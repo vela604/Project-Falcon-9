@@ -159,10 +159,10 @@ function drawRocket() {
     ctx.fill();
   }
 
-  // ---- Body (clean, minimal) ----
-  ctx.fillStyle = '#d8dee8';
-  ctx.strokeStyle = '#8fa0b8';
-  ctx.lineWidth = 1.5;
+  // ---- Body (transparent line-art — matches the console's schematic style) ----
+  ctx.fillStyle = 'rgba(13,20,36,0.55)';
+  ctx.strokeStyle = '#35d6ff';
+  ctx.lineWidth = 1.4;
   ctx.beginPath();
   ctx.moveTo(-W/2, 0);
   ctx.lineTo(-W/2, -H*0.85);
@@ -174,51 +174,46 @@ function drawRocket() {
   ctx.stroke();
 
   // grid-fin style stripe near top for visual interest
-  ctx.strokeStyle = 'rgba(0,0,0,0.15)';
+  ctx.strokeStyle = 'rgba(53,214,255,0.25)';
   ctx.beginPath(); ctx.moveTo(-W/2, -H*0.72); ctx.lineTo(W/2, -H*0.72); ctx.stroke();
 
-  // ---- RCS glow (corners), lights up when firing this tick ----
+  // ---- RCS gas ejection (actual exhaust puff, not a glow) ----
   const firing = lastForces.firing || {};
-  const rcsR = W * 0.12;
+  const pod = lastForces.pod || {};
   const corners = {
     TL: [-W/2, -(H - CONFIG.RCS_TOP_MARGIN/mpp)],
     TR: [ W/2, -(H - CONFIG.RCS_TOP_MARGIN/mpp)],
     BL: [-W/2, -(CONFIG.RCS_BOTTOM_MARGIN/mpp)],
     BR: [ W/2, -(CONFIG.RCS_BOTTOM_MARGIN/mpp)],
   };
+  const plumeLen = W * 1.6;
   Object.keys(corners).forEach(k => {
     const [cx, cy] = corners[k];
-    if (firing[k]) {
-      const glow = ctx.createRadialGradient(cx, cy, 0, cx, cy, rcsR*3);
-      glow.addColorStop(0, 'rgba(120,220,255,0.9)');
-      glow.addColorStop(1, 'rgba(120,220,255,0)');
-      ctx.fillStyle = glow;
-      ctx.beginPath(); ctx.arc(cx, cy, rcsR*3, 0, Math.PI*2); ctx.fill();
+    if (firing[k] && pod[k]) {
+      const mag = Math.hypot(pod[k].Fx, pod[k].Fy);
+      if (mag > 1) {
+        // Ejection direction = reaction-opposite of the force applied to the vehicle.
+        const dx = -pod[k].Fx / mag, dy = pod[k].Fy / mag; // canvas-local (y already flipped)
+        const nx = -dy, ny = dx; // perpendicular, for plume spread
+        const tipX = cx + dx * plumeLen, tipY = cy + dy * plumeLen;
+        const spread = W * 0.05;
+        const grad = ctx.createLinearGradient(cx, cy, tipX, tipY);
+        grad.addColorStop(0, 'rgba(220,235,255,0.85)');
+        grad.addColorStop(1, 'rgba(220,235,255,0)');
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.moveTo(cx - nx*spread, cy - ny*spread);
+        ctx.lineTo(cx + nx*spread, cy + ny*spread);
+        ctx.lineTo(tipX, tipY);
+        ctx.closePath();
+        ctx.fill();
+      }
     }
-    ctx.fillStyle = firing[k] ? '#aef1ff' : '#3a4a5a';
-    ctx.beginPath(); ctx.arc(cx, cy, rcsR, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = firing[k] ? '#aef1ff' : '#22344a';
+    ctx.beginPath(); ctx.arc(cx, cy, W*0.09, 0, Math.PI*2); ctx.fill();
   });
 
   ctx.restore();
-
-  // ---- Vectors (velocity, thrust) toggleable ----
-  if (showVectors) {
-    drawVectorFrom(px, py, state.vx, state.vy, '#ffdd55', 'V');
-  }
-}
-
-function drawVectorFrom(px, py, vx, vy, color, label) {
-  const scale = 3;
-  const speed = Math.hypot(vx, vy);
-  if (speed < 0.05) return;
-  // rotate world vector into screen space (screen y is inverted)
-  const ex = px + vx * scale;
-  const ey = py - vy * scale;
-  ctx.strokeStyle = color;
-  ctx.fillStyle = color;
-  ctx.lineWidth = 2;
-  ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(ex, ey); ctx.stroke();
-  ctx.beginPath(); ctx.arc(ex, ey, 3, 0, Math.PI*2); ctx.fill();
 }
 
 function renderFrame() {

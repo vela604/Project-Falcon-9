@@ -74,6 +74,12 @@ function computeMainThrust(comH) {
   return { Fx, Fy, torque, mdot };
 }
 
+// Empty-tank stand-ins for computeMainThrust()/computeRCS() — used once the
+// propellant tank is dry, so a firing command with no fuel left produces
+// literally nothing rather than "free" thrust.
+function zeroThrust() { return { Fx: 0, Fy: 0, torque: 0, mdot: 0 }; }
+function zeroRCS() { return { Fx: 0, Fy: 0, torque: 0, mdot: 0, firing: {}, pod: {} }; }
+
 function derivatives(s, extra) {
   const M = s.dryMass + s.fuelMass;
   const r = Math.hypot(s.rx, s.ry);
@@ -118,8 +124,10 @@ function physicsStep(dt) {
   applyActuatorRateLimits(dt);
 
   const geom = currentGeometry();
-  const main = computeMainThrust(geom.comH);
-  const rcs = computeRCS(geom.comH, dt);
+  const hasFuel = state.fuelMass > 0;
+  const main = hasFuel ? computeMainThrust(geom.comH) : zeroThrust();
+  const rcs = hasFuel ? computeRCS(geom.comH, dt) : zeroRCS();
+  if (!hasFuel) ENGINES.forEach(e => { e.currentF = 0; });
 
   const extra = {
     Fx: main.Fx + rcs.Fx,
@@ -132,7 +140,7 @@ function physicsStep(dt) {
   lastForces = {
     mainFx: main.Fx, mainFy: main.Fy, mainTorque: main.torque,
     rcsFx: rcs.Fx, rcsFy: rcs.Fy, rcsTorque: rcs.torque,
-    mdot: mdotTotal, firing: rcs.firing,
+    mdot: mdotTotal, firing: rcs.firing || {}, pod: rcs.pod || {},
   };
 
   const s0 = state;

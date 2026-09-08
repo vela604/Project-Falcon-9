@@ -109,7 +109,7 @@ function computeRCS(comH, dt) {
     if (mag > 0) mdot += mag / CONFIG.RCS_VE;
   });
 
-  return { Fx, Fy, torque, mdot, firing };
+  return { Fx, Fy, torque, mdot, firing, pod };
 }
 
 function clearRCS() {

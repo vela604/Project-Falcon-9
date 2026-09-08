@@ -63,6 +63,35 @@ function updateTelemetry() {
 // ---------------------------------------------------------------------------
 let figCanvas, figCtx;
 
+// World-frame vector -> normalized BODY-frame direction (rotates by -theta so
+// the arrow shows correctly relative to the vehicle's nose, even though the
+// figure panel always draws the airframe upright).
+function worldVectorToBodyUnit(wx, wy, theta) {
+  const mag = Math.hypot(wx, wy);
+  if (mag < 1e-6) return null;
+  const ux = wx / mag, uy = wy / mag;
+  const cosT = Math.cos(theta), sinT = Math.sin(theta);
+  return { bx: ux * cosT + uy * sinT, by: -ux * sinT + uy * cosT };
+}
+
+// Already-body-frame vector -> normalized direction (no rotation needed).
+function unitOf(bx, by) {
+  const mag = Math.hypot(bx, by);
+  if (mag < 1e-6) return null;
+  return { bx: bx / mag, by: by / mag };
+}
+
+// Draws a fixed-length unit-direction arrow. (bx, by) is in BODY frame
+// (+y = toward the nose); canvas y is flipped to match.
+function drawUnitVector(ctx2, x0, y0, bx, by, len, color, label) {
+  const ex = x0 + bx * len, ey = y0 - by * len;
+  ctx2.strokeStyle = color; ctx2.fillStyle = color; ctx2.lineWidth = 2;
+  ctx2.beginPath(); ctx2.moveTo(x0, y0); ctx2.lineTo(ex, ey); ctx2.stroke();
+  ctx2.beginPath(); ctx2.arc(ex, ey, 3, 0, Math.PI * 2); ctx2.fill();
+  ctx2.font = '10px "JetBrains Mono", monospace';
+  ctx2.fillText(label, ex + 4, ey + 3);
+}
+
 function initFigureCanvas() {
   figCanvas = document.getElementById('figureCanvas');
   figCtx = figCanvas.getContext('2d');
@@ -80,9 +109,9 @@ function drawFigurePanel() {
   // Body outline (always upright here — this panel is a schematic, not the live attitude)
   const W = CONFIG.ROCKET_WIDTH * scale;
   const H = CONFIG.ROCKET_HEIGHT * scale;
-  figCtx.fillStyle = '#e4e9f2';
-  figCtx.strokeStyle = '#8fa0b8';
-  figCtx.lineWidth = 1.5;
+  figCtx.fillStyle = 'rgba(13,20,36,0.5)';
+  figCtx.strokeStyle = '#35d6ff';
+  figCtx.lineWidth = 1.4;
   figCtx.beginPath();
   figCtx.moveTo(baseX - W/2, baseY);
   figCtx.lineTo(baseX - W/2, baseY - H*0.85);
@@ -106,17 +135,44 @@ function drawFigurePanel() {
   figCtx.fillStyle = '#ff8899'; figCtx.font = '10px monospace';
   figCtx.fillText('CoM', baseX + W*0.45, comY + 3);
 
-  // Force vectors: thrust (orange, up from base) and gravity (white, down from CoM)
-  const thrustMag = ENGINES.reduce((s,e)=>s+e.currentF, 0);
-  const thrustLen = Math.min(H*0.6, (thrustMag / (CONFIG.ENGINE_F_MAX*9)) * H*0.6);
-  if (thrustLen > 2) {
-    figCtx.strokeStyle = '#ffaa33'; figCtx.lineWidth = 3;
-    figCtx.beginPath(); figCtx.moveTo(baseX, baseY); figCtx.lineTo(baseX, baseY - thrustLen); figCtx.stroke();
+  // Force/motion UNIT vectors — direction only, fixed length. This panel is
+  // the only place vectors are shown (the live sim canvas stays clean); the
+  // "Vectors" toolbar toggle controls visibility here.
+  if (showVectors) {
+    const vecLen = H * 0.32;
+    const vUnit = worldVectorToBodyUnit(state.vx, state.vy, state.theta);
+    if (vUnit) drawUnitVector(figCtx, baseX, comY, vUnit.bx, vUnit.by, vecLen, '#ffdd55', 'v');
+
+    // Main-thrust force is already computed in body frame — no rotation needed.
+    const fUnit = unitOf(lastForces.mainFx, lastForces.mainFy);
+    if (fUnit) drawUnitVector(figCtx, baseX, baseY, fUnit.bx, fUnit.by, vecLen, '#ffaa33', 'F');
+
+    const r = Math.hypot(state.rx, state.ry);
+    const gWorld = r > 0 ? { x: -state.rx / r, y: -state.ry / r } : { x: 0, y: -1 };
+    const gUnit = worldVectorToBodyUnit(gWorld.x, gWorld.y, state.theta);
+    if (gUnit) drawUnitVector(figCtx, baseX, comY, gUnit.bx, gUnit.by, vecLen * 0.85, '#aabbff', 'g');
   }
-  const gravLen = H*0.3;
-  figCtx.strokeStyle = '#aabbff'; figCtx.lineWidth = 2;
-  figCtx.beginPath(); figCtx.moveTo(baseX, comY); figCtx.lineTo(baseX, comY + gravLen); figCtx.stroke();
-  figCtx.fillStyle = '#aabbff'; figCtx.fillText('Fg', baseX + 5, comY + gravLen);
+
+  // RCS gas-ejection glow — lights up here (not on the live sim rocket) when firing.
+  const firing = lastForces.firing || {};
+  const podCorners = {
+    TL: [baseX - W/2, baseY - (CONFIG.ROCKET_HEIGHT - CONFIG.RCS_TOP_MARGIN) * scale],
+    TR: [baseX + W/2, baseY - (CONFIG.ROCKET_HEIGHT - CONFIG.RCS_TOP_MARGIN) * scale],
+    BL: [baseX - W/2, baseY - CONFIG.RCS_BOTTOM_MARGIN * scale],
+    BR: [baseX + W/2, baseY - CONFIG.RCS_BOTTOM_MARGIN * scale],
+  };
+  Object.keys(podCorners).forEach(k => {
+    const [cx, cy] = podCorners[k];
+    if (firing[k]) {
+      const glow = figCtx.createRadialGradient(cx, cy, 0, cx, cy, 12);
+      glow.addColorStop(0, 'rgba(120,220,255,0.9)');
+      glow.addColorStop(1, 'rgba(120,220,255,0)');
+      figCtx.fillStyle = glow;
+      figCtx.beginPath(); figCtx.arc(cx, cy, 12, 0, Math.PI*2); figCtx.fill();
+    }
+    figCtx.fillStyle = firing[k] ? '#aef1ff' : '#22344a';
+    figCtx.beginPath(); figCtx.arc(cx, cy, 3.5, 0, Math.PI*2); figCtx.fill();
+  });
 
   // Gimbal indicator on center-engine flame stub
   const centerEngine = ENGINES.find(e => e.isCenter);
@@ -145,8 +201,10 @@ function drawBasalView() {
   basalCtx.clearRect(0, 0, w, h);
   const cx = w/2, cy = h/2, R = Math.min(w,h)*0.38;
 
-  basalCtx.strokeStyle = '#3a4a5a';
-  basalCtx.beginPath(); basalCtx.arc(cx, cy, R*1.35, 0, Math.PI*2); basalCtx.stroke();
+  basalCtx.fillStyle = 'rgba(13,20,36,0.4)';
+  basalCtx.strokeStyle = '#35d6ff';
+  basalCtx.lineWidth = 1.4;
+  basalCtx.beginPath(); basalCtx.arc(cx, cy, R*1.35, 0, Math.PI*2); basalCtx.fill(); basalCtx.stroke();
 
   ENGINES.forEach(e => {
     let ex, ey;
@@ -159,10 +217,10 @@ function drawBasalView() {
     const opacity = 0.15 + 0.85 * e.throttle;
     basalCtx.fillStyle = `rgba(255,${140 + 80*e.throttle},${40+40*e.throttle},${opacity})`;
     basalCtx.beginPath(); basalCtx.arc(ex, ey, e.isCenter ? 10 : 7, 0, Math.PI*2); basalCtx.fill();
-    basalCtx.strokeStyle = 'rgba(255,255,255,0.25)'; basalCtx.stroke();
+    basalCtx.strokeStyle = 'rgba(219,230,245,0.35)'; basalCtx.stroke();
 
     if (e.throttle > 0.02) {
-      basalCtx.fillStyle = '#fff';
+      basalCtx.fillStyle = '#dbe6f5';
       basalCtx.font = '8px monospace';
       basalCtx.textAlign = 'center';
       basalCtx.fillText(Math.round(e.throttle*100)+'%', ex, ey + 18);
