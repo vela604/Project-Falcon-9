@@ -174,9 +174,11 @@ function drawFigurePanel() {
     figCtx.beginPath(); figCtx.arc(cx, cy, 3.5, 0, Math.PI*2); figCtx.fill();
   });
 
-  // Gimbal indicator on center-engine flame stub
+  // Gimbal indicator on center-engine flame stub — driven by actual
+  // delivered thrust, so it disappears the instant the tank runs dry.
   const centerEngine = ENGINES.find(e => e.isCenter);
-  if (centerEngine.throttle > 0.01) {
+  const centerFrac = centerEngine.Fmax > 0 ? centerEngine.currentF / centerEngine.Fmax : 0;
+  if (centerFrac > 0.01) {
     figCtx.save();
     figCtx.translate(baseX, baseY);
     figCtx.rotate(centerEngine.gimbalDeg * Math.PI/180);
@@ -214,16 +216,20 @@ function drawBasalView() {
       ex = cx + Math.cos(rad) * R;
       ey = cy - Math.sin(rad) * R;
     }
-    const opacity = 0.15 + 0.85 * e.throttle;
-    basalCtx.fillStyle = `rgba(255,${140 + 80*e.throttle},${40+40*e.throttle},${opacity})`;
+    // Driven by actual delivered thrust (currentF/Fmax), not the throttle
+    // *setting* — so an engine reads dark/off the instant fuel runs out,
+    // even if its slider is still held up.
+    const frac = e.Fmax > 0 ? e.currentF / e.Fmax : 0;
+    const opacity = 0.15 + 0.85 * frac;
+    basalCtx.fillStyle = `rgba(255,${140 + 80*frac},${40+40*frac},${opacity})`;
     basalCtx.beginPath(); basalCtx.arc(ex, ey, e.isCenter ? 10 : 7, 0, Math.PI*2); basalCtx.fill();
     basalCtx.strokeStyle = 'rgba(219,230,245,0.35)'; basalCtx.stroke();
 
-    if (e.throttle > 0.02) {
+    if (frac > 0.02) {
       basalCtx.fillStyle = '#dbe6f5';
       basalCtx.font = '8px monospace';
       basalCtx.textAlign = 'center';
-      basalCtx.fillText(Math.round(e.throttle*100)+'%', ex, ey + 18);
+      basalCtx.fillText(Math.round(frac*100)+'%', ex, ey + 18);
     }
   });
   basalCtx.textAlign = 'left';

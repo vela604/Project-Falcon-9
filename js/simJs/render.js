@@ -141,8 +141,14 @@ function drawRocket() {
   ctx.translate(px, py);
   ctx.rotate(-visualTheta);
 
-  // ---- Flame (drawn first, behind body, based on center + outer throttle) ----
-  const totalThrottle = ENGINES.reduce((s, e) => s + e.throttle, 0) / ENGINES.length;
+  // ---- Flame (drawn first, behind body) ----
+  // Driven by ACTUAL delivered thrust (currentF / Fmax), not the throttle
+  // *setting* — so once the tank runs dry (currentF forced to 0 in
+  // physics.js) the flame disappears immediately, even if a slider is still
+  // held up at some throttle position.
+  const totalThrust = ENGINES.reduce((s, e) => s + e.currentF, 0);
+  const maxThrust = ENGINES.reduce((s, e) => s + e.Fmax, 0);
+  const totalThrottle = maxThrust > 0 ? totalThrust / maxThrust : 0;
   if (totalThrottle > 0.01) {
     const flameLen = H * (0.3 + 0.9 * totalThrottle);
     const grad = ctx.createLinearGradient(0, 0, 0, flameLen);
@@ -177,7 +183,15 @@ function drawRocket() {
   ctx.strokeStyle = 'rgba(53,214,255,0.25)';
   ctx.beginPath(); ctx.moveTo(-W/2, -H*0.72); ctx.lineTo(W/2, -H*0.72); ctx.stroke();
 
-  // ---- RCS gas ejection (actual exhaust puff, not a glow) ----
+  // ---- RCS gas ejection — fixed-axis quad-thruster nozzles ----
+  // Each pod is a real "RCS quad" block: it has up to two SEPARATE, FIXED
+  // nozzles — one horizontal, one vertical — that either fire or don't.
+  // We never draw one merged/angled "resultant" jet: when both nozzles on a
+  // pod are active (diagonal or rotation commands) they're drawn as two
+  // independent straight puffs, exactly like real fixed-direction RCS
+  // hardware. Each nozzle's direction is a fixed constant (not derived from
+  // the force's instantaneous sign), so a jet can never point back across
+  // the airframe — it always fires straight outward/along the hull.
   const firing = lastForces.firing || {};
   const pod = lastForces.pod || {};
   const corners = {
@@ -186,29 +200,39 @@ function drawRocket() {
     BL: [-W/2, -(CONFIG.RCS_BOTTOM_MARGIN/mpp)],
     BR: [ W/2, -(CONFIG.RCS_BOTTOM_MARGIN/mpp)],
   };
-  const plumeLen = W * 1.6;
+  // horizontal nozzle: always points straight outward, away from centerline.
+  // vertical nozzle: top pods always fire downward (away from the nose,
+  // along the hull); bottom pods always fire upward (away from the tail).
+  const nozzleDir = {
+    TL: { h: [-1, 0], v: [0,  1] },
+    TR: { h: [ 1, 0], v: [0,  1] },
+    BL: { h: [-1, 0], v: [0, -1] },
+    BR: { h: [ 1, 0], v: [0, -1] },
+  };
+  const plumeLen = W * 0.55;
+  const fEps = 1; // Newtons — ignore numerical noise
+  function drawFixedJet(cx, cy, dir) {
+    const [dx, dy] = dir;
+    const nx = -dy, ny = dx; // perpendicular, for plume spread
+    const tipX = cx + dx * plumeLen, tipY = cy + dy * plumeLen;
+    const spread = W * 0.045;
+    const grad = ctx.createLinearGradient(cx, cy, tipX, tipY);
+    grad.addColorStop(0, 'rgba(220,235,255,0.85)');
+    grad.addColorStop(1, 'rgba(220,235,255,0)');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.moveTo(cx - nx*spread, cy - ny*spread);
+    ctx.lineTo(cx + nx*spread, cy + ny*spread);
+    ctx.lineTo(tipX, tipY);
+    ctx.closePath();
+    ctx.fill();
+  }
   Object.keys(corners).forEach(k => {
     const [cx, cy] = corners[k];
-    if (firing[k] && pod[k]) {
-      const mag = Math.hypot(pod[k].Fx, pod[k].Fy);
-      if (mag > 1) {
-        // Ejection direction = reaction-opposite of the force applied to the vehicle.
-        const dx = -pod[k].Fx / mag, dy = pod[k].Fy / mag; // canvas-local (y already flipped)
-        const nx = -dy, ny = dx; // perpendicular, for plume spread
-        const tipX = cx + dx * plumeLen, tipY = cy + dy * plumeLen;
-        const spread = W * 0.05;
-        const grad = ctx.createLinearGradient(cx, cy, tipX, tipY);
-        grad.addColorStop(0, 'rgba(220,235,255,0.85)');
-        grad.addColorStop(1, 'rgba(220,235,255,0)');
-        ctx.fillStyle = grad;
-        ctx.beginPath();
-        ctx.moveTo(cx - nx*spread, cy - ny*spread);
-        ctx.lineTo(cx + nx*spread, cy + ny*spread);
-        ctx.lineTo(tipX, tipY);
-        ctx.closePath();
-        ctx.fill();
-      }
-    }
+    const p = pod[k] || { Fx: 0, Fy: 0 };
+    const dir = nozzleDir[k];
+    if (Math.abs(p.Fx) > fEps) drawFixedJet(cx, cy, dir.h);
+    if (Math.abs(p.Fy) > fEps) drawFixedJet(cx, cy, dir.v);
     ctx.fillStyle = firing[k] ? '#aef1ff' : '#22344a';
     ctx.beginPath(); ctx.arc(cx, cy, W*0.09, 0, Math.PI*2); ctx.fill();
   });

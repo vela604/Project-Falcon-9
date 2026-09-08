@@ -95,28 +95,38 @@
         <div id="slidersLeft" class="slider-rack"></div>
 
         <div class="center-cluster">
-          <button class="rcs-btn" id="rcsNW" style="grid-column:1;grid-row:1;">↖</button>
-          <button class="rcs-btn" id="rcsN" style="grid-column:2;grid-row:1;">↑</button>
-          <button class="rcs-btn" id="rcsNE" style="grid-column:3;grid-row:1;">↗</button>
-
-          <button class="gimbal-btn" id="gimbalACW" style="grid-column:1;grid-row:2;" title="Gimbal ACW">⟲</button>
-          <div class="thrust-col" style="grid-column:2;grid-row:2;">
-            <div id="centerThrustValue">0%</div>
-            <input type="range" id="centerThrustSlider" min="0" max="100" value="0">
-            <div class="thrust-col-label">MAIN</div>
+          <div class="cc-row cc-top">
+            <button class="dir-btn corner-btn" id="rcsNW" data-dir="nw" title="RCS NW"><span class="corner-icon"></span></button>
+            <button class="dir-btn" id="rcsN" title="RCS Up">▲</button>
+            <button class="dir-btn corner-btn" id="rcsNE" data-dir="ne" title="RCS NE"><span class="corner-icon"></span></button>
           </div>
-          <button class="gimbal-btn" id="gimbalCW" style="grid-column:3;grid-row:2;" title="Gimbal CW">⟳</button>
 
-          <button class="rcs-btn" id="rcsW" style="grid-column:1;grid-row:2;align-self:end;">←</button>
-          <button class="rcs-btn" id="rcsE" style="grid-column:3;grid-row:2;align-self:end;">→</button>
+          <div class="cc-row cc-mid">
+            <button class="dir-btn" id="rcsW" title="RCS Left">◀</button>
 
-          <button class="rcs-btn" id="rcsSW" style="grid-column:1;grid-row:3;">↙</button>
-          <button class="rcs-btn" id="rcsS" style="grid-column:2;grid-row:3;">↓</button>
-          <button class="rcs-btn" id="rcsSE" style="grid-column:3;grid-row:3;">↘</button>
+            <div class="cc-inner">
+              <div class="cc-inner-col">
+                <button class="rot-btn gimbal" id="gimbalACW" title="Gimbal ACW">⟲</button>
+                <button class="rot-btn rcs" id="rcsACW" title="RCS Rotate ACW">⟲</button>
+              </div>
+              <div class="thrust-col">
+                <div id="centerThrustValue">0%</div>
+                <input type="range" id="centerThrustSlider" min="0" max="100" value="0">
+                <div class="thrust-col-label">MAIN</div>
+              </div>
+              <div class="cc-inner-col">
+                <button class="rot-btn gimbal" id="gimbalCW" title="Gimbal CW">⟳</button>
+                <button class="rot-btn rcs" id="rcsCW" title="RCS Rotate CW">⟳</button>
+              </div>
+            </div>
 
-          <div class="rotate-row">
-            <button class="rcs-btn rotate" id="rcsACW"><span>⟲</span>ACW</button>
-            <button class="rcs-btn rotate" id="rcsCW"><span>⟳</span>CW</button>
+            <button class="dir-btn" id="rcsE" title="RCS Right">▶</button>
+          </div>
+
+          <div class="cc-row cc-bottom">
+            <button class="dir-btn corner-btn" id="rcsSW" data-dir="sw" title="RCS SW"><span class="corner-icon"></span></button>
+            <button class="dir-btn" id="rcsS" title="RCS Down">▼</button>
+            <button class="dir-btn corner-btn" id="rcsSE" data-dir="se" title="RCS SE"><span class="corner-icon"></span></button>
           </div>
         </div>
 

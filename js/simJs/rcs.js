@@ -14,14 +14,18 @@
 //    regardless of where the CoM currently is. No PWM needed.
 //
 // 2) Pure horizontal translation (Left/Right): the two pods on the SAME side
-//    (both left, or both right) fire together — but they are NOT at the same
-//    height. The CoM is normally well below the geometric mid-height (fuel
-//    is concentrated low), so the TOP pod has a LARGER moment arm than the
-//    BOTTOM pod. Firing both at equal force would create unwanted torque.
-//    Fix: the bottom pod (smaller arm) fires continuously at full force; the
-//    top pod (larger arm) fires at a reduced AVERAGE force via PWM duty
-//    cycling, with duty = d_bottom / d_top, so that F_top_avg * d_top ==
-//    F_bottom * d_bottom -> zero net torque.
+//    (both left, or both right) fire together — and that side is chosen by
+//    real RCS convention: pushing RIGHT fires the LEFT-side pods (their
+//    nozzles eject further left/outward, reaction pushes the vehicle right);
+//    pushing LEFT fires the RIGHT-side pods (mirror case). Those two pods
+//    are NOT at the same height, though. The CoM is normally well below the
+//    geometric mid-height (fuel is concentrated low), so the TOP pod has a
+//    LARGER moment arm than the BOTTOM pod. Firing both at equal force would
+//    create unwanted torque. Fix: the bottom pod (smaller arm) fires
+//    continuously at full force; the top pod (larger arm) fires at a
+//    reduced AVERAGE force via PWM duty cycling, with duty = d_bottom /
+//    d_top, so that F_top_avg * d_top == F_bottom * d_bottom -> zero net
+//    torque.
 //
 // 3) Diagonal translation (NE/NW/SE/SW): superposition of the relevant
 //    vertical + horizontal commands above. One pod ends up firing both of
@@ -73,8 +77,12 @@ function computeRCS(comH, dt) {
   }
   function fireHoriz(dir) {
     const topF = topHorizOn ? f : 0;
-    if (dir === 'E') { pod.TR.Fx += topF; pod.BR.Fx += f; if (topHorizOn) firing.TR = true; firing.BR = true; }
-    else              { pod.TL.Fx -= topF; pod.BL.Fx -= f; if (topHorizOn) firing.TL = true; firing.BL = true; }
+    // Real RCS convention: pushing the vehicle RIGHT means the LEFT-side pods
+    // fire (their nozzles eject further left/outward, away from the hull —
+    // reaction pushes the vehicle right). Pushing LEFT is the mirror case:
+    // the RIGHT-side pods fire, ejecting further right/outward.
+    if (dir === 'E') { pod.TL.Fx += topF; pod.BL.Fx += f; if (topHorizOn) firing.TL = true; firing.BL = true; }
+    else              { pod.TR.Fx -= topF; pod.BR.Fx -= f; if (topHorizOn) firing.TR = true; firing.BR = true; }
   }
   function fireRotation(cw) {
     const s = cw ? 1 : -1;

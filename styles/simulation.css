@@ -169,28 +169,51 @@ input[type=range].vslider::-moz-range-thumb {
   background: var(--orange); box-shadow: 0 0 6px var(--orange); cursor: pointer; border: 2px solid #1a1206;
 }
 
+/* Center RCS/gimbal/thrust cluster — matches the "quad + corner-bracket"
+   control sketch: N/S/E/W as square arrow keys, NW/NE/SW/SE as reticle
+   corner-brackets, and gimbal (ACW/CW) + RCS-rotate (ACW/CW) as small square
+   buttons flanking the thrust slider directly — nothing round, nothing
+   overlapping. */
 .center-cluster {
   flex-shrink: 0;
-  display: grid;
-  grid-template-columns: clamp(36px,8vw,46px) clamp(52px,11vw,60px) clamp(36px,8vw,46px);
-  grid-template-rows: clamp(36px,8vw,46px) clamp(100px,20vw,130px) clamp(30px,7vw,38px);
-  gap: 5px; align-items: center; justify-items: center;
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
 }
-.rcs-btn {
-  width: 100%; height: 100%; min-width: 32px; min-height: 32px;
-  border-radius: 7px; background: var(--panel-2); border: 1px solid var(--panel-border);
+.cc-row { display: flex; align-items: center; justify-content: center; gap: 6px; }
+.cc-mid { gap: 8px; }
+
+.dir-btn {
+  width: clamp(34px,8vw,44px); height: clamp(34px,8vw,44px); flex-shrink: 0;
+  border-radius: 8px; background: var(--panel-2); border: 1px solid var(--panel-border);
   color: var(--cyan); font-size: 15px; display: flex; align-items: center; justify-content: center;
   cursor: pointer; transition: all .1s;
 }
-.rcs-btn.active { background: rgba(53,214,255,0.35); box-shadow: 0 0 12px var(--cyan); border-color: var(--cyan); }
-.rcs-btn.rotate {
-  color: var(--purple); flex-direction: row; gap: 5px; font-size: 11px; font-family: var(--font-mono);
-  font-weight: 600; letter-spacing: 0.3px;
-}
-.rcs-btn.rotate span { font-size: 14px; }
-.rcs-btn.rotate.active { background: rgba(167,139,250,0.35); box-shadow: 0 0 12px var(--purple); border-color: var(--purple); }
+.dir-btn.active { background: rgba(53,214,255,0.35); box-shadow: 0 0 12px var(--cyan); border-color: var(--cyan); }
 
-.thrust-col { grid-column: 2; grid-row: 2; display: flex; flex-direction: column; align-items: center; gap: 4px; height: 100%; justify-content: center; }
+/* Corner-bracket icon: one "L" shape, rotated per corner — a fixed-direction
+   reticle mark rather than a diagonal arrow glyph. */
+.corner-icon { width: 12px; height: 12px; border-top: 2.5px solid currentColor; border-left: 2.5px solid currentColor; }
+.corner-btn[data-dir="nw"] .corner-icon { transform: rotate(0deg); }
+.corner-btn[data-dir="ne"] .corner-icon { transform: rotate(90deg); }
+.corner-btn[data-dir="se"] .corner-icon { transform: rotate(180deg); }
+.corner-btn[data-dir="sw"] .corner-icon { transform: rotate(270deg); }
+
+.cc-inner { display: flex; align-items: center; gap: 6px; }
+.cc-inner-col { display: flex; flex-direction: column; gap: 6px; flex-shrink: 0; }
+
+.rot-btn {
+  width: clamp(28px,6.5vw,36px); height: clamp(28px,6.5vw,36px); flex-shrink: 0;
+  border-radius: 8px; background: var(--panel-2); border: 1px solid var(--panel-border);
+  font-size: 14px; display: flex; align-items: center; justify-content: center; cursor: pointer;
+}
+.rot-btn.gimbal { color: var(--yellow); }
+.rot-btn.gimbal:active { background: rgba(255,210,63,0.3); box-shadow: 0 0 10px var(--yellow); border-color: var(--yellow); }
+.rot-btn.rcs { color: var(--purple); }
+.rot-btn.rcs.active { background: rgba(167,139,250,0.35); box-shadow: 0 0 12px var(--purple); border-color: var(--purple); }
+
+.thrust-col {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+  height: clamp(120px,24vw,150px); flex-shrink: 0;
+}
 #centerThrustSlider {
   -webkit-appearance: none; appearance: none; width: clamp(70px,18vw,100px); height: 8px;
   background: #1c2b45; border-radius: 4px; transform: rotate(-90deg); accent-color: var(--magenta);
@@ -205,16 +228,6 @@ input[type=range].vslider::-moz-range-thumb {
 }
 #centerThrustValue { font-size: 11px; color: var(--magenta); font-family: var(--font-mono); font-weight: 700; }
 .thrust-col-label { font-size: 8.5px; color: var(--dim); letter-spacing: 0.5px; font-family: var(--font-mono); }
-
-.gimbal-btn {
-  width: 100%; height: 100%; min-width: 30px; min-height: 30px;
-  border-radius: 7px; background: var(--panel-2); border: 1px solid var(--panel-border);
-  color: var(--yellow); font-size: 17px; display: flex; align-items: center; justify-content: center; cursor: pointer;
-}
-.gimbal-btn:active, .gimbal-btn.holding { background: rgba(255,210,63,0.3); box-shadow: 0 0 10px var(--yellow); border-color: var(--yellow); }
-
-.rotate-row { grid-column: 1 / span 3; grid-row: 3; display: flex; gap: 8px; width: 100%; }
-.rotate-row .rcs-btn { flex: 1; }
 
 /* ============================================================
    Panel dock — all toggleable panels stack here in normal flow,
