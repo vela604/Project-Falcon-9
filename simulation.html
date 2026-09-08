@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Rocket Simulation — Phase 1</title>
+<link rel="stylesheet" href="styles/simulation.css">
+</head>
+<body>
+<div id="app">
+
+  <!-- ===================== Status Bar ===================== -->
+  <div id="statusBar">
+    <span class="brand">🚀 ROCKET SIM</span>
+    <span class="status-dot" id="statusDot"></span>
+    <span id="statusText">STOPPED</span>
+    <span id="missionClock">T+00:00.0</span>
+    <div class="spacer"></div>
+    <button class="btn btn-start" id="btnStart">▶ START</button>
+    <button class="btn btn-stop" id="btnStop">⏸ STOP</button>
+    <button class="btn btn-reset" id="btnReset">↺ RESET</button>
+    <div class="spacer"></div>
+    <button class="btn icon-btn active" id="btnFollow" title="Follow rocket">🎯</button>
+    <button class="btn icon-btn" id="btnFree" title="Free camera">🖐</button>
+    <button class="btn icon-btn" id="btnZoomOut" title="Zoom out">−</button>
+    <button class="btn icon-btn" id="btnZoomIn" title="Zoom in">+</button>
+    <label class="btn" style="display:flex;align-items:center;gap:6px;"><input type="checkbox" id="toggleGrid" checked> Grid</label>
+    <label class="btn" style="display:flex;align-items:center;gap:6px;"><input type="checkbox" id="toggleVectors" checked> Vectors</label>
+    <button class="btn" id="btnMergePanel">⚙ Engines</button>
+    <button class="btn" id="btnSidePanel">🛰 Rocket</button>
+    <button class="btn" id="btnWindPanel">🌬 Wind</button>
+    <button class="btn" id="btnGraphPanel">📈 Graphs</button>
+    <button class="btn" id="btnGlossary">ⓘ Info</button>
+  </div>
+
+  <!-- ===================== Viewport ===================== -->
+  <div id="viewport">
+    <canvas id="simCanvas"></canvas>
+
+    <!-- Telemetry (compact notation) -->
+    <div id="telemetryPanel">
+      <div class="panel-title" style="margin-bottom:6px;">TELEMETRY</div>
+      <div class="tele-row"><span class="tele-sym">h</span><span class="tele-val" id="t-h">0</span></div>
+      <div class="tele-row"><span class="tele-sym">v</span><span class="tele-val" id="t-v">0</span></div>
+      <div class="tele-row"><span class="tele-sym">vx</span><span class="tele-val" id="t-vx">0</span></div>
+      <div class="tele-row"><span class="tele-sym">vy</span><span class="tele-val" id="t-vy">0</span></div>
+      <div class="tele-row"><span class="tele-sym">θ</span><span class="tele-val" id="t-theta">0</span></div>
+      <div class="tele-row"><span class="tele-sym">ω</span><span class="tele-val" id="t-omega">0</span></div>
+      <div class="tele-row"><span class="tele-sym">m</span><span class="tele-val" id="t-m">0</span></div>
+      <div class="tele-row"><span class="tele-sym">mf</span><span class="tele-val" id="t-mf">0</span></div>
+      <div class="tele-row"><span class="tele-sym">Ft</span><span class="tele-val" id="t-Ft">0</span></div>
+      <div class="tele-row"><span class="tele-sym">γ</span><span class="tele-val" id="t-gimbal">0</span></div>
+      <div class="tele-row"><span class="tele-sym">τ</span><span class="tele-val" id="t-torque">0</span></div>
+      <div class="tele-row"><span class="tele-sym">g</span><span class="tele-val" id="t-g">0</span></div>
+      <div class="tele-row"><span class="tele-sym">ρ</span><span class="tele-val" id="t-rho">0</span></div>
+    </div>
+
+    <!-- Bottom control cluster -->
+    <div id="bottomControls">
+      <div id="slidersLeft" style="display:flex; gap:10px;"></div>
+
+      <div class="center-cluster">
+        <button class="rcs-btn" id="rcsNW" style="grid-column:1;grid-row:1;">↖</button>
+        <button class="rcs-btn" id="rcsN" style="grid-column:2;grid-row:1;">↑</button>
+        <button class="rcs-btn" id="rcsNE" style="grid-column:3;grid-row:1;">↗</button>
+
+        <button class="gimbal-btn" id="gimbalACW" style="grid-column:1;grid-row:2;" title="Gimbal ACW">⟲</button>
+        <div class="thrust-col" style="grid-column:2;grid-row:2;">
+          <div id="centerThrustValue">0%</div>
+          <input type="range" id="centerThrustSlider" min="0" max="100" value="0">
+          <div style="font-size:9px;color:var(--dim);">MAIN</div>
+        </div>
+        <button class="gimbal-btn" id="gimbalCW" style="grid-column:3;grid-row:2;" title="Gimbal CW">⟳</button>
+
+        <button class="rcs-btn" id="rcsW" style="grid-column:1;grid-row:2;align-self:end;">←</button>
+        <button class="rcs-btn" id="rcsE" style="grid-column:3;grid-row:2;align-self:end;">→</button>
+
+        <button class="rcs-btn" id="rcsSW" style="grid-column:1;grid-row:3;">↙</button>
+        <button class="rcs-btn" id="rcsS" style="grid-column:2;grid-row:3;">↓</button>
+        <button class="rcs-btn" id="rcsSE" style="grid-column:3;grid-row:3;">↘</button>
+
+        <div class="rotate-row">
+          <button class="rcs-btn rotate" id="rcsACW" style="flex:1;">⟲ ACW</button>
+          <button class="rcs-btn rotate" id="rcsCW" style="flex:1;">⟳ CW</button>
+        </div>
+      </div>
+
+      <div id="slidersRight" style="display:flex; gap:10px;"></div>
+    </div>
+
+    <!-- Engine merge / octaweb diagram panel -->
+    <div class="panel" id="mergePanel" style="display:none; left:12px; right:auto; top:210px;" data-pause-sim="true">
+      <div class="panel-header"><span class="panel-title">ENGINE GROUPS</span><button class="panel-close" data-target="mergePanel">✕</button></div>
+      <svg id="mergeSvg" width="180" height="180"></svg>
+      <div class="merge-mode-row">
+        <button class="btn active" id="mergeModeSymmetric">Symmetric</button>
+        <button class="btn" id="mergeModeAsymmetric">Asymmetric</button>
+      </div>
+      <div style="font-size:10px;color:var(--dim);margin-bottom:6px;">Click two engine dots to merge them onto one slider.</div>
+      <div id="mergeLegend"></div>
+      <button class="btn" id="btnResetMerges" style="width:100%;margin-top:8px;">Reset Merges</button>
+    </div>
+
+    <!-- Rocket figure side panel -->
+    <div class="panel" id="sidePanel" style="display:none;">
+      <div class="panel-header"><span class="panel-title">ROCKET FIGURE</span><button class="panel-close" data-target="sidePanel">✕</button></div>
+      <canvas id="figureCanvas" width="260" height="260"></canvas>
+      <div class="panel-title" style="margin-top:10px;font-size:11px;">BASAL VIEW (engines)</div>
+      <canvas id="basalCanvas" width="260" height="180"></canvas>
+    </div>
+
+    <!-- Wind panel -->
+    <div class="panel" id="windPanel" style="display:none; left:12px; right:auto; top:600px;">
+      <div class="panel-header"><span class="panel-title">WIND</span><button class="panel-close" data-target="windPanel">✕</button></div>
+      <label style="display:flex;align-items:center;gap:8px;"><input type="checkbox" id="windEnabled"> Enabled</label>
+      <div class="field-row">
+        <div class="field-label"><span>Speed</span><span id="windSpeedLabel">0 m/s</span></div>
+        <input type="range" id="windSpeed" min="0" max="60" value="0">
+      </div>
+      <div class="field-row">
+        <div class="field-label"><span>Direction</span><span id="windDirLabel">0°</span></div>
+        <input type="range" id="windDir" min="0" max="360" value="0">
+      </div>
+    </div>
+
+    <!-- Graphs panel (pauses sim while open) -->
+    <div class="panel" id="graphPanel" style="display:none; left:210px; right:auto; top:50px;" data-pause-sim="true">
+      <div class="panel-header"><span class="panel-title">LIVE GRAPHS</span><button class="panel-close" data-target="graphPanel">✕</button></div>
+      <canvas class="mini-graph" id="graphAlt"></canvas>
+      <canvas class="mini-graph" id="graphVel"></canvas>
+      <canvas class="mini-graph" id="graphThrust"></canvas>
+    </div>
+
+    <!-- Glossary / info panel -->
+    <div class="panel" id="glossaryPanel" style="display:none; left:210px; right:auto; top:340px;">
+      <div class="panel-header"><span class="panel-title">NOTATION GLOSSARY</span><button class="panel-close" data-target="glossaryPanel">✕</button></div>
+      <div id="glossaryList"></div>
+    </div>
+  </div>
+</div>
+
+<script src="js/config.js"></script>
+<script src="js/environment.js"></script>
+<script src="js/vehicle.js"></script>
+<script src="js/rcs.js"></script>
+<script src="js/physics.js"></script>
+<script src="js/controls.js"></script>
+<script src="js/render.js"></script>
+<script src="js/telemetry.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>
