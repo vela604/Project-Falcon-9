@@ -1,13 +1,112 @@
-<DOCTYPE html!>
-  <html>
-    <head>
-      <title>Project Falcon 9</title>
-    </head>
-    <body>
-      <h1>Project Falcon 9</h1>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Rocket Sim — Mission Console</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles/home.css">
+</head>
+<body>
+<div id="home">
 
-      <script>
-        
-      </script>
-    </body>
-  </html>
+  <!-- ===================== Top status bar ===================== -->
+  <div id="topBar">
+    <span class="brand">🚀 ROCKET SIM</span>
+    <span class="brand-sub">Mission Console</span>
+    <div class="spacer"></div>
+    <span id="clock">T 00:00:00</span>
+  </div>
+
+  <!-- ===================== Main ===================== -->
+  <main id="main">
+
+    <!-- Hangar — vehicle schematic + quick specs -->
+    <section id="hangar">
+      <div class="hangar-head">
+        <div class="hangar-eyebrow">Current vehicle</div>
+        <h1 id="vehicleName">—</h1>
+      </div>
+
+      <div class="hangar-body">
+        <svg id="shipArt" viewBox="0 0 200 420" aria-hidden="true">
+          <!-- exhaust glow -->
+          <ellipse id="engineGlow" cx="100" cy="392" rx="22" ry="14" fill="url(#glowGrad)"/>
+          <!-- airframe -->
+          <path d="M 78 40
+                   C 78 14, 100 4, 100 4
+                   C 100 4, 122 14, 122 40
+                   L 122 340
+                   L 78 340 Z"
+                fill="#0d1424" stroke="#35d6ff" stroke-width="1.4"/>
+          <!-- octaweb ring hint at base -->
+          <line x1="78" y1="300" x2="122" y2="300" stroke="#1c2b45" stroke-width="1"/>
+          <line x1="78" y1="340" x2="122" y2="340" stroke="#ff9248" stroke-width="1.4"/>
+          <!-- grid fin -->
+          <path d="M 78 250 L 62 268 L 78 280 Z" fill="none" stroke="#6b7d9c" stroke-width="1"/>
+          <path d="M 122 250 L 138 268 L 122 280 Z" fill="none" stroke="#6b7d9c" stroke-width="1"/>
+          <!-- nozzle -->
+          <path d="M 84 340 L 80 362 L 120 362 L 116 340 Z" fill="#0d1424" stroke="#ff9248" stroke-width="1.4"/>
+          <defs>
+            <radialGradient id="glowGrad" cx="50%" cy="20%" r="80%">
+              <stop offset="0%" stop-color="#ffb066" stop-opacity="0.85"/>
+              <stop offset="100%" stop-color="#ffb066" stop-opacity="0"/>
+            </radialGradient>
+          </defs>
+        </svg>
+
+        <dl id="specList">
+          <div class="spec-row"><dt>Height</dt><dd id="specHeight">—</dd></div>
+          <div class="spec-row"><dt>Diameter</dt><dd id="specWidth">—</dd></div>
+          <div class="spec-row"><dt>Dry mass</dt><dd id="specDry">—</dd></div>
+          <div class="spec-row"><dt>Propellant</dt><dd id="specFuel">—</dd></div>
+          <div class="spec-row"><dt>Main engines</dt><dd id="specEngines">—</dd></div>
+          <div class="spec-row"><dt>Thrust / engine</dt><dd id="specThrustEach">—</dd></div>
+          <div class="spec-row"><dt>Total max thrust</dt><dd id="specThrustTotal">—</dd></div>
+          <div class="spec-row"><dt>Exhaust velocity</dt><dd id="specVe">—</dd></div>
+          <div class="spec-row"><dt>RCS pods</dt><dd id="specRcs">—</dd></div>
+        </dl>
+      </div>
+    </section>
+
+    <!-- Modules -->
+    <nav id="modules" aria-label="Mission modules">
+      <div class="modules-eyebrow">Modules</div>
+
+      <a class="module ready" href="simulation.html">
+        <span class="module-dot"></span>
+        <div class="module-text">
+          <div class="module-name">Flight Simulator</div>
+          <div class="module-desc">Manual control · 9-engine octaweb · RCS · live telemetry</div>
+        </div>
+        <span class="module-status">READY</span>
+      </a>
+
+      <a class="module offline" href="rockets.html" id="fleetLink">
+        <span class="module-dot"></span>
+        <div class="module-text">
+          <div class="module-name">Vehicle Fleet</div>
+          <div class="module-desc">Add rockets, edit engine and mass parameters, compare specs</div>
+        </div>
+        <span class="module-status">OFFLINE</span>
+      </a>
+
+      <p id="moreNote">More modules — landing guidance, mission log — come online as the program grows.</p>
+    </nav>
+
+  </main>
+
+  <!-- ===================== Fleet ticker ===================== -->
+  <div id="ticker">
+    <span id="tickerText">Loading fleet data…</span>
+  </div>
+
+  <div id="toast"></div>
+</div>
+
+<script src="js/config.js"></script>
+<script src="js/home.js"></script>
+</body>
+</html>
