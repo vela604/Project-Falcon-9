@@ -26,10 +26,11 @@ function populateVehicleCard() {
   document.getElementById('specVe').textContent = CONFIG.ENGINE_VE.toLocaleString() + ' m/s';
   document.getElementById('specRcs').textContent = '4 pods (2 nozzles each)';
 
+  const fleetSize = (typeof loadFleet === 'function') ? loadFleet().length : 1;
   const tickerEl = document.getElementById('tickerText');
   tickerEl.innerHTML =
-    `<span class="accent">1</span> vehicle in fleet &nbsp;·&nbsp; ` +
-    `<span class="accent">${CONFIG.ROCKET_NAME}</span> &nbsp;·&nbsp; ` +
+    `<span class="accent">${fleetSize}</span> vehicle${fleetSize === 1 ? '' : 's'} in fleet &nbsp;·&nbsp; ` +
+    `flying <span class="accent">${CONFIG.ROCKET_NAME}</span> &nbsp;·&nbsp; ` +
     `${engineCount} engines &nbsp;·&nbsp; ${fmtForce(totalMaxThrust)} total thrust`;
 }
 
@@ -51,24 +52,7 @@ function startClock() {
   tick();
 }
 
-// ---------------------------------------------------------------------------
-// Vehicle Fleet module isn't built yet — show a toast instead of a dead link.
-// ---------------------------------------------------------------------------
-function bindFleetLink() {
-  const link = document.getElementById('fleetLink');
-  const toast = document.getElementById('toast');
-  let hideTimer = null;
-  link.addEventListener('click', (e) => {
-    e.preventDefault();
-    toast.textContent = 'Vehicle Fleet is still being built — the simulator is ready to fly in the meantime.';
-    toast.classList.add('show');
-    clearTimeout(hideTimer);
-    hideTimer = setTimeout(() => toast.classList.remove('show'), 3200);
-  });
-}
-
 window.addEventListener('DOMContentLoaded', () => {
   populateVehicleCard();
   startClock();
-  bindFleetLink();
 });

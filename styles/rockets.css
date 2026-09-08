@@ -1,0 +1,131 @@
+:root {
+  --bg: #060912;
+  --panel: #0d1424;
+  --panel-border: #1c2b45;
+  --cyan: #35d6ff;
+  --orange: #ff9248;
+  --green: #4ade80;
+  --amber: #ffd23f;
+  --danger: #ff5f7e;
+  --text: #dbe6f5;
+  --dim: #6b7d9c;
+  --font-head: 'Space Grotesk', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Consolas', monospace;
+}
+
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+html, body {
+  margin: 0; padding: 0; width: 100%; min-height: 100%;
+  background: var(--bg); color: var(--text);
+  font-family: var(--font-head);
+}
+
+#fleetApp { display: flex; flex-direction: column; min-height: 100vh; }
+
+/* ---------------- Top bar ---------------- */
+#topBar {
+  display: flex; align-items: baseline; gap: 12px;
+  padding: 14px 24px; background: linear-gradient(180deg, #101a30, #0b1220);
+  border-bottom: 1px solid var(--panel-border);
+  font-family: var(--font-mono); font-size: 13px; flex-shrink: 0;
+}
+.brand { color: var(--cyan); font-weight: 600; letter-spacing: 0.5px; text-decoration: none; }
+.brand-sub { color: var(--dim); }
+.spacer { flex: 1; }
+
+.btn {
+  background: #101a30; border: 1px solid var(--panel-border); color: var(--text);
+  padding: 7px 14px; border-radius: 7px; cursor: pointer; font-size: 12.5px;
+  font-family: var(--font-head); text-decoration: none; display: inline-block;
+  transition: border-color .15s, color .15s;
+}
+.btn:hover { border-color: var(--cyan); color: var(--cyan); }
+.btn-accent { border-color: var(--cyan); color: var(--cyan); background: rgba(53,214,255,0.08); }
+.btn-accent:hover { background: rgba(53,214,255,0.16); }
+.btn-danger { border-color: var(--danger); color: var(--danger); background: transparent; }
+.btn-danger:hover { background: rgba(255,95,126,0.1); }
+.btn:disabled { opacity: 0.35; cursor: not-allowed; border-color: var(--panel-border); color: var(--dim); background: transparent; }
+
+/* ---------------- Main layout ---------------- */
+#main {
+  flex: 1; display: grid;
+  grid-template-columns: 0.85fr 1.15fr;
+  gap: 1px; background: var(--panel-border);
+  align-items: start;
+}
+@media (max-width: 900px) { #main { grid-template-columns: 1fr; } }
+
+#fleetPane, #editorPane { background: var(--bg); padding: 28px clamp(18px, 3vw, 40px); }
+
+.pane-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
+.pane-head h1 { margin: 0; font-size: 22px; font-weight: 600; }
+
+/* ---------------- Fleet list ---------------- */
+.fleet-row {
+  border: 1px solid var(--panel-border); border-radius: 8px;
+  padding: 14px 16px; margin-bottom: 10px; cursor: pointer;
+  transition: border-color .15s, background .15s;
+}
+.fleet-row:hover { border-color: var(--cyan); background: rgba(53,214,255,0.04); }
+.fleet-row.active { border-color: var(--cyan); background: rgba(53,214,255,0.07); }
+
+.fleet-row-top { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.fleet-row-name { font-weight: 600; font-size: 15px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.badge {
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.4px;
+  padding: 2px 7px; border-radius: 4px; flex-shrink: 0;
+}
+.badge-flying { color: var(--green); background: rgba(74,222,128,0.12); }
+.badge-locked { color: var(--dim); background: rgba(107,125,156,0.12); }
+
+.fleet-row-specs { display: flex; flex-wrap: wrap; gap: 4px 14px; font-family: var(--font-mono); font-size: 11.5px; color: var(--dim); margin-bottom: 10px; }
+.fleet-row-specs .accent { color: var(--orange); }
+
+.fleet-row-actions { display: flex; gap: 8px; }
+.fleet-row-actions .btn { padding: 5px 10px; font-size: 11.5px; }
+
+#fleetList:empty::after { content: 'No vehicles yet — add one to get started.'; color: var(--dim); font-size: 13px; }
+
+/* ---------------- Editor ---------------- */
+#editorEmpty { color: var(--dim); font-size: 14px; padding: 40px 0; text-align: center; }
+#editorForm { display: none; }
+#editorForm.show { display: block; }
+#editorEmpty.hide { display: none; }
+
+.editor-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 22px; gap: 12px; }
+.editor-head h2 { margin: 0; font-size: 20px; font-weight: 600; }
+.editor-head-actions { display: flex; gap: 8px; flex-shrink: 0; }
+
+.field { margin-bottom: 14px; }
+.field > label { display: block; font-size: 12px; color: var(--dim); margin-bottom: 5px; }
+.field input[type=text], .field input[type=number] {
+  width: 100%; background: var(--panel); border: 1px solid var(--panel-border); color: var(--text);
+  padding: 9px 10px; border-radius: 6px; font-family: var(--font-mono); font-size: 13px;
+}
+.field input:focus { outline: none; border-color: var(--cyan); }
+.field input:invalid:not(:placeholder-shown) { border-color: var(--danger); }
+
+.input-unit { position: relative; display: flex; align-items: center; }
+.input-unit input { padding-right: 42px; }
+.input-unit span { position: absolute; right: 10px; color: var(--dim); font-size: 11px; font-family: var(--font-mono); pointer-events: none; }
+
+fieldset { border: 1px solid var(--panel-border); border-radius: 8px; padding: 16px 16px 4px; margin: 0 0 18px; }
+legend { padding: 0 6px; font-size: 12.5px; color: var(--cyan); font-family: var(--font-mono); }
+.legend-note { color: var(--dim); }
+
+.field-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 4px 14px; }
+
+.form-error {
+  display: none; color: var(--danger); font-size: 12.5px; background: rgba(255,95,126,0.08);
+  border: 1px solid var(--danger); border-radius: 6px; padding: 10px 12px; margin-bottom: 16px;
+}
+.form-error.show { display: block; }
+
+#capsBox { background: rgba(53,214,255,0.03); }
+.cap-row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,0.05); font-size: 13px; }
+.cap-row:last-child { border-bottom: none; }
+.cap-row dt { margin: 0; color: var(--dim); }
+.cap-row dd { margin: 0; font-family: var(--font-mono); color: var(--orange); }
+
+.editor-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 8px; }

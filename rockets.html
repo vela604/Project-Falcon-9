@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Rocket Sim — Vehicle Fleet</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles/rockets.css">
+</head>
+<body>
+<div id="fleetApp">
+
+  <!-- ===================== Top bar ===================== -->
+  <div id="topBar">
+    <a class="brand" href="index.html">🚀 ROCKET SIM</a>
+    <span class="brand-sub">Vehicle Fleet</span>
+    <div class="spacer"></div>
+    <a class="btn" href="simulation.html">Open Simulator →</a>
+  </div>
+
+  <main id="main">
+
+    <!-- ===================== Fleet list ===================== -->
+    <section id="fleetPane">
+      <div class="pane-head">
+        <h1>Fleet</h1>
+        <button class="btn btn-accent" id="btnNew">+ New Vehicle</button>
+      </div>
+      <div id="fleetList"><!-- populated by rockets.js --></div>
+    </section>
+
+    <!-- ===================== Editor ===================== -->
+    <section id="editorPane">
+
+      <div id="editorEmpty">
+        <p>Select a vehicle to view its full specs, or start a new one.</p>
+      </div>
+
+      <form id="editorForm" novalidate>
+        <div class="editor-head">
+          <h2 id="editorTitle">New Vehicle</h2>
+          <div class="editor-head-actions">
+            <button type="button" class="btn" id="btnDuplicate">Duplicate</button>
+            <button type="button" class="btn btn-danger" id="btnDelete">Delete</button>
+          </div>
+        </div>
+
+        <div class="field">
+          <label for="f-name">Vehicle name</label>
+          <input type="text" id="f-name" required maxlength="60">
+        </div>
+
+        <fieldset>
+          <legend>Geometry &amp; mass</legend>
+          <div class="field-grid">
+            <div class="field"><label for="f-height">Height</label><div class="input-unit"><input type="number" id="f-height" min="1" step="0.1" required><span>m</span></div></div>
+            <div class="field"><label for="f-width">Diameter</label><div class="input-unit"><input type="number" id="f-width" min="0.1" step="0.1" required><span>m</span></div></div>
+            <div class="field"><label for="f-dryMass">Dry mass</label><div class="input-unit"><input type="number" id="f-dryMass" min="1" step="1" required><span>kg</span></div></div>
+            <div class="field"><label for="f-fuelMassMax">Propellant (max)</label><div class="input-unit"><input type="number" id="f-fuelMassMax" min="0" step="1" required><span>kg</span></div></div>
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>Main engines <span class="legend-note">— fixed 9-engine octaweb architecture</span></legend>
+          <div class="field-grid">
+            <div class="field"><label for="f-octaRadius">Octaweb radius</label><div class="input-unit"><input type="number" id="f-octaRadius" min="0.1" step="0.05" required><span>m</span></div></div>
+            <div class="field"><label for="f-engineFMax">Max thrust / engine</label><div class="input-unit"><input type="number" id="f-engineFMax" min="1000" step="1000" required><span>N</span></div></div>
+            <div class="field"><label for="f-engineFMinFrac">Throttle floor</label><div class="input-unit"><input type="number" id="f-engineFMinFrac" min="0" max="0.95" step="0.01" required><span>frac</span></div></div>
+            <div class="field"><label for="f-engineVe">Exhaust velocity</label><div class="input-unit"><input type="number" id="f-engineVe" min="500" step="10" required><span>m/s</span></div></div>
+            <div class="field"><label for="f-engineThrustRate">Thrust change rate</label><div class="input-unit"><input type="number" id="f-engineThrustRate" min="0.01" step="0.01" required><span>/s</span></div></div>
+            <div class="field"><label for="f-gimbalMaxDeg">Gimbal range</label><div class="input-unit"><input type="number" id="f-gimbalMaxDeg" min="0" max="45" step="0.5" required><span>±deg</span></div></div>
+            <div class="field"><label for="f-gimbalRateDegS">Gimbal slew rate</label><div class="input-unit"><input type="number" id="f-gimbalRateDegS" min="1" step="1" required><span>deg/s</span></div></div>
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>RCS <span class="legend-note">— 4 pods, 2 nozzles each</span></legend>
+          <div class="field-grid">
+            <div class="field"><label for="f-rcsThrust">Nozzle thrust</label><div class="input-unit"><input type="number" id="f-rcsThrust" min="10" step="10" required><span>N</span></div></div>
+            <div class="field"><label for="f-rcsVe">Exhaust velocity</label><div class="input-unit"><input type="number" id="f-rcsVe" min="200" step="10" required><span>m/s</span></div></div>
+            <div class="field"><label for="f-rcsXOffset">Lateral offset</label><div class="input-unit"><input type="number" id="f-rcsXOffset" min="0.1" step="0.05" required><span>m</span></div></div>
+            <div class="field"><label for="f-rcsTopMargin">Top margin</label><div class="input-unit"><input type="number" id="f-rcsTopMargin" min="0" step="0.1" required><span>m</span></div></div>
+            <div class="field"><label for="f-rcsBottomMargin">Bottom margin</label><div class="input-unit"><input type="number" id="f-rcsBottomMargin" min="0" step="0.1" required><span>m</span></div></div>
+            <div class="field"><label for="f-rcsPwmPeriod">PWM period</label><div class="input-unit"><input type="number" id="f-rcsPwmPeriod" min="0.02" step="0.01" required><span>s</span></div></div>
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>Aerodynamics</legend>
+          <div class="field-grid">
+            <div class="field"><label for="f-dragCd">Drag coefficient</label><div class="input-unit"><input type="number" id="f-dragCd" min="0" step="0.01" required><span>Cd</span></div></div>
+          </div>
+        </fieldset>
+
+        <div id="formError" class="form-error" role="alert"></div>
+
+        <!-- Live capability preview -->
+        <fieldset id="capsBox">
+          <legend>Capabilities <span class="legend-note">— computed from the fields above</span></legend>
+          <dl id="capsList">
+            <div class="cap-row"><dt>Total max thrust</dt><dd id="c-thrust">—</dd></div>
+            <div class="cap-row"><dt>Wet mass</dt><dd id="c-wet">—</dd></div>
+            <div class="cap-row"><dt>Max TWR (sea level)</dt><dd id="c-twr">—</dd></div>
+            <div class="cap-row"><dt>Δv (ideal, vacuum)</dt><dd id="c-dv">—</dd></div>
+            <div class="cap-row"><dt>Burn time (full throttle)</dt><dd id="c-burn">—</dd></div>
+          </dl>
+        </fieldset>
+
+        <div class="editor-actions">
+          <button type="button" class="btn" id="btnCancel">Cancel</button>
+          <button type="submit" class="btn btn-accent">Save vehicle</button>
+        </div>
+      </form>
+    </section>
+
+  </main>
+</div>
+
+<script src="js/fleet.js"></script>
+<script src="js/rockets.js"></script>
+</body>
+</html>
