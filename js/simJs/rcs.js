@@ -28,6 +28,19 @@
 //    reduced AVERAGE force via PWM duty cycling, duty = d_bottom / d_top, so
 //    F_top_avg * d_top == F_bottom * d_bottom -> zero net torque.
 //
+//    That duty cycle is realized with a DELTA-SIGMA (error-accumulation)
+//    modulator rather than a naive period+threshold gate. A naive gate can
+//    only turn the top pod on/off at whole-tick boundaries, so the ON-time
+//    actually realized in any one period is quantized and slightly off from
+//    the ideal target — leaving a small residual net force/torque "noise"
+//    every period. The delta-sigma version measures that leftover error at
+//    every period boundary and folds it into the NEXT period's target duty
+//    (fire a little more or a little less to pay back what was under/over-
+//    delivered). The error is never permanently lost — it's carried forward
+//    and cancelled out — so the long-run average duty converges EXACTLY to
+//    the ideal value, even though any single short period can still be
+//    slightly off.
+//
 // 3) Diagonal translation (NE/NW/SE/SW): built from a vertical group (the 2
 //    pods on the SAME vertical side as the target, e.g. both top pods for an
 //    "up" component) and a lateral group (the 2 pods whose FIXED lateral
@@ -57,7 +70,29 @@ const rcsCmd = {
   CW: false, ACW: false,
 };
 
-const pwmClock = { t: 0 };
+// PWM clock + delta-sigma error-accumulation state for the top-pod lateral
+// duty cycle. `sigmaError` is the running, never-discarded ledger of
+// (ideal duty − actually-applied duty) from every completed period; it gets
+// folded into the NEXT period's gating threshold so the long-run average
+// duty converges exactly to the ideal value instead of carrying a
+// persistent quantization bias.
+const pwmClock = {
+  t: 0,               // elapsed time within the current period
+  onTime: 0,           // accumulated ON-time within the current period (for measuring actual duty)
+  sigmaError: 0,        // carried-forward duty error (delta-sigma accumulator)
+  periodIdealDuty: 0,    // the TRUE ideal duty target for the period in progress
+  periodTargetDuty: 0,    // the (error-adjusted) duty actually used to gate this period
+  init: false,
+};
+
+function resetPWM() {
+  pwmClock.t = 0;
+  pwmClock.onTime = 0;
+  pwmClock.sigmaError = 0;
+  pwmClock.periodIdealDuty = 0;
+  pwmClock.periodTargetDuty = 0;
+  pwmClock.init = false;
+}
 
 function rcsGeometry(comH) {
   const yTop = CONFIG.ROCKET_HEIGHT - CONFIG.RCS_TOP_MARGIN;
@@ -75,12 +110,34 @@ function rcsGeometry(comH) {
 function computeRCS(comH, dt) {
   const f = CONFIG.RCS_THRUST;
   const geo = rcsGeometry(comH);
+  const period = CONFIG.RCS_PWM_PERIOD;
+  const idealDuty = Math.min(1, geo.dBottom / geo.dTop);
 
-  // Shared PWM clock for whichever lateral nozzle is on a TOP pod this tick.
+  if (!pwmClock.init) {
+    pwmClock.init = true;
+    pwmClock.periodIdealDuty = idealDuty;
+    pwmClock.periodTargetDuty = idealDuty;
+  }
+
+  // Gate this tick using the CURRENT period's (possibly error-adjusted)
+  // target duty, and track how much ON-time actually gets realized.
+  const topLateralOn = pwmClock.t < pwmClock.periodTargetDuty * period;
+  if (topLateralOn) pwmClock.onTime += dt;
+
   pwmClock.t += dt;
-  if (pwmClock.t >= CONFIG.RCS_PWM_PERIOD) pwmClock.t -= CONFIG.RCS_PWM_PERIOD;
-  const duty = Math.min(1, geo.dBottom / geo.dTop);
-  const topLateralOn = pwmClock.t < duty * CONFIG.RCS_PWM_PERIOD;
+  if (pwmClock.t >= period) {
+    // Period complete — measure the quantization error against THIS
+    // period's true ideal duty, and carry it into the accumulator.
+    const actualDuty = pwmClock.onTime / period;
+    pwmClock.sigmaError += pwmClock.periodIdealDuty - actualDuty;
+
+    pwmClock.t -= period;
+    pwmClock.onTime = 0;
+    // Fresh ideal duty for the new period (geometry may have drifted a
+    // little as fuel burns), gated through the accumulated correction.
+    pwmClock.periodIdealDuty = idealDuty;
+    pwmClock.periodTargetDuty = Math.min(1, Math.max(0, idealDuty + pwmClock.sigmaError));
+  }
 
   const pod = { TL: { Fx: 0, Fy: 0 }, TR: { Fx: 0, Fy: 0 }, BL: { Fx: 0, Fy: 0 }, BR: { Fx: 0, Fy: 0 } };
   const isTop = { TL: true, TR: true, BL: false, BR: false };
@@ -154,7 +211,7 @@ function computeRCS(comH, dt) {
     if (mag > 0.01) { mdot += mag / CONFIG.RCS_VE; firing[k] = true; }
   });
 
-  return { Fx, Fy, torque, mdot, firing, pod, dutyTop: duty, topLateralOn };
+  return { Fx, Fy, torque, mdot, firing, pod, dutyTop: idealDuty, topLateralOn, sigmaError: pwmClock.sigmaError };
 }
 
 function clearRCS() {

@@ -183,5 +183,5 @@ function resetState(initialAltitude) {
     crashed: false,
     simTime: 0,
   };
-  pwmClock.t = 0;
+  resetPWM();
 }

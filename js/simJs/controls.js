@@ -152,8 +152,8 @@ function bindCameraControls() {
     document.getElementById('btnFree').classList.add('active');
     document.getElementById('btnFollow').classList.remove('active');
   });
-  document.getElementById('btnZoomIn').addEventListener('click', () => { camera.zoom = Math.min(8, camera.zoom * 1.25); });
-  document.getElementById('btnZoomOut').addEventListener('click', () => { camera.zoom = Math.max(0.1, camera.zoom / 1.25); });
+  document.getElementById('btnZoomIn').addEventListener('click', () => { camera.zoom = Math.min(25, camera.zoom * 1.25); });
+  document.getElementById('btnZoomOut').addEventListener('click', () => { camera.zoom = Math.max(0.08, camera.zoom / 1.25); });
 }
 
 // ---------------------------------------------------------------------------
