@@ -141,6 +141,7 @@ function physicsStep(dt) {
     mainFx: main.Fx, mainFy: main.Fy, mainTorque: main.torque,
     rcsFx: rcs.Fx, rcsFy: rcs.Fy, rcsTorque: rcs.torque,
     mdot: mdotTotal, firing: rcs.firing || {}, pod: rcs.pod || {},
+    dutyTop: rcs.dutyTop || 0,
   };
 
   const s0 = state;

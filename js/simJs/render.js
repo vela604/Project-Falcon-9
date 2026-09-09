@@ -183,15 +183,16 @@ function drawRocket() {
   ctx.strokeStyle = 'rgba(53,214,255,0.25)';
   ctx.beginPath(); ctx.moveTo(-W/2, -H*0.72); ctx.lineTo(W/2, -H*0.72); ctx.stroke();
 
-  // ---- RCS gas ejection — fixed-axis quad-thruster nozzles ----
-  // Each pod is a real "RCS quad" block: it has up to two SEPARATE, FIXED
-  // nozzles — one horizontal, one vertical — that either fire or don't.
-  // We never draw one merged/angled "resultant" jet: when both nozzles on a
-  // pod are active (diagonal or rotation commands) they're drawn as two
-  // independent straight puffs, exactly like real fixed-direction RCS
-  // hardware. Each nozzle's direction is a fixed constant (not derived from
-  // the force's instantaneous sign), so a jet can never point back across
-  // the airframe — it always fires straight outward/along the hull.
+  // ---- RCS gas ejection — 3-nozzle-per-pod quad-thruster hardware ----
+  // Each pod has a FIXED-direction lateral nozzle (always ejects further
+  // outward, away from the centerline — TL/BL eject left, TR/BR eject
+  // right) plus a pair of vertical nozzles (up-facing and down-facing) that
+  // CAN be selected either way depending on which force direction physics
+  // requested this tick. We draw the lateral jet in its one fixed direction,
+  // and the vertical jet in whichever direction matches the actual signed
+  // Fy physics computed for that pod this tick — never a synthesized
+  // "resultant" angled jet; a diagonal-firing pod is drawn as two separate
+  // straight puffs, exactly like real fixed-direction RCS hardware.
   const firing = lastForces.firing || {};
   const pod = lastForces.pod || {};
   const corners = {
@@ -200,39 +201,46 @@ function drawRocket() {
     BL: [-W/2, -(CONFIG.RCS_BOTTOM_MARGIN/mpp)],
     BR: [ W/2, -(CONFIG.RCS_BOTTOM_MARGIN/mpp)],
   };
-  // horizontal nozzle: always points straight outward, away from centerline.
-  // vertical nozzle: top pods always fire downward (away from the nose,
-  // along the hull); bottom pods always fire upward (away from the tail).
-  const nozzleDir = {
-    TL: { h: [-1, 0], v: [0,  1] },
-    TR: { h: [ 1, 0], v: [0,  1] },
-    BL: { h: [-1, 0], v: [0, -1] },
-    BR: { h: [ 1, 0], v: [0, -1] },
-  };
+  // Lateral nozzle: fixed by mounting side, always outward. Vertical nozzle
+  // exhaust direction is the OPPOSITE of the force sign physics requested
+  // (exhaust up -> force down, exhaust down -> force up), computed live.
+  const lateralDir = { TL: [-1, 0], TR: [1, 0], BL: [-1, 0], BR: [1, 0] };
   const plumeLen = W * 0.55;
   const fEps = 1; // Newtons — ignore numerical noise
-  function drawFixedJet(cx, cy, dir) {
+  function drawFixedJet(cx, cy, dir, alpha) {
     const [dx, dy] = dir;
     const nx = -dy, ny = dx; // perpendicular, for plume spread
     const tipX = cx + dx * plumeLen, tipY = cy + dy * plumeLen;
     const spread = W * 0.045;
     const grad = ctx.createLinearGradient(cx, cy, tipX, tipY);
-    grad.addColorStop(0, 'rgba(220,235,255,0.85)');
-    grad.addColorStop(1, 'rgba(220,235,255,0)');
+    // Saturated cyan (not near-white) + a dark outline stroke, so the jet
+    // stays visible whether it's drawn against the dark sky OR overlapping
+    // the light-colored hull fill (a near-white jet on a light hull would
+    // be invisible — this was the "wrong visual" bug).
+    grad.addColorStop(0, `rgba(120,225,255,${0.95*alpha})`);
+    grad.addColorStop(1, 'rgba(120,225,255,0)');
     ctx.fillStyle = grad;
+    ctx.strokeStyle = `rgba(10,30,45,${0.6*alpha})`;
+    ctx.lineWidth = 0.6;
     ctx.beginPath();
     ctx.moveTo(cx - nx*spread, cy - ny*spread);
     ctx.lineTo(cx + nx*spread, cy + ny*spread);
     ctx.lineTo(tipX, tipY);
     ctx.closePath();
     ctx.fill();
+    ctx.stroke();
   }
   Object.keys(corners).forEach(k => {
     const [cx, cy] = corners[k];
     const p = pod[k] || { Fx: 0, Fy: 0 };
-    const dir = nozzleDir[k];
-    if (Math.abs(p.Fx) > fEps) drawFixedJet(cx, cy, dir.h);
-    if (Math.abs(p.Fy) > fEps) drawFixedJet(cx, cy, dir.v);
+    // Lateral nozzle: fixed direction, full brightness whenever active this tick
+    // (PWM gating already decided whether Fx is nonzero — no need to fade it).
+    if (Math.abs(p.Fx) > fEps) drawFixedJet(cx, cy, lateralDir[k], 1);
+    // Vertical nozzle: exhaust direction is opposite the commanded force sign.
+    if (Math.abs(p.Fy) > fEps) {
+      const vDir = p.Fy > 0 ? [0, 1] : [0, -1]; // force+y(up) -> exhaust down; force-y(down) -> exhaust up
+      drawFixedJet(cx, cy, vDir, 1);
+    }
     ctx.fillStyle = firing[k] ? '#aef1ff' : '#22344a';
     ctx.beginPath(); ctx.arc(cx, cy, W*0.09, 0, Math.PI*2); ctx.fill();
   });

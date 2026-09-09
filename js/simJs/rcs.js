@@ -2,41 +2,53 @@
 // rcs.js — 4-pod "advanced" RCS system.
 //
 // Pods: TL (top-left), TR (top-right), BL (bottom-left), BR (bottom-right).
-// Each pod carries independent nozzles and can contribute a horizontal (±X)
-// and/or vertical (±Y) thrust component simultaneously (diagonal firing).
+// Each pod has THREE physical nozzles: an "up" nozzle and a "down" nozzle
+// (both along the vertical/hull axis), and a single LATERAL nozzle whose
+// exhaust direction is FIXED by mounting side — it always ejects further
+// outward, away from the centerline (TL/BL eject further left -> reaction
+// pushes the vehicle RIGHT; TR/BR eject further right -> reaction pushes the
+// vehicle LEFT). At most 2 of a pod's 3 nozzles fire at once (one vertical +
+// the lateral).
 //
 // DESIGN NOTES (derived and verified analytically — see conversation):
 //
-// 1) Pure vertical translation (Up/Down): the two pods on the SAME side
-//    (both top, or both bottom) fire together at equal, continuous force.
-//    Because both pods sit at the same height, their moment arms about the
-//    CoM are equal but opposite in sign (±x), so torque cancels exactly
-//    regardless of where the CoM currently is. No PWM needed.
+// 1) Pure vertical translation (Up/Down): ALL FOUR pods fire the relevant
+//    vertical nozzle together (max available thrust, no lateral involved).
+//    Because the two pairs are symmetric about x=0, torque cancels exactly
+//    regardless of CoM height. No PWM needed.
 //
-// 2) Pure horizontal translation (Left/Right): the two pods on the SAME side
-//    (both left, or both right) fire together — and that side is chosen by
-//    real RCS convention: pushing RIGHT fires the LEFT-side pods (their
-//    nozzles eject further left/outward, reaction pushes the vehicle right);
-//    pushing LEFT fires the RIGHT-side pods (mirror case). Those two pods
-//    are NOT at the same height, though. The CoM is normally well below the
-//    geometric mid-height (fuel is concentrated low), so the TOP pod has a
-//    LARGER moment arm than the BOTTOM pod. Firing both at equal force would
-//    create unwanted torque. Fix: the bottom pod (smaller arm) fires
+// 2) Pure horizontal translation (Left/Right): only pods on the side whose
+//    FIXED lateral nozzle produces the desired push can contribute (pushing
+//    RIGHT needs the LEFT-mounted pods TL/BL; pushing LEFT needs the
+//    RIGHT-mounted pods TR/BR). Those two pods are at different heights, and
+//    the CoM normally sits below the geometric mid-height, so the TOP pod
+//    has a LARGER moment arm than the BOTTOM pod. Firing both at equal force
+//    would create unwanted torque. Fix: the bottom pod (smaller arm) fires
 //    continuously at full force; the top pod (larger arm) fires at a
-//    reduced AVERAGE force via PWM duty cycling, with duty = d_bottom /
-//    d_top, so that F_top_avg * d_top == F_bottom * d_bottom -> zero net
-//    torque.
+//    reduced AVERAGE force via PWM duty cycling, duty = d_bottom / d_top, so
+//    F_top_avg * d_top == F_bottom * d_bottom -> zero net torque.
 //
-// 3) Diagonal translation (NE/NW/SE/SW): superposition of the relevant
-//    vertical + horizontal commands above. One pod ends up firing both of
-//    its nozzles simultaneously; the other two each fire one nozzle.
+// 3) Diagonal translation (NE/NW/SE/SW): built from a vertical group (the 2
+//    pods on the SAME vertical side as the target, e.g. both top pods for an
+//    "up" component) and a lateral group (the 2 pods whose FIXED lateral
+//    direction matches the target, e.g. the two LEFT-mounted pods for a
+//    "right" push). Exactly one pod is in both groups and fires both of its
+//    nozzles; one pod fires vertical only; one fires lateral only; the 4th
+//    is idle. The lateral group still follows the same top-PWM/bottom-
+//    continuous rule as rule (2) above (whichever of the two lateral-firing
+//    pods happens to be a TOP pod gets duty-cycled).
 //
-// 4) Pure rotation (CW/ACW): all 4 pods fire BOTH nozzles simultaneously in
-//    a "windmill" pattern (each pod pushes tangentially to the rotation).
-//    This configuration was verified to cancel net force EXACTLY regardless
-//    of the top/bottom moment-arm asymmetry (the ± sign pattern alone
-//    guarantees cancellation), so no PWM correction is required for
-//    rotation commands — only for the pure horizontal-translation case above.
+// 4) Pure rotation (CW/ACW): rotation needs each pod's lateral push to point
+//    tangentially to the spin. Because the lateral nozzle direction is FIXED
+//    by mounting side, only TWO of the four pods can ever supply a lateral
+//    push in the tangentially-correct direction for a given spin sense —
+//    the other two pods can only help with their vertical nozzle. For CW:
+//    TL and BR are the pods whose fixed lateral direction lines up with the
+//    CW tangent, so they fire BOTH nozzles (diagonal); TR and BL can only
+//    contribute their vertical nozzle. For ACW it's the mirror: TR and BL
+//    fire both nozzles, TL and BR contribute vertical only. This was
+//    verified analytically to cancel net force EXACTLY regardless of the
+//    top/bottom moment-arm asymmetry, so no PWM correction is needed here.
 // ============================================================================
 
 const rcsCmd = {
@@ -58,47 +70,71 @@ function rcsGeometry(comH) {
 }
 
 // Computes this tick's RCS force/torque/mass-flow from the current rcsCmd state.
+// `pod[k]` in the returned object carries the ACTUAL signed (Fx, Fy) applied
+// this tick (post-PWM-gating) so render.js can draw the correct nozzle(s).
 function computeRCS(comH, dt) {
   const f = CONFIG.RCS_THRUST;
   const geo = rcsGeometry(comH);
 
-  // PWM duty cycle for the top pods' HORIZONTAL nozzle only (see note #2 above).
+  // Shared PWM clock for whichever lateral nozzle is on a TOP pod this tick.
   pwmClock.t += dt;
   if (pwmClock.t >= CONFIG.RCS_PWM_PERIOD) pwmClock.t -= CONFIG.RCS_PWM_PERIOD;
   const duty = Math.min(1, geo.dBottom / geo.dTop);
-  const topHorizOn = pwmClock.t < duty * CONFIG.RCS_PWM_PERIOD;
+  const topLateralOn = pwmClock.t < duty * CONFIG.RCS_PWM_PERIOD;
 
   const pod = { TL: { Fx: 0, Fy: 0 }, TR: { Fx: 0, Fy: 0 }, BL: { Fx: 0, Fy: 0 }, BR: { Fx: 0, Fy: 0 } };
-  let firing = { TL: false, TR: false, BL: false, BR: false };
+  const isTop = { TL: true, TR: true, BL: false, BR: false };
+  const lateralSign = { TL: +1, BL: +1, TR: -1, BR: -1 }; // fixed by mounting side (inward-force convention)
 
-  function fireVert(dir) {
-    if (dir === 'N') { pod.TL.Fy += f; pod.TR.Fy += f; firing.TL = firing.TR = true; }
-    else              { pod.BL.Fy -= f; pod.BR.Fy -= f; firing.BL = firing.BR = true; }
+  // Fire a pod's lateral nozzle at full force, but if that pod is a TOP pod,
+  // gate it through the shared PWM duty cycle (see rule 2/3 above). Used for
+  // pure/diagonal horizontal translation, where the two lateral-firing pods
+  // are at DIFFERENT heights and need this correction.
+  function fireLateral(k) {
+    const on = isTop[k] ? topLateralOn : true;
+    pod[k].Fx += on ? lateralSign[k] * f : 0;
   }
-  function fireHoriz(dir) {
-    const topF = topHorizOn ? f : 0;
-    // Real RCS convention: pushing the vehicle RIGHT means the LEFT-side pods
-    // fire (their nozzles eject further left/outward, away from the hull —
-    // reaction pushes the vehicle right). Pushing LEFT is the mirror case:
-    // the RIGHT-side pods fire, ejecting further right/outward.
-    if (dir === 'E') { pod.TL.Fx += topF; pod.BL.Fx += f; if (topHorizOn) firing.TL = true; firing.BL = true; }
-    else              { pod.TR.Fx -= topF; pod.BR.Fx -= f; if (topHorizOn) firing.TR = true; firing.BR = true; }
+  // Rotation uses its own always-continuous lateral fire: the two pods
+  // selected for a given spin sense (TL+BR for CW, TR+BL for ACW) already
+  // cancel net force exactly regardless of top/bottom moment-arm asymmetry
+  // (verified analytically), so gating one of them through PWM would BREAK
+  // that cancellation rather than fix it — do not reuse fireLateral() here.
+  function fireLateralFull(k) {
+    pod[k].Fx += lateralSign[k] * f;
   }
-  function fireRotation(cw) {
-    const s = cw ? 1 : -1;
-    pod.TL.Fx += s * f; pod.TL.Fy += s * f;
-    pod.TR.Fx += s * f; pod.TR.Fy -= s * f;
-    pod.BR.Fx -= s * f; pod.BR.Fy -= s * f;
-    pod.BL.Fx -= s * f; pod.BL.Fy += s * f;
-    firing.TL = firing.TR = firing.BR = firing.BL = true;
+  function fireVertical(k, sign) { // sign: +1 = upward force, -1 = downward force
+    pod[k].Fy += sign * f;
   }
 
-  if (rcsCmd.CW) fireRotation(true);
-  if (rcsCmd.ACW) fireRotation(false);
-  if (rcsCmd.N || rcsCmd.NE || rcsCmd.NW) fireVert('N');
-  if (rcsCmd.S || rcsCmd.SE || rcsCmd.SW) fireVert('S');
-  if (rcsCmd.E || rcsCmd.NE || rcsCmd.SE) fireHoriz('E');
-  if (rcsCmd.W || rcsCmd.NW || rcsCmd.SW) fireHoriz('W');
+  // ---- Pure vertical (all 4 pods; symmetric, torque-free, no PWM) ----
+  const pureN = rcsCmd.N, pureS = rcsCmd.S;
+  if (pureN) ['TL', 'TR', 'BL', 'BR'].forEach(k => fireVertical(k, +1));
+  if (pureS) ['TL', 'TR', 'BL', 'BR'].forEach(k => fireVertical(k, -1));
+
+  // ---- Pure / diagonal horizontal (lateral group only) ----
+  const wantRight = rcsCmd.E || rcsCmd.NE || rcsCmd.SE;
+  const wantLeft = rcsCmd.W || rcsCmd.NW || rcsCmd.SW;
+  if (wantRight) ['TL', 'BL'].forEach(fireLateral); // left-mounted pods push right
+  if (wantLeft) ['TR', 'BR'].forEach(fireLateral);  // right-mounted pods push left
+
+  // ---- Diagonal vertical component (only the 2 same-side pods, not all 4) ----
+  if (rcsCmd.NE || rcsCmd.NW) ['TL', 'TR'].forEach(k => fireVertical(k, +1));
+  if (rcsCmd.SE || rcsCmd.SW) ['BL', 'BR'].forEach(k => fireVertical(k, -1));
+
+  // ---- Rotation: only the two pods whose fixed lateral direction matches
+  // the tangential need can do both nozzles; the other two help vertically.
+  if (rcsCmd.CW) {
+    fireLateralFull('TL'); fireVertical('TL', +1);
+    fireLateralFull('BR'); fireVertical('BR', -1);
+    fireVertical('TR', -1);
+    fireVertical('BL', +1);
+  }
+  if (rcsCmd.ACW) {
+    fireLateralFull('TR'); fireVertical('TR', +1);
+    fireLateralFull('BL'); fireVertical('BL', -1);
+    fireVertical('TL', -1);
+    fireVertical('BR', +1);
+  }
 
   const positions = {
     TL: { x: -CONFIG.RCS_X_OFFSET, y: geo.yTop },
@@ -108,18 +144,20 @@ function computeRCS(comH, dt) {
   };
 
   let Fx = 0, Fy = 0, torque = 0, mdot = 0;
+  const firing = { TL: false, TR: false, BL: false, BR: false };
   Object.keys(pod).forEach(k => {
     const p = pod[k], pos = positions[k];
     Fx += p.Fx; Fy += p.Fy;
     const rx = pos.x, ry = pos.y - comH;
     torque += rx * p.Fy - ry * p.Fx;
     const mag = Math.hypot(p.Fx, p.Fy);
-    if (mag > 0) mdot += mag / CONFIG.RCS_VE;
+    if (mag > 0.01) { mdot += mag / CONFIG.RCS_VE; firing[k] = true; }
   });
 
-  return { Fx, Fy, torque, mdot, firing, pod };
+  return { Fx, Fy, torque, mdot, firing, pod, dutyTop: duty, topLateralOn };
 }
 
 function clearRCS() {
   Object.keys(rcsCmd).forEach(k => rcsCmd[k] = false);
 }
+

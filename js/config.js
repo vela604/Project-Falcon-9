@@ -14,7 +14,7 @@ const DEFAULT_VEHICLE = {
   octaRadius: 1.7, engineFMax: 600000, engineFMinFrac: 0.4, engineVe: 2900,
   engineThrustRate: 0.5, gimbalMaxDeg: 20, gimbalRateDegS: 40,
   rcsThrust: 1100, rcsVe: 2200, rcsXOffset: 1.95,
-  rcsTopMargin: 3, rcsBottomMargin: 3, rcsPwmPeriod: 0.12,
+  rcsTopMargin: 3, rcsBottomMargin: 3, rcsPwmPeriod: 0.3,
   dragCd: 0.6,
 };
 

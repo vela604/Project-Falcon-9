@@ -18,6 +18,7 @@ const NOTATION_GLOSSARY = {
   'τ':  'Net torque about center of mass (N·m)',
   'g':  'Local gravitational acceleration (m/s²)',
   'ρ':  'Local air density (kg/m³)',
+  'D↑': 'RCS top-pod lateral-nozzle PWM duty cycle (%) — how much of each PWM period the top pod fires, to balance its larger moment arm against the bottom pod',
   'T+': 'Mission elapsed time (mm:ss.s)',
 };
 
@@ -54,6 +55,7 @@ function updateTelemetry() {
   set('t-torque', fmt(lastForces.mainTorque + lastForces.rcsTorque, 0));
   set('t-g', fmt(grav.g, 3));
   set('t-rho', fmt(rho, 4));
+  set('t-duty', Math.round((lastForces.dutyTop || 0) * 100) + '%');
 
   pushGraphSample(state.simTime, altitude, speed, ENGINES.reduce((s,e)=>s+e.currentF,0));
 }
