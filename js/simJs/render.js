@@ -141,11 +141,13 @@ function drawRocket() {
   ctx.translate(px, py);
   ctx.rotate(-visualTheta);
 
-    // ============================================================================
-  // === ADVANCED VOLUMETRIC GAS EXHAUST RENDERING (CRITICAL UPDATE) ===
-  // Goal: Match the sprawling, sprawling, voluminous gassy plumes of image_0.png and image_1.png
-  // DITCHES simple linear gradients.
-  // Focuses on complex geometry paths (billowing gas clouds) and layered, blurred gradients.
+  // ============================================================================
+  // === REALISTIC ENGINE PLUME — matched to hot-fire test photography ===
+  // Real exhaust plumes are a CONE that widens as it leaves the nozzle (not a
+  // constant tube or a taper-to-a-point): a small blinding-hot throat right at
+  // the nozzle, expanding into a broad, billowing, turbulent gas cloud. The
+  // bright layers use additive ('lighter') blending so their light visibly
+  // bleeds/glows into the surrounding smoke, matching the photos.
   // ============================================================================
 
   // ---- Flame (drawn first, behind body) ----
@@ -153,116 +155,138 @@ function drawRocket() {
   const maxThrust = ENGINES.reduce((s, e) => s + e.Fmax, 0);
   const totalThrottle = maxThrust > 0 ? totalThrust / maxThrust : 0;
 
-  if (totalThrottle > 0.05) { // Minimum threshold for effect
-    const activeCount = ENGINES.filter(e => e.currentF > e.Fmax * 0.02).length;
-    const spread = Math.min(1, activeCount / 5);
-    
-    // Core structure (retained from previous attempt, contained inside)
-    const baseW = W * (0.8 + 0.3 * spread); 
-    const flicker = 1 + 0.02 * Math.sin(performance.now() * 0.05) + 0.01 * Math.sin(performance.now() * 0.1);
-    const flameLen = H * (0.3 + 1.2 * totalThrottle) * flicker;
+  if (totalThrottle > 0.03) {
+    const tNow = performance.now() * 0.01;
+    const flameLen = H * (0.6 + 1.6 * totalThrottle);
 
-    // Gimbal tilt calculations (retained)
     const centerEngine = ENGINES.find(e => e.isCenter);
     const centerFrac = totalThrust > 0 ? centerEngine.currentF / totalThrust : 0;
     const gimbalRad = (centerEngine.gimbalDeg * Math.PI / 180) * centerFrac;
-    const tipShift = -1 * flameLen * Math.sin(gimbalRad);
+    // Full-length shift for the entire flame (tip displacement)
+    const fullShift = -flameLen * Math.sin(gimbalRad);
 
-    ctx.save();
-
-    // --- Complex Gassy Volumetric Geometry Function ---
-    // Instead of a simple shape, this defines turbulent, sprawling gas plumes.
-    // It creates multiple billowing lobes expanding outwards from the main plume.
-    function drawVolumetricPath(widthFactor, lengthFactor, tipShiftDisplacement, lobes) {
-      const w = baseW * widthFactor;
-      const l = flameLen * lengthFactor;
-      const shift = tipShiftDisplacement;
-
+    // Expanding, billowing, turbulent cone — width GROWS from startW at the
+    // nozzle to endW at the tail. Edge wobble amplitude grows with distance
+    // too, so it stays tight near the nozzle and gets progressively more
+    // turbulent/cloud-like further out, just like the reference plumes.
+    // The wobble phase runs on real time, so the gas visibly churns.
+    // Now takes 'layerShift' so each layer bends proportionally to its own length.
+    function gasConePath(startW, endW, lenFrac, seed, segments, layerShift) {
+      const l = flameLen * lenFrac;
       ctx.beginPath();
-      // Start slightly inside the nozzle exit
-      ctx.moveTo(-w / 2, 0);
-
-      // Define billowing turbulent lobes expanding sideways and down.
-      // This is not a blunt end, but a complex, sprawling gas plume.
-      for (let i = 1; i <= lobes; i++) {
-          const t = i / lobes;
-          const lobe_w = w * (0.8 + 0.4 * t); // widening with length
-          const lobe_y = l * (t);
-          const lobe_x_displacement = shift * (t); // gimbal displacement is layered
-          
-          // Side lobes expanding laterally
-          ctx.quadraticCurveTo(
-              (-lobe_w / 2 + lobe_x_displacement) * (0.6 + 0.4 * Math.sin(t * 15 * flicker)), // turbulent offset
-              lobe_y * (0.8 + 0.1 * Math.sin(t * 20 * flicker)), // turbulent depth
-              -w / 2 * (1 - t), // return toward center
-              lobe_y
-          );
+      ctx.moveTo(-startW / 2, 0);
+      for (let i = 1; i <= segments; i++) {
+        const f = i / segments;
+        const y = l * f;
+        const w = startW + (endW - startW) * f;
+        const grow = 0.15 + 1.1 * f * f; // near-nozzle stays tight, tail billows
+        const wob = Math.sin(f * 4.5 + tNow * 2.3 + seed) * w * 0.16 * grow
+                  + Math.sin(f * 9.5 + tNow * 3.8 + seed * 1.4) * w * 0.08 * grow;
+        ctx.lineTo(-w / 2 - wob + layerShift * f, y);
       }
-      // Draw blunt end with some central plume structure
-      ctx.quadraticCurveTo(shift, l * 1.05, w / 2 + shift * 0.95, l * 0.95);
-      
-      // Draw lobes on the other side
-      for (let i = lobes; i >= 1; i--) {
-          const t = i / lobes;
-          const lobe_w = w * (0.8 + 0.4 * t);
-          const lobe_y = l * (t);
-          const lobe_x_displacement = shift * (t);
-          
-          ctx.quadraticCurveTo(
-              (lobe_w / 2 + lobe_x_displacement) * (0.6 + 0.4 * Math.sin(t * 15 * flicker)), 
-              lobe_y * (0.8 + 0.1 * Math.sin(t * 20 * flicker)),
-              w / 2 * (1 - t), 
-              lobe_y
-          );
+      const capW = endW, capX = layerShift, capY = l;
+      ctx.quadraticCurveTo(capX - capW * 0.34, capY + capW * 0.15, capX, capY + capW * 0.22);
+      ctx.quadraticCurveTo(capX + capW * 0.34, capY + capW * 0.15, endW / 2 + layerShift, l);
+      for (let i = segments; i >= 0; i--) {
+        const f = i / segments;
+        const y = l * f;
+        const w = startW + (endW - startW) * f;
+        const grow = 0.15 + 1.1 * f * f;
+        const wob = Math.sin(f * 4.5 + tNow * 2.3 + seed + 1.9) * w * 0.16 * grow
+                  + Math.sin(f * 9.5 + tNow * 3.8 + seed * 1.4 + 0.8) * w * 0.08 * grow;
+        ctx.lineTo(w / 2 + wob + layerShift * f, y);
       }
-      ctx.lineTo(w / 2, 0);
       ctx.closePath();
     }
 
-    // --- Complex Volumetric Gas Layers (Layers 1-3) ---
-    // Key change: High complexity gradients and varying blur create the gassy look.
+    ctx.save();
 
-    // Layer 1: Expansive, sprawling Outer Gassy Plume (Deep Orange/Red, widest)
-    // High complexity path (more lobes) and higher blur. Engulfs everything.
-    ctx.filter = 'blur(10px)'; // High blur for gas clouds
-    drawVolumetricPath(1.5, 1.1, tipShift * 1.1, 15); // Large, massive, expansive path
-    let g1 = ctx.createRadialGradient(0, 0, baseW, 0, flameLen, baseW * 3);
-    g1.addColorStop(0, 'rgba(255, 90, 20, 0.45)'); 
-    g1.addColorStop(0.5, 'rgba(255, 60, 10, 0.2)'); 
-    g1.addColorStop(1, 'rgba(255, 40, 0, 0)');
+    // Layer 1 — outer smoke envelope: widest, softest, ordinary blending so
+    // it reads as smoke (not extra light) at the very edge of the plume.
+    // Starts at ~full rocket width (the 9-engine cluster spans nearly the
+    // whole base — NOT a single narrow nozzle), then continues to widen.
+    ctx.filter = 'blur(11px)';
+    gasConePath(W * 1.0, W * 2.7, 1.0, 0, 14, fullShift * 1.0);
+    const g1 = ctx.createLinearGradient(0, 0, fullShift * 1.0, flameLen * 1.0);
+    g1.addColorStop(0, 'rgba(255,170,80,0.55)');
+    g1.addColorStop(0.55, 'rgba(255,110,40,0.4)');
+    g1.addColorStop(1, 'rgba(255,70,20,0)');
     ctx.fillStyle = g1;
     ctx.fill();
-    ctx.filter = 'none'; // reset filter for core layers
+    ctx.filter = 'none';
 
-    // Layer 2: Contained Gassy Structure (Yellow/Orange, mid-width)
-    // Mid complexity path, contained logic, medium blur.
-    ctx.filter = 'blur(4px)'; 
-    drawVolumetricPath(1.1, 1.0, tipShift * 1.0, 10);
-    let g2 = ctx.createLinearGradient(0, 0, tipShift, flameLen * 1.0);
-    g2.addColorStop(0, 'rgba(255, 200, 50, 1)'); // Yellow/Opaque structure
-    g2.addColorStop(0.7, 'rgba(255, 140, 20, 0.9)'); 
-    g2.addColorStop(1, 'rgba(255, 80, 0, 0)');
+    // A few drifting billow blobs along the outer edge — cauliflower-cloud
+    // texture, animated so they roll outward over time.
+    ctx.filter = 'blur(7px)';
+    for (let i = 0; i < 5; i++) {
+      const f = 0.35 + 0.6 * (i / 4);
+      const y = flameLen * f;
+      const w = (W * 1.0 + (W * 2.7 - W * 1.0) * f);
+      const side = i % 2 === 0 ? 1 : -1;
+      const drift = Math.sin(tNow * 1.6 + i * 2.1) * w * 0.18;
+      const bx = side * (w * 0.42 + drift) + fullShift * f;
+      const by = y + Math.cos(tNow * 1.3 + i) * w * 0.08;
+      const r = w * (0.2 + 0.08 * Math.sin(i * 1.9 + tNow));
+      const bg = ctx.createRadialGradient(bx, by, 0, bx, by, r);
+      bg.addColorStop(0, 'rgba(255,140,60,0.35)');
+      bg.addColorStop(1, 'rgba(255,90,30,0)');
+      ctx.fillStyle = bg;
+      ctx.beginPath(); ctx.arc(bx, by, r, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.filter = 'none';
+
+    // Layer 2 — mid glow, additive so its light bleeds into the smoke above.
+    // Also widened to start from the engine cluster's real footprint.
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.filter = 'blur(5px)';
+    const shift92 = fullShift * 0.92;
+    gasConePath(W * 0.78, W * 1.9, 0.92, 2.1, 11, shift92);
+    const g2 = ctx.createLinearGradient(0, 0, shift92, flameLen * 0.92);
+    g2.addColorStop(0, 'rgba(255,225,140,0.9)');
+    g2.addColorStop(0.5, 'rgba(255,150,55,0.55)');
+    g2.addColorStop(1, 'rgba(255,90,20,0)');
     ctx.fillStyle = g2;
     ctx.fill();
     ctx.filter = 'none';
 
-    // Layer 3: Blinding White Gassy Hot Core (Shortest, sharpest)
-    // Low complexity path, powerful logic, minimal blur.
-    ctx.filter = 'blur(1px)';
-    drawVolumetricPath(0.85, 0.94, tipShift * 0.94, 5); 
-    let g3 = ctx.createLinearGradient(0, 0, tipShift, flameLen * 0.94);
-    g3.addColorStop(0, 'rgba(255, 255, 255, 1)'); // Blinding white
-    g3.addColorStop(0.85, 'rgba(255, 240, 200, 1)'); // White core stays opaque far down
-    g3.addColorStop(1, 'rgba(255, 120, 50, 0)');
+    // Layer 3 — bright core, additive, hotter/whiter the harder it's throttled.
+    // This is the layer viewers notice most, so it matters most that it
+    // starts wide (spanning the engines) rather than narrowing to a point.
+    ctx.filter = 'blur(2px)';
+    const shift68 = fullShift * 0.68;
+    gasConePath(W * 0.58, W * 1.05, 0.68, 4.4, 9, shift68);
+    const coreHot = 0.55 + 0.45 * totalThrottle; // more blue-white at high throttle
+    const g3 = ctx.createLinearGradient(0, 0, shift68, flameLen * 0.68);
+    g3.addColorStop(0, `rgba(${Math.round(255 - coreHot*15)},252,255,1)`);
+    g3.addColorStop(0.55, 'rgba(255,240,215,0.85)');
+    g3.addColorStop(1, 'rgba(255,190,120,0)');
     ctx.fillStyle = g3;
     ctx.fill();
     ctx.filter = 'none';
 
-    // Intense nozzle exit flare highlight
-    ctx.fillStyle = 'rgba(255, 255, 255, 1)';
-    ctx.beginPath();
-    ctx.ellipse(0, baseW * 0.1, baseW * 0.45, baseW * 0.15, 0, 0, Math.PI * 2);
+    // Layer 4 — blinding throat region right at the nozzle exits. Real
+    // engines are individual small throats, but with 9 of them spread
+    // across the base their combined glow reads as one wide bright band,
+    // not a single pinpoint — keep this close to the engine cluster width.
+    ctx.filter = 'blur(5px)';
+    const shift22 = fullShift * 0.22;
+    gasConePath(W * 0.42, W * 0.55, 0.22, 6.7, 6, shift22);
+    ctx.fillStyle = 'rgba(255,255,255,0.98)';
     ctx.fill();
+    ctx.filter = 'none';
+    ctx.globalCompositeOperation = 'source-over';
+
+    // Nozzle-exit hot spot — a wide additive flare across the cluster
+    // footprint (was a small central dot, which reinforced the "single
+    // point" look) for that "diamond shock" glint across the whole base.
+    ctx.globalCompositeOperation = 'lighter';
+    const flare = ctx.createRadialGradient(0, W * 0.05, 0, fullShift * 0.05, W * 0.05, W * 0.9);
+    flare.addColorStop(0, 'rgba(255,255,255,0.9)');
+    flare.addColorStop(0.5, 'rgba(255,255,255,0.35)');
+    flare.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = flare;
+    ctx.beginPath(); ctx.ellipse(0, W * 0.05, W * 0.65, W * 0.2, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.globalCompositeOperation = 'source-over';
 
     ctx.restore();
   }
@@ -435,11 +459,44 @@ function drawRocket() {
   ctx.restore();
 }
 
+function drawGroundSteam(altitude) {
+  const totalThrust = ENGINES.reduce((s, e) => s + e.currentF, 0);
+  const maxThrust = ENGINES.reduce((s, e) => s + e.Fmax, 0);
+  const throttle = maxThrust > 0 ? totalThrust / maxThrust : 0;
+  if (throttle < 0.05 || altitude > 180) return;
+
+  const [cx, groundPy] = localToScreen(worldToLocal().x, 0);
+  if (groundPy < -200 || groundPy > canvas.height + 400) return;
+
+  const fade = 1 - Math.min(1, altitude / 180); // full strength at the pad, gone by ~180m
+  const mpp = metersPerPixel();
+  const spread = (140 / mpp) * (0.6 + 0.4 * throttle) * fade;
+  const t = performance.now() * 0.0012;
+
+  ctx.save();
+  ctx.filter = 'blur(16px)';
+  const blobs = 8;
+  for (let i = 0; i < blobs; i++) {
+    const f = i / (blobs - 1);
+    const bx = cx + (f - 0.5) * spread * 1.9 + Math.sin(t + i * 1.3) * spread * 0.05;
+    const by = groundPy - Math.abs(Math.sin(f * Math.PI)) * spread * 0.22 + Math.cos(t * 0.8 + i) * spread * 0.03;
+    const r = spread * (0.22 + 0.09 * Math.sin(i * 1.7 + t));
+    const g = ctx.createRadialGradient(bx, by, 0, bx, by, r);
+    g.addColorStop(0, `rgba(255,255,255,${0.85 * fade})`);
+    g.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(bx, by, r, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.filter = 'none';
+  ctx.restore();
+}
+
 function renderFrame() {
   const r = Math.hypot(state.rx, state.ry);
   const altitude = altitudeFromR(r);
   drawSky(altitude);
   drawGrid();
   drawGroundLine();
+  drawGroundSteam(altitude);
   drawRocket();
 }

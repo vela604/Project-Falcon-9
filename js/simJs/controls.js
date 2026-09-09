@@ -139,7 +139,7 @@ function bindWindPanel() {
 // ---------------------------------------------------------------------------
 // Camera controls
 // ---------------------------------------------------------------------------
-const camera = { follow: true, zoom: 1 };
+const camera = { follow: true, zoom: 25 };
 
 function bindCameraControls() {
   document.getElementById('btnFollow').addEventListener('click', () => {
