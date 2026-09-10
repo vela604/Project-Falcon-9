@@ -155,14 +155,13 @@ function drawRocket() {
   const mpp = metersPerPixel();
   const H = CONFIG.ROCKET_HEIGHT / mpp;
   const W = CONFIG.ROCKET_WIDTH / mpp;
-  const geom = currentGeometry();
 
   ctx.save();
   ctx.translate(px, py);
   ctx.rotate(-visualTheta);
 
   // ============================================================================
-  // === REALISTIC ENGINE PLUME ===
+  // ENGINE PLUME
   // ============================================================================
   const totalThrust = ENGINES.reduce((s, e) => s + e.currentF, 0);
   const maxThrust = ENGINES.reduce((s, e) => s + e.Fmax, 0);
@@ -277,20 +276,16 @@ function drawRocket() {
     ctx.fillStyle = flare;
     ctx.beginPath(); ctx.ellipse(0, W * 0.05, W * 0.50 * plumeScale, W * 0.2 * plumeScale, 0, 0, Math.PI * 2); ctx.fill();
     ctx.globalCompositeOperation = 'source-over';
-
     ctx.restore();
   }
 
   // ============================================================================
-  // LEGS SETUP — one helper draws any of the 4 legs.
-  // Back legs: inset + darkened => read as "far side", drawn BEFORE body.
-  // Front legs: drawn AFTER body so they sit on top.
-  // Only front legs feed physics (legs.actualLength / footX / footY).
+  // LEGS SETUP — 4 legs via shared helper
   // ============================================================================
   const p = legs.progress;
   const legHingeY = -H * 0.004;
-  const legLength = H * 0.32;
-  const maxSweepRad = (115 * Math.PI) / 180;
+  const legLength = H * 0.27;
+  const maxSweepRad = (125 * Math.PI) / 180;
   const pistonMountY = -H * 0.08;
   const LEG_TIP_CURVENESS = 0.90;
 
@@ -309,8 +304,8 @@ function drawRocket() {
     const tipX = pivotX + legLength * Math.sin(currentSweep);
     const tipY = pivotY - legLength * Math.cos(currentSweep);
 
-    const cutoutApexX = pivotX + (tipX - pivotX) * 0.05;
-    const cutoutApexY = pivotY + (tipY - pivotY) * 0.06;
+    const cutoutApexX = pivotX + (tipX - pivotX) * 0.15;
+    const cutoutApexY = pivotY + (tipY - pivotY) * 0.15;
 
     const d1 = Math.hypot(tipX - j1x, tipY - jY) || 1;
     const u1x = (j1x - tipX) / d1, u1y = (jY - tipY) / d1;
@@ -333,7 +328,6 @@ function drawRocket() {
       legs.footY[side] = tipApexY;
     }
 
-    // Piston — mounted from pivot; ends at the rounded-tip apex
     if (p > 0.02) {
       const pmX = pivotX;
       const pmY = pistonMountY + depthY;
@@ -359,7 +353,6 @@ function drawRocket() {
       ctx.beginPath(); ctx.arc(rx1, ry1, W * 0.025, 0, Math.PI * 2); ctx.fill();
     }
 
-    // Leg body
     const legGrad = ctx.createLinearGradient(pivotX, jY, tipX, tipY);
     if (isBack) {
       legGrad.addColorStop(0,    '#0f1114');
@@ -387,7 +380,6 @@ function drawRocket() {
     ctx.fill();
     ctx.stroke();
 
-    // Ridge shadow
     ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
     ctx.beginPath();
     ctx.moveTo(j1x, jY);
@@ -396,7 +388,6 @@ function drawRocket() {
     ctx.closePath();
     ctx.fill();
 
-    // Cutout bevel
     ctx.strokeStyle = '#000000';
     ctx.lineWidth = Math.max(1.2, W * 0.018);
     ctx.beginPath();
@@ -405,7 +396,6 @@ function drawRocket() {
     ctx.lineTo(j2x, jY);
     ctx.stroke();
 
-    // Rim highlight
     ctx.strokeStyle = isBack ? 'rgba(255,255,255,0.14)' : 'rgba(255,255,255,0.30)';
     ctx.lineWidth = 0.8;
     ctx.beginPath();
@@ -414,7 +404,7 @@ function drawRocket() {
     ctx.stroke();
   }
 
-  // ---- BACK LEGS — drawn BEFORE body so body occludes them ----
+  // BACK legs (behind body)
   drawLandingLeg(-1, true);
   drawLandingLeg( 1, true);
 
@@ -476,11 +466,13 @@ function drawRocket() {
     ctx.restore();
   });
 
-  // ---- FRONT LEGS — drawn AFTER body so they sit on top ----
+  // FRONT legs (on top of body)
   drawLandingLeg(-1, false);
   drawLandingLeg( 1, false);
 
-  // ---- RCS gas ejection ----
+  // ============================================================================
+  // RCS — rounded-rectangle pods + gas puffs
+  // ============================================================================
   const firing = lastForces.firing || {};
   const pod = lastForces.pod || {};
   const corners = {
@@ -526,18 +518,79 @@ function drawRocket() {
     ctx.beginPath(); ctx.arc(cx + dx*W*0.03, cy + dy*W*0.03, spread*0.6, 0, Math.PI*2); ctx.fill();
   }
 
+  function roundRectPath(x, y, w, h, r) {
+    const rr = Math.min(r, w/2, h/2);
+    ctx.beginPath();
+    ctx.moveTo(x + rr, y);
+    ctx.lineTo(x + w - rr, y);
+    ctx.quadraticCurveTo(x + w, y, x + w, y + rr);
+    ctx.lineTo(x + w, y + h - rr);
+    ctx.quadraticCurveTo(x + w, y + h, x + w - rr, y + h);
+    ctx.lineTo(x + rr, y + h);
+    ctx.quadraticCurveTo(x, y + h, x, y + h - rr);
+    ctx.lineTo(x, y + rr);
+    ctx.quadraticCurveTo(x, y, x + rr, y);
+    ctx.closePath();
+  }
+
   Object.keys(corners).forEach(k => {
-    const [cx, cy] = corners[k];
+    const [cxRaw, cy] = corners[k];
     const pp = pod[k] || { Fx: 0, Fy: 0 };
-    if (Math.abs(pp.Fx) > fEps) drawGasPuff(cx, cy, lateralDir[k], k.charCodeAt(0));
+
+    const podW = W * 0.05;
+    const podH = W * 0.10;
+    const podR = W * 0.03;
+
+    const sideSign = Math.sign(cxRaw);
+    const podX = cxRaw + sideSign * podW * 0.5 - podW / 2;
+    const podY = cy - podH / 2;
+
+    if (Math.abs(pp.Fx) > fEps) drawGasPuff(cxRaw, cy, lateralDir[k], k.charCodeAt(0));
     if (Math.abs(pp.Fy) > fEps) {
       const vDir = pp.Fy > 0 ? [0, 1] : [0, -1];
-      const outX = cx + Math.sign(cx) * W * 0.05;
+      const outX = cxRaw + sideSign * podW * 0.6;
       drawGasPuff(outX, cy, vDir, k.charCodeAt(1) + 3);
     }
+
+    ctx.save();
+
+    ctx.shadowColor = 'rgba(0,0,0,0.45)';
+    ctx.shadowBlur = 2;
+    ctx.shadowOffsetY = 0.5;
+
     ctx.fillStyle = firing[k] ? '#aef1ff' : '#2a2d33';
-    ctx.beginPath(); ctx.arc(cx, cy, W*0.09, 0, Math.PI*2); ctx.fill();
-    ctx.strokeStyle = 'rgba(120,128,140,0.6)'; ctx.lineWidth = 0.7; ctx.stroke();
+    roundRectPath(podX, podY, podW, podH, podR);
+    ctx.fill();
+
+    ctx.shadowColor = 'transparent';
+    ctx.shadowBlur = 0;
+    ctx.shadowOffsetY = 0;
+
+    ctx.strokeStyle = 'rgba(20,24,30,0.85)';
+    ctx.lineWidth = 0.9;
+    ctx.stroke();
+
+    const hlX = sideSign > 0 ? podX + podW * 0.72 : podX + podW * 0.12;
+    const hlGrad = ctx.createLinearGradient(hlX, 0, hlX + podW * 0.15, 0);
+    hlGrad.addColorStop(0, 'rgba(255,255,255,0.0)');
+    hlGrad.addColorStop(0.5, firing[k] ? 'rgba(255,255,255,0.6)' : 'rgba(255,255,255,0.25)');
+    hlGrad.addColorStop(1, 'rgba(255,255,255,0.0)');
+    ctx.fillStyle = hlGrad;
+    roundRectPath(podX + podW * 0.55, podY + podH * 0.15, podW * 0.35, podH * 0.7, podR * 0.6);
+    ctx.fill();
+
+    ctx.strokeStyle = 'rgba(0,0,0,0.55)';
+    ctx.lineWidth = 0.7;
+    const slotX = sideSign > 0 ? podX + podW * 0.35 : podX + podW * 0.65;
+    for (let i = 0; i < 2; i++) {
+      const sy = podY + podH * (0.30 + i * 0.40);
+      ctx.beginPath();
+      ctx.moveTo(slotX - podW * 0.12, sy);
+      ctx.lineTo(slotX + podW * 0.12, sy);
+      ctx.stroke();
+    }
+
+    ctx.restore();
   });
 
   ctx.restore();
