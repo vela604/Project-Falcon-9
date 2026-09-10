@@ -195,7 +195,7 @@ function frame(ts) {
 
 function bootstrap() {
   buildEngineLayout();
-  resetState(500); // Phase-1 default: start airborne at 500m, no launch-pad phase yet
+  resetState(0); // Start on the pad — rocket's base resting on the elevated landing/launch site deck
 
   initCanvas();
   initFigureCanvas();

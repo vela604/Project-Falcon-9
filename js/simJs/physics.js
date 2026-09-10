@@ -181,7 +181,25 @@ function physicsStep(dt) {
 
   const r = Math.hypot(state.rx, state.ry);
   if (altitudeFromR(r) <= 0) {
-    state.crashed = true;
+    // Radial (vertical) velocity: negative = descending. The rocket now
+    // starts resting exactly at altitude 0 on the pad, so this must only
+    // flag a genuine hard impact (real downward speed at ground contact) —
+    // not the rocket simply sitting there, which would otherwise trip a
+    // false "crashed" on the very first tick after pressing Start.
+    const vr = (state.rx * state.vx + state.ry * state.vy) / r;
+    if (vr < -0.5) {
+      state.crashed = true;
+    } else {
+      // Resting/settling on the pad — clamp gently to the deck instead of
+      // letting it drift a hair below ground each tick.
+      const ux = state.rx / r, uy = state.ry / r;
+      state.rx = CONFIG.EARTH_RADIUS * ux;
+      state.ry = CONFIG.EARTH_RADIUS * uy;
+      if (vr < 0) {
+        state.vx -= vr * ux;
+        state.vy -= vr * uy;
+      }
+    }
   }
 }
 

@@ -387,148 +387,103 @@ function drawRocket() {
     ctx.restore();
   });
 
-  // ---- Landing Legs — 3D Metallic Falcon 9 Arrowhead Profile ----
-  const p = legs.progress;                 // 0 = stowed (UP), 1 = deployed (DOWN)
-  const legHingeY = -H * 0.01;             // Base hinge level near engines
-  const legLength = H * 0.20;              // Full leg length
-  const maxSweepRad = (125 * Math.PI) / 180; // Sweep angle top-to-bottom
-  const pistonMountY = -H * 0.08;          // Actuator mount point
+    // ---- Landing legs — Falcon 9 exact stowed fairing & deployment geometry ----
+  const legHingeY = -H * 0.02;     // Base hinge near engines
+  const legLen = H * 0.28;         // Leg extends 28% up the body
+  const p = legs.progress;         // 0 = stowed, 1 = fully deployed
+
+  // Angle: 0 deg = folded straight UP along hull, 138 deg = deployed DOWN & OUT
+  const deployAngleRad = (p * 138) * Math.PI / 180;
 
   [-1, 1].forEach(side => {
-    // 1. Two body joint anchor points at the base
-    const j1x = side * (W * 0.49);         // Outer joint
-    const j2x = side * (W * 0.05);         // Inner joint
-    const jY = legHingeY;
+    // Hinge anchor point on the outer edge of the rocket hull
+    const hx = side * (W / 2);
+    const hy = legHingeY;
 
-    // Center pivot point between the two base joints
-    const pivotX = Math.sin(Math.PI / 4) * (j1x + j2x) / 1;
-    const pivotY = jY;
+    // Direction vector along leg length
+    const legDx = side * Math.sin(deployAngleRad);
+    const legDy = -Math.cos(deployAngleRad); // -1 points UP, +1 points DOWN
 
-    // Rotational sweep (sweeps top-to-bottom around pivotX)
-    const currentSweep = side * p * maxSweepRad;
-    const tipX = pivotX + legLength * Math.sin(currentSweep);
-    const tipY = pivotY - legLength * Math.cos(currentSweep);
+    // Perpendicular vector for panel width/thickness
+    const px = -legDy * side;
+    const py = legDx * side;
 
-    // Inner cutout apex (0.15x from base joints)
-    const cutoutApexX = pivotX + (tipX - pivotX) * 0.15;
-    const cutoutApexY = pivotY + (tipY - pivotY) * 0.15;
+    // Key points along the leg length
+    const tx = hx + legDx * legLen;                  // Top cap / Foot tip
+    const ty = hy + legDy * legLen;
+    const midDist = legLen * 0.72;                   // Widest point of triangular panel
+    const mx = hx + legDx * midDist;
+    const my = hy + legDy * midDist;
 
-    // ----------------------------------------------------------------------
-    // 2. Enhanced Hydraulic Piston Cylinder (3D Chrome + Metallic Housing)
-    // ----------------------------------------------------------------------
-    if (p > 0.02) {
-      const pmX = j1x;
-      const pmY = pistonMountY;
+    const wBase = W * 0.05;
+    const wMax = W * 0.24;
+    const wTip = W * 0.08;
 
-      // Dark Metallic Outer Cylinder
-      ctx.strokeStyle = '#12151a';
-      ctx.lineWidth = Math.max(1.5, W * 0.040);
+    // 1. Hydraulic Telescoping Strut (Hidden when stowed, appears when deploying)
+    if (p > 0.05) {
+      const strutMountY = -H * 0.18;
+      const strutMx = side * (W / 2);
+      const strutMy = strutMountY;
+
+      // Outer dark cylinder
+      ctx.strokeStyle = '#23272e';
+      ctx.lineWidth = Math.max(1, W * 0.035);
       ctx.lineCap = 'round';
       ctx.beginPath();
-      ctx.moveTo(pmX, pmY);
-      ctx.lineTo(tipX, tipY);
+      ctx.moveTo(strutMx, strutMy);
+      ctx.lineTo(tx, ty);
       ctx.stroke();
 
-      // Cylinder Highlight Ridge (Gives round pipe effect)
-      ctx.strokeStyle = '#434954';
-      ctx.lineWidth = Math.max(0.8, W * 0.018);
+      // Inner silver extendable piston
+      ctx.strokeStyle = '#d0d6dc';
+      ctx.lineWidth = Math.max(1, W * 0.02);
       ctx.beginPath();
-      ctx.moveTo(pmX, pmY);
-      ctx.lineTo(tipX, tipY);
+      ctx.moveTo(strutMx + (tx - strutMx) * 0.35, strutMy + (ty - strutMy) * 0.35);
+      ctx.lineTo(tx, ty);
       ctx.stroke();
-
-      // Inner Chrome Extendable Rod
-      const rodStartFrac = 0.32;
-      const rx1 = pmX + (tipX - pmX) * rodStartFrac;
-      const ry1 = pmY + (tipY - pmY) * rodStartFrac;
-
-      ctx.strokeStyle = '#e6ecf2';
-      ctx.lineWidth = Math.max(1, W * 0.022);
-      ctx.beginPath();
-      ctx.moveTo(rx1, ry1);
-      ctx.lineTo(tipX, tipY);
-      ctx.stroke();
-
-      // Piston Joint Collar Ring
-      ctx.fillStyle = '#2d333d';
-      ctx.beginPath();
-      ctx.arc(rx1, ry1, W * 0.025, 0, Math.PI * 2);
-      ctx.fill();
     }
 
-    // ----------------------------------------------------------------------
-    // 3. 3D Beveled Arrowhead Leg (Two-Facet Shading + Carbon Plate Depth)
-    // ----------------------------------------------------------------------
-
-    // Metallic Linear Gradient along leg length
-    const legGrad = ctx.createLinearGradient(pivotX, jY, tipX, tipY);
-    legGrad.addColorStop(0, '#8e95a2');
-    legGrad.addColorStop(0.35, '#ffffff');  // Bright metallic glare
-    legGrad.addColorStop(0.7, '#9ca2af');
-    legGrad.addColorStop(1, '#4e535e');
-
-    // Outer Structural Frame Fill
-    ctx.fillStyle = legGrad;
-    ctx.strokeStyle = '#22262d';
-    ctx.lineWidth = 1.2;
+    // 2. Main Carbon-Composite Triangular Leg Fairing (Solid panel like diagram)
+    ctx.fillStyle = '#d6dbe2';  // Light metallic gray panel
+    ctx.strokeStyle = '#5a626d';
+    ctx.lineWidth = 1;
 
     ctx.beginPath();
-    ctx.moveTo(j1x, jY);                     // 1. Outer base joint
-    ctx.lineTo(tipX, tipY);                 // 2. Main outer leg tip
-    ctx.lineTo(j2x, jY);                     // 3. Inner base joint
-    ctx.lineTo(cutoutApexX, cutoutApexY);   // 4. Inner cutout apex
+    ctx.moveTo(hx + px * wBase, hy + py * wBase);             // Base outer
+    ctx.lineTo(mx + px * wMax, my + py * wMax);             // Outer bulge
+    ctx.lineTo(tx + px * wTip, ty + py * wTip);             // Tip outer
+    ctx.lineTo(tx - px * wTip, ty - py * wTip);             // Tip inner
+    ctx.lineTo(mx - px * (wMax * 0.15), my - py * (wMax * 0.15)); // Inner edge along hull
+    ctx.lineTo(hx - px * wBase, hy - py * wBase);             // Base inner
     ctx.closePath();
     ctx.fill();
     ctx.stroke();
 
-    // --- 3D Ridge Line (Sharp spine down the leg center) ---
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.24)';   // Shadow on left facet
+    // 3. Bevel Shading / 3D Bevel Overlay
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.18)';
     ctx.beginPath();
-    ctx.moveTo(j1x, jY);
-    ctx.lineTo(tipX, tipY);
-    ctx.lineTo(cutoutApexX, cutoutApexY);
+    ctx.moveTo(hx, hy);
+    ctx.lineTo(mx + px * wMax, my + py * wMax);
+    ctx.lineTo(tx, ty);
     ctx.closePath();
     ctx.fill();
 
-    // --- Plate Thickness (Milled Bevel on Cutout Notch) ---
-    ctx.strokeStyle = '#181b22';
-    ctx.lineWidth = Math.max(1.2, W * 0.018);
+    // 4. Top Circular Joint Cap (Reference photo me top par jo dark round cap hai)
+    ctx.fillStyle = '#22252b';
     ctx.beginPath();
-    ctx.moveTo(j1x, jY);
-    ctx.lineTo(cutoutApexX, cutoutApexY);
-    ctx.lineTo(j2x, jY);
-    ctx.stroke();
+    ctx.arc(tx, ty, W * 0.07, 0, Math.PI * 2);
+    ctx.fill();
 
-    // Edge Specular Highlight (Rim lighting)
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.45)';
-    ctx.lineWidth = 0.8;
+    ctx.fillStyle = '#8a929e';
     ctx.beginPath();
-    ctx.moveTo(j1x, jY);
-    ctx.lineTo(tipX, tipY);
-    ctx.stroke();
+    ctx.arc(tx, ty, W * 0.03, 0, Math.PI * 2);
+    ctx.fill();
 
-    // ----------------------------------------------------------------------
-    // 4. Machined Steel Joint Pins (With Cast Shadows & Highlights)
-    // ----------------------------------------------------------------------
-    const drawPin = (x, y, radius, isApex = false) => {
-      // Outer Cast Shadow
-      ctx.fillStyle = 'rgba(0,0,0,0.45)';
-      ctx.beginPath(); ctx.arc(x + 0.6, y + 0.6, radius * 1.15, 0, Math.PI * 2); ctx.fill();
-
-      // Pin Body (Carbon Steel)
-      ctx.fillStyle = '#16191f';
-      ctx.strokeStyle = '#3d4450';
-      ctx.lineWidth = 1;
-      ctx.beginPath(); ctx.arc(x, y, radius, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
-
-      // Metallic Center Cap Glint
-      ctx.fillStyle = isApex ? '#d8deef' : '#8e96a4';
-      ctx.beginPath(); ctx.arc(x - radius * 0.22, y - radius * 0.22, radius * 0.42, 0, Math.PI * 2); ctx.fill();
-    };
-
-    drawPin(j1x, jY, W * 0.042);             // Outer Body Joint
-    drawPin(j2x, jY, W * 0.042);             // Inner Body Joint
-    drawPin(tipX, tipY, W * 0.058, true);    // Main Tip Joint
+    // 5. Bottom Hinge Pin
+    ctx.fillStyle = '#22252b';
+    ctx.beginPath();
+    ctx.arc(hx, hy, W * 0.045, 0, Math.PI * 2);
+    ctx.fill();
   });
 
   // ---- RCS gas ejection — soft puffs, not a flat glow ----
