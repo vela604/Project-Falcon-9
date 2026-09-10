@@ -141,10 +141,10 @@ function drawLaunchPad() {
   const padH = 3 / mpp;
 
   ctx.fillStyle = '#5a5f66';
-  ctx.fillRect(px0 - padHalfW, py0, padHalfW * 2, padH);
+  ctx.fillRect(px0 - padHalfW, py0 - padH, padHalfW * 2, padH);
   ctx.strokeStyle = '#3f4349';
   ctx.lineWidth = 1.5;
-  ctx.strokeRect(px0 - padHalfW, py0, padHalfW * 2, padH);
+  ctx.strokeRect(px0 - padHalfW, py0 - padH, padHalfW * 2, padH);
 }
 
 function drawRocket() {

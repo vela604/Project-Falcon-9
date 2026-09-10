@@ -164,7 +164,7 @@ function bindSimControls() {
   document.getElementById('btnStop').addEventListener('click', () => { simRunning = false; updateStatusBar(); });
   document.getElementById('btnReset').addEventListener('click', () => {
     simRunning = false; simPaused = false;
-    resetState(500); // start 500m up by default for now (no launch-pad phase yet)
+    resetState(0); // start 500m up by default for now (no launch-pad phase yet)
     renderMergeDiagram(); renderOctaSliders();
     updateStatusBar();
   });
