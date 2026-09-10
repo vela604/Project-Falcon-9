@@ -162,15 +162,8 @@ function drawRocket() {
   ctx.rotate(-visualTheta);
 
   // ============================================================================
-  // === REALISTIC ENGINE PLUME — matched to hot-fire test photography ===
-  // Real exhaust plumes are a CONE that widens as it leaves the nozzle (not a
-  // constant tube or a taper-to-a-point): a small blinding-hot throat right at
-  // the nozzle, expanding into a broad, billowing, turbulent gas cloud. The
-  // bright layers use additive ('lighter') blending so their light visibly
-  // bleeds/glows into the surrounding smoke, matching the photos.
+  // === REALISTIC ENGINE PLUME ===
   // ============================================================================
-
-  // ---- Flame (drawn first, behind body) ----
   const totalThrust = ENGINES.reduce((s, e) => s + e.currentF, 0);
   const maxThrust = ENGINES.reduce((s, e) => s + e.Fmax, 0);
   const totalThrottle = maxThrust > 0 ? totalThrust / maxThrust : 0;
@@ -182,25 +175,11 @@ function drawRocket() {
     const centerEngine = ENGINES.find(e => e.isCenter);
     const centerFrac = totalThrust > 0 ? centerEngine.currentF / totalThrust : 0;
     const gimbalRad = (centerEngine.gimbalDeg * Math.PI / 180) * centerFrac;
-    // Full-length shift for the entire flame (tip displacement)
     const fullShift = -flameLen * Math.sin(gimbalRad);
 
-    // ---- Plume base width scales with how many engines are lit. ----
-    // Falcon 9 octaweb: 1 center + 8 outer. A single Merlin nozzle is only
-    // about 25–30% of the rocket's diameter, so:
-    //   1 engine firing  -> thin single-nozzle jet (~0.30 × W)
-    //   9 engines firing -> full-octaweb wall of fire (~1.00 × W)
-    // Everything in between scales linearly. This makes the plume grow to
-    // fill the base only when the whole cluster is really burning.
     const activeCount = ENGINES.filter(e => e.currentF > 1).length;
     const plumeScale = Math.min(1.0, 0.30 + 0.70 * Math.max(0, activeCount - 1) / 8);
 
-    // Expanding, billowing, turbulent cone — width GROWS from startW at the
-    // nozzle to endW at the tail. Edge wobble amplitude grows with distance
-    // too, so it stays tight near the nozzle and gets progressively more
-    // turbulent/cloud-like further out, just like the reference plumes.
-    // The wobble phase runs on real time, so the gas visibly churns.
-    // Takes 'layerShift' so each layer bends proportionally to its own length.
     function gasConePath(startW, endW, lenFrac, seed, segments, layerShift) {
       const l = flameLen * lenFrac;
       ctx.beginPath();
@@ -209,7 +188,7 @@ function drawRocket() {
         const f = i / segments;
         const y = l * f;
         const w = startW + (endW - startW) * f;
-        const grow = 0.15 + 1.1 * f * f; // near-nozzle stays tight, tail billows
+        const grow = 0.15 + 1.1 * f * f;
         const wob = Math.sin(f * 4.5 + tNow * 2.3 + seed) * w * 0.16 * grow
                   + Math.sin(f * 9.5 + tNow * 3.8 + seed * 1.4) * w * 0.08 * grow;
         ctx.lineTo(-w / 2 - wob + layerShift * f, y);
@@ -230,11 +209,6 @@ function drawRocket() {
     }
 
     ctx.save();
-
-    // Layer 1 — outer smoke envelope: widest, softest, ordinary blending so
-    // it reads as smoke (not extra light) at the very edge of the plume.
-    // Starts at the engine cluster's real footprint (scaled by plumeScale),
-    // then continues to widen as the gas expands.
     ctx.filter = 'blur(11px)';
     gasConePath(W * 1.0 * plumeScale, W * 2.7 * plumeScale, 1.0, 0, 14, fullShift * 1.0);
     const g1 = ctx.createLinearGradient(0, 0, fullShift * 1.0, flameLen * 1.0);
@@ -245,8 +219,6 @@ function drawRocket() {
     ctx.fill();
     ctx.filter = 'none';
 
-    // A few drifting billow blobs along the outer edge — cauliflower-cloud
-    // texture, animated so they roll outward over time.
     ctx.filter = 'blur(7px)';
     for (let i = 0; i < 5; i++) {
       const f = 0.35 + 0.6 * (i / 4);
@@ -265,8 +237,6 @@ function drawRocket() {
     }
     ctx.filter = 'none';
 
-    // Layer 2 — mid glow, additive so its light bleeds into the smoke above.
-    // Also scaled by plumeScale to match the actual firing footprint.
     ctx.globalCompositeOperation = 'lighter';
     ctx.filter = 'blur(5px)';
     const shift92 = fullShift * 0.92;
@@ -279,13 +249,10 @@ function drawRocket() {
     ctx.fill();
     ctx.filter = 'none';
 
-    // Layer 3 — bright core, additive, hotter/whiter the harder it's throttled.
-    // This is the layer viewers notice most, so it matters most that its
-    // width matches the actual number of engines producing it.
     ctx.filter = 'blur(2px)';
     const shift68 = fullShift * 0.68;
     gasConePath(W * 0.58 * plumeScale, W * 1.05 * plumeScale, 0.68, 4.4, 9, shift68);
-    const coreHot = 0.55 + 0.45 * totalThrottle; // more blue-white at high throttle
+    const coreHot = 0.55 + 0.45 * totalThrottle;
     const g3 = ctx.createLinearGradient(0, 0, shift68, flameLen * 0.68);
     g3.addColorStop(0, `rgba(${Math.round(255 - coreHot*15)},252,255,1)`);
     g3.addColorStop(0.55, 'rgba(255,240,215,0.85)');
@@ -294,9 +261,6 @@ function drawRocket() {
     ctx.fill();
     ctx.filter = 'none';
 
-    // Layer 4 — blinding throat region right at the nozzle exits. Real
-    // engines are individual small throats; when only one fires this reads
-    // as a single tight bright dot, when nine fire it reads as a bright band.
     ctx.filter = 'blur(5px)';
     const shift22 = fullShift * 0.22;
     gasConePath(W * 0.42 * plumeScale, W * 0.55 * plumeScale, 0.22, 6.7, 6, shift22);
@@ -305,9 +269,6 @@ function drawRocket() {
     ctx.filter = 'none';
     ctx.globalCompositeOperation = 'source-over';
 
-    // Nozzle-exit hot spot — a wide additive flare across the cluster
-    // footprint (was a small central dot). Width also scales with plumeScale
-    // so a single-engine burn shows a compact glint, not a wide band.
     ctx.globalCompositeOperation = 'lighter';
     const flare = ctx.createRadialGradient(0, W * 0.05, 0, fullShift * 0.05, W * 0.05, W * 0.9 * plumeScale);
     flare.addColorStop(0, 'rgba(255,255,255,0.9)');
@@ -320,9 +281,144 @@ function drawRocket() {
     ctx.restore();
   }
 
+  // ============================================================================
+  // LEGS SETUP — one helper draws any of the 4 legs.
+  // Back legs: inset + darkened => read as "far side", drawn BEFORE body.
+  // Front legs: drawn AFTER body so they sit on top.
+  // Only front legs feed physics (legs.actualLength / footX / footY).
+  // ============================================================================
+  const p = legs.progress;
+  const legHingeY = -H * 0.004;
+  const legLength = H * 0.32;
+  const maxSweepRad = (115 * Math.PI) / 180;
+  const pistonMountY = -H * 0.08;
+  const LEG_TIP_CURVENESS = 0.90;
 
-  // ---- Body (realistic Falcon-9 colors: white hull, black interstage,
-  // black grid fins/legs — no more transparent/neon schematic look) ----
+  function drawLandingLeg(side, isBack) {
+    const depthX = isBack ? 0.75 : 1.0;
+    const depthY = isBack ? -H * 0.006 : 0;
+
+    const j1x = side * (W * 0.49) * depthX;
+    const j2x = side * (W * 0.05) * depthX;
+    const jY  = legHingeY + depthY;
+
+    const pivotX = Math.sin(Math.PI / 4) * (j1x + j2x) / 1;
+    const pivotY = jY;
+
+    const currentSweep = side * p * maxSweepRad;
+    const tipX = pivotX + legLength * Math.sin(currentSweep);
+    const tipY = pivotY - legLength * Math.cos(currentSweep);
+
+    const cutoutApexX = pivotX + (tipX - pivotX) * 0.05;
+    const cutoutApexY = pivotY + (tipY - pivotY) * 0.06;
+
+    const d1 = Math.hypot(tipX - j1x, tipY - jY) || 1;
+    const u1x = (j1x - tipX) / d1, u1y = (jY - tipY) / d1;
+    const d2 = Math.hypot(tipX - j2x, tipY - jY) || 1;
+    const u2x = (j2x - tipX) / d2, u2y = (jY - tipY) / d2;
+    const roundR = Math.min(legLength * LEG_TIP_CURVENESS, d1 * 0.85, d2 * 0.85);
+    const p1x = tipX + u1x * roundR, p1y = tipY + u1y * roundR;
+    const p2x = tipX + u2x * roundR, p2y = tipY + u2y * roundR;
+
+    const tipApexX = 0.25 * p1x + 0.5 * tipX + 0.25 * p2x;
+    const tipApexY = 0.25 * p1y + 0.5 * tipY + 0.25 * p2y;
+
+    if (!isBack) {
+      const legActualLength = Math.hypot(tipApexX - pivotX, tipApexY - pivotY);
+      if (!legs.actualLength) {
+        legs.actualLength = {}; legs.footX = {}; legs.footY = {};
+      }
+      legs.actualLength[side] = legActualLength;
+      legs.footX[side] = tipApexX;
+      legs.footY[side] = tipApexY;
+    }
+
+    // Piston — mounted from pivot; ends at the rounded-tip apex
+    if (p > 0.02) {
+      const pmX = pivotX;
+      const pmY = pistonMountY + depthY;
+
+      ctx.strokeStyle = isBack ? '#050608' : '#0a0c0f';
+      ctx.lineWidth = Math.max(1.5, W * 0.040);
+      ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(pmX, pmY); ctx.lineTo(tipApexX, tipApexY); ctx.stroke();
+
+      ctx.strokeStyle = isBack ? '#171b22' : '#2c313a';
+      ctx.lineWidth = Math.max(0.8, W * 0.018);
+      ctx.beginPath(); ctx.moveTo(pmX, pmY); ctx.lineTo(tipApexX, tipApexY); ctx.stroke();
+
+      const rodStartFrac = 0.32;
+      const rx1 = pmX + (tipApexX - pmX) * rodStartFrac;
+      const ry1 = pmY + (tipApexY - pmY) * rodStartFrac;
+
+      ctx.strokeStyle = isBack ? '#8a9099' : '#e6ecf2';
+      ctx.lineWidth = Math.max(1, W * 0.022);
+      ctx.beginPath(); ctx.moveTo(rx1, ry1); ctx.lineTo(tipApexX, tipApexY); ctx.stroke();
+
+      ctx.fillStyle = isBack ? '#0d1015' : '#1a1e24';
+      ctx.beginPath(); ctx.arc(rx1, ry1, W * 0.025, 0, Math.PI * 2); ctx.fill();
+    }
+
+    // Leg body
+    const legGrad = ctx.createLinearGradient(pivotX, jY, tipX, tipY);
+    if (isBack) {
+      legGrad.addColorStop(0,    '#0f1114');
+      legGrad.addColorStop(0.35, '#1a1d22');
+      legGrad.addColorStop(0.7,  '#08090b');
+      legGrad.addColorStop(1,    '#000000');
+    } else {
+      legGrad.addColorStop(0,    '#1c1f24');
+      legGrad.addColorStop(0.35, '#3a3f47');
+      legGrad.addColorStop(0.7,  '#14171b');
+      legGrad.addColorStop(1,    '#000000');
+    }
+
+    ctx.fillStyle = legGrad;
+    ctx.strokeStyle = '#000000';
+    ctx.lineWidth = 1.2;
+
+    ctx.beginPath();
+    ctx.moveTo(j1x, jY);
+    ctx.lineTo(p1x, p1y);
+    ctx.quadraticCurveTo(tipX, tipY, p2x, p2y);
+    ctx.lineTo(j2x, jY);
+    ctx.lineTo(cutoutApexX, cutoutApexY);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    // Ridge shadow
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
+    ctx.beginPath();
+    ctx.moveTo(j1x, jY);
+    ctx.lineTo(tipApexX, tipApexY);
+    ctx.lineTo(cutoutApexX, cutoutApexY);
+    ctx.closePath();
+    ctx.fill();
+
+    // Cutout bevel
+    ctx.strokeStyle = '#000000';
+    ctx.lineWidth = Math.max(1.2, W * 0.018);
+    ctx.beginPath();
+    ctx.moveTo(j1x, jY);
+    ctx.lineTo(cutoutApexX, cutoutApexY);
+    ctx.lineTo(j2x, jY);
+    ctx.stroke();
+
+    // Rim highlight
+    ctx.strokeStyle = isBack ? 'rgba(255,255,255,0.14)' : 'rgba(255,255,255,0.30)';
+    ctx.lineWidth = 0.8;
+    ctx.beginPath();
+    ctx.moveTo(j1x, jY);
+    ctx.lineTo(p1x, p1y);
+    ctx.stroke();
+  }
+
+  // ---- BACK LEGS — drawn BEFORE body so body occludes them ----
+  drawLandingLeg(-1, true);
+  drawLandingLeg( 1, true);
+
+  // ---- Body ----
   ctx.fillStyle = '#e9edf2';
   ctx.strokeStyle = '#8b93a0';
   ctx.lineWidth = 1.2;
@@ -336,8 +432,6 @@ function drawRocket() {
   ctx.fill();
   ctx.stroke();
 
-  // subtle body-panel shading (slight left/right shadow, so it doesn't
-  // read as a flat cut-out shape)
   let shade = ctx.createLinearGradient(-W/2, 0, W/2, 0);
   shade.addColorStop(0, 'rgba(0,0,0,0.14)');
   shade.addColorStop(0.5, 'rgba(255,255,255,0.10)');
@@ -352,8 +446,6 @@ function drawRocket() {
   ctx.closePath();
   ctx.fill();
 
-  // Interstage stripe (Falcon 9's black roll-reference band, just below the
-  // nose taper) + a tiny 2-square checker mark for that unmistakable look.
   const stripeTop = -H * 0.80, stripeBottom = -H * 0.72;
   ctx.fillStyle = '#14161a';
   ctx.fillRect(-W/2, stripeTop, W, stripeBottom - stripeTop);
@@ -367,8 +459,6 @@ function drawRocket() {
   ctx.fillRect(0, chkY, chk, chk/2);
   ctx.fillRect(chk/2, chkY+chk/2, chk/2, chk/2);
 
-  // Grid fins — small canted lattice fins just above the interstage, the
-  // most recognizable Falcon 9 silhouette detail.
   const finY = -H * 0.845, finLen = W * 0.22, finH = H * 0.05;
   [-1, 1].forEach(side => {
     ctx.save();
@@ -378,7 +468,6 @@ function drawRocket() {
     ctx.strokeStyle = '#3a3d43';
     ctx.lineWidth = 0.8;
     ctx.beginPath(); ctx.rect(0, -finH/2, side * finLen, finH); ctx.fill(); ctx.stroke();
-    // lattice cross-hatching
     for (let i = 1; i <= 2; i++) {
       const gx = side * finLen * (i/3);
       ctx.beginPath(); ctx.moveTo(gx, -finH/2); ctx.lineTo(gx, finH/2); ctx.stroke();
@@ -387,160 +476,11 @@ function drawRocket() {
     ctx.restore();
   });
 
-  // ---- Landing Legs — 3D Metallic Falcon 9 Arrowhead Profile ----
-  const p = legs.progress;                 // 0 = stowed (UP), 1 = deployed (DOWN)
-  const legHingeY = -H * 0.01;             // Base hinge level near engines
-  const legLength = H * 0.20;              // Full leg length
-  const maxSweepRad = (125 * Math.PI) / 180; // Sweep angle top-to-bottom
-  const pistonMountY = -H * 0.08;          // Actuator mount point
+  // ---- FRONT LEGS — drawn AFTER body so they sit on top ----
+  drawLandingLeg(-1, false);
+  drawLandingLeg( 1, false);
 
-  [-1, 1].forEach(side => {
-    // 1. Two body joint anchor points at the base
-    const j1x = side * (W * 0.49);         // Outer joint
-    const j2x = side * (W * 0.05);         // Inner joint
-    const jY = legHingeY;
-
-    // Center pivot point between the two base joints
-    const pivotX = Math.sin(Math.PI / 4) * (j1x + j2x) / 1;
-    const pivotY = jY;
-
-    // Rotational sweep (sweeps top-to-bottom around pivotX)
-    const currentSweep = side * p * maxSweepRad;
-    const tipX = pivotX + legLength * Math.sin(currentSweep);
-    const tipY = pivotY - legLength * Math.cos(currentSweep);
-
-    // Inner cutout apex (0.15x from base joints)
-    const cutoutApexX = pivotX + (tipX - pivotX) * 0.15;
-    const cutoutApexY = pivotY + (tipY - pivotY) * 0.15;
-
-    // ----------------------------------------------------------------------
-    // 2. Enhanced Hydraulic Piston Cylinder (3D Chrome + Metallic Housing)
-    // ----------------------------------------------------------------------
-    if (p > 0.02) {
-      const pmX = j1x;
-      const pmY = pistonMountY;
-
-      // Dark Metallic Outer Cylinder
-      ctx.strokeStyle = '#12151a';
-      ctx.lineWidth = Math.max(1.5, W * 0.040);
-      ctx.lineCap = 'round';
-      ctx.beginPath();
-      ctx.moveTo(pmX, pmY);
-      ctx.lineTo(tipX, tipY);
-      ctx.stroke();
-
-      // Cylinder Highlight Ridge (Gives round pipe effect)
-      ctx.strokeStyle = '#434954';
-      ctx.lineWidth = Math.max(0.8, W * 0.018);
-      ctx.beginPath();
-      ctx.moveTo(pmX, pmY);
-      ctx.lineTo(tipX, tipY);
-      ctx.stroke();
-
-      // Inner Chrome Extendable Rod
-      const rodStartFrac = 0.32;
-      const rx1 = pmX + (tipX - pmX) * rodStartFrac;
-      const ry1 = pmY + (tipY - pmY) * rodStartFrac;
-
-      ctx.strokeStyle = '#e6ecf2';
-      ctx.lineWidth = Math.max(1, W * 0.022);
-      ctx.beginPath();
-      ctx.moveTo(rx1, ry1);
-      ctx.lineTo(tipX, tipY);
-      ctx.stroke();
-
-      // Piston Joint Collar Ring
-      ctx.fillStyle = '#2d333d';
-      ctx.beginPath();
-      ctx.arc(rx1, ry1, W * 0.025, 0, Math.PI * 2);
-      ctx.fill();
-    }
-
-    // ----------------------------------------------------------------------
-    // 3. 3D Beveled Arrowhead Leg (Two-Facet Shading + Carbon Plate Depth)
-    // ----------------------------------------------------------------------
-
-    // Metallic Linear Gradient along leg length
-    const legGrad = ctx.createLinearGradient(pivotX, jY, tipX, tipY);
-    legGrad.addColorStop(0, '#8e95a2');
-    legGrad.addColorStop(0.35, '#ffffff');  // Bright metallic glare
-    legGrad.addColorStop(0.7, '#9ca2af');
-    legGrad.addColorStop(1, '#4e535e');
-
-    // Outer Structural Frame Fill
-    ctx.fillStyle = legGrad;
-    ctx.strokeStyle = '#22262d';
-    ctx.lineWidth = 1.2;
-
-    ctx.beginPath();
-    ctx.moveTo(j1x, jY);                     // 1. Outer base joint
-    ctx.lineTo(tipX, tipY);                 // 2. Main outer leg tip
-    ctx.lineTo(j2x, jY);                     // 3. Inner base joint
-    ctx.lineTo(cutoutApexX, cutoutApexY);   // 4. Inner cutout apex
-    ctx.closePath();
-    ctx.fill();
-    ctx.stroke();
-
-    // --- 3D Ridge Line (Sharp spine down the leg center) ---
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.24)';   // Shadow on left facet
-    ctx.beginPath();
-    ctx.moveTo(j1x, jY);
-    ctx.lineTo(tipX, tipY);
-    ctx.lineTo(cutoutApexX, cutoutApexY);
-    ctx.closePath();
-    ctx.fill();
-
-    // --- Plate Thickness (Milled Bevel on Cutout Notch) ---
-    ctx.strokeStyle = '#181b22';
-    ctx.lineWidth = Math.max(1.2, W * 0.018);
-    ctx.beginPath();
-    ctx.moveTo(j1x, jY);
-    ctx.lineTo(cutoutApexX, cutoutApexY);
-    ctx.lineTo(j2x, jY);
-    ctx.stroke();
-
-    // Edge Specular Highlight (Rim lighting)
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.45)';
-    ctx.lineWidth = 0.8;
-    ctx.beginPath();
-    ctx.moveTo(j1x, jY);
-    ctx.lineTo(tipX, tipY);
-    ctx.stroke();
-
-    // ----------------------------------------------------------------------
-    // 4. Machined Steel Joint Pins (With Cast Shadows & Highlights)
-    // ----------------------------------------------------------------------
-    const drawPin = (x, y, radius, isApex = false) => {
-      // Outer Cast Shadow
-      ctx.fillStyle = 'rgba(0,0,0,0.45)';
-      ctx.beginPath(); ctx.arc(x + 0.6, y + 0.6, radius * 1.15, 0, Math.PI * 2); ctx.fill();
-
-      // Pin Body (Carbon Steel)
-      ctx.fillStyle = '#16191f';
-      ctx.strokeStyle = '#3d4450';
-      ctx.lineWidth = 1;
-      ctx.beginPath(); ctx.arc(x, y, radius, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
-
-      // Metallic Center Cap Glint
-      ctx.fillStyle = isApex ? '#d8deef' : '#8e96a4';
-      ctx.beginPath(); ctx.arc(x - radius * 0.22, y - radius * 0.22, radius * 0.42, 0, Math.PI * 2); ctx.fill();
-    };
-
-    drawPin(j1x, jY, W * 0.042);             // Outer Body Joint
-    drawPin(j2x, jY, W * 0.042);             // Inner Body Joint
-    drawPin(tipX, tipY, W * 0.058, true);    // Main Tip Joint
-  });
-
-  // ---- RCS gas ejection — soft puffs, not a flat glow ----
-  // Each pod has a FIXED-direction lateral nozzle (always ejects further
-  // outward, away from the centerline — TL/BL eject left, TR/BR eject
-  // right) plus a pair of vertical nozzles (up-facing and down-facing) that
-  // CAN be selected either way depending on which force direction physics
-  // requested this tick. We draw the lateral jet in its one fixed direction,
-  // and the vertical jet in whichever direction matches the actual signed
-  // Fy physics computed for that pod this tick — never a synthesized
-  // "resultant" angled jet; a diagonal-firing pod is drawn as two separate
-  // straight puffs, exactly like real fixed-direction RCS hardware.
+  // ---- RCS gas ejection ----
   const firing = lastForces.firing || {};
   const pod = lastForces.pod || {};
   const corners = {
@@ -549,23 +489,19 @@ function drawRocket() {
     BL: [-W/2, -(CONFIG.RCS_BOTTOM_MARGIN/mpp)],
     BR: [ W/2, -(CONFIG.RCS_BOTTOM_MARGIN/mpp)],
   };
-  // Lateral nozzle: fixed by mounting side, always outward. Vertical nozzle
-  // exhaust direction is the OPPOSITE of the force sign physics requested
-  // (exhaust up -> force down, exhaust down -> force up), computed live.
   const lateralDir = { TL: [-1, 0], TR: [1, 0], BL: [-1, 0], BR: [1, 0] };
   const plumeLen = W * 0.6;
-  const fEps = 1; // Newtons — ignore numerical noise
+  const fEps = 1;
+
   function drawGasPuff(cx, cy, dir, seed) {
     const [dx, dy] = dir;
-    const nx = -dy, ny = dx; // perpendicular, for spread
+    const nx = -dy, ny = dx;
     const jitter = 1 + 0.10 * Math.sin(performance.now() * 0.05 + seed);
     const len = plumeLen * jitter;
     const tipX = cx + dx * len, tipY = cy + dy * len;
     const midX = cx + dx * len * 0.55, midY = cy + dy * len * 0.55;
     const spread = W * 0.05;
 
-    // Soft tapered puff body, rounded off at the tip (quadratic curve)
-    // rather than a hard triangle point, for a gas-cloud look.
     const grad = ctx.createLinearGradient(cx, cy, tipX, tipY);
     grad.addColorStop(0, 'rgba(130,225,255,0.95)');
     grad.addColorStop(0.55, 'rgba(150,220,255,0.55)');
@@ -577,36 +513,25 @@ function drawRocket() {
     ctx.quadraticCurveTo(midX + nx*spread*0.7, midY + ny*spread*0.7, cx + nx*spread, cy + ny*spread);
     ctx.closePath();
     ctx.fill();
-    // Dark contrasting outline so the puff stays visible whether it's
-    // drawn against the dark sky OR against the (now opaque, white) hull —
-    // a plain light-blue fill alone can vanish against a white body.
     ctx.strokeStyle = 'rgba(10,35,50,0.55)';
     ctx.lineWidth = 0.8;
     ctx.stroke();
 
-    // A couple of small drifting puff blobs beyond the main cone, so it
-    // reads as expanding gas rather than a flat painted wedge.
     ctx.fillStyle = 'rgba(190,235,255,0.35)';
     ctx.beginPath(); ctx.arc(midX, midY, spread*0.9*jitter, 0, Math.PI*2); ctx.fill();
     ctx.fillStyle = 'rgba(200,240,255,0.22)';
     ctx.beginPath(); ctx.arc(tipX, tipY, spread*1.1*jitter, 0, Math.PI*2); ctx.fill();
 
-    // Bright nozzle-exit flare
     ctx.fillStyle = 'rgba(230,250,255,0.9)';
     ctx.beginPath(); ctx.arc(cx + dx*W*0.03, cy + dy*W*0.03, spread*0.6, 0, Math.PI*2); ctx.fill();
   }
+
   Object.keys(corners).forEach(k => {
     const [cx, cy] = corners[k];
-    const p = pod[k] || { Fx: 0, Fy: 0 };
-    // Lateral nozzle: fixed direction, full brightness whenever active this tick
-    // (PWM gating already decided whether Fx is nonzero — no need to fade it).
-    if (Math.abs(p.Fx) > fEps) drawGasPuff(cx, cy, lateralDir[k], k.charCodeAt(0));
-    // Vertical nozzle: exhaust direction is opposite the commanded force sign.
-    // Drawn slightly OUTSIDE the hull edge (not flush against it) — a jet
-    // running exactly along the body's own outline blends into it and
-    // reads as invisible, especially against the now-opaque white hull.
-    if (Math.abs(p.Fy) > fEps) {
-      const vDir = p.Fy > 0 ? [0, 1] : [0, -1]; // force+y(up) -> exhaust down; force-y(down) -> exhaust up
+    const pp = pod[k] || { Fx: 0, Fy: 0 };
+    if (Math.abs(pp.Fx) > fEps) drawGasPuff(cx, cy, lateralDir[k], k.charCodeAt(0));
+    if (Math.abs(pp.Fy) > fEps) {
+      const vDir = pp.Fy > 0 ? [0, 1] : [0, -1];
       const outX = cx + Math.sign(cx) * W * 0.05;
       drawGasPuff(outX, cy, vDir, k.charCodeAt(1) + 3);
     }
