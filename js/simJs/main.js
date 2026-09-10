@@ -177,6 +177,12 @@ function frame(ts) {
     }
   }
 
+  // Landing legs are ground-support-equipment style controls (like deploying
+  // them while parked on the pad before launch) — they animate on real
+  // elapsed time regardless of whether the simulation itself is running or
+  // paused, unlike the physics state above.
+  updateLegs(frameDt);
+
   renderFrame();
   drawFigurePanel();
   drawBasalView();
@@ -196,6 +202,7 @@ function bootstrap() {
   initBasalCanvas();
 
   bindSimControls();
+  bindLegsControl();
   bindCenterControls();
   bindRCSControls();
   bindMergeControls();

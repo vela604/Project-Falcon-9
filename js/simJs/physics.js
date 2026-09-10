@@ -23,6 +23,22 @@ let state = {
   simTime: 0,
 };
 
+// Landing legs — purely visual/control state for now (Phase-1 scope has no
+// landing/touchdown logic yet). `deployed` is the commanded target;
+// `progress` (0 = fully stowed, 1 = fully deployed) is rate-limited toward
+// it each tick, same pattern as throttle/gimbal, so the legs visibly swing
+// open/closed over ~2s rather than snapping instantly.
+let legs = { deployed: false, progress: 0 };
+
+function resetLegs() { legs = { deployed: false, progress: 0 }; }
+
+function updateLegs(dt) {
+  const target = legs.deployed ? 1 : 0;
+  const maxDelta = CONFIG.LEG_DEPLOY_RATE * dt;
+  if (target > legs.progress) legs.progress = Math.min(target, legs.progress + maxDelta);
+  else legs.progress = Math.max(target, legs.progress - maxDelta);
+}
+
 function totalMass() { return state.dryMass + state.fuelMass; }
 
 function currentGeometry() {
@@ -173,6 +189,7 @@ function resetState(initialAltitude) {
   buildEngineLayout();
   resetMerges();
   clearRCS();
+  resetLegs();
   const r0 = CONFIG.EARTH_RADIUS + initialAltitude;
   state = {
     rx: 0, ry: r0,

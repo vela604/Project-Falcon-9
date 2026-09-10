@@ -16,6 +16,7 @@ const DEFAULT_VEHICLE = {
   rcsThrust: 1100, rcsVe: 2200, rcsXOffset: 1.95,
   rcsTopMargin: 3, rcsBottomMargin: 3, rcsPwmPeriod: 0.3,
   dragCd: 0.6,
+  legDeployRate: 0.5, // fraction of full travel per second (~2s to fully deploy/stow)
 };
 
 const ACTIVE_VEHICLE = (typeof getSelectedRocket === 'function') ? getSelectedRocket() : DEFAULT_VEHICLE;
@@ -54,6 +55,9 @@ const CONFIG = {
 
   // ---------------- Aerodynamics ----------------
   DRAG_CD: ACTIVE_VEHICLE.dragCd,                 // dimensionless, orientation-independent (Phase-1 simplification)
+
+  // ---------------- Landing legs ----------------
+  LEG_DEPLOY_RATE: ACTIVE_VEHICLE.legDeployRate || 0.5, // fraction of full travel per second
 
   // ---------------- Simulation ----------------
   DT: 1 / 60,                     // s, fixed physics timestep

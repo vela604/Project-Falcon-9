@@ -170,6 +170,34 @@ function bindSimControls() {
   });
 }
 
+// ---------------------------------------------------------------------------
+// Landing legs — simple deploy/stow toggle. Purely visual/control for now;
+// not yet wired into any touchdown logic (that comes with the landing
+// guidance phase later). The button label and pressed-state reflect the
+// COMMANDED target immediately, while the legs themselves swing open/closed
+// smoothly over ~2s (see physics.js updateLegs()).
+// ---------------------------------------------------------------------------
+function bindLegsControl() {
+  const btn = document.getElementById('btnLegs');
+  if (!btn) return;
+  btn.addEventListener('click', () => {
+    legs.deployed = !legs.deployed;
+    updateLegsButton();
+  });
+}
+
+function updateLegsButton() {
+  const btn = document.getElementById('btnLegs');
+  if (!btn) return;
+  if (legs.deployed) {
+    btn.classList.add('active');
+    btn.innerHTML = '<span class="btn-ic">🦿</span>Stow Legs';
+  } else {
+    btn.classList.remove('active');
+    btn.innerHTML = '<span class="btn-ic">🦿</span>Deploy Legs';
+  }
+}
+
 function updateStatusBar() {
   const dot = document.getElementById('statusDot');
   const txt = document.getElementById('statusText');

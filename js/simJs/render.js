@@ -127,6 +127,72 @@ function drawGroundLine() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Launch pad — a fixed ground structure at local (0,0), the rocket's start
+// position. Purely a visual landmark for Phase 1 (no physical interaction
+// yet — that comes with the landing-guidance phase). Sized in real meters
+// via metersPerPixel() so it scales correctly at any zoom level.
+// ---------------------------------------------------------------------------
+function drawLaunchPad() {
+  const [px0, py0] = localToScreen(0, 0);
+  if (py0 < -150 || py0 > canvas.height + 150) return; // off-screen, skip entirely
+
+  const mpp = metersPerPixel();
+  const padRadius = 60 / mpp;
+  const padThick = 4 / mpp;
+
+  // Concrete pad (slightly foreshortened ellipse for a touch of depth)
+  ctx.fillStyle = '#5a5f66';
+  ctx.beginPath();
+  ctx.ellipse(px0, py0 + padThick * 0.3, padRadius, padThick * 1.6, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = '#3f4349';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  // Perimeter hazard ring
+  ctx.strokeStyle = 'rgba(255,205,60,0.55)';
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([6, 6]);
+  ctx.beginPath();
+  ctx.ellipse(px0, py0 + padThick * 0.3, padRadius * 0.85, padThick * 1.5, 0, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Central scorch mark (soft dark radial fade — where the exhaust lands)
+  const scorchR = padRadius * 0.42;
+  const scorchGrad = ctx.createRadialGradient(px0, py0, 0, px0, py0, scorchR);
+  scorchGrad.addColorStop(0, 'rgba(15,15,18,0.85)');
+  scorchGrad.addColorStop(1, 'rgba(15,15,18,0)');
+  ctx.fillStyle = scorchGrad;
+  ctx.beginPath();
+  ctx.ellipse(px0, py0 + padThick * 0.2, scorchR, padThick * 1.2, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Flame trench (dark exhaust duct cut into the pad)
+  const trenchW = padRadius * 0.5, trenchH = padThick * 2.4;
+  ctx.fillStyle = '#141518';
+  ctx.fillRect(px0 - trenchW / 2, py0 - trenchH * 0.15, trenchW, trenchH);
+
+  // Small support/umbilical tower off to one side, with simple lattice bracing
+  const towerX = px0 + padRadius * 0.78;
+  const towerW = 8 / mpp, towerH = 90 / mpp;
+  ctx.fillStyle = '#3a3e44';
+  ctx.fillRect(towerX - towerW / 2, py0 - towerH, towerW, towerH);
+  ctx.strokeStyle = '#5a5f66';
+  ctx.lineWidth = 1;
+  const braceSteps = 5;
+  for (let i = 0; i < braceSteps; i++) {
+    const y1 = py0 - towerH * (i / braceSteps), y2 = py0 - towerH * ((i + 1) / braceSteps);
+    ctx.beginPath(); ctx.moveTo(towerX - towerW / 2, y1); ctx.lineTo(towerX + towerW / 2, y2); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(towerX + towerW / 2, y1); ctx.lineTo(towerX - towerW / 2, y2); ctx.stroke();
+  }
+  // Blinking hazard light at the tower top
+  const blink = 0.5 + 0.5 * Math.sin(performance.now() * 0.004);
+  ctx.fillStyle = `rgba(255,60,50,${0.5 + 0.5 * blink})`;
+  ctx.beginPath(); ctx.arc(towerX, py0 - towerH, Math.max(2, 1.2 / mpp), 0, Math.PI * 2); ctx.fill();
+}
+
 function drawRocket() {
   const loc = worldToLocal();
   const [px, py] = localToScreen(loc.x, loc.y);
@@ -367,18 +433,46 @@ function drawRocket() {
     ctx.restore();
   });
 
-  // Folded landing-leg fairings near the base.
-  const legY0 = -H * 0.02, legY1 = -H * 0.16, legOut = W * 0.10;
+  // Landing legs — swing from folded (flush against the hull, matching the
+  // grid-fin-adjacent stowed silhouette) out to a splayed A-frame stance
+  // below the base, driven by `legs.progress` (0=stowed, 1=deployed),
+  // which physics.js rate-limits toward the commanded target over ~2s.
+  const legHingeY = -H * 0.03;
+  const foldedTipX = W * 0.10, foldedTipY = -H * 0.16;
+  const deployedTipX = W * 0.95, deployedTipY = H * 0.22; // outward + below the base
+  const p = legs.progress;
+  const legTipX = foldedTipX + (deployedTipX - foldedTipX) * p;
+  const legTipY = foldedTipY + (deployedTipY - foldedTipY) * p;
+  // The strut visually "unfolds" through a knee point so it doesn't just
+  // slide linearly through the hull — the knee bows outward mid-travel.
+  const kneeBow = Math.sin(p * Math.PI) * W * 0.12;
   [-1, 1].forEach(side => {
+    ctx.strokeStyle = '#2a2d33';
     ctx.fillStyle = '#1c1e22';
-    ctx.strokeStyle = '#45484e';
-    ctx.lineWidth = 0.9;
-    ctx.beginPath();
-    ctx.moveTo(side * W/2, legY0);
-    ctx.lineTo(side * (W/2 + legOut), legY0);
-    ctx.lineTo(side * W/2, legY1);
-    ctx.closePath();
-    ctx.fill(); ctx.stroke();
+    ctx.lineWidth = Math.max(1, W * 0.03);
+    ctx.lineCap = 'round';
+    const hx = side * W / 2, hy = legHingeY;
+    const kx = side * (W / 2 + (legTipX) * 0.55 + kneeBow), ky = legHingeY + (legTipY - legHingeY) * 0.5;
+    const tx = side * (W / 2 + legTipX), ty = legTipY;
+    // Primary strut
+    ctx.beginPath(); ctx.moveTo(hx, hy); ctx.quadraticCurveTo(kx, ky, tx, ty); ctx.stroke();
+    // Diagonal brace (only reads once mostly deployed)
+    if (p > 0.15) {
+      ctx.globalAlpha = Math.min(1, p * 1.3);
+      ctx.lineWidth = Math.max(0.8, W * 0.018);
+      ctx.beginPath();
+      ctx.moveTo(side * W / 2, -H * 0.10);
+      ctx.lineTo(tx, ty);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+    // Foot pad
+    if (p > 0.25) {
+      ctx.globalAlpha = Math.min(1, (p - 0.25) * 1.6);
+      const padR = W * 0.09;
+      ctx.beginPath(); ctx.ellipse(tx, ty, padR, padR * 0.45, side * 0.5, 0, Math.PI * 2); ctx.fill();
+      ctx.globalAlpha = 1;
+    }
   });
 
   // ---- RCS gas ejection — soft puffs, not a flat glow ----
@@ -506,6 +600,7 @@ function renderFrame() {
   drawSky(altitude);
   drawGrid();
   drawGroundLine();
+  drawLaunchPad();
   drawGroundSteam(altitude);
   drawRocket();
 }
