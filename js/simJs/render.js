@@ -165,12 +165,22 @@ function drawRocket() {
     // Full-length shift for the entire flame (tip displacement)
     const fullShift = -flameLen * Math.sin(gimbalRad);
 
+    // ---- Plume base width scales with how many engines are lit. ----
+    // Falcon 9 octaweb: 1 center + 8 outer. A single Merlin nozzle is only
+    // about 25–30% of the rocket's diameter, so:
+    //   1 engine firing  -> thin single-nozzle jet (~0.30 × W)
+    //   9 engines firing -> full-octaweb wall of fire (~1.00 × W)
+    // Everything in between scales linearly. This makes the plume grow to
+    // fill the base only when the whole cluster is really burning.
+    const activeCount = ENGINES.filter(e => e.currentF > 1).length;
+    const plumeScale = Math.min(1.0, 0.30 + 0.70 * Math.max(0, activeCount - 1) / 8);
+
     // Expanding, billowing, turbulent cone — width GROWS from startW at the
     // nozzle to endW at the tail. Edge wobble amplitude grows with distance
     // too, so it stays tight near the nozzle and gets progressively more
     // turbulent/cloud-like further out, just like the reference plumes.
     // The wobble phase runs on real time, so the gas visibly churns.
-    // Now takes 'layerShift' so each layer bends proportionally to its own length.
+    // Takes 'layerShift' so each layer bends proportionally to its own length.
     function gasConePath(startW, endW, lenFrac, seed, segments, layerShift) {
       const l = flameLen * lenFrac;
       ctx.beginPath();
@@ -203,10 +213,10 @@ function drawRocket() {
 
     // Layer 1 — outer smoke envelope: widest, softest, ordinary blending so
     // it reads as smoke (not extra light) at the very edge of the plume.
-    // Starts at ~full rocket width (the 9-engine cluster spans nearly the
-    // whole base — NOT a single narrow nozzle), then continues to widen.
+    // Starts at the engine cluster's real footprint (scaled by plumeScale),
+    // then continues to widen as the gas expands.
     ctx.filter = 'blur(11px)';
-    gasConePath(W * 1.0, W * 2.7, 1.0, 0, 14, fullShift * 1.0);
+    gasConePath(W * 1.0 * plumeScale, W * 2.7 * plumeScale, 1.0, 0, 14, fullShift * 1.0);
     const g1 = ctx.createLinearGradient(0, 0, fullShift * 1.0, flameLen * 1.0);
     g1.addColorStop(0, 'rgba(255,170,80,0.55)');
     g1.addColorStop(0.55, 'rgba(255,110,40,0.4)');
@@ -221,7 +231,7 @@ function drawRocket() {
     for (let i = 0; i < 5; i++) {
       const f = 0.35 + 0.6 * (i / 4);
       const y = flameLen * f;
-      const w = (W * 1.0 + (W * 2.7 - W * 1.0) * f);
+      const w = (W * 1.0 * plumeScale + (W * 2.7 * plumeScale - W * 1.0 * plumeScale) * f);
       const side = i % 2 === 0 ? 1 : -1;
       const drift = Math.sin(tNow * 1.6 + i * 2.1) * w * 0.18;
       const bx = side * (w * 0.42 + drift) + fullShift * f;
@@ -236,11 +246,11 @@ function drawRocket() {
     ctx.filter = 'none';
 
     // Layer 2 — mid glow, additive so its light bleeds into the smoke above.
-    // Also widened to start from the engine cluster's real footprint.
+    // Also scaled by plumeScale to match the actual firing footprint.
     ctx.globalCompositeOperation = 'lighter';
     ctx.filter = 'blur(5px)';
     const shift92 = fullShift * 0.92;
-    gasConePath(W * 0.78, W * 1.9, 0.92, 2.1, 11, shift92);
+    gasConePath(W * 0.78 * plumeScale, W * 1.9 * plumeScale, 0.92, 2.1, 11, shift92);
     const g2 = ctx.createLinearGradient(0, 0, shift92, flameLen * 0.92);
     g2.addColorStop(0, 'rgba(255,225,140,0.9)');
     g2.addColorStop(0.5, 'rgba(255,150,55,0.55)');
@@ -250,11 +260,11 @@ function drawRocket() {
     ctx.filter = 'none';
 
     // Layer 3 — bright core, additive, hotter/whiter the harder it's throttled.
-    // This is the layer viewers notice most, so it matters most that it
-    // starts wide (spanning the engines) rather than narrowing to a point.
+    // This is the layer viewers notice most, so it matters most that its
+    // width matches the actual number of engines producing it.
     ctx.filter = 'blur(2px)';
     const shift68 = fullShift * 0.68;
-    gasConePath(W * 0.58, W * 1.05, 0.68, 4.4, 9, shift68);
+    gasConePath(W * 0.58 * plumeScale, W * 1.05 * plumeScale, 0.68, 4.4, 9, shift68);
     const coreHot = 0.55 + 0.45 * totalThrottle; // more blue-white at high throttle
     const g3 = ctx.createLinearGradient(0, 0, shift68, flameLen * 0.68);
     g3.addColorStop(0, `rgba(${Math.round(255 - coreHot*15)},252,255,1)`);
@@ -265,27 +275,26 @@ function drawRocket() {
     ctx.filter = 'none';
 
     // Layer 4 — blinding throat region right at the nozzle exits. Real
-    // engines are individual small throats, but with 9 of them spread
-    // across the base their combined glow reads as one wide bright band,
-    // not a single pinpoint — keep this close to the engine cluster width.
+    // engines are individual small throats; when only one fires this reads
+    // as a single tight bright dot, when nine fire it reads as a bright band.
     ctx.filter = 'blur(5px)';
     const shift22 = fullShift * 0.22;
-    gasConePath(W * 0.42, W * 0.55, 0.22, 6.7, 6, shift22);
+    gasConePath(W * 0.42 * plumeScale, W * 0.55 * plumeScale, 0.22, 6.7, 6, shift22);
     ctx.fillStyle = 'rgba(255,255,255,0.98)';
     ctx.fill();
     ctx.filter = 'none';
     ctx.globalCompositeOperation = 'source-over';
 
     // Nozzle-exit hot spot — a wide additive flare across the cluster
-    // footprint (was a small central dot, which reinforced the "single
-    // point" look) for that "diamond shock" glint across the whole base.
+    // footprint (was a small central dot). Width also scales with plumeScale
+    // so a single-engine burn shows a compact glint, not a wide band.
     ctx.globalCompositeOperation = 'lighter';
-    const flare = ctx.createRadialGradient(0, W * 0.05, 0, fullShift * 0.05, W * 0.05, W * 0.9);
+    const flare = ctx.createRadialGradient(0, W * 0.05, 0, fullShift * 0.05, W * 0.05, W * 0.9 * plumeScale);
     flare.addColorStop(0, 'rgba(255,255,255,0.9)');
     flare.addColorStop(0.5, 'rgba(255,255,255,0.35)');
     flare.addColorStop(1, 'rgba(255,255,255,0)');
     ctx.fillStyle = flare;
-    ctx.beginPath(); ctx.ellipse(0, W * 0.05, W * 0.65, W * 0.2, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(0, W * 0.05, W * 0.50 * plumeScale, W * 0.2 * plumeScale, 0, 0, Math.PI * 2); ctx.fill();
     ctx.globalCompositeOperation = 'source-over';
 
     ctx.restore();
