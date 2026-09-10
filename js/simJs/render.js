@@ -304,8 +304,8 @@ function drawRocket() {
     const tipX = pivotX + legLength * Math.sin(currentSweep);
     const tipY = pivotY - legLength * Math.cos(currentSweep);
 
-    const cutoutApexX = pivotX + (tipX - pivotX) * 0.15;
-    const cutoutApexY = pivotY + (tipY - pivotY) * 0.15;
+    const cutoutApexX = pivotX + (tipX - pivotX) * 0.07;
+    const cutoutApexY = pivotY + (tipY - pivotY) * 0.07;
 
     const d1 = Math.hypot(tipX - j1x, tipY - jY) || 1;
     const u1x = (j1x - tipX) / d1, u1y = (jY - tipY) / d1;
