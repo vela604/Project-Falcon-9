@@ -119,6 +119,13 @@ function buildLegsSwingout4() {
         maxSweepRad: 125 * Math.PI / 180,
         pistonMountY: -H * 0.08,
       }),
+      // How deployed (0..1) the legs must be for a touchdown to be
+      // considered a landing rather than a crash. Lives on the type itself
+      // (not a global CONFIG constant) so a different legs-on-vehicle type
+      // could require, say, a stricter 0.98 without touching physics.js —
+      // physics.js falls back to CONFIG.LANDING_MIN_LEG_DEPLOY if a type
+      // omits this.
+      landingMinDeploy: 0.9,
     },
     parameterSchema: [
       { key: 'legDeployRate', label: 'Deploy rate', unit: '/s', min: 0.05 },

@@ -107,7 +107,23 @@ function rcsGeometry(comH) {
 // Computes this tick's RCS force/torque/mass-flow from the current rcsCmd state.
 // `pod[k]` in the returned object carries the ACTUAL signed (Fx, Fy) applied
 // this tick (post-PWM-gating) so render.js can draw the correct nozzle(s).
+//
+// PHASE 2 DECISION (a) — recorded in PHASE2_PROMPT.md: only the pod LIST
+// (which ids exist, where each one sits) is sourced from the registry
+// (CONFIG.RCS_TYPE.frame.pods). The fire-logic below — the torque-
+// cancellation math and delta-sigma PWM duty-cycling derived in the design
+// notes above — stays tuned specifically to the 4-corner "cornerPods"
+// geometry and its literal TL/TR/BL/BR ids. A future non-4-corner RCS
+// `kind` needs its own dedicated fire-logic function; branching on `kind`
+// (never on a type's `id`) is the sanctioned way to add one, per the hard
+// rule in PHASE2_PROMPT.md.
 function computeRCS(comH, dt) {
+  const rcsType = CONFIG.RCS_TYPE;
+  if (!rcsType || rcsType.kind !== 'cornerPods') {
+    if (rcsType) console.warn(`computeRCS: RCS type "${rcsType.id}" (kind "${rcsType.kind}") has no matching fire-logic implementation yet \u2014 RCS disabled this tick.`);
+    return zeroRCS();
+  }
+
   const f = CONFIG.RCS_THRUST;
   const geo = rcsGeometry(comH);
   const period = CONFIG.RCS_PWM_PERIOD;
@@ -139,9 +155,19 @@ function computeRCS(comH, dt) {
     pwmClock.periodTargetDuty = Math.min(1, Math.max(0, idealDuty + pwmClock.sigmaError));
   }
 
-  const pod = { TL: { Fx: 0, Fy: 0 }, TR: { Fx: 0, Fy: 0 }, BL: { Fx: 0, Fy: 0 }, BR: { Fx: 0, Fy: 0 } };
-  const isTop = { TL: true, TR: true, BL: false, BR: false };
-  const lateralSign = { TL: +1, BL: +1, TR: -1, BR: -1 }; // fixed by mounting side (inward-force convention)
+  // Pod list, top/bottom-ness, and fixed lateral push direction all derive
+  // from the registry's pod metadata (id + corner: [xSign, 'top'|'bottom'])
+  // instead of a hardcoded {TL,TR,BL,BR} literal. lateralSign is the
+  // opposite of the pod's own mounting side: a LEFT-mounted pod (xSign -1)
+  // ejects further outward-left, so its reaction pushes the vehicle RIGHT
+  // (+1) — see the design notes above.
+  const podDefs = rcsType.frame.pods;
+  const pod = {}, isTop = {}, lateralSign = {};
+  podDefs.forEach(p => {
+    pod[p.id] = { Fx: 0, Fy: 0 };
+    isTop[p.id] = p.corner[1] === 'top';
+    lateralSign[p.id] = -p.corner[0];
+  });
 
   // Fire a pod's lateral nozzle at full force, but if that pod is a TOP pod,
   // gate it through the shared PWM duty cycle (see rule 2/3 above). Used for
@@ -193,15 +219,17 @@ function computeRCS(comH, dt) {
     fireVertical('BR', +1);
   }
 
-  const positions = {
-    TL: { x: -CONFIG.RCS_X_OFFSET, y: geo.yTop },
-    TR: { x: CONFIG.RCS_X_OFFSET, y: geo.yTop },
-    BL: { x: -CONFIG.RCS_X_OFFSET, y: geo.yBottom },
-    BR: { x: CONFIG.RCS_X_OFFSET, y: geo.yBottom },
-  };
+  // Positions, too, come from the registry's pod metadata rather than a
+  // hardcoded {TL,TR,BL,BR} literal — a different cornerPods-kind type
+  // (different X offset conventions aside) needs no changes here.
+  const positions = {};
+  podDefs.forEach(p => {
+    positions[p.id] = { x: p.corner[0] * CONFIG.RCS_X_OFFSET, y: p.corner[1] === 'top' ? geo.yTop : geo.yBottom };
+  });
 
   let Fx = 0, Fy = 0, torque = 0, mdot = 0;
-  const firing = { TL: false, TR: false, BL: false, BR: false };
+  const firing = {};
+  podDefs.forEach(p => { firing[p.id] = false; });
   Object.keys(pod).forEach(k => {
     const p = pod[k], pos = positions[k];
     Fx += p.Fx; Fy += p.Fy;

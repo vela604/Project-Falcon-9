@@ -20,11 +20,15 @@
 // mpp      - meters-per-pixel at that scale (only used for the RCS pod
 //            margins, which are specified in real meters in CONFIG)
 // opts     - { legsProgress: 0..1 (default 0, stowed),
-//              firing: {TL,TR,BL,BR} booleans (default none firing),
-//              pod: {TL,TR,BL,BR}: {Fx,Fy} (default none),
+//              firing: { [podId]: boolean } (default none firing),
+//              pod: { [podId]: {Fx,Fy} } (default none),
 //              legsState: optional object to record per-leg foot positions
 //                         into (the live sim passes its `legs` state here;
 //                         a static preview omits it) }
+//            `firing`/`pod` are keyed by whatever pod ids the active RCS
+//            type declares (CONFIG.RCS_TYPE.frame.pods) — TL/TR/BL/BR for
+//            the built-in 4-corner type, but this file never assumes those
+//            literal names (see PHASE2_PROMPT.md Step E).
 // ============================================================================
 function drawRocketArt(ctx, W, H, mpp, opts) {
   opts = opts || {};
@@ -32,13 +36,40 @@ function drawRocketArt(ctx, W, H, mpp, opts) {
   const legsState = opts.legsState || null;
 
   // ============================================================================
-  // LEGS SETUP — 4 legs via shared helper
+  // LEGS SETUP — geometry sourced from the active recovery TYPE (Components
+  // Library), never hardcoded. PHASE 2 STEP E:
+  //  - `hingeGeometry(H)` gives {hingeY, legLength, maxSweepRad, pistonMountY}
+  //    for any `legsOnVehicle`-kind type (see componentLibrary.js) — a new
+  //    type with a different hinge/length/sweep needs zero changes here.
+  //  - `capabilities.deploysOnVehicle` gates whether legs are drawn at all,
+  //    so a `catchFittingOnVehicle`-kind type (no legs, caught by a ground
+  //    tower instead) correctly renders with none, no type.id check needed.
+  //  - The actual leg SHAPE drawn below (the 2-visible + 2-"back" illusion
+  //    that reads as 4 legs) is still tuned specifically to legCount===4;
+  //    a future legsOnVehicle type with a different leg count falls back to
+  //    this same 4-leg illusion (documented limitation, not yet
+  //    generalized — see PHASE2_PROMPT.md Step E scope) rather than
+  //    silently drawing the wrong number of legs.
   // ============================================================================
+  const recoveryType = (typeof CONFIG !== 'undefined') ? CONFIG.RECOVERY_TYPE : null;
+  const showLegs = !!(recoveryType && recoveryType.capabilities && recoveryType.capabilities.deploysOnVehicle);
+  const hingeGeometryFn = (recoveryType && recoveryType.frame && typeof recoveryType.frame.hingeGeometry === 'function')
+    ? recoveryType.frame.hingeGeometry
+    : null;
+  if (showLegs && !hingeGeometryFn) {
+    console.warn(`drawRocketArt: recovery type "${recoveryType.id}" declares deploysOnVehicle but has no frame.hingeGeometry() — legs skipped this frame.`);
+  }
+  const legGeo = hingeGeometryFn ? hingeGeometryFn(H) : null;
+  const legCount = (recoveryType && recoveryType.frame && recoveryType.frame.legCount) || 4;
+  if (showLegs && legGeo && legCount !== 4) {
+    console.warn(`drawRocketArt: recovery type "${recoveryType.id}" has legCount ${legCount}, but leg artwork is still only implemented for the 4-leg illusion — drawing 4 legs anyway.`);
+  }
+
   const p = legsProgress;
-  const legHingeY = -H * 0.004;
-  const legLength = H * 0.27;
-  const maxSweepRad = (125 * Math.PI) / 180;
-  const pistonMountY = -H * 0.08;
+  const legHingeY = legGeo ? legGeo.hingeY : -H * 0.004;
+  const legLength = legGeo ? legGeo.legLength : H * 0.27;
+  const maxSweepRad = legGeo ? legGeo.maxSweepRad : (125 * Math.PI) / 180;
+  const pistonMountY = legGeo ? legGeo.pistonMountY : -H * 0.08;
   const LEG_TIP_CURVENESS = 0.90;
 
   function drawLandingLeg(side, isBack) {
@@ -156,9 +187,12 @@ function drawRocketArt(ctx, W, H, mpp, opts) {
     ctx.stroke();
   }
 
-  // BACK legs (behind body)
-  drawLandingLeg(-1, true);
-  drawLandingLeg( 1, true);
+  // BACK legs (behind body) — skipped entirely for a recovery type that
+  // doesn't deploy legs on the vehicle (e.g. a catch-fitting type).
+  if (showLegs) {
+    drawLandingLeg(-1, true);
+    drawLandingLeg( 1, true);
+  }
 
   // ---- Body ----
   ctx.fillStyle = '#e9edf2';
@@ -219,11 +253,19 @@ function drawRocketArt(ctx, W, H, mpp, opts) {
   });
 
   // FRONT legs (on top of body)
-  drawLandingLeg(-1, false);
-  drawLandingLeg( 1, false);
+  if (showLegs) {
+    drawLandingLeg(-1, false);
+    drawLandingLeg( 1, false);
+  }
 
   // ============================================================================
-  // RCS — rounded-rectangle pods + gas puffs
+  // RCS — rounded-rectangle pods + gas puffs. PHASE 2 STEP E: pod IDENTITY
+  // and POSITION come from the active RCS type's `frame.pods` (registry),
+  // matching rcs.js's Step D decision-(a) scope — no hardcoded {TL,TR,BL,BR}
+  // literal. The fire-logic upstream (rcs.js) is still tuned to the
+  // 4-corner "cornerPods" `kind`, so this drawing code only renders pods for
+  // that `kind`; a future non-4-corner RCS kind needs its own drawing branch
+  // (branching on `kind`, never on a type's `id`, per the hard rule).
   // ============================================================================
   const firing = opts.firing || {};
   const pod = opts.pod || {};
@@ -232,13 +274,25 @@ function drawRocketArt(ctx, W, H, mpp, opts) {
   // active CONFIG (used by the live simulator's own draw call).
   const rcsTopMargin = opts.rcsTopMargin !== undefined ? opts.rcsTopMargin : CONFIG.RCS_TOP_MARGIN;
   const rcsBottomMargin = opts.rcsBottomMargin !== undefined ? opts.rcsBottomMargin : CONFIG.RCS_BOTTOM_MARGIN;
-  const corners = {
-    TL: [-W/2, -(H - rcsTopMargin/mpp)],
-    TR: [ W/2, -(H - rcsTopMargin/mpp)],
-    BL: [-W/2, -(rcsBottomMargin/mpp)],
-    BR: [ W/2, -(rcsBottomMargin/mpp)],
-  };
-  const lateralDir = { TL: [-1, 0], TR: [1, 0], BL: [-1, 0], BR: [1, 0] };
+
+  const rcsType = (typeof CONFIG !== 'undefined') ? CONFIG.RCS_TYPE : null;
+  const podDefs = (rcsType && rcsType.kind === 'cornerPods' && rcsType.frame && rcsType.frame.pods) ? rcsType.frame.pods : [];
+  if (rcsType && rcsType.kind !== 'cornerPods' && podDefs.length === 0) {
+    console.warn(`drawRocketArt: RCS type "${rcsType.id}" (kind "${rcsType.kind}") has no matching pod artwork yet \u2014 RCS pods skipped this frame.`);
+  }
+
+  // Each pod's id + corner ([xSign, 'top'|'bottom']) comes straight from the
+  // registry. `corner[0]` doubles as the FIXED outward ejection direction
+  // for that pod's lateral nozzle (a left-mounted pod, xSign -1, always
+  // vents further left) — same convention rcs.js uses for the reaction-
+  // force sign, just not negated here since this is the gas plume's
+  // direction, not the resulting push.
+  const corners = {}, lateralDir = {};
+  podDefs.forEach(pd => {
+    const xSign = pd.corner[0], isTop = pd.corner[1] === 'top';
+    corners[pd.id] = [xSign * (W / 2), -(isTop ? (H - rcsTopMargin / mpp) : (rcsBottomMargin / mpp))];
+    lateralDir[pd.id] = [xSign, 0];
+  });
   const plumeLen = W * 0.6;
   const fEps = 1;
 

@@ -15,6 +15,9 @@ function renderMergeDiagram() {
   const cx = 90, cy = 90, R = 65;
   let html = `<circle cx="${cx}" cy="${cy}" r="${R+14}" fill="none" stroke="#22344a" stroke-width="1"/>`;
 
+  // Outer-ring dots: purely angle-driven (mergeState.groups comes from the
+  // active layout's mergeTopology, per vehicle.js), so this already works
+  // for any ring size/spacing with no changes.
   mergeState.groups.forEach((g) => {
     const color = groupColorOf(g.name);
     g.angles.forEach(a => {
@@ -25,9 +28,17 @@ function renderMergeDiagram() {
       html += `<circle cx="${ex}" cy="${ey}" r="9" fill="${color}" stroke="${isSelected ? '#fff' : '#111'}" stroke-width="${isSelected?3:1}" class="engine-dot" data-angle="${a}" style="cursor:pointer;"/>`;
     });
   });
-  // Center engine
-  html += `<circle cx="${cx}" cy="${cy}" r="11" fill="#ffcc00" stroke="#222" stroke-width="1.5"/>`;
-  html += `<text x="${cx}" y="${cy+3}" font-size="8" text-anchor="middle" fill="#222">C</text>`;
+
+  // Center marker(s): drawn from whichever slot(s) the active layout marks
+  // role:'center' — not assumed to exist or to be exactly one. A layout
+  // with zero center-role slots (hypothetically, an all-outer ring) simply
+  // draws no center marker; today's octaweb-merlin9 has exactly one ('C').
+  const centerSlots = (CONFIG.ENGINE_LAYOUT ? CONFIG.ENGINE_LAYOUT.frame.slots : []).filter(s => s.role === 'center');
+  if (centerSlots.length) {
+    const label = centerSlots.length === 1 ? centerSlots[0].id : String(centerSlots.length);
+    html += `<circle cx="${cx}" cy="${cy}" r="11" fill="#ffcc00" stroke="#222" stroke-width="1.5"/>`;
+    html += `<text x="${cx}" y="${cy+3}" font-size="8" text-anchor="middle" fill="#222">${label}</text>`;
+  }
 
   svg.innerHTML = html;
   svg.querySelectorAll('.engine-dot').forEach(dot => {
@@ -42,16 +53,43 @@ function renderMergeDiagram() {
 }
 
 // ---------------------------------------------------------------------------
-// Octaweb sliders — ALWAYS 8 individual-engine sliders, 4 fixed to the left
-// rack and 4 to the right rack, regardless of merge state. When two or more
-// engines share a merge group, their sliders are visually tagged with the
-// group's color and moving any one of them drives the whole group (and
-// updates every sibling slider to match), instead of collapsing them into a
-// single slider. This keeps the control layout constant while merges only
-// change *behavior*, not layout.
+// Peripheral engine sliders — one per outer-role slot the ACTIVE engine
+// layout declares, split into a left rack and a right rack, regardless of
+// merge state. When two or more engines share a merge group, their sliders
+// are visually tagged with the group's color and moving any one of them
+// drives the whole group (and updates every sibling slider to match),
+// instead of collapsing them into a single slider. This keeps the control
+// layout stable while merges only change *behavior*, not layout.
+//
+// PHASE 2: no longer a hardcoded 4+4 angle list. Left/right is derived from
+// each slot's actual lateral (x) position at the active layout's radius —
+// positive x -> right rack, negative x -> left rack. The two slots that sit
+// exactly on the front/back axis (x==0, e.g. 90°/270° on an 8-ring) have no
+// lateral side at all, so they're assigned by which half of the circle
+// they're in (front half -> right, back half -> left) purely so every
+// engine still gets a slider — this reproduces the octaweb-merlin9 4+4
+// split exactly, and degrades gracefully to any other outer-engine count.
 // ---------------------------------------------------------------------------
-const RIGHT_SIDE_ANGLES = [0, 45, 90, 315];   // physically the +x / "right" half of the octaweb
-const LEFT_SIDE_ANGLES  = [180, 225, 270, 135]; // physically the -x / "left" half of the octaweb
+function sideOfOuterSlot(slot) {
+  const x = slot.position(CONFIG.OCTA_RADIUS).x;
+  const EPS = 1e-6;
+  if (x > EPS) return 'right';
+  if (x < -EPS) return 'left';
+  return slot.angleDeg < 180 ? 'right' : 'left';
+}
+
+function outerSlotsBySide() {
+  const layout = CONFIG.ENGINE_LAYOUT;
+  const right = [], left = [];
+  if (layout) {
+    layout.frame.slots.filter(s => s.role === 'outer').forEach(s => {
+      (sideOfOuterSlot(s) === 'right' ? right : left).push(s);
+    });
+  }
+  right.sort((a, b) => a.angleDeg - b.angleDeg);
+  left.sort((a, b) => a.angleDeg - b.angleDeg);
+  return { right, left };
+}
 
 function renderOctaSliders() {
   const leftHost = document.getElementById('slidersLeft');
@@ -78,8 +116,9 @@ function renderOctaSliders() {
     });
   }
 
-  RIGHT_SIDE_ANGLES.forEach(a => buildSlider(a, rightHost));
-  LEFT_SIDE_ANGLES.forEach(a => buildSlider(a, leftHost));
+  const { right, left } = outerSlotsBySide();
+  right.forEach(s => buildSlider(s.angleDeg, rightHost));
+  left.forEach(s => buildSlider(s.angleDeg, leftHost));
 }
 
 // Moving ANY slider in a merged group drives the whole group and keeps every
@@ -121,7 +160,6 @@ function bindCenterControls() {
   });
 
   bindHoldControl(document.getElementById('gimbalCW'), (v) => {
-    const c = ENGINES.find(e => e.isCenter);
     setCenterGimbalTarget(v * CONFIG.GIMBAL_MAX_DEG);
   }, { max: 1, rate: 1.2 });
 

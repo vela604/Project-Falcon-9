@@ -64,29 +64,27 @@
               </dl>
             </fieldset>
 
+            <!-- PHASE 2 STEP F: these three sections are populated entirely
+                 from whichever hardware TYPES this vehicle references
+                 (Components Library) — the legend note and every row come
+                 from that type's displayName/parameterSchema, so a
+                 non-octaweb engine or non-4-corner RCS on some future
+                 vehicle shows its own real spec sheet, not a stale
+                 Falcon-9-shaped label. See renderDetailSection() in
+                 rockets.js. -->
             <fieldset>
-              <legend>Main engines <span class="legend-note">— 9-engine octaweb</span></legend>
-              <dl>
-                <div class="cap-row"><dt>Octaweb radius</dt><dd id="d-octaRadius">—</dd></div>
-                <div class="cap-row"><dt>Max thrust / engine</dt><dd id="d-engineFMax">—</dd></div>
-                <div class="cap-row"><dt>Throttle floor</dt><dd id="d-engineFMinFrac">—</dd></div>
-                <div class="cap-row"><dt>Exhaust velocity</dt><dd id="d-engineVe">—</dd></div>
-                <div class="cap-row"><dt>Thrust change rate</dt><dd id="d-engineThrustRate">—</dd></div>
-                <div class="cap-row"><dt>Gimbal range</dt><dd id="d-gimbalMaxDeg">—</dd></div>
-                <div class="cap-row"><dt>Gimbal slew rate</dt><dd id="d-gimbalRateDegS">—</dd></div>
-              </dl>
+              <legend>Main engines <span class="legend-note" id="d-engineNote">—</span></legend>
+              <dl id="d-engineList"></dl>
             </fieldset>
 
             <fieldset>
-              <legend>RCS <span class="legend-note">— 4 pods, 2 nozzles each</span></legend>
-              <dl>
-                <div class="cap-row"><dt>Nozzle thrust</dt><dd id="d-rcsThrust">—</dd></div>
-                <div class="cap-row"><dt>Exhaust velocity</dt><dd id="d-rcsVe">—</dd></div>
-                <div class="cap-row"><dt>Lateral offset</dt><dd id="d-rcsXOffset">—</dd></div>
-                <div class="cap-row"><dt>Top margin</dt><dd id="d-rcsTopMargin">—</dd></div>
-                <div class="cap-row"><dt>Bottom margin</dt><dd id="d-rcsBottomMargin">—</dd></div>
-                <div class="cap-row"><dt>PWM period</dt><dd id="d-rcsPwmPeriod">—</dd></div>
-              </dl>
+              <legend>Recovery mechanism <span class="legend-note" id="d-recoveryNote">—</span></legend>
+              <dl id="d-recoveryList"></dl>
+            </fieldset>
+
+            <fieldset>
+              <legend>RCS <span class="legend-note" id="d-rcsNote">—</span></legend>
+              <dl id="d-rcsList"></dl>
             </fieldset>
 
             <fieldset>
@@ -141,29 +139,40 @@
           </div>
         </fieldset>
 
+        <!-- PHASE 2 STEP F: hardware TYPE selection. These three dropdowns
+             are populated from the Components Library registry
+             (componentLibrary.js) — never a hardcoded option list — and
+             swapping any of them regenerates that section's parameter
+             fields below from the newly-selected type's parameterSchema.
+             See populateTypeSelects() / renderParamFields() in rockets.js. -->
         <fieldset>
-          <legend>Main engines <span class="legend-note">— fixed 9-engine octaweb architecture</span></legend>
+          <legend>Hardware types <span class="legend-note">— from the Components Library</span></legend>
           <div class="field-grid">
-            <div class="field"><label for="f-octaRadius">Octaweb radius</label><div class="input-unit"><input type="number" id="f-octaRadius" min="0.1" step="0.05" required><span>m</span></div></div>
-            <div class="field"><label for="f-engineFMax">Max thrust / engine</label><div class="input-unit"><input type="number" id="f-engineFMax" min="1000" step="1000" required><span>N</span></div></div>
-            <div class="field"><label for="f-engineFMinFrac">Throttle floor</label><div class="input-unit"><input type="number" id="f-engineFMinFrac" min="0" max="0.95" step="0.01" required><span>frac</span></div></div>
-            <div class="field"><label for="f-engineVe">Exhaust velocity</label><div class="input-unit"><input type="number" id="f-engineVe" min="500" step="10" required><span>m/s</span></div></div>
-            <div class="field"><label for="f-engineThrustRate">Thrust change rate</label><div class="input-unit"><input type="number" id="f-engineThrustRate" min="0.01" step="0.01" required><span>/s</span></div></div>
-            <div class="field"><label for="f-gimbalMaxDeg">Gimbal range</label><div class="input-unit"><input type="number" id="f-gimbalMaxDeg" min="0" max="45" step="0.5" required><span>±deg</span></div></div>
-            <div class="field"><label for="f-gimbalRateDegS">Gimbal slew rate</label><div class="input-unit"><input type="number" id="f-gimbalRateDegS" min="1" step="1" required><span>deg/s</span></div></div>
+            <div class="field"><label for="f-engineType">Engine layout</label><select id="f-engineType" required></select></div>
+            <div class="field"><label for="f-recoveryType">Recovery mechanism</label><select id="f-recoveryType" required></select></div>
+            <div class="field"><label for="f-rcsType">RCS arrangement</label><select id="f-rcsType" required></select></div>
           </div>
         </fieldset>
 
-        <fieldset>
-          <legend>RCS <span class="legend-note">— 4 pods, 2 nozzles each</span></legend>
-          <div class="field-grid">
-            <div class="field"><label for="f-rcsThrust">Nozzle thrust</label><div class="input-unit"><input type="number" id="f-rcsThrust" min="10" step="10" required><span>N</span></div></div>
-            <div class="field"><label for="f-rcsVe">Exhaust velocity</label><div class="input-unit"><input type="number" id="f-rcsVe" min="200" step="10" required><span>m/s</span></div></div>
-            <div class="field"><label for="f-rcsXOffset">Lateral offset</label><div class="input-unit"><input type="number" id="f-rcsXOffset" min="0.1" step="0.05" required><span>m</span></div></div>
-            <div class="field"><label for="f-rcsTopMargin">Top margin</label><div class="input-unit"><input type="number" id="f-rcsTopMargin" min="0" step="0.1" required><span>m</span></div></div>
-            <div class="field"><label for="f-rcsBottomMargin">Bottom margin</label><div class="input-unit"><input type="number" id="f-rcsBottomMargin" min="0" step="0.1" required><span>m</span></div></div>
-            <div class="field"><label for="f-rcsPwmPeriod">PWM period</label><div class="input-unit"><input type="number" id="f-rcsPwmPeriod" min="0.02" step="0.01" required><span>s</span></div></div>
-          </div>
+        <!-- The three fieldsets below are entirely auto-generated: every
+             input in them is created from the SELECTED type's
+             parameterSchema (key/label/unit/min/max), never hardcoded to
+             any one type's fields. Adding a brand-new hardware type to the
+             Components Library needs zero changes here — it just shows up
+             as another dropdown option with its own auto-built fields. -->
+        <fieldset id="engineParamsFieldset">
+          <legend>Main engines <span class="legend-note" id="engineParamsNote">—</span></legend>
+          <div class="field-grid" id="engineParamsGrid"></div>
+        </fieldset>
+
+        <fieldset id="recoveryParamsFieldset">
+          <legend>Recovery mechanism <span class="legend-note" id="recoveryParamsNote">—</span></legend>
+          <div class="field-grid" id="recoveryParamsGrid"></div>
+        </fieldset>
+
+        <fieldset id="rcsParamsFieldset">
+          <legend>RCS <span class="legend-note" id="rcsParamsNote">—</span></legend>
+          <div class="field-grid" id="rcsParamsGrid"></div>
         </fieldset>
 
         <fieldset>

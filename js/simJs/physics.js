@@ -199,16 +199,36 @@ function physicsStep(dt) {
 
     if (descentSpeed > 0.3 || hSpeed > 0.3) {
       // Real contact with real motion — this is the moment that decides
-      // LANDED vs CRASHED. Legs must be deployed, and speed/tilt/spin must
-      // all be within the safe envelope; if any one is out of bounds, it's
-      // a crash (landing on stowed legs is always a crash, regardless of
-      // how gentle the touch was).
-      const legsReady = legs.progress >= CONFIG.LANDING_MIN_LEG_DEPLOY;
-      const speedOk = descentSpeed <= CONFIG.LANDING_MAX_VSPEED && hSpeed <= CONFIG.LANDING_MAX_HSPEED;
-      const tiltOk = tiltDeg <= CONFIG.LANDING_MAX_TILT_DEG;
-      const rateOk = Math.abs(state.omega) <= CONFIG.LANDING_MAX_OMEGA;
+      // LANDED vs CRASHED. PHASE 2: whether a soft landing is even
+      // POSSIBLE here depends on the active recovery type's
+      // capabilities.vehicleTouchesGround flag, never on the type's id.
+      // A recovery type that doesn't touch the vehicle to the ground at
+      // all (e.g. a catch-fitting type meant to be caught by ground-tower
+      // arms — not modeled yet, see componentLibrary.js) has no way to
+      // land via this ground-contact check, so real contact is always a
+      // crash for it. This is Step D's decision-(a) scope: structure only,
+      // no ground-tower catch logic yet.
+      const recovery = CONFIG.RECOVERY_TYPE;
+      const canLandOnLegs = !!(recovery && recovery.capabilities && recovery.capabilities.vehicleTouchesGround);
+      let landedOk = false;
+      if (canLandOnLegs) {
+        // The minimum-deploy threshold is the recovery type's OWN data when
+        // it declares one (frame.landingMinDeploy), falling back to the
+        // universal default in CONFIG for a type that doesn't. The rest of
+        // the safety envelope (speed/tilt/spin) stays universal by design
+        // (see config.js) — it's about surviving physics, not about which
+        // recovery hardware is fitted.
+        const minDeploy = (recovery.frame && recovery.frame.landingMinDeploy !== undefined)
+          ? recovery.frame.landingMinDeploy
+          : CONFIG.LANDING_MIN_LEG_DEPLOY;
+        const legsReady = legs.progress >= minDeploy;
+        const speedOk = descentSpeed <= CONFIG.LANDING_MAX_VSPEED && hSpeed <= CONFIG.LANDING_MAX_HSPEED;
+        const tiltOk = tiltDeg <= CONFIG.LANDING_MAX_TILT_DEG;
+        const rateOk = Math.abs(state.omega) <= CONFIG.LANDING_MAX_OMEGA;
+        landedOk = legsReady && speedOk && tiltOk && rateOk;
+      }
 
-      if (legsReady && speedOk && tiltOk && rateOk) {
+      if (landedOk) {
         state.landed = true;
       } else {
         state.crashed = true;

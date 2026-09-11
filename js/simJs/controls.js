@@ -44,7 +44,10 @@ function bindHoldControl(el, onChange, opts = {}) {
 }
 
 // ---------------------------------------------------------------------------
-// Octaweb 5-slider control (4 default pair-groups + center)
+// Peripheral (outer-ring) throttle groups — already generic: a group is
+// just a list of engine angles (see vehicle.js's defaultPairGroups(), which
+// derives them from the active engine layout's mergeTopology), so this
+// works unchanged for any ring size.
 // ---------------------------------------------------------------------------
 function setGroupThrottle(group, value) {
   group.angles.forEach(a => {
@@ -53,14 +56,30 @@ function setGroupThrottle(group, value) {
   });
 }
 
+// PHASE 2: primary-engine throttle. "Primary" = whatever the active engine
+// layout marks role:'center' (today always exactly one — the octaweb's core
+// engine — but this filters rather than assumes a single match, so a future
+// layout with more than one center-role slot works without changes here).
 function setCenterThrottle(value) {
-  const c = ENGINES.find(e => e.isCenter);
-  if (c) c.targetThrottle = value;
+  ENGINES.filter(e => e.isCenter).forEach(e => { e.targetThrottle = value; });
 }
 
+// PHASE 2: shared gimbal target. Every gimbal-capable engine the active
+// layout declares (ENGINES.filter(e => e.gimbal) — NOT just the center one)
+// moves together off one commanded angle. This is only valid when the
+// layout opts into a single shared slider via
+// CONFIG.ENGINE_LAYOUT.capabilities.sharedGimbalSlider; a layout with
+// independently-steerable gimbal engines (sharedGimbalSlider:false) would
+// need its own per-engine gimbal UI, which doesn't exist yet — so that case
+// fails loudly here instead of silently moving the wrong engines.
 function setCenterGimbalTarget(deg) {
-  const c = ENGINES.find(e => e.isCenter);
-  if (c) c.targetGimbalDeg = Math.max(-CONFIG.GIMBAL_MAX_DEG, Math.min(CONFIG.GIMBAL_MAX_DEG, deg));
+  const layout = CONFIG.ENGINE_LAYOUT;
+  if (!layout || !layout.capabilities || !layout.capabilities.sharedGimbalSlider) {
+    console.warn('setCenterGimbalTarget: active engine layout has no shared gimbal slider (per-engine gimbal UI not implemented yet) — ignoring.');
+    return;
+  }
+  const clamped = Math.max(-CONFIG.GIMBAL_MAX_DEG, Math.min(CONFIG.GIMBAL_MAX_DEG, deg));
+  ENGINES.filter(e => e.gimbal).forEach(e => { e.targetGimbalDeg = clamped; });
 }
 
 // ---------------------------------------------------------------------------
