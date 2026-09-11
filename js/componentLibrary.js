@@ -185,12 +185,273 @@ function buildRcs4Pod2Nozzle() {
   };
 }
 
+// ============================================================================
+// PHASE 3 STEP A — four new "fixed real-world spec" categories, plus
+// payloadSpace (2 kinds).
+//
+// IMPORTANT DIFFERENCE from every category before this one: engineLayout /
+// recoveryMechanism / rcsArrangement types declare STRUCTURE only — their
+// parameterSchema lists which numbers a rocket/stage build will need to
+// supply, but never a value itself (that's filled in per-build). thruster /
+// rcsThruster / fuel / metal are the opposite: every key each one declares
+// is a FIXED, real-world spec of that named hardware/material — "Merlin-1D
+// class" HAS a Ve, an efficiency, a gimbal range, etc., the same way a real
+// engine datasheet does. NONE of that is fleet-editable. The only build-time
+// choice for a thruster/rcsThruster is a separate mass-flow-rate field (not
+// part of this schema at all, bounded by the type's own fixed
+// maxMassFlowRate) — see PHASE3_PROMPT.md §2.1/2.3/§4.
+//
+// withFixedValues()/makeThruster()/makeRcsThruster()/makeFuel()/makeMetal()
+// below are the generic "maker" pattern for this: a shared schema SHAPE per
+// kind (label/unit/min/max, still used by the Components Library page's
+// display table exactly like every other category) plus a values bag that
+// gets stamped onto it. Adding a second engine — say a smaller vacuum-
+// optimized thruster — is just another makeThruster(...) call with its own
+// id/displayName/values, zero changes anywhere else, same as every other
+// registry category in this file.
+//
+// Performance categories (thruster, rcsThruster) deliberately have NO
+// `frame` at all — they aren't placed/shaped in space themselves, they're
+// plugged into an engineLayout's or rcsArrangement's slots, which is where
+// the geometry lives.
+// ============================================================================
+
+// Stamps a {key: value} bag onto a schema's entries (adding a `value` field
+// to each), after checking the bag exactly matches the schema's own keys —
+// a missing or unrecognized key throws immediately. This is a build-time-
+// only sanity check (runs once, when the seed registry is built), so a
+// typo'd key fails loudly at load time instead of silently shipping an
+// "undefined" spec for some type.
+function withFixedValues(schema, values) {
+  const missing = schema.filter(p => !(p.key in values)).map(p => p.key);
+  if (missing.length) throw new Error(`withFixedValues: missing fixed value(s) for key(s): ${missing.join(', ')}`);
+  const extra = Object.keys(values).filter(k => !schema.some(p => p.key === k));
+  if (extra.length) throw new Error(`withFixedValues: value(s) given for key(s) not in schema: ${extra.join(', ')}`);
+  return schema.map(p => ({ ...p, value: values[p.key] }));
+}
+
+// Schema SHAPES, one per (category, kind) — shared by every concrete type
+// of that kind, exactly like frame-building helpers (ringSlots, etc.) are
+// shared by every concrete engineLayout. Only 'chemical' exists today for
+// thruster; a future 'electric'/ion kind would get its own shape here and
+// its own makeThruster-style call, per the same kind-discriminator pattern
+// already used elsewhere (e.g. rcs.js branching on RCS `kind`).
+const THRUSTER_CHEMICAL_SCHEMA = [
+  { key: 've', label: 'Exhaust velocity', unit: 'm/s', min: 500 },
+  { key: 'efficiency', label: 'Efficiency', unit: 'frac', min: 0.1, max: 1 },
+  { key: 'maxMassFlowRate', label: 'Max mass flow rate', unit: 'kg/s', min: 0.1 },
+  { key: 'gimbalCapable', label: 'Gimbal capable', unit: 'bool' },
+  { key: 'gimbalMaxDeg', label: 'Gimbal range', unit: 'deg', min: 0, max: 45 },
+  { key: 'gimbalRateDegS', label: 'Gimbal slew rate', unit: 'deg/s', min: 1 },
+  { key: 'minThrottleFrac', label: 'Throttle floor', unit: 'frac', min: 0, max: 0.95 },
+  { key: 'maxThrottleRateFrac', label: 'Throttle change rate', unit: '/s', min: 0.01 },
+];
+
+function makeThruster(id, displayName, description, values) {
+  return {
+    id, category: 'thruster', kind: 'chemical', displayName, description,
+    parameterSchema: withFixedValues(THRUSTER_CHEMICAL_SCHEMA, values),
+  };
+}
+
+// A thruster type is a FIXED performance profile (Ve, efficiency, gimbal
+// envelope, throttle envelope) that an engineLayout slot group references.
+// At rocket-build time, only mass flow rate is chosen (≤ maxMassFlowRate);
+// thrust and engine mass both derive from that (see PHASE3_PROMPT.md §1
+// formulas) — nothing here is itself a build-time-editable number.
+//
+// Values below reproduce today's Falcon-9-class octaweb defaults exactly
+// (config.js's DEFAULT_VEHICLE: engineFMax 600,000 N @ engineVe 2,900 m/s
+// → maxMassFlowRate = 600,000 / 2,900 ≈ 207 kg/s; gimbal ±20° @ 40°/s;
+// throttle floor 40%, change rate 0.5/s), so wiring a fleet build to this
+// type later (Step D/E) won't shift any existing vehicle's numbers.
+// `efficiency` has no such anchor yet — it's a placeholder pending the real
+// engine-mass formula refinement noted in PHASE3_PROMPT.md §1.12.
+function buildThrusterMerlin1DClass() {
+  return makeThruster(
+    'merlin-1d-class',
+    'Merlin-1D class',
+    'Fixed-performance chemical engine type. Ve, efficiency, gimbal range/rate, and throttle floor/rate are all locked in by the type — a rocket build only ever chooses a mass flow rate (≤ this type\'s max), which determines thrust and engine mass.',
+    {
+      ve: 2900,
+      efficiency: 0.9,
+      maxMassFlowRate: 207,
+      gimbalCapable: true,
+      gimbalMaxDeg: 20,
+      gimbalRateDegS: 40,
+      minThrottleFrac: 0.4,
+      maxThrottleRateFrac: 0.5,
+    }
+  );
+}
+
+// Same idea as thruster, but for RCS nozzles — an rcsArrangement's pods
+// reference one of these instead of declaring rcsThrust/rcsVe directly
+// (those keys move OUT of rcsArrangement's parameterSchema in Step B).
+const RCS_THRUSTER_COLD_GAS_SCHEMA = [
+  { key: 've', label: 'Exhaust velocity', unit: 'm/s', min: 100 },
+  { key: 'efficiency', label: 'Efficiency', unit: 'frac', min: 0.1, max: 1 },
+  { key: 'maxMassFlowRate', label: 'Max mass flow rate', unit: 'kg/s', min: 0.001 },
+];
+
+function makeRcsThruster(id, displayName, description, values) {
+  return {
+    id, category: 'rcsThruster', kind: 'coldGas', displayName, description,
+    parameterSchema: withFixedValues(RCS_THRUSTER_COLD_GAS_SCHEMA, values),
+  };
+}
+
+// Values reproduce today's RCS defaults exactly (config.js's DEFAULT_VEHICLE:
+// rcsThrust 1,100 N @ rcsVe 2,200 m/s → maxMassFlowRate = 1,100 / 2,200 = 0.5
+// kg/s per nozzle), same continuity reasoning as the main thruster above.
+function buildRcsThrusterColdGasSmall() {
+  return makeRcsThruster(
+    'cold-gas-small',
+    'Cold-gas thruster (small)',
+    'Fixed-performance RCS nozzle type. Only mass flow rate is chosen per rocket build (≤ this type\'s max); thrust follows from it and the type\'s own Ve/efficiency.',
+    {
+      ve: 2200,
+      efficiency: 0.9,
+      maxMassFlowRate: 0.5,
+    }
+  );
+}
+
+// A fuel type declares only propellant density — tank dimensions (and
+// therefore fuel mass) are chosen per rocket/stage build.
+const FUEL_LIQUID_SCHEMA = [
+  { key: 'propellantDensity', label: 'Propellant density', unit: 'kg/m3', min: 100 },
+];
+
+function makeFuel(id, displayName, description, values) {
+  return {
+    id, category: 'fuel', kind: 'liquid', displayName, description,
+    parameterSchema: withFixedValues(FUEL_LIQUID_SCHEMA, values),
+  };
+}
+
+// 1,030 kg/m³ — a representative combined RP-1 (~810 kg/m³) + LOX
+// (~1,141 kg/m³) average density, the standard simplification for treating
+// a bipropellant tank's contents as one effective propellant density.
+function buildFuelRp1Lox() {
+  return makeFuel(
+    'rp1-lox',
+    'RP-1 / LOX',
+    'Propellant type. Declares only propellant density — tank size (and therefore fuel mass) is decided per rocket/stage build.',
+    { propellantDensity: 1030 }
+  );
+}
+
+// A metal type declares only density — used for body shell, legs (same
+// metal as the body, no separate legs-metal field), and payload-space
+// container mass (which can pick its OWN, different metal type).
+const METAL_ALLOY_SCHEMA = [
+  { key: 'density', label: 'Density', unit: 'kg/m3', min: 500 },
+];
+
+function makeMetal(id, displayName, description, values) {
+  return {
+    id, category: 'metal', kind: 'alloy', displayName, description,
+    parameterSchema: withFixedValues(METAL_ALLOY_SCHEMA, values),
+  };
+}
+
+// 2,700 kg/m³ — a representative aluminium-lithium alloy density (real
+// Al-Li alloys such as 2195 run roughly 2,600–2,780 kg/m³, noticeably
+// lighter than a standard aluminium airframe alloy like 2024 at ~2,780).
+function buildMetalAlLiAlloy() {
+  return makeMetal(
+    'al-li-alloy',
+    'Aluminium-Lithium alloy',
+    'Structural metal type. Declares only density — used to derive body-shell, legs, and payload-space-container mass from whatever volume those structures work out to.',
+    { density: 2700 }
+  );
+}
+
+// payloadSpace: unlike the four pure-performance categories above, this
+// DOES have a frame — it's a physical container with its own geometry.
+// Two kinds in the same category (proving it isn't tied to one silhouette,
+// same pattern as recoveryMechanism's two kinds): a simple nose cap sized
+// to match the stage's own body width, and a wider "bulged" fairing that
+// pokes out past it. structuralVolume/internalVolume are deliberately
+// FORMULAS (functions of the type's own dimension keys, not stored
+// numbers) — placeholder-precision silhouette approximations for now (see
+// PHASE3_PROMPT.md §1.12's "dummy value first" approach); the shape of the
+// formula (inputs -> volume) is what's load-bearing here, not the exact
+// coefficients, which can be refined later without touching anything that
+// calls these.
+function buildPayloadSpaceNoseCap() {
+  return {
+    id: 'cap-standard',
+    category: 'payloadSpace',
+    kind: 'noseCapShape',
+    displayName: 'Standard nose cap',
+    description: 'Simple cone-shaped payload container sized to the stage\'s own body width — no bulge past it.',
+    frame: {
+      structuralVolume: (capHeight, capWidth) => {
+        const r = capWidth / 2;
+        const slant = Math.sqrt(r * r + capHeight * capHeight);
+        const lateralArea = Math.PI * r * slant; // cone lateral surface
+        const shellThicknessFrac = 0.01; // thin-shell approximation
+        return lateralArea * (r * shellThicknessFrac);
+      },
+      internalVolume: (capHeight, capWidth) => {
+        const r = capWidth / 2;
+        return (1 / 3) * Math.PI * r * r * capHeight; // cone volume
+      },
+    },
+    parameterSchema: [
+      { key: 'capHeight', label: 'Cap height', unit: 'm', min: 0.2 },
+      { key: 'capWidth', label: 'Cap base width', unit: 'm', min: 0.2 },
+    ],
+  };
+}
+
+function buildPayloadSpaceBulged() {
+  return {
+    id: 'cap-bulged',
+    category: 'payloadSpace',
+    kind: 'bulgedCapShape',
+    displayName: 'Bulged payload fairing',
+    description: 'Wider fairing-style payload container that bulges out past the stage\'s own body width, tapering back to a point at the nose. Bulge diameter gets capped relative to the stage\'s own fuel-tank diameter at build time (MAX_BULGE_DIAMETER_RATIO), not here.',
+    frame: {
+      // Simplified silhouette: bottom 60% of the height is a cylinder at
+      // the bulge radius, top 40% tapers to a point — a reasonable
+      // fairing-like shape, not a modeled aerodynamic profile.
+      structuralVolume: (capHeight, capWidth, bulgeWidth) => {
+        const rBulge = bulgeWidth / 2;
+        const coneH = capHeight * 0.4, cylH = capHeight * 0.6;
+        const coneSlant = Math.sqrt(rBulge * rBulge + coneH * coneH);
+        const lateralArea = Math.PI * rBulge * coneSlant + 2 * Math.PI * rBulge * cylH;
+        const shellThicknessFrac = 0.01;
+        return lateralArea * (rBulge * shellThicknessFrac);
+      },
+      internalVolume: (capHeight, capWidth, bulgeWidth) => {
+        const rBulge = bulgeWidth / 2;
+        const coneH = capHeight * 0.4, cylH = capHeight * 0.6;
+        return (1 / 3) * Math.PI * rBulge * rBulge * coneH + Math.PI * rBulge * rBulge * cylH;
+      },
+    },
+    parameterSchema: [
+      { key: 'capHeight', label: 'Cap height', unit: 'm', min: 0.2 },
+      { key: 'capWidth', label: 'Cap base width', unit: 'm', min: 0.2 },
+      { key: 'bulgeWidth', label: 'Bulge width', unit: 'm', min: 0.2 },
+    ],
+  };
+}
+
 function seedComponentLibrary() {
   return [
     buildOctaweb9(),
     buildLegsSwingout4(),
     buildCatchFitting2Pin(),
     buildRcs4Pod2Nozzle(),
+    buildThrusterMerlin1DClass(),
+    buildRcsThrusterColdGasSmall(),
+    buildFuelRp1Lox(),
+    buildMetalAlLiAlloy(),
+    buildPayloadSpaceNoseCap(),
+    buildPayloadSpaceBulged(),
   ];
 }
 
