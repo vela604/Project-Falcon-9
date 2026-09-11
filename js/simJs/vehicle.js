@@ -1,6 +1,13 @@
 // ============================================================================
-// vehicle.js — Engine layout (9 engines), mass/CoM/inertia, and the
-// symmetric/asymmetric merge-group system for the octaweb circle diagram.
+// vehicle.js — Engine layout, mass/CoM/inertia, and the symmetric/asymmetric
+// merge-group system for the engine circle diagram.
+//
+// PHASE 2: the engine layout is no longer hardcoded to 9 Falcon-9 engines —
+// it's built generically from CONFIG.ENGINE_LAYOUT (resolved in config.js
+// against componentLibrary.js's registry). A different `ringWithCenter`
+// engine-layout type (any outer-engine count) works with ZERO changes to
+// this file — only `kind` (a sub-shape discriminator, per the Phase 2
+// no-branching-on-type.id rule) is ever inspected, never a specific type id.
 // ============================================================================
 
 // Each engine: { id, angleDeg (null for center), x (2D projected lateral
@@ -11,25 +18,16 @@ const ENGINES = [];
 function buildEngineLayout() {
   ENGINES.length = 0;
 
-  ENGINES.push({
-    id: 'C', angleDeg: null, x: 0, isCenter: true, gimbal: true,
-    Fmax: CONFIG.ENGINE_F_MAX, Fmin: CONFIG.ENGINE_F_MAX * CONFIG.ENGINE_F_MIN_FRAC,
-    Ve: CONFIG.ENGINE_VE,
-    throttle: 0, gimbalDeg: 0, currentF: 0,
-  });
-
-  // 8 outer engines at 45° increments around the octaweb ring. Their 2D
-  // lateral position is the projection onto the single simulated axis:
-  //   x = R * cos(angle)
-  // This naturally produces 5 distinct lateral positions:
-  //   0° -> +R        180° -> -R          (the "extreme" pair)
-  //   45°,315° -> +0.707R   135°,225° -> -0.707R   (the "diagonal" pairs, 2 engines each)
-  //   90°,270° -> 0                                (the "on-axis" pair)
-  const angles = [0, 45, 90, 135, 180, 225, 270, 315];
-  angles.forEach(a => {
-    const x = CONFIG.OCTA_RADIUS * Math.cos(a * Math.PI / 180);
+  // Every slot the registry's engine-layout type declares — for the
+  // built-in octaweb-merlin9 this is 1 center + 8 outer at 45° spacing,
+  // reproducing the original hardcoded layout exactly; a different
+  // `ringWithCenter` type (say, 6 outer engines) needs no changes here at
+  // all, just a different registry entry.
+  CONFIG.ENGINE_LAYOUT.frame.slots.forEach(slot => {
+    const pos = slot.position(CONFIG.OCTA_RADIUS);
     ENGINES.push({
-      id: 'E' + a, angleDeg: a, x: x, isCenter: false, gimbal: false,
+      id: slot.id, angleDeg: slot.angleDeg, x: pos.x,
+      isCenter: slot.role === 'center', gimbal: slot.gimbalCapable,
       Fmax: CONFIG.ENGINE_F_MAX, Fmin: CONFIG.ENGINE_F_MAX * CONFIG.ENGINE_F_MIN_FRAC,
       Ve: CONFIG.ENGINE_VE,
       throttle: 0, gimbalDeg: 0, currentF: 0,
@@ -42,19 +40,24 @@ function getEngine(angleDeg) {
 }
 
 // ---------------------------------------------------------------------------
-// Default groups: engines whose angles are 180° apart (true octagon opposite
-// pairs). This gives exactly 4 pairs + center = 5 sliders, matching the
-// design brief. Every default group is inherently torque-symmetric — firing
-// a group's two engines at equal throttle never produces yaw about the CoM
-// beyond the intended thrust axis.
+// Default groups: derived from the registry's mergeTopology.symmetric list
+// (id-pairs, e.g. ['E90','E270']) resolved back to angle-pairs — this is
+// the generic replacement for the old hardcoded 4-pair Falcon-9 table.
+// Whatever ring size the active engine layout has, this produces one group
+// per 180°-opposite pair automatically. Falls back to no groups if the
+// active layout doesn't expose a mergeTopology at all (e.g. a future
+// non-ring engine-layout `kind` with no natural opposite-pair concept) —
+// a defensive check on the SHAPE of the frame, not a branch on type.id.
 // ---------------------------------------------------------------------------
 function defaultPairGroups() {
-  return [
-    { name: 'On-Axis',  angles: [90, 270] },
-    { name: 'Diag-A',   angles: [45, 225] },
-    { name: 'Diag-B',   angles: [135, 315] },
-    { name: 'Extreme',  angles: [0, 180] },
-  ];
+  const layout = CONFIG.ENGINE_LAYOUT;
+  if (!layout || !layout.frame.mergeTopology) return [];
+  const slotById = {};
+  layout.frame.slots.forEach(s => { slotById[s.id] = s; });
+  return layout.frame.mergeTopology.symmetric.map(([idA, idB]) => {
+    const a = slotById[idA], b = slotById[idB];
+    return { name: `${Math.round(a.angleDeg)}°/${Math.round(b.angleDeg)}°`, angles: [a.angleDeg, b.angleDeg] };
+  });
 }
 
 // mergeState.groups is the live list of controllable peripheral groups.
@@ -69,7 +72,9 @@ let mergeState = {
 // Validates that the merge doesn't create an unbalanced-torque configuration:
 // for 'symmetric' mode groups must already be internally opposite-safe; for
 // 'asymmetric' mode groups must share the same |x| projection so a shared
-// slider never creates a differential-thrust rotation about Z.
+// slider never creates a differential-thrust rotation about Z. Already
+// generic (works off computed x positions, not hardcoded angles) — no
+// changes needed here for a different ring size.
 function mergeGroups(groupNameA, groupNameB) {
   const a = mergeState.groups.find(g => g.name === groupNameA);
   const b = mergeState.groups.find(g => g.name === groupNameB);
