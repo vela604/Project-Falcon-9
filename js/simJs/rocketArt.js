@@ -37,7 +37,7 @@ function drawRocketArt(ctx, W, H, mpp, opts) {
 
   // ============================================================================
   // LEGS SETUP — geometry sourced from the active recovery TYPE (Components
-  // Library), never hardcoded. PHASE 2 STEP E:
+  // Library), never hardcoded. PHASE 2 STEP E/G:
   //  - `hingeGeometry(H)` gives {hingeY, legLength, maxSweepRad, pistonMountY}
   //    for any `legsOnVehicle`-kind type (see componentLibrary.js) — a new
   //    type with a different hinge/length/sweep needs zero changes here.
@@ -50,8 +50,15 @@ function drawRocketArt(ctx, W, H, mpp, opts) {
   //    this same 4-leg illusion (documented limitation, not yet
   //    generalized — see PHASE2_PROMPT.md Step E scope) rather than
   //    silently drawing the wrong number of legs.
+  //  - STEP G: `opts.recoveryType` lets a caller (e.g. the fleet editor
+  //    previewing a specific, not-necessarily-active record) pass the
+  //    RESOLVED type for that exact vehicle instead of relying on the
+  //    globally-active CONFIG.RECOVERY_TYPE. Falls back to CONFIG for
+  //    callers that don't know/care (the live simulator, the home page's
+  //    "current vehicle" card) — and further to null (no legs, no crash)
+  //    on a page that hasn't even loaded config.js at all.
   // ============================================================================
-  const recoveryType = (typeof CONFIG !== 'undefined') ? CONFIG.RECOVERY_TYPE : null;
+  const recoveryType = opts.recoveryType || ((typeof CONFIG !== 'undefined') ? CONFIG.RECOVERY_TYPE : null);
   const showLegs = !!(recoveryType && recoveryType.capabilities && recoveryType.capabilities.deploysOnVehicle);
   const hingeGeometryFn = (recoveryType && recoveryType.frame && typeof recoveryType.frame.hingeGeometry === 'function')
     ? recoveryType.frame.hingeGeometry
@@ -259,23 +266,28 @@ function drawRocketArt(ctx, W, H, mpp, opts) {
   }
 
   // ============================================================================
-  // RCS — rounded-rectangle pods + gas puffs. PHASE 2 STEP E: pod IDENTITY
-  // and POSITION come from the active RCS type's `frame.pods` (registry),
-  // matching rcs.js's Step D decision-(a) scope — no hardcoded {TL,TR,BL,BR}
-  // literal. The fire-logic upstream (rcs.js) is still tuned to the
-  // 4-corner "cornerPods" `kind`, so this drawing code only renders pods for
-  // that `kind`; a future non-4-corner RCS kind needs its own drawing branch
-  // (branching on `kind`, never on a type's `id`, per the hard rule).
+  // RCS — rounded-rectangle pods + gas puffs. PHASE 2 STEP E/G: pod IDENTITY
+  // and POSITION come from the RCS type's `frame.pods` (registry), matching
+  // rcs.js's Step D decision-(a) scope — no hardcoded {TL,TR,BL,BR} literal.
+  // `opts.rcsType` lets a caller pass the RESOLVED type for a specific
+  // vehicle (see the `opts.recoveryType` note above) instead of relying on
+  // the globally-active CONFIG.RCS_TYPE. The fire-logic upstream (rcs.js)
+  // is still tuned to the 4-corner "cornerPods" `kind`, so this drawing
+  // code only renders pods for that `kind`; a future non-4-corner RCS kind
+  // needs its own drawing branch (branching on `kind`, never on a type's
+  // `id`, per the hard rule).
   // ============================================================================
   const firing = opts.firing || {};
   const pod = opts.pod || {};
   // RCS pod margins: explicit opts win (used by renderVehiclePreview() when
   // showing a specific fleet record), otherwise fall back to the globally
-  // active CONFIG (used by the live simulator's own draw call).
-  const rcsTopMargin = opts.rcsTopMargin !== undefined ? opts.rcsTopMargin : CONFIG.RCS_TOP_MARGIN;
-  const rcsBottomMargin = opts.rcsBottomMargin !== undefined ? opts.rcsBottomMargin : CONFIG.RCS_BOTTOM_MARGIN;
+  // active CONFIG (used by the live simulator's own draw call) — guarded
+  // since a page that never loads config.js (the fleet editor) has no
+  // CONFIG global at all.
+  const rcsTopMargin = opts.rcsTopMargin !== undefined ? opts.rcsTopMargin : ((typeof CONFIG !== 'undefined') ? CONFIG.RCS_TOP_MARGIN : 0);
+  const rcsBottomMargin = opts.rcsBottomMargin !== undefined ? opts.rcsBottomMargin : ((typeof CONFIG !== 'undefined') ? CONFIG.RCS_BOTTOM_MARGIN : 0);
 
-  const rcsType = (typeof CONFIG !== 'undefined') ? CONFIG.RCS_TYPE : null;
+  const rcsType = opts.rcsType || ((typeof CONFIG !== 'undefined') ? CONFIG.RCS_TYPE : null);
   const podDefs = (rcsType && rcsType.kind === 'cornerPods' && rcsType.frame && rcsType.frame.pods) ? rcsType.frame.pods : [];
   if (rcsType && rcsType.kind !== 'cornerPods' && podDefs.length === 0) {
     console.warn(`drawRocketArt: RCS type "${rcsType.id}" (kind "${rcsType.kind}") has no matching pod artwork yet \u2014 RCS pods skipped this frame.`);
@@ -414,11 +426,15 @@ function drawRocketArt(ctx, W, H, mpp, opts) {
 // simulator rather than a generic placeholder.
 //
 // `vehicle` is optional — an object with { height, width, rcsTopMargin,
-// rcsBottomMargin } (real meters), e.g. a raw fleet record from fleet.js.
-// Pass it explicitly when showing a specific record that may not be the
-// currently-active one (the fleet page's editor). Omit it to fall back to
-// the globally active CONFIG (the home page always shows the active/
-// selected vehicle, so CONFIG already IS the right vehicle there).
+// rcsBottomMargin, recoveryTypeId, rcsTypeId } (the last two new in Step G),
+// e.g. a fleet record from fleet.js. Pass it explicitly when showing a
+// specific record that may not be the currently-active one (the fleet
+// page's editor) — when `recoveryTypeId`/`rcsTypeId` are present, THIS
+// record's own hardware types are resolved and drawn (correct legs/pods
+// for whatever's actually selected in the form), rather than whatever the
+// globally-active CONFIG happens to be. Omit `vehicle` entirely to fall
+// back to CONFIG outright (the home page always shows the active/selected
+// vehicle, so CONFIG already IS the right vehicle there).
 //
 // Sizing: the canvas's CSS WIDTH is the one fixed thing (set by the page's
 // layout/CSS) — the rocket's width is always exactly 60% of it. Height then
@@ -462,8 +478,18 @@ function renderVehiclePreview(canvas, vehicle) {
   const baseX = cssW / 2;
   const baseY = (cssH - H) / 2 + H; // top margin == bottom margin
 
+  // STEP G: resolve THIS vehicle's own recovery/RCS types when it names
+  // them, instead of always drawing whatever the globally-active CONFIG is.
+  // getComponentType() comes from componentLibrary.js, which every page
+  // that calls renderVehiclePreview() already loads before this file.
+  const recoveryType = (v.recoveryTypeId && typeof getComponentType === 'function') ? getComponentType(v.recoveryTypeId) : null;
+  const rcsType = (v.rcsTypeId && typeof getComponentType === 'function') ? getComponentType(v.rcsTypeId) : null;
+
   pctx.save();
   pctx.translate(baseX, baseY);
-  drawRocketArt(pctx, W, H, mpp, { rcsTopMargin: v.rcsTopMargin, rcsBottomMargin: v.rcsBottomMargin });
+  drawRocketArt(pctx, W, H, mpp, {
+    rcsTopMargin: v.rcsTopMargin, rcsBottomMargin: v.rcsBottomMargin,
+    recoveryType, rcsType,
+  });
   pctx.restore();
 }

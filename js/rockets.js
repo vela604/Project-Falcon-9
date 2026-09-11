@@ -49,25 +49,19 @@ function fmtParamValue(p, value) {
   }
 }
 
-// A small flat adapter for renderVehiclePreview()/drawRocketArt(), which
-// (per rocketArt.js) still take rcsTopMargin/rcsBottomMargin as flat
-// top-level fields rather than the nested `params` shape fleet records use.
-// NOTE (known Step-F-scope limitation): drawRocketArt() sources the LEG and
-// RCS-POD STRUCTURE (hinge geometry, pod list) from the globally-active
-// CONFIG.RECOVERY_TYPE/CONFIG.RCS_TYPE — i.e. whichever vehicle is
-// currently selected to fly — not from this specific record's own
-// engineTypeId/recoveryTypeId/rcsTypeId. So previewing/editing a fleet
-// vehicle that uses DIFFERENT hardware types than the active one will show
-// the active vehicle's leg/pod shape with this record's own numbers
-// (margins, height/width). Full per-record artwork needs drawRocketArt()
-// to accept resolved types as parameters instead of reading CONFIG — out of
-// this step's scope (flagged as a follow-up, not silently glossed over).
+// A small adapter for renderVehiclePreview()/drawRocketArt(): the two
+// margin fields are still flat top-level (matching drawRocketArt()'s opts
+// shape) rather than nested under `params`, and STEP G added
+// recoveryTypeId/rcsTypeId so the preview draws THIS record's own hardware
+// (legs vs. catch-fitting, pod count) instead of whatever's globally active.
 function previewVehicleFor(record) {
   return {
     height: record.height,
     width: record.width,
     rcsTopMargin: record.params ? record.params.rcsTopMargin : undefined,
     rcsBottomMargin: record.params ? record.params.rcsBottomMargin : undefined,
+    recoveryTypeId: record.recoveryTypeId,
+    rcsTypeId: record.rcsTypeId,
   };
 }
 
@@ -365,9 +359,8 @@ function updateCapsPreview() {
   set('c-burn', caps.burnTimeS.toFixed(0) + ' s');
 
   // Real vehicle artwork for whatever's currently in the form — same
-  // drawRocketArt() the flight simulator uses, drawn idle. See
-  // previewVehicleFor()'s note about the leg/RCS-pod SHAPE still coming
-  // from the globally-active vehicle, not this form's own selected types.
+  // drawRocketArt() the flight simulator uses, drawn idle, showing THIS
+  // form's own selected recovery/RCS types (see previewVehicleFor()).
   safeRenderPreview(document.getElementById('vehiclePreviewCanvas'), previewVehicleFor(data));
 }
 
