@@ -24,10 +24,24 @@ const FIELD_MAP = [
   { id: 'f-dragCd', key: 'dragCd' },
 ];
 
-let editingId = null; // null = creating a new (unsaved) vehicle
+let editingId = null; // set only while the edit FORM is open
+let viewingId = null; // set only while the read-only detail panel is open
 
 function fmtMass(kg) { return (kg / 1000).toLocaleString(undefined, { maximumFractionDigits: 1 }) + ' t'; }
 function fmtForce(n) { return (n / 1000).toLocaleString(undefined, { maximumFractionDigits: 0 }) + ' kN'; }
+
+// Guards the preview draw call so a missing/failed rocketArt.js load (wrong
+// folder, blocked request, etc.) can't throw and take the rest of the
+// editor's update logic down with it.
+function safeRenderPreview(canvas, vehicle) {
+  if (typeof renderVehiclePreview !== 'function') {
+    console.warn('renderVehiclePreview() is not defined — check that js/simJs/rocketArt.js ' +
+      'is present at that exact path (js/simJs/, not js/) and loads before this script.');
+    return;
+  }
+  try { renderVehiclePreview(canvas, vehicle); }
+  catch (e) { console.error('Vehicle preview render failed:', e); }
+}
 
 // ---------------------------------------------------------------------------
 // Fleet list
@@ -41,7 +55,7 @@ function renderFleetList() {
   fleet.forEach(r => {
     const caps = rocketCapabilities(r);
     const row = document.createElement('div');
-    row.className = 'fleet-row' + (r.id === editingId ? ' active' : '');
+    row.className = 'fleet-row' + ((r.id === editingId || r.id === viewingId) ? ' active' : '');
     row.innerHTML = `
       <div class="fleet-row-top">
         <span class="fleet-row-name">${escapeHtml(r.name)}</span>
@@ -69,7 +83,7 @@ function renderFleetList() {
       e.stopPropagation();
       const id = btn.dataset.id;
       const act = btn.dataset.act;
-      if (act === 'fly') { setSelectedId(id); renderFleetList(); }
+      if (act === 'fly') { setSelectedId(id); showVehicleDetail(id); }
       if (act === 'edit') openEditorFor(id);
       if (act === 'dup') duplicateRocket(id);
       if (act === 'del') deleteRocketFlow(id);
@@ -82,6 +96,59 @@ function escapeHtml(s) {
 }
 
 // ---------------------------------------------------------------------------
+// Read-only detail panel — "Fly this" opens this instead of the edit form:
+// figure + every spec, laid out flex (figure | grouped spec lists), same
+// idea as the home page's vehicle card. "Edit" (here or in the fleet row)
+// still goes to the actual editable form.
+// ---------------------------------------------------------------------------
+function showVehicleDetail(id) {
+  const fleet = loadFleet();
+  const r = fleet.find(v => v.id === id);
+  if (!r) return;
+  viewingId = id;
+  editingId = null;
+
+  const set = (elId, val) => document.getElementById(elId).textContent = val;
+
+  document.getElementById('detailTitle').textContent = r.name;
+  document.getElementById('detailFlying').style.display = (r.id === getSelectedId()) ? '' : 'none';
+
+  set('d-height', r.height + ' m');
+  set('d-width', r.width + ' m');
+  set('d-dryMass', fmtMass(r.dryMass));
+  set('d-fuelMassMax', fmtMass(r.fuelMassMax));
+  set('d-octaRadius', r.octaRadius + ' m');
+  set('d-engineFMax', fmtForce(r.engineFMax));
+  set('d-engineFMinFrac', Math.round(r.engineFMinFrac * 100) + '%');
+  set('d-engineVe', r.engineVe.toLocaleString() + ' m/s');
+  set('d-engineThrustRate', r.engineThrustRate + ' /s');
+  set('d-gimbalMaxDeg', '±' + r.gimbalMaxDeg + '°');
+  set('d-gimbalRateDegS', r.gimbalRateDegS + ' °/s');
+  set('d-rcsThrust', r.rcsThrust + ' N');
+  set('d-rcsVe', r.rcsVe + ' m/s');
+  set('d-rcsXOffset', r.rcsXOffset + ' m');
+  set('d-rcsTopMargin', r.rcsTopMargin + ' m');
+  set('d-rcsBottomMargin', r.rcsBottomMargin + ' m');
+  set('d-rcsPwmPeriod', r.rcsPwmPeriod + ' s');
+  set('d-dragCd', r.dragCd);
+
+  const caps = rocketCapabilities(r);
+  set('d-c-thrust', fmtForce(caps.totalMaxThrust));
+  set('d-c-wet', fmtMass(caps.wetMass));
+  set('d-c-twr', caps.twrMax.toFixed(2));
+  set('d-c-dv', caps.deltaV.toFixed(0) + ' m/s');
+  set('d-c-burn', caps.burnTimeS.toFixed(0) + ' s');
+
+  safeRenderPreview(document.getElementById('detailPreviewCanvas'), r);
+
+  document.getElementById('editorEmpty').classList.add('hide');
+  document.getElementById('editorForm').classList.remove('show');
+  document.getElementById('vehicleDetail').classList.add('show');
+
+  renderFleetList();
+}
+
+// ---------------------------------------------------------------------------
 // Editor
 // ---------------------------------------------------------------------------
 function openEditorFor(id) {
@@ -89,6 +156,7 @@ function openEditorFor(id) {
   const r = fleet.find(v => v.id === id);
   if (!r) return;
   editingId = id;
+  viewingId = null;
   fillForm(r);
   document.getElementById('editorTitle').textContent = r.name;
   document.getElementById('btnDuplicate').style.display = '';
@@ -101,6 +169,7 @@ function openEditorFor(id) {
 
 function openEditorNew() {
   editingId = null;
+  viewingId = null;
   fillForm(defaultVehicleData());
   document.getElementById('f-name').value = 'New Vehicle';
   document.getElementById('editorTitle').textContent = 'New Vehicle';
@@ -120,13 +189,16 @@ function fillForm(r) {
 }
 
 function showEditor() {
+  document.getElementById('vehicleDetail').classList.remove('show');
   document.getElementById('editorEmpty').classList.add('hide');
   document.getElementById('editorForm').classList.add('show');
 }
 
 function closeEditor() {
   editingId = null;
+  viewingId = null;
   document.getElementById('editorForm').classList.remove('show');
+  document.getElementById('vehicleDetail').classList.remove('show');
   document.getElementById('editorEmpty').classList.remove('hide');
   renderFleetList();
 }
@@ -163,6 +235,11 @@ function updateCapsPreview() {
   set('c-twr', caps.twrMax.toFixed(2));
   set('c-dv', caps.deltaV.toFixed(0) + ' m/s');
   set('c-burn', caps.burnTimeS.toFixed(0) + ' s');
+
+  // Real vehicle artwork for whatever's currently in the form — same
+  // drawRocketArt() the flight simulator uses, drawn idle. `data` already
+  // has height/width/rcsTopMargin/rcsBottomMargin under the right keys.
+  safeRenderPreview(document.getElementById('vehiclePreviewCanvas'), data);
 }
 
 // ---------------------------------------------------------------------------
@@ -208,7 +285,7 @@ function deleteRocketFlow(id) {
   if (!r || r.locked) return;
   if (!confirm(`Delete "${r.name}"? This can't be undone.`)) return;
   deleteRocket(id);
-  if (editingId === id) closeEditor();
+  if (editingId === id || viewingId === id) closeEditor();
   else renderFleetList();
 }
 
@@ -222,6 +299,7 @@ window.addEventListener('DOMContentLoaded', () => {
   document.getElementById('btnCancel').addEventListener('click', closeEditor);
   document.getElementById('btnDelete').addEventListener('click', () => editingId && deleteRocketFlow(editingId));
   document.getElementById('btnDuplicate').addEventListener('click', () => editingId && duplicateRocket(editingId));
+  document.getElementById('btnDetailEdit').addEventListener('click', () => viewingId && openEditorFor(viewingId));
   document.getElementById('editorForm').addEventListener('submit', handleSubmit);
   document.getElementById('editorForm').addEventListener('input', updateCapsPreview);
 });

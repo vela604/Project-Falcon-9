@@ -66,6 +66,7 @@ html, body {
 .status-dot.running { background: var(--green); box-shadow: 0 0 8px var(--green); }
 .status-dot.paused { background: var(--yellow); box-shadow: 0 0 8px var(--yellow); }
 .status-dot.crashed { background: var(--danger); box-shadow: 0 0 8px var(--danger); }
+.status-dot.landed { background: var(--cyan); box-shadow: 0 0 8px var(--cyan); }
 #statusText { font-weight: 600; letter-spacing: 0.4px; }
 .tb-clock { color: var(--cyan); font-weight: 600; }
 

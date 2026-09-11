@@ -26,6 +26,10 @@ function populateVehicleCard() {
   document.getElementById('specVe').textContent = CONFIG.ENGINE_VE.toLocaleString() + ' m/s';
   document.getElementById('specRcs').textContent = '4 pods (2 nozzles each)';
 
+  // Real vehicle artwork — same drawRocketArt() the flight simulator uses,
+  // drawn idle (legs stowed, no thrust) at full device pixel ratio.
+  renderVehiclePreview(document.getElementById('shipArt'));
+
   const fleetSize = (typeof loadFleet === 'function') ? loadFleet().length : 1;
   const tickerEl = document.getElementById('tickerText');
   tickerEl.innerHTML =

@@ -59,6 +59,22 @@ const CONFIG = {
   // ---------------- Landing legs ----------------
   LEG_DEPLOY_RATE: ACTIVE_VEHICLE.legDeployRate || 0.5, // fraction of full travel per second
 
+  // ---------------- Landing safety envelope ----------------
+  // A touchdown only counts as a LANDING if all of these hold; otherwise
+  // it's a crash. Kept as fixed, generous "don't break the hardware"
+  // numbers rather than per-vehicle tuned values.
+  LANDING_MIN_LEG_DEPLOY: 0.9,     // legs.progress must be at least this deployed
+  LANDING_MAX_VSPEED: 5,           // m/s, max safe descent rate
+  LANDING_MAX_HSPEED: 2.5,         // m/s, max safe lateral speed at touchdown
+  LANDING_MAX_TILT_DEG: 12,        // ± degrees off local vertical
+  LANDING_MAX_OMEGA: 0.15,         // rad/s, max safe spin rate at touchdown
+
+  // Legs cannot be COMMANDED to deploy while the vehicle is still climbing
+  // (powered ascent right off the pad) or moving faster than this, so they
+  // can't be ripped open during launch or a fast reentry. Stowing is always
+  // allowed. See legDeploySafety() in controls.js.
+  LEG_DEPLOY_MAX_SPEED: 200,        // m/s
+
   // ---------------- Simulation ----------------
   DT: 1 / 60,                     // s, fixed physics timestep
 };

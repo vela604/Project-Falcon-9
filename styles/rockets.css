@@ -97,6 +97,30 @@ html, body {
 .editor-head h2 { margin: 0; font-size: 20px; font-weight: 600; }
 .editor-head-actions { display: flex; gap: 8px; flex-shrink: 0; }
 
+#vehiclePreview { display: flex; justify-content: center; margin-bottom: 22px; }
+
+/* Preview canvases get their own neutral "display stage" background rather
+   than being transparent over the page's near-black bg — a light rocket
+   (current Falcon-9-class, near-white) and a future dark one (e.g. a black
+   Starship) both need to read clearly against it, not blend into either
+   extreme. */
+#vehiclePreview canvas, #detailPreviewCanvas {
+  width: 220px; border-radius: 10px;
+  filter: drop-shadow(0 0 18px rgba(53,214,255,0.08));
+  background: radial-gradient(ellipse 90% 65% at 50% 32%, #2b3040 0%, #171a22 100%);
+}
+
+/* ---- Read-only flex detail panel ("Fly this" — view without editing) ---- */
+#vehicleDetail { display: none; }
+#vehicleDetail.show { display: block; }
+
+.detail-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 22px; gap: 12px; }
+.detail-head h2 { margin: 0; font-size: 20px; font-weight: 600; }
+.detail-head-actions { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+
+.detail-body { display: flex; gap: clamp(20px, 4vw, 40px); align-items: flex-start; flex-wrap: wrap; }
+.detail-specs { flex: 1; min-width: 240px; }
+
 .field { margin-bottom: 14px; }
 .field > label { display: block; font-size: 12px; color: var(--dim); margin-bottom: 5px; }
 .field input[type=text], .field input[type=number] {

@@ -17,6 +17,15 @@ let canvas, ctx;
 let showGrid = true;
 let showVectors = true;
 
+// Umbilical tower retract animation: 0 = upright/latched against the
+// vehicle, 1 = fully swung back. Driven off real elapsed time (like the
+// hazard-light blink below) so it animates smoothly regardless of sim
+// speed/pause state, and tracks liftoff directly off current altitude so
+// it needs no reset hook — it just eases back down on its own once the
+// vehicle settles back near the pad.
+let towerTilt = 0;
+let towerTiltLastT = null;
+
 function initCanvas() {
   canvas = document.getElementById('simCanvas');
   ctx = canvas.getContext('2d');
@@ -128,23 +137,159 @@ function drawGroundLine() {
 }
 
 // ---------------------------------------------------------------------------
-// Launch/landing site — kept deliberately minimal: just a thin flat
-// rectangle sitting on top of the ground. No slope, no perspective, no
-// extra structures — a pure flat 2D shape, nothing trying to fake depth.
+// Launch/landing site — a proper pad: ground apron, a raised launch mount
+// with hold-down clamps and a flame duct, and an umbilical/strongback
+// tower with lattice bracing and swing arms. Everything is built from flat
+// rectangles/lines/arcs in true 2D side elevation — no ellipse-foreshortening
+// or perspective tricks anywhere. Sized in real meters (scaled off the
+// rocket's own height/width) via metersPerPixel() so it scales correctly
+// at any zoom level. The rocket rests with its base exactly on the mount's
+// top surface (local y = 0).
 // ---------------------------------------------------------------------------
 function drawLaunchPad() {
   const [px0, py0] = localToScreen(0, 0);
-  if (py0 < -150 || py0 > canvas.height + 150) return; // off-screen, skip entirely
+  if (py0 < -500 || py0 > canvas.height + 500) return; // off-screen, skip entirely
 
   const mpp = metersPerPixel();
-  const padHalfW = 34 / mpp;
-  const padH = 3 / mpp;
+  const m = (meters) => meters / mpp;
 
-  ctx.fillStyle = '#5a5f66';
-  ctx.fillRect(px0 - padHalfW, py0 - padH, padHalfW * 2, padH);
+  // The rocket's base rests exactly at local y=0 (py0). The launch mount's
+  // TOP surface is flush with that; everything else (apron, tower, tanks)
+  // is referenced down from the mount's base so nothing floats or embeds.
+  const mountHalfW = m(9), mountH = m(2.4);
+  const aprY = py0 + mountH; // apron top surface, flush with the mount's base
+
+  // ---- Ground apron ----
+  const apronHalfW = m(50);
+  ctx.fillStyle = '#585d64';
+  ctx.fillRect(px0 - apronHalfW, aprY, apronHalfW * 2, m(2));
   ctx.strokeStyle = '#3f4349';
-  ctx.lineWidth = 1.5;
-  ctx.strokeRect(px0 - padHalfW, py0 - padH, padHalfW * 2, padH);
+  ctx.lineWidth = 1.2;
+  ctx.strokeRect(px0 - apronHalfW, aprY, apronHalfW * 2, m(2));
+  // A few flat expansion-joint seams for a bit of surface detail
+  ctx.strokeStyle = 'rgba(0,0,0,0.18)';
+  ctx.lineWidth = 1;
+  [-0.7, -0.35, 0.35, 0.7].forEach(f => {
+    if (Math.abs(f * apronHalfW) > m(6)) {
+      ctx.beginPath(); ctx.moveTo(px0 + f * apronHalfW, aprY); ctx.lineTo(px0 + f * apronHalfW, aprY + m(2)); ctx.stroke();
+    }
+  });
+
+  // ---- Launch mount / pedestal with hold-down clamps ----
+  // Top surface flush with py0 (where the rocket's base actually sits),
+  // extending down to meet the apron.
+  ctx.fillStyle = '#4a4e54';
+  ctx.fillRect(px0 - mountHalfW, py0, mountHalfW * 2, mountH);
+  ctx.strokeStyle = '#2e3136';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(px0 - mountHalfW, py0, mountHalfW * 2, mountH);
+  // Diagonal support ribs on the mount face
+  ctx.strokeStyle = 'rgba(0,0,0,0.22)';
+  for (let i = -1; i <= 1; i += 2) {
+    ctx.beginPath();
+    ctx.moveTo(px0 + i * mountHalfW * 0.15, py0);
+    ctx.lineTo(px0 + i * mountHalfW * 0.85, aprY);
+    ctx.stroke();
+  }
+  // Hold-down clamp blocks right at the top edge, clasping the rocket's base
+  ctx.fillStyle = '#26282c';
+  [-0.62, -0.22, 0.22, 0.62].forEach(f => {
+    ctx.fillRect(px0 + f * mountHalfW * 2 - m(0.5), py0 - m(0.9), m(1), m(1.1));
+  });
+
+  // Flame duct — a dark slot venting exhaust down through the mount + apron.
+  ctx.fillStyle = '#141518';
+  ctx.fillRect(px0 - m(3.2), py0, m(6.4), mountH + m(9));
+  ctx.strokeStyle = '#0a0b0d';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(px0 - m(3.2), py0, m(6.4), mountH + m(9));
+
+  // ---- Umbilical / strongback tower (base on the apron surface) ----
+  // Stands close to the vehicle, like a real strongback/FSS. At liftoff it
+  // swings back and away from the rocket on a hinge at its base — see the
+  // rotation applied below — rather than just standing there.
+  const rocketH = CONFIG.ROCKET_HEIGHT;
+  const towerOffsetFrac = 0.25;
+  const towerX = px0 + apronHalfW * towerOffsetFrac;
+  const towerW = m(4.4), towerH = m(rocketH * 0.9);
+
+  // Update the retract animation off real elapsed time. "Liftoff" is simply
+  // "clear of the mount" — a couple meters of altitude — so the swing-back
+  // starts right as the vehicle leaves the pad.
+  const nowT = performance.now();
+  const dtReal = towerTiltLastT === null ? 0 : Math.min(0.25, (nowT - towerTiltLastT) / 1000);
+  towerTiltLastT = nowT;
+  const r_ = Math.hypot(state.rx, state.ry);
+  const liftedOff = altitudeFromR(r_) > 2;
+  const tiltTarget = liftedOff ? 1 : 0;
+  const tiltRate = 0.7; // ~1.4s to fully swing back
+  if (tiltTarget > towerTilt) towerTilt = Math.min(tiltTarget, towerTilt + tiltRate * dtReal);
+  else towerTilt = Math.max(tiltTarget, towerTilt - tiltRate * dtReal);
+
+  // Hinge at the tower's base; rotate the whole structure about it. The
+  // tower sits to the +x side of the vehicle, so a positive rotation here
+  // swings its top further away (outward), same sense as a strongback
+  // retracting clear of the stack.
+  const maxTiltRad = 12 * Math.PI / 180; // "a little", not a full topple
+  const tiltAngle = towerTilt * maxTiltRad;
+  ctx.save();
+  ctx.translate(towerX, aprY);
+  ctx.rotate(tiltAngle);
+  ctx.translate(-towerX, -aprY);
+
+  ctx.fillStyle = '#3a3e44';
+  ctx.fillRect(towerX - towerW / 2, aprY - towerH, towerW, towerH);
+  ctx.strokeStyle = '#5a5f66';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(towerX - towerW / 2, aprY - towerH, towerW, towerH);
+  // Lattice cross-bracing up the tower
+  const braceSteps = 9;
+  for (let i = 0; i < braceSteps; i++) {
+    const y1 = aprY - towerH * (i / braceSteps), y2 = aprY - towerH * ((i + 1) / braceSteps);
+    ctx.beginPath(); ctx.moveTo(towerX - towerW / 2, y1); ctx.lineTo(towerX + towerW / 2, y2); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(towerX + towerW / 2, y1); ctx.lineTo(towerX - towerW / 2, y2); ctx.stroke();
+  }
+  // Two swing arms reaching toward the vehicle: a lower fueling umbilical
+  // and a higher strongback/clamp arm, each with a hinge block at both ends.
+  // Length reaches to just short of the rocket's own radius so the tip sits
+  // right at the vehicle skin (not floating in space) when upright.
+  const rocketHalfW = m(CONFIG.ROCKET_WIDTH / 2);
+  const armLen = (towerX - towerW / 2) - (px0 + rocketHalfW + m(1.5));
+  [{ frac: 0.12, len: armLen }, { frac: 0.46, len: armLen }].forEach(arm => {
+    const ay = aprY - towerH * arm.frac;
+    const ax0 = towerX - towerW / 2;
+    const ax1 = ax0 - arm.len;
+    ctx.strokeStyle = '#4a4e54';
+    ctx.lineWidth = Math.max(1.5, m(0.6));
+    ctx.beginPath(); ctx.moveTo(ax0, ay); ctx.lineTo(ax1, ay); ctx.stroke();
+    ctx.fillStyle = '#2e3136';
+    ctx.beginPath(); ctx.arc(ax0, ay, m(0.9), 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(ax1, ay, m(0.7), 0, Math.PI * 2); ctx.fill();
+  });
+  // Blinking hazard light at the tower top
+  const blink = 0.5 + 0.5 * Math.sin(performance.now() * 0.004);
+  ctx.fillStyle = `rgba(255,60,50,${0.5 + 0.5 * blink})`;
+  ctx.beginPath(); ctx.arc(towerX, aprY - towerH, Math.max(2, m(1.1)), 0, Math.PI * 2); ctx.fill();
+
+  ctx.restore();
+
+  // ---- Background ground-support tanks (flat side-elevation, not 3D) ----
+  const tankX = px0 - apronHalfW * 0.72;
+  [0, 1].forEach(i => {
+    const tx = tankX - i * m(9);
+    const tw = m(4.5), th = m(10);
+    ctx.fillStyle = '#4a4e54';
+    ctx.fillRect(tx - tw / 2, aprY - th, tw, th);
+    ctx.strokeStyle = '#2e3136';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(tx - tw / 2, aprY - th, tw, th);
+    // Flat domed cap — a legitimate side-elevation feature of a cylindrical
+    // tank, not a perspective effect
+    ctx.beginPath();
+    ctx.arc(tx, aprY - th, tw / 2, Math.PI, 0);
+    ctx.fill();
+    ctx.stroke();
+  });
 }
 
 function drawRocket() {
@@ -279,320 +424,14 @@ function drawRocket() {
     ctx.restore();
   }
 
-  // ============================================================================
-  // LEGS SETUP — 4 legs via shared helper
-  // ============================================================================
-  const p = legs.progress;
-  const legHingeY = -H * 0.004;
-  const legLength = H * 0.27;
-  const maxSweepRad = (125 * Math.PI) / 180;
-  const pistonMountY = -H * 0.08;
-  const LEG_TIP_CURVENESS = 0.90;
-
-  function drawLandingLeg(side, isBack) {
-    const depthX = isBack ? 0.75 : 1.0;
-    const depthY = isBack ? -H * 0.006 : 0;
-
-    const j1x = side * (W * 0.49) * depthX;
-    const j2x = side * (W * 0.05) * depthX;
-    const jY  = legHingeY + depthY;
-
-    const pivotX = Math.sin(Math.PI / 4) * (j1x + j2x) / 1;
-    const pivotY = jY;
-
-    const currentSweep = side * p * maxSweepRad;
-    const tipX = pivotX + legLength * Math.sin(currentSweep);
-    const tipY = pivotY - legLength * Math.cos(currentSweep);
-
-    const cutoutApexX = pivotX + (tipX - pivotX) * 0.07;
-    const cutoutApexY = pivotY + (tipY - pivotY) * 0.07;
-
-    const d1 = Math.hypot(tipX - j1x, tipY - jY) || 1;
-    const u1x = (j1x - tipX) / d1, u1y = (jY - tipY) / d1;
-    const d2 = Math.hypot(tipX - j2x, tipY - jY) || 1;
-    const u2x = (j2x - tipX) / d2, u2y = (jY - tipY) / d2;
-    const roundR = Math.min(legLength * LEG_TIP_CURVENESS, d1 * 0.85, d2 * 0.85);
-    const p1x = tipX + u1x * roundR, p1y = tipY + u1y * roundR;
-    const p2x = tipX + u2x * roundR, p2y = tipY + u2y * roundR;
-
-    const tipApexX = 0.25 * p1x + 0.5 * tipX + 0.25 * p2x;
-    const tipApexY = 0.25 * p1y + 0.5 * tipY + 0.25 * p2y;
-
-    if (!isBack) {
-      const legActualLength = Math.hypot(tipApexX - pivotX, tipApexY - pivotY);
-      if (!legs.actualLength) {
-        legs.actualLength = {}; legs.footX = {}; legs.footY = {};
-      }
-      legs.actualLength[side] = legActualLength;
-      legs.footX[side] = tipApexX;
-      legs.footY[side] = tipApexY;
-    }
-
-    if (p > 0.02) {
-      const pmX = pivotX;
-      const pmY = pistonMountY + depthY;
-
-      ctx.strokeStyle = isBack ? '#050608' : '#0a0c0f';
-      ctx.lineWidth = Math.max(1.5, W * 0.040);
-      ctx.lineCap = 'round';
-      ctx.beginPath(); ctx.moveTo(pmX, pmY); ctx.lineTo(tipApexX, tipApexY); ctx.stroke();
-
-      ctx.strokeStyle = isBack ? '#171b22' : '#2c313a';
-      ctx.lineWidth = Math.max(0.8, W * 0.018);
-      ctx.beginPath(); ctx.moveTo(pmX, pmY); ctx.lineTo(tipApexX, tipApexY); ctx.stroke();
-
-      const rodStartFrac = 0.32;
-      const rx1 = pmX + (tipApexX - pmX) * rodStartFrac;
-      const ry1 = pmY + (tipApexY - pmY) * rodStartFrac;
-
-      ctx.strokeStyle = isBack ? '#8a9099' : '#e6ecf2';
-      ctx.lineWidth = Math.max(1, W * 0.022);
-      ctx.beginPath(); ctx.moveTo(rx1, ry1); ctx.lineTo(tipApexX, tipApexY); ctx.stroke();
-
-      ctx.fillStyle = isBack ? '#0d1015' : '#1a1e24';
-      ctx.beginPath(); ctx.arc(rx1, ry1, W * 0.025, 0, Math.PI * 2); ctx.fill();
-    }
-
-    const legGrad = ctx.createLinearGradient(pivotX, jY, tipX, tipY);
-    if (isBack) {
-      legGrad.addColorStop(0,    '#0f1114');
-      legGrad.addColorStop(0.35, '#1a1d22');
-      legGrad.addColorStop(0.7,  '#08090b');
-      legGrad.addColorStop(1,    '#000000');
-    } else {
-      legGrad.addColorStop(0,    '#1c1f24');
-      legGrad.addColorStop(0.35, '#3a3f47');
-      legGrad.addColorStop(0.7,  '#14171b');
-      legGrad.addColorStop(1,    '#000000');
-    }
-
-    ctx.fillStyle = legGrad;
-    ctx.strokeStyle = '#000000';
-    ctx.lineWidth = 1.2;
-
-    ctx.beginPath();
-    ctx.moveTo(j1x, jY);
-    ctx.lineTo(p1x, p1y);
-    ctx.quadraticCurveTo(tipX, tipY, p2x, p2y);
-    ctx.lineTo(j2x, jY);
-    ctx.lineTo(cutoutApexX, cutoutApexY);
-    ctx.closePath();
-    ctx.fill();
-    ctx.stroke();
-
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
-    ctx.beginPath();
-    ctx.moveTo(j1x, jY);
-    ctx.lineTo(tipApexX, tipApexY);
-    ctx.lineTo(cutoutApexX, cutoutApexY);
-    ctx.closePath();
-    ctx.fill();
-
-    ctx.strokeStyle = '#000000';
-    ctx.lineWidth = Math.max(1.2, W * 0.018);
-    ctx.beginPath();
-    ctx.moveTo(j1x, jY);
-    ctx.lineTo(cutoutApexX, cutoutApexY);
-    ctx.lineTo(j2x, jY);
-    ctx.stroke();
-
-    ctx.strokeStyle = isBack ? 'rgba(255,255,255,0.14)' : 'rgba(255,255,255,0.30)';
-    ctx.lineWidth = 0.8;
-    ctx.beginPath();
-    ctx.moveTo(j1x, jY);
-    ctx.lineTo(p1x, p1y);
-    ctx.stroke();
-  }
-
-  // BACK legs (behind body)
-  drawLandingLeg(-1, true);
-  drawLandingLeg( 1, true);
-
-  // ---- Body ----
-  ctx.fillStyle = '#e9edf2';
-  ctx.strokeStyle = '#8b93a0';
-  ctx.lineWidth = 1.2;
-  ctx.beginPath();
-  ctx.moveTo(-W/2, 0);
-  ctx.lineTo(-W/2, -H*0.85);
-  ctx.quadraticCurveTo(-W/2, -H, 0, -H);
-  ctx.quadraticCurveTo(W/2, -H, W/2, -H*0.85);
-  ctx.lineTo(W/2, 0);
-  ctx.closePath();
-  ctx.fill();
-  ctx.stroke();
-
-  let shade = ctx.createLinearGradient(-W/2, 0, W/2, 0);
-  shade.addColorStop(0, 'rgba(0,0,0,0.14)');
-  shade.addColorStop(0.5, 'rgba(255,255,255,0.10)');
-  shade.addColorStop(1, 'rgba(0,0,0,0.20)');
-  ctx.fillStyle = shade;
-  ctx.beginPath();
-  ctx.moveTo(-W/2, 0);
-  ctx.lineTo(-W/2, -H*0.85);
-  ctx.quadraticCurveTo(-W/2, -H, 0, -H);
-  ctx.quadraticCurveTo(W/2, -H, W/2, -H*0.85);
-  ctx.lineTo(W/2, 0);
-  ctx.closePath();
-  ctx.fill();
-
-  const stripeTop = -H * 0.80, stripeBottom = -H * 0.72;
-  ctx.fillStyle = '#14161a';
-  ctx.fillRect(-W/2, stripeTop, W, stripeBottom - stripeTop);
-  const chk = W * 0.16, chkY = (stripeTop + stripeBottom) / 2 - chk/2;
-  ctx.fillStyle = '#e9edf2';
-  ctx.fillRect(-chk, chkY, chk, chk);
-  ctx.fillRect(0, chkY, chk, chk);
-  ctx.fillStyle = '#14161a';
-  ctx.fillRect(-chk, chkY, chk, chk/2);
-  ctx.fillRect(-chk/2, chkY+chk/2, chk/2, chk/2);
-  ctx.fillRect(0, chkY, chk, chk/2);
-  ctx.fillRect(chk/2, chkY+chk/2, chk/2, chk/2);
-
-  const finY = -H * 0.845, finLen = W * 0.22, finH = H * 0.05;
-  [-1, 1].forEach(side => {
-    ctx.save();
-    ctx.translate(side * W/2, finY);
-    ctx.rotate(side * -0.12);
-    ctx.fillStyle = '#1c1e22';
-    ctx.strokeStyle = '#3a3d43';
-    ctx.lineWidth = 0.8;
-    ctx.beginPath(); ctx.rect(0, -finH/2, side * finLen, finH); ctx.fill(); ctx.stroke();
-    for (let i = 1; i <= 2; i++) {
-      const gx = side * finLen * (i/3);
-      ctx.beginPath(); ctx.moveTo(gx, -finH/2); ctx.lineTo(gx, finH/2); ctx.stroke();
-    }
-    ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(side*finLen, 0); ctx.stroke();
-    ctx.restore();
+  // ---- Airframe, legs, RCS pods (shared with the static vehicle previews
+  // on the home page and fleet page — see rocketArt.js) ----
+  drawRocketArt(ctx, W, H, mpp, {
+    legsProgress: legs.progress,
+    firing: lastForces.firing || {},
+    pod: lastForces.pod || {},
+    legsState: legs,
   });
-
-  // FRONT legs (on top of body)
-  drawLandingLeg(-1, false);
-  drawLandingLeg( 1, false);
-
-  // ============================================================================
-  // RCS — rounded-rectangle pods + gas puffs
-  // ============================================================================
-  const firing = lastForces.firing || {};
-  const pod = lastForces.pod || {};
-  const corners = {
-    TL: [-W/2, -(H - CONFIG.RCS_TOP_MARGIN/mpp)],
-    TR: [ W/2, -(H - CONFIG.RCS_TOP_MARGIN/mpp)],
-    BL: [-W/2, -(CONFIG.RCS_BOTTOM_MARGIN/mpp)],
-    BR: [ W/2, -(CONFIG.RCS_BOTTOM_MARGIN/mpp)],
-  };
-  const lateralDir = { TL: [-1, 0], TR: [1, 0], BL: [-1, 0], BR: [1, 0] };
-  const plumeLen = W * 0.6;
-  const fEps = 1;
-
-  function drawGasPuff(cx, cy, dir, seed) {
-    const [dx, dy] = dir;
-    const nx = -dy, ny = dx;
-    const jitter = 1 + 0.10 * Math.sin(performance.now() * 0.05 + seed);
-    const len = plumeLen * jitter;
-    const tipX = cx + dx * len, tipY = cy + dy * len;
-    const midX = cx + dx * len * 0.55, midY = cy + dy * len * 0.55;
-    const spread = W * 0.05;
-
-    const grad = ctx.createLinearGradient(cx, cy, tipX, tipY);
-    grad.addColorStop(0, 'rgba(130,225,255,0.95)');
-    grad.addColorStop(0.55, 'rgba(150,220,255,0.55)');
-    grad.addColorStop(1, 'rgba(170,220,255,0)');
-    ctx.fillStyle = grad;
-    ctx.beginPath();
-    ctx.moveTo(cx - nx*spread, cy - ny*spread);
-    ctx.quadraticCurveTo(midX - nx*spread*0.7, midY - ny*spread*0.7, tipX, tipY);
-    ctx.quadraticCurveTo(midX + nx*spread*0.7, midY + ny*spread*0.7, cx + nx*spread, cy + ny*spread);
-    ctx.closePath();
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(10,35,50,0.55)';
-    ctx.lineWidth = 0.8;
-    ctx.stroke();
-
-    ctx.fillStyle = 'rgba(190,235,255,0.35)';
-    ctx.beginPath(); ctx.arc(midX, midY, spread*0.9*jitter, 0, Math.PI*2); ctx.fill();
-    ctx.fillStyle = 'rgba(200,240,255,0.22)';
-    ctx.beginPath(); ctx.arc(tipX, tipY, spread*1.1*jitter, 0, Math.PI*2); ctx.fill();
-
-    ctx.fillStyle = 'rgba(230,250,255,0.9)';
-    ctx.beginPath(); ctx.arc(cx + dx*W*0.03, cy + dy*W*0.03, spread*0.6, 0, Math.PI*2); ctx.fill();
-  }
-
-  function roundRectPath(x, y, w, h, r) {
-    const rr = Math.min(r, w/2, h/2);
-    ctx.beginPath();
-    ctx.moveTo(x + rr, y);
-    ctx.lineTo(x + w - rr, y);
-    ctx.quadraticCurveTo(x + w, y, x + w, y + rr);
-    ctx.lineTo(x + w, y + h - rr);
-    ctx.quadraticCurveTo(x + w, y + h, x + w - rr, y + h);
-    ctx.lineTo(x + rr, y + h);
-    ctx.quadraticCurveTo(x, y + h, x, y + h - rr);
-    ctx.lineTo(x, y + rr);
-    ctx.quadraticCurveTo(x, y, x + rr, y);
-    ctx.closePath();
-  }
-
-  Object.keys(corners).forEach(k => {
-    const [cxRaw, cy] = corners[k];
-    const pp = pod[k] || { Fx: 0, Fy: 0 };
-
-    const podW = W * 0.05;
-    const podH = W * 0.10;
-    const podR = W * 0.03;
-
-    const sideSign = Math.sign(cxRaw);
-    const podX = cxRaw + sideSign * podW * 0.5 - podW / 2;
-    const podY = cy - podH / 2;
-
-    if (Math.abs(pp.Fx) > fEps) drawGasPuff(cxRaw, cy, lateralDir[k], k.charCodeAt(0));
-    if (Math.abs(pp.Fy) > fEps) {
-      const vDir = pp.Fy > 0 ? [0, 1] : [0, -1];
-      const outX = cxRaw + sideSign * podW * 0.6;
-      drawGasPuff(outX, cy, vDir, k.charCodeAt(1) + 3);
-    }
-
-    ctx.save();
-
-    ctx.shadowColor = 'rgba(0,0,0,0.45)';
-    ctx.shadowBlur = 2;
-    ctx.shadowOffsetY = 0.5;
-
-    ctx.fillStyle = firing[k] ? '#aef1ff' : '#2a2d33';
-    roundRectPath(podX, podY, podW, podH, podR);
-    ctx.fill();
-
-    ctx.shadowColor = 'transparent';
-    ctx.shadowBlur = 0;
-    ctx.shadowOffsetY = 0;
-
-    ctx.strokeStyle = 'rgba(20,24,30,0.85)';
-    ctx.lineWidth = 0.9;
-    ctx.stroke();
-
-    const hlX = sideSign > 0 ? podX + podW * 0.72 : podX + podW * 0.12;
-    const hlGrad = ctx.createLinearGradient(hlX, 0, hlX + podW * 0.15, 0);
-    hlGrad.addColorStop(0, 'rgba(255,255,255,0.0)');
-    hlGrad.addColorStop(0.5, firing[k] ? 'rgba(255,255,255,0.6)' : 'rgba(255,255,255,0.25)');
-    hlGrad.addColorStop(1, 'rgba(255,255,255,0.0)');
-    ctx.fillStyle = hlGrad;
-    roundRectPath(podX + podW * 0.55, podY + podH * 0.15, podW * 0.35, podH * 0.7, podR * 0.6);
-    ctx.fill();
-
-    ctx.strokeStyle = 'rgba(0,0,0,0.55)';
-    ctx.lineWidth = 0.7;
-    const slotX = sideSign > 0 ? podX + podW * 0.35 : podX + podW * 0.65;
-    for (let i = 0; i < 2; i++) {
-      const sy = podY + podH * (0.30 + i * 0.40);
-      ctx.beginPath();
-      ctx.moveTo(slotX - podW * 0.12, sy);
-      ctx.lineTo(slotX + podW * 0.12, sy);
-      ctx.stroke();
-    }
-
-    ctx.restore();
-  });
-
   ctx.restore();
 }
 

@@ -20,14 +20,16 @@ let state = {
   dryMass: CONFIG.DRY_MASS,
   fuelMass: CONFIG.FUEL_MASS_MAX,
   crashed: false,
+  landed: false,
   simTime: 0,
 };
 
-// Landing legs — purely visual/control state for now (Phase-1 scope has no
-// landing/touchdown logic yet). `deployed` is the commanded target;
-// `progress` (0 = fully stowed, 1 = fully deployed) is rate-limited toward
-// it each tick, same pattern as throttle/gimbal, so the legs visibly swing
-// open/closed over ~2s rather than snapping instantly.
+// Landing legs — `deployed` is the commanded target; `progress` (0 = fully
+// stowed, 1 = fully deployed) is rate-limited toward it each tick, same
+// pattern as throttle/gimbal, so the legs visibly swing open/closed over
+// ~2s rather than snapping instantly. Whether they're actually deployed
+// (progress >= LANDING_MIN_LEG_DEPLOY) is one of the conditions checked at
+// ground contact to decide LANDED vs CRASHED.
 let legs = { deployed: false, progress: 0 };
 
 function resetLegs() { legs = { deployed: false, progress: 0 }; }
@@ -181,18 +183,41 @@ function physicsStep(dt) {
 
   const r = Math.hypot(state.rx, state.ry);
   if (altitudeFromR(r) <= 0) {
-    // Radial (vertical) velocity: negative = descending. The rocket now
-    // starts resting exactly at altitude 0 on the pad, so this must only
-    // flag a genuine hard impact (real downward speed at ground contact) —
-    // not the rocket simply sitting there, which would otherwise trip a
-    // false "crashed" on the very first tick after pressing Start.
-    const vr = (state.rx * state.vx + state.ry * state.vy) / r;
-    if (vr < -0.5) {
-      state.crashed = true;
-    } else {
+    const ux = state.rx / r, uy = state.ry / r; // local "up" (radial) unit vector
+
+    // Decompose velocity into vertical (radial) and horizontal (tangential)
+    // components relative to local vertical at the touchdown point.
+    const vr = state.vx * ux + state.vy * uy;           // + = ascending, - = descending
+    const vTangX = state.vx - vr * ux, vTangY = state.vy - vr * uy;
+    const hSpeed = Math.hypot(vTangX, vTangY);
+    const descentSpeed = -vr;
+
+    // Tilt off local vertical: angle between the body's "up" (nose) axis
+    // and the local radial direction, via their dot product.
+    const bodyUpX = -Math.sin(state.theta), bodyUpY = Math.cos(state.theta);
+    const tiltDeg = Math.acos(Math.max(-1, Math.min(1, bodyUpX * ux + bodyUpY * uy))) * 180 / Math.PI;
+
+    if (descentSpeed > 0.3 || hSpeed > 0.3) {
+      // Real contact with real motion — this is the moment that decides
+      // LANDED vs CRASHED. Legs must be deployed, and speed/tilt/spin must
+      // all be within the safe envelope; if any one is out of bounds, it's
+      // a crash (landing on stowed legs is always a crash, regardless of
+      // how gentle the touch was).
+      const legsReady = legs.progress >= CONFIG.LANDING_MIN_LEG_DEPLOY;
+      const speedOk = descentSpeed <= CONFIG.LANDING_MAX_VSPEED && hSpeed <= CONFIG.LANDING_MAX_HSPEED;
+      const tiltOk = tiltDeg <= CONFIG.LANDING_MAX_TILT_DEG;
+      const rateOk = Math.abs(state.omega) <= CONFIG.LANDING_MAX_OMEGA;
+
+      if (legsReady && speedOk && tiltOk && rateOk) {
+        state.landed = true;
+      } else {
+        state.crashed = true;
+      }
+    }
+
+    if (!state.crashed) {
       // Resting/settling on the pad — clamp gently to the deck instead of
       // letting it drift a hair below ground each tick.
-      const ux = state.rx / r, uy = state.ry / r;
       state.rx = CONFIG.EARTH_RADIUS * ux;
       state.ry = CONFIG.EARTH_RADIUS * uy;
       if (vr < 0) {
@@ -216,6 +241,7 @@ function resetState(initialAltitude) {
     dryMass: CONFIG.DRY_MASS,
     fuelMass: CONFIG.FUEL_MASS_MAX,
     crashed: false,
+    landed: false,
     simTime: 0,
   };
   resetPWM();

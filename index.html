@@ -31,31 +31,10 @@
       </div>
 
       <div class="hangar-body">
-        <svg id="shipArt" viewBox="0 0 200 420" aria-hidden="true">
-          <!-- exhaust glow -->
-          <ellipse id="engineGlow" cx="100" cy="392" rx="22" ry="14" fill="url(#glowGrad)"/>
-          <!-- airframe -->
-          <path d="M 78 40
-                   C 78 14, 100 4, 100 4
-                   C 100 4, 122 14, 122 40
-                   L 122 340
-                   L 78 340 Z"
-                fill="#0d1424" stroke="#35d6ff" stroke-width="1.4"/>
-          <!-- octaweb ring hint at base -->
-          <line x1="78" y1="300" x2="122" y2="300" stroke="#1c2b45" stroke-width="1"/>
-          <line x1="78" y1="340" x2="122" y2="340" stroke="#ff9248" stroke-width="1.4"/>
-          <!-- grid fin -->
-          <path d="M 78 250 L 62 268 L 78 280 Z" fill="none" stroke="#6b7d9c" stroke-width="1"/>
-          <path d="M 122 250 L 138 268 L 122 280 Z" fill="none" stroke="#6b7d9c" stroke-width="1"/>
-          <!-- nozzle -->
-          <path d="M 84 340 L 80 362 L 120 362 L 116 340 Z" fill="#0d1424" stroke="#ff9248" stroke-width="1.4"/>
-          <defs>
-            <radialGradient id="glowGrad" cx="50%" cy="20%" r="80%">
-              <stop offset="0%" stop-color="#ffb066" stop-opacity="0.85"/>
-              <stop offset="100%" stop-color="#ffb066" stop-opacity="0"/>
-            </radialGradient>
-          </defs>
-        </svg>
+        <!-- Real vehicle artwork — same drawRocketArt() the flight simulator
+             renders with, drawn idle (legs stowed, no thrust) via
+             renderVehiclePreview() in home.js. -->
+        <canvas id="shipArt" width="200" height="420" aria-hidden="true"></canvas>
 
         <dl id="specList">
           <div class="spec-row"><dt>Height</dt><dd id="specHeight">—</dd></div>
@@ -107,6 +86,7 @@
 
 <script src="js/fleet.js"></script>
 <script src="js/config.js"></script>
+<script src="js/simJs/rocketArt.js"></script>
 <script src="js/home.js"></script>
 </body>
 </html>

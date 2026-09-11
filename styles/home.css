@@ -55,14 +55,13 @@ html, body {
 
 .hangar-body { display: flex; gap: clamp(20px, 4vw, 48px); align-items: flex-start; }
 
-#shipArt { width: 120px; flex-shrink: 0; filter: drop-shadow(0 0 18px rgba(53,214,255,0.08)); }
-#engineGlow { animation: enginePulse 3.2s ease-in-out infinite; transform-origin: 100px 392px; }
-@keyframes enginePulse {
-  0%, 100% { opacity: 0.55; transform: scale(1); }
-  50% { opacity: 1; transform: scale(1.12); }
-}
-@media (prefers-reduced-motion: reduce) {
-  #engineGlow { animation: none; }
+#shipArt {
+  width: 200px; display: block; flex-shrink: 0; border-radius: 10px;
+  filter: drop-shadow(0 0 18px rgba(53,214,255,0.08));
+  /* Neutral "display stage" background, not transparent — so both a light
+     rocket (current, near-white) and a future dark one (e.g. Starship,
+     near-black) read clearly instead of blending into the page bg. */
+  background: radial-gradient(ellipse 90% 65% at 50% 32%, #2b3040 0%, #171a22 100%);
 }
 
 #specList { margin: 0; flex: 1; min-width: 220px; }

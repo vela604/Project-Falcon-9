@@ -38,6 +38,78 @@
         <p>Select a vehicle to view its full specs, or start a new one.</p>
       </div>
 
+      <!-- ===== Read-only flex detail panel — shown for "Fly this" (view a
+           vehicle without entering edit mode). Figure + full specs,
+           side-by-side like the home page's vehicle card. ===== -->
+      <div id="vehicleDetail">
+        <div class="detail-head">
+          <h2 id="detailTitle">—</h2>
+          <div class="detail-head-actions">
+            <span id="detailFlying" class="badge badge-flying" style="display:none;">FLYING</span>
+            <button type="button" class="btn btn-accent" id="btnDetailEdit">Edit</button>
+          </div>
+        </div>
+
+        <div class="detail-body">
+          <canvas id="detailPreviewCanvas" width="220" height="460" aria-hidden="true"></canvas>
+
+          <div class="detail-specs">
+            <fieldset>
+              <legend>Geometry &amp; mass</legend>
+              <dl>
+                <div class="cap-row"><dt>Height</dt><dd id="d-height">—</dd></div>
+                <div class="cap-row"><dt>Diameter</dt><dd id="d-width">—</dd></div>
+                <div class="cap-row"><dt>Dry mass</dt><dd id="d-dryMass">—</dd></div>
+                <div class="cap-row"><dt>Propellant (max)</dt><dd id="d-fuelMassMax">—</dd></div>
+              </dl>
+            </fieldset>
+
+            <fieldset>
+              <legend>Main engines <span class="legend-note">— 9-engine octaweb</span></legend>
+              <dl>
+                <div class="cap-row"><dt>Octaweb radius</dt><dd id="d-octaRadius">—</dd></div>
+                <div class="cap-row"><dt>Max thrust / engine</dt><dd id="d-engineFMax">—</dd></div>
+                <div class="cap-row"><dt>Throttle floor</dt><dd id="d-engineFMinFrac">—</dd></div>
+                <div class="cap-row"><dt>Exhaust velocity</dt><dd id="d-engineVe">—</dd></div>
+                <div class="cap-row"><dt>Thrust change rate</dt><dd id="d-engineThrustRate">—</dd></div>
+                <div class="cap-row"><dt>Gimbal range</dt><dd id="d-gimbalMaxDeg">—</dd></div>
+                <div class="cap-row"><dt>Gimbal slew rate</dt><dd id="d-gimbalRateDegS">—</dd></div>
+              </dl>
+            </fieldset>
+
+            <fieldset>
+              <legend>RCS <span class="legend-note">— 4 pods, 2 nozzles each</span></legend>
+              <dl>
+                <div class="cap-row"><dt>Nozzle thrust</dt><dd id="d-rcsThrust">—</dd></div>
+                <div class="cap-row"><dt>Exhaust velocity</dt><dd id="d-rcsVe">—</dd></div>
+                <div class="cap-row"><dt>Lateral offset</dt><dd id="d-rcsXOffset">—</dd></div>
+                <div class="cap-row"><dt>Top margin</dt><dd id="d-rcsTopMargin">—</dd></div>
+                <div class="cap-row"><dt>Bottom margin</dt><dd id="d-rcsBottomMargin">—</dd></div>
+                <div class="cap-row"><dt>PWM period</dt><dd id="d-rcsPwmPeriod">—</dd></div>
+              </dl>
+            </fieldset>
+
+            <fieldset>
+              <legend>Aerodynamics</legend>
+              <dl>
+                <div class="cap-row"><dt>Drag coefficient</dt><dd id="d-dragCd">—</dd></div>
+              </dl>
+            </fieldset>
+
+            <fieldset id="detailCapsBox">
+              <legend>Capabilities <span class="legend-note">— computed</span></legend>
+              <dl>
+                <div class="cap-row"><dt>Total max thrust</dt><dd id="d-c-thrust">—</dd></div>
+                <div class="cap-row"><dt>Wet mass</dt><dd id="d-c-wet">—</dd></div>
+                <div class="cap-row"><dt>Max TWR (sea level)</dt><dd id="d-c-twr">—</dd></div>
+                <div class="cap-row"><dt>Δv (ideal, vacuum)</dt><dd id="d-c-dv">—</dd></div>
+                <div class="cap-row"><dt>Burn time (full throttle)</dt><dd id="d-c-burn">—</dd></div>
+              </dl>
+            </fieldset>
+          </div>
+        </div>
+      </div>
+
       <form id="editorForm" novalidate>
         <div class="editor-head">
           <h2 id="editorTitle">New Vehicle</h2>
@@ -45,6 +117,13 @@
             <button type="button" class="btn" id="btnDuplicate">Duplicate</button>
             <button type="button" class="btn btn-danger" id="btnDelete">Delete</button>
           </div>
+        </div>
+
+        <!-- Real vehicle artwork — same drawRocketArt() the flight simulator
+             renders with, drawn idle for whichever vehicle is loaded into
+             this form (selected from the fleet, or being edited live). -->
+        <div id="vehiclePreview">
+          <canvas id="vehiclePreviewCanvas" width="220" height="460" aria-hidden="true"></canvas>
         </div>
 
         <div class="field">
@@ -119,6 +198,7 @@
 </div>
 
 <script src="js/fleet.js"></script>
+<script src="js/simJs/rocketArt.js"></script>
 <script src="js/rockets.js"></script>
 </body>
 </html>

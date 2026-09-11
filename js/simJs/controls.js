@@ -181,9 +181,48 @@ function bindLegsControl() {
   const btn = document.getElementById('btnLegs');
   if (!btn) return;
   btn.addEventListener('click', () => {
+    if (!legs.deployed) {
+      // Only the DEPLOY command is safety-gated — stowing is always allowed
+      // (e.g. to abort a bad deploy). Check the envelope before honoring it.
+      const safety = legDeploySafety();
+      if (!safety.ok) {
+        flashLegsWarning(safety.ascending ? 'Ascending — can\'t deploy' : 'Too fast — can\'t deploy');
+        return;
+      }
+    }
     legs.deployed = !legs.deployed;
     updateLegsButton();
   });
+}
+
+// Legs can only be commanded to DEPLOY when the vehicle isn't climbing under
+// power (still on/just off the pad during launch) and isn't moving faster
+// than a safe deploy speed (e.g. during a fast reentry, before the entry/
+// landing burn has slowed it down). Stowing is never restricted.
+function legDeploySafety() {
+  const r = Math.hypot(state.rx, state.ry);
+  const ux = state.rx / r, uy = state.ry / r; // local "up" (radial) unit vector
+  const vr = state.vx * ux + state.vy * uy;   // + = ascending, - = descending
+  const speed = Math.hypot(state.vx, state.vy);
+  const ascending = vr > 0.5; // small tolerance so sitting on the pad doesn't trip this
+  const tooFast = speed > CONFIG.LEG_DEPLOY_MAX_SPEED;
+  return { ok: !ascending && !tooFast, ascending, tooFast };
+}
+
+// Briefly flashes the legs button red with a reason instead of toggling it,
+// then reverts to the normal deployed/stowed label.
+function flashLegsWarning(text) {
+  const btn = document.getElementById('btnLegs');
+  if (!btn) return;
+  clearTimeout(btn._legsWarnTimer);
+  const prevBg = btn.dataset.prevBg !== undefined ? btn.dataset.prevBg : btn.style.background;
+  btn.dataset.prevBg = prevBg;
+  btn.innerHTML = `<span class="btn-ic">⚠️</span>${text}`;
+  btn.style.background = '#5a1d1d';
+  btn._legsWarnTimer = setTimeout(() => {
+    btn.style.background = prevBg;
+    updateLegsButton();
+  }, 1300);
 }
 
 function updateLegsButton() {
@@ -203,6 +242,7 @@ function updateStatusBar() {
   const txt = document.getElementById('statusText');
   dot.className = 'status-dot';
   if (state.crashed) { dot.classList.add('crashed'); txt.textContent = 'CRASHED'; }
+  else if (state.landed) { dot.classList.add('landed'); txt.textContent = 'LANDED'; }
   else if (simPaused) { dot.classList.add('paused'); txt.textContent = 'PAUSED'; }
   else if (simRunning) { dot.classList.add('running'); txt.textContent = 'RUNNING'; }
   else { txt.textContent = 'STOPPED'; }
