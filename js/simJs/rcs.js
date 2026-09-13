@@ -95,12 +95,16 @@ function resetPWM() {
 }
 
 function rcsGeometry(comH) {
-  const yTop = CONFIG.ROCKET_HEIGHT - CONFIG.RCS_TOP_MARGIN;
-  const yBottom = CONFIG.RCS_BOTTOM_MARGIN;
+  // Both Ys are now bottom-anchored heights (base = 0, up = +).
+  const bottomH = (typeof ACTIVE_VEHICLE_FOR_HARDWARE !== 'undefined' && ACTIVE_VEHICLE_FOR_HARDWARE.height)
+    ? ACTIVE_VEHICLE_FOR_HARDWARE.height
+    : CONFIG.ROCKET_HEIGHT;
+  const yTop    = Math.min(bottomH, CONFIG.RCS_TOP_Y);       // safety clamp
+  const yBottom = CONFIG.RCS_BOTTOM_Y;
   return {
     yTop, yBottom,
-    dTop: Math.max(0.01, yTop - comH),       // moment arm, top pods (usually larger)
-    dBottom: Math.max(0.01, comH - yBottom), // moment arm, bottom pods (usually smaller)
+    dTop: Math.max(0.01, yTop - comH),
+    dBottom: Math.max(0.01, comH - yBottom),
   };
 }
 

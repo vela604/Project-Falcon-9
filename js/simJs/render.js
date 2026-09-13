@@ -426,12 +426,92 @@ function drawRocket() {
 
   // ---- Airframe, legs, RCS pods (shared with the static vehicle previews
   // on the home page and fleet page — see rocketArt.js) ----
+  // ---- Stack: draw every member from bottom→top, at one scale, with the
+// stack's bottom at (0,0). Plume is drawn above (once) from ENGINES (which
+// come from the bottom member). ----
+const stackMembers = (typeof SIM_STACK_MEMBERS !== 'undefined' && SIM_STACK_MEMBERS.length) ?
+  SIM_STACK_MEMBERS :
+  [];
+
+if (stackMembers.length) {
+  let yOffsetPx = 0;
+  stackMembers.forEach((m, idx) => {
+    const memberAbove = stackMembers[idx + 1] || null;
+    let stageAboveBellHeight = 0;
+    if (memberAbove && memberAbove.engineTypeId && typeof getComponentType === 'function') {
+      const layoutAbove = getComponentType(memberAbove.engineTypeId);
+      if (layoutAbove && layoutAbove.frame && layoutAbove.frame.slots) {
+        const groups = (typeof engineThrusterGroups === 'function') ? engineThrusterGroups(layoutAbove) : {};
+        let totalFlow = 0;
+        Object.keys(groups).forEach(gk => {
+          const g = memberAbove.engineThrusters && memberAbove.engineThrusters[gk];
+          if (!g || !Number.isFinite(g.massFlowRate)) return;
+          totalFlow += g.massFlowRate * groups[gk].length;
+        });
+        const perEngine = totalFlow / layoutAbove.frame.slots.length;
+        stageAboveBellHeight = 0.007 * perEngine;
+      }
+    }
+    
+    const mH = (m.height || 0) / mpp;
+    const mW = (m.width || 1) / mpp;
+    const recType = (m.hasRecovery === false) ? null :
+      ((m.recoveryTypeId && typeof getComponentType === 'function') ?
+        getComponentType(m.recoveryTypeId) : null);
+    const rcsT = (m.rcsTypeId && typeof getComponentType === 'function') ?
+      getComponentType(m.rcsTypeId) : null;
+    const engineLayout = (m.engineTypeId && typeof getComponentType === 'function') ?
+      getComponentType(m.engineTypeId) : null;
+    
+    ctx.save();
+    ctx.translate(0, -yOffsetPx);
+    drawRocketArt(ctx, mW, mH, mpp, {
+      legsProgress: (idx === 0) ? legs.progress : 0,
+      legsState: legs,
+      firing: lastForces.firing || {},
+      pod: lastForces.pod || {},
+      rcsTopY: m.params ? m.params.rcsTopY : undefined,
+      rcsBottomY: m.params ? m.params.rcsBottomY : undefined,
+      recoveryType: recType,
+      rcsType: rcsT,
+      stageRole: m.stageRole,
+      noseCurveness: m.noseCurveness,
+      bodyDesign: m.bodyDesign,
+      payloadSpaceColor: (m.payloadSpace && m.payloadSpace.color) ? m.payloadSpace.color : undefined,
+      stagePayload: (typeof buildStagePayload === 'function') ? buildStagePayload(m) : null,
+      engineLayout: engineLayout,
+      engineThrusters: m.engineThrusters,
+      params: m.params,
+      stageAboveBellHeight: stageAboveBellHeight,
+    });
+    ctx.restore();
+    yOffsetPx += mH;
+  });
+} else {
+  // Fallback: single-body (should not normally hit).
+  const fb = (typeof ACTIVE_VEHICLE_FOR_HARDWARE !== 'undefined') ? ACTIVE_VEHICLE_FOR_HARDWARE : null;
+  const fbEngineLayout = (fb && fb.engineTypeId && typeof getComponentType === 'function') ?
+    getComponentType(fb.engineTypeId) : null;
   drawRocketArt(ctx, W, H, mpp, {
     legsProgress: legs.progress,
+    legsState: legs,
     firing: lastForces.firing || {},
     pod: lastForces.pod || {},
-    legsState: legs,
+    rcsTopY: CONFIG.RCS_TOP_Y,
+    rcsBottomY: CONFIG.RCS_BOTTOM_Y,
+    recoveryType: CONFIG.RECOVERY_TYPE,
+    rcsType: CONFIG.RCS_TYPE,
+    stageRole: fb ? fb.stageRole : 'rocket',
+    noseCurveness: fb ? fb.noseCurveness : 0,
+    bodyDesign: fb ? fb.bodyDesign : undefined,
+    payloadSpaceColor: (fb && fb.payloadSpace && fb.payloadSpace.color) ? fb.payloadSpace.color : undefined,
+    stagePayload: (fb && typeof buildStagePayload === 'function') ? buildStagePayload(fb) : null,
+    engineLayout: fbEngineLayout,
+    engineThrusters: fb ? fb.engineThrusters : null,
+    params: fb ? fb.params : null,
+    stageAboveBellHeight: 0,
   });
+}
   ctx.restore();
 }
 

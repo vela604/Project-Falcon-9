@@ -18,7 +18,7 @@ let state = {
   vx: 0, vy: 0,
   theta: 0, omega: 0,
   dryMass: CONFIG.DRY_MASS,
-  fuelMass: CONFIG.FUEL_MASS_MAX,
+  fuelMass: CONFIG.FUEL_MASS_MAX * (CONFIG.DEFAULT_FUEL_FRACTION || 1.0),
   crashed: false,
   landed: false,
   simTime: 0,
@@ -44,7 +44,16 @@ function updateLegs(dt) {
 function totalMass() { return state.dryMass + state.fuelMass; }
 
 function currentGeometry() {
-  const M = totalMass();
+  const members = (typeof SIM_STACK_MEMBERS !== 'undefined' && SIM_STACK_MEMBERS.length) ?
+    SIM_STACK_MEMBERS :
+    ((typeof ACTIVE_STACK_MEMBERS !== 'undefined') ? ACTIVE_STACK_MEMBERS : []);
+  
+  if (members.length && typeof stackMassProps === 'function') {
+    const props = stackMassProps(members, state.fuelMass, legs.progress);
+    return { M: props.totalMass, comH: props.comY, I: props.moi };
+  }
+  // Fallback (should not normally hit): legacy single-body formula.
+  const M = state.dryMass + state.fuelMass;
   const comH = computeCoM(state.fuelMass, M, CONFIG.ROCKET_HEIGHT);
   const I = momentOfInertia(M, CONFIG.ROCKET_HEIGHT, CONFIG.ROCKET_WIDTH);
   return { M, comH, I };
@@ -254,15 +263,16 @@ function resetState(initialAltitude) {
   clearRCS();
   resetLegs();
   const r0 = CONFIG.EARTH_RADIUS + initialAltitude;
-  state = {
-    rx: 0, ry: r0,
-    vx: 0, vy: 0,
-    theta: 0, omega: 0,
-    dryMass: CONFIG.DRY_MASS,
-    fuelMass: CONFIG.FUEL_MASS_MAX,
-    crashed: false,
-    landed: false,
-    simTime: 0,
-  };
+  const startingFuel = (CONFIG.FUEL_MASS_MAX || 0) * (CONFIG.DEFAULT_FUEL_FRACTION || 1.0);
+state = {
+  rx: 0, ry: r0,
+  vx: 0, vy: 0,
+  theta: 0, omega: 0,
+  dryMass: CONFIG.DRY_MASS,
+  fuelMass: startingFuel,
+  crashed: false,
+  landed: false,
+  simTime: 0,
+};
   resetPWM();
 }

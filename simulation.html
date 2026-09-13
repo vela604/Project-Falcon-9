@@ -63,6 +63,7 @@
       <div class="tb-group tb-panel-buttons">
         <button class="btn panel-toggle-btn" id="btnMergePanel"><span class="btn-ic">⚙</span>Engines</button>
         <button class="btn panel-toggle-btn" id="btnSidePanel"><span class="btn-ic">🛰</span>Rocket</button>
+        <button class="btn panel-toggle-btn" id="btnFuelPanel" style="display:none"><span class="btn-ic">⛽</span>Fueling</button>
         <button class="btn panel-toggle-btn" id="btnWindPanel"><span class="btn-ic">🌬</span>Wind</button>
         <button class="btn panel-toggle-btn" id="btnGraphPanel"><span class="btn-ic">📈</span>Graphs</button>
         <button class="btn panel-toggle-btn" id="btnGlossary"><span class="btn-ic">ⓘ</span>Info</button>
@@ -93,6 +94,9 @@
         <div class="tele-row"><span class="tele-sym">g</span><span class="tele-val" id="t-g">0</span></div>
         <div class="tele-row"><span class="tele-sym">ρ</span><span class="tele-val" id="t-rho">0</span></div>
         <div class="tele-row"><span class="tele-sym">D↑</span><span class="tele-val" id="t-duty">0%</span></div>
+        <div class="tele-row"><span class="tele-sym">TWR</span><span class="tele-val" id="t-twr">0</span></div>
+        <div class="tele-row"><span class="tele-sym">hc</span><span class="tele-val" id="t-com">0</span></div>
+<div class="tele-row"><span class="tele-sym">I</span><span class="tele-val" id="t-moi">0</span></div>
       </div>
     </div>
 
@@ -117,10 +121,14 @@
                 <button class="rot-btn rcs" id="rcsACW" title="RCS Rotate ACW">⟲</button>
               </div>
               <div class="thrust-col">
-                <div id="centerThrustValue">0%</div>
-                <input type="range" id="centerThrustSlider" min="0" max="100" value="0">
-                <div class="thrust-col-label">MAIN</div>
-              </div>
+  <div id="centerThrustValue">0%</div>
+  <input type="range" id="centerThrustSlider" min="0" max="100" value="0">
+  <div class="thrust-quick-row">
+    <button class="thrust-quick-btn" id="btnFullThrottle" title="Full throttle">MAX</button>
+    <button class="thrust-quick-btn off" id="btnEngineOff" title="Engine off">OFF</button>
+  </div>
+  <div class="thrust-col-label">MAIN</div>
+</div>
               <div class="cc-inner-col">
                 <button class="rot-btn gimbal" id="gimbalCW" title="Gimbal CW">⟳</button>
                 <button class="rot-btn rcs" id="rcsCW" title="RCS Rotate CW">⟳</button>
@@ -179,6 +187,25 @@
         </div>
       </div>
 
+      <!-- Fueling panel — only accessible when the rocket is on the pad,
+     stationary, engines off. Refuels the whole stack. -->
+<div class="panel" id="fuelPanel">
+  <div class="panel-header"><span class="panel-title">⛽ FUELING</span><button class="panel-close" data-target="fuelPanel">✕</button></div>
+  <div class="fuel-hint" id="fuelHint">Refueling available on the pad.</div>
+  <div class="field-row">
+    <div class="field-label"><span>Fuel load</span><span id="fuelPercentLabel">60%</span></div>
+    <input type="range" id="fuelSlider" min="0" max="100" value="60">
+  </div>
+  <div class="fuel-readout">
+    <div class="fr-row"><span>Fuel mass</span><span id="fuelReadMass">—</span></div>
+    <div class="fr-row"><span>Total mass</span><span id="fuelReadTotal">—</span></div>
+    <div class="fr-row"><span>Max thrust</span><span id="fuelReadThrust">—</span></div>
+    <div class="fr-row"><span>Weight</span><span id="fuelReadWeight">—</span></div>
+    <div class="fr-row"><span>TWR</span><span id="fuelReadTWR">—</span></div>
+  </div>
+  <div class="fuel-warn" id="fuelWarn" style="display:none;">⚠ TWR below 1 — this rocket can't lift off.</div>
+</div>
+
       <!-- Graphs panel (pauses sim while open) -->
       <div class="panel" id="graphPanel" data-pause-sim="true">
         <div class="panel-header"><span class="panel-title">📈 LIVE GRAPHS</span><button class="panel-close" data-target="graphPanel">✕</button></div>
@@ -198,8 +225,10 @@
 </div>
 
 <script src="js/componentLibrary.js"></script>
+<script src="js/customDesign.js"></script>
 <script src="js/fleet.js"></script>
 <script src="js/config.js"></script>
+<script src="js/simJs/massProps.js"></script>
 <script src="js/simJs/environment.js"></script>
 <script src="js/simJs/vehicle.js"></script>
 <script src="js/simJs/rcs.js"></script>

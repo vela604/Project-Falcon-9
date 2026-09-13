@@ -22,17 +22,69 @@
 
   <main id="main">
 
+<div id="rolePicker" class="role-picker-overlay">
+  <div class="role-picker-card">
+    <h3>What are you building?</h3>
+    <div class="role-picker-options">
+      <button type="button" class="role-option" data-role="rocket">
+        <div class="role-title">🚀 Rocket</div>
+        <div class="role-desc">Standalone vehicle with a nose. Fully flyable on its own.</div>
+      </button>
+      <button type="button" class="role-option" data-role="booster">
+        <div class="role-title">🔽 Booster</div>
+        <div class="role-desc">Open-top — carries a stage or stack on top. Adds a max-extra-weight capacity.</div>
+      </button>
+      <button type="button" class="role-option" data-role="stage">
+        <div class="role-title">🛰 Upper Stage</div>
+        <div class="role-desc">Its own fuel tank, body metal, and payload space. Attaches on top of a booster or another stage.</div>
+      </button>
+      <button type="button" class="role-option" data-role="nose" style="display:none">
+  <div class="role-title">🔺 Nose</div>
+  <div class="role-desc">Aerodynamic nose — tops a stack. No engines or recovery.</div>
+</button>
+    </div>
+    <button type="button" class="btn" id="rolePickerCancel">Cancel</button>
+  </div>
+</div>
+
+
+  <div id="viewTabs" class="view-tabs">
+    <button class="view-tab active" data-view="fleet">🚀 Vehicles</button>
+    <button class="view-tab" data-view="stacks">🏗 Stacks</button>
+  </div>
+
+
     <!-- ===================== Fleet list ===================== -->
     <section id="fleetPane">
       <div class="pane-head">
-        <h1>Fleet</h1>
-        <button class="btn btn-accent" id="btnNew">+ New Vehicle</button>
-      </div>
+  <h1>Families</h1>
+  <button class="btn btn-accent" id="btnNew">+ New Family</button>
+</div>
       <div id="fleetList"><!-- populated by rockets.js --></div>
     </section>
 
     <!-- ===================== Editor ===================== -->
     <section id="editorPane">
+
+<div id="familyDetail" style="display:none">
+  <div class="detail-head">
+    <h2 id="famDetailTitle">—</h2>
+    <div class="detail-head-actions">
+      <button type="button" class="btn btn-accent" id="btnFamilyAddMember">+ Add Member</button>
+      <button type="button" class="btn btn-danger" id="btnFamilyDelete">Delete Family</button>
+    </div>
+  </div>
+
+  <fieldset>
+    <legend>Base <span class="legend-note">— mandatory single member</span></legend>
+    <div id="famDetailBase">—</div>
+  </fieldset>
+
+  <fieldset>
+    <legend>Members <span class="legend-note">— stages &amp; noses</span></legend>
+    <div id="famDetailMembers">—</div>
+  </fieldset>
+</div>
 
       <div id="editorEmpty">
         <p>Select a vehicle to view its full specs, or start a new one.</p>
@@ -55,14 +107,14 @@
 
           <div class="detail-specs">
             <fieldset>
-              <legend>Geometry &amp; mass</legend>
-              <dl>
-                <div class="cap-row"><dt>Height</dt><dd id="d-height">—</dd></div>
-                <div class="cap-row"><dt>Diameter</dt><dd id="d-width">—</dd></div>
-                <div class="cap-row"><dt>Dry mass</dt><dd id="d-dryMass">—</dd></div>
-                <div class="cap-row"><dt>Propellant (max)</dt><dd id="d-fuelMassMax">—</dd></div>
-              </dl>
-            </fieldset>
+  <legend>Geometry &amp; mass</legend>
+  <dl>
+    <div class="cap-row"><dt>Height</dt><dd id="d-height">—</dd></div>
+    <div class="cap-row"><dt>Diameter</dt><dd id="d-width">—</dd></div>
+    <div class="cap-row" id="d-row-dryMass"><dt>Dry mass</dt><dd id="d-dryMass">—</dd></div>
+    <div class="cap-row" id="d-row-fuelMassMax"><dt>Propellant (max)</dt><dd id="d-fuelMassMax">—</dd></div>
+  </dl>
+</fieldset>
 
             <!-- PHASE 2 STEP F: these three sections are populated entirely
                  from whichever hardware TYPES this vehicle references
@@ -93,6 +145,18 @@
                 <div class="cap-row"><dt>Drag coefficient</dt><dd id="d-dragCd">—</dd></div>
               </dl>
             </fieldset>
+
+            <fieldset id="d-extraWeightFieldset" style="display:none;">
+  <legend>Stack capacity <span class="legend-note">— what may sit on top</span></legend>
+  <dl>
+    <div class="cap-row"><dt>Max extra weight</dt><dd id="d-maxExtraWeight">—</dd></div>
+  </dl>
+</fieldset>
+
+<fieldset id="d-compatFieldset" style="display:none;">
+  <legend>Compatible boosters <span class="legend-note">— live, from the fleet</span></legend>
+  <div id="d-compatList">—</div>
+</fieldset>
 
             <fieldset id="detailCapsBox">
               <legend>Capabilities <span class="legend-note">— computed</span></legend>
@@ -129,15 +193,38 @@
           <input type="text" id="f-name" required maxlength="60">
         </div>
 
-        <fieldset>
-          <legend>Geometry &amp; mass</legend>
-          <div class="field-grid">
-            <div class="field"><label for="f-height">Height</label><div class="input-unit"><input type="number" id="f-height" min="1" step="0.1" required><span>m</span></div></div>
-            <div class="field"><label for="f-width">Diameter</label><div class="input-unit"><input type="number" id="f-width" min="0.1" step="0.1" required><span>m</span></div></div>
-            <div class="field"><label for="f-dryMass">Dry mass</label><div class="input-unit"><input type="number" id="f-dryMass" min="1" step="1" required><span>kg</span></div></div>
-            <div class="field"><label for="f-fuelMassMax">Propellant (max)</label><div class="input-unit"><input type="number" id="f-fuelMassMax" min="0" step="1" required><span>kg</span></div></div>
-          </div>
-        </fieldset>
+<fieldset id="geometryFieldset" data-role="rocket,booster,stage,nose">
+  <legend>Geometry &amp; mass</legend>
+  <div class="field-grid">
+    <div class="field"><label for="f-height">Height</label><div class="input-unit"><input type="number" id="f-height" min="1" step="0.1" required><span>m</span></div></div>
+    <div class="field"><label for="f-width">Diameter</label><div class="input-unit"><input type="number" id="f-width" min="0.1" step="0.1" required><span>m</span></div></div>
+    <div class="field" id="massDryField" data-roles="rocket,booster"><label for="f-dryMass">Dry mass</label><div class="input-unit"><input type="number" id="f-dryMass" min="1" step="1" required><span>kg</span></div></div>
+    <div class="field" id="massFuelField" data-roles="rocket,booster"><label for="f-fuelMassMax">Propellant (max)</label><div class="input-unit"><input type="number" id="f-fuelMassMax" min="0" step="1" required><span>kg</span></div></div>
+  </div>
+</fieldset>
+
+<fieldset id="d-stageFieldset" style="display:none;">
+  <legend>Stage capacity <span class="legend-note">— computed live</span></legend>
+  <dl>
+    <div class="cap-row"><dt>Fuel mass</dt><dd id="d-sc-fuel">—</dd></div>
+    <div class="cap-row"><dt>Body mass</dt><dd id="d-sc-body">—</dd></div>
+    <div class="cap-row"><dt>Engines (mass)</dt><dd id="d-sc-engines">—</dd></div>
+    <div class="cap-row"><dt>Payload container</dt><dd id="d-sc-payload">—</dd></div>
+    <div class="cap-row"><dt>Landing legs</dt><dd id="d-sc-legs">—</dd></div>
+    <div class="cap-row"><dt>Dry mass (no payload)</dt><dd id="d-sc-dry">—</dd></div>
+    <div class="cap-row"><dt>Max payload (Δv-limited)</dt><dd id="d-sc-pd">—</dd></div>
+    <div class="cap-row"><dt>Max payload (thrust-limited)</dt><dd id="d-sc-pt">—</dd></div>
+    <div class="cap-row"><dt><b>Max payload</b></dt><dd id="d-sc-pmax">—</dd></div>
+    <div class="cap-row"><dt>Wet mass at max payload</dt><dd id="d-sc-wet">—</dd></div>
+  </dl>
+</fieldset>
+
+<fieldset id="extraWeightFieldset" data-role="booster,stage" class="booster-and-stage-only">
+  <legend>Stack capacity <span class="legend-note">— what may sit on top</span></legend>
+  <div class="field-grid">
+    <div class="field"><label for="f-maxExtraWeight">Max extra weight</label><div class="input-unit"><input type="number" id="f-maxExtraWeight" min="0" step="100"><span>kg</span></div></div>
+  </div>
+</fieldset>
 
         <!-- PHASE 2 STEP F: hardware TYPE selection. These three dropdowns
              are populated from the Components Library registry
@@ -145,11 +232,18 @@
              swapping any of them regenerates that section's parameter
              fields below from the newly-selected type's parameterSchema.
              See populateTypeSelects() / renderParamFields() in rockets.js. -->
-        <fieldset>
+        <fieldset id="hardwareTypesFieldset" data-role="rocket,booster,stage">
           <legend>Hardware types <span class="legend-note">— from the Components Library</span></legend>
           <div class="field-grid">
             <div class="field"><label for="f-engineType">Engine layout</label><select id="f-engineType" required></select></div>
-            <div class="field"><label for="f-recoveryType">Recovery mechanism</label><select id="f-recoveryType" required></select></div>
+            <div class="field">
+  <label for="f-recoveryType">Recovery mechanism</label>
+  <label class="chip-toggle chip-toggle-block" style="margin-bottom:6px;">
+    <input type="checkbox" id="f-hasRecovery">
+    <span>Fit recovery</span>
+  </label>
+  <select id="f-recoveryType"></select>
+</div>
             <div class="field"><label for="f-rcsType">RCS arrangement</label><select id="f-rcsType" required></select></div>
           </div>
         </fieldset>
@@ -160,41 +254,142 @@
              any one type's fields. Adding a brand-new hardware type to the
              Components Library needs zero changes here — it just shows up
              as another dropdown option with its own auto-built fields. -->
-        <fieldset id="engineParamsFieldset">
-          <legend>Main engines <span class="legend-note" id="engineParamsNote">—</span></legend>
-          <div class="field-grid" id="engineParamsGrid"></div>
-        </fieldset>
+        <fieldset id="engineParamsFieldset" data-role="rocket,booster,stage">
+  <legend>Main engines <span class="legend-note" id="engineParamsNote">—</span></legend>
+  <div class="field-grid" id="engineParamsGrid"></div>
+  <!-- Per-gimbalCapable-group thruster selection + mass flow rate. Filled
+       by renderEngineThrusters() in rockets.js. -->
+  <div id="engineThrustersMount"></div>
+</fieldset>
 
-        <fieldset id="recoveryParamsFieldset">
+        <fieldset id="recoveryParamsFieldset" data-role="rocket,booster,stage">
           <legend>Recovery mechanism <span class="legend-note" id="recoveryParamsNote">—</span></legend>
           <div class="field-grid" id="recoveryParamsGrid"></div>
         </fieldset>
 
-        <fieldset id="rcsParamsFieldset">
-          <legend>RCS <span class="legend-note" id="rcsParamsNote">—</span></legend>
-          <div class="field-grid" id="rcsParamsGrid"></div>
-        </fieldset>
+        <fieldset id="rcsParamsFieldset" data-role="rocket,booster,stage">
+  <legend>RCS <span class="legend-note" id="rcsParamsNote">—</span></legend>
+  <div class="field-grid" id="rcsParamsGrid"></div>
+  <!-- Single RCS-thruster type + per-nozzle mass flow rate. Filled by
+       renderRcsThruster() in rockets.js. -->
+  <div id="rcsThrusterMount"></div>
+</fieldset>
 
-        <fieldset>
+
+<fieldset id="stageFuelFieldset" data-role="stage" class="stage-only">
+  <legend>Fuel tank <span class="legend-note">— stage only</span></legend>
+  <div class="field-grid">
+    <div class="field"><label for="f-fuelType">Fuel type</label><select id="f-fuelType" required></select></div>
+    <div class="field"><label for="f-fuelTankHeight">Tank height</label><div class="input-unit"><input type="number" id="f-fuelTankHeight" min="0.5" step="0.1" required><span>m</span></div></div>
+    <div class="field"><label for="f-fuelTankWidth">Tank width</label><div class="input-unit"><input type="number" id="f-fuelTankWidth" min="0.2" step="0.1" required><span>m</span></div></div>
+  </div>
+</fieldset>
+
+<fieldset id="stageMetalFieldset" data-role="stage,nose" class="stage-only">
+  <legend>Body metal <span class="legend-note">— stage only; landing legs use this same metal</span></legend>
+  <div class="field-grid">
+    <div class="field"><label for="f-bodyMetalType">Metal type</label><select id="f-bodyMetalType" required></select></div>
+  </div>
+</fieldset>
+
+<fieldset id="stagePayloadFieldset" data-role="stage" class="stage-only">
+  <legend>Payload space <span class="legend-note">— stage only</span></legend>
+  <div class="field-grid">
+    <div class="field"><label for="f-payloadSpaceType">Shape</label><select id="f-payloadSpaceType" required></select></div>
+    <div class="field"><label for="f-payloadSpaceMetalType">Container metal</label><select id="f-payloadSpaceMetalType" required></select></div>
+    <div class="field"><label for="f-payloadSpaceDeployment">Deployment direction</label>
+      <select id="f-payloadSpaceDeployment">
+        <option value="clamshell">Clamshell (two halves)</option>
+        <option value="hinge">Hinged nose</option>
+      </select>
+    </div>
+  </div>
+  <div class="field-grid" id="payloadSpaceParamsGrid"></div>
+</fieldset>
+
+<fieldset id="noseShapeFieldset" data-role="nose">
+  <legend>Nose shape <span class="legend-note">— 0 = sharp cone, 1 = fully rounded</span></legend>
+  <div class="field-grid">
+    <div class="field">
+      <label for="f-noseCurveness">Curveness</label>
+      <div class="input-unit">
+        <input type="number" id="f-noseCurveness" min="0" max="1" step="0.05" value="0">
+        <span>0–1</span>
+      </div>
+    </div>
+  </div>
+</fieldset>
+
+        <fieldset id="aeroFieldset" data-role="rocket,booster,stage,nose">
           <legend>Aerodynamics</legend>
           <div class="field-grid">
             <div class="field"><label for="f-dragCd">Drag coefficient</label><div class="input-unit"><input type="number" id="f-dragCd" min="0" step="0.01" required><span>Cd</span></div></div>
           </div>
         </fieldset>
+        
+        <fieldset id="bodyDesignFieldset">
+  <legend>Body appearance <span class="legend-note">— colour or custom design</span></legend>
+  <div class="field-grid">
+    <div class="field" id="bodyDesignModeField">
+      <label for="f-bodyDesignMode">Appearance</label>
+      <select id="f-bodyDesignMode">
+        <option value="solid">Solid colour</option>
+        <option value="dsl">Custom design (DSL)</option>
+      </select>
+    </div>
+    <div class="field" id="bodySolidColorField">
+      <label for="f-bodySolidColor">Solid colour</label>
+      <input type="color" id="f-bodySolidColor" value="#e9edf2">
+    </div>
+  </div>
+  <div class="field" id="bodyDslField">
+    <label for="f-bodyDslText">Custom design ops (JSON)</label>
+    <textarea id="f-bodyDslText" rows="6" spellcheck="false"
+      placeholder='[{"op":"rect","x":-0.5,"y":0,"w":1,"h":0.85,"fill":"#ff4d4d"}]'></textarea>
+    <div class="dsl-hint">Coordinates: X -0.5..0.5 (left→right), Y 0..1 (base→nose). Ops: rect, circle, line, poly, text.</div>
+    <div class="dsl-error" id="bodyDslError" style="display:none;"></div>
+  </div>
+  <div class="field" id="payloadColorField">
+    <label for="f-payloadSpaceColor">Payload space colour <span class="legend-note">— the stage's own nose</span></label>
+    <input type="color" id="f-payloadSpaceColor" value="#e9edf2">
+  </div>
+</fieldset>
+
+
+
 
         <div id="formError" class="form-error" role="alert"></div>
 
         <!-- Live capability preview -->
-        <fieldset id="capsBox">
-          <legend>Capabilities <span class="legend-note">— computed from the fields above</span></legend>
-          <dl id="capsList">
-            <div class="cap-row"><dt>Total max thrust</dt><dd id="c-thrust">—</dd></div>
-            <div class="cap-row"><dt>Wet mass</dt><dd id="c-wet">—</dd></div>
-            <div class="cap-row"><dt>Max TWR (sea level)</dt><dd id="c-twr">—</dd></div>
-            <div class="cap-row"><dt>Δv (ideal, vacuum)</dt><dd id="c-dv">—</dd></div>
-            <div class="cap-row"><dt>Burn time (full throttle)</dt><dd id="c-burn">—</dd></div>
-          </dl>
-        </fieldset>
+        <fieldset id="capsBox" data-role="rocket,booster" class="rocket-and-booster-only">
+  <legend>Capabilities <span class="legend-note">— computed from the fields above</span></legend>
+  <dl id="capsList">
+    <div class="cap-row"><dt>Total max thrust</dt><dd id="c-thrust">—</dd></div>
+    <div class="cap-row"><dt>Wet mass</dt><dd id="c-wet">—</dd></div>
+    <div class="cap-row"><dt>Max TWR (sea level)</dt><dd id="c-twr">—</dd></div>
+    <div class="cap-row"><dt>Δv (ideal, vacuum)</dt><dd id="c-dv">—</dd></div>
+    <div class="cap-row"><dt>Burn time (full throttle)</dt><dd id="c-burn">—</dd></div>
+  </dl>
+</fieldset>
+
+        <fieldset id="stageCapsBox" data-role="stage" class="stage-only">
+  <legend>Stage capacity <span class="legend-note">— computed live from the inputs above</span></legend>
+  <dl id="stageCapsList">
+    <div class="cap-row"><dt>Fuel mass</dt><dd id="sc-fuel">—</dd></div>
+    <div class="cap-row"><dt>Body mass</dt><dd id="sc-body">—</dd></div>
+    <div class="cap-row"><dt>Engines (mass / thrust)</dt><dd id="sc-engines">—</dd></div>
+    <div class="cap-row"><dt>Payload container</dt><dd id="sc-payload">—</dd></div>
+    <div class="cap-row"><dt>Landing legs</dt><dd id="sc-legs">—</dd></div>
+    <div class="cap-row"><dt>Dry mass (no payload)</dt><dd id="sc-dry">—</dd></div>
+    <div class="cap-row"><dt>Effective Ve</dt><dd id="sc-ve">—</dd></div>
+    <div class="cap-row"><dt>Total thrust</dt><dd id="sc-thrust">—</dd></div>
+    <div class="cap-row"><dt>Max payload (Δv-limited)</dt><dd id="sc-pd">—</dd></div>
+    <div class="cap-row"><dt>Max payload (thrust-limited)</dt><dd id="sc-pt">—</dd></div>
+    <div class="cap-row"><dt><b>Max payload</b></dt><dd id="sc-pmax">—</dd></div>
+    <div class="cap-row"><dt>Wet mass at max payload</dt><dd id="sc-wet">—</dd></div>
+    <div class="cap-row" id="sc-warnRow" style="display:none"><dt>Warnings</dt><dd id="sc-warn">—</dd></div>
+  </dl>
+</fieldset>
 
         <div class="editor-actions">
           <button type="button" class="btn" id="btnCancel">Cancel</button>
@@ -203,11 +398,106 @@
       </form>
     </section>
 
+  <section id="stackPane" style="display:none">
+    <div class="pane-head">
+      <h1>Stacks</h1>
+      <button class="btn btn-accent" id="btnNewStack">+ New Stack</button>
+    </div>
+    <div id="stackList"><!-- populated by rockets.js --></div>
+  </section>
+
+  <section id="stackEditorPane" style="display:none">
+  <div id="stackEditorEmpty">
+    <p>Select a stack to see its members, or create a new one.</p>
+  </div>
+  
+  <div id="stackDetail" style="display:none">
+  <div class="detail-head">
+    <h2 id="stackDetailTitle">—</h2>
+    <div class="detail-head-actions">
+      <span id="stackDetailBadge" class="stack-badge">—</span>
+      <button type="button" class="btn btn-accent" id="btnStackDetailFly">Fly this</button>
+      <button type="button" class="btn btn-accent" id="btnStackDetailEdit">Edit</button>
+    </div>
+  </div>
+
+  <div class="detail-body">
+    <canvas id="stackPreviewCanvas" width="220" height="600" aria-hidden="true"></canvas>
+
+    <div class="detail-specs">
+      <fieldset>
+        <legend>Aggregate <span class="legend-note">— computed</span></legend>
+        <dl>
+          <div class="cap-row"><dt>Members</dt><dd id="sd-count">—</dd></div>
+          <div class="cap-row"><dt>Total height</dt><dd id="sd-height">—</dd></div>
+          <div class="cap-row"><dt>Total mass (wet)</dt><dd id="sd-mass">—</dd></div>
+        </dl>
+      </fieldset>
+
+      <fieldset>
+        <legend>Members <span class="legend-note">— top of stack first</span></legend>
+        <dl id="sd-memberList"></dl>
+      </fieldset>
+
+      <fieldset>
+        <legend>Validation <span class="legend-note">— live</span></legend>
+        <div id="sd-validationOutput">—</div>
+      </fieldset>
+    </div>
+  </div>
+</div>
+  
+  <form id="stackEditorForm" novalidate>
+    <div class="editor-head">
+      <h2 id="stackEditorTitle">New Stack</h2>
+      <div class="editor-head-actions">
+        <button type="button" class="btn" id="btnStackDuplicate">Duplicate</button>
+        <button type="button" class="btn btn-danger" id="btnStackDelete">Delete</button>
+      </div>
+    </div>
+    
+    <div class="field">
+      <label for="fs-name">Stack name</label>
+      <input type="text" id="fs-name" maxlength="60" required>
+    </div>
+    
+    <fieldset>
+      <legend>Members <span class="legend-note">— top of stack on top; bottom (booster) at bottom</span></legend>
+      <div id="stackMemberChain"></div>
+      <div class="field-grid" style="margin-top:14px">
+        <div class="field">
+          <label for="fs-addMember">Add member</label>
+          <select id="fs-addMember"></select>
+        </div>
+        <div class="field" style="align-self:end; padding-bottom:14px">
+          <button type="button" class="btn btn-accent" id="btnStackAddMember">+ Add to stack</button>
+        </div>
+      </div>
+    </fieldset>
+    
+    <fieldset id="stackValidationBox">
+      <legend>Validation <span class="legend-note">— live</span></legend>
+      <div id="stackValidationOutput">—</div>
+    </fieldset>
+    
+    <div id="stackFormError" class="form-error" role="alert"></div>
+    
+    <div class="editor-actions">
+      <button type="button" class="btn" id="btnStackCancel">Cancel</button>
+      <button type="submit" class="btn btn-accent">Save stack</button>
+    </div>
+  </form>
+</section>
+
+</main>
+
   </main>
 </div>
 
 <script src="js/componentLibrary.js"></script>
+<script src="js/customDesign.js"></script>          <!-- ← ye line chahiye -->
 <script src="js/fleet.js"></script>
+<script src="js/config.js"></script>
 <script src="js/simJs/rocketArt.js"></script>
 <script src="js/rockets.js"></script>
 </body>

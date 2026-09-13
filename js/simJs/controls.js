@@ -198,11 +198,9 @@ function bindSimControls() {
 // ---------------------------------------------------------------------------
 function bindLegsControl() {
   const btn = document.getElementById('btnLegs');
-  if (!btn) return;
+  if (!btn || btn.closest('.tb-group')?.style.display === 'none') return;
   btn.addEventListener('click', () => {
     if (!legs.deployed) {
-      // Only the DEPLOY command is safety-gated — stowing is always allowed
-      // (e.g. to abort a bad deploy). Check the envelope before honoring it.
       const safety = legDeploySafety();
       if (!safety.ok) {
         flashLegsWarning(safety.ascending ? 'Ascending — can\'t deploy' : 'Too fast — can\'t deploy');
@@ -270,4 +268,128 @@ function updateStatusBar() {
   const mm = Math.floor(t / 60).toString().padStart(2, '0');
   const ss = (t % 60).toFixed(1).padStart(4, '0');
   document.getElementById('missionClock').textContent = `T+${mm}:${ss}`;
+}
+
+
+// ---------------------------------------------------------------------------
+// P4-C4: Fueling availability + panel + Full/Off quick throttle
+// ---------------------------------------------------------------------------
+
+function canFuelNow() {
+  if (state.crashed) return false;
+  const r = Math.hypot(state.rx, state.ry);
+  const alt = r - CONFIG.EARTH_RADIUS;
+  const speed = Math.hypot(state.vx, state.vy);
+  const enginesOff = ENGINES.every(e =>
+    (e.targetThrottle || 0) < 0.001 && (e.throttle || 0) < 0.001);
+  const nearPad = Math.abs(state.rx) < 30;
+  return alt < 1.5 && speed < 0.5 && enginesOff && nearPad;
+}
+
+function _fmtKg(kg) {
+  return (kg >= 1000) ? (kg / 1000).toFixed(1) + ' t' : Math.round(kg) + ' kg';
+}
+function _fmtKN(n) {
+  return (n / 1000).toFixed(0) + ' kN';
+}
+
+function syncThrottleUI() {
+  ENGINES.filter(e => !e.isCenter).forEach(e => {
+    const val = Math.round(((e.targetThrottle !== undefined ? e.targetThrottle : e.throttle) || 0) * 100);
+    const input = document.querySelector(`.vslider[data-angle="${e.angleDeg}"]`);
+    const label = document.getElementById('val-eng-' + e.angleDeg);
+    if (input) input.value = val;
+    if (label) label.textContent = val + '%';
+  });
+  const c = ENGINES.find(e => e.isCenter);
+  if (c) {
+    const val = Math.round(((c.targetThrottle !== undefined ? c.targetThrottle : c.throttle) || 0) * 100);
+    const slider = document.getElementById('centerThrustSlider');
+    const valEl = document.getElementById('centerThrustValue');
+    if (slider) slider.value = val;
+    if (valEl) valEl.textContent = val + '%';
+  }
+}
+
+function bindQuickThrottle() {
+  const full = document.getElementById('btnFullThrottle');
+  const off  = document.getElementById('btnEngineOff');
+  if (full) full.addEventListener('click', () => {
+    ENGINES.forEach(e => { e.targetThrottle = 1; });
+    syncThrottleUI();
+  });
+  if (off) off.addEventListener('click', () => {
+    ENGINES.forEach(e => { e.targetThrottle = 0; });
+    syncThrottleUI();
+  });
+}
+
+function bindFuelPanel() {
+  const btn = document.getElementById('btnFuelPanel');
+  const slider = document.getElementById('fuelSlider');
+  if (!btn || !slider) return;
+  btn.addEventListener('click', () => {
+    const panel = document.getElementById('fuelPanel');
+    const opening = !panel || panel.style.display !== 'block';
+    if (opening) {
+      // Initialize slider to current fuel load on open.
+      const pct = CONFIG.FUEL_MASS_MAX > 0
+        ? Math.round((state.fuelMass / CONFIG.FUEL_MASS_MAX) * 100) : 0;
+      slider.value = pct;
+      document.getElementById('fuelPercentLabel').textContent = pct + '%';
+      if (panel) panel.style.display = 'block';
+      btn.classList.add('active');
+      updateFuelPanelReadouts();
+    } else {
+      if (panel) panel.style.display = 'none';
+      btn.classList.remove('active');
+    }
+  });
+  slider.addEventListener('input', (e) => {
+    if (!canFuelNow()) return;
+    const pct = parseFloat(e.target.value);
+    state.fuelMass = (CONFIG.FUEL_MASS_MAX || 0) * (pct / 100);
+    document.getElementById('fuelPercentLabel').textContent = Math.round(pct) + '%';
+    updateFuelPanelReadouts();
+  });
+}
+
+function updateFuelPanelReadouts() {
+  const panel = document.getElementById('fuelPanel');
+  if (!panel || panel.style.display !== 'block') return;
+  const geom = currentGeometry();
+  const maxThrust = ENGINES.reduce((s, e) => s + e.Fmax, 0);
+  const g0 = (typeof G0 !== 'undefined') ? G0 : 9.80665;
+  const weight = geom.M * g0;
+  const twr = weight > 0 ? maxThrust / weight : 0;
+
+  const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+  set('fuelReadMass', _fmtKg(state.fuelMass));
+  set('fuelReadTotal', _fmtKg(geom.M));
+  set('fuelReadThrust', _fmtKN(maxThrust));
+  set('fuelReadWeight', _fmtKN(weight));
+  const twrEl = document.getElementById('fuelReadTWR');
+  if (twrEl) {
+    twrEl.textContent = twr.toFixed(2);
+    twrEl.style.color = twr < 1 ? 'var(--danger)' : (twr < 1.2 ? 'var(--yellow)' : 'var(--green)');
+  }
+  const warn = document.getElementById('fuelWarn');
+  if (warn) warn.style.display = (twr < 1) ? 'block' : 'none';
+}
+
+// Called every frame from main.js — shows/hides the Fueling toolbar button
+// and closes the panel if the rocket is no longer at the pad.
+function updateFuelAvailability() {
+  const btn = document.getElementById('btnFuelPanel');
+  if (!btn) return;
+  const can = canFuelNow();
+  const visible = btn.style.display !== 'none';
+  if (can && !visible) btn.style.display = '';
+  else if (!can && visible) {
+    btn.style.display = 'none';
+    const panel = document.getElementById('fuelPanel');
+    if (panel && panel.style.display === 'block') panel.style.display = 'none';
+    btn.classList.remove('active');
+  }
+  updateFuelPanelReadouts();
 }

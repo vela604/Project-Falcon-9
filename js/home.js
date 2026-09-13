@@ -12,24 +12,32 @@ function fmtForce(n) {
 }
 
 function populateVehicleCard() {
-  const engineCount = 9; // center + 8 octaweb, fixed for this vehicle class
-  const totalMaxThrust = CONFIG.ENGINE_F_MAX * engineCount;
-
-  document.getElementById('vehicleName').textContent = CONFIG.ROCKET_NAME;
-  document.getElementById('specHeight').textContent = CONFIG.ROCKET_HEIGHT + ' m';
-  document.getElementById('specWidth').textContent = CONFIG.ROCKET_WIDTH + ' m';
-  document.getElementById('specDry').textContent = fmtMass(CONFIG.DRY_MASS);
-  document.getElementById('specFuel').textContent = fmtMass(CONFIG.FUEL_MASS_MAX);
-  document.getElementById('specEngines').textContent = engineCount + ' (octaweb + center)';
+  const stack = (typeof getActiveStack === 'function') ? getActiveStack() : null;
+  const members = (typeof getActiveStackMembers === 'function') ? getActiveStackMembers() : [];
+  const agg = (typeof stackCombinedAggregates === 'function') ? stackCombinedAggregates(stack) : null;
+  
+  const engineCount = (CONFIG.ENGINE_LAYOUT && CONFIG.ENGINE_LAYOUT.frame && CONFIG.ENGINE_LAYOUT.frame.slots) ?
+  CONFIG.ENGINE_LAYOUT.frame.slots.length : 9;
+const totalMaxThrust = (CONFIG.ENGINE_F_MAX || 0) * engineCount;
+  
+  document.getElementById('vehicleName').textContent = stack ? stack.name : CONFIG.ROCKET_NAME;
+  document.getElementById('specHeight').textContent = (agg ? agg.height : CONFIG.ROCKET_HEIGHT) + ' m';
+  document.getElementById('specWidth').textContent = (agg ? agg.width : CONFIG.ROCKET_WIDTH) + ' m';
+  document.getElementById('specDry').textContent = fmtMass(agg ? agg.dryMass : CONFIG.DRY_MASS);
+  document.getElementById('specFuel').textContent = fmtMass(agg ? agg.fuelMass : CONFIG.FUEL_MASS_MAX);
+  document.getElementById('specEngines').textContent = engineCount + ' (bottom stage)';
   document.getElementById('specThrustEach').textContent = fmtForce(CONFIG.ENGINE_F_MAX) + ' max';
   document.getElementById('specThrustTotal').textContent = fmtForce(totalMaxThrust);
   document.getElementById('specVe').textContent = CONFIG.ENGINE_VE.toLocaleString() + ' m/s';
   document.getElementById('specRcs').textContent = '4 pods (2 nozzles each)';
-
-  // Real vehicle artwork — same drawRocketArt() the flight simulator uses,
-  // drawn idle (legs stowed, no thrust) at full device pixel ratio.
-  renderVehiclePreview(document.getElementById('shipArt'));
-
+  
+  // Stack preview (uses renderStackPreview, moved into rocketArt.js).
+  if (typeof renderStackPreview === 'function' && stack) {
+    renderStackPreview(document.getElementById('shipArt'), stack.members);
+  } else {
+    renderVehiclePreview(document.getElementById('shipArt'));
+  }
+  
   const fleetSize = (typeof loadFleet === 'function') ? loadFleet().length : 1;
   const tickerEl = document.getElementById('tickerText');
   tickerEl.innerHTML =

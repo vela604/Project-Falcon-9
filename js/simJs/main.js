@@ -4,6 +4,15 @@
 // ============================================================================
 
 const MERGE_COLORS = ['#ff8855', '#55ddff', '#aa88ff', '#88ff99', '#ffdd55', '#ff66cc', '#66ffcc'];
+// ---------------------------------------------------------------------------
+// Active stack — resolved once per page-load (the sim's CONFIG, ENGINES, and
+// stack don't change mid-session; user must reload after changing the stack).
+// Used by render.js, physics.js, massProps.js.
+// ---------------------------------------------------------------------------
+const SIM_STACK_MEMBERS = (typeof getActiveStackMembers === 'function') ?
+  getActiveStackMembers() :
+  [];
+
 
 function groupColorOf(groupName) {
   const gi = mergeState.groups.findIndex(g => g.name === groupName);
@@ -227,18 +236,40 @@ function frame(ts) {
   drawGraphs();
   updateTelemetry();
   updateStatusBar();
+  updateFuelAvailability();
 
   requestAnimationFrame(frame);
 }
 
 function bootstrap() {
   buildEngineLayout();
-  resetState(0); // Start on the pad — rocket's base resting on the elevated landing/launch site deck
-
+  resetState(0);
+  
   initCanvas();
   initFigureCanvas();
   initBasalCanvas();
-
+  
+  // Legs availability: hide the button entirely if the active stack's
+  // bottom member has no recovery, or a recovery type that doesn't deploy
+  // legs on the vehicle (e.g. a catch-fitting type, or a booster with
+  // hasRecovery:false).
+  const recovery = (typeof CONFIG !== 'undefined') ? CONFIG.RECOVERY_TYPE : null;
+  const hasLegs = !!(recovery &&
+    recovery.capabilities &&
+    recovery.capabilities.deploysOnVehicle);
+  const legsBtn = document.getElementById('btnLegs');
+  if (legsBtn && !hasLegs) {
+    // Hide the whole toolbar group (button + its separator) for a cleaner look.
+    const group = legsBtn.closest('.tb-group');
+    if (group) group.style.display = 'none';
+    else legsBtn.style.display = 'none';
+  }
+  // Global, set once per page-load — the stack doesn't change mid-sim.
+// (User must reload after changing the stack, same as any CONFIG change.)
+const SIM_STACK_MEMBERS = (typeof getActiveStackMembers === 'function')
+  ? getActiveStackMembers()
+  : [];
+  
   bindSimControls();
   bindLegsControl();
   bindCenterControls();
@@ -246,6 +277,8 @@ function bootstrap() {
   bindMergeControls();
   bindCameraControls();
   bindWindPanel();
+  bindQuickThrottle();
+  bindFuelPanel();
   bindMiscToggles();
 
   buildGlossaryPanel();

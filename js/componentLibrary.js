@@ -18,6 +18,18 @@
 
 const COMPONENT_LIBRARY_KEY = 'rocketSim.componentLibrary.v1';
 
+// Standard gravitational acceleration — physical constant, used by the
+// thruster-mass formula (mass = thrust / (TWR × G0)). Not a tunable
+// design value, so it lives here rather than in config.js.
+const G0 = 9.80665; // m/s²
+// Phase 3/4 shared design constants. These live at top-level (not only on
+// CONFIG) because fleet.js's stage/booster derived-mass functions are
+// called *from* config.js at load time — before CONFIG itself exists.
+// Having them here breaks the circular dependency.
+const BODY_SHELL_FACTOR            = 0.01;
+const SECOND_STAGE_TARGET_DELTA_V  = 4500;
+const MIN_TWR_FLOOR                = 1.2;
+const MAX_BULGE_DIAMETER_RATIO     = 1.4;
 // ---------------------------------------------------------------------------
 // Small geometry helper used by "ringWithCenter" engine-layout frames: given
 // a slot COUNT evenly spaced starting at startDeg, generate the outer-ring
@@ -83,7 +95,7 @@ function buildOctaweb9() {
     category: 'engineLayout',
     kind: 'ringWithCenter',
     displayName: 'Octaweb (Merlin-class, 8+1)',
-    description: 'One gimbaling center engine surrounded by a ring of 8 fixed outer engines at 45° spacing — the current Falcon-9-class layout.',
+    description: 'One gimbaling center engine surrounded by a ring of 8 fixed outer engines at 45° spacing — the current Falcon-9-class layout. Performance (thrust, Ve, gimbal, throttle) comes from the thruster type(s) selected per gimbalCapable group; this type declares only geometry.',
     frame: {
       slots: [
         { id: 'C', role: 'center', gimbalCapable: true, angleDeg: null, position: () => ({ x: 0 }) },
@@ -91,16 +103,35 @@ function buildOctaweb9() {
       ],
       mergeTopology: ringMergeTopology(outer),
     },
+    // STEP B: only geometry remains here. Per-engine thrust/Ve/gimbal/throttle
+    // keys moved to the `thruster` category — a fleet record now references
+    // one thruster type per distinct `gimbalCapable` group (see §2.2 and
+    // fleet.js's engineThrusterGroups()).
     parameterSchema: [
       { key: 'octaRadius', label: 'Ring radius (R)', unit: 'm', min: 0.1 },
-      { key: 'engineFMax', label: 'Max thrust / engine', unit: 'N', min: 1000 },
-      { key: 'engineFMinFrac', label: 'Throttle floor', unit: 'frac', min: 0, max: 0.95 },
-      { key: 'engineVe', label: 'Exhaust velocity', unit: 'm/s', min: 500 },
-      { key: 'engineThrustRate', label: 'Thrust change rate', unit: '/s', min: 0.01 },
-      { key: 'gimbalMaxDeg', label: 'Gimbal range', unit: 'deg', min: 0, max: 45 },
-      { key: 'gimbalRateDegS', label: 'Gimbal slew rate', unit: 'deg/s', min: 1 },
     ],
     capabilities: { sharedGimbalSlider: true, throttleGrouping: true },
+  };
+}
+
+
+function buildSingleNozzleVac() {
+  return {
+    id: 'single-nozzle-vac',
+    category: 'engineLayout',
+    kind: 'ringWithCenter',
+    displayName: 'Single Nozzle (vacuum-class)',
+    description: 'A single gimbaling vacuum-optimized engine at the base — no outer ring. Typical of an upper stage.',
+    frame: {
+      slots: [
+        { id: 'C', role: 'center', gimbalCapable: true, angleDeg: null, position: () => ({ x: 0 }) },
+      ],
+      mergeTopology: { symmetric: [], asymmetric: [] },
+    },
+    // No geometry parameters — single engine sits on the axis. Ring radius
+    // is meaningless here (octaweb-only concept).
+    parameterSchema: [],
+    capabilities: { sharedGimbalSlider: true, throttleGrouping: false },
   };
 }
 
@@ -119,12 +150,19 @@ function buildLegsSwingout4() {
         maxSweepRad: 125 * Math.PI / 180,
         pistonMountY: -H * 0.08,
       }),
-      // How deployed (0..1) the legs must be for a touchdown to be
-      // considered a landing rather than a crash. Lives on the type itself
-      // (not a global CONFIG constant) so a different legs-on-vehicle type
-      // could require, say, a stricter 0.98 without touching physics.js —
-      // physics.js falls back to CONFIG.LANDING_MIN_LEG_DEPLOY if a type
-      // omits this.
+      // STEP B / §2.6: one leg's approximate metal volume — placeholder-
+      // precision silhouette (thin tapered strut with lightening cutouts
+      // folded in via a fill factor), same "dummy value first" philosophy as
+      // payloadSpace's volume formulas. Legs are made of the SAME metal as
+      // the body (confirmed §1.15), so this is multiplied by body-metal
+      // density downstream.
+      structuralVolume: (H, W) => {
+        const legLength = 0.27 * H;
+        const avgThickness = 0.05 * W;
+        const avgDepth = 0.04 * W;
+        const fillFactor = 0.4; // internal cutouts
+        return legLength * avgThickness * avgDepth * fillFactor;
+      },
       landingMinDeploy: 0.9,
     },
     parameterSchema: [
@@ -163,7 +201,7 @@ function buildRcs4Pod2Nozzle() {
     category: 'rcsArrangement',
     kind: 'cornerPods',
     displayName: '4-Corner RCS Pods (2 nozzles/pod)',
-    description: 'Four pods at the top/bottom-left/right corners of the airframe, each with one lateral (outward) and one vertical (along-hull) fixed-direction nozzle — the current Falcon-9-class RCS.',
+    description: 'Four pods at the top/bottom-left/right corners of the airframe, each with one lateral (outward) and one vertical (along-hull) fixed-direction nozzle. Per-nozzle thrust/Ve come from the rcsThruster type; this type declares only pod layout + timing.',
     frame: {
       pods: [
         { id: 'TL', corner: [-1, 'top'] },
@@ -173,14 +211,13 @@ function buildRcs4Pod2Nozzle() {
       ],
       nozzlesPerPod: 2,
     },
+    // STEP B: rcsThrust/rcsVe removed — those come from `rcsThruster` type.
     parameterSchema: [
-      { key: 'rcsThrust', label: 'Nozzle thrust', unit: 'N', min: 10 },
-      { key: 'rcsVe', label: 'Exhaust velocity', unit: 'm/s', min: 200 },
-      { key: 'rcsXOffset', label: 'Lateral offset', unit: 'm', min: 0.1 },
-      { key: 'rcsTopMargin', label: 'Top margin', unit: 'm', min: 0 },
-      { key: 'rcsBottomMargin', label: 'Bottom margin', unit: 'm', min: 0 },
-      { key: 'rcsPwmPeriod', label: 'PWM period', unit: 's', min: 0.02 },
-    ],
+  { key: 'rcsTopY', label: 'Top pods height (from base)', unit: 'm', min: 0 },
+  { key: 'rcsBottomY', label: 'Bottom pods height (from base)', unit: 'm', min: 0 },
+  { key: 'rcsXOffset', label: 'Lateral offset', unit: 'm', min: 0.1 },
+  { key: 'rcsPwmPeriod', label: 'PWM period', unit: 's', min: 0.02 },
+],
     capabilities: { sharedGimbalSlider: false, throttleGrouping: false },
   };
 }
@@ -239,6 +276,7 @@ function withFixedValues(schema, values) {
 const THRUSTER_CHEMICAL_SCHEMA = [
   { key: 've', label: 'Exhaust velocity', unit: 'm/s', min: 500 },
   { key: 'efficiency', label: 'Efficiency', unit: 'frac', min: 0.1, max: 1 },
+  { key: 'twr', label: 'Thrust-to-weight ratio', unit: 'ratio', min: 10, max: 500 },
   { key: 'maxMassFlowRate', label: 'Max mass flow rate', unit: 'kg/s', min: 0.1 },
   { key: 'gimbalCapable', label: 'Gimbal capable', unit: 'bool' },
   { key: 'gimbalMaxDeg', label: 'Gimbal range', unit: 'deg', min: 0, max: 45 },
@@ -273,15 +311,16 @@ function buildThrusterMerlin1DClass() {
     'Merlin-1D class',
     'Fixed-performance chemical engine type. Ve, efficiency, gimbal range/rate, and throttle floor/rate are all locked in by the type — a rocket build only ever chooses a mass flow rate (≤ this type\'s max), which determines thrust and engine mass.',
     {
-      ve: 2900,
-      efficiency: 0.9,
-      maxMassFlowRate: 207,
-      gimbalCapable: true,
-      gimbalMaxDeg: 20,
-      gimbalRateDegS: 40,
-      minThrottleFrac: 0.4,
-      maxThrottleRateFrac: 0.5,
-    }
+  ve: 2900,
+  efficiency: 0.9,
+  twr: 180,
+  maxMassFlowRate: 207,
+  gimbalCapable: true,
+  gimbalMaxDeg: 20,
+  gimbalRateDegS: 40,
+  minThrottleFrac: 0.4,
+  maxThrottleRateFrac: 0.5,
+}
   );
 }
 
@@ -433,9 +472,11 @@ function buildPayloadSpaceBulged() {
       },
     },
     parameterSchema: [
-      { key: 'capHeight', label: 'Cap height', unit: 'm', min: 0.2 },
-      { key: 'capWidth', label: 'Cap base width', unit: 'm', min: 0.2 },
-      { key: 'bulgeWidth', label: 'Bulge width', unit: 'm', min: 0.2 },
+  { key: 'capHeight', label: 'Cap height', unit: 'm', min: 0.2 },
+  { key: 'capWidth', label: 'Cap base width', unit: 'm', min: 0.2 },
+  { key: 'bulgeWidth', label: 'Bulge width', unit: 'm', min: 0.2 },
+  { key: 'frustumSlantDeg', label: 'Frustum slant (from base)', unit: 'deg', min: 15, max: 80 },
+  { key: 'curveHeightFactor', label: 'Top curve height / bulgeR', unit: 'frac', min: 0.3, max: 1.5 },
     ],
   };
 }
@@ -443,6 +484,7 @@ function buildPayloadSpaceBulged() {
 function seedComponentLibrary() {
   return [
     buildOctaweb9(),
+    buildSingleNozzleVac(),
     buildLegsSwingout4(),
     buildCatchFitting2Pin(),
     buildRcs4Pod2Nozzle(),
@@ -486,4 +528,17 @@ function getComponentType(id) {
 
 function getComponentsByCategory(category) {
   return loadComponentLibrary().filter(t => t.category === category);
+}
+
+
+// Engine dry mass for a given thrust level: mass = thrust / (TWR × G0).
+// Shared by rockets.js (live editor readout) and future stage-mass
+// computation (Step E), so both agree on the same formula. Returns NaN if
+// the thruster type doesn't declare a valid `twr` — caller should display
+// "—" rather than a fake number.
+function engineMassFromThrust(thrusterType, thrustN) {
+  if (!thrusterType || !Number.isFinite(thrustN)) return NaN;
+  const twrEntry = thrusterType.parameterSchema.find(p => p.key === 'twr');
+  if (!twrEntry || !Number.isFinite(twrEntry.value) || twrEntry.value <= 0) return NaN;
+  return thrustN / (twrEntry.value * G0);
 }

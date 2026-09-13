@@ -16,9 +16,12 @@ const NOTATION_GLOSSARY = {
   'Ft': 'Total main-engine thrust (N)',
   'γ':  'Center engine gimbal angle (deg)',
   'τ':  'Net torque about center of mass (N·m)',
+  'hc': 'Height of stack center of mass above the base (m)',
+  'I': 'Stack moment of inertia about its center of mass (kg·m²)',
   'g':  'Local gravitational acceleration (m/s²)',
   'ρ':  'Local air density (kg/m³)',
   'D↑': 'RCS top-pod lateral-nozzle PWM duty cycle (%) — how much of each PWM period the top pod fires, to balance its larger moment arm against the bottom pod',
+  'TWR': 'Thrust-to-weight ratio — max thrust / (current mass × g₀). Below 1 means no liftoff.',
   'T+': 'Mission elapsed time (mm:ss.s)',
 };
 
@@ -56,7 +59,18 @@ function updateTelemetry() {
   set('t-g', fmt(grav.g, 3));
   set('t-rho', fmt(rho, 4));
   set('t-duty', Math.round((lastForces.dutyTop || 0) * 100) + '%');
-
+  set('t-com', fmt(geom.comH, 2));
+  set('t-moi', geom.I >= 1e6 ? (geom.I / 1e6).toFixed(2) + 'M' : fmt(geom.I, 0));
+  
+  const maxThrustAll = ENGINES.reduce((s, e) => s + e.Fmax, 0);
+const g0v = (typeof G0 !== 'undefined') ? G0 : 9.80665;
+const twrLive = geom.M > 0 ? maxThrustAll / (geom.M * g0v) : 0;
+const twrEl = document.getElementById('t-twr');
+if (twrEl) {
+  twrEl.textContent = twrLive.toFixed(2);
+  twrEl.style.color = twrLive < 1 ? 'var(--danger)' : (twrLive < 1.2 ? 'var(--yellow)' : '');
+}
+  
   pushGraphSample(state.simTime, altitude, speed, ENGINES.reduce((s,e)=>s+e.currentF,0));
 }
 
@@ -158,11 +172,11 @@ function drawFigurePanel() {
   // RCS gas-ejection glow — lights up here (not on the live sim rocket) when firing.
   const firing = lastForces.firing || {};
   const podCorners = {
-    TL: [baseX - W/2, baseY - (CONFIG.ROCKET_HEIGHT - CONFIG.RCS_TOP_MARGIN) * scale],
-    TR: [baseX + W/2, baseY - (CONFIG.ROCKET_HEIGHT - CONFIG.RCS_TOP_MARGIN) * scale],
-    BL: [baseX - W/2, baseY - CONFIG.RCS_BOTTOM_MARGIN * scale],
-    BR: [baseX + W/2, baseY - CONFIG.RCS_BOTTOM_MARGIN * scale],
-  };
+  TL: [baseX - W / 2, baseY - CONFIG.RCS_TOP_Y * scale],
+  TR: [baseX + W / 2, baseY - CONFIG.RCS_TOP_Y * scale],
+  BL: [baseX - W / 2, baseY - CONFIG.RCS_BOTTOM_Y * scale],
+  BR: [baseX + W / 2, baseY - CONFIG.RCS_BOTTOM_Y * scale],
+};
   Object.keys(podCorners).forEach(k => {
     const [cx, cy] = podCorners[k];
     if (firing[k]) {

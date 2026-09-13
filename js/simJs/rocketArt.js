@@ -30,35 +30,209 @@
 //            the built-in 4-corner type, but this file never assumes those
 //            literal names (see PHASE2_PROMPT.md Step E).
 // ============================================================================
+
+// ============================================================================
+// PS-A — Payload space (fairing) shape renderer.
+//
+// Draws ONLY the fairing silhouette — no body, no legs, no RCS, no engines.
+// Standalone: not yet called from any fleet record path (that's PS-C/PS-D).
+// Coordinate convention matches drawRocketArt exactly: origin at the
+// member's own BASE (0,0), +Y down, nose tip at (0, -H).
+//
+// Two `kind`s, both driven entirely by formulas over opts (Rule 5 — no
+// hardcoded fractions):
+//
+//   noseCapShape   — smooth ogive straight from base width to a rounded tip.
+//
+//   bulgedCapShape — base → frustum (straight taper, angle = frustumAngleDeg
+//                    from horizontal) → straight cylinder (variable height)
+//                    → ogive → rounded tip. Section heights:
+//                      frustumH  = |bulgeR - capR| / tan(frustumAngleDeg)
+//                      curveH    = curveRatio × bulgeR
+//                      straightH = max(0, H - frustumH - curveH)
+//                    If the two mandatory sections (frustum + ogive) alone
+//                    exceed the available height H, both are scaled down
+//                    proportionally so the shape still fits — the straight
+//                    section is simply the first to vanish, exactly like
+//                    "dummy value first" degrades gracefully rather than
+//                    drawing something invalid.
+//
+// opts read:
+//   payloadKind            'noseCapShape' | 'bulgedCapShape' (default noseCapShape)
+//   payloadCapWidth        base diameter, meters (falls back to W×mpp)
+//   payloadBulgeWidth      max bulge diameter, meters (bulged kind only;
+//                          falls back to payloadCapWidth, i.e. no bulge)
+//   payloadFrustumAngleDeg frustum angle from horizontal, degrees (default 45)
+//   payloadCurveRatio      top-curve height / bulge radius (default 0.85)
+//   payloadColor           '#rrggbb' fill (default '#e9edf2')
+// ============================================================================
+function drawPayloadSpaceShape(ctx, W, H, mpp, opts) {
+  opts = opts || {};
+  const kind = opts.payloadKind || 'noseCapShape';
+  const color = opts.payloadColor || '#e9edf2';
+
+  // Dimensions arrive in METERS (matching every other params-bag field in
+  // this codebase) and get converted to px here via mpp — mirrors the
+  // capW_px/bulgeW_px conversion already used by drawStageBody's inline
+  // payload renderer. Falls back to the member's own W (already px) when a
+  // specific field isn't supplied, so an incomplete opts bag still degrades
+  // to a plain cone sized to the member's own bounding box instead of NaN.
+  const capWidth_m = Number.isFinite(opts.payloadCapWidth) ? opts.payloadCapWidth : W * mpp;
+  const capR = (capWidth_m / 2) / mpp; // px
+
+  const isBulged = kind === 'bulgedCapShape';
+  let bulgeR = capR; // no-bulge fallback for the gradient-width calc below
+
+  const bodyPath = () => {
+    ctx.beginPath();
+    if (isBulged) {
+      const bulgeWidth_m = Number.isFinite(opts.payloadBulgeWidth) ? opts.payloadBulgeWidth : capWidth_m;
+      bulgeR = (bulgeWidth_m / 2) / mpp;
+      const frustumAngleDeg = Number.isFinite(opts.payloadFrustumAngleDeg) ? opts.payloadFrustumAngleDeg : 45;
+      const curveRatio = Number.isFinite(opts.payloadCurveRatio) ? opts.payloadCurveRatio : 0.85;
+
+      // Formula-derived section heights — see header comment.
+      const angleRad = Math.max(1, Math.min(89, frustumAngleDeg)) * Math.PI / 180;
+      let frustumH = Math.abs(bulgeR - capR) / Math.tan(angleRad);
+      let curveH = curveRatio * bulgeR;
+      const mandatory = frustumH + curveH;
+      if (mandatory > H && mandatory > 0) {
+        const s = H / mandatory;
+        frustumH *= s;
+        curveH *= s;
+      }
+      const straightH = Math.max(0, H - frustumH - curveH);
+
+      const baseY = 0;
+      const frustumTopY = -frustumH;
+      const straightTopY = frustumTopY - straightH;
+      const tipY = -H;
+
+      // Left side: base → frustum → straight → ogive → tip
+      ctx.moveTo(-capR, baseY);
+      ctx.lineTo(-bulgeR, frustumTopY);
+      ctx.lineTo(-bulgeR, straightTopY);
+      ctx.bezierCurveTo(
+        -bulgeR * 0.98, straightTopY - curveH * 0.30,
+        -bulgeR * 0.45, tipY + curveH * 0.15,
+        0, tipY
+      );
+      // Right side: tip → ogive → straight → frustum → base
+      ctx.bezierCurveTo(
+        bulgeR * 0.45, tipY + curveH * 0.15,
+        bulgeR * 0.98, straightTopY - curveH * 0.30,
+        bulgeR, straightTopY
+      );
+      ctx.lineTo(bulgeR, frustumTopY);
+      ctx.lineTo(capR, baseY);
+    } else {
+      // noseCapShape: smooth ogive straight from base width to a rounded tip.
+      const tipY = -H;
+      ctx.moveTo(-capR, 0);
+      ctx.bezierCurveTo(
+        -capR * 0.70, H * 0.30,
+        -capR * 0.30, tipY + H * 0.20,
+        0, tipY
+      );
+      ctx.bezierCurveTo(
+        capR * 0.30, tipY + H * 0.20,
+        capR * 0.70, H * 0.30,
+        capR, 0
+      );
+    }
+    ctx.closePath();
+  };
+
+  ctx.fillStyle = color;
+  ctx.strokeStyle = '#8b93a0';
+  ctx.lineWidth = 1.2;
+  bodyPath();
+  ctx.fill();
+  ctx.stroke();
+
+  // Same cylindrical shading recipe used everywhere else in this file —
+  // gradient width follows the widest cross-section (bulge, if any).
+  if (typeof applyCylindricalOverlay === 'function') {
+    const gradW = Math.max(capR, bulgeR) * 2;
+    bodyPath();
+    applyCylindricalOverlay(ctx, gradW);
+  }
+}
+
+
 function drawRocketArt(ctx, W, H, mpp, opts) {
   opts = opts || {};
   const legsProgress = opts.legsProgress || 0;
   const legsState = opts.legsState || null;
 
-  // ============================================================================
-  // LEGS SETUP — geometry sourced from the active recovery TYPE (Components
-  // Library), never hardcoded. PHASE 2 STEP E/G:
-  //  - `hingeGeometry(H)` gives {hingeY, legLength, maxSweepRad, pistonMountY}
-  //    for any `legsOnVehicle`-kind type (see componentLibrary.js) — a new
-  //    type with a different hinge/length/sweep needs zero changes here.
-  //  - `capabilities.deploysOnVehicle` gates whether legs are drawn at all,
-  //    so a `catchFittingOnVehicle`-kind type (no legs, caught by a ground
-  //    tower instead) correctly renders with none, no type.id check needed.
-  //  - The actual leg SHAPE drawn below (the 2-visible + 2-"back" illusion
-  //    that reads as 4 legs) is still tuned specifically to legCount===4;
-  //    a future legsOnVehicle type with a different leg count falls back to
-  //    this same 4-leg illusion (documented limitation, not yet
-  //    generalized — see PHASE2_PROMPT.md Step E scope) rather than
-  //    silently drawing the wrong number of legs.
-  //  - STEP G: `opts.recoveryType` lets a caller (e.g. the fleet editor
-  //    previewing a specific, not-necessarily-active record) pass the
-  //    RESOLVED type for that exact vehicle instead of relying on the
-  //    globally-active CONFIG.RECOVERY_TYPE. Falls back to CONFIG for
-  //    callers that don't know/care (the live simulator, the home page's
-  //    "current vehicle" card) — and further to null (no legs, no crash)
-  //    on a page that hasn't even loaded config.js at all.
-  // ============================================================================
-  const recoveryType = opts.recoveryType || ((typeof CONFIG !== 'undefined') ? CONFIG.RECOVERY_TYPE : null);
+  // P4-D3: body appearance + nose shape + role flags.
+  const noseCurveness = opts.noseCurveness || 0;
+  const isBooster = opts.stageRole === 'booster';
+  const isNose = opts.stageRole === 'nose';
+  const isPayloadSpace = opts.stageRole === 'payloadSpace';
+
+  const bodyDesign = opts.bodyDesign || { mode: 'solid', solidColor: '#e9edf2', dslText: '' };
+  const designMode = bodyDesign.mode || 'solid';
+  const solidFill = bodyDesign.solidColor || '#e9edf2';
+
+  // ---- Payload space role: pure fairing shape, early exit. ----
+  // PS-A: standalone shape renderer — no body/legs/RCS/engines for this
+  // role. Not yet reachable from any fleet record (that wiring is PS-C/D);
+  // this branch only fires when a caller explicitly passes
+  // stageRole: 'payloadSpace', same pattern as the nose early-exit below.
+  if (isPayloadSpace) {
+    drawPayloadSpaceShape(ctx, W, H, mpp, opts);
+    return;
+  }
+
+  // ---- Nose role: pure cone, early exit. ----
+  if (isNose) {
+    const c = Math.max(0, Math.min(1, noseCurveness));
+    const ctrlx = -W / 4 + c * (-W / 4);
+    const ctrly = -H / 2 + c * (-H / 2);
+
+    const conePath = () => {
+      ctx.beginPath();
+      ctx.moveTo(-W / 2, 0);
+      ctx.quadraticCurveTo(ctrlx, ctrly, 0, -H);
+      ctx.quadraticCurveTo(-ctrlx, ctrly, W / 2, 0);
+      ctx.closePath();
+    };
+
+    ctx.fillStyle = solidFill;
+    ctx.strokeStyle = '#8b93a0';
+    ctx.lineWidth = 1.2;
+    conePath();
+    ctx.fill();
+    ctx.stroke();
+
+    if (typeof applyCylindricalOverlay === 'function') {
+      conePath();
+      applyCylindricalOverlay(ctx, W);
+    }
+
+    // DSL for nose (if allowed — currently nose role is solid only, but
+    // keep the hook so future support is drop-in).
+    if (designMode === 'dsl' && typeof parseAndValidateDesign === 'function'
+        && typeof drawCustomDesignOps === 'function') {
+      const parsed = parseAndValidateDesign(bodyDesign.dslText || '');
+      if (parsed.ok && parsed.ops.length) {
+        ctx.save();
+        conePath();
+        ctx.clip();
+        drawCustomDesignOps(ctx, W, H, parsed.ops);
+        conePath();
+        if (typeof applyCylindricalOverlay === 'function') applyCylindricalOverlay(ctx, W);
+        ctx.restore();
+      }
+    }
+    return;
+  }
+
+  // ---- Legs setup ----
+  const recoveryType = ('recoveryType' in opts)
+    ? opts.recoveryType
+    : ((typeof CONFIG !== 'undefined') ? CONFIG.RECOVERY_TYPE : null);
   const showLegs = !!(recoveryType && recoveryType.capabilities && recoveryType.capabilities.deploysOnVehicle);
   const hingeGeometryFn = (recoveryType && recoveryType.frame && typeof recoveryType.frame.hingeGeometry === 'function')
     ? recoveryType.frame.hingeGeometry
@@ -71,6 +245,37 @@ function drawRocketArt(ctx, W, H, mpp, opts) {
   if (showLegs && legGeo && legCount !== 4) {
     console.warn(`drawRocketArt: recovery type "${recoveryType.id}" has legCount ${legCount}, but leg artwork is still only implemented for the 4-leg illusion — drawing 4 legs anyway.`);
   }
+
+// ---- Engine bell (stage, standalone) + interstage (booster top) ----
+// Both sizes derive from the engine layout's total mass flow rate:
+//   bellHeight = 0.007 × totalMassFlowRate    (m, per nozzle)
+//   bellRadius = bellHeight / 2
+//   interstageHeight = bellHeight × 1.20      (bell + margin)
+//   interstageDiameter = booster width (fixed)
+//
+// For multi-nozzle layouts (octaweb), we draw one small bell per outer
+// engine + a slightly bigger centre bell — the visible cluster. For a
+// single-nozzle layout, one bell.
+const engineLayout = opts.engineLayout || null;
+const engineBell = (() => {
+  if (!engineLayout || !engineLayout.frame || !engineLayout.frame.slots) return null;
+  const totalFlow = (() => {
+    const groups = (typeof engineThrusterGroups === 'function') ? engineThrusterGroups(engineLayout) : {};
+    let sum = 0;
+    Object.keys(groups).forEach(gk => {
+      const g = opts.engineThrusters && opts.engineThrusters[gk];
+      if (!g || !Number.isFinite(g.massFlowRate)) return;
+      sum += g.massFlowRate * groups[gk].length;
+    });
+    return sum;
+  })();
+  if (totalFlow <= 0) return null;
+  const nSlots = engineLayout.frame.slots.length;
+  const perEngineFlow = totalFlow / nSlots;
+  const h = 0.007 * perEngineFlow;
+  return { h, r: h / 2, count: nSlots, slots: engineLayout.frame.slots };
+})();
+
 
   const p = legsProgress;
   const legHingeY = legGeo ? legGeo.hingeY : -H * 0.004;
@@ -194,117 +399,410 @@ function drawRocketArt(ctx, W, H, mpp, opts) {
     ctx.stroke();
   }
 
-  // BACK legs (behind body) — skipped entirely for a recovery type that
-  // doesn't deploy legs on the vehicle (e.g. a catch-fitting type).
+  // BACK legs
   if (showLegs) {
     drawLandingLeg(-1, true);
     drawLandingLeg( 1, true);
   }
 
-  // ---- Body ----
-  ctx.fillStyle = '#e9edf2';
+// ---- Body ----
+// Three visual cases:
+//   - stage with payloadSpace: tank rectangle + payload shape (cone or bulged)
+//   - booster: flat-top rectangle + interstage lip
+//   - rocket/legacy: cylinder + nose curve
+if (opts.stageRole === 'stage' && opts.stagePayload) {
+  drawStageBody();
+} else {
+  const bodyPath = () => {
+    ctx.beginPath();
+    ctx.moveTo(-W / 2, 0);
+    if (isBooster) {
+      ctx.lineTo(-W / 2, -H);
+      ctx.lineTo(W / 2, -H);
+      ctx.lineTo(W / 2, 0);
+    } else {
+      const c = Math.max(0, Math.min(1, noseCurveness));
+      const shoulderY = -H * 0.85;
+      const ctrlA0x = -W * 0.25, ctrlA0y = shoulderY * 0.5 + (-H) * 0.5;
+      const ctrlA1x = -W * 0.5, ctrlA1y = -H;
+      const ctrlAx = ctrlA0x + c * (ctrlA1x - ctrlA0x);
+      const ctrlAy = ctrlA0y + c * (ctrlA1y - ctrlA0y);
+      ctx.lineTo(-W / 2, shoulderY);
+      ctx.quadraticCurveTo(ctrlAx, ctrlAy, 0, -H);
+      ctx.quadraticCurveTo(-ctrlAx, ctrlAy, W / 2, shoulderY);
+      ctx.lineTo(W / 2, 0);
+    }
+    ctx.closePath();
+  };
+
+  ctx.fillStyle = solidFill;
   ctx.strokeStyle = '#8b93a0';
   ctx.lineWidth = 1.2;
-  ctx.beginPath();
-  ctx.moveTo(-W/2, 0);
-  ctx.lineTo(-W/2, -H*0.85);
-  ctx.quadraticCurveTo(-W/2, -H, 0, -H);
-  ctx.quadraticCurveTo(W/2, -H, W/2, -H*0.85);
-  ctx.lineTo(W/2, 0);
-  ctx.closePath();
+  bodyPath();
   ctx.fill();
   ctx.stroke();
 
-  let shade = ctx.createLinearGradient(-W/2, 0, W/2, 0);
-  shade.addColorStop(0, 'rgba(0,0,0,0.14)');
-  shade.addColorStop(0.5, 'rgba(255,255,255,0.10)');
-  shade.addColorStop(1, 'rgba(0,0,0,0.20)');
-  ctx.fillStyle = shade;
-  ctx.beginPath();
-  ctx.moveTo(-W/2, 0);
-  ctx.lineTo(-W/2, -H*0.85);
-  ctx.quadraticCurveTo(-W/2, -H, 0, -H);
-  ctx.quadraticCurveTo(W/2, -H, W/2, -H*0.85);
-  ctx.lineTo(W/2, 0);
-  ctx.closePath();
-  ctx.fill();
+  if (designMode !== 'dsl') {
+    const shade = ctx.createLinearGradient(-W / 2, 0, W / 2, 0);
+    shade.addColorStop(0, 'rgba(0,0,0,0.14)');
+    shade.addColorStop(0.5, 'rgba(255,255,255,0.10)');
+    shade.addColorStop(1, 'rgba(0,0,0,0.20)');
+    ctx.fillStyle = shade;
+    bodyPath();
+    ctx.fill();
+  }
 
+  if (designMode === 'dsl' && typeof parseAndValidateDesign === 'function'
+      && typeof drawCustomDesignOps === 'function'
+      && typeof applyCylindricalOverlay === 'function') {
+    const parsed = parseAndValidateDesign(bodyDesign.dslText || '');
+    if (parsed.ok && parsed.ops.length) {
+      ctx.save();
+      bodyPath();
+      ctx.clip();
+      drawCustomDesignOps(ctx, W, H, parsed.ops);
+      bodyPath();
+      applyCylindricalOverlay(ctx, W);
+      ctx.restore();
+    } else {
+      const shade = ctx.createLinearGradient(-W / 2, 0, W / 2, 0);
+      shade.addColorStop(0, 'rgba(0,0,0,0.14)');
+      shade.addColorStop(0.5, 'rgba(255,255,255,0.10)');
+      shade.addColorStop(1, 'rgba(0,0,0,0.20)');
+      ctx.fillStyle = shade;
+      bodyPath();
+      ctx.fill();
+    }
+  }
+}
+
+// ---- Stage body renderer: tank section + payload-space (nose) section ----
+function drawStageBody() {
+  const payload = opts.stagePayload;
+  const tankH_m = payload.tankHeight || 0;
+  const capH_m = payload.capHeight || 0;
+  const total_m = tankH_m + capH_m;
+  // Scale so tank + payload exactly fill the member's visual height H,
+  // even if the input dims don't quite sum to the record height.
+  const tankH_px = total_m > 0 ? (tankH_m / total_m) * H : H * 0.75;
+  const capH_px = H - tankH_px;
+
+  // Widths in pixels; bulge can exceed W (fairing overhang).
+  const capW_px = (payload.capWidth || 0) / mpp;
+  const bulgeW_px = (payload.bulgeWidth || payload.capWidth || 0) / mpp;
+  const payloadColor = payload.color || '#e9edf2';
+
+  // ---- Tank section (rectangle, solidFill + cylinder gradient) ----
+  const tankPath = () => {
+    ctx.beginPath();
+    ctx.rect(-W / 2, -tankH_px, W, tankH_px);
+  };
+  tankPath();
+  ctx.fillStyle = solidFill;
+  ctx.fill();
+  ctx.strokeStyle = '#8b93a0';
+  ctx.lineWidth = 1.2;
+  ctx.stroke();
+
+  if (designMode !== 'dsl') {
+    const g = ctx.createLinearGradient(-W / 2, 0, W / 2, 0);
+    g.addColorStop(0, 'rgba(0,0,0,0.14)');
+    g.addColorStop(0.5, 'rgba(255,255,255,0.10)');
+    g.addColorStop(1, 'rgba(0,0,0,0.20)');
+    ctx.fillStyle = g;
+    tankPath();
+    ctx.fill();
+  } else if (typeof parseAndValidateDesign === 'function'
+      && typeof drawCustomDesignOps === 'function'
+      && typeof applyCylindricalOverlay === 'function') {
+    const parsed = parseAndValidateDesign(bodyDesign.dslText || '');
+    if (parsed.ok && parsed.ops.length) {
+      ctx.save();
+      tankPath();
+      ctx.clip();
+      // DSL is relative to the tank section only (Y 0..1 = tank base..tank top).
+      drawCustomDesignOps(ctx, W, tankH_px, parsed.ops);
+      tankPath();
+      applyCylindricalOverlay(ctx, W);
+      ctx.restore();
+    }
+  }
+
+  // ---- Payload space (the stage's nose) ----
+const payloadPath = () => {
+  ctx.beginPath();
+  const baseY = -tankH_px; // top of tank
+  const tipY = -H; // payload tip
+  const halfCapW = capW_px / 2;
+  const halfBulgeW = bulgeW_px / 2;
+  const isBulged = payload.kind === 'bulgedCapShape';
+  
+  if (isBulged) {
+    // Four-section real fairing profile:
+    //   base   → frustum (straight outward) → cylinder (bulge width held)
+    //          → ogive (bezier to point)
+    //
+    // Frustum and cylinder heights are fractions of the total payload
+    // height, and the ogive takes the rest. All fractions tuned to
+    // match a typical real fairing silhouette.
+    const frustumFrac = 0.22; // bottom 22% widens out
+    const cylinderFrac = 0.28; // next 28% holds bulge width
+    // Remaining 50% is the ogive.
+    
+    const frustumH = capH_px * frustumFrac;
+    const cylinderH = capH_px * cylinderFrac;
+    const ogiveH = capH_px - frustumH - cylinderH;
+    
+    const frustumTopY = baseY - frustumH;
+    const cylinderTopY = frustumTopY - cylinderH;
+    
+    // Left side: base → frustum → cylinder → ogive → tip
+    ctx.moveTo(-halfCapW, baseY);
+    ctx.lineTo(-halfBulgeW, frustumTopY); // frustum (straight)
+    ctx.lineTo(-halfBulgeW, cylinderTopY); // cylinder (straight vertical)
+    ctx.bezierCurveTo(
+      -halfBulgeW * 0.98, cylinderTopY - ogiveH * 0.30,
+      -halfBulgeW * 0.45, tipY + ogiveH * 0.15,
+      0, tipY
+    );
+    // Right side: tip → ogive → cylinder → frustum → base
+    ctx.bezierCurveTo(
+      halfBulgeW * 0.45, tipY + ogiveH * 0.15,
+      halfBulgeW * 0.98, cylinderTopY - ogiveH * 0.30,
+      halfBulgeW, cylinderTopY
+    );
+    ctx.lineTo(halfBulgeW, frustumTopY);
+    ctx.lineTo(halfCapW, baseY);
+  } else {
+    // Simple nose cap: smooth ogive from base width to a point, no bulge,
+    // no cylinder section.
+    ctx.moveTo(-halfCapW, baseY);
+    ctx.bezierCurveTo(
+      -halfCapW * 0.70, baseY + capH_px * 0.30,
+      -halfCapW * 0.30, tipY + capH_px * 0.20,
+      0, tipY
+    );
+    ctx.bezierCurveTo(
+      halfCapW * 0.30, tipY + capH_px * 0.20,
+      halfCapW * 0.70, baseY + capH_px * 0.30,
+      halfCapW, baseY
+    );
+  }
+  ctx.closePath();
+};
+
+  payloadPath();
+  ctx.fillStyle = payloadColor;
+  ctx.fill();
+  ctx.strokeStyle = '#8b93a0';
+  ctx.lineWidth = 1.2;
+  ctx.stroke();
+
+  // Cylindrical gradient over the payload (widest width = bulge or cap).
+  const gradW = Math.max(capW_px, bulgeW_px) || W;
+  const pGrad = ctx.createLinearGradient(-gradW / 2, 0, gradW / 2, 0);
+  pGrad.addColorStop(0, 'rgba(0,0,0,0.14)');
+  pGrad.addColorStop(0.5, 'rgba(255,255,255,0.10)');
+  pGrad.addColorStop(1, 'rgba(0,0,0,0.20)');
+  ctx.fillStyle = pGrad;
+  payloadPath();
+  ctx.fill();
+}
+
+  // ---- Booster interstage lip + fins, or checkerboard + fins ----
+  const drawGridFins = (finY) => {
+    const finLen = W * 0.22, finH = H * 0.05;
+    [-1, 1].forEach(side => {
+      ctx.save();
+      ctx.translate(side * W / 2, finY);
+      ctx.rotate(side * -0.12);
+      ctx.fillStyle = '#1c1e22';
+      ctx.strokeStyle = '#3a3d43';
+      ctx.lineWidth = 0.8;
+      ctx.beginPath(); ctx.rect(0, -finH / 2, side * finLen, finH); ctx.fill(); ctx.stroke();
+      for (let i = 1; i <= 2; i++) {
+        const gx = side * finLen * (i / 3);
+        ctx.beginPath(); ctx.moveTo(gx, -finH / 2); ctx.lineTo(gx, finH / 2); ctx.stroke();
+      }
+      ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(side * finLen, 0); ctx.stroke();
+      ctx.restore();
+    });
+  };
+
+if (isBooster) {
+  // ---- Interstage: black cylinder at the booster top. Sized to cover the
+  // stage engine bell above it (bellHeight × 1.20) with a floor so it's
+  // always visible even without a stage stacked. Diameter = booster width.
+  // Replaces the old flat lip band.
+  const defaultH = 0.06 * H;                                // 6% booster if no stage above
+  const bellH_m  = (opts.stageAboveBellHeight && opts.stageAboveBellHeight > 0)
+    ? opts.stageAboveBellHeight : 0;
+  const interstageH_target_m = Math.max(bellH_m * 1.20, defaultH * mpp);
+  const interstageH_px = Math.min(H * 0.20, interstageH_target_m / mpp);
+
+  // Black band filling the top of the booster, flush with the flat top edge.
+  const isGrad = ctx.createLinearGradient(-W / 2, 0, W / 2, 0);
+  isGrad.addColorStop(0,    '#0a0c10');
+  isGrad.addColorStop(0.5,  '#2a2d33');
+  isGrad.addColorStop(1,    '#0a0c10');
+  ctx.fillStyle = isGrad;
+  ctx.fillRect(-W / 2, -H, W, interstageH_px);
+
+  // Bottom edge seam (where the interstage meets the booster tank).
+  ctx.strokeStyle = 'rgba(0, 0, 0, 0.60)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(-W / 2, -H + interstageH_px);
+  ctx.lineTo(W / 2, -H + interstageH_px);
+  ctx.stroke();
+
+  // Top edge highlight (very thin — reads as the upper rim).
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.32)';
+  ctx.lineWidth = 0.9;
+  ctx.beginPath();
+  ctx.moveTo(-W / 2, -H + 0.5);
+  ctx.lineTo(W / 2, -H + 0.5);
+  ctx.stroke();
+
+  // Grid fins just below the interstage.
+  drawGridFins(-H + interstageH_px + H * 0.05);
+} else if (opts.stageRole !== 'stage') {
+  // Rocket / legacy rocket: checkerboard stripe + grid fins near the
+  // shoulder. Stage is skipped entirely — its payload space IS the
+  // visual top.
   const stripeTop = -H * 0.80, stripeBottom = -H * 0.72;
   ctx.fillStyle = '#14161a';
-  ctx.fillRect(-W/2, stripeTop, W, stripeBottom - stripeTop);
-  const chk = W * 0.16, chkY = (stripeTop + stripeBottom) / 2 - chk/2;
+  ctx.fillRect(-W / 2, stripeTop, W, stripeBottom - stripeTop);
+  const chk = W * 0.16, chkY = (stripeTop + stripeBottom) / 2 - chk / 2;
   ctx.fillStyle = '#e9edf2';
   ctx.fillRect(-chk, chkY, chk, chk);
   ctx.fillRect(0, chkY, chk, chk);
   ctx.fillStyle = '#14161a';
-  ctx.fillRect(-chk, chkY, chk, chk/2);
-  ctx.fillRect(-chk/2, chkY+chk/2, chk/2, chk/2);
-  ctx.fillRect(0, chkY, chk, chk/2);
-  ctx.fillRect(chk/2, chkY+chk/2, chk/2, chk/2);
+  ctx.fillRect(-chk, chkY, chk, chk / 2);
+  ctx.fillRect(-chk / 2, chkY + chk / 2, chk / 2, chk / 2);
+  ctx.fillRect(0, chkY, chk, chk / 2);
+  ctx.fillRect(chk / 2, chkY + chk / 2, chk / 2, chk / 2);
 
-  const finY = -H * 0.845, finLen = W * 0.22, finH = H * 0.05;
-  [-1, 1].forEach(side => {
-    ctx.save();
-    ctx.translate(side * W/2, finY);
-    ctx.rotate(side * -0.12);
-    ctx.fillStyle = '#1c1e22';
-    ctx.strokeStyle = '#3a3d43';
-    ctx.lineWidth = 0.8;
-    ctx.beginPath(); ctx.rect(0, -finH/2, side * finLen, finH); ctx.fill(); ctx.stroke();
-    for (let i = 1; i <= 2; i++) {
-      const gx = side * finLen * (i/3);
-      ctx.beginPath(); ctx.moveTo(gx, -finH/2); ctx.lineTo(gx, finH/2); ctx.stroke();
+  drawGridFins(-H * 0.845);
+}
+// stage role: no fins / no checkerboard — payload space is the visual top.
+// stage role: no fins / no checkerboard.
+else {
+    const stripeTop = -H * 0.80, stripeBottom = -H * 0.72;
+    ctx.fillStyle = '#14161a';
+    ctx.fillRect(-W / 2, stripeTop, W, stripeBottom - stripeTop);
+    const chk = W * 0.16, chkY = (stripeTop + stripeBottom) / 2 - chk / 2;
+    ctx.fillStyle = '#e9edf2';
+    ctx.fillRect(-chk, chkY, chk, chk);
+    ctx.fillRect(0, chkY, chk, chk);
+    ctx.fillStyle = '#14161a';
+    ctx.fillRect(-chk, chkY, chk, chk / 2);
+    ctx.fillRect(-chk / 2, chkY + chk / 2, chk / 2, chk / 2);
+    ctx.fillRect(0, chkY, chk, chk / 2);
+    ctx.fillRect(chk / 2, chkY + chk / 2, chk / 2, chk / 2);
+
+    if (opts.stageRole !== 'stage') {
+      drawGridFins(-H * 0.845);
     }
-    ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(side*finLen, 0); ctx.stroke();
-    ctx.restore();
-  });
+  }
 
-  // FRONT legs (on top of body)
+  // FRONT legs
   if (showLegs) {
     drawLandingLeg(-1, false);
     drawLandingLeg( 1, false);
   }
 
-  // ============================================================================
-  // RCS — rounded-rectangle pods + gas puffs. PHASE 2 STEP E/G: pod IDENTITY
-  // and POSITION come from the RCS type's `frame.pods` (registry), matching
-  // rcs.js's Step D decision-(a) scope — no hardcoded {TL,TR,BL,BR} literal.
-  // `opts.rcsType` lets a caller pass the RESOLVED type for a specific
-  // vehicle (see the `opts.recoveryType` note above) instead of relying on
-  // the globally-active CONFIG.RCS_TYPE. The fire-logic upstream (rcs.js)
-  // is still tuned to the 4-corner "cornerPods" `kind`, so this drawing
-  // code only renders pods for that `kind`; a future non-4-corner RCS kind
-  // needs its own drawing branch (branching on `kind`, never on a type's
-  // `id`, per the hard rule).
-  // ============================================================================
+// ---- Stage engine bell (below body base) ----
+// Only drawn for stage role (and legacy rocket if applicable). Booster
+// has its own engine cluster handled by rocketArt if/when needed; stage
+// uses the single-nozzle or whatever its layout is.
+if (opts.stageRole === 'stage' && engineBell) {
+  const bH = engineBell.h / mpp;
+  const bR = engineBell.r / mpp;
+  const gimbalRad = 0;
+  // Single-nozzle: one big cone. Multi-nozzle: cluster (draw smaller).
+  if (engineBell.count === 1) {
+    ctx.save();
+    ctx.translate(0, 0);
+    ctx.rotate(gimbalRad);
+    const g = ctx.createLinearGradient(0, 0, 0, bH);
+    g.addColorStop(0, '#2a2d33');
+    g.addColorStop(0.5, '#4a4e54');
+    g.addColorStop(1, '#1c1e22');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.moveTo(-bR * 0.25, 0);
+    ctx.lineTo(-bR, bH);
+    ctx.lineTo(bR, bH);
+    ctx.lineTo(bR * 0.25, 0);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = '#0f1114';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    // Rim highlight
+    ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(-bR, bH); ctx.lineTo(bR, bH); ctx.stroke();
+    ctx.restore();
+  } else {
+    // Cluster: draw one bell at each slot position, plus center
+    engineBell.slots.forEach(slot => {
+      const R_m = (opts.params && Number.isFinite(opts.params.octaRadius)) ? opts.params.octaRadius : 1.7;
+      const pos = (typeof slot.position === 'function') ? slot.position(R_m) : { x: 0 };
+      const cx = (pos.x || 0) / mpp;
+      const isCenter = slot.role === 'center';
+      const sH = isCenter ? bH * 1.15 : bH;
+      const sR = isCenter ? bR * 1.15 : bR;
+      ctx.save();
+      ctx.translate(cx, 0);
+      const g = ctx.createLinearGradient(0, 0, 0, sH);
+      g.addColorStop(0, '#2a2d33');
+      g.addColorStop(0.5, '#4a4e54');
+      g.addColorStop(1, '#1c1e22');
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.moveTo(-sR * 0.25, 0);
+      ctx.lineTo(-sR, sH);
+      ctx.lineTo(sR, sH);
+      ctx.lineTo(sR * 0.25, 0);
+      ctx.closePath();
+      ctx.fill();
+      ctx.strokeStyle = '#0f1114';
+      ctx.lineWidth = 0.8;
+      ctx.stroke();
+      ctx.restore();
+    });
+  }
+}
+
+  // ---- RCS pods ----
   const firing = opts.firing || {};
   const pod = opts.pod || {};
-  // RCS pod margins: explicit opts win (used by renderVehiclePreview() when
-  // showing a specific fleet record), otherwise fall back to the globally
-  // active CONFIG (used by the live simulator's own draw call) — guarded
-  // since a page that never loads config.js (the fleet editor) has no
-  // CONFIG global at all.
   const rcsTopMargin = opts.rcsTopMargin !== undefined ? opts.rcsTopMargin : ((typeof CONFIG !== 'undefined') ? CONFIG.RCS_TOP_MARGIN : 0);
   const rcsBottomMargin = opts.rcsBottomMargin !== undefined ? opts.rcsBottomMargin : ((typeof CONFIG !== 'undefined') ? CONFIG.RCS_BOTTOM_MARGIN : 0);
 
-  const rcsType = opts.rcsType || ((typeof CONFIG !== 'undefined') ? CONFIG.RCS_TYPE : null);
+  const rcsType = ('rcsType' in opts)
+    ? opts.rcsType
+    : ((typeof CONFIG !== 'undefined') ? CONFIG.RCS_TYPE : null);
   const podDefs = (rcsType && rcsType.kind === 'cornerPods' && rcsType.frame && rcsType.frame.pods) ? rcsType.frame.pods : [];
   if (rcsType && rcsType.kind !== 'cornerPods' && podDefs.length === 0) {
-    console.warn(`drawRocketArt: RCS type "${rcsType.id}" (kind "${rcsType.kind}") has no matching pod artwork yet \u2014 RCS pods skipped this frame.`);
+    console.warn(`drawRocketArt: RCS type "${rcsType.id}" (kind "${rcsType.kind}") has no matching pod artwork yet — RCS pods skipped this frame.`);
   }
 
-  // Each pod's id + corner ([xSign, 'top'|'bottom']) comes straight from the
-  // registry. `corner[0]` doubles as the FIXED outward ejection direction
-  // for that pod's lateral nozzle (a left-mounted pod, xSign -1, always
-  // vents further left) — same convention rcs.js uses for the reaction-
-  // force sign, just not negated here since this is the gas plume's
-  // direction, not the resulting push.
   const corners = {}, lateralDir = {};
-  podDefs.forEach(pd => {
-    const xSign = pd.corner[0], isTop = pd.corner[1] === 'top';
-    corners[pd.id] = [xSign * (W / 2), -(isTop ? (H - rcsTopMargin / mpp) : (rcsBottomMargin / mpp))];
-    lateralDir[pd.id] = [xSign, 0];
-  });
+  const rcsTopY    = opts.rcsTopY !== undefined ? opts.rcsTopY
+                    : ((typeof CONFIG !== 'undefined') ? CONFIG.RCS_TOP_Y : 0);
+const rcsBottomY = opts.rcsBottomY !== undefined ? opts.rcsBottomY
+                    : ((typeof CONFIG !== 'undefined') ? CONFIG.RCS_BOTTOM_Y : 0);
+
+podDefs.forEach(pd => {
+  const xSign = pd.corner[0], isTop = pd.corner[1] === 'top';
+  // Both Ys are base-anchored: pods sit at that height above the base.
+  const yLocal = isTop ? rcsTopY : rcsBottomY;
+  corners[pd.id] = [xSign * (W / 2), -(yLocal / mpp)];
+  lateralDir[pd.id] = [xSign, 0];
+});
   const plumeLen = W * 0.6;
   const fEps = 1;
 
@@ -415,7 +913,25 @@ function drawRocketArt(ctx, W, H, mpp, opts) {
 
     ctx.restore();
   });
+}
 
+// ---------------------------------------------------------------------------
+// P4-D4: build the payload-space descriptor for a stage record. The payload
+// space IS the stage's nose — either a simple cone (noseCapShape) or a
+// bulged fairing (bulgedCapShape). Only applies to stageRole === 'stage'.
+// ---------------------------------------------------------------------------
+function buildStagePayload(rec) {
+  if (!rec || rec.stageRole !== 'stage' || !rec.payloadSpace) return null;
+  const ps = rec.payloadSpace;
+  const ptype = (typeof getComponentType === 'function') ? getComponentType(ps.typeId) : null;
+  return {
+    kind: ptype ? ptype.kind : 'noseCapShape',
+    tankHeight: (rec.fuel && Number.isFinite(rec.fuel.tankHeight)) ? rec.fuel.tankHeight : 0,
+    capHeight: (ps.params && Number.isFinite(ps.params.capHeight)) ? ps.params.capHeight : 0,
+    capWidth: (ps.params && Number.isFinite(ps.params.capWidth)) ? ps.params.capWidth : 0,
+    bulgeWidth: (ps.params && Number.isFinite(ps.params.bulgeWidth)) ? ps.params.bulgeWidth : null,
+    color: ps.color || '#e9edf2',
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -482,14 +998,110 @@ function renderVehiclePreview(canvas, vehicle) {
   // them, instead of always drawing whatever the globally-active CONFIG is.
   // getComponentType() comes from componentLibrary.js, which every page
   // that calls renderVehiclePreview() already loads before this file.
-  const recoveryType = (v.recoveryTypeId && typeof getComponentType === 'function') ? getComponentType(v.recoveryTypeId) : null;
-  const rcsType = (v.rcsTypeId && typeof getComponentType === 'function') ? getComponentType(v.rcsTypeId) : null;
-
+  // P4-B3: distinguish "caller didn't pass recoveryType" (use CONFIG as
+// fallback) from "caller explicitly passed null" (no recovery at all —
+// e.g. a booster with hasRecovery:false). `'recoveryType' in opts` is the
+// only way to tell the difference.
+// `v` carries a *type id*, not a resolved type object — resolve it here.
+// null id → null type → no hardware rendered (e.g. hasRecovery:false).
+const recoveryType = (v.recoveryTypeId && typeof getComponentType === 'function') ?
+  getComponentType(v.recoveryTypeId) :
+  null;
+const rcsType = (v.rcsTypeId && typeof getComponentType === 'function') ?
+  getComponentType(v.rcsTypeId) :
+  null;
+  
   pctx.save();
   pctx.translate(baseX, baseY);
   drawRocketArt(pctx, W, H, mpp, {
-    rcsTopMargin: v.rcsTopMargin, rcsBottomMargin: v.rcsBottomMargin,
-    recoveryType, rcsType,
-  });
+  rcsTopY: v.rcsTopY, rcsBottomY: v.rcsBottomY,
+  recoveryType, rcsType,
+  stageRole: v.stageRole,
+  noseCurveness: v.noseCurveness,
+  bodyDesign: v.bodyDesign,
+  payloadSpaceColor: v.payloadSpaceColor,
+  stagePayload: v.stagePayload,
+});
   pctx.restore();
+}
+
+
+// ---------------------------------------------------------------------------
+// Stack preview — draws all members (bottom→top) stacked vertically on a
+// single canvas, at one shared scale. Used by home page ("current stack"
+// card) and rocket detail views.
+// ---------------------------------------------------------------------------
+function renderStackPreview(canvas, memberIds, fleet) {
+  if (!canvas) return;
+  fleet = fleet || (typeof loadFleet === 'function' ? loadFleet() : []);
+  const members = (memberIds || [])
+    .map(id => fleet.find(r => r.id === id))
+    .filter(Boolean);
+
+  const pctx = canvas.getContext('2d');
+  const cssW = canvas.clientWidth || canvas.width;
+  if (!cssW) return;
+
+  if (!members.length) {
+    canvas.style.height = '160px';
+    const dpr0 = window.devicePixelRatio || 1;
+    canvas.width = Math.round(cssW * dpr0);
+    canvas.height = Math.round(160 * dpr0);
+    pctx.setTransform(dpr0, 0, 0, dpr0, 0, 0);
+    pctx.clearRect(0, 0, cssW, 160);
+    pctx.fillStyle = 'rgba(107,125,156,0.5)';
+    pctx.font = '12px "JetBrains Mono", monospace';
+    pctx.textAlign = 'center';
+    pctx.fillText('(empty stack)', cssW / 2, 84);
+    return;
+  }
+
+  const widest = Math.max(...members.map(m => m.width || 1));
+  const totalH = members.reduce((s, m) => s + (m.height || 0), 0);
+
+  const W_px = cssW * 0.50;
+  const mpp = widest / W_px;
+  const H_px_total = totalH / mpp;
+  const vMarginFrac = 0.94;
+  const cssH = H_px_total / vMarginFrac;
+  canvas.style.height = cssH + 'px';
+
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = Math.round(cssW * dpr);
+  canvas.height = Math.round(cssH * dpr);
+  pctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  pctx.clearRect(0, 0, cssW, cssH);
+
+  const baseX = cssW / 2;
+  let baseY = (cssH + H_px_total) / 2;
+
+  members.forEach(m => {
+  const W = (m.width || 1) / mpp;
+  const H = (m.height || 0) / mpp;
+  const recoveryType = (m.hasRecovery === false) ? null :
+    ((m.recoveryTypeId && typeof getComponentType === 'function') ?
+      getComponentType(m.recoveryTypeId) : null);
+  const rcsType = (m.rcsTypeId && typeof getComponentType === 'function') ?
+    getComponentType(m.rcsTypeId) : null;
+  
+  pctx.save();
+  pctx.translate(baseX, baseY);
+  drawRocketArt(pctx, W, H, mpp, {
+  rcsTopY: m.params ? m.params.rcsTopY : undefined,
+  rcsBottomY: m.params ? m.params.rcsBottomY : undefined,
+  recoveryType, rcsType,
+  stageRole: m.stageRole,
+  noseCurveness: m.noseCurveness,
+  bodyDesign: m.bodyDesign,
+  payloadSpaceColor: (m.payloadSpace && m.payloadSpace.color) ? m.payloadSpace.color : undefined,
+  stagePayload: (typeof buildStagePayload === 'function') ? buildStagePayload(m) : null,
+  engineLayout: engineLayout,
+  engineThrusters: m.engineThrusters,
+  params: m.params,
+  stageAboveBellHeight: stageAboveBellHeight,
+});
+
+    pctx.restore();
+    baseY -= H;
+  });
 }
