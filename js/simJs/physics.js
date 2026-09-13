@@ -318,17 +318,24 @@ if (altB <= 0.5 && !body.crashed) {
     return;
   }
   
-  // (2) Edge-pivot restoring / toppling torque about base centre.
-  const sgn = Math.sign(alpha);
-  if (sgn !== 0) {
-    const gLocal = gravityAccel(body.rx, body.ry).g;
-    const baseR = (CONFIG.ROCKET_WIDTH || 3.9) / 2;
-    const legMult = (body.legs && body.legs.progress > 0.5) ? 1.7 : 1.0;
-    const effBase = baseR * legMult;
-    const netTorque = geom.M * gLocal *
-      (geom.comH * Math.sin(alpha) - sgn * effBase * Math.cos(alpha));
-    extra.torque += netTorque;
+// (2) Gravity torque about base — continuous and zero at α = 0.
+//     Two regimes:
+//       |comH·sin α| < effBase → COM within footprint → restoring
+//       |comH·sin α| ≥ effBase → COM beyond edge     → toppling
+if (Math.abs(alpha) > 1e-6) {
+  const gLocal = gravityAccel(body.rx, body.ry).g;
+  const baseR = (CONFIG.ROCKET_WIDTH || 3.9) / 2;
+  const legMult = (body.legs && body.legs.progress > 0.5) ? 1.7 : 1.0;
+  const effBase = baseR * legMult;
+  const comOffset = geom.comH * Math.sin(alpha);
+  if (Math.abs(comOffset) < effBase) {
+    extra.torque += -geom.M * gLocal * comOffset;
+  } else {
+    const dir = Math.sign(alpha);
+    const excess = Math.abs(comOffset) - effBase;
+    extra.torque += geom.M * gLocal * excess * dir;
   }
+}
   
   // Very light ground friction — kills numerical drift; the actual
   // oscillation damping comes from the restoring torque's sign flip.
