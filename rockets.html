@@ -42,6 +42,10 @@
   <div class="role-title">🔺 Nose</div>
   <div class="role-desc">Aerodynamic nose — tops a stack. No engines or recovery.</div>
 </button>
+      <button type="button" class="role-option" data-role="payloadSpace" style="display:none">
+  <div class="role-title">🛸 Payload Space</div>
+  <div class="role-desc">Standalone fairing. No engines, fuel, or RCS. Must sit at the very top of a stack.</div>
+</button>
     </div>
     <button type="button" class="btn" id="rolePickerCancel">Cancel</button>
   </div>
@@ -51,6 +55,7 @@
   <div id="viewTabs" class="view-tabs">
     <button class="view-tab active" data-view="fleet">🚀 Vehicles</button>
     <button class="view-tab" data-view="stacks">🏗 Stacks</button>
+    <button class="view-tab" data-view="payloads">📦 Payloads</button>
   </div>
 
 
@@ -156,6 +161,16 @@
 <fieldset id="d-compatFieldset" style="display:none;">
   <legend>Compatible boosters <span class="legend-note">— live, from the fleet</span></legend>
   <div id="d-compatList">—</div>
+</fieldset>
+
+<fieldset id="d-payloadSpaceFieldset" style="display:none;">
+  <legend>Payload space <span class="legend-note">— standalone fairing</span></legend>
+  <dl>
+    <div class="cap-row"><dt>Shape</dt><dd id="d-psShape">—</dd></div>
+    <div class="cap-row"><dt>Container metal</dt><dd id="d-psMetal">—</dd></div>
+    <div class="cap-row"><dt>Deployment</dt><dd id="d-psDeployment">—</dd></div>
+    <div class="cap-row"><dt>Colour</dt><dd id="d-psColor">—</dd></div>
+  </dl>
 </fieldset>
 
             <fieldset id="detailCapsBox">
@@ -320,7 +335,26 @@
   </div>
 </fieldset>
 
-        <fieldset id="aeroFieldset" data-role="rocket,booster,stage,nose">
+        <fieldset id="payloadSpaceFieldset" data-role="payloadSpace" style="display:none">
+  <legend>Payload space shape <span class="legend-note">— standalone fairing role</span></legend>
+  <div class="field-grid">
+    <div class="field"><label for="f-psShapeType">Shape</label><select id="f-psShapeType" required></select></div>
+    <div class="field"><label for="f-psMetalType">Container metal</label><select id="f-psMetalType" required></select></div>
+    <div class="field"><label for="f-psDeployment">Deployment direction</label>
+      <select id="f-psDeployment">
+        <option value="clamshell">Clamshell (two halves)</option>
+        <option value="hinge">Hinged nose</option>
+      </select>
+    </div>
+    <div class="field">
+      <label for="f-psColor">Colour</label>
+      <input type="color" id="f-psColor" value="#e9edf2">
+    </div>
+  </div>
+  <div class="field-grid" id="psParamsGrid"></div>
+</fieldset>
+
+<fieldset id="aeroFieldset" data-role="rocket,booster,stage,nose">
           <legend>Aerodynamics</legend>
           <div class="field-grid">
             <div class="field"><label for="f-dragCd">Drag coefficient</label><div class="input-unit"><input type="number" id="f-dragCd" min="0" step="0.01" required><span>Cd</span></div></div>
@@ -434,6 +468,8 @@
         </dl>
       </fieldset>
 
+      
+
       <fieldset>
         <legend>Members <span class="legend-note">— top of stack first</span></legend>
         <dl id="sd-memberList"></dl>
@@ -463,6 +499,7 @@
     
     <fieldset>
       <legend>Members <span class="legend-note">— top of stack on top; bottom (booster) at bottom</span></legend>
+     <div id="stackSequenceHint" class="stack-seq-hint" style="display:none"></div>
       <div id="stackMemberChain"></div>
       <div class="field-grid" style="margin-top:14px">
         <div class="field">
@@ -475,6 +512,14 @@
       </div>
     </fieldset>
     
+    <fieldset id="stackPayloadFieldset" style="display:none">
+  <legend>Payload <span class="legend-note">— rides inside the fairing</span></legend>
+  <div class="field">
+    <label for="fs-payloadId">Attached payload</label>
+    <select id="fs-payloadId"><option value="">— none —</option></select>
+  </div>
+</fieldset>
+    
     <fieldset id="stackValidationBox">
       <legend>Validation <span class="legend-note">— live</span></legend>
       <div id="stackValidationOutput">—</div>
@@ -485,6 +530,44 @@
     <div class="editor-actions">
       <button type="button" class="btn" id="btnStackCancel">Cancel</button>
       <button type="submit" class="btn btn-accent">Save stack</button>
+    </div>
+  </form>
+</section>
+
+
+<section id="payloadPane" style="display:none">
+  <div class="pane-head">
+    <h1>Payloads</h1>
+    <button class="btn btn-accent" id="btnNewPayload">+ New Payload</button>
+  </div>
+  <div id="payloadList"><!-- populated by rockets.js --></div>
+</section>
+
+<section id="payloadEditorPane" style="display:none">
+  <div id="payloadEditorEmpty">
+    <p>Select a payload to view/edit its specs.</p>
+  </div>
+  <form id="payloadEditorForm" novalidate>
+    <div class="editor-head">
+      <h2 id="payloadEditorTitle">New Payload</h2>
+    </div>
+    <div class="field">
+      <label for="pl-name">Payload name</label>
+      <input type="text" id="pl-name" maxlength="60" required>
+    </div>
+    <fieldset>
+      <legend>Specs</legend>
+      <div class="field-grid">
+        <div class="field"><label for="pl-mass">Mass</label><div class="input-unit"><input type="number" id="pl-mass" min="0.1" step="0.1" required><span>kg</span></div></div>
+        <div class="field"><label for="pl-height">Height</label><div class="input-unit"><input type="number" id="pl-height" min="0.1" step="0.1" required><span>m</span></div></div>
+        <div class="field"><label for="pl-width">Width</label><div class="input-unit"><input type="number" id="pl-width" min="0.1" step="0.1" required><span>m</span></div></div>
+        <div class="field"><label for="pl-dragCd">Drag coefficient</label><div class="input-unit"><input type="number" id="pl-dragCd" min="0" step="0.1" required><span>Cd</span></div></div>
+      </div>
+    </fieldset>
+    <div id="payloadFormError" class="form-error" role="alert"></div>
+    <div class="editor-actions">
+      <button type="button" class="btn" id="btnPayloadCancel">Cancel</button>
+      <button type="submit" class="btn btn-accent">Save payload</button>
     </div>
   </form>
 </section>

@@ -13,27 +13,57 @@
 // Each engine: { id, angleDeg (null for center), x (2D projected lateral
 // offset, meters), isCenter, gimbal, Fmax, Fmin, Ve, throttle (0..1),
 // gimbalDeg, currentF (last computed force, for telemetry/rendering) }
-const ENGINES = [];
-
-function buildEngineLayout() {
-  ENGINES.length = 0;
-
-  // Every slot the registry's engine-layout type declares — for the
-  // built-in octaweb-merlin9 this is 1 center + 8 outer at 45° spacing,
-  // reproducing the original hardcoded layout exactly; a different
-  // `ringWithCenter` type (say, 6 outer engines) needs no changes here at
-  // all, just a different registry entry.
-  CONFIG.ENGINE_LAYOUT.frame.slots.forEach(slot => {
-    const pos = slot.position(CONFIG.OCTA_RADIUS);
-    ENGINES.push({
+// Build an engine array for a specific record (its engineThrusters + layout).
+function buildEnginesForRecord(rec) {
+  const layout = (typeof getComponentType === 'function') ? getComponentType(rec.engineTypeId) : null;
+  if (!layout || !layout.frame || !Array.isArray(layout.frame.slots)) return [];
+  const engines = [];
+  const groups = engineThrusterGroups(layout);
+  const R = (rec.params && Number.isFinite(rec.params.octaRadius)) ? rec.params.octaRadius : 1.7;
+  layout.frame.slots.forEach(slot => {
+    const pos = (typeof slot.position === 'function') ? slot.position(R) : { x: 0 };
+    const gk = slot.gimbalCapable ? 'gimbal' : 'fixed';
+    const g = rec.engineThrusters && rec.engineThrusters[gk];
+    if (!g) return;
+    const t = (typeof getComponentType === 'function') ? getComponentType(g.thrusterTypeId) : null;
+    if (!t) return;
+    const ve = t.parameterSchema.find(p => p.key === 've').value;
+    const Fmax = g.massFlowRate * ve;
+    const minFracEnt = t.parameterSchema.find(p => p.key === 'minThrottleFrac');
+    const minFrac = minFracEnt ? minFracEnt.value : 0.4;
+    engines.push({
       id: slot.id, angleDeg: slot.angleDeg, x: pos.x,
       isCenter: slot.role === 'center', gimbal: slot.gimbalCapable,
-      Fmax: CONFIG.ENGINE_F_MAX, Fmin: CONFIG.ENGINE_F_MAX * CONFIG.ENGINE_F_MIN_FRAC,
-      Ve: CONFIG.ENGINE_VE,
-      throttle: 0, gimbalDeg: 0, currentF: 0,
+      Fmax, Fmin: Fmax * minFrac, Ve: ve,
+      throttle: 0, targetThrottle: 0,
+      gimbalDeg: 0, targetGimbalDeg: 0, currentF: 0,
     });
   });
+  return engines;
 }
+
+// ENGINES is now a Proxy over the ACTIVE body's engines array. Existing code
+// that reads/writes ENGINES[i].xyz keeps working unchanged — the reads/writes
+// route to `state.bodies[state.activeBodyIndex].engines`.
+const ENGINES = new Proxy([], {
+  get(_, k) {
+    const b = state.bodies && state.bodies[state.activeBodyIndex];
+    if (!b || !b.engines) return (k === 'length') ? 0 : undefined;
+    const val = b.engines[k];
+    // Bind array methods (filter/forEach/reduce/find/…) to the underlying
+    // real array, otherwise `this` is the (empty) proxy target and every
+    // method sees length 0.
+    if (typeof val === 'function') return val.bind(b.engines);
+    return val;
+  },
+  set(_, k, v) {
+    const b = state.bodies && state.bodies[state.activeBodyIndex];
+    if (!b) return true;
+    if (!b.engines) b.engines = [];
+    b.engines[k] = v;
+    return true;
+  },
+});
 
 function getEngine(angleDeg) {
   return ENGINES.find(e => e.angleDeg === angleDeg);

@@ -22,6 +22,7 @@ const NOTATION_GLOSSARY = {
   'ρ':  'Local air density (kg/m³)',
   'D↑': 'RCS top-pod lateral-nozzle PWM duty cycle (%) — how much of each PWM period the top pod fires, to balance its larger moment arm against the bottom pod',
   'TWR': 'Thrust-to-weight ratio — max thrust / (current mass × g₀). Below 1 means no liftoff.',
+  'B': 'Active bodies (active + discarded) in the scene',
   'T+': 'Mission elapsed time (mm:ss.s)',
 };
 
@@ -59,6 +60,9 @@ function updateTelemetry() {
   set('t-g', fmt(grav.g, 3));
   set('t-rho', fmt(rho, 4));
   set('t-duty', Math.round((lastForces.dutyTop || 0) * 100) + '%');
+  const total = state.bodies.length;
+const disc = state.bodies.filter(b => b.isDiscarded).length;
+set('t-bodies', disc > 0 ? `${total} (${disc}d)` : `${total}`);
   set('t-com', fmt(geom.comH, 2));
   set('t-moi', geom.I >= 1e6 ? (geom.I / 1e6).toFixed(2) + 'M' : fmt(geom.I, 0));
   
@@ -72,6 +76,45 @@ if (twrEl) {
 }
   
   pushGraphSample(state.simTime, altitude, speed, ENGINES.reduce((s,e)=>s+e.currentF,0));
+
+  const bodyListEl = document.getElementById('t-bodyList');
+if (bodyListEl) {
+  const visible = state.bodies
+    .map((b, i) => ({ b, i }))
+    .filter(({ b }) => b.members && b.members.length > 0);
+
+  const rows = visible.map(({ b, i }) => {
+    const r = Math.hypot(b.rx, b.ry);
+    const alt = altitudeFromR(r) - (CONFIG.LAUNCH_SITE_ALTITUDE || 0);
+    const isAct = (i === state.activeBodyIndex);
+    const cls = 'tele-body-block'
+      + (isAct ? ' active' : '')
+      + (b.crashed ? ' crashed' : '')
+      + (b.isDiscarded ? ' discarded' : '');
+    const tag = isAct ? 'A' : ('D' + i);
+
+    // Pairwise: relative to the OTHER visible body.
+    const other = visible.find(v => v.i !== i);
+    let dx = 0, dy = 0, dvx = 0, dvy = 0, relLabel = '—';
+    if (other) {
+      dx = b.rx - other.b.rx;
+      dy = b.ry - other.b.ry;
+      dvx = b.vx - other.b.vx;
+      dvy = b.vy - other.b.vy;
+      relLabel = isAct ? ('vs D' + other.i) : ('vs A');
+    }
+    const dpStr = other ? `${dx.toFixed(1)}, ${dy.toFixed(1)}` : '—';
+    const dvStr = other ? `${dvx.toFixed(2)}, ${dvy.toFixed(2)}` : '—';
+
+    return `<div class="${cls}">
+      <div class="tb-line"><span class="tb-label">${tag} pos</span><span class="tb-val">${alt.toFixed(0)}m</span></div>
+      <div class="tb-line"><span class="tb-label">vx,vy</span><span class="tb-val">${b.vx.toFixed(1)}, ${b.vy.toFixed(1)}</span></div>
+      <div class="tb-line"><span class="tb-label">Δpos ${relLabel}</span><span class="tb-val">${dpStr}</span></div>
+      <div class="tb-line"><span class="tb-label">Δv ${relLabel}</span><span class="tb-val">${dvStr}</span></div>
+    </div>`;
+  });
+  bodyListEl.innerHTML = rows.join('');
+}
 }
 
 // ---------------------------------------------------------------------------

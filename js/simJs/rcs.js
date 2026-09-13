@@ -64,11 +64,36 @@
 //    top/bottom moment-arm asymmetry, so no PWM correction is needed here.
 // ============================================================================
 
-const rcsCmd = {
-  N: false, S: false, E: false, W: false,
-  NE: false, NW: false, SE: false, SW: false,
-  CW: false, ACW: false,
-};
+// rcsCmd is a Proxy over the ACTIVE body's own rcsCmd object. Buttons write
+// here → only affect the active body. Other bodies keep their own rcsCmd
+// state (frozen commands, autopilot commands, etc).
+const _RCS_KEYS = ['N','S','E','W','NE','NW','SE','SW','CW','ACW'];
+function _blankRcsCmd() {
+  const o = {};
+  _RCS_KEYS.forEach(k => { o[k] = false; });
+  return o;
+}
+
+function ensureRcsState(body) {
+  if (!body) return;
+  if (!body.rcsCmd) body.rcsCmd = _blankRcsCmd();
+}
+
+const rcsCmd = new Proxy({}, {
+  get(_, k) {
+    const b = state.bodies && state.bodies[state.activeBodyIndex];
+    if (!b) return false;
+    ensureRcsState(b);
+    return b.rcsCmd[k];
+  },
+  set(_, k, v) {
+    const b = state.bodies && state.bodies[state.activeBodyIndex];
+    if (!b) return true;
+    ensureRcsState(b);
+    b.rcsCmd[k] = v;
+    return true;
+  },
+});
 
 // PWM clock + delta-sigma error-accumulation state for the top-pod lateral
 // duty cycle. `sigmaError` is the running, never-discarded ledger of
@@ -121,50 +146,40 @@ function rcsGeometry(comH) {
 // `kind` needs its own dedicated fire-logic function; branching on `kind`
 // (never on a type's `id`) is the sanctioned way to add one, per the hard
 // rule in PHASE2_PROMPT.md.
-function computeRCS(comH, dt) {
+function computeRCSForBody(body, comH, dt) {
   const rcsType = CONFIG.RCS_TYPE;
-  if (!rcsType || rcsType.kind !== 'cornerPods') {
-    if (rcsType) console.warn(`computeRCS: RCS type "${rcsType.id}" (kind "${rcsType.kind}") has no matching fire-logic implementation yet \u2014 RCS disabled this tick.`);
-    return zeroRCS();
-  }
+  if (!rcsType || rcsType.kind !== 'cornerPods') return zeroRCS();
+  if (!body) return zeroRCS();
 
+  // Per-body PWM clock.
+  if (!body.pwmClock) {
+    body.pwmClock = { t: 0, onTime: 0, sigmaError: 0, periodIdealDuty: 0, periodTargetDuty: 0, init: false };
+  }
+  const clock = body.pwmClock;
+
+  const cmd = body.rcsCmd || {};
   const f = CONFIG.RCS_THRUST;
   const geo = rcsGeometry(comH);
   const period = CONFIG.RCS_PWM_PERIOD;
   const idealDuty = Math.min(1, geo.dBottom / geo.dTop);
 
-  if (!pwmClock.init) {
-    pwmClock.init = true;
-    pwmClock.periodIdealDuty = idealDuty;
-    pwmClock.periodTargetDuty = idealDuty;
+  if (!clock.init) {
+    clock.init = true;
+    clock.periodIdealDuty = idealDuty;
+    clock.periodTargetDuty = idealDuty;
+  }
+  const topLateralOn = clock.t < clock.periodTargetDuty * period;
+  if (topLateralOn) clock.onTime += dt;
+  clock.t += dt;
+  if (clock.t >= period) {
+    const actualDuty = clock.onTime / period;
+    clock.sigmaError += clock.periodIdealDuty - actualDuty;
+    clock.t -= period;
+    clock.onTime = 0;
+    clock.periodIdealDuty = idealDuty;
+    clock.periodTargetDuty = Math.min(1, Math.max(0, idealDuty + clock.sigmaError));
   }
 
-  // Gate this tick using the CURRENT period's (possibly error-adjusted)
-  // target duty, and track how much ON-time actually gets realized.
-  const topLateralOn = pwmClock.t < pwmClock.periodTargetDuty * period;
-  if (topLateralOn) pwmClock.onTime += dt;
-
-  pwmClock.t += dt;
-  if (pwmClock.t >= period) {
-    // Period complete — measure the quantization error against THIS
-    // period's true ideal duty, and carry it into the accumulator.
-    const actualDuty = pwmClock.onTime / period;
-    pwmClock.sigmaError += pwmClock.periodIdealDuty - actualDuty;
-
-    pwmClock.t -= period;
-    pwmClock.onTime = 0;
-    // Fresh ideal duty for the new period (geometry may have drifted a
-    // little as fuel burns), gated through the accumulated correction.
-    pwmClock.periodIdealDuty = idealDuty;
-    pwmClock.periodTargetDuty = Math.min(1, Math.max(0, idealDuty + pwmClock.sigmaError));
-  }
-
-  // Pod list, top/bottom-ness, and fixed lateral push direction all derive
-  // from the registry's pod metadata (id + corner: [xSign, 'top'|'bottom'])
-  // instead of a hardcoded {TL,TR,BL,BR} literal. lateralSign is the
-  // opposite of the pod's own mounting side: a LEFT-mounted pod (xSign -1)
-  // ejects further outward-left, so its reaction pushes the vehicle RIGHT
-  // (+1) — see the design notes above.
   const podDefs = rcsType.frame.pods;
   const pod = {}, isTop = {}, lateralSign = {};
   podDefs.forEach(p => {
@@ -173,59 +188,32 @@ function computeRCS(comH, dt) {
     lateralSign[p.id] = -p.corner[0];
   });
 
-  // Fire a pod's lateral nozzle at full force, but if that pod is a TOP pod,
-  // gate it through the shared PWM duty cycle (see rule 2/3 above). Used for
-  // pure/diagonal horizontal translation, where the two lateral-firing pods
-  // are at DIFFERENT heights and need this correction.
   function fireLateral(k) {
     const on = isTop[k] ? topLateralOn : true;
     pod[k].Fx += on ? lateralSign[k] * f : 0;
   }
-  // Rotation uses its own always-continuous lateral fire: the two pods
-  // selected for a given spin sense (TL+BR for CW, TR+BL for ACW) already
-  // cancel net force exactly regardless of top/bottom moment-arm asymmetry
-  // (verified analytically), so gating one of them through PWM would BREAK
-  // that cancellation rather than fix it — do not reuse fireLateral() here.
-  function fireLateralFull(k) {
-    pod[k].Fx += lateralSign[k] * f;
-  }
-  function fireVertical(k, sign) { // sign: +1 = upward force, -1 = downward force
-    pod[k].Fy += sign * f;
-  }
+  function fireLateralFull(k) { pod[k].Fx += lateralSign[k] * f; }
+  function fireVertical(k, sign) { pod[k].Fy += sign * f; }
 
-  // ---- Pure vertical (all 4 pods; symmetric, torque-free, no PWM) ----
-  const pureN = rcsCmd.N, pureS = rcsCmd.S;
-  if (pureN) ['TL', 'TR', 'BL', 'BR'].forEach(k => fireVertical(k, +1));
-  if (pureS) ['TL', 'TR', 'BL', 'BR'].forEach(k => fireVertical(k, -1));
-
-  // ---- Pure / diagonal horizontal (lateral group only) ----
-  const wantRight = rcsCmd.E || rcsCmd.NE || rcsCmd.SE;
-  const wantLeft = rcsCmd.W || rcsCmd.NW || rcsCmd.SW;
-  if (wantRight) ['TL', 'BL'].forEach(fireLateral); // left-mounted pods push right
-  if (wantLeft) ['TR', 'BR'].forEach(fireLateral);  // right-mounted pods push left
-
-  // ---- Diagonal vertical component (only the 2 same-side pods, not all 4) ----
-  if (rcsCmd.NE || rcsCmd.NW) ['TL', 'TR'].forEach(k => fireVertical(k, +1));
-  if (rcsCmd.SE || rcsCmd.SW) ['BL', 'BR'].forEach(k => fireVertical(k, -1));
-
-  // ---- Rotation: only the two pods whose fixed lateral direction matches
-  // the tangential need can do both nozzles; the other two help vertically.
-  if (rcsCmd.CW) {
+  if (cmd.N) ['TL','TR','BL','BR'].forEach(k => fireVertical(k, +1));
+  if (cmd.S) ['TL','TR','BL','BR'].forEach(k => fireVertical(k, -1));
+  const wantRight = cmd.E || cmd.NE || cmd.SE;
+  const wantLeft  = cmd.W || cmd.NW || cmd.SW;
+  if (wantRight) ['TL','BL'].forEach(fireLateral);
+  if (wantLeft)  ['TR','BR'].forEach(fireLateral);
+  if (cmd.NE || cmd.NW) ['TL','TR'].forEach(k => fireVertical(k, +1));
+  if (cmd.SE || cmd.SW) ['BL','BR'].forEach(k => fireVertical(k, -1));
+  if (cmd.CW) {
     fireLateralFull('TL'); fireVertical('TL', +1);
     fireLateralFull('BR'); fireVertical('BR', -1);
-    fireVertical('TR', -1);
-    fireVertical('BL', +1);
+    fireVertical('TR', -1); fireVertical('BL', +1);
   }
-  if (rcsCmd.ACW) {
+  if (cmd.ACW) {
     fireLateralFull('TR'); fireVertical('TR', +1);
     fireLateralFull('BL'); fireVertical('BL', -1);
-    fireVertical('TL', -1);
-    fireVertical('BR', +1);
+    fireVertical('TL', -1); fireVertical('BR', +1);
   }
 
-  // Positions, too, come from the registry's pod metadata rather than a
-  // hardcoded {TL,TR,BL,BR} literal — a different cornerPods-kind type
-  // (different X offset conventions aside) needs no changes here.
   const positions = {};
   podDefs.forEach(p => {
     positions[p.id] = { x: p.corner[0] * CONFIG.RCS_X_OFFSET, y: p.corner[1] === 'top' ? geo.yTop : geo.yBottom };
@@ -243,8 +231,17 @@ function computeRCS(comH, dt) {
     if (mag > 0.01) { mdot += mag / CONFIG.RCS_VE; firing[k] = true; }
   });
 
-  return { Fx, Fy, torque, mdot, firing, pod, dutyTop: idealDuty, topLateralOn, sigmaError: pwmClock.sigmaError };
+  return { Fx, Fy, torque, mdot, firing, pod, dutyTop: idealDuty };
 }
+
+// Backwards-compat shim.
+function computeRCS(comH, dt) {
+  const body = state.bodies && state.bodies[state.activeBodyIndex];
+  return computeRCSForBody(body, comH, dt);
+}
+
+// resetPWM — now a no-op since PWM lives per body; left for compat.
+function resetPWM() { /* per-body now */ }
 
 function clearRCS() {
   Object.keys(rcsCmd).forEach(k => rcsCmd[k] = false);

@@ -87,7 +87,11 @@ const RESOLVED_RCS_TYPE = (typeof getComponentType === 'function') ?
   GM_EARTH: 3.986004418e14,       // m^3/s^2  (standard gravitational parameter)
   SEA_LEVEL_DENSITY: 1.225,       // kg/m^3
   SCALE_HEIGHT: 8500,             // m (exponential atmosphere model)
-
+  // Launch-site altitude above sea level (m). 0 = sea-level pad (current
+// default). Change this when a launch site sits on elevated terrain:
+// physics uses it for the ground-contact check, and the render frame
+// shifts its local origin so the pad still reads as y_local = 0.
+  LAUNCH_SITE_ALTITUDE: 0,
   
 
   // ---------------- Vehicle geometry & mass ----------------

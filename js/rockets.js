@@ -33,6 +33,7 @@ let editingRole = 'rocket';
 let editingStackId = null; 
 let viewingStackId = null;      // set while the read-only detail panel is open// null = new stack, id = editing existing
 let workingStackMembers = [];   // array of fleet-record ids, bottom→top
+let workingStackPayloadId = null;
 let editingId = null;// set only while the edit FORM is open
 
 
@@ -71,6 +72,13 @@ function fmtParamValue(p, value) {
 function previewVehicleFor(record) {
   const engineLayout = (record.engineTypeId && typeof getComponentType === 'function') ?
     getComponentType(record.engineTypeId) : null;
+  // Standalone payloadSpace role — map record fields + its shape type's
+  // params onto the opts names drawPayloadSpaceShape() actually reads.
+  // The type's `kind` decides noseCapShape vs bulgedCapShape (Rule 1 — no
+  // branching on the type's id here, just its structural kind).
+  const psType = (record.stageRole === 'payloadSpace' && record.payloadSpaceTypeId
+    && typeof getComponentType === 'function') ? getComponentType(record.payloadSpaceTypeId) : null;
+  const psParams = record.params || {};
   return {
     height: record.height,
     width: record.width,
@@ -86,6 +94,12 @@ function previewVehicleFor(record) {
     engineLayout: engineLayout,
     engineThrusters: record.engineThrusters,
     params: record.params,
+    payloadKind: psType ? psType.kind : undefined,
+    payloadCapWidth: Number.isFinite(psParams.capWidth) ? psParams.capWidth : undefined,
+    payloadBulgeWidth: Number.isFinite(psParams.bulgeWidth) ? psParams.bulgeWidth : undefined,
+    payloadFrustumAngleDeg: Number.isFinite(psParams.frustumSlantDeg) ? psParams.frustumSlantDeg : undefined,
+    payloadCurveRatio: Number.isFinite(psParams.curveHeightFactor) ? psParams.curveHeightFactor : undefined,
+    payloadColor: record.stageRole === 'payloadSpace' ? (record.color || '#e9edf2') : undefined,
   };
 }
 
@@ -117,7 +131,8 @@ function populateTypeSelects() {
   });
   // Stage-only sub-selects (Phase 3 Step E1).
   [['f-fuelType', 'fuel'], ['f-bodyMetalType', 'metal'],
-   ['f-payloadSpaceType', 'payloadSpace'], ['f-payloadSpaceMetalType', 'metal']
+   ['f-payloadSpaceType', 'payloadSpace'], ['f-payloadSpaceMetalType', 'metal'],
+   ['f-psShapeType', 'payloadSpace'], ['f-psMetalType', 'metal'],
   ].forEach(([id, cat]) => {
     const el = document.getElementById(id);
     if (!el) return;
@@ -157,12 +172,9 @@ function applyBodyDesignVisibility(role) {
   const select = document.getElementById('f-bodyDesignMode');
   if (!select) return;
 
-  // DSL is booster/rocket-only. Disable the option; if it was selected,
-  // fall back to solid.
-  const dslOption = select.querySelector('option[value="dsl"]');
-  const dslAllowed = (role === 'booster' || role === 'rocket');
-  if (dslOption) dslOption.disabled = !dslAllowed;
-  if (!dslAllowed && select.value === 'dsl') select.value = 'solid';
+  // DSL allowed for all roles now.
+const dslOption = select.querySelector('option[value="dsl"]');
+if (dslOption) dslOption.disabled = false;
 
   const mode = select.value;
   const solidField = document.getElementById('bodySolidColorField');
@@ -229,11 +241,21 @@ if (pspaceSel) {
   });
 }
 
+// Standalone payloadSpace role: same pattern, its own scope/grid/ids.
+const psShapeSel = document.getElementById('f-psShapeType');
+if (psShapeSel) {
+  psShapeSel.addEventListener('change', (e) => {
+    renderPsParams(e.target.value, currentParamValues('ps'));
+    updateCapsPreview();
+  });
+}
+
 // Stage-specific inputs also trigger live capability preview (E2 will
 // actually compute; E1 just keeps the handler wiring in place).
 ['f-fuelType','f-fuelTankHeight','f-fuelTankWidth','f-bodyMetalType',
  'f-payloadSpaceType','f-payloadSpaceMetalType','f-payloadSpaceDeployment',
- 'f-maxExtraWeight'].forEach(id => {
+ 'f-maxExtraWeight',
+ 'f-psShapeType','f-psMetalType','f-psDeployment'].forEach(id => {
   const el = document.getElementById(id);
   if (el) el.addEventListener('input', updateCapsPreview);
 });
@@ -248,7 +270,7 @@ function inferParamStep(p) {
   if (p.unit === 'frac') return 0.01;
   if (p.min !== undefined && p.min > 0 && p.min < 1) return 0.01;
   if (p.min !== undefined && p.min >= 1000) return Math.max(1, Math.round(p.min / 100));
-  return 1;
+  return 0.1;
 }
 
 function renderParamFieldsHTML(schema, values, prefix) {
@@ -446,6 +468,18 @@ function renderPayloadSpaceParams(typeId, currentParams) {
   grid.innerHTML = renderParamFieldsHTML(type.parameterSchema, currentParams || {}, 'payload');
 }
 
+// PS-C2: standalone payloadSpace role's own params grid (scope 'ps') —
+// deliberately separate function/grid/scope from renderPayloadSpaceParams
+// above, which still belongs to the deprecated stage-editor nested field
+// until PS-C's cleanup removes it.
+function renderPsParams(typeId, currentParams) {
+  const grid = document.getElementById('psParamsGrid');
+  if (!grid) return;
+  const type = getComponentType(typeId);
+  if (!type) { grid.innerHTML = ''; return; }
+  grid.innerHTML = renderParamFieldsHTML(type.parameterSchema, currentParams || {}, 'ps');
+}
+
 function applyRoleVisibility(role) {
   // P4-B3: single source of truth for editor-form visibility. Uses element
   // IDs (not HTML data-roles) so it doesn't depend on which attributes
@@ -459,14 +493,15 @@ function applyRoleVisibility(role) {
     stageFuelFieldset: ['booster', 'stage'],
     stageMetalFieldset: ['booster', 'stage', 'nose'],
     stagePayloadFieldset: ['stage'],
+    payloadSpaceFieldset: ['payloadSpace'],
     noseShapeFieldset: ['nose'],
-    aeroFieldset: ['rocket', 'booster', 'stage', 'nose'],
+    aeroFieldset: ['rocket', 'booster', 'stage', 'nose', 'payloadSpace'],
     extraWeightFieldset: ['booster', 'stage'],
     capsBox: ['rocket', 'booster'],
     stageCapsBox: ['stage'],
     massDryField: ['rocket'],
     massFuelField: ['rocket'],
-    bodyDesignFieldset: ['rocket', 'booster', 'stage', 'nose'],
+    bodyDesignFieldset: ['rocket', 'booster', 'stage', 'nose', 'payloadSpace'],
     payloadColorField: ['stage'],
   };
   
@@ -561,6 +596,14 @@ function currentParamValues(scope) {
 // and booster reuse the existing capability math; a stage needs its own
 // derived numbers (fuel mass, max payload, wet mass) because its flat
 // dryMass/fuelMassMax don't exist (see stageDerivedMasses() in fleet.js).
+//
+// BUGFIX: nose and payloadSpace records used to fall through to the
+// rocketCapabilities(r) call at the bottom of this function — but those
+// roles carry no engine `params` bag at all (params is null / not engine-
+// shaped), which crashed rocketCapabilities() the instant one existed in
+// the fleet and took down the ENTIRE fleet list render. Both roles now get
+// their own dedicated summary line instead of ever reaching
+// rocketCapabilities() — same pattern as the existing 'stage' branch below.
 function fleetRowSpecsHTML(r) {
   if (r.stageRole === 'stage') {
     const d = stageDerivedMasses(r);
@@ -574,6 +617,19 @@ function fleetRowSpecsHTML(r) {
       <span>fuel ${fmtMass(d.fuelMass)}</span>
       <span>${maxP}</span>
       <span>wet ${fmtMass(d.totalWetMassAtMaxPayload)}</span>`;
+  }
+  if (r.stageRole === 'nose') {
+    return `
+      <span>${r.height} m</span>
+      <span>W ${r.width} m</span>
+      <span class="accent">${fmtMass(computeNoseDryMass(r))}</span>`;
+  }
+  if (r.stageRole === 'payloadSpace') {
+    const shapeType = getComponentType(r.payloadSpaceTypeId);
+    return `
+      <span>${r.height} m</span>
+      <span>W ${r.width} m</span>
+      <span class="accent">${shapeType ? shapeType.displayName : '—'}</span>`;
   }
   const caps = rocketCapabilities(r);
   const extraRow = (r.stageRole === 'booster')
@@ -688,7 +744,6 @@ header.querySelector(`[data-family-add="${fid}"]`).addEventListener('click', (e)
     }
 
     ordered.forEach(r => {
-      const caps = r.stageRole === 'stage' ? null : rocketCapabilities(r);
       const row = document.createElement('div');
       row.className = 'fleet-row' + ((r.id === editingId || r.id === viewingId) ? ' active' : '');
       const role = r.stageRole || 'rocket';
@@ -831,7 +886,7 @@ function openFamilyAddMember(familyId) {
   // returns null if the referenced record is missing (deleted), so a stale
   // bottomId can't wrongly disable the "add booster" option.
   const hasBooster = !!getFamilyBottom(familyId);
-  const allowed = hasBooster ? ['stage', 'nose'] : ['booster'];
+  const allowed = hasBooster ? ['stage', 'nose', 'payloadSpace'] : ['booster'];
   creatingInFamilyId = familyId;
   document.querySelectorAll('#rolePicker .role-option').forEach(btn => {
     btn.style.display = allowed.includes(btn.dataset.role) ? '' : 'none';
@@ -849,19 +904,27 @@ function openFamilyAddMember(familyId) {
 // ---------------------------------------------------------------------------
 
 let activeView = 'fleet';
+let editingPayloadId = null;
 
 function setActiveView(view) {
   activeView = view;
-  const fleetVisible = view === 'fleet';
-  document.getElementById('fleetPane').style.display       = fleetVisible ? '' : 'none';
-  document.getElementById('editorPane').style.display      = fleetVisible ? '' : 'none';
-  document.getElementById('stackPane').style.display       = fleetVisible ? 'none' : '';
-  document.getElementById('stackEditorPane').style.display = fleetVisible ? 'none' : '';
+  const isFleet = view === 'fleet';
+  const isStacks = view === 'stacks';
+  const isPayloads = view === 'payloads';
+  document.getElementById('fleetPane').style.display = isFleet ? '' : 'none';
+  document.getElementById('editorPane').style.display = isFleet ? '' : 'none';
+  document.getElementById('stackPane').style.display = isStacks ? '' : 'none';
+  document.getElementById('stackEditorPane').style.display = isStacks ? '' : 'none';
+  document.getElementById('payloadPane').style.display = isPayloads ? '' : 'none';
+  document.getElementById('payloadEditorPane').style.display = isPayloads ? '' : 'none';
   document.querySelectorAll('#viewTabs .view-tab').forEach(t => {
     t.classList.toggle('active', t.dataset.view === view);
   });
-  if (!fleetVisible) renderStackList();
-  if (!fleetVisible && editingStackId) openStackEditor(editingStackId);
+  if (isStacks) {
+    renderStackList();
+    if (editingStackId) openStackEditor(editingStackId);
+  }
+  if (isPayloads) renderPayloadList();
 }
 
 function renderStackList() {
@@ -874,7 +937,7 @@ function renderStackList() {
   if (!stacks.length) return; // :empty::after shows placeholder
 
   stacks.forEach(s => {
-    const v = validateStack(s.members, fleet);
+    const v = validateStack(s.members, fleet, s);
     const names = s.members.map(id => {
       const r = fleet.find(x => x.id === id);
       return r ? r.name : '(missing)';
@@ -902,6 +965,96 @@ wireStackRowClicks();
   });
 }
 
+// ---------------------------------------------------------------------------
+// Payloads view (Step I-b).
+// ---------------------------------------------------------------------------
+function renderPayloadList() {
+  const host = document.getElementById('payloadList');
+  if (!host) return;
+  const list = loadPayloads();
+  host.innerHTML = '';
+  if (!list.length) {
+    host.innerHTML = '<p style="color:var(--dim);font-size:13px;">No payloads yet — click &quot;+ New Payload&quot; to create one.</p>';
+    return;
+  }
+  list.forEach(p => {
+    const row = document.createElement('div');
+    row.className = 'fleet-row' + (p.id === editingPayloadId ? ' active' : '');
+    row.innerHTML = `
+      <div class="fleet-row-top">
+        <span class="fleet-row-name">${escapeHtml(p.name)}</span>
+      </div>
+      <div class="fleet-row-specs">
+        <span>${fmtMass(p.mass)}</span>
+        <span>H ${p.height} m · W ${p.width} m</span>
+        <span>Cd ${p.dragCd}</span>
+      </div>
+      <div class="fleet-row-actions">
+        <button class="btn" data-pl-act="edit" data-id="${p.id}">Edit</button>
+        <button class="btn btn-danger" data-pl-act="del" data-id="${p.id}">Delete</button>
+      </div>
+    `;
+    host.appendChild(row);
+  });
+  host.querySelectorAll('button[data-pl-act]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (btn.dataset.plAct === 'edit') openPayloadEditor(btn.dataset.id);
+      if (btn.dataset.plAct === 'del') {
+        if (confirm('Delete this payload?')) { deletePayload(btn.dataset.id); renderPayloadList(); }
+      }
+    });
+  });
+  host.querySelectorAll('.fleet-row').forEach((row, i) => {
+    row.style.cursor = 'pointer';
+    row.addEventListener('click', (e) => {
+      if (e.target.closest('button')) return;
+      openPayloadEditor(list[i].id);
+    });
+  });
+}
+
+function openPayloadEditor(id) {
+  editingPayloadId = id;
+  const p = id ? getPayload(id) : blankPayloadData();
+  if (!p) return;
+  document.getElementById('payloadEditorTitle').textContent = p.name || 'New Payload';
+  document.getElementById('pl-name').value = p.name || '';
+  document.getElementById('pl-mass').value = p.mass;
+  document.getElementById('pl-height').value = p.height;
+  document.getElementById('pl-width').value = p.width;
+  document.getElementById('pl-dragCd').value = p.dragCd;
+  document.getElementById('payloadEditorEmpty').style.display = 'none';
+  document.getElementById('payloadEditorForm').style.display = '';
+  renderPayloadList();
+}
+
+function closePayloadEditor() {
+  editingPayloadId = null;
+  document.getElementById('payloadEditorForm').style.display = 'none';
+  document.getElementById('payloadEditorEmpty').style.display = '';
+  renderPayloadList();
+}
+
+function handlePayloadSubmit(e) {
+  e.preventDefault();
+  const name = document.getElementById('pl-name').value.trim() || 'Unnamed Payload';
+  const mass = parseFloat(document.getElementById('pl-mass').value);
+  const height = parseFloat(document.getElementById('pl-height').value);
+  const width = parseFloat(document.getElementById('pl-width').value);
+  const dragCd = parseFloat(document.getElementById('pl-dragCd').value);
+  if (![mass, height, width, dragCd].every(Number.isFinite)) {
+    document.getElementById('payloadFormError').textContent = 'All fields must be valid numbers.';
+    document.getElementById('payloadFormError').classList.add('show');
+    return;
+  }
+  document.getElementById('payloadFormError').classList.remove('show');
+  if (editingPayloadId) updatePayload(editingPayloadId, { name, mass, height, width, dragCd });
+  else editingPayloadId = addPayload({ name, mass, height, width, dragCd }).id;
+  renderPayloadList();
+  // Keep editor open — user sees the saved state.
+}
+
 
 // ---------------------------------------------------------------------------
 // Stack detail view (Phase 3 Step G3).
@@ -924,8 +1077,7 @@ function openStackDetail(id) {
   editingStackId = null;
 
   const fleet = loadFleet();
-  const v = validateStack(s.members, fleet);
-
+  const v = validateStack(s.members, fleet, s);
   document.getElementById('stackDetailTitle').textContent = s.name;
   
   const flyBtn = document.getElementById('btnStackDetailFly');
@@ -974,6 +1126,18 @@ if (flyBtn) {
   listEl.innerHTML = rows.length ? rows.join('') : '<div class="cap-row"><dt>—</dt><dd>No members.</dd></div>';
 
   renderStackValidationInto('sd-validationOutput', v);
+  // I-c2: payload specs (visible only when stack has a payload assigned).
+const plFieldset = document.getElementById('sd-payloadFieldset');
+const pl = s.payloadId ? getPayload(s.payloadId) : null;
+if (pl && plFieldset) {
+  plFieldset.style.display = '';
+  document.getElementById('sd-plName').textContent = pl.name;
+  document.getElementById('sd-plMass').textContent = fmtMass(pl.mass);
+  document.getElementById('sd-plDims').textContent = `H ${pl.height} m · W ${pl.width} m`;
+  document.getElementById('sd-plCd').textContent = pl.dragCd;
+} else if (plFieldset) {
+  plFieldset.style.display = 'none';
+}
   renderStackPreview(document.getElementById('stackPreviewCanvas'), s.members, fleet);
 
   document.getElementById('stackEditorEmpty').classList.add('hide');
@@ -982,11 +1146,6 @@ if (flyBtn) {
 
   renderStackList();
 }
-
-// Draws the whole stack side-elevation style onto a canvas. Single scale for
-// the entire stack (aspect ratio preserved): widest member = 50% of the
-// canvas width, total height follows from the sum of member heights. Canvas
-// CSS height is set dynamically so the drawing fits exactl
 
 // Shared renderer for a validateStack() result into any element by id —
 // used by both the editor's validation box and the detail view's.
@@ -1023,11 +1182,41 @@ function renderStackValidationInto(targetId, v) {
 // localStorage until Save — Cancel reverts.
 // ---------------------------------------------------------------------------
 
+// SEQ-1b: preset sequence → fixed slot roles (bottom → top). Null = custom.
+function presetSlotRoles(sequence) {
+  const PRESETS = {
+    'f9-standard': ['booster', 'stage', 'payloadSpace'],
+    'f9-heavy':    ['booster', 'stage', 'stage', 'payloadSpace'],
+    'sso':         ['booster', 'payloadSpace'],
+  };
+  return PRESETS[sequence] || null;
+}
+
+
 function openStackEditorNew() {
+  const name = prompt('Stack name:', 'New Stack');
+  if (name === null) return;
+  const seqPrompt = prompt(
+    'Sequence preset:\n' +
+    '1 = Booster + Stage + Payload\n' +
+    '2 = Booster + Stage + Stage + Payload\n' +
+    '3 = Booster + Payload\n' +
+    '4 = Custom',
+    '1'
+  );
+  if (seqPrompt === null) return;
+  const seqMap = { '1': 'f9-standard', '2': 'f9-heavy', '3': 'sso', '4': 'custom' };
+  const sequence = seqMap[seqPrompt.trim()] || 'custom';
+  
   editingStackId = null;
-  workingStackMembers = [];
+  workingStackSequence = sequence;
+  
+  const presetRoles = presetSlotRoles(sequence);
+  workingStackMembers = presetRoles ? presetRoles.map(() => null) : [];
+  workingStackPayloadId = null;
+  
   document.getElementById('stackEditorTitle').textContent = 'New Stack';
-  document.getElementById('fs-name').value = 'New Stack';
+  document.getElementById('fs-name').value = name.trim() || 'New Stack';
   document.getElementById('btnStackDuplicate').style.display = 'none';
   document.getElementById('btnStackDelete').style.display = 'none';
   document.getElementById('stackDetail').style.display = 'none';
@@ -1037,11 +1226,22 @@ function openStackEditorNew() {
   document.getElementById('fs-name').select();
 }
 
+
 function openStackEditor(id) {
   const s = getStack(id);
   if (!s) return;
   editingStackId = id;
+  workingStackSequence = s.sequence || 'custom';
   workingStackMembers = [...s.members];
+  workingStackPayloadId = s.payloadId || null;
+  
+  // SEQ-1b: pad preset stacks with null slots so the fixed sequence shows.
+  const presetRoles = presetSlotRoles(workingStackSequence);
+  if (presetRoles) {
+    while (workingStackMembers.length < presetRoles.length) workingStackMembers.push(null);
+    if (workingStackMembers.length > presetRoles.length) workingStackMembers.length = presetRoles.length;
+  }
+  
   document.getElementById('stackEditorTitle').textContent = s.name;
   document.getElementById('fs-name').value = s.name;
   document.getElementById('btnStackDuplicate').style.display = '';
@@ -1074,10 +1274,80 @@ function closeStackEditor() {
   }
 }
 
+function renderStackSequenceHint() {
+  const el = document.getElementById('stackSequenceHint');
+  if (!el) return;
+  const hints = {
+    'f9-standard': 'Preset: Booster → Stage → Payload Space',
+    'f9-heavy':    'Preset: Booster → Stage → Stage → Payload Space',
+    'sso':         'Preset: Booster → Payload Space',
+  };
+  const text = hints[workingStackSequence];
+  if (!text) { el.style.display = 'none'; return; }
+  el.textContent = text;
+  el.style.display = '';
+}
+
 function renderStackEditorBody() {
+  renderStackSequenceHint();
   renderStackMemberChain();
   refreshAddMemberDropdown();
   renderStackValidation();
+  renderStackPayloadField();
+}
+
+
+// I-c1: payload dropdown. Visible only when the stack has a payloadSpace
+// member. Incompatible payloads appear greyed-out with reason in the title.
+function renderStackPayloadField() {
+  const fieldset = document.getElementById('stackPayloadFieldset');
+  const sel = document.getElementById('fs-payloadId');
+  if (!fieldset || !sel) return;
+  const fleet = loadFleet();
+  const filledMembers = workingStackMembers.filter(Boolean);
+  const hasPayloadSpace = filledMembers.some(id => {
+    const r = fleet.find(x => x.id === id);
+    return r && r.stageRole === 'payloadSpace';
+  });
+  if (!hasPayloadSpace) {
+    fieldset.style.display = 'none';
+    workingStackPayloadId = null;
+    return;
+  }
+  fieldset.style.display = '';
+
+  const payloads = loadPayloads();
+  if (!payloads.length) {
+    sel.innerHTML = '<option value="">— no payloads defined —</option>';
+    sel.disabled = true;
+    return;
+  }
+  sel.disabled = false;
+  const opts = ['<option value="">— none —</option>'];
+  payloads.forEach(p => {
+    const check = payloadCompatibilityCheck(p, filledMembers, fleet);
+    const dis = !check.ok;
+    const title = dis ? check.reasons.join(' · ') : '';
+    opts.push(`<option value="${p.id}" ${dis ? 'disabled' : ''} title="${escapeHtml(title)}">${escapeHtml(p.name)}${dis ? ' (incompatible)' : ''}</option>`);
+  });
+  sel.innerHTML = opts.join('');
+
+  // Restore selection if still valid.
+  if (workingStackPayloadId && sel.querySelector(`option[value="${workingStackPayloadId}"]:not([disabled])`)) {
+    sel.value = workingStackPayloadId;
+  } else {
+    workingStackPayloadId = null;
+    sel.value = '';
+  }
+
+  // Wire once.
+  if (!sel.dataset.wired) {
+    sel.dataset.wired = '1';
+    sel.addEventListener('change', () => {
+      workingStackPayloadId = sel.value || null;
+      renderStackEditorBody();
+    });
+  }
 }
 
 function renderStackMemberChain() {
@@ -1085,35 +1355,67 @@ function renderStackMemberChain() {
   if (!host) return;
   const fleet = loadFleet();
   const n = workingStackMembers.length;
-
+  const presetRoles = presetSlotRoles(workingStackSequence);
+  
   if (!n) {
     host.innerHTML = `<div class="stack-member-empty">No members yet — add a booster first (bottom of stack).</div>`;
     return;
   }
-
-  // Render top-first (reverse iteration) so the visual order matches the
-  // physical stack (nose at top, booster at bottom).
+  
   const rows = [];
   for (let i = n - 1; i >= 0; i--) {
-    const rec = fleet.find(r => r.id === workingStackMembers[i]);
-    const role = rec ? (rec.stageRole || 'rocket') : 'missing';
+    const id = workingStackMembers[i];
+    const rec = id ? fleet.find(r => r.id === id) : null;
     const isBottom = i === 0;
     const isTop = i === n - 1;
+    const expectedRole = presetRoles ? presetRoles[i] : null;
+    
+    // SEQ-1b: empty preset slot → render placeholder with a slot dropdown.
+    if (!rec && expectedRole) {
+      const roleLabel = expectedRole.toUpperCase();
+      const options = fleet.filter(r => {
+        if (r.stageRole !== expectedRole) return false;
+        return !workingStackMembers.some((mid, mi) => mi !== i && mid === r.id);
+      });
+      const opts = options.length ?
+        options.map(r => `<option value="${r.id}">${escapeHtml(r.name)}</option>`).join('') :
+        '<option value="">— no records available —</option>';
+      rows.push(`
+        <div class="stack-member-row placeholder">
+          <div class="stack-member-body">
+            <div class="stack-member-name">
+              <span class="badge badge-role ${expectedRole}">${roleLabel}</span>
+              &nbsp;<em style="color:var(--dim);font-size:12px;">(slot empty)</em>
+            </div>
+            <select class="stack-slot-select" data-slot-idx="${i}">
+              <option value="">— choose ${roleLabel} —</option>
+              ${opts}
+            </select>
+          </div>
+        </div>
+      `);
+      continue;
+    }
+    
+    // Existing member row.
+    const role = rec ? (rec.stageRole || 'rocket') : 'missing';
     const roleClass = role === 'rocket' ? 'rocket-role' : (isBottom ? 'bottom' : (isTop ? 'top' : ''));
     const roleLabel = role === 'missing' ? 'MISSING' : role.toUpperCase();
     const name = rec ? escapeHtml(rec.name) : '(missing fleet record)';
     const ownMass = rec ? stackMemberOwnMass(rec) : NaN;
-    const specs = rec
-      ? `H ${rec.height} m · W ${rec.width} m · ${fmtMass(ownMass)}`
-      : '—';
+    const specs = rec ?
+      `H ${rec.height} m · W ${rec.width} m · ${fmtMass(ownMass)}` :
+      '—';
     const badgeClass = (role === 'rocket' || role === 'missing') ? 'badge-role rocket' : `badge-role ${role}`;
-
+    const canReorder = !presetRoles; // preset slots are fixed-order
+    
     rows.push(`
       <div class="stack-member-row ${roleClass}">
+        ${canReorder ? `
         <div class="stack-member-reorder">
           <button type="button" class="stack-reorder-btn" data-stack-move="up"   data-idx="${i}" ${isTop ? 'disabled' : ''} title="Move up">▲</button>
           <button type="button" class="stack-reorder-btn" data-stack-move="down" data-idx="${i}" ${isBottom ? 'disabled' : ''} title="Move down">▼</button>
-        </div>
+        </div>` : ''}
         <div class="stack-member-body">
           <div class="stack-member-name">
             <span class="${badgeClass}">${roleLabel}</span>
@@ -1121,12 +1423,21 @@ function renderStackMemberChain() {
           </div>
           <div class="stack-member-specs">${specs}</div>
         </div>
-        <button type="button" class="stack-member-remove" data-stack-remove="${i}" title="Remove">✕</button>
+        <button type="button" class="stack-member-remove" data-stack-remove="${i}" title="${presetRoles ? 'Clear slot' : 'Remove'}">✕</button>
       </div>
     `);
   }
   host.innerHTML = rows.join('');
-
+  
+  // Wire slot dropdowns (preset mode).
+  host.querySelectorAll('[data-slot-idx]').forEach(sel => {
+    sel.addEventListener('change', () => {
+      const idx = parseInt(sel.dataset.slotIdx, 10);
+      workingStackMembers[idx] = sel.value || null;
+      renderStackEditorBody();
+    });
+  });
+  
   host.querySelectorAll('[data-stack-move]').forEach(btn => {
     btn.addEventListener('click', () => {
       const idx = parseInt(btn.dataset.idx, 10);
@@ -1139,10 +1450,12 @@ function renderStackMemberChain() {
       renderStackEditorBody();
     });
   });
+  
   host.querySelectorAll('[data-stack-remove]').forEach(btn => {
     btn.addEventListener('click', () => {
       const idx = parseInt(btn.dataset.stackRemove, 10);
-      workingStackMembers.splice(idx, 1);
+      if (presetRoles) workingStackMembers[idx] = null; // clear slot, keep position
+      else workingStackMembers.splice(idx, 1);
       renderStackEditorBody();
     });
   });
@@ -1151,44 +1464,67 @@ function renderStackMemberChain() {
 function refreshAddMemberDropdown() {
   const sel = document.getElementById('fs-addMember');
   if (!sel) return;
+  const addBtn = document.getElementById('btnStackAddMember');
+  const presetRoles = presetSlotRoles(workingStackSequence);
+  
+  if (presetRoles) {
+    // SEQ-1b: preset stacks have fixed slots — no manual add.
+    sel.innerHTML = '<option value="">— preset slots are fixed —</option>';
+    sel.disabled = true;
+    if (addBtn) addBtn.disabled = true;
+    return;
+  }
+  
   const fleet = loadFleet();
   const n = workingStackMembers.length;
-
-  // Which roles are allowed as the NEXT member?
-  //   n == 0 → bottom slot: 'booster' only.
-  //   n  > 0 → above something: 'booster' or 'stage' (never 'rocket').
-  // Also exclude records already in this stack (no duplicates within one
-  // stack — a member can appear in different stacks, that's fine).
-  const allowedRoles = n === 0 ? ['booster'] : ['booster', 'stage'];
-
+  const topRec = n > 0 ? fleet.find(r => r.id === workingStackMembers[n - 1]) : null;
+  const topIsPayloadSpace = !!(topRec && topRec.stageRole === 'payloadSpace');
+  const allowedRoles = n === 0 ?
+    ['booster'] :
+    (topIsPayloadSpace ? [] : ['booster', 'stage', 'payloadSpace']);
+  
   const options = fleet.filter(r => {
     if (!allowedRoles.includes(r.stageRole)) return false;
     if (workingStackMembers.includes(r.id)) return false;
     return true;
   });
-
+  
   if (!options.length) {
     sel.innerHTML = `<option value="">— no valid members available —</option>`;
     sel.disabled = true;
-    document.getElementById('btnStackAddMember').disabled = true;
+    if (addBtn) addBtn.disabled = true;
     return;
   }
   sel.disabled = false;
-  document.getElementById('btnStackAddMember').disabled = false;
+  if (addBtn) addBtn.disabled = false;
   sel.innerHTML = options.map(r =>
     `<option value="${r.id}">${escapeHtml(r.name)} (${(r.stageRole || 'rocket').toUpperCase()}, W ${r.width} m)</option>`
   ).join('');
 }
 
 function renderStackValidation() {
-  const v = validateStack(workingStackMembers, loadFleet());
-  renderStackValidationInto('stackValidationOutput', v);
+  const presetRoles = presetSlotRoles(workingStackSequence);
+  if (presetRoles) {
+    const unfilled = workingStackMembers.filter(m => !m).length;
+    if (unfilled > 0) {
+      renderStackValidationInto('stackValidationOutput', {
+        valid: false,
+        errors: [`${unfilled} slot${unfilled === 1 ? '' : 's'} not yet filled.`],
+        stackTotalHeight: 0, stackTotalMass: 0, memberInfo: [],
+      });
+      return;
+    }
+  }
+  const filled = workingStackMembers.filter(m => !!m);
+  const v = validateStack(filled, loadFleet(), { sequence: workingStackSequence, payloadId: workingStackPayloadId });  renderStackValidationInto('stackValidationOutput', v);
 }
 
 function readStackFormData() {
   return {
     name: document.getElementById('fs-name').value.trim() || 'Unnamed Stack',
-    members: [...workingStackMembers],
+    members: workingStackMembers.filter(m => !!m),
+    sequence: workingStackSequence,
+    payloadId: workingStackPayloadId,
   };
 }
 
@@ -1203,10 +1539,17 @@ function hideStackFormError() {
 
 function handleStackSubmit(e) {
   e.preventDefault();
+  const presetRoles = presetSlotRoles(workingStackSequence);
+if (presetRoles) {
+  const unfilled = workingStackMembers.filter(m => !m).length;
+  if (unfilled > 0) {
+    showStackFormError(`${unfilled} slot${unfilled === 1 ? '' : 's'} still empty.`);
+    return;
+  }
+}
   const data = readStackFormData();
   if (!data.members.length) { showStackFormError('Add at least one member (a booster).'); return; }
-  const v = validateStack(data.members, loadFleet());
-  if (!v.valid) { showStackFormError('Stack is invalid: ' + v.errors[0]); return; }
+  const v = validateStack(data.members, loadFleet(), { sequence: data.sequence });  if (!v.valid) { showStackFormError('Stack is invalid: ' + v.errors[0]); return; }
   hideStackFormError();
 
   let saved;
@@ -1279,6 +1622,7 @@ function showVehicleDetail(id) {
   const role = r.stageRole || 'rocket';
   const isStage = role === 'stage';
   const isNose = role === 'nose';
+  const isPayloadSpace = role === 'payloadSpace';
   const hasStackCap = role === 'booster' || role === 'stage';
 
   const set = (elId, val) => { const el = document.getElementById(elId); if (el) el.textContent = val; };
@@ -1300,8 +1644,8 @@ function showVehicleDetail(id) {
   }
   set('d-dragCd', r.dragCd);
 
-  // Hardware sections — nose has none of these.
-  if (!isNose) {
+  // Hardware sections — nose and payloadSpace have none of these.
+  if (!isNose && !isPayloadSpace) {
     const engineType = getComponentType(r.engineTypeId);
     renderDetailSection('engine', engineType, r.params, engineType ? `(${engineType.frame.slots.length} engines)` : '');
     renderDetailSection('recovery', getComponentType(r.recoveryTypeId), r.params);
@@ -1371,6 +1715,17 @@ function showVehicleDetail(id) {
     renderCompatBoosters(r);
   } else {
     show('d-compatFieldset', false);
+  }
+
+  // Payload-space shape/metal/deployment/colour (standalone role only).
+  show('d-payloadSpaceFieldset', isPayloadSpace);
+  if (isPayloadSpace) {
+    const shapeType = getComponentType(r.payloadSpaceTypeId);
+    const metalType = getComponentType(r.payloadSpaceMetalTypeId);
+    set('d-psShape', shapeType ? shapeType.displayName : '—');
+    set('d-psMetal', metalType ? metalType.displayName : '—');
+    set('d-psDeployment', r.deploymentDirection === 'hinge' ? 'Hinged nose' : 'Clamshell (two halves)');
+    set('d-psColor', r.color || '#e9edf2');
   }
 
   safeRenderPreview(document.getElementById('detailPreviewCanvas'), previewVehicleFor(r));
@@ -1489,6 +1844,7 @@ function openEditorNew(role) {
   const blank = role === 'booster' ? blankBoosterData() :
   role === 'stage' ? blankStageData() :
   role === 'nose' ? blankNoseData() :
+  role === 'payloadSpace' ? blankPayloadSpaceData() :
   blankRocketData();
   fillForm(blank);
   document.getElementById('editorTitle').textContent = blank.name;
@@ -1535,6 +1891,13 @@ if (hasRecEl) hasRecEl.checked = hasRec;
   setVal('f-bodyMetalType', r.bodyMetalTypeId || 'al-li-alloy');
   setVal('f-noseCurveness', r.noseCurveness || 0);
 }
+  if (role === 'payloadSpace') {
+    setVal('f-psShapeType', r.payloadSpaceTypeId);
+    setVal('f-psMetalType', r.payloadSpaceMetalTypeId);
+    setVal('f-psDeployment', r.deploymentDirection || 'clamshell');
+    setVal('f-psColor', r.color || '#e9edf2');
+    renderPsParams(r.payloadSpaceTypeId, r.params);
+  }
 // P4-D2: body appearance.
 const bd = r.bodyDesign || { mode: 'solid', solidColor: '#e9edf2', dslText: '' };
 setVal('f-bodyDesignMode', bd.mode || 'solid');
@@ -1648,6 +2011,40 @@ function readFormData() {
     };
   }
   
+  // Payload-space (standalone role) early return
+  if (role === 'payloadSpace') {
+    const typeId = document.getElementById('f-psShapeType').value;
+    const metalTypeId = document.getElementById('f-psMetalType').value;
+    const deploymentDirection = document.getElementById('f-psDeployment').value;
+    const color = document.getElementById('f-psColor').value || '#e9edf2';
+    const psParams = currentParamValues('ps');
+    // Derive the record's own height/width from the shape params instead
+    // of a separate manual field — payloadSpaceDimensions() is the same
+    // helper fleet.js/stack-width checks use, so there's exactly one place
+    // that knows "capHeight IS the height" / "bulge can exceed capWidth".
+    const dims = (typeof payloadSpaceDimensions === 'function')
+      ? payloadSpaceDimensions({ stageRole: 'payloadSpace', payloadSpaceTypeId: typeId, params: psParams })
+      : { height: 0, width: 0 };
+    return {
+      name: document.getElementById('f-name').value.trim() || 'Unnamed Payload Space',
+      stageRole: 'payloadSpace',
+      height: dims.height,
+      width: dims.width,
+      dragCd: parseFloat(document.getElementById('f-dragCd').value) || 0.4,
+      payloadSpaceTypeId: typeId,
+      payloadSpaceMetalTypeId: metalTypeId,
+      deploymentDirection,
+      color,
+      params: psParams,
+      familyId: editingRecordFamilyId(),
+      bodyDesign: {
+        mode: document.getElementById('f-bodyDesignMode').value || 'solid',
+        solidColor: document.getElementById('f-bodySolidColor').value || '#e9edf2',
+        dslText: (document.getElementById('f-bodyDslText').value || '').trim(),
+      },
+    };
+  }
+
   // Stage + booster fuel/metal block
   if (role === 'stage' || role === 'booster') {
     data.fuel = {
@@ -1689,9 +2086,37 @@ function hideFormError() {
 // ---------------------------------------------------------------------------
 // Live capability preview — recomputed on every input change
 // ---------------------------------------------------------------------------
+
+// Clamp the RCS offset inputs (rcsTopY / rcsBottomY) to the record's own
+// height, so the user cannot type a value larger than the member length.
+// Runs on every input change; also limits the input's max attribute.
+
+
+function applyRcsOffsetCaps() {
+  const heightEl = document.getElementById('f-height');
+  if (!heightEl) return;
+  const H = parseFloat(heightEl.value) || 0;
+  if (H <= 0) return;
+  ['rcsTopY', 'rcsBottomY'].forEach(key => {
+    const inp = document.querySelector(
+      `[data-param-key="${key}"][data-param-scope="param"]`
+    );
+    if (!inp) return;
+    inp.max = H;
+    const v = parseFloat(inp.value);
+    if (Number.isFinite(v) && v > H) inp.value = H;
+    if (Number.isFinite(v) && v < 0) inp.value = 0;
+  });
+}
+
 function updateCapsPreview() {
+  applyRcsOffsetCaps();
   const data = readFormData();
   if (data.stageRole === 'nose') {
+    safeRenderPreview(document.getElementById('vehiclePreviewCanvas'), previewVehicleFor(data));
+    return;
+  }
+  if (data.stageRole === 'payloadSpace') {
     safeRenderPreview(document.getElementById('vehiclePreviewCanvas'), previewVehicleFor(data));
     return;
   }
@@ -1944,6 +2369,10 @@ if (dslTA) {
 }
 
   renderFleetList();
+  // Payloads view bindings.
+document.getElementById('btnNewPayload').addEventListener('click', () => openPayloadEditor(null));
+document.getElementById('btnPayloadCancel').addEventListener('click', closePayloadEditor);
+document.getElementById('payloadEditorForm').addEventListener('submit', handlePayloadSubmit);
 
   TYPE_SLOTS.forEach(slot => {
   document.getElementById(slot.selectId).addEventListener('change', (e) => {

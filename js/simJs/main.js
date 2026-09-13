@@ -237,12 +237,24 @@ function frame(ts) {
   updateTelemetry();
   updateStatusBar();
   updateFuelAvailability();
+  const sepBtn = document.getElementById('btnSeparate');
+if (sepBtn) sepBtn.disabled = !canSeparateNow();
 
+const fairBtn = document.getElementById('btnSplitFairing');
+if (fairBtn) fairBtn.disabled = !canSplitFairingNow();
+
+  const plBtn = document.getElementById('btnReleasePayload');
+  if (plBtn) plBtn.disabled = !canReleasePayloadNow();
+  
+  const tcBtn = document.getElementById('btnTakeControl');
+  if (tcBtn) tcBtn.disabled = !canTakeControlNow();
+  
   requestAnimationFrame(frame);
-}
+  }
+  
 
 function bootstrap() {
-  buildEngineLayout();
+  
   resetState(0);
   
   initCanvas();
@@ -276,6 +288,7 @@ const SIM_STACK_MEMBERS = (typeof getActiveStackMembers === 'function')
   bindRCSControls();
   bindMergeControls();
   bindCameraControls();
+  refreshFollowBodySelect();
   bindWindPanel();
   bindQuickThrottle();
   bindFuelPanel();

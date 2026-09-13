@@ -158,7 +158,7 @@ function bindWindPanel() {
 // ---------------------------------------------------------------------------
 // Camera controls
 // ---------------------------------------------------------------------------
-const camera = { follow: true, zoom: 25 };
+const camera = { follow: true, zoom: 25, followBodyIndex: 0 };
 
 function bindCameraControls() {
   document.getElementById('btnFollow').addEventListener('click', () => {
@@ -171,8 +171,31 @@ function bindCameraControls() {
     document.getElementById('btnFree').classList.add('active');
     document.getElementById('btnFollow').classList.remove('active');
   });
+  const sel = document.getElementById('followBodySelect');
+if (sel) {
+  sel.addEventListener('change', (e) => {
+    camera.followBodyIndex = parseInt(e.target.value, 10) || 0;
+    camera.follow = true;
+    document.getElementById('btnFollow').classList.add('active');
+    document.getElementById('btnFree').classList.remove('active');
+  });
+}
   document.getElementById('btnZoomIn').addEventListener('click', () => { camera.zoom = Math.min(25, camera.zoom * 1.25); });
   document.getElementById('btnZoomOut').addEventListener('click', () => { camera.zoom = Math.max(0.08, camera.zoom / 1.25); });
+}
+
+// H3a: repopulate the follow-body dropdown when the body list changes
+// (separation adds a body). Called from main.js on separation.
+function refreshFollowBodySelect() {
+  const sel = document.getElementById('followBodySelect');
+  if (!sel) return;
+  const current = sel.value;
+  sel.innerHTML = state.bodies.map((b, i) => {
+    const label = b.isActive ? 'Active' : ('Discarded ' + i);
+    return `<option value="${i}">${label}</option>`;
+  }).join('');
+  if (sel.querySelector(`option[value="${current}"]`)) sel.value = current;
+  else sel.value = state.activeBodyIndex;
 }
 
 // ---------------------------------------------------------------------------
@@ -187,6 +210,72 @@ function bindSimControls() {
     renderMergeDiagram(); renderOctaSliders();
     updateStatusBar();
   });
+  const sepBtn = document.getElementById('btnSeparate');
+if (sepBtn) sepBtn.addEventListener('click', () => {
+  if (separateActiveBody()) {
+    refreshFollowBodySelect();
+    updateStatusBar();
+  }
+});
+const tcBtn = document.getElementById('btnTakeControl');
+if (tcBtn) tcBtn.addEventListener('click', () => {
+  const idx = (typeof camera !== 'undefined' && Number.isFinite(camera.followBodyIndex))
+    ? camera.followBodyIndex : state.activeBodyIndex;
+  if (takeControlOfBody(idx)) {
+    updateLegsButton();
+    updateStatusBar();
+    refreshFollowBodySelect();
+  }
+});
+
+const fairBtn = document.getElementById('btnSplitFairing');
+if (fairBtn) fairBtn.addEventListener('click', () => {
+  if (splitFairingOnActiveBody()) {
+    refreshFollowBodySelect();
+    updateStatusBar();
+  }
+});
+const plBtn = document.getElementById('btnReleasePayload');
+if (plBtn) plBtn.addEventListener('click', () => {
+  if (releasePayloadOnActiveBody()) {
+    refreshFollowBodySelect();
+    updateStatusBar();
+  }
+});
+}
+
+function canSeparateNow() {
+  if (state.crashed) return false;
+  const active = state.bodies[state.activeBodyIndex];
+  return !!(active && active.members && active.members.length >= 2);
+}
+
+function canSplitFairingNow() {
+  if (state.crashed) return false;
+  const active = state.bodies[state.activeBodyIndex];
+  if (!active || !active.members) return false;
+  return active.members.some(m => m.stageRole === 'payloadSpace');
+}
+
+function canReleasePayloadNow() {
+  if (state.crashed) return false;
+  const active = state.bodies[state.activeBodyIndex];
+  if (!active || !active.members) return false;
+  if (active.payloadReleased) return false;
+  if (active.members.some(m => m.stageRole === 'payloadSpace')) return false;
+  const stk = (typeof getActiveStack === 'function') ? getActiveStack() : null;
+  return !!(stk && stk.payloadId);
+}
+
+function canTakeControlNow() {
+  const idx = (typeof camera !== 'undefined' && Number.isFinite(camera.followBodyIndex))
+    ? camera.followBodyIndex : state.activeBodyIndex;
+  if (idx === state.activeBodyIndex) return false;
+  const b = state.bodies[idx];
+  if (!b) return false;
+  // Only bodies with members (stack-based) can be actively controlled.
+  // Free payload pieces have no engines to fire.
+  return !!(b.members && b.members.length);
 }
 
 // ---------------------------------------------------------------------------

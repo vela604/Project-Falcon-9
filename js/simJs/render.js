@@ -44,7 +44,12 @@ function localVerticalAngle() {
 }
 
 function worldToLocal() {
-  return { x: state.rx, y: state.ry - CONFIG.EARTH_RADIUS };
+  const idx = (typeof camera !== 'undefined' && Number.isFinite(camera.followBodyIndex)) ?
+    camera.followBodyIndex :
+    state.activeBodyIndex;
+  const b = state.bodies[idx] || state.bodies[state.activeBodyIndex];
+  if (!b) return { x: 0, y: 0 };
+  return { x: b.rx, y: b.ry - CONFIG.EARTH_RADIUS - (CONFIG.LAUNCH_SITE_ALTITUDE || 0) };
 }
 
 // meters -> pixels, and local(x,y) -> screen(px,py)
@@ -292,12 +297,166 @@ function drawLaunchPad() {
   });
 }
 
-function drawRocket() {
-  const loc = worldToLocal();
-  const [px, py] = localToScreen(loc.x, loc.y);
-  const visualTheta = state.theta - localVerticalAngle();
+// H3b: when following a discarded body, draw a small arrow pointing
+// toward the active body if it's off-screen — so the user doesn't lose
+// track of it while watching the booster fall.
+function drawActiveBodyIndicator() {
+  const activeIdx = state.activeBodyIndex;
+  const followingIdx = (typeof camera !== 'undefined' && Number.isFinite(camera.followBodyIndex))
+    ? camera.followBodyIndex : activeIdx;
+  if (activeIdx === followingIdx) return;   // no arrow needed if following active
+
+  const active = state.bodies[activeIdx];
+  if (!active) return;
+
+  const camCenter = camera.follow ? worldToLocal() : cameraCenter;
+  const mpp = metersPerPixel();
+  const locX = active.rx;
+  const locY = active.ry - CONFIG.EARTH_RADIUS;
+  const offX = (locX - camCenter.x) / mpp;
+  const offY = (locY - camCenter.y) / mpp;
+  const cx = canvas.width / 2;
+  const cy = canvas.height / 2;
+  const px = cx + offX;
+  const py = cy - offY;
+
+  const margin = 60;
+  const onScreen = px > margin && px < canvas.width - margin
+                && py > margin && py < canvas.height - margin;
+  if (onScreen) return;
+
+  // Clamp to canvas edge.
+  const dx = px - cx, dy = py - cy;
+  const ang = Math.atan2(dy, dx);
+  const rx = canvas.width / 2 - margin;
+  const ry = canvas.height / 2 - margin;
+  const scale = Math.min(rx / Math.abs(Math.cos(ang) || 1e-6), ry / Math.abs(Math.sin(ang) || 1e-6));
+  const ax = cx + Math.cos(ang) * scale;
+  const ay = cy + Math.sin(ang) * scale;
+
+  // Arrow.
+  ctx.save();
+  ctx.translate(ax, ay);
+  ctx.rotate(ang);
+  ctx.fillStyle = 'rgba(255,210,63,0.9)';
+  ctx.beginPath();
+  ctx.moveTo(16, 0);
+  ctx.lineTo(-8, -10);
+  ctx.lineTo(-4, 0);
+  ctx.lineTo(-8, 10);
+  ctx.closePath();
+  ctx.fill();
+  ctx.strokeStyle = '#0a0c10';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+  // Label under arrow.
+  ctx.rotate(-ang);
+  ctx.fillStyle = 'rgba(255,210,63,0.9)';
+  ctx.font = 'bold 11px "JetBrains Mono", monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('ACTIVE', 0, 28);
+  ctx.restore();
+}
+
+
+function drawPayloadReleaseCue() {
+  if (typeof lastPayloadRelease === 'undefined' || !lastPayloadRelease) return;
+  const age = (performance.now() - lastPayloadRelease.t0) / 1000;
+  if (age > 1.2) { lastPayloadRelease = null; return; }
 
   const mpp = metersPerPixel();
+  const locX = lastPayloadRelease.rx;
+  const locY = lastPayloadRelease.ry - CONFIG.EARTH_RADIUS;
+  const camCenter = camera.follow ? worldToLocal() : cameraCenter;
+  const px = canvas.width / 2 + (locX - camCenter.x) / mpp;
+  const py = canvas.height / 2 - (locY - camCenter.y) / mpp;
+
+  const f = age / 1.2;
+  const alpha = 1 - f;
+
+  ctx.save();
+  // Expanding ring.
+  const ringR = 4 + f * 18;
+  ctx.beginPath();
+  ctx.arc(px, py, ringR, 0, Math.PI * 2);
+  ctx.strokeStyle = `rgba(140,230,255,${alpha * 0.85})`;
+  ctx.lineWidth = 2 * alpha + 0.5;
+  ctx.stroke();
+
+  // Prograde arrow from release point.
+  const arrowLen = 20 + f * 10;
+  const ax = px + lastPayloadRelease.ux * arrowLen;
+  const ay = py - lastPayloadRelease.uy * arrowLen;
+  ctx.beginPath();
+  ctx.moveTo(px, py);
+  ctx.lineTo(ax, ay);
+  ctx.strokeStyle = `rgba(140,230,255,${alpha * 0.7})`;
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+  const ang = Math.atan2(ay - py, ax - px);
+  ctx.beginPath();
+  ctx.moveTo(ax, ay);
+  ctx.lineTo(ax - 6 * Math.cos(ang - 0.4), ay - 6 * Math.sin(ang - 0.4));
+  ctx.lineTo(ax - 6 * Math.cos(ang + 0.4), ay - 6 * Math.sin(ang + 0.4));
+  ctx.closePath();
+  ctx.fillStyle = `rgba(140,230,255,${alpha * 0.8})`;
+  ctx.fill();
+  ctx.restore();
+}
+
+// H4: draw the separation flash — an expanding ring at the split point.
+function drawSeparationFlash() {
+  if (typeof separationFlash === 'undefined' || !separationFlash) return;
+  const age = (performance.now() - separationFlash.t0) / 1000;
+  if (age > 0.35) { separationFlash = null; return; }
+
+  const mpp = metersPerPixel();
+  const locX = separationFlash.rx;
+  const locY = separationFlash.ry - CONFIG.EARTH_RADIUS;
+  const camCenter = camera.follow ? worldToLocal() : cameraCenter;
+  const px = canvas.width / 2 + (locX - camCenter.x) / mpp;
+  const py = canvas.height / 2 - (locY - camCenter.y) / mpp;
+
+  const f = age / 0.35;              // 0 → 1 over the flash lifetime
+  const radius = (2 + f * 30);       // world meters, in px
+  const alpha = (1 - f) * 0.85;
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(px, py, radius, 0, Math.PI * 2);
+  ctx.strokeStyle = `rgba(255,220,120,${alpha})`;
+  ctx.lineWidth = 3 * (1 - f) + 1;
+  ctx.stroke();
+
+  // Inner bright dot fading out.
+  ctx.beginPath();
+  ctx.arc(px, py, Math.max(1, 6 * (1 - f)), 0, Math.PI * 2);
+  ctx.fillStyle = `rgba(255,255,255,${alpha})`;
+  ctx.fill();
+  ctx.restore();
+}
+
+
+function drawRocket() {
+  // H1c: draw every body. Camera still follows the active body (via
+  // worldToLocal() in the camera-center calculation), but each body's
+  // geometry is drawn at its own position/orientation. Right now there is
+  // exactly one body, so this is visually identical to before.
+  state.bodies.forEach((body, idx) => {
+    drawBodyRocket(body, idx === state.activeBodyIndex);
+  });
+}
+
+function drawBodyRocket(body, isActive) {
+  const mpp = metersPerPixel();
+  const locX = body.rx;
+  const locY = body.ry - CONFIG.EARTH_RADIUS;
+  const camX = camera.follow ? worldToLocal().x : cameraCenter.x;
+  const camY = camera.follow ? worldToLocal().y : cameraCenter.y;
+  const px = canvas.width / 2 + (locX - camX) / mpp;
+  const py = canvas.height / 2 - (locY - camY) / mpp;
+  const visualTheta = body.theta - Math.atan2(body.rx, body.ry);
+
   const H = CONFIG.ROCKET_HEIGHT / mpp;
   const W = CONFIG.ROCKET_WIDTH / mpp;
 
@@ -305,213 +464,301 @@ function drawRocket() {
   ctx.translate(px, py);
   ctx.rotate(-visualTheta);
 
-  // ============================================================================
-  // ENGINE PLUME
-  // ============================================================================
-  const totalThrust = ENGINES.reduce((s, e) => s + e.currentF, 0);
-  const maxThrust = ENGINES.reduce((s, e) => s + e.Fmax, 0);
+  // ---- Plume (active body only) ----
+  // ---- Plume (any body whose engines are firing) ----
+{
+  const bodyEngines = (body && body.engines) ? body.engines : [];
+  const totalThrust = bodyEngines.reduce((s, e) => s + e.currentF, 0);
+  const maxThrust = bodyEngines.reduce((s, e) => s + e.Fmax, 0);
   const totalThrottle = maxThrust > 0 ? totalThrust / maxThrust : 0;
 
-  if (totalThrottle > 0.03) {
-    const tNow = performance.now() * 0.01;
-    const flameLen = H * (0.6 + 1.6 * totalThrottle);
+    if (totalThrottle > 0.03) {
+      const tNow = performance.now() * 0.01;
+      const flameLen = H * (0.6 + 1.6 * totalThrottle);
 
-    const centerEngine = ENGINES.find(e => e.isCenter);
-    const centerFrac = totalThrust > 0 ? centerEngine.currentF / totalThrust : 0;
-    const gimbalRad = (centerEngine.gimbalDeg * Math.PI / 180) * centerFrac;
-    const fullShift = -flameLen * Math.sin(gimbalRad);
+      const centerEngine = bodyEngines.find(e => e.isCenter);
 
-    const activeCount = ENGINES.filter(e => e.currentF > 1).length;
-    const plumeScale = Math.min(1.0, 0.30 + 0.70 * Math.max(0, activeCount - 1) / 8);
 
-    function gasConePath(startW, endW, lenFrac, seed, segments, layerShift) {
-      const l = flameLen * lenFrac;
-      ctx.beginPath();
-      ctx.moveTo(-startW / 2, 0);
-      for (let i = 1; i <= segments; i++) {
-        const f = i / segments;
-        const y = l * f;
-        const w = startW + (endW - startW) * f;
-        const grow = 0.15 + 1.1 * f * f;
-        const wob = Math.sin(f * 4.5 + tNow * 2.3 + seed) * w * 0.16 * grow
-                  + Math.sin(f * 9.5 + tNow * 3.8 + seed * 1.4) * w * 0.08 * grow;
-        ctx.lineTo(-w / 2 - wob + layerShift * f, y);
+      const centerFrac = totalThrust > 0 ? centerEngine.currentF / totalThrust : 0;
+      const gimbalRad = (centerEngine.gimbalDeg * Math.PI / 180) * centerFrac;
+      const fullShift = -flameLen * Math.sin(gimbalRad);
+
+      const activeCount = bodyEngines.filter(e => e.currentF > 1).length;
+      const plumeScale = Math.min(1.0, 0.30 + 0.70 * Math.max(0, activeCount - 1) / 8);
+
+      function gasConePath(startW, endW, lenFrac, seed, segments, layerShift) {
+        const l = flameLen * lenFrac;
+        ctx.beginPath();
+        ctx.moveTo(-startW / 2, 0);
+        for (let i = 1; i <= segments; i++) {
+          const f = i / segments;
+          const y = l * f;
+          const w = startW + (endW - startW) * f;
+          const grow = 0.15 + 1.1 * f * f;
+          const wob = Math.sin(f * 4.5 + tNow * 2.3 + seed) * w * 0.16 * grow
+                    + Math.sin(f * 9.5 + tNow * 3.8 + seed * 1.4) * w * 0.08 * grow;
+          ctx.lineTo(-w / 2 - wob + layerShift * f, y);
+        }
+        const capW = endW, capX = layerShift, capY = l;
+        ctx.quadraticCurveTo(capX - capW * 0.34, capY + capW * 0.15, capX, capY + capW * 0.22);
+        ctx.quadraticCurveTo(capX + capW * 0.34, capY + capW * 0.15, endW / 2 + layerShift, l);
+        for (let i = segments; i >= 0; i--) {
+          const f = i / segments;
+          const y = l * f;
+          const w = startW + (endW - startW) * f;
+          const grow = 0.15 + 1.1 * f * f;
+          const wob = Math.sin(f * 4.5 + tNow * 2.3 + seed + 1.9) * w * 0.16 * grow
+                    + Math.sin(f * 9.5 + tNow * 3.8 + seed * 1.4 + 0.8) * w * 0.08 * grow;
+          ctx.lineTo(w / 2 + wob + layerShift * f, y);
+        }
+        ctx.closePath();
       }
-      const capW = endW, capX = layerShift, capY = l;
-      ctx.quadraticCurveTo(capX - capW * 0.34, capY + capW * 0.15, capX, capY + capW * 0.22);
-      ctx.quadraticCurveTo(capX + capW * 0.34, capY + capW * 0.15, endW / 2 + layerShift, l);
-      for (let i = segments; i >= 0; i--) {
-        const f = i / segments;
-        const y = l * f;
-        const w = startW + (endW - startW) * f;
-        const grow = 0.15 + 1.1 * f * f;
-        const wob = Math.sin(f * 4.5 + tNow * 2.3 + seed + 1.9) * w * 0.16 * grow
-                  + Math.sin(f * 9.5 + tNow * 3.8 + seed * 1.4 + 0.8) * w * 0.08 * grow;
-        ctx.lineTo(w / 2 + wob + layerShift * f, y);
+
+      ctx.save();
+      ctx.filter = 'blur(11px)';
+      gasConePath(W * 1.0 * plumeScale, W * 2.7 * plumeScale, 1.0, 0, 14, fullShift * 1.0);
+      const g1 = ctx.createLinearGradient(0, 0, fullShift * 1.0, flameLen * 1.0);
+      g1.addColorStop(0, 'rgba(255,170,80,0.55)');
+      g1.addColorStop(0.55, 'rgba(255,110,40,0.4)');
+      g1.addColorStop(1, 'rgba(255,70,20,0)');
+      ctx.fillStyle = g1;
+      ctx.fill();
+      ctx.filter = 'none';
+
+      ctx.filter = 'blur(7px)';
+      for (let i = 0; i < 5; i++) {
+        const f = 0.35 + 0.6 * (i / 4);
+        const y = flameLen * f;
+        const w = (W * 1.0 * plumeScale + (W * 2.7 * plumeScale - W * 1.0 * plumeScale) * f);
+        const side = i % 2 === 0 ? 1 : -1;
+        const drift = Math.sin(tNow * 1.6 + i * 2.1) * w * 0.18;
+        const bx = side * (w * 0.42 + drift) + fullShift * f;
+        const by = y + Math.cos(tNow * 1.3 + i) * w * 0.08;
+        const r = w * (0.2 + 0.08 * Math.sin(i * 1.9 + tNow));
+        const bg = ctx.createRadialGradient(bx, by, 0, bx, by, r);
+        bg.addColorStop(0, 'rgba(255,140,60,0.35)');
+        bg.addColorStop(1, 'rgba(255,90,30,0)');
+        ctx.fillStyle = bg;
+        ctx.beginPath(); ctx.arc(bx, by, r, 0, Math.PI * 2); ctx.fill();
       }
-      ctx.closePath();
+      ctx.filter = 'none';
+
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.filter = 'blur(5px)';
+      const shift92 = fullShift * 0.92;
+      gasConePath(W * 0.78 * plumeScale, W * 1.9 * plumeScale, 0.92, 2.1, 11, shift92);
+      const g2 = ctx.createLinearGradient(0, 0, shift92, flameLen * 0.92);
+      g2.addColorStop(0, 'rgba(255,225,140,0.9)');
+      g2.addColorStop(0.5, 'rgba(255,150,55,0.55)');
+      g2.addColorStop(1, 'rgba(255,90,20,0)');
+      ctx.fillStyle = g2;
+      ctx.fill();
+      ctx.filter = 'none';
+
+      ctx.filter = 'blur(2px)';
+      const shift68 = fullShift * 0.68;
+      gasConePath(W * 0.58 * plumeScale, W * 1.05 * plumeScale, 0.68, 4.4, 9, shift68);
+      const coreHot = 0.55 + 0.45 * totalThrottle;
+      const g3 = ctx.createLinearGradient(0, 0, shift68, flameLen * 0.68);
+      g3.addColorStop(0, `rgba(${Math.round(255 - coreHot*15)},252,255,1)`);
+      g3.addColorStop(0.55, 'rgba(255,240,215,0.85)');
+      g3.addColorStop(1, 'rgba(255,190,120,0)');
+      ctx.fillStyle = g3;
+      ctx.fill();
+      ctx.filter = 'none';
+
+      ctx.filter = 'blur(5px)';
+      const shift22 = fullShift * 0.22;
+      gasConePath(W * 0.42 * plumeScale, W * 0.55 * plumeScale, 0.22, 6.7, 6, shift22);
+      ctx.fillStyle = 'rgba(255,255,255,0.98)';
+      ctx.fill();
+      ctx.filter = 'none';
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.restore();
+
+      ctx.globalCompositeOperation = 'lighter';
+      const flare = ctx.createRadialGradient(0, W * 0.05, 0, fullShift * 0.05, W * 0.05, W * 0.9 * plumeScale);
+      flare.addColorStop(0, 'rgba(255,255,255,0.9)');
+      flare.addColorStop(0.5, 'rgba(255,255,255,0.35)');
+      flare.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.fillStyle = flare;
+      ctx.beginPath(); ctx.ellipse(0, W * 0.05, W * 0.50 * plumeScale, W * 0.2 * plumeScale, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.globalCompositeOperation = 'source-over';
+     // ctx.restore;
     }
-
-    ctx.save();
-    ctx.filter = 'blur(11px)';
-    gasConePath(W * 1.0 * plumeScale, W * 2.7 * plumeScale, 1.0, 0, 14, fullShift * 1.0);
-    const g1 = ctx.createLinearGradient(0, 0, fullShift * 1.0, flameLen * 1.0);
-    g1.addColorStop(0, 'rgba(255,170,80,0.55)');
-    g1.addColorStop(0.55, 'rgba(255,110,40,0.4)');
-    g1.addColorStop(1, 'rgba(255,70,20,0)');
-    ctx.fillStyle = g1;
-    ctx.fill();
-    ctx.filter = 'none';
-
-    ctx.filter = 'blur(7px)';
-    for (let i = 0; i < 5; i++) {
-      const f = 0.35 + 0.6 * (i / 4);
-      const y = flameLen * f;
-      const w = (W * 1.0 * plumeScale + (W * 2.7 * plumeScale - W * 1.0 * plumeScale) * f);
-      const side = i % 2 === 0 ? 1 : -1;
-      const drift = Math.sin(tNow * 1.6 + i * 2.1) * w * 0.18;
-      const bx = side * (w * 0.42 + drift) + fullShift * f;
-      const by = y + Math.cos(tNow * 1.3 + i) * w * 0.08;
-      const r = w * (0.2 + 0.08 * Math.sin(i * 1.9 + tNow));
-      const bg = ctx.createRadialGradient(bx, by, 0, bx, by, r);
-      bg.addColorStop(0, 'rgba(255,140,60,0.35)');
-      bg.addColorStop(1, 'rgba(255,90,30,0)');
-      ctx.fillStyle = bg;
-      ctx.beginPath(); ctx.arc(bx, by, r, 0, Math.PI * 2); ctx.fill();
-    }
-    ctx.filter = 'none';
-
-    ctx.globalCompositeOperation = 'lighter';
-    ctx.filter = 'blur(5px)';
-    const shift92 = fullShift * 0.92;
-    gasConePath(W * 0.78 * plumeScale, W * 1.9 * plumeScale, 0.92, 2.1, 11, shift92);
-    const g2 = ctx.createLinearGradient(0, 0, shift92, flameLen * 0.92);
-    g2.addColorStop(0, 'rgba(255,225,140,0.9)');
-    g2.addColorStop(0.5, 'rgba(255,150,55,0.55)');
-    g2.addColorStop(1, 'rgba(255,90,20,0)');
-    ctx.fillStyle = g2;
-    ctx.fill();
-    ctx.filter = 'none';
-
-    ctx.filter = 'blur(2px)';
-    const shift68 = fullShift * 0.68;
-    gasConePath(W * 0.58 * plumeScale, W * 1.05 * plumeScale, 0.68, 4.4, 9, shift68);
-    const coreHot = 0.55 + 0.45 * totalThrottle;
-    const g3 = ctx.createLinearGradient(0, 0, shift68, flameLen * 0.68);
-    g3.addColorStop(0, `rgba(${Math.round(255 - coreHot*15)},252,255,1)`);
-    g3.addColorStop(0.55, 'rgba(255,240,215,0.85)');
-    g3.addColorStop(1, 'rgba(255,190,120,0)');
-    ctx.fillStyle = g3;
-    ctx.fill();
-    ctx.filter = 'none';
-
-    ctx.filter = 'blur(5px)';
-    const shift22 = fullShift * 0.22;
-    gasConePath(W * 0.42 * plumeScale, W * 0.55 * plumeScale, 0.22, 6.7, 6, shift22);
-    ctx.fillStyle = 'rgba(255,255,255,0.98)';
-    ctx.fill();
-    ctx.filter = 'none';
-    ctx.globalCompositeOperation = 'source-over';
-
-    ctx.globalCompositeOperation = 'lighter';
-    const flare = ctx.createRadialGradient(0, W * 0.05, 0, fullShift * 0.05, W * 0.05, W * 0.9 * plumeScale);
-    flare.addColorStop(0, 'rgba(255,255,255,0.9)');
-    flare.addColorStop(0.5, 'rgba(255,255,255,0.35)');
-    flare.addColorStop(1, 'rgba(255,255,255,0)');
-    ctx.fillStyle = flare;
-    ctx.beginPath(); ctx.ellipse(0, W * 0.05, W * 0.50 * plumeScale, W * 0.2 * plumeScale, 0, 0, Math.PI * 2); ctx.fill();
-    ctx.globalCompositeOperation = 'source-over';
-    ctx.restore();
   }
 
-  // ---- Airframe, legs, RCS pods (shared with the static vehicle previews
-  // on the home page and fleet page — see rocketArt.js) ----
-  // ---- Stack: draw every member from bottom→top, at one scale, with the
-// stack's bottom at (0,0). Plume is drawn above (once) from ENGINES (which
-// come from the bottom member). ----
-const stackMembers = (typeof SIM_STACK_MEMBERS !== 'undefined' && SIM_STACK_MEMBERS.length) ?
-  SIM_STACK_MEMBERS :
-  [];
+  // ---- Stack body draw (identical to before) ----
+  const stackMembers = (body && body.members && body.members.length)
+  ? body.members
+  : ((typeof SIM_STACK_MEMBERS !== 'undefined' && SIM_STACK_MEMBERS.length) ? SIM_STACK_MEMBERS : []);
 
-if (stackMembers.length) {
-  let yOffsetPx = 0;
-  stackMembers.forEach((m, idx) => {
-    const memberAbove = stackMembers[idx + 1] || null;
-    let stageAboveBellHeight = 0;
-    if (memberAbove && memberAbove.engineTypeId && typeof getComponentType === 'function') {
-      const layoutAbove = getComponentType(memberAbove.engineTypeId);
-      if (layoutAbove && layoutAbove.frame && layoutAbove.frame.slots) {
-        const groups = (typeof engineThrusterGroups === 'function') ? engineThrusterGroups(layoutAbove) : {};
-        let totalFlow = 0;
-        Object.keys(groups).forEach(gk => {
-          const g = memberAbove.engineThrusters && memberAbove.engineThrusters[gk];
-          if (!g || !Number.isFinite(g.massFlowRate)) return;
-          totalFlow += g.massFlowRate * groups[gk].length;
-        });
-        const perEngine = totalFlow / layoutAbove.frame.slots.length;
-        stageAboveBellHeight = 0.007 * perEngine;
-      }
-    }
-    
-    const mH = (m.height || 0) / mpp;
-    const mW = (m.width || 1) / mpp;
-    const recType = (m.hasRecovery === false) ? null :
-      ((m.recoveryTypeId && typeof getComponentType === 'function') ?
-        getComponentType(m.recoveryTypeId) : null);
-    const rcsT = (m.rcsTypeId && typeof getComponentType === 'function') ?
-      getComponentType(m.rcsTypeId) : null;
-    const engineLayout = (m.engineTypeId && typeof getComponentType === 'function') ?
-      getComponentType(m.engineTypeId) : null;
-    
-    ctx.save();
-    ctx.translate(0, -yOffsetPx);
-    drawRocketArt(ctx, mW, mH, mpp, {
-      legsProgress: (idx === 0) ? legs.progress : 0,
-      legsState: legs,
-      firing: lastForces.firing || {},
-      pod: lastForces.pod || {},
-      rcsTopY: m.params ? m.params.rcsTopY : undefined,
-      rcsBottomY: m.params ? m.params.rcsBottomY : undefined,
-      recoveryType: recType,
-      rcsType: rcsT,
-      stageRole: m.stageRole,
-      noseCurveness: m.noseCurveness,
-      bodyDesign: m.bodyDesign,
-      payloadSpaceColor: (m.payloadSpace && m.payloadSpace.color) ? m.payloadSpace.color : undefined,
-      stagePayload: (typeof buildStagePayload === 'function') ? buildStagePayload(m) : null,
-      engineLayout: engineLayout,
-      engineThrusters: m.engineThrusters,
-      params: m.params,
-      stageAboveBellHeight: stageAboveBellHeight,
+// ↓↓↓ ye pura block add karo ↓↓↓
+// Payload drawn BEFORE members (background) — so fairing, drawn after,
+// covers it until fairing splits.
+if (body.payloadId && !body.payloadReleased) {
+  const pl = (typeof getPayload === 'function') ? getPayload(body.payloadId) : null;
+  if (pl) {
+    let payloadBaseY = null, yy = 0;
+    stackMembers.forEach(m => {
+      if (m.stageRole === 'payloadSpace' && payloadBaseY === null) payloadBaseY = yy;
+      yy += (m.height || 0) / mpp;
     });
+    if (payloadBaseY === null) payloadBaseY = yy;
+    const plH = (pl.height || 1) / mpp;
+    const plW = (pl.width || 1) / mpp;
+    ctx.save();
+    ctx.translate(0, -payloadBaseY);
+    drawPayloadArt(ctx, plW, plH);
     ctx.restore();
-    yOffsetPx += mH;
-  });
-} else {
-  // Fallback: single-body (should not normally hit).
-  const fb = (typeof ACTIVE_VEHICLE_FOR_HARDWARE !== 'undefined') ? ACTIVE_VEHICLE_FOR_HARDWARE : null;
-  const fbEngineLayout = (fb && fb.engineTypeId && typeof getComponentType === 'function') ?
-    getComponentType(fb.engineTypeId) : null;
-  drawRocketArt(ctx, W, H, mpp, {
-    legsProgress: legs.progress,
-    legsState: legs,
-    firing: lastForces.firing || {},
-    pod: lastForces.pod || {},
-    rcsTopY: CONFIG.RCS_TOP_Y,
-    rcsBottomY: CONFIG.RCS_BOTTOM_Y,
-    recoveryType: CONFIG.RECOVERY_TYPE,
-    rcsType: CONFIG.RCS_TYPE,
-    stageRole: fb ? fb.stageRole : 'rocket',
-    noseCurveness: fb ? fb.noseCurveness : 0,
-    bodyDesign: fb ? fb.bodyDesign : undefined,
-    payloadSpaceColor: (fb && fb.payloadSpace && fb.payloadSpace.color) ? fb.payloadSpace.color : undefined,
-    stagePayload: (fb && typeof buildStagePayload === 'function') ? buildStagePayload(fb) : null,
-    engineLayout: fbEngineLayout,
-    engineThrusters: fb ? fb.engineThrusters : null,
-    params: fb ? fb.params : null,
-    stageAboveBellHeight: 0,
-  });
+  }
 }
+// ↑↑↑ ye pura block add karo ↑↑↑
+// I-d1: fairing half-shell — draw the payloadSpace silhouette but
+// rendered as if sliced in half (approximate: draw the shape then
+// clip away one lateral side).
+if (body.fairingHalf) {
+  const rec = body.fairingHalf.record;
+  const side = body.fairingHalf.side;
+  const psType = (rec.payloadSpaceTypeId && typeof getComponentType === 'function') ?
+    getComponentType(rec.payloadSpaceTypeId) : null;
+  const psParams = rec.params || {};
+  // Fairing's OWN dims — not the stack's. Previously used CONFIG.ROCKET_*
+  // so the half-shell was drawn at full-rocket height.
+  const fairW_m = Number.isFinite(psParams.capWidth) ? psParams.capWidth : 3;
+  const fairH_m = Number.isFinite(psParams.capHeight) ? psParams.capHeight : 3;
+  const fairW_px = fairW_m / mpp;
+  const fairH_px = fairH_m / mpp;
+  
+  // Clip to one lateral half (side=+1 → right half; side=-1 → left half).
+  ctx.save();
+  ctx.beginPath();
+  if (side > 0) ctx.rect(0, -fairH_px * 2, fairW_px * 2, fairH_px * 4);
+  else ctx.rect(-fairW_px * 2, -fairH_px * 2, fairW_px * 2, fairH_px * 4);
+  ctx.clip();
+  
+  drawRocketArt(ctx, fairW_px, fairH_px, mpp, {
+    stageRole: 'payloadSpace',
+    payloadKind: psType ? psType.kind : undefined,
+    payloadCapWidth: Number.isFinite(psParams.capWidth) ? psParams.capWidth : undefined,
+    payloadBulgeWidth: Number.isFinite(psParams.bulgeWidth) ? psParams.bulgeWidth : undefined,
+    payloadFrustumAngleDeg: Number.isFinite(psParams.frustumSlantDeg) ? psParams.frustumSlantDeg : undefined,
+    payloadCurveRatio: Number.isFinite(psParams.curveHeightFactor) ? psParams.curveHeightFactor : undefined,
+    payloadColor: rec.color || '#e9edf2',
+  });
+  ctx.restore();
+  ctx.restore(); // closes the outer drawBodyRocket save
+  return;
+}
+
+// I-d2: payload body — simple rectangle (height × width from its record).
+if (body.payloadBody) {
+  const pl = body.payloadBody.record;
+  const plH_m = Number.isFinite(pl.height) ? pl.height : 1;
+  const plW_m = Number.isFinite(pl.width) ? pl.width : 1;
+  const plH_px = plH_m / mpp;
+  const plW_px = plW_m / mpp;
+  ctx.save();
+  drawPayloadArt(ctx, plW, plH);
+  ctx.restore();
+  
+  return;
+}
+
+  if (stackMembers.length) {
+    let yOffsetPx = 0;
+    stackMembers.forEach((m, idx) => {
+      const memberAbove = stackMembers[idx + 1] || null;
+      let stageAboveBellHeight = 0;
+      if (memberAbove && memberAbove.engineTypeId && typeof getComponentType === 'function') {
+        const layoutAbove = getComponentType(memberAbove.engineTypeId);
+        if (layoutAbove && layoutAbove.frame && layoutAbove.frame.slots) {
+          const groups = (typeof engineThrusterGroups === 'function') ? engineThrusterGroups(layoutAbove) : {};
+          let totalFlow = 0;
+          Object.keys(groups).forEach(gk => {
+            const g = memberAbove.engineThrusters && memberAbove.engineThrusters[gk];
+            if (!g || !Number.isFinite(g.massFlowRate)) return;
+            totalFlow += g.massFlowRate * groups[gk].length;
+          });
+          const perEngine = totalFlow / layoutAbove.frame.slots.length;
+          stageAboveBellHeight = 0.007 * perEngine;
+        }
+      }
+
+      const mH = (m.height || 0) / mpp;
+      const mW = (m.width || 1) / mpp;
+      const recType = (m.hasRecovery === false) ? null
+        : ((m.recoveryTypeId && typeof getComponentType === 'function')
+            ? getComponentType(m.recoveryTypeId) : null);
+      const rcsT = (m.rcsTypeId && typeof getComponentType === 'function')
+        ? getComponentType(m.rcsTypeId) : null;
+      const engineLayout = (m.engineTypeId && typeof getComponentType === 'function')
+        ? getComponentType(m.engineTypeId) : null;
+
+      // PS-D2: payloadSpace fairing shape opts.
+      const psType = (m.stageRole === 'payloadSpace' && m.payloadSpaceTypeId && typeof getComponentType === 'function')
+        ? getComponentType(m.payloadSpaceTypeId) : null;
+      const psParams = m.params || {};
+      const payloadOpts = (m.stageRole === 'payloadSpace') ? {
+        payloadKind: psType ? psType.kind : undefined,
+        payloadCapWidth: Number.isFinite(psParams.capWidth) ? psParams.capWidth : undefined,
+        payloadBulgeWidth: Number.isFinite(psParams.bulgeWidth) ? psParams.bulgeWidth : undefined,
+        payloadFrustumAngleDeg: Number.isFinite(psParams.frustumSlantDeg) ? psParams.frustumSlantDeg : undefined,
+        payloadCurveRatio: Number.isFinite(psParams.curveHeightFactor) ? psParams.curveHeightFactor : undefined,
+        payloadColor: m.color || '#e9edf2',
+      } : {};
+
+      ctx.save();
+      ctx.translate(0, -yOffsetPx);
+      drawRocketArt(ctx, mW, mH, mpp, {
+        legsProgress: (isActive && idx === 0) ? legs.progress : 0,
+        legsState: isActive ? legs : null,
+        firing: (body.lastRcs && body.lastRcs.firing) || {},
+  pod: (body.lastRcs && body.lastRcs.pod) || {},
+        rcsTopY: m.params ? m.params.rcsTopY : undefined,
+        rcsBottomY: m.params ? m.params.rcsBottomY : undefined,
+        recoveryType: recType,
+        rcsType: rcsT,
+        stageRole: m.stageRole,
+        noseCurveness: m.noseCurveness,
+        bodyDesign: m.bodyDesign,
+        payloadSpaceColor: (m.payloadSpace && m.payloadSpace.color) ? m.payloadSpace.color : undefined,
+        stagePayload: (typeof buildStagePayload === 'function') ? buildStagePayload(m) : null,
+        engineLayout: engineLayout,
+        engineThrusters: m.engineThrusters,
+        params: m.params,
+        stageAboveBellHeight: stageAboveBellHeight,
+        ...payloadOpts,
+      });
+      ctx.restore();
+      yOffsetPx += mH;
+    });
+  } else {
+    // Fallback: single-body (should not normally hit).
+    const fb = (typeof ACTIVE_VEHICLE_FOR_HARDWARE !== 'undefined') ? ACTIVE_VEHICLE_FOR_HARDWARE : null;
+    const fbEngineLayout = (fb && fb.engineTypeId && typeof getComponentType === 'function')
+      ? getComponentType(fb.engineTypeId) : null;
+    drawRocketArt(ctx, W, H, mpp, {
+      legsProgress: isActive ? legs.progress : 0,
+      legsState: isActive ? legs : null,
+      firing: (body.lastRcs && body.lastRcs.firing) || {},
+  pod: (body.lastRcs && body.lastRcs.pod) || {},
+      rcsTopY: CONFIG.RCS_TOP_Y,
+      rcsBottomY: CONFIG.RCS_BOTTOM_Y,
+      recoveryType: CONFIG.RECOVERY_TYPE,
+      rcsType: CONFIG.RCS_TYPE,
+      stageRole: fb ? fb.stageRole : 'rocket',
+      noseCurveness: fb ? fb.noseCurveness : 0,
+      bodyDesign: fb ? fb.bodyDesign : undefined,
+      payloadSpaceColor: (fb && fb.payloadSpace && fb.payloadSpace.color) ? fb.payloadSpace.color : undefined,
+      stagePayload: (fb && typeof buildStagePayload === 'function') ? buildStagePayload(fb) : null,
+      engineLayout: fbEngineLayout,
+      engineThrusters: fb ? fb.engineThrusters : null,
+      params: fb ? fb.params : null,
+      stageAboveBellHeight: 0,
+    });
+  }
+
   ctx.restore();
 }
 
@@ -556,4 +803,7 @@ function renderFrame() {
   drawLaunchPad();
   drawGroundSteam(altitude);
   drawRocket();
+  drawActiveBodyIndicator();
+  drawSeparationFlash();  
+  drawPayloadReleaseCue();
 }

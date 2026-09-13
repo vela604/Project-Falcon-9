@@ -41,6 +41,20 @@
       <div class="tb-group">
         <button class="btn" id="btnLegs"><span class="btn-ic">🦿</span>Deploy Legs</button>
       </div>
+      
+      <div class="tb-sep"></div>
+
+<div class="tb-group">
+  <button class="btn" id="btnSeparate"><span class="btn-ic">💥</span>Separate Stage</button>
+</div>
+
+<div class="tb-group">
+  <button class="btn" id="btnSplitFairing"><span class="btn-ic">🛸</span>Split Fairing</button>
+</div>
+
+<div class="tb-group">
+  <button class="btn" id="btnReleasePayload"><span class="btn-ic">📦</span>Release Payload</button>
+</div>
 
       <div class="tb-sep"></div>
 
@@ -50,6 +64,19 @@
         <button class="btn icon-btn" id="btnZoomOut" title="Zoom out">−</button>
         <button class="btn icon-btn" id="btnZoomIn" title="Zoom in">+</button>
       </div>
+<div class="tb-sep"></div>
+
+<div class="tb-group">
+  <button class="btn" id="btnTakeControl" disabled><span class="btn-ic">🎮</span>Take Control</button>
+</div>
+<div class="tb-sep"></div>
+
+<div class="tb-group">
+  <label style="font-size:11px;color:var(--dim);font-family:var(--font-mono);">Follow:</label>
+  <select id="followBodySelect" class="btn" style="padding:5px 8px;">
+    <option value="0">Active</option>
+  </select>
+</div>
 
       <div class="tb-sep"></div>
 
@@ -95,9 +122,12 @@
         <div class="tele-row"><span class="tele-sym">ρ</span><span class="tele-val" id="t-rho">0</span></div>
         <div class="tele-row"><span class="tele-sym">D↑</span><span class="tele-val" id="t-duty">0%</span></div>
         <div class="tele-row"><span class="tele-sym">TWR</span><span class="tele-val" id="t-twr">0</span></div>
+        <div class="tele-row"><span class="tele-sym">B</span><span class="tele-val" id="t-bodies">1</span></div>
         <div class="tele-row"><span class="tele-sym">hc</span><span class="tele-val" id="t-com">0</span></div>
 <div class="tele-row"><span class="tele-sym">I</span><span class="tele-val" id="t-moi">0</span></div>
       </div>
+      <div class="tele-head" style="margin-top:10px;">BODIES</div>
+<div id="t-bodyList" class="tele-body-list"></div>
     </div>
 
     <!-- Bottom control cluster -->

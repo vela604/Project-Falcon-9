@@ -144,19 +144,115 @@ function drawPayloadSpaceShape(ctx, W, H, mpp, opts) {
   };
 
   ctx.fillStyle = color;
-  ctx.strokeStyle = '#8b93a0';
-  ctx.lineWidth = 1.2;
-  bodyPath();
-  ctx.fill();
-  ctx.stroke();
+ctx.strokeStyle = '#8b93a0';
+ctx.lineWidth = 1.2;
+bodyPath();
+ctx.fill();
+ctx.stroke();
 
-  // Same cylindrical shading recipe used everywhere else in this file —
-  // gradient width follows the widest cross-section (bulge, if any).
-  if (typeof applyCylindricalOverlay === 'function') {
-    const gradW = Math.max(capR, bulgeR) * 2;
+// DSL overlay (clipped to fairing silhouette).
+const bodyDesign = opts.bodyDesign || { mode: 'solid', dslText: '' };
+if ((bodyDesign.mode || 'solid') === 'dsl' &&
+  typeof parseAndValidateDesign === 'function' &&
+  typeof drawCustomDesignOps === 'function') {
+  const parsed = parseAndValidateDesign(bodyDesign.dslText || '');
+  if (parsed.ok && parsed.ops.length) {
+    const widestW_px = Math.max(capR, bulgeR) * 2;
+    ctx.save();
     bodyPath();
-    applyCylindricalOverlay(ctx, gradW);
+    ctx.clip();
+    drawCustomDesignOps(ctx, widestW_px, H, parsed.ops);
+    ctx.restore();
   }
+}
+
+if (typeof applyCylindricalOverlay === 'function') {
+  const gradW = Math.max(capR, bulgeR) * 2;
+  bodyPath();
+  applyCylindricalOverlay(ctx, gradW);
+}
+}
+
+
+// Payload art — compact satellite with folded solar panels + small dish.
+function drawPayloadArt(ctx, W, H) {
+  // ---- Folded solar panels (thin, hugging the body sides) ----
+  const panelW = W * 0.15;
+  const panelH = H * 0.7;
+  const panelY = -H * 0.85;
+  [-1, 1].forEach(side => {
+    const px = side > 0 ? W / 2 : -(W / 2 + panelW);
+    const pg = ctx.createLinearGradient(px, 0, px + panelW, 0);
+    pg.addColorStop(0, '#1a3050');
+    pg.addColorStop(0.5, '#2c5a8a');
+    pg.addColorStop(1, '#0a1520');
+    ctx.fillStyle = pg;
+    ctx.fillRect(px, panelY, panelW, panelH);
+    ctx.strokeStyle = '#0a1520';
+    ctx.lineWidth = 0.6;
+    ctx.strokeRect(px, panelY, panelW, panelH);
+    // Horizontal grid lines (folded cells)
+    ctx.strokeStyle = 'rgba(120,180,255,0.4)';
+    ctx.lineWidth = 0.4;
+    for (let i = 1; i < 5; i++) {
+      const gy = panelY + (panelH * i / 5);
+      ctx.beginPath(); ctx.moveTo(px, gy); ctx.lineTo(px + panelW, gy); ctx.stroke();
+    }
+  });
+
+  // ---- Main body ----
+  const bg = ctx.createLinearGradient(-W / 2, 0, W / 2, 0);
+  bg.addColorStop(0, '#4a4e54');
+  bg.addColorStop(0.5, '#c8d0d8');
+  bg.addColorStop(1, '#3a3d43');
+  ctx.fillStyle = bg;
+  ctx.fillRect(-W / 2, -H, W, H);
+  ctx.strokeStyle = '#1c1e22';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(-W / 2, -H, W, H);
+
+  // Body seams
+  ctx.strokeStyle = 'rgba(20,24,30,0.4)';
+  ctx.lineWidth = 0.5;
+  [-0.25, 0.25].forEach(f => {
+    const y = -H * (0.5 + f);
+    ctx.beginPath(); ctx.moveTo(-W / 2, y); ctx.lineTo(W / 2, y); ctx.stroke();
+  });
+
+  // Small dish on top edge
+  const dishR = W * 0.18;
+  ctx.save();
+  ctx.translate(0, -H);
+  ctx.beginPath();
+  ctx.arc(0, 0, dishR, Math.PI, 0, false);
+  const dg = ctx.createRadialGradient(0, 0, dishR * 0.1, 0, 0, dishR);
+  dg.addColorStop(0, '#e8eef5');
+  dg.addColorStop(1, '#606870');
+  ctx.fillStyle = dg;
+  ctx.fill();
+  ctx.strokeStyle = '#1c1e22';
+  ctx.lineWidth = 0.7;
+  ctx.stroke();
+  ctx.restore();
+
+  // Nozzle at base
+  const nzW = W * 0.35;
+  const nzH = H * 0.08;
+  ctx.fillStyle = '#1c1e22';
+  ctx.beginPath();
+  ctx.moveTo(-nzW / 2, 0);
+  ctx.lineTo(-nzW / 2 * 0.6, nzH);
+  ctx.lineTo(nzW / 2 * 0.6, nzH);
+  ctx.lineTo(nzW / 2, 0);
+  ctx.closePath();
+  ctx.fill();
+
+  // Small blinking beacon
+  const blink = 0.5 + 0.5 * Math.sin(performance.now() * 0.004);
+  ctx.fillStyle = `rgba(255,60,50,${blink})`;
+  ctx.beginPath();
+  ctx.arc(0, -H * 0.55, W * 0.05, 0, Math.PI * 2);
+  ctx.fill();
 }
 
 
@@ -665,7 +761,10 @@ if (isBooster) {
   ctx.stroke();
 
   // Grid fins just below the interstage.
-  drawGridFins(-H + interstageH_px + H * 0.05);
+  // Grid fins sit right at the interstage's bottom edge (where the
+// interstage meets the tank).
+drawGridFins(-H + interstageH_px);
+
 } else if (opts.stageRole !== 'stage') {
   // Rocket / legacy rocket: checkerboard stripe + grid fins near the
   // shoulder. Stage is skipped entirely — its payload space IS the
@@ -791,18 +890,25 @@ if (opts.stageRole === 'stage' && engineBell) {
   }
 
   const corners = {}, lateralDir = {};
-  const rcsTopY    = opts.rcsTopY !== undefined ? opts.rcsTopY
-                    : ((typeof CONFIG !== 'undefined') ? CONFIG.RCS_TOP_Y : 0);
-const rcsBottomY = opts.rcsBottomY !== undefined ? opts.rcsBottomY
-                    : ((typeof CONFIG !== 'undefined') ? CONFIG.RCS_BOTTOM_Y : 0);
+const memberH_m = H * mpp;
+const rawTopY    = opts.rcsTopY !== undefined ? opts.rcsTopY
+                  : ((typeof CONFIG !== 'undefined') ? CONFIG.RCS_TOP_Y : 0);
+const rawBottomY = opts.rcsBottomY !== undefined ? opts.rcsBottomY
+                  : ((typeof CONFIG !== 'undefined') ? CONFIG.RCS_BOTTOM_Y : 0);
+// Clamp both offsets to the member's own height so an over-large value
+// can't place pods outside the member's silhouette (e.g. stage pods
+// climbing into the payload space above).
+const rcsTopY    = Math.max(0, Math.min(rawTopY, memberH_m));
+const rcsBottomY = Math.max(0, Math.min(rawBottomY, memberH_m));
 
 podDefs.forEach(pd => {
   const xSign = pd.corner[0], isTop = pd.corner[1] === 'top';
-  // Both Ys are base-anchored: pods sit at that height above the base.
   const yLocal = isTop ? rcsTopY : rcsBottomY;
   corners[pd.id] = [xSign * (W / 2), -(yLocal / mpp)];
   lateralDir[pd.id] = [xSign, 0];
 });
+
+
   const plumeLen = W * 0.6;
   const fEps = 1;
 
@@ -1021,6 +1127,12 @@ const rcsType = (v.rcsTypeId && typeof getComponentType === 'function') ?
   bodyDesign: v.bodyDesign,
   payloadSpaceColor: v.payloadSpaceColor,
   stagePayload: v.stagePayload,
+  payloadKind: v.payloadKind,
+  payloadCapWidth: v.payloadCapWidth,
+  payloadBulgeWidth: v.payloadBulgeWidth,
+  payloadFrustumAngleDeg: v.payloadFrustumAngleDeg,
+  payloadCurveRatio: v.payloadCurveRatio,
+  payloadColor: v.payloadColor,
 });
   pctx.restore();
 }
@@ -1075,7 +1187,7 @@ function renderStackPreview(canvas, memberIds, fleet) {
   const baseX = cssW / 2;
   let baseY = (cssH + H_px_total) / 2;
 
-  members.forEach(m => {
+  members.forEach((m, idx) => {
   const W = (m.width || 1) / mpp;
   const H = (m.height || 0) / mpp;
   const recoveryType = (m.hasRecovery === false) ? null :
@@ -1083,9 +1195,51 @@ function renderStackPreview(canvas, memberIds, fleet) {
       getComponentType(m.recoveryTypeId) : null);
   const rcsType = (m.rcsTypeId && typeof getComponentType === 'function') ?
     getComponentType(m.rcsTypeId) : null;
-  
+  const engineLayout = (m.engineTypeId && typeof getComponentType === 'function') ?
+    getComponentType(m.engineTypeId) : null;
+
+  // Bell height of the member directly above `m` (for booster/stage
+  // interstage sizing) — same formula as boosterDerivedMasses()'s
+  // interstage calc in fleet.js, duplicated here because that version
+  // reads the global SIM_STACK_MEMBERS (only set inside the live sim);
+  // this preview runs on the home/fleet pages where that global doesn't
+  // exist, but we already have the ordered `members` array locally.
+  let stageAboveBellHeight = 0;
+  const above = members[idx + 1];
+  if (above && above.engineTypeId && typeof getComponentType === 'function') {
+    const layoutAbove = getComponentType(above.engineTypeId);
+    if (layoutAbove && layoutAbove.frame && layoutAbove.frame.slots
+        && typeof engineThrusterGroups === 'function') {
+      const gAbove = engineThrusterGroups(layoutAbove);
+      let totalFlow = 0;
+      Object.keys(gAbove).forEach(gk => {
+        const g = above.engineThrusters && above.engineThrusters[gk];
+        if (!g || !Number.isFinite(g.massFlowRate)) return;
+        totalFlow += g.massFlowRate * gAbove[gk].length;
+      });
+      const perEngine = totalFlow / layoutAbove.frame.slots.length;
+      stageAboveBellHeight = 0.007 * perEngine;
+    }
+  }
+
   pctx.save();
   pctx.translate(baseX, baseY);
+  
+  // PS-D2: payloadSpace shape needs its own opts (kind/capWidth/bulgeWidth/
+// frustumAngle/curveRatio/color). Those aren't computed in stack preview
+// otherwise — extract them from the member record here.
+const psType = (m.stageRole === 'payloadSpace' && m.payloadSpaceTypeId && typeof getComponentType === 'function')
+  ? getComponentType(m.payloadSpaceTypeId) : null;
+const psParams = m.params || {};
+const payloadOpts = (m.stageRole === 'payloadSpace') ? {
+  payloadKind: psType ? psType.kind : undefined,
+  payloadCapWidth: Number.isFinite(psParams.capWidth) ? psParams.capWidth : undefined,
+  payloadBulgeWidth: Number.isFinite(psParams.bulgeWidth) ? psParams.bulgeWidth : undefined,
+  payloadFrustumAngleDeg: Number.isFinite(psParams.frustumSlantDeg) ? psParams.frustumSlantDeg : undefined,
+  payloadCurveRatio: Number.isFinite(psParams.curveHeightFactor) ? psParams.curveHeightFactor : undefined,
+  payloadColor: m.color || '#e9edf2',
+} : {};
+  
   drawRocketArt(pctx, W, H, mpp, {
   rcsTopY: m.params ? m.params.rcsTopY : undefined,
   rcsBottomY: m.params ? m.params.rcsBottomY : undefined,
@@ -1099,6 +1253,7 @@ function renderStackPreview(canvas, memberIds, fleet) {
   engineThrusters: m.engineThrusters,
   params: m.params,
   stageAboveBellHeight: stageAboveBellHeight,
+  ...payloadOpts,
 });
 
     pctx.restore();

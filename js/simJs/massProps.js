@@ -47,14 +47,14 @@ function _rodI(m, L) {
 function memberMaxFuel(rec) {
   if (!rec) return 0;
   const role = rec.stageRole || 'rocket';
-  if (role === 'nose') return 0;
+  if (role === 'nose' || role === 'payloadSpace') return 0;
   if (role === 'booster') {
     const d = (typeof boosterDerivedMasses === 'function') ? boosterDerivedMasses(rec) : null;
-    return d ? d.fuelMass : 0;
+    return (d && Number.isFinite(d.fuelMass)) ? d.fuelMass : 0;
   }
   if (role === 'stage') {
     const d = (typeof stageDerivedMasses === 'function') ? stageDerivedMasses(rec) : null;
-    return (d && !d.infeasible) ? d.fuelMass : 0;
+    return (d && !d.infeasible && Number.isFinite(d.fuelMass)) ? d.fuelMass : 0;
   }
   return Number.isFinite(rec.fuelMassMax) ? rec.fuelMassMax : 0;
 }

@@ -356,3 +356,18 @@ canvas.mini-graph { width: 100%; height: 60px; background: var(--bg); border-rad
   color: var(--danger); font-size: 11.5px; font-family: var(--font-mono);
   line-height: 1.4;
 }
+
+.tele-body-list {
+  display: flex; flex-direction: column; gap: 5px;
+  font-family: var(--font-mono); font-size: 9.5px;
+}
+.tele-body-block {
+  padding: 4px 5px; border-radius: 4px;
+  background: rgba(255,255,255,0.04);
+}
+.tele-body-block.active    { background: rgba(53,214,255,0.13); color: var(--cyan); }
+.tele-body-block.crashed   { background: rgba(255,95,126,0.13); color: var(--danger); }
+.tele-body-block.discarded { opacity: 0.85; }
+.tb-line { display: flex; justify-content: space-between; gap: 6px; line-height: 1.45; }
+.tb-label { color: var(--dim); }
+.tb-val { text-align: right; }
