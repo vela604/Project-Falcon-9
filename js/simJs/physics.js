@@ -287,7 +287,7 @@ function bodyAeroProfile(body) {
     const h = (body && Number.isFinite(body.height)) ? body.height : (CONFIG.ROCKET_HEIGHT || 45);
     return {
       refWidth: w,
-      members: [{ area: Math.PI * (w / 2) ** 2, baseY: 0, height: h, isTapered: true }],
+      members: [{ width: w, height: h, area: Math.PI * (w / 2) ** 2, baseY: 0, isTapered: true }],
     };
   }
   let refWidth = 0;
@@ -302,7 +302,7 @@ function bodyAeroProfile(body) {
     // geometric mid-height — there's no separate nose potential-flow term
     // to blend in for a mid-stack cylindrical segment.
     const isTapered = (m.stageRole === 'nose') || (m.stageRole === 'payloadSpace');
-    const out = { area: Math.PI * (W / 2) ** 2, baseY: yOffset, height: H, isTapered };
+    const out = { width: W, height: H, area: Math.PI * (W / 2) ** 2, baseY: yOffset, isTapered };
     yOffset += H;
     return out;
   });
@@ -319,44 +319,64 @@ function computeDragAero(s, extra) {
   const rho = airDensity(altitude);
 
   const profile = (extra && extra.aero) ? extra.aero : bodyAeroProfile(null);
-  // Total drag magnitude uses the body's OWN widest member — the widest
-  // cross-section is what actually presents to the oncoming flow; a
-  // discarded booster's own width (not the active stack's) now correctly
-  // drives its own drag, and a narrower stage riding above a wider
-  // booster no longer silently inherits the booster's frontal area either.
-  const A = Math.PI * (profile.refWidth / 2) ** 2;
-  const dragMag = 0.5 * rho * CONFIG.DRAG_CD * A * speedRel * speedRel;
+  const comH = (extra && Number.isFinite(extra.comH)) ? extra.comH : 0;
+
+  // Angle of attack must be known BEFORE the area is computed — a body's
+  // presented frontal area is NOT the fixed nose-on circle π(W/2)² except
+  // exactly at zero AoA. Tilted (or broadside/tumbling) it presents its
+  // much larger rectangular SIDE silhouette (W×H) instead, growing toward
+  // that as |AoA| → 90°. Reusing the same |sin(AoA)| blend factor already
+  // used for the CP location keeps both effects consistent with one
+  // another (both driven by how "broadside-on" the body currently is).
+  let alphaDeg = 0, sinAlpha = 0, wCross = 0;
+  if (speedRel > 1e-3) {
+    const velBodyX = relVx * cosT + relVy * sinT;   // perpendicular to nose axis
+    sinAlpha = Math.max(-1, Math.min(1, velBodyX / speedRel));
+    alphaDeg = Math.asin(sinAlpha) * 180 / Math.PI;
+    wCross = Math.min(1, Math.abs(sinAlpha));
+  }
+
+  // Per-member presented area, now ATTITUDE-DEPENDENT (not the old fixed
+  // nose-on circle): blends from the circular end-cap area (aAxial, at
+  // AoA≈0) toward the rectangular side-profile area (aSide = W×H, at
+  // AoA≈90°) using wCross. A tumbling/broadside body — or discarded
+  // hardware falling sideways — now correctly shows far more drag area
+  // than it would nose-first, instead of the old constant πr² regardless
+  // of orientation.
+  let totalAeff = 0;
+  const memberAeff = profile.members.map(m => {
+    const aAxial = m.area;                    // π(W/2)² — nose-on
+    const aSide = m.width * m.height;         // W×H — broadside silhouette
+    const aEff = aAxial * (1 - wCross) + aSide * wCross;
+    totalAeff += aEff;
+    return aEff;
+  });
+  const effectiveArea = totalAeff || (Math.PI * (profile.refWidth / 2) ** 2);
+
+  const dragMag = 0.5 * rho * CONFIG.DRAG_CD * effectiveArea * speedRel * speedRel;
   const Fdx = speedRel > 0 ? -dragMag * relVx / speedRel : 0;
   const Fdy = speedRel > 0 ? -dragMag * relVy / speedRel : 0;
 
-  let dragTorque = 0, alphaDeg = 0, Fnormal = 0;
-  const comH = (extra && Number.isFinite(extra.comH)) ? extra.comH : 0;
-
+  let dragTorque = 0, Fnormal = 0;
   if (speedRel > 1e-3) {
-    // Relative velocity resolved into the BODY frame (world→body rotation).
-    const velBodyX = relVx * cosT + relVy * sinT;   // perpendicular to nose axis
-    const sinAlpha = Math.max(-1, Math.min(1, velBodyX / speedRel));
-    alphaDeg = Math.asin(sinAlpha) * 180 / Math.PI;
-
     // Total drag force is anti-parallel to relative velocity in BOTH
     // frames (rotation preserves anti-parallel relationship), so its
     // body-frame lateral ("normal") component shares the same ratio.
     Fnormal = -dragMag * sinAlpha;
-    const wCross = Math.min(1, Math.abs(sinAlpha));
 
     // Distribute the net normal force across members proportional to each
-    // member's OWN frontal area, and apply each share at that member's
-    // OWN local centroid (absolute Y from the body's base) — summed to get
-    // the net torque. This is the "connected stack" case: every body
-    // (even one, e.g. a single released stage) contributes its own real
-    // drag+torque at its own CP, exactly like a separate free body would,
-    // and when several members ARE connected their individual
-    // contributions simply sum — no separate code path needed for
-    // "connected" vs "separated", since a separated body is just a body
-    // with one (or fewer) members in this same list.
-    const totalArea = profile.members.reduce((sum, m) => sum + m.area, 0) || 1;
-    profile.members.forEach(m => {
-      const share = m.area / totalArea;
+    // member's OWN (attitude-dependent) presented area, and apply each
+    // share at that member's OWN local centroid (absolute Y from the
+    // body's base) — summed to get the net torque. This is the
+    // "connected stack" case: every body (even one, e.g. a single
+    // released stage) contributes its own real drag+torque at its own
+    // CP, exactly like a separate free body would, and when several
+    // members ARE connected their individual contributions simply sum —
+    // no separate code path needed for "connected" vs "separated", since
+    // a separated body is just a body with fewer members in this list.
+    const totalArea = totalAeff || 1;
+    profile.members.forEach((m, i) => {
+      const share = memberAeff[i] / totalArea;
       const localFrac = m.isTapered
         ? AERO_CP_NOSE_FRAC * (1 - wCross) + AERO_CP_BODY_FRAC * wCross
         : AERO_CP_BODY_FRAC;
