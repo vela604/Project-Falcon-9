@@ -44,12 +44,12 @@ function _rodI(m, L) {
 // Maximum fuel a single member can carry (kg). Used for proportional
 // distribution of the stack's total fuel.
 // ---------------------------------------------------------------------------
-function memberMaxFuel(rec) {
+function memberMaxFuel(rec, aboveMember) {
   if (!rec) return 0;
   const role = rec.stageRole || 'rocket';
   if (role === 'nose' || role === 'payloadSpace') return 0;
   if (role === 'booster') {
-    const d = (typeof boosterDerivedMasses === 'function') ? boosterDerivedMasses(rec) : null;
+    const d = (typeof boosterDerivedMasses === 'function') ? boosterDerivedMasses(rec, aboveMember) : null;
     return (d && Number.isFinite(d.fuelMass)) ? d.fuelMass : 0;
   }
   if (role === 'stage') {
@@ -67,7 +67,7 @@ function memberMaxFuel(rec) {
 // legsProgress is applied ONLY to the bottom member (see stackMassProps) —
 // upper members' legs are cosmetically stowed.
 // ---------------------------------------------------------------------------
-function memberComponents(rec, memberFuelMass, legsProgress) {
+function memberComponents(rec, memberFuelMass, legsProgress, aboveMember) {
   const out = [];
   if (!rec) return out;
   const role = rec.stageRole || 'rocket';
@@ -91,9 +91,25 @@ function memberComponents(rec, memberFuelMass, legsProgress) {
   // ---- Body (cylindrical shell/tank) ----
   let bodyMass = 0, bodyH = H;
   if (role === 'booster') {
-    const d = boosterDerivedMasses(rec);
+    const d = boosterDerivedMasses(rec, aboveMember);
     bodyMass = d ? d.bodyMass : 0;
     if (rec.fuel && Number.isFinite(rec.fuel.tankHeight)) bodyH = rec.fuel.tankHeight;
+    // BUG #4 FIX: the interstage (black cylinder at the booster's top,
+    // sized off whatever's actually stacked above it) was computed by
+    // fleet.js and folded into the Fleet-page dry-mass display, but never
+    // turned into an actual physics component here — so the simulator's
+    // real flying mass/MOI silently omitted it, while the Fleet page's
+    // number included it. Push it as its own component so both agree.
+    if (d && Number.isFinite(d.interstageMass) && d.interstageMass > 0) {
+      const interH = Number.isFinite(d.interstageHeight) ? d.interstageHeight : 0;
+      out.push({
+        label: 'interstage',
+        mass: d.interstageMass,
+        comX: 0,
+        comY: bodyH - interH / 2,   // sits at the very top of the body
+        iOwn: _thinCylinderI(d.interstageMass, r, interH),
+      });
+    }
   } else if (role === 'stage') {
     const d = stageDerivedMasses(rec);
     bodyMass = d ? d.bodyMass : 0;
@@ -276,19 +292,30 @@ function combineComponents(components) {
 // ---------------------------------------------------------------------------
 function stackMassProps(members, fuelMassTotal, legsProgress) {
   members = members || [];
-  const maxFuels = members.map(m => memberMaxFuel(m));
-  const sumMax = maxFuels.reduce((s, x) => s + x, 0);
-  const perMemberFuel = sumMax > 0
-    ? maxFuels.map(x => (fuelMassTotal || 0) * (x / sumMax))
-    : maxFuels.map(() => 0);
+
+  // Single pass instead of map+reduce+map — same numbers, fewer array
+  // allocations/traversals (this runs every physics substep).
+  const maxFuels = new Array(members.length);
+  let sumMax = 0;
+  for (let i = 0; i < members.length; i++) {
+    const mf = memberMaxFuel(members[i], members[i + 1] || null);
+    maxFuels[i] = mf;
+    sumMax += mf;
+  }
+  const fuelTotal = fuelMassTotal || 0;
 
   const all = [];
   let yOffset = 0;
   members.forEach((m, i) => {
     const progress = (i === 0) ? (legsProgress || 0) : 0;
-    const comps = memberComponents(m, perMemberFuel[i], progress);
+    const memberFuel = sumMax > 0 ? fuelTotal * (maxFuels[i] / sumMax) : 0;
+    const comps = memberComponents(m, memberFuel, progress, members[i + 1] || null);
     comps.forEach(c => {
-      all.push({ ...c, comY: c.comY + yOffset });
+      // comps are freshly built by memberComponents() every call and never
+      // shared/cached elsewhere, so mutating in place (instead of spreading
+      // into a new object) is safe and skips one allocation per component.
+      c.comY += yOffset;
+      all.push(c);
     });
     yOffset += Number.isFinite(m.height) ? m.height : 0;
   });

@@ -100,7 +100,7 @@ const RESOLVED_RCS_TYPE = (typeof getComponentType === 'function') ?
   ROCKET_WIDTH: ACTIVE_STACK_AGG ? ACTIVE_STACK_AGG.width : ACTIVE_VEHICLE.width,
   DRY_MASS: ACTIVE_STACK_AGG ? ACTIVE_STACK_AGG.dryMass : ACTIVE_VEHICLE.dryMass,
   FUEL_MASS_MAX: ACTIVE_STACK_AGG ? ACTIVE_STACK_AGG.fuelMass : ACTIVE_VEHICLE.fuelMassMax,
-  DEFAULT_FUEL_FRACTION: 0.60,
+  DEFAULT_FUEL_FRACTION: 1.00,
 
 
   // ---------------- Main engines (octaweb, 2D projection) ----------------
@@ -162,7 +162,7 @@ const RESOLVED_RCS_TYPE = (typeof getComponentType === 'function') ?
 // shell, used to estimate body mass: bodyMass = tankVolume ×
 // BODY_SHELL_FACTOR × bodyMetalDensity. Placeholder number calibrated
 // roughly against Falcon-9-class tankage; not yet a real structural model.
-BODY_SHELL_FACTOR: 0.01,
+BODY_SHELL_FACTOR: 0.0165,
 
 // Target Δv budget a 'stage' design is sized against, feeding the
 // Tsiolkovsky capacity calc: D = fuelMass / (e^(ΔV/effectiveVe) − 1).
@@ -186,5 +186,5 @@ MAX_BULGE_DIAMETER_RATIO: 1.4,
   
   
   // ---------------- Simulation ----------------
-  DT: 1 / 60,                     // s, fixed physics timestep
+  DT: 1 / 80,                     // s, fixed physics timestep
 };

@@ -36,17 +36,31 @@ function buildGlossaryPanel() {
 
 function fmt(n, d = 1) { return Number.isFinite(n) ? n.toFixed(d) : '—'; }
 
+// Every telemetry field is a fixed element in simulation.html's static
+// markup (never removed/recreated), so document.getElementById() for the
+// same id always returns the same node — safe to cache instead of doing a
+// fresh DOM lookup ~20 times every single frame.
+const _elCache = new Map();
+function getEl(id) {
+  let el = _elCache.get(id);
+  if (el === undefined) {
+    el = document.getElementById(id);
+    _elCache.set(id, el);
+  }
+  return el;
+}
+
 function updateTelemetry() {
   const r = Math.hypot(state.rx, state.ry);
   const altitude = altitudeFromR(r);
   const speed = Math.hypot(state.vx, state.vy);
-  const geom = currentGeometry();
+  const geom = geometryOf();
   const visualTheta = (state.theta - localVerticalAngle()) * 180 / Math.PI;
   const centerEngine = ENGINES.find(e => e.isCenter);
   const grav = gravityAccel(state.rx, state.ry);
   const rho = airDensity(Math.max(0, altitude));
 
-  const set = (id, val) => { const e = document.getElementById(id); if (e) e.textContent = val; };
+  const set = (id, val) => { const e = getEl(id); if (e) e.textContent = val; };
   set('t-h', fmt(altitude, 1));
   set('t-v', fmt(speed, 2));
   set('t-vx', fmt(state.vx, 2));
@@ -71,7 +85,7 @@ set('t-bodies', disc > 0 ? `${total} (${disc}d)` : `${total}`);
   const maxThrustAll = ENGINES.reduce((s, e) => s + e.Fmax, 0);
 const g0v = (typeof G0 !== 'undefined') ? G0 : 9.80665;
 const twrLive = geom.M > 0 ? maxThrustAll / (geom.M * g0v) : 0;
-const twrEl = document.getElementById('t-twr');
+const twrEl = getEl('t-twr');
 if (twrEl) {
   twrEl.textContent = twrLive.toFixed(2);
   twrEl.style.color = twrLive < 1 ? 'var(--danger)' : (twrLive < 1.2 ? 'var(--yellow)' : '');
@@ -79,7 +93,7 @@ if (twrEl) {
   
   pushGraphSample(state.simTime, altitude, speed, ENGINES.reduce((s,e)=>s+e.currentF,0));
 
-  const bodyListEl = document.getElementById('t-bodyList');
+  const bodyListEl = getEl('t-bodyList');
 if (bodyListEl) {
   const visible = state.bodies
     .map((b, i) => ({ b, i }))
@@ -371,7 +385,7 @@ function drawFigurePanel() {
   const mech = figMemberMechanics(members, body, aero);
 
   // Overall stack CoM — the existing bright reference line, kept as-is.
-  const geom = currentGeometry(body);
+  const geom = geometryOf(body);
   const comY_overall = baseY - (geom.comH || 0) / mpp;
   figCtx.strokeStyle = '#ff4466'; figCtx.lineWidth = 2;
   figCtx.beginPath();

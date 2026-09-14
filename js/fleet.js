@@ -811,7 +811,7 @@ function stackCombinedAggregates(stk) {
     out.width = Math.max(out.width, Number.isFinite(m.width) ? m.width : 0);
     let dry = 0, fuel = 0;
     if (m.stageRole === 'booster') {
-      const d = boosterDerivedMasses(m);
+      const d = boosterDerivedMasses(m, members[i + 1] || null);
       if (d) { dry = d.dryMass; fuel = d.fuelMass; }
     } else if (m.stageRole === 'stage') {
       const d = stageDerivedMasses(m);
@@ -977,7 +977,10 @@ function stageDerivedMasses(rec) {
   const fuelType       = getComponentType(rec.fuel && rec.fuel.typeId);
   const bodyMetalType  = getComponentType(rec.bodyMetalTypeId);
   const engineType     = getComponentType(rec.engineTypeId);
-  const recoveryType   = getComponentType(rec.recoveryTypeId);
+  // BUG #1 FIX: mirror boosterDerivedMasses()'s hasRecovery gate — a stage
+  // with "Fit recovery" unchecked must not keep contributing leg mass just
+  // because recoveryTypeId is still set on the record from a prior state.
+  const recoveryType   = rec.hasRecovery === false ? null : getComponentType(rec.recoveryTypeId);
 
   const ps = rec.payloadSpace || null;
   const payloadType  = ps ? getComponentType(ps.typeId) : null;
@@ -992,7 +995,7 @@ function stageDerivedMasses(rec) {
   const capParams = (ps && ps.params) || {};
   const capH = (payloadType && payloadMetal && Number.isFinite(capParams.capHeight)) ? capParams.capHeight : 0;
   const capW = Number.isFinite(capParams.capWidth) ? capParams.capWidth : tankW;
-  const bulgeW = Number.isFinite(capParams.bulgeWidth) ? capParams.bulgeWidth : null;
+  const bulgeW = Number.isFinite(capParams.bulgeWidth) ? capParams.bulgeWidth : capW;
 
   const fuelDensity    = fuelType.parameterSchema.find(p => p.key === 'propellantDensity').value;
   const bodyDensity    = bodyMetalType.parameterSchema.find(p => p.key === 'density').value;
@@ -1032,13 +1035,13 @@ function stageDerivedMasses(rec) {
 
   let payloadContainerMass = 0;
   if (payloadType && payloadType.frame && typeof payloadType.frame.structuralVolume === 'function') {
-    const vol = (payloadType.kind === 'bulgedCapShape' && bulgeW !== null)
+    const vol = (payloadType.kind === 'bulgedCapShape')
       ? payloadType.frame.structuralVolume(capH, capW, bulgeW)
       : payloadType.frame.structuralVolume(capH, capW);
     payloadContainerMass = vol * payloadDensity;
   }
 
-  if (payloadType && payloadType.kind === 'bulgedCapShape' && bulgeW !== null) {
+  if (payloadType && payloadType.kind === 'bulgedCapShape' && Number.isFinite(capParams.bulgeWidth)) {
     const maxBulgeW = MAX_BULGE_DIAMETER_RATIO * tankW;
     if (bulgeW > maxBulgeW) {
       warnings.push(`Bulge width ${bulgeW} m exceeds cap ${maxBulgeW.toFixed(2)} m (${MAX_BULGE_DIAMETER_RATIO}× tank width).`);
@@ -1102,7 +1105,7 @@ function payloadCompatibilityCheck(payload, stackMembers, fleet) {
     reasons.push(`Payload width ${payload.width} m > fairing base ${psBaseW} m`);
   }
 
-  const psMass = stackMemberOwnMass(psRec);
+  const psMass = stackMemberOwnMass(psRec, null);
   const psMassOk = Number.isFinite(psMass) ? psMass : 0;
 
   // Checks 2 + 3 — cumulative load from each member below the fairing.
@@ -1115,7 +1118,8 @@ function payloadCompatibilityCheck(payload, stackMembers, fleet) {
     for (let j = i + 1; j < stackMembers.length; j++) {
       if (j === psIdx) continue; // fairing already added
       const r = fleet.find(x => x.id === stackMembers[j]);
-      const m = r ? stackMemberOwnMass(r) : 0;
+      const rAbove = (j + 1 < stackMembers.length) ? fleet.find(x => x.id === stackMembers[j + 1]) : null;
+      const m = r ? stackMemberOwnMass(r, rAbove || null) : 0;
       if (Number.isFinite(m)) load += m;
     }
     if (load > cap) {
@@ -1137,7 +1141,7 @@ function payloadCompatibilityCheck(payload, stackMembers, fleet) {
 //
 // Returns null for non-booster records.
 // ---------------------------------------------------------------------------
-function boosterDerivedMasses(rec) {
+function boosterDerivedMasses(rec, aboveMember) {
   if (!rec || rec.stageRole !== 'booster') return null;
   const warnings = [];
 
@@ -1193,27 +1197,39 @@ function boosterDerivedMasses(rec) {
   // Black cylinder at the booster's top, sized to cover the stage engine
   // above. Height = max(stage-above bellHeight × 1.20, 6% booster height).
   // Mass = thin-shell cylindrical volume × metal density.
-  // The stage-above is looked up from SIM_STACK_MEMBERS if loaded (sim /
-  // preview with active stack); otherwise defaults to 6% (standalone).
+  //
+  // BUG #4/#5 FIX: the stage-above used to be looked up ONLY from the
+  // simulation page's global SIM_STACK_MEMBERS — so this booster's actual
+  // stack neighbour on the Fleet/Stacks page (where SIM_STACK_MEMBERS
+  // doesn't exist) was invisible, always falling back to the flat 6%
+  // estimate no matter what was really stacked above it. Callers that know
+  // their stack order (stackCombinedAggregates, stack validation, the
+  // stack-editor UI, and the simulator's own massProps.js) now pass the
+  // real neighbour explicitly via `aboveMember`. `undefined` (old
+  // call-sites not yet updated) still falls back to the SIM_STACK_MEMBERS
+  // global for backward compatibility; explicit `null` means "definitely
+  // no member above" (e.g. a standalone booster preview).
+  let above = aboveMember;
+  if (above === undefined) {
+    above = null;
+    if (typeof SIM_STACK_MEMBERS !== 'undefined' && SIM_STACK_MEMBERS.length) {
+      const idx = SIM_STACK_MEMBERS.findIndex(x => x.id === rec.id);
+      if (idx >= 0 && idx + 1 < SIM_STACK_MEMBERS.length) above = SIM_STACK_MEMBERS[idx + 1];
+    }
+  }
   let stageAboveBellHeight = 0;
-  if (typeof SIM_STACK_MEMBERS !== 'undefined' && SIM_STACK_MEMBERS.length) {
-    const idx = SIM_STACK_MEMBERS.findIndex(x => x.id === rec.id);
-    if (idx >= 0 && idx + 1 < SIM_STACK_MEMBERS.length) {
-      const above = SIM_STACK_MEMBERS[idx + 1];
-      if (above && above.engineTypeId) {
-        const layoutAbove = getComponentType(above.engineTypeId);
-        if (layoutAbove && layoutAbove.frame && layoutAbove.frame.slots) {
-          const gAbove = engineThrusterGroups(layoutAbove);
-          let totalFlow = 0;
-          Object.keys(gAbove).forEach(gk => {
-            const g = above.engineThrusters && above.engineThrusters[gk];
-            if (!g || !Number.isFinite(g.massFlowRate)) return;
-            totalFlow += g.massFlowRate * gAbove[gk].length;
-          });
-          const perEngine = totalFlow / layoutAbove.frame.slots.length;
-          stageAboveBellHeight = 0.007 * perEngine;
-        }
-      }
+  if (above && above.engineTypeId) {
+    const layoutAbove = getComponentType(above.engineTypeId);
+    if (layoutAbove && layoutAbove.frame && layoutAbove.frame.slots) {
+      const gAbove = engineThrusterGroups(layoutAbove);
+      let totalFlow = 0;
+      Object.keys(gAbove).forEach(gk => {
+        const g = above.engineThrusters && above.engineThrusters[gk];
+        if (!g || !Number.isFinite(g.massFlowRate)) return;
+        totalFlow += g.massFlowRate * gAbove[gk].length;
+      });
+      const perEngine = totalFlow / layoutAbove.frame.slots.length;
+      stageAboveBellHeight = 0.007 * perEngine;
     }
   }
   const interstageH_m = Math.max(stageAboveBellHeight * 1.20, 0.06 * tankH);
@@ -1225,7 +1241,7 @@ function boosterDerivedMasses(rec) {
   const wetMass = dryMass + fuelMass;
 
   return {
-    fuelMass, bodyMass, totalEngineMass, legMass, interstageMass,
+    fuelMass, bodyMass, totalEngineMass, legMass, interstageMass, interstageHeight: interstageH_m,
     dryMass, wetMass,
     effectiveVe, totalEngineThrust,
     tankVolume,
@@ -1268,7 +1284,17 @@ function compatibleBoostersForStage(stage, fleet) {
 
 // ---------------------------------------------------------------------------
 // Stack member own mass (Phase 3 §1.16).
-//   stage       → totalWetMassAtMaxPayload (dry + fuel + max payload)
+//   stage       → dryMassNoPayload + fuelMass — the stage's REAL structural
+//                 mass. NOT totalWetMassAtMaxPayload: that figure bakes in
+//                 the stage's max-payload CAPACITY (a delta-v/TWR ceiling —
+//                 "how much could this stage lift"), which is a different
+//                 number from whatever cargo mass is actually assigned to
+//                 the stack (stack.payloadId). Using the capacity here made
+//                 the Stack Detail page's total silently diverge from the
+//                 simulator (which always flies the real assigned payload —
+//                 see massProps.js/physics.js _bodyPayloadMass). The real
+//                 payload's mass is added once, at the top of the stack, in
+//                 validateStack() below — not folded into any one member.
 //   booster     → boosterDerivedMasses().wetMass
 //   rocket      → dryMass + fuelMassMax (flat, like before)
 //   nose        → computeNoseDryMass() (cone metal mass)
@@ -1278,15 +1304,16 @@ function compatibleBoostersForStage(stage, fleet) {
 //                 needed to keep this from crashing.
 // Returns NaN for an infeasible stage.
 // ---------------------------------------------------------------------------
-function stackMemberOwnMass(member) {
+function stackMemberOwnMass(member, aboveMember) {
   if (!member) return NaN;
   if (member.stageRole === 'stage') {
     const d = stageDerivedMasses(member);
     if (!d || d.infeasible) return NaN;
-    return d.totalWetMassAtMaxPayload;
+    return (Number.isFinite(d.dryMassNoPayload) && Number.isFinite(d.fuelMass))
+      ? d.dryMassNoPayload + d.fuelMass : NaN;
   }
   if (member.stageRole === 'booster') {
-    const d = boosterDerivedMasses(member);
+    const d = boosterDerivedMasses(member, aboveMember);
     if (!d) return NaN;
     return d.wetMass;
   }
@@ -1395,8 +1422,20 @@ resolved.forEach((r, i) => {
   }
 });
 
-  const ownMasses = resolved.map(r => r ? stackMemberOwnMass(r) : NaN);
+  const ownMasses = resolved.map((r, i) => r ? stackMemberOwnMass(r, resolved[i + 1] || null) : NaN);
+
+  // Real assigned cargo mass (not a stage's max-payload CAPACITY) — rides
+  // at the very top of the stack, inside the fairing/payload space. Seed
+  // loadAbove[TOP] with it so the cascading load-bearing check below
+  // correctly counts it against every member underneath, and add it once
+  // to stackTotalMass so the displayed total actually matches what the
+  // simulator flies (see massProps.js/_bodyPayloadMass in physics.js).
+  const plForTotal = (stack && stack.payloadId && typeof getPayload === 'function')
+    ? getPayload(stack.payloadId) : null;
+  const realPayloadMass = (plForTotal && Number.isFinite(plForTotal.mass)) ? plForTotal.mass : 0;
+
   const loadAbove = new Array(resolved.length).fill(0);
+  if (resolved.length > 0) loadAbove[resolved.length - 1] = realPayloadMass;
   for (let i = resolved.length - 2; i >= 0; i--) {
     loadAbove[i] = loadAbove[i + 1] + (Number.isFinite(ownMasses[i + 1]) ? ownMasses[i + 1] : 0);
   }
@@ -1431,12 +1470,12 @@ if (!widthOk) {
   if (resolved.length > 0) {
     const top = resolved[resolved.length - 1];
     if (top) {
-      memberInfo.push({ record: top, ownMass: ownMasses[resolved.length - 1], loadAbove: 0, widthOk: true, loadOk: true });
+      memberInfo.push({ record: top, ownMass: ownMasses[resolved.length - 1], loadAbove: loadAbove[resolved.length - 1], widthOk: true, loadOk: true });
     }
   }
 
   const stackTotalHeight = resolved.reduce((s, r) => s + ((r && Number.isFinite(r.height)) ? r.height : 0), 0);
-  const stackTotalMass = ownMasses.reduce((s, m) => s + (Number.isFinite(m) ? m : 0), 0);
+  const stackTotalMass = ownMasses.reduce((s, m) => s + (Number.isFinite(m) ? m : 0), 0) + realPayloadMass;
 
   return {
     valid: errors.length === 0,

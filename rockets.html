@@ -291,8 +291,8 @@
 </fieldset>
 
 
-<fieldset id="stageFuelFieldset" data-role="stage" class="stage-only">
-  <legend>Fuel tank <span class="legend-note">— stage only</span></legend>
+<fieldset id="stageFuelFieldset" data-role="booster,stage" class="stage-and-booster">
+  <legend>Fuel tank <span class="legend-note">— booster &amp; stage</span></legend>
   <div class="field-grid">
     <div class="field"><label for="f-fuelType">Fuel type</label><select id="f-fuelType" required></select></div>
     <div class="field"><label for="f-fuelTankHeight">Tank height</label><div class="input-unit"><input type="number" id="f-fuelTankHeight" min="0.5" step="0.1" required><span>m</span></div></div>
@@ -300,8 +300,8 @@
   </div>
 </fieldset>
 
-<fieldset id="stageMetalFieldset" data-role="stage,nose" class="stage-only">
-  <legend>Body metal <span class="legend-note">— stage only; landing legs use this same metal</span></legend>
+<fieldset id="stageMetalFieldset" data-role="booster,stage,nose" class="stage-and-booster">
+  <legend>Body metal <span class="legend-note">— booster, stage &amp; nose; landing legs use this same metal</span></legend>
   <div class="field-grid">
     <div class="field"><label for="f-bodyMetalType">Metal type</label><select id="f-bodyMetalType" required></select></div>
   </div>
@@ -309,17 +309,23 @@
 
 <fieldset id="stagePayloadFieldset" data-role="stage" class="stage-only">
   <legend>Payload space <span class="legend-note">— stage only</span></legend>
-  <div class="field-grid">
-    <div class="field"><label for="f-payloadSpaceType">Shape</label><select id="f-payloadSpaceType" required></select></div>
-    <div class="field"><label for="f-payloadSpaceMetalType">Container metal</label><select id="f-payloadSpaceMetalType" required></select></div>
-    <div class="field"><label for="f-payloadSpaceDeployment">Deployment direction</label>
-      <select id="f-payloadSpaceDeployment">
-        <option value="clamshell">Clamshell (two halves)</option>
-        <option value="hinge">Hinged nose</option>
-      </select>
+  <label class="chip-toggle chip-toggle-block" style="margin-bottom:6px;">
+    <input type="checkbox" id="f-hasPayloadSpace">
+    <span>Fit payload space</span>
+  </label>
+  <div id="stagePayloadFieldsWrap">
+    <div class="field-grid">
+      <div class="field"><label for="f-payloadSpaceType">Shape</label><select id="f-payloadSpaceType" required></select></div>
+      <div class="field"><label for="f-payloadSpaceMetalType">Container metal</label><select id="f-payloadSpaceMetalType" required></select></div>
+      <div class="field"><label for="f-payloadSpaceDeployment">Deployment direction</label>
+        <select id="f-payloadSpaceDeployment">
+          <option value="clamshell">Clamshell (two halves)</option>
+          <option value="hinge">Hinged nose</option>
+        </select>
+      </div>
     </div>
+    <div class="field-grid" id="payloadSpaceParamsGrid"></div>
   </div>
-  <div class="field-grid" id="payloadSpaceParamsGrid"></div>
 </fieldset>
 
 <fieldset id="noseShapeFieldset" data-role="nose">
@@ -582,6 +588,7 @@
 <script src="js/fleet.js"></script>
 <script src="js/config.js"></script>
 <script src="js/simJs/rocketArt.js"></script>
-<script src="js/rockets.js"></script>
+<script src="js/rockets-core.js"></script>
+<script src="js/rockets-ui.js"></script>
 </body>
 </html>

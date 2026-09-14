@@ -43,13 +43,50 @@ function localVerticalAngle() {
   return Math.atan2(state.rx, state.ry); // angle of position vector from local "north" (ry axis)
 }
 
+// worldToLocal() is called many times per frame (once per point converted
+// in localToScreen — grid lines, rocket outline, flame, stars, vectors...).
+// Its result only changes once per physics/render tick, and computing it
+// involves a full mass-stack pass (currentGeometry -> stackMassProps), so
+// it's cached here and only recomputed when the underlying state actually
+// moves on. invalidateWorldToLocalCache() is called once at the top of
+// renderFrame() to clear it for the new frame.
+let _w2lCache = null;
+
+function invalidateWorldToLocalCache() {
+  _w2lCache = null;
+}
+
 function worldToLocal() {
+  if (_w2lCache) return _w2lCache;
+
   const idx = (typeof camera !== 'undefined' && Number.isFinite(camera.followBodyIndex)) ?
     camera.followBodyIndex :
     state.activeBodyIndex;
   const b = state.bodies[idx] || state.bodies[state.activeBodyIndex];
   if (!b) return { x: 0, y: 0 };
-  return { x: b.rx, y: b.ry - CONFIG.EARTH_RADIUS - (CONFIG.LAUNCH_SITE_ALTITUDE || 0) };
+
+  // Follow the body's current center of mass, not its base reference point.
+  // currentGeometry() gives comH/comW as the COM offset in the BODY-LOCAL
+  // frame (comH along the body's own "up" axis from its base, comW lateral).
+  // Decompose that into world (x, y) using the body's own attitude (theta),
+  // matching the same up/right basis used elsewhere in physics.js:
+  //   local "up"    = (-sin(theta),  cos(theta))
+  //   local "right"  = ( cos(theta),  sin(theta))
+  let comHOffsetX = 0, comHOffsetY = 0;
+  if (typeof geometryOf === 'function') {
+    const geom = geometryOf(b);
+    const comH = geom.comH || 0;
+    const comW = geom.comW || 0;
+    const theta = b.theta || 0;
+    const cosT = Math.cos(theta), sinT = Math.sin(theta);
+    comHOffsetX = comW * cosT - comH * sinT;
+    comHOffsetY = comW * sinT + comH * cosT;
+  }
+
+  const comX = b.rx + comHOffsetX;
+  const comY = b.ry + comHOffsetY;
+  _w2lCache = { x: comX, y: comY - CONFIG.EARTH_RADIUS - (CONFIG.LAUNCH_SITE_ALTITUDE || 0) };
+  return _w2lCache;
 }
 
 // meters -> pixels, and local(x,y) -> screen(px,py)
@@ -460,6 +497,20 @@ function drawBodyRocket(body, isActive) {
   const H = CONFIG.ROCKET_HEIGHT / mpp;
   const W = CONFIG.ROCKET_WIDTH / mpp;
 
+  // Off-screen cull: discarded/staged bodies (boosters, spent stages) keep
+  // existing physically and get fully rendered every frame even long after
+  // they've fallen far outside the visible viewport. Skip the whole draw
+  // (flame + full gradient-heavy art) for anything nowhere near the canvas.
+  // Margin is generous (3x the rocket's own footprint) so nothing that's
+  // even partially visible — including its flame, which can extend past
+  // the body itself — ever gets clipped; this only skips bodies that are
+  // genuinely fully off-screen, so visible rendering is unchanged.
+  const cullMargin = Math.max(H, W) * 3;
+  if (px < -cullMargin || px > canvas.width + cullMargin ||
+      py < -cullMargin || py > canvas.height + cullMargin) {
+    return;
+  }
+
   ctx.save();
   ctx.translate(px, py);
   ctx.rotate(-visualTheta);
@@ -796,6 +847,7 @@ function drawGroundSteam(altitude) {
 }
 
 function renderFrame() {
+  invalidateWorldToLocalCache(); // fresh camera-center calc for this frame only
   const r = Math.hypot(state.rx, state.ry);
   const altitude = altitudeFromR(r);
   drawSky(altitude);

@@ -26,7 +26,7 @@ const G0 = 9.80665; // m/s²
 // CONFIG) because fleet.js's stage/booster derived-mass functions are
 // called *from* config.js at load time — before CONFIG itself exists.
 // Having them here breaks the circular dependency.
-const BODY_SHELL_FACTOR            = 0.01;
+const BODY_SHELL_FACTOR            = 0.0165;
 const SECOND_STAGE_TARGET_DELTA_V  = 4500;
 const MIN_TWR_FLOOR                = 1.2;
 const MAX_BULGE_DIAMETER_RATIO     = 1.4;
@@ -313,8 +313,8 @@ function buildThrusterMerlin1DClass() {
     {
   ve: 2900,
   efficiency: 0.9,
-  twr: 180,
-  maxMassFlowRate: 207,
+  twr: 184,
+  maxMassFlowRate: 300,
   gimbalCapable: true,
   gimbalMaxDeg: 20,
   gimbalRateDegS: 40,
@@ -377,7 +377,7 @@ function buildFuelRp1Lox() {
     'rp1-lox',
     'RP-1 / LOX',
     'Propellant type. Declares only propellant density — tank size (and therefore fuel mass) is decided per rocket/stage build.',
-    { propellantDensity: 1030 }
+    { propellantDensity: 1080 }
   );
 }
 

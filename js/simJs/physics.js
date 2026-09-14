@@ -72,6 +72,7 @@ function _makeBody() {
     fuelMass: 0,
     crashed: false,
     landed: false,
+    settled: false,     // true once a crashed body's bounce has died out and it's fully at rest
     isActive: false,
     isDiscarded: false,
     payloadId: null,
@@ -150,6 +151,16 @@ function updateLegs(dt) {
   });
 }
 
+// BUG #6 FIX: returns the real cargo mass still riding on this body — 0
+// once releasePayloadOnActiveBody() has fired, or if this body never had
+// a payload to begin with (e.g. a discarded booster). Centralised so
+// currentGeometry() and separateActiveBody() agree on the same number.
+function _bodyPayloadMass(body) {
+  if (!body || !body.payloadId || body.payloadReleased) return 0;
+  const pl = (typeof getPayload === 'function') ? getPayload(body.payloadId) : null;
+  return (pl && Number.isFinite(pl.mass)) ? pl.mass : 0;
+}
+
 function totalMass() { return state.dryMass + state.fuelMass; }
 
 function currentGeometry(body) {
@@ -159,14 +170,27 @@ function currentGeometry(body) {
   const legProgress = (body && body.isActive) ? legs.progress : 0;
   
   if (members.length && typeof stackMassProps === 'function') {
-    const props = stackMassProps(members, fuelMass, legProgress);
-    return { M: props.totalMass, comH: props.comY, I: props.moi };
+    const props = stackMassProps(members, fuelMass, legProgress, _bodyPayloadMass(body));
+    return { M: props.totalMass, comH: props.comY, comW: props.comX || 0, I: props.moi };
   }
   // Fallback (empty members) — legacy single-body formula.
   const M = (body ? body.dryMass : 0) + fuelMass;
   const comH = computeCoM(fuelMass, M, CONFIG.ROCKET_HEIGHT);
   const I = momentOfInertia(M, CONFIG.ROCKET_HEIGHT, CONFIG.ROCKET_WIDTH);
-  return { M, comH, I };
+  return { M, comH, comW: 0, I };
+}
+
+// currentGeometry() re-derives the whole mass stack (iterates every
+// component) — physicsStep() already computes it fresh for each body every
+// tick. Reading code (telemetry panel, figure panel, camera) that just wants
+// "the geometry as of right now" for a body should call this instead of
+// currentGeometry() directly, so it reuses that same-tick result rather than
+// recomputing it from scratch again. Falls back to a fresh calc if a body
+// hasn't gone through a physics tick yet (e.g. before sim start).
+function geometryOf(body) {
+  body = body || state.bodies[state.activeBodyIndex];
+  if (body && body._geomCache) return body._geomCache;
+  return currentGeometry(body);
 }
 
 // ---------------------------------------------------------------------------
@@ -457,13 +481,14 @@ function physicsStep(dt) {
  
 
   state.bodies.forEach((body, idx) => {
-  if (body.crashed) return;
+  //if (body.settled) return;
   const isActive = (idx === state.activeBodyIndex);
   const geom = currentGeometry(body);
+  body._geomCache = geom; // let same-tick readers (telemetry, figure panel, camera) reuse this
 
   applyActuatorRateLimitsForBody(body, dt);
 
-  const hasFuel = body.fuelMass > 0;
+  const hasFuel = body.fuelMass > 0 && !body.crashed; // crashed = engines destroyed, no more thrust
   const main = hasFuel ? computeMainThrustForBody(body, geom.comH) : zeroThrust();
   const rcs = hasFuel ? computeRCSForBody(body, geom.comH, dt) : zeroRCS();
   body.lastRcs = { firing: rcs.firing || {}, pod: rcs.pod || {} };
@@ -489,7 +514,7 @@ function physicsStep(dt) {
 //      Large α → toppling (once tan|α| > R / h_com).
 const rB = Math.hypot(body.rx, body.ry);
 const altB = altitudeFromR(rB) - (CONFIG.LAUNCH_SITE_ALTITUDE || 0);
-if (altB <= 0.5 && !body.crashed) {
+if (altB <= 0.5) {// && !body.crashed) {
   const localVert = Math.atan2(body.rx, body.ry);
   const alpha = body.theta - localVert;
   
@@ -583,17 +608,28 @@ if (Math.abs(alpha) > 1e-6) {
 
     body.fuelMass = Math.max(0, body.fuelMass - mdotTotal * dt);
 
-    // Ground contact check — per body.
+    // Ground contact check — per body. Real rigid-body-style response:
+    // position is always clamped exactly to the ground surface (never left
+    // to sink in, however much a fast body overshot in one tick), and a
+    // hard impact REFLECTS the velocity (with energy loss) instead of just
+    // freezing on first contact — so a crash actually bounces/tumbles and
+    // settles over several impacts, the way a real falling object would.
     const r = Math.hypot(body.rx, body.ry);
-    if (altitudeFromR(r) <= (CONFIG.LAUNCH_SITE_ALTITUDE || 0)) {
+    const groundR = CONFIG.EARTH_RADIUS + (CONFIG.LAUNCH_SITE_ALTITUDE || 0);
+    if (r <= groundR) {
       const ux = body.rx / r, uy = body.ry / r;
-      const vr = body.vx * ux + body.vy * uy;
+      const vr = body.vx * ux + body.vy * uy;              // + = away from ground, - = into ground
       const vTangX = body.vx - vr * ux, vTangY = body.vy - vr * uy;
       const hSpeed = Math.hypot(vTangX, vTangY);
       const descentSpeed = -vr;
 
       const bodyUpX = -Math.sin(body.theta), bodyUpY = Math.cos(body.theta);
       const tiltDeg = Math.acos(Math.max(-1, Math.min(1, bodyUpX * ux + bodyUpY * uy))) * 180 / Math.PI;
+
+      // Never let the body remain embedded in the ground — snap the base
+      // back onto the surface every tick, regardless of outcome below.
+      body.rx = groundR * ux;
+      body.ry = groundR * uy;
 
       if (descentSpeed > 0.3 || hSpeed > 0.3) {
         // Recovery type resolved from THIS body's own bottom member (same
@@ -621,14 +657,43 @@ if (Math.abs(alpha) > 1e-6) {
           const rateOk  = Math.abs(body.omega) <= CONFIG.LANDING_MAX_OMEGA;
           landedOk = legsReady && speedOk && tiltOk && rateOk;
         }
-        if (landedOk) body.landed = true;
-        else body.crashed = true;
+
+        if (landedOk) {
+          // Soft touchdown on legs — absorb the impact cleanly, no bounce.
+          body.landed = true;
+          body.vx -= vr * ux; body.vy -= vr * uy;
+        } else {
+          // Hard impact — reflect the normal (into-ground) velocity with a
+          // restitution coefficient (energy lost each bounce), and bleed
+          // off tangential speed + spin via ground friction, instead of
+          // just stopping dead on first contact.
+          body.crashed = true;
+          const RESTITUTION = 0.35;  // 0 = sticks on impact, 1 = perfectly elastic
+          const GROUND_FRICTION = 0.55; // fraction of tangential speed KEPT per bounce
+          const SPIN_DAMPING = 0.6;     // fraction of spin KEPT per bounce
+          const vrBounced = descentSpeed > 0 ? descentSpeed * RESTITUTION : 0; // outward speed after bounce
+          body.vx = ux * vrBounced + vTangX * GROUND_FRICTION;
+          body.vy = uy * vrBounced + vTangY * GROUND_FRICTION;
+          body.omega *= SPIN_DAMPING;
+        }
+      } else if (vr < 0) {
+        // Gentle/near-rest contact — just cancel the small residual inward
+        // velocity so it doesn't keep nudging into the ground each tick.
+        body.vx -= vr * ux; body.vy -= vr * uy;
       }
 
-      if (!body.crashed) {
-        body.rx = CONFIG.EARTH_RADIUS * ux;
-        body.ry = CONFIG.EARTH_RADIUS * uy;
-        if (vr < 0) { body.vx -= vr * ux; body.vy -= vr * uy; }
+      // Once a crashed body's bounce has died down to essentially nothing,
+      // consider it fully at rest — stops it bouncing forever at
+      // ever-smaller (but never quite zero) amplitude, and lets the sim
+      // stop stepping it (see the `if (body.settled) return;` guard above).
+      // Its final resting tilt is left exactly as-is — a toppled-over
+      // crash should stay toppled, not get snapped upright.
+      if (body.crashed) {
+        const restSpeed = Math.hypot(body.vx, body.vy);
+        if (restSpeed < 0.4 && Math.abs(body.omega) < 0.05) {
+          body.settled = true;
+          body.vx = 0; body.vy = 0; body.omega = 0;
+        }
       }
     }
   });
@@ -683,7 +748,7 @@ function separateActiveBody() {
   const activeFuel = totalFuel * (activeMax / sumMax);
   const discFuel   = Math.max(0, totalFuel - activeFuel);
 
-  const activeProps = stackMassProps(remaining, activeFuel, legs.progress);
+  const activeProps = stackMassProps(remaining, activeFuel, legs.progress, _bodyPayloadMass(active));
   const discProps   = stackMassProps([bottomMember], discFuel, 0);
 
   const discarded = _makeBody();

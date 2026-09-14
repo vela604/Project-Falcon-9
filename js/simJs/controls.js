@@ -344,8 +344,8 @@ function updateLegsButton() {
 }
 
 function updateStatusBar() {
-  const dot = document.getElementById('statusDot');
-  const txt = document.getElementById('statusText');
+  const dot = getEl('statusDot');
+  const txt = getEl('statusText');
   dot.className = 'status-dot';
   if (state.crashed) { dot.classList.add('crashed'); txt.textContent = 'CRASHED'; }
   else if (state.landed) { dot.classList.add('landed'); txt.textContent = 'LANDED'; }
@@ -356,7 +356,7 @@ function updateStatusBar() {
   const t = state.simTime;
   const mm = Math.floor(t / 60).toString().padStart(2, '0');
   const ss = (t % 60).toFixed(1).padStart(4, '0');
-  document.getElementById('missionClock').textContent = `T+${mm}:${ss}`;
+  getEl('missionClock').textContent = `T+${mm}:${ss}`;
 }
 
 
@@ -469,14 +469,14 @@ function updateFuelPanelReadouts() {
 // Called every frame from main.js — shows/hides the Fueling toolbar button
 // and closes the panel if the rocket is no longer at the pad.
 function updateFuelAvailability() {
-  const btn = document.getElementById('btnFuelPanel');
+  const btn = getEl('btnFuelPanel');
   if (!btn) return;
   const can = canFuelNow();
   const visible = btn.style.display !== 'none';
   if (can && !visible) btn.style.display = '';
   else if (!can && visible) {
     btn.style.display = 'none';
-    const panel = document.getElementById('fuelPanel');
+    const panel = getEl('fuelPanel');
     if (panel && panel.style.display === 'block') panel.style.display = 'none';
     btn.classList.remove('active');
   }

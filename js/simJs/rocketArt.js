@@ -32,6 +32,35 @@
 // ============================================================================
 
 // ============================================================================
+// Gradient cache — several gradients in this file are a pure function of a
+// pixel width/radius (cylinder body shading, dish, interstage band): same
+// coordinates, same fixed color stops, every time W is the same. They were
+// being rebuilt from scratch every frame for every member of every body.
+// Cached per-canvas-context (WeakMap, so it never leaks a dead canvas) and
+// keyed by the rounded value that actually determines the gradient, so a
+// cache hit is byte-identical to a fresh build — no visual change, just
+// skips rebuilding it when nothing that affects it (i.e. zoom) has moved.
+// Only used for gradients with fixed color stops; anything whose *colors*
+// change frame-to-frame (flame/plume, throttle-driven effects) is left
+// alone since caching those wouldn't help and risks staleness.
+// ============================================================================
+const _gradCache = new WeakMap(); // ctx -> Map("key:sig" -> CanvasGradient)
+function cachedGradient(ctx, key, sig, build) {
+  let bucket = _gradCache.get(ctx);
+  if (!bucket) { bucket = new Map(); _gradCache.set(ctx, bucket); }
+  const fullKey = key + ':' + sig;
+  let grad = bucket.get(fullKey);
+  if (grad) return grad;
+  // Safety net: continuous zoom sweeps through many rounded-width values
+  // over a session. Bounded already (pixel widths are a small finite
+  // range), but reset if it ever grows large so this never accumulates.
+  if (bucket.size > 500) bucket.clear();
+  grad = build();
+  bucket.set(fullKey, grad);
+  return grad;
+}
+
+// ============================================================================
 // PS-A — Payload space (fairing) shape renderer.
 //
 // Draws ONLY the fairing silhouette — no body, no legs, no RCS, no engines.
@@ -201,10 +230,13 @@ function drawPayloadArt(ctx, W, H) {
   });
 
   // ---- Main body ----
-  const bg = ctx.createLinearGradient(-W / 2, 0, W / 2, 0);
-  bg.addColorStop(0, '#4a4e54');
-  bg.addColorStop(0.5, '#c8d0d8');
-  bg.addColorStop(1, '#3a3d43');
+  const bg = cachedGradient(ctx, 'mainBody', Math.round(W), () => {
+    const g = ctx.createLinearGradient(-W / 2, 0, W / 2, 0);
+    g.addColorStop(0, '#4a4e54');
+    g.addColorStop(0.5, '#c8d0d8');
+    g.addColorStop(1, '#3a3d43');
+    return g;
+  });
   ctx.fillStyle = bg;
   ctx.fillRect(-W / 2, -H, W, H);
   ctx.strokeStyle = '#1c1e22';
@@ -225,9 +257,12 @@ function drawPayloadArt(ctx, W, H) {
   ctx.translate(0, -H);
   ctx.beginPath();
   ctx.arc(0, 0, dishR, Math.PI, 0, false);
-  const dg = ctx.createRadialGradient(0, 0, dishR * 0.1, 0, 0, dishR);
-  dg.addColorStop(0, '#e8eef5');
-  dg.addColorStop(1, '#606870');
+  const dg = cachedGradient(ctx, 'topDish', Math.round(dishR), () => {
+    const g = ctx.createRadialGradient(0, 0, dishR * 0.1, 0, 0, dishR);
+    g.addColorStop(0, '#e8eef5');
+    g.addColorStop(1, '#606870');
+    return g;
+  });
   ctx.fillStyle = dg;
   ctx.fill();
   ctx.strokeStyle = '#1c1e22';
@@ -539,10 +574,13 @@ if (opts.stageRole === 'stage' && opts.stagePayload) {
   ctx.stroke();
 
   if (designMode !== 'dsl') {
-    const shade = ctx.createLinearGradient(-W / 2, 0, W / 2, 0);
-    shade.addColorStop(0, 'rgba(0,0,0,0.14)');
-    shade.addColorStop(0.5, 'rgba(255,255,255,0.10)');
-    shade.addColorStop(1, 'rgba(0,0,0,0.20)');
+    const shade = cachedGradient(ctx, 'cylShade', Math.round(W), () => {
+      const g = ctx.createLinearGradient(-W / 2, 0, W / 2, 0);
+      g.addColorStop(0, 'rgba(0,0,0,0.14)');
+      g.addColorStop(0.5, 'rgba(255,255,255,0.10)');
+      g.addColorStop(1, 'rgba(0,0,0,0.20)');
+      return g;
+    });
     ctx.fillStyle = shade;
     bodyPath();
     ctx.fill();
@@ -561,10 +599,13 @@ if (opts.stageRole === 'stage' && opts.stagePayload) {
       applyCylindricalOverlay(ctx, W);
       ctx.restore();
     } else {
-      const shade = ctx.createLinearGradient(-W / 2, 0, W / 2, 0);
-      shade.addColorStop(0, 'rgba(0,0,0,0.14)');
-      shade.addColorStop(0.5, 'rgba(255,255,255,0.10)');
-      shade.addColorStop(1, 'rgba(0,0,0,0.20)');
+      const shade = cachedGradient(ctx, 'cylShade', Math.round(W), () => {
+        const g = ctx.createLinearGradient(-W / 2, 0, W / 2, 0);
+        g.addColorStop(0, 'rgba(0,0,0,0.14)');
+        g.addColorStop(0.5, 'rgba(255,255,255,0.10)');
+        g.addColorStop(1, 'rgba(0,0,0,0.20)');
+        return g;
+      });
       ctx.fillStyle = shade;
       bodyPath();
       ctx.fill();
@@ -601,10 +642,13 @@ function drawStageBody() {
   ctx.stroke();
 
   if (designMode !== 'dsl') {
-    const g = ctx.createLinearGradient(-W / 2, 0, W / 2, 0);
-    g.addColorStop(0, 'rgba(0,0,0,0.14)');
-    g.addColorStop(0.5, 'rgba(255,255,255,0.10)');
-    g.addColorStop(1, 'rgba(0,0,0,0.20)');
+    const g = cachedGradient(ctx, 'cylShade', Math.round(W), () => {
+      const grad = ctx.createLinearGradient(-W / 2, 0, W / 2, 0);
+      grad.addColorStop(0, 'rgba(0,0,0,0.14)');
+      grad.addColorStop(0.5, 'rgba(255,255,255,0.10)');
+      grad.addColorStop(1, 'rgba(0,0,0,0.20)');
+      return grad;
+    });
     ctx.fillStyle = g;
     tankPath();
     ctx.fill();
@@ -696,10 +740,13 @@ const payloadPath = () => {
 
   // Cylindrical gradient over the payload (widest width = bulge or cap).
   const gradW = Math.max(capW_px, bulgeW_px) || W;
-  const pGrad = ctx.createLinearGradient(-gradW / 2, 0, gradW / 2, 0);
-  pGrad.addColorStop(0, 'rgba(0,0,0,0.14)');
-  pGrad.addColorStop(0.5, 'rgba(255,255,255,0.10)');
-  pGrad.addColorStop(1, 'rgba(0,0,0,0.20)');
+  const pGrad = cachedGradient(ctx, 'cylShade', Math.round(gradW), () => {
+    const g = ctx.createLinearGradient(-gradW / 2, 0, gradW / 2, 0);
+    g.addColorStop(0, 'rgba(0,0,0,0.14)');
+    g.addColorStop(0.5, 'rgba(255,255,255,0.10)');
+    g.addColorStop(1, 'rgba(0,0,0,0.20)');
+    return g;
+  });
   ctx.fillStyle = pGrad;
   payloadPath();
   ctx.fill();
@@ -737,10 +784,13 @@ if (isBooster) {
   const interstageH_px = Math.min(H * 0.20, interstageH_target_m / mpp);
 
   // Black band filling the top of the booster, flush with the flat top edge.
-  const isGrad = ctx.createLinearGradient(-W / 2, 0, W / 2, 0);
-  isGrad.addColorStop(0,    '#0a0c10');
-  isGrad.addColorStop(0.5,  '#2a2d33');
-  isGrad.addColorStop(1,    '#0a0c10');
+  const isGrad = cachedGradient(ctx, 'interstage', Math.round(W), () => {
+    const g = ctx.createLinearGradient(-W / 2, 0, W / 2, 0);
+    g.addColorStop(0,    '#0a0c10');
+    g.addColorStop(0.5,  '#2a2d33');
+    g.addColorStop(1,    '#0a0c10');
+    return g;
+  });
   ctx.fillStyle = isGrad;
   ctx.fillRect(-W / 2, -H, W, interstageH_px);
 

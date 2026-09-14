@@ -216,7 +216,7 @@ function frame(ts) {
   lastFrameTime = ts;
   frameDt = Math.min(frameDt, 0.1); // clamp huge gaps (tab switch etc.)
 
-  if (simRunning && !simPaused && !state.crashed) {
+  if (simRunning && !simPaused) {
     accumulator += frameDt;
     while (accumulator >= CONFIG.DT) {
       physicsStep(CONFIG.DT);
@@ -237,16 +237,16 @@ function frame(ts) {
   updateTelemetry();
   updateStatusBar();
   updateFuelAvailability();
-  const sepBtn = document.getElementById('btnSeparate');
+  const sepBtn = getEl('btnSeparate');
 if (sepBtn) sepBtn.disabled = !canSeparateNow();
 
-const fairBtn = document.getElementById('btnSplitFairing');
+const fairBtn = getEl('btnSplitFairing');
 if (fairBtn) fairBtn.disabled = !canSplitFairingNow();
 
-  const plBtn = document.getElementById('btnReleasePayload');
+  const plBtn = getEl('btnReleasePayload');
   if (plBtn) plBtn.disabled = !canReleasePayloadNow();
   
-  const tcBtn = document.getElementById('btnTakeControl');
+  const tcBtn = getEl('btnTakeControl');
   if (tcBtn) tcBtn.disabled = !canTakeControlNow();
   
   requestAnimationFrame(frame);
