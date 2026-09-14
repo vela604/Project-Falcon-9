@@ -15,7 +15,8 @@ const NOTATION_GLOSSARY = {
   'mf': 'Remaining propellant mass (kg)',
   'Ft': 'Total main-engine thrust (N)',
   'γ':  'Center engine gimbal angle (deg)',
-  'τ':  'Net torque about center of mass (N·m)',
+  'τ':  'Net torque about center of mass (N·m) — main engines + RCS + drag (angle-of-attack) torque',
+  'α':  'Angle of attack — angle between the body axis and velocity relative to the air (deg). Drives the drag torque via a center-of-pressure that shifts with AoA (not fixed).',
   'hc': 'Height of stack center of mass above the base (m)',
   'I': 'Stack moment of inertia about its center of mass (kg·m²)',
   'g':  'Local gravitational acceleration (m/s²)',
@@ -56,7 +57,8 @@ function updateTelemetry() {
   set('t-mf', fmt(state.fuelMass, 0));
   set('t-Ft', fmt(ENGINES.reduce((s,e)=>s+e.currentF,0), 0));
   set('t-gimbal', fmt(centerEngine.gimbalDeg, 1));
-  set('t-torque', fmt(lastForces.mainTorque + lastForces.rcsTorque, 0));
+  set('t-torque', fmt(lastForces.mainTorque + lastForces.rcsTorque + (lastForces.dragTorque || 0), 0));
+  set('t-aoa', fmt(lastForces.aoaDeg || 0, 2));
   set('t-g', fmt(grav.g, 3));
   set('t-rho', fmt(rho, 4));
   set('t-duty', Math.round((lastForces.dutyTop || 0) * 100) + '%');

@@ -216,28 +216,184 @@ function computeMainThrust(comH) {
 function zeroThrust() { return { Fx: 0, Fy: 0, torque: 0, mdot: 0 }; }
 function zeroRCS() { return { Fx: 0, Fy: 0, torque: 0, mdot: 0, firing: {}, pod: {} }; }
 
+// ---------------------------------------------------------------------------
+// Aerodynamic drag + angle-of-attack torque.
+//
+// The drag force magnitude (0.5·ρ·Cd·A·v_rel²) stays exactly anti-parallel
+// to the RELATIVE velocity (vehicle velocity minus wind) — unchanged, still
+// drives the translational Fdx/Fdy exactly as before.
+//
+// What was missing: that same drag force, resolved into the BODY frame, has
+// a component perpendicular to the body's own long axis whenever the body
+// axis and the relative-velocity direction don't line up — i.e. whenever
+// angle of attack ≠ 0 (from wind, from a gravity turn, from tumbling, or
+// just from a lean while still moving straight). That perpendicular
+// ("normal") component acts at the CENTER OF PRESSURE, not the center of
+// mass, so unless CP and COM coincide it produces a torque — the classic
+// "weathercocking" effect. Ignoring it is not defensible for a realistic
+// sim, so every body (active or discarded/staged/fairing/payload) gets it.
+//
+// Center of pressure is explicitly NOT a constant. It blends between two
+// limits as a function of |sin(angle of attack)|:
+//   - Near-zero AoA: dominated by the nose's potential-flow (Barrowman-
+//     style) normal-force term — CP sits high, near the nose/shoulder
+//     (AERO_CP_NOSE_FRAC × body height).
+//   - Large AoA (approaching 90°): dominated by the body tube's viscous
+//     cross-flow term (Allen–Perkins style) — CP sits at the body's
+//     geometric centroid (AERO_CP_BODY_FRAC × body height).
+// wCross = |sin(alpha)| sweeps 0→1 across that range, so CP genuinely
+// moves with attitude-vs-velocity mismatch — including with wind disabled,
+// since alpha only depends on body axis vs. relative-velocity direction.
+//
+// `extra.height` / `extra.comH` are supplied once per physics tick (fixed
+// across the RK4 sub-stages), the same simplification already used for
+// extra.I — comH/height don't change fast enough within one tick to matter,
+// while velocity/theta (which drive alpha itself) ARE re-evaluated fresh at
+// every RK4 sub-stage since they come from `s`.
+// ---------------------------------------------------------------------------
+const AERO_CP_NOSE_FRAC = 0.90; // fraction of a tapered member's OWN height, low-AoA (nose-term) CP
+const AERO_CP_BODY_FRAC = 0.50; // fraction of a member's OWN height, high-AoA (cross-flow) CP / plain cylindrical centroid
+
+// ---------------------------------------------------------------------------
+// Per-body aerodynamic reference geometry (per-member CP/area).
+//
+// A "body" (the active stack, a discarded booster, a released upper stage,
+// a fairing half, a free payload...) may carry an internal `members` list
+// (bottom→top stack records). Previously the ENTIRE body — no matter how
+// many different members/widths it was actually made of — was treated as
+// one aerodynamic surface: a single global CONFIG.ROCKET_WIDTH for area,
+// and one blended CP for the whole body's height. That's wrong the moment
+// a body's own geometry differs from the currently-active stack (a
+// discarded booster is narrower/wider than the stage still riding on it,
+// a released upper stage has its own width) — and it also means a
+// mid-stack width change contributed NO torque at all, when physically it
+// should (that's exactly the kind of CP/CoM mismatch that makes a real
+// rocket want to weathercock).
+//
+// This computes, once per physics tick per body (fixed across the RK4
+// sub-stages — same simplification already used for I/comH), each
+// member's own frontal area and own local centroid (measured from the
+// body's own base) — used below to DISTRIBUTE the net lateral ("normal")
+// aerodynamic force across members and sum each member's own torque
+// contribution, instead of one lumped CP for the whole body. A body with
+// no member breakdown (a free-flying fairing half / released payload —
+// pure lumped mass, no stack) falls back to the old single-surface model
+// using that body's own height/width when available, else CONFIG's.
+// ---------------------------------------------------------------------------
+function bodyAeroProfile(body) {
+  const mem = (body && body.members) ? body.members : [];
+  if (!mem.length) {
+    const w = (body && Number.isFinite(body.width)) ? body.width : (CONFIG.ROCKET_WIDTH || 3.9);
+    const h = (body && Number.isFinite(body.height)) ? body.height : (CONFIG.ROCKET_HEIGHT || 45);
+    return {
+      refWidth: w,
+      members: [{ area: Math.PI * (w / 2) ** 2, baseY: 0, height: h, isTapered: true }],
+    };
+  }
+  let refWidth = 0;
+  let yOffset = 0;
+  const members = mem.map(m => {
+    const H = Number.isFinite(m.height) ? m.height : 0;
+    const W = Number.isFinite(m.width) ? m.width : 0;
+    refWidth = Math.max(refWidth, W);
+    // Tapered ("nose-shaped") members get the AoA-dependent nose-term ⇄
+    // cross-flow CP blend, scoped to THEIR OWN height range; a plain
+    // cylindrical member (most booster/stage tanks) just uses its own
+    // geometric mid-height — there's no separate nose potential-flow term
+    // to blend in for a mid-stack cylindrical segment.
+    const isTapered = (m.stageRole === 'nose') || (m.stageRole === 'payloadSpace');
+    const out = { area: Math.PI * (W / 2) ** 2, baseY: yOffset, height: H, isTapered };
+    yOffset += H;
+    return out;
+  });
+  return { refWidth: refWidth || (CONFIG.ROCKET_WIDTH || 3.9), members };
+}
+
+function computeDragAero(s, extra) {
+  const cosT = Math.cos(s.theta), sinT = Math.sin(s.theta);
+  const w = windInertialVector(s.rx, s.ry);
+  const relVx = s.vx - w.wx, relVy = s.vy - w.wy;
+  const speedRel = Math.hypot(relVx, relVy);
+  const r = Math.hypot(s.rx, s.ry);
+  const altitude = altitudeFromR(r);
+  const rho = airDensity(altitude);
+
+  const profile = (extra && extra.aero) ? extra.aero : bodyAeroProfile(null);
+  // Total drag magnitude uses the body's OWN widest member — the widest
+  // cross-section is what actually presents to the oncoming flow; a
+  // discarded booster's own width (not the active stack's) now correctly
+  // drives its own drag, and a narrower stage riding above a wider
+  // booster no longer silently inherits the booster's frontal area either.
+  const A = Math.PI * (profile.refWidth / 2) ** 2;
+  const dragMag = 0.5 * rho * CONFIG.DRAG_CD * A * speedRel * speedRel;
+  const Fdx = speedRel > 0 ? -dragMag * relVx / speedRel : 0;
+  const Fdy = speedRel > 0 ? -dragMag * relVy / speedRel : 0;
+
+  let dragTorque = 0, alphaDeg = 0, Fnormal = 0;
+  const comH = (extra && Number.isFinite(extra.comH)) ? extra.comH : 0;
+
+  if (speedRel > 1e-3) {
+    // Relative velocity resolved into the BODY frame (world→body rotation).
+    const velBodyX = relVx * cosT + relVy * sinT;   // perpendicular to nose axis
+    const sinAlpha = Math.max(-1, Math.min(1, velBodyX / speedRel));
+    alphaDeg = Math.asin(sinAlpha) * 180 / Math.PI;
+
+    // Total drag force is anti-parallel to relative velocity in BOTH
+    // frames (rotation preserves anti-parallel relationship), so its
+    // body-frame lateral ("normal") component shares the same ratio.
+    Fnormal = -dragMag * sinAlpha;
+    const wCross = Math.min(1, Math.abs(sinAlpha));
+
+    // Distribute the net normal force across members proportional to each
+    // member's OWN frontal area, and apply each share at that member's
+    // OWN local centroid (absolute Y from the body's base) — summed to get
+    // the net torque. This is the "connected stack" case: every body
+    // (even one, e.g. a single released stage) contributes its own real
+    // drag+torque at its own CP, exactly like a separate free body would,
+    // and when several members ARE connected their individual
+    // contributions simply sum — no separate code path needed for
+    // "connected" vs "separated", since a separated body is just a body
+    // with one (or fewer) members in this same list.
+    const totalArea = profile.members.reduce((sum, m) => sum + m.area, 0) || 1;
+    profile.members.forEach(m => {
+      const share = m.area / totalArea;
+      const localFrac = m.isTapered
+        ? AERO_CP_NOSE_FRAC * (1 - wCross) + AERO_CP_BODY_FRAC * wCross
+        : AERO_CP_BODY_FRAC;
+      const cpY = m.baseY + m.height * localFrac;
+      const FnormalShare = Fnormal * share;
+      // Torque of a lateral force FnormalShare applied at (0, cpY) about
+      // the COM at (0, comH): torque = rx*Fy - ry*Fx, with rx=0,
+      // ry=(cpY-comH), Fy=0, Fx=FnormalShare → torque = -(cpY-comH)*F.
+      dragTorque += (comH - cpY) * FnormalShare;
+    });
+  }
+
+  return { Fdx, Fdy, dragTorque, alphaDeg, Fnormal };
+}
+
+// Sum of a body's member heights — used as the reference length for the
+// AoA/CP model above, since a discarded/staged body's own height can differ
+// from the active stack's (CONFIG.ROCKET_HEIGHT reflects the active stack).
+function _bodyHeightOf(body) {
+  return (body && body.members && body.members.length)
+    ? body.members.reduce((s, m) => s + (Number.isFinite(m.height) ? m.height : 0), 0)
+    : (CONFIG.ROCKET_HEIGHT || 45);
+}
+
 function derivatives(s, extra) {
   const M = s.dryMass + s.fuelMass;
-  const r = Math.hypot(s.rx, s.ry);
   const grav = gravityAccel(s.rx, s.ry);
 
   const cosT = Math.cos(s.theta), sinT = Math.sin(s.theta);
   const Fx_i = extra.Fx * cosT - extra.Fy * sinT;
   const Fy_i = extra.Fx * sinT + extra.Fy * cosT;
 
-  const w = windInertialVector(s.rx, s.ry);
-  const relVx = s.vx - w.wx, relVy = s.vy - w.wy;
-  const speedRel = Math.hypot(relVx, relVy);
-  const altitude = altitudeFromR(r);
-  const rho = airDensity(altitude);
-  const A = Math.PI * (CONFIG.ROCKET_WIDTH / 2) ** 2;
-  const dragMag = 0.5 * rho * CONFIG.DRAG_CD * A * speedRel * speedRel;
-  const Fdx = speedRel > 0 ? -dragMag * relVx / speedRel : 0;
-  const Fdy = speedRel > 0 ? -dragMag * relVy / speedRel : 0;
+  const aero = computeDragAero(s, extra);
 
-  const ax = grav.ax + (Fx_i + Fdx) / M;
-  const ay = grav.ay + (Fy_i + Fdy) / M;
-  const alpha = extra.torque / extra.I;
+  const ax = grav.ax + (Fx_i + aero.Fdx) / M;
+  const ay = grav.ay + (Fy_i + aero.Fdy) / M;
+  const alpha = (extra.torque + aero.dragTorque) / extra.I;
 
   return { vx: s.vx, vy: s.vy, ax, ay, omega: s.omega, alpha };
 }
@@ -252,7 +408,7 @@ function stepState(s0, k, dt) {
 }
 
 // Last-tick breakdown, kept for the telemetry panel.
-let lastForces = { mainFx: 0, mainFy: 0, mainTorque: 0, rcsFx: 0, rcsFy: 0, rcsTorque: 0, mdot: 0, dragFx: 0, dragFy: 0 };
+let lastForces = { mainFx: 0, mainFy: 0, mainTorque: 0, rcsFx: 0, rcsFy: 0, rcsTorque: 0, mdot: 0, dragFx: 0, dragFy: 0, dragTorque: 0, aoaDeg: 0 };
 
 function physicsStep(dt) {
   if (!state.bodies.length) return;
@@ -288,6 +444,9 @@ function physicsStep(dt) {
   Fy: 0,
   torque: 0,
   I: geom.I,
+  comH: geom.comH,       // fixed for the step, same simplification already used for I
+  height: _bodyHeightOf(body), // THIS body's own height (discarded/staged bodies differ from the active stack)
+  aero: bodyAeroProfile(body), // THIS body's own per-member frontal area + CP geometry
 };
   
 // ---- Ground contact ----
@@ -318,7 +477,7 @@ if (altB <= 0.5 && !body.crashed) {
     return;
   }
   
-// (2) Gravity torque about base — continuous and zero at α = 0.
+  // (2) Gravity torque about base — continuous and zero at α = 0.
 //     Two regimes:
 //       |comH·sin α| < effBase → COM within footprint → restoring
 //       |comH·sin α| ≥ effBase → COM beyond edge     → toppling
@@ -358,11 +517,17 @@ extra.Fy += main.Fy + rcs.Fy;
 extra.torque += main.torque + rcs.torque;
 mdotTotal = main.mdot + rcs.mdot;
 
+      // Representative (pre-RK4) aero snapshot for telemetry — the actual
+      // integration re-evaluates AoA/drag-torque fresh at every RK4
+      // sub-stage inside derivatives(); this is just a display value.
+      const aeroTelemetry = computeDragAero(body, extra);
+
       lastForces = {
         mainFx: main.Fx, mainFy: main.Fy, mainTorque: main.torque,
         rcsFx: rcs.Fx, rcsFy: rcs.Fy, rcsTorque: rcs.torque,
         mdot: mdotTotal, firing: rcs.firing || {}, pod: rcs.pod || {},
         dutyTop: rcs.dutyTop || 0,
+        dragTorque: aeroTelemetry.dragTorque, aoaDeg: aeroTelemetry.alphaDeg,
       };
     }
 
