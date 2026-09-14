@@ -1283,25 +1283,26 @@ function compatibleBoostersForStage(stage, fleet) {
 }
 
 // ---------------------------------------------------------------------------
-// Stack member own mass (Phase 3 §1.16).
-//   stage       → dryMassNoPayload + fuelMass — the stage's REAL structural
-//                 mass. NOT totalWetMassAtMaxPayload: that figure bakes in
-//                 the stage's max-payload CAPACITY (a delta-v/TWR ceiling —
-//                 "how much could this stage lift"), which is a different
-//                 number from whatever cargo mass is actually assigned to
-//                 the stack (stack.payloadId). Using the capacity here made
-//                 the Stack Detail page's total silently diverge from the
-//                 simulator (which always flies the real assigned payload —
-//                 see massProps.js/physics.js _bodyPayloadMass). The real
-//                 payload's mass is added once, at the top of the stack, in
-//                 validateStack() below — not folded into any one member.
+// Stack member own mass (Phase 3 §1.16 — corrected).
+//   stage       → dryMassNoPayload + fuelMass — the stage's OWN hardware +
+//                 propellant, with NO payload assumed. Real cargo is tracked
+//                 separately via the stack's own `payloadId` (see
+//                 validateStack()/stackCombinedAggregates(), and the live
+//                 sim's _bodyPayloadMass() in physics.js). Using
+//                 totalWetMassAtMaxPayload here was wrong: it silently
+//                 assumed the stage was loaded to its MAX theoretical
+//                 capacity even when no payload (or a smaller one) was
+//                 actually assigned, inflating every total-mass / booster-
+//                 capacity number that read through this function. The
+//                 max-capacity number is still available separately via
+//                 stageDerivedMasses().totalWetMassAtMaxPayload for the
+//                 "which boosters COULD this stage fit under" advisory
+//                 check (see compatibleBoostersForStage(), unchanged).
 //   booster     → boosterDerivedMasses().wetMass
 //   rocket      → dryMass + fuelMassMax (flat, like before)
 //   nose        → computeNoseDryMass() (cone metal mass)
-//   payloadSpace→ 0 for now (PS-B3 stub; real dry mass lands in PS-E) — the
-//                 generic fallback below already returns 0 for it since it
-//                 has no dryMass/fuelMassMax fields, so no extra branch is
-//                 needed to keep this from crashing.
+//   payloadSpace→ computePayloadSpaceDryMass() (fairing's own structural mass;
+//                 the cargo it carries is added separately, same as stage).
 // Returns NaN for an infeasible stage.
 // ---------------------------------------------------------------------------
 function stackMemberOwnMass(member, aboveMember) {
@@ -1309,8 +1310,7 @@ function stackMemberOwnMass(member, aboveMember) {
   if (member.stageRole === 'stage') {
     const d = stageDerivedMasses(member);
     if (!d || d.infeasible) return NaN;
-    return (Number.isFinite(d.dryMassNoPayload) && Number.isFinite(d.fuelMass))
-      ? d.dryMassNoPayload + d.fuelMass : NaN;
+    return d.dryMassNoPayload + d.fuelMass;
   }
   if (member.stageRole === 'booster') {
     const d = boosterDerivedMasses(member, aboveMember);
@@ -1423,19 +1423,7 @@ resolved.forEach((r, i) => {
 });
 
   const ownMasses = resolved.map((r, i) => r ? stackMemberOwnMass(r, resolved[i + 1] || null) : NaN);
-
-  // Real assigned cargo mass (not a stage's max-payload CAPACITY) — rides
-  // at the very top of the stack, inside the fairing/payload space. Seed
-  // loadAbove[TOP] with it so the cascading load-bearing check below
-  // correctly counts it against every member underneath, and add it once
-  // to stackTotalMass so the displayed total actually matches what the
-  // simulator flies (see massProps.js/_bodyPayloadMass in physics.js).
-  const plForTotal = (stack && stack.payloadId && typeof getPayload === 'function')
-    ? getPayload(stack.payloadId) : null;
-  const realPayloadMass = (plForTotal && Number.isFinite(plForTotal.mass)) ? plForTotal.mass : 0;
-
   const loadAbove = new Array(resolved.length).fill(0);
-  if (resolved.length > 0) loadAbove[resolved.length - 1] = realPayloadMass;
   for (let i = resolved.length - 2; i >= 0; i--) {
     loadAbove[i] = loadAbove[i + 1] + (Number.isFinite(ownMasses[i + 1]) ? ownMasses[i + 1] : 0);
   }
@@ -1470,12 +1458,21 @@ if (!widthOk) {
   if (resolved.length > 0) {
     const top = resolved[resolved.length - 1];
     if (top) {
-      memberInfo.push({ record: top, ownMass: ownMasses[resolved.length - 1], loadAbove: loadAbove[resolved.length - 1], widthOk: true, loadOk: true });
+      memberInfo.push({ record: top, ownMass: ownMasses[resolved.length - 1], loadAbove: 0, widthOk: true, loadOk: true });
     }
   }
 
   const stackTotalHeight = resolved.reduce((s, r) => s + ((r && Number.isFinite(r.height)) ? r.height : 0), 0);
-  const stackTotalMass = ownMasses.reduce((s, m) => s + (Number.isFinite(m) ? m : 0), 0) + realPayloadMass;
+  let stackTotalMass = ownMasses.reduce((s, m) => s + (Number.isFinite(m) ? m : 0), 0);
+
+  // Real assigned cargo (if any) rides on top of every member's own mass —
+  // the same number the live sim actually flies with (_bodyPayloadMass() in
+  // physics.js). Without this, stackTotalMass only reflected empty hardware
+  // even when a payload was assigned to the stack.
+  if (stack && stack.payloadId && typeof getPayload === 'function') {
+    const pl = getPayload(stack.payloadId);
+    if (pl && Number.isFinite(pl.mass)) stackTotalMass += pl.mass;
+  }
 
   return {
     valid: errors.length === 0,

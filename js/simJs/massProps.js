@@ -88,6 +88,23 @@ function memberComponents(rec, memberFuelMass, legsProgress, aboveMember) {
     return out;
   }
 
+  // ---- Payload space (standalone fairing member): structural shell only,
+  // no engines/legs/fuel — same shape as the nose branch above. Previously
+  // missing entirely, so a standalone payloadSpace member silently flew at
+  // 0 kg (fell into the generic body-mass branch below, which reads
+  // rec.dryMass — a field payloadSpace records never set). ----
+  if (role === 'payloadSpace') {
+    const mass = (typeof computePayloadSpaceDryMass === 'function') ? computePayloadSpaceDryMass(rec) : 0;
+    out.push({
+      label: 'payloadSpace',
+      mass,
+      comX: 0,
+      comY: H / 2,     // simple placeholder, same convention as nose
+      iOwn: _thinCylinderI(mass, r, H),
+    });
+    return out;
+  }
+
   // ---- Body (cylindrical shell/tank) ----
   let bodyMass = 0, bodyH = H;
   if (role === 'booster') {
@@ -290,7 +307,7 @@ function combineComponents(components) {
 // legsProgress applies only to members[0] (the bottom member — the only one
 // whose legs are driven by the sim's leg control in P4-C2b-1).
 // ---------------------------------------------------------------------------
-function stackMassProps(members, fuelMassTotal, legsProgress) {
+function stackMassProps(members, fuelMassTotal, legsProgress, payloadMass) {
   members = members || [];
 
   // Single pass instead of map+reduce+map — same numbers, fewer array
@@ -306,6 +323,7 @@ function stackMassProps(members, fuelMassTotal, legsProgress) {
 
   const all = [];
   let yOffset = 0;
+  let payloadSpaceComY = null;
   members.forEach((m, i) => {
     const progress = (i === 0) ? (legsProgress || 0) : 0;
     const memberFuel = sumMax > 0 ? fuelTotal * (maxFuels[i] / sumMax) : 0;
@@ -317,8 +335,22 @@ function stackMassProps(members, fuelMassTotal, legsProgress) {
       c.comY += yOffset;
       all.push(c);
     });
+    if (m && m.stageRole === 'payloadSpace' && Number.isFinite(m.height)) {
+      payloadSpaceComY = yOffset + m.height / 2;
+    }
     yOffset += Number.isFinite(m.height) ? m.height : 0;
   });
+
+  // Real assigned cargo mass — the caller (physics.js's _bodyPayloadMass())
+  // already resolves this to a plain number (0 once released / if this body
+  // never carried one). Previously this function's signature had no slot
+  // for it at all, so the value physics.js was already passing in got
+  // silently dropped and telemetry's total mass never included cargo.
+  const cargoMass = Number.isFinite(payloadMass) ? payloadMass : 0;
+  if (cargoMass > 0) {
+    const comY = payloadSpaceComY !== null ? payloadSpaceComY : yOffset;
+    all.push({ label: 'payloadCargo', mass: cargoMass, comX: 0, comY, iOwn: 0 });
+  }
 
   const combined = combineComponents(all);
   const dryMass = Math.max(0, combined.totalMass - (fuelMassTotal || 0));
@@ -326,6 +358,7 @@ function stackMassProps(members, fuelMassTotal, legsProgress) {
     totalMass: combined.totalMass,
     dryMass,
     fuelMass: fuelMassTotal || 0,
+    payloadMass: cargoMass,
     comX: combined.comX,
     comY: combined.comY,     // distance from stack base to COM
     moi: combined.moi,       // about stack COM

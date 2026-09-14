@@ -45,7 +45,7 @@ const _boosterDerived = (_activeRole === 'booster' && typeof boosterDerivedMasse
 // Phase 4 — default starting fuel is 60% of max tank capacity. This leaves
 // headroom so the player can add fuel at the pad / landing site. Bounded by
 // the sim's refueling UI (P4-C4).
-const DEFAULT_FUEL_FRACTION = 0.60;
+const DEFAULT_FUEL_FRACTION = 1.0;
 
 
 // ---------------------------------------------------------------------------
