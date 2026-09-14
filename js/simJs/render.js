@@ -582,7 +582,7 @@ function drawBodyRocket(body, isActive) {
       flare.addColorStop(0.5, 'rgba(255,255,255,0.35)');
       flare.addColorStop(1, 'rgba(255,255,255,0)');
       ctx.fillStyle = flare;
-      ctx.beginPath(); ctx.ellipse(0, W * 0.05, W * 0.50 * plumeScale, W * 0.2 * plumeScale, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(0, W * 0.05, W * 0.42 * plumeScale, W * 0.2 * plumeScale, 0, 0, Math.PI * 2); ctx.fill();
       ctx.globalCompositeOperation = 'source-over';
      // ctx.restore;
     }
