@@ -659,8 +659,9 @@ if (body.payloadBody) {
   const plH_px = plH_m / mpp;
   const plW_px = plW_m / mpp;
   ctx.save();
-  drawPayloadArt(ctx, plW, plH);
+  drawPayloadArt(ctx, plW_px, plH_px);
   ctx.restore();
+  ctx.restore(); // closes the outer drawBodyRocket save
   
   return;
 }

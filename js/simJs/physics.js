@@ -328,10 +328,24 @@ function computeDragAero(s, extra) {
   // that as |AoA| → 90°. Reusing the same |sin(AoA)| blend factor already
   // used for the CP location keeps both effects consistent with one
   // another (both driven by how "broadside-on" the body currently is).
+  //
+  // AOA_NOISE_DEADBAND: a body flying with its axis and velocity exactly
+  // aligned (straight ascent, no RCS/gimbal/wind input) should show EXACTLY
+  // zero drag torque forever. In practice velBodyX/speedRel carries tiny
+  // RK4/floating-point roundoff (~1e-14). That's normally harmless, but a
+  // lighter body with less margin between its CP and COM (e.g. an upper
+  // stage right after the heavier, lower booster separates) can be
+  // aerodynamically unstable enough to slowly amplify that roundoff into a
+  // visible spurious torque over time. Clamping anything below this
+  // threshold to exactly zero stops noise from ever seeding that feedback
+  // loop, while any genuine disturbance (wind, RCS, gimbal, real AoA) is
+  // many orders of magnitude above it and is completely unaffected.
+  const AOA_NOISE_DEADBAND = 1e-6;
   let alphaDeg = 0, sinAlpha = 0, wCross = 0;
   if (speedRel > 1e-3) {
     const velBodyX = relVx * cosT + relVy * sinT;   // perpendicular to nose axis
-    sinAlpha = Math.max(-1, Math.min(1, velBodyX / speedRel));
+    const rawSinAlpha = Math.max(-1, Math.min(1, velBodyX / speedRel));
+    sinAlpha = Math.abs(rawSinAlpha) < AOA_NOISE_DEADBAND ? 0 : rawSinAlpha;
     alphaDeg = Math.asin(sinAlpha) * 180 / Math.PI;
     wCross = Math.min(1, Math.abs(sinAlpha));
   }

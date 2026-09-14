@@ -120,7 +120,8 @@ if (bodyListEl) {
 }
 
 // ---------------------------------------------------------------------------
-// Side "rocket figure" panel — force vectors, CoM marker, fuel bar
+// Side "rocket figure" panel — full stack artwork, per-member CoM/CoP,
+// per-member drag vectors, and the overall force/motion vectors.
 // ---------------------------------------------------------------------------
 let figCanvas, figCtx;
 
@@ -158,94 +159,375 @@ function initFigureCanvas() {
   figCtx = figCanvas.getContext('2d');
 }
 
+// ---------------------------------------------------------------------------
+// Aero snapshot for a body — the SAME relative-wind / angle-of-attack maths
+// physics.js's computeDragAero() uses (see AERO_CP_NOSE_FRAC/AERO_CP_BODY_FRAC
+// there), evaluated once against the body's CURRENT state rather than an
+// RK4 sub-stage. This is a read-only snapshot for drawing — it never feeds
+// back into the integrator.
+// ---------------------------------------------------------------------------
+function figAeroSnapshot(body) {
+  const relDefault = { relVx: 0, relVy: 0, speedRel: 0, velBodyX: 0, sinAlpha: 0, wCross: 0 };
+  if (!body) return relDefault;
+  const w = (typeof windInertialVector === 'function') ? windInertialVector(body.rx, body.ry) : { wx: 0, wy: 0 };
+  const relVx = body.vx - w.wx, relVy = body.vy - w.wy;
+  const speedRel = Math.hypot(relVx, relVy);
+  if (speedRel < 1e-3) return { ...relDefault, relVx, relVy, speedRel };
+  const cosT = Math.cos(body.theta), sinT = Math.sin(body.theta);
+  const velBodyX = relVx * cosT + relVy * sinT; // perpendicular to the nose axis
+  const sinAlpha = Math.max(-1, Math.min(1, velBodyX / speedRel));
+  const wCross = Math.min(1, Math.abs(sinAlpha));
+  return { relVx, relVy, speedRel, velBodyX, sinAlpha, wCross };
+}
+
+// Proportional fuel split across members — identical rule to
+// stackMassProps() in massProps.js (kept independent, read-only, so this
+// panel can never accidentally perturb real mass/inertia state).
+function figMemberFuelShares(members, totalFuelMass) {
+  const maxFuels = members.map(m => (typeof memberMaxFuel === 'function') ? memberMaxFuel(m) : 0);
+  const sumMax = maxFuels.reduce((s, x) => s + x, 0);
+  return sumMax > 0 ? maxFuels.map(x => (totalFuelMass || 0) * (x / sumMax)) : maxFuels.map(() => 0);
+}
+
+// Bottom-up per-member breakdown: own local CoM (mass-weighted, via the same
+// component decomposition massProps.js uses for real mass/inertia), own
+// local center-of-pressure (same nose⇄body-tube blend computeDragAero()
+// uses), own presented-area share of the total, and cumulative base height —
+// everything needed to place a CoM dot / CoP dot / drag arrow correctly for
+// every member of the stack.
+function figMemberMechanics(members, body, aero) {
+  const fuelShares = figMemberFuelShares(members, body ? body.fuelMass : 0);
+  const nCross = (typeof AERO_CP_NOSE_FRAC !== 'undefined') ? AERO_CP_NOSE_FRAC : 0.9;
+  const bCross = (typeof AERO_CP_BODY_FRAC !== 'undefined') ? AERO_CP_BODY_FRAC : 0.5;
+  let baseY = 0;
+  const out = members.map((m, i) => {
+    const H = Number.isFinite(m.height) ? m.height : 0;
+    const W = Number.isFinite(m.width) ? m.width : 0;
+    const isTapered = (m.stageRole === 'nose') || (m.stageRole === 'payloadSpace');
+    const legsProgress = (i === 0 && body && body.isActive) ? legs.progress : 0;
+
+    let comX = 0, comY = H / 2;
+    if (typeof memberComponents === 'function' && typeof combineComponents === 'function') {
+      const comps = memberComponents(m, fuelShares[i] || 0, legsProgress);
+      const combined = combineComponents(comps);
+      if (Number.isFinite(combined.comX)) comX = combined.comX;
+      if (Number.isFinite(combined.comY)) comY = combined.comY;
+    }
+
+    const localFrac = isTapered ? (nCross * (1 - aero.wCross) + bCross * aero.wCross) : bCross;
+    const cpY = H * localFrac;
+
+    const aAxial = Math.PI * (W / 2) ** 2;
+    const aSide = W * H;
+    const aEff = aAxial * (1 - aero.wCross) + aSide * aero.wCross;
+
+    const rec = { member: m, index: i, H, W, baseY, comX, comY, cpY, aEff, isTapered };
+    baseY += H;
+    return rec;
+  });
+  const totalAeff = out.reduce((s, m) => s + m.aEff, 0) || 1;
+  out.forEach(m => { m.areaShare = m.aEff / totalAeff; });
+  return out;
+}
+
 function drawFigurePanel() {
   if (!figCtx) return;
   const w = figCanvas.width, h = figCanvas.height;
   figCtx.clearRect(0, 0, w, h);
 
-  const geom = currentGeometry();
-  const scale = (h * 0.75) / CONFIG.ROCKET_HEIGHT;
-  const baseX = w / 2, baseY = h * 0.9;
+  const body = state.bodies[state.activeBodyIndex];
+  const members = (body && body.members) ? body.members : [];
 
-  // Body outline (always upright here — this panel is a schematic, not the live attitude)
-  const W = CONFIG.ROCKET_WIDTH * scale;
-  const H = CONFIG.ROCKET_HEIGHT * scale;
+  if (!members.length) {
+    drawFigurePanelFallback(body, w, h);
+    return;
+  }
+
+  // ---- Scale: fit the WHOLE stack (every member) into the panel ----
+  const widest = Math.max(...members.map(m => Number.isFinite(m.width) ? m.width : 0), 0.1);
+  const totalH_m = members.reduce((s, m) => s + (Number.isFinite(m.height) ? m.height : 0), 0) || 1;
+  const mppW = widest / (w * 0.30);
+  const mppH = totalH_m / (h * 0.80);
+  const mpp = Math.max(mppW, mppH); // meters per pixel — larger of the two keeps both dimensions on-canvas
+
+  const baseX = w / 2, baseY = h * 0.94;
+  const stackHalfW_px = (widest / mpp) / 2;
+
+  // ---- Fuel gauge — whole-stack fraction, thin bar to the left of the stack ----
+  const maxFuelTotal = members.reduce((s, m) => s + ((typeof memberMaxFuel === 'function') ? memberMaxFuel(m) : 0), 0);
+  const fuelFrac = maxFuelTotal > 0 ? Math.max(0, Math.min(1, (body.fuelMass || 0) / maxFuelTotal)) : 0;
+  const gaugeX = baseX - stackHalfW_px - 16;
+  const gaugeH = totalH_m / mpp;
+  figCtx.strokeStyle = 'rgba(255,255,255,0.25)';
+  figCtx.lineWidth = 1;
+  figCtx.strokeRect(gaugeX, baseY - gaugeH, 6, gaugeH);
+  figCtx.fillStyle = 'rgba(255,140,40,0.55)';
+  figCtx.fillRect(gaugeX, baseY - gaugeH * fuelFrac, 6, gaugeH * fuelFrac);
+  figCtx.save();
+  figCtx.fillStyle = '#6b7d9c';
+  figCtx.font = '8px "JetBrains Mono", monospace';
+  figCtx.fillText('FUEL', gaugeX - 2, baseY - gaugeH - 4);
+  figCtx.restore();
+
+  // ---- Payload, if still fitted inside its fairing — drawn BEFORE the
+  // members loop so a fairing that's still on covers it, exactly like the
+  // live sim canvas (see render.js's drawBodyRocket). IMPORTANT: a payload
+  // riding inside its fairing gets NO CoM/CoP/drag arrow of its own here —
+  // the fairing is the surface actually touching the airstream, not the
+  // cargo shielded underneath it. It only becomes its own aerodynamic body
+  // (with its own CoM/CoP/drag, drawn as any other body) once the fairing
+  // splits and it's released — see releasePayloadOnActiveBody().
+  if (body.payloadId && !body.payloadReleased) {
+    const pl = (typeof getPayload === 'function') ? getPayload(body.payloadId) : null;
+    if (pl) {
+      let payloadBaseY_m = null, yy = 0;
+      members.forEach(m => {
+        if (m.stageRole === 'payloadSpace' && payloadBaseY_m === null) payloadBaseY_m = yy;
+        yy += (m.height || 0);
+      });
+      if (payloadBaseY_m === null) payloadBaseY_m = yy;
+      const plH = (pl.height || 1) / mpp, plW = (pl.width || 1) / mpp;
+      figCtx.save();
+      figCtx.translate(baseX, baseY - payloadBaseY_m / mpp);
+      if (typeof drawPayloadArt === 'function') drawPayloadArt(figCtx, plW, plH);
+      figCtx.fillStyle = 'rgba(150,220,255,0.85)';
+      figCtx.font = '8px "JetBrains Mono", monospace';
+      figCtx.textAlign = 'center';
+      figCtx.fillText('shielded — no drag', 0, -plH - 4);
+      figCtx.textAlign = 'left';
+      figCtx.restore();
+    }
+  }
+
+  // ---- Every member's real artwork, bottom → top (identical opts shape to
+  // render.js's live stack draw, so the panel is the literal same vehicle) ----
+  let yOffsetPx = 0;
+  members.forEach((m, idx) => {
+    const memberAbove = members[idx + 1] || null;
+    let stageAboveBellHeight = 0;
+    if (memberAbove && memberAbove.engineTypeId && typeof getComponentType === 'function') {
+      const layoutAbove = getComponentType(memberAbove.engineTypeId);
+      if (layoutAbove && layoutAbove.frame && layoutAbove.frame.slots) {
+        const groups = (typeof engineThrusterGroups === 'function') ? engineThrusterGroups(layoutAbove) : {};
+        let totalFlow = 0;
+        Object.keys(groups).forEach(gk => {
+          const g = memberAbove.engineThrusters && memberAbove.engineThrusters[gk];
+          if (!g || !Number.isFinite(g.massFlowRate)) return;
+          totalFlow += g.massFlowRate * groups[gk].length;
+        });
+        const perEngine = totalFlow / layoutAbove.frame.slots.length;
+        stageAboveBellHeight = 0.007 * perEngine;
+      }
+    }
+
+    const mH = (m.height || 0) / mpp;
+    const mW = (m.width || 1) / mpp;
+    const recType = (m.hasRecovery === false) ? null
+      : ((m.recoveryTypeId && typeof getComponentType === 'function') ? getComponentType(m.recoveryTypeId) : null);
+    const rcsT = (m.rcsTypeId && typeof getComponentType === 'function') ? getComponentType(m.rcsTypeId) : null;
+    const engineLayout = (m.engineTypeId && typeof getComponentType === 'function') ? getComponentType(m.engineTypeId) : null;
+
+    const psType = (m.stageRole === 'payloadSpace' && m.payloadSpaceTypeId && typeof getComponentType === 'function')
+      ? getComponentType(m.payloadSpaceTypeId) : null;
+    const psParams = m.params || {};
+    const payloadOpts = (m.stageRole === 'payloadSpace') ? {
+      payloadKind: psType ? psType.kind : undefined,
+      payloadCapWidth: Number.isFinite(psParams.capWidth) ? psParams.capWidth : undefined,
+      payloadBulgeWidth: Number.isFinite(psParams.bulgeWidth) ? psParams.bulgeWidth : undefined,
+      payloadFrustumAngleDeg: Number.isFinite(psParams.frustumSlantDeg) ? psParams.frustumSlantDeg : undefined,
+      payloadCurveRatio: Number.isFinite(psParams.curveHeightFactor) ? psParams.curveHeightFactor : undefined,
+      payloadColor: m.color || '#e9edf2',
+    } : {};
+
+    figCtx.save();
+    figCtx.translate(baseX, baseY - yOffsetPx);
+    drawRocketArt(figCtx, mW, mH, mpp, {
+      legsProgress: (idx === 0 && body.isActive) ? legs.progress : 0,
+      legsState: null, // schematic — doesn't need to feed foot positions back anywhere
+      firing: (body.lastRcs && body.lastRcs.firing) || {},
+      pod: (body.lastRcs && body.lastRcs.pod) || {},
+      rcsTopY: m.params ? m.params.rcsTopY : undefined,
+      rcsBottomY: m.params ? m.params.rcsBottomY : undefined,
+      recoveryType: recType,
+      rcsType: rcsT,
+      stageRole: m.stageRole,
+      noseCurveness: m.noseCurveness,
+      bodyDesign: m.bodyDesign,
+      payloadSpaceColor: (m.payloadSpace && m.payloadSpace.color) ? m.payloadSpace.color : undefined,
+      stagePayload: (typeof buildStagePayload === 'function') ? buildStagePayload(m) : null,
+      engineLayout: engineLayout,
+      engineThrusters: m.engineThrusters,
+      params: m.params,
+      stageAboveBellHeight: stageAboveBellHeight,
+      ...payloadOpts,
+    });
+    figCtx.restore();
+    yOffsetPx += mH;
+  });
+
+  // ---- Shared aero snapshot: ONE relative wind, ONE angle of attack for
+  // the whole connected body — each member just gets its own share/point. ----
+  const aero = figAeroSnapshot(body);
+  const mech = figMemberMechanics(members, body, aero);
+
+  // Overall stack CoM — the existing bright reference line, kept as-is.
+  const geom = currentGeometry(body);
+  const comY_overall = baseY - (geom.comH || 0) / mpp;
+  figCtx.strokeStyle = '#ff4466'; figCtx.lineWidth = 2;
+  figCtx.beginPath();
+  figCtx.moveTo(baseX - stackHalfW_px * 0.9, comY_overall);
+  figCtx.lineTo(baseX + stackHalfW_px * 0.9, comY_overall);
+  figCtx.stroke();
+  figCtx.beginPath(); figCtx.arc(baseX, comY_overall, 4, 0, Math.PI * 2); figCtx.fillStyle = '#ff4466'; figCtx.fill();
+  figCtx.fillStyle = '#ff8899'; figCtx.font = '10px monospace';
+  figCtx.fillText('CoM (stack)', baseX + stackHalfW_px + 4, comY_overall + 3);
+
+  // Windward side: the body-frame edge the relative wind is arriving FROM.
+  // sideSign = -1 → flow arrives moving in the body's +X direction, which
+  // means it originated on the -X (left) side — left is the windward
+  // (pressure) face, and the opposite face of any tapered member (a
+  // fairing, a nose) physically sees none of that flow. Each member's drag
+  // arrow is drawn from that ONE windward point only — never centered, and
+  // never doubled onto both sides of the same member.
+  const sideSign = (aero.speedRel > 0.2 && Math.abs(aero.sinAlpha) > 0.02) ? -Math.sign(aero.velBodyX) : 0;
+  const dragUnit = (aero.speedRel > 0.2)
+    ? worldVectorToBodyUnit(-aero.relVx / aero.speedRel, -aero.relVy / aero.speedRel, body.theta)
+    : null;
+
+  mech.forEach(mm => {
+    const globalComY_m = mm.baseY + mm.comY;
+    const globalCpY_m  = mm.baseY + mm.cpY;
+    const comPx = { x: baseX + mm.comX / mpp, y: baseY - globalComY_m / mpp };
+
+    // CoP slides from the centerline (nose-on, wCross≈0) out toward
+    // whichever edge actually faces the relative wind as the body presents
+    // more of its broadside (wCross→1) — identical blend to
+    // computeDragAero()'s per-member normal-force split in physics.js.
+    const cpOffsetX_m = sideSign * (mm.W / 2) * aero.wCross;
+    const cpPx = { x: baseX + (mm.comX + cpOffsetX_m) / mpp, y: baseY - globalCpY_m / mpp };
+
+    // Per-member CoM dot.
+    figCtx.beginPath(); figCtx.arc(comPx.x, comPx.y, 2.6, 0, Math.PI * 2);
+    figCtx.fillStyle = 'rgba(255,170,120,0.9)'; figCtx.fill();
+    figCtx.strokeStyle = 'rgba(0,0,0,0.4)'; figCtx.lineWidth = 0.8; figCtx.stroke();
+
+    // Per-member CoP dot.
+    figCtx.beginPath(); figCtx.arc(cpPx.x, cpPx.y, 2.6, 0, Math.PI * 2);
+    figCtx.fillStyle = 'rgba(120,220,255,0.95)'; figCtx.fill();
+    figCtx.strokeStyle = 'rgba(0,0,0,0.4)'; figCtx.lineWidth = 0.8; figCtx.stroke();
+
+    // Drag vector, originating at THIS member's CoP — only when there's
+    // real relative airflow, and only from the single windward point above.
+    if (dragUnit && showVectors) {
+      const len = 14 + 16 * mm.areaShare;
+      const ex = cpPx.x + dragUnit.bx * len;
+      const ey = cpPx.y - dragUnit.by * len;
+      figCtx.strokeStyle = 'rgba(255,120,90,0.9)'; figCtx.lineWidth = 1.6;
+      figCtx.beginPath(); figCtx.moveTo(cpPx.x, cpPx.y); figCtx.lineTo(ex, ey); figCtx.stroke();
+      figCtx.beginPath(); figCtx.arc(ex, ey, 2.2, 0, Math.PI * 2); figCtx.fillStyle = 'rgba(255,120,90,0.9)'; figCtx.fill();
+    }
+  });
+
+  // ---- Compact legend for the new per-member symbols ----
+  figCtx.font = '8px "JetBrains Mono", monospace';
+  [
+    ['rgba(255,170,120,0.9)', 'CoM (member)'],
+    ['rgba(120,220,255,0.95)', 'CoP (member)'],
+    ['rgba(255,120,90,0.9)', 'Drag'],
+  ].forEach(([color, label], i) => {
+    const ly = 10 + i * 10;
+    figCtx.fillStyle = color; figCtx.fillRect(4, ly - 6, 7, 7);
+    figCtx.fillStyle = '#6b7d9c'; figCtx.fillText(label, 14, ly);
+  });
+
+  // ---- Overall force/motion unit vectors (v / main thrust F / g) — kept
+  // exactly as before, anchored on the overall stack CoM / stack base. ----
+  if (showVectors) {
+    const vecLen = (totalH_m / mpp) * 0.32;
+    const vUnit = worldVectorToBodyUnit(body.vx, body.vy, body.theta);
+    if (vUnit) drawUnitVector(figCtx, baseX, comY_overall, vUnit.bx, vUnit.by, vecLen, '#ffdd55', 'v');
+
+    const fUnit = unitOf(lastForces.mainFx, lastForces.mainFy);
+    if (fUnit) drawUnitVector(figCtx, baseX, baseY, fUnit.bx, fUnit.by, vecLen, '#ffaa33', 'F');
+
+    const rr = Math.hypot(body.rx, body.ry);
+    const gWorld = rr > 0 ? { x: -body.rx / rr, y: -body.ry / rr } : { x: 0, y: -1 };
+    const gUnit = worldVectorToBodyUnit(gWorld.x, gWorld.y, body.theta);
+    if (gUnit) drawUnitVector(figCtx, baseX, comY_overall, gUnit.bx, gUnit.by, vecLen * 0.85, '#aabbff', 'g');
+  }
+
+  // ---- Gimbal indicator on the base (bottom engine) — unchanged ----
+  const centerEngine = ENGINES.find(e => e.isCenter);
+  if (centerEngine) {
+    const centerFrac = centerEngine.Fmax > 0 ? centerEngine.currentF / centerEngine.Fmax : 0;
+    if (centerFrac > 0.01) {
+      figCtx.save();
+      figCtx.translate(baseX, baseY);
+      figCtx.rotate(centerEngine.gimbalDeg * Math.PI / 180);
+      figCtx.fillStyle = 'rgba(255,180,80,0.8)';
+      figCtx.beginPath(); figCtx.moveTo(-4, 0); figCtx.lineTo(4, 0); figCtx.lineTo(0, 18); figCtx.closePath(); figCtx.fill();
+      figCtx.restore();
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Fallback for a body with no `members` breakdown — a free-flying released
+// payload, a split fairing half, or (defensively) a legacy single-body
+// state. Same CoM/CoP/drag treatment as one lumped member, so switching
+// "Take Control" onto one of these never leaves the panel blank.
+// ---------------------------------------------------------------------------
+function drawFigurePanelFallback(body, w, h) {
+  const fallbackRec = (body && body.payloadBody && body.payloadBody.record) || null;
+  const H_m = Number.isFinite(body && body.height) ? body.height
+    : (fallbackRec && Number.isFinite(fallbackRec.height)) ? fallbackRec.height
+    : (CONFIG.ROCKET_HEIGHT || 45);
+  const W_m = Number.isFinite(body && body.width) ? body.width
+    : (fallbackRec && Number.isFinite(fallbackRec.width)) ? fallbackRec.width
+    : (CONFIG.ROCKET_WIDTH || 3.9);
+
+  const scale = (h * 0.75) / H_m;
+  const baseX = w / 2, baseY = h * 0.9;
+  const W = W_m * scale, H = H_m * scale;
+
   figCtx.fillStyle = 'rgba(13,20,36,0.5)';
   figCtx.strokeStyle = '#35d6ff';
   figCtx.lineWidth = 1.4;
   figCtx.beginPath();
-  figCtx.moveTo(baseX - W/2, baseY);
-  figCtx.lineTo(baseX - W/2, baseY - H*0.85);
-  figCtx.quadraticCurveTo(baseX - W/2, baseY - H, baseX, baseY - H);
-  figCtx.quadraticCurveTo(baseX + W/2, baseY - H, baseX + W/2, baseY - H*0.85);
-  figCtx.lineTo(baseX + W/2, baseY);
+  figCtx.moveTo(baseX - W / 2, baseY);
+  figCtx.lineTo(baseX - W / 2, baseY - H * 0.85);
+  figCtx.quadraticCurveTo(baseX - W / 2, baseY - H, baseX, baseY - H);
+  figCtx.quadraticCurveTo(baseX + W / 2, baseY - H, baseX + W / 2, baseY - H * 0.85);
+  figCtx.lineTo(baseX + W / 2, baseY);
   figCtx.closePath();
   figCtx.fill(); figCtx.stroke();
 
-  // Fuel level (fill fraction from base)
-  const fuelFrac = state.fuelMass / CONFIG.FUEL_MASS_MAX;
-  figCtx.fillStyle = 'rgba(255,140,40,0.35)';
-  figCtx.fillRect(baseX - W/2 + 2, baseY - H*0.55*fuelFrac, W - 4, H*0.55*fuelFrac);
+  if (!body) return;
 
-  // CoM marker
-  const comY = baseY - geom.comH * scale;
-  figCtx.strokeStyle = '#ff4466';
-  figCtx.lineWidth = 2;
-  figCtx.beginPath(); figCtx.moveTo(baseX - W*0.4, comY); figCtx.lineTo(baseX + W*0.4, comY); figCtx.stroke();
-  figCtx.beginPath(); figCtx.arc(baseX, comY, 4, 0, Math.PI*2); figCtx.fillStyle = '#ff4466'; figCtx.fill();
-  figCtx.fillStyle = '#ff8899'; figCtx.font = '10px monospace';
-  figCtx.fillText('CoM', baseX + W*0.45, comY + 3);
+  const comY = baseY - H * 0.5;
+  const aero = figAeroSnapshot(body);
+  const sideSign = (aero.speedRel > 0.2 && Math.abs(aero.sinAlpha) > 0.02) ? -Math.sign(aero.velBodyX) : 0;
+  const bCross = (typeof AERO_CP_BODY_FRAC !== 'undefined') ? AERO_CP_BODY_FRAC : 0.5;
+  const cpX = baseX + sideSign * (W / 2) * aero.wCross;
+  const cpY = baseY - H * bCross;
 
-  // Force/motion UNIT vectors — direction only, fixed length. This panel is
-  // the only place vectors are shown (the live sim canvas stays clean); the
-  // "Vectors" toolbar toggle controls visibility here.
+  figCtx.strokeStyle = '#ff4466'; figCtx.lineWidth = 2;
+  figCtx.beginPath(); figCtx.moveTo(baseX - W * 0.4, comY); figCtx.lineTo(baseX + W * 0.4, comY); figCtx.stroke();
+  figCtx.beginPath(); figCtx.arc(baseX, comY, 4, 0, Math.PI * 2); figCtx.fillStyle = '#ff4466'; figCtx.fill();
+  figCtx.fillStyle = '#ff8899'; figCtx.font = '10px monospace'; figCtx.fillText('CoM', baseX + W * 0.45, comY + 3);
+
+  figCtx.beginPath(); figCtx.arc(cpX, cpY, 3, 0, Math.PI * 2);
+  figCtx.fillStyle = 'rgba(120,220,255,0.95)'; figCtx.fill();
+  figCtx.fillStyle = '#8fd8ff'; figCtx.font = '10px monospace'; figCtx.fillText('CoP', cpX + 6, cpY + 3);
+
   if (showVectors) {
     const vecLen = H * 0.32;
-    const vUnit = worldVectorToBodyUnit(state.vx, state.vy, state.theta);
+    const vUnit = worldVectorToBodyUnit(body.vx, body.vy, body.theta);
     if (vUnit) drawUnitVector(figCtx, baseX, comY, vUnit.bx, vUnit.by, vecLen, '#ffdd55', 'v');
-
-    // Main-thrust force is already computed in body frame — no rotation needed.
-    const fUnit = unitOf(lastForces.mainFx, lastForces.mainFy);
-    if (fUnit) drawUnitVector(figCtx, baseX, baseY, fUnit.bx, fUnit.by, vecLen, '#ffaa33', 'F');
-
-    const r = Math.hypot(state.rx, state.ry);
-    const gWorld = r > 0 ? { x: -state.rx / r, y: -state.ry / r } : { x: 0, y: -1 };
-    const gUnit = worldVectorToBodyUnit(gWorld.x, gWorld.y, state.theta);
-    if (gUnit) drawUnitVector(figCtx, baseX, comY, gUnit.bx, gUnit.by, vecLen * 0.85, '#aabbff', 'g');
-  }
-
-  // RCS gas-ejection glow — lights up here (not on the live sim rocket) when firing.
-  const firing = lastForces.firing || {};
-  const podCorners = {
-  TL: [baseX - W / 2, baseY - CONFIG.RCS_TOP_Y * scale],
-  TR: [baseX + W / 2, baseY - CONFIG.RCS_TOP_Y * scale],
-  BL: [baseX - W / 2, baseY - CONFIG.RCS_BOTTOM_Y * scale],
-  BR: [baseX + W / 2, baseY - CONFIG.RCS_BOTTOM_Y * scale],
-};
-  Object.keys(podCorners).forEach(k => {
-    const [cx, cy] = podCorners[k];
-    if (firing[k]) {
-      const glow = figCtx.createRadialGradient(cx, cy, 0, cx, cy, 12);
-      glow.addColorStop(0, 'rgba(120,220,255,0.9)');
-      glow.addColorStop(1, 'rgba(120,220,255,0)');
-      figCtx.fillStyle = glow;
-      figCtx.beginPath(); figCtx.arc(cx, cy, 12, 0, Math.PI*2); figCtx.fill();
+    if (aero.speedRel > 0.2) {
+      const dragUnit = worldVectorToBodyUnit(-aero.relVx / aero.speedRel, -aero.relVy / aero.speedRel, body.theta);
+      if (dragUnit) drawUnitVector(figCtx, cpX, cpY, dragUnit.bx, dragUnit.by, vecLen * 0.7, 'rgba(255,120,90,0.9)', 'drag');
     }
-    figCtx.fillStyle = firing[k] ? '#aef1ff' : '#22344a';
-    figCtx.beginPath(); figCtx.arc(cx, cy, 3.5, 0, Math.PI*2); figCtx.fill();
-  });
-
-  // Gimbal indicator on center-engine flame stub — driven by actual
-  // delivered thrust, so it disappears the instant the tank runs dry.
-  const centerEngine = ENGINES.find(e => e.isCenter);
-  const centerFrac = centerEngine.Fmax > 0 ? centerEngine.currentF / centerEngine.Fmax : 0;
-  if (centerFrac > 0.01) {
-    figCtx.save();
-    figCtx.translate(baseX, baseY);
-    figCtx.rotate(centerEngine.gimbalDeg * Math.PI/180);
-    figCtx.fillStyle = 'rgba(255,180,80,0.8)';
-    figCtx.beginPath(); figCtx.moveTo(-4,0); figCtx.lineTo(4,0); figCtx.lineTo(0,18); figCtx.closePath(); figCtx.fill();
-    figCtx.restore();
   }
 }
 
