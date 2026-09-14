@@ -133,15 +133,21 @@ const legs = new Proxy({}, {
 function resetLegs() { /* no-op — legs are per-body, initialized in _makeBody() */ }
 
 function updateLegs(dt) {
-  // Only the active body's legs animate. Discarded bodies' legs are frozen
-  // at whatever state they were in when the body was detached.
-  const b = state.bodies[state.activeBodyIndex];
-  if (!b) return;
-  if (!b.legs) b.legs = { deployed: false, progress: 0 };
-  const target = b.legs.deployed ? 1 : 0;
-  const maxDelta = CONFIG.LEG_DEPLOY_RATE * dt;
-  if (target > b.legs.progress) b.legs.progress = Math.min(target, b.legs.progress + maxDelta);
-  else b.legs.progress = Math.max(target, b.legs.progress - maxDelta);
+  // Every body's legs animate toward its OWN deployed flag now — not just
+  // the active one. This is manual-deploy infrastructure only (no
+  // autonomous trigger here): once the user takes control of a discarded
+  // body (takeControlOfBody()) and commands its legs, they need to actually
+  // move. Keeping this per-body (rather than active-only) also leaves the
+  // door open for a future autopilot/auto-land system to command a
+  // non-active body's legs without needing further changes here.
+  if (!state.bodies) return;
+  state.bodies.forEach(b => {
+    if (!b.legs) b.legs = { deployed: false, progress: 0 };
+    const target = b.legs.deployed ? 1 : 0;
+    const maxDelta = CONFIG.LEG_DEPLOY_RATE * dt;
+    if (target > b.legs.progress) b.legs.progress = Math.min(target, b.legs.progress + maxDelta);
+    else b.legs.progress = Math.max(target, b.legs.progress - maxDelta);
+  });
 }
 
 function totalMass() { return state.dryMass + state.fuelMass; }
@@ -340,7 +346,7 @@ function computeDragAero(s, extra) {
   // threshold to exactly zero stops noise from ever seeding that feedback
   // loop, while any genuine disturbance (wind, RCS, gimbal, real AoA) is
   // many orders of magnitude above it and is completely unaffected.
-  const AOA_NOISE_DEADBAND = 1e-6;
+  const AOA_NOISE_DEADBAND = 1e-8;
   let alphaDeg = 0, sinAlpha = 0, wCross = 0;
   if (speedRel > 1e-3) {
     const velBodyX = relVx * cosT + relVy * sinT;   // perpendicular to nose axis
@@ -463,16 +469,6 @@ function physicsStep(dt) {
   body.lastRcs = { firing: rcs.firing || {}, pod: rcs.pod || {} };
   if (!hasFuel) body.engines.forEach(e => { e.currentF = 0; });
 
-  // lastForces only updated for the active body (used by telemetry/UI).
-  if (isActive) {
-    lastForces = {
-      mainFx: main.Fx, mainFy: main.Fy, mainTorque: main.torque,
-      rcsFx: rcs.Fx, rcsFy: rcs.Fy, rcsTorque: rcs.torque,
-      mdot: main.mdot + rcs.mdot, firing: rcs.firing || {}, pod: rcs.pod || {},
-      dutyTop: rcs.dutyTop || 0,
-    };
-  }
-
   const extra = {
   Fx: 0,
   Fy: 0,
@@ -539,17 +535,20 @@ if (Math.abs(alpha) > 1e-6) {
   
 
     if (isActive) {
-      const hasFuel = body.fuelMass > 0;
-      const main = hasFuel ? computeMainThrust(geom.comH) : zeroThrust();
-      const rcs  = hasFuel ? computeRCS(geom.comH, dt)   : zeroRCS();
+      // Reuse the main/rcs already computed once above for this body
+      // (computeMainThrustForBody/computeRCSForBody) instead of calling the
+      // legacy computeMainThrust()/computeRCS() shims again. Calling
+      // computeRCSForBody a second time per tick was advancing the RCS PWM
+      // delta-sigma clock by 2×dt instead of 1×dt for the active body,
+      // desyncing the top-pod duty-cycle timing from real elapsed time.
       if (!hasFuel) ENGINES.forEach(e => { e.currentF = 0; });
 
       // Add (not assign) so the ground-tipping torque added above is not
-// wiped out.
-extra.Fx += main.Fx + rcs.Fx;
-extra.Fy += main.Fy + rcs.Fy;
-extra.torque += main.torque + rcs.torque;
-mdotTotal = main.mdot + rcs.mdot;
+      // wiped out.
+      extra.Fx += main.Fx + rcs.Fx;
+      extra.Fy += main.Fy + rcs.Fy;
+      extra.torque += main.torque + rcs.torque;
+      mdotTotal = main.mdot + rcs.mdot;
 
       // Representative (pre-RK4) aero snapshot for telemetry — the actual
       // integration re-evaluates AoA/drag-torque fresh at every RK4
@@ -597,13 +596,26 @@ mdotTotal = main.mdot + rcs.mdot;
       const tiltDeg = Math.acos(Math.max(-1, Math.min(1, bodyUpX * ux + bodyUpY * uy))) * 180 / Math.PI;
 
       if (descentSpeed > 0.3 || hSpeed > 0.3) {
-        const recovery = CONFIG.RECOVERY_TYPE;
+        // Recovery type resolved from THIS body's own bottom member (same
+        // per-body pattern as engines/RCS) — a discarded/staged body can
+        // carry a different recovery type than whichever body is active.
+        const bottomMember = (body.members && body.members[0]) ? body.members[0] : null;
+        const recovery = bottomMember
+          ? (bottomMember.hasRecovery === false ? null
+             : ((typeof getComponentType === 'function') ? getComponentType(bottomMember.recoveryTypeId) : null))
+          : CONFIG.RECOVERY_TYPE;
         const canLandOnLegs = !!(recovery && recovery.capabilities && recovery.capabilities.deploysOnVehicle);
         let landedOk = false;
-        if (canLandOnLegs && isActive) {
+        // Any body can land, not just the currently active one — a
+        // discarded booster that had its legs deployed before separation
+        // can still touch down safely on its own; its legs stay frozen at
+        // whatever deploy state they were in when control left it (see
+        // updateLegs()), rather than never being able to land at all.
+        if (canLandOnLegs) {
           const minDeploy = (recovery.frame && recovery.frame.landingMinDeploy !== undefined)
             ? recovery.frame.landingMinDeploy : CONFIG.LANDING_MIN_LEG_DEPLOY;
-          const legsReady = legs.progress >= minDeploy;
+          const bodyLegsProgress = (body.legs && Number.isFinite(body.legs.progress)) ? body.legs.progress : 0;
+          const legsReady = bodyLegsProgress >= minDeploy;
           const speedOk = descentSpeed <= CONFIG.LANDING_MAX_VSPEED && hSpeed <= CONFIG.LANDING_MAX_HSPEED;
           const tiltOk  = tiltDeg <= CONFIG.LANDING_MAX_TILT_DEG;
           const rateOk  = Math.abs(body.omega) <= CONFIG.LANDING_MAX_OMEGA;

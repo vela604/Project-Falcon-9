@@ -119,17 +119,20 @@ function resetPWM() {
   pwmClock.init = false;
 }
 
-function rcsGeometry(comH) {
-  // Both Ys are now bottom-anchored heights (base = 0, up = +).
-  const bottomH = (typeof ACTIVE_VEHICLE_FOR_HARDWARE !== 'undefined' && ACTIVE_VEHICLE_FOR_HARDWARE.height)
-    ? ACTIVE_VEHICLE_FOR_HARDWARE.height
-    : CONFIG.ROCKET_HEIGHT;
-  const yTop    = Math.min(bottomH, CONFIG.RCS_TOP_Y);       // safety clamp
-  const yBottom = CONFIG.RCS_BOTTOM_Y;
+function rcsGeometry(comH, body) {
+  // Resolve from THIS body's own bottom member — mirrors how engines are
+  // resolved per-body (buildEnginesForRecord(body.members[0])). Falls back
+  // to CONFIG only when body/member info isn't available (legacy safety).
+  const bottomMember = (body && body.members && body.members[0]) ? body.members[0] : null;
+  const bodyHeight = (typeof _bodyHeightOf === 'function') ? _bodyHeightOf(body) : CONFIG.ROCKET_HEIGHT;
+  const p = bottomMember && bottomMember.params;
+  const topYRaw = (p && Number.isFinite(p.rcsTopY)) ? p.rcsTopY : CONFIG.RCS_TOP_Y;
+  const bottomY = (p && Number.isFinite(p.rcsBottomY)) ? p.rcsBottomY : CONFIG.RCS_BOTTOM_Y;
+  const yTop = Math.min(bodyHeight, topYRaw);       // safety clamp
   return {
-    yTop, yBottom,
+    yTop, yBottom: bottomY,
     dTop: Math.max(0.01, yTop - comH),
-    dBottom: Math.max(0.01, comH - yBottom),
+    dBottom: Math.max(0.01, comH - bottomY),
   };
 }
 
@@ -147,9 +150,18 @@ function rcsGeometry(comH) {
 // (never on a type's `id`) is the sanctioned way to add one, per the hard
 // rule in PHASE2_PROMPT.md.
 function computeRCSForBody(body, comH, dt) {
-  const rcsType = CONFIG.RCS_TYPE;
+  const bottomMember = (body && body.members && body.members[0]) ? body.members[0] : null;
+  const rcsType = (bottomMember && typeof getComponentType === 'function')
+    ? getComponentType(bottomMember.rcsTypeId)
+    : CONFIG.RCS_TYPE;
   if (!rcsType || rcsType.kind !== 'cornerPods') return zeroRCS();
   if (!body) return zeroRCS();
+
+  const p = bottomMember && bottomMember.params;
+  const f = (p && Number.isFinite(p.rcsThrust)) ? p.rcsThrust : CONFIG.RCS_THRUST;
+  const ve = (p && Number.isFinite(p.rcsVe)) ? p.rcsVe : CONFIG.RCS_VE;
+  const xOffset = (p && Number.isFinite(p.rcsXOffset)) ? p.rcsXOffset : CONFIG.RCS_X_OFFSET;
+  const period = (p && Number.isFinite(p.rcsPwmPeriod)) ? p.rcsPwmPeriod : CONFIG.RCS_PWM_PERIOD;
 
   // Per-body PWM clock.
   if (!body.pwmClock) {
@@ -158,9 +170,7 @@ function computeRCSForBody(body, comH, dt) {
   const clock = body.pwmClock;
 
   const cmd = body.rcsCmd || {};
-  const f = CONFIG.RCS_THRUST;
-  const geo = rcsGeometry(comH);
-  const period = CONFIG.RCS_PWM_PERIOD;
+  const geo = rcsGeometry(comH, body);
   const idealDuty = Math.min(1, geo.dBottom / geo.dTop);
 
   if (!clock.init) {
@@ -216,7 +226,7 @@ function computeRCSForBody(body, comH, dt) {
 
   const positions = {};
   podDefs.forEach(p => {
-    positions[p.id] = { x: p.corner[0] * CONFIG.RCS_X_OFFSET, y: p.corner[1] === 'top' ? geo.yTop : geo.yBottom };
+    positions[p.id] = { x: p.corner[0] * xOffset, y: p.corner[1] === 'top' ? geo.yTop : geo.yBottom };
   });
 
   let Fx = 0, Fy = 0, torque = 0, mdot = 0;
@@ -228,7 +238,7 @@ function computeRCSForBody(body, comH, dt) {
     const rx = pos.x, ry = pos.y - comH;
     torque += rx * p.Fy - ry * p.Fx;
     const mag = Math.hypot(p.Fx, p.Fy);
-    if (mag > 0.01) { mdot += mag / CONFIG.RCS_VE; firing[k] = true; }
+    if (mag > 0.01) { mdot += mag / ve; firing[k] = true; }
   });
 
   return { Fx, Fy, torque, mdot, firing, pod, dutyTop: idealDuty };
