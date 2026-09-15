@@ -82,7 +82,7 @@ function memberComponents(rec, memberFuelMass, legsProgress, aboveMember) {
       label: 'nose',
       mass,
       comX: 0,
-      comY: H / 2,     // cone centroid is 1/4 up from base, but keep H/2 as a simple placeholder
+      comY: H / 4,     // true solid-cone centroid: 1/4 of height up from the base
       iOwn: _coneTransverseI(mass, r, H),
     });
     return out;

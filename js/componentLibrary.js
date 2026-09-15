@@ -314,7 +314,7 @@ function buildThrusterMerlin1DClass() {
   ve: 2900,
   efficiency: 0.9,
   twr: 184,
-  maxMassFlowRate: 300,
+  maxMassFlowRate: 500,
   gimbalCapable: true,
   gimbalMaxDeg: 20,
   gimbalRateDegS: 40,
