@@ -73,6 +73,7 @@ function _makeBody() {
     crashed: false,
     landed: false,
     settled: false,     // true once a crashed body's bounce has died out and it's fully at rest
+    _wasGrounded: false, // was ANY point of this body touching ground last tick? (see resolveGroundContact call site — distinguishes a fresh impact from sustained/rolling contact)
     isActive: false,
     isDiscarded: false,
     payloadId: null,
@@ -517,15 +518,25 @@ let lastForces = { mainFx: 0, mainFy: 0, mainTorque: 0, rcsFx: 0, rcsFy: 0, rcsT
 // ---------------------------------------------------------------------------
 function _rotatedPoint(body, localX, localY) {
   // local frame: +Y = up the stack (toward the nose), +X = right,
-  // origin (0,0) = base center.
-  const cosT = Math.cos(body.theta), sinT = -Math.sin(body.theta);
+  // origin (0,0) = base center. MUST match the up/right basis used
+  // everywhere else in this file (upX=-sinθ, upY=cosθ, rightX=cosθ,
+  // rightY=sinθ — see e.g. line 721, 923-924, 986-987, 1053-1054) and in
+  // render.js's worldToLocal(). A stray sign flip here previously made
+  // this function compute the body's nose/corner points as if it were
+  // rotated by -θ instead of θ — i.e. a left-right MIRROR of the actual
+  // rendered rocket whenever it wasn't perfectly upright. Ground contact
+  // was therefore being resolved against the wrong corner (and pushing/
+  // spinning it toward a wrong equilibrium) as soon as the body tilted at
+  // all, which is why it settled at an incorrect angle instead of
+  // reaching its true resting orientation.
+  const cosT = Math.cos(body.theta), sinT = Math.sin(body.theta);
   return {
     x: body.rx + localX * cosT - localY * sinT,
     y: body.ry + localX * sinT + localY * cosT,
   };
 }
 
-function resolveGroundContact(body, groundR) {
+function resolveGroundContact(body, groundR, geom) {
   const half = _bodyWidthOf(body) / 2;
   const H = _bodyHeightOf(body);
 
@@ -542,141 +553,148 @@ function resolveGroundContact(body, groundR) {
     const alt = r - groundR;
     if (alt < contactAlt) { contactAlt = alt; contact = c; }
   });
-  if (contactAlt > 0) return null; // nothing touching this tick
+  if (contactAlt > 0) return null;
 
   const cx = contact.p.x, cy = contact.p.y;
   const cr = Math.hypot(cx, cy) || 1;
-  const nx = cx / cr, ny = cy / cr;         // outward normal AT the actual contact point
-  const tx = -ny, ty = nx;                   // tangent direction
+  const nx = cx / cr, ny = cy / cr;
+  const tx = -ny, ty = nx;
 
-  // Offset from the tracked origin to the contact point. This is invariant
-  // under the rigid push below (a pure translation doesn't change relative
-  // offsets), so it's computed once, before shifting rx/ry.
-  const offX = cx - body.rx, offY = cy - body.ry;
+  // ---- Contact point relative to BASE ----
+  // Used only for the rigid-body velocity field v_p = v_base + ω × (p − base),
+  // because this sim stores BASE velocity in body.vx/body.vy.
+  const offBaseX = cx - body.rx, offBaseY = cy - body.ry;
 
-  // Push the WHOLE body back along the CONTACT point's normal by the
-  // penetration depth — not the origin's normal — so nose-first or
-  // corner-first penetration is corrected at the point that's actually
-  // embedded, instead of silently leaving it underground while only the
-  // origin gets snapped to the surface.
-  const depth = -contactAlt;
-  body.rx += nx * depth;
-  body.ry += ny * depth;
+  // ---- Contact point relative to COM ----
+  // FIX: the impulse/torque formula (r × n) needs the lever arm measured from
+  // the COM, because geom.I is defined about the COM (massProps.js:
+  // `moi: combined.moi // about stack COM`). Previously base-relative offX/offY
+  // were used here, giving a reference-frame mismatch — off-center (corner /
+  // nose) hits produced wrong-magnitude AND wrong-sign angular impulses, most
+  // visibly kicking a toppling rocket back toward vertical instead of letting
+  // it fall.
+  const comH = geom ? (geom.comH || 0) : 0;
+  const comW = geom ? (geom.comW || 0) : 0;
+  const comWorld = _rotatedPoint(body, comW, comH);
+  const offX = cx - comWorld.x, offY = cy - comWorld.y;
 
-  // Velocity AT the contact point for a rigid body rotating about the
-  // tracked origin: v_p = v_origin + omega × offset
-  // (2D cross product: omega × (ox,oy) = omega * (-oy, ox)).
-  const vpx = body.vx + body.omega * (-offY);
-  const vpy = body.vy + body.omega * (offX);
+  // ---- COM position relative to BASE (world frame) ----
+  // Needed to convert an impulse response computed in the COM frame back to
+  // the BASE velocity this sim actually integrates:
+  //   v_base = v_com + ω × (base − com)
+  //   Δv_base = Δv_com + Δω × (base − com)
+  // Without the second term, ω would update correctly but v_base would be left
+  // behind the rotation it just picked up.
+  const comOffX = comWorld.x - body.rx;
+  const comOffY = comWorld.y - body.ry;
 
-  const vr = vpx * nx + vpy * ny;   // + = leaving ground, - = moving into it
+  // Velocity AT the contact point (rigid body).
+  const vpx = body.vx + body.omega * (-offBaseY);
+  const vpy = body.vy + body.omega * (offBaseX);
+  const vr = vpx * nx + vpy * ny;
   const vt = vpx * tx + vpy * ty;
 
-  return { nx, ny, tx, ty, offX, offY, vr, vt, contactLabel: contact.label };
+  return { nx, ny, tx, ty, offX, offY, comOffX, comOffY, vr, vt, contactLabel: contact.label };
+}
+
+// Read-only version of resolveGroundContact's point sampling — returns just
+// the altitude of whichever of the body's 4 points (base-center, base-left,
+// base-right, nose) is lowest, without moving anything. Used to gate the
+// continuous restoring/toppling torque below on whether ANY part of the
+// body is actually near the ground — not just its origin/base-CENTER,
+// which rises well clear of 0.5m as soon as the body tilts even a modest
+// amount (only the trailing corner stays low during a tip). Gating on the
+// origin alone was silently switching the driving torque off as soon as a
+// body leaned over more than a few degrees, leaving nothing to keep a
+// toppling body rotating — it would just sit there until whatever residual
+// spin/bounce happened to decay to ~0, at whatever angle that left it,
+// instead of actually continuing to fall the way gravity would drive it.
+function _lowestPointAltitude(body, groundR) {
+  const half = _bodyWidthOf(body) / 2;
+  const H = _bodyHeightOf(body);
+  const pts = [
+    _rotatedPoint(body, 0, 0),
+    _rotatedPoint(body, -half, 0),
+    _rotatedPoint(body, half, 0),
+    _rotatedPoint(body, 0, H),
+  ];
+  let minAlt = Infinity;
+  pts.forEach(p => {
+    const alt = Math.hypot(p.x, p.y) - groundR;
+    if (alt < minAlt) minAlt = alt;
+  });
+  return minAlt;
 }
 
 function physicsStep(dt) {
   if (!state.bodies.length) return;
 
-  // Actuators affect only the active body's engines.
- 
-
   state.bodies.forEach((body, idx) => {
-  //if (body.settled) return;
-  const isActive = (idx === state.activeBodyIndex);
-  const geom = currentGeometry(body);
-  body._geomCache = geom; // let same-tick readers (telemetry, figure panel, camera) reuse this
+    const isActive = (idx === state.activeBodyIndex);
+    const geom = currentGeometry(body);
+    body._geomCache = geom; // let same-tick readers (telemetry, figure panel, camera) reuse this
 
-  applyActuatorRateLimitsForBody(body, dt);
+    applyActuatorRateLimitsForBody(body, dt);
 
-  const hasFuel = body.fuelMass > 0 && !body.crashed; // crashed = engines destroyed, no more thrust
-  const main = hasFuel ? computeMainThrustForBody(body, geom.comH) : zeroThrust();
-  const rcs = hasFuel ? computeRCSForBody(body, geom.comH, dt) : zeroRCS();
-  body.lastRcs = { firing: rcs.firing || {}, pod: rcs.pod || {} };
-  if (!hasFuel) body.engines.forEach(e => { e.currentF = 0; });
+    const hasFuel = body.fuelMass > 0 && !body.crashed; // crashed = engines destroyed, no more thrust
+    const main = hasFuel ? computeMainThrustForBody(body, geom.comH) : zeroThrust();
+    const rcs  = hasFuel ? computeRCSForBody(body, geom.comH, dt) : zeroRCS();
+    body.lastRcs = { firing: rcs.firing || {}, pod: rcs.pod || {} };
+    if (!hasFuel) body.engines.forEach(e => { e.currentF = 0; });
 
-  const extra = {
-  Fx: 0,
-  Fy: 0,
-  torque: 0,
-  I: geom.I,
-  comH: geom.comH,       // fixed for the step, same simplification already used for I
-  height: _bodyHeightOf(body), // THIS body's own height (discarded/staged bodies differ from the active stack)
-  aero: bodyAeroProfile(body), // THIS body's own per-member frontal area + CP geometry
-};
-  
-// ---- Ground contact (continuous forces, applied pre-integration) ----
-// While the base is near the ground, gravity acting at the COM against
-// contact at the lower base corner produces a continuous restoring/
-// toppling torque — this still needs to be applied BEFORE this tick's RK4
-// step since it's a real force driving the motion, not a collision to
-// resolve after the fact. The actual ground COLLISION (penetration + bounce
-// / landing) is handled separately, AFTER integration, by
-// resolveGroundContact() — see below.
-//   τ = m·g·( h_com·sin α  −  sgn(α)·R·cos α )
-//   Small α → restoring (rocket wobbles back to vertical).
-//   Large α → toppling (once tan|α| > R / h_com).
-const rB = Math.hypot(body.rx, body.ry);
-const altB = altitudeFromR(rB) - (CONFIG.LAUNCH_SITE_ALTITUDE || 0);
-if (altB <= 0.5) {// && !body.crashed) {
-  const localVert = Math.atan2(body.rx, body.ry);
-  const alpha = body.theta - localVert;
+    const extra = {
+      Fx: 0,
+      Fy: 0,
+      torque: 0,
+      I: geom.I,
+      comH: geom.comH,                 // fixed for the step, same simplification already used for I
+      height: _bodyHeightOf(body),     // THIS body's own height (discarded/staged bodies differ from the active stack)
+      aero: bodyAeroProfile(body),     // THIS body's own per-member frontal area + CP geometry
+    };
 
-  // Nose-tip / off-center collision is now handled AFTER integration, by
-  // resolveGroundContact() below, using this tick's FINAL rotated position
-  // — not here with the stale start-of-tick position. Checking it here
-  // (as this used to) was the source of real tunneling: a fast-rotating
-  // body's nose could swing underground WITHIN this tick's RK4 step, after
-  // this check already ran and found nothing, and the old post-step check
-  // only looked at the origin point — so the nose stayed buried until the
-  // origin itself eventually crossed the ground.
-  
-  // (2) Gravity torque about base — continuous and zero at α = 0.
-//     Two regimes:
-//       |comH·sin α| < effBase → COM within footprint → restoring
-//       |comH·sin α| ≥ effBase → COM beyond edge     → toppling
-if (Math.abs(alpha) > 1e-6) {
-  const gLocal = gravityAccel(body.rx, body.ry).g;
-  const baseR = _bodyWidthOf(body) / 2;
-  const legMult = (body.legs && body.legs.progress > 0.5) ? 1.7 : 1.0;
-  const effBase = baseR * legMult;
-  const comOffset = geom.comH * Math.sin(alpha);
-  if (Math.abs(comOffset) < effBase) {
-    extra.torque += -geom.M * gLocal * comOffset;
-  } else {
-    const dir = Math.sign(alpha);
-    const excess = Math.abs(comOffset) - effBase;
-    extra.torque += geom.M * gLocal * excess * dir;
-  }
-}
-  
-  // Very light ground friction — kills numerical drift; the actual
-  // oscillation damping comes from the restoring torque's sign flip.
-  body.omega *= Math.pow(0.998, dt * 60);
-}
-  
-  let mdotTotal = main.mdot + rcs.mdot;
-  
+    // ---- Ground contact (continuous forces, applied pre-integration) ----
+    // While the base is near the ground, gravity acting at the COM against
+    // contact at the lower base corner produces a continuous restoring/
+    // toppling torque — this still needs to be applied BEFORE this tick's
+    // RK4 step since it's a real force driving the motion, not a collision
+    // to resolve after the fact. (unchanged block)
+    const groundR0 = CONFIG.EARTH_RADIUS + (CONFIG.LAUNCH_SITE_ALTITUDE || 0);
+    const altB = _lowestPointAltitude(body, groundR0);
+    if (altB <= 0.5) {
+      const localVert = Math.atan2(body.rx, body.ry);
+      const alpha = body.theta - localVert;
+
+      if (Math.abs(alpha) > 1e-6) {
+        const gLocal = gravityAccel(body.rx, body.ry).g;
+        const baseR = _bodyWidthOf(body) / 2;
+        const legMult = (body.legs && body.legs.progress > 0.5) ? 1.7 : 1.0;
+        const effBase = baseR * legMult;
+        const comOffset = geom.comH * Math.sin(alpha);
+        if (Math.abs(comOffset) < effBase) {
+          extra.torque += -geom.M * gLocal * comOffset;
+        } else {
+          const dir = Math.sign(alpha);
+          const excess = Math.abs(comOffset) - effBase;
+          extra.torque += geom.M * gLocal * excess * dir;
+        }
+      }
+
+      // Very light ground friction — kills numerical drift.
+      body.omega *= Math.pow(0.998, dt * 60);
+    }
+
+    let mdotTotal = main.mdot + rcs.mdot;
 
     if (isActive) {
-      // Reuse the main/rcs already computed once above for this body
-      // (computeMainThrustForBody/computeRCSForBody) instead of calling the
-      // legacy computeMainThrust()/computeRCS() shims again. Calling
-      // computeRCSForBody a second time per tick was advancing the RCS PWM
-      // delta-sigma clock by 2×dt instead of 1×dt for the active body,
-      // desyncing the top-pod duty-cycle timing from real elapsed time.
       if (!hasFuel) ENGINES.forEach(e => { e.currentF = 0; });
 
-      // Add (not assign) so the ground-tipping torque added above is not
-      // wiped out.
+      // Add (not assign) so the ground-tipping torque added above is not wiped out.
       extra.Fx += main.Fx + rcs.Fx;
       extra.Fy += main.Fy + rcs.Fy;
       extra.torque += main.torque + rcs.torque;
       mdotTotal = main.mdot + rcs.mdot;
 
-      // Representative (pre-RK4) aero snapshot for telemetry — the actual
-      // integration re-evaluates AoA/drag-torque fresh at every RK4
-      // sub-stage inside derivatives(); this is just a display value.
+      // Representative (pre-RK4) aero snapshot for telemetry.
       const aeroTelemetry = computeDragAero(body, extra);
 
       lastForces = {
@@ -688,7 +706,7 @@ if (Math.abs(alpha) > 1e-6) {
       };
     }
 
-    // RK4 integration on THIS body.
+    // ---- RK4 integration on THIS body ----
     const s0 = body;
     const k1 = derivatives(s0, extra);
     const s1 = stepState(s0, k1, dt / 2);
@@ -707,12 +725,20 @@ if (Math.abs(alpha) > 1e-6) {
 
     body.fuelMass = Math.max(0, body.fuelMass - mdotTotal * dt);
 
-    // Ground contact — rigid-body collision against the body's actual
-    // rotated silhouette (see resolveGroundContact() above), not just its
-    // tracked origin point. Fixes nose/corner-first tunneling.
+    // ---- Ground contact resolution (rigid body, against actual silhouette) ----
     const groundR = CONFIG.EARTH_RADIUS + (CONFIG.LAUNCH_SITE_ALTITUDE || 0);
-    const contact = resolveGroundContact(body, groundR);
-    if (contact) {
+
+    // FIX: `geom` now passed in, so resolveGroundContact() can compute the
+    // COM-relative lever arms + the base↔COM offset vector. Without geom,
+    // the impulse formula used base-relative offsets against a COM-relative I
+    // — a reference-frame mismatch that gave off-center (corner/nose) hits
+    // wrong-sign angular impulses, kicking a toppling rocket back toward
+    // vertical instead of letting it fall.
+    const contact = resolveGroundContact(body, groundR, geom);
+
+    if (!contact) {
+      body._wasGrounded = false;
+    } else {
       const descentSpeed = -contact.vr;
       const hSpeed = Math.abs(contact.vt);
 
@@ -721,14 +747,14 @@ if (Math.abs(alpha) > 1e-6) {
       const bodyUpX = -Math.sin(body.theta), bodyUpY = Math.cos(body.theta);
       const tiltDeg = Math.acos(Math.max(-1, Math.min(1, bodyUpX * ux + bodyUpY * uy))) * 180 / Math.PI;
 
-      // A nose-first strike is always fatal at any speed — legs live at
-      // the base, so hitting nose-first can never register as a landing.
       const noseStrike = contact.contactLabel === 'nose';
 
-      if (noseStrike || descentSpeed > 0.3 || hSpeed > 0.3) {
-        // Recovery type resolved from THIS body's own bottom member (same
-        // per-body pattern as engines/RCS) — a discarded/staged body can
-        // carry a different recovery type than whichever body is active.
+      const wasGrounded = !!body._wasGrounded;
+      body._wasGrounded = true;
+      const freshImpact = !wasGrounded && (noseStrike || descentSpeed > 0.3 || hSpeed > 0.3);
+
+      if (freshImpact) {
+        // Recovery type resolved from THIS body's own bottom member.
         const bottomMember = (body.members && body.members[0]) ? body.members[0] : null;
         const recovery = bottomMember
           ? (bottomMember.hasRecovery === false ? null
@@ -736,11 +762,6 @@ if (Math.abs(alpha) > 1e-6) {
           : CONFIG.RECOVERY_TYPE;
         const canLandOnLegs = !!(recovery && recovery.capabilities && recovery.capabilities.deploysOnVehicle);
         let landedOk = false;
-        // Any body can land, not just the currently active one — a
-        // discarded booster that had its legs deployed before separation
-        // can still touch down safely on its own; its legs stay frozen at
-        // whatever deploy state they were in when control left it (see
-        // updateLegs()), rather than never being able to land at all.
         if (canLandOnLegs && !noseStrike) {
           const minDeploy = (recovery.frame && recovery.frame.landingMinDeploy !== undefined)
             ? recovery.frame.landingMinDeploy : CONFIG.LANDING_MIN_LEG_DEPLOY;
@@ -752,60 +773,62 @@ if (Math.abs(alpha) > 1e-6) {
           landedOk = legsReady && speedOk && tiltOk && rateOk;
         }
 
-        // Proper rigid-body impulse AT THE ACTUAL CONTACT POINT — this is
-        // what makes an off-center (corner/nose) hit correctly pick up
-        // spin from the impact instead of just reflecting the body's
-        // overall velocity in place. Standard 2D point-contact impulse:
-        //   K  = 1/M + (r×n)²/I     (effective inverse mass at this point)
-        //   J  = (targetVr − vr) / K
-        //   Δv = (J/M)·n            Δomega = (r×n)·J / I
         const M = geom.M, I = Math.max(1e-6, geom.I);
+
+        // FIX: `contact.offX/offY` are now COM-relative (returned by the
+        // patched resolveGroundContact), so this cross-product matches the
+        // reference frame that geom.I is defined in.
         const rCrossN = contact.offX * contact.ny - contact.offY * contact.nx;
         const K = (1 / M) + (rCrossN * rCrossN) / I;
-        const RESTITUTION = 0.35; // 0 = sticks on impact, 1 = perfectly elastic
+        const RESTITUTION = 0.35;
         const e = landedOk ? 0 : RESTITUTION;
         const targetVr = landedOk ? 0 : descentSpeed * e;
         const J = (targetVr - contact.vr) / K;
 
-        body.vx += (J / M) * contact.nx;
-        body.vy += (J / M) * contact.ny;
-        body.omega += (rCrossN * J) / I;
+        // FIX: Δω computed from the COM-relative cross term, then translated
+        // back to a BASE-frame velocity update:
+        //   Δv_base = Δv_com + Δω × (base − com)
+        //           = J·n/M   + Δω · (comOffY, −comOffX)
+        // (because (base − com) = −(comOffX, comOffY) and 2D cross with +z ω).
+        // Previously only Δv_com was applied — so ω changed but base velocity
+        // was left behind the rotation it had just picked up, which let the
+        // impulse silently "unwind" itself over the next few ticks.
+        const dOmega = (rCrossN * J) / I;
+        body.vx += (J / M) * contact.nx + dOmega * contact.comOffY;
+        body.vy += (J / M) * contact.ny - dOmega * contact.comOffX;
+        body.omega += dOmega;
 
         if (landedOk) {
           body.landed = true;
         } else {
-          // Bleed off tangential speed + spin (ground friction) — kept as
-          // the existing simple damping-factor model rather than a full
-          // tangential-impulse solve.
           body.crashed = true;
-          const GROUND_FRICTION = 0.55; // fraction of tangential speed KEPT per bounce
-          const SPIN_DAMPING = 0.6;     // fraction of spin KEPT per bounce
+          const GROUND_FRICTION = 0.55;
+          const SPIN_DAMPING = 0.6;
           const vtNow = body.vx * contact.tx + body.vy * contact.ty;
           const dvt = vtNow * GROUND_FRICTION - vtNow;
           body.vx += dvt * contact.tx;
           body.vy += dvt * contact.ty;
           body.omega *= SPIN_DAMPING;
         }
-      } else if (contact.vr < 0) {
-        // Gentle/near-rest contact — just cancel the small residual inward
-        // velocity at the contact point (still via the proper K, so it
-        // doesn't inject spurious spin) so it doesn't keep nudging into
-        // the ground each tick.
-        const M = geom.M, I = Math.max(1e-6, geom.I);
-        const rCrossN = contact.offX * contact.ny - contact.offY * contact.nx;
-        const K = (1 / M) + (rCrossN * rCrossN) / I;
-        const J = -contact.vr / K;
-        body.vx += (J / M) * contact.nx;
-        body.vy += (J / M) * contact.ny;
-        body.omega += (rCrossN * J) / I;
+      } else {
+        // SUSTAINED contact — non-bouncing constraint, no anti-topple kick.
+        if (contact.vr < 0) {
+          const M = geom.M, I = Math.max(1e-6, geom.I);
+
+          // FIX: same COM-relative lever arm + base-frame Δv correction.
+          const rCrossN = contact.offX * contact.ny - contact.offY * contact.nx;
+          const K = (1 / M) + (rCrossN * rCrossN) / I;
+          const J = -contact.vr / K;
+
+          const dOmega = (rCrossN * J) / I;
+          body.vx += (J / M) * contact.nx + dOmega * contact.comOffY;
+          body.vy += (J / M) * contact.ny - dOmega * contact.comOffX;
+          body.omega += dOmega;
+        }
+        if (noseStrike) body.crashed = true;
       }
 
-      // Once a crashed body's bounce has died down to essentially nothing,
-      // consider it fully at rest — stops it bouncing forever at
-      // ever-smaller (but never quite zero) amplitude, and lets the sim
-      // stop stepping it (see the `if (body.settled) return;` guard above).
-      // Its final resting tilt is left exactly as-is — a toppled-over
-      // crash should stay toppled, not get snapped upright.
+      // Rest detection for a crashed body — unchanged.
       if (body.crashed) {
         const restSpeed = Math.hypot(body.vx, body.vy);
         if (restSpeed < 0.4 && Math.abs(body.omega) < 0.05) {
@@ -817,34 +840,22 @@ if (Math.abs(alpha) > 1e-6) {
   });
 
   // Step 2 (collision.js) — broad-phase body-vs-body candidate detection.
-  // Detection only, once per tick after every body has finished integrating
-  // this step; nothing is resolved yet (no narrow-phase/impulse response —
-  // that's Step 3/4). Stashed on state so telemetry/debug tooling and the
-  // next steps can read it without recomputing.
   state.collisionPairs = (typeof broadPhaseCollisionPairs === 'function')
     ? broadPhaseCollisionPairs()
     : [];
 
-  // Step 3 (collision.js) — narrow-phase oriented capsule-vs-capsule test on
-  // whatever broad-phase flagged as candidates. Still detection only: this
-  // produces exact contact normal/depth/point per pair but does not move
-  // any body or touch any velocity — that's Step 4 (impulse response, not
-  // yet built).
+  // Step 3 (collision.js) — narrow-phase capsule-vs-capsule test.
   state.collisionContacts = (typeof narrowPhaseCollisionContacts === 'function')
     ? narrowPhaseCollisionContacts(state.collisionPairs)
     : [];
 
-  // Step 4 (collision.js) — impulse response. Pushes overlapping bodies
-  // apart (mass-weighted) and updates both bodies' vx/vy/omega at each
-  // confirmed contact point. Runs after every body's own integration for
-  // this tick, so it acts on this tick's final positions/velocities.
+  // Step 4 (collision.js) — impulse response.
   if (typeof resolveBodyContacts === 'function') {
     resolveBodyContacts(state.collisionContacts);
   }
 
   state.simTime += dt;
 }
-
 function resetState(initialAltitude) {
   resetMerges();
   clearRCS();

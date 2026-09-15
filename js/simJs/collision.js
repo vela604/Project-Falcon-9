@@ -275,10 +275,22 @@ function resolveBodyContact(contact) {
   const M_A = Math.max(1e-6, geomA.M), I_A = Math.max(1e-6, geomA.I);
   const M_B = Math.max(1e-6, geomB.M), I_B = Math.max(1e-6, geomB.I);
 
+  // FIX: impulse lever arms must be measured from COM (I is about COM).
+  // contact.offA/offB stay base-relative — those are still needed for the
+  // rigid-body velocity-at-contact formula below.
+  const comA = _rotatedPoint(bodyA, geomA.comW || 0, geomA.comH || 0);
+  const comB = _rotatedPoint(bodyB, geomB.comW || 0, geomB.comH || 0);
+  const offAX = contact.point.x - comA.x, offAY = contact.point.y - comA.y;
+  const offBX = contact.point.x - comB.x, offBY = contact.point.y - comB.y;
+
+  // COM offset from base (world frame) — converts COM-frame Δv → base-frame.
+  const comOffAX = comA.x - bodyA.rx, comOffAY = comA.y - bodyA.ry;
+  const comOffBX = comB.x - bodyB.rx, comOffBY = comB.y - bodyB.ry;
+
   const { nx, ny } = contact.normal;
   const tx = -ny, ty = nx;
 
-  // ---- Position correction: split penetration by inverse mass ----
+  // ---- Position correction: split penetration by inverse mass (unchanged) ----
   const invMA = 1 / M_A, invMB = 1 / M_B;
   const invMSum = invMA + invMB;
   if (invMSum > 0 && contact.depth > 0) {
@@ -288,68 +300,78 @@ function resolveBodyContact(contact) {
     bodyB.rx -= nx * pushB; bodyB.ry -= ny * pushB;
   }
 
-  // ---- Velocity at the contact point for each body (rigid-body v_p = v + ω×r) ----
+  // ---- Velocity AT the contact point (rigid body: v_p = v_base + ω × (p − base)) ----
   const vAx = bodyA.vx + bodyA.omega * (-contact.offA.y);
   const vAy = bodyA.vy + bodyA.omega * (contact.offA.x);
   const vBx = bodyB.vx + bodyB.omega * (-contact.offB.y);
   const vBy = bodyB.vy + bodyB.omega * (contact.offB.x);
 
   const rvx = vAx - vBx, rvy = vAy - vBy;
-  const vn = rvx * nx + rvy * ny; // + = separating, - = approaching
+  const vn = rvx * nx + rvy * ny;
 
-  const rCrossN_A = contact.offA.x * ny - contact.offA.y * nx;
-  const rCrossN_B = contact.offB.x * ny - contact.offB.y * nx;
+  // COM-relative cross terms now (was base-relative before → wrong torque)
+  const rCrossN_A = offAX * ny - offAY * nx;
+  const rCrossN_B = offBX * ny - offBY * nx;
   const K_n = invMA + invMB + (rCrossN_A * rCrossN_A) / I_A + (rCrossN_B * rCrossN_B) / I_B;
   if (K_n <= 0) return;
 
-  // Two-tier response, mirroring resolveGroundContact()'s hard-hit vs.
-  // gentle-rest split:
-  //   hard hit (approaching faster than HARD_HIT_SPEED) → restitution
-  //     bounce + tangential friction + spin damping.
-  //   gentle/resting contact → just cancel the small residual approach
-  //     velocity (e = 0, no extra damping) so it doesn't keep nudging
-  //     into the other body tick after tick, without artificially
-  //     killing spin/tangential motion on a contact that's just resting.
-  const HARD_HIT_SPEED = 0.3; // m/s, same threshold Step 1 uses for crash vs. settle
+  const HARD_HIT_SPEED = 0.3;
 
   if (vn < -HARD_HIT_SPEED) {
     const J = -(1 + BODY_RESTITUTION) * vn / K_n;
-    bodyA.vx += (J * invMA) * nx; bodyA.vy += (J * invMA) * ny;
-    bodyA.omega += (rCrossN_A * J) / I_A;
-    bodyB.vx -= (J * invMB) * nx; bodyB.vy -= (J * invMB) * ny;
-    bodyB.omega -= (rCrossN_B * J) / I_B;
 
-    // ---- Friction: damp tangential relative speed at the contact (flat
-    // fraction kept, mass-weighted split — see file header note) ----
+    const dOmegaA =  (rCrossN_A * J) / I_A;   // A gets +J·n
+    const dOmegaB = -(rCrossN_B * J) / I_B;   // B gets −J·n
+
+    bodyA.vx += ( J * invMA) * nx + dOmegaA * comOffAY;
+    bodyA.vy += ( J * invMA) * ny - dOmegaA * comOffAX;
+    bodyA.omega += dOmegaA;
+
+    bodyB.vx += (-J * invMB) * nx + dOmegaB * comOffBY;
+    bodyB.vy += (-J * invMB) * ny - dOmegaB * comOffBX;
+    bodyB.omega += dOmegaB;
+
+    // ---- Friction (tangential) — same reference-frame fix ----
     const vAx2 = bodyA.vx + bodyA.omega * (-contact.offA.y);
     const vAy2 = bodyA.vy + bodyA.omega * (contact.offA.x);
     const vBx2 = bodyB.vx + bodyB.omega * (-contact.offB.y);
     const vBy2 = bodyB.vy + bodyB.omega * (contact.offB.x);
     const vt = (vAx2 - vBx2) * tx + (vAy2 - vBy2) * ty;
 
-    const rCrossT_A = contact.offA.x * ty - contact.offA.y * tx;
-    const rCrossT_B = contact.offB.x * ty - contact.offB.y * tx;
+    const rCrossT_A = offAX * ty - offAY * tx;   // COM-relative
+    const rCrossT_B = offBX * ty - offBY * tx;
     const K_t = invMA + invMB + (rCrossT_A * rCrossT_A) / I_A + (rCrossT_B * rCrossT_B) / I_B;
 
     if (Math.abs(vt) > 1e-6 && K_t > 0) {
       const targetVt = vt * BODY_FRICTION_KEEP;
       const Jt = (targetVt - vt) / K_t;
-      bodyA.vx += (Jt * invMA) * tx; bodyA.vy += (Jt * invMA) * ty;
-      bodyA.omega += (rCrossT_A * Jt) / I_A;
-      bodyB.vx -= (Jt * invMB) * tx; bodyB.vy -= (Jt * invMB) * ty;
-      bodyB.omega -= (rCrossT_B * Jt) / I_B;
+      const dOmegaTA =  (rCrossT_A * Jt) / I_A;
+      const dOmegaTB = -(rCrossT_B * Jt) / I_B;
+
+      bodyA.vx += ( Jt * invMA) * tx + dOmegaTA * comOffAY;
+      bodyA.vy += ( Jt * invMA) * ty - dOmegaTA * comOffAX;
+      bodyA.omega += dOmegaTA;
+
+      bodyB.vx += (-Jt * invMB) * tx + dOmegaTB * comOffBY;
+      bodyB.vy += (-Jt * invMB) * ty - dOmegaTB * comOffBX;
+      bodyB.omega += dOmegaTB;
     }
 
     bodyA.omega *= BODY_SPIN_DAMPING;
     bodyB.omega *= BODY_SPIN_DAMPING;
   } else if (vn < 0) {
-    // Gentle contact — cancel just the residual approach velocity (e = 0),
-    // via the same proper K so it doesn't inject spurious spin.
+    // Gentle contact — cancel only residual approach velocity (e = 0).
     const J = -vn / K_n;
-    bodyA.vx += (J * invMA) * nx; bodyA.vy += (J * invMA) * ny;
-    bodyA.omega += (rCrossN_A * J) / I_A;
-    bodyB.vx -= (J * invMB) * nx; bodyB.vy -= (J * invMB) * ny;
-    bodyB.omega -= (rCrossN_B * J) / I_B;
+    const dOmegaA =  (rCrossN_A * J) / I_A;
+    const dOmegaB = -(rCrossN_B * J) / I_B;
+
+    bodyA.vx += ( J * invMA) * nx + dOmegaA * comOffAY;
+    bodyA.vy += ( J * invMA) * ny - dOmegaA * comOffAX;
+    bodyA.omega += dOmegaA;
+
+    bodyB.vx += (-J * invMB) * nx + dOmegaB * comOffBY;
+    bodyB.vy += (-J * invMB) * ny - dOmegaB * comOffBX;
+    bodyB.omega += dOmegaB;
   }
 }
 
