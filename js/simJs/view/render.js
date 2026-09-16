@@ -1061,31 +1061,7 @@ if (body.payloadBody) {
       ctx.restore();
       yOffsetPx += mH;
     });
-  }/* else {
-    // Fallback: single-body (should not normally hit).
-    const fb = (typeof ACTIVE_VEHICLE_FOR_HARDWARE !== 'undefined') ? ACTIVE_VEHICLE_FOR_HARDWARE : null;
-    const fbEngineLayout = (fb && fb.engineTypeId && typeof getComponentType === 'function')
-      ? getComponentType(fb.engineTypeId) : null;
-    drawRocketArt(ctx, W, H, mpp, {
-      legsProgress: isActive ? legs.progress : 0,
-      legsState: isActive ? legs : null,
-      firing: (body.lastRcs && body.lastRcs.firing) || {},
-  pod: (body.lastRcs && body.lastRcs.pod) || {},
-      rcsTopY: CONFIG.RCS_TOP_Y,
-      rcsBottomY: CONFIG.RCS_BOTTOM_Y,
-      recoveryType: CONFIG.RECOVERY_TYPE,
-      rcsType: CONFIG.RCS_TYPE,
-      stageRole: fb ? fb.stageRole : 'rocket',
-      noseCurveness: fb ? fb.noseCurveness : 0,
-      bodyDesign: fb ? fb.bodyDesign : undefined,
-      payloadSpaceColor: (fb && fb.payloadSpace && fb.payloadSpace.color) ? fb.payloadSpace.color : undefined,
-      stagePayload: (fb && typeof buildStagePayload === 'function') ? buildStagePayload(fb) : null,
-      engineLayout: fbEngineLayout,
-      engineThrusters: fb ? fb.engineThrusters : null,
-      params: fb ? fb.params : null,
-      stageAboveBellHeight: 0,
-    });
-  }*/
+  }
 
   ctx.restore();
 }
