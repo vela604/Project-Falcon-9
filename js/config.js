@@ -83,7 +83,16 @@ const RESOLVED_RCS_TYPE = (typeof getComponentType === 'function') ?
   const CONFIG = {
 
   // ---------------- Universal / Earth ----------------
-  EARTH_RADIUS: 6371000,          // m
+  EARTH_RADIUS: 6371000, // m
+  GM_EARTH: 3.986004418e14, // m^3/s^2
+  
+  // Earth rotation — sidereal day, rad/s. Real value: 2π / 86164.0905 s.
+  EARTH_OMEGA: 7.2921159e-5, // rad/s
+  
+  // Where on the Earth circle the launch site sits, measured CCW from
+  // the +y axis (i.e. "up" at t=0). Change this to move the site around
+  // the planet — the pad, gravity turn, and initial velocity all follow.
+  LAUNCH_SITE_ANGLE_0: 0, // rad
   GM_EARTH: 3.986004418e14,       // m^3/s^2  (standard gravitational parameter)
   SEA_LEVEL_DENSITY: 1.225,       // kg/m^3
   SCALE_HEIGHT: 8500,             // m (exponential atmosphere model)

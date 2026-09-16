@@ -35,6 +35,12 @@
         <button class="btn btn-stop" id="btnStop"><span class="btn-ic">⏸</span>Stop</button>
         <button class="btn btn-reset" id="btnReset"><span class="btn-ic">↺</span>Reset</button>
       </div>
+      <div class="tb-group" id="timeWarpGroup">
+  <span style="font-size:11px;color:var(--dim);font-family:var(--font-mono);">Warp:</span>
+  <button class="btn warp-btn active" data-warp="1">1×</button>
+  <button class="btn warp-btn" data-warp="10">10×</button>
+  <button class="btn warp-btn" data-warp="40">40×</button>
+</div>
 
       <div class="tb-sep"></div>
 
@@ -60,7 +66,7 @@
 
       <div class="tb-group">
         <button class="btn icon-btn active" id="btnFollow" title="Follow rocket">🎯</button>
-        <button class="btn icon-btn" id="btnFree" title="Free camera">🖐</button>
+        <button class="btn icon-btn" id="btnFree" title="Planet view">🖐</button>
         <button class="btn icon-btn" id="btnZoomOut" title="Zoom out">−</button>
         <button class="btn icon-btn" id="btnZoomIn" title="Zoom in">+</button>
       </div>
@@ -81,9 +87,12 @@
       <div class="tb-sep"></div>
 
       <div class="tb-group">
-        <label class="chip-toggle"><input type="checkbox" id="toggleGrid" checked><span>Grid</span></label>
-        <label class="chip-toggle"><input type="checkbox" id="toggleVectors" checked><span>Vectors</span></label>
-      </div>
+  <label class="chip-toggle"><input type="checkbox" id="toggleGrid" checked><span>Grid</span></label>
+  <label class="chip-toggle"><input type="checkbox" id="toggleVectors" checked><span>Vectors</span></label>
+  <label class="chip-toggle"><input type="checkbox" id="toggleTrajectory"><span>Trajectory</span></label>
+  <label class="chip-toggle"><input type="checkbox" id="toggleEarthFixed"><span>Earth-fixed</span></label>
+  <label class="chip-toggle"><input type="checkbox" id="toggleAtmosphere" checked><span>Atmosphere</span></label>
+</div>
 
       <div class="tb-sep"></div>
 
@@ -107,10 +116,11 @@
     <div id="telemetryPanel">
       <div class="tele-head">TELEMETRY</div>
       <div class="tele-grid">
-        <div class="tele-row"><span class="tele-sym">h</span><span class="tele-val" id="t-h">0</span></div>
-        <div class="tele-row"><span class="tele-sym">v</span><span class="tele-val" id="t-v">0</span></div>
-        <div class="tele-row"><span class="tele-sym">vx</span><span class="tele-val" id="t-vx">0</span></div>
-        <div class="tele-row"><span class="tele-sym">vy</span><span class="tele-val" id="t-vy">0</span></div>
+        <div class="tele-row"><span class="tele-sym">x</span><span class="tele-val" id="t-x">0</span></div>
+<div class="tele-row"><span class="tele-sym">h</span><span class="tele-val" id="t-h">0</span></div>
+<div class="tele-row"><span class="tele-sym">v</span><span class="tele-val" id="t-v">0</span></div>
+<div class="tele-row"><span class="tele-sym">vr</span><span class="tele-val" id="t-vr">0</span></div>
+<div class="tele-row"><span class="tele-sym">vt</span><span class="tele-val" id="t-vt">0</span></div>
         <div class="tele-row"><span class="tele-sym">θ</span><span class="tele-val" id="t-theta">0</span></div>
         <div class="tele-row"><span class="tele-sym">ω</span><span class="tele-val" id="t-omega">0</span></div>
         <div class="tele-row"><span class="tele-sym">m</span><span class="tele-val" id="t-m">0</span></div>
@@ -255,20 +265,55 @@
   </div>
 </div>
 
+<!-- ============================================================
+     Script load order — worker architecture
+     ============================================================
+     Main thread keeps ALL the same modules loaded as before, because
+     rendering, telemetry, and the figure panel still read from `state`,
+     `ENGINES`, `legs`, `rcsCmd`, etc. What's different is that
+     `physicsStep()` is never called on the main thread — the physics
+     runs inside `physics.worker.js`, and `workerBridge.js` keeps the
+     main-thread `state` mirror in sync with the worker's snapshot.
+
+     Order matters:
+       1. Data layer + config (componentLibrary → fleet → config)
+       2. Sim-side modules that DEFINE state/proxies (environment,
+          vehicle→ENGINES, rcs→rcsCmd, physics→state+legs)
+       3. workerBridge — must be after physics.js so `state` exists
+          when the snapshot handler tries to write into it
+       4. Everything else (controls, art, render, telemetry, main)
+     ============================================================ -->
+
+<!-- ============================================================
+     Script load order — worker architecture
+     ============================================================ -->
+
+<!-- 1. Data layer + config -->
 <script src="js/componentLibrary.js"></script>
 <script src="js/customDesign.js"></script>
 <script src="js/fleet.js"></script>
 <script src="js/config.js"></script>
-<script src="js/simJs/massProps.js"></script>
-<script src="js/simJs/environment.js"></script>
-<script src="js/simJs/vehicle.js"></script>
-<script src="js/simJs/rcs.js"></script>
-<script src="js/simJs/physics.js"></script>
-<script src="js/simJs/collision.js"></script>
-<script src="js/simJs/controls.js"></script>
-<script src="js/simJs/rocketArt.js"></script>
-<script src="js/simJs/render.js"></script>
-<script src="js/simJs/telemetry.js"></script>
+
+<!-- 2. Core (physics / math / environment) — defines state + proxies -->
+<script src="js/simJs/core/massProps.js"></script>
+<script src="js/simJs/core/environment.js"></script>
+<script src="js/simJs/core/vehicle.js"></script>
+<script src="js/simJs/core/rcs.js"></script>
+<script src="js/simJs/core/physics.js"></script>
+<script src="js/simJs/core/collision.js"></script>
+<script src="js/simJs/core/trajectoryMath.js"></script>
+
+<!-- 3. Worker bridge — after physics.js so `state` exists -->
+<script src="js/simJs/threads/workerBridge.js"></script>
+
+<!-- 4. View / UI -->
+<script src="js/simJs/view/controls.js"></script>
+<script src="js/simJs/view/rocketArt.js"></script>
+<script src="js/simJs/view/predictedTrajectory.js"></script>
+<script src="js/simJs/view/render.js"></script>
+<script src="js/simJs/view/telemetry.js"></script>
 <script src="js/simJs/main.js"></script>
+
+
 </body>
 </html>

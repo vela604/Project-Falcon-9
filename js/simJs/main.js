@@ -190,16 +190,28 @@ function bindRCSControls() {
 }
 
 function bindMiscToggles() {
-  document.getElementById('toggleGrid').addEventListener('change', (e) => { showGrid = e.target.checked; });
-  document.getElementById('toggleVectors').addEventListener('change', (e) => { showVectors = e.target.checked; });
-
-  document.getElementById('btnSidePanel').addEventListener('click', () => togglePanel('sidePanel'));
-  document.getElementById('btnWindPanel').addEventListener('click', () => togglePanel('windPanel'));
-  document.getElementById('btnGraphPanel').addEventListener('click', () => togglePanel('graphPanel'));
-  document.getElementById('btnMergePanel').addEventListener('click', () => togglePanel('mergePanel'));
-  document.getElementById('btnGlossary').addEventListener('click', () => togglePanel('glossaryPanel'));
-
+  const bind = (id, event, handler) => {
+    const el = document.getElementById(id);
+    if (!el) { console.warn('bindMiscToggles: no #' + id); return; }
+    el.addEventListener(event, handler);
+  };
+  
+  bind('toggleGrid', 'change', (e) => { showGrid = e.target.checked; });
+  bind('toggleVectors', 'change', (e) => { showVectors = e.target.checked; });
+  bind('toggleTrajectory', 'change', (e) => { showTrajectory = e.target.checked; });
+  bind('toggleAtmosphere', 'change', (e) => {
+    atmosphereEnabled = e.target.checked;
+    WorkerBridge.send({ type: 'setAtmosphere', enabled: e.target.checked });
+  });
+  
+  bind('btnSidePanel', 'click', () => togglePanel('sidePanel'));
+  bind('btnWindPanel', 'click', () => togglePanel('windPanel'));
+  bind('btnGraphPanel', 'click', () => togglePanel('graphPanel'));
+  bind('btnMergePanel', 'click', () => togglePanel('mergePanel'));
+  bind('btnGlossary', 'click', () => togglePanel('glossaryPanel'));
+  
   document.querySelectorAll('.panel-close').forEach(btn => {
+    if (!btn) return;
     btn.addEventListener('click', () => togglePanel(btn.dataset.target));
   });
 }
@@ -214,25 +226,21 @@ function frame(ts) {
   if (lastFrameTime === null) lastFrameTime = ts;
   let frameDt = (ts - lastFrameTime) / 1000;
   lastFrameTime = ts;
-  frameDt = Math.min(frameDt, 0.1); // clamp huge gaps (tab switch etc.)
-
-  if (simRunning && !simPaused) {
-    accumulator += frameDt;
-    while (accumulator >= CONFIG.DT) {
-      physicsStep(CONFIG.DT);
-      accumulator -= CONFIG.DT;
-    }
+  frameDt = Math.min(frameDt, 0.1);
+  
+  // Agar worker ne abhi state nahi bheji, render skip karo.
+  if (!state.bodies || !state.bodies.length) {
+    requestAnimationFrame(frame);
+    return;
   }
+  
+  // ... baaki poora frame code ...
 
-  // Landing legs are ground-support-equipment style controls (like deploying
-  // them while parked on the pad before launch) — they animate on real
-  // elapsed time regardless of whether the simulation itself is running or
-  // paused, unlike the physics state above.
-  updateLegs(frameDt);
 
-  renderFrame();
+
+  
   drawFigurePanel();
-  drawBasalView();
+  
   drawGraphs();
   updateTelemetry();
   updateStatusBar();
@@ -254,52 +262,102 @@ if (fairBtn) fairBtn.disabled = !canSplitFairingNow();
   
 
 function bootstrap() {
+  // Worker ko pehle spawn karo aur hydrate karo.
+  WorkerBridge.init();
+  hydrateWorkerFromLocalStorage();
   
-  resetState(0);
-  
-  initCanvas();
-  initFigureCanvas();
-  initBasalCanvas();
-  
-  // Legs availability: hide the button entirely if the active stack's
-  // bottom member has no recovery, or a recovery type that doesn't deploy
-  // legs on the vehicle (e.g. a catch-fitting type, or a booster with
-  // hasRecovery:false).
-  const recovery = (typeof CONFIG !== 'undefined') ? CONFIG.RECOVERY_TYPE : null;
-  const hasLegs = !!(recovery &&
-    recovery.capabilities &&
-    recovery.capabilities.deploysOnVehicle);
-  const legsBtn = document.getElementById('btnLegs');
-  if (legsBtn && !hasLegs) {
-    // Hide the whole toolbar group (button + its separator) for a cleaner look.
-    const group = legsBtn.closest('.tb-group');
-    if (group) group.style.display = 'none';
-    else legsBtn.style.display = 'none';
-  }
-  // Global, set once per page-load — the stack doesn't change mid-sim.
-// (User must reload after changing the stack, same as any CONFIG change.)
-const SIM_STACK_MEMBERS = (typeof getActiveStackMembers === 'function')
-  ? getActiveStackMembers()
-  : [];
-  
-  bindSimControls();
-  bindLegsControl();
-  bindCenterControls();
-  bindRCSControls();
-  bindMergeControls();
-  bindCameraControls();
-  refreshFollowBodySelect();
-  bindWindPanel();
-  bindQuickThrottle();
-  bindFuelPanel();
-  bindMiscToggles();
+  // Worker ke pehle state snapshot aane ka wait karo, tab tak kuch
+  // render mat karo — kyunki state.bodies khaali hoga aur ENGINES proxy
+  // crash karega.
+WorkerBridge.onReady(() => {
+  // ---- Spawn render worker ----
+  const mainCanvas = document.getElementById('simCanvas');
+  const offscreen = mainCanvas.transferControlToOffscreen();
+  const renderWorker = new Worker('js/simJs/threads/render.worker.js');
+  window._renderWorker = renderWorker;
 
-  buildGlossaryPanel();
-  renderMergeDiagram();
-  renderOctaSliders();
-  updateStatusBar();
+  renderWorker.onmessage = (e) => {
+    const msg = e.data;
+    if (msg.type === 'workerError') {
+      console.error('=== RENDER WORKER CRASH ===', msg.message, msg.stack);
+    } else if (msg.type === 'ready') {
+      console.log('[render] worker ready');
+    }
+  };
 
-  requestAnimationFrame(frame);
+  // hydrate FIRST — this is what triggers importScripts inside the worker.
+  const hydrateKeys = {};
+  [
+    'rocketSim.fleet.v1', 'rocketSim.selectedId.v1',
+    'rocketSim.stacks.v1', 'rocketSim.selectedStackId.v1',
+    'rocketSim.families.v1', 'rocketSim.selectedFamilyId.v1',
+    'rocketSim.componentLibrary.v1', 'rocketSim.payloads.v1',
+    'rocketSim.payloadSplitDone.v1',
+  ].forEach(k => { hydrateKeys[k] = localStorage.getItem(k); });
+  renderWorker.postMessage({ type: 'hydrate', keys: hydrateKeys });
+
+  // THEN init — canvas transfer. Message order is FIFO, so hydrate runs
+  // first (synchronous importScripts), then init installs the canvas.
+  renderWorker.postMessage(
+    {
+      type: 'init',
+      canvas: offscreen,
+      width: mainCanvas.clientWidth,
+      height: mainCanvas.clientHeight,
+    },
+    [offscreen]
+  );
+
+  // Resize relay
+  window.addEventListener('resize', () => {
+    const w = mainCanvas.clientWidth, h = mainCanvas.clientHeight;
+    renderWorker.postMessage({ type: 'resize', width: w, height: h });
+  });
+
+  // Camera + toggle relay
+  const pushRenderContext = () => {
+    renderWorker.postMessage({ type: 'camera', camera: { ...camera } });
+    renderWorker.postMessage({
+      type: 'toggles',
+      showGrid, showVectors, showTrajectory, trajectoryMode,
+    });
+    requestAnimationFrame(pushRenderContext);
+  };
+  pushRenderContext();
+
+  // ... baaki bootstrap content waisa hi
+    initFigureCanvas();
+    initBasalCanvas();
+    
+    // Hide legs button if the active stack has no leg-deploy recovery.
+    const recovery = (typeof CONFIG !== 'undefined') ? CONFIG.RECOVERY_TYPE : null;
+    const hasLegs = !!(recovery && recovery.capabilities && recovery.capabilities.deploysOnVehicle);
+    const legsBtn = document.getElementById('btnLegs');
+    if (legsBtn && !hasLegs) {
+      const group = legsBtn.closest('.tb-group');
+      if (group) group.style.display = 'none';
+      else legsBtn.style.display = 'none';
+    }
+    
+    bindSimControls();
+    bindLegsControl();
+    bindCenterControls();
+    bindRCSControls();
+    bindMergeControls();
+    bindCameraControls();
+    refreshFollowBodySelect();
+    bindWindPanel();
+    bindQuickThrottle();
+    bindFuelPanel();
+    bindMiscToggles();
+    
+    buildGlossaryPanel();
+    renderMergeDiagram();
+    renderOctaSliders();
+    updateStatusBar();
+    
+    requestAnimationFrame(frame);
+  });
 }
 
 window.addEventListener('DOMContentLoaded', bootstrap);
