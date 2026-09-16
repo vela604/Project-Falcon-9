@@ -240,9 +240,9 @@ function frame(ts) {
 
   
   drawFigurePanel();
-  
+  drawBasalView();
   drawGraphs();
-  updateTelemetry();
+updateTelemetry();
   updateStatusBar();
   updateFuelAvailability();
   const sepBtn = getEl('btnSeparate');
