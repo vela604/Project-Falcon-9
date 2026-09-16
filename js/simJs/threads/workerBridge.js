@@ -74,12 +74,25 @@ const _WORKER_HYDRATE_KEYS = [
 // ---- state mirror (mutated in place; physics.js's _makeState() proxies
 //      on main thread read through to this via state.bodies[...]) ----
 function applyStateSnapshot(snap) {
+  const prevCount = state.bodies ? state.bodies.length : 0;
+  
   state.activeBodyIndex = snap.activeBodyIndex;
   state.simTime = snap.simTime;
   state.halted = snap.halted;
   if (snap.lastForces) lastForces = snap.lastForces;
-  // NO state.trajectory assignment — main thread never reads it
   state.bodies = snap.bodies;
+  
+  // Rebuild the follow-body dropdown whenever the body list changes
+  // (separation, fairing split, payload release). Skipping when count
+  // matches avoids running this 60×/s — the actual DOM rebuild only
+  // happens on real changes.
+  const newCount = state.bodies.length;
+  if (newCount !== prevCount &&
+    typeof refreshFollowBodySelect === 'function' &&
+    document.getElementById('followBodySelect')) {
+    refreshFollowBodySelect();
+  }
+  
   
   if (window._renderWorker) {
     const transfers = [];
@@ -94,19 +107,21 @@ function applyStateSnapshot(snap) {
       }
     }
     window._renderWorker.postMessage(
-      {
-        type: 'state',
-        data: {
-          activeBodyIndex: snap.activeBodyIndex,
-          simTime: snap.simTime,
-          halted: snap.halted,
-          trajectory: fwdTraj,
-          lastForces: snap.lastForces,
-          bodies: snap.bodies,
-        },
-      },
-      transfers
-    );
+  {
+    type: 'state',
+    data: {
+      activeBodyIndex: snap.activeBodyIndex,
+      simTime: snap.simTime,
+      halted: snap.halted,
+      trajectory: fwdTraj,
+      lastForces: snap.lastForces,
+      separationFlash: snap.separationFlash,
+      lastPayloadRelease: snap.lastPayloadRelease, // ← add karo
+      bodies: snap.bodies,
+    },
+  },
+  transfers
+);
   }
 }
 

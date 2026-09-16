@@ -54,7 +54,12 @@ function windInertialVector(rx, ry) {
   if (!wind.enabled || wind.speed === 0) return { wx: 0, wy: 0 };
   const r = Math.hypot(rx, ry);
   const upX = rx / r, upY = ry / r;
-  const eastX = -upY, eastY = upX;
+  // East = direction of increasing φ = direction of Earth's rotation.
+  // Matches telemetry.js's uex/uey and earthSurfaceVelocity(). Previous
+  // (-upY, upX) was WEST — the wind panel's 0° compass arrow pointed East
+  // while the physics pushed the rocket West, an invisible contradiction
+  // until you actually watched the response.
+  const eastX = upY, eastY = -upX;
   const rad = wind.directionDeg * Math.PI / 180;
   const dirX = eastX * Math.cos(rad) + upX * Math.sin(rad);
   const dirY = eastY * Math.cos(rad) + upY * Math.sin(rad);

@@ -26,6 +26,14 @@ let trajectoryMode = 'inertial';   // 'inertial' | 'earthFixed'
 // vehicle settles back near the pad.
 let towerTilt = 0;
 let towerTiltLastT = null;
+// Separation-flash local timing. We track the last-seen flash id and the
+// wall-clock instant we first saw it, so the visual runs for a fixed 0.35 s
+// REGARDLESS of time-warp (sim time could pass 40× faster than wall time,
+// which would compress the whole effect into one frame).
+let _lastFlashId = -1;
+let _flashLocalStart = 0;
+let _lastPayloadCueId = -1;
+let _payloadCueLocalStart = 0;
 
 function initCanvas() {
   canvas = document.getElementById('simCanvas');
@@ -77,12 +85,28 @@ function cameraWorldPosition() {
   if (!camera.follow) return { x: cameraCenter.x, y: cameraCenter.y };
   const b = state.bodies[state.activeBodyIndex];
   if (!b) return { x: 0, y: CONFIG.EARTH_RADIUS };
-  const geom = (typeof geometryOf === 'function') ? geometryOf(b) : { comH: 0, comW: 0 };
-  const comW = geom.comW || 0, comH = geom.comH || 0;
+
+  // Camera anchor = a FIXED fraction of the rocket's geometric height above
+  // its base (0.5 = mid-height). Earlier this used the physical center of
+  // mass, which shifted every time mass moved inside the stack — fuel burn,
+  // staging, legs deploying (their COM swings ~9m as they unfold), payload
+  // release. At high zoom those shifts showed up as the ground sliding a
+  // few pixels during what should look like a still shot.
+  //
+  // Anchor-on-geometry keeps the visual frame steady across every mass-
+  // distribution change. The anchor is still in the body's LOCAL frame, so
+  // it rotates with the rocket during tumbles and gravity turns.
+  const totalH = (b.members && b.members.length)
+    ? b.members.reduce((s, m) => s + (Number.isFinite(m.height) ? m.height : 0), 0)
+    : (CONFIG.ROCKET_HEIGHT || 45);
+  const anchorH = totalH * 0.5;
+
   const cT = Math.cos(b.theta), sT = Math.sin(b.theta);
+  // local (0, anchorH) rotated into world — same convention as physics.js's
+  // _rotatedPoint() (local +Y = up-stack, world up = (-sinθ, +cosθ)).
   return {
-    x: b.rx + comW * cT - comH * sT,
-    y: b.ry + comW * sT + comH * cT,
+    x: b.rx - anchorH * sT,
+    y: b.ry + anchorH * cT,
   };
 }
 
@@ -163,48 +187,201 @@ function lerpColor(a, b, t) {
 }
 
 function drawGrid() {
-  if (camera.mode === 'planet') return;
-  
   if (!showGrid) return;
   const mpp = metersPerPixel();
-  const cam = cameraWorldPosition();
-  const camR = Math.hypot(cam.x, cam.y) || 1;
-  const camAlt = camR - CONFIG.EARTH_RADIUS;
   
-  const spacingMeters = niceGridSpacing(mpp * 100);
+  // In planet mode, use a radial grid (concentric altitude circles +
+  // angular spokes) instead of the flat-view horizontal/vertical lines —
+  // the flat model's "horizontal line" formula breaks down when the
+  // camera is at Earth's center (camR = 0).
+  if (camera.mode === 'planet') {
+    drawPlanetGrid(mpp);
+    return;
+  }
+
   
-  ctx.strokeStyle = 'rgba(120,180,255,0.12)';
-  ctx.lineWidth = 1;
-  ctx.font = '10px monospace';
-  ctx.fillStyle = 'rgba(150,200,255,0.35)';
-  
-  // Concentric altitude rings, Earth-centered. At low altitude they read
-  // as horizontal lines (curvature sub-pixel over the viewport); at high
-  // altitude they become visibly circular.
-  const [cx, cy] = worldToScreen(0, 0);
-  const baseAlt = Math.floor(camAlt / spacingMeters) * spacingMeters;
-  const rangeMeters = Math.max(canvas.width, canvas.height) * mpp;
+  // ---- Clip: hide everything inside Earth's silhouette ----
+  // Without this, both the altitude rings and the downrange lines run all
+  // the way through the planet's interior, and the earth-colored disc
+  // doesn't hide them (grid is drawn on top of the earth). Screen-space
+  // clip-outside-circle with the even-odd fill rule: outer rect minus
+  // Earth disc = only the visible sky region gets painted.
+  const [ecx, ecy] = worldToScreen(0, 0);
+  const eRpx = CONFIG.EARTH_RADIUS / mpp;
   
   ctx.save();
   ctx.beginPath();
   ctx.rect(0, 0, canvas.width, canvas.height);
-  ctx.clip();
+  ctx.arc(ecx, ecy, eRpx, 0, Math.PI * 2, true); // reverse winding = hole
+  ctx.clip('evenodd');
   
-  for (let alt = baseAlt - rangeMeters; alt <= camAlt + rangeMeters; alt += spacingMeters) {
-    const rCircle = CONFIG.EARTH_RADIUS + alt;
-    if (rCircle <= CONFIG.EARTH_RADIUS * 0.5) continue;
-    const rPx = rCircle / mpp;
-    if (rPx > 5e7) continue; // absurd — skip
+  const spacingMeters = niceGridSpacing(mpp * 100);
+  const cam = cameraWorldPosition();
+  const camR = Math.hypot(cam.x, cam.y) || 1;
+  const camAlt = camR - CONFIG.EARTH_RADIUS - (CONFIG.LAUNCH_SITE_ALTITUDE || 0);
+  
+  ctx.strokeStyle = 'rgba(120,180,255,0.22)';
+  ctx.lineWidth = 1;
+  ctx.font = '10px monospace';
+  ctx.fillStyle = 'rgba(150,200,255,0.55)';
+  
+  const halfW = canvas.width / 2;
+  const halfH = canvas.height / 2;
+  
+  // ---- Altitude rings (horizontal lines) ----
+  const baseAlt = Math.floor(camAlt / spacingMeters) * spacingMeters;
+  const altRange = canvas.height * mpp;
+  for (let alt = baseAlt - altRange; alt <= camAlt + altRange; alt += spacingMeters) {
+  const localU = alt - camAlt;
+  const py = halfH - localU / mpp;
+  if (py < -10 || py > canvas.height + 10) continue;
+  ctx.beginPath();
+  ctx.moveTo(0, py);
+  ctx.lineTo(canvas.width, py);
+  ctx.stroke();
+  
+  // Label default sits ABOVE the line. For the topmost visible line, that
+  // would push the text off the canvas top (text baseline at y < 10 goes
+  // out of bounds). Flip to below when we're within 15 px of the top.
+  const labelY = (py < 15) ? (py + 12) : (py - 3);
+  ctx.fillText(alt.toFixed(0) + 'm', 3, labelY);
+}
+  
+  // ---- Downrange lines (vertical lines) ----
+  const spacingAngle = spacingMeters / CONFIG.EARTH_RADIUS;
+const camPhi = Math.atan2(cam.x, cam.y);
+const angleRange = (canvas.width * mpp) / CONFIG.EARTH_RADIUS;
+
+// Launch site's inertial angle at this instant.
+const launchPhi = (CONFIG.LAUNCH_SITE_ANGLE_0 || 0) + CONFIG.EARTH_OMEGA * state.simTime;
+
+// Snap grid lines to EARTH-FIXED angular positions — anchored on the
+// launch site, not on the inertial frame. Without this offset the grid
+// is inertial-fixed while the labels are Earth-fixed, so as Earth
+// rotates the "0m" label visibly slides across the static grid lines
+// and the whole thing jitters. Adding launchPhi before and after the
+// floor() shifts the snap lattice so it rotates with the ground.
+const relPhi = camPhi - launchPhi;
+const basePhi = Math.floor(relPhi / spacingAngle) * spacingAngle + launchPhi;
+
+for (let dphi = -angleRange; dphi <= angleRange; dphi += spacingAngle) {
+  const phi = basePhi + dphi;
+  const wx = camR * Math.sin(phi);
+  const wy = camR * Math.cos(phi);
+  const [px] = worldToScreen(wx, wy);
+  if (px < -10 || px > canvas.width + 10) continue;
+  ctx.beginPath();
+  ctx.moveTo(px, 0);
+  ctx.lineTo(px, canvas.height);
+  ctx.stroke();
+  
+  // Downrange distance from launch site, along Earth's surface. Sign
+  // preserved (+ east of pad, − west). Auto-units: m below 1 km, km above.
+  const arcDist = (phi - launchPhi) * CONFIG.EARTH_RADIUS;
+  const absDist = Math.abs(arcDist);
+  const label = absDist < 1000 ?
+    arcDist.toFixed(0) + 'm' :
+    (arcDist / 1000).toFixed(1) + 'km';
+  
+  // Label sits near the bottom of the vertical line, tinted slightly
+  // dimmer than the altitude labels so the two families stay distinct.
+  // Labels sit ABOVE the ground line — the ground-line y is where Earth
+// begins on screen, and everything below it is inside the clipped-out
+// disc. Anchor labels 8px above it so they land in the visible sky.
+const groundX = cam.x * (CONFIG.EARTH_RADIUS / camR);
+const groundY = cam.y * (CONFIG.EARTH_RADIUS / camR);
+const [, groundPy] = worldToScreen(groundX, groundY);
+
+ctx.fillStyle = 'rgba(150,200,255,0.55)';
+ctx.fillText(label, px + 3, groundPy - 8);
+}
+
+// restore altitude-label fill color for the next frame's altitude loop
+ctx.fillStyle = 'rgba(150,200,255,0.55)';
+  
+  ctx.restore();
+}
+
+function drawPlanetGrid(mpp) {
+  const [ecx, ecy] = worldToScreen(0, 0);
+  const Rpx = CONFIG.EARTH_RADIUS / mpp;
+  if (!Number.isFinite(Rpx) || Rpx <= 0) return;
+  
+  ctx.save();
+  
+  // Clip out the Earth disc so grid lines don't draw on top of the planet.
+  ctx.beginPath();
+  ctx.rect(0, 0, canvas.width, canvas.height);
+  ctx.arc(ecx, ecy, Rpx, 0, Math.PI * 2, true);
+  ctx.clip('evenodd');
+  
+  ctx.strokeStyle = 'rgba(120,180,255,0.28)';
+ctx.lineWidth = 2;
+ctx.font = '12px monospace';
+
+const rMaxPx = Math.hypot(canvas.width, canvas.height) / 2;
+
+
+  // ---- Concentric altitude rings ----
+  // Fixed, meaningful altitude steps rather than the local view's
+  // zoom-dependent spacing — planet view spans thousands of km per pixel,
+  // so "nice" values tied to pixel size would either be one giant ring or
+  // dozens of sub-pixel ones. These cover LEO → MEO → GEO.
+  const altSteps_m = [
+    500e3, 1000e3, 2000e3, 5000e3,
+    10000e3, 20000e3, 35786e3, // last one = GEO altitude
+  ];
+  
+  altSteps_m.forEach(h => {
+    const rPx = (CONFIG.EARTH_RADIUS + h) / mpp;
+    if (rPx < Rpx + 4) return; // too close to surface to draw cleanly
+    if (rPx > rMaxPx * 1.3) return; // off-canvas
     ctx.beginPath();
-    ctx.arc(cx, cy, rPx, 0, Math.PI * 2);
+    ctx.arc(ecx, ecy, rPx, 0, Math.PI * 2);
     ctx.stroke();
     
-    // Altitude label — placed on the ring's top intersection with screen center x
-    const yTop = cy - rPx;
-    if (yTop > -50 && yTop < canvas.height + 50) {
-      ctx.fillText(alt.toFixed(0) + 'm', 3, yTop - 3);
-    }
+    // Label at the top of the ring. Highlight GEO distinctly.
+    const label = (h / 1000).toFixed(0) + ' km';
+    const isGeo = Math.abs(h - 35786e3) < 100;
+    ctx.fillStyle = isGeo ?
+      'rgba(255,210,63,0.75)' :
+      'rgba(150,200,255,0.55)';
+    ctx.fillText(label + (isGeo ? ' GEO' : ''), ecx + 4, ecy - rPx - 3);
+  });
+  
+  // ---- Radial spokes ----
+  // Anchored to the launch site's current inertial angle so one spoke
+  // always passes through the pad. As Earth rotates, the whole spoke
+  // fan rotates with it (pad stays on a spoke).
+  const spokeCount = 12;
+  const spokeStep = (Math.PI * 2) / spokeCount;
+  const launchPhi = (CONFIG.LAUNCH_SITE_ANGLE_0 || 0) + CONFIG.EARTH_OMEGA * state.simTime;
+  const spokeRm = rMaxPx * 1.5 * mpp; // extend well past corners in world meters
+  
+  ctx.strokeStyle = 'rgba(120,180,255,0.20)';
+ctx.lineWidth = 1.5;
+for (let i = 0; i < spokeCount; i++) {
+    const phi = launchPhi + i * spokeStep;
+    const wx = spokeRm * Math.sin(phi);
+    const wy = spokeRm * Math.cos(phi);
+    const [px, py] = worldToScreen(wx, wy);
+    ctx.beginPath();
+    ctx.moveTo(ecx, ecy);
+    ctx.lineTo(px, py);
+    ctx.stroke();
   }
+  
+  // Highlight the spoke that passes through the pad.
+  const padX = spokeRm * Math.sin(launchPhi);
+  const padY = spokeRm * Math.cos(launchPhi);
+  const [padPx, padPy] = worldToScreen(padX, padY);
+  ctx.strokeStyle = 'rgba(53,214,255,0.55)';
+ctx.lineWidth = 2;
+ctx.beginPath();
+ctx.moveTo(ecx, ecy);
+ctx.lineTo(padPx, padPy);
+ctx.stroke();
+  
   ctx.restore();
 }
 
@@ -501,27 +678,35 @@ const [px, py] = worldToScreen(lastPayloadRelease.rx, lastPayloadRelease.ry);
 
 // H4: draw the separation flash — an expanding ring at the split point.
 function drawSeparationFlash() {
-  if (typeof separationFlash === 'undefined' || !separationFlash) return;
-  const age = (performance.now() - separationFlash.t0) / 1000;
-  if (age > 0.35) { separationFlash = null; return; }
-
+  const f = state.separationFlash;
+  if (!f) return;
+  
+  // New flash id → reset the local wall-clock timer.
+  if (f.id !== _lastFlashId) {
+    _lastFlashId = f.id;
+    _flashLocalStart = performance.now();
+  }
+  
+  const age = (performance.now() - _flashLocalStart) / 1000;
+  if (age > 0.35) return;
+  
   const mpp = metersPerPixel();
-const [px, py] = worldToScreen(separationFlash.rx, separationFlash.ry);
-
-  const f = age / 0.35;              // 0 → 1 over the flash lifetime
-  const radius = (2 + f * 30);       // world meters, in px
-  const alpha = (1 - f) * 0.85;
-
+  const [px, py] = worldToScreen(f.rx, f.ry);
+  
+  const frac = age / 0.35; // 0 → 1 over the flash lifetime
+  const radius = 2 + frac * 30; // screen pixels
+  const alpha = (1 - frac) * 0.85;
+  
   ctx.save();
   ctx.beginPath();
   ctx.arc(px, py, radius, 0, Math.PI * 2);
   ctx.strokeStyle = `rgba(255,220,120,${alpha})`;
-  ctx.lineWidth = 3 * (1 - f) + 1;
+  ctx.lineWidth = 3 * (1 - frac) + 1;
   ctx.stroke();
-
+  
   // Inner bright dot fading out.
   ctx.beginPath();
-  ctx.arc(px, py, Math.max(1, 6 * (1 - f)), 0, Math.PI * 2);
+  ctx.arc(px, py, Math.max(1, 6 * (1 - frac)), 0, Math.PI * 2);
   ctx.fillStyle = `rgba(255,255,255,${alpha})`;
   ctx.fill();
   ctx.restore();
@@ -876,7 +1061,7 @@ if (body.payloadBody) {
       ctx.restore();
       yOffsetPx += mH;
     });
-  } else {
+  }/* else {
     // Fallback: single-body (should not normally hit).
     const fb = (typeof ACTIVE_VEHICLE_FOR_HARDWARE !== 'undefined') ? ACTIVE_VEHICLE_FOR_HARDWARE : null;
     const fbEngineLayout = (fb && fb.engineTypeId && typeof getComponentType === 'function')
@@ -900,7 +1085,7 @@ if (body.payloadBody) {
       params: fb ? fb.params : null,
       stageAboveBellHeight: 0,
     });
-  }
+  }*/
 
   ctx.restore();
 }
@@ -944,14 +1129,10 @@ if (groundPy < -200 || groundPy > canvas.height + 400) return;
 }
 
 function renderFrame() {
-  // Guard: skip until the first state snapshot has arrived from the worker.
-  // Without this, the render loop's first tick (fires immediately after
-  // canvas install, before any 'state' message) reads state.rx as
-  // undefined → NaN altitude → drawSky's gradient gets rgb(NaN,NaN,NaN)
-  // and the whole render worker crashes.
   if (!state.bodies || !state.bodies.length) return;
   const b = state.bodies[state.activeBodyIndex];
   if (!b || !Number.isFinite(b.rx) || !Number.isFinite(b.ry)) return;
+  if (!camera) return;
   
   const r = Math.hypot(state.rx, state.ry);
   const altitude = altitudeFromR(r);
@@ -959,11 +1140,12 @@ function renderFrame() {
   drawSky(altitude);
   
   if (camera.mode === 'planet') {
-    drawEarth();
-    drawPredictedTrajectory();
-    drawRocket();
-    return;
-  }
+  drawEarth();
+  drawGrid(); // ← ye line add karo
+  drawPredictedTrajectory();
+  drawRocket();
+  return;
+}
   
   drawEarth();
   drawGrid();

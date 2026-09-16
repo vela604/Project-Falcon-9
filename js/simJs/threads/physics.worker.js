@@ -13,6 +13,9 @@
 // Forward any uncaught error in this worker to the main thread, so it shows
 // up in the regular DevTools console (worker consoles are hard to open on
 // some browsers / dev setups).
+
+
+
 self.addEventListener('error', (e) => {
   self.postMessage({
     type: 'workerError',
@@ -47,6 +50,8 @@ if (typeof localStorage === 'undefined') {
 // ---- Loop state ----
 let bootstrapped = false;
 let running = false;
+let paused = false;
+let trajectoryEnabled = false;  
 let warp = 1;
 let accumulator = 0;
 let lastTickTime = performance.now();
@@ -106,6 +111,18 @@ self.onmessage = (e) => {
   switch (msg.type) {
     case 'start': running = true; break;
     case 'stop':  running = false; break;
+    case 'pauseSim':  paused = true;  break;
+    case 'setTrajectoryEnabled': {
+  trajectoryEnabled = !!msg.enabled;
+  // If just turned off, clear any stale trajectory so the render worker
+  // doesn't draw a frozen one from the last enabled frame.
+  if (!trajectoryEnabled) {
+    state.trajectory = null;
+    pendingTrajectoryTransfer = null;
+  }
+  break;
+}
+    case 'resumeSim': paused = false; break;
     case 'warp':  warp = Math.max(0, msg.value || 1); break;
     case 'reset': resetState(msg.alt || 0); break;
 
@@ -180,6 +197,12 @@ self.onmessage = (e) => {
   atmosphereEnabled = !!msg.enabled;
   break;
 }
+    case 'setWind': {
+  if (typeof msg.enabled === 'boolean') wind.enabled = msg.enabled;
+  if (Number.isFinite(msg.speed)) wind.speed = msg.speed;
+  if (Number.isFinite(msg.directionDeg)) wind.directionDeg = msg.directionDeg;
+  break;
+}
     case 'separate': {
       if (typeof separateActiveBody === 'function') separateActiveBody();
       break;
@@ -202,6 +225,18 @@ self.onmessage = (e) => {
 // ---- Snapshot serialization ----
 function serializeForMain() {
   return {
+    separationFlash: separationFlash ? {
+  id: separationFlash.id,
+  rx: separationFlash.rx,
+  ry: separationFlash.ry,
+} : null,
+lastPayloadRelease: lastPayloadRelease ? {
+  id: lastPayloadRelease.id,
+  rx: lastPayloadRelease.rx,
+  ry: lastPayloadRelease.ry,
+  ux: lastPayloadRelease.ux,
+  uy: lastPayloadRelease.uy,
+} : null,
     activeBodyIndex: state.activeBodyIndex,
     simTime: state.simTime,
     halted: state.halted,
@@ -252,23 +287,49 @@ function workerLoop() {
   const loopStart = performance.now();
   const dtReal = Math.min(0.1, (loopStart - lastTickTime) / 1000);
   lastTickTime = loopStart;
-
-  if (running && !state.halted) {
-    accumulator += dtReal * warp;
-    while (accumulator >= CONFIG.DT &&
-           performance.now() - loopStart < 12) {
-      physicsStep(CONFIG.DT);
-      accumulator -= CONFIG.DT;
-      if (state.halted) { running = false; break; }
-    }
+  
+  // Legs animate on REAL elapsed time, independent of simRunning. Same
+  // behaviour as the original main-thread loop — deploying or stowing the
+  // legs must work while the sim is paused (e.g. pre-launch on the pad),
+  // and its rate must not be multiplied by time-warp. Must run BEFORE the
+  // physics step so the progress value used in contact checks is current.
+  updateLegs(dtReal);
+  // Expire the separation flash after 1 s wall time. By then the render
+// worker's own 0.35 s visual has long since finished, so there's no
+// reason to keep shipping it in every snapshot.
+if (separationFlash && performance.now() - separationFlash.t0Real > 1000) {
+  separationFlash = null;
+}
+if (lastPayloadRelease && performance.now() - lastPayloadRelease.t0Real > 2000) {
+  lastPayloadRelease = null;
+}
+  
+  if (running && !paused && !state.halted) {
+  accumulator += dtReal * warp;
+  while (accumulator >= CONFIG.DT &&
+    performance.now() - loopStart < 12) {
+    physicsStep(CONFIG.DT);
+    accumulator -= CONFIG.DT;
+    if (state.halted) { running = false; break; }
   }
+} else {
+  // When paused or stopped, don't let the accumulator grow — otherwise
+  // a long pause followed by resume would trigger a burst of steps to
+  // "catch up" to real time.
+  accumulator = 0;
+}
 
-  if (performance.now() - lastTrajTime >= 16) {
-    lastTrajTime = performance.now();
-    const active = state.bodies[state.activeBodyIndex];
-    state.trajectory = active ? computePredictedTrajectory(active, 500, 1200) : null;
-    pendingTrajectoryTransfer = state.trajectory;
-  }
+  // Skip the leapfrog compute entirely when no consumer wants the trajectory
+// (trajectory checkbox off). The 500-sample integrator running at 60 Hz
+// was ~0.3-0.5 ms of otherwise-idle CPU work. `pendingTrajectoryTransfer`
+// is still sent as null on every snapshot when disabled, so the render
+// worker's cached copy clears the moment the toggle flips off.
+if (trajectoryEnabled && performance.now() - lastTrajTime >= 16) {
+  lastTrajTime = performance.now();
+  const active = state.bodies[state.activeBodyIndex];
+  state.trajectory = active ? computePredictedTrajectory(active, 500, 1200) : null;
+  pendingTrajectoryTransfer = state.trajectory;
+}
 
   const data = serializeForMain();
   const transfers = [];

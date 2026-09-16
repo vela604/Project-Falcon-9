@@ -43,6 +43,7 @@ globalThis.DEBUG_PHYSICS = false;
 
 
 let separationFlash = null;
+let separationFlashId = 0;
 
 
 function computeEngineParamsForRecord(rec) {
@@ -1022,18 +1023,24 @@ body.omega += (-CONFIG.EARTH_OMEGA - body.omega) * PAD_OMEGA_STIFFNESS * dt;
         body._restFrames = 0;
       }
 
-// ---- NEW: flat-fall halt ----
-// Crash ke baad agar body ~2s continuous 85°+ tilt pe padi rahe
-// (matlab "gir gayi"), use freeze karke sim halt kar do — residual
-// torque/omega churn ka koi fayda nahi, bas rengna band ho jata hai.
+// ---- Flat-fall halt ----
+// Crash ke baad agar body ~2s continuous 85°+ tilt pe padi rahe, use
+// frozen treat karo — residual jitter nahi.
+//
+// CRITICAL: state.halted sirf tab set karo jab yeh CURRENTLY-CONTROLLED
+// body ho. Baaki sab (discarded booster, spent stages, fairing halves,
+// released payloads) eventually crash hote hain aur flat padte hain —
+// un par halt karne se poora mission usi second freeze ho jaata hai
+// jaise tum "Split Fairing" karte ho (fairing halves 5 m/s drift
+// karte hain, phir crash karti hain, phir 2s flat padti hain).
 if (body.crashed && !body.settled) {
   const tiltDeg = Math.abs(body.theta - Math.atan2(body.rx, body.ry)) * 180 / Math.PI;
   if (tiltDeg > 85) {
     body._fallenFrames = (body._fallenFrames || 0) + 1;
-    if (body._fallenFrames * dt > 0.5) {
+    if (body._fallenFrames * dt > 2.0) {
       body.vx = 0; body.vy = 0; body.omega = 0;
       body.settled = true;
-      state.halted = true;
+      if (body.isActive) state.halted = true;   // ← only the controlled body halts the sim
     }
   } else {
     body._fallenFrames = 0;
@@ -1208,7 +1215,8 @@ function separateActiveBody() {
   discarded.isActive = false;
   discarded.isDiscarded = true;
   discarded.isDiscarded = true;
-  discarded.bornAt = state.simTime; // Step 2 (collision.js) grace-period exclusion
+  discarded.bornAt = state.simTime;
+  discarded.collisionGracePeriod = 1.0; // ← ye add karo
   if (typeof ensureRcsState === 'function') ensureRcsState(discarded);
   discarded.payloadId = null;      // ← add — booster detach hote hi payload chhod deta hai
 
@@ -1227,9 +1235,16 @@ active.rx = active.rx + boosterHeight * upX;
 active.ry = active.ry + boosterHeight * upY;
   
   
-  separationFlash = {
-  rx: active.rx, ry: active.ry,
-  t0: performance.now(),
+  // Flash id increments on each new event — the render worker uses it to
+// detect "this is a NEW flash, start my local timer". Worker sends the
+// flash in every snapshot until expiry; render worker ignores snapshots
+// with the same id.
+separationFlashId++;
+separationFlash = {
+  id: separationFlashId,
+  rx: active.rx,
+  ry: active.ry,
+  t0Real: performance.now(), // worker-local real time, for worker expiry
 };
   
   state.bodies.push(discarded);
@@ -1320,7 +1335,8 @@ function splitFairingOnActiveBody() {
   half.fuelMass = 0;
   half.isActive = false;
   half.isDiscarded = true;
-  half.bornAt = state.simTime; // Step 2 (collision.js) grace-period exclusion
+  half.bornAt = state.simTime;
+  half.collisionGracePeriod = 1.0; // ← ye add karo (fairing halves already have 5 m/s kick)
   half.fairingHalf = { record: psRec, side };
   state.bodies.push(half);
 });
@@ -1338,6 +1354,7 @@ function splitFairingOnActiveBody() {
 // split (no payloadSpace in members) AND the active stack has a payloadId.
 // Payload becomes its own free body with a prograde kick + slight spin.
 let lastPayloadRelease = null;
+let lastPayloadReleaseId = 0;
 
 function releasePayloadOnActiveBody() {
   const active = state.bodies[state.activeBodyIndex];
@@ -1349,19 +1366,30 @@ function releasePayloadOnActiveBody() {
 const pl = (typeof getPayload === 'function') ? getPayload(active.payloadId) : null;
 if (!pl) return false;
 
-  // World-space position of the payload = top of active body.
-  const upX = -Math.sin(active.theta);
-  const upY = Math.cos(active.theta);
-  const totalH = active.members.reduce((s, m) => s + (Number.isFinite(m.height) ? m.height : 0), 0);
-  const payloadRx = active.rx + totalH * upX;
-  const payloadRy = active.ry + totalH * upY;
+// Spawn the payload ABOVE the rocket's tip with a small clear gap, so its
+// collision capsule begins at least one rocket-radius clear of the rocket's
+// capsule nose. Without this gap, the payload is born overlapping the
+// rocket's capsule; once the grace period expires, every tick's collision
+// resolution pushes it out a few cm, gravity + rocket acceleration pull it
+// back in, and the payload visibly "crawls" along the rocket surface
+// instead of separating cleanly. Real spring-based separation systems
+// physically push the payload clear before release for the same reason.
+const upX = -Math.sin(active.theta);
+const upY = Math.cos(active.theta);
+const totalH = active.members.reduce((s, m) => s + (Number.isFinite(m.height) ? m.height : 0), 0);
+const clearGap = (CONFIG.ROCKET_WIDTH || 3.9) / 2;
+const payloadRx = active.rx + (totalH + clearGap) * upX;
+const payloadRy = active.ry + (totalH + clearGap) * upY;
 
-  // Prograde kick = along velocity direction, magnitude fixed 0.5 m/s.
-  const speed = Math.hypot(active.vx, active.vy);
-  const ux = speed > 0.01 ? active.vx / speed : upX;
-  const uy = speed > 0.01 ? active.vy / speed : upY;
-  const KICK = 0.5;
-  const SPIN = 0.15;
+// Prograde kick. 0.5 m/s was far too weak: a thrusting rocket accelerates
+// at 10–20 m/s², which closes that gap in ~0.03 s. Bump to a spring-
+// separation-class value (real systems give 1–2 m/s; visually 3 m/s reads
+// cleanly even for a fast-launching stack).
+const speed = Math.hypot(active.vx, active.vy);
+const ux = speed > 0.01 ? active.vx / speed : upX;
+const uy = speed > 0.01 ? active.vy / speed : upY;
+const KICK = 3.0;
+const SPIN = 0.15;
 
   const body = _makeBody();
   body.id = 'payload-' + pl.id;
@@ -1376,7 +1404,8 @@ if (!pl) return false;
   body.fuelMass = 0;
   body.isActive = false;
   body.isDiscarded = true;
-  body.bornAt = state.simTime; // Step 2 (collision.js) grace-period exclusion
+  body.bornAt = state.simTime;
+  body.collisionGracePeriod = 1.5; // ← ye add karo
   body.payloadBody = { record: pl };   // render marker
 
   state.bodies.push(body);
@@ -1384,6 +1413,13 @@ if (!pl) return false;
   active.payloadReleased = true;
   active.payloadId = null;   // ← add
 
-  lastPayloadRelease = { rx: payloadRx, ry: payloadRy, ux, uy, t0: performance.now() };
+  lastPayloadReleaseId++;
+lastPayloadRelease = {
+  id: lastPayloadReleaseId,
+  rx: payloadRx,
+  ry: payloadRy,
+  ux, uy,                       // prograde unit vector for the arrow direction
+  t0Real: performance.now(),
+};
   return true;
 }

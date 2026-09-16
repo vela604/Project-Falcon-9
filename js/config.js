@@ -156,7 +156,7 @@ const RESOLVED_RCS_TYPE = (typeof getComponentType === 'function') ?
   // (powered ascent right off the pad) or moving faster than this, so they
   // can't be ripped open during launch or a fast reentry. Stowing is always
   // allowed. See legDeploySafety() in controls.js.
-  LEG_DEPLOY_MAX_SPEED: 200,        // m/s
+  LEG_DEPLOY_MAX_SPEED: 100,        // m/s
   
   
   // ---------------- Stage builder (Phase 3) ----------------

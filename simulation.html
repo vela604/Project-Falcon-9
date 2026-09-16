@@ -13,90 +13,50 @@
 <div id="app">
 
   <!-- ===================== Status / Toolbar ===================== -->
-  <div id="statusBar">
-    <div class="tb-scroll">
+<div id="statusBar">
 
+  <!-- ============ Row 1: brand + status (left) | checkboxes (right) ============ -->
+  <div class="tb-row">
+    <div class="tb-left">
       <a class="tb-brand" href="index.html" title="Back to Rocket Sim home">
         <span class="tb-brand-icon">🚀</span><span class="tb-brand-text">ROCKET SIM</span>
       </a>
-
       <div class="tb-sep"></div>
-
       <div class="tb-group tb-status">
         <span class="status-dot" id="statusDot"></span>
         <span id="statusText">STOPPED</span>
         <span class="tb-clock" id="missionClock">T+00:00.0</span>
       </div>
+    </div>
+    <div class="tb-right">
+      <div class="tb-group">
+        <label class="chip-toggle"><input type="checkbox" id="toggleGrid" checked><span>Grid</span></label>
+        <label class="chip-toggle"><input type="checkbox" id="toggleVectors" checked><span>Vectors</span></label>
+        <label class="chip-toggle"><input type="checkbox" id="toggleTrajectory"><span>Trajectory</span></label>
+        <label class="chip-toggle"><input type="checkbox" id="toggleEarthFixed"><span>Earth-fixed</span></label>
+        <label class="chip-toggle"><input type="checkbox" id="toggleAtmosphere" checked><span>Atmosphere</span></label>
+      </div>
+    </div>
+  </div>
 
-      <div class="tb-sep"></div>
-
+  <!-- ============ Row 2: Start/Stop/Reset + Warp (left) | panel toggles (right) ============ -->
+  <div class="tb-row">
+    <div class="tb-left">
       <div class="tb-group">
         <button class="btn btn-start" id="btnStart"><span class="btn-ic">▶</span>Start</button>
-        <button class="btn btn-stop" id="btnStop"><span class="btn-ic">⏸</span>Stop</button>
+        <button class="btn btn-stop"  id="btnStop"><span class="btn-ic">⏸</span>Stop</button>
         <button class="btn btn-reset" id="btnReset"><span class="btn-ic">↺</span>Reset</button>
       </div>
+      <div class="tb-sep"></div>
       <div class="tb-group" id="timeWarpGroup">
-  <span style="font-size:11px;color:var(--dim);font-family:var(--font-mono);">Warp:</span>
-  <button class="btn warp-btn active" data-warp="1">1×</button>
-  <button class="btn warp-btn" data-warp="10">10×</button>
-  <button class="btn warp-btn" data-warp="40">40×</button>
-</div>
-
-      <div class="tb-sep"></div>
-
-      <div class="tb-group">
-        <button class="btn" id="btnLegs"><span class="btn-ic">🦿</span>Deploy Legs</button>
+        <span class="tb-label">Warp:</span>
+        <button class="btn warp-btn active" data-warp="1">1×</button>
+        <button class="btn warp-btn" data-warp="10">10×</button>
+        <button class="btn warp-btn" data-warp="40">40×</button>
       </div>
-      
-      <div class="tb-sep"></div>
-
-<div class="tb-group">
-  <button class="btn" id="btnSeparate"><span class="btn-ic">💥</span>Separate Stage</button>
-</div>
-
-<div class="tb-group">
-  <button class="btn" id="btnSplitFairing"><span class="btn-ic">🛸</span>Split Fairing</button>
-</div>
-
-<div class="tb-group">
-  <button class="btn" id="btnReleasePayload"><span class="btn-ic">📦</span>Release Payload</button>
-</div>
-
-      <div class="tb-sep"></div>
-
+    </div>
+    <div class="tb-right">
       <div class="tb-group">
-        <button class="btn icon-btn active" id="btnFollow" title="Follow rocket">🎯</button>
-        <button class="btn icon-btn" id="btnFree" title="Planet view">🖐</button>
-        <button class="btn icon-btn" id="btnZoomOut" title="Zoom out">−</button>
-        <button class="btn icon-btn" id="btnZoomIn" title="Zoom in">+</button>
-      </div>
-<div class="tb-sep"></div>
-
-<div class="tb-group">
-  <button class="btn" id="btnTakeControl" disabled><span class="btn-ic">🎮</span>Take Control</button>
-</div>
-<div class="tb-sep"></div>
-
-<div class="tb-group">
-  <label style="font-size:11px;color:var(--dim);font-family:var(--font-mono);">Follow:</label>
-  <select id="followBodySelect" class="btn" style="padding:5px 8px;">
-    <option value="0">Active</option>
-  </select>
-</div>
-
-      <div class="tb-sep"></div>
-
-      <div class="tb-group">
-  <label class="chip-toggle"><input type="checkbox" id="toggleGrid" checked><span>Grid</span></label>
-  <label class="chip-toggle"><input type="checkbox" id="toggleVectors" checked><span>Vectors</span></label>
-  <label class="chip-toggle"><input type="checkbox" id="toggleTrajectory"><span>Trajectory</span></label>
-  <label class="chip-toggle"><input type="checkbox" id="toggleEarthFixed"><span>Earth-fixed</span></label>
-  <label class="chip-toggle"><input type="checkbox" id="toggleAtmosphere" checked><span>Atmosphere</span></label>
-</div>
-
-      <div class="tb-sep"></div>
-
-      <div class="tb-group tb-panel-buttons">
         <button class="btn panel-toggle-btn" id="btnMergePanel"><span class="btn-ic">⚙</span>Engines</button>
         <button class="btn panel-toggle-btn" id="btnSidePanel"><span class="btn-ic">🛰</span>Rocket</button>
         <button class="btn panel-toggle-btn" id="btnFuelPanel" style="display:none"><span class="btn-ic">⛽</span>Fueling</button>
@@ -104,9 +64,10 @@
         <button class="btn panel-toggle-btn" id="btnGraphPanel"><span class="btn-ic">📈</span>Graphs</button>
         <button class="btn panel-toggle-btn" id="btnGlossary"><span class="btn-ic">ⓘ</span>Info</button>
       </div>
-
     </div>
   </div>
+
+</div>
 
   <!-- ===================== Viewport ===================== -->
   <div id="viewport">
@@ -211,22 +172,23 @@
         <div class="panel-header"><span class="panel-title">🛰 ROCKET FIGURE</span><button class="panel-close" data-target="sidePanel">✕</button></div>
         <canvas id="figureCanvas" width="260" height="260"></canvas>
         <div class="panel-subtitle">BASAL VIEW (engines)</div>
-        <canvas id="basalCanvas" width="260" height="180"></canvas>
+        <canvas id="basalCanvas" width="260" height="260"></canvas>
       </div>
 
       <!-- Wind panel -->
       <div class="panel" id="windPanel">
-        <div class="panel-header"><span class="panel-title">🌬 WIND</span><button class="panel-close" data-target="windPanel">✕</button></div>
-        <label class="chip-toggle chip-toggle-block"><input type="checkbox" id="windEnabled"><span>Enabled</span></label>
-        <div class="field-row">
-          <div class="field-label"><span>Speed</span><span id="windSpeedLabel">0 m/s</span></div>
-          <input type="range" id="windSpeed" min="0" max="60" value="0">
-        </div>
-        <div class="field-row">
-          <div class="field-label"><span>Direction</span><span id="windDirLabel">0°</span></div>
-          <input type="range" id="windDir" min="0" max="360" value="0">
-        </div>
-      </div>
+  <div class="panel-header"><span class="panel-title">🌬 WIND</span><button class="panel-close" data-target="windPanel">✕</button></div>
+  <label class="chip-toggle chip-toggle-block"><input type="checkbox" id="windEnabled"><span>Enabled</span></label>
+  <canvas id="windCompass"></canvas>
+  <div class="field-row">
+    <div class="field-label"><span>Speed</span><span id="windSpeedLabel">0 m/s</span></div>
+    <input type="range" id="windSpeed" min="0" max="60" value="0">
+  </div>
+  <div class="field-row">
+    <div class="field-label"><span>Direction</span><span id="windDirLabel">0°</span></div>
+    <input type="range" id="windDir" min="0" max="360" value="0">
+  </div>
+</div>
 
       <!-- Fueling panel — only accessible when the rocket is on the pad,
      stationary, engines off. Refuels the whole stack. -->
@@ -248,7 +210,7 @@
 </div>
 
       <!-- Graphs panel (pauses sim while open) -->
-      <div class="panel" id="graphPanel" data-pause-sim="true">
+      <div class="panel" id="graphPanel">
         <div class="panel-header"><span class="panel-title">📈 LIVE GRAPHS</span><button class="panel-close" data-target="graphPanel">✕</button></div>
         <div class="graph-block"><div class="graph-label">Altitude</div><canvas class="mini-graph" id="graphAlt"></canvas></div>
         <div class="graph-block"><div class="graph-label">Velocity</div><canvas class="mini-graph" id="graphVel"></canvas></div>
@@ -262,6 +224,53 @@
       </div>
 
     </div>
+    
+    <div id="leftToolbar">
+  <div class="lt-wrapper">
+    <div class="lt-content">
+
+      <div class="lt-section">
+        <button class="lt-btn" id="btnFollow" title="Local view (follow rocket)">Local View</button>
+        <button class="lt-btn" id="btnFree"   title="Planet view">Planet View</button>
+      </div>
+
+      <div class="lt-sep"></div>
+
+      <div class="lt-section lt-row">
+        <button class="lt-btn lt-btn-sq" id="btnZoomIn"  title="Zoom in">+</button>
+        <button class="lt-btn lt-btn-sq" id="btnZoomOut" title="Zoom out">−</button>
+      </div>
+
+      <div class="lt-sep"></div>
+
+      <div class="lt-section">
+        <label class="lt-label" for="followBodySelect">Follow</label>
+        <select id="followBodySelect" class="lt-select">
+          <option value="0">Active</option>
+        </select>
+      </div>
+
+      <div class="lt-sep"></div>
+
+      <div class="lt-section">
+        <button class="lt-btn" id="btnTakeControl" disabled title="Take control of another body">Take Control</button>
+      </div>
+
+      <div class="lt-sep lt-sep-strong"></div>
+
+      <div class="lt-section">
+        <button class="lt-btn" id="btnLegs"           title="Deploy / stow landing legs">Deploy Legs</button>
+        <button class="lt-btn" id="btnSeparate"       title="Separate stage">Separate Stage</button>
+        <button class="lt-btn" id="btnSplitFairing"   title="Split fairing">Split Fairing</button>
+        <button class="lt-btn" id="btnReleasePayload" title="Release payload">Release Payload</button>
+      </div>
+
+    </div>
+    <button id="leftToolbarToggle" class="lt-handle" title="Toggle tools">›</button>
+  </div>
+</div>
+    
+    
   </div>
 </div>
 

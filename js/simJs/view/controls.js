@@ -123,14 +123,20 @@ function togglePanel(id) {
   const el = document.getElementById(id);
   const opening = el.style.display === 'none' || el.style.display === '';
   el.style.display = opening ? 'block' : 'none';
-  if (opening && el.dataset.pauseSim === 'true') {
-    simPaused = true;
+  
+  // Recompute desired pause state from the ACTUAL DOM — not from a chain of
+  // increments. Any panel marked data-pause-sim="true" that is currently
+  // visible means physics should be paused. Sending the resulting state
+  // (rather than "toggle") keeps main-thread and worker in lock-step even
+  // if a panel is closed some other way (programmatically, page reload).
+  const anyOpen = Array.from(document.querySelectorAll('[data-pause-sim="true"]'))
+    .some(p => p.style.display === 'block');
+  const wantPaused = anyOpen;
+  
+  if (wantPaused !== simPaused) {
+    simPaused = wantPaused;
+    WorkerBridge.send({ type: wantPaused ? 'pauseSim' : 'resumeSim' });
     updateStatusBar();
-  } else if (!opening) {
-    // Only auto-resume if no other pausing panel is open
-    const anyOpen = Array.from(document.querySelectorAll('[data-pause-sim="true"]'))
-      .some(p => p.style.display === 'block');
-    if (!anyOpen) { simPaused = false; updateStatusBar(); }
   }
 }
 
@@ -138,16 +144,31 @@ function togglePanel(id) {
 // Wind panel
 // ---------------------------------------------------------------------------
 function bindWindPanel() {
-  document.getElementById('windEnabled').addEventListener('change', (e) => {
+  const enabledCb = document.getElementById('windEnabled');
+  const speedInp = document.getElementById('windSpeed');
+  const dirInp = document.getElementById('windDir');
+
+  if (!enabledCb || !speedInp || !dirInp) {
+    console.warn('bindWindPanel: one or more wind controls missing',
+      { enabledCb: !!enabledCb, speedInp: !!speedInp, dirInp: !!dirInp });
+    return;
+  }
+
+  enabledCb.addEventListener('change', (e) => {
     wind.enabled = e.target.checked;
+    WorkerBridge.send({ type: 'setWind', enabled: wind.enabled });
   });
-  document.getElementById('windSpeed').addEventListener('input', (e) => {
+
+  speedInp.addEventListener('input', (e) => {
     wind.speed = parseFloat(e.target.value) || 0;
     document.getElementById('windSpeedLabel').textContent = wind.speed.toFixed(0) + ' m/s';
+    WorkerBridge.send({ type: 'setWind', speed: wind.speed });
   });
-  document.getElementById('windDir').addEventListener('input', (e) => {
+
+  dirInp.addEventListener('input', (e) => {
     wind.directionDeg = parseFloat(e.target.value) || 0;
     document.getElementById('windDirLabel').textContent = wind.directionDeg.toFixed(0) + '°';
+    WorkerBridge.send({ type: 'setWind', directionDeg: wind.directionDeg });
   });
 }
 
@@ -212,7 +233,7 @@ function bindLegsControl() {
     if (!legs.deployed) {
       const safety = legDeploySafety();
       if (!safety.ok) {
-        flashLegsWarning(safety.ascending ? 'Ascending — can\'t deploy' : 'Too fast — can\'t deploy');
+        flashLegsWarning(safety.ascending ? 'Ascending &#9888;' : 'Too fast &#9888;');
         return;
       }
     }

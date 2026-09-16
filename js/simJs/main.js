@@ -198,7 +198,13 @@ function bindMiscToggles() {
   
   bind('toggleGrid', 'change', (e) => { showGrid = e.target.checked; });
   bind('toggleVectors', 'change', (e) => { showVectors = e.target.checked; });
-  bind('toggleTrajectory', 'change', (e) => { showTrajectory = e.target.checked; });
+  bind('toggleTrajectory', 'change', (e) => {
+  showTrajectory = e.target.checked;
+  WorkerBridge.send({ type: 'setTrajectoryEnabled', enabled: showTrajectory });
+});
+  bind('toggleEarthFixed', 'change', (e) => {
+  trajectoryMode = e.target.checked ? 'earthFixed' : 'inertial';
+});
   bind('toggleAtmosphere', 'change', (e) => {
     atmosphereEnabled = e.target.checked;
     WorkerBridge.send({ type: 'setAtmosphere', enabled: e.target.checked });
@@ -209,6 +215,15 @@ function bindMiscToggles() {
   bind('btnGraphPanel', 'click', () => togglePanel('graphPanel'));
   bind('btnMergePanel', 'click', () => togglePanel('mergePanel'));
   bind('btnGlossary', 'click', () => togglePanel('glossaryPanel'));
+  
+  const ltToggle = document.getElementById('leftToolbarToggle');
+const lt = document.getElementById('leftToolbar');
+if (ltToggle && lt) {
+  ltToggle.addEventListener('click', () => {
+    lt.classList.toggle('open');
+    ltToggle.textContent = lt.classList.contains('open') ? '‹' : '›';
+  });
+}
   
   document.querySelectorAll('.panel-close').forEach(btn => {
     if (!btn) return;
@@ -240,8 +255,13 @@ function frame(ts) {
 
   
   drawFigurePanel();
-  drawBasalView();
-  drawGraphs();
+drawBasalView();
+drawGraphs();
+
+// Redraw the wind compass only when its panel is visible.
+const wp = document.getElementById('windPanel');
+if (wp && wp.style.display === 'block') drawWindCompass();
+
 updateTelemetry();
   updateStatusBar();
   updateFuelAvailability();
@@ -273,17 +293,22 @@ WorkerBridge.onReady(() => {
   // ---- Spawn render worker ----
   const mainCanvas = document.getElementById('simCanvas');
   const offscreen = mainCanvas.transferControlToOffscreen();
+  const initW = Math.max(1, mainCanvas.clientWidth || window.innerWidth);
+const initH = Math.max(1, mainCanvas.clientHeight || window.innerHeight);
   const renderWorker = new Worker('js/simJs/threads/render.worker.js');
   window._renderWorker = renderWorker;
 
   renderWorker.onmessage = (e) => {
-    const msg = e.data;
-    if (msg.type === 'workerError') {
-      console.error('=== RENDER WORKER CRASH ===', msg.message, msg.stack);
-    } else if (msg.type === 'ready') {
-      console.log('[render] worker ready');
-    }
-  };
+  const msg = e.data;
+  if (msg.type === 'workerError') {
+    console.error('=== RENDER WORKER CRASH ===');
+    console.error('  message:', msg.message);
+    console.error('  stack:', msg.stack);
+  }
+  
+};
+// Sync worker's trajectory-enabled flag with the main thread's default.
+WorkerBridge.send({ type: 'setTrajectoryEnabled', enabled: showTrajectory });
 
   // hydrate FIRST — this is what triggers importScripts inside the worker.
   const hydrateKeys = {};
@@ -296,38 +321,53 @@ WorkerBridge.onReady(() => {
   ].forEach(k => { hydrateKeys[k] = localStorage.getItem(k); });
   renderWorker.postMessage({ type: 'hydrate', keys: hydrateKeys });
 
-  // THEN init — canvas transfer. Message order is FIFO, so hydrate runs
-  // first (synchronous importScripts), then init installs the canvas.
-  renderWorker.postMessage(
-    {
-      type: 'init',
-      canvas: offscreen,
-      width: mainCanvas.clientWidth,
-      height: mainCanvas.clientHeight,
-    },
-    [offscreen]
-  );
+// Send camera FIRST so it's already set when the init tick fires.
+renderWorker.postMessage({ type: 'camera', camera: { ...camera } });
+renderWorker.postMessage({
+  type: 'toggles',
+  showGrid, showVectors, showTrajectory, trajectoryMode,
+});
+
+renderWorker.postMessage(
+  {
+    type: 'init',
+    canvas: offscreen,
+    width: initW,
+    height: initH,
+  },
+  [offscreen]
+);
 
   // Resize relay
-  window.addEventListener('resize', () => {
-    const w = mainCanvas.clientWidth, h = mainCanvas.clientHeight;
+  let _resizeDebounce = null;
+window.addEventListener('resize', () => {
+  if (_resizeDebounce) clearTimeout(_resizeDebounce);
+  _resizeDebounce = setTimeout(() => {
+    const w = initW;
+    const h = initH;
+    // Ignore degenerate sizes — DevTools emulation briefly collapses the
+    // layout to 0×0 while switching viewports, and setting canvas.width=0
+    // permanently black-screens the offscreen buffer.
+    if (!w || !h || w < 10 || h < 10) return;
     renderWorker.postMessage({ type: 'resize', width: w, height: h });
-  });
+  }, 150);
+});
 
   // Camera + toggle relay
-  const pushRenderContext = () => {
-    renderWorker.postMessage({ type: 'camera', camera: { ...camera } });
-    renderWorker.postMessage({
-      type: 'toggles',
-      showGrid, showVectors, showTrajectory, trajectoryMode,
-    });
-    requestAnimationFrame(pushRenderContext);
-  };
-  pushRenderContext();
-
+ // TEMP: disabled for debugging grid
+const pushRenderContext = () => {
+  renderWorker.postMessage({ type: 'camera', camera: { ...camera } });
+  renderWorker.postMessage({
+    type: 'toggles',
+    showGrid, showVectors, showTrajectory, trajectoryMode,
+  });
+  requestAnimationFrame(pushRenderContext);
+};
+pushRenderContext();
   // ... baaki bootstrap content waisa hi
     initFigureCanvas();
     initBasalCanvas();
+    initWindCompass();
     
     // Hide legs button if the active stack has no leg-deploy recovery.
     const recovery = (typeof CONFIG !== 'undefined') ? CONFIG.RECOVERY_TYPE : null;

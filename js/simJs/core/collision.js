@@ -27,7 +27,18 @@
 // the newborn body gets the same practical result with far less code.
 // =============================================================================
 
-const COLLISION_GRACE_PERIOD = 0.3; // seconds, see note above
+const COLLISION_GRACE_PERIOD = 0.3; // default seconds, see note above
+
+// Per-body override. Payloads, fairing halves, spent stages — anything born
+// from a separation event that has to physically clear the parent body —
+// gets a longer grace period so collision impulses don't fight the
+// separation. Set on the body at birth (physics.js's releasePayloadOnActiveBody,
+// splitFairingOnActiveBody, separateActiveBody). Falls back to the global.
+function _bodyGracePeriod(body) {
+  return (body && Number.isFinite(body.collisionGracePeriod)) ?
+    body.collisionGracePeriod :
+    COLLISION_GRACE_PERIOD;
+}
 
 // Half-diagonal of the body's own H×W footprint — a circle this size fully
 // contains the body's rotated silhouette at any tilt angle.
@@ -58,10 +69,10 @@ function broadPhaseCollisionPairs() {
 
   // Precompute center + radius once per body per call, not once per pair.
   const circles = bodies.map(b => ({
-    c: _bodyBoundingCenter(b),
-    r: _bodyBoundingRadius(b),
-    newborn: (state.simTime - (b.bornAt ?? -Infinity)) < COLLISION_GRACE_PERIOD,
-  }));
+  c: _bodyBoundingCenter(b),
+  r: _bodyBoundingRadius(b),
+  newborn: (state.simTime - (b.bornAt ?? -Infinity)) < _bodyGracePeriod(b),
+}));
 
   for (let i = 0; i < n; i++) {
     if (circles[i].newborn) continue;

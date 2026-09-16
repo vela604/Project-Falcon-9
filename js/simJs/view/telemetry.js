@@ -237,6 +237,12 @@ function drawUnitVector(ctx2, x0, y0, bx, by, len, color, label) {
 function initFigureCanvas() {
   figCanvas = document.getElementById('figureCanvas');
   figCtx = figCanvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  const cssW = figCanvas.clientWidth || figCanvas.width;
+  const cssH = figCanvas.clientHeight || figCanvas.height;
+  figCanvas.width = Math.round(cssW * dpr);
+  figCanvas.height = Math.round(cssH * dpr);
+  figCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -317,7 +323,9 @@ function figMemberMechanics(members, body, aero) {
 
 function drawFigurePanel() {
   if (!figCtx) return;
-  const w = figCanvas.width, h = figCanvas.height;
+  const dpr = window.devicePixelRatio || 1;
+const w = figCanvas.width / dpr;
+const h = figCanvas.height / dpr;
   figCtx.clearRect(0, 0, w, h);
 
   const body = state.bodies[state.activeBodyIndex];
@@ -623,41 +631,75 @@ let basalCanvas, basalCtx;
 function initBasalCanvas() {
   basalCanvas = document.getElementById('basalCanvas');
   basalCtx = basalCanvas.getContext('2d');
+  
+  // Render the canvas at devicePixelRatio so it stays sharp on retina /
+  // high-DPI screens. The canvas's CSS size is controlled by stylesheet;
+  // the BACKING buffer is scaled up by DPR, and the context transform is
+  // set so all drawing code can keep using CSS-pixel coordinates.
+  const dpr = window.devicePixelRatio || 1;
+  const cssW = basalCanvas.clientWidth || basalCanvas.width;
+  const cssH = basalCanvas.clientHeight || basalCanvas.height;
+  basalCanvas.width = Math.round(cssW * dpr);
+  basalCanvas.height = Math.round(cssH * dpr);
+  basalCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
 }
 
 function drawBasalView() {
   if (!basalCtx) return;
-  const w = basalCanvas.width, h = basalCanvas.height;
-  basalCtx.clearRect(0, 0, w, h);
-  const cx = w/2, cy = h/2, R = Math.min(w,h)*0.38;
+  // Work in CSS pixels — the DPR transform set in initBasalCanvas() makes
+// this map to the full-resolution backing buffer automatically.
+const dpr = window.devicePixelRatio || 1;
+const w = basalCanvas.width / dpr;
+const h = basalCanvas.height / dpr;
 
+  basalCtx.clearRect(0, 0, w, h);
+  const cx = w/2, cy = h/2, R = Math.min(w,h)*0.34;
+
+  // Outer frame ring — solid white (was cyan).
   basalCtx.fillStyle = 'rgba(13,20,36,0.4)';
-  basalCtx.strokeStyle = '#35d6ff';
-  basalCtx.lineWidth = 1.4;
-  basalCtx.beginPath(); basalCtx.arc(cx, cy, R*1.35, 0, Math.PI*2); basalCtx.fill(); basalCtx.stroke();
+  basalCtx.strokeStyle = '#ffffff';
+  basalCtx.lineWidth = 2.5;
+  basalCtx.beginPath();
+  basalCtx.arc(cx, cy, R*1.40, 0, Math.PI*2);
+  basalCtx.fill();
+  basalCtx.stroke();
 
   ENGINES.forEach(e => {
     let ex, ey;
     if (e.isCenter) { ex = cx; ey = cy; }
     else {
       const rad = e.angleDeg * Math.PI/180;
-      ex = cx + Math.cos(rad) * R;
-      ey = cy - Math.sin(rad) * R;
+      let radDisfrac = 0.95;
+      ex = cx + Math.cos(rad) * R * radDisfrac;
+      ey = cy - Math.sin(rad) * R * radDisfrac;
     }
-    // Driven by actual delivered thrust (currentF/Fmax), not the throttle
-    // *setting* — so an engine reads dark/off the instant fuel runs out,
-    // even if its slider is still held up.
-    const frac = e.Fmax > 0 ? e.currentF / e.Fmax : 0;
-    const opacity = 0.15 + 0.85 * frac;
-    basalCtx.fillStyle = `rgba(255,${140 + 80*frac},${40+40*frac},${opacity})`;
-    basalCtx.beginPath(); basalCtx.arc(ex, ey, e.isCenter ? 10 : 7, 0, Math.PI*2); basalCtx.fill();
-    basalCtx.strokeStyle = 'rgba(219,230,245,0.35)'; basalCtx.stroke();
 
+    // Driven by ACTUAL delivered thrust (currentF / Fmax), not the
+    // throttle setting — a fuel-starved engine correctly reads off even
+    // if its slider is still held up.
+    const frac = e.Fmax > 0 ? e.currentF / e.Fmax : 0;
+    const radius = e.isCenter ? 22 : 20;
+
+    // Fill: faint disc at idle → solid white at full throttle. Alpha
+    // ramps smoothly so mid-throttle reads as a soft grey, full throttle
+    // as a bright white dot.
+    const alpha = 0.10 + 0.90 * frac;
+    basalCtx.fillStyle = `rgba(255,255,255,${alpha})`;
+    basalCtx.beginPath();
+    basalCtx.arc(ex, ey, radius, 0, Math.PI*2);
+    basalCtx.fill();
+
+    // White outline so idle discs still read as defined shapes.
+    basalCtx.strokeStyle = '#ffffff';
+    basalCtx.lineWidth = 1.5;
+    basalCtx.stroke();
+
+    // Throttle % under the disc, only when there's meaningful thrust.
     if (frac > 0.02) {
-      basalCtx.fillStyle = '#dbe6f5';
-      basalCtx.font = '8px monospace';
+      basalCtx.fillStyle = '#ffffff';
+      basalCtx.font = '8px "JetBrains Mono", monospace';
       basalCtx.textAlign = 'center';
-      basalCtx.fillText(Math.round(frac*100)+'%', ex, ey + 18);
+      //basalCtx.fillText(Math.round(frac*100)+'%', ex, ey + radius + 10);
     }
   });
   basalCtx.textAlign = 'left';
@@ -702,4 +744,134 @@ function drawGraphs() {
   if (altC) drawMiniChart(altC, graphHistory.alt, '#55ddff', 'alt');
   if (velC) drawMiniChart(velC, graphHistory.vel, '#ffdd55', 'v');
   if (thrC) drawMiniChart(thrC, graphHistory.thrust, '#ff8855', 'F');
+}
+
+
+// ---------------------------------------------------------------------------
+// Wind compass — small circular indicator showing the current wind vector
+// direction and magnitude. Uses the same local tangent-frame convention as
+// environment.js: 0° = East (right), 90° = Up/outward (top), 180° = West,
+// 270° = Down/inward.
+// ---------------------------------------------------------------------------
+let windCompassCanvas = null;
+let windCompassCtx = null;
+
+function initWindCompass() {
+  windCompassCanvas = document.getElementById('windCompass');
+  if (!windCompassCanvas) return;
+  windCompassCtx = windCompassCanvas.getContext('2d');
+
+  // DPR scaling so it stays sharp on retina/high-DPI screens. All drawing
+  // below works in CSS-pixel coordinates; the setTransform maps them.
+  const dpr = window.devicePixelRatio || 1;
+  const cssW = windCompassCanvas.clientWidth || 130;
+  const cssH = windCompassCanvas.clientHeight || 130;
+  windCompassCanvas.width  = Math.round(cssW * dpr);
+  windCompassCanvas.height = Math.round(cssH * dpr);
+  windCompassCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+
+function drawWindCompass() {
+  if (!windCompassCtx) return;
+  const dpr = window.devicePixelRatio || 1;
+  const w = windCompassCanvas.width / dpr;
+  const h = windCompassCanvas.height / dpr;
+  const cx = w / 2;
+  const cy = h / 2;
+  const R = Math.min(w, h) * 0.38;
+
+  const c = windCompassCtx;
+  c.clearRect(0, 0, w, h);
+
+  // Backing disc
+  c.fillStyle = 'rgba(13,20,36,0.6)';
+  c.beginPath();
+  c.arc(cx, cy, R + 8, 0, Math.PI * 2);
+  c.fill();
+
+  // Outer ring
+  c.strokeStyle = 'rgba(255,255,255,0.30)';
+  c.lineWidth = 1.5;
+  c.beginPath();
+  c.arc(cx, cy, R, 0, Math.PI * 2);
+  c.stroke();
+
+  // Tick marks every 30° — longer at the four cardinals
+  c.strokeStyle = 'rgba(255,255,255,0.22)';
+  c.lineWidth = 1;
+  for (let i = 0; i < 12; i++) {
+    const ang = i * 30 * Math.PI / 180;
+    const dx = Math.sin(ang), dy = -Math.cos(ang);
+    const isCardinal = (i % 3 === 0);
+    const len = isCardinal ? 8 : 5;
+    c.beginPath();
+    c.moveTo(cx + dx * (R - len), cy + dy * (R - len));
+    c.lineTo(cx + dx * R, cy + dy * R);
+    c.stroke();
+  }
+
+  // Cardinal labels in the local tangent frame:
+  //   E (right, +x)  = direction of increasing φ = Earth's rotation
+  //   W (left, -x)   = opposite
+  //   U (top, -y)    = outward from Earth's centre
+  //   D (bottom,+y)  = inward toward Earth's centre
+  c.fillStyle = 'rgba(150,200,255,0.85)';
+  c.font = 'bold 11px "JetBrains Mono", monospace';
+  c.textAlign = 'center';
+  c.textBaseline = 'middle';
+  c.fillText('U', cx,          cy - R + 12);
+  c.fillText('D', cx,          cy + R - 12);
+  c.fillText('E', cx + R - 12, cy);
+  c.fillText('W', cx - R + 12, cy);
+
+  if (wind.enabled && wind.speed > 0) {
+    // wind.directionDeg: 0 = East, 90 = Up/outward.
+    // Canvas convention: +x = right = East; -y = up = U.
+    const ang = wind.directionDeg * Math.PI / 180;
+    const dx = Math.cos(ang);
+    const dy = -Math.sin(ang);      // canvas y is inverted vs "Up"
+
+    const arrowLen = R * 0.72;
+    const tipX = cx + dx * arrowLen;
+    const tipY = cy + dy * arrowLen;
+    const tailX = cx - dx * arrowLen * 0.25;
+    const tailY = cy - dy * arrowLen * 0.25;
+
+    // Shaft
+    c.strokeStyle = '#ff5f7e';
+    c.lineWidth = 2.5;
+    c.lineCap = 'round';
+    c.beginPath();
+    c.moveTo(tailX, tailY);
+    c.lineTo(tipX, tipY);
+    c.stroke();
+
+    // Arrowhead — two points behind the tip, rotated ±0.4 rad from the
+    // reverse direction. angCanvas is atan2 in canvas coords (y down).
+    const angCanvas = Math.atan2(dy, dx);
+    const headLen = 9;
+    const spread = 0.42;
+    const h1x = tipX + headLen * Math.cos(angCanvas + Math.PI - spread);
+    const h1y = tipY + headLen * Math.sin(angCanvas + Math.PI - spread);
+    const h2x = tipX + headLen * Math.cos(angCanvas + Math.PI + spread);
+    const h2y = tipY + headLen * Math.sin(angCanvas + Math.PI + spread);
+    c.fillStyle = '#ff5f7e';
+    c.beginPath();
+    c.moveTo(tipX, tipY);
+    c.lineTo(h1x, h1y);
+    c.lineTo(h2x, h2y);
+    c.closePath();
+    c.fill();
+
+    // Centre dot (marker for "no direction" reference point)
+    c.beginPath();
+    c.arc(cx, cy, 2.5, 0, Math.PI * 2);
+    c.fill();
+  } else {
+    // Wind off — dim centre dot only
+    c.fillStyle = 'rgba(107,125,156,0.5)';
+    c.beginPath();
+    c.arc(cx, cy, 3, 0, Math.PI * 2);
+    c.fill();
+  }
 }
