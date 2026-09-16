@@ -37,94 +37,101 @@
 // ============================================================================
 function drawPredictedTrajectory() {
   if (!showTrajectory) return;
-
+  
   // Guard 1 — trajectory may not exist yet on the first few frames after
   // the worker starts up (before its first 33 ms trajectory tick).
   const traj = state.trajectory;
-if (!traj || !traj.count || traj.count < 2) return;
-
-const earthFixed = (typeof trajectoryMode !== 'undefined' && trajectoryMode === 'earthFixed');
-const ptsXy = (earthFixed && traj.pointsXyEarthFixed) ?
-  traj.pointsXyEarthFixed :
-  traj.pointsXy;
-if (!ptsXy) return;
-const count = traj.count;
-
+  if (!traj || !traj.count || traj.count < 2) return;
+  
+  const earthFixed = (typeof trajectoryMode !== 'undefined' && trajectoryMode === 'earthFixed');
+  const ptsXy = (earthFixed && traj.pointsXyEarthFixed) ?
+    traj.pointsXyEarthFixed :
+    traj.pointsXy;
+  if (!ptsXy) return;
+  const count = traj.count;
+  
   // ---- Camera projection — cached once for the whole pass ----
   const mpp = metersPerPixel();
   const cam = cameraWorldPosition();
-  const halfW = canvas.width / 2, halfH = canvas.height / 2;
-
+  const halfW = canvas.width / 2,
+    halfH = canvas.height / 2;
+  
   let upX, upY, rightX, rightY;
   if (camera.mode === 'planet') {
-    upX = 0;  upY = 1;
-    rightX = 1; rightY = 0;
+    upX = 0;
+    upY = 1;
+    rightX = 1;
+    rightY = 0;
   } else {
     const camR = Math.hypot(cam.x, cam.y) || 1;
-    upX = cam.x / camR;  upY = cam.y / camR;
-    rightX = upY;         rightY = -upX;
+    upX = cam.x / camR;
+    upY = cam.y / camR;
+    rightX = upY;
+    rightY = -upX;
   }
-
+  
   const project = (wx, wy) => {
-    const dx = wx - cam.x, dy = wy - cam.y;
+    const dx = wx - cam.x,
+      dy = wy - cam.y;
     const localR = dx * rightX + dy * rightY;
-    const localU = dx * upX    + dy * upY;
+    const localU = dx * upX + dy * upY;
     return [halfW + localR / mpp, halfH - localU / mpp];
   };
-
+  
   const earthR_px = CONFIG.EARTH_RADIUS / mpp;
   const lineW = 3 + 2 * Math.max(0, Math.min(1, (800 - earthR_px) / 800));
   const EarthR = CONFIG.EARTH_RADIUS;
-
+  
   // ---- Trajectory curve ----
   ctx.save();
   ctx.strokeStyle = 'rgba(255,210,63,0.7)';
   ctx.lineWidth = lineW;
   ctx.setLineDash([lineW * 3, lineW * 3]);
   ctx.lineCap = 'round';
-
+  
   // Translate the whole curve so its origin (where the rocket was when the
-// trajectory was computed) aligns with where the rocket IS right now.
-// Hides the up-to-16 ms staleness of the prediction, so the curve always
-// starts at the rocket even at high speeds.
-const _predBody = state.bodies[state.activeBodyIndex];
-const dxShift = (_predBody ? _predBody.rx : traj.originX) - traj.originX;
-const dyShift = (_predBody ? _predBody.ry : traj.originY) - traj.originY;
-
-
-
-ctx.beginPath();
-let penDown = false;
-for (let i = 0; i < count; i++) {
-  const [sx, sy] = project(ptsXy[i*2] + dxShift, ptsXy[i*2 + 1] + dyShift);
-  if (!penDown) { ctx.moveTo(sx, sy); penDown = true; }
-  else ctx.lineTo(sx, sy);
-}
-if (penDown) ctx.stroke();
-
-
+  // trajectory was computed) aligns with where the rocket IS right now.
+  // Hides the up-to-16 ms staleness of the prediction, so the curve always
+  // starts at the rocket even at high speeds.
+  const _predBody = state.bodies[state.activeBodyIndex];
+  const dxShift = (_predBody ? _predBody.rx : traj.originX) - traj.originX;
+  const dyShift = (_predBody ? _predBody.ry : traj.originY) - traj.originY;
+  
+  
+  
+  ctx.beginPath();
+  let penDown = false;
+  for (let i = 0; i < count; i++) {
+    const [sx, sy] = project(ptsXy[i * 2] + dxShift, ptsXy[i * 2 + 1] + dyShift);
+    if (!penDown) { ctx.moveTo(sx, sy);
+      penDown = true; }
+    else ctx.lineTo(sx, sy);
+  }
+  if (penDown) ctx.stroke();
+  
+  
   ctx.setLineDash([]);
-
+  
   // ---- Impact marker ----
   const hasImpact = earthFixed ? traj.hasEfImpact : traj.impacted;
-if (hasImpact) {
-  let ix = earthFixed ? traj.impactXEf : traj.impactX;
-  let iy = earthFixed ? traj.impactYEf : traj.impactY;
-  // Same rigid translation as the curve.
-  ix += dxShift;
-  iy += dyShift;
-  const ir = Math.hypot(ix, iy) || 1;
-  const cx = ix * (EarthR / ir);
-  const cy = iy * (EarthR / ir);
-  const [sx, sy] = project(cx, cy);
-  ctx.fillStyle = 'rgba(255,120,90,0.9)';
-  ctx.strokeStyle = 'rgba(20,10,5,0.9)';
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.arc(sx, sy, Math.max(3, lineW * 1.5), 0, Math.PI * 2);
-  ctx.fill();
-  ctx.stroke();
-}
-
+  if (hasImpact) {
+    let ix = earthFixed ? traj.impactXEf : traj.impactX;
+    let iy = earthFixed ? traj.impactYEf : traj.impactY;
+    // Same rigid translation as the curve.
+    ix += dxShift;
+    iy += dyShift;
+    const ir = Math.hypot(ix, iy) || 1;
+    const cx = ix * (EarthR / ir);
+    const cy = iy * (EarthR / ir);
+    const [sx, sy] = project(cx, cy);
+    ctx.fillStyle = 'rgba(255,120,90,0.9)';
+    ctx.strokeStyle = 'rgba(20,10,5,0.9)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(sx, sy, Math.max(3, lineW * 1.5), 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  }
+  
   ctx.restore();
 }

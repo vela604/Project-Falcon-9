@@ -107,21 +107,21 @@ function applyStateSnapshot(snap) {
       }
     }
     window._renderWorker.postMessage(
-  {
-    type: 'state',
-    data: {
-      activeBodyIndex: snap.activeBodyIndex,
-      simTime: snap.simTime,
-      halted: snap.halted,
-      trajectory: fwdTraj,
-      lastForces: snap.lastForces,
-      separationFlash: snap.separationFlash,
-      lastPayloadRelease: snap.lastPayloadRelease, // ← add karo
-      bodies: snap.bodies,
-    },
-  },
-  transfers
-);
+      {
+        type: 'state',
+        data: {
+          activeBodyIndex: snap.activeBodyIndex,
+          simTime: snap.simTime,
+          halted: snap.halted,
+          trajectory: fwdTraj,
+          lastForces: snap.lastForces,
+          separationFlash: snap.separationFlash,
+          lastPayloadRelease: snap.lastPayloadRelease, // ← add karo
+          bodies: snap.bodies,
+        },
+      },
+      transfers
+    );
   }
 }
 

@@ -59,6 +59,7 @@ function fmt(n, d = 1) { return Number.isFinite(n) ? n.toFixed(d) : '—'; }
 // same id always returns the same node — safe to cache instead of doing a
 // fresh DOM lookup ~20 times every single frame.
 const _elCache = new Map();
+
 function getEl(id) {
   let el = _elCache.get(id);
   if (el === undefined) {
@@ -69,24 +70,26 @@ function getEl(id) {
 }
 
 
-  function updateTelemetry() {
+function updateTelemetry() {
   const r = Math.hypot(state.rx, state.ry);
-  const altitude = altitudeFromR(r);   // frame-independent
-
+  const altitude = altitudeFromR(r); // frame-independent
+  
   // ---- Frame-tagged kinematics ----
   // urx/ury = radial unit (same in both frames), uex/uey = east unit
   // (points toward increasing phi, i.e. Earth's rotation direction).
-  const urx = state.rx / r, ury = state.ry / r;
-  const uex = state.ry / r, uey = -state.rx / r;
-
+  const urx = state.rx / r,
+    ury = state.ry / r;
+  const uex = state.ry / r,
+    uey = -state.rx / r;
+  
   // Radial component — IDENTICAL in inertial and Earth-fixed frames (the
   // radial direction is a geometric property of position, not velocity).
   const vRadial = state.vx * urx + state.vy * ury;
-
+  
   // Tangential — inertia and Earth-fixed differ. v_t_rel = v_t_inertial - ω·r.
   const vTangentialInertial = state.vx * uex + state.vy * uey;
   const vTangentialRelative = vTangentialInertial - CONFIG.EARTH_OMEGA * r;
-
+  
   // Total speed. sqrt(vr² + vt²) in each frame.
   const speedInertial = Math.hypot(state.vx, state.vy);
   const speedRelative = Math.hypot(vRadial, vTangentialRelative);
@@ -99,54 +102,54 @@ function getEl(id) {
   const localVerticalAngle = Math.atan2(-state.rx, state.ry);
   const thetaInertial = state.theta * 180 / Math.PI;
   const thetaRelative = (state.theta - localVerticalAngle) * 180 / Math.PI;
-
+  
   // Angular velocity — same duality.
   const omegaInertial = state.omega * 180 / Math.PI;
   const omegaRelative = (state.omega + CONFIG.EARTH_OMEGA) * 180 / Math.PI;
-
+  
   // Downrange arc distance (Earth-fixed), with angular offset in brackets.
   const phiInertial = Math.atan2(state.rx, state.ry);
   const phiEarthFixed = phiInertial - CONFIG.EARTH_OMEGA * state.simTime;
   const arcDistance = CONFIG.EARTH_RADIUS * (phiEarthFixed - (CONFIG.LAUNCH_SITE_ANGLE_0 || 0));
   const arcAngleDeg = (arcDistance / CONFIG.EARTH_RADIUS) * 180 / Math.PI;
-
+  
   const geom = geometryOf();
   const centerEngine = ENGINES.find(e => e.isCenter);
   const grav = gravityAccel(state.rx, state.ry);
   const rho = airDensity(Math.max(0, altitude));
-
+  
   const set = (id, val) => { const e = getEl(id); if (e) e.textContent = val; };
-
+  
   // ---- Display helper ----
   // For quantities whose value differs between frames, show
   //    <Earth-relative> (<inertial>)
   // Frame-independent quantities show a single value.
   const dual = (rel, inertial, digits) => `${fmt(rel, digits)} (${fmt(inertial, digits)})`;
-
-  set('t-x',     `${fmt(arcDistance, 1)} m (${arcAngleDeg.toFixed(4)}°)`);
-  set('t-h',     fmt(altitude, 1));                                  // frame-independent
-  set('t-v',     dual(speedRelative, speedInertial, 2));             // rel (inertial)
-  set('t-vr',    fmt(vRadial, 2));                                    // frame-independent
-  set('t-vt',    dual(vTangentialRelative, vTangentialInertial, 2)); // rel (inertial)
-  set('t-theta', dual(thetaRelative, thetaInertial, 2));             // rel-to-local (inertial)
-  set('t-omega', dual(omegaRelative, omegaInertial, 3));             // rel-to-earth (inertial)
-
-  set('t-m',      fmt(geom.M, 0));
-  set('t-mf',     fmt(state.fuelMass, 0));
-  set('t-Ft',     fmt(ENGINES.reduce((s,e)=>s+e.currentF,0), 0));
+  
+  set('t-x', `${fmt(arcDistance, 1)} m (${arcAngleDeg.toFixed(4)}°)`);
+  set('t-h', fmt(altitude, 1)); // frame-independent
+  set('t-v', dual(speedRelative, speedInertial, 2)); // rel (inertial)
+  set('t-vr', fmt(vRadial, 2)); // frame-independent
+  set('t-vt', dual(vTangentialRelative, vTangentialInertial, 2)); // rel (inertial)
+  set('t-theta', dual(thetaRelative, thetaInertial, 2)); // rel-to-local (inertial)
+  set('t-omega', dual(omegaRelative, omegaInertial, 3)); // rel-to-earth (inertial)
+  
+  set('t-m', fmt(geom.M, 0));
+  set('t-mf', fmt(state.fuelMass, 0));
+  set('t-Ft', fmt(ENGINES.reduce((s, e) => s + e.currentF, 0), 0));
   set('t-gimbal', fmt(centerEngine.gimbalDeg, 1));
   set('t-torque', fmt(lastForces.mainTorque + lastForces.rcsTorque + (lastForces.dragTorque || 0), 0));
-  set('t-aoa',    fmt(lastForces.aoaDeg || 0, 2));
-  set('t-g',      fmt(grav.g, 3));
-  set('t-rho',    fmt(rho, 4));
-  set('t-duty',   Math.round((lastForces.dutyTop || 0) * 100) + '%');
-
+  set('t-aoa', fmt(lastForces.aoaDeg || 0, 2));
+  set('t-g', fmt(grav.g, 3));
+  set('t-rho', fmt(rho, 4));
+  set('t-duty', Math.round((lastForces.dutyTop || 0) * 100) + '%');
+  
   const total = state.bodies.length;
-  const disc  = state.bodies.filter(b => b.isDiscarded).length;
+  const disc = state.bodies.filter(b => b.isDiscarded).length;
   set('t-bodies', disc > 0 ? `${total} (${disc}d)` : `${total}`);
-  set('t-com',    fmt(geom.comH, 2));
-  set('t-moi',    geom.I >= 1e6 ? (geom.I / 1e6).toFixed(2) + 'M' : fmt(geom.I, 0));
-
+  set('t-com', fmt(geom.comH, 2));
+  set('t-moi', geom.I >= 1e6 ? (geom.I / 1e6).toFixed(2) + 'M' : fmt(geom.I, 0));
+  
   const maxThrustAll = ENGINES.reduce((s, e) => s + e.Fmax, 0);
   const g0v = (typeof G0 !== 'undefined') ? G0 : 9.80665;
   const twrLive = geom.M > 0 ? maxThrustAll / (geom.M * g0v) : 0;
@@ -155,48 +158,52 @@ function getEl(id) {
     twrEl.textContent = twrLive.toFixed(2);
     twrEl.style.color = twrLive < 1 ? 'var(--danger)' : (twrLive < 1.2 ? 'var(--yellow)' : '');
   }
-
-
-  pushGraphSample(state.simTime, altitude, speed, ENGINES.reduce((s,e)=>s+e.currentF,0));
-
+  
+  
+  pushGraphSample(state.simTime, altitude, speed, ENGINES.reduce((s, e) => s + e.currentF, 0));
+  
   const bodyListEl = getEl('t-bodyList');
-if (bodyListEl) {
-  const visible = state.bodies
-    .map((b, i) => ({ b, i }))
-    .filter(({ b }) => b.members && b.members.length > 0);
-
-  const rows = visible.map(({ b, i }) => {
-    const r = Math.hypot(b.rx, b.ry);
-    const alt = altitudeFromR(r) - (CONFIG.LAUNCH_SITE_ALTITUDE || 0);
-    const isAct = (i === state.activeBodyIndex);
-    const cls = 'tele-body-block'
-      + (isAct ? ' active' : '')
-      + (b.crashed ? ' crashed' : '')
-      + (b.isDiscarded ? ' discarded' : '');
-    const tag = isAct ? 'A' : ('D' + i);
-
-    // Pairwise: relative to the OTHER visible body.
-    const other = visible.find(v => v.i !== i);
-    let dx = 0, dy = 0, dvx = 0, dvy = 0, relLabel = '—';
-    if (other) {
-      dx = b.rx - other.b.rx;
-      dy = b.ry - other.b.ry;
-      dvx = b.vx - other.b.vx;
-      dvy = b.vy - other.b.vy;
-      relLabel = isAct ? ('vs D' + other.i) : ('vs A');
-    }
-    const dpStr = other ? `${dx.toFixed(1)}, ${dy.toFixed(1)}` : '—';
-    const dvStr = other ? `${dvx.toFixed(2)}, ${dvy.toFixed(2)}` : '—';
-
-    return `<div class="${cls}">
+  if (bodyListEl) {
+    const visible = state.bodies
+      .map((b, i) => ({ b, i }))
+      .filter(({ b }) => b.members && b.members.length > 0);
+    
+    const rows = visible.map(({ b, i }) => {
+      const r = Math.hypot(b.rx, b.ry);
+      const alt = altitudeFromR(r) - (CONFIG.LAUNCH_SITE_ALTITUDE || 0);
+      const isAct = (i === state.activeBodyIndex);
+      const cls = 'tele-body-block' +
+        (isAct ? ' active' : '') +
+        (b.crashed ? ' crashed' : '') +
+        (b.isDiscarded ? ' discarded' : '');
+      const tag = isAct ? 'A' : ('D' + i);
+      
+      // Pairwise: relative to the OTHER visible body.
+      const other = visible.find(v => v.i !== i);
+      let dx = 0,
+        dy = 0,
+        dvx = 0,
+        dvy = 0,
+        relLabel = '—';
+      if (other) {
+        dx = b.rx - other.b.rx;
+        dy = b.ry - other.b.ry;
+        dvx = b.vx - other.b.vx;
+        dvy = b.vy - other.b.vy;
+        relLabel = isAct ? ('vs D' + other.i) : ('vs A');
+      }
+      const dpStr = other ? `${dx.toFixed(1)}, ${dy.toFixed(1)}` : '—';
+      const dvStr = other ? `${dvx.toFixed(2)}, ${dvy.toFixed(2)}` : '—';
+      
+      return `<div class="${cls}">
       <div class="tb-line"><span class="tb-label">${tag} pos</span><span class="tb-val">${alt.toFixed(0)}m</span></div>
       <div class="tb-line"><span class="tb-label">vx,vy</span><span class="tb-val">${b.vx.toFixed(1)}, ${b.vy.toFixed(1)}</span></div>
       <div class="tb-line"><span class="tb-label">Δpos ${relLabel}</span><span class="tb-val">${dpStr}</span></div>
       <div class="tb-line"><span class="tb-label">Δv ${relLabel}</span><span class="tb-val">${dvStr}</span></div>
     </div>`;
-  });
-  bodyListEl.innerHTML = rows.join('');
-}
+    });
+    bodyListEl.innerHTML = rows.join('');
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -211,8 +218,10 @@ let figCanvas, figCtx;
 function worldVectorToBodyUnit(wx, wy, theta) {
   const mag = Math.hypot(wx, wy);
   if (mag < 1e-6) return null;
-  const ux = wx / mag, uy = wy / mag;
-  const cosT = Math.cos(theta), sinT = Math.sin(theta);
+  const ux = wx / mag,
+    uy = wy / mag;
+  const cosT = Math.cos(theta),
+    sinT = Math.sin(theta);
   return { bx: ux * cosT + uy * sinT, by: -ux * sinT + uy * cosT };
 }
 
@@ -226,10 +235,18 @@ function unitOf(bx, by) {
 // Draws a fixed-length unit-direction arrow. (bx, by) is in BODY frame
 // (+y = toward the nose); canvas y is flipped to match.
 function drawUnitVector(ctx2, x0, y0, bx, by, len, color, label) {
-  const ex = x0 + bx * len, ey = y0 - by * len;
-  ctx2.strokeStyle = color; ctx2.fillStyle = color; ctx2.lineWidth = 2;
-  ctx2.beginPath(); ctx2.moveTo(x0, y0); ctx2.lineTo(ex, ey); ctx2.stroke();
-  ctx2.beginPath(); ctx2.arc(ex, ey, 3, 0, Math.PI * 2); ctx2.fill();
+  const ex = x0 + bx * len,
+    ey = y0 - by * len;
+  ctx2.strokeStyle = color;
+  ctx2.fillStyle = color;
+  ctx2.lineWidth = 2;
+  ctx2.beginPath();
+  ctx2.moveTo(x0, y0);
+  ctx2.lineTo(ex, ey);
+  ctx2.stroke();
+  ctx2.beginPath();
+  ctx2.arc(ex, ey, 3, 0, Math.PI * 2);
+  ctx2.fill();
   ctx2.font = '10px "JetBrains Mono", monospace';
   ctx2.fillText(label, ex + 4, ey + 3);
 }
@@ -255,16 +272,18 @@ function initFigureCanvas() {
 function figAeroSnapshot(body) {
   const relDefault = { relVx: 0, relVy: 0, speedRel: 0, velBodyX: 0, sinAlpha: 0, wCross: 0 };
   if (!body) return relDefault;
-  const w  = (typeof windInertialVector === 'function')  ? windInertialVector(body.rx, body.ry)  : { wx: 0, wy: 0 };
-// Atmosphere co-rotates with Earth — subtract that too, same as
-// computeDragAero() in physics.js, otherwise the panel shows a phantom
-// 465 m/s headwind on a rocket that's actually sitting still relative
-// to the air.
-const sv = (typeof earthSurfaceVelocity === 'function') ? earthSurfaceVelocity(body.rx, body.ry) : { vx: 0, vy: 0 };
-const relVx = body.vx - (w.wx + sv.vx), relVy = body.vy - (w.wy + sv.vy);
+  const w = (typeof windInertialVector === 'function') ? windInertialVector(body.rx, body.ry) : { wx: 0, wy: 0 };
+  // Atmosphere co-rotates with Earth — subtract that too, same as
+  // computeDragAero() in physics.js, otherwise the panel shows a phantom
+  // 465 m/s headwind on a rocket that's actually sitting still relative
+  // to the air.
+  const sv = (typeof earthSurfaceVelocity === 'function') ? earthSurfaceVelocity(body.rx, body.ry) : { vx: 0, vy: 0 };
+  const relVx = body.vx - (w.wx + sv.vx),
+    relVy = body.vy - (w.wy + sv.vy);
   const speedRel = Math.hypot(relVx, relVy);
   if (speedRel < 1e-3) return { ...relDefault, relVx, relVy, speedRel };
-  const cosT = Math.cos(body.theta), sinT = Math.sin(body.theta);
+  const cosT = Math.cos(body.theta),
+    sinT = Math.sin(body.theta);
   const velBodyX = relVx * cosT + relVy * sinT; // perpendicular to the nose axis
   const sinAlpha = Math.max(-1, Math.min(1, velBodyX / speedRel));
   const wCross = Math.min(1, Math.abs(sinAlpha));
@@ -296,22 +315,23 @@ function figMemberMechanics(members, body, aero) {
     const W = Number.isFinite(m.width) ? m.width : 0;
     const isTapered = (m.stageRole === 'nose') || (m.stageRole === 'payloadSpace');
     const legsProgress = (i === 0 && body && body.isActive) ? legs.progress : 0;
-
-    let comX = 0, comY = H / 2;
+    
+    let comX = 0,
+      comY = H / 2;
     if (typeof memberComponents === 'function' && typeof combineComponents === 'function') {
       const comps = memberComponents(m, fuelShares[i] || 0, legsProgress);
       const combined = combineComponents(comps);
       if (Number.isFinite(combined.comX)) comX = combined.comX;
       if (Number.isFinite(combined.comY)) comY = combined.comY;
     }
-
+    
     const localFrac = isTapered ? (nCross * (1 - aero.wCross) + bCross * aero.wCross) : bCross;
     const cpY = H * localFrac;
-
+    
     const aAxial = Math.PI * (W / 2) ** 2;
     const aSide = W * H;
     const aEff = aAxial * (1 - aero.wCross) + aSide * aero.wCross;
-
+    
     const rec = { member: m, index: i, H, W, baseY, comX, comY, cpY, aEff, isTapered };
     baseY += H;
     return rec;
@@ -324,28 +344,29 @@ function figMemberMechanics(members, body, aero) {
 function drawFigurePanel() {
   if (!figCtx) return;
   const dpr = window.devicePixelRatio || 1;
-const w = figCanvas.width / dpr;
-const h = figCanvas.height / dpr;
+  const w = figCanvas.width / dpr;
+  const h = figCanvas.height / dpr;
   figCtx.clearRect(0, 0, w, h);
-
+  
   const body = state.bodies[state.activeBodyIndex];
   const members = (body && body.members) ? body.members : [];
-
+  
   if (!members.length) {
     drawFigurePanelFallback(body, w, h);
     return;
   }
-
+  
   // ---- Scale: fit the WHOLE stack (every member) into the panel ----
   const widest = Math.max(...members.map(m => Number.isFinite(m.width) ? m.width : 0), 0.1);
   const totalH_m = members.reduce((s, m) => s + (Number.isFinite(m.height) ? m.height : 0), 0) || 1;
   const mppW = widest / (w * 0.30);
   const mppH = totalH_m / (h * 0.80);
   const mpp = Math.max(mppW, mppH); // meters per pixel — larger of the two keeps both dimensions on-canvas
-
-  const baseX = w / 2, baseY = h * 0.94;
+  
+  const baseX = w / 2,
+    baseY = h * 0.94;
   const stackHalfW_px = (widest / mpp) / 2;
-
+  
   // ---- Fuel gauge — whole-stack fraction, thin bar to the left of the stack ----
   const maxFuelTotal = members.reduce((s, m) => s + ((typeof memberMaxFuel === 'function') ? memberMaxFuel(m) : 0), 0);
   const fuelFrac = maxFuelTotal > 0 ? Math.max(0, Math.min(1, (body.fuelMass || 0) / maxFuelTotal)) : 0;
@@ -361,7 +382,7 @@ const h = figCanvas.height / dpr;
   figCtx.font = '8px "JetBrains Mono", monospace';
   figCtx.fillText('FUEL', gaugeX - 2, baseY - gaugeH - 4);
   figCtx.restore();
-
+  
   // ---- Payload, if still fitted inside its fairing — drawn BEFORE the
   // members loop so a fairing that's still on covers it, exactly like the
   // live sim canvas (see render.js's drawBodyRocket). IMPORTANT: a payload
@@ -373,13 +394,15 @@ const h = figCanvas.height / dpr;
   if (body.payloadId && !body.payloadReleased) {
     const pl = (typeof getPayload === 'function') ? getPayload(body.payloadId) : null;
     if (pl) {
-      let payloadBaseY_m = null, yy = 0;
+      let payloadBaseY_m = null,
+        yy = 0;
       members.forEach(m => {
         if (m.stageRole === 'payloadSpace' && payloadBaseY_m === null) payloadBaseY_m = yy;
         yy += (m.height || 0);
       });
       if (payloadBaseY_m === null) payloadBaseY_m = yy;
-      const plH = (pl.height || 1) / mpp, plW = (pl.width || 1) / mpp;
+      const plH = (pl.height || 1) / mpp,
+        plW = (pl.width || 1) / mpp;
       figCtx.save();
       figCtx.translate(baseX, baseY - payloadBaseY_m / mpp);
       if (typeof drawPayloadArt === 'function') drawPayloadArt(figCtx, plW, plH);
@@ -391,7 +414,7 @@ const h = figCanvas.height / dpr;
       figCtx.restore();
     }
   }
-
+  
   // ---- Every member's real artwork, bottom → top (identical opts shape to
   // render.js's live stack draw, so the panel is the literal same vehicle) ----
   let yOffsetPx = 0;
@@ -412,16 +435,16 @@ const h = figCanvas.height / dpr;
         stageAboveBellHeight = 0.007 * perEngine;
       }
     }
-
+    
     const mH = (m.height || 0) / mpp;
     const mW = (m.width || 1) / mpp;
-    const recType = (m.hasRecovery === false) ? null
-      : ((m.recoveryTypeId && typeof getComponentType === 'function') ? getComponentType(m.recoveryTypeId) : null);
+    const recType = (m.hasRecovery === false) ? null :
+      ((m.recoveryTypeId && typeof getComponentType === 'function') ? getComponentType(m.recoveryTypeId) : null);
     const rcsT = (m.rcsTypeId && typeof getComponentType === 'function') ? getComponentType(m.rcsTypeId) : null;
     const engineLayout = (m.engineTypeId && typeof getComponentType === 'function') ? getComponentType(m.engineTypeId) : null;
-
-    const psType = (m.stageRole === 'payloadSpace' && m.payloadSpaceTypeId && typeof getComponentType === 'function')
-      ? getComponentType(m.payloadSpaceTypeId) : null;
+    
+    const psType = (m.stageRole === 'payloadSpace' && m.payloadSpaceTypeId && typeof getComponentType === 'function') ?
+      getComponentType(m.payloadSpaceTypeId) : null;
     const psParams = m.params || {};
     const payloadOpts = (m.stageRole === 'payloadSpace') ? {
       payloadKind: psType ? psType.kind : undefined,
@@ -431,7 +454,7 @@ const h = figCanvas.height / dpr;
       payloadCurveRatio: Number.isFinite(psParams.curveHeightFactor) ? psParams.curveHeightFactor : undefined,
       payloadColor: m.color || '#e9edf2',
     } : {};
-
+    
     figCtx.save();
     figCtx.translate(baseX, baseY - yOffsetPx);
     drawRocketArt(figCtx, mW, mH, mpp, {
@@ -457,24 +480,29 @@ const h = figCanvas.height / dpr;
     figCtx.restore();
     yOffsetPx += mH;
   });
-
+  
   // ---- Shared aero snapshot: ONE relative wind, ONE angle of attack for
   // the whole connected body — each member just gets its own share/point. ----
   const aero = figAeroSnapshot(body);
   const mech = figMemberMechanics(members, body, aero);
-
+  
   // Overall stack CoM — the existing bright reference line, kept as-is.
   const geom = geometryOf(body);
   const comY_overall = baseY - (geom.comH || 0) / mpp;
-  figCtx.strokeStyle = '#ff4466'; figCtx.lineWidth = 2;
+  figCtx.strokeStyle = '#ff4466';
+  figCtx.lineWidth = 2;
   figCtx.beginPath();
   figCtx.moveTo(baseX - stackHalfW_px * 0.9, comY_overall);
   figCtx.lineTo(baseX + stackHalfW_px * 0.9, comY_overall);
   figCtx.stroke();
-  figCtx.beginPath(); figCtx.arc(baseX, comY_overall, 4, 0, Math.PI * 2); figCtx.fillStyle = '#ff4466'; figCtx.fill();
-  figCtx.fillStyle = '#ff8899'; figCtx.font = '10px monospace';
+  figCtx.beginPath();
+  figCtx.arc(baseX, comY_overall, 4, 0, Math.PI * 2);
+  figCtx.fillStyle = '#ff4466';
+  figCtx.fill();
+  figCtx.fillStyle = '#ff8899';
+  figCtx.font = '10px monospace';
   figCtx.fillText('CoM (stack)', baseX + stackHalfW_px + 4, comY_overall + 3);
-
+  
   // Windward side: the body-frame edge the relative wind is arriving FROM.
   // sideSign = -1 → flow arrives moving in the body's +X direction, which
   // means it originated on the -X (left) side — left is the windward
@@ -483,44 +511,59 @@ const h = figCanvas.height / dpr;
   // arrow is drawn from that ONE windward point only — never centered, and
   // never doubled onto both sides of the same member.
   const sideSign = (aero.speedRel > 0.2 && Math.abs(aero.sinAlpha) > 0.02) ? -Math.sign(aero.velBodyX) : 0;
-  const dragUnit = (aero.speedRel > 0.2)
-    ? worldVectorToBodyUnit(-aero.relVx / aero.speedRel, -aero.relVy / aero.speedRel, body.theta)
-    : null;
-
+  const dragUnit = (aero.speedRel > 0.2) ?
+    worldVectorToBodyUnit(-aero.relVx / aero.speedRel, -aero.relVy / aero.speedRel, body.theta) :
+    null;
+  
   mech.forEach(mm => {
     const globalComY_m = mm.baseY + mm.comY;
-    const globalCpY_m  = mm.baseY + mm.cpY;
+    const globalCpY_m = mm.baseY + mm.cpY;
     const comPx = { x: baseX + mm.comX / mpp, y: baseY - globalComY_m / mpp };
-
+    
     // CoP slides from the centerline (nose-on, wCross≈0) out toward
     // whichever edge actually faces the relative wind as the body presents
     // more of its broadside (wCross→1) — identical blend to
     // computeDragAero()'s per-member normal-force split in physics.js.
     const cpOffsetX_m = sideSign * (mm.W / 2) * aero.wCross;
     const cpPx = { x: baseX + (mm.comX + cpOffsetX_m) / mpp, y: baseY - globalCpY_m / mpp };
-
+    
     // Per-member CoM dot.
-    figCtx.beginPath(); figCtx.arc(comPx.x, comPx.y, 2.6, 0, Math.PI * 2);
-    figCtx.fillStyle = 'rgba(255,170,120,0.9)'; figCtx.fill();
-    figCtx.strokeStyle = 'rgba(0,0,0,0.4)'; figCtx.lineWidth = 0.8; figCtx.stroke();
-
+    figCtx.beginPath();
+    figCtx.arc(comPx.x, comPx.y, 2.6, 0, Math.PI * 2);
+    figCtx.fillStyle = 'rgba(255,170,120,0.9)';
+    figCtx.fill();
+    figCtx.strokeStyle = 'rgba(0,0,0,0.4)';
+    figCtx.lineWidth = 0.8;
+    figCtx.stroke();
+    
     // Per-member CoP dot.
-    figCtx.beginPath(); figCtx.arc(cpPx.x, cpPx.y, 2.6, 0, Math.PI * 2);
-    figCtx.fillStyle = 'rgba(120,220,255,0.95)'; figCtx.fill();
-    figCtx.strokeStyle = 'rgba(0,0,0,0.4)'; figCtx.lineWidth = 0.8; figCtx.stroke();
-
+    figCtx.beginPath();
+    figCtx.arc(cpPx.x, cpPx.y, 2.6, 0, Math.PI * 2);
+    figCtx.fillStyle = 'rgba(120,220,255,0.95)';
+    figCtx.fill();
+    figCtx.strokeStyle = 'rgba(0,0,0,0.4)';
+    figCtx.lineWidth = 0.8;
+    figCtx.stroke();
+    
     // Drag vector, originating at THIS member's CoP — only when there's
     // real relative airflow, and only from the single windward point above.
     if (dragUnit && showVectors) {
       const len = 14 + 16 * mm.areaShare;
       const ex = cpPx.x + dragUnit.bx * len;
       const ey = cpPx.y - dragUnit.by * len;
-      figCtx.strokeStyle = 'rgba(255,120,90,0.9)'; figCtx.lineWidth = 1.6;
-      figCtx.beginPath(); figCtx.moveTo(cpPx.x, cpPx.y); figCtx.lineTo(ex, ey); figCtx.stroke();
-      figCtx.beginPath(); figCtx.arc(ex, ey, 2.2, 0, Math.PI * 2); figCtx.fillStyle = 'rgba(255,120,90,0.9)'; figCtx.fill();
+      figCtx.strokeStyle = 'rgba(255,120,90,0.9)';
+      figCtx.lineWidth = 1.6;
+      figCtx.beginPath();
+      figCtx.moveTo(cpPx.x, cpPx.y);
+      figCtx.lineTo(ex, ey);
+      figCtx.stroke();
+      figCtx.beginPath();
+      figCtx.arc(ex, ey, 2.2, 0, Math.PI * 2);
+      figCtx.fillStyle = 'rgba(255,120,90,0.9)';
+      figCtx.fill();
     }
   });
-
+  
   // ---- Compact legend for the new per-member symbols ----
   figCtx.font = '8px "JetBrains Mono", monospace';
   [
@@ -529,26 +572,28 @@ const h = figCanvas.height / dpr;
     ['rgba(255,120,90,0.9)', 'Drag'],
   ].forEach(([color, label], i) => {
     const ly = 10 + i * 10;
-    figCtx.fillStyle = color; figCtx.fillRect(4, ly - 6, 7, 7);
-    figCtx.fillStyle = '#6b7d9c'; figCtx.fillText(label, 14, ly);
+    figCtx.fillStyle = color;
+    figCtx.fillRect(4, ly - 6, 7, 7);
+    figCtx.fillStyle = '#6b7d9c';
+    figCtx.fillText(label, 14, ly);
   });
-
+  
   // ---- Overall force/motion unit vectors (v / main thrust F / g) — kept
   // exactly as before, anchored on the overall stack CoM / stack base. ----
   if (showVectors) {
     const vecLen = (totalH_m / mpp) * 0.32;
     const vUnit = worldVectorToBodyUnit(body.vx, body.vy, body.theta);
     if (vUnit) drawUnitVector(figCtx, baseX, comY_overall, vUnit.bx, vUnit.by, vecLen, '#ffdd55', 'v');
-
+    
     const fUnit = unitOf(lastForces.mainFx, lastForces.mainFy);
     if (fUnit) drawUnitVector(figCtx, baseX, baseY, fUnit.bx, fUnit.by, vecLen, '#ffaa33', 'F');
-
+    
     const rr = Math.hypot(body.rx, body.ry);
     const gWorld = rr > 0 ? { x: -body.rx / rr, y: -body.ry / rr } : { x: 0, y: -1 };
     const gUnit = worldVectorToBodyUnit(gWorld.x, gWorld.y, body.theta);
     if (gUnit) drawUnitVector(figCtx, baseX, comY_overall, gUnit.bx, gUnit.by, vecLen * 0.85, '#aabbff', 'g');
   }
-
+  
   // ---- Gimbal indicator on the base (bottom engine) — unchanged ----
   const centerEngine = ENGINES.find(e => e.isCenter);
   if (centerEngine) {
@@ -558,7 +603,12 @@ const h = figCanvas.height / dpr;
       figCtx.translate(baseX, baseY);
       figCtx.rotate(centerEngine.gimbalDeg * Math.PI / 180);
       figCtx.fillStyle = 'rgba(255,180,80,0.8)';
-      figCtx.beginPath(); figCtx.moveTo(-4, 0); figCtx.lineTo(4, 0); figCtx.lineTo(0, 18); figCtx.closePath(); figCtx.fill();
+      figCtx.beginPath();
+      figCtx.moveTo(-4, 0);
+      figCtx.lineTo(4, 0);
+      figCtx.lineTo(0, 18);
+      figCtx.closePath();
+      figCtx.fill();
       figCtx.restore();
     }
   }
@@ -572,17 +622,19 @@ const h = figCanvas.height / dpr;
 // ---------------------------------------------------------------------------
 function drawFigurePanelFallback(body, w, h) {
   const fallbackRec = (body && body.payloadBody && body.payloadBody.record) || null;
-  const H_m = Number.isFinite(body && body.height) ? body.height
-    : (fallbackRec && Number.isFinite(fallbackRec.height)) ? fallbackRec.height
-    : (CONFIG.ROCKET_HEIGHT || 45);
-  const W_m = Number.isFinite(body && body.width) ? body.width
-    : (fallbackRec && Number.isFinite(fallbackRec.width)) ? fallbackRec.width
-    : (CONFIG.ROCKET_WIDTH || 3.9);
-
+  const H_m = Number.isFinite(body && body.height) ? body.height :
+    (fallbackRec && Number.isFinite(fallbackRec.height)) ? fallbackRec.height :
+    (CONFIG.ROCKET_HEIGHT || 45);
+  const W_m = Number.isFinite(body && body.width) ? body.width :
+    (fallbackRec && Number.isFinite(fallbackRec.width)) ? fallbackRec.width :
+    (CONFIG.ROCKET_WIDTH || 3.9);
+  
   const scale = (h * 0.75) / H_m;
-  const baseX = w / 2, baseY = h * 0.9;
-  const W = W_m * scale, H = H_m * scale;
-
+  const baseX = w / 2,
+    baseY = h * 0.9;
+  const W = W_m * scale,
+    H = H_m * scale;
+  
   figCtx.fillStyle = 'rgba(13,20,36,0.5)';
   figCtx.strokeStyle = '#35d6ff';
   figCtx.lineWidth = 1.4;
@@ -593,26 +645,40 @@ function drawFigurePanelFallback(body, w, h) {
   figCtx.quadraticCurveTo(baseX + W / 2, baseY - H, baseX + W / 2, baseY - H * 0.85);
   figCtx.lineTo(baseX + W / 2, baseY);
   figCtx.closePath();
-  figCtx.fill(); figCtx.stroke();
-
+  figCtx.fill();
+  figCtx.stroke();
+  
   if (!body) return;
-
+  
   const comY = baseY - H * 0.5;
   const aero = figAeroSnapshot(body);
   const sideSign = (aero.speedRel > 0.2 && Math.abs(aero.sinAlpha) > 0.02) ? -Math.sign(aero.velBodyX) : 0;
   const bCross = (typeof AERO_CP_BODY_FRAC !== 'undefined') ? AERO_CP_BODY_FRAC : 0.5;
   const cpX = baseX + sideSign * (W / 2) * aero.wCross;
   const cpY = baseY - H * bCross;
-
-  figCtx.strokeStyle = '#ff4466'; figCtx.lineWidth = 2;
-  figCtx.beginPath(); figCtx.moveTo(baseX - W * 0.4, comY); figCtx.lineTo(baseX + W * 0.4, comY); figCtx.stroke();
-  figCtx.beginPath(); figCtx.arc(baseX, comY, 4, 0, Math.PI * 2); figCtx.fillStyle = '#ff4466'; figCtx.fill();
-  figCtx.fillStyle = '#ff8899'; figCtx.font = '10px monospace'; figCtx.fillText('CoM', baseX + W * 0.45, comY + 3);
-
-  figCtx.beginPath(); figCtx.arc(cpX, cpY, 3, 0, Math.PI * 2);
-  figCtx.fillStyle = 'rgba(120,220,255,0.95)'; figCtx.fill();
-  figCtx.fillStyle = '#8fd8ff'; figCtx.font = '10px monospace'; figCtx.fillText('CoP', cpX + 6, cpY + 3);
-
+  
+  figCtx.strokeStyle = '#ff4466';
+  figCtx.lineWidth = 2;
+  figCtx.beginPath();
+  figCtx.moveTo(baseX - W * 0.4, comY);
+  figCtx.lineTo(baseX + W * 0.4, comY);
+  figCtx.stroke();
+  figCtx.beginPath();
+  figCtx.arc(baseX, comY, 4, 0, Math.PI * 2);
+  figCtx.fillStyle = '#ff4466';
+  figCtx.fill();
+  figCtx.fillStyle = '#ff8899';
+  figCtx.font = '10px monospace';
+  figCtx.fillText('CoM', baseX + W * 0.45, comY + 3);
+  
+  figCtx.beginPath();
+  figCtx.arc(cpX, cpY, 3, 0, Math.PI * 2);
+  figCtx.fillStyle = 'rgba(120,220,255,0.95)';
+  figCtx.fill();
+  figCtx.fillStyle = '#8fd8ff';
+  figCtx.font = '10px monospace';
+  figCtx.fillText('CoP', cpX + 6, cpY + 3);
+  
   if (showVectors) {
     const vecLen = H * 0.32;
     const vUnit = worldVectorToBodyUnit(body.vx, body.vy, body.theta);
@@ -628,6 +694,7 @@ function drawFigurePanelFallback(body, w, h) {
 // Basal (bottom) view — 9-engine ignition status
 // ---------------------------------------------------------------------------
 let basalCanvas, basalCtx;
+
 function initBasalCanvas() {
   basalCanvas = document.getElementById('basalCanvas');
   basalCtx = basalCanvas.getContext('2d');
@@ -647,53 +714,56 @@ function initBasalCanvas() {
 function drawBasalView() {
   if (!basalCtx) return;
   // Work in CSS pixels — the DPR transform set in initBasalCanvas() makes
-// this map to the full-resolution backing buffer automatically.
-const dpr = window.devicePixelRatio || 1;
-const w = basalCanvas.width / dpr;
-const h = basalCanvas.height / dpr;
-
+  // this map to the full-resolution backing buffer automatically.
+  const dpr = window.devicePixelRatio || 1;
+  const w = basalCanvas.width / dpr;
+  const h = basalCanvas.height / dpr;
+  
   basalCtx.clearRect(0, 0, w, h);
-  const cx = w/2, cy = h/2, R = Math.min(w,h)*0.34;
-
+  const cx = w / 2,
+    cy = h / 2,
+    R = Math.min(w, h) * 0.34;
+  
   // Outer frame ring — solid white (was cyan).
   basalCtx.fillStyle = 'rgba(13,20,36,0.4)';
   basalCtx.strokeStyle = '#ffffff';
   basalCtx.lineWidth = 2.5;
   basalCtx.beginPath();
-  basalCtx.arc(cx, cy, R*1.40, 0, Math.PI*2);
+  basalCtx.arc(cx, cy, R * 1.40, 0, Math.PI * 2);
   basalCtx.fill();
   basalCtx.stroke();
-
+  
   ENGINES.forEach(e => {
     let ex, ey;
-    if (e.isCenter) { ex = cx; ey = cy; }
+    if (e.isCenter) { ex = cx;
+      ey = cy; }
     else {
-      const rad = e.angleDeg * Math.PI/180;
+      const rad = e.angleDeg * Math.PI / 180;
       let radDisfrac = 0.95;
       ex = cx + Math.cos(rad) * R * radDisfrac;
       ey = cy - Math.sin(rad) * R * radDisfrac;
     }
-
+    
     // Driven by ACTUAL delivered thrust (currentF / Fmax), not the
     // throttle setting — a fuel-starved engine correctly reads off even
     // if its slider is still held up.
     const frac = e.Fmax > 0 ? e.currentF / e.Fmax : 0;
     const radius = e.isCenter ? 22 : 20;
-
+    
     // Fill: faint disc at idle → solid white at full throttle. Alpha
     // ramps smoothly so mid-throttle reads as a soft grey, full throttle
     // as a bright white dot.
     const alpha = 0.10 + 0.90 * frac;
     basalCtx.fillStyle = `rgba(255,255,255,${alpha})`;
     basalCtx.beginPath();
-    basalCtx.arc(ex, ey, radius, 0, Math.PI*2);
+    basalCtx.arc(ex, ey, radius, 0, Math.PI * 2);
     basalCtx.fill();
-
+    
     // White outline so idle discs still read as defined shapes.
     basalCtx.strokeStyle = '#ffffff';
     basalCtx.lineWidth = 1.5;
     basalCtx.stroke();
-
+    
     // Throttle % under the disc, only when there's meaningful thrust.
     if (frac > 0.02) {
       basalCtx.fillStyle = '#ffffff';
@@ -712,28 +782,39 @@ const graphHistory = { t: [], alt: [], vel: [], thrust: [] };
 const GRAPH_WINDOW = 60; // seconds of history kept
 
 function pushGraphSample(t, alt, vel, thrust) {
-  graphHistory.t.push(t); graphHistory.alt.push(alt); graphHistory.vel.push(vel); graphHistory.thrust.push(thrust);
+  graphHistory.t.push(t);
+  graphHistory.alt.push(alt);
+  graphHistory.vel.push(vel);
+  graphHistory.thrust.push(thrust);
   while (graphHistory.t.length && t - graphHistory.t[0] > GRAPH_WINDOW) {
-    graphHistory.t.shift(); graphHistory.alt.shift(); graphHistory.vel.shift(); graphHistory.thrust.shift();
+    graphHistory.t.shift();
+    graphHistory.alt.shift();
+    graphHistory.vel.shift();
+    graphHistory.thrust.shift();
   }
 }
 
 function drawMiniChart(canvasEl, data, color, label) {
   const ctx2 = canvasEl.getContext('2d');
-  const w = canvasEl.width, h = canvasEl.height;
+  const w = canvasEl.width,
+    h = canvasEl.height;
   ctx2.clearRect(0, 0, w, h);
   if (data.length < 2) return;
-  const min = Math.min(...data), max = Math.max(...data);
+  const min = Math.min(...data),
+    max = Math.max(...data);
   const range = (max - min) || 1;
-  ctx2.strokeStyle = color; ctx2.lineWidth = 1.5;
+  ctx2.strokeStyle = color;
+  ctx2.lineWidth = 1.5;
   ctx2.beginPath();
   data.forEach((v, i) => {
     const x = (i / (data.length - 1)) * w;
     const y = h - ((v - min) / range) * (h - 8) - 4;
-    if (i === 0) ctx2.moveTo(x, y); else ctx2.lineTo(x, y);
+    if (i === 0) ctx2.moveTo(x, y);
+    else ctx2.lineTo(x, y);
   });
   ctx2.stroke();
-  ctx2.fillStyle = color; ctx2.font = '9px monospace';
+  ctx2.fillStyle = color;
+  ctx2.font = '9px monospace';
   ctx2.fillText(`${label}: ${fmt(data[data.length-1], 1)}`, 3, 10);
 }
 
@@ -760,13 +841,13 @@ function initWindCompass() {
   windCompassCanvas = document.getElementById('windCompass');
   if (!windCompassCanvas) return;
   windCompassCtx = windCompassCanvas.getContext('2d');
-
+  
   // DPR scaling so it stays sharp on retina/high-DPI screens. All drawing
   // below works in CSS-pixel coordinates; the setTransform maps them.
   const dpr = window.devicePixelRatio || 1;
   const cssW = windCompassCanvas.clientWidth || 130;
   const cssH = windCompassCanvas.clientHeight || 130;
-  windCompassCanvas.width  = Math.round(cssW * dpr);
+  windCompassCanvas.width = Math.round(cssW * dpr);
   windCompassCanvas.height = Math.round(cssH * dpr);
   windCompassCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
 }
@@ -779,29 +860,30 @@ function drawWindCompass() {
   const cx = w / 2;
   const cy = h / 2;
   const R = Math.min(w, h) * 0.38;
-
+  
   const c = windCompassCtx;
   c.clearRect(0, 0, w, h);
-
+  
   // Backing disc
   c.fillStyle = 'rgba(13,20,36,0.6)';
   c.beginPath();
   c.arc(cx, cy, R + 8, 0, Math.PI * 2);
   c.fill();
-
+  
   // Outer ring
   c.strokeStyle = 'rgba(255,255,255,0.30)';
   c.lineWidth = 1.5;
   c.beginPath();
   c.arc(cx, cy, R, 0, Math.PI * 2);
   c.stroke();
-
+  
   // Tick marks every 30° — longer at the four cardinals
   c.strokeStyle = 'rgba(255,255,255,0.22)';
   c.lineWidth = 1;
   for (let i = 0; i < 12; i++) {
     const ang = i * 30 * Math.PI / 180;
-    const dx = Math.sin(ang), dy = -Math.cos(ang);
+    const dx = Math.sin(ang),
+      dy = -Math.cos(ang);
     const isCardinal = (i % 3 === 0);
     const len = isCardinal ? 8 : 5;
     c.beginPath();
@@ -809,7 +891,7 @@ function drawWindCompass() {
     c.lineTo(cx + dx * R, cy + dy * R);
     c.stroke();
   }
-
+  
   // Cardinal labels in the local tangent frame:
   //   E (right, +x)  = direction of increasing φ = Earth's rotation
   //   W (left, -x)   = opposite
@@ -819,24 +901,24 @@ function drawWindCompass() {
   c.font = 'bold 11px "JetBrains Mono", monospace';
   c.textAlign = 'center';
   c.textBaseline = 'middle';
-  c.fillText('U', cx,          cy - R + 12);
-  c.fillText('D', cx,          cy + R - 12);
+  c.fillText('U', cx, cy - R + 12);
+  c.fillText('D', cx, cy + R - 12);
   c.fillText('E', cx + R - 12, cy);
   c.fillText('W', cx - R + 12, cy);
-
+  
   if (wind.enabled && wind.speed > 0) {
     // wind.directionDeg: 0 = East, 90 = Up/outward.
     // Canvas convention: +x = right = East; -y = up = U.
     const ang = wind.directionDeg * Math.PI / 180;
     const dx = Math.cos(ang);
-    const dy = -Math.sin(ang);      // canvas y is inverted vs "Up"
-
+    const dy = -Math.sin(ang); // canvas y is inverted vs "Up"
+    
     const arrowLen = R * 0.72;
     const tipX = cx + dx * arrowLen;
     const tipY = cy + dy * arrowLen;
     const tailX = cx - dx * arrowLen * 0.25;
     const tailY = cy - dy * arrowLen * 0.25;
-
+    
     // Shaft
     c.strokeStyle = '#ff5f7e';
     c.lineWidth = 2.5;
@@ -845,7 +927,7 @@ function drawWindCompass() {
     c.moveTo(tailX, tailY);
     c.lineTo(tipX, tipY);
     c.stroke();
-
+    
     // Arrowhead — two points behind the tip, rotated ±0.4 rad from the
     // reverse direction. angCanvas is atan2 in canvas coords (y down).
     const angCanvas = Math.atan2(dy, dx);
@@ -862,7 +944,7 @@ function drawWindCompass() {
     c.lineTo(h2x, h2y);
     c.closePath();
     c.fill();
-
+    
     // Centre dot (marker for "no direction" reference point)
     c.beginPath();
     c.arc(cx, cy, 2.5, 0, Math.PI * 2);

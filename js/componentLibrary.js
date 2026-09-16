@@ -26,10 +26,10 @@ const G0 = 9.80665; // m/s²
 // CONFIG) because fleet.js's stage/booster derived-mass functions are
 // called *from* config.js at load time — before CONFIG itself exists.
 // Having them here breaks the circular dependency.
-const BODY_SHELL_FACTOR            = 0.0165;
-const SECOND_STAGE_TARGET_DELTA_V  = 4500;
-const MIN_TWR_FLOOR                = 1.2;
-const MAX_BULGE_DIAMETER_RATIO     = 1.4;
+const BODY_SHELL_FACTOR = 0.0165;
+const SECOND_STAGE_TARGET_DELTA_V = 4500;
+const MIN_TWR_FLOOR = 1.2;
+const MAX_BULGE_DIAMETER_RATIO = 1.4;
 // ---------------------------------------------------------------------------
 // Small geometry helper used by "ringWithCenter" engine-layout frames: given
 // a slot COUNT evenly spaced starting at startDeg, generate the outer-ring
@@ -213,11 +213,11 @@ function buildRcs4Pod2Nozzle() {
     },
     // STEP B: rcsThrust/rcsVe removed — those come from `rcsThruster` type.
     parameterSchema: [
-  { key: 'rcsTopY', label: 'Top pods height (from base)', unit: 'm', min: 0 },
-  { key: 'rcsBottomY', label: 'Bottom pods height (from base)', unit: 'm', min: 0 },
-  { key: 'rcsXOffset', label: 'Lateral offset', unit: 'm', min: 0.1 },
-  { key: 'rcsPwmPeriod', label: 'PWM period', unit: 's', min: 0.02 },
-],
+      { key: 'rcsTopY', label: 'Top pods height (from base)', unit: 'm', min: 0 },
+      { key: 'rcsBottomY', label: 'Bottom pods height (from base)', unit: 'm', min: 0 },
+      { key: 'rcsXOffset', label: 'Lateral offset', unit: 'm', min: 0.1 },
+      { key: 'rcsPwmPeriod', label: 'PWM period', unit: 's', min: 0.02 },
+    ],
     capabilities: { sharedGimbalSlider: false, throttleGrouping: false },
   };
 }
@@ -287,7 +287,11 @@ const THRUSTER_CHEMICAL_SCHEMA = [
 
 function makeThruster(id, displayName, description, values) {
   return {
-    id, category: 'thruster', kind: 'chemical', displayName, description,
+    id,
+    category: 'thruster',
+    kind: 'chemical',
+    displayName,
+    description,
     parameterSchema: withFixedValues(THRUSTER_CHEMICAL_SCHEMA, values),
   };
 }
@@ -311,16 +315,16 @@ function buildThrusterMerlin1DClass() {
     'Merlin-1D class',
     'Fixed-performance chemical engine type. Ve, efficiency, gimbal range/rate, and throttle floor/rate are all locked in by the type — a rocket build only ever chooses a mass flow rate (≤ this type\'s max), which determines thrust and engine mass.',
     {
-  ve: 2900,
-  efficiency: 0.9,
-  twr: 184,
-  maxMassFlowRate: 500,
-  gimbalCapable: true,
-  gimbalMaxDeg: 20,
-  gimbalRateDegS: 40,
-  minThrottleFrac: 0.4,
-  maxThrottleRateFrac: 0.5,
-}
+      ve: 2900,
+      efficiency: 0.9,
+      twr: 184,
+      maxMassFlowRate: 500,
+      gimbalCapable: true,
+      gimbalMaxDeg: 20,
+      gimbalRateDegS: 40,
+      minThrottleFrac: 0.4,
+      maxThrottleRateFrac: 0.5,
+    }
   );
 }
 
@@ -335,7 +339,11 @@ const RCS_THRUSTER_COLD_GAS_SCHEMA = [
 
 function makeRcsThruster(id, displayName, description, values) {
   return {
-    id, category: 'rcsThruster', kind: 'coldGas', displayName, description,
+    id,
+    category: 'rcsThruster',
+    kind: 'coldGas',
+    displayName,
+    description,
     parameterSchema: withFixedValues(RCS_THRUSTER_COLD_GAS_SCHEMA, values),
   };
 }
@@ -364,7 +372,11 @@ const FUEL_LIQUID_SCHEMA = [
 
 function makeFuel(id, displayName, description, values) {
   return {
-    id, category: 'fuel', kind: 'liquid', displayName, description,
+    id,
+    category: 'fuel',
+    kind: 'liquid',
+    displayName,
+    description,
     parameterSchema: withFixedValues(FUEL_LIQUID_SCHEMA, values),
   };
 }
@@ -376,8 +388,7 @@ function buildFuelRp1Lox() {
   return makeFuel(
     'rp1-lox',
     'RP-1 / LOX',
-    'Propellant type. Declares only propellant density — tank size (and therefore fuel mass) is decided per rocket/stage build.',
-    { propellantDensity: 1080 }
+    'Propellant type. Declares only propellant density — tank size (and therefore fuel mass) is decided per rocket/stage build.', { propellantDensity: 1080 }
   );
 }
 
@@ -390,7 +401,11 @@ const METAL_ALLOY_SCHEMA = [
 
 function makeMetal(id, displayName, description, values) {
   return {
-    id, category: 'metal', kind: 'alloy', displayName, description,
+    id,
+    category: 'metal',
+    kind: 'alloy',
+    displayName,
+    description,
     parameterSchema: withFixedValues(METAL_ALLOY_SCHEMA, values),
   };
 }
@@ -402,8 +417,7 @@ function buildMetalAlLiAlloy() {
   return makeMetal(
     'al-li-alloy',
     'Aluminium-Lithium alloy',
-    'Structural metal type. Declares only density — used to derive body-shell, legs, and payload-space-container mass from whatever volume those structures work out to.',
-    { density: 2700 }
+    'Structural metal type. Declares only density — used to derive body-shell, legs, and payload-space-container mass from whatever volume those structures work out to.', { density: 2700 }
   );
 }
 
@@ -459,7 +473,8 @@ function buildPayloadSpaceBulged() {
       // fairing-like shape, not a modeled aerodynamic profile.
       structuralVolume: (capHeight, capWidth, bulgeWidth) => {
         const rBulge = bulgeWidth / 2;
-        const coneH = capHeight * 0.4, cylH = capHeight * 0.6;
+        const coneH = capHeight * 0.4,
+          cylH = capHeight * 0.6;
         const coneSlant = Math.sqrt(rBulge * rBulge + coneH * coneH);
         const lateralArea = Math.PI * rBulge * coneSlant + 2 * Math.PI * rBulge * cylH;
         const shellThicknessFrac = 0.01;
@@ -467,16 +482,17 @@ function buildPayloadSpaceBulged() {
       },
       internalVolume: (capHeight, capWidth, bulgeWidth) => {
         const rBulge = bulgeWidth / 2;
-        const coneH = capHeight * 0.4, cylH = capHeight * 0.6;
+        const coneH = capHeight * 0.4,
+          cylH = capHeight * 0.6;
         return (1 / 3) * Math.PI * rBulge * rBulge * coneH + Math.PI * rBulge * rBulge * cylH;
       },
     },
     parameterSchema: [
-  { key: 'capHeight', label: 'Cap height', unit: 'm', min: 0.2 },
-  { key: 'capWidth', label: 'Cap base width', unit: 'm', min: 0.2 },
-  { key: 'bulgeWidth', label: 'Bulge width', unit: 'm', min: 0.2 },
-  { key: 'frustumSlantDeg', label: 'Frustum slant (from base)', unit: 'deg', min: 15, max: 80 },
-  { key: 'curveHeightFactor', label: 'Top curve height / bulgeR', unit: 'frac', min: 0.3, max: 1.5 },
+      { key: 'capHeight', label: 'Cap height', unit: 'm', min: 0.2 },
+      { key: 'capWidth', label: 'Cap base width', unit: 'm', min: 0.2 },
+      { key: 'bulgeWidth', label: 'Bulge width', unit: 'm', min: 0.2 },
+      { key: 'frustumSlantDeg', label: 'Frustum slant (from base)', unit: 'deg', min: 15, max: 80 },
+      { key: 'curveHeightFactor', label: 'Top curve height / bulgeR', unit: 'frac', min: 0.3, max: 1.5 },
     ],
   };
 }

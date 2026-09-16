@@ -54,11 +54,11 @@ const TYPE_SLOTS = [
 ];
 
 let editingRole = 'rocket';
-let editingStackId = null; 
-let viewingStackId = null;      // set while the read-only detail panel is open// null = new stack, id = editing existing
-let workingStackMembers = [];   // array of fleet-record ids, bottom→top
+let editingStackId = null;
+let viewingStackId = null; // set while the read-only detail panel is open// null = new stack, id = editing existing
+let workingStackMembers = []; // array of fleet-record ids, bottom→top
 let workingStackPayloadId = null;
-let editingId = null;// set only while the edit FORM is open
+let editingId = null; // set only while the edit FORM is open
 
 
 let viewingId = null; // set only while the read-only detail panel is open
@@ -75,6 +75,7 @@ function fmtMass(kg) {
   if (!Number.isFinite(kg)) return '—';
   return (kg / 1000).toLocaleString(undefined, { maximumFractionDigits: 1 }) + ' t';
 }
+
 function fmtForce(n) { return (n / 1000).toLocaleString(undefined, { maximumFractionDigits: 0 }) + ' kN'; }
 
 // Generic formatter for a schema-declared parameter value, keyed off the
@@ -83,11 +84,16 @@ function fmtForce(n) { return (n / 1000).toLocaleString(undefined, { maximumFrac
 function fmtParamValue(p, value) {
   if (!Number.isFinite(value)) return '—';
   switch (p.unit) {
-    case 'N': return value >= 10000 ? fmtForce(value) : Math.round(value).toLocaleString() + ' N';
-    case 'frac': return Math.round(value * 100) + '%';
-    case 'deg': return '±' + value + '°';
-    case 'm/s': return value.toLocaleString() + ' m/s';
-    default: return value + (p.unit ? ' ' + p.unit : '');
+    case 'N':
+      return value >= 10000 ? fmtForce(value) : Math.round(value).toLocaleString() + ' N';
+    case 'frac':
+      return Math.round(value * 100) + '%';
+    case 'deg':
+      return '±' + value + '°';
+    case 'm/s':
+      return value.toLocaleString() + ' m/s';
+    default:
+      return value + (p.unit ? ' ' + p.unit : '');
   }
 }
 
@@ -103,8 +109,8 @@ function previewVehicleFor(record) {
   // params onto the opts names drawPayloadSpaceShape() actually reads.
   // The type's `kind` decides noseCapShape vs bulgedCapShape (Rule 1 — no
   // branching on the type's id here, just its structural kind).
-  const psType = (record.stageRole === 'payloadSpace' && record.payloadSpaceTypeId
-    && typeof getComponentType === 'function') ? getComponentType(record.payloadSpaceTypeId) : null;
+  const psType = (record.stageRole === 'payloadSpace' && record.payloadSpaceTypeId &&
+    typeof getComponentType === 'function') ? getComponentType(record.payloadSpaceTypeId) : null;
   const psParams = record.params || {};
   return {
     height: record.height,
@@ -157,9 +163,13 @@ function populateTypeSelects() {
     select.innerHTML = types.map(t => `<option value="${t.id}">${escapeHtml(t.displayName)}</option>`).join('');
   });
   // Stage-only sub-selects (Phase 3 Step E1).
-  [['f-fuelType', 'fuel'], ['f-bodyMetalType', 'metal'],
-   ['f-payloadSpaceType', 'payloadSpace'], ['f-payloadSpaceMetalType', 'metal'],
-   ['f-psShapeType', 'payloadSpace'], ['f-psMetalType', 'metal'],
+  [
+    ['f-fuelType', 'fuel'],
+    ['f-bodyMetalType', 'metal'],
+    ['f-payloadSpaceType', 'payloadSpace'],
+    ['f-payloadSpaceMetalType', 'metal'],
+    ['f-psShapeType', 'payloadSpace'],
+    ['f-psMetalType', 'metal'],
   ].forEach(([id, cat]) => {
     const el = document.getElementById(id);
     if (!el) return;
@@ -178,11 +188,11 @@ function applyPayloadSpaceVisibility(role) {
   const cb = document.getElementById('f-hasPayloadSpace');
   const wrap = document.getElementById('stagePayloadFieldsWrap');
   if (!cb || !wrap) return;
-
+  
   const roleAllows = role === 'stage';
   const cbWrap = cb.closest('label');
   if (cbWrap) cbWrap.style.display = roleAllows ? '' : 'none';
-
+  
   const on = roleAllows && cb.checked;
   wrap.style.display = on ? '' : 'none';
   wrap.querySelectorAll('input, select, textarea').forEach(inp => { inp.disabled = !on; });
@@ -226,11 +236,11 @@ function applyRecoveryVisibility(role) {
 function applyBodyDesignVisibility(role) {
   const select = document.getElementById('f-bodyDesignMode');
   if (!select) return;
-
+  
   // DSL allowed for all roles now.
-const dslOption = select.querySelector('option[value="dsl"]');
-if (dslOption) dslOption.disabled = false;
-
+  const dslOption = select.querySelector('option[value="dsl"]');
+  if (dslOption) dslOption.disabled = false;
+  
   const mode = select.value;
   const solidField = document.getElementById('bodySolidColorField');
   const dslField = document.getElementById('bodyDslField');
@@ -307,10 +317,11 @@ if (psShapeSel) {
 
 // Stage-specific inputs also trigger live capability preview (E2 will
 // actually compute; E1 just keeps the handler wiring in place).
-['f-fuelType','f-fuelTankHeight','f-fuelTankWidth','f-bodyMetalType',
- 'f-payloadSpaceType','f-payloadSpaceMetalType','f-payloadSpaceDeployment',
- 'f-maxExtraWeight',
- 'f-psShapeType','f-psMetalType','f-psDeployment'].forEach(id => {
+['f-fuelType', 'f-fuelTankHeight', 'f-fuelTankWidth', 'f-bodyMetalType',
+  'f-payloadSpaceType', 'f-payloadSpaceMetalType', 'f-payloadSpaceDeployment',
+  'f-maxExtraWeight',
+  'f-psShapeType', 'f-psMetalType', 'f-psDeployment'
+].forEach(id => {
   const el = document.getElementById(id);
   if (el) el.addEventListener('input', () => updateCapsPreview());
 });
@@ -394,14 +405,14 @@ function renderEngineThrusters(engineTypeId, currentThrusters) {
     return;
   }
   const defaultTypeId = thrusterTypes[0].id;
-
+  
   mount.innerHTML = groupKeys.map(gk => {
     const slots = groups[gk];
-    const label = gk === 'gimbal'
-      ? `Gimbal-capable group — ${slots.length} engine${slots.length === 1 ? '' : 's'}`
-      : gk === 'fixed'
-        ? `Fixed (non-gimbal) group — ${slots.length} engine${slots.length === 1 ? '' : 's'}`
-        : `${gk} group — ${slots.length} engine${slots.length === 1 ? '' : 's'}`;
+    const label = gk === 'gimbal' ?
+      `Gimbal-capable group — ${slots.length} engine${slots.length === 1 ? '' : 's'}` :
+      gk === 'fixed' ?
+      `Fixed (non-gimbal) group — ${slots.length} engine${slots.length === 1 ? '' : 's'}` :
+      `${gk} group — ${slots.length} engine${slots.length === 1 ? '' : 's'}`;
     const cur = (currentThrusters && currentThrusters[gk]) || {};
     const selId = (cur.thrusterTypeId && getComponentType(cur.thrusterTypeId)) ? cur.thrusterTypeId : defaultTypeId;
     const selType = getComponentType(selId);
@@ -429,7 +440,7 @@ function renderEngineThrusters(engineTypeId, currentThrusters) {
         <div class="thruster-derived" data-thruster-derived="${gk}">—</div>
       </div>`;
   }).join('');
-
+  
   groupKeys.forEach(gk => updateEngineThrusterDerived(gk));
   mount.querySelectorAll('select[data-thruster-type], input[data-thruster-flow]').forEach(el => {
     const handler = () => {
@@ -453,15 +464,16 @@ function updateEngineThrusterDerived(groupKey) {
   if (!out) return;
   if (!t || !Number.isFinite(flow)) { out.innerHTML = '—'; return; }
   const valOf = (k) => { const e = t.parameterSchema.find(p => p.key === k); return e ? e.value : undefined; };
-  const ve = valOf('ve'), maxFlow = valOf('maxMassFlowRate');
-if (ve === undefined) { out.innerHTML = '—'; return; }
-const perEngineF = flow * ve;
-// Mass via thrust / (TWR × G0) — see engineMassFromThrust() in
-// componentLibrary.js. `efficiency` stays in the schema for future use
-// (e.g. an effective-Ve refinement) but is no longer consumed here.
-const perEngineM = engineMassFromThrust(t, perEngineF);
-const groupF = perEngineF * count;
-const groupM = perEngineM * count;
+  const ve = valOf('ve'),
+    maxFlow = valOf('maxMassFlowRate');
+  if (ve === undefined) { out.innerHTML = '—'; return; }
+  const perEngineF = flow * ve;
+  // Mass via thrust / (TWR × G0) — see engineMassFromThrust() in
+  // componentLibrary.js. `efficiency` stays in the schema for future use
+  // (e.g. an effective-Ve refinement) but is no longer consumed here.
+  const perEngineM = engineMassFromThrust(t, perEngineF);
+  const groupF = perEngineF * count;
+  const groupM = perEngineM * count;
   const over = (maxFlow !== undefined && flow > maxFlow);
   out.innerHTML =
     `Per engine: <b>${fmtForce(perEngineF)}</b> thrust · <b>${perEngineM.toFixed(0)} kg</b> mass` +
@@ -486,7 +498,7 @@ function renderRcsThruster(current) {
   const opts = thrusterTypes.map(t =>
     `<option value="${t.id}"${t.id === selId ? ' selected' : ''}>${escapeHtml(t.displayName)}</option>`
   ).join('');
-
+  
   mount.innerHTML = `
     <div class="thruster-group" data-group="rcs">
       <div class="thruster-group-label">RCS thruster (all pods)</div>
@@ -505,10 +517,11 @@ function renderRcsThruster(current) {
       </div>
       <div class="thruster-derived" data-thruster-derived="rcs">—</div>
     </div>`;
-
+  
   updateRcsThrusterDerived();
   mount.querySelectorAll('select[data-thruster-type], input[data-thruster-flow]').forEach(el => {
-    const handler = () => { updateRcsThrusterDerived(); updateCapsPreview(); };
+    const handler = () => { updateRcsThrusterDerived();
+      updateCapsPreview(); };
     el.addEventListener('input', handler);
     el.addEventListener('change', handler);
   });

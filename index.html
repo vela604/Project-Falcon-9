@@ -1,103 +1,133 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-<title>Rocket Sim — Mission Console</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles/home.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>Rocket Sim — Mission Console</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles/home.css">
 </head>
+
 <body>
-<div id="home">
-
-  <!-- ===================== Top status bar ===================== -->
-  <div id="topBar">
-    <span class="brand">🚀 ROCKET SIM</span>
-    <span class="brand-sub">Mission Console</span>
-    <div class="spacer"></div>
-    <span id="clock">T 00:00:00</span>
-  </div>
-
-  <!-- ===================== Main ===================== -->
-  <main id="main">
-
-    <!-- Hangar — vehicle schematic + quick specs -->
-    <section id="hangar">
-      <div class="hangar-head">
-        <div class="hangar-eyebrow">Current vehicle</div>
-        <h1 id="vehicleName">—</h1>
-      </div>
-
-      <div class="hangar-body">
-        <!-- Real vehicle artwork — same drawRocketArt() the flight simulator
+  <div id="home">
+    
+    <!-- ===================== Top status bar ===================== -->
+    <div id="topBar">
+      <span class="brand">🚀 ROCKET SIM</span>
+      <span class="brand-sub">Mission Console</span>
+      <div class="spacer"></div>
+      <span id="clock">T 00:00:00</span>
+    </div>
+    
+    <!-- ===================== Main ===================== -->
+    <main id="main">
+      
+      <!-- Hangar — vehicle schematic + quick specs -->
+      <section id="hangar">
+        <div class="hangar-head">
+          <div class="hangar-eyebrow">Current vehicle</div>
+          <h1 id="vehicleName">—</h1>
+        </div>
+        
+        <div class="hangar-body">
+          <!-- Real vehicle artwork — same drawRocketArt() the flight simulator
              renders with, drawn idle (legs stowed, no thrust) via
              renderVehiclePreview() in home.js. -->
-        <canvas id="shipArt" width="200" height="420" aria-hidden="true"></canvas>
-
-        <dl id="specList">
-          <div class="spec-row"><dt>Height</dt><dd id="specHeight">—</dd></div>
-          <div class="spec-row"><dt>Diameter</dt><dd id="specWidth">—</dd></div>
-          <div class="spec-row"><dt>Dry mass</dt><dd id="specDry">—</dd></div>
-          <div class="spec-row"><dt>Propellant</dt><dd id="specFuel">—</dd></div>
-          <div class="spec-row"><dt>Main engines</dt><dd id="specEngines">—</dd></div>
-          <div class="spec-row"><dt>Thrust / engine</dt><dd id="specThrustEach">—</dd></div>
-          <div class="spec-row"><dt>Total max thrust</dt><dd id="specThrustTotal">—</dd></div>
-          <div class="spec-row"><dt>Exhaust velocity</dt><dd id="specVe">—</dd></div>
-          <div class="spec-row"><dt>RCS pods</dt><dd id="specRcs">—</dd></div>
-        </dl>
-      </div>
-    </section>
-
-    <!-- Modules -->
-    <nav id="modules" aria-label="Mission modules">
-      <div class="modules-eyebrow">Modules</div>
-
-      <a class="module ready" href="simulation.html">
-        <span class="module-dot"></span>
-        <div class="module-text">
-          <div class="module-name">Flight Simulator</div>
-          <div class="module-desc">Manual control · 9-engine octaweb · RCS · live telemetry</div>
+          <canvas id="shipArt" width="200" height="420" aria-hidden="true"></canvas>
+          
+          <dl id="specList">
+            <div class="spec-row">
+              <dt>Height</dt>
+              <dd id="specHeight">—</dd>
+            </div>
+            <div class="spec-row">
+              <dt>Diameter</dt>
+              <dd id="specWidth">—</dd>
+            </div>
+            <div class="spec-row">
+              <dt>Dry mass</dt>
+              <dd id="specDry">—</dd>
+            </div>
+            <div class="spec-row">
+              <dt>Propellant</dt>
+              <dd id="specFuel">—</dd>
+            </div>
+            <div class="spec-row">
+              <dt>Main engines</dt>
+              <dd id="specEngines">—</dd>
+            </div>
+            <div class="spec-row">
+              <dt>Thrust / engine</dt>
+              <dd id="specThrustEach">—</dd>
+            </div>
+            <div class="spec-row">
+              <dt>Total max thrust</dt>
+              <dd id="specThrustTotal">—</dd>
+            </div>
+            <div class="spec-row">
+              <dt>Exhaust velocity</dt>
+              <dd id="specVe">—</dd>
+            </div>
+            <div class="spec-row">
+              <dt>RCS pods</dt>
+              <dd id="specRcs">—</dd>
+            </div>
+          </dl>
         </div>
-        <span class="module-status">READY</span>
-      </a>
-
-      <a class="module ready" href="rockets.html" id="fleetLink">
-        <span class="module-dot"></span>
-        <div class="module-text">
-          <div class="module-name">Vehicle Fleet</div>
-          <div class="module-desc">Add rockets, edit engine and mass parameters, compare specs</div>
-        </div>
-        <span class="module-status">READY</span>
-      </a>
-
-      <a class="module ready" href="components.html">
-        <span class="module-dot"></span>
-        <div class="module-text">
-          <div class="module-name">Components Library</div>
-          <div class="module-desc">Technology Bay — reusable engine, recovery-mechanism &amp; RCS types</div>
-        </div>
-        <span class="module-status">READY</span>
-      </a>
-
-      <p id="moreNote">More modules — landing guidance, mission log — come online as the program grows.</p>
-    </nav>
-
-  </main>
-
-  <!-- ===================== Fleet ticker ===================== -->
-  <div id="ticker">
-    <span id="tickerText">Loading fleet data…</span>
+      </section>
+      
+      <!-- Modules -->
+      <nav id="modules" aria-label="Mission modules">
+        <div class="modules-eyebrow">Modules</div>
+        
+        <a class="module ready" href="simulation.html">
+          <span class="module-dot"></span>
+          <div class="module-text">
+            <div class="module-name">Flight Simulator</div>
+            <div class="module-desc">Manual control · 9-engine octaweb · RCS · live telemetry</div>
+          </div>
+          <span class="module-status">READY</span>
+        </a>
+        
+        <a class="module ready" href="rockets.html" id="fleetLink">
+          <span class="module-dot"></span>
+          <div class="module-text">
+            <div class="module-name">Vehicle Fleet</div>
+            <div class="module-desc">Add rockets, edit engine and mass parameters, compare specs</div>
+          </div>
+          <span class="module-status">READY</span>
+        </a>
+        
+        <a class="module ready" href="components.html">
+          <span class="module-dot"></span>
+          <div class="module-text">
+            <div class="module-name">Components Library</div>
+            <div class="module-desc">Technology Bay — reusable engine, recovery-mechanism &amp; RCS types</div>
+          </div>
+          <span class="module-status">READY</span>
+        </a>
+        
+        <p id="moreNote">More modules — landing guidance, mission log — come online as the program grows.</p>
+      </nav>
+      
+    </main>
+    
+    <!-- ===================== Fleet ticker ===================== -->
+    <div id="ticker">
+      <span id="tickerText">Loading fleet data…</span>
+    </div>
+    
   </div>
-
-</div>
-
-<script src="js/componentLibrary.js"></script>
-<script src="js/customDesign.js"></script>
-<script src="js/fleet.js"></script>
-<script src="js/config.js"></script>
-<script src="js/simJs/view/rocketArt.js"></script>
-<script src="js/home.js"></script>
+  
+  <script src="js/componentLibrary.js"></script>
+  <script src="js/customDesign.js"></script>
+  <script src="js/fleet.js"></script>
+  <script src="js/config.js"></script>
+  <script src="js/simJs/view/rocketArt.js"></script>
+  <script src="js/home.js"></script>
 </body>
+
 </html>

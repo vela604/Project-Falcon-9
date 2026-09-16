@@ -46,20 +46,22 @@ function airDensity(altitude) {
 // In practice we keep it purely tangential (horizontal) for a near-surface sim.
 const wind = {
   enabled: false,
-  speed: 0,        // m/s
+  speed: 0, // m/s
   directionDeg: 0,
 };
 
 function windInertialVector(rx, ry) {
   if (!wind.enabled || wind.speed === 0) return { wx: 0, wy: 0 };
   const r = Math.hypot(rx, ry);
-  const upX = rx / r, upY = ry / r;
+  const upX = rx / r,
+    upY = ry / r;
   // East = direction of increasing φ = direction of Earth's rotation.
   // Matches telemetry.js's uex/uey and earthSurfaceVelocity(). Previous
   // (-upY, upX) was WEST — the wind panel's 0° compass arrow pointed East
   // while the physics pushed the rocket West, an invisible contradiction
   // until you actually watched the response.
-  const eastX = upY, eastY = -upX;
+  const eastX = upY,
+    eastY = -upX;
   const rad = wind.directionDeg * Math.PI / 180;
   const dirX = eastX * Math.cos(rad) + upX * Math.sin(rad);
   const dirY = eastY * Math.cos(rad) + upY * Math.sin(rad);

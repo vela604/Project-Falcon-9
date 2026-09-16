@@ -74,7 +74,7 @@ function memberComponents(rec, memberFuelMass, legsProgress, aboveMember) {
   const H = Number.isFinite(rec.height) ? rec.height : 0;
   const W = Number.isFinite(rec.width) ? rec.width : 0;
   const r = W / 2;
-
+  
   // ---- Nose: single cone component ----
   if (role === 'nose') {
     const mass = (typeof computeNoseDryMass === 'function') ? computeNoseDryMass(rec) : 0;
@@ -82,12 +82,12 @@ function memberComponents(rec, memberFuelMass, legsProgress, aboveMember) {
       label: 'nose',
       mass,
       comX: 0,
-      comY: H / 4,     // true solid-cone centroid: 1/4 of height up from the base
+      comY: H / 4, // true solid-cone centroid: 1/4 of height up from the base
       iOwn: _coneTransverseI(mass, r, H),
     });
     return out;
   }
-
+  
   // ---- Payload space (standalone fairing member): structural shell only,
   // no engines/legs/fuel — same shape as the nose branch above. Previously
   // missing entirely, so a standalone payloadSpace member silently flew at
@@ -99,14 +99,15 @@ function memberComponents(rec, memberFuelMass, legsProgress, aboveMember) {
       label: 'payloadSpace',
       mass,
       comX: 0,
-      comY: H / 2,     // simple placeholder, same convention as nose
+      comY: H / 2, // simple placeholder, same convention as nose
       iOwn: _thinCylinderI(mass, r, H),
     });
     return out;
   }
-
+  
   // ---- Body (cylindrical shell/tank) ----
-  let bodyMass = 0, bodyH = H;
+  let bodyMass = 0,
+    bodyH = H;
   if (role === 'booster') {
     const d = boosterDerivedMasses(rec, aboveMember);
     bodyMass = d ? d.bodyMass : 0;
@@ -123,7 +124,7 @@ function memberComponents(rec, memberFuelMass, legsProgress, aboveMember) {
         label: 'interstage',
         mass: d.interstageMass,
         comX: 0,
-        comY: bodyH - interH / 2,   // sits at the very top of the body
+        comY: bodyH - interH / 2, // sits at the very top of the body
         iOwn: _thinCylinderI(d.interstageMass, r, interH),
       });
     }
@@ -139,22 +140,24 @@ function memberComponents(rec, memberFuelMass, legsProgress, aboveMember) {
     label: 'body',
     mass: bodyMass,
     comX: 0,
-    comY: bodyH / 2,                       // cylinder centroid at mid-height
+    comY: bodyH / 2, // cylinder centroid at mid-height
     iOwn: _thinCylinderI(bodyMass, r, bodyH),
   });
-
+  
   // ---- Engines (per-engine positions aggregated, so future asymmetric
   // layouts just work) ----
   if (typeof getComponentType === 'function') {
     const engineType = getComponentType(rec.engineTypeId);
     if (engineType && engineType.frame && Array.isArray(engineType.frame.slots)) {
-      const groups = (typeof engineThrusterGroups === 'function')
-        ? engineThrusterGroups(engineType) : {};
+      const groups = (typeof engineThrusterGroups === 'function') ?
+        engineThrusterGroups(engineType) : {};
       const R = (rec.params && Number.isFinite(rec.params.octaRadius)) ?
-  rec.params.octaRadius :
-  CONFIG.OCTA_RADIUS; // fallback
-
-      let totalM = 0, sumX = 0, sumY = 0;
+        rec.params.octaRadius :
+        CONFIG.OCTA_RADIUS; // fallback
+      
+      let totalM = 0,
+        sumX = 0,
+        sumY = 0;
       Object.keys(groups).forEach(gk => {
         const g = rec.engineThrusters && rec.engineThrusters[gk];
         if (!g) return;
@@ -163,8 +166,8 @@ function memberComponents(rec, memberFuelMass, legsProgress, aboveMember) {
         const veEntry = t.parameterSchema.find(p => p.key === 've');
         if (!veEntry || !Number.isFinite(g.massFlowRate)) return;
         const thrustPer = g.massFlowRate * veEntry.value;
-        const massPer = (typeof engineMassFromThrust === 'function')
-          ? engineMassFromThrust(t, thrustPer) : NaN;
+        const massPer = (typeof engineMassFromThrust === 'function') ?
+          engineMassFromThrust(t, thrustPer) : NaN;
         if (!Number.isFinite(massPer)) return;
         groups[gk].forEach(slot => {
           const pos = (typeof slot.position === 'function') ? slot.position(R) : { x: 0 };
@@ -179,44 +182,44 @@ function memberComponents(rec, memberFuelMass, legsProgress, aboveMember) {
           mass: totalM,
           comX: sumX / totalM,
           comY: sumY / totalM,
-          iOwn: 0,   // small objects; own MOI negligible for now
+          iOwn: 0, // small objects; own MOI negligible for now
         });
       }
     }
   }
-
+  
   // ---- Landing legs (LIVE: recomputed from legsProgress every call) ----
   if (rec.hasRecovery !== false && typeof getComponentType === 'function') {
     const recoveryType = getComponentType(rec.recoveryTypeId);
-    const canDeploy = recoveryType
-      && recoveryType.capabilities && recoveryType.capabilities.deploysOnVehicle
-      && recoveryType.frame && typeof recoveryType.frame.hingeGeometry === 'function'
-      && typeof recoveryType.frame.structuralVolume === 'function';
+    const canDeploy = recoveryType &&
+      recoveryType.capabilities && recoveryType.capabilities.deploysOnVehicle &&
+      recoveryType.frame && typeof recoveryType.frame.hingeGeometry === 'function' &&
+      typeof recoveryType.frame.structuralVolume === 'function';
     if (canDeploy) {
       const legCount = recoveryType.frame.legCount || 4;
       const legGeo = recoveryType.frame.hingeGeometry(H);
-
+      
       // Hinge distance from base (canvas: y=0 base, y=-H nose; convert sign).
       const hingeLocalY = -legGeo.hingeY;
       const sweep = legsProgress * legGeo.maxSweepRad;
-
+      
       // Tip distance from base, computed LIVE from current deployment.
       const tipLocalY = hingeLocalY + legGeo.legLength * Math.cos(sweep);
       // Leg midpoint = leg's COM (per user's simplification).
       const midLocalY = (hingeLocalY + tipLocalY) / 2;
-
+      
       // Leg X position: visible legs at ±W/2, back legs at ±0.375W (matches
       // rocketArt's 0.75 depth factor). Symmetric → total X cancels, but
       // each leg contributes to MOI via (x² + y²).
       const sideXFront = W / 2;
-      const sideXBack  = W * 0.375;
-
+      const sideXBack = W * 0.375;
+      
       const bodyMetal = getComponentType(rec.bodyMetalTypeId);
-      const bodyDensity = (bodyMetal && bodyMetal.parameterSchema.find(p => p.key === 'density'))
-        ? bodyMetal.parameterSchema.find(p => p.key === 'density').value : 1;
+      const bodyDensity = (bodyMetal && bodyMetal.parameterSchema.find(p => p.key === 'density')) ?
+        bodyMetal.parameterSchema.find(p => p.key === 'density').value : 1;
       const oneLegMass = recoveryType.frame.structuralVolume(H, W) * bodyDensity;
       const legMassOne = oneLegMass; // per leg
-
+      
       // 4 legs (2 front, 2 back) — symmetric X pairs.
       const legXs = [-sideXFront, sideXFront, -sideXBack, sideXBack];
       const legMassTotal = legMassOne * legCount;
@@ -236,14 +239,14 @@ function memberComponents(rec, memberFuelMass, legsProgress, aboveMember) {
       });
     }
   }
-
+  
   // ---- Payload space (stage only) ----
   if (role === 'stage' && typeof stageDerivedMasses === 'function') {
     const d = stageDerivedMasses(rec);
     if (d && !d.infeasible && d.payloadContainerMass > 0) {
       // Payload space sits at the TOP of the stage (above the fuel tank).
-      const capH = (rec.payloadSpace && rec.payloadSpace.params && Number.isFinite(rec.payloadSpace.params.capHeight))
-        ? rec.payloadSpace.params.capHeight : 0;
+      const capH = (rec.payloadSpace && rec.payloadSpace.params && Number.isFinite(rec.payloadSpace.params.capHeight)) ?
+        rec.payloadSpace.params.capHeight : 0;
       const payloadCOM = H - capH / 2;
       out.push({
         label: 'payloadSpace',
@@ -254,7 +257,7 @@ function memberComponents(rec, memberFuelMass, legsProgress, aboveMember) {
       });
     }
   }
-
+  
   // ---- Fuel (variable mass, fills bottom portion of the tank) ----
   if (memberFuelMass > 0) {
     const maxFuel = memberMaxFuel(rec);
@@ -264,11 +267,11 @@ function memberComponents(rec, memberFuelMass, legsProgress, aboveMember) {
       label: 'fuel',
       mass: memberFuelMass,
       comX: 0,
-      comY: fuelColumnH / 2,     // column centroid from base
+      comY: fuelColumnH / 2, // column centroid from base
       iOwn: _thinCylinderI(memberFuelMass, r, fuelColumnH),
     });
   }
-
+  
   return out;
 }
 
@@ -278,7 +281,9 @@ function memberComponents(rec, memberFuelMass, legsProgress, aboveMember) {
 //   I_total = Σ ( I_own_i + m_i * ((x_i - X)² + (y_i - Y)²) )
 // ---------------------------------------------------------------------------
 function combineComponents(components) {
-  let M = 0, sumX = 0, sumY = 0;
+  let M = 0,
+    sumX = 0,
+    sumY = 0;
   (components || []).forEach(c => {
     M += c.mass || 0;
     sumX += (c.mass || 0) * (c.comX || 0);
@@ -286,14 +291,14 @@ function combineComponents(components) {
   });
   const comX = M > 0 ? sumX / M : 0;
   const comY = M > 0 ? sumY / M : 0;
-
+  
   let I = 0;
   (components || []).forEach(c => {
     const dx = (c.comX || 0) - comX;
     const dy = (c.comY || 0) - comY;
     I += (c.iOwn || 0) + (c.mass || 0) * (dx * dx + dy * dy);
   });
-
+  
   return { totalMass: M, comX, comY, moi: I };
 }
 
@@ -309,7 +314,7 @@ function combineComponents(components) {
 // ---------------------------------------------------------------------------
 function stackMassProps(members, fuelMassTotal, legsProgress, payloadMass) {
   members = members || [];
-
+  
   // Single pass instead of map+reduce+map — same numbers, fewer array
   // allocations/traversals (this runs every physics substep).
   const maxFuels = new Array(members.length);
@@ -320,7 +325,7 @@ function stackMassProps(members, fuelMassTotal, legsProgress, payloadMass) {
     sumMax += mf;
   }
   const fuelTotal = fuelMassTotal || 0;
-
+  
   const all = [];
   let yOffset = 0;
   let payloadSpaceComY = null;
@@ -340,7 +345,7 @@ function stackMassProps(members, fuelMassTotal, legsProgress, payloadMass) {
     }
     yOffset += Number.isFinite(m.height) ? m.height : 0;
   });
-
+  
   // Real assigned cargo mass — the caller (physics.js's _bodyPayloadMass())
   // already resolves this to a plain number (0 once released / if this body
   // never carried one). Previously this function's signature had no slot
@@ -351,7 +356,7 @@ function stackMassProps(members, fuelMassTotal, legsProgress, payloadMass) {
     const comY = payloadSpaceComY !== null ? payloadSpaceComY : yOffset;
     all.push({ label: 'payloadCargo', mass: cargoMass, comX: 0, comY, iOwn: 0 });
   }
-
+  
   const combined = combineComponents(all);
   const dryMass = Math.max(0, combined.totalMass - (fuelMassTotal || 0));
   return {
@@ -360,9 +365,9 @@ function stackMassProps(members, fuelMassTotal, legsProgress, payloadMass) {
     fuelMass: fuelMassTotal || 0,
     payloadMass: cargoMass,
     comX: combined.comX,
-    comY: combined.comY,     // distance from stack base to COM
-    moi: combined.moi,       // about stack COM
+    comY: combined.comY, // distance from stack base to COM
+    moi: combined.moi, // about stack COM
     stackHeight: yOffset,
-    components: all,         // debugging aid
+    components: all, // debugging aid
   };
 }

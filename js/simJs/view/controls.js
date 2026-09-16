@@ -6,18 +6,18 @@
 
 let simRunning = false;
 let simPaused = false;
-let timeWarp = 1;   // physics-time multiplier (1 = real time)
+let timeWarp = 1; // physics-time multiplier (1 = real time)
 // ---------------------------------------------------------------------------
 // Touch/mouse "hold to increase, release to snap back to 0" helper.
 // ---------------------------------------------------------------------------
 function bindHoldControl(el, onChange, opts = {}) {
-  const rate = opts.rate || 1.5;      // units/sec while held
+  const rate = opts.rate || 1.5; // units/sec while held
   const max = opts.max !== undefined ? opts.max : 1;
   const min = opts.min !== undefined ? opts.min : 0;
   let holding = false;
   let value = min;
   let rafId = null;
-
+  
   function loop(ts, lastTs) {
     if (!holding) return;
     const dt = lastTs ? (ts - lastTs) / 1000 : 0;
@@ -25,19 +25,20 @@ function bindHoldControl(el, onChange, opts = {}) {
     onChange(value);
     rafId = requestAnimationFrame((t) => loop(t, ts));
   }
-
+  
   function start(e) {
     e.preventDefault();
     holding = true;
     rafId = requestAnimationFrame((t) => loop(t, null));
   }
+  
   function end(e) {
     holding = false;
     if (rafId) cancelAnimationFrame(rafId);
     value = min;
     onChange(value);
   }
-
+  
   el.addEventListener('touchstart', start, { passive: false });
   el.addEventListener('mousedown', start);
   ['touchend', 'touchcancel', 'mouseup', 'mouseleave'].forEach(ev => el.addEventListener(ev, end));
@@ -82,8 +83,12 @@ function setCenterGimbalTarget(deg) {
 // RCS button bindings — each of the 8 directions + CW/ACW
 // ---------------------------------------------------------------------------
 function bindRCSButton(el, key) {
-  function on(e) { e.preventDefault(); WorkerBridge.send({ type: 'rcs', key, on: true }); el.classList.add('active'); }
-  function off() { WorkerBridge.send({ type: 'rcs', key, on: false }); el.classList.remove('active'); }
+  function on(e) { e.preventDefault();
+    WorkerBridge.send({ type: 'rcs', key, on: true });
+    el.classList.add('active'); }
+  
+  function off() { WorkerBridge.send({ type: 'rcs', key, on: false });
+    el.classList.remove('active'); }
   el.addEventListener('touchstart', on, { passive: false });
   el.addEventListener('mousedown', on);
   ['touchend', 'touchcancel', 'mouseup', 'mouseleave'].forEach(ev => el.addEventListener(ev, off));
@@ -147,24 +152,23 @@ function bindWindPanel() {
   const enabledCb = document.getElementById('windEnabled');
   const speedInp = document.getElementById('windSpeed');
   const dirInp = document.getElementById('windDir');
-
+  
   if (!enabledCb || !speedInp || !dirInp) {
-    console.warn('bindWindPanel: one or more wind controls missing',
-      { enabledCb: !!enabledCb, speedInp: !!speedInp, dirInp: !!dirInp });
+    console.warn('bindWindPanel: one or more wind controls missing', { enabledCb: !!enabledCb, speedInp: !!speedInp, dirInp: !!dirInp });
     return;
   }
-
+  
   enabledCb.addEventListener('change', (e) => {
     wind.enabled = e.target.checked;
     WorkerBridge.send({ type: 'setWind', enabled: wind.enabled });
   });
-
+  
   speedInp.addEventListener('input', (e) => {
     wind.speed = parseFloat(e.target.value) || 0;
     document.getElementById('windSpeedLabel').textContent = wind.speed.toFixed(0) + ' m/s';
     WorkerBridge.send({ type: 'setWind', speed: wind.speed });
   });
-
+  
   dirInp.addEventListener('input', (e) => {
     wind.directionDeg = parseFloat(e.target.value) || 0;
     document.getElementById('windDirLabel').textContent = wind.directionDeg.toFixed(0) + '°';
@@ -251,24 +255,27 @@ function bindLegsControl() {
 
 function bindSimControls() {
   document.getElementById('btnStart').addEventListener('click', () => {
-    simRunning = true; simPaused = false;
+    simRunning = true;
+    simPaused = false;
     WorkerBridge.send({ type: 'start' });
     updateStatusBar();
   });
-
+  
   document.getElementById('btnStop').addEventListener('click', () => {
     simRunning = false;
     WorkerBridge.send({ type: 'stop' });
     updateStatusBar();
   });
-
+  
   document.getElementById('btnReset').addEventListener('click', () => {
-    simRunning = false; simPaused = false;
+    simRunning = false;
+    simPaused = false;
     WorkerBridge.send({ type: 'reset', alt: 0 });
-    renderMergeDiagram(); renderOctaSliders();
+    renderMergeDiagram();
+    renderOctaSliders();
     updateStatusBar();
   });
-
+  
   // ---- Separate stage ----
   const sepBtn = document.getElementById('btnSeparate');
   if (sepBtn) sepBtn.addEventListener('click', () => {
@@ -276,18 +283,18 @@ function bindSimControls() {
     refreshFollowBodySelect();
     updateStatusBar();
   });
-
+  
   // ---- Take control of another body ----
   const tcBtn = document.getElementById('btnTakeControl');
   if (tcBtn) tcBtn.addEventListener('click', () => {
-    const idx = (typeof camera !== 'undefined' && Number.isFinite(camera.followBodyIndex))
-      ? camera.followBodyIndex : state.activeBodyIndex;
+    const idx = (typeof camera !== 'undefined' && Number.isFinite(camera.followBodyIndex)) ?
+      camera.followBodyIndex : state.activeBodyIndex;
     WorkerBridge.send({ type: 'takeControl', idx });
     updateLegsButton();
     updateStatusBar();
     refreshFollowBodySelect();
   });
-
+  
   // ---- Split fairing ----
   const fairBtn = document.getElementById('btnSplitFairing');
   if (fairBtn) fairBtn.addEventListener('click', () => {
@@ -295,7 +302,7 @@ function bindSimControls() {
     refreshFollowBodySelect();
     updateStatusBar();
   });
-
+  
   // ---- Release payload ----
   const plBtn = document.getElementById('btnReleasePayload');
   if (plBtn) plBtn.addEventListener('click', () => {
@@ -303,7 +310,7 @@ function bindSimControls() {
     refreshFollowBodySelect();
     updateStatusBar();
   });
-
+  
   bindTimeWarp();
 }
 
@@ -318,7 +325,7 @@ function bindTimeWarp() {
   });
 }
 
-  
+
 
 function canSeparateNow() {
   if (state.crashed) return false;
@@ -344,8 +351,8 @@ function canReleasePayloadNow() {
 }
 
 function canTakeControlNow() {
-  const idx = (typeof camera !== 'undefined' && Number.isFinite(camera.followBodyIndex))
-    ? camera.followBodyIndex : state.activeBodyIndex;
+  const idx = (typeof camera !== 'undefined' && Number.isFinite(camera.followBodyIndex)) ?
+    camera.followBodyIndex : state.activeBodyIndex;
   if (idx === state.activeBodyIndex) return false;
   const b = state.bodies[idx];
   if (!b) return false;
@@ -368,8 +375,9 @@ function canTakeControlNow() {
 // landing burn has slowed it down). Stowing is never restricted.
 function legDeploySafety() {
   const r = Math.hypot(state.rx, state.ry);
-  const ux = state.rx / r, uy = state.ry / r; // local "up" (radial) unit vector
-  const vr = state.vx * ux + state.vy * uy;   // + = ascending, - = descending
+  const ux = state.rx / r,
+    uy = state.ry / r; // local "up" (radial) unit vector
+  const vr = state.vx * ux + state.vy * uy; // + = ascending, - = descending
   const speed = Math.hypot(state.vx, state.vy);
   const ascending = vr > 0.5; // small tolerance so sitting on the pad doesn't trip this
   const tooFast = speed > CONFIG.LEG_DEPLOY_MAX_SPEED;
@@ -408,12 +416,16 @@ function updateStatusBar() {
   const dot = getEl('statusDot');
   const txt = getEl('statusText');
   dot.className = 'status-dot';
-  if (state.crashed) { dot.classList.add('crashed'); txt.textContent = 'CRASHED'; }
-  else if (state.landed) { dot.classList.add('landed'); txt.textContent = 'LANDED'; }
-  else if (simPaused) { dot.classList.add('paused'); txt.textContent = 'PAUSED'; }
-  else if (simRunning) { dot.classList.add('running'); txt.textContent = 'RUNNING'; }
+  if (state.crashed) { dot.classList.add('crashed');
+    txt.textContent = 'CRASHED'; }
+  else if (state.landed) { dot.classList.add('landed');
+    txt.textContent = 'LANDED'; }
+  else if (simPaused) { dot.classList.add('paused');
+    txt.textContent = 'PAUSED'; }
+  else if (simRunning) { dot.classList.add('running');
+    txt.textContent = 'RUNNING'; }
   else { txt.textContent = 'STOPPED'; }
-
+  
   const t = state.simTime;
   const mm = Math.floor(t / 60).toString().padStart(2, '0');
   const ss = (t % 60).toFixed(1).padStart(4, '0');
@@ -433,22 +445,22 @@ function updateStatusBar() {
 function syncThrottleUI(overrideValue) {
   const b = state.bodies && state.bodies[state.activeBodyIndex];
   if (!b || !b.engines) return;
-
+  
   b.engines.filter(e => !e.isCenter).forEach(e => {
-    const val = (overrideValue !== undefined)
-      ? Math.round(overrideValue * 100)
-      : Math.round(((e.targetThrottle !== undefined ? e.targetThrottle : e.throttle) || 0) * 100);
+    const val = (overrideValue !== undefined) ?
+      Math.round(overrideValue * 100) :
+      Math.round(((e.targetThrottle !== undefined ? e.targetThrottle : e.throttle) || 0) * 100);
     const input = document.querySelector(`.vslider[data-angle="${e.angleDeg}"]`);
     const label = document.getElementById('val-eng-' + e.angleDeg);
     if (input) input.value = val;
     if (label) label.textContent = val + '%';
   });
-
+  
   const c = b.engines.find(e => e.isCenter);
   if (c) {
-    const val = (overrideValue !== undefined)
-      ? Math.round(overrideValue * 100)
-      : Math.round(((c.targetThrottle !== undefined ? c.targetThrottle : c.throttle) || 0) * 100);
+    const val = (overrideValue !== undefined) ?
+      Math.round(overrideValue * 100) :
+      Math.round(((c.targetThrottle !== undefined ? c.targetThrottle : c.throttle) || 0) * 100);
     const slider = document.getElementById('centerThrustSlider');
     const valEl = document.getElementById('centerThrustValue');
     if (slider) slider.value = val;
@@ -461,8 +473,8 @@ function syncThrottleUI(overrideValue) {
 // ---------------------------------------------------------------------------
 function bindQuickThrottle() {
   const full = document.getElementById('btnFullThrottle');
-  const off  = document.getElementById('btnEngineOff');
-
+  const off = document.getElementById('btnEngineOff');
+  
   if (full) full.addEventListener('click', () => {
     WorkerBridge.send({ type: 'setAllThrottle', value: 1 });
     syncThrottleUI(1);
@@ -484,8 +496,7 @@ function canFuelNow() {
   // Surface-relative speed, NOT inertial. Inertial speed on the pad is
   // ~465 m/s (Earth's rotation) — comparing against 0.5 would never pass.
   const sv = (typeof earthSurfaceVelocity === 'function') ?
-    earthSurfaceVelocity(state.rx, state.ry) :
-    { vx: 0, vy: 0 };
+    earthSurfaceVelocity(state.rx, state.ry) : { vx: 0, vy: 0 };
   const speedRel = Math.hypot(state.vx - sv.vx, state.vy - sv.vy);
   
   const b = state.bodies && state.bodies[state.activeBodyIndex];
@@ -500,6 +511,7 @@ function canFuelNow() {
 function _fmtKg(kg) {
   return (kg >= 1000) ? (kg / 1000).toFixed(1) + ' t' : Math.round(kg) + ' kg';
 }
+
 function _fmtKN(n) {
   return (n / 1000).toFixed(0) + ' kN';
 }
@@ -508,15 +520,15 @@ function bindFuelPanel() {
   const btn = document.getElementById('btnFuelPanel');
   const slider = document.getElementById('fuelSlider');
   if (!btn || !slider) return;
-
+  
   btn.addEventListener('click', () => {
     const panel = document.getElementById('fuelPanel');
     const opening = !panel || panel.style.display !== 'block';
     if (opening) {
       const b = state.bodies && state.bodies[state.activeBodyIndex];
       const fuelMass = b ? (b.fuelMass || 0) : 0;
-      const pct = CONFIG.FUEL_MASS_MAX > 0
-        ? Math.round((fuelMass / CONFIG.FUEL_MASS_MAX) * 100) : 0;
+      const pct = CONFIG.FUEL_MASS_MAX > 0 ?
+        Math.round((fuelMass / CONFIG.FUEL_MASS_MAX) * 100) : 0;
       slider.value = pct;
       document.getElementById('fuelPercentLabel').textContent = pct + '%';
       if (panel) panel.style.display = 'block';
@@ -527,7 +539,7 @@ function bindFuelPanel() {
       btn.classList.remove('active');
     }
   });
-
+  
   slider.addEventListener('input', (e) => {
     if (!canFuelNow()) return;
     const pct = parseFloat(e.target.value);
@@ -541,23 +553,23 @@ function bindFuelPanel() {
 function updateFuelPanelReadouts() {
   const panel = document.getElementById('fuelPanel');
   if (!panel || panel.style.display !== 'block') return;
-
+  
   const b = state.bodies && state.bodies[state.activeBodyIndex];
   if (!b) return;
-
+  
   const geom = (typeof geometryOf === 'function') ? geometryOf(b) : { M: 0 };
   const engines = b.engines || [];
   const maxThrust = engines.reduce((s, e) => s + e.Fmax, 0);
   const g0 = (typeof G0 !== 'undefined') ? G0 : 9.80665;
   const weight = geom.M * g0;
   const twr = weight > 0 ? maxThrust / weight : 0;
-
+  
   const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
   set('fuelReadMass', _fmtKg(b.fuelMass || 0));
   set('fuelReadTotal', _fmtKg(geom.M));
   set('fuelReadThrust', _fmtKN(maxThrust));
   set('fuelReadWeight', _fmtKN(weight));
-
+  
   const twrEl = document.getElementById('fuelReadTWR');
   if (twrEl) {
     twrEl.textContent = twr.toFixed(2);

@@ -1,60 +1,63 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-<title>Components Library — Rocket Sim</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles/components.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>Components Library — Rocket Sim</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles/components.css">
 </head>
+
 <body>
-<div id="compApp">
-
-  <div id="topBar">
-    <a class="brand" href="index.html">🚀 ROCKET SIM</a>
-    <span class="brand-sub">Components Library</span>
-    <div class="spacer"></div>
-    <a class="btn" href="rockets.html">Vehicle Fleet →</a>
+  <div id="compApp">
+    
+    <div id="topBar">
+      <a class="brand" href="index.html">🚀 ROCKET SIM</a>
+      <span class="brand-sub">Components Library</span>
+      <div class="spacer"></div>
+      <a class="btn" href="rockets.html">Vehicle Fleet →</a>
+    </div>
+    
+    <main id="main">
+      
+      <div class="intro">
+        <h1>Technology Bay</h1>
+        <p>
+          Reusable hardware <strong>types</strong> — engine layouts, recovery mechanisms, RCS
+          arrangements — defined once here, then referenced by name from any rocket on the
+          <a href="rockets.html">Vehicle Fleet</a> page. A type declares its <em>structure</em>
+          (geometry, slots, merge rules) and a <em>parameter schema</em> (which numbers it needs) —
+          never a number itself. Values are filled in per-rocket.
+        </p>
+        <p class="phase-note">
+          <strong>Status:</strong> this is the type catalog (view-only for now) — the simulator's
+          engine/leg/RCS code is still wired directly to the Falcon-9-class defaults shown below.
+          Wiring the flight simulator, Vehicle Fleet page, and rendering to actually read from
+          whichever type a rocket references is the next phase.
+        </p>
+      </div>
+      
+      <div class="cat-tabs" id="catTabs">
+        <button class="cat-tab active" data-cat="engineLayout">Engine Layouts</button>
+        <button class="cat-tab" data-cat="recoveryMechanism">Recovery Mechanisms</button>
+        <button class="cat-tab" data-cat="rcsArrangement">RCS Arrangements</button>
+        <button class="cat-tab" data-cat="thruster">Thrusters</button>
+        <button class="cat-tab" data-cat="rcsThruster">RCS Thrusters</button>
+        <button class="cat-tab" data-cat="fuel">Fuels</button>
+        <button class="cat-tab" data-cat="metal">Metals</button>
+        <button class="cat-tab" data-cat="payloadSpace">Payload Spaces</button>
+      </div>
+      
+      <div id="cardGrid" class="card-grid"></div>
+      
+    </main>
   </div>
-
-  <main id="main">
-
-    <div class="intro">
-      <h1>Technology Bay</h1>
-      <p>
-        Reusable hardware <strong>types</strong> — engine layouts, recovery mechanisms, RCS
-        arrangements — defined once here, then referenced by name from any rocket on the
-        <a href="rockets.html">Vehicle Fleet</a> page. A type declares its <em>structure</em>
-        (geometry, slots, merge rules) and a <em>parameter schema</em> (which numbers it needs) —
-        never a number itself. Values are filled in per-rocket.
-      </p>
-      <p class="phase-note">
-        <strong>Status:</strong> this is the type catalog (view-only for now) — the simulator's
-        engine/leg/RCS code is still wired directly to the Falcon-9-class defaults shown below.
-        Wiring the flight simulator, Vehicle Fleet page, and rendering to actually read from
-        whichever type a rocket references is the next phase.
-      </p>
-    </div>
-
-    <div class="cat-tabs" id="catTabs">
-      <button class="cat-tab active" data-cat="engineLayout">Engine Layouts</button>
-      <button class="cat-tab" data-cat="recoveryMechanism">Recovery Mechanisms</button>
-      <button class="cat-tab" data-cat="rcsArrangement">RCS Arrangements</button>
-      <button class="cat-tab" data-cat="thruster">Thrusters</button>
-      <button class="cat-tab" data-cat="rcsThruster">RCS Thrusters</button>
-      <button class="cat-tab" data-cat="fuel">Fuels</button>
-      <button class="cat-tab" data-cat="metal">Metals</button>
-      <button class="cat-tab" data-cat="payloadSpace">Payload Spaces</button>
-    </div>
-
-    <div id="cardGrid" class="card-grid"></div>
-
-  </main>
-</div>
-
-<script src="js/componentLibrary.js"></script>
-<script src="js/components.js"></script>
+  
+  <script src="js/componentLibrary.js"></script>
+  <script src="js/components.js"></script>
 </body>
+
 </html>

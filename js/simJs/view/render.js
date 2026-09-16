@@ -17,7 +17,7 @@ let canvas, ctx;
 let showGrid = true;
 let showVectors = true;
 let showTrajectory = false;
-let trajectoryMode = 'inertial';   // 'inertial' | 'earthFixed'
+let trajectoryMode = 'inertial'; // 'inertial' | 'earthFixed'
 // Umbilical tower retract animation: 0 = upright/latched against the
 // vehicle, 1 = fully swung back. Driven off real elapsed time (like the
 // hazard-light blink below) so it animates smoothly regardless of sim
@@ -81,11 +81,11 @@ function cameraWorldPosition() {
   if (camera.mode === 'planet') {
     return { x: 0, y: 0 }; // Earth's center is the planet-view camera anchor
   }
-
+  
   if (!camera.follow) return { x: cameraCenter.x, y: cameraCenter.y };
   const b = state.bodies[state.activeBodyIndex];
   if (!b) return { x: 0, y: CONFIG.EARTH_RADIUS };
-
+  
   // Camera anchor = a FIXED fraction of the rocket's geometric height above
   // its base (0.5 = mid-height). Earlier this used the physical center of
   // mass, which shifted every time mass moved inside the stack — fuel burn,
@@ -96,12 +96,13 @@ function cameraWorldPosition() {
   // Anchor-on-geometry keeps the visual frame steady across every mass-
   // distribution change. The anchor is still in the body's LOCAL frame, so
   // it rotates with the rocket during tumbles and gravity turns.
-  const totalH = (b.members && b.members.length)
-    ? b.members.reduce((s, m) => s + (Number.isFinite(m.height) ? m.height : 0), 0)
-    : (CONFIG.ROCKET_HEIGHT || 45);
+  const totalH = (b.members && b.members.length) ?
+    b.members.reduce((s, m) => s + (Number.isFinite(m.height) ? m.height : 0), 0) :
+    (CONFIG.ROCKET_HEIGHT || 45);
   const anchorH = totalH * 0.5;
-
-  const cT = Math.cos(b.theta), sT = Math.sin(b.theta);
+  
+  const cT = Math.cos(b.theta),
+    sT = Math.sin(b.theta);
   // local (0, anchorH) rotated into world — same convention as physics.js's
   // _rotatedPoint() (local +Y = up-stack, world up = (-sinθ, +cosθ)).
   return {
@@ -118,7 +119,7 @@ function cameraAngle() {
 function worldToScreen(wx, wy) {
   const mpp = metersPerPixel();
   const cam = cameraWorldPosition();
-
+  
   let upX, upY, rightX, rightY;
   if (camera.mode === 'planet') {
     // Whole-Earth view: camera sits at Earth's center (0,0), so the
@@ -128,21 +129,26 @@ function worldToScreen(wx, wy) {
     // world position (which rotates with Earth at the surface) will
     // visibly drift around the disc — same way an external observer
     // would see it.
-    upX = 0;  upY = 1;
-    rightX = 1; rightY = 0;
+    upX = 0;
+    upY = 1;
+    rightX = 1;
+    rightY = 0;
   } else {
     // Local view: up = direction from Earth's center to the camera,
     // i.e. the local vertical at the camera's position. This is what
     // gives the flat-ground look and correct attitude rotation.
     const camR = Math.hypot(cam.x, cam.y) || 1;
-    upX = cam.x / camR; upY = cam.y / camR;
-    rightX = upY;       rightY = -upX;
+    upX = cam.x / camR;
+    upY = cam.y / camR;
+    rightX = upY;
+    rightY = -upX;
   }
-
-  const dx = wx - cam.x, dy = wy - cam.y;
+  
+  const dx = wx - cam.x,
+    dy = wy - cam.y;
   const localR = dx * rightX + dy * rightY;
-  const localU = dx * upX    + dy * upY;
-
+  const localU = dx * upX + dy * upY;
+  
   return [
     canvas.width / 2 + localR / mpp,
     canvas.height / 2 - localU / mpp,
@@ -165,8 +171,8 @@ function drawSky(altitude) {
   const densityFrac = Math.min(1, rho / CONFIG.SEA_LEVEL_DENSITY); // 1 = sea level, 0 = vacuum
   // Interpolate: dense (blue sky) -> thin (deep space black), with a violet transition band.
   const skyBlue = [30, 60, 110];
-const midViolet = [25, 15, 50];
-const spaceBlack = [3, 4, 10];
+  const midViolet = [25, 15, 50];
+  const spaceBlack = [3, 4, 10];
   let c;
   if (densityFrac > 0.5) {
     const t = (densityFrac - 0.5) * 2;
@@ -183,7 +189,7 @@ const spaceBlack = [3, 4, 10];
 }
 
 function lerpColor(a, b, t) {
-  return [a[0] + (b[0]-a[0])*t, a[1] + (b[1]-a[1])*t, a[2] + (b[2]-a[2])*t];
+  return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
 }
 
 function drawGrid() {
@@ -198,7 +204,7 @@ function drawGrid() {
     drawPlanetGrid(mpp);
     return;
   }
-
+  
   
   // ---- Clip: hide everything inside Earth's silhouette ----
   // Without this, both the altitude rings and the downrange lines run all
@@ -232,72 +238,72 @@ function drawGrid() {
   const baseAlt = Math.floor(camAlt / spacingMeters) * spacingMeters;
   const altRange = canvas.height * mpp;
   for (let alt = baseAlt - altRange; alt <= camAlt + altRange; alt += spacingMeters) {
-  const localU = alt - camAlt;
-  const py = halfH - localU / mpp;
-  if (py < -10 || py > canvas.height + 10) continue;
-  ctx.beginPath();
-  ctx.moveTo(0, py);
-  ctx.lineTo(canvas.width, py);
-  ctx.stroke();
-  
-  // Label default sits ABOVE the line. For the topmost visible line, that
-  // would push the text off the canvas top (text baseline at y < 10 goes
-  // out of bounds). Flip to below when we're within 15 px of the top.
-  const labelY = (py < 15) ? (py + 12) : (py - 3);
-  ctx.fillText(alt.toFixed(0) + 'm', 3, labelY);
-}
+    const localU = alt - camAlt;
+    const py = halfH - localU / mpp;
+    if (py < -10 || py > canvas.height + 10) continue;
+    ctx.beginPath();
+    ctx.moveTo(0, py);
+    ctx.lineTo(canvas.width, py);
+    ctx.stroke();
+    
+    // Label default sits ABOVE the line. For the topmost visible line, that
+    // would push the text off the canvas top (text baseline at y < 10 goes
+    // out of bounds). Flip to below when we're within 15 px of the top.
+    const labelY = (py < 15) ? (py + 12) : (py - 3);
+    ctx.fillText(alt.toFixed(0) + 'm', 3, labelY);
+  }
   
   // ---- Downrange lines (vertical lines) ----
   const spacingAngle = spacingMeters / CONFIG.EARTH_RADIUS;
-const camPhi = Math.atan2(cam.x, cam.y);
-const angleRange = (canvas.width * mpp) / CONFIG.EARTH_RADIUS;
-
-// Launch site's inertial angle at this instant.
-const launchPhi = (CONFIG.LAUNCH_SITE_ANGLE_0 || 0) + CONFIG.EARTH_OMEGA * state.simTime;
-
-// Snap grid lines to EARTH-FIXED angular positions — anchored on the
-// launch site, not on the inertial frame. Without this offset the grid
-// is inertial-fixed while the labels are Earth-fixed, so as Earth
-// rotates the "0m" label visibly slides across the static grid lines
-// and the whole thing jitters. Adding launchPhi before and after the
-// floor() shifts the snap lattice so it rotates with the ground.
-const relPhi = camPhi - launchPhi;
-const basePhi = Math.floor(relPhi / spacingAngle) * spacingAngle + launchPhi;
-
-for (let dphi = -angleRange; dphi <= angleRange; dphi += spacingAngle) {
-  const phi = basePhi + dphi;
-  const wx = camR * Math.sin(phi);
-  const wy = camR * Math.cos(phi);
-  const [px] = worldToScreen(wx, wy);
-  if (px < -10 || px > canvas.width + 10) continue;
-  ctx.beginPath();
-  ctx.moveTo(px, 0);
-  ctx.lineTo(px, canvas.height);
-  ctx.stroke();
+  const camPhi = Math.atan2(cam.x, cam.y);
+  const angleRange = (canvas.width * mpp) / CONFIG.EARTH_RADIUS;
   
-  // Downrange distance from launch site, along Earth's surface. Sign
-  // preserved (+ east of pad, − west). Auto-units: m below 1 km, km above.
-  const arcDist = (phi - launchPhi) * CONFIG.EARTH_RADIUS;
-  const absDist = Math.abs(arcDist);
-  const label = absDist < 1000 ?
-    arcDist.toFixed(0) + 'm' :
-    (arcDist / 1000).toFixed(1) + 'km';
+  // Launch site's inertial angle at this instant.
+  const launchPhi = (CONFIG.LAUNCH_SITE_ANGLE_0 || 0) + CONFIG.EARTH_OMEGA * state.simTime;
   
-  // Label sits near the bottom of the vertical line, tinted slightly
-  // dimmer than the altitude labels so the two families stay distinct.
-  // Labels sit ABOVE the ground line — the ground-line y is where Earth
-// begins on screen, and everything below it is inside the clipped-out
-// disc. Anchor labels 8px above it so they land in the visible sky.
-const groundX = cam.x * (CONFIG.EARTH_RADIUS / camR);
-const groundY = cam.y * (CONFIG.EARTH_RADIUS / camR);
-const [, groundPy] = worldToScreen(groundX, groundY);
-
-ctx.fillStyle = 'rgba(150,200,255,0.55)';
-ctx.fillText(label, px + 3, groundPy - 8);
-}
-
-// restore altitude-label fill color for the next frame's altitude loop
-ctx.fillStyle = 'rgba(150,200,255,0.55)';
+  // Snap grid lines to EARTH-FIXED angular positions — anchored on the
+  // launch site, not on the inertial frame. Without this offset the grid
+  // is inertial-fixed while the labels are Earth-fixed, so as Earth
+  // rotates the "0m" label visibly slides across the static grid lines
+  // and the whole thing jitters. Adding launchPhi before and after the
+  // floor() shifts the snap lattice so it rotates with the ground.
+  const relPhi = camPhi - launchPhi;
+  const basePhi = Math.floor(relPhi / spacingAngle) * spacingAngle + launchPhi;
+  
+  for (let dphi = -angleRange; dphi <= angleRange; dphi += spacingAngle) {
+    const phi = basePhi + dphi;
+    const wx = camR * Math.sin(phi);
+    const wy = camR * Math.cos(phi);
+    const [px] = worldToScreen(wx, wy);
+    if (px < -10 || px > canvas.width + 10) continue;
+    ctx.beginPath();
+    ctx.moveTo(px, 0);
+    ctx.lineTo(px, canvas.height);
+    ctx.stroke();
+    
+    // Downrange distance from launch site, along Earth's surface. Sign
+    // preserved (+ east of pad, − west). Auto-units: m below 1 km, km above.
+    const arcDist = (phi - launchPhi) * CONFIG.EARTH_RADIUS;
+    const absDist = Math.abs(arcDist);
+    const label = absDist < 1000 ?
+      arcDist.toFixed(0) + 'm' :
+      (arcDist / 1000).toFixed(1) + 'km';
+    
+    // Label sits near the bottom of the vertical line, tinted slightly
+    // dimmer than the altitude labels so the two families stay distinct.
+    // Labels sit ABOVE the ground line — the ground-line y is where Earth
+    // begins on screen, and everything below it is inside the clipped-out
+    // disc. Anchor labels 8px above it so they land in the visible sky.
+    const groundX = cam.x * (CONFIG.EARTH_RADIUS / camR);
+    const groundY = cam.y * (CONFIG.EARTH_RADIUS / camR);
+    const [, groundPy] = worldToScreen(groundX, groundY);
+    
+    ctx.fillStyle = 'rgba(150,200,255,0.55)';
+    ctx.fillText(label, px + 3, groundPy - 8);
+  }
+  
+  // restore altitude-label fill color for the next frame's altitude loop
+  ctx.fillStyle = 'rgba(150,200,255,0.55)';
   
   ctx.restore();
 }
@@ -316,12 +322,12 @@ function drawPlanetGrid(mpp) {
   ctx.clip('evenodd');
   
   ctx.strokeStyle = 'rgba(120,180,255,0.28)';
-ctx.lineWidth = 2;
-ctx.font = '12px monospace';
-
-const rMaxPx = Math.hypot(canvas.width, canvas.height) / 2;
-
-
+  ctx.lineWidth = 2;
+  ctx.font = '12px monospace';
+  
+  const rMaxPx = Math.hypot(canvas.width, canvas.height) / 2;
+  
+  
   // ---- Concentric altitude rings ----
   // Fixed, meaningful altitude steps rather than the local view's
   // zoom-dependent spacing — planet view spans thousands of km per pixel,
@@ -359,8 +365,8 @@ const rMaxPx = Math.hypot(canvas.width, canvas.height) / 2;
   const spokeRm = rMaxPx * 1.5 * mpp; // extend well past corners in world meters
   
   ctx.strokeStyle = 'rgba(120,180,255,0.20)';
-ctx.lineWidth = 1.5;
-for (let i = 0; i < spokeCount; i++) {
+  ctx.lineWidth = 1.5;
+  for (let i = 0; i < spokeCount; i++) {
     const phi = launchPhi + i * spokeStep;
     const wx = spokeRm * Math.sin(phi);
     const wy = spokeRm * Math.cos(phi);
@@ -376,11 +382,11 @@ for (let i = 0; i < spokeCount; i++) {
   const padY = spokeRm * Math.cos(launchPhi);
   const [padPx, padPy] = worldToScreen(padX, padY);
   ctx.strokeStyle = 'rgba(53,214,255,0.55)';
-ctx.lineWidth = 2;
-ctx.beginPath();
-ctx.moveTo(ecx, ecy);
-ctx.lineTo(padPx, padPy);
-ctx.stroke();
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(ecx, ecy);
+  ctx.lineTo(padPx, padPy);
+  ctx.stroke();
   
   ctx.restore();
 }
@@ -419,29 +425,31 @@ function drawEarth() {
 
 function drawLaunchPad() {
   if (camera.mode === 'planet') return;
-
+  
   // Pad is pinned to the rotating Earth — its inertial position moves with
   // Earth's rotation. Compute current site position, screen position, and
   // the surface-tangent orientation, then draw everything inside that frame.
   const site = launchSiteWorldPosition(state.simTime);
   const [sitePx, sitePy] = worldToScreen(site.x, site.y);
   if (sitePx < -800 || sitePx > canvas.width + 800 ||
-      sitePy < -800 || sitePy > canvas.height + 800) return;
-
+    sitePy < -800 || sitePy > canvas.height + 800) return;
+  
   ctx.save();
   ctx.translate(sitePx, sitePy);
   ctx.rotate(-(site.phi - cameraAngle()));
-
-  const px0 = 0, py0 = 0; // pad ground-contact point is now local (0,0)
+  
+  const px0 = 0,
+    py0 = 0; // pad ground-contact point is now local (0,0)
   const mpp = metersPerPixel();
   const m = (meters) => meters / mpp;
-
+  
   // The rocket's base rests exactly at local y=0 (py0). The launch mount's
   // TOP surface is flush with that; everything else (apron, tower, tanks)
   // is referenced down from the mount's base so nothing floats or embeds.
-  const mountHalfW = m(9), mountH = m(2.4);
+  const mountHalfW = m(9),
+    mountH = m(2.4);
   const aprY = py0 + mountH; // apron top surface, flush with the mount's base
-
+  
   // ---- Ground apron ----
   const apronHalfW = m(50);
   ctx.fillStyle = '#585d64';
@@ -454,10 +462,13 @@ function drawLaunchPad() {
   ctx.lineWidth = 1;
   [-0.7, -0.35, 0.35, 0.7].forEach(f => {
     if (Math.abs(f * apronHalfW) > m(6)) {
-      ctx.beginPath(); ctx.moveTo(px0 + f * apronHalfW, aprY); ctx.lineTo(px0 + f * apronHalfW, aprY + m(2)); ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(px0 + f * apronHalfW, aprY);
+      ctx.lineTo(px0 + f * apronHalfW, aprY + m(2));
+      ctx.stroke();
     }
   });
-
+  
   // ---- Launch mount / pedestal with hold-down clamps ----
   // Top surface flush with py0 (where the rocket's base actually sits),
   // extending down to meet the apron.
@@ -479,14 +490,14 @@ function drawLaunchPad() {
   [-0.62, -0.22, 0.22, 0.62].forEach(f => {
     ctx.fillRect(px0 + f * mountHalfW * 2 - m(0.5), py0 - m(0.9), m(1), m(1.1));
   });
-
+  
   // Flame duct — a dark slot venting exhaust down through the mount + apron.
   ctx.fillStyle = '#141518';
   ctx.fillRect(px0 - m(3.2), py0, m(6.4), mountH + m(9));
   ctx.strokeStyle = '#0a0b0d';
   ctx.lineWidth = 1;
   ctx.strokeRect(px0 - m(3.2), py0, m(6.4), mountH + m(9));
-
+  
   // ---- Umbilical / strongback tower (base on the apron surface) ----
   // Stands close to the vehicle, like a real strongback/FSS. At liftoff it
   // swings back and away from the rocket on a hinge at its base — see the
@@ -494,8 +505,9 @@ function drawLaunchPad() {
   const rocketH = CONFIG.ROCKET_HEIGHT;
   const towerOffsetFrac = 0.25;
   const towerX = px0 + apronHalfW * towerOffsetFrac;
-  const towerW = m(4.4), towerH = m(rocketH * 0.9);
-
+  const towerW = m(4.4),
+    towerH = m(rocketH * 0.9);
+  
   // Update the retract animation off real elapsed time. "Liftoff" is simply
   // "clear of the mount" — a couple meters of altitude — so the swing-back
   // starts right as the vehicle leaves the pad.
@@ -508,7 +520,7 @@ function drawLaunchPad() {
   const tiltRate = 0.7; // ~1.4s to fully swing back
   if (tiltTarget > towerTilt) towerTilt = Math.min(tiltTarget, towerTilt + tiltRate * dtReal);
   else towerTilt = Math.max(tiltTarget, towerTilt - tiltRate * dtReal);
-
+  
   // Hinge at the tower's base; rotate the whole structure about it. The
   // tower sits to the +x side of the vehicle, so a positive rotation here
   // swings its top further away (outward), same sense as a strongback
@@ -519,7 +531,7 @@ function drawLaunchPad() {
   ctx.translate(towerX, aprY);
   ctx.rotate(tiltAngle);
   ctx.translate(-towerX, -aprY);
-
+  
   ctx.fillStyle = '#3a3e44';
   ctx.fillRect(towerX - towerW / 2, aprY - towerH, towerW, towerH);
   ctx.strokeStyle = '#5a5f66';
@@ -528,9 +540,16 @@ function drawLaunchPad() {
   // Lattice cross-bracing up the tower
   const braceSteps = 9;
   for (let i = 0; i < braceSteps; i++) {
-    const y1 = aprY - towerH * (i / braceSteps), y2 = aprY - towerH * ((i + 1) / braceSteps);
-    ctx.beginPath(); ctx.moveTo(towerX - towerW / 2, y1); ctx.lineTo(towerX + towerW / 2, y2); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(towerX + towerW / 2, y1); ctx.lineTo(towerX - towerW / 2, y2); ctx.stroke();
+    const y1 = aprY - towerH * (i / braceSteps),
+      y2 = aprY - towerH * ((i + 1) / braceSteps);
+    ctx.beginPath();
+    ctx.moveTo(towerX - towerW / 2, y1);
+    ctx.lineTo(towerX + towerW / 2, y2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(towerX + towerW / 2, y1);
+    ctx.lineTo(towerX - towerW / 2, y2);
+    ctx.stroke();
   }
   // Two swing arms reaching toward the vehicle: a lower fueling umbilical
   // and a higher strongback/clamp arm, each with a hinge block at both ends.
@@ -544,23 +563,33 @@ function drawLaunchPad() {
     const ax1 = ax0 - arm.len;
     ctx.strokeStyle = '#4a4e54';
     ctx.lineWidth = Math.max(1.5, m(0.6));
-    ctx.beginPath(); ctx.moveTo(ax0, ay); ctx.lineTo(ax1, ay); ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(ax0, ay);
+    ctx.lineTo(ax1, ay);
+    ctx.stroke();
     ctx.fillStyle = '#2e3136';
-    ctx.beginPath(); ctx.arc(ax0, ay, m(0.9), 0, Math.PI * 2); ctx.fill();
-    ctx.beginPath(); ctx.arc(ax1, ay, m(0.7), 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath();
+    ctx.arc(ax0, ay, m(0.9), 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(ax1, ay, m(0.7), 0, Math.PI * 2);
+    ctx.fill();
   });
   // Blinking hazard light at the tower top
   const blink = 0.5 + 0.5 * Math.sin(performance.now() * 0.004);
   ctx.fillStyle = `rgba(255,60,50,${0.5 + 0.5 * blink})`;
-  ctx.beginPath(); ctx.arc(towerX, aprY - towerH, Math.max(2, m(1.1)), 0, Math.PI * 2); ctx.fill();
-
+  ctx.beginPath();
+  ctx.arc(towerX, aprY - towerH, Math.max(2, m(1.1)), 0, Math.PI * 2);
+  ctx.fill();
+  
   ctx.restore();
-
+  
   // ---- Background ground-support tanks (flat side-elevation, not 3D) ----
   const tankX = px0 - apronHalfW * 0.72;
   [0, 1].forEach(i => {
     const tx = tankX - i * m(9);
-    const tw = m(4.5), th = m(10);
+    const tw = m(4.5),
+      th = m(10);
     ctx.fillStyle = '#4a4e54';
     ctx.fillRect(tx - tw / 2, aprY - th, tw, th);
     ctx.strokeStyle = '#2e3136';
@@ -573,7 +602,7 @@ function drawLaunchPad() {
     ctx.fill();
     ctx.stroke();
   });
-    // ... (sab existing pad drawing unchanged) ...
+  // ... (sab existing pad drawing unchanged) ...
   
   ctx.restore(); // close the pad transform
   
@@ -584,32 +613,33 @@ function drawLaunchPad() {
 // track of it while watching the booster fall.
 function drawActiveBodyIndicator() {
   const activeIdx = state.activeBodyIndex;
-  const followingIdx = (typeof camera !== 'undefined' && Number.isFinite(camera.followBodyIndex))
-    ? camera.followBodyIndex : activeIdx;
-  if (activeIdx === followingIdx) return;   // no arrow needed if following active
-
+  const followingIdx = (typeof camera !== 'undefined' && Number.isFinite(camera.followBodyIndex)) ?
+    camera.followBodyIndex : activeIdx;
+  if (activeIdx === followingIdx) return; // no arrow needed if following active
+  
   const active = state.bodies[activeIdx];
   if (!active) return;
-
+  
   const mpp = metersPerPixel();
-const [px, py] = worldToScreen(active.rx, active.ry);
-const cx = canvas.width / 2;
-const cy = canvas.height / 2;
-
+  const [px, py] = worldToScreen(active.rx, active.ry);
+  const cx = canvas.width / 2;
+  const cy = canvas.height / 2;
+  
   const margin = 60;
-  const onScreen = px > margin && px < canvas.width - margin
-                && py > margin && py < canvas.height - margin;
+  const onScreen = px > margin && px < canvas.width - margin &&
+    py > margin && py < canvas.height - margin;
   if (onScreen) return;
-
+  
   // Clamp to canvas edge.
-  const dx = px - cx, dy = py - cy;
+  const dx = px - cx,
+    dy = py - cy;
   const ang = Math.atan2(dy, dx);
   const rx = canvas.width / 2 - margin;
   const ry = canvas.height / 2 - margin;
   const scale = Math.min(rx / Math.abs(Math.cos(ang) || 1e-6), ry / Math.abs(Math.sin(ang) || 1e-6));
   const ax = cx + Math.cos(ang) * scale;
   const ay = cy + Math.sin(ang) * scale;
-
+  
   // Arrow.
   ctx.save();
   ctx.translate(ax, ay);
@@ -639,13 +669,13 @@ function drawPayloadReleaseCue() {
   if (typeof lastPayloadRelease === 'undefined' || !lastPayloadRelease) return;
   const age = (performance.now() - lastPayloadRelease.t0) / 1000;
   if (age > 1.2) { lastPayloadRelease = null; return; }
-
+  
   const mpp = metersPerPixel();
-const [px, py] = worldToScreen(lastPayloadRelease.rx, lastPayloadRelease.ry);
-
+  const [px, py] = worldToScreen(lastPayloadRelease.rx, lastPayloadRelease.ry);
+  
   const f = age / 1.2;
   const alpha = 1 - f;
-
+  
   ctx.save();
   // Expanding ring.
   const ringR = 4 + f * 18;
@@ -654,7 +684,7 @@ const [px, py] = worldToScreen(lastPayloadRelease.rx, lastPayloadRelease.ry);
   ctx.strokeStyle = `rgba(140,230,255,${alpha * 0.85})`;
   ctx.lineWidth = 2 * alpha + 0.5;
   ctx.stroke();
-
+  
   // Prograde arrow from release point.
   const arrowLen = 20 + f * 10;
   const ax = px + lastPayloadRelease.ux * arrowLen;
@@ -730,32 +760,32 @@ function drawRocket() {
 function drawBodyAsTriangle(body, isActive) {
   const [px, py] = worldToScreen(body.rx, body.ry);
   const speed = Math.hypot(body.vx, body.vy);
-
+  
   // Vertex points along the body's own nose axis (attitude θ), NOT its
-// velocity. In the inertial world frame the nose direction is
-// (-sin θ, cos θ); screen y is flipped, so the on-screen angle is
-// atan2(-cos θ, -sin θ).
-const screenAngle = Math.atan2(-Math.cos(body.theta), -Math.sin(body.theta));
-
+  // velocity. In the inertial world frame the nose direction is
+  // (-sin θ, cos θ); screen y is flipped, so the on-screen angle is
+  // atan2(-cos θ, -sin θ).
+  const screenAngle = Math.atan2(-Math.cos(body.theta), -Math.sin(body.theta));
+  
   const size = isActive ? 10 : 7;
-
+  
   ctx.save();
   ctx.translate(px, py);
   ctx.rotate(screenAngle);
-
+  
   ctx.beginPath();
-  ctx.moveTo(size, 0);                 // vertex along velocity
+  ctx.moveTo(size, 0); // vertex along velocity
   ctx.lineTo(-size * 0.55, -size * 0.55);
   ctx.lineTo(-size * 0.25, 0);
   ctx.lineTo(-size * 0.55, size * 0.55);
   ctx.closePath();
-
-  ctx.fillStyle   = isActive ? '#35d6ff' : '#ff9248';
+  
+  ctx.fillStyle = isActive ? '#35d6ff' : '#ff9248';
   ctx.strokeStyle = '#0a0c10';
-  ctx.lineWidth   = 1;
+  ctx.lineWidth = 1;
   ctx.fill();
   ctx.stroke();
-
+  
   ctx.restore();
 }
 
@@ -764,7 +794,7 @@ function drawBodyRocket(body, isActive) {
     drawBodyAsTriangle(body, isActive);
     return;
   }
-
+  
   const mpp = metersPerPixel();
   const [px, py] = worldToScreen(body.rx, body.ry);
   const visualTheta = body.theta - Math.atan2(-body.rx, body.ry);
@@ -772,7 +802,7 @@ function drawBodyRocket(body, isActive) {
   
   const H = CONFIG.ROCKET_HEIGHT / mpp;
   const W = CONFIG.ROCKET_WIDTH / mpp;
-
+  
   // Off-screen cull: discarded/staged bodies (boosters, spent stages) keep
   // existing physically and get fully rendered every frame even long after
   // they've fallen far outside the visible viewport. Skip the whole draw
@@ -783,36 +813,36 @@ function drawBodyRocket(body, isActive) {
   // genuinely fully off-screen, so visible rendering is unchanged.
   const cullMargin = Math.max(H, W) * 3;
   if (px < -cullMargin || px > canvas.width + cullMargin ||
-      py < -cullMargin || py > canvas.height + cullMargin) {
+    py < -cullMargin || py > canvas.height + cullMargin) {
     return;
   }
-
+  
   ctx.save();
   ctx.translate(px, py);
   ctx.rotate(-visualTheta);
-
+  
   // ---- Plume (active body only) ----
   // ---- Plume (any body whose engines are firing) ----
-{
-  const bodyEngines = (body && body.engines) ? body.engines : [];
-  const totalThrust = bodyEngines.reduce((s, e) => s + e.currentF, 0);
-  const maxThrust = bodyEngines.reduce((s, e) => s + e.Fmax, 0);
-  const totalThrottle = maxThrust > 0 ? totalThrust / maxThrust : 0;
-
+  {
+    const bodyEngines = (body && body.engines) ? body.engines : [];
+    const totalThrust = bodyEngines.reduce((s, e) => s + e.currentF, 0);
+    const maxThrust = bodyEngines.reduce((s, e) => s + e.Fmax, 0);
+    const totalThrottle = maxThrust > 0 ? totalThrust / maxThrust : 0;
+    
     if (totalThrottle > 0.03) {
       const tNow = performance.now() * 0.01;
       const flameLen = H * (0.6 + 1.6 * totalThrottle);
-
+      
       const centerEngine = bodyEngines.find(e => e.isCenter);
-
-
+      
+      
       const centerFrac = totalThrust > 0 ? centerEngine.currentF / totalThrust : 0;
       const gimbalRad = (centerEngine.gimbalDeg * Math.PI / 180) * centerFrac;
       const fullShift = -flameLen * Math.sin(gimbalRad);
-
+      
       const activeCount = bodyEngines.filter(e => e.currentF > 1).length;
       const plumeScale = Math.min(1.0, 0.30 + 0.70 * Math.max(0, activeCount - 1) / 8);
-
+      
       function gasConePath(startW, endW, lenFrac, seed, segments, layerShift) {
         const l = flameLen * lenFrac;
         ctx.beginPath();
@@ -822,11 +852,13 @@ function drawBodyRocket(body, isActive) {
           const y = l * f;
           const w = startW + (endW - startW) * f;
           const grow = 0.15 + 1.1 * f * f;
-          const wob = Math.sin(f * 4.5 + tNow * 2.3 + seed) * w * 0.16 * grow
-                    + Math.sin(f * 9.5 + tNow * 3.8 + seed * 1.4) * w * 0.08 * grow;
+          const wob = Math.sin(f * 4.5 + tNow * 2.3 + seed) * w * 0.16 * grow +
+            Math.sin(f * 9.5 + tNow * 3.8 + seed * 1.4) * w * 0.08 * grow;
           ctx.lineTo(-w / 2 - wob + layerShift * f, y);
         }
-        const capW = endW, capX = layerShift, capY = l;
+        const capW = endW,
+          capX = layerShift,
+          capY = l;
         ctx.quadraticCurveTo(capX - capW * 0.34, capY + capW * 0.15, capX, capY + capW * 0.22);
         ctx.quadraticCurveTo(capX + capW * 0.34, capY + capW * 0.15, endW / 2 + layerShift, l);
         for (let i = segments; i >= 0; i--) {
@@ -834,13 +866,13 @@ function drawBodyRocket(body, isActive) {
           const y = l * f;
           const w = startW + (endW - startW) * f;
           const grow = 0.15 + 1.1 * f * f;
-          const wob = Math.sin(f * 4.5 + tNow * 2.3 + seed + 1.9) * w * 0.16 * grow
-                    + Math.sin(f * 9.5 + tNow * 3.8 + seed * 1.4 + 0.8) * w * 0.08 * grow;
+          const wob = Math.sin(f * 4.5 + tNow * 2.3 + seed + 1.9) * w * 0.16 * grow +
+            Math.sin(f * 9.5 + tNow * 3.8 + seed * 1.4 + 0.8) * w * 0.08 * grow;
           ctx.lineTo(w / 2 + wob + layerShift * f, y);
         }
         ctx.closePath();
       }
-
+      
       ctx.save();
       ctx.filter = 'blur(11px)';
       gasConePath(W * 1.0 * plumeScale, W * 2.7 * plumeScale, 1.0, 0, 14, fullShift * 1.0);
@@ -851,7 +883,7 @@ function drawBodyRocket(body, isActive) {
       ctx.fillStyle = g1;
       ctx.fill();
       ctx.filter = 'none';
-
+      
       ctx.filter = 'blur(7px)';
       for (let i = 0; i < 5; i++) {
         const f = 0.35 + 0.6 * (i / 4);
@@ -866,10 +898,12 @@ function drawBodyRocket(body, isActive) {
         bg.addColorStop(0, 'rgba(255,140,60,0.35)');
         bg.addColorStop(1, 'rgba(255,90,30,0)');
         ctx.fillStyle = bg;
-        ctx.beginPath(); ctx.arc(bx, by, r, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath();
+        ctx.arc(bx, by, r, 0, Math.PI * 2);
+        ctx.fill();
       }
       ctx.filter = 'none';
-
+      
       ctx.globalCompositeOperation = 'lighter';
       ctx.filter = 'blur(5px)';
       const shift92 = fullShift * 0.92;
@@ -881,7 +915,7 @@ function drawBodyRocket(body, isActive) {
       ctx.fillStyle = g2;
       ctx.fill();
       ctx.filter = 'none';
-
+      
       ctx.filter = 'blur(2px)';
       const shift68 = fullShift * 0.68;
       gasConePath(W * 0.58 * plumeScale, W * 1.05 * plumeScale, 0.68, 4.4, 9, shift68);
@@ -893,7 +927,7 @@ function drawBodyRocket(body, isActive) {
       ctx.fillStyle = g3;
       ctx.fill();
       ctx.filter = 'none';
-
+      
       ctx.filter = 'blur(5px)';
       const shift22 = fullShift * 0.22;
       gasConePath(W * 0.42 * plumeScale, W * 0.55 * plumeScale, 0.22, 6.7, 6, shift22);
@@ -902,97 +936,100 @@ function drawBodyRocket(body, isActive) {
       ctx.filter = 'none';
       ctx.globalCompositeOperation = 'source-over';
       ctx.restore();
-
+      
       ctx.globalCompositeOperation = 'lighter';
       const flare = ctx.createRadialGradient(0, W * 0.05, 0, fullShift * 0.05, W * 0.05, W * 0.9 * plumeScale);
       flare.addColorStop(0, 'rgba(255,255,255,0.9)');
       flare.addColorStop(0.5, 'rgba(255,255,255,0.35)');
       flare.addColorStop(1, 'rgba(255,255,255,0)');
       ctx.fillStyle = flare;
-      ctx.beginPath(); ctx.ellipse(0, W * 0.05, W * 0.42 * plumeScale, W * 0.2 * plumeScale, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath();
+      ctx.ellipse(0, W * 0.05, W * 0.42 * plumeScale, W * 0.2 * plumeScale, 0, 0, Math.PI * 2);
+      ctx.fill();
       ctx.globalCompositeOperation = 'source-over';
-     // ctx.restore;
+      // ctx.restore;
     }
   }
-
+  
   // ---- Stack body draw (identical to before) ----
-  const stackMembers = (body && body.members && body.members.length)
-  ? body.members
-  : ((typeof SIM_STACK_MEMBERS !== 'undefined' && SIM_STACK_MEMBERS.length) ? SIM_STACK_MEMBERS : []);
-
-// ↓↓↓ ye pura block add karo ↓↓↓
-// Payload drawn BEFORE members (background) — so fairing, drawn after,
-// covers it until fairing splits.
-if (body.payloadId && !body.payloadReleased) {
-  const pl = (typeof getPayload === 'function') ? getPayload(body.payloadId) : null;
-  if (pl) {
-    let payloadBaseY = null, yy = 0;
-    stackMembers.forEach(m => {
-      if (m.stageRole === 'payloadSpace' && payloadBaseY === null) payloadBaseY = yy;
-      yy += (m.height || 0) / mpp;
-    });
-    if (payloadBaseY === null) payloadBaseY = yy;
-    const plH = (pl.height || 1) / mpp;
-    const plW = (pl.width || 1) / mpp;
-    ctx.save();
-    ctx.translate(0, -payloadBaseY);
-    drawPayloadArt(ctx, plW, plH);
-    ctx.restore();
+  const stackMembers = (body && body.members && body.members.length) ?
+    body.members :
+    ((typeof SIM_STACK_MEMBERS !== 'undefined' && SIM_STACK_MEMBERS.length) ? SIM_STACK_MEMBERS : []);
+  
+  // ↓↓↓ ye pura block add karo ↓↓↓
+  // Payload drawn BEFORE members (background) — so fairing, drawn after,
+  // covers it until fairing splits.
+  if (body.payloadId && !body.payloadReleased) {
+    const pl = (typeof getPayload === 'function') ? getPayload(body.payloadId) : null;
+    if (pl) {
+      let payloadBaseY = null,
+        yy = 0;
+      stackMembers.forEach(m => {
+        if (m.stageRole === 'payloadSpace' && payloadBaseY === null) payloadBaseY = yy;
+        yy += (m.height || 0) / mpp;
+      });
+      if (payloadBaseY === null) payloadBaseY = yy;
+      const plH = (pl.height || 1) / mpp;
+      const plW = (pl.width || 1) / mpp;
+      ctx.save();
+      ctx.translate(0, -payloadBaseY);
+      drawPayloadArt(ctx, plW, plH);
+      ctx.restore();
+    }
   }
-}
-// ↑↑↑ ye pura block add karo ↑↑↑
-// I-d1: fairing half-shell — draw the payloadSpace silhouette but
-// rendered as if sliced in half (approximate: draw the shape then
-// clip away one lateral side).
-if (body.fairingHalf) {
-  const rec = body.fairingHalf.record;
-  const side = body.fairingHalf.side;
-  const psType = (rec.payloadSpaceTypeId && typeof getComponentType === 'function') ?
-    getComponentType(rec.payloadSpaceTypeId) : null;
-  const psParams = rec.params || {};
-  // Fairing's OWN dims — not the stack's. Previously used CONFIG.ROCKET_*
-  // so the half-shell was drawn at full-rocket height.
-  const fairW_m = Number.isFinite(psParams.capWidth) ? psParams.capWidth : 3;
-  const fairH_m = Number.isFinite(psParams.capHeight) ? psParams.capHeight : 3;
-  const fairW_px = fairW_m / mpp;
-  const fairH_px = fairH_m / mpp;
+  // ↑↑↑ ye pura block add karo ↑↑↑
+  // I-d1: fairing half-shell — draw the payloadSpace silhouette but
+  // rendered as if sliced in half (approximate: draw the shape then
+  // clip away one lateral side).
+  if (body.fairingHalf) {
+    const rec = body.fairingHalf.record;
+    const side = body.fairingHalf.side;
+    const psType = (rec.payloadSpaceTypeId && typeof getComponentType === 'function') ?
+      getComponentType(rec.payloadSpaceTypeId) : null;
+    const psParams = rec.params || {};
+    // Fairing's OWN dims — not the stack's. Previously used CONFIG.ROCKET_*
+    // so the half-shell was drawn at full-rocket height.
+    const fairW_m = Number.isFinite(psParams.capWidth) ? psParams.capWidth : 3;
+    const fairH_m = Number.isFinite(psParams.capHeight) ? psParams.capHeight : 3;
+    const fairW_px = fairW_m / mpp;
+    const fairH_px = fairH_m / mpp;
+    
+    // Clip to one lateral half (side=+1 → right half; side=-1 → left half).
+    ctx.save();
+    ctx.beginPath();
+    if (side > 0) ctx.rect(0, -fairH_px * 2, fairW_px * 2, fairH_px * 4);
+    else ctx.rect(-fairW_px * 2, -fairH_px * 2, fairW_px * 2, fairH_px * 4);
+    ctx.clip();
+    
+    drawRocketArt(ctx, fairW_px, fairH_px, mpp, {
+      stageRole: 'payloadSpace',
+      payloadKind: psType ? psType.kind : undefined,
+      payloadCapWidth: Number.isFinite(psParams.capWidth) ? psParams.capWidth : undefined,
+      payloadBulgeWidth: Number.isFinite(psParams.bulgeWidth) ? psParams.bulgeWidth : undefined,
+      payloadFrustumAngleDeg: Number.isFinite(psParams.frustumSlantDeg) ? psParams.frustumSlantDeg : undefined,
+      payloadCurveRatio: Number.isFinite(psParams.curveHeightFactor) ? psParams.curveHeightFactor : undefined,
+      payloadColor: rec.color || '#e9edf2',
+    });
+    ctx.restore();
+    ctx.restore(); // closes the outer drawBodyRocket save
+    return;
+  }
   
-  // Clip to one lateral half (side=+1 → right half; side=-1 → left half).
-  ctx.save();
-  ctx.beginPath();
-  if (side > 0) ctx.rect(0, -fairH_px * 2, fairW_px * 2, fairH_px * 4);
-  else ctx.rect(-fairW_px * 2, -fairH_px * 2, fairW_px * 2, fairH_px * 4);
-  ctx.clip();
+  // I-d2: payload body — simple rectangle (height × width from its record).
+  if (body.payloadBody) {
+    const pl = body.payloadBody.record;
+    const plH_m = Number.isFinite(pl.height) ? pl.height : 1;
+    const plW_m = Number.isFinite(pl.width) ? pl.width : 1;
+    const plH_px = plH_m / mpp;
+    const plW_px = plW_m / mpp;
+    ctx.save();
+    drawPayloadArt(ctx, plW_px, plH_px);
+    ctx.restore();
+    ctx.restore(); // closes the outer drawBodyRocket save
+    
+    return;
+  }
   
-  drawRocketArt(ctx, fairW_px, fairH_px, mpp, {
-    stageRole: 'payloadSpace',
-    payloadKind: psType ? psType.kind : undefined,
-    payloadCapWidth: Number.isFinite(psParams.capWidth) ? psParams.capWidth : undefined,
-    payloadBulgeWidth: Number.isFinite(psParams.bulgeWidth) ? psParams.bulgeWidth : undefined,
-    payloadFrustumAngleDeg: Number.isFinite(psParams.frustumSlantDeg) ? psParams.frustumSlantDeg : undefined,
-    payloadCurveRatio: Number.isFinite(psParams.curveHeightFactor) ? psParams.curveHeightFactor : undefined,
-    payloadColor: rec.color || '#e9edf2',
-  });
-  ctx.restore();
-  ctx.restore(); // closes the outer drawBodyRocket save
-  return;
-}
-
-// I-d2: payload body — simple rectangle (height × width from its record).
-if (body.payloadBody) {
-  const pl = body.payloadBody.record;
-  const plH_m = Number.isFinite(pl.height) ? pl.height : 1;
-  const plW_m = Number.isFinite(pl.width) ? pl.width : 1;
-  const plH_px = plH_m / mpp;
-  const plW_px = plW_m / mpp;
-  ctx.save();
-  drawPayloadArt(ctx, plW_px, plH_px);
-  ctx.restore();
-  ctx.restore(); // closes the outer drawBodyRocket save
-  
-  return;
-}
-
   if (stackMembers.length) {
     let yOffsetPx = 0;
     stackMembers.forEach((m, idx) => {
@@ -1012,20 +1049,20 @@ if (body.payloadBody) {
           stageAboveBellHeight = 0.007 * perEngine;
         }
       }
-
+      
       const mH = (m.height || 0) / mpp;
       const mW = (m.width || 1) / mpp;
-      const recType = (m.hasRecovery === false) ? null
-        : ((m.recoveryTypeId && typeof getComponentType === 'function')
-            ? getComponentType(m.recoveryTypeId) : null);
-      const rcsT = (m.rcsTypeId && typeof getComponentType === 'function')
-        ? getComponentType(m.rcsTypeId) : null;
-      const engineLayout = (m.engineTypeId && typeof getComponentType === 'function')
-        ? getComponentType(m.engineTypeId) : null;
-
+      const recType = (m.hasRecovery === false) ? null :
+        ((m.recoveryTypeId && typeof getComponentType === 'function') ?
+          getComponentType(m.recoveryTypeId) : null);
+      const rcsT = (m.rcsTypeId && typeof getComponentType === 'function') ?
+        getComponentType(m.rcsTypeId) : null;
+      const engineLayout = (m.engineTypeId && typeof getComponentType === 'function') ?
+        getComponentType(m.engineTypeId) : null;
+      
       // PS-D2: payloadSpace fairing shape opts.
-      const psType = (m.stageRole === 'payloadSpace' && m.payloadSpaceTypeId && typeof getComponentType === 'function')
-        ? getComponentType(m.payloadSpaceTypeId) : null;
+      const psType = (m.stageRole === 'payloadSpace' && m.payloadSpaceTypeId && typeof getComponentType === 'function') ?
+        getComponentType(m.payloadSpaceTypeId) : null;
       const psParams = m.params || {};
       const payloadOpts = (m.stageRole === 'payloadSpace') ? {
         payloadKind: psType ? psType.kind : undefined,
@@ -1035,14 +1072,14 @@ if (body.payloadBody) {
         payloadCurveRatio: Number.isFinite(psParams.curveHeightFactor) ? psParams.curveHeightFactor : undefined,
         payloadColor: m.color || '#e9edf2',
       } : {};
-
+      
       ctx.save();
       ctx.translate(0, -yOffsetPx);
       drawRocketArt(ctx, mW, mH, mpp, {
         legsProgress: (isActive && idx === 0) ? legs.progress : 0,
         legsState: isActive ? legs : null,
         firing: (body.lastRcs && body.lastRcs.firing) || {},
-  pod: (body.lastRcs && body.lastRcs.pod) || {},
+        pod: (body.lastRcs && body.lastRcs.pod) || {},
         rcsTopY: m.params ? m.params.rcsTopY : undefined,
         rcsBottomY: m.params ? m.params.rcsBottomY : undefined,
         recoveryType: recType,
@@ -1062,7 +1099,7 @@ if (body.payloadBody) {
       yOffsetPx += mH;
     });
   }
-
+  
   ctx.restore();
 }
 
@@ -1071,21 +1108,21 @@ function drawGroundSteam(altitude) {
   const maxThrust = ENGINES.reduce((s, e) => s + e.Fmax, 0);
   const throttle = maxThrust > 0 ? totalThrust / maxThrust : 0;
   if (throttle < 0.05 || altitude > 180) return;
-
+  
   // Point on Earth's surface directly beneath the camera.
-const cam = cameraWorldPosition();
-const camR = Math.hypot(cam.x, cam.y) || 1;
-const groundX = cam.x * (CONFIG.EARTH_RADIUS / camR);
-const groundY = cam.y * (CONFIG.EARTH_RADIUS / camR);
-const [cx, groundPy] = worldToScreen(groundX, groundY);
-
-if (groundPy < -200 || groundPy > canvas.height + 400) return;
-
+  const cam = cameraWorldPosition();
+  const camR = Math.hypot(cam.x, cam.y) || 1;
+  const groundX = cam.x * (CONFIG.EARTH_RADIUS / camR);
+  const groundY = cam.y * (CONFIG.EARTH_RADIUS / camR);
+  const [cx, groundPy] = worldToScreen(groundX, groundY);
+  
+  if (groundPy < -200 || groundPy > canvas.height + 400) return;
+  
   const fade = 1 - Math.min(1, altitude / 180); // full strength at the pad, gone by ~180m
   const mpp = metersPerPixel();
   const spread = (140 / mpp) * (0.6 + 0.4 * throttle) * fade;
   const t = performance.now() * 0.0012;
-
+  
   ctx.save();
   ctx.filter = 'blur(16px)';
   const blobs = 8;
@@ -1098,7 +1135,9 @@ if (groundPy < -200 || groundPy > canvas.height + 400) return;
     g.addColorStop(0, `rgba(255,255,255,${0.85 * fade})`);
     g.addColorStop(1, 'rgba(255,255,255,0)');
     ctx.fillStyle = g;
-    ctx.beginPath(); ctx.arc(bx, by, r, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath();
+    ctx.arc(bx, by, r, 0, Math.PI * 2);
+    ctx.fill();
   }
   ctx.filter = 'none';
   ctx.restore();
@@ -1116,12 +1155,12 @@ function renderFrame() {
   drawSky(altitude);
   
   if (camera.mode === 'planet') {
-  drawEarth();
-  drawGrid(); // ← ye line add karo
-  drawPredictedTrajectory();
-  drawRocket();
-  return;
-}
+    drawEarth();
+    drawGrid(); // ← ye line add karo
+    drawPredictedTrajectory();
+    drawRocket();
+    return;
+  }
   
   drawEarth();
   drawGrid();

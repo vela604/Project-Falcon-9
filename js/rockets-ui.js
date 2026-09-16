@@ -43,9 +43,9 @@ function fleetRowSpecsHTML(r) {
   if (r.stageRole === 'stage') {
     const d = stageDerivedMasses(r);
     if (!d || d.reason) return `<span class="accent">—</span>`;
-    const maxP = d.infeasible
-      ? '<span style="color:var(--danger)">INFEASIBLE</span>'
-      : `payload ${fmtMass(d.maxPayloadMassKg)}`;
+    const maxP = d.infeasible ?
+      '<span style="color:var(--danger)">INFEASIBLE</span>' :
+      `payload ${fmtMass(d.maxPayloadMassKg)}`;
     return `
       <span>${r.height} m</span>
       <span class="accent">${fmtForce(d.totalEngineThrust)}</span>
@@ -67,9 +67,9 @@ function fleetRowSpecsHTML(r) {
       <span class="accent">${shapeType ? shapeType.displayName : '—'}</span>`;
   }
   const caps = rocketCapabilities(r);
-  const extraRow = (r.stageRole === 'booster')
-    ? `<span>cap ${fmtMass(r.maxExtraWeightKg || 0)}</span>`
-    : '';
+  const extraRow = (r.stageRole === 'booster') ?
+    `<span>cap ${fmtMass(r.maxExtraWeightKg || 0)}</span>` :
+    '';
   return `
     <span>${r.height} m</span>
     <span class="accent">${fmtForce(caps.totalMaxThrust)}</span>
@@ -77,8 +77,9 @@ function fleetRowSpecsHTML(r) {
     <span>Δv ${caps.deltaV.toFixed(0)} m/s</span>
     ${extraRow}`;
 }
+
 function escapeHtml(s) {
-  return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' } [c]));
 }
 
 // Fills one of the read-only detail panel's three type-driven sections
@@ -107,12 +108,12 @@ function renderFleetList() {
   const families = loadFamilies();
   const selectedId = getSelectedId();
   host.innerHTML = '';
-
+  
   if (!fleet.length && !families.length) {
     host.innerHTML = '<p style="color:var(--dim);font-size:13px;">No families yet — click &quot;+ New Family&quot; to start.</p>';
     return;
   }
-
+  
   // Bucket records by familyId. Anything without a family (shouldn't happen
   // post-migration, but defensive) lands in Unassigned.
   const byFamily = {};
@@ -123,7 +124,7 @@ function renderFleetList() {
     if (!byFamily[fid]) byFamily[fid] = [];
     byFamily[fid].push(r);
   });
-
+  
   // Family display order: real families first (locked Falcon-9 last of these),
   // then Unassigned if it has any records.
   const realFamilyIds = families
@@ -132,43 +133,43 @@ function renderFleetList() {
     .map(f => f.id);
   const orderedIds = [...realFamilyIds];
   if ((byFamily[UNASSIGNED_FAMILY_ID] || []).length) orderedIds.push(UNASSIGNED_FAMILY_ID);
-
+  
   orderedIds.forEach(fid => {
     const fam = getFamily(fid) || { id: fid, name: '(unknown family)', bottomId: null };
     const members = byFamily[fid] || [];
     const bottom = fam.bottomId ? fleet.find(r => r.id === fam.bottomId) : null;
-
+    
     // Family header
     const header = document.createElement('div');
     header.className = 'family-header' + (fid === viewingFamilyId ? ' active' : '');
-    const boosterLabel = bottom
-      ? `base: ${escapeHtml(bottom.name)}`
-      : '<span style="color:var(--amber)">no booster yet</span>';
+    const boosterLabel = bottom ?
+      `base: ${escapeHtml(bottom.name)}` :
+      '<span style="color:var(--amber)">no booster yet</span>';
     header.innerHTML = `
       <span class="family-header-name">${escapeHtml(fam.name)}</span>
       <span class="family-header-meta">${boosterLabel} · ${members.length} member${members.length === 1 ? '' : 's'}</span>
       <button type="button" class="btn" data-family-add="${fid}">+ Add Member</button>
     `;
     host.appendChild(header);
-
+    
     // Family header itself is clickable → opens family detail.
-header.style.cursor = 'pointer';
-header.addEventListener('click', () => showFamilyDetail(fid));
-
-// "+ Add Member" button inside the header — scoped add flow.
-header.querySelector(`[data-family-add="${fid}"]`).addEventListener('click', (e) => {
-  e.stopPropagation();
-  openFamilyAddMember(fid);
-});
+    header.style.cursor = 'pointer';
+    header.addEventListener('click', () => showFamilyDetail(fid));
+    
+    // "+ Add Member" button inside the header — scoped add flow.
+    header.querySelector(`[data-family-add="${fid}"]`).addEventListener('click', (e) => {
+      e.stopPropagation();
+      openFamilyAddMember(fid);
+    });
     // Members — bottom first, then stages/noses.
     const wrap = document.createElement('div');
     wrap.className = 'family-member-indent';
     host.appendChild(wrap);
-
+    
     const ordered = [];
     if (bottom) ordered.push(bottom);
     members.filter(r => !bottom || r.id !== bottom.id).forEach(r => ordered.push(r));
-
+    
     if (!ordered.length) {
       const empty = document.createElement('div');
       empty.className = 'fleet-row';
@@ -177,7 +178,7 @@ header.querySelector(`[data-family-add="${fid}"]`).addEventListener('click', (e)
       wrap.appendChild(empty);
       return;
     }
-
+    
     ordered.forEach(r => {
       const row = document.createElement('div');
       row.className = 'fleet-row' + ((r.id === editingId || r.id === viewingId) ? ' active' : '');
@@ -199,13 +200,14 @@ header.querySelector(`[data-family-add="${fid}"]`).addEventListener('click', (e)
       wrap.appendChild(row);
     });
   });
-
+  
   host.querySelectorAll('button[data-act]').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       const id = btn.dataset.id;
       const act = btn.dataset.act;
-      if (act === 'fly') { setSelectedId(id); showVehicleDetail(id); }
+      if (act === 'fly') { setSelectedId(id);
+        showVehicleDetail(id); }
       if (act === 'edit') openEditorFor(id);
       if (act === 'dup') duplicateRocket(id);
       if (act === 'del') deleteRocketFlow(id);
@@ -213,14 +215,14 @@ header.querySelector(`[data-family-add="${fid}"]`).addEventListener('click', (e)
   });
   
   // Row click → view detail (Fly this removed from rows; stack flies now).
-host.querySelectorAll('.family-member-indent .fleet-row').forEach(row => {
-  row.style.cursor = 'pointer';
-  row.addEventListener('click', (e) => {
-    if (e.target.closest('button')) return;  // ignore button clicks
-    const id = row.querySelector('button[data-act="edit"]');
-    if (id) showVehicleDetail(id.dataset.id);
+  host.querySelectorAll('.family-member-indent .fleet-row').forEach(row => {
+    row.style.cursor = 'pointer';
+    row.addEventListener('click', (e) => {
+      if (e.target.closest('button')) return; // ignore button clicks
+      const id = row.querySelector('button[data-act="edit"]');
+      if (id) showVehicleDetail(id.dataset.id);
+    });
   });
-});
 }
 
 // ---------------------------------------------------------------------------
@@ -234,14 +236,14 @@ function showFamilyDetail(familyId) {
   viewingFamilyId = familyId;
   editingId = null;
   viewingId = null;
-
+  
   const fleet = loadFleet();
   const bottom = fam.bottomId ? fleet.find(r => r.id === fam.bottomId) : null;
   const members = fleet.filter(r => r.familyId === familyId && (!bottom || r.id !== bottom.id));
   const hasBottom = !!bottom;
-
+  
   document.getElementById('famDetailTitle').textContent = fam.name;
-
+  
   // Base member.
   const baseEl = document.getElementById('famDetailBase');
   if (bottom) {
@@ -256,7 +258,7 @@ function showFamilyDetail(familyId) {
   } else {
     baseEl.innerHTML = `<div class="fam-empty-hint">No booster yet — this family isn't flyable. Add one to begin.</div>`;
   }
-
+  
   // Members list (stages + noses).
   const memEl = document.getElementById('famDetailMembers');
   if (members.length) {
@@ -275,18 +277,18 @@ function showFamilyDetail(familyId) {
     memEl.className = '';
     memEl.innerHTML = `<div class="fam-empty-hint">No stages or noses yet.</div>`;
   }
-
+  
   // "+ Add Member" enable/disable depends on role availability — stages and
   // noses are always addable; a booster only if this family doesn't have one.
   document.getElementById('btnFamilyAddMember').disabled = false;
-
+  
   // Delete Family — only when empty (deleteFamily() enforces this too).
   const deletable = !fam.locked && !bottom && members.length === 0;
   const delBtn = document.getElementById('btnFamilyDelete');
   delBtn.disabled = !deletable;
   delBtn.title = fam.locked ? 'Default family is protected.' :
-                 (bottom || members.length) ? 'Delete the family\'s members first.' : '';
-
+    (bottom || members.length) ? 'Delete the family\'s members first.' : '';
+  
   // Wire "Open" buttons.
   [baseEl, memEl].forEach(host => {
     host.querySelectorAll('[data-fam-open]').forEach(btn => {
@@ -296,12 +298,12 @@ function showFamilyDetail(familyId) {
       });
     });
   });
-
+  
   document.getElementById('editorEmpty').classList.add('hide');
   document.getElementById('editorForm').classList.remove('show');
   document.getElementById('vehicleDetail').classList.remove('show');
   document.getElementById('familyDetail').style.display = '';
-
+  
   renderFleetList();
 }
 
@@ -368,9 +370,9 @@ function renderStackList() {
   const stacks = loadStacks();
   const fleet = loadFleet();
   host.innerHTML = '';
-
+  
   if (!stacks.length) return; // :empty::after shows placeholder
-
+  
   stacks.forEach(s => {
     const v = validateStack(s.members, fleet, s);
     const names = s.members.map(id => {
@@ -378,7 +380,7 @@ function renderStackList() {
       return r ? r.name : '(missing)';
     });
     const chain = names.length ? names.join(' → ') : '(empty)';
-
+    
     const row = document.createElement('div');
     row.className = 'fleet-row' + ((s.id === editingStackId || s.id === viewingStackId) ? ' active' : '');
     row.innerHTML = `
@@ -396,7 +398,7 @@ function renderStackList() {
 `;
     host.appendChild(row);
     // G2b: rows become clickable — open editor for the matching stack.
-wireStackRowClicks();
+    wireStackRowClicks();
   });
 }
 
@@ -436,7 +438,8 @@ function renderPayloadList() {
       e.stopPropagation();
       if (btn.dataset.plAct === 'edit') openPayloadEditor(btn.dataset.id);
       if (btn.dataset.plAct === 'del') {
-        if (confirm('Delete this payload?')) { deletePayload(btn.dataset.id); renderPayloadList(); }
+        if (confirm('Delete this payload?')) { deletePayload(btn.dataset.id);
+          renderPayloadList(); }
       }
     });
   });
@@ -510,35 +513,35 @@ function openStackDetail(id) {
   if (!s) return;
   viewingStackId = id;
   editingStackId = null;
-
+  
   const fleet = loadFleet();
   const v = validateStack(s.members, fleet, s);
   document.getElementById('stackDetailTitle').textContent = s.name;
   
   const flyBtn = document.getElementById('btnStackDetailFly');
-if (flyBtn) {
-  const isFlying = (s.id === getSelectedStackId());
-  flyBtn.disabled = isFlying;
-  flyBtn.textContent = isFlying ? 'FLYING' : 'Fly this';
-  // Replace to remove any old listener.
-  const clone = flyBtn.cloneNode(true);
-  flyBtn.parentNode.replaceChild(clone, flyBtn);
-  clone.addEventListener('click', () => {
-    setSelectedStackId(s.id);
-    // Reset sim so CONFIG re-reads at next sim page load.
-    alert(`Stack "${s.name}" is now active. Open the simulator to fly it.`);
-    openStackDetail(s.id);   // re-render to update FLYING state
-  });
-}
+  if (flyBtn) {
+    const isFlying = (s.id === getSelectedStackId());
+    flyBtn.disabled = isFlying;
+    flyBtn.textContent = isFlying ? 'FLYING' : 'Fly this';
+    // Replace to remove any old listener.
+    const clone = flyBtn.cloneNode(true);
+    flyBtn.parentNode.replaceChild(clone, flyBtn);
+    clone.addEventListener('click', () => {
+      setSelectedStackId(s.id);
+      // Reset sim so CONFIG re-reads at next sim page load.
+      alert(`Stack "${s.name}" is now active. Open the simulator to fly it.`);
+      openStackDetail(s.id); // re-render to update FLYING state
+    });
+  }
   
   const badge = document.getElementById('stackDetailBadge');
   badge.textContent = v.valid ? 'VALID' : v.errors.length + ' ERR';
   badge.className = 'stack-badge ' + (v.valid ? 'valid' : 'invalid');
-
+  
   document.getElementById('sd-count').textContent = s.members.length;
   document.getElementById('sd-height').textContent = v.stackTotalHeight.toFixed(1) + ' m';
   document.getElementById('sd-mass').textContent = fmtMass(v.stackTotalMass);
-
+  
   // Member list — top-of-stack first, so it matches the physical layout.
   const listEl = document.getElementById('sd-memberList');
   const rows = [];
@@ -554,32 +557,32 @@ if (flyBtn) {
     const massStr = Number.isFinite(ownMass) ? fmtMass(ownMass) : '<span style="color:var(--danger)">INFEASIBLE</span>';
     rows.push(
       `<div class="cap-row">` +
-        `<dt><span class="badge badge-role ${role}">${role.toUpperCase()}</span> ${escapeHtml(rec.name)}</dt>` +
-        `<dd>${rec.height} m · W ${rec.width} m · ${massStr}</dd>` +
+      `<dt><span class="badge badge-role ${role}">${role.toUpperCase()}</span> ${escapeHtml(rec.name)}</dt>` +
+      `<dd>${rec.height} m · W ${rec.width} m · ${massStr}</dd>` +
       `</div>`
     );
   }
   listEl.innerHTML = rows.length ? rows.join('') : '<div class="cap-row"><dt>—</dt><dd>No members.</dd></div>';
-
+  
   renderStackValidationInto('sd-validationOutput', v);
   // I-c2: payload specs (visible only when stack has a payload assigned).
-const plFieldset = document.getElementById('sd-payloadFieldset');
-const pl = s.payloadId ? getPayload(s.payloadId) : null;
-if (pl && plFieldset) {
-  plFieldset.style.display = '';
-  document.getElementById('sd-plName').textContent = pl.name;
-  document.getElementById('sd-plMass').textContent = fmtMass(pl.mass);
-  document.getElementById('sd-plDims').textContent = `H ${pl.height} m · W ${pl.width} m`;
-  document.getElementById('sd-plCd').textContent = pl.dragCd;
-} else if (plFieldset) {
-  plFieldset.style.display = 'none';
-}
+  const plFieldset = document.getElementById('sd-payloadFieldset');
+  const pl = s.payloadId ? getPayload(s.payloadId) : null;
+  if (pl && plFieldset) {
+    plFieldset.style.display = '';
+    document.getElementById('sd-plName').textContent = pl.name;
+    document.getElementById('sd-plMass').textContent = fmtMass(pl.mass);
+    document.getElementById('sd-plDims').textContent = `H ${pl.height} m · W ${pl.width} m`;
+    document.getElementById('sd-plCd').textContent = pl.dragCd;
+  } else if (plFieldset) {
+    plFieldset.style.display = 'none';
+  }
   renderStackPreview(document.getElementById('stackPreviewCanvas'), s.members, fleet);
-
+  
   document.getElementById('stackEditorEmpty').classList.add('hide');
   document.getElementById('stackEditorForm').classList.remove('show');
   document.getElementById('stackDetail').style.display = '';
-
+  
   renderStackList();
 }
 
@@ -622,8 +625,8 @@ function renderStackValidationInto(targetId, v) {
 function presetSlotRoles(sequence) {
   const PRESETS = {
     'f9-standard': ['booster', 'stage', 'payloadSpace'],
-    'f9-heavy':    ['booster', 'stage', 'stage', 'payloadSpace'],
-    'sso':         ['booster', 'payloadSpace'],
+    'f9-heavy': ['booster', 'stage', 'stage', 'payloadSpace'],
+    'sso': ['booster', 'payloadSpace'],
   };
   return PRESETS[sequence] || null;
 }
@@ -715,8 +718,8 @@ function renderStackSequenceHint() {
   if (!el) return;
   const hints = {
     'f9-standard': 'Preset: Booster → Stage → Payload Space',
-    'f9-heavy':    'Preset: Booster → Stage → Stage → Payload Space',
-    'sso':         'Preset: Booster → Payload Space',
+    'f9-heavy': 'Preset: Booster → Stage → Stage → Payload Space',
+    'sso': 'Preset: Booster → Payload Space',
   };
   const text = hints[workingStackSequence];
   if (!text) { el.style.display = 'none'; return; }
@@ -751,7 +754,7 @@ function renderStackPayloadField() {
     return;
   }
   fieldset.style.display = '';
-
+  
   const payloads = loadPayloads();
   if (!payloads.length) {
     sel.innerHTML = '<option value="">— no payloads defined —</option>';
@@ -767,7 +770,7 @@ function renderStackPayloadField() {
     opts.push(`<option value="${p.id}" ${dis ? 'disabled' : ''} title="${escapeHtml(title)}">${escapeHtml(p.name)}${dis ? ' (incompatible)' : ''}</option>`);
   });
   sel.innerHTML = opts.join('');
-
+  
   // Restore selection if still valid.
   if (workingStackPayloadId && sel.querySelector(`option[value="${workingStackPayloadId}"]:not([disabled])`)) {
     sel.value = workingStackPayloadId;
@@ -775,7 +778,7 @@ function renderStackPayloadField() {
     workingStackPayloadId = null;
     sel.value = '';
   }
-
+  
   // Wire once.
   if (!sel.dataset.wired) {
     sel.dataset.wired = '1';
@@ -917,8 +920,7 @@ function refreshAddMemberDropdown() {
   const n = workingStackMembers.length;
   const topRec = n > 0 ? fleet.find(r => r.id === workingStackMembers[n - 1]) : null;
   const topIsPayloadSpace = !!(topRec && topRec.stageRole === 'payloadSpace');
-  const allowedRoles = n === 0 ?
-    ['booster'] :
+  const allowedRoles = n === 0 ? ['booster'] :
     (topIsPayloadSpace ? [] : ['booster', 'stage', 'payloadSpace']);
   
   const options = fleet.filter(r => {
@@ -948,13 +950,16 @@ function renderStackValidation() {
       renderStackValidationInto('stackValidationOutput', {
         valid: false,
         errors: [`${unfilled} slot${unfilled === 1 ? '' : 's'} not yet filled.`],
-        stackTotalHeight: 0, stackTotalMass: 0, memberInfo: [],
+        stackTotalHeight: 0,
+        stackTotalMass: 0,
+        memberInfo: [],
       });
       return;
     }
   }
   const filled = workingStackMembers.filter(m => !!m);
-  const v = validateStack(filled, loadFleet(), { sequence: workingStackSequence, payloadId: workingStackPayloadId });  renderStackValidationInto('stackValidationOutput', v);
+  const v = validateStack(filled, loadFleet(), { sequence: workingStackSequence, payloadId: workingStackPayloadId });
+  renderStackValidationInto('stackValidationOutput', v);
 }
 
 function readStackFormData() {
@@ -971,6 +976,7 @@ function showStackFormError(msg) {
   el.textContent = msg;
   el.classList.add('show');
 }
+
 function hideStackFormError() {
   document.getElementById('stackFormError').classList.remove('show');
 }
@@ -978,18 +984,19 @@ function hideStackFormError() {
 function handleStackSubmit(e) {
   e.preventDefault();
   const presetRoles = presetSlotRoles(workingStackSequence);
-if (presetRoles) {
-  const unfilled = workingStackMembers.filter(m => !m).length;
-  if (unfilled > 0) {
-    showStackFormError(`${unfilled} slot${unfilled === 1 ? '' : 's'} still empty.`);
-    return;
+  if (presetRoles) {
+    const unfilled = workingStackMembers.filter(m => !m).length;
+    if (unfilled > 0) {
+      showStackFormError(`${unfilled} slot${unfilled === 1 ? '' : 's'} still empty.`);
+      return;
+    }
   }
-}
   const data = readStackFormData();
   if (!data.members.length) { showStackFormError('Add at least one member (a booster).'); return; }
-  const v = validateStack(data.members, loadFleet(), { sequence: data.sequence });  if (!v.valid) { showStackFormError('Stack is invalid: ' + v.errors[0]); return; }
+  const v = validateStack(data.members, loadFleet(), { sequence: data.sequence });
+  if (!v.valid) { showStackFormError('Stack is invalid: ' + v.errors[0]); return; }
   hideStackFormError();
-
+  
   let saved;
   if (editingStackId) {
     saved = updateStack(editingStackId, data);
@@ -1002,7 +1009,7 @@ if (presetRoles) {
   document.getElementById('btnStackDelete').style.display = '';
   renderStackList();
   // Save ho gaya — auto-mark as active so the sim picks it up.
-setSelectedStackId(saved.id);
+  setSelectedStackId(saved.id);
   // Keep editor open after save so the user can see the VALID state — same
   // choice as fleet's editor (which also stays until Cancel/another action).
 }
@@ -1052,23 +1059,23 @@ function showVehicleDetail(id) {
   const fleet = loadFleet();
   const r = fleet.find(v => v.id === id);
   if (!r) return;
-
+  
   hideFamilyDetail();
   viewingId = id;
   editingId = null;
-
+  
   const role = r.stageRole || 'rocket';
   const isStage = role === 'stage';
   const isNose = role === 'nose';
   const isPayloadSpace = role === 'payloadSpace';
   const hasStackCap = role === 'booster' || role === 'stage';
-
+  
   const set = (elId, val) => { const el = document.getElementById(elId); if (el) el.textContent = val; };
   const show = (elId, vis) => { const el = document.getElementById(elId); if (el) el.style.display = vis ? '' : 'none'; };
-
+  
   document.getElementById('detailTitle').textContent = r.name;
   document.getElementById('detailFlying').style.display = (r.id === getSelectedId()) ? '' : 'none';
-
+  
   // Geometry rows
   set('d-height', r.height + ' m');
   set('d-width', r.width + ' m');
@@ -1081,7 +1088,7 @@ function showVehicleDetail(id) {
     set('d-dryMass', fmtMass(computeNoseDryMass(r)));
   }
   set('d-dragCd', r.dragCd);
-
+  
   // Hardware sections — nose and payloadSpace have none of these.
   if (!isNose && !isPayloadSpace) {
     const engineType = getComponentType(r.engineTypeId);
@@ -1089,38 +1096,42 @@ function showVehicleDetail(id) {
     renderDetailSection('recovery', getComponentType(r.recoveryTypeId), r.params);
     renderDetailSection('rcs', getComponentType(r.rcsTypeId), r.params);
   } else {
-    set('d-engineNote', '—'); document.getElementById('d-engineList').innerHTML = '';
-    set('d-recoveryNote', '—'); document.getElementById('d-recoveryList').innerHTML = '';
-    set('d-rcsNote', '—'); document.getElementById('d-rcsList').innerHTML = '';
+    set('d-engineNote', '—');
+    document.getElementById('d-engineList').innerHTML = '';
+    set('d-recoveryNote', '—');
+    document.getElementById('d-recoveryList').innerHTML = '';
+    set('d-rcsNote', '—');
+    document.getElementById('d-rcsList').innerHTML = '';
   }
-
+  
   // Capabilities box (rocket/booster) vs. Stage capacity box (stage).
   show('detailCapsBox', role === 'rocket' || role === 'booster');
   show('d-stageFieldset', isStage);
   if (role === 'rocket') {
-  set('d-dryMass', fmtMass(r.dryMass));
-  set('d-fuelMassMax', fmtMass(r.fuelMassMax));
-  const caps = rocketCapabilities(r);
-  set('d-c-thrust', fmtForce(caps.totalMaxThrust));
+    set('d-dryMass', fmtMass(r.dryMass));
+    set('d-fuelMassMax', fmtMass(r.fuelMassMax));
+    const caps = rocketCapabilities(r);
+    set('d-c-thrust', fmtForce(caps.totalMaxThrust));
     set('d-c-wet', fmtMass(caps.wetMass));
     set('d-c-twr', caps.twrMax.toFixed(2));
     set('d-c-dv', caps.deltaV.toFixed(0) + ' m/s');
     set('d-c-burn', caps.burnTimeS.toFixed(0) + ' s');
-} else if (role === 'booster') {
-  const d = boosterDerivedMasses(r);
-  set('d-dryMass', fmtMass(d ? d.dryMass : 0));
-  set('d-fuelMassMax', fmtMass(d ? d.fuelMass : 0));
-  const caps = rocketCapabilities(r);   // already handles booster derived path
-  set('d-c-thrust', fmtForce(caps.totalMaxThrust));
+  } else if (role === 'booster') {
+    const d = boosterDerivedMasses(r);
+    set('d-dryMass', fmtMass(d ? d.dryMass : 0));
+    set('d-fuelMassMax', fmtMass(d ? d.fuelMass : 0));
+    const caps = rocketCapabilities(r); // already handles booster derived path
+    set('d-c-thrust', fmtForce(caps.totalMaxThrust));
     set('d-c-wet', fmtMass(caps.wetMass));
     set('d-c-twr', caps.twrMax.toFixed(2));
     set('d-c-dv', caps.deltaV.toFixed(0) + ' m/s');
     set('d-c-burn', caps.burnTimeS.toFixed(0) + ' s');
-} else if (isStage) {
+  } else if (isStage) {
     const d = stageDerivedMasses(r);
     if (!d || d.reason) {
-      ['d-sc-fuel','d-sc-body','d-sc-engines','d-sc-payload','d-sc-legs','d-sc-dry',
-       'd-sc-pd','d-sc-pt','d-sc-pmax','d-sc-wet'].forEach(k => set(k, '—'));
+      ['d-sc-fuel', 'd-sc-body', 'd-sc-engines', 'd-sc-payload', 'd-sc-legs', 'd-sc-dry',
+        'd-sc-pd', 'd-sc-pt', 'd-sc-pmax', 'd-sc-wet'
+      ].forEach(k => set(k, '—'));
       set('d-sc-pmax', (d && d.reason) ? d.reason : '—');
     } else {
       set('d-sc-fuel', fmtMass(d.fuelMass));
@@ -1141,12 +1152,12 @@ function showVehicleDetail(id) {
       }
       set('d-sc-wet', fmtMass(d.totalWetMassAtMaxPayload));
     }
-}
-
+  }
+  
   // Stack capacity row (booster + stage).
   show('d-extraWeightFieldset', hasStackCap);
   if (hasStackCap) set('d-maxExtraWeight', fmtMass(r.maxExtraWeightKg || 0));
-
+  
   // Compatible boosters (stage only).
   if (isStage) {
     show('d-compatFieldset', true);
@@ -1154,7 +1165,7 @@ function showVehicleDetail(id) {
   } else {
     show('d-compatFieldset', false);
   }
-
+  
   // Payload-space shape/metal/deployment/colour (standalone role only).
   show('d-payloadSpaceFieldset', isPayloadSpace);
   if (isPayloadSpace) {
@@ -1165,13 +1176,13 @@ function showVehicleDetail(id) {
     set('d-psDeployment', r.deploymentDirection === 'hinge' ? 'Hinged nose' : 'Clamshell (two halves)');
     set('d-psColor', r.color || '#e9edf2');
   }
-
+  
   safeRenderPreview(document.getElementById('detailPreviewCanvas'), previewVehicleFor(r));
-
+  
   document.getElementById('editorEmpty').classList.add('hide');
   document.getElementById('editorForm').classList.remove('show');
   document.getElementById('vehicleDetail').classList.add('show');
-
+  
   renderFleetList();
 }
 
@@ -1183,18 +1194,18 @@ function showVehicleDetail(id) {
 function renderCompatBoosters(stage) {
   const host = document.getElementById('d-compatList');
   if (!host) return;
-
+  
   const d = stageDerivedMasses(stage);
   const infeasible = !d || d.infeasible;
-
+  
   // Context line: what the stage is bringing to the party.
-  const summary = infeasible
-    ? `Stage is infeasible — no compatible booster can be computed.`
-    : `Stage wet mass (at max payload): <b>${fmtMass(d.totalWetMassAtMaxPayload)}</b> · Width: <b>${stage.width} m</b>`;
-
+  const summary = infeasible ?
+    `Stage is infeasible — no compatible booster can be computed.` :
+    `Stage wet mass (at max payload): <b>${fmtMass(d.totalWetMassAtMaxPayload)}</b> · Width: <b>${stage.width} m</b>`;
+  
   const fleet = loadFleet();
   const { compatible, incompatible } = compatibleBoostersForStage(stage, fleet);
-
+  
   if (infeasible) {
     host.innerHTML = `<div class="compat-summary">${summary}</div>` +
       `<div class="legend-note">Fix the stage design (see Stage capacity above) first.</div>`;
@@ -1205,36 +1216,36 @@ function renderCompatBoosters(stage) {
       `<div class="legend-note">No boosters defined in the fleet yet — add one to compare against.</div>`;
     return;
   }
-
+  
   const rows = [];
   rows.push(`<div class="compat-summary">${summary}</div>`);
-
+  
   if (compatible.length) {
     rows.push('<div class="compat-section-label">Compatible</div>');
     compatible.forEach(b => {
       rows.push(
         `<div class="compat-row ok">` +
-          `<span class="compat-name">${escapeHtml(b.name)}</span>` +
-          `<span class="compat-note">cap ${fmtMass(b.maxExtraWeightKg || 0)} · W ${b.width} m</span>` +
+        `<span class="compat-name">${escapeHtml(b.name)}</span>` +
+        `<span class="compat-note">cap ${fmtMass(b.maxExtraWeightKg || 0)} · W ${b.width} m</span>` +
         `</div>`
       );
     });
   } else {
     rows.push('<div class="legend-note">No compatible boosters in the fleet.</div>');
   }
-
+  
   if (incompatible.length) {
     rows.push('<div class="compat-section-label dim">Not compatible</div>');
     incompatible.forEach(({ booster, reasons }) => {
       rows.push(
         `<div class="compat-row bad">` +
-          `<span class="compat-name">${escapeHtml(booster.name)}</span>` +
-          `<span class="compat-note">${escapeHtml(reasons.join(' · '))}</span>` +
+        `<span class="compat-name">${escapeHtml(booster.name)}</span>` +
+        `<span class="compat-note">${escapeHtml(reasons.join(' · '))}</span>` +
         `</div>`
       );
     });
   }
-
+  
   host.innerHTML = rows.join('');
 }
 
@@ -1243,7 +1254,7 @@ function renderCompatBoosters(stage) {
 // Editor
 // ---------------------------------------------------------------------------
 function openEditorFor(id) {
-hideFamilyDetail();
+  hideFamilyDetail();
   const fleet = loadFleet();
   const r = fleet.find(v => v.id === id);
   if (!r) return;
@@ -1267,7 +1278,9 @@ function blankNoseData() {
     locked: false,
     stageRole: 'nose',
     familyId: null,
-    height: 5, width: 3.9, dragCd: 0.4,
+    height: 5,
+    width: 3.9,
+    dragCd: 0.4,
     bodyMetalTypeId: 'al-li-alloy',
     noseCurveness: 0,
     // No engines/legs/RCS/fuel/payload for a nose — it's aerodynamic only.
@@ -1280,10 +1293,10 @@ function openEditorNew(role) {
   viewingId = null;
   editingRole = role;
   const blank = role === 'booster' ? blankBoosterData() :
-  role === 'stage' ? blankStageData() :
-  role === 'nose' ? blankNoseData() :
-  role === 'payloadSpace' ? blankPayloadSpaceData() :
-  blankRocketData();
+    role === 'stage' ? blankStageData() :
+    role === 'nose' ? blankNoseData() :
+    role === 'payloadSpace' ? blankPayloadSpaceData() :
+    blankRocketData();
   fillForm(blank);
   document.getElementById('editorTitle').textContent = blank.name;
   document.getElementById('btnDuplicate').style.display = 'none';
@@ -1310,9 +1323,9 @@ function fillForm(r) {
   renderEngineThrusters(r.engineTypeId, r.engineThrusters);
   renderRcsThruster(r.rcsThruster);
   
-  const hasRec = r.hasRecovery !== false;   // default true
-const hasRecEl = document.getElementById('f-hasRecovery');
-if (hasRecEl) hasRecEl.checked = hasRec;
+  const hasRec = r.hasRecovery !== false; // default true
+  const hasRecEl = document.getElementById('f-hasRecovery');
+  if (hasRecEl) hasRecEl.checked = hasRec;
   if (role === 'stage' && r.fuel) {
     setVal('f-fuelType', r.fuel.typeId);
     setVal('f-fuelTankHeight', r.fuel.tankHeight);
@@ -1338,9 +1351,9 @@ if (hasRecEl) hasRecEl.checked = hasRec;
     }
   }
   if (role === 'nose') {
-  setVal('f-bodyMetalType', r.bodyMetalTypeId || 'al-li-alloy');
-  setVal('f-noseCurveness', r.noseCurveness || 0);
-}
+    setVal('f-bodyMetalType', r.bodyMetalTypeId || 'al-li-alloy');
+    setVal('f-noseCurveness', r.noseCurveness || 0);
+  }
   if (role === 'payloadSpace') {
     setVal('f-psShapeType', r.payloadSpaceTypeId);
     setVal('f-psMetalType', r.payloadSpaceMetalTypeId);
@@ -1348,28 +1361,28 @@ if (hasRecEl) hasRecEl.checked = hasRec;
     setVal('f-psColor', r.color || '#e9edf2');
     renderPsParams(r.payloadSpaceTypeId, r.params);
   }
-// P4-D2: body appearance.
-const bd = r.bodyDesign || { mode: 'solid', solidColor: '#e9edf2', dslText: '' };
-setVal('f-bodyDesignMode', bd.mode || 'solid');
-setVal('f-bodySolidColor', bd.solidColor || '#e9edf2');
-const dslTA = document.getElementById('f-bodyDslText');
-if (dslTA) dslTA.value = bd.dslText || '';
-if (role === 'stage' && r.payloadSpace) {
-  setVal('f-payloadSpaceColor', r.payloadSpace.color || '#e9edf2');
-}
-applyBodyDesignVisibility(role);
-validateBodyDslInput();   // reset any prior error display
-
+  // P4-D2: body appearance.
+  const bd = r.bodyDesign || { mode: 'solid', solidColor: '#e9edf2', dslText: '' };
+  setVal('f-bodyDesignMode', bd.mode || 'solid');
+  setVal('f-bodySolidColor', bd.solidColor || '#e9edf2');
+  const dslTA = document.getElementById('f-bodyDslText');
+  if (dslTA) dslTA.value = bd.dslText || '';
+  if (role === 'stage' && r.payloadSpace) {
+    setVal('f-payloadSpaceColor', r.payloadSpace.color || '#e9edf2');
+  }
+  applyBodyDesignVisibility(role);
+  validateBodyDslInput(); // reset any prior error display
+  
   if (role === 'booster' || role === 'stage') {
     setVal('f-maxExtraWeight', r.maxExtraWeightKg || 0);
   }
   
   if ((role === 'stage' || role === 'booster') && r.fuel) {
-  setVal('f-fuelType', r.fuel.typeId);
-  setVal('f-fuelTankHeight', r.fuel.tankHeight);
-  setVal('f-fuelTankWidth', r.fuel.tankWidth);
-  setVal('f-bodyMetalType', r.bodyMetalTypeId);
-}
+    setVal('f-fuelType', r.fuel.typeId);
+    setVal('f-fuelTankHeight', r.fuel.tankHeight);
+    setVal('f-fuelTankWidth', r.fuel.tankWidth);
+    setVal('f-bodyMetalType', r.bodyMetalTypeId);
+  }
   applyRoleVisibility(role);
   hideFormError();
 }
@@ -1384,7 +1397,7 @@ function closeEditor() {
   editingId = null;
   viewingId = null;
   creatingInFamilyId = null; // P4-B1: abandon a half-created family's first member
-
+  
   document.getElementById('editorForm').classList.remove('show');
   document.getElementById('vehicleDetail').classList.remove('show');
   document.getElementById('editorEmpty').classList.remove('hide');
@@ -1395,6 +1408,7 @@ function readVal(id) {
   const el = document.getElementById(id);
   return el ? parseFloat(el.value) : undefined;
 }
+
 function readStr(id, fallback) {
   const el = document.getElementById(id);
   return el ? el.value : fallback;
@@ -1427,10 +1441,10 @@ function readFormData() {
   TYPE_SLOTS.forEach(slot => { data[slot.recordKey] = document.getElementById(slot.selectId).value; });
   data.params = currentParamValues();
   data.bodyDesign = {
-  mode: document.getElementById('f-bodyDesignMode').value || 'solid',
-  solidColor: document.getElementById('f-bodySolidColor').value || '#e9edf2',
-  dslText: (document.getElementById('f-bodyDslText').value || '').trim(),
-};
+    mode: document.getElementById('f-bodyDesignMode').value || 'solid',
+    solidColor: document.getElementById('f-bodySolidColor').value || '#e9edf2',
+    dslText: (document.getElementById('f-bodyDslText').value || '').trim(),
+  };
   data.engineThrusters = readEngineThrusters();
   data.rcsThruster = readRcsThruster();
   
@@ -1453,10 +1467,10 @@ function readFormData() {
       noseCurveness: curv,
       dryMass: coneVolume * BODY_SHELL_FACTOR * density,
       bodyDesign: {
-  mode: 'solid',
-  solidColor: document.getElementById('f-bodySolidColor').value || '#e9edf2',
-  dslText: '',
-},
+        mode: 'solid',
+        solidColor: document.getElementById('f-bodySolidColor').value || '#e9edf2',
+        dslText: '',
+      },
       familyId: editingRecordFamilyId(),
     };
   }
@@ -1472,9 +1486,9 @@ function readFormData() {
     // of a separate manual field — payloadSpaceDimensions() is the same
     // helper fleet.js/stack-width checks use, so there's exactly one place
     // that knows "capHeight IS the height" / "bulge can exceed capWidth".
-    const dims = (typeof payloadSpaceDimensions === 'function')
-      ? payloadSpaceDimensions({ stageRole: 'payloadSpace', payloadSpaceTypeId: typeId, params: psParams })
-      : { height: 0, width: 0 };
+    const dims = (typeof payloadSpaceDimensions === 'function') ?
+      payloadSpaceDimensions({ stageRole: 'payloadSpace', payloadSpaceTypeId: typeId, params: psParams }) :
+      { height: 0, width: 0 };
     return {
       name: document.getElementById('f-name').value.trim() || 'Unnamed Payload Space',
       stageRole: 'payloadSpace',
@@ -1494,7 +1508,7 @@ function readFormData() {
       },
     };
   }
-
+  
   // Stage + booster fuel/metal block
   if (role === 'stage' || role === 'booster') {
     data.fuel = {
@@ -1531,6 +1545,7 @@ function showFormError(msg) {
   el.textContent = msg;
   el.classList.add('show');
 }
+
 function hideFormError() {
   document.getElementById('formError').classList.remove('show');
 }
@@ -1573,14 +1588,15 @@ function updateCapsPreview() {
     return;
   }
   if (data.stageRole === 'stage') {
-  updateStageCapsPreview(data);
-  safeRenderPreview(document.getElementById('vehiclePreviewCanvas'), previewVehicleFor(data));
-  return;
-}
+    updateStageCapsPreview(data);
+    safeRenderPreview(document.getElementById('vehiclePreviewCanvas'), previewVehicleFor(data));
+    return;
+  }
   if (data.stageRole === 'booster') {
     const d = boosterDerivedMasses(data);
     const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
-    if (!d) { ['c-thrust','c-wet','c-twr','c-dv','c-burn'].forEach(k => set(k, '—')); return; }
+    if (!d) {
+      ['c-thrust', 'c-wet', 'c-twr', 'c-dv', 'c-burn'].forEach(k => set(k, '—')); return; }
     const mdotMax = d.effectiveVe > 0 ? d.totalEngineThrust / d.effectiveVe : 0;
     const twrMax = d.wetMass > 0 ? d.totalEngineThrust / (d.wetMass * 9.8) : 0;
     const deltaV = (d.wetMass > 0 && d.dryMass > 0) ? d.effectiveVe * Math.log(d.wetMass / d.dryMass) : 0;
@@ -1593,7 +1609,7 @@ function updateCapsPreview() {
     safeRenderPreview(document.getElementById('vehiclePreviewCanvas'), previewVehicleFor(data));
     return;
   }
-
+  
   // Rocket path
   const universalOk = FIELD_MAP.every(f => Number.isFinite(data[f.key])) && data.dryMass > 0;
   const typesOk = TYPE_SLOTS.every(slot => !!data[slot.recordKey]);
@@ -1616,14 +1632,16 @@ function updateCapsPreview() {
 
 function updateStageCapsPreview(data) {
   const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
-  const reset = () => ['sc-fuel','sc-body','sc-engines','sc-payload','sc-legs','sc-dry',
-                        'sc-ve','sc-thrust','sc-pd','sc-pt','sc-pmax','sc-wet']
-                        .forEach(id => set(id, '—'));
-
+  const reset = () => ['sc-fuel', 'sc-body', 'sc-engines', 'sc-payload', 'sc-legs', 'sc-dry',
+      'sc-ve', 'sc-thrust', 'sc-pd', 'sc-pt', 'sc-pmax', 'sc-wet'
+    ]
+    .forEach(id => set(id, '—'));
+  
   const derived = stageDerivedMasses(data);
   if (!derived) { reset(); return; }
-  if (derived.reason) { reset(); set('sc-pmax', derived.reason); return; }
-
+  if (derived.reason) { reset();
+    set('sc-pmax', derived.reason); return; }
+  
   set('sc-fuel', fmtMass(derived.fuelMass));
   set('sc-body', fmtMass(derived.bodyMass));
   set('sc-engines', `${fmtMass(derived.totalEngineMass)} / ${fmtForce(derived.totalEngineThrust)}`);
@@ -1634,7 +1652,7 @@ function updateStageCapsPreview(data) {
   set('sc-thrust', fmtForce(derived.totalEngineThrust));
   set('sc-pd', derived.maxPayloadMassFromDeltaV < 0 ? 'infeasible' : fmtMass(derived.maxPayloadMassFromDeltaV));
   set('sc-pt', derived.maxPayloadMassFromThrust < 0 ? 'infeasible' : fmtMass(derived.maxPayloadMassFromThrust));
-
+  
   const pmaxEl = document.getElementById('sc-pmax');
   if (derived.infeasible) {
     pmaxEl.textContent = 'INFEASIBLE';
@@ -1644,7 +1662,7 @@ function updateStageCapsPreview(data) {
     pmaxEl.style.color = 'var(--cyan)';
   }
   set('sc-wet', fmtMass(derived.totalWetMassAtMaxPayload));
-
+  
   const warnRow = document.getElementById('sc-warnRow');
   const warnEl = document.getElementById('sc-warn');
   if (derived.warnings && derived.warnings.length) {
@@ -1664,13 +1682,15 @@ function handleSubmit(e) {
   e.preventDefault();
   const form = document.getElementById('editorForm');
   if (!form.checkValidity()) { form.reportValidity(); return; }
-
+  
   const data = readFormData();
   if (Number.isFinite(data.fuelMassMax) && data.fuelMassMax < 0) {
-    showFormError('Propellant mass cannot be negative.'); return;
+    showFormError('Propellant mass cannot be negative.');
+    return;
   }
   if (data.params && data.params.engineFMinFrac !== undefined && data.params.engineFMinFrac >= 1) {
-    showFormError('Throttle floor must be less than 1 (100%).'); return;
+    showFormError('Throttle floor must be less than 1 (100%).');
+    return;
   }
   if (data.stageRole === 'stage') {
     const derived = stageDerivedMasses(data);
@@ -1683,16 +1703,16 @@ function handleSubmit(e) {
   }
   
   // P4-D2: DSL validity — block save on invalid JSON.
-if (data.bodyDesign && data.bodyDesign.mode === 'dsl') {
-  const v = parseAndValidateDesign(data.bodyDesign.dslText);
-  if (!v.ok) {
-    showFormError('Body design DSL invalid — ' + v.error);
-    return;
+  if (data.bodyDesign && data.bodyDesign.mode === 'dsl') {
+    const v = parseAndValidateDesign(data.bodyDesign.dslText);
+    if (!v.ok) {
+      showFormError('Body design DSL invalid — ' + v.error);
+      return;
+    }
   }
-}
   
   hideFormError();
-
+  
   let saved;
   if (editingId) {
     saved = updateRocket(editingId, data);
@@ -1706,7 +1726,7 @@ if (data.bodyDesign && data.bodyDesign.mode === 'dsl') {
     }
     creatingInFamilyId = null;
   }
-
+  
   // P4-C1 fix: close editor and show the read-only detail view — the same
   // "save done, here's the result" flow the Edit button reverses.
   showVehicleDetail(saved.id);
@@ -1750,109 +1770,109 @@ function deleteRocketFlow(id) {
 window.addEventListener('DOMContentLoaded', () => {
   populateTypeSelects();
   // View tabs (Phase 3 Step G2a).
-document.querySelectorAll('#viewTabs .view-tab').forEach(btn => {
-  btn.addEventListener('click', () => setActiveView(btn.dataset.view));
-});
-
-// "+ New Stack" — G2a: creates an empty stack with a prompted name so
-// the list has something to show. Full editor (member picker, rename,
-// delete) lands in G2b.
-document.getElementById('btnNewStack').addEventListener('click', openStackEditorNew);
-
-// Stack editor bindings (Phase 3 Step G2b).
-document.getElementById('btnStackCancel').addEventListener('click', closeStackEditor);
-document.getElementById('btnStackDuplicate').addEventListener('click', () => editingStackId && duplicateStackFlow(editingStackId));
-document.getElementById('btnStackDelete').addEventListener('click', () => editingStackId && deleteStackFlow(editingStackId));
-document.getElementById('stackEditorForm').addEventListener('submit', handleStackSubmit);
-document.getElementById('btnStackAddMember').addEventListener('click', () => {
-  const sel = document.getElementById('fs-addMember');
-  if (!sel || !sel.value) return;
-  workingStackMembers.push(sel.value);
-  renderStackEditorBody();
-});
-document.getElementById('btnStackDetailEdit').addEventListener('click', () => {
-  if (viewingStackId) openStackEditor(viewingStackId);
-});
-// Family detail pane (Phase 4 Step P4-B2).
-document.getElementById('btnFamilyAddMember').addEventListener('click', () => {
-  if (viewingFamilyId) openFamilyAddMember(viewingFamilyId);
-});
-document.getElementById('btnFamilyDelete').addEventListener('click', () => {
-  if (!viewingFamilyId) return;
-  const fam = getFamily(viewingFamilyId);
-  if (!fam) return;
-  if (!confirm(`Delete family "${fam.name}"?`)) return;
-  if (deleteFamily(viewingFamilyId)) {
-    hideFamilyDetail();
-    document.getElementById('editorEmpty').classList.remove('hide');
-    renderFleetList();
-  } else {
-    alert('Cannot delete — the family still has members, or is protected.');
-  }
-});
-
-const hasPsCb = document.getElementById('f-hasPayloadSpace');
-if (hasPsCb) {
-  hasPsCb.addEventListener('change', () => {
-    applyPayloadSpaceVisibility(editingRole);
-    if (hasPsCb.checked) {
-      const typeSel = document.getElementById('f-payloadSpaceType');
-      renderPayloadSpaceParams(typeSel ? typeSel.value : null, currentParamValues('payload'));
+  document.querySelectorAll('#viewTabs .view-tab').forEach(btn => {
+    btn.addEventListener('click', () => setActiveView(btn.dataset.view));
+  });
+  
+  // "+ New Stack" — G2a: creates an empty stack with a prompted name so
+  // the list has something to show. Full editor (member picker, rename,
+  // delete) lands in G2b.
+  document.getElementById('btnNewStack').addEventListener('click', openStackEditorNew);
+  
+  // Stack editor bindings (Phase 3 Step G2b).
+  document.getElementById('btnStackCancel').addEventListener('click', closeStackEditor);
+  document.getElementById('btnStackDuplicate').addEventListener('click', () => editingStackId && duplicateStackFlow(editingStackId));
+  document.getElementById('btnStackDelete').addEventListener('click', () => editingStackId && deleteStackFlow(editingStackId));
+  document.getElementById('stackEditorForm').addEventListener('submit', handleStackSubmit);
+  document.getElementById('btnStackAddMember').addEventListener('click', () => {
+    const sel = document.getElementById('fs-addMember');
+    if (!sel || !sel.value) return;
+    workingStackMembers.push(sel.value);
+    renderStackEditorBody();
+  });
+  document.getElementById('btnStackDetailEdit').addEventListener('click', () => {
+    if (viewingStackId) openStackEditor(viewingStackId);
+  });
+  // Family detail pane (Phase 4 Step P4-B2).
+  document.getElementById('btnFamilyAddMember').addEventListener('click', () => {
+    if (viewingFamilyId) openFamilyAddMember(viewingFamilyId);
+  });
+  document.getElementById('btnFamilyDelete').addEventListener('click', () => {
+    if (!viewingFamilyId) return;
+    const fam = getFamily(viewingFamilyId);
+    if (!fam) return;
+    if (!confirm(`Delete family "${fam.name}"?`)) return;
+    if (deleteFamily(viewingFamilyId)) {
+      hideFamilyDetail();
+      document.getElementById('editorEmpty').classList.remove('hide');
+      renderFleetList();
+    } else {
+      alert('Cannot delete — the family still has members, or is protected.');
     }
-    updateCapsPreview();
   });
-} else {
-  console.warn('f-hasPayloadSpace checkbox missing in rockets.html');
-}
-
-const hasRecCb = document.getElementById('f-hasRecovery');
-if (hasRecCb) {
-  hasRecCb.addEventListener('change', () => {
-    applyRecoveryVisibility(editingRole);
-    updateCapsPreview(); // ← ye line add karo — preview turant refresh
+  
+  const hasPsCb = document.getElementById('f-hasPayloadSpace');
+  if (hasPsCb) {
+    hasPsCb.addEventListener('change', () => {
+      applyPayloadSpaceVisibility(editingRole);
+      if (hasPsCb.checked) {
+        const typeSel = document.getElementById('f-payloadSpaceType');
+        renderPayloadSpaceParams(typeSel ? typeSel.value : null, currentParamValues('payload'));
+      }
+      updateCapsPreview();
+    });
+  } else {
+    console.warn('f-hasPayloadSpace checkbox missing in rockets.html');
+  }
+  
+  const hasRecCb = document.getElementById('f-hasRecovery');
+  if (hasRecCb) {
+    hasRecCb.addEventListener('change', () => {
+      applyRecoveryVisibility(editingRole);
+      updateCapsPreview(); // ← ye line add karo — preview turant refresh
+    });
+  } else {
+    console.warn('f-hasRecovery checkbox missing in rockets.html');
+  }
+  // P4-D2 body appearance bindings.
+  const bdmSel = document.getElementById('f-bodyDesignMode');
+  if (bdmSel) {
+    bdmSel.addEventListener('change', () => {
+      applyBodyDesignVisibility(editingRole);
+      updateCapsPreview();
+    });
+  }
+  ['f-bodySolidColor', 'f-payloadSpaceColor'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('input', updateCapsPreview);
   });
-} else {
-  console.warn('f-hasRecovery checkbox missing in rockets.html');
-}
-// P4-D2 body appearance bindings.
-const bdmSel = document.getElementById('f-bodyDesignMode');
-if (bdmSel) {
-  bdmSel.addEventListener('change', () => {
-    applyBodyDesignVisibility(editingRole);
-    updateCapsPreview();
-  });
-}
-['f-bodySolidColor', 'f-payloadSpaceColor'].forEach(id => {
-  const el = document.getElementById(id);
-  if (el) el.addEventListener('input', updateCapsPreview);
-});
-const dslTA = document.getElementById('f-bodyDslText');
-if (dslTA) {
-  dslTA.addEventListener('input', () => {
-    validateBodyDslInput();
-    updateCapsPreview();
-  });
-}
-
+  const dslTA = document.getElementById('f-bodyDslText');
+  if (dslTA) {
+    dslTA.addEventListener('input', () => {
+      validateBodyDslInput();
+      updateCapsPreview();
+    });
+  }
+  
   renderFleetList();
   // Payloads view bindings.
-document.getElementById('btnNewPayload').addEventListener('click', () => openPayloadEditor(null));
-document.getElementById('btnPayloadCancel').addEventListener('click', closePayloadEditor);
-document.getElementById('payloadEditorForm').addEventListener('submit', handlePayloadSubmit);
-
+  document.getElementById('btnNewPayload').addEventListener('click', () => openPayloadEditor(null));
+  document.getElementById('btnPayloadCancel').addEventListener('click', closePayloadEditor);
+  document.getElementById('payloadEditorForm').addEventListener('submit', handlePayloadSubmit);
+  
   TYPE_SLOTS.forEach(slot => {
-  document.getElementById(slot.selectId).addEventListener('change', (e) => {
-    renderParamFields(slot, e.target.value, currentParamValues());
-    if (slot.category === 'engineLayout') {
-      renderEngineThrusters(e.target.value, readEngineThrusters());
-    }
-    if (slot.category === 'rcsArrangement') {
-      renderRcsThruster(readRcsThruster());
-    }
-    updateCapsPreview();
+    document.getElementById(slot.selectId).addEventListener('change', (e) => {
+      renderParamFields(slot, e.target.value, currentParamValues());
+      if (slot.category === 'engineLayout') {
+        renderEngineThrusters(e.target.value, readEngineThrusters());
+      }
+      if (slot.category === 'rcsArrangement') {
+        renderRcsThruster(readRcsThruster());
+      }
+      updateCapsPreview();
+    });
   });
-});
-
+  
   
   document.getElementById('btnCancel').addEventListener('click', closeEditor);
   document.getElementById('btnDelete').addEventListener('click', () => editingId && deleteRocketFlow(editingId));

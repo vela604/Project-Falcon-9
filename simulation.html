@@ -1,280 +1,288 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-<title>Simulator — Rocket Sim</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles/simulation.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>Simulator — Rocket Sim</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles/simulation.css">
 </head>
+
 <body>
-<div id="app">
-
-  <!-- ===================== Status / Toolbar ===================== -->
-<div id="statusBar">
-
-  <!-- ============ Row 1: brand + status (left) | checkboxes (right) ============ -->
-  <div class="tb-row">
-    <div class="tb-left">
-      <a class="tb-brand" href="index.html" title="Back to Rocket Sim home">
-        <span class="tb-brand-icon">🚀</span><span class="tb-brand-text">ROCKET SIM</span>
-      </a>
-      <div class="tb-sep"></div>
-      <div class="tb-group tb-status">
-        <span class="status-dot" id="statusDot"></span>
-        <span id="statusText">STOPPED</span>
-        <span class="tb-clock" id="missionClock">T+00:00.0</span>
-      </div>
-    </div>
-    <div class="tb-right">
-      <div class="tb-group">
-        <label class="chip-toggle"><input type="checkbox" id="toggleGrid" checked><span>Grid</span></label>
-        <label class="chip-toggle"><input type="checkbox" id="toggleVectors" checked><span>Vectors</span></label>
-        <label class="chip-toggle"><input type="checkbox" id="toggleTrajectory"><span>Trajectory</span></label>
-        <label class="chip-toggle"><input type="checkbox" id="toggleEarthFixed"><span>Earth-fixed</span></label>
-        <label class="chip-toggle"><input type="checkbox" id="toggleAtmosphere" checked><span>Atmosphere</span></label>
-      </div>
-    </div>
-  </div>
-
-  <!-- ============ Row 2: Start/Stop/Reset + Warp (left) | panel toggles (right) ============ -->
-  <div class="tb-row">
-    <div class="tb-left">
-      <div class="tb-group">
-        <button class="btn btn-start" id="btnStart"><span class="btn-ic">▶</span>Start</button>
-        <button class="btn btn-stop"  id="btnStop"><span class="btn-ic">⏸</span>Stop</button>
-        <button class="btn btn-reset" id="btnReset"><span class="btn-ic">↺</span>Reset</button>
-      </div>
-      <div class="tb-sep"></div>
-      <div class="tb-group" id="timeWarpGroup">
-        <span class="tb-label">Warp:</span>
-        <button class="btn warp-btn active" data-warp="1">1×</button>
-        <button class="btn warp-btn" data-warp="10">10×</button>
-        <button class="btn warp-btn" data-warp="40">40×</button>
-      </div>
-    </div>
-    <div class="tb-right">
-      <div class="tb-group">
-        <button class="btn panel-toggle-btn" id="btnMergePanel"><span class="btn-ic">⚙</span>Engines</button>
-        <button class="btn panel-toggle-btn" id="btnSidePanel"><span class="btn-ic">🛰</span>Rocket</button>
-        <button class="btn panel-toggle-btn" id="btnFuelPanel" style="display:none"><span class="btn-ic">⛽</span>Fueling</button>
-        <button class="btn panel-toggle-btn" id="btnWindPanel"><span class="btn-ic">🌬</span>Wind</button>
-        <button class="btn panel-toggle-btn" id="btnGraphPanel"><span class="btn-ic">📈</span>Graphs</button>
-        <button class="btn panel-toggle-btn" id="btnGlossary"><span class="btn-ic">ⓘ</span>Info</button>
-      </div>
-    </div>
-  </div>
-
-</div>
-
-  <!-- ===================== Viewport ===================== -->
-  <div id="viewport">
-    <canvas id="simCanvas"></canvas>
-
-    <!-- Telemetry (compact notation) -->
-    <div id="telemetryPanel">
-      <div class="tele-head">TELEMETRY</div>
-      <div class="tele-grid">
-        <div class="tele-row"><span class="tele-sym">x</span><span class="tele-val" id="t-x">0</span></div>
-<div class="tele-row"><span class="tele-sym">h</span><span class="tele-val" id="t-h">0</span></div>
-<div class="tele-row"><span class="tele-sym">v</span><span class="tele-val" id="t-v">0</span></div>
-<div class="tele-row"><span class="tele-sym">vr</span><span class="tele-val" id="t-vr">0</span></div>
-<div class="tele-row"><span class="tele-sym">vt</span><span class="tele-val" id="t-vt">0</span></div>
-        <div class="tele-row"><span class="tele-sym">θ</span><span class="tele-val" id="t-theta">0</span></div>
-        <div class="tele-row"><span class="tele-sym">ω</span><span class="tele-val" id="t-omega">0</span></div>
-        <div class="tele-row"><span class="tele-sym">m</span><span class="tele-val" id="t-m">0</span></div>
-        <div class="tele-row"><span class="tele-sym">mf</span><span class="tele-val" id="t-mf">0</span></div>
-        <div class="tele-row"><span class="tele-sym">Ft</span><span class="tele-val" id="t-Ft">0</span></div>
-        <div class="tele-row"><span class="tele-sym">γ</span><span class="tele-val" id="t-gimbal">0</span></div>
-        <div class="tele-row"><span class="tele-sym">τ</span><span class="tele-val" id="t-torque">0</span></div>
-        <div class="tele-row"><span class="tele-sym">α</span><span class="tele-val" id="t-aoa">0</span></div>
-        <div class="tele-row"><span class="tele-sym">g</span><span class="tele-val" id="t-g">0</span></div>
-        <div class="tele-row"><span class="tele-sym">ρ</span><span class="tele-val" id="t-rho">0</span></div>
-        <div class="tele-row"><span class="tele-sym">D↑</span><span class="tele-val" id="t-duty">0%</span></div>
-        <div class="tele-row"><span class="tele-sym">TWR</span><span class="tele-val" id="t-twr">0</span></div>
-        <div class="tele-row"><span class="tele-sym">B</span><span class="tele-val" id="t-bodies">1</span></div>
-        <div class="tele-row"><span class="tele-sym">hc</span><span class="tele-val" id="t-com">0</span></div>
-<div class="tele-row"><span class="tele-sym">I</span><span class="tele-val" id="t-moi">0</span></div>
-      </div>
-      <div class="tele-head" style="margin-top:10px;">BODIES</div>
-<div id="t-bodyList" class="tele-body-list"></div>
-    </div>
-
-    <!-- Bottom control cluster -->
-    <div id="bottomControls">
-      <div class="bc-inner">
-        <div id="slidersLeft" class="slider-rack"></div>
-
-        <div class="center-cluster">
-          <div class="cc-row cc-top">
-            <button class="dir-btn corner-btn" id="rcsNW" data-dir="nw" title="RCS NW"><span class="corner-icon"></span></button>
-            <button class="dir-btn" id="rcsN" title="RCS Up">▲</button>
-            <button class="dir-btn corner-btn" id="rcsNE" data-dir="ne" title="RCS NE"><span class="corner-icon"></span></button>
+  <div id="app">
+    
+    <!-- ===================== Status / Toolbar ===================== -->
+    <div id="statusBar">
+      
+      <!-- ============ Row 1: brand + status (left) | checkboxes (right) ============ -->
+      <div class="tb-row">
+        <div class="tb-left">
+          <a class="tb-brand" href="index.html" title="Back to Rocket Sim home">
+            <span class="tb-brand-icon">🚀</span><span class="tb-brand-text">ROCKET SIM</span>
+          </a>
+          <div class="tb-sep"></div>
+          <div class="tb-group tb-status">
+            <span class="status-dot" id="statusDot"></span>
+            <span id="statusText">STOPPED</span>
+            <span class="tb-clock" id="missionClock">T+00:00.0</span>
           </div>
-
-          <div class="cc-row cc-mid">
-            <button class="dir-btn" id="rcsW" title="RCS Left">◀</button>
-
-            <div class="cc-inner">
-              <div class="cc-inner-col">
-                <button class="rot-btn gimbal" id="gimbalACW" title="Gimbal ACW">⟲</button>
-                <button class="rot-btn rcs" id="rcsACW" title="RCS Rotate ACW">⟲</button>
-              </div>
-              <div class="thrust-col">
-  <div id="centerThrustValue">0%</div>
-  <input type="range" id="centerThrustSlider" min="0" max="100" value="0">
-  <div class="thrust-quick-row">
-    <button class="thrust-quick-btn" id="btnFullThrottle" title="Full throttle">MAX</button>
-    <button class="thrust-quick-btn off" id="btnEngineOff" title="Engine off">OFF</button>
-  </div>
-  <div class="thrust-col-label">MAIN</div>
-</div>
-              <div class="cc-inner-col">
-                <button class="rot-btn gimbal" id="gimbalCW" title="Gimbal CW">⟳</button>
-                <button class="rot-btn rcs" id="rcsCW" title="RCS Rotate CW">⟳</button>
-              </div>
+        </div>
+        <div class="tb-right">
+          <div class="tb-group">
+            <label class="chip-toggle"><input type="checkbox" id="toggleGrid" checked><span>Grid</span></label>
+            <label class="chip-toggle"><input type="checkbox" id="toggleVectors" checked><span>Vectors</span></label>
+            <label class="chip-toggle"><input type="checkbox" id="toggleTrajectory"><span>Trajectory</span></label>
+            <label class="chip-toggle"><input type="checkbox" id="toggleEarthFixed"><span>Earth-fixed</span></label>
+            <label class="chip-toggle"><input type="checkbox" id="toggleAtmosphere" checked><span>Atmosphere</span></label>
+          </div>
+        </div>
+      </div>
+      
+      <!-- ============ Row 2: Start/Stop/Reset + Warp (left) | panel toggles (right) ============ -->
+      <div class="tb-row">
+        <div class="tb-left">
+          <div class="tb-group">
+            <button class="btn btn-start" id="btnStart"><span class="btn-ic">▶</span>Start</button>
+            <button class="btn btn-stop" id="btnStop"><span class="btn-ic">⏸</span>Stop</button>
+            <button class="btn btn-reset" id="btnReset"><span class="btn-ic">↺</span>Reset</button>
+          </div>
+          <div class="tb-sep"></div>
+          <div class="tb-group" id="timeWarpGroup">
+            <span class="tb-label">Warp:</span>
+            <button class="btn warp-btn active" data-warp="1">1×</button>
+            <button class="btn warp-btn" data-warp="10">10×</button>
+            <button class="btn warp-btn" data-warp="40">40×</button>
+          </div>
+        </div>
+        <div class="tb-right">
+          <div class="tb-group">
+            <button class="btn panel-toggle-btn" id="btnMergePanel"><span class="btn-ic">⚙</span>Engines</button>
+            <button class="btn panel-toggle-btn" id="btnSidePanel"><span class="btn-ic">🛰</span>Rocket</button>
+            <button class="btn panel-toggle-btn" id="btnFuelPanel" style="display:none"><span class="btn-ic">⛽</span>Fueling</button>
+            <button class="btn panel-toggle-btn" id="btnWindPanel"><span class="btn-ic">🌬</span>Wind</button>
+            <button class="btn panel-toggle-btn" id="btnGraphPanel"><span class="btn-ic">📈</span>Graphs</button>
+            <button class="btn panel-toggle-btn" id="btnGlossary"><span class="btn-ic">ⓘ</span>Info</button>
+          </div>
+        </div>
+      </div>
+      
+    </div>
+    
+    <!-- ===================== Viewport ===================== -->
+    <div id="viewport">
+      <canvas id="simCanvas"></canvas>
+      
+      <!-- Telemetry (compact notation) -->
+      <div id="telemetryPanel">
+        <div class="tele-head">TELEMETRY</div>
+        <div class="tele-grid">
+          <div class="tele-row"><span class="tele-sym">x</span><span class="tele-val" id="t-x">0</span></div>
+          <div class="tele-row"><span class="tele-sym">h</span><span class="tele-val" id="t-h">0</span></div>
+          <div class="tele-row"><span class="tele-sym">v</span><span class="tele-val" id="t-v">0</span></div>
+          <div class="tele-row"><span class="tele-sym">vr</span><span class="tele-val" id="t-vr">0</span></div>
+          <div class="tele-row"><span class="tele-sym">vt</span><span class="tele-val" id="t-vt">0</span></div>
+          <div class="tele-row"><span class="tele-sym">θ</span><span class="tele-val" id="t-theta">0</span></div>
+          <div class="tele-row"><span class="tele-sym">ω</span><span class="tele-val" id="t-omega">0</span></div>
+          <div class="tele-row"><span class="tele-sym">m</span><span class="tele-val" id="t-m">0</span></div>
+          <div class="tele-row"><span class="tele-sym">mf</span><span class="tele-val" id="t-mf">0</span></div>
+          <div class="tele-row"><span class="tele-sym">Ft</span><span class="tele-val" id="t-Ft">0</span></div>
+          <div class="tele-row"><span class="tele-sym">γ</span><span class="tele-val" id="t-gimbal">0</span></div>
+          <div class="tele-row"><span class="tele-sym">τ</span><span class="tele-val" id="t-torque">0</span></div>
+          <div class="tele-row"><span class="tele-sym">α</span><span class="tele-val" id="t-aoa">0</span></div>
+          <div class="tele-row"><span class="tele-sym">g</span><span class="tele-val" id="t-g">0</span></div>
+          <div class="tele-row"><span class="tele-sym">ρ</span><span class="tele-val" id="t-rho">0</span></div>
+          <div class="tele-row"><span class="tele-sym">D↑</span><span class="tele-val" id="t-duty">0%</span></div>
+          <div class="tele-row"><span class="tele-sym">TWR</span><span class="tele-val" id="t-twr">0</span></div>
+          <div class="tele-row"><span class="tele-sym">B</span><span class="tele-val" id="t-bodies">1</span></div>
+          <div class="tele-row"><span class="tele-sym">hc</span><span class="tele-val" id="t-com">0</span></div>
+          <div class="tele-row"><span class="tele-sym">I</span><span class="tele-val" id="t-moi">0</span></div>
+        </div>
+        <div class="tele-head" style="margin-top:10px;">BODIES</div>
+        <div id="t-bodyList" class="tele-body-list"></div>
+      </div>
+      
+      <!-- Bottom control cluster -->
+      <div id="bottomControls">
+        <div class="bc-inner">
+          <div id="slidersLeft" class="slider-rack"></div>
+          
+          <div class="center-cluster">
+            <div class="cc-row cc-top">
+              <button class="dir-btn corner-btn" id="rcsNW" data-dir="nw" title="RCS NW"><span class="corner-icon"></span></button>
+              <button class="dir-btn" id="rcsN" title="RCS Up">▲</button>
+              <button class="dir-btn corner-btn" id="rcsNE" data-dir="ne" title="RCS NE"><span class="corner-icon"></span></button>
             </div>
-
-            <button class="dir-btn" id="rcsE" title="RCS Right">▶</button>
+            
+            <div class="cc-row cc-mid">
+              <button class="dir-btn" id="rcsW" title="RCS Left">◀</button>
+              
+              <div class="cc-inner">
+                <div class="cc-inner-col">
+                  <button class="rot-btn gimbal" id="gimbalACW" title="Gimbal ACW">⟲</button>
+                  <button class="rot-btn rcs" id="rcsACW" title="RCS Rotate ACW">⟲</button>
+                </div>
+                <div class="thrust-col">
+                  <div id="centerThrustValue">0%</div>
+                  <input type="range" id="centerThrustSlider" min="0" max="100" value="0">
+                  <div class="thrust-quick-row">
+                    <button class="thrust-quick-btn" id="btnFullThrottle" title="Full throttle">MAX</button>
+                    <button class="thrust-quick-btn off" id="btnEngineOff" title="Engine off">OFF</button>
+                  </div>
+                  <div class="thrust-col-label">MAIN</div>
+                </div>
+                <div class="cc-inner-col">
+                  <button class="rot-btn gimbal" id="gimbalCW" title="Gimbal CW">⟳</button>
+                  <button class="rot-btn rcs" id="rcsCW" title="RCS Rotate CW">⟳</button>
+                </div>
+              </div>
+              
+              <button class="dir-btn" id="rcsE" title="RCS Right">▶</button>
+            </div>
+            
+            <div class="cc-row cc-bottom">
+              <button class="dir-btn corner-btn" id="rcsSW" data-dir="sw" title="RCS SW"><span class="corner-icon"></span></button>
+              <button class="dir-btn" id="rcsS" title="RCS Down">▼</button>
+              <button class="dir-btn corner-btn" id="rcsSE" data-dir="se" title="RCS SE"><span class="corner-icon"></span></button>
+            </div>
           </div>
-
-          <div class="cc-row cc-bottom">
-            <button class="dir-btn corner-btn" id="rcsSW" data-dir="sw" title="RCS SW"><span class="corner-icon"></span></button>
-            <button class="dir-btn" id="rcsS" title="RCS Down">▼</button>
-            <button class="dir-btn corner-btn" id="rcsSE" data-dir="se" title="RCS SE"><span class="corner-icon"></span></button>
+          
+          <div id="slidersRight" class="slider-rack"></div>
+        </div>
+      </div>
+      
+      <!-- ===================== Panel dock (right side, stacks — no overlap) ===================== -->
+      <div id="panelDock">
+        
+        <!-- Engine merge / octaweb diagram panel -->
+        <div class="panel" id="mergePanel" data-pause-sim="true">
+          <div class="panel-header"><span class="panel-title">⚙ ENGINE GROUPS</span><button class="panel-close" data-target="mergePanel">✕</button></div>
+          <svg id="mergeSvg" width="180" height="180" viewBox="0 0 180 180"></svg>
+          <div class="merge-mode-row">
+            <button class="btn active" id="mergeModeSymmetric">Symmetric</button>
+            <button class="btn" id="mergeModeAsymmetric">Asymmetric</button>
+          </div>
+          <div class="panel-hint">Tap two engine dots to merge them onto one slider.</div>
+          <div id="mergeLegend"></div>
+          <button class="btn btn-block" id="btnResetMerges">Reset Merges</button>
+        </div>
+        
+        <!-- Rocket figure side panel — open by default, user asked to keep this nearly always visible -->
+        <div class="panel" id="sidePanel" style="display:block;">
+          <div class="panel-header"><span class="panel-title">🛰 ROCKET FIGURE</span><button class="panel-close" data-target="sidePanel">✕</button></div>
+          <canvas id="figureCanvas" width="260" height="260"></canvas>
+          <div class="panel-subtitle">BASAL VIEW (engines)</div>
+          <canvas id="basalCanvas" width="260" height="260"></canvas>
+        </div>
+        
+        <!-- Wind panel -->
+        <div class="panel" id="windPanel">
+          <div class="panel-header"><span class="panel-title">🌬 WIND</span><button class="panel-close" data-target="windPanel">✕</button></div>
+          <label class="chip-toggle chip-toggle-block"><input type="checkbox" id="windEnabled"><span>Enabled</span></label>
+          <canvas id="windCompass"></canvas>
+          <div class="field-row">
+            <div class="field-label"><span>Speed</span><span id="windSpeedLabel">0 m/s</span></div>
+            <input type="range" id="windSpeed" min="0" max="60" value="0">
+          </div>
+          <div class="field-row">
+            <div class="field-label"><span>Direction</span><span id="windDirLabel">0°</span></div>
+            <input type="range" id="windDir" min="0" max="360" value="0">
           </div>
         </div>
-
-        <div id="slidersRight" class="slider-rack"></div>
-      </div>
-    </div>
-
-    <!-- ===================== Panel dock (right side, stacks — no overlap) ===================== -->
-    <div id="panelDock">
-
-      <!-- Engine merge / octaweb diagram panel -->
-      <div class="panel" id="mergePanel" data-pause-sim="true">
-        <div class="panel-header"><span class="panel-title">⚙ ENGINE GROUPS</span><button class="panel-close" data-target="mergePanel">✕</button></div>
-        <svg id="mergeSvg" width="180" height="180" viewBox="0 0 180 180"></svg>
-        <div class="merge-mode-row">
-          <button class="btn active" id="mergeModeSymmetric">Symmetric</button>
-          <button class="btn" id="mergeModeAsymmetric">Asymmetric</button>
-        </div>
-        <div class="panel-hint">Tap two engine dots to merge them onto one slider.</div>
-        <div id="mergeLegend"></div>
-        <button class="btn btn-block" id="btnResetMerges">Reset Merges</button>
-      </div>
-
-      <!-- Rocket figure side panel — open by default, user asked to keep this nearly always visible -->
-      <div class="panel" id="sidePanel" style="display:block;">
-        <div class="panel-header"><span class="panel-title">🛰 ROCKET FIGURE</span><button class="panel-close" data-target="sidePanel">✕</button></div>
-        <canvas id="figureCanvas" width="260" height="260"></canvas>
-        <div class="panel-subtitle">BASAL VIEW (engines)</div>
-        <canvas id="basalCanvas" width="260" height="260"></canvas>
-      </div>
-
-      <!-- Wind panel -->
-      <div class="panel" id="windPanel">
-  <div class="panel-header"><span class="panel-title">🌬 WIND</span><button class="panel-close" data-target="windPanel">✕</button></div>
-  <label class="chip-toggle chip-toggle-block"><input type="checkbox" id="windEnabled"><span>Enabled</span></label>
-  <canvas id="windCompass"></canvas>
-  <div class="field-row">
-    <div class="field-label"><span>Speed</span><span id="windSpeedLabel">0 m/s</span></div>
-    <input type="range" id="windSpeed" min="0" max="60" value="0">
-  </div>
-  <div class="field-row">
-    <div class="field-label"><span>Direction</span><span id="windDirLabel">0°</span></div>
-    <input type="range" id="windDir" min="0" max="360" value="0">
-  </div>
-</div>
-
-      <!-- Fueling panel — only accessible when the rocket is on the pad,
+        
+        <!-- Fueling panel — only accessible when the rocket is on the pad,
      stationary, engines off. Refuels the whole stack. -->
-<div class="panel" id="fuelPanel">
-  <div class="panel-header"><span class="panel-title">⛽ FUELING</span><button class="panel-close" data-target="fuelPanel">✕</button></div>
-  <div class="fuel-hint" id="fuelHint">Refueling available on the pad.</div>
-  <div class="field-row">
-    <div class="field-label"><span>Fuel load</span><span id="fuelPercentLabel">60%</span></div>
-    <input type="range" id="fuelSlider" min="0" max="100" value="60">
-  </div>
-  <div class="fuel-readout">
-    <div class="fr-row"><span>Fuel mass</span><span id="fuelReadMass">—</span></div>
-    <div class="fr-row"><span>Total mass</span><span id="fuelReadTotal">—</span></div>
-    <div class="fr-row"><span>Max thrust</span><span id="fuelReadThrust">—</span></div>
-    <div class="fr-row"><span>Weight</span><span id="fuelReadWeight">—</span></div>
-    <div class="fr-row"><span>TWR</span><span id="fuelReadTWR">—</span></div>
-  </div>
-  <div class="fuel-warn" id="fuelWarn" style="display:none;">⚠ TWR below 1 — this rocket can't lift off.</div>
-</div>
-
-      <!-- Graphs panel (pauses sim while open) -->
-      <div class="panel" id="graphPanel">
-        <div class="panel-header"><span class="panel-title">📈 LIVE GRAPHS</span><button class="panel-close" data-target="graphPanel">✕</button></div>
-        <div class="graph-block"><div class="graph-label">Altitude</div><canvas class="mini-graph" id="graphAlt"></canvas></div>
-        <div class="graph-block"><div class="graph-label">Velocity</div><canvas class="mini-graph" id="graphVel"></canvas></div>
-        <div class="graph-block"><div class="graph-label">Thrust</div><canvas class="mini-graph" id="graphThrust"></canvas></div>
+        <div class="panel" id="fuelPanel">
+          <div class="panel-header"><span class="panel-title">⛽ FUELING</span><button class="panel-close" data-target="fuelPanel">✕</button></div>
+          <div class="fuel-hint" id="fuelHint">Refueling available on the pad.</div>
+          <div class="field-row">
+            <div class="field-label"><span>Fuel load</span><span id="fuelPercentLabel">60%</span></div>
+            <input type="range" id="fuelSlider" min="0" max="100" value="60">
+          </div>
+          <div class="fuel-readout">
+            <div class="fr-row"><span>Fuel mass</span><span id="fuelReadMass">—</span></div>
+            <div class="fr-row"><span>Total mass</span><span id="fuelReadTotal">—</span></div>
+            <div class="fr-row"><span>Max thrust</span><span id="fuelReadThrust">—</span></div>
+            <div class="fr-row"><span>Weight</span><span id="fuelReadWeight">—</span></div>
+            <div class="fr-row"><span>TWR</span><span id="fuelReadTWR">—</span></div>
+          </div>
+          <div class="fuel-warn" id="fuelWarn" style="display:none;">⚠ TWR below 1 — this rocket can't lift off.</div>
+        </div>
+        
+        <!-- Graphs panel (pauses sim while open) -->
+        <div class="panel" id="graphPanel">
+          <div class="panel-header"><span class="panel-title">📈 LIVE GRAPHS</span><button class="panel-close" data-target="graphPanel">✕</button></div>
+          <div class="graph-block">
+            <div class="graph-label">Altitude</div><canvas class="mini-graph" id="graphAlt"></canvas>
+          </div>
+          <div class="graph-block">
+            <div class="graph-label">Velocity</div><canvas class="mini-graph" id="graphVel"></canvas>
+          </div>
+          <div class="graph-block">
+            <div class="graph-label">Thrust</div><canvas class="mini-graph" id="graphThrust"></canvas>
+          </div>
+        </div>
+        
+        <!-- Glossary / info panel -->
+        <div class="panel" id="glossaryPanel">
+          <div class="panel-header"><span class="panel-title">ⓘ NOTATION GLOSSARY</span><button class="panel-close" data-target="glossaryPanel">✕</button></div>
+          <div id="glossaryList"></div>
+        </div>
+        
       </div>
-
-      <!-- Glossary / info panel -->
-      <div class="panel" id="glossaryPanel">
-        <div class="panel-header"><span class="panel-title">ⓘ NOTATION GLOSSARY</span><button class="panel-close" data-target="glossaryPanel">✕</button></div>
-        <div id="glossaryList"></div>
+      
+      <div id="leftToolbar">
+        <div class="lt-wrapper">
+          <div class="lt-content">
+            
+            <div class="lt-section">
+              <button class="lt-btn" id="btnFollow" title="Local view (follow rocket)">Local View</button>
+              <button class="lt-btn" id="btnFree" title="Planet view">Planet View</button>
+            </div>
+            
+            <div class="lt-sep"></div>
+            
+            <div class="lt-section lt-row">
+              <button class="lt-btn lt-btn-sq" id="btnZoomIn" title="Zoom in">+</button>
+              <button class="lt-btn lt-btn-sq" id="btnZoomOut" title="Zoom out">−</button>
+            </div>
+            
+            <div class="lt-sep"></div>
+            
+            <div class="lt-section">
+              <label class="lt-label" for="followBodySelect">Follow</label>
+              <select id="followBodySelect" class="lt-select">
+                <option value="0">Active</option>
+              </select>
+            </div>
+            
+            <div class="lt-sep"></div>
+            
+            <div class="lt-section">
+              <button class="lt-btn" id="btnTakeControl" disabled title="Take control of another body">Take Control</button>
+            </div>
+            
+            <div class="lt-sep lt-sep-strong"></div>
+            
+            <div class="lt-section">
+              <button class="lt-btn" id="btnLegs" title="Deploy / stow landing legs">Deploy Legs</button>
+              <button class="lt-btn" id="btnSeparate" title="Separate stage">Separate Stage</button>
+              <button class="lt-btn" id="btnSplitFairing" title="Split fairing">Split Fairing</button>
+              <button class="lt-btn" id="btnReleasePayload" title="Release payload">Release Payload</button>
+            </div>
+            
+          </div>
+          <button id="leftToolbarToggle" class="lt-handle" title="Toggle tools">›</button>
+        </div>
       </div>
-
+      
+      
     </div>
-    
-    <div id="leftToolbar">
-  <div class="lt-wrapper">
-    <div class="lt-content">
-
-      <div class="lt-section">
-        <button class="lt-btn" id="btnFollow" title="Local view (follow rocket)">Local View</button>
-        <button class="lt-btn" id="btnFree"   title="Planet view">Planet View</button>
-      </div>
-
-      <div class="lt-sep"></div>
-
-      <div class="lt-section lt-row">
-        <button class="lt-btn lt-btn-sq" id="btnZoomIn"  title="Zoom in">+</button>
-        <button class="lt-btn lt-btn-sq" id="btnZoomOut" title="Zoom out">−</button>
-      </div>
-
-      <div class="lt-sep"></div>
-
-      <div class="lt-section">
-        <label class="lt-label" for="followBodySelect">Follow</label>
-        <select id="followBodySelect" class="lt-select">
-          <option value="0">Active</option>
-        </select>
-      </div>
-
-      <div class="lt-sep"></div>
-
-      <div class="lt-section">
-        <button class="lt-btn" id="btnTakeControl" disabled title="Take control of another body">Take Control</button>
-      </div>
-
-      <div class="lt-sep lt-sep-strong"></div>
-
-      <div class="lt-section">
-        <button class="lt-btn" id="btnLegs"           title="Deploy / stow landing legs">Deploy Legs</button>
-        <button class="lt-btn" id="btnSeparate"       title="Separate stage">Separate Stage</button>
-        <button class="lt-btn" id="btnSplitFairing"   title="Split fairing">Split Fairing</button>
-        <button class="lt-btn" id="btnReleasePayload" title="Release payload">Release Payload</button>
-      </div>
-
-    </div>
-    <button id="leftToolbarToggle" class="lt-handle" title="Toggle tools">›</button>
   </div>
-</div>
-    
-    
-  </div>
-</div>
-
-<!-- ============================================================
+  
+  <!-- ============================================================
      Script load order — worker architecture
      ============================================================
      Main thread keeps ALL the same modules loaded as before, because
@@ -292,37 +300,38 @@
           when the snapshot handler tries to write into it
        4. Everything else (controls, art, render, telemetry, main)
      ============================================================ -->
-
-<!-- ============================================================
+  
+  <!-- ============================================================
      Script load order — worker architecture
      ============================================================ -->
-
-<!-- 1. Data layer + config -->
-<script src="js/componentLibrary.js"></script>
-<script src="js/customDesign.js"></script>
-<script src="js/fleet.js"></script>
-<script src="js/config.js"></script>
-
-<!-- 2. Core (physics / math / environment) — defines state + proxies -->
-<script src="js/simJs/core/massProps.js"></script>
-<script src="js/simJs/core/environment.js"></script>
-<script src="js/simJs/core/vehicle.js"></script>
-<script src="js/simJs/core/rcs.js"></script>
-<script src="js/simJs/core/physics.js"></script>
-<script src="js/simJs/core/collision.js"></script>
-<script src="js/simJs/core/trajectoryMath.js"></script>
-
-<!-- 3. Worker bridge — after physics.js so `state` exists -->
-<script src="js/simJs/threads/workerBridge.js"></script>
-
-<!-- 4. View / UI -->
-<script src="js/simJs/view/controls.js"></script>
-<script src="js/simJs/view/rocketArt.js"></script>
-<script src="js/simJs/view/predictedTrajectory.js"></script>
-<script src="js/simJs/view/render.js"></script>
-<script src="js/simJs/view/telemetry.js"></script>
-<script src="js/simJs/main.js"></script>
-
-
+  
+  <!-- 1. Data layer + config -->
+  <script src="js/componentLibrary.js"></script>
+  <script src="js/customDesign.js"></script>
+  <script src="js/fleet.js"></script>
+  <script src="js/config.js"></script>
+  
+  <!-- 2. Core (physics / math / environment) — defines state + proxies -->
+  <script src="js/simJs/core/massProps.js"></script>
+  <script src="js/simJs/core/environment.js"></script>
+  <script src="js/simJs/core/vehicle.js"></script>
+  <script src="js/simJs/core/rcs.js"></script>
+  <script src="js/simJs/core/physics.js"></script>
+  <script src="js/simJs/core/collision.js"></script>
+  <script src="js/simJs/core/trajectoryMath.js"></script>
+  
+  <!-- 3. Worker bridge — after physics.js so `state` exists -->
+  <script src="js/simJs/threads/workerBridge.js"></script>
+  
+  <!-- 4. View / UI -->
+  <script src="js/simJs/view/controls.js"></script>
+  <script src="js/simJs/view/rocketArt.js"></script>
+  <script src="js/simJs/view/predictedTrajectory.js"></script>
+  <script src="js/simJs/view/render.js"></script>
+  <script src="js/simJs/view/telemetry.js"></script>
+  <script src="js/simJs/main.js"></script>
+  
+  
 </body>
+
 </html>

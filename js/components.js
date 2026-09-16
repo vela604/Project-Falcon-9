@@ -24,15 +24,15 @@ function frameSummaryHTML(type) {
         ${f.mergeTopology.asymmetric.length} asymmetric pair(s)</div>`;
   }
   if (type.kind === 'legsOnVehicle') {
-  const g = f.hingeGeometry(1); // evaluate formula at H=1 to show the multipliers
-  const legVol = (typeof f.structuralVolume === 'function') ? f.structuralVolume(1, 0.1) : null;
-  return `
+    const g = f.hingeGeometry(1); // evaluate formula at H=1 to show the multipliers
+    const legVol = (typeof f.structuralVolume === 'function') ? f.structuralVolume(1, 0.1) : null;
+    return `
     <div><span class="fl">Leg count:</span> ${f.legCount}</div>
     <div><span class="fl">Hinge height:</span> ${g.hingeY.toFixed(3)}×H</div>
     <div><span class="fl">Leg length:</span> ${g.legLength.toFixed(3)}×H</div>
     <div><span class="fl">Max sweep:</span> ${Math.round(g.maxSweepRad * 180 / Math.PI)}°</div>
     ${legVol !== null ? `<div><span class="fl">Leg structural volume:</span> ${legVol.toFixed(5)} m³ @ H=1,W=0.1 (formula)</div>` : ''}`;
-}
+  }
   if (type.kind === 'catchFittingOnVehicle') {
     const fits = f.fittingPositions(1);
     return `
@@ -125,9 +125,9 @@ function renderTypeCard(type) {
 function renderGrid() {
   const grid = document.getElementById('cardGrid');
   const types = getComponentsByCategory(activeCategory);
-  grid.innerHTML = types.length
-    ? types.map(renderTypeCard).join('')
-    : '<div class="tc-desc">No types defined in this category yet.</div>';
+  grid.innerHTML = types.length ?
+    types.map(renderTypeCard).join('') :
+    '<div class="tc-desc">No types defined in this category yet.</div>';
 }
 
 document.querySelectorAll('.cat-tab').forEach(btn => {

@@ -66,30 +66,30 @@ function broadPhaseCollisionPairs() {
   const pairs = [];
   const n = bodies.length;
   if (n < 2) return pairs;
-
+  
   // Precompute center + radius once per body per call, not once per pair.
   const circles = bodies.map(b => ({
-  c: _bodyBoundingCenter(b),
-  r: _bodyBoundingRadius(b),
-  newborn: (state.simTime - (b.bornAt ?? -Infinity)) < _bodyGracePeriod(b),
-}));
-
+    c: _bodyBoundingCenter(b),
+    r: _bodyBoundingRadius(b),
+    newborn: (state.simTime - (b.bornAt ?? -Infinity)) < _bodyGracePeriod(b),
+  }));
+  
   for (let i = 0; i < n; i++) {
     if (circles[i].newborn) continue;
     for (let j = i + 1; j < n; j++) {
       if (circles[j].newborn) continue;
-
+      
       const dx = circles[j].c.x - circles[i].c.x;
       const dy = circles[j].c.y - circles[i].c.y;
       const distSq = dx * dx + dy * dy;
       const rSum = circles[i].r + circles[j].r;
-
+      
       if (distSq <= rSum * rSum) {
         pairs.push({ i, j, distSq });
       }
     }
   }
-
+  
   return pairs;
 }
 
@@ -126,39 +126,47 @@ const OBB_CONTACT_SLOP = 0.005; // m
 function _bodyOBB(body) {
   const H = _bodyHeightOf(body);
   const W = _bodyWidthOf(body);
-  const hw = W / 2, hh = H / 2;
-  const cosT = Math.cos(body.theta), sinT = Math.sin(body.theta);
-
+  const hw = W / 2,
+    hh = H / 2;
+  const cosT = Math.cos(body.theta),
+    sinT = Math.sin(body.theta);
+  
   // Corners via _rotatedPoint — the SAME function used by ground contact
   // and every renderer — so the OBB cannot disagree with the body it wraps.
   const corners = [
-    _rotatedPoint(body, -hw, 0),   // base-left
-    _rotatedPoint(body,  hw, 0),   // base-right
-    _rotatedPoint(body, -hw, H),   // nose-left
-    _rotatedPoint(body,  hw, H),   // nose-right
+    _rotatedPoint(body, -hw, 0), // base-left
+    _rotatedPoint(body, hw, 0), // base-right
+    _rotatedPoint(body, -hw, H), // nose-left
+    _rotatedPoint(body, hw, H), // nose-right
   ];
-
+  
   // Center = average of the 4 corners = _rotatedPoint(body, 0, H/2).
   const cx = (corners[0].x + corners[1].x + corners[2].x + corners[3].x) / 4;
   const cy = (corners[0].y + corners[1].y + corners[2].y + corners[3].y) / 4;
-
+  
   // Face-normal axes used by the SAT test. Same convention as
   // _rotatedPoint (clockwise-positive θ), documented above.
-  const ux =  cosT, uy = -sinT;   // local +X axis in world
-  const vx =  sinT, vy =  cosT;   // local +Y axis in world
-
+  const ux = cosT,
+    uy = -sinT; // local +X axis in world
+  const vx = sinT,
+    vy = cosT; // local +Y axis in world
+  
   return {
     corners,
     center: { x: cx, y: cy },
-    halfU: hw, halfV: hh,
-    ux, uy, vx, vy,
+    halfU: hw,
+    halfV: hh,
+    ux,
+    uy,
+    vx,
+    vy,
   };
 }
 
 function _projectOBB(obb, ax, ay) {
   const c = obb.center.x * ax + obb.center.y * ay;
-  const r = obb.halfU * Math.abs(obb.ux * ax + obb.uy * ay)
-          + obb.halfV * Math.abs(obb.vx * ax + obb.vy * ay);
+  const r = obb.halfU * Math.abs(obb.ux * ax + obb.uy * ay) +
+    obb.halfV * Math.abs(obb.vx * ax + obb.vy * ay);
   return { min: c - r, max: c + r };
 }
 
@@ -170,11 +178,16 @@ function _projectOBB(obb, ax, ay) {
 function _obbSupportEdgeMidpoint(obb, nx, ny) {
   const projs = obb.corners.map(c => c.x * nx + c.y * ny);
   let best = -Infinity;
-  for (const p of projs) if (p > best) best = p;
+  for (const p of projs)
+    if (p > best) best = p;
   const EPS = 1e-9;
-  let sx = 0, sy = 0, n = 0;
+  let sx = 0,
+    sy = 0,
+    n = 0;
   obb.corners.forEach((c, i) => {
-    if (projs[i] >= best - EPS) { sx += c.x; sy += c.y; n++; }
+    if (projs[i] >= best - EPS) { sx += c.x;
+      sy += c.y;
+      n++; }
   });
   return { x: sx / n, y: sy / n };
 }
@@ -182,7 +195,7 @@ function _obbSupportEdgeMidpoint(obb, nx, ny) {
 function narrowPhaseOBBTest(bodyA, bodyB) {
   const A = _bodyOBB(bodyA);
   const B = _bodyOBB(bodyB);
-
+  
   // SAT: 4 candidate axes (each rectangle's two face normals). Any axis
   // with non-positive overlap is a separating axis → not touching.
   const axes = [
@@ -191,16 +204,17 @@ function narrowPhaseOBBTest(bodyA, bodyB) {
     { x: B.ux, y: B.uy },
     { x: B.vx, y: B.vy },
   ];
-
+  
   let minOverlap = Infinity;
-  let nx = 0, ny = 1;
-
+  let nx = 0,
+    ny = 1;
+  
   for (const axis of axes) {
     const pa = _projectOBB(A, axis.x, axis.y);
     const pb = _projectOBB(B, axis.x, axis.y);
     const overlap = Math.min(pa.max, pb.max) - Math.max(pa.min, pb.min);
     if (overlap <= 0) return null;
-
+    
     if (overlap < minOverlap) {
       minOverlap = overlap;
       // Normal points B → A. Direction comes from where the two CENTERS
@@ -214,16 +228,16 @@ function narrowPhaseOBBTest(bodyA, bodyB) {
       ny = axis.y * sgn;
     }
   }
-
+  
   // Too shallow → treat as no contact. Prevents the just-separated jitter.
   if (minOverlap < OBB_CONTACT_SLOP) return null;
-
+  
   // Contact point: midpoint of A's supporting-face centre (toward B) and
   // B's supporting-face centre (toward A).
   const supA = _obbSupportEdgeMidpoint(A, -nx, -ny);
-  const supB = _obbSupportEdgeMidpoint(B,  nx,  ny);
+  const supB = _obbSupportEdgeMidpoint(B, nx, ny);
   const point = { x: (supA.x + supB.x) / 2, y: (supA.y + supB.y) / 2 };
-
+  
   return {
     normal: { nx, ny },
     depth: minOverlap,
@@ -265,11 +279,11 @@ function narrowPhaseCollisionContacts(broadPairs) {
 // weighted K trick as the normal impulse.
 // =============================================================================
 
-const BODY_RESTITUTION = 0.2;     // softer than the ground's 0.35 — two rocket
-                                   // parts crunching into each other should feel
-                                   // more like a dead hit than a bounce.
-const BODY_FRICTION_KEEP = 0.55;  // fraction of tangential relative speed KEPT
-const BODY_SPIN_DAMPING = 0.7;    // fraction of each body's spin kept per hit
+const BODY_RESTITUTION = 0.2; // softer than the ground's 0.35 — two rocket
+// parts crunching into each other should feel
+// more like a dead hit than a bounce.
+const BODY_FRICTION_KEEP = 0.55; // fraction of tangential relative speed KEPT
+const BODY_SPIN_DAMPING = 0.7; // fraction of each body's spin kept per hit
 
 // Resolves ONE confirmed contact (from narrowPhaseCollisionContacts) in
 // place: pushes state.bodies[contact.i] and [contact.j] apart, and updates
@@ -280,106 +294,117 @@ function resolveBodyContact(contact) {
   const bodyA = state.bodies[contact.i];
   const bodyB = state.bodies[contact.j];
   if (!bodyA || !bodyB) return;
-
+  
   const geomA = geometryOf(bodyA);
   const geomB = geometryOf(bodyB);
-  const M_A = Math.max(1e-6, geomA.M), I_A = Math.max(1e-6, geomA.I);
-  const M_B = Math.max(1e-6, geomB.M), I_B = Math.max(1e-6, geomB.I);
-
+  const M_A = Math.max(1e-6, geomA.M),
+    I_A = Math.max(1e-6, geomA.I);
+  const M_B = Math.max(1e-6, geomB.M),
+    I_B = Math.max(1e-6, geomB.I);
+  
   // FIX: impulse lever arms must be measured from COM (I is about COM).
   // contact.offA/offB stay base-relative — those are still needed for the
   // rigid-body velocity-at-contact formula below.
   const comA = _rotatedPoint(bodyA, geomA.comW || 0, geomA.comH || 0);
   const comB = _rotatedPoint(bodyB, geomB.comW || 0, geomB.comH || 0);
-  const offAX = contact.point.x - comA.x, offAY = contact.point.y - comA.y;
-  const offBX = contact.point.x - comB.x, offBY = contact.point.y - comB.y;
-
+  const offAX = contact.point.x - comA.x,
+    offAY = contact.point.y - comA.y;
+  const offBX = contact.point.x - comB.x,
+    offBY = contact.point.y - comB.y;
+  
   // COM offset from base (world frame) — converts COM-frame Δv → base-frame.
-  const comOffAX = comA.x - bodyA.rx, comOffAY = comA.y - bodyA.ry;
-  const comOffBX = comB.x - bodyB.rx, comOffBY = comB.y - bodyB.ry;
-
+  const comOffAX = comA.x - bodyA.rx,
+    comOffAY = comA.y - bodyA.ry;
+  const comOffBX = comB.x - bodyB.rx,
+    comOffBY = comB.y - bodyB.ry;
+  
   const { nx, ny } = contact.normal;
-  const tx = -ny, ty = nx;
-
+  const tx = -ny,
+    ty = nx;
+  
   // ---- Position correction: split penetration by inverse mass (unchanged) ----
-  const invMA = 1 / M_A, invMB = 1 / M_B;
+  const invMA = 1 / M_A,
+    invMB = 1 / M_B;
   const invMSum = invMA + invMB;
   if (invMSum > 0 && contact.depth > 0) {
     const pushA = contact.depth * (invMA / invMSum);
     const pushB = contact.depth * (invMB / invMSum);
-    bodyA.rx += nx * pushA; bodyA.ry += ny * pushA;
-    bodyB.rx -= nx * pushB; bodyB.ry -= ny * pushB;
+    bodyA.rx += nx * pushA;
+    bodyA.ry += ny * pushA;
+    bodyB.rx -= nx * pushB;
+    bodyB.ry -= ny * pushB;
   }
-
+  
   // ---- Velocity AT the contact point (rigid body: v_p = v_base + ω × (p − base)) ----
   const vAx = bodyA.vx + bodyA.omega * (-contact.offA.y);
   const vAy = bodyA.vy + bodyA.omega * (contact.offA.x);
   const vBx = bodyB.vx + bodyB.omega * (-contact.offB.y);
   const vBy = bodyB.vy + bodyB.omega * (contact.offB.x);
-
-  const rvx = vAx - vBx, rvy = vAy - vBy;
+  
+  const rvx = vAx - vBx,
+    rvy = vAy - vBy;
   const vn = rvx * nx + rvy * ny;
-
+  
   // COM-relative cross terms now (was base-relative before → wrong torque)
   const rCrossN_A = offAX * ny - offAY * nx;
   const rCrossN_B = offBX * ny - offBY * nx;
   const K_n = invMA + invMB + (rCrossN_A * rCrossN_A) / I_A + (rCrossN_B * rCrossN_B) / I_B;
   if (K_n <= 0) return;
-
+  
   const HARD_HIT_SPEED = 0.3;
-
+  
   if (vn < -HARD_HIT_SPEED) {
     const J = -(1 + BODY_RESTITUTION) * vn / K_n;
-
-    const dOmegaA =  (rCrossN_A * J) / I_A;   // A gets +J·n
-    const dOmegaB = -(rCrossN_B * J) / I_B;   // B gets −J·n
-
-    bodyA.vx += ( J * invMA) * nx + dOmegaA * comOffAY;
-    bodyA.vy += ( J * invMA) * ny - dOmegaA * comOffAX;
+    
+    const dOmegaA = (rCrossN_A * J) / I_A; // A gets +J·n
+    const dOmegaB = -(rCrossN_B * J) / I_B; // B gets −J·n
+    
+    bodyA.vx += (J * invMA) * nx + dOmegaA * comOffAY;
+    bodyA.vy += (J * invMA) * ny - dOmegaA * comOffAX;
     bodyA.omega += dOmegaA;
-
+    
     bodyB.vx += (-J * invMB) * nx + dOmegaB * comOffBY;
     bodyB.vy += (-J * invMB) * ny - dOmegaB * comOffBX;
     bodyB.omega += dOmegaB;
-
+    
     // ---- Friction (tangential) — same reference-frame fix ----
     const vAx2 = bodyA.vx + bodyA.omega * (-contact.offA.y);
     const vAy2 = bodyA.vy + bodyA.omega * (contact.offA.x);
     const vBx2 = bodyB.vx + bodyB.omega * (-contact.offB.y);
     const vBy2 = bodyB.vy + bodyB.omega * (contact.offB.x);
     const vt = (vAx2 - vBx2) * tx + (vAy2 - vBy2) * ty;
-
-    const rCrossT_A = offAX * ty - offAY * tx;   // COM-relative
+    
+    const rCrossT_A = offAX * ty - offAY * tx; // COM-relative
     const rCrossT_B = offBX * ty - offBY * tx;
     const K_t = invMA + invMB + (rCrossT_A * rCrossT_A) / I_A + (rCrossT_B * rCrossT_B) / I_B;
-
+    
     if (Math.abs(vt) > 1e-6 && K_t > 0) {
       const targetVt = vt * BODY_FRICTION_KEEP;
       const Jt = (targetVt - vt) / K_t;
-      const dOmegaTA =  (rCrossT_A * Jt) / I_A;
+      const dOmegaTA = (rCrossT_A * Jt) / I_A;
       const dOmegaTB = -(rCrossT_B * Jt) / I_B;
-
-      bodyA.vx += ( Jt * invMA) * tx + dOmegaTA * comOffAY;
-      bodyA.vy += ( Jt * invMA) * ty - dOmegaTA * comOffAX;
+      
+      bodyA.vx += (Jt * invMA) * tx + dOmegaTA * comOffAY;
+      bodyA.vy += (Jt * invMA) * ty - dOmegaTA * comOffAX;
       bodyA.omega += dOmegaTA;
-
+      
       bodyB.vx += (-Jt * invMB) * tx + dOmegaTB * comOffBY;
       bodyB.vy += (-Jt * invMB) * ty - dOmegaTB * comOffBX;
       bodyB.omega += dOmegaTB;
     }
-
+    
     bodyA.omega *= BODY_SPIN_DAMPING;
     bodyB.omega *= BODY_SPIN_DAMPING;
   } else if (vn < 0) {
     // Gentle contact — cancel only residual approach velocity (e = 0).
     const J = -vn / K_n;
-    const dOmegaA =  (rCrossN_A * J) / I_A;
+    const dOmegaA = (rCrossN_A * J) / I_A;
     const dOmegaB = -(rCrossN_B * J) / I_B;
-
-    bodyA.vx += ( J * invMA) * nx + dOmegaA * comOffAY;
-    bodyA.vy += ( J * invMA) * ny - dOmegaA * comOffAX;
+    
+    bodyA.vx += (J * invMA) * nx + dOmegaA * comOffAY;
+    bodyA.vy += (J * invMA) * ny - dOmegaA * comOffAX;
     bodyA.omega += dOmegaA;
-
+    
     bodyB.vx += (-J * invMB) * nx + dOmegaB * comOffBY;
     bodyB.vy += (-J * invMB) * ny - dOmegaB * comOffBX;
     bodyB.omega += dOmegaB;

@@ -7,6 +7,7 @@
 function fmtMass(kg) {
   return kg >= 1000 ? (kg / 1000).toLocaleString(undefined, { maximumFractionDigits: 1 }) + ' t' : kg + ' kg';
 }
+
 function fmtForce(n) {
   return (n / 1000).toLocaleString(undefined, { maximumFractionDigits: 0 }) + ' kN';
 }
@@ -17,8 +18,8 @@ function populateVehicleCard() {
   const agg = (typeof stackCombinedAggregates === 'function') ? stackCombinedAggregates(stack) : null;
   
   const engineCount = (CONFIG.ENGINE_LAYOUT && CONFIG.ENGINE_LAYOUT.frame && CONFIG.ENGINE_LAYOUT.frame.slots) ?
-  CONFIG.ENGINE_LAYOUT.frame.slots.length : 9;
-const totalMaxThrust = (CONFIG.ENGINE_F_MAX || 0) * engineCount;
+    CONFIG.ENGINE_LAYOUT.frame.slots.length : 9;
+  const totalMaxThrust = (CONFIG.ENGINE_F_MAX || 0) * engineCount;
   
   document.getElementById('vehicleName').textContent = stack ? stack.name : CONFIG.ROCKET_NAME;
   document.getElementById('specHeight').textContent = (agg ? agg.height : CONFIG.ROCKET_HEIGHT) + ' m';
@@ -53,6 +54,7 @@ const totalMaxThrust = (CONFIG.ENGINE_F_MAX || 0) * engineCount;
 function startClock() {
   const start = performance.now();
   const el = document.getElementById('clock');
+  
   function tick() {
     const s = Math.floor((performance.now() - start) / 1000);
     const hh = String(Math.floor(s / 3600)).padStart(2, '0');

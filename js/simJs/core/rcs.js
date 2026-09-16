@@ -73,7 +73,8 @@
 // rcsCmd is a Proxy over the ACTIVE body's own rcsCmd object. Buttons write
 // here → only affect the active body. Other bodies keep their own rcsCmd
 // state (frozen commands, autopilot commands, etc).
-const _RCS_KEYS = ['N','S','E','W','NE','NW','SE','SW','CW','ACW'];
+const _RCS_KEYS = ['N', 'S', 'E', 'W', 'NE', 'NW', 'SE', 'SW', 'CW', 'ACW'];
+
 function _blankRcsCmd() {
   const o = {};
   _RCS_KEYS.forEach(k => { o[k] = false; });
@@ -108,11 +109,11 @@ const rcsCmd = new Proxy({}, {
 // duty converges exactly to the ideal value instead of carrying a
 // persistent quantization bias.
 const pwmClock = {
-  t: 0,               // elapsed time within the current period
-  onTime: 0,           // accumulated ON-time within the current period (for measuring actual duty)
-  sigmaError: 0,        // carried-forward duty error (delta-sigma accumulator)
-  periodIdealDuty: 0,    // the TRUE ideal duty target for the period in progress
-  periodTargetDuty: 0,    // the (error-adjusted) duty actually used to gate this period
+  t: 0, // elapsed time within the current period
+  onTime: 0, // accumulated ON-time within the current period (for measuring actual duty)
+  sigmaError: 0, // carried-forward duty error (delta-sigma accumulator)
+  periodIdealDuty: 0, // the TRUE ideal duty target for the period in progress
+  periodTargetDuty: 0, // the (error-adjusted) duty actually used to gate this period
   init: false,
 };
 
@@ -134,9 +135,10 @@ function rcsGeometry(comH, body) {
   const p = bottomMember && bottomMember.params;
   const topYRaw = (p && Number.isFinite(p.rcsTopY)) ? p.rcsTopY : CONFIG.RCS_TOP_Y;
   const bottomY = (p && Number.isFinite(p.rcsBottomY)) ? p.rcsBottomY : CONFIG.RCS_BOTTOM_Y;
-  const yTop = Math.min(bodyHeight, topYRaw);       // safety clamp
+  const yTop = Math.min(bodyHeight, topYRaw); // safety clamp
   return {
-    yTop, yBottom: bottomY,
+    yTop,
+    yBottom: bottomY,
     dTop: Math.max(0.01, yTop - comH),
     dBottom: Math.max(0.01, comH - bottomY),
   };
@@ -157,111 +159,129 @@ function rcsGeometry(comH, body) {
 // rule in PHASE2_PROMPT.md.
 function computeRCSForBody(body, comH, dt) {
   const bottomMember = (body && body.members && body.members[0]) ? body.members[0] : null;
-  const rcsType = (bottomMember && typeof getComponentType === 'function')
-    ? getComponentType(bottomMember.rcsTypeId)
-    : CONFIG.RCS_TYPE;
+  const rcsType = (bottomMember && typeof getComponentType === 'function') ?
+    getComponentType(bottomMember.rcsTypeId) :
+    CONFIG.RCS_TYPE;
   if (!rcsType || rcsType.kind !== 'cornerPods') return zeroRCS();
   if (!body) return zeroRCS();
-
+  
   const p = bottomMember && bottomMember.params;
   const f = (p && Number.isFinite(p.rcsThrust)) ? p.rcsThrust : CONFIG.RCS_THRUST;
   const ve = (p && Number.isFinite(p.rcsVe)) ? p.rcsVe : CONFIG.RCS_VE;
   const xOffset = (p && Number.isFinite(p.rcsXOffset)) ? p.rcsXOffset : CONFIG.RCS_X_OFFSET;
   const period = (p && Number.isFinite(p.rcsPwmPeriod)) ? p.rcsPwmPeriod : CONFIG.RCS_PWM_PERIOD;
-
+  
   // Per-body PWM clock.
   if (!body.pwmClock) {
     body.pwmClock = { t: 0, onTime: 0, sigmaError: 0, periodIdealDuty: 0, periodTargetDuty: 0, init: false };
   }
   const clock = body.pwmClock;
-
+  
   const cmd = body.rcsCmd || {};
-const geo = rcsGeometry(comH, body);
-
-// Which pod has the LONGER moment arm? That's the one producing more
-// torque for the same lateral force, so IT gets PWM'd down to match the
-// shorter-arm pod's effective average. The original design hardcoded
-// "top is longer" — true only when the CoM sits below geometric
-// mid-height. With a high CoM (heavy upper stage) the bottom arm can be
-// longer, in which case the top pod should fire continuously and the
-// bottom pod should be gated instead.
-const topIsLonger = geo.dTop >= geo.dBottom;
-const idealDuty = topIsLonger
-  ? Math.min(1, geo.dBottom / geo.dTop)     // top is long-arm, PWM top
-  : Math.min(1, geo.dTop / geo.dBottom);    // bottom is long-arm, PWM bottom
-
-if (!clock.init) {
-  clock.init = true;
-  clock.periodIdealDuty = idealDuty;
-  clock.periodTargetDuty = idealDuty;
-}
-const longArmLateralOn = clock.t < clock.periodTargetDuty * period;
-if (longArmLateralOn) clock.onTime += dt;
-clock.t += dt;
-if (clock.t >= period) {
-  const actualDuty = clock.onTime / period;
-  clock.sigmaError += clock.periodIdealDuty - actualDuty;
-  clock.t -= period;
-  clock.onTime = 0;
-  clock.periodIdealDuty = idealDuty;
-  clock.periodTargetDuty = Math.min(1, Math.max(0, idealDuty + clock.sigmaError));
-}
-
+  const geo = rcsGeometry(comH, body);
+  
+  // Which pod has the LONGER moment arm? That's the one producing more
+  // torque for the same lateral force, so IT gets PWM'd down to match the
+  // shorter-arm pod's effective average. The original design hardcoded
+  // "top is longer" — true only when the CoM sits below geometric
+  // mid-height. With a high CoM (heavy upper stage) the bottom arm can be
+  // longer, in which case the top pod should fire continuously and the
+  // bottom pod should be gated instead.
+  const topIsLonger = geo.dTop >= geo.dBottom;
+  const idealDuty = topIsLonger ?
+    Math.min(1, geo.dBottom / geo.dTop) // top is long-arm, PWM top
+    :
+    Math.min(1, geo.dTop / geo.dBottom); // bottom is long-arm, PWM bottom
+  
+  if (!clock.init) {
+    clock.init = true;
+    clock.periodIdealDuty = idealDuty;
+    clock.periodTargetDuty = idealDuty;
+  }
+  const longArmLateralOn = clock.t < clock.periodTargetDuty * period;
+  if (longArmLateralOn) clock.onTime += dt;
+  clock.t += dt;
+  if (clock.t >= period) {
+    const actualDuty = clock.onTime / period;
+    clock.sigmaError += clock.periodIdealDuty - actualDuty;
+    clock.t -= period;
+    clock.onTime = 0;
+    clock.periodIdealDuty = idealDuty;
+    clock.periodTargetDuty = Math.min(1, Math.max(0, idealDuty + clock.sigmaError));
+  }
+  
   const podDefs = rcsType.frame.pods;
-  const pod = {}, isTop = {}, lateralSign = {};
+  const pod = {},
+    isTop = {},
+    lateralSign = {};
   podDefs.forEach(p => {
     pod[p.id] = { Fx: 0, Fy: 0 };
     isTop[p.id] = p.corner[1] === 'top';
     lateralSign[p.id] = -p.corner[0];
   });
-
+  
   // Gate whichever pod currently has the LONGER moment arm (see topIsLonger
-// above). The other pod fires continuously at full force. This preserves
-// the original zero-net-torque invariant under any CoM position.
-function fireLateral(k) {
-  const isLongArm = topIsLonger ? isTop[k] : !isTop[k];
-  const on = isLongArm ? longArmLateralOn : true;
-  pod[k].Fx += on ? lateralSign[k] * f : 0;
-}
+  // above). The other pod fires continuously at full force. This preserves
+  // the original zero-net-torque invariant under any CoM position.
+  function fireLateral(k) {
+    const isLongArm = topIsLonger ? isTop[k] : !isTop[k];
+    const on = isLongArm ? longArmLateralOn : true;
+    pod[k].Fx += on ? lateralSign[k] * f : 0;
+  }
+  
   function fireLateralFull(k) { pod[k].Fx += lateralSign[k] * f; }
+  
   function fireVertical(k, sign) { pod[k].Fy += sign * f; }
-
-  if (cmd.N) ['TL','TR','BL','BR'].forEach(k => fireVertical(k, +1));
-  if (cmd.S) ['TL','TR','BL','BR'].forEach(k => fireVertical(k, -1));
+  
+  if (cmd.N)['TL', 'TR', 'BL', 'BR'].forEach(k => fireVertical(k, +1));
+  if (cmd.S)['TL', 'TR', 'BL', 'BR'].forEach(k => fireVertical(k, -1));
   const wantRight = cmd.E || cmd.NE || cmd.SE;
-  const wantLeft  = cmd.W || cmd.NW || cmd.SW;
-  if (wantRight) ['TL','BL'].forEach(fireLateral);
-  if (wantLeft)  ['TR','BR'].forEach(fireLateral);
-  if (cmd.NE || cmd.NW) ['TL','TR'].forEach(k => fireVertical(k, +1));
-  if (cmd.SE || cmd.SW) ['BL','BR'].forEach(k => fireVertical(k, -1));
+  const wantLeft = cmd.W || cmd.NW || cmd.SW;
+  if (wantRight)['TL', 'BL'].forEach(fireLateral);
+  if (wantLeft)['TR', 'BR'].forEach(fireLateral);
+  if (cmd.NE || cmd.NW)['TL', 'TR'].forEach(k => fireVertical(k, +1));
+  if (cmd.SE || cmd.SW)['BL', 'BR'].forEach(k => fireVertical(k, -1));
   if (cmd.CW) {
-    fireLateralFull('TL'); fireVertical('TL', +1);
-    fireLateralFull('BR'); fireVertical('BR', -1);
-    fireVertical('TR', -1); fireVertical('BL', +1);
+    fireLateralFull('TL');
+    fireVertical('TL', +1);
+    fireLateralFull('BR');
+    fireVertical('BR', -1);
+    fireVertical('TR', -1);
+    fireVertical('BL', +1);
   }
   if (cmd.ACW) {
-    fireLateralFull('TR'); fireVertical('TR', +1);
-    fireLateralFull('BL'); fireVertical('BL', -1);
-    fireVertical('TL', -1); fireVertical('BR', +1);
+    fireLateralFull('TR');
+    fireVertical('TR', +1);
+    fireLateralFull('BL');
+    fireVertical('BL', -1);
+    fireVertical('TL', -1);
+    fireVertical('BR', +1);
   }
-
+  
   const positions = {};
   podDefs.forEach(p => {
     positions[p.id] = { x: p.corner[0] * xOffset, y: p.corner[1] === 'top' ? geo.yTop : geo.yBottom };
   });
-
-  let Fx = 0, Fy = 0, torque = 0, mdot = 0;
+  
+  let Fx = 0,
+    Fy = 0,
+    torque = 0,
+    mdot = 0;
   const firing = {};
   podDefs.forEach(p => { firing[p.id] = false; });
   Object.keys(pod).forEach(k => {
-    const p = pod[k], pos = positions[k];
-    Fx += p.Fx; Fy += p.Fy;
-    const rx = pos.x, ry = pos.y - comH;
+    const p = pod[k],
+      pos = positions[k];
+    Fx += p.Fx;
+    Fy += p.Fy;
+    const rx = pos.x,
+      ry = pos.y - comH;
     torque += rx * p.Fy - ry * p.Fx;
     const mag = Math.hypot(p.Fx, p.Fy);
-    if (mag > 0.01) { mdot += mag / ve; firing[k] = true; }
+    if (mag > 0.01) { mdot += mag / ve;
+      firing[k] = true; }
   });
-
+  
   return { Fx, Fy, torque, mdot, firing, pod, dutyTop: idealDuty };
 }
 
@@ -277,4 +297,3 @@ function resetPWM() { /* per-body now */ }
 function clearRCS() {
   Object.keys(rcsCmd).forEach(k => rcsCmd[k] = false);
 }
-

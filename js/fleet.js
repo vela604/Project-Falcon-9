@@ -46,8 +46,8 @@ const SELECTED_KEY = 'rocketSim.selectedId.v1';
 // ============================================================================
 const FAMILIES_KEY = 'rocketSim.families.v1';
 const SELECTED_FAMILY_KEY = 'rocketSim.selectedFamilyId.v1';
-const LEGACY_FAMILY_ID = 'fam-falcon9-default';   // the seeded Falcon-9 record's family
-const UNASSIGNED_FAMILY_ID = 'fam-unassigned';    // orphan stages/noses awaiting a booster
+const LEGACY_FAMILY_ID = 'fam-falcon9-default'; // the seeded Falcon-9 record's family
+const UNASSIGNED_FAMILY_ID = 'fam-unassigned'; // orphan stages/noses awaiting a booster
 
 // ---------------------------------------------------------------------------
 // Store
@@ -91,7 +91,7 @@ function seedFamiliesFromFleet() {
   const fleet = loadFleet();
   const families = [];
   const nowMembers = [];
-
+  
   fleet.forEach(r => {
     if (r.id === 'falcon9-default') {
       families.push({
@@ -119,7 +119,7 @@ function seedFamiliesFromFleet() {
       nowMembers.push(r.id);
     }
   });
-
+  
   if (nowMembers.length) {
     families.push({
       id: UNASSIGNED_FAMILY_ID,
@@ -128,7 +128,7 @@ function seedFamiliesFromFleet() {
       locked: false,
     });
   }
-
+  
   saveFamilies(families);
   saveFleet(fleet);
   return families;
@@ -146,7 +146,7 @@ function addFamily(data) {
   const rec = {
     id: genFamilyId(),
     name: (data && data.name ? String(data.name) : 'Unnamed Family').trim() || 'Unnamed Family',
-    bottomId: (data && data.bottomId) || null,  // fleet-record id of the booster/rocket
+    bottomId: (data && data.bottomId) || null, // fleet-record id of the booster/rocket
     locked: false,
   };
   families.push(rec);
@@ -262,23 +262,36 @@ function defaultVehicleData() {
     locked: true,
     stageRole: 'rocket',
     familyId: LEGACY_FAMILY_ID,
-    height: 45, width: 3.9, dryMass: 23000, fuelMassMax: 400000, dragCd: 0.6,
+    height: 45,
+    width: 3.9,
+    dryMass: 23000,
+    fuelMassMax: 400000,
+    dragCd: 0.6,
     engineTypeId: 'octaweb-merlin9',
     recoveryTypeId: 'legs-swingout-4',
     hasRecovery: true,
     rcsTypeId: 'rcs-4pod-2nozzle',
     engineThrusters: {
       gimbal: { thrusterTypeId: 'merlin-1d-class', massFlowRate: 207 },
-      fixed:  { thrusterTypeId: 'merlin-1d-class', massFlowRate: 207 },
+      fixed: { thrusterTypeId: 'merlin-1d-class', massFlowRate: 207 },
     },
     rcsThruster: { thrusterTypeId: 'cold-gas-small', massFlowRate: 0.5 },
     params: {
-  octaRadius: 1.7, engineFMax: 600000, engineFMinFrac: 0.4, engineVe: 2900,
-  engineThrustRate: 0.5, gimbalMaxDeg: 20, gimbalRateDegS: 40,
-  legDeployRate: 0.5,
-  rcsThrust: 1100, rcsVe: 2200, rcsXOffset: 1.95,
-  rcsTopY: 42, rcsBottomY: 3, rcsPwmPeriod: 0.3,
-},
+      octaRadius: 1.7,
+      engineFMax: 600000,
+      engineFMinFrac: 0.4,
+      engineVe: 2900,
+      engineThrustRate: 0.5,
+      gimbalMaxDeg: 20,
+      gimbalRateDegS: 40,
+      legDeployRate: 0.5,
+      rcsThrust: 1100,
+      rcsVe: 2200,
+      rcsXOffset: 1.95,
+      rcsTopY: 42,
+      rcsBottomY: 3,
+      rcsPwmPeriod: 0.3,
+    },
     bodyDesign: { mode: 'solid', solidColor: '#e9edf2', dslText: '' },
   };
 }
@@ -358,7 +371,9 @@ function blankPayloadSpaceData() {
     locked: false,
     stageRole: 'payloadSpace',
     familyId: null,
-    height: 3, width: 3.9, dragCd: 0.4,
+    height: 3,
+    width: 3.9,
+    dragCd: 0.4,
     payloadSpaceTypeId: 'cap-standard',
     payloadSpaceMetalTypeId: 'al-li-alloy',
     deploymentDirection: 'clamshell',
@@ -397,10 +412,10 @@ function migrateRocketRecord(r) {
     rcsThruster: r.rcsThruster ? JSON.parse(JSON.stringify(r.rcsThruster)) : null,
     params: stageRole === 'nose' ? null : { ...defaults.params, ...(r.params || {}) },
     bodyDesign: {
-  mode: (r.bodyDesign && ['solid', 'dsl'].includes(r.bodyDesign.mode)) ? r.bodyDesign.mode : 'solid',
-  solidColor: (r.bodyDesign && typeof r.bodyDesign.solidColor === 'string') ? r.bodyDesign.solidColor : '#e9edf2',
-  dslText: (r.bodyDesign && typeof r.bodyDesign.dslText === 'string') ? r.bodyDesign.dslText : '',
-},
+      mode: (r.bodyDesign && ['solid', 'dsl'].includes(r.bodyDesign.mode)) ? r.bodyDesign.mode : 'solid',
+      solidColor: (r.bodyDesign && typeof r.bodyDesign.solidColor === 'string') ? r.bodyDesign.solidColor : '#e9edf2',
+      dslText: (r.bodyDesign && typeof r.bodyDesign.dslText === 'string') ? r.bodyDesign.dslText : '',
+    },
   };
   out.familyId = r.familyId || null;
   // Both 'booster' and 'stage' carry maxExtraWeightKg — anything can be
@@ -408,7 +423,7 @@ function migrateRocketRecord(r) {
   if (stageRole === 'booster' || stageRole === 'stage') {
     out.maxExtraWeightKg = Number.isFinite(r.maxExtraWeightKg) ? r.maxExtraWeightKg : 0;
   }
-
+  
   // Stage-only ingredient inputs.
   if (stageRole === 'stage') {
     out.fuel = {
@@ -417,7 +432,7 @@ function migrateRocketRecord(r) {
       tankWidth: (r.fuel && Number.isFinite(r.fuel.tankWidth)) ? r.fuel.tankWidth : 3.9,
     };
     out.bodyMetalTypeId = r.bodyMetalTypeId || 'al-li-alloy';
-
+    
     // PS-B2 — IMPORTANT CHANGE: the old code always synthesized a nested
     // `payloadSpace` object here, EVEN when the raw record no longer had
     // one — which meant a stage that splitLegacyStagePayloadSpaces() had
@@ -438,19 +453,19 @@ function migrateRocketRecord(r) {
     delete out.dryMass;
     delete out.fuelMassMax;
   }
-
+  
   if (stageRole === 'booster') {
     out.fuel = {
       typeId: (r.fuel && r.fuel.typeId) || 'rp1-lox',
       tankHeight: (r.fuel && Number.isFinite(r.fuel.tankHeight)) ? r.fuel.tankHeight : 45,
-      tankWidth:  (r.fuel && Number.isFinite(r.fuel.tankWidth))  ? r.fuel.tankWidth  : 3.9,
+      tankWidth: (r.fuel && Number.isFinite(r.fuel.tankWidth)) ? r.fuel.tankWidth : 3.9,
     };
     out.bodyMetalTypeId = r.bodyMetalTypeId || 'al-li-alloy';
     // Derived — no stored dryMass/fuelMassMax on a booster anymore.
     delete out.dryMass;
     delete out.fuelMassMax;
   }
-
+  
   // PS-B2 FIX: this whole block used to live NESTED inside
   // `if (stageRole === 'stage')` above, which meant it could never
   // actually run for a real nose record (a record can't be both 'stage'
@@ -471,7 +486,7 @@ function migrateRocketRecord(r) {
     delete out.fuelMassMax;
     out.params = null;
   }
-
+  
   // PS-B2: standalone fairing record — the split target of the migration
   // below. Pure shape + metal; no engines, no recovery, no RCS, no fuel.
   if (stageRole === 'payloadSpace') {
@@ -496,16 +511,16 @@ function migrateRocketRecord(r) {
     delete out.dryMass;
     delete out.fuelMassMax;
     out.bodyDesign = {
-    mode: (r.bodyDesign && ['solid','dsl'].includes(r.bodyDesign.mode)) ? r.bodyDesign.mode : 'solid',
-    solidColor: (r.bodyDesign && typeof r.bodyDesign.solidColor === 'string') ? r.bodyDesign.solidColor : '#e9edf2',
-    dslText: (r.bodyDesign && typeof r.bodyDesign.dslText === 'string') ? r.bodyDesign.dslText : '',
-};
+      mode: (r.bodyDesign && ['solid', 'dsl'].includes(r.bodyDesign.mode)) ? r.bodyDesign.mode : 'solid',
+      solidColor: (r.bodyDesign && typeof r.bodyDesign.solidColor === 'string') ? r.bodyDesign.solidColor : '#e9edf2',
+      dslText: (r.bodyDesign && typeof r.bodyDesign.dslText === 'string') ? r.bodyDesign.dslText : '',
+    };
   }
-
+  
   FLAT_PARAM_KEYS.forEach(k => {
     if (r[k] !== undefined && out.params) out.params[k] = r[k];
   });
-
+  
   // P4-RCS-migration: rcsTopMargin → rcsTopY (bottom-anchored).
   // Old rcsTopMargin measured DOWN from the top; new rcsTopY measures UP
   // from the base. Convert once, then delete the legacy key.
@@ -529,10 +544,10 @@ function migrateRocketRecord(r) {
       delete out.params.rcsBottomMargin;
     }
     // If somehow neither was present, backfill from defaults.
-    if (!Number.isFinite(out.params.rcsTopY))    out.params.rcsTopY = defaults.params.rcsTopY;
+    if (!Number.isFinite(out.params.rcsTopY)) out.params.rcsTopY = defaults.params.rcsTopY;
     if (!Number.isFinite(out.params.rcsBottomY)) out.params.rcsBottomY = defaults.params.rcsBottomY;
   }
-
+  
   backfillThrusterRecords(out, defaults);
   bridgePerfParams(out);
   return out;
@@ -561,7 +576,7 @@ function migrateRocketRecord(r) {
 function splitLegacyStagePayloadSpaces(fleet) {
   const newRecords = [];
   const insertions = []; // { afterId, newId }
-
+  
   fleet.forEach(rec => {
     if (rec.stageRole !== 'stage') return;
     const ps = rec.payloadSpace;
@@ -569,11 +584,11 @@ function splitLegacyStagePayloadSpaces(fleet) {
     // split, the nested field is deleted entirely, so this can't re-fire
     // against the same record (even if this ever ran more than once).
     if (!ps || !ps.params || !Number.isFinite(ps.params.capHeight)) return;
-
+    
     const capH = ps.params.capHeight;
     const capW = Number.isFinite(ps.params.capWidth) ? ps.params.capWidth : (rec.width || 3.9);
     const bulgeW = Number.isFinite(ps.params.bulgeWidth) ? ps.params.bulgeWidth : null;
-
+    
     const psRecord = migrateRocketRecord({
       id: genId(),
       name: rec.name + ' Fairing',
@@ -591,17 +606,17 @@ function splitLegacyStagePayloadSpaces(fleet) {
     });
     newRecords.push(psRecord);
     insertions.push({ afterId: rec.id, newId: psRecord.id });
-
+    
     // The stage keeps only its tank now — its own `height` becomes just the
     // tank height; the fairing's height lives on the new sibling instead.
     rec.height = Number.isFinite(rec.fuel && rec.fuel.tankHeight) ? rec.fuel.tankHeight : rec.height;
     delete rec.payloadSpace;
   });
-
+  
   if (!newRecords.length) return { fleet, changed: false };
-
+  
   const outFleet = [...fleet, ...newRecords];
-
+  
   // Splice each new fairing into any stack right after its parent stage —
   // an already-saved stack keeps flying with the same silhouette instead of
   // silently losing its nose the moment this migration runs.
@@ -617,7 +632,7 @@ function splitLegacyStagePayloadSpaces(fleet) {
     });
   });
   if (stacksChanged) saveStacks(stacks);
-
+  
   return { fleet: outFleet, changed: true };
 }
 
@@ -700,14 +715,14 @@ function genStackId() {
 function addStack(data) {
   const stacks = loadStacks();
   const VALID_SEQ = ['f9-standard', 'f9-heavy', 'sso', 'custom'];
-const rec = {
-  id: genStackId(),
-  name: (data && data.name ? String(data.name) : 'Unnamed Stack').trim() || 'Unnamed Stack',
-  members: Array.isArray(data && data.members) ? [...data.members] : [],
-  sequence: (data && VALID_SEQ.includes(data.sequence)) ? data.sequence : 'custom',
-  payloadId: (data && data.payloadId) ? data.payloadId : null,
-  locked: false,
-};
+  const rec = {
+    id: genStackId(),
+    name: (data && data.name ? String(data.name) : 'Unnamed Stack').trim() || 'Unnamed Stack',
+    members: Array.isArray(data && data.members) ? [...data.members] : [],
+    sequence: (data && VALID_SEQ.includes(data.sequence)) ? data.sequence : 'custom',
+    payloadId: (data && data.payloadId) ? data.payloadId : null,
+    locked: false,
+  };
   stacks.push(rec);
   saveStacks(stacks);
   return rec;
@@ -719,9 +734,9 @@ function updateStack(id, data) {
   if (idx < 0) return null;
   const merged = { ...stacks[idx], ...data, id };
   if (merged.payloadId === undefined) merged.payloadId = null;
-if (!Array.isArray(merged.members)) merged.members = [];
-const VALID_SEQ = ['f9-standard', 'f9-heavy', 'sso', 'custom'];
-if (!VALID_SEQ.includes(merged.sequence)) merged.sequence = 'custom';
+  if (!Array.isArray(merged.members)) merged.members = [];
+  const VALID_SEQ = ['f9-standard', 'f9-heavy', 'sso', 'custom'];
+  if (!VALID_SEQ.includes(merged.sequence)) merged.sequence = 'custom';
   stacks[idx] = merged;
   saveStacks(stacks);
   return merged;
@@ -809,21 +824,24 @@ function stackCombinedAggregates(stk) {
   members.forEach((m, i) => {
     out.height += Number.isFinite(m.height) ? m.height : 0;
     out.width = Math.max(out.width, Number.isFinite(m.width) ? m.width : 0);
-    let dry = 0, fuel = 0;
+    let dry = 0,
+      fuel = 0;
     if (m.stageRole === 'booster') {
       const d = boosterDerivedMasses(m, members[i + 1] || null);
-      if (d) { dry = d.dryMass; fuel = d.fuelMass; }
+      if (d) { dry = d.dryMass;
+        fuel = d.fuelMass; }
     } else if (m.stageRole === 'stage') {
       const d = stageDerivedMasses(m);
-      if (d && !d.infeasible) { dry = d.dryMassNoPayload; fuel = d.fuelMass; }
+      if (d && !d.infeasible) { dry = d.dryMassNoPayload;
+        fuel = d.fuelMass; }
       else if (d && d.reason) out.warnings.push(`member ${i + 1} (${m.name}): ${d.reason}`);
       else out.warnings.push(`member ${i + 1} (${m.name}): infeasible`);
     } else if (m.stageRole === 'nose') {
       dry = computeNoseDryMass(m);
     } else if (m.stageRole === 'payloadSpace') {
-  dry = computePayloadSpaceDryMass(m);
-  fuel = 0;
-} else {
+      dry = computePayloadSpaceDryMass(m);
+      fuel = 0;
+    } else {
       // legacy rocket — flat fields
       dry = Number.isFinite(m.dryMass) ? m.dryMass : 0;
       fuel = Number.isFinite(m.fuelMassMax) ? m.fuelMassMax : 0;
@@ -832,14 +850,14 @@ function stackCombinedAggregates(stk) {
     out.fuelMass += fuel;
   });
   // I-c2: payload mass — counted toward total wet mass (sits inside fairing).
-if (stk && stk.payloadId && typeof getPayload === 'function') {
-  const pl = getPayload(stk.payloadId);
-  if (pl && Number.isFinite(pl.mass)) {
-    out.dryMass += pl.mass;
-    out.payloadMass = pl.mass;
-    out.payloadName = pl.name;
+  if (stk && stk.payloadId && typeof getPayload === 'function') {
+    const pl = getPayload(stk.payloadId);
+    if (pl && Number.isFinite(pl.mass)) {
+      out.dryMass += pl.mass;
+      out.payloadMass = pl.mass;
+      out.payloadName = pl.name;
+    }
   }
-}
   return out;
 }
 
@@ -881,7 +899,7 @@ function deleteRocket(id) {
   if (!fleet.length) fleet = [defaultVehicleData()];
   saveFleet(fleet);
   if (getSelectedId() === id) setSelectedId(fleet[0].id);
-
+  
   // Phase 4 (P4-B3): clear stale bottomId pointers — otherwise the family
   // still reports "has booster" (getFamilyBottom would try to find a
   // missing record and return null, but UI checks like `fam.bottomId`
@@ -889,10 +907,11 @@ function deleteRocket(id) {
   const families = loadFamilies();
   let touched = false;
   families.forEach(f => {
-    if (f.bottomId === id) { f.bottomId = null; touched = true; }
+    if (f.bottomId === id) { f.bottomId = null;
+      touched = true; }
   });
   if (touched) saveFamilies(families);
-
+  
   return true;
 }
 
@@ -917,11 +936,11 @@ function deleteRocket(id) {
 // ---------------------------------------------------------------------------
 function rocketCapabilities(v) {
   const ZERO = { engineCount: 0, totalMaxThrust: 0, wetMass: 0, mdotMax: 0, twrMax: 0, deltaV: 0, burnTimeS: 0 };
-
+  
   // Guard FIRST — before any branch reads v.* — a nose/payloadSpace record
   // (params null) or a malformed record must never crash this function.
   if (!v || !v.params) return ZERO;
-
+  
   // Booster derived-masses path (P4-C1).
   if (v.stageRole === 'booster') {
     const d = boosterDerivedMasses(v);
@@ -936,10 +955,13 @@ function rocketCapabilities(v) {
       engineCount,
       totalMaxThrust: d.totalEngineThrust,
       wetMass: d.wetMass,
-      mdotMax, twrMax, deltaV, burnTimeS,
+      mdotMax,
+      twrMax,
+      deltaV,
+      burnTimeS,
     };
   }
-
+  
   // Rocket path — requires engineFMax/engineVe on params.
   const engineType = (typeof getComponentType === 'function') ? getComponentType(v.engineTypeId) : null;
   const engineCount = engineType ? engineType.frame.slots.length : 9;
@@ -973,40 +995,43 @@ function rocketCapabilities(v) {
 function stageDerivedMasses(rec) {
   if (!rec || rec.stageRole !== 'stage') return null;
   const warnings = [];
-
-  const fuelType       = getComponentType(rec.fuel && rec.fuel.typeId);
-  const bodyMetalType  = getComponentType(rec.bodyMetalTypeId);
-  const engineType     = getComponentType(rec.engineTypeId);
+  
+  const fuelType = getComponentType(rec.fuel && rec.fuel.typeId);
+  const bodyMetalType = getComponentType(rec.bodyMetalTypeId);
+  const engineType = getComponentType(rec.engineTypeId);
   // BUG #1 FIX: mirror boosterDerivedMasses()'s hasRecovery gate — a stage
   // with "Fit recovery" unchecked must not keep contributing leg mass just
   // because recoveryTypeId is still set on the record from a prior state.
-  const recoveryType   = rec.hasRecovery === false ? null : getComponentType(rec.recoveryTypeId);
-
+  const recoveryType = rec.hasRecovery === false ? null : getComponentType(rec.recoveryTypeId);
+  
   const ps = rec.payloadSpace || null;
-  const payloadType  = ps ? getComponentType(ps.typeId) : null;
+  const payloadType = ps ? getComponentType(ps.typeId) : null;
   const payloadMetal = ps ? getComponentType(ps.metalTypeId) : null;
-
+  
   if (!fuelType || !bodyMetalType || !engineType) {
     return { infeasible: true, reason: 'Missing or unresolved type reference.', warnings };
   }
-
+  
   const tankH = rec.fuel.tankHeight;
   const tankW = rec.fuel.tankWidth;
   const capParams = (ps && ps.params) || {};
   const capH = (payloadType && payloadMetal && Number.isFinite(capParams.capHeight)) ? capParams.capHeight : 0;
   const capW = Number.isFinite(capParams.capWidth) ? capParams.capWidth : tankW;
   const bulgeW = Number.isFinite(capParams.bulgeWidth) ? capParams.bulgeWidth : capW;
-
-  const fuelDensity    = fuelType.parameterSchema.find(p => p.key === 'propellantDensity').value;
-  const bodyDensity    = bodyMetalType.parameterSchema.find(p => p.key === 'density').value;
+  
+  const fuelDensity = fuelType.parameterSchema.find(p => p.key === 'propellantDensity').value;
+  const bodyDensity = bodyMetalType.parameterSchema.find(p => p.key === 'density').value;
   const payloadDensity = payloadMetal ? payloadMetal.parameterSchema.find(p => p.key === 'density').value : 0;
-
+  
   const tankVolume = Math.PI * (tankW / 2) ** 2 * tankH;
   const fuelMass = tankVolume * fuelDensity;
   const bodyMass = tankVolume * BODY_SHELL_FACTOR * bodyDensity;
-
+  
   const groups = engineThrusterGroups(engineType);
-  let totalEngineThrust = 0, totalEngineMass = 0, sumFlow = 0, sumFlowVe = 0;
+  let totalEngineThrust = 0,
+    totalEngineMass = 0,
+    sumFlow = 0,
+    sumFlowVe = 0;
   Object.keys(groups).forEach(gk => {
     const count = groups[gk].length;
     const g = rec.engineThrusters && rec.engineThrusters[gk];
@@ -1018,57 +1043,68 @@ function stageDerivedMasses(rec) {
     const thrustPer = flow * ve;
     const massPer = engineMassFromThrust(t, thrustPer);
     totalEngineThrust += thrustPer * count;
-    totalEngineMass   += (Number.isFinite(massPer) ? massPer : 0) * count;
-    sumFlow   += flow * count;
+    totalEngineMass += (Number.isFinite(massPer) ? massPer : 0) * count;
+    sumFlow += flow * count;
     sumFlowVe += flow * ve * count;
   });
   const effectiveVe = sumFlow > 0 ? sumFlowVe / sumFlow : 0;
-
+  
   const stageTotalHeight = tankH + capH;
   let legMass = 0;
-  if (recoveryType && recoveryType.capabilities && recoveryType.capabilities.deploysOnVehicle
-      && recoveryType.frame && typeof recoveryType.frame.structuralVolume === 'function') {
+  if (recoveryType && recoveryType.capabilities && recoveryType.capabilities.deploysOnVehicle &&
+    recoveryType.frame && typeof recoveryType.frame.structuralVolume === 'function') {
     const legCount = recoveryType.frame.legCount || 0;
     const oneLegVol = recoveryType.frame.structuralVolume(stageTotalHeight, tankW);
     legMass = oneLegVol * legCount * bodyDensity;
   }
-
+  
   let payloadContainerMass = 0;
   if (payloadType && payloadType.frame && typeof payloadType.frame.structuralVolume === 'function') {
-    const vol = (payloadType.kind === 'bulgedCapShape')
-      ? payloadType.frame.structuralVolume(capH, capW, bulgeW)
-      : payloadType.frame.structuralVolume(capH, capW);
+    const vol = (payloadType.kind === 'bulgedCapShape') ?
+      payloadType.frame.structuralVolume(capH, capW, bulgeW) :
+      payloadType.frame.structuralVolume(capH, capW);
     payloadContainerMass = vol * payloadDensity;
   }
-
+  
   if (payloadType && payloadType.kind === 'bulgedCapShape' && Number.isFinite(capParams.bulgeWidth)) {
     const maxBulgeW = MAX_BULGE_DIAMETER_RATIO * tankW;
     if (bulgeW > maxBulgeW) {
       warnings.push(`Bulge width ${bulgeW} m exceeds cap ${maxBulgeW.toFixed(2)} m (${MAX_BULGE_DIAMETER_RATIO}× tank width).`);
     }
   }
-
+  
   const dryMassNoPayload = bodyMass + totalEngineMass + payloadContainerMass + legMass;
-
+  
   let D = 0;
   if (effectiveVe > 0) {
     D = fuelMass / (Math.exp(SECOND_STAGE_TARGET_DELTA_V / effectiveVe) - 1);
   }
   const maxPayloadMassFromDeltaV = D - dryMassNoPayload;
-
+  
   const g = (typeof G0 !== 'undefined') ? G0 : 9.80665;
   const maxPayloadMassFromThrust = totalEngineThrust / (MIN_TWR_FLOOR * g) - dryMassNoPayload;
-
+  
   const maxPayloadMassKg = Math.min(maxPayloadMassFromDeltaV, maxPayloadMassFromThrust);
   const infeasible = !Number.isFinite(maxPayloadMassKg) || maxPayloadMassKg < 0;
   const totalWetMassAtMaxPayload = dryMassNoPayload + fuelMass + Math.max(0, maxPayloadMassKg);
-
+  
   return {
-    fuelMass, bodyMass, totalEngineMass, legMass, payloadContainerMass,
-    dryMassNoPayload, effectiveVe, totalEngineThrust,
-    maxPayloadMassFromDeltaV, maxPayloadMassFromThrust, maxPayloadMassKg,
-    totalWetMassAtMaxPayload, stageTotalHeight, tankVolume,
-    infeasible, warnings,
+    fuelMass,
+    bodyMass,
+    totalEngineMass,
+    legMass,
+    payloadContainerMass,
+    dryMassNoPayload,
+    effectiveVe,
+    totalEngineThrust,
+    maxPayloadMassFromDeltaV,
+    maxPayloadMassFromThrust,
+    maxPayloadMassKg,
+    totalWetMassAtMaxPayload,
+    stageTotalHeight,
+    tankVolume,
+    infeasible,
+    warnings,
   };
 }
 
@@ -1085,18 +1121,18 @@ function stageDerivedMasses(rec) {
 function payloadCompatibilityCheck(payload, stackMembers, fleet) {
   const reasons = [];
   if (!payload) return { ok: false, reasons: ['No payload selected'] };
-
+  
   const psIdx = (stackMembers || []).findIndex(id => {
     const r = fleet.find(x => x.id === id);
     return r && r.stageRole === 'payloadSpace';
   });
   if (psIdx < 0) return { ok: false, reasons: ['No payloadSpace in stack'] };
-
+  
   const psRec = fleet.find(x => x.id === stackMembers[psIdx]);
   const psParams = psRec.params || {};
   const psCapH = Number.isFinite(psParams.capHeight) ? psParams.capHeight : 0;
   const psBaseW = Number.isFinite(psParams.capWidth) ? psParams.capWidth : 0;
-
+  
   // Check 1 — dimensions.
   if (payload.height > psCapH) {
     reasons.push(`Payload height ${payload.height} m > fairing height ${psCapH} m`);
@@ -1104,10 +1140,10 @@ function payloadCompatibilityCheck(payload, stackMembers, fleet) {
   if (payload.width > psBaseW) {
     reasons.push(`Payload width ${payload.width} m > fairing base ${psBaseW} m`);
   }
-
+  
   const psMass = stackMemberOwnMass(psRec, null);
   const psMassOk = Number.isFinite(psMass) ? psMass : 0;
-
+  
   // Checks 2 + 3 — cumulative load from each member below the fairing.
   for (let i = psIdx - 1; i >= 0; i--) {
     const lowerRec = fleet.find(x => x.id === stackMembers[i]);
@@ -1127,7 +1163,7 @@ function payloadCompatibilityCheck(payload, stackMembers, fleet) {
       reasons.push(`${label} "${lowerRec.name}" cap ${_fmtMassShort(cap)} < load above ${_fmtMassShort(load)}`);
     }
   }
-
+  
   return { ok: reasons.length === 0, reasons };
 }
 
@@ -1144,29 +1180,32 @@ function payloadCompatibilityCheck(payload, stackMembers, fleet) {
 function boosterDerivedMasses(rec, aboveMember) {
   if (!rec || rec.stageRole !== 'booster') return null;
   const warnings = [];
-
-  const fuelType     = getComponentType(rec.fuel && rec.fuel.typeId);
-  const bodyMetal    = getComponentType(rec.bodyMetalTypeId);
-  const engineType   = getComponentType(rec.engineTypeId);
+  
+  const fuelType = getComponentType(rec.fuel && rec.fuel.typeId);
+  const bodyMetal = getComponentType(rec.bodyMetalTypeId);
+  const engineType = getComponentType(rec.engineTypeId);
   const recoveryType = rec.hasRecovery === false ? null : getComponentType(rec.recoveryTypeId);
-
+  
   if (!fuelType || !bodyMetal || !engineType) {
     return { infeasible: true, reason: 'Missing or unresolved type reference.', warnings };
   }
-
+  
   const tankH = rec.fuel.tankHeight;
   const tankW = rec.fuel.tankWidth;
   const fuelDensity = fuelType.parameterSchema.find(p => p.key === 'propellantDensity').value;
   const bodyDensity = bodyMetal.parameterSchema.find(p => p.key === 'density').value;
-
+  
   // Fuel mass + body (cylindrical tank as the vehicle body).
   const tankVolume = Math.PI * (tankW / 2) ** 2 * tankH;
-  const fuelMass   = tankVolume * fuelDensity;
-  const bodyMass   = tankVolume * BODY_SHELL_FACTOR * bodyDensity;
-
+  const fuelMass = tankVolume * fuelDensity;
+  const bodyMass = tankVolume * BODY_SHELL_FACTOR * bodyDensity;
+  
   // Engines — mass-flow-weighted aggregation.
   const groups = engineThrusterGroups(engineType);
-  let totalEngineThrust = 0, totalEngineMass = 0, sumFlow = 0, sumFlowVe = 0;
+  let totalEngineThrust = 0,
+    totalEngineMass = 0,
+    sumFlow = 0,
+    sumFlowVe = 0;
   Object.keys(groups).forEach(gk => {
     const count = groups[gk].length;
     const g = rec.engineThrusters && rec.engineThrusters[gk];
@@ -1178,21 +1217,21 @@ function boosterDerivedMasses(rec, aboveMember) {
     const thrustPer = flow * ve;
     const massPer = engineMassFromThrust(t, thrustPer);
     totalEngineThrust += thrustPer * count;
-    totalEngineMass   += (Number.isFinite(massPer) ? massPer : 0) * count;
-    sumFlow   += flow * count;
+    totalEngineMass += (Number.isFinite(massPer) ? massPer : 0) * count;
+    sumFlow += flow * count;
     sumFlowVe += flow * ve * count;
   });
   const effectiveVe = sumFlow > 0 ? sumFlowVe / sumFlow : 0;
-
+  
   // Legs — same formula as stage (same metal as body).
   let legMass = 0;
-  if (recoveryType && recoveryType.capabilities && recoveryType.capabilities.deploysOnVehicle
-      && recoveryType.frame && typeof recoveryType.frame.structuralVolume === 'function') {
+  if (recoveryType && recoveryType.capabilities && recoveryType.capabilities.deploysOnVehicle &&
+    recoveryType.frame && typeof recoveryType.frame.structuralVolume === 'function') {
     const legCount = recoveryType.frame.legCount || 0;
     const oneLegVol = recoveryType.frame.structuralVolume(tankH, tankW);
     legMass = oneLegVol * legCount * bodyDensity;
   }
-
+  
   // ---- Interstage mass (H-0c) ----
   // Black cylinder at the booster's top, sized to cover the stage engine
   // above. Height = max(stage-above bellHeight × 1.20, 6% booster height).
@@ -1236,16 +1275,24 @@ function boosterDerivedMasses(rec, aboveMember) {
   const r_booster = tankW / 2;
   const shellThk = BODY_SHELL_FACTOR * r_booster;
   const interstageMass = 2 * Math.PI * r_booster * shellThk * interstageH_m * bodyDensity;
-
+  
   const dryMass = bodyMass + totalEngineMass + legMass + interstageMass;
   const wetMass = dryMass + fuelMass;
-
+  
   return {
-    fuelMass, bodyMass, totalEngineMass, legMass, interstageMass, interstageHeight: interstageH_m,
-    dryMass, wetMass,
-    effectiveVe, totalEngineThrust,
+    fuelMass,
+    bodyMass,
+    totalEngineMass,
+    legMass,
+    interstageMass,
+    interstageHeight: interstageH_m,
+    dryMass,
+    wetMass,
+    effectiveVe,
+    totalEngineThrust,
     tankVolume,
-    infeasible: false, warnings,
+    infeasible: false,
+    warnings,
   };
 }
 
@@ -1258,13 +1305,14 @@ function boosterDerivedMasses(rec, aboveMember) {
 // entries carry a human-readable `reasons` array.
 // ---------------------------------------------------------------------------
 function compatibleBoostersForStage(stage, fleet) {
-  const compatible = [], incompatible = [];
+  const compatible = [],
+    incompatible = [];
   if (!stage || stage.stageRole !== 'stage') return { compatible, incompatible };
-
+  
   const d = stageDerivedMasses(stage);
   const infeasible = !d || d.infeasible;
   const stageWetMass = infeasible ? null : d.totalWetMassAtMaxPayload;
-
+  
   (fleet || []).forEach(b => {
     if (!b || b.stageRole !== 'booster') return;
     const reasons = [];
@@ -1322,8 +1370,8 @@ function stackMemberOwnMass(member, aboveMember) {
   }
   
   if (member.stageRole === 'payloadSpace') {
-  return computePayloadSpaceDryMass(member);
-}
+    return computePayloadSpaceDryMass(member);
+  }
   
   const dry = Number.isFinite(member.dryMass) ? member.dryMass : 0;
   const fuel = Number.isFinite(member.fuelMassMax) ? member.fuelMassMax : 0;
@@ -1353,11 +1401,11 @@ function validateStack(members, fleet, stack) {
   fleet = fleet || loadFleet();
   const errors = [];
   const memberInfo = [];
-
+  
   if (!Array.isArray(members) || members.length === 0) {
     return { valid: false, errors: ['Stack has no members.'], stackTotalHeight: 0, stackTotalMass: 0, memberInfo: [] };
   }
-
+  
   const resolved = members.map((id, i) => {
     const rec = fleet.find(r => r.id === id);
     if (!rec) errors.push(`Member ${i + 1}: fleet record "${id}" not found.`);
@@ -1365,88 +1413,89 @@ function validateStack(members, fleet, stack) {
   });
   
   // I-c1: if this stack has a payload assigned, verify it still fits.
-if (stack && stack.payloadId) {
-  const pl = (typeof getPayload === 'function') ? getPayload(stack.payloadId) : null;
-  if (!pl) {
-    errors.push(`Payload "${stack.payloadId}" not found.`);
-  } else {
-    const check = payloadCompatibilityCheck(pl, members, fleet);
-    if (!check.ok) check.reasons.forEach(r => errors.push(`Payload: ${r}`));
-  }
-}
-
-  if (resolved[0] && resolved[0].stageRole !== 'booster') {
-  errors.push(`Bottom member must be a booster (got "${resolved[0].stageRole || 'unknown'}").`);
-}
-
-
-// SEQ-2: preset sequences enforce their exact role order. Custom
-// sequences fall through to the general rules below.
-const PRESET_ROLES = {
-  'f9-standard': ['booster', 'stage', 'payloadSpace'],
-  'f9-heavy':    ['booster', 'stage', 'stage', 'payloadSpace'],
-  'sso':         ['booster', 'payloadSpace'],
-};
-const seq = stack && stack.sequence;
-if (PRESET_ROLES[seq]) {
-  const expected = PRESET_ROLES[seq];
-  if (resolved.length !== expected.length) {
-    errors.push(`Sequence "${seq}" expects ${expected.length} members (${expected.join(' → ')}); got ${resolved.length}.`);
-  } else {
-    resolved.forEach((r, i) => {
-      if (!r) return;
-      if (r.stageRole !== expected[i]) {
-        errors.push(`Member ${i + 1} should be '${expected[i]}' for preset "${seq}" (got "${r.stageRole}").`);
-      }
-    });
-  }
-}
-
-
-const TOP = resolved.length - 1;
-resolved.forEach((r, i) => {
-  if (!r) return;
-  if (r.stageRole === 'rocket') {
-    errors.push(`Member ${i + 1}: 'rocket' role can't be part of a stack.`);
-    return;
-  }
-  if (r.stageRole === 'payloadSpace') {
-    // PS-D1: payload space is allowed ONLY as the top-most member.
-    if (i !== TOP) {
-      errors.push(`Member ${i + 1}: 'payloadSpace' must be the top-most member.`);
+  if (stack && stack.payloadId) {
+    const pl = (typeof getPayload === 'function') ? getPayload(stack.payloadId) : null;
+    if (!pl) {
+      errors.push(`Payload "${stack.payloadId}" not found.`);
+    } else {
+      const check = payloadCompatibilityCheck(pl, members, fleet);
+      if (!check.ok) check.reasons.forEach(r => errors.push(`Payload: ${r}`));
     }
-    return;
   }
-  if (i > 0 && r.stageRole !== 'stage' && r.stageRole !== 'booster' && r.stageRole !== 'nose') {
-    errors.push(`Member ${i + 1}: only 'stage' / 'booster' / 'nose' can sit above another member.`);
+  
+  if (resolved[0] && resolved[0].stageRole !== 'booster') {
+    errors.push(`Bottom member must be a booster (got "${resolved[0].stageRole || 'unknown'}").`);
   }
-});
-
+  
+  
+  // SEQ-2: preset sequences enforce their exact role order. Custom
+  // sequences fall through to the general rules below.
+  const PRESET_ROLES = {
+    'f9-standard': ['booster', 'stage', 'payloadSpace'],
+    'f9-heavy': ['booster', 'stage', 'stage', 'payloadSpace'],
+    'sso': ['booster', 'payloadSpace'],
+  };
+  const seq = stack && stack.sequence;
+  if (PRESET_ROLES[seq]) {
+    const expected = PRESET_ROLES[seq];
+    if (resolved.length !== expected.length) {
+      errors.push(`Sequence "${seq}" expects ${expected.length} members (${expected.join(' → ')}); got ${resolved.length}.`);
+    } else {
+      resolved.forEach((r, i) => {
+        if (!r) return;
+        if (r.stageRole !== expected[i]) {
+          errors.push(`Member ${i + 1} should be '${expected[i]}' for preset "${seq}" (got "${r.stageRole}").`);
+        }
+      });
+    }
+  }
+  
+  
+  const TOP = resolved.length - 1;
+  resolved.forEach((r, i) => {
+    if (!r) return;
+    if (r.stageRole === 'rocket') {
+      errors.push(`Member ${i + 1}: 'rocket' role can't be part of a stack.`);
+      return;
+    }
+    if (r.stageRole === 'payloadSpace') {
+      // PS-D1: payload space is allowed ONLY as the top-most member.
+      if (i !== TOP) {
+        errors.push(`Member ${i + 1}: 'payloadSpace' must be the top-most member.`);
+      }
+      return;
+    }
+    if (i > 0 && r.stageRole !== 'stage' && r.stageRole !== 'booster' && r.stageRole !== 'nose') {
+      errors.push(`Member ${i + 1}: only 'stage' / 'booster' / 'nose' can sit above another member.`);
+    }
+  });
+  
   const ownMasses = resolved.map((r, i) => r ? stackMemberOwnMass(r, resolved[i + 1] || null) : NaN);
   const loadAbove = new Array(resolved.length).fill(0);
   for (let i = resolved.length - 2; i >= 0; i--) {
     loadAbove[i] = loadAbove[i + 1] + (Number.isFinite(ownMasses[i + 1]) ? ownMasses[i + 1] : 0);
   }
-
+  
   for (let i = 0; i < resolved.length - 1; i++) {
-    const lower = resolved[i], upper = resolved[i + 1];
+    const lower = resolved[i],
+      upper = resolved[i + 1];
     if (!lower || !upper) continue;
-
+    
     // PS-D1 fix: for a payloadSpace (fairing), the BASE diameter (capWidth)
-// is what must fit the member below — the bulge overhangs by design.
-// Comparing the record's stored `width` (which is bulgeWidth for bulged
-// shapes) would wrongly reject a correctly-designed fairing.
-let upperWidth = upper.width;
-if (upper.stageRole === 'payloadSpace' && upper.params &&
-  Number.isFinite(upper.params.capWidth)) {
-  upperWidth = upper.params.capWidth;
-}
-
-const widthOk = upperWidth <= lower.width;
-if (!widthOk) {
-  errors.push(`Width: "${upper.name}" base (${upperWidth} m) > "${lower.name}" (${lower.width} m).`);
-}
-
+    // is what must fit the member below — the bulge overhangs by design.
+    // Comparing the record's stored `width` (which is bulgeWidth for bulged
+    // shapes) would wrongly reject a correctly-designed fairing.
+    let upperWidth = upper.width;
+    if (upper.stageRole === 'payloadSpace' && upper.params &&
+      Number.isFinite(upper.params.capWidth)) {
+      upperWidth = upper.params.capWidth;
+    }
+    
+    const widthOk = upperWidth <= lower.width;
+    if (!widthOk) {
+      errors.push(`Width: "${upper.name}" base (${upperWidth} m) > "${lower.name}" (${lower.width} m).`);
+    }
+    
     const cap = Number.isFinite(lower.maxExtraWeightKg) ? lower.maxExtraWeightKg : 0;
     const load = loadAbove[i];
     const loadOk = Number.isFinite(load) && load <= cap;
@@ -1461,10 +1510,10 @@ if (!widthOk) {
       memberInfo.push({ record: top, ownMass: ownMasses[resolved.length - 1], loadAbove: 0, widthOk: true, loadOk: true });
     }
   }
-
+  
   const stackTotalHeight = resolved.reduce((s, r) => s + ((r && Number.isFinite(r.height)) ? r.height : 0), 0);
   let stackTotalMass = ownMasses.reduce((s, m) => s + (Number.isFinite(m) ? m : 0), 0);
-
+  
   // Real assigned cargo (if any) rides on top of every member's own mass —
   // the same number the live sim actually flies with (_bodyPayloadMass() in
   // physics.js). Without this, stackTotalMass only reflected empty hardware
@@ -1473,7 +1522,7 @@ if (!widthOk) {
     const pl = getPayload(stack.payloadId);
     if (pl && Number.isFinite(pl.mass)) stackTotalMass += pl.mass;
   }
-
+  
   return {
     valid: errors.length === 0,
     errors,
@@ -1492,7 +1541,8 @@ function computeNoseDryMass(rec) {
   const metal = getComponentType(rec.bodyMetalTypeId);
   if (!metal) return 0;
   const density = metal.parameterSchema.find(p => p.key === 'density').value;
-  const H = rec.height || 0, W = rec.width || 0;
+  const H = rec.height || 0,
+    W = rec.width || 0;
   const coneVolume = (1 / 3) * Math.PI * Math.pow(W / 2, 2) * H;
   return coneVolume * BODY_SHELL_FACTOR * density;
 }
@@ -1512,9 +1562,9 @@ function computePayloadSpaceDryMass(rec) {
   const capH = Number.isFinite(p.capHeight) ? p.capHeight : 0;
   const capW = Number.isFinite(p.capWidth) ? p.capWidth : (rec.width || 0);
   const bulgeW = Number.isFinite(p.bulgeWidth) ? p.bulgeWidth : null;
-  const vol = (type.kind === 'bulgedCapShape' && bulgeW !== null)
-    ? type.frame.structuralVolume(capH, capW, bulgeW)
-    : type.frame.structuralVolume(capH, capW);
+  const vol = (type.kind === 'bulgedCapShape' && bulgeW !== null) ?
+    type.frame.structuralVolume(capH, capW, bulgeW) :
+    type.frame.structuralVolume(capH, capW);
   return vol * density;
 }
 
@@ -1582,8 +1632,8 @@ function backfillThrusterRecords(rec, defaults) {
     const seedVe = (rec.params && rec.params.engineVe) || 2900;
     const seedFMax = (rec.params && rec.params.engineFMax) || 600000;
     const seedFlow = seedVe > 0 ? seedFMax / seedVe : 207;
-    const seedType = (defaults && defaults.engineThrusters && defaults.engineThrusters.gimbal)
-      ? defaults.engineThrusters.gimbal.thrusterTypeId : 'merlin-1d-class';
+    const seedType = (defaults && defaults.engineThrusters && defaults.engineThrusters.gimbal) ?
+      defaults.engineThrusters.gimbal.thrusterTypeId : 'merlin-1d-class';
     rec.engineThrusters = {};
     Object.keys(groups).forEach(gk => {
       rec.engineThrusters[gk] = { thrusterTypeId: seedType, massFlowRate: seedFlow };
@@ -1618,10 +1668,14 @@ function bridgePerfParams(rec) {
   if (!engineType) return;
   const groups = engineThrusterGroups(engineType);
   if (!rec.params) rec.params = {};
-
-  let totalThrust = 0, totalEngines = 0, sumFlowVe = 0, sumFlow = 0;
-  let gimbalThruster = null, gimbalFlow = 0;
-
+  
+  let totalThrust = 0,
+    totalEngines = 0,
+    sumFlowVe = 0,
+    sumFlow = 0;
+  let gimbalThruster = null,
+    gimbalFlow = 0;
+  
   Object.keys(groups).forEach(gk => {
     const slots = groups[gk];
     const g = rec.engineThrusters[gk];
@@ -1636,9 +1690,10 @@ function bridgePerfParams(rec) {
     totalEngines += slots.length;
     sumFlowVe += g.massFlowRate * ve * slots.length;
     sumFlow += g.massFlowRate * slots.length;
-    if (gk === 'gimbal') { gimbalThruster = t; gimbalFlow = g.massFlowRate; }
+    if (gk === 'gimbal') { gimbalThruster = t;
+      gimbalFlow = g.massFlowRate; }
   });
-
+  
   if (totalEngines > 0) {
     rec.params.engineFMax = totalThrust / totalEngines;
     rec.params.engineVe = sumFlow > 0 ? sumFlowVe / sumFlow : rec.params.engineVe;
@@ -1704,9 +1759,9 @@ function blankPayloadData() {
   return {
     id: null,
     name: 'New Payload',
-    mass: 500,        // kg
-    height: 2,        // m
-    width: 1.5,       // m
+    mass: 500, // kg
+    height: 2, // m
+    width: 1.5, // m
     dragCd: 0.3,
   };
 }
@@ -1746,7 +1801,8 @@ function deletePayload(id) {
   const fleet = loadFleet();
   let touched = false;
   fleet.forEach(r => {
-    if (r.payloadId === id) { r.payloadId = null; touched = true; }
+    if (r.payloadId === id) { r.payloadId = null;
+      touched = true; }
   });
   if (touched) saveFleet(fleet);
   return true;

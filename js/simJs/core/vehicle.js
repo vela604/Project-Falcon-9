@@ -32,11 +32,19 @@ function buildEnginesForRecord(rec) {
     const minFracEnt = t.parameterSchema.find(p => p.key === 'minThrottleFrac');
     const minFrac = minFracEnt ? minFracEnt.value : 0.4;
     engines.push({
-      id: slot.id, angleDeg: slot.angleDeg, x: pos.x,
-      isCenter: slot.role === 'center', gimbal: slot.gimbalCapable,
-      Fmax, Fmin: Fmax * minFrac, Ve: ve,
-      throttle: 0, targetThrottle: 0,
-      gimbalDeg: 0, targetGimbalDeg: 0, currentF: 0,
+      id: slot.id,
+      angleDeg: slot.angleDeg,
+      x: pos.x,
+      isCenter: slot.role === 'center',
+      gimbal: slot.gimbalCapable,
+      Fmax,
+      Fmin: Fmax * minFrac,
+      Ve: ve,
+      throttle: 0,
+      targetThrottle: 0,
+      gimbalDeg: 0,
+      targetGimbalDeg: 0,
+      currentF: 0,
     });
   });
   return engines;
@@ -85,7 +93,8 @@ function defaultPairGroups() {
   const slotById = {};
   layout.frame.slots.forEach(s => { slotById[s.id] = s; });
   return layout.frame.mergeTopology.symmetric.map(([idA, idB]) => {
-    const a = slotById[idA], b = slotById[idB];
+    const a = slotById[idA],
+      b = slotById[idB];
     return { name: `${Math.round(a.angleDeg)}°/${Math.round(b.angleDeg)}°`, angles: [a.angleDeg, b.angleDeg] };
   });
 }
@@ -109,7 +118,7 @@ function mergeGroups(groupNameA, groupNameB) {
   const a = mergeState.groups.find(g => g.name === groupNameA);
   const b = mergeState.groups.find(g => g.name === groupNameB);
   if (!a || !b || a === b) return false;
-
+  
   if (mergeState.mode === 'asymmetric') {
     const xa = getEngine(a.angles[0]).x;
     const xb = getEngine(b.angles[0]).x;
@@ -118,7 +127,7 @@ function mergeGroups(groupNameA, groupNameB) {
       return false;
     }
   }
-
+  
   const merged = { name: a.name + '+' + b.name, angles: [...a.angles, ...b.angles] };
   mergeState.groups = mergeState.groups.filter(g => g !== a && g !== b);
   mergeState.groups.push(merged);
@@ -133,11 +142,11 @@ function resetMerges() {
 // Mass properties (fuel-depletion dependent, recomputed every tick)
 // ---------------------------------------------------------------------------
 function computeCoM(fuelMass, totalMass, H) {
-  const fuelCentroid = 0.275 * H;   // propellant occupies the lower ~55% of the airframe
-  const dryCentroid = 0.5 * H;      // dry structure approximated as a uniform rod
+  const fuelCentroid = 0.275 * H; // propellant occupies the lower ~55% of the airframe
+  const dryCentroid = 0.5 * H; // dry structure approximated as a uniform rod
   return (fuelMass * fuelCentroid + (totalMass - fuelMass) * dryCentroid) / totalMass;
 }
 
 function momentOfInertia(mass, H, W) {
-  return mass * (H * H + W * W) / 12;   // uniform rod approximation
+  return mass * (H * H + W * W) / 12; // uniform rod approximation
 }
