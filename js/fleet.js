@@ -288,7 +288,7 @@ function defaultVehicleData() {
       rcsThrust: 1100,
       rcsVe: 2200,
       rcsXOffset: 1.95,
-      rcsTopY: 42,
+      rcsTopY: 35,
       rcsBottomY: 3,
       rcsPwmPeriod: 0.3,
     },
