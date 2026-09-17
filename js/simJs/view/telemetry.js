@@ -164,19 +164,33 @@ function updateTelemetry() {
   
   const bodyListEl = getEl('t-bodyList');
   if (bodyListEl) {
-    const visible = state.bodies
-      .map((b, i) => ({ b, i }))
-      .filter(({ b }) => b.members && b.members.length > 0);
+    // Show every body that has physical state worth reporting — including
+// released payloads and split fairing halves. Previously only bodies with
+// `members` (stack-based ones) were listed, so once a payload separated
+// it vanished from telemetry even though it kept its own pos/velocity.
+const visible = state.bodies
+  .map((b, i) => ({ b, i }))
+  .filter(({ b }) => (b.members && b.members.length > 0) || b.payloadBody || b.fairingHalf);
     
     const rows = visible.map(({ b, i }) => {
       const r = Math.hypot(b.rx, b.ry);
       const alt = altitudeFromR(r) - (CONFIG.LAUNCH_SITE_ALTITUDE || 0);
       const isAct = (i === state.activeBodyIndex);
-      const cls = 'tele-body-block' +
-        (isAct ? ' active' : '') +
-        (b.crashed ? ' crashed' : '') +
-        (b.isDiscarded ? ' discarded' : '');
-      const tag = isAct ? 'A' : ('D' + i);
+const isFollowed = (i === _cameraTargetIndex());
+const cls = 'tele-body-block' +
+  (isAct ? ' active' : '') +
+  (isFollowed && !isAct ? ' followed' : '') +
+  (b.crashed ? ' crashed' : '') +
+  (b.isDiscarded ? ' discarded' : '');
+
+// Short tag so the tiny row label tells you at a glance which body
+// this is: A=active, P=payload, F=fairing, B=booster/stage, D=discarded.
+let tag;
+if (isAct) tag = 'A';
+else if (b.payloadBody) tag = 'P';
+else if (b.fairingHalf) tag = 'F';
+else if (b.members && b.members.length) tag = 'B' + i;
+else tag = 'D' + i;
       
       // Pairwise: relative to the OTHER visible body.
       const other = visible.find(v => v.i !== i);
@@ -342,13 +356,33 @@ function figMemberMechanics(members, body, aero) {
 }
 
 function drawFigurePanel() {
-  if (!figCtx) return;
-  const dpr = window.devicePixelRatio || 1;
-  const w = figCanvas.width / dpr;
-  const h = figCanvas.height / dpr;
+  if (!figCanvas || !figCtx) return;
+  
+  // Re-derive the CSS↔buffer scale EVERY frame. The canvas backing buffer
+  // is DPR-scaled (2×, 3× on retina); layout code below is written in CSS
+  // pixels, so the ctx transform must map CSS → buffer. Reading clientWidth
+  // vs width each frame also self-heals if the browser zoom, DPR, or layout
+  // changed since init — a fix that isn't needed on desktop but does bite
+  // on mobile emulators and window drags.
+  const cssW = figCanvas.clientWidth || 260;
+  const cssH = figCanvas.clientHeight || 220;
+  const bufW = figCanvas.width;
+  const bufH = figCanvas.height;
+  const scaleX = bufW / cssW;
+  const scaleY = bufH / cssH;
+  
+  figCtx.setTransform(scaleX, 0, 0, scaleY, 0, 0);
+  
+  // w, h now in CSS pixels — same units the layout math was originally
+  // written for.
+  const w = cssW;
+  const h = cssH;
   figCtx.clearRect(0, 0, w, h);
   
-  const body = state.bodies[state.activeBodyIndex];
+  const followIdx = (typeof _cameraTargetIndex === 'function') ?
+    _cameraTargetIndex() :
+    state.activeBodyIndex;
+  const body = state.bodies[followIdx];
   const members = (body && body.members) ? body.members : [];
   
   if (!members.length) {
@@ -415,71 +449,84 @@ function drawFigurePanel() {
     }
   }
   
-  // ---- Every member's real artwork, bottom → top (identical opts shape to
-  // render.js's live stack draw, so the panel is the literal same vehicle) ----
-  let yOffsetPx = 0;
-  members.forEach((m, idx) => {
-    const memberAbove = members[idx + 1] || null;
-    let stageAboveBellHeight = 0;
-    if (memberAbove && memberAbove.engineTypeId && typeof getComponentType === 'function') {
-      const layoutAbove = getComponentType(memberAbove.engineTypeId);
-      if (layoutAbove && layoutAbove.frame && layoutAbove.frame.slots) {
-        const groups = (typeof engineThrusterGroups === 'function') ? engineThrusterGroups(layoutAbove) : {};
-        let totalFlow = 0;
-        Object.keys(groups).forEach(gk => {
-          const g = memberAbove.engineThrusters && memberAbove.engineThrusters[gk];
-          if (!g || !Number.isFinite(g.massFlowRate)) return;
-          totalFlow += g.massFlowRate * groups[gk].length;
-        });
-        const perEngine = totalFlow / layoutAbove.frame.slots.length;
-        stageAboveBellHeight = 0.007 * perEngine;
-      }
+ // Every member drawn with the SAME real artwork the main flight canvas
+// uses (drawRocketArt, loaded via rocketArt.js). This is why the panel
+// now reads as the literal same vehicle instead of a schematic — legs,
+// RCS pods, engine bells, checkerboard, everything.
+//
+// Each member is drawn in its own translate frame (base at local 0,
+// +Y up-stack in member's own coordinates — matches drawRocketArt's
+// convention), then the panel's cumulative height offset is applied so
+// the stack builds up from the bottom.
+let yOffsetPx = 0;
+members.forEach((m, idx) => {
+  const memberAbove = members[idx + 1] || null;
+  let stageAboveBellHeight = 0;
+  if (memberAbove && memberAbove.engineTypeId && typeof getComponentType === 'function') {
+    const layoutAbove = getComponentType(memberAbove.engineTypeId);
+    if (layoutAbove && layoutAbove.frame && layoutAbove.frame.slots) {
+      const groups = (typeof engineThrusterGroups === 'function') ? engineThrusterGroups(layoutAbove) : {};
+      let totalFlow = 0;
+      Object.keys(groups).forEach(gk => {
+        const g = memberAbove.engineThrusters && memberAbove.engineThrusters[gk];
+        if (!g || !Number.isFinite(g.massFlowRate)) return;
+        totalFlow += g.massFlowRate * groups[gk].length;
+      });
+      const perEngine = totalFlow / layoutAbove.frame.slots.length;
+      stageAboveBellHeight = 0.007 * perEngine;
     }
-    
-    const mH = (m.height || 0) / mpp;
-    const mW = (m.width || 1) / mpp;
-    const recType = (m.hasRecovery === false) ? null :
-      ((m.recoveryTypeId && typeof getComponentType === 'function') ? getComponentType(m.recoveryTypeId) : null);
-    const rcsT = (m.rcsTypeId && typeof getComponentType === 'function') ? getComponentType(m.rcsTypeId) : null;
-    const engineLayout = (m.engineTypeId && typeof getComponentType === 'function') ? getComponentType(m.engineTypeId) : null;
-    
-    const psType = (m.stageRole === 'payloadSpace' && m.payloadSpaceTypeId && typeof getComponentType === 'function') ?
-      getComponentType(m.payloadSpaceTypeId) : null;
-    const psParams = m.params || {};
-    const payloadOpts = (m.stageRole === 'payloadSpace') ? {
-      payloadKind: psType ? psType.kind : undefined,
-      payloadCapWidth: Number.isFinite(psParams.capWidth) ? psParams.capWidth : undefined,
-      payloadBulgeWidth: Number.isFinite(psParams.bulgeWidth) ? psParams.bulgeWidth : undefined,
-      payloadFrustumAngleDeg: Number.isFinite(psParams.frustumSlantDeg) ? psParams.frustumSlantDeg : undefined,
-      payloadCurveRatio: Number.isFinite(psParams.curveHeightFactor) ? psParams.curveHeightFactor : undefined,
-      payloadColor: m.color || '#e9edf2',
-    } : {};
-    
-    figCtx.save();
-    figCtx.translate(baseX, baseY - yOffsetPx);
-    drawRocketArt(figCtx, mW, mH, mpp, {
-      legsProgress: (idx === 0 && body.isActive) ? legs.progress : 0,
-      legsState: null, // schematic — doesn't need to feed foot positions back anywhere
-      firing: (body.lastRcs && body.lastRcs.firing) || {},
-      pod: (body.lastRcs && body.lastRcs.pod) || {},
-      rcsTopY: m.params ? m.params.rcsTopY : undefined,
-      rcsBottomY: m.params ? m.params.rcsBottomY : undefined,
-      recoveryType: recType,
-      rcsType: rcsT,
-      stageRole: m.stageRole,
-      noseCurveness: m.noseCurveness,
-      bodyDesign: m.bodyDesign,
-      payloadSpaceColor: (m.payloadSpace && m.payloadSpace.color) ? m.payloadSpace.color : undefined,
-      stagePayload: (typeof buildStagePayload === 'function') ? buildStagePayload(m) : null,
-      engineLayout: engineLayout,
-      engineThrusters: m.engineThrusters,
-      params: m.params,
-      stageAboveBellHeight: stageAboveBellHeight,
-      ...payloadOpts,
-    });
-    figCtx.restore();
-    yOffsetPx += mH;
+  }
+  
+  const mH = (m.height || 0) / mpp;
+  const mW = (m.width || 1) / mpp;
+  
+  const recType = (m.hasRecovery === false) ? null :
+    ((m.recoveryTypeId && typeof getComponentType === 'function') ?
+      getComponentType(m.recoveryTypeId) : null);
+  const rcsT = (m.rcsTypeId && typeof getComponentType === 'function') ?
+    getComponentType(m.rcsTypeId) : null;
+  const engineLayout = (m.engineTypeId && typeof getComponentType === 'function') ?
+    getComponentType(m.engineTypeId) : null;
+  
+  // PS-D2 fairing options, same as render.js.
+  const psType = (m.stageRole === 'payloadSpace' && m.payloadSpaceTypeId && typeof getComponentType === 'function') ?
+    getComponentType(m.payloadSpaceTypeId) : null;
+  const psParams = m.params || {};
+  const payloadOpts = (m.stageRole === 'payloadSpace') ? {
+    payloadKind: psType ? psType.kind : undefined,
+    payloadCapWidth: Number.isFinite(psParams.capWidth) ? psParams.capWidth : undefined,
+    payloadBulgeWidth: Number.isFinite(psParams.bulgeWidth) ? psParams.bulgeWidth : undefined,
+    payloadFrustumAngleDeg: Number.isFinite(psParams.frustumSlantDeg) ? psParams.frustumSlantDeg : undefined,
+    payloadCurveRatio: Number.isFinite(psParams.curveHeightFactor) ? psParams.curveHeightFactor : undefined,
+    payloadColor: m.color || '#e9edf2',
+  } : {};
+  
+  figCtx.save();
+  figCtx.translate(baseX, baseY - yOffsetPx);
+  drawRocketArt(figCtx, mW, mH, mpp, {
+    legsProgress: (idx === 0 && body.isActive) ? legs.progress : 0,
+    legsState: null,
+    firing: (body.lastRcs && body.lastRcs.firing) || {},
+    pod: (body.lastRcs && body.lastRcs.pod) || {},
+    rcsTopY: m.params ? m.params.rcsTopY : undefined,
+    rcsBottomY: m.params ? m.params.rcsBottomY : undefined,
+    recoveryType: recType,
+    rcsType: rcsT,
+    stageRole: m.stageRole,
+    noseCurveness: m.noseCurveness,
+    bodyDesign: m.bodyDesign,
+    payloadSpaceColor: (m.payloadSpace && m.payloadSpace.color) ? m.payloadSpace.color : undefined,
+    stagePayload: (typeof buildStagePayload === 'function') ? buildStagePayload(m) : null,
+    engineLayout: engineLayout,
+    engineThrusters: m.engineThrusters,
+    params: m.params,
+    stageAboveBellHeight: stageAboveBellHeight,
+    ...payloadOpts,
   });
+  figCtx.restore();
+  
+  yOffsetPx += mH;
+});
   
   // ---- Shared aero snapshot: ONE relative wind, ONE angle of attack for
   // the whole connected body — each member just gets its own share/point. ----
@@ -621,7 +668,13 @@ function drawFigurePanel() {
 // "Take Control" onto one of these never leaves the panel blank.
 // ---------------------------------------------------------------------------
 function drawFigurePanelFallback(body, w, h) {
-  const fallbackRec = (body && body.payloadBody && body.payloadBody.record) || null;
+  // Body's physical extents come from whichever record it carries:
+  // released payload → payloadBody.record, split fairing half →
+  // fairingHalf.record, otherwise the body's own h/w or CONFIG defaults.
+  const fallbackRec =
+    (body && body.payloadBody && body.payloadBody.record) ||
+    (body && body.fairingHalf && body.fairingHalf.record) ||
+    null;
   const H_m = Number.isFinite(body && body.height) ? body.height :
     (fallbackRec && Number.isFinite(fallbackRec.height)) ? fallbackRec.height :
     (CONFIG.ROCKET_HEIGHT || 45);
@@ -635,18 +688,51 @@ function drawFigurePanelFallback(body, w, h) {
   const W = W_m * scale,
     H = H_m * scale;
   
-  figCtx.fillStyle = 'rgba(13,20,36,0.5)';
-  figCtx.strokeStyle = '#35d6ff';
-  figCtx.lineWidth = 1.4;
+  // Real artwork, not the schematic capsule. Dispatch on what the body
+// actually carries:
+//   - payloadBody.record     → the released payload's own satellite art
+//   - fairingHalf.record     → the fairing (payloadSpace) silhouette
+//   - neither                → nothing to draw (empty-bodied core, e.g.
+//                              after fairing split leaves no members)
+//
+// `scale` in this function is meters-per-pixel — exactly what
+// drawRocketArt() wants for its `mpp` argument.
+if (body && body.payloadBody && body.payloadBody.record) {
+  figCtx.save();
+  figCtx.translate(baseX, baseY);
+  drawPayloadArt(figCtx, W, H);
+  figCtx.restore();
+} else if (body && body.fairingHalf && body.fairingHalf.record) {
+  const rec = body.fairingHalf.record;
+  const side = body.fairingHalf.side; // +1 = right half, -1 = left half
+  const psType = (rec.payloadSpaceTypeId && typeof getComponentType === 'function') ?
+    getComponentType(rec.payloadSpaceTypeId) : null;
+  const psParams = rec.params || {};
+  
+  figCtx.save();
+  figCtx.translate(baseX, baseY);
+  
+  // Clip to ONE lateral half — same convention as render.js's
+  // drawBodyRocket() fairing path. Without this, the full fairing
+  // silhouette (both halves) was drawn on each of the two half bodies,
+  // so a split fairing showed two full fairings instead of two halves.
   figCtx.beginPath();
-  figCtx.moveTo(baseX - W / 2, baseY);
-  figCtx.lineTo(baseX - W / 2, baseY - H * 0.85);
-  figCtx.quadraticCurveTo(baseX - W / 2, baseY - H, baseX, baseY - H);
-  figCtx.quadraticCurveTo(baseX + W / 2, baseY - H, baseX + W / 2, baseY - H * 0.85);
-  figCtx.lineTo(baseX + W / 2, baseY);
-  figCtx.closePath();
-  figCtx.fill();
-  figCtx.stroke();
+  if (side > 0) figCtx.rect(0, -H * 2, W * 2, H * 4);
+  else figCtx.rect(-W * 2, -H * 2, W * 2, H * 4);
+  figCtx.clip();
+  
+  drawRocketArt(figCtx, W, H, 1 / scale, {
+    stageRole: 'payloadSpace',
+    payloadKind: psType ? psType.kind : undefined,
+    payloadCapWidth: Number.isFinite(psParams.capWidth) ? psParams.capWidth : undefined,
+    payloadBulgeWidth: Number.isFinite(psParams.bulgeWidth) ? psParams.bulgeWidth : undefined,
+    payloadFrustumAngleDeg: Number.isFinite(psParams.frustumSlantDeg) ? psParams.frustumSlantDeg : undefined,
+    payloadCurveRatio: Number.isFinite(psParams.curveHeightFactor) ? psParams.curveHeightFactor : undefined,
+    payloadColor: rec.color || '#e9edf2',
+  });
+  figCtx.restore();
+}
+// else: no members, no payload record, no fairing record — nothing to draw.
   
   if (!body) return;
   
@@ -724,6 +810,36 @@ function drawBasalView() {
     cy = h / 2,
     R = Math.min(w, h) * 0.34;
   
+  // Basal view = engines of the CURRENTLY-FOLLOWED body, not always the
+  // active one. When you pick a payload / fairing half in the follow
+  // dropdown, that body has no engines — show a placeholder rather than
+  // drawing the stack's engines (which belong to a different body).
+  const followIdx = (typeof _cameraTargetIndex === 'function')
+    ? _cameraTargetIndex()
+    : state.activeBodyIndex;
+  const followBody = state.bodies[followIdx];
+  const bodyEngines = (followBody && followBody.engines) ? followBody.engines : [];
+  
+  if (!bodyEngines.length) {
+    // Placeholder — no engine cluster to show for this body.
+    basalCtx.fillStyle = 'rgba(13,20,36,0.4)';
+    basalCtx.strokeStyle = 'rgba(255,255,255,0.25)';
+    basalCtx.lineWidth = 1.5;
+    basalCtx.beginPath();
+    basalCtx.arc(cx, cy, R * 1.40, 0, Math.PI * 2);
+    basalCtx.fill();
+    basalCtx.stroke();
+    
+    basalCtx.fillStyle = 'rgba(150,170,200,0.65)';
+    basalCtx.font = '12px "JetBrains Mono", monospace';
+    basalCtx.textAlign = 'center';
+    basalCtx.textBaseline = 'middle';
+    basalCtx.fillText('(no engines)', cx, cy);
+    basalCtx.textAlign = 'left';
+    basalCtx.textBaseline = 'alphabetic';
+    return;
+  }
+  
   // Outer frame ring — solid white (was cyan).
   basalCtx.fillStyle = 'rgba(13,20,36,0.4)';
   basalCtx.strokeStyle = '#ffffff';
@@ -733,7 +849,7 @@ function drawBasalView() {
   basalCtx.fill();
   basalCtx.stroke();
   
-  ENGINES.forEach(e => {
+  bodyEngines.forEach(e => {
     let ex, ey;
     if (e.isCenter) { ex = cx;
       ey = cy; }

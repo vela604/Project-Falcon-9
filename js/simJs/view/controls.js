@@ -223,7 +223,12 @@ function refreshFollowBodySelect() {
   if (!sel) return;
   const current = sel.value;
   sel.innerHTML = state.bodies.map((b, i) => {
-    const label = b.isActive ? 'Active' : ('Discarded ' + i);
+    let label;
+    if (b.isActive) label = 'Active';
+    else if (b.payloadBody && b.payloadBody.record) label = 'Payload: ' + b.payloadBody.record.name;
+    else if (b.fairingHalf && b.fairingHalf.record) label = 'Fairing ' + (b.fairingHalf.side > 0 ? 'R' : 'L');
+    else if (b.members && b.members.length && b.members[0].name) label = b.members[0].name;
+    else label = 'Body ' + i;
     return `<option value="${i}">${label}</option>`;
   }).join('');
   if (sel.querySelector(`option[value="${current}"]`)) sel.value = current;
@@ -375,10 +380,23 @@ function canTakeControlNow() {
 // landing burn has slowed it down). Stowing is never restricted.
 function legDeploySafety() {
   const r = Math.hypot(state.rx, state.ry);
+  // A crashed body can't deploy or stow anything meaningful — its state
+// is frozen by the halt system anyway. Treat as permanently blocked.
+if (state.crashed) return { ok: false, ascending: false, tooFast: false };
   const ux = state.rx / r,
     uy = state.ry / r; // local "up" (radial) unit vector
   const vr = state.vx * ux + state.vy * uy; // + = ascending, - = descending
-  const speed = Math.hypot(state.vx, state.vy);
+  
+  // Ground-relative speed for the deploy-speed check: subtract Earth's
+  // tangential rotation velocity at this position (~464 m/s at the
+  // equator), same helper computeDragAero() already uses for atmosphere.
+  // Without this, a rocket sitting still relative to the ground was being
+  // measured at ~464 m/s inertial and instantly tripping "too fast".
+  const sv = earthSurfaceVelocity(state.rx, state.ry);
+  const relVx = state.vx - sv.vx;
+  const relVy = state.vy - sv.vy;
+  const speed = Math.hypot(relVx, relVy);
+  
   const ascending = vr > 0.5; // small tolerance so sitting on the pad doesn't trip this
   const tooFast = speed > CONFIG.LEG_DEPLOY_MAX_SPEED;
   return { ok: !ascending && !tooFast, ascending, tooFast };

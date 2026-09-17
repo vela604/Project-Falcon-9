@@ -368,9 +368,17 @@ function drawRocketArt(ctx, W, H, mpp, opts) {
   }
   
   // ---- Legs setup ----
-  const recoveryType = ('recoveryType' in opts) ?
-    opts.recoveryType :
-    ((typeof CONFIG !== 'undefined') ? CONFIG.RECOVERY_TYPE : null);
+  // No implicit fallback to CONFIG.RECOVERY_TYPE. Callers must pass
+// recoveryType explicitly if they want legs drawn — otherwise default
+// to null (no legs). The old fallback meant any caller that omitted the
+// field silently got the ACTIVE stack's recovery hardware drawn on it,
+// which is why fairing halves / payloads showed phantom legs during
+// descent. Every caller that actually owns legs (member loop in
+// render.js, renderVehiclePreview, renderStackPreview, figure-panel
+// member loop) passes it explicitly.
+const recoveryType = ('recoveryType' in opts) ? opts.recoveryType : null;
+
+
   const showLegs = !!(recoveryType && recoveryType.capabilities && recoveryType.capabilities.deploysOnVehicle);
   const hingeGeometryFn = (recoveryType && recoveryType.frame && typeof recoveryType.frame.hingeGeometry === 'function') ?
     recoveryType.frame.hingeGeometry :
@@ -974,9 +982,11 @@ function drawRocketArt(ctx, W, H, mpp, opts) {
   const rcsTopMargin = opts.rcsTopMargin !== undefined ? opts.rcsTopMargin : ((typeof CONFIG !== 'undefined') ? CONFIG.RCS_TOP_MARGIN : 0);
   const rcsBottomMargin = opts.rcsBottomMargin !== undefined ? opts.rcsBottomMargin : ((typeof CONFIG !== 'undefined') ? CONFIG.RCS_BOTTOM_MARGIN : 0);
   
-  const rcsType = ('rcsType' in opts) ?
-    opts.rcsType :
-    ((typeof CONFIG !== 'undefined') ? CONFIG.RCS_TYPE : null);
+  // Same reasoning as recoveryType above — no implicit CONFIG fallback.
+// A fairing half has no RCS pods; only stack members and previews that
+// explicitly pass rcsType should get them.
+const rcsType = ('rcsType' in opts) ? opts.rcsType : null;
+
   const podDefs = (rcsType && rcsType.kind === 'cornerPods' && rcsType.frame && rcsType.frame.pods) ? rcsType.frame.pods : [];
   if (rcsType && rcsType.kind !== 'cornerPods' && podDefs.length === 0) {
     console.warn(`drawRocketArt: RCS type "${rcsType.id}" (kind "${rcsType.kind}") has no matching pod artwork yet — RCS pods skipped this frame.`);

@@ -1,5 +1,14 @@
 // ============================================================================
 // render.worker.js — canvas rendering on its own thread.
+//
+// OPTIMIZATION #1 (Step 4): the main thread no longer clones the full
+// bodies/engines object graph to this worker every tick. On a normal tick
+// (no separation/fairing-split/payload-release this frame) it only sends a
+// transferred Float64Array of hot numeric fields (`hotBuffer`), which we
+// decode into the SAME body objects we already have (mutated in place —
+// see stateBuffer.js). `bodies` only arrives, as a full clone, on the rare
+// tick where the body count actually changed (a structural event) — that's
+// the only time this worker needs new object shapes/engine lists/ids/flags.
 // ============================================================================
 
 if (typeof localStorage === 'undefined') {
@@ -48,6 +57,7 @@ self.onmessage = (e) => {
       '../core/rcs.js',
       '../core/physics.js',
       '../core/trajectoryMath.js',
+      '../core/stateBuffer.js',
       '../view/rocketArt.js',
       '../view/predictedTrajectory.js',
       '../view/render.js'
@@ -132,7 +142,30 @@ self.onmessage = (e) => {
       else if (!showTrajectory) state.trajectory = null; // ← ye add karo
       state.separationFlash = msg.data.separationFlash;
       state.lastPayloadRelease = msg.data.lastPayloadRelease;
-      state.bodies = msg.data.bodies;
+
+      if (msg.data.bodies) {
+        // Structural sync — a body was added/removed this tick (separation,
+        // fairing split, payload release) or this is the very first state
+        // message. Full replace: new shapes/ids/engine lists/flags.
+        state.bodies = msg.data.bodies;
+      } else if (msg.data.hotBuffer && state.bodies && state.bodies.length) {
+        const hotArr = new Float64Array(msg.data.hotBuffer);
+        decodeHotState(hotArr, state.bodies);
+
+        // RCS puff fix — apply the separately-sent rcsCmd/lastRcs onto the
+        // same body objects (mutate in place, matching decodeHotState's pattern).
+        if (msg.data.rcsSync) {
+          msg.data.rcsSync.forEach((rc, i) => {
+            const b = state.bodies[i];
+            if (b) { b.rcsCmd = rc.rcsCmd; b.lastRcs = rc.lastRcs; }
+          });
+        }
+
+        self.postMessage({ type: 'returnRenderHotBuffer', buffer: hotArr.buffer }, [hotArr.buffer]);
+      }
+      // else: hotBuffer arrived but we have no bodies yet to decode into
+      // (shouldn't happen — the first-ever 'state' message always carries
+      // `bodies`) — safely ignored rather than throwing.
       break;
     }
     case 'camera': {
@@ -144,7 +177,6 @@ self.onmessage = (e) => {
       showVectors = msg.showVectors;
       showTrajectory = msg.showTrajectory;
       trajectoryMode = msg.trajectoryMode;
-      break;
     }
   }
 };

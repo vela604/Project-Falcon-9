@@ -277,6 +277,47 @@ function frame(ts) {
   updateTelemetry();
   updateStatusBar();
   updateFuelAvailability();
+  
+  // ---- Legs button — driven by the CURRENTLY-FOLLOWED body ----
+// Show it only if the followed body actually declares deployable legs
+// in its recovery type. Hides the button entirely when following a
+// fairing half, a payload, or any body with hasRecovery:false — those
+// have no leg hardware, so "Deploy Legs" would be a lie.
+const legsBtn = getEl('btnLegs');
+if (legsBtn) {
+  const followIdx = (typeof _cameraTargetIndex === 'function')
+    ? _cameraTargetIndex()
+    : state.activeBodyIndex;
+  const followBody = state.bodies[followIdx];
+  const bottomMember = (followBody && followBody.members && followBody.members[0])
+    ? followBody.members[0] : null;
+
+  const recovery = (bottomMember && bottomMember.hasRecovery !== false
+      && typeof getComponentType === 'function')
+    ? getComponentType(bottomMember.recoveryTypeId)
+    : null;
+  const hasLegs = !!(recovery && recovery.capabilities && recovery.capabilities.deploysOnVehicle);
+
+  if (!hasLegs) {
+    // No legs on this body — hide the entire toolbar group (button + sep).
+    const group = legsBtn.closest('.tb-group');
+    if (group) group.style.display = 'none';
+    else legsBtn.style.display = 'none';
+  } else {
+    const group = legsBtn.closest('.tb-group');
+    if (group) group.style.display = '';
+    else legsBtn.style.display = '';
+
+    // Same safety gate as before, so it goes gray when deploy is illegal.
+    const safety = legDeploySafety();
+    const blocked = !legs.deployed && !safety.ok;
+    legsBtn.disabled = blocked;
+    legsBtn.title = blocked
+      ? (safety.ascending ? 'Cannot deploy while ascending' : 'Cannot deploy — speed too high')
+      : (legs.deployed ? 'Stow landing legs' : 'Deploy landing legs');
+  }
+}
+  
   const sepBtn = getEl('btnSeparate');
   if (sepBtn) sepBtn.disabled = !canSeparateNow();
   
@@ -316,6 +357,10 @@ function bootstrap() {
         console.error('=== RENDER WORKER CRASH ===');
         console.error('  message:', msg.message);
         console.error('  stack:', msg.stack);
+      } else if (msg.type === 'returnRenderHotBuffer') {
+        // Optimization #1, Step 4: render worker handing back the hot-state
+        // buffer we sent it, so workerBridge.js can reuse it next tick.
+        if (typeof returnRenderHotBuffer === 'function') returnRenderHotBuffer(msg.buffer);
       }
       
     };
@@ -355,30 +400,71 @@ function bootstrap() {
     
     // Resize relay
     let _resizeDebounce = null;
-    window.addEventListener('resize', () => {
-      if (_resizeDebounce) clearTimeout(_resizeDebounce);
-      _resizeDebounce = setTimeout(() => {
-        const w = initW;
-        const h = initH;
-        // Ignore degenerate sizes — DevTools emulation briefly collapses the
-        // layout to 0×0 while switching viewports, and setting canvas.width=0
-        // permanently black-screens the offscreen buffer.
-        if (!w || !h || w < 10 || h < 10) return;
-        renderWorker.postMessage({ type: 'resize', width: w, height: h });
-      }, 150);
-    });
+window.addEventListener('resize', () => {
+  if (_resizeDebounce) clearTimeout(_resizeDebounce);
+  _resizeDebounce = setTimeout(() => {
+    // Re-measure every time — initW/initH were captured once at
+    // bootstrap and never update, so window resizes were sending the
+    // original dimensions. The render worker only ever saw the initial
+    // viewport size, and the backing canvas never matched the real
+    // layout after any subsequent resize.
+    const w = mainCanvas.clientWidth;
+    const h = mainCanvas.clientHeight;
+    if (!w || !h || w < 10 || h < 10) return;
+    renderWorker.postMessage({ type: 'resize', width: w, height: h });
+  }, 150);
+});
     
     // Camera + toggle relay
-    // TEMP: disabled for debugging grid
+    // OPTIMIZATION #6: this used to post BOTH 'camera' and 'toggles'
+    // messages to the render worker on every single requestAnimationFrame
+    // (~60/s) regardless of whether anything in them had actually changed.
+    // Camera fields (follow/zoom/followBodyIndex/mode) only change on
+    // discrete user input — button clicks, dropdown picks — never inside
+    // an animation loop (confirmed: no rAF-driven zoom/follow interpolation
+    // anywhere in controls.js/render.js), and the same is true of the 4
+    // toggle checkboxes. So ~120 postMessage calls/sec were firing for
+    // nothing. Now each message is only sent when at least one of its own
+    // fields actually differs from what was last sent — plain primitive
+    // comparisons, no allocation added. The render worker already treats
+    // "no message this tick" as "nothing changed" (same pattern as
+    // state.trajectory's null-means-unchanged contract), so skipping a send
+    // when nothing moved is exactly correct, not just an approximation.
+    let _lastSentCamera = {
+      follow: camera.follow, zoom: camera.zoom,
+      followBodyIndex: camera.followBodyIndex, mode: camera.mode,
+    };
+    let _lastSentToggles = { showGrid, showVectors, showTrajectory, trajectoryMode };
+
     const pushRenderContext = () => {
-      renderWorker.postMessage({ type: 'camera', camera: { ...camera } });
-      renderWorker.postMessage({
-        type: 'toggles',
-        showGrid,
-        showVectors,
-        showTrajectory,
-        trajectoryMode,
-      });
+      if (camera.follow !== _lastSentCamera.follow ||
+        camera.zoom !== _lastSentCamera.zoom ||
+        camera.followBodyIndex !== _lastSentCamera.followBodyIndex ||
+        camera.mode !== _lastSentCamera.mode) {
+        renderWorker.postMessage({ type: 'camera', camera: { ...camera } });
+        _lastSentCamera.follow = camera.follow;
+        _lastSentCamera.zoom = camera.zoom;
+        _lastSentCamera.followBodyIndex = camera.followBodyIndex;
+        _lastSentCamera.mode = camera.mode;
+      }
+
+      if (showGrid !== _lastSentToggles.showGrid ||
+        showVectors !== _lastSentToggles.showVectors ||
+        showTrajectory !== _lastSentToggles.showTrajectory ||
+        trajectoryMode !== _lastSentToggles.trajectoryMode) {
+        renderWorker.postMessage({
+          type: 'toggles',
+          showGrid,
+          showVectors,
+          showTrajectory,
+          trajectoryMode,
+        });
+        _lastSentToggles.showGrid = showGrid;
+        _lastSentToggles.showVectors = showVectors;
+        _lastSentToggles.showTrajectory = showTrajectory;
+        _lastSentToggles.trajectoryMode = trajectoryMode;
+      }
+
       requestAnimationFrame(pushRenderContext);
     };
     pushRenderContext();
@@ -388,14 +474,7 @@ function bootstrap() {
     initWindCompass();
     
     // Hide legs button if the active stack has no leg-deploy recovery.
-    const recovery = (typeof CONFIG !== 'undefined') ? CONFIG.RECOVERY_TYPE : null;
-    const hasLegs = !!(recovery && recovery.capabilities && recovery.capabilities.deploysOnVehicle);
-    const legsBtn = document.getElementById('btnLegs');
-    if (legsBtn && !hasLegs) {
-      const group = legsBtn.closest('.tb-group');
-      if (group) group.style.display = 'none';
-      else legsBtn.style.display = 'none';
-    }
+    
     
     bindSimControls();
     bindLegsControl();

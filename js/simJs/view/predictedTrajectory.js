@@ -63,9 +63,14 @@ function drawPredictedTrajectory() {
     rightX = 1;
     rightY = 0;
   } else {
-    const camR = Math.hypot(cam.x, cam.y) || 1;
-    upX = cam.x / camR;
-    upY = cam.y / camR;
+    // Same stable reference render.js's worldToScreen() uses (NOT the
+    // rotating camera anchor) — see cameraVerticalReference() in render.js.
+    // Must match exactly, or this curve would visibly mis-align with the
+    // now-stabilized ground/rocket during a fast tumble.
+    const ref = cameraVerticalReference();
+    const refR = Math.hypot(ref.x, ref.y) || 1;
+    upX = ref.x / refR;
+    upY = ref.y / refR;
     rightX = upY;
     rightY = -upX;
   }

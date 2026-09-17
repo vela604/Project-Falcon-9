@@ -8,13 +8,15 @@
 // and silently fall back to the DEFAULT vehicle — meaning the whole
 // simulation would be running the wrong mass, wrong fuel capacity, wrong
 // engine layout, for every session.
+//
+// OPTIMIZATION #1 (Step 2): the per-tick "hot" numeric fields (position,
+// velocity, orientation, fuel, per-engine throttle/currentF/gimbalDeg) no
+// longer travel inside the cloned `data` object from serializeForMain().
+// They're written into a Float64Array (see stateBuffer.js) and moved to the
+// main thread via Transferable Objects — zero-copy, no structured clone.
+// Everything else (flags, legs, rcsCmd, engine meta/ids) still goes through
+// the existing cloned snapshot, unchanged.
 // ============================================================================
-
-// Forward any uncaught error in this worker to the main thread, so it shows
-// up in the regular DevTools console (worker consoles are hard to open on
-// some browsers / dev setups).
-
-
 
 self.addEventListener('error', (e) => {
   self.postMessage({
@@ -58,10 +60,29 @@ let lastTickTime = performance.now();
 let lastTrajTime = 0;
 let pendingTrajectoryTransfer = null;
 
+// ---- Optimization #2: dedicated trajectory worker (see trajectory.worker.js) ----
+// The leapfrog integration used to run inline in workerLoop(), sharing this
+// worker's 12 ms tick budget with the actual physics substeps. It's now
+// computed on its own thread; this worker only fires a tiny request message
+// and picks up the answer whenever it arrives (see trajectoryWorker.onmessage
+// below, and the tick-loop section further down).
+let trajectoryWorker = null;
+let trajectoryWorkerReady = false;
+let trajectoryRequestInFlight = false;
+
+// ---- Hot-state double buffer (Optimization #1) ----
+// Two buffers ping-pong between this worker and the main thread. The worker
+// only ever writes into a buffer it currently owns (popped from
+// `availableHotBuffers`); the main thread transfers each buffer straight
+// back after decoding it (see workerBridge.js, Step 3).
+let availableHotBuffers = [];
+let hotBufferStarvedCount = 0;
+let lastHotBufferWarnTime = 0;
+
 // ---- Message handler ----
 self.onmessage = (e) => {
   const msg = e.data;
-  
+
   // ---- Phase 1: hydrate (must arrive BEFORE any other message) ----
   if (msg.type === 'hydrate' && !bootstrapped) {
     try {
@@ -70,8 +91,8 @@ self.onmessage = (e) => {
         if (v === null || v === undefined) localStorage.removeItem(k);
         else localStorage.setItem(k, v);
       }
-      
-      
+
+
       importScripts(
         '../../componentLibrary.js',
         '../../customDesign.js',
@@ -83,19 +104,64 @@ self.onmessage = (e) => {
         '../core/rcs.js',
         '../core/physics.js',
         '../core/collision.js',
-        '../core/trajectoryMath.js'
+        '../core/stateBuffer.js'
       );
-      
+
       bootstrapped = true;
-      
+
+      // ---- Optimization #2: spawn the dedicated trajectory worker ----
+      // Forwarding the SAME hydrate keys this worker just used means
+      // CONFIG resolves inside it exactly the way it does here and in
+      // render_worker.js (same selected vehicle, same fleet) — no
+      // divergent-CONFIG risk. Spawned once, reused for the whole session.
+      trajectoryWorker = new Worker('trajectory.worker.js');
+      trajectoryWorker.onmessage = (te) => {
+        const tmsg = te.data;
+        if (tmsg.type === 'ready') {
+          trajectoryWorkerReady = true;
+        } else if (tmsg.type === 'result') {
+          trajectoryRequestInFlight = false;
+          // Guard against a stale answer landing AFTER the trajectory
+          // checkbox was turned off mid-flight — 'setTrajectoryEnabled'
+          // already nulled state.trajectory/pendingTrajectoryTransfer in
+          // that case, and we must not let this late message resurrect it.
+          if (trajectoryEnabled) {
+            state.trajectory = tmsg.data;
+            pendingTrajectoryTransfer = tmsg.data;
+          }
+        } else if (tmsg.type === 'bootError' || tmsg.type === 'computeError') {
+          trajectoryRequestInFlight = false;
+          console.error('[physics_worker] trajectory worker ' + tmsg.type + ':', tmsg.message);
+        }
+      };
+      trajectoryWorker.onerror = (err) => {
+        // A crash here must not leave trajectoryRequestInFlight stuck true
+        // forever (that would silently stop all future trajectory requests
+        // since the gate below never sends another one while it's true).
+        trajectoryRequestInFlight = false;
+        console.error('[physics_worker] trajectory worker crashed:', err.message);
+      };
+      trajectoryWorker.postMessage({ type: 'hydrate', keys: msg.keys });
+
       globalThis.SIM_STACK_MEMBERS = getActiveStackMembers();
-      
+
       resetState(0);
-      
+
+      // Seed the double buffer — allocate both up front, never inside the
+      // tick loop.
+      availableHotBuffers = [createHotStateBuffer(), createHotStateBuffer()];
+
       const snap = serializeForMain();
-      
-      self.postMessage({ type: 'ready', data: snap });
-      
+
+      // The very first snapshot needs its hot fields too (state.bodies[i].rx
+      // etc. must not be undefined for the first render frame) — encode one
+      // here the same way workerLoop() does, before workerLoop even starts.
+      const bootHotBuf = availableHotBuffers.pop();
+      encodeHotState(bootHotBuf, state.bodies);
+      snap.hotBuffer = bootHotBuf.buffer;
+
+      self.postMessage({ type: 'ready', data: snap }, [bootHotBuf.buffer]);
+
       setTimeout(workerLoop, 0);
     } catch (err) {
       console.error('  stack:', err && err.stack);
@@ -104,9 +170,9 @@ self.onmessage = (e) => {
     }
     return;
   }
-  
+
   if (!bootstrapped) return; // ignore anything before hydration
-  
+
   // ---- Phase 2: normal dispatch ----
   switch (msg.type) {
     case 'start':
@@ -137,7 +203,7 @@ self.onmessage = (e) => {
     case 'reset':
       resetState(msg.alt || 0);
       break;
-      
+
     case 'spawnInOrbit': {
       resetState(msg.alt || 400000);
       const b = state.bodies[0];
@@ -153,7 +219,7 @@ self.onmessage = (e) => {
       state.simTime = 0;
       break;
     }
-    
+
     case 'setGroupThrottle': {
       const b = state.bodies[state.activeBodyIndex];
       if (!b || !b.engines) break;
@@ -231,83 +297,168 @@ self.onmessage = (e) => {
       if (typeof takeControlOfBody === 'function') takeControlOfBody(msg.idx);
       break;
     }
+
+    // ---- Optimization #1: main thread hands a decoded buffer back so we
+    //      can reuse it next tick instead of allocating a new one. ----
+    case 'returnHotBuffer': {
+      if (msg.buffer) availableHotBuffers.push(new Float64Array(msg.buffer));
+      break;
+    }
   }
 };
 
 // ---- Snapshot serialization ----
+// NOTE (Optimization #1, Step 2): rx, ry, vx, vy, theta, omega, fuelMass,
+// and each engine's throttle/currentF/gimbalDeg are DELIBERATELY left out
+// below — they now travel every tick via the hot-state Float64Array
+// (encodeHotState in stateBuffer.js), not through this cloned object.
+//
+// OPTIMIZATION #5 (object pooling): this function used to call .map() on
+// state.bodies AND on every body's .engines array on every single tick
+// (~500/s), allocating a brand-new object graph — outer bodies array, one
+// object per body, one array + one object per engine — even though almost
+// none of these fields change tick-to-tick (they only change on rare
+// structural events: staging, fairing split, or a throttle/gimbal command).
+// That's dozens of small short-lived allocations per second doing nothing
+// but generating GC pressure.
+//
+// Fix: keep one persistent cache object per body/engine (_bodyCacheAt /
+// _engineCacheAt below) and overwrite its fields in place each tick instead
+// of allocating fresh ones. The cache arrays are only resized (never
+// spliced) when the number of bodies/engines actually changes, which only
+// happens on those same rare structural events. `self.postMessage` still
+// structured-clones this object on its way to the main thread — reusing the
+// object on the SENDING side is what removes the allocation, the receiver
+// always gets an independent copy regardless.
+const _snapCache = {
+  separationFlash: null,
+  lastPayloadRelease: null,
+  activeBodyIndex: 0,
+  simTime: 0,
+  halted: false,
+  lastForces: { firing: {}, pod: {} },
+  bodies: [],
+};
+let _separationFlashCache = null;
+let _lastPayloadReleaseCache = null;
+const _emptyForceObj = {};
+
+function _bodyCacheAt(i) {
+  let c = _snapCache.bodies[i];
+  if (!c) {
+    c = { legs: null, engines: [] };
+    _snapCache.bodies[i] = c;
+  }
+  return c;
+}
+
+function _engineCacheAt(bodyCache, j) {
+  let c = bodyCache.engines[j];
+  if (!c) {
+    c = {};
+    bodyCache.engines[j] = c;
+  }
+  return c;
+}
+
 function serializeForMain() {
-  return {
-    separationFlash: separationFlash ? {
-      id: separationFlash.id,
-      rx: separationFlash.rx,
-      ry: separationFlash.ry,
-    } : null,
-    lastPayloadRelease: lastPayloadRelease ? {
-      id: lastPayloadRelease.id,
-      rx: lastPayloadRelease.rx,
-      ry: lastPayloadRelease.ry,
-      ux: lastPayloadRelease.ux,
-      uy: lastPayloadRelease.uy,
-    } : null,
-    activeBodyIndex: state.activeBodyIndex,
-    simTime: state.simTime,
-    halted: state.halted,
-    lastForces: {
-      mainFx: lastForces.mainFx || 0,
-      mainFy: lastForces.mainFy || 0,
-      mainTorque: lastForces.mainTorque || 0,
-      rcsFx: lastForces.rcsFx || 0,
-      rcsFy: lastForces.rcsFy || 0,
-      rcsTorque: lastForces.rcsTorque || 0,
-      dragTorque: lastForces.dragTorque || 0,
-      aoaDeg: lastForces.aoaDeg || 0,
-      dutyTop: lastForces.dutyTop || 0,
-      mdot: lastForces.mdot || 0,
-      firing: lastForces.firing || {},
-      pod: lastForces.pod || {},
-    },
-    bodies: state.bodies.map(b => ({
-      id: b.id,
-      members: b.members,
-      rx: b.rx,
-      ry: b.ry,
-      vx: b.vx,
-      vy: b.vy,
-      theta: b.theta,
-      omega: b.omega,
-      dryMass: b.dryMass,
-      fuelMass: b.fuelMass,
-      crashed: b.crashed,
-      landed: b.landed,
-      settled: b.settled,
-      isActive: b.isActive,
-      isDiscarded: b.isDiscarded,
-      payloadId: b.payloadId,
-      payloadReleased: b.payloadReleased,
-      legs: b.legs ? { deployed: b.legs.deployed, progress: b.legs.progress } : null,
-      engines: (b.engines || []).map(en => ({
-        id: en.id,
-        angleDeg: en.angleDeg,
-        x: en.x,
-        isCenter: en.isCenter,
-        gimbal: en.gimbal,
-        Fmax: en.Fmax,
-        Fmin: en.Fmin,
-        Ve: en.Ve,
-        throttle: en.throttle,
-        targetThrottle: en.targetThrottle,
-        gimbalDeg: en.gimbalDeg,
-        targetGimbalDeg: en.targetGimbalDeg,
-        currentF: en.currentF,
-      })),
-      rcsCmd: b.rcsCmd,
-      lastRcs: b.lastRcs,
-      payloadBody: b.payloadBody,
-      fairingHalf: b.fairingHalf,
-      height: b.height,
-      width: b.width,
-    })),
-  };
+  const out = _snapCache;
+
+  if (separationFlash) {
+    const f = _separationFlashCache || (_separationFlashCache = {});
+    f.id = separationFlash.id;
+    f.rx = separationFlash.rx;
+    f.ry = separationFlash.ry;
+    out.separationFlash = f;
+  } else {
+    out.separationFlash = null;
+  }
+
+  if (lastPayloadRelease) {
+    const r = _lastPayloadReleaseCache || (_lastPayloadReleaseCache = {});
+    r.id = lastPayloadRelease.id;
+    r.rx = lastPayloadRelease.rx;
+    r.ry = lastPayloadRelease.ry;
+    r.ux = lastPayloadRelease.ux;
+    r.uy = lastPayloadRelease.uy;
+    out.lastPayloadRelease = r;
+  } else {
+    out.lastPayloadRelease = null;
+  }
+
+  out.activeBodyIndex = state.activeBodyIndex;
+  out.simTime = state.simTime;
+  out.halted = state.halted;
+
+  const lf = out.lastForces;
+  lf.mainFx = lastForces.mainFx || 0;
+  lf.mainFy = lastForces.mainFy || 0;
+  lf.mainTorque = lastForces.mainTorque || 0;
+  lf.rcsFx = lastForces.rcsFx || 0;
+  lf.rcsFy = lastForces.rcsFy || 0;
+  lf.rcsTorque = lastForces.rcsTorque || 0;
+  lf.dragTorque = lastForces.dragTorque || 0;
+  lf.aoaDeg = lastForces.aoaDeg || 0;
+  lf.dutyTop = lastForces.dutyTop || 0;
+  lf.mdot = lastForces.mdot || 0;
+  lf.firing = lastForces.firing || _emptyForceObj;
+  lf.pod = lastForces.pod || _emptyForceObj;
+
+  // Reused array: length only changes on staging/fairing-split/reset
+  // (state.bodies is only ever pushed to or wholesale-replaced elsewhere,
+  // never spliced mid-array), so this never reallocs on a normal tick.
+  out.bodies.length = state.bodies.length;
+  for (let i = 0; i < state.bodies.length; i++) {
+    const b = state.bodies[i];
+    const bc = _bodyCacheAt(i);
+
+    bc.id = b.id;
+    bc.members = b.members;
+    bc.dryMass = b.dryMass;
+    bc.crashed = b.crashed;
+    bc.landed = b.landed;
+    bc.settled = b.settled;
+    bc.isActive = b.isActive;
+    bc.isDiscarded = b.isDiscarded;
+    bc.payloadId = b.payloadId;
+    bc.payloadReleased = b.payloadReleased;
+
+    if (b.legs) {
+      if (!bc.legs) bc.legs = {};
+      bc.legs.deployed = b.legs.deployed;
+      bc.legs.progress = b.legs.progress;
+    } else {
+      bc.legs = null;
+    }
+
+    const srcEngines = b.engines || [];
+    bc.engines.length = srcEngines.length;
+    for (let j = 0; j < srcEngines.length; j++) {
+      const en = srcEngines[j];
+      const ec = _engineCacheAt(bc, j);
+      ec.id = en.id;
+      ec.angleDeg = en.angleDeg;
+      ec.x = en.x;
+      ec.isCenter = en.isCenter;
+      ec.gimbal = en.gimbal;
+      ec.Fmax = en.Fmax;
+      ec.Fmin = en.Fmin;
+      ec.Ve = en.Ve;
+      ec.targetThrottle = en.targetThrottle;
+      ec.targetGimbalDeg = en.targetGimbalDeg;
+    }
+
+    bc.rcsCmd = b.rcsCmd;
+    bc.lastRcs = b.lastRcs;
+    bc.payloadBody = b.payloadBody;
+    bc.fairingHalf = b.fairingHalf;
+    bc.height = b.height;
+    bc.width = b.width;
+
+    out.bodies[i] = bc;
+  }
+
+  return out;
 }
 
 // ---- Worker loop ----
@@ -315,7 +466,7 @@ function workerLoop() {
   const loopStart = performance.now();
   const dtReal = Math.min(0.1, (loopStart - lastTickTime) / 1000);
   lastTickTime = loopStart;
-  
+
   // Legs animate on REAL elapsed time, independent of simRunning. Same
   // behaviour as the original main-thread loop — deploying or stowing the
   // legs must work while the sim is paused (e.g. pre-launch on the pad),
@@ -331,7 +482,7 @@ function workerLoop() {
   if (lastPayloadRelease && performance.now() - lastPayloadRelease.t0Real > 2000) {
     lastPayloadRelease = null;
   }
-  
+
   if (running && !paused && !state.halted) {
     accumulator += dtReal * warp;
     while (accumulator >= CONFIG.DT &&
@@ -346,19 +497,38 @@ function workerLoop() {
     // "catch up" to real time.
     accumulator = 0;
   }
-  
-  // Skip the leapfrog compute entirely when no consumer wants the trajectory
-  // (trajectory checkbox off). The 500-sample integrator running at 60 Hz
-  // was ~0.3-0.5 ms of otherwise-idle CPU work. `pendingTrajectoryTransfer`
-  // is still sent as null on every snapshot when disabled, so the render
-  // worker's cached copy clears the moment the toggle flips off.
-  if (trajectoryEnabled && performance.now() - lastTrajTime >= 16) {
+
+  // Skip requesting the leapfrog compute entirely when no consumer wants
+  // the trajectory (trajectory checkbox off) — `pendingTrajectoryTransfer`
+  // is still sent as null on every snapshot when disabled (below), so the
+  // render worker's cached copy clears the moment the toggle flips off.
+  //
+  // OPTIMIZATION #2: this no longer computes anything itself — it only
+  // fires a tiny request at the dedicated trajectory worker (4 numbers)
+  // and returns immediately. `trajectoryRequestInFlight` is a simple
+  // backpressure guard so a slow/backed-up worker never gets a second
+  // request queued on top of one it hasn't answered yet; the ~16 ms gate
+  // then naturally re-fires next tick once it's free again. The actual
+  // result is applied later in trajectoryWorker.onmessage above, whenever
+  // it arrives — same hand-off into pendingTrajectoryTransfer as before,
+  // just decoupled from this tick's timing.
+  if (trajectoryEnabled && trajectoryWorkerReady && !trajectoryRequestInFlight &&
+    performance.now() - lastTrajTime >= 16) {
     lastTrajTime = performance.now();
     const active = state.bodies[state.activeBodyIndex];
-    state.trajectory = active ? computePredictedTrajectory(active, 500, 1200) : null;
-    pendingTrajectoryTransfer = state.trajectory;
+    if (active) {
+      trajectoryRequestInFlight = true;
+      trajectoryWorker.postMessage({
+        type: 'compute',
+        rx: active.rx, ry: active.ry, vx: active.vx, vy: active.vy,
+        maxSamples: 500, maxTimeSec: 1200,
+      });
+    } else {
+      state.trajectory = null;
+      pendingTrajectoryTransfer = null;
+    }
   }
-  
+
   const data = serializeForMain();
   const transfers = [];
   if (pendingTrajectoryTransfer) {
@@ -373,7 +543,31 @@ function workerLoop() {
   } else {
     data.trajectory = null;
   }
+
+  // ---- Optimization #1: hot fields go out as a transferred Float64Array
+  //      instead of being cloned inside `data`. ----
+  let hotBuf = availableHotBuffers.pop();
+  if (!hotBuf) {
+    // Main thread hasn't returned a buffer yet (shouldn't normally happen —
+    // it transfers one back synchronously on receipt). Allocate a one-off
+    // fallback so this tick's render update still goes out; log it (rate-
+    // limited) so a persistent pattern is visible instead of silently
+    // eating an allocation every tick.
+    hotBuf = createHotStateBuffer();
+    hotBufferStarvedCount++;
+    if (loopStart - lastHotBufferWarnTime > 5000) {
+      lastHotBufferWarnTime = loopStart;
+      console.warn('[physics_worker] hot buffer starved', hotBufferStarvedCount, 'times so far — main thread is not returning buffers promptly.');
+    }
+  }
+  const encodeResult = encodeHotState(hotBuf, state.bodies);
+  if (!encodeResult.ok) {
+    console.warn('[physics_worker] hot state buffer capacity exceeded', encodeResult);
+  }
+  data.hotBuffer = hotBuf.buffer;
+  transfers.push(hotBuf.buffer);
+
   self.postMessage({ type: 'state', data }, transfers);
-  
+
   setTimeout(workerLoop, 2);
 }

@@ -419,6 +419,9 @@ canvas.mini-graph { width: 100%; height: 60px; background: var(--bg); border-rad
   padding: 4px 5px; border-radius: 4px;
   background: rgba(255,255,255,0.04);
 }
+.tele-body-block.followed { background: rgba(53,214,255,0.08); }
+.tele-body-block.followed::before { content: '▶ '; color: var(--cyan); }
+
 .tele-body-block.active    { background: rgba(53,214,255,0.13); color: var(--cyan); }
 .tele-body-block.crashed   { background: rgba(255,95,126,0.13); color: var(--danger); }
 .tele-body-block.discarded { opacity: 0.85; }

@@ -49,7 +49,9 @@ function resizeCanvas() {
 }
 
 function localVerticalAngle() {
-  return Math.atan2(state.rx, state.ry); // angle of position vector from local "north" (ry axis)
+  const b = state.bodies[_cameraTargetIndex()];
+  if (!b) return 0;
+  return Math.atan2(b.rx, b.ry);
 }
 
 // worldToLocal() is called many times per frame (once per point converted
@@ -77,13 +79,30 @@ function localVerticalAngle() {
 
 let cameraCenter = { x: 0, y: CONFIG.EARTH_RADIUS }; // free-cam world position
 
+// Which body is the camera currently pointed at? Prefers the user's
+// explicit followBodyIndex (dropdown selection) over the active body —
+// so choosing "Payload" or "Fairing R" in the toolbar dropdown actually
+// moves the camera to that body, not just relabels the option.
+// ---------------------------------------------------------------------------
+// Which body is the camera / side panels pointed at?
+// Prefers the user's explicit dropdown selection (camera.followBodyIndex)
+// over the currently-controlled body, so picking "Payload" or "Fairing R"
+// in the toolbar actually moves camera, figure panel, and basal view to
+// that body — not just relabels the option.
+// ---------------------------------------------------------------------------
+function _cameraTargetIndex() {
+  const idx = (typeof camera !== 'undefined' && Number.isFinite(camera.followBodyIndex)) ?
+    camera.followBodyIndex : 0;
+  if (state.bodies && state.bodies[idx]) return idx;
+  return state.activeBodyIndex;
+}
 function cameraWorldPosition() {
   if (camera.mode === 'planet') {
     return { x: 0, y: 0 }; // Earth's center is the planet-view camera anchor
   }
   
   if (!camera.follow) return { x: cameraCenter.x, y: cameraCenter.y };
-  const b = state.bodies[state.activeBodyIndex];
+  const b = state.bodies[_cameraTargetIndex()];
   if (!b) return { x: 0, y: CONFIG.EARTH_RADIUS };
   
   // Camera anchor = a FIXED fraction of the rocket's geometric height above
@@ -112,8 +131,37 @@ function cameraWorldPosition() {
 }
 
 function cameraAngle() {
-  const cam = cameraWorldPosition();
-  return Math.atan2(cam.x, cam.y);
+  const ref = cameraVerticalReference();
+  return Math.atan2(ref.x, ref.y);
+}
+
+// ---------------------------------------------------------------------------
+// VISUAL BUG FIX: ground/horizon bobbing during a fast tumble (e.g. a
+// spinning crash).
+//
+// cameraWorldPosition()'s anchor is DELIBERATELY pinned to a fixed spot
+// along the rocket's own long axis (see its comment) — that's what fixed
+// the earlier bug where the ground slid as the COM shifted during fuel
+// burn. But being pinned to the body's LOCAL axis means it also rotates
+// WITH the body's theta. During slow/normal attitude changes that's
+// imperceptible. During a fast tumble, that anchor sweeps a circle around
+// the body's actual position at the spin rate — and worldToScreen()/
+// cameraAngle() were both deriving the screen's "up" direction (and the
+// launch pad's rotation) from THAT swinging point's own angle relative to
+// Earth's center. The result: the whole screen basis wobbled at the spin
+// rate, which reads as the ground/horizon bobbing up and down even though
+// the camera's real altitude barely changed.
+//
+// Fix: "up" must come from a point that only TRANSLATES with the body,
+// never rotates with it — the body's own rx/ry. Framing/panning still use
+// the real anchor via cameraWorldPosition() (unchanged, dx/dy in
+// worldToScreen below), so the original fuel-burn/COM-shift fix is
+// untouched; only the ORIENTATION reference changes.
+function cameraVerticalReference() {
+  if (camera.mode === 'planet') return { x: 0, y: 0 };
+  if (!camera.follow) return cameraWorldPosition();
+  const b = state.bodies[_cameraTargetIndex()];
+return b ? { x: b.rx, y: b.ry } : cameraWorldPosition();
 }
 
 function worldToScreen(wx, wy) {
@@ -134,12 +182,15 @@ function worldToScreen(wx, wy) {
     rightX = 1;
     rightY = 0;
   } else {
-    // Local view: up = direction from Earth's center to the camera,
-    // i.e. the local vertical at the camera's position. This is what
-    // gives the flat-ground look and correct attitude rotation.
-    const camR = Math.hypot(cam.x, cam.y) || 1;
-    upX = cam.x / camR;
-    upY = cam.y / camR;
+    // Local view: up = direction from Earth's center to a STABLE
+    // reference point (see cameraVerticalReference() above) — NOT the
+    // rotating camera anchor. This is what gives the flat-ground look
+    // and correct attitude rotation, without wobbling during a fast
+    // tumble.
+    const ref = cameraVerticalReference();
+    const refR = Math.hypot(ref.x, ref.y) || 1;
+    upX = ref.x / refR;
+    upY = ref.y / refR;
     rightX = upY;
     rightY = -upX;
   }
@@ -666,17 +717,32 @@ function drawActiveBodyIndicator() {
 
 
 function drawPayloadReleaseCue() {
-  if (typeof lastPayloadRelease === 'undefined' || !lastPayloadRelease) return;
-  const age = (performance.now() - lastPayloadRelease.t0) / 1000;
-  if (age > 1.2) { lastPayloadRelease = null; return; }
+  // Data comes from the worker via state.lastPayloadRelease — NOT a local
+  // variable. Physics worker sends { id, rx, ry, ux, uy }; the id changes
+  // every release event so we can detect "new cue, reset timer".
+  const p = state.lastPayloadRelease;
+  if (!p) return;
+  
+  // Local wall-clock timer, keyed on the id. Worker and render worker have
+  // separate performance.now() clocks, so we cannot use a timestamp
+  // computed worker-side. Instead: first frame we see a new id → record
+  // local time, then count 1.2 real seconds from there.
+  if (p.id !== _lastPayloadCueId) {
+    _lastPayloadCueId = p.id;
+    _payloadCueLocalStart = performance.now();
+  }
+  
+  const age = (performance.now() - _payloadCueLocalStart) / 1000;
+  if (age > 1.2) return;
   
   const mpp = metersPerPixel();
-  const [px, py] = worldToScreen(lastPayloadRelease.rx, lastPayloadRelease.ry);
+  const [px, py] = worldToScreen(p.rx, p.ry);
   
   const f = age / 1.2;
   const alpha = 1 - f;
   
   ctx.save();
+  
   // Expanding ring.
   const ringR = 4 + f * 18;
   ctx.beginPath();
@@ -685,16 +751,18 @@ function drawPayloadReleaseCue() {
   ctx.lineWidth = 2 * alpha + 0.5;
   ctx.stroke();
   
-  // Prograde arrow from release point.
+  // Prograde arrow from release point, in the world-frame kick direction.
+  // Screen y is flipped, so the arrow's endpoint uses -uy.
   const arrowLen = 20 + f * 10;
-  const ax = px + lastPayloadRelease.ux * arrowLen;
-  const ay = py - lastPayloadRelease.uy * arrowLen;
+  const ax = px + p.ux * arrowLen;
+  const ay = py - p.uy * arrowLen;
   ctx.beginPath();
   ctx.moveTo(px, py);
   ctx.lineTo(ax, ay);
   ctx.strokeStyle = `rgba(140,230,255,${alpha * 0.7})`;
   ctx.lineWidth = 1.5;
   ctx.stroke();
+  
   const ang = Math.atan2(ay - py, ax - px);
   ctx.beginPath();
   ctx.moveTo(ax, ay);
@@ -703,6 +771,7 @@ function drawPayloadReleaseCue() {
   ctx.closePath();
   ctx.fillStyle = `rgba(140,230,255,${alpha * 0.8})`;
   ctx.fill();
+  
   ctx.restore();
 }
 
@@ -1108,6 +1177,8 @@ function drawGroundSteam(altitude) {
   const maxThrust = ENGINES.reduce((s, e) => s + e.Fmax, 0);
   const throttle = maxThrust > 0 ? totalThrust / maxThrust : 0;
   if (throttle < 0.05 || altitude > 180) return;
+  
+  
   
   // Point on Earth's surface directly beneath the camera.
   const cam = cameraWorldPosition();
