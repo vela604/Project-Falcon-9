@@ -14,8 +14,10 @@
 // offset, meters), isCenter, gimbal, Fmax, Fmin, Ve, maxMassFlowRate,
 // minMassFlowRate, massFlowRateRateFrac, massFlowRate (kg/s, canonical
 // command/state — PHASE 1: replaces the old throttle 0..1 fraction),
-// targetMassFlowRate, gimbalDeg, currentF (last computed force, for
-// telemetry/rendering) }
+// targetMassFlowRate, gimbalDeg, targetGimbalDeg, targetGimbalRateDegS
+// (PHASE 3: NaN unless a guidance rate command is active — see
+// applyActuatorRateLimitsForBody in physics.js), currentF (last computed
+// force, for telemetry/rendering) }
 // Build an engine array for a specific record (its engineThrusters + layout).
 function buildEnginesForRecord(rec) {
   const layout = (typeof getComponentType === 'function') ? getComponentType(rec.engineTypeId) : null;
@@ -77,6 +79,14 @@ function buildEnginesForRecord(rec) {
       targetMassFlowRate: 0,
       gimbalDeg: 0,
       targetGimbalDeg: 0,
+      // PHASE 3: NaN = no active guidance rate command — the sentinel
+      // applyActuatorRateLimitsForBody (physics.js) checks via
+      // Number.isFinite() to decide between the rate-integration branch
+      // and the existing angle-slew branch. Every engine starts here
+      // (nothing has commanded a rate yet); setGimbal (human/angle) also
+      // resets it back to NaN each time, since an angle command always
+      // takes precedence over an in-progress rate command.
+      targetGimbalRateDegS: NaN,
       currentF: 0,
     });
   });

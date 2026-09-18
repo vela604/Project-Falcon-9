@@ -98,6 +98,12 @@ function rebuildEnginesForBody(body) {
         e.gimbalDeg = old.gimbalDeg;
         e.targetGimbalDeg = old.targetGimbalDeg;
         e.currentF = old.currentF;
+        // Issue B (round 2) — same kind of transient actuator state as
+        // the five fields above; was the one being dropped (reset to the
+        // fresh-build default of NaN) on a bottom-preserving rebuild,
+        // silently interrupting an in-progress guidance rate command for
+        // one tick.
+        e.targetGimbalRateDegS = old.targetGimbalRateDegS;
       }
     });
   } else {
@@ -142,6 +148,10 @@ function _makeBody() {
     legs: { deployed: false, progress: 0 },
     engines: [],
     rcsCmd: (typeof _blankRcsCmd === 'function') ? _blankRcsCmd() : { N: false, S: false, E: false, W: false, NE: false, NW: false, SE: false, SW: false, CW: false, ACW: false },
+    // PHASE 3: null = no active guidance duty command (boolean rcsCmd
+    // above is what drives RCS). Set by the 'rcsDuty' physics-worker
+    // message, cleared by any boolean 'rcs' command (human precedence).
+    rcsDuty: null,
     pwmClock: null,
     // Phase 2A — lateral fuel-slosh oscillator for this body's bottom tank.
     // offset: lateral displacement of the slosh mass from tank centerline (m)
@@ -671,11 +681,28 @@ function applyActuatorRateLimitsForBody(body, dt) {
     else e.massFlowRate = Math.max(tgt, e.massFlowRate - maxDelta);
     e.massFlowRate = Math.max(0, Math.min(e.maxMassFlowRate || 0, e.massFlowRate));
     if (e.gimbal) {
-      const mg = CONFIG.GIMBAL_RATE_DEG_S * dt;
-      const gt = e.targetGimbalDeg !== undefined ? e.targetGimbalDeg : e.gimbalDeg;
-      if (gt > e.gimbalDeg) e.gimbalDeg = Math.min(gt, e.gimbalDeg + mg);
-      else e.gimbalDeg = Math.max(gt, e.gimbalDeg - mg);
-      e.gimbalDeg = Math.max(-CONFIG.GIMBAL_MAX_DEG, Math.min(CONFIG.GIMBAL_MAX_DEG, e.gimbalDeg));
+      // PHASE 3: rate command (guidance) vs angle command (human slider).
+      // Number.isFinite is the arbitration check — targetGimbalRateDegS
+      // is NaN unless a guidance setGimbalRate command is currently in
+      // effect (vehicle.js initializes it to NaN; setGimbal — the human
+      // angle path, in physics_worker.js — resets it to NaN every time it
+      // fires, which is what makes "human always wins" work without this
+      // function needing to know anything about precedence itself: by the
+      // time this runs, there simply IS no active rate command anymore).
+      if (Number.isFinite(e.targetGimbalRateDegS)) {
+        // Rate mode: integrate directly, ignore targetGimbalDeg entirely
+        // (per the spec's arbitration rule — it's not being slewed
+        // toward, it's stale until a human command overwrites it).
+        e.gimbalDeg += e.targetGimbalRateDegS * dt;
+        e.gimbalDeg = Math.max(-CONFIG.GIMBAL_MAX_DEG, Math.min(CONFIG.GIMBAL_MAX_DEG, e.gimbalDeg));
+      } else {
+        // Existing angle-slew path (human slider), unchanged.
+        const mg = CONFIG.GIMBAL_RATE_DEG_S * dt;
+        const gt = e.targetGimbalDeg !== undefined ? e.targetGimbalDeg : e.gimbalDeg;
+        if (gt > e.gimbalDeg) e.gimbalDeg = Math.min(gt, e.gimbalDeg + mg);
+        else e.gimbalDeg = Math.max(gt, e.gimbalDeg - mg);
+        e.gimbalDeg = Math.max(-CONFIG.GIMBAL_MAX_DEG, Math.min(CONFIG.GIMBAL_MAX_DEG, e.gimbalDeg));
+      }
     }
   });
 }
@@ -2213,6 +2240,18 @@ function takeControlOfBody(idx) {
       e.targetMassFlowRate = 0;
       e.targetGimbalDeg = 0;
     });
+  }
+  // Phase 3 — Interface Fix, Issue 3: also silence RCS on the outgoing
+  // body. Without this, a body that was firing RCS (boolean cmd or a
+  // guidance duty command) at the moment control transfers keeps firing
+  // indefinitely — computeRCSForBody reads rcsCmd/rcsDuty every tick
+  // regardless of which body is active. Only the OUTGOING body is
+  // touched; the incoming body keeps whatever RCS state it already had
+  // (e.g. a booster mid-rotation shouldn't reset just because control
+  // switched to it).
+  if (old) {
+    if (typeof _blankRcsCmd === 'function') old.rcsCmd = _blankRcsCmd();
+    old.rcsDuty = null;
   }
   
   // Flip active flags.

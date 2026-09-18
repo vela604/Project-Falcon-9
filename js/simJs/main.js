@@ -4,6 +4,13 @@
 // ============================================================================
 
 const MERGE_COLORS = ['#ff8855', '#55ddff', '#aa88ff', '#88ff99', '#ffdd55', '#ff66cc', '#66ffcc'];
+
+// PHASE 3 — IMU noise toggle. Off by default (matches imu.js's own
+// `_enabled = false` default) — a plain state var since this only matters
+// to the main<->guidance-worker relationship, unlike showGrid/sloshEnabled
+// etc. which render.js also needs (see that file for why those live there
+// instead of here).
+let imuEnabled = false;
 // ---------------------------------------------------------------------------
 // Active stack — resolved once per page-load (the sim's CONFIG, ENGINES, and
 // stack don't change mid-session; user must reload after changing the stack).
@@ -222,6 +229,10 @@ function bindMiscToggles() {
     sloshEnabled = e.target.checked;
     WorkerBridge.send({ type: 'setSloshEnabled', enabled: sloshEnabled });
   });
+  bind('toggleImu', 'change', (e) => {
+    imuEnabled = e.target.checked;
+    GuidanceBridge.send({ type: 'setImuEnabled', enabled: imuEnabled });
+  });
   bind('toggleEarthFixed', 'change', (e) => {
     trajectoryMode = e.target.checked ? 'earthFixed' : 'inertial';
   });
@@ -389,6 +400,20 @@ function bootstrap() {
     // Phase 2A: same sync for the slosh toggle's default.
     WorkerBridge.send({ type: 'setSloshEnabled', enabled: sloshEnabled });
     
+    // ---- PHASE 3: spawn the guidance worker ----
+    // Independent of the render-worker setup above/below — guidance boots
+    // on its own schedule (see GuidanceBridge in workerBridge.js). Once
+    // IT signals ready, hand both workers their MessageChannel port (see
+    // connectGuidanceToPhysics) and sync the IMU toggle's default. Safe to
+    // do this from inside WorkerBridge.onReady: physics is already up by
+    // construction of being in this callback, so by the time GuidanceBridge
+    // itself becomes ready, both sides genuinely exist.
+    GuidanceBridge.init();
+    GuidanceBridge.onReady(() => {
+      connectGuidanceToPhysics();
+      GuidanceBridge.send({ type: 'setImuEnabled', enabled: imuEnabled });
+    });
+    
     // hydrate FIRST — this is what triggers importScripts inside the worker.
     const hydrateKeys = {};
     [
@@ -408,6 +433,7 @@ function bootstrap() {
       showVectors,
       showTrajectory,
       trajectoryMode,
+      sloshEnabled,
     });
     
     renderWorker.postMessage(

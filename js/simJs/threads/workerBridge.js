@@ -34,7 +34,7 @@ const WorkerBridge = {
         
         const q = this.pendingMessages;
         this.pendingMessages = [];
-        q.forEach(m => this.worker.postMessage(m));
+        q.forEach(m => this.worker.postMessage(m.msg, m.transfer || []));
         
         this.readyCallbacks.forEach(cb => { try { cb(); } catch (err) { console.error(err); } });
         this.readyCallbacks = [];
@@ -43,14 +43,18 @@ const WorkerBridge = {
     this.worker.onerror = (err) => console.error('Physics worker error:', err);
   },
   
-  // Normal send — queued until worker signals ready.
-  send(msg) {
+  // Normal send — queued until worker signals ready. `transfer` (optional)
+  // matches postMessage's transfer-list argument — needed for the one-time
+  // 'connectGuidance' port handoff (see workerBridge.js's
+  // connectGuidanceToPhysics). Pre-existing callers all omit it, which is
+  // equivalent to their previous no-transfer behavior.
+  send(msg, transfer) {
     if (!this.worker) return;
     if (!this.ready) {
-      this.pendingMessages.push(msg);
+      this.pendingMessages.push({ msg, transfer });
       return;
     }
-    this.worker.postMessage(msg);
+    this.worker.postMessage(msg, transfer || []);
   },
   
   // Bootstrap-only send — goes straight to the worker, bypassing the queue.
@@ -226,6 +230,9 @@ payload.rcsSync = state.bodies.map(b => ({ rcsCmd: b.rcsCmd, lastRcs: b.lastRcs 
 
     window._renderWorker.postMessage({ type: 'state', data: payload }, transfers);
   }
+  
+  // PHASE 3 — throttled to ~20 Hz internally; safe to call every tick.
+  maybeForwardGuidanceSnapshot();
 }
 
 // ---- Boot: send initial hydrate from main-thread localStorage ----
@@ -233,4 +240,140 @@ function hydrateWorkerFromLocalStorage() {
   const keys = {};
   _WORKER_HYDRATE_KEYS.forEach(k => { keys[k] = localStorage.getItem(k); });
   WorkerBridge.sendImmediate({ type: 'hydrate', keys });
+}
+
+// ============================================================================
+// PHASE 3 — GuidanceBridge: main-thread side of the guidance worker.
+// Deliberately a near-duplicate of WorkerBridge's ready-queue pattern above
+// (not a refactor to share code with it) — the two workers' lifecycles are
+// independent by design: guidance can boot, hydrate, and go 'ready' on its
+// own schedule regardless of where physics is in its own boot, and nothing
+// here should make that appear coupled.
+// ============================================================================
+const GuidanceBridge = {
+  worker: null,
+  ready: false,
+  readyCallbacks: [],
+  pendingMessages: [],
+  
+  init() {
+    this.worker = new Worker('js/simJs/threads/guidance.worker.js');
+    this.worker.onmessage = (e) => {
+      const msg = e.data;
+      if (msg.type === 'bootError') {
+        console.error('[bridge] GUIDANCE WORKER BOOT FAILED:', msg.message);
+        console.error('[bridge] stack:', msg.stack);
+      } else if (msg.type === 'workerError') {
+        console.error('[bridge] guidance worker runtime error:', msg.message, msg.stack);
+      } else if (msg.type === 'ready') {
+        this.ready = true;
+        const q = this.pendingMessages;
+        this.pendingMessages = [];
+        q.forEach(m => this.worker.postMessage(m.msg, m.transfer || []));
+        this.readyCallbacks.forEach(cb => { try { cb(); } catch (err) { console.error(err); } });
+        this.readyCallbacks = [];
+      }
+    };
+    this.worker.onerror = (err) => console.error('Guidance worker error:', err);
+    this.worker.postMessage({ type: 'hydrate' });
+  },
+  
+  // Normal send — queued until worker signals ready. `transfer` (optional)
+  // matches postMessage's own transfer-list argument, for the one-time
+  // 'connectPhysicsPort' port handoff (see main.js).
+  send(msg, transfer) {
+    if (!this.worker) return;
+    if (!this.ready) {
+      this.pendingMessages.push({ msg, transfer });
+      return;
+    }
+    this.worker.postMessage(msg, transfer || []);
+  },
+  
+  onReady(cb) {
+    if (this.ready) cb();
+    else this.readyCallbacks.push(cb);
+  },
+};
+
+// ---- Snapshot forwarding: throttled to ~20 Hz by wall clock. Called from
+// applyStateSnapshot() below, which runs at full physics-tick rate — this
+// function is what actually gates it down. Deliberately NOT reusing the
+// render worker's hot-buffer machinery: guidance's snapshot needs to be a
+// plain structured-clone object (imu.js's measure() reads/returns plain
+// objects), not a Float64Array layout. Per-body projection is fuller than
+// "trimmed" now implies (see Issue 1 below) — kept the same delivery
+// mechanism, just a richer payload per tick.
+let _lastGuidanceSnapshotAt = 0;
+const GUIDANCE_SNAPSHOT_INTERVAL_MS = 50; // ~20 Hz
+
+function maybeForwardGuidanceSnapshot() {
+  if (!GuidanceBridge.ready) return;
+  const now = (typeof performance !== 'undefined') ? performance.now() : Date.now();
+  if (now - _lastGuidanceSnapshotAt < GUIDANCE_SNAPSHOT_INTERVAL_MS) return;
+  _lastGuidanceSnapshotAt = now;
+  
+  // isActive below reflects state.activeBodyIndex — the physics worker's
+  // single source of truth — NOT the body's own `isActive` field. Derived
+  // on purpose: the two are always equal in the current code, and if they
+  // ever diverge, the index is authoritative. See Issue D in the Phase 3
+  // fixes round-2 prompt.
+  const bodies = state.bodies.map((b, i) => ({
+    rx: b.rx, ry: b.ry, vx: b.vx, vy: b.vy, theta: b.theta, omega: b.omega,
+    fuelMass: b.fuelMass,
+    crashed: !!b.crashed,
+    landed: !!b.landed,
+    isActive: i === state.activeBodyIndex,
+    isDiscarded: !!b.isDiscarded,
+    settled: !!b.settled,
+    payloadId: b.payloadId || null,
+    payloadReleased: !!b.payloadReleased,
+    members: b.members || [],
+    legs: b.legs ? { deployed: !!b.legs.deployed, progress: b.legs.progress || 0 } : null,
+    // NOTE for Phase 4: minMassFlowRate, massFlowRateRateFrac, and
+    // (optionally) Fmax/Fmin are NOT included here yet. They are not
+    // needed for Phase 3's "can guidance construct a valid command"
+    // contract, but Phase 4's control-law implementation will need them
+    // (see Issue E in the Phase 3 fixes round-2 prompt). Extend this
+    // projection when Phase 4 lands.
+    engines: (b.engines || []).map(e => ({
+      id: e.id,
+      angleDeg: e.angleDeg,
+      x: e.x,
+      isCenter: e.isCenter,
+      gimbal: e.gimbal,
+      Ve: e.Ve,
+      maxMassFlowRate: e.maxMassFlowRate,
+      massFlowRate: e.massFlowRate,
+      currentF: e.currentF,
+      gimbalDeg: e.gimbalDeg,
+      targetGimbalRateDegS: e.targetGimbalRateDegS,
+    })),
+    rcsCmd: b.rcsCmd || null,
+    rcsDuty: b.rcsDuty || null,
+  }));
+  GuidanceBridge.send({
+    type: 'snapshot',
+    data: {
+      simTime: state.simTime,
+      activeBodyIndex: state.activeBodyIndex,
+      // Issue A (round 2) — was missing entirely. Without this, guidance
+      // has no signal that the physics tick loop has frozen (crash halt)
+      // and would keep computing/sending commands into a worker that's
+      // no longer advancing.
+      halted: !!state.halted,
+      bodies,
+    },
+  });
+}
+
+// ---- One-time handoff: give physics and guidance the two ends of a single
+// MessageChannel so guidance can post commands straight to physics without
+// main thread relaying every one (see physics_worker.js's 'connectGuidance'
+// and guidance.worker.js's 'connectPhysicsPort' handlers). Called once both
+// workers have signalled ready — see main.js.
+function connectGuidanceToPhysics() {
+  const channel = new MessageChannel();
+  WorkerBridge.send({ type: 'connectGuidance' }, [channel.port1]);
+  GuidanceBridge.send({ type: 'connectPhysicsPort' }, [channel.port2]);
 }

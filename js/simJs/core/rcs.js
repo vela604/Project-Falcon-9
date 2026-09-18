@@ -233,29 +233,63 @@ function computeRCSForBody(body, comH, comW, dt) {
   
   function fireVertical(k, sign) { pod[k].Fy += sign * f; }
   
-  if (cmd.N)['TL', 'TR', 'BL', 'BR'].forEach(k => fireVertical(k, +1));
-  if (cmd.S)['TL', 'TR', 'BL', 'BR'].forEach(k => fireVertical(k, -1));
-  const wantRight = cmd.E || cmd.NE || cmd.SE;
-  const wantLeft = cmd.W || cmd.NW || cmd.SW;
-  if (wantRight)['TL', 'BL'].forEach(fireLateral);
-  if (wantLeft)['TR', 'BR'].forEach(fireLateral);
-  if (cmd.NE || cmd.NW)['TL', 'TR'].forEach(k => fireVertical(k, +1));
-  if (cmd.SE || cmd.SW)['BL', 'BR'].forEach(k => fireVertical(k, -1));
-  if (cmd.CW) {
-    fireLateralFull('TL');
-    fireVertical('TL', +1);
-    fireLateralFull('BR');
-    fireVertical('BR', -1);
-    fireVertical('TR', -1);
-    fireVertical('BL', +1);
+  // PHASE 3 — Interface Fix, Issue 5: raw nozzle interface. Guidance
+  // commands the exact duty it wants on each pod; the long-arm
+  // torque-cancellation gate that the human boolean path (fireLateral /
+  // fireLateralFull, above) uses does NOT apply here. That gate exists
+  // to make a symmetric human "fire both toward this side" command
+  // produce zero net torque — a convenience for a binary input. Guidance
+  // has a continuous per-pod interface instead: if it wants balanced
+  // lateral firing, it computes the compensating duties itself and sends
+  // those. Physics applies exactly what it is given, full stop.
+  function fireLateralDuty(k, commandedDuty) {
+    if (commandedDuty <= 0) return;
+    pod[k].Fx += lateralSign[k] * commandedDuty * f;
   }
-  if (cmd.ACW) {
-    fireLateralFull('TR');
-    fireVertical('TR', +1);
-    fireLateralFull('BL');
-    fireVertical('BL', -1);
-    fireVertical('TL', -1);
-    fireVertical('BR', +1);
+  
+  function fireVerticalDuty(k, sign, commandedDuty) {
+    if (commandedDuty <= 0) return;
+    pod[k].Fy += sign * commandedDuty * f;
+  }
+  
+  if (body.rcsDuty) {
+    // PHASE 3: explicit per-pod, per-nozzle duty command (guidance). Takes
+    // over from the boolean cmd table entirely for this body — see
+    // physics_worker.js's 'rcs'/'rcsDuty' handlers for how the two paths
+    // are kept mutually exclusive (each clears the other).
+    const duties = body.rcsDuty;
+    podDefs.forEach(p => {
+      const d = duties[p.id];
+      if (!d) return;
+      fireLateralDuty(p.id, d.lat || 0);
+      fireVerticalDuty(p.id, +1, d.up || 0);
+      fireVerticalDuty(p.id, -1, d.dn || 0);
+    });
+  } else {
+    if (cmd.N)['TL', 'TR', 'BL', 'BR'].forEach(k => fireVertical(k, +1));
+    if (cmd.S)['TL', 'TR', 'BL', 'BR'].forEach(k => fireVertical(k, -1));
+    const wantRight = cmd.E || cmd.NE || cmd.SE;
+    const wantLeft = cmd.W || cmd.NW || cmd.SW;
+    if (wantRight)['TL', 'BL'].forEach(fireLateral);
+    if (wantLeft)['TR', 'BR'].forEach(fireLateral);
+    if (cmd.NE || cmd.NW)['TL', 'TR'].forEach(k => fireVertical(k, +1));
+    if (cmd.SE || cmd.SW)['BL', 'BR'].forEach(k => fireVertical(k, -1));
+    if (cmd.CW) {
+      fireLateralFull('TL');
+      fireVertical('TL', +1);
+      fireLateralFull('BR');
+      fireVertical('BR', -1);
+      fireVertical('TR', -1);
+      fireVertical('BL', +1);
+    }
+    if (cmd.ACW) {
+      fireLateralFull('TR');
+      fireVertical('TR', +1);
+      fireLateralFull('BL');
+      fireVertical('BL', -1);
+      fireVertical('TL', -1);
+      fireVertical('BR', +1);
+    }
   }
   
   const positions = {};
@@ -268,12 +302,23 @@ function computeRCSForBody(body, comH, comW, dt) {
     torque = 0,
     mdot = 0;
   const firing = {};
-  podDefs.forEach(p => { firing[p.id] = false; });
+  // PHASE 3 — Interface Fix, Issue 5: source-agnostic applied-duty
+  // tracking. Computed here (once, from each pod's FINAL Fx) rather than
+  // inline inside fireLateral/fireLateralFull/fireLateralDuty — those can
+  // in principle touch the same pod more than once in a tick (CW/ACW
+  // combine fireLateralFull with fireVertical on overlapping pods), so
+  // deriving it from the settled pod[k].Fx after all firing calls is the
+  // one place this is unambiguously correct regardless of how many paths
+  // touched a given pod. Same result either way; this is just where it's
+  // safe to compute.
+  const appliedDuty = {};
+  podDefs.forEach(p => { firing[p.id] = false; appliedDuty[p.id] = 0; });
   Object.keys(pod).forEach(k => {
     const p = pod[k],
       pos = positions[k];
     Fx += p.Fx;
     Fy += p.Fy;
+    appliedDuty[k] = f > 0 ? Math.abs(p.Fx) / f : 0;
     
     // Pivot x = the vehicle's ACTUAL current CoM (comW), matching
 // computeMainThrustForBody's convention. comW is 0 whenever slosh is
@@ -286,7 +331,15 @@ torque += rx * p.Fy - ry * p.Fx;
       firing[k] = true; }
   });
   
-  return { Fx, Fy, torque, mdot, firing, pod, dutyTop: idealDuty };
+  // Source-agnostic: the human boolean path's gate shows up here as a
+  // reduced applied fraction on whichever pod it damped; guidance's raw
+  // duty path shows up as exactly what it commanded. Either way this is
+  // "what actually fired", not "what was asked for" — replaces the old
+  // dutyTop: idealDuty, which only ever reflected the human path's INTENT
+  // and was undefined/meaningless whenever body.rcsDuty was in effect.
+  const dutyTop = 0.5 * ((appliedDuty.TL || 0) + (appliedDuty.TR || 0));
+  
+  return { Fx, Fy, torque, mdot, firing, pod, dutyTop };
 }
 
 // Backwards-compat shim.
@@ -301,4 +354,8 @@ function resetPWM() { /* per-body now */ }
 
 function clearRCS() {
   Object.keys(rcsCmd).forEach(k => rcsCmd[k] = false);
+  // PHASE 3: rcsDuty lives directly on the body (not behind the rcsCmd
+  // proxy), so clear it the same direct way.
+  const b = state.bodies && state.bodies[state.activeBodyIndex];
+  if (b) b.rcsDuty = null;
 }

@@ -38,7 +38,7 @@ const NOTATION_GLOSSARY = {
   'ρ': 'Local air density (kg/m³). Exponential model: ρ = ρ₀ · exp(−h / scaleHeight).',
   
   // ---- RCS ----
-  'D↑': 'RCS top-pod lateral-nozzle PWM duty cycle (%). Fraction of each PWM period the top pod fires, to balance its larger moment arm against the bottom pod.',
+  'D↑': 'RCS top-pod lateral duty (%). Average of the two top pods\' actually applied lateral-nozzle duty this tick — source-agnostic (human boolean commands and guidance raw-duty commands both end up here, and the human path\'s torque-balancing gate shows up as a reduced fraction on whichever pod it damped). 0 = no top-pod lateral firing, 1 = both top pods at full.',
   
   // ---- Status ----
   'TWR': 'Thrust-to-weight ratio at full throttle: (max thrust) / (current mass × g₀). Below 1 means the vehicle cannot lift off.',

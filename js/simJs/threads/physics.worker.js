@@ -60,6 +60,15 @@ let lastTickTime = performance.now();
 let lastTrajTime = 0;
 let pendingTrajectoryTransfer = null;
 
+// ---- PHASE 3: guidance worker's direct port ----
+// Set once, when main thread transfers it via 'connectGuidance' (see
+// self.onmessage below). From then on, anything the guidance worker posts
+// down this port runs through the EXACT SAME dispatchCommand() a human UI
+// message would — this worker has no way to tell the two apart, which is
+// the isolation property Phase 3 wants (guidance can only affect physics
+// through message types this worker already handles).
+let guidancePort = null;
+
 // ---- Optimization #2: dedicated trajectory worker (see trajectory.worker.js) ----
 // The leapfrog integration used to run inline in workerLoop(), sharing this
 // worker's 12 ms tick budget with the actual physics substeps. It's now
@@ -189,7 +198,32 @@ self.onmessage = (e) => {
 
   if (!bootstrapped) return; // ignore anything before hydration
 
-  // ---- Phase 2: normal dispatch ----
+  // ---- PHASE 3: guidance worker connects here once, right after its own
+  // boot (see workerBridge.js). e.ports[0] is one end of a MessageChannel
+  // whose other end guidance.worker.js already holds — from this point on
+  // guidance posts commands straight down that port, and its onmessage
+  // below routes them through the identical dispatchCommand() a human UI
+  // message goes through. Handled here (outside dispatchCommand) because
+  // it needs e.ports, which only exists on the original MessageEvent. ----
+  if (msg.type === 'connectGuidance') {
+    guidancePort = e.ports && e.ports[0];
+    if (guidancePort) {
+      guidancePort.onmessage = (ge) => dispatchCommand(ge.data);
+    }
+    return;
+  }
+
+  dispatchCommand(msg);
+};
+
+// ---- Phase 2: normal dispatch ----
+// Factored out of self.onmessage so the guidance port (above) and the
+// main-thread port run every command through the identical switch — this
+// worker cannot distinguish a human-issued command from a guidance-issued
+// one, by construction, which is exactly the "guidance can only affect
+// physics through message types the physics worker already handles"
+// property Phase 3 needs.
+function dispatchCommand(msg) {
   switch (msg.type) {
     case 'start':
       running = true;
@@ -286,7 +320,37 @@ self.onmessage = (e) => {
   if (!b || !b.engines) break;
   const lim = CONFIG.GIMBAL_MAX_DEG;
   const d = Math.max(-lim, Math.min(lim, msg.deg));
-  b.engines.filter(en => en.gimbal).forEach(en => { en.targetGimbalDeg = d; });
+  // PHASE 3 human precedence: an angle command from the human UI (slider)
+  // always wins over an in-progress guidance rate command — clear the
+  // rate field back to NaN so applyActuatorRateLimitsForBody's rate
+  // branch falls through to the angle-slew branch below on the very next
+  // tick, using the targetGimbalDeg this sets.
+  b.engines.filter(en => en.gimbal).forEach(en => {
+    en.targetGimbalDeg = d;
+    en.targetGimbalRateDegS = NaN;
+  });
+  break;
+}
+    // PHASE 3: rate, not angle — guidance commands how fast the gimbal
+    // should move, physics integrates. See applyActuatorRateLimitsForBody
+    // in physics.js for the integration + clamp-to-GIMBAL_MAX_DEG side.
+    // Does NOT touch targetGimbalDeg (ignored while rate mode is active,
+    // per the arbitration rule — ignoring it rather than writing to it
+    // means setGimbal doesn't need to know rate mode exists to win back
+    // control; it just always sets both fields itself, above).
+    case 'setGimbalRate': {
+  // Phase 3 — Interface Fix, Issue 4: deliberately does NOT call
+  // cancelPendingSequences(), unlike the human setGimbal/setAllThrottle
+  // handlers above. Guidance steering during a staged flight is not the
+  // same signal as a human re-commanding thrust: guidance may
+  // legitimately steer right up to and through a separation. Cancelling
+  // a pending split on a rate command would abort a sequence guidance
+  // itself may be steering toward.
+  const b = state.bodies[state.activeBodyIndex];
+  if (!b || !b.engines) break;
+  const lim = CONFIG.GIMBAL_RATE_DEG_S;
+  const rate = Math.max(-lim, Math.min(lim, msg.degPerSec));
+  b.engines.filter(en => en.gimbal).forEach(en => { en.targetGimbalRateDegS = rate; });
   break;
 }
     case 'rcs': {
@@ -294,6 +358,41 @@ self.onmessage = (e) => {
       if (!b) break;
       if (typeof ensureRcsState === 'function') ensureRcsState(b);
       if (b.rcsCmd) b.rcsCmd[msg.key] = !!msg.on;
+      // PHASE 3 human precedence: a boolean RCS command from the human UI
+      // always wins over an in-progress guidance duty command.
+      b.rcsDuty = null;
+      break;
+    }
+    // PHASE 3: full nozzle-level duty command. Overrides the boolean
+    // rcsCmd mechanism for this body — computeRCSForBody (rcs.js) checks
+    // rcsDuty first and only falls back to rcsCmd when it's null/absent.
+    case 'rcsDuty': {
+      // Phase 3 — Interface Fix, Issue 4: same rationale as setGimbalRate
+      // above — deliberately does NOT call cancelPendingSequences().
+      // Only human throttle and gimbal-angle commands clear a pending
+      // separate/release; guidance RCS commands do not.
+      const b = state.bodies[state.activeBodyIndex];
+      if (!b) break;
+      // Issue C (round 2) — Option A: a null/absent duties payload means
+      // "relinquish duty control, fall back to the boolean rcsCmd path".
+      // An explicit object (even one with only zero-valued nozzles) means
+      // "I am actively holding RCS duty control and this is my current
+      // state" — {} is NOT treated as relinquish, since computeRCSForBody
+      // checks `if (body.rcsDuty)` and an empty-but-truthy object would
+      // otherwise permanently lock out the boolean path until a human
+      // pressed an RCS button. See guidance.js's cmdRcsDuty(null).
+      if (msg.duties == null) {
+        b.rcsDuty = null;
+        break;
+      }
+      const clampDuty = (v) => Math.max(0, Math.min(1, Number.isFinite(v) ? v : 0));
+      const duties = {};
+      const src = msg.duties || {};
+      Object.keys(src).forEach(podId => {
+        const d = src[podId] || {};
+        duties[podId] = { lat: clampDuty(d.lat), up: clampDuty(d.up), dn: clampDuty(d.dn) };
+      });
+      b.rcsDuty = duties;
       break;
     }
     case 'legs': {
@@ -356,7 +455,7 @@ self.onmessage = (e) => {
       break;
     }
   }
-};
+}
 
 // ---- Snapshot serialization ----
 // NOTE (Optimization #1, Step 2): rx, ry, vx, vy, theta, omega, fuelMass,
@@ -502,9 +601,16 @@ function serializeForMain() {
       ec.minMassFlowRate = en.minMassFlowRate;
       ec.targetMassFlowRate = en.targetMassFlowRate;
       ec.targetGimbalDeg = en.targetGimbalDeg;
+      // Phase 3 — Interface Fix, Issue 6: previously missing, so a
+      // main-thread debugging UI/telemetry extension would find this
+      // undefined even though guidance actively sets it.
+      ec.targetGimbalRateDegS = en.targetGimbalRateDegS;
     }
 
     bc.rcsCmd = b.rcsCmd;
+    // Phase 3 — Interface Fix, Issue 6: mirror the duty table too, same
+    // reasoning as targetGimbalRateDegS above.
+    bc.rcsDuty = b.rcsDuty;
     bc.lastRcs = b.lastRcs;
     bc.payloadBody = b.payloadBody;
     bc.fairingHalf = b.fairingHalf;
