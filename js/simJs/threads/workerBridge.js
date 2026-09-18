@@ -351,6 +351,10 @@ function maybeForwardGuidanceSnapshot() {
     })),
     rcsCmd: b.rcsCmd || null,
     rcsDuty: b.rcsDuty || null,
+    // Phase 3 Extension (Plan A1) — every pod of every member, flat list.
+    // See rcs.js's buildPodEntries(). Purely additive to the snapshot;
+    // does not change anything about how RCS is actually fired yet.
+    pods: (typeof buildPodEntries === 'function') ? buildPodEntries(b) : [],
   }));
   GuidanceBridge.send({
     type: 'snapshot',

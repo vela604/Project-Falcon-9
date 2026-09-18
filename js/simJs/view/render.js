@@ -1151,10 +1151,14 @@ function drawBodyRocket(body, isActive) {
       ctx.save();
       ctx.translate(0, -yOffsetPx);
       drawRocketArt(ctx, mW, mH, mpp, {
-        legsProgress: (isActive && idx === 0) ? legs.progress : 0,
-        legsState: isActive ? legs : null,
-        firing: (body.lastRcs && body.lastRcs.firing) || {},
-        pod: (body.lastRcs && body.lastRcs.pod) || {},
+      legsProgress: (isActive && idx === 0) ? legs.progress : 0,
+      legsState: isActive ? legs : null,
+      // A5 — tell the drawer which member of the body this is, so its
+      // pod-id lookups match the `b<memberIdx>.<side><idx>` keys that
+      // computeRCSForBody filled into body.lastRcs.
+      memberIdx: idx,
+      firing: (body.lastRcs && body.lastRcs.firing) || {},
+      pod: (body.lastRcs && body.lastRcs.pod) || {},
         rcsTopY: m.params ? m.params.rcsTopY : undefined,
         rcsBottomY: m.params ? m.params.rcsBottomY : undefined,
         recoveryType: recType,

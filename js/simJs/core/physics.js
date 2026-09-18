@@ -98,26 +98,27 @@ function rebuildEnginesForBody(body) {
         e.gimbalDeg = old.gimbalDeg;
         e.targetGimbalDeg = old.targetGimbalDeg;
         e.currentF = old.currentF;
-        // Issue B (round 2) — same kind of transient actuator state as
-        // the five fields above; was the one being dropped (reset to the
-        // fresh-build default of NaN) on a bottom-preserving rebuild,
-        // silently interrupting an in-progress guidance rate command for
-        // one tick.
-        e.targetGimbalRateDegS = old.targetGimbalRateDegS;
       }
     });
   } else {
-    // Phase 2A — the bottom member itself changed (real stage separation,
-    // not just a fairing split / payload release, which fail this branch's
-    // sibling check above and correctly leave the tank — and its slosh —
-    // untouched). The tank this body's slosh oscillator belonged to is
-    // gone, so its slosh state has nothing left to describe. Reset it.
+  // Phase 2A — the bottom member itself changed (real stage separation,
+  // not just a fairing split / payload release, which fail this branch's
+  // sibling check above and correctly leave the tank — and its slosh —
+  // untouched). The tank this body's slosh oscillator belonged to is
+  // gone, so its slosh state has nothing left to describe. Reset it.
     body.slosh = { offset: 0, velocity: 0 };
-    // Phase 2B.1 — new tank, so the old one's proper-acceleration history
-    // is meaningless for it. Zero it rather than let one tick of the new
-    // stage's ω_n calc see the previous stage's g_eff.
-    body._prevAxialProperAccel = 0;
-  }
+  // Phase 2B.1 — new tank, so the old one's proper-acceleration history
+  // is meaningless for it. Zero it rather than let one tick of the new
+  // stage's ω_n calc see the previous stage's g_eff.
+  body._prevAxialProperAccel = 0;
+  // A2 follow-up — per-member PWM clocks are keyed by memberIdx and
+  // belong to whichever member was at that index before the split.
+  // After a bottom-member change the indices mean different members,
+  // so every clock's delta-sigma ledger is stale. Wipe; next
+  // fireCornerPods call re-seeds fresh.
+  body.pwmClocks = {};
+  
+}
   
   body.engines = newEngines;
   body._lastBottomMember = newBottom;
@@ -152,7 +153,14 @@ function _makeBody() {
     // above is what drives RCS). Set by the 'rcsDuty' physics-worker
     // message, cleared by any boolean 'rcs' command (human precedence).
     rcsDuty: null,
-    pwmClock: null,
+    // Phase 3 Extension (Plan A2) — one PWM/delta-sigma clock PER MEMBER
+    // that carries a cornerPods RCS type, keyed by memberIdx. Was a single
+    // `pwmClock: null` field back when only body.members[0] ever fired
+    // RCS; every member with its own pair of top/bottom pods needs its
+    // own independent duty-cycle ledger now, since each sits at a
+    // different height (different lever-arm asymmetry to correct for).
+    // Lazily populated per memberIdx by fireCornerPods() in rcs.js.
+    pwmClocks: {},
     // Phase 2A — lateral fuel-slosh oscillator for this body's bottom tank.
     // offset: lateral displacement of the slosh mass from tank centerline (m)
     // velocity: rate of that displacement (m/s)
@@ -1269,6 +1277,16 @@ function _bodyHasActiveInput(body) {
     for (const k in body.rcsCmd)
       if (body.rcsCmd[k]) return true;
   }
+  // A4 — a nonzero rcsDuty must wake a settled body. Without this, a
+  // landed body that guidance tries to nudge via rcsDuty early-returns
+  // from physicsStep before any RCS force is computed.
+  if (body.rcsDuty) {
+    for (const podId in body.rcsDuty) {
+      const d = body.rcsDuty[podId];
+      if (!d) continue;
+      if ((d.lat || 0) > 0 || (d.up || 0) > 0 || (d.dn || 0) > 0) return true;
+    }
+  }
   if (body.engines) {
     for (const e of body.engines) {
       if ((e.targetMassFlowRate || 0) > 0.001) return true;
@@ -1844,9 +1862,11 @@ function resetState(initialAltitude) {
 // command engine shutdown, then wait for thrust to drop near zero before
 // actually releasing the payload. Emergency eject bypasses this (see
 // emergencyEjectPayload) — it calls releasePayloadOnActiveBody directly.
-function requestReleasePayload(opts) {
+// Phase 3 Extension, Plan B — targetBody: optional body reference,
+// defaults to the active body when omitted.
+function requestReleasePayload(opts, targetBody) {
   opts = opts || {};
-  const active = state.bodies[state.activeBodyIndex];
+  const active = targetBody || state.bodies[state.activeBodyIndex];
   if (!active) return false;
   if (active.crashed) return false;
   if (active.payloadReleased) return false;
@@ -1869,7 +1889,7 @@ function requestReleasePayload(opts) {
   });
   const thrustFrac = totalMax > 0 ? totalThrust / totalMax : 0;
   if (thrustFrac < 0.005) {
-    return releasePayloadOnActiveBody({ emergency: false, kick: opts.kick || 3.0 });
+    return releasePayloadOnActiveBody({ emergency: false, kick: opts.kick || 3.0 }, active);
   }
 
   // Command shutdown, then defer until thrust falls below threshold.
@@ -1888,10 +1908,14 @@ function requestReleasePayload(opts) {
 
 function _checkPendingRelease() {
   if (!pendingRelease) return;
-  const active = state.bodies[state.activeBodyIndex];
+  // Phase 3 Extension, Plan B — find the REQUESTED body by id, same
+  // reasoning as _checkPendingSeparate() above: a pending release can now
+  // be outstanding on a non-active body.
+  const active = state.bodies.find(b => b.id === pendingRelease.bodyId);
 
-  // Body changed since request (Take Control, reset, etc.) — abort.
-  if (!active || active.id !== pendingRelease.bodyId) {
+  // Requested body no longer exists, or Take Control / reset cleared it
+  // out from under it — abort.
+  if (!active) {
     pendingRelease = null;
     return;
   }
@@ -1910,7 +1934,7 @@ function _checkPendingRelease() {
       kick: pendingRelease.kick,
     };
     pendingRelease = null;
-    releasePayloadOnActiveBody(opts);
+    releasePayloadOnActiveBody(opts, active);
   }
 }
 
@@ -1919,6 +1943,11 @@ function _checkPendingRelease() {
 // actual massFlowRate down over the shutdown spool duration) and records
 // a pending request. The active body keeps flying as one stack until
 // shutdown completes.
+//
+// Phase 3 Extension, Plan B — targetBody: optional body reference,
+// defaults to the active body when omitted (preserves every existing
+// call site's behavior unchanged — only physics_worker.js's dispatchCommand
+// passes a non-active body, via resolveTargetBody()).
 //
 // _checkPendingSeparate(): called every physics tick. When thrust is
 // effectively gone (or a safety timeout fires) it calls performSeparate()
@@ -1929,8 +1958,8 @@ function _checkPendingRelease() {
 // shutdown, or directly by requestSeparate() when there's nothing to
 // spool down (no engines, or engines already off).
 // ---------------------------------------------------------------------------
-function requestSeparate() {
-  const active = state.bodies[state.activeBodyIndex];
+function requestSeparate(targetBody) {
+  const active = targetBody || state.bodies[state.activeBodyIndex];
   if (!active || !active.members || active.members.length < 2) return false;
   if (active.crashed) return false;
   if (pendingSeparate) return false; // already in flight — ignore repeat clicks
@@ -1950,7 +1979,7 @@ function requestSeparate() {
   // If the body has no engines at all (edge case: unusual stack), there's
   // nothing to spool down — split immediately.
   if (!active.engines || !active.engines.length) {
-    return performSeparate();
+    return performSeparate(active);
   }
 
   // Command shutdown on all booster engines.
@@ -1983,8 +2012,8 @@ function requestSeparate() {
 // will likely reenter on its own, and a bare satellite would burn up in
 // the airstream. Real escape systems deliver the payload as a single
 // shielded unit for exactly this reason.
-function emergencyEjectPayload() {
-  const active = state.bodies[state.activeBodyIndex];
+function emergencyEjectPayload(targetBody) {
+  const active = targetBody || state.bodies[state.activeBodyIndex];
   if (!active) return false;
   if (active.crashed) return false;
   if (active.payloadReleased) return false;
@@ -2084,19 +2113,37 @@ function emergencyEjectPayload() {
 // The cancel is the physically correct outcome: a user re-commanding
 // thrust is telling the sim "abort the sequence". Any input that would
 // make the pending completion condition unreachable must clear the intent.
-function cancelPendingSequences() {
-  pendingSeparate = null;
-  pendingRelease = null;
+//
+// Phase 3 Extension, Plan B — targetBody: the body the triggering command
+// actually resolved to (see resolveTargetBody() in physics_worker.js),
+// NOT necessarily the active body once targetBodyIdx is in play. Only
+// clears a pending sequence if it belongs to THAT body — a throttle
+// command aimed at body 1 must not abort body 0's pending separate.
+// Defaults to the active body when called with no argument, so any
+// other existing call site keeps its old (pre-Plan-B) behavior exactly.
+function cancelPendingSequences(targetBody) {
+  const body = targetBody || state.bodies[state.activeBodyIndex];
+  const id = body ? body.id : null;
+  if (pendingSeparate && pendingSeparate.bodyId === id) pendingSeparate = null;
+  if (pendingRelease && pendingRelease.bodyId === id) pendingRelease = null;
 }
 function _checkPendingSeparate() {
   if (!pendingSeparate) return;
-  const active = state.bodies[state.activeBodyIndex];
+  // Phase 3 Extension, Plan B — find the REQUESTED body by id, not the
+  // currently-active one. Before targetBodyIdx existed, a pending separate
+  // could only ever have been requested on the active body, so this and
+  // "the active body" were the same check. Now a guidance command can
+  // request separate on a non-active body (a discarded booster, say),
+  // so the lookup has to search — assuming "active" would abort every
+  // non-active pending sequence on its very next tick.
+  const active = state.bodies.find(b => b.id === pendingSeparate.bodyId);
 
-  // Active body changed since the request (user did something else — took
-  // control of another body, reset, etc.). Silently abort. The old body's
+  // Requested body no longer exists (removed from state.bodies somehow —
+  // shouldn't normally happen, but defensive) or Take Control / reset
+  // changed things out from under it. Silently abort. The old body's
   // targets are already zeroed from requestSeparate(), so its engines
   // spool down on their own; the split simply doesn't happen.
-  if (!active || active.id !== pendingSeparate.bodyId) {
+  if (!active) {
     pendingSeparate = null;
     return;
   }
@@ -2116,7 +2163,7 @@ function _checkPendingSeparate() {
   // stuck engine state can't leave the split pending forever.
   if (thrustFrac < 0.005 || elapsed > 5.0) {
     pendingSeparate = null;
-    performSeparate();
+    performSeparate(active);
   }
 }
  
@@ -2128,8 +2175,14 @@ function _checkPendingSeparate() {
 // Renamed from separateActiveBody(): this is now the SECOND phase of the
 // two-phase sequence. Call requestSeparate() (or _checkPendingSeparate())
 // to trigger it; do not call this directly from user commands.
-function performSeparate() {
-  const active = state.bodies[state.activeBodyIndex];
+//
+// Phase 3 Extension, Plan B — targetBody: optional body reference,
+// defaults to the active body when omitted. _checkPendingSeparate() below
+// always passes the body it looked up by id (which may not be the active
+// body once targetBodyIdx is in play); requestSeparate()'s no-engines
+// fast path passes its own resolved `active` through.
+function performSeparate(targetBody) {
+  const active = targetBody || state.bodies[state.activeBodyIndex];
   if (!active || !active.members || active.members.length < 2) return false;
   if (active.crashed) return false;
   
@@ -2235,32 +2288,22 @@ function takeControlOfBody(idx) {
   // shutdown-spool duration, see applyActuatorRateLimitsForBody) carries
   // it down to zero smoothly instead of an instant cutoff.
   const old = state.bodies[state.activeBodyIndex];
-  if (old && old.engines) {
+if (old) {
+  if (old.engines) {
     old.engines.forEach(e => {
       e.targetMassFlowRate = 0;
       e.targetGimbalDeg = 0;
     });
   }
-  // Phase 3 — Interface Fix, Issue 3: also silence RCS on the outgoing
-  // body. Without this, a body that was firing RCS (boolean cmd or a
-  // guidance duty command) at the moment control transfers keeps firing
-  // indefinitely — computeRCSForBody reads rcsCmd/rcsDuty every tick
-  // regardless of which body is active. Only the OUTGOING body is
-  // touched; the incoming body keeps whatever RCS state it already had
-  // (e.g. a booster mid-rotation shouldn't reset just because control
-  // switched to it).
-  if (old) {
-    if (typeof _blankRcsCmd === 'function') old.rcsCmd = _blankRcsCmd();
-    old.rcsDuty = null;
-  }
-  
-  // Flip active flags.
-  // Abort any in-flight separate request — the user has just moved control
-// to a different body. The old body's targets were already zeroed by
-// requestSeparate() if one was pending, so its engines still spool down
-// cleanly on their own; the split itself simply never fires.
-pendingSeparate = null;
-pendingRelease = null;
+  // Restore round-2 Issue 3: silence outgoing body's RCS.
+  if (typeof _blankRcsCmd === 'function') old.rcsCmd = _blankRcsCmd();
+  old.rcsDuty = null;
+}
+
+// Plan B scoping: takeControl is a pure UI action, it does NOT abort
+// any body's pending sequence. Only cancelPendingSequences(body) on
+// throttle/gimbal commands clears a pending sequence, scoped to the
+// body that command targeted.
 
 // Flip active flags.
 if (old) old.isActive = false;
@@ -2286,8 +2329,8 @@ state.activeBodyIndex = idx;
 // A2 CLEANUP: lastFairingSplit removed — it was written on every split but
 // never read anywhere in the codebase.
 
-function splitFairingOnActiveBody() {
-  const active = state.bodies[state.activeBodyIndex];
+function splitFairingOnActiveBody(targetBody) {
+  const active = targetBody || state.bodies[state.activeBodyIndex];
   if (!active || !active.members) return false;
   const psIdx = active.members.findIndex(m => m.stageRole === 'payloadSpace');
   if (psIdx < 0) return false;
@@ -2354,10 +2397,12 @@ function splitFairingOnActiveBody() {
 let lastPayloadRelease = null;
 let lastPayloadReleaseId = 0;
 
-function releasePayloadOnActiveBody(opts) {
+// Phase 3 Extension, Plan B — targetBody: optional body reference,
+// defaults to the active body when omitted.
+function releasePayloadOnActiveBody(opts, targetBody) {
   opts = opts || {};
   const emergency = !!opts.emergency;
-  const active = state.bodies[state.activeBodyIndex];
+  const active = targetBody || state.bodies[state.activeBodyIndex];
   if (!active || !active.members) return false;
   if (active.members.some(m => m.stageRole === 'payloadSpace')) return false; // fairing still on
   if (active.payloadReleased) return false;

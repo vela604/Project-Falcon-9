@@ -216,6 +216,29 @@ self.onmessage = (e) => {
   dispatchCommand(msg);
 };
 
+// ---- Phase 3 Extension, Plan B — body-targeted commands ----
+// Returns the target body, or null if the command should be dropped.
+// A null/undefined targetBodyIdx resolves to the active body — human-UI
+// commands never set this field, so they're completely unaffected by
+// this mechanism.
+//
+// Guidance (running on its own worker, routed through the SAME
+// dispatchCommand as the human UI — see connectGuidance above) can set
+// targetBodyIdx to reach a specific discarded/landed body — e.g. firing
+// RCS on a booster that's no longer the active body — without needing
+// takeControl first.
+function resolveTargetBody(targetBodyIdx) {
+  if (targetBodyIdx == null) return state.bodies[state.activeBodyIndex] || null;
+  if (!Number.isInteger(targetBodyIdx)) return null;
+  if (targetBodyIdx < 0 || targetBodyIdx >= state.bodies.length) return null;
+  const b = state.bodies[targetBodyIdx];
+if (!b) return null;
+// A4 — settled bodies are NOT rejected: a nonzero rcsDuty command must
+// be able to wake a landed/resting body via _bodyHasActiveInput.
+if (b.crashed) return null;
+return b;
+}
+
 // ---- Phase 2: normal dispatch ----
 // Factored out of self.onmessage so the guidance port (above) and the
 // main-thread port run every command through the identical switch — this
@@ -289,9 +312,10 @@ function dispatchCommand(msg) {
     // clampMassFlowCommand() below applies the same clamp to every engine
     // it touches, so it's the one place command-floor/ceiling logic lives.
     case 'setGroupThrottle': {
-  if (typeof cancelPendingSequences === 'function') cancelPendingSequences();
-  const b = state.bodies[state.activeBodyIndex];
-  if (!b || !b.engines) break;
+  const b = resolveTargetBody(msg.targetBodyIdx);
+  if (!b) break;
+  if (typeof cancelPendingSequences === 'function') cancelPendingSequences(b);
+  if (!b.engines) break;
   msg.angles.forEach(a => {
     const eng = b.engines.find(en => en.angleDeg === a);
     if (eng) eng.targetMassFlowRate = clampMassFlowCommand(eng, msg.value);
@@ -299,25 +323,28 @@ function dispatchCommand(msg) {
   break;
 }
     case 'setCenterThrottle': {
-  if (typeof cancelPendingSequences === 'function') cancelPendingSequences();
-  const b = state.bodies[state.activeBodyIndex];
-  if (!b || !b.engines) break;
+  const b = resolveTargetBody(msg.targetBodyIdx);
+  if (!b) break;
+  if (typeof cancelPendingSequences === 'function') cancelPendingSequences(b);
+  if (!b.engines) break;
   b.engines.filter(en => en.isCenter).forEach(en => {
     en.targetMassFlowRate = clampMassFlowCommand(en, msg.value);
   });
   break;
 }
     case 'setAllThrottle': {
-  if (typeof cancelPendingSequences === 'function') cancelPendingSequences();
-  const b = state.bodies[state.activeBodyIndex];
-  if (!b || !b.engines) break;
+  const b = resolveTargetBody(msg.targetBodyIdx);
+  if (!b) break;
+  if (typeof cancelPendingSequences === 'function') cancelPendingSequences(b);
+  if (!b.engines) break;
   b.engines.forEach(en => { en.targetMassFlowRate = clampMassFlowCommand(en, msg.value); });
   break;
 }
     case 'setGimbal': {
-  if (typeof cancelPendingSequences === 'function') cancelPendingSequences();
-  const b = state.bodies[state.activeBodyIndex];
-  if (!b || !b.engines) break;
+  const b = resolveTargetBody(msg.targetBodyIdx);
+  if (!b) break;
+  if (typeof cancelPendingSequences === 'function') cancelPendingSequences(b);
+  if (!b.engines) break;
   const lim = CONFIG.GIMBAL_MAX_DEG;
   const d = Math.max(-lim, Math.min(lim, msg.deg));
   // PHASE 3 human precedence: an angle command from the human UI (slider)
@@ -339,14 +366,7 @@ function dispatchCommand(msg) {
     // means setGimbal doesn't need to know rate mode exists to win back
     // control; it just always sets both fields itself, above).
     case 'setGimbalRate': {
-  // Phase 3 — Interface Fix, Issue 4: deliberately does NOT call
-  // cancelPendingSequences(), unlike the human setGimbal/setAllThrottle
-  // handlers above. Guidance steering during a staged flight is not the
-  // same signal as a human re-commanding thrust: guidance may
-  // legitimately steer right up to and through a separation. Cancelling
-  // a pending split on a rate command would abort a sequence guidance
-  // itself may be steering toward.
-  const b = state.bodies[state.activeBodyIndex];
+  const b = resolveTargetBody(msg.targetBodyIdx);
   if (!b || !b.engines) break;
   const lim = CONFIG.GIMBAL_RATE_DEG_S;
   const rate = Math.max(-lim, Math.min(lim, msg.degPerSec));
@@ -354,7 +374,7 @@ function dispatchCommand(msg) {
   break;
 }
     case 'rcs': {
-      const b = state.bodies[state.activeBodyIndex];
+      const b = resolveTargetBody(msg.targetBodyIdx);
       if (!b) break;
       if (typeof ensureRcsState === 'function') ensureRcsState(b);
       if (b.rcsCmd) b.rcsCmd[msg.key] = !!msg.on;
@@ -367,43 +387,36 @@ function dispatchCommand(msg) {
     // rcsCmd mechanism for this body — computeRCSForBody (rcs.js) checks
     // rcsDuty first and only falls back to rcsCmd when it's null/absent.
     case 'rcsDuty': {
-      // Phase 3 — Interface Fix, Issue 4: same rationale as setGimbalRate
-      // above — deliberately does NOT call cancelPendingSequences().
-      // Only human throttle and gimbal-angle commands clear a pending
-      // separate/release; guidance RCS commands do not.
-      const b = state.bodies[state.activeBodyIndex];
-      if (!b) break;
-      // Issue C (round 2) — Option A: a null/absent duties payload means
-      // "relinquish duty control, fall back to the boolean rcsCmd path".
-      // An explicit object (even one with only zero-valued nozzles) means
-      // "I am actively holding RCS duty control and this is my current
-      // state" — {} is NOT treated as relinquish, since computeRCSForBody
-      // checks `if (body.rcsDuty)` and an empty-but-truthy object would
-      // otherwise permanently lock out the boolean path until a human
-      // pressed an RCS button. See guidance.js's cmdRcsDuty(null).
-      if (msg.duties == null) {
-        b.rcsDuty = null;
-        break;
-      }
-      const clampDuty = (v) => Math.max(0, Math.min(1, Number.isFinite(v) ? v : 0));
-      const duties = {};
-      const src = msg.duties || {};
-      Object.keys(src).forEach(podId => {
-        const d = src[podId] || {};
-        duties[podId] = { lat: clampDuty(d.lat), up: clampDuty(d.up), dn: clampDuty(d.dn) };
-      });
-      b.rcsDuty = duties;
-      break;
-    }
+  const b = resolveTargetBody(msg.targetBodyIdx);
+  if (!b) break;
+  // A3 — restore round-2 Issue C: null/undefined duties payload means
+  // "relinquish duty control, fall back to boolean rcsCmd path". An
+  // explicit object (even one with only zero-valued nozzles) means
+  // "still holding duty control". Without this, guidance can never
+  // hand control back, and {} permanently locks out the boolean path.
+  if (msg.duties == null) {
+    b.rcsDuty = null;
+    break;
+  }
+  const clampDuty = (v) => Math.max(0, Math.min(1, Number.isFinite(v) ? v : 0));
+  const duties = {};
+  const src = msg.duties || {};
+  Object.keys(src).forEach(podId => {
+    const d = src[podId] || {};
+    duties[podId] = { lat: clampDuty(d.lat), up: clampDuty(d.up), dn: clampDuty(d.dn) };
+  });
+  b.rcsDuty = duties;
+  break;
+}
     case 'legs': {
-      const b = state.bodies[state.activeBodyIndex];
+      const b = resolveTargetBody(msg.targetBodyIdx);
       if (!b) break;
       if (!b.legs) b.legs = { deployed: false, progress: 0 };
       b.legs.deployed = !!msg.deployed;
       break;
     }
     case 'setFuelMass': {
-      const b = state.bodies[state.activeBodyIndex];
+      const b = resolveTargetBody(msg.targetBodyIdx);
       if (b) b.fuelMass = msg.value;
       break;
     }
@@ -424,11 +437,15 @@ function dispatchCommand(msg) {
   // Two-phase: this now commands engine shutdown and defers the
   // actual member slice until thrust has spooled down. The split
   // itself is triggered by _checkPendingSeparate() inside physicsStep.
-  if (typeof requestSeparate === 'function') requestSeparate();
+  const b = resolveTargetBody(msg.targetBodyIdx);
+  if (!b) break;
+  if (typeof requestSeparate === 'function') requestSeparate(b);
   break;
 }
     case 'splitFairing': {
-      if (typeof splitFairingOnActiveBody === 'function') splitFairingOnActiveBody();
+      const b = resolveTargetBody(msg.targetBodyIdx);
+      if (!b) break;
+      if (typeof splitFairingOnActiveBody === 'function') splitFairingOnActiveBody(b);
       break;
     }
     
@@ -436,11 +453,15 @@ function dispatchCommand(msg) {
   // Two-phase: command engine shutdown, defer actual release until
   // thrust spools to ~0 (or skip the wait if already coasting).
   // Emergency eject bypasses this — see emergencyEjectPayload.
-  if (typeof requestReleasePayload === 'function') requestReleasePayload();
+  const b = resolveTargetBody(msg.targetBodyIdx);
+  if (!b) break;
+  if (typeof requestReleasePayload === 'function') requestReleasePayload(msg, b);
   break;
 }
     case 'emergencyEject': {
-  if (typeof emergencyEjectPayload === 'function') emergencyEjectPayload();
+  const b = resolveTargetBody(msg.targetBodyIdx);
+  if (!b) break;
+  if (typeof emergencyEjectPayload === 'function') emergencyEjectPayload(b);
   break;
 }
     case 'takeControl': {
@@ -513,7 +534,7 @@ function _engineCacheAt(bodyCache, j) {
 
 function serializeForMain() {
   const out = _snapCache;
-
+  
   if (separationFlash) {
     const f = _separationFlashCache || (_separationFlashCache = {});
     f.id = separationFlash.id;
@@ -523,7 +544,7 @@ function serializeForMain() {
   } else {
     out.separationFlash = null;
   }
-
+  
   if (lastPayloadRelease) {
     const r = _lastPayloadReleaseCache || (_lastPayloadReleaseCache = {});
     r.id = lastPayloadRelease.id;
@@ -535,11 +556,11 @@ function serializeForMain() {
   } else {
     out.lastPayloadRelease = null;
   }
-
+  
   out.activeBodyIndex = state.activeBodyIndex;
   out.simTime = state.simTime;
   out.halted = state.halted;
-
+  
   const lf = out.lastForces;
   lf.mainFx = lastForces.mainFx || 0;
   lf.mainFy = lastForces.mainFy || 0;
@@ -553,7 +574,7 @@ function serializeForMain() {
   lf.mdot = lastForces.mdot || 0;
   lf.firing = lastForces.firing || _emptyForceObj;
   lf.pod = lastForces.pod || _emptyForceObj;
-
+  
   // Reused array: length only changes on staging/fairing-split/reset
   // (state.bodies is only ever pushed to or wholesale-replaced elsewhere,
   // never spliced mid-array), so this never reallocs on a normal tick.
@@ -561,7 +582,7 @@ function serializeForMain() {
   for (let i = 0; i < state.bodies.length; i++) {
     const b = state.bodies[i];
     const bc = _bodyCacheAt(i);
-
+    
     bc.id = b.id;
     bc.members = b.members;
     bc.dryMass = b.dryMass;
@@ -572,7 +593,7 @@ function serializeForMain() {
     bc.isDiscarded = b.isDiscarded;
     bc.payloadId = b.payloadId;
     bc.payloadReleased = b.payloadReleased;
-
+    
     if (b.legs) {
       if (!bc.legs) bc.legs = {};
       bc.legs.deployed = b.legs.deployed;
@@ -580,7 +601,7 @@ function serializeForMain() {
     } else {
       bc.legs = null;
     }
-
+    
     const srcEngines = b.engines || [];
     bc.engines.length = srcEngines.length;
     for (let j = 0; j < srcEngines.length; j++) {
@@ -601,25 +622,25 @@ function serializeForMain() {
       ec.minMassFlowRate = en.minMassFlowRate;
       ec.targetMassFlowRate = en.targetMassFlowRate;
       ec.targetGimbalDeg = en.targetGimbalDeg;
-      // Phase 3 — Interface Fix, Issue 6: previously missing, so a
-      // main-thread debugging UI/telemetry extension would find this
-      // undefined even though guidance actively sets it.
+      // Phase 3 — Issue 6 restoration: guidance's rate command needs to
+      // round-trip back to the main-thread mirror and the guidance
+      // snapshot, otherwise it appears to vanish every tick.
       ec.targetGimbalRateDegS = en.targetGimbalRateDegS;
     }
-
+    
     bc.rcsCmd = b.rcsCmd;
-    // Phase 3 — Interface Fix, Issue 6: mirror the duty table too, same
-    // reasoning as targetGimbalRateDegS above.
+    // Phase 3 — Issue 6 restoration: same reasoning as
+    // targetGimbalRateDegS above.
     bc.rcsDuty = b.rcsDuty;
     bc.lastRcs = b.lastRcs;
     bc.payloadBody = b.payloadBody;
     bc.fairingHalf = b.fairingHalf;
     bc.height = b.height;
     bc.width = b.width;
-
+    
     out.bodies[i] = bc;
   }
-
+  
   return out;
 }
 

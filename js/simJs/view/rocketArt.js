@@ -302,6 +302,12 @@ function drawRocketArt(ctx, W, H, mpp, opts) {
   opts = opts || {};
   const legsProgress = opts.legsProgress || 0;
   const legsState = opts.legsState || null;
+  // A5 — which member of the containing body this draw call represents.
+  // 0 = bottom (the only member that ever existed pre-multi-member), so
+  // every existing caller (static previews, single-member bodies) draws
+  // unchanged with the pod id `b0.*`. Multi-member bodies pass their own
+  // idx so pod lookup keys match what computeRCSForBody returned.
+  const memberIdx = (Number.isInteger(opts.memberIdx) && opts.memberIdx >= 0) ? opts.memberIdx : 0;
   
   // P4-D3: body appearance + nose shape + role flags.
   const noseCurveness = opts.noseCurveness || 0;
@@ -988,31 +994,59 @@ const recoveryType = ('recoveryType' in opts) ? opts.recoveryType : null;
 const rcsType = ('rcsType' in opts) ? opts.rcsType : null;
 
   const podDefs = (rcsType && rcsType.kind === 'cornerPods' && rcsType.frame && rcsType.frame.pods) ? rcsType.frame.pods : [];
-  if (rcsType && rcsType.kind !== 'cornerPods' && podDefs.length === 0) {
-    console.warn(`drawRocketArt: RCS type "${rcsType.id}" (kind "${rcsType.kind}") has no matching pod artwork yet — RCS pods skipped this frame.`);
-  }
-  
-  const corners = {},
-    lateralDir = {};
-  const memberH_m = H * mpp;
-  const rawTopY = opts.rcsTopY !== undefined ? opts.rcsTopY :
-    ((typeof CONFIG !== 'undefined') ? CONFIG.RCS_TOP_Y : 0);
-  const rawBottomY = opts.rcsBottomY !== undefined ? opts.rcsBottomY :
-    ((typeof CONFIG !== 'undefined') ? CONFIG.RCS_BOTTOM_Y : 0);
-  // Clamp both offsets to the member's own height so an over-large value
-  // can't place pods outside the member's silhouette (e.g. stage pods
-  // climbing into the payload space above).
-  const rcsTopY = Math.max(0, Math.min(rawTopY, memberH_m));
-  const rcsBottomY = Math.max(0, Math.min(rawBottomY, memberH_m));
-  
+if (rcsType && rcsType.kind !== 'cornerPods' && podDefs.length === 0) {
+  console.warn(`drawRocketArt: RCS type "${rcsType.id}" (kind "${rcsType.kind}") has no matching pod artwork yet — RCS pods skipped this frame.`);
+}
+
+const corners = {},
+  lateralDir = {};
+const memberH_m = H * mpp;
+const rawTopY = opts.rcsTopY !== undefined ? opts.rcsTopY :
+  ((typeof CONFIG !== 'undefined') ? CONFIG.RCS_TOP_Y : 0);
+const rawBottomY = opts.rcsBottomY !== undefined ? opts.rcsBottomY :
+  ((typeof CONFIG !== 'undefined') ? CONFIG.RCS_BOTTOM_Y : 0);
+// Clamp both offsets to the member's own height so an over-large value
+// can't place pods outside the member's silhouette (e.g. stage pods
+// climbing into the payload space above).
+const rcsTopY = Math.max(0, Math.min(rawTopY, memberH_m));
+const rcsBottomY = Math.max(0, Math.min(rawBottomY, memberH_m));
+
+// A5 — build the same body-wide pod id each pod has in
+// body.lastRcs.firing / body.lastRcs.pod (see rcs.js's buildPodEntries
+// and buildPodId): `b<memberIdx>.<side><idxWithinSide>` — side from
+// corner[0] sign, idx by descending LOCAL Y within (this member, side).
+// Local sort here is enough because we're drawing ONE member: within
+// this call, "local Y" ordering gives the same topmost-first index that
+// buildPodEntries assigns body-wide.
+const podIdByRegistryId = {};
+{
+  const bySide = { L: [], R: [] };
   podDefs.forEach(pd => {
-    const xSign = pd.corner[0],
-      isTop = pd.corner[1] === 'top';
-    const yLocal = isTop ? rcsTopY : rcsBottomY;
-    corners[pd.id] = [xSign * (W / 2), -(yLocal / mpp)];
-    lateralDir[pd.id] = [xSign, 0];
+    const side = pd.corner[0] < 0 ? 'L' : 'R';
+    const localY = pd.corner[1] === 'top' ? rcsTopY : rcsBottomY;
+    bySide[side].push({ pd, localY });
   });
-  
+  ['L', 'R'].forEach(side => {
+    bySide[side]
+      .sort((a, b2) => b2.localY - a.localY)
+      .forEach((entry, i) => {
+        const podId = (typeof buildPodId === 'function') ?
+          buildPodId(memberIdx, side, i + 1) :
+          `b${memberIdx}.${side}${i + 1}`;
+        podIdByRegistryId[entry.pd.id] = podId;
+      });
+  });
+}
+
+podDefs.forEach(pd => {
+  const xSign = pd.corner[0],
+    isTop = pd.corner[1] === 'top';
+  const yLocal = isTop ? rcsTopY : rcsBottomY;
+  const podId = podIdByRegistryId[pd.id];
+  if (!podId) return;
+  corners[podId] = [xSign * (W / 2), -(yLocal / mpp)];
+  lateralDir[podId] = [xSign, 0];
+});
   
   const plumeLen = W * 0.6;
   const fEps = 1;
@@ -1086,12 +1120,12 @@ const rcsType = ('rcsType' in opts) ? opts.rcsType : null;
     const podX = cxRaw + sideSign * podW * 0.5 - podW / 2;
     const podY = cy - podH / 2;
     
-    if (Math.abs(pp.Fx) > fEps) drawGasPuff(cxRaw, cy, lateralDir[k], k.charCodeAt(0));
-    if (Math.abs(pp.Fy) > fEps) {
-      const vDir = pp.Fy > 0 ? [0, 1] : [0, -1];
-      const outX = cxRaw + sideSign * podW * 0.6;
-      drawGasPuff(outX, cy, vDir, k.charCodeAt(1) + 3);
-    }
+   if (Math.abs(pp.Fx) > fEps) drawGasPuff(cxRaw, cy, lateralDir[k], k.charCodeAt(k.length - 2));
+if (Math.abs(pp.Fy) > fEps) {
+  const vDir = pp.Fy > 0 ? [0, 1] : [0, -1];
+  const outX = cxRaw + sideSign * podW * 0.6;
+  drawGasPuff(outX, cy, vDir, k.charCodeAt(k.length - 1) + 3);
+}
     
     ctx.save();
     

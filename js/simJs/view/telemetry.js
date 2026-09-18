@@ -529,10 +529,12 @@ members.forEach((m, idx) => {
   figCtx.save();
   figCtx.translate(baseX, baseY - yOffsetPx);
   drawRocketArt(figCtx, mW, mH, mpp, {
-    legsProgress: (idx === 0 && body.isActive) ? legs.progress : 0,
-    legsState: null,
-    firing: (body.lastRcs && body.lastRcs.firing) || {},
-    pod: (body.lastRcs && body.lastRcs.pod) || {},
+      legsProgress: (idx === 0 && body.isActive) ? legs.progress : 0,
+      legsState: null,
+      // A5 — same as render.js: pod-id lookups need the member's own idx.
+      memberIdx: idx,
+      firing: (body.lastRcs && body.lastRcs.firing) || {},
+      pod: (body.lastRcs && body.lastRcs.pod) || {},
     rcsTopY: m.params ? m.params.rcsTopY : undefined,
     rcsBottomY: m.params ? m.params.rcsBottomY : undefined,
     recoveryType: recType,
