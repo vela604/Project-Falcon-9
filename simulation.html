@@ -37,6 +37,7 @@
             <label class="chip-toggle"><input type="checkbox" id="toggleTrajectory"><span>Trajectory</span></label>
             <label class="chip-toggle"><input type="checkbox" id="toggleEarthFixed"><span>Earth-fixed</span></label>
             <label class="chip-toggle"><input type="checkbox" id="toggleAtmosphere" checked><span>Atmosphere</span></label>
+            <label class="chip-toggle"><input type="checkbox" id="toggleSlosh" checked><span>Fuel slosh</span></label>
           </div>
         </div>
       </div>
@@ -98,6 +99,7 @@
           <div class="tele-row"><span class="tele-sym">TWR</span><span class="tele-val" id="t-twr">0</span></div>
           <div class="tele-row"><span class="tele-sym">B</span><span class="tele-val" id="t-bodies">1</span></div>
           <div class="tele-row"><span class="tele-sym">hc</span><span class="tele-val" id="t-com">0</span></div>
+          <div class="tele-row"><span class="tele-sym">slosh</span><span class="tele-val" id="t-slosh">0</span></div>
           <div class="tele-row"><span class="tele-sym">I</span><span class="tele-val" id="t-moi">0</span></div>
         </div>
         <div class="tele-head" style="margin-top:10px;">BODIES</div>
@@ -221,8 +223,12 @@
             <div class="graph-label">Velocity</div><canvas class="mini-graph" id="graphVel"></canvas>
           </div>
           <div class="graph-block">
-            <div class="graph-label">Thrust</div><canvas class="mini-graph" id="graphThrust"></canvas>
-          </div>
+  <div class="graph-label">Thrust</div><canvas class="mini-graph" id="graphThrust"></canvas>
+</div>
+<div class="graph-block">
+  <div class="graph-label">Slosh offset (cm)</div><canvas class="mini-graph" id="graphSlosh"></canvas>
+</div>
+</div>
         </div>
         
         <!-- Glossary / info panel -->

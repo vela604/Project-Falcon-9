@@ -100,6 +100,17 @@ function rebuildEnginesForBody(body) {
         e.currentF = old.currentF;
       }
     });
+  } else {
+    // Phase 2A — the bottom member itself changed (real stage separation,
+    // not just a fairing split / payload release, which fail this branch's
+    // sibling check above and correctly leave the tank — and its slosh —
+    // untouched). The tank this body's slosh oscillator belonged to is
+    // gone, so its slosh state has nothing left to describe. Reset it.
+    body.slosh = { offset: 0, velocity: 0 };
+    // Phase 2B.1 — new tank, so the old one's proper-acceleration history
+    // is meaningless for it. Zero it rather than let one tick of the new
+    // stage's ω_n calc see the previous stage's g_eff.
+    body._prevAxialProperAccel = 0;
   }
   
   body.engines = newEngines;
@@ -132,6 +143,24 @@ function _makeBody() {
     engines: [],
     rcsCmd: (typeof _blankRcsCmd === 'function') ? _blankRcsCmd() : { N: false, S: false, E: false, W: false, NE: false, NW: false, SE: false, SW: false, CW: false, ACW: false },
     pwmClock: null,
+    // Phase 2A — lateral fuel-slosh oscillator for this body's bottom tank.
+    // offset: lateral displacement of the slosh mass from tank centerline (m)
+    // velocity: rate of that displacement (m/s)
+    // Both stay at 0 when SLOSH_ENABLED is off, or when the body has no
+    // fuel-carrying bottom member. See applySloshStep() below.
+    // Phase 2B.4 — offset/velocity above are now the WALL-BOUNDED values
+    // (soft-saturated at the tank radius); rawOffset/rawVelocity underneath
+    // are the true unbounded linear-oscillator state 2A/2B.1-2B.3 verified
+    // against Abramson's formulas, and angMomentum is last tick's
+    // −m_slosh·y_rel·ẋ (L_z about the body's CoM — see applySloshStep()),
+    // kept around only to compute this tick's Δ for the reaction torque
+    // on body.omega. See applySloshStep() below.
+    slosh: { offset: 0, velocity: 0, rawOffset: 0, rawVelocity: 0, angMomentum: 0 },
+    // Phase 2B.1 — last tick's tank proper acceleration along its own
+    // axial direction (accelerometer-on-the-tank reading; gravity already
+    // folded in — see the assignment at the end of physicsStep). Used
+    // with a one-tick lag by bottomTankSloshOmega() as g_eff.
+    _prevAxialProperAccel: 0,
   };
 }
 
@@ -223,7 +252,8 @@ function currentGeometry(body) {
   const legProgress = (body && body.isActive) ? legs.progress : 0;
   
   if (members.length && typeof stackMassProps === 'function') {
-    const props = stackMassProps(members, fuelMass, legProgress, _bodyPayloadMass(body));
+    const sloshOffset = (body && body.slosh) ? body.slosh.offset : 0;
+    const props = stackMassProps(members, fuelMass, legProgress, _bodyPayloadMass(body), sloshOffset);
     return { M: props.totalMass, comH: props.comY, comW: props.comX || 0, I: props.moi };
   }
   // Fallback (empty members) — legacy single-body formula.
@@ -244,6 +274,359 @@ function geometryOf(body) {
   body = body || state.bodies[state.activeBodyIndex];
   if (body && body._geomCache) return body._geomCache;
   return currentGeometry(body);
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2A — Fuel slosh: one lateral damped-oscillator state per body,
+// driven by the BOTTOM tank only (see prompt_2phase.md §2A). Runs as a
+// pre-step before this tick's forces/RK4. Never adds a force — it only
+// advances body.slosh.offset/velocity; massProps.js/currentGeometry() read
+// that to shift the vehicle's lateral CoM (comW), which is what lets it
+// fight the gimbal via computeMainThrustForBody's torque pivot.
+// ---------------------------------------------------------------------------
+function bodyHasBottomFuelTank(body) {
+  if (!body || !body.members || !body.members.length || !(body.fuelMass > 0)) return false;
+  const role = body.members[0].stageRole || 'rocket';
+  return role !== 'nose' && role !== 'payloadSpace';
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2B.1 — per-tank natural frequency, replacing 2A's fixed
+// CONFIG.SLOSH_OMEGA. Abramson / NASA SP-106, first antisymmetric mode:
+//
+//   ω_n = sqrt( g_eff · λ1 / R · tanh(λ1 · h / R) )
+//
+// g_eff = magnitude of the tank's proper acceleration along its own
+// axial direction — the accelerometer-on-the-tank reading. A tank under
+// high thrust sloshes faster/stiffer than the same tank on the pad,
+// because the liquid's effective weight goes up with it; a coasting
+// tank in free-fall has g_eff → 0 (liquid floats, no restoring force).
+//
+// This reuses body._prevAxialProperAccel, set at the END of the previous
+// tick (after contact resolution) — one-tick lag, same pattern as the
+// lateral slosh drive: applySloshStep() runs BEFORE this tick's forces
+// are known, so "this tick's" proper accel doesn't exist yet.
+//
+// Falls back to CONFIG.SLOSH_OMEGA whenever real tank geometry isn't
+// available (legacy rocket with no rec.fuel.tankHeight, zero-capacity
+// member, near-empty tank where the formula degenerates, etc.) — same
+// defensive posture as 2A had for missing data.
+// ---------------------------------------------------------------------------
+function bottomTankSloshOmega(body) {
+  const fill = (typeof bottomTankFillGeometry === 'function') ? bottomTankFillGeometry(body) : null;
+  if (!fill || !(fill.R > 0)) return CONFIG.SLOSH_OMEGA;
+  
+  const { R, h } = fill;
+  // Near-empty tank: tanh(≈0) ≈ 0 ⇒ ω ≈ 0, which is physically defensible
+  // (almost no liquid mass, almost no restoring stiffness) but is a
+  // degenerate case 2A's fixed frequency never had to face — an
+  // oscillator with ω≈0 just drifts under its drive term instead of
+  // oscillating. Fall back rather than feed that into the integrator.
+  if (!(h > 1e-4)) return CONFIG.SLOSH_OMEGA;
+  
+  const lambda1 = Number.isFinite(CONFIG.SLOSH_LAMBDA1) ? CONFIG.SLOSH_LAMBDA1 : 1.841;
+  // Effective gravity is the magnitude of the tank's proper acceleration
+  // along its OWN axis — exactly what an accelerometer bolted to the tank
+  // wall would read on that axis. NOT g_local + T/M: gravity is already
+  // folded into this value at the source (see the _prevAxialProperAccel
+  // assignment at the end of physicsStep), so adding g_local again would
+  // double-count it. On the pad (a=0) this correctly reduces to g_local
+  // via the pad's support force; in free-fall it correctly goes to 0.
+  const gEff = Math.abs(Number.isFinite(body._prevAxialProperAccel) ? body._prevAxialProperAccel : 0);
+  // Near-zero g_eff (coast / free-fall) degenerates ω_n → 0, which would
+  // freeze the oscillator's restoring force entirely. The drive term is
+  // also ~0 in that regime (see applySloshStep's drive), so falling back
+  // to the CONFIG constant here is a harmless placeholder — nothing
+  // visibly oscillates either way, but the state doesn't get a bogus
+  // zero frequency baked in.
+  if (!(gEff > 1e-3)) return CONFIG.SLOSH_OMEGA;
+  
+  const omega = Math.sqrt(gEff * lambda1 / R * Math.tanh(lambda1 * h / R));
+  return (Number.isFinite(omega) && omega > 0) ? omega : CONFIG.SLOSH_OMEGA;
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2B.3 — per-tank boundary-layer damping ratio, replacing 2A/2B.1's
+// fixed CONFIG.SLOSH_ZETA as the everyday value. Abramson / NASA SP-106: an
+// unbaffled cylindrical tank's slosh damping comes almost entirely from the
+// thin laminar viscous boundary layer along the wetted wall, not from bulk
+// fluid viscosity. Classic closed form for the deep-tank limit:
+//
+//   ζ_wall = 0.83 / sqrt(Re),   Re = ω_n · R² / ν
+//
+// where ν is the propellant's kinematic viscosity (CONFIG.
+// SLOSH_KINEMATIC_VISCOSITY — one averaged constant, same simplification
+// CONFIG already makes for propellant density) and R the tank radius.
+//
+// Shallow fill increases damping — proportionally more of the liquid
+// volume sits near a wetted wall — via Abramson's depth-correction factor:
+//
+//   ζ(h/R) = ζ_wall · [ 1 + (2R/h) / sinh(2·λ1·h/R) ]
+//
+// which → ζ_wall as h/R → ∞ (deep tank, correction factor → 1) and grows
+// without bound as h/R → 0 (a near-empty tank is essentially all boundary
+// layer — directionally correct, but clamped to CONFIG.SLOSH_ZETA_MAX so a
+// draining stage can't hand the Euler integrator a near-critical or
+// overdamped ratio).
+//
+// Needs this tick's ω_n as an input (Re depends on it) — call AFTER
+// bottomTankSloshOmega() in applySloshStep(), passing its result in.
+// Falls back to CONFIG.SLOSH_ZETA under the same degenerate conditions
+// bottomTankSloshOmega() falls back to CONFIG.SLOSH_OMEGA (no tank
+// geometry, near-empty tank, non-finite/zero frequency).
+// ---------------------------------------------------------------------------
+// Phase 2C — additive baffle damping when the bottom member's fuel type
+// declares hasBaffles. Baffles are a property of the FUEL/tank hardware,
+// not of fill level or tank geometry, so this resolves independently of
+// whether bottomTankFillGeometry() can run — a legacy/malformed record
+// with no resolvable tank geometry still gets its baffle bonus if its
+// fuel type declares one, and the boundary-layer derivation is added on
+// top in the normal path. Zero when the fuel type doesn't declare baffles
+// (or doesn't resolve at all), so pre-2C behaviour is bit-exact for any
+// fuel type that doesn't set the flag.
+function _baffleZetaForBody(body) {
+  if (!body || !body.members || !body.members.length) return 0;
+  const rec = body.members[0];
+  if (!rec.fuel || !rec.fuel.typeId) return 0;
+  if (typeof getComponentType !== 'function') return 0;
+  const fuelType = getComponentType(rec.fuel.typeId);
+  if (!fuelType) return 0;
+  const entry = fuelType.parameterSchema.find(p => p.key === 'hasBaffles');
+  if (!entry || entry.value !== true) return 0;
+  return Number.isFinite(CONFIG.SLOSH_BAFFLE_ZETA) ? CONFIG.SLOSH_BAFFLE_ZETA : 0.10;
+}
+
+function bottomTankSloshZeta(body, omega) {
+  const baffleZeta = _baffleZetaForBody(body);
+  
+  const fill = (typeof bottomTankFillGeometry === 'function') ? bottomTankFillGeometry(body) : null;
+  if (!fill || !(fill.R > 0) || !(fill.h > 1e-4) || !(Number.isFinite(omega) && omega > 0)) {
+    return CONFIG.SLOSH_ZETA + baffleZeta;
+  }
+  const { R, h } = fill;
+  
+  const nu = Number.isFinite(CONFIG.SLOSH_KINEMATIC_VISCOSITY) ? CONFIG.SLOSH_KINEMATIC_VISCOSITY : 1e-6;
+  const Re = (omega * R * R) / nu;
+  if (!(Re > 0)) return CONFIG.SLOSH_ZETA + baffleZeta;
+  const zetaWall = 0.83 / Math.sqrt(Re);
+  
+  const lambda1 = Number.isFinite(CONFIG.SLOSH_LAMBDA1) ? CONFIG.SLOSH_LAMBDA1 : 1.841;
+  const hOverR = h / R;
+  const sinhArg = 2 * lambda1 * hOverR;
+  // sinh(x) is already negligible-reciprocal (correction → 0) well before
+  // it would overflow — a generous cutoff avoids computing huge sinh
+  // values for no visible change in the result.
+  const depthCorrection = (sinhArg > 40) ? 0 : (2 * R / h) / Math.sinh(sinhArg);
+  
+  const zetaMax = Number.isFinite(CONFIG.SLOSH_ZETA_MAX) ? CONFIG.SLOSH_ZETA_MAX : 0.5;
+  const zeta = zetaWall * (1 + depthCorrection) + baffleZeta;
+  return Number.isFinite(zeta) ? Math.min(zetaMax, Math.max(zetaWall, zeta)) : (CONFIG.SLOSH_ZETA + baffleZeta);
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2B.4a — soft saturation at the tank wall. Real liquid can't swing
+// past the tank radius; the linear damped-oscillator model 2A/2B.1-2B.3
+// integrate has no such limit built in (a big enough lateral impulse can
+// drive it arbitrarily far). Rather than hard-clamping the integrated
+// state itself (which would throw away momentum/energy at the clamp and
+// reintroduce a discontinuity every time it saturates), the RAW state
+// keeps integrating the exact same unbounded linear ODE 2B.1/2B.3 were
+// verified against — only the EXPOSED offset/velocity (what massProps.js's
+// CoM coupling and telemetry.js/stateBuffer.js actually read) get warped
+// through a smooth saturating map:
+//
+//   x_eff = R · tanh(x_raw / R)
+//
+// which is ≈ x_raw for |x_raw| ≪ R (unchanged small-signal behaviour, so
+// 2B.5's frequency/damping verification against Abramson's published
+// values still holds) and asymptotes smoothly to ±R as x_raw grows
+// without bound — the wall is soft (no hard discontinuity) but never
+// crossed. The matching velocity is just the chain rule on that map:
+//
+//   ẋ_eff = ẋ_raw · sech²(x_raw / R)
+//
+// so a saturated offset also reports a correctly-shrinking velocity (a
+// liquid pinned against the wall isn't still moving at its unsaturated
+// rate) rather than the effective position and its derivative silently
+// disagreeing with each other.
+//
+// Falls back to exposing the raw state unclamped when no tank radius is
+// resolvable (legacy/malformed record) — same defensive posture as
+// bottomTankSloshOmega()/bottomTankSloshZeta(): don't fabricate a wall
+// that doesn't exist.
+// ---------------------------------------------------------------------------
+function _sloshSaturate(rawOffset, rawVelocity, R) {
+  if (!(R > 0)) return { offset: rawOffset, velocity: rawVelocity };
+  const u = rawOffset / R;
+  const t = Math.tanh(u);
+  const sech2 = 1 - t * t; // d/dx[R·tanh(x/R)] = sech²(x/R)
+  return { offset: R * t, velocity: rawVelocity * sech2 };
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2B.4b — slosh mass for the angular-momentum coupling below. Same
+// per-tank mass-fraction × member-fuel product massProps.js's fuel branch
+// already computes for the CoM shift (Phase 2B.2), re-derived here from
+// the SAME inputs (bottomTankFillGeometry's fillFrac, memberMaxFuel) so
+// the coupling can never disagree with the mass the CoM coupling used.
+//
+// fill is the caller's already-computed bottomTankFillGeometry(body)
+// result (may be null — see the fallback branch below).
+// ---------------------------------------------------------------------------
+function bottomTankSloshMass(body, fill) {
+  if (!bodyHasBottomFuelTank(body)) return 0;
+  const rec = body.members[0];
+  const maxFuel = (typeof memberMaxFuel === 'function') ?
+    memberMaxFuel(rec, body.members[1] || null) : 0;
+  if (!(maxFuel > 0)) return 0;
+
+  let memberFuel;
+  if (fill && fill.R > 0 && fill.fillFrac >= 0) {
+    // fillFrac = memberFuel / maxFuel already, from bottomTankFillGeometry
+    // — reuse it rather than re-deriving the proportional split.
+    memberFuel = fill.fillFrac * maxFuel;
+  } else {
+    // No usable tank geometry (legacy/malformed record, zero radius or
+    // height) — fall back to the same proportional-by-capacity split
+    // bottomTankFillGeometry uses internally, so a malformed tank still
+    // gets a sensible slosh mass rather than silently coupling nothing.
+    let sumMax = 0;
+    for (let i = 0; i < body.members.length; i++) {
+      sumMax += memberMaxFuel(body.members[i], body.members[i + 1] || null);
+    }
+    memberFuel = sumMax > 0 ? (body.fuelMass || 0) * (maxFuel / sumMax) : 0;
+  }
+
+  const hOverR = (fill && fill.R > 0) ? (fill.h / fill.R) : NaN;
+  const frac = (typeof sloshMassFraction === 'function') ?
+    sloshMassFraction(hOverR) :
+    (Number.isFinite(CONFIG.SLOSH_MASS_FRACTION) ? CONFIG.SLOSH_MASS_FRACTION : 0.27);
+  return frac * memberFuel;
+}
+
+// coupleOmega: pass false to still integrate/decay/saturate the slosh
+// state but SKIP the angular-momentum reaction on body.omega — used for
+// the settled/sleeping-body decay-only call site in physicsStep(), where
+// a sleeping body must stay exactly asleep and shouldn't get nudged awake
+// by a vanishingly small residual reaction torque every frame.
+function applySloshStep(body, dt, coupleOmega) {
+  if (!body) return;
+  if (coupleOmega === undefined) coupleOmega = true;
+  if (!body.slosh) body.slosh = { offset: 0, velocity: 0, rawOffset: 0, rawVelocity: 0, angMomentum: 0 };
+  // Defensive lazy-init for bodies whose .slosh was reset to the bare
+  // {offset, velocity} shape elsewhere (e.g. the stage-separation reset in
+  // rebuildEnginesForBody) — the raw/angMomentum fields this step needs
+  // just weren't part of that shape historically.
+  if (!Number.isFinite(body.slosh.rawOffset)) body.slosh.rawOffset = body.slosh.offset || 0;
+  if (!Number.isFinite(body.slosh.rawVelocity)) body.slosh.rawVelocity = body.slosh.velocity || 0;
+  if (!Number.isFinite(body.slosh.angMomentum)) body.slosh.angMomentum = 0;
+  
+  if (!CONFIG.SLOSH_ENABLED || !bodyHasBottomFuelTank(body)) {
+    // Slosh disabled, or nothing to slosh (no bottom tank / tank dry):
+    // decay any residual state to exactly zero rather than leaving it
+    // hanging, so "slosh off → identical to before" is bit-exact and a
+    // stale offset can't reappear if fuel/tank comes back later.
+    body.slosh.offset = 0;
+    body.slosh.velocity = 0;
+    body.slosh.rawOffset = 0;
+    body.slosh.rawVelocity = 0;
+    body.slosh.angMomentum = 0;
+    // ω_n (and, since 2B.3, ζ) has no meaning when slosh is off — mark
+    // both NaN so the telemetry shows "—" instead of a stale value left
+    // over from when slosh was last active.
+    body.slosh.omega = NaN;
+    body.slosh.zeta = NaN;
+    return;
+  }
+  
+  // Phase 2B.1 — per-body, per-tick frequency (was CONFIG.SLOSH_OMEGA in
+  // 2A). Stored onto body.slosh.omega for telemetry/debug visibility;
+  // nothing reads it back in as an input (recomputed fresh every tick
+  // from current fill level, not integrated).
+  const omega = bottomTankSloshOmega(body);
+  body.slosh.omega = omega;
+  // Phase 2B.3 — per-body, per-tick boundary-layer damping (was the fixed
+  // CONFIG.SLOSH_ZETA in 2A/2B.1). Stored onto body.slosh.zeta for
+  // telemetry/debug visibility, same pattern as .omega above — nothing
+  // reads it back in as an input, recomputed fresh every tick.
+  const zeta = bottomTankSloshZeta(body, omega);
+  body.slosh.zeta = zeta;
+  const aLateral = body._prevLateralAccel || 0; // one-tick lag — see physicsStep()
+  
+  // Sub-stepped explicit Euler keeps ω·dt small even if ω or dt change
+  // later (Phase 2B derives ω from tank geometry/fill, so it will vary
+  // tick to tick once that lands). Integrates the RAW, unbounded state —
+  // see _sloshSaturate()'s header comment above for why offset/velocity
+  // (the exposed fields) are no longer this loop's own x/v.
+  const n = Math.max(1, CONFIG.SLOSH_SUBSTEPS || 1);
+  const h = dt / n;
+  let x = body.slosh.rawOffset;
+  let v = body.slosh.rawVelocity;
+  for (let i = 0; i < n; i++) {
+    const accel = -omega * omega * x - 2 * zeta * omega * v - aLateral;
+    v += accel * h;
+    x += v * h;
+  }
+  body.slosh.rawOffset = x;
+  body.slosh.rawVelocity = v;
+  
+  // ---- Phase 2B.4a — expose the wall-bounded offset/velocity ----
+  const fill = (typeof bottomTankFillGeometry === 'function') ? bottomTankFillGeometry(body) : null;
+  const Rsat = (fill && fill.R > 0) ? fill.R : 0;
+  const sat = _sloshSaturate(x, v, Rsat);
+  body.slosh.offset = sat.offset;
+  body.slosh.velocity = sat.velocity;
+  
+  // ---- Phase 2B.4b — angular momentum coupling ----
+  // L_z = m·(r × v) about the body's CoM. The slosh mass has PURE
+  // lateral body-frame velocity (ẋ, 0) at position (x, y_rel) relative
+  // to the CoM, where y_rel is its axial (vertical) offset from the CoM
+  // — the tank's slosh mass sits below/above the CoM at a roughly fixed
+  // height, independent of the lateral offset x itself. So:
+  //
+  //   L_z = m·(x·v_y − y_rel·v_x) = m·(x·0 − y_rel·ẋ) = −m·y_rel·ẋ
+  //
+  // y_rel = (slosh mass centroid height) − (body CoM height), both
+  // measured from the body's base in the same axial frame (H=0 at base,
+  // +Y up — see memberComponents()'s header and rcs.js's dTop/dBottom).
+  // The centroid height reuses sloshMassCentroidFrac() (Phase 2B.3,
+  // massProps.js) against this tick's fill height; y_rel is treated as
+  // constant across the lateral swing, same one-tick-lag spirit as
+  // 2B.1's g_eff — it isn't re-derived per substep.
+  //
+  // Conservation-style reaction: as this L_z changes tick to tick, the
+  // body's own I·ω must change by the opposite amount for the pair's
+  // total angular momentum to hold steady.
+  const mSlosh = bottomTankSloshMass(body, fill);
+  let yRel = 0;
+  if (fill && fill.R > 0 && body._geomCache) {
+    const hOverR = fill.h / fill.R;
+    const centroidFrac = (typeof sloshMassCentroidFrac === 'function') ? sloshMassCentroidFrac(hOverR) : 0.5;
+    const h1 = centroidFrac * fill.h; // slosh-mass centroid height, from body base
+    yRel = h1 - (body._geomCache.comH || 0);
+  }
+  const Lnew = -mSlosh * yRel * sat.velocity;
+  const Lprev = body.slosh.angMomentum;
+  body.slosh.angMomentum = Lnew;
+  // Debug/verification visibility for 2B.5's whip-back test (see the
+  // DEBUG_PHYSICS log block in physicsStep) — this tick's actual reaction
+  // applied to omega, 0 when not coupled or I unresolved. Not read back
+  // in as an input anywhere; purely observational.
+  body.slosh.lastReactionDOmega = 0;
+  if (coupleOmega) {
+    // body._geomCache is this tick's currentGeometry() result, cached by
+    // physicsStep() just before calling applySloshStep() — same one-tick
+    // relationship 2B.1 already relies on for g_eff (the body's I can't
+    // know about THIS tick's fresh slosh offset until after this step
+    // runs, so reusing the cached value is the correct order here, not a
+    // shortcut).
+    const I = (body._geomCache && body._geomCache.I > 0) ? body._geomCache.I : 0;
+    if (I > 0) {
+      const dOmega = -(Lnew - Lprev) / I;
+      body.omega += dOmega;
+      body.slosh.lastReactionDOmega = dOmega;
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -298,8 +681,15 @@ function applyActuatorRateLimitsForBody(body, dt) {
 }
 
 // Body-frame force/torque from all 9 main engines (gimbal already rate-limited).
-function computeMainThrustForBody(body, comH) {
+function computeMainThrustForBody(body, comH, comW) {
   if (!body || !body.engines) return zeroThrust();
+  // Phase 2A: torque is taken about the vehicle's ACTUAL current CoM
+  // (comW, comH), not the structural centerline (x=0). Every prior call
+  // effectively had comW = 0 (symmetric layouts, no lateral CoM source
+  // existed), so this is a no-op change everywhere except when fuel slosh
+  // shifts comW away from 0 — which is exactly the "shifted CoM fights the
+  // gimbal" effect the slosh model exists to produce. See applySloshStep().
+  const pivotX = comW || 0;
   let Fx = 0,
     Fy = 0,
     torque = 0,
@@ -316,7 +706,7 @@ function computeMainThrustForBody(body, comH) {
     const fy = F * Math.cos(gRad);
     Fx += fx;
     Fy += fy;
-    torque += e.x * fy - (-comH) * fx;
+    torque += (e.x - pivotX) * fy - (-comH) * fx;
     mdot += e.massFlowRate;
   });
   return { Fx, Fy, torque, mdot };
@@ -873,7 +1263,7 @@ function physicsStep(dt) {
   // check passes — the split itself then happens through the normal
   // per-body machinery below.
   _checkPendingSeparate();
-_checkPendingRelease();
+  _checkPendingRelease();
   
   if (!state.bodies.length) return;
   
@@ -883,21 +1273,52 @@ _checkPendingRelease();
     // koi input na de. Isse gravity-vs-impulse ka per-tick residual
     // poora khatam ho jata hai — yahi asli "zameen mein rengna" ka
     // root cause tha.
-    if (body.settled) {
-      if (!_bodyHasActiveInput(body)) return;
-      body.settled = false;
-      body._restFrames = 0;
+   if (body.settled) {
+  if (!_bodyHasActiveInput(body)) {
+    // Slosh must still decay — otherwise a body that settles after
+    // landing (or any other at-rest transition) freezes whatever
+    // offset it happened to have at the sleep moment. Zero drive
+    // means it only sees its own damping term, which is exactly what
+    // a stationary tank's liquid does.
+    if (body.slosh && (body.slosh.offset !== 0 || body.slosh.velocity !== 0)) {
+      body._prevLateralAccel = 0;
+      // Phase 2B.4 — coupleOmega=false: let the slosh decay (and stay
+      // wall-bounded) while settled, but don't apply its reaction torque
+      // to a sleeping body's omega — see applySloshStep()'s header.
+      applySloshStep(body, dt, false);
     }
+    return;
+  }
+  body.settled = false;
+  body._restFrames = 0;
+}
+
+// Snapshot velocity at the START of this tick. Used at the END of the
+// tick to derive the actual inertial acceleration the body experienced
+// — which includes every force that got applied during the tick
+// (thrust, aero, gravity, AND the contact impulses RK4 doesn't see,
+// because contact resolution happens after integration). This is the
+// only way slosh drive can correctly include the pad support force
+// acting on a stationary tilted body.
+body._vx0 = body.vx;
+body._vy0 = body.vy;
+
+const isActive = (idx === state.activeBodyIndex);
     
-    const isActive = (idx === state.activeBodyIndex);
     const geom = currentGeometry(body);
     body._geomCache = geom;
     
     applyActuatorRateLimitsForBody(body, dt);
     
+    // Phase 2A — lateral slosh pre-step, before this tick's forces/RK4.
+    // Uses LAST tick's lateral acceleration (one-tick lag is fine for a
+    // visual/CoM-coupling feature — see prompt_2phase.md §2A). Only
+    // shifts a stored offset/velocity; never adds a force.
+    applySloshStep(body, dt);
+    
     const hasFuel = body.fuelMass > 0 && !body.crashed;
-    const main = hasFuel ? computeMainThrustForBody(body, geom.comH) : zeroThrust();
-    const rcs = hasFuel ? computeRCSForBody(body, geom.comH, dt) : zeroRCS();
+    const main = hasFuel ? computeMainThrustForBody(body, geom.comH, geom.comW) : zeroThrust();
+    const rcs = hasFuel ? computeRCSForBody(body, geom.comH, geom.comW, dt) : zeroRCS();
     body.lastRcs = { firing: rcs.firing || {}, pod: rcs.pod || {} };
     if (!hasFuel) body.engines.forEach(e => { e.currentF = 0; });
     
@@ -963,6 +1384,8 @@ _checkPendingRelease();
       };
     }
     
+
+   
     // ---- RK4 integration ----
     const s0 = body;
     const k1 = derivatives(s0, extra);
@@ -1167,30 +1590,77 @@ _checkPendingRelease();
       }
       
       // ---- Flat-fall halt ----
-      // Crash ke baad agar body ~2s continuous 85°+ tilt pe padi rahe, use
-      // frozen treat karo — residual jitter nahi.
-      //
-      // CRITICAL: state.halted sirf tab set karo jab yeh CURRENTLY-CONTROLLED
-      // body ho. Baaki sab (discarded booster, spent stages, fairing halves,
-      // released payloads) eventually crash hote hain aur flat padte hain —
-      // un par halt karne se poora mission usi second freeze ho jaata hai
-      // jaise tum "Split Fairing" karte ho (fairing halves 5 m/s drift
-      // karte hain, phir crash karti hain, phir 2s flat padti hain).
-      if (body.crashed && !body.settled) {
-        const tiltDeg = Math.abs(body.theta - Math.atan2(body.rx, body.ry)) * 180 / Math.PI;
-        if (tiltDeg > 85) {
-          body._fallenFrames = (body._fallenFrames || 0) + 1;
-          if (body._fallenFrames * dt > 2.0) {
-            body.vx = 0;
-            body.vy = 0;
-            body.omega = 0;
-            body.settled = true;
-            if (body.isActive) state.halted = true; // ← only the controlled body halts the sim
-          }
-        } else {
-          body._fallenFrames = 0;
+    if (body.crashed && !body.settled) {
+      const tiltDeg = Math.abs(body.theta - Math.atan2(body.rx, body.ry)) * 180 / Math.PI;
+      if (tiltDeg > 85) {
+        body._fallenFrames = (body._fallenFrames || 0) + 1;
+        if (body._fallenFrames * dt > 2.0) {
+          body.vx = 0;
+          body.vy = 0;
+          body.omega = 0;
+          body.settled = true;
+          if (body.isActive) state.halted = true;
         }
+      } else {
+        body._fallenFrames = 0;
       }
+    }
+  }
+  
+  // ---- Slosh drive: proper-acceleration lateral component ----
+  //
+  // The slosh oscillator is driven by the tank's PROPER acceleration —
+  // (a_inertial − g_inertial) — resolved into the body frame and
+  // projected onto the lateral axis. This is exactly what an
+  // accelerometer rigidly mounted to the tank would read along that
+  // axis. It correctly handles every case:
+  //
+  //  - Free-fall / coast: a = g ⇒ drive = 0. Liquid floats. No slosh.
+  //  - Vertical thrust: a − g is axial ⇒ lateral = 0. No slosh.
+  //  - Tilted thrust: axial component only ⇒ lateral = 0 for pure
+  //    axial thrust (real engines gimbal, so there's always a small
+  //    lateral term — captured automatically).
+  //  - Aero drag (any AoA): adds a lateral force the tank walls feel
+  //    but the bulk liquid lags behind ⇒ drives slosh. Scales with
+  //    dynamic pressure; dominates slosh during max-Q and reentry.
+  //  - Stationary on a tilted pad: a = 0, so a − g = −g, whose body-
+  //    frame lateral component is g·sin(tilt) — the pad's support
+  //    force pushing the tank into the liquid. Nonzero, correct, and
+  //    only reachable through this formula because contact impulses
+  //    are already reflected in the Δv/Δt below.
+  //
+  // Deriving acceleration from (v_end − v_start)/dt — rather than
+  // summing named forces — means contact impulses, RCS impulses, and
+  // any future force all get captured for free, and gravity never has
+  // to be special-cased: it's already in the Δv, and subtracting
+  // g_inertial isolates the proper part exactly.
+  //
+  // dt-guard: dv/dt only makes sense if the previous velocity snapshot
+  // exists and dt is finite. First tick after body creation has no
+  // snapshot; falls back to zero (correct — nothing moved yet).
+  {
+    const vx0 = (typeof body._vx0 === 'number') ? body._vx0 : body.vx;
+    const vy0 = (typeof body._vy0 === 'number') ? body._vy0 : body.vy;
+    const aX = dt > 0 ? (body.vx - vx0) / dt : 0;
+    const aY = dt > 0 ? (body.vy - vy0) / dt : 0;
+    const gAcc = gravityAccel(body.rx, body.ry);
+    const aProperX = aX - gAcc.ax;
+    const aProperY = aY - gAcc.ay;
+    const cosT = Math.cos(body.theta), sinT = Math.sin(body.theta);
+    // Body frame: lateral = +right = (cosθ, sinθ);
+    //             axial   = +up    = (-sinθ, cosθ)
+    const lateral = aProperX * cosT + aProperY * sinT;
+    const axial = -aProperX * sinT + aProperY * cosT;
+    // Defensive: any NaN in the chain (division by zero mass elsewhere,
+    // numerical blowup) would poison the slosh oscillator permanently
+    // once it entered offset/velocity. Reject it here at the source.
+    body._prevLateralAccel = Number.isFinite(lateral) ? lateral : 0;
+    // Phase 2B.1 fix — this is the tank's proper acceleration along its
+    // OWN axial direction (accelerometer-on-the-tank reading), used by
+    // bottomTankSloshOmega() as g_eff. NOT thrust/mass added to gravity —
+    // gravity is already subtracted out above (aProperX/Y), so adding
+    // g_local again would double-count it. See prompt_2phase_fixes.md.
+    body._prevAxialProperAccel = Number.isFinite(axial) ? axial : 0;
     }
     
     // ============================================================
@@ -1240,12 +1710,23 @@ _checkPendingRelease();
           `contact(${_c.contactLabel}) vr=${_c.vr.toFixed(4)} vt=${_c.vt.toFixed(4)} depth=${_c.depth.toFixed(5)}` :
           'no contact';
         
+        // Phase 2B.5 whip-back test: with slosh ON, ω should visibly
+        // oscillate phase-locked to sloshOffset (dOmega swings opposite
+        // sign to sloshOffset's velocity zero-crossings); with
+        // CONFIG.SLOSH_ENABLED=false, sloshOffset/dOmega sit at 0/NaN and
+        // ω should show no such correlation.
+        const _sl = body.slosh || {};
+        const _slStr = `offset=${(_sl.offset||0).toExponential(3)} v=${(_sl.velocity||0).toExponential(3)} ` +
+          `ωn=${Number.isFinite(_sl.omega) ? _sl.omega.toFixed(3) : '—'} ζ=${Number.isFinite(_sl.zeta) ? _sl.zeta.toFixed(4) : '—'} ` +
+          `dOmega=${(_sl.lastReactionDOmega||0).toExponential(3)}`;
+        
         console.log(
           `[t=${state.simTime.toFixed(2)}] alt=${_alt.toFixed(2)} tilt=${_tiltDeg.toFixed(5)}° ` +
           `θ=${body.theta.toFixed(6)} ω=${body.omega.toExponential(3)} α=${_alphaAng.toExponential(3)}\n` +
           `  vRel=${_speedRel.toExponential(3)} AoA=${_aoaDeg.toFixed(4)}°\n` +
           `  τ_main=${_tMain.toExponential(3)} τ_rcs=${_tRcs.toExponential(3)} τ_drag=${_tDrag.toExponential(3)} τ_ground=${_tGround.toExponential(3)} τ_total=${_tTotal.toExponential(3)}\n` +
           `  I=${geom.I.toExponential(3)} comH=${geom.comH.toFixed(3)}\n` +
+          `  slosh: ${_slStr}\n` +
           `  engines: ${_engStr}\n` +
           `  rcs_cmd: ${_rcsActive}\n` +
           `  ${_cStr}`
@@ -1255,9 +1736,9 @@ _checkPendingRelease();
     // ============================================================
     // END DEBUG
     // ============================================================
+    });
     
-    
-  });
+
   
   // ---- Body-vs-body collision (unchanged) ----
   state.collisionPairs = (typeof broadPhaseCollisionPairs === 'function') ?
@@ -1323,8 +1804,8 @@ function resetState(initialAltitude) {
   state.activeBodyIndex = 0;
   state.simTime = 0;
   state.halted = false;
-  pendingSeparate = null; // clear any mid-flight separate request
-pendingRelease = null; // and any pending payload release// clear any mid-flight separate request
+  pendingSeparate = null;  // clear any mid-flight separate request
+  pendingRelease = null;   // and any pending payload release
   resetPWM();
   }
 

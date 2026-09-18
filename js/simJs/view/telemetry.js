@@ -24,6 +24,7 @@ const NOTATION_GLOSSARY = {
   'm': 'Total vehicle mass (kg) — dry structure + propellant + any attached payload.',
   'mf': 'Remaining propellant mass (kg).',
   'hc': 'Height of stack center of mass above the base (m).',
+  'slosh': 'Lateral offset of the bottom tank\'s fuel-slosh oscillator from tank centerline (cm). 0 when the Fuel slosh toggle is off or the body has no fuel in its bottom tank. Shifts the stack\'s lateral CoM, which is what makes it fight the gimbal. The values in parentheses are the current natural frequency \u03c9_n (rad/s, derived from tank radius and fill level) and damping ratio \u03b6 (derived from the same geometry plus propellant viscosity, via Abramson\'s boundary-layer model); both show "\u2014" when slosh is off or the body has no bottom tank to measure from.',
   
   // ---- Forces / dynamics ----
   'Ft': 'Total main-engine thrust magnitude (N).',
@@ -148,6 +149,23 @@ function updateTelemetry() {
   const disc = state.bodies.filter(b => b.isDiscarded).length;
   set('t-bodies', disc > 0 ? `${total} (${disc}d)` : `${total}`);
   set('t-com', fmt(geom.comH, 2));
+  // Phase 2A — lateral slosh offset (cm, signed) of the bottom tank's slosh
+  // mass. 0.00 when slosh is off/disabled or the body has no bottom tank.
+  // Phase 2B.1 — also show the derived natural frequency ω_n (rad/s)
+  // alongside it, so the fill-level/thrust-dependent value is visible
+  // rather than only inferrable from offset behaviour.
+  // Phase 2B.3 — and the derived boundary-layer damping ratio ζ, same
+  // "—" fallback pattern as ω when slosh is off / no bottom tank.
+  const _sloshBody = state.bodies[state.activeBodyIndex];
+  // telemetry.js
+const _sloshOffsetCm = fmt((_sloshBody && _sloshBody.slosh ? _sloshBody.slosh.offset : 0) * 100, 3);
+  const _sloshOmega = (_sloshBody && _sloshBody.slosh && Number.isFinite(_sloshBody.slosh.omega))
+    ? _sloshBody.slosh.omega.toFixed(2)
+    : '—';
+  const _sloshZeta = (_sloshBody && _sloshBody.slosh && Number.isFinite(_sloshBody.slosh.zeta))
+    ? _sloshBody.slosh.zeta.toFixed(3)
+    : '—';
+  set('t-slosh', `${_sloshOffsetCm} cm (ω=${_sloshOmega}, ζ=${_sloshZeta})`);
   set('t-moi', geom.I >= 1e6 ? (geom.I / 1e6).toFixed(2) + 'M' : fmt(geom.I, 0));
   
   const maxThrustAll = ENGINES.reduce((s, e) => s + e.Fmax, 0);
@@ -160,8 +178,10 @@ function updateTelemetry() {
   }
   
   
-  pushGraphSample(state.simTime, altitude, speed, ENGINES.reduce((s, e) => s + e.currentF, 0));
-  
+  const _graphSloshBody = state.bodies[state.activeBodyIndex];
+const _sloshCmForGraph = (_graphSloshBody && _graphSloshBody.slosh ? (_graphSloshBody.slosh.offset || 0) * 100 : 0);
+pushGraphSample(state.simTime, altitude, speed, ENGINES.reduce((s, e) => s + e.currentF, 0), _sloshCmForGraph);
+
   const bodyListEl = getEl('t-bodyList');
   if (bodyListEl) {
     // Show every body that has physical state worth reporting — including
@@ -333,7 +353,12 @@ function figMemberMechanics(members, body, aero) {
     let comX = 0,
       comY = H / 2;
     if (typeof memberComponents === 'function' && typeof combineComponents === 'function') {
-      const comps = memberComponents(m, fuelShares[i] || 0, legsProgress);
+      // Phase 2A: only the bottom member (i === 0) ever carries a nonzero
+      // slosh offset — same "bottom tank only" rule as stackMassProps() in
+      // massProps.js. This is what makes the existing per-member CoM dot
+      // below visibly swing side to side when slosh is active.
+      const sloshOffset = (i === 0 && body && body.slosh) ? body.slosh.offset : undefined;
+      const comps = memberComponents(m, fuelShares[i] || 0, legsProgress, null, sloshOffset);
       const combined = combineComponents(comps);
       if (Number.isFinite(combined.comX)) comX = combined.comX;
       if (Number.isFinite(combined.comY)) comY = combined.comY;
@@ -534,8 +559,12 @@ members.forEach((m, idx) => {
   const mech = figMemberMechanics(members, body, aero);
   
   // Overall stack CoM — the existing bright reference line, kept as-is.
+  // The DOT's x position now reflects geom.comW too (Phase 2A: nonzero
+  // only when slosh has shifted the stack's true lateral CoM — previously
+  // always 0, so this is a no-op everywhere else).
   const geom = geometryOf(body);
   const comY_overall = baseY - (geom.comH || 0) / mpp;
+  const comX_overall = baseX + (geom.comW || 0) / mpp;
   figCtx.strokeStyle = '#ff4466';
   figCtx.lineWidth = 2;
   figCtx.beginPath();
@@ -543,7 +572,7 @@ members.forEach((m, idx) => {
   figCtx.lineTo(baseX + stackHalfW_px * 0.9, comY_overall);
   figCtx.stroke();
   figCtx.beginPath();
-  figCtx.arc(baseX, comY_overall, 4, 0, Math.PI * 2);
+  figCtx.arc(comX_overall, comY_overall, 4, 0, Math.PI * 2);
   figCtx.fillStyle = '#ff4466';
   figCtx.fill();
   figCtx.fillStyle = '#ff8899';
@@ -885,19 +914,21 @@ function drawBasalView() {
 // ---------------------------------------------------------------------------
 // Rolling mini graphs (altitude, velocity, thrust vs time)
 // ---------------------------------------------------------------------------
-const graphHistory = { t: [], alt: [], vel: [], thrust: [] };
+const graphHistory = { t: [], alt: [], vel: [], thrust: [], slosh: [] };
 const GRAPH_WINDOW = 60; // seconds of history kept
 
-function pushGraphSample(t, alt, vel, thrust) {
+function pushGraphSample(t, alt, vel, thrust, slosh) {
   graphHistory.t.push(t);
   graphHistory.alt.push(alt);
   graphHistory.vel.push(vel);
   graphHistory.thrust.push(thrust);
+  graphHistory.slosh.push(slosh);
   while (graphHistory.t.length && t - graphHistory.t[0] > GRAPH_WINDOW) {
     graphHistory.t.shift();
     graphHistory.alt.shift();
     graphHistory.vel.shift();
     graphHistory.thrust.shift();
+    graphHistory.slosh.shift();
   }
 }
 
@@ -929,9 +960,11 @@ function drawGraphs() {
   const altC = document.getElementById('graphAlt');
   const velC = document.getElementById('graphVel');
   const thrC = document.getElementById('graphThrust');
+  const slC = document.getElementById('graphSlosh');
   if (altC) drawMiniChart(altC, graphHistory.alt, '#55ddff', 'alt');
   if (velC) drawMiniChart(velC, graphHistory.vel, '#ffdd55', 'v');
   if (thrC) drawMiniChart(thrC, graphHistory.thrust, '#ff8855', 'F');
+  if (slC) drawMiniChart(slC, graphHistory.slosh, '#a78bfa', 'slosh');
 }
 
 

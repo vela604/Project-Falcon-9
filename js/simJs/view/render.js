@@ -17,6 +17,12 @@ let canvas, ctx;
 let showGrid = true;
 let showVectors = true;
 let showTrajectory = false;
+// Phase 2A — fuel slosh. Mirrors CONFIG.SLOSH_ENABLED on the physics
+// worker (see main.js's toggleSlosh binding); kept here alongside the
+// other display toggles purely so the UI checkbox has a main-thread state
+// to read back. The actual on/off effect lives entirely in the worker —
+// when off, body.slosh.offset/velocity decay to 0 and nothing renders.
+let sloshEnabled = true;
 let trajectoryMode = 'inertial'; // 'inertial' | 'earthFixed'
 // Umbilical tower retract animation: 0 = upright/latched against the
 // vehicle, 1 = fully swung back. Driven off real elapsed time (like the

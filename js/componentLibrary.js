@@ -368,6 +368,7 @@ function buildRcsThrusterColdGasSmall() {
 // therefore fuel mass) are chosen per rocket/stage build.
 const FUEL_LIQUID_SCHEMA = [
   { key: 'propellantDensity', label: 'Propellant density', unit: 'kg/m3', min: 100 },
+  { key: 'hasBaffles', label: 'Anti-slosh baffles fitted', unit: 'bool' },
 ];
 
 function makeFuel(id, displayName, description, values) {
@@ -388,7 +389,17 @@ function buildFuelRp1Lox() {
   return makeFuel(
     'rp1-lox',
     'RP-1 / LOX',
-    'Propellant type. Declares only propellant density — tank size (and therefore fuel mass) is decided per rocket/stage build.', { propellantDensity: 1080 }
+    'Propellant type. Declares propellant density and whether the tank carries anti-slosh baffles — tank size (and therefore fuel mass) is decided per rocket/stage build. Unbaffled: relies on the tank wall boundary layer alone for slosh damping (Abramson, ζ ~ 1e-4 for large tanks — barely any damping).',
+    { propellantDensity: 1080, hasBaffles: false }
+  );
+}
+
+function buildFuelRp1LoxBaffled() {
+  return makeFuel(
+    'rp1-lox-baffled',
+    'RP-1 / LOX (baffled tank)',
+    'Same propellant as RP-1/LOX, but the tank is fitted with anti-slosh baffles. Adds CONFIG.SLOSH_BAFFLE_ZETA to the boundary-layer damping — the mechanism real launch vehicles use to keep slosh from ruining the control loop.',
+    { propellantDensity: 1080, hasBaffles: true }
   );
 }
 
@@ -507,7 +518,8 @@ function seedComponentLibrary() {
     buildThrusterMerlin1DClass(),
     buildRcsThrusterColdGasSmall(),
     buildFuelRp1Lox(),
-    buildMetalAlLiAlloy(),
+  buildFuelRp1LoxBaffled(),
+  buildMetalAlLiAlloy(),
     buildPayloadSpaceNoseCap(),
     buildPayloadSpaceBulged(),
   ];

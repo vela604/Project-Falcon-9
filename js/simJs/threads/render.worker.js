@@ -142,7 +142,7 @@ self.onmessage = (e) => {
       else if (!showTrajectory) state.trajectory = null; // ← ye add karo
       state.separationFlash = msg.data.separationFlash;
       state.lastPayloadRelease = msg.data.lastPayloadRelease;
-
+      
       if (msg.data.bodies) {
         // Structural sync — a body was added/removed this tick (separation,
         // fairing split, payload release) or this is the very first state
@@ -151,16 +151,17 @@ self.onmessage = (e) => {
       } else if (msg.data.hotBuffer && state.bodies && state.bodies.length) {
         const hotArr = new Float64Array(msg.data.hotBuffer);
         decodeHotState(hotArr, state.bodies);
-
+        
         // RCS puff fix — apply the separately-sent rcsCmd/lastRcs onto the
         // same body objects (mutate in place, matching decodeHotState's pattern).
         if (msg.data.rcsSync) {
           msg.data.rcsSync.forEach((rc, i) => {
             const b = state.bodies[i];
-            if (b) { b.rcsCmd = rc.rcsCmd; b.lastRcs = rc.lastRcs; }
+            if (b) { b.rcsCmd = rc.rcsCmd;
+              b.lastRcs = rc.lastRcs; }
           });
         }
-
+        
         self.postMessage({ type: 'returnRenderHotBuffer', buffer: hotArr.buffer }, [hotArr.buffer]);
       }
       // else: hotBuffer arrived but we have no bodies yet to decode into
@@ -177,6 +178,7 @@ self.onmessage = (e) => {
       showVectors = msg.showVectors;
       showTrajectory = msg.showTrajectory;
       trajectoryMode = msg.trajectoryMode;
+      sloshEnabled = msg.sloshEnabled;
     }
   }
 };

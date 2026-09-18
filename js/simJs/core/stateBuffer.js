@@ -41,8 +41,16 @@ const HOT_STATE_MAX_ENGINES_PER_BODY = 16; // covers octaweb-merlin9 (1 center +
 // [7] engineCount   (how many of the engine slots below are actually valid)
 // [8] legsProgress  (0..1 animation; 0 for bodies with no legs)
 // [9] legsDeployed  (0 or 1; flag)
-// [10 .. 10 + N*3)  per-engine: massFlowRate (kg/s), currentF, gimbalDeg
-const HOT_STATE_BODY_HEADER_FLOATS = 10;
+// [10] sloshOffset  (m, lateral — Phase 2A; 0 if slosh off / no bottom tank)
+// [11] sloshVelocity (m/s, lateral — Phase 2A)
+// [12] sloshOmega   (rad/s, derived per tick — Phase 2B.1; NaN when slosh
+//                    is off / no bottom tank, so the main thread can render
+//                    "—" instead of a stale value)
+// [13] sloshZeta    (damping ratio, derived per tick — Phase 2B.3; NaN
+//                    under the same conditions sloshOmega is NaN, same
+//                    "—" fallback on the main thread)
+// [14 .. 14 + N*3)  per-engine: massFlowRate (kg/s), currentF, gimbalDeg
+const HOT_STATE_BODY_HEADER_FLOATS = 14;
 const HOT_STATE_FLOATS_PER_ENGINE = 3; // massFlowRate, currentF, gimbalDeg
 const HOT_STATE_BODY_STRIDE =
   HOT_STATE_BODY_HEADER_FLOATS + HOT_STATE_MAX_ENGINES_PER_BODY * HOT_STATE_FLOATS_PER_ENGINE;
@@ -91,6 +99,18 @@ function encodeHotState(buf, bodies) {
     buf[base + 6] = b.fuelMass;
     buf[base + 8] = b.legs ? (b.legs.progress || 0) : 0;
     buf[base + 9] = (b.legs && b.legs.deployed) ? 1 : 0;
+    buf[base + 10] = b.slosh ? (b.slosh.offset || 0) : 0;
+    buf[base + 11] = b.slosh ? (b.slosh.velocity || 0) : 0;
+    // Phase 2B.1 — ω_n is derived per tick on the worker but was never
+    // shipped to the main thread. NaN is a deliberate "no value" sentinel:
+    // Number.isFinite on the consumer side shows "—", and it survives the
+    // Float64Array round-trip cleanly (unlike undefined, which would become
+    // 0 and be indistinguishable from a real ω of zero).
+    buf[base + 12] = (b.slosh && Number.isFinite(b.slosh.omega)) ? b.slosh.omega : NaN;
+    // Phase 2B.3 — same NaN-sentinel treatment as sloshOmega above: the
+    // derived damping ratio is written every tick on the worker but was
+    // never shipped to the main thread until now.
+    buf[base + 13] = (b.slosh && Number.isFinite(b.slosh.zeta)) ? b.slosh.zeta : NaN;
     
     const engines = b.engines || [];
     const usedEngines = Math.min(engines.length, HOT_STATE_MAX_ENGINES_PER_BODY);
@@ -145,6 +165,18 @@ function decodeHotState(buf, bodies) {
     if (!b.legs) b.legs = { deployed: false, progress: 0 };
     b.legs.progress = buf[base + 8];
     b.legs.deployed = buf[base + 9] > 0.5;
+    
+    // Phase 2A — slosh offset/velocity. Same "recreate if missing" pattern
+    // as legs above: a freshly structurally-cloned body (bc in
+    // physics_worker.js's _snapCache) has no .slosh yet until this runs.
+    if (!b.slosh) b.slosh = { offset: 0, velocity: 0 };
+    b.slosh.offset = buf[base + 10];
+    b.slosh.velocity = buf[base + 11];
+    // Phase 2B.1 — NaN round-trips fine through Float64Array and is what
+    // the telemetry layer checks for to render "—" instead of a fake 0.
+    b.slosh.omega = buf[base + 12];
+    // Phase 2B.3 — same NaN-sentinel discipline as omega above.
+    b.slosh.zeta = buf[base + 13];
     
     const engines = b.engines || [];
     const usedEngines = Math.min(buf[base + 7], engines.length, HOT_STATE_MAX_ENGINES_PER_BODY);

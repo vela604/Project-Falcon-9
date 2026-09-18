@@ -210,6 +210,19 @@ self.onmessage = (e) => {
       }
       break;
     }
+    case 'setSloshEnabled': {
+      // Phase 2A — diagnostic toggle from the main thread's UI checkbox.
+      // applySloshStep() reads CONFIG.SLOSH_ENABLED fresh every tick, so
+      // just flipping this is enough; when turned off, zero every body's
+      // slosh state immediately rather than waiting for the next tick's
+      // decay-to-zero branch, so the figure/telemetry don't show a frozen
+      // nonzero offset for one extra frame.
+      CONFIG.SLOSH_ENABLED = !!msg.enabled;
+      if (!CONFIG.SLOSH_ENABLED) {
+        state.bodies.forEach(b => { b.slosh = { offset: 0, velocity: 0 }; });
+      }
+      break;
+    }
     case 'resumeSim':
       paused = false;
       break;

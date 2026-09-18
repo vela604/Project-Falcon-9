@@ -60,6 +60,130 @@ function memberMaxFuel(rec, aboveMember) {
 }
 
 // ---------------------------------------------------------------------------
+// Phase 2B.1 — bottom-tank fill geometry (radius, current fill height,
+// fill fraction), used by physics.js's slosh natural-frequency derivation.
+// Deliberately reproduces the SAME R / fillFrac / column-height math the
+// fuel branch of memberComponents() uses below, from the SAME inputs
+// (rec.fuel.tankHeight, memberMaxFuel, the member's proportional fuel
+// share) — so the frequency model and the CoM-shift model can never see
+// two different fill levels for the same tank.
+//
+// Returns null when there's nothing meaningful to slosh: no bottom member,
+// a nose/payloadSpace bottom (shouldn't happen — bodyHasBottomFuelTank()
+// already filters these — but defensive), zero tank radius, zero tank
+// height, or zero tank capacity (maxFuel divide-by-zero guard). Callers
+// fall back to the CONFIG constant in that case.
+// ---------------------------------------------------------------------------
+function bottomTankFillGeometry(body) {
+  if (!body || !body.members || !body.members.length) return null;
+  const rec = body.members[0];
+  const role = rec.stageRole || 'rocket';
+  if (role === 'nose' || role === 'payloadSpace') return null;
+  
+  // Tank radius: use the actual tank width (fuel.tankWidth) when present
+  // — the same source boosterDerivedMasses/stageDerivedMasses in fleet.js
+  // already use — falling back to the outer mold line (rec.width) only
+  // for legacy/malformed records with no fuel block. A slim tank inside
+  // a wider shroud must slosh at the tank's own radius, not the shroud's.
+  const tankW = (rec.fuel && Number.isFinite(rec.fuel.tankWidth)) ?
+    rec.fuel.tankWidth : (Number.isFinite(rec.width) ? rec.width : 0);
+  const R = tankW / 2;
+  if (!(R > 0)) return null;
+  
+  let bodyH = Number.isFinite(rec.height) ? rec.height : 0;
+  if (rec.fuel && Number.isFinite(rec.fuel.tankHeight)) bodyH = rec.fuel.tankHeight;
+  if (!(bodyH > 0)) return null;
+  
+  const maxFuel = memberMaxFuel(rec, body.members[1] || null);
+  if (!(maxFuel > 0)) return null;
+  
+  // Reproduce stackMassProps' proportional-by-capacity fuel split for
+  // just this (bottom) member, from the body's current total fuelMass.
+  let sumMax = 0;
+  for (let i = 0; i < body.members.length; i++) {
+    sumMax += memberMaxFuel(body.members[i], body.members[i + 1] || null);
+  }
+  const memberFuel = sumMax > 0 ? (body.fuelMass || 0) * (maxFuel / sumMax) : 0;
+  const fillFrac = Math.min(1, Math.max(0, memberFuel / maxFuel));
+  const h = fillFrac * bodyH;
+  
+  return { R, h, fillFrac, bodyH };
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2B.2 — slosh mass fraction from fill ratio h/R. Abramson / NASA
+// SP-106, first antisymmetric mode:
+//
+//   m1 / mL = tanh(λ1 · h/R) / (λ1 · h/R)
+//
+// Shallow fill (h/R → 0): fraction → 1 — a shallow liquid column moves
+// almost entirely with the surface wave.
+// Deep fill (h/R large): fraction → 0 — only a thin layer near the free
+// surface participates in the first mode; the bulk liquid below is
+// effectively decoupled from it.
+//
+// Replaces 2A's fixed CONFIG.SLOSH_MASS_FRACTION (0.27), which stays as
+// the fallback for degenerate inputs (h/R ≤ 0 or non-finite — e.g. an
+// empty tank, or a member with no resolvable radius).
+// ---------------------------------------------------------------------------
+function sloshMassFraction(hOverR) {
+  const fallback = (typeof CONFIG !== 'undefined' && Number.isFinite(CONFIG.SLOSH_MASS_FRACTION)) ?
+    CONFIG.SLOSH_MASS_FRACTION : 0.27;
+  if (!Number.isFinite(hOverR) || hOverR <= 0) return fallback;
+  
+  const lambda1 = (typeof CONFIG !== 'undefined' && Number.isFinite(CONFIG.SLOSH_LAMBDA1)) ?
+    CONFIG.SLOSH_LAMBDA1 : 1.841;
+  const x = lambda1 * hOverR;
+  // tanh(x)/x → 1 as x → 0; guard the division directly rather than lean
+  // on tanh(x) ≈ x cancelling cleanly in floating point at tiny x.
+  const frac = (x < 1e-6) ? 1 : Math.tanh(x) / x;
+  // Mathematically bounded to (0, 1] already — clamp only guards against
+  // a NaN/Infinity slipping through from a garbage hOverR upstream.
+  return Number.isFinite(frac) ? Math.min(1, Math.max(0, frac)) : fallback;
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2B.3 — mode-1 slosh mass centroid height, as a FRACTION of the
+// current fill height h (0.5 .. 1.0), measured from the tank base same as
+// everything else here. Abramson / NASA SP-106 closed form:
+//
+//   h1/h = 1 - [cosh(λ1·h/R) - 1] / [λ1·(h/R)·sinh(λ1·h/R)]
+//
+// Deep fill (h/R large): bracket term → 0, so h1/h → 1 — the sloshing
+// mode is a free-surface wave, so nearly all of the moving mass sits right
+// at the free surface (near the TOP of the column, not its bulk h/2
+// centroid). This is the standard deep-tank slosh result (same reasoning
+// as ocean surface waves: motion decays with depth below the surface).
+// Shallow fill (h/R → 0): bracket term → 1/2, so h1/h → 1/2 — a thin
+// liquid layer moves together, and its effective centroid falls back
+// toward the column's own bulk mid-height.
+//
+// Only ever applied to the small slosh-mass fraction (see
+// sloshMassFraction() above) in memberComponents()'s fuel branch below —
+// the much larger BULK fuel mass stays at the plain column centroid h/2,
+// exactly as before this step.
+// ---------------------------------------------------------------------------
+function sloshMassCentroidFrac(hOverR) {
+  if (!Number.isFinite(hOverR) || hOverR <= 0) return 0.5;
+  const lambda1 = (typeof CONFIG !== 'undefined' && Number.isFinite(CONFIG.SLOSH_LAMBDA1)) ?
+    CONFIG.SLOSH_LAMBDA1 : 1.841;
+  const x = lambda1 * hOverR;
+  // Series limit (→ 1/2) rather than evaluating cosh(x)-1 directly at tiny
+  // x, where it loses precision to floating-point cancellation (cosh(x)
+  // rounds to exactly 1.0 for x below ~1e-8 in double precision).
+  if (x < 1e-3) return 0.5;
+  // cosh/sinh don't overflow until x ≈ 709, and the bracket term is
+  // already negligible (≈1/x) well before then — 1/x < 1e-6 by x ≈ 1e6,
+  // but a generous, cheap cutoff avoids computing huge cosh/sinh values
+  // for no visible change in the result.
+  if (x > 30) return 1;
+  const frac = 1 - (Math.cosh(x) - 1) / (x * Math.sinh(x));
+  // Bounded to [0.5, 1] by construction — clamp only guards a stray
+  // NaN/Infinity from slipping through from a garbage hOverR upstream.
+  return Number.isFinite(frac) ? Math.min(1, Math.max(0.5, frac)) : 0.5;
+}
+
+// ---------------------------------------------------------------------------
 // Per-member component decomposition. Returns an array of
 //   { label, mass, comX, comY, iOwn }
 // in the member's LOCAL frame (base = 0, +Y up).
@@ -67,7 +191,7 @@ function memberMaxFuel(rec, aboveMember) {
 // legsProgress is applied ONLY to the bottom member (see stackMassProps) —
 // upper members' legs are cosmetically stowed.
 // ---------------------------------------------------------------------------
-function memberComponents(rec, memberFuelMass, legsProgress, aboveMember) {
+function memberComponents(rec, memberFuelMass, legsProgress, aboveMember, sloshOffset) {
   const out = [];
   if (!rec) return out;
   const role = rec.stageRole || 'rocket';
@@ -263,13 +387,78 @@ function memberComponents(rec, memberFuelMass, legsProgress, aboveMember) {
     const maxFuel = memberMaxFuel(rec);
     const fillFrac = maxFuel > 0 ? Math.min(1, memberFuelMass / maxFuel) : 0;
     const fuelColumnH = fillFrac * bodyH;
-    out.push({
-      label: 'fuel',
-      mass: memberFuelMass,
-      comX: 0,
-      comY: fuelColumnH / 2, // column centroid from base
-      iOwn: _thinCylinderI(memberFuelMass, r, fuelColumnH),
-    });
+    // Tank radius for the fuel column itself: fuel.tankWidth when
+    // present (same source fleet.js's boosterDerivedMasses/
+    // stageDerivedMasses already use), falling back to the outer mold
+    // line (the shared `r` above) only for legacy/malformed records
+    // with no fuel block. Scoped locally — the body shell, nose, legs,
+    // engine, and payload-space branches above genuinely want the mold
+    // line `r` and must not be affected by this.
+    const tankR = (rec.fuel && Number.isFinite(rec.fuel.tankWidth)) ?
+      rec.fuel.tankWidth / 2 : r;
+
+    // Phase 2A / 2B.2 — sloshOffset is only ever passed for the BOTTOM
+    // member (see stackMassProps); every other member gets undefined
+    // here, matching "only the bottom tank matters" in prompt_2phase.md
+    // §2A. Gated on CONFIG.SLOSH_ENABLED too (not just the instantaneous
+    // offset) so this collapses back to the original single lumped-at-h/2
+    // component whenever slosh is off — "slosh disabled → bit-identical
+    // to pre-Phase-2 baseline" (2A.6) still holds exactly.
+    const isBottomSloshMember = Number.isFinite(sloshOffset) &&
+      (typeof CONFIG === 'undefined' || CONFIG.SLOSH_ENABLED);
+    const hOverR = tankR > 0 ? fuelColumnH / tankR : 0;
+    const sloshFrac = isBottomSloshMember ? sloshMassFraction(hOverR) : 0;
+
+    // Phase 2B.3 — split the fuel into a BULK sub-mass (plain column
+    // centroid h/2, never shifts laterally) and a SLOSH sub-mass (the
+    // sloshMassFraction() share of memberFuelMass, sitting at the mode-1
+    // liquid centroid height from sloshMassCentroidFrac() — near the free
+    // surface for a deep tank, sinking toward the column mid-height for a
+    // shallow one — and the ONLY part that ever shifts laterally, by the
+    // full sloshOffset). 2A/2B.2 instead lumped 100% of the fuel mass at
+    // h/2 and shifted the WHOLE thing sideways by sloshMassFraction() ×
+    // offset — same net first moment (mass × fraction × offset either
+    // way), but with no distinct location for the part that's actually
+    // doing the sloshing. Splitting keeps the vertical CoM/MOI honest:
+    // only a slice of the propellant participates in the sloshing mode,
+    // so only that slice sits at the sloshing mode's own centroid height,
+    // and it moves by its own real displacement (the oscillator's
+    // sloshOffset state), not a fraction of it.
+    if (sloshFrac > 1e-6 && sloshFrac < 1) {
+      const sloshMass = memberFuelMass * sloshFrac;
+      const bulkMass = memberFuelMass - sloshMass;
+      const sloshComY = sloshMassCentroidFrac(hOverR) * fuelColumnH;
+
+      out.push({
+        label: 'fuel-bulk',
+        mass: bulkMass,
+        comX: 0,
+        comY: fuelColumnH / 2, // column centroid from base
+        iOwn: _thinCylinderI(bulkMass, tankR, fuelColumnH),
+      });
+      out.push({
+        label: 'fuel-slosh',
+        mass: sloshMass,
+        comX: sloshOffset,
+        comY: sloshComY,
+        // Own-axis inertia is secondary here — the parallel-axis term
+        // from sitting off the member's combined comX/comY dominates for
+        // a small mass fraction. Reuses the full column height as the
+        // characteristic dimension rather than fabricating a separate
+        // "slosh layer thickness", same placeholder-precision approach
+        // the rest of this file uses (see structuralVolume comments in
+        // componentLibrary.js).
+        iOwn: _thinCylinderI(sloshMass, tankR, fuelColumnH),
+      });
+    } else {
+      out.push({
+        label: 'fuel',
+        mass: memberFuelMass,
+        comX: 0,
+        comY: fuelColumnH / 2, // column centroid from base
+        iOwn: _thinCylinderI(memberFuelMass, tankR, fuelColumnH),
+      });
+    }
   }
   
   return out;
@@ -312,7 +501,7 @@ function combineComponents(components) {
 // legsProgress applies only to members[0] (the bottom member — the only one
 // whose legs are driven by the sim's leg control in P4-C2b-1).
 // ---------------------------------------------------------------------------
-function stackMassProps(members, fuelMassTotal, legsProgress, payloadMass) {
+function stackMassProps(members, fuelMassTotal, legsProgress, payloadMass, sloshOffset) {
   members = members || [];
   
   // Single pass instead of map+reduce+map — same numbers, fewer array
@@ -332,7 +521,10 @@ function stackMassProps(members, fuelMassTotal, legsProgress, payloadMass) {
   members.forEach((m, i) => {
     const progress = (i === 0) ? (legsProgress || 0) : 0;
     const memberFuel = sumMax > 0 ? fuelTotal * (maxFuels[i] / sumMax) : 0;
-    const comps = memberComponents(m, memberFuel, progress, members[i + 1] || null);
+    // Phase 2A: only the BOTTOM member (i === 0) ever gets a nonzero slosh
+    // offset passed through — see prompt_2phase.md §2A "only the bottom
+    // tank matters".
+    const comps = memberComponents(m, memberFuel, progress, members[i + 1] || null, i === 0 ? sloshOffset : undefined);
     comps.forEach(c => {
       // comps are freshly built by memberComponents() every call and never
       // shared/cached elsewhere, so mutating in place (instead of spreading

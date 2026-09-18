@@ -157,7 +157,7 @@ function rcsGeometry(comH, body) {
 // `kind` needs its own dedicated fire-logic function; branching on `kind`
 // (never on a type's `id`) is the sanctioned way to add one, per the hard
 // rule in PHASE2_PROMPT.md.
-function computeRCSForBody(body, comH, dt) {
+function computeRCSForBody(body, comH, comW, dt) {
   const bottomMember = (body && body.members && body.members[0]) ? body.members[0] : null;
   const rcsType = (bottomMember && typeof getComponentType === 'function') ?
     getComponentType(bottomMember.rcsTypeId) :
@@ -274,9 +274,13 @@ function computeRCSForBody(body, comH, dt) {
       pos = positions[k];
     Fx += p.Fx;
     Fy += p.Fy;
-    const rx = pos.x,
-      ry = pos.y - comH;
-    torque += rx * p.Fy - ry * p.Fx;
+    
+    // Pivot x = the vehicle's ACTUAL current CoM (comW), matching
+// computeMainThrustForBody's convention. comW is 0 whenever slosh is
+// off or inactive, so this is a no-op everywhere except while slosh
+// has shifted the lateral CoM away from the centerline.
+const rx = pos.x - (comW || 0), ry = pos.y - comH;
+torque += rx * p.Fy - ry * p.Fx;
     const mag = Math.hypot(p.Fx, p.Fy);
     if (mag > 0.01) { mdot += mag / ve;
       firing[k] = true; }
@@ -288,7 +292,8 @@ function computeRCSForBody(body, comH, dt) {
 // Backwards-compat shim.
 function computeRCS(comH, dt) {
   const body = state.bodies && state.bodies[state.activeBodyIndex];
-  return computeRCSForBody(body, comH, dt);
+  const geom = (typeof geometryOf === 'function') ? geometryOf(body) : null;
+  return computeRCSForBody(body, comH, geom ? geom.comW : 0, dt);
 }
 
 // resetPWM — now a no-op since PWM lives per body; left for compat.

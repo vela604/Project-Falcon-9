@@ -212,4 +212,49 @@ const CONFIG = {
   
   // ---------------- Simulation ----------------
   DT: 1 / 80, // s, fixed physics timestep
+  
+  // ---------------- Fuel slosh (Phase 2A) ----------------
+  // A single lateral slosh oscillator on the body's BOTTOM tank only.
+  // 2A uses fixed constants; Phase 2B replaces SLOSH_OMEGA/SLOSH_ZETA with
+  // per-tank values derived from Abramson's formulas (tank radius + fill
+  // level), and Phase 2C adds a baffle damping bonus on top. This block
+  // stays as the fallback used whenever a real derivation isn't available
+  // (e.g. a member with no tank geometry yet).
+  SLOSH_ENABLED: true,
+  SLOSH_OMEGA: 1.6, // rad/s — 2A fixed value; 2B uses this only as a FALLBACK
+  // when a body has no usable tank geometry (see bottomTankSloshOmega() in
+  // physics.js). No longer the everyday value once 2B.1 lands.
+  SLOSH_ZETA: 0.03, // fallback damping ratio — 2B.3 replaces this as the
+  // everyday value with per-tank boundary-layer damping
+  // (bottomTankSloshZeta() in physics.js); stays as the fallback used
+  // whenever real tank geometry/frequency aren't available, same role
+  // SLOSH_OMEGA plays for frequency.
+  SLOSH_MASS_FRACTION: 0.27, // fallback fraction, same role as SLOSH_OMEGA above — now used only when h/R can't be derived (see sloshMassFraction() in massProps.js, Phase 2B.2)
+  SLOSH_SUBSTEPS: 4, // Euler substeps per physics tick, for ω·dt stability headroom
+  // Phase 2B.1 — first antisymmetric sloshing-mode eigenvalue (Abramson /
+  // NASA SP-106) for an upright cylindrical tank. Standard textbook value;
+  // not something a designer/fuel-type would ever override, so it lives
+  // here as a named constant rather than hardcoded in the formula.
+  SLOSH_LAMBDA1: 1.841,
+  // Phase 2B.3 — representative kinematic viscosity feeding the boundary-
+  // layer damping formula (bottomTankSloshZeta() in physics.js). Real
+  // viscosity depends on which propellant is loaded, but this codebase
+  // already treats fuel as one averaged "RP-1/LOX" density rather than
+  // modeling each propellant separately (see componentLibrary.js's
+  // buildFuelRp1Lox) — same simplification here. 1e-6 m²/s sits between
+  // LOX's (~1.9e-7 m²/s) and RP-1's (~2.5e-6 m²/s) kinematic viscosity at
+  // typical propellant temperatures.
+  SLOSH_KINEMATIC_VISCOSITY: 1e-6, // m²/s
+    // Hard ceiling on the derived damping ratio. Abramson's boundary-layer
+  // formula diverges as fill height → 0 (a near-empty tank is essentially
+  // all boundary layer, directionally correct but unbounded) — clamped
+  // here rather than letting a near-critical/overdamped ratio reach the
+  // Euler integrator right as a stage runs dry.
+  SLOSH_ZETA_MAX: 0.5,
+    // Phase 2C — additive damping when a fuel type declares hasBaffles:true.
+    // Real baffled launch-vehicle tanks run ζ ≈ 0.10–0.15 (Abramson /
+    // NASA SP-106); 0.10 is the representative lower-bound value, added on
+    // top of whatever boundary-layer ζ the tank's own geometry derives.
+    SLOSH_BAFFLE_ZETA: 0.10,
+
 };

@@ -218,6 +218,10 @@ function bindMiscToggles() {
     showTrajectory = e.target.checked;
     WorkerBridge.send({ type: 'setTrajectoryEnabled', enabled: showTrajectory });
   });
+  bind('toggleSlosh', 'change', (e) => {
+    sloshEnabled = e.target.checked;
+    WorkerBridge.send({ type: 'setSloshEnabled', enabled: sloshEnabled });
+  });
   bind('toggleEarthFixed', 'change', (e) => {
     trajectoryMode = e.target.checked ? 'earthFixed' : 'inertial';
   });
@@ -382,6 +386,8 @@ function bootstrap() {
     };
     // Sync worker's trajectory-enabled flag with the main thread's default.
     WorkerBridge.send({ type: 'setTrajectoryEnabled', enabled: showTrajectory });
+    // Phase 2A: same sync for the slosh toggle's default.
+    WorkerBridge.send({ type: 'setSloshEnabled', enabled: sloshEnabled });
     
     // hydrate FIRST — this is what triggers importScripts inside the worker.
     const hydrateKeys = {};
@@ -450,7 +456,7 @@ window.addEventListener('resize', () => {
       follow: camera.follow, zoom: camera.zoom,
       followBodyIndex: camera.followBodyIndex, mode: camera.mode,
     };
-    let _lastSentToggles = { showGrid, showVectors, showTrajectory, trajectoryMode };
+    let _lastSentToggles = { showGrid, showVectors, showTrajectory, trajectoryMode, sloshEnabled };
 
     const pushRenderContext = () => {
       if (camera.follow !== _lastSentCamera.follow ||
@@ -467,18 +473,21 @@ window.addEventListener('resize', () => {
       if (showGrid !== _lastSentToggles.showGrid ||
         showVectors !== _lastSentToggles.showVectors ||
         showTrajectory !== _lastSentToggles.showTrajectory ||
-        trajectoryMode !== _lastSentToggles.trajectoryMode) {
+        trajectoryMode !== _lastSentToggles.trajectoryMode ||
+        sloshEnabled !== _lastSentToggles.sloshEnabled) {
         renderWorker.postMessage({
           type: 'toggles',
           showGrid,
           showVectors,
           showTrajectory,
           trajectoryMode,
+          sloshEnabled,
         });
         _lastSentToggles.showGrid = showGrid;
         _lastSentToggles.showVectors = showVectors;
         _lastSentToggles.showTrajectory = showTrajectory;
         _lastSentToggles.trajectoryMode = trajectoryMode;
+        _lastSentToggles.sloshEnabled = sloshEnabled;
       }
 
       requestAnimationFrame(pushRenderContext);
