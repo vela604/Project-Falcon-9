@@ -11,8 +11,11 @@
 // ============================================================================
 
 // Each engine: { id, angleDeg (null for center), x (2D projected lateral
-// offset, meters), isCenter, gimbal, Fmax, Fmin, Ve, throttle (0..1),
-// gimbalDeg, currentF (last computed force, for telemetry/rendering) }
+// offset, meters), isCenter, gimbal, Fmax, Fmin, Ve, maxMassFlowRate,
+// minMassFlowRate, massFlowRateRateFrac, massFlowRate (kg/s, canonical
+// command/state — PHASE 1: replaces the old throttle 0..1 fraction),
+// targetMassFlowRate, gimbalDeg, currentF (last computed force, for
+// telemetry/rendering) }
 // Build an engine array for a specific record (its engineThrusters + layout).
 function buildEnginesForRecord(rec) {
   const layout = (typeof getComponentType === 'function') ? getComponentType(rec.engineTypeId) : null;
@@ -28,9 +31,28 @@ function buildEnginesForRecord(rec) {
     const t = (typeof getComponentType === 'function') ? getComponentType(g.thrusterTypeId) : null;
     if (!t) return;
     const ve = t.parameterSchema.find(p => p.key === 've').value;
-    const Fmax = g.massFlowRate * ve;
+    // PHASE 1: g.massFlowRate is this engine's build-time-chosen MAX mass
+    // flow rate (kg/s) — the thruster type's maxMassFlowRate, capped at
+    // build time. Thrust is derived (massFlowRate × Ve), never stored
+    // independently.
+    const maxMassFlowRate = g.massFlowRate;
     const minFracEnt = t.parameterSchema.find(p => p.key === 'minThrottleFrac');
     const minFrac = minFracEnt ? minFracEnt.value : 0.4;
+    const minMassFlowRate = maxMassFlowRate * minFrac;
+    const rateFracEnt = t.parameterSchema.find(p => p.key === 'maxThrottleRateFrac');
+    // Falls back to the vehicle-wide CONFIG constant for any thruster type
+    // that doesn't declare its own rate (keeps old vehicles' feel intact).
+    const massFlowRateRateFrac = rateFracEnt ? rateFracEnt.value : CONFIG.ENGINE_THRUST_RATE;
+    // PART B (Option 3): per-engine spool transients. Not yet exposed on
+    // THRUSTER_CHEMICAL_SCHEMA in componentLibrary.js — these read as
+    // undefined for every type today, and applyActuatorRateLimitsForBody
+    // (physics.js) falls back to its own approximate constants in that
+    // case. Reading them here (rather than hardcoding a number in this
+    // file) means the day componentLibrary.js grows these keys, every
+    // vehicle picks them up with zero changes here.
+    const startupDurationEnt = t.parameterSchema.find(p => p.key === 'startupDurationS');
+    const shutdownDurationEnt = t.parameterSchema.find(p => p.key === 'shutdownDurationS');
+    const Fmax = maxMassFlowRate * ve;
     engines.push({
       id: slot.id,
       angleDeg: slot.angleDeg,
@@ -38,10 +60,21 @@ function buildEnginesForRecord(rec) {
       isCenter: slot.role === 'center',
       gimbal: slot.gimbalCapable,
       Fmax,
-      Fmin: Fmax * minFrac,
+      Fmin: minMassFlowRate * ve,
       Ve: ve,
-      throttle: 0,
-      targetThrottle: 0,
+      // Physical flow-rate envelope for this specific engine (from its
+      // thruster type). The command layer (controls.js/physics_worker.js)
+      // clamps against these, not against a bare 0..1 fraction.
+      maxMassFlowRate,
+      minMassFlowRate,
+      massFlowRateRateFrac,
+      // PART B: undefined today (see comment above) — physics.js's rate
+      // limiter treats a non-finite value here as "use my own default".
+      startupDurationS: startupDurationEnt ? startupDurationEnt.value : undefined,
+      shutdownDurationS: shutdownDurationEnt ? shutdownDurationEnt.value : undefined,
+      // Canonical engine state: current and commanded mass flow, kg/s.
+      massFlowRate: 0,
+      targetMassFlowRate: 0,
       gimbalDeg: 0,
       targetGimbalDeg: 0,
       currentF: 0,

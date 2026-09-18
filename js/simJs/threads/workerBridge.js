@@ -5,7 +5,7 @@
 //
 // OPTIMIZATION #1 (Step 3): the physics worker now sends the per-tick "hot"
 // numeric fields (rx, ry, vx, vy, theta, omega, fuelMass, and each engine's
-// throttle/currentF/gimbalDeg) as a transferred Float64Array (`hotBuffer`)
+// massFlowRate/currentF/gimbalDeg) as a transferred Float64Array (`hotBuffer`)
 // instead of inside the cloned `data.bodies` objects. This file decodes
 // that buffer into state.bodies right after assigning the fresh "cold"
 // bodies from the clone, then transfers the (now empty) buffer straight
@@ -145,11 +145,29 @@ function applyStateSnapshot(snap) {
   // matches avoids running this 60×/s — the actual DOM rebuild only
   // happens on real changes.
   const newCount = state.bodies.length;
-  if (newCount !== prevCount &&
-    typeof refreshFollowBodySelect === 'function' &&
-    document.getElementById('followBodySelect')) {
-    refreshFollowBodySelect();
+if (newCount !== prevCount &&
+  typeof refreshFollowBodySelect === 'function' &&
+  document.getElementById('followBodySelect')) {
+  
+  // If a body was added this tick carrying the emergencyEject flag,
+  // switch the camera to it. The user pressed Emergency Eject precisely
+  // to save the payload — leaving the camera on the now-fairing-less
+  // active body would make the ejected unit look like it "vanished".
+  // Same logic would apply to any future "auto-track the important
+  // thing" event; today only emergency eject sets this flag.
+  let autoFollowIdx = -1;
+  for (let i = prevCount; i < newCount; i++) {
+    const b = state.bodies[i];
+    if (b && b.emergencyEject) { autoFollowIdx = i; break; }
   }
+  if (autoFollowIdx >= 0 && typeof camera !== 'undefined') {
+    camera.followBodyIndex = autoFollowIdx;
+    camera.follow = true;
+    camera.mode = 'local';
+  }
+  
+  refreshFollowBodySelect();
+}
   
   
   if (window._renderWorker) {

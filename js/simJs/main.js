@@ -112,7 +112,11 @@ function renderOctaSliders() {
     const engine = getEngine(angle);
     const group = angleGroupOf(angle);
     const color = groupColorOf(group.name);
-    const startVal = Math.round((engine.targetThrottle !== undefined ? engine.targetThrottle : engine.throttle) * 100);
+    // PHASE 1: engine state is mass flow rate (kg/s); the slider still
+    // shows percent of this engine's own max flow.
+    const maxFlow = engine.maxMassFlowRate || 1;
+    const flow = (engine.targetMassFlowRate !== undefined ? engine.targetMassFlowRate : engine.massFlowRate) || 0;
+    const startVal = Math.round((flow / maxFlow) * 100);
     
     const wrap = document.createElement('div');
     wrap.className = 'vslider-wrap';
@@ -327,6 +331,18 @@ if (legsBtn) {
   const plBtn = getEl('btnReleasePayload');
   if (plBtn) plBtn.disabled = !canReleasePayloadNow();
   
+  const ejectBtn = getEl('btnEjectPayload');
+if (ejectBtn) {
+  const active = state.bodies[state.activeBodyIndex];
+  const canEject = !!(active && active.payloadId && !active.payloadReleased && !active.crashed);
+  ejectBtn.disabled = !canEject;
+  ejectBtn.title = canEject
+    ? 'Emergency eject — splits fairing and deploys cargo at high velocity'
+    : (active && active.payloadReleased
+        ? 'Payload already ejected'
+        : 'No payload to eject');
+}
+
   const tcBtn = getEl('btnTakeControl');
   if (tcBtn) tcBtn.disabled = !canTakeControlNow();
   

@@ -50,16 +50,28 @@ function bindHoldControl(el, onChange, opts = {}) {
 // derives them from the active engine layout's mergeTopology), so this
 // works unchanged for any ring size.
 // ---------------------------------------------------------------------------
+// PHASE 1: `value` here is still the UI's 0..1 fraction (the user's mental
+// model doesn't change) — converted to a commanded mass flow rate (kg/s)
+// using a representative engine from the group before it crosses the
+// worker boundary. Every engine in one group shares a thruster type (a
+// merge group is always drawn from one side's peripheral ring), so any
+// member's maxMassFlowRate is the right conversion factor for the whole
+// group.
 function setGroupThrottle(group, value) {
-  WorkerBridge.send({ type: 'setGroupThrottle', angles: group.angles, value });
+  const rep = getEngine(group.angles[0]);
+  const maxFlow = rep ? (rep.maxMassFlowRate || 0) : 0;
+  WorkerBridge.send({ type: 'setGroupThrottle', angles: group.angles, value: value * maxFlow });
 }
 
 // PHASE 2: primary-engine throttle. "Primary" = whatever the active engine
 // layout marks role:'center' (today always exactly one — the octaweb's core
 // engine — but this filters rather than assumes a single match, so a future
 // layout with more than one center-role slot works without changes here).
+// PHASE 1: same fraction-to-mass-flow conversion as setGroupThrottle above.
 function setCenterThrottle(value) {
-  WorkerBridge.send({ type: 'setCenterThrottle', value });
+  const rep = ENGINES.find(e => e.isCenter);
+  const maxFlow = rep ? (rep.maxMassFlowRate || 0) : 0;
+  WorkerBridge.send({ type: 'setCenterThrottle', value: value * maxFlow });
 }
 
 // PHASE 2: shared gimbal target. Every gimbal-capable engine the active
@@ -315,6 +327,13 @@ function bindSimControls() {
     refreshFollowBodySelect();
     updateStatusBar();
   });
+  // Emergency eject — independent of stage separation and normal payload
+// release. Always available while the active body carries an attached
+// payload; splits the fairing and ejects the cargo at high velocity.
+const ejectBtn = document.getElementById('btnEjectPayload');
+if (ejectBtn) ejectBtn.addEventListener('click', () => {
+  WorkerBridge.send({ type: 'emergencyEject' });
+});
   
   bindTimeWarp();
 }
@@ -335,7 +354,17 @@ function bindTimeWarp() {
 function canSeparateNow() {
   if (state.crashed) return false;
   const active = state.bodies[state.activeBodyIndex];
-  return !!(active && active.members && active.members.length >= 2);
+  if (!active || !active.members || active.members.length < 2) return false;
+  
+  // Both the bottom member AND the one directly above it must be a
+  // separable role. If the second-from-bottom is a fairing (payloadSpace)
+  // or a nose, the bottom is the FINAL upper stage — separating it would
+  // leave the fairing drifting as a stack with no rocket attached. That's
+  // exactly the case Split Fairing + Release Payload exist for.
+  const SEPARABLE = { booster: 1, stage: 1 };
+  const bottom = active.members[0];
+  const above = active.members[1];
+  return !!(bottom && above && SEPARABLE[bottom.stageRole] && SEPARABLE[above.stageRole]);
 }
 
 function canSplitFairingNow() {
@@ -464,10 +493,15 @@ function syncThrottleUI(overrideValue) {
   const b = state.bodies && state.bodies[state.activeBodyIndex];
   if (!b || !b.engines) return;
   
+  // PHASE 1: engine state is a mass flow rate (kg/s) now, so the display
+  // percent is that flow divided by this engine's own max flow — the UI's
+  // "percent of max" meaning is unchanged, only the underlying unit is.
   b.engines.filter(e => !e.isCenter).forEach(e => {
+    const maxFlow = e.maxMassFlowRate || 1;
+    const flow = (e.targetMassFlowRate !== undefined ? e.targetMassFlowRate : e.massFlowRate) || 0;
     const val = (overrideValue !== undefined) ?
       Math.round(overrideValue * 100) :
-      Math.round(((e.targetThrottle !== undefined ? e.targetThrottle : e.throttle) || 0) * 100);
+      Math.round((flow / maxFlow) * 100);
     const input = document.querySelector(`.vslider[data-angle="${e.angleDeg}"]`);
     const label = document.getElementById('val-eng-' + e.angleDeg);
     if (input) input.value = val;
@@ -476,9 +510,11 @@ function syncThrottleUI(overrideValue) {
   
   const c = b.engines.find(e => e.isCenter);
   if (c) {
+    const maxFlow = c.maxMassFlowRate || 1;
+    const flow = (c.targetMassFlowRate !== undefined ? c.targetMassFlowRate : c.massFlowRate) || 0;
     const val = (overrideValue !== undefined) ?
       Math.round(overrideValue * 100) :
-      Math.round(((c.targetThrottle !== undefined ? c.targetThrottle : c.throttle) || 0) * 100);
+      Math.round((flow / maxFlow) * 100);
     const slider = document.getElementById('centerThrustSlider');
     const valEl = document.getElementById('centerThrustValue');
     if (slider) slider.value = val;
@@ -493,8 +529,12 @@ function bindQuickThrottle() {
   const full = document.getElementById('btnFullThrottle');
   const off = document.getElementById('btnEngineOff');
   
+  // PHASE 1: MAX sends Infinity rather than a single kg/s figure — engines
+  // on this vehicle can be heterogeneous thruster types (different maxes),
+  // and the worker's clampMassFlowCommand() resolves Infinity down to
+  // each engine's own max cleanly. OFF's 0 needs no conversion at all.
   if (full) full.addEventListener('click', () => {
-    WorkerBridge.send({ type: 'setAllThrottle', value: 1 });
+    WorkerBridge.send({ type: 'setAllThrottle', value: Infinity });
     syncThrottleUI(1);
   });
   if (off) off.addEventListener('click', () => {
@@ -519,7 +559,7 @@ function canFuelNow() {
   
   const b = state.bodies && state.bodies[state.activeBodyIndex];
   const enginesOff = b && b.engines ?
-    b.engines.every(e => (e.targetThrottle || 0) < 0.001 && (e.throttle || 0) < 0.001) :
+    b.engines.every(e => (e.targetMassFlowRate || 0) < 0.001 && (e.massFlowRate || 0) < 0.001) :
     true;
   
   const nearPad = Math.abs(state.rx) < 30;

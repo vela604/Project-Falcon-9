@@ -137,8 +137,8 @@ function updateTelemetry() {
   set('t-m', fmt(geom.M, 0));
   set('t-mf', fmt(state.fuelMass, 0));
   set('t-Ft', fmt(ENGINES.reduce((s, e) => s + e.currentF, 0), 0));
-  set('t-gimbal', fmt(centerEngine.gimbalDeg, 1));
-  set('t-torque', fmt(lastForces.mainTorque + lastForces.rcsTorque + (lastForces.dragTorque || 0), 0));
+  
+  set('t-gimbal', centerEngine ? fmt(centerEngine.gimbalDeg, 1) : '—');  set('t-torque', fmt(lastForces.mainTorque + lastForces.rcsTorque + (lastForces.dragTorque || 0), 0));
   set('t-aoa', fmt(lastForces.aoaDeg || 0, 2));
   set('t-g', fmt(grav.g, 3));
   set('t-rho', fmt(rho, 4));
@@ -675,74 +675,65 @@ function drawFigurePanelFallback(body, w, h) {
     (body && body.payloadBody && body.payloadBody.record) ||
     (body && body.fairingHalf && body.fairingHalf.record) ||
     null;
+
   const H_m = Number.isFinite(body && body.height) ? body.height :
     (fallbackRec && Number.isFinite(fallbackRec.height)) ? fallbackRec.height :
     (CONFIG.ROCKET_HEIGHT || 45);
   const W_m = Number.isFinite(body && body.width) ? body.width :
     (fallbackRec && Number.isFinite(fallbackRec.width)) ? fallbackRec.width :
     (CONFIG.ROCKET_WIDTH || 3.9);
-  
-  const scale = (h * 0.75) / H_m;
-  const baseX = w / 2,
-    baseY = h * 0.9;
-  const W = W_m * scale,
-    H = H_m * scale;
-  
-  // Real artwork, not the schematic capsule. Dispatch on what the body
-// actually carries:
-//   - payloadBody.record     → the released payload's own satellite art
-//   - fairingHalf.record     → the fairing (payloadSpace) silhouette
-//   - neither                → nothing to draw (empty-bodied core, e.g.
-//                              after fairing split leaves no members)
-//
-// `scale` in this function is meters-per-pixel — exactly what
-// drawRocketArt() wants for its `mpp` argument.
-if (body && body.payloadBody && body.payloadBody.record) {
-  figCtx.save();
-  figCtx.translate(baseX, baseY);
-  drawPayloadArt(figCtx, W, H);
-  figCtx.restore();
-} else if (body && body.fairingHalf && body.fairingHalf.record) {
-  const rec = body.fairingHalf.record;
-  const side = body.fairingHalf.side; // +1 = right half, -1 = left half
-  const psType = (rec.payloadSpaceTypeId && typeof getComponentType === 'function') ?
-    getComponentType(rec.payloadSpaceTypeId) : null;
-  const psParams = rec.params || {};
-  
-  figCtx.save();
-  figCtx.translate(baseX, baseY);
-  
-  // Clip to ONE lateral half — same convention as render.js's
-  // drawBodyRocket() fairing path. Without this, the full fairing
-  // silhouette (both halves) was drawn on each of the two half bodies,
-  // so a split fairing showed two full fairings instead of two halves.
-  figCtx.beginPath();
-  if (side > 0) figCtx.rect(0, -H * 2, W * 2, H * 4);
-  else figCtx.rect(-W * 2, -H * 2, W * 2, H * 4);
-  figCtx.clip();
-  
-  drawRocketArt(figCtx, W, H, 1 / scale, {
-    stageRole: 'payloadSpace',
-    payloadKind: psType ? psType.kind : undefined,
-    payloadCapWidth: Number.isFinite(psParams.capWidth) ? psParams.capWidth : undefined,
-    payloadBulgeWidth: Number.isFinite(psParams.bulgeWidth) ? psParams.bulgeWidth : undefined,
-    payloadFrustumAngleDeg: Number.isFinite(psParams.frustumSlantDeg) ? psParams.frustumSlantDeg : undefined,
-    payloadCurveRatio: Number.isFinite(psParams.curveHeightFactor) ? psParams.curveHeightFactor : undefined,
-    payloadColor: rec.color || '#e9edf2',
-  });
-  figCtx.restore();
-}
-// else: no members, no payload record, no fairing record — nothing to draw.
-  
+
+  const scale = (h * 0.75) / H_m;      // px per meter
+  const baseX = w / 2, baseY = h * 0.9;
+  const W = W_m * scale, H = H_m * scale;
+
+  // ---- Artwork ----
+  if (body && body.payloadBody && body.payloadBody.record) {
+    // Released payload — draw its own satellite artwork.
+    figCtx.save();
+    figCtx.translate(baseX, baseY);
+    drawPayloadArt(figCtx, W, H);
+    figCtx.restore();
+  } else if (body && body.fairingHalf && body.fairingHalf.record) {
+    // Fairing half — draw the fairing silhouette clipped to one lateral
+    // half (same convention as render.js: +1 = right, -1 = left).
+    const rec = body.fairingHalf.record;
+    const side = body.fairingHalf.side;
+    const psType = (rec.payloadSpaceTypeId && typeof getComponentType === 'function')
+      ? getComponentType(rec.payloadSpaceTypeId) : null;
+    const psParams = rec.params || {};
+
+    figCtx.save();
+    figCtx.translate(baseX, baseY);
+
+    figCtx.beginPath();
+    if (side > 0) figCtx.rect(0, -H * 2, W * 2, H * 4);
+    else          figCtx.rect(-W * 2, -H * 2, W * 2, H * 4);
+    figCtx.clip();
+
+    drawRocketArt(figCtx, W, H, 1 / scale, {
+      stageRole: 'payloadSpace',
+      payloadKind: psType ? psType.kind : undefined,
+      payloadCapWidth: Number.isFinite(psParams.capWidth) ? psParams.capWidth : undefined,
+      payloadBulgeWidth: Number.isFinite(psParams.bulgeWidth) ? psParams.bulgeWidth : undefined,
+      payloadFrustumAngleDeg: Number.isFinite(psParams.frustumSlantDeg) ? psParams.frustumSlantDeg : undefined,
+      payloadCurveRatio: Number.isFinite(psParams.curveHeightFactor) ? psParams.curveHeightFactor : undefined,
+      payloadColor: rec.color || '#e9edf2',
+    });
+    figCtx.restore();
+  }
+  // else: no members, no payload record, no fairing record — nothing to draw.
+
   if (!body) return;
-  
+
+  // ---- CoM / CoP / drag overlay ----
   const comY = baseY - H * 0.5;
   const aero = figAeroSnapshot(body);
   const sideSign = (aero.speedRel > 0.2 && Math.abs(aero.sinAlpha) > 0.02) ? -Math.sign(aero.velBodyX) : 0;
   const bCross = (typeof AERO_CP_BODY_FRAC !== 'undefined') ? AERO_CP_BODY_FRAC : 0.5;
   const cpX = baseX + sideSign * (W / 2) * aero.wCross;
   const cpY = baseY - H * bCross;
-  
+
   figCtx.strokeStyle = '#ff4466';
   figCtx.lineWidth = 2;
   figCtx.beginPath();
@@ -756,7 +747,7 @@ if (body && body.payloadBody && body.payloadBody.record) {
   figCtx.fillStyle = '#ff8899';
   figCtx.font = '10px monospace';
   figCtx.fillText('CoM', baseX + W * 0.45, comY + 3);
-  
+
   figCtx.beginPath();
   figCtx.arc(cpX, cpY, 3, 0, Math.PI * 2);
   figCtx.fillStyle = 'rgba(120,220,255,0.95)';
@@ -764,7 +755,7 @@ if (body && body.payloadBody && body.payloadBody.record) {
   figCtx.fillStyle = '#8fd8ff';
   figCtx.font = '10px monospace';
   figCtx.fillText('CoP', cpX + 6, cpY + 3);
-  
+
   if (showVectors) {
     const vecLen = H * 0.32;
     const vUnit = worldVectorToBodyUnit(body.vx, body.vy, body.theta);

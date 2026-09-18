@@ -127,8 +127,11 @@ const CONFIG = {
   
   // ---------------- Main engines (octaweb, 2D projection) ----------------
   OCTA_RADIUS: ACTIVE_VEHICLE.params.octaRadius, // m — radius of the 8 outer engines
+  // A2 CLEANUP: ENGINE_F_MAX kept — still read by home.js's spec sheet.
+  // ENGINE_F_MIN_FRAC removed — verified zero reads anywhere (the actual
+  // per-engine floor now lives on each engine object as minMassFlowRate,
+  // sourced from its thruster type's minThrottleFrac in vehicle.js).
   ENGINE_F_MAX: ACTIVE_VEHICLE.params.engineFMax, // N per engine
-  ENGINE_F_MIN_FRAC: ACTIVE_VEHICLE.params.engineFMinFrac, // 40% throttle floor (default)
   ENGINE_VE: ACTIVE_VEHICLE.params.engineVe, // m/s exhaust velocity
   ENGINE_THRUST_RATE: ACTIVE_VEHICLE.params.engineThrustRate, // max change rate, fraction of F_MAX per second
   GIMBAL_MAX_DEG: ACTIVE_VEHICLE.params.gimbalMaxDeg, // ± degrees (gimbal-capable engines)

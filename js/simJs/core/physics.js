@@ -46,40 +46,64 @@ let separationFlash = null;
 let separationFlashId = 0;
 
 
-function computeEngineParamsForRecord(rec) {
-  const layout = (typeof getComponentType === 'function') ? getComponentType(rec.engineTypeId) : null;
-  if (!layout || !layout.frame) return null;
-  const groups = engineThrusterGroups(layout);
-  let totalThrust = 0,
-    totalEngines = 0,
-    sumFlow = 0,
-    sumFlowVe = 0;
-  Object.keys(groups).forEach(gk => {
-    const g = rec.engineThrusters && rec.engineThrusters[gk];
-    if (!g) return;
-    const t = getComponentType(g.thrusterTypeId);
-    if (!t) return;
-    const ve = t.parameterSchema.find(p => p.key === 've').value;
-    const count = groups[gk].length;
-    totalThrust += g.massFlowRate * ve * count;
-    totalEngines += count;
-    sumFlow += g.massFlowRate * count;
-    sumFlowVe += g.massFlowRate * ve * count;
-  });
-  return {
-    layout,
-    engineFMax: totalEngines > 0 ? totalThrust / totalEngines : 0,
-    engineVe: sumFlow > 0 ? sumFlowVe / sumFlow : 0,
-    octaRadius: (rec.params && Number.isFinite(rec.params.octaRadius)) ? rec.params.octaRadius : CONFIG.OCTA_RADIUS,
-  };
-}
+// Two-phase staging state. When the user requests a separation, the
+// booster's engines are commanded to zero FIRST and the split is deferred
+// until thrust has actually spooled down. Without this, the member slice
+// and body spawn both landed on the same tick as the shutdown command
+// while the booster was still firing at full throttle — the two bodies
+// overlapped at the same position with thrust still active, producing an
+// immediate collision. Real boosters throttle down and cut off before the
+// separation bolts fire.
+let pendingSeparate = null; // { bodyId, requestedAt } or null
+
+// Same two-phase pattern for payload release: commanding the payload off
+// while the engine is still firing would shoot it through the plume.
+// Real upper stages do a SECO (Second Engine Cut-Off) before deploying.
+// Emergency eject deliberately BYPASSES this — that path is a "save the
+// cargo no matter what" flow and cannot afford a 1.2 s spool-down wait.
+let pendingRelease = null; // { bodyId, requestedAt, emergency, kick } or null
+// A2 CLEANUP: computeEngineParamsForRecord(rec) removed — verified zero
+// callers anywhere in the codebase.
 
 // H2a-2: rebuild the global ENGINES[] to match a body's CURRENT bottom
 // member. Called after separation, so thrust/gimbal follow the new bottom.
 function rebuildEnginesForBody(body) {
   if (!body || !body.members || !body.members.length) return;
-  body.engines = (typeof buildEnginesForRecord === 'function') ?
-    buildEnginesForRecord(body.members[0]) : [];
+  
+  const prevBottom = body._lastBottomMember;
+  const newBottom = body.members[0];
+  
+  const newEngines = (typeof buildEnginesForRecord === 'function') ?
+    buildEnginesForRecord(newBottom) : [];
+  
+  // Preserve engine state when the bottom member is unchanged. Split
+  // Fairing, Payload Release, Nose removal — any of those remove a TOP
+  // member; the engines belong to the bottom member and their mass flow /
+  // gimbal / currentF should carry across untouched. Without this, every
+  // rebuild spawned fresh engines at massFlowRate = 0, which is why
+  // clicking Split Fairing silently shut the engines down.
+  //
+  // Stage separation DOES change the bottom (the active body's new
+  // bottom is the previous second member), so the check fails and fresh
+  // engines are built — correct, because the upper stage's engines are
+  // different hardware that needs its own ignition sequence.
+  if (prevBottom === newBottom) {
+    const oldById = {};
+    (body.engines || []).forEach(e => { oldById[e.id] = e; });
+    newEngines.forEach(e => {
+      const old = oldById[e.id];
+      if (old) {
+        e.massFlowRate = old.massFlowRate;
+        e.targetMassFlowRate = old.targetMassFlowRate;
+        e.gimbalDeg = old.gimbalDeg;
+        e.targetGimbalDeg = old.targetGimbalDeg;
+        e.currentF = old.currentF;
+      }
+    });
+  }
+  
+  body.engines = newEngines;
+  body._lastBottomMember = newBottom;
 }
 
 function _makeBody() {
@@ -230,11 +254,39 @@ function geometryOf(body) {
 function applyActuatorRateLimitsForBody(body, dt) {
   if (!body || !body.engines) return;
   body.engines.forEach(e => {
-    const maxDelta = CONFIG.ENGINE_THRUST_RATE * dt;
-    const tgt = e.targetThrottle !== undefined ? e.targetThrottle : e.throttle;
-    if (tgt > e.throttle) e.throttle = Math.min(tgt, e.throttle + maxDelta);
-    else e.throttle = Math.max(tgt, e.throttle - maxDelta);
-    e.throttle = Math.max(0, Math.min(1, e.throttle));
+    // PHASE 1: rate limit in mass-flow units — same physical rate as
+    // before (a fraction of this engine's max flow per second), just no
+    // longer restated as an abstract 0..1 throttle.
+    // A3 FIX: Number.isFinite guard instead of `!== undefined` — a
+    // thruster type declaring a non-finite rate (or any other garbage
+    // value) used to propagate NaN through massFlowRate every tick after.
+    const rateFrac = Number.isFinite(e.massFlowRateRateFrac) ? e.massFlowRateRateFrac : CONFIG.ENGINE_THRUST_RATE;
+    const tgt = e.targetMassFlowRate !== undefined ? e.targetMassFlowRate : e.massFlowRate;
+    
+    // PART B (Option 3) — spool transients. Crossing through zero is a
+    // real physical event (turbopump spin-down/spin-up), not just another
+    // throttle move, so it gets its own (typically slower) rate over a
+    // fixed duration, distinct from the normal mid-range slew above. A
+    // move that neither starts at nor targets zero (adjusting throttle
+    // while already firing) is unaffected and still uses rateFrac.
+    // startupDurationS/shutdownDurationS are placeholders (not yet exposed
+    // per-thruster-type in componentLibrary.js) — every engine currently
+    // uses the same approximate real-launcher figures until that's wired
+    // through.
+    let maxDelta;
+    if (tgt <= 0 && e.massFlowRate > 0) {
+      const shutdownS = (Number.isFinite(e.shutdownDurationS) && e.shutdownDurationS > 0) ? e.shutdownDurationS : 1.2;
+      maxDelta = (e.maxMassFlowRate || 0) / shutdownS * dt;
+    } else if (tgt > 0 && e.massFlowRate <= 0) {
+      const startupS = (Number.isFinite(e.startupDurationS) && e.startupDurationS > 0) ? e.startupDurationS : 2.0;
+      maxDelta = (e.maxMassFlowRate || 0) / startupS * dt;
+    } else {
+      maxDelta = rateFrac * (e.maxMassFlowRate || 0) * dt;
+    }
+    
+    if (tgt > e.massFlowRate) e.massFlowRate = Math.min(tgt, e.massFlowRate + maxDelta);
+    else e.massFlowRate = Math.max(tgt, e.massFlowRate - maxDelta);
+    e.massFlowRate = Math.max(0, Math.min(e.maxMassFlowRate || 0, e.massFlowRate));
     if (e.gimbal) {
       const mg = CONFIG.GIMBAL_RATE_DEG_S * dt;
       const gt = e.targetGimbalDeg !== undefined ? e.targetGimbalDeg : e.gimbalDeg;
@@ -253,8 +305,11 @@ function computeMainThrustForBody(body, comH) {
     torque = 0,
     mdot = 0;
   body.engines.forEach(e => {
-    if (e.throttle <= 0) { e.currentF = 0; return; }
-    const F = e.Fmin + e.throttle * (e.Fmax - e.Fmin);
+    if (e.massFlowRate <= 0) { e.currentF = 0; return; }
+    // PHASE 1: thrust = mass flow rate × exhaust velocity, directly —
+    // this is the physically canonical relation; it was already true
+    // before, just previously reached via a throttle-fraction detour.
+    const F = e.massFlowRate * e.Ve;
     e.currentF = F;
     const gRad = (e.gimbal ? e.gimbalDeg : 0) * Math.PI / 180;
     const fx = F * Math.sin(gRad);
@@ -262,16 +317,13 @@ function computeMainThrustForBody(body, comH) {
     Fx += fx;
     Fy += fy;
     torque += e.x * fy - (-comH) * fx;
-    mdot += F / e.Ve;
+    mdot += e.massFlowRate;
   });
   return { Fx, Fy, torque, mdot };
 }
-// Backwards-compat shim: any leftover caller using the old name routes to
-// the active body's engine array.
-function computeMainThrust(comH) {
-  const body = state.bodies && state.bodies[state.activeBodyIndex];
-  return computeMainThrustForBody(body, comH);
-}
+// A2 CLEANUP: computeMainThrust(comH) backwards-compat shim removed —
+// verified zero callers; computeMainThrustForBody(body, comH) is the only
+// call path in use.
 
 // Empty-tank stand-ins for computeMainThrust()/computeRCS() — used once the
 // propellant tank is dry, so a firing command with no fuel left produces
@@ -535,7 +587,17 @@ function _bodyWidthOf(body) {
 }
 
 function derivatives(s, extra) {
-  const M = s.dryMass + s.fuelMass;
+  // Use the mass currentGeometry() already computed for this body this
+  // tick — NOT s.dryMass + s.fuelMass. The dryMass/fuelMass pair is only
+  // correct for bodies whose members are empty (payloads, fairings fall
+  // through the fallback in currentGeometry); for a body with members, the
+  // real mass lives in stackMassProps()'s output, and dryMass is a stale
+  // cached scalar. Reading it here previously gave M = 0 for the ejected
+  // payload body (which sets dryMass = 0 at spawn), producing a
+  // division-by-zero → NaN velocity → the body vanished from the sim.
+  // Using geom.M keeps the integrator and the mass model in lockstep by
+  // construction — the two can't disagree, ever.
+  const M = extra.M;
   const grav = gravityAccel(s.rx, s.ry);
   
   const cosT = Math.cos(s.theta),
@@ -792,7 +854,7 @@ function _bodyHasActiveInput(body) {
   }
   if (body.engines) {
     for (const e of body.engines) {
-      if ((e.targetThrottle || 0) > 0.001) return true;
+      if ((e.targetMassFlowRate || 0) > 0.001) return true;
       if (Math.abs(e.targetGimbalDeg || 0) > 0.01) return true;
     }
   }
@@ -805,6 +867,14 @@ function _bodyHasActiveInput(body) {
 
 
 function physicsStep(dt) {
+  // Two-phase staging: check whether a pending separation request is
+  // ready to fire (booster thrust has spooled to ~0). Runs BEFORE the
+  // body loop so a completed shutdown is split on the same tick the
+  // check passes — the split itself then happens through the normal
+  // per-body machinery below.
+  _checkPendingSeparate();
+_checkPendingRelease();
+  
   if (!state.bodies.length) return;
   
   state.bodies.forEach((body, idx) => {
@@ -832,14 +902,17 @@ function physicsStep(dt) {
     if (!hasFuel) body.engines.forEach(e => { e.currentF = 0; });
     
     const extra = {
-      Fx: 0,
-      Fy: 0,
-      torque: 0,
-      I: geom.I,
-      comH: geom.comH,
-      height: _bodyHeightOf(body),
-      aero: bodyAeroProfile(body),
-    };
+  Fx: 0,
+  Fy: 0,
+  torque: 0,
+  M: geom.M, // ← add — the SAME mass currentGeometry already
+  //    derived this tick, so derivatives can never
+  //    disagree with it (or divide by zero)
+  I: geom.I,
+  comH: geom.comH,
+  height: _bodyHeightOf(body),
+  aero: bodyAeroProfile(body),
+};
     
     // ---- Continuous ground-tip torque (pre-integration, unchanged) ----
     const groundR0 = CONFIG.EARTH_RADIUS + (CONFIG.LAUNCH_SITE_ALTITUDE || 0);
@@ -1157,7 +1230,7 @@ function physicsStep(dt) {
         const _alphaAng = _tTotal / Math.max(1e-6, geom.I);
         
         const _engStr = (body.engines || []).map(e =>
-          `${e.id}(t=${(e.throttle||0).toFixed(3)},g=${(e.gimbalDeg||0).toFixed(3)},F=${Math.round(e.currentF||0)},x=${(e.x||0).toFixed(2)})`
+          `${e.id}(mdot=${(e.massFlowRate||0).toFixed(2)},g=${(e.gimbalDeg||0).toFixed(3)},F=${Math.round(e.currentF||0)},x=${(e.x||0).toFixed(2)})`
         ).join(' ');
         
         const _rcsActive = Object.keys(body.rcsCmd || {}).filter(k => body.rcsCmd[k]).join(',') || '—';
@@ -1242,22 +1315,312 @@ function resetState(initialAltitude) {
   body.isActive = true;
   body.engines = (members.length && typeof buildEnginesForRecord === 'function') ?
     buildEnginesForRecord(members[0]) : [];
-  
+  body._lastBottomMember = members.length ? members[0] : null;
   const stk = (typeof getActiveStack === 'function') ? getActiveStack() : null;
   body.payloadId = (stk && stk.payloadId) ? stk.payloadId : null;
   
-  state.bodies = [body];
+    state.bodies = [body];
   state.activeBodyIndex = 0;
   state.simTime = 0;
   state.halted = false;
+  pendingSeparate = null; // clear any mid-flight separate request
+pendingRelease = null; // and any pending payload release// clear any mid-flight separate request
   resetPWM();
+  }
+
+// ---------------------------------------------------------------------------
+// Two-phase separate sequence.
+//
+
+// Two-phase payload release. Same shape as the separate-stage sequence:
+// command engine shutdown, then wait for thrust to drop near zero before
+// actually releasing the payload. Emergency eject bypasses this (see
+// emergencyEjectPayload) — it calls releasePayloadOnActiveBody directly.
+function requestReleasePayload(opts) {
+  opts = opts || {};
+  const active = state.bodies[state.activeBodyIndex];
+  if (!active) return false;
+  if (active.crashed) return false;
+  if (active.payloadReleased) return false;
+  if (!active.payloadId) return false;
+  if (pendingRelease) return false;
+  if (pendingSeparate) return false;  // don't interleave with a staging sequence
+
+  // Fairing still on? Payload is shielded — user must split fairing first
+  // (or use Emergency Eject, which auto-splits).
+  if (active.members && active.members.some(m => m.stageRole === 'payloadSpace')) {
+    return false;
+  }
+
+  // If engines are effectively off already (coast phase — the normal time
+  // to deploy), release immediately with no wait.
+  let totalThrust = 0, totalMax = 0;
+  (active.engines || []).forEach(e => {
+    totalThrust += e.currentF || 0;
+    totalMax += e.Fmax || 0;
+  });
+  const thrustFrac = totalMax > 0 ? totalThrust / totalMax : 0;
+  if (thrustFrac < 0.005) {
+    return releasePayloadOnActiveBody({ emergency: false, kick: opts.kick || 3.0 });
+  }
+
+  // Command shutdown, then defer until thrust falls below threshold.
+  (active.engines || []).forEach(e => {
+    e.targetMassFlowRate = 0;
+  });
+
+  pendingRelease = {
+    bodyId: active.id,
+    requestedAt: state.simTime,
+    emergency: false,
+    kick: opts.kick || 3.0,
+  };
+  return true;
 }
 
+function _checkPendingRelease() {
+  if (!pendingRelease) return;
+  const active = state.bodies[state.activeBodyIndex];
 
+  // Body changed since request (Take Control, reset, etc.) — abort.
+  if (!active || active.id !== pendingRelease.bodyId) {
+    pendingRelease = null;
+    return;
+  }
+
+  let totalThrust = 0, totalMax = 0;
+  (active.engines || []).forEach(e => {
+    totalThrust += e.currentF || 0;
+    totalMax += e.Fmax || 0;
+  });
+  const thrustFrac = totalMax > 0 ? totalThrust / totalMax : 0;
+  const elapsed = state.simTime - pendingRelease.requestedAt;
+
+  if (thrustFrac < 0.005 || elapsed > 5.0) {
+    const opts = {
+      emergency: pendingRelease.emergency,
+      kick: pendingRelease.kick,
+    };
+    pendingRelease = null;
+    releasePayloadOnActiveBody(opts);
+  }
+}
+
+// requestSeparate(): the user-facing entry point. Commands the booster's
+// engines to zero (target, not current — the rate limiter carries the
+// actual massFlowRate down over the shutdown spool duration) and records
+// a pending request. The active body keeps flying as one stack until
+// shutdown completes.
+//
+// _checkPendingSeparate(): called every physics tick. When thrust is
+// effectively gone (or a safety timeout fires) it calls performSeparate()
+// to actually slice members and spawn the discarded body.
+//
+// performSeparate(): the physical split — everything separateActiveBody()
+// used to do. Called either by _checkPendingSeparate() on a successful
+// shutdown, or directly by requestSeparate() when there's nothing to
+// spool down (no engines, or engines already off).
+// ---------------------------------------------------------------------------
+function requestSeparate() {
+  const active = state.bodies[state.activeBodyIndex];
+  if (!active || !active.members || active.members.length < 2) return false;
+  if (active.crashed) return false;
+  if (pendingSeparate) return false; // already in flight — ignore repeat clicks
+  
+  // Same guard as controls.js's canSeparateNow() — the bottom and the
+  // member directly above it must both be separable roles. If the member
+  // above the bottom is a fairing/nose, that bottom is the LAST upper
+  // stage; splitting it would leave the fairing floating alone. Defensive
+  // even if the button is disabled — a race condition or programmatic
+  // call shouldn't be able to trigger this state.
+  const SEPARABLE = { booster: 1, stage: 1 };
+  const bottom = active.members[0];
+  const above = active.members[1];
+  if (!(bottom && above && SEPARABLE[bottom.stageRole] && SEPARABLE[above.stageRole])) {
+    return false;
+  }
+  // If the body has no engines at all (edge case: unusual stack), there's
+  // nothing to spool down — split immediately.
+  if (!active.engines || !active.engines.length) {
+    return performSeparate();
+  }
+
+  // Command shutdown on all booster engines.
+  active.engines.forEach(e => {
+    e.targetMassFlowRate = 0;
+    e.targetGimbalDeg = 0;
+  });
+
+  pendingSeparate = {
+    bodyId: active.id,
+    requestedAt: state.simTime,
+  };
+  return true;
+}
+
+// Emergency payload eject — independent of the normal separation flow.
+// Always available while the active body still has an attached payload:
+// splits the fairing (if one is still on) and ejects the cargo with a
+// large prograde kick, regardless of what stage the stack is on. Real
+// launchers carry analogous systems (launch escape towers, emergency
+// deploy modes) precisely because once the rocket is failing, the only
+// thing worth saving is the payload.
+// Emergency payload eject — independent of the normal separation flow.
+// Always available while the active body still has an attached payload.
+//
+// Unlike the NORMAL payload release (which splits the fairing first so a
+// bare satellite deploys), emergency eject keeps the fairing CLOSED around
+// the cargo. Physical rationale: the fairing is the payload's reentry
+// shield — if the rocket is failing and the payload is being saved, it
+// will likely reenter on its own, and a bare satellite would burn up in
+// the airstream. Real escape systems deliver the payload as a single
+// shielded unit for exactly this reason.
+function emergencyEjectPayload() {
+  const active = state.bodies[state.activeBodyIndex];
+  if (!active) return false;
+  if (active.crashed) return false;
+  if (active.payloadReleased) return false;
+  if (!active.payloadId) return false;
+  
+  // Find the fairing member still sitting on the active stack, if any.
+  const fairingIdx = (active.members || [])
+    .findIndex(m => m.stageRole === 'payloadSpace');
+  const fairingMember = fairingIdx >= 0 ? active.members[fairingIdx] : null;
+  
+  // World-space position of the fairing/payload BASE. Members stack
+  // bottom→top, so sum heights below the fairing and offset along nose.
+  const upX = -Math.sin(active.theta);
+  const upY = Math.cos(active.theta);
+  const belowH = fairingMember ?
+    active.members.slice(0, fairingIdx)
+    .reduce((s, m) => s + (Number.isFinite(m.height) ? m.height : 0), 0) :
+    active.members.reduce((s, m) => s + (Number.isFinite(m.height) ? m.height : 0), 0);
+  const baseRx = active.rx + belowH * upX;
+  const baseRy = active.ry + belowH * upY;
+  
+  // Slice the fairing off the active body's member list (if present).
+  if (fairingIdx >= 0) {
+    active.members.splice(fairingIdx, 1);
+  }
+  
+  // Prograde kick direction. Fallback to nose axis if the active body is
+  // essentially at rest (edge case: emergency eject triggered on the pad).
+  const speed = Math.hypot(active.vx, active.vy);
+  const ux = speed > 0.01 ? active.vx / speed : upX;
+  const uy = speed > 0.01 ? active.vy / speed : upY;
+  
+  // Same magnitude as a real jettison system — clearly faster than the
+  // normal deploy kick (~3 m/s), but not absurd.
+  const KICK = 30.0;
+  const SPIN = 0.05; // gentle tumble; cargo is shielded, not tumbling free
+  
+  // Create the ejected body. It carries:
+  //   - the fairing member (if still present), so its silhouette is a
+  //     closed fairing over the payload — reentry drag protection
+  //   - payloadId pointing at the cargo, so the renderer keeps drawing the
+  //     payload inside the fairing and a future Release Payload command
+  //     can still free the satellite once it's safe to deploy
+  const body = _makeBody();
+  body.id = 'ejected-' + active.payloadId;
+  body.members = fairingMember ? [fairingMember] : [];
+  body.rx = baseRx;
+  body.ry = baseRy;
+  body.vx = active.vx + KICK * ux; // ADDITIVE — inherits active velocity
+  body.vy = active.vy + KICK * uy;
+  body.theta = active.theta;
+  body.omega = SPIN;
+  body.dryMass = 0; // derived from members on next tick
+  body.fuelMass = 0;
+  body.isActive = false;
+  body.isDiscarded = true;
+  body.bornAt = state.simTime;
+  body.collisionGracePeriod = 1.5;
+  body.payloadId = active.payloadId;
+  body.payloadReleased = false;
+  body.emergencyEject = true;
+  body.rcsCmd = (typeof _blankRcsCmd === 'function') ? _blankRcsCmd() : null;
+  
+  state.bodies.push(body);
+  
+  // The active body no longer carries cargo.
+  active.payloadId = null;
+  active.payloadReleased = true;
+  
+  // Rebuild the active body's engines if we removed its bottom member
+  // (edge case: active stack was only [fairing]? Can't happen — fairing
+  // is never at the bottom of a stack — so this only fires when there are
+  // still members above. Rebuild is defensive.)
+  if (typeof rebuildEnginesForBody === 'function') {
+    rebuildEnginesForBody(active);
+  }
+  
+  // Visual flash at the eject point.
+  separationFlashId++;
+  separationFlash = {
+    id: separationFlashId,
+    rx: baseRx,
+    ry: baseRy,
+    t0Real: performance.now(),
+  };
+  
+  return true;
+}
+// Cancel any in-flight two-phase sequence. Called when the user issues a
+// NEW thrust/gimbal command while a shutdown-and-split or shutdown-and-
+// release sequence is pending. Without this, a MAX-throttle click during
+// the 1.2 s spool-down window silently overrode the shutdown command, the
+// thrust threshold never fell, the 5 s safety timeout eventually fired,
+// and the split happened with engines at full throttle — reinstating the
+// original "separation with engines firing" collision bug.
+//
+// The cancel is the physically correct outcome: a user re-commanding
+// thrust is telling the sim "abort the sequence". Any input that would
+// make the pending completion condition unreachable must clear the intent.
+function cancelPendingSequences() {
+  pendingSeparate = null;
+  pendingRelease = null;
+}
+function _checkPendingSeparate() {
+  if (!pendingSeparate) return;
+  const active = state.bodies[state.activeBodyIndex];
+
+  // Active body changed since the request (user did something else — took
+  // control of another body, reset, etc.). Silently abort. The old body's
+  // targets are already zeroed from requestSeparate(), so its engines
+  // spool down on their own; the split simply doesn't happen.
+  if (!active || active.id !== pendingSeparate.bodyId) {
+    pendingSeparate = null;
+    return;
+  }
+
+  let currentThrust = 0, maxThrust = 0;
+  (active.engines || []).forEach(e => {
+    currentThrust += e.currentF || 0;
+    maxThrust += e.Fmax || 0;
+  });
+  const thrustFrac = maxThrust > 0 ? currentThrust / maxThrust : 0;
+  const elapsed = state.simTime - pendingSeparate.requestedAt;
+
+  // Split when thrust is effectively gone (<0.5% of max) OR after a
+  // safety timeout. At full-thrust shutdown spool (~1.2 s to zero) the
+  // thrust threshold fires well inside ~1.2 s; the 5 s timeout is a very
+  // wide margin that should never fire in practice — it exists only so a
+  // stuck engine state can't leave the split pending forever.
+  if (thrustFrac < 0.005 || elapsed > 5.0) {
+    pendingSeparate = null;
+    performSeparate();
+  }
+}
+ 
+ 
 // H2a-2: split the active body. Bottom member detaches as a new discarded
 // body (same position/velocity, will free-fall in H2b); remaining members
 // stay on the active body. Engines rebuild so thrust follows the new bottom.
-function separateActiveBody() {
+//
+// Renamed from separateActiveBody(): this is now the SECOND phase of the
+// two-phase sequence. Call requestSeparate() (or _checkPendingSeparate())
+// to trigger it; do not call this directly from user commands.
+function performSeparate() {
   const active = state.bodies[state.activeBodyIndex];
   if (!active || !active.members || active.members.length < 2) return false;
   if (active.crashed) return false;
@@ -1280,6 +1643,27 @@ function separateActiveBody() {
   discarded.members = [bottomMember];
   discarded.engines = (typeof buildEnginesForRecord === 'function') ?
     buildEnginesForRecord(bottomMember) : [];
+  
+  // PART B: buildEnginesForRecord() always returns fresh engines at rest
+  // (massFlowRate 0) — starting the discarded booster there is exactly
+  // the "instant cutoff" discontinuity this fixes. `active.engines` at
+  // this point is still the OLD, pre-separation array, built from this
+  // same bottomMember, so slot ids line up 1:1 with the newly built
+  // discarded.engines. Copy across whatever thrust state the booster
+  // actually had the instant before separation, then COMMAND shutdown
+  // (target 0) rather than snapping the state itself to 0 — the shutdown
+  // spool in applyActuatorRateLimitsForBody carries it down over ~1.2 s.
+  // The booster was already commanded to zero and spooled down during
+// the two-phase wait (see requestSeparate / _checkPendingSeparate), so
+// the discarded body's engines simply start at rest — buildEnginesForRecord
+// already returns them at massFlowRate 0. No state copy needed. This
+// also handles the case where the split fired immediately because the
+// engines were already off — same "start at rest" outcome.
+discarded.engines.forEach(e => {
+  e.targetMassFlowRate = 0;
+  e.targetGimbalDeg = 0;
+});
+  
   discarded.rx = active.rx;
   discarded.ry = active.ry;
   discarded.vx = active.vx;
@@ -1336,13 +1720,31 @@ function takeControlOfBody(idx) {
   if (idx < 0 || idx >= state.bodies.length) return false;
   if (idx === state.activeBodyIndex) return false;
   
-  // Clear actuator state on the OLD active body's engines.
-  
+  // Clear actuator state on the OLD active body's engines. Only the
+  // TARGETS are zeroed, not the current massFlowRate directly — the old
+  // body keeps ticking through physicsStep() after losing control (it's
+  // still falling/flying), so its existing rate limiter (with the
+  // shutdown-spool duration, see applyActuatorRateLimitsForBody) carries
+  // it down to zero smoothly instead of an instant cutoff.
+  const old = state.bodies[state.activeBodyIndex];
+  if (old && old.engines) {
+    old.engines.forEach(e => {
+      e.targetMassFlowRate = 0;
+      e.targetGimbalDeg = 0;
+    });
+  }
   
   // Flip active flags.
-  const old = state.bodies[state.activeBodyIndex];
-  if (old) old.isActive = false;
-  state.activeBodyIndex = idx;
+  // Abort any in-flight separate request — the user has just moved control
+// to a different body. The old body's targets were already zeroed by
+// requestSeparate() if one was pending, so its engines still spool down
+// cleanly on their own; the split itself simply never fires.
+pendingSeparate = null;
+pendingRelease = null;
+
+// Flip active flags.
+if (old) old.isActive = false;
+state.activeBodyIndex = idx;
   const next = state.bodies[idx];
   next.isActive = true;
   
@@ -1361,7 +1763,8 @@ function takeControlOfBody(idx) {
 // half-shell discarded bodies (clamshell). Removes the fairing from the
 // active body's members; keeps payloadId untouched (payload releases
 // later, in I-d2).
-let lastFairingSplit = null; // { rx, ry, theta, t0 } for visual flash
+// A2 CLEANUP: lastFairingSplit removed — it was written on every split but
+// never read anywhere in the codebase.
 
 function splitFairingOnActiveBody() {
   const active = state.bodies[state.activeBodyIndex];
@@ -1421,7 +1824,6 @@ function splitFairingOnActiveBody() {
   // — actually bottom unchanged here, but safe to call).
   rebuildEnginesForBody(active);
   
-  lastFairingSplit = { rx: baseRx, ry: baseRy, t0: performance.now() };
   return true;
 }
 
@@ -1432,7 +1834,9 @@ function splitFairingOnActiveBody() {
 let lastPayloadRelease = null;
 let lastPayloadReleaseId = 0;
 
-function releasePayloadOnActiveBody() {
+function releasePayloadOnActiveBody(opts) {
+  opts = opts || {};
+  const emergency = !!opts.emergency;
   const active = state.bodies[state.activeBodyIndex];
   if (!active || !active.members) return false;
   if (active.members.some(m => m.stageRole === 'payloadSpace')) return false; // fairing still on
@@ -1464,8 +1868,8 @@ function releasePayloadOnActiveBody() {
   const speed = Math.hypot(active.vx, active.vy);
   const ux = speed > 0.01 ? active.vx / speed : upX;
   const uy = speed > 0.01 ? active.vy / speed : upY;
-  const KICK = 3.0;
-  const SPIN = 0.15;
+  const KICK = emergency ? (opts.kick || 20.0) : 3.0;
+const SPIN = emergency ? 0.5 : 0.15;
   
   const body = _makeBody();
   body.id = 'payload-' + pl.id;
@@ -1483,7 +1887,7 @@ function releasePayloadOnActiveBody() {
   body.bornAt = state.simTime;
   body.collisionGracePeriod = 1.5; // ← ye add karo
   body.payloadBody = { record: pl }; // render marker
-  
+  body.emergencyEject = emergency;   // render/cue can key off this later
   state.bodies.push(body);
   active.payloadReleased = true;
   active.payloadReleased = true;

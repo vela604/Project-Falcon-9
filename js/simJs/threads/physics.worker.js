@@ -10,7 +10,7 @@
 // engine layout, for every session.
 //
 // OPTIMIZATION #1 (Step 2): the per-tick "hot" numeric fields (position,
-// velocity, orientation, fuel, per-engine throttle/currentF/gimbalDeg) no
+// velocity, orientation, fuel, per-engine massFlowRate/currentF/gimbalDeg) no
 // longer travel inside the cloned `data` object from serializeForMain().
 // They're written into a Float64Array (see stateBuffer.js) and moved to the
 // main thread via Transferable Objects — zero-copy, no structured clone.
@@ -78,6 +78,22 @@ let trajectoryRequestInFlight = false;
 let availableHotBuffers = [];
 let hotBufferStarvedCount = 0;
 let lastHotBufferWarnTime = 0;
+
+// ---- PHASE 1: mass-flow command clamp ----
+// Converts/clamps a commanded engine mass flow rate (kg/s) into this
+// engine's valid range:
+//  - 0 (or any non-positive/NaN command) is always "off" — the floor
+//    below does NOT apply to zero, that's the intentional asymmetry.
+//  - Anything above the engine's max is capped down. Infinity is used
+//    deliberately by the quick MAX command (see setAllThrottle) and
+//    caps cleanly to whatever this specific engine's max is.
+//  - Anything else nonzero is floored at the combustion-stability
+//    minimum (minMassFlowRate).
+function clampMassFlowCommand(eng, cmd) {
+  if (!(cmd > 0)) return 0;
+  const capped = Math.min(cmd, eng.maxMassFlowRate || 0);
+  return Math.max(capped, eng.minMassFlowRate || 0);
+}
 
 // ---- Message handler ----
 self.onmessage = (e) => {
@@ -220,35 +236,46 @@ self.onmessage = (e) => {
       break;
     }
 
+    // PHASE 1: setGroupThrottle/setCenterThrottle/setAllThrottle now carry
+    // a commanded mass flow rate (kg/s) in msg.value, not a 0..1 fraction —
+    // converted from the UI's percent at the control layer (controls.js).
+    // clampMassFlowCommand() below applies the same clamp to every engine
+    // it touches, so it's the one place command-floor/ceiling logic lives.
     case 'setGroupThrottle': {
-      const b = state.bodies[state.activeBodyIndex];
-      if (!b || !b.engines) break;
-      msg.angles.forEach(a => {
-        const eng = b.engines.find(en => en.angleDeg === a);
-        if (eng) eng.targetThrottle = msg.value;
-      });
-      break;
-    }
+  if (typeof cancelPendingSequences === 'function') cancelPendingSequences();
+  const b = state.bodies[state.activeBodyIndex];
+  if (!b || !b.engines) break;
+  msg.angles.forEach(a => {
+    const eng = b.engines.find(en => en.angleDeg === a);
+    if (eng) eng.targetMassFlowRate = clampMassFlowCommand(eng, msg.value);
+  });
+  break;
+}
     case 'setCenterThrottle': {
-      const b = state.bodies[state.activeBodyIndex];
-      if (!b || !b.engines) break;
-      b.engines.filter(en => en.isCenter).forEach(en => { en.targetThrottle = msg.value; });
-      break;
-    }
+  if (typeof cancelPendingSequences === 'function') cancelPendingSequences();
+  const b = state.bodies[state.activeBodyIndex];
+  if (!b || !b.engines) break;
+  b.engines.filter(en => en.isCenter).forEach(en => {
+    en.targetMassFlowRate = clampMassFlowCommand(en, msg.value);
+  });
+  break;
+}
     case 'setAllThrottle': {
-      const b = state.bodies[state.activeBodyIndex];
-      if (!b || !b.engines) break;
-      b.engines.forEach(en => { en.targetThrottle = msg.value; });
-      break;
-    }
+  if (typeof cancelPendingSequences === 'function') cancelPendingSequences();
+  const b = state.bodies[state.activeBodyIndex];
+  if (!b || !b.engines) break;
+  b.engines.forEach(en => { en.targetMassFlowRate = clampMassFlowCommand(en, msg.value); });
+  break;
+}
     case 'setGimbal': {
-      const b = state.bodies[state.activeBodyIndex];
-      if (!b || !b.engines) break;
-      const lim = CONFIG.GIMBAL_MAX_DEG;
-      const d = Math.max(-lim, Math.min(lim, msg.deg));
-      b.engines.filter(en => en.gimbal).forEach(en => { en.targetGimbalDeg = d; });
-      break;
-    }
+  if (typeof cancelPendingSequences === 'function') cancelPendingSequences();
+  const b = state.bodies[state.activeBodyIndex];
+  if (!b || !b.engines) break;
+  const lim = CONFIG.GIMBAL_MAX_DEG;
+  const d = Math.max(-lim, Math.min(lim, msg.deg));
+  b.engines.filter(en => en.gimbal).forEach(en => { en.targetGimbalDeg = d; });
+  break;
+}
     case 'rcs': {
       const b = state.bodies[state.activeBodyIndex];
       if (!b) break;
@@ -282,17 +309,28 @@ self.onmessage = (e) => {
       break;
     }
     case 'separate': {
-      if (typeof separateActiveBody === 'function') separateActiveBody();
-      break;
-    }
+  // Two-phase: this now commands engine shutdown and defers the
+  // actual member slice until thrust has spooled down. The split
+  // itself is triggered by _checkPendingSeparate() inside physicsStep.
+  if (typeof requestSeparate === 'function') requestSeparate();
+  break;
+}
     case 'splitFairing': {
       if (typeof splitFairingOnActiveBody === 'function') splitFairingOnActiveBody();
       break;
     }
+    
     case 'releasePayload': {
-      if (typeof releasePayloadOnActiveBody === 'function') releasePayloadOnActiveBody();
-      break;
-    }
+  // Two-phase: command engine shutdown, defer actual release until
+  // thrust spools to ~0 (or skip the wait if already coasting).
+  // Emergency eject bypasses this — see emergencyEjectPayload.
+  if (typeof requestReleasePayload === 'function') requestReleasePayload();
+  break;
+}
+    case 'emergencyEject': {
+  if (typeof emergencyEjectPayload === 'function') emergencyEjectPayload();
+  break;
+}
     case 'takeControl': {
       if (typeof takeControlOfBody === 'function') takeControlOfBody(msg.idx);
       break;
@@ -309,7 +347,7 @@ self.onmessage = (e) => {
 
 // ---- Snapshot serialization ----
 // NOTE (Optimization #1, Step 2): rx, ry, vx, vy, theta, omega, fuelMass,
-// and each engine's throttle/currentF/gimbalDeg are DELIBERATELY left out
+// and each engine's massFlowRate/currentF/gimbalDeg are DELIBERATELY left out
 // below — they now travel every tick via the hot-state Float64Array
 // (encodeHotState in stateBuffer.js), not through this cloned object.
 //
@@ -444,7 +482,12 @@ function serializeForMain() {
       ec.Fmax = en.Fmax;
       ec.Fmin = en.Fmin;
       ec.Ve = en.Ve;
-      ec.targetThrottle = en.targetThrottle;
+      // PHASE 1: mass-flow limits/target travel here (they only change on
+      // the same rare structural events as everything else in this
+      // clone); massFlowRate itself is hot-path and comes via the buffer.
+      ec.maxMassFlowRate = en.maxMassFlowRate;
+      ec.minMassFlowRate = en.minMassFlowRate;
+      ec.targetMassFlowRate = en.targetMassFlowRate;
       ec.targetGimbalDeg = en.targetGimbalDeg;
     }
 

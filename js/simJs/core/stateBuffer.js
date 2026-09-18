@@ -2,7 +2,9 @@
 // stateBuffer.js — Optimization #1, Step 1.
 //
 // Fixed-layout Float64Array schema for the "hot" per-tick physics fields
-// (position, velocity, orientation, fuel, per-engine throttle/thrust/gimbal).
+// (position, velocity, orientation, fuel, per-engine mass flow rate/
+// thrust/gimbal — PHASE 1: engine field 0 is a mass flow rate in kg/s,
+// not a 0..1 throttle fraction).
 // This buffer is moved between the physics worker and the main thread via
 // the Transferable Objects mechanism (postMessage(buf, [buf.buffer])) — a
 // zero-copy move, not a structured-clone deep copy.
@@ -39,9 +41,9 @@ const HOT_STATE_MAX_ENGINES_PER_BODY = 16; // covers octaweb-merlin9 (1 center +
 // [7] engineCount   (how many of the engine slots below are actually valid)
 // [8] legsProgress  (0..1 animation; 0 for bodies with no legs)
 // [9] legsDeployed  (0 or 1; flag)
-// [10 .. 10 + N*3)  per-engine: throttle, currentF, gimbalDeg
+// [10 .. 10 + N*3)  per-engine: massFlowRate (kg/s), currentF, gimbalDeg
 const HOT_STATE_BODY_HEADER_FLOATS = 10;
-const HOT_STATE_FLOATS_PER_ENGINE = 3; // throttle, currentF, gimbalDeg
+const HOT_STATE_FLOATS_PER_ENGINE = 3; // massFlowRate, currentF, gimbalDeg
 const HOT_STATE_BODY_STRIDE =
   HOT_STATE_BODY_HEADER_FLOATS + HOT_STATE_MAX_ENGINES_PER_BODY * HOT_STATE_FLOATS_PER_ENGINE;
 
@@ -99,7 +101,7 @@ function encodeHotState(buf, bodies) {
     for (let j = 0; j < usedEngines; j++) {
       const e = engines[j];
       const eb = engBase + j * HOT_STATE_FLOATS_PER_ENGINE;
-      buf[eb + 0] = e.throttle;
+      buf[eb + 0] = e.massFlowRate;
       buf[eb + 1] = e.currentF;
       buf[eb + 2] = e.gimbalDeg;
     }
@@ -150,7 +152,7 @@ function decodeHotState(buf, bodies) {
     for (let j = 0; j < usedEngines; j++) {
       const e = engines[j];
       const eb = engBase + j * HOT_STATE_FLOATS_PER_ENGINE;
-      e.throttle = buf[eb + 0];
+      e.massFlowRate = buf[eb + 0];
       e.currentF = buf[eb + 1];
       e.gimbalDeg = buf[eb + 2];
     }
