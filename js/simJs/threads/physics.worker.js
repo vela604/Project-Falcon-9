@@ -659,7 +659,11 @@ if (b.chute) {
     bc.payloadBody = b.payloadBody;
     bc.fairingHalf = b.fairingHalf;
     bc.height = b.height;
-    bc.width = b.width;
+bc.width = b.width;
+// IMU accelerometer readings — see physics.js's assignment for why
+// these are PROPER (non-gravitational) accelerations.
+bc.accelX = b._lastAccelX || 0;
+bc.accelY = b._lastAccelY || 0;
     
     out.bodies[i] = bc;
   }

@@ -264,8 +264,8 @@ const GuidanceBridge = {
         console.error('[bridge] GUIDANCE WORKER BOOT FAILED:', msg.message);
         console.error('[bridge] stack:', msg.stack);
       } else if (msg.type === 'workerError') {
-        console.error('[bridge] guidance worker runtime error:', msg.message, msg.stack);
-      } else if (msg.type === 'ready') {
+  console.error('[bridge] guidance worker runtime error:', msg.message, msg.stack);
+} else if (msg.type === 'ready') {
         this.ready = true;
         const q = this.pendingMessages;
         this.pendingMessages = [];
@@ -319,56 +319,68 @@ function maybeForwardGuidanceSnapshot() {
   // ever diverge, the index is authoritative. See Issue D in the Phase 3
   // fixes round-2 prompt.
   const bodies = state.bodies.map((b, i) => ({
-    rx: b.rx, ry: b.ry, vx: b.vx, vy: b.vy, theta: b.theta, omega: b.omega,
-    fuelMass: b.fuelMass,
-    crashed: !!b.crashed,
-    landed: !!b.landed,
-    isActive: i === state.activeBodyIndex,
-    isDiscarded: !!b.isDiscarded,
-    settled: !!b.settled,
-    payloadId: b.payloadId || null,
-    payloadReleased: !!b.payloadReleased,
-    members: b.members || [],
-    legs: b.legs ? { deployed: !!b.legs.deployed, progress: b.legs.progress || 0 } : null,
-    // NOTE for Phase 4: minMassFlowRate, massFlowRateRateFrac, and
-    // (optionally) Fmax/Fmin are NOT included here yet. They are not
-    // needed for Phase 3's "can guidance construct a valid command"
-    // contract, but Phase 4's control-law implementation will need them
-    // (see Issue E in the Phase 3 fixes round-2 prompt). Extend this
-    // projection when Phase 4 lands.
-    engines: (b.engines || []).map(e => ({
-      id: e.id,
-      angleDeg: e.angleDeg,
-      x: e.x,
-      isCenter: e.isCenter,
-      gimbal: e.gimbal,
-      Ve: e.Ve,
-      maxMassFlowRate: e.maxMassFlowRate,
-      massFlowRate: e.massFlowRate,
-      currentF: e.currentF,
-      gimbalDeg: e.gimbalDeg,
-      targetGimbalRateDegS: e.targetGimbalRateDegS,
-    })),
-    rcsCmd: b.rcsCmd || null,
-    rcsDuty: b.rcsDuty || null,
-    // Phase 3 Extension (Plan A1) — every pod of every member, flat list.
-    // See rcs.js's buildPodEntries(). Purely additive to the snapshot;
-    // does not change anything about how RCS is actually fired yet.
-    pods: (typeof buildPodEntries === 'function') ? buildPodEntries(b) : [],
-  }));
-  GuidanceBridge.send({
-    type: 'snapshot',
-    data: {
-      simTime: state.simTime,
-      activeBodyIndex: state.activeBodyIndex,
-      // Issue A (round 2) — was missing entirely. Without this, guidance
-      // has no signal that the physics tick loop has frozen (crash halt)
-      // and would keep computing/sending commands into a worker that's
-      // no longer advancing.
-      halted: !!state.halted,
-      bodies,
-    },
-  });
+  rx: b.rx, ry: b.ry, vx: b.vx, vy: b.vy, theta: b.theta, omega: b.omega,
+  // IMU accelerometer — body-frame, proper (non-gravitational) accel
+  ax: b.accelX || 0, ay: b.accelY || 0,
+  // Body-own geometry + dry mass. Used by guidance's fallback path for
+  // member-less bodies (fairing halves, ejected packages, released
+  // payloads) — same numbers physics's own _bodyHeightOf/_bodyWidthOf/
+  // currentGeometry fallback path reads.
+  height: b.height,
+  width: b.width,
+  dryMass: b.dryMass,
+  // Cryogenic tank level
+  fuelMass: b.fuelMass,
+  // Discrete status flags (set by physics on events)
+  crashed: !!b.crashed,
+  landed: !!b.landed,
+  isActive: i === state.activeBodyIndex,
+  isDiscarded: !!b.isDiscarded,
+  settled: !!b.settled,
+  emergencyEject: !!b.emergencyEject,
+  payloadId: b.payloadId || null,
+  payloadReleased: !!b.payloadReleased,
+  members: b.members || [],
+  // Landing gear position sensor
+  legs: b.legs ? { deployed: !!b.legs.deployed, progress: b.legs.progress || 0 } : null,
+  // Slosh — physically a nav-filter estimate derived from IMU residuals,
+  // not a direct measurement; passed through clean for now.
+  slosh: b.slosh ? { offset: b.slosh.offset || 0, velocity: b.slosh.velocity || 0 } : null,
+  // Engine flow meter + gimbal LVDT (per engine)
+  engines: (b.engines || []).map(e => ({
+    id: e.id,
+    angleDeg: e.angleDeg,
+    x: e.x,
+    isCenter: e.isCenter,
+    gimbal: e.gimbal,
+    Ve: e.Ve,
+    maxMassFlowRate: e.maxMassFlowRate,
+    massFlowRate: e.massFlowRate,
+    currentF: e.currentF,
+    gimbalDeg: e.gimbalDeg,
+    targetGimbalRateDegS: e.targetGimbalRateDegS,
+  })),
+  rcsCmd: b.rcsCmd || null,
+  rcsDuty: b.rcsDuty || null,
+  pods: (typeof buildPodEntries === 'function') ? buildPodEntries(b) : [],
+}));
+// Wind — from ground uplink (meteorological data), not an onboard
+// sensor, but available to the rocket at every tick.
+const windSnapshot = (typeof wind !== 'undefined') ? {
+  enabled: !!wind.enabled,
+  speed: wind.speed || 0,
+  directionDeg: wind.directionDeg || 0,
+} : { enabled: false, speed: 0, directionDeg: 0 };
+GuidanceBridge.send({
+  type: 'snapshot',
+  data: {
+    simTime: state.simTime,
+    activeBodyIndex: state.activeBodyIndex,
+    halted: !!state.halted,
+    wind: windSnapshot,
+    bodies,
+  },
+});
 }
 
 // ---- One-time handoff: give physics and guidance the two ends of a single
@@ -381,3 +393,88 @@ function connectGuidanceToPhysics() {
   WorkerBridge.send({ type: 'connectGuidance' }, [channel.port1]);
   GuidanceBridge.send({ type: 'connectPhysicsPort' }, [channel.port2]);
 }
+
+// ---------------------------------------------------------------------------
+// Guidance stack data — one-time handoff at boot.
+//
+// Raw ingredients only. The member records are sent as-is (functions
+// stripped since they can't survive structured clone) and every hardware
+// type those members reference is included, also as-is. Environment
+// constants are snapshotted from CONFIG so guidance has everything it
+// needs without importing config.js (which is not in its worker scope).
+//
+// Guidance derives everything itself from these — dry mass, COM, I,
+// fuel distribution, slosh fractions — using its own reimplementation of
+// the same formulas. Nothing is pre-computed on this side.
+//
+// Sent exactly once, right after guidance signals ready. The stack doesn't
+// change mid-session; user must reload to switch stacks.
+// ---------------------------------------------------------------------------
+function _stripFns(obj) {
+  return JSON.parse(JSON.stringify(obj, (k, v) => (typeof v === 'function' ? undefined : v)));
+}
+
+function _collectStackDataForGuidance() {
+  const members = (typeof ACTIVE_STACK_MEMBERS !== 'undefined' && ACTIVE_STACK_MEMBERS) || [];
+  const typeIds = new Set();
+  members.forEach(m => {
+    if (m.engineTypeId) typeIds.add(m.engineTypeId);
+    if (m.recoveryTypeId && m.hasRecovery !== false) typeIds.add(m.recoveryTypeId);
+    if (m.rcsTypeId) typeIds.add(m.rcsTypeId);
+    if (m.bodyMetalTypeId) typeIds.add(m.bodyMetalTypeId);
+    if (m.legsMetalTypeId) typeIds.add(m.legsMetalTypeId);
+    if (m.payloadSpaceTypeId) typeIds.add(m.payloadSpaceTypeId);
+    if (m.payloadSpaceMetalTypeId) typeIds.add(m.payloadSpaceMetalTypeId);
+    if (m.fuel && m.fuel.typeId) typeIds.add(m.fuel.typeId);
+    if (m.engineThrusters) {
+      Object.keys(m.engineThrusters).forEach(gk => {
+        const g = m.engineThrusters[gk];
+        if (g && g.thrusterTypeId) typeIds.add(g.thrusterTypeId);
+      });
+    }
+    if (m.rcsThruster && m.rcsThruster.thrusterTypeId) typeIds.add(m.rcsThruster.thrusterTypeId);
+    if (m.payloadSpace && m.payloadSpace.typeId) typeIds.add(m.payloadSpace.typeId);
+    if (m.payloadSpace && m.payloadSpace.metalTypeId) typeIds.add(m.payloadSpace.metalTypeId);
+    if (m.chuteTypeId) typeIds.add(m.chuteTypeId);
+  });
+  const types = {};
+  typeIds.forEach(id => {
+    if (typeof getComponentType !== 'function') return;
+    const t = getComponentType(id);
+    if (t) types[id] = _stripFns(t);
+  });
+  
+  // Stack payload mass — guidance needs it to include cargo in its own
+  // COM computation once the fairing is on.
+  let stackPayloadMass = 0;
+  if (typeof getActiveStack === 'function' && typeof getPayload === 'function') {
+    const stk = getActiveStack();
+    if (stk && stk.payloadId) {
+      const pl = getPayload(stk.payloadId);
+      if (pl && Number.isFinite(pl.mass)) stackPayloadMass = pl.mass;
+    }
+  }
+  
+  return {
+    members: members.map(_stripFns),
+    types,
+    stackPayloadMass,
+    env: {
+      EARTH_RADIUS: CONFIG.EARTH_RADIUS,
+      GM_EARTH: CONFIG.GM_EARTH,
+      EARTH_OMEGA: CONFIG.EARTH_OMEGA,
+      LAUNCH_SITE_ALTITUDE: CONFIG.LAUNCH_SITE_ALTITUDE,
+      LAUNCH_SITE_ANGLE_0: CONFIG.LAUNCH_SITE_ANGLE_0,
+      G0: (typeof G0 !== 'undefined') ? G0 : 9.80665,
+      SEA_LEVEL_DENSITY: CONFIG.SEA_LEVEL_DENSITY,
+      SCALE_HEIGHT: CONFIG.SCALE_HEIGHT,
+      DRAG_CD: CONFIG.DRAG_CD,
+    },
+  };
+}
+
+function sendStackDataToGuidance() {
+  const data = _collectStackDataForGuidance();
+  GuidanceBridge.send({ type: 'stackData', data });
+}
+

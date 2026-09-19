@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"><title>Guidance test</title></head>
+<body>
+<script src="js/simJs/guidance/imu.js"></script>
+<script src="js/simJs/guidance/guidance.js"></script>
+<script>
+console.log('imu loaded:', typeof measure === 'function');
+console.log('guidance loaded:', typeof Guidance === 'object');
+
+// Fake stack data — matches the shape workerBridge.js will send
+const fakeStackData = {
+  members: [
+    { id: 'falcon9-default', stageRole: 'booster', height: 41.2, width: 3.7,
+      fuel: { typeId: 'rp1-lox', tankHeight: 34.1, tankWidth: 3.7 } },
+    { id: 'falcon9-stage', stageRole: 'stage', height: 13.8, width: 3.7,
+      fuel: { typeId: 'rp1-lox', tankHeight: 8.0, tankWidth: 3.7 } },
+    { id: 'falcon9-fairing', stageRole: 'payloadSpace', height: 13.1, width: 5.2 },
+  ],
+  types: {
+    'rp1-lox': { id: 'rp1-lox', parameterSchema: [{ key: 'propellantDensity', value: 1080 }] },
+  },
+  stackPayloadMass: 12000,
+  env: { EARTH_RADIUS: 6371000, GM_EARTH: 3.986e14, EARTH_OMEGA: 7.2921e-5, G0: 9.80665 },
+};
+
+Guidance.setStackData(fakeStackData);
+
+console.log('--- getters ---');
+console.log('members count:', Guidance.getStackData().members.length);
+console.log('member 0 role:', Guidance.getMemberRecord(0).stageRole);
+console.log('type rp1-lox density:', Guidance.getTypeById('rp1-lox').parameterSchema[0].value);
+console.log('env EARTH_RADIUS:', Guidance.getEnv().EARTH_RADIUS);
+console.log('payload mass:', Guidance.getStackPayloadMass());
+</script>
+</body>
+</html>

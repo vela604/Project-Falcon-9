@@ -423,10 +423,11 @@ function bootstrap() {
     // construction of being in this callback, so by the time GuidanceBridge
     // itself becomes ready, both sides genuinely exist.
     GuidanceBridge.init();
-    GuidanceBridge.onReady(() => {
-      connectGuidanceToPhysics();
-      GuidanceBridge.send({ type: 'setImuEnabled', enabled: imuEnabled });
-    });
+GuidanceBridge.onReady(() => {
+  connectGuidanceToPhysics();
+  GuidanceBridge.send({ type: 'setImuEnabled', enabled: imuEnabled });
+  sendStackDataToGuidance();
+});
     
     // hydrate FIRST — this is what triggers importScripts inside the worker.
     const hydrateKeys = {};

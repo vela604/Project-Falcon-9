@@ -1879,10 +1879,17 @@ if (body.fairingHalf && !body.crashed && !body.settled) {
     const aX = dt > 0 ? (body.vx - vx0) / dt : 0;
     const aY = dt > 0 ? (body.vy - vy0) / dt : 0;
     const gAcc = gravityAccel(body.rx, body.ry);
-    const aProperX = aX - gAcc.ax;
-    const aProperY = aY - gAcc.ay;
-    const cosT = Math.cos(body.theta), sinT = Math.sin(body.theta);
-    // Body frame: lateral = +right = (cosθ, sinθ);
+const aProperX = aX - gAcc.ax;
+const aProperY = aY - gAcc.ay;
+// IMU accelerometer reading — PROPER (non-gravitational) acceleration
+// in the inertial frame. This is what a real accelerometer physically
+// measures; guidance's snapshot carries it as `ax`/`ay`. Inertial
+// acceleration is one gravity-vector addition away if needed (the
+// guidance worker has GM_EARTH and its own position).
+body._lastAccelX = Number.isFinite(aProperX) ? aProperX : 0;
+body._lastAccelY = Number.isFinite(aProperY) ? aProperY : 0;
+const cosT = Math.cos(body.theta), sinT = Math.sin(body.theta);
+// Body frame: lateral = +right = (cosθ, sinθ);
     //             axial   = +up    = (-sinθ, cosθ)
     const lateral = aProperX * cosT + aProperY * sinT;
     const axial = -aProperX * sinT + aProperY * cosT;

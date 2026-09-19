@@ -3,18 +3,13 @@
 //
 // Pure function module: measure(trueState) -> measuredState. Runs ONLY
 // inside guidance.worker.js. Never imports anything, never touches `state`
-// or `CONFIG` — those don't exist in this worker's scope at all (see
-// guidance.worker.js's importScripts list). Everything this file needs
-// arrives as the argument to measure().
+// or `CONFIG` — those don't exist in this worker's scope at all.
 //
-// Noise model: white Gaussian, per-axis, per-call, from a seeded PRNG —
-// same seed => same sequence => reproducible A/B runs (guidance-with-noise
-// vs guidance-without-noise on the same trajectory). See setSeed()/reset()
-// below for how a caller controls that.
+// Noise model: white Gaussian, per-quantity, per-call, from a seeded PRNG.
+// Same seed => same sequence => reproducible A/B runs.
 // ============================================================================
 
-// ---- Seeded PRNG: mulberry32. Small, fast, good-enough statistical
-// quality for a noise model (not cryptographic — doesn't need to be). ----
+// ---- Seeded PRNG: mulberry32 ----
 function _mulberry32(seed) {
   let a = seed >>> 0;
   return function() {
@@ -26,15 +21,9 @@ function _mulberry32(seed) {
   };
 }
 
-// Module-level seed. A future UI field could call setSeed() to override
-// this before the first measure() call; until then it's a fixed constant,
-// per the spec ("the seed is a module-level constant by default").
 const IMU_DEFAULT_SEED = 0x1a2b3c4d;
 let _seed = IMU_DEFAULT_SEED;
 let _rand = _mulberry32(_seed);
-
-// Box-Muller keeps one spare normal sample per pair of uniform draws —
-// halves the PRNG calls per Gaussian sample on average.
 let _spareGaussian = null;
 
 function _nextGaussian() {
@@ -43,9 +32,6 @@ function _nextGaussian() {
     _spareGaussian = null;
     return g;
   }
-  // Box-Muller transform. u1 must be nonzero (log(0) is -Infinity) — the
-  // ' || 1e-12' term below excludes the exact-zero case, which the
-  // mulberry32 stream can in principle produce.
   let u1 = _rand();
   if (u1 <= 0) u1 = 1e-12;
   const u2 = _rand();
@@ -55,17 +41,10 @@ function _nextGaussian() {
   return r * Math.cos(theta);
 }
 
-// Gaussian sample with the given standard deviation (mean 0).
 function _gauss(sigma) {
   return _nextGaussian() * sigma;
 }
 
-// setSeed(): re-seeds the PRNG and discards any pending spare sample (a
-// leftover spare from the OLD seed would otherwise leak one draw from the
-// previous sequence into the new one). Two calls to measure() after
-// setSeed(sameValue) always produce the same sequence — this is the
-// "seedable/deterministic" contract the spec requires, and it's exercised
-// directly by the Node harness in VERIFY.md.
 function setSeed(seed) {
   _seed = seed >>> 0;
   _rand = _mulberry32(_seed);
@@ -76,24 +55,44 @@ function resetToDefaultSeed() {
   setSeed(IMU_DEFAULT_SEED);
 }
 
-// ---- Noise magnitudes (Phase 3 scope — see IMU_PROMPT_md.txt "What gets
-// noised"). Attitude/rate in radians (internal unit used by physics —
-// deg values in the spec are converted here once, so every caller of
-// measure() works in the same units the rest of the sim already uses). ----
-const IMU_SIGMA = {
-  theta: 1.7e-3, // rad  (~0.1°)
-  omega: 8.7e-4, // rad/s (~0.05°/s)
-  position: 5, // m per axis
-  velocity: 0.05, // m/s per axis
+// ============================================================================
+// SENSOR_SPECS — the noise envelope, one entry per sensor reading that
+// guidance receives in its snapshot. EDIT THIS to tune the sim's sensor
+// fidelity. Any entry whose `sigma` is 0, missing, or non-finite passes
+// its value through un-noised. Add/remove keys as the snapshot schema
+// evolves — measure() walks this table, it does not hardcode field names.
+//
+// Sigma values are representative real-hardware figures for launch-
+// vehicle-grade sensors (individual `source` notes below name the
+// reference class). They are deliberately on the pessimistic side — a
+// good GPS/INS can do better, but a rocket in a vibration-heavy ascent
+// is the reference case here.
+// ============================================================================
+const SENSOR_SPECS = {
+  // --- GPS + INS fused state estimate ---
+  rx:           { sigma: 5,      unit: 'm',     source: 'GPS position fix (~1-10 m)' },
+  ry:           { sigma: 5,      unit: 'm',     source: 'GPS position fix (~1-10 m)' },
+  vx:           { sigma: 0.05,   unit: 'm/s',   source: 'GPS doppler velocity' },
+  vy:           { sigma: 0.05,   unit: 'm/s',   source: 'GPS doppler velocity' },
+
+  // --- IMU ---
+  theta:        { sigma: 1.7e-3, unit: 'rad',   source: 'IMU attitude (gyro-integrated, ~0.1°)' },
+  omega:        { sigma: 8.7e-4, unit: 'rad/s', source: 'IMU rate gyro (~0.05°/s short-term)' },
+  ax:           { sigma: 0.01,   unit: 'm/s²',  source: 'IMU accelerometer (~1 mg)' },
+  ay:           { sigma: 0.01,   unit: 'm/s²',  source: 'IMU accelerometer (~1 mg)' },
+
+  // --- Propellant tank ---
+  fuelMass:     { sigma: 300,    unit: 'kg',    source: 'cryogenic tank gauging (~0.06% of 500t)' },
+
+  // --- Engine instrumentation (applied per engine) ---
+  engineFlow:   { sigma: 0.3,    unit: 'kg/s',  source: 'turbine flow meter (~0.1%)' },
+  engineGimbal: { sigma: 0.02,   unit: 'deg',   source: 'gimbal LVDT (~0.1% FS)' },
+
+  // --- Landing gear ---
+  legsProgress: { sigma: 0.01,   unit: 'frac',  source: 'leg position sensor (~1% travel)' },
 };
 
-// ---- Enabled flag. Module-level, not a measure() parameter — this is
-// what makes "measure() is identity when disabled" a property of the
-// function itself (spec's literal contract), rather than something every
-// caller has to remember to check before calling. guidance.js flips this
-// via setEnabled() when it gets the 'setImuEnabled' message from main
-// thread; it does NOT need its own separate on/off branching around every
-// measure() call site as a result.
+// ---- Enabled flag ----
 let _enabled = false;
 
 function setEnabled(enabled) {
@@ -104,38 +103,72 @@ function isEnabled() {
   return _enabled;
 }
 
-// measure(x) -> new object, same shape as x, four kinematic fields
-// replaced with noisy draws when enabled. Never mutates x. Every other
-// field (mass, engine states, flags, members, rcs state, id, simTime, ...)
-// is passed through BY REFERENCE — safe, because the caller (guidance.js)
-// owns the input and never mutates it either; see guidance.js's snapshot
-// handling.
+// Reads the spec for a given key and adds Gaussian noise if sigma is set.
+// Values that are not finite (NaN/undefined) pass through untouched —
+// the sensor layer shouldn't manufacture numbers where there were none.
+function _noise(value, specKey) {
+  if (!Number.isFinite(value)) return value;
+  const spec = SENSOR_SPECS[specKey];
+  if (!spec || !Number.isFinite(spec.sigma) || spec.sigma <= 0) return value;
+  return value + _gauss(spec.sigma);
+}
+
+// measure(x) -> new object, same shape as x, per-sensor noise applied when
+// enabled. Never mutates x. Everything not listed in SENSOR_SPECS (mass
+// flow flags, RCS state, member records, status booleans, ...) passes
+// through untouched.
 //
 // PHASE 3 CONTRACT: when disabled, this is a true identity — returns the
 // SAME reference, not a shallow copy — so a disabled IMU is bit-exact to
-// not having an IMU module at all (success criterion #2).
+// not having an IMU module at all.
 function measure(trueState) {
   if (!_enabled) return trueState;
-  
+
   const out = Object.assign({}, trueState);
   if (Array.isArray(trueState.bodies)) {
     out.bodies = trueState.bodies.map(b => {
       if (!b) return b;
       const nb = Object.assign({}, b);
-      nb.theta = b.theta + _gauss(IMU_SIGMA.theta);
-      nb.omega = b.omega + _gauss(IMU_SIGMA.omega);
-      nb.rx = b.rx + _gauss(IMU_SIGMA.position);
-      nb.ry = b.ry + _gauss(IMU_SIGMA.position);
-      nb.vx = b.vx + _gauss(IMU_SIGMA.velocity);
-      nb.vy = b.vy + _gauss(IMU_SIGMA.velocity);
+
+      // GPS + INS fused kinematics
+      nb.rx = _noise(b.rx, 'rx');
+      nb.ry = _noise(b.ry, 'ry');
+      nb.vx = _noise(b.vx, 'vx');
+      nb.vy = _noise(b.vy, 'vy');
+      // IMU attitude + rate
+      nb.theta = _noise(b.theta, 'theta');
+      nb.omega = _noise(b.omega, 'omega');
+      // IMU accelerometer (body-frame)
+      if (Number.isFinite(b.ax)) nb.ax = _noise(b.ax, 'ax');
+      if (Number.isFinite(b.ay)) nb.ay = _noise(b.ay, 'ay');
+      // Tank level
+      nb.fuelMass = _noise(b.fuelMass, 'fuelMass');
+
+      // Engine flow meter + gimbal LVDT — per engine
+      if (Array.isArray(b.engines)) {
+        nb.engines = b.engines.map(e => ({
+          ...e,
+          massFlowRate: _noise(e.massFlowRate, 'engineFlow'),
+          gimbalDeg:    _noise(e.gimbalDeg,    'engineGimbal'),
+        }));
+      }
+
+      // Landing gear position
+      if (b.legs) {
+        nb.legs = { ...b.legs, progress: _noise(b.legs.progress, 'legsProgress') };
+      }
+
       return nb;
     });
   }
   return out;
 }
 
-// Node/CommonJS export for the standalone verification harness; inside the
-// worker this is simply unused (typeof module === 'undefined' there).
+// Node/CommonJS export for the standalone verification harness.
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { measure, setEnabled, isEnabled, setSeed, resetToDefaultSeed, IMU_SIGMA, IMU_DEFAULT_SEED };
+  module.exports = {
+    measure, setEnabled, isEnabled,
+    setSeed, resetToDefaultSeed,
+    SENSOR_SPECS, IMU_DEFAULT_SEED,
+  };
 }

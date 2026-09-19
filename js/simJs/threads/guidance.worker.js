@@ -91,10 +91,22 @@ self.onmessage = (e) => {
     }
     
     // The only message main thread sends besides snapshots — the IMU
-    // toggle. Physics worker and render worker never see this at all.
-    case 'setImuEnabled': {
-      if (typeof Guidance !== 'undefined') Guidance.setImuEnabled(!!msg.enabled);
-      break;
-    }
+// toggle. Physics worker and render worker never see this at all.
+// The only message main thread sends besides snapshots — the IMU
+// toggle. Physics worker and render worker never see this at all.
+case 'setImuEnabled': {
+  if (typeof Guidance !== 'undefined') Guidance.setImuEnabled(!!msg.enabled);
+  break;
+}
+
+// One-time boot handoff: raw member records + resolved hardware types
+// + environment constants. See workerBridge.js's
+// sendStackDataToGuidance() for what's inside and why.
+case 'stackData': {
+  if (typeof Guidance !== 'undefined') Guidance.setStackData(msg.data);
+  break;
+}
+
+
   }
 };
