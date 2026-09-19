@@ -393,15 +393,18 @@ function bottomTankSloshOmega(body) {
 // bottomTankSloshOmega() falls back to CONFIG.SLOSH_OMEGA (no tank
 // geometry, near-empty tank, non-finite/zero frequency).
 // ---------------------------------------------------------------------------
-// Phase 2C — additive baffle damping when the bottom member's fuel type
-// declares hasBaffles. Baffles are a property of the FUEL/tank hardware,
-// not of fill level or tank geometry, so this resolves independently of
-// whether bottomTankFillGeometry() can run — a legacy/malformed record
-// with no resolvable tank geometry still gets its baffle bonus if its
-// fuel type declares one, and the boundary-layer derivation is added on
-// top in the normal path. Zero when the fuel type doesn't declare baffles
-// (or doesn't resolve at all), so pre-2C behaviour is bit-exact for any
-// fuel type that doesn't set the flag.
+// ---------------------------------------------------------------------------
+// Phase 2C — additive baffle damping from the bottom member's TANK HARDWARE.
+// Baffle geometry (count + inner-radius fraction) lives on the vehicle
+// record as part of `fuel` — alongside tankHeight/tankWidth — never on the
+// fuel TYPE. The fuel type declares only propellant properties (density);
+// the tank — including any baffles welded to its wall — is the vehicle
+// builder's choice. This resolves independently of whether
+// bottomTankFillGeometry() can run: a legacy/malformed record with no
+// resolvable tank geometry still gets its baffle bonus from the record's
+// own fuel.baffleCount, and the boundary-layer derivation is added on top
+// in the normal path. Zero when the record declares no baffles, so pre-2C
+// behaviour is bit-exact for any vehicle that never set a baffle count.
 function _baffleZetaForBody(body) {
   if (!body || !body.members || !body.members.length) return 0;
   const rec = body.members[0];
