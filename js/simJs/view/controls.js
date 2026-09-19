@@ -176,10 +176,15 @@ function bindWindPanel() {
   });
   
   speedInp.addEventListener('input', (e) => {
-    wind.speed = parseFloat(e.target.value) || 0;
-    document.getElementById('windSpeedLabel').textContent = wind.speed.toFixed(0) + ' m/s';
-    WorkerBridge.send({ type: 'setWind', speed: wind.speed });
-  });
+  wind.speed = parseFloat(e.target.value) || 0;
+  // Show both units — sim physics runs in m/s, but km/h is the
+  // familiar "wind speed" number most people have an intuition for.
+  // 1 m/s = 3.6 km/h.
+  const kmh = wind.speed * 3.6;
+  document.getElementById('windSpeedLabel').textContent =
+    wind.speed.toFixed(0) + ' m/s (' + kmh.toFixed(0) + ' km/h)';
+  WorkerBridge.send({ type: 'setWind', speed: wind.speed });
+});
   
   dirInp.addEventListener('input', (e) => {
     wind.directionDeg = parseFloat(e.target.value) || 0;
