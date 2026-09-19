@@ -1326,12 +1326,6 @@ function fillForm(r) {
   const hasRec = r.hasRecovery !== false; // default true
   const hasRecEl = document.getElementById('f-hasRecovery');
   if (hasRecEl) hasRecEl.checked = hasRec;
-  if (role === 'stage' && r.fuel) {
-    setVal('f-fuelType', r.fuel.typeId);
-    setVal('f-fuelTankHeight', r.fuel.tankHeight);
-    setVal('f-fuelTankWidth', r.fuel.tankWidth);
-    setVal('f-bodyMetalType', r.bodyMetalTypeId);
-  }
   if (role === 'stage' && r.payloadSpace) {
     setVal('f-payloadSpaceType', r.payloadSpace.typeId);
     setVal('f-payloadSpaceMetalType', r.payloadSpace.metalTypeId);

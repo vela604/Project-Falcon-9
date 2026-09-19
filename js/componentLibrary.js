@@ -368,7 +368,6 @@ function buildRcsThrusterColdGasSmall() {
 // therefore fuel mass) are chosen per rocket/stage build.
 const FUEL_LIQUID_SCHEMA = [
   { key: 'propellantDensity', label: 'Propellant density', unit: 'kg/m3', min: 100 },
-  { key: 'hasBaffles', label: 'Anti-slosh baffles fitted', unit: 'bool' },
 ];
 
 function makeFuel(id, displayName, description, values) {
@@ -389,8 +388,8 @@ function buildFuelRp1Lox() {
   return makeFuel(
     'rp1-lox',
     'RP-1 / LOX',
-    'Propellant type. Declares propellant density and whether the tank carries anti-slosh baffles — tank size (and therefore fuel mass) is decided per rocket/stage build. Unbaffled: relies on the tank wall boundary layer alone for slosh damping (Abramson, ζ ~ 1e-4 for large tanks — barely any damping).',
-    { propellantDensity: 1080, hasBaffles: false }
+    'Propellant type. Declares ONLY propellant density — tank size (and therefore fuel mass) is decided per rocket/stage build. Baffle hardware (count + inner-radius fraction) is a TANK-hardware property, chosen per vehicle on the fuel-tank fieldset, not a property of the propellant itself. Unbaffled tanks rely on the wall boundary layer alone for slosh damping (Abramson, ζ ~ 1e-4 for large tanks — barely any damping).',
+    { propellantDensity: 1080 }
   );
 }
 
