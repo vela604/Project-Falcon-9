@@ -318,6 +318,7 @@ if (psShapeSel) {
 // Stage-specific inputs also trigger live capability preview (E2 will
 // actually compute; E1 just keeps the handler wiring in place).
 ['f-fuelType', 'f-fuelTankHeight', 'f-fuelTankWidth', 'f-bodyMetalType',
+  'f-baffleCount', 'f-baffleInnerRadiusFrac',
   'f-payloadSpaceType', 'f-payloadSpaceMetalType', 'f-payloadSpaceDeployment',
   'f-maxExtraWeight',
   'f-psShapeType', 'f-psMetalType', 'f-psDeployment'

@@ -394,14 +394,7 @@ function buildFuelRp1Lox() {
   );
 }
 
-function buildFuelRp1LoxBaffled() {
-  return makeFuel(
-    'rp1-lox-baffled',
-    'RP-1 / LOX (baffled tank)',
-    'Same propellant as RP-1/LOX, but the tank is fitted with anti-slosh baffles. Adds CONFIG.SLOSH_BAFFLE_ZETA to the boundary-layer damping — the mechanism real launch vehicles use to keep slosh from ruining the control loop.',
-    { propellantDensity: 1080, hasBaffles: true }
-  );
-}
+
 
 // A metal type declares only density — used for body shell, legs (same
 // metal as the body, no separate legs-metal field), and payload-space
@@ -518,8 +511,8 @@ function seedComponentLibrary() {
     buildThrusterMerlin1DClass(),
     buildRcsThrusterColdGasSmall(),
     buildFuelRp1Lox(),
-  buildFuelRp1LoxBaffled(),
-  buildMetalAlLiAlloy(),
+    
+    buildMetalAlLiAlloy(),
     buildPayloadSpaceNoseCap(),
     buildPayloadSpaceBulged(),
   ];

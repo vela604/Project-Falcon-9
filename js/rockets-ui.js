@@ -1377,12 +1377,16 @@ function fillForm(r) {
     setVal('f-maxExtraWeight', r.maxExtraWeightKg || 0);
   }
   
-  if ((role === 'stage' || role === 'booster') && r.fuel) {
-    setVal('f-fuelType', r.fuel.typeId);
-    setVal('f-fuelTankHeight', r.fuel.tankHeight);
-    setVal('f-fuelTankWidth', r.fuel.tankWidth);
-    setVal('f-bodyMetalType', r.bodyMetalTypeId);
-  }
+ if ((role === 'stage' || role === 'booster') && r.fuel) {
+  setVal('f-fuelType', r.fuel.typeId);
+  setVal('f-fuelTankHeight', r.fuel.tankHeight);
+  setVal('f-fuelTankWidth', r.fuel.tankWidth);
+  // Phase 2C-extension: default to 0 baffles / 0.8 inner radius for
+  // legacy records that predate these fields.
+  setVal('f-baffleCount', Number.isFinite(r.fuel.baffleCount) ? r.fuel.baffleCount : 0);
+  setVal('f-baffleInnerRadiusFrac', Number.isFinite(r.fuel.baffleInnerRadiusFrac) ? r.fuel.baffleInnerRadiusFrac : 0.8);
+  setVal('f-bodyMetalType', r.bodyMetalTypeId);
+}
   applyRoleVisibility(role);
   hideFormError();
 }
@@ -1511,13 +1515,20 @@ function readFormData() {
   
   // Stage + booster fuel/metal block
   if (role === 'stage' || role === 'booster') {
-    data.fuel = {
-      typeId: document.getElementById('f-fuelType').value,
-      tankHeight: parseFloat(document.getElementById('f-fuelTankHeight').value),
-      tankWidth: parseFloat(document.getElementById('f-fuelTankWidth').value),
-    };
-    data.bodyMetalTypeId = document.getElementById('f-bodyMetalType').value;
-  }
+  // Phase 2C-extension: baffleCount and baffleInnerRadiusFrac live on
+  // the vehicle record (per-vehicle tank hardware), not the fuel type.
+  const rawBaffleCount = parseFloat(document.getElementById('f-baffleCount').value);
+  const rawBaffleFrac = parseFloat(document.getElementById('f-baffleInnerRadiusFrac').value);
+  data.fuel = {
+    typeId: document.getElementById('f-fuelType').value,
+    tankHeight: parseFloat(document.getElementById('f-fuelTankHeight').value),
+    tankWidth: parseFloat(document.getElementById('f-fuelTankWidth').value),
+    baffleCount: Number.isFinite(rawBaffleCount) ? Math.max(0, Math.round(rawBaffleCount)) : 0,
+    baffleInnerRadiusFrac: Number.isFinite(rawBaffleFrac) ?
+      Math.max(0, Math.min(1, rawBaffleFrac)) : 0.8,
+  };
+  data.bodyMetalTypeId = document.getElementById('f-bodyMetalType').value;
+}
   if (role === 'stage') {
     const hasPsEl = document.getElementById('f-hasPayloadSpace');
     const hasPs = hasPsEl ? hasPsEl.checked : false;

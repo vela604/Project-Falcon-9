@@ -378,18 +378,24 @@
           </fieldset>
           
           
-          <fieldset id="stageFuelFieldset" data-role="booster,stage" class="stage-and-booster">
-            <legend>Fuel tank <span class="legend-note">— booster &amp; stage</span></legend>
-            <div class="field-grid">
-              <div class="field"><label for="f-fuelType">Fuel type</label><select id="f-fuelType" required></select></div>
-              <div class="field"><label for="f-fuelTankHeight">Tank height</label>
-                <div class="input-unit"><input type="number" id="f-fuelTankHeight" min="0.5" step="0.1" required><span>m</span></div>
-              </div>
-              <div class="field"><label for="f-fuelTankWidth">Tank width</label>
-                <div class="input-unit"><input type="number" id="f-fuelTankWidth" min="0.2" step="0.1" required><span>m</span></div>
-              </div>
-            </div>
-          </fieldset>
+         <fieldset id="stageFuelFieldset" data-role="booster,stage" class="stage-and-booster">
+  <legend>Fuel tank <span class="legend-note">— booster &amp; stage</span></legend>
+  <div class="field-grid">
+    <div class="field"><label for="f-fuelType">Fuel type</label><select id="f-fuelType" required></select></div>
+    <div class="field"><label for="f-fuelTankHeight">Tank height</label>
+      <div class="input-unit"><input type="number" id="f-fuelTankHeight" min="0.5" step="0.1" required><span>m</span></div>
+    </div>
+    <div class="field"><label for="f-fuelTankWidth">Tank width</label>
+      <div class="input-unit"><input type="number" id="f-fuelTankWidth" min="0.2" step="0.1" required><span>m</span></div>
+    </div>
+    <div class="field"><label for="f-baffleCount">Baffle count</label>
+      <div class="input-unit"><input type="number" id="f-baffleCount" min="0" max="20" step="1" value="0"><span>count</span></div>
+    </div>
+    <div class="field"><label for="f-baffleInnerRadiusFrac">Baffle inner radius fraction</label>
+      <div class="input-unit"><input type="number" id="f-baffleInnerRadiusFrac" min="0" max="1" step="0.01" value="0.8"><span>frac</span></div>
+    </div>
+  </div>
+</fieldset>
           
           <fieldset id="stageMetalFieldset" data-role="booster,stage,nose" class="stage-and-booster">
             <legend>Body metal <span class="legend-note">— booster, stage &amp; nose; landing legs use this same metal</span></legend>

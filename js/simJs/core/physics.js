@@ -405,15 +405,26 @@ function bottomTankSloshOmega(body) {
 function _baffleZetaForBody(body) {
   if (!body || !body.members || !body.members.length) return 0;
   const rec = body.members[0];
-  if (!rec.fuel || !rec.fuel.typeId) return 0;
-  if (typeof getComponentType !== 'function') return 0;
-  const fuelType = getComponentType(rec.fuel.typeId);
-  if (!fuelType) return 0;
-  const entry = fuelType.parameterSchema.find(p => p.key === 'hasBaffles');
-  if (!entry || entry.value !== true) return 0;
-  return Number.isFinite(CONFIG.SLOSH_BAFFLE_ZETA) ? CONFIG.SLOSH_BAFFLE_ZETA : 0.10;
+  // Phase 2C-extension: baffle geometry is per-vehicle now (part of
+  // rec.fuel, alongside tankHeight/tankWidth), not a fuel-type property.
+  // A fuel type declares only propellant properties (density); the tank
+  // hardware — including any baffles welded to the wall — is the
+  // vehicle's choice.
+  if (!rec.fuel) return 0;
+  
+  const rawCount = rec.fuel.baffleCount;
+  const rawFrac = rec.fuel.baffleInnerRadiusFrac;
+  if (!Number.isFinite(rawCount) || rawCount <= 0) return 0;
+  if (!Number.isFinite(rawFrac)) return 0;
+  
+  const count = Math.round(rawCount); // integer enforcement
+  const rFrac = Math.max(0, Math.min(1, rawFrac)); // clamp to [0,1]
+  const C = Number.isFinite(CONFIG.SLOSH_BAFFLE_DAMPING_COEF) ? CONFIG.SLOSH_BAFFLE_DAMPING_COEF : 0.125;
+  
+  // ζ_baffle = C · N · (1 - r_frac). Linear in both count and blockage.
+  // Typical geometry: 4 baffles, r_frac 0.8 → 0.125 × 4 × 0.2 = 0.10.
+  return C * count * (1 - rFrac);
 }
-
 function bottomTankSloshZeta(body, omega) {
   const baffleZeta = _baffleZetaForBody(body);
   

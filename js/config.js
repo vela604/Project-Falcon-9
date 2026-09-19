@@ -250,11 +250,18 @@ const CONFIG = {
   // all boundary layer, directionally correct but unbounded) — clamped
   // here rather than letting a near-critical/overdamped ratio reach the
   // Euler integrator right as a stage runs dry.
-  SLOSH_ZETA_MAX: 0.5,
-    // Phase 2C — additive damping when a fuel type declares hasBaffles:true.
-    // Real baffled launch-vehicle tanks run ζ ≈ 0.10–0.15 (Abramson /
-    // NASA SP-106); 0.10 is the representative lower-bound value, added on
-    // top of whatever boundary-layer ζ the tank's own geometry derives.
-    SLOSH_BAFFLE_ZETA: 0.10,
+    SLOSH_ZETA_MAX: 0.5,
+    // Phase 2C — geometric baffle damping calibration. The per-baffle
+    // damping contribution is:
+    //     ζ_1 = SLOSH_BAFFLE_DAMPING_COEF × (1 - baffleInnerRadiusFrac)
+    // and total baffle damping is ζ_1 × baffleCount, added on top of the
+    // boundary-layer ζ. The coefficient is a PLACEHOLDER calibrated so that
+    // the previous fixed constant (SLOSH_BAFFLE_ZETA = 0.10) is reproduced
+    // for the default baffled-tank geometry — 4 baffles at 0.8 inner-radius
+    // fraction gives 0.125 × 4 × 0.2 = 0.10. Real baffled tanks run ζ ≈
+    // 0.10–0.15 (Abramson / NASA SP-106); refining this coefficient against
+    // real slosh-test data is future work.
+    SLOSH_BAFFLE_DAMPING_COEF: 0.125,
+  
 
 };

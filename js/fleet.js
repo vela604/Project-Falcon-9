@@ -322,8 +322,10 @@ function blankBoosterData() {
     stageRole: 'booster',
     maxExtraWeightKg: 0,
     // Same fuel/metal inputs as a stage — dry mass and fuel capacity are
-    // now DERIVED (P4-C1), not manually entered.
-    fuel: { typeId: 'rp1-lox', tankHeight: 45, tankWidth: 3.9 },
+    // now DERIVED (P4-C1), not manually entered. Phase 2C-extension:
+    // baffleCount defaults to 0 (no baffles) and baffleInnerRadiusFrac
+    // to the standard real-baffle 0.8 ratio.
+    fuel: { typeId: 'rp1-lox', tankHeight: 45, tankWidth: 3.9, baffleCount: 0, baffleInnerRadiusFrac: 0.8 },
     bodyMetalTypeId: 'al-li-alloy',
   };
   delete out.dryMass;
@@ -334,14 +336,14 @@ function blankBoosterData() {
 function blankStageData() {
   const base = defaultVehicleData();
   const out = {
-    ...base,
-    id: null,
-    name: 'New Stage',
-    locked: false,
-    stageRole: 'stage',
-    // Stage inputs — these drive all derived masses at read time.
-    fuel: { typeId: 'rp1-lox', tankHeight: 10, tankWidth: 3.9 },
-    bodyMetalTypeId: 'al-li-alloy',
+      ...base,
+      id: null,
+      name: 'New Stage',
+      locked: false,
+      stageRole: 'stage',
+      // Stage inputs — these drive all derived masses at read time.
+      fuel: { typeId: 'rp1-lox', tankHeight: 10, tankWidth: 3.9, baffleCount: 0, baffleInnerRadiusFrac: 0.8 },
+      bodyMetalTypeId: 'al-li-alloy',
     // NOTE (PS-B2): nested payloadSpace is the LEGACY shape. Going forward
     // the fairing is its own top-level 'payloadSpace' fleet record (see
     // blankPayloadSpaceData() below) — a brand-new stage created after this
@@ -426,13 +428,23 @@ function migrateRocketRecord(r) {
   
   // Stage-only ingredient inputs.
   if (stageRole === 'stage') {
-    out.fuel = {
-      typeId: (r.fuel && r.fuel.typeId) || 'rp1-lox',
-      tankHeight: (r.fuel && Number.isFinite(r.fuel.tankHeight)) ? r.fuel.tankHeight : 10,
-      tankWidth: (r.fuel && Number.isFinite(r.fuel.tankWidth)) ? r.fuel.tankWidth : 3.9,
-    };
-    out.bodyMetalTypeId = r.bodyMetalTypeId || 'al-li-alloy';
-    
+  out.fuel = {
+    typeId: (r.fuel && r.fuel.typeId) || 'rp1-lox',
+    tankHeight: (r.fuel && Number.isFinite(r.fuel.tankHeight)) ? r.fuel.tankHeight : 10,
+    tankWidth: (r.fuel && Number.isFinite(r.fuel.tankWidth)) ? r.fuel.tankWidth : 3.9,
+    // Phase 2C-extension: baffle geometry now per-vehicle. Default 0
+    // baffles for legacy records (matches pre-2C-extension behavior for
+    // any tank that was never explicitly baffled). Legacy fuel types
+    // that used to carry a baffle default (rp1-lox-baffled) no longer
+    // exist; records that referenced them will fall back to
+    // typeId='rp1-lox' and default to 0 baffles. Any vehicle that
+    // actually wanted baffles must set the count here.
+    baffleCount: (r.fuel && Number.isFinite(r.fuel.baffleCount)) ?
+      Math.max(0, Math.round(r.fuel.baffleCount)) : 0,
+    baffleInnerRadiusFrac: (r.fuel && Number.isFinite(r.fuel.baffleInnerRadiusFrac)) ?
+      Math.max(0, Math.min(1, r.fuel.baffleInnerRadiusFrac)) : 0.8,
+  };
+  out.bodyMetalTypeId = r.bodyMetalTypeId || 'al-li-alloy';
     // PS-B2 — IMPORTANT CHANGE: the old code always synthesized a nested
     // `payloadSpace` object here, EVEN when the raw record no longer had
     // one — which meant a stage that splitLegacyStagePayloadSpaces() had
@@ -455,12 +467,16 @@ function migrateRocketRecord(r) {
   }
   
   if (stageRole === 'booster') {
-    out.fuel = {
-      typeId: (r.fuel && r.fuel.typeId) || 'rp1-lox',
-      tankHeight: (r.fuel && Number.isFinite(r.fuel.tankHeight)) ? r.fuel.tankHeight : 45,
-      tankWidth: (r.fuel && Number.isFinite(r.fuel.tankWidth)) ? r.fuel.tankWidth : 3.9,
-    };
-    out.bodyMetalTypeId = r.bodyMetalTypeId || 'al-li-alloy';
+  out.fuel = {
+    typeId: (r.fuel && r.fuel.typeId) || 'rp1-lox',
+    tankHeight: (r.fuel && Number.isFinite(r.fuel.tankHeight)) ? r.fuel.tankHeight : 45,
+    tankWidth: (r.fuel && Number.isFinite(r.fuel.tankWidth)) ? r.fuel.tankWidth : 3.9,
+    baffleCount: (r.fuel && Number.isFinite(r.fuel.baffleCount)) ?
+      Math.max(0, Math.round(r.fuel.baffleCount)) : 0,
+    baffleInnerRadiusFrac: (r.fuel && Number.isFinite(r.fuel.baffleInnerRadiusFrac)) ?
+      Math.max(0, Math.min(1, r.fuel.baffleInnerRadiusFrac)) : 0.8,
+  };
+  out.bodyMetalTypeId = r.bodyMetalTypeId || 'al-li-alloy';
     // Derived — no stored dryMass/fuelMassMax on a booster anymore.
     delete out.dryMass;
     delete out.fuelMassMax;
