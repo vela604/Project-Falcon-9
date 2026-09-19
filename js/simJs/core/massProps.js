@@ -338,10 +338,15 @@ function memberComponents(rec, memberFuelMass, legsProgress, aboveMember, sloshO
       const sideXFront = W / 2;
       const sideXBack = W * 0.375;
       
-      const bodyMetal = getComponentType(rec.bodyMetalTypeId);
-      const bodyDensity = (bodyMetal && bodyMetal.parameterSchema.find(p => p.key === 'density')) ?
-        bodyMetal.parameterSchema.find(p => p.key === 'density').value : 1;
-      const oneLegMass = recoveryType.frame.structuralVolume(H, W) * bodyDensity;
+      // Legs use their OWN metal now (rec.legsMetalTypeId) — real F9
+// legs are carbon-fibre composite over aluminium honeycomb, not
+// the al-li airframe. Fall back to body metal if legsMetalTypeId
+// isn't set (legacy record), preserving pre-fix behavior exactly.
+const legsMetal = getComponentType(rec.legsMetalTypeId) ||
+  getComponentType(rec.bodyMetalTypeId);
+const legDensity = (legsMetal && legsMetal.parameterSchema.find(p => p.key === 'density')) ?
+  legsMetal.parameterSchema.find(p => p.key === 'density').value : 1;
+const oneLegMass = recoveryType.frame.structuralVolume(H, W) * legDensity;
       const legMassOne = oneLegMass; // per leg
       
       // 4 legs (2 front, 2 back) — symmetric X pairs.

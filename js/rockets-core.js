@@ -127,7 +127,6 @@ function previewVehicleFor(record) {
     engineLayout: engineLayout,
     engineThrusters: record.engineThrusters,
     params: record.params,
-    payloadKind: psType ? psType.kind : undefined,
     payloadCapWidth: Number.isFinite(psParams.capWidth) ? psParams.capWidth : undefined,
     payloadBulgeWidth: Number.isFinite(psParams.bulgeWidth) ? psParams.bulgeWidth : undefined,
     payloadFrustumAngleDeg: Number.isFinite(psParams.frustumSlantDeg) ? psParams.frustumSlantDeg : undefined,
@@ -164,18 +163,31 @@ function populateTypeSelects() {
   });
   // Stage-only sub-selects (Phase 3 Step E1).
   [
-    ['f-fuelType', 'fuel'],
-    ['f-bodyMetalType', 'metal'],
-    ['f-payloadSpaceType', 'payloadSpace'],
-    ['f-payloadSpaceMetalType', 'metal'],
-    ['f-psShapeType', 'payloadSpace'],
-    ['f-psMetalType', 'metal'],
-  ].forEach(([id, cat]) => {
-    const el = document.getElementById(id);
-    if (!el) return;
-    const types = getComponentsByCategory(cat);
-    el.innerHTML = types.map(t => `<option value="${t.id}">${escapeHtml(t.displayName)}</option>`).join('');
-  });
+  ['f-fuelType', 'fuel'],
+  ['f-bodyMetalType', 'metal'],
+  ['f-legsMetalType', 'metal'],
+  ['f-payloadSpaceType', 'payloadSpace'],
+  ['f-payloadSpaceMetalType', 'metal'],
+  ['f-psShapeType', 'payloadSpace'],
+  ['f-psMetalType', 'metal'],
+].forEach(([id, cat]) => {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const types = getComponentsByCategory(cat);
+  el.innerHTML = types.map(t => `<option value="${t.id}">${escapeHtml(t.displayName)}</option>`).join('');
+});
+// Chute dropdown is special — it must include a "no chute" empty option
+// (chute is OPTIONAL hardware, unlike the mandatory metal/shape selects
+// above). Prepending the empty option here keeps the populate path
+// consistent without a one-off special-case in HTML.
+{
+  const chuteSel = document.getElementById('f-chuteType');
+  if (chuteSel) {
+    const chutes = getComponentsByCategory('fairingRecovery');
+    chuteSel.innerHTML = '<option value="">— no chute —</option>' +
+      chutes.map(t => `<option value="${t.id}">${escapeHtml(t.displayName)}</option>`).join('');
+  }
+}
 }
 
 // BUG #2 FIX: same pattern as applyRecoveryVisibility() — a stage can now
@@ -561,11 +573,13 @@ function applyRoleVisibility(role) {
     rcsParamsFieldset: ['rocket', 'booster', 'stage'],
     stageFuelFieldset: ['booster', 'stage'],
     stageMetalFieldset: ['booster', 'stage', 'nose'],
-    stagePayloadFieldset: ['stage'],
-    payloadSpaceFieldset: ['payloadSpace'],
-    noseShapeFieldset: ['nose'],
+    stagePayloadFieldset: [],
+  payloadSpaceFieldset: ['payloadSpace'],
+  fairingRecoveryFieldset: ['payloadSpace'],
+  noseShapeFieldset: ['nose'],
     aeroFieldset: ['rocket', 'booster', 'stage', 'nose', 'payloadSpace'],
-    extraWeightFieldset: ['booster', 'stage'],
+  shellFactorFieldset: ['booster', 'stage', 'payloadSpace'],
+  extraWeightFieldset: ['booster', 'stage'],
     capsBox: ['rocket', 'booster'],
     stageCapsBox: ['stage'],
     massDryField: ['rocket'],

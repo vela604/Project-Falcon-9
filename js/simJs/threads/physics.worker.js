@@ -592,7 +592,30 @@ function serializeForMain() {
     bc.isActive = b.isActive;
     bc.isDiscarded = b.isDiscarded;
     bc.payloadId = b.payloadId;
-    bc.payloadReleased = b.payloadReleased;
+bc.payloadReleased = b.payloadReleased;
+// Flag set by emergencyEjectPayload / releasePayloadOnActiveBody
+// (emergency path). Read by main-thread button-enablement guards
+// (canSplitFairingNow, canReleasePayloadNow, canEject) AND by
+// workerBridge.js's auto-follow-camera logic. Without this line the
+// main-thread mirror's `active.emergencyEject` is always undefined,
+// so every guard against re-splitting/re-releasing an ejected body
+// silently passes and its buttons wrongly enable after Take Control.
+bc.emergencyEject = b.emergencyEject;
+// Fairing-recovery chute state. Without this copy, the main-thread
+// mirror's body.chute is always undefined — the physics worker
+// deploys the canopy internally, but the renderer never gets the
+// typeId needed to look up the canopy silhouette, so nothing is
+// drawn. Progress ALSO arrives via hot-buffer slot 14; decodeHotState
+// overwrites this cold progress with the hot value each tick, so
+// both paths stay consistent.
+if (b.chute) {
+  if (!bc.chute) bc.chute = {};
+  bc.chute.typeId = b.chute.typeId;
+  bc.chute.deployed = b.chute.deployed;
+  bc.chute.progress = b.chute.progress;
+} else {
+  bc.chute = null;
+}
     
     if (b.legs) {
       if (!bc.legs) bc.legs = {};

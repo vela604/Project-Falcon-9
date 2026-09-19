@@ -178,9 +178,18 @@ function _makeBody() {
     // axial direction (accelerometer-on-the-tank reading; gravity already
     // folded in — see the assignment at the end of physicsStep). Used
     // with a one-tick lag by bottomTankSloshOmega() as g_eff.
+        // Phase 2B.1 — last tick's tank proper acceleration along its own
+    // axial direction (accelerometer-on-the-tank reading; gravity already
+    // folded in — see the assignment at the end of physicsStep). Used
+    // with a one-tick lag by bottomTankSloshOmega() as g_eff.
     _prevAxialProperAccel: 0,
-  };
-}
+      // Fairing-recovery parachute state. null = no chute (normal stack
+      // members, non-recovery fairings). Non-null once a fairing half or
+      // emergency-ejected package has inherited a chuteTypeId from its
+      // source record. Shape: { typeId, deployed, progress }.
+      chute: null,
+    };
+    }
 
 
 
@@ -275,11 +284,24 @@ function currentGeometry(body) {
     return { M: props.totalMass, comH: props.comY, comW: props.comX || 0, I: props.moi };
   }
   // Fallback (empty members) — legacy single-body formula.
+    // Fallback (empty members) — free-flying bodies with no stack breakdown:
+  // fairing halves, ejected packages, released payloads. Uses the body's
+  // OWN height/width when set (see splitFairingOnActiveBody /
+  // releasePayloadOnActiveBody, which seed these from the source record).
+  // CONFIG.ROCKET_* only kicks in as a last-resort legacy fallback, not
+  // the everyday path — previously this hardcoded the ACTIVE stack's own
+  // 45 m × 3.9 m for every member-less body, which gave a fairing half a
+  // moment of inertia ~28× too large (a 45 m rocket-sized I instead of a
+  // 13 m fairing-sized one).
   const M = (body ? body.dryMass : 0) + fuelMass;
-  const comH = computeCoM(fuelMass, M, CONFIG.ROCKET_HEIGHT);
-  const I = momentOfInertia(M, CONFIG.ROCKET_HEIGHT, CONFIG.ROCKET_WIDTH);
+  const bodyH = (body && Number.isFinite(body.height) && body.height > 0) ?
+    body.height : CONFIG.ROCKET_HEIGHT;
+  const bodyW = (body && Number.isFinite(body.width) && body.width > 0) ?
+    body.width : CONFIG.ROCKET_WIDTH;
+  const comH = computeCoM(fuelMass, M, bodyH);
+  const I = momentOfInertia(M, bodyH, bodyW);
   return { M, comH, comW: 0, I };
-}
+  }
 
 // currentGeometry() re-derives the whole mass stack (iterates every
 // component) — physicsStep() already computes it fresh for each body every
@@ -854,9 +876,19 @@ function bodyAeroProfile(body) {
   if (!mem.length) {
     const w = (body && Number.isFinite(body.width)) ? body.width : (CONFIG.ROCKET_WIDTH || 3.9);
     const h = (body && Number.isFinite(body.height)) ? body.height : (CONFIG.ROCKET_HEIGHT || 45);
+    // A split fairing half is a curved SHELL, not a nose-cone aerodynamic
+    // body — it must NOT get the Barrowman linear nose term (CNα=2, CP at
+    // 0.466×height). For a fairing half that CP sits BELOW the CoM (6.1 m
+    // vs 6.55 m on an F9 fairing), making the linear aero response
+    // amplifying instead of restoring: any small AoA drove a large torque,
+    // and with the half's now-realistic (small) MOI that torque became
+    // violent spin. Marking it non-tapered keeps the Allen-Perkins
+    // crossflow drag (still correct — a shell does decelerate through air)
+    // while removing the destabilizing nose term entirely.
+    const isShell = !!(body && body.fairingHalf);
     return {
       refWidth: w,
-      members: [{ width: w, height: h, area: Math.PI * (w / 2) ** 2, baseY: 0, isTapered: true }],
+      members: [{ width: w, height: h, area: Math.PI * (w / 2) ** 2, baseY: 0, isTapered: !isShell }],
     };
   }
   let refWidth = 0;
@@ -876,26 +908,26 @@ function bodyAeroProfile(body) {
     return out;
   });
   return { refWidth: refWidth || (CONFIG.ROCKET_WIDTH || 3.9), members };
-}
-
-function computeDragAero(s, extra) {
+  }
+  
+  function computeDragAero(s, extra) {
   const cosT = Math.cos(s.theta),
     sinT = Math.sin(s.theta);
   
-  // Atmosphere co-rotates with Earth (standard assumption up to ~100 km).
-  // The true atmospheric inertial velocity is (ω × r) + user-wind. Without
-  // this, a rocket at rest on the pad (moving at ω·R in inertial with the
-  // rotating Earth) would see ~465 m/s of phantom headwind, generating a
-  // huge drag force at launch — enough to knock it off the pad instantly.
-  const w = windInertialVector(s.rx, s.ry);
-  const sv = earthSurfaceVelocity(s.rx, s.ry);
-  const relVx = s.vx - (w.wx + sv.vx);
-  const relVy = s.vy - (w.wy + sv.vy);
-  
-  const speedRel = Math.hypot(relVx, relVy);
-  const r = Math.hypot(s.rx, s.ry);
-  const altitude = altitudeFromR(r);
-  const rho = airDensity(altitude);
+// Atmosphere co-rotates with Earth (standard assumption up to ~100 km).
+// The true atmospheric inertial velocity is (ω × r) + user-wind. Without
+// this, a rocket at rest on the pad (moving at ω·R in inertial with the
+// rotating Earth) would see ~465 m/s of phantom headwind, generating a
+// huge drag force at launch — enough to knock it off the pad instantly.
+const w = windInertialVector(s.rx, s.ry);
+const sv = earthSurfaceVelocity(s.rx, s.ry);
+const relVx = s.vx - (w.wx + sv.vx);
+const relVy = s.vy - (w.wy + sv.vy);
+
+const speedRel = Math.hypot(relVx, relVy);
+const r = Math.hypot(s.rx, s.ry);
+const altitude = altitudeFromR(r);
+const rho = airDensity(altitude);
   
   const profile = (extra && extra.aero) ? extra.aero : bodyAeroProfile(null);
   const comH = (extra && Number.isFinite(extra.comH)) ? extra.comH : 0;
@@ -1307,15 +1339,117 @@ function _bodyHasActiveInput(body) {
       if (Math.abs(e.targetGimbalDeg || 0) > 0.01) return true;
     }
   }
-  if (body.legs) {
+    if (body.legs) {
     const target = body.legs.deployed ? 1 : 0;
     if (Math.abs((body.legs.progress || 0) - target) > 0.001) return true;
   }
   return false;
+  }
+  
+  // ============================================================================
+  // Fairing-recovery parachute — per-body physics step.
+  //
+  // Runs for every body that has a non-null body.chute (fairing halves from
+  // a normal Split Fairing, and the emergency-ejected shielded package).
+  // Two responsibilities:
+  //   1. Auto-deploy when the body descends below CONFIG.FAIRING_CHUTE_
+  //      DEPLOY_ALT_AGL_M — no manual button, no per-event wiring.
+  //   2. Once deployed, apply canopy drag + an orientation restoring spring
+  //      that keeps the body nose-up (bulkhead-down descent).
+  //
+  // Chute forces are STASHED on body._chuteFx/_chuteFy/_chuteTorque and
+  // consumed by physicsStep's `extra` — same integration path every other
+  // force uses, so RK4 quality is preserved.
+  // ============================================================================
+  function applyChuteStep(body, dt) {
+    body._chuteFx = 0;
+    body._chuteFy = 0;
+    body._chuteTorque = 0;
+    
+    if (!body.chute || !body.chute.typeId) return;
+    const chuteType = (typeof getComponentType === 'function') ? getComponentType(body.chute.typeId) : null;
+    if (!chuteType) return;
+    
+    const valOf = (k) => { const e = chuteType.parameterSchema.find(p => p.key === k); return e ? e.value : undefined; };
+    const lineStretchS = valOf('lineStretchTime');
+    const openingS = valOf('openingTime');
+    if (!Number.isFinite(lineStretchS) || !Number.isFinite(openingS)) return;
+    const totalS = lineStretchS + openingS;
+    
+    // ---- Auto-deploy check (only when not yet deployed) ----
+    if (!body.chute.deployed) {
+      const r = Math.hypot(body.rx, body.ry);
+      const altAGL = r - CONFIG.EARTH_RADIUS - (CONFIG.LAUNCH_SITE_ALTITUDE || 0);
+      const deployAlt = Number.isFinite(CONFIG.FAIRING_CHUTE_DEPLOY_ALT_AGL_M) ?
+        CONFIG.FAIRING_CHUTE_DEPLOY_ALT_AGL_M : 1500;
+      const vr = r > 0 ? (body.vx * body.rx + body.vy * body.ry) / r : 0;
+      // Descending (radial velocity inward) and below the trigger altitude.
+      if (altAGL < deployAlt && vr < 0) {
+        body.chute.deployed = true;
+        body.chute.progress = 0;
+      }
+    }
+    if (!body.chute.deployed) return;
+    
+    // ---- Progress + effective-area ramp ----
+    body.chute.progress = Math.min(1, body.chute.progress + dt / totalS);
+    const tSinceStart = body.chute.progress * totalS;
+    let areaFrac = 0;
+    if (tSinceStart > lineStretchS) {
+      areaFrac = Math.min(1, (tSinceStart - lineStretchS) / openingS);
+    }
+    body._chuteAreaFrac = areaFrac;
+    
+    // ---- Canopy drag ----
+    const canopyD = valOf('canopyDiameter');
+    const canopyCd = valOf('dragCoefficient');
+    if (!Number.isFinite(canopyD) || !Number.isFinite(canopyCd)) return;
+    const canopyA = Math.PI * (canopyD / 2) ** 2;
+    
+    const r = Math.hypot(body.rx, body.ry);
+    const alt = r - CONFIG.EARTH_RADIUS;
+    const rho = airDensity(Math.max(0, alt));
+    if (!(rho > 0)) return;
+    
+    // Relative velocity vs co-rotating atmosphere + user wind — same
+    // convention computeDragAero uses.
+    const w = (typeof windInertialVector === 'function') ? windInertialVector(body.rx, body.ry) : { wx: 0, wy: 0 };
+    const sv = (typeof earthSurfaceVelocity === 'function') ? earthSurfaceVelocity(body.rx, body.ry) : { vx: 0, vy: 0 };
+    const relVx = body.vx - (w.wx + sv.vx);
+    // BUGFIX: earthSurfaceVelocity returns {vx, vy} — `sv.wy` read
+// undefined, making relVy NaN → speedRel NaN → the `if (speedRel >
+// 1e-3)` drag gate below was always false. Torque still applied
+// because it's a separate branch — that's why the chute visibly
+// deployed (progress hit 1.00) but descent rate never dropped.
+const relVy = body.vy - (w.wy + sv.vy);
+const speedRel = Math.hypot(relVx, relVy);
+    
+    if (speedRel > 1e-3 && areaFrac > 0) {
+      const dragMag = 0.5 * rho * canopyCd * canopyA * areaFrac * speedRel * speedRel;
+      body._chuteFx = -dragMag * relVx / speedRel;
+      body._chuteFy = -dragMag * relVy / speedRel;
+    }
+    
+    // ---- Orientation restoring (nose-up) ----
+    // Target theta for nose-up descent: body's local +Y axis aligned with
+    // local vertical (rx/r, ry/r). Using _rotatedPoint's convention
+    // (local +Y → world (-sinθ, cosθ)), the solution is θ_target = -atan2(rx, ry).
+      const omega_n = valOf('restoreStiffness');
+  const I = (body._geomCache && body._geomCache.I > 0) ? body._geomCache.I : 0;
+  if (Number.isFinite(omega_n) && omega_n > 0 && I > 0) {
+    const targetTheta = -Math.atan2(body.rx, body.ry);
+    let dTheta = body.theta - targetTheta;
+    while (dTheta > Math.PI) dTheta -= 2 * Math.PI;
+    while (dTheta < -Math.PI) dTheta += 2 * Math.PI;
+    const k = I * omega_n * omega_n;
+    const c = 2 * I * omega_n; // critical damping
+    body._chuteTorque = -k * dTheta - c * body.omega;
+  }
+  
 }
-
-
-function physicsStep(dt) {
+  
+  
+  function physicsStep(dt) {
   // Two-phase staging: check whether a pending separation request is
   // ready to fire (booster thrust has spooled to ~0). Runs BEFORE the
   // body loop so a completed shutdown is split on the same tick the
@@ -1381,18 +1515,46 @@ const isActive = (idx === state.activeBodyIndex);
     body.lastRcs = { firing: rcs.firing || {}, pod: rcs.pod || {} };
     if (!hasFuel) body.engines.forEach(e => { e.currentF = 0; });
     
-    const extra = {
-  Fx: 0,
-  Fy: 0,
-  torque: 0,
-  M: geom.M, // ← add — the SAME mass currentGeometry already
-  //    derived this tick, so derivatives can never
-  //    disagree with it (or divide by zero)
-  I: geom.I,
-  comH: geom.comH,
-  height: _bodyHeightOf(body),
-  aero: bodyAeroProfile(body),
-};
+        const extra = {
+      Fx: 0,
+      Fy: 0,
+      torque: 0,
+      M: geom.M, // ← add — the SAME mass currentGeometry already
+      //    derived this tick, so derivatives can never
+      //    disagree with it (or divide by zero)
+      I: geom.I,
+      comH: geom.comH,
+      height: _bodyHeightOf(body),
+      aero: bodyAeroProfile(body),
+    };
+    
+    // Fairing-recovery parachute — auto-deploy check + canopy drag +
+    // nose-up restoring torque. Runs for every body with a non-null
+    // body.chute; harmless (no-op) for all others.
+    // Fairing-recovery parachute — auto-deploy check + canopy drag +
+// nose-up restoring torque. Runs for every body with a non-null
+// body.chute; harmless (no-op) for all others.
+applyChuteStep(body, dt);
+// FRAME FIX: applyChuteStep produces _chuteFx/_chuteFy in the WORLD
+// (inertial) frame — they're built from relVx/relVy, which are
+// world-frame velocity components. But extra.Fx/Fy are BODY-frame by
+// convention: derivatives() rotates them by theta before integrating.
+// Adding a world-frame vector directly into extra.Fx/Fy therefore
+// subjected it to an EXTRA rotation by the body's own attitude — so
+// whenever a tumbling fairing half (or the emergency-ejected package)
+// wasn't exactly upright, most of the canopy's upward drag got
+// redirected sideways instead of opposing the fall. That's why the
+// chute deployed correctly (progress reached 1.00) but the descent
+// rate never came down. Inverse-rotate to body-frame here so the
+// downstream rotation lands it back in the correct world direction.
+if (body._chuteFx || body._chuteFy) {
+  const cT = Math.cos(body.theta), sT = Math.sin(body.theta);
+  const chuteFx_body =  body._chuteFx * cT + body._chuteFy * sT;
+  const chuteFy_body = -body._chuteFx * sT + body._chuteFy * cT;
+  extra.Fx += chuteFx_body;
+  extra.Fy += chuteFy_body;
+}
+extra.torque += body._chuteTorque || 0;
     
     // ---- Continuous ground-tip torque (pre-integration, unchanged) ----
     const groundR0 = CONFIG.EARTH_RADIUS + (CONFIG.LAUNCH_SITE_ALTITUDE || 0);
@@ -1697,9 +1859,23 @@ const isActive = (idx === state.activeBodyIndex);
   // dt-guard: dv/dt only makes sense if the previous velocity snapshot
   // exists and dt is finite. First tick after body creation has no
   // snapshot; falls back to zero (correct — nothing moved yet).
-  {
-    const vx0 = (typeof body._vx0 === 'number') ? body._vx0 : body.vx;
-    const vy0 = (typeof body._vy0 === 'number') ? body._vy0 : body.vy;
+// Free-tumbling shell damping — fairing halves (and only fairing
+// halves) get an angular-velocity damping term. A hollow shell tumbling
+// through air sheds rotational energy through separated flow far faster
+// than a rigid-body MOI alone suggests; without this, crossflow aero
+// torque on a 13 m × 5.2 m half can keep winding ω up. Rate is soft
+// (0.8/s → ~1.2 s to halve ω), so a legitimate tumble from an
+// asymmetric kick still reads visually, it just doesn't accelerate.
+if (body.fairingHalf && !body.crashed && !body.settled) {
+  const SHELL_ANG_DAMP_RATE = 0.8;
+  body.omega *= Math.exp(-SHELL_ANG_DAMP_RATE * dt);
+}
+
+// dt-guard: dv/dt only makes sense if the previous velocity snapshot
+// exists and dt is finite. First tick after body creation has no
+// snapshot; falls back to zero (correct — nothing moved yet).
+{
+    const vx0 = (typeof body._vx0 === 'number') ? body._vx0 : body.vx;    const vy0 = (typeof body._vy0 === 'number') ? body._vy0 : body.vy;
     const aX = dt > 0 ? (body.vx - vx0) / dt : 0;
     const aY = dt > 0 ? (body.vy - vy0) / dt : 0;
     const gAcc = gravityAccel(body.rx, body.ry);
@@ -2072,9 +2248,20 @@ function emergencyEjectPayload(targetBody) {
   //     payload inside the fairing and a future Release Payload command
   //     can still free the satellite once it's safe to deploy
   const body = _makeBody();
-  body.id = 'ejected-' + active.payloadId;
-  body.members = fairingMember ? [fairingMember] : [];
-  body.rx = baseRx;
+body.id = 'ejected-' + active.payloadId;
+body.members = fairingMember ? [fairingMember] : [];
+// Defensive fallback for the (currently unreachable — the Emergency
+// Eject button blocks this state) edge case where the fairing was
+// already gone: use the payload's own dims, not CONFIG's rocket-sized
+// ones. Same fix as the split-fairing and release-payload sites.
+if (!fairingMember) {
+  const pl = (typeof getPayload === 'function') ? getPayload(active.payloadId) : null;
+  if (pl) {
+    body.height = Number.isFinite(pl.height) ? pl.height : 1;
+    body.width = Number.isFinite(pl.width) ? pl.width : 1;
+  }
+}
+body.rx = baseRx;
   body.ry = baseRy;
   body.vx = active.vx + KICK * ux; // ADDITIVE — inherits active velocity
   body.vy = active.vy + KICK * uy;
@@ -2089,9 +2276,19 @@ function emergencyEjectPayload(targetBody) {
   body.payloadId = active.payloadId;
   body.payloadReleased = false;
   body.emergencyEject = true;
-  body.rcsCmd = (typeof _blankRcsCmd === 'function') ? _blankRcsCmd() : null;
-  
-  state.bodies.push(body);
+body.rcsCmd = (typeof _blankRcsCmd === 'function') ? _blankRcsCmd() : null;
+// Fairing-recovery chute inheritance — same mechanism as a normal
+// split fairing half. Non-null chuteTypeId triggers applyChuteStep's
+// auto-deploy (once this body descends below CONFIG.FAIRING_CHUTE_
+// DEPLOY_ALT_AGL_M), canopy drag, and nose-up restoring spring.
+// Without this line the ejected package's chute stays null forever —
+// the worker's applyChuteStep early-returns, main thread sees only a
+// {progress:0} placeholder, and no canopy ever renders.
+body.chute = (fairingMember && fairingMember.chuteTypeId) ?
+  { typeId: fairingMember.chuteTypeId, deployed: false, progress: 0 } :
+  null;
+
+state.bodies.push(body);
   
   // The active body no longer carries cargo.
   active.payloadId = null;
@@ -2369,33 +2566,51 @@ function splitFairingOnActiveBody(targetBody) {
   const psMass = (typeof computePayloadSpaceDryMass === 'function') ? computePayloadSpaceDryMass(psRec) : 0;
   const halfMass = psMass / 2;
   
-  const sideVecX = Math.cos(active.theta); // local +X (right)
-  const sideVecY = Math.sin(active.theta); // m/s outward kick
-  const spinSpeed = 0.4; // rad/s tumble
-  
-  const pushSpeed = 5; // m/s screen-horizontal outward
-  
-  [1, -1].forEach(side => {
-    const half = _makeBody();
-    half.id = 'fairing-' + side + '-' + Date.now().toString(36);
-    half.members = [];
-    half.rx = baseRx;
-    half.ry = baseRy;
-    // Screen-X always points right; this is more intuitive than world-frame
-    // theta rotation for the "fairing petals out" moment.
-    half.vx = active.vx + side * pushSpeed;
-    half.vy = active.vy;
-    half.theta = active.theta;
-    half.omega = side * -0.2;
-    half.dryMass = halfMass;
-    half.fuelMass = 0;
-    half.isActive = false;
-    half.isDiscarded = true;
-    half.bornAt = state.simTime;
-    half.collisionGracePeriod = 1.0; // ← ye add karo (fairing halves already have 5 m/s kick)
-    half.fairingHalf = { record: psRec, side };
-    state.bodies.push(half);
-  });
+// Push each half PERPENDICULAR to the active body's long axis — the
+// "petals out" direction. Using world-X (previous behavior) pushed
+// the halves straight into the tilted active body during a gravity
+// turn, spawning them overlapping the active OBB and producing
+// anomalous contact impulses that spun them up. Local +X in world
+// frame is (cosθ, sinθ) — the same convention as _rotatedPoint.
+const sideVecX = Math.cos(active.theta);
+const sideVecY = Math.sin(active.theta);
+const pushSpeed = 8; // m/s — halves are light (~950 kg), 3 m/s is plenty
+
+const fairingDims = (typeof payloadSpaceDimensions === 'function') ?
+  payloadSpaceDimensions(psRec) :
+  { height: psRec.height || 0, width: psRec.width || 0 };
+
+[1, -1].forEach(side => {
+  const half = _makeBody();
+  half.id = 'fairing-' + side + '-' + Date.now().toString(36);
+  half.members = [];
+  half.height = fairingDims.height;
+  half.width = fairingDims.width;
+  half.rx = baseRx;
+  half.ry = baseRy;
+  half.vx = active.vx + side * pushSpeed * sideVecX;
+  half.vy = active.vy + side * pushSpeed * sideVecY;
+  half.theta = active.theta;
+  half.omega = side * -0.6; // reduced — heavy spin clashed with aero damping
+  half.dryMass = halfMass;
+  half.fuelMass = 0;
+  half.isActive = false;
+half.isDiscarded = true;
+half.bornAt = state.simTime;
+// 2.5 s is enough for the halves to drift ~7.5 m apart from each other
+// and clear of the accelerating active body (which pulls away at
+// 15–30 m/s² from thrust alone), and long enough that a first-tick
+// glancing OBB overlap with the active body's top edge doesn't fire.
+half.collisionGracePeriod = 2.5;
+half.fairingHalf = { record: psRec, side };
+// Inherit the source fairing's chute selection — non-null triggers
+// applyChuteStep()'s auto-deploy + physics path once this half
+// descends below CONFIG.FAIRING_CHUTE_DEPLOY_ALT_AGL_M.
+half.chute = psRec.chuteTypeId ?
+  { typeId: psRec.chuteTypeId, deployed: false, progress: 0 } :
+  null;
+state.bodies.push(half);
+});
   
   // Rebuild ENGINES (bottom member may have changed if fairing was on top
   // — actually bottom unchanged here, but safe to call).
@@ -2451,9 +2666,15 @@ function releasePayloadOnActiveBody(opts, targetBody) {
 const SPIN = emergency ? 0.5 : 0.15;
   
   const body = _makeBody();
-  body.id = 'payload-' + pl.id;
-  body.members = [];
-  body.rx = payloadRx;
+body.id = 'payload-' + pl.id;
+body.members = [];
+// Same canonical-dims rule as the fairing halves above — a released
+// payload with empty members previously inherited the full rocket's
+// drag + inertia instead of its own. Uses the payload record's own
+// height/width, with 1 m as a defensive non-zero floor.
+body.height = Number.isFinite(pl.height) ? pl.height : 1;
+body.width = Number.isFinite(pl.width) ? pl.width : 1;
+body.rx = payloadRx;
   body.ry = payloadRy;
   body.vx = active.vx + KICK * ux;
   body.vy = active.vy + KICK * uy;

@@ -25,6 +25,26 @@ function _fmtMassShort(kg) {
   return kg >= 1000 ? (kg / 1000).toFixed(1) + ' t' : Math.round(kg) + ' kg';
 }
 
+// Role-specific default body-shell factors, calibrated so a fresh record
+// of each role lands on the Falcon-9-class real hardware's derived mass
+// with essentially zero error:
+//   booster       → 0.0178  (F9 Block 5 booster dry mass 25,600 kg, −0.1%)
+//   stage         → 0.0147  (F9 Block 5 upper stage dry mass 3,900 kg)
+//   payloadSpace  → 0.0026  (F9 carbon-composite fairing ~1,900 kg)
+// A record can override its own value at build time (f-bodyShellFactor).
+const DEFAULT_SHELL_FACTOR_BY_ROLE = {
+  // Booster: shell factor calibrated so a F9 Block 5 booster's total dry
+  // mass (shell + 9×Merlin + 4×carbon legs + carbon interstage) lands on
+  // the real 25,600 kg with ~+0.02% error.
+  booster: 0.01797,
+  // Stage: shell factor calibrated so the F9 Block 5 upper stage's total
+  // dry mass (shell + 1×MVac) lands on real 3,900 kg with ~+0.4% error.
+  stage: 0.0147,
+  // PayloadSpace: fairing-shell thickness fraction — 13.1 m tall × 5.2 m
+  // bulge carbon-composite F9 fairing → ~1,906 kg (real ~1,900 kg).
+  payloadSpace: 0.0026,
+};
+
 const FLEET_KEY = 'rocketSim.fleet.v1';
 const SELECTED_KEY = 'rocketSim.selectedId.v1';
 
@@ -93,15 +113,20 @@ function seedFamiliesFromFleet() {
   const nowMembers = [];
   
   fleet.forEach(r => {
-    if (r.id === 'falcon9-default') {
-      families.push({
-        id: LEGACY_FAMILY_ID,
-        name: 'Falcon-9-Class Family',
-        bottomId: r.id,
-        locked: true,
-      });
-      r.familyId = LEGACY_FAMILY_ID;
-    } else if (r.stageRole === 'booster' || r.stageRole === 'rocket') {
+      // All three seeded F9 records belong to the same locked legacy family
+      // (booster + stage + fairing). The family is pushed once, on the
+      // booster — the stage/fairing just get their familyId set.
+      if (r.id === 'falcon9-default' || r.id === 'falcon9-stage' || r.id === 'falcon9-fairing') {
+        if (!families.some(f => f.id === LEGACY_FAMILY_ID)) {
+          families.push({
+            id: LEGACY_FAMILY_ID,
+            name: 'Falcon-9-Class Family',
+            bottomId: 'falcon9-default',
+            locked: true,
+          });
+        }
+        r.familyId = LEGACY_FAMILY_ID;
+      } else if (r.stageRole === 'booster' || r.stageRole === 'rocket') {
       const fid = 'fam_' + r.id;
       families.push({
         id: fid,
@@ -268,9 +293,13 @@ function defaultVehicleData() {
     fuelMassMax: 400000,
     dragCd: 0.6,
     engineTypeId: 'octaweb-merlin9',
-    recoveryTypeId: 'legs-swingout-4',
-    hasRecovery: true,
-    rcsTypeId: 'rcs-4pod-2nozzle',
+  recoveryTypeId: 'legs-swingout-4',
+  hasRecovery: true,
+  // Real F9 legs are carbon-fibre composite over an aluminium honeycomb
+  // core — a different material from the al-li airframe. Kept separate
+  // from bodyMetalTypeId so a rocket/booster/stage can mix them.
+  legsMetalTypeId: 'carbon-composite',
+  rcsTypeId: 'rcs-4pod-2nozzle',
     engineThrusters: {
       gimbal: { thrusterTypeId: 'merlin-1d-class', massFlowRate: 207 },
       fixed: { thrusterTypeId: 'merlin-1d-class', massFlowRate: 207 },
@@ -307,6 +336,130 @@ function defaultVehicleData() {
 // the builder surfaces it as "no type selected".
 // ---------------------------------------------------------------------------
 
+// ============================================================================
+// Falcon 9 Block 5 seed — the default family on a fresh install. Three
+// separate fleet records (booster / stage / fairing), one payload, one
+// stack. Values are real Block 5 hardware, calibrated so each record's
+// derived mass lands on the real figure within ~0.5%.
+// ============================================================================
+
+function seedFalcon9Booster() {
+  return {
+    id: 'falcon9-default',
+    name: 'Falcon 9 Block 5 — Booster',
+    locked: true,
+    stageRole: 'booster',
+    familyId: LEGACY_FAMILY_ID,
+    height: 41.2, width: 3.7, dragCd: 0.6,
+    engineTypeId: 'octaweb-merlin9',
+    recoveryTypeId: 'legs-swingout-4',
+    hasRecovery: true,
+    rcsTypeId: 'rcs-4pod-2nozzle',
+    bodyMetalTypeId: 'al-li-alloy',
+    legsMetalTypeId: 'carbon-composite',
+    bodyShellFactor: 0.01797,
+    maxExtraWeightKg: 121500,
+    engineThrusters: {
+      gimbal: { thrusterTypeId: 'merlin-1d-class', massFlowRate: 306 },
+      fixed:  { thrusterTypeId: 'merlin-1d-class', massFlowRate: 306 },
+    },
+    rcsThruster: { thrusterTypeId: 'cold-gas-small', massFlowRate: 0.5 },
+    fuel: {
+      typeId: 'rp1-lox',
+      tankHeight: 34.1, tankWidth: 3.7,
+      baffleCount: 4, baffleInnerRadiusFrac: 0.8,
+    },
+    params: {
+  octaRadius: 1.7,
+  rcsTopY: 40.5, rcsBottomY: 1, rcsXOffset: 1.85, rcsPwmPeriod: 0.3,
+  legDeployRate: 0.5,
+},
+    bodyDesign: { mode: 'solid', solidColor: '#e9edf2', dslText: '' },
+  };
+}
+
+function seedFalcon9Stage() {
+  return {
+    id: 'falcon9-stage',
+    name: 'Falcon 9 Block 5 — Upper Stage',
+    locked: false,
+    stageRole: 'stage',
+    familyId: LEGACY_FAMILY_ID,
+    height: 13.8, width: 3.7, dragCd: 0.6,
+    engineTypeId: 'single-nozzle-vac',
+    recoveryTypeId: null,
+    hasRecovery: false,
+    rcsTypeId: 'rcs-4pod-2nozzle',
+    bodyMetalTypeId: 'al-li-alloy',
+    legsMetalTypeId: 'carbon-composite',
+    bodyShellFactor: 0.0147,
+    maxExtraWeightKg: 22000,
+    engineThrusters: {
+      gimbal: { thrusterTypeId: 'merlin-1d-vac-class', massFlowRate: 288 },
+    },
+    rcsThruster: { thrusterTypeId: 'cold-gas-small', massFlowRate: 0.5 },
+    fuel: {
+      typeId: 'rp1-lox',
+      tankHeight: 8.0, tankWidth: 3.7,
+      baffleCount: 2, baffleInnerRadiusFrac: 0.8,
+    },
+    params: {
+  rcsTopY: 13, rcsBottomY: 1, rcsXOffset: 1.85, rcsPwmPeriod: 0.3,
+},
+    bodyDesign: { mode: 'solid', solidColor: '#e9edf2', dslText: '' },
+  };
+}
+
+function seedFalcon9Fairing() {
+  return {
+    id: 'falcon9-fairing',
+    name: 'Falcon 9 Fairing',
+    locked: false,
+    stageRole: 'payloadSpace',
+    familyId: LEGACY_FAMILY_ID,
+    height: 13.1, width: 5.2, dragCd: 0.4,
+    payloadSpaceTypeId: 'cap-bulged',
+payloadSpaceMetalTypeId: 'carbon-composite',
+bodyShellFactor: 0.0026,
+deploymentDirection: 'clamshell',
+color: '#e9edf2',
+// F9 fairings are recovered with parachutes — round-canopy type,
+// auto-deploys at CONFIG.FAIRING_CHUTE_DEPLOY_ALT_AGL_M.
+chuteTypeId: 'fairing-chute-round',
+params: {
+  capHeight: 13.1, capWidth: 3.7, bulgeWidth: 5.2,
+  frustumSlantDeg: 42, curveHeightFactor: 1.4,
+},
+    bodyDesign: { mode: 'solid', solidColor: '#e9edf2', dslText: '' },
+  };
+}
+
+function seedFalcon9Payload() {
+  return {
+    id: 'pl_falcon9-default',
+    name: 'Falcon 9 Demo Payload',
+    mass: 12000,
+    height: 8.0,
+    width: 3.0,
+    dragCd: 0.3,
+  };
+}
+
+function seedFalcon9Stack() {
+  return {
+    id: 'stk_falcon9-default',
+    name: 'Falcon 9 Block 5',
+    members: ['falcon9-default', 'falcon9-stage', 'falcon9-fairing'],
+    sequence: 'f9-standard',
+    payloadId: 'pl_falcon9-default',
+    locked: false,
+  };
+}
+
+function seedFalcon9Family() {
+  return [seedFalcon9Booster(), seedFalcon9Stage(), seedFalcon9Fairing()];
+}
+
 function blankRocketData() {
   const base = defaultVehicleData();
   return { ...base, id: null, name: 'New Rocket', locked: false, stageRole: 'rocket' };
@@ -325,9 +478,20 @@ function blankBoosterData() {
     // now DERIVED (P4-C1), not manually entered. Phase 2C-extension:
     // baffleCount defaults to 0 (no baffles) and baffleInnerRadiusFrac
     // to the standard real-baffle 0.8 ratio.
-    fuel: { typeId: 'rp1-lox', tankHeight: 45, tankWidth: 3.9, baffleCount: 0, baffleInnerRadiusFrac: 0.8 },
-    bodyMetalTypeId: 'al-li-alloy',
+      // Same fuel/metal inputs as a stage — dry mass and fuel capacity are
+  // now DERIVED (P4-C1), not manually entered. Phase 2C-extension:
+  // baffleCount defaults to 0 (no baffles) and baffleInnerRadiusFrac
+  // to the standard real-baffle 0.8 ratio.
+  fuel: { typeId: 'rp1-lox', tankHeight: 45, tankWidth: 3.9, baffleCount: 0, baffleInnerRadiusFrac: 0.8 },
+      bodyMetalTypeId: 'al-li-alloy',
+    // Real F9 legs are carbon-fibre composite — default a new booster's
+    // legs to that, independent of the airframe metal.
+    legsMetalTypeId: 'carbon-composite',
+    // F9-calibrated default — user can override per-record.
+    bodyShellFactor: DEFAULT_SHELL_FACTOR_BY_ROLE.booster,
   };
+  
+  
   delete out.dryMass;
   delete out.fuelMassMax;
   return out;
@@ -342,8 +506,11 @@ function blankStageData() {
       locked: false,
       stageRole: 'stage',
       // Stage inputs — these drive all derived masses at read time.
-      fuel: { typeId: 'rp1-lox', tankHeight: 10, tankWidth: 3.9, baffleCount: 0, baffleInnerRadiusFrac: 0.8 },
-      bodyMetalTypeId: 'al-li-alloy',
+      // Stage inputs — these drive all derived masses at read time.
+fuel: { typeId: 'rp1-lox', tankHeight: 10, tankWidth: 3.9, baffleCount: 0, baffleInnerRadiusFrac: 0.8 },
+  bodyMetalTypeId: 'al-li-alloy',
+  legsMetalTypeId: 'carbon-composite',
+  bodyShellFactor: DEFAULT_SHELL_FACTOR_BY_ROLE.stage,
     // NOTE (PS-B2): nested payloadSpace is the LEGACY shape. Going forward
     // the fairing is its own top-level 'payloadSpace' fleet record (see
     // blankPayloadSpaceData() below) — a brand-new stage created after this
@@ -376,14 +543,19 @@ function blankPayloadSpaceData() {
     height: 3,
     width: 3.9,
     dragCd: 0.4,
-    payloadSpaceTypeId: 'cap-standard',
-    payloadSpaceMetalTypeId: 'al-li-alloy',
-    deploymentDirection: 'clamshell',
-    color: '#e9edf2',
-    params: { capHeight: 3, capWidth: 3.9 },
-    bodyDesign: { mode: 'solid', solidColor: '#e9edf2', dslText: '' },
-  };
-}
+        payloadSpaceTypeId: 'cap-bulged',
+      payloadSpaceMetalTypeId: 'al-li-alloy',
+      bodyShellFactor: DEFAULT_SHELL_FACTOR_BY_ROLE.payloadSpace,
+      deploymentDirection: 'clamshell',
+      color: '#e9edf2',
+      // Fairing recovery chute — null = no chute, deploy nothing. Any body
+      // spawned from this record (split half OR emergency-ejected package)
+      // inherits this selection.
+      chuteTypeId: null,
+      params: { capHeight: 3, capWidth: 3.9 },
+      bodyDesign: { mode: 'solid', solidColor: '#e9edf2', dslText: '' },
+    };
+    }
 
 
 // Normalizes ANY record — a genuinely old Phase-1 flat record, a fresh
@@ -420,9 +592,27 @@ function migrateRocketRecord(r) {
     },
   };
   out.familyId = r.familyId || null;
-  // Both 'booster' and 'stage' carry maxExtraWeightKg — anything can be
-  // stacked on top of either.
-  if (stageRole === 'booster' || stageRole === 'stage') {
+// Legs metal — new dedicated field. Pre-fix records had no separate
+// legs metal; the mass model used bodyMetalTypeId. Preserve that
+// behavior exactly for legacy records by falling back through
+// bodyMetalTypeId, and finally to 'al-li-alloy' if neither is present.
+// New records from the blank factories carry 'carbon-composite'
+// explicitly, so this fallback never runs for them.
+out.legsMetalTypeId = r.legsMetalTypeId || r.bodyMetalTypeId || 'al-li-alloy';
+// Per-record shell factor. Role-appropriate default for legacy records
+// that predate the field; explicit value carried through otherwise.
+// Note: this is set for ALL roles (same pattern as legsMetalTypeId
+// above) — nose / rocket simply ignore it downstream.
+if (Number.isFinite(r.bodyShellFactor)) {
+  out.bodyShellFactor = r.bodyShellFactor;
+} else {
+  out.bodyShellFactor = DEFAULT_SHELL_FACTOR_BY_ROLE[stageRole] || BODY_SHELL_FACTOR;
+}
+// Both 'booster' and 'stage' carry maxExtraWeightKg — anything can be
+// stacked on top of either.
+// Both 'booster' and 'stage' carry maxExtraWeightKg — anything can be
+// stacked on top of either.
+if (stageRole === 'booster' || stageRole === 'stage') {
     out.maxExtraWeightKg = Number.isFinite(r.maxExtraWeightKg) ? r.maxExtraWeightKg : 0;
   }
   
@@ -505,11 +695,14 @@ function migrateRocketRecord(r) {
   
   // PS-B2: standalone fairing record — the split target of the migration
   // below. Pure shape + metal; no engines, no recovery, no RCS, no fuel.
-  if (stageRole === 'payloadSpace') {
-    out.payloadSpaceTypeId = r.payloadSpaceTypeId || 'cap-standard';
-    out.payloadSpaceMetalTypeId = r.payloadSpaceMetalTypeId || 'al-li-alloy';
-    out.deploymentDirection = r.deploymentDirection || 'clamshell';
-    out.color = (typeof r.color === 'string') ? r.color : '#e9edf2';
+if (stageRole === 'payloadSpace') {
+  out.payloadSpaceTypeId = r.payloadSpaceTypeId || 'cap-bulged';
+  out.payloadSpaceMetalTypeId = r.payloadSpaceMetalTypeId || 'al-li-alloy';
+  out.deploymentDirection = r.deploymentDirection || 'clamshell';
+  out.color = (typeof r.color === 'string') ? r.color : '#e9edf2';
+  // Chute selection. null = no chute (legacy/pre-recovery records keep
+  // their no-chute behavior; user opts in by picking a type in the form).
+  out.chuteTypeId = r.chuteTypeId || null;
     const p = r.params || {};
     out.params = {
       capHeight: Number.isFinite(p.capHeight) ? p.capHeight : 3,
@@ -614,7 +807,7 @@ function splitLegacyStagePayloadSpaces(fleet) {
       height: capH,
       width: bulgeW || capW,
       dragCd: Number.isFinite(rec.dragCd) ? rec.dragCd : 0.4,
-      payloadSpaceTypeId: ps.typeId || 'cap-standard',
+      payloadSpaceTypeId: ps.typeId || 'cap-bulged',
       payloadSpaceMetalTypeId: ps.metalTypeId || 'al-li-alloy',
       deploymentDirection: ps.deploymentDirection || 'clamshell',
       color: ps.color || '#e9edf2',
@@ -677,11 +870,29 @@ function loadFleet() {
       }
     }
   } catch (e) { /* fall through to seed */ }
-  const seeded = [defaultVehicleData()];
-  saveFleet(seeded);
-  localStorage.setItem(SELECTED_KEY, seeded[0].id);
+// Fresh install — seed the full Falcon 9 Block 5 demo family (booster +
+// upper stage + fairing), plus its payload and pre-built stack. Runs
+// once: after this save, subsequent loadFleet() calls take the normal
+// migrate-and-return branch above.
+//
+// CRITICAL: migration MUST run on the seed before returning it. Config.js
+// reads the returned records at script-load time, and role-specific
+// derived params (engineVe / engineFMax for a booster, etc.) only exist
+// AFTER bridgePerfParams() has backfilled them — which only runs inside
+// migrateRocketRecord(). Skipping this step left CONFIG.ENGINE_VE
+// undefined, which crashed home.js's spec card the moment a booster was
+// the selected vehicle.
+const seeded = seedFalcon9Family().map(migrateRocketRecord);
+saveFleet(seeded);
+localStorage.setItem(SELECTED_KEY, seeded[0].id);
+  // Seed the demo payload + stack (only if not already present).
+  if (!loadPayloads().length) savePayloads([seedFalcon9Payload()]);
+  if (!loadStacks().length) {
+    saveStacks([seedFalcon9Stack()]);
+    setSelectedStackId('stk_falcon9-default');
+  }
   return seeded;
-}
+  }
 
 function saveFleet(fleet) {
   localStorage.setItem(FLEET_KEY, JSON.stringify(fleet));
@@ -1039,10 +1250,14 @@ function stageDerivedMasses(rec) {
   const bodyDensity = bodyMetalType.parameterSchema.find(p => p.key === 'density').value;
   const payloadDensity = payloadMetal ? payloadMetal.parameterSchema.find(p => p.key === 'density').value : 0;
   
-  const tankVolume = Math.PI * (tankW / 2) ** 2 * tankH;
-  const fuelMass = tankVolume * fuelDensity;
-  const bodyMass = tankVolume * BODY_SHELL_FACTOR * bodyDensity;
-  
+  // Fuel mass + body (cylindrical tank as the vehicle body). Shell factor
+// from the record's own field, falling back to the constant for any
+// record that somehow lacks it (shouldn't happen post-migration).
+const shellF = Number.isFinite(rec.bodyShellFactor) ? rec.bodyShellFactor : BODY_SHELL_FACTOR;
+const tankVolume = Math.PI * (tankW / 2) ** 2 * tankH;
+const fuelMass = tankVolume * fuelDensity;
+const bodyMass = tankVolume * shellF * bodyDensity;
+
   const groups = engineThrusterGroups(engineType);
   let totalEngineThrust = 0,
     totalEngineMass = 0,
@@ -1066,21 +1281,30 @@ function stageDerivedMasses(rec) {
   const effectiveVe = sumFlow > 0 ? sumFlowVe / sumFlow : 0;
   
   const stageTotalHeight = tankH + capH;
-  let legMass = 0;
-  if (recoveryType && recoveryType.capabilities && recoveryType.capabilities.deploysOnVehicle &&
-    recoveryType.frame && typeof recoveryType.frame.structuralVolume === 'function') {
-    const legCount = recoveryType.frame.legCount || 0;
-    const oneLegVol = recoveryType.frame.structuralVolume(stageTotalHeight, tankW);
-    legMass = oneLegVol * legCount * bodyDensity;
-  }
+// Legs — density from legsMetalTypeId (same change as booster path).
+let legMass = 0;
+if (recoveryType && recoveryType.capabilities && recoveryType.capabilities.deploysOnVehicle &&
+  recoveryType.frame && typeof recoveryType.frame.structuralVolume === 'function') {
+  const legsMetal = (typeof getComponentType === 'function') ?
+    (getComponentType(rec.legsMetalTypeId) || bodyMetalType) :
+    bodyMetalType;
+  const legDensity = (legsMetal && legsMetal.parameterSchema.find(p => p.key === 'density')) ?
+    legsMetal.parameterSchema.find(p => p.key === 'density').value :
+    bodyDensity;
+  const legCount = recoveryType.frame.legCount || 0;
+  const oneLegVol = recoveryType.frame.structuralVolume(stageTotalHeight, tankW);
+  legMass = oneLegVol * legCount * legDensity;
+}
   
   let payloadContainerMass = 0;
-  if (payloadType && payloadType.frame && typeof payloadType.frame.structuralVolume === 'function') {
-    const vol = (payloadType.kind === 'bulgedCapShape') ?
-      payloadType.frame.structuralVolume(capH, capW, bulgeW) :
-      payloadType.frame.structuralVolume(capH, capW);
-    payloadContainerMass = vol * payloadDensity;
-  }
+if (payloadType && payloadType.frame && typeof payloadType.frame.structuralVolume === 'function') {
+  // Legacy nested payload-space uses its own shell factor if present,
+  // else the payloadSpace role default.
+  const psShellF = Number.isFinite(ps && ps.bodyShellFactor) ?
+    ps.bodyShellFactor :
+    DEFAULT_SHELL_FACTOR_BY_ROLE.payloadSpace;
+  payloadContainerMass = payloadType.frame.structuralVolume(capH, capW, bulgeW, psShellF) * payloadDensity;
+}
   
   if (payloadType && payloadType.kind === 'bulgedCapShape' && Number.isFinite(capParams.bulgeWidth)) {
     const maxBulgeW = MAX_BULGE_DIAMETER_RATIO * tankW;
@@ -1212,10 +1436,14 @@ function boosterDerivedMasses(rec, aboveMember) {
   const bodyDensity = bodyMetal.parameterSchema.find(p => p.key === 'density').value;
   
   // Fuel mass + body (cylindrical tank as the vehicle body).
-  const tankVolume = Math.PI * (tankW / 2) ** 2 * tankH;
-  const fuelMass = tankVolume * fuelDensity;
-  const bodyMass = tankVolume * BODY_SHELL_FACTOR * bodyDensity;
-  
+  // Fuel mass + body (cylindrical tank as the vehicle body). Shell factor
+// from the record's own field, falling back to the constant for any
+// record that somehow lacks it (shouldn't happen post-migration).
+const shellF = Number.isFinite(rec.bodyShellFactor) ? rec.bodyShellFactor : BODY_SHELL_FACTOR;
+const tankVolume = Math.PI * (tankW / 2) ** 2 * tankH;
+const fuelMass = tankVolume * fuelDensity;
+const bodyMass = tankVolume * shellF * bodyDensity;
+
   // Engines — mass-flow-weighted aggregation.
   const groups = engineThrusterGroups(engineType);
   let totalEngineThrust = 0,
@@ -1240,13 +1468,24 @@ function boosterDerivedMasses(rec, aboveMember) {
   const effectiveVe = sumFlow > 0 ? sumFlowVe / sumFlow : 0;
   
   // Legs — same formula as stage (same metal as body).
-  let legMass = 0;
-  if (recoveryType && recoveryType.capabilities && recoveryType.capabilities.deploysOnVehicle &&
-    recoveryType.frame && typeof recoveryType.frame.structuralVolume === 'function') {
-    const legCount = recoveryType.frame.legCount || 0;
-    const oneLegVol = recoveryType.frame.structuralVolume(tankH, tankW);
-    legMass = oneLegVol * legCount * bodyDensity;
-  }
+  // Legs — same volume formula as stage, but density comes from the
+// vehicle's own legsMetalTypeId now, not the body's. Falls back to the
+// body metal type if legsMetalTypeId is missing/unresolved (legacy
+// records, or a hand-edited record), preserving pre-fix behavior for
+// anything the migration didn't touch.
+let legMass = 0;
+if (recoveryType && recoveryType.capabilities && recoveryType.capabilities.deploysOnVehicle &&
+  recoveryType.frame && typeof recoveryType.frame.structuralVolume === 'function') {
+  const legsMetal = (typeof getComponentType === 'function') ?
+    (getComponentType(rec.legsMetalTypeId) || bodyMetal) :
+    bodyMetal;
+  const legDensity = (legsMetal && legsMetal.parameterSchema.find(p => p.key === 'density')) ?
+    legsMetal.parameterSchema.find(p => p.key === 'density').value :
+    bodyDensity;
+  const legCount = recoveryType.frame.legCount || 0;
+  const oneLegVol = recoveryType.frame.structuralVolume(tankH, tankW);
+  legMass = oneLegVol * legCount * legDensity;
+}
   
   // ---- Interstage mass (H-0c) ----
   // Black cylinder at the booster's top, sized to cover the stage engine
@@ -1288,10 +1527,15 @@ function boosterDerivedMasses(rec, aboveMember) {
     }
   }
   const interstageH_m = Math.max(stageAboveBellHeight * 1.20, 0.06 * tankH);
-  const r_booster = tankW / 2;
-  const shellThk = BODY_SHELL_FACTOR * r_booster;
-  const interstageMass = 2 * Math.PI * r_booster * shellThk * interstageH_m * bodyDensity;
-  
+const r_booster = tankW / 2;
+// Interstage uses the booster's own shell factor (same shell thickness
+// class as the tank it sits on), but a CARBON-COMPOSITE density — real
+// F9 interstage is carbon fibre, not the al-li airframe alloy. Target
+// ~1,500 kg for a 2.42 m tall interstage (real F9 estimate).
+const INTERSTAGE_DENSITY = 1600;
+const shellThk = shellF * r_booster;
+const interstageMass = 2 * Math.PI * r_booster * shellThk * interstageH_m * INTERSTAGE_DENSITY;
+
   const dryMass = bodyMass + totalEngineMass + legMass + interstageMass;
   const wetMass = dryMass + fuelMass;
   
@@ -1574,15 +1818,21 @@ function computePayloadSpaceDryMass(rec) {
   if (!type || !metal) return 0;
   if (!type.frame || typeof type.frame.structuralVolume !== 'function') return 0;
   const density = metal.parameterSchema.find(p => p.key === 'density').value;
-  const p = rec.params || {};
+      const p = rec.params || {};
   const capH = Number.isFinite(p.capHeight) ? p.capHeight : 0;
   const capW = Number.isFinite(p.capWidth) ? p.capWidth : (rec.width || 0);
-  const bulgeW = Number.isFinite(p.bulgeWidth) ? p.bulgeWidth : null;
-  const vol = (type.kind === 'bulgedCapShape' && bulgeW !== null) ?
-    type.frame.structuralVolume(capH, capW, bulgeW) :
-    type.frame.structuralVolume(capH, capW);
-  return vol * density;
-}
+  // bulgeWidth defaults to capWidth — same as the renderer's no-bulge
+  // fallback, so a record without bulgeWidth still produces a valid
+  // straight-sided shape's volume rather than NaN.
+  const bulgeW = Number.isFinite(p.bulgeWidth) ? p.bulgeWidth : capW;
+  // Per-record shell factor — F9-calibrated default if absent.
+  const shellF = Number.isFinite(rec.bodyShellFactor) ?
+    rec.bodyShellFactor :
+    DEFAULT_SHELL_FACTOR_BY_ROLE.payloadSpace;
+  return type.frame.structuralVolume(capH, capW, bulgeW, shellF) * density;
+ }
+
+
 
 
 // PS-B3 — payloadSpace dimensions helper. Reads the ACTUAL rendered
@@ -1603,11 +1853,8 @@ function payloadSpaceDimensions(rec) {
   const p = rec.params || {};
   const height = Number.isFinite(p.capHeight) ? p.capHeight : (rec.height || 0);
   const capWidth = Number.isFinite(p.capWidth) ? p.capWidth : (rec.width || 0);
-  const type = getComponentType(rec.payloadSpaceTypeId);
-  const isBulged = !!(type && type.kind === 'bulgedCapShape');
   const bulgeWidth = Number.isFinite(p.bulgeWidth) ? p.bulgeWidth : capWidth;
-  const width = isBulged ? Math.max(capWidth, bulgeWidth) : capWidth;
-  return { height, width };
+  return { height, width: Math.max(capWidth, bulgeWidth) };
 }
 
 

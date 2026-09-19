@@ -210,6 +210,13 @@ const CONFIG = {
   
   
   
+// ---------------- Fairing parachute recovery ----------------
+// Altitude (m, AGL) below which a fairing-half or emergency-ejected
+// shielded body auto-deploys its parachute. Same trigger for every
+// chute-equipped body — normal Split Fairing halves AND Emergency
+// Eject packages. No manual button; deployment is automatic.
+FAIRING_CHUTE_DEPLOY_ALT_AGL_M: 1500,
+  
   // ---------------- Simulation ----------------
   DT: 1 / 80, // s, fixed physics timestep
   

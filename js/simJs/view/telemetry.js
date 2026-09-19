@@ -178,10 +178,24 @@ const _sloshOffsetCm = fmt((_sloshBody && _sloshBody.slosh ? _sloshBody.slosh.of
   }
   
   
-  const _graphSloshBody = state.bodies[state.activeBodyIndex];
-const _sloshCmForGraph = (_graphSloshBody && _graphSloshBody.slosh ? (_graphSloshBody.slosh.offset || 0) * 100 : 0);
-pushGraphSample(state.simTime, altitude, speed, ENGINES.reduce((s, e) => s + e.currentF, 0), _sloshCmForGraph);
-
+    const _graphSloshBody = state.bodies[state.activeBodyIndex];
+  const _sloshCmForGraph = (_graphSloshBody && _graphSloshBody.slosh ? (_graphSloshBody.slosh.offset || 0) * 100 : 0);
+  
+  // Dynamic pressure Q = ½·ρ·v_rel², using the SAME relative-velocity
+  // convention physics.js's computeDragAero uses (co-rotating atmosphere
+  // + user wind), so the graph matches what the rocket actually feels.
+  // Shown in kPa — peak for F9-class is ~30-40 kPa, so Pa would be
+  // awkwardly large on a mini-graph axis.
+  const _qW = (typeof windInertialVector === 'function') ? windInertialVector(state.rx, state.ry) : { wx: 0, wy: 0 };
+  const _qSv = (typeof earthSurfaceVelocity === 'function') ? earthSurfaceVelocity(state.rx, state.ry) : { vx: 0, vy: 0 };
+  const _qRelVx = state.vx - (_qW.wx + _qSv.vx);
+  const _qRelVy = state.vy - (_qW.wy + _qSv.vy);
+  const _qSpeedRel = Math.hypot(_qRelVx, _qRelVy);
+  const _qPa = 0.5 * rho * _qSpeedRel * _qSpeedRel;
+  const _qKPa = Number.isFinite(_qPa) ? (_qPa / 1000) : 0;
+  
+  pushGraphSample(state.simTime, altitude, speed, ENGINES.reduce((s, e) => s + e.currentF, 0), _qKPa, _sloshCmForGraph);
+  
   const bodyListEl = getEl('t-bodyList');
   if (bodyListEl) {
     // Show every body that has physical state worth reporting — including
@@ -485,8 +499,8 @@ function drawFigurePanel() {
 // the stack builds up from the bottom.
 let yOffsetPx = 0;
 members.forEach((m, idx) => {
-  const memberAbove = members[idx + 1] || null;
-  let stageAboveBellHeight = 0;
+      const memberAbove = members[idx + 1] || null;
+     let stageAboveBellHeight = 0;
   if (memberAbove && memberAbove.engineTypeId && typeof getComponentType === 'function') {
     const layoutAbove = getComponentType(memberAbove.engineTypeId);
     if (layoutAbove && layoutAbove.frame && layoutAbove.frame.slots) {
@@ -518,7 +532,6 @@ members.forEach((m, idx) => {
     getComponentType(m.payloadSpaceTypeId) : null;
   const psParams = m.params || {};
   const payloadOpts = (m.stageRole === 'payloadSpace') ? {
-    payloadKind: psType ? psType.kind : undefined,
     payloadCapWidth: Number.isFinite(psParams.capWidth) ? psParams.capWidth : undefined,
     payloadBulgeWidth: Number.isFinite(psParams.bulgeWidth) ? psParams.bulgeWidth : undefined,
     payloadFrustumAngleDeg: Number.isFinite(psParams.frustumSlantDeg) ? psParams.frustumSlantDeg : undefined,
@@ -527,14 +540,15 @@ members.forEach((m, idx) => {
   } : {};
   
   figCtx.save();
-  figCtx.translate(baseX, baseY - yOffsetPx);
-  drawRocketArt(figCtx, mW, mH, mpp, {
+figCtx.translate(baseX, baseY - yOffsetPx);
+drawRocketArt(figCtx, mW, mH, mpp, {
       legsProgress: (idx === 0 && body.isActive) ? legs.progress : 0,
       legsState: null,
       // A5 — same as render.js: pod-id lookups need the member's own idx.
       memberIdx: idx,
       firing: (body.lastRcs && body.lastRcs.firing) || {},
       pod: (body.lastRcs && body.lastRcs.pod) || {},
+      
     rcsTopY: m.params ? m.params.rcsTopY : undefined,
     rcsBottomY: m.params ? m.params.rcsBottomY : undefined,
     recoveryType: recType,
@@ -916,20 +930,22 @@ function drawBasalView() {
 // ---------------------------------------------------------------------------
 // Rolling mini graphs (altitude, velocity, thrust vs time)
 // ---------------------------------------------------------------------------
-const graphHistory = { t: [], alt: [], vel: [], thrust: [], slosh: [] };
+const graphHistory = { t: [], alt: [], vel: [], thrust: [], q: [], slosh: [] };
 const GRAPH_WINDOW = 60; // seconds of history kept
 
-function pushGraphSample(t, alt, vel, thrust, slosh) {
+function pushGraphSample(t, alt, vel, thrust, q, slosh) {
   graphHistory.t.push(t);
   graphHistory.alt.push(alt);
   graphHistory.vel.push(vel);
   graphHistory.thrust.push(thrust);
+  graphHistory.q.push(q);
   graphHistory.slosh.push(slosh);
   while (graphHistory.t.length && t - graphHistory.t[0] > GRAPH_WINDOW) {
     graphHistory.t.shift();
     graphHistory.alt.shift();
     graphHistory.vel.shift();
     graphHistory.thrust.shift();
+    graphHistory.q.shift();
     graphHistory.slosh.shift();
   }
 }
@@ -962,10 +978,12 @@ function drawGraphs() {
   const altC = document.getElementById('graphAlt');
   const velC = document.getElementById('graphVel');
   const thrC = document.getElementById('graphThrust');
+  const qC = document.getElementById('graphQ');
   const slC = document.getElementById('graphSlosh');
   if (altC) drawMiniChart(altC, graphHistory.alt, '#55ddff', 'alt');
   if (velC) drawMiniChart(velC, graphHistory.vel, '#ffdd55', 'v');
   if (thrC) drawMiniChart(thrC, graphHistory.thrust, '#ff8855', 'F');
+  if (qC) drawMiniChart(qC, graphHistory.q, '#ff5fa8', 'Q kPa');
   if (slC) drawMiniChart(slC, graphHistory.slosh, '#a78bfa', 'slosh');
 }
 

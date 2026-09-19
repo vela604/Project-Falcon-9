@@ -26,6 +26,20 @@ const G0 = 9.80665; // m/s²
 // CONFIG) because fleet.js's stage/booster derived-mass functions are
 // called *from* config.js at load time — before CONFIG itself exists.
 // Having them here breaks the circular dependency.
+// Fraction of a stage's/booster's fuel-tank cylinder volume that becomes
+// structural metal mass. Calibrated to make the Falcon-9-class BOOSTER's
+// derived dry mass land on the real 25,600 kg with essentially zero
+// error (−0.13%) — the stage's derived dry mass then reads +17% over
+// its own 3,900 kg target. A single factor can't match both exactly
+// because their real shell-per-tank-vol ratios differ (booster ~0.0178,
+// stage ~0.0147); lower this to 0.0147 if you'd rather have the STAGE
+// exact and the booster −17% instead.
+// FALLBACK-ONLY body-shell factor. Every booster / stage / payloadSpace
+// record carries its own `bodyShellFactor` field (see fleet.js's
+// DEFAULT_SHELL_FACTOR_BY_ROLE for the role-specific calibrated defaults),
+// so this constant is only read when a record has no such field — legacy
+// pre-field records, or the nose role which still uses this directly.
+// 0.0165 is a generic middle value, not calibrated to any specific rocket.
 const BODY_SHELL_FACTOR = 0.0165;
 const SECOND_STAGE_TARGET_DELTA_V = 4500;
 const MIN_TWR_FLOOR = 1.2;
@@ -150,19 +164,26 @@ function buildLegsSwingout4() {
         maxSweepRad: 125 * Math.PI / 180,
         pistonMountY: -H * 0.08,
       }),
-      // STEP B / §2.6: one leg's approximate metal volume — placeholder-
-      // precision silhouette (thin tapered strut with lightening cutouts
-      // folded in via a fill factor), same "dummy value first" philosophy as
-      // payloadSpace's volume formulas. Legs are made of the SAME metal as
-      // the body (confirmed §1.15), so this is multiplied by body-metal
-      // density downstream.
+// STEP B / §2.6: one leg's approximate metal volume — placeholder-
+// precision silhouette (thin tapered strut with lightening cutouts
+// folded in via a fill factor), same "dummy value first" philosophy as
+// payloadSpace's volume formulas. Legs now carry their OWN metal
+// (rec.legsMetalTypeId) — real F9 landing legs are carbon-fibre
+// composite over an aluminium honeycomb core, not the al-li airframe
+// alloy — so this volume is multiplied by LEGS metal density
+// downstream (see fleet.js / massProps.js), not body-metal density.
       structuralVolume: (H, W) => {
-        const legLength = 0.27 * H;
-        const avgThickness = 0.05 * W;
-        const avgDepth = 0.04 * W;
-        const fillFactor = 0.4; // internal cutouts
-        return legLength * avgThickness * avgDepth * fillFactor;
-      },
+  // Legs modeled as a tapered solid strut with no cutout reduction
+  // (fillFactor 1.0). avgThickness calibrated so a Falcon-9-class
+  // booster's 4 carbon-composite legs total ~2,100 kg, matching the
+  // public "less than 2,100 kg" figure for the real landing gear
+  // system (Light Metal Age).
+  const legLength = 0.27 * H;
+  const avgThickness = 0.065 * W;
+  const avgDepth = 0.04 * W;
+  const fillFactor = 1.0;
+  return legLength * avgThickness * avgDepth * fillFactor;
+},
       landingMinDeploy: 0.9,
     },
     parameterSchema: [
@@ -315,12 +336,42 @@ function buildThrusterMerlin1DClass() {
     'Merlin-1D class',
     'Fixed-performance chemical engine type. Ve, efficiency, gimbal range/rate, and throttle floor/rate are all locked in by the type — a rocket build only ever chooses a mass flow rate (≤ this type\'s max), which determines thrust and engine mass.',
     {
-      ve: 2900,
+      // Real Merlin 1D (SL variant): Isp_sl = 282 s → Ve = 282 × 9.80665
+      // = 2765.5 m/s. Sim uses ONE Ve (altitude-independent), so this is
+      // the SL value — booster's primary regime. Vacuum thrust (~981 kN)
+      // will read ~14% low; acceptable for this simplified model.
+      ve: 2766,
       efficiency: 0.9,
-      twr: 184,
-      maxMassFlowRate: 500,
+      twr: 184, // real Merlin 1D TWR (Wikipedia datasheet)
+      maxMassFlowRate: 500, // generous cap; real max mdot ~320 kg/s
       gimbalCapable: true,
-      gimbalMaxDeg: 20,
+      gimbalMaxDeg: 5, // real Merlin 1D gimbal range (sim had 20° — too high)
+      gimbalRateDegS: 40,
+      minThrottleFrac: 0.4, // real deep-throttle floor ~40%
+      maxThrottleRateFrac: 0.5,
+    }
+  );
+}
+
+// Merlin 1D Vacuum — the upper-stage engine on Falcon 9. Fundamentally
+// different from the SL Merlin: much larger expansion ratio (vacuum-
+// optimized nozzle), Isp_vac = 348 s (vs 282 s SL), lower thrust (981 kN
+// vs 845 kN). Uses the SAME combustor/powerpack, so gimbal range and
+// throttle floor are identical; only Ve, thrust-derived TWR, and mass
+// flow cap differ. TWR 200 ≈ 981 kN / (490 kg × 9.80665) — real MVac
+// dry mass is ~490 kg.
+function buildThrusterMerlin1DVacClass() {
+  return makeThruster(
+    'merlin-1d-vac-class',
+    'Merlin-1D Vacuum class',
+    'Vacuum-optimized Merlin variant for upper stages. Isp_vac = 348 s (Ve = 3412 m/s), thrust 981 kN. Same combustor/gimbal envelope as the SL Merlin — the nozzle expansion ratio is what changes. Sim uses one Ve (no altitude dependence), so this type is tuned to its own vacuum design point rather than the SL variant.',
+    {
+      ve: 3412, // 348 s × 9.80665 m/s²
+      efficiency: 0.92, // MVac is more expansion-optimized than the SL variant
+      twr: 200, // ~981 kN / (490 kg × G0)
+      maxMassFlowRate: 350, // headroom above real max mdot ≈ 288 kg/s
+      gimbalCapable: true,
+      gimbalMaxDeg: 5,
       gimbalRateDegS: 40,
       minThrottleFrac: 0.4,
       maxThrottleRateFrac: 0.5,
@@ -357,9 +408,67 @@ function buildRcsThrusterColdGasSmall() {
     'Cold-gas thruster (small)',
     'Fixed-performance RCS nozzle type. Only mass flow rate is chosen per rocket build (≤ this type\'s max); thrust follows from it and the type\'s own Ve/efficiency.',
     {
-      ve: 2200,
-      efficiency: 0.9,
-      maxMassFlowRate: 0.5,
+      // Real N₂ cold-gas: Isp ~55 s → Ve = 55 × 9.80665 = 539 m/s.
+      // (ESA: "only around 50 s at best"; other sources ~60 s; 55 s midpoint.)
+      ve: 539,
+      efficiency: 0.85, // cold-gas loses more to valve/nozzle losses than chemical
+      maxMassFlowRate: 0.5, // → per-nozzle thrust ≈ 0.5 × 539 ≈ 270 N
+    }
+  );
+}
+
+// ============================================================================
+// Fairing recovery — parachute-type registry.
+//
+// A payloadSpace (fairing) record references one of these by id. When the
+// fairing splits into two halves (normal sequence) OR is ejected whole as
+// part of a shielded emergency package, each resulting body inherits this
+// chute type. Deployment is automatic — see CONFIG.FAIRING_CHUTE_DEPLOY_
+// ALT_AGL_M — with no per-event user input.
+//
+// Values in the schema are the FIXED aerodynamic + timing characteristics
+// of the canopy design (a real parachute datasheet would declare exactly
+// this set). Different fairing missions with different descent-rate
+// requirements get a different type here, no code change needed.
+// ============================================================================
+
+const FAIRING_CHUTE_SCHEMA = [
+  { key: 'canopyDiameter', label: 'Canopy diameter', unit: 'm', min: 1, max: 60 },
+  { key: 'dragCoefficient', label: 'Canopy drag coefficient', unit: 'Cd', min: 0.3, max: 1.2 },
+  { key: 'lineLength', label: 'Suspension line length', unit: 'm', min: 1, max: 50 },
+  { key: 'lineStretchTime', label: 'Line-stretch duration', unit: 's', min: 0.05, max: 2 },
+  { key: 'openingTime', label: 'Canopy inflation duration', unit: 's', min: 0.5, max: 10 },
+  { key: 'restoreStiffness', label: 'Orientation restore rate', unit: 'rad/s', min: 0.1, max: 5 },
+];
+
+function makeFairingChute(id, displayName, description, values) {
+  return {
+    id,
+    category: 'fairingRecovery',
+    kind: 'deployableChute',
+    displayName,
+    description,
+    parameterSchema: withFixedValues(FAIRING_CHUTE_SCHEMA, values),
+  };
+}
+
+// Seed type — sized to give a reasonable descent rate for BOTH a single
+// fairing half (~950 kg) and the emergency-ejected full shielded package
+// (~13 t with a 12 t payload). Emergency package descends faster (~23 m/s)
+// than a lone half (~6 m/s) at this size — bump canopyDiameter if you
+// want the emergency package gentler too.
+function buildFairingChuteRound() {
+  return makeFairingChute(
+    'fairing-chute-round',
+    'Round canopy (fairing-class)',
+    'Standard hemispherical-canopy parachute sized for Falcon-9-class fairing recovery. Automatically deploys below CONFIG.FAIRING_CHUTE_DEPLOY_ALT_AGL_M. Descent rate is set at design time by canopy diameter — this type targets ~6 m/s for a lone fairing half (~950 kg) and ~23 m/s for the emergency-ejected full shielded package (~13 t).',
+    {
+      canopyDiameter: 25,
+      dragCoefficient: 0.85,
+      lineLength: 20,
+      lineStretchTime: 0.5,
+      openingTime: 2.5,
+      restoreStiffness: 1.0,
     }
   );
 }
@@ -424,44 +533,31 @@ function buildMetalAlLiAlloy() {
   );
 }
 
+// Carbon-fibre composite — real Falcon 9 payload fairing material. Much
+// lighter than aluminium-lithium (~1,600 vs 2,700 kg/m³), which is why
+// a real F9 fairing weighs ~1,900 kg despite a huge shell area. Note:
+// the sim's structural-volume formula for payload-space shells is a
+// placeholder, so even with this correct density the derived mass will
+// still overestimate a real fairing by ~2× — but it removes ~40% of the
+// overshoot compared to al-li-alloy.
+function buildMetalCarbonComposite() {
+  return makeMetal(
+    'carbon-composite',
+    'Carbon fibre composite',
+    'Composite structural material — lower density than aluminium alloys, used for payload fairings and other non-load-bearing shells. Declares only density, same as every metal type; the shell thickness is derived downstream from the structural-volume formula.',
+    { density: 1600 }
+  );
+}
+
 // payloadSpace: unlike the four pure-performance categories above, this
 // DOES have a frame — it's a physical container with its own geometry.
-// Two kinds in the same category (proving it isn't tied to one silhouette,
-// same pattern as recoveryMechanism's two kinds): a simple nose cap sized
-// to match the stage's own body width, and a wider "bulged" fairing that
-// pokes out past it. structuralVolume/internalVolume are deliberately
-// FORMULAS (functions of the type's own dimension keys, not stored
-// numbers) — placeholder-precision silhouette approximations for now (see
-// PHASE3_PROMPT.md §1.12's "dummy value first" approach); the shape of the
-// formula (inputs -> volume) is what's load-bearing here, not the exact
-// coefficients, which can be refined later without touching anything that
-// calls these.
-function buildPayloadSpaceNoseCap() {
-  return {
-    id: 'cap-standard',
-    category: 'payloadSpace',
-    kind: 'noseCapShape',
-    displayName: 'Standard nose cap',
-    description: 'Simple cone-shaped payload container sized to the stage\'s own body width — no bulge past it.',
-    frame: {
-      structuralVolume: (capHeight, capWidth) => {
-        const r = capWidth / 2;
-        const slant = Math.sqrt(r * r + capHeight * capHeight);
-        const lateralArea = Math.PI * r * slant; // cone lateral surface
-        const shellThicknessFrac = 0.01; // thin-shell approximation
-        return lateralArea * (r * shellThicknessFrac);
-      },
-      internalVolume: (capHeight, capWidth) => {
-        const r = capWidth / 2;
-        return (1 / 3) * Math.PI * r * r * capHeight; // cone volume
-      },
-    },
-    parameterSchema: [
-      { key: 'capHeight', label: 'Cap height', unit: 'm', min: 0.2 },
-      { key: 'capWidth', label: 'Cap base width', unit: 'm', min: 0.2 },
-    ],
-  };
-}
+// A single kind (`bulgedCapShape`) covers every fairing silhouette:
+// bulgeWidth == capWidth gives a straight-sided cap; bulgeWidth > capWidth
+// gives the classic flared fairing. structuralVolume/internalVolume are
+// deliberately FORMULAS (functions of the type's own dimension keys, not
+// stored numbers). The fairing's shellThicknessFrac is calibrated so a
+// Falcon-9-class fairing with a carbon-composite metal type totals
+// ~1,900 kg, matching the real hardware.
 
 function buildPayloadSpaceBulged() {
   return {
@@ -474,15 +570,19 @@ function buildPayloadSpaceBulged() {
       // Simplified silhouette: bottom 60% of the height is a cylinder at
       // the bulge radius, top 40% tapers to a point — a reasonable
       // fairing-like shape, not a modeled aerodynamic profile.
-      structuralVolume: (capHeight, capWidth, bulgeWidth) => {
-        const rBulge = bulgeWidth / 2;
-        const coneH = capHeight * 0.4,
-          cylH = capHeight * 0.6;
-        const coneSlant = Math.sqrt(rBulge * rBulge + coneH * coneH);
-        const lateralArea = Math.PI * rBulge * coneSlant + 2 * Math.PI * rBulge * cylH;
-        const shellThicknessFrac = 0.01;
-        return lateralArea * (rBulge * shellThicknessFrac);
-      },
+      // shellThicknessFrac is now a per-record field (rec.bodyShellFactor),
+// passed in by the caller — falls back to 0.0026 (the F9-calibrated
+// fairing value) when absent, so a record without the field still
+// produces the same mass it did before this field existed.
+structuralVolume: (capHeight, capWidth, bulgeWidth, shellThicknessFrac) => {
+  if (!Number.isFinite(shellThicknessFrac)) shellThicknessFrac = 0.0026;
+  const rBulge = bulgeWidth / 2;
+  const coneH = capHeight * 0.4,
+    cylH = capHeight * 0.6;
+  const coneSlant = Math.sqrt(rBulge * rBulge + coneH * coneH);
+  const lateralArea = Math.PI * rBulge * coneSlant + 2 * Math.PI * rBulge * cylH;
+  return lateralArea * (rBulge * shellThicknessFrac);
+},
       internalVolume: (capHeight, capWidth, bulgeWidth) => {
         const rBulge = bulgeWidth / 2;
         const coneH = capHeight * 0.4,
@@ -507,12 +607,14 @@ function seedComponentLibrary() {
     buildLegsSwingout4(),
     buildCatchFitting2Pin(),
     buildRcs4Pod2Nozzle(),
-    buildThrusterMerlin1DClass(),
+        buildThrusterMerlin1DClass(),
+    buildThrusterMerlin1DVacClass(),
     buildRcsThrusterColdGasSmall(),
+    buildFairingChuteRound(),
     buildFuelRp1Lox(),
     
     buildMetalAlLiAlloy(),
-    buildPayloadSpaceNoseCap(),
+    buildMetalCarbonComposite(),
     buildPayloadSpaceBulged(),
   ];
 }

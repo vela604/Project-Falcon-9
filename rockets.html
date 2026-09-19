@@ -183,9 +183,13 @@
                 <div id="d-compatList">—</div>
               </fieldset>
               
-              <fieldset id="d-payloadSpaceFieldset" style="display:none;">
-                <legend>Payload space <span class="legend-note">— standalone fairing</span></legend>
-                <dl>
+             
+
+
+
+<fieldset id="payloadSpaceFieldset" data-role="payloadSpace" style="display:none">
+  <legend>Payload space shape <span class="legend-note">— standalone fairing role</span></legend>
+  <dl>
                   <div class="cap-row">
                     <dt>Shape</dt>
                     <dd id="d-psShape">—</dd>
@@ -365,9 +369,15 @@
           </fieldset>
           
           <fieldset id="recoveryParamsFieldset" data-role="rocket,booster,stage">
-            <legend>Recovery mechanism <span class="legend-note" id="recoveryParamsNote">—</span></legend>
-            <div class="field-grid" id="recoveryParamsGrid"></div>
-          </fieldset>
+  <legend>Recovery mechanism <span class="legend-note" id="recoveryParamsNote">—</span></legend>
+  <div class="field-grid" id="recoveryParamsGrid"></div>
+  <div class="field-grid" style="margin-top:10px">
+    <div class="field">
+      <label for="f-legsMetalType">Legs metal</label>
+      <select id="f-legsMetalType"></select>
+    </div>
+  </div>
+</fieldset>
           
           <fieldset id="rcsParamsFieldset" data-role="rocket,booster,stage">
             <legend>RCS <span class="legend-note" id="rcsParamsNote">—</span></legend>
@@ -426,45 +436,75 @@
           </fieldset>
           
           <fieldset id="noseShapeFieldset" data-role="nose">
-            <legend>Nose shape <span class="legend-note">— 0 = sharp cone, 1 = fully rounded</span></legend>
-            <div class="field-grid">
-              <div class="field">
-                <label for="f-noseCurveness">Curveness</label>
-                <div class="input-unit">
-                  <input type="number" id="f-noseCurveness" min="0" max="1" step="0.05" value="0">
-                  <span>0–1</span>
-                </div>
-              </div>
-            </div>
-          </fieldset>
+  <legend>Nose shape <span class="legend-note">— 0 = sharp cone, 1 = fully rounded</span></legend>
+  <div class="field-grid">
+    <div class="field">
+      <label for="f-noseCurveness">Curveness</label>
+      <div class="input-unit">
+        <input type="number" id="f-noseCurveness" min="0" max="1" step="0.05" value="0">
+        <span>0–1</span>
+      </div>
+    </div>
+  </div>
+</fieldset>
+
+<fieldset id="fairingRecoveryFieldset" data-role="payloadSpace" style="display:none">
+  <legend>Fairing recovery <span class="legend-note">— parachute for split halves &amp; emergency eject</span></legend>
+  <div class="field-grid">
+    <div class="field">
+      <label for="f-chuteType">Chute type</label>
+      <select id="f-chuteType">
+        <option value="">— no chute —</option>
+      </select>
+    </div>
+  </div>
+</fieldset>
+
+<fieldset id="payloadSpaceFieldset" data-role="payloadSpace" style="display:none">
+  <legend>Payload space shape <span class="legend-note">— standalone fairing role</span></legend>
+  <div class="field-grid">
+    <div class="field">
+      <label for="f-psShapeType">Shape</label><select id="f-psShapeType" required></select>
+    </div>
+    <div class="field">
+      <label for="f-psMetalType">Container metal</label><select id="f-psMetalType" required></select>
+    </div>
+    <div class="field">
+      <label for="f-psDeployment">Deployment direction</label>
+      <select id="f-psDeployment">
+        <option value="clamshell">Clamshell (two halves)</option>
+        <option value="hinge">Hinged nose</option>
+      </select>
+    </div>
+    <div class="field">
+      <label for="f-psColor">Colour</label>
+      <input type="color" id="f-psColor" value="#e9edf2">
+    </div>
+  </div>
+  <div class="field-grid" id="psParamsGrid"></div>
+</fieldset>
           
-          <fieldset id="payloadSpaceFieldset" data-role="payloadSpace" style="display:none">
-            <legend>Payload space shape <span class="legend-note">— standalone fairing role</span></legend>
-            <div class="field-grid">
-              <div class="field"><label for="f-psShapeType">Shape</label><select id="f-psShapeType" required></select></div>
-              <div class="field"><label for="f-psMetalType">Container metal</label><select id="f-psMetalType" required></select></div>
-              <div class="field"><label for="f-psDeployment">Deployment direction</label>
-                <select id="f-psDeployment">
-                  <option value="clamshell">Clamshell (two halves)</option>
-                  <option value="hinge">Hinged nose</option>
-                </select>
-              </div>
-              <div class="field">
-                <label for="f-psColor">Colour</label>
-                <input type="color" id="f-psColor" value="#e9edf2">
-              </div>
-            </div>
-            <div class="field-grid" id="psParamsGrid"></div>
-          </fieldset>
-          
-          <fieldset id="aeroFieldset" data-role="rocket,booster,stage,nose">
-            <legend>Aerodynamics</legend>
-            <div class="field-grid">
-              <div class="field"><label for="f-dragCd">Drag coefficient</label>
-                <div class="input-unit"><input type="number" id="f-dragCd" min="0" step="0.01" required><span>Cd</span></div>
-              </div>
-            </div>
-          </fieldset>
+          <fieldset id="shellFactorFieldset" data-role="booster,stage,payloadSpace">
+  <legend>Body shell <span class="legend-note">— fraction of tank/shell volume that becomes metal</span></legend>
+  <div class="field-grid">
+    <div class="field">
+      <label for="f-bodyShellFactor">Shell factor</label>
+      <div class="input-unit">
+        <input type="number" id="f-bodyShellFactor" min="0.0001" max="0.5" step="any" required>
+        <span>frac</span>
+      </div>
+    </div>
+  </div>
+</fieldset>
+
+<fieldset id="aeroFieldset" data-role="rocket,booster,stage,nose">
+  <legend>Aerodynamics</legend>
+  <div class="field-grid">
+    <div class="field"><label for="f-dragCd">Drag coefficient</label>
+      <div class="input-unit"><input type="number" id="f-dragCd" min="0" step="0.01" required><span>Cd</span></div>
+    </div>
+  </div>
+</fieldset>
           
           <fieldset id="bodyDesignFieldset">
             <legend>Body appearance <span class="legend-note">— colour or custom design</span></legend>

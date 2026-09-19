@@ -346,17 +346,31 @@ if (legsBtn) {
   const plBtn = getEl('btnReleasePayload');
   if (plBtn) plBtn.disabled = !canReleasePayloadNow();
   
-  const ejectBtn = getEl('btnEjectPayload');
-if (ejectBtn) {
-  const active = state.bodies[state.activeBodyIndex];
-  const canEject = !!(active && active.payloadId && !active.payloadReleased && !active.crashed);
-  ejectBtn.disabled = !canEject;
-  ejectBtn.title = canEject
-    ? 'Emergency eject — splits fairing and deploys cargo at high velocity'
-    : (active && active.payloadReleased
-        ? 'Payload already ejected'
-        : 'No payload to eject');
-}
+      const ejectBtn = getEl('btnEjectPayload');
+  if (ejectBtn) {
+    const active = state.bodies[state.activeBodyIndex];
+    // Emergency eject ONLY makes sense while the fairing is still on —
+    // its whole rationale is "save the SHIELDED payload". Once the fairing
+    // has been split (or was never fitted), the payload is already exposed
+    // and normal Release Payload is the correct command. Also disabled on
+    // an emergency-ejected body itself: it IS the shielded unit, there's
+    // nothing left to eject.
+    const isEmergencyUnit = !!(active && active.emergencyEject);
+    const hasFairing = !!(active && active.members &&
+      active.members.some(m => m && m.stageRole === 'payloadSpace'));
+    const canEject = !!(active && active.payloadId && !active.payloadReleased &&
+      !active.crashed && hasFairing && !isEmergencyUnit);
+    ejectBtn.disabled = !canEject;
+    ejectBtn.title = canEject ?
+      'Emergency eject — splits fairing and deploys cargo at high velocity' :
+      (isEmergencyUnit ?
+        'Already ejected as a shielded unit' :
+        (active && active.payloadReleased ?
+          'Payload already ejected' :
+          (active && !hasFairing ?
+            'No fairing to eject with — use Release Payload instead' :
+            'No payload to eject')));
+  }
 
   const tcBtn = getEl('btnTakeControl');
   if (tcBtn) tcBtn.disabled = !canTakeControlNow();

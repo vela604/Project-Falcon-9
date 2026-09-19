@@ -65,111 +65,89 @@ function cachedGradient(ctx, key, sig, build) {
 // PS-A — Payload space (fairing) shape renderer.
 //
 // Draws ONLY the fairing silhouette — no body, no legs, no RCS, no engines.
-// Standalone: not yet called from any fleet record path (that's PS-C/PS-D).
 // Coordinate convention matches drawRocketArt exactly: origin at the
 // member's own BASE (0,0), +Y down, nose tip at (0, -H).
 //
-// Two `kind`s, both driven entirely by formulas over opts (Rule 5 — no
-// hardcoded fractions):
+// Single silhouette, driven entirely by formulas over opts (Rule 5 — no
+// hardcoded fractions). Section heights:
+//   frustumH  = |bulgeR - capR| / tan(frustumAngleDeg)
+//   curveH    = curveRatio × bulgeR
+//   straightH = max(0, H - frustumH - curveH)
+// If the two mandatory sections (frustum + ogive) alone exceed the
+// available height H, both are scaled down proportionally so the shape
+// still fits — the straight section is simply the first to vanish.
 //
-//   noseCapShape   — smooth ogive straight from base width to a rounded tip.
-//
-//   bulgedCapShape — base → frustum (straight taper, angle = frustumAngleDeg
-//                    from horizontal) → straight cylinder (variable height)
-//                    → ogive → rounded tip. Section heights:
-//                      frustumH  = |bulgeR - capR| / tan(frustumAngleDeg)
-//                      curveH    = curveRatio × bulgeR
-//                      straightH = max(0, H - frustumH - curveH)
-//                    If the two mandatory sections (frustum + ogive) alone
-//                    exceed the available height H, both are scaled down
-//                    proportionally so the shape still fits — the straight
-//                    section is simply the first to vanish, exactly like
-//                    "dummy value first" degrades gracefully rather than
-//                    drawing something invalid.
+// bulgeWidth == capWidth gives a straight-sided "cap" (frustum collapses);
+// bulgeWidth > capWidth gives the classic flared fairing.
 //
 // opts read:
-//   payloadKind            'noseCapShape' | 'bulgedCapShape' (default noseCapShape)
 //   payloadCapWidth        base diameter, meters (falls back to W×mpp)
-//   payloadBulgeWidth      max bulge diameter, meters (bulged kind only;
-//                          falls back to payloadCapWidth, i.e. no bulge)
+//   payloadBulgeWidth      max bulge diameter, meters (falls back to
+//                          payloadCapWidth → straight-sided shape)
 //   payloadFrustumAngleDeg frustum angle from horizontal, degrees (default 45)
 //   payloadCurveRatio      top-curve height / bulge radius (default 0.85)
 //   payloadColor           '#rrggbb' fill (default '#e9edf2')
 // ============================================================================
+
 function drawPayloadSpaceShape(ctx, W, H, mpp, opts) {
   opts = opts || {};
-  const kind = opts.payloadKind || 'noseCapShape';
   const color = opts.payloadColor || '#e9edf2';
   
   // Dimensions arrive in METERS (matching every other params-bag field in
   // this codebase) and get converted to px here via mpp — mirrors the
-  // capW_px/bulgeW_px conversion already used by drawStageBody's inline
-  // payload renderer. Falls back to the member's own W (already px) when a
-  // specific field isn't supplied, so an incomplete opts bag still degrades
-  // to a plain cone sized to the member's own bounding box instead of NaN.
+  // capW_px/bulgeW_px conversion used by drawStageBody's inline payload
+  // renderer. Falls back to the member's own W (already px) when a
+  // specific field isn't supplied, so an incomplete opts bag still
+  // degrades to a plain cone sized to the member's own bounding box
+  // instead of NaN.
   const capWidth_m = Number.isFinite(opts.payloadCapWidth) ? opts.payloadCapWidth : W * mpp;
   const capR = (capWidth_m / 2) / mpp; // px
   
-  const isBulged = kind === 'bulgedCapShape';
-  let bulgeR = capR; // no-bulge fallback for the gradient-width calc below
+  // Single-kind renderer (`bulgedCapShape`). When bulgeWidth == capWidth,
+  // the frustum section (|bulgeR − capR| / tan(angle)) collapses to zero
+  // height and the shape reduces to a straight cylinder + ogive — that's
+  // the "nose cap" case; a genuine flared fairing is bulgeWidth > capWidth.
+  const bulgeWidth_m = Number.isFinite(opts.payloadBulgeWidth) ? opts.payloadBulgeWidth : capWidth_m;
+  const bulgeR = (bulgeWidth_m / 2) / mpp;
+  const frustumAngleDeg = Number.isFinite(opts.payloadFrustumAngleDeg) ? opts.payloadFrustumAngleDeg : 45;
+  const curveRatio = Number.isFinite(opts.payloadCurveRatio) ? opts.payloadCurveRatio : 0.85;
+  
+  // Formula-derived section heights.
+  const angleRad = Math.max(1, Math.min(89, frustumAngleDeg)) * Math.PI / 180;
+  let frustumH = Math.abs(bulgeR - capR) / Math.tan(angleRad);
+  let curveH = curveRatio * bulgeR;
+  const mandatory = frustumH + curveH;
+  if (mandatory > H && mandatory > 0) {
+    const s = H / mandatory;
+    frustumH *= s;
+    curveH *= s;
+  }
+  const straightH = Math.max(0, H - frustumH - curveH);
+  
+  const baseY = 0;
+  const frustumTopY = -frustumH;
+  const straightTopY = frustumTopY - straightH;
+  const tipY = -H;
   
   const bodyPath = () => {
     ctx.beginPath();
-    if (isBulged) {
-      const bulgeWidth_m = Number.isFinite(opts.payloadBulgeWidth) ? opts.payloadBulgeWidth : capWidth_m;
-      bulgeR = (bulgeWidth_m / 2) / mpp;
-      const frustumAngleDeg = Number.isFinite(opts.payloadFrustumAngleDeg) ? opts.payloadFrustumAngleDeg : 45;
-      const curveRatio = Number.isFinite(opts.payloadCurveRatio) ? opts.payloadCurveRatio : 0.85;
-      
-      // Formula-derived section heights — see header comment.
-      const angleRad = Math.max(1, Math.min(89, frustumAngleDeg)) * Math.PI / 180;
-      let frustumH = Math.abs(bulgeR - capR) / Math.tan(angleRad);
-      let curveH = curveRatio * bulgeR;
-      const mandatory = frustumH + curveH;
-      if (mandatory > H && mandatory > 0) {
-        const s = H / mandatory;
-        frustumH *= s;
-        curveH *= s;
-      }
-      const straightH = Math.max(0, H - frustumH - curveH);
-      
-      const baseY = 0;
-      const frustumTopY = -frustumH;
-      const straightTopY = frustumTopY - straightH;
-      const tipY = -H;
-      
-      // Left side: base → frustum → straight → ogive → tip
-      ctx.moveTo(-capR, baseY);
-      ctx.lineTo(-bulgeR, frustumTopY);
-      ctx.lineTo(-bulgeR, straightTopY);
-      ctx.bezierCurveTo(
-        -bulgeR * 0.98, straightTopY - curveH * 0.30,
-        -bulgeR * 0.45, tipY + curveH * 0.15,
-        0, tipY
-      );
-      // Right side: tip → ogive → straight → frustum → base
-      ctx.bezierCurveTo(
-        bulgeR * 0.45, tipY + curveH * 0.15,
-        bulgeR * 0.98, straightTopY - curveH * 0.30,
-        bulgeR, straightTopY
-      );
-      ctx.lineTo(bulgeR, frustumTopY);
-      ctx.lineTo(capR, baseY);
-    } else {
-      // noseCapShape: smooth ogive straight from base width to a rounded tip.
-      const tipY = -H;
-      ctx.moveTo(-capR, 0);
-      ctx.bezierCurveTo(
-        -capR * 0.70, H * 0.30,
-        -capR * 0.30, tipY + H * 0.20,
-        0, tipY
-      );
-      ctx.bezierCurveTo(
-        capR * 0.30, tipY + H * 0.20,
-        capR * 0.70, H * 0.30,
-        capR, 0
-      );
-    }
+    // Left side: base → frustum → straight → ogive → tip
+    ctx.moveTo(-capR, baseY);
+    ctx.lineTo(-bulgeR, frustumTopY);
+    ctx.lineTo(-bulgeR, straightTopY);
+    ctx.bezierCurveTo(
+      -bulgeR * 0.98, straightTopY - curveH * 0.30,
+      -bulgeR * 0.45, tipY + curveH * 0.15,
+      0, tipY
+    );
+    // Right side: tip → ogive → straight → frustum → base
+    ctx.bezierCurveTo(
+      bulgeR * 0.45, tipY + curveH * 0.15,
+      bulgeR * 0.98, straightTopY - curveH * 0.30,
+      bulgeR, straightTopY
+    );
+    ctx.lineTo(bulgeR, frustumTopY);
+    ctx.lineTo(capR, baseY);
     ctx.closePath();
   };
   
@@ -200,6 +178,115 @@ function drawPayloadSpaceShape(ctx, W, H, mpp, opts) {
     const gradW = Math.max(capR, bulgeR) * 2;
     bodyPath();
     applyCylindricalOverlay(ctx, gradW);
+  }
+}
+
+
+// ============================================================================
+// Fairing-recovery parachute artwork.
+//
+// Drawn in the body's own local frame (caller has already applied the
+// body's translate + rotate), origin at the body's base, +Y DOWN. The
+// canopy sits above the body's top edge, connected by suspension lines.
+//
+// progress: 0 → nothing drawn (chute packed / not fitted)
+//           0..lineStretchFrac → only the folded chute pack + lines
+//           lineStretchFrac..1 → canopy inflates linearly from 0 → full size
+//
+// Sizes are derived from the real-world canopy diameter + line length in
+// METERS (matching every other opts value this file reads), converted to
+// px via mpp — so a canopy rendered at any zoom always matches its true
+// physical size relative to the fairing it's attached to.
+// ============================================================================
+function drawChuteArt(ctx, bodyTopY, mpp, chuteType, progress) {
+  if (!chuteType || !chuteType.parameterSchema) return;
+  const valOf = (k) => { const e = chuteType.parameterSchema.find(p => p.key === k); return e ? e.value : undefined; };
+  const canopyD = valOf('canopyDiameter');
+  const lineLen = valOf('lineLength');
+  const lineStretchS = valOf('lineStretchTime');
+  const openingS = valOf('openingTime');
+  if (!Number.isFinite(canopyD) || !Number.isFinite(lineLen)) return;
+  if (!Number.isFinite(lineStretchS) || !Number.isFinite(openingS)) return;
+  
+  const totalS = lineStretchS + openingS;
+  if (totalS <= 0) return;
+  const tSinceStart = progress * totalS;
+  
+  // Inflation ramp — 0 during line-stretch, linear 0→1 during opening.
+  let inflateFrac = 0;
+  if (tSinceStart > lineStretchS) {
+    inflateFrac = Math.min(1, (tSinceStart - lineStretchS) / openingS);
+  }
+  
+  const linePx = lineLen / mpp;
+  const canopyR_full = (canopyD / 2) / mpp;
+  const canopyR = canopyR_full * inflateFrac;
+  
+  // Attach point (body top) and canopy center — canopy center sits at
+  // attach + line + radius above the body top.
+  const attachY = bodyTopY;
+  const canopyCenterY = attachY - linePx - canopyR;
+  const canopyCenterX = 0;
+  
+  // ---- Suspension lines (drawn from canopy rim to attach point) ----
+  // Always drawn once line-stretch begins, even at inflateFrac = 0 — the
+  // lines are physically taut before the canopy fills.
+  if (tSinceStart > 0) {
+    ctx.save();
+    ctx.strokeStyle = 'rgba(220,225,232,0.55)';
+    ctx.lineWidth = Math.max(0.6, 1 / mpp * 0.5);
+    const lineCount = 6;
+    for (let i = 0; i < lineCount; i++) {
+      // Rim point angle — evenly spaced around the canopy; project onto
+      // the 2D plane as ±cos, so lines spread to both sides.
+      const ang = (i / (lineCount - 1)) * Math.PI; // 0..π (half ring visible)
+      const rx = Math.cos(ang) * canopyR;
+      ctx.beginPath();
+      ctx.moveTo(attachY === bodyTopY ? 0 : 0, attachY);
+      ctx.lineTo(rx, canopyCenterY + canopyR * 0.15);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+  
+  // ---- Canopy (dome) ----
+  if (inflateFrac > 0.02 && canopyR > 0.5) {
+    ctx.save();
+    // Dome: upper semicircle, sitting on the canopy center line.
+    const grad = ctx.createLinearGradient(
+      canopyCenterX - canopyR, canopyCenterY - canopyR,
+      canopyCenterX + canopyR, canopyCenterY - canopyR
+    );
+    grad.addColorStop(0, '#a8b0bc');
+    grad.addColorStop(0.5, '#e4e8ee');
+    grad.addColorStop(1, '#8f98a6');
+    ctx.fillStyle = grad;
+    ctx.strokeStyle = '#4a5058';
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.arc(canopyCenterX, canopyCenterY, canopyR, Math.PI, 0, false);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    
+    // Radial seams — 4 gores for a segmented look.
+    ctx.strokeStyle = 'rgba(74,80,88,0.55)';
+    ctx.lineWidth = 0.8;
+    for (let i = 1; i <= 3; i++) {
+      const fx = canopyCenterX - canopyR + (2 * canopyR) * (i / 4);
+      ctx.beginPath();
+      ctx.moveTo(fx, canopyCenterY - Math.sqrt(Math.max(0, canopyR * canopyR - (fx - canopyCenterX) ** 2)));
+      ctx.lineTo(canopyCenterX, canopyCenterY);
+      ctx.stroke();
+    }
+    // Vent ring at the canopy top (small ellipse).
+    const ventR = canopyR * 0.18;
+    ctx.fillStyle = 'rgba(60,65,72,0.55)';
+    ctx.beginPath();
+    ctx.ellipse(canopyCenterX, canopyCenterY - canopyR * 0.95, ventR, ventR * 0.4, 0, 0, Math.PI * 2);
+    ctx.fill();
+    
+    ctx.restore();
   }
 }
 
@@ -311,10 +398,16 @@ function drawRocketArt(ctx, W, H, mpp, opts) {
   
   // P4-D3: body appearance + nose shape + role flags.
   const noseCurveness = opts.noseCurveness || 0;
-  const isBooster = opts.stageRole === 'booster';
-  const isNose = opts.stageRole === 'nose';
-  const isPayloadSpace = opts.stageRole === 'payloadSpace';
-  
+const isBooster = opts.stageRole === 'booster';
+const isNose = opts.stageRole === 'nose';
+const isPayloadSpace = opts.stageRole === 'payloadSpace';
+// When a separate payloadSpace fairing sits directly above this stage
+// in the stack, the stage's top is capped by the fairing, so it must
+// render as a flat-top (open) cylinder — NOT with its own nose. Without
+// this flag a stage in a stack drew its own nose, which visually poked
+// out from underneath the fairing.
+const hasFairingAbove = !!opts.hasFairingAbove;
+
   const bodyDesign = opts.bodyDesign || { mode: 'solid', solidColor: '#e9edf2', dslText: '' };
   const designMode = bodyDesign.mode || 'solid';
   const solidFill = bodyDesign.solidColor || '#e9edf2';
@@ -582,10 +675,19 @@ const recoveryType = ('recoveryType' in opts) ? opts.recoveryType : null;
   if (opts.stageRole === 'stage' && opts.stagePayload) {
     drawStageBody();
   } else {
-    const bodyPath = () => {
+  // isOpenTop: flat-top cylinder, no nose. True for boosters, and also
+  // for a stage whose fairing is a separate member stacked above it —
+  // the fairing is what supplies the nose in that case.
+  // isOpenTop: flat-top cylinder, no nose. A real F9 upper stage is a
+// flat-topped cylinder — its top is capped by the payload fairing
+// (which is now a separate member in the stack), not by an integrated
+// nose cone. Same for boosters, whose top is capped by the interstage.
+// Only rocket / nose / payloadSpace roles get their own nose curve.
+const isOpenTop = isBooster || opts.stageRole === 'stage';
+const bodyPath = () => {
       ctx.beginPath();
       ctx.moveTo(-W / 2, 0);
-      if (isBooster) {
+      if (isOpenTop) {
         ctx.lineTo(-W / 2, -H);
         ctx.lineTo(W / 2, -H);
         ctx.lineTo(W / 2, 0);
@@ -1374,17 +1476,19 @@ function renderStackPreview(canvas, memberIds, fleet) {
       }
     }
     
-    pctx.save();
-    pctx.translate(baseX, baseY);
-    
-    // PS-D2: payloadSpace shape needs its own opts (kind/capWidth/bulgeWidth/
-    // frustumAngle/curveRatio/color). Those aren't computed in stack preview
-    // otherwise — extract them from the member record here.
-    const psType = (m.stageRole === 'payloadSpace' && m.payloadSpaceTypeId && typeof getComponentType === 'function') ?
-      getComponentType(m.payloadSpaceTypeId) : null;
+    // Same flag as render.js — a stage with a fairing directly above it
+// in the stack suppresses its own nose.
+
+pctx.save();
+pctx.translate(baseX, baseY);
+
+// PS-D2: payloadSpace shape needs its own opts (kind/capWidth/bulgeWidth/
+// frustumAngle/curveRatio/color). Those aren't computed in stack preview
+// otherwise — extract them from the member record here.
+const psType = (m.stageRole === 'payloadSpace' && m.payloadSpaceTypeId && typeof getComponentType === 'function') ?
+  getComponentType(m.payloadSpaceTypeId) : null;
     const psParams = m.params || {};
     const payloadOpts = (m.stageRole === 'payloadSpace') ? {
-      payloadKind: psType ? psType.kind : undefined,
       payloadCapWidth: Number.isFinite(psParams.capWidth) ? psParams.capWidth : undefined,
       payloadBulgeWidth: Number.isFinite(psParams.bulgeWidth) ? psParams.bulgeWidth : undefined,
       payloadFrustumAngleDeg: Number.isFinite(psParams.frustumSlantDeg) ? psParams.frustumSlantDeg : undefined,
@@ -1398,6 +1502,7 @@ function renderStackPreview(canvas, memberIds, fleet) {
       recoveryType,
       rcsType,
       stageRole: m.stageRole,
+      
       noseCurveness: m.noseCurveness,
       bodyDesign: m.bodyDesign,
       payloadSpaceColor: (m.payloadSpace && m.payloadSpace.color) ? m.payloadSpace.color : undefined,

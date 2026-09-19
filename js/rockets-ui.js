@@ -1348,13 +1348,16 @@ function fillForm(r) {
     setVal('f-bodyMetalType', r.bodyMetalTypeId || 'al-li-alloy');
     setVal('f-noseCurveness', r.noseCurveness || 0);
   }
-  if (role === 'payloadSpace') {
-    setVal('f-psShapeType', r.payloadSpaceTypeId);
-    setVal('f-psMetalType', r.payloadSpaceMetalTypeId);
-    setVal('f-psDeployment', r.deploymentDirection || 'clamshell');
-    setVal('f-psColor', r.color || '#e9edf2');
-    renderPsParams(r.payloadSpaceTypeId, r.params);
-  }
+if (role === 'payloadSpace') {
+  setVal('f-psShapeType', r.payloadSpaceTypeId);
+  setVal('f-psMetalType', r.payloadSpaceMetalTypeId);
+  setVal('f-psDeployment', r.deploymentDirection || 'clamshell');
+  setVal('f-psColor', r.color || '#e9edf2');
+  // Chute dropdown: '' for the "no chute" option, otherwise the type id.
+  setVal('f-chuteType', r.chuteTypeId || '');
+  renderPsParams(r.payloadSpaceTypeId, r.params);
+
+}
   // P4-D2: body appearance.
   const bd = r.bodyDesign || { mode: 'solid', solidColor: '#e9edf2', dslText: '' };
   setVal('f-bodyDesignMode', bd.mode || 'solid');
@@ -1367,23 +1370,39 @@ function fillForm(r) {
   applyBodyDesignVisibility(role);
   validateBodyDslInput(); // reset any prior error display
   
-  if (role === 'booster' || role === 'stage') {
+    if (role === 'booster' || role === 'stage') {
     setVal('f-maxExtraWeight', r.maxExtraWeightKg || 0);
   }
   
- if ((role === 'stage' || role === 'booster') && r.fuel) {
-  setVal('f-fuelType', r.fuel.typeId);
-  setVal('f-fuelTankHeight', r.fuel.tankHeight);
-  setVal('f-fuelTankWidth', r.fuel.tankWidth);
-  // Phase 2C-extension: default to 0 baffles / 0.8 inner radius for
-  // legacy records that predate these fields.
-  setVal('f-baffleCount', Number.isFinite(r.fuel.baffleCount) ? r.fuel.baffleCount : 0);
-  setVal('f-baffleInnerRadiusFrac', Number.isFinite(r.fuel.baffleInnerRadiusFrac) ? r.fuel.baffleInnerRadiusFrac : 0.8);
-  setVal('f-bodyMetalType', r.bodyMetalTypeId);
-}
-  applyRoleVisibility(role);
+  if ((role === 'stage' || role === 'booster') && r.fuel) {
+    setVal('f-fuelType', r.fuel.typeId);
+    setVal('f-fuelTankHeight', r.fuel.tankHeight);
+    setVal('f-fuelTankWidth', r.fuel.tankWidth);
+    // Phase 2C-extension: default to 0 baffles / 0.8 inner radius for
+    // legacy records that predate these fields.
+    setVal('f-baffleCount', Number.isFinite(r.fuel.baffleCount) ? r.fuel.baffleCount : 0);
+    setVal('f-baffleInnerRadiusFrac', Number.isFinite(r.fuel.baffleInnerRadiusFrac) ? r.fuel.baffleInnerRadiusFrac : 0.8);
+    setVal('f-bodyMetalType', r.bodyMetalTypeId);
+  }
+  // Legs metal — separate dropdown from body metal now. Real F9 legs are
+  // carbon-fibre composite over aluminium honeycomb, so a real F9 build
+  // selects 'carbon-composite' here while its airframe stays al-li.
+  // Falls back to body metal for pre-fix records (migration preserves the
+  // old "legs = body metal" behavior exactly).
+  // Legs metal — separate dropdown from body metal now. Real F9 legs are
+// carbon-fibre composite over aluminium honeycomb, so a real F9 build
+// selects 'carbon-composite' here while its airframe stays al-li.
+// Falls back to body metal for pre-fix records (migration preserves the
+// old "legs = body metal" behavior exactly).
+setVal('f-legsMetalType', r.legsMetalTypeId || r.bodyMetalTypeId || 'carbon-composite');
+// Per-record shell factor — role-appropriate default if absent.
+const shellF = Number.isFinite(r.bodyShellFactor) ?
+  r.bodyShellFactor :
+  (DEFAULT_SHELL_FACTOR_BY_ROLE[role] || BODY_SHELL_FACTOR);
+setVal('f-bodyShellFactor', shellF);
+applyRoleVisibility(role);
   hideFormError();
-}
+  }
 
 function showEditor() {
   document.getElementById('vehicleDetail').classList.remove('show');
@@ -1410,6 +1429,17 @@ function readVal(id) {
 function readStr(id, fallback) {
   const el = document.getElementById(id);
   return el ? el.value : fallback;
+}
+
+// Reads + clamps the body-shell-factor input. Wide physical bound — the
+// field's real job is to be user-tunable, not to enforce any particular
+// engineering envelope; the clamp is just to keep a NaN/negative from
+// silently producing a broken mass.
+function clampShellFactor(el) {
+  if (!el) return BODY_SHELL_FACTOR;
+  const raw = parseFloat(el.value);
+  if (!Number.isFinite(raw)) return BODY_SHELL_FACTOR;
+  return Math.max(0.0001, Math.min(0.5, raw));
 }
 
 
@@ -1488,16 +1518,19 @@ function readFormData() {
       payloadSpaceDimensions({ stageRole: 'payloadSpace', payloadSpaceTypeId: typeId, params: psParams }) :
       { height: 0, width: 0 };
     return {
-      name: document.getElementById('f-name').value.trim() || 'Unnamed Payload Space',
-      stageRole: 'payloadSpace',
-      height: dims.height,
-      width: dims.width,
-      dragCd: parseFloat(document.getElementById('f-dragCd').value) || 0.4,
-      payloadSpaceTypeId: typeId,
-      payloadSpaceMetalTypeId: metalTypeId,
-      deploymentDirection,
-      color,
-      params: psParams,
+  name: document.getElementById('f-name').value.trim() || 'Unnamed Payload Space',
+  stageRole: 'payloadSpace',
+  height: dims.height,
+  width: dims.width,
+  dragCd: parseFloat(document.getElementById('f-dragCd').value) || 0.4,
+  payloadSpaceTypeId: typeId,
+  payloadSpaceMetalTypeId: metalTypeId,
+  bodyShellFactor: clampShellFactor(document.getElementById('f-bodyShellFactor')),
+  deploymentDirection,
+  color,
+  // Empty string from the "no chute" option → stored as null.
+  chuteTypeId: (document.getElementById('f-chuteType').value) || null,
+  params: psParams,
       familyId: editingRecordFamilyId(),
       bodyDesign: {
         mode: document.getElementById('f-bodyDesignMode').value || 'solid',
@@ -1508,9 +1541,17 @@ function readFormData() {
   }
   
   // Stage + booster fuel/metal block
-  if (role === 'stage' || role === 'booster') {
-  // Phase 2C-extension: baffleCount and baffleInnerRadiusFrac live on
-  // the vehicle record (per-vehicle tank hardware), not the fuel type.
+  // Legs metal — applies to rocket / booster / stage (nose and
+// payloadSpace early-return above). Read once, before the fuel block,
+// so a legacy 'rocket' record round-trips its value too.
+const legsMetalEl = document.getElementById('f-legsMetalType');
+if (legsMetalEl) data.legsMetalTypeId = legsMetalEl.value;
+
+// Stage + booster fuel/metal block
+// Stage + booster fuel/metal block
+if (role === 'stage' || role === 'booster') {
+  data.bodyShellFactor = clampShellFactor(document.getElementById('f-bodyShellFactor'));
+  // Phase 2C-extension: baffleCount and baffleInnerRadiusFrac live on  // the vehicle record (per-vehicle tank hardware), not the fuel type.
   const rawBaffleCount = parseFloat(document.getElementById('f-baffleCount').value);
   const rawBaffleFrac = parseFloat(document.getElementById('f-baffleInnerRadiusFrac').value);
   data.fuel = {

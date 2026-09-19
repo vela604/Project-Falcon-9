@@ -370,18 +370,33 @@ function canSeparateNow() {
 function canSplitFairingNow() {
   if (state.crashed) return false;
   const active = state.bodies[state.activeBodyIndex];
-  if (!active || !active.members) return false;
-  return active.members.some(m => m.stageRole === 'payloadSpace');
+  if (!active || !Array.isArray(active.members)) return false;
+  // Emergency-ejected bodies (fairing + payload flying as one shielded
+  // unit) are the END of the ejection sequence — reopening the package
+  // defeats its whole point. Explicit flag check covers the case where
+  // the user Takes Control of the ejected body, which then becomes the
+  // active body and would otherwise pass the fairing-present test below.
+  if (active.emergencyEject) return false;
+  // After a payload release (normal or emergency), splitting the fairing
+  // is meaningless — there's no cargo left to expose.
+  if (active.payloadReleased) return false;
+  return active.members.some(m => m && m.stageRole === 'payloadSpace');
 }
 
 function canReleasePayloadNow() {
   if (state.crashed) return false;
   const active = state.bodies[state.activeBodyIndex];
-  if (!active || !active.members) return false;
+  if (!active || !Array.isArray(active.members)) return false;
+  // Emergency-ejected bodies never offer the normal "expose the payload"
+  // release sequence — they ARE the delivered package.
+  if (active.emergencyEject) return false;
   if (active.payloadReleased) return false;
-  if (active.members.some(m => m.stageRole === 'payloadSpace')) return false;
-  const stk = (typeof getActiveStack === 'function') ? getActiveStack() : null;
-  return !!(stk && stk.payloadId);
+  // Fairing must still be OFF the stack — release is only valid after
+  // Split Fairing.
+  if (active.members.some(m => m && m.stageRole === 'payloadSpace')) return false;
+  // The active body must still actually carry a payloadId.
+  if (!active.payloadId) return false;
+  return true;
 }
 
 function canTakeControlNow() {

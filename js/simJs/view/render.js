@@ -878,15 +878,15 @@ function drawBodyRocket(body, isActive) {
   const H = CONFIG.ROCKET_HEIGHT / mpp;
   const W = CONFIG.ROCKET_WIDTH / mpp;
   
-  // Off-screen cull: discarded/staged bodies (boosters, spent stages) keep
-  // existing physically and get fully rendered every frame even long after
-  // they've fallen far outside the visible viewport. Skip the whole draw
-  // (flame + full gradient-heavy art) for anything nowhere near the canvas.
-  // Margin is generous (3x the rocket's own footprint) so nothing that's
-  // even partially visible — including its flame, which can extend past
-  // the body itself — ever gets clipped; this only skips bodies that are
-  // genuinely fully off-screen, so visible rendering is unchanged.
-  const cullMargin = Math.max(H, W) * 3;
+// Off-screen cull: discarded/staged bodies (boosters, spent stages) keep
+// existing physically and get fully rendered every frame even long after
+// they've fallen far outside the visible viewport. Skip the whole draw
+// (flame + full gradient-heavy art) for anything nowhere near the canvas.
+// Margin is generous (6x the rocket's own footprint — bumped from 3x to
+// accommodate a fairing's parachute canopy, which can extend 20+ m above
+// the body itself) so nothing that's even partially visible ever gets
+// clipped.
+const cullMargin = Math.max(H, W) * 6;
   if (px < -cullMargin || px > canvas.width + cullMargin ||
     py < -cullMargin || py > canvas.height + cullMargin) {
     return;
@@ -1022,15 +1022,33 @@ function drawBodyRocket(body, isActive) {
       ctx.ellipse(0, W * 0.05, W * 0.42 * plumeScale, W * 0.2 * plumeScale, 0, 0, Math.PI * 2);
       ctx.fill();
       ctx.globalCompositeOperation = 'source-over';
-      // ctx.restore;
+          // ctx.restore;
     }
-  }
-  
-  // ---- Stack body draw (identical to before) ----
-  const stackMembers = (body && body.members && body.members.length) ?
-    body.members :
-    ((typeof SIM_STACK_MEMBERS !== 'undefined' && SIM_STACK_MEMBERS.length) ? SIM_STACK_MEMBERS : []);
-  
+    }
+    
+    // ---- Fairing parachute ----
+    // MUST be drawn BEFORE the fairing-half / payload-body early returns
+    // below — those branches exit the function, so a chute-draw placed at
+    // the bottom would never execute for a fairing half or ejected package
+    // (exactly the bug: physics deployed the canopy correctly, but nothing
+    // rendered because the fairing-half branch returned before reaching
+    // the draw call).
+    if (body.chute && body.chute.typeId && body.chute.progress > 0) {
+      const chuteType = (typeof getComponentType === 'function') ? getComponentType(body.chute.typeId) : null;
+      if (chuteType) {
+        const sm = (body && body.members) ? body.members : [];
+        const bodyVisualH_px = sm.length ?
+          sm.reduce((s, m) => s + (m.height || 0) / mpp, 0) :
+          (body.height ? body.height / mpp : 0);
+        drawChuteArt(ctx, -bodyVisualH_px, mpp, chuteType, body.chute.progress);
+      }
+    }
+    
+    // ---- Stack body draw (identical to before) ----
+    const stackMembers = (body && body.members && body.members.length) ?
+      body.members :
+      ((typeof SIM_STACK_MEMBERS !== 'undefined' && SIM_STACK_MEMBERS.length) ? SIM_STACK_MEMBERS : []);
+      
   // ↓↓↓ ye pura block add karo ↓↓↓
   // Payload drawn BEFORE members (background) — so fairing, drawn after,
   // covers it until fairing splits.
@@ -1148,9 +1166,13 @@ function drawBodyRocket(body, isActive) {
         payloadColor: m.color || '#e9edf2',
       } : {};
       
-      ctx.save();
-      ctx.translate(0, -yOffsetPx);
-      drawRocketArt(ctx, mW, mH, mpp, {
+      // Render-side: signal that this stage has a fairing sitting on top
+// of it in the stack, so the drawer suppresses the stage's own nose.
+const hasFairingAbove = !!(memberAbove && memberAbove.stageRole === 'payloadSpace');
+
+ctx.save();
+ctx.translate(0, -yOffsetPx);
+drawRocketArt(ctx, mW, mH, mpp, {
       legsProgress: (isActive && idx === 0) ? legs.progress : 0,
       legsState: isActive ? legs : null,
       // A5 — tell the drawer which member of the body this is, so its
@@ -1159,6 +1181,7 @@ function drawBodyRocket(body, isActive) {
       memberIdx: idx,
       firing: (body.lastRcs && body.lastRcs.firing) || {},
       pod: (body.lastRcs && body.lastRcs.pod) || {},
+      
         rcsTopY: m.params ? m.params.rcsTopY : undefined,
         rcsBottomY: m.params ? m.params.rcsBottomY : undefined,
         recoveryType: recType,
@@ -1174,15 +1197,15 @@ function drawBodyRocket(body, isActive) {
         stageAboveBellHeight: stageAboveBellHeight,
         ...payloadOpts,
       });
-      ctx.restore();
+                 ctx.restore();
       yOffsetPx += mH;
-    });
-  }
-  
-  ctx.restore();
-}
-
-function drawGroundSteam(altitude) {
+      });
+      }
+      
+      ctx.restore();
+      }
+      
+      function drawGroundSteam(altitude) {
   const totalThrust = ENGINES.reduce((s, e) => s + e.currentF, 0);
   const maxThrust = ENGINES.reduce((s, e) => s + e.Fmax, 0);
   const throttle = maxThrust > 0 ? totalThrust / maxThrust : 0;

@@ -49,8 +49,11 @@ const HOT_STATE_MAX_ENGINES_PER_BODY = 16; // covers octaweb-merlin9 (1 center +
 // [13] sloshZeta    (damping ratio, derived per tick — Phase 2B.3; NaN
 //                    under the same conditions sloshOmega is NaN, same
 //                    "—" fallback on the main thread)
-// [14 .. 14 + N*3)  per-engine: massFlowRate (kg/s), currentF, gimbalDeg
-const HOT_STATE_BODY_HEADER_FLOATS = 14;
+// [14] chuteProgress (0..1 — 0 when no chute or not yet deployed, else
+//                    ramps 0→1 across (lineStretchTime + openingTime);
+//                    consumed by the renderer to animate canopy inflation)
+// [15 .. 15 + N*3)  per-engine: massFlowRate (kg/s), currentF, gimbalDeg
+const HOT_STATE_BODY_HEADER_FLOATS = 15;
 const HOT_STATE_FLOATS_PER_ENGINE = 3; // massFlowRate, currentF, gimbalDeg
 const HOT_STATE_BODY_STRIDE =
   HOT_STATE_BODY_HEADER_FLOATS + HOT_STATE_MAX_ENGINES_PER_BODY * HOT_STATE_FLOATS_PER_ENGINE;
@@ -107,11 +110,15 @@ function encodeHotState(buf, bodies) {
     // Float64Array round-trip cleanly (unlike undefined, which would become
     // 0 and be indistinguishable from a real ω of zero).
     buf[base + 12] = (b.slosh && Number.isFinite(b.slosh.omega)) ? b.slosh.omega : NaN;
-    // Phase 2B.3 — same NaN-sentinel treatment as sloshOmega above: the
-    // derived damping ratio is written every tick on the worker but was
-    // never shipped to the main thread until now.
-    buf[base + 13] = (b.slosh && Number.isFinite(b.slosh.zeta)) ? b.slosh.zeta : NaN;
-    
+// Phase 2B.3 — same NaN-sentinel treatment as sloshOmega above: the
+// derived damping ratio is written every tick on the worker but was
+// never shipped to the main thread until now.
+buf[base + 13] = (b.slosh && Number.isFinite(b.slosh.zeta)) ? b.slosh.zeta : NaN;
+// Fairing-recovery chute — 0 means either "no chute" or "not yet
+// deployed"; both render identically (nothing above the fairing).
+// Once deployed, ramps 0→1 across (lineStretchTime + openingTime).
+buf[base + 14] = (b.chute && Number.isFinite(b.chute.progress)) ? b.chute.progress : 0;
+
     const engines = b.engines || [];
     const usedEngines = Math.min(engines.length, HOT_STATE_MAX_ENGINES_PER_BODY);
     if (engines.length > HOT_STATE_MAX_ENGINES_PER_BODY) truncatedEngines = true;
@@ -175,8 +182,13 @@ function decodeHotState(buf, bodies) {
     // Phase 2B.1 — NaN round-trips fine through Float64Array and is what
     // the telemetry layer checks for to render "—" instead of a fake 0.
     b.slosh.omega = buf[base + 12];
-    // Phase 2B.3 — same NaN-sentinel discipline as omega above.
-    b.slosh.zeta = buf[base + 13];
+// Phase 2B.3 — same NaN-sentinel discipline as omega above.
+b.slosh.zeta = buf[base + 13];
+// Chute — decode into a stable {progress} holder. The full chute
+// object (typeId, deployed) arrives on the cold snapshot path once;
+// this hot field only updates progress every tick.
+if (!b.chute) b.chute = { progress: 0 };
+b.chute.progress = buf[base + 14];
     
     const engines = b.engines || [];
     const usedEngines = Math.min(buf[base + 7], engines.length, HOT_STATE_MAX_ENGINES_PER_BODY);
