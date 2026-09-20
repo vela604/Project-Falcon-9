@@ -627,3 +627,184 @@ canvas.mini-graph { width: 100%; height: 60px; background: var(--bg); border-rad
   color: #5a1d1d;
   background: rgba(0,0,0,0.2);
 }
+
+/* ============================================================
+   Right toolbar — guidance. Mirrors #leftToolbar but pinned
+   right, sliding from right. Handle is a left-edge tab so the
+   whole strip collapses off-screen behind the right viewport
+   edge when closed.
+   ============================================================ */
+#rightToolbar {
+  position: absolute;
+  top: 50%;
+  right: 0;
+  transform: translateY(-50%);
+  z-index: 40;
+  pointer-events: none;
+}
+
+#rightToolbar .rt-wrapper {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  transform: translateX(156px);   /* content width — closed by default */
+  transition: transform 0.28s ease-out;
+}
+#rightToolbar.open .rt-wrapper {
+  transform: translateX(0);
+}
+
+/* ---- Handle (arrow) — leftmost in flex row, sits at right edge when closed ---- */
+#rightToolbar .rt-handle {
+  width: 34px;
+  height: 76px;
+  flex-shrink: 0;
+  background: rgba(13,20,36,0.94);
+  border: 1px solid var(--panel-border);
+  border-right: none;
+  border-radius: 10px 0 0 10px;
+  color: var(--cyan);
+  font-size: 20px;
+  font-weight: 500;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  padding: 0;
+  backdrop-filter: blur(8px);
+  pointer-events: auto;
+  transition: color 0.15s;
+}
+#rightToolbar .rt-handle:hover { color: #fff; }
+
+/* ---- Content panel ---- */
+#rightToolbar .rt-content {
+  width: 156px;
+  max-height: 82vh;
+  overflow-y: auto;
+  background: linear-gradient(180deg, rgba(15,23,42,0.97), rgba(9,14,26,0.97));
+  border: 1px solid var(--panel-border);
+  border-right: none;
+  border-radius: 10px 0 0 10px;
+  backdrop-filter: blur(10px);
+  box-shadow:
+    -4px 0 20px rgba(0,0,0,0.45),
+    inset -1px 0 0 rgba(53,214,255,0.10);
+  padding: 16px 18px 16px 12px;
+  display: flex; flex-direction: column; gap: 10px;
+  box-sizing: border-box;
+  pointer-events: auto;
+}
+
+#rightToolbar .rt-section {
+  display: flex; flex-direction: column; gap: 8px;
+  width: 100%;
+}
+#rightToolbar .rt-section.rt-row {
+  flex-direction: row;
+  gap: 6px;
+}
+
+#rightToolbar .rt-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.3px;
+  color: var(--dim);
+}
+
+#rightToolbar .rt-select {
+  width: 100%;
+  background: var(--panel-2);
+  border: 1px solid var(--panel-border);
+  color: var(--text);
+  border-radius: 7px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 6px 8px;
+  box-sizing: border-box;
+}
+#rightToolbar .rt-select:focus { outline: none; border-color: var(--cyan); }
+
+#rightToolbar .rt-btn {
+  width: 100%;
+  padding: 10px 10px;
+  background: linear-gradient(180deg, #16213a 0%, #0e1830 100%);
+  border: 1px solid #23344f;
+  color: var(--text);
+  border-radius: 7px;
+  font-family: var(--font-head);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  text-align: center;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.05);
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+  box-sizing: border-box;
+  flex: 1;
+}
+#rightToolbar .rt-btn:hover { color: var(--cyan); border-color: rgba(53,214,255,0.55); }
+#rightToolbar .rt-btn-start {
+  border-color: rgba(74,222,128,0.4);
+  color: var(--green);
+}
+#rightToolbar .rt-btn-start:hover { background: rgba(74,222,128,0.1); border-color: var(--green); }
+#rightToolbar .rt-btn-stop {
+  border-color: rgba(255,95,126,0.4);
+  color: var(--danger);
+}
+#rightToolbar .rt-btn-stop:hover { background: rgba(255,95,126,0.1); border-color: var(--danger); }
+
+#rightToolbar .rt-sep {
+  width: 100%;
+  height: 1px;
+  background: var(--panel-border);
+  margin: 2px 0;
+}
+
+#rightToolbar .rt-status {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 1.6;
+}
+#rightToolbar .rt-status-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 6px;
+}
+#rightToolbar .rt-status-row span:first-child { color: var(--dim); }
+#rightToolbar .rt-status-row span:last-child { color: var(--cyan); text-align: right; }
+
+@media (max-width: 760px) {
+  #rightToolbar .rt-wrapper { transform: translateX(142px); }
+  #rightToolbar .rt-content { width: 142px; padding: 14px 14px 14px 10px; }
+  #rightToolbar .rt-btn { font-size: 11px; padding: 6px 8px; }
+  #rightToolbar .rt-handle { width: 22px; height: 48px; font-size: 13px; }
+}
+
+/* ============================================================
+   Direction / wind HUD — top-center of viewport. Compact
+   compass with E/W axis and the current wind vector. Hidden in
+   planet view where E/W on screen doesn't map to the local frame.
+   ============================================================ */
+#directionHUD {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 22;
+  pointer-events: none;
+  background: rgba(13,20,36,0.85);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  padding: 4px 10px 6px;
+  box-shadow: 0 6px 18px rgba(0,0,0,0.4);
+}
+#directionCanvas {
+  display: block;
+  width: 170px;
+  height: 106px;
+}
+@media (max-width: 760px) {
+  #directionHUD { top: 8px; padding: 3px 8px 4px; }
+  #directionCanvas { width: 140px; height: 92px; }
+}

@@ -671,3 +671,91 @@ function updateFuelAvailability() {
   }
   updateFuelPanelReadouts();
 }
+
+
+// ============================================================================
+// Right toolbar — guidance selection + start/stop.
+// ============================================================================
+function bindGuidanceToolbar() {
+  const toolbar = document.getElementById('rightToolbar');
+  const toggle = document.getElementById('rightToolbarToggle');
+  const sel = document.getElementById('guideSelect');
+  const startBtn = document.getElementById('btnGuideStart');
+  const stopBtn = document.getElementById('btnGuideStop');
+  
+  if (!toolbar || !toggle || !sel || !startBtn || !stopBtn) {
+    console.warn('bindGuidanceToolbar: some elements missing');
+    return;
+  }
+  
+  // Open by default so the user sees the new panel immediately.
+  toolbar.classList.add('open');
+  toggle.textContent = '›';
+  
+  toggle.addEventListener('click', () => {
+    toolbar.classList.toggle('open');
+    toggle.textContent = toolbar.classList.contains('open') ? '›' : '‹';
+  });
+  
+  startBtn.addEventListener('click', () => {
+    const name = sel.value;
+    if (!name) { alert('Select a guidance first'); return; }
+    if (typeof GuidanceBridge === 'undefined' || !GuidanceBridge.ready) {
+      console.warn('[guidance toolbar] guidance worker not ready yet');
+      return;
+    }
+    GuidanceBridge.send({ type: 'guidanceCommand', action: 'start', guideName: name });
+  });
+  
+  stopBtn.addEventListener('click', () => {
+    if (typeof GuidanceBridge === 'undefined') return;
+    GuidanceBridge.send({ type: 'guidanceCommand', action: 'stop' });
+  });
+}
+
+// Called by workerBridge.js whenever the guidance worker pushes a status
+// update (or an immediate ack from a guidanceCommand). Updates the right
+// toolbar's live readout.
+function onGuidanceStatus(status) {
+  const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+  if (!status || !status.active) {
+    set('guideStatusText', 'STOPPED');
+    set('guideStatusTicks', '—');
+    set('guideStatusTarget', '—');
+    set('guideStatusAchieved', '—');
+    set('guideStatusFires', '—');
+    return;
+  }
+  set('guideStatusText', 'RUNNING');
+  set('guideStatusTicks', String(status.ticks || 0));
+  set('guideStatusTarget', Math.round(status.lastTarget || 0) + ' N·m');
+  set('guideStatusAchieved', Math.round(status.lastAchieved || 0) + ' N·m');
+  const fires = (status.lastFires || 0) + (status.lastSaturated ? ' · sat' : '');
+  set('guideStatusFires', fires);
+  
+// gimbalPredictive2 status — main-thread console log
+if (status.gReq !== undefined) {
+  console.log(
+    `[g2] t=${status.ticks}` +
+    ` g_N=${status.gN.toFixed(3)}° → g_{N+1}=${status.gN1.toFixed(3)}°` +
+    ` g_req=${status.gReq.toFixed(3)}°` +
+    ` R_req=${status.RReq.toFixed(1)}°/s → R_cmd=${status.RCmd.toFixed(1)}°/s` +
+    (status.saturated ? ' [SAT]' : '') +
+    ` τ_drag(N+2)=${status.tauDrag2.toFixed(0)} N·m`
+  );
+}
+
+// predictVerifier rolling stats — only present when that guide is active.
+// Logged on the MAIN thread's console, so no worker-console switching.
+if (status.nCompared !== undefined) {
+    console.log(
+      `[pv] n=${status.nCompared} skip=${status.nSkipped}` +
+      ` | τ mean|err|=${status.meanAbsErrTq.toFixed(0)} N·m` +
+      ` last pred=${status.lastTq.pred.toFixed(0)} act=${status.lastTq.act.toFixed(0)}` +
+      ` | α mean|err|=${status.meanAbsErrAlphaDeg.toExponential(2)}°` +
+      ` last pred=${status.lastAlpha.pred.toFixed(4)} act=${status.lastAlpha.act.toFixed(4)}` +
+      ` | drag mean|err|=${status.meanAbsErrDragN.toFixed(0)} N` +
+      ` | Q mean|err|=${status.meanAbsErrQPa.toFixed(1)} Pa`
+    );
+  }
+}

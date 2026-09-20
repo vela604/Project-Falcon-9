@@ -285,9 +285,10 @@ function frame(ts) {
   
   
   
-  drawFigurePanel();
-  drawBasalView();
-  drawGraphs();
+ drawFigurePanel();
+drawBasalView();
+drawGraphs();
+drawDirectionHUD();
   
   // Redraw the wind compass only when its panel is visible.
   const wp = document.getElementById('windPanel');
@@ -553,8 +554,9 @@ window.addEventListener('resize', () => {
     bindQuickThrottle();
     bindFuelPanel();
     bindMiscToggles();
-    
-    buildGlossaryPanel();
+bindGuidanceToolbar();
+
+buildGlossaryPanel();
     renderMergeDiagram();
     renderOctaSliders();
     updateStatusBar();

@@ -1,0 +1,847 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Guidance Log — Rocket Sim</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #060912;
+  --bg-2: #0a1120;
+  --panel: #0d1424;
+  --panel-2: #101a30;
+  --panel-border: #1c2b45;
+  --cyan: #35d6ff;
+  --orange: #ff9248;
+  --magenta: #ff5fa8;
+  --green: #4ade80;
+  --yellow: #ffd23f;
+  --purple: #a78bfa;
+  --danger: #ff5f7e;
+  --text: #dbe6f5;
+  --dim: #6b7d9c;
+  --font-head: 'Space Grotesk', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Consolas', monospace;
+}
+
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+html, body {
+  margin: 0; padding: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-head);
+  font-size: 15px;
+  line-height: 1.55;
+  overflow-x: hidden;
+}
+
+#app {
+  max-width: 1000px;
+  margin: 0 auto;
+  padding: 0 24px 80px;
+}
+
+/* ===================== Header ===================== */
+header.hero {
+  padding: 48px 0 32px;
+  border-bottom: 1px solid var(--panel-border);
+  margin-bottom: 40px;
+}
+
+.hero-eyebrow {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 1.5px;
+  color: var(--cyan);
+  text-transform: uppercase;
+  margin-bottom: 12px;
+}
+
+.hero-title {
+  font-size: 40px;
+  font-weight: 700;
+  margin: 0 0 12px;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+}
+
+.hero-sub {
+  font-size: 16px;
+  color: var(--dim);
+  max-width: 640px;
+  margin: 0;
+}
+
+.hero-stats {
+  display: flex;
+  gap: 32px;
+  margin-top: 32px;
+  flex-wrap: wrap;
+}
+
+.hero-stat {
+  display: flex;
+  flex-direction: column;
+}
+
+.hero-stat-num {
+  font-family: var(--font-mono);
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--cyan);
+}
+
+.hero-stat-label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--dim);
+  letter-spacing: 0.5px;
+  margin-top: 4px;
+  text-transform: uppercase;
+}
+
+/* ===================== Legend ===================== */
+.legend {
+  display: flex;
+  gap: 20px;
+  padding: 16px 20px;
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  margin-bottom: 40px;
+  flex-wrap: wrap;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--dim);
+}
+
+.legend-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.legend-dot.pass { background: var(--green); box-shadow: 0 0 8px var(--green); }
+.legend-dot.partial { background: var(--yellow); box-shadow: 0 0 8px var(--yellow); }
+.legend-dot.fail { background: var(--danger); box-shadow: 0 0 8px var(--danger); }
+.legend-dot.tool { background: var(--cyan); box-shadow: 0 0 8px var(--cyan); }
+
+/* ===================== Section headers ===================== */
+.section-header {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 1.2px;
+  color: var(--dim);
+  text-transform: uppercase;
+  margin: 56px 0 20px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--panel-border);
+}
+
+/* ===================== Experiment card ===================== */
+.exp {
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-left: 3px solid var(--panel-border);
+  border-radius: 12px;
+  padding: 24px 26px;
+  margin-bottom: 20px;
+  position: relative;
+  /* Never let a wide <pre> line stretch this card beyond its parent. */
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.exp.pass {
+  border-left-color: var(--green);
+  /* Subtle green glow + faint tint to mark the working guide — visible
+     but not loud, matches the panel-heavy theme. */
+  box-shadow:
+    0 0 24px rgba(74,222,128,0.10),
+    0 0 60px rgba(74,222,128,0.05),
+    inset 0 0 40px rgba(74,222,128,0.025);
+  background: linear-gradient(
+    180deg,
+    rgba(74,222,128,0.035) 0%,
+    var(--panel) 40%
+  );
+}
+.exp.partial { border-left-color: var(--yellow); }
+.exp.fail { border-left-color: var(--danger); }
+.exp.tool { border-left-color: var(--cyan); }
+
+.exp-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 8px;
+}
+
+.exp-title {
+  font-size: 19px;
+  font-weight: 600;
+  margin: 0;
+  line-height: 1.3;
+}
+
+.exp-id {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--dim);
+  margin-top: 4px;
+}
+
+.exp-status {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.exp-status.pass { color: var(--green); background: rgba(74,222,128,0.12); border: 1px solid rgba(74,222,128,0.35); }
+.exp-status.partial { color: var(--yellow); background: rgba(255,210,63,0.10); border: 1px solid rgba(255,210,63,0.35); }
+.exp-status.fail { color: var(--danger); background: rgba(255,95,126,0.10); border: 1px solid rgba(255,95,126,0.35); }
+.exp-status.tool { color: var(--cyan); background: rgba(53,214,255,0.10); border: 1px solid rgba(53,214,255,0.35); }
+
+.exp-body { margin-top: 16px; }
+
+.exp-row {
+  display: grid;
+  /* minmax(0, 1fr) lets the content column shrink below its natural
+     min-content width — otherwise a wide <pre> line makes the 1fr column
+     grow and pushes the whole card wider than its container. */
+  grid-template-columns: 100px minmax(0, 1fr);
+  gap: 16px;
+  margin-bottom: 14px;
+  align-items: start;
+  min-width: 0;
+}
+
+.exp-value { min-width: 0; }
+.exp-value pre { min-width: 0; }
+
+.exp-label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.4px;
+  color: var(--dim);
+  text-transform: uppercase;
+  padding-top: 2px;
+}
+
+.exp-value {
+  font-size: 14px;
+  color: var(--text);
+}
+
+.exp-value p { margin: 0 0 8px; }
+.exp-value p:last-child { margin-bottom: 0; }
+.exp-value ul { margin: 0 0 8px; padding-left: 18px; }
+.exp-value ul:last-child { margin-bottom: 0; }
+.exp-value li { margin-bottom: 4px; }
+
+.exp-value strong { color: var(--cyan); font-weight: 600; }
+
+code {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  background: var(--panel-2);
+  border: 1px solid var(--panel-border);
+  border-radius: 4px;
+  padding: 1px 6px;
+  color: var(--orange);
+}
+
+pre {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  background: var(--bg-2);
+  border: 1px solid var(--panel-border);
+  border-radius: 6px;
+  padding: 10px 14px;
+  margin: 8px 0;
+  overflow-x: auto;
+  line-height: 1.55;
+  color: var(--text);
+}
+
+pre .cmt { color: var(--dim); }
+
+.tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--panel-border);
+}
+
+.tag {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.4px;
+  padding: 3px 9px;
+  border-radius: 5px;
+  background: rgba(53,214,255,0.06);
+  border: 1px solid rgba(53,214,255,0.20);
+  color: var(--cyan);
+}
+
+.tag.warn {
+  background: rgba(255,210,63,0.06);
+  border-color: rgba(255,210,63,0.25);
+  color: var(--yellow);
+}
+
+.tag.err {
+  background: rgba(255,95,126,0.06);
+  border-color: rgba(255,95,126,0.25);
+  color: var(--danger);
+}
+
+/* ===================== Footer ===================== */
+.footer {
+  margin-top: 64px;
+  padding-top: 24px;
+  border-top: 1px solid var(--panel-border);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--dim);
+  line-height: 1.7;
+}
+
+.footer a { color: var(--cyan); text-decoration: none; }
+.footer a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <header class="hero">
+    <div class="hero-eyebrow">Rocket Sim · Guidance Module</div>
+    <h1 class="hero-title">Guidance Experiment Log</h1>
+    <p class="hero-sub">
+      A chronological record of every guidance algorithm attempted for the
+      sim — what it tried to achieve, whether it worked, and precisely why
+      the failed ones failed. Kept as a build-in-public log so future work
+      doesn't repeat the same mistakes.
+    </p>
+    <div class="hero-stats">
+      <div class="hero-stat">
+        <div class="hero-stat-num">7</div>
+        <div class="hero-stat-label">Experiments</div>
+      </div>
+      <div class="hero-stat">
+        <div class="hero-stat-num" style="color:var(--green)">1</div>
+        <div class="hero-stat-label">Accurate Win</div>
+      </div>
+      <div class="hero-stat">
+        <div class="hero-stat-num" style="color:var(--yellow)">1</div>
+        <div class="hero-stat-label">Partial</div>
+      </div>
+      <div class="hero-stat">
+        <div class="hero-stat-num" style="color:var(--danger)">5</div>
+        <div class="hero-stat-label">Failed</div>
+      </div>
+      <div class="hero-stat">
+        <div class="hero-stat-num" style="color:var(--cyan)">1</div>
+        <div class="hero-stat-label">Diagnostic</div>
+      </div>
+    </div>
+  </header>
+
+  <div class="legend">
+    <div class="legend-item"><span class="legend-dot pass"></span>Accurate Win</div>
+    <div class="legend-item"><span class="legend-dot partial"></span>Partial / Not Practical</div>
+    <div class="legend-item"><span class="legend-dot fail"></span>Failed</div>
+    <div class="legend-item"><span class="legend-dot tool"></span>Diagnostic Tool</div>
+  </div>
+
+  <!-- ==================== RCS PHASE ==================== -->
+  <div class="section-header">RCS Attitude Control Experiments</div>
+
+  <!-- 1. testGuide -->
+  <div class="exp fail">
+    <div class="exp-head">
+      <div>
+        <h3 class="exp-title">Test — Torque Balance</h3>
+        <div class="exp-id">testGuide</div>
+      </div>
+      <span class="exp-status fail">FAIL</span>
+    </div>
+    <div class="exp-body">
+      <div class="exp-row">
+        <div class="exp-label">Target</div>
+        <div class="exp-value">
+          Every tick, derive current total torque on the body and fire RCS
+          with exactly the opposing torque. See if RCS alone can hold AoA ≈ 0
+          during a max-throttle launch with gimbal fixed at 0.
+        </div>
+      </div>
+      <div class="exp-row">
+        <div class="exp-label">Approach</div>
+        <div class="exp-value">
+          <pre>targetTorque = −τ_total (each snapshot, no memory)</pre>
+          <code>GuideRCS.targetTorqueRcs()</code> converts to per-pod duty.
+        </div>
+      </div>
+      <div class="exp-row">
+        <div class="exp-label">What happened</div>
+        <div class="exp-value">
+          Limit cycle. <strong>Jump → zero → jump → zero</strong> at ~2 Hz on
+          the telemetry torque trace, until RCS saturated, then a monotonic
+          drift to crash.
+        </div>
+      </div>
+      <div class="exp-row">
+        <div class="exp-label">Why it failed</div>
+        <div class="exp-value">
+          <ul>
+            <li><strong>Deadband release</strong>: below 100 N·m the guide sent
+              <code>cmdRcsDuty(null)</code>, relinquishing control. Next snapshot
+              saw torque back and re-fired. Classic bang-bang limit cycle.</li>
+            <li><strong>Snapshot rate mismatch</strong>: 20 Hz throttle (later
+              fixed to 80 Hz) put guidance 4 physics ticks behind.</li>
+            <li><strong>Snapshot is one tick stale</strong>: the torque it reacts
+              to has already evolved before the command lands.</li>
+          </ul>
+        </div>
+      </div>
+      <div class="tags">
+        <span class="tag err">limit-cycle</span>
+        <span class="tag err">deadband-release</span>
+        <span class="tag warn">latency</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- 2. predictiveTorque -->
+  <div class="exp fail">
+    <div class="exp-head">
+      <div>
+        <h3 class="exp-title">Predictive Torque Cancel</h3>
+        <div class="exp-id">predictiveTorque</div>
+      </div>
+      <span class="exp-status fail">FAIL</span>
+    </div>
+    <div class="exp-body">
+      <div class="exp-row">
+        <div class="exp-label">Target</div>
+        <div class="exp-value">
+          Instead of reacting to past torque, predict the <em>next</em> tick's
+          drag torque from current state and command RCS to cancel it before
+          it happens.
+        </div>
+      </div>
+      <div class="exp-row">
+        <div class="exp-label">Approach</div>
+        <div class="exp-value">
+          <pre>predict state at t+dt (no RCS assumed)
+τ_drag_next = derive(predicted state).torqueDrag
+targetTorque = −τ_drag_next
+fire RCS via GuideRCS</pre>
+        </div>
+      </div>
+      <div class="exp-row">
+        <div class="exp-label">What happened</div>
+        <div class="exp-value">
+          Ran for a while looking great — torque trace smooth and low.
+          Then attitude suddenly broke away and rocket crashed.
+        </div>
+      </div>
+      <div class="exp-row">
+        <div class="exp-label">Why it failed</div>
+        <div class="exp-value">
+          <ul>
+            <li>Prediction assumes <strong>no RCS</strong>, but RCS is firing.
+              Each shot shifts lateral velocity → AoA grows → drag torque
+              prediction goes stale by the time command lands.</li>
+            <li>Small residual (200–500 N·m) per tick in a
+              <strong>CP-above-CoM instability</strong> compounds exponentially.</li>
+            <li>Pure feedforward has no rate/attitude feedback to absorb drift.</li>
+          </ul>
+        </div>
+      </div>
+      <div class="tags">
+        <span class="tag err">feedforward-only</span>
+        <span class="tag err">positive-feedback</span>
+        <span class="tag warn">model-mismatch</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- 3. predictivePlus -->
+  <div class="exp fail">
+    <div class="exp-head">
+      <div>
+        <h3 class="exp-title">Predictive + PID</h3>
+        <div class="exp-id">predictivePlus</div>
+      </div>
+      <span class="exp-status fail">FAIL</span>
+    </div>
+    <div class="exp-body">
+      <div class="exp-row">
+        <div class="exp-label">Target</div>
+        <div class="exp-value">
+          Add classical PID on top of feedforward — proportional attitude
+          hold (vs local vertical), rate damping, and an integral term to
+          absorb slow biases.
+        </div>
+      </div>
+      <div class="exp-row">
+        <div class="exp-label">Approach</div>
+        <div class="exp-value">
+          <pre>targetTorque = −τ_drag_predicted     <span class="cmt">// feedforward</span>
+             − K_p·(θ − θ_target)    <span class="cmt">// attitude hold</span>
+             − K_d·ω                 <span class="cmt">// rate damping</span>
+             − K_lead·dτ_drag/dt     <span class="cmt">// phase lead</span>
+             + K_i·∫err              <span class="cmt">// bias correction</span></pre>
+        </div>
+      </div>
+      <div class="exp-row">
+        <div class="exp-label">What happened</div>
+        <div class="exp-value">
+          Better than feedforward alone — the crash was delayed, but
+          ultimately same outcome. Attitude wandered off, RCS saturated,
+          rocket flipped.
+        </div>
+      </div>
+      <div class="exp-row">
+        <div class="exp-label">Why it failed</div>
+        <div class="exp-value">
+          <ul>
+            <li>PID is <strong>reactive</strong>; by the time it reacts to
+              attitude drift, the drift has had several ticks to grow.</li>
+            <li>Latency between snapshot and command application (~1–2 ticks)
+              is unaccounted-for in the loop.</li>
+            <li>CP-above-CoM instability requires phase advance that PID can't
+              provide without high gain — and high gain saturates RCS.</li>
+          </ul>
+        </div>
+      </div>
+      <div class="tags">
+        <span class="tag err">reactive-only</span>
+        <span class="tag err">latency-unmodeled</span>
+        <span class="tag warn">gain-vs-saturation tradeoff</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- 4. predictivePlusAoA -->
+  <div class="exp partial">
+    <div class="exp-head">
+      <div>
+        <h3 class="exp-title">Predictive + PID + AoA Impulse</h3>
+        <div class="exp-id">predictivePlusAoA</div>
+      </div>
+      <span class="exp-status partial">SUCCESS · NOT PRACTICAL</span>
+    </div>
+    <div class="exp-body">
+      <div class="exp-row">
+        <div class="exp-label">Target</div>
+        <div class="exp-value">
+          Add a periodic "AoA impulse" term — every 3rd tick, fire full
+          RCS torque proportional to AoA. Intent: kick AoA toward zero faster
+          than PID can.
+        </div>
+      </div>
+      <div class="exp-row">
+        <div class="exp-label">Approach</div>
+        <div class="exp-value">
+          <pre><span class="cmt">// tick N   → check AoA &gt; threshold, arm pending</span>
+<span class="cmt">// tick N+1 → fire 2·I·AoA/dt² (way above RCS max → fully saturated)</span>
+<span class="cmt">// tick N+2 → skip</span>
+<span class="cmt">// repeat</span></pre>
+        </div>
+      </div>
+      <div class="exp-row">
+        <div class="exp-label">What happened</div>
+        <div class="exp-value">
+          Actually worked — the manual test with an initial east tilt
+          ran all the way up with AoA staying bounded. This was the first
+          guide that <strong>did not crash</strong>.
+        </div>
+      </div>
+      <div class="exp-row">
+        <div class="exp-label">Why "not practical"</div>
+        <div class="exp-value">
+          <ul>
+            <li>Fires RCS at 100% saturation every third tick, consuming
+              propellant aggressively.</li>
+            <li>Relies on huge torque overshoots that only work because RCS is
+              cheap in this sim. In a real system this would burn through
+              cold-gas budget in seconds.</li>
+            <li>Bang-bang behaviour — no graceful scaling.</li>
+          </ul>
+        </div>
+      </div>
+      <div class="tags">
+        <span class="tag err">propellant-waste</span>
+        <span class="tag warn">bang-bang</span>
+        <span class="tag">first-non-crash</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- 5. predictivePlusAoAPush -->
+  <div class="exp fail">
+    <div class="exp-head">
+      <div>
+        <h3 class="exp-title">Predictive + PID + AoA + East Push</h3>
+        <div class="exp-id">predictivePlusAoAPush</div>
+      </div>
+      <span class="exp-status fail">FAIL</span>
+    </div>
+    <div class="exp-body">
+      <div class="exp-row">
+        <div class="exp-label">Target</div>
+        <div class="exp-value">
+          Prefix the successful predictivePlusAoA with a timed east-tilt
+          phase (S seconds), then hand off to AoA chase. Later iterations
+          added west-reversal and cadence-based nudges.
+        </div>
+      </div>
+      <div class="exp-row">
+        <div class="exp-label">Approach</div>
+        <div class="exp-value">
+          Phase machine — <code>east</code> (S sec) → <code>west</code>
+          (ω-crossing) → <code>chase</code> (predictivePlusAoA verbatim).
+        </div>
+      </div>
+      <div class="exp-row">
+        <div class="exp-label">What happened</div>
+        <div class="exp-value">
+          Multiple iterations, all unstable. West-reversal overshot ω
+          (adding a second-tick delay before AoA chase engaged). Cadence
+          push built drift. Simple east prefix destabilised when the AoA-chase
+          phase inherited a nonzero ω.
+        </div>
+      </div>
+      <div class="exp-row">
+        <div class="exp-label">Why it failed</div>
+        <div class="exp-value">
+          <ul>
+            <li><strong>θ_target sign flip bug</strong> — for several iterations
+              the AoA-zero direction was computed as <code>atan2(relVx, -relVy)</code>
+              instead of <code>atan2(-relVx, relVy)</code>. 180° error meant
+              the guide was holding the rocket <em>upside-down</em>.</li>
+            <li>After sign fix, D-term on <code>dAoA</code> was unconditionally
+              braking — fighting reductions in AoA as well as increases.</li>
+            <li>Sweep and chase phase interacted badly: sweep left ω residual
+              that chase had to absorb, and the impulse governor kept
+              re-arming, compounding.</li>
+          </ul>
+        </div>
+      </div>
+      <div class="tags">
+        <span class="tag err">sign-flip-bug</span>
+        <span class="tag err">phase-coupling</span>
+        <span class="tag warn">impulse-governor-race</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- 6. predictVerifier -->
+  <div class="exp tool">
+    <div class="exp-head">
+      <div>
+        <h3 class="exp-title">Verify: Prediction Accuracy</h3>
+        <div class="exp-id">predictVerifier</div>
+      </div>
+      <span class="exp-status tool">DIAGNOSTIC</span>
+    </div>
+    <div class="exp-body">
+      <div class="exp-row">
+        <div class="exp-label">Target</div>
+        <div class="exp-value">
+          Prove (or disprove) that the prediction chain —
+          next-tick drag torque, AoA, altitude, dynamic pressure — is
+          actually accurate. No RCS, no gimbal, only derive math.
+        </div>
+      </div>
+      <div class="exp-row">
+        <div class="exp-label">Approach</div>
+        <div class="exp-value">
+          Predict state at N+1, store. Next tick, compare predicted values
+          against the actual snapshot's derive output. Only count 1-tick
+          gaps; skip duplicates and misses.
+        </div>
+      </div>
+      <div class="exp-row">
+        <div class="exp-label">Result</div>
+        <div class="exp-value">
+          <strong>Prediction is essentially exact.</strong>
+          <pre>τ: mean |err| ≈ 0–1 N·m   out of  9,000–40,000 N·m
+α: mean |err| ≈ 6e-6 degrees
+Q: mean |err| ≈ 0 Pa
+drag: mean |err| ≈ 0 N</pre>
+          Floating-point-level agreement between predictor and physics.
+        </div>
+      </div>
+      <div class="exp-row">
+        <div class="exp-label">Takeaway</div>
+        <div class="exp-value">
+          All the failures were <strong>controller problems</strong>, not
+          prediction problems. This diagnostic retired a whole class of
+          suspicion and pointed cleanly at the actuation/latency pipeline.
+        </div>
+      </div>
+      <div class="tags">
+        <span class="tag">diagnostic</span>
+        <span class="tag">retired-hypothesis</span>
+        <span class="tag">prediction-is-trustworthy</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== GIMBAL PHASE ==================== -->
+  <div class="section-header">Gimbal Attitude Control Experiments</div>
+
+  <!-- 7. gimbalPredictive2 -->
+  <div class="exp pass">
+    <div class="exp-head">
+      <div>
+        <h3 class="exp-title">Gimbal: 2-tick Predictive</h3>
+        <div class="exp-id">gimbalPredictive2</div>
+      </div>
+      <span class="exp-status pass">ACCURATE WIN</span>
+    </div>
+    <div class="exp-body">
+      <div class="exp-row">
+        <div class="exp-label">Target</div>
+        <div class="exp-value">
+          Use the engine gimbal (not RCS) to autonomously cancel drag torque
+          during ascent. Match predicted future-tick drag torque with gimbal
+          torque by commanding the correct rate <em>before</em> the tick
+          where it needs to act.
+        </div>
+      </div>
+      <div class="exp-row">
+        <div class="exp-label">Key insight</div>
+        <div class="exp-value">
+          Physics integrates gimbal rate <strong>one tick at a time</strong>.
+          Guidance replaces the rate every snapshot. So a "2-tick pipeline"
+          only needs to compute the rate that lands gimbal on target
+          <em>at the next tick</em> — predicting two ticks ahead and issuing
+          a rate for tick N+2 caused repeated overshoot/undershoot because
+          the rate was overwritten before it finished acting.
+        </div>
+      </div>
+      <div class="exp-row">
+        <div class="exp-label">Approach</div>
+        <div class="exp-value">
+          <pre><span class="cmt">// current tick N</span>
+g_N = current gimbal angle
+g_N1 = g_N + R_N·dt                       <span class="cmt">// committed</span>
+S_N1 = predict(S_N, gimbal = g_N1)
+τ_drag_N1 = derive(S_N1).torqueDrag
+
+<span class="cmt">// Solve gimbal torque: A·cos(g) + B·sin(g) = −τ_drag_N1</span>
+g_req = asin(−τ_drag_N1 / R_amp) − φ
+g_req = clamp(g_req, ±GIMBAL_MAX_DEG)
+
+<span class="cmt">// Rate so gimbal lands on g_req at N+1</span>
+R_cmd = clamp((g_req − g_N)/dt, ±GIMBAL_RATE_DEG_S)
+send(setGimbalRate(R_cmd))</pre>
+        </div>
+      </div>
+      <div class="exp-row">
+        <div class="exp-label">Result</div>
+        <div class="exp-value">
+          <strong>Rock solid.</strong> Total torque held at
+          <strong>100–150 N·m</strong> at low altitude, then as the rocket
+          climbed and drag faded, held steady at <strong>1 N·m for over a
+          minute</strong>. Attitude never drifted more than a fraction of a
+          degree. No RCS, no propellant waste.
+        </div>
+      </div>
+      <div class="exp-row">
+        <div class="exp-label">Why it works</div>
+        <div class="exp-value">
+          <ul>
+            <li>Gimbal is <strong>continuous</strong> — one rate command
+              integrates smoothly within the tick. No pulsed duty-cycle
+              timing mismatch like RCS.</li>
+            <li>Prediction is exact (proven by <code>predictVerifier</code>),
+              so the solved g_req matches the actual torque requirement.</li>
+            <li>1-tick horizon correctly matches the pipeline: predict,
+              solve, command — all in the same tick, gimbal ready by next.</li>
+            <li>Angle and rate clamps handled gracefully; saturation simply
+              caps the achievable torque rather than destabilising.</li>
+          </ul>
+        </div>
+      </div>
+      <div class="tags">
+        <span class="tag">continuous-actuator</span>
+        <span class="tag">predictive-solve</span>
+        <span class="tag">1-tick-horizon</span>
+        <span class="tag">accurate</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="section-header">Lessons That Survived Every Iteration</div>
+
+  <div class="exp">
+    <div class="exp-body">
+      <div class="exp-row">
+        <div class="exp-label">Actuator choice</div>
+        <div class="exp-value">
+          Continuous actuators (gimbal) are easier to control precisely than
+          pulsed/duty-cycle actuators (RCS). Latency is baked into RCS at the
+          hardware level; gimbal integrates smoothly.
+        </div>
+      </div>
+      <div class="exp-row">
+        <div class="exp-label">Horizon</div>
+        <div class="exp-value">
+          A control horizon must match the actuator's actual integration
+          step. Predicting 2 ticks ahead when the rate gets overwritten
+          every tick just causes oscillation. 1-tick pipeline is correct
+          for the current architecture.
+        </div>
+      </div>
+      <div class="exp-row">
+        <div class="exp-label">Prediction &gt; feedback</div>
+        <div class="exp-value">
+          Once prediction is verified accurate, feedforward-solve beats
+          PID for this problem. PID's job was to mask the deeper problem
+          (model mismatch); with a correct model, PID has nothing left to do.
+        </div>
+      </div>
+      <div class="exp-row">
+        <div class="exp-label">Diagnose before tuning</div>
+        <div class="exp-value">
+          Five failures were spent tuning PID gains while the actual culprit
+          was either sign conventions, horizon mismatch, or actuation latency.
+          <code>predictVerifier</code> should have come first.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer">
+    Rocket Sim · Guidance Experiment Log<br>
+    Entries reflect the state of the guidance module as of the latest
+    session. Each card documents what was tried, what happened, and why.
+  </div>
+
+</div>
+</body>
+</html>

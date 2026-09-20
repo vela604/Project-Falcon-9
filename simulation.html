@@ -103,11 +103,16 @@
           <div class="tele-row"><span class="tele-sym">slosh</span><span class="tele-val" id="t-slosh">0</span></div>
           <div class="tele-row"><span class="tele-sym">I</span><span class="tele-val" id="t-moi">0</span></div>
         </div>
-        <div class="tele-head" style="margin-top:10px;">BODIES</div>
-        <div id="t-bodyList" class="tele-body-list"></div>
-      </div>
-      
-      <!-- Bottom control cluster -->
+          <div class="tele-head" style="margin-top:10px;">BODIES</div>
+  <div id="t-bodyList" class="tele-body-list"></div>
+  </div>
+  
+  <!-- Direction / wind HUD — top-center. Local view only -->
+  <div id="directionHUD">
+    <canvas id="directionCanvas"></canvas>
+  </div>
+  
+  <!-- Bottom control cluster -->
       <div id="bottomControls">
         <div class="bc-inner">
           <div id="slidersLeft" class="slider-rack"></div>
@@ -290,13 +295,47 @@
 </div>
             
           </div>
-          <button id="leftToolbarToggle" class="lt-handle" title="Toggle tools">›</button>
+                 <button id="leftToolbarToggle" class="lt-handle" title="Toggle tools">›</button>
         </div>
-      </div>
-      
-      
-    </div>
-  </div>
+        </div>
+        
+        <!-- ===================== Right toolbar — guidance ===================== -->
+        <div id="rightToolbar">
+          <div class="rt-wrapper">
+            <button id="rightToolbarToggle" class="rt-handle" title="Toggle guidance">‹</button>
+            <div class="rt-content">
+              <div class="rt-section">
+                <label class="rt-label" for="guideSelect">Guidance</label>
+                <select id="guideSelect" class="rt-select">
+  <option value="">(none)</option>
+  <option value="testGuide">✗ Test — Torque Balance</option>
+  <option value="predictiveTorque">✗ Predictive Torque Cancel</option>
+  <option value="predictivePlus">✗ Predictive + PID</option>
+  <option value="predictivePlusAoA">~ Predictive + PID + AoA Impulse — success, not practical</option>
+  <option value="predictivePlusAoAPush">✗ Predictive + PID + AoA + East Push</option>
+  <option value="predictVerifier">ⓘ Verify: Prediction Accuracy — diagnostic tool</option>
+  <option value="gimbalPredictive2">✓ Gimbal: 2-tick Predictive — FIRST ACCURATE WIN</option>
+</select>
+              </div>
+              <div class="rt-sep"></div>
+              <div class="rt-section rt-row">
+                <button class="rt-btn rt-btn-start" id="btnGuideStart">▶ Start</button>
+                <button class="rt-btn rt-btn-stop" id="btnGuideStop">■ Stop</button>
+              </div>
+              <div class="rt-sep"></div>
+              <div class="rt-status">
+                <div class="rt-status-row"><span>Status</span><span id="guideStatusText">—</span></div>
+                <div class="rt-status-row"><span>Ticks</span><span id="guideStatusTicks">0</span></div>
+                <div class="rt-status-row"><span>Target τ</span><span id="guideStatusTarget">0</span></div>
+                <div class="rt-status-row"><span>Achieved</span><span id="guideStatusAchieved">0</span></div>
+                <div class="rt-status-row"><span>Fires</span><span id="guideStatusFires">0</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        
+        </div>
+        </div>
   
   <!-- ============================================================
      Script load order — worker architecture

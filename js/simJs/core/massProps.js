@@ -191,7 +191,7 @@ function sloshMassCentroidFrac(hOverR) {
 // legsProgress is applied ONLY to the bottom member (see stackMassProps) —
 // upper members' legs are cosmetically stowed.
 // ---------------------------------------------------------------------------
-function memberComponents(rec, memberFuelMass, legsProgress, aboveMember, sloshOffset) {
+function memberComponents(rec, memberFuelMass, legsProgress, aboveMember, sloshOffset, frozenInterstage) {
   const out = [];
   if (!rec) return out;
   const role = rec.stageRole || 'rocket';
@@ -233,10 +233,10 @@ function memberComponents(rec, memberFuelMass, legsProgress, aboveMember, sloshO
   let bodyMass = 0,
     bodyH = H;
   if (role === 'booster') {
-    const d = boosterDerivedMasses(rec, aboveMember);
-    bodyMass = d ? d.bodyMass : 0;
-    if (rec.fuel && Number.isFinite(rec.fuel.tankHeight)) bodyH = rec.fuel.tankHeight;
-    // BUG #4 FIX: the interstage (black cylinder at the booster's top,
+  const d = boosterDerivedMasses(rec, aboveMember, frozenInterstage);
+  bodyMass = d ? d.bodyMass : 0;
+  if (rec.fuel && Number.isFinite(rec.fuel.tankHeight)) bodyH = rec.fuel.tankHeight;
+  // BUG #4 FIX: the interstage (black cylinder at the booster's top,
     // sized off whatever's actually stacked above it) was computed by
     // fleet.js and folded into the Fleet-page dry-mass display, but never
     // turned into an actual physics component here — so the simulator's
@@ -509,6 +509,13 @@ function combineComponents(components) {
 function stackMassProps(members, fuelMassTotal, legsProgress, payloadMass, sloshOffset) {
   members = members || [];
   
+  // Look up the active stack's frozen derived values so booster interstage
+  // mass/height don't drift when the stack detaches during flight. The
+  // physics worker has getActiveStack() (from fleet.js) available.
+  const _stk = (typeof getActiveStack === 'function') ? getActiveStack() : null;
+  const frozenInterstageMap = (_stk && _stk.derived && _stk.derived.interstage) ?
+    _stk.derived.interstage : {};
+  
   // Single pass instead of map+reduce+map — same numbers, fewer array
   // allocations/traversals (this runs every physics substep).
   const maxFuels = new Array(members.length);
@@ -524,13 +531,15 @@ function stackMassProps(members, fuelMassTotal, legsProgress, payloadMass, slosh
   let yOffset = 0;
   let payloadSpaceComY = null;
   members.forEach((m, i) => {
-    const progress = (i === 0) ? (legsProgress || 0) : 0;
-    const memberFuel = sumMax > 0 ? fuelTotal * (maxFuels[i] / sumMax) : 0;
-    // Phase 2A: only the BOTTOM member (i === 0) ever gets a nonzero slosh
-    // offset passed through — see prompt_2phase.md §2A "only the bottom
-    // tank matters".
-    const comps = memberComponents(m, memberFuel, progress, members[i + 1] || null, i === 0 ? sloshOffset : undefined);
-    comps.forEach(c => {
+        const progress = (i === 0) ? (legsProgress || 0) : 0;
+        const memberFuel = sumMax > 0 ? fuelTotal * (maxFuels[i] / sumMax) : 0;
+        // Only boosters have a stack-derived interstage; other member types
+        // ignore this field (memberComponents only reads it on the booster path).
+        const frozenInterstage = frozenInterstageMap[m.id] || null;
+        // Phase 2A: only the BOTTOM member (i === 0) ever gets a nonzero slosh
+        // offset passed through — see prompt_2phase.md §2A "only the bottom
+        // tank matters".
+        const comps = memberComponents(m, memberFuel, progress, members[i + 1] || null, i === 0 ? sloshOffset : undefined, frozenInterstage);    comps.forEach(c => {
       // comps are freshly built by memberComponents() every call and never
       // shared/cached elsewhere, so mutating in place (instead of spreading
       // into a new object) is safe and skips one allocation per component.

@@ -265,6 +265,8 @@ const GuidanceBridge = {
         console.error('[bridge] stack:', msg.stack);
       } else if (msg.type === 'workerError') {
   console.error('[bridge] guidance worker runtime error:', msg.message, msg.stack);
+} else if (msg.type === 'guideStatus') {
+  if (typeof onGuidanceStatus === 'function') onGuidanceStatus(msg.status);
 } else if (msg.type === 'ready') {
         this.ready = true;
         const q = this.pendingMessages;
@@ -305,13 +307,20 @@ const GuidanceBridge = {
 // "trimmed" now implies (see Issue 1 below) — kept the same delivery
 // mechanism, just a richer payload per tick.
 let _lastGuidanceSnapshotAt = 0;
-const GUIDANCE_SNAPSHOT_INTERVAL_MS = 50; // ~20 Hz
+// 0 disables throttling. Physics worker fires ~80 Hz on its own clock;
+// forward every snapshot 1-to-1 so guidance ticks exactly track physics
+// ticks. Any nonzero throttle here runs on the MAIN thread's wall clock,
+// which is independent of the physics tick clock — the mismatch was
+// duplicating and skipping snapshots (diagnostic showed roughly half of
+// comparisons were 0-tick or 2-tick gaps rather than clean 1-tick ones).
+const GUIDANCE_SNAPSHOT_INTERVAL_MS = 0;
 
 function maybeForwardGuidanceSnapshot() {
   if (!GuidanceBridge.ready) return;
   const now = (typeof performance !== 'undefined') ? performance.now() : Date.now();
-  if (now - _lastGuidanceSnapshotAt < GUIDANCE_SNAPSHOT_INTERVAL_MS) return;
-  _lastGuidanceSnapshotAt = now;
+if (GUIDANCE_SNAPSHOT_INTERVAL_MS > 0 &&
+  now - _lastGuidanceSnapshotAt < GUIDANCE_SNAPSHOT_INTERVAL_MS) return;
+_lastGuidanceSnapshotAt = now;
   
   // isActive below reflects state.activeBodyIndex — the physics worker's
   // single source of truth — NOT the body's own `isActive` field. Derived
@@ -455,21 +464,35 @@ function _collectStackDataForGuidance() {
     }
   }
   
-  return {
-    members: members.map(_stripFns),
-    types,
-    stackPayloadMass,
-    env: {
+  // Active stack's frozen derived values (interstage sizing, etc.) —
+// guidance's derivation.js reads these instead of recomputing, so its
+// mass props stay in lockstep with physics whether the stack is
+// attached, separating, or fully detached.
+const activeStk = (typeof getActiveStack === 'function') ? getActiveStack() : null;
+const derived = (activeStk && activeStk.derived) ? activeStk.derived : null;
+
+return {
+  members: members.map(_stripFns),
+  types,
+  stackPayloadMass,
+  derived,
+  env: {
       EARTH_RADIUS: CONFIG.EARTH_RADIUS,
       GM_EARTH: CONFIG.GM_EARTH,
       EARTH_OMEGA: CONFIG.EARTH_OMEGA,
       LAUNCH_SITE_ALTITUDE: CONFIG.LAUNCH_SITE_ALTITUDE,
       LAUNCH_SITE_ANGLE_0: CONFIG.LAUNCH_SITE_ANGLE_0,
-      G0: (typeof G0 !== 'undefined') ? G0 : 9.80665,
-      SEA_LEVEL_DENSITY: CONFIG.SEA_LEVEL_DENSITY,
-      SCALE_HEIGHT: CONFIG.SCALE_HEIGHT,
-      DRAG_CD: CONFIG.DRAG_CD,
-    },
+          G0: (typeof G0 !== 'undefined') ? G0 : 9.80665,
+    SEA_LEVEL_DENSITY: CONFIG.SEA_LEVEL_DENSITY,
+    SCALE_HEIGHT: CONFIG.SCALE_HEIGHT,
+    DRAG_CD: CONFIG.DRAG_CD,
+    // Physics tick period. Needed by guidance to predict next-tick
+    // state (position/velocity/attitude extrapolation).
+    DT: CONFIG.DT,
+    // Gimbal envelope — guidance clamps to the same limits physics does.
+    GIMBAL_MAX_DEG: CONFIG.GIMBAL_MAX_DEG,
+    GIMBAL_RATE_DEG_S: CONFIG.GIMBAL_RATE_DEG_S,
+  },
   };
 }
 

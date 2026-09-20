@@ -1117,3 +1117,177 @@ function drawWindCompass() {
     c.fill();
   }
 }
+
+// ============================================================================
+// Direction / wind HUD — top-center overlay.
+//
+// Shows the NET apparent wind relative to the GROUND (earth-fixed
+// atmosphere), not the rocket:
+//
+//   atmosphere at altitude r   : ω·r        (east, in local frame)
+//   earth surface at R_earth   : ω·R_earth  (east, in local frame)
+//   net co-rotation excess     : ω·(r − R_earth) = ω · altitude
+//
+//   USER wind adds its own local east/up components on top.
+//
+//   NET = co-rotation excess + user wind
+//
+// Rocket velocity is NOT involved. What the arrow shows is "how fast is
+// the air at this altitude moving eastward compared to the ground" —
+// small at low altitude (2.9 m/s at 40 km), significant up high
+// (14.6 m/s at 200 km, 29 m/s at 400 km).
+// ============================================================================
+let _dirHudCtx = null;
+
+function drawDirectionHUD() {
+  const canvas = document.getElementById('directionCanvas');
+  if (!canvas) return;
+  const hud = document.getElementById('directionHUD');
+  if (!hud) return;
+  
+  const isPlanet = (typeof camera !== 'undefined' && camera.mode === 'planet');
+  hud.style.display = isPlanet ? 'none' : '';
+  if (isPlanet) return;
+  
+  if (!_dirHudCtx) _dirHudCtx = canvas.getContext('2d');
+  const ctx = _dirHudCtx;
+  
+  const dpr = window.devicePixelRatio || 1;
+  const cssW = canvas.clientWidth || 170;
+  const cssH = canvas.clientHeight || 106;
+  if (canvas.width !== Math.round(cssW * dpr) || canvas.height !== Math.round(cssH * dpr)) {
+    canvas.width = Math.round(cssW * dpr);
+    canvas.height = Math.round(cssH * dpr);
+  }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const w = cssW, h = cssH;
+  ctx.clearRect(0, 0, w, h);
+  
+  // --- Compute net wind (ground-relative) ---
+  const followIdx = (typeof _cameraTargetIndex === 'function')
+    ? _cameraTargetIndex() : state.activeBodyIndex;
+  const b = state.bodies ? state.bodies[followIdx] : null;
+  
+  let coRotE = 0;              // co-rotation excess (east)
+  let userE = 0, userU = 0, userMag = 0;
+  let netE = 0, netU = 0, netMag = 0, netDirDeg = 0;
+  
+  if (b) {
+    const r = Math.hypot(b.rx, b.ry);
+    if (r > 1) {
+      const urx = b.rx / r, ury = b.ry / r;
+      const eax = b.ry / r, eay = -b.rx / r;
+      
+      // Co-rotation excess at this altitude
+      const altASL = r - CONFIG.EARTH_RADIUS;
+      coRotE = CONFIG.EARTH_OMEGA * altASL;
+      
+      // User wind in local frame
+      const wInert = (typeof windInertialVector === 'function')
+        ? windInertialVector(b.rx, b.ry) : { wx: 0, wy: 0 };
+      userE = wInert.wx * eax + wInert.wy * eay;
+      userU = wInert.wx * urx + wInert.wy * ury;
+      userMag = Math.hypot(userE, userU);
+      
+      netE = coRotE + userE;
+      netU = userU;
+      netMag = Math.hypot(netE, netU);
+      netDirDeg = netMag > 0.01 ? Math.atan2(netU, netE) * 180 / Math.PI : 0;
+    }
+  }
+  
+  // --- Compass frame ---
+  const cx = w / 2;
+  const cy = h * 0.36;
+  const R = Math.min(w, h * 1.2) * 0.22;
+  
+  ctx.strokeStyle = 'rgba(150,200,255,0.28)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(cx - R - 8, cy); ctx.lineTo(cx + R + 8, cy);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(cx, cy - R - 4); ctx.lineTo(cx, cy + R + 4);
+  ctx.stroke();
+  
+  ctx.beginPath();
+  ctx.moveTo(cx - R - 8, cy - 3); ctx.lineTo(cx - R - 8, cy + 3);
+  ctx.moveTo(cx + R + 8, cy - 3); ctx.lineTo(cx + R + 8, cy + 3);
+  ctx.moveTo(cx - 3, cy - R - 4); ctx.lineTo(cx + 3, cy - R - 4);
+  ctx.moveTo(cx - 3, cy + R + 4); ctx.lineTo(cx + 3, cy + R + 4);
+  ctx.stroke();
+  
+  ctx.fillStyle = 'rgba(150,200,255,0.75)';
+  ctx.font = 'bold 10px "JetBrains Mono", monospace';
+  ctx.textBaseline = 'middle';
+  ctx.textAlign = 'center';
+  ctx.fillText('W', cx - R - 16, cy);
+  ctx.fillText('E', cx + R + 16, cy);
+  ctx.font = '9px "JetBrains Mono", monospace';
+  ctx.fillText('U', cx, cy - R - 11);
+  ctx.fillText('D', cx, cy + R + 12);
+  
+  // --- User wind arrow (dotted, only if user wind on) ---
+  if (wind.enabled && wind.speed > 0 && userMag > 0.1) {
+    const nE = userE / userMag, nU = userU / userMag;
+    const uLen = R * 0.65;
+    ctx.strokeStyle = 'rgba(255,210,120,0.7)';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([3, 3]);
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.lineTo(cx + nE * uLen, cy - nU * uLen);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+  
+  // --- Net wind arrow ---
+  if (netMag > 0.05) {
+    // Auto-scale so a small co-rot-only wind still reads visibly.
+    // Full arrow length for anything ≥ 5 m/s, linear below that.
+    const scale = Math.min(1, Math.max(0.15, netMag / 5));
+    const arrowLen = R * (0.35 + 0.65 * scale);
+    const nE = netE / netMag, nU = netU / netMag;
+    const tipX = cx + nE * arrowLen;
+    const tipY = cy - nU * arrowLen;
+    
+    ctx.strokeStyle = '#ff5f7e';
+    ctx.lineWidth = 2.5;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.lineTo(tipX, tipY);
+    ctx.stroke();
+    
+    const ang = Math.atan2(-nU, nE);
+    const headLen = 8;
+    const spread = 0.5;
+    ctx.fillStyle = '#ff5f7e';
+    ctx.beginPath();
+    ctx.moveTo(tipX, tipY);
+    ctx.lineTo(tipX - headLen * Math.cos(ang - spread), tipY - headLen * Math.sin(ang - spread));
+    ctx.lineTo(tipX - headLen * Math.cos(ang + spread), tipY - headLen * Math.sin(ang + spread));
+    ctx.closePath();
+    ctx.fill();
+  }
+  
+  // Center dot
+  ctx.fillStyle = 'rgba(200,220,255,0.75)';
+  ctx.beginPath();
+  ctx.arc(cx, cy, 2.2, 0, Math.PI * 2);
+  ctx.fill();
+  
+  // --- Readouts ---
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+  
+  const netTxt = `NET  ${netMag.toFixed(1)} m/s  ·  ${(netMag * 3.6).toFixed(0)} km/h  ·  ${Math.round(netDirDeg)}°`;
+  ctx.fillStyle = netMag > 0.05 ? 'rgba(255,150,180,0.95)' : 'rgba(150,160,180,0.55)';
+  ctx.font = '9.5px "JetBrains Mono", monospace';
+  ctx.fillText(netTxt, cx, cy + R + 12);
+  
+  const subTxt = `CO-ROT ${coRotE.toFixed(1)}  +  USER ${userMag.toFixed(1)}`;
+  ctx.fillStyle = (userMag > 0.1) ? 'rgba(255,210,120,0.85)' : 'rgba(150,170,200,0.7)';
+  ctx.font = '8.5px "JetBrains Mono", monospace';
+  ctx.fillText(subTxt, cx, cy + R + 25);
+}

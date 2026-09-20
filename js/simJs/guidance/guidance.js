@@ -1,844 +1,1380 @@
 // ============================================================================
-// guidance.js — Phase 3 scaffold. Runs inside guidance.worker.js, imported
-// AFTER imu.js (so measure()/setEnabled() below are already global in this
-// worker's scope — importScripts shares one global, not modules).
+// guidance.js — Guidance worker orchestrator.
 //
-// PHASE 3: no control law. This file's job in this phase is the
-// INTERFACE — receiving snapshots, applying (or not) IMU error, and giving
-// Phase 4 a single place (Guidance.tick) to drop a real algorithm into,
-// plus a full set of command-builder helpers so that drop-in doesn't also
-// have to invent the wire format.
+// Responsibilities (deliberately minimal):
+//   - Boot: receive stack data from main thread, hand to Derivation.
+//   - IMU: toggle on/off, funnel raw snapshots through measure().
+//   - tick(): called once per snapshot with the (optionally IMU-errored)
+//     state. Empty placeholder for now — a real control law drops in here.
+//   - Command builders: shape outgoing messages to the physics worker.
 //
-// Isolation note: this file must never reference `state`, `CONFIG`,
-// `getComponentType`, or anything else from the physics side. It can't —
-// none of those scripts are in this worker's importScripts list (see
-// guidance.worker.js) — so a stray reference here throws a ReferenceError
-// immediately rather than silently reaching into physics. That's the
-// enforcement mechanism the spec asks for; nothing in this file "helps"
-// enforce it, the worker boundary does.
+// Everything heavy is in sibling modules:
+//   - derivation.js  → Derivation.* : mass props, per-member aero, kinematics
+//   - guidercs.js    → GuideRCS.*   : torque-driven RCS distribution
+//
+// Both are globals once guidance.worker.js importScripts's them, and both
+// are deliberately excluded from touching anything physics-side. This file
+// is the ONLY place that knows how to talk to the physics worker (via
+// send()/cmd* builders); the algorithms above just produce data.
 // ============================================================================
 
 const Guidance = (function () {
-  let _physicsSend = null; // (msg) => void, wired by guidance.worker.js once the physics MessagePort connects
-  let _lastRawSnapshot = null; // most recent snapshot exactly as received (pre-IMU)
-  let _lastMeasuredSnapshot = null; // what tick()/the future control law actually sees
-  
-  // One-time boot handoff from main thread. Contains:
-  //   members[]         — this stack's member records (functions stripped),
-  //                       bottom → top, same order as the physics body's
-  //                       own members[] field
-  //   types{id → obj}   — every hardware type those members reference
-  //                       (functions stripped)
-  //   stackPayloadMass  — cargo mass, 0 if none assigned
-  //   env               — EARTH_RADIUS, GM_EARTH, EARTH_OMEGA, G0,
-  //                       SEA_LEVEL_DENSITY, SCALE_HEIGHT, DRAG_CD,
-  //                       LAUNCH_SITE_ALTITUDE, LAUNCH_SITE_ANGLE_0
-  // Guidance derives every mass property (dry mass, COM, I, tank
-  // geometry, slosh fractions) itself from this data — nothing is
-  // pre-computed on the main thread side.
-  let _stackData = null;
+  let _physicsSend = null;      // (msg) => void, wired by guidance.worker.js
+  let _lastRawSnapshot = null;  // most recent snapshot exactly as received
+  let _lastMeasuredSnapshot = null; // post-IMU copy handed to tick()
   
   function init(physicsSendFn) {
     _physicsSend = physicsSendFn;
   }
   
-  function setStackData(data) { _stackData = data; }
-  function getStackData() { return _stackData; }
-  function getMemberRecord(idx) {
-    return (_stackData && _stackData.members) ? _stackData.members[idx] : null;
-  }
-  function getTypeById(id) {
-    return (_stackData && _stackData.types && _stackData.types[id]) ? _stackData.types[id] : null;
-  }
-  function getEnv() {
-    return _stackData ? _stackData.env : null;
-  }
-  function getStackPayloadMass() {
-  return _stackData ? (_stackData.stackPayloadMass || 0) : 0;
-}
-
-// ============================================================
-// DERIVATION MODULE
-//
-// Everything guidance can compute ITSELF from the snapshot + the
-// one-time stack data. Nothing here is pre-computed on main thread;
-// guidance is fully self-sufficient.
-//
-// Conventions (same as physics internally):
-//   - Position/velocity: inertial (Earth-centered, non-rotating)
-//   - theta: inertial body-axis angle; nose direction is (-sinθ, cosθ)
-//   - Body-local frame: origin at base center, +X right, +Y toward nose
-//   - Member-local comY: from that member's own base, +Y up-stack
-//   - Stack comY: from the STACK base (lowest attached member's base)
-// ============================================================
-
-const _SLOSH_LAMBDA1 = 1.841;
-const _INTERSTAGE_DENSITY = 1600; // matches fleet.js
-const _BODY_SHELL_FACTOR_NOSE = 0.0165; // matches componentLibrary.js for nose mass
-
-// ---- Env accessor with fallback ----
-function _envNum(key, fallback) {
-  const e = getEnv();
-  return (e && Number.isFinite(e[key])) ? e[key] : fallback;
-}
-
-// ---- Inertia helpers (matching massProps.js) ----
-function _cylI(m, r, h) { return 0.5 * m * r * r + (1 / 12) * m * h * h; }
-function _coneI(m, r, h) { return (3 / 20) * m * r * r + (3 / 80) * m * h * h; }
-function _rodI(m, L) { return (1 / 12) * m * L * L; }
-
-// ---- Type parameter lookup ----
-function _typeParam(type, key) {
-  if (!type || !Array.isArray(type.parameterSchema)) return undefined;
-  const e = type.parameterSchema.find(p => p.key === key);
-  return e ? e.value : undefined;
-}
-
-// ---- Abramson slosh fraction (matches massProps.js) ----
-function _sloshMassFraction(hOverR) {
-  if (!Number.isFinite(hOverR) || hOverR <= 0) return 0.27;
-  const x = _SLOSH_LAMBDA1 * hOverR;
-  const f = (x < 1e-6) ? 1 : Math.tanh(x) / x;
-  return Number.isFinite(f) ? Math.min(1, Math.max(0, f)) : 0.27;
-}
-function _sloshCentroidFrac(hOverR) {
-  if (!Number.isFinite(hOverR) || hOverR <= 0) return 0.5;
-  const x = _SLOSH_LAMBDA1 * hOverR;
-  if (x < 1e-3) return 0.5;
-  if (x > 30) return 1;
-  const f = 1 - (Math.cosh(x) - 1) / (x * Math.sinh(x));
-  return Number.isFinite(f) ? Math.min(1, Math.max(0.5, f)) : 0.5;
-}
-
-// ---- Parallel-axis aggregation (matches massProps.js) ----
-function _combine(components) {
-  let M = 0, sumX = 0, sumY = 0;
-  (components || []).forEach(c => {
-    M += c.mass || 0;
-    sumX += (c.mass || 0) * (c.comX || 0);
-    sumY += (c.mass || 0) * (c.comY || 0);
-  });
-  const comX = M > 0 ? sumX / M : 0;
-  const comY = M > 0 ? sumY / M : 0;
-  let I = 0;
-  (components || []).forEach(c => {
-    const dx = (c.comX || 0) - comX;
-    const dy = (c.comY || 0) - comY;
-    I += (c.iOwn || 0) + (c.mass || 0) * (dx * dx + dy * dy);
-  });
-  return { M, comX, comY, I };
-}
-
-// ---- Max fuel a member can hold ----
-function _memberMaxFuel(rec, aboveRec) {
-  if (!rec) return 0;
-  const role = rec.stageRole || 'rocket';
-  if (role === 'nose' || role === 'payloadSpace') return 0;
-  if (role === 'booster' || role === 'stage') {
-    const t = rec.fuel;
-    if (!t) return 0;
-    const fuelType = getTypeById(t.typeId);
-    if (!fuelType) return 0;
-    const density = _typeParam(fuelType, 'propellantDensity');
-    if (!Number.isFinite(density)) return 0;
-    const tankH = Number.isFinite(t.tankHeight) ? t.tankHeight : 0;
-    const tankW = Number.isFinite(t.tankWidth) ? t.tankWidth : 0;
-    const volume = Math.PI * (tankW / 2) ** 2 * tankH;
-    return volume * density;
-  }
-  return Number.isFinite(rec.fuelMassMax) ? rec.fuelMassMax : 0;
-}
-
-// ---- Booster interstage sizing helper ----
-// Bell height of the member above, from ITS total engine mass flow /
-// total slots. Uses angleDeg-based positions (data, not the stripped
-// position() function) so nothing here depends on re-importing formulas.
-function _stageAboveBellHeight(aboveRec) {
-  if (!aboveRec || !aboveRec.engineTypeId) return 0;
-  const layout = getTypeById(aboveRec.engineTypeId);
-  if (!layout || !layout.frame || !Array.isArray(layout.frame.slots)) return 0;
-  const slotCount = layout.frame.slots.length;
-  if (!slotCount) return 0;
-  let totalFlow = 0;
-  if (aboveRec.engineThrusters) {
-    Object.keys(aboveRec.engineThrusters).forEach(gk => {
-      const g = aboveRec.engineThrusters[gk];
-      if (!g || !Number.isFinite(g.massFlowRate)) return;
-      const isG = (gk === 'gimbal');
-      const count = layout.frame.slots.filter(s => !!s.gimbalCapable === isG).length;
-      totalFlow += g.massFlowRate * count;
-    });
-  }
-  return 0.007 * (totalFlow / slotCount);
-}
-
-// ---- Engine components for a member (aggregated per group) ----
-function _engineComponents(rec) {
-  const out = [];
-  if (!rec.engineTypeId || !rec.engineThrusters) return out;
-  const layout = getTypeById(rec.engineTypeId);
-  if (!layout || !layout.frame || !Array.isArray(layout.frame.slots)) return out;
-  const G0 = _envNum('G0', 9.80665);
-  const R = (rec.params && Number.isFinite(rec.params.octaRadius)) ? rec.params.octaRadius : 1.7;
+  // Forwarding stubs for boot-time stack data. Actual storage and all
+  // accessors live in derivation.js, which owns the raw records and the
+  // formulas that consume them.
+  function setStackData(data) { Derivation.setStackData(data); }
+  function getStackData() { return Derivation.getStackData(); }
   
-  let totalMass = 0, sumXmass = 0;
-  layout.frame.slots.forEach(slot => {
-    const gk = slot.gimbalCapable ? 'gimbal' : 'fixed';
-    const g = rec.engineThrusters[gk];
-    if (!g) return;
-    const t = getTypeById(g.thrusterTypeId);
-    if (!t) return;
-    const ve = _typeParam(t, 've');
-    const twr = _typeParam(t, 'twr');
-    if (!Number.isFinite(ve) || !Number.isFinite(g.massFlowRate)) return;
-    const thrustPer = g.massFlowRate * ve;
-    const massPer = (Number.isFinite(twr) && twr > 0) ? thrustPer / (twr * G0) : 0;
-    const posX = (slot.angleDeg === null || slot.angleDeg === undefined)
-      ? 0
-      : R * Math.cos(slot.angleDeg * Math.PI / 180);
-    totalMass += massPer;
-    sumXmass += massPer * posX;
-  });
-  if (totalMass > 0) {
-    out.push({ label: 'engines', mass: totalMass, comX: sumXmass / totalMass, comY: 0, iOwn: 0 });
-  }
-  return out;
-}
-
-// ---- Landing leg components (live position with legs progress) ----
-function _legComponents(rec, legsProgress) {
-  const out = [];
-  if (rec.hasRecovery === false) return out;
-  const recoveryType = getTypeById(rec.recoveryTypeId);
-  if (!recoveryType || recoveryType.kind !== 'legsOnVehicle') return out;
-  if (!recoveryType.capabilities || !recoveryType.capabilities.deploysOnVehicle) return out;
-  
-  const H = Number.isFinite(rec.height) ? rec.height : 0;
-  const W = Number.isFinite(rec.width) ? rec.width : 0;
-  // Legs anchor to the TANK, not the whole member — matches
-  // fleet.js/massProps.js which pass tankHeight into leg structuralVolume.
-  const bodyH_forLegs = (rec.fuel && Number.isFinite(rec.fuel.tankHeight)) ?
-    rec.fuel.tankHeight : H;
-  
-  // Leg geometry — same placeholder formulas the swingout type uses.
-  const hingeY = -bodyH_forLegs * 0.004;
-  const legLength = bodyH_forLegs * 0.27;
-  const maxSweepRad = 125 * Math.PI / 180;
-  const hingeLocalY = -hingeY; // member-local +Y up from base
-  const sweep = (legsProgress || 0) * maxSweepRad;
-  const tipLocalY = hingeLocalY + legLength * Math.cos(sweep);
-  const midLocalY = (hingeLocalY + tipLocalY) / 2;
-  
-  // Leg mass per leg — same structuralVolume formula.
-  const avgThickness = 0.065 * W;
-  const avgDepth = 0.04 * W;
-  const oneLegVolume = legLength * avgThickness * avgDepth;
-  const legsMetal = getTypeById(rec.legsMetalTypeId) || getTypeById(rec.bodyMetalTypeId);
-  const density = legsMetal ? (_typeParam(legsMetal, 'density') || 0) : 0;
-  const legMass = oneLegVolume * density;
-  
-  // X positions: front legs at ±W/2, back legs at ±0.375W.
-  const legXs = [-W / 2, W / 2, -W * 0.375, W * 0.375];
-  const count = Math.min(4, legXs.length);
-  for (let i = 0; i < count; i++) {
-    out.push({
-      label: 'leg' + i,
-      mass: legMass, comX: legXs[i], comY: midLocalY,
-      iOwn: _rodI(legMass, legLength),
-    });
-  }
-  return out;
-}
-
-// ---- Fuel components (bulk + slosh split, live) ----
-function _fuelComponents(rec, memberFuelMass, sloshOffset) {
-  const out = [];
-  if (!(memberFuelMass > 0)) return out;
-  const t = rec.fuel;
-  if (!t) return out;
-  const tankH = Number.isFinite(t.tankHeight) ? t.tankHeight : 0;
-  const tankW = Number.isFinite(t.tankWidth) ? t.tankWidth : 0;
-  if (!(tankH > 0) || !(tankW > 0)) return out;
-  
-  const maxFuel = _memberMaxFuel(rec, null);
-  const fillFrac = maxFuel > 0 ? Math.min(1, memberFuelMass / maxFuel) : 0;
-  const fuelH = fillFrac * tankH;
-  const r = tankW / 2;
-  const hOverR = r > 0 ? fuelH / r : 0;
-  
-  const sloshFrac = _sloshMassFraction(hOverR);
-  const sloshActive = Number.isFinite(sloshOffset) && sloshFrac > 1e-6 && sloshFrac < 1;
-  
-  if (sloshActive) {
-    const sloshMass = memberFuelMass * sloshFrac;
-    const bulkMass = memberFuelMass - sloshMass;
-    const sloshComY = _sloshCentroidFrac(hOverR) * fuelH;
-    out.push({ label: 'fuel-bulk', mass: bulkMass, comX: 0, comY: fuelH / 2, iOwn: _cylI(bulkMass, r, fuelH) });
-    out.push({ label: 'fuel-slosh', mass: sloshMass, comX: sloshOffset, comY: sloshComY, iOwn: _cylI(sloshMass, r, fuelH) });
-  } else {
-    out.push({ label: 'fuel', mass: memberFuelMass, comX: 0, comY: fuelH / 2, iOwn: _cylI(memberFuelMass, r, fuelH) });
-  }
-  return out;
-}
-
-// ---- All components of one member in its LOCAL frame (base = 0). ----
-function _memberComponents(rec, aboveRec, memberFuelMass, legsProgress, sloshOffset) {
-  const role = rec.stageRole || 'rocket';
-  const H = Number.isFinite(rec.height) ? rec.height : 0;
-  const W = Number.isFinite(rec.width) ? rec.width : 0;
-  const r = W / 2;
-  const out = [];
-  
-  // ---- Nose: solid cone ----
-  if (role === 'nose') {
-    const metal = getTypeById(rec.bodyMetalTypeId);
-    const density = metal ? (_typeParam(metal, 'density') || 0) : 0;
-    const coneVol = (1 / 3) * Math.PI * r * r * H;
-    const mass = coneVol * _BODY_SHELL_FACTOR_NOSE * density;
-    out.push({ label: 'nose', mass, comX: 0, comY: H / 4, iOwn: _coneI(mass, r, H) });
-    return out;
-  }
-  
-  // ---- PayloadSpace (standalone fairing): bulged cap shell ----
-  if (role === 'payloadSpace') {
-    const metal = getTypeById(rec.payloadSpaceMetalTypeId);
-    const density = metal ? (_typeParam(metal, 'density') || 0) : 0;
-    const p = rec.params || {};
-    const capH = p.capHeight || 0;
-    const capW = p.capWidth || 0;
-    const bulgeW = p.bulgeWidth || capW;
-    const rBulge = bulgeW / 2;
-    const coneH = capH * 0.4;
-    const cylH = capH * 0.6;
-    const coneSlant = Math.sqrt(rBulge * rBulge + coneH * coneH);
-    const lateralArea = Math.PI * rBulge * coneSlant + 2 * Math.PI * rBulge * cylH;
-    const shellFrac = Number.isFinite(rec.bodyShellFactor) ? rec.bodyShellFactor : 0.0026;
-    const vol = lateralArea * rBulge * shellFrac;
-    const mass = vol * density;
-    out.push({ label: 'payloadSpace', mass, comX: 0, comY: H / 2, iOwn: _cylI(mass, capW / 2, H) });
-    return out;
-  }
-  
-  // ---- Booster / Stage / Rocket: shell + interstage + engines + legs + fuel ----
-  let bodyMass = 0, bodyH = H, interstageMass = 0, interstageH = 0;
-  
-  if (role === 'booster' || role === 'stage') {
-    const t = rec.fuel || {};
-    const tankH = Number.isFinite(t.tankHeight) ? t.tankHeight : H;
-    const tankW = Number.isFinite(t.tankWidth) ? t.tankWidth : W;
-    const fuelType = getTypeById(t.typeId);
-    const metalType = getTypeById(rec.bodyMetalTypeId);
-    const fuelDensity = fuelType ? (_typeParam(fuelType, 'propellantDensity') || 0) : 0;
-    const metalDensity = metalType ? (_typeParam(metalType, 'density') || 0) : 0;
-    const shellF = Number.isFinite(rec.bodyShellFactor)
-      ? rec.bodyShellFactor
-      : (role === 'booster' ? 0.01797 : 0.0147);
-    const tankVol = Math.PI * (tankW / 2) ** 2 * tankH;
-    bodyMass = tankVol * shellF * metalDensity;
-    bodyH = tankH;
-    
-    if (role === 'booster') {
-      const bellH = _stageAboveBellHeight(aboveRec);
-      const ish = Math.max(bellH * 1.20, 0.06 * tankH);
-      const r_b = tankW / 2;
-      const shellThk = shellF * r_b;
-      interstageMass = 2 * Math.PI * r_b * shellThk * ish * _INTERSTAGE_DENSITY;
-      interstageH = ish;
-    }
-  } else {
-    bodyMass = Number.isFinite(rec.dryMass) ? rec.dryMass : 0;
-  }
-  
-  out.push({ label: 'body', mass: bodyMass, comX: 0, comY: bodyH / 2, iOwn: _cylI(bodyMass, r, bodyH) });
-  if (interstageMass > 0) {
-    out.push({
-      label: 'interstage', mass: interstageMass, comX: 0,
-      comY: bodyH - interstageH / 2,
-      iOwn: _cylI(interstageMass, r, interstageH),
-    });
-  }
-  
-  _engineComponents(rec).forEach(c => out.push(c));
-  _legComponents(rec, legsProgress).forEach(c => out.push(c));
-  _fuelComponents(rec, memberFuelMass, sloshOffset).forEach(c => out.push(c));
-  
-  return out;
-}
-
-// ---- Whole-stack mass properties (with fuel distribution) ----
-// bodySnapshot: a body from the guidance snapshot (has .members, .fuelMass,
-//   .legs, .slosh)
-// payloadMass: cargo mass currently riding on the stack (or 0)
-function _stackMassProps(bodySnapshot, payloadMass) {
-  const members = (bodySnapshot && bodySnapshot.members) || [];
-  if (!members.length) return null;
-  
-  const fuelTotal = bodySnapshot.fuelMass || 0;
-  const legsProgress = bodySnapshot.legs ? (bodySnapshot.legs.progress || 0) : 0;
-  const sloshOffset = bodySnapshot.slosh ? (bodySnapshot.slosh.offset || 0) : 0;
-  
-  const maxFuels = members.map((m, i) => _memberMaxFuel(m, members[i + 1] || null));
-  const sumMax = maxFuels.reduce((s, x) => s + x, 0);
-  
-  const all = [];
-let yOffset = 0;
-let payloadSpaceComY = null;
-let payloadSpaceIdx = -1;
-members.forEach((m, i) => {
-  const memberFuel = sumMax > 0 ? fuelTotal * (maxFuels[i] / sumMax) : 0;
-  const memberLegs = (i === 0) ? legsProgress : 0;
-  const memberSlosh = (i === 0) ? sloshOffset : 0;
-  const comps = _memberComponents(m, members[i + 1] || null, memberFuel, memberLegs, memberSlosh);
-  // Tag every component with its member index — this is what
-  // derive()'s per-member breakdown filters on. Window-based
-  // inference (comY in [cumY, cumY+H]) double-counted components
-  // sitting exactly on a member boundary (e.g. a stage's engines
-  // sit at stack-Y = booster top = stage base; they matched both
-  // the booster's window and the stage's window).
-  comps.forEach(c => all.push({ ...c, comY: c.comY + yOffset, _memberIdx: i }));
-  if (m.stageRole === 'payloadSpace') {
-    payloadSpaceComY = yOffset + (m.height || 0) / 2;
-    payloadSpaceIdx = i;
-  }
-  yOffset += (m.height || 0);
-});
-
-const cargo = Number.isFinite(payloadMass) ? payloadMass : 0;
-if (cargo > 0) {
-  const comY = payloadSpaceComY !== null ? payloadSpaceComY : yOffset;
-  all.push({
-    label: 'payloadCargo', mass: cargo, comX: 0, comY, iOwn: 0,
-    _memberIdx: payloadSpaceIdx >= 0 ? payloadSpaceIdx : (members.length - 1),
-  });
-}
-  
-  const combined = _combine(all);
-  return {
-    M: combined.M,
-    comX: combined.comX,
-    comY: combined.comY,
-    I: combined.I,
-    stackHeight: yOffset,
-    dryMass: Math.max(0, combined.M - fuelTotal),
-    fuelMass: fuelTotal,
-    payloadMass: cargo,
-    components: all,
-  };
-}
-
-// ---- Wind → inertial vector (matches environment.js) ----
-// ---- Body-own dimensions, mirroring physics's fallback path. ----
-// For a member-less body (fairing half, ejected package, released
-// payload), physics uses body.height/body.width — set at spawn time
-// by splitFairingOnActiveBody / releasePayloadOnActiveBody — instead
-// of a stack aggregate. Guidance's own COM/I/aero math needs the same
-// numbers or it will drift from what physics is actually flying.
-function _bodyHeightOf(body) {
-  if (body && body.members && body.members.length) {
-    return body.members.reduce((s, m) => s + (Number.isFinite(m.height) ? m.height : 0), 0);
-  }
-  return (body && Number.isFinite(body.height) && body.height > 0) ? body.height : 0;
-}
-function _bodyWidthOf(body) {
-  if (body && body.members && body.members.length) {
-    const bottom = body.members[0];
-    if (bottom && Number.isFinite(bottom.width)) return bottom.width;
-  }
-  return (body && Number.isFinite(body.width) && body.width > 0) ? body.width : 0;
-}
-
-// ---- Wind → inertial vector (matches environment.js) ----
-function _windInertial(rx, ry, wind) {
-  if (!wind || !wind.enabled || !wind.speed) return { wx: 0, wy: 0 };
-  const r = Math.hypot(rx, ry) || 1;
-  const upX = rx / r, upY = ry / r;
-  const eastX = upY, eastY = -upX;
-  const rad = (wind.directionDeg || 0) * Math.PI / 180;
-  const dirX = eastX * Math.cos(rad) + upX * Math.sin(rad);
-  const dirY = eastY * Math.cos(rad) + upY * Math.sin(rad);
-  return { wx: dirX * wind.speed, wy: dirY * wind.speed };
-}
-
-// ------------------------------------------------------------------
-// Per-member aerodynamic breakdown (COM + CoP + area share + drag).
-//
-// Physics's computeDragAero() distributes drag + normal force over every
-// member using that member's OWN presented area (nose-on circle blended
-// with broadside rectangle by |sin AoA|), and its own CP position
-// (tapered members blend nose-CP 0.9H → body-CP 0.5H via |sin AoA|;
-// straight cylinders use body-CP 0.5H). This mirrors that per-member,
-// then guidance can either aggregate (for trajectory work) or inspect
-// individually (for control-law decisions that care about one member).
-//
-// Values are returned in each member's LOCAL frame (base=0, +Y up), so
-// callers add their own cumulative height offset when they need stack-
-// frame coordinates.
-// ------------------------------------------------------------------
-const _AERO_CP_NOSE_FRAC = 0.90;
-const _AERO_CP_BODY_FRAC = 0.50;
-const _AERO_CP_NOSE_LINEAR_FRAC = 0.466;   // Barrowman ogive CP (small AoA)
-const _AERO_CNALPHA_NOSE = 2.0;            // Barrowman CNα, nose/taper
-const _AERO_CD_CROSSFLOW = 1.2;            // Allen-Perkins crossflow Cd
-
-function _memberAero(member, refWidth, rho, speedRel, sinAlpha) {
-  const H = Number.isFinite(member.height) ? member.height : 0;
-  const W = Number.isFinite(member.width) ? member.width : 0;
-  const isTapered = (member.stageRole === 'nose') || (member.stageRole === 'payloadSpace');
-  const wCross = Math.min(1, Math.abs(sinAlpha));
-  
-  // Presented area — nose-on circle blended to broadside rectangle.
-  const aAxial = Math.PI * (W / 2) ** 2;
-  const aSide = W * H;
-  const aEff = aAxial * (1 - wCross) + aSide * wCross;
-  
-  // Drag contribution (axial, magnitude only — direction is at body level).
-  const drag = (rho > 0 && speedRel > 1e-3)
-    ? 0.5 * rho * (getEnv() ? (getEnv().DRAG_CD || 0.6) : 0.6) * aEff * speedRel * speedRel
-    : 0;
-  
-  // CP position, local frame. Tapered members additionally have a
-  // Barrowman linear-regime CP (0.466 × own height) that matters at
-  // small AoA; both CPs are returned so callers can apply either regime.
-  const cpBodyFrac = isTapered
-    ? (_AERO_CP_NOSE_FRAC * (1 - wCross) + _AERO_CP_BODY_FRAC * wCross)
-    : _AERO_CP_BODY_FRAC;
-  const copY_body = H * cpBodyFrac;
-  const copY_linear = isTapered ? H * _AERO_CP_NOSE_LINEAR_FRAC : null;
-  
-  // Barrowman linear normal-force (tapered only). Allen-Perkins
-  // crossflow normal-force (every member).
-  const q = 0.5 * rho * speedRel * speedRel;
-  const S_ref = Math.PI * (refWidth / 2) ** 2;
-  const sinAbs = Math.abs(sinAlpha);
-  const F_lin = isTapered ? (-q * _AERO_CNALPHA_NOSE * S_ref * sinAlpha) : 0;
-  const F_cross = -q * _AERO_CD_CROSSFLOW * aSide * sinAbs * sinAlpha;
-  
-  return {
-    isTapered, wCross,
-    presentedArea: aEff,
-    aAxial, aSide,
-    drag,
-    copY_body,          // local-frame body-CP
-    copY_linear,        // local-frame Barrowman CP (null for cylinders)
-    Fnormal_linear: F_lin,
-    Fnormal_crossflow: F_cross,
-  };
-}
-
-// ------------------------------------------------------------------
-// Derive a FULL body: aggregate + per-member breakdown.
-//
-// Bodies are independent here by construction — snapshot.bodies[i] is
-// one body. When physics has several members attached to that body
-// (F9 booster + stage + fairing), the members list is those attached
-// members, and everything gets combined. When separated, each body's
-// members list reflects only what's still on it — so the SAME function
-// correctly handles attached and detached states without any branch.
-// ------------------------------------------------------------------
-
-// ============================================================
-// THE MASTER DERIVE — one call, everything.
-// snapshot: the full guidance snapshot (bodies + wind + simTime)
-// bodyIdx:  which body (defaults to activeBodyIndex)
-// payloadMass: cargo mass on the stack (or omit to auto-use stackPayloadMass)
-// ============================================================
-function derive(snapshot, bodyIdx, payloadMass) {
-  if (!snapshot || !Array.isArray(snapshot.bodies)) return null;
-  const idx = Number.isInteger(bodyIdx) ? bodyIdx : (snapshot.activeBodyIndex || 0);
-  const body = snapshot.bodies[idx];
-  if (!body) return null;
-  
-  const env = getEnv();
-  if (!env) return null;
-  
-  // Fallback for member-less bodies — a fairing half, an ejected
-  // package, a released payload. These carry no `members` list, so
-  // all stack-oriented derivations are meaningless. Guidance instead
-  // uses body.height/body.width/dryMass — the exact fields physics
-  // seeds on such bodies at spawn time, so the two agree.
-  const hasMembers = Array.isArray(body.members) && body.members.length > 0;
-  
-  // ---- Kinematics ----
-  const rx = body.rx, ry = body.ry, vx = body.vx, vy = body.vy;
-  const theta = body.theta, omega = body.omega;
-  
-  // ---- Position-derived ----
-  const r = Math.hypot(rx, ry);
-  const altitudeASL = r - env.EARTH_RADIUS;
-  const altitudeAGL = altitudeASL - (env.LAUNCH_SITE_ALTITUDE || 0);
-  
-  // ---- Gravity ----
-  const gMag = env.GM_EARTH / (r * r);
-  const gVecX = r > 0 ? -gMag * rx / r : 0;
-  const gVecY = r > 0 ? -gMag * ry / r : 0;
-  
-  // ---- Air density ----
-  const rho = altitudeASL < 0
-    ? env.SEA_LEVEL_DENSITY
-    : env.SEA_LEVEL_DENSITY * Math.exp(-altitudeASL / env.SCALE_HEIGHT);
-  
-  // ---- Relative velocity (co-rotating atmosphere + user wind) ----
-  const w = _windInertial(rx, ry, snapshot.wind);
-  const omegaE = env.EARTH_OMEGA || 0;
-  const svx = omegaE * ry, svy = -omegaE * rx;
-  const relVx = vx - (w.wx + svx);
-  const relVy = vy - (w.wy + svy);
-  const speedRel = Math.hypot(relVx, relVy);
-  
-  // ---- Dynamic pressure Q ----
-  const Q = 0.5 * rho * speedRel * speedRel;
-  
-  // ---- AoA (body axis vs relative-velocity direction) ----
-  const cosT = Math.cos(theta), sinT = Math.sin(theta);
-  const velBodyX = speedRel > 1e-6
-    ? (relVx * cosT + relVy * sinT)
-    : 0;
-  const sinAlpha = speedRel > 1e-6
-    ? Math.max(-1, Math.min(1, velBodyX / speedRel))
-    : 0;
-  const alphaDeg = Math.asin(sinAlpha) * 180 / Math.PI;
-  
-  // ---- Drag (simple axial-area model) ----
-  // Sum each member's nose-on cross-section. Guidance's purpose is
-  // trajectory prediction; the AoA-dependent area blend can be added
-  // later if prediction fidelity demands it.
-  const members = body.members || [];
-  let axialArea = 0;
-  members.forEach(m => {
-    const W = m.width || 0;
-    axialArea += Math.PI * (W / 2) ** 2;
-  });
-  if (axialArea <= 0 && body.width) axialArea = Math.PI * (body.width / 2) ** 2;
-  const dragCd = env.DRAG_CD || 0.6;
-  const dragMag = (rho > 0 && speedRel > 1e-3)
-    ? 0.5 * rho * dragCd * axialArea * speedRel * speedRel
-    : 0;
-  const dragVecX = speedRel > 1e-6 ? -dragMag * relVx / speedRel : 0;
-  const dragVecY = speedRel > 1e-6 ? -dragMag * relVy / speedRel : 0;
-  
-  // ---- Thrust (all engines, magnitude; direction is per-engine gimbal) ----
-  let thrustTotal = 0, mdotTotal = 0;
-  let thrustBodyX = 0, thrustBodyY = 0; // body-frame components
-  (body.engines || []).forEach(e => {
-    if (!(e.massFlowRate > 0)) return;
-    const F = e.massFlowRate * e.Ve;
-    thrustTotal += F;
-    mdotTotal += e.massFlowRate;
-    const gRad = (e.gimbal ? (e.gimbalDeg || 0) : 0) * Math.PI / 180;
-    thrustBodyX += F * Math.sin(gRad);
-    thrustBodyY += F * Math.cos(gRad);
-  });
-  
-// ---- Mass properties ----
-const payloadMassInput = Number.isFinite(payloadMass) ?
-  payloadMass :
-  (body.payloadReleased ? 0 : getStackPayloadMass());
-// Branch: stack (has members) → aggregate over members. Member-less
-// → single lumped body using body.height/width/dryMass, matching
-// physics's currentGeometry() fallback.
-const massProps = hasMembers ?
-  _stackMassProps(body, payloadMassInput) :
-  _soloBodyMassProps(body);
-  
-// ---- Per-member aero + CoM/CoP breakdown ----
-// Reference width = widest member, same as physics's bodyAeroProfile.
-let refWidth = 0;
-members.forEach(m => {
-  const W = Number.isFinite(m.width) ? m.width : 0;
-  if (W > refWidth) refWidth = W;
-});
-if (refWidth <= 0 && body.width) refWidth = body.width;
-
-// For a member-less body, synthesize ONE entry so downstream consumers
-// (control law, plot tooling) always see at least one member-shaped
-// record with the body's own dims — same treatment physics applies
-// in bodyAeroProfile(). Tapered=false: no nose-role record exists to
-// infer from; a fairing half is a shell, not a nose.
-if (!hasMembers) {
-  const soloW = _bodyWidthOf(body);
-  const soloH = _bodyHeightOf(body);
-  const soloAero = _memberAero(
-    { stageRole: null, width: soloW, height: soloH },
-    refWidth || soloW, rho, speedRel, sinAlpha
-  );
-  const soloComY = soloH * 0.5;
-  return {
-    rx, ry, vx, vy, theta, omega,
-    r, altitudeASL, altitudeAGL,
-    gMag, gVecX, gVecY, rho,
-    windInertial: w,
-    earthSurfaceV: { svx, svy },
-    relVx, relVy, speedRel,
-    Q, velBodyX, sinAlpha, alphaDeg,
-    dragMag, dragVecX, dragVecY,
-    thrustTotal, mdotTotal, thrustBodyX, thrustBodyY,
-    massProps,
-    memberBreakdown: [{
-      index: 0, id: body.id || '(solo)', role: '(solo)',
-      H: soloH, W: soloW, baseY: 0,
-      mass: massProps.M,
-      comX: 0, comY: soloComY, comY_stack: soloComY,
-      copY: soloAero.copY_body, copY_stack: soloAero.copY_body,
-      copY_linear: soloAero.copY_linear,
-      copY_linear_stack: soloAero.copY_linear,
-      presentedArea: soloAero.presentedArea,
-      aAxial: soloAero.aAxial, aSide: soloAero.aSide,
-      drag: soloAero.drag,
-      Fnormal_linear: soloAero.Fnormal_linear,
-      Fnormal_crossflow: soloAero.Fnormal_crossflow,
-      isTapered: soloAero.isTapered,
-    }],
-    hasMembers: false,
-  };
-}
-
-let cumY = 0;
-const memberBreakdown = members.map((m, i) => {  const H = Number.isFinite(m.height) ? m.height : 0;
-  const W = Number.isFinite(m.width) ? m.width : 0;
-  
-  // CoM — pulled from the mass-props components array (member-local,
-  // already computed above).
-  // CoM — pull from the mass-props components array. Filter by the
-// _memberIdx tag (_stackMassProps sets it directly), NOT by a
-// yOffset window: a stage's engines sit at stack-Y = booster top,
-// which is exactly the boundary between two windows, so window-
-// based filtering double-counted them.
-const memberComponents = massProps.components.filter(c => c._memberIdx === i);
-  let comLocalX = 0, comLocalY = H / 2, memberMass = 0;
-  if (memberComponents.length) {
-    const combined = _combine(memberComponents.map(c => ({ ...c, comY: c.comY - cumY })));
-    comLocalX = combined.comX;
-    comLocalY = combined.comY;
-    memberMass = combined.M;
-  }
-  
-  const aero = _memberAero(m, refWidth, rho, speedRel, sinAlpha);
-  
-  const entry = {
-    index: i,
-    id: m.id,
-    role: m.stageRole || 'rocket',
-    H, W,
-    baseY: cumY,                // stack-frame base height of this member
-    mass: memberMass,
-    comX: comLocalX,            // member-local
-    comY: comLocalY,            // member-local (from member base)
-    comY_stack: cumY + comLocalY,
-    copY: aero.copY_body,       // member-local
-    copY_stack: cumY + aero.copY_body,
-    copY_linear: aero.copY_linear,
-    copY_linear_stack: aero.copY_linear !== null ? cumY + aero.copY_linear : null,
-    presentedArea: aero.presentedArea,
-    aAxial: aero.aAxial,
-    aSide: aero.aSide,
-    drag: aero.drag,
-    Fnormal_linear: aero.Fnormal_linear,
-    Fnormal_crossflow: aero.Fnormal_crossflow,
-    isTapered: aero.isTapered,
-  };
-  cumY += H;
-  return entry;
-});
-
-return {
-    // Kinematics (raw, from snapshot)
-    rx, ry, vx, vy, theta, omega,
-    // Position-derived
-    r, altitudeASL, altitudeAGL,
-    // Gravity
-    gMag, gVecX, gVecY,
-    // Atmosphere
-    rho,
-    // Wind + relative velocity
-    windInertial: w,
-    earthSurfaceV: { svx, svy },
-    relVx, relVy, speedRel,
-    // Dynamic pressure
-    Q,
-    // AoA
-    velBodyX, sinAlpha, alphaDeg,
-    // Drag
-    dragMag, dragVecX, dragVecY,
-    // Thrust
-    thrustTotal, mdotTotal, thrustBodyX, thrustBodyY,
-    // Mass props
-        // Mass props
-    massProps,
-    // Per-member breakdown — one entry per attached member, in stack
-    // order (bottom → top). Each has its own CoM, CoP (body-CP and,
-    // for tapered, Barrowman linear-CP), presented area, and drag
-    // contribution. Attached bodies show all their members here;
-    // detached bodies show only what's still on them.
-    memberBreakdown,
-    hasMembers: true,
-    };
-    }
-    
-    // ---- Solo (member-less) body mass properties. ----
-    // Mirrors physics's currentGeometry() fallback for a fairing half,
-    // ejected package, or released payload: lumped mass at body mid-height,
-    // thin-cylinder MOI about that point. Uses body.dryMass + fuelMass.
-    function _soloBodyMassProps(body) {
-      const M = (Number.isFinite(body.dryMass) ? body.dryMass : 0) +
-        (Number.isFinite(body.fuelMass) ? body.fuelMass : 0);
-      const H = _bodyHeightOf(body);
-      const W = _bodyWidthOf(body);
-      // Thin-cylinder MOI about its own COM — same closed form physics
-      // uses for the fallback path via momentOfInertia().
-      const I = M * (H * H + W * W) / 12;
-      const comH = H * 0.5;
-      return {
-        M,
-        comX: 0,
-        comY: comH,
-        I,
-        stackHeight: H,
-        dryMass: Number.isFinite(body.dryMass) ? body.dryMass : 0,
-        fuelMass: Number.isFinite(body.fuelMass) ? body.fuelMass : 0,
-        payloadMass: 0,
-        components: [{ label: 'solo', mass: M, comX: 0, comY: comH, iOwn: I }],
-      };
-    }
-    
-    // Convenience: run derive() for every body in the snapshot.
-    // Returns an array, one entry per body (same order as snapshot.bodies).
-    // Bodies with no members (e.g. released payload, fairing half) get
-    // whatever derive() can legitimately return — the per-body derivation
-    // is uniform across the array, so callers don't need to special-case
-    // which body they're looking at.
-    function deriveAllBodies(snapshot, perBodyPayloadMass) {
-      if (!snapshot || !Array.isArray(snapshot.bodies)) return [];
-      return snapshot.bodies.map((_, i) => {
-        const pm = Array.isArray(perBodyPayloadMass) ? perBodyPayloadMass[i] : undefined;
-        try { return derive(snapshot, i, pm); }
-        catch (e) { return null; }
-      });
-    }
-  
-  // ---- IMU wiring. setEnabled()/measure() are globals from imu.js. ----
+  // ---- IMU wiring ----
   function setImuEnabled(enabled) {
     setEnabled(enabled); // imu.js global
   }
   
-  // Called by guidance.worker.js on every 'snapshot' message from main
-  // thread. Applies (or, per imu.js's own identity contract, doesn't
-  // apply) IMU error, stores both copies, and hands off to tick().
+  // Called once per snapshot from guidance.worker.js. Applies (or skips)
+  // IMU noise, stores both versions, and hands the measured one to tick().
   function onSnapshot(rawSnapshot) {
     _lastRawSnapshot = rawSnapshot;
-    _lastMeasuredSnapshot = measure(rawSnapshot); // imu.js global; identity when disabled
+    _lastMeasuredSnapshot = measure(rawSnapshot);
     tick(_lastMeasuredSnapshot);
   }
   
-  // PHASE 4 HOOK. Called once per snapshot with the (possibly IMU-errored)
-  // state. Empty in Phase 3 — no control law yet. A real implementation
-  // reads `snapshot.bodies[snapshot.activeBodyIndex]` and calls the
-  // send() helpers below; it should NOT reach for _lastRawSnapshot (that
-  // would defeat the entire point of routing through IMU).
-  function tick(snapshot) {
-    // no-op — Phase 4
+// ============================================================
+// Guide framework. Each guide is a tick function with optional
+// .start() / .stop() lifecycle hooks and optional .getStatus()
+// for UI feedback. Exactly one is active at a time.
+// ============================================================
+const GUIDES = {};
+let _activeGuide = null;
+
+function startGuide(name) {
+  if (!name || !GUIDES[name]) {
+    console.warn('[guidance] startGuide: unknown guide', name);
+    return false;
+  }
+  if (_activeGuide === name) return true;
+  if (_activeGuide && typeof GUIDES[_activeGuide].stop === 'function') {
+    try { GUIDES[_activeGuide].stop(); } catch (e) { console.error(e); }
+  }
+  _activeGuide = name;
+  if (typeof GUIDES[name].start === 'function') {
+    try { GUIDES[name].start(); } catch (e) { console.error(e); }
+  }
+  console.log('[guidance] started:', name);
+  return true;
+}
+
+function stopGuide() {
+  if (!_activeGuide) return;
+  const name = _activeGuide;
+  if (typeof GUIDES[name].stop === 'function') {
+    try { GUIDES[name].stop(); } catch (e) { console.error(e); }
+  }
+  _activeGuide = null;
+  console.log('[guidance] stopped:', name);
+}
+
+function setActiveGuide(name) {
+  // Legacy: immediate activation without start/stop hooks.
+  _activeGuide = (name && GUIDES[name]) ? name : null;
+}
+function getActiveGuide() { return _activeGuide; }
+function listGuides() { return Object.keys(GUIDES); }
+
+function getGuideStatus() {
+  if (!_activeGuide) return { active: null };
+  const g = GUIDES[_activeGuide];
+  const out = { active: _activeGuide };
+  if (typeof g.getStatus === 'function') Object.assign(out, g.getStatus());
+  return out;
+}
+
+function tick(snapshot) {
+  if (_activeGuide && GUIDES[_activeGuide]) {
+    GUIDES[_activeGuide](snapshot);
+  }
+}
+
+// ============================================================
+// testGuide — experimental.
+//
+// Every tick:
+//   1. Derive current total torque on the active body (engine + drag;
+//      torqueRcs is 0 in derive by construction).
+//   2. Target torque = −(that value) — the exact opposing torque
+//      RCS would need to produce to zero the net rotation.
+//   3. Hand the target to GuideRCS.targetTorqueRcs → duty table.
+//   4. Send cmdRcsDuty(duties) to physics.
+//
+// stop() relinquishes RCS duty control so physics falls back to idle.
+// ============================================================
+const _testGuideState = {
+  ticks: 0,
+  lastTarget: 0,
+  lastAchieved: 0,
+  lastFires: 0,
+  lastSaturated: false,
+};
+const _TEST_TORQUE_DEADBAND = 100; // N·m
+
+function _testGuideTick(snapshot) {
+  _testGuideState.ticks++;
+  const idx = snapshot.activeBodyIndex || 0;
+  const body = snapshot.bodies[idx];
+  if (!body) return;
+  
+  const d = Derivation.derive(snapshot, idx);
+  if (!d || !d.massProps) return;
+  
+  // EXPERIMENT: 2× the opposing torque — overshoots deliberately so
+// we can see the reverse-direction response and how the loop
+// settles (or doesn't). Will be reverted to −1× once we understand
+// the dynamics.
+const targetTorque = -dragNext;
+_predictiveState.lastTarget = targetTorque;
+
+// ---- 4. Convert to per-pod duties at PREDICTED COM ----
+
+const result = GuideRCS.targetTorqueRcs(snapshot, targetTorque, idx);
+if (!result || !result.fires.length) {
+  send(cmdRcsDuty({}));
+  _testGuideState.lastAchieved = 0;
+  _testGuideState.lastFires = 0;
+  _testGuideState.lastSaturated = false;
+  return;
+}
+  
+  send(cmdRcsDuty(result.duties));
+  _testGuideState.lastAchieved = result.torqueAchieved;
+  _testGuideState.lastFires = result.fires.length;
+  _testGuideState.lastSaturated = result.saturated;
+}
+
+_testGuideTick.start = function () {
+  // Launch: max throttle, gimbal left untouched (defaults to 0).
+  send(cmdSetAllThrottle(Infinity));
+  _testGuideState.ticks = 0;
+  _testGuideState.lastTarget = 0;
+  _testGuideState.lastAchieved = 0;
+  _testGuideState.lastFires = 0;
+  _testGuideState.lastSaturated = false;
+};
+_testGuideTick.stop = function () {
+  send(cmdRcsDuty(null));
+};
+_testGuideTick.getStatus = function () {
+  return { ..._testGuideState };
+};
+
+GUIDES.testGuide = _testGuideTick;
+
+// ============================================================
+// predictiveTorque — feedforward drag-torque cancellation.
+//
+// Math (all in the physics tick's dt = CONFIG.DT ≈ 12.5 ms):
+//
+//   1. Derive current state → kinematic + force quantities.
+//   2. Predict next-tick state assuming NO RCS action this tick:
+//        rx_next   = rx + vx·dt
+//        ry_next   = ry + vy·dt
+//        a_inertial = gravity + rotate(thrust_body, theta)/M + drag/M
+//        vx_next   = vx + a_inertial.x·dt
+//        vy_next   = vy + a_inertial.y·dt
+//        alpha_now = torque_total / I
+//        omega_next = omega + alpha_now·dt
+//        theta_next = theta + omega·dt + ½·alpha_now·dt²
+//        slosh_x_next = slosh_x + slosh_v·dt   (Euler)
+//   3. Derive the same body AT the predicted state (deriveForState):
+//        → A_eff_next, COP_next, COM_next, τ_drag_next
+//   4. targetTorque = −τ_drag_next
+//   5. GuideRCS.targetTorqueRcs with comX/comY = next-tick COM, so
+//      arm geometry matches where COM will be when the torque lands.
+//   6. cmdRcsDuty(duties).
+//
+// The RCS command we're sending in step 6 is intentionally NOT part
+// of the prediction in step 2 — we're cancelling the disturbance as
+// predicted in the "do-nothing" world, not iterating to a fixed point.
+// ============================================================
+const _predictiveState = {
+  ticks: 0,
+  lastTarget: 0,
+  lastAchieved: 0,
+  lastFires: 0,
+  lastSaturated: false,
+  lastDragNext: 0,
+  lastComNextX: 0,
+  lastComNextY: 0,
+};
+
+
+function _predictiveTick(snapshot) {
+  _predictiveState.ticks++;
+  const idx = snapshot.activeBodyIndex || 0;
+  const body = snapshot.bodies[idx];
+  if (!body) return;
+  
+  const dNow = Derivation.derive(snapshot, idx);
+  if (!dNow || !dNow.massProps) return;
+  
+  const env = Derivation.getEnv();
+  const dt = (env && Number.isFinite(env.DT)) ? env.DT : (1 / 80);
+  const M = dNow.massProps.M;
+  if (!(M > 0)) return;
+  
+  // ---- 1. Predict next-tick kinematics (no RCS action assumed) ----
+  const cosT = Math.cos(dNow.theta);
+  const sinT = Math.sin(dNow.theta);
+  
+  // Thrust is body-frame; rotate to inertial (same convention physics
+  // uses in derivatives(): Fx_i = Fx·cosT − Fy·sinT, Fy_i = Fx·sinT + Fy·cosT).
+  const thrustIx = dNow.thrustBodyX * cosT - dNow.thrustBodyY * sinT;
+  const thrustIy = dNow.thrustBodyX * sinT + dNow.thrustBodyY * cosT;
+  
+  // Drag from derive() is ALREADY inertial-frame (built from relVx/relVy).
+  const aIx = dNow.gVecX + (thrustIx + dNow.dragVecX) / M;
+  const aIy = dNow.gVecY + (thrustIy + dNow.dragVecY) / M;
+  
+  const rx_n = dNow.rx + dNow.vx * dt;
+  const ry_n = dNow.ry + dNow.vy * dt;
+  const vx_n = dNow.vx + aIx * dt;
+  const vy_n = dNow.vy + aIy * dt;
+  
+  const alpha = dNow.alphaAng;
+  const omega_n = dNow.omega + alpha * dt;
+  const theta_n = dNow.theta + dNow.omega * dt + 0.5 * alpha * dt * dt;
+  
+  const sloshNow = body.slosh || { offset: 0, velocity: 0 };
+  const sloshX_n = (sloshNow.offset || 0) + (sloshNow.velocity || 0) * dt;
+  const sloshV_n = sloshNow.velocity || 0;
+  
+  // ---- 2. Derive at predicted state ----
+  const dNext = Derivation.deriveForState(snapshot, idx, {
+    rx: rx_n, ry: ry_n,
+    vx: vx_n, vy: vy_n,
+    theta: theta_n, omega: omega_n,
+    slosh: { offset: sloshX_n, velocity: sloshV_n },
+  });
+  if (!dNext || !dNext.massProps) return;
+  
+  const dragNext = dNext.torqueDrag;
+  _predictiveState.lastDragNext = dragNext;
+  _predictiveState.lastComNextX = dNext.massProps.comX;
+  _predictiveState.lastComNextY = dNext.massProps.comY;
+  
+  // ---- 3. Target torque = opposite of predicted drag torque ----
+  const targetTorque = -dragNext;
+  _predictiveState.lastTarget = targetTorque;
+  
+  
+  
+  // ---- 4. Convert to per-pod duties at PREDICTED COM ----
+  const result = GuideRCS.targetTorqueRcs(
+    snapshot, targetTorque, idx,
+    { comX: dNext.massProps.comX, comY: dNext.massProps.comY }
+  );
+  if (!result || !result.fires.length) {
+    send(cmdRcsDuty({}));
+    _predictiveState.lastAchieved = 0;
+    _predictiveState.lastFires = 0;
+    _predictiveState.lastSaturated = false;
+    return;
   }
   
-  // ---- Outbound: send a command to the physics worker. ----
+  send(cmdRcsDuty(result.duties));
+  _predictiveState.lastAchieved = result.torqueAchieved;
+  _predictiveState.lastFires = result.fires.length;
+  _predictiveState.lastSaturated = result.saturated;
+}
+
+_predictiveTick.start = function () {
+  send(cmdSetAllThrottle(Infinity));
+  _predictiveState.ticks = 0;
+  _predictiveState.lastTarget = 0;
+  _predictiveState.lastAchieved = 0;
+  _predictiveState.lastFires = 0;
+  _predictiveState.lastSaturated = false;
+  _predictiveState.lastDragNext = 0;
+};
+_predictiveTick.stop = function () {
+  send(cmdRcsDuty(null));
+};
+_predictiveTick.getStatus = function () {
+  return {
+    ticks: _predictiveState.ticks,
+    lastTarget: _predictiveState.lastTarget,
+    lastAchieved: _predictiveState.lastAchieved,
+    lastFires: _predictiveState.lastFires,
+    lastSaturated: _predictiveState.lastSaturated,
+  };
+};
+
+GUIDES.predictivePlus = _predPlusTick;
+
+// ============================================================
+// predictivePlusAoA — predictivePlus + periodic AoA impulse.
+//
+// Same five-term PID + feedforward as predictivePlus, plus:
+//
+//   Every `_AOA_CYCLE` (3) ticks: check current AoA.
+//     Tick N   : check. If |AoA| > threshold, set pending.
+//     Tick N+1 : fire. Add impulse torque 2·I/dt² with sign
+//                opposing the AoA. Base PID runs as normal,
+//                so this is superposition on top.
+//     Tick N+2 : skip. Base PID only.
+//     Tick N+3 : check again.
+//
+// `2·I/dt²` is enormous compared to RCS capability — the fire tick
+// will saturate RCS every time. That's the point of this experiment.
+// ============================================================
+const _predAoaState = {
+  ticks: 0,
+  lastTarget: 0,
+  lastAchieved: 0,
+  lastFires: 0,
+  lastSaturated: false,
+  lastThetaError: 0,
+  lastOmega: 0,
+  lastIntegralError: 0,
+  lastAoaDeg: 0,
+  lastCorrection: 0,
+  lastTerms: { ff: 0, p: 0, d: 0, lead: 0, i: 0, aoa: 0 },
+};
+
+let _predAoaIntegralError = 0;
+let _predAoaPrevDragTorque = null;
+let _predAoaTickCounter = 0;
+let _predAoaPendingFire = false;
+const _AOA_CYCLE = 3;              // check, fire, skip
+const _AOA_THRESHOLD_DEG = 0.01;
+
+function _predAoaTick(snapshot) {
+  _predAoaState.ticks++;
+  const idx = snapshot.activeBodyIndex || 0;
+  const body = snapshot.bodies[idx];
+  if (!body) return;
+  
+  const dNow = Derivation.derive(snapshot, idx);
+  if (!dNow || !dNow.massProps) return;
+  
+  const env = Derivation.getEnv();
+  const dt = (env && Number.isFinite(env.DT)) ? env.DT : (1 / 80);
+  const M = dNow.massProps.M;
+  if (!(M > 0)) return;
+  
+  // ---- 1. Next-tick kinematics (no RCS assumed) ----
+  const cosT = Math.cos(dNow.theta), sinT = Math.sin(dNow.theta);
+  const thrustIx = dNow.thrustBodyX * cosT - dNow.thrustBodyY * sinT;
+  const thrustIy = dNow.thrustBodyX * sinT + dNow.thrustBodyY * cosT;
+  const aIx = dNow.gVecX + (thrustIx + dNow.dragVecX) / M;
+  const aIy = dNow.gVecY + (thrustIy + dNow.dragVecY) / M;
+  
+  const rx_n = dNow.rx + dNow.vx * dt;
+  const ry_n = dNow.ry + dNow.vy * dt;
+  const vx_n = dNow.vx + aIx * dt;
+  const vy_n = dNow.vy + aIy * dt;
+  
+  const alpha = dNow.alphaAng;
+  const omega_n = dNow.omega + alpha * dt;
+  const theta_n = dNow.theta + dNow.omega * dt + 0.5 * alpha * dt * dt;
+  
+  const sloshNow = body.slosh || { offset: 0, velocity: 0 };
+  const sloshX_n = (sloshNow.offset || 0) + (sloshNow.velocity || 0) * dt;
+  const sloshV_n = sloshNow.velocity || 0;
+  
+  // ---- 2. Next-tick drag torque ----
+  const dNext = Derivation.deriveForState(snapshot, idx, {
+    rx: rx_n, ry: ry_n,
+    vx: vx_n, vy: vy_n,
+    theta: theta_n, omega: omega_n,
+    slosh: { offset: sloshX_n, velocity: sloshV_n },
+  });
+  if (!dNext || !dNext.massProps) return;
+  
+  const dragNext = dNext.torqueDrag;
+  
+  // ---- 3. Base PID + feedforward ----
+  // Phase 3 — full predictivePlusAoA stack (includes -K_d·ω).
+const ffTerm = -dragNext;
+
+// AoA-zero target: the body-axis angle that makes velBodyX = 0,
+// i.e. aligns the nose with the body's velocity-through-air.
+// Derivation: velBodyX = relVx·cosθ + relVy·sinθ = 0
+//   → tanθ = −relVx/relVy
+//   → θ = atan2(relVx, −relVy)   (branch that puts nose INTO
+//     the motion direction, not retrograde)
+// Fallback to local vertical when relV is near-zero (early flight,
+// any degenerate case) — atan2(0,0) gives 0 which is wrong.
+const speedRelNow = dNow.speedRel || 0;
+const thetaTarget = (speedRelNow > 0.5) ?
+  Math.atan2(dNow.relVx, -dNow.relVy) :
+  -Math.atan2(body.rx, body.ry);
+let thetaError = body.theta - thetaTarget;
+  while (thetaError > Math.PI) thetaError -= 2 * Math.PI;
+  while (thetaError < -Math.PI) thetaError += 2 * Math.PI;
+  const pTerm = -_PRED_GAINS.K_p * thetaError;
+  _predAoaState.lastThetaError = thetaError;
+  
+  const dTerm = -_PRED_GAINS.K_d * dNow.omega;
+  _predAoaState.lastOmega = dNow.omega;
+  
+  let leadTerm = 0;
+  if (_PRED_GAINS.K_lead > 0 && _predAoaPrevDragTorque !== null) {
+    const dTau_dt = (dragNext - _predAoaPrevDragTorque) / dt;
+    leadTerm = -_PRED_GAINS.K_lead * dTau_dt;
+  }
+  _predAoaPrevDragTorque = dragNext;
+  
+  const iTerm = _PRED_GAINS.K_i * _predAoaIntegralError;
+  _predAoaState.lastIntegralError = _predAoaIntegralError;
+  
+  // ---- 4. AoA impulse (periodic) ----
+  // ---- 4. AoA impulse (periodic, saturating) ----
+let aoaTerm = 0;
+_predAoaState.lastAoaDeg = dNow.alphaDeg;
+
+if (_predAoaPendingFire) {
+  // Fire tick — impulse torque of 2·I·AoA/dt² opposing the current AoA.
+  // AoA in radians (alphaDeg is degrees; convert). Negative sign flips
+  // the sign so positive AoA → negative torque, and vice versa.
+  // The pending flag is NOT cleared here — it's cleared below only
+  // if RCS actually delivered the requested torque. If RCS saturates
+  // (impulse is far bigger than max available), the pending flag
+  // stays set and the same term fires again next tick, until either
+  // AoA drops enough that the impulse becomes deliverable, or the
+  // threshold is met and no more fire is needed.
+  const aoaRad = dNow.alphaDeg * Math.PI / 180;
+  aoaTerm = -2 * dNow.massProps.I * aoaRad / (dt * dt);
+} else if (_predAoaTickCounter % _AOA_CYCLE === 0) {
+  // Check tick
+  if (Math.abs(dNow.alphaDeg) > _AOA_THRESHOLD_DEG) {
+    _predAoaPendingFire = true;
+  }
+}
+_predAoaTickCounter++;
+_predAoaState.lastCorrection = aoaTerm;
+  
+  // ---- 5. Combined target torque ----
+  const targetTorque = ffTerm + pTerm + dTerm + leadTerm + iTerm + aoaTerm;
+  _predAoaState.lastTarget = targetTorque;
+  _predAoaState.lastTerms = {
+    ff: ffTerm, p: pTerm, d: dTerm, lead: leadTerm, i: iTerm, aoa: aoaTerm,
+  };
+  
+  // ---- 6. Fire ----
+  const result = GuideRCS.targetTorqueRcs(
+    snapshot, targetTorque, idx,
+    { comX: dNext.massProps.comX, comY: dNext.massProps.comY }
+  );
+  
+  if (!result || !result.fires.length) {
+    send(cmdRcsDuty({}));
+    _predAoaState.lastAchieved = 0;
+    _predAoaState.lastFires = 0;
+    _predAoaState.lastSaturated = false;
+    return;
+  }
+  
+  send(cmdRcsDuty(result.duties));
+  _predAoaState.lastAchieved = result.torqueAchieved;
+  _predAoaState.lastFires = result.fires.length;
+  _predAoaState.lastSaturated = result.saturated;
+  
+  if (!result.saturated) {
+    const gap = targetTorque - result.torqueAchieved;
+    _predAoaIntegralError += gap * dt;
+    if (_predAoaIntegralError >  1e6) _predAoaIntegralError =  1e6;
+    if (_predAoaIntegralError < -1e6) _predAoaIntegralError = -1e6;
+  }
+}
+
+_predAoaTick.start = function () {
+  send(cmdSetAllThrottle(Infinity));
+  _predAoaState.ticks = 0;
+  _predAoaState.lastTarget = 0;
+  _predAoaState.lastAchieved = 0;
+  _predAoaState.lastFires = 0;
+  _predAoaState.lastSaturated = false;
+  _predAoaState.lastThetaError = 0;
+  _predAoaState.lastOmega = 0;
+  _predAoaState.lastIntegralError = 0;
+  _predAoaState.lastAoaDeg = 0;
+  _predAoaState.lastCorrection = 0;
+  _predAoaState.lastTerms = { ff: 0, p: 0, d: 0, lead: 0, i: 0, aoa: 0 };
+  _predAoaIntegralError = 0;
+  _predAoaPrevDragTorque = null;
+  _predAoaTickCounter = 0;
+  _predAoaPendingFire = false;
+};
+_predAoaTick.stop = function () {
+  send(cmdRcsDuty(null));
+};
+_predAoaTick.getStatus = function () {
+  return {
+    ticks: _predAoaState.ticks,
+    lastTarget: _predAoaState.lastTarget,
+    lastAchieved: _predAoaState.lastAchieved,
+    lastFires: _predAoaState.lastFires,
+    lastSaturated: _predAoaState.lastSaturated,
+    lastThetaError: _predAoaState.lastThetaError,
+    lastOmega: _predAoaState.lastOmega,
+    lastIntegralError: _predAoaState.lastIntegralError,
+    lastAoaDeg: _predAoaState.lastAoaDeg,
+    lastCorrection: _predAoaState.lastCorrection,
+    lastTerms: _predAoaState.lastTerms,
+  };
+};
+
+GUIDES.predictivePlusAoAPush = _predSweepTick;
+
+// ============================================================
+// predictVerifier — no RCS, just verify prediction accuracy.
+//
+// Each tick:
+//   1. If a previous prediction exists (and exactly one physics tick
+//      elapsed between snapshots — verified via simTime delta),
+//      compare predicted vs actual derive() outputs.
+//   2. Compute fresh next-tick prediction using the SAME math the
+//      guides use.
+//   3. Fire nothing (cmdRcsDuty(null)) so we don't perturb the state
+//      we're trying to predict.
+//
+// Reports mean absolute error for key quantities every ~1s.
+// Call getPredictVerifierStatus() for a snapshot of the numbers.
+// ============================================================
+const _pvState = {
+  ticks: 0,
+  nCompared: 0,
+  nSkipped: 0,       // snapshots that didn't line up 1-to-1 with a tick
+  prevSimTime: null,
+  sAbsTq: 0,
+  sAbsDrag: 0,
+  sAbsAlpha: 0,
+  sAbsAlt: 0,
+  sAbsQ: 0,
+  lastTq: { pred: 0, act: 0, err: 0 },
+  lastAlpha: { pred: 0, act: 0, err: 0 },
+  lastDrag: { pred: 0, act: 0, err: 0 },
+  lastQ: { pred: 0, act: 0, err: 0 },
+};
+let _pvPendingPrediction = null;
+
+function _predictNextTick(snapshot, idx) {
+  const dNow = Derivation.derive(snapshot, idx);
+  if (!dNow || !dNow.massProps) return null;
+  const env = Derivation.getEnv();
+  const dt = (env && Number.isFinite(env.DT)) ? env.DT : (1 / 80);
+  const M = dNow.massProps.M;
+  if (!(M > 0)) return null;
+  
+  const cosT = Math.cos(dNow.theta), sinT = Math.sin(dNow.theta);
+  const thrustIx = dNow.thrustBodyX * cosT - dNow.thrustBodyY * sinT;
+  const thrustIy = dNow.thrustBodyX * sinT + dNow.thrustBodyY * cosT;
+  const aIx = dNow.gVecX + (thrustIx + dNow.dragVecX) / M;
+  const aIy = dNow.gVecY + (thrustIy + dNow.dragVecY) / M;
+  
+  const rx_n = dNow.rx + dNow.vx * dt;
+  const ry_n = dNow.ry + dNow.vy * dt;
+  const vx_n = dNow.vx + aIx * dt;
+  const vy_n = dNow.vy + aIy * dt;
+  
+  const alpha = dNow.alphaAng;
+  const omega_n = dNow.omega + alpha * dt;
+  const theta_n = dNow.theta + dNow.omega * dt + 0.5 * alpha * dt * dt;
+  
+  const body = snapshot.bodies[idx];
+  const sloshNow = body.slosh || { offset: 0, velocity: 0 };
+  const sloshX_n = (sloshNow.offset || 0) + (sloshNow.velocity || 0) * dt;
+  const sloshV_n = sloshNow.velocity || 0;
+  
+  return Derivation.deriveForState(snapshot, idx, {
+    rx: rx_n, ry: ry_n,
+    vx: vx_n, vy: vy_n,
+    theta: theta_n, omega: omega_n,
+    slosh: { offset: sloshX_n, velocity: sloshV_n },
+  });
+}
+
+function _pvCompare(pred, act) {
+  const errTq = act.torqueDrag - pred.torqueDrag;
+  const errAlpha = act.alphaDeg - pred.alphaDeg;
+  _pvState.sAbsTq += Math.abs(errTq);
+  _pvState.sAbsDrag += Math.abs(act.dragMag - pred.dragMag);
+  _pvState.sAbsAlpha += Math.abs(errAlpha);
+  _pvState.sAbsAlt += Math.abs(act.altitudeASL - pred.altitudeASL);
+  _pvState.sAbsQ += Math.abs(act.Q - pred.Q);
+  _pvState.lastTq = { pred: pred.torqueDrag, act: act.torqueDrag, err: errTq };
+  _pvState.lastAlpha = { pred: pred.alphaDeg, act: act.alphaDeg, err: errAlpha };
+  _pvState.lastDrag = { pred: pred.dragMag, act: act.dragMag, err: act.dragMag - pred.dragMag };
+  _pvState.lastQ = { pred: pred.Q, act: act.Q, err: act.Q - pred.Q };
+  _pvState.nCompared++;
+}
+
+function _predictVerifierTick(snapshot) {
+  _pvState.ticks++;
+  const idx = snapshot.activeBodyIndex || 0;
+  const env = Derivation.getEnv();
+  const dt = (env && Number.isFinite(env.DT)) ? env.DT : (1 / 80);
+  
+  // Compare pending prediction with current actual, but only when
+  // exactly one physics tick elapsed since the last snapshot.
+  if (_pvPendingPrediction && _pvState.prevSimTime !== null) {
+    const tickDelta = snapshot.simTime - _pvState.prevSimTime;
+    if (Math.abs(tickDelta - dt) < dt * 0.05) {
+      const dNow = Derivation.derive(snapshot, idx);
+      if (dNow) _pvCompare(_pvPendingPrediction, dNow);
+    } else {
+      _pvState.nSkipped++;
+    }
+  }
+  _pvState.prevSimTime = snapshot.simTime;
+  
+  // Fresh prediction for next tick
+  _pvPendingPrediction = _predictNextTick(snapshot, idx);
+  
+  // Fire nothing
+  send(cmdRcsDuty(null));
+  
+  // Report every 80 ticks (~1 s)
+  if (_pvState.ticks % 80 === 0 && _pvState.nCompared > 0) {
+    const n = _pvState.nCompared;
+    const meanTq = _pvState.sAbsTq / n;
+    const meanAlpha = _pvState.sAbsAlpha / n;
+    console.log(
+      `[pv] t=${snapshot.simTime.toFixed(2)}s n=${n} skip=${_pvState.nSkipped}` +
+      ` | τ: mean|err|=${meanTq.toFixed(0)} N·m, last pred=${_pvState.lastTq.pred.toFixed(0)} act=${_pvState.lastTq.act.toFixed(0)}` +
+      ` | α: mean|err|=${meanAlpha.toExponential(2)}°, last pred=${_pvState.lastAlpha.pred.toFixed(4)} act=${_pvState.lastAlpha.act.toFixed(4)}`
+    );
+  }
+}
+
+_predictVerifierTick.start = function () {
+  send(cmdSetAllThrottle(Infinity));
+  _pvState.ticks = 0;
+  _pvState.nCompared = 0;
+  _pvState.nSkipped = 0;
+  _pvState.prevSimTime = null;
+  _pvState.sAbsTq = 0;
+  _pvState.sAbsDrag = 0;
+  _pvState.sAbsAlpha = 0;
+  _pvState.sAbsAlt = 0;
+  _pvState.sAbsQ = 0;
+  _pvPendingPrediction = null;
+  console.log('[predictVerifier] started — no RCS, pure prediction check');
+};
+_predictVerifierTick.stop = function () {
+  send(cmdRcsDuty(null));
+  const n = _pvState.nCompared || 1;
+  console.log('[predictVerifier] stop. Summary:');
+  console.log('  n compared:', _pvState.nCompared, '| skipped:', _pvState.nSkipped);
+  console.log('  mean |err| τ_drag:', (_pvState.sAbsTq / n).toFixed(1), 'N·m');
+  console.log('  mean |err| dragMag:', (_pvState.sAbsDrag / n).toFixed(1), 'N');
+  console.log('  mean |err| alpha:', (_pvState.sAbsAlpha / n).toExponential(3), '°');
+  console.log('  mean |err| altitude:', (_pvState.sAbsAlt / n).toFixed(2), 'm');
+  console.log('  mean |err| Q:', (_pvState.sAbsQ / n).toFixed(1), 'Pa');
+};
+_predictVerifierTick.getStatus = function () {
+  const n = _pvState.nCompared || 1;
+  return {
+    ticks: _pvState.ticks,
+    nCompared: _pvState.nCompared,
+    nSkipped: _pvState.nSkipped,
+    meanAbsErrTq: _pvState.sAbsTq / n,
+    meanAbsErrAlphaDeg: _pvState.sAbsAlpha / n,
+    meanAbsErrDragN: _pvState.sAbsDrag / n,
+    meanAbsErrQPa: _pvState.sAbsQ / n,
+    lastTq: _pvState.lastTq,
+    lastAlpha: _pvState.lastAlpha,
+    lastDrag: _pvState.lastDrag,
+  };
+};
+
+GUIDES.predictVerifier = _predictVerifierTick;
+
+// ============================================================
+// predictivePlusAoAPush — east push prefix + predictivePlusAoA.
+//
+//   Phase 0..S : full east torque (RCS saturated)
+//   Phase S+   : predictivePlusAoA verbatim — feedforward + PID +
+//                AoA impulse. thetaTarget = atan2(relVx, −relVy)
+//                (the AoA-zero branch the user verified works).
+//
+// No west phase. No cadence. Just push, then let AoA-chase take over.
+// ============================================================
+let   _SWEEP_S_SECONDS = 10.0;
+const _SWEEP_FULL_TORQUE = 1e9;
+
+const _predSweepState = {
+  ticks: 0,
+  phase: 'idle',
+  elapsed: 0,
+  lastTarget: 0,
+  lastAchieved: 0,
+  lastFires: 0,
+  lastSaturated: false,
+  lastThetaError: 0,
+  lastOmega: 0,
+  lastIntegralError: 0,
+  lastAoaDeg: 0,
+  lastDaoA: 0,
+  aoaGrowing: false,
+  lastCorrection: 0,
+  lastTerms: { ff: 0, p: 0, d: 0, lead: 0, i: 0, aoa: 0, sweep: 0 },
+};
+
+let _predSweepIntegralError = 0;
+let _predSweepPrevDragTorque = null;
+let _predSweepTickCounter = 0;
+let _predSweepAoaPendingFire = false; // kept for reset symmetry, unused now
+let _predSweepStartTime = null;
+
+// AoA bang-bang midpoint state machine:
+//   idle    → capture AoA, start forward fire
+//   forward → fire toward zero until |AoA| ≤ half initial AND dAoA is
+//             moving toward zero — then switch to brake
+//   brake   → fire opposite until dAoA ≈ 0 — then back to idle
+let _aoaPrevForD = 0; // previous-tick AoA (radians), for dAoA/dt
+let _aoaPrevForD_valid = false;
+
+function _predSweepTick(snapshot) {
+  _predSweepState.ticks++;
+  const idx = snapshot.activeBodyIndex || 0;
+  const body = snapshot.bodies[idx];
+  if (!body) return;
+  
+  const dNow = Derivation.derive(snapshot, idx);
+  if (!dNow || !dNow.massProps) return;
+  
+  const env = Derivation.getEnv();
+  const dt = (env && Number.isFinite(env.DT)) ? env.DT : (1 / 80);
+  const M = dNow.massProps.M;
+  if (!(M > 0)) return;
+  
+  // ---- Next-tick kinematics ----
+  const cosT = Math.cos(dNow.theta), sinT = Math.sin(dNow.theta);
+  const thrustIx = dNow.thrustBodyX * cosT - dNow.thrustBodyY * sinT;
+  const thrustIy = dNow.thrustBodyX * sinT + dNow.thrustBodyY * cosT;
+  const aIx = dNow.gVecX + (thrustIx + dNow.dragVecX) / M;
+  const aIy = dNow.gVecY + (thrustIy + dNow.dragVecY) / M;
+  
+  const rx_n = dNow.rx + dNow.vx * dt;
+  const ry_n = dNow.ry + dNow.vy * dt;
+  const vx_n = dNow.vx + aIx * dt;
+  const vy_n = dNow.vy + aIy * dt;
+  
+  const alpha = dNow.alphaAng;
+  const omega_n = dNow.omega + alpha * dt;
+  const theta_n = dNow.theta + dNow.omega * dt + 0.5 * alpha * dt * dt;
+  
+  const sloshNow = body.slosh || { offset: 0, velocity: 0 };
+  const sloshX_n = (sloshNow.offset || 0) + (sloshNow.velocity || 0) * dt;
+  const sloshV_n = sloshNow.velocity || 0;
+  
+  const dNext = Derivation.deriveForState(snapshot, idx, {
+    rx: rx_n, ry: ry_n,
+    vx: vx_n, vy: vy_n,
+    theta: theta_n, omega: omega_n,
+    slosh: { offset: sloshX_n, velocity: sloshV_n },
+  });
+  if (!dNext || !dNext.massProps) return;
+  
+  const dragNext = dNext.torqueDrag;
+  
+  // ---- Phase ----
+  if (_predSweepStartTime === null) _predSweepStartTime = snapshot.simTime;
+  const elapsed = snapshot.simTime - _predSweepStartTime;
+  _predSweepState.elapsed = elapsed;
+  const phase = elapsed < _SWEEP_S_SECONDS ? 'east' : 'chase';
+  _predSweepState.phase = phase;
+  
+  let targetTorque;
+  let terms = { ff: 0, p: 0, d: 0, lead: 0, i: 0, aoa: 0, sweep: 0 };
+  
+  if (phase === 'east') {
+    // ---- Push prefix: full saturated east ----
+    targetTorque = -_SWEEP_FULL_TORQUE;
+    terms.sweep = targetTorque;
+    _predSweepState.lastThetaError = 0;
+    _predSweepState.lastOmega = dNow.omega;
+    _predSweepState.lastIntegralError = _predSweepIntegralError;
+    _predSweepState.lastAoaDeg = dNow.alphaDeg;
+    _predSweepState.lastCorrection = 0;
+  } else {
+    // ---- predictivePlusAoA verbatim ----
+    
+    // Feedforward
+    const ffTerm = -dragNext;
+    
+    // Proportional — thetaTarget = AoA-zero direction.
+// Derivation: nose world direction = (−sinθ, cosθ). Align with
+// relV: (−sinθ, cosθ) = k·(relVx, relVy), k>0.
+//   → sinθ = −relVx/|relV|, cosθ = relVy/|relV|
+//   → θ = atan2(−relVx, relVy)
+// Test: relV = (0, 100) → θ = 0 (nose up). ✓
+// Fallback to local vertical (θ = −atan2(rx, ry)) when relV is tiny.
+const speedRelNow = dNow.speedRel || 0;
+const thetaTarget = (speedRelNow > 0.5) ?
+  Math.atan2(-dNow.relVx, dNow.relVy) :
+  -Math.atan2(body.rx, body.ry);
+let thetaError = body.theta - thetaTarget;
+    while (thetaError > Math.PI) thetaError -= 2 * Math.PI;
+    while (thetaError < -Math.PI) thetaError += 2 * Math.PI;
+    const pTerm = -_PRED_GAINS.K_p * thetaError;
+    _predSweepState.lastThetaError = thetaError;
+    
+    // Rate damping — brake |AoA| only when it is GROWING. d|AoA|/dt =
+// dAoA × sign(AoA). If positive, |AoA| is expanding and we should
+// oppose the motion. If negative, |AoA| is shrinking — leave it
+// alone and let the P term finish the job. The old unconditional
+// -K_d·dAoA fought every reduction, which (with K_d large) could
+// overpower P and actually push AoA the wrong way.
+const aoaRad_d = dNow.alphaDeg * Math.PI / 180;
+const dAoA_d = _aoaPrevForD_valid ? (aoaRad_d - _aoaPrevForD) / dt : 0;
+_aoaPrevForD = aoaRad_d;
+_aoaPrevForD_valid = true;
+const aoaIsGrowing = (aoaRad_d * dAoA_d) > 0;
+const dTerm = aoaIsGrowing ? (-_PRED_GAINS.K_d * dAoA_d) : 0;
+_predSweepState.lastOmega = dNow.omega;
+_predSweepState.lastDaoA = dAoA_d;
+_predSweepState.lastAoaGrowing = aoaIsGrowing;
+
+
+
+    // Phase lead
+    let leadTerm = 0;
+    if (_PRED_GAINS.K_lead > 0 && _predSweepPrevDragTorque !== null) {
+      const dTau_dt = (dragNext - _predSweepPrevDragTorque) / dt;
+      leadTerm = -_PRED_GAINS.K_lead * dTau_dt;
+    }
+    _predSweepPrevDragTorque = dragNext;
+    
+    // Integral
+    const iTerm = _PRED_GAINS.K_i * _predSweepIntegralError;
+    _predSweepState.lastIntegralError = _predSweepIntegralError;
+    
+// AoA impulse term disabled for this experiment. Rate damping via
+// the PID's -K_d·(dAoA/dt) term is now the sole attitude correction.
+const aoaTerm = 0;
+_predSweepState.lastAoaDeg = dNow.alphaDeg;
+_predSweepState.lastCorrection = 0;
+_predSweepState.aoaMode = 'disabled';
+
+
+    targetTorque = ffTerm + pTerm + dTerm + leadTerm + iTerm + aoaTerm;
+    terms = { ff: ffTerm, p: pTerm, d: dTerm, lead: leadTerm, i: iTerm, aoa: aoaTerm, sweep: 0 };
+  }
+  
+  _predSweepState.lastTarget = targetTorque;
+  _predSweepState.lastTerms = terms;
+  
+  // ---- Fire ----
+  const result = GuideRCS.targetTorqueRcs(
+    snapshot, targetTorque, idx,
+    { comX: dNext.massProps.comX, comY: dNext.massProps.comY }
+  );
+  
+  if (!result || !result.fires.length) {
+    send(cmdRcsDuty({}));
+    _predSweepState.lastAchieved = 0;
+    _predSweepState.lastFires = 0;
+    _predSweepState.lastSaturated = false;
+    return;
+  }
+  
+  send(cmdRcsDuty(result.duties));
+  _predSweepState.lastAchieved = result.torqueAchieved;
+  _predSweepState.lastFires = result.fires.length;
+  _predSweepState.lastSaturated = result.saturated;
+  
+  if (_predSweepAoaPendingFire) {
+    const aoaNowAbs = Math.abs(dNow.alphaDeg);
+    if (!result.saturated || aoaNowAbs <= _AOA_THRESHOLD_DEG) {
+      _predSweepAoaPendingFire = false;
+    }
+  }
+  
+  if (!result.saturated && !_predSweepAoaPendingFire) {
+    const gap = targetTorque - result.torqueAchieved;
+    _predSweepIntegralError += gap * dt;
+    if (_predSweepIntegralError >  1e6) _predSweepIntegralError =  1e6;
+    if (_predSweepIntegralError < -1e6) _predSweepIntegralError = -1e6;
+  }
+}
+
+_predSweepTick.start = function () {
+  send(cmdSetAllThrottle(Infinity));
+  _predSweepState.ticks = 0;
+  _predSweepState.phase = 'east';
+  _predSweepState.elapsed = 0;
+  _predSweepState.lastTarget = 0;
+  _predSweepState.lastAchieved = 0;
+  _predSweepState.lastFires = 0;
+  _predSweepState.lastSaturated = false;
+  _predSweepState.lastThetaError = 0;
+  _predSweepState.lastOmega = 0;
+  _predSweepState.lastIntegralError = 0;
+  _predSweepState.lastAoaDeg = 0;
+  _predSweepState.lastCorrection = 0;
+  _predSweepState.lastTerms = { ff: 0, p: 0, d: 0, lead: 0, i: 0, aoa: 0, sweep: 0 };
+  _predSweepIntegralError = 0;
+  _predSweepPrevDragTorque = null;
+    _predSweepTickCounter = 0;
+  _predSweepAoaPendingFire = false;
+  _predSweepStartTime = null;
+      _aoaPrevForD = 0;
+  _aoaPrevForD_valid = false;
+  };
+  
+_predSweepTick.stop = function () {
+  send(cmdRcsDuty(null));
+};
+_predSweepTick.getStatus = function () {
+  return {
+    ticks: _predSweepState.ticks,
+    phase: _predSweepState.phase,
+    elapsed: _predSweepState.elapsed,
+    lastTarget: _predSweepState.lastTarget,
+    lastAchieved: _predSweepState.lastAchieved,
+    lastFires: _predSweepState.lastFires,
+    lastSaturated: _predSweepState.lastSaturated,
+    lastThetaError: _predSweepState.lastThetaError,
+    lastOmega: _predSweepState.lastOmega,
+    lastIntegralError: _predSweepState.lastIntegralError,
+    lastAoaDeg: _predSweepState.lastAoaDeg,
+    lastDaoA: _predSweepState.lastDaoA || 0,
+    aoaGrowing: !!_predSweepState.lastAoaGrowing,
+        lastCorrection: _predSweepState.lastCorrection,
+      aoaMode: _predSweepState.aoaMode || 'idle',
+      lastTerms: _predSweepState.lastTerms,
+    };
+    };
+
+GUIDES.predictivePlusAoAPush = _predSweepTick;
+
+function setSweepDuration(sec) {
+  if (Number.isFinite(sec) && sec > 0) {
+    _SWEEP_S_SECONDS = sec;
+    console.log('[sweep] S =', sec, 's');
+  }
+}
+
+
+// ============================================================
+// gimbalPredictive2 — 2-tick lookahead gimbal control.
+//
+// At snapshot N:
+//   g_N   = current gimbal angle
+//   R_N   = current committed rate (from previous command)
+//   g_{N+1} = g_N + R_N × dt    (physics will integrate this during tick N+1)
+//
+//   S_{N+1} = predict(S_N, gimbal = g_{N+1})
+//   S_{N+2} = predict(S_{N+1}, gimbal = g_{N+1})   ← "don't change rate"
+//
+//   τ_drag(S_{N+2}) = ?  (from derive)
+//   Solve g_req such that  τ_gimbal(g_req) = −τ_drag(S_{N+2})
+//     where  τ_gimbal(g) = comY × F_total × sin(g)   (radians)
+//     → g_req = asin(−τ_drag / (comY × F_total))
+//
+//   Clamp g_req to ±GIMBAL_MAX_DEG.
+//
+//   We want g_{N+2} = g_req, and g_{N+2} = g_{N+1} + R_{N+1} × dt
+//     → R_{N+1} = (g_req − g_{N+1}) / dt
+//
+//   Clamp R_{N+1} to ±GIMBAL_RATE_DEG_S. Send it.
+//
+// Physics applies the rate starting next tick; by the tick after next
+// the gimbal is at g_req and the drag torque at that instant is
+// cancelled by gimbal torque. No RCS involved.
+// ============================================================
+const _gimbal2State = {
+  ticks: 0,
+  gN: 0,
+  gN1: 0,
+  gReq: 0,
+  RReq: 0,
+  RCmd: 0,
+  tauDrag2: 0,
+  saturated: false,
+};
+
+function _gimbalPredictive2Tick(snapshot) {
+  _gimbal2State.ticks++;
+  const idx = snapshot.activeBodyIndex || 0;
+  const body = snapshot.bodies[idx];
+  if (!body) return;
+  
+  const env = Derivation.getEnv();
+  const dt = (env && Number.isFinite(env.DT)) ? env.DT : (1 / 80);
+  
+  const dNow = Derivation.derive(snapshot, idx);
+  if (!dNow || !dNow.massProps) return;
+  const M = dNow.massProps.M;
+  if (!(M > 0)) return;
+  
+  // ---- Gimbal-capable engines ----
+  const engines = body.engines || [];
+  const gimbalEngines = engines.filter(e => e.gimbal);
+  if (!gimbalEngines.length) return;
+  
+  const g_N = gimbalEngines[0].gimbalDeg || 0;
+  const R_N = Number.isFinite(gimbalEngines[0].targetGimbalRateDegS)
+    ? gimbalEngines[0].targetGimbalRateDegS : 0;
+  
+  // ---- Predict S_{N+1} ----
+  // Two candidate predictions of the gimbal angle at tick N+1:
+  //   - "if nothing changes": g = g_N + R_N·dt  (used for the state
+  //     evolution prediction, so drag torque reflects the state we'll
+  //     actually be in — drag barely depends on gimbal angle)
+  //   - "if we command R_new": g = g_N + R_new·dt  (this is what the
+  //     gimbal WILL be at N+1, and it's what the cancel condition is
+  //     solved for)
+  // We iterate once: use g_N + R_N·dt for the state, solve for g_req,
+  // then compute R_new from g_N (not g_N1) so gimbal lands exactly on
+  // g_req at N+1.
+  const g_N1 = g_N + R_N * dt;
+  
+  // Predict S_{N+1} state (position, velocity, attitude) at gimbal = g_N1.
+  const cosT = Math.cos(dNow.theta), sinT = Math.sin(dNow.theta);
+  const thrustIx = dNow.thrustBodyX * cosT - dNow.thrustBodyY * sinT;
+  const thrustIy = dNow.thrustBodyX * sinT + dNow.thrustBodyY * cosT;
+  const aIx = dNow.gVecX + (thrustIx + dNow.dragVecX) / M;
+  const aIy = dNow.gVecY + (thrustIy + dNow.dragVecY) / M;
+  
+  const rx_n1 = dNow.rx + dNow.vx * dt;
+  const ry_n1 = dNow.ry + dNow.vy * dt;
+  const vx_n1 = dNow.vx + aIx * dt;
+  const vy_n1 = dNow.vy + aIy * dt;
+  
+  const alpha = dNow.alphaAng;
+  const omega_n1 = dNow.omega + alpha * dt;
+  const theta_n1 = dNow.theta + dNow.omega * dt + 0.5 * alpha * dt * dt;
+  
+  const sloshNow = body.slosh || { offset: 0, velocity: 0 };
+  const sloshX_n1 = (sloshNow.offset || 0) + (sloshNow.velocity || 0) * dt;
+  const sloshV_n1 = sloshNow.velocity || 0;
+  
+  const dN1 = Derivation.deriveForState(snapshot, idx, {
+    rx: rx_n1, ry: ry_n1,
+    vx: vx_n1, vy: vy_n1,
+    theta: theta_n1, omega: omega_n1,
+    slosh: { offset: sloshX_n1, velocity: sloshV_n1 },
+  }, g_N1);
+  if (!dN1 || !dN1.massProps) return;
+  
+  const tauDrag1 = dN1.torqueDrag;
+  _gimbal2State.tauDrag2 = tauDrag1;
+  
+  // ---- Solve g_req such that τ_gimbal(g_req) = −τ_drag(S_{N+1}) ----
+  // τ_gimbal(g) ≈ A·cos(g) + B·sin(g)   [g in radians]
+  //   A = Σ (e.x − comX)·F_e
+  //   B = comY · Σ F_e
+  // → R_amp·sin(g + φ) = target,   R_amp = √(A²+B²), φ = atan2(A, B)
+  const comX1 = dN1.massProps.comX;
+  const comY1 = dN1.massProps.comY;
+  
+  let A = 0, B = 0;
+  gimbalEngines.forEach(e => {
+    const F = (e.massFlowRate || 0) * (e.Ve || 0);
+    A += ((e.x || 0) - comX1) * F;
+    B += F;
+  });
+  B *= comY1;
+  
+  const targetTau = -tauDrag1;
+  const Ramp = Math.hypot(A, B);
+  let g_req_rad = 0;
+  if (Ramp > 1) {
+    const ratio = Math.max(-1, Math.min(1, targetTau / Ramp));
+    const phi = Math.atan2(A, B);
+    const s1 = Math.asin(ratio) - phi;
+    const s2 = Math.PI - Math.asin(ratio) - phi;
+    const wrap = (x) => { while (x > Math.PI) x -= 2*Math.PI; while (x < -Math.PI) x += 2*Math.PI; return x; };
+    const w1 = wrap(s1), w2 = wrap(s2);
+    g_req_rad = (Math.abs(w1) <= Math.abs(w2)) ? w1 : w2;
+  }
+  let g_req_deg = g_req_rad * 180 / Math.PI;
+  
+  // Clamp g_req to angle envelope.
+  const MAX_ANG = (env && Number.isFinite(env.GIMBAL_MAX_DEG)) ? env.GIMBAL_MAX_DEG : 5;
+  if (Math.abs(g_req_deg) > MAX_ANG) {
+    g_req_deg = Math.sign(g_req_deg) * MAX_ANG;
+  }
+  
+  // ---- Rate required so gimbal lands on g_req at tick N+1 ----
+  // Physics: g_{N+1} = g_N + R_new · dt   (rate we're about to send
+  // applies during tick N+1 — that's the ONLY tick it will run, since
+  // guidance replaces the rate again at snapshot N+1).
+  const R_required = (g_req_deg - g_N) / dt;
+  const MAX_RATE = (env && Number.isFinite(env.GIMBAL_RATE_DEG_S)) ? env.GIMBAL_RATE_DEG_S : 40;
+  let R_cmd = R_required;
+  let saturated = false;
+  if (Math.abs(R_cmd) > MAX_RATE) {
+    R_cmd = Math.sign(R_cmd) * MAX_RATE;
+    saturated = true;
+  }
+  
+  send(cmdSetGimbalRate(R_cmd));
+  
+    _gimbal2State.gN = g_N;
+  _gimbal2State.gN1 = g_N1;
+  _gimbal2State.gReq = g_req_deg;
+  _gimbal2State.RReq = R_required;
+  _gimbal2State.RCmd = R_cmd;
+  _gimbal2State.saturated = saturated;
+  
+  // Aliases so the generic right-toolbar readout works. "Target" here
+  // is the torque we WANT to cancel (= −τ_drag at N+1); "Achieved" is
+  // the gimbal torque we're actually generating at g_req. Both are
+  // torques in the same units as RCS guides' lastTarget/lastAchieved.
+  const tauGimbalAchieved = A * Math.cos(g_req_rad) + B * Math.sin(g_req_rad);
+  _gimbal2State.lastTarget = -tauDrag1;
+  _gimbal2State.lastAchieved = tauGimbalAchieved;
+  _gimbal2State.lastFires = 1; // one gimbal actuator, for parity
+  }
+
+_gimbalPredictive2Tick.start = function () {
+  send(cmdSetAllThrottle(Infinity));
+  _gimbal2State.ticks = 0;
+  _gimbal2State.gN = 0;
+  _gimbal2State.gN1 = 0;
+  _gimbal2State.gReq = 0;
+  _gimbal2State.RReq = 0;
+  _gimbal2State.RCmd = 0;
+  _gimbal2State.tauDrag2 = 0;
+  _gimbal2State.saturated = false;
+  console.log('[gimbalPredictive2] started');
+};
+_gimbalPredictive2Tick.stop = function () {
+  // Rate 0 leaves gimbal at its current angle; no forced recentre.
+  send(cmdSetGimbalRate(0));
+  console.log('[gimbalPredictive2] stopped');
+};
+_gimbalPredictive2Tick.getStatus = function() {
+  return {
+    ticks: _gimbal2State.ticks,
+    gN: _gimbal2State.gN,
+    gN1: _gimbal2State.gN1,
+    gReq: _gimbal2State.gReq,
+    RReq: _gimbal2State.RReq,
+    RCmd: _gimbal2State.RCmd,
+    tauDrag2: _gimbal2State.tauDrag2,
+    saturated: _gimbal2State.saturated,
+    // Aliases for the generic right-toolbar readout
+    lastTarget: _gimbal2State.lastTarget || 0,
+    lastAchieved: _gimbal2State.lastAchieved || 0,
+    lastFires: _gimbal2State.lastFires || 0,
+  };
+};
+
+GUIDES.gimbalPredictive2 = _gimbalPredictive2Tick;
+
+
+// ============================================================
+// predictivePlus — feedforward + PID hybrid.
+//
+//   targetTorque = −τ_drag_predicted          (feedforward)
+//                − K_p · (θ − θ_target)      (attitude hold)
+//                − K_d · ω                   (rate damping)
+//                − K_lead · dτ_drag/dt       (phase lead)
+//                + K_i · integral_error      (bias correction)
+//
+// The first term does the bulk disturbance work. The four feedback
+// terms absorb model error, latency, RCS cross-coupling, and slow
+// biases — everything that makes pure feedforward drift and eventually
+// fail. Theta_target is the current local-vertical direction
+// (-atan2(rx, ry)), so the rocket naturally holds "upright relative
+// to ground".
+// ============================================================
+const _predictivePlusState = {
+  ticks: 0,
+  lastTarget: 0,
+  lastAchieved: 0,
+  lastFires: 0,
+  lastSaturated: false,
+  lastThetaError: 0,
+  lastOmega: 0,
+  lastIntegralError: 0,
+  lastTerms: { ff: 0, p: 0, d: 0, lead: 0, i: 0 },
+};
+
+// Gains, tunable at runtime via Guidance.setPredictiveGains({...}).
+// Tuned for F9-class stack (I ≈ 1.3e8 kg·m², RCS max ≈ 1.2e4 N·m per axis).
+// Rough calibration:
+//   K_p: 0.01 rad attitude error → ~3000 N·m correction
+//   K_d: 0.01 rad/s rate error   → ~2000 N·m correction
+//   K_i: 50 N·m persistent bias over 10 s → ~250 N·m correction
+//   K_lead: 0 disables (needs noise-tolerant derivative to be useful)
+const _PRED_GAINS = {
+  K_p: 3.0e5,
+  K_d: 5.0e7, // bumped for stronger rate damping
+  K_lead: 0.0,
+  K_i: 0.5,
+};
+
+let _predIntegralError = 0;      // N·m·s
+let _predPrevDragTorque = null;  // N·m
+
+function _predPlusTick(snapshot) {
+  _predictivePlusState.ticks++;
+  const idx = snapshot.activeBodyIndex || 0;
+  const body = snapshot.bodies[idx];
+  if (!body) return;
+  
+  const dNow = Derivation.derive(snapshot, idx);
+  if (!dNow || !dNow.massProps) return;
+  
+  const env = Derivation.getEnv();
+  const dt = (env && Number.isFinite(env.DT)) ? env.DT : (1 / 80);
+  const M = dNow.massProps.M;
+  if (!(M > 0)) return;
+  
+  // ---- 1. Predict next-tick kinematics (no RCS assumed) ----
+  const cosT = Math.cos(dNow.theta), sinT = Math.sin(dNow.theta);
+  const thrustIx = dNow.thrustBodyX * cosT - dNow.thrustBodyY * sinT;
+  const thrustIy = dNow.thrustBodyX * sinT + dNow.thrustBodyY * cosT;
+  const aIx = dNow.gVecX + (thrustIx + dNow.dragVecX) / M;
+  const aIy = dNow.gVecY + (thrustIy + dNow.dragVecY) / M;
+  
+  const rx_n = dNow.rx + dNow.vx * dt;
+  const ry_n = dNow.ry + dNow.vy * dt;
+  const vx_n = dNow.vx + aIx * dt;
+  const vy_n = dNow.vy + aIy * dt;
+  
+  const alpha = dNow.alphaAng;
+  const omega_n = dNow.omega + alpha * dt;
+  const theta_n = dNow.theta + dNow.omega * dt + 0.5 * alpha * dt * dt;
+  
+  const sloshNow = body.slosh || { offset: 0, velocity: 0 };
+  const sloshX_n = (sloshNow.offset || 0) + (sloshNow.velocity || 0) * dt;
+  const sloshV_n = sloshNow.velocity || 0;
+  
+  // ---- 2. Next-tick drag torque via deriveForState ----
+  const dNext = Derivation.deriveForState(snapshot, idx, {
+    rx: rx_n, ry: ry_n,
+    vx: vx_n, vy: vy_n,
+    theta: theta_n, omega: omega_n,
+    slosh: { offset: sloshX_n, velocity: sloshV_n },
+  });
+  if (!dNext || !dNext.massProps) return;
+  
+  const dragNext = dNext.torqueDrag;
+  
+  // ---- 3. The five terms ----
+  
+  // 3a. Feedforward — cancel predicted drag
+  const ffTerm = -dragNext;
+  
+  // 3b. Proportional — attitude hold vs local vertical
+  const thetaTarget = -Math.atan2(body.rx, body.ry);
+  let thetaError = body.theta - thetaTarget;
+  while (thetaError > Math.PI) thetaError -= 2 * Math.PI;
+  while (thetaError < -Math.PI) thetaError += 2 * Math.PI;
+  const pTerm = -_PRED_GAINS.K_p * thetaError;
+  _predictivePlusState.lastThetaError = thetaError;
+  
+  // 3c. Rate damping
+  const dTerm = -_PRED_GAINS.K_d * dNow.omega;
+  _predictivePlusState.lastOmega = dNow.omega;
+  
+  // 3d. Phase lead — derivative of predicted drag torque
+  let leadTerm = 0;
+  if (_PRED_GAINS.K_lead > 0 && _predPrevDragTorque !== null) {
+    const dTau_dt = (dragNext - _predPrevDragTorque) / dt;
+    leadTerm = -_PRED_GAINS.K_lead * dTau_dt;
+  }
+  _predPrevDragTorque = dragNext;
+  
+  // 3e. Integral — accumulated torque deficit
+  const iTerm = _PRED_GAINS.K_i * _predIntegralError;
+  _predictivePlusState.lastIntegralError = _predIntegralError;
+  
+  const targetTorque = ffTerm + pTerm + dTerm + leadTerm + iTerm;
+  _predictivePlusState.lastTarget = targetTorque;
+  _predictivePlusState.lastTerms = {
+    ff: ffTerm, p: pTerm, d: dTerm, lead: leadTerm, i: iTerm,
+  };
+  
+  // ---- 4. Fire via GuideRCS at PREDICTED COM ----
+  const result = GuideRCS.targetTorqueRcs(
+    snapshot, targetTorque, idx,
+    { comX: dNext.massProps.comX, comY: dNext.massProps.comY }
+  );
+  
+  if (!result || !result.fires.length) {
+    send(cmdRcsDuty({}));
+    _predictivePlusState.lastAchieved = 0;
+    _predictivePlusState.lastFires = 0;
+    _predictivePlusState.lastSaturated = false;
+    return;
+  }
+  
+  send(cmdRcsDuty(result.duties));
+  _predictivePlusState.lastAchieved = result.torqueAchieved;
+  _predictivePlusState.lastFires = result.fires.length;
+  _predictivePlusState.lastSaturated = result.saturated;
+  
+  // Anti-windup: only accumulate the deficit when RCS wasn't
+  // saturated. If saturated, the gap isn't correctable — integrating
+  // it would just build a huge terminal value and cause a rebound
+  // the moment saturation lifts.
+  if (!result.saturated) {
+    const gap = targetTorque - result.torqueAchieved; // N·m
+    _predIntegralError += gap * dt;
+    // Clamp — safety against slow drift / numerical accumulation.
+    if (_predIntegralError >  1e6) _predIntegralError =  1e6;
+    if (_predIntegralError < -1e6) _predIntegralError = -1e6;
+  }
+}
+
+_predPlusTick.start = function () {
+  send(cmdSetAllThrottle(Infinity));
+  _predictivePlusState.ticks = 0;
+  _predictivePlusState.lastTarget = 0;
+  _predictivePlusState.lastAchieved = 0;
+  _predictivePlusState.lastFires = 0;
+  _predictivePlusState.lastSaturated = false;
+  _predictivePlusState.lastThetaError = 0;
+  _predictivePlusState.lastOmega = 0;
+  _predictivePlusState.lastIntegralError = 0;
+  _predictivePlusState.lastTerms = { ff: 0, p: 0, d: 0, lead: 0, i: 0 };
+  _predIntegralError = 0;
+  _predPrevDragTorque = null;
+};
+_predPlusTick.stop = function () {
+  send(cmdRcsDuty(null));
+};
+_predPlusTick.getStatus = function () {
+  return {
+    ticks: _predictivePlusState.ticks,
+    lastTarget: _predictivePlusState.lastTarget,
+    lastAchieved: _predictivePlusState.lastAchieved,
+    lastFires: _predictivePlusState.lastFires,
+    lastSaturated: _predictivePlusState.lastSaturated,
+    lastThetaError: _predictivePlusState.lastThetaError,
+    lastOmega: _predictivePlusState.lastOmega,
+    lastIntegralError: _predictivePlusState.lastIntegralError,
+    lastTerms: _predictivePlusState.lastTerms,
+  };
+};
+
+GUIDES.predictivePlus = _predPlusTick;
+
+// Runtime gain tuning — callable from the guidance worker console.
+function setPredictiveGains(gains) {
+  if (!gains) return;
+  ['K_p', 'K_d', 'K_lead', 'K_i'].forEach(k => {
+    if (Number.isFinite(gains[k])) _PRED_GAINS[k] = gains[k];
+  });
+  console.log('[predictivePlus] gains:', JSON.stringify(_PRED_GAINS));
+}
+  
+  // ---- Outbound: single choke point for physics commands. ----
   function send(msg) {
     if (!_physicsSend) {
       console.warn('[guidance] send() called before physics port connected:', msg);
@@ -847,17 +1383,7 @@ return {
     _physicsSend(msg);
   }
   
-  // ---- Command builders — one per message type in the interface
-  // contract (IMU_PROMPT_md.txt, "Command messages"). These only shape
-  // the message; clamping/validation is the physics worker's job (same
-  // as for human UI commands — guidance is not a trusted client, it goes
-  // through the identical clamp path clampMassFlowCommand() etc. use).
-  // Every one of these is usable directly from this worker's devtools
-  // console for manual testing, e.g.:
-  //   Guidance.send(Guidance.cmdSetAllThrottle(Infinity))
-  // ----
-  
-  // A. Existing messages, reused verbatim.
+  // ---- Command builders. Shape-only; clamping is physics's job. ----
   function cmdSetGroupThrottle(angles, kgPerSec) { return { type: 'setGroupThrottle', angles, value: kgPerSec }; }
   function cmdSetCenterThrottle(kgPerSec) { return { type: 'setCenterThrottle', value: kgPerSec }; }
   function cmdSetAllThrottle(kgPerSec) { return { type: 'setAllThrottle', value: kgPerSec }; }
@@ -868,19 +1394,10 @@ return {
   function cmdReleasePayload() { return { type: 'releasePayload' }; }
   function cmdEmergencyEject() { return { type: 'emergencyEject' }; }
   function cmdTakeControl(idx) { return { type: 'takeControl', idx }; }
-  function cmdWarp(value) { return { type: 'warp', value }; } // available but discouraged, see spec "Out of scope"
-  function cmdSetFuelMass(value) { return { type: 'setFuelMass', value }; } // allowed but discouraged (pad-only, enforced worker-side)
-  
-  // B. New in Phase 3 — rate-not-angle gimbal, per-nozzle RCS duty.
+  function cmdWarp(value) { return { type: 'warp', value }; }
+  function cmdSetFuelMass(value) { return { type: 'setFuelMass', value }; }
   function cmdSetGimbalRate(degPerSec) { return { type: 'setGimbalRate', degPerSec }; }
-  // duties: { TL:{lat,up,dn}, TR:{...}, BL:{...}, BR:{...} }, any subset of
-  // nozzles/pods. Issue C (round 2): passes `duties` through AS-IS — this
-  // is deliberate, not an oversight. Call cmdRcsDuty(null) (or with no
-  // argument) to relinquish RCS duty control back to the boolean rcsCmd
-  // path; physics_worker.js's 'rcsDuty' handler treats a null/undefined
-  // duties payload as "release", not "hold at all-zero". Sending
-  // cmdRcsDuty({}) or all-zero nozzle objects is NOT the same thing — that
-  // still latches duty control, just at zero force.
+  // Pass null to relinquish; {} latches at zero.
   function cmdRcsDuty(duties) { return { type: 'rcsDuty', duties }; }
   
   return {
@@ -888,24 +1405,23 @@ return {
     setImuEnabled,
     setStackData,
     getStackData,
-    getMemberRecord,
-    getTypeById,
-    getEnv,
-    getStackPayloadMass,
-    getStackPayloadMass,
-// Derivation module
-// Derivation module
-derive,
-deriveAllBodies,
-memberMaxFuel: _memberMaxFuel,
-// Lower-level pieces, exposed for callers who want just one quantity
-// without the full derive() object.
-combineComponents: _combine,
-sloshMassFraction: _sloshMassFraction,
-sloshCentroidFrac: _sloshCentroidFrac,
     onSnapshot,
-    tick, // exposed so Phase 4 can override/replace this single function
-    send,
+tick,
+send,
+// Guide library
+startGuide,
+stopGuide,
+setActiveGuide,
+getActiveGuide,
+listGuides,
+getGuideStatus,
+setPredictiveGains,
+setSweepDuration,
+    // Convenience forwarders so callers can keep using Guidance.*
+    derive: (...args) => Derivation.derive(...args),
+    deriveAllBodies: (...args) => Derivation.deriveAllBodies(...args),
+    targetTorqueRcs: (...args) => GuideRCS.targetTorqueRcs(...args),
+    // Command builders
     cmdSetGroupThrottle,
     cmdSetCenterThrottle,
     cmdSetAllThrottle,
@@ -920,7 +1436,7 @@ sloshCentroidFrac: _sloshCentroidFrac,
     cmdSetFuelMass,
     cmdSetGimbalRate,
     cmdRcsDuty,
-    // exposed for debugging/inspection from the worker's devtools console
+    // Debug getters
     get lastRawSnapshot() { return _lastRawSnapshot; },
     get lastMeasuredSnapshot() { return _lastMeasuredSnapshot; },
   };

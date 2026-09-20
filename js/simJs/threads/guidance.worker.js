@@ -37,6 +37,11 @@ let bootstrapped = false;
 // in that path at all once this is wired.
 let physicsPort = null;
 
+// Throttle for status pushes back to main thread — one message every N
+// snapshots (snapshots arrive at ~20 Hz, so N=10 → 2 Hz UI updates).
+let _statusPushCounter = 0;
+const _STATUS_PUSH_EVERY = 10;
+
 self.onmessage = (e) => {
   const msg = e.data;
   
@@ -53,10 +58,12 @@ self.onmessage = (e) => {
       // for parity with physics/render workers and in case Phase 4 needs
       // it); imu.js and guidance.js are the only real content.
       importScripts(
-        'workerShims.js',
-        '../guidance/imu.js',
-        '../guidance/guidance.js'
-      );
+  'workerShims.js',
+  '../guidance/imu.js',
+  '../guidance/derivation.js',
+  '../guidance/guidercs.js',
+  '../guidance/guidance.js'
+);
       bootstrapped = true;
       self.postMessage({ type: 'ready' });
     } catch (err) {
@@ -82,13 +89,40 @@ self.onmessage = (e) => {
     }
     
     // Forwarded copy of the physics snapshot (structured clone — mutating
-    // it affects only this worker's copy, physics is untouched by
-    // construction). measure()'s identity-vs-noise branch happens inside
-    // Guidance.onSnapshot -> imu.js's global measure().
-    case 'snapshot': {
-      if (typeof Guidance !== 'undefined') Guidance.onSnapshot(msg.data);
+// it affects only this worker's copy, physics is untouched by
+// construction). measure()'s identity-vs-noise branch happens inside
+// Guidance.onSnapshot -> imu.js's global measure().
+case 'snapshot': {
+  if (typeof Guidance === 'undefined') break;
+  Guidance.onSnapshot(msg.data);
+  // Throttled status push so main thread's right toolbar can show
+  // live testGuide stats without spamming messages every tick.
+  _statusPushCounter++;
+  if (_statusPushCounter >= _STATUS_PUSH_EVERY) {
+    _statusPushCounter = 0;
+    self.postMessage({ type: 'guideStatus', status: Guidance.getGuideStatus() });
+  }
+  break;
+}
+
+// Guidance command channel — main thread's right toolbar drives this.
+//   action: 'start' | 'stop'
+//   guideName: name of the guide to start (ignored for 'stop')
+case 'guidanceCommand': {
+  if (typeof Guidance === 'undefined') break;
+  switch (msg.action) {
+    case 'start':
+      Guidance.startGuide(msg.guideName);
       break;
-    }
+    case 'stop':
+      Guidance.stopGuide();
+      break;
+  }
+  // Immediate status ack so the UI reflects the transition without
+  // waiting for the next throttled push.
+  self.postMessage({ type: 'guideStatus', status: Guidance.getGuideStatus() });
+  break;
+}
     
     // The only message main thread sends besides snapshots — the IMU
 // toggle. Physics worker and render worker never see this at all.
@@ -103,7 +137,7 @@ case 'setImuEnabled': {
 // + environment constants. See workerBridge.js's
 // sendStackDataToGuidance() for what's inside and why.
 case 'stackData': {
-  if (typeof Guidance !== 'undefined') Guidance.setStackData(msg.data);
+  if (typeof Derivation !== 'undefined') Derivation.setStackData(msg.data);
   break;
 }
 

@@ -925,7 +925,21 @@ function loadStacks() {
     const raw = localStorage.getItem(STACKS_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) return parsed;
+      if (Array.isArray(parsed)) {
+        // One-time migration: stacks that predate the frozen-derived
+        // layer (or the seed stack written directly via saveStacks)
+        // don't have a `derived` field. Compute it now and persist so
+        // this never has to run again for the same stack.
+        let changed = false;
+        parsed.forEach(s => {
+          if (!s.derived || !s.derived.interstage) {
+            s.derived = computeStackDerived(s.members);
+            changed = true;
+          }
+        });
+        if (changed) saveStacks(parsed);
+        return parsed;
+      }
     }
   } catch (e) { /* fall through */ }
   return [];
@@ -939,16 +953,47 @@ function genStackId() {
   return 'stk_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 }
 
+// ---------------------------------------------------------------------------
+// Stack-level derived values — computed ONCE when the stack is saved,
+// then read from the stack record forever after. The point: an interstage
+// is bolted hardware on the booster, and its dimensions are decided by
+// what stage sits on top of it AT STACK DESIGN TIME. Once saved, the
+// value must never change during flight — not when the stage detaches,
+// not when the sim re-derives mass properties.
+//
+// Currently freezes only interstage sizing (the only stack-dependent
+// structural value in the codebase today). Other per-member masses
+// (shell, engines, fuel tank volume, legs, fairing) are member-local and
+// don't need this — they compute identically attached or detached.
+//
+// If a future addition introduces another stack-context-dependent value,
+// it goes here too.
+// ---------------------------------------------------------------------------
+function computeStackDerived(memberIds) {
+  const fleet = loadFleet();
+  const records = (memberIds || []).map(id => fleet.find(r => r.id === id)).filter(Boolean);
+  const interstage = {};
+  records.forEach((rec, i) => {
+    if (rec.stageRole !== 'booster') return;
+    const aboveRec = records[i + 1] || null;
+    interstage[rec.id] = computeInterstageForBooster(rec, aboveRec);
+  });
+  return { interstage };
+}
+
 function addStack(data) {
   const stacks = loadStacks();
   const VALID_SEQ = ['f9-standard', 'f9-heavy', 'sso', 'custom'];
+  const memberIds = Array.isArray(data && data.members) ? [...data.members] : [];
   const rec = {
     id: genStackId(),
     name: (data && data.name ? String(data.name) : 'Unnamed Stack').trim() || 'Unnamed Stack',
-    members: Array.isArray(data && data.members) ? [...data.members] : [],
+    members: memberIds,
     sequence: (data && VALID_SEQ.includes(data.sequence)) ? data.sequence : 'custom',
     payloadId: (data && data.payloadId) ? data.payloadId : null,
     locked: false,
+    // Frozen at save time — see computeStackDerived() header.
+    derived: computeStackDerived(memberIds),
   };
   stacks.push(rec);
   saveStacks(stacks);
@@ -964,6 +1009,9 @@ function updateStack(id, data) {
   if (!Array.isArray(merged.members)) merged.members = [];
   const VALID_SEQ = ['f9-standard', 'f9-heavy', 'sso', 'custom'];
   if (!VALID_SEQ.includes(merged.sequence)) merged.sequence = 'custom';
+  // Recompute derived (members may have changed, or an underlying member
+  // record was edited). Always overwrite; never trust a stale cached copy.
+  merged.derived = computeStackDerived(merged.members);
   stacks[idx] = merged;
   saveStacks(stacks);
   return merged;
@@ -1054,9 +1102,14 @@ function stackCombinedAggregates(stk) {
     let dry = 0,
       fuel = 0;
     if (m.stageRole === 'booster') {
-      const d = boosterDerivedMasses(m, members[i + 1] || null);
-      if (d) { dry = d.dryMass;
-        fuel = d.fuelMass; }
+  // Pass the stack's own frozen interstage value (if present). Falls
+  // back to the live compute for legacy stacks that predate the
+  // freezing layer — loadStacks() migrates those on next read.
+  const frozen = (stk && stk.derived && stk.derived.interstage)
+    ? stk.derived.interstage[m.id] : null;
+  const d = boosterDerivedMasses(m, members[i + 1] || null, frozen);
+  if (d) { dry = d.dryMass;
+    fuel = d.fuelMass; }
     } else if (m.stageRole === 'stage') {
       const d = stageDerivedMasses(m);
       if (d && !d.infeasible) { dry = d.dryMassNoPayload;
@@ -1417,7 +1470,52 @@ function payloadCompatibilityCheck(payload, stackMembers, fleet) {
 //
 // Returns null for non-booster records.
 // ---------------------------------------------------------------------------
-function boosterDerivedMasses(rec, aboveMember) {
+// ---------------------------------------------------------------------------
+// Interstage sizing — extracted so it can be called both inside
+// boosterDerivedMasses (legacy/fallback path) and at stack-save time
+// (to freeze the value on the stack record).
+//
+// Height: max(stage-above's engine bell × 1.20, 6% booster tank height).
+// Mass:   thin-cylinder shell × carbon-composite density.
+//
+// Only the STACK CONTEXT decides the "stage above" term. Once the stack
+// is saved, this value must never change during flight — see
+// computeStackDerived() below for the freezing layer.
+// ---------------------------------------------------------------------------
+function computeInterstageForBooster(rec, aboveRec) {
+  let stageAboveBellHeight = 0;
+  if (aboveRec && aboveRec.engineTypeId) {
+    const layoutAbove = getComponentType(aboveRec.engineTypeId);
+    if (layoutAbove && layoutAbove.frame && layoutAbove.frame.slots) {
+      const gAbove = engineThrusterGroups(layoutAbove);
+      let totalFlow = 0;
+      Object.keys(gAbove).forEach(gk => {
+        const g = aboveRec.engineThrusters && aboveRec.engineThrusters[gk];
+        if (!g || !Number.isFinite(g.massFlowRate)) return;
+        totalFlow += g.massFlowRate * gAbove[gk].length;
+      });
+      const perEngine = totalFlow / layoutAbove.frame.slots.length;
+      stageAboveBellHeight = 0.007 * perEngine;
+    }
+  }
+  const tankH = (rec.fuel && Number.isFinite(rec.fuel.tankHeight)) ? rec.fuel.tankHeight : 0;
+  const tankW = (rec.fuel && Number.isFinite(rec.fuel.tankWidth)) ? rec.fuel.tankWidth : 0;
+  const height = Math.max(stageAboveBellHeight * 1.20, 0.06 * tankH);
+  
+  const shellF = Number.isFinite(rec.bodyShellFactor) ? rec.bodyShellFactor : BODY_SHELL_FACTOR;
+const r_booster = tankW / 2;
+const shellThk = shellF * r_booster;
+// Real F9 interstage is carbon fibre — hardcoded 1600 kg/m³, matching
+// physics.js's own INTERSTAGE_DENSITY constant. Do NOT use the body
+// metal density here; the interstage shell is a different material
+// from the al-li airframe.
+const INTERSTAGE_DENSITY = 1600;
+const mass = 2 * Math.PI * r_booster * shellThk * height * INTERSTAGE_DENSITY;
+
+  return { height, mass };
+}
+
+function boosterDerivedMasses(rec, aboveMember, frozenInterstage) {
   if (!rec || rec.stageRole !== 'booster') return null;
   const warnings = [];
   
@@ -1503,6 +1601,16 @@ if (recoveryType && recoveryType.capabilities && recoveryType.capabilities.deplo
   // call-sites not yet updated) still falls back to the SIM_STACK_MEMBERS
   // global for backward compatibility; explicit `null` means "definitely
   // no member above" (e.g. a standalone booster preview).
+  // Interstage dimensions — either the FROZEN value from the stack record
+// (preferred: set once when the stack was saved, never changes during
+// flight), or the legacy fallback (compute from `aboveMember` or the
+// SIM_STACK_MEMBERS global). Same physical formula in both paths; the
+// only difference is WHEN it runs.
+let interstageH_m, interstageMass;
+if (frozenInterstage && Number.isFinite(frozenInterstage.height) && Number.isFinite(frozenInterstage.mass)) {
+  interstageH_m = frozenInterstage.height;
+  interstageMass = frozenInterstage.mass;
+} else {
   let above = aboveMember;
   if (above === undefined) {
     above = null;
@@ -1511,30 +1619,10 @@ if (recoveryType && recoveryType.capabilities && recoveryType.capabilities.deplo
       if (idx >= 0 && idx + 1 < SIM_STACK_MEMBERS.length) above = SIM_STACK_MEMBERS[idx + 1];
     }
   }
-  let stageAboveBellHeight = 0;
-  if (above && above.engineTypeId) {
-    const layoutAbove = getComponentType(above.engineTypeId);
-    if (layoutAbove && layoutAbove.frame && layoutAbove.frame.slots) {
-      const gAbove = engineThrusterGroups(layoutAbove);
-      let totalFlow = 0;
-      Object.keys(gAbove).forEach(gk => {
-        const g = above.engineThrusters && above.engineThrusters[gk];
-        if (!g || !Number.isFinite(g.massFlowRate)) return;
-        totalFlow += g.massFlowRate * gAbove[gk].length;
-      });
-      const perEngine = totalFlow / layoutAbove.frame.slots.length;
-      stageAboveBellHeight = 0.007 * perEngine;
-    }
-  }
-  const interstageH_m = Math.max(stageAboveBellHeight * 1.20, 0.06 * tankH);
-const r_booster = tankW / 2;
-// Interstage uses the booster's own shell factor (same shell thickness
-// class as the tank it sits on), but a CARBON-COMPOSITE density — real
-// F9 interstage is carbon fibre, not the al-li airframe alloy. Target
-// ~1,500 kg for a 2.42 m tall interstage (real F9 estimate).
-const INTERSTAGE_DENSITY = 1600;
-const shellThk = shellF * r_booster;
-const interstageMass = 2 * Math.PI * r_booster * shellThk * interstageH_m * INTERSTAGE_DENSITY;
+  const computed = computeInterstageForBooster(rec, above);
+  interstageH_m = computed.height;
+  interstageMass = computed.mass;
+}
 
   const dryMass = bodyMass + totalEngineMass + legMass + interstageMass;
   const wetMass = dryMass + fuelMass;
