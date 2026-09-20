@@ -1333,14 +1333,21 @@ function renderVehiclePreview(canvas, vehicle) {
   // Rocket width = 60% of canvas width, fixed. Height follows from the
   // real height:width ratio at that same scale (mpp) — true proportion,
   // never stretched/squashed.
-  const W = cssW * 0.50;
-  const mpp = v.width / W;
-  const H = v.height / mpp;
-  
-  // Small margin above/below the rocket; canvas height sized to fit exactly.
-  const vMarginFrac = 0.94;
-  const cssH = H / vMarginFrac;
-  canvas.style.height = cssH + 'px';
+  // Same height cap logic as renderStackPreview — keeps tall rockets from
+// stretching the canvas past a reasonable size, at the cost of the
+// drawn rocket being correspondingly narrower (correct — aspect is
+// intrinsically preserved).
+const MAX_DRAWN_H_PX = 520;
+const maxW = cssW * 0.50;
+const mppW = v.width / maxW;
+const mppH = v.height / MAX_DRAWN_H_PX;
+const mpp = Math.max(mppW, mppH);
+const W = v.width / mpp;
+const H = v.height / mpp;
+
+const vMarginFrac = 0.94;
+const cssH = H / vMarginFrac;
+canvas.style.height = cssH + 'px';
   
   const dpr = window.devicePixelRatio || 1;
   canvas.width = Math.round(cssW * dpr);
@@ -1423,14 +1430,22 @@ function renderStackPreview(canvas, memberIds, fleet) {
   }
   
   const widest = Math.max(...members.map(m => m.width || 1));
-  const totalH = members.reduce((s, m) => s + (m.height || 0), 0);
-  
-  const W_px = cssW * 0.50;
-  const mpp = widest / W_px;
-  const H_px_total = totalH / mpp;
-  const vMarginFrac = 0.94;
-  const cssH = H_px_total / vMarginFrac;
-  canvas.style.height = cssH + 'px';
+const totalH = members.reduce((s, m) => s + (m.height || 0), 0);
+
+// Cap the DRAWN rocket's height so a very tall stack (F9 stack is 68m
+// × 5.2m, aspect ~13:1) doesn't stretch the canvas past reason. When
+// the height cap binds, the drawn width shrinks proportionally —
+// which is correct: the rocket is intrinsically that narrow.
+const MAX_DRAWN_H_PX = 520;
+const maxW_px = cssW * 0.50;
+const mppW = widest / maxW_px;
+const mppH = totalH / MAX_DRAWN_H_PX;
+const mpp = Math.max(mppW, mppH);
+const W_px = widest / mpp;
+const H_px_total = totalH / mpp;
+const vMarginFrac = 0.94;
+const cssH = H_px_total / vMarginFrac;
+canvas.style.height = cssH + 'px';
   
   const dpr = window.devicePixelRatio || 1;
   canvas.width = Math.round(cssW * dpr);
