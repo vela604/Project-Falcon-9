@@ -919,9 +919,16 @@ function refreshAddMemberDropdown() {
   const fleet = loadFleet();
   const n = workingStackMembers.length;
   const topRec = n > 0 ? fleet.find(r => r.id === workingStackMembers[n - 1]) : null;
-  const topIsPayloadSpace = !!(topRec && topRec.stageRole === 'payloadSpace');
+  // 'nose' was missing from this list originally — the role picker hides
+  // the nose role from top-level creation (nose records only exist as
+  // additions to a family), but the fleet can still contain nose records,
+  // and a custom stack must be able to stack one on top. Both 'nose' and
+  // 'payloadSpace' are top-only elements: once one of them is the top
+  // member, nothing else can go above it.
+  const topIsTopOnly = !!(topRec &&
+    (topRec.stageRole === 'payloadSpace' || topRec.stageRole === 'nose'));
   const allowedRoles = n === 0 ? ['booster'] :
-    (topIsPayloadSpace ? [] : ['booster', 'stage', 'payloadSpace']);
+    (topIsTopOnly ? [] : ['booster', 'stage', 'payloadSpace', 'nose']);
   
   const options = fleet.filter(r => {
     if (!allowedRoles.includes(r.stageRole)) return false;
@@ -1278,11 +1285,11 @@ function blankNoseData() {
     locked: false,
     stageRole: 'nose',
     familyId: null,
-    height: 5,
+    height: 6,
     width: 3.9,
     dragCd: 0.4,
     bodyMetalTypeId: 'al-li-alloy',
-    noseCurveness: 0,
+    noseCurveness: 1,
     // No engines/legs/RCS/fuel/payload for a nose — it's aerodynamic only.
   };
 }
@@ -1353,10 +1360,21 @@ if (role === 'payloadSpace') {
   setVal('f-psMetalType', r.payloadSpaceMetalTypeId);
   setVal('f-psDeployment', r.deploymentDirection || 'clamshell');
   setVal('f-psColor', r.color || '#e9edf2');
-  // Chute dropdown: '' for the "no chute" option, otherwise the type id.
-  setVal('f-chuteType', r.chuteTypeId || '');
-  renderPsParams(r.payloadSpaceTypeId, r.params);
-
+  // Stale record pointing at a deleted type (e.g. legacy 'cap-standard')
+  // would render an empty grid. Fall back to whatever the select
+  // currently has, or to 'cap-bulged' if the select is empty too.
+  const validTypeId = (r.payloadSpaceTypeId && getComponentType(r.payloadSpaceTypeId)) ?
+    r.payloadSpaceTypeId :
+    (document.getElementById('f-psShapeType')?.value || 'cap-bulged');
+  renderPsParams(validTypeId, r.params);
+  // Deferred re-render: covers the case where this runs before the
+  // select got its options on the very first editor open.
+  requestAnimationFrame(() => {
+    const g = document.getElementById('psParamsGrid');
+    if (g && g.children.length === 0) {
+      renderPsParams(validTypeId, r.params);
+    }
+  });
 }
   // P4-D2: body appearance.
   const bd = r.bodyDesign || { mode: 'solid', solidColor: '#e9edf2', dslText: '' };
@@ -1400,7 +1418,21 @@ const shellF = Number.isFinite(r.bodyShellFactor) ?
   r.bodyShellFactor :
   (DEFAULT_SHELL_FACTOR_BY_ROLE[role] || BODY_SHELL_FACTOR);
 setVal('f-bodyShellFactor', shellF);
-applyRoleVisibility(role);
+  applyRoleVisibility(role);
+  
+  // Deferred safety net: agar upar wale kisi bhi step ne psParamsGrid
+  // clear kar diya, ya f-psShapeType ka value populate nahi hua, to
+  // ab (jab select ke options available hain) dobara try karo.
+  if (role === 'payloadSpace') {
+    requestAnimationFrame(() => {
+      const grid = document.getElementById('psParamsGrid');
+      if (!grid || grid.children.length > 0) return; // already populated, skip
+      const shapeSel = document.getElementById('f-psShapeType');
+      const fallbackTypeId = (shapeSel && shapeSel.value) || r.payloadSpaceTypeId;
+      renderPsParams(fallbackTypeId, r.params);
+    });
+  }
+  
   hideFormError();
   }
 

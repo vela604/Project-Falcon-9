@@ -556,7 +556,16 @@ function renderPayloadSpaceParams(typeId, currentParams) {
 function renderPsParams(typeId, currentParams) {
   const grid = document.getElementById('psParamsGrid');
   if (!grid) return;
-  const type = getComponentType(typeId);
+  let type = getComponentType(typeId);
+  // Fallback: agar requested typeId resolve nahi hua (stale record
+  // jo hataye gaye type pe point kar raha hai, ya empty value), to
+  // registry ka first payloadSpace type use karo — grid tab bhi fill
+  // rahega, dimension inputs gayab nahi honge.
+  if (!type) {
+    const all = (typeof getComponentsByCategory === 'function') ?
+      getComponentsByCategory('payloadSpace') : [];
+    type = all && all.length ? all[0] : null;
+  }
   if (!type) { grid.innerHTML = ''; return; }
   grid.innerHTML = renderParamFieldsHTML(type.parameterSchema, currentParams || {}, 'ps');
 }
@@ -594,7 +603,7 @@ function applyRoleVisibility(role) {
     el.querySelectorAll('input, select, textarea').forEach(inp => { inp.disabled = !show; });
   }
   
-  Object.keys(MATRIX).forEach(id => {
+    Object.keys(MATRIX).forEach(id => {
     const el = document.getElementById(id);
     if (!el) {
       console.warn(`applyRoleVisibility: #${id} not found — check rockets.html`);
@@ -603,12 +612,59 @@ function applyRoleVisibility(role) {
     setVisible(el, MATRIX[id].includes(role));
   });
   
+// Defensive re-enable — nose aur payloadSpace ke dimensions ko explicitly
+// visible + enabled karo, kyunki setVisible ka cascade nested fieldset
+// (geometryFieldset ke andar mass fields) unko disable kar sakta hai.
+if (role === 'nose') {
+  const geom = document.getElementById('geometryFieldset');
+  if (geom) geom.style.display = '';
+  ['f-height', 'f-width'].forEach(id => {
+    const inp = document.getElementById(id);
+    if (!inp) return;
+    inp.disabled = false;
+    if (inp.parentElement) inp.parentElement.style.display = '';
+    if (inp.parentElement && inp.parentElement.parentElement)
+      inp.parentElement.parentElement.style.display = '';
+  });
+}
+if (role === 'payloadSpace') {
+  // --- Shape fieldset (payloadSpaceFieldset) ---
+  const psFs = document.getElementById('payloadSpaceFieldset');
+  if (psFs) psFs.style.display = '';
+  const grid = document.getElementById('psParamsGrid');
+  if (grid) {
+    if (grid.children.length === 0 && typeof renderPsParams === 'function') {
+      const shapeSel = document.getElementById('f-psShapeType');
+      if (shapeSel) renderPsParams(shapeSel.value, {});
+    }
+    grid.querySelectorAll('input, select, textarea').forEach(inp => { inp.disabled = false; });
+  }
+  
+  // --- Chute fieldset (fairingRecoveryFieldset) — yahi miss tha ---
+  const chuteFs = document.getElementById('fairingRecoveryFieldset');
+  if (chuteFs) chuteFs.style.display = '';
+  const chuteSel = document.getElementById('f-chuteType');
+  if (chuteSel) {
+    // Agar dropdown sirf placeholder hai (populateTypeSelects skip hua
+    // ya pehle chala), to abhi populate karo.
+    if (chuteSel.options.length <= 1 && typeof getComponentsByCategory === 'function') {
+      const chutes = getComponentsByCategory('fairingRecovery');
+      chuteSel.innerHTML = '<option value="">— no chute —</option>' +
+        chutes.map(t => `<option value="${t.id}">${t.displayName}</option>`).join('');
+    }
+    chuteSel.disabled = false;
+    // Pura fieldset ke saare inputs enable
+    chuteFs.querySelectorAll('input, select, textarea').forEach(inp => { inp.disabled = false; });
+  }
+
+  }
+  
   // Recovery gate (Part C): checkbox off → hide dropdown + params even
   // for roles that support recovery.
   applyRecoveryVisibility(role);
   applyPayloadSpaceVisibility(role);
   applyBodyDesignVisibility(role);
-}
+  }
 
 
 function updateRcsThrusterDerived() {

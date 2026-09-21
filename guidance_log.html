@@ -8,110 +8,368 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
+/* =====================================================================
+   Guidance Log — iOS-style glassmorphism theme.
+   Frosted panels with backdrop-filter, gradient edge sheen, drifting
+   colour orbs in the background so the blur has something to chew on.
+   ===================================================================== */
+
 :root {
-  --bg: #060912;
-  --bg-2: #0a1120;
-  --panel: #0d1424;
-  --panel-2: #101a30;
-  --panel-border: #1c2b45;
-  --cyan: #35d6ff;
-  --orange: #ff9248;
-  --magenta: #ff5fa8;
-  --green: #4ade80;
-  --yellow: #ffd23f;
-  --purple: #a78bfa;
-  --danger: #ff5f7e;
-  --text: #dbe6f5;
-  --dim: #6b7d9c;
-  --font-head: 'Space Grotesk', system-ui, sans-serif;
-  --font-mono: 'JetBrains Mono', 'Consolas', monospace;
+  --bg-deep:      #04060e;
+  --bg-mid:       #080c18;
+
+  --cyan:         #35d6ff;
+  --orange:       #ff9248;
+  --magenta:      #ff5fa8;
+  --green:        #4ade80;
+  --yellow:       #ffd23f;
+  --purple:       #a78bfa;
+  --danger:       #ff5f7e;
+
+  --text:         #e8eef8;
+  --text-dim:     #8b9ab6;
+  --text-mute:    #55617a;
+
+  --font-head: 'Space Grotesk', system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', Consolas, monospace;
+
+  /* Glass recipe — used across every panel */
+  --glass-bg:        rgba(20, 28, 48, 0.42);
+  --glass-bg-hi:     rgba(30, 42, 68, 0.55);
+  --glass-border:    rgba(255, 255, 255, 0.10);
+  --glass-border-hi: rgba(255, 255, 255, 0.18);
+  --glass-shadow:
+    0 8px 32px rgba(0, 0, 0, 0.35),
+    0 2px 8px rgba(0, 0, 0, 0.2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.10),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.20);
 }
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 
 html, body {
   margin: 0; padding: 0;
-  background: var(--bg);
+  background: var(--bg-deep);
   color: var(--text);
   font-family: var(--font-head);
   font-size: 15px;
   line-height: 1.55;
+  min-height: 100vh;
   overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
 }
 
+/* =====================================================================
+   Background — Gemini-style mesh gradient.
+   Multiple large, soft radial gradients blending into each other, with
+   one heavy container-level blur on top. No visible "orbs" — just a
+   continuous colour field that slowly drifts and shifts hue. The frosted
+   panels above use backdrop-filter to blur this further, producing the
+   live-iOS-glass effect.
+   ===================================================================== */
+
+/* Deep dark base — anchors bottom. */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background: linear-gradient(180deg, #04060e 0%, #02030a 100%);
+  z-index: 0;
+  pointer-events: none;
+}
+
+/* The mesh itself. Six radial anchors, each very large and soft, all
+   overlapping. One global blur smooths them into a continuous field —
+   this is exactly what makes it look like Gemini and not like orbs. */
+.bg-mesh {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background:
+    /* Base wash — huge dim blue everywhere */
+    radial-gradient(ellipse 95% 48% at 40% 10%,
+      rgba(40, 80, 190, 0.75), transparent 78%),
+
+    /* Blue anchor — upper left, the dominant colour */
+    radial-gradient(ellipse 55% 38% at 20% 6%,
+      rgba(66, 133, 244, 1.00), transparent 68%),
+
+    /* Purple anchor — upper right */
+    radial-gradient(ellipse 55% 38% at 82% 5%,
+      rgba(165, 120, 215, 0.95), transparent 68%),
+
+    /* Cyan accent — top center, glues blue and purple together */
+    radial-gradient(ellipse 45% 28% at 52% 0%,
+      rgba(70, 225, 255, 0.80), transparent 70%),
+
+    /* Magenta accent — right edge */
+    radial-gradient(ellipse 40% 32% at 96% 18%,
+      rgba(255, 95, 168, 0.50), transparent 70%),
+
+    /* Faint green accent — left edge, adds subtle depth */
+    radial-gradient(ellipse 40% 32% at 4% 22%,
+      rgba(74, 222, 128, 0.28), transparent 70%),
+
+    /* Bottom falloff — mesh fades to pure black quickly, keeping the
+       glow confined to the top band only */
+    linear-gradient(180deg,
+      rgba(4, 6, 14, 0.00) 0%,
+      rgba(4, 6, 14, 0.30) 20%,
+      rgba(4, 6, 14, 0.88) 38%,
+      rgba(2, 3, 10, 1.00) 55%);
+
+  filter: blur(70px) saturate(170%);
+  animation: meshDrift 16s ease-in infinite;
+  will-change: transform, filter;
+  transform-origin: 50% 0%;
+}
+
+/* Single keyframe handles both motion (drift+scale) and colour shift
+   (hue-rotate). Combined into one animation so both properties don't
+   fight — CSS applies whichever animation's last declaration wins when
+   both touch the same property on the same element. */
+@keyframes meshDrift {
+  0% {
+    transform: translate3d(0%, 0%, 0)         scale(1.00);
+    filter: blur(80px) saturate(150%) hue-rotate(0deg);
+  }
+  25% {
+    transform: translate3d(50%, 50%, 0)      scale(1.12);
+    filter: blur(95px) saturate(165%) hue-rotate(45deg);
+  }
+  50% {
+    transform: translate3d(0%, 50%, 0)      scale(1.06);
+    filter: blur(105px) saturate(195%) hue-rotate(0deg);
+  }
+  75% {
+    transform: translate3d(0%, 0%, 0)      scale(1.12);
+    filter: blur(95px) saturate(165%) hue-rotate(-45deg);
+  }
+  100% {
+    transform: translate3d(0%, 0%, 0)         scale(1.00);
+    filter: blur(80px) saturate(150%) hue-rotate(0deg);
+  }
+}
+
+/* Dot texture grid — subtle depth, keeps the glass reading as glass. */
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image:
+    radial-gradient(circle, rgba(255,255,255,0.022) 1px, transparent 1px);
+  background-size: 22px 22px;
+  z-index: 2;
+  pointer-events: none;
+  mask-image: radial-gradient(ellipse 85% 70% at 50% 35%, #000 30%, transparent 100%);
+  -webkit-mask-image: radial-gradient(ellipse 85% 70% at 50% 35%, #000 30%, transparent 100%);
+}
+
+
+/* =====================================================================
+   Gargantua — real-time black hole background (WebGL ray-marcher).
+   Fixed behind everything; the glass panels blur it. The CAMERA is
+   tied to scroll: at the top you are right next to the hole (close-up,
+   rolled, disk sweeping across the frame); scrolling down dollies the
+   camera away, scrolling back up brings it close again. If WebGL is
+   missing the canvas is removed and the old mesh gradient stays.
+   ===================================================================== */
+#bh {
+  position: fixed;
+  left: 0; top: 0;
+  width: 100%;
+  height: 100vh;
+  z-index: 1;
+  pointer-events: none;
+  display: none;
+  will-change: opacity;
+  -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 80%, transparent 100%);
+          mask-image: linear-gradient(to bottom, #000 0%, #000 80%, transparent 100%);
+}
+.has-bh #bh { display: block; }
+/* Endurance + Miller's planet overlay — same fade mask as the black hole */
+#bh-fg { position: fixed; left: 0; top: 0; width: 100%; height: 100vh; z-index: 1; pointer-events: none; display: none;
+  -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 80%, transparent 100%);
+          mask-image: linear-gradient(to bottom, #000 0%, #000 80%, transparent 100%); }
+.has-bh #bh-fg { display: block; }
+.has-bh .bg-mesh { display: none; }   /* delete this line to bring the mesh back on top of space */
+/* the close-up is very bright — make the frosted panels a bit denser so text stays readable */
+body.has-bh { --glass-bg: rgba(10, 14, 28, 0.58); }
+
+/* Older orb layer kept as a no-op so nothing breaks if HTML still
+   references it — see the cleanup note below. */
+.bg-orbs { display: none; }
+
+/* =====================================================================
+   Layout
+   ===================================================================== */
 #app {
-  max-width: 1000px;
+  max-width: 1040px;
   margin: 0 auto;
-  padding: 0 24px 80px;
+  padding: 0 24px 96px;
+  position: relative;
+  z-index: 3;
 }
 
-/* ===================== Header ===================== */
-header.hero {
-  padding: 48px 0 32px;
-  border-bottom: 1px solid var(--panel-border);
-  margin-bottom: 40px;
+/* =====================================================================
+   Glass primitive — every frosted surface in this file inherits
+   from this base recipe.
+   ===================================================================== */
+.glass {
+  position: relative;
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(24px) saturate(170%);
+          backdrop-filter: blur(24px) saturate(170%);
+  border-radius: 20px;
+  box-shadow: var(--glass-shadow);
+  overflow: hidden;
+  isolation: isolate;
+}
+
+/* Gradient edge sheen — light reflects more off the top-left and
+   bottom-right, less along the middle. This is the "moving glass"
+   effect iOS uses on its translucent surfaces. */
+.glass::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(
+    135deg,
+    rgba(255,255,255,0.28) 0%,
+    rgba(255,255,255,0.03) 22%,
+    rgba(255,255,255,0.03) 55%,
+    rgba(255,255,255,0.02) 72%,
+    rgba(255,255,255,0.16) 100%
+  );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+          mask-composite: exclude;
+  pointer-events: none;
+  z-index: 2;
+}
+
+/* Soft top highlight — the "ambient light from above" iOS applies
+   to glass panels. */
+.glass::after {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255,255,255,0.28) 40%,
+    rgba(255,255,255,0.28) 60%,
+    transparent 100%
+  );
+  pointer-events: none;
+  z-index: 3;
+  opacity: 0.7;
+}
+
+/* =====================================================================
+   Hero
+   ===================================================================== */
+.hero {
+  padding: 44px 40px 38px;
+  margin-bottom: 26px;
+  margin-top: 40px;
 }
 
 .hero-eyebrow {
   font-family: var(--font-mono);
-  font-size: 12px;
-  letter-spacing: 1.5px;
+  font-size: 11.5px;
+  letter-spacing: 1.6px;
   color: var(--cyan);
   text-transform: uppercase;
-  margin-bottom: 12px;
+  margin-bottom: 14px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.hero-eyebrow::before {
+  content: '';
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--cyan);
+  box-shadow: 0 0 12px var(--cyan);
 }
 
 .hero-title {
-  font-size: 40px;
+  font-size: 46px;
   font-weight: 700;
-  margin: 0 0 12px;
-  letter-spacing: -0.02em;
-  line-height: 1.1;
+  margin: 0 0 14px;
+  letter-spacing: -0.025em;
+  line-height: 1.05;
+  background: linear-gradient(
+    180deg,
+    #ffffff 0%,
+    #cddaf0 40%,
+    #97a8c4 100%
+  );
+  -webkit-background-clip: text;
+          background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
 }
 
 .hero-sub {
   font-size: 16px;
-  color: var(--dim);
-  max-width: 640px;
+  color: var(--text-dim);
+  max-width: 660px;
   margin: 0;
+  line-height: 1.62;
 }
 
 .hero-stats {
   display: flex;
-  gap: 32px;
-  margin-top: 32px;
+  gap: 14px;
+  margin-top: 30px;
   flex-wrap: wrap;
 }
 
 .hero-stat {
   display: flex;
   flex-direction: column;
+  padding: 12px 20px;
+  border-radius: 14px;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.06);
+  min-width: 108px;
+  position: relative;
 }
 
 .hero-stat-num {
   font-family: var(--font-mono);
-  font-size: 28px;
+  font-size: 26px;
   font-weight: 700;
   color: var(--cyan);
+  line-height: 1;
+  letter-spacing: -0.02em;
 }
 
 .hero-stat-label {
   font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--dim);
-  letter-spacing: 0.5px;
-  margin-top: 4px;
+  font-size: 10px;
+  color: var(--text-mute);
+  letter-spacing: 0.8px;
+  margin-top: 7px;
   text-transform: uppercase;
 }
 
-/* ===================== Legend ===================== */
+/* =====================================================================
+   Legend
+   ===================================================================== */
 .legend {
   display: flex;
-  gap: 20px;
-  padding: 16px 20px;
-  background: var(--panel);
-  border: 1px solid var(--panel-border);
-  border-radius: 10px;
+  gap: 12px;
+  padding: 16px 22px;
   margin-bottom: 40px;
   flex-wrap: wrap;
 }
@@ -119,221 +377,449 @@ header.hero {
 .legend-item {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  color: var(--dim);
+  gap: 9px;
+  font-size: 12.5px;
+  color: var(--text-dim);
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.06);
+  font-family: var(--font-mono);
 }
 
 .legend-dot {
-  width: 10px;
-  height: 10px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
   flex-shrink: 0;
 }
 
-.legend-dot.pass { background: var(--green); box-shadow: 0 0 8px var(--green); }
-.legend-dot.partial { background: var(--yellow); box-shadow: 0 0 8px var(--yellow); }
-.legend-dot.fail { background: var(--danger); box-shadow: 0 0 8px var(--danger); }
-.legend-dot.tool { background: var(--cyan); box-shadow: 0 0 8px var(--cyan); }
+.legend-dot.pass    { background: var(--green);   box-shadow: 0 0 10px var(--green); }
+.legend-dot.partial { background: var(--yellow);  box-shadow: 0 0 10px var(--yellow); }
+.legend-dot.fail    { background: var(--danger);  box-shadow: 0 0 10px var(--danger); }
+.legend-dot.tool    { background: var(--cyan);    box-shadow: 0 0 10px var(--cyan); }
 
-/* ===================== Section headers ===================== */
+/* =====================================================================
+   Section headers
+   ===================================================================== */
 .section-header {
   font-family: var(--font-mono);
-  font-size: 12px;
-  letter-spacing: 1.2px;
-  color: var(--dim);
+  font-size: 11.5px;
+  letter-spacing: 1.4px;
+  color: var(--text-mute);
   text-transform: uppercase;
-  margin: 56px 0 20px;
-  padding-bottom: 12px;
-  border-bottom: 1px solid var(--panel-border);
+  margin: 54px 0 20px;
+  padding: 0 6px 14px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 
-/* ===================== Experiment card ===================== */
+.section-header::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg,
+    rgba(255,255,255,0.14) 0%,
+    rgba(255,255,255,0.02) 100%);
+}
+
+/* =====================================================================
+   Experiment cards
+   ===================================================================== */
 .exp {
-  background: var(--panel);
-  border: 1px solid var(--panel-border);
-  border-left: 3px solid var(--panel-border);
-  border-radius: 12px;
-  padding: 24px 26px;
+  padding: 28px 30px;
   margin-bottom: 20px;
-  position: relative;
-  /* Never let a wide <pre> line stretch this card beyond its parent. */
-  max-width: 100%;
-  min-width: 0;
-  overflow: hidden;
+  transition: transform 0.4s cubic-bezier(0.22,1,0.36,1),
+              box-shadow 0.4s ease;
 }
 
-.exp.pass {
-  border-left-color: var(--green);
-  /* Subtle green glow + faint tint to mark the working guide — visible
-     but not loud, matches the panel-heavy theme. */
+.exp:hover {
+  transform: translateY(-2px);
   box-shadow:
-    0 0 24px rgba(74,222,128,0.10),
-    0 0 60px rgba(74,222,128,0.05),
-    inset 0 0 40px rgba(74,222,128,0.025);
+    0 16px 48px rgba(0, 0, 0, 0.42),
+    0 4px 16px rgba(0, 0, 0, 0.25),
+    inset 0 1px 0 rgba(255, 255, 255, 0.14),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.20);
+}
+
+/* Status tint — each card gets a coloured left-edge strip + faint
+   interior colour that spills through the glass. */
+.exp.pass {
+  background:
+    linear-gradient(180deg,
+      rgba(74,222,128,0.09) 0%,
+      rgba(74,222,128,0.03) 30%,
+      rgba(20,28,48,0.42) 100%);
+  box-shadow:
+    0 8px 40px rgba(74,222,128,0.15),
+    0 2px 12px rgba(0,0,0,0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.12),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.20);
+}
+
+.exp.pass::before {
   background: linear-gradient(
-    180deg,
-    rgba(74,222,128,0.035) 0%,
-    var(--panel) 40%
+    135deg,
+    rgba(74,222,128,0.55) 0%,
+    rgba(255,255,255,0.04) 30%,
+    rgba(255,255,255,0.03) 65%,
+    rgba(74,222,128,0.32) 100%
   );
 }
-.exp.partial { border-left-color: var(--yellow); }
-.exp.fail { border-left-color: var(--danger); }
-.exp.tool { border-left-color: var(--cyan); }
 
+/* Star wave field — a dense, dome-curved lattice of 4-point sparkles
+   along the bottom of the card, drawn on a <canvas> by the script at
+   the bottom. The stars NEVER move; only size, colour and opacity
+   change, driven by a real 2-D wave simulation (two point sources,
+   interference, reflecting walls) — small + blue in the troughs,
+   big + purple at the crests. The mask fades the field out before it
+   reaches the top; the card's overflow:hidden clips the rest. */
+.exp-emerge {
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  height: 90%;
+  z-index: 0;
+  pointer-events: none;
+  -webkit-mask-image: linear-gradient(to top, #000 0%, #000 45%, transparent 100%);
+          mask-image: linear-gradient(to top, #000 0%, #000 45%, transparent 100%);
+  opacity: 0.9;
+}
+
+.exp-emerge canvas {
+  display: block;
+  width: 100%;
+  height: 60%;
+}
+
+.exp.partial {
+  background:
+    linear-gradient(180deg,
+      rgba(255,210,63,0.05) 0%,
+      rgba(20,28,48,0.42) 45%);
+}
+
+.exp.partial::before {
+  background: linear-gradient(
+    135deg,
+    rgba(255,210,63,0.32) 0%,
+    rgba(255,255,255,0.04) 30%,
+    rgba(255,255,255,0.03) 65%,
+    rgba(255,210,63,0.20) 100%
+  );
+}
+
+.exp.fail::before {
+  background: linear-gradient(
+    135deg,
+    rgba(255,95,126,0.28) 0%,
+    rgba(255,255,255,0.04) 30%,
+    rgba(255,255,255,0.03) 65%,
+    rgba(255,95,126,0.18) 100%
+  );
+}
+
+.exp.tool::before {
+  background: linear-gradient(
+    135deg,
+    rgba(53,214,255,0.30) 0%,
+    rgba(255,255,255,0.04) 30%,
+    rgba(255,255,255,0.03) 65%,
+    rgba(53,214,255,0.20) 100%
+  );
+}
+
+/* ---------- Card head ---------- */
 .exp-head {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
-  margin-bottom: 8px;
+  margin-bottom: 22px;
+  position: relative;
+  z-index: 1;
 }
 
 .exp-title {
-  font-size: 19px;
+  font-size: 21px;
   font-weight: 600;
   margin: 0;
-  line-height: 1.3;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+  color: #f3f7ff;
 }
 
 .exp-id {
   font-family: var(--font-mono);
   font-size: 11px;
-  color: var(--dim);
-  margin-top: 4px;
+  color: var(--text-mute);
+  margin-top: 5px;
+  letter-spacing: 0.3px;
+}
+
+.exp-time {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text-dim);
+  margin-top: 7px;
+  letter-spacing: 0.3px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.exp-time::before {
+  content: '';
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--cyan);
+  box-shadow: 0 0 6px rgba(53, 214, 255, 0.9);
+  flex-shrink: 0;
+}
+
+.exp-time .exp-time-day {
+  color: var(--text-mute);
 }
 
 .exp-status {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 10.5px;
   font-weight: 700;
-  letter-spacing: 0.6px;
-  padding: 4px 10px;
-  border-radius: 6px;
+  letter-spacing: 0.8px;
+  padding: 6px 12px;
+  border-radius: 999px;
   white-space: nowrap;
   flex-shrink: 0;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  text-transform: uppercase;
 }
 
-.exp-status.pass { color: var(--green); background: rgba(74,222,128,0.12); border: 1px solid rgba(74,222,128,0.35); }
-.exp-status.partial { color: var(--yellow); background: rgba(255,210,63,0.10); border: 1px solid rgba(255,210,63,0.35); }
-.exp-status.fail { color: var(--danger); background: rgba(255,95,126,0.10); border: 1px solid rgba(255,95,126,0.35); }
-.exp-status.tool { color: var(--cyan); background: rgba(53,214,255,0.10); border: 1px solid rgba(53,214,255,0.35); }
+.exp-status.pass {
+  color: var(--green);
+  background: rgba(74,222,128,0.10);
+  border: 1px solid rgba(74,222,128,0.42);
+  box-shadow:
+    0 0 20px rgba(74,222,128,0.30),
+    inset 0 1px 0 rgba(255,255,255,0.14);
+}
 
-.exp-body { margin-top: 16px; }
+.exp-status.partial {
+  color: var(--yellow);
+  background: rgba(255,210,63,0.08);
+  border: 1px solid rgba(255,210,63,0.38);
+  box-shadow:
+    0 0 16px rgba(255,210,63,0.18),
+    inset 0 1px 0 rgba(255,255,255,0.12);
+}
+
+.exp-status.fail {
+  color: var(--danger);
+  background: rgba(255,95,126,0.08);
+  border: 1px solid rgba(255,95,126,0.38);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.10);
+}
+
+.exp-status.tool {
+  color: var(--cyan);
+  background: rgba(53,214,255,0.08);
+  border: 1px solid rgba(53,214,255,0.38);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.10);
+}
+
+/* ---------- Card rows ---------- */
+.exp-body { position: relative; z-index: 1; }
 
 .exp-row {
   display: grid;
-  /* minmax(0, 1fr) lets the content column shrink below its natural
-     min-content width — otherwise a wide <pre> line makes the 1fr column
-     grow and pushes the whole card wider than its container. */
-  grid-template-columns: 100px minmax(0, 1fr);
-  gap: 16px;
-  margin-bottom: 14px;
+  grid-template-columns: 108px minmax(0, 1fr);
+  gap: 20px;
+  margin-bottom: 18px;
   align-items: start;
   min-width: 0;
 }
 
-.exp-value { min-width: 0; }
-.exp-value pre { min-width: 0; }
+.exp-row:last-child { margin-bottom: 0; }
 
 .exp-label {
   font-family: var(--font-mono);
-  font-size: 11px;
-  letter-spacing: 0.4px;
-  color: var(--dim);
+  font-size: 10.5px;
+  letter-spacing: 0.6px;
+  color: var(--text-mute);
   text-transform: uppercase;
-  padding-top: 2px;
+  padding-top: 3px;
 }
 
 .exp-value {
-  font-size: 14px;
-  color: var(--text);
+  font-size: 14.5px;
+  color: #c6d2e6;
+  min-width: 0;
+  line-height: 1.62;
 }
 
 .exp-value p { margin: 0 0 8px; }
 .exp-value p:last-child { margin-bottom: 0; }
-.exp-value ul { margin: 0 0 8px; padding-left: 18px; }
+.exp-value ul { margin: 0 0 8px; padding-left: 20px; }
 .exp-value ul:last-child { margin-bottom: 0; }
-.exp-value li { margin-bottom: 4px; }
+.exp-value li { margin-bottom: 6px; }
+.exp-value li::marker { color: var(--text-mute); }
 
 .exp-value strong { color: var(--cyan); font-weight: 600; }
+.exp-value em { color: var(--orange); font-style: normal; }
 
+/* ---------- Code ---------- */
 code {
   font-family: var(--font-mono);
   font-size: 12.5px;
-  background: var(--panel-2);
-  border: 1px solid var(--panel-border);
-  border-radius: 4px;
-  padding: 1px 6px;
-  color: var(--orange);
+  background: rgba(0,0,0,0.30);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 5px;
+  padding: 2px 7px;
+  color: #ffb27a;
+  white-space: nowrap;
 }
 
 pre {
   font-family: var(--font-mono);
   font-size: 12.5px;
-  background: var(--bg-2);
-  border: 1px solid var(--panel-border);
-  border-radius: 6px;
-  padding: 10px 14px;
-  margin: 8px 0;
+  background:
+    linear-gradient(180deg,
+      rgba(0,0,0,0.34) 0%,
+      rgba(0,0,0,0.26) 100%);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 12px;
+  padding: 14px 18px;
+  margin: 10px 0;
   overflow-x: auto;
-  line-height: 1.55;
-  color: var(--text);
+  line-height: 1.65;
+  color: #cdd8ec;
+  min-width: 0;
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.04),
+    inset 0 -1px 0 rgba(0,0,0,0.25);
+  position: relative;
 }
 
-pre .cmt { color: var(--dim); }
+pre::before {
+  /* thin colored left rule on code blocks — signals "this is code" */
+  content: '';
+  position: absolute;
+  left: 0; top: 12px; bottom: 12px;
+  width: 2px;
+  border-radius: 2px;
+  background: linear-gradient(180deg,
+    rgba(53,214,255,0.55),
+    rgba(53,214,255,0.10));
+}
 
+pre .cmt { color: var(--text-mute); font-style: italic; }
+pre::-webkit-scrollbar { height: 6px; }
+pre::-webkit-scrollbar-track { background: transparent; }
+pre::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,0.10);
+  border-radius: 3px;
+}
+
+/* ---------- Tags ---------- */
 .tags {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 16px;
-  padding-top: 16px;
-  border-top: 1px solid var(--panel-border);
+  gap: 7px;
+  margin-top: 20px;
+  padding-top: 18px;
+  border-top: 1px solid rgba(255,255,255,0.05);
+  position: relative;
+  z-index: 1;
 }
 
 .tag {
   font-family: var(--font-mono);
   font-size: 10.5px;
   letter-spacing: 0.4px;
-  padding: 3px 9px;
-  border-radius: 5px;
-  background: rgba(53,214,255,0.06);
-  border: 1px solid rgba(53,214,255,0.20);
-  color: var(--cyan);
+  padding: 4px 11px;
+  border-radius: 999px;
+  background: rgba(53,214,255,0.05);
+  border: 1px solid rgba(53,214,255,0.18);
+  color: #7ee1ff;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
 }
 
 .tag.warn {
-  background: rgba(255,210,63,0.06);
-  border-color: rgba(255,210,63,0.25);
-  color: var(--yellow);
+  background: rgba(255,210,63,0.05);
+  border-color: rgba(255,210,63,0.22);
+  color: #ffdd7a;
 }
 
 .tag.err {
-  background: rgba(255,95,126,0.06);
-  border-color: rgba(255,95,126,0.25);
-  color: var(--danger);
+  background: rgba(255,95,126,0.05);
+  border-color: rgba(255,95,126,0.22);
+  color: #ff8fa8;
 }
 
-/* ===================== Footer ===================== */
+/* =====================================================================
+   Footer
+   ===================================================================== */
 .footer {
-  margin-top: 64px;
-  padding-top: 24px;
-  border-top: 1px solid var(--panel-border);
+  margin-top: 72px;
+  padding-top: 26px;
+  border-top: 1px solid rgba(255,255,255,0.06);
   font-family: var(--font-mono);
   font-size: 12px;
-  color: var(--dim);
-  line-height: 1.7;
+  color: var(--text-mute);
+  line-height: 1.75;
+  text-align: center;
 }
 
 .footer a { color: var(--cyan); text-decoration: none; }
 .footer a:hover { text-decoration: underline; }
+
+/* =====================================================================
+   Responsive
+   ===================================================================== */
+@media (max-width: 720px) {
+  #app { padding: 0 16px 64px; }
+  .hero { padding: 32px 24px 28px; margin-top: 20px; }
+  .hero-title { font-size: 32px; }
+  .hero-sub { font-size: 14.5px; }
+  .hero-stats { gap: 10px; }
+  .hero-stat { padding: 10px 16px; min-width: 92px; }
+  .hero-stat-num { font-size: 22px; }
+  .exp { padding: 22px 20px; border-radius: 18px; }
+  .exp-title { font-size: 18px; }
+  .exp-row {
+    grid-template-columns: 1fr;
+    gap: 6px;
+    margin-bottom: 16px;
+  }
+  .exp-label { padding-top: 0; }
+  .legend { padding: 12px 16px; gap: 8px; }
+.legend-item { font-size: 11px; padding: 5px 11px; }
+/* Mobile: cut blur radius — the container-level blur is the heaviest
+   cost in this page. Colours and drift stay identical. */
+.bg-mesh { filter: blur(50px) saturate(165%); }
+pre { padding: 12px 14px; font-size: 11.5px; }
+}
+
+@media (max-width: 480px) {
+  .hero-title { font-size: 27px; }
+  .hero-eyebrow { font-size: 10.5px; letter-spacing: 1.2px; }
+}
 </style>
 </head>
 <body>
+
+<!-- Layered animated background — the frosted panels blur against
+     this, producing live iOS glass with a flowing Gemini-style
+     mesh gradient underneath. -->
+<canvas id="bh" aria-hidden="true"></canvas>
+<canvas id="bh-fg" aria-hidden="true"></canvas>
+<div class="bg-mesh" aria-hidden="true"></div>
+
 <div id="app">
 
-  <header class="hero">
+  <header class="hero glass">
     <div class="hero-eyebrow">Rocket Sim · Guidance Module</div>
     <h1 class="hero-title">Guidance Experiment Log</h1>
     <p class="hero-sub">
@@ -366,7 +852,7 @@ pre .cmt { color: var(--dim); }
     </div>
   </header>
 
-  <div class="legend">
+  <div class="legend glass">
     <div class="legend-item"><span class="legend-dot pass"></span>Accurate Win</div>
     <div class="legend-item"><span class="legend-dot partial"></span>Partial / Not Practical</div>
     <div class="legend-item"><span class="legend-dot fail"></span>Failed</div>
@@ -377,11 +863,12 @@ pre .cmt { color: var(--dim); }
   <div class="section-header">RCS Attitude Control Experiments</div>
 
   <!-- 1. testGuide -->
-  <div class="exp fail">
+  <div class="exp glass fail">
     <div class="exp-head">
       <div>
         <h3 class="exp-title">Test — Torque Balance</h3>
         <div class="exp-id">testGuide</div>
+        <div class="exp-time">2:30 PM <span class="exp-time-day">· Sun, Sep 20</span></div>
       </div>
       <span class="exp-status fail">FAIL</span>
     </div>
@@ -432,11 +919,12 @@ pre .cmt { color: var(--dim); }
   </div>
 
   <!-- 2. predictiveTorque -->
-  <div class="exp fail">
+  <div class="exp glass fail">
     <div class="exp-head">
       <div>
         <h3 class="exp-title">Predictive Torque Cancel</h3>
         <div class="exp-id">predictiveTorque</div>
+        <div class="exp-time">3:00 PM <span class="exp-time-day">· Sun, Sep 20</span></div>
       </div>
       <span class="exp-status fail">FAIL</span>
     </div>
@@ -487,11 +975,12 @@ fire RCS via GuideRCS</pre>
   </div>
 
   <!-- 3. predictivePlus -->
-  <div class="exp fail">
+  <div class="exp glass fail">
     <div class="exp-head">
       <div>
         <h3 class="exp-title">Predictive + PID</h3>
         <div class="exp-id">predictivePlus</div>
+        <div class="exp-time">3:40 PM <span class="exp-time-day">· Sun, Sep 20</span></div>
       </div>
       <span class="exp-status fail">FAIL</span>
     </div>
@@ -544,11 +1033,12 @@ fire RCS via GuideRCS</pre>
   </div>
 
   <!-- 4. predictivePlusAoA -->
-  <div class="exp partial">
+  <div class="exp glass partial">
     <div class="exp-head">
       <div>
         <h3 class="exp-title">Predictive + PID + AoA Impulse</h3>
         <div class="exp-id">predictivePlusAoA</div>
+        <div class="exp-time">4:15 PM <span class="exp-time-day">· Sun, Sep 20</span></div>
       </div>
       <span class="exp-status partial">SUCCESS · NOT PRACTICAL</span>
     </div>
@@ -600,11 +1090,12 @@ fire RCS via GuideRCS</pre>
   </div>
 
   <!-- 5. predictivePlusAoAPush -->
-  <div class="exp fail">
+  <div class="exp glass fail">
     <div class="exp-head">
       <div>
         <h3 class="exp-title">Predictive + PID + AoA + East Push</h3>
         <div class="exp-id">predictivePlusAoAPush</div>
+        <div class="exp-time">5:00 PM <span class="exp-time-day">· Sun, Sep 20</span></div>
       </div>
       <span class="exp-status fail">FAIL</span>
     </div>
@@ -628,8 +1119,8 @@ fire RCS via GuideRCS</pre>
         <div class="exp-label">What happened</div>
         <div class="exp-value">
           Multiple iterations, all unstable. West-reversal overshot ω
-          (adding a second-tick delay before AoA chase engaged). Cadence
-          push built drift. Simple east prefix destabilised when the AoA-chase
+          (adding a second-tick delay before AoA chase engaged). Cadence push
+          built drift. Simple east prefix destabilised when the AoA-chase
           phase inherited a nonzero ω.
         </div>
       </div>
@@ -658,11 +1149,12 @@ fire RCS via GuideRCS</pre>
   </div>
 
   <!-- 6. predictVerifier -->
-  <div class="exp tool">
+  <div class="exp glass tool">
     <div class="exp-head">
       <div>
         <h3 class="exp-title">Verify: Prediction Accuracy</h3>
         <div class="exp-id">predictVerifier</div>
+        <div class="exp-time">5:15 PM <span class="exp-time-day">· Sun, Sep 20</span></div>
       </div>
       <span class="exp-status tool">DIAGNOSTIC</span>
     </div>
@@ -714,11 +1206,14 @@ drag: mean |err| ≈ 0 N</pre>
   <div class="section-header">Gimbal Attitude Control Experiments</div>
 
   <!-- 7. gimbalPredictive2 -->
-  <div class="exp pass">
+  <div class="exp glass pass">
+    <!-- Star wave field — canvas is generated by the script at the bottom -->
+    <div class="exp-emerge" aria-hidden="true"></div>
     <div class="exp-head">
       <div>
         <h3 class="exp-title">Gimbal: 2-tick Predictive</h3>
         <div class="exp-id">gimbalPredictive2</div>
+        <div class="exp-time">6:35 PM <span class="exp-time-day">· Sun, Sep 20</span></div>
       </div>
       <span class="exp-status pass">ACCURATE WIN</span>
     </div>
@@ -798,7 +1293,7 @@ send(setGimbalRate(R_cmd))</pre>
 
   <div class="section-header">Lessons That Survived Every Iteration</div>
 
-  <div class="exp">
+  <div class="exp glass">
     <div class="exp-body">
       <div class="exp-row">
         <div class="exp-label">Actuator choice</div>
@@ -838,10 +1333,845 @@ send(setGimbalRate(R_cmd))</pre>
 
   <div class="footer">
     Rocket Sim · Guidance Experiment Log<br>
-    Entries reflect the state of the guidance module as of the latest
-    session. Each card documents what was tried, what happened, and why.
+    Entries reflect the state of the guidance module as of the latest session.
   </div>
 
 </div>
+
+<script>
+/* =====================================================================
+   Star wave field (canvas) — driven by a real 2-D wave simulation
+   ---------------------------------------------------------------------
+   Stars: a dense, dome-warped lattice of sparkles. Positions are built
+   once and never move.
+
+   Waves: the height field u(x,y,t) obeys the 2-D wave equation
+
+        u_tt = c² ∇²u          (solved with a leap-frog finite difference)
+
+   - TWO point sources (left & right) emit ring pulses again and again,
+     so the field keeps living forever.
+   - Rings pass through each other and interfere: crests add up to big
+     purple stars, crest + trough cancel to small blue ones — then the
+     rings carry on unchanged, exactly like real waves.
+   - The four edges are reflecting walls (free-end / Neumann): a pulse
+     hitting a wall bounces back with the same sign, and the reflection
+     then collides with the incoming waves.
+   - Tap / click the card to drop an extra ripple anywhere.
+
+   Star look, every frame:
+        k      = 0.5 + 0.5·tanh( GAIN·u − BIAS )     // 0 … 1
+        radius = lerp(R_MIN, R_MAX, k) · envelope · edgeScale
+        colour = lerp(palette.lo, palette.hi, k)     // palette auto-rotates randomly
+   ===================================================================== */
+(function () {
+  var host = document.querySelector('.exp-emerge');
+  if (!host) return;
+
+  // ---- star lattice -------------------------------------------------
+  var PITCH  = 10;     // horizontal spacing between stars (px)
+  var ROW    = 10;     // vertical spacing between rows (px)
+  var R_MIN  = 0.7;    // smallest star radius (px)
+  var R_MAX  = 6.6;    // biggest star radius (px)
+  var A_MIN  = 0.28;   // opacity in troughs
+  var A_MAX  = 0.80;   // opacity at crests
+  var BOW    = 20;     // arch of the rows in the middle (px)
+  var WARP   = 1.1;    // fisheye squeeze at the sides (0 = none)
+
+  // ---- COLOUR PALETTES ----------------------------------------------
+  // Har entry = [trough colour (chhote stars), crest colour (bade stars)].
+  // Jitne chahein utne naye pairs add kar do — bas RGB [r, g, b] likho.
+  // Script automatically inme se random palette chunke smoothly badlegi.
+  var PALETTES = [
+    { name: 'blue-purple',   lo: [66, 133, 244],  hi: [196, 140, 255] },
+    { name: 'cyan-magenta',  lo: [53, 214, 255],  hi: [255, 95, 168]  },
+    { name: 'green-yellow',  lo: [74, 222, 128],  hi: [255, 210, 63]  },
+    { name: 'orange-pink',   lo: [255, 146, 72],  hi: [255, 95, 126]  },
+    { name: 'teal-lime',     lo: [45, 212, 191],  hi: [190, 242, 100] },
+    { name: 'indigo-ice',    lo: [99, 102, 241],  hi: [103, 232, 249] },
+    { name: 'violet-rose',   lo: [139, 92, 246],  hi: [251, 113, 133] },
+    { name: 'ember-gold',    lo: [255, 95, 126],  hi: [255, 214, 102] }
+    // { name: 'mera-palette', lo: [r, g, b], hi: [r, g, b] },
+  ];
+
+  // ---- colour animation ---------------------------------------------
+  var PAL_HOLD_MIN  = 3;     // palette kam se kam itne sec ruka rahe
+  var PAL_HOLD_MAX  = 7;     // aur zyada se zyada itne sec
+  var PAL_FADE      = 2.6;   // ek palette se dusre mein blend hone ka time (s)
+  var PAL_SPREAD    = 0.35;  // 0 = poori field ek saath badle, >0 = colour wave ki tarah phailta hai
+  var TWINKLE       = 0.14;  // star ki halki jhilmil (0 = off)
+  var HALO          = true;  // bade crest stars ke aas-paas soft glow
+
+  // ---- wave physics -------------------------------------------------
+  var DX      = 6;       // simulation cell size (px)
+  var SPEED   = 60;      // wave speed (px / second)
+  var CFL     = 0.5;     // Courant number (must stay < 0.707 for stability)
+  var DAMP    = 0.9988;  // tiny per-step damping: waves fade very slowly
+  var AMP     = 0.25;    // source strength
+  var GAIN    = 3.0;     // wave height → star size sensitivity
+  var BIAS    = 0.3;     // resting stars are a bit small & blue
+  var EVERY   = 5;       // seconds between pulses from each source
+  var DT      = CFL * DX / SPEED;   // fixed simulation timestep (s)
+
+  var cv = document.createElement('canvas');
+  host.appendChild(cv);
+  var ctx = cv.getContext('2d');
+  var TAU = Math.PI * 2;
+  function lerp(a, b, k) { return a + (b - a) * k; }
+
+  var W = 0, H = 0, dpr = 1, nx = 0, ny = 0;
+  var stars = [], prev, cur, nxt, sources = [], T = 0, stepN = 0;
+
+  // ---- palette state -------------------------------------------------
+  var palFrom = PALETTES[0], palTo = PALETTES[0];
+  var palT = 1, palWait = rand(PAL_HOLD_MIN, PAL_HOLD_MAX), palIdx = 0;
+
+  function rand(a, b) { return a + Math.random() * (b - a); }
+  function ease(t) { return t * t * (3 - 2 * t); }
+
+  function pickPalette() {
+    if (PALETTES.length < 2) return;
+    var n;
+    do { n = Math.floor(Math.random() * PALETTES.length); } while (n === palIdx);
+    palIdx = n;
+    palFrom = palTo; palTo = PALETTES[n]; palT = 0;
+  }
+
+  function updatePalette(dt) {
+    if (palT < 1) palT = Math.min(1, palT + dt / PAL_FADE);
+    else {
+      palWait -= dt;
+      if (palWait <= 0) { pickPalette(); palWait = rand(PAL_HOLD_MIN, PAL_HOLD_MAX); }
+    }
+  }
+
+  // ---- build lattice + sim grid ------------------------------------
+  function build() {
+    var r = host.getBoundingClientRect();
+    W = Math.max(1, Math.round(r.width));
+    H = Math.max(1, Math.round(r.height));
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    cv.width = W * dpr; cv.height = H * dpr;
+    cv.style.width = W + 'px'; cv.style.height = H + 'px';
+
+    nx = Math.ceil(W / DX) + 1;
+    ny = Math.ceil(H / DX) + 1;
+    prev = new Float32Array(nx * ny);
+    cur  = new Float32Array(nx * ny);
+    nxt  = new Float32Array(nx * ny);
+    T = 0; stepN = 0;
+
+    // two permanent sources (different pitch so the interference varies)
+    sources = [
+      { x: W * 0.27, y: H * 0.68, f: 0.85, per: EVERY, t0: 0 },
+      { x: W * 0.73, y: H * 0.68, f: 1.10, per: EVERY, t0: EVERY / 2 },
+      { x: W * 0.30, y: H * 0.55, f: 1.00, per: EVERY, t0: EVERY / 1.5 },
+      { x: W * 0.0, y: H * 1.0, f: 1.47, per: EVERY, t0: EVERY / 0.5 },
+      { x: W * 1.0, y: H * 1.0, f: 1.73, per: EVERY, t0: 0 }
+    ];
+
+    stars = [];
+    var rows = Math.ceil(H / ROW) + 1;
+    var cols = Math.ceil(W / PITCH) + 2;
+    var sinA = Math.sin(WARP);
+    for (var j = 0; j < rows; j++) {
+      var baseY = H - j * ROW;
+      var v = Math.max(0, Math.min(1, baseY / H));
+      for (var i = -1; i < cols; i++) {
+        var gx = (i + (j % 2 ? 0.5 : 0)) * PITCH;
+        var u = (gx / W - 0.5) * 2;
+        if (u < -1 || u > 1) continue;
+        var x = WARP > 0 ? W / 2 + (W / 2) * Math.sin(u * WARP) / sinA : gx;
+        var edge = WARP > 0 ? Math.cos(u * WARP) : 1;
+        var y = baseY - BOW * (1 - u * u) * (1 - v);
+        if (y < -8 || y > H + 8) continue;
+        var vy = Math.max(0, Math.min(1, y / H));
+        var env = 0.28 + 0.72 * Math.pow(vy, 0.85);
+
+        // pre-compute bilinear sample point in the sim grid
+        var gxs = Math.max(0, Math.min(nx - 1.001, x / DX));
+        var gys = Math.max(0, Math.min(ny - 1.001, y / DX));
+        var i0 = Math.floor(gxs), j0 = Math.floor(gys);
+        stars.push({
+          x: x, y: y, env: env, edge: edge,
+          ph: Math.random() * TAU, tw: 0.8 + Math.random() * 1.8,
+          sp: (x / W) * 0.6 + (1 - y / H) * 0.4,
+          idx: j0 * nx + i0, fx: gxs - i0, fy: gys - j0
+        });
+      }
+    }
+
+    // pre-warm: let the waves travel, hit walls and interfere before the
+    // first paint, so the card never starts as an empty flat field
+    var warm = Math.round(9 / DT);
+    for (var n = 0; n < warm; n++) step();
+  }
+
+  // ---- one leap-frog step of  u_tt = c² ∇²u  ------------------------
+  function step() {
+    var c2 = CFL * CFL;
+    for (var j = 0; j < ny; j++) {
+      // mirrored neighbours at the edges → reflecting walls
+      var jm = j > 0 ? j - 1 : 1;
+      var jp = j < ny - 1 ? j + 1 : ny - 2;
+      var row = j * nx, rowm = jm * nx, rowp = jp * nx;
+      for (var i = 0; i < nx; i++) {
+        var im = i > 0 ? i - 1 : 1;
+        var ip = i < nx - 1 ? i + 1 : nx - 2;
+        var id = row + i, c = cur[id];
+        var lap = cur[row + im] + cur[row + ip] + cur[rowm + i] + cur[rowp + i] - 4 * c;
+        nxt[id] = c + (c - prev[id]) * DAMP + c2 * lap;
+      }
+    }
+
+    // sources: zero-mean Ricker wavelet → clean ring, no net "pumping"
+    for (var s = sources.length - 1; s >= 0; s--) {
+      var S = sources[s];
+      while (T >= S.t0 + S.per) S.t0 += S.per;
+      var D = 2.6 / S.f, tau = T - S.t0;
+      if (tau >= D && S.per === Infinity) { sources.splice(s, 1); continue; }
+      if (tau < 0 || tau >= D) continue;
+      var a = Math.PI * S.f * (tau - D / 2);
+      var g = (1 - 2 * a * a) * Math.exp(-a * a) * AMP * (S.k || 1);
+      var ci = Math.round(S.x / DX), cj = Math.round(S.y / DX);
+      for (var dj = -1; dj <= 1; dj++) {
+        for (var di = -1; di <= 1; di++) {
+          var ii = ci + di, jj = cj + dj;
+          if (ii < 0 || ii >= nx || jj < 0 || jj >= ny) continue;
+          var w = (di === 0 && dj === 0) ? 1 : (di === 0 || dj === 0 ? 0.5 : 0.25);
+          nxt[jj * nx + ii] += g * w;
+        }
+      }
+    }
+
+    var t = prev; prev = cur; cur = nxt; nxt = t;
+    T += DT;
+
+    // walls conserve the average height; strip numerical drift now and then
+    if ((++stepN) % 30 === 0) {
+      var m = 0, q;
+      for (q = 0; q < cur.length; q++) m += cur[q];
+      m /= cur.length;
+      for (q = 0; q < cur.length; q++) { cur[q] -= m; prev[q] -= m; }
+    }
+  }
+
+  // ---- drawing -------------------------------------------------------
+  function sparkle(x, y, r) {
+    ctx.beginPath();
+    ctx.moveTo(x, y - r);
+    ctx.quadraticCurveTo(x, y, x + r, y);
+    ctx.quadraticCurveTo(x, y, x, y + r);
+    ctx.quadraticCurveTo(x, y, x - r, y);
+    ctx.quadraticCurveTo(x, y, x, y - r);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  function render() {
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, W, H);
+    var eT = ease(palT);
+    for (var n = 0; n < stars.length; n++) {
+      var s = stars[n], p = s.idx;
+      var top = cur[p] * (1 - s.fx) + cur[p + 1] * s.fx;
+      var bot = cur[p + nx] * (1 - s.fx) + cur[p + nx + 1] * s.fx;
+      var u = top * (1 - s.fy) + bot * s.fy;
+
+      var k = 0.5 + 0.5 * Math.tanh(GAIN * u - BIAS);
+      var tw = 1 + TWINKLE * Math.sin(T * s.tw * 2 + s.ph);
+      var r = lerp(R_MIN, R_MAX, k) * s.env * s.edge * tw;
+      if (r < 0.25) continue;
+      var c = k * (0.55 + 0.45 * s.env);
+
+      // palette blend — PAL_SPREAD makes the change sweep across the field
+      var lt = Math.max(0, Math.min(1, (palT * (1 + PAL_SPREAD) - s.sp * PAL_SPREAD)));
+      var m = ease(lt);
+      var lo0 = palFrom.lo, hi0 = palFrom.hi, lo1 = palTo.lo, hi1 = palTo.hi;
+      var R = Math.round(lerp(lerp(lo0[0], lo1[0], m), lerp(hi0[0], hi1[0], m), c));
+      var G = Math.round(lerp(lerp(lo0[1], lo1[1], m), lerp(hi0[1], hi1[1], m), c));
+      var B = Math.round(lerp(lerp(lo0[2], lo1[2], m), lerp(hi0[2], hi1[2], m), c));
+      var al = lerp(A_MIN, A_MAX, k) * (0.4 + 0.6 * s.env) * tw;
+      var rgb = R + ',' + G + ',' + B;
+
+      if (HALO && k > 0.8 && r > 3.5) {
+        ctx.fillStyle = 'rgba(' + rgb + ',' + (al * 0.14).toFixed(3) + ')';
+        ctx.beginPath(); ctx.arc(s.x, s.y, r * 2.3, 0, TAU); ctx.fill();
+      }
+      ctx.fillStyle = 'rgba(' + rgb + ',' + al.toFixed(3) + ')';
+      if (r < 1.5) { ctx.beginPath(); ctx.arc(s.x, s.y, r, 0, TAU); ctx.fill(); }
+      else sparkle(s.x, s.y, r);
+    }
+  }
+
+  // ---- main loop (fixed-timestep physics, frame-rate independent) ----
+  var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var running = false, raf = 0, last = null, acc = 0;
+
+  function tick(now) {
+    if (last === null) last = now;
+    var dtReal = Math.min(0.1, (now - last) / 1000);
+    acc += dtReal;
+    last = now;
+    updatePalette(dtReal);
+    var guard = 0;
+    while (acc >= DT && guard++ < 8) { step(); acc -= DT; }
+    render();
+    raf = requestAnimationFrame(tick);
+  }
+  function play()  { if (!running && !reduce) { running = true; raf = requestAnimationFrame(tick); } }
+  function pause() { running = false; cancelAnimationFrame(raf); last = null; acc = 0; }
+
+  build();
+  render();
+
+  if ('ResizeObserver' in window) {
+    new ResizeObserver(function () { build(); render(); }).observe(host);
+  } else {
+    window.addEventListener('resize', function () { build(); render(); });
+  }
+
+  if ('IntersectionObserver' in window) {
+    new IntersectionObserver(function (e) { e[0].isIntersecting ? play() : pause(); }).observe(host);
+  } else {
+    play();
+  }
+
+  // tap / click the card → extra ripple at that spot
+  var card = host.parentElement;
+  if (card) card.addEventListener('pointerdown', function (e) {
+    var r = host.getBoundingClientRect();
+    var x = e.clientX - r.left, y = e.clientY - r.top;
+    if (x < 0 || x > r.width || y < 0 || y > r.height) return;
+    sources.push({ x: x, y: y, f: 1.0, per: Infinity, t0: T, k: 1.6 });
+    if (palT >= 1) { pickPalette(); palWait = rand(PAL_HOLD_MIN, PAL_HOLD_MAX); }
+  });
+})();
+</script>
+
+<script>
+/* =====================================================================
+   Gargantua — Schwarzschild black hole, ray-marched on the GPU
+   ---------------------------------------------------------------------
+   For every pixel we shoot a light ray backwards from the camera and
+   bend it with the Schwarzschild null-geodesic equation
+
+        a = −(3/2)·rs·h² · r̂ / r⁴          (rs = 1, h = |r × v| conserved)
+
+   - falls inside r < 1        → event horizon (black shadow)
+   - crosses the disk plane    → glowing accretion-disk sample (a ray can
+     cross it several times → disk bent over the top and under the
+     bottom of the hole, plus the band passing in front)
+   - escapes to infinity       → star field, lensed by the same bending
+
+   SCROLL-DRIVEN CAMERA
+   scroll = 0  → NEAR : camera right beside the hole, rolled, wide disk
+                        sweeping across the frame, hole off to the right
+   scroll ↑↓  → the camera dollies away / back, smoothly (critically
+                damped), distance interpolated geometrically
+   far        → FAR  : the classic centred, edge-on Gargantua
+   ===================================================================== */
+(function () {
+  var cv = document.getElementById('bh');
+  if (!cv) return;
+
+  // ---- camera keyframes (s = 0 near … s = 1 far) ---------------------
+  var NEAR = { d: 9.3,  el: 0.13, roll: -0.41, cx: 0.99, cy: 0.37, ex: 1.9  };
+  var FAR  = { d: 22.0, el: 0.13, roll: 0.0,   cx: 0.50, cy: 0.36, ex: 1.15 };
+  var SCROLL_LEN = 1.4;   // viewport-heights of scroll for ~63% of the dolly (bigger = slower)
+  var SMOOTH     = 5.0;   // camera follow speed (bigger = snappier)
+
+  // ---- quality / look ----------------------------------------------
+  var FAR_MAX_PX = 430;   // far state: max half-width of the disk (css px)
+  var FAR_FILL   = 0.52;  //            …or this fraction of screen width
+  var PIXELS     = 160000; // render budget (lower = faster, softer)
+  var FPS        = 30;
+
+  var gl = cv.getContext('webgl', { antialias: false, alpha: false, powerPreference: 'low-power' }) ||
+           cv.getContext('experimental-webgl');
+  if (!gl) { cv.parentNode.removeChild(cv); return; }
+
+  var VERT = 'attribute vec2 a;void main(){gl_Position=vec4(a,0.0,1.0);}';
+
+  var FRAG = [
+  '#ifdef GL_FRAGMENT_PRECISION_HIGH',
+  'precision highp float;',
+  '#else',
+  'precision mediump float;',
+  '#endif',
+  'uniform vec2 uCenter; uniform float uSize, uTime, uExpo, uEl, uCamD, uRoll, uDetail;',
+  'const float RIN = 3.0;',
+  'const float ROUT = 9.0;',
+
+  'float h21(vec2 p){ vec3 q = fract(vec3(p.xyx) * .1031); q += dot(q, q.yzx + 33.33); return fract((q.x + q.y) * q.z); }',
+  'float h31(vec3 q){ q = fract(q * .1031); q += dot(q, q.zyx + 31.32); return fract((q.x + q.y) * q.z); }',
+
+  // value noise that wraps around in x (so the disk has no seam)
+  'float pnoise(vec2 p, float per){',
+  '  vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);',
+  '  float x0 = mod(i.x, per), x1 = mod(i.x + 1.0, per);',
+  '  float a = h21(vec2(x0, i.y)),       b = h21(vec2(x1, i.y));',
+  '  float c = h21(vec2(x0, i.y + 1.0)), d = h21(vec2(x1, i.y + 1.0));',
+  '  return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);',
+  '}',
+  // fine octaves fade in only when the camera is close (no shimmer from far away)
+  'float fbm(vec2 p, float dl){',
+  '  float w2 = 0.28 * (0.4 + 0.6 * dl), w3 = 0.17 * dl;',
+  '  float v = 0.55 * pnoise(p, 24.0)',
+  '          + w2 * pnoise(p * vec2(2.0, 2.2) + vec2(0.0, 13.0), 48.0)',
+  '          + w3 * pnoise(p * vec2(4.0, 5.0) + vec2(0.0, 29.0), 96.0);',
+  '  return v / (0.55 + w2 + w3);',
+  '}',
+
+  // turbulence that rotates faster on the inside; two time-layers cross-fade
+  'float diskNoise(float r, float phi, float t){',
+  '  float turns = phi * 0.15915494;',
+  '  float P = 30.0;',
+  '  float p0 = fract(t / P), p1 = fract(t / P + 0.5);',
+  '  float w0 = 1.0 - abs(2.0 * p0 - 1.0), w1 = 1.0 - w0;',
+  '  float om = 0.5 * pow(r, -1.5);',
+  '  float n0 = fbm(vec2((turns - om * p0 * P) * 24.0, r * 4.0), uDetail);',
+  '  float n1 = fbm(vec2((turns - om * p1 * P) * 24.0, r * 4.0 + 7.0), uDetail);',
+  '  return w0 * n0 + w1 * n1;',
+  '}',
+
+  'vec3 ramp(float temp){',
+  '  vec3 cool = vec3(0.45, 0.12, 0.03), mid = vec3(1.0, 0.52, 0.16), hot = vec3(1.0, 0.86, 0.62);',
+  '  vec3 c = mix(cool, mid, smoothstep(0.0, 0.5, temp));',
+  '  return mix(c, hot, smoothstep(0.45, 1.0, temp));',
+  '}',
+
+  'vec3 starField(vec3 d, float t){',
+  '  vec3 c = vec3(0.0);',
+  '  for (int L = 0; L < 2; L++){',
+  '    float sc = L == 0 ? 70.0 : 140.0;',
+  '    float thr = L == 0 ? 0.985 : 0.9975;',
+  '    vec3 p = d * sc, ip = floor(p), fp = p - ip;',
+  '    float h = h31(ip + float(L) * 17.0);',
+  '    vec3 cen = vec3(h31(ip + 3.1), h31(ip + 7.7), h31(ip + 11.3)) * 0.6 + 0.2;',
+  '    float b = smoothstep(0.17, 0.0, length(fp - cen)) * step(thr, h);',
+  '    b *= 0.45 + 0.55 * h31(ip + 23.0);',
+  '    b *= 0.75 + 0.25 * sin(t * 2.0 + h * 60.0);',
+  '    c += b * mix(vec3(0.70, 0.80, 1.00), vec3(1.00, 0.86, 0.72), h31(ip + 5.0));',
+  '  }',
+  '  return c;',
+  '}',
+
+  'void main(){',
+  '  vec2 p = (gl_FragCoord.xy - uCenter) / uSize * 0.45;',
+  '  vec3 cam = uCamD * vec3(0.0, sin(uEl), -cos(uEl));',
+  '  vec3 f = normalize(-cam);',
+  '  vec3 rgt0 = normalize(cross(vec3(0.0, 1.0, 0.0), f));',
+  '  vec3 up0 = cross(f, rgt0);',
+  '  float cr = cos(uRoll), sr = sin(uRoll);',
+  '  vec3 rgt = rgt0 * cr + up0 * sr;',
+  '  vec3 up2 = -rgt0 * sr + up0 * cr;',
+  '  vec3 vel = normalize(f + p.x * rgt + p.y * up2);',
+  '  vec3 pos = cam;',
+  '  vec3 hh = cross(pos, vel);',
+  '  float h2 = dot(hh, hh);',
+  '  vec3 col = vec3(0.0);',
+  '  float trans = 1.0;',
+  '  bool escaped = false;',
+
+  '  for (int i = 0; i < 110; i++){',
+  '    float r2 = dot(pos, pos);',
+  '    float r = sqrt(r2);',
+  '    if (r < 1.0){ trans = 0.0; break; }',
+  '    if (r > 40.0 && dot(pos, vel) > 0.0){ escaped = true; break; }',
+  '    float dt = clamp(0.10 * (r - 0.6), 0.045, 1.6);',
+  '    vel += -1.5 * h2 * pos / (r2 * r2 * r) * dt;',
+  '    vec3 np = pos + vel * dt;',
+
+  // thin haze around the disk plane → soft bloom instead of a razor edge
+  '    float rr = length(pos.xz), ay = abs(pos.y);',
+  '    if (ay < 0.7 && rr > RIN && rr < ROUT + 1.0){',
+  '      float tt = 1.0 - clamp((rr - RIN) / (ROUT - RIN), 0.0, 1.0);',
+  '      float g = exp(-ay * ay * 5.0) * smoothstep(RIN, RIN + 1.0, rr) * (1.0 - smoothstep(ROUT - 2.0, ROUT + 1.0, rr));',
+  '      col += trans * ramp(pow(tt, 1.6)) * g * dt * 0.10 * (0.25 + 1.5 * tt * tt);',
+  '    }',
+
+  // accretion-disk plane crossing
+  '    if (pos.y * np.y < 0.0){',
+  '      float fr = pos.y / (pos.y - np.y);',
+  '      vec3 hp = mix(pos, np, fr);',
+  '      float hr = length(hp.xz);',
+  '      if (hr > RIN && hr < ROUT){',
+  '        float t = clamp((hr - RIN) / (ROUT - RIN), 0.0, 1.0);',
+  '        float temp = pow(1.0 - t, 1.6);',
+  '        float n = diskNoise(hr, atan(hp.z, hp.x), uTime);',
+  '        vec3 tang = normalize(vec3(-hp.z, 0.0, hp.x));',
+  '        float v = sqrt(0.5 / max(hr, 1.0));',
+  '        float ca = -dot(tang, normalize(vel)) * v;',
+  '        float dop = clamp(inversesqrt(1.0 - v * v) / (1.0 - ca), 0.4, 2.2);',
+  '        vec3 em = ramp(temp) * (0.25 + 3.0 * pow(temp, 2.2)) * (0.35 + 1.25 * n) * pow(dop, 1.2);',
+  '        float edge = clamp((hr - RIN) / 0.3, 0.0, 1.0) * (1.0 - clamp((hr - (ROUT - 3.0)) / 3.0, 0.0, 1.0));',
+  '        float a = 0.6 * edge;',
+  '        col += trans * a * em;',
+  '        trans *= 1.0 - a;',
+  '      }',
+  '    }',
+  '    pos = np;',
+  '  }',
+
+  '  if (escaped) col += trans * starField(normalize(vel), uTime);',
+  '  col = 1.0 - exp(-col * uExpo);',
+  '  col = pow(col, vec3(0.9));',
+  '  gl_FragColor = vec4(col, 1.0);',
+  '}'
+  ].join('\n');
+
+  function compile(type, src) {
+    var sh = gl.createShader(type);
+    gl.shaderSource(sh, src); gl.compileShader(sh);
+    if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) {
+      if (window.console) console.warn('[Gargantua] shader error:', gl.getShaderInfoLog(sh));
+      return null;
+    }
+    return sh;
+  }
+  var vs = compile(gl.VERTEX_SHADER, VERT), fs = compile(gl.FRAGMENT_SHADER, FRAG);
+  if (!vs || !fs) { cv.parentNode.removeChild(cv); return; }
+  var prog = gl.createProgram();
+  gl.attachShader(prog, vs); gl.attachShader(prog, fs); gl.linkProgram(prog);
+  if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) { cv.parentNode.removeChild(cv); return; }
+  gl.useProgram(prog);
+
+  var buf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+  var loc = gl.getAttribLocation(prog, 'a');
+  gl.enableVertexAttribArray(loc);
+  gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+
+  var U = {};
+  ['uCenter', 'uSize', 'uTime', 'uExpo', 'uEl', 'uCamD', 'uRoll', 'uDetail'].forEach(function (n) {
+    U[n] = gl.getUniformLocation(prog, n);
+  });
+
+  document.body.classList.add('has-bh');
+
+  // ---- layout ---------------------------------------------------------
+  var cssW = 0, cssH = 0, RW = 0, RH = 0, scale = 1, sizeNear = 1, sizeFar = 1, nearCx = NEAR.cx;
+  function resize() {
+    cssW = cv.clientWidth; cssH = cv.clientHeight;
+    if (!cssW || !cssH) return;
+    scale = Math.min(1, Math.sqrt(PIXELS / (cssW * cssH)));
+    RW = Math.max(2, Math.round(cssW * scale));
+    RH = Math.max(2, Math.round(cssH * scale));
+    cv.width = RW; cv.height = RH;
+    gl.viewport(0, 0, RW, RH);
+    var portrait = cssH > cssW;
+    sizeNear = Math.min(1100, Math.max(cssW * 0.50, cssH * 0.42));  // pixels-per-tan at close range
+    sizeFar  = Math.min(cssW * FAR_FILL, FAR_MAX_PX);
+    nearCx   = portrait ? 0.90 : NEAR.cx;                           // show more of the shadow on phones
+  }
+
+  // ---- scroll → camera ------------------------------------------------
+  var target = 0, cur = 0;
+  function readScroll() {
+    var y = window.pageYOffset || 0;
+    target = 1 - Math.exp(-y / (Math.max(300, window.innerHeight) * SCROLL_LEN));
+  }
+  window.addEventListener('scroll', function () { readScroll(); if (reduce) { cur = target; draw(0); } }, { passive: true });
+  
+  const brightnessChangeFactor = 0.2;
+  function lerp(a, b, k) { return a + (b - a) * k; }
+  function draw(t) {
+    if (!RW) return;
+    var s = cur;
+    window.__garg = { s: s, hx: cssW * lerp(nearCx, FAR.cx, s), hy: cssH * lerp(NEAR.cy, FAR.cy, s) };
+    var d = Math.exp(lerp(Math.log(NEAR.d), Math.log(FAR.d), s));        // geometric dolly
+    gl.uniform2f(U.uCenter, RW * lerp(nearCx, FAR.cx, s), RH * (1 - lerp(NEAR.cy, FAR.cy, s)));
+    gl.uniform1f(U.uSize,  lerp(sizeNear, sizeFar, s) * scale);
+    gl.uniform1f(U.uExpo,  lerp(NEAR.ex, FAR.ex, s));
+    gl.uniform1f(U.uCamD,  d);
+    gl.uniform1f(U.uEl,    lerp(NEAR.el, FAR.el, s) + 0.018 * Math.sin(t * 0.13));  // slow breathing
+    gl.uniform1f(U.uRoll,  lerp(NEAR.roll, FAR.roll, s));
+    gl.uniform1f(U.uDetail, Math.min(1, Math.max(0.15, (22 - d) / 12)));
+    gl.uniform1f(U.uTime,  t);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    cv.style.opacity = (1 - brightnessChangeFactor * s).toFixed(3);   // sits back a little once you're reading
+  }
+
+  var rt = 0;
+  window.addEventListener('resize', function () {
+    clearTimeout(rt); rt = setTimeout(function () { resize(); readScroll(); draw((performance.now() - t0) / 1000); }, 120);
+  });
+
+  var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var t0 = performance.now();
+  resize(); readScroll(); cur = target;   // start exactly where the page is scrolled to
+  draw(0);
+  if (reduce) return;
+
+  var last = t0, minGap = 1000 / FPS - 2;
+  function loop(now) {
+    requestAnimationFrame(loop);
+    if (now - last < minGap) return;
+    var dt = Math.min(0.1, (now - last) / 1000);
+    last = now;
+    cur += (target - cur) * (1 - Math.exp(-dt * SMOOTH));   // critically-damped follow → no jerks
+    draw((now - t0) / 1000);
+  }
+  requestAnimationFrame(loop);
+
+  cv.addEventListener('webglcontextlost', function (e) { e.preventDefault(); document.body.classList.remove('has-bh'); }, false);
+})();
+</script>
+
+<script>
+/* =====================================================================
+   Endurance (rotating ring ship) + Miller's planet — foreground of the
+   Gargantua scene. Drawn on a 2-D canvas above the black hole.
+   - Both follow the black-hole camera (window.__garg.s: 0 = near, 1 = far)
+     but shrink/move only a little ("closer" objects → parallax).
+   - Endurance's ring spin is tied to scroll position: scroll down = one
+     way, scroll up = back. Lit from the side facing the black hole.
+   ===================================================================== */
+(function () {
+  var cv = document.getElementById('bh-fg');
+  if (!cv) return;
+  var ctx = cv.getContext('2d'); if (!ctx) return;
+
+  // x, y = screen fractions, r = size in units of "u" (≈ screen scale). near = scroll 0, far = scrolled down
+  var ENDURANCE = { near: { x: 0.205, y: 0.40, r: 0.20 }, far: { x: 0.15, y: 0.31, r: 0.115 } };
+  var PLANET    = { near: { x: 0.507, y: 0.485, r: 0.029 }, far: { x: 0.33, y: 0.50, r: 0.018 } };
+  var MODULES = 12;
+  var SPIN_PER_PX = 0.0035;   // ring rotation (rad) per scrolled pixel
+  var IDLE_SPIN   = 0.04;     // tiny drift when not scrolling (0 = only scroll moves it)
+  var SPIN_SMOOTH = 6;
+  var FPS = 30;
+
+  var TAU = Math.PI * 2, W = 0, H = 0, dpr = 1, u = 1;
+  var spin = 0, idle = 0, reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  function lerp(a, b, k) { return a + (b - a) * k; }
+
+  function resize() {
+    W = cv.clientWidth; H = cv.clientHeight; if (!W || !H) return;
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+    u = Math.min(1100, Math.max(W * 0.5, H * 0.42));
+  }
+  function place(c, s, minR) {
+    return { x: W * lerp(c.near.x, c.far.x, s), y: H * lerp(c.near.y, c.far.y, s), r: Math.max(minR, u * lerp(c.near.r, c.far.r, s)) };
+  }
+
+  // ---- Endurance: real 3-D mini model, flat-shaded (painter's algorithm) ----
+  // 12 chamfered hex-ish modules with recessed panels, ball joints + struts,
+  // central spine, lander pods and a docking boom — like the film model.
+  var M3 = null;
+  var DEC = [
+    [[0, 0, 0.09, 0.12]],
+    [[0, -0.09, 0.09, 0.06], [0, 0.09, 0.09, 0.06]],
+    [[-0.05, -0.08, 0.04, 0.06], [0.05, -0.08, 0.04, 0.06], [-0.05, 0.08, 0.04, 0.06], [0.05, 0.08, 0.04, 0.06]]
+  ];
+  function prism(c, U, V, W, hu, hv, hw, ch, dec, gl) {
+    var o = [[hu, -hv + ch], [hu, hv - ch], [hu - ch, hv], [-hu + ch, hv], [-hu, hv - ch], [-hu, -hv + ch], [-hu + ch, -hv], [hu - ch, -hv]];
+    function pt(a, b, z) { return [c[0] + U[0] * a + V[0] * b + W[0] * z, c[1] + U[1] * a + V[1] * b + W[1] * z, c[2] + U[2] * a + V[2] * b + W[2] * z]; }
+    function dr(a, b, z) { return [U[0] * a + V[0] * b + W[0] * z, U[1] * a + V[1] * b + W[1] * z, U[2] * a + V[2] * b + W[2] * z]; }
+    var out = [], i;
+    for (i = 0; i < 8; i++) {
+      var p0 = o[i], p1 = o[(i + 1) % 8], nx = p1[1] - p0[1], ny = -(p1[0] - p0[0]), l = Math.hypot(nx, ny);
+      out.push({ P: [pt(p0[0], p0[1], -hw), pt(p1[0], p1[1], -hw), pt(p1[0], p1[1], hw), pt(p0[0], p0[1], hw)], n: dr(nx / l, ny / l, 0), k: i });
+    }
+    [1, -1].forEach(function (sg) {
+      out.push({
+        P: o.map(function (q) { return pt(q[0], q[1], sg * hw); }), n: dr(0, 0, sg),
+        dec: dec.map(function (r) {
+          return [[r[0] - r[2], r[1] - r[3]], [r[0] + r[2], r[1] - r[3]], [r[0] + r[2], r[1] + r[3]], [r[0] - r[2], r[1] + r[3]]]
+            .map(function (q) { return pt(q[0], q[1], sg * (hw + 0.002)); });
+        }),
+        gl: gl.map(function (g) { return pt(g[0], g[1], sg * (hw + 0.01)); })
+      });
+    });
+    return out;
+  }
+  function build3() {
+    var F = [], S = [], C = [], B = [], N = 12, i, X = [1, 0, 0], Y = [0, 1, 0], Z = [0, 0, 1];
+    function edge(k, sg) { var a = k * TAU / N; return [Math.cos(a) - Math.sin(a) * 0.18 * sg, Math.sin(a) + Math.cos(a) * 0.18 * sg, 0]; }
+    for (i = 0; i < N; i++) {
+      var a = i * TAU / N, ca = Math.cos(a), sa = Math.sin(a), j = a + TAU / (2 * N), jp = [Math.cos(j), Math.sin(j), 0];
+      F = F.concat(prism([ca, sa, 0], [ca, sa, 0], [-sa, ca, 0], Z, 0.15, 0.18, 0.22, 0.05, DEC[i % 3], i % 3 === 1 ? [[0, -0.07], [0, 0.07]] : []));
+      B.push([jp, 0.075]);
+      S.push([jp, edge(i, 1), 0.035]); S.push([jp, edge(i + 1, -1), 0.035]);
+    }
+    F = F.concat(prism([0, 0, 0], X, Y, Z, 0.22, 0.11, 0.07, 0.04, [[0, 0, 0.12, 0.06]], []));
+    F = F.concat(prism([-0.3, 0, 0], X, Y, Z, 0.09, 0.09, 0.11, 0.03, [], []));
+    F = F.concat(prism([0.3, 0, 0], X, Y, Z, 0.09, 0.09, 0.11, 0.03, [], []));
+    C.push([[0, 0, -0.62], [0, 0, 0], 0.045], [[0, 0, 0], [0, 0, 0.62], 0.045], [[0.1, 0, 0], [0.85, 0, 0], 0.028]);
+    B.push([[0, 0, 0.62], 0.06], [[0, 0, -0.62], 0.06], [[0, 0, 0.33], 0.05], [[0, 0, -0.33], 0.05]);
+    return { F: F, S: S.concat(C), B: B };
+  }
+
+  function endurance(p, L, s, t) {
+    if (!M3) M3 = build3();
+    var R = p.r * 0.8, tx = 0.55 + 0.25 * s + 0.05 * Math.sin(t * 0.4), ty = -0.42 + 0.05 * Math.cos(t * 0.3), rot = -0.3;
+    var cs = Math.cos(spin), sn = Math.sin(spin), cy = Math.cos(ty), sy = Math.sin(ty), cx = Math.cos(tx), sx = Math.sin(tx);
+    function T(q) {
+      var x1 = q[0] * cs - q[1] * sn, y1 = q[0] * sn + q[1] * cs, z1 = q[2];
+      var x2 = x1 * cy + z1 * sy, z2 = -x1 * sy + z1 * cy;
+      return [x2, y1 * cx - z2 * sx, y1 * sx + z2 * cx];
+    }
+    function P(q) { var k = 5 / (5 - q[2]); return [q[0] * k * R, -q[1] * k * R, k]; }
+    var cr = Math.cos(rot), sr = Math.sin(rot);
+    var lx = L.x * cr + L.y * sr, ly = -L.x * sr + L.y * cr, ll = Math.hypot(lx, ly, 0.45);
+    // the black hole is BEHIND the ship: light comes from its side and slightly from the back,
+    // so faces looking at the camera stay dark and side faces catch the glare
+    var Ld = [lx / ll, -ly / ll, -0.45 / ll];
+    var Hv = [Ld[0], Ld[1], Ld[2] + 1], hl = Math.hypot(Hv[0], Hv[1], Hv[2]); Hv = [Hv[0] / hl, Hv[1] / hl, Hv[2] / hl];
+    var sd = Math.hypot(Ld[0], Ld[1]) || 1, dS = [Ld[0] / sd, -Ld[1] / sd];    // light direction on screen
+    function shade(n) {
+      var d = Math.max(0, n[0] * Ld[0] + n[1] * Ld[1] + n[2] * Ld[2]);
+      var h = Math.max(0, n[0] * Hv[0] + n[1] * Hv[1] + n[2] * Hv[2]);
+      var side = Math.max(0, n[0] * Ld[0] + n[1] * Ld[1]);
+      return { d: d, sp: d > 0 ? Math.pow(h, 28) : 0, rim: Math.pow(1 - Math.max(0, n[2]), 2.5) * side };
+    }
+    function col(sh, m, am) {                              // metal: near-black in shadow, blown-out warm in the glare
+      am = am || 1; var d = sh.d * m * am, hi = 255 * (sh.sp * m * 0.8 + sh.rim * 0.7) * am, a = 205;
+      return 'rgb(' + Math.min(255, (a * (0.035 + d * 1.25) + hi) | 0) + ',' + Math.min(255, (a * (0.045 + d * 1.02) + hi * 0.93) | 0) + ',' + Math.min(255, (a * (0.07 + d * 0.80) + hi * 0.82) | 0) + ')';
+    }
+    var items = [], i;
+
+    M3.F.forEach(function (f) {
+      var n = T(f.n); if (n[2] <= 0.02) return;
+      var q = f.P.map(T), z = 0, k;
+      for (k = 0; k < q.length; k++) z += q[k][2]; z /= q.length;
+      var sh = shade(n);
+      items.push({ z: z, f: function () {
+        var pp = q.map(P), mx = 0, my = 0, mn = 1e9, mv = -1e9;
+        pp.forEach(function (w) { mx += w[0]; my += w[1]; }); mx /= pp.length; my /= pp.length;
+        pp.forEach(function (w) { var pr = (w[0] - mx) * dS[0] + (w[1] - my) * dS[1]; if (pr < mn) mn = pr; if (pr > mv) mv = pr; });
+        var g = ctx.createLinearGradient(mx + dS[0] * mn, my + dS[1] * mn, mx + dS[0] * mv, my + dS[1] * mv);
+        var am = f.dec ? 0.35 : 1;   // front (cap) faces are dark anodised panels
+        g.addColorStop(0, col(sh, 0.5, am)); g.addColorStop(1, col(sh, 1.3, am));
+        ctx.beginPath();
+        pp.forEach(function (w, m) { m ? ctx.lineTo(w[0], w[1]) : ctx.moveTo(w[0], w[1]); });
+        ctx.closePath(); ctx.fillStyle = g; ctx.fill();
+        ctx.strokeStyle = 'rgba(0,0,0,0.55)'; ctx.lineWidth = 0.8; ctx.stroke();
+        if (f.k === 0 || f.k === 2 || f.k === 6) {        // radiator louvres — catch the light like the film model
+          for (var st = 1; st < 6; st++) {
+            var u = st / 6, a0 = [q[0][0] + (q[3][0] - q[0][0]) * u, q[0][1] + (q[3][1] - q[0][1]) * u, q[0][2] + (q[3][2] - q[0][2]) * u],
+                b0 = [q[1][0] + (q[2][0] - q[1][0]) * u, q[1][1] + (q[2][1] - q[1][1]) * u, q[1][2] + (q[2][2] - q[1][2]) * u],
+                A = P(a0), B = P(b0);
+            ctx.strokeStyle = 'rgba(0,0,0,0.45)'; ctx.lineWidth = 1.4;
+            ctx.beginPath(); ctx.moveTo(A[0], A[1]); ctx.lineTo(B[0], B[1]); ctx.stroke();
+            if (sh.d > 0.04) {
+              ctx.strokeStyle = 'rgba(255,238,215,' + Math.min(0.75, sh.d * 0.9).toFixed(2) + ')'; ctx.lineWidth = 0.9;
+              ctx.beginPath(); ctx.moveTo(A[0], A[1] + 1); ctx.lineTo(B[0], B[1] + 1); ctx.stroke();
+            }
+          }
+        }
+        if (f.dec) f.dec.forEach(function (dq) {          // recessed panels on the (dark) front faces
+          ctx.beginPath();
+          dq.map(T).forEach(function (v, m) { var w = P(v); m ? ctx.lineTo(w[0], w[1]) : ctx.moveTo(w[0], w[1]); });
+          ctx.closePath(); ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.fill();
+          ctx.strokeStyle = 'rgba(150,170,205,' + (0.14 + 0.5 * sh.d).toFixed(2) + ')'; ctx.lineWidth = 0.9; ctx.stroke();
+        });
+        if (f.gl && f.gl.length) {                        // engines: soft bloom + halo + core + anamorphic streak
+          var ws = f.gl.map(function (g2) { return P(T(g2)); }), mid = [(ws[0][0] + ws[1][0]) / 2, (ws[0][1] + ws[1][1]) / 2, ws[0][2]];
+          var pul = 0.85 + 0.15 * Math.sin(t * 2.4 + z * 9);
+          ctx.globalCompositeOperation = 'lighter';
+          function blob(x, y, rad, c0, c1, c2) {
+            var gr = ctx.createRadialGradient(x, y, 0, x, y, rad);
+            gr.addColorStop(0, c0); gr.addColorStop(0.35, c1); gr.addColorStop(1, c2);
+            ctx.fillStyle = gr; ctx.beginPath(); ctx.arc(x, y, rad, 0, TAU); ctx.fill();
+          }
+          blob(mid[0], mid[1], 0.42 * R * mid[2], 'rgba(70,130,255,' + 0.30 * pul + ')', 'rgba(50,100,255,' + 0.10 * pul + ')', 'rgba(40,80,255,0)');
+          ws.forEach(function (w) {
+            blob(w[0], w[1], 0.16 * R * w[2], 'rgba(170,215,255,' + 0.85 * pul + ')', 'rgba(70,140,255,' + 0.40 * pul + ')', 'rgba(50,100,255,0)');
+            blob(w[0], w[1], 0.045 * R * w[2], 'rgba(255,255,255,' + pul + ')', 'rgba(210,235,255,0.7)', 'rgba(150,200,255,0)');
+          });
+          ctx.save(); ctx.translate(mid[0], mid[1]); ctx.rotate(-rot);
+          var ln = 0.75 * R * mid[2], sg2 = ctx.createLinearGradient(-ln, 0, ln, 0);
+          sg2.addColorStop(0, 'rgba(110,170,255,0)'); sg2.addColorStop(0.5, 'rgba(170,210,255,' + 0.5 * pul + ')'); sg2.addColorStop(1, 'rgba(110,170,255,0)');
+          ctx.fillStyle = sg2; ctx.fillRect(-ln, -1.1, ln * 2, 2.2);
+          ctx.restore();
+          ctx.globalCompositeOperation = 'source-over';
+        }
+      } });
+    });
+
+    M3.S.forEach(function (sg) {                       // struts / spine / boom (dark metal, thin lit edge)
+      var a = T(sg[0]), b = T(sg[1]), pa = P(a), pb = P(b), wd = sg[2] * 2 * R * (pa[2] + pb[2]) / 2;
+      items.push({ z: (a[2] + b[2]) / 2, f: function () {
+        ctx.lineCap = 'round';
+        ctx.strokeStyle = '#0a0d15'; ctx.lineWidth = wd;
+        ctx.beginPath(); ctx.moveTo(pa[0], pa[1]); ctx.lineTo(pb[0], pb[1]); ctx.stroke();
+        var ox = dS[0] * wd * 0.28, oy = dS[1] * wd * 0.28;
+        ctx.strokeStyle = 'rgba(255,225,190,0.65)'; ctx.lineWidth = Math.max(0.8, wd * 0.28);
+        ctx.beginPath(); ctx.moveTo(pa[0] + ox, pa[1] + oy); ctx.lineTo(pb[0] + ox, pb[1] + oy); ctx.stroke();
+      } });
+    });
+
+    M3.B.forEach(function (bl) {                       // ball joints: dark spheres with a hot glint toward the hole
+      var c = T(bl[0]), w = P(c), r = bl[1] * R * w[2];
+      items.push({ z: c[2] + 0.01, f: function () {
+        var g = ctx.createRadialGradient(w[0] + dS[0] * r * 0.55, w[1] + dS[1] * r * 0.55, 0, w[0] + dS[0] * r * 0.2, w[1] + dS[1] * r * 0.2, r * 1.15);
+        g.addColorStop(0, 'rgb(255,240,220)'); g.addColorStop(0.25, 'rgb(190,150,115)'); g.addColorStop(0.6, 'rgb(28,26,32)'); g.addColorStop(1, 'rgb(4,5,9)');
+        ctx.fillStyle = g; ctx.beginPath(); ctx.arc(w[0], w[1], r, 0, TAU); ctx.fill();
+      } });
+    });
+
+    items.sort(function (a, b) { return a.z - b.z; });
+    ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(rot);
+    ctx.lineJoin = 'round';
+    ctx.globalCompositeOperation = 'lighter';           // faint blue haze from the engines behind the ring
+    var hz = ctx.createRadialGradient(0, 0, R * 0.2, 0, 0, R * 1.7);
+    hz.addColorStop(0, 'rgba(60,110,255,0.05)'); hz.addColorStop(1, 'rgba(60,110,255,0)');
+    ctx.fillStyle = hz; ctx.beginPath(); ctx.arc(0, 0, R * 1.7, 0, TAU); ctx.fill();
+    ctx.globalCompositeOperation = 'source-over';
+    for (i = 0; i < items.length; i++) items[i].f();
+    ctx.restore();
+  }
+
+  function planet(p, L, t) {
+    var r = p.r, x = p.x, y = p.y + Math.sin(t * 0.3) * r * 0.08;
+    ctx.save(); ctx.translate(x, y);
+    ctx.fillStyle = '#04060b'; ctx.beginPath(); ctx.arc(0, 0, r, 0, TAU); ctx.fill();
+    ctx.save(); ctx.beginPath(); ctx.arc(0, 0, r, 0, TAU); ctx.clip();   // thin lit crescent from the disk
+    var g = ctx.createRadialGradient(L.x * r * 1.6, L.y * r * 1.6, 0, L.x * r * 1.6, L.y * r * 1.6, r * 1.75);
+    g.addColorStop(0.34, 'rgba(255,236,210,0.95)'); g.addColorStop(0.6, 'rgba(255,190,140,0.25)'); g.addColorStop(0.8, 'rgba(255,170,120,0)');
+    ctx.fillStyle = g; ctx.fillRect(-r, -r, r * 2, r * 2);
+    ctx.restore();
+    var th = Math.atan2(L.y, L.x);
+    ctx.shadowColor = 'rgba(255,200,150,0.9)'; ctx.shadowBlur = r * 0.7;
+    ctx.strokeStyle = 'rgba(255,235,210,0.85)'; ctx.lineWidth = Math.max(1, r * 0.06);
+    ctx.beginPath(); ctx.arc(0, 0, r, th - 1.0, th + 1.0); ctx.stroke();
+    ctx.restore();
+  }
+
+  function draw(t) {
+    if (!W) return;
+    var G = window.__garg || { s: 0, hx: W * 0.99, hy: H * 0.37 }, s = G.s;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, W, H);
+    var e = place(ENDURANCE, s, 28), m = place(PLANET, s, 8);
+    function dir(o) { var dx = G.hx - o.x, dy = G.hy - o.y, l = Math.hypot(dx, dy) || 1; return { x: dx / l, y: dy / l }; }
+    planet(m, dir(m), t);
+    endurance(e, dir(e), s, t);
+    cv.style.opacity = (1 - 0.2 * s).toFixed(3);   // same dimming as the black hole
+  }
+
+  var t0 = performance.now(), last = t0;
+  resize();
+  spin = (window.pageYOffset || 0) * SPIN_PER_PX;
+  draw(0);
+  window.addEventListener('resize', function () { resize(); draw((performance.now() - t0) / 1000); });
+  if (reduce) {
+    window.addEventListener('scroll', function () { spin = (window.pageYOffset || 0) * SPIN_PER_PX; draw(0); }, { passive: true });
+    return;
+  }
+  var gap = 1000 / FPS - 2;
+  (function loop(now) {
+    requestAnimationFrame(loop);
+    if (now - last < gap) return;
+    var dt = Math.min(0.1, (now - last) / 1000); last = now;
+    var target = (window.pageYOffset || 0) * SPIN_PER_PX;
+    idle += IDLE_SPIN * dt;
+    spin += (target - (spin - idle)) * (1 - Math.exp(-dt * SPIN_SMOOTH));   // scroll-driven, eased
+    draw((now - t0) / 1000);
+  })(t0);
+})();
+</script>
 </body>
 </html>

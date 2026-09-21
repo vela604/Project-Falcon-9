@@ -178,36 +178,36 @@
                 </dl>
               </fieldset>
               
-              <fieldset id="d-compatFieldset" style="display:none;">
-                <legend>Compatible boosters <span class="legend-note">— live, from the fleet</span></legend>
-                <div id="d-compatList">—</div>
-              </fieldset>
-              
-             
+                           <fieldset id="d-compatFieldset" style="display:none;">
+  <legend>Compatible boosters <span class="legend-note">— live, from the fleet</span></legend>
+  <div id="d-compatList">—</div>
+</fieldset>
 
-
-
-<fieldset id="payloadSpaceFieldset" data-role="payloadSpace" style="display:none">
-  <legend>Payload space shape <span class="legend-note">— standalone fairing role</span></legend>
+<!-- Read-only detail version — `d-` prefix so it doesn't
+     clash with the editable #payloadSpaceFieldset inside
+     #editorForm. rockets-ui.js's showVehicleDetail()
+     toggles this by `d-payloadSpaceFieldset`. -->
+<fieldset id="d-payloadSpaceFieldset" style="display:none;">
+  <legend>Payload space <span class="legend-note">— standalone fairing</span></legend>
   <dl>
-                  <div class="cap-row">
-                    <dt>Shape</dt>
-                    <dd id="d-psShape">—</dd>
-                  </div>
-                  <div class="cap-row">
-                    <dt>Container metal</dt>
-                    <dd id="d-psMetal">—</dd>
-                  </div>
-                  <div class="cap-row">
-                    <dt>Deployment</dt>
-                    <dd id="d-psDeployment">—</dd>
-                  </div>
-                  <div class="cap-row">
-                    <dt>Colour</dt>
-                    <dd id="d-psColor">—</dd>
-                  </div>
-                </dl>
-              </fieldset>
+    <div class="cap-row">
+      <dt>Shape</dt>
+      <dd id="d-psShape">—</dd>
+    </div>
+    <div class="cap-row">
+      <dt>Container metal</dt>
+      <dd id="d-psMetal">—</dd>
+    </div>
+    <div class="cap-row">
+      <dt>Deployment</dt>
+      <dd id="d-psDeployment">—</dd>
+    </div>
+    <div class="cap-row">
+      <dt>Colour</dt>
+      <dd id="d-psColor">—</dd>
+    </div>
+  </dl>
+</fieldset>
               
               <fieldset id="detailCapsBox">
                 <legend>Capabilities <span class="legend-note">— computed</span></legend>

@@ -465,98 +465,50 @@ function blankRocketData() {
   return { ...base, id: null, name: 'New Rocket', locked: false, stageRole: 'rocket' };
 }
 
+// ---------------------------------------------------------------------------
+// Blank-member factories now derive their defaults from the Falcon 9
+// Block 5 seed records (see seedFalcon9Booster/Stage/Fairing below).
+// One source of truth: any change to the F9 seed automatically flows
+// into every new member the user creates, so a fresh "New Booster" is
+// already tuned to realistic F9-class values (tank dims, shell factor,
+// thruster types + mass flow rates, chute, baffle geometry, RCS offsets,
+// engine layout, etc.) instead of generic placeholders.
+//
+// The seed's own id/locked/familyId/name are stripped so the new record
+// behaves as a normal user-created member.
+// ---------------------------------------------------------------------------
 function blankBoosterData() {
-  const base = defaultVehicleData();
-  const out = {
-    ...base,
+  const seed = seedFalcon9Booster();
+  return {
+    ...seed,
     id: null,
     name: 'New Booster',
     locked: false,
-    stageRole: 'booster',
-    maxExtraWeightKg: 0,
-    // Same fuel/metal inputs as a stage — dry mass and fuel capacity are
-    // now DERIVED (P4-C1), not manually entered. Phase 2C-extension:
-    // baffleCount defaults to 0 (no baffles) and baffleInnerRadiusFrac
-    // to the standard real-baffle 0.8 ratio.
-      // Same fuel/metal inputs as a stage — dry mass and fuel capacity are
-  // now DERIVED (P4-C1), not manually entered. Phase 2C-extension:
-  // baffleCount defaults to 0 (no baffles) and baffleInnerRadiusFrac
-  // to the standard real-baffle 0.8 ratio.
-  fuel: { typeId: 'rp1-lox', tankHeight: 45, tankWidth: 3.9, baffleCount: 0, baffleInnerRadiusFrac: 0.8 },
-      bodyMetalTypeId: 'al-li-alloy',
-    // Real F9 legs are carbon-fibre composite — default a new booster's
-    // legs to that, independent of the airframe metal.
-    legsMetalTypeId: 'carbon-composite',
-    // F9-calibrated default — user can override per-record.
-    bodyShellFactor: DEFAULT_SHELL_FACTOR_BY_ROLE.booster,
+    familyId: null,
   };
-  
-  
-  delete out.dryMass;
-  delete out.fuelMassMax;
-  return out;
 }
 
 function blankStageData() {
-  const base = defaultVehicleData();
-  const out = {
-      ...base,
-      id: null,
-      name: 'New Stage',
-      locked: false,
-      stageRole: 'stage',
-      // Stage inputs — these drive all derived masses at read time.
-      // Stage inputs — these drive all derived masses at read time.
-fuel: { typeId: 'rp1-lox', tankHeight: 10, tankWidth: 3.9, baffleCount: 0, baffleInnerRadiusFrac: 0.8 },
-  bodyMetalTypeId: 'al-li-alloy',
-  legsMetalTypeId: 'carbon-composite',
-  bodyShellFactor: DEFAULT_SHELL_FACTOR_BY_ROLE.stage,
-    // NOTE (PS-B2): nested payloadSpace is the LEGACY shape. Going forward
-    // the fairing is its own top-level 'payloadSpace' fleet record (see
-    // blankPayloadSpaceData() below) — a brand-new stage created after this
-    // step no longer needs one. It's kept out of this blank factory on
-    // purpose; the deprecated stage-editor payload fieldset (still wired
-    // in rockets.js/rockets.html until PS-C) is what still writes this
-    // field onto a record if the user touches those inputs.
-    maxExtraWeightKg: 0,
+  const seed = seedFalcon9Stage();
+  return {
+    ...seed,
+    id: null,
+    name: 'New Stage',
+    locked: false,
+    familyId: null,
   };
-  // A stage has no manually-entered dry/fuel mass — those are computed live
-  // from the ingredients above (PHASE3_PROMPT.md §3).
-  delete out.dryMass;
-  delete out.fuelMassMax;
-  return out;
 }
 
-// Blank factory for the standalone payloadSpace role (Phase PS-B). A pure
-// fairing record — no engines, RCS, recovery, or fuel. Its own footprint
-// (height/width) is independent for now; PS-D1 will add the stack-level
-// rule that it must sit at the very top with width compatible with the
-// member below it. dryMass is DERIVED (structural volume × metal density,
-// added in PS-E) — never stored here, same rule as booster/stage.
 function blankPayloadSpaceData() {
+  const seed = seedFalcon9Fairing();
   return {
+    ...seed,
     id: null,
     name: 'New Payload Space',
     locked: false,
-    stageRole: 'payloadSpace',
     familyId: null,
-    height: 3,
-    width: 3.9,
-    dragCd: 0.4,
-        payloadSpaceTypeId: 'cap-bulged',
-      payloadSpaceMetalTypeId: 'al-li-alloy',
-      bodyShellFactor: DEFAULT_SHELL_FACTOR_BY_ROLE.payloadSpace,
-      deploymentDirection: 'clamshell',
-      color: '#e9edf2',
-      // Fairing recovery chute — null = no chute, deploy nothing. Any body
-      // spawned from this record (split half OR emergency-ejected package)
-      // inherits this selection.
-      chuteTypeId: null,
-      params: { capHeight: 3, capWidth: 3.9 },
-      bodyDesign: { mode: 'solid', solidColor: '#e9edf2', dslText: '' },
-    };
-    }
-
+  };
+}
 
 // Normalizes ANY record — a genuinely old Phase-1 flat record, a fresh
 // Phase-2 nested record, or a hybrid (e.g. a nested record spread with a

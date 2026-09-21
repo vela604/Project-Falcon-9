@@ -4,7 +4,6 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Guidance Log — Rocket Sim</title>
-<meta name="color-scheme" content="dark">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -69,56 +68,106 @@ html, body {
    live-iOS-glass effect.
    ===================================================================== */
 
-/* =====================================================================
-   Background — Gemini App Style (Stronger & Visible)
-   ===================================================================== */
-
-/* Base background color */
-body {
-  background-color: #04050a !important;
-}
-
+/* Deep dark base — anchors bottom. */
 body::before {
   content: '';
   position: fixed;
   inset: 0;
-  background: #04050a;
-  z-index: -5;
+  background: linear-gradient(180deg, #04060e 0%, #02030a 100%);
+  z-index: 0;
   pointer-events: none;
 }
 
-
+/* The mesh itself. Six radial anchors, each very large and soft, all
+   overlapping. One global blur smooths them into a continuous field —
+   this is exactly what makes it look like Gemini and not like orbs. */
 .bg-mesh {
   position: fixed;
-  top: 0; left: 0; width: 100vw; height: 100vh;
-  z-index: -2; pointer-events: none;
-  /* Soft gradients directly, no blur filter needed */
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
   background:
-    radial-gradient(circle at 20% 20%, rgba(66, 133, 244, 0.45) 0%, transparent 55%),
-    radial-gradient(circle at 80% 30%, rgba(155, 114, 203, 0.45) 0%, transparent 55%),
-    radial-gradient(circle at 50% 90%, rgba(214, 52, 132, 0.55) 0%, transparent 65%),
-    radial-gradient(circle at 50% 0%, rgba(53, 214, 255, 0.25) 0%, transparent 50%),
-    #04050a; /* Fallback base color */
-  animation: geminiBreathe 5s ease-in-out infinite alternate;
+    /* Base wash — huge dim blue everywhere */
+    radial-gradient(ellipse 95% 48% at 40% 10%,
+      rgba(40, 80, 190, 0.75), transparent 78%),
+
+    /* Blue anchor — upper left, the dominant colour */
+    radial-gradient(ellipse 55% 38% at 20% 6%,
+      rgba(66, 133, 244, 1.00), transparent 68%),
+
+    /* Purple anchor — upper right */
+    radial-gradient(ellipse 55% 38% at 82% 5%,
+      rgba(165, 120, 215, 0.95), transparent 68%),
+
+    /* Cyan accent — top center, glues blue and purple together */
+    radial-gradient(ellipse 45% 28% at 52% 0%,
+      rgba(70, 225, 255, 0.80), transparent 70%),
+
+    /* Magenta accent — right edge */
+    radial-gradient(ellipse 40% 32% at 96% 18%,
+      rgba(255, 95, 168, 0.50), transparent 70%),
+
+    /* Faint green accent — left edge, adds subtle depth */
+    radial-gradient(ellipse 40% 32% at 4% 22%,
+      rgba(74, 222, 128, 0.28), transparent 70%),
+
+    /* Bottom falloff — mesh fades to pure black quickly, keeping the
+       glow confined to the top band only */
+    linear-gradient(180deg,
+      rgba(4, 6, 14, 0.00) 0%,
+      rgba(4, 6, 14, 0.30) 20%,
+      rgba(4, 6, 14, 0.88) 38%,
+      rgba(2, 3, 10, 1.00) 55%);
+
+  filter: blur(70px) saturate(170%);
+  animation: meshDrift 16s ease-in infinite;
+  will-change: transform, filter;
+  transform-origin: 50% 0%;
 }
 
-@keyframes geminiBreathe {
-  0% { transform: scale(1); }
-  100% { transform: scale(1.1); }
+/* Single keyframe handles both motion (drift+scale) and colour shift
+   (hue-rotate). Combined into one animation so both properties don't
+   fight — CSS applies whichever animation's last declaration wins when
+   both touch the same property on the same element. */
+@keyframes meshDrift {
+  0% {
+    transform: translate3d(0%, 0%, 0)         scale(1.00);
+    filter: blur(80px) saturate(150%) hue-rotate(0deg);
+  }
+  25% {
+    transform: translate3d(50%, 50%, 0)      scale(1.12);
+    filter: blur(95px) saturate(165%) hue-rotate(45deg);
+  }
+  50% {
+    transform: translate3d(0%, 50%, 0)      scale(1.06);
+    filter: blur(105px) saturate(195%) hue-rotate(0deg);
+  }
+  75% {
+    transform: translate3d(0%, 0%, 0)      scale(1.12);
+    filter: blur(95px) saturate(165%) hue-rotate(-45deg);
+  }
+  100% {
+    transform: translate3d(0%, 0%, 0)         scale(1.00);
+    filter: blur(80px) saturate(150%) hue-rotate(0deg);
+  }
 }
 
-/* Dotted Pattern */
+/* Dot texture grid — subtle depth, keeps the glass reading as glass. */
 body::after {
-  content: ''; position: fixed; inset: 0;
-  z-index: -1; pointer-events: none;
-  background-image: radial-gradient(rgba(255, 255, 255, 0.5) 1.5px, transparent 1.5px);
-  background-size: 16px 16px;
-  -webkit-mask-image: linear-gradient(to bottom, transparent 20%, rgba(0,0,0,0.5) 60%, rgba(0,0,0,1) 100%);
-  mask-image: linear-gradient(to bottom, transparent 20%, rgba(0,0,0,0.5) 60%, rgba(0,0,0,1) 100%);
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image:
+    radial-gradient(circle, rgba(255,255,255,0.022) 1px, transparent 1px);
+  background-size: 22px 22px;
+  z-index: 2;
+  pointer-events: none;
+  mask-image: radial-gradient(ellipse 85% 70% at 50% 35%, #000 30%, transparent 100%);
+  -webkit-mask-image: radial-gradient(ellipse 85% 70% at 50% 35%, #000 30%, transparent 100%);
 }
 
-
-/* Older orb layer kept as a no-op... */
+/* Older orb layer kept as a no-op so nothing breaks if HTML still
+   references it — see the cleanup note below. */
 .bg-orbs { display: none; }
 
 /* =====================================================================
@@ -129,7 +178,7 @@ body::after {
   margin: 0 auto;
   padding: 0 24px 96px;
   position: relative;
-  z-index: 1;
+  z-index: 3;
 }
 
 /* =====================================================================
@@ -388,6 +437,30 @@ body::after {
   );
 }
 
+/* Star wave field — a dense, dome-curved lattice of 4-point sparkles
+   along the bottom of the card, drawn on a <canvas> by the script at
+   the bottom. The stars NEVER move; only size, colour and opacity
+   change, driven by a real 2-D wave simulation (two point sources,
+   interference, reflecting walls) — small + blue in the troughs,
+   big + purple at the crests. The mask fades the field out before it
+   reaches the top; the card's overflow:hidden clips the rest. */
+.exp-emerge {
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  height: 90%;
+  z-index: 0;
+  pointer-events: none;
+  -webkit-mask-image: linear-gradient(to top, #000 0%, #000 45%, transparent 100%);
+          mask-image: linear-gradient(to top, #000 0%, #000 45%, transparent 100%);
+  opacity: 0.9;
+}
+
+.exp-emerge canvas {
+  display: block;
+  width: 100%;
+  height: 60%;
+}
+
 .exp.partial {
   background:
     linear-gradient(180deg,
@@ -451,6 +524,31 @@ body::after {
   color: var(--text-mute);
   margin-top: 5px;
   letter-spacing: 0.3px;
+}
+
+.exp-time {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text-dim);
+  margin-top: 7px;
+  letter-spacing: 0.3px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.exp-time::before {
+  content: '';
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--cyan);
+  box-shadow: 0 0 6px rgba(53, 214, 255, 0.9);
+  flex-shrink: 0;
+}
+
+.exp-time .exp-time-day {
+  color: var(--text-mute);
 }
 
 .exp-status {
@@ -667,7 +765,9 @@ pre::-webkit-scrollbar-thumb {
   .exp-label { padding-top: 0; }
   .legend { padding: 12px 16px; gap: 8px; }
 .legend-item { font-size: 11px; padding: 5px 11px; }
-
+/* Mobile: cut blur radius — the container-level blur is the heaviest
+   cost in this page. Colours and drift stay identical. */
+.bg-mesh { filter: blur(50px) saturate(165%); }
 pre { padding: 12px 14px; font-size: 11.5px; }
 }
 
@@ -735,6 +835,7 @@ pre { padding: 12px 14px; font-size: 11.5px; }
       <div>
         <h3 class="exp-title">Test — Torque Balance</h3>
         <div class="exp-id">testGuide</div>
+        <div class="exp-time">2:30 PM <span class="exp-time-day">· Sun, Sep 20</span></div>
       </div>
       <span class="exp-status fail">FAIL</span>
     </div>
@@ -790,6 +891,7 @@ pre { padding: 12px 14px; font-size: 11.5px; }
       <div>
         <h3 class="exp-title">Predictive Torque Cancel</h3>
         <div class="exp-id">predictiveTorque</div>
+        <div class="exp-time">3:00 PM <span class="exp-time-day">· Sun, Sep 20</span></div>
       </div>
       <span class="exp-status fail">FAIL</span>
     </div>
@@ -845,6 +947,7 @@ fire RCS via GuideRCS</pre>
       <div>
         <h3 class="exp-title">Predictive + PID</h3>
         <div class="exp-id">predictivePlus</div>
+        <div class="exp-time">3:40 PM <span class="exp-time-day">· Sun, Sep 20</span></div>
       </div>
       <span class="exp-status fail">FAIL</span>
     </div>
@@ -902,6 +1005,7 @@ fire RCS via GuideRCS</pre>
       <div>
         <h3 class="exp-title">Predictive + PID + AoA Impulse</h3>
         <div class="exp-id">predictivePlusAoA</div>
+        <div class="exp-time">4:15 PM <span class="exp-time-day">· Sun, Sep 20</span></div>
       </div>
       <span class="exp-status partial">SUCCESS · NOT PRACTICAL</span>
     </div>
@@ -958,6 +1062,7 @@ fire RCS via GuideRCS</pre>
       <div>
         <h3 class="exp-title">Predictive + PID + AoA + East Push</h3>
         <div class="exp-id">predictivePlusAoAPush</div>
+        <div class="exp-time">5:00 PM <span class="exp-time-day">· Sun, Sep 20</span></div>
       </div>
       <span class="exp-status fail">FAIL</span>
     </div>
@@ -1016,6 +1121,7 @@ fire RCS via GuideRCS</pre>
       <div>
         <h3 class="exp-title">Verify: Prediction Accuracy</h3>
         <div class="exp-id">predictVerifier</div>
+        <div class="exp-time">5:15 PM <span class="exp-time-day">· Sun, Sep 20</span></div>
       </div>
       <span class="exp-status tool">DIAGNOSTIC</span>
     </div>
@@ -1068,10 +1174,13 @@ drag: mean |err| ≈ 0 N</pre>
 
   <!-- 7. gimbalPredictive2 -->
   <div class="exp glass pass">
+    <!-- Star wave field — canvas is generated by the script at the bottom -->
+    <div class="exp-emerge" aria-hidden="true"></div>
     <div class="exp-head">
       <div>
         <h3 class="exp-title">Gimbal: 2-tick Predictive</h3>
         <div class="exp-id">gimbalPredictive2</div>
+        <div class="exp-time">6:35 PM <span class="exp-time-day">· Sun, Sep 20</span></div>
       </div>
       <span class="exp-status pass">ACCURATE WIN</span>
     </div>
@@ -1195,5 +1304,253 @@ send(setGimbalRate(R_cmd))</pre>
   </div>
 
 </div>
+
+<script>
+/* =====================================================================
+   Star wave field (canvas) — driven by a real 2-D wave simulation
+   ---------------------------------------------------------------------
+   Stars: a dense, dome-warped lattice of sparkles. Positions are built
+   once and never move.
+
+   Waves: the height field u(x,y,t) obeys the 2-D wave equation
+
+        u_tt = c² ∇²u          (solved with a leap-frog finite difference)
+
+   - TWO point sources (left & right) emit ring pulses again and again,
+     so the field keeps living forever.
+   - Rings pass through each other and interfere: crests add up to big
+     purple stars, crest + trough cancel to small blue ones — then the
+     rings carry on unchanged, exactly like real waves.
+   - The four edges are reflecting walls (free-end / Neumann): a pulse
+     hitting a wall bounces back with the same sign, and the reflection
+     then collides with the incoming waves.
+   - Tap / click the card to drop an extra ripple anywhere.
+
+   Star look, every frame:
+        k      = 0.5 + 0.5·tanh( GAIN·u − BIAS )     // 0 … 1
+        radius = lerp(R_MIN, R_MAX, k) · envelope · edgeScale
+        colour = lerp(BLUE, PURPLE, k)               // big = purple
+   ===================================================================== */
+(function () {
+  var host = document.querySelector('.exp-emerge');
+  if (!host) return;
+
+  // ---- star lattice -------------------------------------------------
+  var PITCH  = 10;     // horizontal spacing between stars (px)
+  var ROW    = 10;     // vertical spacing between rows (px)
+  var R_MIN  = 0.7;    // smallest star radius (px)
+  var R_MAX  = 6.6;    // biggest star radius (px)
+  var A_MIN  = 0.28;   // opacity in troughs
+  var A_MAX  = 0.80;   // opacity at crests
+  var BOW    = 20;     // arch of the rows in the middle (px)
+  var WARP   = 1.1;    // fisheye squeeze at the sides (0 = none)
+  var BLUE   = [66, 133, 244];
+  var PURPLE = [196, 140, 255];
+
+  // ---- wave physics -------------------------------------------------
+  var DX      = 6;       // simulation cell size (px)
+  var SPEED   = 60;     // wave speed (px / second)
+  var CFL     = 0.5;     // Courant number (must stay < 0.707 for stability)
+  var DAMP    = 0.9988;  // tiny per-step damping: waves fade very slowly
+  var AMP     = 0.25;    // source strength
+  var GAIN    = 3.0;     // wave height → star size sensitivity
+  var BIAS    = 0.3;     // resting stars are a bit small & blue
+  var EVERY   = 5;     // seconds between pulses from each source
+  var DT      = CFL * DX / SPEED;   // fixed simulation timestep (s)
+
+  var cv = document.createElement('canvas');
+  host.appendChild(cv);
+  var ctx = cv.getContext('2d');
+  var TAU = Math.PI * 2;
+  function lerp(a, b, k) { return a + (b - a) * k; }
+
+  var W = 0, H = 0, dpr = 1, nx = 0, ny = 0;
+  var stars = [], prev, cur, nxt, sources = [], T = 0, stepN = 0;
+
+  // ---- build lattice + sim grid ------------------------------------
+  function build() {
+    var r = host.getBoundingClientRect();
+    W = Math.max(1, Math.round(r.width));
+    H = Math.max(1, Math.round(r.height));
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    cv.width = W * dpr; cv.height = H * dpr;
+    cv.style.width = W + 'px'; cv.style.height = H + 'px';
+
+    nx = Math.ceil(W / DX) + 1;
+    ny = Math.ceil(H / DX) + 1;
+    prev = new Float32Array(nx * ny);
+    cur  = new Float32Array(nx * ny);
+    nxt  = new Float32Array(nx * ny);
+    T = 0; stepN = 0;
+
+    // two permanent sources (different pitch so the interference varies)
+    sources = [
+      /*{ x: W * 0.27, y: H * 0.68, f: 0.85, per: EVERY, t0: 0 },
+      { x: W * 0.73, y: H * 0.68, f: 1.10, per: EVERY, t0: EVERY / 2 }
+      { x: W * 0.30, y: H * 0.55, f: 1.00, per: EVERY, t0: 0 },*/
+      { x: W * 0.0, y: H * 1.0, f: 1.47, per: EVERY, t0: 0 },
+      { x: W * 1.0, y: H * 1.0, f: 1.73, per: EVERY, t0: 0 }
+    ];
+
+    stars = [];
+    var rows = Math.ceil(H / ROW) + 1;
+    var cols = Math.ceil(W / PITCH) + 2;
+    var sinA = Math.sin(WARP);
+    for (var j = 0; j < rows; j++) {
+      var baseY = H - j * ROW;
+      var v = Math.max(0, Math.min(1, baseY / H));
+      for (var i = -1; i < cols; i++) {
+        var gx = (i + (j % 2 ? 0.5 : 0)) * PITCH;
+        var u = (gx / W - 0.5) * 2;
+        if (u < -1 || u > 1) continue;
+        var x = WARP > 0 ? W / 2 + (W / 2) * Math.sin(u * WARP) / sinA : gx;
+        var edge = WARP > 0 ? Math.cos(u * WARP) : 1;
+        var y = baseY - BOW * (1 - u * u) * (1 - v);
+        if (y < -8 || y > H + 8) continue;
+        var vy = Math.max(0, Math.min(1, y / H));
+        var env = 0.28 + 0.72 * Math.pow(vy, 0.85);
+
+        // pre-compute bilinear sample point in the sim grid
+        var gxs = Math.max(0, Math.min(nx - 1.001, x / DX));
+        var gys = Math.max(0, Math.min(ny - 1.001, y / DX));
+        var i0 = Math.floor(gxs), j0 = Math.floor(gys);
+        stars.push({
+          x: x, y: y, env: env, edge: edge,
+          idx: j0 * nx + i0, fx: gxs - i0, fy: gys - j0
+        });
+      }
+    }
+
+    // pre-warm: let the waves travel, hit walls and interfere before the
+    // first paint, so the card never starts as an empty flat field
+    var warm = Math.round(9 / DT);
+    for (var n = 0; n < warm; n++) step();
+  }
+
+  // ---- one leap-frog step of  u_tt = c² ∇²u  ------------------------
+  function step() {
+    var c2 = CFL * CFL;
+    for (var j = 0; j < ny; j++) {
+      // mirrored neighbours at the edges → reflecting walls
+      var jm = j > 0 ? j - 1 : 1;
+      var jp = j < ny - 1 ? j + 1 : ny - 2;
+      var row = j * nx, rowm = jm * nx, rowp = jp * nx;
+      for (var i = 0; i < nx; i++) {
+        var im = i > 0 ? i - 1 : 1;
+        var ip = i < nx - 1 ? i + 1 : nx - 2;
+        var id = row + i, c = cur[id];
+        var lap = cur[row + im] + cur[row + ip] + cur[rowm + i] + cur[rowp + i] - 4 * c;
+        nxt[id] = c + (c - prev[id]) * DAMP + c2 * lap;
+      }
+    }
+
+    // sources: zero-mean Ricker wavelet → clean ring, no net "pumping"
+    for (var s = sources.length - 1; s >= 0; s--) {
+      var S = sources[s];
+      while (T >= S.t0 + S.per) S.t0 += S.per;
+      var D = 2.6 / S.f, tau = T - S.t0;
+      if (tau >= D && S.per === Infinity) { sources.splice(s, 1); continue; }
+      if (tau < 0 || tau >= D) continue;
+      var a = Math.PI * S.f * (tau - D / 2);
+      var g = (1 - 2 * a * a) * Math.exp(-a * a) * AMP * (S.k || 1);
+      var ci = Math.round(S.x / DX), cj = Math.round(S.y / DX);
+      for (var dj = -1; dj <= 1; dj++) {
+        for (var di = -1; di <= 1; di++) {
+          var ii = ci + di, jj = cj + dj;
+          if (ii < 0 || ii >= nx || jj < 0 || jj >= ny) continue;
+          var w = (di === 0 && dj === 0) ? 1 : (di === 0 || dj === 0 ? 0.5 : 0.25);
+          nxt[jj * nx + ii] += g * w;
+        }
+      }
+    }
+
+    var t = prev; prev = cur; cur = nxt; nxt = t;
+    T += DT;
+
+    // walls conserve the average height; strip numerical drift now and then
+    if ((++stepN) % 30 === 0) {
+      var m = 0, q;
+      for (q = 0; q < cur.length; q++) m += cur[q];
+      m /= cur.length;
+      for (q = 0; q < cur.length; q++) { cur[q] -= m; prev[q] -= m; }
+    }
+  }
+
+  // ---- drawing -------------------------------------------------------
+  function sparkle(x, y, r) {
+    ctx.beginPath();
+    ctx.moveTo(x, y - r);
+    ctx.quadraticCurveTo(x, y, x + r, y);
+    ctx.quadraticCurveTo(x, y, x, y + r);
+    ctx.quadraticCurveTo(x, y, x - r, y);
+    ctx.quadraticCurveTo(x, y, x, y - r);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  function render() {
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, W, H);
+    for (var n = 0; n < stars.length; n++) {
+      var s = stars[n], p = s.idx;
+      var top = cur[p] * (1 - s.fx) + cur[p + 1] * s.fx;
+      var bot = cur[p + nx] * (1 - s.fx) + cur[p + nx + 1] * s.fx;
+      var u = top * (1 - s.fy) + bot * s.fy;
+
+      var k = 0.5 + 0.5 * Math.tanh(GAIN * u - BIAS);
+      var r = lerp(R_MIN, R_MAX, k) * s.env * s.edge;
+      if (r < 0.25) continue;
+      var c = k * (0.55 + 0.45 * s.env);
+      var R = Math.round(lerp(BLUE[0], PURPLE[0], c));
+      var G = Math.round(lerp(BLUE[1], PURPLE[1], c));
+      var B = Math.round(lerp(BLUE[2], PURPLE[2], c));
+      var al = lerp(A_MIN, A_MAX, k) * (0.4 + 0.6 * s.env);
+      ctx.fillStyle = 'rgba(' + R + ',' + G + ',' + B + ',' + al.toFixed(3) + ')';
+      if (r < 1.5) { ctx.beginPath(); ctx.arc(s.x, s.y, r, 0, TAU); ctx.fill(); }
+      else sparkle(s.x, s.y, r);
+    }
+  }
+
+  // ---- main loop (fixed-timestep physics, frame-rate independent) ----
+  var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var running = false, raf = 0, last = null, acc = 0;
+
+  function tick(now) {
+    if (last === null) last = now;
+    acc += Math.min(0.1, (now - last) / 1000);
+    last = now;
+    var guard = 0;
+    while (acc >= DT && guard++ < 8) { step(); acc -= DT; }
+    render();
+    raf = requestAnimationFrame(tick);
+  }
+  function play()  { if (!running && !reduce) { running = true; raf = requestAnimationFrame(tick); } }
+  function pause() { running = false; cancelAnimationFrame(raf); last = null; acc = 0; }
+
+  build();
+  render();
+
+  if ('ResizeObserver' in window) {
+    new ResizeObserver(function () { build(); render(); }).observe(host);
+  } else {
+    window.addEventListener('resize', function () { build(); render(); });
+  }
+
+  if ('IntersectionObserver' in window) {
+    new IntersectionObserver(function (e) { e[0].isIntersecting ? play() : pause(); }).observe(host);
+  } else {
+    play();
+  }
+
+  // tap / click the card → extra ripple at that spot
+  var card = host.parentElement;
+  if (card) card.addEventListener('pointerdown', function (e) {
+    var r = host.getBoundingClientRect();
+    var x = e.clientX - r.left, y = e.clientY - r.top;
+    if (x < 0 || x > r.width || y < 0 || y > r.height) return;
+    sources.push({ x: x, y: y, f: 1.0, per: Infinity, t0: T, k: 1.6 });
+  });
+})();
+</script>
 </body>
 </html>
