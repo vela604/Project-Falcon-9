@@ -1,0 +1,207 @@
+/* =====================================================================
+   Vehicle Fleet — "Earth orbit / Aurora Emerald" theme.
+   Loads AFTER rockets.css. Recolours through the same CSS variables
+   (--cyan is now emerald, --orange sunrise gold, --purple periwinkle),
+   turns the flat panes into frosted glass, and re-tints the hard-coded
+   cyan tints. Layout / behaviour of rockets.css is untouched.
+   ===================================================================== */
+:root {
+  --bg: #020706;
+  --panel: rgba(6, 20, 16, 0.86);
+  --panel-border: rgba(120, 255, 205, 0.16);
+  --cyan: #3ee6a8;          /* primary accent → emerald */
+  --orange: #ffb45e;        /* sunrise gold */
+  --green: #b8f36a;         /* lime, for FLYING / ok states */
+  --purple: #8fb8ff;        /* periwinkle for stages */
+  --danger: #ff6f8a;
+  --text: #e6f4ee;
+  --dim: #86a196;
+  --em-rgb: 62, 230, 168;
+  --glass: linear-gradient(180deg, rgba(10, 34, 28, 0.44), rgba(3, 12, 10, 0.62));
+}
+
+/* ---------------- Background layers ---------------- */
+#earthBg { position: fixed; inset: 0; z-index: 0; pointer-events: none; background: #020706; transition: opacity .6s ease; }
+#earthBg.dim { opacity: 0.55; }
+#earthGL, #earthFX { position: absolute; inset: 0; width: 100%; height: 100%; }
+#earthVeil { position: absolute; inset: 0;           /* keeps text zones readable: darker toward the top */
+  background: linear-gradient(180deg, rgba(2, 7, 6, 0.55) 0%, rgba(2, 7, 6, 0) 38%), radial-gradient(ellipse 120% 80% at 50% 110%, transparent 55%, rgba(2, 7, 6, 0.5) 100%); }
+body.no-gl #earthBg { background: radial-gradient(ellipse 120% 60% at 30% 62%, #ffb45e 0%, #b8552a 6%, #0d2a4a 22%, #030b14 55%, #020706 100%); }
+body.no-gl #earthGL, body.no-gl #earthFX { display: none; }
+
+#fleetApp { position: relative; z-index: 2; }
+
+/* ---------------- Top bar + buttons ---------------- */
+#topBar { background: linear-gradient(180deg, rgba(2, 8, 6, 0.85), rgba(2, 8, 6, 0)); border-bottom: none; }
+.brand { color: var(--cyan); letter-spacing: 1.4px; }
+.btn { background: rgba(255, 255, 255, 0.04); border-color: rgba(120, 255, 205, 0.2); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); }
+.btn:hover { border-color: var(--cyan); color: var(--cyan); background: rgba(var(--em-rgb), 0.08); }
+.btn-accent { background: rgba(var(--em-rgb), 0.10); }
+.btn-accent:hover { background: rgba(var(--em-rgb), 0.20); box-shadow: 0 0 18px rgba(var(--em-rgb), 0.22); }
+.btn-danger { background: transparent; }
+
+/* ---------------- Layout: floating glass panes ---------------- */
+#main { background: transparent; gap: 22px; padding: 6px clamp(14px, 3vw, 40px) 44px; }
+#fleetPane, #editorPane, #stackPane, #stackEditorPane, #payloadPane, #payloadEditorPane {
+  position: relative; isolation: isolate; border-radius: 22px; background: var(--glass);
+  -webkit-backdrop-filter: blur(16px) saturate(160%); backdrop-filter: blur(16px) saturate(160%);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(200, 255, 235, 0.12), inset 0 -1px 0 rgba(0, 0, 0, 0.3); }
+#fleetPane::before, #editorPane::before, #stackPane::before, #stackEditorPane::before, #payloadPane::before, #payloadEditorPane::before {
+  content: ''; position: absolute; inset: 0; border-radius: inherit; padding: 1px; pointer-events: none;
+  background: linear-gradient(135deg, rgba(var(--em-rgb), 0.42), rgba(255, 255, 255, 0.04) 32%, rgba(255, 255, 255, 0.03) 66%, rgba(255, 180, 94, 0.30));
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask-composite: exclude; }
+.pane-head h1, .editor-head h2, .detail-head h2 { background: linear-gradient(180deg, #fff, #bff5df); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+
+/* ---------------- View tabs → pill switcher ---------------- */
+#viewTabs { width: fit-content; max-width: 100%; padding: 4px; gap: 4px; border: 1px solid rgba(120, 255, 205, 0.18); border-radius: 999px; overflow-x: auto;
+  background: rgba(4, 16, 13, 0.55); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); }
+.view-tab { border-bottom: none; border-radius: 999px; padding: 8px 16px; white-space: nowrap; }
+.view-tab.active { color: var(--cyan); background: rgba(var(--em-rgb), 0.14); box-shadow: inset 0 0 0 1px rgba(var(--em-rgb), 0.38), 0 0 16px rgba(var(--em-rgb), 0.16); }
+
+/* ---------------- Lists, fieldsets, inputs ---------------- */
+.fleet-row { background: rgba(255, 255, 255, 0.025); border-color: rgba(120, 255, 205, 0.14); border-radius: 14px; transition: border-color .18s, background .18s, box-shadow .18s, transform .18s; }
+.fleet-row:hover { border-color: var(--cyan); background: rgba(var(--em-rgb), 0.06); box-shadow: 0 0 20px rgba(var(--em-rgb), 0.12); transform: translateY(-1px); }
+.fleet-row.active { border-color: var(--cyan); background: rgba(var(--em-rgb), 0.11); box-shadow: 0 0 24px rgba(var(--em-rgb), 0.16); }
+fieldset { border-color: rgba(120, 255, 205, 0.15); border-radius: 14px; background: rgba(255, 255, 255, 0.02); }
+#capsBox, .thruster-group, .stack-member-row.placeholder { background: rgba(var(--em-rgb), 0.04); border-radius: 10px; }
+#stageCapsBox, #d-stageFieldset { background: rgba(143, 184, 255, 0.05); }
+#d-compatFieldset { background: rgba(184, 243, 106, 0.04); }
+.field input[type=text], .field input[type=number], .field select, #bodyDslText { background: rgba(0, 10, 8, 0.55); border-color: rgba(120, 255, 205, 0.2); color: var(--text); border-radius: 8px; }
+.field input:focus, .field select:focus, #bodyDslText:focus { border-color: var(--cyan); box-shadow: 0 0 0 3px rgba(var(--em-rgb), 0.14); }
+.badge-role.rocket { background: rgba(var(--em-rgb), 0.14); }
+.badge-role.booster { background: rgba(255, 180, 94, 0.14); }
+.badge-role.stage { background: rgba(143, 184, 255, 0.14); }
+.badge-flying { background: rgba(184, 243, 106, 0.14); }
+.family-header { background: linear-gradient(180deg, rgba(var(--em-rgb), 0.09), rgba(var(--em-rgb), 0.02)); border-color: rgba(var(--em-rgb), 0.28); border-radius: 12px; }
+.family-member-indent { border-left-color: rgba(var(--em-rgb), 0.2); }
+.fam-base-row { background: rgba(var(--em-rgb), 0.06); border-color: rgba(var(--em-rgb), 0.28); }
+.stack-seq-hint { background: rgba(var(--em-rgb), 0.07); border-color: rgba(var(--em-rgb), 0.28); }
+.stack-member-row { background: rgba(255, 255, 255, 0.03); border-radius: 10px; }
+
+/* vehicle art stages: warm-neutral so light AND dark rockets read clearly */
+#vehiclePreview canvas, #detailPreviewCanvas, #stackPreviewCanvas {
+  border: 1px solid rgba(120, 255, 205, 0.14); filter: drop-shadow(0 0 20px rgba(var(--em-rgb), 0.12));
+  background: radial-gradient(ellipse 90% 65% at 50% 32%, #22322e 0%, #0e1614 100%); }
+
+/* ---------------- Role picker modal ---------------- */
+.role-picker-overlay { background: rgba(2, 8, 6, 0.72); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); }
+.role-picker-card { background: var(--glass); border-color: rgba(120, 255, 205, 0.22); border-radius: 22px; box-shadow: 0 24px 70px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(200, 255, 235, 0.12); }
+.role-option { background: rgba(255, 255, 255, 0.03); border-radius: 12px; transition: border-color .18s, background .18s, transform .18s; }
+.role-option:hover { border-color: var(--cyan); background: rgba(var(--em-rgb), 0.09); transform: translateX(3px); }
+
+@media (max-width: 900px) { #main { gap: 16px; } #fleetPane, #editorPane, #stackPane, #stackEditorPane, #payloadPane, #payloadEditorPane { border-radius: 18px; } }
+
+/* =====================================================================
+   Layout / overflow fixes
+   - stack + payload panes had NO padding in rockets.css (only fleet/editor did),
+     so their content touched — and looked like it spilled out of — the glass card.
+   - grid columns used plain "fr", whose minimum is "auto": one wide child
+     (long stack chain, number inputs) stretched the column past its card.
+   - rows were stretching, which pushed the panes far below the tabs.
+   ===================================================================== */
+#main { grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr); align-content: start; grid-auto-rows: auto; }
+#viewTabs { grid-column: 1 / -1; }
+@media (max-width: 1000px) { #main { grid-template-columns: minmax(0, 1fr); } }
+
+#fleetPane, #editorPane, #stackPane, #stackEditorPane, #payloadPane, #payloadEditorPane {
+  min-width: 0; max-width: 100%; padding: 24px clamp(16px, 2.4vw, 32px) 26px; overflow-x: clip; }
+
+/* everything inside a pane may shrink and wrap instead of pushing outward */
+#main :is(.fleet-row, .fleet-row-top, .fleet-row-specs, .stack-member-row, .stack-member-body, .fam-base-row, .fam-member-row,
+          .role-name, .role-specs, .compat-row, .detail-specs, .detail-body > *, .field, .field-grid > *, .input-unit, .stack-chain, fieldset, form, dl) { min-width: 0; }
+#main :is(h1, h2, h3, p, dt, dd, label, legend, .fleet-row-name, .fleet-row-specs, .stack-chain, .stack-member-name, .stack-member-specs,
+          .role-name, .role-specs, .compat-name, .compat-note, .legend-note, .family-header-name, .family-header-meta, .stack-valid-list li) { overflow-wrap: anywhere; }
+.pane-head, .editor-head, .detail-head, .family-header, .fleet-row-top { flex-wrap: wrap; row-gap: 10px; }
+.editor-actions, .fleet-row-actions, .detail-head-actions, .editor-head-actions, .stack-member-row { flex-wrap: wrap; }
+.field input[type=text], .field input[type=number], .field select, #bodyDslText, .stack-slot-select { width: 100%; max-width: 100%; min-width: 0; }
+.field-grid { grid-template-columns: repeat(auto-fit, minmax(min(150px, 100%), 1fr)); }
+.detail-specs { flex: 1 1 240px; min-width: min(240px, 100%); }
+#vehiclePreview canvas, #detailPreviewCanvas, #stackPreviewCanvas, #main canvas { max-width: 100%; height: auto; }
+#main pre, #bodyDslText { max-width: 100%; overflow-x: auto; }
+
+/* top bar: one line on phones */
+#topBar .brand, #topBar .brand-sub, #topBar .btn { white-space: nowrap; }
+@media (max-width: 560px) { #topBar { padding: 12px 16px; } #topBar .brand-sub { display: none; } }
+
+/* =====================================================================
+   Tab switching — slide transitions (js/fleet-slide.js)
+   ===================================================================== */
+:root { --sl-out: 200ms; --sl-in: 560ms; --sl-ease: cubic-bezier(.22, 1, .36, 1); }
+
+/* glowing thumb that glides behind the active tab */
+#viewTabs { position: relative; }
+.tab-thumb { position: absolute; left: 0; top: 0; z-index: 0; pointer-events: none; border-radius: 999px;
+  background: rgba(var(--em-rgb), 0.16); box-shadow: inset 0 0 0 1px rgba(var(--em-rgb), 0.42), 0 0 18px rgba(var(--em-rgb), 0.2);
+  transition: transform .55s cubic-bezier(.34, 1.35, .64, 1), width .55s cubic-bezier(.34, 1.35, .64, 1); }
+.view-tab { position: relative; z-index: 1; }
+.view-tab.active { background: transparent; box-shadow: none; }
+
+/* panes: old pair leaves, new pair arrives */
+.sl-out-l { animation: slOutL var(--sl-out) cubic-bezier(.4, 0, 1, 1) var(--d, 0ms) both; }
+.sl-out-r { animation: slOutR var(--sl-out) cubic-bezier(.4, 0, 1, 1) var(--d, 0ms) both; }
+.sl-in-r  { animation: slInR var(--sl-in) var(--sl-ease) var(--d, 0ms) both; }
+.sl-in-l  { animation: slInL var(--sl-in) var(--sl-ease) var(--d, 0ms) both; }
+@keyframes slOutL { to { opacity: 0; transform: translateX(-56px) scale(0.985); filter: blur(3px); } }
+@keyframes slOutR { to { opacity: 0; transform: translateX(56px) scale(0.985); filter: blur(3px); } }
+@keyframes slInR { from { opacity: 0; transform: translateX(84px) scale(0.985); filter: blur(4px); } to { opacity: 1; transform: none; filter: none; } }
+@keyframes slInL { from { opacity: 0; transform: translateX(-84px) scale(0.985); filter: blur(4px); } to { opacity: 1; transform: none; filter: none; } }
+
+/* list rows rise in one after another */
+.sl-entering :is(#fleetList, #stackList, #payloadList) > * { animation: slRow .55s var(--sl-ease) both; }
+.sl-entering :is(#fleetList, #stackList, #payloadList) > :nth-child(1) { animation-delay: .18s; }
+.sl-entering :is(#fleetList, #stackList, #payloadList) > :nth-child(2) { animation-delay: .25s; }
+.sl-entering :is(#fleetList, #stackList, #payloadList) > :nth-child(3) { animation-delay: .32s; }
+.sl-entering :is(#fleetList, #stackList, #payloadList) > :nth-child(4) { animation-delay: .39s; }
+.sl-entering :is(#fleetList, #stackList, #payloadList) > :nth-child(n+5) { animation-delay: .45s; }
+@keyframes slRow { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+
+@media (prefers-reduced-motion: reduce) { .sl-out-l, .sl-out-r, .sl-in-l, .sl-in-r, .sl-entering * { animation: none !important; } .tab-thumb { transition: none; } }
+
+/* =====================================================================
+   Overflow fixes v2 — names, family headers, member rows
+   ---------------------------------------------------------------------
+   Root causes (found by rendering the page in Chromium):
+   - .role-specs (family detail rows) and .family-header-meta were
+     white-space:nowrap + flex-shrink:0, so the long stats line claimed
+     the whole row and squeezed the NAME down to ~0px. The
+     overflow-wrap:anywhere rule above then broke that sliver letter by
+     letter ("N e w S t a g e") and pushed the "Open" button out of the
+     card.
+   - names were single-line ellipsis, so any long name showed as "Falc…".
+   Fix: names wrap by WORDS and can never collapse; stats become a wrapping
+   row of chips on their own line; the family header is a tiny 2-row grid.
+   ===================================================================== */
+
+/* names: wrap at word boundaries, no truncation. (break-word — unlike
+   "anywhere" — does not shrink the min-content size, so the name can't be
+   crushed by its siblings; very long single tokens still break.) */
+#main :is(.fleet-row-name, .family-header-name, .role-name, .stack-member-name, .compat-name) {
+  white-space: normal; overflow: visible; text-overflow: clip;
+  overflow-wrap: break-word; word-break: normal;
+}
+
+/* Families list (left pane): row title — badge · name · status badges */
+#main .fleet-row-top { align-items: center; column-gap: 8px; row-gap: 4px; }
+#main .fleet-row-top .fleet-row-name { flex: 1 1 7em; min-width: min(7em, 100%); }
+
+/* Family header: [ name ........ + Add Member ]
+                  [ base: … · N members         ] */
+#main .family-header {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "name btn" "meta meta";
+  align-items: center; column-gap: 10px; row-gap: 4px;
+}
+#main .family-header-name { grid-area: name; }
+#main .family-header-meta { grid-area: meta; white-space: normal; }
+#main .family-header .btn { grid-area: btn; }
+
+/* Family detail (right pane): [ ROLE · name ........ Open ]
+                               [ stat chips that wrap …      ] */
+#main :is(.fam-base-row, .fam-member-row) { flex-wrap: wrap; align-items: center; column-gap: 10px; row-gap: 8px; }
+#main :is(.fam-base-row, .fam-member-row) .role-name { order: 1; flex: 1 1 8em; min-width: min(8em, 100%); }
+#main :is(.fam-base-row, .fam-member-row) .btn { order: 2; flex: 0 0 auto; margin-left: auto; }
+#main :is(.fam-base-row, .fam-member-row) .role-specs {
+  order: 3; flex: 1 1 100%; min-width: 0; white-space: normal;
+  display: flex; flex-wrap: wrap; gap: 3px 14px;
+}
+#main :is(.fam-base-row, .fam-member-row) .role-specs > span { white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+#main :is(.fam-base-row, .fam-member-row) .role-specs .accent { color: var(--orange); }   /* match the left-hand cards */

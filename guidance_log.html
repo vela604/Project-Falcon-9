@@ -197,6 +197,44 @@ body::after {
 /* the close-up is very bright — make the frosted panels a bit denser so text stays readable */
 body.has-bh { --glass-bg: rgba(10, 14, 28, 0.58); }
 
+/* Toggle switch — fixed pill, top-right, frosted like the rest of the UI.
+   Just flips the existing .has-bh class: ON = black hole scene (canvases),
+   OFF = the existing colour mesh (.bg-mesh) — same fallback that already
+   shows automatically when WebGL isn't available, now user-selectable too. */
+.theme-toggle {
+  position: fixed;
+  top: max(16px, env(safe-area-inset-top, 0px));
+  right: 16px;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 12px 7px 7px;
+  border-radius: 999px;
+  background: var(--glass-bg, rgba(20, 28, 48, 0.55));
+  border: 1px solid rgba(255,255,255,0.14);
+  -webkit-backdrop-filter: blur(18px) saturate(160%);
+          backdrop-filter: blur(18px) saturate(160%);
+  box-shadow: 0 4px 18px rgba(0,0,0,0.35);
+  color: var(--text-mute, #9aa4bd);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.3px;
+  cursor: pointer;
+  user-select: none;
+}
+.theme-toggle .tt-dot {
+  width: 9px; height: 9px;
+  border-radius: 50%;
+  background: #b98cff;
+  box-shadow: 0 0 8px rgba(185, 140, 255, 0.9);
+  transition: background 0.25s ease, box-shadow 0.25s ease;
+}
+.has-bh .theme-toggle .tt-dot {
+  background: #8ec5ff;
+  box-shadow: 0 0 8px rgba(142, 197, 255, 0.9);
+}
+
 /* Older orb layer kept as a no-op so nothing breaks if HTML still
    references it — see the cleanup note below. */
 .bg-orbs { display: none; }
@@ -816,6 +854,11 @@ pre { padding: 12px 14px; font-size: 11.5px; }
 <canvas id="bh" aria-hidden="true"></canvas>
 <canvas id="bh-fg" aria-hidden="true"></canvas>
 <div class="bg-mesh" aria-hidden="true"></div>
+
+<button type="button" class="theme-toggle" id="themeToggle" aria-pressed="false">
+  <span class="tt-dot" aria-hidden="true"></span>
+  <span id="themeToggleLabel">Neon</span>
+</button>
 
 <div id="app">
 
@@ -2171,6 +2214,33 @@ send(setGimbalRate(R_cmd))</pre>
     spin += (target - (spin - idle)) * (1 - Math.exp(-dt * SPIN_SMOOTH));   // scroll-driven, eased
     draw((now - t0) / 1000);
   })(t0);
+})();
+</script>
+
+<script>
+/* Background switch — just flips the existing .has-bh class between the
+   black hole scene (canvases) and the colour mesh (.bg-mesh), same as
+   the automatic WebGL-fail fallback already in the CSS. Nothing new. */
+(function () {
+  var btn = document.getElementById('themeToggle');
+  var label = document.getElementById('themeToggleLabel');
+  if (!btn) return;
+
+  function sync() {
+    var isBH = document.body.classList.contains('has-bh');
+    btn.setAttribute('aria-pressed', isBH ? 'true' : 'false');
+    label.textContent = isBH ? 'Space' : 'Neon';
+  }
+
+  btn.addEventListener('click', function () {
+    document.body.classList.toggle('has-bh');
+    sync();
+  });
+
+  sync();
+  // WebGL init (elsewhere on the page) may add .has-bh a tick after load —
+  // resync shortly after so the label matches once that settles.
+  window.addEventListener('load', function () { setTimeout(sync, 300); });
 })();
 </script>
 </body>
