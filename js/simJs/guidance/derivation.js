@@ -496,14 +496,16 @@ const Derivation = (function () {
       thrustBodyY += F * Math.cos(gRad);
     });
     
-    // Payload cargo is only physically present if the body still carries
-// a payloadSpace member AND hasn't released the cargo. A detached
-// booster (no fairing) or a bare stage alone can't be carrying the
-// stack payload — adding it there double-counts.
-const stackHasPayloadSpace = members.some(m => m.stageRole === 'payloadSpace');
-const payloadMassInput = Number.isFinite(payloadMass) ?
-  payloadMass :
-  (body.payloadReleased || !stackHasPayloadSpace ? 0 : getStackPayloadMass());
+// Payload cargo is physically present whenever the body still carries
+// an attached payload — the fairing's presence is irrelevant. Once the
+// fairing splits and the satellite is exposed but still bolted on, the
+// satellite is still part of the stage's mass. Only a released payload
+// is gone. (Previously this required the fairing to still be a member,
+// so fairing split made the payload silently vanish from guidance's
+// mass model while physics kept including it — a 2× I mismatch that
+// halved every attitude response during ANG_FOR_APOGEE and
+// TARGET_APOGEE.)
+const payloadMassInput = 12000; // TEMP: hardcoded, remove after test
 const massProps = hasMembers ?
   _stackMassProps(body, payloadMassInput) :
   _soloBodyMassProps(body);

@@ -136,6 +136,18 @@ a.back:hover { color: var(--cyan); }
 .log-row:hover { background: rgba(53,214,255,0.04); }
 .log-row span { overflow: hidden; text-overflow: ellipsis; }
 
+/* Per-body row colouring — matches the graph palette so table rows
+   visually map to the trace of the same body. Class is set from the
+   body's own index in state.bodies, so a split assigns fresh colours
+   to each new body automatically. */
+.log-row.row-b0 { background: rgba(53,214,255,0.045); box-shadow: inset 3px 0 0 rgba(53,214,255,0.55); }
+.log-row.row-b1 { background: rgba(255,146,72,0.045); box-shadow: inset 3px 0 0 rgba(255,146,72,0.55); }
+.log-row.row-b2 { background: rgba(74,222,128,0.045); box-shadow: inset 3px 0 0 rgba(74,222,128,0.55); }
+.log-row.row-b3 { background: rgba(255,95,168,0.045); box-shadow: inset 3px 0 0 rgba(255,95,168,0.55); }
+.log-row.row-b4 { background: rgba(167,139,250,0.045); box-shadow: inset 3px 0 0 rgba(167,139,250,0.55); }
+.log-row.row-b5 { background: rgba(255,210,63,0.045); box-shadow: inset 3px 0 0 rgba(255,210,63,0.55); }
+.log-row.row-b6 { background: rgba(126,225,255,0.045); box-shadow: inset 3px 0 0 rgba(126,225,255,0.55); }
+.log-row.row-b7 { background: rgba(255,95,126,0.045); box-shadow: inset 3px 0 0 rgba(255,95,126,0.55); }
 /* Range highlights — colors match the graphs' reference lines:
    yellow = X-axis refs, cyan = Y-axis refs, purple = speed circles. */
 .log-row span.hl-range-x  { background: rgba(255,210,63,0.16); color: #ffe58a; border-radius: 3px; padding: 0 4px; }
@@ -585,28 +597,45 @@ default: break;
     return 'any';
   }
 
-  function tunableFieldsFor(guideName) {
-    try {
-      if (guideName === 'ascentAoaHold' && typeof Guidance.getAscentHoldConfig === 'function') {
-        const c = Guidance.getAscentHoldConfig();
-        return Object.keys(c).map(k => ({ key: k, value: c[k], step: _stepFor(k) }));
-      }
-      if (guideName === 'ascentRR' && typeof Guidance.getAscentRRConfig === 'function') {
-        const c = Guidance.getAscentRRConfig();
-        return Object.keys(c).map(k => ({ key: k, value: c[k], step: _stepFor(k) }));
-      }
-      if (guideName === 'predictivePlus' && typeof Guidance.getPredictiveGains === 'function') {
-        const c = Guidance.getPredictiveGains();
-        return Object.keys(c).map(k => ({ key: k, value: c[k], step: _stepFor(k) }));
-      }
-      if (guideName === 'predictivePlusAoAPush') {
-        return [{ key: 'SWEEP_S', value: 10.0, step: 0.5 }];
-      }
-    } catch (e) {
-      console.warn('[tester] tunableFieldsFor failed for', guideName, e);
+function tunableFieldsFor(guideName) {
+  try {
+    if (guideName === 'ascentAoaHold' && typeof Guidance.getAscentHoldConfig === 'function') {
+      const c = Guidance.getAscentHoldConfig();
+      return Object.keys(c).map(k => ({ key: k, value: c[k], step: _stepFor(k) }));
     }
-    return [];
+    if (guideName === 'ascentRR' && typeof Guidance.getAscentRRConfig === 'function') {
+      const c = Guidance.getAscentRRConfig();
+      return Object.keys(c).map(k => ({ key: k, value: c[k], step: _stepFor(k) }));
+    }
+    if (guideName === 'predictivePlus' && typeof Guidance.getPredictiveGains === 'function') {
+      const c = Guidance.getPredictiveGains();
+      return Object.keys(c).map(k => ({ key: k, value: c[k], step: _stepFor(k) }));
+    }
+    if (guideName === 'predictivePlusAoAPush') {
+      return [{ key: 'SWEEP_S', value: 10.0, step: 0.5 }];
+    }
+    if (guideName === 'leoInsertion' && typeof Guidance.getLeoInsertionConfig === 'function') {
+      const c = Guidance.getLeoInsertionConfig();
+      // Flatten nested objects (e.g. STAGE) into "STAGE.KEY" keys so
+      // the tunable panel shows them as individual inputs.
+      const out = [];
+      Object.keys(c).forEach(k => {
+        const v = c[k];
+        if (v && typeof v === 'object' && !Array.isArray(v)) {
+          Object.keys(v).forEach(kk => {
+            out.push({ key: k + '.' + kk, value: v[kk], step: _stepFor(kk) });
+          });
+        } else {
+          out.push({ key: k, value: v, step: _stepFor(k) });
+        }
+      });
+      return out;
+    }
+  } catch (e) {
+    console.warn('[tester] tunableFieldsFor failed for', guideName, e);
   }
+  return [];
+}
 
   // Per-guide persisted input state (in-memory, per page load).
   const tunablesState = {}; // guideName → { key: value }
@@ -638,20 +667,34 @@ default: break;
     });
   }
 
-  function applyTunables(guideName) {
-    const t = tunablesState[guideName];
-    if (!t) return;
-    try {
-      if (guideName === 'ascentAoaHold') Guidance.setAscentHold(t);
-      else if (guideName === 'ascentRR') Guidance.setAscentRR(t);
-      else if (guideName === 'predictivePlus') Guidance.setPredictiveGains(t);
-      else if (guideName === 'predictivePlusAoAPush') {
-        if (Number.isFinite(t.SWEEP_S)) Guidance.setSweepDuration(t.SWEEP_S);
-      }
-    } catch (e) {
-      console.warn('[tester] applyTunables failed for', guideName, e);
+function applyTunables(guideName) {
+  const t = tunablesState[guideName];
+  if (!t) return;
+  try {
+    if (guideName === 'ascentAoaHold') Guidance.setAscentHold(t);
+    else if (guideName === 'ascentRR') Guidance.setAscentRR(t);
+    else if (guideName === 'predictivePlus') Guidance.setPredictiveGains(t);
+    else if (guideName === 'predictivePlusAoAPush') {
+      if (Number.isFinite(t.SWEEP_S)) Guidance.setSweepDuration(t.SWEEP_S);
     }
+    else if (guideName === 'leoInsertion') {
+      // Un-flatten "STAGE.KEY" back into { STAGE: { KEY: value } }.
+      const patch = {};
+      Object.keys(t).forEach(k => {
+        if (k.indexOf('.') >= 0) {
+          const [outer, inner] = k.split('.');
+          if (!patch[outer]) patch[outer] = {};
+          patch[outer][inner] = t[k];
+        } else {
+          patch[k] = t[k];
+        }
+      });
+      Guidance.setLeoInsertion(patch);
+    }
+  } catch (e) {
+    console.warn('[tester] applyTunables failed for', guideName, e);
   }
+}
 
   sel.addEventListener('change', () => renderTunablesFor(sel.value));
 
@@ -878,7 +921,7 @@ function highlightClasses(physRow) {
   return out;
 }
 
-function buildRow(guideName, physRow, status) {
+function buildRow(guideName, physRow, status, bodyIdx) {
   const cols = activeColumns(guideName);
   const hl = highlightClasses(physRow);
   const cells = cols.map(col => {
@@ -889,7 +932,8 @@ function buildRow(guideName, physRow, status) {
     const cls = hl[col.key] ? ` class="${hl[col.key]}"` : '';
     return `<span${cls}>${formatCell(col, v)}</span>`;
   });
-  return '<div class="log-row">' + cells.join('') + '</div>';
+  const bi = Number.isInteger(bodyIdx) ? (bodyIdx % 8) : 0;
+  return `<div class="log-row row-b${bi}">` + cells.join('') + '</div>';
 }
 
 
@@ -1487,7 +1531,7 @@ if (curSec > lastSampleSec) {
   for (let bi = 0; bi < snap.bodies.length; bi++) {
     const physRow = computePhysicsRow(snap, bi);
     if (!physRow) continue;
-    out.insertAdjacentHTML('beforeend', buildRow(guideName, physRow, status));
+    out.insertAdjacentHTML('beforeend', buildRow(guideName, physRow, status, bi));
     const bodyKey = 'b' + bi;
     pushTraj(bodyKey, physRow._down, physRow._alt);
     pushVel(bodyKey, physRow._vt, physRow._vr);

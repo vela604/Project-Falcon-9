@@ -304,6 +304,10 @@ const THRUSTER_CHEMICAL_SCHEMA = [
   { key: 'gimbalRateDegS', label: 'Gimbal slew rate', unit: 'deg/s', min: 1 },
   { key: 'minThrottleFrac', label: 'Throttle floor', unit: 'frac', min: 0, max: 0.95 },
   { key: 'maxThrottleRateFrac', label: 'Throttle change rate', unit: '/s', min: 0.01 },
+  // Spool transients — real turbopump spin-up/spin-down times. Crossing
+  // through zero gets its own rate (see applyActuatorRateLimitsForBody).
+  { key: 'startupDurationS', label: 'Startup time (0→max)', unit: 's', min: 0.1 },
+  { key: 'shutdownDurationS', label: 'Shutdown time (max→0)', unit: 's', min: 0.1 },
 ];
 
 function makeThruster(id, displayName, description, values) {
@@ -336,20 +340,22 @@ function buildThrusterMerlin1DClass() {
     'Merlin-1D class',
     'Fixed-performance chemical engine type. Ve, efficiency, gimbal range/rate, and throttle floor/rate are all locked in by the type — a rocket build only ever chooses a mass flow rate (≤ this type\'s max), which determines thrust and engine mass.',
     {
-      // Real Merlin 1D (SL variant): Isp_sl = 282 s → Ve = 282 × 9.80665
-      // = 2765.5 m/s. Sim uses ONE Ve (altitude-independent), so this is
-      // the SL value — booster's primary regime. Vacuum thrust (~981 kN)
-      // will read ~14% low; acceptable for this simplified model.
-      ve: 2766,
-      efficiency: 0.9,
-      twr: 184, // real Merlin 1D TWR (Wikipedia datasheet)
-      maxMassFlowRate: 500, // generous cap; real max mdot ~320 kg/s
-      gimbalCapable: true,
-      gimbalMaxDeg: 20, // real Merlin 1D gimbal range (sim had 20° — too high)
-      gimbalRateDegS: 40,
-      minThrottleFrac: 0.4, // real deep-throttle floor ~40%
-      maxThrottleRateFrac: 0.5,
-    }
+  // Real Merlin 1D (SL variant): Isp_sl = 282 s → Ve = 282 × 9.80665
+  // = 2765.5 m/s. Sim uses ONE Ve (altitude-independent), so this is
+  // the SL value — booster's primary regime. Vacuum thrust (~981 kN)
+  // will read ~14% low; acceptable for this simplified model.
+  ve: 2766,
+  efficiency: 0.9,
+  twr: 184, // real Merlin 1D TWR (Wikipedia datasheet)
+  maxMassFlowRate: 500, // generous cap; real max mdot ~320 kg/s
+  gimbalCapable: true,
+  gimbalMaxDeg: 20, // real Merlin 1D gimbal range (sim had 20° — too high)
+  gimbalRateDegS: 40,
+  minThrottleFrac: 0.4, // real deep-throttle floor ~40%
+  maxThrottleRateFrac: 0.5,
+  startupDurationS: 3.0,
+  shutdownDurationS: 2.0,
+}
   );
 }
 
@@ -366,16 +372,18 @@ function buildThrusterMerlin1DVacClass() {
     'Merlin-1D Vacuum class',
     'Vacuum-optimized Merlin variant for upper stages. Isp_vac = 348 s (Ve = 3412 m/s), thrust 981 kN. Same combustor/gimbal envelope as the SL Merlin — the nozzle expansion ratio is what changes. Sim uses one Ve (no altitude dependence), so this type is tuned to its own vacuum design point rather than the SL variant.',
     {
-      ve: 3412, // 348 s × 9.80665 m/s²
-      efficiency: 0.92, // MVac is more expansion-optimized than the SL variant
-      twr: 200, // ~981 kN / (490 kg × G0)
-      maxMassFlowRate: 350, // headroom above real max mdot ≈ 288 kg/s
-      gimbalCapable: true,
-      gimbalMaxDeg: 20,
-      gimbalRateDegS: 40,
-      minThrottleFrac: 0.4,
-      maxThrottleRateFrac: 0.5,
-    }
+  ve: 3412, // 348 s × 9.80665 m/s²
+  efficiency: 0.92, // MVac is more expansion-optimized than the SL variant
+  twr: 200, // ~981 kN / (490 kg × G0)
+  maxMassFlowRate: 350, // headroom above real max mdot ≈ 288 kg/s
+  gimbalCapable: true,
+  gimbalMaxDeg: 20,
+  gimbalRateDegS: 40,
+  minThrottleFrac: 0.4,
+  maxThrottleRateFrac: 0.5,
+  startupDurationS: 3.0,
+  shutdownDurationS: 2.0,
+}
   );
 }
 

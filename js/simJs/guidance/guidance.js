@@ -1992,7 +1992,11 @@ function _hWrapPi(x) {
   return x;
 }
 
-function _hTick(snapshot) {
+// cfgOverride: optional config bag. When called directly by the
+// ascentAoaHold guide, omitted → defaults to ASCENT_HOLD (legacy path).
+// When called by leoInsertion's ASCENT phase, receives LEO_INSERTION.ASCENT
+// so the two guides tune independently.
+function _hTick(snapshot, cfgOverride) {
   _hState.ticks++;
   const idx = snapshot.activeBodyIndex || 0;
   const body = snapshot.bodies[idx];
@@ -2009,7 +2013,7 @@ function _hTick(snapshot) {
   const simT = snapshot.simTime;
   const altKm = dNow.altitudeAGL / 1000;
   _hState.lastAltKm = altKm;
-  const cfg = ASCENT_HOLD;
+  const cfg = cfgOverride || ASCENT_HOLD;
   
   // ---------- Init ----------
   if (!_hState.init) {
@@ -2354,10 +2358,33 @@ function setAscentHold(patch) {
 // the moment the phase machine lands.
 // ============================================================
 const LEO_INSERTION = {
-  // ---- Hand-off from ascent ----
-  // At/above this AGL altitude, MECO fires: cmdSeparate() is issued and
-  // pre-separation RCS duty starts.
-  MECO_ALT_KM:          70,
+    // ---- Ascent constants (independent copy of ASCENT_HOLD) ----
+    // leoInsertion's ASCENT phase runs `_hTick` with THIS config, not the
+    // shared ASCENT_HOLD. Same keys, same defaults to start, but tunable
+    // independently — editing here never touches ascentAoaHold's behavior,
+    // and vice versa. This is what makes the two guides tuneable apart.
+    ASCENT: {
+      INITIAL_COAST_S: 4.9,
+      PUSH_T_S: 4.8,
+      PUSH_MAX_GIMBAL_DEG: 1.45,
+      PUSH_EAST_SIGN: -1,
+      HOLD_K_DAMP: 4.0,
+      HOLD_MAX_AOA_DEG: 8,
+      HOLD_K_DQ: 0.005,
+      HOLD_Q_REF: 1000,
+      THROTTLE_FRAC: 1.0,
+      THROTTLE_ALT_LOW_KM: 8,
+      THROTTLE_ALT_HIGH_KM: 13,
+      THROTTLE_FRAC_LOW: 0.7,
+      COAST_DAMP_GAIN: 16,
+      COAST_DAMP_K: 4.0,
+    },
+    
+    // ---- Hand-off from ascent ----
+    // MECO fires when the current osculating apogee (from live inertial
+    // state, thrust NOT assumed) reaches this value. Altitude-based
+    // trigger is gone — apogee is the physically meaningful target.
+    MECO_APOGEE_KM: 150,
 
   // ---- Separation phase targets ----
   // Phase 1 (axial): fire booster RCS `dn` nozzles until the gap along
@@ -2377,7 +2404,7 @@ const LEO_INSERTION = {
   FAIRING_OPEN_ENABLED: true,
 
   // ---- Target orbit ----
-  TARGET_ORBIT_ALT_KM:  200,
+  TARGET_ORBIT_ALT_KM:  180,
   // Reference bands (CONFIG.*):
   //   160–2000 km  → LEO
   //   2000–35786   → MEO
@@ -2389,16 +2416,44 @@ const LEO_INSERTION = {
 
   // ---- Stage (upper) phase ----
   STAGE: {
-    BURN_ALT_KM:       80,
-    TARGET_VEL_MPS:    7800,
-    CUTOFF_TOL_V:      5,
-  },
-};
+      BURN_ALT_KM: 80,
+      TARGET_VEL_MPS: 7800,
+      CUTOFF_TOL_V: 5,
+    },
+    
+// ---- ROTATE — bang-bang RCS rotation to steep climb angle ----
+// Engine OFF during rotation. RCS fires max torque in one direction
+// until θ passes the midpoint (start + target) / 2, then max torque
+// opposite to decelerate. Time-optimal for a rigid body with
+// saturating actuator and no rate limit.
+//
+// Target: east tilt from local vertical. Ascent convention: east is
+// negative θ_rel.
+ANG_FOR_APOG_TILT_DEG: 10,
+  // Exit tolerance — tilt error and angular rate below these = done.
+  ROTATE_TOL_DEG: 0.5,
+  ROTATE_OMEGA_TOL: 0.02,
+  // Safety: bail out of rotation if it takes this long (RCS may be
+  // too weak to reach target on a heavy stage; DONE is preferable to
+  // a phase-machine hang).
+  ROTATE_TIMEOUT_S: 90,
+    
+    // ---- targetApogee — raise apogee to target orbit altitude ----
+    // Full throttle until apogee is within TARGET_APOGEE_MARGIN_KM of the
+    // target, then min throttle for a soft approach, then cutoff. The
+    // margin exists because at orbital velocity the apogee moves several km
+    // per tick — without it the cutoff would overshoot by tens of km.
+    TARGET_APOGEE_MARGIN_KM: 10,
+    // Inertial ω damper gain (1/s) — same shape as ascent's REST damper.
+    STAGE_OMEGA_DAMP: 2.0,
+  };
 
 const _leoState = {
   init: false,
   ticks: 0,
   phase: 'ASCENT',
+  // 'ASCENT' | 'MECO_SPOOL' | 'SEPARATED_AXIAL' | 'SEPARATED_LATERAL'
+  // | 'STAGE_COAST' | 'ANG_FOR_APOGEE' | 'TARGET_APOGEE' | 'DONE'
   phaseStart: 0,
   mecoTriggered: false,
   splitDetected: false,
@@ -2411,7 +2466,9 @@ const _leoState = {
   lastAltKm: 0,
   lastAxialGap: 0,
   lastLateralGap: 0,
-};
+    angStartTiltDeg: null, // locked-in tilt at ANG_FOR_APOGEE start
+    lastApogeeKm: 0,
+      };
 
 function _leoTick(snapshot) {
   _leoState.ticks++;
@@ -2444,39 +2501,85 @@ function _leoTick(snapshot) {
   console.log('[leoInsertion] started, phase ASCENT');
 }
 
-  // ---------- Derive current state ----------
-  const d = Derivation.derive(snapshot, idx);
-  if (!d || !d.massProps) return;
-  _leoState.lastAltKm = d.altitudeAGL / 1000;
+// ---------- Derive current state ----------
+const d = Derivation.derive(snapshot, idx);
+if (!d || !d.massProps) return;
+_leoState.lastAltKm = d.altitudeAGL / 1000;
 
-  // ---------- Phase machine ----------
+// ---------- Derive next-tick predicted state (used by drag-cancel and
+// the COASTnAoADAMP formula in stage phases) ----------
+const env = Derivation.getEnv();
+const dt = (env && Number.isFinite(env.DT)) ? env.DT : (1 / 80);
+const M_d = d.massProps.M;
+let dNext = null;
+if (M_d > 0) {
+  const cosT = Math.cos(d.theta), sinT = Math.sin(d.theta);
+  const thrustIx = d.thrustBodyX * cosT - d.thrustBodyY * sinT;
+  const thrustIy = d.thrustBodyX * sinT + d.thrustBodyY * cosT;
+  const aIx = d.gVecX + (thrustIx + d.dragVecX) / M_d;
+  const aIy = d.gVecY + (thrustIy + d.dragVecY) / M_d;
+  const rx_n = d.rx + d.vx * dt;
+  const ry_n = d.ry + d.vy * dt;
+  const vx_n = d.vx + aIx * dt;
+  const vy_n = d.vy + aIy * dt;
+  const omega_n = d.omega + d.alphaAng * dt;
+  const theta_n = d.theta + d.omega * dt + 0.5 * d.alphaAng * dt * dt;
+  const sloshNow = body.slosh || { offset: 0, velocity: 0 };
+  const sloshX_n = (sloshNow.offset || 0) + (sloshNow.velocity || 0) * dt;
+  const sloshV_n = sloshNow.velocity || 0;
+  dNext = Derivation.deriveForState(snapshot, idx, {
+    rx: rx_n, ry: ry_n, vx: vx_n, vy: vy_n,
+    theta: theta_n, omega: omega_n,
+    slosh: { offset: sloshX_n, velocity: sloshV_n },
+  });
+}
+
+// ---------- Phase machine ----------
   switch (_leoState.phase) {
 
-    // =========================================================
-    // ASCENT — delegate to ascentAoaHold's full tick, then check
-    // for MECO trigger on altitude.
-    // =========================================================
-    case 'ASCENT': {
-      if (typeof _hTick === 'function') _hTick(snapshot);
-
-      if (!_leoState.mecoTriggered && _leoState.lastAltKm >= LEO_INSERTION.MECO_ALT_KM) {
-  _leoState.mecoTriggered = true;
-  _leoState.phase = 'MECO_SPOOL';
-  _leoState.phaseStart = simT;
-  
-  // Only cmdSeparate() goes out here. Pre-split RCS firing was
-  // tried and reverted: the stack is still one rigid body during
-  // the spool window, so balanced RCS on both member groups
-  // produces zero net force and zero useful relative velocity —
-  // it just burns propellant. The actual separation push begins
-  // the tick AFTER the split lands, in SEPARATED_AXIAL.
-  if (typeof cmdSeparate === 'function') send(cmdSeparate());
-  
-  console.log('[leoInsertion] MECO at', _leoState.lastAltKm.toFixed(2),
-    'km — separation commanded');
-}
-      break;
+// =========================================================
+// ASCENT — delegate to ascentAoaHold's full tick, then check
+// for MECO trigger on osculating apogee.
+// =========================================================
+case 'ASCENT': {
+  if (typeof _hTick === 'function') {
+    _hTick(snapshot, LEO_INSERTION.ASCENT);
+  }
+  if (!_leoState.mecoTriggered) {
+    // Current osculating apogee from live inertial state. No thrust
+    // assumed — this is the apogee the stack would reach if the
+    // engines cut THIS instant, which is exactly what MECO means.
+    const r_m = Math.hypot(body.rx, body.ry);
+    const ux_m = body.rx / r_m, uy_m = body.ry / r_m;
+    const ex_m = body.ry / r_m, ey_m = -body.rx / r_m;
+    const vr_m = body.vx * ux_m + body.vy * uy_m;
+    const vt_m = body.vx * ex_m + body.vy * ey_m;
+    const GM_m = env.GM_EARTH;
+    const R_m = env.EARTH_RADIUS;
+    const E_m = 0.5 * (vr_m * vr_m + vt_m * vt_m) - GM_m / r_m;
+    let apogeeKm = Infinity;
+    if (E_m < 0) {
+      const a_m = -GM_m / (2 * E_m);
+      const h_m = r_m * vt_m;
+      const e_m = Math.sqrt(Math.max(0, 1 + 2 * E_m * h_m * h_m / (GM_m * GM_m)));
+      apogeeKm = (a_m * (1 + e_m) - R_m) / 1000;
     }
+    _leoState.lastApogeeKm = apogeeKm;
+
+    if (apogeeKm >= LEO_INSERTION.MECO_APOGEE_KM) {
+      _leoState.mecoTriggered = true;
+      _leoState.phase = 'MECO_SPOOL';
+      _leoState.phaseStart = simT;
+
+      if (typeof cmdSeparate === 'function') send(cmdSeparate());
+
+      console.log('[leoInsertion] MECO — apogee',
+        apogeeKm.toFixed(2), 'km (target',
+        LEO_INSERTION.MECO_APOGEE_KM, 'km) — separation commanded');
+    }
+  }
+  break;
+}
 
     // =========================================================
     // MECO_SPOOL — separation requested, waiting for engine cutoff
@@ -2553,70 +2656,283 @@ if (stageDuties) send(cmdRcsDuty(stageDuties, sIdx));
       _leoState.lastAxialGap = axialGap;
 
       if (axialGap >= LEO_INSERTION.AXIAL_SEP_TARGET_M) {
-  // Stage's job is done — release its RCS duty so it doesn't
-  // keep firing into the lateral phase.
+  // Release BOTH bodies' RCS duty — lateral phase is skipped.
+  // Straight to ROTATE_BANG_BANG: engines stay off, RCS does the
+  // slew to climb angle. No Karman-line coast in between — the
+  // stage's ballistic apogee right after separation (~180 km) is
+  // BELOW target, so a coast-then-burn would let it drift up
+  // unused and then burn to overshoot. Rotate and burn NOW.
   send(cmdRcsDuty(null, sIdx));
-  _leoState.phase = 'SEPARATED_LATERAL';
+  send(cmdRcsDuty(null, bIdx));
+  _leoState.phase = 'ROTATE_BANG_BANG';
   _leoState.phaseStart = simT;
+  _leoState.angStartTiltDeg = null;
+  _leoState.bangMidpointDeg = null;
   console.log('[leoInsertion] axial gap', axialGap.toFixed(2),
-    'm — entering lateral phase');
+    'm — entering ROTATE_BANG_BANG');
 }
       break;
     }
 
     // =========================================================
-    // SEPARATED_LATERAL — booster fires LEFT pods' lat nozzles
-    // (force toward body +X in booster's own frame). Terminates
-    // when |perpendicular offset from stage's nose axis| reaches
-    // LATERAL_SEP_TARGET_M.
-    // =========================================================
-    case 'SEPARATED_LATERAL': {
-      const bIdx = _leoState.boosterIdx;
-      const sIdx = _leoState.stageIdx;
-      if (bIdx < 0 || sIdx < 0) { _leoState.phase = 'STAGE'; break; }
-      const boosterBody = snapshot.bodies[bIdx];
-      const stageBody = snapshot.bodies[sIdx];
-      if (!boosterBody || !stageBody) { _leoState.phase = 'STAGE'; break; }
+// SEPARATED_LATERAL — booster fires LEFT pods' lat nozzles
+// (force toward body +X in booster's own frame). Terminates
+// when |perpendicular offset from stage's nose axis| reaches
+// LATERAL_SEP_TARGET_M.
+// =========================================================
+// SEPARATED_LATERAL removed — lateral nudge was dropped in favour of
+// going straight to STAGE_COAST once axial gap clears. The lateral
+// RCS force was too weak to meaningfully change the separation anyway.
 
-      // Fire booster's LEFT pods — lateral nozzles, full duty.
-      const duties = GuideRCS.postSeparationLateralDuty(snapshot, bIdx, 'L');
-      if (duties) send(cmdRcsDuty(duties, bIdx));
+case 'SEPARATED_LATERAL': {
+  const bIdx = _leoState.boosterIdx;
+  const sIdx = _leoState.stageIdx;
+  if (bIdx < 0 || sIdx < 0) { _leoState.phase = 'STAGE'; break; }
+  const boosterBody = snapshot.bodies[bIdx];
+  const stageBody = snapshot.bodies[sIdx];
+  if (!boosterBody || !stageBody) { _leoState.phase = 'STAGE'; break; }
+  
+  // Fire booster's LEFT pods — lateral nozzles, full duty.
+  const duties = GuideRCS.postSeparationLateralDuty(snapshot, bIdx, 'L');
+  if (duties) send(cmdRcsDuty(duties, bIdx));
+  
+  // Perpendicular gap from stage's nose axis.
+  const upX = -Math.sin(stageBody.theta);
+  const upY = Math.cos(stageBody.theta);
+  const perpX = -upY;
+  const perpY = upX;
+  const dx = stageBody.rx - boosterBody.rx;
+  const dy = stageBody.ry - boosterBody.ry;
+  const latSigned = dx * perpX + dy * perpY;
+  const lateralGap = Math.abs(latSigned);
+  _leoState.lastLateralGap = lateralGap;
+  
+  if (lateralGap >= LEO_INSERTION.LATERAL_SEP_TARGET_M) {
+    // Cut booster RCS — relinquish duty control on that body.
+    send(cmdRcsDuty(null, bIdx));
+    _leoState.phase = 'STAGE_COAST';
+    _leoState.phaseStart = simT;
+    console.log('[leoInsertion] lateral gap', lateralGap.toFixed(2),
+      'm — separation complete, entering STAGE_COAST');
+  }
+  break;
+}
 
-      // Perpendicular gap from stage's nose axis.
-      const upX = -Math.sin(stageBody.theta);
-      const upY = Math.cos(stageBody.theta);
-      const perpX = -upY;
-      const perpY = upX;
-      const dx = stageBody.rx - boosterBody.rx;
-      const dy = stageBody.ry - boosterBody.ry;
-      const latSigned = dx * perpX + dy * perpY;
-      const lateralGap = Math.abs(latSigned);
-      _leoState.lastLateralGap = lateralGap;
+// =========================================================
+// ROTATE_BANG_BANG — slew the stage to the steep climb angle
+// using saturating RCS torque. Engine stays OFF for the whole
+// rotation; there is no drag-cancel gimbal here.
+//
+// Time-optimal bang-bang:
+//   Phase 1 (before midpoint): fire +max torque → accelerate
+//   Phase 2 (after  midpoint): fire −max torque → decelerate
+//   mid = (startTilt + targetTilt) / 2
+// Exit when tilt error and |ω| are both inside tolerance, or on
+// timeout. Apogee is checked every tick — if it already reached
+// target (unlikely right after MECO but possible on a lighter
+// stack), skip straight to DONE.
+// =========================================================
+case 'ROTATE_BANG_BANG': {
+  // Engine OFF — no thrust to interfere with the RCS-only slew.
+  send(cmdSetAllThrottle(0));
+  // Cancel any gimbal command left over from ascent.
+  send(cmdSetGimbalRate(0));
 
-      if (lateralGap >= LEO_INSERTION.LATERAL_SEP_TARGET_M) {
-        // Cut booster RCS — relinquish duty control on that body.
-        send(cmdRcsDuty(null, bIdx));
-        _leoState.phase = 'STAGE';
-        _leoState.phaseStart = simT;
-        console.log('[leoInsertion] lateral gap', lateralGap.toFixed(2),
-          'm — separation complete, entering STAGE phase');
-      }
-      break;
-    }
+  const elapsed = simT - _leoState.phaseStart;
 
-    // =========================================================
-    // STAGE / DONE — placeholder. Upper-stage ignition, orbit
-    // insertion burn, and cutoff logic land here.
-    // =========================================================
-        // =========================================================
-    // STAGE / DONE — placeholder. Upper-stage ignition, orbit
-    // insertion burn, and cutoff logic land here.
-    // =========================================================
-    case 'STAGE':
-    case 'DONE':
-    default:
+  // ---- Apogee check every tick ----
+  const r_ap = Math.hypot(body.rx, body.ry);
+  const ux_ap = body.rx / r_ap, uy_ap = body.ry / r_ap;
+  const ex_ap = body.ry / r_ap, ey_ap = -body.rx / r_ap;
+  const vr_ap = body.vx * ux_ap + body.vy * uy_ap;
+  const vt_ap = body.vx * ex_ap + body.vy * ey_ap;
+  const GM_ap = env.GM_EARTH;
+  const R_ap = env.EARTH_RADIUS;
+  const E_ap = 0.5 * (vr_ap * vr_ap + vt_ap * vt_ap) - GM_ap / r_ap;
+  let apogeeKm = Infinity;
+  if (E_ap < 0) {
+    const a_ap = -GM_ap / (2 * E_ap);
+    const h_ap = r_ap * vt_ap;
+    const e_ap = Math.sqrt(Math.max(0, 1 + 2 * E_ap * h_ap * h_ap / (GM_ap * GM_ap)));
+    apogeeKm = (a_ap * (1 + e_ap) - R_ap) / 1000;
+  }
+  _leoState.lastApogeeKm = apogeeKm;
+  if (apogeeKm >= LEO_INSERTION.TARGET_ORBIT_ALT_KM) {
+    send(cmdRcsDuty(null, idx));
+    send(cmdSetAllThrottle(0));
+    _leoState.phase = 'DONE';
+    console.log('[leoInsertion] apogee already at target during rotate:',
+      apogeeKm.toFixed(2), 'km — DONE');
     break;
+  }
+
+  // ---- Timeout safety ----
+  if (elapsed >= LEO_INSERTION.ROTATE_TIMEOUT_S) {
+    send(cmdRcsDuty(null, idx));
+    _leoState.phase = 'TARGET_APOGEE';
+    _leoState.phaseStart = simT;
+    console.log('[leoInsertion] ROTATE timeout — proceeding to TARGET_APOGEE');
+    break;
+  }
+
+  // ---- Tilt / midpoint ----
+  const localVert = Math.atan2(-body.rx, body.ry);
+  const currentTiltDeg = (body.theta - localVert) * 180 / Math.PI;
+  const targetTiltDeg = -LEO_INSERTION.ANG_FOR_APOG_TILT_DEG;
+
+  if (_leoState.angStartTiltDeg === null) {
+    _leoState.angStartTiltDeg = currentTiltDeg;
+    _leoState.bangMidpointDeg = (currentTiltDeg + targetTiltDeg) / 2;
+  }
+  const midDeg = _leoState.bangMidpointDeg;
+  const startDeg = _leoState.angStartTiltDeg;
+
+  const err = targetTiltDeg - currentTiltDeg;
+  const omegaRel = body.omega + (env.EARTH_OMEGA || 0);
+
+  // ---- Exit when close and slow ----
+  if (Math.abs(err) < LEO_INSERTION.ROTATE_TOL_DEG &&
+      Math.abs(omegaRel) < LEO_INSERTION.ROTATE_OMEGA_TOL) {
+    send(cmdRcsDuty(null, idx));
+    _leoState.phase = 'TARGET_APOGEE';
+    _leoState.phaseStart = simT;
+    console.log('[leoInsertion] ROTATE complete — tilt',
+      currentTiltDeg.toFixed(2), '° — entering TARGET_APOGEE');
+    break;
+  }
+
+  // ---- Bang-bang torque sign ----
+  // Direction of desired motion in θ_rel: sign(target − start).
+  const dirSign = Math.sign(targetTiltDeg - startDeg) || 1;
+  // Crossed midpoint? (start-mid) * (current-mid) ≤ 0 means we're on
+  // the far side of mid now.
+  const crossed = (startDeg - midDeg) * (currentTiltDeg - midDeg) <= 0;
+  const phaseSign = crossed ? -1 : 1;
+  const tauCmd = phaseSign * dirSign * 1e9;
+
+  const result = GuideRCS.targetTorqueRcs(snapshot, tauCmd, idx);
+  if (result && result.fires.length) {
+    send(cmdRcsDuty(result.duties, idx));
+  } else {
+    send(cmdRcsDuty(null, idx));
+  }
+  break;
+}
+
+  // =========================================================
+  // TARGET_APOGEE — full burn until apogee reaches target orbit.
+  //   Attitude: gimbal (inertial ω damper + drag cancel).
+  //   Throttle: max until target − apogee ≤ TARGET_APOGEE_MARGIN_KM,
+  //             then min for a soft approach, then cutoff + DONE.
+  // =========================================================
+  case 'TARGET_APOGEE': {
+    if (!dNext || !dNext.massProps) break;
+    const I_next = dNext.massProps.I;
+
+    const tau_damp = -LEO_INSERTION.STAGE_OMEGA_DAMP * I_next * body.omega;
+    const tau_drag_cancel = -dNext.torqueDrag;
+    const tau_desired = tau_damp + tau_drag_cancel;
+
+    const gimbals = (body.engines || []).filter(e => e.gimbal);
+    if (!gimbals.length) { _leoState.phase = 'DONE'; break; }
+    const g_N = gimbals[0].gimbalDeg || 0;
+    const comX = dNext.massProps.comX;
+    const comY = dNext.massProps.comY;
+    let A_g = 0, B_g = 0;
+    gimbals.forEach(e => {
+      const F = (e.massFlowRate || 0) * (e.Ve || 0);
+      A_g += ((e.x || 0) - comX) * F;
+      B_g += F;
+    });
+    B_g *= comY;
+    const R_amp = Math.hypot(A_g, B_g);
+    let g_req_rad = 0;
+    if (R_amp > 1) {
+      const ratio = Math.max(-1, Math.min(1, tau_desired / R_amp));
+      const phi = Math.atan2(A_g, B_g);
+      const w1 = _hWrapPi(Math.asin(ratio) - phi);
+      const w2 = _hWrapPi(Math.PI - Math.asin(ratio) - phi);
+      g_req_rad = (Math.abs(w1) <= Math.abs(w2)) ? w1 : w2;
     }
+    let g_req_deg = g_req_rad * 180 / Math.PI;
+    const MAX_ANG = (env && Number.isFinite(env.GIMBAL_MAX_DEG)) ? env.GIMBAL_MAX_DEG : 20;
+    if (Math.abs(g_req_deg) > MAX_ANG) g_req_deg = Math.sign(g_req_deg) * MAX_ANG;
+    const R_req = (g_req_deg - g_N) / dt;
+    const MAX_RATE = (env && Number.isFinite(env.GIMBAL_RATE_DEG_S)) ? env.GIMBAL_RATE_DEG_S : 40;
+    const R_cmd = Math.max(-MAX_RATE, Math.min(MAX_RATE, R_req));
+    send(cmdSetGimbalRate(R_cmd));
+
+    // Osculating apogee from current inertial state.
+    const r = Math.hypot(body.rx, body.ry);
+    const ux = body.rx / r, uy = body.ry / r;
+    const ex = body.ry / r, ey = -body.rx / r;
+    const vr = body.vx * ux + body.vy * uy;
+    const vtInertial = body.vx * ex + body.vy * ey;
+    const GM = env.GM_EARTH;
+    const R_earth = env.EARTH_RADIUS;
+    const E = 0.5 * (vr * vr + vtInertial * vtInertial) - GM / r;
+    let apogeeKm = Infinity;
+    if (E < 0) {
+      const a = -GM / (2 * E);
+      const h = r * vtInertial;
+      const eSq = 1 + 2 * E * h * h / (GM * GM);
+      const e = Math.sqrt(Math.max(0, eSq));
+      const ra = a * (1 + e);
+      apogeeKm = (ra - R_earth) / 1000;
+    }
+  // Effective guidance tick interval (sim-seconds between snapshots
+// THAT THIS PHASE ACTUALLY SAW). NOT CONFIG.DT — under load the
+// guidance worker can lag and see snapshots 100-200 ms apart while
+// physics still ticks at 12.5 ms. Using CONFIG.DT here made the
+// apogee-rate 8-16× too high and the prediction far too short —
+// cutoff fired on a tick where apogee was already 208 km.
+const simDt = (_leoState.lastApogeeSimT > 0 && simT > _leoState.lastApogeeSimT) ?
+  (simT - _leoState.lastApogeeSimT) :
+  dt;
+const apogeeRate = (_leoState.lastApogeeKm > 0 && simDt > 0) ?
+  (apogeeKm - _leoState.lastApogeeKm) / simDt :
+  0;
+// Extrapolate one real guidance tick forward — if the NEXT tick's
+// apogee would already exceed target, cut NOW. simDt carries the
+// real lag, so a slow device gets a proportionally wider prediction.
+const predictedApogeeKm = apogeeKm + Math.max(0, apogeeRate) * simDt;
+_leoState.lastApogeeKm = apogeeKm;
+_leoState.lastApogeeSimT = simT;
+
+const targetKm = LEO_INSERTION.TARGET_ORBIT_ALT_KM;
+const margin = LEO_INSERTION.TARGET_APOGEE_MARGIN_KM;
+const gap = targetKm - apogeeKm;
+
+if (gap <= 0 || predictedApogeeKm >= targetKm) {
+    // Overshoot reached — engine cutoff, phase done.
+    send(cmdSetAllThrottle(0));
+    _leoState.phase = 'DONE';
+    console.log('[leoInsertion] TARGET APOGEE reached:', apogeeKm.toFixed(2),
+      'km — engine cutoff, DONE');
+  } else {
+    // Linear throttle decay across the final margin:
+    //   gap = margin  → 100%
+    //   gap = 0       → 40% (floor)
+    // Anything below 40% would be floored by physics to each
+    // engine's own min-throttle (0.4 for Merlin Vac), so 40% is the
+    // effective bottom of the usable range — no point commanding
+    // lower. Below the margin, cutoff fires on the next tick once
+    // gap ≤ 0.
+    const frac = Math.max(0.4, Math.min(1.0, 0.4 + 0.6 * (gap / margin)));
+    
+    let refMax = 0;
+    (body.engines || []).forEach(e => {
+      if (Number.isFinite(e.maxMassFlowRate) && e.maxMassFlowRate > refMax) refMax = e.maxMassFlowRate;
+    });
+    send(cmdSetAllThrottle(refMax * frac));
+  }
+  break;
+  }
+
+  case 'DONE':
+  default:
+    break;
+}
     
     // ---- Fairing open (independent, runs every tick) ----
     // Once the split has happened (bodies >= 2) AND altitude crosses
@@ -2652,11 +2968,15 @@ _leoTick.start = function() {
   _leoState.preSplitBodyId = null;
   _leoState.boosterIdx = -1;
   _leoState.stageIdx = -1;
-  _leoState.lastAltKm = 0;
+    _leoState.lastAltKm = 0;
   _leoState.lastAxialGap = 0;
   _leoState.lastLateralGap = 0;
+      _leoState.angStartTiltDeg = null;
+  _leoState.bangMidpointDeg = null;
+  _leoState.lastApogeeKm = 0;
+  _leoState.lastApogeeSimT = 0;
   console.log('[leoInsertion] started');
-};
+  };
 _leoTick.stop = function () {
   console.log('[leoInsertion] stopped');
 };
@@ -2670,17 +2990,31 @@ _leoTick.getStatus = function() {
     fairingOpened: _leoState.fairingOpened,
     axialGap: _leoState.lastAxialGap,
     lateralGap: _leoState.lastLateralGap,
-  };
-};
+        apogeeKm: _leoState.lastApogeeKm,
+      angStartTiltDeg: _leoState.angStartTiltDeg,
+      bangMidpointDeg: _leoState.bangMidpointDeg,
+    };
+    };
 
 GUIDES.leoInsertion = _leoTick;
 
 function setLeoInsertion(patch) {
   if (!patch) return;
   Object.keys(patch).forEach(k => {
-    if (k in LEO_INSERTION) LEO_INSERTION[k] = patch[k];
+    if (!(k in LEO_INSERTION)) return;
+    const cur = LEO_INSERTION[k];
+    const nxt = patch[k];
+    if (cur && typeof cur === 'object' && !Array.isArray(cur) &&
+      nxt && typeof nxt === 'object' && !Array.isArray(nxt)) {
+      // Deep merge one level — protects nested objects like STAGE from
+      // being wholesale replaced by a patch that only carries a couple
+      // of its keys.
+      Object.assign(cur, nxt);
+    } else {
+      LEO_INSERTION[k] = nxt;
+    }
   });
-  console.log('[leoInsertion] constants:', JSON.stringify(LEO_INSERTION));
+  console.log('[leoInsertion] constants updated');
 }
 function getLeoInsertionConfig() { return { ...LEO_INSERTION }; }
   
