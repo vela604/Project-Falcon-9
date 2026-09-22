@@ -773,22 +773,25 @@
             <input type="text" id="pl-name" maxlength="60" required>
           </div>
           <fieldset>
-            <legend>Specs</legend>
-            <div class="field-grid">
-              <div class="field"><label for="pl-mass">Mass</label>
-                <div class="input-unit"><input type="number" id="pl-mass" min="0.1" step="0.1" required><span>kg</span></div>
-              </div>
-              <div class="field"><label for="pl-height">Height</label>
-                <div class="input-unit"><input type="number" id="pl-height" min="0.1" step="0.1" required><span>m</span></div>
-              </div>
-              <div class="field"><label for="pl-width">Width</label>
-                <div class="input-unit"><input type="number" id="pl-width" min="0.1" step="0.1" required><span>m</span></div>
-              </div>
-              <div class="field"><label for="pl-dragCd">Drag coefficient</label>
-                <div class="input-unit"><input type="number" id="pl-dragCd" min="0" step="0.1" required><span>Cd</span></div>
-              </div>
-            </div>
-          </fieldset>
+  <legend>Specs</legend>
+  <div class="field-grid">
+    <div class="field"><label for="pl-mass">Mass</label>
+      <div class="input-unit"><input type="number" id="pl-mass" min="0.1" step="0.1" required><span>kg</span></div>
+    </div>
+    <div class="field"><label for="pl-height">Height</label>
+      <div class="input-unit"><input type="number" id="pl-height" min="0.1" step="0.1" required><span>m</span></div>
+    </div>
+    <div class="field"><label for="pl-width">Width</label>
+      <div class="input-unit"><input type="number" id="pl-width" min="0.1" step="0.1" required><span>m</span></div>
+    </div>
+    <div class="field"><label for="pl-dragCd">Drag coefficient</label>
+      <div class="input-unit"><input type="number" id="pl-dragCd" min="0" step="0.1" required><span>Cd</span></div>
+    </div>
+    <div class="field"><label for="pl-maxHeatFlux">Max heat flux <span class="legend-note">— TPS rating</span></label>
+      <div class="input-unit"><input type="number" id="pl-maxHeatFlux" min="0" step="1000" value="20000"><span>W/m²</span></div>
+    </div>
+  </div>
+</fieldset>
           <div id="payloadFormError" class="form-error" role="alert"></div>
           <div class="editor-actions">
             <button type="button" class="btn" id="btnPayloadCancel">Cancel</button>

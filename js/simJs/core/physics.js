@@ -1516,17 +1516,24 @@ const isActive = (idx === state.activeBodyIndex);
     if (!hasFuel) body.engines.forEach(e => { e.currentF = 0; });
     
         const extra = {
-      Fx: 0,
-      Fy: 0,
-      torque: 0,
-      M: geom.M, // ← add — the SAME mass currentGeometry already
-      //    derived this tick, so derivatives can never
-      //    disagree with it (or divide by zero)
-      I: geom.I,
-      comH: geom.comH,
-      height: _bodyHeightOf(body),
-      aero: bodyAeroProfile(body),
-    };
+  Fx: 0,
+  Fy: 0,
+  torque: 0,
+  M: geom.M,
+  I: geom.I,
+  comH: geom.comH,
+  height: _bodyHeightOf(body),
+  aero: bodyAeroProfile(body),
+};
+
+// Pneumatic separation pusher — constant acceleration along the body's
+// own local tail (-Y body frame) for the window armed by
+// performSeparate(). Fired via extra.Fy so it goes through the same
+// RK4 integration path as every other force. Not propellant-consuming.
+if (Number.isFinite(body._sepPushUntil) && state.simTime < body._sepPushUntil) {
+  const accel = Number.isFinite(CONFIG.SEPARATION_ACC_CONST) ? CONFIG.SEPARATION_ACC_CONST : 6.0;
+  extra.Fy -= geom.M * accel;
+}
     
     // Fairing-recovery parachute — auto-deploy check + canopy drag +
     // nose-up restoring torque. Runs for every body with a non-null
@@ -1579,32 +1586,38 @@ extra.torque += body._chuteTorque || 0;
       body.omega *= Math.pow(0.998, dt * 60);
     }
     
-    let mdotTotal = main.mdot + rcs.mdot;
-    
-    if (isActive) {
-      if (!hasFuel) ENGINES.forEach(e => { e.currentF = 0; });
-      extra.Fx += main.Fx + rcs.Fx;
-      extra.Fy += main.Fy + rcs.Fy;
-      extra.torque += main.torque + rcs.torque;
-      mdotTotal = main.mdot + rcs.mdot;
-      
-      const aeroTelemetry = computeDragAero(body, extra);
-      lastForces = {
-        mainFx: main.Fx,
-        mainFy: main.Fy,
-        mainTorque: main.torque,
-        rcsFx: rcs.Fx,
-        rcsFy: rcs.Fy,
-        rcsTorque: rcs.torque,
-        mdot: mdotTotal,
-        firing: rcs.firing || {},
-        pod: rcs.pod || {},
-        dutyTop: rcs.dutyTop || 0,
-        dragTorque: aeroTelemetry.dragTorque,
-        aoaDeg: aeroTelemetry.alphaDeg,
-      };
-    }
-    
+    // ---- Main + RCS forces go to EVERY body, not just active ----
+// Until now this was inside `if (isActive)` on the assumption that
+// only the active body ever fires anything. That assumption broke
+// when guidance started commanding a discarded booster's RCS during
+// separation: the duty table was set, computeRCSForBody() produced
+// the right forces, and then they were silently thrown away for
+// every non-active body. Force application happens for all bodies.
+extra.Fx += main.Fx + rcs.Fx;
+extra.Fy += main.Fy + rcs.Fy;
+extra.torque += main.torque + rcs.torque;
+const mdotTotal = main.mdot + rcs.mdot;
+
+if (isActive) {
+  if (!hasFuel) ENGINES.forEach(e => { e.currentF = 0; });
+  // lastForces is a telemetry-only snapshot for the ACTIVE body's
+  // HUD, so it stays gated on isActive.
+  const aeroTelemetry = computeDragAero(body, extra);
+  lastForces = {
+    mainFx: main.Fx,
+    mainFy: main.Fy,
+    mainTorque: main.torque,
+    rcsFx: rcs.Fx,
+    rcsFy: rcs.Fy,
+    rcsTorque: rcs.torque,
+    mdot: mdotTotal,
+    firing: rcs.firing || {},
+    pod: rcs.pod || {},
+    dutyTop: rcs.dutyTop || 0,
+    dragTorque: aeroTelemetry.dragTorque,
+    aoaDeg: aeroTelemetry.alphaDeg,
+  };
+}
 
    
     // ---- RK4 integration ----
@@ -2486,10 +2499,19 @@ discarded.engines.forEach(e => {
     t0Real: performance.now(), // worker-local real time, for worker expiry
   };
   
-  state.bodies.push(discarded);
+    state.bodies.push(discarded);
   rebuildEnginesForBody(active);
+  
+  // ---- Pneumatic pusher kick ----
+  // Arm a fixed-duration constant-acceleration push on the DISCARDED
+  // body only — see CONFIG.SEPARATION_ACC_CONST's comment for the
+  // physical justification. Physics applies it every tick until
+  // state.simTime exceeds this deadline.
+  discarded._sepPushUntil = state.simTime +
+    (Number.isFinite(CONFIG.SEPARATION_PUSH_DURATION_S) ? CONFIG.SEPARATION_PUSH_DURATION_S : 1.0);
+  
   return true;
-}
+  }
 
 
 // Take user control of any body (usually a discarded booster, so the user

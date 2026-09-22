@@ -2330,6 +2330,360 @@ function setAscentHold(patch) {
 }
   function getAscentHoldConfig() { return { ...ASCENT_HOLD }; }
   
+// ============================================================
+// leoInsertion — full mission superguide.
+//
+// Sequential phases inside one tick (implementation to follow):
+//   1. ASCENT   — delegates to _hTick (ascentAoaHold's full phase
+//                 machine: PRE_COAST → PUSH → COAST → HOLD →
+//                 COASTnAoADAMP). ASCENT_HOLD constants stay
+//                 authoritative for this phase.
+//   2. MECO     — engines cut at MECO_ALT_KM.
+//   3. FAIRING  — once alt ≥ FAIRING_OPEN_ALT_KM, send
+//                 cmdSplitFairing(). Idempotent — fires once.
+//   4. SETTLE   — RCS drives inertial ω toward RCS_OMEGA_TARGET,
+//                 within RCS_SETTLE_TOL.
+//   5. SEPARATE — send cmdSeparate(). Booster becomes free.
+//   6. STAGE    — upper-stage ignition, orbit insertion at
+//                 TARGET_ORBIT_ALT_KM.
+//
+// This guide is a stub — tick() returns immediately. The command
+// handlers it will dispatch (splitFairing, separate, releasePayload,
+// emergencyEject, takeControl) are already wired in the tester and
+// fast pages' localDispatch, so this tick can start calling them
+// the moment the phase machine lands.
+// ============================================================
+const LEO_INSERTION = {
+  // ---- Hand-off from ascent ----
+  // At/above this AGL altitude, MECO fires: cmdSeparate() is issued and
+  // pre-separation RCS duty starts.
+  MECO_ALT_KM:          70,
+
+  // ---- Separation phase targets ----
+  // Phase 1 (axial): fire booster RCS `dn` nozzles until the gap along
+  // the retained body's nose axis reaches AXIAL_SEP_TARGET_M.
+  AXIAL_SEP_TARGET_M:   10,
+  // Phase 2 (lateral): fire booster RCS LEFT pods' `lat` nozzles until
+  // the perpendicular-to-nose-axis distance reaches LATERAL_SEP_TARGET_M.
+  LATERAL_SEP_TARGET_M: 5,
+  // Safety net: if the split hasn't been detected within this many sim
+  // seconds after MECO, abort the spool phase and go straight to STAGE.
+  // Guards against a stuck two-phase sequence (shouldn't happen, but the
+  // phase machine must never lock up).
+  SPLIT_TIMEOUT_S:      10,
+
+  // ---- Fairing opening (post-separation) ----
+  FAIRING_OPEN_ALT_KM:  80,
+  FAIRING_OPEN_ENABLED: true,
+
+  // ---- Target orbit ----
+  TARGET_ORBIT_ALT_KM:  200,
+  // Reference bands (CONFIG.*):
+  //   160–2000 km  → LEO
+  //   2000–35786   → MEO
+  //   35786 km     → GEO
+
+  // ---- RCS settle (post-separation, pre-stage-burn) ----
+  RCS_OMEGA_TARGET:     0,
+  RCS_SETTLE_TOL:       1e-4,
+
+  // ---- Stage (upper) phase ----
+  STAGE: {
+    BURN_ALT_KM:       80,
+    TARGET_VEL_MPS:    7800,
+    CUTOFF_TOL_V:      5,
+  },
+};
+
+const _leoState = {
+  init: false,
+  ticks: 0,
+  phase: 'ASCENT',
+  phaseStart: 0,
+  mecoTriggered: false,
+  splitDetected: false,
+  fairingOpened: false,
+  initialBodyCount: 0,
+  preSplitBodyId: null,
+  boosterIdx: -1,
+  stageIdx: -1,
+  // Debug / status
+  lastAltKm: 0,
+  lastAxialGap: 0,
+  lastLateralGap: 0,
+};
+
+function _leoTick(snapshot) {
+  _leoState.ticks++;
+  if (!snapshot || !Array.isArray(snapshot.bodies) || !snapshot.bodies.length) return;
+
+  const idx = (Number.isInteger(snapshot.activeBodyIndex)) ? snapshot.activeBodyIndex : 0;
+  const body = snapshot.bodies[idx];
+  if (!body) return;
+  const simT = snapshot.simTime;
+
+  // ---------- Init ----------
+  if (!_leoState.init) {
+  _leoState.init = true;
+  _leoState.phase = 'ASCENT';
+  _leoState.phaseStart = simT;
+  _leoState.mecoTriggered = false;
+  _leoState.splitDetected = false;
+  _leoState.fairingOpened = false;
+  _leoState.initialBodyCount = snapshot.bodies.length;
+  _leoState.preSplitBodyId = body.id || null;
+  _leoState.boosterIdx = -1;
+  _leoState.stageIdx = idx;
+  
+  // Kick off the ascent sub-guide — commands engines to full throttle,
+  // resets its internal phase machine. Its per-tick function is called
+  // below in the ASCENT branch, but its .start() hook must run once.
+  if (typeof _hTick !== 'undefined' && typeof _hTick.start === 'function') {
+    try { _hTick.start(); } catch (e) { console.error('[leoInsertion] _hTick.start failed', e); }
+  }
+  console.log('[leoInsertion] started, phase ASCENT');
+}
+
+  // ---------- Derive current state ----------
+  const d = Derivation.derive(snapshot, idx);
+  if (!d || !d.massProps) return;
+  _leoState.lastAltKm = d.altitudeAGL / 1000;
+
+  // ---------- Phase machine ----------
+  switch (_leoState.phase) {
+
+    // =========================================================
+    // ASCENT — delegate to ascentAoaHold's full tick, then check
+    // for MECO trigger on altitude.
+    // =========================================================
+    case 'ASCENT': {
+      if (typeof _hTick === 'function') _hTick(snapshot);
+
+      if (!_leoState.mecoTriggered && _leoState.lastAltKm >= LEO_INSERTION.MECO_ALT_KM) {
+  _leoState.mecoTriggered = true;
+  _leoState.phase = 'MECO_SPOOL';
+  _leoState.phaseStart = simT;
+  
+  // Only cmdSeparate() goes out here. Pre-split RCS firing was
+  // tried and reverted: the stack is still one rigid body during
+  // the spool window, so balanced RCS on both member groups
+  // produces zero net force and zero useful relative velocity —
+  // it just burns propellant. The actual separation push begins
+  // the tick AFTER the split lands, in SEPARATED_AXIAL.
+  if (typeof cmdSeparate === 'function') send(cmdSeparate());
+  
+  console.log('[leoInsertion] MECO at', _leoState.lastAltKm.toFixed(2),
+    'km — separation commanded');
+}
+      break;
+    }
+
+    // =========================================================
+    // MECO_SPOOL — separation requested, waiting for engine cutoff
+    // to complete and the actual split to occur.
+    // =========================================================
+    case 'MECO_SPOOL': {
+  // No commands during the spool window — waiting for engine cutoff
+  // to complete and the split to physically fire. Pre-split RCS
+  // firing was tried and removed (see MECO trigger comment above).
+  // Detection only.
+  
+  // Detect the split by body-count increase.
+  if (snapshot.bodies.length > _leoState.initialBodyCount) {
+    _leoState.splitDetected = true;
+
+        // Identify: stage is the body whose id matches the pre-split
+        // active body; booster is the newly-appended one.
+        const stageIdx = _leoState.preSplitBodyId != null
+          ? snapshot.bodies.findIndex(b => b.id === _leoState.preSplitBodyId)
+          : idx;
+        const boosterIdx = snapshot.bodies.findIndex((b, i) =>
+          i !== stageIdx && b && !b.isActive);
+
+        _leoState.stageIdx = (stageIdx >= 0) ? stageIdx : idx;
+        _leoState.boosterIdx = (boosterIdx >= 0) ? boosterIdx : (1 - _leoState.stageIdx);
+
+        _leoState.phase = 'SEPARATED_AXIAL';
+        _leoState.phaseStart = simT;
+        console.log('[leoInsertion] split detected — booster idx', _leoState.boosterIdx,
+          'stage idx', _leoState.stageIdx);
+        break;
+      }
+
+      // Safety timeout — if split never lands, don't lock up.
+      if (simT - _leoState.phaseStart > LEO_INSERTION.SPLIT_TIMEOUT_S) {
+        console.warn('[leoInsertion] split timeout — advancing to STAGE');
+        _leoState.phase = 'STAGE';
+        _leoState.phaseStart = simT;
+      }
+      break;
+    }
+
+    // =========================================================
+    // SEPARATED_AXIAL — booster fires dn duty (full) each tick.
+    // Terminates when the gap along the stage's nose axis reaches
+    // AXIAL_SEP_TARGET_M, measured BEYOND the initial adjacency
+    // (bases start adjacent, gap = 0, grows as booster moves away).
+    // =========================================================
+    case 'SEPARATED_AXIAL': {
+      const bIdx = _leoState.boosterIdx;
+      const sIdx = _leoState.stageIdx;
+      if (bIdx < 0 || sIdx < 0) { _leoState.phase = 'STAGE'; break; }
+      const boosterBody = snapshot.bodies[bIdx];
+      const stageBody = snapshot.bodies[sIdx];
+      if (!boosterBody || !stageBody) { _leoState.phase = 'STAGE'; break; }
+
+      // Booster fires dn (tailward), stage fires up (noseward) —
+// both bodies actively push apart. Balanced RCS keeps the pair's
+// net momentum zero and lets the stage hold attitude.
+const boosterDuties = GuideRCS.postSeparationAxialDuty(snapshot, bIdx, 'dn');
+if (boosterDuties) send(cmdRcsDuty(boosterDuties, bIdx));
+const stageDuties = GuideRCS.postSeparationAxialDuty(snapshot, sIdx, 'up');
+if (stageDuties) send(cmdRcsDuty(stageDuties, sIdx));
+
+      // Measure axial gap along the STAGE's nose axis.
+      const boosterHeight = (boosterBody.members && boosterBody.members[0])
+        ? (boosterBody.members[0].height || 0) : 0;
+      const upX = -Math.sin(stageBody.theta);
+      const upY = Math.cos(stageBody.theta);
+      const dx = stageBody.rx - boosterBody.rx;
+      const dy = stageBody.ry - boosterBody.ry;
+      const proj = dx * upX + dy * upY;
+      const axialGap = Math.max(0, proj - boosterHeight);
+      _leoState.lastAxialGap = axialGap;
+
+      if (axialGap >= LEO_INSERTION.AXIAL_SEP_TARGET_M) {
+  // Stage's job is done — release its RCS duty so it doesn't
+  // keep firing into the lateral phase.
+  send(cmdRcsDuty(null, sIdx));
+  _leoState.phase = 'SEPARATED_LATERAL';
+  _leoState.phaseStart = simT;
+  console.log('[leoInsertion] axial gap', axialGap.toFixed(2),
+    'm — entering lateral phase');
+}
+      break;
+    }
+
+    // =========================================================
+    // SEPARATED_LATERAL — booster fires LEFT pods' lat nozzles
+    // (force toward body +X in booster's own frame). Terminates
+    // when |perpendicular offset from stage's nose axis| reaches
+    // LATERAL_SEP_TARGET_M.
+    // =========================================================
+    case 'SEPARATED_LATERAL': {
+      const bIdx = _leoState.boosterIdx;
+      const sIdx = _leoState.stageIdx;
+      if (bIdx < 0 || sIdx < 0) { _leoState.phase = 'STAGE'; break; }
+      const boosterBody = snapshot.bodies[bIdx];
+      const stageBody = snapshot.bodies[sIdx];
+      if (!boosterBody || !stageBody) { _leoState.phase = 'STAGE'; break; }
+
+      // Fire booster's LEFT pods — lateral nozzles, full duty.
+      const duties = GuideRCS.postSeparationLateralDuty(snapshot, bIdx, 'L');
+      if (duties) send(cmdRcsDuty(duties, bIdx));
+
+      // Perpendicular gap from stage's nose axis.
+      const upX = -Math.sin(stageBody.theta);
+      const upY = Math.cos(stageBody.theta);
+      const perpX = -upY;
+      const perpY = upX;
+      const dx = stageBody.rx - boosterBody.rx;
+      const dy = stageBody.ry - boosterBody.ry;
+      const latSigned = dx * perpX + dy * perpY;
+      const lateralGap = Math.abs(latSigned);
+      _leoState.lastLateralGap = lateralGap;
+
+      if (lateralGap >= LEO_INSERTION.LATERAL_SEP_TARGET_M) {
+        // Cut booster RCS — relinquish duty control on that body.
+        send(cmdRcsDuty(null, bIdx));
+        _leoState.phase = 'STAGE';
+        _leoState.phaseStart = simT;
+        console.log('[leoInsertion] lateral gap', lateralGap.toFixed(2),
+          'm — separation complete, entering STAGE phase');
+      }
+      break;
+    }
+
+    // =========================================================
+    // STAGE / DONE — placeholder. Upper-stage ignition, orbit
+    // insertion burn, and cutoff logic land here.
+    // =========================================================
+        // =========================================================
+    // STAGE / DONE — placeholder. Upper-stage ignition, orbit
+    // insertion burn, and cutoff logic land here.
+    // =========================================================
+    case 'STAGE':
+    case 'DONE':
+    default:
+    break;
+    }
+    
+    // ---- Fairing open (independent, runs every tick) ----
+    // Once the split has happened (bodies >= 2) AND altitude crosses
+    // FAIRING_OPEN_ALT_KM, send cmdSplitFairing() once. Physics's fairing
+    // split is idempotent — the check is defensive, not required.
+    if (LEO_INSERTION.FAIRING_OPEN_ENABLED &&
+      !_leoState.fairingOpened &&
+      _leoState.splitDetected &&
+      _leoState.lastAltKm >= LEO_INSERTION.FAIRING_OPEN_ALT_KM) {
+      // Only send if a payloadSpace member is still attached to the
+      // ACTIVE body (fairing might have been ejected/opened earlier).
+      const stageBody = snapshot.bodies[_leoState.stageIdx];
+      const hasFairing = !!(stageBody && stageBody.members &&
+        stageBody.members.some(m => m && m.stageRole === 'payloadSpace'));
+      if (hasFairing) {
+        send(cmdSplitFairing());
+        _leoState.fairingOpened = true;
+        console.log('[leoInsertion] fairing open at',
+          _leoState.lastAltKm.toFixed(2), 'km — cmdSplitFairing sent');
+      }
+    }
+    }
+
+_leoTick.start = function() {
+    _leoState.init = false;
+    _leoState.ticks = 0;
+    _leoState.phase = 'ASCENT';
+    _leoState.phaseStart = 0;
+    _leoState.mecoTriggered = false;
+    _leoState.splitDetected = false;
+    _leoState.fairingOpened = false;
+  _leoState.initialBodyCount = 0;
+  _leoState.preSplitBodyId = null;
+  _leoState.boosterIdx = -1;
+  _leoState.stageIdx = -1;
+  _leoState.lastAltKm = 0;
+  _leoState.lastAxialGap = 0;
+  _leoState.lastLateralGap = 0;
+  console.log('[leoInsertion] started');
+};
+_leoTick.stop = function () {
+  console.log('[leoInsertion] stopped');
+};
+_leoTick.getStatus = function() {
+  return {
+    ticks: _leoState.ticks,
+    phase: _leoState.phase,
+    altKm: _leoState.lastAltKm,
+    mecoTriggered: _leoState.mecoTriggered,
+    splitDetected: _leoState.splitDetected,
+    fairingOpened: _leoState.fairingOpened,
+    axialGap: _leoState.lastAxialGap,
+    lateralGap: _leoState.lastLateralGap,
+  };
+};
+
+GUIDES.leoInsertion = _leoTick;
+
+function setLeoInsertion(patch) {
+  if (!patch) return;
+  Object.keys(patch).forEach(k => {
+    if (k in LEO_INSERTION) LEO_INSERTION[k] = patch[k];
+  });
+  console.log('[leoInsertion] constants:', JSON.stringify(LEO_INSERTION));
+}
+function getLeoInsertionConfig() { return { ...LEO_INSERTION }; }
+  
   // ---- Outbound: single choke point for physics commands. ----
   function send(msg) {
     if (!_physicsSend) {
@@ -2353,9 +2707,15 @@ function setAscentHold(patch) {
   function cmdWarp(value) { return { type: 'warp', value }; }
   function cmdSetFuelMass(value) { return { type: 'setFuelMass', value }; }
   function cmdSetGimbalRate(degPerSec) { return { type: 'setGimbalRate', degPerSec }; }
-  // Pass null to relinquish; {} latches at zero.
-  function cmdRcsDuty(duties) { return { type: 'rcsDuty', duties }; }
-  
+  // Optional targetBodyIdx — post-separation, guidance needs to command
+// a non-active body's pods (typically the discarded booster). Physics
+// worker's resolveTargetBody handles it; human UI never sets it.
+function cmdRcsDuty(duties, targetBodyIdx) {
+  const msg = { type: 'rcsDuty', duties };
+  if (Number.isInteger(targetBodyIdx)) msg.targetBodyIdx = targetBodyIdx;
+  return msg;
+}
+
   return {
     init,
     setImuEnabled,
@@ -2375,9 +2735,11 @@ setPredictiveGains,
 setAscentRR,
 setSweepDuration,
 setAscentHold,
+setLeoInsertion,
 getAscentRRConfig,
 getAscentHoldConfig,
 getPredictiveGains,
+getLeoInsertionConfig,
     // Convenience forwarders so callers can keep using Guidance.*
     derive: (...args) => Derivation.derive(...args),
     deriveAllBodies: (...args) => Derivation.deriveAllBodies(...args),

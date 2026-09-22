@@ -402,7 +402,19 @@ a.back:hover { color: var(--cyan); }
       },
     };
   }
-
+// Payload nose radius — used for the hypothetical Sutton-Graves flux
+// column in the sample row. Read once at boot; the payload doesn't
+// change mid-session.
+let activePayloadRn = 1.0;
+(function computePayloadRn() {
+  const stk = (typeof getActiveStack === 'function') ? getActiveStack() : null;
+  if (!stk || !stk.payloadId || typeof getPayload !== 'function') return;
+  const pl = getPayload(stk.payloadId);
+  if (!pl) return;
+  const w = Number.isFinite(pl.width) ? pl.width : 1;
+  const h = Number.isFinite(pl.height) ? pl.height : 1;
+  activePayloadRn = Math.max(0.05, Math.min(w, h) / 2);
+})();
   Derivation.setStackData(collectStackData());
 
   // ---------------------------------------------------------------------------
@@ -457,9 +469,17 @@ a.back:hover { color: var(--cyan); }
   }
 
   function localDispatch(msg) {
-    const b = state.bodies[state.activeBodyIndex];
-    if (!b) return;
-    switch (msg.type) {
+  // resolveTargetBody mirror of physics.worker.js — honour targetBodyIdx
+  // when present, else fall back to the active body.
+  let b;
+  if (Number.isInteger(msg.targetBodyIdx) &&
+    msg.targetBodyIdx >= 0 && msg.targetBodyIdx < state.bodies.length) {
+    b = state.bodies[msg.targetBodyIdx];
+  } else {
+    b = state.bodies[state.activeBodyIndex];
+  }
+  if (!b) return;
+  switch (msg.type) {
       case 'setGimbalRate': {
         if (!b.engines) break;
         const lim = CONFIG.GIMBAL_RATE_DEG_S;
@@ -504,16 +524,42 @@ a.back:hover { color: var(--cyan); }
         break;
       }
       case 'rcsDuty': {
-        if (msg.duties == null) b.rcsDuty = null;
-        else b.rcsDuty = msg.duties;
-        break;
-      }
+  if (msg.duties == null) b.rcsDuty = null;
+  else b.rcsDuty = msg.duties;
+  break;
+}
       case 'legs': {
-        if (!b.legs) b.legs = { deployed: false, progress: 0 };
-        b.legs.deployed = !!msg.deployed;
-        break;
-      }
-      default: break;
+  if (!b.legs) b.legs = { deployed: false, progress: 0 };
+  b.legs.deployed = !!msg.deployed;
+  break;
+}
+// ---- Mission-event commands (LEO_INSERTION sequence) ----
+// All these are defined in physics.js and reachable as globals on
+// this page. Two-phase commands (separate, releasePayload) defer
+// the actual split until engine thrust has spooled to ~0 — the
+// _checkPending* hooks inside physicsStep handle the deferral, so
+// calling the request function is all that's needed here.
+case 'separate': {
+  if (typeof requestSeparate === 'function') requestSeparate(b);
+  break;
+}
+case 'splitFairing': {
+  if (typeof splitFairingOnActiveBody === 'function') splitFairingOnActiveBody(b);
+  break;
+}
+case 'releasePayload': {
+  if (typeof requestReleasePayload === 'function') requestReleasePayload(msg, b);
+  break;
+}
+case 'emergencyEject': {
+  if (typeof emergencyEjectPayload === 'function') emergencyEjectPayload(b);
+  break;
+}
+case 'takeControl': {
+  if (typeof takeControlOfBody === 'function') takeControlOfBody(msg.idx);
+  break;
+}
+default: break;
     }
   }
 
@@ -614,7 +660,8 @@ a.back:hover { color: var(--cyan); }
   //    getStatus()). Common physics columns always shown.
   // ---------------------------------------------------------------------------
   const COMMON_COLUMNS = [
-    { key: '_t',       label: 't' },
+    { key: '_body', label: 'b' },
+    { key: '_t', label: 't' },
     { key: '_alt',     label: 'alt km', fmt: v => v.toFixed(3) },
     { key: '_down',    label: 'down km', fmt: v => v.toFixed(3) },
     { key: '_v',       label: 'v m/s',  fmt: v => v.toFixed(1) },
@@ -626,9 +673,10 @@ a.back:hover { color: var(--cyan); }
     { key: '_gimbal',  label: 'gimbal°',fmt: v => v.toFixed(3) },
         { key: '_thr',     label: 'thr kN', fmt: v => v.toFixed(1) },
   { key: '_fuel',    label: 'fuel t', fmt: v => v.toFixed(1) },
-  { key: '_mass',    label: 'mass t', fmt: v => v.toFixed(2) },
+    { key: '_mass',    label: 'mass t', fmt: v => v.toFixed(2) },
   { key: '_apogee',  label: 'apogee km', fmt: v => Number.isFinite(v) ? v.toFixed(2) : '∞' },
   { key: '_vApogee', label: 'v_apo m/s', fmt: v => v.toFixed(1) },
+  { key: '_heatFlux', label: 'q W/m²', fmt: v => Number.isFinite(v) ? v.toFixed(0) : '—' },
 ];
 
   const GUIDE_COLUMNS = {
@@ -715,10 +763,12 @@ a.back:hover { color: var(--cyan); }
   // 4. Row formatter — computes physics-derived values fresh from state,
   //    merges in guide status fields by key.
   // ---------------------------------------------------------------------------
-  function computePhysicsRow(snap) {
-    const idx = state.activeBodyIndex;
-    const b = state.bodies[idx];
-    if (!b) return null;
+  function computePhysicsRow(snap, bodyIdx) {
+  const idx = Number.isInteger(bodyIdx) ? bodyIdx : state.activeBodyIndex;
+  const b = state.bodies[idx];
+  if (!b) return null;
+  // Tag: A=active, B=discarded booster/stage, Dn=other.
+  const tag = b.isActive ? 'A' : (b.isDiscarded ? 'B' : 'D' + idx);
 
     const r = Math.hypot(b.rx, b.ry) || 1;
     const alt = r - CONFIG.EARTH_RADIUS;
@@ -753,16 +803,28 @@ if (E < 0) {
 }
 
 const d = Derivation.derive(snap, idx);
-    const aoa = d ? d.alphaDeg : 0;
-    const mass = d && d.massProps ? d.massProps.M : 0;
+const aoa = d ? d.alphaDeg : 0;
+const mass = d && d.massProps ? d.massProps.M : 0;
+
+// Sutton-Graves heat flux at the payload's leading edge — flux if
+// the fairing were open right now, i.e. the hypothetical rating
+// that drives the fairing-open decision.
+//   q = K · √(ρ / R_n) · V³
+// K = 1.7415e-4 (air, SI); R_n = min(payload.w, payload.h)/2.
+let heatFlux = 0;
+if (d && d.rho > 0 && d.speedRel > 0 && activePayloadRn > 0) {
+  const K = 1.7415e-4;
+  heatFlux = K * Math.sqrt(d.rho / activePayloadRn) * d.speedRel * d.speedRel * d.speedRel;
+}
 
     const gimbals = (b.engines || []).filter(e => e.gimbal);
     const gimbalDeg = gimbals.length ? (gimbals[0].gimbalDeg || 0) : 0;
     const thrust = (b.engines || []).reduce((s, e) => s + (e.currentF || 0), 0);
 
     return {
-      _t:        state.simTime,
-      _alt:      alt / 1000,
+  _body: tag,
+  _t: state.simTime,
+  _alt: alt / 1000,
       _down:     downArc / 1000,
       _v:        Math.hypot(b.vx, b.vy),
       _vr:       vr,
@@ -774,8 +836,9 @@ const d = Derivation.derive(snap, idx);
       _thr:      thrust / 1000,
               _fuel: (b.fuelMass || 0) / 1000,
       _mass: mass / 1000,
-      _apogee: apogeeKm,
+          _apogee: apogeeKm,
       _vApogee: vApogee,
+      _heatFlux: heatFlux,
     };
     }
 
@@ -847,9 +910,9 @@ let trajRuns = [];
 let _trajRunIdx = 0;
 
 function startNewTrajRun() {
-  const color = _TRAJ_COLORS[_trajRunIdx % _TRAJ_COLORS.length];
+  const ci = _trajRunIdx % _TRAJ_COLORS.length;
   _trajRunIdx++;
-  trajRuns.push({ color, points: [] });
+  trajRuns.push({ baseIdx: ci, color: _TRAJ_COLORS[ci], pointsByBody: {} });
   drawTraj();
 }
 
@@ -859,9 +922,11 @@ function clearAllTrajRuns() {
   drawTraj();
 }
 
-function pushTraj(downKm, altKm) {
+function pushTraj(bodyKey, downKm, altKm) {
   if (!trajRuns.length) startNewTrajRun();
-  trajRuns[trajRuns.length - 1].points.push({ down: downKm, alt: altKm });
+  const run = trajRuns[trajRuns.length - 1];
+  if (!run.pointsByBody[bodyKey]) run.pointsByBody[bodyKey] = [];
+  run.pointsByBody[bodyKey].push({ down: downKm, alt: altKm });
   drawTraj();
 }
 
@@ -875,15 +940,17 @@ let velRuns = [];
 let _velRunIdx = 0;
 
 function startNewVelRun() {
-  const color = _TRAJ_COLORS[_velRunIdx % _TRAJ_COLORS.length];
+  const ci = _velRunIdx % _TRAJ_COLORS.length;
   _velRunIdx++;
-  velRuns.push({ color, points: [] });
+  velRuns.push({ baseIdx: ci, color: _TRAJ_COLORS[ci], pointsByBody: {} });
   drawVel();
 }
 
-function pushVel(vt, vr) {
+function pushVel(bodyKey, vt, vr) {
   if (!velRuns.length) startNewVelRun();
-  velRuns[velRuns.length - 1].points.push({ vt, vr });
+  const run = velRuns[velRuns.length - 1];
+  if (!run.pointsByBody[bodyKey]) run.pointsByBody[bodyKey] = [];
+  run.pointsByBody[bodyKey].push({ vt, vr });
   drawVel();
 }
 
@@ -910,7 +977,8 @@ function drawVel() {
   let xMin = 0, xMax = 1, yMin = 0, yMax = 1;
   let anyPt = false;
   velRuns.forEach(r => {
-    r.points.forEach(p => {
+  Object.values(r.pointsByBody).forEach(pts => {
+    pts.forEach(p => {
       anyPt = true;
       if (p.vt > xMax) xMax = p.vt;
       if (p.vr > yMax) yMax = p.vr;
@@ -918,6 +986,7 @@ function drawVel() {
       if (p.vr < yMin) yMin = p.vr;
     });
   });
+});
 if (xMax - xMin < 10) xMax = xMin + 10;
 if (yMax - yMin < 10) yMax = yMin + 10;
 
@@ -1077,36 +1146,44 @@ ctx.stroke();
 
   // Traces — older dimmed, latest bright
   const lastIdx = velRuns.length - 1;
-  velRuns.forEach((run, ri) => {
-    if (run.points.length < 2) return;
-    const isLatest = (ri === lastIdx);
+velRuns.forEach((run, ri) => {
+  const isLatest = (ri === lastIdx);
+  const bodyKeys = Object.keys(run.pointsByBody);
+  bodyKeys.forEach((bk, bi) => {
+    const pts = run.pointsByBody[bk];
+    if (pts.length < 2) return;
     ctx.globalAlpha = isLatest ? 1.0 : 0.35;
-    ctx.strokeStyle = run.color;
-    ctx.lineWidth = isLatest ? 1.8 : 1.2;
+const colorIdx = (run.baseIdx + bi) % _TRAJ_COLORS.length;
+ctx.strokeStyle = _TRAJ_COLORS[colorIdx];
+ctx.lineWidth = isLatest ? 1.8 : 1.2;
     ctx.beginPath();
-    run.points.forEach((p, i) => {
+    pts.forEach((p, i) => {
       const x = tx(p.vt), y = ty(p.vr);
       if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
     });
     ctx.stroke();
   });
-  ctx.globalAlpha = 1.0;
-
+});
+ctx.globalAlpha = 1.0;
   // Current-point marker on the latest run only
   if (lastIdx >= 0) {
-    const pts = velRuns[lastIdx].points;
-    if (pts.length) {
-      const p = pts[pts.length - 1];
-      const x = tx(p.vt), y = ty(p.vr);
-      ctx.fillStyle = '#ffd23f';
-      ctx.beginPath();
-      ctx.arc(x, y, 3.4, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.strokeStyle = 'rgba(0,0,0,0.55)';
-      ctx.lineWidth = 1;
-      ctx.stroke();
-    }
-  }
+  const run = velRuns[lastIdx];
+  const bodyKeys = Object.keys(run.pointsByBody);
+  bodyKeys.forEach((bk, bi) => {
+    const pts = run.pointsByBody[bk];
+    if (!pts.length) return;
+    const p = pts[pts.length - 1];
+    const x = tx(p.vt), y = ty(p.vr);
+    const colorIdx = (run.baseIdx + bi) % _TRAJ_COLORS.length;
+ctx.fillStyle = _TRAJ_COLORS[colorIdx];
+    ctx.beginPath();
+    ctx.arc(x, y, 3.4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(0,0,0,0.55)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  });
+}
 }
 
 function drawTraj() {
@@ -1133,12 +1210,14 @@ function drawTraj() {
 let xMin = 0, xMax = 1, yMin = 0, yMax = 1;
 let anyPt = false;
 trajRuns.forEach(r => {
-  r.points.forEach(p => {
-    anyPt = true;
-    if (p.down > xMax) xMax = p.down;
-    if (p.alt  > yMax) yMax = p.alt;
-    if (p.down < xMin) xMin = p.down;
-    if (p.alt  < yMin) yMin = p.alt;
+  Object.values(r.pointsByBody).forEach(pts => {
+    pts.forEach(p => {
+      anyPt = true;
+      if (p.down > xMax) xMax = p.down;
+      if (p.alt > yMax) yMax = p.alt;
+      if (p.down < xMin) xMin = p.down;
+      if (p.alt < yMin) yMin = p.alt;
+    });
   });
 });
 if (xMax - xMin < 0.5) xMax = xMin + 0.5;
@@ -1274,17 +1353,24 @@ ctx.restore();
   // Older runs first (dimmed), latest run drawn last (bright + dot).
 const lastIdx = trajRuns.length - 1;
 trajRuns.forEach((run, ri) => {
-  if (run.points.length < 2) return;
   const isLatest = (ri === lastIdx);
-  ctx.globalAlpha = isLatest ? 1.0 : 0.35;
-  ctx.strokeStyle = run.color;
-  ctx.lineWidth = isLatest ? 1.8 : 1.2;
-  ctx.beginPath();
-  run.points.forEach((p, i) => {
-    const x = tx(p.down), y = ty(p.alt);
-    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  const bodyKeys = Object.keys(run.pointsByBody);
+  bodyKeys.forEach((bk, bi) => {
+    const pts = run.pointsByBody[bk];
+    if (pts.length < 2) return;
+    ctx.globalAlpha = isLatest ? 1.0 : 0.35;
+// Each body gets its own palette colour, offset by the run's
+// base index so different runs don't reuse the same set.
+const colorIdx = (run.baseIdx + bi) % _TRAJ_COLORS.length;
+ctx.strokeStyle = _TRAJ_COLORS[colorIdx];
+ctx.lineWidth = isLatest ? 1.8 : 1.2;
+    ctx.beginPath();
+    pts.forEach((p, i) => {
+      const x = tx(p.down), y = ty(p.alt);
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
   });
-  ctx.stroke();
 });
 ctx.globalAlpha = 1.0;
 
@@ -1300,18 +1386,22 @@ if (ox >= padL - 1 && ox <= padL + plotW + 1 &&
 
 // Current-point marker on the LATEST run only
 if (lastIdx >= 0) {
-  const pts = trajRuns[lastIdx].points;
-  if (pts.length) {
+  const run = trajRuns[lastIdx];
+  const bodyKeys = Object.keys(run.pointsByBody);
+  bodyKeys.forEach((bk, bi) => {
+    const pts = run.pointsByBody[bk];
+    if (!pts.length) return;
     const p = pts[pts.length - 1];
     const x = tx(p.down), y = ty(p.alt);
-    ctx.fillStyle = '#ffd23f';
+    const colorIdx = (run.baseIdx + bi) % _TRAJ_COLORS.length;
+ctx.fillStyle = _TRAJ_COLORS[colorIdx];
     ctx.beginPath();
     ctx.arc(x, y, 3.4, 0, Math.PI * 2);
     ctx.fill();
     ctx.strokeStyle = 'rgba(0,0,0,0.55)';
     ctx.lineWidth = 1;
     ctx.stroke();
-  }
+  });
 }
 }
 
@@ -1390,17 +1480,20 @@ startNewVelRun();
 
       // Sample exactly once per whole sim-second.
       const curSec = Math.floor(state.simTime);
-      if (curSec > lastSampleSec) {
-        lastSampleSec = curSec;
-        const status = (Guidance.getGuideStatus && Guidance.getGuideStatus()) || null;
-        const physRow = computePhysicsRow(buildSnapshot());
-        if (physRow) {
-          out.insertAdjacentHTML('beforeend', buildRow(guideName, physRow, status));
-          pushTraj(physRow._down, physRow._alt);
-pushVel(physRow._vt, physRow._vr);
-          out.scrollTop = out.scrollHeight;
-        }
-      }
+if (curSec > lastSampleSec) {
+  lastSampleSec = curSec;
+  const status = (Guidance.getGuideStatus && Guidance.getGuideStatus()) || null;
+  const snap = buildSnapshot();
+  for (let bi = 0; bi < snap.bodies.length; bi++) {
+    const physRow = computePhysicsRow(snap, bi);
+    if (!physRow) continue;
+    out.insertAdjacentHTML('beforeend', buildRow(guideName, physRow, status));
+    const bodyKey = 'b' + bi;
+    pushTraj(bodyKey, physRow._down, physRow._alt);
+    pushVel(bodyKey, physRow._vt, physRow._vr);
+  }
+  out.scrollTop = out.scrollHeight;
+}
 
       // Yield periodically so the browser can paint status + new rows.
       if (i > 0 && i % CHUNK === 0) {

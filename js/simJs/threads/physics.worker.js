@@ -305,7 +305,41 @@ function dispatchCommand(msg) {
       state.simTime = 0;
       break;
     }
-
+    
+    // Debug teleport — reposition the active body at a specific altitude
+// and velocity state on the launch meridian. Skips the ~60 s of real
+// ascent so MECO/separation can be tested immediately.
+//
+// Params:
+//   altKm        target altitude AGL (km)
+//   vRad         radial velocity, +up (m/s)
+//   vTan         tangential velocity, +east (m/s)
+//   thetaRelDeg  attitude from local vertical, +east tilt (deg)
+//   omega        angular velocity (rad/s)
+//   enginesOff   if true, zero out all engine commands + state
+case 'debugTeleport': {
+  const b = state.bodies[state.activeBodyIndex];
+  if (!b) break;
+  const R0 = CONFIG.EARTH_RADIUS + (CONFIG.LAUNCH_SITE_ALTITUDE || 0);
+  b.rx = 0;
+  b.ry = R0 + (msg.altKm || 0) * 1000;
+  b.vx = msg.vTan || 0;
+  b.vy = msg.vRad || 0;
+//   thetaInertialDeg  body theta in inertial frame, degrees// tester's _thetaRel column prints on the launch meridian, where
+// localVert = 0). Passed directly, no sign gymnastics.
+b.theta = (msg.thetaInertialDeg || 0) * Math.PI / 180;
+b.omega = msg.omega || 0;
+  if (msg.enginesOff && b.engines) {
+    b.engines.forEach(e => { e.massFlowRate = 0; e.targetMassFlowRate = 0; });
+  }
+  // Fresh trajectory — reset slosh history.
+  if (b.slosh) b.slosh = { offset: 0, velocity: 0, rawOffset: 0, rawVelocity: 0, angMomentum: 0 };
+  state.simTime = 0;
+  state.halted = false;
+  console.log('[debugTeleport] alt=' + msg.altKm + 'km vr=' + msg.vRad + ' vt=' + msg.vTan);
+  break;
+}
+    
     // PHASE 1: setGroupThrottle/setCenterThrottle/setAllThrottle now carry
     // a commanded mass flow rate (kg/s) in msg.value, not a 0..1 fraction —
     // converted from the UI's percent at the control layer (controls.js).

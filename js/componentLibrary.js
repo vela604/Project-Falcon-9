@@ -549,6 +549,42 @@ function buildMetalCarbonComposite() {
   );
 }
 
+
+// ============================================================================
+// Pneumatic pushers — gas-driven separation actuators bolted into the
+// interstage. Documentation-only hardware: the sim applies a fixed
+// acceleration (CONFIG.SEPARATION_ACC_CONST) rather than modeling the jet
+// in detail, because pusher mass and gas consumption are negligible next
+// to the vehicle's own. The type exists so the fleet page can show "this
+// stack has N2 pushers" without the physics caring about which gas.
+// ============================================================================
+
+const PNEUMATIC_PUSHER_SCHEMA = [
+  { key: 'gasType', label: 'Gas', unit: '' },
+  { key: 'ejectVelocity', label: 'Eject velocity', unit: 'm/s', min: 50 },
+  { key: 'massFlowRate', label: 'Mass flow rate', unit: 'kg/s', min: 0.01 },
+];
+
+function makePneumaticPusher(id, displayName, description, values) {
+  return {
+    id,
+    category: 'pneumaticPusher',
+    kind: 'gasPusher',
+    displayName,
+    description,
+    parameterSchema: withFixedValues(PNEUMATIC_PUSHER_SCHEMA, values),
+  };
+}
+
+function buildPneumaticPusherN2() {
+  return makePneumaticPusher(
+    'pneumatic-pusher-n2',
+    'Nitrogen pneumatic pusher (interstage)',
+    'Gas-driven separation actuator. Fires for ~0.5 s right after MECO, kicking the lower body away from the stack. Gas type, eject velocity, and mass flow rate are documentation only — the sim applies a fixed acceleration kick from CONFIG.SEPARATION_ACC_CONST rather than modeling the individual jet, since pusher mass and propellant are negligible. Pre-installed on every booster and stage.',
+    { gasType: 'N2', ejectVelocity: 300, massFlowRate: 4.0 }
+  );
+}
+
 // payloadSpace: unlike the four pure-performance categories above, this
 // DOES have a frame — it's a physical container with its own geometry.
 // A single kind (`bulgedCapShape`) covers every fairing silhouette:
@@ -615,6 +651,7 @@ function seedComponentLibrary() {
     
     buildMetalAlLiAlloy(),
     buildMetalCarbonComposite(),
+    buildPneumaticPusherN2(),
     buildPayloadSpaceBulged(),
   ];
 }

@@ -115,6 +115,15 @@ const CONFIG = {
   // shifts its local origin so the pad still reads as y_local = 0.
   LAUNCH_SITE_ALTITUDE: 0,
   
+  // ---------------- Orbit regimes (altitude ASL, km) ----------------
+// Standard Earth-orbit classification boundaries. Bands are half-open:
+// [MIN, MAX) — low edge inclusive, high edge exclusive. GEO is a
+// specific altitude (period = one sidereal day), not a band.
+LEO_MIN_KM:  160,
+LEO_MAX_KM:  2000,
+MEO_MIN_KM:  2000,
+MEO_MAX_KM:  35786,
+GEO_ALT_KM:  35786,
   
   // ---------------- Vehicle geometry & mass ----------------
   ROCKET_NAME: ACTIVE_STACK_AGG ? ACTIVE_STACK_AGG.name : ACTIVE_VEHICLE.name,
@@ -217,9 +226,23 @@ const CONFIG = {
 // Eject packages. No manual button; deployment is automatic.
 FAIRING_CHUTE_DEPLOY_ALT_AGL_M: 1500,
   
-  // ---------------- Simulation ----------------
-  DT: 1 / 80, // s, fixed physics timestep
+// ---------------- Simulation ----------------
+DT: 1 / 80, // s, fixed physics timestep,
   
+  // ---------------- Stage separation (pneumatic pushers) ----------------
+  // Real F9 uses N2/helium pneumatic pushers in the interstage — not RCS —
+  // to push the lower body away after MECO. This sim models them as a
+  // constant acceleration applied to the DISCARDED body along its own
+  // local tail direction (-Y in body frame) for a short window.
+  //
+  //   SEPARATION_ACC_CONST       m/s² applied to the discarded body
+  //   SEPARATION_PUSH_DURATION_S window length, seconds
+  //
+  // Product = velocity gain. Default 6.0 × 1.0 = 6 m/s relative kick —
+  // matches the 3–5 m/s range real F9-class pushers deliver. Not
+  // propellant-consuming; pusher mass and gas budget are ignored.
+  SEPARATION_ACC_CONST: 2.5,
+  SEPARATION_PUSH_DURATION_S: 1.0,
   // ---------------- Fuel slosh (Phase 2A) ----------------
   // A single lateral slosh oscillator on the body's BOTTOM tank only.
   // 2A uses fixed constants; Phase 2B replaces SLOSH_OMEGA/SLOSH_ZETA with

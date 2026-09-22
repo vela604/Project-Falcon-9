@@ -462,8 +462,12 @@ function openPayloadEditor(id) {
   document.getElementById('pl-height').value = p.height;
   document.getElementById('pl-width').value = p.width;
   document.getElementById('pl-dragCd').value = p.dragCd;
-  document.getElementById('payloadEditorEmpty').style.display = 'none';
-  document.getElementById('payloadEditorForm').style.display = '';
+// maxHeatFlux — default 20 kW/m² for legacy payloads that predate
+// this field. Bare satellite with minimal TPS.
+const mhf = Number.isFinite(p.maxHeatFlux) ? p.maxHeatFlux : 20000;
+document.getElementById('pl-maxHeatFlux').value = mhf;
+document.getElementById('payloadEditorEmpty').style.display = 'none';
+document.getElementById('payloadEditorForm').style.display = '';
   renderPayloadList();
 }
 
@@ -481,15 +485,19 @@ function handlePayloadSubmit(e) {
   const height = parseFloat(document.getElementById('pl-height').value);
   const width = parseFloat(document.getElementById('pl-width').value);
   const dragCd = parseFloat(document.getElementById('pl-dragCd').value);
-  if (![mass, height, width, dragCd].every(Number.isFinite)) {
-    document.getElementById('payloadFormError').textContent = 'All fields must be valid numbers.';
-    document.getElementById('payloadFormError').classList.add('show');
-    return;
-  }
-  document.getElementById('payloadFormError').classList.remove('show');
-  if (editingPayloadId) updatePayload(editingPayloadId, { name, mass, height, width, dragCd });
-  else editingPayloadId = addPayload({ name, mass, height, width, dragCd }).id;
-  renderPayloadList();
+const maxHeatFlux = parseFloat(document.getElementById('pl-maxHeatFlux').value);
+if (![mass, height, width, dragCd].every(Number.isFinite)) {
+  document.getElementById('payloadFormError').textContent = 'All fields must be valid numbers.';
+  document.getElementById('payloadFormError').classList.add('show');
+  return;
+}
+// maxHeatFlux optional — empty/NaN falls back to 20 kW/m².
+const maxHeatFluxSafe = Number.isFinite(maxHeatFlux) && maxHeatFlux >= 0 ? maxHeatFlux : 20000;
+document.getElementById('payloadFormError').classList.remove('show');
+const payloadData = { name, mass, height, width, dragCd, maxHeatFlux: maxHeatFluxSafe };
+if (editingPayloadId) updatePayload(editingPayloadId, payloadData);
+else editingPayloadId = addPayload(payloadData).id;
+renderPayloadList();
   // Keep editor open — user sees the saved state.
 }
 

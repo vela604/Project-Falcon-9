@@ -164,7 +164,85 @@ const tauLat = -ry * (latSign * Fmax);
     };
   }
   
+  
+  // ============================================================
+// Separation-phase duties — Stage (A.0) mission support.
+//
+// Pod-id layout (see buildPodEntries in rcs.js): `b<memberIdx>.<side><n>`
+// — e.g. `b0.L1` is member 0, left side, topmost pod. Each pod's duty
+// table has { up, dn, lat } in 0..1. From rcs.js:
+//   duty.up  → Fy = +Fmax  (force toward body nose)
+//   duty.dn  → Fy = −Fmax  (force toward body tail)
+//   duty.lat → Fx = lateralSign × Fmax (L pods → +X, R pods → −X)
+//
+// Only one nozzle per axis fires per pod per tick; caller is
+// responsible for not overlapping axial and lateral phases.
+// ============================================================
+
+// Pre-separation axial duty — one body still, about to be split into
+// two at member index `boundaryIdx`. Lower members [0, boundaryIdx)
+// become the discarded booster; upper members [boundaryIdx, end) are
+// the retained stack. Fires ONLY the lower group's `dn` nozzles —
+// pushes the future booster downward (away from the future stage),
+// so the moment of physical split finds them already moving apart.
+//
+// Returns a duty table for the parent body's pods, or null if the
+// body has no pods / no matching members.
+function preSeparationDuty(snapshot, parentIdx, boundaryIdx) {
+  if (!snapshot || !Array.isArray(snapshot.bodies)) return null;
+  const body = snapshot.bodies[parentIdx];
+  if (!body || !Array.isArray(body.pods)) return null;
+  const duties = {};
+  body.pods.forEach(pod => {
+    if (pod.memberIdx < boundaryIdx) {
+      // Lower group — future booster: force tailward (away from stage).
+      duties[pod.podId] = { up: 0, dn: 1, lat: 0 };
+    } else {
+      // Upper group — future stage: force noseward (away from booster).
+      duties[pod.podId] = { up: 1, dn: 0, lat: 0 };
+    }
+  });
+  return Object.keys(duties).length ? duties : null;
+}
+
+// Post-separation axial duty — a single body (typically the discarded
+// booster) fires ALL pods in a fixed direction. `direction` is
+// 'dn' (body-tailward) or 'up' (body-noseward).
+function postSeparationAxialDuty(snapshot, bodyIdx, direction) {
+  if (!snapshot || !Array.isArray(snapshot.bodies)) return null;
+  const body = snapshot.bodies[bodyIdx];
+  if (!body || !Array.isArray(body.pods)) return null;
+  if (direction !== 'dn' && direction !== 'up') return null;
+  const duties = {};
+  body.pods.forEach(pod => {
+    duties[pod.podId] = direction === 'dn' ?
+      { up: 0, dn: 1, lat: 0 } :
+      { up: 1, dn: 0, lat: 0 };
+  });
+  return Object.keys(duties).length ? duties : null;
+}
+
+// Post-separation lateral duty — fires ONLY the pods on one side's
+// lateral nozzles. `side` is 'L' or 'R'. Per rcs.js:
+//   side 'L' → Fx = +Fmax (force toward body +X)
+//   side 'R' → Fx = −Fmax (force toward body −X)
+function postSeparationLateralDuty(snapshot, bodyIdx, side) {
+  if (!snapshot || !Array.isArray(snapshot.bodies)) return null;
+  const body = snapshot.bodies[bodyIdx];
+  if (!body || !Array.isArray(body.pods)) return null;
+  if (side !== 'L' && side !== 'R') return null;
+  const duties = {};
+  body.pods.forEach(pod => {
+    if (pod.side === side) duties[pod.podId] = { up: 0, dn: 0, lat: 1 };
+  });
+  return Object.keys(duties).length ? duties : null;
+}
+  
+  
   return {
-    targetTorqueRcs,
-  };
+  targetTorqueRcs,
+  preSeparationDuty,
+  postSeparationAxialDuty,
+  postSeparationLateralDuty,
+};
 })();

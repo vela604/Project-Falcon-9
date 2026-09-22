@@ -364,6 +364,7 @@ function seedFalcon9Booster() {
       fixed:  { thrusterTypeId: 'merlin-1d-class', massFlowRate: 306 },
     },
     rcsThruster: { thrusterTypeId: 'cold-gas-small', massFlowRate: 0.5 },
+    pusherTypeId: 'pneumatic-pusher-n2',
     fuel: {
       typeId: 'rp1-lox',
       tankHeight: 34.1, tankWidth: 3.7,
@@ -442,6 +443,10 @@ function seedFalcon9Payload() {
     height: 8.0,
     width: 3.0,
     dragCd: 0.3,
+    // Demo satellite with real TPS-class shielding. 60 kW/m² is on the
+    // higher end of typical satellite ratings (a fairing-less exposed
+    // spacecraft would burn up at lower flux during ascent).
+    maxHeatFlux: 60000,
   };
 }
 
@@ -708,7 +713,12 @@ if (stageRole === 'payloadSpace') {
     if (!Number.isFinite(out.params.rcsTopY)) out.params.rcsTopY = defaults.params.rcsTopY;
     if (!Number.isFinite(out.params.rcsBottomY)) out.params.rcsBottomY = defaults.params.rcsBottomY;
   }
-  
+    // Pneumatic pusher — pre-installed on every booster and stage. Purely
+// documentation for the fleet page; physics reads CONFIG.SEPARATION_ACC_CONST
+// directly and never reads this field.
+if (stageRole === 'booster' || stageRole === 'stage') {
+  out.pusherTypeId = r.pusherTypeId || 'pneumatic-pusher-n2';
+}
   backfillThrusterRecords(out, defaults);
   bridgePerfParams(out);
   return out;
@@ -2066,6 +2076,12 @@ function blankPayloadData() {
     height: 2, // m
     width: 1.5, // m
     dragCd: 0.3,
+    // Max stagnation-point heat flux the payload's TPS can survive.
+    // 20 kW/m² default — bare satellite with minimal shielding; fairing
+    // is the primary protection. Sutton-Graves model (physics side)
+    // compares the hypothetical open-fairing flux against this value to
+    // decide when it's safe to split the fairing.
+    maxHeatFlux: 20000, // W/m²
   };
 }
 
@@ -2078,6 +2094,12 @@ function addPayload(data) {
     height: Number.isFinite(data && data.height) ? data.height : 2,
     width: Number.isFinite(data && data.width) ? data.width : 1.5,
     dragCd: Number.isFinite(data && data.dragCd) ? data.dragCd : 0.3,
+    // TPS rating. Falls back to 20 kW/m² for records that predate this
+    // field (blankPayloadData always sets it, so this only matters for
+    // hand-written records or data imported from elsewhere).
+    maxHeatFlux: Number.isFinite(data && data.maxHeatFlux) && data.maxHeatFlux >= 0 ?
+      data.maxHeatFlux :
+      20000,
   };
   list.push(rec);
   savePayloads(list);

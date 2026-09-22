@@ -17,6 +17,7 @@
   var ctx = cv.getContext('2d');
 
   var W = 0, H = 0, DPR = Math.min(window.devicePixelRatio || 1, 2);
+  var traces = [];  // declared before resize() runs, so buildTraces()'s
 
   function resize() {
     W = cv.clientWidth;
@@ -24,6 +25,7 @@
     cv.width = Math.round(W * DPR);
     cv.height = Math.round(H * DPR);
     ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    buildTraces();
   }
   window.addEventListener('resize', resize);
   resize();
@@ -74,6 +76,128 @@
   }
 
   var GRID_HALF = 260, GRID_STEP = 26, GRID_Y = 34;
+
+  // ---- Circuit trace field ---------------------------------------------
+  // Orthogonal "PCB trace" routing across the full page — the ambient
+  // layer that carries the background past the hologram's hero zone.
+  // Deterministic-ish random walk on a grid: mostly right-angle turns,
+  // occasional 45° chamfered corners, the classic PCB-routing look.
+  function seededRandom(seed) {
+    var s = seed;
+    return function () {
+      s = (s * 9301 + 49297) % 233280;
+      return s / 233280;
+    };
+  }
+
+  function buildTraces() {
+    traces = [];
+    var GRID = 42;
+    var cols = Math.ceil(W / GRID), rows = Math.ceil(H / GRID);
+    var count = Math.max(16, Math.min(140, Math.round((W * H) / 42000)));
+    var rand = seededRandom(1337);
+    var dirs = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+
+    for (var i = 0; i < count; i++) {
+      var gx = Math.floor(rand() * cols);
+      var gy = Math.floor(rand() * rows);
+      var pts = [[gx * GRID, gy * GRID]];
+      var segCount = 4 + Math.floor(rand() * 6);
+      var lastDir = -1;
+      for (var s = 0; s < segCount; s++) {
+        var choices = [0, 1, 2, 3].filter(function (d) { return d !== ((lastDir + 2) % 4); });
+        var d = choices[Math.floor(rand() * choices.length)];
+        var len = (1 + Math.floor(rand() * 3)) * GRID;
+        gx += dirs[d][0] * (len / GRID);
+        gy += dirs[d][1] * (len / GRID);
+        gx = Math.max(0, Math.min(cols, gx));
+        gy = Math.max(0, Math.min(rows, gy));
+        var nx = gx * GRID, ny = gy * GRID;
+        pts.push([nx, ny]);
+        lastDir = d;
+      }
+      // de-dupe consecutive identical points
+      var clean = [pts[0]];
+      for (var p = 1; p < pts.length; p++) {
+        var pv = pts[p], pr = clean[clean.length - 1];
+        if (Math.abs(pv[0] - pr[0]) > 0.01 || Math.abs(pv[1] - pr[1]) > 0.01) clean.push(pv);
+      }
+      if (clean.length < 2) continue;
+
+      var cum = [0];
+      for (var c = 1; c < clean.length; c++) {
+        var dx = clean[c][0] - clean[c - 1][0], dy = clean[c][1] - clean[c - 1][1];
+        cum.push(cum[c - 1] + Math.sqrt(dx * dx + dy * dy));
+      }
+      traces.push({
+        pts: clean,
+        cum: cum,
+        total: cum[cum.length - 1],
+        speed: 55 + rand() * 70,
+        phase: rand() * 1000,
+        pulseLen: 30 + rand() * 40,
+        hue: rand() < 0.82 ? 'cyan' : 'orange',
+      });
+    }
+  }
+
+  function pointAt(trace, dist) {
+    var cum = trace.cum, pts = trace.pts;
+    dist = ((dist % trace.total) + trace.total) % trace.total;
+    for (var i = 1; i < cum.length; i++) {
+      if (dist <= cum[i]) {
+        var segLen = cum[i] - cum[i - 1];
+        var tt = segLen > 0 ? (dist - cum[i - 1]) / segLen : 0;
+        var a = pts[i - 1], b = pts[i];
+        return [a[0] + (b[0] - a[0]) * tt, a[1] + (b[1] - a[1]) * tt];
+      }
+    }
+    return pts[pts.length - 1];
+  }
+
+  function drawTraces(t) {
+    ctx.save();
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+
+    // base (dim, always-on) traces
+    ctx.lineWidth = 1.1;
+    traces.forEach(function (tr) {
+      ctx.strokeStyle = tr.hue === 'cyan' ? 'rgba(53,214,255,0.20)' : 'rgba(255,146,72,0.18)';
+      ctx.beginPath();
+      tr.pts.forEach(function (p, i) { i === 0 ? ctx.moveTo(p[0], p[1]) : ctx.lineTo(p[0], p[1]); });
+      ctx.stroke();
+      // via dots at the ends
+      ctx.fillStyle = tr.hue === 'cyan' ? 'rgba(53,214,255,0.32)' : 'rgba(255,146,72,0.32)';
+      [tr.pts[0], tr.pts[tr.pts.length - 1]].forEach(function (p) {
+        ctx.beginPath(); ctx.arc(p[0], p[1], 2.2, 0, Math.PI * 2); ctx.fill();
+      });
+    });
+
+    // traveling pulses
+    traces.forEach(function (tr) {
+      if (tr.total < 1) return;
+      var head = (t + tr.phase) * tr.speed;
+      var steps = 14;
+      ctx.lineWidth = 1.6;
+      for (var i = 0; i < steps; i++) {
+        var d0 = head - (i / steps) * tr.pulseLen;
+        var d1 = head - ((i + 1) / steps) * tr.pulseLen;
+        var a = pointAt(tr, d0), b = pointAt(tr, d1);
+        var fade = 1 - i / steps;
+        var alpha = 0.5 * fade * fade;
+        ctx.strokeStyle = tr.hue === 'cyan'
+          ? 'rgba(160,235,255,' + alpha.toFixed(3) + ')'
+          : 'rgba(255,195,150,' + alpha.toFixed(3) + ')';
+        ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke();
+      }
+      var headPt = pointAt(tr, head);
+      ctx.fillStyle = tr.hue === 'cyan' ? 'rgba(200,245,255,0.85)' : 'rgba(255,215,180,0.85)';
+      ctx.beginPath(); ctx.arc(headPt[0], headPt[1], 1.8, 0, Math.PI * 2); ctx.fill();
+    });
+
+    ctx.restore();
+  }
 
   // xf: world -> camera transform for this frame (spin + tilt + bob composed once)
   function drawFloor(t, xf, cx, cy, camZ, scale) {
@@ -166,6 +290,8 @@
 
   function draw(t) {
     ctx.clearRect(0, 0, W, H);
+
+    drawTraces(t);
 
     var cx = W * 0.5;
     var cy = 168;                    // anchored to the top hero zone, not full viewport height

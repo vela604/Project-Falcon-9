@@ -3,7 +3,7 @@
   --panel: #0d1424;
   --panel-2: #101a30;
   --panel-border: #1c2b45;
-  --glass-bg: rgba(13, 20, 38, 0.20);
+  --glass-bg: rgba(13, 20, 38, 0.30);
   --glass-bg-2: rgba(16, 26, 48, 0.32);
   --glass-border: rgba(255, 255, 255, 0.10);
   --cyan: #35d6ff;
@@ -36,8 +36,6 @@ html, body {
   height: 100%;
   z-index: 0;
   pointer-events: none;
-  -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 24%, transparent 52%);
-          mask-image: linear-gradient(to bottom, #000 0%, #000 24%, transparent 52%);
 }
 
 .holo-tag {

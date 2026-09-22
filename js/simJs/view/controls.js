@@ -346,12 +346,41 @@ if (ejectBtn) ejectBtn.addEventListener('click', () => {
 function bindTimeWarp() {
   document.querySelectorAll('.warp-btn').forEach(btn => {
     btn.addEventListener('click', () => {
+      if (btn.disabled) return;
       document.querySelectorAll('.warp-btn').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       const v = parseFloat(btn.dataset.warp) || 1;
       WorkerBridge.send({ type: 'warp', value: v });
     });
   });
+}
+
+// Guidance assumes a fixed physics tick cadence (dt = CONFIG.DT = 1/80).
+// Warp > 1× can drop ticks on slower devices (the physics worker's 12 ms
+// wall-clock budget clamps the number of substeps it can run per real
+// frame), so guidance's predictions desync from reality and the control
+// loop drifts. Lock warp to 1× whenever a guide is active. Called from
+// onGuidanceStatus — the guidance worker already pushes a status ack on
+// every start/stop, so this tracks run state automatically, including
+// auto-stops on crash/halt.
+function setWarpEnabled(enabled) {
+  const btns = document.querySelectorAll('.warp-btn');
+  btns.forEach(b => {
+    b.disabled = !enabled;
+    b.title = enabled ? '' : 'Guidance active — time warp locked to 1×';
+  });
+  if (!enabled) {
+    const activeBtn = document.querySelector('.warp-btn.active');
+    const currentVal = activeBtn ? (parseFloat(activeBtn.dataset.warp) || 1) : 1;
+    if (currentVal !== 1) {
+      document.querySelectorAll('.warp-btn').forEach(b => b.classList.remove('active'));
+      const oneX = document.querySelector('.warp-btn[data-warp="1"]');
+      if (oneX) oneX.classList.add('active');
+      if (typeof WorkerBridge !== 'undefined') {
+        WorkerBridge.send({ type: 'warp', value: 1 });
+      }
+    }
+  }
 }
 
 
@@ -718,6 +747,11 @@ function bindGuidanceToolbar() {
 // toolbar's live readout.
 function onGuidanceStatus(status) {
   const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+  
+  // Warp lock — guidance is active → force 1× and disable warp buttons.
+  // Auto-syncs on every status ack (start, stop, and any auto-stop).
+  setWarpEnabled(!(status && status.active));
+  
   if (!status || !status.active) {
     set('guideStatusText', 'STOPPED');
     set('guideStatusTicks', '—');
