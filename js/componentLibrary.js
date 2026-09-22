@@ -345,7 +345,7 @@ function buildThrusterMerlin1DClass() {
       twr: 184, // real Merlin 1D TWR (Wikipedia datasheet)
       maxMassFlowRate: 500, // generous cap; real max mdot ~320 kg/s
       gimbalCapable: true,
-      gimbalMaxDeg: 5, // real Merlin 1D gimbal range (sim had 20° — too high)
+      gimbalMaxDeg: 20, // real Merlin 1D gimbal range (sim had 20° — too high)
       gimbalRateDegS: 40,
       minThrottleFrac: 0.4, // real deep-throttle floor ~40%
       maxThrottleRateFrac: 0.5,
@@ -371,7 +371,7 @@ function buildThrusterMerlin1DVacClass() {
       twr: 200, // ~981 kN / (490 kg × G0)
       maxMassFlowRate: 350, // headroom above real max mdot ≈ 288 kg/s
       gimbalCapable: true,
-      gimbalMaxDeg: 5,
+      gimbalMaxDeg: 20,
       gimbalRateDegS: 40,
       minThrottleFrac: 0.4,
       maxThrottleRateFrac: 0.5,
@@ -628,20 +628,25 @@ function stripFunctions(type) {
   return JSON.parse(JSON.stringify(type, (k, v) => (typeof v === 'function' ? undefined : v)));
 }
 
+let _libraryCache = null;
+
 function loadComponentLibrary() {
+  if (_libraryCache) return _libraryCache;
   const seeded = seedComponentLibrary();
   let custom = [];
   try {
     const raw = localStorage.getItem(COMPONENT_LIBRARY_KEY);
     if (raw) custom = JSON.parse(raw).filter(t => !seeded.some(s => s.id === t.id));
-  } catch (e) { /* ignore, start fresh */ }
-  return [...seeded, ...custom];
+  } catch (e) {}
+  _libraryCache = [...seeded, ...custom];
+  return _libraryCache;
 }
 
 function saveCustomComponentTypes(types) {
   const seededIds = seedComponentLibrary().map(t => t.id);
   const custom = types.filter(t => !seededIds.includes(t.id)).map(stripFunctions);
   localStorage.setItem(COMPONENT_LIBRARY_KEY, JSON.stringify(custom));
+  _libraryCache = null; // ← add
 }
 
 function getComponentType(id) {

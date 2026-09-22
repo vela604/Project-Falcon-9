@@ -394,9 +394,25 @@ function figMemberMechanics(members, body, aero) {
   return out;
 }
 
+// Pick the velocity vector to display in the figure panel based on the
+// SAME checkbox that controls trajectory frame. When 'earthFixed' is
+// active, show Earth-relative velocity (inertial minus co-rotation),
+// otherwise inertial. Keeps the panel consistent with whatever frame
+// the trajectory overlay is currently showing.
+function _figureVelocityVector(body) {
+  if (!body) return { vx: 0, vy: 0 };
+  const earthFixed = (typeof trajectoryMode !== 'undefined' && trajectoryMode === 'earthFixed');
+  if (!earthFixed) return { vx: body.vx, vy: body.vy };
+  const w = (typeof CONFIG !== 'undefined' && Number.isFinite(CONFIG.EARTH_OMEGA)) ? CONFIG.EARTH_OMEGA : 0;
+  // Earth surface (co-rotating) velocity at this inertial position:
+  //   v_surface = (ω·ry, −ω·rx)
+  const svx = w * body.ry;
+  const svy = -w * body.rx;
+  return { vx: body.vx - svx, vy: body.vy - svy };
+}
+
 function drawFigurePanel() {
   if (!figCanvas || !figCtx) return;
-  
   // Re-derive the CSS↔buffer scale EVERY frame. The canvas backing buffer
   // is DPR-scaled (2×, 3× on retina); layout code below is written in CSS
   // pixels, so the ctx transform must map CSS → buffer. Reading clientWidth
@@ -673,9 +689,10 @@ drawRocketArt(figCtx, mW, mH, mpp, {
   // ---- Overall force/motion unit vectors (v / main thrust F / g) — kept
   // exactly as before, anchored on the overall stack CoM / stack base. ----
   if (showVectors) {
-    const vecLen = (totalH_m / mpp) * 0.32;
-    const vUnit = worldVectorToBodyUnit(body.vx, body.vy, body.theta);
-    if (vUnit) drawUnitVector(figCtx, baseX, comY_overall, vUnit.bx, vUnit.by, vecLen, '#ffdd55', 'v');
+  const vecLen = (totalH_m / mpp) * 0.32;
+  const vv = _figureVelocityVector(body);
+  const vUnit = worldVectorToBodyUnit(vv.vx, vv.vy, body.theta);
+  if (vUnit) drawUnitVector(figCtx, baseX, comY_overall, vUnit.bx, vUnit.by, vecLen, '#ffdd55', 'v');
     
     const fUnit = unitOf(lastForces.mainFx, lastForces.mainFy);
     if (fUnit) drawUnitVector(figCtx, baseX, baseY, fUnit.bx, fUnit.by, vecLen, '#ffaa33', 'F');
@@ -802,9 +819,10 @@ function drawFigurePanelFallback(body, w, h) {
   figCtx.fillText('CoP', cpX + 6, cpY + 3);
 
   if (showVectors) {
-    const vecLen = H * 0.32;
-    const vUnit = worldVectorToBodyUnit(body.vx, body.vy, body.theta);
-    if (vUnit) drawUnitVector(figCtx, baseX, comY, vUnit.bx, vUnit.by, vecLen, '#ffdd55', 'v');
+  const vecLen = H * 0.32;
+  const vv = _figureVelocityVector(body);
+  const vUnit = worldVectorToBodyUnit(vv.vx, vv.vy, body.theta);
+  if (vUnit) drawUnitVector(figCtx, baseX, comY, vUnit.bx, vUnit.by, vecLen, '#ffdd55', 'v');
     if (aero.speedRel > 0.2) {
       const dragUnit = worldVectorToBodyUnit(-aero.relVx / aero.speedRel, -aero.relVy / aero.speedRel, body.theta);
       if (dragUnit) drawUnitVector(figCtx, cpX, cpY, dragUnit.bx, dragUnit.by, vecLen * 0.7, 'rgba(255,120,90,0.9)', 'drag');

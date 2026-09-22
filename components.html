@@ -12,6 +12,13 @@
 </head>
 
 <body>
+  <canvas id="holoCanvas" aria-hidden="true"></canvas>
+  <div class="holo-tag" style="top:18%; left:6%;">OCTAWEB · 8+1</div>
+  <div class="holo-tag orange hide-sm" style="top:24%; right:7%; animation-delay:1.4s;">CENTER · GIMBAL-CAPABLE</div>
+  <div class="holo-tag hide-sm" style="top:33%; left:9%; animation-delay:2.6s;">MERGE TOPOLOGY · 4 SYMMETRIC PAIRS</div>
+  <div class="holo-tag hide-sm" style="top:40%; right:5%; animation-delay:3.8s;">RING SPACING · 45°</div>
+  <div class="holo-tag" style="top:47%; left:5%; animation-delay:5.1s;">SCANNING TYPE REGISTRY…</div>
+  
   <div id="compApp">
     
     <div id="topBar">
@@ -19,6 +26,10 @@
       <span class="brand-sub">Components Library</span>
       <div class="spacer"></div>
       <a class="btn" href="rockets.html">Vehicle Fleet →</a>
+    </div>
+    
+    <div class="holo-hero" aria-hidden="true">
+      <div class="holo-hero-label">OCTAWEB · MERLIN-CLASS 8+1 · LIVE TYPE REGISTRY</div>
     </div>
     
     <main id="main">
@@ -40,17 +51,17 @@
         </p>
       </div>
       
-     <div class="cat-tabs" id="catTabs">
-  <button class="cat-tab active" data-cat="engineLayout">Engine Layouts</button>
-  <button class="cat-tab" data-cat="recoveryMechanism">Recovery Mechanisms</button>
-  <button class="cat-tab" data-cat="rcsArrangement">RCS Arrangements</button>
-  <button class="cat-tab" data-cat="thruster">Thrusters</button>
-  <button class="cat-tab" data-cat="rcsThruster">RCS Thrusters</button>
-  <button class="cat-tab" data-cat="fairingRecovery">Fairing Recovery</button>
-  <button class="cat-tab" data-cat="fuel">Fuels</button>
-  <button class="cat-tab" data-cat="metal">Metals</button>
-  <button class="cat-tab" data-cat="payloadSpace">Payload Spaces</button>
-</div>
+      <div class="cat-tabs" id="catTabs">
+        <button class="cat-tab active" data-cat="engineLayout">Engine Layouts</button>
+        <button class="cat-tab" data-cat="recoveryMechanism">Recovery Mechanisms</button>
+        <button class="cat-tab" data-cat="rcsArrangement">RCS Arrangements</button>
+        <button class="cat-tab" data-cat="thruster">Thrusters</button>
+        <button class="cat-tab" data-cat="rcsThruster">RCS Thrusters</button>
+        <button class="cat-tab" data-cat="fairingRecovery">Fairing Recovery</button>
+        <button class="cat-tab" data-cat="fuel">Fuels</button>
+        <button class="cat-tab" data-cat="metal">Metals</button>
+        <button class="cat-tab" data-cat="payloadSpace">Payload Spaces</button>
+      </div>
       
       <div id="cardGrid" class="card-grid"></div>
       
@@ -59,6 +70,7 @@
   
   <script src="js/componentLibrary.js"></script>
   <script src="js/components.js"></script>
+  <script src="js/techBayBackground.js"></script>
 </body>
 
 </html>

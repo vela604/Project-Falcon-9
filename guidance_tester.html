@@ -1,0 +1,1425 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Guidance Tester — Rocket Sim</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #060912;
+  --panel: #0d1424;
+  --panel-2: #101a30;
+  --border: #1c2b45;
+  --cyan: #35d6ff;
+  --orange: #ff9248;
+  --green: #4ade80;
+  --yellow: #ffd23f;
+  --danger: #ff5f7e;
+  --text: #dbe6f5;
+  --dim: #6b7d9c;
+  --font-head: 'Space Grotesk', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Consolas', monospace;
+
+  /* log-table grid — set dynamically by JS after header build */
+  --log-cols: 13;
+}
+* { box-sizing: border-box; }
+html, body {
+  margin: 0; padding: 0; min-height: 100%;
+  background: var(--bg); color: var(--text);
+  font-family: var(--font-head); font-size: 14px;
+}
+#app { display: flex; flex-direction: column; min-height: 100vh; }
+
+#topBar {
+  display: flex; align-items: baseline; gap: 14px;
+  padding: 14px 24px;
+  background: linear-gradient(180deg, #101a30, #0b1220);
+  border-bottom: 1px solid var(--border);
+  font-family: var(--font-mono); font-size: 13px;
+}
+.brand { color: var(--cyan); font-weight: 700; letter-spacing: 0.5px; text-decoration: none; }
+.brand-sub { color: var(--dim); }
+.spacer { flex: 1; }
+a.back { color: var(--dim); text-decoration: none; font-size: 12px; }
+a.back:hover { color: var(--cyan); }
+
+#controls {
+  display: flex; align-items: center; gap: 14px;
+  padding: 12px 24px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+#controls label { color: var(--dim); font-family: var(--font-mono); font-size: 11.5px; }
+#controls select, #controls input[type=number] {
+  background: var(--panel-2); border: 1px solid var(--border); color: var(--text);
+  padding: 7px 10px; border-radius: 6px;
+  font-family: var(--font-mono); font-size: 12.5px;
+}
+#controls select:focus, #controls input:focus { outline: none; border-color: var(--cyan); }
+
+.btn {
+  background: var(--panel-2); border: 1px solid var(--border); color: var(--text);
+  padding: 8px 16px; border-radius: 7px; cursor: pointer;
+  font-family: var(--font-head); font-size: 12.5px; font-weight: 500;
+  transition: border-color .15s, color .15s, background .15s;
+}
+.btn:hover { border-color: var(--cyan); color: var(--cyan); }
+.btn-run { border-color: var(--green); color: var(--green); }
+.btn-run:hover { background: rgba(74,222,128,0.1); }
+.btn-stop { border-color: var(--danger); color: var(--danger); }
+.btn-stop:hover { background: rgba(255,95,126,0.1); }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* ---- Tunables panel (auto-generated per guide) ---- */
+#tunables {
+  background: #0a1020;
+  border-bottom: 1px solid var(--border);
+  padding: 12px 24px 14px;
+}
+.tunables-title {
+  color: var(--cyan);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  margin-bottom: 8px;
+}
+#tunablesBody {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 6px 18px;
+}
+.tunable-row {
+  display: flex; align-items: center; gap: 8px;
+  font-family: var(--font-mono); font-size: 11.5px;
+}
+.tunable-row label { flex: 1; color: var(--dim); overflow: hidden; text-overflow: ellipsis; }
+.tunable-row input {
+  width: 100px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 4px 6px;
+  border-radius: 4px;
+  font-family: var(--font-mono); font-size: 11.5px;
+}
+.tunable-row input:focus { outline: none; border-color: var(--cyan); }
+
+/* ---- Log table ---- */
+#output {
+  flex: 1; overflow-y: auto;
+  padding: 10px 20px 40px;
+  font-family: var(--font-mono); font-size: 11px;
+  line-height: 1.5;
+  background: #060912;
+}
+.log-header, .log-row {
+  display: grid;
+  grid-template-columns: repeat(var(--log-cols), minmax(58px, auto));
+  gap: 8px;
+  padding: 3px 6px;
+  white-space: nowrap;
+}
+.log-header {
+  position: sticky; top: 0;
+  background: linear-gradient(180deg, #0b1220, #060912);
+  border-bottom: 1px solid var(--border);
+  color: var(--cyan); font-weight: 700;
+  z-index: 2;
+}
+.log-row { border-bottom: 1px solid rgba(255,255,255,0.04); }
+.log-row:hover { background: rgba(53,214,255,0.04); }
+.log-row span { overflow: hidden; text-overflow: ellipsis; }
+
+/* Range highlights — colors match the graphs' reference lines:
+   yellow = X-axis refs, cyan = Y-axis refs, purple = speed circles. */
+.log-row span.hl-range-x  { background: rgba(255,210,63,0.16); color: #ffe58a; border-radius: 3px; padding: 0 4px; }
+.log-row span.hl-range-y  { background: rgba(126,225,255,0.16); color: #a5ecff; border-radius: 3px; padding: 0 4px; }
+.log-row span.hl-range-vt { background: rgba(255,210,63,0.16); color: #ffe58a; border-radius: 3px; padding: 0 4px; }
+.log-row span.hl-range-vr { background: rgba(126,225,255,0.16); color: #a5ecff; border-radius: 3px; padding: 0 4px; }
+.log-row span.hl-range-v  { background: rgba(167,139,250,0.20); color: #d4c5ff; border-radius: 3px; padding: 0 4px; }
+
+.log-footer {
+  margin-top: 16px; padding: 12px;
+  border: 1px solid var(--border); border-radius: 8px;
+  background: var(--panel); color: var(--green);
+  font-size: 12px;
+}
+
+#status {
+  color: var(--dim);
+  font-family: var(--font-mono); font-size: 11.5px;
+  padding: 6px 24px;
+  background: var(--panel);
+  border-top: 1px solid var(--border);
+}
+
+/* ---- Environment panel ---- */
+#envPanel {
+  background: #0a1020;
+  border-bottom: 1px solid var(--border);
+  padding: 10px 24px 12px;
+  display: flex;
+  gap: 28px;
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+.env-group {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.env-title {
+  color: var(--cyan);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  margin-bottom: 3px;
+}
+.env-group label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--dim);
+}
+.env-group input[type=number] {
+  width: 62px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 3px 6px;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+}
+.env-group input[type=number]:focus { outline: none; border-color: var(--cyan); }
+.env-group input[type=checkbox] { accent-color: var(--cyan); }
+
+
+/* ---- Trajectory plot panel ---- */
+#plotPanel {
+  background: #0a1020;
+  border-bottom: 1px solid var(--border);
+  padding: 10px 24px 12px;
+}
+.plot-title {
+  color: var(--cyan);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+#trajCanvas {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  background: #060912;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+#velCanvas {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  background: #060912;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+</style>
+</head>
+<body>
+<div id="app">
+
+  <div id="topBar">
+    <span class="brand">🚀 GUIDANCE TESTER</span>
+    <span class="brand-sub">Rocket Sim</span>
+    <div class="spacer"></div>
+    <a class="back" href="index.html">← Home</a>
+  </div>
+
+  <div id="controls">
+    <label for="guideSelect">Guide:</label>
+    <select id="guideSelect"></select>
+    <label for="durationInput">Duration (s):</label>
+    <input id="durationInput" type="number" value="160" min="1" max="2000" step="10" style="width:90px;">
+    <button class="btn btn-run" id="startBtn">▶ Run</button>
+    <button class="btn btn-stop" id="stopBtn" disabled>■ Stop</button>
+  </div>
+
+<div id="envPanel">
+  <div class="env-group">
+    <div class="env-title">Wind</div>
+    <label><input type="checkbox" id="envWindEnabled"> Enabled</label>
+    <label>Speed <input type="number" id="envWindSpeed" value="0" step="1" min="0" max="60"> m/s</label>
+    <label>Dir <input type="number" id="envWindDir" value="0" step="5" min="0" max="360"> °</label>
+  </div>
+  <div class="env-group">
+    <div class="env-title">Fuel</div>
+    <label>Load <input type="number" id="envFuelPct" value="100" step="5" min="0" max="100"> %</label>
+  </div>
+  <div class="env-group">
+    <div class="env-title">Physics</div>
+    <label><input type="checkbox" id="envAtmosphere" checked> Atmosphere</label>
+    <label><input type="checkbox" id="envSlosh" checked> Fuel slosh</label>
+  </div>
+  <div class="env-group">
+    <div class="env-title">Guidance</div>
+    <label><input type="checkbox" id="envImu"> IMU noise</label>
+  </div>
+</div>
+
+  <div id="tunables" style="display:none;">
+    <div class="tunables-title">Constants</div>
+    <div id="tunablesBody"></div>
+  </div>
+  <div id="plotPanel">
+  <div class="plot-title">Trajectory — Y alt (km) vs X range (km)</div>
+  <canvas id="trajCanvas"></canvas>
+</div>
+<div id="velPlotPanel" style="background:#0a1020;border-bottom:1px solid #1c2b45;padding:10px 24px 12px;">
+  <div class="plot-title">Velocity — Y vr (m/s) vs X vt (m/s)</div>
+  <canvas id="velCanvas"></canvas>
+</div>
+  <div id="output"></div>
+  <div id="status">Ready.</div>
+</div>
+
+<!-- ============ 1. Data layer + config ============ -->
+<script src="js/componentLibrary.js"></script>
+<script src="js/customDesign.js"></script>
+<script src="js/fleet.js"></script>
+<script src="js/config.js"></script>
+
+<!-- ============ 2. Core physics ============ -->
+<script src="js/simJs/core/massProps.js"></script>
+<script src="js/simJs/core/environment.js"></script>
+<script src="js/simJs/core/vehicle.js"></script>
+<script src="js/simJs/core/rcs.js"></script>
+<script src="js/simJs/core/physics.js"></script>
+<script src="js/simJs/core/collision.js"></script>
+<script src="js/simJs/core/trajectoryMath.js"></script>
+<script src="js/simJs/core/stateBuffer.js"></script>
+
+<!-- ============ 3. Guidance modules ============ -->
+<script src="js/simJs/guidance/imu.js"></script>
+<script src="js/simJs/guidance/derivation.js"></script>
+<script src="js/simJs/guidance/guidercs.js"></script>
+<script src="js/simJs/guidance/guidance.js"></script>
+
+<!-- ============ 4. Tester bootstrap ============ -->
+<script>
+(function () {
+  'use strict';
+
+  const out       = document.getElementById('output');
+  const statusEl  = document.getElementById('status');
+  const sel       = document.getElementById('guideSelect');
+  const durInput  = document.getElementById('durationInput');
+  const startBtn  = document.getElementById('startBtn');
+  const stopBtn   = document.getElementById('stopBtn');
+  const tunPanel  = document.getElementById('tunables');
+  const tunBody   = document.getElementById('tunablesBody');
+
+  // ---------------------------------------------------------------------------
+  // 0. Stack members + guidance stack data (unchanged from original)
+  // ---------------------------------------------------------------------------
+  const members = (typeof getActiveStackMembers === 'function') ? getActiveStackMembers() : [];
+  window.SIM_STACK_MEMBERS = members;
+
+  if (!members.length) {
+    statusEl.textContent = '⚠ No active stack in fleet. Sim will fly whatever resetState produces.';
+  } else {
+    statusEl.textContent = `Active stack: ${members.map(m => m.name).join(' → ')}`;
+  }
+
+  function _stripFns(obj) {
+    return JSON.parse(JSON.stringify(obj, (k, v) => (typeof v === 'function' ? undefined : v)));
+  }
+
+  function collectStackData() {
+    const typeIds = new Set();
+    members.forEach(m => {
+      if (m.engineTypeId) typeIds.add(m.engineTypeId);
+      if (m.recoveryTypeId && m.hasRecovery !== false) typeIds.add(m.recoveryTypeId);
+      if (m.rcsTypeId) typeIds.add(m.rcsTypeId);
+      if (m.bodyMetalTypeId) typeIds.add(m.bodyMetalTypeId);
+      if (m.legsMetalTypeId) typeIds.add(m.legsMetalTypeId);
+      if (m.payloadSpaceTypeId) typeIds.add(m.payloadSpaceTypeId);
+      if (m.payloadSpaceMetalTypeId) typeIds.add(m.payloadSpaceMetalTypeId);
+      if (m.fuel && m.fuel.typeId) typeIds.add(m.fuel.typeId);
+      if (m.engineThrusters) {
+        Object.keys(m.engineThrusters).forEach(gk => {
+          const g = m.engineThrusters[gk];
+          if (g && g.thrusterTypeId) typeIds.add(g.thrusterTypeId);
+        });
+      }
+      if (m.rcsThruster && m.rcsThruster.thrusterTypeId) typeIds.add(m.rcsThruster.thrusterTypeId);
+      if (m.payloadSpace && m.payloadSpace.typeId) typeIds.add(m.payloadSpace.typeId);
+      if (m.payloadSpace && m.payloadSpace.metalTypeId) typeIds.add(m.payloadSpace.metalTypeId);
+      if (m.chuteTypeId) typeIds.add(m.chuteTypeId);
+    });
+    const types = {};
+    typeIds.forEach(id => {
+      const t = (typeof getComponentType === 'function') ? getComponentType(id) : null;
+      if (t) types[id] = _stripFns(t);
+    });
+    const activeStk = (typeof getActiveStack === 'function') ? getActiveStack() : null;
+    const derived = (activeStk && activeStk.derived) ? activeStk.derived : null;
+    let stackPayloadMass = 0;
+    if (activeStk && activeStk.payloadId && typeof getPayload === 'function') {
+      const pl = getPayload(activeStk.payloadId);
+      if (pl && Number.isFinite(pl.mass)) stackPayloadMass = pl.mass;
+    }
+    return {
+      members: members.map(_stripFns),
+      types,
+      stackPayloadMass,
+      derived,
+      env: {
+        EARTH_RADIUS: CONFIG.EARTH_RADIUS,
+        GM_EARTH: CONFIG.GM_EARTH,
+        EARTH_OMEGA: CONFIG.EARTH_OMEGA,
+        LAUNCH_SITE_ALTITUDE: CONFIG.LAUNCH_SITE_ALTITUDE,
+        LAUNCH_SITE_ANGLE_0: CONFIG.LAUNCH_SITE_ANGLE_0,
+        G0: (typeof G0 !== 'undefined') ? G0 : 9.80665,
+        SEA_LEVEL_DENSITY: CONFIG.SEA_LEVEL_DENSITY,
+        SCALE_HEIGHT: CONFIG.SCALE_HEIGHT,
+        DRAG_CD: CONFIG.DRAG_CD,
+        DT: CONFIG.DT,
+        GIMBAL_MAX_DEG: CONFIG.GIMBAL_MAX_DEG,
+        GIMBAL_RATE_DEG_S: CONFIG.GIMBAL_RATE_DEG_S,
+      },
+    };
+  }
+
+  Derivation.setStackData(collectStackData());
+
+  // ---------------------------------------------------------------------------
+  // Snapshot builder (unchanged)
+  // ---------------------------------------------------------------------------
+  function buildSnapshot() {
+    const bodies = state.bodies.map((b, i) => ({
+      rx: b.rx, ry: b.ry, vx: b.vx, vy: b.vy, theta: b.theta, omega: b.omega,
+      ax: b._lastAccelX || 0, ay: b._lastAccelY || 0,
+      height: b.height, width: b.width, dryMass: b.dryMass,
+      fuelMass: b.fuelMass,
+      crashed: !!b.crashed, landed: !!b.landed,
+      isActive: i === state.activeBodyIndex,
+      isDiscarded: !!b.isDiscarded, settled: !!b.settled,
+      emergencyEject: !!b.emergencyEject,
+      payloadId: b.payloadId || null,
+      payloadReleased: !!b.payloadReleased,
+      members: b.members || [],
+      legs: b.legs ? { deployed: !!b.legs.deployed, progress: b.legs.progress || 0 } : null,
+      slosh: b.slosh ? { offset: b.slosh.offset || 0, velocity: b.slosh.velocity || 0 } : null,
+      engines: (b.engines || []).map(e => ({
+        id: e.id, angleDeg: e.angleDeg, x: e.x,
+        isCenter: e.isCenter, gimbal: e.gimbal, Ve: e.Ve,
+        maxMassFlowRate: e.maxMassFlowRate,
+        massFlowRate: e.massFlowRate, currentF: e.currentF,
+        gimbalDeg: e.gimbalDeg,
+        targetGimbalRateDegS: e.targetGimbalRateDegS,
+      })),
+      rcsCmd: b.rcsCmd || null,
+      rcsDuty: b.rcsDuty || null,
+      pods: (typeof buildPodEntries === 'function') ? buildPodEntries(b) : [],
+    }));
+    const windSnap = (typeof wind !== 'undefined') ? {
+      enabled: !!wind.enabled, speed: wind.speed || 0, directionDeg: wind.directionDeg || 0,
+    } : { enabled: false, speed: 0, directionDeg: 0 };
+    return {
+      simTime: state.simTime,
+      activeBodyIndex: state.activeBodyIndex,
+      halted: !!state.halted,
+      wind: windSnap,
+      bodies,
+    };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Local dispatch (unchanged)
+  // ---------------------------------------------------------------------------
+  function clampFlow(en, cmd) {
+    if (!(cmd > 0)) return 0;
+    const capped = Math.min(cmd, en.maxMassFlowRate || 0);
+    return Math.max(capped, en.minMassFlowRate || 0);
+  }
+
+  function localDispatch(msg) {
+    const b = state.bodies[state.activeBodyIndex];
+    if (!b) return;
+    switch (msg.type) {
+      case 'setGimbalRate': {
+        if (!b.engines) break;
+        const lim = CONFIG.GIMBAL_RATE_DEG_S;
+        const rate = Math.max(-lim, Math.min(lim, msg.degPerSec));
+        b.engines.filter(en => en.gimbal).forEach(en => { en.targetGimbalRateDegS = rate; });
+        break;
+      }
+      case 'setGimbal': {
+        if (!b.engines) break;
+        const lim = CONFIG.GIMBAL_MAX_DEG;
+        const d = Math.max(-lim, Math.min(lim, msg.deg));
+        b.engines.filter(en => en.gimbal).forEach(en => {
+          en.targetGimbalDeg = d;
+          en.targetGimbalRateDegS = NaN;
+        });
+        break;
+      }
+      case 'setAllThrottle': {
+        if (!b.engines) break;
+        b.engines.forEach(en => { en.targetMassFlowRate = clampFlow(en, msg.value); });
+        break;
+      }
+      case 'setCenterThrottle': {
+        if (!b.engines) break;
+        b.engines.filter(en => en.isCenter).forEach(en => {
+          en.targetMassFlowRate = clampFlow(en, msg.value);
+        });
+        break;
+      }
+      case 'setGroupThrottle': {
+        if (!b.engines) break;
+        (msg.angles || []).forEach(a => {
+          const en = b.engines.find(e => e.angleDeg === a);
+          if (en) en.targetMassFlowRate = clampFlow(en, msg.value);
+        });
+        break;
+      }
+      case 'rcs': {
+        if (!b.rcsCmd) b.rcsCmd = {};
+        b.rcsCmd[msg.key] = !!msg.on;
+        b.rcsDuty = null;
+        break;
+      }
+      case 'rcsDuty': {
+        if (msg.duties == null) b.rcsDuty = null;
+        else b.rcsDuty = msg.duties;
+        break;
+      }
+      case 'legs': {
+        if (!b.legs) b.legs = { deployed: false, progress: 0 };
+        b.legs.deployed = !!msg.deployed;
+        break;
+      }
+      default: break;
+    }
+  }
+
+  Guidance.init(localDispatch);
+
+  // ---------------------------------------------------------------------------
+  // 1. Populate guide dropdown
+  // ---------------------------------------------------------------------------
+  const guides = (Guidance.listGuides && Guidance.listGuides()) || [];
+  sel.innerHTML = guides.length
+    ? guides.map(g => `<option value="${g}">${g}</option>`).join('')
+    : '<option value="">(no guides registered)</option>';
+
+  // ---------------------------------------------------------------------------
+  // 2. Per-guide tunable schema — pulled live from Guidance getters
+  //    (falls back gracefully if the getter isn't exposed).
+  // ---------------------------------------------------------------------------
+  function _stepFor(key) {
+    if (/SIGN|THRESHOLD|FRAC|K_DAMP|K_DQ|K_P|K_D|K_I|K_LEAD|T_SCALE/.test(key)) return 'any';
+    if (/KM|_S$|S$/.test(key)) return 0.5;
+    if (/DEG/.test(key)) return 0.1;
+    if (/Q_SCALE|Q_REF/.test(key)) return 100;
+    return 'any';
+  }
+
+  function tunableFieldsFor(guideName) {
+    try {
+      if (guideName === 'ascentAoaHold' && typeof Guidance.getAscentHoldConfig === 'function') {
+        const c = Guidance.getAscentHoldConfig();
+        return Object.keys(c).map(k => ({ key: k, value: c[k], step: _stepFor(k) }));
+      }
+      if (guideName === 'ascentRR' && typeof Guidance.getAscentRRConfig === 'function') {
+        const c = Guidance.getAscentRRConfig();
+        return Object.keys(c).map(k => ({ key: k, value: c[k], step: _stepFor(k) }));
+      }
+      if (guideName === 'predictivePlus' && typeof Guidance.getPredictiveGains === 'function') {
+        const c = Guidance.getPredictiveGains();
+        return Object.keys(c).map(k => ({ key: k, value: c[k], step: _stepFor(k) }));
+      }
+      if (guideName === 'predictivePlusAoAPush') {
+        return [{ key: 'SWEEP_S', value: 10.0, step: 0.5 }];
+      }
+    } catch (e) {
+      console.warn('[tester] tunableFieldsFor failed for', guideName, e);
+    }
+    return [];
+  }
+
+  // Per-guide persisted input state (in-memory, per page load).
+  const tunablesState = {}; // guideName → { key: value }
+
+  function renderTunablesFor(guideName) {
+    const fields = tunableFieldsFor(guideName);
+    if (!fields.length) {
+      tunPanel.style.display = 'none';
+      tunBody.innerHTML = '';
+      return;
+    }
+    tunPanel.style.display = 'block';
+    if (!tunablesState[guideName]) {
+      tunablesState[guideName] = {};
+      fields.forEach(f => { tunablesState[guideName][f.key] = f.value; });
+    }
+    tunBody.innerHTML = fields.map(f => {
+      const v = tunablesState[guideName][f.key];
+      return `<div class="tunable-row">
+        <label for="tn_${f.key}" title="${f.key}">${f.key}</label>
+        <input type="number" id="tn_${f.key}" data-key="${f.key}" value="${v}" step="${f.step}">
+      </div>`;
+    }).join('');
+    tunBody.querySelectorAll('input').forEach(inp => {
+      inp.addEventListener('input', (e) => {
+        const v = parseFloat(e.target.value);
+        if (Number.isFinite(v)) tunablesState[guideName][e.target.dataset.key] = v;
+      });
+    });
+  }
+
+  function applyTunables(guideName) {
+    const t = tunablesState[guideName];
+    if (!t) return;
+    try {
+      if (guideName === 'ascentAoaHold') Guidance.setAscentHold(t);
+      else if (guideName === 'ascentRR') Guidance.setAscentRR(t);
+      else if (guideName === 'predictivePlus') Guidance.setPredictiveGains(t);
+      else if (guideName === 'predictivePlusAoAPush') {
+        if (Number.isFinite(t.SWEEP_S)) Guidance.setSweepDuration(t.SWEEP_S);
+      }
+    } catch (e) {
+      console.warn('[tester] applyTunables failed for', guideName, e);
+    }
+  }
+
+  sel.addEventListener('change', () => renderTunablesFor(sel.value));
+
+  // ---------------------------------------------------------------------------
+  // 3. Per-guide status columns (guide-specific status fields pulled from
+  //    getStatus()). Common physics columns always shown.
+  // ---------------------------------------------------------------------------
+  const COMMON_COLUMNS = [
+    { key: '_t',       label: 't' },
+    { key: '_alt',     label: 'alt km', fmt: v => v.toFixed(3) },
+    { key: '_down',    label: 'down km', fmt: v => v.toFixed(3) },
+    { key: '_v',       label: 'v m/s',  fmt: v => v.toFixed(1) },
+    { key: '_vr',      label: 'vr',     fmt: v => v.toFixed(1) },
+    { key: '_vt',      label: 'vt',     fmt: v => v.toFixed(1) },
+    { key: '_thetaRel',label: 'θ°',     fmt: v => v.toFixed(3) },
+    { key: '_aoa',     label: 'AoA°',   fmt: v => v.toFixed(3) },
+    { key: '_omegaRel',label: 'ω°/s',   fmt: v => v.toFixed(4) },
+    { key: '_gimbal',  label: 'gimbal°',fmt: v => v.toFixed(3) },
+    { key: '_thr',     label: 'thr kN', fmt: v => v.toFixed(1) },
+    { key: '_fuel',    label: 'fuel t', fmt: v => v.toFixed(1) },
+    { key: '_mass',    label: 'mass t', fmt: v => v.toFixed(2) },
+  ];
+
+  const GUIDE_COLUMNS = {
+    ascentRR: [
+      { key: 'phase',       label: 'phase' },
+      { key: 'mode',        label: 'mode' },
+      { key: 'paused',      label: 'pause', fmt: v => v ? 'Y' : 'N' },
+      { key: 'deltaDeg',    label: 'Δθ°',   fmt: v => v.toFixed(3) },
+      { key: 'thetaErr',    label: 'θ_err', fmt: v => v.toFixed(4) },
+      { key: 'Q',           label: 'Q kPa', fmt: v => (v / 1000).toFixed(2) },
+      { key: 'tauDesired',  label: 'τ_des', fmt: v => v.toFixed(0) },
+      { key: 'tauDrag',     label: 'τ_drag',fmt: v => v.toFixed(0) },
+      { key: 'gRate',       label: 'gRate', fmt: v => v.toFixed(2) },
+    ],
+    ascentAoaHold: [
+      { key: 'phase',       label: 'phase' },
+      { key: 'aoaDeg',      label: 'AoA°',   fmt: v => v.toFixed(3) },
+      { key: 'aoaNextDeg',  label: 'AoA_N1°',fmt: v => v.toFixed(3) },
+      { key: 'omegaAoANow', label: 'ω_AoA',  fmt: v => v.toExponential(2) },
+      { key: 'omegaAoANext',label: 'ω_AoA_N1', fmt: v => v.toExponential(2) },
+      { key: 'alphaAoANext',label: 'α_AoA_N1', fmt: v => v.toExponential(2) },
+      { key: 'dQ',          label: 'dQ',     fmt: v => v.toFixed(0) },
+      { key: 'tauDQ',       label: 'τ_dQ',   fmt: v => v.toFixed(0) },
+      { key: 'tauDesired',  label: 'τ_des',  fmt: v => v.toFixed(0) },
+      { key: 'tauDrag',     label: 'τ_drag', fmt: v => v.toFixed(0) },
+      { key: 'gRate',       label: 'gRate',  fmt: v => v.toFixed(2) },
+    ],
+    gimbalPredictive2: [
+      { key: 'gN',     label: 'g_N°',  fmt: v => v.toFixed(3) },
+      { key: 'gN1',    label: 'g_N1°', fmt: v => v.toFixed(3) },
+      { key: 'gReq',   label: 'g_req°',fmt: v => v.toFixed(3) },
+      { key: 'RReq',   label: 'R_req', fmt: v => v.toFixed(2) },
+      { key: 'RCmd',   label: 'R_cmd', fmt: v => v.toFixed(2) },
+      { key: 'tauDrag2',label: 'τ_drag',fmt: v => v.toFixed(0) },
+      { key: 'saturated',label: 'sat', fmt: v => v ? 'Y' : 'N' },
+    ],
+    predictivePlus: [
+      { key: 'lastThetaError',   label: 'θ_err', fmt: v => v.toFixed(4) },
+      { key: 'lastOmega',        label: 'ω',     fmt: v => v.toFixed(4) },
+      { key: 'lastTarget',       label: 'τ_tgt', fmt: v => v.toFixed(0) },
+      { key: 'lastAchieved',     label: 'τ_ach', fmt: v => v.toFixed(0) },
+      { key: 'lastFires',        label: 'fires' },
+      { key: 'lastSaturated',    label: 'sat',   fmt: v => v ? 'Y' : 'N' },
+    ],
+    predictivePlusAoAPush: [
+      { key: 'phase',    label: 'phase' },
+      { key: 'elapsed',  label: 'elap',  fmt: v => v.toFixed(2) },
+      { key: 'lastThetaError', label: 'θ_err', fmt: v => v.toFixed(4) },
+      { key: 'lastDaoA', label: 'dAoA',  fmt: v => v.toExponential(2) },
+      { key: 'lastTarget',label: 'τ_tgt',fmt: v => v.toFixed(0) },
+      { key: 'lastFires', label: 'fires' },
+    ],
+    predictVerifier: [
+      { key: 'nCompared',            label: 'n' },
+      { key: 'nSkipped',             label: 'skip' },
+      { key: 'meanAbsErrTq',         label: 'τ err',  fmt: v => v.toFixed(1) },
+      { key: 'meanAbsErrAlphaDeg',   label: 'α err',  fmt: v => v.toExponential(2) },
+      { key: 'meanAbsErrDragN',      label: 'drag err', fmt: v => v.toFixed(1) },
+      { key: 'meanAbsErrQPa',        label: 'Q err',  fmt: v => v.toFixed(1) },
+    ],
+    testGuide: [
+      { key: 'lastTarget',   label: 'τ_tgt', fmt: v => v.toFixed(0) },
+      { key: 'lastAchieved', label: 'τ_ach', fmt: v => v.toFixed(0) },
+      { key: 'lastFires',    label: 'fires' },
+      { key: 'lastSaturated',label: 'sat',   fmt: v => v ? 'Y' : 'N' },
+    ],
+  };
+
+  function activeColumns(guideName) {
+    return COMMON_COLUMNS.concat(GUIDE_COLUMNS[guideName] || []);
+  }
+
+  function updateGridColumnCount(n) {
+    document.documentElement.style.setProperty('--log-cols', String(n));
+  }
+
+  function buildHeader(guideName) {
+    const cols = activeColumns(guideName);
+    updateGridColumnCount(cols.length);
+    return '<div class="log-header">' + cols.map(c => `<span>${c.label}</span>`).join('') + '</div>';
+  }
+
+  // ---------------------------------------------------------------------------
+  // 4. Row formatter — computes physics-derived values fresh from state,
+  //    merges in guide status fields by key.
+  // ---------------------------------------------------------------------------
+  function computePhysicsRow(snap) {
+    const idx = state.activeBodyIndex;
+    const b = state.bodies[idx];
+    if (!b) return null;
+
+    const r = Math.hypot(b.rx, b.ry) || 1;
+    const alt = r - CONFIG.EARTH_RADIUS;
+    const localVert = Math.atan2(-b.rx, b.ry);
+    const phiI = Math.atan2(b.rx, b.ry);
+    const phiEF = phiI - CONFIG.EARTH_OMEGA * state.simTime;
+    const downArc = CONFIG.EARTH_RADIUS * (phiEF - (CONFIG.LAUNCH_SITE_ANGLE_0 || 0));
+
+    const ux = b.rx / r, uy = b.ry / r;
+    const ex = b.ry / r, ey = -b.rx / r;
+    const vr = b.vx * ux + b.vy * uy;
+    const vt = (b.vx * ex + b.vy * ey) - CONFIG.EARTH_OMEGA * r;
+
+    const d = Derivation.derive(snap, idx);
+    const aoa = d ? d.alphaDeg : 0;
+    const mass = d && d.massProps ? d.massProps.M : 0;
+
+    const gimbals = (b.engines || []).filter(e => e.gimbal);
+    const gimbalDeg = gimbals.length ? (gimbals[0].gimbalDeg || 0) : 0;
+    const thrust = (b.engines || []).reduce((s, e) => s + (e.currentF || 0), 0);
+
+    return {
+      _t:        state.simTime,
+      _alt:      alt / 1000,
+      _down:     downArc / 1000,
+      _v:        Math.hypot(b.vx, b.vy),
+      _vr:       vr,
+      _vt:       vt,
+      _thetaRel: (b.theta - localVert) * 180 / Math.PI,
+      _aoa:      aoa,
+      _omegaRel: (b.omega + CONFIG.EARTH_OMEGA) * 180 / Math.PI,
+      _gimbal:   gimbalDeg,
+      _thr:      thrust / 1000,
+      _fuel:     (b.fuelMass || 0) / 1000,
+      _mass:     mass / 1000,
+    };
+  }
+
+  function formatCell(col, value) {
+    if (value === undefined || value === null) return '—';
+    if (typeof value === 'string') return value;
+    if (typeof value === 'number') {
+      if (!Number.isFinite(value)) return '—';
+      return col.fmt ? col.fmt(value) : value.toFixed(3);
+    }
+    if (typeof value === 'boolean') return value ? 'true' : 'false';
+    return String(value);
+  }
+
+// Range references — mirror the dashed lines / circles drawn on the
+// two graphs. A cell whose value falls inside its range gets a
+// matching highlight class. Units match physRow:
+//   _down / _alt in km, _vt / _vr in m/s.
+const HIGHLIGHT_RANGES = [
+  { key: '_down', lo: 45, hi: 55, cls: 'hl-range-x' },
+  { key: '_alt', lo: 65, hi: 72, cls: 'hl-range-y' },
+  { key: '_vt', lo: 900, hi: 1100, cls: 'hl-range-vt' },
+  { key: '_vr', lo: 1150, hi: 1350, cls: 'hl-range-vr' },
+];
+
+function highlightClasses(physRow) {
+  const out = {};
+  HIGHLIGHT_RANGES.forEach(r => {
+    const v = physRow[r.key];
+    if (Number.isFinite(v) && v >= r.lo && v <= r.hi) out[r.key] = r.cls;
+  });
+  // Speed circle — |v| = sqrt(vt² + vr²), both earth-relative. Highlight
+  // goes on the _v column, but the CHECK uses the earth-relative
+  // magnitude the circles actually represent.
+  const vSpeed = Math.hypot(physRow._vt || 0, physRow._vr || 0);
+  if (vSpeed >= 1550 && vSpeed <= 1700) out._v = 'hl-range-v';
+  return out;
+}
+
+function buildRow(guideName, physRow, status) {
+  const cols = activeColumns(guideName);
+  const hl = highlightClasses(physRow);
+  const cells = cols.map(col => {
+    let v;
+    if (col.key in physRow) v = physRow[col.key];
+    else if (status && col.key in status) v = status[col.key];
+    else v = undefined;
+    const cls = hl[col.key] ? ` class="${hl[col.key]}"` : '';
+    return `<span${cls}>${formatCell(col, v)}</span>`;
+  });
+  return '<div class="log-row">' + cells.join('') + '</div>';
+}
+
+
+// ---------------------------------------------------------------------------
+// 4b. Trajectory plot — live X (downrange) vs Y (altitude)
+// ---------------------------------------------------------------------------
+const trajCanvas = document.getElementById('trajCanvas');
+const trajCtx = trajCanvas.getContext('2d');
+
+// Each entry is { color, points:[{down, alt}] }. Previous runs stay
+// on-screen (dimmed) so successive tuning passes can be compared
+// visually. The latest run is highlighted.
+const _TRAJ_COLORS = [
+  '#35d6ff', '#4ade80', '#ffd23f', '#ff5fa8',
+  '#a78bfa', '#ff9248', '#7ee1ff', '#ff5f7e',
+];
+let trajRuns = [];
+let _trajRunIdx = 0;
+
+function startNewTrajRun() {
+  const color = _TRAJ_COLORS[_trajRunIdx % _TRAJ_COLORS.length];
+  _trajRunIdx++;
+  trajRuns.push({ color, points: [] });
+  drawTraj();
+}
+
+function clearAllTrajRuns() {
+  trajRuns = [];
+  _trajRunIdx = 0;
+  drawTraj();
+}
+
+function pushTraj(downKm, altKm) {
+  if (!trajRuns.length) startNewTrajRun();
+  trajRuns[trajRuns.length - 1].points.push({ down: downKm, alt: altKm });
+  drawTraj();
+}
+
+
+// ---------------------------------------------------------------------------
+// 4c. Velocity plot — Y = vr (radial), X = vt (tangential)
+// ---------------------------------------------------------------------------
+const velCanvas = document.getElementById('velCanvas');
+const velCtx = velCanvas.getContext('2d');
+let velRuns = [];
+let _velRunIdx = 0;
+
+function startNewVelRun() {
+  const color = _TRAJ_COLORS[_velRunIdx % _TRAJ_COLORS.length];
+  _velRunIdx++;
+  velRuns.push({ color, points: [] });
+  drawVel();
+}
+
+function pushVel(vt, vr) {
+  if (!velRuns.length) startNewVelRun();
+  velRuns[velRuns.length - 1].points.push({ vt, vr });
+  drawVel();
+}
+
+function drawVel() {
+  const dpr = window.devicePixelRatio || 1;
+  const cssW = velCanvas.clientWidth || 600;
+  const cssH = velCanvas.clientHeight || 220;
+  if (velCanvas.width !== Math.round(cssW * dpr) ||
+      velCanvas.height !== Math.round(cssH * dpr)) {
+    velCanvas.width  = Math.round(cssW * dpr);
+    velCanvas.height = Math.round(cssH * dpr);
+  }
+  const ctx = velCtx;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const W = cssW, H = cssH;
+  ctx.clearRect(0, 0, W, H);
+
+  const padL = 50, padR = 14, padT = 14, padB = 28;
+  const plotW = W - padL - padR;
+  const plotH = H - padT - padB;
+  if (plotW <= 10 || plotH <= 10) return;
+
+  // Data range — auto, no clamping (vr goes negative past apogee).
+  let xMin = 0, xMax = 1, yMin = 0, yMax = 1;
+  let anyPt = false;
+  velRuns.forEach(r => {
+    r.points.forEach(p => {
+      anyPt = true;
+      if (p.vt > xMax) xMax = p.vt;
+      if (p.vr > yMax) yMax = p.vr;
+      if (p.vt < xMin) xMin = p.vt;
+      if (p.vr < yMin) yMin = p.vr;
+    });
+  });
+if (xMax - xMin < 10) xMax = xMin + 10;
+if (yMax - yMin < 10) yMax = yMin + 10;
+
+// Floors — X and Y both default to 0. Follow below-0 only if the
+// data actually goes there (vr goes negative past apogee; vt on
+// westward rotation).
+const floorX = Math.min(0, xMin);
+const floorY = Math.min(0, yMin);
+
+const xPad = (xMax - floorX) * 0.08;
+const yPad = (yMax - floorY) * 0.08;
+xMax += xPad;
+yMax += yPad;
+xMin = floorX;
+yMin = floorY;
+
+// 1:1 aspect — one m/s on X = one m/s on Y.
+const spanX = xMax - xMin;
+const spanY = yMax - yMin;
+const plotAspect = plotW / plotH;
+let newSpanX, newSpanY;
+if (spanX / spanY > plotAspect) {
+  newSpanX = spanX;
+  newSpanY = spanX / plotAspect;
+} else {
+  newSpanY = spanY;
+  newSpanX = spanY * plotAspect;
+}
+const cxData = (xMin + xMax) / 2;
+const cyData = (yMin + yMax) / 2;
+xMin = cxData - newSpanX / 2;
+xMax = cxData + newSpanX / 2;
+yMin = cyData - newSpanY / 2;
+yMax = cyData + newSpanY / 2;
+if (xMin < floorX) { const s = floorX - xMin; xMin += s; xMax += s; }
+if (yMin < floorY) { const s = floorY - yMin; yMin += s; yMax += s; }
+
+  const tx = (v) => padL + (v - xMin) / (xMax - xMin) * plotW;
+  const ty = (v) => padT + plotH - (v - yMin) / (yMax - yMin) * plotH;
+
+  // Grid
+  ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  for (let i = 0; i <= 4; i++) {
+    const y = padT + i * plotH / 4;
+    ctx.moveTo(padL, y); ctx.lineTo(padL + plotW, y);
+  }
+  for (let i = 0; i <= 4; i++) {
+    const x = padL + i * plotW / 4;
+    ctx.moveTo(x, padT); ctx.lineTo(x, padT + plotH);
+  }
+  ctx.stroke();
+
+// Permanent reference lines — X = 1250, 1390 (vertical) and
+// Y = 830, 970 (horizontal). Same styling as trajectory graph.
+ctx.save();
+ctx.setLineDash([5, 4]);
+ctx.lineWidth = 1;
+ctx.strokeStyle = 'rgba(255,210,63,0.55)';
+[1250, 1390].forEach(xv => {
+  if (xv < xMin || xv > xMax) return;
+  const x = tx(xv);
+  ctx.beginPath();
+  ctx.moveTo(x, padT);
+  ctx.lineTo(x, padT + plotH);
+  ctx.stroke();
+  ctx.fillStyle = 'rgba(255,210,63,0.85)';
+  ctx.font = '9px "JetBrains Mono", monospace';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'bottom';
+  ctx.fillText('x=' + xv, x, padT - 2);
+});
+ctx.strokeStyle = 'rgba(126,225,255,0.55)';
+[830, 970].forEach(yv => {
+  if (yv < yMin || yv > yMax) return;
+  const y = ty(yv);
+  ctx.beginPath();
+  ctx.moveTo(padL, y);
+  ctx.lineTo(padL + plotW, y);
+  ctx.stroke();
+  ctx.fillStyle = 'rgba(126,225,255,0.85)';
+  ctx.font = '9px "JetBrains Mono", monospace';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('y=' + yv, padL + 3, y - 2);
+});
+ctx.restore();
+
+// Speed circles — concentric arcs centered at origin, radius
+// |v| = 1670 and 1750 m/s. Since aspect is 1:1, both axes share
+// the same px-per-unit, so an arc radius in data units maps to
+// pixels with a single scale factor. Clipped to the plot rect.
+ctx.save();
+ctx.beginPath();
+ctx.rect(padL, padT, plotW, plotH);
+ctx.clip();
+ctx.setLineDash([3, 5]);
+ctx.lineWidth = 1;
+ctx.strokeStyle = 'rgba(167,139,250,0.65)';
+const arcCx = tx(0), arcCy = ty(0);
+const pxPerUnit = plotW / (xMax - xMin);
+[1670, 1750].forEach(rad => {
+  ctx.beginPath();
+  ctx.arc(arcCx, arcCy, rad * pxPerUnit, 0, Math.PI * 2);
+  ctx.stroke();
+});
+// Labels at 45° up-right, just outside each arc
+ctx.setLineDash([]);
+ctx.fillStyle = 'rgba(167,139,250,0.9)';
+ctx.font = '9px "JetBrains Mono", monospace';
+ctx.textAlign = 'left';
+ctx.textBaseline = 'middle';
+const ang = -Math.PI / 4;
+[1670, 1750].forEach(rad => {
+  const lx = arcCx + Math.cos(ang) * rad * pxPerUnit;
+  const ly = arcCy + Math.sin(ang) * rad * pxPerUnit;
+  ctx.fillText('|v|=' + rad, lx + 4, ly);
+});
+ctx.restore();
+
+// Axes
+ctx.strokeStyle = 'rgba(255,255,255,0.22)';
+ctx.beginPath();
+ctx.moveTo(padL, padT);
+ctx.lineTo(padL, padT + plotH);
+ctx.lineTo(padL + plotW, padT + plotH);
+ctx.stroke();
+
+  // Tick labels
+  ctx.fillStyle = 'rgba(107,125,156,0.9)';
+  ctx.font = '10px "JetBrains Mono", monospace';
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'middle';
+  for (let i = 0; i <= 4; i++) {
+    const v = yMax - i * (yMax - yMin) / 4;
+    const y = padT + i * plotH / 4;
+    ctx.fillText(v.toFixed(0), padL - 6, y);
+  }
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+  for (let i = 0; i <= 4; i++) {
+    const v = xMin + i * (xMax - xMin) / 4;
+    const x = padL + i * plotW / 4;
+    ctx.fillText(v.toFixed(0), x, padT + plotH + 6);
+  }
+
+  // Axis titles
+  ctx.fillStyle = 'rgba(150,200,255,0.75)';
+  ctx.font = '10px "JetBrains Mono", monospace';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'top';
+  ctx.fillText('Y · vr (m/s)', 4, 2);
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'bottom';
+  ctx.fillText('X · vt (m/s)', padL + plotW, H - 2);
+
+  // Traces — older dimmed, latest bright
+  const lastIdx = velRuns.length - 1;
+  velRuns.forEach((run, ri) => {
+    if (run.points.length < 2) return;
+    const isLatest = (ri === lastIdx);
+    ctx.globalAlpha = isLatest ? 1.0 : 0.35;
+    ctx.strokeStyle = run.color;
+    ctx.lineWidth = isLatest ? 1.8 : 1.2;
+    ctx.beginPath();
+    run.points.forEach((p, i) => {
+      const x = tx(p.vt), y = ty(p.vr);
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+  });
+  ctx.globalAlpha = 1.0;
+
+  // Current-point marker on the latest run only
+  if (lastIdx >= 0) {
+    const pts = velRuns[lastIdx].points;
+    if (pts.length) {
+      const p = pts[pts.length - 1];
+      const x = tx(p.vt), y = ty(p.vr);
+      ctx.fillStyle = '#ffd23f';
+      ctx.beginPath();
+      ctx.arc(x, y, 3.4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(0,0,0,0.55)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+  }
+}
+
+function drawTraj() {
+  const dpr = window.devicePixelRatio || 1;
+  const cssW = trajCanvas.clientWidth || 600;
+  const cssH = trajCanvas.clientHeight || 220;
+  if (trajCanvas.width !== Math.round(cssW * dpr) ||
+      trajCanvas.height !== Math.round(cssH * dpr)) {
+    trajCanvas.width  = Math.round(cssW * dpr);
+    trajCanvas.height = Math.round(cssH * dpr);
+  }
+  const ctx = trajCtx;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const W = cssW, H = cssH;
+  ctx.clearRect(0, 0, W, H);
+
+  const padL = 50, padR = 14, padT = 14, padB = 28;
+  const plotW = W - padL - padR;
+  const plotH = H - padT - padB;
+  if (plotW <= 10 || plotH <= 10) return;
+
+// Data range — flatten all runs. Origin always included so the
+// launch site stays visible even on tiny traces.
+let xMin = 0, xMax = 1, yMin = 0, yMax = 1;
+let anyPt = false;
+trajRuns.forEach(r => {
+  r.points.forEach(p => {
+    anyPt = true;
+    if (p.down > xMax) xMax = p.down;
+    if (p.alt  > yMax) yMax = p.alt;
+    if (p.down < xMin) xMin = p.down;
+    if (p.alt  < yMin) yMin = p.alt;
+  });
+});
+if (xMax - xMin < 0.5) xMax = xMin + 0.5;
+if (yMax - yMin < 0.5) yMax = yMin + 0.5;
+
+// Floors — X and Y both default to 0. Only follow below-0 if the
+// data actually goes there (X on westward rotation).
+const floorX = Math.min(0, xMin);
+const floorY = Math.min(0, yMin);
+
+// Pad only above/right so the floors aren't pushed below.
+const xPad = (xMax - floorX) * 0.08;
+const yPad = (yMax - floorY) * 0.08;
+xMax += xPad;
+yMax += yPad;
+xMin = floorX;
+yMin = floorY;
+
+// 1:1 aspect — expand the shorter axis so both share the same
+// km-per-pixel. Center on data midpoint, then re-anchor floors
+// in case the expansion pushed a lower bound below its floor.
+const spanX = xMax - xMin;
+const spanY = yMax - yMin;
+const plotAspect = plotW / plotH;
+let newSpanX, newSpanY;
+if (spanX / spanY > plotAspect) {
+  newSpanX = spanX;
+  newSpanY = spanX / plotAspect;
+} else {
+  newSpanY = spanY;
+  newSpanX = spanY * plotAspect;
+}
+const cxData = (xMin + xMax) / 2;
+const cyData = (yMin + yMax) / 2;
+xMin = cxData - newSpanX / 2;
+xMax = cxData + newSpanX / 2;
+yMin = cyData - newSpanY / 2;
+yMax = cyData + newSpanY / 2;
+if (xMin < floorX) { const s = floorX - xMin; xMin += s; xMax += s; }
+if (yMin < floorY) { const s = floorY - yMin; yMin += s; yMax += s; }
+
+  const tx = (v) => padL + (v - xMin) / (xMax - xMin) * plotW;
+  const ty = (v) => padT + plotH - (v - yMin) / (yMax - yMin) * plotH;
+
+  // Grid
+  ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  for (let i = 0; i <= 4; i++) {
+    const y = padT + i * plotH / 4;
+    ctx.moveTo(padL, y); ctx.lineTo(padL + plotW, y);
+  }
+  for (let i = 0; i <= 4; i++) {
+  const x = padL + i * plotW / 4;
+  ctx.moveTo(x, padT); ctx.lineTo(x, padT + plotH);
+}
+ctx.stroke();
+
+// Permanent reference lines — X = 65, 80 (vertical) and
+// Y = 60, 70 (horizontal). Drawn only if they fall within the
+// current view range, so they don't clamp the plot in tiny runs.
+ctx.save();
+ctx.setLineDash([5, 4]);
+ctx.lineWidth = 1;
+ctx.strokeStyle = 'rgba(255,210,63,0.55)';   // yellow-ish for X refs
+[65, 80].forEach(xv => {
+  if (xv < xMin || xv > xMax) return;
+  const x = tx(xv);
+  ctx.beginPath();
+  ctx.moveTo(x, padT);
+  ctx.lineTo(x, padT + plotH);
+  ctx.stroke();
+  // label at top
+  ctx.fillStyle = 'rgba(255,210,63,0.85)';
+  ctx.font = '9px "JetBrains Mono", monospace';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'bottom';
+  ctx.fillText('x=' + xv, x, padT - 2);
+});
+ctx.strokeStyle = 'rgba(126,225,255,0.55)';  // cyan-ish for Y refs
+[60, 70].forEach(yv => {
+  if (yv < yMin || yv > yMax) return;
+  const y = ty(yv);
+  ctx.beginPath();
+  ctx.moveTo(padL, y);
+  ctx.lineTo(padL + plotW, y);
+  ctx.stroke();
+  ctx.fillStyle = 'rgba(126,225,255,0.85)';
+  ctx.font = '9px "JetBrains Mono", monospace';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('y=' + yv, padL + 3, y - 2);
+});
+ctx.restore();
+
+  // Axes
+  ctx.strokeStyle = 'rgba(255,255,255,0.22)';
+  ctx.beginPath();
+  ctx.moveTo(padL, padT);
+  ctx.lineTo(padL, padT + plotH);
+  ctx.lineTo(padL + plotW, padT + plotH);
+  ctx.stroke();
+
+  // Tick labels
+  ctx.fillStyle = 'rgba(107,125,156,0.9)';
+  ctx.font = '10px "JetBrains Mono", monospace';
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'middle';
+  for (let i = 0; i <= 4; i++) {
+    const v = yMax - i * (yMax - yMin) / 4;
+    const y = padT + i * plotH / 4;
+    ctx.fillText(v.toFixed(1), padL - 6, y);
+  }
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+  for (let i = 0; i <= 4; i++) {
+    const v = xMin + i * (xMax - xMin) / 4;
+    const x = padL + i * plotW / 4;
+    ctx.fillText(v.toFixed(1), x, padT + plotH + 6);
+  }
+
+  // Axis titles
+  ctx.fillStyle = 'rgba(150,200,255,0.75)';
+  ctx.font = '10px "JetBrains Mono", monospace';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'top';
+  ctx.fillText('Y · alt (km)', 4, 2);
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'bottom';
+  ctx.fillText('X · range (km)', padL + plotW, H - 2);
+
+  // Trace
+  // Older runs first (dimmed), latest run drawn last (bright + dot).
+const lastIdx = trajRuns.length - 1;
+trajRuns.forEach((run, ri) => {
+  if (run.points.length < 2) return;
+  const isLatest = (ri === lastIdx);
+  ctx.globalAlpha = isLatest ? 1.0 : 0.35;
+  ctx.strokeStyle = run.color;
+  ctx.lineWidth = isLatest ? 1.8 : 1.2;
+  ctx.beginPath();
+  run.points.forEach((p, i) => {
+    const x = tx(p.down), y = ty(p.alt);
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  });
+  ctx.stroke();
+});
+ctx.globalAlpha = 1.0;
+
+// Origin (launch site)
+const ox = tx(0), oy = ty(0);
+if (ox >= padL - 1 && ox <= padL + plotW + 1 &&
+    oy >= padT - 1 && oy <= padT + plotH + 1) {
+  ctx.fillStyle = '#ff5f7e';
+  ctx.beginPath();
+  ctx.arc(ox, oy, 2.8, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+// Current-point marker on the LATEST run only
+if (lastIdx >= 0) {
+  const pts = trajRuns[lastIdx].points;
+  if (pts.length) {
+    const p = pts[pts.length - 1];
+    const x = tx(p.down), y = ty(p.alt);
+    ctx.fillStyle = '#ffd23f';
+    ctx.beginPath();
+    ctx.arc(x, y, 3.4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(0,0,0,0.55)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
+}
+}
+
+// Redraw on window resize (canvas backing buffer must be resized)
+window.addEventListener('resize', () => { drawTraj(); drawVel(); });
+  // ---------------------------------------------------------------------------
+  // 5. Run loop — async, chunked, non-blocking.
+  // ---------------------------------------------------------------------------
+  let running = false;
+  let abort = false;
+
+  // Yield to browser event loop so UI can paint.
+  function yieldToBrowser() {
+    return new Promise(resolve => setTimeout(resolve, 0));
+  }
+
+  async function run() {
+    if (running) return;
+    const guideName = sel.value;
+    if (!guideName) {
+      statusEl.textContent = 'Select a guide first.';
+      return;
+    }
+
+    running = true;
+    abort = false;
+    startBtn.disabled = true;
+    stopBtn.disabled = false;
+
+    // Apply tunables BEFORE startGuide so .start() sees the new values.
+applyTunables(guideName);
+
+// Apply environment settings BEFORE resetState so the very first
+// physics tick already sees them. `wind`, `atmosphereEnabled`, and
+// CONFIG are all plain globals on this page — tester runs everything
+// on the main thread.
+if (typeof wind !== 'undefined') {
+  wind.enabled = document.getElementById('envWindEnabled').checked;
+  wind.speed = parseFloat(document.getElementById('envWindSpeed').value) || 0;
+  wind.directionDeg = parseFloat(document.getElementById('envWindDir').value) || 0;
+}
+const fuelPct = Math.max(0, Math.min(100, parseFloat(document.getElementById('envFuelPct').value) || 0));
+CONFIG.DEFAULT_FUEL_FRACTION = fuelPct / 100;
+if (typeof atmosphereEnabled !== 'undefined') {
+  atmosphereEnabled = document.getElementById('envAtmosphere').checked;
+}
+CONFIG.SLOSH_ENABLED = document.getElementById('envSlosh').checked;
+try { Guidance.setImuEnabled(document.getElementById('envImu').checked); } catch (e) { /* ignore */ }
+
+    // Fresh log.
+    out.innerHTML = buildHeader(guideName);
+
+startNewTrajRun();
+startNewVelRun();
+    const durationS = Math.max(1, parseFloat(durInput.value) || 160);
+    const dt = CONFIG.DT;
+    const maxTicks = Math.ceil(durationS / dt);
+
+    // Reset physics, then start guide.
+    resetState(0);
+    try { Guidance.startGuide(guideName); } catch (e) { console.error('[tester] startGuide failed:', e); }
+
+    let lastSampleSec = -1;
+    const t0 = performance.now();
+    let ticksRun = 0;
+    const CHUNK = 400; // ticks per chunk before yielding
+
+    for (let i = 0; i < maxTicks; i++) {
+      if (abort) break;
+      if (state.halted) break;
+
+      const snap = buildSnapshot();
+      Guidance.onSnapshot(snap);
+      physicsStep(dt);
+      ticksRun++;
+
+      // Sample exactly once per whole sim-second.
+      const curSec = Math.floor(state.simTime);
+      if (curSec > lastSampleSec) {
+        lastSampleSec = curSec;
+        const status = (Guidance.getGuideStatus && Guidance.getGuideStatus()) || null;
+        const physRow = computePhysicsRow(buildSnapshot());
+        if (physRow) {
+          out.insertAdjacentHTML('beforeend', buildRow(guideName, physRow, status));
+          pushTraj(physRow._down, physRow._alt);
+pushVel(physRow._vt, physRow._vr);
+          out.scrollTop = out.scrollHeight;
+        }
+      }
+
+      // Yield periodically so the browser can paint status + new rows.
+      if (i > 0 && i % CHUNK === 0) {
+        const tps = ticksRun / ((performance.now() - t0) / 1000);
+        statusEl.textContent =
+          `Running…  t=${state.simTime.toFixed(1)}s / ${durationS}s  ` +
+          `(${ticksRun} ticks, ${tps.toFixed(0)} ticks/s)`;
+        await yieldToBrowser();
+      }
+    }
+
+    try { Guidance.stopGuide(); } catch (e) { /* ignore */ }
+
+    const elapsed = performance.now() - t0;
+    const tps = ticksRun / (elapsed / 1000);
+    out.insertAdjacentHTML(
+      'beforeend',
+      `<div class="log-footer">` +
+      `Ran ${ticksRun} ticks (${state.simTime.toFixed(2)} s sim) in ${elapsed.toFixed(0)} ms — ` +
+      `${tps.toFixed(0)} ticks/s — ` +
+      (state.crashed ? '<span style="color:var(--danger)">CRASHED</span>' :
+       state.landed ? '<span style="color:var(--green)">LANDED</span>' :
+       state.halted ? 'HALTED' : 'stopped cleanly') +
+      `</div>`
+    );
+    statusEl.textContent = `Done. ${ticksRun} ticks in ${elapsed.toFixed(0)} ms.`;
+
+    running = false;
+    startBtn.disabled = false;
+    stopBtn.disabled = true;
+  }
+
+  startBtn.addEventListener('click', run);
+  stopBtn.addEventListener('click', () => {
+    abort = true;
+    statusEl.textContent = 'Aborting…';
+  });
+
+  // Initial tunables render for whichever guide is preselected.
+  if (guides.length) renderTunablesFor(sel.value);
+
+  console.log('[tester] ready. Guides:', guides.join(', '));
+})();
+</script>
+</body>
+</html>

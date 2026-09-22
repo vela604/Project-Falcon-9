@@ -1174,6 +1174,514 @@ _gimbalPredictive2Tick.getStatus = function() {
 
 GUIDES.gimbalPredictive2 = _gimbalPredictive2Tick;
 
+// ============================================================
+// ascentRR — Rotate-Rest cycle on top of the successful
+// gimbalPredictive2 core.
+//
+// Cycle: 10s REST (initial climb) → 10s ROTATE → 10s REST → ...
+//   Rotate phase: τ_desired = EAST_SIGN · I · A · sin(2π·t/T)
+//                 where A = 2π·Δθ_rad / T²
+//   Rest phase:   τ_desired = -K_DAMP · I · ω_relative   (damps residual spin)
+// Gimbal target torque: τ_gimbal = τ_desired − τ_drag_next (predicted).
+// Gimbal rate solved and clamped the same way gimbalPredictive2 does.
+//
+// Δθ is decided at the START of every rotation, from that instant's
+// dynamic pressure Q:  Δθ = DELTA_THETA_K / Q  (capped at MAX deg).
+//
+// Altitude gates:
+//   ≥ PAUSE_ROTATE_KM (8 km):  finish current rotation if mid-flight,
+//                              then REST-only (no more rotations)
+//   ≥ RESUME_ROTATE_KM (14 km): reset cycle, resume rotate-rest fresh
+//
+// Throttle program:
+//   10 km ≤ alt < 14 km:  THR_FRAC_LOW (0.7)
+//   otherwise:            1.0
+//
+// ALL constants in ASCENT_RR below — tune directly.
+// ============================================================
+const ASCENT_RR = {
+  // --- Rotate-rest cycle timing ---
+// Rotate duration scales with Δθ: T_rotate = |Δθ_deg| seconds
+// ("jitna degree, utna second"). Small rotations take proportionally
+// less time, avoiding extended exposure where drag amplifies AoA.
+CYCLE_ROTATE_S: 10, // default / fallback if scaling disabled
+  CYCLE_REST_S: 5,
+  // Dynamic-T clamp: keep the pulse width physically meaningful
+  // (never shorter than MIN, never longer than MAX).
+  ROTATE_T_MIN_S: 1.0,
+  ROTATE_T_MAX_S: 10.0,
+  ROTATE_T_SCALE: 1.0, // seconds per degree
+  
+// --- Δθ calibration: Δθ_deg = Δθ_MAX · exp(−Q / Q_SCALE) ---
+// Exponential decay with dynamic pressure. Gives max rotation at
+// low Q (near the pad), smoothly decays as Q grows through MaxQ.
+//
+// Constants chosen so MaxQ (~35 kPa) → Δθ ≈ 3°:
+//   Q =      0 Pa → Δθ = 10.00°
+//   Q =  3,000 Pa → Δθ ≈  9.02°
+//   Q =  5,000 Pa → Δθ ≈  8.42°
+//   Q = 10,000 Pa → Δθ ≈  7.08°
+//   Q = 20,000 Pa → Δθ ≈  5.02°
+//   Q = 35,000 Pa → Δθ ≈  2.99°   (MaxQ)
+//
+// Q_SCALE sets how fast Δθ falls with pressure. Higher Q_SCALE →
+// gentler decay (more rotation deeper into ascent). Tune both at
+// runtime via setAscentRR({...}).
+DELTA_THETA_MAX_DEG: 5, // ° — value as Q → 0
+  DELTA_THETA_Q_SCALE: 29000, // Pa — e-folding pressure
+  
+  // --- Rotation direction (east = downrange). Flip to +1 if the
+  //     rocket rotates west with −1. ---
+  ROTATION_EAST_SIGN: -1,
+  
+  // --- REST-phase omega damper (1/s). Adds τ = -K_DAMP · I · ω_rel
+  //     during REST, so ω_rel decays as e^(-K_DAMP·t). Kills residual
+  //     spin left over from the previous rotation (and drag-driven
+  //     wobble) without interfering with the rotation program itself.
+  //     2.0 → ω halves every ~0.35 s. ---
+  K_DAMP:             2.0,
+  
+// --- Chain threshold ---
+// After a ROTATE cycle completes, if |AoA| is still above this,
+// skip REST and immediately start another ROTATE (with Δθ = current
+// AoA). Prevents drag-driven AoA growth during idle rest when the
+// alignment is still off.
+AOA_CHAIN_THRESHOLD_DEG: 0.5,
+  
+  // --- Altitude gates ---
+  PAUSE_ROTATE_KM: 8, // finish rotation, then REST-only
+  RESUME_ROTATE_KM: 14, // reset cycle, resume rotate-rest
+  
+  // --- Throttle program ---
+  THR_ALT_LOW_KM:     10,
+  THR_ALT_HIGH_KM:    14,
+  THR_FRAC_LOW:       0.7,
+  THR_FRAC_HIGH:      1.0,
+};
+
+const _rrState = {
+  init: false,
+  ticks: 0,
+  phase: 'REST',          // 'ROTATE' | 'REST'  (first 10s is REST)
+  phaseStart: 0,          // simTime when current phase began
+  currentDeltaDeg: 0,     // Δθ for the CURRENT rotation
+  paused: false,
+  wasPaused: false,
+  lastThrottleSent: null,
+  // debug — full snapshot for main-thread logging
+  lastTauDesired: 0,
+  lastTauDrag: 0,
+  lastTauTarget: 0,
+  lastGRate: 0,
+  lastAltKm: 0,
+  lastElapsed: 0,
+  lastThetaInertial: 0,
+  lastThetaRel: 0,
+  lastOmegaInertial: 0,
+  lastOmegaRel: 0,
+  lastTargetThetaRel: 0,
+  lastThetaErr: 0,
+  lastQ: 0,
+  lastGRadN: 0,
+  lastGRadN1: 0,
+  lastGReqDeg: 0,
+  lastRReqDegS: 0,
+  lastRcmdDegS: 0,
+      lastInertia: 0,
+    lastMass: 0,
+    lastMode: 'ROTATE',
+    firstRotateDone: false,
+    currentT: 10, // active T for THIS rotation (seconds)
+};
+
+// Dynamic rotate duration: T = clamp(|Δθ_deg| × ROTATE_T_SCALE, MIN, MAX).
+// Called every time a new ROTATE phase begins.
+function _rrRotateT(Δθ_deg) {
+  const cfg = ASCENT_RR;
+  const s = Math.abs(Δθ_deg) * (Number.isFinite(cfg.ROTATE_T_SCALE) ? cfg.ROTATE_T_SCALE : 1);
+  const mn = Number.isFinite(cfg.ROTATE_T_MIN_S) ? cfg.ROTATE_T_MIN_S : 1;
+  const mx = Number.isFinite(cfg.ROTATE_T_MAX_S) ? cfg.ROTATE_T_MAX_S : 10;
+  if (!Number.isFinite(s)) return cfg.CYCLE_ROTATE_S;
+  return Math.max(mn, Math.min(mx, s));
+}
+
+function _rrDeltaThetaDeg(Q) {
+  const maxDeg = ASCENT_RR.DELTA_THETA_MAX_DEG;
+  const qScale = ASCENT_RR.DELTA_THETA_Q_SCALE;
+  if (!Number.isFinite(maxDeg) || maxDeg <= 0) return 0;
+  if (!Number.isFinite(qScale) || qScale <= 0) return maxDeg;
+  const qEff = (Number.isFinite(Q) && Q > 0) ? Q : 0;
+  const delta = maxDeg * Math.exp(-qEff / qScale);
+  if (!Number.isFinite(delta) || delta <= 0) return 0;
+  return delta;
+}
+
+function _rrWrapPi(x) {
+  while (x > Math.PI) x -= 2 * Math.PI;
+  while (x < -Math.PI) x += 2 * Math.PI;
+  return x;
+}
+
+function _rrTick(snapshot) {
+  _rrState.ticks++;
+  const idx = snapshot.activeBodyIndex || 0;
+  const body = snapshot.bodies[idx];
+  if (!body) return;
+  
+  const dNow = Derivation.derive(snapshot, idx);
+  if (!dNow || !dNow.massProps) return;
+  
+  const env = Derivation.getEnv();
+  const dt = (env && Number.isFinite(env.DT)) ? env.DT : (1 / 80);
+  const M = dNow.massProps.M;
+  if (!(M > 0)) return;
+  
+  const altKm = dNow.altitudeAGL / 1000;
+  const simT = snapshot.simTime;
+  const cfg = ASCENT_RR;
+  _rrState.lastAltKm = altKm;
+  
+  // ---------- Init ----------
+  // First 10 seconds are REST — rocket climbs straight while flight is
+  // still settling. Rotation begins at t=10s.
+  if (!_rrState.init) {
+  _rrState.init = true;
+  _rrState.phase = 'REST';
+  _rrState.phaseStart = simT;
+  _rrState.currentDeltaDeg = 0; // set when first ROTATE begins
+  _rrState.paused = altKm >= cfg.PAUSE_ROTATE_KM;
+  _rrState.wasPaused = _rrState.paused;
+  _rrState.firstRotateDone = false;
+}
+  
+  // ---------- Pause / resume transitions ----------
+  _rrState.wasPaused = _rrState.paused;
+  if (altKm >= cfg.PAUSE_ROTATE_KM)   _rrState.paused = true;
+  if (altKm >= cfg.RESUME_ROTATE_KM)  _rrState.paused = false;
+  
+ if (_rrState.wasPaused && !_rrState.paused) {
+  // Just resumed after MaxQ. Reset cycle fresh: start with a ROTATE.
+  // Past MaxQ, the disturbance is already established — go straight
+  // to AoA-based alignment.
+  _rrState.phase = 'ROTATE';
+  _rrState.phaseStart = simT;
+  _rrState.currentDeltaDeg = dNow.alphaDeg;
+  _rrState.currentT = _rrRotateT(_rrState.currentDeltaDeg);
+  _rrState.firstRotateDone = true;
+}
+  
+  // ---------- Cycle clock ----------
+  const elapsed = simT - _rrState.phaseStart;
+  
+  if (_rrState.paused) {
+    if (_rrState.phase === 'ROTATE' && elapsed < cfg.CYCLE_ROTATE_S) {
+      // Mid-rotation → finish it
+    } else if (_rrState.phase !== 'REST') {
+      _rrState.phase = 'REST';
+      _rrState.phaseStart = simT;
+    }
+  } else {
+    if (_rrState.phase === 'ROTATE') {
+  if (elapsed >= _rrState.currentT) {
+    // Chain ONLY when AoA is POSITIVE. Positive = velocity east of
+    // body axis = we're still behind, rotate more east to catch up.
+    // Negative = body has overshot east of velocity = go to REST
+    // and let gravity rotate velocity east until AoA becomes
+    // positive again.
+    //
+    // Chaining on negative AoA used to trigger a WEST pulse
+    // (Δθ = currentDeltaDeg, dirSign flips), which undid the
+    // previous east tilt — pushing the rocket back toward vertical
+    // instead of continuing downrange.
+    if (dNow.alphaDeg > cfg.AOA_CHAIN_THRESHOLD_DEG) {
+  // Chained pulse — same sine formula, but HALF the T. Keeps
+  // re-checks tight so we don't overshoot past the velocity
+  // vector while AoA is still large.
+  _rrState.phase = 'ROTATE';
+  _rrState.phaseStart = simT;
+  _rrState.currentDeltaDeg = dNow.alphaDeg;
+  _rrState.currentT = _rrRotateT(_rrState.currentDeltaDeg) * 0.5;
+} else {
+      _rrState.phase = 'REST';
+      _rrState.phaseStart = simT;
+    }
+  }
+} else {
+  if (elapsed >= cfg.CYCLE_REST_S) {
+    _rrState.phase = 'ROTATE';
+    _rrState.phaseStart = simT;
+    if (!_rrState.firstRotateDone) {
+      // First rotation — deliberate disturbance kick from the
+      // Q-based formula. Sets a starting AoA that gravity then
+      // rotates. Subsequent rotations align to whatever AoA that
+      // rotation produced.
+      _rrState.currentDeltaDeg = _rrDeltaThetaDeg(dNow.Q);
+      _rrState.firstRotateDone = true;
+    } else {
+      // Δθ = current AoA. Sign carries direction; magnitude is
+      // the current AoA in degrees.
+      _rrState.currentDeltaDeg = dNow.alphaDeg;
+    }
+    // Scale T with this rotation's magnitude.
+    _rrState.currentT = _rrRotateT(_rrState.currentDeltaDeg);
+  }
+}
+  }
+  
+  // ---------- Predict next-tick state (same as gimbalPredictive2) ----------
+  const cosT = Math.cos(dNow.theta), sinT = Math.sin(dNow.theta);
+  const thrustIx = dNow.thrustBodyX * cosT - dNow.thrustBodyY * sinT;
+  const thrustIy = dNow.thrustBodyX * sinT + dNow.thrustBodyY * cosT;
+  const aIx = dNow.gVecX + (thrustIx + dNow.dragVecX) / M;
+  const aIy = dNow.gVecY + (thrustIy + dNow.dragVecY) / M;
+  const rx_n = dNow.rx + dNow.vx * dt;
+  const ry_n = dNow.ry + dNow.vy * dt;
+  const vx_n = dNow.vx + aIx * dt;
+  const vy_n = dNow.vy + aIy * dt;
+  const alpha = dNow.alphaAng;
+  const omega_n = dNow.omega + alpha * dt;
+  const theta_n = dNow.theta + dNow.omega * dt + 0.5 * alpha * dt * dt;
+  const sloshNow = body.slosh || { offset: 0, velocity: 0 };
+  const sloshX_n = (sloshNow.offset || 0) + (sloshNow.velocity || 0) * dt;
+  const sloshV_n = sloshNow.velocity || 0;
+  
+  const engines = body.engines || [];
+  const gimbals = engines.filter(e => e.gimbal);
+  if (!gimbals.length) return;
+  
+  const g_N  = gimbals[0].gimbalDeg || 0;
+  const R_N  = Number.isFinite(gimbals[0].targetGimbalRateDegS)
+    ? gimbals[0].targetGimbalRateDegS : 0;
+  const g_N1 = g_N + R_N * dt;
+  
+  const dNext = Derivation.deriveForState(snapshot, idx, {
+    rx: rx_n, ry: ry_n, vx: vx_n, vy: vy_n,
+    theta: theta_n, omega: omega_n,
+    slosh: { offset: sloshX_n, velocity: sloshV_n },
+  }, g_N1);
+  if (!dNext || !dNext.massProps) return;
+  
+  const τ_drag_next = dNext.torqueDrag;
+  _rrState.lastTauDrag = τ_drag_next;
+  
+  // ---------- τ_desired (uses next-tick I) ----------
+  const I_next = dNext.massProps.I;
+  const omegaEarth = (env && Number.isFinite(env.EARTH_OMEGA)) ? env.EARTH_OMEGA : 0;
+  const ω_rel_now = dNow.omega + omegaEarth;
+  let τ_desired = 0;
+  if (_rrState.phase === 'ROTATE') {
+  // Δθ = |AoA| captured at the start of this rotation. Direction
+  // follows sign of AoA: positive (velocity east of body) → east
+  // rotate; negative → west rotate.
+  // T = dynamic, scaled with |Δθ| (jitna degree utna second).
+  const T = _rrState.currentT;
+  const Δθ_rad = Math.abs(_rrState.currentDeltaDeg) * Math.PI / 180;
+  const A_ang = (2 * Math.PI * Δθ_rad) / (T * T);
+  const omega_ang = (2 * Math.PI) / T;
+  const tRel = Math.max(0, Math.min(T, elapsed));
+  const dirSign = (_rrState.currentDeltaDeg >= 0) ?
+    cfg.ROTATION_EAST_SIGN :
+    -cfg.ROTATION_EAST_SIGN;
+  τ_desired = dirSign * I_next * A_ang * Math.sin(omega_ang * tRel);
+  _rrState.lastMode = 'ROTATE';
+} else {
+    // REST phase — residual-omega damper. Damp ω_relative (ground-
+    // relative), NOT ω_inertial. ω_inertial carries Earth's own
+    // rotation; damping it to zero would drift the rocket out of
+    // alignment with local vertical at ω_earth rate.
+    τ_desired = -cfg.K_DAMP * I_next * ω_rel_now;
+    _rrState.lastMode = 'REST-DAMP';
+  }
+  _rrState.lastTauDesired = τ_desired;
+  
+  // ---------- Solve gimbal rate ----------
+  const τ_target = τ_desired - τ_drag_next;
+  _rrState.lastTauTarget = τ_target;
+  
+  const comX = dNext.massProps.comX;
+  const comY = dNext.massProps.comY;
+  let A_g = 0, B_g = 0;
+  gimbals.forEach(e => {
+    const F = (e.massFlowRate || 0) * (e.Ve || 0);
+    A_g += ((e.x || 0) - comX) * F;
+    B_g += F;
+  });
+  B_g *= comY;
+  
+  const R_amp = Math.hypot(A_g, B_g);
+  let g_req_rad = 0;
+  if (R_amp > 1) {
+    const ratio = Math.max(-1, Math.min(1, τ_target / R_amp));
+    const phi = Math.atan2(A_g, B_g);
+    const w1 = _rrWrapPi(Math.asin(ratio) - phi);
+    const w2 = _rrWrapPi(Math.PI - Math.asin(ratio) - phi);
+    g_req_rad = (Math.abs(w1) <= Math.abs(w2)) ? w1 : w2;
+  }
+  let g_req_deg = g_req_rad * 180 / Math.PI;
+  const MAX_ANG = (env && Number.isFinite(env.GIMBAL_MAX_DEG)) ? env.GIMBAL_MAX_DEG : 5;
+  if (Math.abs(g_req_deg) > MAX_ANG) g_req_deg = Math.sign(g_req_deg) * MAX_ANG;
+  
+  const R_req = (g_req_deg - g_N) / dt;
+  const MAX_RATE = (env && Number.isFinite(env.GIMBAL_RATE_DEG_S)) ? env.GIMBAL_RATE_DEG_S : 40;
+  const R_cmd = Math.max(-MAX_RATE, Math.min(MAX_RATE, R_req));
+  _rrState.lastGRate = R_cmd;
+  
+  // ---- Debug: capture full snapshot for main-thread logging ----
+  const localVert = Math.atan2(-dNow.rx, dNow.ry);
+  const targetThetaAbs = localVert + cfg.ROTATION_EAST_SIGN * (_rrState.currentDeltaDeg * Math.PI / 180);
+  _rrState.lastElapsed = elapsed;
+  _rrState.lastThetaInertial = dNow.theta;
+  _rrState.lastThetaRel = dNow.theta - localVert;
+  _rrState.lastOmegaInertial = dNow.omega;
+  _rrState.lastOmegaRel = ω_rel_now;
+  _rrState.lastTargetThetaRel = targetThetaAbs - localVert;
+  _rrState.lastThetaErr = _rrWrapPi(targetThetaAbs - dNow.theta);
+  _rrState.lastQ = dNow.Q;
+  _rrState.lastGRadN = g_N;
+  _rrState.lastGRadN1 = g_N1;
+  _rrState.lastGReqDeg = g_req_deg;
+  _rrState.lastRReqDegS = R_req;
+  _rrState.lastRcmdDegS = R_cmd;
+  _rrState.lastInertia = I_next;
+  _rrState.lastMass = M;
+  
+  send(cmdSetGimbalRate(R_cmd));
+  
+  // ---------- Throttle program ----------
+  let thrFrac = cfg.THR_FRAC_HIGH;
+  if (altKm >= cfg.THR_ALT_LOW_KM && altKm < cfg.THR_ALT_HIGH_KM) {
+    thrFrac = cfg.THR_FRAC_LOW;
+  }
+  let refMax = 0;
+  engines.forEach(e => { if (Number.isFinite(e.maxMassFlowRate) && e.maxMassFlowRate > refMax) refMax = e.maxMassFlowRate; });
+  const targetFlow = thrFrac * refMax;
+  
+  if (_rrState.lastThrottleSent === null ||
+      Math.abs(targetFlow - _rrState.lastThrottleSent) > 0.5) {
+    send(cmdSetAllThrottle(targetFlow));
+    _rrState.lastThrottleSent = targetFlow;
+  }
+}
+
+_rrTick.start = function () {
+  send(cmdSetAllThrottle(Infinity));
+  _rrState.init = false;
+  _rrState.ticks = 0;
+  _rrState.phase = 'REST';
+  _rrState.phaseStart = 0;
+  _rrState.currentDeltaDeg = 0;
+  _rrState.paused = false;
+  _rrState.wasPaused = false;
+  _rrState.lastThrottleSent = null;
+  _rrState.lastTauDesired = 0;
+  _rrState.lastTauDrag = 0;
+  _rrState.lastTauTarget = 0;
+  _rrState.lastGRate = 0;
+  _rrState.lastAltKm = 0;
+  _rrState.lastElapsed = 0;
+  _rrState.lastThetaInertial = 0;
+  _rrState.lastThetaRel = 0;
+  _rrState.lastOmegaInertial = 0;
+  _rrState.lastOmegaRel = 0;
+  _rrState.lastTargetThetaRel = 0;
+  _rrState.lastThetaErr = 0;
+  _rrState.lastQ = 0;
+  _rrState.lastGRadN = 0;
+  _rrState.lastGRadN1 = 0;
+  _rrState.lastGReqDeg = 0;
+  _rrState.lastRReqDegS = 0;
+  _rrState.lastRcmdDegS = 0;
+  _rrState.lastInertia = 0;
+_rrState.lastMass = 0;
+_rrState.lastMode = 'ROTATE';
+_rrState.firstRotateDone = false;
+_rrState.currentT = 10;
+console.log('[ascentRR] started');
+};
+_rrTick.stop = function () {
+  send(cmdSetAllThrottle(0));
+  send(cmdSetGimbalRate(0));
+  _rrState.init = false;
+  _rrState.phase = 'REST';
+  console.log('[ascentRR] stopped');
+};
+_rrTick.getStatus = function () {
+  return {
+    ticks: _rrState.ticks,
+    phase: _rrState.phase,
+    mode: _rrState.lastMode,
+    paused: _rrState.paused,
+    altKm: _rrState.lastAltKm,
+    elapsed: _rrState.lastElapsed,
+    deltaDeg: _rrState.currentDeltaDeg,
+    tauDesired: _rrState.lastTauDesired,
+    tauDrag: _rrState.lastTauDrag,
+    tauTarget: _rrState.lastTauTarget,
+    gRate: _rrState.lastGRate,
+    throttleFlow: _rrState.lastThrottleSent,
+    thetaInertial: _rrState.lastThetaInertial,
+    thetaRel: _rrState.lastThetaRel,
+    omegaInertial: _rrState.lastOmegaInertial,
+    omegaRel: _rrState.lastOmegaRel,
+    targetThetaRel: _rrState.lastTargetThetaRel,
+    thetaErr: _rrState.lastThetaErr,
+    Q: _rrState.lastQ,
+    gRadN: _rrState.lastGRadN,
+    gRadN1: _rrState.lastGRadN1,
+    gReqDeg: _rrState.lastGReqDeg,
+    rReq: _rrState.lastRReqDegS,
+    rCmd: _rrState.lastRcmdDegS,
+    inertia: _rrState.lastInertia,
+    mass: _rrState.lastMass,
+  };
+};
+
+GUIDES.ascentRR = _rrTick;
+
+// Runtime tuner — guidance worker console:
+//   Guidance.setAscentRR({ DELTA_THETA_K: 150000, ROTATION_EAST_SIGN: 1 })
+function setAscentRR(patch) {
+  if (!patch) return;
+  Object.keys(patch).forEach(k => {
+    if (k in ASCENT_RR) ASCENT_RR[k] = patch[k];
+  });
+  console.log('[ascentRR] constants:', JSON.stringify(ASCENT_RR));
+}
+function getAscentRRConfig() { return { ...ASCENT_RR }; }
+// ============================================================
+// Ascent constants — pitch program, throttle program, cutoff,
+// attitude gains. Populated by the ascent guide (to be written).
+// All tunable values live here so the guide itself stays thin.
+// ============================================================
+const ASCENT = {
+  // --- Pitch program (tilt from local vertical, positive = downrange/east) ---
+  TILT_KM_MAXQ: 10, // tilt reaches TILT_MAXQ_DEG here
+  TILT_KM_HOLD_END: 20, // hold at TILT_MAXQ_DEG through here
+  TILT_KM_FINAL: 85, // tilt reaches TILT_FINAL_DEG here
+  TILT_MAXQ_DEG: 20,
+  TILT_FINAL_DEG: 60,
+  // Sign convention: positive tilt = east/downrange. theta_relative for
+  // east tilt is NEGATIVE in this sim (see gimbalPredictive2 comments),
+  // so target_theta = local_vertical − tilt. Set EAST_SIGN = +1 if the
+  // build has the opposite handedness.
+  TILT_EAST_SIGN: -1,
+  
+  // --- Throttle program ---
+  THR_KM_DOWN: 7, // start throttling down
+  THR_KM_LOW: 10, // reach THR_LOW_FRAC
+  THR_KM_UP: 16, // start throttling up
+  THR_KM_FULL: 18, // reach 1.0
+  THR_LOW_FRAC: 0.7,
+  
+  // --- Cutoff ---
+  CUTOFF_KM: 80,
+  
+  // --- Attitude gains (torque per rad error / per rad/s rate) ---
+  // I_xx of F9 ≈ 1.3e8 kg·m². Critically-damped ~1 rad/s bandwidth:
+  //   K_p = I·ω_n² ≈ 1.3e8, K_d = 2·I·ω_n ≈ 2.6e8
+  K_p: 1.3e8,
+  K_d: 2.6e8,
+};
 
 // ============================================================
 // predictivePlus — feedforward + PID hybrid.
@@ -1373,6 +1881,435 @@ function setPredictiveGains(gains) {
   });
   console.log('[predictivePlus] gains:', JSON.stringify(_PRED_GAINS));
 }
+
+function getPredictiveGains() { return { ..._PRED_GAINS }; }
+  
+  
+  
+// ============================================================
+// ascentAoaHold — PUSH → COAST → HOLD with lag-free AoA derivatives.
+//
+//   PUSH  : sin pulse (T sec), east kick. AoA goes negative.
+//   COAST : pure gimbalPredictive2 — drag cancel only. Body holds,
+//           velocity catches up east, AoA drifts negative → positive.
+//   HOLD  : triggered when AoA ≥ 0 AND ω_AoA > 0. Adds two extra
+//           τ_desired terms:
+//             τ_accel = −I_next · α_AoA_N1   (oppose AoA accel)
+//             τ_damp  = −K · I_next · ω_AoA_N1 (damp AoA rate → 0)
+//   Revert to COAST when AoA < 0 (or |AoA| blows past safety cap).
+//
+// Lag-free derivatives — both use the PREDICTED next-tick AoA
+// (dNext.alphaDeg, verified exact by predictVerifier), not a
+// 1-tick-backward finite difference:
+//   ω_AoA_N1 = (AoA_N1 − AoA_N) / dt
+//   α_AoA_N1 = (AoA_N1 − 2·AoA_N + AoA_N-1) / dt²
+// ============================================================
+const ASCENT_HOLD = {
+    INITIAL_COAST_S: 4.9, // straight climb before the push pulse
+  PUSH_T_S: 4.8,
+  // --- PUSH amplitude, specified as the peak gimbal angle to swing to.
+  //     At each tick during PUSH, the gimbal torque coefficients A/B
+  //     (= −comX·ΣF, comY·ΣF) are computed from the current thrust and
+  //     geometry, then the peak torque at this gimbal angle is
+  //         τ_gimbal_max = A·cos(g_max) + B·sin(g_max)
+  //     and the sine pulse amplitude is  A_ang = τ_gimbal_max / I.
+  //     So the peak torque during the pulse equals the max the gimbal
+  //     can produce at this angle — self-scaling with thrust & inertia.
+  //
+ //     Default 1.5° is calibrated to be roughly equivalent to the
+//     previous PUSH_DELTA_DEG = 1° for the F9-class test stack. Tune
+//     by feel.
+PUSH_MAX_GIMBAL_DEG: 1.75,
+  PUSH_EAST_SIGN: -1,
+  HOLD_K_DAMP: 4.0, // sweet spot; 1.5+ aggressive
+  HOLD_MAX_AOA_DEG: 8, // safety: blow past this → revert to COAST
+  
+  // --- dQ-driven east torque term (HOLD only) ---
+  // Adds a non-negative east-only torque whose magnitude rises as dQ
+  // goes negative (Q falling, post-MaxQ). Never flips to west.
+  //   τ_dQ = -K_dQ · I · f(dQ)
+  //   f(dQ) = 0.5 · (1 - tanh(dQ / Q_ref))   ∈ (0, 1]
+  // Q_ref sets the dQ sensitivity scale. Typical dQ through MaxQ is
+  // thousands of Pa/s, so 5000 sits the sigmoid's slope right over the
+  // interesting range.
+    HOLD_K_DQ: 0.005,
+  HOLD_Q_REF: 1000,
+  
+  // --- Throttle fraction (0..1) applied to every engine's own max
+  //     mass flow rate. 1.0 = full throttle (default), 0.7 = 70%.
+  //     Sent every tick via cmdSetAllThrottle(refMax × THROTTLE_FRAC);
+  //     physics's clampMassFlowCommand scales each engine down to its
+  //     own fraction of its own max. ---
+  THROTTLE_FRAC: 1.0,
+
+// --- COASTnAoADAMP phase torque ---
+    
+    // --- COASTnAoADAMP phase torque ---
+    //   τ_desired = (−COAST_DAMP_GAIN · I · AoA_N1) / COAST_DAMP_K²
+    // Independent of the HOLD constants so both phases tune separately.
+    COAST_DAMP_GAIN: 16,
+    COAST_DAMP_K: 4.0,
+  
+};
+
+const _hState = {
+    init: false,
+    ticks: 0,
+    phase: 'PUSH', // 'PRE_COAST' | 'PUSH' | 'COAST' | 'HOLD'
+    phaseStart: 0,
+    currentDeltaDeg: 0, // locked Δθ for THIS PUSH pulse
+    lastThrottleSent: undefined,
+    lastQ: null, // previous tick's dynamic pressure (for dQ/dt)
+    lastDQ: 0, // last computed dQ/dt for debug
+    // debug
+  // debug
+  lastElapsed: 0,
+  lastAltKm: 0,
+  lastAoANowDeg: 0,
+  lastAoANextDeg: 0,
+  lastOmegaAoANow: 0,
+  lastOmegaAoANext: 0,
+  lastAlphaAoANext: 0,
+  lastTauDesired: 0,
+  lastTauDrag: 0,
+  lastTauTarget: 0,
+  lastGRate: 0,
+  lastGRadN: 0,
+  lastGReqDeg: 0,
+};
+
+function _hWrapPi(x) {
+  while (x > Math.PI) x -= 2 * Math.PI;
+  while (x < -Math.PI) x += 2 * Math.PI;
+  return x;
+}
+
+function _hTick(snapshot) {
+  _hState.ticks++;
+  const idx = snapshot.activeBodyIndex || 0;
+  const body = snapshot.bodies[idx];
+  if (!body) return;
+  
+  const dNow = Derivation.derive(snapshot, idx);
+  if (!dNow || !dNow.massProps) return;
+  
+  const env = Derivation.getEnv();
+  const dt = (env && Number.isFinite(env.DT)) ? env.DT : (1 / 80);
+  const M = dNow.massProps.M;
+  if (!(M > 0)) return;
+  
+  const simT = snapshot.simTime;
+  const altKm = dNow.altitudeAGL / 1000;
+  _hState.lastAltKm = altKm;
+  const cfg = ASCENT_HOLD;
+  
+  // ---------- Init ----------
+  if (!_hState.init) {
+    _hState.init = true;
+    _hState.phase = 'PRE_COAST';
+    _hState.phaseStart = simT;
+  }
+  
+  // ---------- Predict next-tick state ----------
+  const cosTc = Math.cos(dNow.theta), sinTc = Math.sin(dNow.theta);
+  const thrustIxC = dNow.thrustBodyX * cosTc - dNow.thrustBodyY * sinTc;
+  const thrustIyC = dNow.thrustBodyX * sinTc + dNow.thrustBodyY * cosTc;
+  const aIxC = dNow.gVecX + (thrustIxC + dNow.dragVecX) / M;
+  const aIyC = dNow.gVecY + (thrustIyC + dNow.dragVecY) / M;
+  const rx_n = dNow.rx + dNow.vx * dt;
+  const ry_n = dNow.ry + dNow.vy * dt;
+  const vx_n = dNow.vx + aIxC * dt;
+  const vy_n = dNow.vy + aIyC * dt;
+  const alpha_body = dNow.alphaAng;
+  const omega_n = dNow.omega + alpha_body * dt;
+  const theta_n = dNow.theta + dNow.omega * dt + 0.5 * alpha_body * dt * dt;
+  const sloshNow = body.slosh || { offset: 0, velocity: 0 };
+  const sloshX_n = (sloshNow.offset || 0) + (sloshNow.velocity || 0) * dt;
+  const sloshV_n = sloshNow.velocity || 0;
+  
+  const engines = body.engines || [];
+  const gimbals = engines.filter(e => e.gimbal);
+  if (!gimbals.length) return;
+  
+  const g_N  = gimbals[0].gimbalDeg || 0;
+  const R_N  = Number.isFinite(gimbals[0].targetGimbalRateDegS)
+    ? gimbals[0].targetGimbalRateDegS : 0;
+  const g_N1 = g_N + R_N * dt;
+  
+  const dNext = Derivation.deriveForState(snapshot, idx, {
+    rx: rx_n, ry: ry_n, vx: vx_n, vy: vy_n,
+    theta: theta_n, omega: omega_n,
+    slosh: { offset: sloshX_n, velocity: sloshV_n },
+  }, g_N1);
+  if (!dNext || !dNext.massProps) return;
+  
+  const τ_drag_next = dNext.torqueDrag;
+  _hState.lastTauDrag = τ_drag_next;
+  const I_next = dNext.massProps.I;
+  
+  // ---------- AoA derivatives — ANALYTIC, no finite difference ----------
+  //
+  //   AoA = atan2(u, v),   u = relV·bodyX,  v = relV·bodyY
+  //
+  //   First derivative:
+  //     d(AoA)/dt = ω + (v·a_x − u·a_y) / r²
+  //   Second derivative (with jerk ≈ 0 over one tick):
+  //     d²(AoA)/dt² = α − 2·(v·a_x − u·a_y)·(u·a_x + v·a_y) / r⁴
+  //
+  //   where a_x, a_y are body-frame components of inertial acceleration,
+  //   r² = u² + v².
+  //
+  // Both formulas are exact algebra — no 1/dt² amplification.
+  //
+  // Helper: computes u, v, a_x, a_y from a body-derived object.
+  function bodyFrameKinematics(d, M_d) {
+    const cosT = Math.cos(d.theta);
+    const sinT = Math.sin(d.theta);
+    const thrustIx = d.thrustBodyX * cosT - d.thrustBodyY * sinT;
+    const thrustIy = d.thrustBodyX * sinT + d.thrustBodyY * cosT;
+    const aIx = d.gVecX + (thrustIx + d.dragVecX) / M_d;
+    const aIy = d.gVecY + (thrustIy + d.dragVecY) / M_d;
+    const u = d.relVx * cosT + d.relVy * sinT;
+    const v = -d.relVx * sinT + d.relVy * cosT;
+    const ax = aIx * cosT + aIy * sinT;
+    const ay = -aIx * sinT + aIy * cosT;
+    return { u, v, ax, ay };
+  }
+  
+  // Current tick (for trigger condition)
+  // Current tick (for trigger condition AND for HOLD's Now-mode torque)
+const kC = bodyFrameKinematics(dNow, M);
+const r2C = kC.u * kC.u + kC.v * kC.v;
+const PC = kC.v * kC.ax - kC.u * kC.ay;
+const QC = kC.u * kC.ax + kC.v * kC.ay;
+const omegaAoANow = (r2C > 1e-6) ? (dNow.omega + PC / r2C) : 0;
+const alphaAoANow = (r2C > 1e-6) ? (dNow.alphaAng - 2 * PC * QC / (r2C * r2C)) : 0;
+  
+  // Next tick (for HOLD torque — lag-free)
+  const kN = bodyFrameKinematics(dNext, dNext.massProps.M);
+  const r2N = kN.u * kN.u + kN.v * kN.v;
+  const PN  = kN.v * kN.ax - kN.u * kN.ay;
+  const QN  = kN.u * kN.ax + kN.v * kN.ay;
+  const omegaAoANext = (r2N > 1e-6) ? (dNext.omega + PN / r2N) : 0;
+  const alphaAoANext = (r2N > 1e-6) ? (dNext.alphaAng - 2 * PN * QN / (r2N * r2N)) : 0;
+  
+  _hState.lastAoANowDeg = dNow.alphaDeg;
+_hState.lastAoANextDeg = dNext.alphaDeg;
+_hState.lastOmegaAoANow = omegaAoANow;
+_hState.lastOmegaAoANext = omegaAoANext;
+_hState.lastAlphaAoANow = alphaAoANow;
+_hState.lastAlphaAoANext = alphaAoANext;
+
+// Dynamic-pressure trend. Positive = still climbing toward MaxQ;
+// negative = past MaxQ (or descending). Used by HOLD to choose
+// between next-tick and current-tick torque calculation.
+const Q_now = dNow.Q;
+const dQ = (_hState.lastQ !== null) ? (Q_now - _hState.lastQ) / dt : 0;
+_hState.lastQ = Q_now;
+_hState.lastDQ = dQ;
+  
+  // ---------- Phase transitions ----------
+  const elapsed = simT - _hState.phaseStart;
+  
+  if (_hState.phase === 'PRE_COAST') {
+  if (elapsed >= cfg.INITIAL_COAST_S) {
+    _hState.phase = 'PUSH';
+    _hState.phaseStart = simT;
+
+    // Lock Δθ for this PUSH pulse from the max gimbal angle at this
+    // instant. Peak torque the gimbal can reach at PUSH_MAX_GIMBAL_DEG
+    // — computed from current thrust + geometry — then Δθ follows
+    // from the sine-pulse identity  Δθ = τ_peak · T² / (2π·I).
+    // After this, the max-gimbal input is discarded; the pulse uses
+    // the old formula with this locked Δθ for its entire duration.
+    const g_max_rad = (Number.isFinite(cfg.PUSH_MAX_GIMBAL_DEG) ? cfg.PUSH_MAX_GIMBAL_DEG : 0) * Math.PI / 180;
+    let A_gp = 0, B_gp = 0;
+    gimbals.forEach(e => {
+      const F = (e.massFlowRate || 0) * (e.Ve || 0);
+      A_gp += ((e.x || 0) - dNext.massProps.comX) * F;
+      B_gp += F;
+    });
+    B_gp *= dNext.massProps.comY;
+    const tau_peak = A_gp * Math.cos(g_max_rad) + B_gp * Math.sin(g_max_rad);
+    const Tp = cfg.PUSH_T_S;
+    const deltaRad = (I_next > 0) ? (tau_peak * Tp * Tp) / (2 * Math.PI * I_next) : 0;
+    _hState.currentDeltaDeg = deltaRad * 180 / Math.PI;
+    _hState.lastLockedDeltaDeg = _hState.currentDeltaDeg; // debug
+  }
+} else if (_hState.phase === 'PUSH') {
+    if (elapsed >= cfg.PUSH_T_S) {
+      _hState.phase = 'COAST';
+      _hState.phaseStart = simT;
+    }
+  } else if (_hState.phase === 'COAST') {
+    // Trigger: AoA ≥ 0 AND ω_AoA > 0 (analytic).
+    if (dNow.alphaDeg >= 0) { // && omegaAoANow > 0) {
+      _hState.phase = 'HOLD';
+      _hState.phaseStart = simT;
+    }
+  } else if (_hState.phase === 'HOLD') {
+    if (dNow.alphaDeg < 0) { // || omegaAoANow < 0) {//Math.abs(dNow.alphaDeg) > cfg.HOLD_MAX_AOA_DEG) {
+      _hState.phase = 'COASTnAoADAMP';
+      _hState.phaseStart = simT;
+    }
+  }
+  _hState.lastElapsed = elapsed;
+  
+  // ---------- τ_desired ----------
+    let τ_desired = 0;
+  if (_hState.phase === 'PUSH') {
+    const T = cfg.PUSH_T_S;
+    const Δθ_rad = _hState.currentDeltaDeg * Math.PI / 180;
+    const A_ang = (2 * Math.PI * Δθ_rad) / (T * T);
+    const omega_ang = (2 * Math.PI) / T;
+    const tRel = Math.max(0, Math.min(T, elapsed));
+    τ_desired = cfg.PUSH_EAST_SIGN * I_next * A_ang * Math.sin(omega_ang * tRel);
+    _hState.lastTauDQ = 0;
+  } else if (_hState.phase === 'COAST' || _hState.phase === 'PRE_COAST') {
+  τ_desired = 0;
+  _hState.lastTauDQ = 0;
+} else if (_hState.phase === 'COASTnAoADAMP') {
+  τ_desired = (-I_next * cfg.COAST_DAMP_GAIN * dNext.alphaDeg) /
+    (cfg.COAST_DAMP_K * cfg.COAST_DAMP_K);
+  _hState.lastTauDQ = 0;
+} else { // HOLD
+  // Two sub-modes based on dynamic-pressure trend:
+  //   dQ/dt ≥ 0  → pre-MaxQ (or Q flat): use PREDICTED next-tick
+  //                values. Q rising means next tick matters more than
+  //                now (drag is growing).
+  //   dQ/dt < 0  → past MaxQ: use CURRENT-tick values. Q falling means
+  //                next tick's drag is already weaker than now, so
+  //                predicting against the next tick would lag the
+  //                actual pressure environment. Reacting on the
+  //                current (higher-Q) state keeps the loop from
+  //                feeling sluggish in the descent-side of the
+  //                pressure hump.
+  const useNow = (dQ < 0);
+  const I_use = useNow ? dNow.massProps.I : I_next;
+  const alpha_use = useNow ? alphaAoANow : alphaAoANext;
+  const omega_use = useNow ? omegaAoANow : omegaAoANext;
+  const τ_accel = -I_use * alpha_use;
+  const τ_damp = -cfg.HOLD_K_DAMP * I_use * omega_use;
+  
+  // dQ-driven east nudge — always east (negative torque), never west.
+  //   f ∈ (0, 1], rises as dQ falls below zero.
+  const qRef = cfg.HOLD_Q_REF;
+  const f_dQ = (Number.isFinite(qRef) && qRef > 0) ?
+    0.5 * (1 - Math.tanh(dQ / qRef)) :
+    0.5;
+    const τ_dQ = -cfg.HOLD_K_DQ * I_use * f_dQ;
+  _hState.lastTauDQ = τ_dQ;
+  
+  τ_desired = τ_accel + τ_damp + τ_dQ;
+  }
+  _hState.lastTauDesired = τ_desired;
+  
+  // ---------- Solve gimbal rate ----------
+  const τ_target = τ_desired - τ_drag_next;
+  _hState.lastTauTarget = τ_target;
+  
+  const comX = dNext.massProps.comX;
+  const comY = dNext.massProps.comY;
+  let A_g = 0, B_g = 0;
+  gimbals.forEach(e => {
+    const F = (e.massFlowRate || 0) * (e.Ve || 0);
+    A_g += ((e.x || 0) - comX) * F;
+    B_g += F;
+  });
+  B_g *= comY;
+  
+  const R_amp = Math.hypot(A_g, B_g);
+  let g_req_rad = 0;
+  if (R_amp > 1) {
+    const ratio = Math.max(-1, Math.min(1, τ_target / R_amp));
+    const phi = Math.atan2(A_g, B_g);
+    const w1 = _hWrapPi(Math.asin(ratio) - phi);
+    const w2 = _hWrapPi(Math.PI - Math.asin(ratio) - phi);
+    g_req_rad = (Math.abs(w1) <= Math.abs(w2)) ? w1 : w2;
+  }
+  let g_req_deg = g_req_rad * 180 / Math.PI;
+  const MAX_ANG = (env && Number.isFinite(env.GIMBAL_MAX_DEG)) ? env.GIMBAL_MAX_DEG : 20;
+  if (Math.abs(g_req_deg) > MAX_ANG) g_req_deg = Math.sign(g_req_deg) * MAX_ANG;
+  
+  const R_req = (g_req_deg - g_N) / dt;
+  const MAX_RATE = (env && Number.isFinite(env.GIMBAL_RATE_DEG_S)) ? env.GIMBAL_RATE_DEG_S : 40;
+  const R_cmd = Math.max(-MAX_RATE, Math.min(MAX_RATE, R_req));
+  
+  _hState.lastGRate = R_cmd;
+  _hState.lastGRadN = g_N;
+  _hState.lastGReqDeg = g_req_deg;
+  
+  send(cmdSetGimbalRate(R_cmd));
+  
+   // ---------- Throttle: THROTTLE_FRAC × each engine's own max ----------
+  //   refMax is the largest maxMassFlowRate among this stack's engines.
+  //   Sending refMax × frac lets physics's clampMassFlowCommand scale
+  //   each engine to its own frac of its own max — exact for the normal
+  //   homogeneous octaweb case.
+  let refMax = 0;
+  engines.forEach(e => { if (Number.isFinite(e.maxMassFlowRate) && e.maxMassFlowRate > refMax) refMax = e.maxMassFlowRate; });
+  const thrFrac = (Number.isFinite(cfg.THROTTLE_FRAC) && cfg.THROTTLE_FRAC > 0) ?
+    Math.min(1, cfg.THROTTLE_FRAC) : 1.0;
+  const targetFlow = refMax * thrFrac;
+  if (_hState.lastThrottleSent === undefined ||
+    Math.abs(targetFlow - _hState.lastThrottleSent) > 0.5) {
+    send(cmdSetAllThrottle(targetFlow));
+    _hState.lastThrottleSent = targetFlow;
+  }
+  }
+
+_hTick.start = function() {
+    send(cmdSetAllThrottle(Infinity));
+    _hState.init = false;
+_hState.ticks = 0;
+_hState.phase = 'PRE_COAST';
+_hState.phaseStart = 0;
+_hState.currentDeltaDeg = 0;
+_hState.lastThrottleSent = undefined;
+_hState.lastQ = null;
+_hState.lastDQ = 0;
+  console.log('[ascentAoaHold] started');
+};
+_hTick.stop = function () {
+  send(cmdSetAllThrottle(0));
+  send(cmdSetGimbalRate(0));
+  _hState.init = false;
+  console.log('[ascentAoaHold] stopped');
+};
+_hTick.getStatus = function() {
+    return {
+      ticks: _hState.ticks,
+      phase: _hState.phase,
+      elapsed: _hState.lastElapsed,
+      lockedDeltaDeg: _hState.currentDeltaDeg,
+    altKm: _hState.lastAltKm,
+    aoaDeg: _hState.lastAoANowDeg,
+    aoaNextDeg: _hState.lastAoANextDeg,
+    omegaAoANow: _hState.lastOmegaAoANow,
+    omegaAoANext: _hState.lastOmegaAoANext,
+    alphaAoANow: _hState.lastAlphaAoANow,
+  alphaAoANext: _hState.lastAlphaAoANext,
+  dQ: _hState.lastDQ,
+  tauDQ: _hState.lastTauDQ,
+    tauDesired: _hState.lastTauDesired,
+    tauDrag: _hState.lastTauDrag,
+    tauTarget: _hState.lastTauTarget,
+    gRate: _hState.lastGRate,
+    gRadN: _hState.lastGRadN,
+    gReqDeg: _hState.lastGReqDeg,
+  };
+};
+
+GUIDES.ascentAoaHold = _hTick;
+
+function setAscentHold(patch) {
+  if (!patch) return;
+  Object.keys(patch).forEach(k => {
+    if (k in ASCENT_HOLD) ASCENT_HOLD[k] = patch[k];
+  });
+  console.log('[ascentAoaHold] constants:', JSON.stringify(ASCENT_HOLD));
+}
+  function getAscentHoldConfig() { return { ...ASCENT_HOLD }; }
   
   // ---- Outbound: single choke point for physics commands. ----
   function send(msg) {
@@ -1416,7 +2353,12 @@ getActiveGuide,
 listGuides,
 getGuideStatus,
 setPredictiveGains,
+setAscentRR,
 setSweepDuration,
+setAscentHold,
+getAscentRRConfig,
+getAscentHoldConfig,
+getPredictiveGains,
     // Convenience forwarders so callers can keep using Guidance.*
     derive: (...args) => Derivation.derive(...args),
     deriveAllBodies: (...args) => Derivation.deriveAllBodies(...args),

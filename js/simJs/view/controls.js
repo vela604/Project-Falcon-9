@@ -727,12 +727,52 @@ function onGuidanceStatus(status) {
     return;
   }
   set('guideStatusText', 'RUNNING');
-  set('guideStatusTicks', String(status.ticks || 0));
-  set('guideStatusTarget', Math.round(status.lastTarget || 0) + ' N·m');
-  set('guideStatusAchieved', Math.round(status.lastAchieved || 0) + ' N·m');
-  const fires = (status.lastFires || 0) + (status.lastSaturated ? ' · sat' : '');
-  set('guideStatusFires', fires);
-  
+set('guideStatusTicks', String(status.ticks || 0));
+set('guideStatusTarget', Math.round(status.lastTarget || 0) + ' N·m');
+set('guideStatusAchieved', Math.round(status.lastAchieved || 0) + ' N·m');
+const fires = (status.lastFires || 0) + (status.lastSaturated ? ' · sat' : '');
+set('guideStatusFires', fires);
+
+// ascentAoaHold status
+if (status.aoaDeg !== undefined) {
+  const r2d = 180 / Math.PI;
+ /* console.log(
+  `[hold] ${status.phase} t=${status.elapsed.toFixed(1)}s alt=${status.altKm.toFixed(2)}km ` +
+  `dQ=${status.dQ.toFixed(0)}Pa/s ` +
+  `AoA=${status.aoaDeg.toFixed(3)}°→${status.aoaNextDeg.toFixed(3)}° ` +
+  `ω_now=${status.omegaAoANow.toFixed(5)} ω_N1=${status.omegaAoANext.toFixed(5)} ` +
+  `α_now=${status.alphaAoANow.toFixed(5)} α_N1=${status.alphaAoANext.toFixed(5)}`
+);*/
+}
+
+// ascentRR status
+if (status.tauDesired !== undefined && status.mode !== undefined && status.deltaDeg !== undefined) {
+  const d2r = 180 / Math.PI;
+  const r2d = 180 / Math.PI;
+  console.log(
+    `[rr] ${status.phase}·${status.mode}${status.paused?'·PAUSED':''} ` +
+    `t=${status.elapsed.toFixed(2)}s alt=${status.altKm.toFixed(2)}km Q=${(status.Q/1000).toFixed(1)}kPa Δθ=${status.deltaDeg.toFixed(2)}°`
+  );
+  console.log(
+    `     θ_in=${(status.thetaInertial*d2r).toFixed(3)}° θ_rel=${(status.thetaRel*d2r).toFixed(3)}° ` +
+    `θ_tgt_rel=${(status.targetThetaRel*d2r).toFixed(3)}° θ_err=${(status.thetaErr*d2r).toFixed(4)}°`
+  );
+  console.log(
+    `     ω_in=${(status.omegaInertial*d2r).toFixed(4)}°/s ω_rel=${(status.omegaRel*d2r).toFixed(4)}°/s`
+  );
+  console.log(
+    `     τ_des=${status.tauDesired.toExponential(3)} τ_drag=${status.tauDrag.toExponential(3)} ` +
+    `τ_tgt=${status.tauTarget.toExponential(3)}`
+  );
+  console.log(
+    `     gimbal: N=${status.gRadN.toFixed(3)}° N+1=${status.gRadN1.toFixed(3)}° ` +
+    `g_req=${status.gReqDeg.toFixed(3)}° R_req=${status.rReq.toFixed(2)}°/s R_cmd=${status.rCmd.toFixed(2)}°/s`
+  );
+  console.log(
+    `     M=${status.mass.toFixed(0)}kg I=${status.inertia.toExponential(2)} thrustFlow=${status.throttleFlow !== null ? status.throttleFlow.toFixed(1) : '—'}`
+  );
+}
+
 // gimbalPredictive2 status — main-thread console log
 if (status.gReq !== undefined) {
   console.log(
@@ -758,4 +798,7 @@ if (status.nCompared !== undefined) {
       ` | Q mean|err|=${status.meanAbsErrQPa.toFixed(1)} Pa`
     );
   }
+  
+
 }
+

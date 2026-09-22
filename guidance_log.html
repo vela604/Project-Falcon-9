@@ -871,14 +871,14 @@ pre { padding: 12px 14px; font-size: 11.5px; }
       the failed ones failed. Kept as a build-in-public log so future work
       doesn't repeat the same mistakes.
     </p>
-    <div class="hero-stats">
+       <div class="hero-stats">
       <div class="hero-stat">
-        <div class="hero-stat-num">7</div>
+        <div class="hero-stat-num">9</div>
         <div class="hero-stat-label">Experiments</div>
       </div>
       <div class="hero-stat">
-        <div class="hero-stat-num" style="color:var(--green)">1</div>
-        <div class="hero-stat-label">Accurate Win</div>
+        <div class="hero-stat-num" style="color:var(--green)">2</div>
+        <div class="hero-stat-label">Accurate Wins</div>
       </div>
       <div class="hero-stat">
         <div class="hero-stat-num" style="color:var(--yellow)">1</div>
@@ -911,7 +911,7 @@ pre { padding: 12px 14px; font-size: 11.5px; }
       <div>
         <h3 class="exp-title">Test — Torque Balance</h3>
         <div class="exp-id">testGuide</div>
-        <div class="exp-time">2:30 PM <span class="exp-time-day">· Sun, Sep 20</span></div>
+        <div class="exp-time">2:30 PM <span class="exp-time-day">· Sun, Sep' 20 2026</span></div>
       </div>
       <span class="exp-status fail">FAIL</span>
     </div>
@@ -967,7 +967,7 @@ pre { padding: 12px 14px; font-size: 11.5px; }
       <div>
         <h3 class="exp-title">Predictive Torque Cancel</h3>
         <div class="exp-id">predictiveTorque</div>
-        <div class="exp-time">3:00 PM <span class="exp-time-day">· Sun, Sep 20</span></div>
+        <div class="exp-time">3:00 PM <span class="exp-time-day">· Sun, Sep' 20 2026</span></div>
       </div>
       <span class="exp-status fail">FAIL</span>
     </div>
@@ -1023,7 +1023,7 @@ fire RCS via GuideRCS</pre>
       <div>
         <h3 class="exp-title">Predictive + PID</h3>
         <div class="exp-id">predictivePlus</div>
-        <div class="exp-time">3:40 PM <span class="exp-time-day">· Sun, Sep 20</span></div>
+        <div class="exp-time">3:40 PM <span class="exp-time-day">· Sun, Sep' 20 2026</span></div>
       </div>
       <span class="exp-status fail">FAIL</span>
     </div>
@@ -1081,7 +1081,7 @@ fire RCS via GuideRCS</pre>
       <div>
         <h3 class="exp-title">Predictive + PID + AoA Impulse</h3>
         <div class="exp-id">predictivePlusAoA</div>
-        <div class="exp-time">4:15 PM <span class="exp-time-day">· Sun, Sep 20</span></div>
+        <div class="exp-time">4:15 PM <span class="exp-time-day">· Sun, Sep' 20 2026</span></div>
       </div>
       <span class="exp-status partial">SUCCESS · NOT PRACTICAL</span>
     </div>
@@ -1138,7 +1138,7 @@ fire RCS via GuideRCS</pre>
       <div>
         <h3 class="exp-title">Predictive + PID + AoA + East Push</h3>
         <div class="exp-id">predictivePlusAoAPush</div>
-        <div class="exp-time">5:00 PM <span class="exp-time-day">· Sun, Sep 20</span></div>
+        <div class="exp-time">5:00 PM <span class="exp-time-day">· Sun, Sep' 20 2026</span></div>
       </div>
       <span class="exp-status fail">FAIL</span>
     </div>
@@ -1197,7 +1197,7 @@ fire RCS via GuideRCS</pre>
       <div>
         <h3 class="exp-title">Verify: Prediction Accuracy</h3>
         <div class="exp-id">predictVerifier</div>
-        <div class="exp-time">5:15 PM <span class="exp-time-day">· Sun, Sep 20</span></div>
+        <div class="exp-time">5:15 PM <span class="exp-time-day">· Sun, Sep' 20 2026</span></div>
       </div>
       <span class="exp-status tool">DIAGNOSTIC</span>
     </div>
@@ -1256,7 +1256,7 @@ drag: mean |err| ≈ 0 N</pre>
       <div>
         <h3 class="exp-title">Gimbal: 2-tick Predictive</h3>
         <div class="exp-id">gimbalPredictive2</div>
-        <div class="exp-time">6:35 PM <span class="exp-time-day">· Sun, Sep 20</span></div>
+        <div class="exp-time">6:35 PM <span class="exp-time-day">· Sun, Sep' 20 2026</span></div>
       </div>
       <span class="exp-status pass">ACCURATE WIN</span>
     </div>
@@ -1333,6 +1333,316 @@ send(setGimbalRate(R_cmd))</pre>
       </div>
     </div>
   </div>
+  <!-- ==================== COAST PHASE — SHELVED ==================== -->
+<div class="section-header">Coast-Phase Control · Shelved</div>
+
+<!-- 8. coastDragShelved -->
+<div class="exp glass fail">
+  <div class="exp-head">
+    <div>
+      <h3 class="exp-title">Coast-Phase Drag Cancel — Shelved</h3>
+      <div class="exp-id">coastDrag · abandoned</div>
+      <div class="exp-time">7:20 PM <span class="exp-time-day">· Sun, Sep' 20 2026</span></div>
+    </div>
+    <span class="exp-status fail">FAIL · SHELVED</span>
+  </div>
+  <div class="exp-body">
+    <div class="exp-row">
+      <div class="exp-label">Target</div>
+      <div class="exp-value">
+        Extend the working <code>gimbalPredictive2</code> controller past
+        burnout, into the coast phase — hold AoA ≈ 0 while the rocket is
+        still airborne but no longer thrusting, so apogee and landing stay
+        clean.
+      </div>
+    </div>
+    <div class="exp-row">
+      <div class="exp-label">Approaches tried</div>
+      <div class="exp-value">
+        <ul>
+          <li><strong>Straight port</strong> of <code>gimbalPredictive2</code>
+            into coast — worked for a few seconds, then attitude broke away.</li>
+          <li><strong>N-tick horizon</strong> (2, 3, 4 ticks) — no improvement;
+            overshoot and undershoot alternated. Longer horizon made it worse,
+            not better.</li>
+          <li><strong>PID assist on top</strong> — masked the drift briefly,
+            then saturated the gimbal.</li>
+          <li><strong>RCS assist</strong> — reintroduced the Phase-1 RCS
+            limit-cycle problem verbatim.</li>
+        </ul>
+      </div>
+    </div>
+    <div class="exp-row">
+      <div class="exp-label">What happened</div>
+      <div class="exp-value">
+        In every variant the gimbal ended up <strong>wobbling visibly</strong>
+        — angle trace oscillated a few degrees peak-to-peak at ~1–2 Hz, which
+        reads as unstable on the plot even when the numeric AoA stays
+        bounded. And crucially, <em>coast drag is not a tame continuation of
+        ascent drag</em>: once thrust is off, torque direction and magnitude
+        swing hard with tiny attitude changes. Small model error → large
+        response.
+      </div>
+    </div>
+    <div class="exp-row">
+      <div class="exp-label">Why we're shelving it</div>
+      <div class="exp-value">
+        <ul>
+          <li>We <strong>can</strong> hand-tune any single launch profile to
+            survive coast. We <strong>cannot</strong> write universal logic
+            that saves every case — the drag regime during rest is
+            fundamentally different and no single controller covers it.</li>
+          <li>The gimbal wobble in every near-working variant is a symptom,
+            not a cosmetic issue: the controller is fighting an unmodelled
+            effect, and it will keep fighting it no matter the gain.</li>
+          <li>Continuing to tune would just be Phase 1 again — treating the
+            symptom of a deeper mismatch.</li>
+        </ul>
+      </div>
+    </div>
+    <div class="exp-row">
+      <div class="exp-label">Decision</div>
+      <div class="exp-value">
+        <strong>Abandon coast-phase active attitude control for now.</strong>
+        Accept AoA drift during coast. Revisit only if a coast-phase physical
+        model is added to the sim (drag-regime separation, turbulence term,
+        or a real aerodynamic coefficient table). Until then, no controller
+        will be honest about what it can hold.
+      </div>
+    </div>
+    <div class="exp-row">
+      <div class="exp-label">What survives</div>
+      <div class="exp-value">
+        <code>gimbalPredictive2</code> stays as the <strong>ascent-only</strong>
+        controller — that part genuinely works and remains the accurate win.
+        Coast is a separate problem and gets its own future experiment, not
+        a bolt-on to this one.
+      </div>
+    </div>
+    <div class="tags">
+      <span class="tag err">abandoned</span>
+      <span class="tag err">gimbal-wobble</span>
+      <span class="tag warn">no-universal-logic</span>
+      <span class="tag">ascent-only-scoped</span>
+    </div>
+  </div>
+</div>
+
+  <!-- ==================== ASCENT ATTITUDE ==================== -->
+  <div class="section-header">Ascent Attitude Control</div>
+
+  <!-- 9. ascentAoaHold -->
+  <div class="exp glass pass">
+    <div class="exp-head">
+      <div>
+        <h3 class="exp-title">Ascent: AoA Hold with Analytic Derivatives</h3>
+        <div class="exp-id">ascentAoaHold</div>
+        <div class="exp-time">6:45 AM<span class="exp-time-day">· Tue, Sep' 22 2026</span></div>
+      </div>
+      <span class="exp-status pass">ACCURATE WIN</span>
+    </div>
+    <div class="exp-body">
+      <div class="exp-row">
+        <div class="exp-label">Target</div>
+        <div class="exp-value">
+          Deliver a full-ascent attitude controller that keeps the rocket's
+          angle-of-attack bounded through the entire burn — from pad to
+          Max-Q to post-Max-Q — with no hand-tuning per launch profile.
+          RCS was already ruled out; the gimbal was the only viable actuator
+          (proven by <code>gimbalPredictive2</code>). The question was
+          whether a controller on top of it could ride through the drag
+          torque peak without hand-tuned gains.
+        </div>
+      </div>
+      <div class="exp-row">
+  <div class="exp-label">Iterations</div>
+  <div class="exp-value">
+    <p>This guide went through six distinct iterations before it
+    settled. Each one exposed a specific failure mode:</p>
+    <ul>
+      <li><strong>v1 — PUSH + COAST + HOLD, finite-difference
+        derivatives.</strong> Straight port of the sin-pulse
+        prefix idea from <code>predictivePlusAoAPush</code>, with
+        a new HOLD phase triggered on AoA ≥ 0. ω_AoA and α_AoA
+        came from 1-tick and 2-tick backward finite differences.
+        Immediate failure: 1/dt² = 6400× amplification turned
+        every rounding error in AoA into a gimbal-saturating
+        torque. Attitude broke within 2 seconds of HOLD entry.</li>
+      <li><strong>v2 — analytic derivatives.</strong> Replaced
+        both derivatives with exact algebra on body-frame
+        velocity + acceleration:
+        <code>ω_AoA = ω + P/r²</code> and
+        <code>α_AoA = α − 2PQ/r⁴</code>. No more amplification.
+        HOLD became tractable — but the rate damper alone wasn't
+        enough post-Max-Q: the gimbal kept chasing a growing AoA
+        as dynamic pressure fell.</li>
+      <li><strong>v3 — HOLD trigger with ω_AoA gate.</strong>
+        Entry was originally <code>AoA ≥ 0 AND ω_AoA &gt; 0</code>.
+        Backfired — the ω gate fired late in most runs (ω sometimes
+        crossing zero *before* AoA did), so HOLD missed the
+        transition and CoAST continued past the window. Reverted
+        to AoA-only entry; the ω condition is still in the code
+        but commented out.</li>
+      <li><strong>v4 — COASTnAoADAMP phase.</strong> Reverting
+        HOLD → COAST on AoA &lt; 0 caused a hard discontinuity —
+        HOLD's damped torque snapped to zero, and the gimbal
+        slammed. Added a third phase in between: a scaled
+        position controller that decays AoA back toward zero
+        without the accel-cancel term. Formula went through
+        several iterations; the final shape is a
+        critically-damped second-order position response,
+        <code>τ = −I·16·AoA / K²</code>.</li>
+      <li><strong>v5 — τ_dQ east nudge.</strong> Post-Max-Q the
+        rate damper was fighting drag with diminishing effect —
+        the pressure peak passed but the AoA kept creeping
+        positive. Added a soft, always-east bias that only
+        activates when dQ &lt; 0:
+        <code>τ_dQ = −K_dQ · I · 0.5(1 − tanh(dQ/Q_ref))</code>.
+        Tuned down from 0.05/5000 to 0.005/1000 after the first
+        pass rotated too aggressively into the falling-pressure
+        window.</li>
+      <li><strong>v6 — useNow sub-mode inside HOLD.</strong> The
+        pre-Max-Q and post-Max-Q regimes want opposite things:
+        rising pressure wants next-tick prediction, falling
+        pressure wants current-tick reaction. Added a runtime
+        switch inside HOLD: <code>dQ ≥ 0</code> uses the
+        N+1 predicted derivatives, <code>dQ &lt; 0</code> uses
+        current-tick. This was the change that closed the loop.</li>
+    </ul>
+    <p>Final tuning: <code>INITIAL_COAST_S</code> 5 → 4.9,
+    <code>PUSH_T_S</code> 5 → 4.8, and <code>16</code> /
+    <code>HOLD_K_DAMP</code> in the COASTnAoADAMP formula split
+    into two independent constants
+    (<code>COAST_DAMP_GAIN</code>, <code>COAST_DAMP_K</code>) so
+    the two phases tune separately.</p>
+  </div>
+</div>
+      <div class="exp-row">
+        <div class="exp-label">Key insight</div>
+        <div class="exp-value">
+          Finite differences of AoA derivatives amplify by <strong>1/dt²</strong>
+          — at <code>dt = 1/80 s</code>, that's 6400×. Any noise in AoA
+          gets amplified into a gimbal-saturating torque. The fix wasn't a
+          better filter or a shorter horizon — it was <strong>not using
+          finite differences at all</strong>.
+          <p>With <code>AoA = atan2(u, v)</code> in body-frame velocity
+          components, the derivatives are exact algebra:</p>
+          <pre>u = relVx·cosθ + relVy·sinθ
+v = −relVx·sinθ + relVy·cosθ
+a_x = a_Ix·cosθ + a_Iy·sinθ
+a_y = −a_Ix·sinθ + a_Iy·cosθ
+r² = u² + v²
+P = v·a_x − u·a_y
+Q = u·a_x + v·a_y
+
+ω_AoA = ω + P/r²
+α_AoA = α_body − 2·P·Q/r⁴</pre>
+          No 1/dt², no amplification, no filter needed.
+        </div>
+      </div>
+      <div class="exp-row">
+        <div class="exp-label">Final architecture</div>
+        <div class="exp-value">
+          Four phases, one gimbal rate command per tick, all built on top
+          of the <code>gimbalPredictive2</code> drag-cancel core:
+          <pre><span class="cmt">// PRE_COAST (4.9 s) — straight climb, drag cancel only</span>
+τ_desired = 0
+
+<span class="cmt">// PUSH (4.8 s) — sin-pulse east kick</span>
+τ = EAST_SIGN · I · A · sin(2πt/T),  A = 2π·Δθ/T²
+
+<span class="cmt">// COAST — pure drag cancel, AoA drifts negative → positive</span>
+τ_desired = 0
+
+<span class="cmt">// HOLD — triggered when AoA ≥ 0</span>
+τ_desired = −I · α_AoA            <span class="cmt">// accel cancel</span>
+          − K · I · ω_AoA         <span class="cmt">// rate damper</span>
+          − K_dQ · I · f(dQ)      <span class="cmt">// post-Max-Q east nudge</span>
+          <span class="cmt">// f(dQ) = 0.5·(1 − tanh(dQ/Q_ref)), always ≥ 0</span></pre>
+          Every value from the derived state at the predicted next tick —
+          nothing finite-differenced. The gimbal rate solve is the same
+          algebraic form as <code>gimbalPredictive2</code>: solve
+          <code>τ_gimbal(g) = τ_desired − τ_drag_next</code> for
+          <code>g_req</code>, clamp, convert to rate.
+        </div>
+      </div>
+      <div class="exp-row">
+        <div class="exp-label">Why it works</div>
+        <div class="exp-value">
+          <ul>
+            <li><strong>Analytic derivatives</strong> — no
+              <code>1/dt²</code> amplification, so the HOLD torque terms
+              respond to actual AoA motion, not to numerical noise.</li>
+            <li><strong>Predicted next-tick values throughout HOLD</strong> —
+              no stale actuals, no phase lag. The gimbal lands on target
+              exactly when it's needed, not one tick late.</li>
+            <li><strong>dQ-driven east nudge</strong> — a soft, always-east
+              bias that grows only when dynamic pressure is falling
+              (post-Max-Q). Fills the gap the rate damper leaves open,
+              without ever rotating the wrong way.</li>
+            <li><strong>Gimbal, not RCS</strong> — continuous actuator,
+              smooth integration, no duty-cycle timing to fight.</li>
+          </ul>
+        </div>
+      </div>
+      <div class="exp-row">
+        <div class="exp-label">Tuned constants</div>
+        <div class="exp-value">
+          <pre>INITIAL_COAST_S: 4.9
+PUSH_T_S:        4.8
+PUSH_DELTA_DEG:  1
+PUSH_EAST_SIGN:  -1
+HOLD_K_DAMP:     4.0
+HOLD_MAX_AOA_DEG:8
+HOLD_K_DQ:       0.005
+HOLD_Q_REF:      1000</pre>
+        </div>
+      </div>
+      <div class="exp-row">
+        <div class="exp-label">Result</div>
+        <div class="exp-value">
+          Attitude held through the full ascent. AoA stayed bounded through
+          Max-Q without any per-profile tuning. Torque trace clean, gimbal
+          rate stayed well inside its ±40°/s envelope, no RCS involvement
+          at any point. This is the second fully accurate result after
+          <code>gimbalPredictive2</code> — and the first that covers the
+          full burn rather than just the low-drag early phase.
+        </div>
+      </div>
+      <div class="exp-row">
+        <div class="exp-label">Drawbacks</div>
+        <div class="exp-value">
+          <ul>
+            <li><strong>Not wind-ready.</strong> Every torque term derives
+              from body-frame relative velocity, but the constants were
+              tuned entirely with wind off. Once wind is enabled, the
+              phase machine will need re-tuning — the PUSH amplitude and
+              the HOLD damping gains both have explicit
+              <code>q_eff</code> (relative dynamic pressure) baked into
+              their behaviour, and wind shifts that. No wind-compensation
+              term exists yet.</li>
+            <li><strong>Constants are hand-tuned, not auto-tuned.</strong>
+              <code>INITIAL_COAST_S</code>, <code>PUSH_T_S</code>,
+              <code>PUSH_DELTA_DEG</code>, <code>HOLD_K_DAMP</code>,
+              <code>HOLD_K_DQ</code>, <code>HOLD_Q_REF</code> all sit at
+              values specific to <em>this</em> F9-class mass, thrust, and
+              drag profile. A different stack would need different values.
+              No trajectory-to-constants mapping exists — there's no way
+              to hand the guide a target apogee / downrange / Max-Q and
+              have it compute its own gains.</li>
+          </ul>
+        </div>
+      </div>
+      <div class="tags">
+        <span class="tag">analytic-derivatives</span>
+        <span class="tag">gimbal-ascent</span>
+        <span class="tag">post-maxq-hold</span>
+        <span class="tag">accurate</span>
+        <span class="tag warn">wind-untested</span>
+        <span class="tag warn">hand-tuned-constants</span>
+      </div>
+    </div>
+  </div>
 
   <div class="section-header">Lessons That Survived Every Iteration</div>
 
@@ -1371,6 +1681,15 @@ send(setGimbalRate(R_cmd))</pre>
           <code>predictVerifier</code> should have come first.
         </div>
       </div>
+      <div class="exp-row">
+  <div class="exp-label">Know when to stop</div>
+  <div class="exp-value">
+    If a controller only works because it was hand-tuned to one launch
+    profile, that isn't a controller — it's a lookup table. Shelve the
+    approach, scope what actually works (ascent-only gimbal), and let the
+    rest wait until the physics model catches up.
+  </div>
+</div>
     </div>
   </div>
 
@@ -1385,309 +1704,294 @@ send(setGimbalRate(R_cmd))</pre>
 /* =====================================================================
    Star wave field (canvas) — driven by a real 2-D wave simulation
    ---------------------------------------------------------------------
-   Stars: a dense, dome-warped lattice of sparkles. Positions are built
-   once and never move.
+   Runs on EVERY `.exp.pass` card (all accurate wins). The script finds
+   them all, auto-injects a `.exp-emerge` host in each, and spins up an
+   independent wave simulation per card. Palettes, drift phases, and
+   twinkle all independent between instances — same behaviour on each,
+   different look.
 
-   Waves: the height field u(x,y,t) obeys the 2-D wave equation
-
-        u_tt = c² ∇²u          (solved with a leap-frog finite difference)
-
-   - TWO point sources (left & right) emit ring pulses again and again,
-     so the field keeps living forever.
-   - Rings pass through each other and interfere: crests add up to big
-     purple stars, crest + trough cancel to small blue ones — then the
-     rings carry on unchanged, exactly like real waves.
-   - The four edges are reflecting walls (free-end / Neumann): a pulse
-     hitting a wall bounces back with the same sign, and the reflection
-     then collides with the incoming waves.
-   - Tap / click the card to drop an extra ripple anywhere.
-
-   Star look, every frame:
-        k      = 0.5 + 0.5·tanh( GAIN·u − BIAS )     // 0 … 1
-        radius = lerp(R_MIN, R_MAX, k) · envelope · edgeScale
-        colour = lerp(palette.lo, palette.hi, k)     // palette auto-rotates randomly
+   Wave physics and star rendering are identical to the single-instance
+   version (see below). Only the bootstrap changed: a factory function
+   `createWaveField(host)` is now invoked once per success card.
    ===================================================================== */
 (function () {
-  var host = document.querySelector('.exp-emerge');
-  if (!host) return;
+  'use strict';
 
-  // ---- star lattice -------------------------------------------------
-  var PITCH  = 10;     // horizontal spacing between stars (px)
-  var ROW    = 10;     // vertical spacing between rows (px)
-  var R_MIN  = 0.7;    // smallest star radius (px)
-  var R_MAX  = 6.6;    // biggest star radius (px)
-  var A_MIN  = 0.28;   // opacity in troughs
-  var A_MAX  = 0.80;   // opacity at crests
-  var BOW    = 20;     // arch of the rows in the middle (px)
-  var WARP   = 1.1;    // fisheye squeeze at the sides (0 = none)
+  function createWaveField(host) {
+    // ---- star lattice -------------------------------------------------
+    var PITCH  = 10;
+    var ROW    = 10;
+    var R_MIN  = 0.7;
+    var R_MAX  = 6.6;
+    var A_MIN  = 0.28;
+    var A_MAX  = 0.80;
+    var BOW    = 20;
+    var WARP   = 1.1;
 
-  // ---- COLOUR PALETTES ----------------------------------------------
-  // Har entry = [trough colour (chhote stars), crest colour (bade stars)].
-  // Jitne chahein utne naye pairs add kar do — bas RGB [r, g, b] likho.
-  // Script automatically inme se random palette chunke smoothly badlegi.
-  var PALETTES = [
-    { name: 'blue-purple',   lo: [66, 133, 244],  hi: [196, 140, 255] },
-    { name: 'cyan-magenta',  lo: [53, 214, 255],  hi: [255, 95, 168]  },
-    { name: 'green-yellow',  lo: [74, 222, 128],  hi: [255, 210, 63]  },
-    { name: 'orange-pink',   lo: [255, 146, 72],  hi: [255, 95, 126]  },
-    { name: 'teal-lime',     lo: [45, 212, 191],  hi: [190, 242, 100] },
-    { name: 'indigo-ice',    lo: [99, 102, 241],  hi: [103, 232, 249] },
-    { name: 'violet-rose',   lo: [139, 92, 246],  hi: [251, 113, 133] },
-    { name: 'ember-gold',    lo: [255, 95, 126],  hi: [255, 214, 102] }
-    // { name: 'mera-palette', lo: [r, g, b], hi: [r, g, b] },
-  ];
-
-  // ---- colour animation ---------------------------------------------
-  var PAL_HOLD_MIN  = 3;     // palette kam se kam itne sec ruka rahe
-  var PAL_HOLD_MAX  = 7;     // aur zyada se zyada itne sec
-  var PAL_FADE      = 2.6;   // ek palette se dusre mein blend hone ka time (s)
-  var PAL_SPREAD    = 0.35;  // 0 = poori field ek saath badle, >0 = colour wave ki tarah phailta hai
-  var TWINKLE       = 0.14;  // star ki halki jhilmil (0 = off)
-  var HALO          = true;  // bade crest stars ke aas-paas soft glow
-
-  // ---- wave physics -------------------------------------------------
-  var DX      = 6;       // simulation cell size (px)
-  var SPEED   = 60;      // wave speed (px / second)
-  var CFL     = 0.5;     // Courant number (must stay < 0.707 for stability)
-  var DAMP    = 0.9988;  // tiny per-step damping: waves fade very slowly
-  var AMP     = 0.25;    // source strength
-  var GAIN    = 3.0;     // wave height → star size sensitivity
-  var BIAS    = 0.3;     // resting stars are a bit small & blue
-  var EVERY   = 5;       // seconds between pulses from each source
-  var DT      = CFL * DX / SPEED;   // fixed simulation timestep (s)
-
-  var cv = document.createElement('canvas');
-  host.appendChild(cv);
-  var ctx = cv.getContext('2d');
-  var TAU = Math.PI * 2;
-  function lerp(a, b, k) { return a + (b - a) * k; }
-
-  var W = 0, H = 0, dpr = 1, nx = 0, ny = 0;
-  var stars = [], prev, cur, nxt, sources = [], T = 0, stepN = 0;
-
-  // ---- palette state -------------------------------------------------
-  var palFrom = PALETTES[0], palTo = PALETTES[0];
-  var palT = 1, palWait = rand(PAL_HOLD_MIN, PAL_HOLD_MAX), palIdx = 0;
-
-  function rand(a, b) { return a + Math.random() * (b - a); }
-  function ease(t) { return t * t * (3 - 2 * t); }
-
-  function pickPalette() {
-    if (PALETTES.length < 2) return;
-    var n;
-    do { n = Math.floor(Math.random() * PALETTES.length); } while (n === palIdx);
-    palIdx = n;
-    palFrom = palTo; palTo = PALETTES[n]; palT = 0;
-  }
-
-  function updatePalette(dt) {
-    if (palT < 1) palT = Math.min(1, palT + dt / PAL_FADE);
-    else {
-      palWait -= dt;
-      if (palWait <= 0) { pickPalette(); palWait = rand(PAL_HOLD_MIN, PAL_HOLD_MAX); }
-    }
-  }
-
-  // ---- build lattice + sim grid ------------------------------------
-  function build() {
-    var r = host.getBoundingClientRect();
-    W = Math.max(1, Math.round(r.width));
-    H = Math.max(1, Math.round(r.height));
-    dpr = Math.min(window.devicePixelRatio || 1, 2);
-    cv.width = W * dpr; cv.height = H * dpr;
-    cv.style.width = W + 'px'; cv.style.height = H + 'px';
-
-    nx = Math.ceil(W / DX) + 1;
-    ny = Math.ceil(H / DX) + 1;
-    prev = new Float32Array(nx * ny);
-    cur  = new Float32Array(nx * ny);
-    nxt  = new Float32Array(nx * ny);
-    T = 0; stepN = 0;
-
-    // two permanent sources (different pitch so the interference varies)
-    sources = [
-      { x: W * 0.27, y: H * 0.68, f: 0.85, per: EVERY, t0: 0 },
-      { x: W * 0.73, y: H * 0.68, f: 1.10, per: EVERY, t0: EVERY / 2 },
-      { x: W * 0.30, y: H * 0.55, f: 1.00, per: EVERY, t0: EVERY / 1.5 },
-      { x: W * 0.0, y: H * 1.0, f: 1.47, per: EVERY, t0: EVERY / 0.5 },
-      { x: W * 1.0, y: H * 1.0, f: 1.73, per: EVERY, t0: 0 }
+    var PALETTES = [
+      { name: 'blue-purple',   lo: [66, 133, 244],  hi: [196, 140, 255] },
+      { name: 'cyan-magenta',  lo: [53, 214, 255],  hi: [255, 95, 168]  },
+      { name: 'green-yellow',  lo: [74, 222, 128],  hi: [255, 210, 63]  },
+      { name: 'orange-pink',   lo: [255, 146, 72],  hi: [255, 95, 126]  },
+      { name: 'teal-lime',     lo: [45, 212, 191],  hi: [190, 242, 100] },
+      { name: 'indigo-ice',    lo: [99, 102, 241],  hi: [103, 232, 249] },
+      { name: 'violet-rose',   lo: [139, 92, 246],  hi: [251, 113, 133] },
+      { name: 'ember-gold',    lo: [255, 95, 126],  hi: [255, 214, 102] }
     ];
 
-    stars = [];
-    var rows = Math.ceil(H / ROW) + 1;
-    var cols = Math.ceil(W / PITCH) + 2;
-    var sinA = Math.sin(WARP);
-    for (var j = 0; j < rows; j++) {
-      var baseY = H - j * ROW;
-      var v = Math.max(0, Math.min(1, baseY / H));
-      for (var i = -1; i < cols; i++) {
-        var gx = (i + (j % 2 ? 0.5 : 0)) * PITCH;
-        var u = (gx / W - 0.5) * 2;
-        if (u < -1 || u > 1) continue;
-        var x = WARP > 0 ? W / 2 + (W / 2) * Math.sin(u * WARP) / sinA : gx;
-        var edge = WARP > 0 ? Math.cos(u * WARP) : 1;
-        var y = baseY - BOW * (1 - u * u) * (1 - v);
-        if (y < -8 || y > H + 8) continue;
-        var vy = Math.max(0, Math.min(1, y / H));
-        var env = 0.28 + 0.72 * Math.pow(vy, 0.85);
+    var PAL_HOLD_MIN  = 3;
+    var PAL_HOLD_MAX  = 7;
+    var PAL_FADE      = 2.6;
+    var PAL_SPREAD    = 0.35;
+    var TWINKLE       = 0.14;
+    var HALO          = true;
 
-        // pre-compute bilinear sample point in the sim grid
-        var gxs = Math.max(0, Math.min(nx - 1.001, x / DX));
-        var gys = Math.max(0, Math.min(ny - 1.001, y / DX));
-        var i0 = Math.floor(gxs), j0 = Math.floor(gys);
-        stars.push({
-          x: x, y: y, env: env, edge: edge,
-          ph: Math.random() * TAU, tw: 0.8 + Math.random() * 1.8,
-          sp: (x / W) * 0.6 + (1 - y / H) * 0.4,
-          idx: j0 * nx + i0, fx: gxs - i0, fy: gys - j0
-        });
+    var DX      = 6;
+    var SPEED   = 60;
+    var CFL     = 0.5;
+    var DAMP    = 0.9988;
+    var AMP     = 0.25;
+    var GAIN    = 3.0;
+    var BIAS    = 0.3;
+    var EVERY   = 5;
+    var DT      = CFL * DX / SPEED;
+
+    var cv = document.createElement('canvas');
+    host.appendChild(cv);
+    var ctx = cv.getContext('2d');
+    var TAU = Math.PI * 2;
+    function lerp(a, b, k) { return a + (b - a) * k; }
+
+    var W = 0, H = 0, dpr = 1, nx = 0, ny = 0;
+    var stars = [], prev, cur, nxt, sources = [], T = 0, stepN = 0;
+
+    var palFrom = PALETTES[0], palTo = PALETTES[0];
+    var palT = 1, palWait = rand(PAL_HOLD_MIN, PAL_HOLD_MAX), palIdx = 0;
+
+    function rand(a, b) { return a + Math.random() * (b - a); }
+    function ease(t) { return t * t * (3 - 2 * t); }
+
+    function pickPalette() {
+      if (PALETTES.length < 2) return;
+      var n;
+      do { n = Math.floor(Math.random() * PALETTES.length); } while (n === palIdx);
+      palIdx = n;
+      palFrom = palTo; palTo = PALETTES[n]; palT = 0;
+    }
+
+    function updatePalette(dt) {
+      if (palT < 1) palT = Math.min(1, palT + dt / PAL_FADE);
+      else {
+        palWait -= dt;
+        if (palWait <= 0) { pickPalette(); palWait = rand(PAL_HOLD_MIN, PAL_HOLD_MAX); }
       }
     }
 
-    // pre-warm: let the waves travel, hit walls and interfere before the
-    // first paint, so the card never starts as an empty flat field
-    var warm = Math.round(9 / DT);
-    for (var n = 0; n < warm; n++) step();
-  }
+    function build() {
+      var r = host.getBoundingClientRect();
+      W = Math.max(1, Math.round(r.width));
+      H = Math.max(1, Math.round(r.height));
+      dpr = Math.min(window.devicePixelRatio || 1, 2);
+      cv.width = W * dpr; cv.height = H * dpr;
+      cv.style.width = W + 'px'; cv.style.height = H + 'px';
 
-  // ---- one leap-frog step of  u_tt = c² ∇²u  ------------------------
-  function step() {
-    var c2 = CFL * CFL;
-    for (var j = 0; j < ny; j++) {
-      // mirrored neighbours at the edges → reflecting walls
-      var jm = j > 0 ? j - 1 : 1;
-      var jp = j < ny - 1 ? j + 1 : ny - 2;
-      var row = j * nx, rowm = jm * nx, rowp = jp * nx;
-      for (var i = 0; i < nx; i++) {
-        var im = i > 0 ? i - 1 : 1;
-        var ip = i < nx - 1 ? i + 1 : nx - 2;
-        var id = row + i, c = cur[id];
-        var lap = cur[row + im] + cur[row + ip] + cur[rowm + i] + cur[rowp + i] - 4 * c;
-        nxt[id] = c + (c - prev[id]) * DAMP + c2 * lap;
-      }
-    }
+      nx = Math.ceil(W / DX) + 1;
+      ny = Math.ceil(H / DX) + 1;
+      prev = new Float32Array(nx * ny);
+      cur  = new Float32Array(nx * ny);
+      nxt  = new Float32Array(nx * ny);
+      T = 0; stepN = 0;
 
-    // sources: zero-mean Ricker wavelet → clean ring, no net "pumping"
-    for (var s = sources.length - 1; s >= 0; s--) {
-      var S = sources[s];
-      while (T >= S.t0 + S.per) S.t0 += S.per;
-      var D = 2.6 / S.f, tau = T - S.t0;
-      if (tau >= D && S.per === Infinity) { sources.splice(s, 1); continue; }
-      if (tau < 0 || tau >= D) continue;
-      var a = Math.PI * S.f * (tau - D / 2);
-      var g = (1 - 2 * a * a) * Math.exp(-a * a) * AMP * (S.k || 1);
-      var ci = Math.round(S.x / DX), cj = Math.round(S.y / DX);
-      for (var dj = -1; dj <= 1; dj++) {
-        for (var di = -1; di <= 1; di++) {
-          var ii = ci + di, jj = cj + dj;
-          if (ii < 0 || ii >= nx || jj < 0 || jj >= ny) continue;
-          var w = (di === 0 && dj === 0) ? 1 : (di === 0 || dj === 0 ? 0.5 : 0.25);
-          nxt[jj * nx + ii] += g * w;
+      sources = [
+        { x: W * 0.27, y: H * 0.68, f: 0.85, per: EVERY, t0: 0 },
+        { x: W * 0.73, y: H * 0.68, f: 1.10, per: EVERY, t0: EVERY / 2 },
+        { x: W * 0.30, y: H * 0.55, f: 1.00, per: EVERY, t0: EVERY / 1.5 },
+        { x: W * 0.0,  y: H * 1.0,  f: 1.47, per: EVERY, t0: EVERY / 0.5 },
+        { x: W * 1.0,  y: H * 1.0,  f: 1.73, per: EVERY, t0: 0 }
+      ];
+
+      stars = [];
+      var rows = Math.ceil(H / ROW) + 1;
+      var cols = Math.ceil(W / PITCH) + 2;
+      var sinA = Math.sin(WARP);
+      for (var j = 0; j < rows; j++) {
+        var baseY = H - j * ROW;
+        var v = Math.max(0, Math.min(1, baseY / H));
+        for (var i = -1; i < cols; i++) {
+          var gx = (i + (j % 2 ? 0.5 : 0)) * PITCH;
+          var u = (gx / W - 0.5) * 2;
+          if (u < -1 || u > 1) continue;
+          var x = WARP > 0 ? W / 2 + (W / 2) * Math.sin(u * WARP) / sinA : gx;
+          var edge = WARP > 0 ? Math.cos(u * WARP) : 1;
+          var y = baseY - BOW * (1 - u * u) * (1 - v);
+          if (y < -8 || y > H + 8) continue;
+          var vy = Math.max(0, Math.min(1, y / H));
+          var env = 0.28 + 0.72 * Math.pow(vy, 0.85);
+
+          var gxs = Math.max(0, Math.min(nx - 1.001, x / DX));
+          var gys = Math.max(0, Math.min(ny - 1.001, y / DX));
+          var i0 = Math.floor(gxs), j0 = Math.floor(gys);
+          stars.push({
+            x: x, y: y, env: env, edge: edge,
+            ph: Math.random() * TAU, tw: 0.8 + Math.random() * 1.8,
+            sp: (x / W) * 0.6 + (1 - y / H) * 0.4,
+            idx: j0 * nx + i0, fx: gxs - i0, fy: gys - j0
+          });
         }
       }
+
+      var warm = Math.round(9 / DT);
+      for (var n = 0; n < warm; n++) step();
     }
 
-    var t = prev; prev = cur; cur = nxt; nxt = t;
-    T += DT;
-
-    // walls conserve the average height; strip numerical drift now and then
-    if ((++stepN) % 30 === 0) {
-      var m = 0, q;
-      for (q = 0; q < cur.length; q++) m += cur[q];
-      m /= cur.length;
-      for (q = 0; q < cur.length; q++) { cur[q] -= m; prev[q] -= m; }
-    }
-  }
-
-  // ---- drawing -------------------------------------------------------
-  function sparkle(x, y, r) {
-    ctx.beginPath();
-    ctx.moveTo(x, y - r);
-    ctx.quadraticCurveTo(x, y, x + r, y);
-    ctx.quadraticCurveTo(x, y, x, y + r);
-    ctx.quadraticCurveTo(x, y, x - r, y);
-    ctx.quadraticCurveTo(x, y, x, y - r);
-    ctx.closePath();
-    ctx.fill();
-  }
-
-  function render() {
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, W, H);
-    var eT = ease(palT);
-    for (var n = 0; n < stars.length; n++) {
-      var s = stars[n], p = s.idx;
-      var top = cur[p] * (1 - s.fx) + cur[p + 1] * s.fx;
-      var bot = cur[p + nx] * (1 - s.fx) + cur[p + nx + 1] * s.fx;
-      var u = top * (1 - s.fy) + bot * s.fy;
-
-      var k = 0.5 + 0.5 * Math.tanh(GAIN * u - BIAS);
-      var tw = 1 + TWINKLE * Math.sin(T * s.tw * 2 + s.ph);
-      var r = lerp(R_MIN, R_MAX, k) * s.env * s.edge * tw;
-      if (r < 0.25) continue;
-      var c = k * (0.55 + 0.45 * s.env);
-
-      // palette blend — PAL_SPREAD makes the change sweep across the field
-      var lt = Math.max(0, Math.min(1, (palT * (1 + PAL_SPREAD) - s.sp * PAL_SPREAD)));
-      var m = ease(lt);
-      var lo0 = palFrom.lo, hi0 = palFrom.hi, lo1 = palTo.lo, hi1 = palTo.hi;
-      var R = Math.round(lerp(lerp(lo0[0], lo1[0], m), lerp(hi0[0], hi1[0], m), c));
-      var G = Math.round(lerp(lerp(lo0[1], lo1[1], m), lerp(hi0[1], hi1[1], m), c));
-      var B = Math.round(lerp(lerp(lo0[2], lo1[2], m), lerp(hi0[2], hi1[2], m), c));
-      var al = lerp(A_MIN, A_MAX, k) * (0.4 + 0.6 * s.env) * tw;
-      var rgb = R + ',' + G + ',' + B;
-
-      if (HALO && k > 0.8 && r > 3.5) {
-        ctx.fillStyle = 'rgba(' + rgb + ',' + (al * 0.14).toFixed(3) + ')';
-        ctx.beginPath(); ctx.arc(s.x, s.y, r * 2.3, 0, TAU); ctx.fill();
+    function step() {
+      var c2 = CFL * CFL;
+      for (var j = 0; j < ny; j++) {
+        var jm = j > 0 ? j - 1 : 1;
+        var jp = j < ny - 1 ? j + 1 : ny - 2;
+        var row = j * nx, rowm = jm * nx, rowp = jp * nx;
+        for (var i = 0; i < nx; i++) {
+          var im = i > 0 ? i - 1 : 1;
+          var ip = i < nx - 1 ? i + 1 : nx - 2;
+          var id = row + i, c = cur[id];
+          var lap = cur[row + im] + cur[row + ip] + cur[rowm + i] + cur[rowp + i] - 4 * c;
+          nxt[id] = c + (c - prev[id]) * DAMP + c2 * lap;
+        }
       }
-      ctx.fillStyle = 'rgba(' + rgb + ',' + al.toFixed(3) + ')';
-      if (r < 1.5) { ctx.beginPath(); ctx.arc(s.x, s.y, r, 0, TAU); ctx.fill(); }
-      else sparkle(s.x, s.y, r);
+
+      for (var s = sources.length - 1; s >= 0; s--) {
+        var S = sources[s];
+        while (T >= S.t0 + S.per) S.t0 += S.per;
+        var D = 2.6 / S.f, tau = T - S.t0;
+        if (tau >= D && S.per === Infinity) { sources.splice(s, 1); continue; }
+        if (tau < 0 || tau >= D) continue;
+        var a = Math.PI * S.f * (tau - D / 2);
+        var g = (1 - 2 * a * a) * Math.exp(-a * a) * AMP * (S.k || 1);
+        var ci = Math.round(S.x / DX), cj = Math.round(S.y / DX);
+        for (var dj = -1; dj <= 1; dj++) {
+          for (var di = -1; di <= 1; di++) {
+            var ii = ci + di, jj = cj + dj;
+            if (ii < 0 || ii >= nx || jj < 0 || jj >= ny) continue;
+            var w = (di === 0 && dj === 0) ? 1 : (di === 0 || dj === 0 ? 0.5 : 0.25);
+            nxt[jj * nx + ii] += g * w;
+          }
+        }
+      }
+
+      var t = prev; prev = cur; cur = nxt; nxt = t;
+      T += DT;
+
+      if ((++stepN) % 30 === 0) {
+        var m = 0, q;
+        for (q = 0; q < cur.length; q++) m += cur[q];
+        m /= cur.length;
+        for (q = 0; q < cur.length; q++) { cur[q] -= m; prev[q] -= m; }
+      }
     }
-  }
 
-  // ---- main loop (fixed-timestep physics, frame-rate independent) ----
-  var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  var running = false, raf = 0, last = null, acc = 0;
+    function sparkle(x, y, r) {
+      ctx.beginPath();
+      ctx.moveTo(x, y - r);
+      ctx.quadraticCurveTo(x, y, x + r, y);
+      ctx.quadraticCurveTo(x, y, x, y + r);
+      ctx.quadraticCurveTo(x, y, x - r, y);
+      ctx.quadraticCurveTo(x, y, x, y - r);
+      ctx.closePath();
+      ctx.fill();
+    }
 
-  function tick(now) {
-    if (last === null) last = now;
-    var dtReal = Math.min(0.1, (now - last) / 1000);
-    acc += dtReal;
-    last = now;
-    updatePalette(dtReal);
-    var guard = 0;
-    while (acc >= DT && guard++ < 8) { step(); acc -= DT; }
+    function render() {
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, W, H);
+      for (var n = 0; n < stars.length; n++) {
+        var s = stars[n], p = s.idx;
+        var top = cur[p] * (1 - s.fx) + cur[p + 1] * s.fx;
+        var bot = cur[p + nx] * (1 - s.fx) + cur[p + nx + 1] * s.fx;
+        var u = top * (1 - s.fy) + bot * s.fy;
+
+        var k = 0.5 + 0.5 * Math.tanh(GAIN * u - BIAS);
+        var tw = 1 + TWINKLE * Math.sin(T * s.tw * 2 + s.ph);
+        var r = lerp(R_MIN, R_MAX, k) * s.env * s.edge * tw;
+        if (r < 0.25) continue;
+        var c = k * (0.55 + 0.45 * s.env);
+
+        var lt = Math.max(0, Math.min(1, (palT * (1 + PAL_SPREAD) - s.sp * PAL_SPREAD)));
+        var m = ease(lt);
+        var lo0 = palFrom.lo, hi0 = palFrom.hi, lo1 = palTo.lo, hi1 = palTo.hi;
+        var R = Math.round(lerp(lerp(lo0[0], lo1[0], m), lerp(hi0[0], hi1[0], m), c));
+        var G = Math.round(lerp(lerp(lo0[1], lo1[1], m), lerp(hi0[1], hi1[1], m), c));
+        var B = Math.round(lerp(lerp(lo0[2], lo1[2], m), lerp(hi0[2], hi1[2], m), c));
+        var al = lerp(A_MIN, A_MAX, k) * (0.4 + 0.6 * s.env) * tw;
+        var rgb = R + ',' + G + ',' + B;
+
+        if (HALO && k > 0.8 && r > 3.5) {
+          ctx.fillStyle = 'rgba(' + rgb + ',' + (al * 0.14).toFixed(3) + ')';
+          ctx.beginPath(); ctx.arc(s.x, s.y, r * 2.3, 0, TAU); ctx.fill();
+        }
+        ctx.fillStyle = 'rgba(' + rgb + ',' + al.toFixed(3) + ')';
+        if (r < 1.5) { ctx.beginPath(); ctx.arc(s.x, s.y, r, 0, TAU); ctx.fill(); }
+        else sparkle(s.x, s.y, r);
+      }
+    }
+
+    var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    var running = false, raf = 0, last = null, acc = 0;
+
+    function tick(now) {
+      if (last === null) last = now;
+      var dtReal = Math.min(0.1, (now - last) / 1000);
+      acc += dtReal;
+      last = now;
+      updatePalette(dtReal);
+      var guard = 0;
+      while (acc >= DT && guard++ < 8) { step(); acc -= DT; }
+      render();
+      raf = requestAnimationFrame(tick);
+    }
+    function play()  { if (!running && !reduce) { running = true; raf = requestAnimationFrame(tick); } }
+    function pause() { running = false; cancelAnimationFrame(raf); last = null; acc = 0; }
+
+    build();
     render();
-    raf = requestAnimationFrame(tick);
+
+    if ('ResizeObserver' in window) {
+      new ResizeObserver(function () { build(); render(); }).observe(host);
+    } else {
+      window.addEventListener('resize', function () { build(); render(); });
+    }
+
+    if ('IntersectionObserver' in window) {
+      new IntersectionObserver(function (e) { e[0].isIntersecting ? play() : pause(); }).observe(host);
+    } else {
+      play();
+    }
+
+    var card = host.parentElement;
+    if (card) card.addEventListener('pointerdown', function (e) {
+      var r = host.getBoundingClientRect();
+      var x = e.clientX - r.left, y = e.clientY - r.top;
+      if (x < 0 || x > r.width || y < 0 || y > r.height) return;
+      sources.push({ x: x, y: y, f: 1.0, per: Infinity, t0: T, k: 1.6 });
+      if (palT >= 1) { pickPalette(); palWait = rand(PAL_HOLD_MIN, PAL_HOLD_MAX); }
+    });
   }
-  function play()  { if (!running && !reduce) { running = true; raf = requestAnimationFrame(tick); } }
-  function pause() { running = false; cancelAnimationFrame(raf); last = null; acc = 0; }
 
-  build();
-  render();
-
-  if ('ResizeObserver' in window) {
-    new ResizeObserver(function () { build(); render(); }).observe(host);
-  } else {
-    window.addEventListener('resize', function () { build(); render(); });
+  // Auto-inject a host div into every success card if one isn't already
+  // present, then spin up an independent wave field for each.
+  function ensureHostFor(card) {
+    var host = card.querySelector('.exp-emerge');
+    if (!host) {
+      host = document.createElement('div');
+      host.className = 'exp-emerge';
+      host.setAttribute('aria-hidden', 'true');
+      card.insertBefore(host, card.firstChild);
+    }
+    return host;
   }
 
-  if ('IntersectionObserver' in window) {
-    new IntersectionObserver(function (e) { e[0].isIntersecting ? play() : pause(); }).observe(host);
-  } else {
-    play();
-  }
-
-  // tap / click the card → extra ripple at that spot
-  var card = host.parentElement;
-  if (card) card.addEventListener('pointerdown', function (e) {
-    var r = host.getBoundingClientRect();
-    var x = e.clientX - r.left, y = e.clientY - r.top;
-    if (x < 0 || x > r.width || y < 0 || y > r.height) return;
-    sources.push({ x: x, y: y, f: 1.0, per: Infinity, t0: T, k: 1.6 });
-    if (palT >= 1) { pickPalette(); palWait = rand(PAL_HOLD_MIN, PAL_HOLD_MAX); }
+  var successCards = document.querySelectorAll('.exp.pass');
+  successCards.forEach(function (card) {
+    createWaveField(ensureHostFor(card));
   });
 })();
 </script>
