@@ -624,10 +624,12 @@ a.back:hover { color: var(--cyan); }
     { key: '_aoa',     label: 'AoA°',   fmt: v => v.toFixed(3) },
     { key: '_omegaRel',label: 'ω°/s',   fmt: v => v.toFixed(4) },
     { key: '_gimbal',  label: 'gimbal°',fmt: v => v.toFixed(3) },
-    { key: '_thr',     label: 'thr kN', fmt: v => v.toFixed(1) },
-    { key: '_fuel',    label: 'fuel t', fmt: v => v.toFixed(1) },
-    { key: '_mass',    label: 'mass t', fmt: v => v.toFixed(2) },
-  ];
+        { key: '_thr',     label: 'thr kN', fmt: v => v.toFixed(1) },
+  { key: '_fuel',    label: 'fuel t', fmt: v => v.toFixed(1) },
+  { key: '_mass',    label: 'mass t', fmt: v => v.toFixed(2) },
+  { key: '_apogee',  label: 'apogee km', fmt: v => Number.isFinite(v) ? v.toFixed(2) : '∞' },
+  { key: '_vApogee', label: 'v_apo m/s', fmt: v => v.toFixed(1) },
+];
 
   const GUIDE_COLUMNS = {
     ascentRR: [
@@ -726,11 +728,31 @@ a.back:hover { color: var(--cyan); }
     const downArc = CONFIG.EARTH_RADIUS * (phiEF - (CONFIG.LAUNCH_SITE_ANGLE_0 || 0));
 
     const ux = b.rx / r, uy = b.ry / r;
-    const ex = b.ry / r, ey = -b.rx / r;
-    const vr = b.vx * ux + b.vy * uy;
-    const vt = (b.vx * ex + b.vy * ey) - CONFIG.EARTH_OMEGA * r;
+const ex = b.ry / r, ey = -b.rx / r;
+const vr = b.vx * ux + b.vy * uy;
+const vtInertial = b.vx * ex + b.vy * ey;
+const vt = vtInertial - CONFIG.EARTH_OMEGA * r;
 
-    const d = Derivation.derive(snap, idx);
+// Osculating two-body orbit from current INERTIAL state.
+//   E  = (vr² + vt_inertial²)/2 − GM/r
+//   E ≥ 0 → escape: apogee = ∞, vApogee = 0 (parabolic limit)
+//   else  → a = −GM/(2E), e² = 1 + 2·E·h²/GM², h = r·vt_inertial
+//          r_a = a·(1+e), vApogee = |h|/r_a (vr=0 there)
+const GM = CONFIG.GM_EARTH;
+const E = 0.5 * (vr * vr + vtInertial * vtInertial) - GM / r;
+let apogeeKm = Infinity;
+let vApogee = 0;
+if (E < 0) {
+  const a = -GM / (2 * E);
+  const h = r * vtInertial;
+  const eSq = 1 + 2 * E * h * h / (GM * GM);
+  const e = Math.sqrt(Math.max(0, eSq));
+  const ra = a * (1 + e);
+  apogeeKm = (ra - CONFIG.EARTH_RADIUS) / 1000;
+  vApogee = (ra > 0) ? Math.abs(h) / ra : 0;
+}
+
+const d = Derivation.derive(snap, idx);
     const aoa = d ? d.alphaDeg : 0;
     const mass = d && d.massProps ? d.massProps.M : 0;
 
@@ -750,10 +772,12 @@ a.back:hover { color: var(--cyan); }
       _omegaRel: (b.omega + CONFIG.EARTH_OMEGA) * 180 / Math.PI,
       _gimbal:   gimbalDeg,
       _thr:      thrust / 1000,
-      _fuel:     (b.fuelMass || 0) / 1000,
-      _mass:     mass / 1000,
+              _fuel: (b.fuelMass || 0) / 1000,
+      _mass: mass / 1000,
+      _apogee: apogeeKm,
+      _vApogee: vApogee,
     };
-  }
+    }
 
   function formatCell(col, value) {
     if (value === undefined || value === null) return '—';

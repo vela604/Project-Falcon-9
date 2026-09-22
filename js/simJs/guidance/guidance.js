@@ -1905,21 +1905,21 @@ function getPredictiveGains() { return { ..._PRED_GAINS }; }
 //   α_AoA_N1 = (AoA_N1 − 2·AoA_N + AoA_N-1) / dt²
 // ============================================================
 const ASCENT_HOLD = {
-    INITIAL_COAST_S: 4.9, // straight climb before the push pulse
-  PUSH_T_S: 4.8,
+    INITIAL_COAST_S: 11.3, // straight climb before the push pulse
+  PUSH_T_S: 10.3,
   // --- PUSH amplitude, specified as the peak gimbal angle to swing to.
   //     At each tick during PUSH, the gimbal torque coefficients A/B
   //     (= −comX·ΣF, comY·ΣF) are computed from the current thrust and
   //     geometry, then the peak torque at this gimbal angle is
   //         τ_gimbal_max = A·cos(g_max) + B·sin(g_max)
   //     and the sine pulse amplitude is  A_ang = τ_gimbal_max / I.
-  //     So the peak torque during the pulse equals the max the gimbal
+  //&&      So the peak torque during the pulse equals the max the gimbal
   //     can produce at this angle — self-scaling with thrust & inertia.
   //
  //     Default 1.5° is calibrated to be roughly equivalent to the
 //     previous PUSH_DELTA_DEG = 1° for the F9-class test stack. Tune
 //     by feel.
-PUSH_MAX_GIMBAL_DEG: 1.75,
+PUSH_MAX_GIMBAL_DEG: 1.45,
   PUSH_EAST_SIGN: -1,
   HOLD_K_DAMP: 4.0, // sweet spot; 1.5+ aggressive
   HOLD_MAX_AOA_DEG: 8, // safety: blow past this → revert to COAST
@@ -1935,12 +1935,20 @@ PUSH_MAX_GIMBAL_DEG: 1.75,
     HOLD_K_DQ: 0.005,
   HOLD_Q_REF: 1000,
   
-  // --- Throttle fraction (0..1) applied to every engine's own max
-  //     mass flow rate. 1.0 = full throttle (default), 0.7 = 70%.
-  //     Sent every tick via cmdSetAllThrottle(refMax × THROTTLE_FRAC);
-  //     physics's clampMassFlowCommand scales each engine down to its
-  //     own fraction of its own max. ---
-  THROTTLE_FRAC: 1.0,
+// --- Throttle fraction (0..1) applied to every engine's own max
+//     mass flow rate. 1.0 = full throttle (default), 0.7 = 70%.
+//     Sent every tick via cmdSetAllThrottle(refMax × THROTTLE_FRAC);
+//     physics's clampMassFlowCommand scales each engine down to its
+//     own fraction of its own max. ---
+THROTTLE_FRAC: 1.0,
+  
+  // --- Throttle-down band (AGL, km). Between LOW and HIGH the throttle
+  //     drops to THROTTLE_FRAC_LOW — a Max-Q throttle bucket. Outside
+  //     the band, base THROTTLE_FRAC applies. Half-open interval
+  //     [LOW, HIGH): low edge inclusive, high edge exclusive. ---
+  THROTTLE_ALT_LOW_KM: 8,
+  THROTTLE_ALT_HIGH_KM: 13,
+  THROTTLE_FRAC_LOW: 0.7,
 
 // --- COASTnAoADAMP phase torque ---
     
@@ -2241,21 +2249,32 @@ _hState.lastDQ = dQ;
   
   send(cmdSetGimbalRate(R_cmd));
   
-   // ---------- Throttle: THROTTLE_FRAC × each engine's own max ----------
-  //   refMax is the largest maxMassFlowRate among this stack's engines.
-  //   Sending refMax × frac lets physics's clampMassFlowCommand scale
-  //   each engine to its own frac of its own max — exact for the normal
-  //   homogeneous octaweb case.
-  let refMax = 0;
-  engines.forEach(e => { if (Number.isFinite(e.maxMassFlowRate) && e.maxMassFlowRate > refMax) refMax = e.maxMassFlowRate; });
-  const thrFrac = (Number.isFinite(cfg.THROTTLE_FRAC) && cfg.THROTTLE_FRAC > 0) ?
-    Math.min(1, cfg.THROTTLE_FRAC) : 1.0;
-  const targetFlow = refMax * thrFrac;
-  if (_hState.lastThrottleSent === undefined ||
-    Math.abs(targetFlow - _hState.lastThrottleSent) > 0.5) {
-    send(cmdSetAllThrottle(targetFlow));
-    _hState.lastThrottleSent = targetFlow;
-  }
+// ---------- Throttle: base frac, overridden to low frac inside band ----------
+//   refMax is the largest maxMassFlowRate among this stack's engines.
+//   Sending refMax × frac lets physics's clampMassFlowCommand scale
+//   each engine to its own frac of its own max — exact for the normal
+//   homogeneous octaweb case.
+let refMax = 0;
+engines.forEach(e => { if (Number.isFinite(e.maxMassFlowRate) && e.maxMassFlowRate > refMax) refMax = e.maxMassFlowRate; });
+
+// Base throttle fraction.
+let thrFrac = (Number.isFinite(cfg.THROTTLE_FRAC) && cfg.THROTTLE_FRAC > 0) ?
+  Math.min(1, cfg.THROTTLE_FRAC) : 1.0;
+
+// Max-Q bucket — half-open [LOW, HIGH) in AGL km.
+const thrLow = Number.isFinite(cfg.THROTTLE_ALT_LOW_KM) ? cfg.THROTTLE_ALT_LOW_KM : Infinity;
+const thrHigh = Number.isFinite(cfg.THROTTLE_ALT_HIGH_KM) ? cfg.THROTTLE_ALT_HIGH_KM : -Infinity;
+if (altKm >= thrLow && altKm < thrHigh) {
+  const lowFrac = Number.isFinite(cfg.THROTTLE_FRAC_LOW) ? cfg.THROTTLE_FRAC_LOW : thrFrac;
+  thrFrac = Math.max(0, Math.min(1, lowFrac));
+}
+
+const targetFlow = refMax * thrFrac;
+if (_hState.lastThrottleSent === undefined ||
+  Math.abs(targetFlow - _hState.lastThrottleSent) > 0.5) {
+  send(cmdSetAllThrottle(targetFlow));
+  _hState.lastThrottleSent = targetFlow;
+}
   }
 
 _hTick.start = function() {

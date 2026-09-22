@@ -1,0 +1,884 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Guidance Fast — Rocket Sim</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #060912;
+  --panel: #0d1424;
+  --panel-2: #101a30;
+  --border: #1c2b45;
+  --cyan: #35d6ff;
+  --green: #4ade80;
+  --danger: #ff5f7e;
+  --yellow: #ffd23f;
+  --text: #dbe6f5;
+  --dim: #6b7d9c;
+  --font-head: 'Space Grotesk', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Consolas', monospace;
+}
+* { box-sizing: border-box; }
+html, body {
+  margin: 0; padding: 0; min-height: 100%;
+  background: var(--bg); color: var(--text);
+  font-family: var(--font-head); font-size: 14px;
+}
+#app { display: flex; flex-direction: column; min-height: 100vh; }
+
+#topBar {
+  display: flex; align-items: baseline; gap: 14px;
+  padding: 12px 24px;
+  background: linear-gradient(180deg, #101a30, #0b1220);
+  border-bottom: 1px solid var(--border);
+  font-family: var(--font-mono); font-size: 13px;
+}
+.brand { color: var(--cyan); font-weight: 700; letter-spacing: 0.5px; text-decoration: none; }
+.brand-sub { color: var(--dim); }
+.spacer { flex: 1; }
+a.back { color: var(--dim); text-decoration: none; font-size: 12px; }
+a.back:hover { color: var(--cyan); }
+
+#controls {
+  display: flex; align-items: center; gap: 14px;
+  padding: 12px 24px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+#controls label { color: var(--dim); font-family: var(--font-mono); font-size: 11.5px; }
+#controls select, #controls input[type=number] {
+  background: var(--panel-2); border: 1px solid var(--border); color: var(--text);
+  padding: 7px 10px; border-radius: 6px;
+  font-family: var(--font-mono); font-size: 12.5px;
+}
+#controls select:focus, #controls input:focus { outline: none; border-color: var(--cyan); }
+.btn {
+  background: var(--panel-2); border: 1px solid var(--border); color: var(--text);
+  padding: 8px 16px; border-radius: 7px; cursor: pointer;
+  font-family: var(--font-head); font-size: 12.5px; font-weight: 500;
+}
+.btn:hover { border-color: var(--cyan); color: var(--cyan); }
+.btn-run { border-color: var(--green); color: var(--green); }
+.btn-run:hover { background: rgba(74,222,128,0.1); }
+.btn-stop { border-color: var(--danger); color: var(--danger); }
+.btn-stop:hover { background: rgba(255,95,126,0.1); }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+#envPanel, #rangesPanel {
+  background: #0a1020;
+  border-bottom: 1px solid var(--border);
+  padding: 10px 24px 12px;
+}
+#envPanel { display: flex; gap: 28px; flex-wrap: wrap; align-items: flex-start; }
+.env-group { display: flex; flex-direction: column; gap: 3px; }
+.env-title {
+  color: var(--cyan); font-family: var(--font-mono); font-size: 10px;
+  letter-spacing: 1px; text-transform: uppercase; margin-bottom: 3px;
+}
+.env-group label {
+  display: flex; align-items: center; gap: 6px;
+  font-family: var(--font-mono); font-size: 11.5px; color: var(--dim);
+}
+.env-group input[type=number] {
+  width: 62px; background: var(--panel-2); border: 1px solid var(--border);
+  color: var(--text); padding: 3px 6px; border-radius: 4px;
+  font-family: var(--font-mono); font-size: 11.5px;
+}
+.env-group input[type=number]:focus { outline: none; border-color: var(--cyan); }
+.env-group input[type=checkbox] { accent-color: var(--cyan); }
+
+/* --- 8-field ranges grid --- */
+.ranges-title {
+  color: var(--cyan); font-family: var(--font-mono); font-size: 10px;
+  letter-spacing: 1px; text-transform: uppercase; margin-bottom: 6px;
+}
+#rangesGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 6px 20px;
+}
+.range-row {
+  display: flex; align-items: center; gap: 8px;
+  font-family: var(--font-mono); font-size: 11.5px;
+}
+.range-row label {
+  width: 92px;
+  color: var(--dim);
+  overflow: hidden; text-overflow: ellipsis;
+  flex-shrink: 0;
+}
+.range-row input[type=number] {
+  width: 86px; background: var(--panel-2); border: 1px solid var(--border);
+  color: var(--text); padding: 4px 6px; border-radius: 4px;
+  font-family: var(--font-mono); font-size: 11.5px;
+}
+.range-row input[type=number]:focus { outline: none; border-color: var(--cyan); }
+.range-row .sep { color: var(--dim); }
+
+#tunables {
+  background: #0a1020;
+  border-bottom: 1px solid var(--border);
+  padding: 10px 24px 12px;
+}
+.tunables-title {
+  color: var(--cyan); font-family: var(--font-mono); font-size: 10px;
+  letter-spacing: 1px; text-transform: uppercase; margin-bottom: 6px;
+}
+#tunablesBody {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 4px 18px;
+}
+.tunable-row { display: flex; align-items: center; gap: 8px;
+  font-family: var(--font-mono); font-size: 11.5px; }
+.tunable-row label { flex: 1; color: var(--dim); overflow: hidden; text-overflow: ellipsis; }
+.tunable-row input {
+  width: 100px; background: var(--panel-2); border: 1px solid var(--border);
+  color: var(--text); padding: 4px 6px; border-radius: 4px;
+  font-family: var(--font-mono); font-size: 11.5px;
+}
+.tunable-row input:focus { outline: none; border-color: var(--cyan); }
+
+#resultsPanel {
+  flex: 1;
+  background: #0a1020;
+  border-top: 1px solid var(--border);
+  padding: 12px 24px 20px;
+  display: flex; flex-direction: column; gap: 10px;
+  min-height: 0;
+}
+.results-bar {
+  display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+}
+.results-bar label {
+  color: var(--dim); font-family: var(--font-mono); font-size: 11.5px;
+}
+.results-bar input[type=number], .results-bar select {
+  background: var(--panel-2); border: 1px solid var(--border); color: var(--text);
+  padding: 6px 9px; border-radius: 5px;
+  font-family: var(--font-mono); font-size: 12px;
+}
+.results-bar input:focus, .results-bar select:focus { outline: none; border-color: var(--cyan); }
+.results-summary {
+  font-family: var(--font-mono); font-size: 11.5px; color: var(--dim);
+}
+#resultsJson {
+  flex: 1;
+  margin: 0;
+  padding: 12px 16px;
+  background: #060912;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: #cdd8ec;
+  font-family: var(--font-mono); font-size: 11.5px;
+  line-height: 1.55;
+  overflow: auto;
+  min-height: 200px;
+  max-height: 60vh;
+  white-space: pre;
+}
+
+#status {
+  color: var(--dim); font-family: var(--font-mono); font-size: 11.5px;
+  padding: 8px 24px; background: var(--panel);
+  border-top: 1px solid var(--border);
+  white-space: pre-wrap;
+}
+</style>
+</head>
+<body>
+<div id="app">
+
+  <div id="topBar">
+    <span class="brand">⚡ GUIDANCE FAST</span>
+    <span class="brand-sub">Rocket Sim · headless data run</span>
+    <div class="spacer"></div>
+    <a class="back" href="index.html">← Home</a>
+  </div>
+
+  <div id="controls">
+    <label for="guideSelect">Guide:</label>
+    <select id="guideSelect"></select>
+    <label for="durationInput">Duration (s):</label>
+    <input id="durationInput" type="number" value="160" min="1" max="5000" step="10" style="width:90px;">
+    <label for="sampleInput">Sample (s):</label>
+    <input id="sampleInput" type="number" value="1" min="0.05" max="10" step="0.05" style="width:80px;">
+    <button class="btn btn-run" id="startBtn">▶ Run</button>
+    <button class="btn btn-stop" id="stopBtn" disabled>■ Stop</button>
+  </div>
+
+  <div id="envPanel">
+    <div class="env-group">
+      <div class="env-title">Wind</div>
+      <label><input type="checkbox" id="envWindEnabled"> Enabled</label>
+      <label>Speed <input type="number" id="envWindSpeed" value="0" step="1" min="0" max="60"> m/s</label>
+      <label>Dir <input type="number" id="envWindDir" value="0" step="5" min="0" max="360"> °</label>
+    </div>
+    <div class="env-group">
+      <div class="env-title">Fuel</div>
+      <label>Load <input type="number" id="envFuelPct" value="100" step="5" min="0" max="100"> %</label>
+    </div>
+    <div class="env-group">
+      <div class="env-title">Physics</div>
+      <label><input type="checkbox" id="envAtmosphere" checked> Atmosphere</label>
+      <label><input type="checkbox" id="envSlosh" checked> Fuel slosh</label>
+    </div>
+    <div class="env-group">
+      <div class="env-title">Guidance</div>
+      <label><input type="checkbox" id="envImu"> IMU noise</label>
+    </div>
+  </div>
+
+  <div id="rangesPanel">
+    <div class="ranges-title">Target Ranges (min / max) — units: km, m/s, kg</div>
+    <div id="rangesGrid"></div>
+  </div>
+
+  <div id="tunables" style="display:none;">
+    <div class="tunables-title">Constants</div>
+    <div id="tunablesBody"></div>
+  </div>
+
+  <div id="resultsPanel">
+    <div class="results-bar">
+      <label for="topNInput">Show top:</label>
+      <input id="topNInput" type="number" value="20" min="1" max="1000" step="1" style="width:80px;">
+      <label for="eliminateSelect">Direct eliminate by:</label>
+      <select id="eliminateSelect">
+        <option value="">(none)</option>
+        <option value="down">downrange</option>
+        <option value="alt">altitude</option>
+        <option value="vt">velocity X (vt)</option>
+        <option value="vr">velocity Y (vr)</option>
+        <option value="fuelLeft">fuel mass left</option>
+        <option value="fuelUsed">fuel mass used</option>
+        <option value="apogee">apogee height</option>
+        <option value="vApogee">velocity at apogee</option>
+      </select>
+    </div>
+    <div class="results-summary" id="resultsSummary">No run yet.</div>
+    <pre id="resultsJson">[]</pre>
+  </div>
+
+  <div id="status">Ready.</div>
+</div>
+
+<!-- ============ 1. Data layer + config ============ -->
+<script src="js/componentLibrary.js"></script>
+<script src="js/customDesign.js"></script>
+<script src="js/fleet.js"></script>
+<script src="js/config.js"></script>
+
+<!-- ============ 2. Core physics ============ -->
+<script src="js/simJs/core/massProps.js"></script>
+<script src="js/simJs/core/environment.js"></script>
+<script src="js/simJs/core/vehicle.js"></script>
+<script src="js/simJs/core/rcs.js"></script>
+<script src="js/simJs/core/physics.js"></script>
+<script src="js/simJs/core/collision.js"></script>
+
+<!-- ============ 3. Guidance modules ============ -->
+<script src="js/simJs/guidance/imu.js"></script>
+<script src="js/simJs/guidance/derivation.js"></script>
+<script src="js/simJs/guidance/guidercs.js"></script>
+<script src="js/simJs/guidance/guidance.js"></script>
+
+<!-- ============ 4. Fast boot ============ -->
+<script>
+(function () {
+  'use strict';
+
+  // =====================================================================
+  // RANGE WEIGHTS — edit here. Applied per-field in scoring:
+  //   field_score = raw_score(0..100 for in-range, less outside, negative
+  //                 for sign-flipped samples) × weight
+  //   total       = Σ over the 8 fields
+  // =====================================================================
+  const RANGE_WEIGHTS = {
+    down:       1,
+    alt:        1,
+    vt:         1,
+    vr:         1,
+    fuelLeft:   1,
+    fuelUsed:   1,
+    apogee:     1,
+    vApogee:    1,
+  };
+
+  // Field metadata — key, label, and default range. Units shown in label.
+  const RANGE_FIELDS = [
+    { key: 'down',     label: 'downrange (km)',     defLo: 65,     defHi: 80     },
+    { key: 'alt',      label: 'altitude (km)',      defLo: 60,     defHi: 70     },
+    { key: 'vt',       label: 'velocity X vt (m/s)',defLo: 1250,   defHi: 1390   },
+    { key: 'vr',       label: 'velocity Y vr (m/s)',defLo: 830,    defHi: 970    },
+    { key: 'fuelLeft', label: 'fuel left (kg)',     defLo: 150000, defHi: 220000 },
+    { key: 'fuelUsed', label: 'fuel used (kg)',     defLo: 310000, defHi: 370000 },
+    { key: 'apogee',   label: 'apogee height (km)', defLo: 110,     defHi: 180    },
+    { key: 'vApogee',  label: 'vel at apogee (m/s)',defLo: 1400,   defHi: 1900   },
+  ];
+
+  // =====================================================================
+  // SPEED WIN #1 — cache loadComponentLibrary()
+  // =====================================================================
+  (function patchLibraryCache() {
+    var _cache = null;
+    var _origLoadCL = loadComponentLibrary;
+    loadComponentLibrary = function () {
+      if (_cache) return _cache;
+      _cache = _origLoadCL();
+      return _cache;
+    };
+    if (typeof saveCustomComponentTypes === 'function') {
+      var _origSave = saveCustomComponentTypes;
+      saveCustomComponentTypes = function (types) {
+        _origSave(types);
+        _cache = null;
+      };
+    }
+  })();
+
+  // =====================================================================
+  // Stack data (one-time boot handoff to guidance)
+  // =====================================================================
+  const members = (typeof getActiveStackMembers === 'function') ? getActiveStackMembers() : [];
+  window.SIM_STACK_MEMBERS = members;
+
+  function _stripFns(obj) {
+    return JSON.parse(JSON.stringify(obj, (k, v) => (typeof v === 'function' ? undefined : v)));
+  }
+
+  function collectStackData() {
+    const typeIds = new Set();
+    members.forEach(m => {
+      if (m.engineTypeId) typeIds.add(m.engineTypeId);
+      if (m.recoveryTypeId && m.hasRecovery !== false) typeIds.add(m.recoveryTypeId);
+      if (m.rcsTypeId) typeIds.add(m.rcsTypeId);
+      if (m.bodyMetalTypeId) typeIds.add(m.bodyMetalTypeId);
+      if (m.legsMetalTypeId) typeIds.add(m.legsMetalTypeId);
+      if (m.payloadSpaceTypeId) typeIds.add(m.payloadSpaceTypeId);
+      if (m.payloadSpaceMetalTypeId) typeIds.add(m.payloadSpaceMetalTypeId);
+      if (m.fuel && m.fuel.typeId) typeIds.add(m.fuel.typeId);
+      if (m.engineThrusters) {
+        Object.keys(m.engineThrusters).forEach(gk => {
+          const g = m.engineThrusters[gk];
+          if (g && g.thrusterTypeId) typeIds.add(g.thrusterTypeId);
+        });
+      }
+      if (m.rcsThruster && m.rcsThruster.thrusterTypeId) typeIds.add(m.rcsThruster.thrusterTypeId);
+      if (m.payloadSpace && m.payloadSpace.typeId) typeIds.add(m.payloadSpace.typeId);
+      if (m.payloadSpace && m.payloadSpace.metalTypeId) typeIds.add(m.payloadSpace.metalTypeId);
+      if (m.chuteTypeId) typeIds.add(m.chuteTypeId);
+    });
+    const types = {};
+    typeIds.forEach(id => {
+      const t = (typeof getComponentType === 'function') ? getComponentType(id) : null;
+      if (t) types[id] = _stripFns(t);
+    });
+    const activeStk = (typeof getActiveStack === 'function') ? getActiveStack() : null;
+    const derived = (activeStk && activeStk.derived) ? activeStk.derived : null;
+    let stackPayloadMass = 0;
+    if (activeStk && activeStk.payloadId && typeof getPayload === 'function') {
+      const pl = getPayload(activeStk.payloadId);
+      if (pl && Number.isFinite(pl.mass)) stackPayloadMass = pl.mass;
+    }
+    return {
+      members: members.map(_stripFns),
+      types,
+      stackPayloadMass,
+      derived,
+      env: {
+        EARTH_RADIUS: CONFIG.EARTH_RADIUS,
+        GM_EARTH: CONFIG.GM_EARTH,
+        EARTH_OMEGA: CONFIG.EARTH_OMEGA,
+        LAUNCH_SITE_ALTITUDE: CONFIG.LAUNCH_SITE_ALTITUDE,
+        LAUNCH_SITE_ANGLE_0: CONFIG.LAUNCH_SITE_ANGLE_0,
+        G0: (typeof G0 !== 'undefined') ? G0 : 9.80665,
+        SEA_LEVEL_DENSITY: CONFIG.SEA_LEVEL_DENSITY,
+        SCALE_HEIGHT: CONFIG.SCALE_HEIGHT,
+        DRAG_CD: CONFIG.DRAG_CD,
+        DT: CONFIG.DT,
+        GIMBAL_MAX_DEG: CONFIG.GIMBAL_MAX_DEG,
+        GIMBAL_RATE_DEG_S: CONFIG.GIMBAL_RATE_DEG_S,
+      },
+    };
+  }
+
+  Derivation.setStackData(collectStackData());
+
+  // =====================================================================
+  // SPEED WIN #2 — reusable snapshot object.
+  // =====================================================================
+  const _snap = {
+    bodies: null, activeBodyIndex: 0, simTime: 0, halted: false,
+    wind: { enabled: false, speed: 0, directionDeg: 0 },
+  };
+  function refreshSnap() {
+    _snap.bodies = state.bodies;
+    _snap.activeBodyIndex = state.activeBodyIndex;
+    _snap.simTime = state.simTime;
+    _snap.halted = state.halted;
+    const w = (typeof wind !== 'undefined' && wind) ? wind : null;
+    _snap.wind.enabled = w ? !!w.enabled : false;
+    _snap.wind.speed = w ? (w.speed || 0) : 0;
+    _snap.wind.directionDeg = w ? (w.directionDeg || 0) : 0;
+  }
+
+  // =====================================================================
+  // Local dispatch
+  // =====================================================================
+  function clampFlow(en, cmd) {
+    if (!(cmd > 0)) return 0;
+    const capped = Math.min(cmd, en.maxMassFlowRate || 0);
+    return Math.max(capped, en.minMassFlowRate || 0);
+  }
+  function localDispatch(msg) {
+    const b = state.bodies[state.activeBodyIndex];
+    if (!b) return;
+    switch (msg.type) {
+      case 'setGimbalRate': {
+        if (!b.engines) break;
+        const lim = CONFIG.GIMBAL_RATE_DEG_S;
+        const rate = Math.max(-lim, Math.min(lim, msg.degPerSec));
+        b.engines.filter(en => en.gimbal).forEach(en => { en.targetGimbalRateDegS = rate; });
+        break;
+      }
+      case 'setGimbal': {
+        if (!b.engines) break;
+        const lim = CONFIG.GIMBAL_MAX_DEG;
+        const d = Math.max(-lim, Math.min(lim, msg.deg));
+        b.engines.filter(en => en.gimbal).forEach(en => {
+          en.targetGimbalDeg = d;
+          en.targetGimbalRateDegS = NaN;
+        });
+        break;
+      }
+      case 'setAllThrottle': {
+        if (!b.engines) break;
+        b.engines.forEach(en => { en.targetMassFlowRate = clampFlow(en, msg.value); });
+        break;
+      }
+      case 'setCenterThrottle': {
+        if (!b.engines) break;
+        b.engines.filter(en => en.isCenter).forEach(en => {
+          en.targetMassFlowRate = clampFlow(en, msg.value);
+        });
+        break;
+      }
+      case 'setGroupThrottle': {
+        if (!b.engines) break;
+        (msg.angles || []).forEach(a => {
+          const en = b.engines.find(e => e.angleDeg === a);
+          if (en) en.targetMassFlowRate = clampFlow(en, msg.value);
+        });
+        break;
+      }
+      case 'rcs': {
+        if (!b.rcsCmd) b.rcsCmd = {};
+        b.rcsCmd[msg.key] = !!msg.on;
+        b.rcsDuty = null;
+        break;
+      }
+      case 'rcsDuty': {
+        if (msg.duties == null) b.rcsDuty = null;
+        else b.rcsDuty = msg.duties;
+        break;
+      }
+      case 'legs': {
+        if (!b.legs) b.legs = { deployed: false, progress: 0 };
+        b.legs.deployed = !!msg.deployed;
+        break;
+      }
+      default: break;
+    }
+  }
+  Guidance.init(localDispatch);
+
+  // =====================================================================
+  // UI setup
+  // =====================================================================
+  const statusEl   = document.getElementById('status');
+  const sel        = document.getElementById('guideSelect');
+  const durInput   = document.getElementById('durationInput');
+  const sampInput  = document.getElementById('sampleInput');
+  const startBtn   = document.getElementById('startBtn');
+  const stopBtn    = document.getElementById('stopBtn');
+  const tunPanel   = document.getElementById('tunables');
+  const tunBody    = document.getElementById('tunablesBody');
+  const rangesGrid = document.getElementById('rangesGrid');
+  const topNInput  = document.getElementById('topNInput');
+  const elimSel    = document.getElementById('eliminateSelect');
+  const resultsSum = document.getElementById('resultsSummary');
+  const resultsJson= document.getElementById('resultsJson');
+
+  // Build the 8-field range grid.
+  rangesGrid.innerHTML = RANGE_FIELDS.map(f => `
+    <div class="range-row">
+      <label title="${f.key}">${f.label}</label>
+      <input type="number" data-key="${f.key}" data-end="lo" value="${f.defLo}" step="any">
+      <span class="sep">–</span>
+      <input type="number" data-key="${f.key}" data-end="hi" value="${f.defHi}" step="any">
+    </div>
+  `).join('');
+
+  const guides = (Guidance.listGuides && Guidance.listGuides()) || [];
+  sel.innerHTML = guides.length
+    ? guides.map(g => `<option value="${g}">${g}</option>`).join('')
+    : '<option value="">(no guides registered)</option>';
+
+  if (!members.length) {
+    statusEl.textContent = '⚠ No active stack in fleet.';
+  } else {
+    statusEl.textContent = `Active stack: ${members.map(m => m.name).join(' → ')}`;
+  }
+
+  // --- Tunables ---
+  function _stepFor(key) {
+    if (/SIGN|THRESHOLD|FRAC|K_DAMP|K_DQ|K_P|K_D|K_I|K_LEAD|T_SCALE/.test(key)) return 'any';
+    if (/KM|_S$|S$/.test(key)) return 0.5;
+    if (/DEG/.test(key)) return 0.1;
+    if (/Q_SCALE|Q_REF/.test(key)) return 100;
+    return 'any';
+  }
+  function tunableFieldsFor(guideName) {
+    try {
+      if (guideName === 'ascentAoaHold' && typeof Guidance.getAscentHoldConfig === 'function') {
+        const c = Guidance.getAscentHoldConfig();
+        return Object.keys(c).map(k => ({ key: k, value: c[k], step: _stepFor(k) }));
+      }
+      if (guideName === 'ascentRR' && typeof Guidance.getAscentRRConfig === 'function') {
+        const c = Guidance.getAscentRRConfig();
+        return Object.keys(c).map(k => ({ key: k, value: c[k], step: _stepFor(k) }));
+      }
+      if (guideName === 'predictivePlus' && typeof Guidance.getPredictiveGains === 'function') {
+        const c = Guidance.getPredictiveGains();
+        return Object.keys(c).map(k => ({ key: k, value: c[k], step: _stepFor(k) }));
+      }
+      if (guideName === 'predictivePlusAoAPush') {
+        return [{ key: 'SWEEP_S', value: 10.0, step: 0.5 }];
+      }
+    } catch (e) { console.warn('[fast] tunableFieldsFor', e); }
+    return [];
+  }
+  const tunablesState = {};
+  function renderTunablesFor(guideName) {
+    const fields = tunableFieldsFor(guideName);
+    if (!fields.length) { tunPanel.style.display = 'none'; tunBody.innerHTML = ''; return; }
+    tunPanel.style.display = 'block';
+    if (!tunablesState[guideName]) {
+      tunablesState[guideName] = {};
+      fields.forEach(f => { tunablesState[guideName][f.key] = f.value; });
+    }
+    tunBody.innerHTML = fields.map(f => {
+      const v = tunablesState[guideName][f.key];
+      return `<div class="tunable-row"><label title="${f.key}">${f.key}</label><input type="number" data-key="${f.key}" value="${v}" step="${f.step}"></div>`;
+    }).join('');
+    tunBody.querySelectorAll('input').forEach(inp => {
+      inp.addEventListener('input', (e) => {
+        const v = parseFloat(e.target.value);
+        if (Number.isFinite(v)) tunablesState[guideName][e.target.dataset.key] = v;
+      });
+    });
+  }
+  function applyTunables(guideName) {
+    const t = tunablesState[guideName];
+    if (!t) return;
+    try {
+      if (guideName === 'ascentAoaHold') Guidance.setAscentHold(t);
+      else if (guideName === 'ascentRR') Guidance.setAscentRR(t);
+      else if (guideName === 'predictivePlus') Guidance.setPredictiveGains(t);
+      else if (guideName === 'predictivePlusAoAPush') {
+        if (Number.isFinite(t.SWEEP_S)) Guidance.setSweepDuration(t.SWEEP_S);
+      }
+    } catch (e) { console.warn('[fast] applyTunables', e); }
+  }
+  sel.addEventListener('change', () => renderTunablesFor(sel.value));
+  if (guides.length) renderTunablesFor(sel.value);
+
+  function readRanges() {
+    const out = {};
+    RANGE_FIELDS.forEach(f => {
+      const loEl = rangesGrid.querySelector(`input[data-key="${f.key}"][data-end="lo"]`);
+      const hiEl = rangesGrid.querySelector(`input[data-key="${f.key}"][data-end="hi"]`);
+      out[f.key] = {
+        lo: parseFloat(loEl.value),
+        hi: parseFloat(hiEl.value),
+      };
+    });
+    return out;
+  }
+
+  // =====================================================================
+  // maxAlt / vApogee — osculating two-body orbit from current INERTIAL state.
+  // =====================================================================
+  function orbitalElements(r, vr, vt_inertial, GM, R) {
+    const E = 0.5 * (vr * vr + vt_inertial * vt_inertial) - GM / r;
+    if (E >= 0) {
+      // Escape — apogee is infinity, v_apogee is 0 (parabolic escape).
+      return { apogeeKm: Infinity, vApogee: 0 };
+    }
+    const a = -GM / (2 * E);
+    const h = r * vt_inertial;
+    const eSq = 1 + 2 * E * h * h / (GM * GM);
+    const e = Math.sqrt(Math.max(0, eSq));
+    const ra = a * (1 + e);
+    // Velocity at apogee: vr = 0 there, so |v| = vt = h / r_a.
+    const vApogee = (ra > 0) ? Math.abs(h) / ra : 0;
+    return { apogeeKm: (ra - R) / 1000, vApogee };
+  }
+
+  // =====================================================================
+  // Scoring
+  // =====================================================================
+  // raw score for one field vs its range. 100 = inside; 0..100 = outside,
+  // proportional to closeness (ratio-based); negative = sample sign-flip
+  // against a positive range (magnitude distance from lo).
+  function rawScore(v, lo, hi) {
+    if (!Number.isFinite(v) || !Number.isFinite(lo) || !Number.isFinite(hi)) return 0;
+    if (v >= lo && v <= hi) return 100;
+    if (v < lo) {
+      // Distance below lo, as a fraction of lo. lo > 0 normal case.
+      if (lo === 0) return 0;
+      return (v / lo) * 100;
+    }
+    // v > hi
+    if (v === 0) return 0;
+    return (hi / v) * 100;
+  }
+
+  function scoreSample(sample, ranges) {
+    let total = 0;
+    const breakdown = {};
+    for (const f of RANGE_FIELDS) {
+      const r = ranges[f.key];
+      const w = Number.isFinite(RANGE_WEIGHTS[f.key]) ? RANGE_WEIGHTS[f.key] : 1;
+      const rs = rawScore(sample[f.key], r.lo, r.hi);
+      const fs = rs * w;
+      breakdown[f.key] = { raw: rs, weight: w, score: fs };
+      total += fs;
+    }
+    return { total, breakdown };
+  }
+
+  function insideElimination(sample, ranges, elimKey) {
+    if (!elimKey) return true;
+    const r = ranges[elimKey];
+    if (!r || !Number.isFinite(r.lo) || !Number.isFinite(r.hi)) return true;
+    const v = sample[elimKey];
+    return Number.isFinite(v) && v >= r.lo && v <= r.hi;
+  }
+
+  function rankSamples(data, ranges, elimKey, topN) {
+    // Pre-filter by elimination field (if set).
+    const candidates = [];
+    for (let i = 0; i < data.length; i++) {
+      const s = data[i];
+      if (insideElimination(s, ranges, elimKey)) candidates.push({ s, idx: i });
+    }
+    // Score every candidate.
+    const scored = candidates.map(c => {
+      const { total, breakdown } = scoreSample(c.s, ranges);
+      return { s: c.s, idx: c.idx, total, breakdown };
+    });
+    // Sort: total desc, tie → earlier time first.
+    scored.sort((a, b) => {
+      if (b.total !== a.total) return b.total - a.total;
+      return a.idx - b.idx;
+    });
+    return { candidates: scored, top: scored.slice(0, topN) };
+  }
+
+  // =====================================================================
+  // Run loop
+  // =====================================================================
+  let running = false;
+  let abort = false;
+
+  function yieldToBrowser() {
+    return new Promise(resolve => setTimeout(resolve, 0));
+  }
+
+  async function run() {
+    if (running) return;
+    const guideName = sel.value;
+    if (!guideName) { statusEl.textContent = 'Select a guide first.'; return; }
+
+    running = true;
+    abort = false;
+    startBtn.disabled = true;
+    stopBtn.disabled = false;
+
+    applyTunables(guideName);
+
+    // Read ranges ONCE (they don't change mid-run).
+    const ranges = readRanges();
+
+    // Env
+    if (typeof wind !== 'undefined' && wind) {
+      wind.enabled = document.getElementById('envWindEnabled').checked;
+      wind.speed = parseFloat(document.getElementById('envWindSpeed').value) || 0;
+      wind.directionDeg = parseFloat(document.getElementById('envWindDir').value) || 0;
+    }
+    const fuelPct = Math.max(0, Math.min(100, parseFloat(document.getElementById('envFuelPct').value) || 0));
+    CONFIG.DEFAULT_FUEL_FRACTION = fuelPct / 100;
+    if (typeof atmosphereEnabled !== 'undefined') {
+      atmosphereEnabled = document.getElementById('envAtmosphere').checked;
+    }
+    CONFIG.SLOSH_ENABLED = document.getElementById('envSlosh').checked;
+    try { Guidance.setImuEnabled(document.getElementById('envImu').checked); } catch (e) {}
+
+    const durationS = Math.max(1, parseFloat(durInput.value) || 160);
+    const sampleS = Math.max(0.05, parseFloat(sampInput.value) || 1);
+    const dt = CONFIG.DT;
+    const maxTicks = Math.ceil(durationS / dt);
+    const sampleEveryTicks = Math.max(1, Math.round(sampleS / dt));
+
+    resetState(0);
+    try { Guidance.startGuide(guideName); } catch (e) { console.error('[fast] startGuide', e); }
+
+    const activeIdx = state.activeBodyIndex;
+    const initialFuel = state.bodies[activeIdx] ? (state.bodies[activeIdx].fuelMass || 0) : 0;
+
+    const data = [];
+    const GM = CONFIG.GM_EARTH;
+    const R  = CONFIG.EARTH_RADIUS;
+    const OM = CONFIG.EARTH_OMEGA;
+
+    let ticksRun = 0;
+    const t0 = performance.now();
+
+    function sampleNow() {
+      const b = state.bodies[activeIdx];
+      if (!b) return;
+      const r = Math.hypot(b.rx, b.ry) || 1;
+      const ux = b.rx / r, uy = b.ry / r;
+      const ex = b.ry / r, ey = -b.rx / r;
+      const vr = b.vx * ux + b.vy * uy;
+      const vtInertial = b.vx * ex + b.vy * ey;
+      const vtRel = vtInertial - OM * r;
+      const phiI = Math.atan2(b.rx, b.ry);
+      const phiEF = phiI - OM * state.simTime;
+      const downArc = R * (phiEF - (CONFIG.LAUNCH_SITE_ANGLE_0 || 0));
+      const fuelLeft = b.fuelMass || 0;
+      const fuelUsed = initialFuel - fuelLeft;
+      const orb = orbitalElements(r, vr, vtInertial, GM, R);
+      data.push({
+        t: state.simTime,
+        down: downArc / 1000,
+        alt: (r - R) / 1000,
+        vt: vtRel,
+        vr: vr,
+        fuelLeft: fuelLeft,
+        fuelUsed: fuelUsed,
+        apogee: orb.apogeeKm,
+        vApogee: orb.vApogee,
+      });
+    }
+
+    sampleNow();
+
+    const CHUNK = 2000;
+
+    for (let i = 0; i < maxTicks; i++) {
+      if (abort) break;
+      if (state.halted) break;
+
+      refreshSnap();
+      Guidance.onSnapshot(_snap);
+      physicsStep(dt);
+      ticksRun++;
+
+      if ((i + 1) % sampleEveryTicks === 0) sampleNow();
+
+      if (i > 0 && i % CHUNK === 0) {
+        const wall = (performance.now() - t0) / 1000;
+        statusEl.textContent =
+          `Running… t=${state.simTime.toFixed(1)}s / ${durationS}s  ` +
+          `(${ticksRun} ticks, ${(ticksRun / wall).toFixed(0)} ticks/s, ` +
+          `${data.length} samples)`;
+        await yieldToBrowser();
+      }
+    }
+
+    try { Guidance.stopGuide(); } catch (e) {}
+
+    const elapsedMs = performance.now() - t0;
+    const tps = ticksRun / (elapsedMs / 1000);
+
+    // ---- Score & rank ----
+    const topN = Math.max(1, Math.min(1000, parseInt(topNInput.value, 10) || 20));
+    const elimKey = elimSel.value || '';
+    const { candidates, top } = rankSamples(data, ranges, elimKey, topN);
+
+    window.__data    = data;
+    window.__ranges  = ranges;
+    window.__weights = RANGE_WEIGHTS;
+    window.__ranked  = candidates;
+    window.__top     = top;
+    window.__meta = {
+      guide: guideName,
+      duration: durationS,
+      samplePeriod: sampleS,
+      ticks: ticksRun,
+      wallSeconds: elapsedMs / 1000,
+      ticksPerSecond: tps,
+      crashed: !!state.crashed,
+      landed: !!state.landed,
+      halted: !!state.halted,
+      elimination: elimKey || null,
+      candidates: candidates.length,
+      totalSamples: data.length,
+      topN: topN,
+    };
+
+    // ---- DOM ----
+    resultsSum.textContent =
+      `${candidates.length} candidate${candidates.length === 1 ? '' : 's'} ` +
+      `(of ${data.length} samples)` +
+      (elimKey ? `  ·  eliminate by: ${elimKey}` : '') +
+      `  ·  showing top ${Math.min(topN, candidates.length)}`;
+
+    // Max possible total = Σ (raw_max × weight) = Σ (100 × weight) = 100 · Σ weights.
+let _wSum = 0;
+for (const f of RANGE_FIELDS) {
+  const w = Number.isFinite(RANGE_WEIGHTS[f.key]) ? RANGE_WEIGHTS[f.key] : 1;
+  _wSum += w;
+}
+const maxTotal = 100 * _wSum;
+
+resultsJson.textContent = JSON.stringify(top.map(t => ({
+  t: t.s.t,
+  percent: Number((t.total / maxTotal * 100).toFixed(3)),
+  total: Number(t.total.toFixed(3)),
+  ...Object.fromEntries(
+    Object.entries(t.s).filter(([k]) => k !== 't').map(([k, v]) => [k, Number.isFinite(v) ? Number(v.toFixed(4)) : v])
+  ),
+  score_breakdown: Object.fromEntries(
+    Object.entries(t.breakdown).map(([k, v]) => [k, Number(v.score.toFixed(3))])
+  ),
+})), null, 2);
+
+    statusEl.textContent =
+      `Done. ${ticksRun} ticks (${state.simTime.toFixed(2)}s sim) in ` +
+      `${(elapsedMs / 1000).toFixed(2)}s wall — ${tps.toFixed(0)} ticks/s — ` +
+      `${data.length} samples, ${candidates.length} candidates.  ` +
+      `Data in window.__data, ranked in window.__ranked, top in window.__top.`;
+
+    console.log('[fast] run complete:', window.__meta);
+
+    running = false;
+    startBtn.disabled = false;
+    stopBtn.disabled = true;
+  }
+
+  startBtn.addEventListener('click', run);
+  stopBtn.addEventListener('click', () => { abort = true; statusEl.textContent = 'Aborting…'; });
+
+  console.log('[fast] ready. Guides:', guides.join(', '));
+})();
+</script>
+</body>
+</html>

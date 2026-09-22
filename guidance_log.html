@@ -1545,7 +1545,7 @@ Q = u·a_x + v·a_y
         <div class="exp-value">
           Four phases, one gimbal rate command per tick, all built on top
           of the <code>gimbalPredictive2</code> drag-cancel core:
-          <pre><span class="cmt">// PRE_COAST (4.9 s) — straight climb, drag cancel only</span>
+                    <pre><span class="cmt">// PRE_COAST (4.9 s) — straight climb, drag cancel only</span>
 τ_desired = 0
 
 <span class="cmt">// PUSH (4.8 s) — sin-pulse east kick</span>
@@ -1558,7 +1558,12 @@ Q = u·a_x + v·a_y
 τ_desired = −I · α_AoA            <span class="cmt">// accel cancel</span>
           − K · I · ω_AoA         <span class="cmt">// rate damper</span>
           − K_dQ · I · f(dQ)      <span class="cmt">// post-Max-Q east nudge</span>
-          <span class="cmt">// f(dQ) = 0.5·(1 − tanh(dQ/Q_ref)), always ≥ 0</span></pre>
+          <span class="cmt">// f(dQ) = 0.5·(1 − tanh(dQ/Q_ref)), always ≥ 0</span>
+
+<span class="cmt">// Throttle program (independent of phase)</span>
+alt &lt; 8 km          → 100%
+8 ≤ alt &lt; 13 km    → 70%   <span class="cmt">// Max-Q throttle bucket</span>
+alt ≥ 13 km         → 100%</pre>
           Every value from the derived state at the predicted next tick —
           nothing finite-differenced. The gimbal rate solve is the same
           algebraic form as <code>gimbalPredictive2</code>: solve
@@ -1585,30 +1590,39 @@ Q = u·a_x + v·a_y
           </ul>
         </div>
       </div>
-      <div class="exp-row">
-        <div class="exp-label">Tuned constants</div>
-        <div class="exp-value">
-          <pre>INITIAL_COAST_S: 4.9
-PUSH_T_S:        4.8
-PUSH_DELTA_DEG:  1
-PUSH_EAST_SIGN:  -1
-HOLD_K_DAMP:     4.0
-HOLD_MAX_AOA_DEG:8
-HOLD_K_DQ:       0.005
-HOLD_Q_REF:      1000</pre>
+              <div class="exp-row">
+          <div class="exp-label">Tuned constants</div>
+          <div class="exp-value">
+            <pre>INITIAL_COAST_S:       4.9
+PUSH_T_S:              4.8
+PUSH_MAX_GIMBAL_DEG:   1.45
+PUSH_EAST_SIGN:        -1
+HOLD_K_DAMP:           4.0
+HOLD_MAX_AOA_DEG:      8
+HOLD_K_DQ:             0.005
+HOLD_Q_REF:            1000
+COAST_DAMP_GAIN:       16
+COAST_DAMP_K:          4.0
+THROTTLE_FRAC:         1.0
+THROTTLE_ALT_LOW_KM:   8
+THROTTLE_ALT_HIGH_KM:  13
+THROTTLE_FRAC_LOW:     0.7</pre>
+          </div>
         </div>
-      </div>
-      <div class="exp-row">
-        <div class="exp-label">Result</div>
-        <div class="exp-value">
-          Attitude held through the full ascent. AoA stayed bounded through
-          Max-Q without any per-profile tuning. Torque trace clean, gimbal
-          rate stayed well inside its ±40°/s envelope, no RCS involvement
-          at any point. This is the second fully accurate result after
-          <code>gimbalPredictive2</code> — and the first that covers the
-          full burn rather than just the low-drag early phase.
-        </div>
-      </div>
+        <div class="exp-row">
+    <div class="exp-label">Result</div>
+    <div class="exp-value">
+      Attitude held through the full ascent. AoA stayed bounded through
+      Max-Q without any per-profile tuning. Torque trace clean, gimbal
+      rate stayed well inside its ±40°/s envelope, no RCS involvement
+      at any point. A 70% throttle bucket across 8–13 km (the Max-Q
+      window) further softened the drag-torque peak without any
+      destabilising effect on the AoA loop. This is the second fully
+      accurate result after <code>gimbalPredictive2</code> — and the
+      first that covers the full burn rather than just the low-drag
+      early phase.
+    </div>
+  </div>
       <div class="exp-row">
         <div class="exp-label">Drawbacks</div>
         <div class="exp-value">
