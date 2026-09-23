@@ -450,10 +450,28 @@ b.omega = msg.omega || 0;
       break;
     }
     case 'setFuelMass': {
-      const b = resolveTargetBody(msg.targetBodyIdx);
-      if (b) b.fuelMass = msg.value;
-      break;
+  const b = resolveTargetBody(msg.targetBodyIdx);
+  if (!b) break;
+  const members = b.members || [];
+  const total = Math.max(0, msg.value || 0);
+  if (Array.isArray(b.memberFuel) && b.memberFuel.length === members.length && members.length) {
+    // Distribute proportionally to each member's tank capacity —
+    // matches the load-to-fraction semantics the fueling panel has
+    // always implied.
+    const maxes = members.map((m, i) => {
+      if (typeof memberMaxFuel === 'function') return memberMaxFuel(m, members[i + 1] || null);
+      return 0;
+    });
+    const sumMax = maxes.reduce((s, x) => s + x, 0);
+    if (sumMax > 0) {
+      b.memberFuel = maxes.map(mx => total * (mx / sumMax));
+    } else {
+      b.memberFuel = members.map(() => 0);
     }
+  }
+  b.fuelMass = total;
+  break;
+}
     case 'setAtmosphere': {
       // Toggle global in the worker's own environment.js copy. Effects
       // are immediate: airDensity() returns 0 on the very next physics
@@ -503,9 +521,44 @@ b.omega = msg.omega || 0;
       break;
     }
 
-    // ---- Optimization #1: main thread hands a decoded buffer back so we
-    //      can reuse it next tick instead of allocating a new one. ----
-    case 'returnHotBuffer': {
+    // ---- Fast-forward support ----
+// captureFullState: return a DEEP CLONE of the worker's canonical
+// state, so the main thread can run its own physicsStep + guidance
+// loop without touching the worker.
+case 'captureFullState': {
+  try {
+    const clone = structuredClone({
+      bodies: state.bodies,
+      activeBodyIndex: state.activeBodyIndex,
+      simTime: state.simTime,
+      halted: state.halted,
+    });
+    self.postMessage({ type: 'fullState', data: clone });
+  } catch (e) {
+    self.postMessage({ type: 'fullStateError', message: String(e) });
+  }
+  break;
+}
+// replaceState: overwrite the worker's state with a body list
+// produced by a main-thread fast-forward run.
+case 'replaceState': {
+  if (!msg.bodies || !Array.isArray(msg.bodies)) {
+    console.warn('[physics] replaceState: invalid bodies', msg);
+    break;
+  }
+  state.bodies = msg.bodies;
+  state.activeBodyIndex = Math.max(0, Math.min(msg.bodies.length - 1, msg.activeBodyIndex || 0));
+  state.simTime = Number.isFinite(msg.simTime) ? msg.simTime : state.simTime;
+  state.halted = !!msg.halted;
+  state.bodies.forEach(b => { if (!b.pwmClocks) b.pwmClocks = {}; });
+  pendingSeparate = null;
+  pendingRelease = null;
+  self.postMessage({ type: 'replaceStateAck' }); // ← naya ack
+  break;
+}
+// ---- Optimization #1: main thread hands a decoded buffer back so we
+//      can reuse it next tick instead of allocating a new one. ----
+case 'returnHotBuffer': {
       if (msg.buffer) availableHotBuffers.push(new Float64Array(msg.buffer));
       break;
     }
@@ -678,17 +731,29 @@ if (b.chute) {
       ec.maxMassFlowRate = en.maxMassFlowRate;
       ec.minMassFlowRate = en.minMassFlowRate;
       ec.targetMassFlowRate = en.targetMassFlowRate;
-      ec.targetGimbalDeg = en.targetGimbalDeg;
-      // Phase 3 — Issue 6 restoration: guidance's rate command needs to
-      // round-trip back to the main-thread mirror and the guidance
-      // snapshot, otherwise it appears to vanish every tick.
-      ec.targetGimbalRateDegS = en.targetGimbalRateDegS;
+ec.targetGimbalDeg = en.targetGimbalDeg;
+// Phase 3 — Issue 6 restoration: guidance's rate command needs to
+// round-trip back to the main-thread mirror and the guidance
+// snapshot, otherwise it appears to vanish every tick.
+ec.targetGimbalRateDegS = en.targetGimbalRateDegS;
+// Spool transients — needed by guidance (STAGE_BURN predictive
+// cutoff, CIRCULARIZE spool Δv compensation) and anything else
+// that wants to know how long the engine takes to spin up/down.
+// Without these forwarded, the main-thread engine object showed
+// `shutdownDurationS: undefined` even though the fleet record and
+// the worker's own engine object both carry the value.
+ec.startupDurationS = en.startupDurationS;
+ec.shutdownDurationS = en.shutdownDurationS;
     }
     
-    bc.rcsCmd = b.rcsCmd;
-    // Phase 3 — Issue 6 restoration: same reasoning as
-    // targetGimbalRateDegS above.
-    bc.rcsDuty = b.rcsDuty;
+    // Per-member fuel — array parallel to members[]. Small (2-4 entries)
+// so cloning it every tick is cheap, and guidance needs it for its
+// own stackMassProps (which reads per-tank levels after separation).
+bc.memberFuel = Array.isArray(b.memberFuel) ? b.memberFuel.slice() : [];
+bc.rcsCmd = b.rcsCmd;
+// Phase 3 — Issue 6 restoration: same reasoning as
+// targetGimbalRateDegS above.
+bc.rcsDuty = b.rcsDuty;
     bc.lastRcs = b.lastRcs;
     bc.payloadBody = b.payloadBody;
     bc.fairingHalf = b.fairingHalf;

@@ -135,7 +135,13 @@ function _makeBody() {
     theta: 0,
     omega: 0,
     dryMass: 0,
-    fuelMass: 0,
+  // Cached total (sum of memberFuel). Kept for every existing reader —
+  // telemetry, fuel panel, HUD — so they don't need to know per-member.
+  fuelMass: 0,
+  // Per-member current fuel, parallel to body.members[]. Engines burn
+  // memberFuel[0] only (all engines come from the bottom member by
+  // construction). Separation slices this array — no redistribution.
+  memberFuel: [],
     crashed: false,
     landed: false,
     settled: false,
@@ -279,10 +285,11 @@ function currentGeometry(body) {
   const legProgress = (body && body.isActive) ? legs.progress : 0;
   
   if (members.length && typeof stackMassProps === 'function') {
-    const sloshOffset = (body && body.slosh) ? body.slosh.offset : 0;
-    const props = stackMassProps(members, fuelMass, legProgress, _bodyPayloadMass(body), sloshOffset);
-    return { M: props.totalMass, comH: props.comY, comW: props.comX || 0, I: props.moi };
-  }
+  const sloshOffset = (body && body.slosh) ? body.slosh.offset : 0;
+  const memberFuels = (body && Array.isArray(body.memberFuel)) ? body.memberFuel : null;
+  const props = stackMassProps(members, fuelMass, legProgress, _bodyPayloadMass(body), sloshOffset, memberFuels);
+  return { M: props.totalMass, comH: props.comY, comW: props.comX || 0, I: props.moi };
+}
   // Fallback (empty members) — legacy single-body formula.
     // Fallback (empty members) — free-flying bodies with no stack breakdown:
   // fairing halves, ejected packages, released payloads. Uses the body's
@@ -1637,8 +1644,19 @@ if (isActive) {
     body.theta += dt / 6 * (k1.omega + 2 * k2.omega + 2 * k3.omega + k4.omega);
     body.omega += dt / 6 * (k1.alpha + 2 * k2.alpha + 2 * k3.alpha + k4.alpha);
     
-    body.fuelMass = Math.max(0, body.fuelMass - mdotTotal * dt);
-    
+    // Per-member fuel drain. All engines belong to the bottom member
+// (buildEnginesForRecord is called on members[0] only), so all
+// engine + RCS flow draws from memberFuel[0]. Members above keep
+// their tanks untouched until they become the bottom member.
+if (Array.isArray(body.memberFuel) && body.memberFuel.length) {
+  const burn = mdotTotal * dt;
+  body.memberFuel[0] = Math.max(0, (body.memberFuel[0] || 0) - burn);
+  let total = 0;
+  for (let k = 0; k < body.memberFuel.length; k++) total += body.memberFuel[k];
+  body.fuelMass = total;
+} else {
+  body.fuelMass = Math.max(0, body.fuelMass - mdotTotal * dt);
+}
     // ---- Ground contact resolution ----
     const groundR = CONFIG.EARTH_RADIUS + (CONFIG.LAUNCH_SITE_ALTITUDE || 0);
     const contact = resolveGroundContact(body, groundR, geom);
@@ -2047,7 +2065,22 @@ function resetState(initialAltitude) {
   body.omega = -CONFIG.EARTH_OMEGA; // was: 0
   
   body.dryMass = CONFIG.DRY_MASS;
-  body.fuelMass = CONFIG.FUEL_MASS_MAX * (CONFIG.DEFAULT_FUEL_FRACTION || 1.0);
+// Per-member fuel — each tank loaded to `fraction × its own max`. Sum
+// matches the old CONFIG.FUEL_MASS_MAX × fraction value, but now the
+// distribution is explicit and per-tank (which matters after
+// separation — the stage keeps a full tank instead of getting a share
+// of the depleted lump).
+const fraction = CONFIG.DEFAULT_FUEL_FRACTION || 1.0;
+if (Array.isArray(members) && members.length) {
+  body.memberFuel = members.map((m, i) => {
+    const maxF = (typeof memberMaxFuel === 'function') ?
+      memberMaxFuel(m, members[i + 1] || null) : 0;
+    return maxF * fraction;
+  });
+} else {
+  body.memberFuel = [];
+}
+body.fuelMass = body.memberFuel.reduce((s, x) => s + x, 0);
   body.isActive = true;
   body.engines = (members.length && typeof buildEnginesForRecord === 'function') ?
     buildEnginesForRecord(members[0]) : [];
@@ -2270,6 +2303,7 @@ function emergencyEjectPayload(targetBody) {
   const body = _makeBody();
 body.id = 'ejected-' + active.payloadId;
 body.members = fairingMember ? [fairingMember] : [];
+body.memberFuel = fairingMember ? [0] : [];
 // Defensive fallback for the (currently unreachable — the Emergency
 // Eject button blocks this state) edge case where the fairing was
 // already gone: use the payload's own dims, not CONFIG's rocket-sized
@@ -2420,13 +2454,17 @@ function performSeparate(targetBody) {
   const bottomMember = active.members[0];
   const remaining = active.members.slice(1);
   
-  const activeMax = Math.max(1, memberMaxFuel(remaining[0]) || 0);
-  const discMax = Math.max(1, memberMaxFuel(bottomMember) || 0);
-  const sumMax = activeMax + discMax;
-  const totalFuel = Number.isFinite(active.fuelMass) ? active.fuelMass : 0;
-  const activeFuel = totalFuel * (activeMax / sumMax);
-  const discFuel = Math.max(0, totalFuel - activeFuel);
-  
+  // Per-member fuel — no redistribution. The booster takes its own
+// tank (index 0) as-is; the stage keeps whatever its member(s) had.
+// This is the physically correct split: the booster was the one
+// burning during ascent, so its tank reflects that depletion, and
+// the stage's untouched tank stays full until it fires its own
+// engines post-separation.
+const memberFuel = Array.isArray(active.memberFuel) ? active.memberFuel.slice() : [];
+const discFuel = memberFuel.length > 0 ? memberFuel[0] : 0;
+const remainingFuelArr = memberFuel.length > 0 ? memberFuel.slice(1) : [];
+const activeFuel = remainingFuelArr.reduce((s, x) => s + x, 0);
+
   const activeProps = stackMassProps(remaining, activeFuel, legs.progress, _bodyPayloadMass(active));
   const discProps = stackMassProps([bottomMember], discFuel, 0);
   
@@ -2463,8 +2501,9 @@ discarded.engines.forEach(e => {
   discarded.theta = active.theta;
   discarded.omega = active.omega;
   discarded.dryMass = Number.isFinite(discProps.dryMass) ? discProps.dryMass : 0;
-  discarded.fuelMass = discFuel;
-  discarded.isActive = false;
+discarded.memberFuel = [discFuel];
+discarded.fuelMass = discFuel;
+discarded.isActive = false;
   discarded.isDiscarded = true;
   discarded.isDiscarded = true;
   discarded.bornAt = state.simTime;
@@ -2473,8 +2512,9 @@ discarded.engines.forEach(e => {
   discarded.payloadId = null; // ← add — booster detach hote hi payload chhod deta hai
   
   active.members = remaining;
-  active.dryMass = Number.isFinite(activeProps.dryMass) ? activeProps.dryMass : 0;
-  active.fuelMass = activeFuel;
+active.memberFuel = remainingFuelArr;
+active.dryMass = Number.isFinite(activeProps.dryMass) ? activeProps.dryMass : 0;
+active.fuelMass = activeFuel;
   
   // Offset the stage upward along the body's own nose axis by the booster's
   // height, so the stage's BASE sits exactly where its base was before
@@ -2613,7 +2653,8 @@ const fairingDims = (typeof payloadSpaceDimensions === 'function') ?
   const half = _makeBody();
   half.id = 'fairing-' + side + '-' + Date.now().toString(36);
   half.members = [];
-  half.height = fairingDims.height;
+half.memberFuel = [];
+half.height = fairingDims.height;
   half.width = fairingDims.width;
   half.rx = baseRx;
   half.ry = baseRy;
@@ -2691,12 +2732,18 @@ function releasePayloadOnActiveBody(opts, targetBody) {
   const speed = Math.hypot(active.vx, active.vy);
   const ux = speed > 0.01 ? active.vx / speed : upX;
   const uy = speed > 0.01 ? active.vy / speed : upY;
-  const KICK = emergency ? (opts.kick || 20.0) : 3.0;
-const SPIN = emergency ? 0.5 : 0.15;
+    const KICK = emergency ? (opts.kick || 20.0) : 3.0;
+  // Payload tumble rate after release. Original 0.15 rad/s (~8.6°/s)
+  // read as spinning on screen — payloads usually settle with a much
+  // smaller residual rate, especially on a clean prograde release.
+  // 0.02 rad/s (~1.1°/s) reads as "just floating" while still giving a
+  // visible slow rotation so the payload doesn't look frozen.
+  const SPIN = emergency ? 0.5 : 0.02;
   
   const body = _makeBody();
 body.id = 'payload-' + pl.id;
 body.members = [];
+body.memberFuel = [];
 // Same canonical-dims rule as the fairing halves above — a released
 // payload with empty members previously inherited the full rocket's
 // drag + inertia instead of its own. Uses the payload record's own

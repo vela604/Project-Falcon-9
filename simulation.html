@@ -52,12 +52,9 @@
             <button class="btn btn-reset" id="btnReset"><span class="btn-ic">↺</span>Reset</button>
           </div>
           <div class="tb-sep"></div>
-          <div class="tb-group" id="timeWarpGroup">
-            <span class="tb-label">Warp:</span>
-            <button class="btn warp-btn active" data-warp="1">1×</button>
-            <button class="btn warp-btn" data-warp="10">10×</button>
-            <button class="btn warp-btn" data-warp="40">40×</button>
-          </div>
+<div class="tb-group">
+  <button class="btn" id="btnFastForward" title="Fast-forward the simulation"><span class="btn-ic">⏩</span>Fast Forward</button>
+</div>
         </div>
         <div class="tb-right">
           <div class="tb-group">
@@ -83,8 +80,11 @@
         <div class="tele-grid">
           <div class="tele-row"><span class="tele-sym">x</span><span class="tele-val" id="t-x">0</span></div>
           <div class="tele-row"><span class="tele-sym">h</span><span class="tele-val" id="t-h">0</span></div>
-          <div class="tele-row"><span class="tele-sym">v</span><span class="tele-val" id="t-v">0</span></div>
-          <div class="tele-row"><span class="tele-sym">vr</span><span class="tele-val" id="t-vr">0</span></div>
+<div class="tele-row"><span class="tele-sym">ha</span><span class="tele-val" id="t-apogee">0</span></div>
+<div class="tele-row"><span class="tele-sym">hp</span><span class="tele-val" id="t-perigee">0</span></div>
+<div class="tele-row"><span class="tele-sym">va</span><span class="tele-val" id="t-vapo">0</span></div>
+<div class="tele-row"><span class="tele-sym">v</span><span class="tele-val" id="t-v">0</span></div>
+<div class="tele-row"><span class="tele-sym">vr</span><span class="tele-val" id="t-vr">0</span></div>
           <div class="tele-row"><span class="tele-sym">vt</span><span class="tele-val" id="t-vt">0</span></div>
           <div class="tele-row"><span class="tele-sym">θ</span><span class="tele-val" id="t-theta">0</span></div>
           <div class="tele-row"><span class="tele-sym">ω</span><span class="tele-val" id="t-omega">0</span></div>
@@ -318,7 +318,7 @@
   <option value="ascentRR">✗ Ascent — Rotate-Rest</option>
   <option value="ascentAoaHold">✓ Ascent — AoA Hold — ACCURATE WIN</option>
 <option value="leoInsertion">🛰 LEO Insertion — ascent → MECO → separate → orbit</option>
-
+<option value="leoInsertionV2">🛰 LEO Insertion V2 — coast-until-apogee + 4× burn window</option>
 </select>
               </div>
               <div class="rt-sep"></div>
@@ -383,13 +383,105 @@
   <!-- 3. Worker bridge — after physics.js so `state` exists -->
   <script src="js/simJs/threads/workerBridge.js"></script>
   
-  <!-- 4. View / UI -->
-  <script src="js/simJs/view/controls.js"></script>
+<!-- Fast Forward — backdrop dims+blurs the canvas but sits BELOW the
+     panels. During FF, body.ff-active raises #app's z-index above this
+     backdrop, so telemetry / figure / basal / graphs / toolbars stay
+     crisp and live-updating over the dim. -->
+
+<style>
+  /* Fast-forward visual: blur the canvas + top/bottom chrome via CSS
+     filter. No backdrop element, no stacking-context fights. The
+     panel dock (telemetry, figure, basal, graphs) and the FF dialog
+     stay crisp because they're not in the blur list.
+
+     Left/right toolbars are HIDDEN (not just blurred) during FF —
+     both because their buttons can't fire anything anyway while
+     holdingState blocks commands, and because the right toolbar
+     visually overlaps the graph panel's right edge. Hiding avoids
+     the overlap entirely. */
+  body.ff-active #simCanvas,
+  body.ff-active #bottomControls,
+  body.ff-active #directionHUD,
+  body.ff-active #statusBar {
+    filter: blur(8px) brightness(0.55);
+    transition: filter 0.35s ease;
+  }
+  body.ff-active #leftToolbar,
+  body.ff-active #rightToolbar {
+    display: none !important;
+  }
+  body.ff-active #ffModal {
+    z-index: 9999;
+  }
+</style>
+
+<!-- Fast Forward dialog — compact floating card, bottom-center, above
+     the panels so it never hides them. -->
+<div id="ffModal" style="display:none;position:fixed;left:50%;top:110px;transform:translateX(-50%);z-index:9999;background:#0d1424;border:1px solid #1c2b45;border-radius:14px;padding:20px 26px;min-width:340px;max-width:460px;font-family:'JetBrains Mono',monospace;color:#dbe6f5;box-shadow:0 20px 60px rgba(0,0,0,0.7);">
+  <div style="font-size:14px;font-weight:700;letter-spacing:1px;color:#35d6ff;text-transform:uppercase;margin-bottom:14px;">⏩ Fast Forward</div>
+
+  <div id="ffInputSection">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:20px;">
+      <label for="ffDurationInput" style="font-size:12.5px;color:#8b9ab6;">Forward by</label>
+      <input type="number" id="ffDurationInput" min="1" max="3600" step="1" value="60"
+        style="flex:1;background:#101a30;border:1px solid #1c2b45;color:#dbe6f5;padding:7px 10px;border-radius:6px;font-family:inherit;font-size:13px;">
+      <span style="font-size:12.5px;color:#8b9ab6;">seconds</span>
+    </div>
+    <div style="display:flex;gap:10px;justify-content:flex-end;">
+      <button id="ffCancelBtn" style="background:#101a30;border:1px solid #1c2b45;color:#dbe6f5;padding:8px 18px;border-radius:7px;cursor:pointer;font-family:inherit;font-size:12.5px;">Cancel</button>
+      <button id="ffForwardBtn" style="background:#101a30;border:1px solid #4ade80;color:#4ade80;padding:8px 18px;border-radius:7px;cursor:pointer;font-family:inherit;font-size:12.5px;font-weight:500;">Forward</button>
+    </div>
+  </div>
+
+  <div id="ffProgressSection" style="display:none;">
+    <div id="ffSimTime" style="font-size:22px;font-weight:700;color:#35d6ff;text-align:center;margin-bottom:6px;letter-spacing:1px;">T+00:00.0</div>
+    <div id="ffProgressText" style="font-size:12px;color:#8b9ab6;margin-bottom:12px;text-align:center;">Forwarding… 0.0 / 60.0s</div>
+    <div style="width:100%;height:8px;background:#060912;border-radius:4px;overflow:hidden;border:1px solid #1c2b45;">
+      <div id="ffProgressFill" style="height:100%;width:0%;background:linear-gradient(90deg,#35d6ff,#a78bfa);transition:width 0.1s linear;"></div>
+    </div>
+    <div style="display:flex;justify-content:center;margin-top:18px;">
+      <button id="ffContinueBtn" style="background:#101a30;border:1px solid #ffd23f;color:#ffd23f;padding:7px 18px;border-radius:7px;cursor:pointer;font-family:inherit;font-size:12px;">⏸ Continue from here</button>
+    </div>
+  </div>
+
+  <div id="ffCompleteSection" style="display:none;">
+    <div style="font-size:13px;color:#4ade80;text-align:center;margin-bottom:18px;">✓ Forwarding complete</div>
+    <div style="display:flex;gap:10px;justify-content:center;">
+      <button id="ffRevertBtn" style="background:#101a30;border:1px solid #1c2b45;color:#dbe6f5;padding:8px 18px;border-radius:7px;cursor:pointer;font-family:inherit;font-size:12.5px;">Revert</button>
+      <button id="ffApplyBtn" style="background:#101a30;border:1px solid #4ade80;color:#4ade80;padding:8px 18px;border-radius:7px;cursor:pointer;font-family:inherit;font-size:12.5px;font-weight:500;">Forward →</button>
+    </div>
+  </div>
+
+  <div id="ffLoadingSection" style="display:none;">
+    <div style="font-size:13px;color:#ffd23f;text-align:center;">Simulation loading…</div>
+  </div>
+</div>
+
+<style>
+  /* During FF, raise #app above the backdrop so all panels (telemetry,
+     figure, basal, graphs, toolbars) sit crisply on top of the dimmed
+     canvas. The backdrop blurs the canvas underneath without touching
+     any of the frosted panel content. */
+  body.ff-active #app {
+    z-index: 9995;
+    position: relative;
+  }
+</style>
+
+<!-- Guidance modules (main-thread copy, used only by fast-forward) -->
+<script src="js/simJs/guidance/imu.js"></script>
+<script src="js/simJs/guidance/derivation.js"></script>
+<script src="js/simJs/guidance/guidercs.js"></script>
+<script src="js/simJs/guidance/guidance.js"></script>
+
+<!-- 4. View / UI -->
+<script src="js/simJs/view/controls.js"></script>
   <script src="js/simJs/view/rocketArt.js"></script>
   <script src="js/simJs/view/predictedTrajectory.js"></script>
   <script src="js/simJs/view/render.js"></script>
-  <script src="js/simJs/view/telemetry.js"></script>
-  <script src="js/simJs/main.js"></script>
+ <script src="js/simJs/view/telemetry.js"></script>
+<script src="js/simJs/view/fastForward.js"></script>
+<script src="js/simJs/main.js"></script>
   
   
 </body>

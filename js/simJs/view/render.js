@@ -121,10 +121,16 @@ function cameraWorldPosition() {
   // Anchor-on-geometry keeps the visual frame steady across every mass-
   // distribution change. The anchor is still in the body's LOCAL frame, so
   // it rotates with the rocket during tumbles and gravity turns.
-  const totalH = (b.members && b.members.length) ?
-    b.members.reduce((s, m) => s + (Number.isFinite(m.height) ? m.height : 0), 0) :
-    (CONFIG.ROCKET_HEIGHT || 45);
-  const anchorH = totalH * 0.5;
+  // Solo bodies (payloads, fairing halves, ejected packages) have no
+// members — use their own stored height instead of falling back to
+// the active stack's 45 m. Without this, a payload's camera anchor
+// sat 22.5 m from its actual position instead of 4 m, and any spin
+// sent the body revolving around screen-center at 5.6× the correct
+// radius. Same preference order as physics.js's _bodyHeightOf.
+const totalH = (b.members && b.members.length) ?
+  b.members.reduce((s, m) => s + (Number.isFinite(m.height) ? m.height : 0), 0) :
+  (Number.isFinite(b.height) && b.height > 0 ? b.height : (CONFIG.ROCKET_HEIGHT || 45));
+const anchorH = totalH * 0.5;
   
   const cT = Math.cos(b.theta),
     sT = Math.sin(b.theta);

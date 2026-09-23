@@ -307,15 +307,24 @@ function bindSimControls() {
   });
   
   // ---- Take control of another body ----
-  const tcBtn = document.getElementById('btnTakeControl');
-  if (tcBtn) tcBtn.addEventListener('click', () => {
-    const idx = (typeof camera !== 'undefined' && Number.isFinite(camera.followBodyIndex)) ?
-      camera.followBodyIndex : state.activeBodyIndex;
-    WorkerBridge.send({ type: 'takeControl', idx });
-    updateLegsButton();
-    updateStatusBar();
-    refreshFollowBodySelect();
-  });
+const tcBtn = document.getElementById('btnTakeControl');
+if (tcBtn) tcBtn.addEventListener('click', () => {
+  const idx = (typeof camera !== 'undefined' && Number.isFinite(camera.followBodyIndex)) ?
+    camera.followBodyIndex : state.activeBodyIndex;
+  WorkerBridge.send({ type: 'takeControl', idx });
+  // Auto-follow the new active body so the camera moves with it —
+  // the whole point of taking control is to watch THAT body's
+  // trajectory, and leaving the camera on the previous body would
+  // defeat the purpose.
+  if (typeof camera !== 'undefined') {
+    camera.followBodyIndex = idx;
+    camera.follow = true;
+    camera.mode = 'local';
+  }
+  updateLegsButton();
+  updateStatusBar();
+  refreshFollowBodySelect();
+});
   
   // ---- Split fairing ----
   const fairBtn = document.getElementById('btnSplitFairing');
@@ -340,8 +349,11 @@ if (ejectBtn) ejectBtn.addEventListener('click', () => {
   WorkerBridge.send({ type: 'emergencyEject' });
 });
   
-  bindTimeWarp();
-}
+    // Fast Forward button — replaces the old time-warp group. Runs the
+  // simulation forward on the main thread with a matching guidance
+  // pass, then teleports the physics worker to the final state.
+  if (typeof FastForward !== 'undefined') FastForward.bind();
+  }
 
 function bindTimeWarp() {
   document.querySelectorAll('.warp-btn').forEach(btn => {
@@ -439,9 +451,15 @@ function canTakeControlNow() {
   if (idx === state.activeBodyIndex) return false;
   const b = state.bodies[idx];
   if (!b) return false;
-  // Only bodies with members (stack-based) can be actively controlled.
-  // Free payload pieces have no engines to fire.
-  return !!(b.members && b.members.length);
+  // Any body in the scene can be taken control of — including bodies
+  // with no members and no engines (released payloads, fairing halves,
+  // spent boosters). "Control" here just means "make it the active body
+  // so the trajectory overlay, telemetry, and figure panels switch to
+  // it". Actuators that don't exist for that body (RCS pods, gimbals,
+  // engines) simply do nothing when commanded — no special-casing
+  // required, and the user still gets to inspect the body's orbit.
+  if (b.crashed) return false;
+  return true;
 }
 
 // ---------------------------------------------------------------------------

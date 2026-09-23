@@ -26,9 +26,20 @@ const WorkerBridge = {
       if (msg.type === 'state') {
         applyStateSnapshot(msg.data);
       } else if (msg.type === 'bootError') {
-        console.error('[bridge] PHYSICS WORKER BOOT FAILED:', msg.message);
-        console.error('[bridge] stack:', msg.stack);
-      } else if (msg.type === 'ready') {
+  console.error('[bridge] PHYSICS WORKER BOOT FAILED:', msg.message);
+  console.error('[bridge] stack:', msg.stack);
+} else if (msg.type === 'fullState') {
+  if (typeof FastForward !== 'undefined' && FastForward.onFullState) {
+    FastForward.onFullState(msg.data);
+  }
+} else if (msg.type === 'replaceStateAck') {
+  console.log('[bridge] replaceState ack received');
+} else if (msg.type === 'fullStateError') {
+  console.error('[bridge] captureFullState failed:', msg.message);
+  if (typeof FastForward !== 'undefined' && FastForward.onFullState) {
+    FastForward.onFullState(null);
+  }
+} else if (msg.type === 'ready') {
         if (msg.data) applyStateSnapshot(msg.data);
         this.ready = true;
         
@@ -95,6 +106,19 @@ function returnRenderHotBuffer(buffer) {
 // message, which would wrongly send it a hot-only buffer it can't use yet.
 let renderWorkerHasBodies = false;
 
+// Force the NEXT snapshot to send a full bodies clone to the render
+// worker, even if body counts match. Needed after a fast-forward
+// Continue — the FF run changed main-thread state.bodies structurally,
+// but the worker's new state has the SAME count, so the naive
+// `newCount !== prevCount` check skips the clone and the render worker
+// keeps drawing the pre-FF shape. Exposed globally so fastForward.js
+// can call it just before resume.
+let _forceStructuralResync = false;
+function forceRenderResync() {
+  _forceStructuralResync = true;
+  renderWorkerHasBodies = false;
+}
+
 // ---- localStorage keys the worker needs for its own loaders ----
 const _WORKER_HYDRATE_KEYS = [
   'rocketSim.fleet.v1',
@@ -111,6 +135,20 @@ const _WORKER_HYDRATE_KEYS = [
 // ---- state mirror (mutated in place; physics.js's _makeState() proxies
 //      on main thread read through to this via state.bodies[...]) ----
 function applyStateSnapshot(snap) {
+  // Fast-forward bypass. While FastForward is holding state, the main
+  // thread owns `state` and the worker's snapshots — which keep firing
+  // even when paused — must NOT clobber it. Drop them, but still return
+  // the hot buffer so the pool doesn't starve.
+  if (typeof FastForward !== 'undefined' &&
+    typeof FastForward.isHoldingState === 'function' &&
+    FastForward.isHoldingState()) {
+    if (snap && snap.hotBuffer && WorkerBridge.worker) {
+      const hotArr = new Float64Array(snap.hotBuffer);
+      WorkerBridge.worker.postMessage({ type: 'returnHotBuffer', buffer: hotArr.buffer }, [hotArr.buffer]);
+    }
+    return;
+  }
+  
   const prevCount = state.bodies ? state.bodies.length : 0;
   
   state.activeBodyIndex = snap.activeBodyIndex;
@@ -207,10 +245,11 @@ if (newCount !== prevCount &&
     // Every other tick (the common case): only the hot numeric fields
     // changed, and the render worker already has the same body objects
     // from last time — send just a transferred buffer, it decodes in place.
-    if (newCount !== prevCount || !renderWorkerHasBodies) {
-      payload.bodies = state.bodies;
-      renderWorkerHasBodies = true;
-    } else {
+    if (newCount !== prevCount || !renderWorkerHasBodies || _forceStructuralResync) {
+  payload.bodies = state.bodies;
+  renderWorkerHasBodies = true;
+  _forceStructuralResync = false;
+} else {
       let renderHotBuf = renderHotBuffers.pop();
       if (!renderHotBuf) {
         // Render worker hasn't returned a buffer yet — same rare fallback
@@ -231,9 +270,17 @@ payload.rcsSync = state.bodies.map(b => ({ rcsCmd: b.rcsCmd, lastRcs: b.lastRcs 
     window._renderWorker.postMessage({ type: 'state', data: payload }, transfers);
   }
   
-  // PHASE 3 — throttled to ~20 Hz internally; safe to call every tick.
+    // PHASE 3 — throttled to ~20 Hz internally; safe to call every tick.
   maybeForwardGuidanceSnapshot();
-}
+  
+  // Fast-forward: if the panel is waiting for the worker to catch up
+  // after a teleport (Revert or Continue), a full non-held snapshot
+  // just landed — the state is real, so hide the modal.
+  if (typeof FastForward !== 'undefined' &&
+    typeof FastForward.onSnapshotApplied === 'function') {
+    FastForward.onSnapshotApplied();
+  }
+  }
 
 // ---- Boot: send initial hydrate from main-thread localStorage ----
 function hydrateWorkerFromLocalStorage() {
@@ -264,8 +311,12 @@ const GuidanceBridge = {
         console.error('[bridge] GUIDANCE WORKER BOOT FAILED:', msg.message);
         console.error('[bridge] stack:', msg.stack);
       } else if (msg.type === 'workerError') {
-  console.error('[bridge] guidance worker runtime error:', msg.message, msg.stack);
-} else if (msg.type === 'guideStatus') {
+        console.error('[bridge] guidance worker runtime error:', msg.message, msg.stack);
+      } else if (msg.type === 'guidanceState') {
+        if (typeof FastForward !== 'undefined' && FastForward.onGuidanceState) {
+          FastForward.onGuidanceState(msg.data);
+        }
+      } else if (msg.type === 'guideStatus') {
   if (typeof onGuidanceStatus === 'function') onGuidanceStatus(msg.status);
 } else if (msg.type === 'ready') {
         this.ready = true;
@@ -350,6 +401,11 @@ _lastGuidanceSnapshotAt = now;
   payloadId: b.payloadId || null,
   payloadReleased: !!b.payloadReleased,
   members: b.members || [],
+  // Per-member fuel — parallel array to members[]. Guidance's own
+  // derivation.js reads this so its mass model matches physics's
+  // per-tank distribution exactly (especially after separation, when
+  // the stage's tank is no longer a proportional share of a lump).
+  memberFuel: Array.isArray(b.memberFuel) ? b.memberFuel.slice() : [],
   // Landing gear position sensor
   legs: b.legs ? { deployed: !!b.legs.deployed, progress: b.legs.progress || 0 } : null,
   // Slosh — physically a nav-filter estimate derived from IMU residuals,
@@ -357,18 +413,20 @@ _lastGuidanceSnapshotAt = now;
   slosh: b.slosh ? { offset: b.slosh.offset || 0, velocity: b.slosh.velocity || 0 } : null,
   // Engine flow meter + gimbal LVDT (per engine)
   engines: (b.engines || []).map(e => ({
-    id: e.id,
-    angleDeg: e.angleDeg,
-    x: e.x,
-    isCenter: e.isCenter,
-    gimbal: e.gimbal,
-    Ve: e.Ve,
-    maxMassFlowRate: e.maxMassFlowRate,
-    massFlowRate: e.massFlowRate,
-    currentF: e.currentF,
-    gimbalDeg: e.gimbalDeg,
-    targetGimbalRateDegS: e.targetGimbalRateDegS,
-  })),
+  id: e.id,
+  angleDeg: e.angleDeg,
+  x: e.x,
+  isCenter: e.isCenter,
+  gimbal: e.gimbal,
+  Ve: e.Ve,
+  maxMassFlowRate: e.maxMassFlowRate,
+  massFlowRate: e.massFlowRate,
+  currentF: e.currentF,
+  gimbalDeg: e.gimbalDeg,
+  targetGimbalRateDegS: e.targetGimbalRateDegS,
+  startupDurationS: e.startupDurationS,
+  shutdownDurationS: e.shutdownDurationS,
+})),
   rcsCmd: b.rcsCmd || null,
   rcsDuty: b.rcsDuty || null,
   pods: (typeof buildPodEntries === 'function') ? buildPodEntries(b) : [],

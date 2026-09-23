@@ -164,6 +164,164 @@ const tauLat = -ry * (latSign * Fmax);
     };
   }
   
+  // ============================================================
+// targetTorqueRcsNoNetForce — same 4-pod interface as targetTorqueRcs,
+// but guarantees ZERO net linear force (Fnet_x = Fnet_y = 0) for
+// every torque demand. Uses only two balanced patterns:
+//
+//   Vertical pair (4 fires, opposite Y forces):
+//     TL.dn + TR.up + BL.dn + BR.up    (τ > 0)
+//     TL.up + TR.dn + BL.up + BR.dn    (τ < 0)
+//     Net Y-force = 0, τ = 4·xO·F·duty
+//
+//   Lateral pair (2 fires, opposite X forces):
+//     TR.lat + BL.lat                  (τ > 0)
+//     TL.lat + BR.lat                  (τ < 0)
+//     Net X-force = 0, τ = (yTop − yBot)·F·duty
+//
+// Priority: laterals fire first (larger moment arm ~40 m vs ~2 m for
+// verticals), so most demands are met with laterals alone. Only when
+// |τ| > τ_L_max do verticals engage, and then laterals stay at 1.
+//
+// Cases:
+//   |τ| ≥ τ_V_max + τ_L_max  →  saturate, both at 1
+//   |τ| ≤ τ_L_max            →  verticals 0, laterals partial
+//   otherwise                →  laterals 1, verticals partial
+//
+// Returns same shape as targetTorqueRcs so callers are interchangeable.
+// Assumes one member (typically member 0) carries all 4 pods.
+// ============================================================
+function targetTorqueRcsNoNetForce(snapshot, targetTorque, bodyIdx, customCom) {
+  if (!snapshot || !Array.isArray(snapshot.bodies)) return null;
+  if (!Number.isFinite(targetTorque)) return null;
+  
+  const idx = Number.isInteger(bodyIdx) ? bodyIdx : (snapshot.activeBodyIndex || 0);
+  const body = snapshot.bodies[idx];
+  if (!body) return null;
+  
+  const d = Derivation.derive(snapshot, idx);
+  if (!d || !d.massProps) return null;
+  const comX = (customCom && Number.isFinite(customCom.comX)) ? customCom.comX : d.massProps.comX;
+  const comY = (customCom && Number.isFinite(customCom.comY)) ? customCom.comY : d.massProps.comY;
+  
+  const pods = body.pods || [];
+  const members = body.members || [];
+  if (pods.length < 4) {
+    // Not a 4-pod arrangement — no zero-net-force pattern available.
+    return { fires: [], duties: {}, targetTorque, torqueAchieved: 0, saturated: Math.abs(targetTorque) > 1e-9 };
+  }
+  
+  // Sort each side's pods by memberLocalY descending (topmost first).
+  const bySide = { L: [], R: [] };
+  pods.forEach(p => {
+    if (p.side === 'L' || p.side === 'R') bySide[p.side].push(p);
+  });
+  bySide.L.sort((a, b) => (b.memberLocalY || 0) - (a.memberLocalY || 0));
+  bySide.R.sort((a, b) => (b.memberLocalY || 0) - (a.memberLocalY || 0));
+  if (!bySide.L.length || !bySide.R.length) {
+    return { fires: [], duties: {}, targetTorque, torqueAchieved: 0, saturated: Math.abs(targetTorque) > 1e-9 };
+  }
+  const topL = bySide.L[0];
+  const botL = bySide.L[bySide.L.length - 1];
+  const topR = bySide.R[0];
+  const botR = bySide.R[bySide.R.length - 1];
+  
+  // Per-nozzle thrust from the shared rcsThruster on any of these pods.
+  const refMember = members[topL.memberIdx];
+  if (!refMember || !refMember.rcsThruster) {
+    return { fires: [], duties: {}, targetTorque, torqueAchieved: 0, saturated: Math.abs(targetTorque) > 1e-9 };
+  }
+  const refType = Derivation.getTypeById(refMember.rcsThruster.thrusterTypeId);
+  if (!refType) {
+    return { fires: [], duties: {}, targetTorque, torqueAchieved: 0, saturated: Math.abs(targetTorque) > 1e-9 };
+  }
+  const ve = Derivation.typeParam(refType, 've');
+  const mdot = refMember.rcsThruster.massFlowRate;
+  if (!Number.isFinite(ve) || !Number.isFinite(mdot)) {
+    return { fires: [], duties: {}, targetTorque, torqueAchieved: 0, saturated: Math.abs(targetTorque) > 1e-9 };
+  }
+  const F = mdot * ve;
+  if (!(F > 0)) {
+    return { fires: [], duties: {}, targetTorque, torqueAchieved: 0, saturated: Math.abs(targetTorque) > 1e-9 };
+  }
+  
+  // Moment arms.
+  const xO = Math.abs(topL.memberLocalX || 0); // pod lateral offset
+  const yTop = topL.offsetFromStackBase || 0;
+  const yBot = botL.offsetFromStackBase || 0;
+  const tauV_max = 4 * xO * F;                   // all 4 verticals, duty 1
+  const tauL_max = Math.max(0, (yTop - yBot) * F); // both laterals, duty 1
+  const tauAll_max = tauV_max + tauL_max;
+  
+  const absTau = Math.abs(targetTorque);
+  const sign = targetTorque >= 0 ? 1 : -1;
+  
+  // Priority: laterals first.
+  let dV = 0, dL = 0;
+  if (absTau >= tauAll_max) {
+    dV = 1; dL = 1;
+  } else if (absTau <= tauL_max) {
+    dV = 0;
+    dL = tauL_max > 0 ? absTau / tauL_max : 0;
+  } else {
+    dL = 1;
+    dV = tauV_max > 0 ? (absTau - tauL_max) / tauV_max : 0;
+  }
+  
+  const duties = {};
+  const fires = [];
+  const addFire = (pod, nozzle, duty, tauMag) => {
+    if (!pod || duty <= 1e-9) return;
+    if (!duties[pod.podId]) duties[pod.podId] = { up: 0, dn: 0, lat: 0 };
+    duties[pod.podId][nozzle] += duty;
+    fires.push({
+      podId: pod.podId, nozzle, duty,
+      torque: sign * tauMag,
+      Fmax: F, thrust: duty * F,
+    });
+  };
+  
+  if (sign > 0) {
+    // Verticals: TL.dn, TR.up, BL.dn, BR.up
+    if (dV > 0) {
+      addFire(topL, 'dn', dV, (xO + comX) * F);
+      addFire(topR, 'up', dV, (xO - comX) * F);
+      addFire(botL, 'dn', dV, (xO + comX) * F);
+      addFire(botR, 'up', dV, (xO - comX) * F);
+    }
+    // Laterals: TR.lat, BL.lat
+    if (dL > 0) {
+      addFire(topR, 'lat', dL, (yTop - comY) * F);
+      addFire(botL, 'lat', dL, (comY - yBot) * F);
+    }
+  } else {
+    // Verticals: TL.up, TR.dn, BL.up, BR.dn
+    if (dV > 0) {
+      addFire(topL, 'up', dV, (xO + comX) * F);
+      addFire(topR, 'dn', dV, (xO - comX) * F);
+      addFire(botL, 'up', dV, (xO + comX) * F);
+      addFire(botR, 'dn', dV, (xO - comX) * F);
+    }
+    // Laterals: TL.lat, BR.lat
+    if (dL > 0) {
+      addFire(topL, 'lat', dL, (yTop - comY) * F);
+      addFire(botR, 'lat', dL, (comY - yBot) * F);
+    }
+  }
+  
+  // Clamp duties (greedy walk should already keep them ≤ 1, safety net).
+  Object.keys(duties).forEach(podId => {
+    ['up', 'dn', 'lat'].forEach(n => {
+      if (duties[podId][n] > 1) duties[podId][n] = 1;
+    });
+  });
+  
+  const torqueAchieved = sign * (dV * tauV_max + dL * tauL_max);
+  const saturated = absTau > tauAll_max;
+  
+  return { fires, duties, targetTorque, torqueAchieved, saturated };
+}
+  
   
   // ============================================================
 // Separation-phase duties — Stage (A.0) mission support.
@@ -241,6 +399,7 @@ function postSeparationLateralDuty(snapshot, bodyIdx, side) {
   
   return {
   targetTorqueRcs,
+  targetTorqueRcsNoNetForce,
   preSeparationDuty,
   postSeparationAxialDuty,
   postSeparationLateralDuty,

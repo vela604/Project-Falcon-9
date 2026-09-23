@@ -314,11 +314,13 @@ const Derivation = (function () {
   }
   
   function _stackMassProps(bodySnapshot, payloadMass) {
-    const members = (bodySnapshot && bodySnapshot.members) || [];
-    if (!members.length) return null;
-    const fuelTotal = bodySnapshot.fuelMass || 0;
-    const legsProgress = bodySnapshot.legs ? (bodySnapshot.legs.progress || 0) : 0;
-    const sloshOffset = bodySnapshot.slosh ? (bodySnapshot.slosh.offset || 0) : 0;
+  const members = (bodySnapshot && bodySnapshot.members) || [];
+  if (!members.length) return null;
+  const fuelTotal = bodySnapshot.fuelMass || 0;
+  const memberFuelArr = Array.isArray(bodySnapshot.memberFuel) ? bodySnapshot.memberFuel : null;
+  const usePerMember = memberFuelArr && memberFuelArr.length === members.length;
+  const legsProgress = bodySnapshot.legs ? (bodySnapshot.legs.progress || 0) : 0;
+  const sloshOffset = bodySnapshot.slosh ? (bodySnapshot.slosh.offset || 0) : 0;
     
     const maxFuels = members.map((m, i) => _memberMaxFuel(m, members[i + 1] || null));
     const sumMax = maxFuels.reduce((s, x) => s + x, 0);
@@ -328,8 +330,10 @@ const Derivation = (function () {
     let payloadSpaceComY = null;
     let payloadSpaceIdx = -1;
     members.forEach((m, i) => {
-      const memberFuel = sumMax > 0 ? fuelTotal * (maxFuels[i] / sumMax) : 0;
-      const memberLegs = (i === 0) ? legsProgress : 0;
+      const memberFuel = usePerMember ?
+        Math.max(0, memberFuelArr[i] || 0) :
+        (sumMax > 0 ? fuelTotal * (maxFuels[i] / sumMax) : 0);
+        const memberLegs = (i === 0) ? legsProgress : 0;
       const memberSlosh = (i === 0) ? sloshOffset : 0;
       const comps = _memberComponents(m, members[i + 1] || null, memberFuel, memberLegs, memberSlosh);
       comps.forEach(c => all.push({ ...c, comY: c.comY + yOffset, _memberIdx: i }));

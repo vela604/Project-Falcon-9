@@ -871,17 +871,17 @@ pre { padding: 12px 14px; font-size: 11.5px; }
       the failed ones failed. Kept as a build-in-public log so future work
       doesn't repeat the same mistakes.
     </p>
-       <div class="hero-stats">
+               <div class="hero-stats">
       <div class="hero-stat">
-        <div class="hero-stat-num">9</div>
+        <div class="hero-stat-num">11</div>
         <div class="hero-stat-label">Experiments</div>
       </div>
       <div class="hero-stat">
-        <div class="hero-stat-num" style="color:var(--green)">2</div>
+        <div class="hero-stat-num" style="color:var(--green)">3</div>
         <div class="hero-stat-label">Accurate Wins</div>
       </div>
       <div class="hero-stat">
-        <div class="hero-stat-num" style="color:var(--yellow)">1</div>
+        <div class="hero-stat-num" style="color:var(--yellow)">2</div>
         <div class="hero-stat-label">Partial</div>
       </div>
       <div class="hero-stat">
@@ -1654,6 +1654,370 @@ THROTTLE_FRAC_LOW:     0.7</pre>
         <span class="tag">accurate</span>
         <span class="tag warn">wind-untested</span>
         <span class="tag warn">hand-tuned-constants</span>
+      </div>
+    </div>
+  </div>
+  
+    <!-- ==================== FULL MISSION ==================== -->
+  <div class="section-header">Full-Mission Experiments</div>
+
+  <!-- 10. leoInsertion -->
+  <div class="exp glass partial">
+    <div class="exp-head">
+      <div>
+        <h3 class="exp-title">LEO Insertion — Full Mission</h3>
+        <div class="exp-id">leoInsertion</div>
+        <div class="exp-time">— <span class="exp-time-day">· Tue, Sep 23</span></div>
+      </div>
+      <span class="exp-status partial">ACCURATE UP TO MECO · FAILS AT ORBIT</span>
+    </div>
+    <div class="exp-body">
+      <div class="exp-row">
+        <div class="exp-label">Target</div>
+        <div class="exp-value">
+          Chain the ascent guide into a full mission: launch → MECO → stage
+          separation → attitude slew → circularization burn → satellite in
+          LEO. One guide, one phase machine, every hand-off autonomous. The
+          goal wasn't just "get up there" — it was orbit insertion.
+        </div>
+      </div>
+      <div class="exp-row">
+        <div class="exp-label">Iterations</div>
+        <div class="exp-value">
+          <p>The ascent phase worked from day one (it delegates to
+          <code>ascentAoaHold</code>'s proven control law). Everything
+          after MECO went through six rewrites:</p>
+          <ul>
+            <li><strong>v1 — RCS-slew rotation via sin-pulse.</strong>
+              The target was a 20° steep-up angle, delivered by RCS using
+              the same <code>τ = I·A·sin(2πt/T)</code> formula as the PUSH
+              pulse. Undershot by exactly half. RCS torque is ~1/280th of
+              what's needed to slew an upper stage at that rate.</li>
+            <li><strong>v2 — sin-pulse handed to the gimbal.</strong>
+              Same formula, actuator swapped. Rotation worked, but the
+              stage was coasting up at steep angle while the burn was
+              supposed to take over — apogee kept rising past target
+              during the slew.</li>
+            <li><strong>v3 — dropped coast phase entirely.</strong>
+              Separation → immediate rotate → immediate burn. Removed
+              the "Karman-line coast" that was wasting altitude gain.
+              Rotation target changed to horizontal (90° from local
+              vertical) — the natural prograde direction at apogee.</li>
+            <li><strong>v4 — bang-bang rotation.</strong> Replaced the
+              sin-pulse with time-optimal bang-bang: fire max torque one
+              way until the midpoint of the rotation, then max the other
+              way to decelerate. RCS at saturation for the entire slew,
+              but exits with zero residual ω. Tolerances were the tricky
+              part — the exit-condition band had to be tight enough to
+              catch the hand-off cleanly.</li>
+            <li><strong>v5 — coast-to-apogee planning block.</strong>
+              At cutoff, compute apogee, V_apogee (h/r_a), V_orbital
+              (√(GM/r_a)), Δv, required fuel via Tsiolkovsky, burn
+              duration, and time-to-apogee via Kepler. Everything the
+              circularization phase needs, locked once so the coast tick
+              doesn't re-derive.</li>
+            <li><strong>v6 — net-zero-force RCS hold.</strong> During the
+              100+ second coast, the attitude hold was drifting the
+              trajectory — RCS duty doesn't inherently balance linear
+              force. Added
+              <code>targetTorqueRcsNoNetForce()</code>: prioritises the
+              lateral nozzle pair (larger moment arm), and only engages
+              verticals when lateral torque alone can't meet demand,
+              always in balanced pairs. Net linear force is exactly zero
+              by construction.</li>
+          </ul>
+        </div>
+      </div>
+      <div class="exp-row">
+        <div class="exp-label">Final architecture</div>
+        <div class="exp-value">
+          <pre><span class="cmt">// Phase machine — one switch, one tick per phase</span>
+ASCENT              → delegate to _hTick (ascentAoaHold's full machine)
+MECO_SPOOL          → wait for separation to complete
+SEPARATED_AXIAL     → booster RCS 'dn' + stage RCS 'up' till 10 m gap
+                    → pneumatic pusher (2 m/s² for 1 s on discarded body)
+ROTATE_BANG_BANG    → RCS max torque, mid-point reversal, exit at
+                       target tilt = −10° from local vertical, ω ≈ 0
+TARGET_APOGEE       → full throttle + gimbal attitude hold,
+                       throttle decay inside 10 km margin,
+                       cutoff at apogee ≥ 180 km
+COAST_ROTATE        → bang-bang RCS slew to horizontal (θ_rel = −90°)
+COAST_HOLD          → hold horizontal via targetTorqueRcsNoNetForce,
+                       wait until t_to_apogee ≤ 0.25 · T_burn
+CIRCULARIZE         → full throttle + gimbal hold horizontal,
+                       throttle decay near V_orb, cutoff at v ≥ V_orb
+DONE</pre>
+          <p>Every torque demand that runs during coast goes through the
+          net-force-free RCS distributor. Every burn-phase attitude hold
+          uses the gimbal (100× more torque than RCS). Guidance reads
+          the same derived state for every phase — no physics
+          internal reach-through.</p>
+        </div>
+      </div>
+      <div class="exp-row">
+        <div class="exp-label">Result — up to MECO</div>
+        <div class="exp-value">
+          <strong>Rock solid.</strong> Ascent runs to apogee 150 km on
+          <code>ascentAoaHold</code>'s control law. MECO trigger fires on
+          osculating apogee, not altitude — the physically meaningful
+          hand-off. Separation is clean: 10 m axial gap in seconds,
+          booster drifts away, stage stays upright. Rotation to −10°
+          completes with the bang-bang slew. Apogee burn hits 180 km
+          within the throttle-decay margin. This whole sequence is
+          reproducible across runs.
+        </div>
+      </div>
+      <div class="exp-row">
+        <div class="exp-label">What failed — circularization</div>
+        <div class="exp-value">
+          The circularization burn <strong>never actually reaches orbital
+          velocity</strong>. Coast → rotate → burn all fire on schedule,
+          the guidance status reads <code>CIRCULARIZE</code>, and the
+          burn starts. But the required Δv is delivered in a fraction
+          that is many times longer than the ideal
+          <code>Δv / ṁ</code>. The upper stage runs out of burn time or
+          drifts off the intended altitude before <code>v ≥ V_orbital</code>
+          is achieved.
+        </div>
+      </div>
+      <div class="exp-row">
+        <div class="exp-label">Why it failed</div>
+        <div class="exp-value">
+          The mission profile is fundamentally wrong for an orbital
+          insertion. <em>"Steep up se orbit height tak jaldi pahunch ke
+          koi fayeda nahi kyunki fir V_orbital achieve karne mein Δv ke
+          times se 4–5× time lagta hai kyunki gravity exist karti hai."</em>
+          <p>Getting to the target altitude fast with a steep climb
+          leaves almost all of the horizontal velocity to be added at
+          the top. But that horizontal burn is fighting gravity the whole
+          time — every second of horizontal thrust loses ~9.7 m/s of
+          useful velocity to the vertical pull that the wings (which
+          don't exist) would have countered. Gravity losses turn a
+          1.5 km/s ideal Δv into a burn that takes 4–5× longer than the
+          mass-flow math predicts. By the time the required velocity
+          arrives, apogee has dropped below the target altitude, and the
+          resulting orbit is elliptical, not circular.</p>
+          <p>The real fix isn't a better circularization controller — it's
+          a different ascent profile. Real launchers pitch over early and
+          build horizontal velocity throughout the climb, arriving at
+          orbit altitude with most of V_orbital already banked. That's
+          the whole point of a gravity turn. This mission never made one.</p>
+        </div>
+      </div>
+      <div class="exp-row">
+        <div class="exp-label">Drawbacks</div>
+        <div class="exp-value">
+          <ul>
+            <li><strong>Ascent profile is steep, not orbital.</strong>
+              Climb-to-altitude-then-burn-horizontal is the wrong shape.
+              It maximises altitude gain per unit time and minimises
+              velocity gain, which is the opposite of what orbit needs.</li>
+            <li><strong>Gravity losses during the horizontal burn are
+              unmodelled.</strong> The burn planning (Tsiolkovsky + ṁ)
+              assumes ideal Δv, not gravity-and-steering losses. A 4–5×
+              time multiplication is the observable consequence.</li>
+            <li><strong>No pitch-program rework attempted.</strong>
+              Everything after MECO was tuned, but MECO itself fires on
+              the ascent profile inherited from <code>ascentAoaHold</code>
+              — which was never designed to leave the stage in a
+              good energy state for orbit.</li>
+          </ul>
+        </div>
+      </div>
+      <div class="tags">
+        <span class="tag">phase-machine</span>
+        <span class="tag">meco-on-apogee</span>
+        <span class="tag">bang-bang-rotation</span>
+        <span class="tag">net-zero-force-rcs</span>
+        <span class="tag warn">circularization-failed</span>
+        <span class="tag err">gravity-losses-unmodelled</span>
+        <span class="tag err">steep-ascent-profile</span>
+      </div>
+    </div>
+  </div>
+    <!-- 11. leoInsertionV2 -->
+  <div class="exp glass pass">
+    <div class="exp-head">
+      <div>
+        <h3 class="exp-title">LEO Insertion V2 — Full Mission</h3>
+        <div class="exp-id">leoInsertionV2</div>
+        <div class="exp-time">— <span class="exp-time-day">· 23 Sept' 2026</span></div>
+      </div>
+      <span class="exp-status pass">FULL MISSION · PAYLOAD IN ORBIT</span>
+    </div>
+    <div class="exp-body">
+      <div class="exp-row">
+        <div class="exp-label">Target</div>
+        <div class="exp-value">
+          One guide, one phase machine, autonomous pad-to-orbit-and-deploy.
+          Ascent → MECO → separation → burn to apogee → RCS boost → coast
+          → circularization burn → coast to apogee → release payload →
+          DONE. Every hand-off handled by guidance, no manual commands
+          after launch.
+        </div>
+      </div>
+      <div class="exp-row">
+        <div class="exp-label">What v1 got wrong</div>
+        <div class="exp-value">
+          v1 climbed steeply to apogee, coasted, then tried to add all the
+          horizontal velocity in a short burn near the top. That profile
+          fights gravity the whole way — every second of horizontal thrust
+          loses vertical velocity it didn't need to spend. The result was
+          the same floor on every run: apogee locked at 209 km regardless
+          of target, because the available burn never delivered
+          <code>V_orbital</code> and the resulting orbit was elliptical.
+          <p>The failure is a <strong>shape</strong> failure, not a
+          controller failure. Ascent controller, separation logic, coast
+          attitude hold — all worked. The mission had just been aimed at
+          the wrong trajectory.</p>
+        </div>
+      </div>
+      <div class="exp-row">
+        <div class="exp-label">The road to v2</div>
+        <div class="exp-value">
+          <ul>
+            <li><strong>Coast was wasting altitude.</strong> Sitting at
+              target altitude before burning meant the horizontal burn
+              fought gravity for a 4-5× longer window than the mass-flow
+              math suggested. Fix: stop coasting, keep burning — the
+              burn itself <em>is</em> the ride to apogee.</li>
+            <li><strong>Attitude drift during long coast.</strong> RCS
+              torque without force-balancing walks the orbit off course
+              over 100+ seconds. Fix: <code>targetTorqueRcsNoNetForce</code>
+              — pairs lateral and vertical fires so <code>ΣF = 0</code>
+              is exact by construction, while still delivering the
+              requested torque.</li>
+            <li><strong>Apogee overshoot on shutdown spool.</strong>
+              Merlin-class engines take ~2 s to actually stop; during
+              that window thrust continues and adds ~30 m/s, which at
+              orbital velocity moves apogee by ~50 km. Prediction
+              lookahead reads the engine's own
+              <code>shutdownDurationS</code> and cuts early by the
+              predicted Δv.</li>
+            <li><strong>Apogee target too imprecise at orbital
+              velocity.</strong> One guidance tick moves apogee by
+              100+ km — "apogee ≥ target" was firing way past the mark.
+              Replaced with a two-stage trim: main engine cuts at
+              apogee ≥ target − margin, then RCS_BOOST does fine
+              prograde push until apogee hits exactly.</li>
+            <li><strong>Payload release timing.</strong> Releasing at
+              apogee needs precise attitude and orbit. Fix: re-derive
+              the apogee point from the eccentricity vector every tick
+              and hold the nose along the local velocity there.
+              Release triggers on <code>vr</code> sign flip — the
+              exact apogee crossing.</li>
+          </ul>
+        </div>
+      </div>
+      <div class="exp-row">
+        <div class="exp-label">Key insights</div>
+        <div class="exp-value">
+          <p><strong>1. Attitude lock at 85° during the orbital burn.</strong>
+          During STAGE_BURN, once the body's tilt-from-local-vertical
+          reaches 85° (near-horizontal), the gimbal control switches
+          from AoA-damping to a PD hold at that exact tilt. Below the
+          threshold the nose stays velocity-aligned (natural gravity
+          turn); above it, thrust points mostly tangentially, which is
+          what actually raises perigee efficiently.</p>
+          <p><strong>2. Two burn stages — main engine coarse, RCS
+          fine.</strong> The main engine brings apogee near the target
+          (coarse, cheap). RCS_BOOST then does the last ~100 m/s of
+          perigee trim if the engine's spool overshoot left it short.
+          The mission is not all-or-nothing: the engine lands close, and
+          RCS closes the gap.</p>
+          <p><strong>3. Spool compensation is physics, not tuning.</strong>
+          Both the STAGE_BURN predictive cutoff and the CIRCULARIZE
+          cutoff read the engine's own
+          <code>shutdownDurationS</code> and compute the Δv that will
+          be delivered during spool-down. The cutoff fires that much
+          early, so the engine reaches zero thrust exactly when the
+          vehicle reaches the target velocity. No hand-tuned margin.</p>
+          <p><strong>4. Payload kick gets pre-compensated.</strong> The
+          deploy mechanism adds a fixed 3 m/s prograde impulse to the
+          payload. The stage only needs to reach
+          <code>V_orbital − kick</code>, so the CIRCULARIZE cutoff
+          fires (spool_Δv + kick) early. The stage ends up 3 m/s short
+          — the payload ends up exactly on the target.</p>
+        </div>
+      </div>
+      <div class="exp-row">
+        <div class="exp-label">Phase machine</div>
+        <div class="exp-value">
+          <pre><span class="cmt">// Post-MECO path — v2 diverges from v1 here</span>
+ASCENT              → _hTick (ascentAoaHold core)
+MECO_SPOOL          → trigger on osculating apogee ≥ 150 km
+SEPARATED_AXIAL     → RCS push apart, pneumatic pusher, 10 m gap
+STAGE_BURN          → full throttle, gimbal control:
+                       pre-85°  : COASTnAoADAMP (velocity-aligned)
+                       post-85° : PD hold at locked 85° tilt
+                    → cutoff at apogee ≥ target, predictive spool
+RCS_BOOST           → engine off, wait for spool, then 4× up nozzles
+                       prograde until apogee hits target exactly
+COAST_ROTATE        → bang-bang RCS slew to fixed inertial θ that
+                       matches velocity direction at apogee
+COAST_HOLD          → hold that θ via net-zero-force RCS,
+                       wait for burn trigger
+CIRCULARIZE         → full throttle, PD hold same θ
+                    → cutoff when v_err ≤ (spool_Δv + payload_kick)
+DEPLOY_PAYLOAD      → coast to apogee, hold nose along velocity at
+                       the apogee point (recomputed every tick)
+                    → release at vr sign flip
+DONE                → RCS holds attitude indefinitely</pre>
+        </div>
+      </div>
+      <div class="exp-row">
+        <div class="exp-label">Key constants</div>
+        <div class="exp-value">
+          <p>Only the ones that actually decide the mission:</p>
+          <pre>MECO_APOGEE_KM:              150    <span class="cmt">// hand-off trigger</span>
+TARGET_ORBIT_ALT_KM:         320    <span class="cmt">// orbit altitude</span>
+STAGE_BURN_LOCK_TILT_DEG:    85     <span class="cmt">// thrust goes tangential</span>
+CIRC_ATT_KP:                 0.5    <span class="cmt">// coast/circ attitude P</span>
+CIRC_ATT_KD:                 4.0    <span class="cmt">// coast/circ attitude D</span>
+PAYLOAD_EJECT_KICK_MPS:      3.0    <span class="cmt">// deploy pre-compensation</span>
+STAGE_BURN_LOOKAHEAD_TICKS:  3      <span class="cmt">// coarse spool guard</span></pre>
+          <p>Engine-side values (spool, Ve, mass flow) are read at
+          runtime from the active engine object, not hardcoded —
+          swapping the thruster type in the fleet editor carries
+          through without touching the guide. Everything is tunable
+          at runtime via <code>Guidance.setLeoInsertionV2({...})</code>.</p>
+        </div>
+      </div>
+      <div class="exp-row">
+        <div class="exp-label">Result</div>
+        <div class="exp-value">
+          <strong>Payload is in orbit.</strong> The mission now runs
+          autonomously end-to-end: ascent → MECO → separation → burn
+          to apogee → RCS boost → coast → circularization burn → coast
+          to apogee → release payload → DONE. Every hand-off handled by
+          guidance, no manual commands after launch. Final orbit lands
+          at the target altitude, the payload separates with the correct
+          prograde kick, and the stage settles into a stable
+          attitude-hold state for as long as the sim runs. This is the
+          first guide that gets not just the vehicle but the
+          <em>payload</em> into orbit.
+        </div>
+      </div>
+      <div class="exp-row">
+        <div class="exp-label">Drawbacks</div>
+        <div class="exp-value">
+          <ul>
+            <li><strong>Sun and Moon gravity not modelled.</strong> The
+              sim treats Earth as the only gravitating body. Over the
+              timescales this mission runs (minutes to hours) the
+              perturbation is negligible, but long-term orbit prediction
+              would need a proper multi-body integration.</li>
+          </ul>
+        </div>
+      </div>
+      <div class="tags">
+        <span class="tag">full-mission</span>
+        <span class="tag">pad-to-orbit</span>
+        <span class="tag">payload-deploy</span>
+        <span class="tag">spool-compensation</span>
+        <span class="tag">no-net-force-rcs</span>
+        <span class="tag">tilt-lock</span>
+        <span class="tag">exact-apogee-release</span>
       </div>
     </div>
   </div>

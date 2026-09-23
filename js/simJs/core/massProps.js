@@ -506,8 +506,14 @@ function combineComponents(components) {
 // legsProgress applies only to members[0] (the bottom member — the only one
 // whose legs are driven by the sim's leg control in P4-C2b-1).
 // ---------------------------------------------------------------------------
-function stackMassProps(members, fuelMassTotal, legsProgress, payloadMass, sloshOffset) {
+// memberFuels (optional): array parallel to `members[]`, each entry the
+// CURRENT fuel mass in that member's tank (kg). When provided, tank
+// levels come from here instead of a proportional-by-capacity split of
+// fuelMassTotal. Caller passes this after the per-member fuel refactor
+// so each tank drains independently — engines burn their own tank only.
+function stackMassProps(members, fuelMassTotal, legsProgress, payloadMass, sloshOffset, memberFuels) {
   members = members || [];
+  const usePerMember = Array.isArray(memberFuels) && memberFuels.length === members.length;
   
   // Look up the active stack's frozen derived values so booster interstage
   // mass/height don't drift when the stack detaches during flight. The
@@ -531,8 +537,10 @@ function stackMassProps(members, fuelMassTotal, legsProgress, payloadMass, slosh
   let yOffset = 0;
   let payloadSpaceComY = null;
   members.forEach((m, i) => {
-        const progress = (i === 0) ? (legsProgress || 0) : 0;
-        const memberFuel = sumMax > 0 ? fuelTotal * (maxFuels[i] / sumMax) : 0;
+      const progress = (i === 0) ? (legsProgress || 0) : 0;
+      const memberFuel = usePerMember ?
+        Math.max(0, memberFuels[i] || 0) :
+        (sumMax > 0 ? fuelTotal * (maxFuels[i] / sumMax) : 0);
         // Only boosters have a stack-derived interstage; other member types
         // ignore this field (memberComponents only reads it on the booster path).
         const frozenInterstage = frozenInterstageMap[m.id] || null;

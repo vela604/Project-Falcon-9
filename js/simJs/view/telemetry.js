@@ -9,7 +9,13 @@ const NOTATION_GLOSSARY = {
   'x': 'Downrange arc distance from launch site, Earth-fixed (m). + east, − west. Bracketed value: angular offset in degrees. arc = R_earth · (φ_rocket_earth_fixed − φ_launch).',
   
   'h': 'Altitude above sea level (m). Frame-independent — radial distance minus Earth\'s radius.',
-  
+
+'ha': 'Apogee altitude (km, ASL) — the highest point of the current osculating two-body orbit. Computed from the instantaneous inertial state (r, vr, vt_inertial). Shows "∞" on escape trajectories (parabolic or hyperbolic). Not the same as CONFIG.TARGET_ORBIT_ALT_KM unless the orbit happens to be circular.',
+
+'hp': 'Perigee altitude (km, ASL) — the lowest point of the current osculating two-body orbit. Always defined for any bound or unbound conic. During a circular orbit ha ≈ hp; during a coast ellipse they diverge as expected.',
+
+'va': 'Velocity at apogee (m/s) — the speed the body will have when it reaches apogee, from angular momentum conservation: vr = 0 there, so |v| = |h| / r_a. Zero on escape trajectories (apogee undefined).',
+
   'v': 'Speed — magnitude of the velocity vector (m/s). Format: relative (inertial). Earth-relative excludes the local surface rotation velocity (ω_earth · r).',
   
   'vr': 'Radial velocity (m/s) — component along local vertical. + = outward (away from Earth\'s center). Frame-independent: the radial direction is a geometric property of position, identical in inertial and Earth-fixed frames.',
@@ -45,6 +51,29 @@ const NOTATION_GLOSSARY = {
   'B': 'Number of active bodies in the scene. Format: total (discarded) — discarded boosters, spent stages, released fairing halves and payloads each count as one.',
   'T+': 'Mission elapsed time, mm:ss.s.',
 };
+
+// Time from current 2-body state to the next apogee (seconds). Exact
+// via Kepler's equation. Used by the direction HUD's burn countdown —
+// same math the guidance worker runs, inlined here because telemetry
+// runs on the main thread and has no access to guidance's internals.
+function _timeToApogeeKepler(r, vr, vt, GM) {
+  if (!(r > 0)) return Infinity;
+  const E = 0.5 * (vr * vr + vt * vt) - GM / r;
+  if (E >= 0) return Infinity;
+  const a = -GM / (2 * E);
+  const h = r * vt;
+  const eSq = 1 + 2 * E * h * h / (GM * GM);
+  const e = Math.sqrt(Math.max(0, eSq));
+  if (e < 1e-9) return Math.PI * Math.sqrt(a * a * a / GM);
+  const cosE = (1 - r / a) / e;
+  const sinE = (r * vr) / (e * Math.sqrt(GM * a));
+  let E_an = Math.atan2(sinE, cosE);
+  if (E_an < 0) E_an += 2 * Math.PI;
+  const M = E_an - e * Math.sin(E_an);
+  const n = Math.sqrt(GM / (a * a * a));
+  if (M < Math.PI) return (Math.PI - M) / n;
+  return (3 * Math.PI - M) / n;
+}
 
 function buildGlossaryPanel() {
   const el = document.getElementById('glossaryList');
@@ -128,9 +157,39 @@ function updateTelemetry() {
   const dual = (rel, inertial, digits) => `${fmt(rel, digits)} (${fmt(inertial, digits)})`;
   
   set('t-x', `${fmt(arcDistance, 1)} m (${arcAngleDeg.toFixed(4)}°)`);
-  set('t-h', fmt(altitude, 1)); // frame-independent
-  set('t-v', dual(speedRelative, speedInertial, 2)); // rel (inertial)
-  set('t-vr', fmt(vRadial, 2)); // frame-independent
+set('t-h', fmt(altitude, 1)); // frame-independent
+
+// ---- Osculating orbital elements (two-body, from current inertial state) ----
+//   E = ½(vr² + vt_inertial²) − GM/r        specific energy
+//   h = r · vt_inertial                     specific angular momentum
+//   p = h² / GM                             semi-latus rectum
+//   e = √(1 + 2·E·h²/GM²)                   eccentricity
+//   r_p = p / (1 + e)                       always defined
+//   r_a = p / (1 − e)   if e < 1            apogee (undefined if escape)
+//   v_apo = |h| / r_a                       velocity at apogee (vr = 0 there)
+// Thrust is NOT subtracted — same convention as guidance's plan block,
+// so the numbers here match what the mission guide reads.
+{
+  const GM = CONFIG.GM_EARTH;
+  const R_e = CONFIG.EARTH_RADIUS;
+  const h_orb = r * vTangentialInertial;
+  const p_orb = GM > 0 ? (h_orb * h_orb) / GM : 0;
+  const E_orb = 0.5 * (vRadial * vRadial + vTangentialInertial * vTangentialInertial) - GM / r;
+  const eSq = 1 + 2 * E_orb * h_orb * h_orb / (GM * GM);
+  const e = Math.sqrt(Math.max(0, eSq));
+  const r_p = p_orb / (1 + e);
+  const r_a = (e < 1 && e >= 0) ? p_orb / (1 - e) : Infinity;
+  const altP = (r_p - R_e) / 1000;
+  const altA = Number.isFinite(r_a) ? (r_a - R_e) / 1000 : Infinity;
+  const vApo = (Number.isFinite(r_a) && r_a > 0) ? Math.abs(h_orb) / r_a : 0;
+  
+  set('t-apogee', Number.isFinite(altA) ? fmt(altA, 1) + ' km' : '∞ (escape)');
+  set('t-perigee', fmt(altP, 1) + ' km');
+  set('t-vapo', fmt(vApo, 0) + ' m/s');
+}
+
+set('t-v', dual(speedRelative, speedInertial, 2)); // rel (inertial)
+set('t-vr', fmt(vRadial, 2)); // frame-independent
   set('t-vt', dual(vTangentialRelative, vTangentialInertial, 2)); // rel (inertial)
   set('t-theta', dual(thetaRelative, thetaInertial, 2)); // rel-to-local (inertial)
   set('t-omega', dual(omegaRelative, omegaInertial, 3)); // rel-to-earth (inertial)
@@ -1178,13 +1237,51 @@ function drawDirectionHUD() {
     canvas.height = Math.round(cssH * dpr);
   }
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  const w = cssW, h = cssH;
-  ctx.clearRect(0, 0, w, h);
-  
-  // --- Compute net wind (ground-relative) ---
-  const followIdx = (typeof _cameraTargetIndex === 'function')
-    ? _cameraTargetIndex() : state.activeBodyIndex;
-  const b = state.bodies ? state.bodies[followIdx] : null;
+const w = cssW, h = cssH;
+ctx.clearRect(0, 0, w, h);
+
+// --- Compute net wind (ground-relative) ---
+const followIdx = (typeof _cameraTargetIndex === 'function')
+  ? _cameraTargetIndex() : state.activeBodyIndex;
+const b = state.bodies ? state.bodies[followIdx] : null;
+
+// --- Altitude gate for HUD repurposing ---
+// Past the Karman line the "wind" compass has no physical meaning —
+// there's no atmosphere to steer against. Two behaviours kick in:
+//   * Within the last 10 s of the coast, the compass is replaced
+//     by a big seconds-to-apogee countdown (burn trigger is at
+//     startup + 2 s, so 10 s is a comfortable "get ready" window).
+//   * Otherwise the wind arrows are suppressed; only the E/W/U/D
+//     axes remain, so the HUD still shows orientation.
+let _hudAltKm = 0;
+if (b) {
+  const _r = Math.hypot(b.rx, b.ry);
+  _hudAltKm = (_r - CONFIG.EARTH_RADIUS) / 1000;
+}
+const _hudPastKarman = _hudAltKm > 100;
+
+// --- Countdown takeover ---
+if (b && _hudPastKarman) {
+  const _r = Math.hypot(b.rx, b.ry);
+  const _ux = b.rx / _r, _uy = b.ry / _r;
+  const _ex = b.ry / _r, _ey = -b.rx / _r;
+  const _vr = b.vx * _ux + b.vy * _uy;
+  const _vt = b.vx * _ex + b.vy * _ey;
+  const _tRem = _timeToApogeeKepler(_r, _vr, _vt, CONFIG.GM_EARTH);
+  const _thrustOn = (b.engines || []).some(e => (e.massFlowRate || 0) > 5);
+  if (Number.isFinite(_tRem) && _tRem > 0 && _tRem <= 10 && !_thrustOn) {
+    const cx = w / 2, cy = h / 2;
+    ctx.fillStyle = 'rgba(53,214,255,1)';
+    ctx.font = 'bold 46px "JetBrains Mono", monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(Math.ceil(_tRem).toString(), cx, cy - 8);
+    ctx.font = 'bold 10px "JetBrains Mono", monospace';
+    ctx.fillStyle = 'rgba(255,210,63,0.95)';
+    ctx.fillText('SECONDS TO APOGEE', cx, cy + 32);
+    return;
+  }
+}
   
   let coRotE = 0;              // co-rotation excess (east)
   let userE = 0, userU = 0, userMag = 0;
@@ -1245,8 +1342,12 @@ function drawDirectionHUD() {
   ctx.fillText('U', cx, cy - R - 11);
   ctx.fillText('D', cx, cy + R + 12);
   
-  // --- User wind arrow (dotted, only if user wind on) ---
-  if (wind.enabled && wind.speed > 0 && userMag > 0.1) {
+  // --- User wind arrow (dotted, only if user wind on AND not past Karman) ---
+// Past ~100 km the "wind" has no physical effect on the vehicle —
+// there's effectively no atmosphere. Suppress the arrow so the HUD
+// stops implying a force that isn't there. The compass axes still
+// draw below, so orientation info is not lost.
+if (!_hudPastKarman && wind.enabled && wind.speed > 0 && userMag > 0.1) {
     const nE = userE / userMag, nU = userU / userMag;
     const uLen = R * 0.65;
     ctx.strokeStyle = 'rgba(255,210,120,0.7)';
@@ -1259,8 +1360,8 @@ function drawDirectionHUD() {
     ctx.setLineDash([]);
   }
   
-  // --- Net wind arrow ---
-  if (netMag > 0.05) {
+ // --- Net wind arrow (suppressed past Karman) ---
+if (!_hudPastKarman && netMag > 0.05) {
     // Auto-scale so a small co-rot-only wind still reads visibly.
     // Full arrow length for anything ≥ 5 m/s, linear below that.
     const scale = Math.min(1, Math.max(0.15, netMag / 5));
@@ -1296,16 +1397,20 @@ function drawDirectionHUD() {
   ctx.fill();
   
   // --- Readouts ---
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'top';
-  
-  const netTxt = `NET  ${netMag.toFixed(1)} m/s  ·  ${(netMag * 3.6).toFixed(0)} km/h  ·  ${Math.round(netDirDeg)}°`;
-  ctx.fillStyle = netMag > 0.05 ? 'rgba(255,150,180,0.95)' : 'rgba(150,160,180,0.55)';
-  ctx.font = '9.5px "JetBrains Mono", monospace';
-  ctx.fillText(netTxt, cx, cy + R + 12);
-  
-  const subTxt = `CO-ROT ${coRotE.toFixed(1)}  +  USER ${userMag.toFixed(1)}`;
-  ctx.fillStyle = (userMag > 0.1) ? 'rgba(255,210,120,0.85)' : 'rgba(150,170,200,0.7)';
-  ctx.font = '8.5px "JetBrains Mono", monospace';
-  ctx.fillText(subTxt, cx, cy + R + 25);
-}
+  // Past Karman, wind has no physical meaning for the vehicle, so the
+  // numeric readouts are suppressed too. Only shown below 100 km.
+  if (!_hudPastKarman) {
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    
+    const netTxt = `NET  ${netMag.toFixed(1)} m/s  ·  ${(netMag * 3.6).toFixed(0)} km/h  ·  ${Math.round(netDirDeg)}°`;
+    ctx.fillStyle = netMag > 0.05 ? 'rgba(255,150,180,0.95)' : 'rgba(150,160,180,0.55)';
+    ctx.font = '9.5px "JetBrains Mono", monospace';
+    ctx.fillText(netTxt, cx, cy + R + 12);
+    
+    const subTxt = `CO-ROT ${coRotE.toFixed(1)}  +  USER ${userMag.toFixed(1)}`;
+    ctx.fillStyle = (userMag > 0.1) ? 'rgba(255,210,120,0.85)' : 'rgba(150,170,200,0.7)';
+    ctx.font = '8.5px "JetBrains Mono", monospace';
+    ctx.fillText(subTxt, cx, cy + R + 25);
+  }
+  }

@@ -96,6 +96,38 @@ function getGuideStatus() {
   return out;
 }
 
+// ---- Guide state pack/unpack (for main-thread fast-forward) ----
+// Every guide's phase and mission-plan data lives in one of these
+// module-scoped state objects. Fast-forward on the main thread imports
+// them at the start (so the FF guide resumes from the exact phase the
+// worker was in) and exports them at the end (so the worker picks up
+// where the FF stopped). Without this, main and worker guides drift
+// immediately — one replays from ASCENT, the other is mid-STAGE_BURN.
+function exportGuideState() {
+  const out = { activeGuide: _activeGuide };
+  try {
+    out.hState = JSON.parse(JSON.stringify(_hState));
+    out.leoState = JSON.parse(JSON.stringify(_leoState));
+    out.leoStateV2 = JSON.parse(JSON.stringify(_leoStateV2));
+    out.rrState = JSON.parse(JSON.stringify(_rrState));
+  } catch (e) {
+    console.warn('[guidance] exportGuideState failed', e);
+  }
+  return out;
+}
+function importGuideState(data) {
+  if (!data) return;
+  try {
+    if (data.hState) Object.assign(_hState, data.hState);
+    if (data.leoState) Object.assign(_leoState, data.leoState);
+    if (data.leoStateV2) Object.assign(_leoStateV2, data.leoStateV2);
+    if (data.rrState) Object.assign(_rrState, data.rrState);
+    if (data.activeGuide !== undefined) _activeGuide = data.activeGuide;
+  } catch (e) {
+    console.warn('[guidance] importGuideState failed', e);
+  }
+}
+
 function tick(snapshot) {
   if (_activeGuide && GUIDES[_activeGuide]) {
     GUIDES[_activeGuide](snapshot);
@@ -1992,6 +2024,31 @@ function _hWrapPi(x) {
   return x;
 }
 
+// Time from current 2-body state to the next apogee, in seconds.
+// Exact via Kepler's equation (no numerical integration needed).
+// Returns Infinity on escape trajectories.
+function _hTimeToApogee(r, vr, vt, GM) {
+  if (!(r > 0)) return Infinity;
+  const E = 0.5 * (vr * vr + vt * vt) - GM / r;
+  if (E >= 0) return Infinity;
+  const a = -GM / (2 * E);
+  const h = r * vt;
+  const eSq = 1 + 2 * E * h * h / (GM * GM);
+  const e = Math.sqrt(Math.max(0, eSq));
+  if (e < 1e-9) {
+    // Circular — apogee undefined; return half-period as a stand-in.
+    return Math.PI * Math.sqrt(a * a * a / GM);
+  }
+  const cosE = (1 - r / a) / e;
+  const sinE = (r * vr) / (e * Math.sqrt(GM * a));
+  let E_an = Math.atan2(sinE, cosE);
+  if (E_an < 0) E_an += 2 * Math.PI;
+  const M = E_an - e * Math.sin(E_an);
+  const n = Math.sqrt(GM / (a * a * a));
+  if (M < Math.PI) return (Math.PI - M) / n;
+  return (3 * Math.PI - M) / n;
+}
+
 // cfgOverride: optional config bag. When called directly by the
 // ascentAoaHold guide, omitted → defaults to ASCENT_HOLD (legacy path).
 // When called by leoInsertion's ASCENT phase, receives LEO_INSERTION.ASCENT
@@ -2410,9 +2467,32 @@ const LEO_INSERTION = {
   //   2000–35786   → MEO
   //   35786 km     → GEO
 
-  // ---- RCS settle (post-separation, pre-stage-burn) ----
-  RCS_OMEGA_TARGET:     0,
-  RCS_SETTLE_TOL:       1e-4,
+// ---- RCS settle (post-separation, pre-stage-burn) ----
+RCS_OMEGA_TARGET: 0,
+  RCS_SETTLE_TOL: 1e-4,
+  
+  // ---- Coast → circularization planning ----
+  // After TARGET_APOGEE cuts the engine, apogee is fixed (two-body).
+  // Guidance computes: V_apogee, V_orbital, Δv, fuel needed (Tsiolkovsky),
+  // T_burn = fuel/mdot, and T_coast = time-to-apogee (numerical).
+  // Burn triggers when T_remaining_to_apogee ≤ COAST_BURN_TRIGGER_FRAC × T_burn.
+  COAST_BURN_TRIGGER_FRAC: 1.0,
+  
+  // Horizontal target = local vertical rotated −90° (east prograde).
+  // CW direction, matches ascent convention where east tilt = negative
+  // θ_rel.
+  COAST_TARGET_TILT_DEG: -90,
+  
+  // Rotation to horizontal — same bang-bang as ROTATE_BANG_BANG.
+  COAST_ROTATE_TOL_DEG: 0.5,
+  COAST_ROTATE_OMEGA_TOL: 0.02,
+  COAST_ROTATE_TIMEOUT_S: 240,
+  
+  // Circularization burn.
+  CIRC_VEL_TOL_MPS: 5, // cutoff tolerance on |v − v_orb|
+  CIRC_DECAY_FRAC: 0.05, // decay window as frac of V_orbital
+  CIRC_ATT_KP: 0.5, // gimbal attitude hold P gain
+  CIRC_ATT_KD: 4.0, // gimbal attitude hold D gain
 
   // ---- Stage (upper) phase ----
   STAGE: {
@@ -2466,9 +2546,28 @@ const _leoState = {
   lastAltKm: 0,
   lastAxialGap: 0,
   lastLateralGap: 0,
-    angStartTiltDeg: null, // locked-in tilt at ANG_FOR_APOGEE start
+      angStartTiltDeg: null, // tilt at ROTATE entry
+    bangMidpointDeg: null, // (start + target) / 2
     lastApogeeKm: 0,
-      };
+    lastApogeeSimT: 0,
+    // Coast-to-apogee / circularization plan (locked at TARGET_APOGEE cutoff)
+    coastCutoffSimT: 0,
+    coastApogeeKm: 0,
+    coastVApogee: 0,
+    coastVOrbital: 0,
+    coastDeltaV: 0,
+    coastFuelNeeded: 0,
+    coastTBurn: 0,
+    coastTCoast: 0,
+    // Coast rotate state
+      coastRotateStartTilt: null,
+    coastRotateMid: null,
+    // Live circularization readout (updated every CIRCULARIZE tick)
+    circCurrentV: 0,
+    circTargetV: 0,
+    circErr: 0,
+    circAchieved: false,
+  };
 
 function _leoTick(snapshot) {
   _leoState.ticks++;
@@ -2904,12 +3003,62 @@ const margin = LEO_INSERTION.TARGET_APOGEE_MARGIN_KM;
 const gap = targetKm - apogeeKm;
 
 if (gap <= 0 || predictedApogeeKm >= targetKm) {
-    // Overshoot reached — engine cutoff, phase done.
-    send(cmdSetAllThrottle(0));
-    _leoState.phase = 'DONE';
-    console.log('[leoInsertion] TARGET APOGEE reached:', apogeeKm.toFixed(2),
-      'km — engine cutoff, DONE');
-  } else {
+  send(cmdSetAllThrottle(0));
+  
+  // ---- One-shot mission plan for the coast + circularization ----
+  // Engine is now off — apogee is fixed (two-body). Compute
+  // everything here so the coast phases don't re-derive.
+  const r_c = Math.hypot(body.rx, body.ry);
+  const ux_c = body.rx / r_c, uy_c = body.ry / r_c;
+  const ex_c = body.ry / r_c, ey_c = -body.rx / r_c;
+  const vr_c = body.vx * ux_c + body.vy * uy_c;
+  const vt_c = body.vx * ex_c + body.vy * ey_c;
+  const GM_c = env.GM_EARTH;
+  const R_c = env.EARTH_RADIUS;
+  const E_c = 0.5 * (vr_c * vr_c + vt_c * vt_c) - GM_c / r_c;
+  let r_apo = r_c;
+  if (E_c < 0) {
+    const a_c = -GM_c / (2 * E_c);
+    const h_c = r_c * vt_c;
+    const e_c = Math.sqrt(Math.max(0, 1 + 2 * E_c * h_c * h_c / (GM_c * GM_c)));
+    r_apo = a_c * (1 + e_c);
+  }
+  const h_now = r_c * vt_c;
+  const v_apo = (r_apo > 0) ? Math.abs(h_now) / r_apo : 0;
+  const v_orb = Math.sqrt(GM_c / r_apo);
+  const dv_needed = Math.max(0, v_orb - v_apo);
+  
+  const m_now = (dNext && dNext.massProps) ? dNext.massProps.M : d.massProps.M;
+  const ve_engine = (body.engines && body.engines[0] && body.engines[0].Ve) || 3412;
+  const m_final = m_now / Math.exp(dv_needed / ve_engine);
+  const fuel_needed = Math.max(0, m_now - m_final);
+  let refMax_c = 0;
+  (body.engines || []).forEach(e => {
+    if (Number.isFinite(e.maxMassFlowRate) && e.maxMassFlowRate > refMax_c) refMax_c = e.maxMassFlowRate;
+  });
+  const t_burn = refMax_c > 0 ? fuel_needed / refMax_c : 0;
+  
+  // ---- Numerical time-to-apogee via Kepler (exact two-body) ----
+  const t_coast = _hTimeToApogee(r_c, vr_c, vt_c, GM_c);
+  
+  _leoState.coastCutoffSimT = simT;
+  _leoState.coastApogeeKm = (r_apo - R_c) / 1000;
+  _leoState.coastVApogee = v_apo;
+  _leoState.coastVOrbital = v_orb;
+  _leoState.coastDeltaV = dv_needed;
+  _leoState.coastFuelNeeded = fuel_needed;
+  _leoState.coastTBurn = t_burn;
+  _leoState.coastTCoast = t_coast;
+  _leoState.phase = 'COAST_ROTATE';
+  _leoState.phaseStart = simT;
+  _leoState.coastRotateStartTilt = null;
+  _leoState.coastRotateMid = null;
+  
+  console.log('[leoInsertion] TARGET APOGEE cutoff at', apogeeKm.toFixed(2),
+    'km | plan: V_apo=' + v_apo.toFixed(1) + ' V_orb=' + v_orb.toFixed(1) +
+    ' Δv=' + dv_needed.toFixed(1) + ' m/s | T_burn=' + t_burn.toFixed(2) +
+    's | T_coast=' + t_coast.toFixed(1) + 's → COAST_ROTATE');
+} else {
     // Linear throttle decay across the final margin:
     //   gap = margin  → 100%
     //   gap = 0       → 40% (floor)
@@ -2927,6 +3076,211 @@ if (gap <= 0 || predictedApogeeKm >= targetKm) {
     send(cmdSetAllThrottle(refMax * frac));
   }
   break;
+  }
+
+    // =========================================================
+  // COAST_ROTATE — engine OFF. Bang-bang RCS slew to horizontal
+  // (target = local vertical − 90°, east prograde).
+  // =========================================================
+  case 'COAST_ROTATE': {
+    send(cmdSetAllThrottle(0));
+    send(cmdSetGimbalRate(0));
+    
+    const elapsed = simT - _leoState.phaseStart;
+    if (elapsed >= LEO_INSERTION.COAST_ROTATE_TIMEOUT_S) {
+      send(cmdRcsDuty(null, idx));
+      _leoState.phase = 'COAST_HOLD';
+      _leoState.phaseStart = simT;
+      console.log('[leoInsertion] COAST_ROTATE timeout — COAST_HOLD');
+      break;
+    }
+    
+    const localVert = Math.atan2(-body.rx, body.ry);
+    const currentTiltDeg = (body.theta - localVert) * 180 / Math.PI;
+    const targetTiltDeg = LEO_INSERTION.COAST_TARGET_TILT_DEG;
+    
+    if (_leoState.coastRotateStartTilt === null) {
+      _leoState.coastRotateStartTilt = currentTiltDeg;
+      _leoState.coastRotateMid = (currentTiltDeg + targetTiltDeg) / 2;
+    }
+    const startDeg = _leoState.coastRotateStartTilt;
+    const midDeg = _leoState.coastRotateMid;
+    
+    const err = targetTiltDeg - currentTiltDeg;
+    const omegaRel = body.omega + (env.EARTH_OMEGA || 0);
+    if (Math.abs(err) < LEO_INSERTION.COAST_ROTATE_TOL_DEG &&
+        Math.abs(omegaRel) < LEO_INSERTION.COAST_ROTATE_OMEGA_TOL) {
+      send(cmdRcsDuty(null, idx));
+      _leoState.phase = 'COAST_HOLD';
+      _leoState.phaseStart = simT;
+      console.log('[leoInsertion] COAST_ROTATE done at tilt', currentTiltDeg.toFixed(2),
+        '° — COAST_HOLD');
+      break;
+    }
+    
+    const dirSign = Math.sign(targetTiltDeg - startDeg) || 1;
+    const crossed = (startDeg - midDeg) * (currentTiltDeg - midDeg) <= 0;
+    const phaseSign = crossed ? -1 : 1;
+    const tauCmd = phaseSign * dirSign * 1e9;
+    
+    const result = GuideRCS.targetTorqueRcs(snapshot, tauCmd, idx);
+    if (result && result.fires.length) send(cmdRcsDuty(result.duties, idx));
+    else send(cmdRcsDuty(null, idx));
+    break;
+  }
+
+  // =========================================================
+  // COAST_HOLD — engine OFF, coast toward apogee. RCS holds the
+  // body at horizontal using the COASTnAoADAMP formula, but routed
+  // through targetTorqueRcsNoNetForce so the hold produces ZERO net
+  // linear acceleration (no trajectory drift over 100+ seconds).
+  // Burn trigger fires when time remaining to apogee ≤ triggerFrac×T_burn.
+  // =========================================================
+  case 'COAST_HOLD': {
+    send(cmdSetAllThrottle(0));
+    send(cmdSetGimbalRate(0));
+    
+    // Check burn trigger.
+    const r_c = Math.hypot(body.rx, body.ry);
+    const ux_c = body.rx / r_c, uy_c = body.ry / r_c;
+    const ex_c = body.ry / r_c, ey_c = -body.rx / r_c;
+    const vr_c = body.vx * ux_c + body.vy * uy_c;
+    const vt_c = body.vx * ex_c + body.vy * ey_c;
+    const t_rem = _hTimeToApogee(r_c, vr_c, vt_c, env.GM_EARTH);
+
+// Apogee-peak detection. _hTimeToApogee returns time to the NEXT
+// apogee; right AT apogee that mathematically jumps back to a full
+// period (M == π boundary case). So t_rem alone can't detect
+// "we're at apogee". Detect it by vr crossing from positive to
+// negative — that's the moment the radial velocity flips, which
+// only happens at apogee.
+const prevVr = _leoStateV2._prevVr;
+_leoStateV2._prevVr = vr_c;
+const apogeePeak = (prevVr !== null && prevVr !== undefined &&
+  prevVr > 0 && vr_c <= 0);
+
+// Trigger: apogee reached (fire now) OR t_rem window (fire early
+// so the burn ENDS near apogee). Apogee-peak detection catches
+// the case where we arrive at apogee before the t_rem window
+// opens — mathematically the trigger for that path is the vr
+// sign flip, since t_rem is unusable at the peak.
+if (apogeePeak || t_rem <= _leoStateV2.coastTBurnPractical) {
+  send(cmdRcsDuty(null, idx));
+  _leoStateV2.phase = 'CIRCULARIZE';
+  _leoStateV2.phaseStart = simT;
+  console.log('[leoInsertionV2] burn trigger — ' +
+    (apogeePeak ? 'apogee peak detected' : 't_rem=' + t_rem.toFixed(2) +
+      's ≤ T_burn_practical=' + _leoStateV2.coastTBurnPractical.toFixed(2) + 's') +
+    ' — CIRCULARIZE');
+  break;
+}
+    
+    // Attitude hold — same formula as ascent COASTnAoADAMP.
+    if (dNext && dNext.massProps) {
+      const I_next = dNext.massProps.I;
+      const gain = (LEO_INSERTION.ASCENT && Number.isFinite(LEO_INSERTION.ASCENT.COAST_DAMP_GAIN))
+        ? LEO_INSERTION.ASCENT.COAST_DAMP_GAIN : 16;
+      const kd = (LEO_INSERTION.ASCENT && Number.isFinite(LEO_INSERTION.ASCENT.COAST_DAMP_K))
+        ? LEO_INSERTION.ASCENT.COAST_DAMP_K : 4.0;
+      const tau_desired = (-I_next * gain * dNext.alphaDeg) / (kd * kd);
+      
+      const result = GuideRCS.targetTorqueRcsNoNetForce(snapshot, tau_desired, idx);
+      if (result && result.fires.length) send(cmdRcsDuty(result.duties, idx));
+      else send(cmdRcsDuty(null, idx));
+    }
+    break;
+  }
+
+  // =========================================================
+  // CIRCULARIZE — engine on, prograde burn along local horizontal.
+  // Attitude held at horizontal via gimbal. Throttle decays near
+  // cutoff to avoid overshoot. Cutoff when |v − V_orbital| < tol.
+  // =========================================================
+  case 'CIRCULARIZE': {
+    if (!dNext || !dNext.massProps) break;
+    const gimbals = (body.engines || []).filter(e => e.gimbal);
+    
+    // ---- Current velocity vs orbital ----
+    const r_c = Math.hypot(body.rx, body.ry);
+const ux_c = body.rx / r_c, uy_c = body.ry / r_c;
+const ex_c = body.ry / r_c, ey_c = -body.rx / r_c;
+// Radial and inertial-tangential velocity components. Needed for
+// the osculating perigee computation below — the crossing condition
+// reads these, and without them vr_c/vt_c were undefined → NaN in
+// the perigee calc → crossing never fired, engine burned past
+// every target altitude.
+const vr_c = body.vx * ux_c + body.vy * uy_c;
+const vt_c = body.vx * ex_c + body.vy * ey_c;
+const speed = Math.hypot(body.vx, body.vy);
+const v_orb_target = _leoStateV2.coastVOrbital;
+const v_err = v_orb_target - speed;
+
+// Live readout — updated every tick while circularizing.
+_leoState.circCurrentV = speed;
+_leoState.circTargetV = v_orb_target;
+_leoState.circErr = v_err;
+
+if (v_err <= 0) {
+  _leoState.circAchieved = true;
+  send(cmdSetAllThrottle(0));
+  send(cmdSetGimbalRate(0));
+  _leoState.phase = 'DONE';
+  console.log('[leoInsertion] CIRCULARIZE complete — v=' + speed.toFixed(1) +
+    ' m/s (target ' + v_orb_target.toFixed(1) + ') — DONE');
+  break;
+}
+    
+    // ---- Throttle: full until decay window, then ramp to 40% ----
+    const decayWindow = LEO_INSERTION.CIRC_DECAY_FRAC * v_orb_target;
+    let thrFrac = 1.0;
+    if (v_err <= decayWindow && decayWindow > 0) {
+      thrFrac = Math.max(0.4, 0.4 + 0.6 * (v_err / decayWindow));
+    }
+    let refMax = 0;
+    (body.engines || []).forEach(e => {
+      if (Number.isFinite(e.maxMassFlowRate) && e.maxMassFlowRate > refMax) refMax = e.maxMassFlowRate;
+    });
+    send(cmdSetAllThrottle(refMax * thrFrac));
+    
+    // ---- Attitude hold at horizontal via gimbal ----
+    if (gimbals.length) {
+      const I_next = dNext.massProps.I;
+      const localVert = Math.atan2(-body.rx, body.ry);
+      const targetAbsTilt = localVert + LEO_INSERTION.COAST_TARGET_TILT_DEG * Math.PI / 180;
+      let thetaErr = body.theta - targetAbsTilt;
+      thetaErr = _hWrapPi(thetaErr);
+      const omegaRel = body.omega + (env.EARTH_OMEGA || 0);
+      const tau_desired = -I_next * (LEO_INSERTION.CIRC_ATT_KP * thetaErr
+                                   + LEO_INSERTION.CIRC_ATT_KD * omegaRel);
+      
+      const g_N = gimbals[0].gimbalDeg || 0;
+      const comX1 = dNext.massProps.comX;
+      const comY1 = dNext.massProps.comY;
+      let A_g = 0, B_g = 0;
+      gimbals.forEach(e => {
+        const F = (e.massFlowRate || 0) * (e.Ve || 0);
+        A_g += ((e.x || 0) - comX1) * F;
+        B_g += F;
+      });
+      B_g *= comY1;
+      const R_amp = Math.hypot(A_g, B_g);
+      let g_req_rad = 0;
+      if (R_amp > 1) {
+        const ratio = Math.max(-1, Math.min(1, tau_desired / R_amp));
+        const phi = Math.atan2(A_g, B_g);
+        const w1 = _hWrapPi(Math.asin(ratio) - phi);
+        const w2 = _hWrapPi(Math.PI - Math.asin(ratio) - phi);
+        g_req_rad = (Math.abs(w1) <= Math.abs(w2)) ? w1 : w2;
+      }
+      let g_req_deg = g_req_rad * 180 / Math.PI;
+      const MAX_ANG = (env && Number.isFinite(env.GIMBAL_MAX_DEG)) ? env.GIMBAL_MAX_DEG : 20;
+      if (Math.abs(g_req_deg) > MAX_ANG) g_req_deg = Math.sign(g_req_deg) * MAX_ANG;
+      const R_req = (g_req_deg - g_N) / dt;
+      const MAX_RATE = (env && Number.isFinite(env.GIMBAL_RATE_DEG_S)) ? env.GIMBAL_RATE_DEG_S : 40;
+      const R_cmd = Math.max(-MAX_RATE, Math.min(MAX_RATE, R_req));
+      send(cmdSetGimbalRate(R_cmd));
+    }
+    break;
   }
 
   case 'DONE':
@@ -2971,13 +3325,33 @@ _leoTick.start = function() {
     _leoState.lastAltKm = 0;
   _leoState.lastAxialGap = 0;
   _leoState.lastLateralGap = 0;
-      _leoState.angStartTiltDeg = null;
+        _leoState.angStartTiltDeg = null;
   _leoState.bangMidpointDeg = null;
   _leoState.lastApogeeKm = 0;
   _leoState.lastApogeeSimT = 0;
+  _leoState.coastCutoffSimT = 0;
+  _leoState.coastApogeeKm = 0;
+  _leoState.coastVApogee = 0;
+  _leoState.coastVOrbital = 0;
+  _leoState.coastDeltaV = 0;
+  _leoState.coastFuelNeeded = 0;
+  _leoState.coastTBurn = 0;
+  _leoState.coastTCoast = 0;
+    _leoState.coastRotateStartTilt = null;
+  _leoState.coastRotateMid = null;
+  _leoState.circCurrentV = 0;
+  _leoState.circTargetV = 0;
+  _leoState.circErr = 0;
+  _leoState.circAchieved = false;
   console.log('[leoInsertion] started');
   };
-_leoTick.stop = function () {
+_leoTick.stop = function() {
+  send(cmdSetAllThrottle(0));
+  send(cmdSetGimbalRate(0));
+  send(cmdRcsDuty(null));
+  if (typeof _hTick !== 'undefined' && typeof _hTick.stop === 'function') {
+    try { _hTick.stop(); } catch (e) {}
+  }
   console.log('[leoInsertion] stopped');
 };
 _leoTick.getStatus = function() {
@@ -2990,11 +3364,19 @@ _leoTick.getStatus = function() {
     fairingOpened: _leoState.fairingOpened,
     axialGap: _leoState.lastAxialGap,
     lateralGap: _leoState.lastLateralGap,
-        apogeeKm: _leoState.lastApogeeKm,
+            apogeeKm: _leoState.lastApogeeKm,
       angStartTiltDeg: _leoState.angStartTiltDeg,
       bangMidpointDeg: _leoState.bangMidpointDeg,
-    };
-    };
+        coastTBurn: _leoState.coastTBurn,
+    coastTCoast: _leoState.coastTCoast,
+    coastDeltaV: _leoState.coastDeltaV,
+    coastVOrbital: _leoState.coastVOrbital,
+    circCurrentV: _leoState.circCurrentV,
+    circTargetV: _leoState.circTargetV,
+    circErr: _leoState.circErr,
+    circAchieved: _leoState.circAchieved,
+  };
+  };
 
 GUIDES.leoInsertion = _leoTick;
 
@@ -3017,7 +3399,1083 @@ function setLeoInsertion(patch) {
   console.log('[leoInsertion] constants updated');
 }
 function getLeoInsertionConfig() { return { ...LEO_INSERTION }; }
+
+
+
+
+
+// ============================================================
+// leoInsertionV2 — full mission, correct orbital-insertion shape.
+//
+// Same as v1 up to MECO. Diverges after separation:
+//
+//   v1: rotate to steep climb, burn hard to apogee, coast to apogee,
+//       then try to circularize in the last 25% of T_burn. FAILED at
+//       orbit because the climb profile was wrong and the horizontal
+//       burn was fighting gravity for 4–5× the ideal burn time.
+//
+//   v2: after separation, re-ignite the stage and continue with the
+//       SAME COASTnAoADAMP formula used in ascent. Full throttle,
+//       gimbal holding AoA = 0 (nose follows velocity vector — a
+//       natural gravity turn). Burn continues until the OSCULATING
+//       APOGEE reaches the target orbit altitude, then cuts.
+//       At that moment the vehicle is NOT at apogee — it's on an
+//       orbit whose apogee equals the target. The remaining coast
+//       naturally arrives at apogee, and the circularization burn
+//       starts well before to absorb gravity losses.
+//
+// Circularization timing:
+//   T_burn_ideal = fuel_needed / mdot  (Tsiolkovsky)
+//   T_burn_practical = 4 × T_burn_ideal  (rule-of-thumb for gravity loss)
+//   Burn starts when time-to-apogee ≤ T_burn_practical.
+//   This guarantees the burn's peak lands near apogee instead of
+//   undershooting by the whole gravity-loss deficit.
+// ============================================================
+
+const LEO_INSERTION_V2 = {
+  // ---- Ascent constants (independent copy — same shape as v1) ----
+  ASCENT: {
+    INITIAL_COAST_S: 4.9,
+    PUSH_T_S: 4.8,
+    PUSH_MAX_GIMBAL_DEG: 1.45,
+    PUSH_EAST_SIGN: -1,
+    HOLD_K_DAMP: 4.0,
+    HOLD_MAX_AOA_DEG: 8,
+    HOLD_K_DQ: 0.005,
+    HOLD_Q_REF: 1000,
+    THROTTLE_FRAC: 1.0,
+    THROTTLE_ALT_LOW_KM: 8,
+    THROTTLE_ALT_HIGH_KM: 13,
+    THROTTLE_FRAC_LOW: 0.7,
+    COAST_DAMP_GAIN: 16,
+    COAST_DAMP_K: 4.0,
+  },
+
+  // ---- Hand-off from ascent (same as v1) ----
+  MECO_APOGEE_KM: 150,
+
+  // ---- Separation ----
+  AXIAL_SEP_TARGET_M: 10,
+  LATERAL_SEP_TARGET_M: 5,
+  SPLIT_TIMEOUT_S: 10,
+
+  // ---- Fairing ----
+  FAIRING_OPEN_ALT_KM: 80,
+  FAIRING_OPEN_ENABLED: true,
+
+  // ---- Target orbit ----
+  TARGET_ORBIT_ALT_KM: 320,
+
+  // ---- RCS settle ----
+  RCS_OMEGA_TARGET: 0,
+  RCS_SETTLE_TOL: 1e-4,
+
+  // ---- STAGE_BURN — full throttle with ascent AoA-damp ----
+  // Burn continues until osculating apogee ≥ TARGET_ORBIT_ALT_KM.
+  // Predictive cutoff to absorb the spool-down overshoot.
+  STAGE_BURN_LOOKAHEAD_TICKS: 3,
   
+  // Attitude lock: once |θ_rel| (tilt from local vertical) first reaches
+  // this many degrees during STAGE_BURN, switch from AoA-damp to a PD
+  // hold at that tilt. Below the threshold the gimbal holds velocity-
+  // aligned (AoA = 0); above, it holds the body at a fixed angle
+  // relative to local vertical so thrust stays at ~85° to radial,
+  // adding tangential velocity to raise perigee. Sign is captured at
+  // crossing, so it doesn't flip mid-burn.
+  STAGE_BURN_LOCK_TILT_DEG: 85,
+
+  // ---- Coast + circularization ----
+  COAST_TARGET_TILT_DEG: -90,
+  COAST_ROTATE_TOL_DEG: 0.5,
+  COAST_ROTATE_OMEGA_TOL: 0.02,
+  COAST_ROTATE_TIMEOUT_S: 240,
+
+  CIRC_VEL_TOL_MPS: 5,
+  
+  // Payload ejection kick. `releasePayloadOnActiveBody` applies a
+  // prograde impulse to the payload when it separates — 3 m/s for
+  // normal release, 20 m/s for emergency. The stage only needs to
+  // reach V_orbital − kick, because the payload's final velocity is
+  // stage_v + kick. Cutting 3 m/s early also saves burn time.
+  PAYLOAD_EJECT_KICK_MPS: 3.0,
+  CIRC_DECAY_FRAC: 0.05,
+  CIRC_ATT_KP: 0.5,
+  CIRC_ATT_KD: 4.0,
+  
+  // Perigee-crossing cutoff. During a prograde burn near apogee, perigee
+  // rises from deep-negative (orbit intersects Earth) up through 0. At
+  // the moment it crosses 0, the orbit just became "bound but touching
+  // the atmosphere". Waiting for v ≥ V_orbital instead pushes apogee
+  // hundreds of km past target — apogee changes so fast at this point
+  // that one guidance tick can overshoot by 100+ km. Cutting on the
+  // perigee crossing stops the burn earlier, keeping apogee close to
+  // target. RCS then holds attitude through the coast.
+  // Cutoff fires when osculating perigee crosses this value. NEGATIVE
+// by default: during the 2 s shutdown spool, thrust continues and
+// perigee keeps rising — firing at perigee = 0 would overshoot (the
+// burn reaches apogee 450 km instead of 320). Firing at −50 km means
+// by the time engines actually stop, perigee has risen through 0 to
+// a small positive value. Tune: more negative = cut earlier = less
+// apogee overshoot.
+CIRC_PERIGEE_CUTOFF_KM: -50,
+  // Multiplier on ideal T_burn to set the coast burn trigger window.
+  // 4× matches the observed gravity-loss deficit (gravity eats ~3/4 of
+  // the useful burn budget on a horizontal burn at LEO altitude).
+  COAST_BURN_MULTIPLIER: 4.0,
+
+  // ---- Placeholder (unused in v2, kept for shape symmetry) ----
+  STAGE: { BURN_ALT_KM: 80, TARGET_VEL_MPS: 7800, CUTOFF_TOL_V: 5 },
+  ANG_FOR_APOG_TILT_DEG: 10,
+  ROTATE_TOL_DEG: 0.5,
+  ROTATE_OMEGA_TOL: 0.02,
+  ROTATE_TIMEOUT_S: 90,
+  TARGET_APOGEE_MARGIN_KM: 10,
+  STAGE_OMEGA_DAMP: 2.0,
+};
+
+const _leoStateV2 = {
+  init: false,
+  ticks: 0,
+  phase: 'ASCENT',
+  phaseStart: 0,
+  mecoTriggered: false,
+  splitDetected: false,
+  fairingOpened: false,
+  initialBodyCount: 0,
+  preSplitBodyId: null,
+  boosterIdx: -1,
+  stageIdx: -1,
+  lastAltKm: 0,
+  lastAxialGap: 0,
+  lastLateralGap: 0,
+  lastApogeeKm: 0,
+  lastApogeeSimT: 0,
+  coastCutoffSimT: 0,
+  coastApogeeKm: 0,
+  coastVApogee: 0,
+  coastVOrbital: 0,
+  coastDeltaV: 0,
+  coastFuelNeeded: 0,
+  coastTBurnIdeal: 0,
+  coastTBurnPractical: 0,
+  coastTCoast: 0,
+  coastRotateStartTilt: null,
+  coastRotateMid: null,
+  coastTargetThetaInertial: null, // fixed inertial θ that at apogee aligns nose with velocity
+    circCurrentV: 0,
+    circTargetV: 0,
+    circErr: 0,
+    circAchieved: false,
+        lastPerigeeKm: null,
+    stageBurnLocked: false,
+    stageBurnTargetTiltDeg: 0,
+    _prevApogeeKm: 0, // previous tick's apogee (for rate computation)
+  _prevVr: null, // previous tick's radial velocity (apogee peak detection)
+  };
+
+function _leoTickV2(snapshot) {
+  _leoStateV2.ticks++;
+  if (!snapshot || !Array.isArray(snapshot.bodies) || !snapshot.bodies.length) return;
+  
+  // Diagnostic wrapper — every zero-throttle command logs its source
+  // phase + reason. Used to trace which code path killed the engine
+  // in CIRCULARIZE before the v_err-based cutoff fired.
+  const _origSend = send;
+  const sendThrottleZero = (reason) => {
+    console.log('[throttle-zero] phase=' + _leoStateV2.phase + ' reason=' + reason);
+    _origSend(cmdSetAllThrottle(0));
+  };
+  const idx = (Number.isInteger(snapshot.activeBodyIndex)) ? snapshot.activeBodyIndex : 0;
+  const body = snapshot.bodies[idx];
+  if (!body) return;
+  const simT = snapshot.simTime;
+
+  // ---------- Init ----------
+  if (!_leoStateV2.init) {
+    _leoStateV2.init = true;
+    _leoStateV2.phase = 'ASCENT';
+    _leoStateV2.phaseStart = simT;
+    _leoStateV2.mecoTriggered = false;
+    _leoStateV2.splitDetected = false;
+    _leoStateV2.fairingOpened = false;
+    _leoStateV2.initialBodyCount = snapshot.bodies.length;
+    _leoStateV2.preSplitBodyId = body.id || null;
+    _leoStateV2.boosterIdx = -1;
+    _leoStateV2.stageIdx = idx;
+    if (typeof _hTick !== 'undefined' && typeof _hTick.start === 'function') {
+      try { _hTick.start(); } catch (e) { console.error('[leoInsertionV2] _hTick.start failed', e); }
+    }
+    console.log('[leoInsertionV2] started, phase ASCENT');
+  }
+
+  // ---------- Derive current state ----------
+  const d = Derivation.derive(snapshot, idx);
+  if (!d || !d.massProps) return;
+  _leoStateV2.lastAltKm = d.altitudeAGL / 1000;
+
+  const env = Derivation.getEnv();
+  const dt = (env && Number.isFinite(env.DT)) ? env.DT : (1 / 80);
+  const M_d = d.massProps.M;
+
+  // ---------- Predict next-tick state ----------
+  let dNext = null;
+  if (M_d > 0) {
+    const cosT = Math.cos(d.theta), sinT = Math.sin(d.theta);
+    const thrustIx = d.thrustBodyX * cosT - d.thrustBodyY * sinT;
+    const thrustIy = d.thrustBodyX * sinT + d.thrustBodyY * cosT;
+    const aIx = d.gVecX + (thrustIx + d.dragVecX) / M_d;
+    const aIy = d.gVecY + (thrustIy + d.dragVecY) / M_d;
+    const rx_n = d.rx + d.vx * dt;
+    const ry_n = d.ry + d.vy * dt;
+    const vx_n = d.vx + aIx * dt;
+    const vy_n = d.vy + aIy * dt;
+    const omega_n = d.omega + d.alphaAng * dt;
+    const theta_n = d.theta + d.omega * dt + 0.5 * d.alphaAng * dt * dt;
+    const sloshNow = body.slosh || { offset: 0, velocity: 0 };
+    const sloshX_n = (sloshNow.offset || 0) + (sloshNow.velocity || 0) * dt;
+    const sloshV_n = sloshNow.velocity || 0;
+    dNext = Derivation.deriveForState(snapshot, idx, {
+      rx: rx_n, ry: ry_n, vx: vx_n, vy: vy_n,
+      theta: theta_n, omega: omega_n,
+      slosh: { offset: sloshX_n, velocity: sloshV_n },
+    });
+  }
+
+  // ---------- Phase machine ----------
+  switch (_leoStateV2.phase) {
+
+    case 'ASCENT': {
+      if (typeof _hTick === 'function') {
+        _hTick(snapshot, LEO_INSERTION_V2.ASCENT);
+      }
+      if (!_leoStateV2.mecoTriggered) {
+        const r_m = Math.hypot(body.rx, body.ry);
+        const ux_m = body.rx / r_m, uy_m = body.ry / r_m;
+        const ex_m = body.ry / r_m, ey_m = -body.rx / r_m;
+        const vr_m = body.vx * ux_m + body.vy * uy_m;
+        const vt_m = body.vx * ex_m + body.vy * ey_m;
+        const GM_m = env.GM_EARTH;
+        const R_m = env.EARTH_RADIUS;
+        const E_m = 0.5 * (vr_m * vr_m + vt_m * vt_m) - GM_m / r_m;
+        let apogeeKm = Infinity;
+        if (E_m < 0) {
+          const a_m = -GM_m / (2 * E_m);
+          const h_m = r_m * vt_m;
+          const e_m = Math.sqrt(Math.max(0, 1 + 2 * E_m * h_m * h_m / (GM_m * GM_m)));
+          apogeeKm = (a_m * (1 + e_m) - R_m) / 1000;
+        }
+        _leoStateV2.lastApogeeKm = apogeeKm;
+        if (apogeeKm >= LEO_INSERTION_V2.MECO_APOGEE_KM) {
+          _leoStateV2.mecoTriggered = true;
+          _leoStateV2.phase = 'MECO_SPOOL';
+          _leoStateV2.phaseStart = simT;
+          if (typeof cmdSeparate === 'function') send(cmdSeparate());
+          console.log('[leoInsertionV2] MECO — apogee',
+            apogeeKm.toFixed(2), 'km — separation commanded');
+        }
+      }
+      break;
+    }
+
+    case 'MECO_SPOOL': {
+      if (snapshot.bodies.length > _leoStateV2.initialBodyCount) {
+        _leoStateV2.splitDetected = true;
+        const stageIdx = _leoStateV2.preSplitBodyId != null
+          ? snapshot.bodies.findIndex(b => b.id === _leoStateV2.preSplitBodyId)
+          : idx;
+        const boosterIdx = snapshot.bodies.findIndex((b, i) =>
+          i !== stageIdx && b && !b.isActive);
+        _leoStateV2.stageIdx = (stageIdx >= 0) ? stageIdx : idx;
+        _leoStateV2.boosterIdx = (boosterIdx >= 0) ? boosterIdx : (1 - _leoStateV2.stageIdx);
+        _leoStateV2.phase = 'SEPARATED_AXIAL';
+        _leoStateV2.phaseStart = simT;
+        console.log('[leoInsertionV2] split detected — booster idx', _leoStateV2.boosterIdx,
+          'stage idx', _leoStateV2.stageIdx);
+        break;
+      }
+      if (simT - _leoStateV2.phaseStart > LEO_INSERTION_V2.SPLIT_TIMEOUT_S) {
+        console.warn('[leoInsertionV2] split timeout');
+        _leoStateV2.phase = 'DONE';
+      }
+      break;
+    }
+
+    case 'SEPARATED_AXIAL': {
+      const bIdx = _leoStateV2.boosterIdx;
+      const sIdx = _leoStateV2.stageIdx;
+      if (bIdx < 0 || sIdx < 0) { _leoStateV2.phase = 'DONE'; break; }
+      const boosterBody = snapshot.bodies[bIdx];
+      const stageBody = snapshot.bodies[sIdx];
+      if (!boosterBody || !stageBody) { _leoStateV2.phase = 'DONE'; break; }
+
+      const boosterDuties = GuideRCS.postSeparationAxialDuty(snapshot, bIdx, 'dn');
+      if (boosterDuties) send(cmdRcsDuty(boosterDuties, bIdx));
+      const stageDuties = GuideRCS.postSeparationAxialDuty(snapshot, sIdx, 'up');
+      if (stageDuties) send(cmdRcsDuty(stageDuties, sIdx));
+
+      const boosterHeight = (boosterBody.members && boosterBody.members[0])
+        ? (boosterBody.members[0].height || 0) : 0;
+      const upX = -Math.sin(stageBody.theta);
+      const upY = Math.cos(stageBody.theta);
+      const dx = stageBody.rx - boosterBody.rx;
+      const dy = stageBody.ry - boosterBody.ry;
+      const proj = dx * upX + dy * upY;
+      const axialGap = Math.max(0, proj - boosterHeight);
+      _leoStateV2.lastAxialGap = axialGap;
+
+      if (axialGap >= LEO_INSERTION_V2.AXIAL_SEP_TARGET_M) {
+        send(cmdRcsDuty(null, sIdx));
+        send(cmdRcsDuty(null, bIdx));
+        _leoStateV2.phase = 'STAGE_BURN';
+        _leoStateV2.phaseStart = simT;
+        _leoStateV2.lastApogeeSimT = 0;
+        console.log('[leoInsertionV2] axial gap', axialGap.toFixed(2),
+          'm — entering STAGE_BURN');
+      }
+      break;
+    }
+
+  case 'STAGE_BURN': {
+    if (!dNext || !dNext.massProps) break;
+    const gimbals = (body.engines || []).filter(e => e.gimbal);
+    if (!gimbals.length) { _leoStateV2.phase = 'DONE'; break; }
+
+    // Full throttle — no decay here; cutoff spool is handled by physics.
+    send(cmdSetAllThrottle(Infinity));
+
+    const I_next = dNext.massProps.I;
+    const localVert = Math.atan2(-body.rx, body.ry);
+    const currentTiltDeg = (body.theta - localVert) * 180 / Math.PI;
+
+    // Tilt lock — once |θ_rel| first crosses 85°, lock the target
+    // tilt for the rest of the burn.
+    if (!_leoStateV2.stageBurnLocked &&
+        Math.abs(currentTiltDeg) >= LEO_INSERTION_V2.STAGE_BURN_LOCK_TILT_DEG) {
+      _leoStateV2.stageBurnLocked = true;
+      _leoStateV2.stageBurnTargetTiltDeg = (currentTiltDeg >= 0) ?
+        LEO_INSERTION_V2.STAGE_BURN_LOCK_TILT_DEG :
+        -LEO_INSERTION_V2.STAGE_BURN_LOCK_TILT_DEG;
+      console.log('[leoInsertionV2] STAGE_BURN attitude locked at tilt ' +
+        _leoStateV2.stageBurnTargetTiltDeg.toFixed(1) + '° (θ_rel=' +
+        currentTiltDeg.toFixed(2) + '°)');
+    }
+
+    // Attitude control: AoA-damp pre-lock, PD-hold at locked tilt after.
+    let tau_desired;
+    if (_leoStateV2.stageBurnLocked) {
+      const targetAbsTheta = localVert +
+        _leoStateV2.stageBurnTargetTiltDeg * Math.PI / 180;
+      const thetaErr = _hWrapPi(body.theta - targetAbsTheta);
+      const omegaRel = body.omega + (env.EARTH_OMEGA || 0);
+      tau_desired = -I_next * (LEO_INSERTION_V2.CIRC_ATT_KP * thetaErr
+                             + LEO_INSERTION_V2.CIRC_ATT_KD * omegaRel);
+    } else {
+      const gain = LEO_INSERTION_V2.ASCENT.COAST_DAMP_GAIN;
+      const kd = LEO_INSERTION_V2.ASCENT.COAST_DAMP_K;
+      tau_desired = (-I_next * gain * dNext.alphaDeg) / (kd * kd);
+    }
+    const tau_target = tau_desired - dNext.torqueDrag;
+
+    // Gimbal solve.
+    const g_N = gimbals[0].gimbalDeg || 0;
+    const comX1 = dNext.massProps.comX;
+    const comY1 = dNext.massProps.comY;
+    let A_g = 0, B_g = 0;
+    gimbals.forEach(e => {
+      const F = (e.massFlowRate || 0) * (e.Ve || 0);
+      A_g += ((e.x || 0) - comX1) * F;
+      B_g += F;
+    });
+    B_g *= comY1;
+    const R_amp = Math.hypot(A_g, B_g);
+    let g_req_rad = 0;
+    if (R_amp > 1) {
+      const ratio = Math.max(-1, Math.min(1, tau_target / R_amp));
+      const phi = Math.atan2(A_g, B_g);
+      const w1 = _hWrapPi(Math.asin(ratio) - phi);
+      const w2 = _hWrapPi(Math.PI - Math.asin(ratio) - phi);
+      g_req_rad = (Math.abs(w1) <= Math.abs(w2)) ? w1 : w2;
+    }
+    let g_req_deg = g_req_rad * 180 / Math.PI;
+    const MAX_ANG = (env && Number.isFinite(env.GIMBAL_MAX_DEG)) ? env.GIMBAL_MAX_DEG : 20;
+    if (Math.abs(g_req_deg) > MAX_ANG) g_req_deg = Math.sign(g_req_deg) * MAX_ANG;
+    const R_req = (g_req_deg - g_N) / dt;
+    const MAX_RATE = (env && Number.isFinite(env.GIMBAL_RATE_DEG_S)) ? env.GIMBAL_RATE_DEG_S : 40;
+    const R_cmd = Math.max(-MAX_RATE, Math.min(MAX_RATE, R_req));
+    send(cmdSetGimbalRate(R_cmd));
+
+    // ---- Osculating apogee / perigee ----
+    const r_ap = Math.hypot(body.rx, body.ry);
+    const ux_ap = body.rx / r_ap, uy_ap = body.ry / r_ap;
+    const ex_ap = body.ry / r_ap, ey_ap = -body.rx / r_ap;
+    const vr_ap = body.vx * ux_ap + body.vy * uy_ap;
+    const vt_ap = body.vx * ex_ap + body.vy * ey_ap;
+    const GM_ap = env.GM_EARTH;
+    const R_ap = env.EARTH_RADIUS;
+    const E_ap = 0.5 * (vr_ap * vr_ap + vt_ap * vt_ap) - GM_ap / r_ap;
+    let apogeeKm = Infinity;
+    if (E_ap < 0) {
+      const a_ap = -GM_ap / (2 * E_ap);
+      const h_ap = r_ap * vt_ap;
+      const e_ap = Math.sqrt(Math.max(0, 1 + 2 * E_ap * h_ap * h_ap / (GM_ap * GM_ap)));
+      apogeeKm = (a_ap * (1 + e_ap) - R_ap) / 1000;
+    }
+    _leoStateV2.lastApogeeKm = apogeeKm;
+
+    const h_sb = r_ap * vt_ap;
+    const p_sb = h_sb * h_sb / GM_ap;
+    const e_sb = Math.sqrt(Math.max(0, 1 + 2 * E_ap * h_sb * h_sb / (GM_ap * GM_ap)));
+    const r_p_sb = p_sb / (1 + e_sb);
+    const perigeeKm_sb = (r_p_sb - R_ap) / 1000;
+    _leoStateV2.lastPerigeeKm = perigeeKm_sb;
+
+    // Predictive cutoff accounts for engine shutdown spool.
+    const simDt = (_leoStateV2.lastApogeeSimT > 0 && simT > _leoStateV2.lastApogeeSimT)
+      ? (simT - _leoStateV2.lastApogeeSimT) : dt;
+    const apogeeRateV2 = (_leoStateV2.lastApogeeSimT > 0
+      && Number.isFinite(apogeeKm)
+      && Number.isFinite(_leoStateV2._prevApogeeKm))
+      ? (apogeeKm - _leoStateV2._prevApogeeKm) / simDt : 0;
+    _leoStateV2._prevApogeeKm = apogeeKm;
+    _leoStateV2.lastApogeeSimT = simT;
+
+    let spoolS = 2.0;
+    if (body.engines && body.engines[0] && Number.isFinite(body.engines[0].shutdownDurationS)) {
+      spoolS = body.engines[0].shutdownDurationS;
+    }
+    const predictedKm = apogeeKm + Math.max(0, apogeeRateV2) * spoolS;
+
+    if (apogeeKm >= LEO_INSERTION_V2.TARGET_ORBIT_ALT_KM ||
+        predictedKm >= LEO_INSERTION_V2.TARGET_ORBIT_ALT_KM) {
+      send(cmdSetAllThrottle(0));
+      send(cmdSetGimbalRate(0));
+      _leoStateV2.phase = 'RCS_BOOST';
+      _leoStateV2.phaseStart = simT;
+      console.log('[leoInsertionV2] STAGE_BURN cutoff — apogee ' +
+        apogeeKm.toFixed(1) + ' km (target ' +
+        LEO_INSERTION_V2.TARGET_ORBIT_ALT_KM + ') | perigee=' +
+        perigeeKm_sb.toFixed(1) + ' km, e=' + e_sb.toFixed(4) +
+        ' → RCS_BOOST');
+      break;
+    }
+    break;
+  }
+
+  // =========================================================
+  // RCS_BOOST — engine off, waits for spool, then fires all four
+  // 'up' nozzles at full duty if apogee is below target. Exits at
+  // apogee == target, then immediately transitions to CIRCULARIZE
+  // (attitude is already prograde from STAGE_BURN's tilt lock).
+  // =========================================================
+  case 'RCS_BOOST': {
+    send(cmdSetAllThrottle(0));
+    send(cmdSetGimbalRate(0));
+
+    // Current osculating elements.
+    const r_b = Math.hypot(body.rx, body.ry);
+    const ux_b = body.rx / r_b, uy_b = body.ry / r_b;
+    const ex_b = body.ry / r_b, ey_b = -body.rx / r_b;
+    const vr_b = body.vx * ux_b + body.vy * uy_b;
+    const vt_b = body.vx * ex_b + body.vy * ey_b;
+    const GM_b = env.GM_EARTH;
+    const R_b = env.EARTH_RADIUS;
+    const E_b = 0.5 * (vr_b * vr_b + vt_b * vt_b) - GM_b / r_b;
+    let apogeeKm_b = Infinity;
+    if (E_b < 0) {
+      const a_b = -GM_b / (2 * E_b);
+      const h_b = r_b * vt_b;
+      const e_b = Math.sqrt(Math.max(0, 1 + 2 * E_b * h_b * h_b / (GM_b * GM_b)));
+      apogeeKm_b = (a_b * (1 + e_b) - R_b) / 1000;
+    }
+    _leoStateV2.lastApogeeKm = apogeeKm_b;
+
+    const h_b2 = r_b * vt_b;
+    const p_b = h_b2 * h_b2 / GM_b;
+    const e_b2 = Math.sqrt(Math.max(0, 1 + 2 * E_b * h_b2 * h_b2 / (GM_b * GM_b)));
+    const r_p_b = p_b / (1 + e_b2);
+    const perigeeKm_b = (r_p_b - R_b) / 1000;
+    _leoStateV2.lastPerigeeKm = perigeeKm_b;
+
+    // Exit: apogee at target → CIRCULARIZE.
+    if (apogeeKm_b >= LEO_INSERTION_V2.TARGET_ORBIT_ALT_KM) {
+      send(cmdRcsDuty(null, idx));
+
+      // Circularization plan.
+      const r_c = r_b;
+      const vr_c = vr_b;
+      const vt_c = vt_b;
+      const GM_c = GM_b;
+      const R_c = R_b;
+      const E_c = E_b;
+      const a_c = E_c < 0 ? -GM_c / (2 * E_c) : r_c;
+      const h_c = r_b * vt_c;
+      const e_c = e_b2;
+      const r_apo = a_c > 0 ? a_c * (1 + e_c) : r_c;
+      const v_apo = r_apo > 0 ? Math.abs(h_c) / r_apo : 0;
+      const v_orb = Math.sqrt(GM_c / r_apo);
+      const dv_needed = Math.max(0, v_orb - v_apo);
+
+      const v2_c = body.vx * body.vx + body.vy * body.vy;
+      const rv_c = body.rx * body.vx + body.ry * body.vy;
+      const ex_ecc = ((v2_c - GM_c / r_c) * body.rx - rv_c * body.vx) / GM_c;
+      const ey_ecc = ((v2_c - GM_c / r_c) * body.ry - rv_c * body.vy) / GM_c;
+      const e_mag = Math.hypot(ex_ecc, ey_ecc);
+      let thetaApo;
+      if (e_mag > 1e-6) {
+        const phiApo = Math.atan2(-ex_ecc, -ey_ecc);
+        const rx_apo = r_apo * Math.sin(phiApo);
+        const ry_apo = r_apo * Math.cos(phiApo);
+        const sDir = (vt_c >= 0) ? 1 : -1;
+        thetaApo = Math.atan2(-sDir * ry_apo, -sDir * rx_apo);
+      } else {
+        thetaApo = Math.atan2(-body.vx, body.vy);
+      }
+      _leoStateV2.coastTargetThetaInertial = thetaApo;
+
+      const m_now = dNext.massProps.M;
+      const ve_engine = (body.engines && body.engines[0] && body.engines[0].Ve) || 3412;
+      const m_final = m_now / Math.exp(dv_needed / ve_engine);
+      const fuel_needed = Math.max(0, m_now - m_final);
+      let refMax_c = 0;
+      (body.engines || []).forEach(e => {
+        if (Number.isFinite(e.maxMassFlowRate) && e.maxMassFlowRate > refMax_c) refMax_c = e.maxMassFlowRate;
+      });
+      const t_burn_ideal = refMax_c > 0 ? fuel_needed / refMax_c : 0;
+      const t_burn_practical = t_burn_ideal * LEO_INSERTION_V2.COAST_BURN_MULTIPLIER;
+      const t_coast = _hTimeToApogee(r_c, vr_c, vt_c, GM_c);
+
+      _leoStateV2.coastCutoffSimT = simT;
+      _leoStateV2.coastApogeeKm = (r_apo - R_c) / 1000;
+      _leoStateV2.coastVApogee = v_apo;
+      _leoStateV2.coastVOrbital = v_orb;
+      _leoStateV2.coastDeltaV = dv_needed;
+      _leoStateV2.coastFuelNeeded = fuel_needed;
+      _leoStateV2.coastTBurnIdeal = t_burn_ideal;
+      _leoStateV2.coastTBurnPractical = t_burn_practical;
+      _leoStateV2.coastTCoast = t_coast;
+      _leoStateV2.phase = 'COAST_ROTATE';
+      _leoStateV2.phaseStart = simT;
+      _leoStateV2.coastRotateStartTilt = null;
+      _leoStateV2.coastRotateMid = null;
+
+      console.log('[leoInsertionV2] RCS_BOOST done at apogee ' +
+        apogeeKm_b.toFixed(1) + ' km' +
+        ' | perigee=' + perigeeKm_b.toFixed(1) + ' km, e=' + e_c.toFixed(4) +
+        ' | V_apo=' + v_apo.toFixed(1) + ' V_orb=' + v_orb.toFixed(1) +
+        ' Δv=' + dv_needed.toFixed(1) + ' → COAST_ROTATE');
+      break;
+    }
+
+    // Wait for engine spool before firing RCS.
+    const engineStillFiring = (body.engines || []).some(e => (e.massFlowRate || 0) > 1);
+    if (engineStillFiring) {
+      send(cmdRcsDuty(null, idx));
+      break;
+    }
+
+    // Fire all 'up' nozzles at full duty — prograde push, attitude
+    // already aligned from STAGE_BURN's tilt lock.
+    const duties = GuideRCS.postSeparationAxialDuty(snapshot, idx, 'up');
+    if (duties) send(cmdRcsDuty(duties, idx));
+    else send(cmdRcsDuty(null, idx));
+    break;
+  }
+
+  // =========================================================
+  // COAST_ROTATE — bang-bang RCS slew to fixed inertial θ.
+  // =========================================================
+  case 'COAST_ROTATE': {
+    send(cmdSetAllThrottle(0));
+    send(cmdSetGimbalRate(0));
+
+    const elapsed = simT - _leoStateV2.phaseStart;
+    if (elapsed >= LEO_INSERTION_V2.COAST_ROTATE_TIMEOUT_S) {
+      send(cmdRcsDuty(null, idx));
+      _leoStateV2.phase = 'COAST_HOLD';
+      _leoStateV2.phaseStart = simT;
+      console.log('[leoInsertionV2] COAST_ROTATE timeout — COAST_HOLD');
+      break;
+    }
+
+    const targetThetaRad = _leoStateV2.coastTargetThetaInertial;
+    if (targetThetaRad === null || targetThetaRad === undefined) {
+      send(cmdRcsDuty(null, idx));
+      _leoStateV2.phase = 'COAST_HOLD';
+      _leoStateV2.phaseStart = simT;
+      break;
+    }
+    const targetThetaDeg = targetThetaRad * 180 / Math.PI;
+    const currentThetaDeg = body.theta * 180 / Math.PI;
+
+    if (_leoStateV2.coastRotateStartTilt === null) {
+      _leoStateV2.coastRotateStartTilt = currentThetaDeg;
+      _leoStateV2.coastRotateMid = (currentThetaDeg + targetThetaDeg) / 2;
+    }
+    const startDeg = _leoStateV2.coastRotateStartTilt;
+    const midDeg = _leoStateV2.coastRotateMid;
+    const err = targetThetaDeg - currentThetaDeg;
+    const omegaRel = body.omega + (env.EARTH_OMEGA || 0);
+
+    if (Math.abs(err) < LEO_INSERTION_V2.COAST_ROTATE_TOL_DEG &&
+        Math.abs(omegaRel) < LEO_INSERTION_V2.COAST_ROTATE_OMEGA_TOL) {
+      send(cmdRcsDuty(null, idx));
+      _leoStateV2.phase = 'COAST_HOLD';
+      _leoStateV2.phaseStart = simT;
+      console.log('[leoInsertionV2] COAST_ROTATE done at inertial θ',
+        currentThetaDeg.toFixed(2), '° — COAST_HOLD');
+      break;
+    }
+
+    const dirSign = Math.sign(targetThetaDeg - startDeg) || 1;
+    const crossed = (startDeg - midDeg) * (currentThetaDeg - midDeg) <= 0;
+    const phaseSign = crossed ? -1 : 1;
+    const tauCmd = phaseSign * dirSign * 1e9;
+
+    const result = GuideRCS.targetTorqueRcs(snapshot, tauCmd, idx);
+    if (result && result.fires.length) send(cmdRcsDuty(result.duties, idx));
+    else send(cmdRcsDuty(null, idx));
+    break;
+  }
+
+  // =========================================================
+  // COAST_HOLD — RCS holds fixed inertial θ via net-zero-force
+  // distributor; wait for burn trigger (engine startup + 2 s window
+  // remaining to apogee, or vr sign flip).
+  // =========================================================
+  case 'COAST_HOLD': {
+    send(cmdSetAllThrottle(0));
+    send(cmdSetGimbalRate(0));
+
+    const r_c = Math.hypot(body.rx, body.ry);
+    const ux_c = body.rx / r_c, uy_c = body.ry / r_c;
+    const ex_c = body.ry / r_c, ey_c = -body.rx / r_c;
+    const vr_c = body.vx * ux_c + body.vy * uy_c;
+    const vt_c = body.vx * ex_c + body.vy * ey_c;
+    const t_rem = _hTimeToApogee(r_c, vr_c, vt_c, env.GM_EARTH);
+
+    // Apogee-peak fallback — _hTimeToApogee jumps to full period
+    // exactly at apogee; vr sign flip catches the boundary.
+    const prevVr = _leoStateV2._prevVr;
+    _leoStateV2._prevVr = vr_c;
+    const apogeePeak = (prevVr !== null && prevVr !== undefined
+      && prevVr > 0 && vr_c <= 0);
+
+    let startupS = 3.0;
+    if (body.engines && body.engines[0]
+        && Number.isFinite(body.engines[0].startupDurationS)) {
+      startupS = body.engines[0].startupDurationS;
+    }
+    const triggerWindowS = startupS + 0.0;
+
+    if (t_rem <= triggerWindowS || apogeePeak) {
+      send(cmdRcsDuty(null, idx));
+      _leoStateV2.phase = 'CIRCULARIZE';
+      _leoStateV2.phaseStart = simT;
+      console.log('[leoInsertionV2] burn trigger — ' +
+        (apogeePeak ? 'apogee peak (vr sign flip)'
+          : 't_rem=' + t_rem.toFixed(2) + 's ≤ ' + triggerWindowS.toFixed(2) + 's') +
+        ' — CIRCULARIZE');
+      break;
+    }
+
+    // Attitude hold via net-zero-force RCS.
+    if (dNext && dNext.massProps && _leoStateV2.coastTargetThetaInertial !== null) {
+      const I_next = dNext.massProps.I;
+      const thetaErr = _hWrapPi(body.theta - _leoStateV2.coastTargetThetaInertial);
+      const omegaRel = body.omega + (env.EARTH_OMEGA || 0);
+      const tau_desired = -I_next * (LEO_INSERTION_V2.CIRC_ATT_KP * thetaErr
+                                   + LEO_INSERTION_V2.CIRC_ATT_KD * omegaRel);
+      const result = GuideRCS.targetTorqueRcsNoNetForce(snapshot, tau_desired, idx);
+      if (result && result.fires.length) send(cmdRcsDuty(result.duties, idx));
+      else send(cmdRcsDuty(null, idx));
+    }
+    break;
+  }
+
+  // =========================================================
+  // CIRCULARIZE — full throttle, gimbal PD-hold at fixed inertial θ.
+  // Cutoff when speed reaches V_orbital OR apogee climbs back to
+  // target (whichever fires first).
+  // =========================================================
+  case 'CIRCULARIZE': {
+    if (!dNext || !dNext.massProps) break;
+    const gimbals = (body.engines || []).filter(e => e.gimbal);
+
+    const r_c = Math.hypot(body.rx, body.ry);
+    const ux_c = body.rx / r_c, uy_c = body.ry / r_c;
+    const ex_c = body.ry / r_c, ey_c = -body.rx / r_c;
+    const vr_c = body.vx * ux_c + body.vy * uy_c;
+    const vt_c = body.vx * ex_c + body.vy * ey_c;
+    const speed = Math.hypot(body.vx, body.vy);
+    const v_orb_target = _leoStateV2.coastVOrbital;
+    const v_err = v_orb_target - speed;
+
+    _leoStateV2.circCurrentV = speed;
+    _leoStateV2.circTargetV = v_orb_target;
+    _leoStateV2.circErr = v_err;
+
+    // Current osculating apogee — cutoff if it reaches target again.
+    const E_now = 0.5 * (vr_c * vr_c + vt_c * vt_c) - env.GM_EARTH / r_c;
+    let apogeeNowKm = Infinity;
+    if (E_now < 0) {
+      const a_now = -env.GM_EARTH / (2 * E_now);
+      const h_now = r_c * vt_c;
+      const e_now = Math.sqrt(Math.max(0, 1 + 2 * E_now * h_now * h_now / (env.GM_EARTH * env.GM_EARTH)));
+      apogeeNowKm = (a_now * (1 + e_now) - env.EARTH_RADIUS) / 1000;
+    }
+    _leoStateV2.lastApogeeKm = apogeeNowKm;
+
+    // Cutoff ONLY on speed reaching V_orbital. The previous apogee
+// check fired immediately because CIRCULARIZE starts AT apogee
+// (RCS_BOOST already pushed it to target) — apogeeNowKm was
+// already ≥ 320 on tick 1, so DONE fired before any burn. Speed
+// is the physical circularization criterion: at apogee, when
+// |v| = V_orbital, perigee rises to apogee and the orbit is
+// circular.
+// Cutoff fires EARLY by the Δv the engine will deliver during
+// its shutdown spool. Physics ramps mass flow linearly from
+// current down to zero over shutdownDurationS, so average flow
+// ≈ current/2 and fuel burned ≈ (current/2) × spoolS. Tsiolkovsky
+// over that fuel gives the post-cutoff Δv. Cutting when the
+// remaining v_err equals that predicted Δv lands the actual
+// speed on V_orbital at the moment thrust hits zero.
+// Read spool time from the ACTIVE engine's own shutdownDurationS
+// (per-thruster-type field set in the fleet build, sourced from
+// componentLibrary.js). Falls back to CONFIG if the engine object
+// doesn't carry it (older cached fleets), then 2.0 as last resort.
+let spoolS = null;
+for (let ei = 0; ei < (body.engines || []).length; ei++) {
+  const e = body.engines[ei];
+  if (e && Number.isFinite(e.shutdownDurationS) && e.shutdownDurationS > 0) {
+    spoolS = e.shutdownDurationS;
+    break;
+  }
+}
+if (spoolS === null && typeof CONFIG !== 'undefined' &&
+  Number.isFinite(CONFIG.ENGINE_SHUTDOWN_DURATION_S)) {
+  spoolS = CONFIG.ENGINE_SHUTDOWN_DURATION_S;
+}
+if (spoolS === null) spoolS = 2.0;
+console.log('[leoInsertionV2] CIRCULARIZE using spoolS=' + spoolS.toFixed(2) +
+  's (engine.shutdownDurationS=' +
+  (body.engines && body.engines[0] ? body.engines[0].shutdownDurationS : 'none') + ')');
+
+// Simple linear-ramp approximation. Mass flow ramps linearly from
+// mdot_now down to zero over spoolS, so average mdot = mdot_now/2.
+// Average thrust = (mdot_now/2) × Ve. Average accel = F_avg / M.
+// Δv delivered during the spool = a_avg × spoolS.
+// Mass loss during the spool (~300 kg on a 30 t stage) is
+// negligible for this estimate, so M is treated as constant.
+let mdot_now = 0;
+(body.engines || []).forEach(e => { mdot_now += (e.massFlowRate || 0); });
+const ve_engine_c = (body.engines && body.engines[0] && body.engines[0].Ve) || 3412;
+const m_now_c = dNext.massProps.M;
+
+// Physics ramp rate = maxMassFlowRate / shutdownDurationS (kg/s²),
+// starting from current flow and going down to zero. So the ACTUAL
+// spool time is proportional to current flow, not the full rated
+// duration:
+//   t_spool_actual = mdot_now / (maxMassFlowRate / shutdownS)
+//                  = mdot_now × shutdownS / maxMassFlowRate
+// Average mdot during the ramp = mdot_now / 2.
+let maxMFR = 0;
+(body.engines || []).forEach(e => {
+  if (Number.isFinite(e.maxMassFlowRate) && e.maxMassFlowRate > maxMFR) maxMFR = e.maxMassFlowRate;
+});
+let t_spool_actual = spoolS;
+if (maxMFR > 0 && mdot_now > 0) {
+  t_spool_actual = mdot_now * spoolS / maxMFR;
+}
+const F_avg_spool = (mdot_now / 2) * ve_engine_c;
+const a_avg_spool = F_avg_spool / Math.max(1, m_now_c);
+const dv_spool = a_avg_spool * t_spool_actual;
+
+// Effective target for the STAGE is V_orbital − payload kick,
+// because the payload's own final velocity = stage_v + kick.
+// Combined with the spool Δv, cutoff fires when the remaining
+// stage-side v_err equals (spool Δv + payload kick).
+const ejectionKick = (typeof LEO_INSERTION_V2.PAYLOAD_EJECT_KICK_MPS === 'number') ?
+  LEO_INSERTION_V2.PAYLOAD_EJECT_KICK_MPS : 0;
+const cutoffThreshold = dv_spool + ejectionKick;
+if (v_err <= cutoffThreshold) {
+  _leoStateV2.circAchieved = true;
+  send(cmdSetAllThrottle(0));
+  send(cmdSetGimbalRate(0));
+  _leoStateV2.phase = 'DEPLOY_PAYLOAD';
+  _leoStateV2.phaseStart = simT;
+  _leoStateV2._prevVr = null;
+  break;
+}
+
+    // Throttle: full until final decay window, then ramp to 40%.
+    const decayWindow = LEO_INSERTION_V2.CIRC_DECAY_FRAC * v_orb_target;
+    let thrFrac = 1.0;
+    if (v_err <= decayWindow && decayWindow > 0) {
+      thrFrac = Math.max(0.4, 0.4 + 0.6 * (v_err / decayWindow));
+    }
+    let refMax = 0;
+    (body.engines || []).forEach(e => {
+      if (Number.isFinite(e.maxMassFlowRate) && e.maxMassFlowRate > refMax) refMax = e.maxMassFlowRate;
+    });
+    send(cmdSetAllThrottle(refMax * thrFrac));
+
+    // Gimbal PD-hold at fixed inertial θ.
+    if (gimbals.length && _leoStateV2.coastTargetThetaInertial !== null) {
+      const I_next = dNext.massProps.I;
+      const thetaErr = _hWrapPi(body.theta - _leoStateV2.coastTargetThetaInertial);
+      const omegaRel = body.omega + (env.EARTH_OMEGA || 0);
+      const tau_desired = -I_next * (LEO_INSERTION_V2.CIRC_ATT_KP * thetaErr
+                                   + LEO_INSERTION_V2.CIRC_ATT_KD * omegaRel);
+      const g_N = gimbals[0].gimbalDeg || 0;
+      const comX1 = dNext.massProps.comX;
+      const comY1 = dNext.massProps.comY;
+      let A_g = 0, B_g = 0;
+      gimbals.forEach(e => {
+        const F = (e.massFlowRate || 0) * (e.Ve || 0);
+        A_g += ((e.x || 0) - comX1) * F;
+        B_g += F;
+      });
+      B_g *= comY1;
+      const R_amp = Math.hypot(A_g, B_g);
+      let g_req_rad = 0;
+      if (R_amp > 1) {
+        const ratio = Math.max(-1, Math.min(1, tau_desired / R_amp));
+        const phi = Math.atan2(A_g, B_g);
+        const w1 = _hWrapPi(Math.asin(ratio) - phi);
+        const w2 = _hWrapPi(Math.PI - Math.asin(ratio) - phi);
+        g_req_rad = (Math.abs(w1) <= Math.abs(w2)) ? w1 : w2;
+      }
+      let g_req_deg = g_req_rad * 180 / Math.PI;
+      const MAX_ANG = (env && Number.isFinite(env.GIMBAL_MAX_DEG)) ? env.GIMBAL_MAX_DEG : 20;
+      if (Math.abs(g_req_deg) > MAX_ANG) g_req_deg = Math.sign(g_req_deg) * MAX_ANG;
+      const R_req = (g_req_deg - g_N) / dt;
+      const MAX_RATE = (env && Number.isFinite(env.GIMBAL_RATE_DEG_S)) ? env.GIMBAL_RATE_DEG_S : 40;
+      const R_cmd = Math.max(-MAX_RATE, Math.min(MAX_RATE, R_req));
+      send(cmdSetGimbalRate(R_cmd));
+    }
+    break;
+  }
+
+// =========================================================
+// DEPLOY_PAYLOAD — coast to apogee, hold nose along the
+// (recomputed each tick) apogee-point velocity direction, then
+// release the payload.
+//
+// Target θ is recomputed every tick from the current eccentricity
+// vector: apogee-point φ = atan2(−e_x, −e_y), and the nose there
+// should point along the tangential velocity. Because the target
+// is rebuilt each tick, small attitude errors early on don't
+// accumulate — the body self-corrects toward whatever the current
+// apogee direction is.
+//
+// Release trigger: vr sign flip (positive → negative), which is
+// the moment the body crosses apogee. Fires cmdReleasePayload()
+// and hands off to DONE.
+// =========================================================
+case 'DEPLOY_PAYLOAD': {
+  send(cmdSetAllThrottle(0));
+  send(cmdSetGimbalRate(0));
+  
+  const r_d = Math.hypot(body.rx, body.ry);
+  const ux_d = body.rx / r_d, uy_d = body.ry / r_d;
+  const ex_d = body.ry / r_d, ey_d = -body.rx / r_d;
+  const vr_d = body.vx * ux_d + body.vy * uy_d;
+  const vt_d = body.vx * ex_d + body.vy * ey_d;
+  const GM_d = env.GM_EARTH;
+  
+  // Eccentricity vector → apogee point.
+  const v2_d = body.vx * body.vx + body.vy * body.vy;
+  const rv_d = body.rx * body.vx + body.ry * body.vy;
+  const ex_ecc = ((v2_d - GM_d / r_d) * body.rx - rv_d * body.vx) / GM_d;
+  const ey_ecc = ((v2_d - GM_d / r_d) * body.ry - rv_d * body.vy) / GM_d;
+  const e_mag_d = Math.hypot(ex_ecc, ey_ecc);
+  
+  let thetaTarget;
+  if (e_mag_d > 1e-6) {
+    const phiApo = Math.atan2(-ex_ecc, -ey_ecc);
+    const h_d = r_d * vt_d;
+    const sDir = (h_d >= 0) ? 1 : -1;
+    const rx_apo = Math.sin(phiApo);
+    const ry_apo = Math.cos(phiApo);
+    thetaTarget = Math.atan2(-sDir * ry_apo, -sDir * rx_apo);
+  } else {
+    // Nearly circular — nose along current velocity.
+    thetaTarget = Math.atan2(-body.vx, body.vy);
+  }
+  
+  // Apogee arrival via vr sign flip.
+  const prevVr = _leoStateV2._prevVr;
+  _leoStateV2._prevVr = vr_d;
+  const atApogee = (prevVr !== null && prevVr !== undefined
+    && prevVr > 0 && vr_d <= 0);
+  
+  if (atApogee) {
+    send(cmdRcsDuty(null, idx));
+    if (typeof cmdReleasePayload === 'function') send(cmdReleasePayload());
+    _leoStateV2.phase = 'DONE';
+    console.log('[leoInsertionV2] payload release at apogee | v=' +
+      Math.hypot(body.vx, body.vy).toFixed(1) + ' m/s, alt=' +
+      ((r_d - env.EARTH_RADIUS) / 1000).toFixed(1) + ' km');
+    break;
+  }
+  
+  // Attitude hold — PD toward recomputed θ, via no-net-force RCS
+  // distributor so the long coast doesn't drift sideways.
+  if (dNext && dNext.massProps) {
+    const I_next = dNext.massProps.I;
+    const thetaErr = _hWrapPi(body.theta - thetaTarget);
+    const omegaRel = body.omega + (env.EARTH_OMEGA || 0);
+    const tau_desired = -I_next * (LEO_INSERTION_V2.CIRC_ATT_KP * thetaErr
+                                 + LEO_INSERTION_V2.CIRC_ATT_KD * omegaRel);
+    const result = GuideRCS.targetTorqueRcsNoNetForce(snapshot, tau_desired, idx);
+    if (result && result.fires.length) send(cmdRcsDuty(result.duties, idx));
+    else send(cmdRcsDuty(null, idx));
+  }
+  break;
+}
+
+// =========================================================
+// DONE — engine off, orbit ballistic. RCS holds fixed inertial θ.
+// =========================================================
+case 'DONE': {
+    send(cmdSetAllThrottle(0));
+    send(cmdSetGimbalRate(0));
+
+    if (dNext && dNext.massProps && _leoStateV2.coastTargetThetaInertial !== null) {
+      const I_next = dNext.massProps.I;
+      const thetaErr = _hWrapPi(body.theta - _leoStateV2.coastTargetThetaInertial);
+      const omegaRel = body.omega + (env.EARTH_OMEGA || 0);
+      const tau_desired = -I_next * (LEO_INSERTION_V2.CIRC_ATT_KP * thetaErr
+                                   + LEO_INSERTION_V2.CIRC_ATT_KD * omegaRel);
+      const result = GuideRCS.targetTorqueRcsNoNetForce(snapshot, tau_desired, idx);
+      if (result && result.fires.length) send(cmdRcsDuty(result.duties, idx));
+      else send(cmdRcsDuty(null, idx));
+    }
+    break;
+  }
+
+  default:
+    break;
+}
+
+  // ---- Fairing open (independent) ----
+  if (LEO_INSERTION_V2.FAIRING_OPEN_ENABLED &&
+      !_leoStateV2.fairingOpened &&
+      _leoStateV2.splitDetected &&
+      _leoStateV2.lastAltKm >= LEO_INSERTION_V2.FAIRING_OPEN_ALT_KM) {
+    const stageBody = snapshot.bodies[_leoStateV2.stageIdx];
+    const hasFairing = !!(stageBody && stageBody.members &&
+      stageBody.members.some(m => m && m.stageRole === 'payloadSpace'));
+    if (hasFairing) {
+      send(cmdSplitFairing());
+      _leoStateV2.fairingOpened = true;
+      console.log('[leoInsertionV2] fairing open at',
+        _leoStateV2.lastAltKm.toFixed(2), 'km');
+    }
+  }
+}
+
+_leoTickV2.start = function () {
+  _leoStateV2.init = false;
+  _leoStateV2.ticks = 0;
+  _leoStateV2.phase = 'ASCENT';
+  _leoStateV2.phaseStart = 0;
+  _leoStateV2.mecoTriggered = false;
+  _leoStateV2.splitDetected = false;
+  _leoStateV2.fairingOpened = false;
+  _leoStateV2.initialBodyCount = 0;
+  _leoStateV2.preSplitBodyId = null;
+  _leoStateV2.boosterIdx = -1;
+  _leoStateV2.stageIdx = -1;
+  _leoStateV2.lastAltKm = 0;
+  _leoStateV2.lastAxialGap = 0;
+  _leoStateV2.lastLateralGap = 0;
+  _leoStateV2.lastApogeeKm = 0;
+  _leoStateV2.lastApogeeSimT = 0;
+  _leoStateV2._prevApogeeKm = 0;
+_leoStateV2._prevVr = null;
+  _leoStateV2.coastCutoffSimT = 0;
+  _leoStateV2.coastApogeeKm = 0;
+  _leoStateV2.coastVApogee = 0;
+  _leoStateV2.coastVOrbital = 0;
+  _leoStateV2.coastDeltaV = 0;
+  _leoStateV2.coastFuelNeeded = 0;
+  _leoStateV2.coastTBurnIdeal = 0;
+  _leoStateV2.coastTBurnPractical = 0;
+  _leoStateV2.coastTCoast = 0;
+  _leoStateV2.coastRotateStartTilt = null;
+_leoStateV2.coastRotateMid = null;
+_leoStateV2.coastTargetThetaInertial = null;
+  _leoStateV2.circCurrentV = 0;
+  _leoStateV2.circTargetV = 0;
+  _leoStateV2.circErr = 0;
+    _leoStateV2.circAchieved = false;
+  _leoStateV2.lastPerigeeKm = null;
+    _leoStateV2.stageBurnLocked = false;
+  _leoStateV2.stageBurnTargetTiltDeg = 0;
+  _leoStateV2._prevApogeeKm = 0;
+  console.log('[leoInsertionV2] started');
+  };
+_leoTickV2.stop = function () {
+  send(cmdSetAllThrottle(0));
+  send(cmdSetGimbalRate(0));
+  send(cmdRcsDuty(null));
+  if (typeof _hTick !== 'undefined' && typeof _hTick.stop === 'function') {
+    try { _hTick.stop(); } catch (e) {}
+  }
+  console.log('[leoInsertionV2] stopped');
+};
+_leoTickV2.getStatus = function () {
+  return {
+    ticks: _leoStateV2.ticks,
+    phase: _leoStateV2.phase,
+    altKm: _leoStateV2.lastAltKm,
+    mecoTriggered: _leoStateV2.mecoTriggered,
+    splitDetected: _leoStateV2.splitDetected,
+    fairingOpened: _leoStateV2.fairingOpened,
+    axialGap: _leoStateV2.lastAxialGap,
+    lateralGap: _leoStateV2.lastLateralGap,
+    apogeeKm: _leoStateV2.lastApogeeKm,
+    coastTBurnIdeal: _leoStateV2.coastTBurnIdeal,
+    coastTBurnPractical: _leoStateV2.coastTBurnPractical,
+    coastTCoast: _leoStateV2.coastTCoast,
+    coastDeltaV: _leoStateV2.coastDeltaV,
+    coastVOrbital: _leoStateV2.coastVOrbital,
+  coastTargetThetaDeg: (_leoStateV2.coastTargetThetaInertial != null) ?
+  _leoStateV2.coastTargetThetaInertial * 180 / Math.PI : null,
+      circCurrentV: _leoStateV2.circCurrentV,
+      circTargetV: _leoStateV2.circTargetV,
+      circErr: _leoStateV2.circErr,
+          circAchieved: _leoStateV2.circAchieved,
+      lastPerigeeKm: _leoStateV2.lastPerigeeKm,
+      stageBurnLocked: _leoStateV2.stageBurnLocked,
+      stageBurnTargetTiltDeg: _leoStateV2.stageBurnTargetTiltDeg,
+    };
+    };
+
+GUIDES.leoInsertionV2 = _leoTickV2;
+
+function setLeoInsertionV2(patch) {
+  if (!patch) return;
+  Object.keys(patch).forEach(k => {
+    if (!(k in LEO_INSERTION_V2)) return;
+    const cur = LEO_INSERTION_V2[k];
+    const nxt = patch[k];
+    if (cur && typeof cur === 'object' && !Array.isArray(cur) &&
+        nxt && typeof nxt === 'object' && !Array.isArray(nxt)) {
+      Object.assign(cur, nxt);
+    } else {
+      LEO_INSERTION_V2[k] = nxt;
+    }
+  });
+  console.log('[leoInsertionV2] constants updated');
+}
+function getLeoInsertionV2Config() { return { ...LEO_INSERTION_V2 }; }
+
+
+
+
+
   // ---- Outbound: single choke point for physics commands. ----
   function send(msg) {
     if (!_physicsSend) {
@@ -3070,10 +4528,14 @@ setAscentRR,
 setSweepDuration,
 setAscentHold,
 setLeoInsertion,
+setLeoInsertionV2,
+getLeoInsertionV2Config,
 getAscentRRConfig,
 getAscentHoldConfig,
 getPredictiveGains,
 getLeoInsertionConfig,
+exportGuideState,
+importGuideState,
     // Convenience forwarders so callers can keep using Guidance.*
     derive: (...args) => Derivation.derive(...args),
     deriveAllBodies: (...args) => Derivation.deriveAllBodies(...args),

@@ -631,6 +631,23 @@ function tunableFieldsFor(guideName) {
       });
       return out;
     }
+    
+    if (guideName === 'leoInsertionV2' && typeof Guidance.getLeoInsertionV2Config === 'function') {
+  const c = Guidance.getLeoInsertionV2Config();
+  const out = [];
+  Object.keys(c).forEach(k => {
+    const v = c[k];
+    if (v && typeof v === 'object' && !Array.isArray(v)) {
+      Object.keys(v).forEach(kk => {
+        out.push({ key: k + '.' + kk, value: v[kk], step: _stepFor(kk) });
+      });
+    } else {
+      out.push({ key: k, value: v, step: _stepFor(k) });
+    }
+  });
+  return out;
+}
+    
   } catch (e) {
     console.warn('[tester] tunableFieldsFor failed for', guideName, e);
   }
@@ -691,6 +708,19 @@ function applyTunables(guideName) {
       });
       Guidance.setLeoInsertion(patch);
     }
+    else if (guideName === 'leoInsertionV2') {
+  const patch = {};
+  Object.keys(t).forEach(k => {
+    if (k.indexOf('.') >= 0) {
+      const [outer, inner] = k.split('.');
+      if (!patch[outer]) patch[outer] = {};
+      patch[outer][inner] = t[k];
+    } else {
+      patch[k] = t[k];
+    }
+  });
+  Guidance.setLeoInsertionV2(patch);
+}
   } catch (e) {
     console.warn('[tester] applyTunables failed for', guideName, e);
   }
@@ -1539,14 +1569,32 @@ if (curSec > lastSampleSec) {
   out.scrollTop = out.scrollHeight;
 }
 
-      // Yield periodically so the browser can paint status + new rows.
-      if (i > 0 && i % CHUNK === 0) {
-        const tps = ticksRun / ((performance.now() - t0) / 1000);
-        statusEl.textContent =
-          `Running…  t=${state.simTime.toFixed(1)}s / ${durationS}s  ` +
-          `(${ticksRun} ticks, ${tps.toFixed(0)} ticks/s)`;
-        await yieldToBrowser();
-      }
+// ---- Live circularization readout (updated every sample) ----
+// Reads the last getGuideStatus snapshot and, if we're circularizing,
+// shows current velocity vs target orbital velocity + achieved flag.
+{
+  const status = (Guidance.getGuideStatus && Guidance.getGuideStatus()) || null;
+  if (status && status.phase === 'CIRCULARIZE' && status.circTargetV > 0) {
+    const cur = status.circCurrentV || 0;
+    const tgt = status.circTargetV;
+    const pct = (cur / tgt * 100).toFixed(1);
+    const err = (tgt - cur).toFixed(1);
+    statusEl.textContent =
+      `🛰 CIRCULARIZE  v = ${cur.toFixed(0)} / ${tgt.toFixed(0)} m/s  ` +
+      `(${pct}%)  ·  Δv remaining = ${err} m/s`;
+  } else if (status && status.circAchieved) {
+    statusEl.textContent =
+      `✅ CIRCULARIZE complete  v = ${status.circCurrentV.toFixed(0)} / ${status.circTargetV.toFixed(0)} m/s`;
+  }
+}
+
+if (i > 0 && i % CHUNK === 0) {
+  const tps = ticksRun / ((performance.now() - t0) / 1000);
+  statusEl.textContent =
+    `Running…  t=${state.simTime.toFixed(1)}s / ${durationS}s  ` +
+    `(${ticksRun} ticks, ${tps.toFixed(0)} ticks/s)`;
+  await yieldToBrowser();
+}
     }
 
     try { Guidance.stopGuide(); } catch (e) { /* ignore */ }

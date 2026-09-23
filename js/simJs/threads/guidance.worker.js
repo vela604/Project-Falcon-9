@@ -133,6 +133,21 @@ case 'setImuEnabled': {
   break;
 }
 
+// Fast-forward support — main thread asks for a full copy of every
+// guide's state, or hands one back after its FF run completes.
+case 'captureGuidanceState': {
+  if (typeof Guidance !== 'undefined' && Guidance.exportGuideState) {
+    self.postMessage({ type: 'guidanceState', data: Guidance.exportGuideState() });
+  }
+  break;
+}
+case 'replaceGuidanceState': {
+  if (typeof Guidance !== 'undefined' && Guidance.importGuideState) {
+    Guidance.importGuideState(msg.data);
+  }
+  break;
+}
+
 // One-time boot handoff: raw member records + resolved hardware types
 // + environment constants. See workerBridge.js's
 // sendStackDataToGuidance() for what's inside and why.
