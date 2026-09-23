@@ -187,10 +187,19 @@ try {
 } else if (m.type === 'progressBodies') {
   // Full body update for panels.
   if (m.bodies && Array.isArray(m.bodies)) {
+    const _prevLen = state.bodies ? state.bodies.length : 0;
     state.bodies = m.bodies;
     state.simTime = m.simTime;
     state.activeBodyIndex = m.activeBodyIndex || 0;
     state.halted = !!m.halted;
+    // Refresh the follow-body dropdown when body count changed
+    // mid-FF (separation, fairing split, payload release). FF
+    // bypasses workerBridge's snapshot path, so its own
+    // count-change heuristic never fires during the run.
+    if (m.bodies.length !== _prevLen &&
+      typeof refreshFollowBodySelect === 'function') {
+      refreshFollowBodySelect();
+    }
   }
 } else if (m.type === 'done') {
         _state.pendingResult = m;
@@ -287,10 +296,17 @@ try {
   }
 
   function onSnapshotApplied() {
-    if (!_state.waitingForResume) return;
-    _state.waitingForResume = false;
-    closeDialog();
+  if (!_state.waitingForResume) return;
+  _state.waitingForResume = false;
+  closeDialog();
+  // Force dropdown rebuild after FF. Physics's next snapshot may carry
+  // the same body count as pre-FF (5 → 5), so workerBridge's count-
+  // change heuristic won't trigger and the dropdown stays stale
+  // (only "Active"). Rebuild from the current state.bodies instead.
+  if (typeof refreshFollowBodySelect === 'function') {
+    refreshFollowBodySelect();
   }
+}
 
   function bind() {
     const btn = document.getElementById('btnFastForward');

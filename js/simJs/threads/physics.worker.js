@@ -345,35 +345,40 @@ b.omega = msg.omega || 0;
     // converted from the UI's percent at the control layer (controls.js).
     // clampMassFlowCommand() below applies the same clamp to every engine
     // it touches, so it's the one place command-floor/ceiling logic lives.
-    case 'setGroupThrottle': {
-  const b = resolveTargetBody(msg.targetBodyIdx);
-  if (!b) break;
-  if (typeof cancelPendingSequences === 'function') cancelPendingSequences(b);
-  if (!b.engines) break;
-  msg.angles.forEach(a => {
-    const eng = b.engines.find(en => en.angleDeg === a);
-    if (eng) eng.targetMassFlowRate = clampMassFlowCommand(eng, msg.value);
-  });
-  break;
-}
-    case 'setCenterThrottle': {
-  const b = resolveTargetBody(msg.targetBodyIdx);
-  if (!b) break;
-  if (typeof cancelPendingSequences === 'function') cancelPendingSequences(b);
-  if (!b.engines) break;
-  b.engines.filter(en => en.isCenter).forEach(en => {
-    en.targetMassFlowRate = clampMassFlowCommand(en, msg.value);
-  });
-  break;
-}
-    case 'setAllThrottle': {
-  const b = resolveTargetBody(msg.targetBodyIdx);
-  if (!b) break;
-  if (typeof cancelPendingSequences === 'function') cancelPendingSequences(b);
-  if (!b.engines) break;
-  b.engines.forEach(en => { en.targetMassFlowRate = clampMassFlowCommand(en, msg.value); });
-  break;
-}
+        case 'setGroupThrottle': {
+      const b = resolveTargetBody(msg.targetBodyIdx);
+      if (!b) break;
+      // Only cancel pending separate/release on NON-ZERO throttle commands.
+      // Guidance's DONE/CIRCULARIZE/DEPLOY_PAYLOAD phases fire
+      // setAllThrottle(0) every tick as housekeeping; the old unconditional
+      // cancel would clobber an in-flight pendingRelease waiting for engine
+      // spool-down, and the payload would never spawn.
+      if (msg.value > 0 && typeof cancelPendingSequences === 'function') cancelPendingSequences(b);
+      if (!b.engines) break;
+      msg.angles.forEach(a => {
+        const eng = b.engines.find(en => en.angleDeg === a);
+        if (eng) eng.targetMassFlowRate = clampMassFlowCommand(eng, msg.value);
+      });
+      break;
+    }
+        case 'setCenterThrottle': {
+      const b = resolveTargetBody(msg.targetBodyIdx);
+      if (!b) break;
+      if (msg.value > 0 && typeof cancelPendingSequences === 'function') cancelPendingSequences(b);
+      if (!b.engines) break;
+      b.engines.filter(en => en.isCenter).forEach(en => {
+        en.targetMassFlowRate = clampMassFlowCommand(en, msg.value);
+      });
+      break;
+    }
+        case 'setAllThrottle': {
+      const b = resolveTargetBody(msg.targetBodyIdx);
+      if (!b) break;
+      if (msg.value > 0 && typeof cancelPendingSequences === 'function') cancelPendingSequences(b);
+      if (!b.engines) break;
+      b.engines.forEach(en => { en.targetMassFlowRate = clampMassFlowCommand(en, msg.value); });
+      break;
+    }
     case 'setGimbal': {
   const b = resolveTargetBody(msg.targetBodyIdx);
   if (!b) break;

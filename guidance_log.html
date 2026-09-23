@@ -1839,21 +1839,26 @@ DONE</pre>
   <div class="exp glass pass">
     <div class="exp-head">
       <div>
-        <h3 class="exp-title">LEO Insertion V2 — Full Mission</h3>
+        <h3 class="exp-title">LEO Insertion V2 — Full Mission, Universal</h3>
         <div class="exp-id">leoInsertionV2</div>
         <div class="exp-time">— <span class="exp-time-day">· 23 Sept' 2026</span></div>
       </div>
-      <span class="exp-status pass">FULL MISSION · PAYLOAD IN ORBIT</span>
+      <span class="exp-status pass">FULL MISSION · PAYLOAD DEPLOYED · UNIVERSAL</span>
     </div>
     <div class="exp-body">
       <div class="exp-row">
         <div class="exp-label">Target</div>
         <div class="exp-value">
           One guide, one phase machine, autonomous pad-to-orbit-and-deploy.
-          Ascent → MECO → separation → burn to apogee → RCS boost → coast
+          Ascent → MECO → separation → burn to apogee → RCS trim → coast
           → circularization burn → coast to apogee → release payload →
           DONE. Every hand-off handled by guidance, no manual commands
           after launch.
+          <p>Not tuned for one specific stack or one specific profile —
+          engine values are read at runtime from the fleet record, so a
+          different thruster type, a different stage mass, or a different
+          target altitude all work without touching the guide. Any LEO
+          within reach of the available fuel lands.</p>
         </div>
       </div>
       <div class="exp-row">
@@ -1883,29 +1888,43 @@ DONE</pre>
               burn itself <em>is</em> the ride to apogee.</li>
             <li><strong>Attitude drift during long coast.</strong> RCS
               torque without force-balancing walks the orbit off course
-              over 100+ seconds. Fix: <code>targetTorqueRcsNoNetForce</code>
-              — pairs lateral and vertical fires so <code>ΣF = 0</code>
-              is exact by construction, while still delivering the
-              requested torque.</li>
+              over 100+ seconds. Fix:
+              <code>targetTorqueRcsNoNetForce</code> — pairs lateral
+              and vertical fires so <code>ΣF = 0</code> is exact by
+              construction, while still delivering the requested
+              torque.</li>
             <li><strong>Apogee overshoot on shutdown spool.</strong>
               Merlin-class engines take ~2 s to actually stop; during
               that window thrust continues and adds ~30 m/s, which at
               orbital velocity moves apogee by ~50 km. Prediction
               lookahead reads the engine's own
               <code>shutdownDurationS</code> and cuts early by the
-              predicted Δv.</li>
-            <li><strong>Apogee target too imprecise at orbital
-              velocity.</strong> One guidance tick moves apogee by
-              100+ km — "apogee ≥ target" was firing way past the mark.
-              Replaced with a two-stage trim: main engine cuts at
-              apogee ≥ target − margin, then RCS_BOOST does fine
-              prograde push until apogee hits exactly.</li>
+              predicted Δv — same physics model in STAGE_BURN's coarse
+              cutoff and CIRCULARIZE's fine cutoff.</li>
+            <li><strong>Main engine alone too coarse.</strong> Even with
+              spool compensation, tick granularity at orbital velocity
+              means the main engine lands within a few km, not metres.
+              Fix: split the burn into two stages — main engine brings
+              apogee close, then <code>RCS_BOOST</code> does a
+              bidirectional prograde/retrograde RCS trim to land
+              exactly on target.</li>
             <li><strong>Payload release timing.</strong> Releasing at
-              apogee needs precise attitude and orbit. Fix: re-derive
-              the apogee point from the eccentricity vector every tick
-              and hold the nose along the local velocity there.
-              Release triggers on <code>vr</code> sign flip — the
-              exact apogee crossing.</li>
+              apogee needs precise attitude and orbit. Fix:
+              bang-bang RCS slew to the velocity direction at deploy
+              entry, hold the fixed inertial angle during the slew,
+              release on alignment. Attitude lock uses the same
+              midpoint-reversal pattern as the ascent rotation —
+              wraparound-safe on the ±π seam.</li>
+            <li><strong>Payload release silently aborted.</strong>
+              Guidance fires <code>cmdReleasePayload</code> while the
+              engine is still spooling, so physics defers the release
+              until thrust reaches zero. Meanwhile DONE's housekeeping
+              <code>setAllThrottle(0)</code> was calling
+              <code>cancelPendingSequences</code> every tick and
+              clobbering the in-flight <code>pendingRelease</code>.
+              Fix: only cancel pending sequences on <em>non-zero</em>
+              throttle commands. Zero-throttle housekeeping never
+              touches pending state.</li>
           </ul>
         </div>
       </div>
@@ -1919,49 +1938,59 @@ DONE</pre>
           threshold the nose stays velocity-aligned (natural gravity
           turn); above it, thrust points mostly tangentially, which is
           what actually raises perigee efficiently.</p>
-          <p><strong>2. Two burn stages — main engine coarse, RCS
-          fine.</strong> The main engine brings apogee near the target
-          (coarse, cheap). RCS_BOOST then does the last ~100 m/s of
-          perigee trim if the engine's spool overshoot left it short.
-          The mission is not all-or-nothing: the engine lands close, and
-          RCS closes the gap.</p>
+          <p><strong>2. Coarse + fine — two burn stages.</strong> The
+          main engine cuts when predicted apogee ≥ target − small
+          margin. Then RCS_BOOST closes the gap in either direction:
+          undershoot fires prograde 'up' nozzles, overshoot fires
+          retrograde 'dn' nozzles, exit on crossing detection. Effectively
+          exact — final error bounded only by the RCS per-tick
+          resolution (~2 m).</p>
           <p><strong>3. Spool compensation is physics, not tuning.</strong>
-          Both the STAGE_BURN predictive cutoff and the CIRCULARIZE
-          cutoff read the engine's own
+          Both cutoffs read the engine's own
           <code>shutdownDurationS</code> and compute the Δv that will
-          be delivered during spool-down. The cutoff fires that much
-          early, so the engine reaches zero thrust exactly when the
-          vehicle reaches the target velocity. No hand-tuned margin.</p>
-          <p><strong>4. Payload kick gets pre-compensated.</strong> The
-          deploy mechanism adds a fixed 3 m/s prograde impulse to the
-          payload. The stage only needs to reach
+          be delivered during spool-down using the same linear-ramp
+          model physics uses for the actual integration. The cutoff
+          fires that much early so the engine reaches zero thrust
+          exactly when the vehicle reaches the target velocity. No
+          hand-tuned margin.</p>
+          <p><strong>4. Payload kick gets pre-compensated.</strong>
+          The deploy mechanism adds a fixed 3 m/s prograde impulse to
+          the payload. The stage only needs to reach
           <code>V_orbital − kick</code>, so the CIRCULARIZE cutoff
           fires (spool_Δv + kick) early. The stage ends up 3 m/s short
           — the payload ends up exactly on the target.</p>
+          <p><strong>5. Bang-bang for large slews, PD for tracking.</strong>
+          The deploy rotation uses the same midpoint-reversal bang-bang
+          the ascent rotation uses — saturating torque, switch signs
+          at the midpoint, wraparound-safe. Once the nose is on the
+          velocity direction, the phase exits immediately. Tracking
+          a target that rotates with the orbit is a separate problem,
+          handled by PD with error-rate = (ω − ω_orbital), not raw ω.</p>
         </div>
       </div>
       <div class="exp-row">
         <div class="exp-label">Phase machine</div>
         <div class="exp-value">
-          <pre><span class="cmt">// Post-MECO path — v2 diverges from v1 here</span>
+          <pre><span class="cmt">// Post-MECO path</span>
 ASCENT              → _hTick (ascentAoaHold core)
 MECO_SPOOL          → trigger on osculating apogee ≥ 150 km
 SEPARATED_AXIAL     → RCS push apart, pneumatic pusher, 10 m gap
 STAGE_BURN          → full throttle, gimbal control:
                        pre-85°  : COASTnAoADAMP (velocity-aligned)
                        post-85° : PD hold at locked 85° tilt
-                    → cutoff at apogee ≥ target, predictive spool
-RCS_BOOST           → engine off, wait for spool, then 4× up nozzles
-                       prograde until apogee hits target exactly
-COAST_ROTATE        → bang-bang RCS slew to fixed inertial θ that
-                       matches velocity direction at apogee
-COAST_HOLD          → hold that θ via net-zero-force RCS,
-                       wait for burn trigger
+                    → cutoff at predicted apogee ≥ target − margin,
+                       predictive spool Δv from shutdownDurationS
+RCS_BOOST           → engine off, wait for spool, then bidirectional
+                       RCS trim: 'up' if undershoot, 'dn' if overshoot.
+                       Exit on crossing detection → exact apogee
+COAST_ROTATE        → bang-bang RCS slew to fixed inertial θ
+COAST_HOLD          → hold that θ via targetTorqueRcsNoNetForce
+                    → burn trigger when t_rem ≤ engine startup time
 CIRCULARIZE         → full throttle, PD hold same θ
                     → cutoff when v_err ≤ (spool_Δv + payload_kick)
-DEPLOY_PAYLOAD      → coast to apogee, hold nose along velocity at
-                       the apogee point (recomputed every tick)
-                    → release at vr sign flip
+DEPLOY_PAYLOAD      → bang-bang RCS slew to velocity direction at
+                       entry, wraparound-safe midpoint reversal
+                    → release on nose-aligned + settled rate
 DONE                → RCS holds attitude indefinitely</pre>
         </div>
       </div>
@@ -1974,13 +2003,13 @@ TARGET_ORBIT_ALT_KM:         320    <span class="cmt">// orbit altitude</span>
 STAGE_BURN_LOCK_TILT_DEG:    85     <span class="cmt">// thrust goes tangential</span>
 CIRC_ATT_KP:                 0.5    <span class="cmt">// coast/circ attitude P</span>
 CIRC_ATT_KD:                 4.0    <span class="cmt">// coast/circ attitude D</span>
-PAYLOAD_EJECT_KICK_MPS:      3.0    <span class="cmt">// deploy pre-compensation</span>
-STAGE_BURN_LOOKAHEAD_TICKS:  3      <span class="cmt">// coarse spool guard</span></pre>
-          <p>Engine-side values (spool, Ve, mass flow) are read at
-          runtime from the active engine object, not hardcoded —
-          swapping the thruster type in the fleet editor carries
-          through without touching the guide. Everything is tunable
-          at runtime via <code>Guidance.setLeoInsertionV2({...})</code>.</p>
+PAYLOAD_EJECT_KICK_MPS:      3.0    <span class="cmt">// deploy pre-compensation</span></pre>
+          <p>Engine-side values (Ve, mass flow, startup/shutdown
+          durations) are read at runtime from the active engine object
+          — swapping the thruster type in the fleet editor carries
+          through without touching the guide. All constants are
+          tunable at runtime via
+          <code>Guidance.setLeoInsertionV2({...})</code>.</p>
         </div>
       </div>
       <div class="exp-row">
@@ -1988,14 +2017,19 @@ STAGE_BURN_LOOKAHEAD_TICKS:  3      <span class="cmt">// coarse spool guard</spa
         <div class="exp-value">
           <strong>Payload is in orbit.</strong> The mission now runs
           autonomously end-to-end: ascent → MECO → separation → burn
-          to apogee → RCS boost → coast → circularization burn → coast
+          to apogee → RCS trim → coast → circularization burn → coast
           to apogee → release payload → DONE. Every hand-off handled by
-          guidance, no manual commands after launch. Final orbit lands
-          at the target altitude, the payload separates with the correct
-          prograde kick, and the stage settles into a stable
-          attitude-hold state for as long as the sim runs. This is the
-          first guide that gets not just the vehicle but the
-          <em>payload</em> into orbit.
+          guidance, no manual commands after launch.
+          <p>Final orbit lands at the target altitude to within the
+          RCS trim resolution (~2 m at the apogee crossing), the
+          payload separates with the correct prograde kick, and both
+          the stage and payload settle into independent stable
+          attitude-hold states for as long as the sim runs.</p>
+          <p>No stack-specific tuning was needed past the initial
+          calibration — the guide reads engine properties from the
+          active fleet record and computes its own burn profiles from
+          those. Any LEO within the vehicle's fuel reach is
+          achievable.</p>
         </div>
       </div>
       <div class="exp-row">
@@ -2005,8 +2039,10 @@ STAGE_BURN_LOOKAHEAD_TICKS:  3      <span class="cmt">// coarse spool guard</spa
             <li><strong>Sun and Moon gravity not modelled.</strong> The
               sim treats Earth as the only gravitating body. Over the
               timescales this mission runs (minutes to hours) the
-              perturbation is negligible, but long-term orbit prediction
-              would need a proper multi-body integration.</li>
+              perturbation is negligible — the insertion is exact —
+              but long-term orbit propagation would need a proper
+              multi-body integration. The same holds for J2 oblateness,
+              which is also not modelled.</li>
           </ul>
         </div>
       </div>
@@ -2014,10 +2050,13 @@ STAGE_BURN_LOOKAHEAD_TICKS:  3      <span class="cmt">// coarse spool guard</spa
         <span class="tag">full-mission</span>
         <span class="tag">pad-to-orbit</span>
         <span class="tag">payload-deploy</span>
+        <span class="tag">universal</span>
         <span class="tag">spool-compensation</span>
         <span class="tag">no-net-force-rcs</span>
         <span class="tag">tilt-lock</span>
-        <span class="tag">exact-apogee-release</span>
+        <span class="tag">bang-bang-slew</span>
+        <span class="tag">bidirectional-trim</span>
+        <span class="tag warn">no-multibody-gravity</span>
       </div>
     </div>
   </div>

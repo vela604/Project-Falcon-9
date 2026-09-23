@@ -451,13 +451,11 @@ function canTakeControlNow() {
   if (idx === state.activeBodyIndex) return false;
   const b = state.bodies[idx];
   if (!b) return false;
-  // Any body in the scene can be taken control of — including bodies
-  // with no members and no engines (released payloads, fairing halves,
-  // spent boosters). "Control" here just means "make it the active body
-  // so the trajectory overlay, telemetry, and figure panels switch to
-  // it". Actuators that don't exist for that body (RCS pods, gimbals,
-  // engines) simply do nothing when commanded — no special-casing
-  // required, and the user still gets to inspect the body's orbit.
+  // Any non-crashed body can be taken control of — including free
+  // payloads, fairing halves, ejected packages. "Control" here just
+  // means "become the active body so trajectory/telemetry/figure
+  // panels switch to it". Bodies without engines / RCS / gimbals
+  // simply do nothing when commanded.
   if (b.crashed) return false;
   return true;
 }

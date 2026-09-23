@@ -198,10 +198,14 @@ if (newCount !== prevCount &&
   // Same logic would apply to any future "auto-track the important
   // thing" event; today only emergency eject sets this flag.
   let autoFollowIdx = -1;
-  for (let i = prevCount; i < newCount; i++) {
-    const b = state.bodies[i];
-    if (b && b.emergencyEject) { autoFollowIdx = i; break; }
-  }
+for (let i = prevCount; i < newCount; i++) {
+  const b = state.bodies[i];
+  // Auto-follow emergency-eject packages (save-the-payload event)
+  // AND normal payload releases. Same rationale — the payload is the
+  // mission-critical object and leaving the camera on the spent stage
+  // means the user never sees it separate.
+  if (b && (b.emergencyEject || b.payloadBody)) { autoFollowIdx = i; break; }
+}
   if (autoFollowIdx >= 0 && typeof camera !== 'undefined') {
     camera.followBodyIndex = autoFollowIdx;
     camera.follow = true;
