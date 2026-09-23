@@ -3608,9 +3608,37 @@ function _leoTickV2(snapshot) {
     _leoStateV2.boosterIdx = -1;
     _leoStateV2.stageIdx = idx;
     if (typeof _hTick !== 'undefined' && typeof _hTick.start === 'function') {
-      try { _hTick.start(); } catch (e) { console.error('[leoInsertionV2] _hTick.start failed', e); }
-    }
-    console.log('[leoInsertionV2] started, phase ASCENT');
+  try { _hTick.start(); } catch (e) { console.error('[leoInsertionV2] _hTick.start failed', e); }
+}
+
+// ---- Boot-time contract validation ----
+// Every env and engine field the guide reads must be present. If any
+// is missing, that's a boot-pipeline bug — surface it loudly on the
+// first tick instead of silently substituting a fallback that hides
+// the problem for the rest of the mission.
+(function validateContracts() {
+  const env = Derivation.getEnv();
+  const requiredEnv = ['DT','GM_EARTH','EARTH_RADIUS','EARTH_OMEGA',
+                        'GIMBAL_MAX_DEG','GIMBAL_RATE_DEG_S'];
+  const missingEnv = requiredEnv.filter(k => !Number.isFinite(env[k]));
+  if (missingEnv.length) {
+    console.error('[leoInsertionV2] CONTRACT VIOLATION — env missing:',
+      missingEnv.join(', '), '— guide will misbehave');
+  }
+  const eng = body.engines && body.engines[0];
+  if (!eng) {
+    console.error('[leoInsertionV2] CONTRACT VIOLATION — no engine[0]');
+    return;
+  }
+  const requiredEng = ['Ve','maxMassFlowRate','startupDurationS','shutdownDurationS'];
+  const missingEng = requiredEng.filter(k => !Number.isFinite(eng[k]));
+  if (missingEng.length) {
+    console.error('[leoInsertionV2] CONTRACT VIOLATION — engine missing:',
+      missingEng.join(', '), '— guide will misbehave');
+  }
+})();
+
+console.log('[leoInsertionV2] started, phase ASCENT');
   }
 
   // ---------- Derive current state ----------
@@ -3619,8 +3647,8 @@ function _leoTickV2(snapshot) {
   _leoStateV2.lastAltKm = d.altitudeAGL / 1000;
 
   const env = Derivation.getEnv();
-  const dt = (env && Number.isFinite(env.DT)) ? env.DT : (1 / 80);
-  const M_d = d.massProps.M;
+const dt = env.DT;
+const M_d = d.massProps.M;
 
   // ---------- Predict next-tick state ----------
   let dNext = null;
@@ -3802,12 +3830,12 @@ function _leoTickV2(snapshot) {
       g_req_rad = (Math.abs(w1) <= Math.abs(w2)) ? w1 : w2;
     }
     let g_req_deg = g_req_rad * 180 / Math.PI;
-    const MAX_ANG = (env && Number.isFinite(env.GIMBAL_MAX_DEG)) ? env.GIMBAL_MAX_DEG : 20;
-    if (Math.abs(g_req_deg) > MAX_ANG) g_req_deg = Math.sign(g_req_deg) * MAX_ANG;
-    const R_req = (g_req_deg - g_N) / dt;
-    const MAX_RATE = (env && Number.isFinite(env.GIMBAL_RATE_DEG_S)) ? env.GIMBAL_RATE_DEG_S : 40;
-    const R_cmd = Math.max(-MAX_RATE, Math.min(MAX_RATE, R_req));
-    send(cmdSetGimbalRate(R_cmd));
+const MAX_ANG = env.GIMBAL_MAX_DEG;
+if (Math.abs(g_req_deg) > MAX_ANG) g_req_deg = Math.sign(g_req_deg) * MAX_ANG;
+const R_req = (g_req_deg - g_N) / dt;
+const MAX_RATE = env.GIMBAL_RATE_DEG_S;
+const R_cmd = Math.max(-MAX_RATE, Math.min(MAX_RATE, R_req));
+send(cmdSetGimbalRate(R_cmd));
 
     // ---- Osculating apogee / perigee ----
     const r_ap = Math.hypot(body.rx, body.ry);
@@ -3858,19 +3886,10 @@ function _leoTickV2(snapshot) {
 //   4. Compute apogee at THAT velocity — the state the vehicle
 //      will actually reach when thrust hits zero
 //   5. Cut when that predicted apogee >= target
-let spoolS = null;
-for (let ei = 0; ei < (body.engines || []).length; ei++) {
-  const e = body.engines[ei];
-  if (e && Number.isFinite(e.shutdownDurationS) && e.shutdownDurationS > 0) {
-    spoolS = e.shutdownDurationS;
-    break;
-  }
-}
-if (spoolS === null && typeof CONFIG !== 'undefined'
-    && Number.isFinite(CONFIG.ENGINE_SHUTDOWN_DURATION_S)) {
-  spoolS = CONFIG.ENGINE_SHUTDOWN_DURATION_S;
-}
-if (spoolS === null) spoolS = 2.0;
+// Engine contract: shutdownDurationS is a schema-declared field
+// on the thruster type. If it's missing, the build is broken —
+// don't silently substitute a default, that just hides the bug.
+const spoolS = body.engines[0].shutdownDurationS;
 
 let mdot_now_sb = 0;
 let maxMFR_sb = 0;
@@ -3880,7 +3899,7 @@ let maxMFR_sb = 0;
     maxMFR_sb = e.maxMassFlowRate;
   }
 });
-const ve_engine_sb = (body.engines && body.engines[0] && body.engines[0].Ve) || 3412;
+const ve_engine_sb = body.engines[0].Ve;
 const M_sb = dNext.massProps.M;
 
 // Physics ramp: mdot decreases at fixed rate (maxMFR / spoolS)
@@ -4054,13 +4073,10 @@ if (crossed) {
     _leoStateV2.coastTargetThetaInertial = thetaApo;
 
     const m_now = dNext.massProps.M;
-    const ve_engine = (body.engines && body.engines[0] && body.engines[0].Ve) || 3412;
-    const m_final = m_now / Math.exp(dv_needed / ve_engine);
-    const fuel_needed = Math.max(0, m_now - m_final);
-    let refMax_c = 0;
-    (body.engines || []).forEach(e => {
-      if (Number.isFinite(e.maxMassFlowRate) && e.maxMassFlowRate > refMax_c) refMax_c = e.maxMassFlowRate;
-    });
+const ve_engine = body.engines[0].Ve;
+const m_final = m_now / Math.exp(dv_needed / ve_engine);
+const fuel_needed = Math.max(0, m_now - m_final);
+const refMax_c = body.engines[0].maxMassFlowRate;
     const t_burn_ideal = refMax_c > 0 ? fuel_needed / refMax_c : 0;
     const t_burn_practical = t_burn_ideal * LEO_INSERTION_V2.COAST_BURN_MULTIPLIER;
     const t_coast = _hTimeToApogee(r_c, vr_c, vt_c, GM_c);
@@ -4176,19 +4192,9 @@ if (crossed) {
     const apogeePeak = (prevVr !== null && prevVr !== undefined
       && prevVr > 0 && vr_c <= 0);
 
-    let startupS = 3.0;
-if (body.engines && body.engines[0] &&
-  Number.isFinite(body.engines[0].startupDurationS)) {
-  startupS = body.engines[0].startupDurationS;
-}
-// Lead the burn start by an extra few seconds so the cutoff fires
-// BEFORE apogee crossing. Without the lead, CIRCULARIZE's spool
-// + burn window (~6-8s) runs past apogee, vr flips negative, and
-// DEPLOY_PAYLOAD enters past the peak — nearApogee fallback misses
-// and we wait a full orbit for the next sign flip. With the lead,
-// cutoff lands a few seconds shy of apogee, giving DEPLOY a clean
-// positive-vr entry.
-const CIRC_TRIGGER_LEAD_S = 2.0;
+   const startupS = body.engines[0].startupDurationS;
+// Lead the burn start by an extra few seconds...
+const CIRC_TRIGGER_LEAD_S = 3.0;
 const triggerWindowS = startupS + CIRC_TRIGGER_LEAD_S;
 
     if (t_rem <= triggerWindowS || apogeePeak) {
@@ -4267,19 +4273,7 @@ const triggerWindowS = startupS + CIRC_TRIGGER_LEAD_S;
 // (per-thruster-type field set in the fleet build, sourced from
 // componentLibrary.js). Falls back to CONFIG if the engine object
 // doesn't carry it (older cached fleets), then 2.0 as last resort.
-let spoolS = null;
-for (let ei = 0; ei < (body.engines || []).length; ei++) {
-  const e = body.engines[ei];
-  if (e && Number.isFinite(e.shutdownDurationS) && e.shutdownDurationS > 0) {
-    spoolS = e.shutdownDurationS;
-    break;
-  }
-}
-if (spoolS === null && typeof CONFIG !== 'undefined' &&
-  Number.isFinite(CONFIG.ENGINE_SHUTDOWN_DURATION_S)) {
-  spoolS = CONFIG.ENGINE_SHUTDOWN_DURATION_S;
-}
-if (spoolS === null) spoolS = 2.0;
+const spoolS = body.engines[0].shutdownDurationS;
 console.log('[leoInsertionV2] CIRCULARIZE using spoolS=' + spoolS.toFixed(2) +
   's (engine.shutdownDurationS=' +
   (body.engines && body.engines[0] ? body.engines[0].shutdownDurationS : 'none') + ')');
@@ -4292,7 +4286,7 @@ console.log('[leoInsertionV2] CIRCULARIZE using spoolS=' + spoolS.toFixed(2) +
 // negligible for this estimate, so M is treated as constant.
 let mdot_now = 0;
 (body.engines || []).forEach(e => { mdot_now += (e.massFlowRate || 0); });
-const ve_engine_c = (body.engines && body.engines[0] && body.engines[0].Ve) || 3412;
+const ve_engine_c = body.engines[0].Ve;
 const m_now_c = dNext.massProps.M;
 
 // Physics ramp rate = maxMassFlowRate / shutdownDurationS (kg/s²),
@@ -4377,11 +4371,11 @@ _leoStateV2.deployBangMid = 0;
         g_req_rad = (Math.abs(w1) <= Math.abs(w2)) ? w1 : w2;
       }
       let g_req_deg = g_req_rad * 180 / Math.PI;
-      const MAX_ANG = (env && Number.isFinite(env.GIMBAL_MAX_DEG)) ? env.GIMBAL_MAX_DEG : 20;
-      if (Math.abs(g_req_deg) > MAX_ANG) g_req_deg = Math.sign(g_req_deg) * MAX_ANG;
-      const R_req = (g_req_deg - g_N) / dt;
-      const MAX_RATE = (env && Number.isFinite(env.GIMBAL_RATE_DEG_S)) ? env.GIMBAL_RATE_DEG_S : 40;
-      const R_cmd = Math.max(-MAX_RATE, Math.min(MAX_RATE, R_req));
+const MAX_ANG = env.GIMBAL_MAX_DEG;
+if (Math.abs(g_req_deg) > MAX_ANG) g_req_deg = Math.sign(g_req_deg) * MAX_ANG;
+const R_req = (g_req_deg - g_N) / dt;
+const MAX_RATE = env.GIMBAL_RATE_DEG_S;
+const R_cmd = Math.max(-MAX_RATE, Math.min(MAX_RATE, R_req));
       send(cmdSetGimbalRate(R_cmd));
     }
     break;
@@ -4440,7 +4434,7 @@ case 'DEPLOY_PAYLOAD': {
   const currentTheta = body.theta;
   
   const thetaErr = _hWrapPi(thetaTarget - currentTheta);
-  const omegaRel = body.omega + (env.EARTH_OMEGA || 0);
+  const omegaRel = body.omega + env.EARTH_OMEGA;
   const elapsed = simT - _leoStateV2.phaseStart;
   
   // ---- Exit condition ----
