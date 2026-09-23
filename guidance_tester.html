@@ -438,7 +438,14 @@ let activePayloadRn = 1.0;
       ax: b._lastAccelX || 0, ay: b._lastAccelY || 0,
       height: b.height, width: b.width, dryMass: b.dryMass,
       fuelMass: b.fuelMass,
-      crashed: !!b.crashed, landed: !!b.landed,
+  // Per-member fuel array — parallel to `members[]`. Guidance's
+  // derivation.js reads this for its own mass model. Without it,
+  // derivation falls back to capacity-proportional split of the
+  // total — which gave a 2× I mismatch after fairing split in
+  // the sim, and same would happen here during STAGE_BURN /
+  // CIRCULARIZE.
+  memberFuel: Array.isArray(b.memberFuel) ? b.memberFuel.slice() : [],
+  crashed: !!b.crashed, landed: !!b.landed,
       isActive: i === state.activeBodyIndex,
       isDiscarded: !!b.isDiscarded, settled: !!b.settled,
       emergencyEject: !!b.emergencyEject,
@@ -450,10 +457,18 @@ let activePayloadRn = 1.0;
       engines: (b.engines || []).map(e => ({
         id: e.id, angleDeg: e.angleDeg, x: e.x,
         isCenter: e.isCenter, gimbal: e.gimbal, Ve: e.Ve,
-        maxMassFlowRate: e.maxMassFlowRate,
-        massFlowRate: e.massFlowRate, currentF: e.currentF,
-        gimbalDeg: e.gimbalDeg,
-        targetGimbalRateDegS: e.targetGimbalRateDegS,
+          maxMassFlowRate: e.maxMassFlowRate,
+    massFlowRate: e.massFlowRate, currentF: e.currentF,
+    gimbalDeg: e.gimbalDeg,
+    targetGimbalRateDegS: e.targetGimbalRateDegS,
+    // Spool transients — v2's STAGE_BURN predictive cutoff and
+    // CIRCULARIZE spool-Δv compensation read these from the engine
+    // object. Without them, the guide falls back to CONFIG's 2.0s
+    // default, which happens to be correct for Merlin but not for
+    // any other thruster type.
+    startupDurationS: e.startupDurationS,
+    shutdownDurationS: e.shutdownDurationS,
+  })),
       })),
       rcsCmd: b.rcsCmd || null,
       rcsDuty: b.rcsDuty || null,

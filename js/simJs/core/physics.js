@@ -1698,23 +1698,47 @@ if (Array.isArray(body.memberFuel) && body.memberFuel.length) {
       const freshImpact = !wasGrounded && (noseStrike || descentSpeed > 0.3 || hSpeed > 0.3);
       
       if (freshImpact) {
-        const bottomMember = (body.members && body.members[0]) ? body.members[0] : null;
-        const recovery = bottomMember ?
-          (bottomMember.hasRecovery === false ? null :
-            ((typeof getComponentType === 'function') ? getComponentType(bottomMember.recoveryTypeId) : null)) :
-          CONFIG.RECOVERY_TYPE;
-        const canLandOnLegs = !!(recovery && recovery.capabilities && recovery.capabilities.deploysOnVehicle);
-        let landedOk = false;
-        if (canLandOnLegs && !noseStrike) {
-          const minDeploy = (recovery.frame && recovery.frame.landingMinDeploy !== undefined) ?
-            recovery.frame.landingMinDeploy : CONFIG.LANDING_MIN_LEG_DEPLOY;
-          const bodyLegsProgress = (body.legs && Number.isFinite(body.legs.progress)) ? body.legs.progress : 0;
-          const legsReady = bodyLegsProgress >= minDeploy;
-          const speedOk = descentSpeed <= CONFIG.LANDING_MAX_VSPEED && hSpeed <= CONFIG.LANDING_MAX_HSPEED;
-          const tiltOk = tiltDeg <= CONFIG.LANDING_MAX_TILT_DEG;
-          const rateOk = Math.abs(body.omega) <= CONFIG.LANDING_MAX_OMEGA;
-          landedOk = legsReady && speedOk && tiltOk && rateOk;
-        }
+  // Chute-recovery bodies (fairing halves, emergency-eject packages)
+  // don't have legs and are recovered by splashdown. Their ground
+  // contact must NOT be evaluated against the active stack's leg
+  // hardware — previously `bottomMember` was null for a fairing half
+  // (empty members[]), so the fallback pulled the ACTIVE stack's
+  // recovery type, `legsReady` was always false (fairing has no legs),
+  // and every chute-cushioned landing was flagged as a crash. Now
+  // chute-deployed bodies are evaluated on their own soft-landing
+  // envelope: descent ≤ 12 m/s (canopy terminal velocity), lateral
+  // ≤ 6 m/s (wind drift), tilt ≤ 45° (drogue-swing angle), and
+  // spin ≤ 0.5 rad/s.
+  const chuteDeployed = !!(body.chute && body.chute.deployed &&
+    Number.isFinite(body.chute.progress) && body.chute.progress > 0.5);
+  let landedOk = false;
+  
+  if (chuteDeployed) {
+    const speedOk = descentSpeed <= 12 && hSpeed <= 6;
+    const tiltOk = tiltDeg <= 45;
+    const rateOk = Math.abs(body.omega) <= 0.5;
+    landedOk = speedOk && tiltOk && rateOk;
+  } else if (!noseStrike) {
+    const bottomMember = (body.members && body.members[0]) ? body.members[0] : null;
+    const recovery = bottomMember ?
+      (bottomMember.hasRecovery === false ? null :
+        ((typeof getComponentType === 'function') ? getComponentType(bottomMember.recoveryTypeId) : null)) :
+      null;
+    const canLandOnLegs = !!(recovery && recovery.capabilities && recovery.capabilities.deploysOnVehicle);
+    if (canLandOnLegs) {
+      const minDeploy = (recovery.frame && recovery.frame.landingMinDeploy !== undefined) ?
+        recovery.frame.landingMinDeploy : CONFIG.LANDING_MIN_LEG_DEPLOY;
+      const bodyLegsProgress = (body.legs && Number.isFinite(body.legs.progress)) ? body.legs.progress : 0;
+      const legsReady = bodyLegsProgress >= minDeploy;
+      const speedOk = descentSpeed <= CONFIG.LANDING_MAX_VSPEED && hSpeed <= CONFIG.LANDING_MAX_HSPEED;
+      const tiltOk = tiltDeg <= CONFIG.LANDING_MAX_TILT_DEG;
+      const rateOk = Math.abs(body.omega) <= CONFIG.LANDING_MAX_OMEGA;
+      landedOk = legsReady && speedOk && tiltOk && rateOk;
+    }
+    // else: no legs and no chute — a bare released payload, spent
+    // fairing without recovery hardware, etc. Free-fall impact =
+    // crash. `landedOk` stays false.
+  }
         
         const M = geom.M,
           I = Math.max(1e-6, geom.I);

@@ -366,7 +366,28 @@
   
   <!-- 1. Data layer + config -->
   <script src="js/componentLibrary.js"></script>
-  <script src="js/customDesign.js"></script>
+<script>
+  // Cache the component library on the main thread — the physics worker
+  // and FF worker each have their own copy; this one serves the panels
+  // and telemetry. Same rationale as the tester page's cache patch.
+  (function() {
+    var _cache = null;
+    var _orig = loadComponentLibrary;
+    loadComponentLibrary = function() {
+      if (_cache) return _cache;
+      _cache = _orig();
+      return _cache;
+    };
+    if (typeof saveCustomComponentTypes === 'function') {
+      var _origSave = saveCustomComponentTypes;
+      saveCustomComponentTypes = function(types) {
+        _origSave(types);
+        _cache = null;
+      };
+    }
+  })();
+</script>
+<script src="js/customDesign.js"></script>
   <script src="js/fleet.js"></script>
   <script src="js/config.js"></script>
   
