@@ -2085,16 +2085,27 @@ PAYLOAD_EJECT_KICK_MPS:      3.0    <span class="cmt">// deploy pre-compensation
       bidirectional trim, and perigee is closed by CIRCULARIZE's
       spool and payload-kick pre-compensation. Any LEO altitude
       within the vehicle's fuel reach is achievable.</p>
-    <p>After CIRCULARIZE, the vehicle re-slews to the NEW
+        <p>After CIRCULARIZE, the vehicle re-slews to the NEW
       apogee direction (post-burn orbit) before the payload
-      releases — the burn's 3 s early start shifts apogee from
-      the pre-burn estimate, and ejecting on the stale direction
-      would leave the payload slightly misaligned with the
-      orbital velocity vector. The realign is exact: engine
-      shutdown spool completes first, then the apogee direction
-      is computed fresh from the current state.</p>
-  </div>
-</div>
+      releases — the burn's 3 s early start shifts apogee from the
+      pre-burn estimate, and ejecting on the stale direction would
+      leave the payload slightly misaligned with the orbital
+      velocity vector. The realign is exact: engine shutdown spool
+      completes first, then the apogee direction is computed fresh
+      from the current state.</p>
+    <p><strong>Note on pre-flight tuning.</strong> Engine
+      properties (Ve, mass flow, spool durations) and every burn
+      profile (Δv, T_burn, spool Δv, apogee direction, target θ)
+      are read at runtime from the active fleet record and the
+      current orbit — those auto-adjust to any stack. The
+      hand-picked control constants (ascent phase timings and
+      damping, cutoff margins, coast attitude KP/KD, slew
+      tolerances) are calibrated for the F9-class reference stack
+      and would need a pass of pre-flight adjustment for a
+      fundamentally different vehicle, same as any real launch
+      vehicle's autopilot before a new mission profile.</p>
+    </div>
+    </div>
       <div class="exp-row">
   <div class="exp-label">Drawbacks</div>
   <div class="exp-value">
