@@ -3497,13 +3497,7 @@ STAGE_BURN_LOOKAHEAD_TICKS: 3,
   COAST_ROTATE_OMEGA_TOL: 0.02,
   COAST_ROTATE_TIMEOUT_S: 240,
   
-  // Rate-damping term for COAST_HOLD_2's attitude hold. The base
-  // COASTnAoADAMP formula is proportional-only (effective per-radian
-  // gain ≈ 57 via the deg→rad conversion, ζ ≈ 0.05 from the one-tick
-  // α-lookahead alone) — an essentially undamped oscillator. Adding
-  // -I·K·ω_body with K=10 brings ζ to ~0.7, which stops the visible
-  // oscillation without changing the equilibrium.
-  COAST2_DAMP_RATE: 10,
+
   
   // Burn trigger lead: fire when time-remaining-to-apogee ≤
   // startupDurationS + this. The startup duration is the hard floor
@@ -4245,26 +4239,31 @@ const triggerWindowS = startupS + LEO_INSERTION_V2.CIRC_TRIGGER_LEAD_S;
       send(cmdRcsDuty(null, idx));
       _leoStateV2.phase = 'CIRCULARIZE';
       _leoStateV2.phaseStart = simT;
-      console.log('[leoInsertionV2] burn trigger — ' +
-        (apogeePeak ? 'apogee peak (vr sign flip)'
-          : 't_rem=' + t_rem.toFixed(2) + 's ≤ ' + triggerWindowS.toFixed(2) + 's') +
-        ' — CIRCULARIZE');
-      break;
+          console.log('[leoInsertionV2] burn trigger — ' +
+      (apogeePeak ? 'apogee peak detected' : 't_rem=' + t_rem.toFixed(2) +
+        's ≤ T_burn_practical=' + _leoStateV2.coastTBurnPractical.toFixed(2) + 's') +
+      ' — CIRCULARIZE');
+    break;
     }
-
-    // Attitude hold via net-zero-force RCS.
+    
+    // Attitude hold — PD at fixed inertial θ (coastTargetThetaInertial,
+    // the apogee-peak velocity direction computed at RCS_BOOST exit).
+    // Same design as COAST_HOLD_2 / DONE / CIRCULARIZE. α-based AoA
+    // damping was wrong here: the target is a fixed inertial direction,
+    // not the current (rotating) velocity direction — the nose must
+    // stay pointed along the future apogee direction, not chase where
+    // the vehicle is currently headed.
     if (dNext && dNext.massProps && _leoStateV2.coastTargetThetaInertial !== null) {
       const I_next = dNext.massProps.I;
       const thetaErr = _hWrapPi(body.theta - _leoStateV2.coastTargetThetaInertial);
-      const omegaRel = body.omega + (env.EARTH_OMEGA || 0);
-      const tau_desired = -I_next * (LEO_INSERTION_V2.CIRC_ATT_KP * thetaErr
-                                   + LEO_INSERTION_V2.CIRC_ATT_KD * omegaRel);
+      const tau_desired = -I_next * (LEO_INSERTION_V2.CIRC_ATT_KP * thetaErr +
+        LEO_INSERTION_V2.CIRC_ATT_KD * body.omega);
       const result = GuideRCS.targetTorqueRcsNoNetForce(snapshot, tau_desired, idx);
       if (result && result.fires.length) send(cmdRcsDuty(result.duties, idx));
       else send(cmdRcsDuty(null, idx));
     }
     break;
-  }
+    }
 
   // =========================================================
   // CIRCULARIZE — full throttle, gimbal PD-hold at fixed inertial θ.
@@ -4524,11 +4523,9 @@ case 'COAST_ROTATE_2': {
 }
   
 // =========================================================
-// COAST_HOLD_2 — same COASTnAoADAMP controller as pre-circularize
-// COAST_HOLD: AoA damping drives the nose to the velocity direction
-// (prograde). AoA is velocity-relative by definition, so the target
-// rotates with the orbit naturally — no fixed inertial θ, no drift.
-// Eject on vr sign flip (apogee crossing).
+// COAST_HOLD_2 — PD hold at coast2TargetThetaInertial (the apogee-peak
+// velocity direction, computed at CIRCULARIZE end). Inertial-ω damping,
+// same design as CIRCULARIZE's attitude hold. Eject on vr sign flip.
 // =========================================================
 case 'COAST_HOLD_2': {
   send(cmdSetAllThrottle(0));
@@ -4553,48 +4550,37 @@ case 'COAST_HOLD_2': {
     break;
   }
 
-  // Attitude hold — same formula as ascent COASTnAoADAMP and
-  // pre-circularize COAST_HOLD.
-  if (dNext && dNext.massProps) {
+  // Attitude hold — PD at fixed inertial θ, inertial ω damping.
+  if (dNext && dNext.massProps && _leoStateV2.coast2TargetThetaInertial !== null) {
     const I_next = dNext.massProps.I;
-    const gain = (LEO_INSERTION_V2.ASCENT && Number.isFinite(LEO_INSERTION_V2.ASCENT.COAST_DAMP_GAIN))
-      ? LEO_INSERTION_V2.ASCENT.COAST_DAMP_GAIN : 16;
-    const kd = (LEO_INSERTION_V2.ASCENT && Number.isFinite(LEO_INSERTION_V2.ASCENT.COAST_DAMP_K))
-      ? LEO_INSERTION_V2.ASCENT.COAST_DAMP_K : 4.0;
-        const tau_desired = (-I_next * gain * dNext.alphaDeg) / (kd * kd) -
-      I_next * LEO_INSERTION_V2.COAST2_DAMP_RATE * body.omega;
-    
+    const thetaErr = _hWrapPi(body.theta - _leoStateV2.coast2TargetThetaInertial);
+    const tau_desired = -I_next * (LEO_INSERTION_V2.CIRC_ATT_KP * thetaErr
+                                 + LEO_INSERTION_V2.CIRC_ATT_KD * body.omega);
     const result = GuideRCS.targetTorqueRcsNoNetForce(snapshot, tau_desired, idx);
     if (result && result.fires.length) send(cmdRcsDuty(result.duties, idx));
     else send(cmdRcsDuty(null, idx));
-    }
-    break;
-    }
-
+  }
+  break;
+}
 
 // =========================================================
-// DONE — engine off, orbit ballistic. Same COASTnAoADAMP attitude
-// hold as COAST_HOLD_2 (AoA damping keeps the nose prograde as the
-// orbit progresses — naturally tracks the rotating target).
+// DONE — engine off, orbit ballistic. Same PD hold as COAST_HOLD_2:
+// fixed inertial θ, inertial ω damping.
 // =========================================================
 case 'DONE': {
   send(cmdSetAllThrottle(0));
   send(cmdSetGimbalRate(0));
   
-  if (dNext && dNext.massProps) {
-  const I_next = dNext.massProps.I;
-  const gain = (LEO_INSERTION_V2.ASCENT && Number.isFinite(LEO_INSERTION_V2.ASCENT.COAST_DAMP_GAIN)) ?
-    LEO_INSERTION_V2.ASCENT.COAST_DAMP_GAIN : 16;
-  const kd = (LEO_INSERTION_V2.ASCENT && Number.isFinite(LEO_INSERTION_V2.ASCENT.COAST_DAMP_K)) ?
-    LEO_INSERTION_V2.ASCENT.COAST_DAMP_K : 4.0;
-  const tau_desired = (-I_next * gain * dNext.alphaDeg) / (kd * kd) -
-    I_next * LEO_INSERTION_V2.COAST2_DAMP_RATE * body.omega;
-  
-  const result = GuideRCS.targetTorqueRcsNoNetForce(snapshot, tau_desired, idx);
-  if (result && result.fires.length) send(cmdRcsDuty(result.duties, idx));
-  else send(cmdRcsDuty(null, idx));
-}
-break;
+  if (dNext && dNext.massProps && _leoStateV2.coast2TargetThetaInertial !== null) {
+    const I_next = dNext.massProps.I;
+    const thetaErr = _hWrapPi(body.theta - _leoStateV2.coast2TargetThetaInertial);
+    const tau_desired = -I_next * (LEO_INSERTION_V2.CIRC_ATT_KP * thetaErr +
+      LEO_INSERTION_V2.CIRC_ATT_KD * body.omega);
+    const result = GuideRCS.targetTorqueRcsNoNetForce(snapshot, tau_desired, idx);
+    if (result && result.fires.length) send(cmdRcsDuty(result.duties, idx));
+    else send(cmdRcsDuty(null, idx));
+  }
+  break;
 }
 
 
