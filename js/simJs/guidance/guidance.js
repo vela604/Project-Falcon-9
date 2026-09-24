@@ -4165,38 +4165,45 @@ const refMax_c = body.engines[0].maxMassFlowRate;
     }
 
     const targetThetaRad = _leoStateV2.coastTargetThetaInertial;
-    if (targetThetaRad === null || targetThetaRad === undefined) {
-      send(cmdRcsDuty(null, idx));
-      _leoStateV2.phase = 'COAST_HOLD';
-      _leoStateV2.phaseStart = simT;
-      break;
-    }
-    const targetThetaDeg = targetThetaRad * 180 / Math.PI;
-    const currentThetaDeg = body.theta * 180 / Math.PI;
+if (targetThetaRad === null || targetThetaRad === undefined) {
+  send(cmdRcsDuty(null, idx));
+  _leoStateV2.phase = 'COAST_HOLD';
+  _leoStateV2.phaseStart = simT;
+  break;
+}
 
-    if (_leoStateV2.coastRotateStartTilt === null) {
-      _leoStateV2.coastRotateStartTilt = currentThetaDeg;
-      _leoStateV2.coastRotateMid = (currentThetaDeg + targetThetaDeg) / 2;
-    }
-    const startDeg = _leoStateV2.coastRotateStartTilt;
-    const midDeg = _leoStateV2.coastRotateMid;
-    const err = targetThetaDeg - currentThetaDeg;
-    const omegaRel = body.omega + (env.EARTH_OMEGA || 0);
+// WRAPAROUND-SAFE bang-bang — same fix as COAST_ROTATE_2 above.
+// Pre-CIRCULARIZE never triggered this in practice (body.theta and
+// target both far from ±π), but the latent bug was identical.
+if (_leoStateV2.coastRotateStartTilt === null) {
+  _leoStateV2.coastRotateStartTilt = body.theta;
+  _leoStateV2.coastRotateMid = _hWrapPi(targetThetaRad - body.theta);
+}
+const startThetaRad = _leoStateV2.coastRotateStartTilt;
+const deltaTotalRad = _leoStateV2.coastRotateMid;
 
-    if (Math.abs(err) < LEO_INSERTION_V2.COAST_ROTATE_TOL_DEG &&
-        Math.abs(omegaRel) < LEO_INSERTION_V2.COAST_ROTATE_OMEGA_TOL) {
-      send(cmdRcsDuty(null, idx));
-      _leoStateV2.phase = 'COAST_HOLD';
-      _leoStateV2.phaseStart = simT;
-      console.log('[leoInsertionV2] COAST_ROTATE done at inertial θ',
-        currentThetaDeg.toFixed(2), '° — COAST_HOLD');
-      break;
-    }
+const errRad = _hWrapPi(targetThetaRad - body.theta);
+const omegaRel = body.omega + (env.EARTH_OMEGA || 0);
 
-      const dirSign = Math.sign(targetThetaDeg - startDeg) || 1;
-  const crossed = (startDeg - midDeg) * (currentThetaDeg - midDeg) <= 0;
-  const phaseSign = crossed ? -1 : 1;
-  const tauCmd = phaseSign * dirSign * 1e9;
+if (Math.abs(errRad) < LEO_INSERTION_V2.COAST_ROTATE_TOL_DEG * Math.PI / 180 &&
+  Math.abs(omegaRel) < LEO_INSERTION_V2.COAST_ROTATE_OMEGA_TOL) {
+  send(cmdRcsDuty(null, idx));
+  _leoStateV2.phase = 'COAST_HOLD';
+  _leoStateV2.phaseStart = simT;
+  console.log('[leoInsertionV2] COAST_ROTATE done at θ=' +
+    (body.theta * 180 / Math.PI).toFixed(2) + '° (tgt=' +
+    (targetThetaRad * 180 / Math.PI).toFixed(2) + '°) — COAST_HOLD');
+  break;
+}
+
+const dirSign = Math.sign(deltaTotalRad) || 1;
+const currentDeltaRad = body.theta - startThetaRad;
+const midDeltaRad = deltaTotalRad / 2;
+const crossed = (dirSign > 0) ?
+  (currentDeltaRad >= midDeltaRad) :
+  (currentDeltaRad <= midDeltaRad);
+const phaseSign = crossed ? -1 : 1;
+const tauCmd = phaseSign * dirSign * 1e9;
   
   // Net-zero-force distributor — this is a coast-phase slew on a
   // ballistic arc; the greedy distributor's unbalanced fires would
@@ -4362,51 +4369,18 @@ if (v_err <= cutoffThreshold) {
   _leoStateV2.circAchieved = true;
   send(cmdSetAllThrottle(0));
   send(cmdSetGimbalRate(0));
-  
-  // ---- Compute coast2TargetThetaInertial at CIRCULARIZE end ----
-  // Same computation as the RCS_BOOST plan block (which computed
-  // coastTargetThetaInertial for COAST_ROTATE): eccentricity vector →
-  // apogee point → velocity direction there, as inertial θ. The burn
-  // just changed the orbit, so this differs from coastTargetThetaInertial.
-  {
-    const r_c = Math.hypot(body.rx, body.ry);
-    const ux_c = body.rx / r_c, uy_c = body.ry / r_c;
-    const ex_c = body.ry / r_c, ey_c = -body.rx / r_c;
-    const vr_c = body.vx * ux_c + body.vy * uy_c;
-    const vt_c = body.vx * ex_c + body.vy * ey_c;
-    const GM_c = env.GM_EARTH;
-    const v2_c = body.vx * body.vx + body.vy * body.vy;
-    const rv_c = body.rx * body.vx + body.ry * body.vy;
-    const ex_ecc = ((v2_c - GM_c / r_c) * body.rx - rv_c * body.vx) / GM_c;
-    const ey_ecc = ((v2_c - GM_c / r_c) * body.ry - rv_c * body.vy) / GM_c;
-    const e_mag = Math.hypot(ex_ecc, ey_ecc);
-    let thetaApo;
-    if (e_mag > 1e-6) {
-      const phiApo = Math.atan2(-ex_ecc, -ey_ecc);
-      const E_c = 0.5 * (vr_c * vr_c + vt_c * vt_c) - GM_c / r_c;
-      const a_c = E_c < 0 ? -GM_c / (2 * E_c) : r_c;
-      const r_apo = a_c * (1 + e_mag);
-      const rx_apo = r_apo * Math.sin(phiApo);
-      const ry_apo = r_apo * Math.cos(phiApo);
-      const sDir = (vt_c >= 0) ? 1 : -1;
-      thetaApo = Math.atan2(-sDir * ry_apo, -sDir * rx_apo);
-    } else {
-      // Near-circular: no meaningful apogee direction; use current
-      // velocity direction as a sensible fallback.
-      const speed_c = Math.hypot(body.vx, body.vy);
-      thetaApo = (speed_c > 1) ? Math.atan2(-body.vx, body.vy) : body.theta;
-    }
-    _leoStateV2.coast2TargetThetaInertial = thetaApo;
-    console.log('[leoInsertionV2] CIRCULARIZE complete — v=' + speed.toFixed(1) +
-      ' | coast2Target=' + (thetaApo * 180 / Math.PI).toFixed(2) + '°' +
-      ' (e=' + e_mag.toExponential(3) + ') → COAST_ROTATE_2');
-  }
-  
+  // Target computation deferred to COAST_ROTATE_2 — it waits for the
+  // engine shutdown spool to complete first, then computes the
+  // eccentricity vector from the FINAL (post-spool) state. No
+  // propagation, no linear-approximation error.
   _leoStateV2.phase = 'COAST_ROTATE_2';
   _leoStateV2.phaseStart = simT;
+  _leoStateV2.coast2TargetThetaInertial = null;
   _leoStateV2.coast2RotateStartTilt = null;
   _leoStateV2.coast2RotateMid = null;
   _leoStateV2._prevVr2 = null;
+  console.log('[leoInsertionV2] CIRCULARIZE complete — v=' + speed.toFixed(1) +
+    ' → COAST_ROTATE_2 (wait for spool, then compute target)');
   break;
 }
 
@@ -4470,6 +4444,19 @@ case 'COAST_ROTATE_2': {
   send(cmdSetAllThrottle(0));
   send(cmdSetGimbalRate(0));
   
+  // ---- Wait for engine shutdown spool to fully complete ----
+  // During the spool, residual prograde thrust is still changing the
+  // orbit; computing the target before spool finishes gives a stale
+  // (pre-spool) orbit. Wait until every engine's massFlowRate is
+  // effectively zero — the orbit is then fixed (two-body) and the
+  // eccentricity-vector computation is exact, no propagation needed.
+  let stillFiring = false;
+  (body.engines || []).forEach(e => { if ((e.massFlowRate || 0) > 1) stillFiring = true; });
+  if (stillFiring) {
+    send(cmdRcsDuty(null, idx));
+    break;
+  }
+  
   const elapsed = simT - _leoStateV2.phaseStart;
   if (elapsed >= LEO_INSERTION_V2.COAST_ROTATE_TIMEOUT_S) {
     send(cmdRcsDuty(null, idx));
@@ -4480,41 +4467,81 @@ case 'COAST_ROTATE_2': {
     break;
   }
   
+  // ---- Compute coast2TargetThetaInertial from CURRENT (post-spool) state ----
+  // Same osculating-element math as telemetry's apogee readout, but with
+  // the eccentricity VECTOR (need direction, not just magnitude):
+  //   ex = ((v² − μ/r)·rx − (r·v)·vx) / μ
+  //   ey = ((v² − μ/r)·ry − (r·v)·vy) / μ
+  // Apogee direction = −e. Nose θ there points along east-tangential
+  // (prograde, since vr = 0 at apogee).
+  if (_leoStateV2.coast2TargetThetaInertial === null) {
+    const GM_c = env.GM_EARTH;
+    const r_c = Math.hypot(body.rx, body.ry);
+    const v2_c = body.vx * body.vx + body.vy * body.vy;
+    const rv_c = body.rx * body.vx + body.ry * body.vy;
+    const ex_ecc = ((v2_c - GM_c / r_c) * body.rx - rv_c * body.vx) / GM_c;
+    const ey_ecc = ((v2_c - GM_c / r_c) * body.ry - rv_c * body.vy) / GM_c;
+    const e_mag = Math.hypot(ex_ecc, ey_ecc);
+    let thetaApo;
+    if (e_mag > 1e-6) {
+      const phiApo = Math.atan2(-ex_ecc, -ey_ecc);
+      const E_c = 0.5 * v2_c - GM_c / r_c;
+      const a_c = (E_c < 0) ? -GM_c / (2 * E_c) : r_c;
+      const r_apo = a_c * (1 + e_mag);
+      const rx_apo = r_apo * Math.sin(phiApo);
+      const ry_apo = r_apo * Math.cos(phiApo);
+      const vt_c = body.vx * (body.ry / r_c) + body.vy * (-body.rx / r_c);
+      const sDir = (vt_c >= 0) ? 1 : -1;
+      thetaApo = Math.atan2(-sDir * ry_apo, -sDir * rx_apo);
+    } else {
+      const speed_c = Math.hypot(body.vx, body.vy);
+      thetaApo = (speed_c > 1) ? Math.atan2(-body.vx, body.vy) : body.theta;
+    }
+    _leoStateV2.coast2TargetThetaInertial = thetaApo;
+    console.log('[leoInsertionV2] COAST_ROTATE_2 target (post-spool): ' +
+      (thetaApo * 180 / Math.PI).toFixed(4) + '°' +
+      ' | e=' + e_mag.toExponential(4) +
+      ' | alt_now=' + ((r_c - env.EARTH_RADIUS) / 1000).toFixed(3) + ' km' +
+      ' | alt_apo=' + ((r_c * (1 + e_mag) - env.EARTH_RADIUS) / 1000).toFixed(3) + ' km');
+  }
+  
   const targetThetaRad = _leoStateV2.coast2TargetThetaInertial;
-  if (targetThetaRad === null || targetThetaRad === undefined) {
-    send(cmdRcsDuty(null, idx));
-    _leoStateV2.phase = 'COAST_HOLD_2';
-    _leoStateV2.phaseStart = simT;
-    _leoStateV2._prevVr2 = null;
-    break;
-  }
-  const targetThetaDeg = targetThetaRad * 180 / Math.PI;
-  const currentThetaDeg = body.theta * 180 / Math.PI;
   
+  // WRAPAROUND-SAFE bang-bang. targetThetaRad is atan2 output in
+  // [-π, π]; body.theta is unwrapped and can be at any magnitude.
+  // Raw subtraction across the ±π seam picks the LONG way around.
+  // Fix: lock the shortest-path delta ONCE on entry (via _hWrapPi),
+  // and do all progress tracking in unwrapped-θ space.
   if (_leoStateV2.coast2RotateStartTilt === null) {
-    _leoStateV2.coast2RotateStartTilt = currentThetaDeg;
-    _leoStateV2.coast2RotateMid = (currentThetaDeg + targetThetaDeg) / 2;
+    _leoStateV2.coast2RotateStartTilt = body.theta;
+    _leoStateV2.coast2RotateMid = _hWrapPi(targetThetaRad - body.theta);
   }
-  const startDeg = _leoStateV2.coast2RotateStartTilt;
-  const midDeg = _leoStateV2.coast2RotateMid;
-  const err = targetThetaDeg - currentThetaDeg;
-  const omegaRel = body.omega + (env.EARTH_OMEGA || 0);
-  
-  if (Math.abs(err) < LEO_INSERTION_V2.COAST_ROTATE_TOL_DEG &&
-    Math.abs(omegaRel) < LEO_INSERTION_V2.COAST_ROTATE_OMEGA_TOL) {
-    send(cmdRcsDuty(null, idx));
-    _leoStateV2.phase = 'COAST_HOLD_2';
-    _leoStateV2.phaseStart = simT;
-    _leoStateV2._prevVr2 = null;
-    console.log('[leoInsertionV2] COAST_ROTATE_2 done at inertial θ ' +
-      currentThetaDeg.toFixed(2) + '° — COAST_HOLD_2');
-    break;
-  }
-  
-  const dirSign = Math.sign(targetThetaDeg - startDeg) || 1;
-  const crossed = (startDeg - midDeg) * (currentThetaDeg - midDeg) <= 0;
-  const phaseSign = crossed ? -1 : 1;
-  const tauCmd = phaseSign * dirSign * 1e9;
+const startThetaRad = _leoStateV2.coast2RotateStartTilt;
+const deltaTotalRad = _leoStateV2.coast2RotateMid;
+
+const errRad = _hWrapPi(targetThetaRad - body.theta);
+const omegaRel = body.omega + (env.EARTH_OMEGA || 0);
+
+if (Math.abs(errRad) < LEO_INSERTION_V2.COAST_ROTATE_TOL_DEG * Math.PI / 180 &&
+  Math.abs(omegaRel) < LEO_INSERTION_V2.COAST_ROTATE_OMEGA_TOL) {
+  send(cmdRcsDuty(null, idx));
+  _leoStateV2.phase = 'COAST_HOLD_2';
+  _leoStateV2.phaseStart = simT;
+  _leoStateV2._prevVr2 = null;
+  console.log('[leoInsertionV2] COAST_ROTATE_2 done at θ=' +
+    (body.theta * 180 / Math.PI).toFixed(2) + '° (tgt=' +
+    (targetThetaRad * 180 / Math.PI).toFixed(2) + '°) — COAST_HOLD_2');
+  break;
+}
+
+const dirSign = Math.sign(deltaTotalRad) || 1;
+const currentDeltaRad = body.theta - startThetaRad;
+const midDeltaRad = deltaTotalRad / 2;
+const crossed = (dirSign > 0) ?
+  (currentDeltaRad >= midDeltaRad) :
+  (currentDeltaRad <= midDeltaRad);
+const phaseSign = crossed ? -1 : 1;
+const tauCmd = phaseSign * dirSign * 1e9;
   
   const result = GuideRCS.targetTorqueRcsNoNetForce(snapshot, tauCmd, idx);
   if (result && result.fires.length) send(cmdRcsDuty(result.duties, idx));
