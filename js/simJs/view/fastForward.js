@@ -16,19 +16,20 @@ const FastForward = (function () {
   'use strict';
 
   let _state = {
-    open: false,
-    running: false,
-    holdingState: false,
-    cancel: false,
-    durationS: 60,
-    pendingResult: null,    // { fullState, guidanceState }
-    ffWorker: null,
-    waitingForResume: false,
-    pausedByDialog: false,
-    graphAutoOpened: false,
-    _pendingPhysicsState: null,
-    _pendingGuidanceState: null,
-  };
+  open: false,
+  running: false,
+  holdingState: false,
+  cancel: false,
+  durationS: 60,
+  pendingResult: null, // { fullState, guidanceState }
+  ffWorker: null,
+  waitingForResume: false,
+  pausedByDialog: false,
+  graphAutoOpened: false,
+  _pendingPhysicsState: null,
+  _pendingGuidanceState: null,
+  _pendingAck: null, // resolves when physics acks replaceState
+};
 
   const $ = (id) => document.getElementById(id);
 
@@ -170,12 +171,29 @@ try {
       return;
     }
 
-    const stackData = (typeof _collectStackDataForGuidance === 'function')
-      ? _collectStackDataForGuidance() : null;
-    const guideSel = document.getElementById('guideSelect');
-    const activeGuide = guideSel ? guideSel.value : null;
+    const stackData = (typeof _collectStackDataForGuidance === 'function') ?
+  _collectStackDataForGuidance() : null;
+const guideSel = document.getElementById('guideSelect');
+const activeGuide = guideSel ? guideSel.value : null;
 
-    const w = new Worker('js/simJs/threads/fastforward.worker.js');
+// Environment state — physics worker receives these as separate
+// setWind / setAtmosphere / setSloshEnabled messages; the FF worker
+// does not, so without passing them here it would run with defaults
+// (wind off, atmosphere on, slosh on, IMU off) regardless of what
+// the user actually set. That mismatch is what causes FF to drift
+// from normal play.
+const envState = {
+  wind: {
+    enabled: !!(typeof wind !== 'undefined' && wind.enabled),
+    speed: (typeof wind !== 'undefined' && Number.isFinite(wind.speed)) ? wind.speed : 0,
+    directionDeg: (typeof wind !== 'undefined' && Number.isFinite(wind.directionDeg)) ? wind.directionDeg : 0,
+  },
+  atmosphereEnabled: !!(typeof atmosphereEnabled !== 'undefined' && atmosphereEnabled),
+  sloshEnabled: !!(typeof sloshEnabled !== 'undefined' && sloshEnabled),
+  imuEnabled: !!(typeof imuEnabled !== 'undefined' && imuEnabled),
+};
+
+const w = new Worker('js/simJs/threads/fastforward.worker.js');
     _state.ffWorker = w;
     const _baseSimTime = physData.simTime;
 
@@ -202,15 +220,37 @@ try {
     }
   }
 } else if (m.type === 'done') {
-        _state.pendingResult = m;
-        _state.running = false;
-        try { w.terminate(); } catch (e) {}
-        _state.ffWorker = null;
-        // Ensure the bar shows 100% even if the last progress message
-        // landed a bit short.
-        setProgress(m.fullState.simTime - _baseSimTime, durationS, m.fullState.simTime);
-        showSection('complete');
-      } else if (m.type === 'workerError') {
+  _state.pendingResult = m;
+  _state.running = false;
+  try { w.terminate(); } catch (e) {}
+  _state.ffWorker = null;
+  
+  // Apply the FINAL FF state to main-thread state so the
+  // "complete" screen's telemetry matches the actual final tick.
+  // Without this, state.bodies is still whatever the last
+  // progressBodies message carried — up to bodiesEveryTicks
+  // (10 sim-sec) behind — and the telemetry visibly jumps forward
+  // the moment Forward is clicked. Display-only: holdingState is
+  // still true, so any in-flight physics snapshots are dropped,
+  // and on Continue this state is what replaceState already
+  // delivers, so nothing double-applies.
+  if (m.fullState && Array.isArray(m.fullState.bodies)) {
+    const _prevLen = state.bodies ? state.bodies.length : 0;
+    state.bodies = m.fullState.bodies;
+    state.simTime = m.fullState.simTime;
+    state.activeBodyIndex = m.fullState.activeBodyIndex || 0;
+    state.halted = !!m.fullState.halted;
+    if (m.fullState.bodies.length !== _prevLen &&
+      typeof refreshFollowBodySelect === 'function') {
+      refreshFollowBodySelect();
+    }
+  }
+  
+  // Ensure the bar shows 100% even if the last progress message
+  // landed a bit short.
+  setProgress(m.fullState.simTime - _baseSimTime, durationS, m.fullState.simTime);
+  showSection('complete');
+} else if (m.type === 'workerError') {
         console.error('[ff worker]', m.message, m.stack);
         try { w.terminate(); } catch (e) {}
         _state.ffWorker = null;
@@ -221,26 +261,27 @@ try {
     };
 
     w.postMessage({
-      type: 'run',
-      storageKeys: buildStorageKeys(),
-      fullState: {
-        bodies: physData.bodies,
-        activeBodyIndex: physData.activeBodyIndex,
-        simTime: physData.simTime,
-        halted: !!physData.halted,
-      },
-      guidanceState: guideData,
-      stackData: stackData,
-      activeGuide: activeGuide,
-        durationS: durationS,
-    // Two independent cadences, in ticks:
-    //   progressEveryTicks — tiny simTime-only ping, drives the
-    //                        progress bar + T+ clock smoothly
-    //   bodiesEveryTicks   — full body list for panel updates,
-    //                        heavier (structured clone), so slower
-    progressEveryTicks: 80, // 1 sim-sec
-    //bodiesEveryTicks: 800, // 10 sim-sec
-    });
+  type: 'run',
+  storageKeys: buildStorageKeys(),
+  fullState: {
+    bodies: physData.bodies,
+    activeBodyIndex: physData.activeBodyIndex,
+    simTime: physData.simTime,
+    halted: !!physData.halted,
+  },
+  guidanceState: guideData,
+  stackData: stackData,
+  activeGuide: activeGuide,
+  envState: envState,
+  durationS: durationS,
+  // Two independent cadences, in ticks:
+  //   progressEveryTicks — tiny simTime-only ping, drives the
+  //                        progress bar + T+ clock smoothly
+  //   bodiesEveryTicks   — full body list for panel updates,
+  //                        heavier (structured clone), so slower
+  progressEveryTicks: 80, // 1 sim-sec
+  //bodiesEveryTicks: 800, // 10 sim-sec
+});
   }
 
   function onCancel() {
@@ -266,34 +307,66 @@ try {
   }
 
   async function onContinue() {
-    if (!_state.pendingResult) {
-      console.warn('[fastForward] no pending result');
-      return onRevert();
-    }
-    showSection('loading');
-    await new Promise(r => setTimeout(r, 2000));
-
-    const result = _state.pendingResult;
-    _state.pendingResult = null;
-
-    WorkerBridge.send({
-      type: 'replaceState',
-      bodies: result.fullState.bodies,
-      simTime: result.fullState.simTime,
-      activeBodyIndex: result.fullState.activeBodyIndex,
-      halted: result.fullState.halted,
-    });
-
-    if (result.guidanceState && typeof GuidanceBridge !== 'undefined') {
-      GuidanceBridge.send({ type: 'replaceGuidanceState', data: result.guidanceState });
-    }
-
-    if (typeof forceRenderResync === 'function') forceRenderResync();
-
-    _state.holdingState = false;
-    _state.waitingForResume = true;
-    WorkerBridge.send({ type: 'resumeSim' });
+  if (!_state.pendingResult) {
+    console.warn('[fastForward] no pending result');
+    return onRevert();
   }
+  showSection('loading');
+  await new Promise(r => setTimeout(r, 2000));
+  
+  const result = _state.pendingResult;
+  _state.pendingResult = null;
+  
+  // Set up the ack-promise BEFORE sending replaceState, so the ack
+  // can't arrive and be dropped before we're listening.
+  const ackPromise = new Promise(r => { _state._pendingAck = r; });
+  
+  WorkerBridge.send({
+    type: 'replaceState',
+    bodies: result.fullState.bodies,
+    simTime: result.fullState.simTime,
+    activeBodyIndex: result.fullState.activeBodyIndex,
+    halted: result.fullState.halted,
+  });
+  
+  if (result.guidanceState && typeof GuidanceBridge !== 'undefined') {
+    GuidanceBridge.send({ type: 'replaceGuidanceState', data: result.guidanceState });
+  }
+  
+  if (typeof forceRenderResync === 'function') forceRenderResync();
+  
+  // Wait for physics to acknowledge replaceState BEFORE setting
+  // holdingState = false. This guarantees:
+  //   - Any snapshots already queued in main's message queue (from
+  //     before physics processed replaceState) are dropped while
+  //     holdingState is still true — no stale pre-FF state leaks
+  //     through to guidance.
+  //   - The first snapshot after the ack reflects the FF state (it
+  //     was sent after physics's replaceState handler ran).
+  //
+  // Without this, holdingState went false immediately and physics's
+  // next (still pre-replaceState) snapshot was applied + forwarded
+  // to guidance — one stale tick that corrupted _prevVr2, lastApogeeKm,
+  // and phase timers in the guide's state, causing phase-machine
+  // misbehaviour on the next real snapshot.
+  //
+  // 2 s timeout so a lost ack can't hang the dialog forever.
+  await Promise.race([
+    ackPromise,
+    new Promise(r => setTimeout(r, 2000)),
+  ]);
+  _state._pendingAck = null;
+  
+  _state.holdingState = false;
+  _state.waitingForResume = true;
+  WorkerBridge.send({ type: 'resumeSim' });
+}
+
+function onReplaceStateAck() {
+  const r = _state._pendingAck;
+  _state._pendingAck = null;
+  if (r) r();
+}
 
   function onSnapshotApplied() {
   if (!_state.waitingForResume) return;
@@ -339,10 +412,11 @@ try {
   }
 
   return {
-    bind,
-    onFullState,
-    onGuidanceState,
-    onSnapshotApplied,
-    isHoldingState: () => _state.holdingState,
-  };
+  bind,
+  onFullState,
+  onGuidanceState,
+  onSnapshotApplied,
+  onReplaceStateAck,
+  isHoldingState: () => _state.holdingState,
+};
 })();

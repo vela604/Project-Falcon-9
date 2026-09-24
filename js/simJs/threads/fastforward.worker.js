@@ -113,14 +113,36 @@ state.bodies = msg.fullState.bodies;
       }
     });
     
-    // ---- Init Derivation + Guidance ----
-    if (msg.stackData && typeof Derivation !== 'undefined') {
-      Derivation.setStackData(msg.stackData);
-    }
-    if (typeof Guidance !== 'undefined') {
-      Guidance.init(localDispatch);
-      if (msg.guidanceState) Guidance.importGuideState(msg.guidanceState);
-    }
+    // ---- Apply environment state from main thread ----
+// The physics worker receives wind / atmosphere / slosh / IMU toggles
+// as separate post-boot messages; the FF worker gets none of those,
+// so without this block it would run with fresh defaults (wind off,
+// atmosphere on, slosh on, IMU off) and diverge from normal play.
+if (msg.envState) {
+  if (msg.envState.wind && typeof wind !== 'undefined') {
+    wind.enabled = !!msg.envState.wind.enabled;
+    wind.speed = Number.isFinite(msg.envState.wind.speed) ? msg.envState.wind.speed : 0;
+    wind.directionDeg = Number.isFinite(msg.envState.wind.directionDeg) ? msg.envState.wind.directionDeg : 0;
+  }
+  if (typeof msg.envState.atmosphereEnabled === 'boolean' && typeof atmosphereEnabled !== 'undefined') {
+    atmosphereEnabled = msg.envState.atmosphereEnabled;
+  }
+  if (typeof msg.envState.sloshEnabled === 'boolean' && typeof CONFIG !== 'undefined') {
+    CONFIG.SLOSH_ENABLED = msg.envState.sloshEnabled;
+  }
+  if (typeof msg.envState.imuEnabled === 'boolean' && typeof Guidance !== 'undefined' && Guidance.setImuEnabled) {
+    Guidance.setImuEnabled(msg.envState.imuEnabled);
+  }
+}
+
+// ---- Init Derivation + Guidance ----
+if (msg.stackData && typeof Derivation !== 'undefined') {
+  Derivation.setStackData(msg.stackData);
+}
+if (typeof Guidance !== 'undefined') {
+  Guidance.init(localDispatch);
+  if (msg.guidanceState) Guidance.importGuideState(msg.guidanceState);
+}
     
     // ---- Persistent snapshot wrapper (zero alloc per tick) ----
     const snap = {

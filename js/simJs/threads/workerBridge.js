@@ -34,6 +34,9 @@ const WorkerBridge = {
   }
 } else if (msg.type === 'replaceStateAck') {
   console.log('[bridge] replaceState ack received');
+  if (typeof FastForward !== 'undefined' && FastForward.onReplaceStateAck) {
+    FastForward.onReplaceStateAck();
+  }
 } else if (msg.type === 'fullStateError') {
   console.error('[bridge] captureFullState failed:', msg.message);
   if (typeof FastForward !== 'undefined' && FastForward.onFullState) {
@@ -362,20 +365,37 @@ const GuidanceBridge = {
 // "trimmed" now implies (see Issue 1 below) — kept the same delivery
 // mechanism, just a richer payload per tick.
 let _lastGuidanceSnapshotAt = 0;
-// 0 disables throttling. Physics worker fires ~80 Hz on its own clock;
-// forward every snapshot 1-to-1 so guidance ticks exactly track physics
-// ticks. Any nonzero throttle here runs on the MAIN thread's wall clock,
-// which is independent of the physics tick clock — the mismatch was
-// duplicating and skipping snapshots (diagnostic showed roughly half of
-// comparisons were 0-tick or 2-tick gaps rather than clean 1-tick ones).
+// 0 disables wall-clock throttling. Physics worker fires ~80 Hz on its
+// own clock; forward every snapshot 1-to-1 so guidance ticks exactly
+// track physics ticks. Any nonzero throttle here runs on the MAIN
+// thread's wall clock, which is independent of the physics tick clock —
+// the mismatch was duplicating and skipping snapshots (diagnostic
+// showed roughly half of comparisons were 0-tick or 2-tick gaps rather
+// than clean 1-tick ones).
 const GUIDANCE_SNAPSHOT_INTERVAL_MS = 0;
+
+// Filter to one forward per ACTUAL physics step. The physics worker
+// posts a snapshot every workerLoop iteration, but an iteration may
+// contain 0 physicsSteps (accumulator hasn't reached DT yet) or 2-3
+// (catching up after a slow loop). Forwarding every loop iteration
+// makes guidance tick at loop rate — sometimes with duplicate
+// simTimes, sometimes collapsing multiple physicsSteps into one tick.
+// Guidance's internal dt is always CONFIG.DT (1/80 s), so its
+// numerical derivatives (dQ, rate integrations) computed against a
+// collapsed or duplicated snapshot are wrong by 2-3×. Skipping
+// forwards whose simTime hasn't advanced keeps the tick rate matched
+// to actual physics steps — matching the fast-forward worker, which
+// ticks guidance exactly once per physicsStep.
+let _lastForwardedSimTime = -1;
 
 function maybeForwardGuidanceSnapshot() {
   if (!GuidanceBridge.ready) return;
+  if (state.simTime === _lastForwardedSimTime) return;
+  _lastForwardedSimTime = state.simTime;
   const now = (typeof performance !== 'undefined') ? performance.now() : Date.now();
-if (GUIDANCE_SNAPSHOT_INTERVAL_MS > 0 &&
-  now - _lastGuidanceSnapshotAt < GUIDANCE_SNAPSHOT_INTERVAL_MS) return;
-_lastGuidanceSnapshotAt = now;
+  if (GUIDANCE_SNAPSHOT_INTERVAL_MS > 0 &&
+    now - _lastGuidanceSnapshotAt < GUIDANCE_SNAPSHOT_INTERVAL_MS) return;
+  _lastGuidanceSnapshotAt = now;
   
   // isActive below reflects state.activeBodyIndex — the physics worker's
   // single source of truth — NOT the body's own `isActive` field. Derived
