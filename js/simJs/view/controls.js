@@ -844,9 +844,40 @@ function bindGuidanceToolbar() {
 function onGuidanceStatus(status) {
   const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
   
-  // Sync the guidance-active lock every time we hear from the worker.
-  // Idempotent — the function bails if the state hasn't changed.
-  _syncGuidanceLock(status);
+// Sync the guidance-active lock every time we hear from the worker.
+// Idempotent — the function bails if the state hasn't changed.
+_syncGuidanceLock(status);
+
+// TEMP DIAGNOSTIC — COAST_HOLD_2 attitude investigation.
+if (status && status.phase === 'COAST_HOLD_2' && status.coast2TargetThetaDeg != null) {
+  const now = performance.now();
+  if (!window._c2DiagLast || now - window._c2DiagLast > 500) {
+    window._c2DiagLast = now;
+    const b = state.bodies[state.activeBodyIndex];
+    if (b) {
+      const thetaDeg = b.theta * 180 / Math.PI;
+      const omegaDeg = b.omega * 180 / Math.PI;
+      const errDeg = thetaDeg - status.coast2TargetThetaDeg;
+      let rcsSummary = 'none';
+      if (b.rcsDuty) {
+        const pods = Object.keys(b.rcsDuty);
+        if (pods.length) {
+          rcsSummary = pods.map(p => {
+            const d = b.rcsDuty[p];
+            return p + ':' + (d.lat || 0).toFixed(2) + '/' + (d.up || 0).toFixed(2) + '/' + (d.dn || 0).toFixed(2);
+          }).join(' ');
+        }
+      }
+      console.log('[c2] θ_in=' + thetaDeg.toFixed(3) +
+        ' tgt=' + status.coast2TargetThetaDeg.toFixed(3) +
+        ' err=' + errDeg.toFixed(3) + '°' +
+        ' ω=' + omegaDeg.toFixed(5) + '°/s' +
+        ' settled=' + b.settled +
+        ' crashed=' + b.crashed +
+        ' RCS=' + rcsSummary);
+    }
+  }
+}
   
   // Warp lock — guidance is active → force 1× and disable warp buttons.
   // Auto-syncs on every status ack (start, stop, and any auto-stop).
@@ -917,6 +948,22 @@ if (status.gReq !== undefined) {
     (status.saturated ? ' [SAT]' : '') +
     ` τ_drag(N+2)=${status.tauDrag2.toFixed(0)} N·m`
   );
+}
+
+// leoInsertionV2 post-circularize realign — main-thread log so no
+// worker-console switching needed. Prints both pre- and post-burn
+// targets so we can compare whether the second-apogee target differs
+// from the first (which is the whole point of the realign).
+if (status.coast2TargetThetaDeg !== null && status.coast2TargetThetaDeg !== undefined) {
+  if (window._lastCoast2Log !== status.coast2TargetThetaDeg) {
+    window._lastCoast2Log = status.coast2TargetThetaDeg;
+    console.log('[c2] phase=' + status.phase +
+      ' coastTarget=' + (status.coastTargetThetaDeg != null ?
+        status.coastTargetThetaDeg.toFixed(2) + '°' : '—') +
+      ' coast2Target=' + status.coast2TargetThetaDeg.toFixed(2) + '°' +
+      ' rotateStart=' + (status.coast2RotateStartTiltDeg != null ?
+        status.coast2RotateStartTiltDeg.toFixed(2) + '°' : '—'));
+  }
 }
 
 // predictVerifier rolling stats — only present when that guide is active.
