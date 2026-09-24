@@ -3497,6 +3497,14 @@ STAGE_BURN_LOOKAHEAD_TICKS: 3,
   COAST_ROTATE_OMEGA_TOL: 0.02,
   COAST_ROTATE_TIMEOUT_S: 240,
   
+  // Rate-damping term for COAST_HOLD_2's attitude hold. The base
+  // COASTnAoADAMP formula is proportional-only (effective per-radian
+  // gain ≈ 57 via the deg→rad conversion, ζ ≈ 0.05 from the one-tick
+  // α-lookahead alone) — an essentially undamped oscillator. Adding
+  // -I·K·ω_body with K=10 brings ζ to ~0.7, which stops the visible
+  // oscillation without changing the equilibrium.
+  COAST2_DAMP_RATE: 10,
+  
   // Burn trigger lead: fire when time-remaining-to-apogee ≤
   // startupDurationS + this. The startup duration is the hard floor
   // (thrust can't be full until then); the extra lead gives the
@@ -4355,18 +4363,51 @@ if (v_err <= cutoffThreshold) {
   _leoStateV2.circAchieved = true;
   send(cmdSetAllThrottle(0));
   send(cmdSetGimbalRate(0));
+  
+  // ---- Compute coast2TargetThetaInertial at CIRCULARIZE end ----
+  // Same computation as the RCS_BOOST plan block (which computed
+  // coastTargetThetaInertial for COAST_ROTATE): eccentricity vector →
+  // apogee point → velocity direction there, as inertial θ. The burn
+  // just changed the orbit, so this differs from coastTargetThetaInertial.
+  {
+    const r_c = Math.hypot(body.rx, body.ry);
+    const ux_c = body.rx / r_c, uy_c = body.ry / r_c;
+    const ex_c = body.ry / r_c, ey_c = -body.rx / r_c;
+    const vr_c = body.vx * ux_c + body.vy * uy_c;
+    const vt_c = body.vx * ex_c + body.vy * ey_c;
+    const GM_c = env.GM_EARTH;
+    const v2_c = body.vx * body.vx + body.vy * body.vy;
+    const rv_c = body.rx * body.vx + body.ry * body.vy;
+    const ex_ecc = ((v2_c - GM_c / r_c) * body.rx - rv_c * body.vx) / GM_c;
+    const ey_ecc = ((v2_c - GM_c / r_c) * body.ry - rv_c * body.vy) / GM_c;
+    const e_mag = Math.hypot(ex_ecc, ey_ecc);
+    let thetaApo;
+    if (e_mag > 1e-6) {
+      const phiApo = Math.atan2(-ex_ecc, -ey_ecc);
+      const E_c = 0.5 * (vr_c * vr_c + vt_c * vt_c) - GM_c / r_c;
+      const a_c = E_c < 0 ? -GM_c / (2 * E_c) : r_c;
+      const r_apo = a_c * (1 + e_mag);
+      const rx_apo = r_apo * Math.sin(phiApo);
+      const ry_apo = r_apo * Math.cos(phiApo);
+      const sDir = (vt_c >= 0) ? 1 : -1;
+      thetaApo = Math.atan2(-sDir * ry_apo, -sDir * rx_apo);
+    } else {
+      // Near-circular: no meaningful apogee direction; use current
+      // velocity direction as a sensible fallback.
+      const speed_c = Math.hypot(body.vx, body.vy);
+      thetaApo = (speed_c > 1) ? Math.atan2(-body.vx, body.vy) : body.theta;
+    }
+    _leoStateV2.coast2TargetThetaInertial = thetaApo;
+    console.log('[leoInsertionV2] CIRCULARIZE complete — v=' + speed.toFixed(1) +
+      ' | coast2Target=' + (thetaApo * 180 / Math.PI).toFixed(2) + '°' +
+      ' (e=' + e_mag.toExponential(3) + ') → COAST_ROTATE_2');
+  }
+  
   _leoStateV2.phase = 'COAST_ROTATE_2';
   _leoStateV2.phaseStart = simT;
-  // Reset the post-circularization realign locks. The new apogee
-  // point is recomputed from the current orbit on COAST_ROTATE_2 entry
-  // — see that phase's comment for why the pre-CIRCULARIZE target θ
-  // is now stale.
-  _leoStateV2.coast2TargetThetaInertial = null;
   _leoStateV2.coast2RotateStartTilt = null;
   _leoStateV2.coast2RotateMid = null;
   _leoStateV2._prevVr2 = null;
-  console.log('[leoInsertionV2] CIRCULARIZE complete — v=' + speed.toFixed(1) +
-    ' → COAST_ROTATE_2 (recompute apogee point)');
   break;
 }
 
@@ -4419,67 +4460,38 @@ const R_cmd = Math.max(-MAX_RATE, Math.min(MAX_RATE, R_req));
     break;
   }
 
+
 // =========================================================
-// COAST_ROTATE_2 — post-circularization realign to the NEW apogee
-// point. Burn started 3 s before the old apogee and ran past it, so
-// the pre-CIRCULARIZE target θ now points behind us. Recompute the
-// apogee direction from the current osculating orbit (same
-// eccentricity-vector method the pre-CIRCULARIZE plan block used),
-// bang-bang slew to the velocity direction there, then coast.
+// COAST_ROTATE_2 — bang-bang slew to coast2TargetThetaInertial,
+// exactly the same controller as COAST_ROTATE: target is the fixed
+// inertial θ computed at CIRCULARIZE end (velocity direction at the
+// new apogee point, from eccentricity vector).
 // =========================================================
 case 'COAST_ROTATE_2': {
   send(cmdSetAllThrottle(0));
   send(cmdSetGimbalRate(0));
-
-  // Compute NEW apogee-point θ on first entry. Uses the current
-  // inertial state — the burn's Δv has already changed the orbit, so
-  // this is a genuinely different target than coastTargetThetaInertial.
-  if (_leoStateV2.coast2TargetThetaInertial === null) {
-    const r_c = Math.hypot(body.rx, body.ry);
-    const ux_c = body.rx / r_c, uy_c = body.ry / r_c;
-    const ex_c = body.ry / r_c, ey_c = -body.rx / r_c;
-    const vr_c = body.vx * ux_c + body.vy * uy_c;
-    const vt_c = body.vx * ex_c + body.vy * ey_c;
-    const GM_c = env.GM_EARTH;
-    const v2_c = body.vx * body.vx + body.vy * body.vy;
-    const rv_c = body.rx * body.vx + body.ry * body.vy;
-    const ex_ecc = ((v2_c - GM_c / r_c) * body.rx - rv_c * body.vx) / GM_c;
-    const ey_ecc = ((v2_c - GM_c / r_c) * body.ry - rv_c * body.vy) / GM_c;
-    const e_mag = Math.hypot(ex_ecc, ey_ecc);
-let thetaApo;
-let phiApo = 0, sDir = 1;
-if (e_mag > 1e-6) {
-  phiApo = Math.atan2(-ex_ecc, -ey_ecc);
-      const E_c = 0.5 * (vr_c * vr_c + vt_c * vt_c) - GM_c / r_c;
-      const a_c = E_c < 0 ? -GM_c / (2 * E_c) : r_c;
-      const r_apo = a_c * (1 + e_mag);
-      const rx_apo = r_apo * Math.sin(phiApo);
-      const ry_apo = r_apo * Math.cos(phiApo);
-        sDir = (vt_c >= 0) ? 1 : -1;
-  thetaApo = Math.atan2(-sDir * ry_apo, -sDir * rx_apo);
-} else {
-      // Near-circular: no meaningful apogee direction; keep whatever
-      // attitude we have.
-      thetaApo = body.theta;
-    }
-    _leoStateV2.coast2TargetThetaInertial = thetaApo;
-console.log('[leoInsertionV2] COAST_ROTATE_2 target locked: ' +
-  (thetaApo * 180 / Math.PI).toFixed(2) + '° (e=' + e_mag.toExponential(3) +
-  ', r_apo=' + ((r_c * (1 + e_mag) - env.EARTH_RADIUS) / 1000).toFixed(1) + ' km)');
-console.log('[leoInsertionV2] COAST_ROTATE_2 debug:' +
-  ' currentDeg=' + (body.theta * 180 / Math.PI).toFixed(3) +
-  ' targetDeg=' + (thetaApo * 180 / Math.PI).toFixed(3) +
-  ' phiApo_deg=' + (phiApo * 180 / Math.PI).toFixed(3) +
-  ' sDir=' + sDir +
-  ' vt_c=' + vt_c.toFixed(2) +
-  ' e_mag=' + e_mag.toExponential(3) +
-  ' rx=' + body.rx.toFixed(0) + ' ry=' + body.ry.toFixed(0) +
-  ' vx=' + body.vx.toFixed(2) + ' vy=' + body.vy.toFixed(2));
+  
+  const elapsed = simT - _leoStateV2.phaseStart;
+  if (elapsed >= LEO_INSERTION_V2.COAST_ROTATE_TIMEOUT_S) {
+    send(cmdRcsDuty(null, idx));
+    _leoStateV2.phase = 'COAST_HOLD_2';
+    _leoStateV2.phaseStart = simT;
+    _leoStateV2._prevVr2 = null;
+    console.log('[leoInsertionV2] COAST_ROTATE_2 timeout — COAST_HOLD_2');
+    break;
   }
-
-  const targetThetaDeg = _leoStateV2.coast2TargetThetaInertial * 180 / Math.PI;
+  
+  const targetThetaRad = _leoStateV2.coast2TargetThetaInertial;
+  if (targetThetaRad === null || targetThetaRad === undefined) {
+    send(cmdRcsDuty(null, idx));
+    _leoStateV2.phase = 'COAST_HOLD_2';
+    _leoStateV2.phaseStart = simT;
+    _leoStateV2._prevVr2 = null;
+    break;
+  }
+  const targetThetaDeg = targetThetaRad * 180 / Math.PI;
   const currentThetaDeg = body.theta * 180 / Math.PI;
-
+  
   if (_leoStateV2.coast2RotateStartTilt === null) {
     _leoStateV2.coast2RotateStartTilt = currentThetaDeg;
     _leoStateV2.coast2RotateMid = (currentThetaDeg + targetThetaDeg) / 2;
@@ -4488,9 +4500,9 @@ console.log('[leoInsertionV2] COAST_ROTATE_2 debug:' +
   const midDeg = _leoStateV2.coast2RotateMid;
   const err = targetThetaDeg - currentThetaDeg;
   const omegaRel = body.omega + (env.EARTH_OMEGA || 0);
-
+  
   if (Math.abs(err) < LEO_INSERTION_V2.COAST_ROTATE_TOL_DEG &&
-      Math.abs(omegaRel) < LEO_INSERTION_V2.COAST_ROTATE_OMEGA_TOL) {
+    Math.abs(omegaRel) < LEO_INSERTION_V2.COAST_ROTATE_OMEGA_TOL) {
     send(cmdRcsDuty(null, idx));
     _leoStateV2.phase = 'COAST_HOLD_2';
     _leoStateV2.phaseStart = simT;
@@ -4499,24 +4511,24 @@ console.log('[leoInsertionV2] COAST_ROTATE_2 debug:' +
       currentThetaDeg.toFixed(2) + '° — COAST_HOLD_2');
     break;
   }
-
-    const dirSign = Math.sign(targetThetaDeg - startDeg) || 1;
+  
+  const dirSign = Math.sign(targetThetaDeg - startDeg) || 1;
   const crossed = (startDeg - midDeg) * (currentThetaDeg - midDeg) <= 0;
   const phaseSign = crossed ? -1 : 1;
   const tauCmd = phaseSign * dirSign * 1e9;
   
-  // Net-zero-force distributor — post-STAGE_BURN coast slew on a
-  // ballistic arc; the greedy distributor's unbalanced fires would
-  // push the vehicle off the arc.
   const result = GuideRCS.targetTorqueRcsNoNetForce(snapshot, tauCmd, idx);
   if (result && result.fires.length) send(cmdRcsDuty(result.duties, idx));
   else send(cmdRcsDuty(null, idx));
   break;
-  }
+}
   
-  // =========================================================
-  // COAST_HOLD_2 — hold fixed inertial θ via net-zero-force RCS,
-  // coast to the new apogee, eject payload on vr sign flip.
+// =========================================================
+// COAST_HOLD_2 — same COASTnAoADAMP controller as pre-circularize
+// COAST_HOLD: AoA damping drives the nose to the velocity direction
+// (prograde). AoA is velocity-relative by definition, so the target
+// rotates with the orbit naturally — no fixed inertial θ, no drift.
+// Eject on vr sign flip (apogee crossing).
 // =========================================================
 case 'COAST_HOLD_2': {
   send(cmdSetAllThrottle(0));
@@ -4541,43 +4553,49 @@ case 'COAST_HOLD_2': {
     break;
   }
 
-  // Attitude hold via net-zero-force RCS.
-  if (dNext && dNext.massProps && _leoStateV2.coast2TargetThetaInertial !== null) {
+  // Attitude hold — same formula as ascent COASTnAoADAMP and
+  // pre-circularize COAST_HOLD.
+  if (dNext && dNext.massProps) {
     const I_next = dNext.massProps.I;
-    const thetaErr = _hWrapPi(body.theta - _leoStateV2.coast2TargetThetaInertial);
-    //const omegaRel = body.omega + (env.EARTH_OMEGA || 0);
-    const tau_desired = -I_next * (LEO_INSERTION_V2.CIRC_ATT_KP * thetaErr
-                                 + LEO_INSERTION_V2.CIRC_ATT_KD * body.omega);
+    const gain = (LEO_INSERTION_V2.ASCENT && Number.isFinite(LEO_INSERTION_V2.ASCENT.COAST_DAMP_GAIN))
+      ? LEO_INSERTION_V2.ASCENT.COAST_DAMP_GAIN : 16;
+    const kd = (LEO_INSERTION_V2.ASCENT && Number.isFinite(LEO_INSERTION_V2.ASCENT.COAST_DAMP_K))
+      ? LEO_INSERTION_V2.ASCENT.COAST_DAMP_K : 4.0;
+        const tau_desired = (-I_next * gain * dNext.alphaDeg) / (kd * kd) -
+      I_next * LEO_INSERTION_V2.COAST2_DAMP_RATE * body.omega;
+    
     const result = GuideRCS.targetTorqueRcsNoNetForce(snapshot, tau_desired, idx);
     if (result && result.fires.length) send(cmdRcsDuty(result.duties, idx));
     else send(cmdRcsDuty(null, idx));
-  }
-  break;
-}
-
-
-// =========================================================
-// DONE — engine off, orbit ballistic. RCS holds fixed inertial θ
-// (the post-circularization target, since coastTargetThetaInertial
-// from before the burn is now stale).
-// =========================================================
-case 'DONE': {
-    send(cmdSetAllThrottle(0));
-    send(cmdSetGimbalRate(0));
-
-    if (dNext && dNext.massProps && _leoStateV2.coast2TargetThetaInertial !== null) {
-      const I_next = dNext.massProps.I;
-      const thetaErr = _hWrapPi(body.theta - _leoStateV2.coast2TargetThetaInertial);
-      //const omegaRel = body.omega + (env.EARTH_OMEGA || 0);
-      const tau_desired = -I_next * (LEO_INSERTION_V2.CIRC_ATT_KP * thetaErr
-                                   + LEO_INSERTION_V2.CIRC_ATT_KD * body.omega);
-      const result = GuideRCS.targetTorqueRcsNoNetForce(snapshot, tau_desired, idx);
-      if (result && result.fires.length) send(cmdRcsDuty(result.duties, idx));
-      else send(cmdRcsDuty(null, idx));
     }
     break;
-  }
+    }
 
+
+// =========================================================
+// DONE — engine off, orbit ballistic. Same COASTnAoADAMP attitude
+// hold as COAST_HOLD_2 (AoA damping keeps the nose prograde as the
+// orbit progresses — naturally tracks the rotating target).
+// =========================================================
+case 'DONE': {
+  send(cmdSetAllThrottle(0));
+  send(cmdSetGimbalRate(0));
+  
+  if (dNext && dNext.massProps) {
+  const I_next = dNext.massProps.I;
+  const gain = (LEO_INSERTION_V2.ASCENT && Number.isFinite(LEO_INSERTION_V2.ASCENT.COAST_DAMP_GAIN)) ?
+    LEO_INSERTION_V2.ASCENT.COAST_DAMP_GAIN : 16;
+  const kd = (LEO_INSERTION_V2.ASCENT && Number.isFinite(LEO_INSERTION_V2.ASCENT.COAST_DAMP_K)) ?
+    LEO_INSERTION_V2.ASCENT.COAST_DAMP_K : 4.0;
+  const tau_desired = (-I_next * gain * dNext.alphaDeg) / (kd * kd) -
+    I_next * LEO_INSERTION_V2.COAST2_DAMP_RATE * body.omega;
+  
+  const result = GuideRCS.targetTorqueRcsNoNetForce(snapshot, tau_desired, idx);
+  if (result && result.fires.length) send(cmdRcsDuty(result.duties, idx));
+  else send(cmdRcsDuty(null, idx));
+}
+break;
+}
 
 
 
