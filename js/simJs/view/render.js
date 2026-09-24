@@ -476,6 +476,297 @@ function drawEarth() {
 }
 
 // ---------------------------------------------------------------------------
+// Remote area (final resting zone) — earth-fixed arc drawn on the surface
+// west of the launch site. A memorial, not a hazard marker.
+//
+// Rotates with Earth automatically: earth-fixed angles are converted to
+// inertial by adding ω_e·t, same convention as launchSiteWorldPosition().
+//
+// Visible in both camera modes:
+//   - Planet mode (camera at Earth centre): arc appears as a curved band
+//     on the disc, label + quote float just outside it.
+//   - Local mode (camera near surface): near-side segments of the arc
+//     are drawn; far-side segments are culled by the horizon test.
+//     Label + quote suppressed (midpoint is almost always on the far
+//     side during a local pass).
+//
+// Called after drawEarth() so the arc sits on top of the planet fill,
+// but before trajectory / pad / rocket so those always draw over it.
+// ---------------------------------------------------------------------------
+function drawRemoteArea() {
+  const R = CONFIG.EARTH_RADIUS;
+  const phi0 = CONFIG.LAUNCH_SITE_ANGLE_0 || 0;
+  const omegaE = CONFIG.EARTH_OMEGA;
+  const t = state.simTime;
+  
+  const westStartRad = (CONFIG.REMOTE_AREA_WEST_START_DEG || 120) * Math.PI / 180;
+  const westEndRad   = (CONFIG.REMOTE_AREA_WEST_END_DEG   || 180) * Math.PI / 180;
+  
+  // Inertial angles: earth-fixed angle + ω·t.
+  const phiStart = phi0 - westStartRad + omegaE * t;
+  const phiEnd   = phi0 - westEndRad   + omegaE * t;
+  
+  // Sample the arc densely. 64 samples over 60° gives ~1° steps, smooth
+  // at any zoom level.
+  const N = 64;
+  const pts = [];
+  for (let i = 0; i <= N; i++) {
+    const f = i / N;
+    const phi = phiStart + f * (phiEnd - phiStart);
+    pts.push({ x: R * Math.sin(phi), y: R * Math.cos(phi) });
+  }
+  
+  // Horizon occlusion test — in local mode, a surface point is only
+  // visible from the camera if it's on the near side of Earth. Planet
+  // mode has the camera at Earth's centre, so every point is visible.
+  const cam = cameraWorldPosition();
+  const camR = Math.hypot(cam.x, cam.y);
+  const rSquared = R * R;
+  const visible = pts.map(p => {
+    if (camera.mode === 'planet') return true;
+    if (camR <= R + 1) return true;
+    return (p.x * cam.x + p.y * cam.y) >= rSquared;
+  });
+  
+  const screenPts = pts.map(p => worldToScreen(p.x, p.y));
+  
+  // Split into contiguous visible segments — the arc can break into two
+  // pieces as Earth's horizon sweeps across it.
+  const segs = [];
+  let cur = null;
+  for (let i = 0; i <= N; i++) {
+    if (visible[i]) {
+      if (!cur) { cur = []; segs.push(cur); }
+      cur.push(screenPts[i]);
+    } else {
+      cur = null;
+    }
+  }
+  if (!segs.length) return;
+  
+  // ---- Palette — soft violet, dignified, no hazard colours ----
+  const CORE  = '#9a8ae8';
+  const GLOW  = 'rgba(124, 111, 214, 0.20)';
+  const CAP   = '#b8aaf0';
+  const LABEL = '#d4c9ff';
+  const QUOTE = '#a898e8';
+  
+  ctx.save();
+  
+  // ---- Soft glow band under the core stroke ----
+  ctx.strokeStyle = GLOW;
+  ctx.lineWidth = 16;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  segs.forEach(seg => {
+    ctx.beginPath();
+    seg.forEach(([x, y], i) => { i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
+    ctx.stroke();
+  });
+  
+  // ---- Core stroke ----
+  ctx.strokeStyle = CORE;
+  ctx.lineWidth = 3.5;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  segs.forEach(seg => {
+    ctx.beginPath();
+    seg.forEach(([x, y], i) => { i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
+    ctx.stroke();
+  });
+  
+  // ---- Cap ticks at arc endpoints (only when that endpoint is visible) ----
+  [[0, R], [N, R]].forEach(([i]) => {
+    if (!visible[i]) return;
+    const p = pts[i];
+    // Extrapolate 20 km radially outward from the surface.
+    const ox = p.x * (R + 20000) / R;
+    const oy = p.y * (R + 20000) / R;
+    const [px0, py0] = worldToScreen(p.x, p.y);
+    const [px1, py1] = worldToScreen(ox, oy);
+    ctx.strokeStyle = CAP;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(px0, py0);
+    ctx.lineTo(px1, py1);
+    ctx.stroke();
+  });
+  
+  // ---- Label + quote — planet mode only ----
+  // In local mode the arc midpoint is almost always on the far side of
+  // Earth, so drawing text there would either be invisible or land in
+  // the wrong place. Restrict to planet mode.
+  if (camera.mode === 'planet') {
+    const midIdx = Math.round(N / 2);
+    const mp = pts[midIdx];
+    // Offset radially outward 40 px so the text floats just off the disc.
+    const [sx, sy] = worldToScreen(mp.x, mp.y);
+    const nx = mp.x / R, ny = mp.y / R;
+    const labelX = sx + nx * 40;
+    const labelY = sy - ny * 40;
+    
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    
+    // Label
+    ctx.font = '600 12px "JetBrains Mono", monospace';
+    ctx.fillStyle = LABEL;
+    ctx.fillText(CONFIG.REMOTE_AREA_LABEL || 'FINIS ITINERIS', labelX, labelY);
+    
+    // Quote
+    ctx.font = 'italic 10px "JetBrains Mono", monospace';
+    ctx.fillStyle = QUOTE;
+    ctx.fillText(CONFIG.REMOTE_AREA_QUOTE || '', labelX, labelY + 16);
+    
+    if (CONFIG.REMOTE_AREA_QUOTE_AUTHOR) {
+      ctx.font = '9px "JetBrains Mono", monospace';
+      ctx.fillStyle = 'rgba(168, 152, 232, 0.75)';
+      ctx.fillText('— ' + CONFIG.REMOTE_AREA_QUOTE_AUTHOR, labelX, labelY + 30);
+    }
+  }
+  
+  ctx.restore();
+}
+
+// ---------------------------------------------------------------------------
+// Ocean zone — earth-fixed arc EAST of launch, drawn as a filled swath
+// on the surface. Marks fairing splashdown stretch (future ASDS site).
+// Same earth-fixed convention as drawRemoteArea(): the arc rotates with
+// Earth automatically via the ω_e·t term.
+// ---------------------------------------------------------------------------
+function drawOceanArea() {
+  const R = CONFIG.EARTH_RADIUS;
+  const phi0 = CONFIG.LAUNCH_SITE_ANGLE_0 || 0;
+  const omegaE = CONFIG.EARTH_OMEGA;
+  const t = state.simTime;
+  
+  const eastStartRad = (CONFIG.OCEAN_ZONE_EAST_START_DEG || 2) * Math.PI / 180;
+  const eastEndRad   = (CONFIG.OCEAN_ZONE_EAST_END_DEG   || 60) * Math.PI / 180;
+  
+  const phiStart = phi0 + eastStartRad + omegaE * t;
+  const phiEnd   = phi0 + eastEndRad   + omegaE * t;
+  
+  const BAND_DEPTH_M = 80000;
+  const rOuter = R + BAND_DEPTH_M;
+  
+  const N = 64;
+  const innerPts = [], outerPts = [];
+  for (let i = 0; i <= N; i++) {
+    const f = i / N;
+    const phi = phiStart + f * (phiEnd - phiStart);
+    const s = Math.sin(phi), c = Math.cos(phi);
+    innerPts.push({ x: R * s,      y: R * c      });
+    outerPts.push({ x: rOuter * s, y: rOuter * c });
+  }
+  
+  const cam = cameraWorldPosition();
+  const camR = Math.hypot(cam.x, cam.y);
+  const rSquared = R * R;
+  const visible = innerPts.map(p => {
+    if (camera.mode === 'planet') return true;
+    if (camR <= R + 1) return true;
+    return (p.x * cam.x + p.y * cam.y) >= rSquared;
+  });
+  
+  const innerScreen = innerPts.map(p => worldToScreen(p.x, p.y));
+  const outerScreen = outerPts.map(p => worldToScreen(p.x, p.y));
+  
+  const segs = [];
+  let cur = null;
+  for (let i = 0; i <= N; i++) {
+    if (visible[i]) {
+      if (!cur) { cur = { i0: i, i1: i }; segs.push(cur); }
+      else cur.i1 = i;
+    } else {
+      cur = null;
+    }
+  }
+  if (!segs.length) return;
+  
+  const FILL_TOP    = 'rgba(90, 166, 220, 0.28)';
+  const FILL_BOTTOM = 'rgba(40,  90, 160, 0.10)';
+  const EDGE        = 'rgba(120, 190, 235, 0.85)';
+  const CAP         = 'rgba(120, 190, 235, 0.55)';
+  
+  ctx.save();
+  
+  segs.forEach(seg => {
+    const { i0, i1 } = seg;
+    if (i1 <= i0) return;
+    
+    ctx.beginPath();
+    for (let i = i0; i <= i1; i++) {
+      const [x, y] = outerScreen[i];
+      if (i === i0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    for (let i = i1; i >= i0; i--) {
+      const [x, y] = innerScreen[i];
+      ctx.lineTo(x, y);
+    }
+    ctx.closePath();
+    const midIdx = Math.floor((i0 + i1) / 2);
+    const [mx, myOut] = outerScreen[midIdx];
+    const [, myIn] = innerScreen[midIdx];
+    const grad = ctx.createLinearGradient(mx, myOut, mx, myIn);
+    grad.addColorStop(0, FILL_TOP);
+    grad.addColorStop(1, FILL_BOTTOM);
+    ctx.fillStyle = grad;
+    ctx.fill();
+    
+    ctx.strokeStyle = EDGE;
+    ctx.lineWidth = 2;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    for (let i = i0; i <= i1; i++) {
+      const [x, y] = outerScreen[i];
+      if (i === i0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  });
+  
+    // ---- Endpoint ticks at the ocean-zone boundaries (only when visible) ----
+  [[0, innerPts[0], outerPts[0]],
+   [N, innerPts[N], outerPts[N]]].forEach(([i, pIn, pOut]) => {
+    if (!visible[i]) return;
+    // Extend the tick slightly past the band edges so it reads as a
+    // bounded zone rather than a rectangle.
+    const rLow = R - 30000, rHigh = R + BAND_DEPTH_M + 30000;
+    const sx = pIn.x / R, sy = pIn.y / R;
+    const [px0, py0] = worldToScreen(sx * rLow,  sy * rLow);
+    const [px1, py1] = worldToScreen(sx * rHigh, sy * rHigh);
+    ctx.strokeStyle = CAP;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(px0, py0);
+    ctx.lineTo(px1, py1);
+    ctx.stroke();
+  });
+  
+  // ---- Label — planet mode only ----
+  // In local mode the arc midpoint is almost always on the far side of
+  // Earth, so drawing text there would either be invisible or land in
+  // the wrong place.
+  if (camera.mode === 'planet') {
+    const midIdx = Math.round(N / 2);
+    const mp = outerPts[midIdx];
+    const [sx, sy] = worldToScreen(mp.x, mp.y);
+    const nx = mp.x / rOuter, ny = mp.y / rOuter;
+    const labelX = sx + nx * 20;
+    const labelY = sy - ny * 20;
+    
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = '600 12px "JetBrains Mono", monospace';
+    ctx.fillStyle = 'rgba(150, 210, 245, 0.9)';
+    ctx.fillText('Ocean', labelX, labelY);
+  }
+  
+  ctx.restore();
+}
+// ---------------------------------------------------------------------------
 // Launch/landing site — a proper pad: ground apron, a raised launch mount
 // with hold-down clamps and a flame duct, and an umbilical/strongback
 // tower with lattice bracing and swing arms. Everything is built from flat
@@ -1265,19 +1556,23 @@ function renderFrame() {
   drawSky(altitude);
   
   if (camera.mode === 'planet') {
-    drawEarth();
-    drawGrid(); // ← ye line add karo
-    drawPredictedTrajectory();
-    drawRocket();
-    return;
-  }
-  
   drawEarth();
   drawGrid();
+  drawOceanArea();
+  drawRemoteArea();
   drawPredictedTrajectory();
-  drawLaunchPad();
-  drawGroundSteam(altitude);
   drawRocket();
+  return;
+}
+
+drawEarth();
+drawGrid();
+drawOceanArea();
+drawRemoteArea();
+drawPredictedTrajectory();
+drawLaunchPad();
+drawGroundSteam(altitude);
+drawRocket();
   drawActiveBodyIndicator();
   drawSeparationFlash();
   drawPayloadReleaseCue();

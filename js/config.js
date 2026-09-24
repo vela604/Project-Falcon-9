@@ -107,6 +107,29 @@ const CONFIG = {
   // the planet — the pad, gravity turn, and initial velocity all follow.
   LAUNCH_SITE_ANGLE_0: 0, // rad
   GM_EARTH: 3.986004418e14, // m^3/s^2  (standard gravitational parameter)
+  
+  // ---------------- Remote area (final resting zone) ----------------
+  // The stretch of Earth's surface where a spent stage is expected to
+  // come to rest after its mission. NOT a hazard zone — a memorial.
+  // Defined as an earth-fixed arc WEST of the launch site. Both values
+  // are degrees west of the launch meridian, so moving the launch site
+  // moves the resting zone with it automatically.
+  REMOTE_AREA_WEST_START_DEG: 120,
+  REMOTE_AREA_WEST_END_DEG: 180,
+  REMOTE_AREA_LABEL: 'FINIS ITINERIS',
+  REMOTE_AREA_QUOTE: 'I only regret that I have but one life to lose for the world.',
+  REMOTE_AREA_QUOTE_AUTHOR: 'Nathan Hale',
+  
+  // ---------------- Ocean zone (fairing splashdown / future ASDS) --------
+  // Earth-fixed arc EAST of the launch site. Marks the ocean stretch
+  // where fairing halves splash down, and where a future Autonomous
+  // Spaceport Drone Ship (ASDS) would be positioned. Same earth-fixed
+  // convention as REMOTE_AREA above — degrees east of the launch
+  // meridian, so moving the launch site moves the ocean zone too.
+  OCEAN_ZONE_EAST_START_DEG: 2,
+  OCEAN_ZONE_EAST_END_DEG: 60,
+  
+  
   SEA_LEVEL_DENSITY: 1.225, // kg/m^3
   SCALE_HEIGHT: 8500, // m (exponential atmosphere model)
   // Launch-site altitude above sea level (m). 0 = sea-level pad (current
