@@ -311,11 +311,12 @@ const tcBtn = document.getElementById('btnTakeControl');
 if (tcBtn) tcBtn.addEventListener('click', () => {
   const idx = (typeof camera !== 'undefined' && Number.isFinite(camera.followBodyIndex)) ?
     camera.followBodyIndex : state.activeBodyIndex;
-  WorkerBridge.send({ type: 'takeControl', idx });
-  // Auto-follow the new active body so the camera moves with it —
-  // the whole point of taking control is to watch THAT body's
-  // trajectory, and leaving the camera on the previous body would
-  // defeat the purpose.
+  // If guidance is running, do NOT shut down the previous active body's
+  // engines — guidance is flying it and would immediately re-fire next
+  // tick anyway. The take-control is only a human FOCUS change, not a
+  // pilot handover. Physics worker respects keepEnginesAlive.
+  const guideRunning = document.body.classList.contains('guide-active');
+  WorkerBridge.send({ type: 'takeControl', idx, keepEnginesAlive: guideRunning });
   if (typeof camera !== 'undefined') {
     camera.followBodyIndex = idx;
     camera.follow = true;
@@ -398,6 +399,7 @@ function setWarpEnabled(enabled) {
 
 
 function canSeparateNow() {
+  if (_guideActive) return false;
   if (state.crashed) return false;
   const active = state.bodies[state.activeBodyIndex];
   if (!active || !active.members || active.members.length < 2) return false;
@@ -414,6 +416,7 @@ function canSeparateNow() {
 }
 
 function canSplitFairingNow() {
+  if (_guideActive) return false;
   if (state.crashed) return false;
   const active = state.bodies[state.activeBodyIndex];
   if (!active || !Array.isArray(active.members)) return false;
@@ -430,6 +433,7 @@ function canSplitFairingNow() {
 }
 
 function canReleasePayloadNow() {
+  if (_guideActive) return false;
   if (state.crashed) return false;
   const active = state.bodies[state.activeBodyIndex];
   if (!active || !Array.isArray(active.members)) return false;
@@ -473,6 +477,7 @@ function canTakeControlNow() {
 // than a safe deploy speed (e.g. during a fast reentry, before the entry/
 // landing burn has slowed it down). Stowing is never restricted.
 function legDeploySafety() {
+  if (_guideActive) return { ok: false, ascending: false, tooFast: false };
   const r = Math.hypot(state.rx, state.ry);
   // A crashed body can't deploy or stow anything meaningful — its state
 // is frozen by the halt system anyway. Treat as permanently blocked.
@@ -718,6 +723,76 @@ function updateFuelAvailability() {
 }
 
 
+// ---------------------------------------------------------------------------
+// Guidance-active lock.
+//
+// When a guide is running, the human UI must not touch anything that
+// affects physics. Guidance has its own target-body tracking and would
+// get into a tug-of-war with any human command; it also doesn't respect
+// the "active body" concept (which the human Take Control manipulates),
+// so letting the human change bodies would point guidance's commands at
+// the wrong vehicle.
+//
+// Enabled: view-only controls, Start/Stop/Reset, Fast Forward,
+//          follow / zoom / Take Control.
+// Disabled: separation, fairing, legs, payload, wind/fuel/engines panels,
+//           atmosphere/slosh/IMU toggles.
+// Hidden: bottom pilot cluster (throttle sliders + RCS buttons + gimbal).
+//
+// The only way to regain control is the Abort Guidance button, which
+// stops the guide cleanly.
+// ---------------------------------------------------------------------------
+let _guideActive = false;
+function setGuidanceActive(active) {
+  const next = !!active;
+  if (next === _guideActive) return;
+  _guideActive = next;
+  document.body.classList.toggle('guide-active', _guideActive);
+  
+  // Sim-affecting buttons.
+  const disables = [
+    'btnLegs', 'btnSeparate', 'btnSplitFairing', 'btnReleasePayload',
+    'btnEjectPayload', 'btnWindPanel', 'btnFuelPanel', 'btnMergePanel',
+  ];
+  disables.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.disabled = _guideActive;
+  });
+  
+  // Physics-affecting toggles.
+  ['toggleAtmosphere', 'toggleSlosh', 'toggleImu'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.disabled = _guideActive;
+  });
+  
+  // Right-toolbar guidance controls: can't switch guide mid-mission,
+  // can't double-start.
+  const guideSel = document.getElementById('guideSelect');
+  if (guideSel) guideSel.disabled = _guideActive;
+  const guideStart = document.getElementById('btnGuideStart');
+  if (guideStart) guideStart.disabled = _guideActive;
+  
+  // Abort button — visible only while a guide is running.
+  const abortBtn = document.getElementById('btnGuideAbort');
+  if (abortBtn) abortBtn.style.display = _guideActive ? '' : 'none';
+}
+
+// Abort — the ONLY way to release the human lock while a guide is
+// running. Sends the guide a stop command; the sim itself keeps
+// flying (physics runs regardless), only the autonomous controller
+// is detached.
+function abortGuidance() {
+  if (typeof GuidanceBridge === 'undefined' || !GuidanceBridge.ready) return;
+  GuidanceBridge.send({ type: 'guidanceCommand', action: 'stop' });
+}
+
+// Called by onGuidanceStatus every time the guidance worker pushes
+// a status update, so the lock state always tracks the actual guide.
+function _syncGuidanceLock(status) {
+  const active = !!(status && status.active);
+  setGuidanceActive(active);
+}
+
 // ============================================================================
 // Right toolbar — guidance selection + start/stop.
 // ============================================================================
@@ -752,17 +827,26 @@ function bindGuidanceToolbar() {
     GuidanceBridge.send({ type: 'guidanceCommand', action: 'start', guideName: name });
   });
   
-  stopBtn.addEventListener('click', () => {
+    stopBtn.addEventListener('click', () => {
     if (typeof GuidanceBridge === 'undefined') return;
     GuidanceBridge.send({ type: 'guidanceCommand', action: 'stop' });
   });
-}
+  
+  // Abort Guidance — prominent top-bar button, visible only while
+  // a guide is running.
+  const abortBtn = document.getElementById('btnGuideAbort');
+  if (abortBtn) abortBtn.addEventListener('click', abortGuidance);
+  }
 
 // Called by workerBridge.js whenever the guidance worker pushes a status
 // update (or an immediate ack from a guidanceCommand). Updates the right
 // toolbar's live readout.
 function onGuidanceStatus(status) {
   const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+  
+  // Sync the guidance-active lock every time we hear from the worker.
+  // Idempotent — the function bails if the state hasn't changed.
+  _syncGuidanceLock(status);
   
   // Warp lock — guidance is active → force 1× and disable warp buttons.
   // Auto-syncs on every status ack (start, stop, and any auto-stop).

@@ -2581,28 +2581,29 @@ active.fuelMass = activeFuel;
 // Take user control of any body (usually a discarded booster, so the user
 // can fire its RCS / deploy its legs / land it). Resets actuators so the
 // new active body starts with engines off, gimbals centered, RCS idle.
-function takeControlOfBody(idx) {
+function takeControlOfBody(idx, opts) {
+  opts = opts || {};
   if (idx < 0 || idx >= state.bodies.length) return false;
   if (idx === state.activeBodyIndex) return false;
   
-  // Clear actuator state on the OLD active body's engines. Only the
-  // TARGETS are zeroed, not the current massFlowRate directly — the old
-  // body keeps ticking through physicsStep() after losing control (it's
-  // still falling/flying), so its existing rate limiter (with the
-  // shutdown-spool duration, see applyActuatorRateLimitsForBody) carries
-  // it down to zero smoothly instead of an instant cutoff.
+  // Clear actuator state on the OLD active body's engines — but ONLY
+  // when the human is actually taking over. If guidance is running
+  // (keepEnginesAlive: true), the old body is being flown by the
+  // guide, not the human; shutting it down would just create a one-tick
+  // dip before the guide re-fires it, and it confuses the guide's
+  // internal state. Take control then becomes a pure focus change.
   const old = state.bodies[state.activeBodyIndex];
-if (old) {
-  if (old.engines) {
-    old.engines.forEach(e => {
-      e.targetMassFlowRate = 0;
-      e.targetGimbalDeg = 0;
-    });
+  if (old && !opts.keepEnginesAlive) {
+    if (old.engines) {
+      old.engines.forEach(e => {
+        e.targetMassFlowRate = 0;
+        e.targetGimbalDeg = 0;
+      });
+    }
+    // Restore round-2 Issue 3: silence outgoing body's RCS.
+    if (typeof _blankRcsCmd === 'function') old.rcsCmd = _blankRcsCmd();
+    old.rcsDuty = null;
   }
-  // Restore round-2 Issue 3: silence outgoing body's RCS.
-  if (typeof _blankRcsCmd === 'function') old.rcsCmd = _blankRcsCmd();
-  old.rcsDuty = null;
-}
 
 // Plan B scoping: takeControl is a pure UI action, it does NOT abort
 // any body's pending sequence. Only cancelPendingSequences(body) on

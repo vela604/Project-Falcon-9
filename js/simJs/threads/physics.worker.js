@@ -522,9 +522,11 @@ b.omega = msg.omega || 0;
   break;
 }
     case 'takeControl': {
-      if (typeof takeControlOfBody === 'function') takeControlOfBody(msg.idx);
-      break;
-    }
+  if (typeof takeControlOfBody === 'function') {
+    takeControlOfBody(msg.idx, { keepEnginesAlive: !!msg.keepEnginesAlive });
+  }
+  break;
+}
 
     // ---- Fast-forward support ----
 // captureFullState: return a DEEP CLONE of the worker's canonical

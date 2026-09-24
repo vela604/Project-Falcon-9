@@ -285,29 +285,29 @@ else if (b.fairingHalf) tag = 'F';
 else if (b.members && b.members.length) tag = 'B' + i;
 else tag = 'D' + i;
       
-      // Pairwise: relative to the OTHER visible body.
-      const other = visible.find(v => v.i !== i);
-      let dx = 0,
-        dy = 0,
-        dvx = 0,
-        dvy = 0,
-        relLabel = '—';
-      if (other) {
-        dx = b.rx - other.b.rx;
-        dy = b.ry - other.b.ry;
-        dvx = b.vx - other.b.vx;
-        dvy = b.vy - other.b.vy;
-        relLabel = isAct ? ('vs D' + other.i) : ('vs A');
-      }
-      const dpStr = other ? `${dx.toFixed(1)}, ${dy.toFixed(1)}` : '—';
-      const dvStr = other ? `${dvx.toFixed(2)}, ${dvy.toFixed(2)}` : '—';
-      
-      return `<div class="${cls}">
-      <div class="tb-line"><span class="tb-label">${tag} pos</span><span class="tb-val">${alt.toFixed(0)}m</span></div>
-      <div class="tb-line"><span class="tb-label">vx,vy</span><span class="tb-val">${b.vx.toFixed(1)}, ${b.vy.toFixed(1)}</span></div>
-      <div class="tb-line"><span class="tb-label">Δpos ${relLabel}</span><span class="tb-val">${dpStr}</span></div>
-      <div class="tb-line"><span class="tb-label">Δv ${relLabel}</span><span class="tb-val">${dvStr}</span></div>
-    </div>`;
+        // Every non-active body shows Δpos / Δv relative to the ACTIVE
+  // body — not "first visible other body", which was arbitrary and
+  // gave different frames depending on body order in state.bodies.
+  // The active body itself shows "—" for these rows (it can't be
+  // relative to itself).
+  const activeBody = state.bodies[state.activeBodyIndex];
+  let dpStr = '—', dvStr = '—';
+  if (!isAct && activeBody) {
+    const dx = b.rx - activeBody.rx;
+    const dy = b.ry - activeBody.ry;
+    const dvx = b.vx - activeBody.vx;
+    const dvy = b.vy - activeBody.vy;
+    dpStr = `${dx.toFixed(1)}, ${dy.toFixed(1)}`;
+    dvStr = `${dvx.toFixed(2)}, ${dvy.toFixed(2)}`;
+  }
+  const relTag = isAct ? '' : ' vs A';
+  
+  return `<div class="${cls}">
+  <div class="tb-line"><span class="tb-label">${tag} pos</span><span class="tb-val">${alt.toFixed(0)}m</span></div>
+  <div class="tb-line"><span class="tb-label">vx,vy</span><span class="tb-val">${b.vx.toFixed(1)}, ${b.vy.toFixed(1)}</span></div>
+  <div class="tb-line"><span class="tb-label">Δpos${relTag}</span><span class="tb-val">${dpStr}</span></div>
+  <div class="tb-line"><span class="tb-label">Δv${relTag}</span><span class="tb-val">${dvStr}</span></div>
+</div>`;
     });
     bodyListEl.innerHTML = rows.join('');
   }

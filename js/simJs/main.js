@@ -347,21 +347,21 @@ if (legsBtn) {
   const plBtn = getEl('btnReleasePayload');
   if (plBtn) plBtn.disabled = !canReleasePayloadNow();
   
-      const ejectBtn = getEl('btnEjectPayload');
-  if (ejectBtn) {
-    const active = state.bodies[state.activeBodyIndex];
-    // Emergency eject ONLY makes sense while the fairing is still on —
-    // its whole rationale is "save the SHIELDED payload". Once the fairing
-    // has been split (or was never fitted), the payload is already exposed
-    // and normal Release Payload is the correct command. Also disabled on
-    // an emergency-ejected body itself: it IS the shielded unit, there's
-    // nothing left to eject.
-    const isEmergencyUnit = !!(active && active.emergencyEject);
-    const hasFairing = !!(active && active.members &&
-      active.members.some(m => m && m.stageRole === 'payloadSpace'));
-    const canEject = !!(active && active.payloadId && !active.payloadReleased &&
-      !active.crashed && hasFairing && !isEmergencyUnit);
-    ejectBtn.disabled = !canEject;
+          const ejectBtn = getEl('btnEjectPayload');
+    if (ejectBtn) {
+      const active = state.bodies[state.activeBodyIndex];
+      // Emergency eject ONLY makes sense while the fairing is still on —
+      // its whole rationale is "save the SHIELDED payload". Once the fairing
+      // has been split (or was never fitted), the payload is already exposed
+      // and normal Release Payload is the correct command. Also disabled on
+      // an emergency-ejected body itself: it IS the shielded unit, there's
+      // nothing left to eject.
+      const isEmergencyUnit = !!(active && active.emergencyEject);
+      const hasFairing = !!(active && active.members &&
+        active.members.some(m => m && m.stageRole === 'payloadSpace'));
+      const canEject = !_guideActive && !!(active && active.payloadId && !active.payloadReleased &&
+        !active.crashed && hasFairing && !isEmergencyUnit);
+      ejectBtn.disabled = !canEject;
     ejectBtn.title = canEject ?
       'Emergency eject — splits fairing and deploys cargo at high velocity' :
       (isEmergencyUnit ?

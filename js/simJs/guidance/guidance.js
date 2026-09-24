@@ -3542,6 +3542,7 @@ const _leoStateV2 = {
   splitDetected: false,
   fairingOpened: false,
   initialBodyCount: 0,
+  missionBodyIdx: null, // locked to the body guidance is flying
   preSplitBodyId: null,
   boosterIdx: -1,
   stageIdx: -1,
@@ -3582,31 +3583,36 @@ function _leoTickV2(snapshot) {
   _leoStateV2.ticks++;
   if (!snapshot || !Array.isArray(snapshot.bodies) || !snapshot.bodies.length) return;
   
-  // Diagnostic wrapper — every zero-throttle command logs its source
-  // phase + reason. Used to trace which code path killed the engine
-  // in CIRCULARIZE before the v_err-based cutoff fired.
-  const _origSend = send;
-  const sendThrottleZero = (reason) => {
-    console.log('[throttle-zero] phase=' + _leoStateV2.phase + ' reason=' + reason);
-    _origSend(cmdSetAllThrottle(0));
-  };
-  const idx = (Number.isInteger(snapshot.activeBodyIndex)) ? snapshot.activeBodyIndex : 0;
+  // Use the locked mission body if one is set; otherwise fall back to
+  // the currently-active body on the first tick. The init block below
+  // captures the mission body the first time we run.
+  let idx = (Number.isInteger(_leoStateV2.missionBodyIdx)) ?
+    _leoStateV2.missionBodyIdx :
+    ((Number.isInteger(snapshot.activeBodyIndex)) ? snapshot.activeBodyIndex : 0);
   const body = snapshot.bodies[idx];
   if (!body) return;
   const simT = snapshot.simTime;
 
   // ---------- Init ----------
   if (!_leoStateV2.init) {
-    _leoStateV2.init = true;
-    _leoStateV2.phase = 'ASCENT';
-    _leoStateV2.phaseStart = simT;
-    _leoStateV2.mecoTriggered = false;
-    _leoStateV2.splitDetected = false;
-    _leoStateV2.fairingOpened = false;
-    _leoStateV2.initialBodyCount = snapshot.bodies.length;
-    _leoStateV2.preSplitBodyId = body.id || null;
-    _leoStateV2.boosterIdx = -1;
-    _leoStateV2.stageIdx = idx;
+  _leoStateV2.init = true;
+  _leoStateV2.phase = 'ASCENT';
+  _leoStateV2.phaseStart = simT;
+  _leoStateV2.mecoTriggered = false;
+  _leoStateV2.splitDetected = false;
+  _leoStateV2.fairingOpened = false;
+  _leoStateV2.initialBodyCount = snapshot.bodies.length;
+  _leoStateV2.preSplitBodyId = body.id || null;
+  _leoStateV2.boosterIdx = -1;
+  _leoStateV2.stageIdx = idx;
+  
+  // Lock the mission body and hand the index to Guidance.send().
+  // From here on, activeBodyIndex changes (Take Control, etc.) don't
+  // affect which body guidance commands.
+  _leoStateV2.missionBodyIdx = idx;
+  if (typeof Guidance !== 'undefined' && Guidance.setMissionBody) {
+    Guidance.setMissionBody(idx);
+  }
     if (typeof _hTick !== 'undefined' && typeof _hTick.start === 'function') {
   try { _hTick.start(); } catch (e) { console.error('[leoInsertionV2] _hTick.start failed', e); }
 }
@@ -4531,9 +4537,10 @@ _leoTickV2.start = function () {
   _leoStateV2.phase = 'ASCENT';
   _leoStateV2.phaseStart = 0;
   _leoStateV2.mecoTriggered = false;
-  _leoStateV2.splitDetected = false;
-  _leoStateV2.fairingOpened = false;
-  _leoStateV2.initialBodyCount = 0;
+_leoStateV2.splitDetected = false;
+_leoStateV2.fairingOpened = false;
+_leoStateV2.initialBodyCount = 0;
+_leoStateV2.missionBodyIdx = null;
   _leoStateV2.preSplitBodyId = null;
   _leoStateV2.boosterIdx = -1;
   _leoStateV2.stageIdx = -1;
@@ -4570,12 +4577,21 @@ _leoStateV2.deployStartTheta = 0;
 _leoStateV2.deployBangMid = 0;
   console.log('[leoInsertionV2] started');
   };
-_leoTickV2.stop = function () {
+_leoTickV2.stop = function() {
+  // Commands target the mission body explicitly — send() auto-injects
+  // the lock, which is still set at this point. Only after cleanup do
+  // we clear the mission body.
   send(cmdSetAllThrottle(0));
   send(cmdSetGimbalRate(0));
   send(cmdRcsDuty(null));
   if (typeof _hTick !== 'undefined' && typeof _hTick.stop === 'function') {
     try { _hTick.stop(); } catch (e) {}
+  }
+  // Release the mission lock so a subsequent guide start picks up
+  // whatever body is active at that moment.
+  _leoStateV2.missionBodyIdx = null;
+  if (typeof Guidance !== 'undefined' && Guidance.setMissionBody) {
+    Guidance.setMissionBody(null);
   }
   console.log('[leoInsertionV2] stopped');
 };
@@ -4630,14 +4646,32 @@ function getLeoInsertionV2Config() { return { ...LEO_INSERTION_V2 }; }
 
 
 
-  // ---- Outbound: single choke point for physics commands. ----
-  function send(msg) {
-    if (!_physicsSend) {
-      console.warn('[guidance] send() called before physics port connected:', msg);
-      return;
-    }
-    _physicsSend(msg);
+// ---- Mission body lock ----
+// When a guide is running, every command it sends must land on the
+// body the guide is flying, regardless of what body the human UI has
+// selected via Take Control. Without this, Take Control repoints
+// guidance at the wrong vehicle — the guided body gets its engines
+// killed by take-control's shutdown, and the newly-focused body
+// receives stage-burn throttle commands it was never meant to.
+let _missionBodyIdx = null;
+function setMissionBody(idx) {
+  _missionBodyIdx = Number.isInteger(idx) ? idx : null;
+}
+
+// ---- Outbound: single choke point for physics commands. ----
+function send(msg) {
+  if (!_physicsSend) {
+    console.warn('[guidance] send() called before physics port connected:', msg);
+    return;
   }
+  // Auto-inject the mission body when the caller didn't set one.
+  // Commands that explicitly set targetBodyIdx (RCS_BOOST, etc.) are
+  // left untouched — only the default-active-body path is redirected.
+  if (_missionBodyIdx !== null && msg.targetBodyIdx === undefined) {
+    msg.targetBodyIdx = _missionBodyIdx;
+  }
+  _physicsSend(msg);
+}
   
   // ---- Command builders. Shape-only; clamping is physics's job. ----
   function cmdSetGroupThrottle(angles, kgPerSec) { return { type: 'setGroupThrottle', angles, value: kgPerSec }; }
@@ -4683,6 +4717,7 @@ setSweepDuration,
 setAscentHold,
 setLeoInsertion,
 setLeoInsertionV2,
+setMissionBody,
 getLeoInsertionV2Config,
 getAscentRRConfig,
 getAscentHoldConfig,

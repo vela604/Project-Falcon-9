@@ -54,6 +54,9 @@
           <div class="tb-sep"></div>
 <div class="tb-group">
   <button class="btn" id="btnFastForward" title="Fast-forward the simulation"><span class="btn-ic">⏩</span>Fast Forward</button>
+  <button class="btn" id="btnGuideAbort" style="display:none;border-color:var(--danger);color:var(--danger);" title="Abort the running guidance — releases all controls back to the human">
+    <span class="btn-ic">⏹</span>Abort Guidance
+  </button>
 </div>
         </div>
         <div class="tb-right">
@@ -433,6 +436,52 @@
   }
   body.ff-active #ffModal {
     z-index: 9999;
+  }
+</style>
+
+<style>
+  /* Fast-forward visual: blur the canvas + top/bottom chrome via CSS
+     filter. ... */
+  body.ff-active #simCanvas,
+  body.ff-active #bottomControls,
+  body.ff-active #directionHUD,
+  body.ff-active #statusBar {
+    filter: blur(8px) brightness(0.55);
+    transition: filter 0.35s ease;
+  }
+  body.ff-active #leftToolbar,
+  body.ff-active #rightToolbar {
+    display: none !important;
+  }
+  body.ff-active #ffModal {
+    z-index: 9999;
+  }
+  
+  /* Guidance active: hide the pilot cluster entirely (guidance owns
+     every actuator it uses; a human thumb on the sliders would just
+     fight it), and visually dim the sim-affecting buttons that JS
+     disables. View-only controls (Grid, Vectors, Trajectory,
+     Earth-fixed, follow, zoom, take-control, Start/Stop/Reset,
+     Fast Forward) stay fully interactive. */
+  body.guide-active #bottomControls {
+    display: none !important;
+  }
+  body.guide-active #btnLegs[disabled],
+  body.guide-active #btnSeparate[disabled],
+  body.guide-active #btnSplitFairing[disabled],
+  body.guide-active #btnReleasePayload[disabled],
+  body.guide-active #btnEjectPayload[disabled],
+  body.guide-active #btnWindPanel[disabled],
+  body.guide-active #btnFuelPanel[disabled],
+  body.guide-active #btnMergePanel[disabled] {
+    opacity: 0.35;
+    cursor: not-allowed;
+  }
+  body.guide-active label.chip-toggle:has(#toggleAtmosphere[disabled]),
+  body.guide-active label.chip-toggle:has(#toggleSlosh[disabled]),
+  body.guide-active label.chip-toggle:has(#toggleImu[disabled]) {
+    opacity: 0.35;
+    cursor: not-allowed;
   }
 </style>
 
