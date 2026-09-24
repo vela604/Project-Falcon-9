@@ -20,6 +20,51 @@
 // migrated automatically on load — see migrateRocketRecord() below.
 // ============================================================================
 
+
+// ---------------------------------------------------------------------------
+// Seed record sync — brings every live seed record back in line with its
+// current seed function definition.
+//
+// WHY THIS EXISTS: seed records are created fresh only on a fresh install.
+// After that, loadFleet() reads them from localStorage — so any edit to
+// seedFalcon9Booster() / seedFalcon9Stage() / seedFalcon9Fairing() (tank
+// heights, mass flow rates, shell factors, engine thrusters, ...) has
+// zero effect on browsers that already have fleet data cached. This block
+// rebuilds the seeds fresh and copies every field the seed declares onto
+// the matching live record by id.
+//
+// WHY IT'S SAFE TO FORCE: seed records are protected — the fleet editor
+// treats them as read-only (deleteRocket() refuses locked records, and
+// users who want to customize are expected to Duplicate instead of Edit).
+// A record with a seed id but non-seed data can only exist via manual
+// localStorage tampering, which isn't a case we protect against.
+//
+// FIELD SCOPE: only fields the seed record itself defines are overwritten.
+// Any runtime-owned field the seed doesn't declare (none today, but this
+// keeps the door open) is left untouched on the live record.
+//
+// Idempotent: after the first load, every seed field already matches and
+// nothing is written.
+// ---------------------------------------------------------------------------
+function syncSeedRecords(fleet) {
+  const freshSeeds = seedFalcon9Family().map(migrateRocketRecord);
+  let changed = false;
+  freshSeeds.forEach(seedRec => {
+    const idx = fleet.findIndex(r => r.id === seedRec.id);
+    if (idx < 0) return;
+    const liveRec = fleet[idx];
+    Object.keys(seedRec).forEach(k => {
+      const seedJson = JSON.stringify(seedRec[k]);
+      const liveJson = JSON.stringify(liveRec[k]);
+      if (seedJson !== liveJson) {
+        liveRec[k] = JSON.parse(seedJson);
+        changed = true;
+      }
+    });
+  });
+  return changed;
+}
+
 function _fmtMassShort(kg) {
   if (!Number.isFinite(kg)) return '—';
   return kg >= 1000 ? (kg / 1000).toFixed(1) + ' t' : Math.round(kg) + ' kg';
@@ -358,7 +403,7 @@ function seedFalcon9Booster() {
     bodyMetalTypeId: 'al-li-alloy',
     legsMetalTypeId: 'carbon-composite',
     bodyShellFactor: 0.01797,
-    maxExtraWeightKg: 121500,
+    maxExtraWeightKg: 150000,
     engineThrusters: {
       gimbal: { thrusterTypeId: 'merlin-1d-class', massFlowRate: 306 },
       fixed:  { thrusterTypeId: 'merlin-1d-class', massFlowRate: 306 },
@@ -367,7 +412,7 @@ function seedFalcon9Booster() {
     pusherTypeId: 'pneumatic-pusher-n2',
     fuel: {
       typeId: 'rp1-lox',
-      tankHeight: 34.1, tankWidth: 3.7,
+      tankHeight: 33.6, tankWidth: 3.7,
       baffleCount: 4, baffleInnerRadiusFrac: 0.8,
     },
     params: {
@@ -383,7 +428,7 @@ function seedFalcon9Stage() {
   return {
     id: 'falcon9-stage',
     name: 'Falcon 9 Block 5 — Upper Stage',
-    locked: false,
+    locked: true,
     stageRole: 'stage',
     familyId: LEGACY_FAMILY_ID,
     height: 13.8, width: 3.7, dragCd: 0.6,
@@ -399,11 +444,11 @@ function seedFalcon9Stage() {
       gimbal: { thrusterTypeId: 'merlin-1d-vac-class', massFlowRate: 288 },
     },
     rcsThruster: { thrusterTypeId: 'cold-gas-small', massFlowRate: 0.5 },
-    fuel: {
-      typeId: 'rp1-lox',
-      tankHeight: 8.0, tankWidth: 3.7,
-      baffleCount: 2, baffleInnerRadiusFrac: 0.8,
-    },
+fuel: {
+  typeId: 'rp1-lox',
+  tankHeight: 8.8, tankWidth: 3.7,
+  baffleCount: 2, baffleInnerRadiusFrac: 0.8,
+},
     params: {
   rcsTopY: 13, rcsBottomY: 1, rcsXOffset: 1.85, rcsPwmPeriod: 0.3,
 },
@@ -415,7 +460,7 @@ function seedFalcon9Fairing() {
   return {
     id: 'falcon9-fairing',
     name: 'Falcon 9 Fairing',
-    locked: false,
+    locked: true,
     stageRole: 'payloadSpace',
     familyId: LEGACY_FAMILY_ID,
     height: 13.1, width: 5.2, dragCd: 0.4,
@@ -439,6 +484,7 @@ function seedFalcon9Payload() {
   return {
     id: 'pl_falcon9-default',
     name: 'Falcon 9 Demo Payload',
+    locked: true,
     mass: 12000,
     height: 8.0,
     width: 3.0,
@@ -457,7 +503,7 @@ function seedFalcon9Stack() {
     members: ['falcon9-default', 'falcon9-stage', 'falcon9-fairing'],
     sequence: 'f9-standard',
     payloadId: 'pl_falcon9-default',
-    locked: false,
+    locked: true,
   };
 }
 
@@ -819,6 +865,45 @@ function runPayloadSpaceSplitOnce(fleet) {
   return result.fleet;
 }
 
+// ---------------------------------------------------------------------------
+// Seed calibration fixes — force-updates certain fields on the built-in
+// seed records to match the current calibrated values.
+//
+// WHY THIS EXISTS: seed records are created fresh only on a fresh install.
+// After that, loadFleet() reads them from localStorage — so a calibration
+// change to seedFalcon9Booster() / seedFalcon9Stage() has zero effect on
+// any browser that already has fleet data cached. This block patches the
+// live records in place.
+//
+// WHY IT'S SAFE TO FORCE (no value-match guard): seed records are
+// protected — the fleet editor treats them as read-only (deleteRocket()
+// refuses locked records, and users who want to customize are expected
+// to Duplicate instead of Edit). Any record with a seed ID but
+// non-seed data can only exist via manual localStorage tampering, which
+// isn't a use case we need to protect.
+//
+// Idempotent: after the first load, values already equal the targets and
+// nothing is written. Add new seed calibration fixes below as { id: { field: value } }.
+// ---------------------------------------------------------------------------
+const SEED_CALIBRATION_FIXES = {
+  'falcon9-default': { tankHeight: 33.6 },
+  'falcon9-stage': { tankHeight: 8.8 },
+};
+
+function applySeedCalibrationFixes(fleet) {
+  let changed = false;
+  fleet.forEach(r => {
+    const fixes = SEED_CALIBRATION_FIXES[r.id];
+    if (!fixes) return;
+    if (fixes.tankHeight !== undefined && r.fuel &&
+      r.fuel.tankHeight !== fixes.tankHeight) {
+      r.fuel.tankHeight = fixes.tankHeight;
+      changed = true;
+    }
+  });
+  return changed;
+}
+
 function loadFleet() {
   try {
     const raw = localStorage.getItem(FLEET_KEY);
@@ -826,9 +911,13 @@ function loadFleet() {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed) && parsed.length) {
         let migrated = parsed.map(migrateRocketRecord);
-        migrated = runPayloadSpaceSplitOnce(migrated);
-        if (JSON.stringify(migrated) !== JSON.stringify(parsed)) saveFleet(migrated);
-        return migrated;
+migrated = runPayloadSpaceSplitOnce(migrated);
+const seedChanged = syncSeedRecords(migrated);
+if (seedChanged ||
+  JSON.stringify(migrated) !== JSON.stringify(parsed)) {
+  saveFleet(migrated);
+}
+return migrated;
       }
     }
   } catch (e) { /* fall through to seed */ }
@@ -882,6 +971,12 @@ function getSelectedRocket() {
 // fleet. Records are looked up by id — the stack itself stores only ids,
 // so renaming/deleting/re-editing a member is immediately reflected.
 // ---------------------------------------------------------------------------
+// Seed stack ids that must be locked. Existing browsers saved the seed
+// stack with locked:false before this list existed; force them locked on
+// load. Adding a new seeded stack? Just add its id here — this is a
+// one-time, idempotent migration.
+const SEED_STACK_LOCKED_IDS = ['stk_falcon9-default'];
+
 function loadStacks() {
   try {
     const raw = localStorage.getItem(STACKS_KEY);
@@ -896,6 +991,11 @@ function loadStacks() {
         parsed.forEach(s => {
           if (!s.derived || !s.derived.interstage) {
             s.derived = computeStackDerived(s.members);
+            changed = true;
+          }
+          // Seed lock migration — force seeded stacks locked.
+          if (SEED_STACK_LOCKED_IDS.includes(s.id) && s.locked !== true) {
+            s.locked = true;
             changed = true;
           }
         });
@@ -2049,12 +2149,27 @@ function bridgePerfParams(rec) {
 // ============================================================================
 const PAYLOADS_KEY = 'rocketSim.payloads.v1';
 
+// Seed payload ids that must be locked. Existing browsers saved the seed
+// payload without a locked flag before this list existed; force it on
+// load. Add new seeded payload ids here as needed.
+const SEED_PAYLOAD_LOCKED_IDS = ['pl_falcon9-default'];
+
 function loadPayloads() {
   try {
     const raw = localStorage.getItem(PAYLOADS_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) return parsed;
+      if (Array.isArray(parsed)) {
+        let changed = false;
+        parsed.forEach(p => {
+          if (SEED_PAYLOAD_LOCKED_IDS.includes(p.id) && p.locked !== true) {
+            p.locked = true;
+            changed = true;
+          }
+        });
+        if (changed) savePayloads(parsed);
+        return parsed;
+      }
     }
   } catch (e) { /* fall through */ }
   return [];
@@ -2110,6 +2225,9 @@ function updatePayload(id, patch) {
   const list = loadPayloads();
   const idx = list.findIndex(p => p.id === id);
   if (idx < 0) return null;
+  // Locked payloads are protected — writes rejected at the data layer,
+  // not just the UI, so a stray call can't slip through.
+  if (list[idx].locked) return null;
   const merged = { ...list[idx], ...patch, id };
   list[idx] = merged;
   savePayloads(list);
@@ -2119,7 +2237,7 @@ function updatePayload(id, patch) {
 function deletePayload(id) {
   let list = loadPayloads();
   const tgt = list.find(p => p.id === id);
-  if (!tgt) return false;
+  if (!tgt || tgt.locked) return false;
   list = list.filter(p => p.id !== id);
   savePayloads(list);
   // Clear any payloadSpace.payloadId pointers that referenced this payload.

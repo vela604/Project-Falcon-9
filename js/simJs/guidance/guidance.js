@@ -3437,7 +3437,7 @@ const LEO_INSERTION_V2 = {
   ASCENT: {
     INITIAL_COAST_S: 4.9,
     PUSH_T_S: 4.8,
-    PUSH_MAX_GIMBAL_DEG: 1.45,
+    PUSH_MAX_GIMBAL_DEG: 0.65,
     PUSH_EAST_SIGN: -1,
     HOLD_K_DAMP: 4.0,
     HOLD_MAX_AOA_DEG: 8,
@@ -3480,7 +3480,11 @@ STAGE_BURN_LOOKAHEAD_TICKS: 3,
   // timing from tick-granularity — the main engine does the coarse
   // burn, RCS does the fine trim. 3 m/s ≈ 10-15 km of apogee, which
   // RCS covers in ~80 seconds at 1080 N on a ~28 t stage.
-  STAGE_BURN_CUTOFF_MARGIN_MPS: 3.0,
+  // Burn trigger lead: fire when time-remaining-to-apogee ≤
+// startupDurationS + this. The startup duration is the hard floor
+// (thrust can't be full until then); the extra lead gives the
+// attitude controller room to settle before the burn really ramps.
+CIRC_TRIGGER_LEAD_S: 0.5,
   
   // Attitude lock: once |θ_rel| (tilt from local vertical) first reaches
   // this many degrees during STAGE_BURN, switch from AoA-damp to a PD

@@ -319,6 +319,15 @@ function hideFamilyDetail() {
 function openFamilyAddMember(familyId) {
   const fam = getFamily(familyId);
   if (!fam) return;
+  // Default (locked) families are protected — adding a member would be an
+// edit to the seed family. Duplicate its members instead.
+if (fam.locked) {
+  showFleetToast(
+    'Default family',
+    'Duplicate a vehicle to add new members.'
+  );
+  return;
+}
   // P4-B3: use getFamilyBottom() — it resolves the id to a real record and
   // returns null if the referenced record is missing (deleted), so a stale
   // bottomId can't wrongly disable the "add booster" option.
@@ -405,6 +414,73 @@ function renderStackList() {
 // ---------------------------------------------------------------------------
 // Payloads view (Step I-b).
 // ---------------------------------------------------------------------------
+// Payload preview — draws the payload's own artwork (drawPayloadArt from
+// rocketArt.js — same routine that renders a released satellite in the
+// live sim) at an aspect-correct scale, fitted to the canvas with a small
+// margin. Live-updates on mass/height/width edits.
+function renderPayloadPreview(canvas, dims) {
+  if (!canvas) return;
+  const cssW = canvas.clientWidth || canvas.width || 220;
+  if (!cssW) return;
+  const pctx = canvas.getContext('2d');
+  
+  // Fall back to 1:1 for degenerate/cleared fields so the preview
+  // doesn't vanish mid-edit.
+  const plW = Number.isFinite(dims.width)  && dims.width  > 0 ? dims.width  : 1;
+  const plH = Number.isFinite(dims.height) && dims.height > 0 ? dims.height : 1;
+  
+  // drawPayloadArt draws the body as a W×H rect (base at origin, body
+  // spans up to -H), plus a dish of radius 0.18·W sitting above the body,
+  // plus folded solar panels extending 0.15·W on each side of the body.
+  // Whole drawn extent: 1.3·W wide × (H + 0.18·W) tall.
+  const DRAW_W_FRAC = 1.3;
+  const DISH_FRAC   = 0.18;
+  const FILL        = 0.85;   // fraction of canvas the drawing fills
+  const MAX_H_PX    = 400;    // cap so very tall payloads don't overshoot
+  
+  let W_px = (cssW * FILL) / DRAW_W_FRAC;
+  let H_px = (plH / plW) * W_px;
+  const drawH_pre = H_px + DISH_FRAC * W_px;
+  if (drawH_pre > MAX_H_PX) {
+    const k = MAX_H_PX / drawH_pre;
+    W_px *= k;
+    H_px *= k;
+  }
+  const drawH = H_px + DISH_FRAC * W_px;
+  const cssH = drawH / FILL;
+  
+  canvas.style.height = cssH + 'px';
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width  = Math.round(cssW * dpr);
+  canvas.height = Math.round(cssH * dpr);
+  pctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  pctx.clearRect(0, 0, cssW, cssH);
+  
+  const baseX = cssW / 2;
+  // Base sits at the bottom edge of the drawn extent (dish extends up
+  // from the top of the body). (cssH + drawH)/2 places top + bottom
+  // margins equal.
+  const baseY = (cssH + drawH) / 2;
+  
+  pctx.save();
+  pctx.translate(baseX, baseY);
+  if (typeof drawPayloadArt === 'function') {
+    drawPayloadArt(pctx, W_px, H_px);
+  }
+  pctx.restore();
+}
+
+function _renderPayloadPreviewFromForm() {
+  const canvas = document.getElementById('payloadPreviewCanvas');
+  if (!canvas) return;
+  const h = parseFloat(document.getElementById('pl-height').value);
+  const w = parseFloat(document.getElementById('pl-width').value);
+  renderPayloadPreview(canvas, {
+    height: Number.isFinite(h) && h > 0 ? h : 1,
+    width:  Number.isFinite(w) && w > 0 ? w : 1,
+  });
+}
+
 function renderPayloadList() {
   const host = document.getElementById('payloadList');
   if (!host) return;
@@ -420,6 +496,7 @@ function renderPayloadList() {
     row.innerHTML = `
       <div class="fleet-row-top">
         <span class="fleet-row-name">${escapeHtml(p.name)}</span>
+        ${p.locked ? '<span class="badge badge-locked">DEFAULT</span>' : ''}
       </div>
       <div class="fleet-row-specs">
         <span>${fmtMass(p.mass)}</span>
@@ -428,7 +505,8 @@ function renderPayloadList() {
       </div>
       <div class="fleet-row-actions">
         <button class="btn" data-pl-act="edit" data-id="${p.id}">Edit</button>
-        <button class="btn btn-danger" data-pl-act="del" data-id="${p.id}">Delete</button>
+        <button class="btn" data-pl-act="dup" data-id="${p.id}">Duplicate</button>
+        <button class="btn btn-danger" data-pl-act="del" data-id="${p.id}" ${p.locked ? 'disabled' : ''}>Delete</button>
       </div>
     `;
     host.appendChild(row);
@@ -436,25 +514,121 @@ function renderPayloadList() {
   host.querySelectorAll('button[data-pl-act]').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
-      if (btn.dataset.plAct === 'edit') openPayloadEditor(btn.dataset.id);
+      const id = btn.dataset.id;
+      if (btn.dataset.plAct === 'edit') openPayloadEditor(id);
+      if (btn.dataset.plAct === 'dup')  duplicatePayloadFlow(id);
       if (btn.dataset.plAct === 'del') {
-        if (confirm('Delete this payload?')) { deletePayload(btn.dataset.id);
-          renderPayloadList(); }
+        if (confirm('Delete this payload?')) { deletePayload(id); renderPayloadList(); }
       }
     });
   });
-  host.querySelectorAll('.fleet-row').forEach((row, i) => {
+      host.querySelectorAll('.fleet-row').forEach((row, i) => {
     row.style.cursor = 'pointer';
     row.addEventListener('click', (e) => {
       if (e.target.closest('button')) return;
-      openPayloadEditor(list[i].id);
+      showPayloadDetail(list[i].id);
     });
   });
 }
 
+// Copy a payload — including a locked one — into a fresh editable record.
+function duplicatePayloadFlow(id) {
+  const src = getPayload(id);
+  if (!src) return;
+  const copy = addPayload({
+    name: src.name + ' (copy)',
+    mass: src.mass,
+    height: src.height,
+    width: src.width,
+    dragCd: src.dragCd,
+    maxHeatFlux: src.maxHeatFlux,
+  });
+  renderPayloadList();
+  openPayloadEditor(copy.id);
+}
+
+// Read-only view for a selected payload — mirrors showVehicleDetail()'s
+// role for vehicles. Row clicks route here; only the Edit button enters
+// the actual editor form (which has its own locked-record guard).
+function showPayloadDetail(id) {
+  const p = getPayload(id);
+  if (!p) return;
+  editingPayloadId = id; // reuse: id of the currently-selected payload
+  
+  document.getElementById('payloadDetailTitle').textContent = p.name;
+  document.getElementById('payloadDetailLocked').style.display = p.locked ? '' : 'none';
+  
+  const set = (elId, val) => { const el = document.getElementById(elId); if (el) el.textContent = val; };
+  set('pd-mass', fmtMass(p.mass));
+  set('pd-height', p.height + ' m');
+  set('pd-width', p.width + ' m');
+  set('pd-dragCd', p.dragCd);
+  const mhf = Number.isFinite(p.maxHeatFlux) ? p.maxHeatFlux : 20000;
+  set('pd-maxHeatFlux', mhf.toLocaleString() + ' W/m²');
+  
+  // Delete button disabled on locked — matches vehicle/stack behaviour.
+  const delBtn = document.getElementById('btnPayloadDetailDelete');
+  if (delBtn) delBtn.disabled = !!p.locked;
+  
+  // Preview — reuse the same renderer the editor uses.
+  renderPayloadPreview(
+    document.getElementById('payloadDetailPreviewCanvas'),
+    { height: p.height, width: p.width }
+  );
+  
+  document.getElementById('payloadEditorEmpty').style.display = 'none';
+  document.getElementById('payloadEditorForm').style.display = 'none';
+  document.getElementById('payloadDetail').style.display = '';
+  
+  renderPayloadList();
+}
+
+// Wire the detail-panel action buttons once, at module load. They act on
+// whichever payload is currently selected (editingPayloadId).
+(function wirePayloadDetailActions() {
+  const wire = () => {
+    const dupBtn = document.getElementById('btnPayloadDetailDuplicate');
+    const editBtn = document.getElementById('btnPayloadDetailEdit');
+    const delBtn = document.getElementById('btnPayloadDetailDelete');
+    if (dupBtn) dupBtn.addEventListener('click', () => {
+      if (editingPayloadId) duplicatePayloadFlow(editingPayloadId);
+    });
+    if (editBtn) editBtn.addEventListener('click', () => {
+      if (editingPayloadId) openPayloadEditor(editingPayloadId);
+    });
+    if (delBtn) delBtn.addEventListener('click', () => {
+      if (!editingPayloadId) return;
+      if (confirm('Delete this payload?')) {
+        if (deletePayload(editingPayloadId)) {
+          editingPayloadId = null;
+          document.getElementById('payloadDetail').style.display = 'none';
+          document.getElementById('payloadEditorEmpty').style.display = '';
+          renderPayloadList();
+        }
+      }
+    });
+  };
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', wire);
+  } else {
+    wire();
+  }
+})();
+
 function openPayloadEditor(id) {
+  // Locked (default) payloads are protected — same guard as vehicles and
+  // stacks. Duplicate instead.
+  const existing = id ? getPayload(id) : null;
+  if (existing && existing.locked) {
+    showFleetToast(
+      'Default payload',
+      'Duplicate to edit this payload.'
+    );
+    return;
+  }
+  
   editingPayloadId = id;
-  const p = id ? getPayload(id) : blankPayloadData();
+  const p = id ? existing : blankPayloadData();
   if (!p) return;
   document.getElementById('payloadEditorTitle').textContent = p.name || 'New Payload';
   document.getElementById('pl-name').value = p.name || '';
@@ -462,20 +636,57 @@ function openPayloadEditor(id) {
   document.getElementById('pl-height').value = p.height;
   document.getElementById('pl-width').value = p.width;
   document.getElementById('pl-dragCd').value = p.dragCd;
-// maxHeatFlux — default 20 kW/m² for legacy payloads that predate
-// this field. Bare satellite with minimal TPS.
-const mhf = Number.isFinite(p.maxHeatFlux) ? p.maxHeatFlux : 20000;
-document.getElementById('pl-maxHeatFlux').value = mhf;
-document.getElementById('payloadEditorEmpty').style.display = 'none';
+  // maxHeatFlux — default 20 kW/m² for legacy payloads that predate
+  // this field. Bare satellite with minimal TPS.
+  const mhf = Number.isFinite(p.maxHeatFlux) ? p.maxHeatFlux : 20000;
+  document.getElementById('pl-maxHeatFlux').value = mhf;
+  
+  // Locked badge + Duplicate button in the editor head. Only shown when
+  // the payload is locked — the guard above means the editor never opens
+  // for a locked payload from a normal user flow, but defensive display
+  // costs nothing.
+  const lockBadge = document.getElementById('payloadLockedBadge');
+  const dupBtn = document.getElementById('btnPayloadDuplicate');
+  if (lockBadge) lockBadge.style.display = p.locked ? '' : 'none';
+  if (dupBtn) dupBtn.style.display = p.locked ? '' : 'none';
+  
+  document.getElementById('payloadEditorEmpty').style.display = 'none';
+document.getElementById('payloadDetail').style.display = 'none';
 document.getElementById('payloadEditorForm').style.display = '';
+
+// Draw the preview now that dimensions are populated, then re-draw on
+// every subsequent input change.
+_renderPayloadPreviewFromForm();
+  const form = document.getElementById('payloadEditorForm');
+  if (!form.dataset.previewWired) {
+    form.dataset.previewWired = '1';
+    ['pl-height', 'pl-width'].forEach(fid => {
+      const el = document.getElementById(fid);
+      if (el) el.addEventListener('input', _renderPayloadPreviewFromForm);
+    });
+    const dupBtnEl = document.getElementById('btnPayloadDuplicate');
+    if (dupBtnEl) {
+      dupBtnEl.addEventListener('click', () => {
+        if (editingPayloadId) duplicatePayloadFlow(editingPayloadId);
+      });
+    }
+  }
+  
   renderPayloadList();
 }
 
 function closePayloadEditor() {
+  const prevId = editingPayloadId;
   editingPayloadId = null;
   document.getElementById('payloadEditorForm').style.display = 'none';
-  document.getElementById('payloadEditorEmpty').style.display = '';
-  renderPayloadList();
+  if (prevId && getPayload(prevId)) {
+    // Return to the read-only view of whichever payload we were editing.
+    showPayloadDetail(prevId);
+  } else {
+    document.getElementById('payloadDetail').style.display = 'none';
+    document.getElementById('payloadEditorEmpty').style.display = '';
+    renderPayloadList();
+  }
 }
 
 function handlePayloadSubmit(e) {
@@ -677,6 +888,17 @@ function openStackEditorNew() {
 function openStackEditor(id) {
   const s = getStack(id);
   if (!s) return;
+  // Default (locked) stacks are protected — same guard as fleet records.
+  // All editor entry points route through here (detail Edit button,
+  // list row click, post-duplicate open), so this single check covers
+  // every path.
+  if (s.locked) {
+    showFleetToast(
+      'Default stack',
+      'Duplicate to edit this stack.'
+    );
+    return;
+  }
   editingStackId = id;
   workingStackSequence = s.sequence || 'custom';
   workingStackMembers = [...s.members];
@@ -1268,11 +1490,58 @@ function renderCompatBoosters(stage) {
 // ---------------------------------------------------------------------------
 // Editor
 // ---------------------------------------------------------------------------
+
+// In-page toast — replaces alert() for protected-record messages. Same
+// glass aesthetic as the rest of the fleet UI (colours come from the
+// active theme's CSS variables), auto-dismisses after a few seconds, no
+// click required. First call lazily creates the DOM node and reuses it
+// for every subsequent message.
+let _fleetToastEl = null;
+let _fleetToastTimer = null;
+
+function showFleetToast(title, subtitle) {
+  if (!_fleetToastEl) {
+    const el = document.createElement('div');
+    el.id = 'fleetToast';
+    el.innerHTML =
+      '<span class="ft-icon" aria-hidden="true"></span>' +
+      '<div class="ft-body">' +
+      '<div class="ft-title"></div>' +
+      '<div class="ft-sub"></div>' +
+      '</div>';
+    document.body.appendChild(el);
+    _fleetToastEl = el;
+  }
+  _fleetToastEl.querySelector('.ft-title').textContent = title;
+  _fleetToastEl.querySelector('.ft-sub').textContent = subtitle || '';
+  // Restart animation cleanly if a toast is already visible.
+  _fleetToastEl.classList.remove('show');
+  void _fleetToastEl.offsetWidth;
+  _fleetToastEl.classList.add('show');
+  if (_fleetToastTimer) clearTimeout(_fleetToastTimer);
+  _fleetToastTimer = setTimeout(() => {
+    _fleetToastEl.classList.remove('show');
+  }, 2800);
+}
+
+// Default (locked) records are protected — the user isn't allowed to edit
+// them. They have to Duplicate instead. Called from every entry point that
+// would otherwise open the editor on a locked record.
+function _lockedRecordGuard(record) {
+  if (!record || !record.locked) return false;
+  showFleetToast(
+    'Default vehicle',
+    'Duplicate to edit or add members.'
+  );
+  return true;
+}
+
 function openEditorFor(id) {
   hideFamilyDetail();
   const fleet = loadFleet();
   const r = fleet.find(v => v.id === id);
   if (!r) return;
+  if (_lockedRecordGuard(r)) return;
   editingId = id;
   viewingId = null;
   editingRole = r.stageRole || 'rocket';

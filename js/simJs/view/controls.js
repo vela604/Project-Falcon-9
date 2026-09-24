@@ -616,6 +616,22 @@ function bindQuickThrottle() {
 // ---------------------------------------------------------------------------
 // Fueling availability + panel.
 // ---------------------------------------------------------------------------
+
+// Bottom member's tank capacity (kg). Engines only exist on the bottom
+// member (buildEnginesForRecord is called on members[0] only), so only
+// that tank is ever consumed during flight. All fueling UI — slider,
+// percentage, mass readout — is relative to this, NOT to the whole
+// stack, because refueling is a booster-tank operation and the stage's
+// tank stays at whatever load it was built with.
+function _activeBottomMemberMaxFuel() {
+  const b = state.bodies && state.bodies[state.activeBodyIndex];
+  if (!b || !b.members || !b.members.length) return 0;
+  if (typeof memberMaxFuel === 'function') {
+    return memberMaxFuel(b.members[0], b.members[1] || null);
+  }
+  return 0;
+}
+
 function canFuelNow() {
   if (state.crashed) return false;
   const r = Math.hypot(state.rx, state.ry);
@@ -654,9 +670,16 @@ function bindFuelPanel() {
     const opening = !panel || panel.style.display !== 'block';
     if (opening) {
       const b = state.bodies && state.bodies[state.activeBodyIndex];
-      const fuelMass = b ? (b.fuelMass || 0) : 0;
-      const pct = CONFIG.FUEL_MASS_MAX > 0 ?
-        Math.round((fuelMass / CONFIG.FUEL_MASS_MAX) * 100) : 0;
+      // Slider and percentage are relative to the BOTTOM MEMBER's tank
+      // capacity, not the whole stack — refueling only touches the
+      // booster's own tank (engines only exist there).
+      const bottomMax = _activeBottomMemberMaxFuel();
+      const bottomFuel = (b && Array.isArray(b.memberFuel) && Number.isFinite(b.memberFuel[0])) ?
+        b.memberFuel[0] :
+        (b ? (b.fuelMass || 0) : 0);
+      const pct = bottomMax > 0 ?
+        Math.round((bottomFuel / bottomMax) * 100) :
+        0;
       slider.value = pct;
       document.getElementById('fuelPercentLabel').textContent = pct + '%';
       if (panel) panel.style.display = 'block';
@@ -671,8 +694,13 @@ function bindFuelPanel() {
   slider.addEventListener('input', (e) => {
     if (!canFuelNow()) return;
     const pct = parseFloat(e.target.value);
-    const val = (CONFIG.FUEL_MASS_MAX || 0) * (pct / 100);
-    WorkerBridge.send({ type: 'setFuelMass', value: val });
+    const bottomMax = _activeBottomMemberMaxFuel();
+    const val = bottomMax * (pct / 100);
+    // setBottomFuel only writes memberFuel[0], leaving every stage tank
+    // above the booster at its built load. Previously setFuelMass
+    // distributed proportional to capacity, so both booster and stage
+    // ended up at whatever percentage the slider showed.
+    WorkerBridge.send({ type: 'setBottomFuel', value: val });
     document.getElementById('fuelPercentLabel').textContent = Math.round(pct) + '%';
     updateFuelPanelReadouts();
   });
@@ -693,10 +721,17 @@ function updateFuelPanelReadouts() {
   const twr = weight > 0 ? maxThrust / weight : 0;
   
   const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
-  set('fuelReadMass', _fmtKg(b.fuelMass || 0));
-  set('fuelReadTotal', _fmtKg(geom.M));
-  set('fuelReadThrust', _fmtKN(maxThrust));
-  set('fuelReadWeight', _fmtKN(weight));
+// Show the BOTTOM member's own tank — that's the only one that
+// actually drains during flight, so it's the number the pilot cares
+// about here. Total mass below still reflects the whole stack
+// (including the stage's full tank), which is correct.
+const bottomFuel = (Array.isArray(b.memberFuel) && Number.isFinite(b.memberFuel[0])) ?
+  b.memberFuel[0] :
+  (b.fuelMass || 0);
+set('fuelReadMass', _fmtKg(bottomFuel));
+set('fuelReadTotal', _fmtKg(geom.M));
+set('fuelReadThrust', _fmtKN(maxThrust));
+set('fuelReadWeight', _fmtKN(weight));
   
   const twrEl = document.getElementById('fuelReadTWR');
   if (twrEl) {

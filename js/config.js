@@ -116,7 +116,7 @@ const CONFIG = {
   // moves the resting zone with it automatically.
   REMOTE_AREA_WEST_START_DEG: 120,
   REMOTE_AREA_WEST_END_DEG: 180,
-  REMOTE_AREA_LABEL: 'FINIS ITINERIS',
+  REMOTE_AREA_LABEL:         'FINIS ITINERIS · RESTING SITE',
   REMOTE_AREA_QUOTE: 'I only regret that I have but one life to lose for the world.',
   REMOTE_AREA_QUOTE_AUTHOR: 'Nathan Hale',
   

@@ -454,29 +454,50 @@ b.omega = msg.omega || 0;
       b.legs.deployed = !!msg.deployed;
       break;
     }
-    case 'setFuelMass': {
-  const b = resolveTargetBody(msg.targetBodyIdx);
-  if (!b) break;
-  const members = b.members || [];
-  const total = Math.max(0, msg.value || 0);
-  if (Array.isArray(b.memberFuel) && b.memberFuel.length === members.length && members.length) {
-    // Distribute proportionally to each member's tank capacity —
-    // matches the load-to-fraction semantics the fueling panel has
-    // always implied.
-    const maxes = members.map((m, i) => {
-      if (typeof memberMaxFuel === 'function') return memberMaxFuel(m, members[i + 1] || null);
-      return 0;
-    });
-    const sumMax = maxes.reduce((s, x) => s + x, 0);
-    if (sumMax > 0) {
-      b.memberFuel = maxes.map(mx => total * (mx / sumMax));
-    } else {
-      b.memberFuel = members.map(() => 0);
+        case 'setFuelMass': {
+      const b = resolveTargetBody(msg.targetBodyIdx);
+      if (!b) break;
+      const members = b.members || [];
+      const total = Math.max(0, msg.value || 0);
+      if (Array.isArray(b.memberFuel) && b.memberFuel.length === members.length && members.length) {
+        // Distribute proportionally to each member's tank capacity.
+        // Kept for the guidance command builder (cmdSetFuelMass) which
+        // still expresses a "total load" intent.
+        const maxes = members.map((m, i) => {
+          if (typeof memberMaxFuel === 'function') return memberMaxFuel(m, members[i + 1] || null);
+          return 0;
+        });
+        const sumMax = maxes.reduce((s, x) => s + x, 0);
+        if (sumMax > 0) {
+          b.memberFuel = maxes.map(mx => total * (mx / sumMax));
+        } else {
+          b.memberFuel = members.map(() => 0);
+        }
+      }
+      b.fuelMass = total;
+      break;
     }
-  }
-  b.fuelMass = total;
-  break;
-}
+    // setBottomFuel — the fueling-panel's command. Writes ONLY the bottom
+    // member's tank. All engines live on the bottom member
+    // (buildEnginesForRecord is called on members[0] only), so that is
+    // the only tank consumed during flight; stage tanks stay at whatever
+    // load the build set them to. The total body.fuelMass is recomputed
+    // as the sum so every other reader (fuel bar, telemetry) stays
+    // consistent.
+    case 'setBottomFuel': {
+      const b = resolveTargetBody(msg.targetBodyIdx);
+      if (!b) break;
+      const value = Math.max(0, msg.value || 0);
+      if (Array.isArray(b.memberFuel) && b.memberFuel.length) {
+        b.memberFuel[0] = value;
+        let total = 0;
+        for (let k = 0; k < b.memberFuel.length; k++) total += b.memberFuel[k];
+        b.fuelMass = total;
+      } else {
+        b.fuelMass = value;
+      }
+      break;
+    }
     case 'setAtmosphere': {
       // Toggle global in the worker's own environment.js copy. Effects
       // are immediate: airDensity() returns 0 on the very next physics

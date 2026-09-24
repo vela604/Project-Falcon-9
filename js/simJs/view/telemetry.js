@@ -195,7 +195,17 @@ set('t-vr', fmt(vRadial, 2)); // frame-independent
   set('t-omega', dual(omegaRelative, omegaInertial, 3)); // rel-to-earth (inertial)
   
   set('t-m', fmt(geom.M, 0));
-  set('t-mf', fmt(state.fuelMass, 0));
+// Fuel readout — bottom member's own tank only. Engines only exist on
+// the bottom member (buildEnginesForRecord is called on members[0]
+// only), so that's the tank actually being consumed. Showing the
+// whole-stack sum stays misleadingly high during ascent while the
+// booster drains and the stage tank sits untouched.
+{
+  const _ab = state.bodies[state.activeBodyIndex];
+  const _bottomFuel = (_ab && Array.isArray(_ab.memberFuel) && Number.isFinite(_ab.memberFuel[0]))
+    ? _ab.memberFuel[0] : state.fuelMass;
+  set('t-mf', fmt(_bottomFuel, 0));
+}
   set('t-Ft', fmt(ENGINES.reduce((s, e) => s + e.currentF, 0), 0));
   
   set('t-gimbal', centerEngine ? fmt(centerEngine.gimbalDeg, 1) : '—');  set('t-torque', fmt(lastForces.mainTorque + lastForces.rcsTorque + (lastForces.dragTorque || 0), 0));
@@ -515,9 +525,18 @@ function drawFigurePanel() {
     baseY = h * 0.94;
   const stackHalfW_px = (widest / mpp) / 2;
   
-  // ---- Fuel gauge — whole-stack fraction, thin bar to the left of the stack ----
-  const maxFuelTotal = members.reduce((s, m) => s + ((typeof memberMaxFuel === 'function') ? memberMaxFuel(m) : 0), 0);
-  const fuelFrac = maxFuelTotal > 0 ? Math.max(0, Math.min(1, (body.fuelMass || 0) / maxFuelTotal)) : 0;
+  // ---- Fuel gauge — bottom-member fraction, thin bar to the left of the
+//      stack. Engines only exist on the bottom member, so its tank is
+//      the only one being drained; showing the whole-stack sum stayed
+//      misleadingly high during ascent while the booster drained and
+//      the stage tank sat untouched. ----
+const bottomMember = members[0];
+const bottomMaxFuel = (typeof memberMaxFuel === 'function') ?
+  memberMaxFuel(bottomMember, members[1] || null) : 0;
+const bottomFuel = (body.memberFuel && Number.isFinite(body.memberFuel[0])) ?
+  body.memberFuel[0] : 0;
+const fuelFrac = bottomMaxFuel > 0 ?
+  Math.max(0, Math.min(1, bottomFuel / bottomMaxFuel)) : 0;
   const gaugeX = baseX - stackHalfW_px - 16;
   const gaugeH = totalH_m / mpp;
   figCtx.strokeStyle = 'rgba(255,255,255,0.25)';

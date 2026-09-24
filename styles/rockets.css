@@ -89,7 +89,7 @@ html, body {
 #fleetList:empty::after { content: 'No vehicles yet — add one to get started.'; color: var(--dim); font-size: 13px; }
 
 /* ---------------- Editor ---------------- */
-#editorEmpty { color: var(--dim); font-size: 14px; padding: 40px 0; text-align: center; }
+#editorEmpty, #payloadEditorEmpty { color: var(--dim); font-size: 14px; padding: 40px 0; text-align: center; }
 #editorForm { display: none; }
 #editorForm.show { display: block; }
 #editorEmpty.hide { display: none; }
@@ -98,14 +98,14 @@ html, body {
 .editor-head h2 { margin: 0; font-size: 20px; font-weight: 600; }
 .editor-head-actions { display: flex; gap: 8px; flex-shrink: 0; }
 
-#vehiclePreview { display: flex; justify-content: center; margin-bottom: 22px; }
+#vehiclePreview, #payloadPreview { display: flex; justify-content: center; margin-bottom: 22px; }
 
 /* Preview canvases get their own neutral "display stage" background rather
    than being transparent over the page's near-black bg — a light rocket
    (current Falcon-9-class, near-white) and a future dark one (e.g. a black
    Starship) both need to read clearly against it, not blend into either
    extreme. */
-#vehiclePreview canvas, #detailPreviewCanvas {
+#vehiclePreview canvas, #detailPreviewCanvas, #payloadPreviewCanvas {
   width: 220px; border-radius: 10px;
   filter: drop-shadow(0 0 18px rgba(53,214,255,0.08));
   background: radial-gradient(ellipse 90% 65% at 50% 32%, #2b3040 0%, #171a22 100%);
@@ -497,3 +497,122 @@ input[type=color]:focus { outline: none; border-color: var(--cyan); }
   font-family: var(--font-mono); font-size: 12px;
 }
 
+/* ---------------- Toast — same glass recipe as the panes above,
+   copied verbatim from rockets-earth.css (#fleetPane / #editorPane ...).
+   Only the axis changes: pane transitions animate horizontally
+   (slInR / slOutR), the toast lifts vertically from bottom-center.
+   All easings, timings, transforms, colours, gradient stops and
+   shadows are copied 1:1 — nothing invented. -------- */
+#fleetToast {
+  position: fixed;
+  left: 50%;
+  bottom: 32px;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 20px 12px 16px;
+  border-radius: 22px;
+  max-width: min(440px, calc(100vw - 32px));
+  isolation: isolate;
+  background: var(--glass);
+  -webkit-backdrop-filter: blur(16px) saturate(160%);
+          backdrop-filter: blur(16px) saturate(160%);
+  box-shadow:
+    0 2px 40px rgba(0, 0, 0, 0.45),
+    inset 0 1px 0 rgba(200, 255, 235, 0.12),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.3);
+  color: var(--text);
+  font-family: var(--font-head);
+  pointer-events: none;
+  /* Resting hidden pose — same shape as slInR's "from" state, pivoted
+     to the vertical axis. */
+  opacity: 0;
+  transform: translate(-50%, 84px) scale(0.985);
+  filter: blur(4px);
+  /* Arriving easing — exactly --sl-in / --sl-ease from rockets-earth.css. */
+  transition:
+    opacity var(--sl-in, 560ms) var(--sl-ease, cubic-bezier(.22, 1, .36, 1)),
+    transform var(--sl-in, 560ms) var(--sl-ease, cubic-bezier(.22, 1, .36, 1)),
+    filter var(--sl-in, 560ms) var(--sl-ease, cubic-bezier(.22, 1, .36, 1));
+  will-change: opacity, transform, filter;
+}
+
+/* Copy of #fleetPane::before — same gradient, same mask, same stops. */
+#fleetToast::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  pointer-events: none;
+  background: linear-gradient(135deg, rgba(var(--em-rgb), 0.42), rgba(255, 255, 255, 0.04) 32%, rgba(255, 255, 255, 0.03) 66%, rgba(255, 180, 94, 0.30));
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+          mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+          mask-composite: exclude;
+  z-index: 1;
+}
+
+/* Shown state — slInR's "to" state, pivoted vertical.
+   Same final transform language (opacity 1, translate 0, scale 1,
+   filter none). */
+#fleetToast.show {
+  opacity: 1;
+  transform: translate(-50%, 0) scale(1);
+  filter: none;
+}
+
+/* Leaving easing — exactly slOutL/slOutR's timing, applied when
+   .show is removed. Uses the same --sl-out and cubic-bezier(.4, 0, 1, 1)
+   the panes use to slide out. */
+#fleetToast:not(.show) {
+  transition:
+    opacity var(--sl-out, 200ms) cubic-bezier(.4, 0, 1, 1),
+    transform var(--sl-out, 200ms) cubic-bezier(.4, 0, 1, 1),
+    filter var(--sl-out, 200ms) cubic-bezier(.4, 0, 1, 1);
+}
+
+#fleetToast .ft-icon {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--cyan);
+  box-shadow: 0 0 8px var(--cyan);
+  flex-shrink: 0;
+  position: relative;
+  z-index: 2;
+}
+#fleetToast .ft-body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  position: relative;
+  z-index: 2;
+}
+#fleetToast .ft-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.3;
+  letter-spacing: 0.1px;
+}
+#fleetToast .ft-sub {
+  font-size: 12px;
+  color: var(--dim);
+  line-height: 1.45;
+}
+
+@media (max-width: 560px) {
+  #fleetToast {
+    left: 16px;
+    right: 16px;
+    bottom: 20px;
+    max-width: none;
+    transform: translateY(84px) scale(0.985);
+  }
+  #fleetToast.show {
+    transform: translateY(0) scale(1);
+  }
+}
