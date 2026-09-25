@@ -542,12 +542,17 @@ b.omega = msg.omega || 0;
   if (typeof emergencyEjectPayload === 'function') emergencyEjectPayload(b);
   break;
 }
-    case 'takeControl': {
+        case 'takeControl': {
   if (typeof takeControlOfBody === 'function') {
     takeControlOfBody(msg.idx, { keepEnginesAlive: !!msg.keepEnginesAlive });
   }
   break;
 }
+    case 'markIntentionalImpact': {
+      const b = resolveTargetBody(msg.targetBodyIdx);
+      if (b) b.intentionalImpact = true;
+      break;
+    }
 
     // ---- Fast-forward support ----
 // captureFullState: return a DEEP CLONE of the worker's canonical

@@ -1869,17 +1869,24 @@ if (Array.isArray(body.memberFuel) && body.memberFuel.length) {
     if (body.crashed && !body.settled) {
       const tiltDeg = Math.abs(body.theta - Math.atan2(body.rx, body.ry)) * 180 / Math.PI;
       if (tiltDeg > 85) {
-        body._fallenFrames = (body._fallenFrames || 0) + 1;
-        if (body._fallenFrames * dt > 2.0) {
-          body.vx = 0;
-          body.vy = 0;
-          body.omega = 0;
-          body.settled = true;
-          if (body.isActive) state.halted = true;
-        }
-      } else {
-        body._fallenFrames = 0;
-      }
+  body._fallenFrames = (body._fallenFrames || 0) + 1;
+  if (body._fallenFrames * dt > 2.0) {
+    body.vx = 0;
+    body.vy = 0;
+    body.omega = 0;
+    body.settled = true;
+    // No halt-on-crash pause. The stage crashing into the resting
+    // area is the intended endpoint of the suicide-burn mission;
+    // pausing there would force a manual resume on a successful
+    // run. The payload keeps orbiting, the rest of the sim keeps
+    // running. Crashed bodies can still be "Take Control"-ed for
+    // viewing, but all commands to them are rejected by
+    // resolveTargetBody (physics.worker.js) — cockpit becomes
+    // read-only.
+  }
+} else {
+  body._fallenFrames = 0;
+}
     }
   }
   

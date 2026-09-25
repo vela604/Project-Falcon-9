@@ -405,14 +405,14 @@ function seedFalcon9Booster() {
     bodyShellFactor: 0.01797,
     maxExtraWeightKg: 150000,
     engineThrusters: {
-  gimbal: { thrusterTypeId: 'merlin-1d-class', massFlowRate: 308.75 },
-  fixed: { thrusterTypeId: 'merlin-1d-class', massFlowRate: 308.75 },
+  gimbal: { thrusterTypeId: 'merlin-1d-class', massFlowRate: 306 },
+  fixed: { thrusterTypeId: 'merlin-1d-class', massFlowRate: 306 },
 },
     rcsThruster: { thrusterTypeId: 'cold-gas-small', massFlowRate: 0.5 },
     pusherTypeId: 'pneumatic-pusher-n2',
     fuel: {
       typeId: 'rp1-lox',
-      tankHeight: 33.6, tankWidth: 3.7,
+      tankHeight: 34.1, tankWidth: 3.7,
       baffleCount: 4, baffleInnerRadiusFrac: 0.8,
     },
     params: {
@@ -446,7 +446,7 @@ function seedFalcon9Stage() {
     rcsThruster: { thrusterTypeId: 'cold-gas-small', massFlowRate: 0.5 },
 fuel: {
   typeId: 'rp1-lox',
-  tankHeight: 8.8, tankWidth: 3.7,
+  tankHeight: 8.0, tankWidth: 3.7,
   baffleCount: 2, baffleInnerRadiusFrac: 0.8,
 },
     params: {

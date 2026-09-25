@@ -506,7 +506,7 @@ function buildFuelRp1Lox() {
     'rp1-lox',
     'RP-1 / LOX',
     'Propellant type. Declares ONLY propellant density — tank size (and therefore fuel mass) is decided per rocket/stage build. Baffle hardware (count + inner-radius fraction) is a TANK-hardware property, chosen per vehicle on the fuel-tank fieldset, not a property of the propellant itself. Unbaffled tanks rely on the wall boundary layer alone for slosh damping (Abramson, ζ ~ 1e-4 for large tanks — barely any damping).',
-    { propellantDensity: 1138 }
+    { propellantDensity: 1080 }
   );
 }
 

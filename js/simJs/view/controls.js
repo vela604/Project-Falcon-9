@@ -455,12 +455,13 @@ function canTakeControlNow() {
   if (idx === state.activeBodyIndex) return false;
   const b = state.bodies[idx];
   if (!b) return false;
-  // Any non-crashed body can be taken control of — including free
-  // payloads, fairing halves, ejected packages. "Control" here just
+  // Any body can be taken control of — including free payloads, fairing
+  // halves, ejected packages, and crashed stages. "Control" here just
   // means "become the active body so trajectory/telemetry/figure
-  // panels switch to it". Bodies without engines / RCS / gimbals
-  // simply do nothing when commanded.
-  if (b.crashed) return false;
+  // panels switch to it". Bodies without engines / RCS / gimbals do
+  // nothing when commanded, and crashed bodies reject all commands at
+  // the physics layer (resolveTargetBody returns null) — the cockpit
+  // becomes read-only for them.
   return true;
 }
 
