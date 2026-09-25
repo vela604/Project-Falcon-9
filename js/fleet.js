@@ -405,9 +405,9 @@ function seedFalcon9Booster() {
     bodyShellFactor: 0.01797,
     maxExtraWeightKg: 150000,
     engineThrusters: {
-      gimbal: { thrusterTypeId: 'merlin-1d-class', massFlowRate: 306 },
-      fixed:  { thrusterTypeId: 'merlin-1d-class', massFlowRate: 306 },
-    },
+  gimbal: { thrusterTypeId: 'merlin-1d-class', massFlowRate: 308.75 },
+  fixed: { thrusterTypeId: 'merlin-1d-class', massFlowRate: 308.75 },
+},
     rcsThruster: { thrusterTypeId: 'cold-gas-small', massFlowRate: 0.5 },
     pusherTypeId: 'pneumatic-pusher-n2',
     fuel: {
