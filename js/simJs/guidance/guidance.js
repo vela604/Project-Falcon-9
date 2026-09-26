@@ -3463,11 +3463,7 @@ const LEO_INSERTION_V2 = {
   COAST_ROTATE_TIMEOUT_S: 240,
   // Burn trigger: fire when t_rem ≤ startup + this lead.
   CIRC_TRIGGER_LEAD_S: 3.0,
-  // Payload eject kick: stage only needs to reach V_orb − kick
-  // (payload's final velocity = stage_v + kick). Pre-compensated in
-  // CIRCULARIZE cutoff.
-  PAYLOAD_EJECT_KICK_MPS: 3.0,
-  CIRC_DECAY_FRAC: 0.05,
+CIRC_DECAY_FRAC: 0.05,
   CIRC_ATT_KP: 0.5,
   CIRC_ATT_KD: 4.0,
   // Burn-trigger window = COAST_BURN_MULTIPLIER × ideal T_burn
@@ -4158,8 +4154,16 @@ function _leoTickV2(snapshot) {
       const dv_spool = (mdot_now / 2) * body.engines[0].Ve * t_spool_actual
                      / Math.max(1, dNext.massProps.M);
 
-      const ejectionKick = LEO_INSERTION_V2.PAYLOAD_EJECT_KICK_MPS;
-      const cutoffThreshold = dv_spool + ejectionKick;
+      // Effective target for the STAGE is V_orbital − payload kick,
+// because the payload's own final velocity = stage_v + kick.
+// Combined with the spool Δv, cutoff fires when the remaining
+// stage-side v_err equals (spool Δv + payload kick).
+//
+// ejectionKick comes from env (CONFIG-derived boot data) — physical
+// hardware spec, not a guidance tunable. Same value physics.js applies
+// in releasePayloadOnActiveBody.
+const ejectionKick = env.PAYLOAD_EJECT_KICK_MPS || 0;
+const cutoffThreshold = dv_spool + ejectionKick;
 
       if (v_err <= cutoffThreshold) {
         _leoStateV2.circAchieved = true;

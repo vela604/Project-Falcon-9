@@ -54,9 +54,6 @@ let bootstrapped = false;
 let running = false;
 let paused = false;
 let trajectoryEnabled = false;
-let warp = 1;
-let accumulator = 0;
-let lastTickTime = performance.now();
 let lastTrajTime = 0;
 let pendingTrajectoryTransfer = null;
 
@@ -284,8 +281,9 @@ function dispatchCommand(msg) {
       paused = false;
       break;
     case 'warp':
-      warp = Math.max(0, msg.value || 1);
-      break;
+// No-op — warp UI was removed. Kept as a recognised message type so
+// any stale code path doesn't fall through to the default branch.
+break;
     case 'reset':
       resetState(msg.alt || 0);
       break;
@@ -805,16 +803,17 @@ bc.accelY = b._lastAccelY || 0;
 
 // ---- Worker loop ----
 function workerLoop() {
+  // Only used by the hot-buffer starvation warning below. Physics stepping
+  // is now purely per-iteration at CONFIG.DT cadence; wall-clock only
+  // gates that one warning so we don't spam console.
   const loopStart = performance.now();
-  const dtReal = Math.min(0.1, (loopStart - lastTickTime) / 1000);
-  lastTickTime = loopStart;
-
-  // Legs animate on REAL elapsed time, independent of simRunning. Same
-  // behaviour as the original main-thread loop — deploying or stowing the
-  // legs must work while the sim is paused (e.g. pre-launch on the pad),
-  // and its rate must not be multiplied by time-warp. Must run BEFORE the
-  // physics step so the progress value used in contact checks is current.
-  updateLegs(dtReal);
+  
+  // Legs animate on SIM time, not wall-clock. Previously this used
+  // wall-clock dtReal, so a laggy browser advanced legs slower than a
+  // smooth one — a source of divergence from the FF worker, which steps
+  // legs by exactly CONFIG.DT per tick. Sim-time binding makes both paths
+  // bit-identical.
+  updateLegs(CONFIG.DT);
   // Expire the separation flash after 1 s wall time. By then the render
   // worker's own 0.35 s visual has long since finished, so there's no
   // reason to keep shipping it in every snapshot.
@@ -824,20 +823,23 @@ function workerLoop() {
   if (lastPayloadRelease && performance.now() - lastPayloadRelease.t0Real > 2000) {
     lastPayloadRelease = null;
   }
-
+  
   if (running && !paused && !state.halted) {
-    accumulator += dtReal * warp;
-    while (accumulator >= CONFIG.DT &&
-      performance.now() - loopStart < 12) {
-      physicsStep(CONFIG.DT);
-      accumulator -= CONFIG.DT;
-      if (state.halted) { running = false; break; }
-    }
-  } else {
-    // When paused or stopped, don't let the accumulator grow — otherwise
-    // a long pause followed by resume would trigger a burst of steps to
-    // "catch up" to real time.
-    accumulator = 0;
+    // One step per loop iteration — identical to the FF worker's
+    // `for (i = 0; i < maxTicks; i++) physicsStep(dt)`.
+    //
+    // Why the old accumulator-based loop diverged: it ran 0, 1, or 2+
+    // steps in a single iteration depending on wall-clock jitter, but
+    // guidance gets ONE snapshot per loop iteration (not per step). A
+    // multi-step iteration meant guidance missed control ticks — visible
+    // drift from the FF run, which is perfectly 1:1.
+    //
+    // Trade-off: sim now runs at whatever rate the browser can sustain
+    // (target = CONFIG.DT via the setTimeout below). If the browser lags,
+    // sim time lags with it — matching FF exactly. Real-time accuracy is
+    // sacrificed for determinism.
+    physicsStep(CONFIG.DT);
+    if (state.halted) running = false;
   }
 
   // Skip requesting the leapfrog compute entirely when no consumer wants
@@ -909,7 +911,10 @@ function workerLoop() {
   data.hotBuffer = hotBuf.buffer;
   transfers.push(hotBuf.buffer);
 
-  self.postMessage({ type: 'state', data }, transfers);
-
-  setTimeout(workerLoop, 2);
-}
+    self.postMessage({ type: 'state', data }, transfers);
+  
+  // Target: one loop iteration per physics step, matching FF 1:1.
+  // setTimeout granularity is typically ~4 ms in browsers, so the actual
+  // rate lands close to CONFIG.DT (12.5 ms) without drifting.
+  setTimeout(workerLoop, CONFIG.DT * 1000);
+  }

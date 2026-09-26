@@ -621,7 +621,7 @@ return {
       EARTH_RADIUS: CONFIG.EARTH_RADIUS,
       GM_EARTH: CONFIG.GM_EARTH,
       EARTH_OMEGA: CONFIG.EARTH_OMEGA,
-        LAUNCH_SITE_ALTITUDE: CONFIG.LAUNCH_SITE_ALTITUDE,
+          LAUNCH_SITE_ALTITUDE: CONFIG.LAUNCH_SITE_ALTITUDE,
     LAUNCH_SITE_ANGLE_0: CONFIG.LAUNCH_SITE_ANGLE_0,
     G0: (typeof G0 !== 'undefined') ? G0 : 9.80665,
     // Resting-area midpoint (degrees west of launch meridian) — used by
@@ -629,10 +629,13 @@ return {
     // guidance doesn't need CONFIG (its scope doesn't have it). Single
     // source of truth stays CONFIG.REMOTE_AREA_WEST_*.
     REMOTE_AREA_MID_WEST_DEG:
-  ((CONFIG.REMOTE_AREA_WEST_START_DEG || 0) + (CONFIG.REMOTE_AREA_WEST_END_DEG || 0)) / 2,
-  REMOTE_AREA_WEST_START_DEG: CONFIG.REMOTE_AREA_WEST_START_DEG || 0,
-  REMOTE_AREA_WEST_END_DEG: CONFIG.REMOTE_AREA_WEST_END_DEG || 0,
-  SEA_LEVEL_DENSITY: CONFIG.SEA_LEVEL_DENSITY,
+    ((CONFIG.REMOTE_AREA_WEST_START_DEG || 0) + (CONFIG.REMOTE_AREA_WEST_END_DEG || 0)) / 2,
+    REMOTE_AREA_WEST_START_DEG: CONFIG.REMOTE_AREA_WEST_START_DEG || 0,
+    REMOTE_AREA_WEST_END_DEG: CONFIG.REMOTE_AREA_WEST_END_DEG || 0,
+    // Payload eject kick — physical hardware spec, read by CIRCULARIZE
+    // for cutoff pre-compensation. Same number physics.js applies.
+    PAYLOAD_EJECT_KICK_MPS: CONFIG.PAYLOAD_EJECT_KICK_MPS,
+    SEA_LEVEL_DENSITY: CONFIG.SEA_LEVEL_DENSITY,
     SCALE_HEIGHT: CONFIG.SCALE_HEIGHT,
     DRAG_CD: CONFIG.DRAG_CD,
     // Physics tick period. Needed by guidance to predict next-tick

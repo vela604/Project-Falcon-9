@@ -190,8 +190,19 @@ GEO_ALT_KM:  35786,
   
   
   
-  // ---------------- Landing safety envelope ----------------
-  // A touchdown only counts as a LANDING if all of these hold; otherwise
+// ---------------- Payload ejection ----------------
+// Physical eject mechanism on the payload adapter. Read by physics.js's
+// releasePayloadOnActiveBody / emergencyEjectPayload — NOT tunable via
+// the guidance constants panel, because it's hardware, not control law.
+// Guidance pre-compensates CIRCULARIZE cutoff by PAYLOAD_EJECT_KICK_MPS
+// (see LEO_INSERTION_V2.CIRCULARIZE), so physics and guidance share the
+// same number via the env boot data.
+PAYLOAD_EJECT_KICK_MPS: 3.0, // normal release (coast phase)
+  PAYLOAD_EMERGENCY_KICK_MPS: 20.0, // emergency flag on releasePayloadOnActiveBody
+  PAYLOAD_EMERGENCY_EJECT_KICK_MPS: 30.0, // emergencyEjectPayload (shielded unit, keeps fairing)
+
+// ---------------- Landing safety envelope ----------------
+// A touchdown only counts as a LANDING if all of these hold; otherwise
   // it's a crash. Kept as fixed, generous "don't break the hardware"
   // numbers rather than per-vehicle tuned values.
   LANDING_MIN_LEG_DEPLOY: 0.9, // legs.progress must be at least this deployed

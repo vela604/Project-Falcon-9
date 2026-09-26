@@ -976,35 +976,47 @@ function _driveFarewell(status) {
   }
   const curPhase = status.phase || '';
   const curTrimDone = !!status.suicideTrimDone;
-
-  // What should be showing right now?
+  
+  // Message table — one entry per guidance phase of the suicide sequence.
+  // Every message auto-hides after 5 s. Phase transitions replace the
+  // current message immediately (rather than waiting for the timer).
+  //
+  //   DONE            → "MISSION SUCCESSFUL"
+  //   SUICIDE_ROTATE  → "JUST ADJUSTING FOR FINAL BURN…"
+  //   SUICIDE_BURN    → "GOING FOR FINAL BURN…"
+  //   SUICIDE_COAST   → "JUST ADJUSTING FINAL DESTINATION…" (or "GOOD BYE !"
+  //                     if trim already converged on entry)
+  //
+  // Any other phase (ASCENT, MECO, STAGE_BURN, etc.) → key stays null →
+  // element hidden.
   let key = null;
   let headline = null;
-  let autoHideMs = 0;
-
+  const AUTO_HIDE_MS = 5000;
+  
   if (curPhase === 'DONE') {
     key = 'DONE';
+    headline = 'MISSION SUCCESSFUL';
+  } else if (curPhase === 'SUICIDE_ROTATE') {
+    key = 'ADJUST_BURN';
+    headline = 'JUST ADJUSTING FOR FINAL BURN…';
+  } else if (curPhase === 'SUICIDE_BURN') {
+    key = 'FINAL_BURN';
     headline = 'GOING FOR FINAL BURN…';
-    autoHideMs = 0;                // persistent — held until phase changes
   } else if (curPhase === 'SUICIDE_COAST') {
     if (curTrimDone) {
       key = 'BYE';
       headline = 'GOOD BYE !';
-      autoHideMs = 8000;
     } else {
-      key = 'ADJUST';
-      headline = 'JUST ADJUSTING MY FINAL DESTINATION…';
-      autoHideMs = 6000;
+      key = 'ADJUST_DEST';
+      headline = 'JUST ADJUSTING FINAL DESTINATION…';
     }
   }
-  // SUICIDE_ROTATE, SUICIDE_BURN, and every non-suicide phase → key stays
-  // null → the element is hidden.
-
+  
   if (key !== _farewellLastKey) {
     console.log('[farewell] key:', _farewellLastKey || '(none)', '→', key || '(none)',
       '| phase:', curPhase, '| trimDone:', curTrimDone);
     _farewellLastKey = key;
-    if (headline) _showFarewell(_farewellHtml(headline), autoHideMs);
+    if (headline) _showFarewell(_farewellHtml(headline), AUTO_HIDE_MS);
     else _hideFarewell();
   }
 }

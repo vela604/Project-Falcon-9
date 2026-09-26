@@ -2322,9 +2322,11 @@ function emergencyEjectPayload(targetBody) {
   
   // Same magnitude as a real jettison system — clearly faster than the
   // normal deploy kick (~3 m/s), but not absurd.
-  const KICK = 30.0;
-  const SPIN = 0.05; // gentle tumble; cargo is shielded, not tumbling free
-  
+  // Same magnitude as a real jettison system — clearly faster than the
+// normal deploy kick, but not absurd. From CONFIG (hardware spec).
+const KICK = CONFIG.PAYLOAD_EMERGENCY_EJECT_KICK_MPS;
+const SPIN = 0.05; // gentle tumble; cargo is shielded, not tumbling free
+
   // Create the ejected body. It carries:
   //   - the fairing member (if still present), so its silhouette is a
   //     closed fairing over the payload — reentry drag protection
@@ -2764,7 +2766,11 @@ function releasePayloadOnActiveBody(opts, targetBody) {
   const speed = Math.hypot(active.vx, active.vy);
   const ux = speed > 0.01 ? active.vx / speed : upX;
   const uy = speed > 0.01 ? active.vy / speed : upY;
-    const KICK = emergency ? (opts.kick || 20.0) : 3.0;
+    // Eject kick from CONFIG — physical hardware spec, not a tunable.
+// Normal release vs. emergency flag on this same function.
+const KICK = emergency ?
+  (opts.kick || CONFIG.PAYLOAD_EMERGENCY_KICK_MPS) :
+  CONFIG.PAYLOAD_EJECT_KICK_MPS;
   // Payload tumble rate after release. Original 0.15 rad/s (~8.6°/s)
   // read as spinning on screen — payloads usually settle with a much
   // smaller residual rate, especially on a clean prograde release.

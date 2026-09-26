@@ -82,8 +82,7 @@ const GUIDE_DEFAULT_PRESETS = {
       COAST_ROTATE_OMEGA_TOL: 0.02,
       COAST_ROTATE_TIMEOUT_S: 240,
       CIRC_TRIGGER_LEAD_S: 3.0,
-      PAYLOAD_EJECT_KICK_MPS: 3.0,
-      CIRC_DECAY_FRAC: 0.05,
+  CIRC_DECAY_FRAC: 0.05,
       CIRC_ATT_KP: 0.5,
       CIRC_ATT_KD: 4.0,
       COAST_BURN_MULTIPLIER: 4.0,
@@ -234,15 +233,22 @@ const GUIDE_DEFAULT_PRESETS = {
 // ---------------------------------------------------------------------------
 const GUIDE_IMPORTANT_FIELDS = {
   leoInsertionV2: [
-    'TARGET_ORBIT_ALT_KM',
-    'MECO_APOGEE_KM',
-    'ASCENT.INITIAL_COAST_S',
-    'ASCENT.PUSH_T_S',
-    'ASCENT.PUSH_MAX_GIMBAL_DEG',
-    'STAGE_BURN_LOCK_TILT_DEG',
-    'STAGE_BURN_CUTOFF_MARGIN_MPS',
-    'SUICIDE_DELAY_AFTER_DEPLOY_S',
-  ],
+  'TARGET_ORBIT_ALT_KM',
+  'MECO_APOGEE_KM',
+  'ASCENT.INITIAL_COAST_S',
+  'ASCENT.PUSH_T_S',
+  'ASCENT.PUSH_MAX_GIMBAL_DEG',
+  // Max-Q throttle bucket — these four define where the rocket
+  // throttles down through the peak dynamic pressure and back up:
+  //   [LOW, HIGH) km → THROTTLE_FRAC_LOW;  outside → THROTTLE_FRAC.
+  'ASCENT.THROTTLE_ALT_LOW_KM',
+  'ASCENT.THROTTLE_ALT_HIGH_KM',
+  'ASCENT.THROTTLE_FRAC_LOW',
+  'ASCENT.THROTTLE_FRAC',
+  'STAGE_BURN_LOCK_TILT_DEG',
+  'STAGE_BURN_CUTOFF_MARGIN_MPS',
+  'SUICIDE_DELAY_AFTER_DEPLOY_S',
+],
   leoInsertion: [
     'TARGET_ORBIT_ALT_KM',
     'MECO_APOGEE_KM',
