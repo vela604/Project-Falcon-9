@@ -110,6 +110,16 @@ function exportGuideState() {
     out.leoState = JSON.parse(JSON.stringify(_leoState));
     out.leoStateV2 = JSON.parse(JSON.stringify(_leoStateV2));
     out.rrState = JSON.parse(JSON.stringify(_rrState));
+    // Live guide configs — snapshot every guide's current constants so
+    // the fast-forward worker (which loads its own fresh copy of this
+    // module at code-defaults) can be brought up to the same values the
+    // running simulation is using. Without this, a user who applies
+    // constants (e.g. TARGET_ORBIT_ALT_KM = 250) and then fast-forwards
+    // gets a FF run at the code default (320).
+    out.guideConfigs = {};
+    Object.keys(_GUIDE_CONFIGS).forEach(name => {
+      out.guideConfigs[name] = getGuideConfig(name);
+    });
   } catch (e) {
     console.warn('[guidance] exportGuideState failed', e);
   }
@@ -123,6 +133,20 @@ function importGuideState(data) {
     if (data.leoStateV2) Object.assign(_leoStateV2, data.leoStateV2);
     if (data.rrState) Object.assign(_rrState, data.rrState);
     if (data.activeGuide !== undefined) _activeGuide = data.activeGuide;
+    // Restore live guide configs — brings the fast-forward worker's
+    // fresh-booted (code-default) copies up to the same constants the
+    // main simulation was running with. Silent no-op if a guide
+    // wasn't in the snapshot.
+    if (data.guideConfigs && typeof data.guideConfigs === 'object') {
+      Object.keys(data.guideConfigs).forEach(name => {
+        const v = data.guideConfigs[name];
+        if (v && typeof v === 'object') {
+          try { applyGuideConfig(name, v); } catch (e) {
+            console.warn('[guidance] importGuideState config restore failed for', name, e);
+          }
+        }
+      });
+    }
   } catch (e) {
     console.warn('[guidance] importGuideState failed', e);
   }
