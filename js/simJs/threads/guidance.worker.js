@@ -156,6 +156,51 @@ case 'stackData': {
   break;
 }
 
+// Guide config API passthroughs. The main thread can't reach the
+// module-scope config objects in guidance.js, so it asks here. Every
+// request carries a reqId that's echoed back so the main-thread
+// bridge can correlate the reply to its pending Promise.
+//
+//   in  { type:'getGuideConfig', reqId, name }
+//   out { type:'guideConfigResponse', reqId, ok, values|null }
+//
+//   in  { type:'setGuideConfig', reqId, name, values }
+//   out { type:'guideConfigResponse', reqId, ok }
+case 'getGuideConfig': {
+  let values = null, ok = false;
+  if (typeof Guidance !== 'undefined' && Guidance.getGuideConfig) {
+    try {
+      values = Guidance.getGuideConfig(msg.name);
+      ok = values !== null;
+    } catch (e) {
+      console.error('[guidance worker] getGuideConfig failed', e);
+    }
+  }
+  self.postMessage({
+    type: 'guideConfigResponse',
+    reqId: msg.reqId,
+    ok,
+    values,
+  });
+  break;
+}
+case 'setGuideConfig': {
+  let ok = false;
+  if (typeof Guidance !== 'undefined' && Guidance.applyGuideConfig) {
+    try {
+      ok = !!Guidance.applyGuideConfig(msg.name, msg.values);
+    } catch (e) {
+      console.error('[guidance worker] setGuideConfig failed', e);
+    }
+  }
+  self.postMessage({
+    type: 'guideConfigResponse',
+    reqId: msg.reqId,
+    ok,
+  });
+  break;
+}
+
 
   }
 };

@@ -261,13 +261,15 @@ a.back:hover { color: var(--cyan); }
   </div>
 
   <div id="controls">
-    <label for="guideSelect">Guide:</label>
-    <select id="guideSelect"></select>
-    <label for="durationInput">Duration (s):</label>
-    <input id="durationInput" type="number" value="160" min="1" max="2000" step="10" style="width:90px;">
-    <button class="btn btn-run" id="startBtn">▶ Run</button>
-    <button class="btn btn-stop" id="stopBtn" disabled>■ Stop</button>
-  </div>
+  <label for="guideSelect">Guide:</label>
+  <select id="guideSelect"></select>
+  <label for="durationInput">Duration (s):</label>
+  <input id="durationInput" type="number" value="160" min="1" max="2000" step="10" style="width:90px;">
+  <button class="btn btn-run" id="startBtn">▶ Run</button>
+  <button class="btn btn-stop" id="stopBtn" disabled>■ Stop</button>
+  <button class="btn" id="exportBtn" title="Copy current constants as JSON to clipboard">⇧ Export JSON</button>
+  <button class="btn" id="importBtn" title="Paste constants JSON to fill the tunables">⇩ Import JSON</button>
+</div>
 
 <div id="envPanel">
   <div class="env-group">
@@ -303,9 +305,36 @@ a.back:hover { color: var(--cyan); }
   <div class="plot-title">Velocity — Y vr (m/s) vs X vt (m/s)</div>
   <canvas id="velCanvas"></canvas>
 </div>
-  <div id="output"></div>
+    <div id="output"></div>
   <div id="status">Ready.</div>
-</div>
+  </div>
+  
+  <!-- ============================================================
+     Import constants — small modal for pasting JSON. Replaces the
+     tunable inputs after strict validation against the current
+     guide's code-default schema. Values stay in the tunablesState
+     map until the next Run (same session semantics as manual edits).
+     ============================================================ -->
+  <div id="importBackdrop" style="display:none; position:fixed; inset:0; z-index:100; background:rgba(2,6,14,0.78); -webkit-backdrop-filter:blur(8px); backdrop-filter:blur(8px); align-items:center; justify-content:center; padding:24px 16px;">
+    <div style="width:min(680px,96vw); max-height:88vh; display:flex; flex-direction:column; background:var(--panel); border:1px solid var(--border); border-radius:14px; box-shadow:0 24px 70px rgba(0,0,0,0.72); overflow:hidden;">
+      <div style="padding:14px 20px; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; font-family:var(--font-mono); font-size:12.5px; font-weight:700; letter-spacing:1px; color:var(--cyan); text-transform:uppercase;">
+        <span>⇩ Import Constants JSON</span>
+        <button id="importCloseBtn" style="background:transparent; border:1px solid transparent; color:var(--dim); width:26px; height:26px; border-radius:6px; cursor:pointer; font-size:13px;">✕</button>
+      </div>
+      <div style="padding:16px 20px; overflow-y:auto;">
+        <div style="font-size:12px; color:var(--dim); font-family:var(--font-mono); line-height:1.5; margin-bottom:10px;">
+          Shape must match this guide's schema exactly. Flat (dotted keys) or
+          nested both accepted; nested is what Export produces.
+        </div>
+        <textarea id="importText" rows="14" spellcheck="false" style="width:100%; background:var(--bg); border:1px solid var(--border); color:var(--text); padding:10px 12px; border-radius:6px; font-family:var(--font-mono); font-size:12px; resize:vertical;" placeholder='{ "TARGET_ORBIT_ALT_KM": 320, "ASCENT": { ... } }'></textarea>
+        <div id="importErr" style="display:none; margin-top:10px; padding:8px 10px; border-radius:6px; background:rgba(255,95,126,0.08); border:1px solid var(--danger); color:var(--danger); font-family:var(--font-mono); font-size:11.5px; line-height:1.45; white-space:pre-wrap; word-break:break-word;"></div>
+      </div>
+      <div style="display:flex; justify-content:flex-end; gap:8px; padding:12px 20px; border-top:1px solid var(--border); background:linear-gradient(180deg,#0d1424,#0a1120);">
+        <button class="btn" id="importCancelBtn">Cancel</button>
+        <button class="btn btn-run" id="importConfirmBtn">Validate &amp; Fill</button>
+      </div>
+    </div>
+  </div>
 
 <!-- ============ 1. Data layer + config ============ -->
 <script src="js/componentLibrary.js"></script>
@@ -330,6 +359,11 @@ a.back:hover { color: var(--cyan); }
 <script src="js/simJs/guidance/guidance.js"></script>
 
 <!-- ============ 4. Tester bootstrap ============ -->
+<!-- Guidance config registry + preset validators — same files the sim
+     panel uses. Loaded here so the tester can import/export in the
+     exact same nested-JSON shape the sim panel produces/consumes. -->
+<script src="js/guideConfigDefaults.js"></script>
+<script src="js/guidancePresets.js"></script>
 <script>
 (function () {
   'use strict';
@@ -969,6 +1003,160 @@ function highlightClasses(physRow) {
   if (vSpeed >= 1550 && vSpeed <= 1700) out._v = 'hl-range-v';
   return out;
 }
+
+
+
+function readRanges() {
+  const out = {};
+  RANGE_FIELDS.forEach(f => {
+    const loEl = rangesGrid.querySelector(`input[data-key="${f.key}"][data-end="lo"]`);
+    const hiEl = rangesGrid.querySelector(`input[data-key="${f.key}"][data-end="hi"]`);
+    out[f.key] = {
+      lo: parseFloat(loEl.value),
+      hi: parseFloat(hiEl.value),
+    };
+  });
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// Constants Import/Export — symmetric with the sim panel's shape.
+//
+//   Export: reads current tunables (flat dotted keys), un-flattens to the
+//           nested shape the sim panel and guideConfigDefaults use, copies
+//           to clipboard.
+//   Import: parses JSON (nested or flat), normalises to nested, validates
+//           strict against the current guide's code-default schema, then
+//           writes the flat form back into tunablesState and re-renders.
+//
+// Uses setByPath / validateConstantsStrict / getGuideDefaultPreset from
+// guidancePresets.js + guideConfigDefaults.js (loaded above).
+// ---------------------------------------------------------------------------
+function _flattenDotted(obj, prefix, out) {
+  out = out || {};
+  prefix = prefix || '';
+  if (!obj || typeof obj !== 'object') return out;
+  Object.keys(obj).forEach(k => {
+    const v = obj[k];
+    const path = prefix ? prefix + '.' + k : k;
+    if (v && typeof v === 'object' && !Array.isArray(v)) {
+      _flattenDotted(v, path, out);
+    } else {
+      out[path] = v;
+    }
+  });
+  return out;
+}
+
+function _normaliseToNested(obj) {
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return obj;
+  const keys = Object.keys(obj);
+  if (keys.some(k => k.includes('.'))) {
+    // Flat (dotted) → nested
+    const out = {};
+    keys.forEach(k => setByPath(out, k, obj[k]));
+    return out;
+  }
+  return obj;
+}
+
+// Build a nested reference from the current tunable fields — used as a
+// fallback if guideConfigDefaults doesn't have an entry for this guide.
+function _referenceFromFields(guideName) {
+  const def = (typeof getGuideDefaultPreset === 'function')
+    ? getGuideDefaultPreset(guideName) : null;
+  if (def && def.constants) return def.constants;
+  const fields = tunableFieldsFor(guideName);
+  const nested = {};
+  fields.forEach(f => setByPath(nested, f.key, f.value));
+  return nested;
+}
+
+function exportConstants() {
+  const guideName = sel.value;
+  if (!guideName) { statusEl.textContent = 'Select a guide first.'; return; }
+  const fields = tunableFieldsFor(guideName);
+  if (!fields.length) { statusEl.textContent = 'This guide has no tunable constants.'; return; }
+  const state = tunablesState[guideName] || {};
+  const nested = _normaliseToNested(state);
+  const json = JSON.stringify(nested, null, 2);
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(json).then(
+      () => { statusEl.textContent = 'Exported ' + guideName + ' constants to clipboard.'; },
+      () => { statusEl.textContent = 'Clipboard write failed.'; }
+    );
+  } else {
+    const ta = document.createElement('textarea');
+    ta.value = json;
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); statusEl.textContent = 'Exported to clipboard.'; }
+    catch (e) { statusEl.textContent = 'Copy failed.'; }
+    document.body.removeChild(ta);
+  }
+}
+
+function openImportModal() {
+  const guideName = sel.value;
+  if (!guideName) { statusEl.textContent = 'Select a guide first.'; return; }
+  const fields = tunableFieldsFor(guideName);
+  if (!fields.length) { statusEl.textContent = 'This guide has no tunable constants.'; return; }
+  const modal = document.getElementById('importBackdrop');
+  document.getElementById('importText').value = '';
+  document.getElementById('importErr').style.display = 'none';
+  modal.style.display = 'flex';
+  document.getElementById('importText').focus();
+}
+
+function closeImportModal() {
+  document.getElementById('importBackdrop').style.display = 'none';
+}
+
+function confirmImport() {
+  const guideName = sel.value;
+  const raw = document.getElementById('importText').value;
+  const errEl = document.getElementById('importErr');
+  if (!raw.trim()) {
+    errEl.textContent = 'Paste constants JSON first.';
+    errEl.style.display = 'block';
+    return;
+  }
+  let parsed;
+  try { parsed = JSON.parse(raw); }
+  catch (e) {
+    errEl.textContent = 'JSON parse error: ' + e.message;
+    errEl.style.display = 'block';
+    return;
+  }
+  const nested = _normaliseToNested(parsed);
+  const reference = _referenceFromFields(guideName);
+  const v = validateConstantsStrict(nested, reference);
+  if (!v.ok) {
+    errEl.textContent = 'Validation failed: ' + v.error;
+    errEl.style.display = 'block';
+    return;
+  }
+  // Write back into tunablesState as dotted keys, then re-render.
+  const flat = _flattenDotted(nested);
+  tunablesState[guideName] = Object.assign({}, flat);
+  renderTunablesFor(guideName);
+  closeImportModal();
+  statusEl.textContent = 'Imported ' + Object.keys(flat).length + ' constants for ' + guideName + '.';
+}
+
+document.getElementById('exportBtn').addEventListener('click', exportConstants);
+document.getElementById('importBtn').addEventListener('click', openImportModal);
+document.getElementById('importCloseBtn').addEventListener('click', closeImportModal);
+document.getElementById('importCancelBtn').addEventListener('click', closeImportModal);
+document.getElementById('importConfirmBtn').addEventListener('click', confirmImport);
+document.getElementById('importBackdrop').addEventListener('click', (e) => {
+  if (e.target === document.getElementById('importBackdrop')) closeImportModal();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && document.getElementById('importBackdrop').style.display === 'flex') {
+    closeImportModal();
+  }
+});
 
 function buildRow(guideName, physRow, status, bodyIdx) {
   const cols = activeColumns(guideName);

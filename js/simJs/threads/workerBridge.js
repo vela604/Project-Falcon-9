@@ -304,6 +304,41 @@ function hydrateWorkerFromLocalStorage() {
 // own schedule regardless of where physics is in its own boot, and nothing
 // here should make that appear coupled.
 // ============================================================================
+// ---------------------------------------------------------------------------
+// Pending-request registry — correlates an outgoing get/setGuideConfig to
+// its eventual response. Every request gets a monotonic integer id; the
+// worker echoes it back; the matching Promise is resolved here.
+//
+// Promise rejection policy: reject on worker-reported failure OR on
+// timeout. Timeout exists because a worker crash mid-request would
+// otherwise leave the Promise pending forever, hanging any UI that
+// awaits it.
+// ---------------------------------------------------------------------------
+const _GUIDE_CONFIG_REQ_TIMEOUT_MS = 4000;
+let _guideConfigReqId = 0;
+const _guideConfigPending = new Map();
+
+function _issueGuideConfigRequest(msg) {
+  return new Promise((resolve, reject) => {
+    if (!GuidanceBridge.worker) { reject(new Error('guidance worker not created')); return; }
+    const reqId = ++_guideConfigReqId;
+    const timer = setTimeout(() => {
+      _guideConfigPending.delete(reqId);
+      reject(new Error('guide config request timed out'));
+    }, _GUIDE_CONFIG_REQ_TIMEOUT_MS);
+    _guideConfigPending.set(reqId, { resolve, reject, timer });
+    GuidanceBridge.send({ ...msg, reqId });
+  });
+}
+
+function _resolveGuideConfigRequest(reqId, payload) {
+  const entry = _guideConfigPending.get(reqId);
+  if (!entry) return;
+  clearTimeout(entry.timer);
+  _guideConfigPending.delete(reqId);
+  entry.resolve(payload);
+}
+
 const GuidanceBridge = {
   worker: null,
   ready: false,
@@ -324,8 +359,13 @@ const GuidanceBridge = {
           FastForward.onGuidanceState(msg.data);
         }
       } else if (msg.type === 'guideStatus') {
-  if (typeof onGuidanceStatus === 'function') onGuidanceStatus(msg.status);
-} else if (msg.type === 'ready') {
+        if (typeof onGuidanceStatus === 'function') onGuidanceStatus(msg.status);
+      } else if (msg.type === 'guideConfigResponse') {
+        _resolveGuideConfigRequest(msg.reqId, {
+          ok: !!msg.ok,
+          values: msg.values || null,
+        });
+      } else if (msg.type === 'ready') {
         this.ready = true;
         const q = this.pendingMessages;
         this.pendingMessages = [];
@@ -353,6 +393,25 @@ const GuidanceBridge = {
   onReady(cb) {
     if (this.ready) cb();
     else this.readyCallbacks.push(cb);
+  },
+  
+  // -------------------------------------------------------------------------
+  // Config API — Promise-based helpers. Callers await these:
+  //
+  //   const values = await GuidanceBridge.requestGuideConfig('leoInsertionV2');
+  //   const ok     = await GuidanceBridge.setGuideConfig('leoInsertionV2', vals);
+  //
+  // requestGuideConfig resolves to a deep-cloned values object, or null
+  // if the guide has no config API. setGuideConfig resolves to true/false.
+  // Both reject on worker timeout.
+  // -------------------------------------------------------------------------
+  requestGuideConfig(name) {
+    return _issueGuideConfigRequest({ type: 'getGuideConfig', name })
+      .then(res => res.ok ? res.values : null);
+  },
+  setGuideConfig(name, values) {
+    return _issueGuideConfigRequest({ type: 'setGuideConfig', name, values })
+      .then(res => res.ok);
   },
 };
 

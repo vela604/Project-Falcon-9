@@ -307,23 +307,9 @@
           <div class="rt-wrapper">
             <button id="rightToolbarToggle" class="rt-handle" title="Toggle guidance">‹</button>
             <div class="rt-content">
-              <div class="rt-section">
-                <label class="rt-label" for="guideSelect">Guidance</label>
-                <select id="guideSelect" class="rt-select">
-  <option value="">(none)</option>
-  <option value="testGuide">✗ Test — Torque Balance</option>
-  <option value="predictiveTorque">✗ Predictive Torque Cancel</option>
-  <option value="predictivePlus">✗ Predictive + PID</option>
-  <option value="predictivePlusAoA">~ Predictive + PID + AoA Impulse — success, not practical</option>
-  <option value="predictivePlusAoAPush">✗ Predictive + PID + AoA + East Push</option>
-  <option value="predictVerifier">ⓘ Verify: Prediction Accuracy — diagnostic tool</option>
-      <option value="gimbalPredictive2">✓ Gimbal: 2-tick Predictive — FIRST ACCURATE WIN</option>
-  <option value="ascentRR">✗ Ascent — Rotate-Rest</option>
-  <option value="ascentAoaHold">✓ Ascent — AoA Hold — ACCURATE WIN</option>
-<option value="leoInsertion">🛰 LEO Insertion — ascent → MECO → separate → orbit</option>
-<option value="leoInsertionV2" selected>✓ LEO Insertion V2 — Full Mission · Payload to LEO · UNIVERSAL</option>
-</select>
-              </div>
+                            <div class="rt-section">
+  <button class="rt-btn rt-btn-config" id="btnGuideConfig">⚙ Guidance System</button>
+</div>
               <div class="rt-sep"></div>
               <div class="rt-section rt-row">
                 <button class="rt-btn rt-btn-start" id="btnGuideStart">▶ Start</button>
@@ -367,32 +353,161 @@
      Script load order — worker architecture
      ============================================================ -->
   
-  <!-- 1. Data layer + config -->
+    <!-- ============================================================
+       Guidance System modal — full-screen backdrop blur, centered card,
+       scrollable content. Opens via the ⚙ button in the right toolbar.
+       Structure:
+         - top: guidance dropdown + preset dropdown
+         - middle: constants form (Important section on top, then
+           nested groups for everything else) — OR a "no tunable
+           constants" empty state for guides without config
+         - inline expansion panels: Paste JSON, Save as preset
+         - footer: Reset | Paste | Export | Save | Apply
+       All wiring in controls.js.
+       ============================================================ -->
+  <div id="gcmBackdrop" class="gcm-backdrop" style="display:none;">
+    <div class="gcm-card" role="dialog" aria-modal="true" aria-label="Guidance System">
+      <div class="gcm-header">
+        <div class="gcm-title">⚙ GUIDANCE SYSTEM</div>
+        <button class="gcm-close" id="gcmClose" title="Close" aria-label="Close">✕</button>
+      </div>
+
+      <div class="gcm-body">
+        <!-- ───────────── top controls ───────────── -->
+        <div class="gcm-top-controls">
+          <div class="gcm-top-field">
+            <label for="gcmGuideSelect">Guidance</label>
+            <select id="gcmGuideSelect"></select>
+          </div>
+          <div class="gcm-top-field">
+            <label for="gcmPresetSelect">Preset</label>
+            <select id="gcmPresetSelect"></select>
+          </div>
+        </div>
+
+        <div class="gcm-hint" id="gcmConfigNote">—</div>
+
+        <!-- ───────────── main fields view ───────────── -->
+        <div id="gcmFieldsHost" class="gcm-fields"></div>
+
+        <!-- ───────────── "no tunable constants" empty state ───────────── -->
+        <div id="gcmNoConfig" class="gcm-empty" style="display:none;">
+          This guidance has no tunable constants.
+        </div>
+
+        <!-- ───────────── paste JSON sub-view ───────────── -->
+        <div id="gcmPastePanel" class="gcm-subpanel" style="display:none;">
+          <div class="gcm-subpanel-title">Paste constants JSON</div>
+          <div class="gcm-subpanel-hint">
+            Shape must match this guidance's schema exactly — every key
+            present, no extras, all values the correct type.
+          </div>
+          <textarea id="gcmPasteText" rows="12" spellcheck="false"
+            placeholder='{ "TARGET_ORBIT_ALT_KM": 320, "ASCENT": { ... } }'></textarea>
+          <div id="gcmPasteError" class="gcm-error" style="display:none;"></div>
+          <div class="gcm-subpanel-actions">
+            <button class="gcm-btn" id="gcmPasteCancel">Cancel</button>
+            <button class="gcm-btn gcm-btn-accent" id="gcmPasteConfirm">Validate &amp; Fill Fields</button>
+          </div>
+        </div>
+
+        <!-- ───────────── save-as-preset sub-view ───────────── -->
+        <div id="gcmSavePanel" class="gcm-subpanel" style="display:none;">
+          <div class="gcm-subpanel-title">Save as preset</div>
+          <div class="gcm-subpanel-hint">
+            Saves the current field values as a named preset in your local
+            storage. Default presets cannot be edited — use Duplicate
+            instead from the presets page.
+          </div>
+          <label class="gcm-sub-label" for="gcmSaveName">Name</label>
+          <input type="text" id="gcmSaveName" maxlength="80" placeholder="My F9 LEO — tuned">
+          <label class="gcm-sub-label" for="gcmSaveDesc">Description (optional)</label>
+          <textarea id="gcmSaveDesc" rows="2" maxlength="400"
+            placeholder="What changed and why."></textarea>
+          <label class="gcm-sub-label" for="gcmSaveTags">Tags (comma-separated, optional)</label>
+          <input type="text" id="gcmSaveTags" maxlength="200" placeholder="wind-safe, fuel-efficient">
+          <div id="gcmSaveError" class="gcm-error" style="display:none;"></div>
+          <div class="gcm-subpanel-actions">
+            <button class="gcm-btn" id="gcmSaveCancel">Cancel</button>
+            <button class="gcm-btn gcm-btn-accent" id="gcmSaveConfirm">Save Preset</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="gcm-footer">
+        <div class="gcm-footer-left">
+          <button class="gcm-btn" id="gcmReset" title="Load the code-default values into the fields">
+            ↺ Reset to default
+          </button>
+        </div>
+        <div class="gcm-footer-right">
+          <button class="gcm-btn" id="gcmPasteBtn">Paste JSON</button>
+          <button class="gcm-btn" id="gcmExportBtn">Export JSON</button>
+          <button class="gcm-btn" id="gcmSaveBtn">Save as preset</button>
+          <button class="gcm-btn gcm-btn-primary" id="gcmApply">Apply</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+      <!-- Center-screen farewell message — driven by guidance phase transitions.
+     Appears during the suicide-burn sequence; see controls.js's
+     onGuidanceStatus for the trigger logic. -->
+<div id="farewellMsg" aria-live="polite"></div>
+
+<!-- Hidden guide selector. Was previously the visible dropdown at the top
+     of the right toolbar; now the Guidance System modal is the single
+     source of truth for which guide is active. This element is kept in
+     the DOM (hidden) because existing code (Start/Stop buttons,
+     fastForward, boot-time default sync) reads from #guideSelect by id.
+     The modal writes its selection back here on change. -->
+<select id="guideSelect" style="display:none;">
+  <option value="">(none)</option>
+  <option value="testGuide">Test — Torque Balance</option>
+  <option value="predictiveTorque">Predictive Torque Cancel</option>
+  <option value="predictivePlus">Predictive + PID</option>
+  <option value="predictivePlusAoA">Predictive + PID + AoA Impulse</option>
+  <option value="predictivePlusAoAPush">Predictive + PID + AoA + East Push</option>
+  <option value="predictVerifier">Verify: Prediction Accuracy</option>
+  <option value="gimbalPredictive2">Gimbal: 2-tick Predictive</option>
+  <option value="ascentRR">Ascent — Rotate-Rest</option>
+  <option value="ascentAoaHold">Ascent — AoA Hold</option>
+  <option value="leoInsertion">LEO Insertion</option>
+  <option value="leoInsertionV2" selected>LEO Insertion V2</option>
+</select>
+  
   <script src="js/componentLibrary.js"></script>
-<script>
-  // Cache the component library on the main thread — the physics worker
-  // and FF worker each have their own copy; this one serves the panels
-  // and telemetry. Same rationale as the tester page's cache patch.
-  (function() {
-    var _cache = null;
-    var _orig = loadComponentLibrary;
-    loadComponentLibrary = function() {
-      if (_cache) return _cache;
-      _cache = _orig();
-      return _cache;
-    };
-    if (typeof saveCustomComponentTypes === 'function') {
-      var _origSave = saveCustomComponentTypes;
-      saveCustomComponentTypes = function(types) {
-        _origSave(types);
-        _cache = null;
+  <script>
+    // Cache the component library on the main thread — the physics worker
+    // and FF worker each have their own copy; this one serves the panels
+    // and telemetry. Same rationale as the tester page's cache patch.
+    (function() {
+      var _cache = null;
+      var _orig = loadComponentLibrary;
+      loadComponentLibrary = function() {
+        if (_cache) return _cache;
+        _cache = _orig();
+        return _cache;
       };
-    }
-  })();
-</script>
-<script src="js/customDesign.js"></script>
+      if (typeof saveCustomComponentTypes === 'function') {
+        var _origSave = saveCustomComponentTypes;
+        saveCustomComponentTypes = function(types) {
+          _origSave(types);
+          _cache = null;
+        };
+      }
+    })();
+  </script>
+  <script src="js/customDesign.js"></script>
   <script src="js/fleet.js"></script>
   <script src="js/config.js"></script>
+  
+  <!-- Guidance presets & defaults — MUST load before guidance.js, because
+       guidancePresets.js's lenient/strict validators reference the default
+       presets by guide name. They're plain data/logic files, no worker
+       coupling, so they live on the main thread only. -->
+  <script src="js/guideConfigDefaults.js"></script>
+  <script src="js/guidancePresets.js"></script>
   
   <!-- 2. Core (physics / math / environment) — defines state + proxies -->
   <script src="js/simJs/core/massProps.js"></script>

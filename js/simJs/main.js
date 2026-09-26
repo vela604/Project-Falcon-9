@@ -543,7 +543,7 @@ window.addEventListener('resize', () => {
     // Hide legs button if the active stack has no leg-deploy recovery.
     
     
-    bindSimControls();
+        bindSimControls();
     bindLegsControl();
     bindCenterControls();
     bindRCSControls();
@@ -554,7 +554,10 @@ window.addEventListener('resize', () => {
     bindQuickThrottle();
     bindFuelPanel();
     bindMiscToggles();
-bindGuidanceToolbar();
+    bindGuidanceToolbar();
+    // Guidance System modal — depends on _guideActive (set up by
+    // bindGuidanceToolbar's onGuidanceStatus hook) so must run after it.
+    bindGuidanceConfigModal();
 
 buildGlossaryPanel();
     renderMergeDiagram();

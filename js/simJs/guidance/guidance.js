@@ -3493,8 +3493,14 @@ const LEO_INSERTION_V2 = {
   // Coarse margin: fire main engine until impact is this many degrees
   // west of midpoint, then hand over to RCS (100× finer resolution).
   SUICIDE_BURN_COARSE_MARGIN_DEG: 10,
-  // RCS trim tolerance — ~0.005° at r=6371 km is ~550 m on surface.
-  SUICIDE_TRIM_TOL_DEG: 0.005,
+  // RCS trim tolerance. Once the predicted impact is within this of
+// midpoint we STOP firing and never re-engage — the last few hundred
+// metres of correction are below what bang-bang RCS can resolve in a
+// single tick (it overshoots, then corrects, then overshoots the other
+// way → limit cycle). 0.1° at r=6371 km ≈ 11 km on surface — well
+// inside the ~6670 km resting arc, and cheap to achieve without
+// thrashing the thrusters.
+SUICIDE_TRIM_TOL_DEG: 0.1,
 };
 
 const _leoStateV2 = {
@@ -3537,10 +3543,15 @@ const _leoStateV2 = {
   circTargetV: 0,
   circErr: 0,
   circAchieved: false,
-  // Suicide burn
+    // Suicide burn
   suicideBurnStartT: 0,
-  suicideImpactEf: null,
-  suicideDlambda: null,
+    suicideImpactEf: null,
+    suicideDlambda: null,
+    // Once the trim has converged into the tolerance band, this latches
+    // true and RCS never fires again — prevents the bang-bang limit cycle
+    // that happens when we keep chasing sub-tick precision.
+    suicideTrimDone: false,
+  
 };
 
 // ---------------------------------------------------------------------------
@@ -4545,47 +4556,68 @@ function _leoTickV2(snapshot) {
     // SUICIDE_COAST — RCS trim to midpoint + attitude hold.
     // ---------------------------------------------------------
     case 'SUICIDE_COAST': {
-      send(cmdSetAllThrottle(0));
-      send(cmdSetGimbalRate(0));
-
-      // Attitude hold: PD on retrograde (so up/dn stay world-consistent).
-      const speedH = Math.hypot(body.vx, body.vy);
-      if (speedH > 1) {
-        const ux_v = body.vx / speedH;
-        const uy_v = body.vy / speedH;
-        const targetThetaRad = Math.atan2(ux_v, -uy_v);
-        const thetaErrH = _hWrapPi(body.theta - targetThetaRad);
-        const I_nextH = (dNext && dNext.massProps) ? dNext.massProps.I : 0;
-        if (I_nextH > 0) {
-          const tau_hold = -I_nextH *
-            (LEO_INSERTION_V2.SUICIDE_ATT_KP * thetaErrH
-           + LEO_INSERTION_V2.SUICIDE_ATT_KD * body.omega);
-          const rHold = GuideRCS.targetTorqueRcsNoNetForce(snapshot, tau_hold, idx);
-          if (rHold && rHold.fires.length) send(cmdRcsDuty(rHold.duties, idx));
-        }
-      }
-
-      const impact = _suicidePredictImpact(body.rx, body.ry, body.vx, body.vy, simT);
-      if (!impact) {
-        // Perigee lifted above surface — push it back down (fire 'up').
-        const duties = GuideRCS.postSeparationAxialDuty(snapshot, idx, 'up');
-        if (duties) send(cmdRcsDuty(duties, idx));
-        break;
-      }
-
-      const lambdaMidEf = (env.LAUNCH_SITE_ANGLE_0 || 0) -
-        (env.REMOTE_AREA_MID_WEST_DEG || 0) * Math.PI / 180;
-      const dLambdaDeg = (impact.phiEf - lambdaMidEf) * 180 / Math.PI;
-
-      if (Math.abs(dLambdaDeg) < LEO_INSERTION_V2.SUICIDE_TRIM_TOL_DEG) break;
-
-      // impact east of target → fire 'up' (retrograde, moves impact west)
-      // impact west of target → fire 'dn' (prograde, moves impact east)
-      const direction = (dLambdaDeg > 0) ? 'up' : 'dn';
-      const duties = GuideRCS.postSeparationAxialDuty(snapshot, idx, direction);
-      if (duties) send(cmdRcsDuty(duties, idx));
-      break;
+  send(cmdSetAllThrottle(0));
+  send(cmdSetGimbalRate(0));
+  
+  // Once trim converged, the mission is effectively over — stop
+  // firing anything. No attitude hold, no trim. Body free-falls to
+  // impact. Keeping RCS alive past convergence just for attitude
+  // would waste propellant on a body that's about to hit the ground.
+  if (_leoStateV2.suicideTrimDone) {
+    send(cmdRcsDuty(null, idx));
+    break;
+  }
+  
+  // Attitude hold: PD on retrograde (so up/dn stay world-consistent).
+  const speedH = Math.hypot(body.vx, body.vy);
+  if (speedH > 1) {
+    const ux_v = body.vx / speedH;
+    const uy_v = body.vy / speedH;
+    const targetThetaRad = Math.atan2(ux_v, -uy_v);
+    const thetaErrH = _hWrapPi(body.theta - targetThetaRad);
+    const I_nextH = (dNext && dNext.massProps) ? dNext.massProps.I : 0;
+    if (I_nextH > 0) {
+      const tau_hold = -I_nextH *
+        (LEO_INSERTION_V2.SUICIDE_ATT_KP * thetaErrH +
+          LEO_INSERTION_V2.SUICIDE_ATT_KD * body.omega);
+      const rHold = GuideRCS.targetTorqueRcsNoNetForce(snapshot, tau_hold, idx);
+      if (rHold && rHold.fires.length) send(cmdRcsDuty(rHold.duties, idx));
     }
+  }
+  
+  const impact = _suicidePredictImpact(body.rx, body.ry, body.vx, body.vy, simT);
+  if (!impact) {
+    // Perigee lifted above surface — push it back down (fire 'up').
+    const duties = GuideRCS.postSeparationAxialDuty(snapshot, idx, 'up');
+    if (duties) send(cmdRcsDuty(duties, idx));
+    break;
+  }
+  
+  const lambdaMidEf = (env.LAUNCH_SITE_ANGLE_0 || 0) -
+    (env.REMOTE_AREA_MID_WEST_DEG || 0) * Math.PI / 180;
+  const dLambdaDeg = (impact.phiEf - lambdaMidEf) * 180 / Math.PI;
+  
+  // Latch: once converged, kill everything. Without this, a tick
+  // where the impact drifts back outside tolerance re-engages RCS,
+  // then the next tick overshoots the other way — bang-bang limit
+  // cycle that never settles. Once we're close enough, we're done.
+  if (Math.abs(dLambdaDeg) < LEO_INSERTION_V2.SUICIDE_TRIM_TOL_DEG) {
+    _leoStateV2.suicideTrimDone = true;
+    send(cmdRcsDuty(null, idx));
+    console.log('[leoInsertionV2] SUICIDE_TRIM converged — impact_ef=' +
+      (impact.phiEf * 180 / Math.PI).toFixed(3) + '° mid_ef=' +
+      (lambdaMidEf * 180 / Math.PI).toFixed(3) + '° dLambda=' +
+      dLambdaDeg.toFixed(3) + '° — all control off');
+    break;
+  }
+  
+  // impact east of target → fire 'up' (retrograde, moves impact west)
+  // impact west of target → fire 'dn' (prograde, moves impact east)
+  const direction = (dLambdaDeg > 0) ? 'up' : 'dn';
+  const duties = GuideRCS.postSeparationAxialDuty(snapshot, idx, direction);
+  if (duties) send(cmdRcsDuty(duties, idx));
+  break;
+}
 
     default:
       break;
@@ -4645,9 +4677,10 @@ _leoTickV2.start = function () {
   _leoStateV2.circErr = 0;
   _leoStateV2.circAchieved = false;
   _leoStateV2.suicideBurnStartT = 0;
-  _leoStateV2.suicideImpactEf = null;
-  _leoStateV2.suicideDlambda = null;
-  console.log('[leoInsertionV2] started');
+_leoStateV2.suicideImpactEf = null;
+_leoStateV2.suicideDlambda = null;
+_leoStateV2.suicideTrimDone = false;
+console.log('[leoInsertionV2] started');
 };
 
 _leoTickV2.stop = function () {
@@ -4687,10 +4720,11 @@ _leoTickV2.getStatus = function () {
     circAchieved: _leoStateV2.circAchieved,
     stageBurnLocked: _leoStateV2.stageBurnLocked,
     stageBurnTargetTiltDeg: _leoStateV2.stageBurnTargetTiltDeg,
-    suicideImpactEfDeg: (_leoStateV2.suicideImpactEf != null)
-      ? _leoStateV2.suicideImpactEf * 180 / Math.PI : null,
-    suicideDlambdaDeg: (_leoStateV2.suicideDlambda != null)
-      ? _leoStateV2.suicideDlambda * 180 / Math.PI : null,
+      suicideImpactEfDeg: (_leoStateV2.suicideImpactEf != null) ?
+    _leoStateV2.suicideImpactEf * 180 / Math.PI : null,
+    suicideDlambdaDeg: (_leoStateV2.suicideDlambda != null) ?
+    _leoStateV2.suicideDlambda * 180 / Math.PI : null,
+    suicideTrimDone: !!_leoStateV2.suicideTrimDone,
   };
 };
 
@@ -4715,6 +4749,110 @@ function getLeoInsertionV2Config() { return { ...LEO_INSERTION_V2 }; }
 
 
 
+
+
+// ============================================================================
+// Guide config API — table + accessors
+//
+// Every guide that has tunable constants exposes a { get, set } pair here.
+// get() returns a deep-clone (caller can mutate freely); set() hands a
+// caller-provided bag to the guide's own setter, which does the actual
+// merge (each guide's setter already handles nested merging — see the
+// individual setX() functions above).
+//
+// The sim panel, presets page, and tester all reach this through the
+// guidance worker — they never touch the module-scope objects directly.
+//
+// Guides not listed here have no tunable constants (testGuide,
+// predictVerifier, gimbalPredictive2, predictiveTorque,
+// predictivePlusAoA) and the UI shows "No tunable constants" for them.
+// ============================================================================
+const _GUIDE_CONFIGS = {
+  leoInsertionV2: {
+    get: () => getLeoInsertionV2Config(),
+    set: (vals) => setLeoInsertionV2(vals),
+  },
+  leoInsertion: {
+    get: () => getLeoInsertionConfig(),
+    set: (vals) => setLeoInsertion(vals),
+  },
+  ascentAoaHold: {
+    get: () => getAscentHoldConfig(),
+    set: (vals) => setAscentHold(vals),
+  },
+  ascentRR: {
+    get: () => getAscentRRConfig(),
+    set: (vals) => setAscentRR(vals),
+  },
+  predictivePlus: {
+    get: () => getPredictiveGains(),
+    set: (vals) => setPredictiveGains(vals),
+  },
+  // predictivePlusAoAPush has a single scalar at module scope (not an
+  // object), so it's wrapped/unwrapped to fit the { key: value } bag
+  // shape every other guide uses.
+  predictivePlusAoAPush: {
+    get: () => ({ SWEEP_S: _SWEEP_S_SECONDS }),
+    set: (vals) => {
+      if (vals && Number.isFinite(vals.SWEEP_S)) setSweepDuration(vals.SWEEP_S);
+    },
+  },
+};
+
+// Returns a deep clone of the live config for `name`, or null if that
+// guide has no config API. Caller-safe: mutating the result cannot
+// touch the module-scope objects.
+function getGuideConfig(name) {
+  const entry = _GUIDE_CONFIGS[name];
+  if (!entry) return null;
+  try {
+    return JSON.parse(JSON.stringify(entry.get()));
+  } catch (e) {
+    console.error('[guidance] getGuideConfig clone failed for', name, e);
+    return null;
+  }
+}
+
+// Hands `values` to the guide's setter. The setter is responsible for
+// shape/type sanity (existing per-guide setters already do one-level
+// deep merge and skip non-finite numbers). Returns true on success,
+// false if the guide has no config API.
+//
+// NOTE: callers that need strict full-parity validation should validate
+// BEFORE calling this — applyGuideConfig trusts its input, matching the
+// existing setX() contract.
+function applyGuideConfig(name, values) {
+  const entry = _GUIDE_CONFIGS[name];
+  if (!entry || !values) return false;
+  try {
+    entry.set(values);
+    return true;
+  } catch (e) {
+    console.error('[guidance] applyGuideConfig failed for', name, e);
+    return false;
+  }
+}
+
+// Does this guide expose tunable constants? (Drives the "No tunable
+// constants" branch in the UI.)
+function hasGuideConfig(name) {
+  return !!_GUIDE_CONFIGS[name];
+}
+
+// List of guides that have a config API. Used by the presets page to
+// populate its sidebar and by the sim panel to gray out non-tunable
+// entries in the guidance dropdown.
+function listGuidesWithConfig() {
+  return Object.keys(_GUIDE_CONFIGS);
+}
+
+// Single-value accessor for the sweep-duration experiment. Kept next to
+// the table so callers can use it without reaching into module scope.
+function getSweepDuration() {
+  return _SWEEP_S_SECONDS;
+}
+
+
 // ---- Mission body lock ----
 // When a guide is running, every command it sends must land on the
 // body the guide is flying, regardless of what body the human UI has
@@ -4723,6 +4861,8 @@ function getLeoInsertionV2Config() { return { ...LEO_INSERTION_V2 }; }
 // killed by take-control's shutdown, and the newly-focused body
 // receives stage-burn throttle commands it was never meant to.
 let _missionBodyIdx = null;
+
+
 function setMissionBody(idx) {
   _missionBodyIdx = Number.isInteger(idx) ? idx : null;
 }
@@ -4800,6 +4940,12 @@ getAscentRRConfig,
 getAscentHoldConfig,
 getPredictiveGains,
 getLeoInsertionConfig,
+// Guide config API — see _GUIDE_CONFIGS block above
+getGuideConfig,
+applyGuideConfig,
+hasGuideConfig,
+listGuidesWithConfig,
+getSweepDuration,
 exportGuideState,
 importGuideState,
     // Convenience forwarders so callers can keep using Guidance.*

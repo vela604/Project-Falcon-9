@@ -661,18 +661,157 @@ default: break;
   sel.addEventListener('change', () => renderTunablesFor(sel.value));
   if (guides.length) renderTunablesFor(sel.value);
 
-  function readRanges() {
+function readRanges() {
+  const out = {};
+  RANGE_FIELDS.forEach(f => {
+    const loEl = rangesGrid.querySelector(`input[data-key="${f.key}"][data-end="lo"]`);
+    const hiEl = rangesGrid.querySelector(`input[data-key="${f.key}"][data-end="hi"]`);
+    out[f.key] = {
+      lo: parseFloat(loEl.value),
+      hi: parseFloat(hiEl.value),
+    };
+  });
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// Constants Import/Export — symmetric with the sim panel's shape.
+//
+//   Export: reads current tunables (flat dotted keys), un-flattens to the
+//           nested shape the sim panel and guideConfigDefaults use, copies
+//           to clipboard.
+//   Import: parses JSON (nested or flat), normalises to nested, validates
+//           strict against the current guide's code-default schema, then
+//           writes the flat form back into tunablesState and re-renders.
+//
+// Uses setByPath / validateConstantsStrict / getGuideDefaultPreset from
+// guidancePresets.js + guideConfigDefaults.js (loaded above).
+// ---------------------------------------------------------------------------
+function _flattenDotted(obj, prefix, out) {
+  out = out || {};
+  prefix = prefix || '';
+  if (!obj || typeof obj !== 'object') return out;
+  Object.keys(obj).forEach(k => {
+    const v = obj[k];
+    const path = prefix ? prefix + '.' + k : k;
+    if (v && typeof v === 'object' && !Array.isArray(v)) {
+      _flattenDotted(v, path, out);
+    } else {
+      out[path] = v;
+    }
+  });
+  return out;
+}
+
+function _normaliseToNested(obj) {
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return obj;
+  const keys = Object.keys(obj);
+  if (keys.some(k => k.includes('.'))) {
+    // Flat (dotted) → nested
     const out = {};
-    RANGE_FIELDS.forEach(f => {
-      const loEl = rangesGrid.querySelector(`input[data-key="${f.key}"][data-end="lo"]`);
-      const hiEl = rangesGrid.querySelector(`input[data-key="${f.key}"][data-end="hi"]`);
-      out[f.key] = {
-        lo: parseFloat(loEl.value),
-        hi: parseFloat(hiEl.value),
-      };
-    });
+    keys.forEach(k => setByPath(out, k, obj[k]));
     return out;
   }
+  return obj;
+}
+
+// Build a nested reference from the current tunable fields — used as a
+// fallback if guideConfigDefaults doesn't have an entry for this guide.
+function _referenceFromFields(guideName) {
+  const def = (typeof getGuideDefaultPreset === 'function')
+    ? getGuideDefaultPreset(guideName) : null;
+  if (def && def.constants) return def.constants;
+  const fields = tunableFieldsFor(guideName);
+  const nested = {};
+  fields.forEach(f => setByPath(nested, f.key, f.value));
+  return nested;
+}
+
+function exportConstants() {
+  const guideName = sel.value;
+  if (!guideName) { statusEl.textContent = 'Select a guide first.'; return; }
+  const fields = tunableFieldsFor(guideName);
+  if (!fields.length) { statusEl.textContent = 'This guide has no tunable constants.'; return; }
+  const state = tunablesState[guideName] || {};
+  const nested = _normaliseToNested(state);
+  const json = JSON.stringify(nested, null, 2);
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(json).then(
+      () => { statusEl.textContent = 'Exported ' + guideName + ' constants to clipboard.'; },
+      () => { statusEl.textContent = 'Clipboard write failed.'; }
+    );
+  } else {
+    const ta = document.createElement('textarea');
+    ta.value = json;
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); statusEl.textContent = 'Exported to clipboard.'; }
+    catch (e) { statusEl.textContent = 'Copy failed.'; }
+    document.body.removeChild(ta);
+  }
+}
+
+function openImportModal() {
+  const guideName = sel.value;
+  if (!guideName) { statusEl.textContent = 'Select a guide first.'; return; }
+  const fields = tunableFieldsFor(guideName);
+  if (!fields.length) { statusEl.textContent = 'This guide has no tunable constants.'; return; }
+  const modal = document.getElementById('importBackdrop');
+  document.getElementById('importText').value = '';
+  document.getElementById('importErr').style.display = 'none';
+  modal.style.display = 'flex';
+  document.getElementById('importText').focus();
+}
+
+function closeImportModal() {
+  document.getElementById('importBackdrop').style.display = 'none';
+}
+
+function confirmImport() {
+  const guideName = sel.value;
+  const raw = document.getElementById('importText').value;
+  const errEl = document.getElementById('importErr');
+  if (!raw.trim()) {
+    errEl.textContent = 'Paste constants JSON first.';
+    errEl.style.display = 'block';
+    return;
+  }
+  let parsed;
+  try { parsed = JSON.parse(raw); }
+  catch (e) {
+    errEl.textContent = 'JSON parse error: ' + e.message;
+    errEl.style.display = 'block';
+    return;
+  }
+  const nested = _normaliseToNested(parsed);
+  const reference = _referenceFromFields(guideName);
+  const v = validateConstantsStrict(nested, reference);
+  if (!v.ok) {
+    errEl.textContent = 'Validation failed: ' + v.error;
+    errEl.style.display = 'block';
+    return;
+  }
+  // Write back into tunablesState as dotted keys, then re-render.
+  const flat = _flattenDotted(nested);
+  tunablesState[guideName] = Object.assign({}, flat);
+  renderTunablesFor(guideName);
+  closeImportModal();
+  statusEl.textContent = 'Imported ' + Object.keys(flat).length + ' constants for ' + guideName + '.';
+}
+
+document.getElementById('exportBtn').addEventListener('click', exportConstants);
+document.getElementById('importBtn').addEventListener('click', openImportModal);
+document.getElementById('importCloseBtn').addEventListener('click', closeImportModal);
+document.getElementById('importCancelBtn').addEventListener('click', closeImportModal);
+document.getElementById('importConfirmBtn').addEventListener('click', confirmImport);
+document.getElementById('importBackdrop').addEventListener('click', (e) => {
+  if (e.target === document.getElementById('importBackdrop')) closeImportModal();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && document.getElementById('importBackdrop').style.display === 'flex') {
+    closeImportModal();
+  }
+});
 
   // =====================================================================
   // maxAlt / vApogee — osculating two-body orbit from current INERTIAL state.

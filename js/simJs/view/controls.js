@@ -874,15 +874,155 @@ function bindGuidanceToolbar() {
   if (abortBtn) abortBtn.addEventListener('click', abortGuidance);
   }
 
+// ---------------------------------------------------------------------------
+// Farewell sequence — driven by the CURRENT guidance phase, not by
+// transition detection. This makes it robust against:
+//   - fast-forward (phases can jump, transitions aren't observed)
+//   - missed throttled status pushes
+//   - the user landing in the middle of the sequence
+//
+// Message table (keyed by phase + trimDone):
+//   DONE                              "GOING FOR FINAL BURN…"        (persistent)
+//   SUICIDE_COAST, !trimDone          "JUST ADJUSTING MY FINAL DESTINATION…"
+//   SUICIDE_COAST, trimDone           "GOOD BYE !"                    (8 s fade)
+//   any other phase                   (hidden)
+//
+// We latch on the message KEY (not on phase-delta). When the key
+// changes, we swap the display; when it doesn't, we leave it alone so
+// the auto-hide timer isn't reset every status push.
+//
+// Every message shows the headline on one line, and "~ stage-name" on
+// the next line.
+// ---------------------------------------------------------------------------
+let _farewellLastKey = '';
+let _farewellHideTimer = null;
+
+function _farewellEl() {
+  let el = document.getElementById('farewellMsg');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'farewellMsg';
+    document.body.appendChild(el);
+  }
+  return el;
+}
+
+function _showFarewell(html, autoHideMs) {
+  const el = _farewellEl();
+  el.innerHTML = html;
+  // Force reflow so the show transition re-fires if the element was
+  // hidden milliseconds before.
+  el.classList.remove('show');
+  void el.offsetWidth;
+  el.classList.add('show');
+  if (_farewellHideTimer) { clearTimeout(_farewellHideTimer); _farewellHideTimer = null; }
+  if (autoHideMs && autoHideMs > 0) {
+    _farewellHideTimer = setTimeout(() => {
+      el.classList.remove('show');
+      _farewellHideTimer = null;
+    }, autoHideMs);
+  }
+}
+
+function _hideFarewell() {
+  const el = document.getElementById('farewellMsg');
+  if (!el) return;
+  el.classList.remove('show');
+  if (_farewellHideTimer) { clearTimeout(_farewellHideTimer); _farewellHideTimer = null; }
+}
+
+// Find the stage body's name, regardless of which body is active.
+// Scans the body list for a non-crashed body whose bottom member is a
+// 'stage' role; falls back to the active body's first member name;
+// finally falls back to a generic string.
+function _farewellStageName() {
+  try {
+    const bodies = (state && state.bodies) ? state.bodies : [];
+    for (let i = 0; i < bodies.length; i++) {
+      const b = bodies[i];
+      if (!b || !Array.isArray(b.members) || !b.members.length) continue;
+      const m0 = b.members[0];
+      if (m0 && m0.stageRole === 'stage' && m0.name && !b.crashed) {
+        return m0.name;
+      }
+    }
+    const a = bodies[state.activeBodyIndex];
+    if (a && Array.isArray(a.members) && a.members.length && a.members[0].name) {
+      return a.members[0].name;
+    }
+  } catch (e) { /* fallthrough */ }
+  return 'the stage';
+}
+
+function _esc(s) {
+  return String(s).replace(/[<>&"]/g, c =>
+    ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
+}
+
+// Build the message body: headline on top, "~ name" below on its own line.
+function _farewellHtml(headline) {
+  const name = _farewellStageName();
+  return _esc(headline) + '<br>' +
+    '<span class="fw-bracket">~</span>' +
+    '<span class="fw-name">' + _esc(name) + '</span>';
+}
+
+function _driveFarewell(status) {
+  // Guide not running — clear everything.
+  if (!status || !status.active) {
+    _hideFarewell();
+    _farewellLastKey = '';
+    return;
+  }
+  const curPhase = status.phase || '';
+  const curTrimDone = !!status.suicideTrimDone;
+
+  // What should be showing right now?
+  let key = null;
+  let headline = null;
+  let autoHideMs = 0;
+
+  if (curPhase === 'DONE') {
+    key = 'DONE';
+    headline = 'GOING FOR FINAL BURN…';
+    autoHideMs = 0;                // persistent — held until phase changes
+  } else if (curPhase === 'SUICIDE_COAST') {
+    if (curTrimDone) {
+      key = 'BYE';
+      headline = 'GOOD BYE !';
+      autoHideMs = 8000;
+    } else {
+      key = 'ADJUST';
+      headline = 'JUST ADJUSTING MY FINAL DESTINATION…';
+      autoHideMs = 6000;
+    }
+  }
+  // SUICIDE_ROTATE, SUICIDE_BURN, and every non-suicide phase → key stays
+  // null → the element is hidden.
+
+  if (key !== _farewellLastKey) {
+    console.log('[farewell] key:', _farewellLastKey || '(none)', '→', key || '(none)',
+      '| phase:', curPhase, '| trimDone:', curTrimDone);
+    _farewellLastKey = key;
+    if (headline) _showFarewell(_farewellHtml(headline), autoHideMs);
+    else _hideFarewell();
+  }
+}
+
 // Called by workerBridge.js whenever the guidance worker pushes a status
 // update (or an immediate ack from a guidanceCommand). Updates the right
 // toolbar's live readout.
 function onGuidanceStatus(status) {
   const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
   
-// Sync the guidance-active lock every time we hear from the worker.
-// Idempotent — the function bails if the state hasn't changed.
-_syncGuidanceLock(status);
+  // Sync the guidance-active lock every time we hear from the worker.
+  // Idempotent — the function bails if the state hasn't changed.
+  _syncGuidanceLock(status);
+
+  // Farewell sequence — driven by phase transitions. Fires the
+  // "GOING FOR FINAL BURN" / "JUST ADJUSTING" / "GOOD BYE" messages
+  // during the suicide-burn flow.
+  _driveFarewell(status);
 
 // TEMP DIAGNOSTIC — COAST_HOLD_2 attitude investigation.
 if (status && status.phase === 'COAST_HOLD_2' && status.coast2TargetThetaDeg != null) {
@@ -1018,4 +1158,587 @@ if (status.nCompared !== undefined) {
   
 
 }
+
+
+
+
+// ============================================================================
+// Guidance System modal — open/close, guidance dropdown, preset dropdown,
+// constants form (important-on-top), Apply / Reset / Export / Paste / Save.
+//
+// Reads live config from the guidance worker via GuidanceBridge (promise
+// helpers added in workerBridge.js), renders fields locally, and writes
+// back on Apply. Presets come from guidancePresets.js (main thread only).
+//
+// State is intentionally session-scoped: the modal always re-fetches on
+// open, so a page refresh naturally restores code defaults with no extra
+// bookkeeping.
+// ============================================================================
+function bindGuidanceConfigModal() {
+  const backdrop    = document.getElementById('gcmBackdrop');
+  if (!backdrop) { console.warn('[gcm] modal backdrop not found — wiring skipped'); return; }
+
+  const btnOpen     = document.getElementById('btnGuideConfig');
+  const btnClose    = document.getElementById('gcmClose');
+  const guideSel    = document.getElementById('gcmGuideSelect');
+  const presetSel   = document.getElementById('gcmPresetSelect');
+  const configNote  = document.getElementById('gcmConfigNote');
+  const fieldsHost  = document.getElementById('gcmFieldsHost');
+  const noConfigEl  = document.getElementById('gcmNoConfig');
+
+  // sub-panels
+  const pastePanel  = document.getElementById('gcmPastePanel');
+  const pasteText   = document.getElementById('gcmPasteText');
+  const pasteErr    = document.getElementById('gcmPasteError');
+  const pasteConfirm= document.getElementById('gcmPasteConfirm');
+  const pasteCancel = document.getElementById('gcmPasteCancel');
+
+  const savePanel   = document.getElementById('gcmSavePanel');
+  const saveName    = document.getElementById('gcmSaveName');
+  const saveDesc    = document.getElementById('gcmSaveDesc');
+  const saveTags    = document.getElementById('gcmSaveTags');
+  const saveErr     = document.getElementById('gcmSaveError');
+  const saveConfirm = document.getElementById('gcmSaveConfirm');
+  const saveCancel  = document.getElementById('gcmSaveCancel');
+
+  // footer actions
+  const btnReset    = document.getElementById('gcmReset');
+  const btnPaste    = document.getElementById('gcmPasteBtn');
+  const btnExport   = document.getElementById('gcmExportBtn');
+  const btnSave     = document.getElementById('gcmSaveBtn');
+  const btnApply    = document.getElementById('gcmApply');
+
+  // ----------------------------------------------------------------
+  // Local state
+  // ----------------------------------------------------------------
+  let _activeGuide        = '';        // currently displayed guide
+  let _referenceConstants = null;      // schema + Reset source (nested)
+  let _currentValues      = null;      // mirror of field values (nested)
+  let _renderToken        = 0;         // async guard for rapid guide switches
+
+  // ----------------------------------------------------------------
+  // Helpers
+  // ----------------------------------------------------------------
+  function clone(v) { return JSON.parse(JSON.stringify(v)); }
+
+  // Bottom-center toast, self-created on first use.
+  let _toastEl = null, _toastTimer = null;
+  function toast(msg) {
+    if (!_toastEl) {
+      _toastEl = document.createElement('div');
+      _toastEl.id = 'gcmToast';
+      document.body.appendChild(_toastEl);
+    }
+    _toastEl.textContent = msg;
+    _toastEl.classList.add('show');
+    if (_toastTimer) clearTimeout(_toastTimer);
+    _toastTimer = setTimeout(() => _toastEl.classList.remove('show'), 2800);
+  }
+
+  // Is the current guide active in the sim? (_guideActive is the same
+  // module-scope flag controls.js already maintains via onGuidanceStatus.)
+  function isGuideActive() {
+    return typeof _guideActive !== 'undefined' && _guideActive;
+  }
+
+  // ----------------------------------------------------------------
+  // Dropdowns
+  // ----------------------------------------------------------------
+  function populateGuideDropdown() {
+    const all = (typeof Guidance !== 'undefined' && Guidance.listGuides)
+      ? Guidance.listGuides()
+      : [];
+    const withCfg = (typeof Guidance !== 'undefined' && Guidance.listGuidesWithConfig)
+      ? new Set(Guidance.listGuidesWithConfig())
+      : new Set();
+    guideSel.innerHTML = all.length
+      ? all.map(g => {
+          const suffix = withCfg.has(g) ? '' : ' — no tunable constants';
+          return `<option value="${g}">${g}${suffix}</option>`;
+        }).join('')
+      : '<option value="">(no guides registered)</option>';
+  }
+
+  function populatePresetDropdown(guideName) {
+    if (typeof getAllPresetsForGuide !== 'function') {
+      presetSel.innerHTML = '<option value="">— presets module unavailable —</option>';
+      presetSel.disabled = true;
+      return;
+    }
+    const list = getAllPresetsForGuide(guideName);
+    if (!list.length) {
+      presetSel.innerHTML = '<option value="">— no presets —</option>';
+      presetSel.disabled = true;
+      return;
+    }
+    presetSel.disabled = false;
+    presetSel.innerHTML = '<option value="">— select a preset —</option>' +
+      list.map(p => {
+        const tag = p.isDefault ? 'DEFAULT' : 'USER';
+        const stack = p.stackName || '(no stack)';
+        return `<option value="${p.id}">${p.name} · [${tag}] · ${stack}</option>`;
+      }).join('');
+    presetSel.value = '';
+  }
+
+  // ----------------------------------------------------------------
+  // Field rendering
+  // ----------------------------------------------------------------
+  // A "leaf path" is a dotted key leading to a scalar in the reference.
+  // Nested objects are rendered as their own collapsible section.
+  function makeFieldRow(path, reference, values) {
+    const refVal = getByPath(reference, path);
+    const curVal = getByPath(values, path);
+    const leafType = typeof refVal;
+
+    const row = document.createElement('div');
+    row.className = 'gcm-field-row';
+    row.dataset.path = path;
+
+    const lbl = document.createElement('label');
+    lbl.textContent = path.split('.').pop();
+    lbl.title = path;
+    row.appendChild(lbl);
+
+    let input;
+    if (leafType === 'boolean') {
+      input = document.createElement('input');
+      input.type = 'checkbox';
+      input.checked = !!curVal;
+      input.addEventListener('change', () => {
+        setByPath(_currentValues, path, !!input.checked);
+      });
+    } else if (leafType === 'string') {
+      input = document.createElement('input');
+      input.type = 'text';
+      input.value = curVal != null ? String(curVal) : '';
+      input.addEventListener('input', () => {
+        setByPath(_currentValues, path, input.value);
+      });
+    } else {
+      input = document.createElement('input');
+      input.type = 'number';
+      input.step = 'any';
+      input.value = Number.isFinite(curVal) ? curVal : '';
+      input.addEventListener('input', () => {
+        const v = parseFloat(input.value);
+        if (Number.isFinite(v)) {
+          setByPath(_currentValues, path, v);
+          input.classList.remove('gcm-invalid');
+        } else {
+          input.classList.add('gcm-invalid');
+        }
+      });
+    }
+    input.dataset.path = path;
+    row.appendChild(input);
+    return row;
+  }
+
+  function renderFields(guideName, values, reference) {
+    fieldsHost.innerHTML = '';
+    _currentValues = clone(values);
+
+    const important = (typeof getGuideImportantFields === 'function')
+      ? getGuideImportantFields(guideName)
+      : [];
+    const importantSet = new Set(important);
+
+    // ---- Important section (if any) ----
+    if (important.length) {
+      const section = document.createElement('div');
+      section.className = 'gcm-section is-important';
+      const header = document.createElement('div');
+      header.className = 'gcm-section-header no-toggle';
+      header.innerHTML = '<span>Important</span>';
+      section.appendChild(header);
+      const body = document.createElement('div');
+      body.className = 'gcm-section-body';
+      let any = false;
+      important.forEach(path => {
+        const refV = getByPath(reference, path);
+        if (refV === undefined) {
+          console.warn('[gcm] important field not in schema:', guideName, path);
+          return;
+        }
+        any = true;
+        body.appendChild(makeFieldRow(path, reference, values));
+      });
+      if (any) {
+        section.appendChild(body);
+        fieldsHost.appendChild(section);
+      }
+    }
+
+    // ---- Remaining fields, grouped by top-level key ----
+    const rootScalars = [];
+    const objectGroups = [];
+    for (const k in reference) {
+      if (importantSet.has(k)) continue;
+      const v = reference[k];
+      if (v !== null && typeof v === 'object' && !Array.isArray(v)) {
+        objectGroups.push(k);
+      } else {
+        rootScalars.push(k);
+      }
+    }
+
+    if (rootScalars.length) {
+      const section = document.createElement('div');
+      section.className = 'gcm-section';
+      const header = document.createElement('div');
+      header.className = 'gcm-section-header';
+      header.innerHTML = '<span>Root</span><span class="gcm-section-chevron">▾</span>';
+      header.addEventListener('click', () => {
+        section.dataset.collapsed = (section.dataset.collapsed === '1') ? '0' : '1';
+      });
+      const body = document.createElement('div');
+      body.className = 'gcm-section-body';
+      rootScalars.forEach(k => body.appendChild(makeFieldRow(k, reference, values)));
+      section.appendChild(header);
+      section.appendChild(body);
+      fieldsHost.appendChild(section);
+    }
+
+    objectGroups.forEach(gk => {
+      const subRef = reference[gk];
+      const section = document.createElement('div');
+      section.className = 'gcm-section';
+      const header = document.createElement('div');
+      header.className = 'gcm-section-header';
+      header.innerHTML = `<span>${gk}</span><span class="gcm-section-chevron">▾</span>`;
+      header.addEventListener('click', () => {
+        section.dataset.collapsed = (section.dataset.collapsed === '1') ? '0' : '1';
+      });
+      const body = document.createElement('div');
+      body.className = 'gcm-section-body';
+
+      for (const ck in subRef) {
+        const childPath = gk + '.' + ck;
+        if (importantSet.has(childPath)) continue;
+        const cv = subRef[ck];
+        if (cv !== null && typeof cv === 'object' && !Array.isArray(cv)) {
+          // Depth-3 subgroup — inline header spanning the grid, then
+          // its scalar children below it.
+          const subHead = document.createElement('div');
+          subHead.style.gridColumn = '1 / -1';
+          subHead.style.fontSize = '10.5px';
+          subHead.style.color = 'var(--dim)';
+          subHead.style.letterSpacing = '0.6px';
+          subHead.style.textTransform = 'uppercase';
+          subHead.style.marginTop = '6px';
+          subHead.textContent = ck;
+          body.appendChild(subHead);
+          for (const gck in cv) {
+            const deepPath = childPath + '.' + gck;
+            if (importantSet.has(deepPath)) continue;
+            body.appendChild(makeFieldRow(deepPath, reference, values));
+          }
+        } else {
+          body.appendChild(makeFieldRow(childPath, reference, values));
+        }
+      }
+      section.appendChild(header);
+      section.appendChild(body);
+      fieldsHost.appendChild(section);
+    });
+  }
+
+  // ----------------------------------------------------------------
+  // Read / apply field values
+  // ----------------------------------------------------------------
+  // Read every rendered input back into a nested object shaped like
+  // `_referenceConstants`. Returns { ok:false, path } on the first
+  // invalid number entry.
+  function readCurrentValues() {
+    const out = clone(_referenceConstants);
+    const inputs = fieldsHost.querySelectorAll('input[data-path]');
+    for (let i = 0; i < inputs.length; i++) {
+      const inp = inputs[i];
+      const path = inp.dataset.path;
+      const refVal = getByPath(_referenceConstants, path);
+      if (typeof refVal === 'boolean') {
+        setByPath(out, path, !!inp.checked);
+      } else if (typeof refVal === 'string') {
+        setByPath(out, path, String(inp.value));
+      } else {
+        const v = parseFloat(inp.value);
+        if (!Number.isFinite(v)) return { ok: false, path };
+        setByPath(out, path, v);
+      }
+    }
+    return { ok: true, values: out };
+  }
+
+  // Push a nested values bag into every rendered input.
+  function applyValuesToFields(values) {
+    _currentValues = clone(values);
+    const inputs = fieldsHost.querySelectorAll('input[data-path]');
+    for (let i = 0; i < inputs.length; i++) {
+      const inp = inputs[i];
+      const path = inp.dataset.path;
+      const refVal = getByPath(_referenceConstants, path);
+      const v = getByPath(values, path);
+      inp.classList.remove('gcm-invalid');
+      if (typeof refVal === 'boolean') inp.checked = !!v;
+      else if (typeof refVal === 'string') inp.value = v != null ? String(v) : '';
+      else inp.value = Number.isFinite(v) ? v : '';
+    }
+  }
+
+  // ----------------------------------------------------------------
+  // Load a guide into the modal
+  // ----------------------------------------------------------------
+  async function loadGuide(guideName) {
+    _activeGuide = guideName;
+    pastePanel.style.display = 'none';
+    savePanel.style.display = 'none';
+    pasteErr.style.display = 'none';
+    saveErr.style.display = 'none';
+
+    const token = ++_renderToken;
+
+    if (typeof GuidanceBridge === 'undefined' || !GuidanceBridge.ready) {
+      fieldsHost.innerHTML = '';
+      noConfigEl.style.display = '';
+      noConfigEl.textContent = 'Waiting for guidance worker…';
+      configNote.textContent = '—';
+      presetSel.innerHTML = '<option value="">—</option>';
+      presetSel.disabled = true;
+      return;
+    }
+
+    let liveConfig = null;
+    try {
+      liveConfig = await GuidanceBridge.requestGuideConfig(guideName);
+    } catch (e) {
+      console.error('[gcm] requestGuideConfig failed', e);
+    }
+    // Guard against a slower request resolving after a newer one started.
+    if (token !== _renderToken) return;
+
+    if (!liveConfig) {
+      fieldsHost.innerHTML = '';
+      noConfigEl.style.display = '';
+      noConfigEl.textContent = 'This guidance has no tunable constants.';
+      configNote.textContent = '—';
+      presetSel.innerHTML = '<option value="">—</option>';
+      presetSel.disabled = true;
+      return;
+    }
+
+    const defPreset = (typeof getGuideDefaultPreset === 'function')
+      ? getGuideDefaultPreset(guideName)
+      : null;
+    _referenceConstants = defPreset ? clone(defPreset.constants) : clone(liveConfig);
+
+    populatePresetDropdown(guideName);
+    noConfigEl.style.display = 'none';
+    renderFields(guideName, liveConfig, _referenceConstants);
+
+    configNote.textContent = isGuideActive()
+      ? 'A guide is running. Edits apply on the next Start.'
+      : 'Values apply on the next Start of the guide. Edits are session-only — a page refresh restores code defaults.';
+  }
+
+  // ----------------------------------------------------------------
+  // Open / close
+  // ----------------------------------------------------------------
+  function openModal() {
+    backdrop.style.display = 'flex';
+    populateGuideDropdown();
+    // Preserve the currently-selected sim guide if it exists in the list.
+    const simSel = document.getElementById('guideSelect');
+    const wanted = (simSel && simSel.value
+      && guideSel.querySelector(`option[value="${simSel.value}"]`))
+      ? simSel.value
+      : (guideSel.options[0] ? guideSel.options[0].value : '');
+    if (wanted) {
+      guideSel.value = wanted;
+      loadGuide(wanted);
+    }
+  }
+  function closeModal() {
+    backdrop.style.display = 'none';
+  }
+
+  // ----------------------------------------------------------------
+  // Event wiring
+  // ----------------------------------------------------------------
+  if (btnOpen) btnOpen.addEventListener('click', openModal);
+  btnClose.addEventListener('click', closeModal);
+  backdrop.addEventListener('click', (e) => { if (e.target === backdrop) closeModal(); });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && backdrop.style.display === 'flex') closeModal();
+  });
+
+  // Modal's guide dropdown is the single source of truth for "which guide
+// is active". Mirror it to the hidden #guideSelect so the toolbar's
+// Start button, fastForward.js, and boot-time sync all see the same
+// selection.
+guideSel.addEventListener('change', () => {
+  const hidden = document.getElementById('guideSelect');
+  if (hidden && guideSel.value) hidden.value = guideSel.value;
+  loadGuide(guideSel.value);
+});
+
+  // Preset selection — fills fields only, no auto-apply.
+  presetSel.addEventListener('change', () => {
+    const id = presetSel.value;
+    if (!id) return;
+    if (typeof getPresetById !== 'function' || typeof validateConstantsStrict !== 'function') return;
+    const p = getPresetById(id);
+    if (!p || !p.constants) return;
+    const v = validateConstantsStrict(p.constants, _referenceConstants);
+    if (!v.ok) {
+      toast('Preset incompatible: ' + v.error);
+      return;
+    }
+    applyValuesToFields(p.constants);
+    toast('Loaded preset "' + p.name + '" (not applied yet)');
+  });
+
+  // Reset to code defaults
+  btnReset.addEventListener('click', () => {
+    if (!_referenceConstants) return;
+    applyValuesToFields(_referenceConstants);
+    toast('Fields reset to code defaults (not applied yet)');
+  });
+
+  // Export current field values as JSON
+  btnExport.addEventListener('click', () => {
+    const r = readCurrentValues();
+    if (!r.ok) { toast('Invalid value at ' + r.path); return; }
+    const json = JSON.stringify(r.values, null, 2);
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(json).then(
+        () => toast('Copied constants JSON to clipboard'),
+        () => toast('Clipboard write failed')
+      );
+    } else {
+      const ta = document.createElement('textarea');
+      ta.value = json;
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand('copy'); toast('Copied constants JSON'); }
+      catch (e) { toast('Copy failed'); }
+      document.body.removeChild(ta);
+    }
+  });
+
+  // Paste JSON sub-panel
+  btnPaste.addEventListener('click', () => {
+    pastePanel.style.display = '';
+    savePanel.style.display = 'none';
+    pasteErr.style.display = 'none';
+    pasteText.value = '';
+    pasteText.focus();
+  });
+  pasteCancel.addEventListener('click', () => {
+    pastePanel.style.display = 'none';
+    pasteErr.style.display = 'none';
+  });
+  pasteConfirm.addEventListener('click', () => {
+    if (!_referenceConstants) return;
+    let parsed;
+    try { parsed = JSON.parse(pasteText.value); }
+    catch (e) {
+      pasteErr.textContent = 'JSON parse error: ' + e.message;
+      pasteErr.style.display = '';
+      return;
+    }
+    const v = validateConstantsStrict(parsed, _referenceConstants);
+    if (!v.ok) {
+      pasteErr.textContent = 'Validation failed: ' + v.error;
+      pasteErr.style.display = '';
+      return;
+    }
+    pasteErr.style.display = 'none';
+    applyValuesToFields(parsed);
+    pastePanel.style.display = 'none';
+    toast('Fields filled from pasted JSON (not applied yet)');
+  });
+
+  // Save as preset sub-panel
+  btnSave.addEventListener('click', () => {
+    savePanel.style.display = '';
+    pastePanel.style.display = 'none';
+    saveErr.style.display = 'none';
+    saveName.value = '';
+    saveDesc.value = '';
+    saveTags.value = '';
+    saveName.focus();
+  });
+  saveCancel.addEventListener('click', () => {
+    savePanel.style.display = 'none';
+    saveErr.style.display = 'none';
+  });
+  saveConfirm.addEventListener('click', () => {
+    if (!_referenceConstants) return;
+    const name = saveName.value.trim();
+    if (!name) {
+      saveErr.textContent = 'Name is required.';
+      saveErr.style.display = '';
+      return;
+    }
+    const r = readCurrentValues();
+    if (!r.ok) {
+      saveErr.textContent = 'Invalid value at ' + r.path;
+      saveErr.style.display = '';
+      return;
+    }
+    if (typeof addUserPreset !== 'function') {
+      saveErr.textContent = 'Preset storage unavailable.';
+      saveErr.style.display = '';
+      return;
+    }
+    let stackId = '', stackName = '';
+    if (typeof getActiveStack === 'function') {
+      const stk = getActiveStack();
+      if (stk) { stackId = stk.id; stackName = stk.name; }
+    }
+    const tags = saveTags.value.split(',').map(s => s.trim()).filter(Boolean);
+    const rec = addUserPreset({
+      name,
+      description: saveDesc.value.trim(),
+      guideName: _activeGuide,
+      stackId,
+      stackName,
+      tags,
+      constants: r.values,
+    });
+    if (!rec) {
+      saveErr.textContent = 'Save failed. See console.';
+      saveErr.style.display = '';
+      return;
+    }
+    populatePresetDropdown(_activeGuide);
+    savePanel.style.display = 'none';
+    toast('Preset "' + rec.name + '" saved');
+  });
+
+  // Apply — writes to live config via worker bridge. Takes effect on the
+  // next Start if the guide is currently running.
+  btnApply.addEventListener('click', async () => {
+    if (!_referenceConstants) return;
+    const r = readCurrentValues();
+    if (!r.ok) { toast('Invalid value at ' + r.path); return; }
+
+    if (typeof GuidanceBridge === 'undefined' || !GuidanceBridge.ready) {
+      toast('Guidance worker not ready.');
+      return;
+    }
+    try {
+      const ok = await GuidanceBridge.setGuideConfig(_activeGuide, r.values);
+      if (!ok) { toast('Apply failed — see console.'); return; }
+      toast(isGuideActive()
+        ? 'Applied. Takes effect on next Start.'
+        : 'Applied.');
+    } catch (e) {
+      console.error('[gcm] apply failed', e);
+      toast('Apply failed: ' + e.message);
+    }
+  });
+}
+
 
