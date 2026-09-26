@@ -4028,43 +4028,22 @@ function _leoTickV2(snapshot) {
         _leoStateV2.coastRotateStartTilt = null;
         _leoStateV2.coastRotateMid = null;
 
-        console.log('[leoInsertionV2] RCS_BOOST done — apogee ' +
-          apogeeKm_b.toFixed(2) + ' km, perigee=' + _leoStateV2.lastPerigeeKm.toFixed(1) +
-          ' km | V_apo=' + v_apo.toFixed(1) + ' V_orb=' + v_orb.toFixed(1) +
-          ' Δv=' + dv_needed.toFixed(1) + ' → COAST_ROTATE');
-        break;
-      }
-
-        // impact east of target → fire 'up' (retrograde, moves impact west)
-  // impact west of target → fire 'dn' (prograde, moves impact east)
-  const direction = (dLambdaDeg > 0) ? 'up' : 'dn';
-  
-  // Proportional duty: full duty when far, linear down-scaling when
-  // near. This is the fix for the bang-bang limit cycle — at full duty
-  // every tick, RCS overshoots the midpoint and then has to reverse,
-  // forever, never entering the tolerance band.
-  //
-  //   |dLambda| ≥ FAR_DEG  → duty = 1.0 (saturated)
-  //   |dLambda| < FAR_DEG  → duty = |dLambda| / FAR_DEG, floored
-  const FAR = LEO_INSERTION_V2.SUICIDE_TRIM_FAR_DEG;
-  const MIN_DUTY = LEO_INSERTION_V2.SUICIDE_TRIM_MIN_DUTY;
-  let duty = Math.min(1, Math.abs(dLambdaDeg) / Math.max(FAR, 1e-6));
-  if (duty < MIN_DUTY) duty = MIN_DUTY;
-  
-  const duties = GuideRCS.postSeparationAxialDuty(snapshot, idx, direction);
-  if (duties) {
-    // Scale every nozzle's duty by `duty`.
-    Object.keys(duties).forEach(podId => {
-      const d = duties[podId];
-      if (!d) return;
-      d.up *= duty;
-      d.dn *= duty;
-      d.lat *= duty;
-    });
-    send(cmdRcsDuty(duties, idx));
-  }
-  break;
-  }
+            console.log('[leoInsertionV2] RCS_BOOST done — apogee ' +
+      apogeeKm_b.toFixed(2) + ' km, perigee=' + _leoStateV2.lastPerigeeKm.toFixed(1) +
+      ' km | V_apo=' + v_apo.toFixed(1) + ' V_orb=' + v_orb.toFixed(1) +
+      ' Δv=' + dv_needed.toFixed(1) + ' → COAST_ROTATE');
+    break;
+    }
+    
+    // Corrective RCS fire — apogee below target → fire 'up' (prograde,
+    // raises apogee). Above target → fire 'dn' (retrograde, lowers).
+    // Sign convention: 'up' = nose = prograde, 'dn' = tailward = retro.
+    const direction = (errKm > 0) ? 'dn' : 'up';
+    const duties = GuideRCS.postSeparationAxialDuty(snapshot, idx, direction);
+    if (duties) send(cmdRcsDuty(duties, idx));
+    else send(cmdRcsDuty(null, idx));
+    break;
+    }
 
     // ---------------------------------------------------------
     // COAST_ROTATE — RCS PD-with-saturation slew to fixed inertial θ.
@@ -4592,31 +4571,27 @@ const cutoffThreshold = dv_spool + ejectionKick;
       break;
     }
 
-    // ---------------------------------------------------------
-    // SUICIDE_COAST — RCS trim to midpoint + attitude hold.
-    // ---------------------------------------------------------
-    case 'SUICIDE_COAST': {
+   // ---------------------------------------------------------
+// SUICIDE_COAST — RCS trim to midpoint + attitude hold.
+// ---------------------------------------------------------
+case 'SUICIDE_COAST': {
   send(cmdSetAllThrottle(0));
   send(cmdSetGimbalRate(0));
   
   // Once trim converged, the mission is effectively over — stop
-  // firing anything. No attitude hold, no trim. Body free-falls to
-  // impact. Keeping RCS alive past convergence just for attitude
-  // would waste propellant on a body that's about to hit the ground.
+  // firing anything. Body free-falls to impact.
   if (_leoStateV2.suicideTrimDone) {
     send(cmdRcsDuty(null, idx));
     break;
   }
   
-  // First entry into SUICIDE_COAST — stamp the clock for the timeout
-  // backstop below.
+  // First entry into SUICIDE_COAST — stamp the clock for the
+  // timeout backstop below.
   if (_leoStateV2.suicideTrimStartT === 0) {
     _leoStateV2.suicideTrimStartT = simT;
   }
   
   // Backstop — if trim has been running too long, give up and latch.
-  // Pathological cases (impact sensitivity spikes near apogee, big
-  // RCS authority swings) would otherwise spin this loop forever.
   if (simT - _leoStateV2.suicideTrimStartT > LEO_INSERTION_V2.SUICIDE_TRIM_MAX_S) {
     _leoStateV2.suicideTrimDone = true;
     send(cmdRcsDuty(null, idx));
@@ -4625,7 +4600,7 @@ const cutoffThreshold = dv_spool + ejectionKick;
     break;
   }
   
-  // Attitude hold: PD on retrograde (so up/dn stay world-consistent).
+  // Attitude hold: PD on retrograde.
   const speedH = Math.hypot(body.vx, body.vy);
   if (speedH > 1) {
     const ux_v = body.vx / speedH;
@@ -4654,10 +4629,7 @@ const cutoffThreshold = dv_spool + ejectionKick;
     (env.REMOTE_AREA_MID_WEST_DEG || 0) * Math.PI / 180;
   const dLambdaDeg = (impact.phiEf - lambdaMidEf) * 180 / Math.PI;
   
-  // Latch: once converged, kill everything. Without this, a tick
-  // where the impact drifts back outside tolerance re-engages RCS,
-  // then the next tick overshoots the other way — bang-bang limit
-  // cycle that never settles. Once we're close enough, we're done.
+  // Latch: once converged, kill everything.
   if (Math.abs(dLambdaDeg) < LEO_INSERTION_V2.SUICIDE_TRIM_TOL_DEG) {
     _leoStateV2.suicideTrimDone = true;
     send(cmdRcsDuty(null, idx));
@@ -4668,11 +4640,24 @@ const cutoffThreshold = dv_spool + ejectionKick;
     break;
   }
   
-  // impact east of target → fire 'up' (retrograde, moves impact west)
-  // impact west of target → fire 'dn' (prograde, moves impact east)
+  // Proportional duty: full when far, linear down-scaling when near.
   const direction = (dLambdaDeg > 0) ? 'up' : 'dn';
+  const FAR = LEO_INSERTION_V2.SUICIDE_TRIM_FAR_DEG;
+  const MIN_DUTY = LEO_INSERTION_V2.SUICIDE_TRIM_MIN_DUTY;
+  let duty = Math.min(1, Math.abs(dLambdaDeg) / Math.max(FAR, 1e-6));
+  if (duty < MIN_DUTY) duty = MIN_DUTY;
+  
   const duties = GuideRCS.postSeparationAxialDuty(snapshot, idx, direction);
-  if (duties) send(cmdRcsDuty(duties, idx));
+  if (duties) {
+    Object.keys(duties).forEach(podId => {
+      const d = duties[podId];
+      if (!d) return;
+      d.up *= duty;
+      d.dn *= duty;
+      d.lat *= duty;
+    });
+    send(cmdRcsDuty(duties, idx));
+  }
   break;
 }
 
