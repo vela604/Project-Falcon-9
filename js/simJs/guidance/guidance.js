@@ -3489,14 +3489,22 @@ CIRC_DECAY_FRAC: 0.05,
   // Coarse margin: fire main engine until impact is this many degrees
   // west of midpoint, then hand over to RCS (100× finer resolution).
   SUICIDE_BURN_COARSE_MARGIN_DEG: 10,
-  // RCS trim tolerance. Once the predicted impact is within this of
-// midpoint we STOP firing and never re-engage — the last few hundred
-// metres of correction are below what bang-bang RCS can resolve in a
-// single tick (it overshoots, then corrects, then overshoots the other
-// way → limit cycle). 0.1° at r=6371 km ≈ 11 km on surface — well
-// inside the ~6670 km resting arc, and cheap to achieve without
-// thrashing the thrusters.
+// RCS trim tolerance. Once the predicted impact is within this of
+// midpoint we STOP firing and never re-engage. 0.1° at r=6371 km ≈
+// 11 km on surface — well inside the ~6670 km resting arc.
 SUICIDE_TRIM_TOL_DEG: 0.1,
+  // Duty-scaling window for the trim. At |dLambda| >= this, RCS fires
+  // at full duty (fast correction). Below it, duty scales linearly down
+  // to SUICIDE_TRIM_MIN_DUTY. Removes the bang-bang limit cycle that
+  // occurs when full-duty pulses overshoot the target every tick.
+  SUICIDE_TRIM_FAR_DEG: 1.0,
+  // Floor on the duty. Below this the nozzle wouldn't meaningfully move
+  // the vehicle anyway; a small floor ensures forward progress when
+  // convergence is slow.
+  SUICIDE_TRIM_MIN_DUTY: 0.15,
+  // Hard backstop — if trim hasn't converged after this many seconds,
+  // force-latch. Prevents an infinite trim loop in pathological cases.
+  SUICIDE_TRIM_MAX_S: 120,
 };
 
 const _leoStateV2 = {
@@ -3543,10 +3551,14 @@ const _leoStateV2 = {
   suicideBurnStartT: 0,
     suicideImpactEf: null,
     suicideDlambda: null,
-    // Once the trim has converged into the tolerance band, this latches
-    // true and RCS never fires again — prevents the bang-bang limit cycle
-    // that happens when we keep chasing sub-tick precision.
-    suicideTrimDone: false,
+     // Once the trim has converged into the tolerance band, this latches
+  // true and RCS never fires again — prevents the bang-bang limit cycle
+  // that happens when we keep chasing sub-tick precision.
+  suicideTrimDone: false,
+    // Wall-clock sim time at which the trim phase started, used by the
+    // SUICIDE_TRIM_MAX_S backstop.
+    suicideTrimStartT: 0,
+  
   
 };
 
@@ -4023,12 +4035,36 @@ function _leoTickV2(snapshot) {
         break;
       }
 
-      const direction = (errKm > 0) ? 'dn' : 'up';
-      const duties = GuideRCS.postSeparationAxialDuty(snapshot, idx, direction);
-      if (duties) send(cmdRcsDuty(duties, idx));
-      else send(cmdRcsDuty(null, idx));
-      break;
-    }
+        // impact east of target → fire 'up' (retrograde, moves impact west)
+  // impact west of target → fire 'dn' (prograde, moves impact east)
+  const direction = (dLambdaDeg > 0) ? 'up' : 'dn';
+  
+  // Proportional duty: full duty when far, linear down-scaling when
+  // near. This is the fix for the bang-bang limit cycle — at full duty
+  // every tick, RCS overshoots the midpoint and then has to reverse,
+  // forever, never entering the tolerance band.
+  //
+  //   |dLambda| ≥ FAR_DEG  → duty = 1.0 (saturated)
+  //   |dLambda| < FAR_DEG  → duty = |dLambda| / FAR_DEG, floored
+  const FAR = LEO_INSERTION_V2.SUICIDE_TRIM_FAR_DEG;
+  const MIN_DUTY = LEO_INSERTION_V2.SUICIDE_TRIM_MIN_DUTY;
+  let duty = Math.min(1, Math.abs(dLambdaDeg) / Math.max(FAR, 1e-6));
+  if (duty < MIN_DUTY) duty = MIN_DUTY;
+  
+  const duties = GuideRCS.postSeparationAxialDuty(snapshot, idx, direction);
+  if (duties) {
+    // Scale every nozzle's duty by `duty`.
+    Object.keys(duties).forEach(podId => {
+      const d = duties[podId];
+      if (!d) return;
+      d.up *= duty;
+      d.dn *= duty;
+      d.lat *= duty;
+    });
+    send(cmdRcsDuty(duties, idx));
+  }
+  break;
+  }
 
     // ---------------------------------------------------------
     // COAST_ROTATE — RCS PD-with-saturation slew to fixed inertial θ.
@@ -4572,6 +4608,23 @@ const cutoffThreshold = dv_spool + ejectionKick;
     break;
   }
   
+  // First entry into SUICIDE_COAST — stamp the clock for the timeout
+  // backstop below.
+  if (_leoStateV2.suicideTrimStartT === 0) {
+    _leoStateV2.suicideTrimStartT = simT;
+  }
+  
+  // Backstop — if trim has been running too long, give up and latch.
+  // Pathological cases (impact sensitivity spikes near apogee, big
+  // RCS authority swings) would otherwise spin this loop forever.
+  if (simT - _leoStateV2.suicideTrimStartT > LEO_INSERTION_V2.SUICIDE_TRIM_MAX_S) {
+    _leoStateV2.suicideTrimDone = true;
+    send(cmdRcsDuty(null, idx));
+    console.log('[leoInsertionV2] SUICIDE_TRIM forced off after ' +
+      (simT - _leoStateV2.suicideTrimStartT).toFixed(1) + 's — trim timeout');
+    break;
+  }
+  
   // Attitude hold: PD on retrograde (so up/dn stay world-consistent).
   const speedH = Math.hypot(body.vx, body.vy);
   if (speedH > 1) {
@@ -4684,6 +4737,7 @@ _leoTickV2.start = function () {
 _leoStateV2.suicideImpactEf = null;
 _leoStateV2.suicideDlambda = null;
 _leoStateV2.suicideTrimDone = false;
+_leoStateV2.suicideTrimStartT = 0;
 console.log('[leoInsertionV2] started');
 };
 
