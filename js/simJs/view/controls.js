@@ -1221,12 +1221,13 @@ function bindGuidanceConfigModal() {
   const btnApply    = document.getElementById('gcmApply');
 
   // ----------------------------------------------------------------
-  // Local state
-  // ----------------------------------------------------------------
-  let _activeGuide        = '';        // currently displayed guide
-  let _referenceConstants = null;      // schema + Reset source (nested)
-  let _currentValues      = null;      // mirror of field values (nested)
-  let _renderToken        = 0;         // async guard for rapid guide switches
+// Local state
+// ----------------------------------------------------------------
+let _activeGuide = ''; // currently displayed guide
+let _referenceConstants = null; // schema + Reset source (nested)
+let _currentValues = null; // mirror of field values (nested)
+let _renderToken = 0; // async guard for rapid guide switches
+// (Description lookup function _fieldTitle defined below makeFieldRow.)
 
   // ----------------------------------------------------------------
   // Helpers
@@ -1298,19 +1299,30 @@ function bindGuidanceConfigModal() {
   // ----------------------------------------------------------------
   // A "leaf path" is a dotted key leading to a scalar in the reference.
   // Nested objects are rendered as their own collapsible section.
-  function makeFieldRow(path, reference, values) {
-    const refVal = getByPath(reference, path);
-    const curVal = getByPath(values, path);
-    const leafType = typeof refVal;
+  // Description lookup — pulls from guideConstantDescriptions.js if
+// loaded. Returns '' when no description exists, so title attribute
+// just falls back to the path.
+function _fieldTitle(guideName, path) {
+  const map = (typeof GUIDE_CONSTANT_DESCRIPTIONS !== 'undefined' &&
+    GUIDE_CONSTANT_DESCRIPTIONS[guideName]) ? GUIDE_CONSTANT_DESCRIPTIONS[guideName] : {};
+  const desc = map[path];
+  return desc ? (path + ' — ' + desc) : path;
+}
 
-    const row = document.createElement('div');
-    row.className = 'gcm-field-row';
-    row.dataset.path = path;
-
-    const lbl = document.createElement('label');
-    lbl.textContent = path.split('.').pop();
-    lbl.title = path;
-    row.appendChild(lbl);
+function makeFieldRow(path, reference, values) {
+  const refVal = getByPath(reference, path);
+  const curVal = getByPath(values, path);
+  const leafType = typeof refVal;
+  const title = _fieldTitle(_activeGuide, path);
+  
+  const row = document.createElement('div');
+  row.className = 'gcm-field-row';
+  row.dataset.path = path;
+  
+  const lbl = document.createElement('label');
+  lbl.textContent = path.split('.').pop();
+  lbl.title = title;
+  row.appendChild(lbl);
 
     let input;
     if (leafType === 'boolean') {
@@ -1342,9 +1354,10 @@ function bindGuidanceConfigModal() {
         }
       });
     }
-    input.dataset.path = path;
-    row.appendChild(input);
-    return row;
+      input.dataset.path = path;
+  input.title = title;
+  row.appendChild(input);
+  return row;
   }
 
   function renderFields(guideName, values, reference) {

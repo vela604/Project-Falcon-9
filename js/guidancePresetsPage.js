@@ -791,13 +791,164 @@ function collectKnownStacks() {
   // ----------------------------------------------------------------
   // Boot
   // ----------------------------------------------------------------
+    // ----------------------------------------------------------------
+  // Constants reference section
+  // ----------------------------------------------------------------
+  // Renders every configurable guide's constants with descriptions from
+  // GUIDE_CONSTANT_DESCRIPTIONS. Grouped Important-first (mirrors the
+  // modal form), then by top-level parent. Purely read-only.
+  //
+  // One guide's section auto-opens: whichever guide is selected in the
+  // sidebar. Changing the sidebar selection also toggles the reference
+  // — a small visual link between the two panels.
+  
+  function renderReference() {
+    const host = $('refGuideList');
+    if (!host) return;
+    host.innerHTML = '';
+    const guides = allConfigurableGuides();
+    guides.forEach(g => {
+      const descMap = (typeof GUIDE_CONSTANT_DESCRIPTIONS !== 'undefined' &&
+        GUIDE_CONSTANT_DESCRIPTIONS[g]) ? GUIDE_CONSTANT_DESCRIPTIONS[g] : {};
+      const def = getGuideDefaultPreset(g);
+      const schema = def ? def.constants : null;
+      const important = (typeof getGuideImportantFields === 'function') ?
+        getGuideImportantFields(g) : [];
+      const impSet = new Set(important);
+      
+      const wrapper = document.createElement('div');
+      wrapper.className = 'ref-guide' + (g === _selectedGuide ? ' open' : '');
+      wrapper.dataset.guide = g;
+      
+      const header = document.createElement('div');
+      header.className = 'ref-guide-header';
+      header.innerHTML =
+        `<span>${escapeHtml(g)}</span>` +
+        `<span class="ref-guide-chevron">▸</span>`;
+      header.addEventListener('click', () => {
+        wrapper.classList.toggle('open');
+      });
+      wrapper.appendChild(header);
+      
+      const body = document.createElement('div');
+      body.className = 'ref-guide-body';
+      
+      // If the guide has no schema, we can't enumerate — show a message.
+      if (!schema) {
+        body.innerHTML = '<div class="ref-missing">No constants schema registered for this guide.</div>';
+        wrapper.appendChild(body);
+        host.appendChild(wrapper);
+        return;
+      }
+      
+      // ---- Important section ----
+      if (important.length) {
+        const sec = document.createElement('div');
+        sec.className = 'ref-section is-important';
+        sec.innerHTML = '<div class="ref-section-label">Important</div>';
+        important.forEach(path => {
+          if (getByPath(schema, path) === undefined) return;
+          sec.appendChild(mkRefRow(path, descMap[path]));
+        });
+        body.appendChild(sec);
+      }
+      
+      // ---- Root scalars (not in Important) ----
+      const rootScalars = [];
+      const objectGroups = [];
+      for (const k in schema) {
+        if (impSet.has(k)) continue;
+        const v = schema[k];
+        if (v !== null && typeof v === 'object' && !Array.isArray(v)) objectGroups.push(k);
+        else rootScalars.push(k);
+      }
+      
+      if (rootScalars.length) {
+        const sec = document.createElement('div');
+        sec.className = 'ref-section';
+        sec.innerHTML = '<div class="ref-section-label">Root</div>';
+        rootScalars.forEach(k => sec.appendChild(mkRefRow(k, descMap[k])));
+        body.appendChild(sec);
+      }
+      
+      // ---- Object groups ----
+      objectGroups.forEach(gk => {
+        const subRef = schema[gk];
+        const sec = document.createElement('div');
+        sec.className = 'ref-section';
+        sec.innerHTML = `<div class="ref-section-label">${escapeHtml(gk)}</div>`;
+        let emittedAny = false;
+        for (const ck in subRef) {
+          const childPath = gk + '.' + ck;
+          if (impSet.has(childPath)) continue;
+          const cv = subRef[ck];
+          if (cv !== null && typeof cv === 'object' && !Array.isArray(cv)) {
+            // Depth-3 subgroup — its own sub-label
+            const subLabel = document.createElement('div');
+            subLabel.className = 'ref-section-label';
+            subLabel.style.marginTop = '8px';
+            subLabel.textContent = ck;
+            sec.appendChild(subLabel);
+            for (const gck in cv) {
+              const deepPath = childPath + '.' + gck;
+              if (impSet.has(deepPath)) continue;
+              sec.appendChild(mkRefRow(deepPath, descMap[deepPath]));
+              emittedAny = true;
+            }
+          } else {
+            sec.appendChild(mkRefRow(childPath, descMap[childPath]));
+            emittedAny = true;
+          }
+        }
+        if (emittedAny) body.appendChild(sec);
+      });
+      
+      wrapper.appendChild(body);
+      host.appendChild(wrapper);
+    });
+  }
+  
+  function mkRefRow(path, description) {
+    const row = document.createElement('div');
+    row.className = 'ref-row';
+    const keyEl = document.createElement('div');
+    keyEl.className = 'ref-key';
+    keyEl.textContent = path;
+    row.appendChild(keyEl);
+    const descEl = document.createElement('div');
+    descEl.className = 'ref-desc';
+    if (description) {
+      descEl.textContent = description;
+    } else {
+      descEl.textContent = '(no description yet)';
+      descEl.style.fontStyle = 'italic';
+      descEl.style.opacity = '0.55';
+    }
+    row.appendChild(descEl);
+    return row;
+  }
+  
+  // When the sidebar selection changes, keep the reference section in
+  // sync — auto-open the selected guide, close the rest.
+  const _origRenderMain = renderMain;
+  renderMain = function() {
+    _origRenderMain();
+    const host = $('refGuideList');
+    if (!host) return;
+    host.querySelectorAll('.ref-guide').forEach(el => {
+      el.classList.toggle('open', el.dataset.guide === _selectedGuide);
+    });
+  };
+  
+  // ----------------------------------------------------------------
+  // Boot
+  // ----------------------------------------------------------------
   renderStats();
-  // Auto-select the first configurable guide so the user sees content
-  // immediately on load.
   const guides = allConfigurableGuides();
   if (guides.length) _selectedGuide = guides[0];
   renderSidebar();
   renderMain();
-
+  renderReference();
+  
   console.log('[guidancePresetsPage] ready.');
-})();
+  })();
