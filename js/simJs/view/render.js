@@ -1499,10 +1499,13 @@ drawRocketArt(ctx, mW, mH, mpp, {
         engineLayout: engineLayout,
         engineThrusters: m.engineThrusters,
         params: m.params,
-          stageAboveBellHeight: stageAboveBellHeight,
+            stageAboveBellHeight: stageAboveBellHeight,
     gridFinType: gfType,
     gridFinParams: m.gridFinParams || null,
+    // Live per-fin deploy + control state (body-level, all four fins
+    // share one state object — matches the renderer's convention).
     gridFinState: body.gridFins || null,
+    gridFinColor: m.gridFinColor || '#8a9198',
     ...payloadOpts,
   });
                  ctx.restore();

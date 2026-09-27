@@ -180,8 +180,21 @@ function _makeBody() {
     // kept around only to compute this tick's Δ for the reaction torque
     // on body.omega. See applySloshStep() below.
     slosh: { offset: 0, velocity: 0, rawOffset: 0, rawVelocity: 0, angMomentum: 0 },
-    // Phase 2B.1 — last tick's tank proper acceleration along its own
-    // axial direction (accelerometer-on-the-tank reading; gravity already
+  // Grid fins — per-fin deploy + control state, both in degrees.
+  //   deploy:  0 = deployed (perpendicular), ±90 = stowed (sign = fin
+  //            identity: L=+, R=−, FB=+ on F / − on B).
+  //   control: F/B only, mirrors F=+v / B=−v at render. Locked at 0
+  //            whenever FB.deploy ≠ 0 (rotating a stowed fin about Z
+  //            would drag its plate through the hull).
+  // targetDeploy / targetControl are the commanded goals; updateGridFins()
+  // slews current toward target at the fin type's own rate constants.
+  gridFins: {
+    L: { deploy: 90, control: 0, targetDeploy: 90, targetControl: 0 },
+    R: { deploy: -90, control: 0, targetDeploy: -90, targetControl: 0 },
+    FB: { deploy: 90, control: 0, targetDeploy: 90, targetControl: 0 },
+  },
+// Phase 2B.1 — last tick's tank proper acceleration along its own
+// axial direction (accelerometer-on-the-tank reading; gravity already
     // folded in — see the assignment at the end of physicsStep). Used
     // with a one-tick lag by bottomTankSloshOmega() as g_eff.
         // Phase 2B.1 — last tick's tank proper acceleration along its own
@@ -263,6 +276,53 @@ function updateLegs(dt) {
     const maxDelta = CONFIG.LEG_DEPLOY_RATE * dt;
     if (target > b.legs.progress) b.legs.progress = Math.min(target, b.legs.progress + maxDelta);
     else b.legs.progress = Math.max(target, b.legs.progress - maxDelta);
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Grid-fin slew. Two rate constants come from the fin TYPE (per-type
+// typeConstants.maxSlewDeployingDegS / maxSlewControllingDegS) — same
+// pattern as leg hinge geometry, all physical characteristics on the
+// hardware type, not the rocket record.
+//
+// Lock rule: whenever FB.deploy ≠ 0 (i.e. not fully deployed), FB control
+// is forced back to 0 — both target and (rate-limited) current. A stowed
+// F/B fin has its plate physically embedded in the hull; any Z rotation
+// at that pose would drag the plate through structure.
+//
+// All four fins are on the SAME body and slewed in this single pass — no
+// per-member state, since a rocket's booster and stage are separate bodies
+// after separation, each carrying its own gridFins.
+// ---------------------------------------------------------------------------
+function updateGridFins(body, dt) {
+  if (!body || !body.gridFins) return;
+  const type = (body.gridFinTypeId && typeof getComponentType === 'function') ?
+    getComponentType(body.gridFinTypeId) : null;
+  const TC = (type && type.typeConstants) ? type.typeConstants : {};
+  const deployRate = Number.isFinite(TC.maxSlewDeployingDegS) ? TC.maxSlewDeployingDegS : 15;
+  const controlRate = Number.isFinite(TC.maxSlewControllingDegS) ? TC.maxSlewControllingDegS : 30;
+  const deployMaxDelta = deployRate * dt;
+  const controlMaxDelta = controlRate * dt;
+  
+  ['L', 'R', 'FB'].forEach(k => {
+    const f = body.gridFins[k];
+    if (!f) return;
+    // Deploy slew.
+    if (Number.isFinite(f.targetDeploy)) {
+      const d = f.targetDeploy - f.deploy;
+      if (Math.abs(d) <= deployMaxDelta) f.deploy = f.targetDeploy;
+      else f.deploy += Math.sign(d) * deployMaxDelta;
+    }
+    // Control only on FB; L/R are locked at 0 (rotating about X would
+    // leave the 2D plane).
+    if (k === 'FB') {
+      if (f.deploy !== 0) f.targetControl = 0;
+      if (Number.isFinite(f.targetControl)) {
+        const c = f.targetControl - f.control;
+        if (Math.abs(c) <= controlMaxDelta) f.control = f.targetControl;
+        else f.control += Math.sign(c) * controlMaxDelta;
+      }
+    }
   });
 }
 
@@ -1545,9 +1605,10 @@ const geom = currentGeometry(body);
 body._geomCache = geom;
 
 applyActuatorRateLimitsForBody(body, dt);
+updateGridFins(body, dt);
 
-    // Phase 2A — lateral slosh pre-step, before this tick's forces/RK4.
-    // Uses LAST tick's lateral acceleration (one-tick lag is fine for a
+// Phase 2A — lateral slosh pre-step
+// Uses LAST tick's lateral acceleration (one-tick lag is fine for a
     // visual/CoM-coupling feature — see prompt_2phase.md §2A). Only
     // shifts a stored offset/velocity; never adds a force.
     applySloshStep(body, dt);

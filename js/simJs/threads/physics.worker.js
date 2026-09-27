@@ -452,6 +452,41 @@ b.omega = msg.omega || 0;
       b.legs.deployed = !!msg.deployed;
       break;
     }
+    
+    case 'gridFinsDeploy': {
+  const b = resolveTargetBody(msg.targetBodyIdx);
+  if (!b || !b.gridFins) break;
+  // Deployed: all targets → 0. Stowed: per-fin sign (L=+90, R=−90,
+  // FB=+90 — FB covers both F and B, which mirror internally).
+  ['L', 'R', 'FB'].forEach(k => {
+    const f = b.gridFins[k];
+    if (!f) return;
+    if (msg.deployed) f.targetDeploy = 0;
+    else f.targetDeploy = (k === 'R') ? -90 : 90;
+  });
+  break;
+}
+case 'gridFinsControl': {
+  const b = resolveTargetBody(msg.targetBodyIdx);
+  if (!b || !b.gridFins) break;
+  // Angle target for F/B control. Physical envelope is a hardware
+  // property of the fin type (typeConstants.maxControlDeg) — read
+  // from there rather than hardcoding. updateGridFins() forces
+  // control back to 0 if FB isn't deployed.
+  const bottomMember = b.members && b.members[0];
+  const gfType = (bottomMember && bottomMember.gridFinTypeId &&
+      typeof getComponentType === 'function') ?
+    getComponentType(bottomMember.gridFinTypeId) : null;
+  const maxCtrl = (gfType && gfType.typeConstants &&
+      Number.isFinite(gfType.typeConstants.maxControlDeg)) ?
+    gfType.typeConstants.maxControlDeg : 45;
+  const f = b.gridFins.FB;
+  if (f && Number.isFinite(msg.controlDeg)) {
+    f.targetControl = Math.max(-maxCtrl, Math.min(maxCtrl, msg.controlDeg));
+  }
+  break;
+}
+    
         case 'setFuelMass': {
       const b = resolveTargetBody(msg.targetBodyIdx);
       if (!b) break;
@@ -732,7 +767,28 @@ if (b.chute) {
   bc.chute.deployed = b.chute.deployed;
   bc.chute.progress = b.chute.progress;
 } else {
-  bc.chute = null;
+      bc.chute = null;
+}
+// Grid fins — cold copy. The hot scalars (L/R/FB.deploy, FB.control)
+// travel via the Float64Array each tick; what's copied here is only the
+// shape so the receiver has objects to decode into. targets stay at
+// whatever the last command set them to.
+if (b.gridFins) {
+  if (!bc.gridFins) {
+    bc.gridFins = {
+      L:  { deploy:  90, control: 0, targetDeploy:  90, targetControl: 0 },
+      R:  { deploy: -90, control: 0, targetDeploy: -90, targetControl: 0 },
+      FB: { deploy:  90, control: 0, targetDeploy:  90, targetControl: 0 },
+    };
+  }
+  ['L', 'R', 'FB'].forEach(k => {
+    const src = b.gridFins[k], dst = bc.gridFins[k];
+    if (!src || !dst) return;
+    dst.targetDeploy = src.targetDeploy;
+    dst.targetControl = src.targetControl;
+  });
+} else {
+  bc.gridFins = null;
 }
     
     if (b.legs) {

@@ -510,10 +510,11 @@ function maybeForwardGuidanceSnapshot() {
   startupDurationS: e.startupDurationS,
   shutdownDurationS: e.shutdownDurationS,
 })),
-  rcsCmd: b.rcsCmd || null,
-  rcsDuty: b.rcsDuty || null,
-  pods: (typeof buildPodEntries === 'function') ? buildPodEntries(b) : [],
-}));
+    rcsCmd: b.rcsCmd || null,
+    rcsDuty: b.rcsDuty || null,
+    gridFins: b.gridFins || null,
+    pods: (typeof buildPodEntries === 'function') ? buildPodEntries(b) : [],
+  }));
 // Wind — from ground uplink (meteorological data), not an onboard
 // sensor, but available to the rocket at every tick.
 const windSnapshot = (typeof wind !== 'undefined') ? {

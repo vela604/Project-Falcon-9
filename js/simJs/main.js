@@ -338,6 +338,42 @@ if (legsBtn) {
   }
 }
   
+  // Grid fins — show the deploy button + control cluster only when the
+// followed body's bottom member carries grid fins. Same "hardware
+// present" gate as the legs button above.
+{
+  const followIdx = (typeof _cameraTargetIndex === 'function') ?
+    _cameraTargetIndex() : state.activeBodyIndex;
+  const followBody = state.bodies[followIdx];
+  const bottomMember = (followBody && followBody.members && followBody.members[0]) ?
+    followBody.members[0] : null;
+  const hasGridFins = !!(bottomMember && bottomMember.hasGridFins);
+  
+  const gfBtn = getEl('btnDeployGridFins');
+  if (gfBtn) gfBtn.style.display = hasGridFins ? '' : 'none';
+  
+  const gfGroup = document.getElementById('gridFinControlGroup');
+  if (gfGroup) gfGroup.style.display = hasGridFins ? 'flex' : 'none';
+  
+  // Deploy button reflects current state via label (like the legs button).
+  if (gfBtn && hasGridFins && followBody.gridFins) {
+    const stowed = (followBody.gridFins.L.deploy !== 0 ||
+      followBody.gridFins.R.deploy !== 0 ||
+      followBody.gridFins.FB.deploy !== 0);
+    gfBtn.classList.toggle('active', !stowed);
+    gfBtn.textContent = stowed ? 'Deploy Grid Fins' : 'Stow Grid Fins';
+  }
+  
+  // Control buttons only usable when deployed; disable while stowed
+  // (visual only — physics enforces the lock anyway).
+  const fbDeployed = !!(followBody && followBody.gridFins && followBody.gridFins.FB.deploy === 0);
+  const acw = getEl('gridFinACW');
+  const cw = getEl('gridFinCW');
+  if (acw) acw.disabled = !hasGridFins || !fbDeployed;
+  if (cw) cw.disabled = !hasGridFins || !fbDeployed;
+}
+
+  
   const sepBtn = getEl('btnSeparate');
   if (sepBtn) sepBtn.disabled = !canSeparateNow();
   
@@ -544,8 +580,9 @@ window.addEventListener('resize', () => {
     
     
         bindSimControls();
-    bindLegsControl();
-    bindCenterControls();
+bindLegsControl();
+bindGridFinControls();
+bindCenterControls();
     bindRCSControls();
     bindMergeControls();
     bindCameraControls();

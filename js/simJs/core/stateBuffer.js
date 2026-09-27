@@ -52,8 +52,12 @@ const HOT_STATE_MAX_ENGINES_PER_BODY = 16; // covers octaweb-merlin9 (1 center +
 // [14] chuteProgress (0..1 — 0 when no chute or not yet deployed, else
 //                    ramps 0→1 across (lineStretchTime + openingTime);
 //                    consumed by the renderer to animate canopy inflation)
-// [15 .. 15 + N*3)  per-engine: massFlowRate (kg/s), currentF, gimbalDeg
-const HOT_STATE_BODY_HEADER_FLOATS = 15;
+// [15] gridFin.L.deploy  (deg, signed — 0 deployed, +90 stowed)
+// [16] gridFin.R.deploy  (deg, signed — 0 deployed, −90 stowed)
+// [17] gridFin.FB.deploy (deg, signed — 0 deployed, +90 stowed)
+// [18] gridFin.FB.control (deg, signed — F=+v, B=−v mirror)
+// [19 .. 19 + N*3)  per-engine: massFlowRate (kg/s), currentF, gimbalDeg
+const HOT_STATE_BODY_HEADER_FLOATS = 19;
 const HOT_STATE_FLOATS_PER_ENGINE = 3; // massFlowRate, currentF, gimbalDeg
 const HOT_STATE_BODY_STRIDE =
   HOT_STATE_BODY_HEADER_FLOATS + HOT_STATE_MAX_ENGINES_PER_BODY * HOT_STATE_FLOATS_PER_ENGINE;
@@ -118,8 +122,15 @@ buf[base + 13] = (b.slosh && Number.isFinite(b.slosh.zeta)) ? b.slosh.zeta : NaN
 // deployed"; both render identically (nothing above the fairing).
 // Once deployed, ramps 0→1 across (lineStretchTime + openingTime).
 buf[base + 14] = (b.chute && Number.isFinite(b.chute.progress)) ? b.chute.progress : 0;
+// Grid fins — 4 scalars. Missing state defaults to stowed (90/…/90) so a
+// body that predates the feature reads as fully retracted.
+const gf = b.gridFins;
+buf[base + 15] = (gf && gf.L && Number.isFinite(gf.L.deploy)) ? gf.L.deploy : 90;
+buf[base + 16] = (gf && gf.R && Number.isFinite(gf.R.deploy)) ? gf.R.deploy : -90;
+buf[base + 17] = (gf && gf.FB && Number.isFinite(gf.FB.deploy)) ? gf.FB.deploy : 90;
+buf[base + 18] = (gf && gf.FB && Number.isFinite(gf.FB.control)) ? gf.FB.control : 0;
 
-    const engines = b.engines || [];
+const engines = b.engines || [];
     const usedEngines = Math.min(engines.length, HOT_STATE_MAX_ENGINES_PER_BODY);
     if (engines.length > HOT_STATE_MAX_ENGINES_PER_BODY) truncatedEngines = true;
     buf[base + 7] = usedEngines;
@@ -189,8 +200,23 @@ b.slosh.zeta = buf[base + 13];
 // this hot field only updates progress every tick.
 if (!b.chute) b.chute = { progress: 0 };
 b.chute.progress = buf[base + 14];
-    
-    const engines = b.engines || [];
+// Grid fins — lazy-init the shape (with stowed defaults) if this body
+// predates the feature, then overwrite the 4 hot scalars. targetDeploy /
+// targetControl are cold (set only by an actual command) and stay
+// whatever they were — decode doesn't touch them.
+if (!b.gridFins) {
+  b.gridFins = {
+    L: { deploy: 90, control: 0, targetDeploy: 90, targetControl: 0 },
+    R: { deploy: -90, control: 0, targetDeploy: -90, targetControl: 0 },
+    FB: { deploy: 90, control: 0, targetDeploy: 90, targetControl: 0 },
+  };
+}
+b.gridFins.L.deploy = buf[base + 15];
+b.gridFins.R.deploy = buf[base + 16];
+b.gridFins.FB.deploy = buf[base + 17];
+b.gridFins.FB.control = buf[base + 18];
+
+const engines = b.engines || [];
     const usedEngines = Math.min(buf[base + 7], engines.length, HOT_STATE_MAX_ENGINES_PER_BODY);
     const engBase = base + HOT_STATE_BODY_HEADER_FLOATS;
     for (let j = 0; j < usedEngines; j++) {

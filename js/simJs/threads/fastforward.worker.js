@@ -298,6 +298,24 @@ function localDispatch(msg) {
       b.legs.deployed = !!msg.deployed;
       break;
     }
+    case 'gridFinsDeploy': {
+  if (!b || !b.gridFins) break;
+  ['L', 'R', 'FB'].forEach(k => {
+    const f = b.gridFins[k];
+    if (!f) return;
+    if (msg.deployed) f.targetDeploy = 0;
+    else f.targetDeploy = (k === 'R') ? -90 : 90;
+  });
+  break;
+}
+case 'gridFinsControl': {
+  if (!b || !b.gridFins) break;
+  const f = b.gridFins.FB;
+  if (f && Number.isFinite(msg.controlDeg)) {
+    f.targetControl = Math.max(-90, Math.min(90, msg.controlDeg));
+  }
+  break;
+}
     case 'separate': {
       if (typeof requestSeparate === 'function') requestSeparate(b);
       break;

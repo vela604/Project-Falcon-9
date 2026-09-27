@@ -285,11 +285,17 @@ function buildGridFinSerratedF9() {
     // in fleet.js. A future fin type with different wall/material ratios
     // supplies its own bag here.
     typeConstants: {
-      WALL_THICKNESS_FACTOR: 0.025, // wall thickness = factor × fin thickness
-      SHELL_FACTOR: 0.30, // calibration multiplier on outer solid volume × cellFill
-      maxSlewDeployingDegS: 15, // 90° deploy takes ~6 s
-      maxSlewControllingDegS: 30, // control deflection rate
-    },
+  WALL_THICKNESS_FACTOR: 0.025, // wall thickness = factor × fin thickness
+  SHELL_FACTOR: 0.30, // calibration multiplier on outer solid volume × cellFill
+  maxSlewDeployingDegS: 15, // 90° deploy takes ~6 s
+  maxSlewControllingDegS: 30, // control deflection rate
+  // Physical deflection envelope. Real F9 fins swing ±45° at full
+  // control authority; the vehicle can't mechanically command more.
+  // Both the physics clamp and the UI hold-button range read from
+  // here, so a future fin type with a different envelope (say ±30°)
+  // only changes its own typeConstants — no code edits anywhere.
+  maxControlDeg: 45,
+},
     capabilities: {
       deploysOnVehicle: true,
       controlCapable: true,

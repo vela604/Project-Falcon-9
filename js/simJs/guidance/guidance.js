@@ -5027,9 +5027,11 @@ function send(msg) {
   function cmdSetAllThrottle(kgPerSec) { return { type: 'setAllThrottle', value: kgPerSec }; }
   function cmdRcs(key, on) { return { type: 'rcs', key, on: !!on }; }
   function cmdLegs(deployed) { return { type: 'legs', deployed: !!deployed }; }
-  function cmdSeparate() { return { type: 'separate' }; }
-  function cmdSplitFairing() { return { type: 'splitFairing' }; }
-  function cmdReleasePayload() { return { type: 'releasePayload' }; }
+  function cmdGridFinsDeploy(deployed) { return { type: 'gridFinsDeploy', deployed: !!deployed }; }
+function cmdGridFinsControl(controlDeg) { return { type: 'gridFinsControl', controlDeg }; }
+function cmdSeparate() { return { type: 'separate' }; }
+function cmdSplitFairing() { return { type: 'splitFairing' }; }
+function cmdReleasePayload() { return { type: 'releasePayload' }; }
   function cmdEmergencyEject() { return { type: 'emergencyEject' }; }
   function cmdTakeControl(idx) { return { type: 'takeControl', idx }; }
   function cmdWarp(value) { return { type: 'warp', value }; }
@@ -5097,7 +5099,9 @@ importGuideState,
     cmdSetAllThrottle,
     cmdRcs,
     cmdLegs,
-    cmdSeparate,
+cmdGridFinsDeploy,
+cmdGridFinsControl,
+cmdSeparate,
     cmdSplitFairing,
     cmdReleasePayload,
     cmdEmergencyEject,

@@ -417,24 +417,28 @@ function drawPayloadArt(ctx, W, H) {
 // overlay: only poses where the fin's perforated face is aimed at the
 // viewer should draw it (F/B stowed); every other pose shows a solid
 // edge sliver with no mesh.
-function drawGridFinFace(ctx, anchorX, hingeY, wPx, hPx, cellPx, side, style, showMesh, rotateRad) {
+// Draw one grid-fin rect. The rect's top-left in the local (pre-rotation)
+// frame is (topX, topY); the rect has size (wPx, hPx). Rotation happens
+// around the (pivotX, pivotY) anchor — which lets the caller put the
+// pivot at the fin's physical hinge axis (root end, thickness-center)
+// while still positioning the rect wherever the pose needs it.
+//
+// This separation is what makes control rotation look right: at deployed
+// state the caller passes topY = -thicknessPx/2, so the rect's geometric
+// center sits exactly on the pivot — the strip spins in place rather
+// than seesawing around its top edge.
+function drawGridFinFace(ctx, pivotX, pivotY, topX, topY, wPx, hPx, cellPx, style, showMesh, rotateRad) {
   if (!(wPx > 0) || !(hPx > 0)) return;
   const fill = (style && style.fill) || '#8a9198';
   const stroke = (style && style.stroke) || '#48515e';
   const cellStroke = (style && style.cellStroke) || 'rgba(30, 36, 44, 0.55)';
   
   ctx.save();
-  ctx.translate(anchorX, hingeY);
+  ctx.translate(pivotX, pivotY);
   if (rotateRad) ctx.rotate(rotateRad);
   
-  // Local rect relative to anchor: side<0 → extends −X from anchor,
-  // side>0 → extends +X, side=0 → centered on anchor. Hinge is the TOP
-  // edge; rect hangs tailward (+Y) from it.
-  const x0 = (side < 0) ? -wPx : (side > 0) ? 0 : -wPx / 2;
-  const y0 = 0;
-  
   ctx.beginPath();
-  ctx.rect(x0, y0, wPx, hPx);
+  ctx.rect(topX, topY, wPx, hPx);
   ctx.fillStyle = fill;
   ctx.fill();
   ctx.strokeStyle = stroke;
@@ -443,7 +447,7 @@ function drawGridFinFace(ctx, anchorX, hingeY, wPx, hPx, cellPx, side, style, sh
   
   if (showMesh) {
     ctx.beginPath();
-    ctx.rect(x0, y0, wPx, hPx);
+    ctx.rect(topX, topY, wPx, hPx);
     ctx.clip();
     ctx.strokeStyle = cellStroke;
     ctx.lineWidth = 0.7;
@@ -451,19 +455,19 @@ function drawGridFinFace(ctx, anchorX, hingeY, wPx, hPx, cellPx, side, style, sh
     const cols = Math.max(1, Math.round(wPx / cellPx));
     const colStep = wPx / cols;
     for (let i = 1; i < cols; i++) {
-      const x = x0 + i * colStep;
+      const x = topX + i * colStep;
       ctx.beginPath();
-      ctx.moveTo(x, y0);
-      ctx.lineTo(x, y0 + hPx);
+      ctx.moveTo(x, topY);
+      ctx.lineTo(x, topY + hPx);
       ctx.stroke();
     }
     const rows = Math.max(1, Math.round(hPx / cellPx));
     const rowStep = hPx / rows;
     for (let j = 1; j < rows; j++) {
-      const y = y0 + j * rowStep;
+      const y = topY + j * rowStep;
       ctx.beginPath();
-      ctx.moveTo(x0, y);
-      ctx.lineTo(x0 + wPx, y);
+      ctx.moveTo(topX, y);
+      ctx.lineTo(topX + wPx, y);
       ctx.stroke();
     }
   }
@@ -1145,21 +1149,22 @@ const bodyPath = () => {
 // Per-fin state. `deploy` and `control` are both in DEGREES.
 //   deploy:  0 = deployed (fin perpendicular to hull), ±90 = stowed
 //            (flat against hull). Sign is fin identity: L=+, R=−, F=+, B=−.
-//   control: F/B only, and only meaningful at deploy = 0. Front ACW
-//            (from front view) = +deg; back mirrors to −deg.
+//   control: F/B only, only meaningful at deploy = 0. Front ACW
+//            (from front view) = +deg; back mirrors (visual same
+//            direction in side view, opposite in 3D).
 //
-// F/B share ONE state entry (they mirror each other): F = +FB.deploy,
-// B = −FB.deploy; F = +FB.control, B = −FB.control. Any asymmetric
-// deploy/control between them would leak torque out of the 2D plane.
-// L/R keep independent deploy values (their deploy only creates
-// Z-axis torque in the 2D plane, so asymmetric deploy is safe);
-// their control is locked at 0 (rotating about X would leave the plane).
+// F/B share ONE state entry (mirror pair); L/R independent deploy.
+// Mesh visible only on F/B stowed (chord × span face aimed at viewer).
 //
-// Screen-projected dims at any progress p ∈ [0,1] (0 stowed, 1 deployed):
-//   L/R: W = thickness→span,  H = span→thickness
-//   F/B: W = chord (constant),H = span→thickness
-// Mesh visible only when a fin's perforated face aims at the viewer —
-// which is F/B stowed only. Every other pose shows a solid edge sliver.
+// PIVOT POSITIONS (this is what makes rotation look right):
+//   All four fins pivot around their PHYSICAL hinge axis, which runs
+//   along the thickness-CENTER of the fin's root end. In the deployed
+//   pose that puts the pivot at the vertical center of the strip; in
+//   the stowed pose, at the top edge of the strip (fin hangs down from
+//   it). Achieved by keeping the world pivot fixed at (anchor, hingeY)
+//   and offsetting the rect upward by p × thicknessPx/2 as deploy
+//   progresses — the rect's top migrates from "at pivot" (stowed) to
+//   "thicknessPx/2 above pivot" (deployed, rect centered on pivot).
 if (opts.gridFinType && opts.gridFinParams) {
   const gp = opts.gridFinParams;
   const spanPx = (gp.span || 0) / mpp;
@@ -1171,9 +1176,6 @@ if (opts.gridFinType && opts.gridFinParams) {
   const hingeY = -(gp.finPositionY || 0) / mpp;
   const hullHalfPx = W / 2;
   
-  // Default state (no live state passed in, e.g. editor preview):
-  // stowed. Stowed is the informative static pose — it's the one that
-  // shows F/B's full chord×span mesh face.
   const st = opts.gridFinState || {
     L: { deploy: 90, control: 0 },
     R: { deploy: -90, control: 0 },
@@ -1184,42 +1186,44 @@ if (opts.gridFinType && opts.gridFinParams) {
   const sideStyle = { fill: finColor, stroke: '#48515e' };
   const fbStyle = { fill: finColor, stroke: '#5a626e' };
   
-  // |deploy| = 90° → progress 0 (stowed); |deploy| = 0° → progress 1.
   const pFromDeg = (d) => 1 - Math.min(1, Math.abs(d) / 90);
   
   // ---- F/B pair ----
   const fbP = pFromDeg(st.FB.deploy);
-  // Control locked at 0 whenever FB isn't fully deployed, per the state
-  // contract: "deploy ≠ 0 → control forced 0".
   const fbControlDeg = (st.FB.deploy === 0) ? (st.FB.control || 0) : 0;
   const fbControlRad = fbControlDeg * Math.PI / 180;
   const fbW = chordPx;
   const fbH = spanPx + (thicknessPx - spanPx) * fbP;
+  // Rect top migrates from 0 (stowed → hangs from pivot) to
+  // -thicknessPx/2 (deployed → centered on pivot).
+  const fbTopY = -fbP * thicknessPx / 2;
   const fbShowMesh = (fbP < 0.2);
   
-  // B behind (dim, mirrored rotation); drawn first.
+  // B (ghost) first — same visual direction as F (see earlier note).
   ctx.save();
-  ctx.globalAlpha = 0.5;
-  drawGridFinFace(ctx, 0, hingeY, fbW, fbH, cellPx, 0, fbStyle, fbShowMesh, -fbControlRad);
+  ctx.globalAlpha = 0.15;
+  drawGridFinFace(ctx, 0, hingeY, -fbW / 2, fbTopY, fbW, fbH, cellPx, fbStyle, fbShowMesh, +fbControlRad);
   ctx.restore();
   
-  // ---- L/R pair (independent deploy, control locked at 0) ----
+  // ---- L/R pair ----
+  // Local rect extends outward from the pivot (R: +X, L: −X), with
+  // thickness centered on the local Y-axis. Rotation about the pivot
+  // swings the strip from hanging-down (stowed) to pointing-outward
+  // (deployed); the pivot itself is the fin's physical hinge axis —
+  // root end, thickness-center.
   const lp = pFromDeg(st.L.deploy);
   const rp = pFromDeg(st.R.deploy);
-  const lW = thicknessPx + (spanPx - thicknessPx) * lp;
-  const lH = spanPx + (thicknessPx - spanPx) * lp;
-  const rW = thicknessPx + (spanPx - thicknessPx) * rp;
-  const rH = spanPx + (thicknessPx - spanPx) * rp;
+  const lRot = -(1 - lp) * (Math.PI / 2); // stowed −π/2 (down) → deployed 0
+  const rRot = +(1 - rp) * (Math.PI / 2); // stowed +π/2 (down) → deployed 0
   const rightHingeX = hullHalfPx + gapPx;
   const leftHingeX = -(hullHalfPx + gapPx);
-  drawGridFinFace(ctx, leftHingeX, hingeY, lW, lH, cellPx, -1, sideStyle, false, 0);
-  drawGridFinFace(ctx, rightHingeX, hingeY, rW, rH, cellPx, +1, sideStyle, false, 0);
+  // L fin rect: (−spanPx, −thick/2) → (0, +thick/2).
+  // R fin rect: (0, −thick/2) → (+spanPx, +thick/2).
+  drawGridFinFace(ctx, leftHingeX, hingeY, -spanPx, -thicknessPx / 2, spanPx, thicknessPx, cellPx, sideStyle, false, lRot);
+  drawGridFinFace(ctx, rightHingeX, hingeY, 0, -thicknessPx / 2, spanPx, thicknessPx, cellPx, sideStyle, false, rRot);
   
-  // F drawn last (in front, opaque-ish).
-  ctx.save();
-  ctx.globalAlpha = 0.5;
-  drawGridFinFace(ctx, 0, hingeY, fbW, fbH, cellPx, 0, fbStyle, fbShowMesh, +fbControlRad);
-  ctx.restore();
+  // F drawn last (front, opaque).
+  drawGridFinFace(ctx, 0, hingeY, -fbW / 2, fbTopY, fbW, fbH, cellPx, fbStyle, fbShowMesh, +fbControlRad);
 }
   
   

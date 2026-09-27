@@ -268,7 +268,55 @@ function bindLegsControl() {
   });
 }
 
+// ---------------------------------------------------------------------------
+// Grid fin controls — deploy toggle + F/B deflection hold buttons.
+//
+// Deploy toggle: mirrors the leg button — checks current state and
+// commands the opposite. If any fin is still stowed, "deploy" fires;
+// if all are deployed, "stow" fires.
+//
+// Deflection buttons: hold to slew F/B control toward a deflection angle
+// (±30° range in this UI), release snaps back to 0. Physics's rate
+// limiter (updateGridFins) is what actually moves the angle; the button
+// only commands the target. Lock rule (control = 0 when not deployed)
+// is enforced physics-side, so pressing these while stowed does nothing
+// — no UI-level gate needed.
+// ---------------------------------------------------------------------------
+function bindGridFinControls() {
+  const deployBtn = document.getElementById('btnDeployGridFins');
+  if (deployBtn) deployBtn.addEventListener('click', () => {
+    if (_guideActive) return;
+    const b = state.bodies[state.activeBodyIndex];
+    if (!b || !b.gridFins) return;
+    const stowed = (b.gridFins.L.deploy !== 0 ||
+      b.gridFins.R.deploy !== 0 ||
+      b.gridFins.FB.deploy !== 0);
+    WorkerBridge.send({ type: 'gridFinsDeploy', deployed: stowed });
+  });
+  
+  // Hold-button range reads the fin type's own maxControlDeg. Physics
+// clamps anyway, but matching the UI envelope keeps the button from
+// running into a dead zone (still ramping when the actuator has
+// already hit its physical limit).
+const _gfMaxControlDeg = () => {
+  const b = state.bodies && state.bodies[state.activeBodyIndex];
+  const bm = b && b.members && b.members[0];
+  const t = (bm && bm.gridFinTypeId && typeof getComponentType === 'function') ?
+    getComponentType(bm.gridFinTypeId) : null;
+  return (t && t.typeConstants && Number.isFinite(t.typeConstants.maxControlDeg)) ?
+    t.typeConstants.maxControlDeg : 45;
+};
 
+const acw = document.getElementById('gridFinACW');
+if (acw) bindHoldControl(acw, (v) => {
+  WorkerBridge.send({ type: 'gridFinsControl', controlDeg: +v * _gfMaxControlDeg() });
+}, { max: 1, rate: 1.2 });
+
+const cw = document.getElementById('gridFinCW');
+if (cw) bindHoldControl(cw, (v) => {
+  WorkerBridge.send({ type: 'gridFinsControl', controlDeg: -v * _gfMaxControlDeg() });
+}, { max: 1, rate: 1.2 });
+}
 
 // ---------------------------------------------------------------------------
 // Start / Stop / Reset
@@ -787,9 +835,10 @@ function setGuidanceActive(active) {
   
   // Sim-affecting buttons.
   const disables = [
-    'btnLegs', 'btnSeparate', 'btnSplitFairing', 'btnReleasePayload',
-    'btnEjectPayload', 'btnWindPanel', 'btnFuelPanel', 'btnMergePanel',
-  ];
+  'btnLegs', 'btnDeployGridFins', 'gridFinACW', 'gridFinCW',
+  'btnSeparate', 'btnSplitFairing', 'btnReleasePayload',
+  'btnEjectPayload', 'btnWindPanel', 'btnFuelPanel', 'btnMergePanel',
+];
   disables.forEach(id => {
     const el = document.getElementById(id);
     if (el) el.disabled = _guideActive;
