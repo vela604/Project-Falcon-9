@@ -582,10 +582,14 @@ default: break;
   `).join('');
 
   const guides = (Guidance.listGuides && Guidance.listGuides()) || [];
-  sel.innerHTML = guides.length
-    ? guides.map(g => `<option value="${g}">${g}</option>`).join('')
-    : '<option value="">(no guides registered)</option>';
-
+const _labelOf = (g) => (Guidance.getGuideStatusLabel && Guidance.getGuideStatusLabel(g)) || '';
+sel.innerHTML = guides.length ?
+  guides.map(g => {
+    const lbl = _labelOf(g);
+    return `<option value="${g}">${g}${lbl ? ' — ' + lbl : ''}</option>`;
+  }).join('') :
+  '<option value="">(no guides registered)</option>';
+  
   if (!members.length) {
     statusEl.textContent = '⚠ No active stack in fleet.';
   } else {

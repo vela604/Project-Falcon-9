@@ -307,14 +307,17 @@ const _gfMaxControlDeg = () => {
     t.typeConstants.maxControlDeg : 45;
 };
 
+// Sign flip fix: canvas rotation is CW-positive (y-down), so a positive
+// controlDeg rotates the strip CW on screen. ACW button must send
+// negative, CW button positive. Earlier signs were inverted.
 const acw = document.getElementById('gridFinACW');
 if (acw) bindHoldControl(acw, (v) => {
-  WorkerBridge.send({ type: 'gridFinsControl', controlDeg: +v * _gfMaxControlDeg() });
+  WorkerBridge.send({ type: 'gridFinsControl', controlDeg: -v * _gfMaxControlDeg() });
 }, { max: 1, rate: 1.2 });
 
 const cw = document.getElementById('gridFinCW');
 if (cw) bindHoldControl(cw, (v) => {
-  WorkerBridge.send({ type: 'gridFinsControl', controlDeg: -v * _gfMaxControlDeg() });
+  WorkerBridge.send({ type: 'gridFinsControl', controlDeg: +v * _gfMaxControlDeg() });
 }, { max: 1, rate: 1.2 });
 }
 
@@ -1307,19 +1310,28 @@ let _renderToken = 0; // async guard for rapid guide switches
   // Dropdowns
   // ----------------------------------------------------------------
   function populateGuideDropdown() {
-    const all = (typeof Guidance !== 'undefined' && Guidance.listGuides)
-      ? Guidance.listGuides()
-      : [];
-    const withCfg = (typeof Guidance !== 'undefined' && Guidance.listGuidesWithConfig)
-      ? new Set(Guidance.listGuidesWithConfig())
-      : new Set();
-    guideSel.innerHTML = all.length
-      ? all.map(g => {
-          const suffix = withCfg.has(g) ? '' : ' — no tunable constants';
-          return `<option value="${g}">${g}${suffix}</option>`;
-        }).join('')
-      : '<option value="">(no guides registered)</option>';
-  }
+  const all = (typeof Guidance !== 'undefined' && Guidance.listGuides) ?
+    Guidance.listGuides() :
+    [];
+  const withCfg = (typeof Guidance !== 'undefined' && Guidance.listGuidesWithConfig) ?
+    new Set(Guidance.listGuidesWithConfig()) :
+    new Set();
+  guideSel.innerHTML = all.length ?
+    all.map(g => {
+      // Failed-experiment marker comes first (short, loud). Then the
+      // "no tunable constants" note, if applicable. Both suffixes are
+      // display-only — the option value stays the bare guide name.
+      const statusLabel = (typeof Guidance.getGuideStatusLabel === 'function') ?
+        (Guidance.getGuideStatusLabel(g) || '') :
+        '';
+      const parts = [];
+      if (statusLabel) parts.push(statusLabel);
+      if (!withCfg.has(g)) parts.push('no tunable constants');
+      const suffix = parts.length ? ' — ' + parts.join(' · ') : '';
+      return `<option value="${g}">${g}${suffix}</option>`;
+    }).join('') :
+    '<option value="">(no guides registered)</option>';
+}
 
   function populatePresetDropdown(guideName) {
     if (typeof getAllPresetsForGuide !== 'function') {

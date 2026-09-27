@@ -636,10 +636,14 @@ default: break;
   // 1. Populate guide dropdown
   // ---------------------------------------------------------------------------
   const guides = (Guidance.listGuides && Guidance.listGuides()) || [];
-  sel.innerHTML = guides.length
-    ? guides.map(g => `<option value="${g}">${g}</option>`).join('')
-    : '<option value="">(no guides registered)</option>';
-
+const _labelOf = (g) => (Guidance.getGuideStatusLabel && Guidance.getGuideStatusLabel(g)) || '';
+sel.innerHTML = guides.length ?
+  guides.map(g => {
+    const lbl = _labelOf(g);
+    return `<option value="${g}">${g}${lbl ? ' — ' + lbl : ''}</option>`;
+  }).join('') :
+  '<option value="">(no guides registered)</option>';
+  
   // ---------------------------------------------------------------------------
   // 2. Per-guide tunable schema — pulled live from Guidance getters
   //    (falls back gracefully if the getter isn't exposed).

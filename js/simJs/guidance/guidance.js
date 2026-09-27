@@ -54,6 +54,21 @@ const Guidance = (function () {
 const GUIDES = {};
 let _activeGuide = null;
 
+// Status labels mirroring the guidance experiment log (see
+// guidance_log.html for the full entries). Used by the sim / tester /
+// fast page dropdowns to flag guides that turned out not to work, so a
+// user picking from the list sees the verdict inline instead of having
+// to cross-check the log. Order of GUIDES is never affected — this is a
+// display-only annotation.
+const GUIDE_STATUS_LABELS = {
+  testGuide: 'FAILED',
+  predictiveTorque: 'FAILED',
+  predictivePlus: 'FAILED',
+  predictivePlusAoAPush: 'FAILED',
+  leoInsertion: 'FAILED',
+};
+function getGuideStatusLabel(name) { return GUIDE_STATUS_LABELS[name] || ''; }
+
 function startGuide(name) {
   if (!name || !GUIDES[name]) {
     console.warn('[guidance] startGuide: unknown guide', name);
@@ -87,6 +102,8 @@ function setActiveGuide(name) {
 }
 function getActiveGuide() { return _activeGuide; }
 function listGuides() { return Object.keys(GUIDES); }
+// Accessor mirror so pages reading Guidance.listGuides() can also ask
+// for the display label without a separate import.
 
 function getGuideStatus() {
   if (!_activeGuide) return { active: null };
@@ -5069,6 +5086,7 @@ setActiveGuide,
 getActiveGuide,
 listGuides,
 getGuideStatus,
+getGuideStatusLabel,
 setPredictiveGains,
 setAscentRR,
 setSweepDuration,
