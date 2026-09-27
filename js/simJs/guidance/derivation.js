@@ -150,9 +150,13 @@ const Derivation = (function () {
       const g = rec.engineThrusters[gk];
       if (!g) return;
       const t = getTypeById(g.thrusterTypeId);
-      if (!t) return;
-      const ve = typeParam(t, 've');
-      const twr = typeParam(t, 'twr');
+if (!t) return;
+// Hardware spec — vacuum Ve. Live Ve(Pa) reaches guidance via the
+// engine snapshot's e.Ve (physics.js computes it per tick); this
+// constant is only used here for engine-MASS derivation, a fixed
+// hardware property.
+const ve = typeParam(t, 'veVacuum');
+const twr = typeParam(t, 'twr');
       if (!Number.isFinite(ve) || !Number.isFinite(g.massFlowRate)) return;
       const thrustPer = g.massFlowRate * ve;
       const massPer = (Number.isFinite(twr) && twr > 0) ? thrustPer / (twr * G0) : 0;

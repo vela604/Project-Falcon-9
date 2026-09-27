@@ -295,9 +295,10 @@ function withFixedValues(schema, values) {
 // its own makeThruster-style call, per the same kind-discriminator pattern
 // already used elsewhere (e.g. rcs.js branching on RCS `kind`).
 const THRUSTER_CHEMICAL_SCHEMA = [
-  { key: 've', label: 'Exhaust velocity', unit: 'm/s', min: 500 },
-  { key: 'efficiency', label: 'Efficiency', unit: 'frac', min: 0.1, max: 1 },
-  { key: 'twr', label: 'Thrust-to-weight ratio', unit: 'ratio', min: 10, max: 500 },
+    { key: 'veVacuum', label: 'Exhaust velocity (vacuum)', unit: 'm/s', min: 500 },
+    { key: 'atmosphericPenalty', label: 'Atmospheric penalty', unit: 'm²·s/kg', min: 0 },
+    { key: 'efficiency', label: 'Efficiency', unit: 'frac', min: 0.1, max: 1 },
+    { key: 'twr', label: 'Thrust-to-weight ratio', unit: 'ratio', min: 10, max: 500 },
   { key: 'maxMassFlowRate', label: 'Max mass flow rate', unit: 'kg/s', min: 0.1 },
   { key: 'gimbalCapable', label: 'Gimbal capable', unit: 'bool' },
   { key: 'gimbalMaxDeg', label: 'Gimbal range', unit: 'deg', min: 0, max: 45 },
@@ -336,16 +337,15 @@ function makeThruster(id, displayName, description, values) {
 // engine-mass formula refinement noted in PHASE3_PROMPT.md §1.12.
 function buildThrusterMerlin1DClass() {
   return makeThruster(
-    'merlin-1d-class',
-    'Merlin-1D class',
-    'Fixed-performance chemical engine type. Ve, efficiency, gimbal range/rate, and throttle floor/rate are all locked in by the type — a rocket build only ever chooses a mass flow rate (≤ this type\'s max), which determines thrust and engine mass.',
-    {
-  // Real Merlin 1D (SL variant): Isp_sl = 282 s → Ve = 282 × 9.80665
-  // = 2765.5 m/s. Sim uses ONE Ve (altitude-independent), so this is
-  // the SL value — booster's primary regime. Vacuum thrust (~981 kN)
-  // will read ~14% low; acceptable for this simplified model.
-  ve: 2766,
-  efficiency: 0.9,
+      'merlin-1d-class',
+      'Merlin-1D (Demo)',
+      'Demo variant — altitude-independent Ve, atmosphericPenalty = 0. Kept under the original id so every existing fleet record keeps flying with exactly the numbers it had before the Ve-live change. Use "Merlin-1D" for the pressure-aware version.',
+      {
+        // Constant Ve (no atmospheric penalty) — reproduces the pre-Ve-live
+        // behavior byte-for-byte. Ve = veVacuum at every altitude.
+        veVacuum: 2766,
+        atmosphericPenalty: 0,
+        efficiency: 0.9,
   twr: 184, // real Merlin 1D TWR (Wikipedia datasheet)
   maxMassFlowRate: 500, // generous cap; real max mdot ~320 kg/s
   gimbalCapable: true,
@@ -368,13 +368,16 @@ function buildThrusterMerlin1DClass() {
 // dry mass is ~490 kg.
 function buildThrusterMerlin1DVacClass() {
   return makeThruster(
-    'merlin-1d-vac-class',
-    'Merlin-1D Vacuum class',
-    'Vacuum-optimized Merlin variant for upper stages. Isp_vac = 348 s (Ve = 3412 m/s), thrust 981 kN. Same combustor/gimbal envelope as the SL Merlin — the nozzle expansion ratio is what changes. Sim uses one Ve (no altitude dependence), so this type is tuned to its own vacuum design point rather than the SL variant.',
-    {
-  ve: 3412, // 348 s × 9.80665 m/s²
-  efficiency: 0.92, // MVac is more expansion-optimized than the SL variant
-  twr: 200, // ~981 kN / (490 kg × G0)
+      'merlin-1d-vac-class',
+      'MVacD (Demo)',
+      'Demo variant — altitude-independent Ve, atmosphericPenalty = 0. Kept under the original id so every existing fleet record keeps flying with exactly the numbers it had before the Ve-live change. Use "MVacD" for the pressure-aware version.',
+      {
+        // Constant Ve (no atmospheric penalty) — reproduces the pre-Ve-live
+        // behavior byte-for-byte.
+        veVacuum: 3412,
+        atmosphericPenalty: 0,
+        efficiency: 0.92, // MVac is more expansion-optimized than the SL variant
+        twr: 200, // ~981 kN / (490 kg × G0)
   maxMassFlowRate: 350, // headroom above real max mdot ≈ 288 kg/s
   gimbalCapable: true,
   gimbalMaxDeg: 20,
@@ -386,6 +389,63 @@ function buildThrusterMerlin1DVacClass() {
 }
   );
 }
+
+
+// ---------------------------------------------------------------------------
+// Pressure-aware production variants. These are the "real" Merlin values:
+// vacuum Ve is the hardware's actual vacuum performance; atmosphericPenalty
+// is nozzle exit area / mass flow, calibrated so that at sea level the
+// effective Ve matches the real SL Isp.
+//
+//   Merlin-1D : Isp_vac ≈ 312 s, Isp_sl ≈ 288 s
+//   MVacD     : Isp_vac = 348 s  — huge penalty (vacuum-optimized nozzle).
+//               At sea level it would be massively over-expanded and
+//               produce almost nothing; only fires at altitude.
+// ---------------------------------------------------------------------------
+function buildThrusterMerlin1D() {
+  return makeThruster(
+    'merlin-1d',
+    'Merlin-1D',
+    'Pressure-aware Merlin 1D. Ve(Pa) = veVacuum − atmosphericPenalty × Pa recomputed per tick from ambient pressure. Vacuum Isp ≈ 312 s; sea-level Isp ≈ 288 s. Same combustor/gimbal/throttle envelope as the demo variant.',
+    {
+      veVacuum: 3060.7,
+      atmosphericPenalty: 0.002278,
+      efficiency: 0.9,
+      twr: 184,
+      maxMassFlowRate: 500,
+      gimbalCapable: true,
+      gimbalMaxDeg: 20,
+      gimbalRateDegS: 40,
+      minThrottleFrac: 0.4,
+      maxThrottleRateFrac: 0.5,
+      startupDurationS: 3.0,
+      shutdownDurationS: 2.0,
+    }
+  );
+}
+
+function buildThrusterMerlin1DVac() {
+  return makeThruster(
+    'merlin-1d-vac',
+    'MVacD',
+    'Pressure-aware Merlin Vacuum. Large vacuum-optimized nozzle ⇒ much bigger atmospheric penalty than the SL variant; at sea level it produces very little thrust. Vacuum Isp = 348 s. Only fires post-separation at high altitude.',
+    {
+      veVacuum: 3412.7,
+      atmosphericPenalty: 0.02290,
+      efficiency: 0.92,
+      twr: 200,
+      maxMassFlowRate: 350,
+      gimbalCapable: true,
+      gimbalMaxDeg: 20,
+      gimbalRateDegS: 40,
+      minThrottleFrac: 0.4,
+      maxThrottleRateFrac: 0.5,
+      startupDurationS: 3.0,
+      shutdownDurationS: 2.0,
+    }
+  );
+}
+
 
 // Same idea as thruster, but for RCS nozzles — an rcsArrangement's pods
 // reference one of these instead of declaring rcsThrust/rcsVe directly
@@ -507,6 +567,22 @@ function buildFuelRp1Lox() {
     'RP-1 / LOX',
     'Propellant type. Declares ONLY propellant density — tank size (and therefore fuel mass) is decided per rocket/stage build. Baffle hardware (count + inner-radius fraction) is a TANK-hardware property, chosen per vehicle on the fuel-tank fieldset, not a property of the propellant itself. Unbaffled tanks rely on the wall boundary layer alone for slosh damping (Abramson, ζ ~ 1e-4 for large tanks — barely any damping).',
     { propellantDensity: 1080 }
+  );
+}
+
+// Sub-cooled ("densified") RP-1 / LOX. Chilling the propellant below its
+// normal boiling point raises its density — the same tank physically holds
+// more mass. Real Falcon 9 uses densified propellant for exactly this
+// reason (higher mass in the same volume, no structural change). The
+// sim models it as a separate fuel TYPE rather than a per-load option:
+// a rocket built for chilled propellant is a different vehicle with the
+// same tank geometry but a different loaded mass.
+function buildFuelRp1LoxChilled() {
+  return makeFuel(
+    'rp1-lox-chilled',
+    'RP-1 / LOX (chilled)',
+    'Sub-cooled RP-1 / LOX. Same tank hardware as standard RP-1 / LOX, but the propellant is chilled below its normal boiling point — higher density (1138 kg/m³ vs 1080) means more mass in the same tank volume. Mass properties, Δv, and burn time all scale accordingly. Baffle hardware is a per-vehicle tank property, exactly as with the standard variant.',
+    { propellantDensity: 1138 }
   );
 }
 
@@ -652,12 +728,15 @@ function seedComponentLibrary() {
     buildCatchFitting2Pin(),
     buildRcs4Pod2Nozzle(),
         buildThrusterMerlin1DClass(),
-    buildThrusterMerlin1DVacClass(),
-    buildRcsThrusterColdGasSmall(),
+  buildThrusterMerlin1DVacClass(),
+  buildThrusterMerlin1D(),
+  buildThrusterMerlin1DVac(),
+  buildRcsThrusterColdGasSmall(),
     buildFairingChuteRound(),
-    buildFuelRp1Lox(),
-    
-    buildMetalAlLiAlloy(),
+  buildFuelRp1Lox(),
+  buildFuelRp1LoxChilled(),
+  
+  buildMetalAlLiAlloy(),
     buildMetalCarbonComposite(),
     buildPneumaticPusherN2(),
     buildPayloadSpaceBulged(),

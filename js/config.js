@@ -131,7 +131,9 @@ const CONFIG = {
   
   
   SEA_LEVEL_DENSITY: 1.225, // kg/m^3
+  SEA_LEVEL_PRESSURE: 101325, // Pa (standard atmosphere, sea level)
   SCALE_HEIGHT: 8500, // m (exponential atmosphere model)
+  
   // Launch-site altitude above sea level (m). 0 = sea-level pad (current
   // default). Change this when a launch site sits on elevated terrain:
   // physics uses it for the ground-contact check, and the render frame

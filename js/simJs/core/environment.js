@@ -40,6 +40,17 @@ function airDensity(altitude) {
   return CONFIG.SEA_LEVEL_DENSITY * Math.exp(-altitude / CONFIG.SCALE_HEIGHT);
 }
 
+// Static ambient pressure from the same exponential atmosphere model.
+//   P(h) = P0 · exp(-h / scaleHeight)
+// Same shape as airDensity(), same atmosphereEnabled guard, so toggling
+// "Atmosphere" off zeroes both density and pressure. Altitudes below sea
+// level clamp to sea-level pressure (no negative dip).
+function airPressure(altitude) {
+  if (!atmosphereEnabled) return 0;
+  if (altitude < 0) return CONFIG.SEA_LEVEL_PRESSURE;
+  return CONFIG.SEA_LEVEL_PRESSURE * Math.exp(-altitude / CONFIG.SCALE_HEIGHT);
+}
+
 // ---------------- Wind ----------------
 // Modeled as a horizontal (locally tangential) vector at the rocket's current
 // location. directionDeg: 0° = local "East" (tangential), 90° = local "Up".

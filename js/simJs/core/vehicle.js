@@ -31,10 +31,20 @@ function buildEnginesForRecord(rec) {
     const g = rec.engineThrusters && rec.engineThrusters[gk];
     if (!g) return;
     const t = (typeof getComponentType === 'function') ? getComponentType(g.thrusterTypeId) : null;
-    if (!t) return;
-    const ve = t.parameterSchema.find(p => p.key === 've').value;
-    // PHASE 1: g.massFlowRate is this engine's build-time-chosen MAX mass
-    // flow rate (kg/s) — the thruster type's maxMassFlowRate, capped at
+if (!t) return;
+// veVacuum is the hardware's vacuum Ve — constant. Ve is LIVE:
+//   Ve(Pa) = veVacuum − atmosphericPenalty × Pa
+// recomputed per tick in physics.js's _updateEngineVeForBody(). It's
+// seeded with the vacuum value here so a body sitting in vacuum (or
+// read before the first tick) shows the correct upper bound.
+const veVacuumEnt = t.parameterSchema.find(p => p.key === 'veVacuum');
+const penaltyEnt = t.parameterSchema.find(p => p.key === 'atmosphericPenalty');
+if (!veVacuumEnt) return;
+const veVacuum = veVacuumEnt.value;
+const atmosphericPenalty = penaltyEnt ? penaltyEnt.value : 0;
+const ve = veVacuum;
+// PHASE 1: g.massFlowRate is this engine's build-time-chosen MAX mass
+// flow rate (kg/s) — the thruster type's maxMassFlowRate, capped at
     // build time. Thrust is derived (massFlowRate × Ve), never stored
     // independently.
     const maxMassFlowRate = g.massFlowRate;
@@ -55,7 +65,7 @@ function buildEnginesForRecord(rec) {
     const startupDurationEnt = t.parameterSchema.find(p => p.key === 'startupDurationS');
     const shutdownDurationEnt = t.parameterSchema.find(p => p.key === 'shutdownDurationS');
     const Fmax = maxMassFlowRate * ve;
-    engines.push({
+engines.push({
       id: slot.id,
       angleDeg: slot.angleDeg,
       x: pos.x,
@@ -64,6 +74,10 @@ function buildEnginesForRecord(rec) {
       Fmax,
       Fmin: minMassFlowRate * ve,
       Ve: ve,
+      // Hardware constants for the live-Ve update (physics.js recomputes
+      // Ve/Fmax/Fmin every tick from these + current ambient pressure).
+      veVacuum,
+      atmosphericPenalty,
       // Physical flow-rate envelope for this specific engine (from its
       // thruster type). The command layer (controls.js/physics_worker.js)
       // clamps against these, not against a bare 0..1 fraction.

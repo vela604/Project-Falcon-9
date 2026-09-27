@@ -92,6 +92,33 @@ function capsHTML(caps) {
   }).join('');
 }
 
+// Derived spec row for thruster-category types: Isp_vac and Isp_sl
+// computed from the schema's own veVacuum / atmosphericPenalty. Whole
+// numbers per user preference. Rendered under the parameter table so the
+// fixed hardware spec and the mission-relevant derived numbers sit
+// side by side.
+function ispRowHTML(type) {
+  if (!type || type.category !== 'thruster') return '';
+  const valOf = (k) => { const e = type.parameterSchema.find(p => p.key === k); return e ? e.value : undefined; };
+  const veVac = valOf('veVacuum');
+  const penalty = valOf('atmosphericPenalty');
+  if (!Number.isFinite(veVac)) return '';
+  const G0 = 9.80665;
+  const ispVac = veVac / G0;
+  let ispSl = ispVac;
+  if (Number.isFinite(penalty)) {
+    const P_sl = (typeof CONFIG !== 'undefined' && Number.isFinite(CONFIG.SEA_LEVEL_PRESSURE)) ?
+      CONFIG.SEA_LEVEL_PRESSURE : 101325;
+    const veSl = veVac - penalty * P_sl;
+    ispSl = Math.max(0, veSl) / G0;
+  }
+  return `<div class="tc-section-label">Derived performance</div>
+    <div class="tc-frame">
+      <div><span class="fl">Isp (vacuum):</span> ${Math.round(ispVac)} s</div>
+      <div><span class="fl">Isp (sea level):</span> ${Math.round(ispSl)} s</div>
+    </div>`;
+}
+
 function renderTypeCard(type) {
   // Frame and capabilities are both OPTIONAL at the schema level — the four
   // pure performance/material categories (thruster, rcsThruster, fuel,
@@ -116,10 +143,11 @@ function renderTypeCard(type) {
       </div>
       <p class="tc-desc">${type.description || ''}</p>
       ${frameSection}
-      <div class="tc-section-label">Parameter schema</div>
-      ${paramsTableHTML(type.parameterSchema)}
-      ${capsSection}
-    </div>`;
+        <div class="tc-section-label">Parameter schema</div>
+  ${paramsTableHTML(type.parameterSchema)}
+  ${ispRowHTML(type)}
+  ${capsSection}
+</div>`;
 }
 
 function renderGrid() {

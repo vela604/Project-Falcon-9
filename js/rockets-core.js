@@ -477,8 +477,8 @@ function updateEngineThrusterDerived(groupKey) {
   if (!out) return;
   if (!t || !Number.isFinite(flow)) { out.innerHTML = '—'; return; }
   const valOf = (k) => { const e = t.parameterSchema.find(p => p.key === k); return e ? e.value : undefined; };
-  const ve = valOf('ve'),
-    maxFlow = valOf('maxMassFlowRate');
+  const ve = valOf('veVacuum'),
+  maxFlow = valOf('maxMassFlowRate');
   if (ve === undefined) { out.innerHTML = '—'; return; }
   const perEngineF = flow * ve;
   // Mass via thrust / (TWR × G0) — see engineMassFromThrust() in

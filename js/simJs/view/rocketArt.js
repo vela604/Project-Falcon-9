@@ -1345,20 +1345,45 @@ const mpp = Math.max(mppW, mppH);
 const W = v.width / mpp;
 const H = v.height / mpp;
 
+// Reserve vertical space for anything drawn BELOW the body's base —
+// chiefly the stage engine bell, which extends downward from local
+// (0, 0). Previously canvas height was H/0.94, leaving only ~3% of H
+// below the base, which clipped the bell (≈15% of a stage's height) to
+// a thin sliver. Formula mirrors drawRocketArt's own bell sizing
+// exactly: h_m = 0.007 × (total flow / slot count); pixel extent = h_m / mpp.
+let subBaseExtentPx = 0;
+if (v.stageRole === 'stage' && v.engineLayout && v.engineLayout.frame &&
+  Array.isArray(v.engineLayout.frame.slots) && v.engineThrusters) {
+  const groups = (typeof engineThrusterGroups === 'function') ? engineThrusterGroups(v.engineLayout) : {};
+  let totalFlow = 0;
+  Object.keys(groups).forEach(gk => {
+    const g = v.engineThrusters[gk];
+    if (!g || !Number.isFinite(g.massFlowRate)) return;
+    totalFlow += g.massFlowRate * groups[gk].length;
+  });
+  const nSlots = v.engineLayout.frame.slots.length || 1;
+  const perEngineFlow = totalFlow / nSlots;
+  const bellH_m = 0.007 * perEngineFlow;
+  if (bellH_m > 0) subBaseExtentPx = bellH_m / mpp;
+}
+
+const contentH = H + subBaseExtentPx;
 const vMarginFrac = 0.94;
-const cssH = H / vMarginFrac;
+const cssH = contentH / vMarginFrac;
 canvas.style.height = cssH + 'px';
-  
-  const dpr = window.devicePixelRatio || 1;
-  canvas.width = Math.round(cssW * dpr);
-  canvas.height = Math.round(cssH * dpr);
-  const pctx = canvas.getContext('2d');
-  pctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  pctx.clearRect(0, 0, cssW, cssH);
-  
-  const baseX = cssW / 2;
-  const baseY = (cssH - H) / 2 + H; // top margin == bottom margin
-  
+
+const dpr = window.devicePixelRatio || 1;
+canvas.width = Math.round(cssW * dpr);
+canvas.height = Math.round(cssH * dpr);
+const pctx = canvas.getContext('2d');
+pctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+pctx.clearRect(0, 0, cssW, cssH);
+
+const baseX = cssW / 2;
+// Symmetric top/bottom margins around contentH (body above base, bell
+// below). Base sits H below content-top.
+const baseY = (cssH - contentH) / 2 + H;
+
   // STEP G: resolve THIS vehicle's own recovery/RCS types when it names
   // them, instead of always drawing whatever the globally-active CONFIG is.
   // getComponentType() comes from componentLibrary.js, which every page
@@ -1377,25 +1402,31 @@ canvas.style.height = cssH + 'px';
     null;
   
   pctx.save();
-  pctx.translate(baseX, baseY);
-  drawRocketArt(pctx, W, H, mpp, {
-    rcsTopY: v.rcsTopY,
-    rcsBottomY: v.rcsBottomY,
-    recoveryType,
-    rcsType,
-    stageRole: v.stageRole,
-    noseCurveness: v.noseCurveness,
-    bodyDesign: v.bodyDesign,
-    payloadSpaceColor: v.payloadSpaceColor,
-    stagePayload: v.stagePayload,
-    payloadKind: v.payloadKind,
-    payloadCapWidth: v.payloadCapWidth,
-    payloadBulgeWidth: v.payloadBulgeWidth,
-    payloadFrustumAngleDeg: v.payloadFrustumAngleDeg,
-    payloadCurveRatio: v.payloadCurveRatio,
-    payloadColor: v.payloadColor,
-  });
-  pctx.restore();
+pctx.translate(baseX, baseY);
+drawRocketArt(pctx, W, H, mpp, {
+  rcsTopY: v.rcsTopY,
+  rcsBottomY: v.rcsBottomY,
+  recoveryType,
+  rcsType,
+  stageRole: v.stageRole,
+  noseCurveness: v.noseCurveness,
+  bodyDesign: v.bodyDesign,
+  payloadSpaceColor: v.payloadSpaceColor,
+  stagePayload: v.stagePayload,
+  payloadKind: v.payloadKind,
+  payloadCapWidth: v.payloadCapWidth,
+  payloadBulgeWidth: v.payloadBulgeWidth,
+  payloadFrustumAngleDeg: v.payloadFrustumAngleDeg,
+  payloadCurveRatio: v.payloadCurveRatio,
+  payloadColor: v.payloadColor,
+  // Engine bell / interstage sizing — drawRocketArt's bell block reads
+  // these. Without them every standalone preview (home member viewer,
+  // fleet detail, fleet editor) silently skipped the stage's bell.
+  engineLayout: v.engineLayout || null,
+  engineThrusters: v.engineThrusters || null,
+  params: v.params || null,
+});
+pctx.restore();
 }
 
 

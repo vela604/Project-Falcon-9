@@ -690,6 +690,38 @@ function applySloshStep(body, dt, coupleOmega) {
   }
 }
 
+
+// ---------------------------------------------------------------------------
+// Live Ve + thrust-envelope recompute.
+//   Ve(Pa) = veVacuum − atmosphericPenalty × Pa
+// Called once per body per tick, BEFORE applyActuatorRateLimitsForBody, so
+// every downstream reader — computeMainThrustForBody, telemetry, the
+// guidance snapshot's e.Ve, derivatives() — sees the same Ve the tick
+// actually produced. Fmax/Fmin also refreshed because both scale linearly
+// with Ve; the throttle-% UI and TWR readouts read them.
+//
+// Pa comes from environment.js's airPressure(altitude) — same exponential
+// atmosphere model airDensity() uses, same atmosphereEnabled toggle, so
+// turning atmosphere off zeroes both drag and Ve penalty.
+// ---------------------------------------------------------------------------
+function _updateEngineVeForBody(body) {
+  if (!body || !body.engines || !body.engines.length) return;
+  const r = Math.hypot(body.rx, body.ry);
+  const alt = altitudeFromR(r);
+  const Pa = (typeof airPressure === 'function') ? airPressure(alt) : 0;
+  body.engines.forEach(e => {
+    if (!Number.isFinite(e.veVacuum)) return;
+    const penalty = Number.isFinite(e.atmosphericPenalty) ? e.atmosphericPenalty : 0;
+    const ve = e.veVacuum - penalty * Pa;
+    // Guard: a massively over-expanded nozzle at high Pa could
+    // mathematically go negative. Clamp to a tiny positive so a
+    // downstream mdot × Ve never flips sign.
+    e.Ve = Math.max(1, ve);
+    e.Fmax = (e.maxMassFlowRate || 0) * e.Ve;
+    e.Fmin = (e.minMassFlowRate || 0) * e.Ve;
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Rate-limited actuator application. Called once per tick from controls.js
 // with the *desired* throttle/gimbal targets; this function moves the actual
@@ -1504,12 +1536,16 @@ body._vx0 = body.vx;
 body._vy0 = body.vy;
 
 const isActive = (idx === state.activeBodyIndex);
-    
-    const geom = currentGeometry(body);
-    body._geomCache = geom;
-    
-    applyActuatorRateLimitsForBody(body, dt);
-    
+
+// Live Ve / Fmax / Fmin from current ambient pressure. Must run
+// BEFORE rate limits and any downstream force calc reads engine.Ve.
+_updateEngineVeForBody(body);
+
+const geom = currentGeometry(body);
+body._geomCache = geom;
+
+applyActuatorRateLimitsForBody(body, dt);
+
     // Phase 2A — lateral slosh pre-step, before this tick's forces/RK4.
     // Uses LAST tick's lateral acceleration (one-tick lag is fine for a
     // visual/CoM-coupling feature — see prompt_2phase.md §2A). Only
