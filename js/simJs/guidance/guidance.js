@@ -3481,10 +3481,17 @@ const LEO_INSERTION_V2 = {
   STAGE_BURN_LOCK_TILT_DEG: 85,
 
   // ---- Coast + circularization ----
-  COAST_TARGET_TILT_DEG: -90,
+COAST_TARGET_TILT_DEG: -90,
   COAST_ROTATE_TOL_DEG: 0.5,
   COAST_ROTATE_OMEGA_TOL: 0.02,
   COAST_ROTATE_TIMEOUT_S: 240,
+  // Coast-wait window: after the first COAST_ROTATE, all attitude control
+  // is dropped. When time-to-apogee falls to this value, a second
+  // COAST_ROTATE runs (safety re-align in case of drift) before
+  // COAST_HOLD takes over for the burn trigger. Saves the RCS propellant
+  // that continuous PD-hold during the long coast would burn.
+  COAST_WAIT_BEFORE_APOGEE_S: 90,
+  
   // Burn trigger: fire when t_rem ≤ startup + this lead.
   CIRC_TRIGGER_LEAD_S: 3.0,
 CIRC_DECAY_FRAC: 0.05,
@@ -3561,11 +3568,17 @@ const _leoStateV2 = {
   coastTBurnPractical: 0,
   coastVOrbital: 0,
   _prevVr: null,
-  // COAST_HOLD_2 / DONE
-  coast2TargetThetaInertial: null,
-  coast2RotateStartTilt: null,
-  coast2RotateMid: null,
-  _prevVr2: null,
+// COAST_HOLD / CIRCULARIZE
+coastTargetThetaInertial: null,
+  coastRotateStartTilt: null,
+  coastRotateMid: null,
+  coastTBurnPractical: 0,
+  coastVOrbital: 0,
+  _prevVr: null,
+  // COAST_ROTATE runs twice — once right after RCS_BOOST, and again
+  // right before COAST_HOLD. This flag tracks which pass we're on so
+  // the exit condition routes correctly.
+  coastRotateSecondPass: false,
   // Live circularize readout
   circCurrentV: 0,
   circTargetV: 0,
@@ -4077,34 +4090,55 @@ function _leoTickV2(snapshot) {
       send(cmdSetGimbalRate(0));
 
       const elapsed = simT - _leoStateV2.phaseStart;
-      if (elapsed >= LEO_INSERTION_V2.COAST_ROTATE_TIMEOUT_S) {
-        send(cmdRcsDuty(null, idx));
-        _leoStateV2.phase = 'COAST_HOLD';
-        _leoStateV2.phaseStart = simT;
-        console.log('[leoInsertionV2] COAST_ROTATE timeout — COAST_HOLD');
-        break;
-      }
+if (elapsed >= LEO_INSERTION_V2.COAST_ROTATE_TIMEOUT_S) {
+  send(cmdRcsDuty(null, idx));
+  if (_leoStateV2.coastRotateSecondPass) {
+    _leoStateV2.phase = 'COAST_HOLD';
+    _leoStateV2.phaseStart = simT;
+    console.log('[leoInsertionV2] COAST_ROTATE (2nd pass) timeout — COAST_HOLD');
+  } else {
+    _leoStateV2.phase = 'COAST_WAIT';
+    _leoStateV2.phaseStart = simT;
+    _leoStateV2.coastRotateSecondPass = true;
+    console.log('[leoInsertionV2] COAST_ROTATE (1st pass) timeout — COAST_WAIT');
+  }
+  break;
+}
 
-      const targetThetaRad = _leoStateV2.coastTargetThetaInertial;
-      if (targetThetaRad === null || targetThetaRad === undefined) {
-        send(cmdRcsDuty(null, idx));
-        _leoStateV2.phase = 'COAST_HOLD';
-        _leoStateV2.phaseStart = simT;
-        break;
-      }
+const targetThetaRad = _leoStateV2.coastTargetThetaInertial;
+if (targetThetaRad === null || targetThetaRad === undefined) {
+  send(cmdRcsDuty(null, idx));
+  if (_leoStateV2.coastRotateSecondPass) {
+    _leoStateV2.phase = 'COAST_HOLD';
+    _leoStateV2.phaseStart = simT;
+  } else {
+    _leoStateV2.phase = 'COAST_WAIT';
+    _leoStateV2.phaseStart = simT;
+    _leoStateV2.coastRotateSecondPass = true;
+  }
+  break;
+}
 
       const thetaErr = _hWrapPi(body.theta - targetThetaRad);
       const omegaRel = body.omega;
 
       if (Math.abs(thetaErr) < LEO_INSERTION_V2.COAST_ROTATE_TOL_DEG * Math.PI / 180 &&
-        Math.abs(omegaRel) < LEO_INSERTION_V2.COAST_ROTATE_OMEGA_TOL) {
-        send(cmdRcsDuty(null, idx));
-        _leoStateV2.phase = 'COAST_HOLD';
-        _leoStateV2.phaseStart = simT;
-        console.log('[leoInsertionV2] COAST_ROTATE done at θ=' +
-          (body.theta * 180 / Math.PI).toFixed(2) + '° → COAST_HOLD');
-        break;
-      }
+  Math.abs(omegaRel) < LEO_INSERTION_V2.COAST_ROTATE_OMEGA_TOL) {
+  send(cmdRcsDuty(null, idx));
+  if (_leoStateV2.coastRotateSecondPass) {
+    _leoStateV2.phase = 'COAST_HOLD';
+    _leoStateV2.phaseStart = simT;
+    console.log('[leoInsertionV2] COAST_ROTATE (2nd pass) done at θ=' +
+      (body.theta * 180 / Math.PI).toFixed(2) + '° → COAST_HOLD');
+  } else {
+    _leoStateV2.phase = 'COAST_WAIT';
+    _leoStateV2.phaseStart = simT;
+    _leoStateV2.coastRotateSecondPass = true;
+    console.log('[leoInsertionV2] COAST_ROTATE (1st pass) done at θ=' +
+      (body.theta * 180 / Math.PI).toFixed(2) + '° → COAST_WAIT');
+  }
+  break;
+}
 
       const I_next = (dNext && dNext.massProps) ? dNext.massProps.I : 0;
       if (!(I_next > 0)) { send(cmdRcsDuty(null, idx)); break; }
@@ -4119,10 +4153,47 @@ function _leoTickV2(snapshot) {
     }
 
     // ---------------------------------------------------------
-    // COAST_HOLD — coast toward apogee, PD hold at fixed inertial θ.
-    // Burn trigger when t_rem ≤ startup + lead, or apogee-peak.
-    // ---------------------------------------------------------
-    case 'COAST_HOLD': {
+// COAST_WAIT — all attitude control dropped. The stage free-floats
+// through the long coast; RCS stays silent so the propellant budget
+// is preserved for the burn and the trim. Exits when time-to-apogee
+// reaches COAST_WAIT_BEFORE_APOGEE_S; the phase machine then re-runs
+// COAST_ROTATE as a safety re-align (drift accumulated during the
+// free coast is recovered there) before handing off to COAST_HOLD.
+// ---------------------------------------------------------
+case 'COAST_WAIT': {
+  send(cmdSetAllThrottle(0));
+  send(cmdSetGimbalRate(0));
+  send(cmdRcsDuty(null, idx));
+
+  const r_c = Math.hypot(body.rx, body.ry);
+  const ux_c = body.rx / r_c, uy_c = body.ry / r_c;
+  const ex_c = body.ry / r_c, ey_c = -body.rx / r_c;
+  const vr_c = body.vx * ux_c + body.vy * uy_c;
+  const vt_c = body.vx * ex_c + body.vy * ey_c;
+  const t_rem = _hTimeToApogee(r_c, vr_c, vt_c, env.GM_EARTH);
+
+  if (t_rem <= LEO_INSERTION_V2.COAST_WAIT_BEFORE_APOGEE_S) {
+    _leoStateV2.phase = 'COAST_ROTATE';
+    _leoStateV2.phaseStart = simT;
+    // Clear the start-tilt / mid-delta fields so COAST_ROTATE's
+    // wraparound-safe slew recomputes them from the CURRENT body
+    // attitude. Without this, the 2nd pass would reuse the 1st
+    // pass's entry values and slew the wrong way.
+    _leoStateV2.coastRotateStartTilt = null;
+    _leoStateV2.coastRotateMid = null;
+    console.log('[leoInsertionV2] COAST_WAIT done — t_rem=' +
+      t_rem.toFixed(1) + 's ≤ ' +
+      LEO_INSERTION_V2.COAST_WAIT_BEFORE_APOGEE_S + 's → COAST_ROTATE (2nd pass)');
+    break;
+  }
+  break;
+}
+
+// ---------------------------------------------------------
+// COAST_HOLD — coast toward apogee, PD hold at fixed inertial θ.
+// Burn trigger when t_rem ≤ startup + lead, or apogee-peak.
+// ---------------------------------------------------------
+case 'COAST_HOLD': {
       send(cmdSetAllThrottle(0));
       send(cmdSetGimbalRate(0));
 
@@ -4729,11 +4800,12 @@ _leoTickV2.start = function () {
   _leoStateV2.stageBurnTargetTiltDeg = 0;
   _leoStateV2._prevApogeeErr = null;
   _leoStateV2.coastTargetThetaInertial = null;
-  _leoStateV2.coastRotateStartTilt = null;
-  _leoStateV2.coastRotateMid = null;
-  _leoStateV2.coastTBurnPractical = 0;
-  _leoStateV2.coastVOrbital = 0;
-  _leoStateV2._prevVr = null;
+_leoStateV2.coastRotateStartTilt = null;
+_leoStateV2.coastRotateMid = null;
+_leoStateV2.coastTBurnPractical = 0;
+_leoStateV2.coastVOrbital = 0;
+_leoStateV2._prevVr = null;
+_leoStateV2.coastRotateSecondPass = false;
   _leoStateV2.coast2TargetThetaInertial = null;
   _leoStateV2.coast2RotateStartTilt = null;
   _leoStateV2.coast2RotateMid = null;
