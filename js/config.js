@@ -126,7 +126,7 @@ const CONFIG = {
   // Spaceport Drone Ship (ASDS) would be positioned. Same earth-fixed
   // convention as REMOTE_AREA above — degrees east of the launch
   // meridian, so moving the launch site moves the ocean zone too.
-  OCEAN_ZONE_EAST_START_DEG: 2,
+  OCEAN_ZONE_EAST_START_DEG: 1,
   OCEAN_ZONE_EAST_END_DEG: 60,
   
   
