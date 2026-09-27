@@ -73,16 +73,16 @@ function _fmtMassShort(kg) {
 // Role-specific default body-shell factors, calibrated so a fresh record
 // of each role lands on the Falcon-9-class real hardware's derived mass
 // with essentially zero error:
-//   booster       → 0.0178  (F9 Block 5 booster dry mass 25,600 kg, −0.1%)
-//   stage         → 0.0147  (F9 Block 5 upper stage dry mass 3,900 kg)
+//   booster       → 0.0178  (F9 Block 3 booster dry mass 25,600 kg, −0.1%)
+//   stage         → 0.0147  (F9 Block 3 upper stage dry mass 3,900 kg)
 //   payloadSpace  → 0.0026  (F9 carbon-composite fairing ~1,900 kg)
 // A record can override its own value at build time (f-bodyShellFactor).
 const DEFAULT_SHELL_FACTOR_BY_ROLE = {
-  // Booster: shell factor calibrated so a F9 Block 5 booster's total dry
+  // Booster: shell factor calibrated so a F9 Block 3 booster's total dry
   // mass (shell + 9×Merlin + 4×carbon legs + carbon interstage) lands on
   // the real 25,600 kg with ~+0.02% error.
   booster: 0.01797,
-  // Stage: shell factor calibrated so the F9 Block 5 upper stage's total
+  // Stage: shell factor calibrated so the F9 Block 3 upper stage's total
   // dry mass (shell + 1×MVac) lands on real 3,900 kg with ~+0.4% error.
   stage: 0.0147,
   // PayloadSpace: fairing-shell thickness fraction — 13.1 m tall × 5.2 m
@@ -382,16 +382,16 @@ function defaultVehicleData() {
 // ---------------------------------------------------------------------------
 
 // ============================================================================
-// Falcon 9 Block 5 seed — the default family on a fresh install. Three
+// Falcon 9 Block 3 seed — the default family on a fresh install. Three
 // separate fleet records (booster / stage / fairing), one payload, one
-// stack. Values are real Block 5 hardware, calibrated so each record's
+// stack. Values are real Block 3 hardware, calibrated so each record's
 // derived mass lands on the real figure within ~0.5%.
 // ============================================================================
 
 function seedFalcon9Booster() {
   return {
     id: 'falcon9-default',
-    name: 'Falcon 9 Block 5 — Booster',
+    name: 'Falcon 9 Block 3 — Booster',
     locked: true,
     stageRole: 'booster',
     familyId: LEGACY_FAMILY_ID,
@@ -427,7 +427,7 @@ function seedFalcon9Booster() {
 function seedFalcon9Stage() {
   return {
     id: 'falcon9-stage',
-    name: 'Falcon 9 Block 5 — Upper Stage',
+    name: 'Falcon 9 Block 3 — Upper Stage',
     locked: true,
     stageRole: 'stage',
     familyId: LEGACY_FAMILY_ID,
@@ -499,7 +499,7 @@ function seedFalcon9Payload() {
 function seedFalcon9Stack() {
   return {
     id: 'stk_falcon9-default',
-    name: 'Falcon 9 Block 5',
+    name: 'Falcon 9 Block 3',
     members: ['falcon9-default', 'falcon9-stage', 'falcon9-fairing'],
     sequence: 'f9-standard',
     payloadId: 'pl_falcon9-default',
@@ -518,7 +518,7 @@ function blankRocketData() {
 
 // ---------------------------------------------------------------------------
 // Blank-member factories now derive their defaults from the Falcon 9
-// Block 5 seed records (see seedFalcon9Booster/Stage/Fairing below).
+// Block 3 seed records (see seedFalcon9Booster/Stage/Fairing below).
 // One source of truth: any change to the F9 seed automatically flows
 // into every new member the user creates, so a fresh "New Booster" is
 // already tuned to realistic F9-class values (tank dims, shell factor,
@@ -921,7 +921,7 @@ return migrated;
       }
     }
   } catch (e) { /* fall through to seed */ }
-// Fresh install — seed the full Falcon 9 Block 5 demo family (booster +
+// Fresh install — seed the full Falcon 9 Block 3 demo family (booster +
 // upper stage + fairing), plus its payload and pre-built stack. Runs
 // once: after this save, subsequent loadFleet() calls take the normal
 // migrate-and-return branch above.

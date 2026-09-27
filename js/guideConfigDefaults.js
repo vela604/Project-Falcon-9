@@ -23,7 +23,7 @@
 // ============================================================================
 
 const GUIDE_DEFAULT_STACK_ID   = 'stk_falcon9-default';
-const GUIDE_DEFAULT_STACK_NAME = 'Falcon 9 Block 5';
+const GUIDE_DEFAULT_STACK_NAME = 'Falcon 9 Block 3';
 
 // ---------------------------------------------------------------------------
 // Default preset factory — stamps the shared metadata onto a constants bag.
@@ -51,7 +51,7 @@ const GUIDE_DEFAULT_PRESETS = {
   leoInsertionV2: _mkDefault(
     'leoInsertionV2',
     'F9 LEO — Baseline',
-    'Full autonomous mission: ascent → MECO → separation → circularization → payload deploy → suicide-burn deorbit. Calibrated for the Falcon 9 Block 5 default stack.',
+    'Full autonomous mission: ascent → MECO → separation → circularization → payload deploy → suicide-burn deorbit. Calibrated for the Falcon 9 Block 3 default stack.',
     {
       ASCENT: {
         INITIAL_COAST_S: 4.9,
