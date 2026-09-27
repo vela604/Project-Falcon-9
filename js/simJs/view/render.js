@@ -1460,10 +1460,18 @@ const cullMargin = Math.max(H, W) * 6;
         payloadBulgeWidth: Number.isFinite(psParams.bulgeWidth) ? psParams.bulgeWidth : undefined,
         payloadFrustumAngleDeg: Number.isFinite(psParams.frustumSlantDeg) ? psParams.frustumSlantDeg : undefined,
         payloadCurveRatio: Number.isFinite(psParams.curveHeightFactor) ? psParams.curveHeightFactor : undefined,
-        payloadColor: m.color || '#e9edf2',
-      } : {};
-      
-      // Render-side: signal that this stage has a fairing sitting on top
+          payloadColor: m.color || '#e9edf2',
+  }: {};
+  
+  // Grid fins — the live state lives on the BODY (one state per body,
+  // all four fins share it — L/R deploy together, F/B deploy together
+  // and control together). m.isActive (from body index) decides
+  // whether this member receives the live state or just renders
+  // stowed.
+  const gfType = (m.hasGridFins && m.gridFinTypeId && typeof getComponentType === 'function') ?
+    getComponentType(m.gridFinTypeId) : null;
+  
+  // Render-side: signal that this stage has a fairing sitting on top
 // of it in the stack, so the drawer suppresses the stage's own nose.
 const hasFairingAbove = !!(memberAbove && memberAbove.stageRole === 'payloadSpace');
 
@@ -1491,9 +1499,12 @@ drawRocketArt(ctx, mW, mH, mpp, {
         engineLayout: engineLayout,
         engineThrusters: m.engineThrusters,
         params: m.params,
-        stageAboveBellHeight: stageAboveBellHeight,
-        ...payloadOpts,
-      });
+          stageAboveBellHeight: stageAboveBellHeight,
+    gridFinType: gfType,
+    gridFinParams: m.gridFinParams || null,
+    gridFinState: body.gridFins || null,
+    ...payloadOpts,
+  });
                  ctx.restore();
       yOffsetPx += mH;
       });

@@ -1653,9 +1653,27 @@ if (role === 'payloadSpace') {
     }
   });
 }
-  // P4-D2: body appearance.
-  const bd = r.bodyDesign || { mode: 'solid', solidColor: '#e9edf2', dslText: '' };
-  setVal('f-bodyDesignMode', bd.mode || 'solid');
+  // Grid fins (booster / stage). Populate before body design so the
+// checkbox state is settled before applyRoleVisibility's tail call
+// reads it.
+if (role === 'booster' || role === 'stage') {
+  const hasGF = !!r.hasGridFins;
+  const cbEl = document.getElementById('f-hasGridFins');
+  if (cbEl) cbEl.checked = hasGF;
+  setVal('f-gridFinType', r.gridFinTypeId || 'gridfins-serrated-f9');
+setVal('f-gridFinMetalType', r.gridFinMetalTypeId || 'titanium-alloy');
+setVal('f-gridFinColor', r.gridFinColor || '#8a9198');
+if (hasGF) {
+    renderGridFinParams(r.gridFinTypeId || 'gridfins-serrated-f9', r.gridFinParams || {});
+  } else {
+    const grid = document.getElementById('gridFinParamsGrid');
+    if (grid) grid.innerHTML = '';
+  }
+}
+
+// P4-D2: body appearance.
+const bd = r.bodyDesign || { mode: 'solid', solidColor: '#e9edf2', dslText: '' };
+setVal('f-bodyDesignMode', bd.mode || 'solid');
   setVal('f-bodySolidColor', bd.solidColor || '#e9edf2');
   const dslTA = document.getElementById('f-bodyDslText');
   if (dslTA) dslTA.value = bd.dslText || '';
@@ -1885,14 +1903,37 @@ if (role === 'stage' || role === 'booster') {
     } : null;
   }
   if (role === 'booster' || role === 'stage') {
-    data.maxExtraWeightKg = parseFloat(document.getElementById('f-maxExtraWeight').value) || 0;
-  }
-  
-  const hasRecEl = document.getElementById('f-hasRecovery');
-  data.hasRecovery = hasRecEl ? hasRecEl.checked : true;
-  
-  bridgePerfParams(data);
-  return data;
+  data.maxExtraWeightKg = parseFloat(document.getElementById('f-maxExtraWeight').value) || 0;
+  // Grid fins — independent hardware. Params bag is separate from the
+  // engine/RCS `params` (different scope, different schema).
+  const gfCb = document.getElementById('f-hasGridFins');
+  data.hasGridFins = gfCb ? gfCb.checked : false;
+  if (data.hasGridFins) {
+    data.gridFinTypeId = document.getElementById('f-gridFinType').value;
+    data.gridFinMetalTypeId = document.getElementById('f-gridFinMetalType').value;
+    const gfRaw = currentParamValues('gridFin');
+    data.gridFinParams = {
+      span: Number.isFinite(gfRaw.span) ? gfRaw.span : 1.5,
+      chord: Number.isFinite(gfRaw.chord) ? gfRaw.chord : 1.2,
+      thickness: Number.isFinite(gfRaw.thickness) ? gfRaw.thickness : 0.4,
+      cellWidth: Number.isFinite(gfRaw.cellWidth) ? gfRaw.cellWidth : 0.17,
+          finPositionY: Number.isFinite(gfRaw.finPositionY) ? gfRaw.finPositionY : 0,
+  };
+  const gfColorEl = document.getElementById('f-gridFinColor');
+  data.gridFinColor = (gfColorEl && gfColorEl.value) ? gfColorEl.value : '#8a9198';
+} else {
+  data.gridFinTypeId = null;
+  data.gridFinMetalTypeId = null;
+  data.gridFinParams = null;
+  data.gridFinColor = '#8a9198';
+}
+}
+
+const hasRecEl = document.getElementById('f-hasRecovery');
+data.hasRecovery = hasRecEl ? hasRecEl.checked : true;
+
+bridgePerfParams(data);
+return data;
 }
 
 function showFormError(msg) {

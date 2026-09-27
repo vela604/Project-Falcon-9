@@ -244,6 +244,66 @@ function buildRcs4Pod2Nozzle() {
 }
 
 // ============================================================================
+// Grid fins — hinged aerodynamic control surfaces. Independent hardware
+// from the recovery mechanism: a booster can have BOTH landing legs AND
+// grid fins. Four instances per vehicle (L/R/F/B), hinged at the top of
+// the fin, deployed by rotating 90° from "flat against hull" (tailward)
+// to "perpendicular, sticking outward".
+//
+// Lattice modelled as N×M square cells of side cellWidth, separated by
+// walls of auto-computed thickness (WALL_THICKNESS_FACTOR × thickness).
+// SHELL_FACTOR is the calibration constant — tuned so real F9 geometry
+// hits ~150 kg/fin with titanium. Both type-level constants live on the
+// seed object, not in the per-record schema (they're material/manufacturing
+// properties, not rocket-tunable).
+// ============================================================================
+function buildGridFinSerratedF9() {
+  return {
+    id: 'gridfins-serrated-f9',
+    category: 'gridFin',
+    kind: 'hingedLatticeFin',
+    displayName: 'Serrated-teeth grid fins',
+    description: 'Titanium lattice grid fins, hinged at the top. Four instances per vehicle (L/R/F/B). The serrated-teeth lattice gives high aerodynamic authority at a fraction of a solid plate\'s mass. Wall thickness auto-derived from fin thickness; SHELL_FACTOR calibrated so a real Falcon 9 fin (1.5 × 1.2 × 0.4 m, 0.17 m cells, titanium) hits ~150 kg.',
+    frame: {
+      finCount: 4,
+      // Gap between hinge and hull surface, meters. Kept small — real F9
+      // stowed fins sit nearly flush.
+      gapM: 0.05,
+      // Lattice cells are square — the constraint is documented here rather
+      // than as a schema field, so a future "rectangular cell" fin type can
+      // override it without a per-record input.
+      cellAspect: 1.0,
+    },
+    parameterSchema: [
+      { key: 'span', label: 'Span (radial extent)', unit: 'm', min: 0.1, max: 5 },
+      { key: 'chord', label: 'Chord (axial extent)', unit: 'm', min: 0.1, max: 5 },
+      { key: 'thickness', label: 'Thickness (depth)', unit: 'm', min: 0.01, max: 1 },
+      { key: 'cellWidth', label: 'Lattice cell width', unit: 'm', min: 0.02, max: 1 },
+      { key: 'finPositionY', label: 'Hinge position (from base)', unit: 'm', min: 0 },
+    ],
+    // Type-level constants. NOT in schema — read by computeGridFinMass()
+    // in fleet.js. A future fin type with different wall/material ratios
+    // supplies its own bag here.
+    typeConstants: {
+      WALL_THICKNESS_FACTOR: 0.025, // wall thickness = factor × fin thickness
+      SHELL_FACTOR: 0.30, // calibration multiplier on outer solid volume × cellFill
+      maxSlewDeployingDegS: 15, // 90° deploy takes ~6 s
+      maxSlewControllingDegS: 30, // control deflection rate
+    },
+    capabilities: {
+      deploysOnVehicle: true,
+      controlCapable: true,
+      // 2D constraint: L/R fins cannot slew in the control direction
+      // (would rotate about X and inject out-of-plane torque). Only
+      // front/back fins are control-actuated.
+      controlSides: ['F', 'B'],
+    },
+  };
+}
+
+
+
+// ============================================================================
 // PHASE 3 STEP A — four new "fixed real-world spec" categories, plus
 // payloadSpace (2 kinds).
 //
@@ -634,6 +694,18 @@ function buildMetalCarbonComposite() {
 }
 
 
+// Titanium alloy — real F9 grid fins are Ti-6Al-4V (Grade 5), chosen for
+// high strength-to-weight and heat tolerance (fins see max-Q and reentry
+// heating without active cooling). Density 4430 kg/m³, ~1.6× aluminium.
+function buildMetalTitaniumAlloy() {
+  return makeMetal(
+    'titanium-alloy',
+    'Titanium alloy (Ti-6Al-4V)',
+    'High-strength titanium alloy used for grid-fin lattice hardware. Declares only density, same as every metal type — the fin\'s material volume is derived from span/chord/thickness/cellWidth downstream.',
+    { density: 4430 }
+  );
+}
+
 // ============================================================================
 // Pneumatic pushers — gas-driven separation actuators bolted into the
 // interstage. Documentation-only hardware: the sim applies a fixed
@@ -727,6 +799,8 @@ function seedComponentLibrary() {
     buildLegsSwingout4(),
     buildCatchFitting2Pin(),
     buildRcs4Pod2Nozzle(),
+    buildRcs4Pod2Nozzle(),
+buildGridFinSerratedF9(),
         buildThrusterMerlin1DClass(),
   buildThrusterMerlin1DVacClass(),
   buildThrusterMerlin1D(),
@@ -738,6 +812,8 @@ function seedComponentLibrary() {
   
   buildMetalAlLiAlloy(),
     buildMetalCarbonComposite(),
+    buildMetalCarbonComposite(),
+buildMetalTitaniumAlloy(),
     buildPneumaticPusherN2(),
     buildPayloadSpaceBulged(),
   ];

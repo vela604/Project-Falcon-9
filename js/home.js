@@ -182,9 +182,14 @@ function _previewVehicleFor(m) {
     payloadBulgeWidth: Number.isFinite(psParams.bulgeWidth) ? psParams.bulgeWidth : undefined,
     payloadFrustumAngleDeg: Number.isFinite(psParams.frustumSlantDeg) ? psParams.frustumSlantDeg : undefined,
     payloadCurveRatio: Number.isFinite(psParams.curveHeightFactor) ? psParams.curveHeightFactor : undefined,
-    payloadColor: (m.stageRole === 'payloadSpace') ? (m.color || '#e9edf2') : undefined,
+        payloadColor: (m.stageRole === 'payloadSpace') ? (m.color || '#e9edf2') : undefined,
+        gridFinType: (m.hasGridFins && m.gridFinTypeId && typeof getComponentType === 'function') ?
+    getComponentType(m.gridFinTypeId) : null,
+    gridFinParams: m.gridFinParams || null,
+    gridFinColor: m.gridFinColor || '#8a9198',
+  gridFinState: null, // null → rocketArt.js defaults to all-stowed
   };
-}
+    }
 
 function _renderPreviewMember() {
   const m = _previewMembers[_previewIdx];

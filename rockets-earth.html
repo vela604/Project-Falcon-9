@@ -468,6 +468,32 @@
   </div>
 </fieldset>
 
+<fieldset id="gridFinFieldset" data-role="booster,stage" style="display:none">
+  <legend>Grid fins <span class="legend-note">— hinged aerodynamic control surfaces</span></legend>
+  <label class="chip-toggle chip-toggle-block" style="margin-bottom:6px;">
+    <input type="checkbox" id="f-hasGridFins">
+    <span>Fit grid fins</span>
+  </label>
+  <div id="gridFinFieldsWrap">
+    <div class="field-grid">
+      <div class="field">
+        <label for="f-gridFinType">Grid fin type</label>
+        <select id="f-gridFinType" required></select>
+      </div>
+        <div class="field">
+    <label for="f-gridFinMetalType">Metal</label>
+    <select id="f-gridFinMetalType" required></select>
+  </div>
+  <div class="field">
+    <label for="f-gridFinColor">Fin colour</label>
+    <input type="color" id="f-gridFinColor" value="#8a9198">
+  </div>
+  </div>
+    <div class="field-grid" id="gridFinParamsGrid"></div>
+    <div id="gridFinDerived" class="thruster-derived">—</div>
+  </div>
+</fieldset>
+
 <fieldset id="payloadSpaceFieldset" data-role="payloadSpace" style="display:none">
   <legend>Payload space shape <span class="legend-note">— standalone fairing role</span></legend>
   <div class="field-grid">

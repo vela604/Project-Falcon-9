@@ -765,6 +765,39 @@ if (stageRole === 'payloadSpace') {
 if (stageRole === 'booster' || stageRole === 'stage') {
   out.pusherTypeId = r.pusherTypeId || 'pneumatic-pusher-n2';
 }
+
+// Grid fins — independent hardware, applies to booster + stage only.
+// Roles that can't carry fins (nose, payloadSpace) get null/false.
+if (stageRole === 'booster' || stageRole === 'stage') {
+  out.hasGridFins = !!r.hasGridFins;
+  out.gridFinTypeId = out.hasGridFins ? (r.gridFinTypeId || 'gridfins-serrated-f9') : null;
+  out.gridFinMetalTypeId = out.hasGridFins ? (r.gridFinMetalTypeId || 'titanium-alloy') : null;
+  if (out.hasGridFins) {
+    const gp = r.gridFinParams || {};
+    out.gridFinParams = {
+      span:         Number.isFinite(gp.span)         ? gp.span         : 1.5,
+      chord:        Number.isFinite(gp.chord)        ? gp.chord        : 1.2,
+      thickness:    Number.isFinite(gp.thickness)    ? gp.thickness    : 0.4,
+      cellWidth:    Number.isFinite(gp.cellWidth)    ? gp.cellWidth    : 0.17,
+      // Default: midpoint of the tank cylinder (the visual centre of the
+      // hull). Booster/stage fuel blocks both carry tankHeight.
+      finPositionY: Number.isFinite(gp.finPositionY) ? gp.finPositionY :
+        ((r.fuel && Number.isFinite(r.fuel.tankHeight)) ? r.fuel.tankHeight * 0.5 : 0),
+    };
+    out.gridFinColor = (typeof r.gridFinColor === 'string') ? r.gridFinColor : '#8a9198';
+  } else {
+    out.gridFinParams = null;
+    out.gridFinColor = '#8a9198';
+  }
+} else {
+  out.hasGridFins = false;
+  out.gridFinTypeId = null;
+  out.gridFinMetalTypeId = null;
+  out.gridFinParams = null;
+  out.gridFinColor = '#8a9198';
+}
+
+
   backfillThrusterRecords(out, defaults);
   bridgePerfParams(out);
   return out;
@@ -1983,7 +2016,52 @@ function computePayloadSpaceDryMass(rec) {
  }
 
 
-
+// ---------------------------------------------------------------------------
+// Per-fin material mass + total fin-set mass for a record. Volume formula
+// mirrors the one documented on the seed type's description:
+//
+//   wallThickness  = WALL_THICKNESS_FACTOR × thickness
+//   cellPitch      = cellWidth + wallThickness
+//   cellFill       = 1 − (cellWidth / cellPitch)³      ← cube-lattice fill
+//   V_mat_one      = span × chord × thickness × cellFill × SHELL_FACTOR
+//   mass_one       = V_mat_one × metalDensity
+//   total_set_mass = finCount × mass_one              ← 4 physical fins
+//
+// Returns null if the record has no grid fins or the type/metal can't be
+// resolved. Record still carries all 4 fins' mass even though only L/R
+// render prominently in 2D — the front/back pair contributes inertia
+// identically.
+// ---------------------------------------------------------------------------
+function computeGridFinMass(rec) {
+  if (!rec || !rec.hasGridFins) return null;
+  const type = (typeof getComponentType === 'function') ? getComponentType(rec.gridFinTypeId) : null;
+  const metal = (typeof getComponentType === 'function') ? getComponentType(rec.gridFinMetalTypeId) : null;
+  if (!type || !metal) return null;
+  if (!type.typeConstants) return null;
+  const TC = type.typeConstants;
+  const metalDensityEnt = metal.parameterSchema.find(p => p.key === 'density');
+  const metalDensity = metalDensityEnt ? metalDensityEnt.value : 0;
+  if (!(metalDensity > 0)) return null;
+  
+  const p = rec.gridFinParams || {};
+  const span = Number.isFinite(p.span) ? p.span : 0;
+  const chord = Number.isFinite(p.chord) ? p.chord : 0;
+  const thickness = Number.isFinite(p.thickness) ? p.thickness : 0;
+  const cellWidth = Number.isFinite(p.cellWidth) ? p.cellWidth : 0;
+  if (!(span > 0) || !(chord > 0) || !(thickness > 0) || !(cellWidth > 0)) {
+    return { perFinMass: 0, totalMass: 0, finCount: 4 };
+  }
+  
+  const wallThickness = thickness * TC.WALL_THICKNESS_FACTOR;
+  const cellPitch = cellWidth + wallThickness;
+  const cellFill = 1 - Math.pow(cellWidth / cellPitch, 3);
+  const vOuter = span * chord * thickness;
+  const vMat = vOuter * cellFill * TC.SHELL_FACTOR;
+  const perFinMass = vMat * metalDensity;
+  const finCount = (type.frame && type.frame.finCount) ? type.frame.finCount : 4;
+  
+  return { perFinMass, totalMass: perFinMass * finCount, finCount };
+}
 
 // PS-B3 — payloadSpace dimensions helper. Reads the ACTUAL rendered
 // footprint off a standalone payloadSpace record: height = capHeight

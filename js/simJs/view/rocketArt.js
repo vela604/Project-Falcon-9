@@ -384,6 +384,93 @@ function drawPayloadArt(ctx, W, H) {
   ctx.fill();
 }
 
+// ============================================================================
+// Grid fin artwork — one fin as an axis-aligned rectangle with a lattice
+// overlay, hinged at a FIXED top-edge point (never re-centers).
+//
+// Real orthographic front-view physics (confirmed against reference
+// photos): only ONE pose ever shows the full perforated mesh — the
+// FRONT fin's STOWED pose (chord×span, face-on, because in the tangent-
+// plane its face happens to align with the view). Every other
+// combination is a thin, mostly-solid-looking edge-on sliver:
+//   L/R stowed:   thickness × span   (thin vertical strip)
+//   L/R deployed: span × thickness   (thin horizontal strip)
+//   F/B deployed: chord × thickness  (thin horizontal strip)
+// This isn't a shortcut — it's what a real photo taken exactly
+// horizontal shows (a slightly-below camera angle, like some reference
+// shots, peeks a bit of the underside; a true horizontal view doesn't).
+//
+//   anchorX — anchor x in body-local coords. For L/R fins this is the
+//             hull-edge x (the fin's inner edge touches the hull).
+//             For F/B fins this is 0 (fin is horizontally centered).
+//   hingeY  — the FIXED hinge line (top edge) in body-local coords. The
+//             rect always hangs tailward (canvas +y) from this fixed
+//             point — it never re-centers as wPx/hPx change with p.
+//   side    — -1 = left-anchored (rect extends in −X from anchor),
+//             +1 = right-anchored (rect extends in +X from anchor),
+//              0 = centered (rect straddles anchor)
+//   cellPx  — lattice cell size in px.
+// ============================================================================
+// Draw one grid-fin rect. `rotateRad` (default 0) rotates the rect about
+// the anchor/hinge point — used for F/B control deflection; L/R never
+// rotate (their control is locked at 0). `showMesh` gates the lattice
+// overlay: only poses where the fin's perforated face is aimed at the
+// viewer should draw it (F/B stowed); every other pose shows a solid
+// edge sliver with no mesh.
+function drawGridFinFace(ctx, anchorX, hingeY, wPx, hPx, cellPx, side, style, showMesh, rotateRad) {
+  if (!(wPx > 0) || !(hPx > 0)) return;
+  const fill = (style && style.fill) || '#8a9198';
+  const stroke = (style && style.stroke) || '#48515e';
+  const cellStroke = (style && style.cellStroke) || 'rgba(30, 36, 44, 0.55)';
+  
+  ctx.save();
+  ctx.translate(anchorX, hingeY);
+  if (rotateRad) ctx.rotate(rotateRad);
+  
+  // Local rect relative to anchor: side<0 → extends −X from anchor,
+  // side>0 → extends +X, side=0 → centered on anchor. Hinge is the TOP
+  // edge; rect hangs tailward (+Y) from it.
+  const x0 = (side < 0) ? -wPx : (side > 0) ? 0 : -wPx / 2;
+  const y0 = 0;
+  
+  ctx.beginPath();
+  ctx.rect(x0, y0, wPx, hPx);
+  ctx.fillStyle = fill;
+  ctx.fill();
+  ctx.strokeStyle = stroke;
+  ctx.lineWidth = 1.2;
+  ctx.stroke();
+  
+  if (showMesh) {
+    ctx.beginPath();
+    ctx.rect(x0, y0, wPx, hPx);
+    ctx.clip();
+    ctx.strokeStyle = cellStroke;
+    ctx.lineWidth = 0.7;
+    
+    const cols = Math.max(1, Math.round(wPx / cellPx));
+    const colStep = wPx / cols;
+    for (let i = 1; i < cols; i++) {
+      const x = x0 + i * colStep;
+      ctx.beginPath();
+      ctx.moveTo(x, y0);
+      ctx.lineTo(x, y0 + hPx);
+      ctx.stroke();
+    }
+    const rows = Math.max(1, Math.round(hPx / cellPx));
+    const rowStep = hPx / rows;
+    for (let j = 1; j < rows; j++) {
+      const y = y0 + j * rowStep;
+      ctx.beginPath();
+      ctx.moveTo(x0, y);
+      ctx.lineTo(x0 + wPx, y);
+      ctx.stroke();
+    }
+  }
+  ctx.restore();
+}
+
+
 
 function drawRocketArt(ctx, W, H, mpp, opts) {
   opts = opts || {};
@@ -894,35 +981,10 @@ const bodyPath = () => {
     ctx.fill();
   }
   
-  // ---- Booster interstage lip + fins, or checkerboard + fins ----
-  const drawGridFins = (finY) => {
-    const finLen = W * 0.22,
-      finH = H * 0.05;
-    [-1, 1].forEach(side => {
-      ctx.save();
-      ctx.translate(side * W / 2, finY);
-      ctx.rotate(side * -0.12);
-      ctx.fillStyle = '#1c1e22';
-      ctx.strokeStyle = '#3a3d43';
-      ctx.lineWidth = 0.8;
-      ctx.beginPath();
-      ctx.rect(0, -finH / 2, side * finLen, finH);
-      ctx.fill();
-      ctx.stroke();
-      for (let i = 1; i <= 2; i++) {
-        const gx = side * finLen * (i / 3);
-        ctx.beginPath();
-        ctx.moveTo(gx, -finH / 2);
-        ctx.lineTo(gx, finH / 2);
-        ctx.stroke();
-      }
-      ctx.beginPath();
-      ctx.moveTo(0, 0);
-      ctx.lineTo(side * finLen, 0);
-      ctx.stroke();
-      ctx.restore();
-    });
-  };
+  // (Old hardcoded "drawGridFins" helper — a fixed-size decoration with no
+// parameters, no type lookup, and a hardcoded ±7° tilt — has been removed.
+// Real grid fins are now a proper hardware type drawn via drawGridFin /
+// drawGridFinEdgeOn further down, driven by opts.gridFinType / Params.)
   
   if (isBooster) {
     // ---- Interstage: black cylinder at the booster top. Sized to cover the
@@ -962,11 +1024,9 @@ const bodyPath = () => {
     ctx.lineTo(W / 2, -H + 0.5);
     ctx.stroke();
     
-    // Grid fins just below the interstage.
-    // Grid fins sit right at the interstage's bottom edge (where the
-    // interstage meets the tank).
-    drawGridFins(-H + interstageH_px);
-    
+      // (Old hardcoded grid-fin decoration removed — real fins now render
+  // via the gridFinType/gridFinParams block above this section.)
+  
   } else if (opts.stageRole !== 'stage') {
     // Rocket / legacy rocket: checkerboard stripe + grid fins near the
     // shoulder. Stage is skipped entirely — its payload space IS the
@@ -984,9 +1044,8 @@ const bodyPath = () => {
     ctx.fillRect(-chk, chkY, chk, chk / 2);
     ctx.fillRect(-chk / 2, chkY + chk / 2, chk / 2, chk / 2);
     ctx.fillRect(0, chkY, chk, chk / 2);
-    ctx.fillRect(chk / 2, chkY + chk / 2, chk / 2, chk / 2);
-    
-    drawGridFins(-H * 0.845);
+     ctx.fillRect(0, chkY, chk, chk / 2);
+  ctx.fillRect(chk / 2, chkY + chk / 2, chk / 2, chk / 2);
   }
   // stage role: no fins / no checkerboard — payload space is the visual top.
   // stage role: no fins / no checkerboard.
@@ -1006,9 +1065,7 @@ const bodyPath = () => {
     ctx.fillRect(0, chkY, chk, chk / 2);
     ctx.fillRect(chk / 2, chkY + chk / 2, chk / 2, chk / 2);
     
-    if (opts.stageRole !== 'stage') {
-      drawGridFins(-H * 0.845);
-    }
+      // (Old hardcoded grid-fin decoration removed — see comment above.)
   }
   
   // FRONT legs
@@ -1083,6 +1140,88 @@ const bodyPath = () => {
       });
     }
   }
+  
+// ---- Grid fins ----
+// Per-fin state. `deploy` and `control` are both in DEGREES.
+//   deploy:  0 = deployed (fin perpendicular to hull), ±90 = stowed
+//            (flat against hull). Sign is fin identity: L=+, R=−, F=+, B=−.
+//   control: F/B only, and only meaningful at deploy = 0. Front ACW
+//            (from front view) = +deg; back mirrors to −deg.
+//
+// F/B share ONE state entry (they mirror each other): F = +FB.deploy,
+// B = −FB.deploy; F = +FB.control, B = −FB.control. Any asymmetric
+// deploy/control between them would leak torque out of the 2D plane.
+// L/R keep independent deploy values (their deploy only creates
+// Z-axis torque in the 2D plane, so asymmetric deploy is safe);
+// their control is locked at 0 (rotating about X would leave the plane).
+//
+// Screen-projected dims at any progress p ∈ [0,1] (0 stowed, 1 deployed):
+//   L/R: W = thickness→span,  H = span→thickness
+//   F/B: W = chord (constant),H = span→thickness
+// Mesh visible only when a fin's perforated face aims at the viewer —
+// which is F/B stowed only. Every other pose shows a solid edge sliver.
+if (opts.gridFinType && opts.gridFinParams) {
+  const gp = opts.gridFinParams;
+  const spanPx = (gp.span || 0) / mpp;
+  const chordPx = (gp.chord || 0) / mpp;
+  const thicknessPx = (gp.thickness || 0) / mpp;
+  const cellPx = (gp.cellWidth || 0.17) / mpp;
+  const gapPx = (opts.gridFinType.frame && Number.isFinite(opts.gridFinType.frame.gapM)) ?
+    opts.gridFinType.frame.gapM / mpp : 0;
+  const hingeY = -(gp.finPositionY || 0) / mpp;
+  const hullHalfPx = W / 2;
+  
+  // Default state (no live state passed in, e.g. editor preview):
+  // stowed. Stowed is the informative static pose — it's the one that
+  // shows F/B's full chord×span mesh face.
+  const st = opts.gridFinState || {
+    L: { deploy: 90, control: 0 },
+    R: { deploy: -90, control: 0 },
+    FB: { deploy: 90, control: 0 },
+  };
+  
+  const finColor = opts.gridFinColor || '#8a9198';
+  const sideStyle = { fill: finColor, stroke: '#48515e' };
+  const fbStyle = { fill: finColor, stroke: '#5a626e' };
+  
+  // |deploy| = 90° → progress 0 (stowed); |deploy| = 0° → progress 1.
+  const pFromDeg = (d) => 1 - Math.min(1, Math.abs(d) / 90);
+  
+  // ---- F/B pair ----
+  const fbP = pFromDeg(st.FB.deploy);
+  // Control locked at 0 whenever FB isn't fully deployed, per the state
+  // contract: "deploy ≠ 0 → control forced 0".
+  const fbControlDeg = (st.FB.deploy === 0) ? (st.FB.control || 0) : 0;
+  const fbControlRad = fbControlDeg * Math.PI / 180;
+  const fbW = chordPx;
+  const fbH = spanPx + (thicknessPx - spanPx) * fbP;
+  const fbShowMesh = (fbP < 0.2);
+  
+  // B behind (dim, mirrored rotation); drawn first.
+  ctx.save();
+  ctx.globalAlpha = 0.5;
+  drawGridFinFace(ctx, 0, hingeY, fbW, fbH, cellPx, 0, fbStyle, fbShowMesh, -fbControlRad);
+  ctx.restore();
+  
+  // ---- L/R pair (independent deploy, control locked at 0) ----
+  const lp = pFromDeg(st.L.deploy);
+  const rp = pFromDeg(st.R.deploy);
+  const lW = thicknessPx + (spanPx - thicknessPx) * lp;
+  const lH = spanPx + (thicknessPx - spanPx) * lp;
+  const rW = thicknessPx + (spanPx - thicknessPx) * rp;
+  const rH = spanPx + (thicknessPx - spanPx) * rp;
+  const rightHingeX = hullHalfPx + gapPx;
+  const leftHingeX = -(hullHalfPx + gapPx);
+  drawGridFinFace(ctx, leftHingeX, hingeY, lW, lH, cellPx, -1, sideStyle, false, 0);
+  drawGridFinFace(ctx, rightHingeX, hingeY, rW, rH, cellPx, +1, sideStyle, false, 0);
+  
+  // F drawn last (in front, opaque-ish).
+  ctx.save();
+  ctx.globalAlpha = 0.5;
+  drawGridFinFace(ctx, 0, hingeY, fbW, fbH, cellPx, 0, fbStyle, fbShowMesh, +fbControlRad);
+  ctx.restore();
+}
+  
   
   // ---- RCS pods ----
   const firing = opts.firing || {};
@@ -1417,15 +1556,19 @@ drawRocketArt(pctx, W, H, mpp, {
   payloadCapWidth: v.payloadCapWidth,
   payloadBulgeWidth: v.payloadBulgeWidth,
   payloadFrustumAngleDeg: v.payloadFrustumAngleDeg,
-  payloadCurveRatio: v.payloadCurveRatio,
-  payloadColor: v.payloadColor,
-  // Engine bell / interstage sizing — drawRocketArt's bell block reads
-  // these. Without them every standalone preview (home member viewer,
-  // fleet detail, fleet editor) silently skipped the stage's bell.
-  engineLayout: v.engineLayout || null,
-  engineThrusters: v.engineThrusters || null,
-  params: v.params || null,
-});
+    payloadCurveRatio: v.payloadCurveRatio,
+    payloadColor: v.payloadColor,
+    // Engine bell / interstage sizing — drawRocketArt's bell block reads
+    // these. Without them every standalone preview (home member viewer,
+    // fleet detail, fleet editor) silently skipped the stage's bell.
+    engineLayout: v.engineLayout || null,
+    engineThrusters: v.engineThrusters || null,
+    params: v.params || null,
+    // Grid fins — type object drives finCount/gap, params drive geometry.
+    gridFinType: v.gridFinType || null,
+    gridFinParams: v.gridFinParams || null,
+    gridFinState: v.gridFinState || null,
+  });
 pctx.restore();
 }
 
@@ -1553,14 +1696,18 @@ const psType = (m.stageRole === 'payloadSpace' && m.payloadSpaceTypeId && typeof
       bodyDesign: m.bodyDesign,
       payloadSpaceColor: (m.payloadSpace && m.payloadSpace.color) ? m.payloadSpace.color : undefined,
       stagePayload: (typeof buildStagePayload === 'function') ? buildStagePayload(m) : null,
-      engineLayout: engineLayout,
-      engineThrusters: m.engineThrusters,
-      params: m.params,
-      stageAboveBellHeight: stageAboveBellHeight,
-      ...payloadOpts,
-    });
-    
-    pctx.restore();
-    baseY -= H;
-  });
-}
+            engineLayout: engineLayout,
+        engineThrusters: m.engineThrusters,
+        params: m.params,
+        stageAboveBellHeight: stageAboveBellHeight,
+        gridFinType: (m.hasGridFins && m.gridFinTypeId && typeof getComponentType === 'function') ?
+  getComponentType(m.gridFinTypeId) : null,
+  gridFinParams: m.gridFinParams || null,
+  gridFinColor: m.gridFinColor || '#8a9198',
+  ...payloadOpts,
+      });
+      
+      pctx.restore();
+      baseY -= H;
+      });
+      }

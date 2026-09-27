@@ -131,9 +131,14 @@ function previewVehicleFor(record) {
     payloadBulgeWidth: Number.isFinite(psParams.bulgeWidth) ? psParams.bulgeWidth : undefined,
     payloadFrustumAngleDeg: Number.isFinite(psParams.frustumSlantDeg) ? psParams.frustumSlantDeg : undefined,
     payloadCurveRatio: Number.isFinite(psParams.curveHeightFactor) ? psParams.curveHeightFactor : undefined,
-    payloadColor: record.stageRole === 'payloadSpace' ? (record.color || '#e9edf2') : undefined,
+        payloadColor: record.stageRole === 'payloadSpace' ? (record.color || '#e9edf2') : undefined,
+        gridFinType: (record.hasGridFins && record.gridFinTypeId && typeof getComponentType === 'function') ?
+    getComponentType(record.gridFinTypeId) : null,
+    gridFinParams: record.gridFinParams || null,
+    gridFinColor: record.gridFinColor || '#8a9198',
+  gridFinState: null, // null → rocketArt.js defaults to all-stowed
   };
-}
+    }
 
 // Guards the preview draw call so a missing/failed rocketArt.js load (wrong
 // folder, blocked request, etc.) can't throw and take the rest of the
@@ -168,9 +173,11 @@ function populateTypeSelects() {
   ['f-legsMetalType', 'metal'],
   ['f-payloadSpaceType', 'payloadSpace'],
   ['f-payloadSpaceMetalType', 'metal'],
-  ['f-psShapeType', 'payloadSpace'],
+    ['f-psShapeType', 'payloadSpace'],
   ['f-psMetalType', 'metal'],
-].forEach(([id, cat]) => {
+  ['f-gridFinType', 'gridFin'],
+  ['f-gridFinMetalType', 'metal'],
+  ].forEach(([id, cat]) => {
   const el = document.getElementById(id);
   if (!el) return;
   const types = getComponentsByCategory(cat);
@@ -209,6 +216,26 @@ function applyPayloadSpaceVisibility(role) {
   wrap.style.display = on ? '' : 'none';
   wrap.querySelectorAll('input, select, textarea').forEach(inp => { inp.disabled = !on; });
 }
+
+// Grid fins — checkbox-off hides the type/metal/params block entirely and
+// disables every input inside it, so a hidden field can't fail browser
+// validation on submit. Mirrors applyRecoveryVisibility exactly.
+function applyGridFinVisibility(role) {
+  const cb = document.getElementById('f-hasGridFins');
+  const wrap = document.getElementById('gridFinFieldsWrap');
+  if (!cb || !wrap) return;
+  const roleAllows = (role === 'booster' || role === 'stage');
+  const cbWrap = cb.closest('label');
+  if (cbWrap) cbWrap.style.display = roleAllows ? '' : 'none';
+  const on = roleAllows && cb.checked;
+  wrap.style.display = on ? '' : 'none';
+  wrap.querySelectorAll('input, select, textarea').forEach(inp => { inp.disabled = !on; });
+  if (!on) {
+    const d = document.getElementById('gridFinDerived');
+    if (d) d.textContent = '—';
+  }
+}
+
 
 function applyRecoveryVisibility(role) {
   const allowedRoles = ['rocket', 'booster', 'stage'];
@@ -308,6 +335,39 @@ document.querySelectorAll('.role-option').forEach(btn => {
     // record to that family and, if it's the booster, make it the bottomId.
     openEditorNew(role);
   });
+});
+
+// Grid-fin checkbox → toggle visibility + re-render params when on.
+const gridFinCb = document.getElementById('f-hasGridFins');
+if (gridFinCb) {
+  gridFinCb.addEventListener('change', () => {
+    applyGridFinVisibility(editingRole);
+    if (gridFinCb.checked) {
+      const typeSel = document.getElementById('f-gridFinType');
+      renderGridFinParams(typeSel ? typeSel.value : null, currentParamValues('gridFin'));
+    }
+    if (typeof updateCapsPreview === 'function') updateCapsPreview();
+  });
+}
+// Grid-fin type / metal change → refresh params + derived readout.
+['f-gridFinType', 'f-gridFinMetalType'].forEach(id => {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.addEventListener('change', () => {
+    if (id === 'f-gridFinType') {
+      renderGridFinParams(el.value, currentParamValues('gridFin'));
+    } else {
+      updateGridFinDerived();
+    }
+    if (typeof updateCapsPreview === 'function') updateCapsPreview();
+  });
+});
+// Param inputs on the grid grid → live update derived readout.
+// (Delegated — the grid re-renders on type change.)
+document.addEventListener('input', (e) => {
+  if (e.target && e.target.dataset && e.target.dataset.paramScope === 'gridFin') {
+    updateGridFinDerived();
+  }
 });
 
 // Payload-space type change → re-render its params grid.
@@ -570,6 +630,54 @@ function renderPsParams(typeId, currentParams) {
   grid.innerHTML = renderParamFieldsHTML(type.parameterSchema, currentParams || {}, 'ps');
 }
 
+// Grid-fin parameter fields + live per-fin mass readout. Split out from
+// the generic renderParamFields because the mass depends on TWO inputs
+// (this record's params + the type's own typeConstants), so we need a
+// place to keep them in sync as the user types.
+function renderGridFinParams(typeId, currentParams) {
+  const grid = document.getElementById('gridFinParamsGrid');
+  const derived = document.getElementById('gridFinDerived');
+  if (!grid) return;
+  const type = (typeof getComponentType === 'function') ? getComponentType(typeId) : null;
+  if (!type) { grid.innerHTML = ''; if (derived) derived.textContent = '—'; return; }
+  grid.innerHTML = renderParamFieldsHTML(type.parameterSchema, currentParams || {}, 'gridFin');
+  updateGridFinDerived();
+  grid.querySelectorAll('input').forEach(inp => {
+    inp.addEventListener('input', updateGridFinDerived);
+  });
+}
+
+function updateGridFinDerived() {
+  const derived = document.getElementById('gridFinDerived');
+  if (!derived) return;
+  const typeId = document.getElementById('f-gridFinType').value;
+  const metalId = document.getElementById('f-gridFinMetalType').value;
+  const type = (typeof getComponentType === 'function') ? getComponentType(typeId) : null;
+  const metal = (typeof getComponentType === 'function') ? getComponentType(metalId) : null;
+  if (!type || !metal || !type.typeConstants) { derived.textContent = '—'; return; }
+  const metalDensityEnt = metal.parameterSchema.find(p => p.key === 'density');
+  const metalDensity = metalDensityEnt ? metalDensityEnt.value : 0;
+  const params = currentParamValues('gridFin');
+  if (!(params.span > 0) || !(params.chord > 0) || !(params.thickness > 0) || !(params.cellWidth > 0)) {
+    derived.textContent = '—';
+    return;
+  }
+  const TC = type.typeConstants;
+  const wallThickness = params.thickness * TC.WALL_THICKNESS_FACTOR;
+  const cellPitch = params.cellWidth + wallThickness;
+  const cellFill = 1 - Math.pow(params.cellWidth / cellPitch, 3);
+  const vOuter = params.span * params.chord * params.thickness;
+  const vMat = vOuter * cellFill * TC.SHELL_FACTOR;
+  const perFinMass = vMat * metalDensity;
+  const finCount = (type.frame && type.frame.finCount) ? type.frame.finCount : 4;
+  const totalMass = perFinMass * finCount;
+  derived.innerHTML =
+    `Wall thickness: <b>${(wallThickness * 1000).toFixed(1)} mm</b> · ` +
+    `per fin: <b>${perFinMass.toFixed(1)} kg</b> · ` +
+    `× ${finCount} = <b>${totalMass.toFixed(0)} kg</b>`;
+}
+
+
 function applyRoleVisibility(role) {
   // P4-B3: single source of truth for editor-form visibility. Uses element
   // IDs (not HTML data-roles) so it doesn't depend on which attributes
@@ -586,7 +694,8 @@ function applyRoleVisibility(role) {
   payloadSpaceFieldset: ['payloadSpace'],
   fairingRecoveryFieldset: ['payloadSpace'],
   noseShapeFieldset: ['nose'],
-    aeroFieldset: ['rocket', 'booster', 'stage', 'nose', 'payloadSpace'],
+  gridFinFieldset: ['booster', 'stage'],
+  aeroFieldset: ['rocket', 'booster', 'stage', 'nose', 'payloadSpace'],
   shellFactorFieldset: ['booster', 'stage', 'payloadSpace'],
   extraWeightFieldset: ['booster', 'stage'],
     capsBox: ['rocket', 'booster'],
@@ -662,9 +771,10 @@ if (role === 'payloadSpace') {
   // Recovery gate (Part C): checkbox off → hide dropdown + params even
   // for roles that support recovery.
   applyRecoveryVisibility(role);
-  applyPayloadSpaceVisibility(role);
-  applyBodyDesignVisibility(role);
-  }
+applyPayloadSpaceVisibility(role);
+applyBodyDesignVisibility(role);
+applyGridFinVisibility(role);
+}
 
 
 function updateRcsThrusterDerived() {
