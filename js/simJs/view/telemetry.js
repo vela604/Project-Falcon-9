@@ -633,10 +633,11 @@ members.forEach((m, idx) => {
     payloadColor: m.color || '#e9edf2',
   } : {};
   
-  figCtx.save();
-figCtx.translate(baseX, baseY - yOffsetPx);
-drawRocketArt(figCtx, mW, mH, mpp, {
-      legsProgress: (idx === 0 && body.isActive) ? legs.progress : 0,
+    figCtx.save();
+  figCtx.translate(baseX, baseY - yOffsetPx);
+  drawRocketArt(figCtx, mW, mH, mpp, {
+        hasMemberBelow: idx > 0,
+        legsProgress: (idx === 0 && body.isActive) ? legs.progress : 0,
       legsState: null,
       // A5 — same as render.js: pod-id lookups need the member's own idx.
       memberIdx: idx,

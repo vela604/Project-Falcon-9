@@ -192,7 +192,15 @@ fieldset { border-color: rgba(120, 255, 205, 0.15); border-radius: 14px; backgro
 }
 #main .family-header-name { grid-area: name; }
 #main .family-header-meta { grid-area: meta; white-space: normal; }
-#main .family-header .btn { grid-area: btn; }
+/* Wrapper occupies the single trailing cell; buttons lay out inside it
+   as normal flex items, so any number (0, 1, 2+) never overlaps. */
+#main .family-header-actions {
+  grid-area: btn;
+  display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end;
+}
+/* Override the old single-slot rule — buttons are no longer grid
+   children of the header, they're flex children of the wrapper. */
+#main .family-header .btn { grid-area: auto; }
 
 /* Family detail (right pane): [ ROLE · name ........ Open ]
                                [ stat chips that wrap …      ] */

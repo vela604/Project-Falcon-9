@@ -331,6 +331,40 @@ document.querySelectorAll('.role-option').forEach(btn => {
   btn.addEventListener('click', () => {
     const role = btn.dataset.role;
     rolePicker.classList.remove('show');
+    
+    // When we're inside a family (creatingInFamilyId set), offer a
+    // second choice: build a blank member, or COPY an existing fleet
+    // record of the same role from ANY OTHER family — including locked
+    // ones like the F9 default. The copy is a fresh editable record;
+    // the source is never touched.
+    //
+    // Applies to every role, including booster: a new family can pull
+    // an existing booster in as its bottom member instead of starting
+    // from scratch.
+    if (creatingInFamilyId && typeof loadFleet === 'function') {
+      const candidates = loadFleet().filter(r =>
+        r.stageRole === role && r.familyId !== creatingInFamilyId
+      );
+      if (candidates.length) {
+        const menu = candidates
+          .map((c, i) => `${i + 1}. ${c.name}`)
+          .join('\n');
+        const reply = prompt(
+          `Add a new blank ${role}, or copy an existing one?\n\n` +
+          `Enter 0 for a new blank ${role}.\n\n` +
+          `Copy from:\n${menu}`,
+          '0'
+        );
+        if (reply === null) return; // user cancelled
+        const idx = parseInt(reply, 10);
+        if (Number.isInteger(idx) && idx >= 1 && idx <= candidates.length) {
+          copyRecordIntoFamily(candidates[idx - 1].id, creatingInFamilyId);
+          return;
+        }
+        // else: fall through to blank creation
+      }
+    }
+    
     // creatingInFamilyId stays set — handleSubmit will attach the new
     // record to that family and, if it's the booster, make it the bottomId.
     openEditorNew(role);

@@ -27,7 +27,7 @@ const G0 = 9.80665; // m/s²
 // called *from* config.js at load time — before CONFIG itself exists.
 // Having them here breaks the circular dependency.
 // Fraction of a stage's/booster's fuel-tank cylinder volume that becomes
-// structural metal mass. Calibrated to make the Falcon-9-class BOOSTER's
+// structural metal mass. Calibrated to make the Falcon 9 Block-3 BOOSTER's
 // derived dry mass land on the real 25,600 kg with essentially zero
 // error (−0.13%) — the stage's derived dry mass then reads +17% over
 // its own 3,900 kg target. A single factor can't match both exactly
@@ -109,7 +109,7 @@ function buildOctaweb9() {
     category: 'engineLayout',
     kind: 'ringWithCenter',
     displayName: 'Octaweb (Merlin-class, 8+1)',
-    description: 'One gimbaling center engine surrounded by a ring of 8 fixed outer engines at 45° spacing — the current Falcon-9-class layout. Performance (thrust, Ve, gimbal, throttle) comes from the thruster type(s) selected per gimbalCapable group; this type declares only geometry.',
+    description: 'One gimbaling center engine surrounded by a ring of 8 fixed outer engines at 45° spacing — the current Falcon 9 Block-3 layout. Performance (thrust, Ve, gimbal, throttle) comes from the thruster type(s) selected per gimbalCapable group; this type declares only geometry.',
     frame: {
       slots: [
         { id: 'C', role: 'center', gimbalCapable: true, angleDeg: null, position: () => ({ x: 0 }) },
@@ -155,7 +155,7 @@ function buildLegsSwingout4() {
     category: 'recoveryMechanism',
     kind: 'legsOnVehicle',
     displayName: 'Swing-Out Landing Legs (×4)',
-    description: 'Four hinged legs mounted on the vehicle itself, folded flush against the airframe in flight and swung open before touchdown — the current Falcon-9-class recovery hardware.',
+    description: 'Four hinged legs mounted on the vehicle itself, folded flush against the airframe in flight and swung open before touchdown — the current Falcon 9 Block-3 recovery hardware.',
     frame: {
       legCount: 4,
       hingeGeometry: (H) => ({
@@ -174,7 +174,7 @@ function buildLegsSwingout4() {
 // downstream (see fleet.js / massProps.js), not body-metal density.
       structuralVolume: (H, W) => {
   // Legs modeled as a tapered solid strut with no cutout reduction
-  // (fillFactor 1.0). avgThickness calibrated so a Falcon-9-class
+  // (fillFactor 1.0). avgThickness calibrated so a Falcon 9 Block-3
   // booster's 4 carbon-composite legs total ~2,100 kg, matching the
   // public "less than 2,100 kg" figure for the real landing gear
   // system (Light Metal Age).
@@ -394,7 +394,7 @@ function makeThruster(id, displayName, description, values) {
 // thrust and engine mass both derive from that (see PHASE3_PROMPT.md §1
 // formulas) — nothing here is itself a build-time-editable number.
 //
-// Values below reproduce today's Falcon-9-class octaweb defaults exactly
+// Values below reproduce today's Falcon 9 Block-3 octaweb defaults exactly
 // (config.js's DEFAULT_VEHICLE: engineFMax 600,000 N @ engineVe 2,900 m/s
 // → maxMassFlowRate = 600,000 / 2,900 ≈ 207 kg/s; gimbal ±20° @ 40°/s;
 // throttle floor 40%, change rate 0.5/s), so wiring a fleet build to this
@@ -595,7 +595,7 @@ function buildFairingChuteRound() {
   return makeFairingChute(
     'fairing-chute-round',
     'Round canopy (fairing-class)',
-    'Standard hemispherical-canopy parachute sized for Falcon-9-class fairing recovery. Automatically deploys below CONFIG.FAIRING_CHUTE_DEPLOY_ALT_AGL_M. Descent rate is set at design time by canopy diameter — this type targets ~6 m/s for a lone fairing half (~950 kg) and ~23 m/s for the emergency-ejected full shielded package (~13 t).',
+    'Standard hemispherical-canopy parachute sized for Falcon 9 Block-3 fairing recovery. Automatically deploys below CONFIG.FAIRING_CHUTE_DEPLOY_ALT_AGL_M. Descent rate is set at design time by canopy diameter — this type targets ~6 m/s for a lone fairing half (~950 kg) and ~23 m/s for the emergency-ejected full shielded package (~13 t).',
     {
       canopyDiameter: 25,
       dragCoefficient: 0.85,
@@ -754,7 +754,7 @@ function buildPneumaticPusherN2() {
 // gives the classic flared fairing. structuralVolume/internalVolume are
 // deliberately FORMULAS (functions of the type's own dimension keys, not
 // stored numbers). The fairing's shellThicknessFrac is calibrated so a
-// Falcon-9-class fairing with a carbon-composite metal type totals
+// Falcon 9 Block-3 fairing with a carbon-composite metal type totals
 // ~1,900 kg, matching the real hardware.
 
 function buildPayloadSpaceBulged() {

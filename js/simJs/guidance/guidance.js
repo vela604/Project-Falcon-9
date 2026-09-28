@@ -41,10 +41,30 @@ const Guidance = (function () {
   // Called once per snapshot from guidance.worker.js. Applies (or skips)
   // IMU noise, stores both versions, and hands the measured one to tick().
   function onSnapshot(rawSnapshot) {
-    _lastRawSnapshot = rawSnapshot;
-    _lastMeasuredSnapshot = measure(rawSnapshot);
-    tick(_lastMeasuredSnapshot);
+  _lastRawSnapshot = rawSnapshot;
+  _lastMeasuredSnapshot = measure(rawSnapshot);
+  _lastSimTime = _lastMeasuredSnapshot.simTime || 0;
+  tick(_lastMeasuredSnapshot);
+  
+  // Phase-log update: compare the guide's current phase to the last
+  // one we recorded. On change, freeze the old phase's endT and open a
+  // new entry. Runs every tick (cheap — just a string compare) so the
+  // recorded times are as precise as possible.
+  if (_activeGuide && GUIDES[_activeGuide]) {
+    const g = GUIDES[_activeGuide];
+    const st = (typeof g.getStatus === 'function') ? g.getStatus() : null;
+    const ph = st && st.phase;
+    if (ph && ph !== _lastSeenPhase) {
+      const nowT = _lastSimTime;
+      if (_lastSeenPhase && _phaseLog[_lastSeenPhase]) {
+        _phaseLog[_lastSeenPhase].endT = nowT;
+      }
+      _lastSeenPhase = ph;
+      if (_guideStartT === null) _guideStartT = nowT;
+      _phaseLog[ph] = { startT: nowT, endT: null };
+    }
   }
+}
   
 // ============================================================
 // Guide framework. Each guide is a tick function with optional
@@ -53,6 +73,142 @@ const Guidance = (function () {
 // ============================================================
 const GUIDES = {};
 let _activeGuide = null;
+
+// ---------------------------------------------------------------------------
+// Per-guide ordered list of phases (raw internal names). The display layer
+// further down maps these to friendly / merged / hidden labels.
+// ---------------------------------------------------------------------------
+const GUIDE_PHASE_SEQUENCES = {
+  leoInsertionV2: [
+    'ASCENT', 'MECO_SPOOL', 'SEPARATED_AXIAL', 'STAGE_BURN', 'RCS_BOOST',
+    'COAST_ROTATE', 'COAST_WAIT', 'COAST_HOLD', 'CIRCULARIZE',
+    'COAST_ROTATE_2', 'COAST_HOLD_2', 'DONE',
+    'SUICIDE_ROTATE', 'SUICIDE_BURN', 'SUICIDE_COAST',
+  ],
+  leoInsertion: [
+    'ASCENT', 'MECO_SPOOL', 'SEPARATED_AXIAL', 'SEPARATED_LATERAL',
+    'ROTATE_BANG_BANG', 'TARGET_APOGEE', 'COAST_ROTATE', 'COAST_HOLD',
+    'CIRCULARIZE', 'DONE',
+  ],
+  ascentAoaHold: ['PRE_COAST', 'PUSH', 'COAST', 'HOLD', 'COASTnAoADAMP'],
+};
+
+// ---- Phase timeline tracking ----------------------------------------------
+// Per-guide ordered list of phases, for the sim page's checkpoint UI.
+// Guides that cycle (ascentRR) or have just one continuous state
+// (predictivePlus, testGuide, ...) have no entry — the UI falls back to
+// showing just the current phase.
+// ---------------------------------------------------------------------------
+// Display-layer transform for the phase timeline. The phase machine's
+// internal names NEVER change here — this is purely how the sim page's
+// checkpoint panel labels things. Three things are configurable per guide:
+//
+//   RENAME — map a raw phase name to a friendly display string.
+//   HIDE   — map a raw phase name to null; it is dropped from the track
+//            entirely and never shown as a row.
+//   MERGE  — map two or more raw phases to the SAME display string. They
+//            collapse into one row: the row's start time is the earliest
+//            of the merged phases, its end time is the latest, and its
+//            "active" highlight triggers whenever the guide is on any of
+//            them.
+//
+// Rules:
+//   - Row ORDER follows GUIDE_PHASE_SEQUENCES, with each display string
+//     appearing at the position of its first raw mapping. Later raw
+//     phases mapping to an already-used display name are absorbed.
+//   - Raw phases not listed in a guide's map pass through unchanged
+//     (their raw name is their display name).
+//   - Hiding the phase currently in progress leaves the previous visible
+//     row as the most-recently-active one — nothing is artificially
+//     highlighted in its place.
+//
+// This table is the ONLY place to edit if you want different names or
+// groupings for a guide's timeline. No code changes anywhere else.
+const GUIDE_PHASE_DISPLAY = {
+  leoInsertionV2: {
+    // Merge the whole coast triplet into one row — three internal states
+    // that a viewer reads as a single "coasting to apogee" leg.
+    COAST_ROTATE: 'COAST',
+    COAST_WAIT: 'COAST',
+    COAST_HOLD: 'COAST',
+    // Same for the post-circularize pair.
+    COAST_ROTATE_2: 'PAYLOAD DEPLOY',
+    COAST_HOLD_2: 'PAYLOAD DEPLOY',
+    // Short friendly names for the rest.
+    MECO_SPOOL: 'MECO',
+    SEPARATED_AXIAL: 'SEPARATION',
+    STAGE_BURN: 'ORBIT BURN',
+    RCS_BOOST: 'APOGEE TRIM',
+    CIRCULARIZE: 'CIRCULARIZE',
+    DONE: 'MISSION COMPLETE',
+    SUICIDE_ROTATE: 'DEORBIT',
+    SUICIDE_BURN: 'DEORBIT',
+    SUICIDE_COAST: 'IMPACT',
+  },
+  leoInsertion: {
+    MECO_SPOOL: 'MECO',
+    SEPARATED_AXIAL: 'SEPARATION',
+    // SEPARATED_LATERAL unused in the current flow — hide it entirely so
+    // the track has no phantom empty row.
+    SEPARATED_LATERAL: null,
+    ROTATE_BANG_BANG: 'ROTATE',
+    TARGET_APOGEE: 'APOGEE BURN',
+    COAST_ROTATE: 'COAST',
+    COAST_HOLD: 'COAST',
+  },
+  // ascentAoaHold left as-is — its phases are already short and readable.
+};
+
+// Apply the display transform to a raw (sequence, log) pair and return
+// the display-ready versions plus the current phase's display name.
+function _applyPhaseDisplay(guideName, rawSeq, rawLog, rawCurrentPhase) {
+  const map = GUIDE_PHASE_DISPLAY[guideName] || {};
+  const displaySeq = [];
+  const rawToDisp = {};
+  rawSeq.forEach(ph => {
+    const disp = (ph in map) ? map[ph] : ph;
+    rawToDisp[ph] = disp;
+    if (disp === null) return; // hidden
+    if (!displaySeq.includes(disp)) displaySeq.push(disp);
+  });
+  const displayLog = {};
+  rawSeq.forEach(ph => {
+    const disp = rawToDisp[ph];
+    if (disp === null) return; // hidden
+    const e = rawLog[ph];
+    if (!e) return;
+    const cur = displayLog[disp];
+    if (!cur) {
+      displayLog[disp] = { startT: e.startT, endT: e.endT };
+    } else {
+      // earliest start
+      if (Number.isFinite(e.startT) &&
+        (!Number.isFinite(cur.startT) || e.startT < cur.startT)) {
+        cur.startT = e.startT;
+      }
+      // latest end (null = still running wins, since "not finished" must
+      // propagate up to the merged row)
+      if (e.endT === null || e.endT === undefined) {
+        cur.endT = null;
+      } else if (cur.endT !== null && cur.endT !== undefined) {
+        if (e.endT > cur.endT) cur.endT = e.endT;
+      }
+    }
+  });
+  const curDisp = rawCurrentPhase ? (rawToDisp[rawCurrentPhase] || null) : null;
+  return { displaySeq, displayLog, curDisp };
+}
+
+// Rolling log of { [phaseName]: { startT, endT } } for the active guide.
+// endT is null while a phase is still in progress. Reset on every
+// startGuide. Sent to the main thread inside every guideStatus push so
+// the UI can render the vertical checkpoint timeline.
+let _phaseLog = {};
+let _lastSeenPhase = null;
+let _guideStartT = null;
+let _lastSimTime = 0;
+
+
 
 // Status labels mirroring the guidance experiment log (see
 // guidance_log.html for the full entries). Used by the sim / tester /
@@ -79,7 +235,10 @@ function startGuide(name) {
     try { GUIDES[_activeGuide].stop(); } catch (e) { console.error(e); }
   }
   _activeGuide = name;
-  if (typeof GUIDES[name].start === 'function') {
+_phaseLog = {};
+_lastSeenPhase = null;
+_guideStartT = null;
+if (typeof GUIDES[name].start === 'function') {
     try { GUIDES[name].start(); } catch (e) { console.error(e); }
   }
   console.log('[guidance] started:', name);
@@ -110,6 +269,17 @@ function getGuideStatus() {
   const g = GUIDES[_activeGuide];
   const out = { active: _activeGuide };
   if (typeof g.getStatus === 'function') Object.assign(out, g.getStatus());
+  // Phase timeline metadata for the sim page's checkpoint UI. The raw
+  // sequence + log are transformed through GUIDE_PHASE_DISPLAY so the
+  // UI can show renamed / merged / hidden phases without knowing about
+  // any of that logic itself.
+  const rawSeq = GUIDE_PHASE_SEQUENCES[_activeGuide] || [];
+  const transformed = _applyPhaseDisplay(_activeGuide, rawSeq, _phaseLog, out.phase);
+  out.phaseSequence = transformed.displaySeq;
+  out.phaseLog = transformed.displayLog;
+  out.phaseDisplay = transformed.curDisp; // display name of current phase (null if hidden)
+  out.guideStartT = _guideStartT;
+  out.simTime = _lastSimTime;
   return out;
 }
 

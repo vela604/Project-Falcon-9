@@ -1082,7 +1082,12 @@ const bodyPath = () => {
   // Only drawn for stage role (and legacy rocket if applicable). Booster
   // has its own engine cluster handled by rocketArt if/when needed; stage
   // uses the single-nozzle or whatever its layout is.
-  if (opts.stageRole === 'stage' && engineBell) {
+  // Bell is drawn only when this stage stands alone. When it's stacked
+// above another member (a booster with an interstage), the bell
+// physically sits inside the interstage — real F9 hides the MVac bell
+// there too, so drawing it would layer it on top of the interstage.
+// Callers pass hasMemberBelow=true for stack-ordered rendering.
+if (opts.stageRole === 'stage' && engineBell && !opts.hasMemberBelow) {
     const bH = engineBell.h / mpp;
     const bR = engineBell.r / mpp;
     const gimbalRad = 0;
@@ -1547,7 +1552,8 @@ const baseY = (cssH - contentH) / 2 + H;
   pctx.save();
 pctx.translate(baseX, baseY);
 drawRocketArt(pctx, W, H, mpp, {
-  rcsTopY: v.rcsTopY,
+      hasMemberBelow: idx > 0,
+      rcsTopY: m.params ? m.params.rcsTopY : undefined,
   rcsBottomY: v.rcsBottomY,
   recoveryType,
   rcsType,

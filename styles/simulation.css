@@ -1262,3 +1262,151 @@ canvas.mini-graph { width: 100%; height: 60px; background: var(--bg); border-rad
     letter-spacing: 1px;
   }
 }
+
+
+/* ============================================================
+   Floating mission-phase checkpoint panel — bottom-right corner.
+   Sits OUTSIDE the right toolbar; anchored below the toolbar's
+   vertical range and above the viewport bottom. Lighter, more
+   translucent than the toolbar itself so it recedes into the
+   background until a guide actually needs to show progress.
+   Each row: [T+abs / +elapsed] [line·dot·line] [PHASE_NAME].
+   States: .done (green), .active (cyan, pulsing), .future (dim).
+   ============================================================ */
+#guidePhaseTrack {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  z-index: 45;
+  width: min(260px, calc(100vw - 24px));
+  /* Top edge never rises above the toolbar's vertical center — leaves
+     the upper half of the screen free for the toolbar itself. */
+  max-height: calc(50vh - 62px);
+  display: flex;
+  flex-direction: column;
+  background: rgba(10, 16, 30, 0.55);
+  -webkit-backdrop-filter: blur(16px) saturate(160%);
+          backdrop-filter: blur(16px) saturate(160%);
+  border: 1px solid rgba(53, 214, 255, 0.18);
+  border-radius: 10px;
+  box-shadow:
+    0 10px 32px rgba(0, 0, 0, 0.42),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  padding: 10px 12px 8px 10px;
+  font-family: var(--font-mono);
+  pointer-events: auto;
+  overflow: hidden;
+}
+
+#guidePhaseTrack .gpt-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 6px;
+  margin-bottom: 6px;
+  border-bottom: 1px solid rgba(53, 214, 255, 0.14);
+  font-size: 10px;
+  letter-spacing: 0.7px;
+  text-transform: uppercase;
+}
+#guidePhaseTrack .gpt-title { color: var(--cyan); font-weight: 700; }
+#guidePhaseTrack .gpt-count { color: var(--dim); }
+
+#guidePhaseTrack .gpt-list {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  padding-right: 4px;
+  min-height: 0;
+}
+#guidePhaseTrack .gpt-list::-webkit-scrollbar { width: 4px; }
+#guidePhaseTrack .gpt-list::-webkit-scrollbar-thumb {
+  background: rgba(53, 214, 255, 0.25);
+  border-radius: 2px;
+}
+
+.gp-row {
+  display: grid;
+  grid-template-columns: 74px 18px 1fr;
+  gap: 6px;
+  align-items: stretch;
+  min-height: 44px;
+}
+
+.gp-time {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 1px;
+  padding-right: 4px;
+  font-size: 9.5px;
+  line-height: 1.25;
+  color: var(--dim);
+}
+.gp-tabs { color: var(--text); font-size: 9.5px; }
+.gp-trel { color: var(--dim); font-size: 9px; }
+
+.gp-dotcol {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.gp-line-in, .gp-line-out {
+  flex: 1;
+  width: 2px;
+  min-height: 6px;
+  background: rgba(53, 214, 255, 0.10);
+}
+.gp-dot {
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(53, 214, 255, 0.20);
+  background: transparent;
+  flex-shrink: 0;
+  margin: 3px 0;
+  transition: background 0.28s ease, border-color 0.28s ease, box-shadow 0.28s ease;
+}
+
+.gp-name {
+  display: flex;
+  align-items: center;
+  color: var(--dim);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-size: 10px;
+  padding-left: 4px;
+  transition: color 0.28s ease;
+  opacity: 0.55;
+}
+
+/* ---- done ---- */
+.gp-row.done .gp-dot {
+  background: var(--green);
+  border-color: var(--green);
+  box-shadow: 0 0 6px rgba(74,222,128,0.55);
+}
+.gp-row.done .gp-line-in,
+.gp-row.done .gp-line-out { background: var(--green); }
+.gp-row.done .gp-name { color: var(--text); opacity: 1; }
+.gp-row.done .gp-tabs { color: var(--green); opacity: 1; }
+.gp-row.done .gp-trel { opacity: 0.75; }
+
+/* ---- active ---- */
+.gp-row.active .gp-dot {
+  background: var(--cyan);
+  border-color: var(--cyan);
+  box-shadow: 0 0 10px var(--cyan);
+  animation: gpPulse 1.5s ease-in-out infinite;
+}
+.gp-row.active .gp-line-in { background: var(--green); }
+.gp-row.active .gp-line-out { background: rgba(53, 214, 255, 0.10); }
+.gp-row.active .gp-name { color: var(--cyan); font-weight: 600; opacity: 1; }
+.gp-row.active .gp-tabs { color: var(--cyan); opacity: 1; }
+.gp-row.active .gp-trel { color: var(--cyan); opacity: 0.85; }
+
+@keyframes gpPulse {
+  0%, 100% { transform: scale(1.0); box-shadow: 0 0 6px var(--cyan); }
+  50%      { transform: scale(1.22); box-shadow: 0 0 16px var(--cyan), 0 0 5px var(--cyan); }
+}

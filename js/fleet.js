@@ -71,7 +71,7 @@ function _fmtMassShort(kg) {
 }
 
 // Role-specific default body-shell factors, calibrated so a fresh record
-// of each role lands on the Falcon-9-class real hardware's derived mass
+// of each role lands on the Falcon 9 Block-3 real hardware's derived mass
 // with essentially zero error:
 //   booster       → 0.0178  (F9 Block 3 booster dry mass 25,600 kg, −0.1%)
 //   stage         → 0.0147  (F9 Block 3 upper stage dry mass 3,900 kg)
@@ -165,7 +165,7 @@ function seedFamiliesFromFleet() {
         if (!families.some(f => f.id === LEGACY_FAMILY_ID)) {
           families.push({
             id: LEGACY_FAMILY_ID,
-            name: 'Falcon-9-Class Family',
+            name: 'Falcon 9 Block-3 Family',
             bottomId: 'falcon9-default',
             locked: true,
           });
@@ -328,7 +328,7 @@ const FLAT_PARAM_KEYS = [
 function defaultVehicleData() {
   return {
     id: 'falcon9-default',
-    name: 'Falcon-9-Class (Default)',
+    name: 'Falcon 9 Block-3 (Default)',
     locked: true,
     stageRole: 'rocket',
     familyId: LEGACY_FAMILY_ID,
@@ -373,7 +373,7 @@ function defaultVehicleData() {
 
 // ---------------------------------------------------------------------------
 // Blank-record factories for the other stage roles (Phase 3 §3 / PS-B1).
-// All inherit the Falcon-9-class engine/legs/RCS baseline as a reasonable
+// All inherit the Falcon 9 Block-3 engine/legs/RCS baseline as a reasonable
 // starting point where relevant — the builder then lets the user swap any
 // component type. Placeholder type ids below match the built-in seed
 // registry (componentLibrary.js); a real registry with these ids removed

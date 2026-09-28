@@ -143,24 +143,47 @@ function renderFleetList() {
     const header = document.createElement('div');
     header.className = 'family-header' + (fid === viewingFamilyId ? ' active' : '');
     const boosterLabel = bottom ?
-      `base: ${escapeHtml(bottom.name)}` :
-      '<span style="color:var(--amber)">no booster yet</span>';
-    header.innerHTML = `
-      <span class="family-header-name">${escapeHtml(fam.name)}</span>
-      <span class="family-header-meta">${boosterLabel} · ${members.length} member${members.length === 1 ? '' : 's'}</span>
-      <button type="button" class="btn" data-family-add="${fid}">+ Add Member</button>
-    `;
-    host.appendChild(header);
+  `base: ${escapeHtml(bottom.name)}` :
+  '<span style="color:var(--amber)">no booster yet</span>';
+// "+ Add Member" only shown on unlocked families — a locked family
+// cannot be modified, and the copy-from-existing path lives in the
+// add-member flow of a NEW family (see role-picker click handler).
+const addBtnHTML = fam.locked ? '' :
+  `<button type="button" class="btn" data-family-add="${fid}">+ Add Member</button>`;
+const copyBtnHTML =
+  `<button type="button" class="btn" data-family-copy="${fid}" title="Duplicate this family's members into a new one">Copy</button>`;
+// Both actions live in ONE grid cell via a wrapper, so the header
+// layout never changes based on how many buttons are present.
+header.innerHTML = `
+  <span class="family-header-name">${escapeHtml(fam.name)}</span>
+  <span class="family-header-meta">${boosterLabel} · ${members.length} member${members.length === 1 ? '' : 's'}</span>
+  <div class="family-header-actions">
+    ${addBtnHTML}
+    ${copyBtnHTML}
+  </div>
+`;
+host.appendChild(header);
     
     // Family header itself is clickable → opens family detail.
     header.style.cursor = 'pointer';
     header.addEventListener('click', () => showFamilyDetail(fid));
     
-    // "+ Add Member" button inside the header — scoped add flow.
-    header.querySelector(`[data-family-add="${fid}"]`).addEventListener('click', (e) => {
-      e.stopPropagation();
-      openFamilyAddMember(fid);
-    });
+// "+ Add Member" button inside the header — scoped add flow. Absent
+// on locked families, so guard the query.
+const _addBtn = header.querySelector(`[data-family-add="${fid}"]`);
+if (_addBtn) _addBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  openFamilyAddMember(fid);
+});
+// "Copy" button — always present, works on locked families. Opens
+// the newly-created family's detail pane on click (handled inside
+// duplicateFamily).
+const _copyBtn = header.querySelector(`[data-family-copy="${fid}"]`);
+if (_copyBtn) _copyBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  duplicateFamily(fid);
+});
+
     // Members — bottom first, then stages/noses.
     const wrap = document.createElement('div');
     wrap.className = 'family-member-indent';
@@ -2128,22 +2151,133 @@ function handleSubmit(e) {
   showVehicleDetail(saved.id);
 }
 
+
+// ---------------------------------------------------------------------------
+// Clone an existing fleet record (from any family, including locked ones)
+// into a target family as a fresh editable member. The source is never
+// touched — this is a deep copy with a new id, cleared lock flag, and the
+// target familyId. Used by the "+ Add Member" flow (via the role picker's
+// copy prompt) so a new family can reuse the Falcon 9 upper stage, nose,
+// fairing, or even the booster itself as a starting point.
+//
+// If the copied record's role is a bottom role (booster/rocket) and the
+// target family doesn't yet have a bottom member, the copy is promoted
+// to that family's bottomId — mirrors the handleSubmit path for
+// brand-new boosters.
+// ---------------------------------------------------------------------------
+function copyRecordIntoFamily(srcId, targetFamilyId) {
+  const src = loadFleet().find(r => r.id === srcId);
+  if (!src) return;
+  const { id: _drop, locked: _l, familyId: _f, ...rest } = src;
+  const copy = addRocket({ ...rest, name: src.name + ' (copy)' });
+  updateRocket(copy.id, { familyId: targetFamilyId });
+  
+  const isBottomRole = (copy.stageRole === 'booster' || copy.stageRole === 'rocket');
+  if (isBottomRole) {
+    const fam = getFamily(targetFamilyId);
+    if (fam && !fam.bottomId) {
+      updateFamily(targetFamilyId, { bottomId: copy.id });
+    }
+  }
+  
+  creatingInFamilyId = null;
+  openEditorFor(copy.id);
+}
+
+// ---------------------------------------------------------------------------
+// Deep-copy an entire family into a brand-new one. Source family is never
+// touched — every member record is cloned with a fresh id, cleared lock
+// flag, and re-attached to the new family. The first booster/rocket
+// clone becomes the new family's bottomId. Locked source families are
+// allowed (this is a read-only operation on the source), which is the
+// intended way to reuse a protected family like the F9 default.
+//
+// Scope: only family records are cloned. Stacks that reference the
+// original family's members are NOT copied — they still point at the
+// originals. Copy stacks separately if you need them.
+// ---------------------------------------------------------------------------
+function duplicateFamily(familyId) {
+  const fam = getFamily(familyId);
+  if (!fam) return;
+  const fleet = loadFleet();
+  const members = fleet.filter(r => r.familyId === familyId);
+  if (!members.length) {
+    showFleetToast('Empty family', 'Nothing to copy.');
+    return;
+  }
+  
+  // Create the destination family shell first — bottomId is filled in
+  // once we know the cloned booster's new id.
+  const newFam = addFamily({ name: fam.name + ' (copy)', bottomId: null });
+  
+  // Preserve display order: bottom member first, then the rest in their
+  // fleet-array order — matches how the fleet list already renders them.
+  const bottomSrc = fam.bottomId ? fleet.find(r => r.id === fam.bottomId) : null;
+  const ordered = [];
+  if (bottomSrc) ordered.push(bottomSrc);
+  members.forEach(r => {
+    if (!bottomSrc || r.id !== bottomSrc.id) ordered.push(r);
+  });
+  
+  let newBottomId = null;
+  ordered.forEach(src => {
+    const { id: _d, locked: _l, familyId: _f, ...rest } = src;
+    const copy = addRocket({ ...rest, name: src.name + ' (copy)' });
+    updateRocket(copy.id, { familyId: newFam.id });
+    if (!newBottomId &&
+      (copy.stageRole === 'booster' || copy.stageRole === 'rocket')) {
+      newBottomId = copy.id;
+    }
+  });
+  
+  if (newBottomId) updateFamily(newFam.id, { bottomId: newBottomId });
+  
+  showFleetToast(
+    'Family copied',
+    ordered.length + ' member' + (ordered.length === 1 ? '' : 's') +
+    ' → ' + newFam.name
+  );
+  renderFleetList();
+  // Open the new family's detail so the result is immediately visible.
+  showFamilyDetail(newFam.id);
+}
+
+
+
 function duplicateRocket(id) {
   const fleet = loadFleet();
   const r = fleet.find(v => v.id === id);
   if (!r) return;
+  const fam = r.familyId ? getFamily(r.familyId) : null;
+  const famLocked = !!(fam && fam.locked);
   const isBottomRole = r.stageRole === 'booster' || r.stageRole === 'rocket';
   
+  // Locked-family guard. Only a booster/rocket (the family's bottom
+  // member) can still be duplicated from a locked family — its duplicate
+  // spins off a NEW family, so the locked original is untouched. Any
+  // other role's duplicate would land INSIDE the locked family (it stays
+  // in the same family by design), which is exactly what "locked" is
+  // supposed to prevent. Use the copy-from-existing flow in a new family
+  // to reuse a locked member as a starting point instead.
+  if ((r.locked || famLocked) && !isBottomRole) {
+    showFleetToast(
+      'Protected member',
+      'Copy from this family into a new one to reuse it.'
+    );
+    return;
+  }
+  
   if (isBottomRole) {
-    // P4-B3: duplicating a booster/rocket spins off a NEW family (a family
-    // can only have one bottom member). Original family is untouched.
+    // Duplicating a booster/rocket spins off a NEW family (a family can
+    // only have one bottom member). Original family is untouched.
     const { id: _drop, locked: _l, familyId: _f, ...rest } = r;
     const copy = addRocket({ ...rest, name: r.name + ' (copy)' });
-    const fam = addFamily({ name: r.name + ' Family (copy)', bottomId: copy.id });
-    updateRocket(copy.id, { familyId: fam.id });
+    const famNew = addFamily({ name: r.name + ' Family (copy)', bottomId: copy.id });
+    updateRocket(copy.id, { familyId: famNew.id });
     openEditorFor(copy.id);
   } else {
-    // Stage/nose duplicates stay in the same family.
+    // Stage/nose duplicates stay in the same family (guarded above
+    // against locked families).
     const { id: _drop, locked: _l, ...rest } = r;
     const copy = addRocket({ ...rest, name: r.name + ' (copy)' });
     openEditorFor(copy.id);

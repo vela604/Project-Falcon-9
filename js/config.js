@@ -14,7 +14,7 @@
 // ============================================================================
 
 const DEFAULT_VEHICLE = {
-  name: 'Falcon-9-Class (Default)',
+  name: 'Falcon 9 Block-3 (Default)',
   height: 45,
   width: 3.9,
   dryMass: 23000,
@@ -231,7 +231,7 @@ PAYLOAD_EJECT_KICK_MPS: 3.0, // normal release (coast phase)
   // Fraction of a stage's fuel-tank cylinder volume that becomes metal
   // shell, used to estimate body mass: bodyMass = tankVolume ×
   // BODY_SHELL_FACTOR × bodyMetalDensity. Placeholder number calibrated
-  // roughly against Falcon-9-class tankage; not yet a real structural model.
+  // roughly against Falcon 9 Block-3 tankage; not yet a real structural model.
   BODY_SHELL_FACTOR: 0.0165,
   
   // Target Δv budget a 'stage' design is sized against, feeding the

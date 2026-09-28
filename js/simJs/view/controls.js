@@ -1073,6 +1073,130 @@ function _driveFarewell(status) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Phase-checkpoint timeline — right toolbar.
+//
+// Rows are built once per guide sequence; on each status push, only the
+// per-row state class and the time labels are updated. That keeps the
+// active-row's pulse animation alive instead of restarting it on every
+// status tick (status pushes arrive at ~8 Hz).
+// ---------------------------------------------------------------------------
+function _fmtHMS(sec) {
+  if (!Number.isFinite(sec) || sec < 0) return '--:--:--';
+  const s = Math.floor(sec);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const ss = s % 60;
+  return String(h).padStart(2, '0') + ':' +
+         String(m).padStart(2, '0') + ':' +
+         String(ss).padStart(2, '0');
+}
+
+let _phaseTrackLastSeq = null;
+let _phaseTrackRows = {}; // phase name -> row element
+
+function _renderPhaseTrack(status) {
+  const host = document.getElementById('guidePhaseList');
+  const trackBox = document.getElementById('guidePhaseTrack');
+  if (!host || !trackBox) return;
+  
+  if (!status || !status.active) {
+    trackBox.style.display = 'none';
+    _phaseTrackLastSeq = null;
+    _phaseTrackRows = {};
+    return;
+  }
+  trackBox.style.display = '';
+  
+  // Active-row match uses the DISPLAY name (phaseDisplay) — the sequence
+// and log the worker sent are already in display-space, so comparing
+// against the raw phase would leave every row unhighlighted whenever
+// a rename/merge map is configured.
+const curPhase = status.phaseDisplay || status.phase || null;
+const seq = Array.isArray(status.phaseSequence) && status.phaseSequence.length ?
+  status.phaseSequence :
+  (curPhase ? [curPhase] : []);
+  const seqKey = seq.join('|');
+  
+  // Rebuild DOM only when the sequence changes (guide switch / restart).
+  if (seqKey !== _phaseTrackLastSeq) {
+    _phaseTrackLastSeq = seqKey;
+    _phaseTrackRows = {};
+    host.innerHTML = '';
+    seq.forEach((ph, i) => {
+      const row = document.createElement('div');
+      row.className = 'gp-row future';
+      row.dataset.phase = ph;
+      const firstLine = (i === 0) ?
+        '<div class="gp-line-in" style="background:transparent;"></div>' :
+        '<div class="gp-line-in"></div>';
+      const lastLine = (i === seq.length - 1) ?
+        '<div class="gp-line-out" style="background:transparent;"></div>' :
+        '<div class="gp-line-out"></div>';
+      row.innerHTML = `
+        <div class="gp-time">
+          <div class="gp-tabs"></div>
+          <div class="gp-trel"></div>
+        </div>
+        <div class="gp-dotcol">
+          ${firstLine}
+          <div class="gp-dot"></div>
+          ${lastLine}
+        </div>
+        <div class="gp-name"></div>`;
+      row.querySelector('.gp-name').textContent = ph;
+      host.appendChild(row);
+      _phaseTrackRows[ph] = row;
+    });
+  }
+  
+  const log = status.phaseLog || {};
+  const simTime = status.simTime || 0;
+  let doneCount = 0;
+  
+  seq.forEach(ph => {
+    const row = _phaseTrackRows[ph];
+    if (!row) return;
+    const entry = log[ph];
+    
+    let cls;
+    if (entry && entry.endT !== null && entry.endT !== undefined) {
+      cls = 'done'; doneCount++;
+    } else if (ph === curPhase) {
+      cls = 'active';
+    } else {
+      cls = 'future';
+    }
+    
+    const wasActive = row.classList.contains('active');
+    // Always assign; CSS transitions handle the same-state no-op cheaply.
+    row.className = 'gp-row ' + cls;
+    
+    const tabsEl = row.querySelector('.gp-tabs');
+    const trelEl = row.querySelector('.gp-trel');
+    if (entry && Number.isFinite(entry.startT)) {
+      tabsEl.textContent = 'T+' + _fmtHMS(entry.startT);
+      if (entry.endT !== null && entry.endT !== undefined) {
+        trelEl.textContent = '+' + _fmtHMS(entry.endT - entry.startT);
+      } else {
+        trelEl.textContent = '+' + _fmtHMS(Math.max(0, simTime - entry.startT));
+      }
+    } else {
+      tabsEl.textContent = '';
+      trelEl.textContent = '';
+    }
+    
+    // Scroll the newly-active row into view, but only on the transition.
+    if (cls === 'active' && !wasActive && typeof row.scrollIntoView === 'function') {
+      row.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
+  });
+  
+  const countEl = document.getElementById('guidePhaseCount');
+  if (countEl) countEl.textContent = doneCount + '/' + seq.length;
+}
+
+
 // Called by workerBridge.js whenever the guidance worker pushes a status
 // update (or an immediate ack from a guidanceCommand). Updates the right
 // toolbar's live readout.
@@ -1082,7 +1206,7 @@ function onGuidanceStatus(status) {
   // Sync the guidance-active lock every time we hear from the worker.
   // Idempotent — the function bails if the state hasn't changed.
   _syncGuidanceLock(status);
-
+  _renderPhaseTrack(status);
   // Farewell sequence — driven by phase transitions. Fires the
   // "GOING FOR FINAL BURN" / "JUST ADJUSTING" / "GOOD BYE" messages
   // during the suicide-burn flow.

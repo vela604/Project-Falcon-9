@@ -1500,7 +1500,11 @@ drawRocketArt(ctx, mW, mH, mpp, {
         engineThrusters: m.engineThrusters,
         params: m.params,
             stageAboveBellHeight: stageAboveBellHeight,
-    gridFinType: gfType,
+  // Bell hidden when this member has a member below in the stack —
+  // see drawRocketArt's guard for the reasoning (MVac bell sits
+  // inside the booster's interstage, not visible side-on).
+  hasMemberBelow: idx > 0,
+  gridFinType: gfType,
     gridFinParams: m.gridFinParams || null,
     // Live per-fin deploy + control state (body-level, all four fins
     // share one state object — matches the renderer's convention).
