@@ -2162,9 +2162,9 @@ const psType = (m.stageRole === 'payloadSpace' && m.payloadSpaceTypeId && typeof
             engineLayout: engineLayout,
         engineThrusters: m.engineThrusters,
         params: m.params,
-        stageAboveBellHeight: stageAboveBellHeight,
-              gridFinType: (m.hasGridFins && m.gridFinTypeId && typeof getComponentType === 'function') ?
-    getComponentType(m.gridFinTypeId) : null,
+  stageAboveBellHeight: stageAboveBellHeight,
+  hasMemberBelow: idx > 0,
+  gridFinType: (m.hasGridFins && m.gridFinTypeId && typeof getComponentType === 'function') ?
     gridFinParams: m.gridFinParams || null,
     gridFinColor: m.gridFinColor || '#8a9198',
     // SZAD overlay: only drawn on locked (default) boosters.
