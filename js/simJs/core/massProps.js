@@ -358,7 +358,6 @@ if (!veEntry || !Number.isFinite(g.massFlowRate)) return;
     legsMetal.parameterSchema.find(p => p.key === 'density').value : 1;
   const oneLegMass = recoveryType.frame.structuralVolume(legH, legW) * legDensity;
   const legMassOne = oneLegMass; // per leg
-  
       
       // 4 legs (2 front, 2 back) — symmetric X pairs.
       const legXs = [-sideXFront, sideXFront, -sideXBack, sideXBack];
