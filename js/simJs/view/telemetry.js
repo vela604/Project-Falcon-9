@@ -655,12 +655,13 @@ drawRocketArt(figCtx, mW, mH, mpp, {
       engineLayout: engineLayout,
     engineThrusters: m.engineThrusters,
     params: m.params,
-    stageAboveBellHeight: stageAboveBellHeight,
+      stageAboveBellHeight: stageAboveBellHeight,
     gridFinType: (m.hasGridFins && m.gridFinTypeId && typeof getComponentType === 'function') ?
     getComponentType(m.gridFinTypeId) : null,
     gridFinParams: m.gridFinParams || null,
     gridFinColor: m.gridFinColor || '#8a9198',
     gridFinState: body.gridFins || null,
+    locked: m.locked === true,
     ...payloadOpts,
   });
     figCtx.restore();

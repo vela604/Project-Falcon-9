@@ -135,8 +135,10 @@ function previewVehicleFor(record) {
         gridFinType: (record.hasGridFins && record.gridFinTypeId && typeof getComponentType === 'function') ?
     getComponentType(record.gridFinTypeId) : null,
     gridFinParams: record.gridFinParams || null,
-    gridFinColor: record.gridFinColor || '#8a9198',
-  gridFinState: null, // null → rocketArt.js defaults to all-stowed
+      gridFinColor: record.gridFinColor || '#8a9198',
+    gridFinState: null, // null → rocketArt.js defaults to all-stowed
+    // Fleet record lock flag — drives the SZAD overlay on default boosters.
+    locked: record.locked === true,
   };
     }
 

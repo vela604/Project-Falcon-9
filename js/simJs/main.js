@@ -434,8 +434,13 @@ function bootstrap() {
     window._renderWorker = renderWorker;
     
     renderWorker.onmessage = (e) => {
-      const msg = e.data;
-      if (msg.type === 'workerError') {
+    const msg = e.data;
+    if (msg.type === 'dbg-bodies' || msg.type === 'dbg-bodies-error') {
+  console.log('[render-worker-dbg]', msg);
+  return;
+}
+
+    if (msg.type === 'workerError') {
         console.error('=== RENDER WORKER CRASH ===');
         console.error('  message:', msg.message);
         console.error('  stack:', msg.stack);

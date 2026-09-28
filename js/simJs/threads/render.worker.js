@@ -45,23 +45,28 @@ self.onmessage = (e) => {
       if (v === null || v === undefined) localStorage.removeItem(k);
       else localStorage.setItem(k, v);
     }
+    if (msg.type === 'szad-draw') {
+  console.log('[szad-worker] draw fired — W=' + msg.w + ' H=' + msg.h);
+  return;
+}
     
     importScripts(
-      '../../componentLibrary.js',
-      '../../customDesign.js',
-      '../../fleet.js',
-      '../../config.js',
-      '../core/massProps.js',
-      '../core/environment.js',
-      '../core/vehicle.js',
-      '../core/rcs.js',
-      '../core/physics.js',
-      '../core/trajectoryMath.js',
-      '../core/stateBuffer.js',
-      '../view/rocketArt.js',
-      '../view/predictedTrajectory.js',
-      '../view/render.js'
-    );
+  '../../componentLibrary.js',
+  '../../customDesign.js',
+  '../../fleet.js',
+  '../../config.js',
+  '../../szadFont.js',
+  '../core/massProps.js',
+  '../core/environment.js',
+  '../core/vehicle.js',
+  '../core/rcs.js',
+  '../core/physics.js',
+  '../core/trajectoryMath.js',
+  '../core/stateBuffer.js',
+  '../view/rocketArt.js',
+  '../view/predictedTrajectory.js',
+  '../view/render.js'
+);
     
     initCanvas = function() {};
     resizeCanvas = function() {};
@@ -130,9 +135,30 @@ self.onmessage = (e) => {
       break;
     }
     case 'state': {
-      state.activeBodyIndex = msg.data.activeBodyIndex;
-      state.simTime = msg.data.simTime;
-      state.halted = msg.data.halted;
+  state.activeBodyIndex = msg.data.activeBodyIndex;
+  state.simTime = msg.data.simTime;
+  state.halted = msg.data.halted;
+  // TEMP DIAGNOSTIC — remove after debugging. Routes the actual
+  // bodies payload arriving in the render worker back to the main
+  // thread console (worker console.log is a separate context).
+  if (msg.data.bodies && typeof self !== 'undefined' && self.postMessage
+      && !globalThis._dbgBodiesSent) {
+    globalThis._dbgBodiesSent = true;
+    try {
+      const b0 = msg.data.bodies[0];
+      const m0 = b0 && b0.members && b0.members[0];
+      self.postMessage({ type: 'dbg-bodies',
+        bodiesLen: msg.data.bodies.length,
+        m0Name: m0 ? m0.name : 'no-m0',
+        m0Locked: m0 ? m0.locked : 'no-m0',
+        m0LockedType: m0 ? typeof m0.locked : 'no-m0',
+        m0Role: m0 ? m0.stageRole : 'no-m0',
+        m0Keys: m0 ? Object.keys(m0).slice(0, 25).join(',') : 'no-m0'
+      });
+    } catch (e) {
+      self.postMessage({ type: 'dbg-bodies-error', msg: String(e) });
+    }
+  }
       // Trajectory is optional — null means "nothing new this tick, keep
       // the cache". But when the checkbox is off the worker deliberately
       // sends null AND clears its own copy; the render worker still shows

@@ -46,24 +46,138 @@
 // Idempotent: after the first load, every seed field already matches and
 // nothing is written.
 // ---------------------------------------------------------------------------
-function syncSeedRecords(fleet) {
-  const freshSeeds = seedFalcon9Family().map(migrateRocketRecord);
+function reconcileDefaultRecords(fleet) {
   let changed = false;
-  freshSeeds.forEach(seedRec => {
-    const idx = fleet.findIndex(r => r.id === seedRec.id);
-    if (idx < 0) return;
-    const liveRec = fleet[idx];
-    Object.keys(seedRec).forEach(k => {
-      const seedJson = JSON.stringify(seedRec[k]);
-      const liveJson = JSON.stringify(liveRec[k]);
-      if (seedJson !== liveJson) {
-        liveRec[k] = JSON.parse(seedJson);
-        changed = true;
-      }
-    });
+  DEFAULT_RECORDS.forEach(({ seed }) => {
+    const freshSeed = migrateRocketRecord(seed());
+    const idx = fleet.findIndex(r => r.id === freshSeed.id);
+    if (idx < 0) {
+      // Missing — insert. Handles the "new default shipped in a code
+      // update" case; existing users pick it up on next page load.
+      fleet.push(freshSeed);
+      changed = true;
+    } else {
+      // Present — sync every field the seed declares onto the live
+      // record. Seed records are protected by their own locked:true
+      // (from migrateRocketRecord), so this overwrite is by design —
+      // user customization happens through Duplicate, not Edit.
+      const liveRec = fleet[idx];
+      Object.keys(freshSeed).forEach(k => {
+        const seedJson = JSON.stringify(freshSeed[k]);
+        const liveJson = JSON.stringify(liveRec[k]);
+        if (seedJson !== liveJson) {
+          liveRec[k] = JSON.parse(seedJson);
+          changed = true;
+        }
+      });
+    }
   });
   return changed;
 }
+
+// ---------------------------------------------------------------------------
+// Reconcile default families. Existing users who already have a family
+// store get any missing default families added and any existing default
+// families force-locked. Fresh users get the defaults + the UNASSIGNED
+// bucket (same bootstrap path the old seedFamiliesFromFleet() provided).
+// ---------------------------------------------------------------------------
+function reconcileDefaultFamilies(families) {
+  let changed = false;
+  
+  // Fresh start — no families yet. Seed the defaults directly; the
+  // fleet records already carry the right familyId (from their seed
+  // functions or migrateRocketRecord's fallback), so no fleet scan
+  // is needed the way the old seedFamiliesFromFleet did it.
+  if (!families.length) {
+    DEFAULT_FAMILIES.forEach(f => families.push({ ...f }));
+    // The orphan bucket so any record not in a default family has
+    // somewhere to live.
+    families.push({
+      id: UNASSIGNED_FAMILY_ID,
+      name: 'Unassigned Stages',
+      bottomId: null,
+      locked: false,
+    });
+    return true;
+  }
+  
+  // Existing users — add any missing defaults, force-lock existing ones.
+  DEFAULT_FAMILIES.forEach(f => {
+    const idx = families.findIndex(x => x.id === f.id);
+    if (idx < 0) {
+      families.push({ ...f });
+      changed = true;
+    } else {
+      if (!families[idx].locked) {
+        families[idx].locked = true;
+        changed = true;
+      }
+      // Name drift correction — keep the default families' names in
+      // sync with what the code declares.
+      if (families[idx].name !== f.name) {
+        families[idx].name = f.name;
+        changed = true;
+      }
+      if (families[idx].bottomId !== f.bottomId) {
+        families[idx].bottomId = f.bottomId;
+        changed = true;
+      }
+    }
+  });
+  return changed;
+}
+
+// ---------------------------------------------------------------------------
+// Reconcile default stacks. Insert missing, force-lock existing. Does NOT
+// overwrite member lists on existing stacks — a user's stack member edits
+// should survive a code update (this is a mid-development concession;
+// shipped stacks should also be locked so their members can't be edited).
+// ---------------------------------------------------------------------------
+function reconcileDefaultStacks(stacks) {
+  let changed = false;
+  DEFAULT_STACKS.forEach(({ seed }) => {
+    const fresh = seed();
+    const idx = stacks.findIndex(s => s.id === fresh.id);
+    if (idx < 0) {
+      // Compute derived for the fresh stack before storing.
+      fresh.derived = computeStackDerived(fresh.members);
+      stacks.push(fresh);
+      changed = true;
+    } else {
+      if (!stacks[idx].locked) {
+        stacks[idx].locked = true;
+        changed = true;
+      }
+      if (!stacks[idx].derived || !stacks[idx].derived.interstage) {
+        stacks[idx].derived = computeStackDerived(stacks[idx].members);
+        changed = true;
+      }
+    }
+  });
+  return changed;
+}
+
+// ---------------------------------------------------------------------------
+// Reconcile default payloads. Insert missing, force-lock existing.
+// ---------------------------------------------------------------------------
+function reconcileDefaultPayloads(payloads) {
+  let changed = false;
+  DEFAULT_PAYLOADS.forEach(({ seed }) => {
+    const fresh = seed();
+    const idx = payloads.findIndex(p => p.id === fresh.id);
+    if (idx < 0) {
+      payloads.push(fresh);
+      changed = true;
+    } else {
+      if (!payloads[idx].locked) {
+        payloads[idx].locked = true;
+        changed = true;
+      }
+    }
+  });
+  return changed;
+}
+
 
 function _fmtMassShort(kg) {
   if (!Number.isFinite(kg)) return '—';
@@ -94,6 +208,8 @@ const FLEET_KEY = 'rocketSim.fleet.v1';
 const SELECTED_KEY = 'rocketSim.selectedId.v1';
 
 
+
+
 // ============================================================================
 // PHASE 4 — Family model.
 //
@@ -113,6 +229,45 @@ const FAMILIES_KEY = 'rocketSim.families.v1';
 const SELECTED_FAMILY_KEY = 'rocketSim.selectedFamilyId.v1';
 const LEGACY_FAMILY_ID = 'fam-falcon9-default'; // the seeded Falcon-9 record's family
 const UNASSIGNED_FAMILY_ID = 'fam-unassigned'; // orphan stages/noses awaiting a booster
+
+
+// ============================================================================
+// DEFAULT SEED REGISTRY
+//
+// Single source of truth for what default vehicles / families / stacks /
+// payloads ship with the code. To add a new default mission:
+//   1. Write a seedXxx() function that returns a fresh record object.
+//   2. Add ONE entry to the relevant array below.
+// Reconciliation handles the rest — records already present in a user's
+// localStorage get their fields synced from the seed (a locked seed's
+// edits are protected by `locked: true`; users Duplicate instead of
+// editing). Records MISSING entirely get inserted on the next page load,
+// so a default vehicle added in a code update lands for existing users
+// too, not just fresh installs. No other file needs to change.
+// ============================================================================
+const DEFAULT_FAMILIES = [
+  { id: LEGACY_FAMILY_ID, name: 'Falcon-9-Class Family', bottomId: 'falcon9-default', locked: true },
+  // ↑ Add new default families here.
+];
+
+const DEFAULT_RECORDS = [
+  { seed: seedFalcon9Booster },
+  { seed: seedFalcon9Stage },
+  { seed: seedFalcon9Fairing },
+  // ↑ Add new default records here. Each seed function must declare its
+  // own id and familyId — reconcile matches by id.
+];
+
+const DEFAULT_STACKS = [
+  { seed: seedFalcon9Stack },
+  // ↑ Add new default stacks here.
+];
+
+const DEFAULT_PAYLOADS = [
+  { seed: seedFalcon9Payload },
+  // ↑ Add new default payloads here.
+];
+
 
 // ---------------------------------------------------------------------------
 // Store
@@ -136,8 +291,9 @@ function saveFamilies(families) {
 // no page needs to call an explicit "migrate" hook. Idempotent: once
 // families exist, this is a pure read.
 function loadFamilies() {
-  let families = loadFamiliesRaw();
-  if (!families.length) families = seedFamiliesFromFleet();
+  const families = loadFamiliesRaw();
+  const changed = reconcileDefaultFamilies(families);
+  if (changed) saveFamilies(families);
   return families;
 }
 
@@ -918,24 +1074,11 @@ function runPayloadSpaceSplitOnce(fleet) {
 // Idempotent: after the first load, values already equal the targets and
 // nothing is written. Add new seed calibration fixes below as { id: { field: value } }.
 // ---------------------------------------------------------------------------
-const SEED_CALIBRATION_FIXES = {
-  'falcon9-default': { tankHeight: 33.6 },
-  'falcon9-stage': { tankHeight: 8.8 },
-};
-
-function applySeedCalibrationFixes(fleet) {
-  let changed = false;
-  fleet.forEach(r => {
-    const fixes = SEED_CALIBRATION_FIXES[r.id];
-    if (!fixes) return;
-    if (fixes.tankHeight !== undefined && r.fuel &&
-      r.fuel.tankHeight !== fixes.tankHeight) {
-      r.fuel.tankHeight = fixes.tankHeight;
-      changed = true;
-    }
-  });
-  return changed;
-}
+// (SEED_CALIBRATION_FIXES / applySeedCalibrationFixes removed —
+//  they were never called and duplicated the role of the seed
+//  functions' own tankHeight values. Reconcile now syncs the seed
+//  values verbatim, so tank-height calibration lives entirely on the
+//  seed function that owns it.)
 
 function loadFleet() {
   try {
@@ -944,39 +1087,41 @@ function loadFleet() {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed) && parsed.length) {
         let migrated = parsed.map(migrateRocketRecord);
-migrated = runPayloadSpaceSplitOnce(migrated);
-const seedChanged = syncSeedRecords(migrated);
-if (seedChanged ||
-  JSON.stringify(migrated) !== JSON.stringify(parsed)) {
-  saveFleet(migrated);
-}
-return migrated;
+        migrated = runPayloadSpaceSplitOnce(migrated);
+        // Reconcile defaults — updates existing seed records, inserts
+        // any that are missing (new defaults added since the user's
+        // store was first written).
+        const reconciled = reconcileDefaultRecords(migrated);
+        if (reconciled ||
+          JSON.stringify(migrated) !== JSON.stringify(parsed)) {
+          saveFleet(migrated);
+        }
+        return migrated;
       }
     }
   } catch (e) { /* fall through to seed */ }
-// Fresh install — seed the full Falcon 9 Block 3 demo family (booster +
-// upper stage + fairing), plus its payload and pre-built stack. Runs
-// once: after this save, subsequent loadFleet() calls take the normal
-// migrate-and-return branch above.
-//
-// CRITICAL: migration MUST run on the seed before returning it. Config.js
-// reads the returned records at script-load time, and role-specific
-// derived params (engineVe / engineFMax for a booster, etc.) only exist
-// AFTER bridgePerfParams() has backfilled them — which only runs inside
-// migrateRocketRecord(). Skipping this step left CONFIG.ENGINE_VE
-// undefined, which crashed home.js's spec card the moment a booster was
-// the selected vehicle.
-const seeded = seedFalcon9Family().map(migrateRocketRecord);
-saveFleet(seeded);
-localStorage.setItem(SELECTED_KEY, seeded[0].id);
-  // Seed the demo payload + stack (only if not already present).
-  if (!loadPayloads().length) savePayloads([seedFalcon9Payload()]);
-  if (!loadStacks().length) {
-    saveStacks([seedFalcon9Stack()]);
-    setSelectedStackId('stk_falcon9-default');
+  // Fresh install — seed every default record from the registry. Runs
+  // once: after this save, subsequent loadFleet() calls take the normal
+  // migrate-and-reconcile branch above.
+  //
+  // CRITICAL: migration MUST run on each seed before returning. Config.js
+  // reads the returned records at script-load time, and role-specific
+  // derived params (engineVe / engineFMax for a booster, etc.) only exist
+  // AFTER bridgePerfParams() has backfilled them — which only runs inside
+  // migrateRocketRecord().
+  const seeded = DEFAULT_RECORDS.map(({ seed }) => migrateRocketRecord(seed()));
+  saveFleet(seeded);
+  localStorage.setItem(SELECTED_KEY, seeded[0].id);
+  // Payloads + stacks reconcile on their own loaders (below); just kick
+  // them by loading — the reconcile insert path handles fresh installs
+  // and existing users identically.
+  loadPayloads();
+  const stacks = loadStacks();
+  if (stacks.length && !getSelectedStackId()) {
+    setSelectedStackId(stacks[0].id);
   }
   return seeded;
-  }
+}
 
 function saveFleet(fleet) {
   localStorage.setItem(FLEET_KEY, JSON.stringify(fleet));
@@ -1008,7 +1153,9 @@ function getSelectedRocket() {
 // stack with locked:false before this list existed; force them locked on
 // load. Adding a new seeded stack? Just add its id here — this is a
 // one-time, idempotent migration.
-const SEED_STACK_LOCKED_IDS = ['stk_falcon9-default'];
+// (SEED_STACK_LOCKED_IDS removed — locking now handled by the
+// reconcile functions reading DEFAULT_* registries.)
+
 
 function loadStacks() {
   try {
@@ -1016,28 +1163,33 @@ function loadStacks() {
     if (raw) {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed)) {
-        // One-time migration: stacks that predate the frozen-derived
-        // layer (or the seed stack written directly via saveStacks)
-        // don't have a `derived` field. Compute it now and persist so
-        // this never has to run again for the same stack.
         let changed = false;
+        // One-time migration: stacks that predate the frozen-derived
+        // layer don't have a `derived` field. Compute now, persist.
         parsed.forEach(s => {
           if (!s.derived || !s.derived.interstage) {
             s.derived = computeStackDerived(s.members);
             changed = true;
           }
-          // Seed lock migration — force seeded stacks locked.
-          if (SEED_STACK_LOCKED_IDS.includes(s.id) && s.locked !== true) {
-            s.locked = true;
-            changed = true;
-          }
         });
+        // Reconcile defaults (insert missing, force-lock existing).
+        if (reconcileDefaultStacks(parsed)) changed = true;
         if (changed) saveStacks(parsed);
         return parsed;
       }
     }
   } catch (e) { /* fall through */ }
-  return [];
+  // Fresh install — seed all defaults.
+  const seeded = DEFAULT_STACKS.map(({ seed }) => {
+    const s = seed();
+    s.derived = computeStackDerived(s.members);
+    return s;
+  });
+  if (seeded.length) {
+    saveStacks(seeded);
+    if (!getSelectedStackId()) setSelectedStackId(seeded[0].id);
+  }
+  return seeded;
 }
 
 function saveStacks(stacks) {
@@ -2245,7 +2397,8 @@ const PAYLOADS_KEY = 'rocketSim.payloads.v1';
 // Seed payload ids that must be locked. Existing browsers saved the seed
 // payload without a locked flag before this list existed; force it on
 // load. Add new seeded payload ids here as needed.
-const SEED_PAYLOAD_LOCKED_IDS = ['pl_falcon9-default'];
+// (SEED_PAYLOAD_LOCKED_IDS removed — see DEFAULT_PAYLOADS registry.)
+
 
 function loadPayloads() {
   try {
@@ -2253,19 +2406,16 @@ function loadPayloads() {
     if (raw) {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed)) {
-        let changed = false;
-        parsed.forEach(p => {
-          if (SEED_PAYLOAD_LOCKED_IDS.includes(p.id) && p.locked !== true) {
-            p.locked = true;
-            changed = true;
-          }
-        });
+        const changed = reconcileDefaultPayloads(parsed);
         if (changed) savePayloads(parsed);
         return parsed;
       }
     }
   } catch (e) { /* fall through */ }
-  return [];
+  // Fresh install — seed all defaults.
+  const seeded = DEFAULT_PAYLOADS.map(({ seed }) => seed());
+  if (seeded.length) savePayloads(seeded);
+  return seeded;
 }
 
 function savePayloads(list) {

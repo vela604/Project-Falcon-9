@@ -186,8 +186,9 @@ function _previewVehicleFor(m) {
         gridFinType: (m.hasGridFins && m.gridFinTypeId && typeof getComponentType === 'function') ?
     getComponentType(m.gridFinTypeId) : null,
     gridFinParams: m.gridFinParams || null,
-    gridFinColor: m.gridFinColor || '#8a9198',
-  gridFinState: null, // null → rocketArt.js defaults to all-stowed
+      gridFinColor: m.gridFinColor || '#8a9198',
+    gridFinState: null, // null → rocketArt.js defaults to all-stowed
+    locked: m.locked === true,
   };
     }
 

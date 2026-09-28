@@ -61,6 +61,442 @@ function cachedGradient(ctx, key, sig, build) {
   return grad;
 }
 
+
+// ============================================================================
+// SZAD overlay — canonical branding that appears on every DEFAULT (locked)
+// booster. Two PNG variants ship with the code:
+//   assets/szad-light.png — light-coloured logo (for dark booster bodies)
+//   assets/szad-dark.png  — dark-coloured logo  (for light booster bodies)
+//
+// On load each image is tight-cropped to its non-transparent, non-white
+// bounds so the caller doesn't have to ship hand-cropped PNGs. If the file
+// is missing or canvas-crop fails (CORS / non-image), the overlay silently
+// skips — no error, no half-drawn state.
+// ============================================================================
+const _szadImages = {
+  light: null,   // for DARK backgrounds
+  dark: null,    // for LIGHT backgrounds
+};
+
+function _trimImageWhitespace(img) {
+  try {
+    const c = document.createElement('canvas');
+    c.width = img.naturalWidth;
+    c.height = img.naturalHeight;
+    const cx = c.getContext('2d');
+    cx.drawImage(img, 0, 0);
+    const d = cx.getImageData(0, 0, c.width, c.height).data;
+    let minX = c.width, minY = c.height, maxX = -1, maxY = -1;
+    for (let y = 0; y < c.height; y++) {
+      for (let x = 0; x < c.width; x++) {
+        const i = (y * c.width + x) * 4;
+        const r = d[i], g = d[i+1], b = d[i+2], a = d[i+3];
+        // "content" = has alpha AND isn't near-white (typical exported-
+        // logo-with-white-background case).
+        const isContent = a > 16 && !(r > 245 && g > 245 && b > 245);
+        if (isContent) {
+          if (x < minX) minX = x;
+          if (x > maxX) maxX = x;
+          if (y < minY) minY = y;
+          if (y > maxY) maxY = y;
+        }
+      }
+    }
+    if (maxX < minX || maxY < minY) return img; // nothing found
+    const out = document.createElement('canvas');
+    out.width  = maxX - minX + 1;
+    out.height = maxY - minY + 1;
+    out.getContext('2d').drawImage(img,
+      minX, minY, out.width, out.height,
+      0, 0, out.width, out.height);
+    return out;
+  } catch (e) {
+    return img; // CORS or security error — fall back to original
+  }
+}
+
+// ============================================================================
+// SZAD rendering mode.
+//   true  → text-render (vertical SZAD letters with cylindrical shading,
+//           matching the body's own lighting; no PNG needed).
+//   false → PNG overlay (uses assets/szad-*.png).
+// Both modes call into _drawSzadAtAnchor; flip this to switch.
+// ============================================================================
+const SZAD_USE_TEXT = true;
+
+
+(function _preloadSzad() {
+    // Skip PNG loading entirely when text mode is on — no network hits for
+    // assets we're not going to draw.
+    if (typeof SZAD_USE_TEXT !== 'undefined' && SZAD_USE_TEXT) return;
+  // Two runtimes to satisfy: main thread (has Image + document.createElement)
+  // and render worker (has neither — only fetch + createImageBitmap +
+  // OffscreenCanvas). Both produce a drawable thing drawImage() accepts:
+  // HTMLImageElement on the main thread, ImageBitmap in the worker.
+  const canUseImage = (typeof Image === 'function');
+  const canUseBitmap = (typeof fetch === 'function' &&
+    typeof createImageBitmap === 'function');
+  const canUseOffscreen = (typeof OffscreenCanvas === 'function');
+  
+  const logReady = (key, w, h) => {
+    // worker console is separate; the log shows up in the render worker's
+    // own DevTools context, not the page's — harmless either way.
+    try {
+      console.log('[szad] loaded ' + key + ' ' + w + 'x' + h);
+    } catch (e) {}
+  };
+  const logFail = (key, src, err) => {
+    try {
+      console.warn('[szad] failed to load ' + key + ' from ' + src, err || '');
+    } catch (e) {}
+  };
+  const afterLoad = () => {
+    if (typeof _redrawAllPreviews === 'function') _redrawAllPreviews();
+  };
+  
+  // --- Bitmap path (worker) ---
+  const loadBitmap = (src, key) => {
+    fetch(src).then(r => {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.blob();
+    }).then(b => createImageBitmap(b)).then(bitmap => {
+      const trimmed = canUseOffscreen
+        ? _trimBitmapWhitespace(bitmap)
+        : bitmap;
+      _szadImages[key] = trimmed;
+      logReady(key, trimmed.width, trimmed.height);
+      afterLoad();
+    }).catch(err => logFail(key, src, err));
+  };
+  
+  // --- Image path (main thread) ---
+  const loadImage = (src, key) => {
+    const img = new Image();
+    img.onload = () => {
+      const trimmed = _trimImageWhitespace(img);
+      _szadImages[key] = trimmed;
+      logReady(key, trimmed.width, trimmed.height);
+      afterLoad();
+    };
+    img.onerror = (e) => logFail(key, src, 'onerror');
+    img.src = src;
+  };
+  
+  const load = (canUseImage && typeof document !== 'undefined' &&
+    typeof document.createElement === 'function')
+    ? loadImage
+    : (canUseBitmap ? loadBitmap : null);
+  
+  if (!load) {
+    try { console.warn('[szad] no usable image loader in this context'); } catch (e) {}
+    return;
+  }
+  load('/assets/szad-light.png', 'light');
+  load('/assets/szad-dark.png',  'dark');
+})();
+
+// OffscreenCanvas equivalent of _trimImageWhitespace — used by the worker
+// path. Takes an ImageBitmap, returns a (possibly trimmed) ImageBitmap
+// ready for drawImage. Falls back to the original on any failure.
+function _trimBitmapWhitespace(bitmap) {
+  try {
+    const w = bitmap.width, h = bitmap.height;
+    const oc = new OffscreenCanvas(w, h);
+    const cx = oc.getContext('2d');
+    cx.drawImage(bitmap, 0, 0);
+    const d = cx.getImageData(0, 0, w, h).data;
+    let minX = w, minY = h, maxX = -1, maxY = -1;
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const i = (y * w + x) * 4;
+        const r = d[i], g = d[i+1], b = d[i+2], a = d[i+3];
+        const isContent = a > 16 && !(r > 245 && g > 245 && b > 245);
+        if (isContent) {
+          if (x < minX) minX = x;
+          if (x > maxX) maxX = x;
+          if (y < minY) minY = y;
+          if (y > maxY) maxY = y;
+        }
+      }
+    }
+    if (maxX < minX || maxY < minY) return bitmap;
+    const tw = maxX - minX + 1, th = maxY - minY + 1;
+    const out = new OffscreenCanvas(tw, th);
+    out.getContext('2d').drawImage(bitmap,
+      minX, minY, tw, th,
+      0, 0, tw, th);
+    return out.transferToImageBitmap();
+  } catch (e) {
+    return bitmap;
+  }
+}
+
+// Perceptual luminance (Rec. 709) — true if the hex colour reads as "light".
+function _isLightColor(hex) {
+  if (typeof hex !== 'string') return true;
+  let h = hex.trim();
+  if (h[0] === '#') h = h.slice(1);
+  if (h.length === 3) h = h[0]+h[0]+h[1]+h[1]+h[2]+h[2];
+  if (h.length !== 6) return true;
+  const r = parseInt(h.slice(0,2),16)/255;
+  const g = parseInt(h.slice(2,4),16)/255;
+  const b = parseInt(h.slice(4,6),16)/255;
+  if (![r,g,b].every(Number.isFinite)) return true;
+  return (0.2126*r + 0.7152*g + 0.0722*b) > 0.55;
+}
+
+// Draw the SZAD overlay on a body-local frame (origin at base, +Y down).
+// Only called for locked (default) boosters — see the call site in
+// drawRocketArt. Image variant picked from the body's solid colour:
+//   light body → dark SZAD
+//   dark body  → light SZAD
+// Rotated 90° CW so SZAD reads TOP (nose end) → BOTTOM (base end).
+// One-time-per-body-key log so we can confirm the call fires without
+// spamming every frame. Keyed by role so a booster logs once.
+let _szadCallLogged = false;
+
+
+// Draws SZAD at a caller-provided CSS-pixel anchor (baseX, baseY of the
+// body). Called by outer renderers AFTER their drawRocketArt call has
+// completed and the ctx is back in a clean transform. Inside drawRocketArt
+// the ctx origin sits at a translate-to-base that lands off the visible
+// canvas buffer for tall boosters, so any draw from in there goes
+// off-screen; drawing from outside fixes that.
+function _drawSzadAtAnchor(ctx, anchorX, anchorY, W, H, solidColor) {
+  const isLightBody = _isLightColor(solidColor);
+  
+// Common layout box. Letters wide enough that each stroke spans a
+// meaningful slice of the cylinder gradient — otherwise they read as
+// flat black lines instead of shaded text on a curved surface.
+// Layout box — real F9 proportions: letters wider than tall, lockup
+// occupies a modest band down the body.
+const maxL = H * 0.30;
+const maxD = W * 0.78;
+
+// Vertical nudge as a fraction of body height. Positive = down (toward
+// base), negative = up (toward nose). 0 = dead centre.
+const SZAD_Y_OFFSET_K = 0.15;
+
+ctx.save();
+ctx.globalCompositeOperation = 'source-over';
+// Body centre, plus the offset below. Anchor Y is the base, so we shift
+// the whole lockup DOWN by SZAD_Y_OFFSET_K · H.
+ctx.translate(anchorX, anchorY - H / 2 + H * SZAD_Y_OFFSET_K);
+  // NOTE: no additional rotation needed for text mode — letters stack
+  // directly along body Y (top at -Y, base at +Y). PNG mode (below) uses
+  // a π/2 rotation so the horizontal wordmark reads top→bottom.
+  
+  if (SZAD_USE_TEXT) {
+    _drawSzadText(ctx, maxL, maxD, isLightBody);
+  } else {
+    _drawSzadPng(ctx, maxL, maxD, isLightBody);
+  }
+  
+  ctx.restore();
+}
+
+// ---------------------------------------------------------------------------
+// Text renderer — S Z A D letters stacked vertically along body Y. Blue,
+// solid-ish fill with a subtle vertical-edge darkening so the letters
+// still read as ink on a curved surface. Sized and spaced to match the
+// reference (SpaceX body livery): letters bold, generous vertical gaps,
+// each letter filling most of the body's width without touching edges.
+// ---------------------------------------------------------------------------
+// SZAD font comes from js/szadFont.js (loaded ahead of this file on every
+// page and added to the render worker's importScripts). Family name and
+// loader are globals defined there — this file only consumes them.
+const _szadCache = new Map();
+let _szadFontReady = false;
+let _szadFontReq = false;
+
+function _ensureSzadFont() {
+  if (_szadFontReq) return;
+  if (typeof loadSzadFont !== 'function') return;
+  _szadFontReq = true;
+  loadSzadFont().then((ok) => {
+    if (!ok) return;
+    _szadFontReady = true;
+    _szadCache.clear();
+    if (typeof _redrawAllPreviews === 'function') _redrawAllPreviews();
+  });
+}
+
+
+// Canvas factory that works in BOTH main thread and worker:
+//   main  → document.createElement('canvas')
+//   worker → new OffscreenCanvas()
+// Every canvas creation in the SZAD text renderer must go through this,
+// otherwise the render worker throws `document is not defined` on its
+// first SZAD draw (see the crash trace: _drawSzadText → drawSzadAtAnchor
+// → drawRocketArt → render.worker.js). Cached as a function ref so the
+// typeof test runs once, not per-draw.
+const _szadMakeCanvas = (function() {
+  if (typeof document !== 'undefined' && typeof document.createElement === 'function') {
+    return (w, h) => {
+      const c = document.createElement('canvas');
+      c.width = w; c.height = h;
+      return c;
+    };
+  }
+  if (typeof OffscreenCanvas !== 'undefined') {
+    return (w, h) => new OffscreenCanvas(w, h);
+  }
+  return null;
+})();
+
+function _drawSzadText(ctx, maxL, maxD, isLightBody) {
+  _ensureSzadFont();
+  if (!_szadFontReady) return;   // font load hote hi next frame me aa jayega
+  if (!_szadMakeCanvas) return;  // no canvas factory in this context
+  
+  // ---- Tunables ----
+  const WIDTH_K  = 0.54;   // letter width / body width
+  const ASPECT   = 0.62;   // letter height / width
+  const PITCH_K  = 1.8;    // pitch / letter height
+  const BOLD = 0;   // is font me motai already sahi hai)         // extra stroke thickness (0 = normal Michroma)
+  const Q        = 3;      // supersampling
+
+  const BODY_W = maxD / 0.78;
+  const R = BODY_W / 2;
+  const MAX_LOCK = maxL / 0.30 * 0.45;
+  const letters = ['z', 'a', 'd', 's'];   // lowercase zaroori hai
+
+  // ---- Sizing ----
+  const SCREEN_W = BODY_W * WIDTH_K;
+  let fW = 2 * R * Math.asin(Math.min(0.99, SCREEN_W / 2 / R)); // flat width
+  let gh = fW * ASPECT;
+  let pitch = gh * PITCH_K;
+  let lockH = pitch * (letters.length - 1) + gh;
+  if (lockH > MAX_LOCK) {
+    const k = MAX_LOCK / lockH;
+    fW *= k; gh *= k; pitch *= k; lockH *= k;
+  }
+  const sW = 2 * R * Math.sin(fW / 2 / R);   // on-screen width after wrap
+
+  const key = [fW.toFixed(1), lockH.toFixed(1), R.toFixed(1), isLightBody].join('|');
+  let wrapped = _szadCache.get(key);
+  if (!wrapped) {
+    // 1) flat lockup: har letter same box me fit
+    // 1) flat lockup: har letter same box me fit
+const flat = _szadMakeCanvas(Math.ceil(fW * Q), Math.ceil(lockH * Q));
+const f = flat.getContext('2d');
+    const col = isLightBody ? '#0d5a8f' : '#8cc4ec';
+    f.fillStyle = f.strokeStyle = col;
+    f.font = '400 200px ' + SZAD_FONT_FAMILY;
+    f.textAlign = 'left';
+    f.textBaseline = 'alphabetic';
+    f.lineJoin = 'miter';
+    f.lineWidth = BOLD;
+
+    for (let i = 0; i < letters.length; i++) {
+      const m = f.measureText(letters[i]);
+      const bw = m.actualBoundingBoxLeft + m.actualBoundingBoxRight + BOLD;
+      const bh = m.actualBoundingBoxAscent + m.actualBoundingBoxDescent + BOLD;
+      f.save();
+      f.translate(0, i * pitch * Q);
+      f.scale((fW * Q) / bw, (gh * Q) / bh);
+      const x = m.actualBoundingBoxLeft + BOLD / 2;
+      const y = m.actualBoundingBoxAscent + BOLD / 2;
+      f.fillText(letters[i], x, y);
+      if (BOLD > 0) f.strokeText(letters[i], x, y);
+      f.restore();
+    }
+
+    // 2) cylinder wrap
+    // 2) cylinder wrap
+const outW = Math.ceil(sW * Q), outH = flat.height;
+wrapped = _szadMakeCanvas(outW, outH);
+const w = wrapped.getContext('2d');
+    for (let i = 0; i < outW; i++) {
+      const dx  = (i + 0.5) / Q - sW / 2;
+      const phi = Math.asin(Math.max(-1, Math.min(1, dx / R)));
+      const sx  = (phi * R + fW / 2) * Q;
+      w.drawImage(flat, Math.max(0, Math.min(flat.width - 1, Math.floor(sx))), 0, 1, outH, i, 0, 1, outH);
+    }
+
+    // 3) cylinder shading
+    w.globalCompositeOperation = 'source-atop';
+    const sh = w.createLinearGradient(0, 0, outW, 0);
+    for (let s = 0; s <= 10; s++) {
+      const t = s / 10;
+      const x = (t - 0.5) * sW;
+      const c = Math.cos(Math.asin(Math.max(-1, Math.min(1, x / R))));
+      const dark = Math.pow(1 - c, 0.8) * 1.6;
+      const hi = Math.max(0, 1 - Math.abs(t - 0.42) / 0.3) * 0.22;
+      if (dark > hi) sh.addColorStop(t, `rgba(0,10,25,${Math.min(0.5, dark - hi).toFixed(3)})`);
+      else sh.addColorStop(t, `rgba(255,255,255,${hi.toFixed(3)})`);
+    }
+    w.fillStyle = sh;
+    w.fillRect(0, 0, outW, outH);
+    _szadCache.set(key, wrapped);
+  }
+
+  ctx.drawImage(wrapped, -sW / 2, -lockH / 2, sW, lockH);
+}
+
+// ---------------------------------------------------------------------------
+// PNG renderer — the pre-existing path. Horizontal wordmark rotated so it
+// reads top→bottom along the body. Aspect preserved from the source image.
+// ---------------------------------------------------------------------------
+function _drawSzadPng(ctx, maxL, maxD, isLightBody) {
+  const img = isLightBody ? _szadImages.dark : _szadImages.light;
+  if (!img) return;
+  const iw = img.width, ih = img.height;
+  if (!(iw > 0 && ih > 0)) return;
+  const aspect = iw / ih;
+  let L = maxL;
+  let D = L / aspect;
+  if (D > maxD) {
+    D = maxD;
+    L = D * aspect;
+  }
+  // If aspect-only leaves SZAD below 45% of body length, allow up to
+  // that threshold with a vertical stretch — image stays width-clamped.
+  const minL = maxL * 0.51;   // 0.45 of body ≈ 0.51 of maxL
+  if (L < minL) {
+    L = Math.min(minL, maxL);
+    D = Math.min(maxD, L / aspect);
+  }
+  ctx.save();
+  ctx.globalAlpha = 0.95;
+  ctx.rotate(Math.PI / 2);
+  ctx.drawImage(img, -L / 2, -D / 2, L, D);
+  ctx.restore();
+}
+
+
+// Redraw any visible static previews after an asset finishes loading —
+// previews are one-shot draws, so they miss a late-arriving image unless
+// we nudge them. Live sim render uses rAF and picks the image up
+// automatically, no nudge needed. All calls are typeof-guarded so this
+// works identically on pages that don't have these functions.
+function _redrawAllPreviews() {
+  try {
+    if (typeof viewingId !== 'undefined' && viewingId &&
+        typeof showVehicleDetail === 'function') {
+      showVehicleDetail(viewingId);
+    }
+  } catch (e) {}
+  try {
+    if (typeof editingId !== 'undefined' && editingId &&
+        typeof openEditorFor === 'function') {
+      // Don't re-open editor (loses user form state) — instead just
+      // redraw the preview canvas that's already present.
+      const cv = document.getElementById('vehiclePreviewCanvas');
+      if (cv && typeof renderVehiclePreview === 'function') {
+        const rec = loadFleet().find(r => r.id === editingId);
+        if (rec) renderVehiclePreview(cv, previewVehicleFor(rec));
+      }
+    }
+  } catch (e) {}
+  try {
+    if (typeof _previewMembers !== 'undefined' && _previewMembers.length &&
+        typeof _renderPreviewMember === 'function') {
+      _renderPreviewMember();
+    }
+  } catch (e) {}
+}
+
 // ============================================================================
 // PS-A — Payload space (fairing) shape renderer.
 //
@@ -478,7 +914,8 @@ function drawGridFinFace(ctx, pivotX, pivotY, topX, topY, wPx, hPx, cellPx, styl
 
 function drawRocketArt(ctx, W, H, mpp, opts) {
   opts = opts || {};
-  const legsProgress = opts.legsProgress || 0;
+  
+ const legsProgress = opts.legsProgress || 0;
   const legsState = opts.legsState || null;
   // A5 — which member of the containing body this draw call represents.
   // 0 = bottom (the only member that ever existed pre-multi-member), so
@@ -752,11 +1189,17 @@ const recoveryType = ('recoveryType' in opts) ? opts.recoveryType : null;
     ctx.stroke();
   }
   
-  // BACK legs
-  if (showLegs) {
-    drawLandingLeg(-1, true);
-    drawLandingLeg(1, true);
-  }
+// ---- SZAD overlay — DEFAULT (locked) boosters only ----
+// (SZAD is NOT drawn here — see _drawSzadAtAnchor, called by each
+// outer renderer that has baseX/baseY in scope. drawRocketArt's
+// transform at this point has an off-canvas origin, so any local
+// translate lands the image outside the visible buffer.)
+
+// FRONT legs
+if (showLegs) {
+  drawLandingLeg(-1, false);
+  drawLandingLeg(1, false);
+}
   
   // ---- Body ----
   // Three visual cases:
@@ -1575,13 +2018,23 @@ drawRocketArt(pctx, W, H, mpp, {
     engineThrusters: v.engineThrusters || null,
     params: v.params || null,
     // Grid fins — type object drives finCount/gap, params drive geometry.
-    gridFinType: v.gridFinType || null,
+      // Grid fins — type object drives finCount/gap, params drive geometry.
+  gridFinType: v.gridFinType || null,
     gridFinParams: v.gridFinParams || null,
-    gridFinState: v.gridFinState || null,
-  });
-pctx.restore();
-}
-
+            gridFinState: v.gridFinState || null,
+      // SZAD overlay: only drawn on locked (default) boosters.
+      locked: v.locked === true,
+    });
+    pctx.restore();
+    
+    // SZAD overlay — drawn AFTER drawRocketArt, so the ctx is back in clean
+    // CSS-pixel space (setTransform(dpr,0,0,dpr,0,0)), no off-canvas base
+    // translate active. Only for locked (default) boosters.
+    if (v.locked === true && v.stageRole === 'booster') {
+      const solidColor = (v.bodyDesign && v.bodyDesign.solidColor) || '#e9edf2';
+      _drawSzadAtAnchor(pctx, baseX, baseY, W, H, solidColor);
+    }
+    }
 
 // ---------------------------------------------------------------------------
 // Stack preview — draws all members (bottom→top) stacked vertically on a
@@ -1710,14 +2163,25 @@ const psType = (m.stageRole === 'payloadSpace' && m.payloadSpaceTypeId && typeof
         engineThrusters: m.engineThrusters,
         params: m.params,
         stageAboveBellHeight: stageAboveBellHeight,
-        gridFinType: (m.hasGridFins && m.gridFinTypeId && typeof getComponentType === 'function') ?
-  getComponentType(m.gridFinTypeId) : null,
-  gridFinParams: m.gridFinParams || null,
-  gridFinColor: m.gridFinColor || '#8a9198',
-  ...payloadOpts,
-      });
-      
-      pctx.restore();
-      baseY -= H;
-      });
-      }
+              gridFinType: (m.hasGridFins && m.gridFinTypeId && typeof getComponentType === 'function') ?
+    getComponentType(m.gridFinTypeId) : null,
+    gridFinParams: m.gridFinParams || null,
+    gridFinColor: m.gridFinColor || '#8a9198',
+    // SZAD overlay: only drawn on locked (default) boosters.
+    locked: m.locked === true,
+    ...payloadOpts,
+  });
+  
+  pctx.restore();
+  
+  // SZAD — after restore, clean transform. Uses the member's own
+  // base anchor (baseX, baseY) which is still the current anchor
+  // before the -= H step below.
+  if (m.locked === true && m.stageRole === 'booster') {
+    const solidColor = (m.bodyDesign && m.bodyDesign.solidColor) || '#e9edf2';
+    _drawSzadAtAnchor(pctx, baseX, baseY, W, H, solidColor);
+  }
+  
+  baseY -= H;
+  });
+  }
