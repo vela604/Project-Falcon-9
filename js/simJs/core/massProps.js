@@ -286,9 +286,13 @@ function memberComponents(rec, memberFuelMass, legsProgress, aboveMember, sloshO
         const g = rec.engineThrusters && rec.engineThrusters[gk];
         if (!g) return;
         const t = getComponentType(g.thrusterTypeId);
-        if (!t) return;
-        const veEntry = t.parameterSchema.find(p => p.key === 've');
-        if (!veEntry || !Number.isFinite(g.massFlowRate)) return;
+if (!t) return;
+// Post-Ve-live schema: chemical thrusters use veVacuum (the
+// hardware's vacuum Ve) — atmospheric penalty is applied at runtime
+// by physics.js's _updateEngineVeForBody, not in the mass model.
+// RCS thrusters still use 've' and are not read here.
+const veEntry = t.parameterSchema.find(p => p.key === 'veVacuum');
+if (!veEntry || !Number.isFinite(g.massFlowRate)) return;
         const thrustPer = g.massFlowRate * veEntry.value;
         const massPer = (typeof engineMassFromThrust === 'function') ?
           engineMassFromThrust(t, thrustPer) : NaN;
@@ -320,34 +324,41 @@ function memberComponents(rec, memberFuelMass, legsProgress, aboveMember, sloshO
       recoveryType.frame && typeof recoveryType.frame.hingeGeometry === 'function' &&
       typeof recoveryType.frame.structuralVolume === 'function';
     if (canDeploy) {
-      const legCount = recoveryType.frame.legCount || 4;
-      const legGeo = recoveryType.frame.hingeGeometry(H);
-      
-      // Hinge distance from base (canvas: y=0 base, y=-H nose; convert sign).
-      const hingeLocalY = -legGeo.hingeY;
-      const sweep = legsProgress * legGeo.maxSweepRad;
-      
-      // Tip distance from base, computed LIVE from current deployment.
-      const tipLocalY = hingeLocalY + legGeo.legLength * Math.cos(sweep);
-      // Leg midpoint = leg's COM (per user's simplification).
-      const midLocalY = (hingeLocalY + tipLocalY) / 2;
-      
-      // Leg X position: visible legs at ±W/2, back legs at ±0.375W (matches
-      // rocketArt's 0.75 depth factor). Symmetric → total X cancels, but
-      // each leg contributes to MOI via (x² + y²).
-      const sideXFront = W / 2;
-      const sideXBack = W * 0.375;
-      
-      // Legs use their OWN metal now (rec.legsMetalTypeId) — real F9
-// legs are carbon-fibre composite over aluminium honeycomb, not
-// the al-li airframe. Fall back to body metal if legsMetalTypeId
-// isn't set (legacy record), preserving pre-fix behavior exactly.
-const legsMetal = getComponentType(rec.legsMetalTypeId) ||
-  getComponentType(rec.bodyMetalTypeId);
-const legDensity = (legsMetal && legsMetal.parameterSchema.find(p => p.key === 'density')) ?
-  legsMetal.parameterSchema.find(p => p.key === 'density').value : 1;
-const oneLegMass = recoveryType.frame.structuralVolume(H, W) * legDensity;
-      const legMassOne = oneLegMass; // per leg
+  // Leg geometry anchors to the TANK body, not the full record height.
+  // Matches fleet.js's boosterDerivedMasses / stageDerivedMasses (which
+  // pass tankH/tankW to structuralVolume) and derivation.js's own
+  // _legComponents (also uses tankHeight). Using rec.height here
+  // over-sized every leg on a booster whose tank sits inside a taller
+  // record (interstage counted as leg length → 41.2/34.1 = 20% too heavy).
+  const legH = (rec.fuel && Number.isFinite(rec.fuel.tankHeight)) ? rec.fuel.tankHeight : H;
+  const legW = (rec.fuel && Number.isFinite(rec.fuel.tankWidth)) ? rec.fuel.tankWidth : W;
+  const legCount = recoveryType.frame.legCount || 4;
+  const legGeo = recoveryType.frame.hingeGeometry(legH);
+  
+  // Hinge distance from base (canvas: y=0 base, y=-H nose; convert sign).
+  const hingeLocalY = -legGeo.hingeY;
+  const sweep = legsProgress * legGeo.maxSweepRad;
+  
+  // Tip distance from base, computed LIVE from current deployment.
+  const tipLocalY = hingeLocalY + legGeo.legLength * Math.cos(sweep);
+  // Leg midpoint = leg's COM (per user's simplification).
+  const midLocalY = (hingeLocalY + tipLocalY) / 2;
+  
+  // Leg X position: visible legs at ±legW/2, back legs at ±0.375·legW.
+  // Symmetric → total X cancels; each leg contributes MOI via (x² + y²).
+  const sideXFront = legW / 2;
+  const sideXBack = legW * 0.375;
+  
+  // Legs use their OWN metal (rec.legsMetalTypeId) — real F9 legs are
+  // carbon-fibre composite over aluminium honeycomb, not the al-li
+  // airframe. Falls back to body metal for legacy records.
+  const legsMetal = getComponentType(rec.legsMetalTypeId) ||
+    getComponentType(rec.bodyMetalTypeId);
+  const legDensity = (legsMetal && legsMetal.parameterSchema.find(p => p.key === 'density')) ?
+    legsMetal.parameterSchema.find(p => p.key === 'density').value : 1;
+  const oneLegMass = recoveryType.frame.structuralVolume(legH, legW) * legDensity;
+  const legMassOne = oneLegMass; // per leg
+  
       
       // 4 legs (2 front, 2 back) — symmetric X pairs.
       const legXs = [-sideXFront, sideXFront, -sideXBack, sideXBack];
@@ -357,17 +368,51 @@ const oneLegMass = recoveryType.frame.structuralVolume(H, W) * legDensity;
       // a single component with iOwn = 0 and let the (dx² + dy²) term carry
       // the distance to the member's COM.
       // But to preserve per-leg MOI, iterate here instead:
-      legXs.forEach((lx, i) => {
-        out.push({
-          label: 'leg' + (i + 1),
-          mass: legMassOne,
-          comX: lx,
-          comY: midLocalY,
-          iOwn: _rodI(legMassOne, legGeo.legLength),
-        });
+          legXs.forEach((lx, i) => {
+      out.push({
+        label: 'leg' + (i + 1),
+        mass: legMassOne,
+        comX: lx,
+        comY: midLocalY,
+        iOwn: _rodI(legMassOne, legGeo.legLength),
       });
+    });
     }
-  }
+    }
+    
+    // ---- Grid fins (L/R/F/B) ----
+    // All four fins modelled as a single combined mass at their shared
+    // hinge station (0, finPositionY). Symmetric L/R lateral offsets cancel
+    // by construction, and the F/B pair sits on the axis. Deploy-time motion
+    // of that combined point (fin swinging from "hanging below hinge" to
+    // "extending outward from hinge") is real but negligible for the sim's
+    // totals — (span/2 ≈ 0.75 m) × (600 kg out of ~5×10⁵ kg) is under a
+    // millimetre of CoM shift. Ignoring it here keeps the mass model a
+    // pure function of the RECORD (no live deploy state threading through),
+    // matching how body shell / engine layout / interstage are treated.
+    //
+    // computeGridFinMass() is fleet.js's own formula (wall thickness
+    // derivation, cell fill, SHELL_FACTOR calibration), so the editor's
+    // derived readout and the sim's real mass agree to the kg.
+    if (rec.hasGridFins && typeof computeGridFinMass === 'function') {
+      const gf = computeGridFinMass(rec);
+      if (gf && gf.perFinMass > 0) {
+        const gp = rec.gridFinParams || {};
+        const span = Number.isFinite(gp.span) ? gp.span : 1.5;
+        const finPosY = Number.isFinite(gp.finPositionY) ? gp.finPositionY : 0;
+        const maxY = bodyH > 0 ? bodyH : H;
+        out.push({
+          label: 'gridFins',
+          mass: gf.totalMass,
+          comX: 0,
+          comY: Math.max(0, Math.min(finPosY, maxY)),
+          // Four thin rods of length span, each about its own mid-span.
+          iOwn: gf.finCount * _rodI(gf.perFinMass, span),
+        });
+      }
+    }
+    
+    // ---- Payload space (stage only) ----
   
   // ---- Payload space (stage only) ----
   if (role === 'stage' && typeof stageDerivedMasses === 'function') {

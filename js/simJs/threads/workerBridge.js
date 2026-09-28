@@ -586,9 +586,14 @@ function _collectStackDataForGuidance() {
     if (m.rcsThruster && m.rcsThruster.thrusterTypeId) typeIds.add(m.rcsThruster.thrusterTypeId);
     if (m.payloadSpace && m.payloadSpace.typeId) typeIds.add(m.payloadSpace.typeId);
     if (m.payloadSpace && m.payloadSpace.metalTypeId) typeIds.add(m.payloadSpace.metalTypeId);
-    if (m.chuteTypeId) typeIds.add(m.chuteTypeId);
+      if (m.chuteTypeId) typeIds.add(m.chuteTypeId);
+  // Grid-fin hardware types — needed by derivation.js's inlined grid-fin
+  // mass formula (it reads typeConstants + metal density from these).
+  if (m.gridFinTypeId) typeIds.add(m.gridFinTypeId);
+  if (m.gridFinMetalTypeId) typeIds.add(m.gridFinMetalTypeId);
   });
   const types = {};
+  
   typeIds.forEach(id => {
     if (typeof getComponentType !== 'function') return;
     const t = getComponentType(id);

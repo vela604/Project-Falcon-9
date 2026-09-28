@@ -1461,8 +1461,14 @@ if (payloadType && payloadType.frame && typeof payloadType.frame.structuralVolum
     }
   }
   
-  const dryMassNoPayload = bodyMass + totalEngineMass + payloadContainerMass + legMass;
-  
+  // Grid fins — same treatment as the booster path (computeGridFinMass
+// is shared, so both roles use one formula).
+const gridFinData = (rec.hasGridFins && typeof computeGridFinMass === 'function') ?
+  computeGridFinMass(rec) : null;
+const gridFinMass = gridFinData ? gridFinData.totalMass : 0;
+
+const dryMassNoPayload = bodyMass + totalEngineMass + payloadContainerMass + legMass + gridFinMass;
+
   let D = 0;
   if (effectiveVe > 0) {
     D = fuelMass / (Math.exp(SECOND_STAGE_TARGET_DELTA_V / effectiveVe) - 1);
@@ -1477,13 +1483,14 @@ if (payloadType && payloadType.frame && typeof payloadType.frame.structuralVolum
   const totalWetMassAtMaxPayload = dryMassNoPayload + fuelMass + Math.max(0, maxPayloadMassKg);
   
   return {
-    fuelMass,
-    bodyMass,
-    totalEngineMass,
-    legMass,
-    payloadContainerMass,
-    dryMassNoPayload,
-    effectiveVe,
+  fuelMass,
+  bodyMass,
+  totalEngineMass,
+  legMass,
+  gridFinMass,
+  payloadContainerMass,
+  dryMassNoPayload,
+  effectiveVe,
     totalEngineThrust,
     maxPayloadMassFromDeltaV,
     maxPayloadMassFromThrust,
@@ -1719,7 +1726,14 @@ if (frozenInterstage && Number.isFinite(frozenInterstage.height) && Number.isFin
   interstageMass = computed.mass;
 }
 
-  const dryMass = bodyMass + totalEngineMass + legMass + interstageMass;
+    // Grid fins contribute to dry mass when the booster carries them.
+  // Same formula the editor's derived readout uses, so the number shown
+  // there and the number the sim flies with are identical.
+  const gridFinData = (rec.hasGridFins && typeof computeGridFinMass === 'function') ?
+    computeGridFinMass(rec) : null;
+  const gridFinMass = gridFinData ? gridFinData.totalMass : 0;
+  
+  const dryMass = bodyMass + totalEngineMass + legMass + interstageMass + gridFinMass;
   const wetMass = dryMass + fuelMass;
   
   return {
@@ -1729,6 +1743,7 @@ if (frozenInterstage && Number.isFinite(frozenInterstage.height) && Number.isFin
     legMass,
     interstageMass,
     interstageHeight: interstageH_m,
+    gridFinMass,
     dryMass,
     wetMass,
     effectiveVe,
@@ -1737,7 +1752,7 @@ if (frozenInterstage && Number.isFinite(frozenInterstage.height) && Number.isFin
     infeasible: false,
     warnings,
   };
-}
+  }
 
 // ---------------------------------------------------------------------------
 // Stage ↔ booster compatibility (Phase 3 §1.6 + §1.16).

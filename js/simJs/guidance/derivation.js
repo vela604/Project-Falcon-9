@@ -234,8 +234,55 @@ const twr = typeParam(t, 'twr');
     return out;
   }
   
-  function _memberComponents(rec, aboveRec, memberFuelMass, legsProgress, sloshOffset) {
-    const role = rec.stageRole || 'rocket';
+  // Grid-fin total mass — same formula as fleet.js's computeGridFinMass,
+// inlined here because derivation.js cannot reach fleet.js (guidance
+// worker doesn't load it). Uses typeParam() and getTypeById() — same
+// data the boot handoff already carries for every other type.
+function _gridFinMassFor(rec) {
+  if (!rec || !rec.hasGridFins) return 0;
+  const type = getTypeById(rec.gridFinTypeId);
+  const metal = getTypeById(rec.gridFinMetalTypeId);
+  if (!type || !metal) return 0;
+  const TC = type.typeConstants;
+  if (!TC) return 0;
+  const density = typeParam(metal, 'density');
+  if (!Number.isFinite(density)) return 0;
+  const p = rec.gridFinParams || {};
+  const span = Number.isFinite(p.span) ? p.span : 0;
+  const chord = Number.isFinite(p.chord) ? p.chord : 0;
+  const thickness = Number.isFinite(p.thickness) ? p.thickness : 0;
+  const cellWidth = Number.isFinite(p.cellWidth) ? p.cellWidth : 0;
+  if (!(span > 0) || !(chord > 0) || !(thickness > 0) || !(cellWidth > 0)) return 0;
+  const wallThickness = thickness * TC.WALL_THICKNESS_FACTOR;
+  const cellPitch = cellWidth + wallThickness;
+  const cellFill = 1 - Math.pow(cellWidth / cellPitch, 3);
+  const vOuter = span * chord * thickness;
+  const vMat = vOuter * cellFill * TC.SHELL_FACTOR;
+  const perFinMass = vMat * density;
+  const finCount = (type.frame && Number.isFinite(type.frame.finCount)) ? type.frame.finCount : 4;
+  return perFinMass * finCount;
+}
+
+function _gridFinComponents(rec, bodyH) {
+  const out = [];
+  const mass = _gridFinMassFor(rec);
+  if (!(mass > 0)) return out;
+  const p = rec.gridFinParams || {};
+  const span = Number.isFinite(p.span) ? p.span : 1.5;
+  const finPosY = Number.isFinite(p.finPositionY) ? p.finPositionY : 0;
+  const maxY = (bodyH > 0) ? bodyH : (Number.isFinite(rec.height) ? rec.height : 0);
+  out.push({
+    label: 'gridFins',
+    mass,
+    comX: 0,
+    comY: Math.max(0, Math.min(finPosY, maxY)),
+    iOwn: 4 * _rodI(mass / 4, span),
+  });
+  return out;
+}
+
+function _memberComponents(rec, aboveRec, memberFuelMass, legsProgress, sloshOffset) {
+  const role = rec.stageRole || 'rocket';
     const H = Number.isFinite(rec.height) ? rec.height : 0;
     const W = Number.isFinite(rec.width) ? rec.width : 0;
     const r = W / 2;
@@ -312,9 +359,10 @@ const twr = typeParam(t, 'twr');
       });
     }
     _engineComponents(rec).forEach(c => out.push(c));
-    _legComponents(rec, legsProgress).forEach(c => out.push(c));
-    _fuelComponents(rec, memberFuelMass, sloshOffset).forEach(c => out.push(c));
-    return out;
+_legComponents(rec, legsProgress).forEach(c => out.push(c));
+_gridFinComponents(rec, bodyH).forEach(c => out.push(c));
+_fuelComponents(rec, memberFuelMass, sloshOffset).forEach(c => out.push(c));
+return out;
   }
   
   function _stackMassProps(bodySnapshot, payloadMass) {

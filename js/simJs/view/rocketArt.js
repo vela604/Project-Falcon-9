@@ -1552,8 +1552,8 @@ const baseY = (cssH - contentH) / 2 + H;
   pctx.save();
 pctx.translate(baseX, baseY);
 drawRocketArt(pctx, W, H, mpp, {
-      hasMemberBelow: idx > 0,
-      rcsTopY: m.params ? m.params.rcsTopY : undefined,
+      hasMemberBelow: false,
+      rcsTopY: v.params ? v.params.rcsTopY : undefined,
   rcsBottomY: v.rcsBottomY,
   recoveryType,
   rcsType,

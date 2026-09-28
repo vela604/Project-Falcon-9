@@ -413,9 +413,11 @@ a.back:hover { color: var(--cyan); }
       if (m.rcsThruster && m.rcsThruster.thrusterTypeId) typeIds.add(m.rcsThruster.thrusterTypeId);
       if (m.payloadSpace && m.payloadSpace.typeId) typeIds.add(m.payloadSpace.typeId);
       if (m.payloadSpace && m.payloadSpace.metalTypeId) typeIds.add(m.payloadSpace.metalTypeId);
-      if (m.chuteTypeId) typeIds.add(m.chuteTypeId);
-    });
-    const types = {};
+        if (m.chuteTypeId) typeIds.add(m.chuteTypeId);
+  if (m.gridFinTypeId) typeIds.add(m.gridFinTypeId);
+  if (m.gridFinMetalTypeId) typeIds.add(m.gridFinMetalTypeId);
+  });
+  const types = {};
     typeIds.forEach(id => {
       const t = (typeof getComponentType === 'function') ? getComponentType(id) : null;
       if (t) types[id] = _stripFns(t);
