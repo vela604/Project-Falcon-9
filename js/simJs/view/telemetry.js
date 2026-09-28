@@ -633,11 +633,10 @@ members.forEach((m, idx) => {
     payloadColor: m.color || '#e9edf2',
   } : {};
   
-    figCtx.save();
-  figCtx.translate(baseX, baseY - yOffsetPx);
-  drawRocketArt(figCtx, mW, mH, mpp, {
-        hasMemberBelow: idx > 0,
-        legsProgress: (idx === 0 && body.isActive) ? legs.progress : 0,
+  figCtx.save();
+figCtx.translate(baseX, baseY - yOffsetPx);
+drawRocketArt(figCtx, mW, mH, mpp, {
+      legsProgress: (idx === 0 && body.isActive) ? legs.progress : 0,
       legsState: null,
       // A5 — same as render.js: pod-id lookups need the member's own idx.
       memberIdx: idx,
@@ -653,16 +652,129 @@ members.forEach((m, idx) => {
     bodyDesign: m.bodyDesign,
     payloadSpaceColor: (m.payloadSpace && m.payloadSpace.color) ? m.payloadSpace.color : undefined,
     stagePayload: (typeof buildStagePayload === 'function') ? buildStagePayload(m) : null,
-    engineLayout: engineLayout,
+      engineLayout: engineLayout,
     engineThrusters: m.engineThrusters,
     params: m.params,
     stageAboveBellHeight: stageAboveBellHeight,
+    gridFinType: (m.hasGridFins && m.gridFinTypeId && typeof getComponentType === 'function') ?
+    getComponentType(m.gridFinTypeId) : null,
+    gridFinParams: m.gridFinParams || null,
+    gridFinColor: m.gridFinColor || '#8a9198',
+    gridFinState: body.gridFins || null,
     ...payloadOpts,
   });
-  figCtx.restore();
+    figCtx.restore();
   
   yOffsetPx += mH;
 });
+
+// ---- Per-fin overlay (L/R side fins only — F/B are edge-on in the
+// side view, so their markers would sit on the centerline and clutter).
+// Each visible fin gets its own CoM dot, CoP dot, and a force arrow at
+// the CoP. Positions come from the fin's own deploy angle, exactly as
+// physics.js's _gfAxes defines them; the arrow direction approximates
+// the fin's drag (opposite relative wind) and its length scales with
+// local q × presented area. Purely diagnostic — the sim itself uses the
+// full per-fin model (see computeGridFinAero in physics.js).
+if (body.gridFins && body.members) {
+  body.members.forEach((m, midx) => {
+    if (!m || !m.hasGridFins || !m.gridFinParams) return;
+    const type = (m.gridFinTypeId && typeof getComponentType === 'function')
+      ? getComponentType(m.gridFinTypeId) : null;
+    const gp = m.gridFinParams;
+    const span = Number.isFinite(gp.span) ? gp.span : 1.5;
+    const chord = Number.isFinite(gp.chord) ? gp.chord : 1.2;
+    const thk = Number.isFinite(gp.thickness) ? gp.thickness : 0.4;
+    const finPosY = Number.isFinite(gp.finPositionY) ? gp.finPositionY : 0;
+    const gap = (type && type.frame && Number.isFinite(type.frame.gapM)) ? type.frame.gapM : 0.05;
+    // member base in figure local frame (bottom-up cumulative):
+    let memberBaseY_m = 0;
+    for (let k = 0; k < midx; k++) {
+      memberBaseY_m += (body.members[k] && Number.isFinite(body.members[k].height)) ? body.members[k].height : 0;
+    }
+    const mW = Number.isFinite(m.width) ? m.width : 3.7;
+    const hingeY_m = memberBaseY_m + finPosY;
+    const hullHalf_m = mW / 2 + gap;
+    
+    // CoP marker helper — same baseX/baseY + mpp conversion the per-member
+    // overlay above uses, so the fin markers line up with the hull.
+    const toPx = (bodyX, bodyY) => ({
+      x: baseX + bodyX / mpp,
+      y: baseY - bodyY / mpp,
+    });
+    
+    // Relative wind in body frame (2D) — same convention physics uses.
+    const w = (typeof windInertialVector === 'function') ? windInertialVector(body.rx, body.ry) : { wx: 0, wy: 0 };
+    const sv = (typeof earthSurfaceVelocity === 'function') ? earthSurfaceVelocity(body.rx, body.ry) : { vx: 0, vy: 0 };
+    const relVx_w = body.vx - (w.wx + sv.vx);
+    const relVy_w = body.vy - (w.wy + sv.vy);
+    const cosT = Math.cos(body.theta), sinT = Math.sin(body.theta);
+    const bx = relVx_w * cosT + relVy_w * sinT;
+    const by = -relVx_w * sinT + relVy_w * cosT;
+    const speedBody = Math.hypot(bx, by) || 1;
+    const ux = -bx / speedBody, uy = -by / speedBody; // drag direction
+    const r_km = Math.hypot(body.rx, body.ry);
+    const alt_m = r_km - CONFIG.EARTH_RADIUS;
+    const rho_m = (typeof airDensity === 'function') ? airDensity(Math.max(0, alt_m)) : 0;
+    const q_m = 0.5 * rho_m * speedBody * speedBody;
+    
+    ['L', 'R'].forEach(kind => {
+      const st = body.gridFins[kind];
+      if (!st || !Number.isFinite(st.deploy)) return;
+      const d_rad = st.deploy * Math.PI / 180;
+      const cosd = Math.cos(d_rad), sind = Math.sin(d_rad);
+      const s0 = (kind === 'L') ? -1 : 1;
+      // Span unit vector in body frame.
+      const sx = s0 * cosd;
+      const sy = s0 * sind;
+      const hx = (kind === 'L') ? -hullHalf_m : hullHalf_m;
+      // CoM (and CoP for a symmetric lattice — same location for a uniform plate).
+      const finX = hx + (span / 2) * sx;
+      const finY = hingeY_m + (span / 2) * sy;
+      const pPx = toPx(finX, finY);
+      // Arrow direction: body-frame drag (opposite relative wind), flipped
+      // to screen y (up = +y body → screen up = -y screen).
+      const arrowLen_px = Math.min(40, Math.max(6, q_m * span * chord * 1.2e-4));
+      const aex = pPx.x + ux * arrowLen_px;
+      const aey = pPx.y - uy * arrowLen_px;
+      
+      // CoM dot — orange, same palette as the per-member overlay.
+      figCtx.beginPath();
+      figCtx.arc(pPx.x, pPx.y, 2.4, 0, Math.PI * 2);
+      figCtx.fillStyle = 'rgba(255,170,120,0.95)';
+      figCtx.fill();
+      figCtx.strokeStyle = 'rgba(0,0,0,0.55)';
+      figCtx.lineWidth = 0.7;
+      figCtx.stroke();
+      
+      // CoP dot — cyan, offset by a hair so both are visible when stacked.
+      figCtx.beginPath();
+      figCtx.arc(pPx.x + 0.6, pPx.y + 0.6, 2.4, 0, Math.PI * 2);
+      figCtx.fillStyle = 'rgba(120,220,255,0.95)';
+      figCtx.fill();
+      figCtx.strokeStyle = 'rgba(0,0,0,0.55)';
+      figCtx.lineWidth = 0.7;
+      figCtx.stroke();
+      
+      // Force arrow from the CoP.
+      figCtx.strokeStyle = 'rgba(255,120,90,0.9)';
+      figCtx.lineWidth = 1.4;
+      figCtx.beginPath();
+      figCtx.moveTo(pPx.x, pPx.y);
+      figCtx.lineTo(aex, aey);
+      figCtx.stroke();
+      figCtx.beginPath();
+      figCtx.arc(aex, aey, 2, 0, Math.PI * 2);
+      figCtx.fillStyle = 'rgba(255,120,90,0.9)';
+      figCtx.fill();
+      
+      // Tiny label so the reader knows which side this is.
+      figCtx.fillStyle = 'rgba(180,200,220,0.75)';
+      figCtx.font = '8px "JetBrains Mono", monospace';
+      figCtx.fillText(kind, pPx.x + 5, pPx.y - 4);
+    });
+  });
+}
   
   // ---- Shared aero snapshot: ONE relative wind, ONE angle of attack for
   // the whole connected body — each member just gets its own share/point. ----

@@ -287,14 +287,18 @@ function buildGridFinSerratedF9() {
     typeConstants: {
   WALL_THICKNESS_FACTOR: 0.025, // wall thickness = factor × fin thickness
   SHELL_FACTOR: 0.30, // calibration multiplier on outer solid volume × cellFill
-  maxSlewDeployingDegS: 15, // 90° deploy takes ~6 s
-  maxSlewControllingDegS: 30, // control deflection rate
-  // Physical deflection envelope. Real F9 fins swing ±45° at full
-  // control authority; the vehicle can't mechanically command more.
-  // Both the physics clamp and the UI hold-button range read from
-  // here, so a future fin type with a different envelope (say ±30°)
-  // only changes its own typeConstants — no code edits anywhere.
-  maxControlDeg: 45,
+  // Physical deflection envelope — real Falcon 9 grid fins swing 90°
+  // from stowed (folded against hull) to deployed (perpendicular),
+  // and can then deflect up to ±30° from the perpendicular axis for
+  // active control. Higher control angles exceed the fin's stall
+  // angle (~20-25°); authority peaks around 20° and drops off.
+  maxDeployDeg: 90,
+  maxControlDeg: 30,
+  // Slew rates. Deploy: 90° in ~5 s (matches F9 landing footage).
+  // Control: faster, since the fin needs to respond within a short
+  // control loop, not a slow mechanical deploy.
+  maxSlewDeployingDegS: 18,
+  maxSlewControllingDegS: 40,
 },
     capabilities: {
       deploysOnVehicle: true,

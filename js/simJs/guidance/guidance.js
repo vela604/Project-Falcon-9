@@ -5214,7 +5214,7 @@ function send(msg) {
   function cmdSetAllThrottle(kgPerSec) { return { type: 'setAllThrottle', value: kgPerSec }; }
   function cmdRcs(key, on) { return { type: 'rcs', key, on: !!on }; }
   function cmdLegs(deployed) { return { type: 'legs', deployed: !!deployed }; }
-  function cmdGridFinsDeploy(deployed) { return { type: 'gridFinsDeploy', deployed: !!deployed }; }
+function cmdGridFinsDeploy(deployed) { return { type: 'gridFinsDeploy', deployed: !!deployed }; }
 function cmdGridFinsControl(controlDeg) { return { type: 'gridFinsControl', controlDeg }; }
 function cmdSeparate() { return { type: 'separate' }; }
 function cmdSplitFairing() { return { type: 'splitFairing' }; }

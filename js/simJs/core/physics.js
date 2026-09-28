@@ -294,37 +294,63 @@ function updateLegs(dt) {
 // per-member state, since a rocket's booster and stage are separate bodies
 // after separation, each carrying its own gridFins.
 // ---------------------------------------------------------------------------
+// Fin component type for a body: first member that carries grid fins.
+function bodyGridFinType(body) {
+  if (!body || typeof getComponentType !== 'function') return null;
+  const id = body.gridFinTypeId ||
+    ((body.members || []).find(m => m && m.hasGridFins && m.gridFinTypeId) || {}).gridFinTypeId;
+  return id ? getComponentType(id) : null;
+}
+
 function updateGridFins(body, dt) {
   if (!body || !body.gridFins) return;
-  const type = (body.gridFinTypeId && typeof getComponentType === 'function') ?
-    getComponentType(body.gridFinTypeId) : null;
+  // Early-out when the body carries no grid-fin hardware at all. The
+  // .gridFins state object always exists (inits in _makeBody) so it
+  // can't be used as the presence check — a member with hasGridFins
+  // is the real signal.
+  const _hasAny = (body.members || []).some(m => m && m.hasGridFins);
+  if (!_hasAny) return;
+  // The fin type lives on the MEMBER record that carries the fins
+  // The fin type lives on the MEMBER record that carries the fins
+  // (body.gridFinTypeId is never set on a body), so look it up there.
+  // Reading body.gridFinTypeId silently fell back to the defaults.
+  const type = bodyGridFinType(body);
   const TC = (type && type.typeConstants) ? type.typeConstants : {};
-  const deployRate = Number.isFinite(TC.maxSlewDeployingDegS) ? TC.maxSlewDeployingDegS : 15;
-  const controlRate = Number.isFinite(TC.maxSlewControllingDegS) ? TC.maxSlewControllingDegS : 30;
+  const deployRate = Number.isFinite(TC.maxSlewDeployingDegS) ? TC.maxSlewDeployingDegS : 18;
+  const controlRate = Number.isFinite(TC.maxSlewControllingDegS) ? TC.maxSlewControllingDegS : 40;
+  // Envelope clamps — a command beyond these is capped, same idea as
+  // gimbal's ±GIMBAL_MAX_DEG. Read from the type so a future fin type
+  // with a different envelope only edits its own typeConstants.
+  const maxDeployDeg = Number.isFinite(TC.maxDeployDeg) ? TC.maxDeployDeg : 90;
+  const maxControlDeg = Number.isFinite(TC.maxControlDeg) ? TC.maxControlDeg : 30;
   const deployMaxDelta = deployRate * dt;
   const controlMaxDelta = controlRate * dt;
   
   ['L', 'R', 'FB'].forEach(k => {
     const f = body.gridFins[k];
     if (!f) return;
-    // Deploy slew.
+    // Deploy slew — target clamped to the type's own envelope.
     if (Number.isFinite(f.targetDeploy)) {
-      const d = f.targetDeploy - f.deploy;
-      if (Math.abs(d) <= deployMaxDelta) f.deploy = f.targetDeploy;
+      const clampedTarget = Math.max(-maxDeployDeg, Math.min(maxDeployDeg, f.targetDeploy));
+      const d = clampedTarget - f.deploy;
+      if (Math.abs(d) <= deployMaxDelta) f.deploy = clampedTarget;
       else f.deploy += Math.sign(d) * deployMaxDelta;
     }
     // Control only on FB; L/R are locked at 0 (rotating about X would
-    // leave the 2D plane).
+    // leave the 2D plane). Lock rule still applies: any non-zero deploy
+    // forces control target back to 0.
     if (k === 'FB') {
       if (f.deploy !== 0) f.targetControl = 0;
       if (Number.isFinite(f.targetControl)) {
-        const c = f.targetControl - f.control;
-        if (Math.abs(c) <= controlMaxDelta) f.control = f.targetControl;
+        const clampedCtrl = Math.max(-maxControlDeg, Math.min(maxControlDeg, f.targetControl));
+        const c = clampedCtrl - f.control;
+        if (Math.abs(c) <= controlMaxDelta) f.control = clampedCtrl;
         else f.control += Math.sign(c) * controlMaxDelta;
       }
     }
   });
 }
+
 
 // BUG #6 FIX: returns the real cargo mass still riding on this body — 0
 // once releasePayloadOnActiveBody() has fired, or if this body never had
@@ -344,12 +370,18 @@ function currentGeometry(body) {
   const fuelMass = body ? body.fuelMass : 0;
   const legProgress = (body && body.isActive) ? legs.progress : 0;
   
-  if (members.length && typeof stackMassProps === 'function') {
-  const sloshOffset = (body && body.slosh) ? body.slosh.offset : 0;
-  const memberFuels = (body && Array.isArray(body.memberFuel)) ? body.memberFuel : null;
-  const props = stackMassProps(members, fuelMass, legProgress, _bodyPayloadMass(body), sloshOffset, memberFuels);
-  return { M: props.totalMass, comH: props.comY, comW: props.comX || 0, I: props.moi };
-}
+    if (members.length && typeof stackMassProps === 'function') {
+    const sloshOffset = (body && body.slosh) ? body.slosh.offset : 0;
+    const memberFuels = (body && Array.isArray(body.memberFuel)) ? body.memberFuel : null;
+    // Live per-fin deploy state — asymmetric L/R deploy shifts the fin
+    // group's CoM laterally, which shifts the body's whole CoM, which
+    // changes the thrust-torque lever arm. See massProps.js's grid-fin
+    // branch for the derivation.
+    const gridFinsLive = (body && body.gridFins) ? body.gridFins : null;
+    const props = stackMassProps(members, fuelMass, legProgress, _bodyPayloadMass(body), sloshOffset, memberFuels, gridFinsLive);
+    return { M: props.totalMass, comH: props.comY, comW: props.comX || 0, I: props.moi };
+  }
+  
   // Fallback (empty members) — legacy single-body formula.
     // Fallback (empty members) — free-flying bodies with no stack breakdown:
   // fairing halves, ejected packages, released payloads. Uses the body's
@@ -1009,6 +1041,200 @@ function bodyAeroProfile(body) {
   return { refWidth: refWidth || (CONFIG.ROCKET_WIDTH || 3.9), members };
   }
   
+// ============================================================================
+// GRID FIN AERODYNAMICS
+// ----------------------------------------------------------------------------
+// Every fin is a lattice PANEL with three orthogonal directions:
+//   span (s)      — long in-plane edge (radial when deployed)
+//   chord (c)     — other in-plane edge
+//   thickness (t) — cell depth, perpendicular to the perforated face
+// Flow is resolved into the fin's own (u_s, u_c, u_t) components, so stowed /
+// deployed / mid-slew / control-deflected poses all fall out of ONE model —
+// the fin's axes are rotated by its deploy angle (and control angle for F/B),
+// and area, Cd, CP and force direction follow automatically.
+//
+//   1. FACE THROUGH-FLOW (along t): flow crossing the perforated face. At
+//      zero incidence it only meets the cell walls (solidity σ, small drag).
+//      As the flow tilts, cells progressively "close" (see-through width
+//      shrinks) until blockage → 1 at tanφ = cellW/thickness: a solid plate.
+//        F_t = -½ρ·Cd_face·A_face·B(φ)·|u_t|·u_t ,  A_face = span×chord
+//   2. CELL-WALL CASCADE LIFT (along the IN-PLANE axes, s and c): the cell
+//      walls act as many short wings. Flow with in-plane component u_∥ over
+//      through-flow |u_t| gives force ∝ |u_t|·u_∥ — linear in incidence,
+//      saturating at the cell stall angle. This is the grid fin's real
+//      control mechanism, and it acts ALONG SPAN (and chord).
+//   3. EDGE DRAG (solid frame seen edge-on):
+//        along s: A = chord×thickness      along c: A = span×thickness
+//      At AoA=0 with fins STOWED the flow runs along span → the chord×
+//      thickness "top surface" takes the load.
+//
+// Extras: Mach-dependent drag rise / lift-slope loss (transonic choking),
+// lee-side hull shielding for L/R fins, and ω×r local flow so a rotating
+// vehicle feels grid-fin pitch/yaw damping. Force lines act at the panel's
+// centre (hinge + ½·span·s) so the CP moves as the fin deploys.
+// ============================================================================
+const GRIDFIN_CONTROL_SIGN = +1; // +control = ACW about Z. Flip to -1 if the sign looks mirrored.
+const GF_CD_FACE = 1.25; // solid-plate normal drag coefficient (fully blocked face)
+const GF_CD_EDGE = 1.15; // edge-on frame drag coefficient
+const GF_CNA_GRID = 3.0; // cell-wall cascade normal-force slope, per rad, on A_face
+const GF_SHIELD_MIN = 0.12; // residual wake loading on a fully shadowed lee fin
+const GF_SHIELD_LAT_ON = 0.15; // lateral flow fraction (|sinα|) where shielding starts
+const GF_SHIELD_LAT_FULL = 0.55; // …and where the lee fin is fully in the wake
+
+function _gfSmooth(x, a, b) {
+  if (x <= a) return 0;
+  if (x >= b) return 1;
+  const t = (x - a) / (b - a);
+  return t * t * (3 - 2 * t);
+}
+
+// ISA-style speed of sound (the sim's atmosphere is a bare exponential and
+// carries no temperature, so Mach is estimated from standard-atmosphere T).
+function _gfSpeedOfSound(alt) {
+  const h = Math.max(0, alt);
+  let T;
+  if (h < 11000) T = 288.15 - 0.0065 * h;
+  else if (h < 20000) T = 216.65;
+  else if (h < 47000) T = 216.65 + 0.001 * (h - 20000);
+  else T = 270.65;
+  return Math.sqrt(1.4 * 287.05 * T);
+}
+
+function _gfMachFactors(M) {
+  const pg = Math.min(1.6, 1 / Math.sqrt(Math.max(0.05, 1 - Math.min(M, 0.85) ** 2)));
+  return {
+    // Transonic drag rise on the blocked face (choked flow), settling high.
+    drag: 1 + 1.4 * Math.exp(-(((M - 1.0) / 0.3) ** 2)) + 0.25 * _gfSmooth(M, 1.3, 3.0),
+    // Prandtl-Glauert lift-slope growth, then loss once the lattice chokes.
+    cna: pg * (1 - 0.5 * _gfSmooth(M, 0.9, 1.5)),
+    edge: 1 + 0.6 * Math.exp(-(((M - 1.0) / 0.35) ** 2)),
+  };
+}
+
+// Static per-tick description of every fin on a body (geometry + a snapshot
+// of live deploy/control). Built once per tick alongside bodyAeroProfile().
+function bodyGridFinProfile(body, profile) {
+  if (!body || !body.gridFins || !body.members || !profile || !profile.members) return null;
+  const fins = [];
+  body.members.forEach((m, i) => {
+    if (!m || !m.hasGridFins || !m.gridFinParams) return;
+    const pm = profile.members[i];
+    if (!pm) return;
+    const gp = m.gridFinParams;
+    const type = (m.gridFinTypeId && typeof getComponentType === 'function') ?
+      getComponentType(m.gridFinTypeId) : null;
+    const TC = (type && type.typeConstants) ? type.typeConstants : {};
+    const gap = (type && type.frame && Number.isFinite(type.frame.gapM)) ? type.frame.gapM : 0.05;
+    const span = gp.span, chord = gp.chord, thk = gp.thickness, cw = gp.cellWidth;
+    if (!(span > 0 && chord > 0 && thk > 0 && cw > 0)) return;
+    const wallF = Number.isFinite(TC.WALL_THICKNESS_FACTOR) ? TC.WALL_THICKNESS_FACTOR : 0.025;
+    const open = Math.max(0, 1 - (thk * wallF) / cw);
+    fins.push({
+      span, chord, thk,
+      sigma: Math.max(0.02, Math.min(1, 1 - open * open)), // wall solidity of the face
+      tanBlock: cw / thk, // tanφ at which cells stop being see-through
+      tanStall: Math.min(0.45, cw / thk), // cascade-lift stall (~24°)
+      hingeY: pm.baseY + (Number.isFinite(gp.finPositionY) ? gp.finPositionY : 0),
+      hullHalf: pm.width / 2 + gap,
+    });
+  });
+  if (!fins.length) return null;
+  const g = body.gridFins;
+  const snap = k => ({
+    deploy: (g[k] && Number.isFinite(g[k].deploy)) ? g[k].deploy : 90,
+    control: (g[k] && Number.isFinite(g[k].control)) ? g[k].control : 0,
+  });
+  return { fins, st: { L: snap('L'), R: snap('R'), FB: snap('FB') } };
+}
+
+// Fin-frame unit axes in the body frame (x lateral, y toward nose, z depth).
+// deploy 0 = deployed, ±90 = stowed (L:+90, R:−90, FB:+90); control = ACW
+// rotation about Z (F/B only) applied to the deployed plate about its hinge.
+//   L/R  : hinge axis Z → in-plane rotation.  Deployed: s=±X, t=Y, c=Z.
+//   F/B  : hinge axis X → depth motion.       Deployed: s=±Z, t=Y, c=X.
+// Stowed both fold to s = −Y (hang tailward along the hull).
+function _gfAxes(kind, deployDeg, controlDeg) {
+  const d = deployDeg * Math.PI / 180;
+  const cd = Math.cos(d), sd = Math.sin(d);
+  if (kind === 'L' || kind === 'R') {
+    const s0 = (kind === 'L') ? -1 : 1;
+    return { s: [s0 * cd, s0 * sd, 0], t: [-sd, cd, 0], c: [0, 0, 1] };
+  }
+  let s = [0, -sd, cd], t = [0, cd, sd], c = [1, 0, 0]; // F fin; B mirrors z only
+  if (controlDeg) {
+    const a = GRIDFIN_CONTROL_SIGN * controlDeg * Math.PI / 180;
+    const ca = Math.cos(a), sa = Math.sin(a);
+    const rz = v => [v[0] * ca - v[1] * sa, v[0] * sa + v[1] * ca, v[2]];
+    s = rz(s); t = rz(t); c = rz(c);
+  }
+  return { s, t, c };
+}
+
+// Force (body frame x,y) + torque about CoM from every fin on the body.
+//   bx, by  — CoM velocity relative to the air, body frame
+//   omega   — body angular rate (ACW +)
+function computeGridFinAero(gfp, bx, by, omega, rho, comH, comW, altitude) {
+  let Fx = 0, Fy = 0, torque = 0;
+  const V0 = Math.hypot(bx, by);
+  if (!gfp || !(rho > 0) || V0 < 1e-3) return { Fx, Fy, torque };
+  const q = 0.5 * rho;
+  const w = Math.min(1, Math.abs(bx) / V0); // lateral flow fraction
+  const shieldT = _gfSmooth(w, GF_SHIELD_LAT_ON, GF_SHIELD_LAT_FULL);
+  const kinds = ['L', 'R', 'FB'];
+  
+  gfp.fins.forEach(f => {
+    const Aface = f.span * f.chord;
+    const Aes = f.chord * f.thk; // normal to span
+    const Aec = f.span * f.thk; // normal to chord
+    kinds.forEach(kind => {
+      const st = gfp.st[kind];
+      const ax = _gfAxes(kind, st.deploy, kind === 'FB' ? st.control : 0);
+      const hx = (kind === 'L') ? -f.hullHalf : (kind === 'R') ? f.hullHalf : 0;
+      // Panel centre = hinge + ½·span·s (moves as the fin deploys → CP shift).
+      const xc = hx + 0.5 * f.span * ax.s[0];
+      const yc = f.hingeY + 0.5 * f.span * ax.s[1];
+      const rx = xc - comW, ry = yc - comH;
+      // Local air-relative velocity at the panel (rigid rotation adds ω×r).
+      const vx = bx - omega * ry, vy = by + omega * rx;
+      const V = Math.hypot(vx, vy);
+      if (V < 1e-3) return;
+      const mf = _gfMachFactors(V / _gfSpeedOfSound(altitude));
+      const us = vx * ax.s[0] + vy * ax.s[1];
+      const uc = vx * ax.c[0] + vy * ax.c[1];
+      const ut = vx * ax.t[0] + vy * ax.t[1];
+      const absUt = Math.abs(ut);
+      const inPlane = Math.hypot(us, uc);
+      
+      // 1. Face through-flow with tilt-dependent blockage.
+      const tanPhi = absUt > 1e-9 ? inPlane / absUt : Infinity;
+      const B = f.sigma + (1 - f.sigma) * Math.min(1, tanPhi / f.tanBlock);
+      const Ft = -q * GF_CD_FACE * mf.drag * Aface * B * absUt * ut;
+      // 2. Cell-wall cascade lift along span & chord, saturating at stall.
+      const lim = f.tanStall * absUt;
+      const sat = (inPlane > lim && inPlane > 1e-12) ? lim / inPlane : 1;
+      const kc = -q * GF_CNA_GRID * mf.cna * Aface * absUt * sat;
+      // 3. Solid-frame edge drag.
+      const Fs = kc * us - q * GF_CD_EDGE * mf.edge * Aes * Math.abs(us) * us;
+      const Fc = kc * uc - q * GF_CD_EDGE * mf.edge * Aec * Math.abs(uc) * uc;
+      
+      let fx = Ft * ax.t[0] + Fs * ax.s[0] + Fc * ax.c[0];
+      let fy = Ft * ax.t[1] + Fs * ax.s[1] + Fc * ax.c[1];
+      
+      // Lee-side L/R fin sits in the hull's wake at high lateral flow.
+      if (kind !== 'FB' && bx !== 0 && (hx > 0) !== (bx > 0)) {
+        const S = 1 - (1 - GF_SHIELD_MIN) * shieldT;
+        fx *= S; fy *= S;
+      }
+      // F/B are a front+back PAIR: z components cancel, x,y double.
+      const n = (kind === 'FB') ? 2 : 1;
+      fx *= n; fy *= n;
+      Fx += fx; Fy += fy;
+      torque += rx * fy - ry * fx;
+    });
+  });
+  return { Fx, Fy, torque };
+}
+
   function computeDragAero(s, extra) {
   const cosT = Math.cos(s.theta),
     sinT = Math.sin(s.theta);
@@ -1130,7 +1356,26 @@ const rho = airDensity(altitude);
     });
   }
   
-  return { Fdx, Fdy, dragTorque, alphaDeg, Fnormal };
+  // ---- Grid fins (see GRID FIN AERODYNAMICS above) ----
+  let gfFx = 0, gfFy = 0, gridFinTorque = 0;
+  if (extra && extra.gridFins && speedRel > 1e-3) {
+    const bx = relVx * cosT + relVy * sinT;
+    const by = -relVx * sinT + relVy * cosT;
+    const gf = computeGridFinAero(extra.gridFins, bx, by, Number.isFinite(s.omega) ? s.omega : 0,
+      rho, comH, Number.isFinite(extra.comW) ? extra.comW : 0, altitude);
+    // body frame → inertial
+    gfFx = gf.Fx * cosT - gf.Fy * sinT;
+    gfFy = gf.Fx * sinT + gf.Fy * cosT;
+    gridFinTorque = gf.torque;
+  }
+  
+  return {
+    Fdx: Fdx + gfFx,
+    Fdy: Fdy + gfFy,
+    dragTorque: dragTorque + gridFinTorque,
+    alphaDeg, Fnormal,
+    gridFinTorque,
+  };
 }
 
 // Sum of a body's member heights — used as the reference length for the
@@ -1198,7 +1443,7 @@ function stepState(s0, k, dt) {
 }
 
 // Last-tick breakdown, kept for the telemetry panel.
-let lastForces = { mainFx: 0, mainFy: 0, mainTorque: 0, rcsFx: 0, rcsFy: 0, rcsTorque: 0, mdot: 0, dragFx: 0, dragFy: 0, dragTorque: 0, aoaDeg: 0 };
+let lastForces = { mainFx: 0, mainFy: 0, mainTorque: 0, rcsFx: 0, rcsFy: 0, rcsTorque: 0, mdot: 0, dragFx: 0, dragFy: 0, dragTorque: 0, aoaDeg: 0, gridFinTorque: 0 };
 
 // ---------------------------------------------------------------------------
 // Rigid-body ground contact.
@@ -1626,9 +1871,13 @@ updateGridFins(body, dt);
   M: geom.M,
   I: geom.I,
   comH: geom.comH,
+  comW: geom.comW || 0,
   height: _bodyHeightOf(body),
-  aero: bodyAeroProfile(body),
+  aero: null,
+  gridFins: null,
 };
+extra.aero = bodyAeroProfile(body);
+extra.gridFins = bodyGridFinProfile(body, extra.aero);
 
 // Pneumatic separation pusher — constant acceleration along the body's
 // own local tail (-Y body frame) for the window armed by
@@ -1720,6 +1969,7 @@ if (isActive) {
     dutyTop: rcs.dutyTop || 0,
     dragTorque: aeroTelemetry.dragTorque,
     aoaDeg: aeroTelemetry.alphaDeg,
+    gridFinTorque: aeroTelemetry.gridFinTorque || 0,
   };
 }
 

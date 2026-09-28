@@ -191,7 +191,7 @@ function sloshMassCentroidFrac(hOverR) {
 // legsProgress is applied ONLY to the bottom member (see stackMassProps) —
 // upper members' legs are cosmetically stowed.
 // ---------------------------------------------------------------------------
-function memberComponents(rec, memberFuelMass, legsProgress, aboveMember, sloshOffset, frozenInterstage) {
+function memberComponents(rec, memberFuelMass, legsProgress, aboveMember, sloshOffset, frozenInterstage, gridFinsLive) {
   const out = [];
   if (!rec) return out;
   const role = rec.stageRole || 'rocket';
@@ -394,22 +394,49 @@ if (!veEntry || !Number.isFinite(g.massFlowRate)) return;
     // derivation, cell fill, SHELL_FACTOR calibration), so the editor's
     // derived readout and the sim's real mass agree to the kg.
     if (rec.hasGridFins && typeof computeGridFinMass === 'function') {
-      const gf = computeGridFinMass(rec);
-      if (gf && gf.perFinMass > 0) {
-        const gp = rec.gridFinParams || {};
-        const span = Number.isFinite(gp.span) ? gp.span : 1.5;
-        const finPosY = Number.isFinite(gp.finPositionY) ? gp.finPositionY : 0;
-        const maxY = bodyH > 0 ? bodyH : H;
-        out.push({
-          label: 'gridFins',
-          mass: gf.totalMass,
-          comX: 0,
-          comY: Math.max(0, Math.min(finPosY, maxY)),
-          // Four thin rods of length span, each about its own mid-span.
-          iOwn: gf.finCount * _rodI(gf.perFinMass, span),
-        });
-      }
+  const gf = computeGridFinMass(rec);
+  if (gf && gf.perFinMass > 0) {
+    const gp = rec.gridFinParams || {};
+    const span = Number.isFinite(gp.span) ? gp.span : 1.5;
+    const finPosY = Number.isFinite(gp.finPositionY) ? gp.finPositionY : 0;
+    const maxY = bodyH > 0 ? bodyH : H;
+    const hingeY = Math.max(0, Math.min(finPosY, maxY));
+    // Live per-fin deploy state (body.gridFins). When absent — previews,
+    // fleet readouts, pre-flight calculations — every fin defaults to
+    // the deployed pose, which is laterally symmetric (comX = 0) and
+    // matches the pre-live-state behaviour.
+    //
+    // WHY THIS MATTERS: with L deployed and R stowed, the L fin hangs
+    // sideways while R still folds tailward. Their combined CoM drifts
+    // LATERALLY off the centerline (~19 cm for a 1.5 m F9 fin). That
+    // shifts the whole body's CoM, which in turn gives the main-engine
+    // thrust — applied on-axis at the base — a lever arm about CoM.
+    // At ~800 kN that is ~150 kN·m of attitude torque, comparable to
+    // max RCS authority. Previously all four fins sat at (0, hingeY),
+    // so this effect was silently zero.
+    //
+    // Combined CoM of the four fins, derived from each fin's span
+    // direction (see physics.js _gfAxes):
+    //   comX = (span/8)·(cos(d_R) − cos(d_L))
+    //   comY = hingeY − (span/8)·(sin(d_L) − sin(d_R) + 2·sin(d_FB))
+    // Both collapse to 0 / hingeY when L and R are symmetric.
+    let dL = 0, dR = 0, dFB = 0;
+    if (gridFinsLive) {
+      dL = (gridFinsLive.L && Number.isFinite(gridFinsLive.L.deploy)) ? gridFinsLive.L.deploy * Math.PI / 180 : 0;
+      dR = (gridFinsLive.R && Number.isFinite(gridFinsLive.R.deploy)) ? gridFinsLive.R.deploy * Math.PI / 180 : 0;
+      dFB = (gridFinsLive.FB && Number.isFinite(gridFinsLive.FB.deploy)) ? gridFinsLive.FB.deploy * Math.PI / 180 : 0;
     }
+    const comX_fin = (span / 8) * (Math.cos(dR) - Math.cos(dL));
+    const comY_fin = hingeY - (span / 8) * (Math.sin(dL) - Math.sin(dR) + 2 * Math.sin(dFB));
+    out.push({
+      label: 'gridFins',
+      mass: gf.totalMass,
+      comX: comX_fin,
+      comY: comY_fin,
+      iOwn: gf.finCount * _rodI(gf.perFinMass, span),
+    });
+  }
+}
     
     // ---- Payload space (stage only) ----
   
@@ -555,7 +582,7 @@ function combineComponents(components) {
 // levels come from here instead of a proportional-by-capacity split of
 // fuelMassTotal. Caller passes this after the per-member fuel refactor
 // so each tank drains independently — engines burn their own tank only.
-function stackMassProps(members, fuelMassTotal, legsProgress, payloadMass, sloshOffset, memberFuels) {
+function stackMassProps(members, fuelMassTotal, legsProgress, payloadMass, sloshOffset, memberFuels, gridFinsLive) {
   members = members || [];
   const usePerMember = Array.isArray(memberFuels) && memberFuels.length === members.length;
   
@@ -581,28 +608,29 @@ function stackMassProps(members, fuelMassTotal, legsProgress, payloadMass, slosh
   let yOffset = 0;
   let payloadSpaceComY = null;
   members.forEach((m, i) => {
-      const progress = (i === 0) ? (legsProgress || 0) : 0;
-      const memberFuel = usePerMember ?
-        Math.max(0, memberFuels[i] || 0) :
-        (sumMax > 0 ? fuelTotal * (maxFuels[i] / sumMax) : 0);
-        // Only boosters have a stack-derived interstage; other member types
-        // ignore this field (memberComponents only reads it on the booster path).
-        const frozenInterstage = frozenInterstageMap[m.id] || null;
-        // Phase 2A: only the BOTTOM member (i === 0) ever gets a nonzero slosh
-        // offset passed through — see prompt_2phase.md §2A "only the bottom
-        // tank matters".
-        const comps = memberComponents(m, memberFuel, progress, members[i + 1] || null, i === 0 ? sloshOffset : undefined, frozenInterstage);    comps.forEach(c => {
-      // comps are freshly built by memberComponents() every call and never
-      // shared/cached elsewhere, so mutating in place (instead of spreading
-      // into a new object) is safe and skips one allocation per component.
-      c.comY += yOffset;
-      all.push(c);
-    });
-    if (m && m.stageRole === 'payloadSpace' && Number.isFinite(m.height)) {
-      payloadSpaceComY = yOffset + m.height / 2;
-    }
-    yOffset += Number.isFinite(m.height) ? m.height : 0;
+  const progress = (i === 0) ? (legsProgress || 0) : 0;
+  const memberFuel = usePerMember ?
+    Math.max(0, memberFuels[i] || 0) :
+    (sumMax > 0 ? fuelTotal * (maxFuels[i] / sumMax) : 0);
+  // Only boosters have a stack-derived interstage; other member types
+  // ignore this field (memberComponents only reads it on the booster path).
+  const frozenInterstage = frozenInterstageMap[m.id] || null;
+  // Phase 2A: only the BOTTOM member (i === 0) ever gets a nonzero slosh
+  // offset passed through — see prompt_2phase.md §2A "only the bottom
+  // tank matters".
+  const comps = memberComponents(m, memberFuel, progress, members[i + 1] || null, i === 0 ? sloshOffset : undefined, frozenInterstage, gridFinsLive);
+  // comps are freshly built by memberComponents() every call and never
+  // shared/cached elsewhere, so mutating in place (instead of spreading
+  // into a new object) is safe and skips one allocation per component.
+  comps.forEach(c => {
+    c.comY += yOffset;
+    all.push(c);
   });
+  if (m && m.stageRole === 'payloadSpace' && Number.isFinite(m.height)) {
+    payloadSpaceComY = yOffset + m.height / 2;
+  }
+  yOffset += Number.isFinite(m.height) ? m.height : 0;
+});
   
   // Real assigned cargo mass — the caller (physics.js's _bodyPayloadMass())
   // already resolves this to a plain number (0 once released / if this body

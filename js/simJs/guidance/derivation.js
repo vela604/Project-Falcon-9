@@ -263,7 +263,7 @@ function _gridFinMassFor(rec) {
   return perFinMass * finCount;
 }
 
-function _gridFinComponents(rec, bodyH) {
+function _gridFinComponents(rec, bodyH, gridFinsLive) {
   const out = [];
   const mass = _gridFinMassFor(rec);
   if (!(mass > 0)) return out;
@@ -271,17 +271,30 @@ function _gridFinComponents(rec, bodyH) {
   const span = Number.isFinite(p.span) ? p.span : 1.5;
   const finPosY = Number.isFinite(p.finPositionY) ? p.finPositionY : 0;
   const maxY = (bodyH > 0) ? bodyH : (Number.isFinite(rec.height) ? rec.height : 0);
+  const hingeY = Math.max(0, Math.min(finPosY, maxY));
+  // Mirror of massProps.js's grid-fin CoM derivation — same formulas so
+  // guidance's mass model stays in lockstep with physics. See that file
+  // for the full reasoning (asymmetric L/R deploy → lateral CoM shift).
+  let dL = 0, dR = 0, dFB = 0;
+  if (gridFinsLive) {
+    dL = (gridFinsLive.L && Number.isFinite(gridFinsLive.L.deploy)) ? gridFinsLive.L.deploy * Math.PI / 180 : 0;
+    dR = (gridFinsLive.R && Number.isFinite(gridFinsLive.R.deploy)) ? gridFinsLive.R.deploy * Math.PI / 180 : 0;
+    dFB = (gridFinsLive.FB && Number.isFinite(gridFinsLive.FB.deploy)) ? gridFinsLive.FB.deploy * Math.PI / 180 : 0;
+  }
+  const comX_fin = (span / 8) * (Math.cos(dR) - Math.cos(dL));
+  const comY_fin = hingeY - (span / 8) * (Math.sin(dL) - Math.sin(dR) + 2 * Math.sin(dFB));
   out.push({
     label: 'gridFins',
     mass,
-    comX: 0,
-    comY: Math.max(0, Math.min(finPosY, maxY)),
+    comX: comX_fin,
+    comY: comY_fin,
     iOwn: 4 * _rodI(mass / 4, span),
   });
   return out;
 }
 
-function _memberComponents(rec, aboveRec, memberFuelMass, legsProgress, sloshOffset) {
+
+function _memberComponents(rec, aboveRec, memberFuelMass, legsProgress, sloshOffset, gridFinsLive) {
   const role = rec.stageRole || 'rocket';
     const H = Number.isFinite(rec.height) ? rec.height : 0;
     const W = Number.isFinite(rec.width) ? rec.width : 0;
@@ -360,7 +373,7 @@ function _memberComponents(rec, aboveRec, memberFuelMass, legsProgress, sloshOff
     }
     _engineComponents(rec).forEach(c => out.push(c));
 _legComponents(rec, legsProgress).forEach(c => out.push(c));
-_gridFinComponents(rec, bodyH).forEach(c => out.push(c));
+_gridFinComponents(rec, bodyH, gridFinsLive).forEach(c => out.push(c));
 _fuelComponents(rec, memberFuelMass, sloshOffset).forEach(c => out.push(c));
 return out;
   }
@@ -387,7 +400,7 @@ return out;
         (sumMax > 0 ? fuelTotal * (maxFuels[i] / sumMax) : 0);
         const memberLegs = (i === 0) ? legsProgress : 0;
       const memberSlosh = (i === 0) ? sloshOffset : 0;
-      const comps = _memberComponents(m, members[i + 1] || null, memberFuel, memberLegs, memberSlosh);
+      const comps = _memberComponents(m, members[i + 1] || null, memberFuel, memberLegs, memberSlosh, bodySnapshot.gridFins);
       comps.forEach(c => all.push({ ...c, comY: c.comY + yOffset, _memberIdx: i }));
       if (m.stageRole === 'payloadSpace') {
         payloadSpaceComY = yOffset + (m.height || 0) / 2;

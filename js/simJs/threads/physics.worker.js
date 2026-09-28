@@ -453,19 +453,26 @@ b.omega = msg.omega || 0;
       break;
     }
     
-    case 'gridFinsDeploy': {
-  const b = resolveTargetBody(msg.targetBodyIdx);
-  if (!b || !b.gridFins) break;
-  // Deployed: all targets → 0. Stowed: per-fin sign (L=+90, R=−90,
-  // FB=+90 — FB covers both F and B, which mirror internally).
-  ['L', 'R', 'FB'].forEach(k => {
-    const f = b.gridFins[k];
-    if (!f) return;
-    if (msg.deployed) f.targetDeploy = 0;
-    else f.targetDeploy = (k === 'R') ? -90 : 90;
-  });
-  break;
-}
+        case 'gridFinsDeploy': {
+      const b = resolveTargetBody(msg.targetBodyIdx);
+      if (!b || !b.gridFins) break;
+      // Envelope comes from the fin type's own typeConstants (same source
+      // updateGridFins reads), so a fin type with a different swing only
+      // edits its own seed values.
+      const gfType = (typeof bodyGridFinType === 'function') ? bodyGridFinType(b) : null;
+      const maxDeploy = (gfType && gfType.typeConstants &&
+          Number.isFinite(gfType.typeConstants.maxDeployDeg)) ?
+        gfType.typeConstants.maxDeployDeg : 90;
+      // Deployed: all targets → 0. Stowed: per-fin sign (L=+, R=−, FB=+;
+      // FB covers both F and B, which mirror internally).
+      ['L', 'R', 'FB'].forEach(k => {
+        const f = b.gridFins[k];
+        if (!f) return;
+        if (msg.deployed) f.targetDeploy = 0;
+        else f.targetDeploy = (k === 'R') ? -maxDeploy : maxDeploy;
+      });
+      break;
+    }
 case 'gridFinsControl': {
   const b = resolveTargetBody(msg.targetBodyIdx);
   if (!b || !b.gridFins) break;
@@ -473,13 +480,12 @@ case 'gridFinsControl': {
   // property of the fin type (typeConstants.maxControlDeg) — read
   // from there rather than hardcoding. updateGridFins() forces
   // control back to 0 if FB isn't deployed.
-  const bottomMember = b.members && b.members[0];
-  const gfType = (bottomMember && bottomMember.gridFinTypeId &&
-      typeof getComponentType === 'function') ?
-    getComponentType(bottomMember.gridFinTypeId) : null;
-  const maxCtrl = (gfType && gfType.typeConstants &&
-      Number.isFinite(gfType.typeConstants.maxControlDeg)) ?
-    gfType.typeConstants.maxControlDeg : 45;
+  // First member that actually carries fins (not blindly members[0] —
+  // after separation the fins may sit on a different member).
+  const gfType = (typeof bodyGridFinType === 'function') ? bodyGridFinType(b) : null;
+const maxCtrl = (gfType && gfType.typeConstants &&
+    Number.isFinite(gfType.typeConstants.maxControlDeg)) ?
+  gfType.typeConstants.maxControlDeg : 30;
   const f = b.gridFins.FB;
   if (f && Number.isFinite(msg.controlDeg)) {
     f.targetControl = Math.max(-maxCtrl, Math.min(maxCtrl, msg.controlDeg));

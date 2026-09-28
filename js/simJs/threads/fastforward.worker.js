@@ -300,11 +300,15 @@ function localDispatch(msg) {
     }
     case 'gridFinsDeploy': {
   if (!b || !b.gridFins) break;
+  const gfType = (typeof bodyGridFinType === 'function') ? bodyGridFinType(b) : null;
+  const maxDeploy = (gfType && gfType.typeConstants &&
+      Number.isFinite(gfType.typeConstants.maxDeployDeg)) ?
+    gfType.typeConstants.maxDeployDeg : 90;
   ['L', 'R', 'FB'].forEach(k => {
     const f = b.gridFins[k];
     if (!f) return;
     if (msg.deployed) f.targetDeploy = 0;
-    else f.targetDeploy = (k === 'R') ? -90 : 90;
+    else f.targetDeploy = (k === 'R') ? -maxDeploy : maxDeploy;
   });
   break;
 }
