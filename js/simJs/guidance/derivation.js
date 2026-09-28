@@ -665,12 +665,23 @@ const massProps = hasMembers ?
     });
     
     const torqueRcs = 0;
-    const torqueTotal = torqueEngine + torqueDrag + torqueRcs;
-    const _I = massProps.I > 0 ? massProps.I : 0;
-    const alphaEngine = _I > 0 ? torqueEngine / _I : 0;
-    const alphaDrag   = _I > 0 ? torqueDrag   / _I : 0;
-    const alphaRcs    = _I > 0 ? torqueRcs    / _I : 0;
-    const alphaAng    = _I > 0 ? torqueTotal  / _I : 0;
+// Gravity-gradient torque — mirror of physics.js's
+// gravityGradientTorque(), same formula, same slender-body
+// simplification (I_axial ≈ 0). Guidance's own controller
+// predictions must account for it or its attitude-hold loops will
+// see a phantom imbalance during long coasts.
+const _localVertGG = Math.atan2(-rx, ry);
+const _betaGG = theta - _localVertGG;
+const torqueGravityGradient = (massProps.I > 0 && r > 1) ?
+  -1.5 * env.GM_EARTH / (r * r * r) * massProps.I * Math.sin(2 * _betaGG) :
+  0;
+const torqueTotal = torqueEngine + torqueDrag + torqueRcs + torqueGravityGradient;
+const _I = massProps.I > 0 ? massProps.I : 0;
+const alphaEngine = _I > 0 ? torqueEngine / _I : 0;
+const alphaDrag = _I > 0 ? torqueDrag / _I : 0;
+const alphaRcs = _I > 0 ? torqueRcs / _I : 0;
+const alphaGG = _I > 0 ? torqueGravityGradient / _I : 0;
+const alphaAng = _I > 0 ? torqueTotal / _I : 0;
     
     return {
       rx, ry, vx, vy, theta, omega,
@@ -683,8 +694,15 @@ const massProps = hasMembers ?
       dragMag, dragVecX, dragVecY,
       thrustTotal, mdotTotal, thrustBodyX, thrustBodyY,
       massProps,
-      torqueEngine, torqueDrag, torqueRcs, torqueTotal,
-      alphaEngine, alphaDrag, alphaRcs, alphaAng,
+// torqueDrag = aero only; torqueGravityGradient = GG only;
+// torqueEnvironmental = their sum. Guides that want to cancel
+// EVERY external attitude disturbance with gimbal/RCS should
+// reference the combined field, not torqueDrag — otherwise the
+// GG contribution goes uncancelled and slowly drifts attitude
+// during long coasts.
+torqueEngine, torqueDrag, torqueGravityGradient, torqueEnvironmental: torqueDrag + torqueGravityGradient,
+  torqueRcs, torqueTotal,
+  alphaEngine, alphaDrag, alphaRcs, alphaGG, alphaAng,
       memberBreakdown,
       hasMembers,
     };

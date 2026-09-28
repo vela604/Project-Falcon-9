@@ -1401,6 +1401,44 @@ function _bodyWidthOf(body) {
   return (body && Number.isFinite(body.width)) ? body.width : (CONFIG.ROCKET_WIDTH || 3.9);
 }
 
+
+// ---------------------------------------------------------------------------
+// Gravity-gradient torque — the differential pull of a non-uniform
+// gravity field across a long body. Textbook pitch-plane form:
+//
+//   τ = -(3/2)·(GM/r³)·(I_trans − I_axial)·sin(2·β)
+//
+// where β is the tilt between the body's long axis and the local
+// vertical (β = θ − localVert). Zero at β = 0°, 90°, 180°; peak at 45°.
+// Restoring for a slender body (I_trans > I_axial) — the long axis
+// prefers to point radially, which is the same effect that tidally locks
+// the Moon to Earth.
+//
+// Magnitude for an F9 stack in LEO: I ≈ 2e8 kg·m², GM/r³ ≈ 1.3e-6 s⁻²
+// → τ_peak ≈ 380 N·m. Small vs RCS (~12 kN·m) but real; matters most
+// during long coast phases where nothing else is damping attitude.
+//
+// I_axial (inertia about the long axis) is not modelled by this sim's
+// 2D mass pipeline — for any real rocket it's ~0.5% of I_transverse
+// (thin-cylinder axial inertia << pitch-plane inertia). Ignoring it
+// reduces the formula above to the classic dumbbell result and overstates
+// τ_gg by that same 0.5% — negligible.
+//
+// Depends on attitude, so evaluated fresh at each RK4 sub-step inside
+// derivatives() from the sub-step state s, not cached per-tick.
+// ---------------------------------------------------------------------------
+function gravityGradientTorque(s, extra) {
+  const r2 = s.rx * s.rx + s.ry * s.ry;
+  if (!(r2 > 1)) return 0;
+  const r3 = r2 * Math.sqrt(r2);
+  const I = extra.I;
+  if (!(I > 0)) return 0;
+  const localVert = Math.atan2(-s.rx, s.ry);
+  const beta = s.theta - localVert;
+  return -1.5 * CONFIG.GM_EARTH / r3 * I * Math.sin(2 * beta);
+}
+
+
 function derivatives(s, extra) {
   // Use the mass currentGeometry() already computed for this body this
   // tick — NOT s.dryMass + s.fuelMass. The dryMass/fuelMass pair is only
@@ -1421,11 +1459,15 @@ function derivatives(s, extra) {
   const Fy_i = extra.Fx * sinT + extra.Fy * cosT;
   
   const aero = computeDragAero(s, extra);
-  
-  const ax = grav.ax + (Fx_i + aero.Fdx) / M;
-  const ay = grav.ay + (Fy_i + aero.Fdy) / M;
-  const alpha = (extra.torque + aero.dragTorque) / extra.I;
-  
+
+// Gravity-gradient torque — attitude-dependent, so evaluated fresh per
+// RK4 sub-step (its contribution varies within the tick as θ evolves).
+const ggTau = gravityGradientTorque(s, extra);
+
+const ax = grav.ax + (Fx_i + aero.Fdx) / M;
+const ay = grav.ay + (Fy_i + aero.Fdy) / M;
+const alpha = (extra.torque + aero.dragTorque + ggTau) / extra.I;
+
   return { vx: s.vx, vy: s.vy, ax, ay, omega: s.omega, alpha };
 }
 

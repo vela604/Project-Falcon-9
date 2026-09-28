@@ -4057,7 +4057,11 @@ function _leoTickV2(snapshot) {
         const kd = LEO_INSERTION_V2.ASCENT.COAST_DAMP_K;
         tau_desired = (-I_next * gain * dNext.alphaDeg) / (kd * kd);
       }
-      const tau_target = tau_desired - dNext.torqueDrag;
+      // Cancel BOTH aero and gravity-gradient torque. GG is small
+// (~380 N·m at LEO) but sustained over the long STAGE_BURN; the
+// gimbal has plenty of authority, and cancelling both keeps the
+// stage on the tilt-lock instead of letting GG slowly drift it.
+const tau_target = tau_desired - dNext.torqueEnvironmental;
 
       // Gimbal solve
       const g_N = gimbals[0].gimbalDeg || 0;
