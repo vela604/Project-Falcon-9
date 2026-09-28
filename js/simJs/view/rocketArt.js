@@ -293,6 +293,15 @@ ctx.translate(anchorX, anchorY - H / 2 + H * SZAD_Y_OFFSET_K);
   }
   
   ctx.restore();
+  
+  // India flag, near the top of the booster
+  const FLAG_Y_OFFSET_K = -0.30; // centre se: negative = upar, positive = neeche
+  ctx.save();
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.translate(anchorX, anchorY - H / 2 + H * FLAG_Y_OFFSET_K);
+  _drawIndiaFlag(ctx, W, H);
+  ctx.restore();
+  
 }
 
 // ---------------------------------------------------------------------------
@@ -343,6 +352,117 @@ const _szadMakeCanvas = (function() {
   }
   return null;
 })();
+
+
+// Decal shading that matches the ACTUAL booster body gradient.
+// Profile measured from the rendered body (u = 0 left edge … 1 right edge,
+// value = brightness relative to the brightest column). Peak sits at the
+// centre, right side falls off a bit faster than the left.
+const _BODY_SHADE = [0.866, 0.892, 0.922, 0.951, 0.978, 1.0, 0.976, 0.934, 0.900, 0.848, 0.80];
+
+function _bodyShade(u) {
+  const x = Math.max(0, Math.min(1, u)) * (_BODY_SHADE.length - 1);
+  const i = Math.min(_BODY_SHADE.length - 2, Math.floor(x));
+  return _BODY_SHADE[i] + (_BODY_SHADE[i + 1] - _BODY_SHADE[i]) * (x - i);
+}
+
+// w      : 2D ctx of the already-wrapped decal canvas
+// outW/H : its pixel size
+// sW     : decal on-screen width (CSS px)   W : full BODY width (CSS px)
+// Darkens only (multiply-like), so the decal colour stays true at the
+// brightest column and dims exactly as much as the body underneath.
+function _decalShade(w, outW, outH, sW, W) {
+  w.save();
+  w.globalCompositeOperation = 'source-atop';
+  const g = w.createLinearGradient(0, 0, outW, 0);
+  for (let s = 0; s <= 12; s++) {
+    const t = s / 12;                              // across the decal
+    const u = 0.5 + (t - 0.5) * (sW / W);          // across the BODY
+    g.addColorStop(t, `rgba(0,0,0,${(1 - _bodyShade(u)).toFixed(3)})`);
+  }
+  w.fillStyle = g;
+  w.fillRect(0, 0, outW, outH);
+  w.restore();
+}
+
+
+// India flag on the booster body — same cylinder wrap + shading as SZAD.
+// Paste this ANYWHERE below _szadMakeCanvas (same file as _drawSzadAtAnchor).
+const _flagCache = new Map();
+
+function _drawIndiaFlag(ctx, W, H) {
+  if (!_szadMakeCanvas) return;
+
+  // ---- Tunables ----
+  const WIDTH_K = 0.56;    // flag width / body width
+  const ASPECT  = 2 / 3;   // flag height / width (India = 2:3)
+  const MAX_H_K = 0.10;    // flag height cap as fraction of body height
+  const Q       = 3;       // supersampling
+
+  const R = W / 2;
+  let fW = 2 * R * Math.asin(Math.min(0.99, (W * WIDTH_K) / 2 / R)); // flat width
+  let fH = fW * ASPECT;
+  if (fH > H * MAX_H_K) {            // short boosters: scale down
+    const k = (H * MAX_H_K) / fH;
+    fW *= k; fH *= k;
+  }
+  const sW = 2 * R * Math.sin(fW / 2 / R);   // on-screen width after wrap
+
+  const key = [fW.toFixed(1), fH.toFixed(1), R.toFixed(1)].join('|');
+  let wrapped = _flagCache.get(key);
+  if (!wrapped) {
+    // 1) flat flag
+    const fw = Math.ceil(fW * Q), fh = Math.ceil(fH * Q);
+    const flat = _szadMakeCanvas(fw, fh);
+    const f = flat.getContext('2d');
+    const bh = fh / 3;
+    f.fillStyle = '#D9822F'; f.fillRect(0, 0, fw, bh);
+    f.fillStyle = '#EEF0F4'; f.fillRect(0, bh, fw, bh);
+    f.fillStyle = '#1F6B3C'; f.fillRect(0, 2 * bh, fw, fh - 2 * bh);
+
+    // Ashoka Chakra: diameter = 3/4 of white band, 24 spokes
+    const cx = fw / 2, cy = fh / 2, r = bh * 0.375;
+    f.strokeStyle = f.fillStyle = '#1F3070';
+    f.lineWidth = Math.max(1, r * 0.13);
+    f.beginPath(); f.arc(cx, cy, r, 0, Math.PI * 2); f.stroke();
+    f.lineWidth = Math.max(0.6, r * 0.05);
+    f.beginPath();
+    for (let i = 0; i < 24; i++) {
+      const a = (i / 24) * Math.PI * 2;
+      f.moveTo(cx, cy);
+      f.lineTo(cx + Math.cos(a) * r, cy + Math.sin(a) * r);
+    }
+    f.stroke();
+    f.beginPath(); f.arc(cx, cy, r * 0.13, 0, Math.PI * 2); f.fill();
+
+    // 2) cylinder wrap
+    const outW = Math.ceil(sW * Q), outH = fh;
+    wrapped = _szadMakeCanvas(outW, outH);
+    const w = wrapped.getContext('2d');
+    for (let i = 0; i < outW; i++) {
+      const dx  = (i + 0.5) / Q - sW / 2;
+      const phi = Math.asin(Math.max(-1, Math.min(1, dx / R)));
+      const sx  = (phi * R + fW / 2) * Q;
+      w.drawImage(flat, Math.max(0, Math.min(fw - 1, Math.floor(sx))), 0, 1, outH, i, 0, 1, outH);
+    }
+
+    // 3) shading — same profile as the real body
+    _decalShade(w, outW, outH, sW, W);
+    // matte / faded-paint look: slight desaturation toward body colour
+    w.globalCompositeOperation = 'source-atop';
+    w.fillStyle = 'rgba(232,235,242,0.14)';
+    w.fillRect(0, 0, outW, outH);
+    _flagCache.set(key, wrapped);
+  }
+
+  // origin = top-centre of the flag
+  ctx.save();
+  ctx.globalAlpha = 0.93;   // paint, not sticker
+  ctx.drawImage(wrapped, -sW / 2, -fH / 2, sW, fH);
+  ctx.restore();
+}
+
+
 
 function _drawSzadText(ctx, maxL, maxD, isLightBody) {
   _ensureSzadFont();
@@ -415,19 +535,7 @@ const w = wrapped.getContext('2d');
     }
 
     // 3) cylinder shading
-    w.globalCompositeOperation = 'source-atop';
-    const sh = w.createLinearGradient(0, 0, outW, 0);
-    for (let s = 0; s <= 10; s++) {
-      const t = s / 10;
-      const x = (t - 0.5) * sW;
-      const c = Math.cos(Math.asin(Math.max(-1, Math.min(1, x / R))));
-      const dark = Math.pow(1 - c, 0.8) * 1.6;
-      const hi = Math.max(0, 1 - Math.abs(t - 0.42) / 0.3) * 0.22;
-      if (dark > hi) sh.addColorStop(t, `rgba(0,10,25,${Math.min(0.5, dark - hi).toFixed(3)})`);
-      else sh.addColorStop(t, `rgba(255,255,255,${hi.toFixed(3)})`);
-    }
-    w.fillStyle = sh;
-    w.fillRect(0, 0, outW, outH);
+    _decalShade(w, outW, outH, sW, BODY_W);
     _szadCache.set(key, wrapped);
   }
 
@@ -911,6 +1019,39 @@ function drawGridFinFace(ctx, pivotX, pivotY, topX, topY, wPx, hPx, cellPx, styl
 }
 
 
+
+// ---------------------------------------------------------------------------
+// Engine bell — visual constants and exit-plane helper.
+//
+// Kept at module scope (not inline in drawRocketArt's bell block) so
+// render.js's plume anchor reads the exact same values the bell is drawn
+// with. Change any of these and the flame stays attached to the nozzle
+// exit automatically.
+//
+//   ASPECT       height / exit radius        (higher = taller bell)
+//   R_FRAC       exit radius / rocket width  (higher = wider bell)
+//   CENTER_BOOST extra size on centre bell   (cluster-only)
+//   SINGLE_BOOST extra size on lone MVac     (single-nozzle-only)
+// ---------------------------------------------------------------------------
+const ENGINE_BELL_ASPECT = 1.8;
+const ENGINE_BELL_R_FRAC = 0.13;
+const ENGINE_BELL_CENTER_BOOST = 1.10;
+const ENGINE_BELL_SINGLE_BOOST = 1.15;
+
+// Bell exit plane Y, in METERS, down-positive from the member's own base.
+// Only the deepest nozzle matters visually — centre bell in a cluster,
+// the lone bell in a single-nozzle layout — because the plume emerges
+// from there. Returns 0 when the record has no resolvable layout.
+function getEngineBellExitY_m(record) {
+  if (!record || !record.engineTypeId || typeof getComponentType !== 'function') return 0;
+  const layout = getComponentType(record.engineTypeId);
+  if (!layout || !layout.frame || !Array.isArray(layout.frame.slots)) return 0;
+  const nSlots = layout.frame.slots.length || 1;
+  const bump = (nSlots === 1) ? ENGINE_BELL_SINGLE_BOOST : ENGINE_BELL_CENTER_BOOST;
+  const W_m = Number.isFinite(record.width) ? record.width : 3.9;
+  const sR_m = W_m * ENGINE_BELL_R_FRAC;
+  return sR_m * ENGINE_BELL_ASPECT * bump;
+}
 
 function drawRocketArt(ctx, W, H, mpp, opts) {
   opts = opts || {};
@@ -1521,76 +1662,112 @@ const bodyPath = () => {
     drawLandingLeg(1, false);
   }
   
-  // ---- Stage engine bell (below body base) ----
-  // Only drawn for stage role (and legacy rocket if applicable). Booster
-  // has its own engine cluster handled by rocketArt if/when needed; stage
-  // uses the single-nozzle or whatever its layout is.
-  // Bell is drawn only when this stage stands alone. When it's stacked
-// above another member (a booster with an interstage), the bell
-// physically sits inside the interstage — real F9 hides the MVac bell
-// there too, so drawing it would layer it on top of the interstage.
-// Callers pass hasMemberBelow=true for stack-ordered rendering.
-if (opts.stageRole === 'stage' && engineBell && !opts.hasMemberBelow) {
-    const bH = engineBell.h / mpp;
-    const bR = engineBell.r / mpp;
-    const gimbalRad = 0;
-    // Single-nozzle: one big cone. Multi-nozzle: cluster (draw smaller).
-    if (engineBell.count === 1) {
-      ctx.save();
-      ctx.translate(0, 0);
-      ctx.rotate(gimbalRad);
-      const g = ctx.createLinearGradient(0, 0, 0, bH);
-      g.addColorStop(0, '#2a2d33');
-      g.addColorStop(0.5, '#4a4e54');
-      g.addColorStop(1, '#1c1e22');
-      ctx.fillStyle = g;
-      ctx.beginPath();
-      ctx.moveTo(-bR * 0.25, 0);
-      ctx.lineTo(-bR, bH);
-      ctx.lineTo(bR, bH);
-      ctx.lineTo(bR * 0.25, 0);
-      ctx.closePath();
-      ctx.fill();
-      ctx.strokeStyle = '#0f1114';
-      ctx.lineWidth = 1;
-      ctx.stroke();
-      // Rim highlight
-      ctx.strokeStyle = 'rgba(255,255,255,0.25)';
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      ctx.moveTo(-bR, bH);
-      ctx.lineTo(bR, bH);
-      ctx.stroke();
-      ctx.restore();
-    } else {
-      // Cluster: draw one bell at each slot position, plus center
-      engineBell.slots.forEach(slot => {
-        const R_m = (opts.params && Number.isFinite(opts.params.octaRadius)) ? opts.params.octaRadius : 1.7;
-        const pos = (typeof slot.position === 'function') ? slot.position(R_m) : { x: 0 };
-        const cx = (pos.x || 0) / mpp;
-        const isCenter = slot.role === 'center';
-        const sH = isCenter ? bH * 1.15 : bH;
-        const sR = isCenter ? bR * 1.15 : bR;
-        ctx.save();
-        ctx.translate(cx, 0);
-        const g = ctx.createLinearGradient(0, 0, 0, sH);
-        g.addColorStop(0, '#2a2d33');
-        g.addColorStop(0.5, '#4a4e54');
-        g.addColorStop(1, '#1c1e22');
-        ctx.fillStyle = g;
-        ctx.beginPath();
-        ctx.moveTo(-sR * 0.25, 0);
-        ctx.lineTo(-sR, sH);
-        ctx.lineTo(sR, sH);
-        ctx.lineTo(sR * 0.25, 0);
-        ctx.closePath();
-        ctx.fill();
-        ctx.strokeStyle = '#0f1114';
-        ctx.lineWidth = 0.8;
-        ctx.stroke();
-        ctx.restore();
-      });
-    }
+// ---- Engine bells (bottom-of-stack bodies only) ----
+// Drawn when this member has nothing below it in the stack (boosters,
+// standalone rocket role, standalone stage). A stage sitting above a
+// booster hides its MVac bell inside the interstage, exactly as real F9
+// hardware does — see opts.hasMemberBelow gate below.
+const drawsEngineBells = (opts.stageRole === 'stage' || isBooster || opts.stageRole === 'rocket');
+if (drawsEngineBells && engineBell && !opts.hasMemberBelow) {
+  // Visual bell sizing — deliberately decoupled from engineBell.h/r
+  // (the flow-derived formula) because that formula sizes the interstage,
+  // not the nozzle's own exit: it over-estimates a real nozzle's exit
+  // diameter by ~2×. Silhouette here matches a real Merlin/MVac nozzle:
+  //   exit radius ≈ 13% of rocket width, aspect (height / radius) ≈ 1.6.
+  const BELL_ASPECT = ENGINE_BELL_ASPECT;
+const BELL_R_FRAC = ENGINE_BELL_R_FRAC;
+const CENTER_BOOST = ENGINE_BELL_CENTER_BOOST;
+const SINGLE_BOOST = ENGINE_BELL_SINGLE_BOOST;
+const W_m = W * mpp;
+  const hullHalf_m = W_m / 2;
+  
+  // de Laval bell curve — ROUNDED throat at top, wall bulges outward
+  // through the middle, flat exit plane at the bottom. Throat half-width
+  // is deliberately 55% of the exit (a real nozzle is closer to ~35%),
+  // and the near-throat bezier control only reaches 1.25× the throat
+  // width — that keeps the top reading as a smooth rounded shoulder
+  // instead of a pointed cone tip.
+  function bellPath(g, sR, sH) {
+    const tR = sR * 0.45; // throat half-width — narrower, neck visible
+g.beginPath();
+g.moveTo(-tR, 0);
+g.bezierCurveTo(
+  -tR * 1.7, sH * 0.26,
+  -sR * 0.90, sH * 0.75,
+  -sR, sH
+);
+g.lineTo(sR, sH);
+g.bezierCurveTo(
+  sR * 0.90, sH * 0.75,
+  tR * 1.7, sH * 0.26,
+  tR, 0
+);
+    g.closePath();
+  }
+  
+  const drawOneBell = (cx, sR, sH) => {
+    ctx.save();
+    ctx.translate(cx, 0);
+    const g = ctx.createLinearGradient(-sR, 0, sR, 0);
+g.addColorStop(0, '#1c1e22');
+g.addColorStop(0.5, '#4a4e54');
+g.addColorStop(1, '#1c1e22');
+    ctx.fillStyle = g;
+    bellPath(ctx, sR, sH);
+    ctx.fill();
+    ctx.strokeStyle = '#0f1114';
+    ctx.lineWidth = 0.9;
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,255,255,0.22)';
+    ctx.lineWidth = 1.3;
+    ctx.beginPath();
+    ctx.moveTo(-sR, sH);
+    ctx.lineTo(sR, sH);
+    ctx.stroke();
+    ctx.restore();
+  };
+  
+  if (engineBell.count === 1) {
+    // Single vacuum-class nozzle (MVac). Lone bell; modest size bump
+    // (MVac expansion ratio > SL Merlin's).
+    const sR_m = W_m * BELL_R_FRAC * SINGLE_BOOST;
+    const sH_m = sR_m * BELL_ASPECT;
+    drawOneBell(0, sR_m / mpp, sH_m / mpp);
+  } else {
+    // Multi-nozzle cluster. Outer bells equal size; centre slightly
+    // larger. Cluster ring radius for VISUAL placement is the smaller
+    // of the stored octaRadius and what actually fits inside the hull
+    // (with clearance for the widest bell — the centre one).
+    const sR_m = W_m * BELL_R_FRAC;
+    const sH_m = sR_m * BELL_ASPECT;
+    const sR_c_m = sR_m * CENTER_BOOST;
+    const sH_c_m = sH_m * CENTER_BOOST;
+    const R_m = (opts.params && Number.isFinite(opts.params.octaRadius)) ? opts.params.octaRadius : 1.7;
+    const gap_m = 0.03;
+    const R_fit_m = Math.max(sR_m + 0.01, hullHalf_m - sR_c_m - gap_m);
+    const R_vis_m = Math.min(R_m, R_fit_m);
+    
+    // Painter's order for the WHOLE cluster, centre included. z =
+// sin(angle)·R is depth: +z sits farther from the viewer.
+// Far-first → near bells drawn later occlude whatever is behind
+// them. The front-most outer (at x=0) then correctly covers the
+// centre engine, instead of the old code that force-drew the
+// centre last and made it look like the closest engine.
+const items = [];
+engineBell.slots.forEach(slot => {
+  if (slot.angleDeg == null) items.push({ slot, z: 0, isCenter: true });
+  else items.push({ slot,
+    z: Math.sin(slot.angleDeg * Math.PI / 180) * R_vis_m,
+    isCenter: false });
+});
+items.sort((a, b) => b.z - a.z);   // descending: farthest z first
+items.forEach(({ slot, isCenter }) => {
+  const pos = (typeof slot.position === 'function') ? slot.position(R_vis_m) : { x: 0 };
+  drawOneBell((pos.x || 0) / mpp,
+              (isCenter ? sR_c_m : sR_m) / mpp,
+              (isCenter ? sH_c_m : sH_m) / mpp);
+});
+  }
   }
   
 // ---- Grid fins ----
@@ -1943,18 +2120,15 @@ const H = v.height / mpp;
 // a thin sliver. Formula mirrors drawRocketArt's own bell sizing
 // exactly: h_m = 0.007 × (total flow / slot count); pixel extent = h_m / mpp.
 let subBaseExtentPx = 0;
-if (v.stageRole === 'stage' && v.engineLayout && v.engineLayout.frame &&
-  Array.isArray(v.engineLayout.frame.slots) && v.engineThrusters) {
-  const groups = (typeof engineThrusterGroups === 'function') ? engineThrusterGroups(v.engineLayout) : {};
-  let totalFlow = 0;
-  Object.keys(groups).forEach(gk => {
-    const g = v.engineThrusters[gk];
-    if (!g || !Number.isFinite(g.massFlowRate)) return;
-    totalFlow += g.massFlowRate * groups[gk].length;
-  });
+const _drawsBells = (v.stageRole === 'stage' || v.stageRole === 'booster' || v.stageRole === 'rocket');
+if (_drawsBells && v.engineLayout && v.engineLayout.frame &&
+  Array.isArray(v.engineLayout.frame.slots)) {
+  // Match drawRocketArt's visual bell sizing: exit radius ≈ 13% of
+  // rocket width, aspect 1.6. Max extent is centre bell in a cluster
+  // (×1.10) or the lone bell in a single-nozzle layout (×1.15).
   const nSlots = v.engineLayout.frame.slots.length || 1;
-  const perEngineFlow = totalFlow / nSlots;
-  const bellH_m = 0.007 * perEngineFlow;
+  const bump = (nSlots === 1) ? 1.15 : 1.10;
+  const bellH_m = (v.width || 3.9) * 0.13 * 1.2 * bump;
   if (bellH_m > 0) subBaseExtentPx = bellH_m / mpp;
 }
 
@@ -2080,8 +2254,27 @@ const mppH = totalH / MAX_DRAWN_H_PX;
 const mpp = Math.max(mppW, mppH);
 const W_px = widest / mpp;
 const H_px_total = totalH / mpp;
+
+// Reserve vertical space for the bottom member's engine bell (extends
+// downward from local (0,0)). Same formula drawRocketArt sizes it with:
+// h_m = 0.007 × (total flow / slot count). Only the bottom member ever
+// draws a bell (hasMemberBelow gate at the draw call).
+let subBaseExtentPx = 0;
+{
+  const bottom = members[0];
+  const bottomLayout = (bottom && bottom.engineTypeId && typeof getComponentType === 'function') ?
+    getComponentType(bottom.engineTypeId) : null;
+  if (bottomLayout && bottomLayout.frame && Array.isArray(bottomLayout.frame.slots)) {
+  const nSlots = bottomLayout.frame.slots.length || 1;
+  const bump = (nSlots === 1) ? 1.15 : 1.10;
+  const bellH_m = (bottom.width || 1) * 0.13 * 1.2 * bump;
+  if (bellH_m > 0) subBaseExtentPx = bellH_m / mpp;
+}
+}
+
+const contentH = H_px_total + subBaseExtentPx;
 const vMarginFrac = 0.94;
-const cssH = H_px_total / vMarginFrac;
+const cssH = contentH / vMarginFrac;
 canvas.style.height = cssH + 'px';
   
   const dpr = window.devicePixelRatio || 1;
@@ -2091,7 +2284,7 @@ canvas.style.height = cssH + 'px';
   pctx.clearRect(0, 0, cssW, cssH);
   
   const baseX = cssW / 2;
-  let baseY = (cssH + H_px_total) / 2;
+let baseY = (cssH - contentH) / 2 + H_px_total;
   
   members.forEach((m, idx) => {
     const W = (m.width || 1) / mpp;
@@ -2165,7 +2358,8 @@ const psType = (m.stageRole === 'payloadSpace' && m.payloadSpaceTypeId && typeof
   stageAboveBellHeight: stageAboveBellHeight,
   hasMemberBelow: idx > 0,
   gridFinType: (m.hasGridFins && m.gridFinTypeId && typeof getComponentType === 'function') ?
-    gridFinParams: m.gridFinParams || null,
+  getComponentType(m.gridFinTypeId) : null,
+  gridFinParams: m.gridFinParams || null,
     gridFinColor: m.gridFinColor || '#8a9198',
     // SZAD overlay: only drawn on locked (default) boosters.
     locked: m.locked === true,

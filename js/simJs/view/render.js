@@ -1190,10 +1190,19 @@ const cullMargin = Math.max(H, W) * 6;
   }
   
   ctx.save();
-  ctx.translate(px, py);
-  ctx.rotate(-visualTheta);
-  
-  // ---- Plume (active body only) ----
+ctx.translate(px, py);
+ctx.rotate(-visualTheta);
+
+// Bell exit-plane offset (px). Flame must emerge from the nozzle's exit,
+// not the rocket's base — the bell extends below the base by this much.
+// Reads rocketArt.js's shared helper so the anchor is guaranteed to sit
+// exactly at the bell's flat bottom.
+let bellExitY_px = 0;
+if (body.members && body.members.length && typeof getEngineBellExitY_m === 'function') {
+  bellExitY_px = getEngineBellExitY_m(body.members[0]) / mpp;
+}
+
+// ---- Plume (active body only) ----
   // ---- Plume (any body whose engines are firing) ----
   {
     const bodyEngines = (body && body.engines) ? body.engines : [];
@@ -1202,8 +1211,13 @@ const cullMargin = Math.max(H, W) * 6;
     const totalThrottle = maxThrust > 0 ? totalThrust / maxThrust : 0;
     
     if (totalThrottle > 0.03) {
-      const tNow = performance.now() * 0.01;
-      const flameLen = H * (0.6 + 1.6 * totalThrottle);
+  // Wrap the WHOLE plume (all cones + the flare) so everything is
+  // anchored at the bell's exit, not the body base.
+  ctx.save();
+  ctx.translate(0, bellExitY_px);
+  
+  const tNow = performance.now() * 0.01;
+  const flameLen = H * (0.6 + 1.6 * totalThrottle);
       
       const centerEngine = bodyEngines.find(e => e.isCenter);
       
@@ -1318,10 +1332,11 @@ const cullMargin = Math.max(H, W) * 6;
       ctx.beginPath();
       ctx.ellipse(0, W * 0.05, W * 0.42 * plumeScale, W * 0.2 * plumeScale, 0, 0, Math.PI * 2);
       ctx.fill();
-      ctx.globalCompositeOperation = 'source-over';
-          // ctx.restore;
-    }
-    }
+        ctx.globalCompositeOperation = 'source-over';
+  // ctx.restore;
+  ctx.restore(); // outer — pops the bellExitY translate
+  }
+  }
     
     // ---- Fairing parachute ----
     // MUST be drawn BEFORE the fairing-half / payload-body early returns
