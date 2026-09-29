@@ -50,8 +50,13 @@ const MAX_BULGE_DIAMETER_RATIO = 1.4;
 // slot list. This is the generic replacement for vehicle.js's hardcoded
 // `angles = [0,45,90,...]` — any ring size works, not just 8.
 // ---------------------------------------------------------------------------
-function ringSlots(count, startDeg) {
+// gimbalCapable optional (default false) so callers can build a ring
+// where every outer engine is gimbal-capable, matching real F9 Block 5
+// where all nine Merlins gimbal together. Legacy 8+1-with-fixed-outers
+// layouts (Block 3 era) still pass nothing and get false.
+function ringSlots(count, startDeg, gimbalCapable) {
   startDeg = startDeg || 0;
+  const gCap = !!gimbalCapable;
   const step = 360 / count;
   const slots = [];
   for (let i = 0; i < count; i++) {
@@ -59,7 +64,7 @@ function ringSlots(count, startDeg) {
     slots.push({
       id: 'E' + deg,
       role: 'outer',
-      gimbalCapable: false,
+      gimbalCapable: gCap,
       angleDeg: deg,
       position: (R) => ({ x: R * Math.cos(deg * Math.PI / 180) }),
     });
@@ -128,6 +133,47 @@ function buildOctaweb9() {
   };
 }
 
+
+// ---------------------------------------------------------------------------
+// All-gimbal octaweb — every engine (center + 8 outer) is gimbal-capable.
+// Matches real F9 Block 5, where all nine Merlin 1D+ engines gimbal
+// together off a single commanded angle. Same slot geometry as the
+// classic octaweb-merlin9 layout; the only difference is the
+// gimbalCapable flag on each outer slot. Because all nine slots share
+// the same capability, engineThrusterGroups() returns a single 'gimbal'
+// group with 9 slots — the fleet editor shows one thruster config block
+// for the whole cluster instead of separate gimbal/fixed blocks.
+//
+// Effect on physics: pitch authority scales with the number of engines
+// contributing torque. With only the center gimballing, effective
+// torque ≈ comY × F_center × sin(g). With all nine gimballing, the
+// symmetric outer pairs contribute x-axis torques that cancel, but the
+// comY × F term multiplies by 9 — roughly a 9× jump in pitch authority
+// for the same commanded angle. Guidance constants (PUSH_MAX_GIMBAL_DEG,
+// HOLD_K_DAMP, etc.) are tuned for the single-gimbal baseline; a stack
+// running this layout will need a fresh tuning pass before it flies.
+// ---------------------------------------------------------------------------
+function buildOctaweb9AllGimbal() {
+  const outer = ringSlots(8, 0, true);
+  return {
+    id: 'octaweb-merlin9-allgimbal',
+    category: 'engineLayout',
+    kind: 'ringWithCenter',
+    displayName: 'Octaweb (Merlin-class, 8+1, all gimbal)',
+    description: 'Falcon 9 Block 5 layout: one gimbaling center engine plus a ring of 8 gimbaling outer engines at 45° spacing. Every engine on the ring moves off a single commanded gimbal angle, matching the real vehicle\'s all-engines-gimbal design. Higher pitch authority than the fixed-outer octaweb; guidance constants will need re-tuning for a stack running this layout.',
+    frame: {
+      slots: [
+        { id: 'C', role: 'center', gimbalCapable: true, angleDeg: null, position: () => ({ x: 0 }) },
+        ...outer,
+      ],
+      mergeTopology: ringMergeTopology(outer),
+    },
+    parameterSchema: [
+      { key: 'octaRadius', label: 'Ring radius (R)', unit: 'm', min: 0.1 },
+    ],
+    capabilities: { sharedGimbalSlider: true, throttleGrouping: true },
+  };
+}
 
 function buildSingleNozzleVac() {
   return {
@@ -850,6 +896,7 @@ structuralVolume: (capHeight, capWidth, bulgeWidth, shellThicknessFrac) => {
 function seedComponentLibrary() {
   return [
     buildOctaweb9(),
+    buildOctaweb9AllGimbal(),
     buildSingleNozzleVac(),
     buildLegsSwingout4(),
     buildCatchFitting2Pin(),

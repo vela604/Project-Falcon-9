@@ -160,30 +160,44 @@ GEO_ALT_KM:  35786,
   
   
   // ---------------- Main engines (octaweb, 2D projection) ----------------
-  OCTA_RADIUS: ACTIVE_VEHICLE.params.octaRadius, // m — radius of the 8 outer engines
+  // ---------------- Main engines (octaweb, 2D projection) ----------------
+// All hardware fields come from ACTIVE_VEHICLE_FOR_HARDWARE (= the stack
+// bottom member when a stack is active, else the fleet selection). Using
+// ACTIVE_VEHICLE here was wrong for a stack: the fleet-list selection
+// could be any record (e.g. a legacy Block 3 booster with 20° gimbal)
+// while the actual flying hardware is the stack's bottom member (B5
+// booster with 8° gimbal). The two never need to match, so pulling
+// hardware from the wrong one silently gave the sim the wrong gimbal
+// envelope, wrong engine constants, wrong RCS geometry.
+OCTA_RADIUS: ACTIVE_VEHICLE_FOR_HARDWARE.params.octaRadius, // m — radius of the 8 outer engines
   // A2 CLEANUP: ENGINE_F_MAX kept — still read by home.js's spec sheet.
   // ENGINE_F_MIN_FRAC removed — verified zero reads anywhere (the actual
   // per-engine floor now lives on each engine object as minMassFlowRate,
   // sourced from its thruster type's minThrottleFrac in vehicle.js).
-  ENGINE_F_MAX: ACTIVE_VEHICLE.params.engineFMax, // N per engine
-  ENGINE_VE: ACTIVE_VEHICLE.params.engineVe, // m/s exhaust velocity
-  ENGINE_THRUST_RATE: ACTIVE_VEHICLE.params.engineThrustRate, // max change rate, fraction of F_MAX per second
-  GIMBAL_MAX_DEG: ACTIVE_VEHICLE.params.gimbalMaxDeg, // ± degrees (gimbal-capable engines)
-  GIMBAL_RATE_DEG_S: ACTIVE_VEHICLE.params.gimbalRateDegS, // deg/sec max slew rate
+  ENGINE_F_MAX: ACTIVE_VEHICLE_FOR_HARDWARE.params.engineFMax, // N per engine
+  ENGINE_VE: ACTIVE_VEHICLE_FOR_HARDWARE.params.engineVe, // m/s exhaust velocity
+  ENGINE_THRUST_RATE: ACTIVE_VEHICLE_FOR_HARDWARE.params.engineThrustRate, // max change rate, fraction of F_MAX per second
+  GIMBAL_MAX_DEG: ACTIVE_VEHICLE_FOR_HARDWARE.params.gimbalMaxDeg, // ± degrees (gimbal-capable engines)
+  GIMBAL_RATE_DEG_S: ACTIVE_VEHICLE_FOR_HARDWARE.params.gimbalRateDegS, // deg/sec max slew rate
   
   // ---------------- RCS (4 advanced pods) ----------------
-  RCS_THRUST: ACTIVE_VEHICLE.params.rcsThrust, // N, fixed magnitude per nozzle
-  RCS_VE: ACTIVE_VEHICLE.params.rcsVe, // m/s
-  RCS_X_OFFSET: ACTIVE_VEHICLE.params.rcsXOffset, // m from centerline
+  RCS_THRUST: ACTIVE_VEHICLE_FOR_HARDWARE.params.rcsThrust, // N, fixed magnitude per nozzle
+  RCS_VE: ACTIVE_VEHICLE_FOR_HARDWARE.params.rcsVe, // m/s
+  RCS_X_OFFSET: ACTIVE_VEHICLE_FOR_HARDWARE.params.rcsXOffset, // m from centerline
   RCS_TOP_Y: ACTIVE_VEHICLE_FOR_HARDWARE.params.rcsTopY, // m, base se upar
   RCS_BOTTOM_Y: ACTIVE_VEHICLE_FOR_HARDWARE.params.rcsBottomY, // m, base se upar
-  RCS_PWM_PERIOD: ACTIVE_VEHICLE.params.rcsPwmPeriod, // s, duty-cycle period for the far-arm pod
+  RCS_PWM_PERIOD: ACTIVE_VEHICLE_FOR_HARDWARE.params.rcsPwmPeriod, // s, duty-cycle period for the far-arm pod
   
   // ---------------- Aerodynamics ----------------
-  DRAG_CD: ACTIVE_VEHICLE.dragCd, // dimensionless, orientation-independent (Phase-1 simplification)
+  // Whole-stack Cd — stack aggregate drag uses this as the reference; a
+  // booster's own Cd is still read where per-member drag is computed
+  // (physics.js's bodyAeroProfile reads member records directly). Here
+  // it's the stack-level fallback for a body with no member breakdown.
+  DRAG_CD: (ACTIVE_VEHICLE_FOR_HARDWARE.dragCd !== undefined) ?
+  ACTIVE_VEHICLE_FOR_HARDWARE.dragCd : ACTIVE_VEHICLE.dragCd,
   
   // ---------------- Landing legs ----------------
-  LEG_DEPLOY_RATE: ACTIVE_VEHICLE.params.legDeployRate || 0.5, // fraction of full travel per second
+  LEG_DEPLOY_RATE: ACTIVE_VEHICLE_FOR_HARDWARE.params.legDeployRate || 0.5, // fraction of full travel per second
   
   // ---------------- Resolved hardware TYPES ----------------
   ENGINE_LAYOUT: RESOLVED_ENGINE_LAYOUT,

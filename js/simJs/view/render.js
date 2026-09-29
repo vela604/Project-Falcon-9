@@ -1211,12 +1211,42 @@ if (body.members && body.members.length && typeof getEngineBellExitY_m === 'func
     const totalThrottle = maxThrust > 0 ? totalThrust / maxThrust : 0;
     
     if (totalThrottle > 0.03) {
-  // Wrap the WHOLE plume (all cones + the flare) so everything is
-  // anchored at the bell's exit, not the body base.
+  // Wrap the WHOLE plume. The rotation axis must match the BELL's:
+  // the bell hinges at its gimbal bearing (hull base, y=0) and its
+  // exit plane swings with the gimbal. So the flame pivot has to be
+  // that same hull-base point, with a translate to the (rotated)
+  // exit plane applied AFTERWARD. Order is critical — rotate first
+  // about the hull base, then slide down the rotated axis to the
+  // nozzle exit. Reversing the order (which the earlier version did)
+  // made the flame rotate about the exit plane instead, so its
+  // origin no longer coincided with the bell's true swing path.
   ctx.save();
-  ctx.translate(0, bellExitY_px);
   
-  // Flame palette — vacuum engines (single-nozzle MVac) get a
+  // Rotate the whole flame with the gimbal angle. The bell already
+  // rotates (drawOneBell applies the same ctx.rotate(gimbalRad)), so
+  // the flame now pivots about the same nozzle-exit anchor and tilts
+  // naturally instead of staying vertical with a horizontally-shifted
+  // tip. Angle is the thrust-weighted average across every gimbal
+  // engine that's actually firing — correct for the single-gimbal
+  // legacy layout (only the centre contributes) and for the
+  // all-gimbal Block 5 layout (all nine at the same angle).
+  let _gSum = 0, _gCount = 0;
+  bodyEngines.forEach(e => {
+    if (e.gimbal && e.currentF > 0.01) {
+      _gSum += e.gimbalDeg || 0;
+      _gCount++;
+    }
+  });
+  const avgGimbalDeg = _gCount > 0 ? _gSum / _gCount : 0;
+const gimbalRad = avgGimbalDeg * Math.PI / 180;
+if (gimbalRad !== 0) ctx.rotate(gimbalRad);
+// After rotation, drop from the hull-base pivot to the (now
+// rotated) bell-exit plane. bellExitY_px is canvas-y (positive
+// down), so this lands the flame's local origin exactly at the
+// swung nozzle exit.
+ctx.translate(0, bellExitY_px);
+
+// Flame palette — vacuum engines (single-nozzle MVac) get a
   // blue-violet plume that's WIDE and SHORT; sea-level clusters get
   // the classic orange-white-hot plume that's narrow and long. The
   // wide blue look matches a real vacuum bell's hugely-expanded
@@ -1276,12 +1306,12 @@ const trailMul = isSingleNozzle ? 0.40 : 1.0;
   const tNow = performance.now() * 0.01;
   const flameLen = H * (0.6 + 1.6 * totalThrottle) * lenMul;
   
-  const centerEngine = bodyEngines.find(e => e.isCenter);
-  
-  
-  const centerFrac = (centerEngine && totalThrust > 0) ? centerEngine.currentF / totalThrust : 0;
-  const gimbalRad = centerEngine ? (centerEngine.gimbalDeg * Math.PI / 180) * centerFrac : 0;
-  const fullShift = -flameLen * Math.sin(gimbalRad);
+  // fullShift used to horizontally offset the flame tip to fake a
+// gimbal lean — no longer needed now that the outer ctx.rotate
+// above genuinely tilts the whole plume. Kept declared (value 0)
+// because the gasConePath calls and the linear gradients below
+// still reference it as an endpoint / layer-shift argument.
+const fullShift = 0;
   
   const activeCount = bodyEngines.filter(e => e.currentF > 1).length;
   const plumeScale = isSingleNozzle ?

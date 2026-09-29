@@ -712,10 +712,15 @@ function seedFalcon9B5Booster() {
     stageRole: 'booster',
     familyId: FALCON9_B5_FAMILY_ID,
     // Hull-only height. The 1.5 m Merlin 1D+ bell hangs below the hull
-// base and is added by memberStackContribution; total ground-to-hull-
-// top is 39.7 + 1.5 = 41.2 m, matching the real spec.
-height: 39.7, width: 3.7, dragCd: 0.6,
-    engineTypeId: 'octaweb-merlin9',
+    // base and is added by memberStackContribution; total ground-to-hull-
+    // top is 39.7 + 1.5 = 41.2 m, matching the real spec.
+    height: 39.7, width: 3.7, dragCd: 0.6,
+    // Real F9 Block 5: all nine Merlins gimbal together. Uses the
+    // all-gimbal octaweb layout (see componentLibrary.js's
+    // buildOctaweb9AllGimbal) — pitch authority is 9× the fixed-outer
+    // legacy layout at the same commanded angle, so guidance constants
+    // (specifically PUSH_MAX_GIMBAL_DEG) are scaled down accordingly.
+    engineTypeId: 'octaweb-merlin9-allgimbal',
     recoveryTypeId: 'legs-swingout-4',
     hasRecovery: true,
     rcsTypeId: 'rcs-4pod-2nozzle',
