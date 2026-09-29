@@ -373,6 +373,14 @@ const THRUSTER_CHEMICAL_SCHEMA = [
     { key: 'atmosphericPenalty', label: 'Atmospheric penalty', unit: 'm²·s/kg', min: 0 },
     { key: 'efficiency', label: 'Efficiency', unit: 'frac', min: 0.1, max: 1 },
     { key: 'twr', label: 'Thrust-to-weight ratio', unit: 'ratio', min: 10, max: 500 },
+    // Bell auto-sizing — the rendered nozzle's exit diameter and height
+    // are derived per-flight from the engine's actual mass flow rate,
+    // scaled by these two hardware constants. A thruster type declares
+    // its bell geometry once (from the real datasheet) and every vehicle
+    // that mounts it gets the correct nozzle automatically, no per-record
+    // bell dimensions.
+    { key: 'massFlowToBellDiameter', label: 'Bell exit ∅ per (kg/s)', unit: 'm/(kg/s)', min: 0 },
+    { key: 'massFlowToBellHeight', label: 'Bell height per (kg/s)', unit: 'm/(kg/s)', min: 0 },
   { key: 'maxMassFlowRate', label: 'Max mass flow rate', unit: 'kg/s', min: 0.1 },
   { key: 'gimbalCapable', label: 'Gimbal capable', unit: 'bool' },
   { key: 'gimbalMaxDeg', label: 'Gimbal range', unit: 'deg', min: 0, max: 45 },
@@ -414,14 +422,18 @@ function buildThrusterMerlin1DClass() {
       'merlin-1d-class',
       'Merlin-1D (Demo)',
       'Demo variant — altitude-independent Ve, atmosphericPenalty = 0. Kept under the original id so every existing fleet record keeps flying with exactly the numbers it had before the Ve-live change. Use "Merlin-1D" for the pressure-aware version.',
-      {
-        // Constant Ve (no atmospheric penalty) — reproduces the pre-Ve-live
-        // behavior byte-for-byte. Ve = veVacuum at every altitude.
-        veVacuum: 2766,
-        atmosphericPenalty: 0,
-        efficiency: 0.9,
-  twr: 184, // real Merlin 1D TWR (Wikipedia datasheet)
-  maxMassFlowRate: 500, // generous cap; real max mdot ~320 kg/s
+          {
+      // Constant Ve (no atmospheric penalty) — reproduces the pre-Ve-live
+      // behavior byte-for-byte. Ve = veVacuum at every altitude.
+      veVacuum: 2766,
+      atmosphericPenalty: 0,
+      efficiency: 0.9,
+      twr: 184, // real Merlin 1D TWR (Wikipedia datasheet)
+      maxMassFlowRate: 500, // generous cap; real max mdot ~320 kg/s
+      // Same bell constants as the production Merlin 1D+ (the demo variant
+      // differs only in Ve; nozzle hardware is identical).
+      massFlowToBellDiameter: 0.003007,
+      massFlowToBellHeight: 0.005882,
   gimbalCapable: true,
   gimbalMaxDeg: 20, // real Merlin 1D gimbal range (sim had 20° — too high)
   gimbalRateDegS: 40,
@@ -445,14 +457,16 @@ function buildThrusterMerlin1DVacClass() {
       'merlin-1d-vac-class',
       'MVacD (Demo)',
       'Demo variant — altitude-independent Ve, atmosphericPenalty = 0. Kept under the original id so every existing fleet record keeps flying with exactly the numbers it had before the Ve-live change. Use "MVacD" for the pressure-aware version.',
-      {
-        // Constant Ve (no atmospheric penalty) — reproduces the pre-Ve-live
-        // behavior byte-for-byte.
-        veVacuum: 3412,
-        atmosphericPenalty: 0,
-        efficiency: 0.92, // MVac is more expansion-optimized than the SL variant
-        twr: 200, // ~981 kN / (490 kg × G0)
-  maxMassFlowRate: 350, // headroom above real max mdot ≈ 288 kg/s
+          {
+      // Constant Ve (no atmospheric penalty) — reproduces the pre-Ve-live
+      // behavior byte-for-byte.
+      veVacuum: 3412,
+      atmosphericPenalty: 0,
+      efficiency: 0.92, // MVac is more expansion-optimized than the SL variant
+      twr: 200, // ~981 kN / (490 kg × G0)
+      maxMassFlowRate: 350, // headroom above real max mdot ≈ 288 kg/s
+      massFlowToBellDiameter: 0.008333,
+      massFlowToBellHeight: 0.012847,
   gimbalCapable: true,
   gimbalMaxDeg: 20,
   gimbalRateDegS: 40,
@@ -488,12 +502,18 @@ function buildThrusterMerlin1D() {
     'Merlin 1D+ (Block 5)',
     'Falcon 9 Block 5 sea-level engine. Ve(Pa) = veVacuum − atmosphericPenalty × Pa recomputed per tick. Vacuum Isp ≈ 311 s; sea-level Isp ≈ 282 s. Throttle floor 39%. Gimbal range 8°.',
     {
-      veVacuum: 3049.87, // 311 s × 9.80665
-      atmosphericPenalty: 0.002807, // (veVacuum − 282 s·g₀) / 101325
-      efficiency: 0.92,
-      twr: 198,
-      maxMassFlowRate: 500,
-      gimbalCapable: true,
+  veVacuum: 3049.87, // 311 s × 9.80665
+  atmosphericPenalty: 0.002807, // (veVacuum − 282 s·g₀) / 101325
+  efficiency: 0.92,
+  twr: 184,
+  maxMassFlowRate: 500,
+  // Bell auto-size — real F9 Block 5 Merlin 1D+ nozzle is ~0.92 m
+  // exit ∅ and ~1.8 m tall at full flow (306 kg/s). Constants below
+  // are per-unit-flow, so a differently-throttled build scales the
+  // bell automatically.
+  massFlowToBellDiameter: 0.003922, // 1.2 / 306
+  massFlowToBellHeight: 0.004902, // 1.5 / 306
+  gimbalCapable: true,
       gimbalMaxDeg: 8,
       gimbalRateDegS: 40,
       minThrottleFrac: 0.39,
@@ -515,12 +535,18 @@ function buildThrusterMerlin1DVac() {
     'MVacD (Block 5)',
     'Falcon 9 Block 5 vacuum-optimized upper-stage engine. Large exit nozzle ⇒ big atmospheric penalty; nearly zero thrust at sea level. Vacuum Isp = 348 s. Throttle floor 39%, gimbal 8°.',
     {
-      veVacuum: 3412.71, // 348 s × 9.80665
-      atmosphericPenalty: 0.02290,
-      efficiency: 0.92,
-      twr: 172,
-      maxMassFlowRate: 350,
-      gimbalCapable: true,
+  veVacuum: 3412.71, // 348 s × 9.80665
+  atmosphericPenalty: 0.02290,
+  efficiency: 0.92,
+  twr: 160,
+  maxMassFlowRate: 350,
+  // Bell auto-size — real F9 MVac nozzle is ~2.4 m exit ∅ and
+  // ~3.7 m tall at full flow (288 kg/s). MVacD's much larger
+  // expansion ratio is what makes it need a bigger interstage
+  // to house than the SL Merlin.
+  massFlowToBellDiameter: 0.011458, // 3.30 / 288
+  massFlowToBellHeight: 0.009514, // 2.74 / 288
+  gimbalCapable: true,
       gimbalMaxDeg: 8,
       gimbalRateDegS: 40,
       minThrottleFrac: 0.39,

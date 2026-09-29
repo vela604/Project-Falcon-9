@@ -593,16 +593,8 @@ const fuelFrac = bottomMaxFuel > 0 ?
 // the stack builds up from the bottom.
 let yOffsetPx = 0;
 members.forEach((m, idx) => {
-      const memberAbove = members[idx + 1] || null;
-// Interstage height — same physical source as drawRocketArt.
-let interstageHeight_m = null;
-if (m.stageRole === 'booster' && typeof computeInterstageForBooster === 'function') {
-  const inter = computeInterstageForBooster(m, memberAbove);
-  if (inter && Number.isFinite(inter.height)) interstageHeight_m = inter.height;
-}
-  
-  const mH = (m.height || 0) / mpp;
-  const mW = (m.width || 1) / mpp;
+      const mH = (m.height || 0) / mpp;
+      const mW = (m.width || 1) / mpp;
   
   const recType = (m.hasRecovery === false) ? null :
     ((m.recoveryTypeId && typeof getComponentType === 'function') ?
@@ -624,9 +616,12 @@ if (m.stageRole === 'booster' && typeof computeInterstageForBooster === 'functio
     payloadColor: m.color || '#e9edf2',
   } : {};
   
+    const overlapPxFig = (m.stageRole === 'payloadSpace' && Number.isFinite(m.stageOverlapM)) ?
+    m.stageOverlapM / mpp : 0;
+  const placeYFig = yOffsetPx - overlapPxFig;
   figCtx.save();
-figCtx.translate(baseX, baseY - yOffsetPx);
-drawRocketArt(figCtx, mW, mH, mpp, {
+  figCtx.translate(baseX, baseY - placeYFig);
+  drawRocketArt(figCtx, mW, mH, mpp, {
       legsProgress: (idx === 0 && body.isActive) ? legs.progress : 0,
       legsState: null,
       // A5 — same as render.js: pod-id lookups need the member's own idx.
@@ -646,8 +641,8 @@ drawRocketArt(figCtx, mW, mH, mpp, {
       engineLayout: engineLayout,
     engineThrusters: m.engineThrusters,
     params: m.params,
-        interstageHeight_m: interstageHeight_m,
-    gridFinType: (m.hasGridFins && m.gridFinTypeId && typeof getComponentType === 'function') ?
+        // (interstage is its own member now)
+        gridFinType: (m.hasGridFins && m.gridFinTypeId && typeof getComponentType === 'function') ?
     getComponentType(m.gridFinTypeId) : null,
     gridFinParams: m.gridFinParams || null,
     gridFinColor: m.gridFinColor || '#8a9198',
@@ -655,10 +650,10 @@ drawRocketArt(figCtx, mW, mH, mpp, {
     locked: m.locked === true,
     ...payloadOpts,
   });
-    figCtx.restore();
-  
-  yOffsetPx += mH;
-});
+        figCtx.restore();
+    
+    yOffsetPx = placeYFig + mH;
+    });
 
 // ---- Per-fin overlay (L/R side fins only — F/B are edge-on in the
 // side view, so their markers would sit on the centerline and clutter).

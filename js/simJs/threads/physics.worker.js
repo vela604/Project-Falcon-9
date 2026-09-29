@@ -811,9 +811,10 @@ if (b.gridFins) {
       const en = srcEngines[j];
       const ec = _engineCacheAt(bc, j);
       ec.id = en.id;
-      ec.angleDeg = en.angleDeg;
-      ec.x = en.x;
-      ec.isCenter = en.isCenter;
+ec.angleDeg = en.angleDeg;
+ec.x = en.x;
+ec.y = en.y;
+ec.isCenter = en.isCenter;
       ec.gimbal = en.gimbal;
       ec.Fmax = en.Fmax;
       ec.Fmin = en.Fmin;

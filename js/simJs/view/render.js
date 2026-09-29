@@ -1436,18 +1436,10 @@ if (body.members && body.members.length && typeof getEngineBellExitY_m === 'func
   }
   
   if (stackMembers.length) {
-    let yOffsetPx = 0;
-    stackMembers.forEach((m, idx) => {
-      const memberAbove = stackMembers[idx + 1] || null;
-      // Interstage height — the same value the physical mass model uses.
-      let interstageHeight_m = null;
-      if (m.stageRole === 'booster' && typeof computeInterstageForBooster === 'function') {
-        const inter = computeInterstageForBooster(m, memberAbove);
-        if (inter && Number.isFinite(inter.height)) interstageHeight_m = inter.height;
-      }
-      
-      const mH = (m.height || 0) / mpp;
-      const mW = (m.width || 1) / mpp;
+  let yOffsetPx = 0;
+  stackMembers.forEach((m, idx) => {
+        const mH = (m.height || 0) / mpp;
+        const mW = (m.width || 1) / mpp;
       const recType = (m.hasRecovery === false) ? null :
         ((m.recoveryTypeId && typeof getComponentType === 'function') ?
           getComponentType(m.recoveryTypeId) : null);
@@ -1481,10 +1473,17 @@ if (body.members && body.members.length && typeof getEngineBellExitY_m === 'func
 // of it in the stack, so the drawer suppresses the stage's own nose.
 const hasFairingAbove = !!(memberAbove && memberAbove.stageRole === 'payloadSpace');
 
-ctx.save();
-ctx.translate(0, -yOffsetPx);
-drawRocketArt(ctx, mW, mH, mpp, {
-      legsProgress: (isActive && idx === 0) ? legs.progress : 0,
+      ctx.save();
+      // Fairing's physical base sits `stageOverlapM` below the stage hull
+      // top — that overlap is where the fairing wraps the stage. Reduce
+      // the fairing's draw position by that much so the two members
+      // interlock instead of the fairing hovering above the stage.
+      const overlapPx = (m.stageRole === 'payloadSpace' && Number.isFinite(m.stageOverlapM)) ?
+        m.stageOverlapM / mpp : 0;
+      const placeY = yOffsetPx - overlapPx;
+      ctx.translate(0, -placeY);
+      drawRocketArt(ctx, mW, mH, mpp, {
+            legsProgress: (isActive && idx === 0) ? legs.progress : 0,
       legsState: isActive ? legs : null,
       // A5 — tell the drawer which member of the body this is, so its
       // pod-id lookups match the `b<memberIdx>.<side><idx>` keys that
@@ -1505,7 +1504,7 @@ drawRocketArt(ctx, mW, mH, mpp, {
         engineLayout: engineLayout,
         engineThrusters: m.engineThrusters,
         params: m.params,
-                  interstageHeight_m: interstageHeight_m,
+                  // (interstage is its own member now — nothing extra to pass)
         // Bell hidden when this member has a member below in the stack —
         // see drawRocketArt's guard for the reasoning (MVac bell sits
         // inside the booster's interstage, not visible side-on).
@@ -1532,9 +1531,9 @@ drawRocketArt(ctx, mW, mH, mpp, {
              ctx.restore();
            }
            
-           yOffsetPx += mH;
-           });
-      }
+                yOffsetPx = placeY + mH;
+     });
+     }
       
       ctx.restore();
       }

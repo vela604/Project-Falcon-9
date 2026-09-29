@@ -351,12 +351,17 @@ if (fam.locked) {
   );
   return;
 }
-  // P4-B3: use getFamilyBottom() — it resolves the id to a real record and
-  // returns null if the referenced record is missing (deleted), so a stale
-  // bottomId can't wrongly disable the "add booster" option.
-  const hasBooster = !!getFamilyBottom(familyId);
-  const allowed = hasBooster ? ['stage', 'nose', 'payloadSpace'] : ['booster'];
-  creatingInFamilyId = familyId;
+// P4-B3: use getFamilyBottom() — it resolves the id to a real record and
+// returns null if the referenced record is missing (deleted), so a stale
+// bottomId can't wrongly disable the "add booster" option.
+//
+// Once a booster exists in the family, every subsequent member is a
+// stack addition: interstage (band), stage (upper stage), or payloadSpace
+// (fairing). Legacy standalone 'rocket' and deprecated 'nose' roles are
+// not offered here — those are only created at family birth.
+const hasBooster = !!getFamilyBottom(familyId);
+const allowed = hasBooster ? ['interstage', 'stage', 'payloadSpace'] : ['booster'];
+creatingInFamilyId = familyId;
   document.querySelectorAll('#rolePicker .role-option').forEach(btn => {
     btn.style.display = allowed.includes(btn.dataset.role) ? '' : 'none';
   });
@@ -866,8 +871,9 @@ function renderStackValidationInto(targetId, v) {
 // SEQ-1b: preset sequence → fixed slot roles (bottom → top). Null = custom.
 function presetSlotRoles(sequence) {
   const PRESETS = {
-    'f9-standard': ['booster', 'stage', 'payloadSpace'],
-    'f9-heavy': ['booster', 'stage', 'stage', 'payloadSpace'],
+    'f9-standard': ['booster', 'interstage', 'stage', 'payloadSpace'],
+    'f9-legacy': ['booster', 'stage', 'payloadSpace'],
+    'f9-heavy': ['booster', 'interstage', 'stage', 'interstage', 'stage', 'payloadSpace'],
     'sso': ['booster', 'payloadSpace'],
   };
   return PRESETS[sequence] || null;
@@ -970,8 +976,9 @@ function renderStackSequenceHint() {
   const el = document.getElementById('stackSequenceHint');
   if (!el) return;
   const hints = {
-    'f9-standard': 'Preset: Booster → Stage → Payload Space',
-    'f9-heavy': 'Preset: Booster → Stage → Stage → Payload Space',
+    'f9-standard': 'Preset: Booster → Interstage → Stage → Payload Space',
+    'f9-legacy': 'Preset (legacy): Booster → Stage → Payload Space',
+    'f9-heavy': 'Preset: Booster → Interstage → Stage → Interstage → Stage → Payload Space',
     'sso': 'Preset: Booster → Payload Space',
   };
   const text = hints[workingStackSequence];
@@ -1600,8 +1607,8 @@ function openEditorNew(role) {
   viewingId = null;
   editingRole = role;
   const blank = role === 'booster' ? blankBoosterData() :
+    role === 'interstage' ? blankInterstageData() :
     role === 'stage' ? blankStageData() :
-    role === 'nose' ? blankNoseData() :
     role === 'payloadSpace' ? blankPayloadSpaceData() :
     blankRocketData();
   fillForm(blank);
@@ -1652,14 +1659,32 @@ function fillForm(r) {
     }
   }
   if (role === 'nose') {
-    setVal('f-bodyMetalType', r.bodyMetalTypeId || 'al-li-alloy');
-    setVal('f-noseCurveness', r.noseCurveness || 0);
-  }
+  setVal('f-bodyMetalType', r.bodyMetalTypeId || 'al-li-alloy');
+  setVal('f-noseCurveness', r.noseCurveness || 0);
+}
+if (role === 'rocket') {
+  // Legacy rocket has an integrated nose — populate its curveness so
+  // the preview and any re-save round-trip the value.
+  const curvEl = document.getElementById('f-noseCurveness');
+  if (curvEl) curvEl.value = Number.isFinite(r.noseCurveness) ? r.noseCurveness : 0;
+  // Metal type also lives on a rocket record; the fieldset is shared
+  // with nose. Populate it if present.
+  const metalEl = document.getElementById('f-bodyMetalType');
+  if (metalEl && r.bodyMetalTypeId) metalEl.value = r.bodyMetalTypeId;
+}
+if (role === 'interstage') {
+  setVal('f-bodyMetalType', r.bodyMetalTypeId || 'carbon-composite');
+  setVal('f-bodyShellFactor', Number.isFinite(r.bodyShellFactor) ? r.bodyShellFactor : 0.0026);
+  setVal('f-interstageOverlapLimit', Number.isFinite(r.overlapLimitM) ? r.overlapLimitM : 4.0);
+  setVal('f-interstagePusherThrust', Number.isFinite(r.pneumaticPusherThrustKN) ? r.pneumaticPusherThrustKN : 30);
+  setVal('f-interstageColor', (r.bodyDesign && r.bodyDesign.solidColor) || r.color || '#1a1d22');
+}
 if (role === 'payloadSpace') {
   setVal('f-psShapeType', r.payloadSpaceTypeId);
   setVal('f-psMetalType', r.payloadSpaceMetalTypeId);
   setVal('f-psDeployment', r.deploymentDirection || 'clamshell');
   setVal('f-psColor', r.color || '#e9edf2');
+  setVal('f-psStageOverlap', Number.isFinite(r.stageOverlapM) ? r.stageOverlapM : 0);
   // Stale record pointing at a deleted type (e.g. legacy 'cap-standard')
   // would render an empty grid. Fall back to whatever the select
   // currently has, or to 'cap-bulged' if the select is empty too.
@@ -1853,42 +1878,60 @@ function readFormData() {
     };
   }
   
-  // Payload-space (standalone role) early return
-  if (role === 'payloadSpace') {
-    const typeId = document.getElementById('f-psShapeType').value;
-    const metalTypeId = document.getElementById('f-psMetalType').value;
-    const deploymentDirection = document.getElementById('f-psDeployment').value;
-    const color = document.getElementById('f-psColor').value || '#e9edf2';
-    const psParams = currentParamValues('ps');
-    // Derive the record's own height/width from the shape params instead
-    // of a separate manual field — payloadSpaceDimensions() is the same
-    // helper fleet.js/stack-width checks use, so there's exactly one place
-    // that knows "capHeight IS the height" / "bulge can exceed capWidth".
-    const dims = (typeof payloadSpaceDimensions === 'function') ?
-      payloadSpaceDimensions({ stageRole: 'payloadSpace', payloadSpaceTypeId: typeId, params: psParams }) :
-      { height: 0, width: 0 };
-    return {
-  name: document.getElementById('f-name').value.trim() || 'Unnamed Payload Space',
-  stageRole: 'payloadSpace',
-  height: dims.height,
-  width: dims.width,
-  dragCd: parseFloat(document.getElementById('f-dragCd').value) || 0.4,
-  payloadSpaceTypeId: typeId,
-  payloadSpaceMetalTypeId: metalTypeId,
-  bodyShellFactor: clampShellFactor(document.getElementById('f-bodyShellFactor')),
-  deploymentDirection,
-  color,
-  // Empty string from the "no chute" option → stored as null.
-  chuteTypeId: (document.getElementById('f-chuteType').value) || null,
-  params: psParams,
-      familyId: editingRecordFamilyId(),
-      bodyDesign: {
-        mode: document.getElementById('f-bodyDesignMode').value || 'solid',
-        solidColor: document.getElementById('f-bodySolidColor').value || '#e9edf2',
-        dslText: (document.getElementById('f-bodyDslText').value || '').trim(),
-      },
-    };
-  }
+  // Interstage — hollow structural band. Carries only geometry,
+// pusher-thrust, and colour. Everything else (engines/RCS/fuel/
+// recovery/grid fins) is nulled out by migrateRocketRecord on save.
+if (role === 'interstage') {
+  const colorVal = document.getElementById('f-interstageColor').value || '#1a1d22';
+  return {
+    name: document.getElementById('f-name').value.trim() || 'Unnamed Interstage',
+    stageRole: 'interstage',
+    height: parseFloat(document.getElementById('f-height').value) || 0,
+    width: parseFloat(document.getElementById('f-width').value) || 0,
+    dragCd: parseFloat(document.getElementById('f-dragCd').value) || 0.4,
+    bodyMetalTypeId: document.getElementById('f-bodyMetalType').value || 'carbon-composite',
+    bodyShellFactor: clampShellFactor(document.getElementById('f-bodyShellFactor')),
+    overlapLimitM: parseFloat(document.getElementById('f-interstageOverlapLimit').value) || 4.0,
+    pneumaticPusherThrustKN: parseFloat(document.getElementById('f-interstagePusherThrust').value) || 30,
+    color: colorVal,
+    familyId: editingRecordFamilyId(),
+    bodyDesign: { mode: 'solid', solidColor: colorVal, dslText: '' },
+  };
+}
+
+// Payload-space (standalone role) early return
+if (role === 'payloadSpace') {
+  const typeId = document.getElementById('f-psShapeType').value;
+  const metalTypeId = document.getElementById('f-psMetalType').value;
+  const deploymentDirection = document.getElementById('f-psDeployment').value;
+  const color = document.getElementById('f-psColor').value || '#e9edf2';
+  const psParams = currentParamValues('ps');
+  const stageOverlap = parseFloat(document.getElementById('f-psStageOverlap').value);
+  const dims = (typeof payloadSpaceDimensions === 'function') ?
+    payloadSpaceDimensions({ stageRole: 'payloadSpace', payloadSpaceTypeId: typeId, params: psParams }) :
+    { height: 0, width: 0 };
+  return {
+name: document.getElementById('f-name').value.trim() || 'Unnamed Payload Space',
+stageRole: 'payloadSpace',
+height: dims.height,
+width: dims.width,
+dragCd: parseFloat(document.getElementById('f-dragCd').value) || 0.4,
+payloadSpaceTypeId: typeId,
+payloadSpaceMetalTypeId: metalTypeId,
+bodyShellFactor: clampShellFactor(document.getElementById('f-bodyShellFactor')),
+deploymentDirection,
+color,
+stageOverlapM: Number.isFinite(stageOverlap) ? Math.max(0, stageOverlap) : 0,
+chuteTypeId: (document.getElementById('f-chuteType').value) || null,
+params: psParams,
+    familyId: editingRecordFamilyId(),
+    bodyDesign: {
+      mode: document.getElementById('f-bodyDesignMode').value || 'solid',
+      solidColor: document.getElementById('f-bodySolidColor').value || '#e9edf2',
+      dslText: (document.getElementById('f-bodyDslText').value || '').trim(),
+    },
+  };
+}
   
   // Stage + booster fuel/metal block
   // Legs metal — applies to rocket / booster / stage (nose and
@@ -1955,6 +1998,14 @@ if (role === 'stage' || role === 'booster') {
 const hasRecEl = document.getElementById('f-hasRecovery');
 data.hasRecovery = hasRecEl ? hasRecEl.checked : true;
 
+// Legacy rocket carries an integrated nose — capture its curveness
+// alongside the booster fields it already wrote above. Nose is a legacy
+// role with its own early-return, so this is rocket-only.
+if (role === 'rocket') {
+  const curvEl = document.getElementById('f-noseCurveness');
+  if (curvEl) data.noseCurveness = parseFloat(curvEl.value) || 0;
+}
+
 bridgePerfParams(data);
 return data;
 }
@@ -1999,6 +2050,10 @@ function updateCapsPreview() {
   applyRcsOffsetCaps();
   const data = readFormData();
   if (data.stageRole === 'nose') {
+    safeRenderPreview(document.getElementById('vehiclePreviewCanvas'), previewVehicleFor(data));
+    return;
+  }
+  if (data.stageRole === 'interstage') {
     safeRenderPreview(document.getElementById('vehiclePreviewCanvas'), previewVehicleFor(data));
     return;
   }

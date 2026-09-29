@@ -445,7 +445,9 @@ if (psShapeSel) {
   'f-baffleCount', 'f-baffleInnerRadiusFrac',
   'f-payloadSpaceType', 'f-payloadSpaceMetalType', 'f-payloadSpaceDeployment',
   'f-maxExtraWeight',
-  'f-psShapeType', 'f-psMetalType', 'f-psDeployment'
+  'f-psShapeType', 'f-psMetalType', 'f-psDeployment', 'f-psStageOverlap',
+  'f-interstageOverlapLimit', 'f-interstagePusherThrust', 'f-interstageColor',
+  'f-noseCurveness', 'f-bodyShellFactor'
 ].forEach(id => {
   const el = document.getElementById(id);
   if (el) el.addEventListener('input', () => updateCapsPreview());
@@ -757,29 +759,40 @@ function updateGridFinDerived() {
 function applyRoleVisibility(role) {
   // P4-B3: single source of truth for editor-form visibility. Uses element
   // IDs (not HTML data-roles) so it doesn't depend on which attributes
-  // happened to make it into rockets.html.
+  // happened to make it into rockets-earth.html.
+  //
+  // 'nose' role is legacy — new records can't be created with it, but the
+  // MATRIX still lists it so editing an old nose record keeps its
+  // geometry + metal + aero fields visible.
   const MATRIX = {
-    geometryFieldset: ['rocket', 'booster', 'stage', 'nose'],
+    geometryFieldset: ['rocket', 'booster', 'interstage', 'stage', 'nose', 'payloadSpace'],
     hardwareTypesFieldset: ['rocket', 'booster', 'stage'],
     engineParamsFieldset: ['rocket', 'booster', 'stage'],
     recoveryParamsFieldset: ['rocket', 'booster', 'stage'],
     rcsParamsFieldset: ['rocket', 'booster', 'stage'],
     stageFuelFieldset: ['booster', 'stage'],
-    stageMetalFieldset: ['booster', 'stage', 'nose'],
+    stageMetalFieldset: ['booster', 'interstage', 'stage', 'nose'],
     stagePayloadFieldset: [],
-  payloadSpaceFieldset: ['payloadSpace'],
-  fairingRecoveryFieldset: ['payloadSpace'],
-  noseShapeFieldset: ['nose'],
-  gridFinFieldset: ['booster', 'stage'],
-  aeroFieldset: ['rocket', 'booster', 'stage', 'nose', 'payloadSpace'],
-  shellFactorFieldset: ['booster', 'stage', 'payloadSpace'],
-  extraWeightFieldset: ['booster', 'stage'],
+    payloadSpaceFieldset: ['payloadSpace'],
+    fairingRecoveryFieldset: ['payloadSpace'],
+    noseShapeFieldset: ['rocket', 'nose'],
+    gridFinFieldset: ['booster', 'stage'],
+    aeroFieldset: ['rocket', 'booster', 'interstage', 'stage', 'nose', 'payloadSpace'],
+    shellFactorFieldset: ['booster', 'interstage', 'stage', 'payloadSpace'],
+    extraWeightFieldset: ['booster', 'stage'],
     capsBox: ['rocket', 'booster'],
     stageCapsBox: ['stage'],
     massDryField: ['rocket'],
     massFuelField: ['rocket'],
-    bodyDesignFieldset: ['rocket', 'booster', 'stage', 'nose', 'payloadSpace'],
+    // Interstage excluded — its colour comes from the dedicated
+// f-interstageColor picker inside interstageFieldset, which writes
+// through to bodyDesign.solidColor on save. Showing both would be
+// two colour pickers fighting over the same field.
+bodyDesignFieldset: ['rocket', 'booster', 'stage', 'nose', 'payloadSpace'],
     payloadColorField: ['stage'],
+    // Interstage-only fields — overlap limit, pneumatic pusher thrust,
+    // and the band's own colour.
+    interstageFieldset: ['interstage'],
   };
   
   function setVisible(el, show) {

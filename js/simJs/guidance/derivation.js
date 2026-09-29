@@ -301,14 +301,28 @@ function _memberComponents(rec, aboveRec, memberFuelMass, legsProgress, sloshOff
     const r = W / 2;
     const out = [];
     
-    if (role === 'nose') {
-      const metal = getTypeById(rec.bodyMetalTypeId);
-      const density = metal ? (typeParam(metal, 'density') || 0) : 0;
-      const coneVol = (1 / 3) * Math.PI * r * r * H;
-      const mass = coneVol * _BODY_SHELL_FACTOR_NOSE * density;
-      out.push({ label: 'nose', mass, comX: 0, comY: H / 4, iOwn: _coneI(mass, r, H) });
-      return out;
-    }
+    if (role === 'interstage') {
+  // Thin cylindrical shell — same formula computeInterstageDryMass
+  // uses in fleet.js / massProps.js, mirrored here since guidance
+  // worker can't import either.
+  const metal = getTypeById(rec.bodyMetalTypeId);
+  const density = metal ? (typeParam(metal, 'density') || 0) : 0;
+  const shellF = Number.isFinite(rec.bodyShellFactor) ? rec.bodyShellFactor : 0.0026;
+  const shellThk = shellF * r;
+  const lateralArea = 2 * Math.PI * r * H;
+  const mass = lateralArea * shellThk * density;
+  out.push({ label: 'interstage', mass, comX: 0, comY: H / 2, iOwn: _cylI(mass, r, H) });
+  return out;
+}
+
+if (role === 'nose') {
+  const metal = getTypeById(rec.bodyMetalTypeId);
+  const density = metal ? (typeParam(metal, 'density') || 0) : 0;
+  const coneVol = (1 / 3) * Math.PI * r * r * H;
+  const mass = coneVol * _BODY_SHELL_FACTOR_NOSE * density;
+  out.push({ label: 'nose', mass, comX: 0, comY: H / 4, iOwn: _coneI(mass, r, H) });
+  return out;
+}
     if (role === 'payloadSpace') {
       const metal = getTypeById(rec.payloadSpaceMetalTypeId);
       const density = metal ? (typeParam(metal, 'density') || 0) : 0;
@@ -645,14 +659,18 @@ const massProps = hasMembers ?
     const comX_t = massProps.comX;
     
     let torqueEngine = 0;
-    (body.engines || []).forEach(e => {
-      if (!(e.massFlowRate > 0)) return;
-      const F = e.massFlowRate * e.Ve;
-      const gRad = (e.gimbal ? (e.gimbalDeg || 0) : 0) * Math.PI / 180;
-      const fx = F * Math.sin(gRad);
-      const fy = F * Math.cos(gRad);
-      torqueEngine += (e.x - comX_t) * fy + comY_t * fx;
-    });
+(body.engines || []).forEach(e => {
+  if (!(e.massFlowRate > 0)) return;
+  const F = e.massFlowRate * e.Ve;
+  const gRad = (e.gimbal ? (e.gimbalDeg || 0) : 0) * Math.PI / 180;
+  const fx = F * Math.sin(gRad);
+  const fy = F * Math.cos(gRad);
+ // Thrust transmits through the gimbal bearing (see vehicle.js's
+// e.y comment). e.y is the bearing's local y — 0 for F9 and
+// nearly every real engine.
+const ey = Number.isFinite(e.y) ? e.y : 0;
+torqueEngine += (e.x - comX_t) * fy - (ey - comY_t) * fx;
+});
     
     let torqueDrag = 0;
     memberBreakdown.forEach(m => {

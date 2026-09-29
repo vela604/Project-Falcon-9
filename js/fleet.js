@@ -199,10 +199,15 @@ const DEFAULT_SHELL_FACTOR_BY_ROLE = {
   // Stage: shell factor calibrated so the F9 Block 3 upper stage's total
   // dry mass (shell + 1×MVac) lands on real 3,900 kg with ~+0.4% error.
   stage: 0.0147,
-  // PayloadSpace: fairing-shell thickness fraction — 13.1 m tall × 5.2 m
+    // PayloadSpace: fairing-shell thickness fraction — 13.1 m tall × 5.2 m
   // bulge carbon-composite F9 fairing → ~1,906 kg (real ~1,900 kg).
   payloadSpace: 0.0026,
-};
+    // Interstage: thin composite shell, same material class as the fairing.
+    // Carried forward from the legacy booster-embedded interstage mass
+    // formula so the new standalone interstage member produces the same
+    // number (~530 kg for the F9 Block 3-class 2.57 m band).
+    interstage: 0.0026,
+  };
 
 const FLEET_KEY = 'rocketSim.fleet.v1';
 const SELECTED_KEY = 'rocketSim.selectedId.v1';
@@ -258,6 +263,7 @@ const DEFAULT_RECORDS = [
   { seed: seedFalcon9Stage },
   { seed: seedFalcon9Fairing },
   { seed: seedFalcon9B5Booster },
+  { seed: seedFalcon9B5Interstage },
   { seed: seedFalcon9B5Stage },
   { seed: seedFalcon9B5Fairing },
   // ↑ Add new default records here. Each seed function must declare its
@@ -476,7 +482,14 @@ function _fmtMassShort(kg) {
 //               maxPayloadMassKg, totalWetMassAtMaxPayload) are computed
 //               live from those inputs — NEVER stored/cached on the record
 //               (PHASE3_PROMPT.md §3 / §1.12).
-const STAGE_ROLES = ['rocket', 'booster', 'stage', 'nose', 'payloadSpace', 'payload'];
+// Member roles. 'nose' is deprecated — kept in the list only so legacy
+// records that still carry stageRole:'nose' don't get silently coerced
+// into a different role during migration. The role picker in
+// rockets-core.js no longer offers it, so no new nose records can be
+// created. 'interstage' is new: a hollow structural band that sits
+// between a booster and the stage above it, houses the stage engine
+// bell, and carries the pneumatic pushers.
+const STAGE_ROLES = ['rocket', 'booster', 'interstage', 'stage', 'nose', 'payloadSpace', 'payload'];
 
 
 // Every param key that now lives under `params`, regardless of which
@@ -669,7 +682,10 @@ function seedFalcon9Stack() {
     id: 'stk_falcon9-default',
     name: 'Falcon 9 Block 3',
     members: ['falcon9-default', 'falcon9-stage', 'falcon9-fairing'],
-    sequence: 'f9-standard',
+    // Legacy sequence — pre-interstage-member architecture. Block 5 uses
+    // the new 'f9-standard' 4-member chain (booster + interstage + stage
+    // + fairing); Block 3 keeps its historical 3-member layout.
+    sequence: 'f9-legacy',
     payloadId: 'pl_falcon9-default',
     locked: true,
   };
@@ -695,7 +711,10 @@ function seedFalcon9B5Booster() {
     locked: true,
     stageRole: 'booster',
     familyId: FALCON9_B5_FAMILY_ID,
-    height: 41.2, width: 3.7, dragCd: 0.6,
+    // Hull-only height. The 1.5 m Merlin 1D+ bell hangs below the hull
+// base and is added by memberStackContribution; total ground-to-hull-
+// top is 39.7 + 1.5 = 41.2 m, matching the real spec.
+height: 39.7, width: 3.7, dragCd: 0.6,
     engineTypeId: 'octaweb-merlin9',
     recoveryTypeId: 'legs-swingout-4',
     hasRecovery: true,
@@ -724,13 +743,9 @@ bodyShellFactor: 0.0152,
     gridFinMetalTypeId: 'titanium-alloy',
     gridFinParams: {
   span: 1.5, chord: 1.2, thickness: 0.4, cellWidth: 0.17,
-  // Hinge axis at the interstage's bottom edge. No thickness/2
-  // subtraction — the hinge IS the reference point, and the fin's
-  // geometry naturally sits around it (stowed = hangs below hinge,
-  // deployed = extends outward with half-thickness above the hinge
-  // line — physically correct for a real hinge pin).
-  //   = 41.2 − 1.695 = 39.505 → 39.5
-  finPositionY: 39.5,
+  // Hull top at 39.7 m. Fins sit 0.5 m below the interstage member's
+  // bottom edge (fin thickness + small clearance).
+  finPositionY: 39.2,
 },
     gridFinColor: '#8a9198',
     params: {
@@ -749,7 +764,11 @@ function seedFalcon9B5Stage() {
     locked: true,
     stageRole: 'stage',
     familyId: FALCON9_B5_FAMILY_ID,
-    height: 13.8, width: 3.7, dragCd: 0.6,
+    // Hull-only height. The 3.7 m MVacD bell hangs below the hull base
+    // and is added by memberStackContribution for standalone flight, or
+    // hidden inside the interstage member below it in a stack. Real
+    // stage total = 10.1 + 3.7 = 13.8 m as per spec.
+    height: 10.1, width: 3.7, dragCd: 0.6,
     engineTypeId: 'single-nozzle-vac',
     recoveryTypeId: null,
     hasRecovery: false,
@@ -788,11 +807,40 @@ function seedFalcon9B5Fairing() {
     deploymentDirection: 'clamshell',
     color: '#e9edf2',
     chuteTypeId: 'fairing-chute-round',
-    params: {
-      capHeight: 13.1, capWidth: 3.7, bulgeWidth: 5.2,
-      frustumSlantDeg: 42, curveHeightFactor: 1.4,
-    },
+// 0.9 m of the fairing's bottom wraps the top of the stage hull,
+// matching real F9 assembly — this overlap reduces the fairing's
+// contribution to total stack height by 0.9 m.
+stageOverlapM: 0.9,
+params: {
+  capHeight: 13.1, capWidth: 3.7, bulgeWidth: 5.2,
+  frustumSlantDeg: 42, curveHeightFactor: 1.4,
+},
     bodyDesign: { mode: 'solid', solidColor: '#e9edf2', dslText: '' },
+  };
+}
+
+// New interstage member for Block 5. Now a first-class stack record, not
+// a band embedded in the booster. Carries its own mass, its own width
+// (validated against the booster below and the stage above), its own
+// stage-engine insertion limit, and its own pneumatic-pusher spec.
+function seedFalcon9B5Interstage() {
+  return {
+    id: 'falcon9-b5-interstage',
+    name: 'Falcon 9 Block 5 — Interstage',
+    locked: true,
+    stageRole: 'interstage',
+    familyId: FALCON9_B5_FAMILY_ID,
+    height: 6.5, width: 3.7,
+    bodyMetalTypeId: 'carbon-composite',
+    bodyShellFactor: 0.0026,
+    // Real F9 MVac bell is 3.7 m; 4.0 m gives 0.3 m structural clearance.
+    overlapLimitM: 4.0,
+    // N₂ pneumatic pushers on the real F9 interstage total ~30 kN of
+    // ejection thrust; the booster weighs ~25 t dry, so this accelerates
+    // it at ~1.2 m/s² for the short push window.
+    pneumaticPusherThrustKN: 30,
+    color: '#1a1d22',
+    bodyDesign: { mode: 'solid', solidColor: '#1a1d22', dslText: '' },
   };
 }
 
@@ -800,7 +848,7 @@ function seedFalcon9B5Stack() {
   return {
     id: 'stk_falcon9-b5',
     name: 'Falcon 9 Block 5',
-    members: ['falcon9-b5-booster', 'falcon9-b5-stage', 'falcon9-b5-fairing'],
+    members: ['falcon9-b5-booster', 'falcon9-b5-interstage', 'falcon9-b5-stage', 'falcon9-b5-fairing'],
     sequence: 'f9-standard',
     payloadId: 'pl_falcon9-default',
     locked: true,
@@ -858,6 +906,28 @@ function blankPayloadSpaceData() {
     name: 'New Payload Space',
     locked: false,
     familyId: null,
+  };
+}
+
+// Blank interstage. Defaults to F9 Block 5-class numbers so a new
+// interstage dropped into a stack lines up with real hardware without
+// hand-tuning: 6.5 m tall, 3.7 m wide, 4.0 m stage-engine insertion
+// allowance, 30 kN total pneumatic-pusher thrust, carbon-composite shell.
+function blankInterstageData() {
+  return {
+    id: null,
+    name: 'New Interstage',
+    locked: false,
+    stageRole: 'interstage',
+    familyId: null,
+    height: 6.5,
+    width: 3.7,
+    bodyMetalTypeId: 'carbon-composite',
+    bodyShellFactor: 0.0026,
+    overlapLimitM: 4.0,
+    pneumaticPusherThrustKN: 30,
+    color: '#1a1d22',
+    bodyDesign: { mode: 'solid', solidColor: '#1a1d22', dslText: '' },
   };
 }
 
@@ -1002,9 +1072,49 @@ if (stageRole === 'booster' || stageRole === 'stage') {
     out.params = null;
   }
   
+    // Interstage — hollow structural band between booster and stage.
+  // Carries no engines, no fuel, no recovery, no RCS, no grid fins.
+  // Its geometry (width) is validated against the booster below and the
+  // stage above; its overlap-limit field is validated against the
+  // stage's actual engine bell height. Its pneumatic-pusher-thrust field
+  // is applied as an axial force at separation time.
+  if (stageRole === 'interstage') {
+    out.bodyMetalTypeId = r.bodyMetalTypeId || 'carbon-composite';
+    // Max depth of stage-engine insertion this interstage can accept.
+    // Stage's engine bell height must be ≤ this value for the stack to
+    // pass validation (a real interstage is sized to house the whole
+    // nozzle, not just clear it).
+    out.overlapLimitM = Number.isFinite(r.overlapLimitM) ? r.overlapLimitM : 4.0;
+    // Total pneumatic-pusher thrust from all pushers on this interstage,
+    // in kilonewtons. Applied along the stack axis at separation time.
+    out.pneumaticPusherThrustKN = Number.isFinite(r.pneumaticPusherThrustKN) ? r.pneumaticPusherThrustKN : 30;
+    // Band colour — the interstage is a solid dark band in every real
+    // F9-class vehicle, distinct from the white hull above and below.
+    out.color = (typeof r.color === 'string') ? r.color : '#1a1d22';
+    // Null out every field that belongs to engine-bearing roles — an
+    // interstage must never have them set, or downstream code would
+    // try to build engines / RCS off it.
+    out.engineTypeId = null;
+    out.recoveryTypeId = null;
+    out.hasRecovery = false;
+    out.rcsTypeId = null;
+    out.engineThrusters = null;
+    out.rcsThruster = null;
+    out.params = null;
+    delete out.dryMass;
+    delete out.fuelMassMax;
+    delete out.maxExtraWeightKg;
+    // Solid-colour rendering — the colour field above is authoritative.
+    out.bodyDesign = {
+      mode: 'solid',
+      solidColor: out.color,
+      dslText: '',
+    };
+  }
+  
   // PS-B2: standalone fairing record — the split target of the migration
   // below. Pure shape + metal; no engines, no recovery, no RCS, no fuel.
-if (stageRole === 'payloadSpace') {
+  if (stageRole === 'payloadSpace') {
   out.payloadSpaceTypeId = r.payloadSpaceTypeId || 'cap-bulged';
   out.payloadSpaceMetalTypeId = r.payloadSpaceMetalTypeId || 'al-li-alloy';
   out.deploymentDirection = r.deploymentDirection || 'clamshell';
@@ -1012,6 +1122,11 @@ if (stageRole === 'payloadSpace') {
   // Chute selection. null = no chute (legacy/pre-recovery records keep
   // their no-chute behavior; user opts in by picking a type in the form).
   out.chuteTypeId = r.chuteTypeId || null;
+  // How much of the fairing's bottom overlaps the stage hull below it,
+  // when the fairing sits directly on top of a stage in a stack. Purely
+  // a stack-height accounting field — the fairing's own mass, drag, and
+  // rendering are unaffected.
+  out.stageOverlapM = Number.isFinite(r.stageOverlapM) ? r.stageOverlapM : 0;
     const p = r.params || {};
     out.params = {
       capHeight: Number.isFinite(p.capHeight) ? p.capHeight : 3,
@@ -1380,7 +1495,7 @@ function computeStackDerived(memberIds) {
 
 function addStack(data) {
   const stacks = loadStacks();
-  const VALID_SEQ = ['f9-standard', 'f9-heavy', 'sso', 'custom'];
+  const VALID_SEQ = ['f9-standard', 'f9-legacy', 'f9-heavy', 'sso', 'custom'];
   const memberIds = Array.isArray(data && data.members) ? [...data.members] : [];
   const rec = {
     id: genStackId(),
@@ -1404,7 +1519,7 @@ function updateStack(id, data) {
   const merged = { ...stacks[idx], ...data, id };
   if (merged.payloadId === undefined) merged.payloadId = null;
   if (!Array.isArray(merged.members)) merged.members = [];
-  const VALID_SEQ = ['f9-standard', 'f9-heavy', 'sso', 'custom'];
+  const VALID_SEQ = ['f9-standard', 'f9-legacy', 'f9-heavy', 'sso', 'custom'];
   if (!VALID_SEQ.includes(merged.sequence)) merged.sequence = 'custom';
   // Recompute derived (members may have changed, or an underlying member
   // record was edited). Always overwrite; never trust a stale cached copy.
@@ -1494,25 +1609,27 @@ function stackCombinedAggregates(stk) {
   };
   if (!members.length) return out;
   members.forEach((m, i) => {
-    out.height += Number.isFinite(m.height) ? m.height : 0;
+    const above = members[i + 1] || null;
+    const below = members[i - 1] || null;
+    // Physical stack contribution — bell exit to tip, with the stage's
+    // own bell hidden inside the interstage, and the fairing overlapping
+    // the top of the stage hull. See memberStackContribution().
+    out.height += memberStackContribution(m, below, above);
     out.width = Math.max(out.width, Number.isFinite(m.width) ? m.width : 0);
-    let dry = 0,
-      fuel = 0;
+    let dry = 0, fuel = 0;
     if (m.stageRole === 'booster') {
-  // Pass the stack's own frozen interstage value (if present). Falls
-  // back to the live compute for legacy stacks that predate the
-  // freezing layer — loadStacks() migrates those on next read.
-  const frozen = (stk && stk.derived && stk.derived.interstage)
-    ? stk.derived.interstage[m.id] : null;
-  const d = boosterDerivedMasses(m, members[i + 1] || null, frozen);
-  if (d) { dry = d.dryMass;
-    fuel = d.fuelMass; }
+      const frozen = (stk && stk.derived && stk.derived.interstage)
+        ? stk.derived.interstage[m.id] : null;
+      const d = boosterDerivedMasses(m, above, frozen);
+      if (d) { dry = d.dryMass; fuel = d.fuelMass; }
     } else if (m.stageRole === 'stage') {
       const d = stageDerivedMasses(m);
-      if (d && !d.infeasible) { dry = d.dryMassNoPayload;
-        fuel = d.fuelMass; }
+      if (d && !d.infeasible) { dry = d.dryMassNoPayload; fuel = d.fuelMass; }
       else if (d && d.reason) out.warnings.push(`member ${i + 1} (${m.name}): ${d.reason}`);
       else out.warnings.push(`member ${i + 1} (${m.name}): infeasible`);
+    } else if (m.stageRole === 'interstage') {
+      dry = computeInterstageDryMass(m);
+      fuel = 0;
     } else if (m.stageRole === 'nose') {
       dry = computeNoseDryMass(m);
     } else if (m.stageRole === 'payloadSpace') {
@@ -1843,11 +1960,15 @@ function payloadCompatibilityCheck(payload, stackMembers, fleet) {
   
   // Checks 2 + 3 — cumulative load from each member below the fairing.
   for (let i = psIdx - 1; i >= 0; i--) {
-    const lowerRec = fleet.find(x => x.id === stackMembers[i]);
-    if (!lowerRec) continue;
-    const cap = Number.isFinite(lowerRec.maxExtraWeightKg) ? lowerRec.maxExtraWeightKg : 0;
-    // Load above this member = payload + fairing + every member strictly above i.
-    let load = payload.mass + psMassOk;
+  const lowerRec = fleet.find(x => x.id === stackMembers[i]);
+  if (!lowerRec) continue;
+  // Interstage is a structural pass-through — no payload-capacity cap,
+  // its mass loads the members below it but it doesn't itself need to
+  // declare a carrying limit.
+  if (lowerRec.stageRole === 'interstage') continue;
+  const cap = Number.isFinite(lowerRec.maxExtraWeightKg) ? lowerRec.maxExtraWeightKg : 0;
+  // Load above this member = payload + fairing + every member strictly above i.
+  let load = payload.mass + psMassOk;
     for (let j = i + 1; j < stackMembers.length; j++) {
       if (j === psIdx) continue; // fairing already added
       const r = fleet.find(x => x.id === stackMembers[j]);
@@ -2021,42 +2142,34 @@ if (recoveryType && recoveryType.capabilities && recoveryType.capabilities.deplo
 }
   
   // ---- Interstage mass (H-0c) ----
-  // Black cylinder at the booster's top, sized to cover the stage engine
-  // above. Height = max(stage-above bellHeight × 1.20, 6% booster height).
-  // Mass = thin-shell cylindrical volume × metal density.
-  //
-  // BUG #4/#5 FIX: the stage-above used to be looked up ONLY from the
-  // simulation page's global SIM_STACK_MEMBERS — so this booster's actual
-  // stack neighbour on the Fleet/Stacks page (where SIM_STACK_MEMBERS
-  // doesn't exist) was invisible, always falling back to the flat 6%
-  // estimate no matter what was really stacked above it. Callers that know
-  // their stack order (stackCombinedAggregates, stack validation, the
-  // stack-editor UI, and the simulator's own massProps.js) now pass the
-  // real neighbour explicitly via `aboveMember`. `undefined` (old
-  // call-sites not yet updated) still falls back to the SIM_STACK_MEMBERS
-  // global for backward compatibility; explicit `null` means "definitely
-  // no member above" (e.g. a standalone booster preview).
-  // Interstage dimensions — either the FROZEN value from the stack record
-// (preferred: set once when the stack was saved, never changes during
-// flight), or the legacy fallback (compute from `aboveMember` or the
-// SIM_STACK_MEMBERS global). Same physical formula in both paths; the
-// only difference is WHEN it runs.
-let interstageH_m, interstageMass;
-if (frozenInterstage && Number.isFinite(frozenInterstage.height) && Number.isFinite(frozenInterstage.mass)) {
-  interstageH_m = frozenInterstage.height;
-  interstageMass = frozenInterstage.mass;
-} else {
-  let above = aboveMember;
-  if (above === undefined) {
-    above = null;
-    if (typeof SIM_STACK_MEMBERS !== 'undefined' && SIM_STACK_MEMBERS.length) {
-      const idx = SIM_STACK_MEMBERS.findIndex(x => x.id === rec.id);
-      if (idx >= 0 && idx + 1 < SIM_STACK_MEMBERS.length) above = SIM_STACK_MEMBERS[idx + 1];
-    }
+// Legacy path (Block 3 and any pre-new-model booster): the interstage
+// is a virtual band INSIDE the booster's top region, sized from the
+// stage bell above or the record's own override.
+//
+// New-model path: when the member directly above this booster is a
+// standalone `interstage` role record, the interstage mass belongs to
+// that member (computeInterstageDryMass) and this booster carries NO
+// interstage structure at all.
+let above = aboveMember;
+if (above === undefined) {
+  above = null;
+  if (typeof SIM_STACK_MEMBERS !== 'undefined' && SIM_STACK_MEMBERS.length) {
+    const idx = SIM_STACK_MEMBERS.findIndex(x => x.id === rec.id);
+    if (idx >= 0 && idx + 1 < SIM_STACK_MEMBERS.length) above = SIM_STACK_MEMBERS[idx + 1];
   }
-  const computed = computeInterstageForBooster(rec, above);
-  interstageH_m = computed.height;
-  interstageMass = computed.mass;
+}
+const hasSeparateInterstage = !!(above && above.stageRole === 'interstage');
+
+let interstageH_m = 0, interstageMass = 0;
+if (!hasSeparateInterstage) {
+  if (frozenInterstage && Number.isFinite(frozenInterstage.height) && Number.isFinite(frozenInterstage.mass)) {
+    interstageH_m = frozenInterstage.height;
+    interstageMass = frozenInterstage.mass;
+  } else {
+    const computed = computeInterstageForBooster(rec, above);
+    interstageH_m = computed.height;
+    interstageMass = computed.mass;
+  }
 }
 
     // Grid fins contribute to dry mass when the booster carries them.
@@ -2156,13 +2269,17 @@ function stackMemberOwnMass(member, aboveMember) {
     if (!d) return NaN;
     return d.wetMass;
   }
-  if (member.stageRole === 'nose') {
-    return computeNoseDryMass(member);
-  }
-  
-  if (member.stageRole === 'payloadSpace') {
-    return computePayloadSpaceDryMass(member);
-  }
+  if (member.stageRole === 'interstage') {
+  return computeInterstageDryMass(member);
+}
+
+if (member.stageRole === 'nose') {
+  return computeNoseDryMass(member);
+}
+
+if (member.stageRole === 'payloadSpace') {
+  return computePayloadSpaceDryMass(member);
+}
   
   const dry = Number.isFinite(member.dryMass) ? member.dryMass : 0;
   const fuel = Number.isFinite(member.fuelMassMax) ? member.fuelMassMax : 0;
@@ -2222,10 +2339,16 @@ function validateStack(members, fleet, stack) {
   // SEQ-2: preset sequences enforce their exact role order. Custom
   // sequences fall through to the general rules below.
   const PRESET_ROLES = {
-    'f9-standard': ['booster', 'stage', 'payloadSpace'],
-    'f9-heavy': ['booster', 'stage', 'stage', 'payloadSpace'],
-    'sso': ['booster', 'payloadSpace'],
-  };
+  // New 4-member F9 layout: interstage is now its own stack member.
+  'f9-standard': ['booster', 'interstage', 'stage', 'payloadSpace'],
+  // Legacy 3-member chain (pre-interstage-member architecture). Kept
+  // alive for the frozen F9 Block 3 stack.
+  'f9-legacy': ['booster', 'stage', 'payloadSpace'],
+  // Heavy variant: two stages, each with its own interstage.
+  'f9-heavy': ['booster', 'interstage', 'stage', 'interstage', 'stage', 'payloadSpace'],
+  // Sounding rocket — payload fairing directly above booster.
+  'sso': ['booster', 'payloadSpace'],
+};
   const seq = stack && stack.sequence;
   if (PRESET_ROLES[seq]) {
     const expected = PRESET_ROLES[seq];
@@ -2256,9 +2379,14 @@ function validateStack(members, fleet, stack) {
       }
       return;
     }
-    if (i > 0 && r.stageRole !== 'stage' && r.stageRole !== 'booster' && r.stageRole !== 'nose') {
-      errors.push(`Member ${i + 1}: only 'stage' / 'booster' / 'nose' can sit above another member.`);
-    }
+    // Interstage is now a first-class stack member, so it joins the
+// whitelist of roles permitted above another member. Nose is legacy —
+// only exists on old records now; kept here so an unmigrated nose
+// record still validates.
+if (i > 0 && r.stageRole !== 'stage' && r.stageRole !== 'booster' &&
+  r.stageRole !== 'interstage' && r.stageRole !== 'nose') {
+  errors.push(`Member ${i + 1}: only 'stage' / 'booster' / 'interstage' / 'nose' can sit above another member.`);
+}
   });
   
   const ownMasses = resolved.map((r, i) => r ? stackMemberOwnMass(r, resolved[i + 1] || null) : NaN);
@@ -2268,33 +2396,42 @@ function validateStack(members, fleet, stack) {
   }
   
   for (let i = 0; i < resolved.length - 1; i++) {
-    const lower = resolved[i],
-      upper = resolved[i + 1];
-    if (!lower || !upper) continue;
-    
-    // PS-D1 fix: for a payloadSpace (fairing), the BASE diameter (capWidth)
-    // is what must fit the member below — the bulge overhangs by design.
-    // Comparing the record's stored `width` (which is bulgeWidth for bulged
-    // shapes) would wrongly reject a correctly-designed fairing.
-    let upperWidth = upper.width;
-    if (upper.stageRole === 'payloadSpace' && upper.params &&
-      Number.isFinite(upper.params.capWidth)) {
-      upperWidth = upper.params.capWidth;
-    }
-    
-    const widthOk = upperWidth <= lower.width;
-    if (!widthOk) {
-      errors.push(`Width: "${upper.name}" base (${upperWidth} m) > "${lower.name}" (${lower.width} m).`);
-    }
-    
-    const cap = Number.isFinite(lower.maxExtraWeightKg) ? lower.maxExtraWeightKg : 0;
-    const load = loadAbove[i];
-    const loadOk = Number.isFinite(load) && load <= cap;
-    if (!loadOk) {
-      errors.push(`Mass: load above "${lower.name}" (${_fmtMassShort(load)}) > its cap (${_fmtMassShort(cap)}).`);
-    }
-    memberInfo.push({ record: lower, ownMass: ownMasses[i], loadAbove: load, widthOk, loadOk });
+  const lower = resolved[i],
+    upper = resolved[i + 1];
+  if (!lower || !upper) continue;
+  
+  // PS-D1 fix: for a payloadSpace (fairing), the BASE diameter (capWidth)
+  // is what must fit the member below — the bulge overhangs by design.
+  // Comparing the record's stored `width` (which is bulgeWidth for bulged
+  // shapes) would wrongly reject a correctly-designed fairing.
+  let upperWidth = upper.width;
+  if (upper.stageRole === 'payloadSpace' && upper.params &&
+    Number.isFinite(upper.params.capWidth)) {
+    upperWidth = upper.params.capWidth;
   }
+  
+  const widthOk = upperWidth <= lower.width;
+  if (!widthOk) {
+    errors.push(`Width: "${upper.name}" base (${upperWidth} m) > "${lower.name}" (${lower.width} m).`);
+  }
+  
+  // Interstage is a structural pass-through — its job is to carry
+  // axial loads from the stage above into the booster below, not to
+  // declare a separate payload-carrying capacity. Diameter check
+  // above is its only validation rule.
+  if (lower.stageRole === 'interstage') {
+    memberInfo.push({ record: lower, ownMass: ownMasses[i], loadAbove: loadAbove[i], widthOk, loadOk: true });
+    continue;
+  }
+  
+  const cap = Number.isFinite(lower.maxExtraWeightKg) ? lower.maxExtraWeightKg : 0;
+  const load = loadAbove[i];
+  const loadOk = Number.isFinite(load) && load <= cap;
+  if (!loadOk) {
+    errors.push(`Mass: load above "${lower.name}" (${_fmtMassShort(load)}) > its cap (${_fmtMassShort(cap)}).`);
+  }
+  memberInfo.push({ record: lower, ownMass: ownMasses[i], loadAbove: load, widthOk, loadOk });
+}
   if (resolved.length > 0) {
     const top = resolved[resolved.length - 1];
     if (top) {
@@ -2302,9 +2439,16 @@ function validateStack(members, fleet, stack) {
     }
   }
   
-  const stackTotalHeight = resolved.reduce((s, r) => s + ((r && Number.isFinite(r.height)) ? r.height : 0), 0);
-  let stackTotalMass = ownMasses.reduce((s, m) => s + (Number.isFinite(m) ? m : 0), 0);
-  
+  // Stack total height — uses memberStackContribution so overlaps (fairing
+// wrap, hidden stage bell inside interstage) and engine-bell hang are
+// all accounted for, exactly matching stackCombinedAggregates' number.
+let stackTotalHeight = 0;
+resolved.forEach((r, i) => {
+  if (!r) return;
+  stackTotalHeight += memberStackContribution(r, resolved[i - 1] || null, resolved[i + 1] || null);
+});
+let stackTotalMass = ownMasses.reduce((s, m) => s + (Number.isFinite(m) ? m : 0), 0);
+
   // Real assigned cargo (if any) rides on top of every member's own mass —
   // the same number the live sim actually flies with (_bodyPayloadMass() in
   // physics.js). Without this, stackTotalMass only reflected empty hardware
@@ -2327,6 +2471,26 @@ function validateStack(members, fleet, stack) {
 // Phase 4 (P4-B3): nose dry mass = cone volume × shell factor × metal
 // density. Curveness affects the visual silhouette but not the mass
 // (simplification — the user confirmed cone-volume is fine for now).
+// Interstage dry mass — thin carbon-composite cylindrical band. Same
+// thin-wall shell formula the fairing uses, scaled to the interstage's
+// own height and diameter.
+function computeInterstageDryMass(rec) {
+  if (!rec || rec.stageRole !== 'interstage') return 0;
+  const metal = (typeof getComponentType === 'function') ? getComponentType(rec.bodyMetalTypeId) : null;
+  if (!metal) return 0;
+  const densEnt = metal.parameterSchema.find(p => p.key === 'density');
+  if (!densEnt || !Number.isFinite(densEnt.value)) return 0;
+  const density = densEnt.value;
+  const H = Number.isFinite(rec.height) ? rec.height : 0;
+  const W = Number.isFinite(rec.width) ? rec.width : 0;
+  if (!(H > 0) || !(W > 0)) return 0;
+  const r = W / 2;
+  const shellF = Number.isFinite(rec.bodyShellFactor) ? rec.bodyShellFactor : 0.0026;
+  const shellThk = shellF * r;
+  const lateralArea = 2 * Math.PI * r * H;
+  return lateralArea * shellThk * density;
+}
+
 function computeNoseDryMass(rec) {
   if (!rec || rec.stageRole !== 'nose') return 0;
   const metal = getComponentType(rec.bodyMetalTypeId);
@@ -2496,6 +2660,82 @@ function engineThrusterGroups(engineType) {
     (groups[key] = groups[key] || []).push(slot);
   });
   return groups;
+}
+
+// ---------------------------------------------------------------------------
+// Engine bell auto-sizing. Every thruster type declares two constants
+// (massFlowToBellHeight / massFlowToBellDiameter), calibrated from the real
+// hardware's nozzle dimensions at a known reference flow rate. The actual
+// bell rendered for a specific build is derived per-record from that
+// record's own mass flow rate, so mounting a Merlin 1D+ at 306 kg/s gives a
+// 1.8 m nozzle and mounting the same thruster at 200 kg/s gives a 1.2 m one
+// automatically — no per-record bell dimensions.
+// ---------------------------------------------------------------------------
+function engineBellHeightForRecord(rec) {
+  if (!rec) return 0;
+  const role = rec.stageRole || 'rocket';
+  if (role !== 'booster' && role !== 'stage' && role !== 'rocket') return 0;
+  if (!rec.engineTypeId || !rec.engineThrusters || typeof getComponentType !== 'function') return 0;
+  const layout = getComponentType(rec.engineTypeId);
+  if (!layout) return 0;
+  // Use whichever thruster group the layout actually has. A layout with
+  // only a gimbal group (like the single-nozzle-vac upper stage) and one
+  // with both gimbal+fixed (octaweb) both read from the same source here;
+  // a hypothetical mixed-thruster layout would use the gimbal group.
+  const g = rec.engineThrusters.gimbal || rec.engineThrusters.fixed;
+  if (!g || !Number.isFinite(g.massFlowRate)) return 0;
+  const t = getComponentType(g.thrusterTypeId);
+  if (!t) return 0;
+  const ent = t.parameterSchema.find(p => p.key === 'massFlowToBellHeight');
+  if (!ent || !Number.isFinite(ent.value)) return 0;
+  return ent.value * g.massFlowRate;
+}
+
+function engineBellDiameterForRecord(rec) {
+  if (!rec) return 0;
+  const role = rec.stageRole || 'rocket';
+  if (role !== 'booster' && role !== 'stage' && role !== 'rocket') return 0;
+  if (!rec.engineTypeId || !rec.engineThrusters || typeof getComponentType !== 'function') return 0;
+  const layout = getComponentType(rec.engineTypeId);
+  if (!layout) return 0;
+  const g = rec.engineThrusters.gimbal || rec.engineThrusters.fixed;
+  if (!g || !Number.isFinite(g.massFlowRate)) return 0;
+  const t = getComponentType(g.thrusterTypeId);
+  if (!t) return 0;
+  const ent = t.parameterSchema.find(p => p.key === 'massFlowToBellDiameter');
+  if (!ent || !Number.isFinite(ent.value)) return 0;
+  return ent.value * g.massFlowRate;
+}
+
+// ---------------------------------------------------------------------------
+// Stack height contribution — how much vertical space this member adds to
+// the assembled stack, measured from ground (y=0) upward. Depends on the
+// member's role, on what's directly above it (stage over interstage hides
+// its bell), and on the fairing's own stageOverlapM field.
+//
+//   Booster:           hull + engine bell  (bell exit is the ground point)
+//   Interstage:        own height
+//   Stage (over inter):hull only           (bell hidden inside interstage)
+//   Stage (standalone):hull + engine bell
+//   Payload space:     height − stageOverlapM
+//   Legacy rocket:     own height + engine bell
+// ---------------------------------------------------------------------------
+function memberStackContribution(m, below, above) {
+  if (!m) return 0;
+  const h = Number.isFinite(m.height) ? m.height : 0;
+  const role = m.stageRole || 'rocket';
+  if (role === 'rocket') return h + engineBellHeightForRecord(m);
+  if (role === 'booster') return h + engineBellHeightForRecord(m);
+  if (role === 'interstage') return h;
+  if (role === 'stage') {
+    if (below && below.stageRole === 'interstage') return h;
+    return h + engineBellHeightForRecord(m);
+  }
+  if (role === 'payloadSpace') {
+    const overlap = Number.isFinite(m.stageOverlapM) ? m.stageOverlapM : 0;
+    return Math.max(0, h - overlap);
+  }
+  return h;
 }
 
 // Backfill the new engineThrusters / rcsThruster sub-records for records

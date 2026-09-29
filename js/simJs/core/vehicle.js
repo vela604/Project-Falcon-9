@@ -64,11 +64,22 @@ const ve = veVacuum;
     // vehicle picks them up with zero changes here.
     const startupDurationEnt = t.parameterSchema.find(p => p.key === 'startupDurationS');
     const shutdownDurationEnt = t.parameterSchema.find(p => p.key === 'shutdownDurationS');
-    const Fmax = maxMassFlowRate * ve;
-engines.push({
+        const Fmax = maxMassFlowRate * ve;
+    // Engine bell height for THIS record — used to place each engine at the
+    // bell exit plane (below the hull base) so torque calc pivots correctly
+    // and the renderer's plume anchor sits at the nozzle exit.
+    engines.push({
       id: slot.id,
       angleDeg: slot.angleDeg,
       x: pos.x,
+      // Local y position of the GIMBAL BEARING, not the nozzle exit.
+      // Thrust acts along the engine axis at the nozzle exit plane, but
+      // the force transmits to the rocket through the gimbal bearing
+      // (the nozzle extends BELOW the gimbal point — it's the gimbal
+      // that holds the whole engine assembly onto the hull). On F9 the
+      // gimbal sits at the top of the octaweb, essentially at hull base,
+      // so 0. Any future engine type with an unusual mount can override.
+      y: 0,
       isCenter: slot.role === 'center',
       gimbal: slot.gimbalCapable,
       Fmax,

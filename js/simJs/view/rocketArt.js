@@ -1039,36 +1039,38 @@ function drawGridFinFace(ctx, pivotX, pivotY, topX, topY, wPx, hPx, cellPx, styl
 
 
 // ---------------------------------------------------------------------------
-// Engine bell — visual constants and exit-plane helper.
+// Engine bell — auto-sized from the record's actual thruster mass flow.
 //
-// Kept at module scope (not inline in drawRocketArt's bell block) so
-// render.js's plume anchor reads the exact same values the bell is drawn
-// with. Change any of these and the flame stays attached to the nozzle
-// exit automatically.
+// Every thruster type declares two hardware constants
+// (massFlowToBellHeight / massFlowToBellDiameter); the rendered bell is
+// derived from the record's own mass flow rate × those constants, so the
+// same thruster at a different flow gets a proportionally different
+// nozzle automatically. No percentage-of-rocket-width fudge any more.
 //
-//   ASPECT       height / exit radius        (higher = taller bell)
-//   R_FRAC       exit radius / rocket width  (higher = wider bell)
-//   CENTER_BOOST extra size on centre bell   (cluster-only)
-//   SINGLE_BOOST extra size on lone MVac     (single-nozzle-only)
+//   bellHeight_m   = massFlowToBellHeight   × gimbalFlowKgPerSec
+//   bellDiameter_m = massFlowToBellDiameter × gimbalFlowKgPerSec
+//   bellExitY_m    = bellHeight_m           (from the member's own base,
+//                                            down-positive)
 // ---------------------------------------------------------------------------
-const ENGINE_BELL_ASPECT = 1.8;
-const ENGINE_BELL_R_FRAC = 0.13;
-const ENGINE_BELL_CENTER_BOOST = 1.10;
-const ENGINE_BELL_SINGLE_BOOST = 1.15;
+function getEngineBellDims_m(record) {
+  const empty = { h: 0, d: 0, exitY: 0 };
+  if (!record || !record.engineTypeId || !record.engineThrusters) return empty;
+  if (typeof getComponentType !== 'function') return empty;
+  const g = record.engineThrusters.gimbal || record.engineThrusters.fixed;
+  if (!g || !Number.isFinite(g.massFlowRate)) return empty;
+  const t = getComponentType(g.thrusterTypeId);
+  if (!t) return empty;
+  const hEnt = t.parameterSchema.find(p => p.key === 'massFlowToBellHeight');
+  const dEnt = t.parameterSchema.find(p => p.key === 'massFlowToBellDiameter');
+  if (!hEnt || !dEnt) return empty;
+  const h = Number.isFinite(hEnt.value) ? hEnt.value * g.massFlowRate : 0;
+  const d = Number.isFinite(dEnt.value) ? dEnt.value * g.massFlowRate : 0;
+  return { h, d, exitY: h };
+}
 
-// Bell exit plane Y, in METERS, down-positive from the member's own base.
-// Only the deepest nozzle matters visually — centre bell in a cluster,
-// the lone bell in a single-nozzle layout — because the plume emerges
-// from there. Returns 0 when the record has no resolvable layout.
+// Kept as a thin wrapper for existing callers (render.js's plume anchor).
 function getEngineBellExitY_m(record) {
-  if (!record || !record.engineTypeId || typeof getComponentType !== 'function') return 0;
-  const layout = getComponentType(record.engineTypeId);
-  if (!layout || !layout.frame || !Array.isArray(layout.frame.slots)) return 0;
-  const nSlots = layout.frame.slots.length || 1;
-  const bump = (nSlots === 1) ? ENGINE_BELL_SINGLE_BOOST : ENGINE_BELL_CENTER_BOOST;
-  const W_m = Number.isFinite(record.width) ? record.width : 3.9;
-  const sR_m = W_m * ENGINE_BELL_R_FRAC;
-  return sR_m * ENGINE_BELL_ASPECT * bump;
+  return getEngineBellDims_m(record).exitY;
 }
 
 function drawRocketArt(ctx, W, H, mpp, opts) {
@@ -1099,18 +1101,57 @@ const hasFairingAbove = !!opts.hasFairingAbove;
   const designMode = bodyDesign.mode || 'solid';
   const solidFill = bodyDesign.solidColor || '#e9edf2';
   
-  // ---- Payload space role: pure fairing shape, early exit. ----
-  // PS-A: standalone shape renderer — no body/legs/RCS/engines for this
-  // role. Not yet reachable from any fleet record (that wiring is PS-C/D);
-  // this branch only fires when a caller explicitly passes
-  // stageRole: 'payloadSpace', same pattern as the nose early-exit below.
-  if (isPayloadSpace) {
-    drawPayloadSpaceShape(ctx, W, H, mpp, opts);
-    return;
-  }
-  
-  // ---- Nose role: pure cone, early exit. ----
-  if (isNose) {
+  // ---- Interstage: hollow dark band. ----
+// Structure-only member between a booster (below) and a stage (above).
+// No engines, no legs, no fuel, no RCS. Drawn as a solid dark rectangle
+// in the member's own colour with a subtle cylindrical gradient, plus
+// a top rim highlight to read as "structural ring". Early exit before
+// any of the engine / legs / body machinery below.
+if (opts.stageRole === 'interstage') {
+  const bandColor = (opts.bodyDesign && opts.bodyDesign.solidColor) || '#1a1d22';
+  const grad = cachedGradient(ctx, 'interstageBand', Math.round(W) + ':' + bandColor, () => {
+    const g = ctx.createLinearGradient(-W / 2, 0, W / 2, 0);
+    // Darker edges, slightly lighter centre — same cylindrical read
+    // the booster hull and engine bells use, just at low contrast so
+    // the band still reads as "dark structural" not "shiny metal".
+    g.addColorStop(0, 'rgba(0,0,0,0.55)');
+    g.addColorStop(0.5, 'rgba(255,255,255,0.08)');
+    g.addColorStop(1, 'rgba(0,0,0,0.55)');
+    return g;
+  });
+  ctx.fillStyle = bandColor;
+  ctx.fillRect(-W / 2, -H, W, H);
+  ctx.fillStyle = grad;
+  ctx.fillRect(-W / 2, -H, W, H);
+  // Top rim — thin light band at the very top edge, reads as the
+  // structural interface where the stage's thrust structure clamps.
+  ctx.strokeStyle = 'rgba(255,255,255,0.22)';
+  ctx.lineWidth = 0.9;
+  ctx.beginPath();
+  ctx.moveTo(-W / 2, -H + 0.5);
+  ctx.lineTo(W / 2, -H + 0.5);
+  ctx.stroke();
+  // Bottom rim — same, where it meets the booster's hull top.
+  ctx.strokeStyle = 'rgba(0,0,0,0.5)';
+  ctx.beginPath();
+  ctx.moveTo(-W / 2, -0.5);
+  ctx.lineTo(W / 2, -0.5);
+  ctx.stroke();
+  return;
+}
+
+// ---- Payload space role: pure fairing shape, early exit. ----
+// PS-A: standalone shape renderer — no body/legs/RCS/engines for this
+// role. Not yet reachable from any fleet record (that wiring is PS-C/D);
+// this branch only fires when a caller explicitly passes
+// stageRole: 'payloadSpace', same pattern as the nose early-exit below.
+if (isPayloadSpace) {
+  drawPayloadSpaceShape(ctx, W, H, mpp, opts);
+  return;
+}
+
+// ---- Nose role: pure cone, early exit. ----
+if (isNose) {
     const c = Math.max(0, Math.min(1, noseCurveness));
     const ctrlx = -W / 4 + c * (-W / 4);
     const ctrly = -H / 2 + c * (-H / 2);
@@ -1189,24 +1230,26 @@ const recoveryType = ('recoveryType' in opts) ? opts.recoveryType : null;
   // engine + a slightly bigger centre bell — the visible cluster. For a
   // single-nozzle layout, one bell.
   const engineLayout = opts.engineLayout || null;
-  const engineBell = (() => {
-    if (!engineLayout || !engineLayout.frame || !engineLayout.frame.slots) return null;
-    const totalFlow = (() => {
-      const groups = (typeof engineThrusterGroups === 'function') ? engineThrusterGroups(engineLayout) : {};
-      let sum = 0;
-      Object.keys(groups).forEach(gk => {
-        const g = opts.engineThrusters && opts.engineThrusters[gk];
-        if (!g || !Number.isFinite(g.massFlowRate)) return;
-        sum += g.massFlowRate * groups[gk].length;
-      });
-      return sum;
-    })();
-    if (totalFlow <= 0) return null;
-    const nSlots = engineLayout.frame.slots.length;
-    const perEngineFlow = totalFlow / nSlots;
-    const h = 0.007 * perEngineFlow;
-    return { h, r: h / 2, count: nSlots, slots: engineLayout.frame.slots };
-  })();
+const engineBell = (() => {
+  if (!engineLayout || !engineLayout.frame || !engineLayout.frame.slots) return null;
+  // Auto-sized from the record's own mass flow × the thruster type's
+  // two bell constants. Falls back to no bell if either the layout or
+  // the thruster schema can't be resolved.
+  const dims = (typeof getEngineBellDims_m === 'function') ?
+  getEngineBellDims_m({
+    engineTypeId: engineLayout.id,
+    engineThrusters: opts.engineThrusters,
+  }) : { h: 0, d: 0 };
+  if (!(dims.h > 0) || !(dims.d > 0)) return null;
+  const nSlots = engineLayout.frame.slots.length;
+  return {
+    h: dims.h,
+    d: dims.d,
+    r: dims.d / 2,
+    count: nSlots,
+    slots: engineLayout.frame.slots,
+  };
+})();
   
   
   const p = legsProgress;
@@ -1592,62 +1635,11 @@ const bodyPath = () => {
 // Real grid fins are now a proper hardware type drawn via drawGridFin /
 // drawGridFinEdgeOn further down, driven by opts.gridFinType / Params.)
   
-  if (isBooster) {
-    // ---- Interstage: black cylinder at the booster top. Sized to cover the
-    // stage engine bell above it (bellHeight × 1.20) with a floor so it's
-    // always visible even without a stage stacked. Diameter = booster width.
-    // Replaces the old flat lip band.
-    const defaultH = 0.06 * H;
-// Interstage height — prefer the PHYSICAL value from fleet.js's
-// computeInterstageForBooster (the same source that finPositionY
-// default and dry-mass calc key off). Without this, the render used
-// its own flow-based estimate (~2.5 m) while the physical model used
-// the width-based one (~1.7 m) — the visible band covered ~0.8 m
-// more of the booster than the actual hardware, and grid fins
-// anchored "just below the interstage" appeared to be inside it.
-let interstageH_target_m;
-if (Number.isFinite(opts.interstageHeight_m) && opts.interstageHeight_m > 0) {
-  interstageH_target_m = opts.interstageHeight_m;
-} else {
-  // Legacy fallback for callers that don't supply the physical value.
-  const bellH_m = (opts.stageAboveBellHeight && opts.stageAboveBellHeight > 0) ?
-    opts.stageAboveBellHeight : 0;
-  interstageH_target_m = Math.max(bellH_m * 1.20, defaultH * mpp);
-}
-const interstageH_px = Math.min(H * 0.20, interstageH_target_m / mpp);
-    
-    // Black band filling the top of the booster, flush with the flat top edge.
-    const isGrad = cachedGradient(ctx, 'interstage', Math.round(W), () => {
-      const g = ctx.createLinearGradient(-W / 2, 0, W / 2, 0);
-      g.addColorStop(0, '#0a0c10');
-      g.addColorStop(0.5, '#2a2d33');
-      g.addColorStop(1, '#0a0c10');
-      return g;
-    });
-    ctx.fillStyle = isGrad;
-    ctx.fillRect(-W / 2, -H, W, interstageH_px);
-    
-    // Bottom edge seam (where the interstage meets the booster tank).
-    ctx.strokeStyle = 'rgba(0, 0, 0, 0.60)';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(-W / 2, -H + interstageH_px);
-    ctx.lineTo(W / 2, -H + interstageH_px);
-    ctx.stroke();
-    
-      // Top edge highlight (very thin — reads as the upper rim).
-  ctx.strokeStyle = 'rgba(255, 255, 255, 0.32)';
-  ctx.lineWidth = 0.9;
-  ctx.beginPath();
-  ctx.moveTo(-W / 2, -H + 0.5);
-  ctx.lineTo(W / 2, -H + 0.5);
-  ctx.stroke();
-  
+if (isBooster) {
   // ---- Bottom black band — just above the engine bay ----
-  // Same gradient treatment as the interstage so both read as hardware
-  // trim, not a painted stripe. Height = BOOSTER_BOTTOM_BAND_FRAC ×
-  // body height. Drawn AFTER the body, so it sits cleanly on top of
-  // the cylinder gradient.
+  // Same gradient treatment the interstage band uses, so both read as
+  // hardware trim, not a painted stripe. Drawn AFTER the body so it
+  // sits cleanly on top of the cylinder gradient.
   const BOOSTER_BOTTOM_BAND_FRAC = 0.06;
   const bandH_px = Math.max(3, H * BOOSTER_BOTTOM_BAND_FRAC);
   const bottomBandGrad = cachedGradient(ctx, 'boosterBottomBand', Math.round(W), () => {
@@ -1676,9 +1668,12 @@ const interstageH_px = Math.min(H * 0.20, interstageH_target_m / mpp);
   ctx.lineTo(W / 2, -0.5);
   ctx.stroke();
   
-    // (Old hardcoded grid-fin decoration removed — real fins now render
-// via the gridFinType/gridFinParams block above this section.)
-
+  // Interstage is now its own stack member; the booster no longer
+  // renders a band at its top. Legacy Block 3 records — which don't
+  // have an interstage member — will visually look different (no top
+  // band) until migrated. Acceptable since Block 3's interstage role
+  // migration is a separate follow-up.
+  
 } else if (opts.stageRole !== 'stage') {
     // Rocket / legacy rocket: checkerboard stripe + grid fins near the
     // shoulder. Stage is skipped entirely — its payload space IS the
@@ -1733,49 +1728,52 @@ const interstageH_px = Math.min(H * 0.20, interstageH_target_m / mpp);
 // hardware does — see opts.hasMemberBelow gate below.
 const drawsEngineBells = (opts.stageRole === 'stage' || isBooster || opts.stageRole === 'rocket');
 if (drawsEngineBells && engineBell && !opts.hasMemberBelow) {
-  // Visual bell sizing — deliberately decoupled from engineBell.h/r
-  // (the flow-derived formula) because that formula sizes the interstage,
-  // not the nozzle's own exit: it over-estimates a real nozzle's exit
-  // diameter by ~2×. Silhouette here matches a real Merlin/MVac nozzle:
-  //   exit radius ≈ 13% of rocket width, aspect (height / radius) ≈ 1.6.
-  const BELL_ASPECT = ENGINE_BELL_ASPECT;
-const BELL_R_FRAC = ENGINE_BELL_R_FRAC;
-const CENTER_BOOST = ENGINE_BELL_CENTER_BOOST;
-const SINGLE_BOOST = ENGINE_BELL_SINGLE_BOOST;
-const W_m = W * mpp;
-  const hullHalf_m = W_m / 2;
+  // Bell dimensions come straight from the thruster type's hardware
+  // constants × this record's own mass flow rate — no percentage-of-
+  // rocket-width fudge. Bell exit plane sits BELOW the hull base,
+  // matching real F9: nozzle exit is the ground-contact point, hull
+  // base sits bellHeight above it. Caller positions the member so the
+  // hull base is at (0,0) in local canvas coords, and this function
+  // draws the bell hanging down from there.
+  const sR_m = engineBell.r; // exit radius, meters
+  const sH_m = engineBell.h;
+  const hullHalf_m = (W * mpp) / 2;
   
-  // de Laval bell curve — ROUNDED throat at top, wall bulges outward
-  // through the middle, flat exit plane at the bottom. Throat half-width
-  // is deliberately 55% of the exit (a real nozzle is closer to ~35%),
-  // and the near-throat bezier control only reaches 1.25× the throat
-  // width — that keeps the top reading as a smooth rounded shoulder
-  // instead of a pointed cone tip.
+  // de Laval bell curve — rounded throat, cylindrical wall, flat exit.
   function bellPath(g, sR, sH) {
-    const tR = sR * 0.45; // throat half-width — narrower, neck visible
-g.beginPath();
-g.moveTo(-tR, 0);
-g.bezierCurveTo(
-  -tR * 1.7, sH * 0.26,
-  -sR * 0.90, sH * 0.75,
-  -sR, sH
-);
-g.lineTo(sR, sH);
-g.bezierCurveTo(
-  sR * 0.90, sH * 0.75,
-  tR * 1.7, sH * 0.26,
-  tR, 0
-);
-    g.closePath();
-  }
+  // Narrow throat + steep initial shoulder + near-straight lower wall.
+  //   tR     = throat half-width / exit half-width.  0.35–0.45 = nozzle
+  //            bell; higher (0.6+) collapses to a cone shape.
+  //   CP1 y  = where the shoulder curve bottoms out. Lower = shoulder
+  //            sharper; higher = rounder.
+  //   CP1 x  = how far the shoulder bulges outward. Higher = more
+  //            dramatic flare.
+  //   CP2    = controls the lower-wall straightness. x closer to sR
+  //            gives a straighter wall near the exit.
+  const tR = sR * 0.35;
+  g.beginPath();
+  g.moveTo(-tR, 0);
+  g.bezierCurveTo(
+    -tR * 2.6, sH * 0.18, // steep initial shoulder
+    -sR * 0.98, sH * 0.68, // nearly straight mid-wall
+    -sR, sH // exit corner
+  );
+  g.lineTo(sR, sH);
+  g.bezierCurveTo(
+    sR * 0.98, sH * 0.68,
+    tR * 2.6, sH * 0.18,
+    tR, 0
+  );
+  g.closePath();
+}
   
   const drawOneBell = (cx, sR, sH) => {
     ctx.save();
     ctx.translate(cx, 0);
     const g = ctx.createLinearGradient(-sR, 0, sR, 0);
-g.addColorStop(0, '#1c1e22');
-g.addColorStop(0.5, '#4a4e54');
-g.addColorStop(1, '#1c1e22');
+    g.addColorStop(0, '#1c1e22');
+    g.addColorStop(0.5, '#4a4e54');
+    g.addColorStop(1, '#1c1e22');
     ctx.fillStyle = g;
     bellPath(ctx, sR, sH);
     ctx.fill();
@@ -1792,47 +1790,29 @@ g.addColorStop(1, '#1c1e22');
   };
   
   if (engineBell.count === 1) {
-    // Single vacuum-class nozzle (MVac). Lone bell; modest size bump
-    // (MVac expansion ratio > SL Merlin's).
-    const sR_m = W_m * BELL_R_FRAC * SINGLE_BOOST;
-    const sH_m = sR_m * BELL_ASPECT;
     drawOneBell(0, sR_m / mpp, sH_m / mpp);
   } else {
-    // Multi-nozzle cluster. Outer bells equal size; centre slightly
-    // larger. Cluster ring radius for VISUAL placement is the smaller
-    // of the stored octaRadius and what actually fits inside the hull
-    // (with clearance for the widest bell — the centre one).
-    const sR_m = W_m * BELL_R_FRAC;
-    const sH_m = sR_m * BELL_ASPECT;
-    const sR_c_m = sR_m * CENTER_BOOST;
-    const sH_c_m = sH_m * CENTER_BOOST;
-    const R_m = (opts.params && Number.isFinite(opts.params.octaRadius)) ? opts.params.octaRadius : 1.7;
+    // Cluster — same z-sorted painter's order.
+    // Cluster ring radius: min of stored octaRadius and what fits
+    // inside the hull, accounting for the bell's own exit radius.
     const gap_m = 0.03;
-    const R_fit_m = Math.max(sR_m + 0.01, hullHalf_m - sR_c_m - gap_m);
+    const R_m = (opts.params && Number.isFinite(opts.params.octaRadius)) ? opts.params.octaRadius : 1.7;
+    const R_fit_m = Math.max(sR_m + 0.01, hullHalf_m - sR_m - gap_m);
     const R_vis_m = Math.min(R_m, R_fit_m);
-    
-    // Painter's order for the WHOLE cluster, centre included. z =
-// sin(angle)·R is depth: +z sits farther from the viewer.
-// Far-first → near bells drawn later occlude whatever is behind
-// them. The front-most outer (at x=0) then correctly covers the
-// centre engine, instead of the old code that force-drew the
-// centre last and made it look like the closest engine.
-const items = [];
-engineBell.slots.forEach(slot => {
-  if (slot.angleDeg == null) items.push({ slot, z: 0, isCenter: true });
-  else items.push({ slot,
-    z: Math.sin(slot.angleDeg * Math.PI / 180) * R_vis_m,
-    isCenter: false });
-});
-items.sort((a, b) => b.z - a.z);   // descending: farthest z first
-items.forEach(({ slot, isCenter }) => {
-  const pos = (typeof slot.position === 'function') ? slot.position(R_vis_m) : { x: 0 };
-  drawOneBell((pos.x || 0) / mpp,
-              (isCenter ? sR_c_m : sR_m) / mpp,
-              (isCenter ? sH_c_m : sH_m) / mpp);
-});
+    const items = [];
+    engineBell.slots.forEach(slot => {
+      if (slot.angleDeg == null) items.push({ slot, z: 0, isCenter: true });
+      else items.push({ slot,
+        z: Math.sin(slot.angleDeg * Math.PI / 180) * R_vis_m,
+        isCenter: false });
+    });
+    items.sort((a, b) => b.z - a.z);
+    items.forEach(({ slot }) => {
+      const pos = (typeof slot.position === 'function') ? slot.position(R_vis_m) : { x: 0 };
+      drawOneBell((pos.x || 0) / mpp, sR_m / mpp, sH_m / mpp);
+    });
   }
-  }
+}
   
 // ---- Grid fins ----
 // Per-fin state. `deploy` and `control` are both in DEGREES.
@@ -2225,14 +2205,16 @@ const H = v.height / mpp;
 // exactly: h_m = 0.007 × (total flow / slot count); pixel extent = h_m / mpp.
 let subBaseExtentPx = 0;
 const _drawsBells = (v.stageRole === 'stage' || v.stageRole === 'booster' || v.stageRole === 'rocket');
-if (_drawsBells && v.engineLayout && v.engineLayout.frame &&
-  Array.isArray(v.engineLayout.frame.slots)) {
-  // Match drawRocketArt's visual bell sizing: exit radius ≈ 13% of
-  // rocket width, aspect 1.6. Max extent is centre bell in a cluster
-  // (×1.10) or the lone bell in a single-nozzle layout (×1.15).
-  const nSlots = v.engineLayout.frame.slots.length || 1;
-  const bump = (nSlots === 1) ? 1.15 : 1.10;
-  const bellH_m = (v.width || 3.9) * 0.13 * 1.2 * bump;
+if (_drawsBells && typeof engineBellHeightForRecord === 'function') {
+  // Bell height comes from the record's own mass flow × the thruster
+  // type's massFlowToBellHeight constant, matching what drawRocketArt
+  // will actually draw. Falls through to 0 if the thruster or layout
+  // can't be resolved.
+  const bellH_m = engineBellHeightForRecord({
+    stageRole: v.stageRole,
+    engineTypeId: v.engineLayout ? v.engineLayout.id : null,
+    engineThrusters: v.engineThrusters,
+  });
   if (bellH_m > 0) subBaseExtentPx = bellH_m / mpp;
 }
 
@@ -2354,42 +2336,26 @@ function renderStackPreview(canvas, memberIds, fleet) {
     return;
   }
   
-  const widest = Math.max(...members.map(m => m.width || 1));
-const totalH = members.reduce((s, m) => s + (m.height || 0), 0);
-
-// Cap the DRAWN rocket's height so a very tall stack (F9 stack is 68m
-// × 5.2m, aspect ~13:1) doesn't stretch the canvas past reason. When
-// the height cap binds, the drawn width shrinks proportionally —
-// which is correct: the rocket is intrinsically that narrow.
-const MAX_DRAWN_H_PX = 520;
-const maxW_px = cssW * 0.50;
-const mppW = widest / maxW_px;
-const mppH = totalH / MAX_DRAWN_H_PX;
-const mpp = Math.max(mppW, mppH);
-const W_px = widest / mpp;
-const H_px_total = totalH / mpp;
-
-// Reserve vertical space for the bottom member's engine bell (extends
-// downward from local (0,0)). Same formula drawRocketArt sizes it with:
-// h_m = 0.007 × (total flow / slot count). Only the bottom member ever
-// draws a bell (hasMemberBelow gate at the draw call).
-let subBaseExtentPx = 0;
-{
-  const bottom = members[0];
-  const bottomLayout = (bottom && bottom.engineTypeId && typeof getComponentType === 'function') ?
-    getComponentType(bottom.engineTypeId) : null;
-  if (bottomLayout && bottomLayout.frame && Array.isArray(bottomLayout.frame.slots)) {
-  const nSlots = bottomLayout.frame.slots.length || 1;
-  const bump = (nSlots === 1) ? 1.15 : 1.10;
-  const bellH_m = (bottom.width || 1) * 0.13 * 1.2 * bump;
-  if (bellH_m > 0) subBaseExtentPx = bellH_m / mpp;
-}
-}
-
-const contentH = H_px_total + subBaseExtentPx;
-const vMarginFrac = 0.94;
-const cssH = contentH / vMarginFrac;
-canvas.style.height = cssH + 'px';
+    const widest = Math.max(...members.map(m => m.width || 1));
+  
+  // Total stack height in METERS — bell exit to nose tip. Uses the same
+  // memberStackContribution helper fleet.js's stackCombinedAggregates
+  // does, so the rendered canvas and the reported stack height agree.
+  let contentH_m = 0;
+  members.forEach((m, i) => {
+    contentH_m += memberStackContribution(m, members[i - 1] || null, members[i + 1] || null);
+  });
+  if (contentH_m <= 0) contentH_m = 1;
+  
+  const MAX_DRAWN_H_PX = 520;
+  const maxW_px = cssW * 0.50;
+  const mppW = widest / maxW_px;
+  const mppH = contentH_m / MAX_DRAWN_H_PX;
+  const mpp = Math.max(mppW, mppH);
+  const contentH_px = contentH_m / mpp;
+  const vMarginFrac = 0.94;
+  const cssH = contentH_px / vMarginFrac;
+  canvas.style.height = cssH + 'px';
   
   const dpr = window.devicePixelRatio || 1;
   canvas.width = Math.round(cssW * dpr);
@@ -2398,11 +2364,38 @@ canvas.style.height = cssH + 'px';
   pctx.clearRect(0, 0, cssW, cssH);
   
   const baseX = cssW / 2;
-let baseY = (cssH - contentH) / 2 + H_px_total;
+  // Ground plane (bell exit) sits at the bottom of content, above the
+  // bottom margin.
+  const groundY = (cssH + contentH_px) / 2;
   
+  // Cumulative height from ground, in px. Members stack bottom-up; each
+  // member's hull base is placed at the running cumulative value, and
+  // the cumulative advances by that member's own contribution.
+  let cumPx = 0;
   members.forEach((m, idx) => {
+    const role = m.stageRole;
+    const Hpx = (m.height || 0) / mpp;
     const W = (m.width || 1) / mpp;
-    const H = (m.height || 0) / mpp;
+    
+    // Base y-position of this member's hull, in px above ground.
+    let baseAboveGround_px;
+    if (role === 'booster' || role === 'rocket') {
+      const bellHpx = (typeof engineBellHeightForRecord === 'function') ?
+        engineBellHeightForRecord(m) / mpp : 0;
+      baseAboveGround_px = cumPx + bellHpx;
+      cumPx += bellHpx + Hpx;
+    } else if (role === 'payloadSpace') {
+      const overlapPx = (Number.isFinite(m.stageOverlapM) ? m.stageOverlapM : 0) / mpp;
+      baseAboveGround_px = cumPx - overlapPx;
+      cumPx += Hpx - overlapPx;
+    } else {
+      // interstage, stage, nose — base at previous top.
+      baseAboveGround_px = cumPx;
+      cumPx += Hpx;
+    }
+    
+    const baseY = groundY - baseAboveGround_px;
+    
     const recoveryType = (m.hasRecovery === false) ? null :
       ((m.recoveryTypeId && typeof getComponentType === 'function') ?
         getComponentType(m.recoveryTypeId) : null);
@@ -2411,33 +2404,8 @@ let baseY = (cssH - contentH) / 2 + H_px_total;
     const engineLayout = (m.engineTypeId && typeof getComponentType === 'function') ?
       getComponentType(m.engineTypeId) : null;
     
-    // Bell height of the member directly above `m` (for booster/stage
-    // interstage sizing) — same formula as boosterDerivedMasses()'s
-    // interstage calc in fleet.js, duplicated here because that version
-    // reads the global SIM_STACK_MEMBERS (only set inside the live sim);
-    // this preview runs on the home/fleet pages where that global doesn't
-    // exist, but we already have the ordered `members` array locally.
-    const above = members[idx + 1];
-// Interstage height — the same physical value computeInterstageForBooster
-// produces for the booster's mass model, so the rendered band matches
-// the hardware grid fins and dry-mass both key off.
-let interstageHeight_m = null;
-if (m.stageRole === 'booster' && typeof computeInterstageForBooster === 'function') {
-  const inter = computeInterstageForBooster(m, above);
-  if (inter && Number.isFinite(inter.height)) interstageHeight_m = inter.height;
-}
-    
-    // Same flag as render.js — a stage with a fairing directly above it
-// in the stack suppresses its own nose.
-
-pctx.save();
-pctx.translate(baseX, baseY);
-
-// PS-D2: payloadSpace shape needs its own opts (kind/capWidth/bulgeWidth/
-// frustumAngle/curveRatio/color). Those aren't computed in stack preview
-// otherwise — extract them from the member record here.
-const psType = (m.stageRole === 'payloadSpace' && m.payloadSpaceTypeId && typeof getComponentType === 'function') ?
-  getComponentType(m.payloadSpaceTypeId) : null;
+    const psType = (m.stageRole === 'payloadSpace' && m.payloadSpaceTypeId && typeof getComponentType === 'function') ?
+      getComponentType(m.payloadSpaceTypeId) : null;
     const psParams = m.params || {};
     const payloadOpts = (m.stageRole === 'payloadSpace') ? {
       payloadCapWidth: Number.isFinite(psParams.capWidth) ? psParams.capWidth : undefined,
@@ -2447,41 +2415,35 @@ const psType = (m.stageRole === 'payloadSpace' && m.payloadSpaceTypeId && typeof
       payloadColor: m.color || '#e9edf2',
     } : {};
     
-    drawRocketArt(pctx, W, H, mpp, {
+    pctx.save();
+    pctx.translate(baseX, baseY);
+    drawRocketArt(pctx, W, Hpx, mpp, {
       rcsTopY: m.params ? m.params.rcsTopY : undefined,
       rcsBottomY: m.params ? m.params.rcsBottomY : undefined,
       recoveryType,
       rcsType,
       stageRole: m.stageRole,
-      
       noseCurveness: m.noseCurveness,
       bodyDesign: m.bodyDesign,
       payloadSpaceColor: (m.payloadSpace && m.payloadSpace.color) ? m.payloadSpace.color : undefined,
       stagePayload: (typeof buildStagePayload === 'function') ? buildStagePayload(m) : null,
-            engineLayout: engineLayout,
-        engineThrusters: m.engineThrusters,
-              params: m.params,
-        interstageHeight_m: interstageHeight_m,
-        hasMemberBelow: idx > 0,
-  gridFinType: (m.hasGridFins && m.gridFinTypeId && typeof getComponentType === 'function') ?
-  getComponentType(m.gridFinTypeId) : null,
-  gridFinParams: m.gridFinParams || null,
-    gridFinColor: m.gridFinColor || '#8a9198',
-    // SZAD overlay: only drawn on locked (default) boosters.
-    locked: m.locked === true,
-    ...payloadOpts,
-  });
-  
-  pctx.restore();
-  
-  // SZAD — after restore, clean transform. Uses the member's own
-  // base anchor (baseX, baseY) which is still the current anchor
-  // before the -= H step below.
-  if (m.locked === true && m.stageRole === 'booster') {
-    const solidColor = (m.bodyDesign && m.bodyDesign.solidColor) || '#e9edf2';
-    _drawSzadAtAnchor(pctx, baseX, baseY, W, H, solidColor);
-  }
-  
-  baseY -= H;
+      engineLayout: engineLayout,
+      engineThrusters: m.engineThrusters,
+      params: m.params,
+      hasMemberBelow: idx > 0,
+      gridFinType: (m.hasGridFins && m.gridFinTypeId && typeof getComponentType === 'function') ?
+        getComponentType(m.gridFinTypeId) : null,
+      gridFinParams: m.gridFinParams || null,
+      gridFinColor: m.gridFinColor || '#8a9198',
+      locked: m.locked === true,
+      ...payloadOpts,
+    });
+    pctx.restore();
+    
+    if (m.locked === true && m.stageRole === 'booster') {
+      const solidColor = (m.bodyDesign && m.bodyDesign.solidColor) || '#e9edf2';
+      _drawSzadAtAnchor(pctx, baseX, baseY, W, Hpx, solidColor);
+    }
   });
   }
+  

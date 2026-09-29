@@ -897,20 +897,24 @@ function computeMainThrustForBody(body, comH, comW) {
     torque = 0,
     mdot = 0;
   body.engines.forEach(e => {
-    if (e.massFlowRate <= 0) { e.currentF = 0; return; }
-    // PHASE 1: thrust = mass flow rate × exhaust velocity, directly —
-    // this is the physically canonical relation; it was already true
-    // before, just previously reached via a throttle-fraction detour.
-    const F = e.massFlowRate * e.Ve;
-    e.currentF = F;
-    const gRad = (e.gimbal ? e.gimbalDeg : 0) * Math.PI / 180;
-    const fx = F * Math.sin(gRad);
-    const fy = F * Math.cos(gRad);
-    Fx += fx;
-    Fy += fy;
-    torque += (e.x - pivotX) * fy - (-comH) * fx;
-    mdot += e.massFlowRate;
-  });
+  if (e.massFlowRate <= 0) { e.currentF = 0; return; }
+  // PHASE 1: thrust = mass flow rate × exhaust velocity, directly —
+  // this is the physically canonical relation; it was already true
+  // before, just previously reached via a throttle-fraction detour.
+  const F = e.massFlowRate * e.Ve;
+  e.currentF = F;
+  const gRad = (e.gimbal ? e.gimbalDeg : 0) * Math.PI / 180;
+  const fx = F * Math.sin(gRad);
+  const fy = F * Math.cos(gRad);
+  Fx += fx;
+  Fy += fy;
+  // Thrust transmits through the gimbal bearing (see vehicle.js's e.y
+// comment). e.y is the bearing's local y — 0 for F9 and nearly every
+// real engine. Kept as a field so an unusual mount could specify.
+const ey = Number.isFinite(e.y) ? e.y : 0;
+torque += (e.x - pivotX) * fy - (ey - comH) * fx;
+  mdot += e.massFlowRate;
+});
   return { Fx, Fy, torque, mdot };
 }
 // A2 CLEANUP: computeMainThrust(comH) backwards-compat shim removed —
@@ -1007,15 +1011,6 @@ function bodyAeroProfile(body) {
   if (!mem.length) {
     const w = (body && Number.isFinite(body.width)) ? body.width : (CONFIG.ROCKET_WIDTH || 3.9);
     const h = (body && Number.isFinite(body.height)) ? body.height : (CONFIG.ROCKET_HEIGHT || 45);
-    // A split fairing half is a curved SHELL, not a nose-cone aerodynamic
-    // body — it must NOT get the Barrowman linear nose term (CNα=2, CP at
-    // 0.466×height). For a fairing half that CP sits BELOW the CoM (6.1 m
-    // vs 6.55 m on an F9 fairing), making the linear aero response
-    // amplifying instead of restoring: any small AoA drove a large torque,
-    // and with the half's now-realistic (small) MOI that torque became
-    // violent spin. Marking it non-tapered keeps the Allen-Perkins
-    // crossflow drag (still correct — a shell does decelerate through air)
-    // while removing the destabilizing nose term entirely.
     const isShell = !!(body && body.fairingHalf);
     return {
       refWidth: w,
@@ -1023,23 +1018,59 @@ function bodyAeroProfile(body) {
     };
   }
   let refWidth = 0;
+  const members = [];
+  // Hull-base reference frame: bottom member's hull base at y = 0,
+  // everything below is negative. comH is measured in the same frame
+  // (stackMassProps returns hull-base-relative COM), so the bell as a
+  // negative-baseY virtual member drops in cleanly with no COM shift.
+  //
+  // Virtual engine-bay member — the bell cluster hangs below the bottom
+  // hull. Effective width = min(cluster span, hull width) so it never
+  // pokes outside the hull silhouette; height = single-bell height
+  // (all bells in a cluster hang the same distance). Nose-on this
+  // adds almost nothing (behind the hull); broadside/tumbling it
+  // contributes real crossflow area.
+  const bottom = mem[0];
+  const bellH_m = (typeof engineBellHeightForRecord === 'function') ?
+    engineBellHeightForRecord(bottom) : 0;
+  if (bellH_m > 0) {
+    const layout = (bottom.engineTypeId && typeof getComponentType === 'function') ?
+      getComponentType(bottom.engineTypeId) : null;
+    const nSlots = (layout && layout.frame && Array.isArray(layout.frame.slots)) ?
+      layout.frame.slots.length : 1;
+    const bellDia = (typeof engineBellDiameterForRecord === 'function') ?
+      engineBellDiameterForRecord(bottom) : 0;
+    const hullW = Number.isFinite(bottom.width) ? bottom.width : 3.9;
+    const octaR = (bottom.params && Number.isFinite(bottom.params.octaRadius)) ?
+      bottom.params.octaRadius : 1.7;
+    const clusterSpan = (nSlots === 1) ? bellDia : Math.min(hullW, octaR * 2 + bellDia);
+    if (clusterSpan > 0) {
+      members.push({
+        width: clusterSpan,
+        height: bellH_m,
+        area: Math.PI * (clusterSpan / 2) ** 2,
+        baseY: -bellH_m,
+        isTapered: false,
+      });
+    }
+  }
   let yOffset = 0;
-  const members = mem.map(m => {
+  mem.forEach(m => {
     const H = Number.isFinite(m.height) ? m.height : 0;
     const W = Number.isFinite(m.width) ? m.width : 0;
     refWidth = Math.max(refWidth, W);
-    // Tapered ("nose-shaped") members get the AoA-dependent nose-term ⇄
-    // cross-flow CP blend, scoped to THEIR OWN height range; a plain
-    // cylindrical member (most booster/stage tanks) just uses its own
-    // geometric mid-height — there's no separate nose potential-flow term
-    // to blend in for a mid-stack cylindrical segment.
     const isTapered = (m.stageRole === 'nose') || (m.stageRole === 'payloadSpace');
-    const out = { width: W, height: H, area: Math.PI * (W / 2) ** 2, baseY: yOffset, isTapered };
+    members.push({
+      width: W,
+      height: H,
+      area: Math.PI * (W / 2) ** 2,
+      baseY: yOffset,
+      isTapered,
+    });
     yOffset += H;
-    return out;
   });
   return { refWidth: refWidth || (CONFIG.ROCKET_WIDTH || 3.9), members };
-  }
+}
   
 // ============================================================================
 // GRID FIN AERODYNAMICS
@@ -1609,12 +1640,22 @@ function resolveGroundContact(body, groundR, geom) {
   
   // ... (existing tilted-body code — 4-point selection, unchanged)
   
-  const candidates = [
-    { label: 'base', p: _rotatedPoint(body, 0, 0) },
-    { label: 'baseL', p: _rotatedPoint(body, -half, 0) },
-    { label: 'baseR', p: _rotatedPoint(body, half, 0) },
-    { label: 'nose', p: _rotatedPoint(body, 0, H) },
-  ];
+  // Bell exit is the physically lowest point of a bottom-of-stack body —
+// below the hull base by the bell height. When it's present, the bell
+// is what touches ground first (F9 launch pad reality: nozzle exit
+// plane sits just above the flame trench). Missing when the body has
+// no resolvable engine hardware; skipped in that case.
+const bellH_m = (body.members && body.members[0] && typeof engineBellHeightForRecord === 'function') ?
+  engineBellHeightForRecord(body.members[0]) : 0;
+const candidates = [
+  { label: 'base', p: _rotatedPoint(body, 0, 0) },
+  { label: 'baseL', p: _rotatedPoint(body, -half, 0) },
+  { label: 'baseR', p: _rotatedPoint(body, half, 0) },
+  { label: 'nose', p: _rotatedPoint(body, 0, H) },
+];
+if (bellH_m > 0) {
+  candidates.push({ label: 'bell', p: _rotatedPoint(body, 0, -bellH_m) });
+}
   
   let contact = null,
     contactAlt = Infinity;

@@ -47,7 +47,7 @@ function _rodI(m, L) {
 function memberMaxFuel(rec, aboveMember) {
   if (!rec) return 0;
   const role = rec.stageRole || 'rocket';
-  if (role === 'nose' || role === 'payloadSpace') return 0;
+  if (role === 'nose' || role === 'payloadSpace' || role === 'interstage') return 0;
   if (role === 'booster') {
     const d = (typeof boosterDerivedMasses === 'function') ? boosterDerivedMasses(rec, aboveMember) : null;
     return (d && Number.isFinite(d.fuelMass)) ? d.fuelMass : 0;
@@ -199,8 +199,25 @@ function memberComponents(rec, memberFuelMass, legsProgress, aboveMember, sloshO
   const W = Number.isFinite(rec.width) ? rec.width : 0;
   const r = W / 2;
   
-  // ---- Nose: single cone component ----
-  if (role === 'nose') {
+  // ---- Interstage: hollow cylindrical shell, structure only ----
+// No engines, no fuel, no legs, no RCS. Same thin-shell mass formula
+// computeInterstageDryMass uses in fleet.js — kept identical so the
+// editor's derived readout and the sim's flying mass match to the kg.
+if (role === 'interstage') {
+  const mass = (typeof computeInterstageDryMass === 'function') ?
+    computeInterstageDryMass(rec) : 0;
+  out.push({
+    label: 'interstage',
+    mass,
+    comX: 0,
+    comY: H / 2, // cylinder centroid at mid-height
+    iOwn: _thinCylinderI(mass, r, H),
+  });
+  return out;
+}
+
+// ---- Nose: single cone component ----
+if (role === 'nose') {
     const mass = (typeof computeNoseDryMass === 'function') ? computeNoseDryMass(rec) : 0;
     out.push({
       label: 'nose',
@@ -604,33 +621,41 @@ function stackMassProps(members, fuelMassTotal, legsProgress, payloadMass, slosh
   }
   const fuelTotal = fuelMassTotal || 0;
   
-  const all = [];
+    const all = [];
   let yOffset = 0;
   let payloadSpaceComY = null;
   members.forEach((m, i) => {
-  const progress = (i === 0) ? (legsProgress || 0) : 0;
-  const memberFuel = usePerMember ?
-    Math.max(0, memberFuels[i] || 0) :
-    (sumMax > 0 ? fuelTotal * (maxFuels[i] / sumMax) : 0);
-  // Only boosters have a stack-derived interstage; other member types
-  // ignore this field (memberComponents only reads it on the booster path).
-  const frozenInterstage = frozenInterstageMap[m.id] || null;
-  // Phase 2A: only the BOTTOM member (i === 0) ever gets a nonzero slosh
-  // offset passed through — see prompt_2phase.md §2A "only the bottom
-  // tank matters".
-  const comps = memberComponents(m, memberFuel, progress, members[i + 1] || null, i === 0 ? sloshOffset : undefined, frozenInterstage, gridFinsLive);
-  // comps are freshly built by memberComponents() every call and never
-  // shared/cached elsewhere, so mutating in place (instead of spreading
-  // into a new object) is safe and skips one allocation per component.
-  comps.forEach(c => {
-    c.comY += yOffset;
-    all.push(c);
+    const progress = (i === 0) ? (legsProgress || 0) : 0;
+    const memberFuel = usePerMember ?
+      Math.max(0, memberFuels[i] || 0) :
+      (sumMax > 0 ? fuelTotal * (maxFuels[i] / sumMax) : 0);
+    // Only boosters have a stack-derived interstage; other member types
+    // ignore this field (memberComponents only reads it on the booster path).
+    const frozenInterstage = frozenInterstageMap[m.id] || null;
+    // Phase 2A: only the BOTTOM member (i === 0) ever gets a nonzero slosh
+    // offset passed through — see prompt_2phase.md §2A "only the bottom
+    // tank matters".
+    const comps = memberComponents(m, memberFuel, progress, members[i + 1] || null, i === 0 ? sloshOffset : undefined, frozenInterstage, gridFinsLive);
+    // Fairing overlap — the fairing's physical base sits `stageOverlapM`
+    // below the naive cumulative sum, because its bottom wraps the top of
+    // the stage hull. Shifts the fairing's whole mass down by that much.
+    // (Effect on the overall stack COM is small — ~2 t of fairing vs ~550 t
+    // stack — but doing it right keeps the number honest.)
+    const overlapM = (m.stageRole === 'payloadSpace' && Number.isFinite(m.stageOverlapM)) ?
+      m.stageOverlapM : 0;
+    const baseOffset = yOffset - overlapM;
+    // comps are freshly built by memberComponents() every call and never
+    // shared/cached elsewhere, so mutating in place (instead of spreading
+    // into a new object) is safe and skips one allocation per component.
+    comps.forEach(c => {
+      c.comY += baseOffset;
+      all.push(c);
+    });
+    if (m && m.stageRole === 'payloadSpace' && Number.isFinite(m.height)) {
+      payloadSpaceComY = baseOffset + m.height / 2;
+    }
+    yOffset = baseOffset + (Number.isFinite(m.height) ? m.height : 0);
   });
-  if (m && m.stageRole === 'payloadSpace' && Number.isFinite(m.height)) {
-    payloadSpaceComY = yOffset + m.height / 2;
-  }
-  yOffset += Number.isFinite(m.height) ? m.height : 0;
-});
   
   // Real assigned cargo mass — the caller (physics.js's _bodyPayloadMass())
   // already resolves this to a plain number (0 once released / if this body

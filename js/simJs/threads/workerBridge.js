@@ -496,10 +496,11 @@ function maybeForwardGuidanceSnapshot() {
   slosh: b.slosh ? { offset: b.slosh.offset || 0, velocity: b.slosh.velocity || 0 } : null,
   // Engine flow meter + gimbal LVDT (per engine)
   engines: (b.engines || []).map(e => ({
-  id: e.id,
-  angleDeg: e.angleDeg,
-  x: e.x,
-  isCenter: e.isCenter,
+        id: e.id,
+        angleDeg: e.angleDeg,
+        x: e.x,
+        y: e.y,
+        isCenter: e.isCenter,
   gimbal: e.gimbal,
   Ve: e.Ve,
   maxMassFlowRate: e.maxMassFlowRate,
