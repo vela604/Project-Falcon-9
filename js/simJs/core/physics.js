@@ -1007,6 +1007,11 @@ const AERO_CD_CROSSFLOW = 1.2;
 // using that body's own height/width when available, else CONFIG's.
 // ---------------------------------------------------------------------------
 function bodyAeroProfile(body) {
+  // Permanent cache — a body's members / engines / params are fixed
+  // after construction. Profile only changes on staging, which swaps
+  // the body object entirely (new body, new cache slot). Null body
+  // (fallback path) is skipped so the cheap CONFIG path isn't cached.
+  if (body && body._aeroProfileCache) return body._aeroProfileCache;
   const mem = (body && body.members) ? body.members : [];
   if (!mem.length) {
     const w = (body && Number.isFinite(body.width)) ? body.width : (CONFIG.ROCKET_WIDTH || 3.9);
@@ -1054,7 +1059,7 @@ function bodyAeroProfile(body) {
       });
     }
   }
-  let yOffset = 0;
+    let yOffset = 0;
   mem.forEach(m => {
     const H = Number.isFinite(m.height) ? m.height : 0;
     const W = Number.isFinite(m.width) ? m.width : 0;
@@ -1069,7 +1074,9 @@ function bodyAeroProfile(body) {
     });
     yOffset += H;
   });
-  return { refWidth: refWidth || (CONFIG.ROCKET_WIDTH || 3.9), members };
+  const result = { refWidth: refWidth || (CONFIG.ROCKET_WIDTH || 3.9), members };
+  if (body) body._aeroProfileCache = result;
+  return result;
 }
   
 // ============================================================================
@@ -1153,6 +1160,17 @@ function _gfMachFactors(M) {
 // of live deploy/control). Built once per tick alongside bodyAeroProfile().
 function bodyGridFinProfile(body, profile) {
   if (!body || !body.gridFins || !body.members || !profile || !profile.members) return null;
+  // Cache — fin deploy/control angles stay fixed through stowed and
+// fully-deployed phases (the bulk of flight); only the brief slew
+// transitions change them. When unchanged, the profile is identical,
+// so return the last one. Fin state is the ONLY dynamic input.
+const _gf = body.gridFins;
+const _c = body._gfpCache;
+if (_c &&
+    _c.L === _gf.L.deploy && _c.R === _gf.R.deploy &&
+    _c.FB === _gf.FB.deploy && _c.FBc === _gf.FB.control) {
+  return _c.profile;
+}
   const fins = [];
   body.members.forEach((m, i) => {
     if (!m || !m.hasGridFins || !m.gridFinParams) return;
@@ -1182,7 +1200,12 @@ function bodyGridFinProfile(body, profile) {
     deploy: (g[k] && Number.isFinite(g[k].deploy)) ? g[k].deploy : 90,
     control: (g[k] && Number.isFinite(g[k].control)) ? g[k].control : 0,
   });
-  return { fins, st: { L: snap('L'), R: snap('R'), FB: snap('FB') } };
+    const result = { fins, st: { L: snap('L'), R: snap('R'), FB: snap('FB') } };
+  body._gfpCache = {
+    L: g.L.deploy, R: g.R.deploy, FB: g.FB.deploy, FBc: g.FB.control,
+    profile: result,
+  };
+  return result;
 }
 
 // Fin-frame unit axes in the body frame (x lateral, y toward nose, z depth).
@@ -1496,7 +1519,8 @@ function derivatives(s, extra) {
   const Fx_i = extra.Fx * cosT - extra.Fy * sinT;
   const Fy_i = extra.Fx * sinT + extra.Fy * cosT;
   
-  const aero = computeDragAero(s, extra);
+  const aero = extra._tickAero || computeDragAero(s, extra);
+extra._lastAero = aero;
 
 // Gravity-gradient torque — attitude-dependent, so evaluated fresh per
 // RK4 sub-step (its contribution varies within the tick as θ evolves).
@@ -1594,33 +1618,12 @@ const bodyUpX = -Math.sin(body.theta),
 const cosTilt = Math.max(-1, Math.min(1, bodyUpX * upX + bodyUpY * upY));
 const tiltRad = Math.acos(cosTilt);
 
-// Bell height for this body — same source the grounded-booster
-// bootstrap uses to shift the stack up so the nozzle (not the hull
-// base) is the resting contact plane. When non-zero, the bell must
-// be included in the contact-point selection here, otherwise an
-// upright rocket with the base hanging 1.5 m above ground never sees
-// a ground contact until gravity has dropped the base to earth —
-// and when it finally does, the freshImpact check (which expects a
-// bell contact, not a base contact) misfires and flags the vehicle
-// as crashed at the pad.
-const bellH_m = (body.members && body.members[0] &&
-    typeof engineBellHeightForRecord === 'function')
-  ? engineBellHeightForRecord(body.members[0]) : 0;
-
 if (tiltRad < 0.02) { // ~1.15° threshold
-  const pBase = _rotatedPoint(body, 0, 0);
-  const altBase = Math.hypot(pBase.x, pBase.y) - groundR;
-  let pBell = null, altBell = Infinity;
-  if (bellH_m > 0) {
-    pBell = _rotatedPoint(body, 0, -bellH_m);
-    altBell = Math.hypot(pBell.x, pBell.y) - groundR;
-  }
-  const useBell = altBell < altBase;
-  const pLow = useBell ? pBell : pBase;
-  const altLow = useBell ? altBell : altBase;
-  if (altLow > 0) return null;
+  const p = _rotatedPoint(body, 0, 0);
+  const alt = Math.hypot(p.x, p.y) - groundR;
+  if (alt > 0) return null;
   
-  const cx = pLow.x, cy = pLow.y;
+  const cx = p.x, cy = p.y;
   const nx = upX, ny = upY;
   const tx = -ny, ty = nx;
   
@@ -1637,33 +1640,28 @@ if (tiltRad < 0.02) { // ~1.15° threshold
   const vr = (vpx - sv.vx) * nx + (vpy - sv.vy) * ny;
   const vt = (vpx - sv.vx) * tx + (vpy - sv.vy) * ty;
   
-  return {
+    return {
     nx, ny, tx, ty,
     offX, offY, comOffX, comOffY,
     vr, vt,
-    depth: -altLow,
-    contactLabel: useBell ? 'bell' : 'base',
+    depth: -alt,
+    contactLabel: 'base',
   };
 }
   
   // ... (existing tilted-body code — 4-point selection, unchanged)
   
-  // Bell exit is the physically lowest point of a bottom-of-stack body —
-// below the hull base by the bell height. When it's present, the bell
-// is what touches ground first (F9 launch pad reality: nozzle exit
-// plane sits just above the flame trench). Missing when the body has
-// no resolvable engine hardware; skipped in that case.
-const bellH_m = (body.members && body.members[0] && typeof engineBellHeightForRecord === 'function') ?
-  engineBellHeightForRecord(body.members[0]) : 0;
+// Ground contact candidates — base, base corners, nose only. The
+// engine bell is deliberately EXCLUDED: real F9's bells live in the
+// flame trench BELOW the octaweb contact plane, so treating them as
+// ground-contact points pins the vehicle to the pad and blocks
+// liftoff. Bell stays a pure visual/aero feature.
 const candidates = [
   { label: 'base', p: _rotatedPoint(body, 0, 0) },
   { label: 'baseL', p: _rotatedPoint(body, -half, 0) },
   { label: 'baseR', p: _rotatedPoint(body, half, 0) },
   { label: 'nose', p: _rotatedPoint(body, 0, H) },
 ];
-if (bellH_m > 0) {
-  candidates.push({ label: 'bell', p: _rotatedPoint(body, 0, -bellH_m) });
-}
   
   let contact = null,
     contactAlt = Infinity;
@@ -1971,8 +1969,10 @@ updateGridFins(body, dt);
   comH: geom.comH,
   comW: geom.comW || 0,
   height: _bodyHeightOf(body),
-  aero: null,
+    aero: null,
   gridFins: null,
+  _lastAero: null,
+  _tickAero: null,
 };
 extra.aero = bodyAeroProfile(body);
 extra.gridFins = bodyGridFinProfile(body, extra.aero);
@@ -2048,33 +2048,24 @@ extra.Fx += main.Fx + rcs.Fx;
 extra.Fy += main.Fy + rcs.Fy;
 extra.torque += main.torque + rcs.torque;
 const mdotTotal = main.mdot + rcs.mdot;
-
-if (isActive) {
-  if (!hasFuel) ENGINES.forEach(e => { e.currentF = 0; });
-  // lastForces is a telemetry-only snapshot for the ACTIVE body's
-  // HUD, so it stays gated on isActive.
-  const aeroTelemetry = computeDragAero(body, extra);
-  lastForces = {
-    mainFx: main.Fx,
-    mainFy: main.Fy,
-    mainTorque: main.torque,
-    rcsFx: rcs.Fx,
-    rcsFy: rcs.Fy,
-    rcsTorque: rcs.torque,
-    mdot: mdotTotal,
-    firing: rcs.firing || {},
-    pod: rcs.pod || {},
-    dutyTop: rcs.dutyTop || 0,
-    dragTorque: aeroTelemetry.dragTorque,
-    aoaDeg: aeroTelemetry.alphaDeg,
-    gridFinTorque: aeroTelemetry.gridFinTorque || 0,
-  };
-}
+// (telemetry block deferred to after RK4 — see the comment there)
 
    
-    // ---- RK4 integration ----
-    const s0 = body;
-    const k1 = derivatives(s0, extra);
+    // Compute aero once per tick. The four RK4 substep states differ from
+// s0 by at most ~6 m in position and ~0.12 m/s in velocity over a
+// 12.5 ms tick — far below the threshold where drag force or its
+// torque meaningfully changes (Q and drag force both vary by <0.1%).
+// Caching here cuts computeDragAero from 4 calls/tick to 1, and
+// computeGridFinAero (called inside it) from ~4 to 1. Together that
+// was ~26% of the total tick cost on the profiler.
+// Toggleable for A/B testing the RK4-substep reuse — see
+// headless/compare.js. Default off ⇒ production behaviour.
+extra._tickAero = globalThis.SIM_NO_AERO_CACHE
+  ? null
+  : computeDragAero(body, extra);
+// ---- RK4 integration ----
+const s0 = body;
+const k1 = derivatives(s0, extra);
     const s1 = stepState(s0, k1, dt / 2);
     const k2 = derivatives(s1, extra);
     const s2 = stepState(s0, k2, dt / 2);
@@ -2102,6 +2093,31 @@ if (Array.isArray(body.memberFuel) && body.memberFuel.length) {
 } else {
   body.fuelMass = Math.max(0, body.fuelMass - mdotTotal * dt);
 }
+
+// Telemetry block — placed AFTER RK4 so extra._lastAero (set inside
+// derivatives()) holds the 4th substep's aero result. Reusing it here
+// skips the 5th computeDragAero call per tick that used to fire from
+// the pre-RK4 position, where _lastAero was still null.
+if (isActive) {
+  if (!hasFuel) ENGINES.forEach(e => { e.currentF = 0; });
+  const aeroTelemetry = extra._lastAero || computeDragAero(body, extra);
+  lastForces = {
+    mainFx: main.Fx,
+    mainFy: main.Fy,
+    mainTorque: main.torque,
+    rcsFx: rcs.Fx,
+    rcsFy: rcs.Fy,
+    rcsTorque: rcs.torque,
+    mdot: mdotTotal,
+    firing: rcs.firing || {},
+    pod: rcs.pod || {},
+    dutyTop: rcs.dutyTop || 0,
+    dragTorque: aeroTelemetry.dragTorque,
+    aoaDeg: aeroTelemetry.alphaDeg,
+    gridFinTorque: aeroTelemetry.gridFinTorque || 0,
+  };
+}
+
     // ---- Ground contact resolution ----
     const groundR = CONFIG.EARTH_RADIUS + (CONFIG.LAUNCH_SITE_ALTITUDE || 0);
     const contact = resolveGroundContact(body, groundR, geom);
@@ -2138,17 +2154,9 @@ if (Array.isArray(body.memberFuel) && body.memberFuel.length) {
       const tiltDeg = Math.acos(Math.max(-1, Math.min(1, bodyUpX * ux + bodyUpY * uy))) * 180 / Math.PI;
       
       const noseStrike = contact.contactLabel === 'nose';
-// Bell exit is the normal resting contact for a booster — the
-// real F9's nozzle plane hovers just above the flame trench, held
-// by the launch mount. A bell touch must NOT count as a landing
-// or crash event; only base / baseL / baseR / nose touches do.
-// Without this exclusion, the pad-resting rocket is flagged as
-// crashed on the first tick (bell is 'freshly touching' the
-// ground), which then pins it in place forever.
-const bellTouch = contact.contactLabel === 'bell';
 const wasGrounded = !!body._wasGrounded;
 body._wasGrounded = true;
-const freshImpact = !bellTouch && !wasGrounded &&
+const freshImpact = !wasGrounded &&
   (noseStrike || descentSpeed > 0.3 || hSpeed > 0.3);
       
       if (freshImpact) {
@@ -2531,22 +2539,11 @@ function resetState(initialAltitude) {
 body.rx = r0 * Math.sin(phi0);
 body.ry = r0 * Math.cos(phi0);
 
-// Real F9 rests with the nozzle exit plane at ground level (the octaweb
-// is held by the launch mount, and the nozzles are above the flame
-// trench). Shift the stack UP by the bottom member's bell height so
-// the bell exit — not the hull base — is the ground-contact point.
-// Without this the hull base starts at ground level and the bell dips
-// 1.5 m below the surface, which drives the ground resolver to zero
-// radial velocity every tick and crashes the vehicle on the pad.
-const bottomRec0 = members[0] || null;
-const bellH0 = (bottomRec0 && typeof engineBellHeightForRecord === 'function') ?
-  engineBellHeightForRecord(bottomRec0) : 0;
-if (bellH0 > 0) {
-  const upX0 = -Math.sin(body.theta);
-  const upY0 = Math.cos(body.theta);
-  body.rx += upX0 * bellH0;
-  body.ry += upY0 * bellH0;
-}
+// Base at ground level. Real F9's octaweb (engine mount plate) rests
+// on the launch mount surface — the nozzle bells hang BELOW that
+// plane, into the flame trench. Since the sim has no trench, bells
+// simply overlap the ground visually; they are NOT treated as
+// contact points (see resolveGroundContact).
   
   // Rocket at rest on the pad → in the INERTIAL frame it moves with the pad.
   const surfV = earthSurfaceVelocity(body.rx, body.ry);

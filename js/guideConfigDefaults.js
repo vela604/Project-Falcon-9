@@ -56,7 +56,7 @@ const GUIDE_DEFAULT_PRESETS = {
       ASCENT: {
         INITIAL_COAST_S: 4.9,
         PUSH_T_S: 4.8,
-        PUSH_MAX_GIMBAL_DEG: 1.45,
+        PUSH_MAX_GIMBAL_DEG: 0.16,
         PUSH_EAST_SIGN: -1,
         HOLD_K_DAMP: 4.0,
         HOLD_MAX_AOA_DEG: 8,

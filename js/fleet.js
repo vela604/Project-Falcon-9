@@ -298,15 +298,21 @@ function loadFamiliesRaw() {
 
 function saveFamilies(families) {
   localStorage.setItem(FAMILIES_KEY, JSON.stringify(families));
+  _familiesCache = null;
 }
 
 // Public loader — lazily seeds from current fleet state on first access so
 // no page needs to call an explicit "migrate" hook. Idempotent: once
 // families exist, this is a pure read.
+// Same cache pattern as loadFleet/loadStacks.
+let _familiesCache = null;
+
 function loadFamilies() {
+  if (_familiesCache) return _familiesCache;
   const families = loadFamiliesRaw();
   const changed = reconcileDefaultFamilies(families);
   if (changed) saveFamilies(families);
+  _familiesCache = families;
   return families;
 }
 
@@ -1358,7 +1364,16 @@ function runPayloadSpaceSplitOnce(fleet) {
 //  values verbatim, so tank-height calibration lives entirely on the
 //  seed function that owns it.)
 
+// In-memory cache — the fleet DB doesn't change during a flight (no
+// editor, no user edits), yet stackMassProps calls getActiveStack()
+// every physics tick, which calls loadFleet(). The JSON.parse +
+// migrate + JSON.stringify double-compare was ~1.9 ms PER CALL. Cache
+// invalidates on saveFleet(). Profile went from 5.2 s in stackMassProps
+// to a fraction of that once this landed.
+let _fleetCache = null;
+
 function loadFleet() {
+  if (_fleetCache) return _fleetCache;
   try {
     const raw = localStorage.getItem(FLEET_KEY);
     if (raw) {
@@ -1366,14 +1381,12 @@ function loadFleet() {
       if (Array.isArray(parsed) && parsed.length) {
         let migrated = parsed.map(migrateRocketRecord);
         migrated = runPayloadSpaceSplitOnce(migrated);
-        // Reconcile defaults — updates existing seed records, inserts
-        // any that are missing (new defaults added since the user's
-        // store was first written).
         const reconciled = reconcileDefaultRecords(migrated);
         if (reconciled ||
           JSON.stringify(migrated) !== JSON.stringify(parsed)) {
           saveFleet(migrated);
         }
+        _fleetCache = migrated;
         return migrated;
       }
     }
@@ -1387,22 +1400,21 @@ function loadFleet() {
   // derived params (engineVe / engineFMax for a booster, etc.) only exist
   // AFTER bridgePerfParams() has backfilled them — which only runs inside
   // migrateRocketRecord().
-  const seeded = DEFAULT_RECORDS.map(({ seed }) => migrateRocketRecord(seed()));
+    const seeded = DEFAULT_RECORDS.map(({ seed }) => migrateRocketRecord(seed()));
   saveFleet(seeded);
   localStorage.setItem(SELECTED_KEY, seeded[0].id);
-  // Payloads + stacks reconcile on their own loaders (below); just kick
-  // them by loading — the reconcile insert path handles fresh installs
-  // and existing users identically.
   loadPayloads();
   const stacks = loadStacks();
   if (stacks.length && !getSelectedStackId()) {
     setSelectedStackId(stacks[0].id);
   }
+  _fleetCache = seeded;
   return seeded;
 }
 
 function saveFleet(fleet) {
   localStorage.setItem(FLEET_KEY, JSON.stringify(fleet));
+  _fleetCache = null;
 }
 
 function getSelectedId() {
@@ -1435,29 +1447,32 @@ function getSelectedRocket() {
 // reconcile functions reading DEFAULT_* registries.)
 
 
+// Same rationale as _fleetCache above. stackMassProps hits this via
+// getActiveStack() every tick; without the cache that's another
+// localStorage.getItem + JSON.parse + reconcile pass per tick.
+let _stacksCache = null;
+
 function loadStacks() {
+  if (_stacksCache) return _stacksCache;
   try {
     const raw = localStorage.getItem(STACKS_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed)) {
         let changed = false;
-        // One-time migration: stacks that predate the frozen-derived
-        // layer don't have a `derived` field. Compute now, persist.
         parsed.forEach(s => {
           if (!s.derived || !s.derived.interstage) {
             s.derived = computeStackDerived(s.members);
             changed = true;
           }
         });
-        // Reconcile defaults (insert missing, force-lock existing).
         if (reconcileDefaultStacks(parsed)) changed = true;
         if (changed) saveStacks(parsed);
+        _stacksCache = parsed;
         return parsed;
       }
     }
   } catch (e) { /* fall through */ }
-  // Fresh install — seed all defaults.
   const seeded = DEFAULT_STACKS.map(({ seed }) => {
     const s = seed();
     s.derived = computeStackDerived(s.members);
@@ -1467,11 +1482,13 @@ function loadStacks() {
     saveStacks(seeded);
     if (!getSelectedStackId()) setSelectedStackId(seeded[0].id);
   }
+  _stacksCache = seeded;
   return seeded;
 }
 
 function saveStacks(stacks) {
   localStorage.setItem(STACKS_KEY, JSON.stringify(stacks));
+  _stacksCache = null;
 }
 
 function genStackId() {
@@ -1801,6 +1818,10 @@ function rocketCapabilities(v) {
 // ---------------------------------------------------------------------------
 function stageDerivedMasses(rec) {
   if (!rec || rec.stageRole !== 'stage') return null;
+  // Same rationale as boosterDerivedMasses' cache above — every output
+  // is a pure function of the record, so a first-call cache eliminates
+  // the 2nd+ calls per tick.
+  if (rec._sdmCache) return rec._sdmCache;
   const warnings = [];
   
   const fuelType = getComponentType(rec.fuel && rec.fuel.typeId);
@@ -1914,7 +1935,7 @@ const dryMassNoPayload = bodyMass + totalEngineMass + payloadContainerMass + leg
   const infeasible = !Number.isFinite(maxPayloadMassKg) || maxPayloadMassKg < 0;
   const totalWetMassAtMaxPayload = dryMassNoPayload + fuelMass + Math.max(0, maxPayloadMassKg);
   
-  return {
+    const result = {
   fuelMass,
   bodyMass,
   totalEngineMass,
@@ -1933,6 +1954,8 @@ const dryMassNoPayload = bodyMass + totalEngineMass + payloadContainerMass + leg
     infeasible,
     warnings,
   };
+  rec._sdmCache = result;
+  return result;
 }
 
 
@@ -2086,6 +2109,23 @@ const mass = 2 * Math.PI * r_booster * shellThk * height * INTERSTAGE_DENSITY;
 
 function boosterDerivedMasses(rec, aboveMember, frozenInterstage) {
   if (!rec || rec.stageRole !== 'booster') return null;
+  
+  // Cache — every output of this function is static given (rec,
+  // aboveMember, frozenInterstage). fuelMass, bodyMass, engineMass,
+  // legMass, interstageMass: none depend on the LIVE fuel level or
+  // legs progress (callers multiply those in themselves). During a
+  // flight the record doesn't change and aboveMember doesn't change
+  // (except at staging, when a fresh record key handles it). So a
+  // simple identity cache saves the 2nd+ calls per tick — physics
+  // itself hits this twice per tick (memberMaxFuel + memberComponents)
+  // plus once from applySloshStep's fill geometry, and fleet-page
+  // readouts hit it again.
+  const aboveId = aboveMember ? aboveMember.id : '-';
+  const fiKey = (frozenInterstage && Number.isFinite(frozenInterstage.height))
+    ? frozenInterstage.height.toFixed(6) : '-';
+  const cacheKey = aboveId + '|' + fiKey;
+  if (rec._bdmCache && rec._bdmCache.key === cacheKey) return rec._bdmCache.value;
+  
   const warnings = [];
   
   const fuelType = getComponentType(rec.fuel && rec.fuel.typeId);
@@ -2195,23 +2235,27 @@ if (!hasSeparateInterstage) {
   const dryMass = bodyMass + totalEngineMass + legMass + interstageMass + gridFinMass;
   const wetMass = dryMass + fuelMass;
   
-  return {
-    fuelMass,
-    bodyMass,
-    totalEngineMass,
-    legMass,
-    interstageMass,
-    interstageHeight: interstageH_m,
-    gridFinMass,
-    dryMass,
-    wetMass,
-    effectiveVe,
-    totalEngineThrust,
-    tankVolume,
-    infeasible: false,
-    warnings,
-  };
-  }
+  const result = {
+  fuelMass,
+  bodyMass,
+  totalEngineMass,
+  legMass,
+  interstageMass,
+  interstageHeight: interstageH_m,
+  gridFinMass,
+  dryMass,
+  wetMass,
+  effectiveVe,
+  totalEngineThrust,
+  tankVolume,
+  infeasible: false,
+  warnings,
+};
+if (!rec._bdmCache) rec._bdmCache = {};
+rec._bdmCache.key = cacheKey;
+rec._bdmCache.value = result;
+return result;
+}
 
 // ---------------------------------------------------------------------------
 // Stage ↔ booster compatibility (Phase 3 §1.6 + §1.16).
@@ -2598,6 +2642,7 @@ function _defaultFinPositionY(rec) {
 
 function computeGridFinMass(rec) {
   if (!rec || !rec.hasGridFins) return null;
+  if (rec._gfmCache) return rec._gfmCache;
   const type = (typeof getComponentType === 'function') ? getComponentType(rec.gridFinTypeId) : null;
   const metal = (typeof getComponentType === 'function') ? getComponentType(rec.gridFinMetalTypeId) : null;
   if (!type || !metal) return null;
@@ -2624,7 +2669,9 @@ function computeGridFinMass(rec) {
   const perFinMass = vMat * metalDensity;
   const finCount = (type.frame && type.frame.finCount) ? type.frame.finCount : 4;
   
-  return { perFinMass, totalMass: perFinMass * finCount, finCount };
+    const result = { perFinMass, totalMass: perFinMass * finCount, finCount };
+  rec._gfmCache = result;
+  return result;
 }
 
 // PS-B3 — payloadSpace dimensions helper. Reads the ACTUAL rendered
@@ -2873,7 +2920,11 @@ const PAYLOADS_KEY = 'rocketSim.payloads.v1';
 // (SEED_PAYLOAD_LOCKED_IDS removed — see DEFAULT_PAYLOADS registry.)
 
 
+// Same cache pattern.
+let _payloadsCache = null;
+
 function loadPayloads() {
+  if (_payloadsCache) return _payloadsCache;
   try {
     const raw = localStorage.getItem(PAYLOADS_KEY);
     if (raw) {
@@ -2881,18 +2932,20 @@ function loadPayloads() {
       if (Array.isArray(parsed)) {
         const changed = reconcileDefaultPayloads(parsed);
         if (changed) savePayloads(parsed);
+        _payloadsCache = parsed;
         return parsed;
       }
     }
   } catch (e) { /* fall through */ }
-  // Fresh install — seed all defaults.
   const seeded = DEFAULT_PAYLOADS.map(({ seed }) => seed());
   if (seeded.length) savePayloads(seeded);
+  _payloadsCache = seeded;
   return seeded;
 }
 
 function savePayloads(list) {
   localStorage.setItem(PAYLOADS_KEY, JSON.stringify(list));
+  _payloadsCache = null;
 }
 
 function genPayloadId() {

@@ -294,7 +294,7 @@ function _gridFinComponents(rec, bodyH, gridFinsLive) {
 }
 
 
-function _memberComponents(rec, aboveRec, memberFuelMass, legsProgress, sloshOffset, gridFinsLive) {
+function _memberComponentsFull(rec, aboveRec, memberFuelMass, legsProgress, sloshOffset, gridFinsLive) {
   const role = rec.stageRole || 'rocket';
     const H = Number.isFinite(rec.height) ? rec.height : 0;
     const W = Number.isFinite(rec.width) ? rec.width : 0;
@@ -392,7 +392,35 @@ _fuelComponents(rec, memberFuelMass, sloshOffset).forEach(c => out.push(c));
 return out;
   }
   
-  function _stackMassProps(bodySnapshot, payloadMass) {
+  
+const _mcCache = new Map();
+function _memberComponents(rec, aboveRec, memberFuelMass, legsProgress, sloshOffset, gridFinsLive) {
+  if (!rec) return [];
+  const role = rec.stageRole || 'rocket';
+  if (role === 'interstage' || role === 'nose' || role === 'payloadSpace') {
+    return _memberComponentsFull(rec, aboveRec, memberFuelMass, legsProgress, sloshOffset, gridFinsLive);
+  }
+  const recId = rec.id || '(no-id)';
+  const aboveId = aboveRec ? aboveRec.id : '-';
+  const _gf = gridFinsLive;
+  const gfLd = (_gf && _gf.L && Number.isFinite(_gf.L.deploy)) ? _gf.L.deploy : 0;
+  const gfRd = (_gf && _gf.R && Number.isFinite(_gf.R.deploy)) ? _gf.R.deploy : 0;
+  const gfFd = (_gf && _gf.FB && Number.isFinite(_gf.FB.deploy)) ? _gf.FB.deploy : 0;
+  const gfFc = (_gf && _gf.FB && Number.isFinite(_gf.FB.control)) ? _gf.FB.control : 0;
+  const key = aboveId + '|' + legsProgress.toFixed(6) + '|' +
+    gfLd.toFixed(3) + '|' + gfRd.toFixed(3) + '|' +
+    gfFd.toFixed(3) + '|' + gfFc.toFixed(3);
+  let entry = _mcCache.get(recId);
+  if (!entry || entry.key !== key) {
+    entry = { key, comps: _memberComponentsFull(rec, aboveRec, 0, legsProgress, 0, gridFinsLive) };
+    _mcCache.set(recId, entry);
+  }
+  const out = entry.comps.map(c => ({ ...c }));
+  _fuelComponents(rec, memberFuelMass, sloshOffset).forEach(c => out.push(c));
+  return out;
+}
+
+function _stackMassPropsFull(bodySnapshot, payloadMass) {
   const members = (bodySnapshot && bodySnapshot.members) || [];
   if (!members.length) return null;
   const fuelTotal = bodySnapshot.fuelMass || 0;
@@ -442,7 +470,22 @@ return out;
     };
   }
   
-  function _soloBodyMassProps(body) {
+  
+let _smpKey=null, _smpVal=null;
+function _stackMassProps(bodySnapshot, payloadMass) {
+  const members=(bodySnapshot&&bodySnapshot.members)||[];
+  if(!members.length) return null;
+  const fuelTotal=bodySnapshot.fuelMass||0;
+  const fa=Array.isArray(bodySnapshot.memberFuel)?bodySnapshot.memberFuel:null;
+  const pm=Number.isFinite(payloadMass)?payloadMass:0;
+  const key=fuelTotal.toFixed(3)+'|'+(fa?fa.join(','):'')+'|'+pm.toFixed(3);
+  if(key===_smpKey && _smpVal) return _smpVal;
+  const result=_stackMassPropsFull(bodySnapshot, payloadMass);
+  _smpKey=key; _smpVal=result;
+  return result;
+}
+
+function _soloBodyMassProps(body) {
     const M = (Number.isFinite(body.dryMass) ? body.dryMass : 0)
             + (Number.isFinite(body.fuelMass) ? body.fuelMass : 0);
     const H = _bodyHeightOf(body);
@@ -515,15 +558,40 @@ return out;
   }
   
   // ============================================================
-  // derive() — the master function. One body per call.
-  // ============================================================
-  function derive(snapshot, bodyIdx, payloadMass) {
-    if (!snapshot || !Array.isArray(snapshot.bodies)) return null;
-    const idx = Number.isInteger(bodyIdx) ? bodyIdx : (snapshot.activeBodyIndex || 0);
-    const body = snapshot.bodies[idx];
-    if (!body) return null;
-    const env = getEnv();
-    if (!env) return null;
+// derive() — the master function. One body per call.
+// ============================================================
+//
+// Cache: guidance delegates to a sub-guide per tick, and both the
+// top-level guide (leoInsertionV2) and the delegated one (_hTick /
+// ascentAoaHold) call derive(snapshot, idx) on the SAME outer
+// snapshot. The 2nd call was pure recomputation — same body, same
+// snapshot, same derived result. WeakMap keyed on the snapshot
+// object → entries drop as soon as the snapshot is GC'd, so no
+// stale values can leak across ticks.
+const _deriveCache = new WeakMap();
+
+function derive(snapshot, bodyIdx, payloadMass, noCache) {
+  if (!snapshot || !Array.isArray(snapshot.bodies)) return null;
+  const idx = Number.isInteger(bodyIdx) ? bodyIdx : (snapshot.activeBodyIndex || 0);
+  // Bypass cache when caller supplies a payload override, or
+  // explicitly opts out (deriveForState's one-shot virtual snaps).
+  if (payloadMass !== undefined || noCache) {
+    return _deriveImpl(snapshot, idx, payloadMass);
+  }
+  let bucket = _deriveCache.get(snapshot);
+  if (bucket && bucket[idx] !== undefined) return bucket[idx];
+  const result = _deriveImpl(snapshot, idx);
+  if (!bucket) { bucket = Object.create(null); _deriveCache.set(snapshot, bucket); }
+  bucket[idx] = result;
+  return result;
+}
+
+function _deriveImpl(snapshot, bodyIdx, payloadMass) {
+  const idx = Number.isInteger(bodyIdx) ? bodyIdx : (snapshot.activeBodyIndex || 0);
+  const body = snapshot.bodies[idx];
+  if (!body) return null;
+  const env = getEnv();
+  if (!env) return null;
     
     const hasMembers = Array.isArray(body.members) && body.members.length > 0;
     const members = body.members || [];
@@ -769,11 +837,13 @@ function deriveForState(snapshot, idx, overrideBody, gimbalOverrideDeg) {
       return e;
     });
   }
-  const virtualSnap = Object.assign({}, snapshot, {
+    const virtualSnap = Object.assign({}, snapshot, {
     bodies: snapshot.bodies.slice(),
   });
   virtualSnap.bodies[idx] = virtualBody;
-  return derive(virtualSnap, idx);
+  // noCache=true — virtual snapshots are one-shot; caching them would
+  // leak map entries without any benefit.
+  return derive(virtualSnap, idx, undefined, true);
 }
   
   return {

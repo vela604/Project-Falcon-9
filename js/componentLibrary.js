@@ -931,6 +931,7 @@ function stripFunctions(type) {
 }
 
 let _libraryCache = null;
+let _libraryById = null;
 
 function loadComponentLibrary() {
   if (_libraryCache) return _libraryCache;
@@ -941,6 +942,16 @@ function loadComponentLibrary() {
     if (raw) custom = JSON.parse(raw).filter(t => !seeded.some(s => s.id === t.id));
   } catch (e) {}
   _libraryCache = [...seeded, ...custom];
+  // Id-indexed map alongside the array. getComponentType() is called
+  // 30-80 times per physics tick (once per engine slot lookup, per
+  // grid-fin type lookup, per RCS pod, per mass model call). The
+  // array .find() was O(n) with a string compare per item; the map is
+  // O(1). N is small (~20 types), but 30-80 × 20 = 600-1600 string
+  // compares per tick gets noticeable in a hot loop.
+  _libraryById = Object.create(null);
+  for (let i = 0; i < _libraryCache.length; i++) {
+    _libraryById[_libraryCache[i].id] = _libraryCache[i];
+  }
   return _libraryCache;
 }
 
@@ -948,11 +959,14 @@ function saveCustomComponentTypes(types) {
   const seededIds = seedComponentLibrary().map(t => t.id);
   const custom = types.filter(t => !seededIds.includes(t.id)).map(stripFunctions);
   localStorage.setItem(COMPONENT_LIBRARY_KEY, JSON.stringify(custom));
-  _libraryCache = null; // ← add
+  _libraryCache = null;
+  _libraryById = null;
 }
 
 function getComponentType(id) {
-  return loadComponentLibrary().find(t => t.id === id) || null;
+  if (!id) return null;
+  loadComponentLibrary();
+  return _libraryById[id] || null;
 }
 
 function getComponentsByCategory(category) {

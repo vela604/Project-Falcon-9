@@ -3631,7 +3631,12 @@ const LEO_INSERTION_V2 = {
   ASCENT: {
     INITIAL_COAST_S: 4.9,
     PUSH_T_S: 4.8,
-    PUSH_MAX_GIMBAL_DEG: 1.45,
+    // ÷9 of the fixed-outer baseline (1.45°) — B5 uses the all-gimbal
+// octaweb layout, so all 9 engines contribute pitch torque during
+// the PUSH pulse instead of just the center one. Same commanded
+// angle → ~9× peak torque → ~9× Δθ. Dividing by 9 restores the
+// pulse's net attitude kick to what the fixed-outer tuning produced.
+PUSH_MAX_GIMBAL_DEG: 0.16,
     PUSH_EAST_SIGN: -1,
     HOLD_K_DAMP: 4.0,
     HOLD_MAX_AOA_DEG: 8,
@@ -5028,7 +5033,7 @@ _leoTickV2.stop = function () {
 };
 
 _leoTickV2.getStatus = function () {
-  return {
+  const base = {
     ticks: _leoStateV2.ticks,
     phase: _leoStateV2.phase,
     altKm: _leoStateV2.lastAltKm,
@@ -5056,6 +5061,30 @@ _leoTickV2.getStatus = function () {
     _leoStateV2.suicideDlambda * 180 / Math.PI : null,
     suicideTrimDone: !!_leoStateV2.suicideTrimDone,
   };
+  // During ASCENT, delegate to _hTick for the actual control-loop internals.
+  // _hTick is the ascentAoaHold phase machine that's actually flying the
+  // vehicle in this phase — its getStatus() returns aoaDeg, omegaAoA,
+  // tauDesired, gReqDeg, gRate, lockedDeltaDeg, elapsed, etc. Without this
+  // merge, any main-thread or headless telemetry reading getStatus() sees
+  // all zeros for those fields (they only exist inside _hTick's private
+  // _hState) even though the ascent controller is running normally.
+    if (_leoStateV2.phase === 'ASCENT' && typeof _hTick !== 'undefined' &&
+      typeof _hTick.getStatus === 'function') {
+    const hs = _hTick.getStatus();
+    // _hTick.getStatus() returns a `phase` field that names the ascent
+    // SUB-phase (PRE_COAST / PUSH / COAST / HOLD / COASTnAoADAMP), not
+    // the mission phase. Merging it straight into base clobbers the
+    // top-level `phase: 'ASCENT'` — so external readers saw
+    // 'COASTnAoADAMP' etc. instead of 'ASCENT', and never saw the
+    // ASCENT → MECO_SPOOL transition. Rename to `ascentPhase` so both
+    // are visible.
+    if (hs && Object.prototype.hasOwnProperty.call(hs, 'phase')) {
+      hs.ascentPhase = hs.phase;
+      delete hs.phase;
+    }
+    return Object.assign(base, hs);
+  }
+  return base;
 };
 
 GUIDES.leoInsertionV2 = _leoTickV2;

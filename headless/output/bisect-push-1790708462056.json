@@ -1,0 +1,44 @@
+{
+  "trace": [
+    {
+      "pd": 0.10433,
+      "mecoFired": true,
+      "mecoTiltDeg": -61.0211906315035,
+      "mecoApogeeKm": 150.01163637278881,
+      "mecoSimTime": 153.49999999999733,
+      "finalPhase": "STAGE_BURN",
+      "finalTilt": -62.113315835783624,
+      "finalAltKm": 76.30115112389159,
+      "crashed": false,
+      "simTime": 159.99999999999142
+    },
+    {
+      "pd": 0.10219,
+      "mecoFired": true,
+      "mecoTiltDeg": -59.62551532098419,
+      "mecoApogeeKm": 150.0503037156202,
+      "mecoSimTime": 151.9999999999987,
+      "finalPhase": "STAGE_BURN",
+      "finalTilt": -61.01082357472785,
+      "finalAltKm": 77.5370622551106,
+      "crashed": false,
+      "simTime": 159.99999999999142
+    }
+  ],
+  "best": {
+    "pd": 0.10219,
+    "mecoFired": true,
+    "mecoTiltDeg": -59.62551532098419,
+    "mecoApogeeKm": 150.0503037156202,
+    "mecoSimTime": 151.9999999999987,
+    "finalPhase": "STAGE_BURN",
+    "finalTilt": -61.01082357472785,
+    "finalAltKm": 77.5370622551106,
+    "crashed": false,
+    "simTime": 159.99999999999142
+  },
+  "finalBracket": [
+    0.10005,
+    0.10433
+  ]
+}

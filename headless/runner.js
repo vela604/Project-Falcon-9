@@ -370,11 +370,11 @@ globalThis.__sim = (function () {
     },
 
     applyTunables: (guideName, tunables) => {
-      if (!tunables || !tunables.length) return true;
-      const patch = {};
-      tunables.forEach(t => setDeep(patch, t.path, t.value));
-      return applyGuideConfig(guideName, patch);
-    },
+  if (!tunables || !tunables.length) return true;
+  const patch = {};
+  tunables.forEach(t => setDeep(patch, t.path, t.value));
+  return Guidance.applyGuideConfig(guideName, patch);
+},
 
     setFueling: (boosterPct, stagePct) => {
       const b = state.bodies[0];
@@ -463,7 +463,12 @@ globalThis.__sim = (function () {
       }),
     }),
 
-    getTracker: () => ({ ...tracker }),
+        getTracker: () => ({ ...tracker }),
+
+    // Slot for extra-bootstrap code (e.g. the profiler) to attach data.
+    // Reads a global that the extraCode appended after this bootstrap
+    // may set — undefined when nothing was appended.
+    get profile() { return globalThis.__profile || null; },
   };
 })();
 `;
@@ -474,22 +479,24 @@ globalThis.__sim = (function () {
 // ---------------------------------------------------------------------------
 const _instances = new Map();
 
-function _loadInstance(stackId, vehicleId, quiet) {
+function _loadInstance(stackId, vehicleId, quiet, extraCode) {
   const seedDump = seedStorageFromRegistry(stackId, vehicleId);
   const storage = makeMemoryStorage(seedDump);
   const ctx = vm.createContext(makeSandboxGlobals(storage, quiet));
   const code = SIM_FILES
     .map(f => fs.readFileSync(path.join(PROJECT_ROOT, f), 'utf8'))
-    .join('\n;\n') + '\n;\n' + bootstrapSnippet();
+    .join('\n;\n') + '\n;\n' + bootstrapSnippet() +
+    (extraCode ? '\n;\n' + extraCode : '');
   vm.runInContext(code, ctx);
   return ctx.__sim;
 }
 
-function _getInstance(stackId, vehicleId, quiet) {
-  const key = stackId + '::' + vehicleId + '::' + (quiet ? 'q' : 'v');
+function _getInstance(stackId, vehicleId, quiet, extraCode) {
+  const key = stackId + '::' + vehicleId + '::' + (quiet ? 'q' : 'v') +
+    '::' + (extraCode ? 'X' : '-');
   let inst = _instances.get(key);
   if (!inst) {
-    inst = _loadInstance(stackId, vehicleId, quiet);
+    inst = _loadInstance(stackId, vehicleId, quiet, extraCode);
     _instances.set(key, inst);
   }
   return inst;
@@ -506,7 +513,7 @@ function runSim(options) {
   const durationS = Number.isFinite(options.durationS) ? options.durationS : 1500;
   const quiet = !!options.quiet;
 
-  const sim = _getInstance(stackId, vehicleId, quiet);
+  const sim = _getInstance(stackId, vehicleId, quiet, options.extraBootstrapCode);
 
   sim.reset(0);
   if (options.environment) sim.setEnvironment(options.environment);
@@ -536,8 +543,19 @@ while (elapsed < maxTicks) {
   elapsed += r.ticks;
   chunkTimes.push({ atSim: elapsed * dt, ms: ct });
   if (!quiet) {
-    process.stdout.write('\r  sim t=' + (elapsed * dt).toFixed(0) + 's / ' + durationS + 's  (' + ct.toFixed(0) + ' ms/chunk)');
-  }
+  const ab = sim.state.bodies[sim.state.activeBodyIndex];
+  const r = Math.hypot(ab.rx, ab.ry) || 1;
+  const alt = r - sim.CONFIG.EARTH_RADIUS;
+  const vr = (ab.vx * ab.rx + ab.vy * ab.ry) / r;
+  const thrust = (ab.engines || []).reduce((s, e) => s + (e.currentF || 0), 0);
+  const gs = (sim.getStatus().guideStatus || {}).phase || '';
+  process.stdout.write('\r  t=' + (elapsed * dt).toFixed(1) + 's' +
+    ' alt=' + alt.toFixed(1) + 'm vr=' + vr.toFixed(2) + 'm/s' +
+    ' thr=' + (thrust/1e6).toFixed(2) + 'MN' +
+    ' cr=' + (ab.crashed ? 'Y' : 'N') +
+    ' ph=' + gs.padEnd(12) +
+    '   ');
+}
   if (r.halted) { halted = true; break; }
 }
 if (!quiet) process.stdout.write('\n');
@@ -559,6 +577,7 @@ status.chunkTimes = chunkTimes;
   wallMs,
   status,
   tracker,
+  sim,   // exposed for headless/profile.js — reach into .profile and .state
 };
 }
 
