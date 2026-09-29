@@ -223,6 +223,16 @@ if (i % bodiesEvery === 0) {
     activeBodyIndex: state.activeBodyIndex,
     halted: !!state.halted,
   });
+  // Guide status — carries phaseLog + current phase so main
+  // thread's mission-phase panel updates live during FF instead
+  // of freezing then jumping to the final phase.
+  if (typeof Guidance !== 'undefined' && Guidance.getGuideStatus) {
+    try {
+      self.postMessage({ type: 'guideStatus', status: Guidance.getGuideStatus() });
+    } catch (ge) {
+      self.postMessage({ type: 'workerError', message: 'guideStatus: ' + ge.message, stack: ge.stack });
+    }
+  }
   // Yield so an incoming 'abort' can be processed.
   await new Promise(r => setTimeout(r, 0));
 }

@@ -303,15 +303,25 @@ function exportGuideState() {
     // running simulation is using. Without this, a user who applies
     // constants (e.g. TARGET_ORBIT_ALT_KM = 250) and then fast-forwards
     // gets a FF run at the code default (320).
-    out.guideConfigs = {};
+        out.guideConfigs = {};
     Object.keys(_GUIDE_CONFIGS).forEach(name => {
       out.guideConfigs[name] = getGuideConfig(name);
     });
+    // Phase log + tracking vars. Without these, after FF the guidance
+    // worker's _phaseLog still holds only pre-FF history, so the next
+    // snapshot sees a phase jump (e.g. ASCENT → DONE) and appends one
+    // entry, skipping every intermediate phase the FF run passed
+    // through. Including them carries the timeline through FF.
+    out.phaseLog = JSON.parse(JSON.stringify(_phaseLog || {}));
+    out.lastSeenPhase = _lastSeenPhase;
+    out.guideStartT = _guideStartT;
+    out.lastSimTime = _lastSimTime;
   } catch (e) {
     console.warn('[guidance] exportGuideState failed', e);
   }
   return out;
 }
+
 function importGuideState(data) {
   if (!data) return;
   try {
@@ -324,7 +334,7 @@ function importGuideState(data) {
     // fresh-booted (code-default) copies up to the same constants the
     // main simulation was running with. Silent no-op if a guide
     // wasn't in the snapshot.
-    if (data.guideConfigs && typeof data.guideConfigs === 'object') {
+        if (data.guideConfigs && typeof data.guideConfigs === 'object') {
       Object.keys(data.guideConfigs).forEach(name => {
         const v = data.guideConfigs[name];
         if (v && typeof v === 'object') {
@@ -334,6 +344,13 @@ function importGuideState(data) {
         }
       });
     }
+    // Phase log + tracking vars — see exportGuideState's comment.
+    if (data.phaseLog && typeof data.phaseLog === 'object') {
+      _phaseLog = JSON.parse(JSON.stringify(data.phaseLog));
+    }
+    if (data.lastSeenPhase !== undefined) _lastSeenPhase = data.lastSeenPhase;
+    if (data.guideStartT !== undefined) _guideStartT = data.guideStartT;
+    if (data.lastSimTime !== undefined) _lastSimTime = data.lastSimTime;
   } catch (e) {
     console.warn('[guidance] importGuideState failed', e);
   }
