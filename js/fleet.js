@@ -232,7 +232,6 @@ const SELECTED_KEY = 'rocketSim.selectedId.v1';
 // ============================================================================
 const FAMILIES_KEY = 'rocketSim.families.v1';
 const SELECTED_FAMILY_KEY = 'rocketSim.selectedFamilyId.v1';
-const LEGACY_FAMILY_ID = 'fam-falcon9-default'; // the seeded Falcon-9 record's family
 const UNASSIGNED_FAMILY_ID = 'fam-unassigned'; // orphan stages/noses awaiting a booster
 
 
@@ -253,15 +252,12 @@ const UNASSIGNED_FAMILY_ID = 'fam-unassigned'; // orphan stages/noses awaiting a
 const FALCON9_B5_FAMILY_ID = 'fam-falcon9-b5';
 
 const DEFAULT_FAMILIES = [
-  { id: LEGACY_FAMILY_ID, name: 'Falcon-9-Class Family', bottomId: 'falcon9-default', locked: true },
   { id: FALCON9_B5_FAMILY_ID, name: 'Falcon 9 Block 5 Family', bottomId: 'falcon9-b5-booster', locked: true },
   // ↑ Add new default families here.
 ];
 
 const DEFAULT_RECORDS = [
-  { seed: seedFalcon9Booster },
-  { seed: seedFalcon9Stage },
-  { seed: seedFalcon9Fairing },
+
   { seed: seedFalcon9B5Booster },
   { seed: seedFalcon9B5Interstage },
   { seed: seedFalcon9B5Stage },
@@ -271,7 +267,7 @@ const DEFAULT_RECORDS = [
 ];
 
 const DEFAULT_STACKS = [
-  { seed: seedFalcon9Stack },
+
   { seed: seedFalcon9B5Stack },
   // ↑ Add new default stacks here.
 ];
@@ -327,58 +323,6 @@ function loadFamilies() {
 //                             let the user re-home these into a real family
 //                             once a booster exists.
 // ---------------------------------------------------------------------------
-function seedFamiliesFromFleet() {
-  const fleet = loadFleet();
-  const families = [];
-  const nowMembers = [];
-  
-  fleet.forEach(r => {
-      // All three seeded F9 records belong to the same locked legacy family
-      // (booster + stage + fairing). The family is pushed once, on the
-      // booster — the stage/fairing just get their familyId set.
-      if (r.id === 'falcon9-default' || r.id === 'falcon9-stage' || r.id === 'falcon9-fairing') {
-        if (!families.some(f => f.id === LEGACY_FAMILY_ID)) {
-          families.push({
-            id: LEGACY_FAMILY_ID,
-            name: 'Falcon 9 Block-3 Family',
-            bottomId: 'falcon9-default',
-            locked: true,
-          });
-        }
-        r.familyId = LEGACY_FAMILY_ID;
-      } else if (r.stageRole === 'booster' || r.stageRole === 'rocket') {
-      const fid = 'fam_' + r.id;
-      families.push({
-        id: fid,
-        name: r.name + ' Family',
-        bottomId: r.id,
-        locked: false,
-      });
-      r.familyId = fid;
-    } else if (r.stageRole === 'stage' || r.stageRole === 'nose') {
-      r.familyId = UNASSIGNED_FAMILY_ID;
-      nowMembers.push(r.id);
-    } else {
-      // Unknown / missing role — park it in the unassigned bucket.
-      r.familyId = UNASSIGNED_FAMILY_ID;
-      nowMembers.push(r.id);
-    }
-  });
-  
-  if (nowMembers.length) {
-    families.push({
-      id: UNASSIGNED_FAMILY_ID,
-      name: 'Unassigned Stages',
-      bottomId: null,
-      locked: false,
-    });
-  }
-  
-  saveFamilies(families);
-  saveFleet(fleet);
-  return families;
-}
-
 // ---------------------------------------------------------------------------
 // CRUD
 // ---------------------------------------------------------------------------
@@ -508,45 +452,33 @@ const FLAT_PARAM_KEYS = [
 ];
 
 function defaultVehicleData() {
+  // Fallback template for migrateRocketRecord() (fills missing fields on
+  // very old user records) and deleteRocket() (empty-fleet guard). Values
+  // reflect the F9 Block 5 baseline so any legacy record gets sensible
+  // B5-class defaults when it's first touched.
   return {
-    id: 'falcon9-default',
-    name: 'Falcon 9 Block-3 (Default)',
-    locked: true,
+    id: 'default-template',
+    name: 'Default Rocket',
+    locked: false,
     stageRole: 'rocket',
-    familyId: LEGACY_FAMILY_ID,
-    height: 45,
-    width: 3.9,
-    dryMass: 23000,
-    fuelMassMax: 400000,
+    familyId: null,
+    height: 45, width: 3.7,
+    dryMass: 22000, fuelMassMax: 411000,
     dragCd: 0.6,
-    engineTypeId: 'octaweb-merlin9',
-  recoveryTypeId: 'legs-swingout-4',
-  hasRecovery: true,
-  // Real F9 legs are carbon-fibre composite over an aluminium honeycomb
-  // core — a different material from the al-li airframe. Kept separate
-  // from bodyMetalTypeId so a rocket/booster/stage can mix them.
-  legsMetalTypeId: 'carbon-composite',
-  rcsTypeId: 'rcs-4pod-2nozzle',
+    engineTypeId: 'octaweb-merlin9-allgimbal',
+    recoveryTypeId: 'legs-swingout-4',
+    hasRecovery: true,
+    legsMetalTypeId: 'carbon-composite',
+    rcsTypeId: 'rcs-4pod-2nozzle',
     engineThrusters: {
-      gimbal: { thrusterTypeId: 'merlin-1d-class', massFlowRate: 207 },
-      fixed: { thrusterTypeId: 'merlin-1d-class', massFlowRate: 207 },
+      gimbal: { thrusterTypeId: 'merlin-1d', massFlowRate: 306 },
     },
     rcsThruster: { thrusterTypeId: 'cold-gas-small', massFlowRate: 0.5 },
+    bodyShellFactor: 0.0165,
     params: {
-      octaRadius: 1.7,
-      engineFMax: 600000,
-      engineFMinFrac: 0.4,
-      engineVe: 2900,
-      engineThrustRate: 0.5,
-      gimbalMaxDeg: 20,
-      gimbalRateDegS: 40,
+      octaRadius: 1.35,
+      rcsTopY: 39, rcsBottomY: 1, rcsXOffset: 1.85, rcsPwmPeriod: 0.3,
       legDeployRate: 0.5,
-      rcsThrust: 1100,
-      rcsVe: 2200,
-      rcsXOffset: 1.95,
-      rcsTopY: 35,
-      rcsBottomY: 3,
-      rcsPwmPeriod: 0.3,
     },
     bodyDesign: { mode: 'solid', solidColor: '#e9edf2', dslText: '' },
   };
@@ -570,103 +502,6 @@ function defaultVehicleData() {
 // derived mass lands on the real figure within ~0.5%.
 // ============================================================================
 
-function seedFalcon9Booster() {
-  return {
-    id: 'falcon9-default',
-    name: 'Falcon 9 Block 3 — Booster',
-    locked: true,
-    stageRole: 'booster',
-    familyId: LEGACY_FAMILY_ID,
-    height: 41.2, width: 3.7, dragCd: 0.6,
-    // Legacy pin: Block 3's interstage keeps the original flow-derived
-    // height (2.57 m) it had before the width-based bell formula landed.
-    // Blanket the new formula across Block 3 would shrink it to ~1.70 m;
-    // pinning here means Block 3 is untouched by B5-and-future changes.
-    interstageOverride_m: 2.57,
-    engineTypeId: 'octaweb-merlin9',
-    recoveryTypeId: 'legs-swingout-4',
-    hasRecovery: true,
-    rcsTypeId: 'rcs-4pod-2nozzle',
-    bodyMetalTypeId: 'al-li-alloy',
-    legsMetalTypeId: 'carbon-composite',
-    bodyShellFactor: 0.01797,
-    maxExtraWeightKg: 150000,
-    engineThrusters: {
-  gimbal: { thrusterTypeId: 'merlin-1d-class', massFlowRate: 306 },
-  fixed: { thrusterTypeId: 'merlin-1d-class', massFlowRate: 306 },
-},
-    rcsThruster: { thrusterTypeId: 'cold-gas-small', massFlowRate: 0.5 },
-    pusherTypeId: 'pneumatic-pusher-n2',
-    fuel: {
-      typeId: 'rp1-lox',
-      tankHeight: 34.1, tankWidth: 3.7,
-      baffleCount: 4, baffleInnerRadiusFrac: 0.8,
-    },
-    params: {
-  octaRadius: 1.7,
-  rcsTopY: 40.5, rcsBottomY: 1, rcsXOffset: 1.85, rcsPwmPeriod: 0.3,
-  legDeployRate: 0.5,
-},
-    bodyDesign: { mode: 'solid', solidColor: '#e9edf2', dslText: '' },
-  };
-}
-
-function seedFalcon9Stage() {
-  return {
-    id: 'falcon9-stage',
-    name: 'Falcon 9 Block 3 — Upper Stage',
-    locked: true,
-    stageRole: 'stage',
-    familyId: LEGACY_FAMILY_ID,
-    height: 13.8, width: 3.7, dragCd: 0.6,
-    engineTypeId: 'single-nozzle-vac',
-    recoveryTypeId: null,
-    hasRecovery: false,
-    rcsTypeId: 'rcs-4pod-2nozzle',
-    bodyMetalTypeId: 'al-li-alloy',
-    legsMetalTypeId: 'carbon-composite',
-    bodyShellFactor: 0.0147,
-    maxExtraWeightKg: 22000,
-    engineThrusters: {
-      gimbal: { thrusterTypeId: 'merlin-1d-vac-class', massFlowRate: 288 },
-    },
-    rcsThruster: { thrusterTypeId: 'cold-gas-small', massFlowRate: 0.5 },
-fuel: {
-  typeId: 'rp1-lox',
-  tankHeight: 8.0, tankWidth: 3.7,
-  baffleCount: 2, baffleInnerRadiusFrac: 0.8,
-},
-    params: {
-  rcsTopY: 13, rcsBottomY: 1, rcsXOffset: 1.85, rcsPwmPeriod: 0.3,
-},
-    bodyDesign: { mode: 'solid', solidColor: '#e9edf2', dslText: '' },
-  };
-}
-
-function seedFalcon9Fairing() {
-  return {
-    id: 'falcon9-fairing',
-    name: 'Falcon 9 Fairing',
-    locked: true,
-    stageRole: 'payloadSpace',
-    familyId: LEGACY_FAMILY_ID,
-    height: 13.1, width: 5.2, dragCd: 0.4,
-    payloadSpaceTypeId: 'cap-bulged',
-payloadSpaceMetalTypeId: 'carbon-composite',
-bodyShellFactor: 0.0026,
-deploymentDirection: 'clamshell',
-color: '#e9edf2',
-// F9 fairings are recovered with parachutes — round-canopy type,
-// auto-deploys at CONFIG.FAIRING_CHUTE_DEPLOY_ALT_AGL_M.
-chuteTypeId: 'fairing-chute-round',
-params: {
-  capHeight: 13.1, capWidth: 3.7, bulgeWidth: 5.2,
-  frustumSlantDeg: 42, curveHeightFactor: 1.4,
-},
-    bodyDesign: { mode: 'solid', solidColor: '#e9edf2', dslText: '' },
-  };
-}
-
 function seedFalcon9Payload() {
   return {
     id: 'pl_falcon9-default',
@@ -680,20 +515,6 @@ function seedFalcon9Payload() {
     // higher end of typical satellite ratings (a fairing-less exposed
     // spacecraft would burn up at lower flux during ascent).
     maxHeatFlux: 60000,
-  };
-}
-
-function seedFalcon9Stack() {
-  return {
-    id: 'stk_falcon9-default',
-    name: 'Falcon 9 Block 3',
-    members: ['falcon9-default', 'falcon9-stage', 'falcon9-fairing'],
-    // Legacy sequence — pre-interstage-member architecture. Block 5 uses
-    // the new 'f9-standard' 4-member chain (booster + interstage + stage
-    // + fairing); Block 3 keeps its historical 3-member layout.
-    sequence: 'f9-legacy',
-    payloadId: 'pl_falcon9-default',
-    locked: true,
   };
 }
 
@@ -874,10 +695,6 @@ function seedFalcon9B5Stack() {
   };
 }
 
-function seedFalcon9Family() {
-  return [seedFalcon9Booster(), seedFalcon9Stage(), seedFalcon9Fairing()];
-}
-
 function blankRocketData() {
   const base = defaultVehicleData();
   return { ...base, id: null, name: 'New Rocket', locked: false, stageRole: 'rocket' };
@@ -896,7 +713,7 @@ function blankRocketData() {
 // behaves as a normal user-created member.
 // ---------------------------------------------------------------------------
 function blankBoosterData() {
-  const seed = seedFalcon9Booster();
+  const seed = seedFalcon9B5Booster();
   return {
     ...seed,
     id: null,
@@ -907,7 +724,7 @@ function blankBoosterData() {
 }
 
 function blankStageData() {
-  const seed = seedFalcon9Stage();
+  const seed = seedFalcon9B5Stage();
   return {
     ...seed,
     id: null,
@@ -918,7 +735,7 @@ function blankStageData() {
 }
 
 function blankPayloadSpaceData() {
-  const seed = seedFalcon9Fairing();
+  const seed = seedFalcon9B5Fairing();
   return {
     ...seed,
     id: null,
@@ -1603,7 +1420,7 @@ function getActiveStack() {
   // booster/stage/nose records do NOT fly alone; a single-member stack can
   // be created explicitly in the stack editor if the user wants that.
   const fleet = loadFleet();
-  const legacy = fleet.find(r => r.id === 'falcon9-default') || fleet[0];
+  const legacy = fleet[0];
   if (legacy) {
     return {
       id: 'stk:legacy:' + legacy.id,
