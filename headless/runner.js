@@ -520,24 +520,46 @@ function runSim(options) {
   const startOk = sim.startGuide(guide);
   const dt = sim.CONFIG.DT;
   const maxTicks = Math.ceil(durationS / dt);
-  const t0 = performance.now();
-  const loop = sim.step(maxTicks);
-  const wallMs = performance.now() - t0;
-  sim.stopGuide();
+  // Chunked execution so we can print progress from the Node side.
+// A single 120k-tick call gives zero feedback for ~9 minutes and looks
+// like a hang. 800 ticks = 10 sim-seconds per chunk.
+const CHUNK_TICKS = 800;
+let elapsed = 0;
+const t0 = performance.now();
+let halted = false;
+const chunkTimes = [];
+while (elapsed < maxTicks) {
+  const n = Math.min(CHUNK_TICKS, maxTicks - elapsed);
+  const ct0 = performance.now();
+  const r = sim.step(n);
+  const ct = performance.now() - ct0;
+  elapsed += r.ticks;
+  chunkTimes.push({ atSim: elapsed * dt, ms: ct });
+  if (!quiet) {
+    process.stdout.write('\r  sim t=' + (elapsed * dt).toFixed(0) + 's / ' + durationS + 's  (' + ct.toFixed(0) + ' ms/chunk)');
+  }
+  if (r.halted) { halted = true; break; }
+}
+if (!quiet) process.stdout.write('\n');
+const wallMs = performance.now() - t0;
 
-  const status = sim.getStatus();
-  const tracker = sim.getTracker();
+// Capture status BEFORE stopGuide — getGuideStatus() only returns
+// phase info while a guide is still active.
+const status = sim.getStatus();
+const tracker = sim.getTracker();
+sim.stopGuide();
+status.chunkTimes = chunkTimes;
 
   return {
-    guideName: guide,
-    durationS,
-    startOk,
-    ticksRun: loop.ticks,
-    haltedByLoop: loop.halted,
-    wallMs,
-    status,
-    tracker,
-  };
+  guideName: guide,
+  durationS,
+  startOk,
+  ticksRun: elapsed,
+  haltedByLoop: halted,
+  wallMs,
+  status,
+  tracker,
+};
 }
 
 module.exports = { runSim };
