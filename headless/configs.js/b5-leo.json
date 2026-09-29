@@ -1,0 +1,52 @@
+{
+  "id": "b5-leo-opt-1",
+  "description": "F9 B5 → 320 km LEO",
+  
+  "stackId": "stk_falcon9-b5",
+  "vehicleId": "falcon9-b5-booster",
+  "guide": "leoInsertionV2",
+  "durationS": 500,
+  
+  "environment": {
+    "atmosphere": true,
+    "slosh": true,
+    "imu": false,
+    "wind": { "enabled": false, "speed": 0, "directionDeg": 0 }
+  },
+  
+  "fueling": {
+    "boosterPct": { "lo": 70, "hi": 100, "init": 100 },
+    "stagePct": { "lo": 90, "hi": 100, "init": 100 }
+  },
+  
+  "tunables": [
+    { "path": "ASCENT.PUSH_MAX_GIMBAL_DEG", "lo": 0.05, "hi": 0.40, "init": 0.16 },
+    { "path": "ASCENT.HOLD_K_DAMP", "lo": 1.0, "hi": 8.0, "init": 4.0 },
+    { "path": "ASCENT.THROTTLE_FRAC_LOW", "lo": 0.55, "hi": 0.85, "init": 0.70 },
+    { "path": "TARGET_ORBIT_ALT_KM", "lo": 300, "hi": 340, "init": 320 },
+    { "path": "CIRC_ATT_KP", "lo": 0.2, "hi": 1.5, "init": 0.5 },
+    { "path": "CIRC_ATT_KD", "lo": 1.0, "hi": 8.0, "init": 4.0 }
+  ],
+  
+  "score": {
+    "criteria": [
+      { "metric": "missionSuccess", "weight": 10000 },
+      { "metric": "payloadDeployed", "weight": 5000 },
+      { "metric": "orbitalAltKm", "target": 320, "tolerance": 5, "weight": 100 },
+      { "metric": "orbitalEcc", "target": 0.001, "tolerance": 0.005, "weight": 200 },
+      { "metric": "fuelUsedKg", "weight": -0.05 },
+      { "metric": "timeToOrbitS", "weight": -0.02 }
+    ],
+    "hardConstraints": {
+      "maxGForce": 6.0,
+      "maxDynamicPressureKPa": 60
+    }
+  },
+  
+  "cmaes": {
+    "populationSize": 8,
+    "maxGenerations": 60,
+    "sigma0": 0.25,
+    "tolerance": 1e-4
+  }
+}
