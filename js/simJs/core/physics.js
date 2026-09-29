@@ -1587,56 +1587,64 @@ function resolveGroundContact(body, groundR, geom) {
   // small tilt threshold, force the geometry to the physical answer: base
   // center, radial normal.
   const rBody = Math.hypot(body.rx, body.ry) || 1;
-  const upX = body.rx / rBody,
-    upY = body.ry / rBody;
-  const bodyUpX = -Math.sin(body.theta),
-    bodyUpY = Math.cos(body.theta);
-  const cosTilt = Math.max(-1, Math.min(1, bodyUpX * upX + bodyUpY * upY));
-  const tiltRad = Math.acos(cosTilt);
-  
-  if (tiltRad < 0.02) { // ~1.15° threshold
-    const p = _rotatedPoint(body, 0, 0);
-    const alt = Math.hypot(p.x, p.y) - groundR;
-    if (alt > 0) return null;
-    
-    const cx = p.x,
-      cy = p.y;
-    const nx = upX,
-      ny = upY;
-    const tx = -ny,
-      ty = nx;
-    
-    const offBaseX = cx - body.rx,
-      offBaseY = cy - body.ry;
-    const comH = geom ? (geom.comH || 0) : 0;
-    const comW = geom ? (geom.comW || 0) : 0;
-    const comWorld = _rotatedPoint(body, comW, comH);
-    const offX = cx - comWorld.x,
-      offY = cy - comWorld.y;
-    const comOffX = comWorld.x - body.rx,
-      comOffY = comWorld.y - body.ry;
-    
-    const vpx = body.vx + body.omega * (-offBaseY);
-    const vpy = body.vy + body.omega * (offBaseX);
-    const sv = earthSurfaceVelocity(cx, cy);
-    const vr = (vpx - sv.vx) * nx + (vpy - sv.vy) * ny;
-    const vt = (vpx - sv.vx) * tx + (vpy - sv.vy) * ty;
-    
-    return {
-      nx,
-      ny,
-      tx,
-      ty,
-      offX,
-      offY,
-      comOffX,
-      comOffY,
-      vr,
-      vt,
-      depth: -alt,
-      contactLabel: 'base',
-    };
+const upX = body.rx / rBody,
+  upY = body.ry / rBody;
+const bodyUpX = -Math.sin(body.theta),
+  bodyUpY = Math.cos(body.theta);
+const cosTilt = Math.max(-1, Math.min(1, bodyUpX * upX + bodyUpY * upY));
+const tiltRad = Math.acos(cosTilt);
+
+// Bell height for this body — same source the grounded-booster
+// bootstrap uses to shift the stack up so the nozzle (not the hull
+// base) is the resting contact plane. When non-zero, the bell must
+// be included in the contact-point selection here, otherwise an
+// upright rocket with the base hanging 1.5 m above ground never sees
+// a ground contact until gravity has dropped the base to earth —
+// and when it finally does, the freshImpact check (which expects a
+// bell contact, not a base contact) misfires and flags the vehicle
+// as crashed at the pad.
+const bellH_m = (body.members && body.members[0] &&
+    typeof engineBellHeightForRecord === 'function')
+  ? engineBellHeightForRecord(body.members[0]) : 0;
+
+if (tiltRad < 0.02) { // ~1.15° threshold
+  const pBase = _rotatedPoint(body, 0, 0);
+  const altBase = Math.hypot(pBase.x, pBase.y) - groundR;
+  let pBell = null, altBell = Infinity;
+  if (bellH_m > 0) {
+    pBell = _rotatedPoint(body, 0, -bellH_m);
+    altBell = Math.hypot(pBell.x, pBell.y) - groundR;
   }
+  const useBell = altBell < altBase;
+  const pLow = useBell ? pBell : pBase;
+  const altLow = useBell ? altBell : altBase;
+  if (altLow > 0) return null;
+  
+  const cx = pLow.x, cy = pLow.y;
+  const nx = upX, ny = upY;
+  const tx = -ny, ty = nx;
+  
+  const offBaseX = cx - body.rx, offBaseY = cy - body.ry;
+  const comH = geom ? (geom.comH || 0) : 0;
+  const comW = geom ? (geom.comW || 0) : 0;
+  const comWorld = _rotatedPoint(body, comW, comH);
+  const offX = cx - comWorld.x, offY = cy - comWorld.y;
+  const comOffX = comWorld.x - body.rx, comOffY = comWorld.y - body.ry;
+  
+  const vpx = body.vx + body.omega * (-offBaseY);
+  const vpy = body.vy + body.omega * (offBaseX);
+  const sv = earthSurfaceVelocity(cx, cy);
+  const vr = (vpx - sv.vx) * nx + (vpy - sv.vy) * ny;
+  const vt = (vpx - sv.vx) * tx + (vpy - sv.vy) * ty;
+  
+  return {
+    nx, ny, tx, ty,
+    offX, offY, comOffX, comOffY,
+    vr, vt,
+    depth: -altLow,
+    contactLabel: useBell ? 'bell' : 'base',
+  };
+}
   
   // ... (existing tilted-body code — 4-point selection, unchanged)
   
