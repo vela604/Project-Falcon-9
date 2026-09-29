@@ -112,9 +112,25 @@ function previewVehicleFor(record) {
   const psType = (record.stageRole === 'payloadSpace' && record.payloadSpaceTypeId &&
     typeof getComponentType === 'function') ? getComponentType(record.payloadSpaceTypeId) : null;
   const psParams = record.params || {};
-  return {
-    height: record.height,
-    width: record.width,
+// Interstage height for a standalone booster preview — must reflect the
+// SAME stage-above context that the record's default finPositionY was
+// computed against, otherwise the rendered interstage band (measured
+// from stage-less fallback) is much shorter than the fin-position
+// implies, and the fins appear to float ~1 m below the band. Looks up
+// the stage record from the same family; falls back to stage-less
+// compute only when the family has no stage defined.
+let interstageHeight_m = null;
+if (record.stageRole === 'booster' && typeof computeInterstageForBooster === 'function') {
+  const fleet = (typeof loadFleet === 'function') ? loadFleet() : [];
+  const stageAbove = record.familyId ?
+    fleet.find(r => r.familyId === record.familyId && r.stageRole === 'stage') : null;
+  const inter = computeInterstageForBooster(record, stageAbove);
+  if (inter && Number.isFinite(inter.height)) interstageHeight_m = inter.height;
+}
+return {
+  height: record.height,
+  interstageHeight_m: interstageHeight_m,
+  width: record.width,
     rcsTopY: record.params ? record.params.rcsTopY : undefined,
     rcsBottomY: record.params ? record.params.rcsBottomY : undefined,
     recoveryTypeId: record.hasRecovery === false ? null : record.recoveryTypeId,

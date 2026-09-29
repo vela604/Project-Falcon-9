@@ -594,21 +594,12 @@ const fuelFrac = bottomMaxFuel > 0 ?
 let yOffsetPx = 0;
 members.forEach((m, idx) => {
       const memberAbove = members[idx + 1] || null;
-     let stageAboveBellHeight = 0;
-  if (memberAbove && memberAbove.engineTypeId && typeof getComponentType === 'function') {
-    const layoutAbove = getComponentType(memberAbove.engineTypeId);
-    if (layoutAbove && layoutAbove.frame && layoutAbove.frame.slots) {
-      const groups = (typeof engineThrusterGroups === 'function') ? engineThrusterGroups(layoutAbove) : {};
-      let totalFlow = 0;
-      Object.keys(groups).forEach(gk => {
-        const g = memberAbove.engineThrusters && memberAbove.engineThrusters[gk];
-        if (!g || !Number.isFinite(g.massFlowRate)) return;
-        totalFlow += g.massFlowRate * groups[gk].length;
-      });
-      const perEngine = totalFlow / layoutAbove.frame.slots.length;
-      stageAboveBellHeight = 0.007 * perEngine;
-    }
-  }
+// Interstage height — same physical source as drawRocketArt.
+let interstageHeight_m = null;
+if (m.stageRole === 'booster' && typeof computeInterstageForBooster === 'function') {
+  const inter = computeInterstageForBooster(m, memberAbove);
+  if (inter && Number.isFinite(inter.height)) interstageHeight_m = inter.height;
+}
   
   const mH = (m.height || 0) / mpp;
   const mW = (m.width || 1) / mpp;
@@ -655,7 +646,7 @@ drawRocketArt(figCtx, mW, mH, mpp, {
       engineLayout: engineLayout,
     engineThrusters: m.engineThrusters,
     params: m.params,
-      stageAboveBellHeight: stageAboveBellHeight,
+        interstageHeight_m: interstageHeight_m,
     gridFinType: (m.hasGridFins && m.gridFinTypeId && typeof getComponentType === 'function') ?
     getComponentType(m.gridFinTypeId) : null,
     gridFinParams: m.gridFinParams || null,

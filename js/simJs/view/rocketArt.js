@@ -975,49 +975,67 @@ function drawGridFinFace(ctx, pivotX, pivotY, topX, topY, wPx, hPx, cellPx, styl
   if (!(wPx > 0) || !(hPx > 0)) return;
   const fill = (style && style.fill) || '#8a9198';
   const stroke = (style && style.stroke) || '#48515e';
-  const cellStroke = (style && style.cellStroke) || 'rgba(30, 36, 44, 0.55)';
   
   ctx.save();
   ctx.translate(pivotX, pivotY);
   if (rotateRad) ctx.rotate(rotateRad);
   
-  ctx.beginPath();
-  ctx.rect(topX, topY, wPx, hPx);
-  ctx.fillStyle = fill;
-  ctx.fill();
-  ctx.strokeStyle = stroke;
-  ctx.lineWidth = 1.2;
-  ctx.stroke();
-  
   if (showMesh) {
-    ctx.beginPath();
-    ctx.rect(topX, topY, wPx, hPx);
-    ctx.clip();
-    ctx.strokeStyle = cellStroke;
-    ctx.lineWidth = 0.7;
+    // Perforated face — ONLY the cell walls and frame are drawn. Cells
+    // stay transparent so whatever's behind (hull, sky, another fin)
+    // shows through the openings. Previously the rect was filled solid
+    // first and the mesh was overlaid as thin lines, so the "cells"
+    // still read as grey metal instead of holes.
+    //
+    // Wall thickness: ~18% of the cell pitch, floored at 0.8 px so walls
+    // don't disappear at fine zoom. Frame gets a bit more weight than
+    // the interior walls so the fin reads as a bordered panel.
+    const wallPx = Math.max(0.8, cellPx * 0.18);
+    const framePx = Math.max(1.4, cellPx * 0.30);
     
     const cols = Math.max(1, Math.round(wPx / cellPx));
+    const rows = Math.max(1, Math.round(hPx / cellPx));
     const colStep = wPx / cols;
+    const rowStep = hPx / rows;
+    
+    // Interior walls (thin lattice).
+    ctx.strokeStyle = fill;
+    ctx.lineWidth = wallPx;
+    ctx.beginPath();
     for (let i = 1; i < cols; i++) {
       const x = topX + i * colStep;
-      ctx.beginPath();
       ctx.moveTo(x, topY);
       ctx.lineTo(x, topY + hPx);
-      ctx.stroke();
     }
-    const rows = Math.max(1, Math.round(hPx / cellPx));
-    const rowStep = hPx / rows;
     for (let j = 1; j < rows; j++) {
       const y = topY + j * rowStep;
-      ctx.beginPath();
       ctx.moveTo(topX, y);
       ctx.lineTo(topX + wPx, y);
-      ctx.stroke();
     }
+    ctx.stroke();
+    
+    // Frame — same colour, slightly heavier, drawn on the perimeter.
+    // Inset by wallPx/2 so the stroke straddles the rect edge, matching
+    // how the interior walls straddle their grid lines.
+    ctx.lineWidth = framePx;
+    ctx.strokeRect(
+      topX + framePx / 2,
+      topY + framePx / 2,
+      wPx - framePx,
+      hPx - framePx
+    );
+  } else {
+    // Solid edge-on face — filled rect + border, unchanged.
+    ctx.beginPath();
+    ctx.rect(topX, topY, wPx, hPx);
+    ctx.fillStyle = fill;
+    ctx.fill();
+    ctx.strokeStyle = stroke;
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
   }
   ctx.restore();
 }
-
 
 
 // ---------------------------------------------------------------------------
@@ -1579,11 +1597,24 @@ const bodyPath = () => {
     // stage engine bell above it (bellHeight × 1.20) with a floor so it's
     // always visible even without a stage stacked. Diameter = booster width.
     // Replaces the old flat lip band.
-    const defaultH = 0.06 * H; // 6% booster if no stage above
-    const bellH_m = (opts.stageAboveBellHeight && opts.stageAboveBellHeight > 0) ?
-      opts.stageAboveBellHeight : 0;
-    const interstageH_target_m = Math.max(bellH_m * 1.20, defaultH * mpp);
-    const interstageH_px = Math.min(H * 0.20, interstageH_target_m / mpp);
+    const defaultH = 0.06 * H;
+// Interstage height — prefer the PHYSICAL value from fleet.js's
+// computeInterstageForBooster (the same source that finPositionY
+// default and dry-mass calc key off). Without this, the render used
+// its own flow-based estimate (~2.5 m) while the physical model used
+// the width-based one (~1.7 m) — the visible band covered ~0.8 m
+// more of the booster than the actual hardware, and grid fins
+// anchored "just below the interstage" appeared to be inside it.
+let interstageH_target_m;
+if (Number.isFinite(opts.interstageHeight_m) && opts.interstageHeight_m > 0) {
+  interstageH_target_m = opts.interstageHeight_m;
+} else {
+  // Legacy fallback for callers that don't supply the physical value.
+  const bellH_m = (opts.stageAboveBellHeight && opts.stageAboveBellHeight > 0) ?
+    opts.stageAboveBellHeight : 0;
+  interstageH_target_m = Math.max(bellH_m * 1.20, defaultH * mpp);
+}
+const interstageH_px = Math.min(H * 0.20, interstageH_target_m / mpp);
     
     // Black band filling the top of the booster, flush with the flat top edge.
     const isGrad = cachedGradient(ctx, 'interstage', Math.round(W), () => {
@@ -1873,13 +1904,53 @@ if (opts.gridFinType && opts.gridFinParams) {
   const rp = pFromDeg(st.R.deploy);
   const lRot = -(1 - lp) * (Math.PI / 2); // stowed −π/2 (down) → deployed 0
   const rRot = +(1 - rp) * (Math.PI / 2); // stowed +π/2 (down) → deployed 0
-  const rightHingeX = hullHalfPx + gapPx;
-  const leftHingeX = -(hullHalfPx + gapPx);
-  // L fin rect: (−spanPx, −thick/2) → (0, +thick/2).
-  // R fin rect: (0, −thick/2) → (+spanPx, +thick/2).
-  drawGridFinFace(ctx, leftHingeX, hingeY, -spanPx, -thicknessPx / 2, spanPx, thicknessPx, cellPx, sideStyle, false, lRot);
-  drawGridFinFace(ctx, rightHingeX, hingeY, 0, -thicknessPx / 2, spanPx, thicknessPx, cellPx, sideStyle, false, rRot);
-  
+  // Hinge offset = gap + thickness/2. The gap is the air space between
+// the hull surface and the fin's INNER FACE — but the hinge axis runs
+// along the fin's thickness-CENTER, so the physical hinge sits a half-
+// thickness further out. Without the +thickness/2, the stowed fin's
+// inner half penetrates the hull by exactly thickness/2.
+const hingeOffsetX = hullHalfPx + gapPx + thicknessPx / 2;
+const rightHingeX = hingeOffsetX;
+const leftHingeX = -hingeOffsetX;
+
+// ---- Hinge brackets ----
+// Small structural bosses bridging the hull-to-hinge air gap on both
+// sides. Without these, the offset hinge leaves the deployed fin
+// visually detached — a floating rectangle next to the rocket. Drawn
+// BEFORE the fin rects so a deployed fin cleanly overlaps its own
+// bracket (they share the hinge axis).
+const bracketH = Math.max(3, thicknessPx * 0.55);
+const bracketColor = '#242830';
+const bracketEdge = '#0c0e12';
+const bracketHighlight = 'rgba(255,255,255,0.28)';
+function drawHingeBracket(sideSign) {
+  const hullEdgeX = sideSign * hullHalfPx;
+  const hingeX = sideSign * hingeOffsetX;
+  const x0 = Math.min(hullEdgeX, hingeX);
+  const x1 = Math.max(hullEdgeX, hingeX);
+  const y0 = hingeY - bracketH / 2;
+  ctx.save();
+  ctx.fillStyle = bracketColor;
+  ctx.fillRect(x0, y0, x1 - x0, bracketH);
+  ctx.strokeStyle = bracketEdge;
+  ctx.lineWidth = 0.8;
+  ctx.strokeRect(x0, y0, x1 - x0, bracketH);
+  ctx.strokeStyle = bracketHighlight;
+  ctx.lineWidth = 0.6;
+  ctx.beginPath();
+  ctx.moveTo(x0, y0 + 0.4);
+  ctx.lineTo(x1, y0 + 0.4);
+  ctx.stroke();
+  ctx.restore();
+}
+drawHingeBracket(-1);
+drawHingeBracket(+1);
+
+// L fin rect: (−spanPx, −thick/2) → (0, +thick/2).
+// R fin rect: (0, −thick/2) → (+spanPx, +thick/2).
+drawGridFinFace(ctx, leftHingeX, hingeY, -spanPx, -thicknessPx / 2, spanPx, thicknessPx, cellPx, sideStyle, false, lRot);
+drawGridFinFace(ctx, rightHingeX, hingeY, 0, -thicknessPx / 2, spanPx, thicknessPx, cellPx, sideStyle, false, rRot);
+
   // F drawn last (front, opaque).
   drawGridFinFace(ctx, 0, hingeY, -fbW / 2, fbTopY, fbW, fbH, cellPx, fbStyle, fbShowMesh, +fbControlRad);
 }
@@ -2199,11 +2270,21 @@ const baseY = (cssH - contentH) / 2 + H;
     getComponentType(v.rcsTypeId) :
     null;
   
-  pctx.save();
-pctx.translate(baseX, baseY);
-drawRocketArt(pctx, W, H, mpp, {
-      hasMemberBelow: false,
-      rcsTopY: v.params ? v.params.rcsTopY : undefined,
+    pctx.save();
+  pctx.translate(baseX, baseY);
+  // Standalone preview — the interstage height comes precomputed on the
+// vehicle object (populated by previewVehicleFor / _previewVehicleFor,
+// which look up the real stage-above from the fleet). Fallback to the
+// stage-less compute only for old call sites that don't supply it.
+let interstageHeight_m = Number.isFinite(v.interstageHeight_m) ? v.interstageHeight_m : null;
+if (interstageHeight_m === null && v.stageRole === 'booster' && typeof computeInterstageForBooster === 'function') {
+  const inter = computeInterstageForBooster(v, null);
+  if (inter && Number.isFinite(inter.height)) interstageHeight_m = inter.height;
+}
+  drawRocketArt(pctx, W, H, mpp, {
+        hasMemberBelow: false,
+        interstageHeight_m: interstageHeight_m,
+        rcsTopY: v.params ? v.params.rcsTopY : undefined,
   rcsBottomY: v.rcsBottomY,
   recoveryType,
   rcsType,
@@ -2336,23 +2417,15 @@ let baseY = (cssH - contentH) / 2 + H_px_total;
     // reads the global SIM_STACK_MEMBERS (only set inside the live sim);
     // this preview runs on the home/fleet pages where that global doesn't
     // exist, but we already have the ordered `members` array locally.
-    let stageAboveBellHeight = 0;
     const above = members[idx + 1];
-    if (above && above.engineTypeId && typeof getComponentType === 'function') {
-      const layoutAbove = getComponentType(above.engineTypeId);
-      if (layoutAbove && layoutAbove.frame && layoutAbove.frame.slots &&
-        typeof engineThrusterGroups === 'function') {
-        const gAbove = engineThrusterGroups(layoutAbove);
-        let totalFlow = 0;
-        Object.keys(gAbove).forEach(gk => {
-          const g = above.engineThrusters && above.engineThrusters[gk];
-          if (!g || !Number.isFinite(g.massFlowRate)) return;
-          totalFlow += g.massFlowRate * gAbove[gk].length;
-        });
-        const perEngine = totalFlow / layoutAbove.frame.slots.length;
-        stageAboveBellHeight = 0.007 * perEngine;
-      }
-    }
+// Interstage height — the same physical value computeInterstageForBooster
+// produces for the booster's mass model, so the rendered band matches
+// the hardware grid fins and dry-mass both key off.
+let interstageHeight_m = null;
+if (m.stageRole === 'booster' && typeof computeInterstageForBooster === 'function') {
+  const inter = computeInterstageForBooster(m, above);
+  if (inter && Number.isFinite(inter.height)) interstageHeight_m = inter.height;
+}
     
     // Same flag as render.js — a stage with a fairing directly above it
 // in the stack suppresses its own nose.
@@ -2387,9 +2460,9 @@ const psType = (m.stageRole === 'payloadSpace' && m.payloadSpaceTypeId && typeof
       stagePayload: (typeof buildStagePayload === 'function') ? buildStagePayload(m) : null,
             engineLayout: engineLayout,
         engineThrusters: m.engineThrusters,
-        params: m.params,
-  stageAboveBellHeight: stageAboveBellHeight,
-  hasMemberBelow: idx > 0,
+              params: m.params,
+        interstageHeight_m: interstageHeight_m,
+        hasMemberBelow: idx > 0,
   gridFinType: (m.hasGridFins && m.gridFinTypeId && typeof getComponentType === 'function') ?
   getComponentType(m.gridFinTypeId) : null,
   gridFinParams: m.gridFinParams || null,

@@ -245,8 +245,11 @@ const UNASSIGNED_FAMILY_ID = 'fam-unassigned'; // orphan stages/noses awaiting a
 // so a default vehicle added in a code update lands for existing users
 // too, not just fresh installs. No other file needs to change.
 // ============================================================================
+const FALCON9_B5_FAMILY_ID = 'fam-falcon9-b5';
+
 const DEFAULT_FAMILIES = [
   { id: LEGACY_FAMILY_ID, name: 'Falcon-9-Class Family', bottomId: 'falcon9-default', locked: true },
+  { id: FALCON9_B5_FAMILY_ID, name: 'Falcon 9 Block 5 Family', bottomId: 'falcon9-b5-booster', locked: true },
   // ↑ Add new default families here.
 ];
 
@@ -254,12 +257,16 @@ const DEFAULT_RECORDS = [
   { seed: seedFalcon9Booster },
   { seed: seedFalcon9Stage },
   { seed: seedFalcon9Fairing },
+  { seed: seedFalcon9B5Booster },
+  { seed: seedFalcon9B5Stage },
+  { seed: seedFalcon9B5Fairing },
   // ↑ Add new default records here. Each seed function must declare its
   // own id and familyId — reconcile matches by id.
 ];
 
 const DEFAULT_STACKS = [
   { seed: seedFalcon9Stack },
+  { seed: seedFalcon9B5Stack },
   // ↑ Add new default stacks here.
 ];
 
@@ -552,6 +559,11 @@ function seedFalcon9Booster() {
     stageRole: 'booster',
     familyId: LEGACY_FAMILY_ID,
     height: 41.2, width: 3.7, dragCd: 0.6,
+    // Legacy pin: Block 3's interstage keeps the original flow-derived
+    // height (2.57 m) it had before the width-based bell formula landed.
+    // Blanket the new formula across Block 3 would shrink it to ~1.70 m;
+    // pinning here means Block 3 is untouched by B5-and-future changes.
+    interstageOverride_m: 2.57,
     engineTypeId: 'octaweb-merlin9',
     recoveryTypeId: 'legs-swingout-4',
     hasRecovery: true,
@@ -657,6 +669,138 @@ function seedFalcon9Stack() {
     id: 'stk_falcon9-default',
     name: 'Falcon 9 Block 3',
     members: ['falcon9-default', 'falcon9-stage', 'falcon9-fairing'],
+    sequence: 'f9-standard',
+    payloadId: 'pl_falcon9-default',
+    locked: true,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Falcon 9 Block 5 — current operational F9 configuration.
+//
+// Delta from the Block 3 seed above:
+//   • Booster propellant 411 t (densified rp1-lox-chilled, 1138 kg/m³)
+//   • Upper-stage propellant 107.7 t (densified + 10% stretched tank)
+//   • Merlin 1D+ / MVacD thrusters (Isp 282/311 s and 348 s, throttle
+//     floor 39%, gimbal 8°)
+//   • Grid fins fitted (titanium lattice, ~70 kg/fin)
+//   • Booster shell factor 0.0146 → 22,200 kg dry mass target
+//   • Stage shell factor 0.0134 → 4,000 kg dry mass target
+//   • Octaweb ring radius 1.35 m (real geometry, vs 1.7 m legacy)
+// ---------------------------------------------------------------------------
+function seedFalcon9B5Booster() {
+  return {
+    id: 'falcon9-b5-booster',
+    name: 'Falcon 9 Block 5 — Booster',
+    locked: true,
+    stageRole: 'booster',
+    familyId: FALCON9_B5_FAMILY_ID,
+    height: 41.2, width: 3.7, dragCd: 0.6,
+    engineTypeId: 'octaweb-merlin9',
+    recoveryTypeId: 'legs-swingout-4',
+    hasRecovery: true,
+    rcsTypeId: 'rcs-4pod-2nozzle',
+    bodyMetalTypeId: 'al-li-alloy',
+    legsMetalTypeId: 'carbon-composite',
+    // Recalibrated for the new interstage formula — interstage is now
+// bell-sized (~1.19 m, was 2.42 m), dropping ~620 kg of structure.
+// Bumped shell factor slightly so total booster dry mass still lands
+// on the real F9 Block 5 figure of ~22,200 kg.
+bodyShellFactor: 0.0152,
+  maxExtraWeightKg: 150000,
+    engineThrusters: {
+  gimbal: { thrusterTypeId: 'merlin-1d', massFlowRate: 306 },
+  fixed: { thrusterTypeId: 'merlin-1d', massFlowRate: 306 },
+},
+    rcsThruster: { thrusterTypeId: 'cold-gas-small', massFlowRate: 0.5 },
+    pusherTypeId: 'pneumatic-pusher-n2',
+    fuel: {
+      typeId: 'rp1-lox-chilled',
+      tankHeight: 33.6, tankWidth: 3.7,
+      baffleCount: 4, baffleInnerRadiusFrac: 0.8,
+    },
+    hasGridFins: true,
+    gridFinTypeId: 'gridfins-serrated-f9',
+    gridFinMetalTypeId: 'titanium-alloy',
+    gridFinParams: {
+  span: 1.5, chord: 1.2, thickness: 0.4, cellWidth: 0.17,
+  // Hinge axis at the interstage's bottom edge. No thickness/2
+  // subtraction — the hinge IS the reference point, and the fin's
+  // geometry naturally sits around it (stowed = hangs below hinge,
+  // deployed = extends outward with half-thickness above the hinge
+  // line — physically correct for a real hinge pin).
+  //   = 41.2 − 1.695 = 39.505 → 39.5
+  finPositionY: 39.5,
+},
+    gridFinColor: '#8a9198',
+    params: {
+      octaRadius: 1.35,
+      rcsTopY: 40.5, rcsBottomY: 1, rcsXOffset: 1.85, rcsPwmPeriod: 0.3,
+      legDeployRate: 0.5,
+    },
+    bodyDesign: { mode: 'solid', solidColor: '#e9edf2', dslText: '' },
+  };
+}
+
+function seedFalcon9B5Stage() {
+  return {
+    id: 'falcon9-b5-stage',
+    name: 'Falcon 9 Block 5 — Upper Stage',
+    locked: true,
+    stageRole: 'stage',
+    familyId: FALCON9_B5_FAMILY_ID,
+    height: 13.8, width: 3.7, dragCd: 0.6,
+    engineTypeId: 'single-nozzle-vac',
+    recoveryTypeId: null,
+    hasRecovery: false,
+    rcsTypeId: 'rcs-4pod-2nozzle',
+    bodyMetalTypeId: 'al-li-alloy',
+    legsMetalTypeId: 'carbon-composite',
+    bodyShellFactor: 0.0134,
+    maxExtraWeightKg: 22000,
+    engineThrusters: {
+  gimbal: { thrusterTypeId: 'merlin-1d-vac', massFlowRate: 288 },
+},
+    rcsThruster: { thrusterTypeId: 'cold-gas-small', massFlowRate: 0.5 },
+    fuel: {
+      typeId: 'rp1-lox-chilled',
+      tankHeight: 8.8, tankWidth: 3.7,
+      baffleCount: 2, baffleInnerRadiusFrac: 0.8,
+    },
+    params: {
+      rcsTopY: 13, rcsBottomY: 1, rcsXOffset: 1.85, rcsPwmPeriod: 0.3,
+    },
+    bodyDesign: { mode: 'solid', solidColor: '#e9edf2', dslText: '' },
+  };
+}
+
+function seedFalcon9B5Fairing() {
+  return {
+    id: 'falcon9-b5-fairing',
+    name: 'Falcon 9 Block 5 — Fairing',
+    locked: true,
+    stageRole: 'payloadSpace',
+    familyId: FALCON9_B5_FAMILY_ID,
+    height: 13.1, width: 5.2, dragCd: 0.4,
+    payloadSpaceTypeId: 'cap-bulged',
+    payloadSpaceMetalTypeId: 'carbon-composite',
+    bodyShellFactor: 0.0026,
+    deploymentDirection: 'clamshell',
+    color: '#e9edf2',
+    chuteTypeId: 'fairing-chute-round',
+    params: {
+      capHeight: 13.1, capWidth: 3.7, bulgeWidth: 5.2,
+      frustumSlantDeg: 42, curveHeightFactor: 1.4,
+    },
+    bodyDesign: { mode: 'solid', solidColor: '#e9edf2', dslText: '' },
+  };
+}
+
+function seedFalcon9B5Stack() {
+  return {
+    id: 'stk_falcon9-b5',
+    name: 'Falcon 9 Block 5',
+    members: ['falcon9-b5-booster', 'falcon9-b5-stage', 'falcon9-b5-fairing'],
     sequence: 'f9-standard',
     payloadId: 'pl_falcon9-default',
     locked: true,
@@ -826,10 +970,16 @@ if (stageRole === 'booster' || stageRole === 'stage') {
       Math.max(0, Math.min(1, r.fuel.baffleInnerRadiusFrac)) : 0.8,
   };
   out.bodyMetalTypeId = r.bodyMetalTypeId || 'al-li-alloy';
-    // Derived — no stored dryMass/fuelMassMax on a booster anymore.
-    delete out.dryMass;
-    delete out.fuelMassMax;
+  // Preserve per-record interstage override — Block 3's legacy 2.57 m
+  // pin (see seedFalcon9Booster). Absent on all other records, meaning
+  // they take the width-based formula.
+  if (Number.isFinite(r.interstageOverride_m)) {
+    out.interstageOverride_m = r.interstageOverride_m;
   }
+  // Derived — no stored dryMass/fuelMassMax on a booster anymore.
+  delete out.dryMass;
+  delete out.fuelMassMax;
+}
   
   // PS-B2 FIX: this whole block used to live NESTED inside
   // `if (stageRole === 'stage')` above, which meant it could never
@@ -938,7 +1088,7 @@ if (stageRole === 'booster' || stageRole === 'stage') {
       // Default: midpoint of the tank cylinder (the visual centre of the
       // hull). Booster/stage fuel blocks both carry tankHeight.
       finPositionY: Number.isFinite(gp.finPositionY) ? gp.finPositionY :
-        ((r.fuel && Number.isFinite(r.fuel.tankHeight)) ? r.fuel.tankHeight * 0.5 : 0),
+  _defaultFinPositionY(r),
     };
     out.gridFinColor = (typeof r.gridFinColor === 'string') ? r.gridFinColor : '#8a9198';
   } else {
@@ -1736,25 +1886,56 @@ function payloadCompatibilityCheck(payload, stackMembers, fleet) {
 // is saved, this value must never change during flight — see
 // computeStackDerived() below for the freezing layer.
 // ---------------------------------------------------------------------------
+// Bell-height constants — MUST stay identical to rocketArt.js's
+// ENGINE_BELL_ASPECT / ENGINE_BELL_R_FRAC / ENGINE_BELL_SINGLE_BOOST /
+// ENGINE_BELL_CENTER_BOOST. Any change over there breaks the visual /
+// physical match between the drawn nozzle and the interstage that
+// covers it. The interstage is sized to wrap the visible bell plus a
+// small clearance, so a single source of truth for these values means
+// the black band always exactly covers the nozzle above it.
+const BELL_ASPECT_MIRROR = 1.8;
+const BELL_R_FRAC_MIRROR = 0.13;
+const BELL_SINGLE_BOOST_MIRROR = 1.15;
+const BELL_CENTER_BOOST_MIRROR = 1.10;
+const INTERSTAGE_CLEARANCE_K = 1.20; // bell + 20% housing
+const INTERSTAGE_PUSHER_ALLOWANCE_M = 0.50; // pneumatic pusher bay
+
 function computeInterstageForBooster(rec, aboveRec) {
-  let stageAboveBellHeight = 0;
-  if (aboveRec && aboveRec.engineTypeId) {
+  // Explicit override — for records whose interstage has a fixed
+  // real-world height that should NOT track the width-based formula
+  // below. Used by the legacy Block 3 seed to preserve its original
+  // flow-derived interstage (2.57 m) after the formula was rewritten.
+  if (Number.isFinite(rec.interstageOverride_m) && rec.interstageOverride_m > 0) {
+    const h = rec.interstageOverride_m;
+    const tankW = (rec.fuel && Number.isFinite(rec.fuel.tankWidth)) ? rec.fuel.tankWidth : 0;
+    const shellF = Number.isFinite(rec.bodyShellFactor) ? rec.bodyShellFactor : BODY_SHELL_FACTOR;
+    const r_booster = tankW / 2;
+    const shellThk = shellF * r_booster;
+    const INTERSTAGE_DENSITY = 1600;
+    const mass = 2 * Math.PI * r_booster * shellThk * h * INTERSTAGE_DENSITY;
+    return { height: h, mass };
+  }
+  
+  let stageAboveBellHeight_m = 0;
+  if (aboveRec && aboveRec.engineTypeId && Number.isFinite(aboveRec.width)) {
     const layoutAbove = getComponentType(aboveRec.engineTypeId);
-    if (layoutAbove && layoutAbove.frame && layoutAbove.frame.slots) {
-      const gAbove = engineThrusterGroups(layoutAbove);
-      let totalFlow = 0;
-      Object.keys(gAbove).forEach(gk => {
-        const g = aboveRec.engineThrusters && aboveRec.engineThrusters[gk];
-        if (!g || !Number.isFinite(g.massFlowRate)) return;
-        totalFlow += g.massFlowRate * gAbove[gk].length;
-      });
-      const perEngine = totalFlow / layoutAbove.frame.slots.length;
-      stageAboveBellHeight = 0.007 * perEngine;
+    if (layoutAbove && layoutAbove.frame && Array.isArray(layoutAbove.frame.slots)) {
+      const nSlots = layoutAbove.frame.slots.length || 1;
+      const boost = (nSlots === 1) ? BELL_SINGLE_BOOST_MIRROR : BELL_CENTER_BOOST_MIRROR;
+      const sR_m = aboveRec.width * BELL_R_FRAC_MIRROR * boost;
+      stageAboveBellHeight_m = sR_m * BELL_ASPECT_MIRROR;
     }
   }
-  const tankH = (rec.fuel && Number.isFinite(rec.fuel.tankHeight)) ? rec.fuel.tankHeight : 0;
+  // Standalone booster (nothing stacked above) — small fraction of its
+  // own height as a visible minimum, so the band doesn't disappear.
+  const boosterH = Number.isFinite(rec.height) ? rec.height : 0;
+  const fallbackH = 0.02 * boosterH;
+  const height = Math.max(
+  stageAboveBellHeight_m * INTERSTAGE_CLEARANCE_K + INTERSTAGE_PUSHER_ALLOWANCE_M,
+  fallbackH
+);
+  
   const tankW = (rec.fuel && Number.isFinite(rec.fuel.tankWidth)) ? rec.fuel.tankWidth : 0;
-  const height = Math.max(stageAboveBellHeight * 1.20, 0.06 * tankH);
   
   const shellF = Number.isFinite(rec.bodyShellFactor) ? rec.bodyShellFactor : BODY_SHELL_FACTOR;
 const r_booster = tankW / 2;
@@ -2199,6 +2380,45 @@ function computePayloadSpaceDryMass(rec) {
 // render prominently in 2D — the front/back pair contributes inertia
 // identically.
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Default hinge height for a booster/stage's grid fins — places the fin's
+// TOP edge exactly at the interstage's BOTTOM edge. Uses the same bell-
+// sizing formula as computeInterstageForBooster, assuming the stage above
+// is the booster's own width (true for F9 and most real stacks). If the
+// caller stores an explicit finPositionY, that wins — this is only a
+// fallback for records that don't have one yet.
+//
+//   finPositionY = boosterHeight − interstageHeight − finThickness / 2
+//
+// where interstageHeight = bellHeight × INTERSTAGE_CLEARANCE_K, and
+// bellHeight = boosterWidth × BELL_R_FRAC × SINGLE_BOOST × BELL_ASPECT.
+// (Single-nozzle above is the common case — stage sits on booster.)
+// ---------------------------------------------------------------------------
+function _defaultFinPositionY(rec) {
+  if (!rec || (rec.stageRole !== 'booster' && rec.stageRole !== 'stage')) return 0;
+  const boosterH = Number.isFinite(rec.height) ? rec.height : 0;
+  const boosterW = Number.isFinite(rec.width) ? rec.width : 0;
+  const gp = rec.gridFinParams || {};
+  const thickness = Number.isFinite(gp.thickness) ? gp.thickness : 0.4;
+  
+      // Interstage height — respects the record's own override when present,
+  // otherwise uses the same width-based formula computeInterstageForBooster
+  // does.
+  let interstageH_m;
+  if (Number.isFinite(rec.interstageOverride_m) && rec.interstageOverride_m > 0) {
+    interstageH_m = rec.interstageOverride_m;
+  } else {
+    const bellH_m = boosterW * BELL_R_FRAC_MIRROR * BELL_SINGLE_BOOST_MIRROR * BELL_ASPECT_MIRROR;
+    interstageH_m = bellH_m * INTERSTAGE_CLEARANCE_K + INTERSTAGE_PUSHER_ALLOWANCE_M;
+  }
+  
+  // Hinge axis sits exactly at the interstage's bottom edge. No
+  // thickness/2 subtraction: the hinge is the reference, the fin
+  // geometry sits naturally around it.
+  const pos = boosterH - interstageH_m;
+  return Math.max(0, pos);
+  }
+
 function computeGridFinMass(rec) {
   if (!rec || !rec.hasGridFins) return null;
   const type = (typeof getComponentType === 'function') ? getComponentType(rec.gridFinTypeId) : null;

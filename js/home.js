@@ -162,9 +162,23 @@ function _previewVehicleFor(m) {
   const psType = (m.stageRole === 'payloadSpace' && m.payloadSpaceTypeId &&
     typeof getComponentType === 'function') ? getComponentType(m.payloadSpaceTypeId) : null;
   const psParams = m.params || {};
-  return {
-    height: m.height,
-    width: m.width,
+// Same reasoning as rockets-core.js's previewVehicleFor — the standalone
+// booster preview needs the interstage height computed with the actual
+// stage-above from the same family, so the band and the fins don't
+// drift apart on the home page.
+let interstageHeight_m = null;
+if (m.stageRole === 'booster' && typeof computeInterstageForBooster === 'function') {
+  const fleet = (typeof loadFleet === 'function') ? loadFleet() : [];
+  const stageAbove = m.familyId ?
+    fleet.find(r => r.familyId === m.familyId && r.stageRole === 'stage') : null;
+  const inter = computeInterstageForBooster(m, stageAbove);
+  if (inter && Number.isFinite(inter.height)) interstageHeight_m = inter.height;
+}
+return {
+  height: m.height,
+  interstageHeight_m: interstageHeight_m,
+  width: m.width,
+  
     rcsTopY: m.params ? m.params.rcsTopY : undefined,
     rcsBottomY: m.params ? m.params.rcsBottomY : undefined,
     recoveryTypeId: m.hasRecovery === false ? null : m.recoveryTypeId,

@@ -1439,20 +1439,11 @@ if (body.members && body.members.length && typeof getEngineBellExitY_m === 'func
     let yOffsetPx = 0;
     stackMembers.forEach((m, idx) => {
       const memberAbove = stackMembers[idx + 1] || null;
-      let stageAboveBellHeight = 0;
-      if (memberAbove && memberAbove.engineTypeId && typeof getComponentType === 'function') {
-        const layoutAbove = getComponentType(memberAbove.engineTypeId);
-        if (layoutAbove && layoutAbove.frame && layoutAbove.frame.slots) {
-          const groups = (typeof engineThrusterGroups === 'function') ? engineThrusterGroups(layoutAbove) : {};
-          let totalFlow = 0;
-          Object.keys(groups).forEach(gk => {
-            const g = memberAbove.engineThrusters && memberAbove.engineThrusters[gk];
-            if (!g || !Number.isFinite(g.massFlowRate)) return;
-            totalFlow += g.massFlowRate * groups[gk].length;
-          });
-          const perEngine = totalFlow / layoutAbove.frame.slots.length;
-          stageAboveBellHeight = 0.007 * perEngine;
-        }
+      // Interstage height — the same value the physical mass model uses.
+      let interstageHeight_m = null;
+      if (m.stageRole === 'booster' && typeof computeInterstageForBooster === 'function') {
+        const inter = computeInterstageForBooster(m, memberAbove);
+        if (inter && Number.isFinite(inter.height)) interstageHeight_m = inter.height;
       }
       
       const mH = (m.height || 0) / mpp;
@@ -1514,11 +1505,11 @@ drawRocketArt(ctx, mW, mH, mpp, {
         engineLayout: engineLayout,
         engineThrusters: m.engineThrusters,
         params: m.params,
-            stageAboveBellHeight: stageAboveBellHeight,
-  // Bell hidden when this member has a member below in the stack —
-  // see drawRocketArt's guard for the reasoning (MVac bell sits
-  // inside the booster's interstage, not visible side-on).
-  hasMemberBelow: idx > 0,
+                  interstageHeight_m: interstageHeight_m,
+        // Bell hidden when this member has a member below in the stack —
+        // see drawRocketArt's guard for the reasoning (MVac bell sits
+        // inside the booster's interstage, not visible side-on).
+        hasMemberBelow: idx > 0,
     gridFinType: gfType,
     gridFinParams: m.gridFinParams || null,
     gridFinState: body.gridFins || null,

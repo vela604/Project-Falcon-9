@@ -284,10 +284,14 @@ function buildGridFinSerratedF9() {
     // Type-level constants. NOT in schema — read by computeGridFinMass()
     // in fleet.js. A future fin type with different wall/material ratios
     // supplies its own bag here.
+    
     typeConstants: {
-  WALL_THICKNESS_FACTOR: 0.025, // wall thickness = factor × fin thickness
-  SHELL_FACTOR: 0.30, // calibration multiplier on outer solid volume × cellFill
-  // Physical deflection envelope — real Falcon 9 grid fins swing 90°
+      WALL_THICKNESS_FACTOR: 0.025, // wall thickness = factor × fin thickness
+      // Calibrated so a real F9 Block 5 grid fin (1.5 × 1.2 × 0.4 m, 0.17 m
+      // cells, cast titanium) lands at ~70 kg — matching the published
+      // ~70 kg/fin figure for the flight hardware.
+      SHELL_FACTOR: 0.14,
+      // Physical deflection envelope — real Falcon 9 grid fins swing 90°
   // from stowed (folded against hull) to deployed (perpendicular),
   // and can then deflect up to ±30° from the perpendicular axis for
   // active control. Higher control angles exceed the fin's stall
@@ -472,21 +476,27 @@ function buildThrusterMerlin1DVacClass() {
 //               At sea level it would be massively over-expanded and
 //               produce almost nothing; only fires at altitude.
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Merlin 1D+ — Falcon 9 Block 5 sea-level engine. Supersedes the earlier
+// Block 3/4 numbers (Isp_vac 312 s → 311 s, Isp_SL 288 s → 282 s,
+// throttle floor 40% → 39%, gimbal 20° → 8°). Live Ve is recomputed per
+// tick as veVacuum − atmosphericPenalty × Pa.
+// ---------------------------------------------------------------------------
 function buildThrusterMerlin1D() {
   return makeThruster(
     'merlin-1d',
-    'Merlin-1D',
-    'Pressure-aware Merlin 1D. Ve(Pa) = veVacuum − atmosphericPenalty × Pa recomputed per tick from ambient pressure. Vacuum Isp ≈ 312 s; sea-level Isp ≈ 288 s. Same combustor/gimbal/throttle envelope as the demo variant.',
+    'Merlin 1D+ (Block 5)',
+    'Falcon 9 Block 5 sea-level engine. Ve(Pa) = veVacuum − atmosphericPenalty × Pa recomputed per tick. Vacuum Isp ≈ 311 s; sea-level Isp ≈ 282 s. Throttle floor 39%. Gimbal range 8°.',
     {
-      veVacuum: 3060.7,
-      atmosphericPenalty: 0.002278,
-      efficiency: 0.9,
-      twr: 184,
+      veVacuum: 3049.87, // 311 s × 9.80665
+      atmosphericPenalty: 0.002807, // (veVacuum − 282 s·g₀) / 101325
+      efficiency: 0.92,
+      twr: 198,
       maxMassFlowRate: 500,
       gimbalCapable: true,
-      gimbalMaxDeg: 20,
+      gimbalMaxDeg: 8,
       gimbalRateDegS: 40,
-      minThrottleFrac: 0.4,
+      minThrottleFrac: 0.39,
       maxThrottleRateFrac: 0.5,
       startupDurationS: 3.0,
       shutdownDurationS: 2.0,
@@ -494,32 +504,41 @@ function buildThrusterMerlin1D() {
   );
 }
 
+// ---------------------------------------------------------------------------
+// MVacD — Falcon 9 Block 5 upper-stage engine. Vacuum Isp 348 s, gimbal
+// 8°, throttle floor 39% (unchanged from the earlier MVac — Block 5
+// didn't significantly change the vac engine's Isp or throttle envelope).
+// ---------------------------------------------------------------------------
 function buildThrusterMerlin1DVac() {
   return makeThruster(
     'merlin-1d-vac',
-    'MVacD',
-    'Pressure-aware Merlin Vacuum. Large vacuum-optimized nozzle ⇒ much bigger atmospheric penalty than the SL variant; at sea level it produces very little thrust. Vacuum Isp = 348 s. Only fires post-separation at high altitude.',
+    'MVacD (Block 5)',
+    'Falcon 9 Block 5 vacuum-optimized upper-stage engine. Large exit nozzle ⇒ big atmospheric penalty; nearly zero thrust at sea level. Vacuum Isp = 348 s. Throttle floor 39%, gimbal 8°.',
     {
-      veVacuum: 3412.7,
+      veVacuum: 3412.71, // 348 s × 9.80665
       atmosphericPenalty: 0.02290,
       efficiency: 0.92,
-      twr: 200,
+      twr: 172,
       maxMassFlowRate: 350,
       gimbalCapable: true,
-      gimbalMaxDeg: 20,
+      gimbalMaxDeg: 8,
       gimbalRateDegS: 40,
-      minThrottleFrac: 0.4,
+      minThrottleFrac: 0.39,
       maxThrottleRateFrac: 0.5,
       startupDurationS: 3.0,
       shutdownDurationS: 2.0,
     }
   );
 }
+
+
 
 
 // Same idea as thruster, but for RCS nozzles — an rcsArrangement's pods
 // reference one of these instead of declaring rcsThrust/rcsVe directly
 // (those keys move OUT of rcsArrangement's parameterSchema in Step B).
+
+
 const RCS_THRUSTER_COLD_GAS_SCHEMA = [
   { key: 've', label: 'Exhaust velocity', unit: 'm/s', min: 100 },
   { key: 'efficiency', label: 'Efficiency', unit: 'frac', min: 0.1, max: 1 },
