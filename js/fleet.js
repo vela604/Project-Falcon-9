@@ -731,13 +731,17 @@ bodyShellFactor: 0.0152,
   gimbal: { thrusterTypeId: 'merlin-1d', massFlowRate: 306 },
   fixed: { thrusterTypeId: 'merlin-1d', massFlowRate: 306 },
 },
-    rcsThruster: { thrusterTypeId: 'cold-gas-small', massFlowRate: 0.5 },
-    pusherTypeId: 'pneumatic-pusher-n2',
-    fuel: {
-      typeId: 'rp1-lox-chilled',
-      tankHeight: 33.6, tankWidth: 3.7,
-      baffleCount: 4, baffleInnerRadiusFrac: 0.8,
-    },
+    // Double the per-nozzle mass flow vs. the standard cold-gas-small
+// (0.5 → 1.0 kg/s). Booster RCS has to control ~22 t of empty
+// booster during descent; the higher flow roughly doubles the
+// attitude authority that thin cold-gas thrust would give.
+rcsThruster: { thrusterTypeId: 'cold-gas-small', massFlowRate: 1.0 },
+pusherTypeId: 'pneumatic-pusher-n2',
+fuel: {
+  typeId: 'rp1-lox-chilled',
+  tankHeight: 33.6, tankWidth: 3.7,
+  baffleCount: 4, baffleInnerRadiusFrac: 0.8,
+},
     hasGridFins: true,
     gridFinTypeId: 'gridfins-serrated-f9',
     gridFinMetalTypeId: 'titanium-alloy',
@@ -749,10 +753,13 @@ bodyShellFactor: 0.0152,
 },
     gridFinColor: '#8a9198',
     params: {
-      octaRadius: 1.35,
-      rcsTopY: 40.5, rcsBottomY: 1, rcsXOffset: 1.85, rcsPwmPeriod: 0.3,
-      legDeployRate: 0.5,
-    },
+  octaRadius: 1.35,
+  // RCS pod heights measured from the hull's base (hull = 39.7 m).
+  // Top pods near the hull top (0.2 m below the interstage), bottom
+  // pods near the hull base (0.7 m up, clear of the engine bay).
+  rcsTopY: 39.5, rcsBottomY: 0.7, rcsXOffset: 1.85, rcsPwmPeriod: 0.3,
+  legDeployRate: 0.5,
+},
     bodyDesign: { mode: 'solid', solidColor: '#e9edf2', dslText: '' },
   };
 }
@@ -786,8 +793,9 @@ function seedFalcon9B5Stage() {
       tankHeight: 8.8, tankWidth: 3.7,
       baffleCount: 2, baffleInnerRadiusFrac: 0.8,
     },
-    params: {
-      rcsTopY: 13, rcsBottomY: 1, rcsXOffset: 1.85, rcsPwmPeriod: 0.3,
+        params: {
+      // RCS pod heights measured from the stage hull's base (10.1 m hull).
+      rcsTopY: 9.8, rcsBottomY: 0.5, rcsXOffset: 1.85, rcsPwmPeriod: 0.3,
     },
     bodyDesign: { mode: 'solid', solidColor: '#e9edf2', dslText: '' },
   };

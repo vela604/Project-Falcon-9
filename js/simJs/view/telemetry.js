@@ -645,9 +645,10 @@ members.forEach((m, idx) => {
         gridFinType: (m.hasGridFins && m.gridFinTypeId && typeof getComponentType === 'function') ?
     getComponentType(m.gridFinTypeId) : null,
     gridFinParams: m.gridFinParams || null,
-    gridFinColor: m.gridFinColor || '#8a9198',
+      gridFinColor: m.gridFinColor || '#8a9198',
     gridFinState: body.gridFins || null,
     locked: m.locked === true,
+    liveEngines: (idx === 0) ? body.engines : null,
     ...payloadOpts,
   });
         figCtx.restore();

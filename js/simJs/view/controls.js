@@ -455,15 +455,17 @@ function canSeparateNow() {
   const active = state.bodies[state.activeBodyIndex];
   if (!active || !active.members || active.members.length < 2) return false;
   
-  // Both the bottom member AND the one directly above it must be a
-  // separable role. If the second-from-bottom is a fairing (payloadSpace)
-  // or a nose, the bottom is the FINAL upper stage — separating it would
-  // leave the fairing drifting as a stack with no rocket attached. That's
-  // exactly the case Split Fairing + Release Payload exist for.
-  const SEPARABLE = { booster: 1, stage: 1 };
+  // Bottom must be a booster (or legacy rocket). Above it, the immediate
+  // member can be either a stage (legacy 3-member layout) or an
+  // interstage (new 4-member layout) — the interstage is a structural
+  // pass-through that gets discarded along with the booster.
+  // A fairing/nose directly above the booster means there's no separable
+  // upper stage to detach — that's Split Fairing / Release Payload's job.
+  const BOTTOM_ROLES = { booster: 1, rocket: 1 };
+  const ABOVE_ROLES = { stage: 1, interstage: 1 };
   const bottom = active.members[0];
   const above = active.members[1];
-  return !!(bottom && above && SEPARABLE[bottom.stageRole] && SEPARABLE[above.stageRole]);
+  return !!(bottom && above && BOTTOM_ROLES[bottom.stageRole] && ABOVE_ROLES[above.stageRole]);
 }
 
 function canSplitFairingNow() {

@@ -1216,125 +1216,181 @@ if (body.members && body.members.length && typeof getEngineBellExitY_m === 'func
   ctx.save();
   ctx.translate(0, bellExitY_px);
   
+  // Flame palette — vacuum engines (single-nozzle MVac) get a
+  // blue-violet plume that's WIDE and SHORT; sea-level clusters get
+  // the classic orange-white-hot plume that's narrow and long. The
+  // wide blue look matches a real vacuum bell's hugely-expanded
+  // exhaust in near-vacuum — narrow & long would visually read as a
+  // sea-level engine, which is wrong for the upper stage.
+  const isSingleNozzle = !!(
+    body.members && body.members[0] && body.members[0].engineTypeId &&
+    typeof getComponentType === 'function' &&
+    (() => {
+      const lay = getComponentType(body.members[0].engineTypeId);
+      return lay && lay.frame && Array.isArray(lay.frame.slots) && lay.frame.slots.length === 1;
+    })()
+  );
+  const PAL = isSingleNozzle ? {
+    g1_hi: 'rgba(140,180,255,0.60)',
+    g1_mid: 'rgba(70,130,255,0.40)',
+    g1_lo: 'rgba(40,80,220,0)',
+    puff_hi: 'rgba(130,180,255,0.42)',
+    puff_lo: 'rgba(70,120,255,0)',
+    g2_hi: 'rgba(180,225,255,0.95)',
+    g2_mid: 'rgba(120,180,255,0.60)',
+    g2_lo: 'rgba(70,130,255,0)',
+    g3_hi: 'rgba(245,252,255,1)',
+    g3_mid: 'rgba(200,235,255,0.88)',
+    g3_lo: 'rgba(150,200,255,0)',
+    core: 'rgba(240,250,255,0.98)',
+    flare_hi: 'rgba(220,240,255,0.9)',
+    flare_mid: 'rgba(180,215,255,0.35)',
+    flare_lo: 'rgba(140,190,255,0)',
+  } : {
+    g1_hi: 'rgba(255,170,80,0.55)',
+    g1_mid: 'rgba(255,110,40,0.4)',
+    g1_lo: 'rgba(255,70,20,0)',
+    puff_hi: 'rgba(255,140,60,0.35)',
+    puff_lo: 'rgba(255,90,30,0)',
+    g2_hi: 'rgba(255,225,140,0.9)',
+    g2_mid: 'rgba(255,150,55,0.55)',
+    g2_lo: 'rgba(255,90,20,0)',
+    g3_hi: 'rgba(255,252,255,1)',
+    g3_mid: 'rgba(255,240,215,0.85)',
+    g3_lo: 'rgba(255,190,120,0)',
+    core: 'rgba(255,255,255,0.98)',
+    flare_hi: 'rgba(255,255,255,0.9)',
+    flare_mid: 'rgba(255,255,255,0.35)',
+    flare_lo: 'rgba(255,255,255,0)',
+  };
+  // Length and width multipliers. Vacuum plume is shorter and wider
+  // — real MVac flame doesn't punch as far as a Merlin's, it spreads
+  // radially once it clears the massive nozzle exit.
+  const lenMul = isSingleNozzle ? 0.55 : 1.0;
+  const widthMul = isSingleNozzle ? 1.30 : 1.0;
+  
   const tNow = performance.now() * 0.01;
-  const flameLen = H * (0.6 + 1.6 * totalThrottle);
-      
-      const centerEngine = bodyEngines.find(e => e.isCenter);
-      
-      
-      const centerFrac = totalThrust > 0 ? centerEngine.currentF / totalThrust : 0;
-      const gimbalRad = (centerEngine.gimbalDeg * Math.PI / 180) * centerFrac;
-      const fullShift = -flameLen * Math.sin(gimbalRad);
-      
-      const activeCount = bodyEngines.filter(e => e.currentF > 1).length;
-      const plumeScale = Math.min(1.0, 0.30 + 0.70 * Math.max(0, activeCount - 1) / 8);
-      
-      function gasConePath(startW, endW, lenFrac, seed, segments, layerShift) {
-        const l = flameLen * lenFrac;
-        ctx.beginPath();
-        ctx.moveTo(-startW / 2, 0);
-        for (let i = 1; i <= segments; i++) {
-          const f = i / segments;
-          const y = l * f;
-          const w = startW + (endW - startW) * f;
-          const grow = 0.15 + 1.1 * f * f;
-          const wob = Math.sin(f * 4.5 + tNow * 2.3 + seed) * w * 0.16 * grow +
-            Math.sin(f * 9.5 + tNow * 3.8 + seed * 1.4) * w * 0.08 * grow;
-          ctx.lineTo(-w / 2 - wob + layerShift * f, y);
-        }
-        const capW = endW,
-          capX = layerShift,
-          capY = l;
-        ctx.quadraticCurveTo(capX - capW * 0.34, capY + capW * 0.15, capX, capY + capW * 0.22);
-        ctx.quadraticCurveTo(capX + capW * 0.34, capY + capW * 0.15, endW / 2 + layerShift, l);
-        for (let i = segments; i >= 0; i--) {
-          const f = i / segments;
-          const y = l * f;
-          const w = startW + (endW - startW) * f;
-          const grow = 0.15 + 1.1 * f * f;
-          const wob = Math.sin(f * 4.5 + tNow * 2.3 + seed + 1.9) * w * 0.16 * grow +
-            Math.sin(f * 9.5 + tNow * 3.8 + seed * 1.4 + 0.8) * w * 0.08 * grow;
-          ctx.lineTo(w / 2 + wob + layerShift * f, y);
-        }
-        ctx.closePath();
-      }
-      
-      ctx.save();
-      ctx.filter = 'blur(11px)';
-      gasConePath(W * 1.0 * plumeScale, W * 2.7 * plumeScale, 1.0, 0, 14, fullShift * 1.0);
-      const g1 = ctx.createLinearGradient(0, 0, fullShift * 1.0, flameLen * 1.0);
-      g1.addColorStop(0, 'rgba(255,170,80,0.55)');
-      g1.addColorStop(0.55, 'rgba(255,110,40,0.4)');
-      g1.addColorStop(1, 'rgba(255,70,20,0)');
-      ctx.fillStyle = g1;
-      ctx.fill();
-      ctx.filter = 'none';
-      
-      ctx.filter = 'blur(7px)';
-      for (let i = 0; i < 5; i++) {
-        const f = 0.35 + 0.6 * (i / 4);
-        const y = flameLen * f;
-        const w = (W * 1.0 * plumeScale + (W * 2.7 * plumeScale - W * 1.0 * plumeScale) * f);
-        const side = i % 2 === 0 ? 1 : -1;
-        const drift = Math.sin(tNow * 1.6 + i * 2.1) * w * 0.18;
-        const bx = side * (w * 0.42 + drift) + fullShift * f;
-        const by = y + Math.cos(tNow * 1.3 + i) * w * 0.08;
-        const r = w * (0.2 + 0.08 * Math.sin(i * 1.9 + tNow));
-        const bg = ctx.createRadialGradient(bx, by, 0, bx, by, r);
-        bg.addColorStop(0, 'rgba(255,140,60,0.35)');
-        bg.addColorStop(1, 'rgba(255,90,30,0)');
-        ctx.fillStyle = bg;
-        ctx.beginPath();
-        ctx.arc(bx, by, r, 0, Math.PI * 2);
-        ctx.fill();
-      }
-      ctx.filter = 'none';
-      
-      ctx.globalCompositeOperation = 'lighter';
-      ctx.filter = 'blur(5px)';
-      const shift92 = fullShift * 0.92;
-      gasConePath(W * 0.78 * plumeScale, W * 1.9 * plumeScale, 0.92, 2.1, 11, shift92);
-      const g2 = ctx.createLinearGradient(0, 0, shift92, flameLen * 0.92);
-      g2.addColorStop(0, 'rgba(255,225,140,0.9)');
-      g2.addColorStop(0.5, 'rgba(255,150,55,0.55)');
-      g2.addColorStop(1, 'rgba(255,90,20,0)');
-      ctx.fillStyle = g2;
-      ctx.fill();
-      ctx.filter = 'none';
-      
-      ctx.filter = 'blur(2px)';
-      const shift68 = fullShift * 0.68;
-      gasConePath(W * 0.58 * plumeScale, W * 1.05 * plumeScale, 0.68, 4.4, 9, shift68);
-      const coreHot = 0.55 + 0.45 * totalThrottle;
-      const g3 = ctx.createLinearGradient(0, 0, shift68, flameLen * 0.68);
-      g3.addColorStop(0, `rgba(${Math.round(255 - coreHot*15)},252,255,1)`);
-      g3.addColorStop(0.55, 'rgba(255,240,215,0.85)');
-      g3.addColorStop(1, 'rgba(255,190,120,0)');
-      ctx.fillStyle = g3;
-      ctx.fill();
-      ctx.filter = 'none';
-      
-      ctx.filter = 'blur(5px)';
-      const shift22 = fullShift * 0.22;
-      gasConePath(W * 0.42 * plumeScale, W * 0.55 * plumeScale, 0.22, 6.7, 6, shift22);
-      ctx.fillStyle = 'rgba(255,255,255,0.98)';
-      ctx.fill();
-      ctx.filter = 'none';
-      ctx.globalCompositeOperation = 'source-over';
-      ctx.restore();
-      
-      ctx.globalCompositeOperation = 'lighter';
-      const flare = ctx.createRadialGradient(0, W * 0.05, 0, fullShift * 0.05, W * 0.05, W * 0.9 * plumeScale);
-      flare.addColorStop(0, 'rgba(255,255,255,0.9)');
-      flare.addColorStop(0.5, 'rgba(255,255,255,0.35)');
-      flare.addColorStop(1, 'rgba(255,255,255,0)');
-      ctx.fillStyle = flare;
-      ctx.beginPath();
-      ctx.ellipse(0, W * 0.05, W * 0.42 * plumeScale, W * 0.2 * plumeScale, 0, 0, Math.PI * 2);
-      ctx.fill();
-        ctx.globalCompositeOperation = 'source-over';
-  // ctx.restore;
-  ctx.restore(); // outer — pops the bellExitY translate
+  const flameLen = H * (0.6 + 1.6 * totalThrottle) * lenMul;
+  
+  const centerEngine = bodyEngines.find(e => e.isCenter);
+  
+  
+  const centerFrac = (centerEngine && totalThrust > 0) ? centerEngine.currentF / totalThrust : 0;
+  const gimbalRad = centerEngine ? (centerEngine.gimbalDeg * Math.PI / 180) * centerFrac : 0;
+  const fullShift = -flameLen * Math.sin(gimbalRad);
+  
+  const activeCount = bodyEngines.filter(e => e.currentF > 1).length;
+  const plumeScale = isSingleNozzle ?
+    0.55 :
+    Math.min(1.0, 0.30 + 0.70 * Math.max(0, activeCount - 1) / 8);
+  
+  function gasConePath(startW, endW, lenFrac, seed, segments, layerShift) {
+    const l = flameLen * lenFrac;
+    ctx.beginPath();
+    ctx.moveTo(-startW / 2, 0);
+    for (let i = 1; i <= segments; i++) {
+      const f = i / segments;
+      const y = l * f;
+      const w = startW + (endW - startW) * f;
+      const grow = 0.15 + 1.1 * f * f;
+      const wob = Math.sin(f * 4.5 + tNow * 2.3 + seed) * w * 0.16 * grow +
+        Math.sin(f * 9.5 + tNow * 3.8 + seed * 1.4) * w * 0.08 * grow;
+      ctx.lineTo(-w / 2 - wob + layerShift * f, y);
+    }
+    const capW = endW,
+      capX = layerShift,
+      capY = l;
+    ctx.quadraticCurveTo(capX - capW * 0.34, capY + capW * 0.15, capX, capY + capW * 0.22);
+    ctx.quadraticCurveTo(capX + capW * 0.34, capY + capW * 0.15, endW / 2 + layerShift, l);
+    for (let i = segments; i >= 0; i--) {
+      const f = i / segments;
+      const y = l * f;
+      const w = startW + (endW - startW) * f;
+      const grow = 0.15 + 1.1 * f * f;
+      const wob = Math.sin(f * 4.5 + tNow * 2.3 + seed + 1.9) * w * 0.16 * grow +
+        Math.sin(f * 9.5 + tNow * 3.8 + seed * 1.4 + 0.8) * w * 0.08 * grow;
+      ctx.lineTo(w / 2 + wob + layerShift * f, y);
+    }
+    ctx.closePath();
+  }
+  
+  ctx.save();
+  ctx.filter = 'blur(11px)';
+  gasConePath(W * 1.0 * plumeScale * widthMul, W * 2.7 * plumeScale * widthMul, 1.0, 0, 14, fullShift * 1.0);
+  const g1 = ctx.createLinearGradient(0, 0, fullShift * 1.0, flameLen * 1.0);
+  g1.addColorStop(0, PAL.g1_hi);
+  g1.addColorStop(0.55, PAL.g1_mid);
+  g1.addColorStop(1, PAL.g1_lo);
+  ctx.fillStyle = g1;
+  ctx.fill();
+  ctx.filter = 'none';
+  
+  ctx.filter = 'blur(7px)';
+  for (let i = 0; i < 5; i++) {
+    const f = 0.35 + 0.6 * (i / 4);
+    const y = flameLen * f;
+    const w = (W * 1.0 * plumeScale * widthMul + (W * 2.7 * plumeScale * widthMul - W * 1.0 * plumeScale * widthMul) * f);
+    const side = i % 2 === 0 ? 1 : -1;
+    const drift = Math.sin(tNow * 1.6 + i * 2.1) * w * 0.18;
+    const bx = side * (w * 0.42 + drift) + fullShift * f;
+    const by = y + Math.cos(tNow * 1.3 + i) * w * 0.08;
+    const r = w * (0.2 + 0.08 * Math.sin(i * 1.9 + tNow));
+    const bg = ctx.createRadialGradient(bx, by, 0, bx, by, r);
+    bg.addColorStop(0, PAL.puff_hi);
+    bg.addColorStop(1, PAL.puff_lo);
+    ctx.fillStyle = bg;
+    ctx.beginPath();
+    ctx.arc(bx, by, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.filter = 'none';
+  
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.filter = 'blur(5px)';
+  const shift92 = fullShift * 0.92;
+  gasConePath(W * 0.78 * plumeScale * widthMul, W * 1.9 * plumeScale * widthMul, 0.92, 2.1, 11, shift92);
+  const g2 = ctx.createLinearGradient(0, 0, shift92, flameLen * 0.92);
+  g2.addColorStop(0, PAL.g2_hi);
+  g2.addColorStop(0.5, PAL.g2_mid);
+  g2.addColorStop(1, PAL.g2_lo);
+  ctx.fillStyle = g2;
+  ctx.fill();
+  ctx.filter = 'none';
+  
+  ctx.filter = 'blur(2px)';
+  const shift68 = fullShift * 0.68;
+  gasConePath(W * 0.58 * plumeScale * widthMul, W * 1.05 * plumeScale * widthMul, 0.68, 4.4, 9, shift68);
+  const g3 = ctx.createLinearGradient(0, 0, shift68, flameLen * 0.68);
+  g3.addColorStop(0, PAL.g3_hi);
+  g3.addColorStop(0.55, PAL.g3_mid);
+  g3.addColorStop(1, PAL.g3_lo);
+  ctx.fillStyle = g3;
+  ctx.fill();
+  ctx.filter = 'none';
+  
+  ctx.filter = 'blur(5px)';
+  const shift22 = fullShift * 0.22;
+  gasConePath(W * 0.42 * plumeScale * widthMul, W * 0.55 * plumeScale * widthMul, 0.22, 6.7, 6, shift22);
+  ctx.fillStyle = PAL.core;
+  ctx.fill();
+  ctx.filter = 'none';
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.restore();
+  
+  ctx.globalCompositeOperation = 'lighter';
+  const flare = ctx.createRadialGradient(0, W * 0.05, 0, fullShift * 0.05, W * 0.05, W * 0.9 * plumeScale);
+  flare.addColorStop(0, PAL.flare_hi);
+  flare.addColorStop(0.5, PAL.flare_mid);
+  flare.addColorStop(1, PAL.flare_lo);
+    ctx.fillStyle = flare;
+  ctx.beginPath();
+  ctx.ellipse(0, W * 0.05, W * 0.42 * plumeScale * widthMul, W * 0.2 * plumeScale * widthMul, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.globalCompositeOperation = 'source-over';
+  // Balanced restore for the outer ctx.save()+translate(0, bellExitY_px)
+  // at the top of this block. Without it, every flame frame leaked one
+  // save entry and one translate onto the canvas state stack.
+  ctx.restore();
   }
   }
     
@@ -1438,8 +1494,16 @@ if (body.members && body.members.length && typeof getEngineBellExitY_m === 'func
   if (stackMembers.length) {
   let yOffsetPx = 0;
   stackMembers.forEach((m, idx) => {
-        const mH = (m.height || 0) / mpp;
-        const mW = (m.width || 1) / mpp;
+      // `memberAbove` is still needed downstream by hasFairingAbove
+      // (suppresses the stage's own nose when a fairing sits above it).
+      const memberAbove = stackMembers[idx + 1] || null;
+      // `stageAboveBellHeight` is no longer passed to drawRocketArt
+      // (interstage is its own member now), but kept declared in case
+      // any future caller still reads it.
+      let stageAboveBellHeight = 0;
+      
+      const mH = (m.height || 0) / mpp;
+      const mW = (m.width || 1) / mpp;
       const recType = (m.hasRecovery === false) ? null :
         ((m.recoveryTypeId && typeof getComponentType === 'function') ?
           getComponentType(m.recoveryTypeId) : null);
@@ -1512,8 +1576,13 @@ const hasFairingAbove = !!(memberAbove && memberAbove.stageRole === 'payloadSpac
     gridFinType: gfType,
     gridFinParams: m.gridFinParams || null,
     gridFinState: body.gridFins || null,
-    gridFinColor: m.gridFinColor || '#8a9198',
+      gridFinColor: m.gridFinColor || '#8a9198',
     locked: m.locked === true,
+    // Live engine array — only the bottom member carries engines
+    // (buildEnginesForRecord is called on members[0] only). Passed so
+    // the bell draw can rotate each nozzle by its current gimbalDeg.
+    // Static previews and upper members get null → bells drawn at 0°.
+    liveEngines: (idx === 0) ? body.engines : null,
     ...payloadOpts,
   });
                                        ctx.restore();

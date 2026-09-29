@@ -1767,9 +1767,10 @@ if (drawsEngineBells && engineBell && !opts.hasMemberBelow) {
   g.closePath();
 }
   
-  const drawOneBell = (cx, sR, sH) => {
+  const drawOneBell = (cx, sR, sH, gimbalRad) => {
     ctx.save();
     ctx.translate(cx, 0);
+    if (Number.isFinite(gimbalRad) && gimbalRad !== 0) ctx.rotate(gimbalRad);
     const g = ctx.createLinearGradient(-sR, 0, sR, 0);
     g.addColorStop(0, '#1c1e22');
     g.addColorStop(0.5, '#4a4e54');
@@ -1790,8 +1791,17 @@ if (drawsEngineBells && engineBell && !opts.hasMemberBelow) {
   };
   
   if (engineBell.count === 1) {
-    drawOneBell(0, sR_m / mpp, sH_m / mpp);
-  } else {
+  const gEng = (opts.engineThrusters && opts.engineThrusters.gimbal) ? opts.engineThrusters.gimbal : null;
+  // Live gimbal angle passed by caller (physics snapshot for sim,
+  // 0 for static previews). Read from the caller's engine list if
+  // available, else default 0.
+  let gRad = 0;
+  if (opts.liveEngines && opts.liveEngines.length) {
+    const gE = opts.liveEngines.find(e => e.gimbal);
+    if (gE && Number.isFinite(gE.gimbalDeg)) gRad = gE.gimbalDeg * Math.PI / 180;
+  }
+  drawOneBell(0, sR_m / mpp, sH_m / mpp, gRad);
+} else {
     // Cluster — same z-sorted painter's order.
     // Cluster ring radius: min of stored octaRadius and what fits
     // inside the hull, accounting for the bell's own exit radius.
@@ -1807,10 +1817,16 @@ if (drawsEngineBells && engineBell && !opts.hasMemberBelow) {
         isCenter: false });
     });
     items.sort((a, b) => b.z - a.z);
-    items.forEach(({ slot }) => {
-      const pos = (typeof slot.position === 'function') ? slot.position(R_vis_m) : { x: 0 };
-      drawOneBell((pos.x || 0) / mpp, sR_m / mpp, sH_m / mpp);
-    });
+items.forEach(({ slot }) => {
+  const pos = (typeof slot.position === 'function') ? slot.position(R_vis_m) : { x: 0 };
+  // Live gimbal angle — same value for all gimbal-capable engines.
+  let gRad = 0;
+  if (opts.liveEngines && opts.liveEngines.length) {
+    const eng = opts.liveEngines.find(e => e.gimbal && e.angleDeg === slot.angleDeg);
+    if (eng && Number.isFinite(eng.gimbalDeg)) gRad = eng.gimbalDeg * Math.PI / 180;
+  }
+  drawOneBell((pos.x || 0) / mpp, sR_m / mpp, sH_m / mpp, gRad);
+});
   }
 }
   

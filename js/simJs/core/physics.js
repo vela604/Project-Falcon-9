@@ -2675,18 +2675,19 @@ function requestSeparate(targetBody) {
   if (active.crashed) return false;
   if (pendingSeparate) return false; // already in flight — ignore repeat clicks
   
-  // Same guard as controls.js's canSeparateNow() — the bottom and the
-  // member directly above it must both be separable roles. If the member
-  // above the bottom is a fairing/nose, that bottom is the LAST upper
-  // stage; splitting it would leave the fairing floating alone. Defensive
-  // even if the button is disabled — a race condition or programmatic
-  // call shouldn't be able to trigger this state.
-  const SEPARABLE = { booster: 1, stage: 1 };
-  const bottom = active.members[0];
-  const above = active.members[1];
-  if (!(bottom && above && SEPARABLE[bottom.stageRole] && SEPARABLE[above.stageRole])) {
-    return false;
-  }
+  // Same guard as controls.js's canSeparateNow() — the bottom must be a
+// booster/rocket, and the member immediately above it must be either a
+// stage (legacy) or an interstage (new model). A fairing/nose directly
+// above the booster means there's no separable upper stage to detach.
+// Defensive even if the button is disabled — a race condition or
+// programmatic call shouldn't be able to trigger this state.
+const BOTTOM_ROLES = { booster: 1, rocket: 1 };
+const ABOVE_ROLES = { stage: 1, interstage: 1 };
+const bottom = active.members[0];
+const above = active.members[1];
+if (!(bottom && above && BOTTOM_ROLES[bottom.stageRole] && ABOVE_ROLES[above.stageRole])) {
+  return false;
+}
   // If the body has no engines at all (edge case: unusual stack), there's
   // nothing to spool down — split immediately.
   if (!active.engines || !active.engines.length) {
@@ -2921,29 +2922,45 @@ function performSeparate(targetBody) {
   if (!active || !active.members || active.members.length < 2) return false;
   if (active.crashed) return false;
   
-  const bottomMember = active.members[0];
-  const remaining = active.members.slice(1);
+  // Split index — everything below the FIRST `stage` member is discarded
+  // as a single unit (booster + interstage, if present). Real F9: the
+  // interstage is bolted to stage 1, so both free-fall together after
+  // stage-2 separation; only the stage + fairing continue under power.
+  // Falls back to 1 if no stage is found (defensive — a stack without a
+  // stage wouldn't have been separable in the first place, per
+  // requestSeparate's guard).
+  let splitIdx = active.members.findIndex(m => m && m.stageRole === 'stage');
+  if (splitIdx < 1) splitIdx = 1;
   
-  // Per-member fuel — no redistribution. The booster takes its own
-// tank (index 0) as-is; the stage keeps whatever its member(s) had.
-// This is the physically correct split: the booster was the one
-// burning during ascent, so its tank reflects that depletion, and
-// the stage's untouched tank stays full until it fires its own
-// engines post-separation.
-const memberFuel = Array.isArray(active.memberFuel) ? active.memberFuel.slice() : [];
-const discFuel = memberFuel.length > 0 ? memberFuel[0] : 0;
-const remainingFuelArr = memberFuel.length > 0 ? memberFuel.slice(1) : [];
-const activeFuel = remainingFuelArr.reduce((s, x) => s + x, 0);
-
+  const discardedMembers = active.members.slice(0, splitIdx);
+  const remaining = active.members.slice(splitIdx);
+  
+  // Per-member fuel — no redistribution. The discarded side takes the
+  // tanks from every member it carries (booster, plus any interstage
+  // which has none); the active side keeps its own members' tanks. This
+  // is the physically correct split: the booster was the one burning
+  // during ascent, so its tank reflects that depletion, and the stage's
+  // untouched tank stays full until it fires its own engines.
+  const memberFuel = Array.isArray(active.memberFuel) ? active.memberFuel.slice() : [];
+  const discFuelArr = memberFuel.slice(0, splitIdx);
+  const remainingFuelArr = memberFuel.slice(splitIdx);
+  const discFuel = discFuelArr.reduce((s, x) => s + x, 0);
+  const activeFuel = remainingFuelArr.reduce((s, x) => s + x, 0);
+  
   const activeProps = stackMassProps(remaining, activeFuel, legs.progress, _bodyPayloadMass(active));
-  const discProps = stackMassProps([bottomMember], discFuel, 0);
+  const discProps = stackMassProps(discardedMembers, discFuel, 0);
   
+  const bottomMember = discardedMembers[0];
   const discarded = _makeBody();
   discarded.id = 'discarded-' + bottomMember.id;
-  discarded.members = [bottomMember];
-  discarded.engines = (typeof buildEnginesForRecord === 'function') ?
-    buildEnginesForRecord(bottomMember) : [];
-  
+  discarded.members = discardedMembers;
+  // Engines still belong to the booster's bottom member (index 0 of the
+// discarded list), even though the discarded body also carries the
+// interstage above it. buildEnginesForRecord is bottom-member-only.
+discarded.engines = (typeof buildEnginesForRecord === 'function') ?
+  buildEnginesForRecord(bottomMember) : [];
+discarded._lastBottomMember = bottomMember;
+
   // PART B: buildEnginesForRecord() always returns fresh engines at rest
   // (massFlowRate 0) — starting the discarded booster there is exactly
   // the "instant cutoff" discontinuity this fixes. `active.engines` at
@@ -2970,9 +2987,9 @@ discarded.engines.forEach(e => {
   discarded.vy = active.vy;
   discarded.theta = active.theta;
   discarded.omega = active.omega;
-  discarded.dryMass = Number.isFinite(discProps.dryMass) ? discProps.dryMass : 0;
-discarded.memberFuel = [discFuel];
-discarded.fuelMass = discFuel;
+    discarded.dryMass = Number.isFinite(discProps.dryMass) ? discProps.dryMass : 0;
+  discarded.memberFuel = discFuelArr;
+  discarded.fuelMass = discFuel;
 discarded.isActive = false;
   discarded.isDiscarded = true;
   discarded.isDiscarded = true;
@@ -2986,15 +3003,20 @@ active.memberFuel = remainingFuelArr;
 active.dryMass = Number.isFinite(activeProps.dryMass) ? activeProps.dryMass : 0;
 active.fuelMass = activeFuel;
   
-  // Offset the stage upward along the body's own nose axis by the booster's
-  // height, so the stage's BASE sits exactly where its base was before
-  // separation. Camera follows active → appears to pan up; discarded booster
-  // visually falls away in screen space.
-  const upX = -Math.sin(active.theta);
-  const upY = Math.cos(active.theta);
-  const boosterHeight = Number.isFinite(bottomMember.height) ? bottomMember.height : 0;
-  active.rx = active.rx + boosterHeight * upX;
-  active.ry = active.ry + boosterHeight * upY;
+  // Offset the active (upper) stack upward along the body's own nose axis
+// by the combined stack contribution of everything that was discarded.
+// memberStackContribution handles bell-below-hull and fairing overlap
+// so the offset is exact, not a naive height-sum.
+const upX = -Math.sin(active.theta);
+const upY = Math.cos(active.theta);
+let discardedHeight_m = 0;
+discardedMembers.forEach((m, i) => {
+  discardedHeight_m += (typeof memberStackContribution === 'function') ?
+    memberStackContribution(m, discardedMembers[i - 1] || null, discardedMembers[i + 1] || null) :
+    (Number.isFinite(m.height) ? m.height : 0);
+});
+active.rx = active.rx + discardedHeight_m * upX;
+active.ry = active.ry + discardedHeight_m * upY;
   
   
   // Flash id increments on each new event — the render worker uses it to
