@@ -145,48 +145,61 @@ if (typeof Guidance !== 'undefined') {
 }
     
     // ---- Persistent snapshot wrapper (zero alloc per tick) ----
-    const snap = {
-      simTime: 0,
-      activeBodyIndex: 0,
-      halted: false,
-      wind: { enabled: false, speed: 0, directionDeg: 0 },
-      bodies: state.bodies,
-    };
-    
     const dt = CONFIG.DT;
 const maxTicks = Math.ceil(msg.durationS / dt);
 const progressEvery = Math.max(1, msg.progressEveryTicks || 80);
 const bodiesEvery = Math.max(progressEvery, msg.bodiesEveryTicks || 800);
-const yieldEvery = bodiesEvery;
 const startSimT = state.simTime;
-    
-    for (let i = 0; i < maxTicks; i++) {
-      if (_abort) break;
-      
-      // Refresh snapshot in-place.
-      snap.simTime = state.simTime;
-      snap.activeBodyIndex = state.activeBodyIndex;
-      snap.halted = !!state.halted;
-      snap.bodies = state.bodies;
-      if (typeof wind !== 'undefined') {
-        snap.wind.enabled = !!wind.enabled;
-        snap.wind.speed = wind.speed || 0;
-        snap.wind.directionDeg = wind.directionDeg || 0;
-      }
-      
-      // Guidance reads pre-step state, then physics mutates.
-      // Same order as the sim pipeline (physics.worker forwards
-      // snapshot to guidance, then physicsStep runs).
-      try { Guidance.onSnapshot(snap); }
-      catch (ge) {
-        self.postMessage({ type: 'workerError', message: 'guidance: ' + ge.message, stack: ge.stack });
-      }
-      
-      try { physicsStep(dt); }
-      catch (pe) {
-        self.postMessage({ type: 'workerError', message: 'physics: ' + pe.message, stack: pe.stack });
-        break;
-      }
+
+for (let i = 0; i < maxTicks; i++) {
+  if (_abort) break;
+  
+  // 1. updateLegs — matches physics.worker.js workerLoop, which
+  //    calls updateLegs(CONFIG.DT) every iteration before step.
+  //    Without this, legs stay frozen in their captured pose.
+  try { updateLegs(dt); } catch (le) {
+    self.postMessage({ type: 'workerError', message: 'updateLegs: ' + le.message, stack: le.stack });
+  }
+  
+  // 2. physicsStep — consumes the commands set by the PREVIOUS
+  //    iteration's Guidance.onSnapshot (via localDispatch), giving
+  //    guidance the same 1-tick command latency it experiences in
+  //    the real sim. The old code called onSnapshot BEFORE
+  //    physicsStep, so guidance commands applied with zero latency —
+  //    a systematic drift vs. 1× playback.
+  try { physicsStep(dt); }
+  catch (pe) {
+    self.postMessage({ type: 'workerError', message: 'physics: ' + pe.message, stack: pe.stack });
+    break;
+  }
+  
+  // 3. Fresh snapshot per tick. Two reasons:
+  //    (a) Guidance sees POST-physicsStep state — exactly what the
+  //        real sim's physics.worker sends to main → guidance.
+  //    (b) Derivation.derive() caches per snapshot OBJECT (WeakMap)
+  //        for in-tick dedup. Reusing one snap object across ticks
+  //        made every tick after the first return the stale cached
+  //        derive result — guidance effectively flew on frozen data.
+  //        Fresh object per tick keeps the intra-tick cache working
+  //        while correctly invalidating between ticks.
+  const snap = {
+    simTime: state.simTime,
+    activeBodyIndex: state.activeBodyIndex,
+    halted: !!state.halted,
+    wind: (typeof wind !== 'undefined') ? {
+      enabled: !!wind.enabled,
+      speed: wind.speed || 0,
+      directionDeg: wind.directionDeg || 0,
+    } : { enabled: false, speed: 0, directionDeg: 0 },
+    bodies: state.bodies,
+  };
+  
+  // 4. Guidance tick on the post-step snapshot. Commands issued via
+  //    localDispatch land in the next iteration's physicsStep.
+  try { Guidance.onSnapshot(snap); }
+  catch (ge) {
+    self.postMessage({ type: 'workerError', message: 'guidance: ' + ge.message, stack: ge.stack });
+  }
       
       // Fast progress ping — simTime only. Tiny payload, cheap to
 // postMessage 80×/sim-minute. Keeps the progress bar and mission
