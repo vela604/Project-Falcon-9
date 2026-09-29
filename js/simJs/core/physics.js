@@ -2130,9 +2130,18 @@ if (Array.isArray(body.memberFuel) && body.memberFuel.length) {
       const tiltDeg = Math.acos(Math.max(-1, Math.min(1, bodyUpX * ux + bodyUpY * uy))) * 180 / Math.PI;
       
       const noseStrike = contact.contactLabel === 'nose';
-      const wasGrounded = !!body._wasGrounded;
-      body._wasGrounded = true;
-      const freshImpact = !wasGrounded && (noseStrike || descentSpeed > 0.3 || hSpeed > 0.3);
+// Bell exit is the normal resting contact for a booster — the
+// real F9's nozzle plane hovers just above the flame trench, held
+// by the launch mount. A bell touch must NOT count as a landing
+// or crash event; only base / baseL / baseR / nose touches do.
+// Without this exclusion, the pad-resting rocket is flagged as
+// crashed on the first tick (bell is 'freshly touching' the
+// ground), which then pins it in place forever.
+const bellTouch = contact.contactLabel === 'bell';
+const wasGrounded = !!body._wasGrounded;
+body._wasGrounded = true;
+const freshImpact = !bellTouch && !wasGrounded &&
+  (noseStrike || descentSpeed > 0.3 || hSpeed > 0.3);
       
       if (freshImpact) {
   // Chute-recovery bodies (fairing halves, emergency-eject packages)
@@ -2511,8 +2520,25 @@ function resetState(initialAltitude) {
   body.members = [...members];
   
   // Launch site is on the ROTATING Earth. At t=0 it sits at (r·sin φ0, r·cos φ0).
-  body.rx = r0 * Math.sin(phi0);
-  body.ry = r0 * Math.cos(phi0);
+body.rx = r0 * Math.sin(phi0);
+body.ry = r0 * Math.cos(phi0);
+
+// Real F9 rests with the nozzle exit plane at ground level (the octaweb
+// is held by the launch mount, and the nozzles are above the flame
+// trench). Shift the stack UP by the bottom member's bell height so
+// the bell exit — not the hull base — is the ground-contact point.
+// Without this the hull base starts at ground level and the bell dips
+// 1.5 m below the surface, which drives the ground resolver to zero
+// radial velocity every tick and crashes the vehicle on the pad.
+const bottomRec0 = members[0] || null;
+const bellH0 = (bottomRec0 && typeof engineBellHeightForRecord === 'function') ?
+  engineBellHeightForRecord(bottomRec0) : 0;
+if (bellH0 > 0) {
+  const upX0 = -Math.sin(body.theta);
+  const upY0 = Math.cos(body.theta);
+  body.rx += upX0 * bellH0;
+  body.ry += upY0 * bellH0;
+}
   
   // Rocket at rest on the pad → in the INERTIAL frame it moves with the pad.
   const surfV = earthSurfaceVelocity(body.rx, body.ry);

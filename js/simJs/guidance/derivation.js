@@ -588,7 +588,13 @@ return out;
 // mass model while physics kept including it — a 2× I mismatch that
 // halved every attitude response during ANG_FOR_APOGEE and
 // TARGET_APOGEE.)
-const payloadMassInput = 12000; // TEMP: hardcoded, remove after test
+// Payload mass comes through the env boot data or the per-call argument.
+// A hardcoded 12000 here would silently drift the guidance mass model
+// away from physics's whenever a user tuned the payload or switched to
+// a mission without cargo.
+const payloadMassInput = Number.isFinite(payloadMass) ?
+  payloadMass :
+  ((_stackData && _stackData.stackPayloadMass) || 0);
 const massProps = hasMembers ?
   _stackMassProps(body, payloadMassInput) :
   _soloBodyMassProps(body);
