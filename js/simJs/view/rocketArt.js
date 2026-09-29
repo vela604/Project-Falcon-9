@@ -1604,18 +1604,51 @@ const bodyPath = () => {
     ctx.lineTo(W / 2, -H + interstageH_px);
     ctx.stroke();
     
-    // Top edge highlight (very thin — reads as the upper rim).
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.32)';
-    ctx.lineWidth = 0.9;
-    ctx.beginPath();
-    ctx.moveTo(-W / 2, -H + 0.5);
-    ctx.lineTo(W / 2, -H + 0.5);
-    ctx.stroke();
-    
-      // (Old hardcoded grid-fin decoration removed — real fins now render
-  // via the gridFinType/gridFinParams block above this section.)
+      // Top edge highlight (very thin — reads as the upper rim).
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.32)';
+  ctx.lineWidth = 0.9;
+  ctx.beginPath();
+  ctx.moveTo(-W / 2, -H + 0.5);
+  ctx.lineTo(W / 2, -H + 0.5);
+  ctx.stroke();
   
-  } else if (opts.stageRole !== 'stage') {
+  // ---- Bottom black band — just above the engine bay ----
+  // Same gradient treatment as the interstage so both read as hardware
+  // trim, not a painted stripe. Height = BOOSTER_BOTTOM_BAND_FRAC ×
+  // body height. Drawn AFTER the body, so it sits cleanly on top of
+  // the cylinder gradient.
+  const BOOSTER_BOTTOM_BAND_FRAC = 0.06;
+  const bandH_px = Math.max(3, H * BOOSTER_BOTTOM_BAND_FRAC);
+  const bottomBandGrad = cachedGradient(ctx, 'boosterBottomBand', Math.round(W), () => {
+    const g = ctx.createLinearGradient(-W / 2, 0, W / 2, 0);
+    g.addColorStop(0, '#0a0c10');
+    g.addColorStop(0.5, '#2a2d33');
+    g.addColorStop(1, '#0a0c10');
+    return g;
+  });
+  ctx.fillStyle = bottomBandGrad;
+  ctx.fillRect(-W / 2, -bandH_px, W, bandH_px);
+  
+  // Top seam — where the black band meets the white tank.
+  ctx.strokeStyle = 'rgba(0, 0, 0, 0.60)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(-W / 2, -bandH_px);
+  ctx.lineTo(W / 2, -bandH_px);
+  ctx.stroke();
+  
+  // Bottom rim — reads as the top edge of the engine bay itself.
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.28)';
+  ctx.lineWidth = 0.9;
+  ctx.beginPath();
+  ctx.moveTo(-W / 2, -0.5);
+  ctx.lineTo(W / 2, -0.5);
+  ctx.stroke();
+  
+    // (Old hardcoded grid-fin decoration removed — real fins now render
+// via the gridFinType/gridFinParams block above this section.)
+
+} else if (opts.stageRole !== 'stage') {
     // Rocket / legacy rocket: checkerboard stripe + grid fins near the
     // shoulder. Stage is skipped entirely — its payload space IS the
     // visual top.

@@ -1073,7 +1073,14 @@ function bodyAeroProfile(body) {
 // vehicle feels grid-fin pitch/yaw damping. Force lines act at the panel's
 // centre (hinge + ½·span·s) so the CP moves as the fin deploys.
 // ============================================================================
-const GRIDFIN_CONTROL_SIGN = +1; // +control = ACW about Z. Flip to -1 if the sign looks mirrored.
+// Sign convention: flip this to keep physics consistent with the canvas
+// rotation in rocketArt.js. rocketArt uses canvas.rotate(+controlRad),
+// which is a CW rotation in canvas coords (y down) — visually the fin
+// tilts one way. _gfAxes uses Rz(GRIDFIN_CONTROL_SIGN · controlRad) in
+// body frame (y up, same value negated) — so +1 puts physics a full
+// 180° out of phase with the render. -1 aligns them: visual tilt =
+// physics geometry = force direction = actual motion.
+const GRIDFIN_CONTROL_SIGN = -1;
 const GF_CD_FACE = 1.25; // solid-plate normal drag coefficient (fully blocked face)
 const GF_CD_EDGE = 1.15; // edge-on frame drag coefficient
 const GF_CNA_GRID = 3.0; // cell-wall cascade normal-force slope, per rad, on A_face
