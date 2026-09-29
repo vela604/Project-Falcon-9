@@ -107,33 +107,6 @@ function ringMergeTopology(slots) {
   return { symmetric, asymmetric };
 }
 
-function buildOctaweb9() {
-  const outer = ringSlots(8, 0);
-  return {
-    id: 'octaweb-merlin9',
-    category: 'engineLayout',
-    kind: 'ringWithCenter',
-    displayName: 'Octaweb (Merlin-class, 8+1)',
-    description: 'One gimbaling center engine surrounded by a ring of 8 fixed outer engines at 45° spacing — the current Falcon 9 Block-3 layout. Performance (thrust, Ve, gimbal, throttle) comes from the thruster type(s) selected per gimbalCapable group; this type declares only geometry.',
-    frame: {
-      slots: [
-        { id: 'C', role: 'center', gimbalCapable: true, angleDeg: null, position: () => ({ x: 0 }) },
-        ...outer,
-      ],
-      mergeTopology: ringMergeTopology(outer),
-    },
-    // STEP B: only geometry remains here. Per-engine thrust/Ve/gimbal/throttle
-    // keys moved to the `thruster` category — a fleet record now references
-    // one thruster type per distinct `gimbalCapable` group (see §2.2 and
-    // fleet.js's engineThrusterGroups()).
-    parameterSchema: [
-      { key: 'octaRadius', label: 'Ring radius (R)', unit: 'm', min: 0.1 },
-    ],
-    capabilities: { sharedGimbalSlider: true, throttleGrouping: true },
-  };
-}
-
-
 // ---------------------------------------------------------------------------
 // All-gimbal octaweb — every engine (center + 8 outer) is gimbal-capable.
 // Matches real F9 Block 5, where all nine Merlin 1D+ engines gimbal
@@ -463,34 +436,6 @@ function makeThruster(id, displayName, description, values) {
 // type later (Step D/E) won't shift any existing vehicle's numbers.
 // `efficiency` has no such anchor yet — it's a placeholder pending the real
 // engine-mass formula refinement noted in PHASE3_PROMPT.md §1.12.
-function buildThrusterMerlin1DClass() {
-  return makeThruster(
-      'merlin-1d-class',
-      'Merlin-1D (Demo)',
-      'Demo variant — altitude-independent Ve, atmosphericPenalty = 0. Kept under the original id so every existing fleet record keeps flying with exactly the numbers it had before the Ve-live change. Use "Merlin-1D" for the pressure-aware version.',
-          {
-      // Constant Ve (no atmospheric penalty) — reproduces the pre-Ve-live
-      // behavior byte-for-byte. Ve = veVacuum at every altitude.
-      veVacuum: 2766,
-      atmosphericPenalty: 0,
-      efficiency: 0.9,
-      twr: 184, // real Merlin 1D TWR (Wikipedia datasheet)
-      maxMassFlowRate: 500, // generous cap; real max mdot ~320 kg/s
-      // Same bell constants as the production Merlin 1D+ (the demo variant
-      // differs only in Ve; nozzle hardware is identical).
-      massFlowToBellDiameter: 0.003007,
-      massFlowToBellHeight: 0.005882,
-  gimbalCapable: true,
-  gimbalMaxDeg: 20, // real Merlin 1D gimbal range (sim had 20° — too high)
-  gimbalRateDegS: 40,
-  minThrottleFrac: 0.4, // real deep-throttle floor ~40%
-  maxThrottleRateFrac: 0.5,
-  startupDurationS: 3.0,
-  shutdownDurationS: 2.0,
-}
-  );
-}
-
 // Merlin 1D Vacuum — the upper-stage engine on Falcon 9. Fundamentally
 // different from the SL Merlin: much larger expansion ratio (vacuum-
 // optimized nozzle), Isp_vac = 348 s (vs 282 s SL), lower thrust (981 kN
@@ -498,33 +443,6 @@ function buildThrusterMerlin1DClass() {
 // throttle floor are identical; only Ve, thrust-derived TWR, and mass
 // flow cap differ. TWR 200 ≈ 981 kN / (490 kg × 9.80665) — real MVac
 // dry mass is ~490 kg.
-function buildThrusterMerlin1DVacClass() {
-  return makeThruster(
-      'merlin-1d-vac-class',
-      'MVacD (Demo)',
-      'Demo variant — altitude-independent Ve, atmosphericPenalty = 0. Kept under the original id so every existing fleet record keeps flying with exactly the numbers it had before the Ve-live change. Use "MVacD" for the pressure-aware version.',
-          {
-      // Constant Ve (no atmospheric penalty) — reproduces the pre-Ve-live
-      // behavior byte-for-byte.
-      veVacuum: 3412,
-      atmosphericPenalty: 0,
-      efficiency: 0.92, // MVac is more expansion-optimized than the SL variant
-      twr: 200, // ~981 kN / (490 kg × G0)
-      maxMassFlowRate: 350, // headroom above real max mdot ≈ 288 kg/s
-      massFlowToBellDiameter: 0.008333,
-      massFlowToBellHeight: 0.012847,
-  gimbalCapable: true,
-  gimbalMaxDeg: 20,
-  gimbalRateDegS: 40,
-  minThrottleFrac: 0.4,
-  maxThrottleRateFrac: 0.5,
-  startupDurationS: 3.0,
-  shutdownDurationS: 2.0,
-}
-  );
-}
-
-
 // ---------------------------------------------------------------------------
 // Pressure-aware production variants. These are the "real" Merlin values:
 // vacuum Ve is the hardware's actual vacuum performance; atmosphericPenalty
@@ -895,7 +813,7 @@ structuralVolume: (capHeight, capWidth, bulgeWidth, shellThicknessFrac) => {
 
 function seedComponentLibrary() {
   return [
-    buildOctaweb9(),
+
     buildOctaweb9AllGimbal(),
     buildSingleNozzleVac(),
     buildLegsSwingout4(),
@@ -903,8 +821,8 @@ function seedComponentLibrary() {
     buildRcs4Pod2Nozzle(),
     buildRcs4Pod2Nozzle(),
 buildGridFinSerratedF9(),
-        buildThrusterMerlin1DClass(),
-  buildThrusterMerlin1DVacClass(),
+
+
   buildThrusterMerlin1D(),
   buildThrusterMerlin1DVac(),
   buildRcsThrusterColdGasSmall(),

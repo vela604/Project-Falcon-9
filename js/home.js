@@ -38,7 +38,7 @@ function _loadPreviewMembers() {
   if (!activeStk || !Array.isArray(activeStk.members) || !activeStk.members.length) {
     // No stack at all — fall back to whichever single record the fleet
     // considers the legacy default, so the panel isn't blank.
-    const legacy = fleet.find(r => r.id === 'falcon9-default') || fleet[0];
+    const legacy = fleet[0];
     return { members: legacy ? [legacy] : [], stackName: legacy ? legacy.name : '—' };
   }
   const members = activeStk.members

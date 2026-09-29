@@ -2811,7 +2811,7 @@ function backfillThrusterRecords(rec, defaults) {
     const seedFMax = (rec.params && rec.params.engineFMax) || 600000;
     const seedFlow = seedVe > 0 ? seedFMax / seedVe : 207;
     const seedType = (defaults && defaults.engineThrusters && defaults.engineThrusters.gimbal) ?
-      defaults.engineThrusters.gimbal.thrusterTypeId : 'merlin-1d-class';
+      defaults.engineThrusters.gimbal.thrusterTypeId : 'merlin-1d';
     rec.engineThrusters = {};
     Object.keys(groups).forEach(gk => {
       rec.engineThrusters[gk] = { thrusterTypeId: seedType, massFlowRate: seedFlow };

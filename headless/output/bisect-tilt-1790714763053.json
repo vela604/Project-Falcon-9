@@ -1,0 +1,99 @@
+{
+  "trace": [
+    {
+      "tiltLockDeg": 79.75,
+      "fail": false,
+      "exitReason": "PAUSE-slope+",
+      "minVr": 68.72692378012965,
+      "minVrAtT": 435.29999999974103,
+      "stageBurnStartT": 150.50000000000006,
+      "stageBurnEndT": 435.39999999974094,
+      "simTime": 435.39999999974094,
+      "finalPhase": "STAGE_BURN",
+      "apogeeKm": 228.57141655470525,
+      "perigeeKm": -3897.4094801329143
+    },
+    {
+      "tiltLockDeg": 84.625,
+      "fail": true,
+      "exitReason": "FAIL-vr",
+      "minVr": 0.41837156519120916,
+      "minVrAtT": 397.1999999997757,
+      "stageBurnStartT": 150.50000000000006,
+      "stageBurnEndT": 397.1999999997757,
+      "simTime": 397.1999999997757,
+      "finalPhase": "STAGE_BURN",
+      "apogeeKm": 220.14819453279117,
+      "perigeeKm": -4672.033153813068
+    },
+    {
+      "tiltLockDeg": 82.1875,
+      "fail": true,
+      "exitReason": "FAIL-vr",
+      "minVr": 0.3794493449548174,
+      "minVrAtT": 418.1999999997566,
+      "stageBurnStartT": 150.50000000000006,
+      "stageBurnEndT": 418.1999999997566,
+      "simTime": 418.1999999997566,
+      "finalPhase": "STAGE_BURN",
+      "apogeeKm": 222.5503895916883,
+      "perigeeKm": -4294.72333823574
+    },
+    {
+      "tiltLockDeg": 80.96875,
+      "fail": false,
+      "exitReason": "PAUSE-slope+",
+      "minVr": 19.339035312228418,
+      "minVrAtT": 442.29999999973467,
+      "stageBurnStartT": 150.50000000000006,
+      "stageBurnEndT": 442.3999999997346,
+      "simTime": 442.3999999997346,
+      "finalPhase": "STAGE_BURN",
+      "apogeeKm": 225.19770453124215,
+      "perigeeKm": -3682.986476046874
+    },
+    {
+      "tiltLockDeg": 81.578125,
+      "fail": true,
+      "exitReason": "FAIL-vr",
+      "minVr": 0.48420419625467137,
+      "minVrAtT": 432.19999999974385,
+      "stageBurnStartT": 150.50000000000006,
+      "stageBurnEndT": 432.19999999974385,
+      "simTime": 432.19999999974385,
+      "finalPhase": "STAGE_BURN",
+      "apogeeKm": 223.62826310043036,
+      "perigeeKm": -3969.3195058982906
+    },
+    {
+      "tiltLockDeg": 81.2734375,
+      "fail": false,
+      "exitReason": "PAUSE-slope+",
+      "minVr": 6.752439500923803,
+      "minVrAtT": 444.09999999973303,
+      "stageBurnStartT": 150.50000000000006,
+      "stageBurnEndT": 444.19999999973294,
+      "simTime": 444.19999999973294,
+      "finalPhase": "STAGE_BURN",
+      "apogeeKm": 224.38135144429282,
+      "perigeeKm": -3623.500470044096
+    }
+  ],
+  "best": {
+    "tiltLockDeg": 81.2734375,
+    "fail": false,
+    "exitReason": "PAUSE-slope+",
+    "minVr": 6.752439500923803,
+    "minVrAtT": 444.09999999973303,
+    "stageBurnStartT": 150.50000000000006,
+    "stageBurnEndT": 444.19999999973294,
+    "simTime": 444.19999999973294,
+    "finalPhase": "STAGE_BURN",
+    "apogeeKm": 224.38135144429282,
+    "perigeeKm": -3623.500470044096
+  },
+  "finalBracket": [
+    81.2734375,
+    81.578125
+  ]
+}
