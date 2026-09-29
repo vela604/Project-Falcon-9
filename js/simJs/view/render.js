@@ -1267,7 +1267,11 @@ if (body.members && body.members.length && typeof getEngineBellExitY_m === 'func
   // — real MVac flame doesn't punch as far as a Merlin's, it spreads
   // radially once it clears the massive nozzle exit.
   const lenMul = isSingleNozzle ? 0.55 : 1.0;
-  const widthMul = isSingleNozzle ? 1.30 : 1.0;
+const widthMul = isSingleNozzle ? 1.30 : 1.0;
+// Trail taper — vacuum plumes narrow as they dissipate, they don't
+// balloon outward like SL cluster plumes. 1.0 = full SL spread,
+// 0.55 = about half-width trail. Booster cluster keeps 1.0.
+const trailMul = isSingleNozzle ? 0.40 : 1.0;
   
   const tNow = performance.now() * 0.01;
   const flameLen = H * (0.6 + 1.6 * totalThrottle) * lenMul;
@@ -1298,10 +1302,15 @@ if (body.members && body.members.length && typeof getEngineBellExitY_m === 'func
       ctx.lineTo(-w / 2 - wob + layerShift * f, y);
     }
     const capW = endW,
-      capX = layerShift,
-      capY = l;
-    ctx.quadraticCurveTo(capX - capW * 0.34, capY + capW * 0.15, capX, capY + capW * 0.22);
-    ctx.quadraticCurveTo(capX + capW * 0.34, capY + capW * 0.15, endW / 2 + layerShift, l);
+  capX = layerShift,
+  capY = l;
+if (isSingleNozzle) {
+  // Vacuum tip — low rounded point, no outward bulge.
+  ctx.quadraticCurveTo(capX, capY + capW * 0.10, endW / 2 + layerShift, l);
+} else {
+  ctx.quadraticCurveTo(capX - capW * 0.34, capY + capW * 0.15, capX, capY + capW * 0.22);
+  ctx.quadraticCurveTo(capX + capW * 0.34, capY + capW * 0.15, endW / 2 + layerShift, l);
+}
     for (let i = segments; i >= 0; i--) {
       const f = i / segments;
       const y = l * f;
@@ -1316,7 +1325,7 @@ if (body.members && body.members.length && typeof getEngineBellExitY_m === 'func
   
   ctx.save();
   ctx.filter = 'blur(11px)';
-  gasConePath(W * 1.0 * plumeScale * widthMul, W * 2.7 * plumeScale * widthMul, 1.0, 0, 14, fullShift * 1.0);
+  gasConePath(W * 1.0 * plumeScale * widthMul, W * 2.7 * plumeScale * widthMul * trailMul, 1.0, 0, 14, fullShift * 1.0);
   const g1 = ctx.createLinearGradient(0, 0, fullShift * 1.0, flameLen * 1.0);
   g1.addColorStop(0, PAL.g1_hi);
   g1.addColorStop(0.55, PAL.g1_mid);
@@ -1329,7 +1338,7 @@ if (body.members && body.members.length && typeof getEngineBellExitY_m === 'func
   for (let i = 0; i < 5; i++) {
     const f = 0.35 + 0.6 * (i / 4);
     const y = flameLen * f;
-    const w = (W * 1.0 * plumeScale * widthMul + (W * 2.7 * plumeScale * widthMul - W * 1.0 * plumeScale * widthMul) * f);
+    const w = (W * 1.0 * plumeScale * widthMul + (W * 2.7 * plumeScale * widthMul * trailMul - W * 1.0 * plumeScale * widthMul) * f);
     const side = i % 2 === 0 ? 1 : -1;
     const drift = Math.sin(tNow * 1.6 + i * 2.1) * w * 0.18;
     const bx = side * (w * 0.42 + drift) + fullShift * f;
@@ -1348,7 +1357,7 @@ if (body.members && body.members.length && typeof getEngineBellExitY_m === 'func
   ctx.globalCompositeOperation = 'lighter';
   ctx.filter = 'blur(5px)';
   const shift92 = fullShift * 0.92;
-  gasConePath(W * 0.78 * plumeScale * widthMul, W * 1.9 * plumeScale * widthMul, 0.92, 2.1, 11, shift92);
+  gasConePath(W * 0.78 * plumeScale * widthMul, W * 1.9 * plumeScale * widthMul * trailMul, 0.92, 2.1, 11, shift92);
   const g2 = ctx.createLinearGradient(0, 0, shift92, flameLen * 0.92);
   g2.addColorStop(0, PAL.g2_hi);
   g2.addColorStop(0.5, PAL.g2_mid);
@@ -1359,7 +1368,7 @@ if (body.members && body.members.length && typeof getEngineBellExitY_m === 'func
   
   ctx.filter = 'blur(2px)';
   const shift68 = fullShift * 0.68;
-  gasConePath(W * 0.58 * plumeScale * widthMul, W * 1.05 * plumeScale * widthMul, 0.68, 4.4, 9, shift68);
+  gasConePath(W * 0.58 * plumeScale * widthMul, W * 1.05 * plumeScale * widthMul * trailMul, 0.68, 4.4, 9, shift68);
   const g3 = ctx.createLinearGradient(0, 0, shift68, flameLen * 0.68);
   g3.addColorStop(0, PAL.g3_hi);
   g3.addColorStop(0.55, PAL.g3_mid);
@@ -1370,7 +1379,7 @@ if (body.members && body.members.length && typeof getEngineBellExitY_m === 'func
   
   ctx.filter = 'blur(5px)';
   const shift22 = fullShift * 0.22;
-  gasConePath(W * 0.42 * plumeScale * widthMul, W * 0.55 * plumeScale * widthMul, 0.22, 6.7, 6, shift22);
+  gasConePath(W * 0.42 * plumeScale * widthMul, W * 0.55 * plumeScale * widthMul * trailMul, 0.22, 6.7, 6, shift22);
   ctx.fillStyle = PAL.core;
   ctx.fill();
   ctx.filter = 'none';
