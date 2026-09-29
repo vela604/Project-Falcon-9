@@ -670,13 +670,37 @@ function renderPsParams(typeId, currentParams) {
 // the generic renderParamFields because the mass depends on TWO inputs
 // (this record's params + the type's own typeConstants), so we need a
 // place to keep them in sync as the user types.
+// Default grid-fin geometry for a fresh booster/stage. Used as a fallback
+// for any key the caller doesn't supply — so checking "Fit grid fins" on
+// a new record fills the form with real F9-class numbers instead of the
+// schema minimums (0.1, 0.1, 0.01, 0.02).
+const GRID_FIN_DEFAULTS = {
+  span: 1.5,
+  chord: 1.2,
+  thickness: 0.4,
+  cellWidth: 0.17,
+  // finPositionY is derived at render time from the current tank height
+  // (mid-tank) — same rule fleet.js's migrateRocketRecord uses when the
+  // field is absent on a stored record. Placeholder value here is only a
+  // last resort if tank height isn't set yet.
+  finPositionY: 0,
+};
+
 function renderGridFinParams(typeId, currentParams) {
   const grid = document.getElementById('gridFinParamsGrid');
   const derived = document.getElementById('gridFinDerived');
   if (!grid) return;
   const type = (typeof getComponentType === 'function') ? getComponentType(typeId) : null;
   if (!type) { grid.innerHTML = ''; if (derived) derived.textContent = '—'; return; }
-  grid.innerHTML = renderParamFieldsHTML(type.parameterSchema, currentParams || {}, 'gridFin');
+  const merged = Object.assign({}, GRID_FIN_DEFAULTS, currentParams || {});
+  // finPositionY: only compute the mid-tank default when the caller didn't
+  // supply a finite value — preserves any user-typed value across a
+  // fin-type change (which re-renders via this same function).
+  if (!Number.isFinite(merged.finPositionY) || merged.finPositionY === 0) {
+    const tankH = parseFloat((document.getElementById('f-fuelTankHeight') || {}).value);
+    if (Number.isFinite(tankH) && tankH > 0) merged.finPositionY = tankH * 0.5;
+  }
+  grid.innerHTML = renderParamFieldsHTML(type.parameterSchema, merged, 'gridFin');
   updateGridFinDerived();
   grid.querySelectorAll('input').forEach(inp => {
     inp.addEventListener('input', updateGridFinDerived);
