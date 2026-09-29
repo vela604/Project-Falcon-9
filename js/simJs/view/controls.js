@@ -1067,8 +1067,6 @@ function _driveFarewell(status) {
   }
   
   if (key !== _farewellLastKey) {
-    console.log('[farewell] key:', _farewellLastKey || '(none)', '→', key || '(none)',
-      '| phase:', curPhase, '| trimDone:', curTrimDone);
     _farewellLastKey = key;
     if (headline) _showFarewell(_farewellHtml(headline), AUTO_HIDE_MS);
     else _hideFarewell();
@@ -1214,37 +1212,6 @@ function onGuidanceStatus(status) {
   // during the suicide-burn flow.
   _driveFarewell(status);
 
-// TEMP DIAGNOSTIC — COAST_HOLD_2 attitude investigation.
-if (status && status.phase === 'COAST_HOLD_2' && status.coast2TargetThetaDeg != null) {
-  const now = performance.now();
-  if (!window._c2DiagLast || now - window._c2DiagLast > 500) {
-    window._c2DiagLast = now;
-    const b = state.bodies[state.activeBodyIndex];
-    if (b) {
-      const thetaDeg = b.theta * 180 / Math.PI;
-      const omegaDeg = b.omega * 180 / Math.PI;
-      const errDeg = thetaDeg - status.coast2TargetThetaDeg;
-      let rcsSummary = 'none';
-      if (b.rcsDuty) {
-        const pods = Object.keys(b.rcsDuty);
-        if (pods.length) {
-          rcsSummary = pods.map(p => {
-            const d = b.rcsDuty[p];
-            return p + ':' + (d.lat || 0).toFixed(2) + '/' + (d.up || 0).toFixed(2) + '/' + (d.dn || 0).toFixed(2);
-          }).join(' ');
-        }
-      }
-      console.log('[c2] θ_in=' + thetaDeg.toFixed(3) +
-        ' tgt=' + status.coast2TargetThetaDeg.toFixed(3) +
-        ' err=' + errDeg.toFixed(3) + '°' +
-        ' ω=' + omegaDeg.toFixed(5) + '°/s' +
-        ' settled=' + b.settled +
-        ' crashed=' + b.crashed +
-        ' RCS=' + rcsSummary);
-    }
-  }
-}
-  
   // Warp lock — guidance is active → force 1× and disable warp buttons.
   // Auto-syncs on every status ack (start, stop, and any auto-stop).
   setWarpEnabled(!(status && status.active));
@@ -1264,90 +1231,9 @@ set('guideStatusAchieved', Math.round(status.lastAchieved || 0) + ' N·m');
 const fires = (status.lastFires || 0) + (status.lastSaturated ? ' · sat' : '');
 set('guideStatusFires', fires);
 
-// ascentAoaHold status
-if (status.aoaDeg !== undefined) {
-  const r2d = 180 / Math.PI;
- /* console.log(
-  `[hold] ${status.phase} t=${status.elapsed.toFixed(1)}s alt=${status.altKm.toFixed(2)}km ` +
-  `dQ=${status.dQ.toFixed(0)}Pa/s ` +
-  `AoA=${status.aoaDeg.toFixed(3)}°→${status.aoaNextDeg.toFixed(3)}° ` +
-  `ω_now=${status.omegaAoANow.toFixed(5)} ω_N1=${status.omegaAoANext.toFixed(5)} ` +
-  `α_now=${status.alphaAoANow.toFixed(5)} α_N1=${status.alphaAoANext.toFixed(5)}`
-);*/
-}
-
-// ascentRR status
-if (status.tauDesired !== undefined && status.mode !== undefined && status.deltaDeg !== undefined) {
-  const d2r = 180 / Math.PI;
-  const r2d = 180 / Math.PI;
-  console.log(
-    `[rr] ${status.phase}·${status.mode}${status.paused?'·PAUSED':''} ` +
-    `t=${status.elapsed.toFixed(2)}s alt=${status.altKm.toFixed(2)}km Q=${(status.Q/1000).toFixed(1)}kPa Δθ=${status.deltaDeg.toFixed(2)}°`
-  );
-  console.log(
-    `     θ_in=${(status.thetaInertial*d2r).toFixed(3)}° θ_rel=${(status.thetaRel*d2r).toFixed(3)}° ` +
-    `θ_tgt_rel=${(status.targetThetaRel*d2r).toFixed(3)}° θ_err=${(status.thetaErr*d2r).toFixed(4)}°`
-  );
-  console.log(
-    `     ω_in=${(status.omegaInertial*d2r).toFixed(4)}°/s ω_rel=${(status.omegaRel*d2r).toFixed(4)}°/s`
-  );
-  console.log(
-    `     τ_des=${status.tauDesired.toExponential(3)} τ_drag=${status.tauDrag.toExponential(3)} ` +
-    `τ_tgt=${status.tauTarget.toExponential(3)}`
-  );
-  console.log(
-    `     gimbal: N=${status.gRadN.toFixed(3)}° N+1=${status.gRadN1.toFixed(3)}° ` +
-    `g_req=${status.gReqDeg.toFixed(3)}° R_req=${status.rReq.toFixed(2)}°/s R_cmd=${status.rCmd.toFixed(2)}°/s`
-  );
-  console.log(
-    `     M=${status.mass.toFixed(0)}kg I=${status.inertia.toExponential(2)} thrustFlow=${status.throttleFlow !== null ? status.throttleFlow.toFixed(1) : '—'}`
-  );
-}
-
-// gimbalPredictive2 status — main-thread console log
-if (status.gReq !== undefined) {
-  console.log(
-    `[g2] t=${status.ticks}` +
-    ` g_N=${status.gN.toFixed(3)}° → g_{N+1}=${status.gN1.toFixed(3)}°` +
-    ` g_req=${status.gReq.toFixed(3)}°` +
-    ` R_req=${status.RReq.toFixed(1)}°/s → R_cmd=${status.RCmd.toFixed(1)}°/s` +
-    (status.saturated ? ' [SAT]' : '') +
-    ` τ_drag(N+2)=${status.tauDrag2.toFixed(0)} N·m`
-  );
-}
-
-// leoInsertionV2 post-circularize realign — main-thread log so no
-// worker-console switching needed. Prints both pre- and post-burn
-// targets so we can compare whether the second-apogee target differs
-// from the first (which is the whole point of the realign).
-if (status.coast2TargetThetaDeg !== null && status.coast2TargetThetaDeg !== undefined) {
-  if (window._lastCoast2Log !== status.coast2TargetThetaDeg) {
-    window._lastCoast2Log = status.coast2TargetThetaDeg;
-    console.log('[c2] phase=' + status.phase +
-      ' coastTarget=' + (status.coastTargetThetaDeg != null ?
-        status.coastTargetThetaDeg.toFixed(2) + '°' : '—') +
-      ' coast2Target=' + status.coast2TargetThetaDeg.toFixed(2) + '°' +
-      ' rotateStart=' + (status.coast2RotateStartTiltDeg != null ?
-        status.coast2RotateStartTiltDeg.toFixed(2) + '°' : '—'));
-  }
-}
-
-// predictVerifier rolling stats — only present when that guide is active.
-// Logged on the MAIN thread's console, so no worker-console switching.
-if (status.nCompared !== undefined) {
-    console.log(
-      `[pv] n=${status.nCompared} skip=${status.nSkipped}` +
-      ` | τ mean|err|=${status.meanAbsErrTq.toFixed(0)} N·m` +
-      ` last pred=${status.lastTq.pred.toFixed(0)} act=${status.lastTq.act.toFixed(0)}` +
-      ` | α mean|err|=${status.meanAbsErrAlphaDeg.toExponential(2)}°` +
-      ` last pred=${status.lastAlpha.pred.toFixed(4)} act=${status.lastAlpha.act.toFixed(4)}` +
-      ` | drag mean|err|=${status.meanAbsErrDragN.toFixed(0)} N` +
-      ` | Q mean|err|=${status.meanAbsErrQPa.toFixed(1)} Pa`
-    );
-  }
-  
 
 }
+
 
 
 

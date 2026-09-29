@@ -334,7 +334,6 @@ b.omega = msg.omega || 0;
   if (b.slosh) b.slosh = { offset: 0, velocity: 0, rawOffset: 0, rawVelocity: 0, angMomentum: 0 };
   state.simTime = 0;
   state.halted = false;
-  console.log('[debugTeleport] alt=' + msg.altKm + 'km vr=' + msg.vRad + ' vt=' + msg.vTan);
   break;
 }
     

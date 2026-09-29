@@ -436,7 +436,6 @@ function bootstrap() {
     renderWorker.onmessage = (e) => {
     const msg = e.data;
     if (msg.type === 'dbg-bodies' || msg.type === 'dbg-bodies-error') {
-  console.log('[render-worker-dbg]', msg);
   return;
 }
 

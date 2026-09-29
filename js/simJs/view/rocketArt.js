@@ -142,7 +142,6 @@ const SZAD_USE_TEXT = true;
     // worker console is separate; the log shows up in the render worker's
     // own DevTools context, not the page's — harmless either way.
     try {
-      console.log('[szad] loaded ' + key + ' ' + w + 'x' + h);
     } catch (e) {}
   };
   const logFail = (key, src, err) => {

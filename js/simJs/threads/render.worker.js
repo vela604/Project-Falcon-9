@@ -46,7 +46,6 @@ self.onmessage = (e) => {
       else localStorage.setItem(k, v);
     }
     if (msg.type === 'szad-draw') {
-  console.log('[szad-worker] draw fired — W=' + msg.w + ' H=' + msg.h);
   return;
 }
     

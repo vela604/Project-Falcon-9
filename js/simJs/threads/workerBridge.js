@@ -33,7 +33,6 @@ const WorkerBridge = {
     FastForward.onFullState(msg.data);
   }
 } else if (msg.type === 'replaceStateAck') {
-  console.log('[bridge] replaceState ack received');
   if (typeof FastForward !== 'undefined' && FastForward.onReplaceStateAck) {
     FastForward.onReplaceStateAck();
   }
