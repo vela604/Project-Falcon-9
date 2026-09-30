@@ -2319,13 +2319,14 @@ function _hTick(snapshot, cfgOverride) {
   const alpha_body = dNow.alphaAng;
   const omega_n = dNow.omega + alpha_body * dt;
   const theta_n = dNow.theta + dNow.omega * dt + 0.5 * alpha_body * dt * dt;
-  const sloshNow = body.slosh || { offset: 0, velocity: 0 };
-  const sloshX_n = (sloshNow.offset || 0) + (sloshNow.velocity || 0) * dt;
-  const sloshV_n = sloshNow.velocity || 0;
-  
-  const engines = body.engines || [];
-  const gimbals = engines.filter(e => e.gimbal);
-  if (!gimbals.length) return;
+const sloshNow = body.slosh || { offset: 0, velocity: 0 };
+const sloshX_n = (sloshNow.offset || 0) + (sloshNow.velocity || 0) * dt;
+const sloshV_n = sloshNow.velocity || 0;
+
+const engines = body.engines || [];
+const gimbalTarget = cfg.GIMBAL_TARGET || 'all';
+const gimbals = engines.filter(e => e.gimbal && (gimbalTarget !== 'center' || e.isCenter));
+if (!gimbals.length) return;
   
   const g_N  = gimbals[0].gimbalDeg || 0;
   const R_N  = Number.isFinite(gimbals[0].targetGimbalRateDegS)
@@ -2532,10 +2533,10 @@ _hState.lastDQ = dQ;
   const R_cmd = Math.max(-MAX_RATE, Math.min(MAX_RATE, R_req));
   
   _hState.lastGRate = R_cmd;
-  _hState.lastGRadN = g_N;
-  _hState.lastGReqDeg = g_req_deg;
-  
-  send(cmdSetGimbalRate(R_cmd));
+_hState.lastGRadN = g_N;
+_hState.lastGReqDeg = g_req_deg;
+
+send(cmdSetGimbalRate(R_cmd, cfg.GIMBAL_TARGET));
   
 // ---------- Throttle: base frac, overridden to low frac inside band ----------
 //   refMax is the largest maxMassFlowRate among this stack's engines.
@@ -3659,12 +3660,13 @@ const LEO_INSERTION_V2 = {
     THROTTLE_ALT_LOW_KM: 8,
     THROTTLE_ALT_HIGH_KM: 13,
     THROTTLE_FRAC_LOW: 0.7,
-    COAST_DAMP_GAIN: 16,
-    COAST_DAMP_K: 4.0,
-  },
+      COAST_DAMP_GAIN: 16,
+  COAST_DAMP_K: 4.0,
+  GIMBAL_TARGET: 'center',
+},
 
-  // ---- Hand-off from ascent ----
-  MECO_APOGEE_KM: 150,
+// ---- Hand-off from ascent ----
+MECO_APOGEE_KM: 150,
 
   // ---- Separation ----
   AXIAL_SEP_TARGET_M: 10,
@@ -5271,7 +5273,11 @@ function cmdReleasePayload() { return { type: 'releasePayload' }; }
   function cmdTakeControl(idx) { return { type: 'takeControl', idx }; }
   function cmdWarp(value) { return { type: 'warp', value }; }
   function cmdSetFuelMass(value) { return { type: 'setFuelMass', value }; }
-  function cmdSetGimbalRate(degPerSec) { return { type: 'setGimbalRate', degPerSec }; }
+  function cmdSetGimbalRate(degPerSec, target) {
+  const msg = { type: 'setGimbalRate', degPerSec };
+  if (target) msg.target = target;
+  return msg;
+}
   // Optional targetBodyIdx — post-separation, guidance needs to command
 // a non-active body's pods (typically the discarded booster). Physics
 // worker's resolveTargetBody handles it; human UI never sets it.

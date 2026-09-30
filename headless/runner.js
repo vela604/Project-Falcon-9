@@ -177,12 +177,14 @@ globalThis.__sim = (function () {
     if (!b) return;
     switch (msg.type) {
       case 'setGimbalRate': {
-        if (!b.engines) break;
-        const lim = CONFIG.GIMBAL_RATE_DEG_S;
-        const rate = Math.max(-lim, Math.min(lim, msg.degPerSec));
-        b.engines.filter(en => en.gimbal).forEach(en => { en.targetGimbalRateDegS = rate; });
-        break;
-      }
+  if (!b.engines) break;
+  const lim = CONFIG.GIMBAL_RATE_DEG_S;
+  const rate = Math.max(-lim, Math.min(lim, msg.degPerSec));
+  const onlyCenter = (msg.target === 'center');
+  b.engines.filter(en => en.gimbal && (!onlyCenter || en.isCenter))
+    .forEach(en => { en.targetGimbalRateDegS = rate; });
+  break;
+}
       case 'setGimbal': {
         if (!b.engines) break;
         const lim = CONFIG.GIMBAL_MAX_DEG;

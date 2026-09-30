@@ -401,12 +401,14 @@ b.omega = msg.omega || 0;
     // per the arbitration rule — ignoring it rather than writing to it
     // means setGimbal doesn't need to know rate mode exists to win back
     // control; it just always sets both fields itself, above).
-    case 'setGimbalRate': {
+        case 'setGimbalRate': {
   const b = resolveTargetBody(msg.targetBodyIdx);
   if (!b || !b.engines) break;
   const lim = CONFIG.GIMBAL_RATE_DEG_S;
   const rate = Math.max(-lim, Math.min(lim, msg.degPerSec));
-  b.engines.filter(en => en.gimbal).forEach(en => { en.targetGimbalRateDegS = rate; });
+  const onlyCenter = (msg.target === 'center');
+  b.engines.filter(en => en.gimbal && (!onlyCenter || en.isCenter))
+    .forEach(en => { en.targetGimbalRateDegS = rate; });
   break;
 }
     case 'rcs': {

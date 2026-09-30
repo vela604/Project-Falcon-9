@@ -270,12 +270,14 @@ function localDispatch(msg) {
   if (!b) return;
   switch (msg.type) {
     case 'setGimbalRate': {
-      if (!b.engines) break;
-      const lim = CONFIG.GIMBAL_RATE_DEG_S;
-      const rate = Math.max(-lim, Math.min(lim, msg.degPerSec));
-      b.engines.filter(e => e.gimbal).forEach(e => { e.targetGimbalRateDegS = rate; });
-      break;
-    }
+  if (!b.engines) break;
+  const lim = CONFIG.GIMBAL_RATE_DEG_S;
+  const rate = Math.max(-lim, Math.min(lim, msg.degPerSec));
+  const onlyCenter = (msg.target === 'center');
+  b.engines.filter(e => e.gimbal && (!onlyCenter || e.isCenter))
+    .forEach(e => { e.targetGimbalRateDegS = rate; });
+  break;
+}
     case 'setGimbal': {
       if (!b.engines) break;
       const lim = CONFIG.GIMBAL_MAX_DEG;
