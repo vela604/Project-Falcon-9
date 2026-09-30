@@ -3648,9 +3648,8 @@ const LEO_INSERTION_V2 = {
     INITIAL_COAST_S: 4.9,
     PUSH_T_S: 4.8,
     // Calibrated for F9 Block 5 (all-gimbal octaweb). Bisection over
-    // the MECO-tilt band [55°, 60°] converged on 0.09576 — MECO fires
-    // at ~55.3° tilt with apogee 150.04 km at t=147.5 s.
-    PUSH_MAX_GIMBAL_DEG: 0.09576,
+    
+    PUSH_MAX_GIMBAL_DEG: 0.0665,
     PUSH_EAST_SIGN: -1,
     HOLD_K_DAMP: 4.0,
     HOLD_MAX_AOA_DEG: 8,
@@ -3681,13 +3680,12 @@ const LEO_INSERTION_V2 = {
   // ---- STAGE_BURN ----
 // Cutoff margin: cut this much EARLY (in Δv terms), leaving a gap
 // for RCS_BOOST to trim. Coarse + fine split.
-STAGE_BURN_CUTOFF_MARGIN_MPS: 3.0,
+STAGE_BURN_CUTOFF_MARGIN_MPS: 0.3,
 // Attitude lock: once |θ_rel| first crosses this value, hold that
 // tilt for the rest of the burn. Sign captured at crossing.
 // Calibrated for F9 Block 5 — bisection over the vr-safety protocol
-// (min vr ≥ 0.5 m/s during STAGE_BURN, pause on vr slope reversal)
-// converged on 81.39° with 2.07 m/s of margin. 81.42° fails the floor.
-STAGE_BURN_LOCK_TILT_DEG: 81.39,
+
+STAGE_BURN_LOCK_TILT_DEG: 90,
 
   // ---- Coast + circularization ----
 COAST_TARGET_TILT_DEG: -90,

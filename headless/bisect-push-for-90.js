@@ -22,8 +22,8 @@ const fs = require('fs');
 const path = require('path');
 const { runSim } = require('./runner');
 
-const TILT_LOCK_FIXED = 89.9;
-const VR_FLOOR = 0.5;
+const TILT_LOCK_FIXED = 89.999;
+const VR_FLOOR = 0.001;
 const STAGE_BURN_TIMEOUT_S = 900;
 const TOTAL_SIM_S = 700;
 const CHUNK_TICKS = 8;
@@ -118,9 +118,9 @@ console.log('vr floor = ' + VR_FLOOR + ' m/s');
 console.log('stage burn timeout = ' + STAGE_BURN_TIMEOUT_S + ' s');
 console.log('');
 
-let lo = 0.02;   // no east kick — near-vertical ascent
-let hi = 0.09576; // known value at tilt-lock 81.39 — will fail at 90
-const PRECISION = 0.0005;
+let lo = 0.067;   // no east kick — near-vertical ascent
+let hi = 0.08; // known value at tilt-lock 81.39 — will fail at 90
+const PRECISION = 0.00005;
 let best = null;
 const trace = [];
 
