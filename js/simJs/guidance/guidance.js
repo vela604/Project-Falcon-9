@@ -2334,14 +2334,14 @@ if (!gimbals.length) return;
   const g_N1 = g_N + R_N * dt;
   
   const dNext = Derivation.deriveForState(snapshot, idx, {
-    rx: rx_n, ry: ry_n, vx: vx_n, vy: vy_n,
-    theta: theta_n, omega: omega_n,
-    slosh: { offset: sloshX_n, velocity: sloshV_n },
-  }, g_N1);
-  if (!dNext || !dNext.massProps) return;
-  
-  const τ_drag_next = dNext.torqueDrag;
-  _hState.lastTauDrag = τ_drag_next;
+  rx: rx_n, ry: ry_n, vx: vx_n, vy: vy_n,
+  theta: theta_n, omega: omega_n,
+  slosh: { offset: sloshX_n, velocity: sloshV_n },
+}, g_N1, cfg.GIMBAL_TARGET);
+if (!dNext || !dNext.massProps) return;
+
+const τ_drag_next = dNext.torqueDrag;
+_hState.lastTauDrag = τ_drag_next;
   const I_next = dNext.massProps.I;
   
   // ---------- AoA derivatives — ANALYTIC, no finite difference ----------

@@ -823,7 +823,7 @@ torqueEngine, torqueDrag, torqueGravityGradient, torqueEnvironmental: torqueDrag
 // kinematics and slosh, exactly as physics would compute them if the
 // body were in that state.
 // ------------------------------------------------------------------
-function deriveForState(snapshot, idx, overrideBody, gimbalOverrideDeg) {
+function deriveForState(snapshot, idx, overrideBody, gimbalOverrideDeg, gimbalOverrideScope) {
   if (!snapshot || !snapshot.bodies || !snapshot.bodies[idx]) return null;
   const origBody = snapshot.bodies[idx];
   const virtualBody = Object.assign({}, origBody, overrideBody);
@@ -832,11 +832,13 @@ function deriveForState(snapshot, idx, overrideBody, gimbalOverrideDeg) {
   // guidance to answer "what does S_{N+k} look like if gimbal is X?"
   // without mutating the real snapshot.
   if (Number.isFinite(gimbalOverrideDeg) && Array.isArray(origBody.engines)) {
-    virtualBody.engines = origBody.engines.map(e => {
-      if (e.gimbal) return Object.assign({}, e, { gimbalDeg: gimbalOverrideDeg });
-      return e;
-    });
-  }
+  const scope = (gimbalOverrideScope === 'center') ? 'center' : 'all';
+  virtualBody.engines = origBody.engines.map(e => {
+    if (!e.gimbal) return e;
+    if (scope === 'center' && !e.isCenter) return e;
+    return Object.assign({}, e, { gimbalDeg: gimbalOverrideDeg });
+  });
+}
     const virtualSnap = Object.assign({}, snapshot, {
     bodies: snapshot.bodies.slice(),
   });
