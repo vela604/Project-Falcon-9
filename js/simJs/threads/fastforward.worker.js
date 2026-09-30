@@ -211,7 +211,8 @@ if (i % progressEvery === 0) {
     elapsedS: state.simTime - startSimT,
   });
 }
-
+  
+// bounded. Panels redraw on this cadence.
 // Slower full-body ping — heavier structured clone, only fired
 // every 10 sim-sec so the total transfer cost over a long FF is
 // bounded. Panels redraw on this cadence.

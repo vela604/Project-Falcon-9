@@ -197,19 +197,19 @@ const w = new Worker('js/simJs/threads/fastforward.worker.js');
     _state.ffWorker = w;
     const _baseSimTime = physData.simTime;
 
-        w.onmessage = (ev) => {
-        const m = ev.data;
-        if (m.type === 'progress') {
-          // Fast tick — simTime only.
-          setProgress(m.simTime - _baseSimTime, durationS, m.simTime);
-        } else if (m.type === 'guideStatus') {
-          // Live phase-log update from the FF worker. Forward straight to
-          // onGuidanceStatus so the mission-phase panel updates during FF
-          // instead of freezing and jumping at the end.
-          if (typeof onGuidanceStatus === 'function' && m.status) {
-            try { onGuidanceStatus(m.status); } catch (e) { console.error('[ff] onGuidanceStatus', e); }
-          }
-        } else if (m.type === 'progressBodies') {
+            w.onmessage = (ev) => {
+      const m = ev.data;
+      if (m.type === 'progress') {
+  // Fast tick — simTime only.
+  setProgress(m.simTime - _baseSimTime, durationS, m.simTime);
+} else if (m.type === 'guideStatus') {
+  // Live phase-log update from the FF worker. Forward straight to
+  // onGuidanceStatus so the mission-phase panel updates during FF
+  // instead of freezing and jumping at the end.
+  if (typeof onGuidanceStatus === 'function' && m.status) {
+    try { onGuidanceStatus(m.status); } catch (e) { console.error('[ff] onGuidanceStatus', e); }
+  }
+} else if (m.type === 'progressBodies') {
   // Full body update for panels.
   if (m.bodies && Array.isArray(m.bodies)) {
     const _prevLen = state.bodies ? state.bodies.length : 0;

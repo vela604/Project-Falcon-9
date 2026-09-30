@@ -22,7 +22,7 @@ const fs = require('fs');
 const path = require('path');
 const { runSim } = require('./runner');
 
-const TILT_LOCK_FIXED = 90;
+const TILT_LOCK_FIXED = 89.9;
 const VR_FLOOR = 0.5;
 const STAGE_BURN_TIMEOUT_S = 900;
 const TOTAL_SIM_S = 700;
