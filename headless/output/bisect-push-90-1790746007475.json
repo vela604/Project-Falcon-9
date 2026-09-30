@@ -1,0 +1,125 @@
+{
+  "trace": [
+    {
+      "pushVal": 0.05788,
+      "fail": false,
+      "exitReason": "EXIT-RCS_BOOST",
+      "minVr": 878.9891459587612,
+      "minVrAtT": 325.89999999984053,
+      "mecoTiltDeg": -28.440094691503205,
+      "mecoSimT": 132.40000000001652,
+      "simTime": 325.99999999984044,
+      "finalPhase": "RCS_BOOST",
+      "apogeeKm": 319.24187354446667,
+      "perigeeKm": -5965.066962192682
+    },
+    {
+      "pushVal": 0.07682,
+      "fail": true,
+      "exitReason": "FAIL-vr",
+      "minVr": 0.34200395376974885,
+      "minVrAtT": 430.4999999997454,
+      "mecoTiltDeg": -42.06574182848248,
+      "mecoSimT": 138.00000000001143,
+      "simTime": 430.4999999997454,
+      "finalPhase": "STAGE_BURN",
+      "apogeeKm": 265.13516525216494,
+      "perigeeKm": -4514.200572636908
+    },
+    {
+      "pushVal": 0.06735,
+      "fail": false,
+      "exitReason": "PAUSE-slope+",
+      "minVr": 50.179453914315374,
+      "minVrAtT": 506.5999999996762,
+      "mecoTiltDeg": -35.29434326532081,
+      "mecoSimT": 134.80000000001434,
+      "simTime": 506.6999999996761,
+      "finalPhase": "STAGE_BURN",
+      "apogeeKm": 315.5459932480194,
+      "perigeeKm": -228.26632872507162
+    },
+    {
+      "pushVal": 0.072085,
+      "fail": true,
+      "exitReason": "FAIL-vr",
+      "minVr": 0.27753133591246737,
+      "minVrAtT": 456.0999999997221,
+      "mecoTiltDeg": -38.70211811085153,
+      "mecoSimT": 136.30000000001297,
+      "simTime": 456.0999999997221,
+      "finalPhase": "STAGE_BURN",
+      "apogeeKm": 284.1797464211313,
+      "perigeeKm": -3925.546720989134
+    },
+    {
+      "pushVal": 0.06971749999999999,
+      "fail": true,
+      "exitReason": "FAIL-vr",
+      "minVr": 0.49344624885972094,
+      "minVrAtT": 477.49999999970265,
+      "mecoTiltDeg": -37.00053441037537,
+      "mecoSimT": 135.5000000000137,
+      "simTime": 477.49999999970265,
+      "finalPhase": "STAGE_BURN",
+      "apogeeKm": 296.3563398574619,
+      "perigeeKm": -3033.361604509936
+    },
+    {
+      "pushVal": 0.06853374999999999,
+      "fail": true,
+      "exitReason": "FAIL-vr",
+      "minVr": 0.48567477954119975,
+      "minVrAtT": 500.0999999996821,
+      "mecoTiltDeg": -36.16065524810211,
+      "mecoSimT": 135.20000000001397,
+      "simTime": 500.0999999996821,
+      "finalPhase": "STAGE_BURN",
+      "apogeeKm": 303.80100212658755,
+      "perigeeKm": -1131.9179000744177
+    },
+    {
+      "pushVal": 0.06794187499999998,
+      "fail": false,
+      "exitReason": "PAUSE-slope+",
+      "minVr": 22.5839162333529,
+      "minVrAtT": 507.9999999996749,
+      "mecoTiltDeg": -35.72844447080693,
+      "mecoSimT": 135.00000000001415,
+      "simTime": 508.0999999996748,
+      "finalPhase": "STAGE_BURN",
+      "apogeeKm": 309.5253444807706,
+      "perigeeKm": 61.58875055077299
+    },
+    {
+      "pushVal": 0.0682378125,
+      "fail": false,
+      "exitReason": "EXIT-RCS_BOOST",
+      "minVr": 8.714988076163332,
+      "minVrAtT": 508.19999999967473,
+      "mecoTiltDeg": -35.94266266312733,
+      "mecoSimT": 135.10000000001406,
+      "simTime": 508.29999999967464,
+      "finalPhase": "RCS_BOOST",
+      "apogeeKm": 306.16042971252,
+      "perigeeKm": 119.88509950216674
+    }
+  ],
+  "best": {
+    "pushVal": 0.0682378125,
+    "fail": false,
+    "exitReason": "EXIT-RCS_BOOST",
+    "minVr": 8.714988076163332,
+    "minVrAtT": 508.19999999967473,
+    "mecoTiltDeg": -35.94266266312733,
+    "mecoSimT": 135.10000000001406,
+    "simTime": 508.29999999967464,
+    "finalPhase": "RCS_BOOST",
+    "apogeeKm": 306.16042971252,
+    "perigeeKm": 119.88509950216674
+  },
+  "finalBracket": [
+    0.0682378125,
+    0.06853374999999999
+  ]
+}
