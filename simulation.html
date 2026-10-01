@@ -802,8 +802,8 @@
       r2(o.hp),
       Number.isFinite(gs.coastDeltaV) ? r2(gs.coastDeltaV) : null,
       Number.isFinite(gs.coastTRem) ? r1(gs.coastTRem) : null,
-      Number.isFinite(gs.circCurrentV) ? r1(gs.circCurrentV) : null,
-      Number.isFinite(gs.circTargetV) ? r1(gs.circTargetV) : null,
+      (gs.phase === 'CIRCULARIZE' && Number.isFinite(gs.circCurrentV)) ? r1(gs.circCurrentV): null,
+  (gs.phase === 'CIRCULARIZE' && Number.isFinite(gs.circTargetV)) ? r1(gs.circTargetV) : null,
       r2((b.fuelMass || 0) / 1000),
       gs.stageBurnLocked ? r1(gs.stageBurnTargetTiltDeg) : null,
     ];
@@ -860,10 +860,11 @@
       btnRec.style.color = 'var(--danger)';
     }
     if (btnDl) btnDl.disabled = true;
-    const r0 = _row();
-    if (r0) _rows.push(r0);
-    _lastSec = Math.floor(state.simTime);
-    requestAnimationFrame(_tick);
+    // Don't capture an immediate t=0 row — window.__lastGuideStatus may
+// be stale from a previous run. Let the natural tick loop capture
+// row 0 on the first real snapshot.
+_lastSec = -1;
+requestAnimationFrame(_tick);
   }
 
   function _stopRecording() {
