@@ -162,7 +162,7 @@ if (typeof Guidance !== 'undefined') {
 const dt = CONFIG.DT;
 const maxTicks = Math.ceil(msg.durationS / dt);
 const progressEvery = Math.max(1, msg.progressEveryTicks || 80);
-const bodiesEvery = Math.max(progressEvery, msg.bodiesEveryTicks || 800);
+const bodiesEvery = Math.max(progressEvery, msg.bodiesEveryTicks || 80);
 const startSimT = state.simTime;
 
 // Real-sim tick order: physicsStep → snapshot@T+dt → guidance.
