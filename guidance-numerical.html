@@ -1288,13 +1288,20 @@ a.back:hover { color: var(--cyan); }
           peakQ_kPa = Q_Pa;
           peakQ_state = captureState();
         }
-        const ax = body._lastAccelX || 0, ay = body._lastAccelY || 0;
-        const g_proper = Math.hypot(ax, ay) / 9.80665;
-        if (g_proper > peakG) {
-          peakG = g_proper;
-          peakG_state = captureState();
-        }
-      }
+        // ✅ NEW — every body, matches runner.js's tracker.maxG
+// (this catches crash impulses on discarded boosters too, which is what
+//  runner.js's own tracker does — parity requires the same definition)
+for (let _bi = 0; _bi < state.bodies.length; _bi++) {
+  const _b = state.bodies[_bi];
+  const ax = _b._lastAccelX || 0, ay = _b._lastAccelY || 0;
+  const g_proper = Math.hypot(ax, ay) / 9.80665;
+  if (g_proper > peakG) {
+    peakG = g_proper;
+    peakG_state = captureState();  // always captures the ACTIVE body — same
+                                    // as runner.js, which doesn't store a
+                                    // peak body index at all
+  }
+}
 
       // ---- Yield + progress ----
       if (i > 0 && i % CHUNK === 0) {
