@@ -32,7 +32,18 @@ const WorkerBridge = {
   if (typeof FastForward !== 'undefined' && FastForward.onFullState) {
     FastForward.onFullState(msg.data);
   }
-} else if (msg.type === 'replaceStateAck') {
+} else if (msg.type === 'pausedState') {
+  if (typeof FastForward !== 'undefined' && FastForward.onPausedState) {
+    FastForward.onPausedState(msg.data);
+  }
+} else if (msg.type === 'pausedStateError') {
+  console.error('[bridge] pauseAndCapture failed:', msg.message);
+  if (typeof FastForward !== 'undefined' && FastForward.onPausedState) {
+    FastForward.onPausedState(null);
+  }
+}
+
+else if (msg.type === 'replaceStateAck') {
   if (typeof FastForward !== 'undefined' && FastForward.onReplaceStateAck) {
     FastForward.onReplaceStateAck();
   }

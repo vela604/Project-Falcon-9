@@ -102,6 +102,20 @@ state.bodies = msg.fullState.bodies;
     state.simTime = msg.fullState.simTime;
     state.halted = !!msg.fullState.halted;
     
+    // TEMP DIAG — capture state signature, sent to main thread for display
+(function diagCaptureHash() {
+  const b0 = state.bodies[0];
+  if (!b0) return;
+  const sig = 't=' + state.simTime.toFixed(6) +
+              ' n=' + state.bodies.length +
+              ' rx=' + b0.rx.toFixed(4) +
+              ' ry=' + b0.ry.toFixed(4) +
+              ' vx=' + b0.vx.toFixed(4) +
+              ' vy=' + b0.vy.toFixed(4) +
+              ' fuel=' + b0.fuelMass.toFixed(2);
+  self.postMessage({ type: 'diagCapture', sig: sig });
+})();
+    
     // Per-body init: pwmClocks, pods (cache). Crashed / settled bodies
     // don't need pods — guidance never drives them and physicsStep
     // early-returns them, so skip the work.
@@ -145,43 +159,56 @@ if (typeof Guidance !== 'undefined') {
 }
     
     // ---- Persistent snapshot wrapper (zero alloc per tick) ----
-    const dt = CONFIG.DT;
+const dt = CONFIG.DT;
 const maxTicks = Math.ceil(msg.durationS / dt);
 const progressEvery = Math.max(1, msg.progressEveryTicks || 80);
 const bodiesEvery = Math.max(progressEvery, msg.bodiesEveryTicks || 800);
 const startSimT = state.simTime;
 
+// Real-sim tick order: physicsStep → snapshot@T+dt → guidance.
+// Matches physics.worker.js's workerLoop exactly: the worker runs
+// physics, snapshots the post-step state, main thread forwards to
+// guidance, guidance computes commands, commands apply on the next
+// physicsStep. Do NOT reorder — a 1-tick shift here propagates into
+// every control loop downstream (RCS slew, cutoff timing, etc).
 for (let i = 0; i < maxTicks; i++) {
+  if (i === 0) {
+  console.log('[FF-BOOT] t=' + state.simTime.toFixed(6) + ' bodies=' + state.bodies.length + ' body0.rx=' + state.bodies[0].rx.toFixed(6) + ' body0.ry=' + state.bodies[0].ry.toFixed(6));
+}
   if (_abort) break;
   
-  // 1. updateLegs — matches physics.worker.js workerLoop, which
-  //    calls updateLegs(CONFIG.DT) every iteration before step.
-  //    Without this, legs stay frozen in their captured pose.
+  // 1. Legs
   try { updateLegs(dt); } catch (le) {
     self.postMessage({ type: 'workerError', message: 'updateLegs: ' + le.message, stack: le.stack });
   }
   
-  // 2. physicsStep — consumes the commands set by the PREVIOUS
-  //    iteration's Guidance.onSnapshot (via localDispatch), giving
-  //    guidance the same 1-tick command latency it experiences in
-  //    the real sim. The old code called onSnapshot BEFORE
-  //    physicsStep, so guidance commands applied with zero latency —
-  //    a systematic drift vs. 1× playback.
+  // 2. Physics step @ T → @ T+dt. Uses commands mutated by the
+  //    previous iteration's guidance tick.
   try { physicsStep(dt); }
   catch (pe) {
     self.postMessage({ type: 'workerError', message: 'physics: ' + pe.message, stack: pe.stack });
     break;
   }
   
-  // 3. Fresh snapshot per tick. Two reasons:
-  //    (a) Guidance sees POST-physicsStep state — exactly what the
-  //        real sim's physics.worker sends to main → guidance.
-  //    (b) Derivation.derive() caches per snapshot OBJECT (WeakMap)
-  //        for in-tick dedup. Reusing one snap object across ticks
-  //        made every tick after the first return the stale cached
-  //        derive result — guidance effectively flew on frozen data.
-  //        Fresh object per tick keeps the intra-tick cache working
-  //        while correctly invalidating between ticks.
+  // 3. Refresh .pods on EVERY body — matches workerBridge.js's
+  //    maybeForwardGuidanceSnapshot(), which adds fresh buildPodEntries(b)
+  //    to every body on every tick before forwarding to guidance.
+  //
+  //    The boot-time per-body init only ran ONCE, so bodies created
+  //    DURING FF (the discarded booster at MECO, fairing halves,
+  //    released payload) never had pods set. Guidance's
+  //    postSeparationAxialDuty / targetTorqueRcs read body.pods and
+  //    silently returned null for these new bodies — no RCS fired,
+  //    separation dynamics diverged from the real sim.
+  if (typeof buildPodEntries === 'function') {
+    for (let pi = 0; pi < state.bodies.length; pi++) {
+      state.bodies[pi].pods = buildPodEntries(state.bodies[pi]);
+    }
+  }
+  
+  // 4. Fresh snapshot @ T+dt. New object every tick — Derivation
+  //    caches per snapshot OBJECT via WeakMap; reusing one object
+  //    would make every tick after the first return stale derives.
   const snap = {
     simTime: state.simTime,
     activeBodyIndex: state.activeBodyIndex,
@@ -194,52 +221,47 @@ for (let i = 0; i < maxTicks; i++) {
     bodies: state.bodies,
   };
   
-  // 4. Guidance tick on the post-step snapshot. Commands issued via
-  //    localDispatch land in the next iteration's physicsStep.
+  // 5. Guidance tick on post-step state. Commands mutate state.bodies
+  //    targets; the NEXT iteration's physicsStep applies them.
   try { Guidance.onSnapshot(snap); }
   catch (ge) {
     self.postMessage({ type: 'workerError', message: 'guidance: ' + ge.message, stack: ge.stack });
   }
-      
-      // Fast progress ping — simTime only. Tiny payload, cheap to
-// postMessage 80×/sim-minute. Keeps the progress bar and mission
-// clock advancing smoothly instead of jumping 50 seconds at once.
-if (i % progressEvery === 0) {
-  self.postMessage({
-    type: 'progress',
-    simTime: state.simTime,
-    elapsedS: state.simTime - startSimT,
-  });
-}
   
-// bounded. Panels redraw on this cadence.
-// Slower full-body ping — heavier structured clone, only fired
-// every 10 sim-sec so the total transfer cost over a long FF is
-// bounded. Panels redraw on this cadence.
-if (i % bodiesEvery === 0) {
-  self.postMessage({
-    type: 'progressBodies',
-    simTime: state.simTime,
-    bodies: state.bodies,
-    activeBodyIndex: state.activeBodyIndex,
-    halted: !!state.halted,
-  });
-  // Guide status — carries phaseLog + current phase so main
-  // thread's mission-phase panel updates live during FF instead
-  // of freezing then jumping to the final phase.
-  if (typeof Guidance !== 'undefined' && Guidance.getGuideStatus) {
-    try {
-      self.postMessage({ type: 'guideStatus', status: Guidance.getGuideStatus() });
-    } catch (ge) {
-      self.postMessage({ type: 'workerError', message: 'guideStatus: ' + ge.message, stack: ge.stack });
-    }
+  // Fast progress ping — simTime only. Tiny payload, cheap to
+  // postMessage 80×/sim-minute.
+  if (i % progressEvery === 0) {
+    self.postMessage({
+      type: 'progress',
+      simTime: state.simTime,
+      elapsedS: state.simTime - startSimT,
+    });
   }
-  // Yield so an incoming 'abort' can be processed.
-  await new Promise(r => setTimeout(r, 0));
-}
-      
-      if (state.halted) break;
+  
+  // Slower full-body ping — heavier structured clone, only fired
+  // every 10 sim-sec so the total transfer cost over a long FF is
+  // bounded.
+  if (i % bodiesEvery === 0) {
+    self.postMessage({
+      type: 'progressBodies',
+      simTime: state.simTime,
+      bodies: state.bodies,
+      activeBodyIndex: state.activeBodyIndex,
+      halted: !!state.halted,
+    });
+    if (typeof Guidance !== 'undefined' && Guidance.getGuideStatus) {
+      try {
+        self.postMessage({ type: 'guideStatus', status: Guidance.getGuideStatus() });
+      } catch (ge) {
+        self.postMessage({ type: 'workerError', message: 'guideStatus: ' + ge.message, stack: ge.stack });
+      }
     }
+    // Yield so an incoming 'abort' can be processed.
+    await new Promise(r => setTimeout(r, 0));
+  }
+  
+  if (state.halted) break;
+}
     
     // ---- Final export ----
     self.postMessage({
@@ -266,18 +288,24 @@ function clampFlow(en, cmd) {
 }
 
 function localDispatch(msg) {
-  const b = state.bodies[state.activeBodyIndex];
+  let b;
+  if (Number.isInteger(msg.targetBodyIdx) && msg.targetBodyIdx >= 0 &&
+      msg.targetBodyIdx < state.bodies.length) {
+    b = state.bodies[msg.targetBodyIdx];
+  } else {
+    b = state.bodies[state.activeBodyIndex];
+  }
   if (!b) return;
   switch (msg.type) {
     case 'setGimbalRate': {
-  if (!b.engines) break;
-  const lim = CONFIG.GIMBAL_RATE_DEG_S;
-  const rate = Math.max(-lim, Math.min(lim, msg.degPerSec));
-  const onlyCenter = (msg.target === 'center');
-  b.engines.filter(e => e.gimbal && (!onlyCenter || e.isCenter))
-    .forEach(e => { e.targetGimbalRateDegS = rate; });
-  break;
-}
+      if (!b.engines) break;
+      const lim = CONFIG.GIMBAL_RATE_DEG_S;
+      const rate = Math.max(-lim, Math.min(lim, msg.degPerSec));
+      const onlyCenter = (msg.target === 'center');
+      b.engines.filter(e => e.gimbal && (!onlyCenter || e.isCenter))
+        .forEach(e => { e.targetGimbalRateDegS = rate; });
+      break;
+    }
     case 'setGimbal': {
       if (!b.engines) break;
       const lim = CONFIG.GIMBAL_MAX_DEG;
@@ -325,27 +353,27 @@ function localDispatch(msg) {
       break;
     }
     case 'gridFinsDeploy': {
-  if (!b || !b.gridFins) break;
-  const gfType = (typeof bodyGridFinType === 'function') ? bodyGridFinType(b) : null;
-  const maxDeploy = (gfType && gfType.typeConstants &&
-      Number.isFinite(gfType.typeConstants.maxDeployDeg)) ?
-    gfType.typeConstants.maxDeployDeg : 90;
-  ['L', 'R', 'FB'].forEach(k => {
-    const f = b.gridFins[k];
-    if (!f) return;
-    if (msg.deployed) f.targetDeploy = 0;
-    else f.targetDeploy = (k === 'R') ? -maxDeploy : maxDeploy;
-  });
-  break;
-}
-case 'gridFinsControl': {
-  if (!b || !b.gridFins) break;
-  const f = b.gridFins.FB;
-  if (f && Number.isFinite(msg.controlDeg)) {
-    f.targetControl = Math.max(-90, Math.min(90, msg.controlDeg));
-  }
-  break;
-}
+      if (!b || !b.gridFins) break;
+      const gfType = (typeof bodyGridFinType === 'function') ? bodyGridFinType(b) : null;
+      const maxDeploy = (gfType && gfType.typeConstants &&
+          Number.isFinite(gfType.typeConstants.maxDeployDeg)) ?
+        gfType.typeConstants.maxDeployDeg : 90;
+      ['L', 'R', 'FB'].forEach(k => {
+        const f = b.gridFins[k];
+        if (!f) return;
+        if (msg.deployed) f.targetDeploy = 0;
+        else f.targetDeploy = (k === 'R') ? -maxDeploy : maxDeploy;
+      });
+      break;
+    }
+    case 'gridFinsControl': {
+      if (!b || !b.gridFins) break;
+      const f = b.gridFins.FB;
+      if (f && Number.isFinite(msg.controlDeg)) {
+        f.targetControl = Math.max(-90, Math.min(90, msg.controlDeg));
+      }
+      break;
+    }
     case 'separate': {
       if (typeof requestSeparate === 'function') requestSeparate(b);
       break;
@@ -364,6 +392,10 @@ case 'gridFinsControl': {
     }
     case 'takeControl': {
       if (typeof takeControlOfBody === 'function') takeControlOfBody(msg.idx);
+      break;
+    }
+    case 'markIntentionalImpact': {
+      if (b) b.intentionalImpact = true;
       break;
     }
     default: break;

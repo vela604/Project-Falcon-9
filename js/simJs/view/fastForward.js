@@ -15,21 +15,22 @@
 const FastForward = (function () {
   'use strict';
 
-  let _state = {
-  open: false,
-  running: false,
-  holdingState: false,
-  cancel: false,
-  durationS: 60,
-  pendingResult: null, // { fullState, guidanceState }
-  ffWorker: null,
-  waitingForResume: false,
-  pausedByDialog: false,
-  graphAutoOpened: false,
-  _pendingPhysicsState: null,
-  _pendingGuidanceState: null,
-  _pendingAck: null, // resolves when physics acks replaceState
-};
+    let _state = {
+    open: false,
+    running: false,
+    holdingState: false,
+    cancel: false,
+    durationS: 60,
+    pendingResult: null,
+    ffWorker: null,
+    waitingForResume: false,
+    pausedByDialog: false,
+    graphAutoOpened: false,
+    _pendingPhysicsState: null,
+    _pendingGuidanceState: null,
+    _pendingAck: null,
+    _pendingPauseCapture: null,
+  };
 
   const $ = (id) => document.getElementById(id);
 
@@ -89,12 +90,7 @@ const FastForward = (function () {
     }
   }
 
-  function requestPhysicsState() {
-    return new Promise(resolve => {
-      _state._pendingPhysicsState = resolve;
-      WorkerBridge.send({ type: 'captureFullState' });
-    });
-  }
+
   function requestGuidanceState() {
     return new Promise(resolve => {
       _state._pendingGuidanceState = resolve;
@@ -107,6 +103,13 @@ const FastForward = (function () {
     _state._pendingPhysicsState = null;
     if (r) r(data);
   }
+  
+  function onPausedState(data) {
+  const r = _state._pendingPauseCapture;
+  _state._pendingPauseCapture = null;
+  if (r) r(data);
+}
+  
   function onGuidanceState(data) {
     const r = _state._pendingGuidanceState;
     _state._pendingGuidanceState = null;
@@ -141,28 +144,26 @@ const FastForward = (function () {
       _state.graphAutoOpened = false;
     }
 
-    WorkerBridge.send({ type: 'pauseSim' });
-
-// Wait for both workers to quiesce before capturing. Physics worker
-// sends snapshots even while paused (same state repeatedly); those
-// forwards trigger guidance ticks. 400 ms wall lets the queue drain
-// and both workers settle on the same sim tick, so the pair we
-// capture is matched. Without this, guidance state could be one
-// tick behind physics, and the FF would start from a mismatched
-// pair — different results across runs.
-await new Promise(r => setTimeout(r, 400));
+    // Atomic pause + capture. Physics worker sets paused=true AND clones
+// its state in the same message handler, so the captured state is
+// exactly "last tick before pause" — no wall-clock race, no extra
+// steps draining while we wait. Fixes the non-determinism where
+// identical constants produced different FF results across attempts.
+WorkerBridge.send({ type: 'pauseAndCapture' });
+const physDataPromise = new Promise(r => { _state._pendingPauseCapture = r; });
+const guideDataPromise = requestGuidanceState();
 
 let physData = null, guideData = null;
 try {
-  physData = await requestPhysicsState();
-  guideData = await requestGuidanceState();
+  physData = await physDataPromise;
+  guideData = await guideDataPromise;
 } catch (e) {
-      console.error('[fastForward] state capture failed', e);
-      _state.running = false;
-      _state.holdingState = false;
-      showSection('input');
-      return;
-    }
+  console.error('[fastForward] state capture failed', e);
+  _state.running = false;
+  _state.holdingState = false;
+  showSection('input');
+  return;
+}
     if (!physData || !Array.isArray(physData.bodies)) {
       console.error('[fastForward] invalid physics state');
       _state.running = false;
@@ -199,6 +200,11 @@ const w = new Worker('js/simJs/threads/fastforward.worker.js');
 
             w.onmessage = (ev) => {
       const m = ev.data;
+      if (m.type === 'diagCapture') {
+  const el = document.getElementById('status');
+  if (el) el.textContent = 'CAPTURE: ' + m.sig;
+  return;
+}
       if (m.type === 'progress') {
   // Fast tick — simTime only.
   setProgress(m.simTime - _baseSimTime, durationS, m.simTime);
@@ -422,6 +428,7 @@ function onReplaceStateAck() {
   bind,
   onFullState,
   onGuidanceState,
+  onPausedState,
   onSnapshotApplied,
   onReplaceStateAck,
   isHoldingState: () => _state.holdingState,

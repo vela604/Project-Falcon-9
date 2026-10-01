@@ -410,9 +410,19 @@ a.back:hover { color: var(--cyan); }
     const bodies = state.bodies;
     for (let i = 0; i < bodies.length; i++) {
       const b = bodies[i];
-      b.ax = b._lastAccelX || 0;
-      b.ay = b._lastAccelY || 0;
-    }
+        b.ax = b._lastAccelX || 0;
+  b.ay = b._lastAccelY || 0;
+  // CRITICAL: guidance reads body.pods for every RCS command
+  // (targetTorqueRcs, postSeparationAxialDuty). Physics never sets
+  // pods on the live body — physics's own RCS path rebuilds pods
+  // internally per tick. So the snapshot MUST build them, exactly
+  // like runner.js's buildSnapshot does. Without this, every RCS
+  // guidance command silently returns empty fires → COAST_ROTATE
+  // and CIRCULARIZE never complete.
+  if (typeof buildPodEntries === 'function') {
+    b.pods = buildPodEntries(b);
+  }
+  }
     return {
       simTime: state.simTime,
       activeBodyIndex: state.activeBodyIndex,
@@ -434,101 +444,104 @@ a.back:hover { color: var(--cyan); }
     if (!(cmd > 0)) return 0;
     return Math.max(Math.min(cmd, en.maxMassFlowRate || 0), en.minMassFlowRate || 0);
   }
-  function localDispatch(msg) {
-    let b;
-    if (Number.isInteger(msg.targetBodyIdx) && msg.targetBodyIdx >= 0 &&
-        msg.targetBodyIdx < state.bodies.length) {
-      b = state.bodies[msg.targetBodyIdx];
-    } else {
-      b = state.bodies[state.activeBodyIndex];
-    }
-    if (!b) return;
-    switch (msg.type) {
-      case 'setGimbalRate': {
-        if (!b.engines) break;
-        const lim = CONFIG.GIMBAL_RATE_DEG_S;
-        const rate = Math.max(-lim, Math.min(lim, msg.degPerSec));
-        const onlyCenter = (msg.target === 'center');
-        b.engines.filter(en => en.gimbal && (!onlyCenter || en.isCenter))
-          .forEach(en => { en.targetGimbalRateDegS = rate; });
-        break;
-      }
-      case 'setGimbal': {
-        if (!b.engines) break;
-        const lim = CONFIG.GIMBAL_MAX_DEG;
-        const d = Math.max(-lim, Math.min(lim, msg.deg));
-        b.engines.filter(en => en.gimbal).forEach(en => {
-          en.targetGimbalDeg = d; en.targetGimbalRateDegS = NaN;
-        });
-        break;
-      }
-      case 'setAllThrottle': {
-        if (!b.engines) break;
-        b.engines.forEach(en => { en.targetMassFlowRate = clampFlow(en, msg.value); });
-        break;
-      }
-      case 'setCenterThrottle': {
-        if (!b.engines) break;
-        b.engines.filter(en => en.isCenter).forEach(en => {
-          en.targetMassFlowRate = clampFlow(en, msg.value);
-        });
-        break;
-      }
-      case 'setGroupThrottle': {
-        if (!b.engines) break;
-        (msg.angles || []).forEach(a => {
-          const en = b.engines.find(e => e.angleDeg === a);
-          if (en) en.targetMassFlowRate = clampFlow(en, msg.value);
-        });
-        break;
-      }
-      case 'rcs': {
-        if (!b.rcsCmd) b.rcsCmd = {};
-        b.rcsCmd[msg.key] = !!msg.on;
-        b.rcsDuty = null;
-        break;
-      }
-      case 'rcsDuty': {
-        if (msg.duties == null) b.rcsDuty = null;
-        else b.rcsDuty = msg.duties;
-        break;
-      }
-      case 'legs': {
-        if (!b.legs) b.legs = { deployed: false, progress: 0 };
-        b.legs.deployed = !!msg.deployed;
-        break;
-      }
-      case 'gridFinsDeploy': {
-        if (!b || !b.gridFins) break;
-        const gfType = (typeof bodyGridFinType === 'function') ? bodyGridFinType(b) : null;
-        const maxDeploy = (gfType && gfType.typeConstants &&
-            Number.isFinite(gfType.typeConstants.maxDeployDeg)) ?
-          gfType.typeConstants.maxDeployDeg : 90;
-        ['L', 'R', 'FB'].forEach(k => {
-          const f = b.gridFins[k];
-          if (!f) return;
-          if (msg.deployed) f.targetDeploy = 0;
-          else f.targetDeploy = (k === 'R') ? -maxDeploy : maxDeploy;
-        });
-        break;
-      }
-      case 'gridFinsControl': {
-        if (!b || !b.gridFins) break;
-        const f = b.gridFins.FB;
-        if (f && Number.isFinite(msg.controlDeg)) {
-          f.targetControl = Math.max(-90, Math.min(90, msg.controlDeg));
-        }
-        break;
-      }
-      case 'separate':   { if (typeof requestSeparate === 'function') requestSeparate(b); break; }
-      case 'splitFairing': { if (typeof splitFairingOnActiveBody === 'function') splitFairingOnActiveBody(b); break; }
-      case 'releasePayload': { if (typeof requestReleasePayload === 'function') requestReleasePayload(msg, b); break; }
-      case 'emergencyEject': { if (typeof emergencyEjectPayload === 'function') emergencyEjectPayload(b); break; }
-      case 'takeControl': { if (typeof takeControlOfBody === 'function') takeControlOfBody(msg.idx); break; }
-      case 'markIntentionalImpact': { if (b) b.intentionalImpact = true; break; }
-      default: break;
-    }
+  // Commands mutate state.bodies targets directly (via localDispatch).
+// The NEXT physicsStep uses them — 1-tick pipeline latency matching
+// real sim's physics worker + guidance worker architecture.
+function localDispatch(msg) {
+  let b;
+  if (Number.isInteger(msg.targetBodyIdx) && msg.targetBodyIdx >= 0 &&
+      msg.targetBodyIdx < state.bodies.length) {
+    b = state.bodies[msg.targetBodyIdx];
+  } else {
+    b = state.bodies[state.activeBodyIndex];
   }
+  if (!b) return;
+  switch (msg.type) {
+    case 'setGimbalRate': {
+      if (!b.engines) break;
+      const lim = CONFIG.GIMBAL_RATE_DEG_S;
+      const rate = Math.max(-lim, Math.min(lim, msg.degPerSec));
+      const onlyCenter = (msg.target === 'center');
+      b.engines.filter(en => en.gimbal && (!onlyCenter || en.isCenter))
+        .forEach(en => { en.targetGimbalRateDegS = rate; });
+      break;
+    }
+    case 'setGimbal': {
+      if (!b.engines) break;
+      const lim = CONFIG.GIMBAL_MAX_DEG;
+      const d = Math.max(-lim, Math.min(lim, msg.deg));
+      b.engines.filter(en => en.gimbal).forEach(en => {
+        en.targetGimbalDeg = d; en.targetGimbalRateDegS = NaN;
+      });
+      break;
+    }
+    case 'setAllThrottle': {
+      if (!b.engines) break;
+      b.engines.forEach(en => { en.targetMassFlowRate = clampFlow(en, msg.value); });
+      break;
+    }
+    case 'setCenterThrottle': {
+      if (!b.engines) break;
+      b.engines.filter(en => en.isCenter).forEach(en => {
+        en.targetMassFlowRate = clampFlow(en, msg.value);
+      });
+      break;
+    }
+    case 'setGroupThrottle': {
+      if (!b.engines) break;
+      (msg.angles || []).forEach(a => {
+        const en = b.engines.find(e => e.angleDeg === a);
+        if (en) en.targetMassFlowRate = clampFlow(en, msg.value);
+      });
+      break;
+    }
+    case 'rcs': {
+      if (!b.rcsCmd) b.rcsCmd = {};
+      b.rcsCmd[msg.key] = !!msg.on;
+      b.rcsDuty = null;
+      break;
+    }
+    case 'rcsDuty': {
+      if (msg.duties == null) b.rcsDuty = null;
+      else b.rcsDuty = msg.duties;
+      break;
+    }
+    case 'legs': {
+      if (!b.legs) b.legs = { deployed: false, progress: 0 };
+      b.legs.deployed = !!msg.deployed;
+      break;
+    }
+    case 'gridFinsDeploy': {
+      if (!b || !b.gridFins) break;
+      const gfType = (typeof bodyGridFinType === 'function') ? bodyGridFinType(b) : null;
+      const maxDeploy = (gfType && gfType.typeConstants &&
+          Number.isFinite(gfType.typeConstants.maxDeployDeg)) ?
+        gfType.typeConstants.maxDeployDeg : 90;
+      ['L', 'R', 'FB'].forEach(k => {
+        const f = b.gridFins[k];
+        if (!f) return;
+        if (msg.deployed) f.targetDeploy = 0;
+        else f.targetDeploy = (k === 'R') ? -maxDeploy : maxDeploy;
+      });
+      break;
+    }
+    case 'gridFinsControl': {
+      if (!b || !b.gridFins) break;
+      const f = b.gridFins.FB;
+      if (f && Number.isFinite(msg.controlDeg)) {
+        f.targetControl = Math.max(-90, Math.min(90, msg.controlDeg));
+      }
+      break;
+    }
+    case 'separate': { if (typeof requestSeparate === 'function') requestSeparate(b); break; }
+    case 'splitFairing': { if (typeof splitFairingOnActiveBody === 'function') splitFairingOnActiveBody(b); break; }
+    case 'releasePayload': { if (typeof requestReleasePayload === 'function') requestReleasePayload(msg, b); break; }
+    case 'emergencyEject': { if (typeof emergencyEjectPayload === 'function') emergencyEjectPayload(b); break; }
+    case 'takeControl': { if (typeof takeControlOfBody === 'function') takeControlOfBody(msg.idx); break; }
+    case 'markIntentionalImpact': { if (b) b.intentionalImpact = true; break; }
+    default: break;
+  }
+}
 
 
 // ============================================================================
@@ -1157,13 +1170,13 @@ a.back:hover { color: var(--cyan); }
     // localDispatch and applied on the first physicsStep below. This is
     // EXACTLY the pattern headless/runner.js uses.
     try { Guidance.stopGuide(); } catch (e) {}
-    try { Guidance.startGuide(currentGuide); } catch (e) {
-      console.error('[num] startGuide failed:', e);
-      statusEl.textContent = 'startGuide failed: ' + e.message;
-      running = false;
-      startBtn.disabled = false; stopBtn.disabled = true;
-      return;
-    }
+ try { Guidance.startGuide(currentGuide); } catch (e) {
+  console.error('[num] startGuide failed:', e);
+  statusEl.textContent = 'startGuide failed: ' + e.message;
+  running = false;
+  startBtn.disabled = false; stopBtn.disabled = true;
+  return;
+}
 
     // ---- Loop bounds ----
     const durationS = Math.max(1, parseFloat(durInput.value) || 1500);
@@ -1190,18 +1203,26 @@ a.back:hover { color: var(--cyan); }
     const CHUNK = 400;
 
     for (let i = 0; i < maxTicks; i++) {
-      if (abort) break;
-      if (state.halted) break;
-
-      // ---- Runner.js tick order: snapshot → physics ----
-      const snap = buildSnapshot();
-      try { Guidance.onSnapshot(snap); } catch (ge) {
-        console.error('[num] onSnapshot failed at t=' + state.simTime.toFixed(2), ge);
-        statusEl.textContent = 'onSnapshot failed: ' + ge.message;
-        break;
-      }
-      physicsStep(dt);
-      ticksRun++;
+  if (abort) break;
+  if (state.halted) break;
+  
+  // ---- Real-sim tick order (1-tick pipeline latency) ----
+  // 1. Physics step @ T → @ T+dt using commands mutated by the
+  //    previous iteration's guidance tick.
+  physicsStep(dt);
+  ticksRun++;
+  
+  // 2. Snapshot @ T+dt
+  const snap = buildSnapshot();
+  
+  // 3. Guidance ticks on post-step state. Its `send()` calls hit
+  //    localDispatch which mutates state.bodies — those mutations
+  //    take effect on the NEXT iteration's physicsStep.
+  try { Guidance.onSnapshot(snap); } catch (ge) {
+    console.error('[num] onSnapshot failed at t=' + state.simTime.toFixed(2), ge);
+    statusEl.textContent = 'onSnapshot failed: ' + ge.message;
+    break;
+  }
 
       // ---- Event detection + peak tracking ----
       const gs = (Guidance.getGuideStatus && Guidance.getGuideStatus()) || {};
@@ -1284,26 +1305,25 @@ a.back:hover { color: var(--cyan); }
         const sr = Math.hypot(relVx, relVy);
         const rho = (typeof airDensity === 'function') ? airDensity(Math.max(0, alt)) : 0;
         const Q_Pa = 0.5 * rho * sr * sr;
-        if (Q_Pa > peakQ_kPa) {
-          peakQ_kPa = Q_Pa;
-          peakQ_state = captureState();
-        }
-        // ✅ NEW — every body, matches runner.js's tracker.maxG
-// (this catches crash impulses on discarded boosters too, which is what
-//  runner.js's own tracker does — parity requires the same definition)
-for (let _bi = 0; _bi < state.bodies.length; _bi++) {
-  const _b = state.bodies[_bi];
-  const ax = _b._lastAccelX || 0, ay = _b._lastAccelY || 0;
-  const g_proper = Math.hypot(ax, ay) / 9.80665;
-  if (g_proper > peakG) {
-    peakG = g_proper;
-    peakG_state = captureState();  // always captures the ACTIVE body — same
-                                    // as runner.js, which doesn't store a
-                                    // peak body index at all
+          if (Q_Pa > peakQ_kPa) {
+    peakQ_kPa = Q_Pa;
+    peakQ_state = captureState();
   }
-}
-
-      // ---- Yield + progress ----
+  
+  // Peak G — every body, matches runner.js's tracker.maxG
+  for (let _bi = 0; _bi < state.bodies.length; _bi++) {
+    const _b = state.bodies[_bi];
+    const ax = _b._lastAccelX || 0;
+    const ay = _b._lastAccelY || 0;
+    const g_proper = Math.hypot(ax, ay) / 9.80665;
+    if (g_proper > peakG) {
+      peakG = g_proper;
+      peakG_state = captureState();
+    }
+  }
+  } // ←←← YE LINE MISSING THI — if (body) block close karta hai
+  
+  // ---- Yield + progress ----
       if (i > 0 && i % CHUNK === 0) {
         const wall = (performance.now() - t0) / 1000;
         const tps = ticksRun / wall;
@@ -1315,22 +1335,64 @@ for (let _bi = 0; _bi < state.bodies.length; _bi++) {
       }
     }
 
-    try { Guidance.stopGuide(); } catch (e) {}
+    // ---- Capture final state BEFORE stopGuide ----
+// getGuideStatus() only returns live data while a guide is active.
+// After stopGuide() the phase / circAchieved / coastDeltaV fields all
+// become undefined and the summary silently reverts to "?" / "no" / "—"
+// even though the physics already completed. Capture first, stop after.
+const finalEndState = captureState();
 
-    // ---- Peak captures appended (chronological sort at the end) ----
-    if (peakQ_state) captures.push({ type: 'peak', label: `PEAK Q = ${(peakQ_kPa / 1000).toFixed(2)} kPa`, simTime: peakQ_state.simTime, state: peakQ_state });
-    if (peakG_state) captures.push({ type: 'peak', label: `PEAK G = ${peakG.toFixed(2)} g`, simTime: peakG_state.simTime, state: peakG_state });
-    {
-      const endState = captureState();
-      if (endState) captures.push({ type: 'end', label: 'RUN END', simTime: endState.simTime, state: endState });
-    }
-    captures.sort((a, b) => a.simTime - b.simTime);
+try { Guidance.stopGuide(); } catch (e) {}
+
+// ---- Peak captures appended (chronological sort at the end) ----
+if (peakQ_state) captures.push({ type: 'peak', label: `PEAK Q = ${(peakQ_kPa / 1000).toFixed(2)} kPa`, simTime: peakQ_state.simTime, state: peakQ_state });
+if (peakG_state) captures.push({ type: 'peak', label: `PEAK G = ${peakG.toFixed(2)} g`, simTime: peakG_state.simTime, state: peakG_state });
+if (finalEndState) captures.push({ type: 'end', label: 'RUN END', simTime: finalEndState.simTime, state: finalEndState });
+captures.sort((a, b) => a.simTime - b.simTime);
 
     // ---- Summary ----
-    const elapsedMs = performance.now() - t0;
-    const tps = ticksRun / (elapsedMs / 1000);
-    const finalSt = captures.length ? captures[captures.length - 1].state : null;
-    const summary = {
+const elapsedMs = performance.now() - t0;
+const tps = ticksRun / (elapsedMs / 1000);
+const finalSt = captures.length ? captures[captures.length - 1].state : null;
+
+// ---- Final orbit source ----
+// If a payload was released, report ITS orbit — the stage was
+// deliberately cut short by the ejection-kick pre-compensation
+// (V_orbital − 3 m/s), so its perigee sits ~3 m/s low on purpose.
+// The payload received the +3 m/s kick, so its orbit is the mission-
+// graded one. Fall back to the active body when no payload exists.
+const payloadBody = state.bodies.find(b => b && b.payloadBody);
+const orbitBody = payloadBody || state.bodies[state.activeBodyIndex];
+let finalOrbit = null;
+if (orbitBody) {
+  const r_f = Math.hypot(orbitBody.rx, orbitBody.ry) || 1;
+  const ux_f = orbitBody.rx / r_f, uy_f = orbitBody.ry / r_f;
+  const ex_f = orbitBody.ry / r_f, ey_f = -orbitBody.rx / r_f;
+  const vr_f = orbitBody.vx * ux_f + orbitBody.vy * uy_f;
+  const vt_f = orbitBody.vx * ex_f + orbitBody.vy * ey_f;
+  const GM_f = CONFIG.GM_EARTH;
+  const E_f = 0.5 * (vr_f * vr_f + vt_f * vt_f) - GM_f / r_f;
+  const h_f = r_f * vt_f;
+  let apo_km_f = Infinity, peri_km_f = Infinity;
+  if (E_f < 0) {
+    const a_f = -GM_f / (2 * E_f);
+    const e_f = Math.sqrt(Math.max(0, 1 + 2 * E_f * h_f * h_f / (GM_f * GM_f)));
+    apo_km_f = (a_f * (1 + e_f) - CONFIG.EARTH_RADIUS) / 1000;
+    peri_km_f = (a_f * (1 - e_f) - CONFIG.EARTH_RADIUS) / 1000;
+  } else if (E_f > 0) {
+    const p_f = h_f * h_f / GM_f;
+    const e_f = Math.sqrt(Math.max(0, 1 + 2 * E_f * h_f * h_f / (GM_f * GM_f)));
+    peri_km_f = (p_f / (1 + e_f) - CONFIG.EARTH_RADIUS) / 1000;
+  }
+  finalOrbit = {
+    apo_km: apo_km_f,
+    peri_km: peri_km_f,
+    alt_km: (r_f - CONFIG.EARTH_RADIUS) / 1000,
+    isPayload: !!payloadBody,
+  };
+}
+
+const summary = {
       guide: currentGuide,
       duration: durationS,
       ticks: ticksRun,

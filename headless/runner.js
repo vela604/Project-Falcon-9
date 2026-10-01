@@ -402,11 +402,15 @@ globalThis.__sim = (function () {
     stopGuide: () => Guidance.stopGuide(),
 
     step: (n) => {
-      const dt = CONFIG.DT;
-      for (let i = 0; i < n; i++) {
-        Guidance.onSnapshot(buildSnapshot());
-        physicsStep(dt);
-        tracker.ticksRun++;
+    const dt = CONFIG.DT;
+    for (let i = 0; i < n; i++) {
+      // Real-sim parity: physicsStep runs FIRST, then the snapshot is
+      // taken from POST-step state, then guidance ticks on it. Commands
+      // mutate state, applied by the NEXT iteration's physicsStep —
+      // exactly the 1-tick pipeline latency physics.worker.js produces.
+      physicsStep(dt);
+      Guidance.onSnapshot(buildSnapshot());
+      tracker.ticksRun++;
 
         // Peak G (proper accel magnitude / g0)
         state.bodies.forEach(b => {

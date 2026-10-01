@@ -285,8 +285,26 @@ function dispatchCommand(msg) {
 // any stale code path doesn't fall through to the default branch.
 break;
     case 'reset':
-      resetState(msg.alt || 0);
-      break;
+// Reset must ALSO stop the sim loop. Without this, the physics
+// worker's workerLoop keeps ticking physicsStep every CONFIG.DT
+// seconds after the reset — because workerLoop only skips
+// physicsStep when `running` is false. That means between the user
+// clicking Reset and clicking Fast Forward, the sim advances by a
+// wall-clock-dependent number of ticks (80 ticks/sec × however many
+// seconds the user took). The FF capture then starts from a
+// different sim time every single run, which is the entire source
+// of "FF gives different results each time" non-determinism.
+//
+// Setting running=false here means: after Reset, the sim is
+// completely frozen at t=0. FF capture always gets exactly t=0
+// state. Deterministic.
+//
+// Also clear paused so the UI's simPaused flag (already set false
+// by controls.js) is mirrored on the worker side.
+running = false;
+paused = false;
+resetState(msg.alt || 0);
+break;
 
     case 'spawnInOrbit': {
       resetState(msg.alt || 400000);
@@ -598,6 +616,39 @@ const maxCtrl = (gfType && gfType.typeConstants &&
 // captureFullState: return a DEEP CLONE of the worker's canonical
 // state, so the main thread can run its own physicsStep + guidance
 // loop without touching the worker.
+
+// Atomic pause + capture. Replaces the old "pauseSim, wait 400ms,
+// then captureFullState" sequence in fastForward.js, which depended
+// on wall-clock timing — the 400ms wait could drain 0, 1, or 2 extra
+// physics steps depending on machine load, making the captured state
+// non-deterministic between FF attempts with identical inputs.
+//
+// This handler pauses FIRST, THEN clones — so the captured state is
+// exactly the last tick before pause, every time. The 400ms wait can
+// be removed from fastForward.js entirely.
+case 'pauseAndCapture': {
+  // Atomic pause + state clone. Replaces fastForward.js's old
+  // "pauseSim, wait 400 ms, then captureFullState" sequence, which
+  // depended on wall-clock timing — machine load could shift the
+  // number of pre-pause physics ticks by ±1, making two identical
+  // FF attempts start from slightly different states.
+  paused = true;
+  console.log('[CAPTURE] t=' + state.simTime.toFixed(6) + ' bodies=' + state.bodies.length + ' body0.rx=' + state.bodies[0].rx.toFixed(6) + ' body0.ry=' + state.bodies[0].ry.toFixed(6));
+  try {
+    const clone = structuredClone({
+      bodies: state.bodies,
+      activeBodyIndex: state.activeBodyIndex,
+      simTime: state.simTime,
+      halted: state.halted,
+    });
+    self.postMessage({ type: 'pausedState', data: clone });
+  } catch (e) {
+    self.postMessage({ type: 'pausedStateError', message: String(e) });
+  }
+  break;
+}
+
+
 case 'captureFullState': {
   try {
     const clone = structuredClone({

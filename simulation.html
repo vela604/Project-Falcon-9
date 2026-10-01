@@ -58,6 +58,11 @@
     <span class="btn-ic">⏹</span>Abort Guidance
   </button>
 </div>
+<div class="tb-sep"></div>
+<div class="tb-group">
+  <button class="btn" id="btnRecordData" title="Start recording per-second telemetry — leave this tab focused while running"><span class="btn-ic">⏺</span>Record</button>
+  <button class="btn" id="btnDownloadData" disabled title="Download recorded telemetry as JSON"><span class="btn-ic">⬇</span>Download</button>
+</div>
         </div>
         <div class="tb-right">
           <div class="tb-group">
@@ -691,7 +696,213 @@
 <script src="js/simJs/view/fastForward.js"></script>
 <script src="js/simJs/main.js"></script>
   
-  
+  <script>
+// ============================================================================
+// Telemetry recorder — per-second capture + JSON download.
+//
+// Captures the ENTIRE sim state every integer sim-second: body positions/
+// velocities/attitudes, engine mass flows + gimbal, fuel per member, guide
+// phase + sub-phase, osculating orbital elements per body, all guide
+// internals (apogee, perigee, coast Δv, circ velocity, etc).
+//
+// Output: one JSON file with { meta, samples }. Feed it to whoever needs
+// to compare runs — field-by-field diff between two JSONs pinpoints
+// exactly where two runs diverge.
+// ============================================================================
+(function () {
+  'use strict';
+
+  let _recording = false;
+  let _recorded = [];
+  let _lastRecordedSec = -1;
+  let _startSimTime = 0;
+  let _startWallMs = 0;
+
+  const $ = (id) => document.getElementById(id);
+  const btnRec = $('btnRecordData');
+  const btnDl = $('btnDownloadData');
+
+  function _captureSnapshot() {
+    const t = state.simTime;
+    const gs = (typeof Guidance !== 'undefined' && Guidance.getGuideStatus)
+      ? (Guidance.getGuideStatus() || {}) : {};
+
+    const bodies = state.bodies.map((b, i) => {
+      const r = Math.hypot(b.rx, b.ry);
+      const ux = r > 0 ? b.rx / r : 0;
+      const uy = r > 0 ? b.ry / r : 0;
+      const ex = uy, ey = -ux;
+      const vr = b.vx * ux + b.vy * uy;
+      const vt = b.vx * ex + b.vy * ey;
+
+      const GM = CONFIG.GM_EARTH;
+      const E = 0.5 * (vr * vr + vt * vt) - GM / r;
+      const h = r * vt;
+      let apo_km = null, peri_km = null;
+      if (E < 0) {
+        const a = -GM / (2 * E);
+        const e = Math.sqrt(Math.max(0, 1 + 2 * E * h * h / (GM * GM)));
+        apo_km = (a * (1 + e) - CONFIG.EARTH_RADIUS) / 1000;
+        peri_km = (a * (1 - e) - CONFIG.EARTH_RADIUS) / 1000;
+      } else if (E > 0) {
+        const p = h * h / GM;
+        const e = Math.sqrt(Math.max(0, 1 + 2 * E * h * h / (GM * GM)));
+        peri_km = (p / (1 + e) - CONFIG.EARTH_RADIUS) / 1000;
+      }
+
+      return {
+        i, id: b.id,
+        role: b.isActive ? 'active'
+          : b.payloadBody ? 'payload'
+          : b.fairingHalf ? 'fairing'
+          : b.isDiscarded ? 'discarded' : 'free',
+        rx: b.rx, ry: b.ry, vx: b.vx, vy: b.vy,
+        theta: b.theta, omega: b.omega,
+        alt_km: (r - CONFIG.EARTH_RADIUS) / 1000,
+        vr, vt,
+        apo_km, peri_km,
+        fuelMass: b.fuelMass,
+        memberFuel: Array.isArray(b.memberFuel) ? b.memberFuel.slice() : null,
+        crashed: !!b.crashed,
+        landed: !!b.landed,
+        payloadReleased: !!b.payloadReleased,
+        legs: b.legs ? { deployed: !!b.legs.deployed, progress: b.legs.progress || 0 } : null,
+        engines: (b.engines || []).map(e => ({
+          id: e.id, gimbal: !!e.gimbal, isCenter: !!e.isCenter,
+          massFlowRate: e.massFlowRate,
+          gimbalDeg: e.gimbalDeg,
+          currentF: e.currentF,
+        })),
+      };
+    });
+
+    return {
+      t,
+      activeBodyIndex: state.activeBodyIndex,
+      guide: {
+        phase: gs.phase || null,
+        ascentPhase: gs.ascentPhase || null,
+        mecoTriggered: !!gs.mecoTriggered,
+        splitDetected: !!gs.splitDetected,
+        fairingOpened: !!gs.fairingOpened,
+        stageBurnLocked: !!gs.stageBurnLocked,
+        stageBurnTargetTiltDeg: gs.stageBurnTargetTiltDeg,
+        apogeeKm: gs.apogeeKm,
+        perigeeKm: gs.perigeeKm,
+        coastDeltaV: gs.coastDeltaV,
+        coastTRem: gs.coastTRem,
+        coastVOrbital: gs.coastVOrbital,
+        circCurrentV: gs.circCurrentV,
+        circTargetV: gs.circTargetV,
+        circAchieved: !!gs.circAchieved,
+        coastTargetThetaDeg: gs.coastTargetThetaDeg,
+        coast2TargetThetaDeg: gs.coast2TargetThetaDeg,
+      },
+      bodies,
+    };
+  }
+
+  function _tick() {
+    if (!_recording) return;
+    const sec = Math.floor(state.simTime);
+    if (sec !== _lastRecordedSec) {
+      _lastRecordedSec = sec;
+      try {
+        _recorded.push(_captureSnapshot());
+        if (btnRec) btnRec.innerHTML = '<span class="btn-ic">⏺</span>' + _recorded.length + 's';
+      } catch (e) {
+        console.error('[record] snapshot failed at t=' + state.simTime.toFixed(2), e);
+      }
+    }
+    requestAnimationFrame(_tick);
+  }
+
+  function _startRecording() {
+    _recorded = [];
+    _lastRecordedSec = -1;
+    _startSimTime = state.simTime;
+    _startWallMs = performance.now();
+    _recording = true;
+    if (btnRec) {
+      btnRec.innerHTML = '<span class="btn-ic">⏺</span>0s';
+      btnRec.style.borderColor = 'var(--danger)';
+      btnRec.style.color = 'var(--danger)';
+    }
+    if (btnDl) btnDl.disabled = true;
+    requestAnimationFrame(_tick);
+    console.log('[record] started at simTime=' + _startSimTime.toFixed(3));
+  }
+
+  function _stopRecording() {
+    _recording = false;
+    if (btnRec) {
+      btnRec.innerHTML = '<span class="btn-ic">⏺</span>Record';
+      btnRec.style.borderColor = '';
+      btnRec.style.color = '';
+    }
+    if (btnDl) btnDl.disabled = _recorded.length === 0;
+    console.log('[record] stopped. ' + _recorded.length + ' samples captured.');
+  }
+
+  function _download() {
+    if (!_recorded.length) return;
+    const stack = (typeof getActiveStack === 'function') ? getActiveStack() : null;
+    const activeGuide = (typeof Guidance !== 'undefined' && Guidance.getActiveGuide)
+      ? Guidance.getActiveGuide() : null;
+
+    const payload = {
+      meta: {
+        exportedAt: new Date().toISOString(),
+        stackId: stack ? stack.id : null,
+        stackName: stack ? stack.name : null,
+        stackMembers: (typeof getActiveStackMembers === 'function')
+          ? getActiveStackMembers().map(m => ({
+              id: m.id, name: m.name, role: m.stageRole,
+            }))
+          : [],
+        guide: activeGuide,
+        startSimTime: _startSimTime,
+        endSimTime: state.simTime,
+        startWallMs: _startWallMs,
+        endWallMs: performance.now(),
+        samplesCount: _recorded.length,
+        env: {
+          windEnabled: (typeof wind !== 'undefined') ? !!wind.enabled : null,
+          windSpeed: (typeof wind !== 'undefined') ? wind.speed : null,
+          windDir: (typeof wind !== 'undefined') ? wind.directionDeg : null,
+          atmosphereEnabled: (typeof atmosphereEnabled !== 'undefined') ? atmosphereEnabled : null,
+          sloshEnabled: (typeof CONFIG !== 'undefined') ? CONFIG.SLOSH_ENABLED : null,
+          imuEnabled: (typeof imuEnabled !== 'undefined') ? imuEnabled : null,
+        },
+      },
+      samples: _recorded,
+    };
+
+    const json = JSON.stringify(payload);
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const ts = new Date().toISOString().replace(/[:.]/g, '-');
+    a.href = url;
+    a.download = 'rocket-sim-telemetry-' + ts + '.json';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    console.log('[record] downloaded ' + _recorded.length + ' samples.');
+  }
+
+  function _toggle() {
+    if (_recording) _stopRecording();
+    else _startRecording();
+  }
+
+  if (btnRec) btnRec.addEventListener('click', _toggle);
+  if (btnDl) btnDl.addEventListener('click', _download);
+
+  console.log('[record] ready.');
+})();
+</script>
 </body>
 
 </html>
