@@ -835,8 +835,11 @@ const guideActive = !!gs.active;
       _lastSec = sec;
       try {
         const b = state.bodies[state.activeBodyIndex];
-const gs = window.__lastGuideStatus || {};
-const guideActiveNow = !!gs.active;
+        let gs = {};
+        if (typeof Guidance !== 'undefined' && Guidance.getGuideStatus) {
+          try { gs = Guidance.getGuideStatus() || {}; } catch (e) {}
+        }
+        const guideActiveNow = !!gs.active || !!(Guidance.getActiveGuide && Guidance.getActiveGuide());
 
         // Event log
         if (guideActiveNow !== _guideWasActive) {
@@ -916,7 +919,12 @@ const guideActiveNow = !!gs.active;
         endSimTime: state.simTime,
         wallMs: performance.now() - _startWallMs,
         samples: _rows.length - 1,
-        env: {
+  guideDebug: {
+    cacheType: typeof window.__lastGuideStatus,
+    cacheActive: window.__lastGuideStatus ? window.__lastGuideStatus.active : undefined,
+    cachePhase: window.__lastGuideStatus ? window.__lastGuideStatus.phase : undefined,
+  },
+  env: {
           w: (typeof wind !== 'undefined' && wind.enabled)
             ? (wind.speed + 'm/s@' + wind.directionDeg + 'deg') : 'off',
           atm: (typeof atmosphereEnabled !== 'undefined') ? atmosphereEnabled : null,

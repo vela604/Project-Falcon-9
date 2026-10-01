@@ -369,8 +369,13 @@ const GuidanceBridge = {
           FastForward.onGuidanceState(msg.data);
         }
       } else if (msg.type === 'guideStatus') {
-        if (typeof onGuidanceStatus === 'function') onGuidanceStatus(msg.status);
-      } else if (msg.type === 'guideConfigResponse') {
+  // Global cache — recorder and any other main-thread script can
+  // read the last-known guide status without re-plumbing
+  // workerBridge callbacks. Without this, the numerical side would
+  // need to duplicate the entire worker-message flow.
+  window.__lastGuideStatus = msg.status;
+  if (typeof onGuidanceStatus === 'function') onGuidanceStatus(msg.status);
+} else if (msg.type === 'guideConfigResponse') {
         _resolveGuideConfigRequest(msg.reqId, {
           ok: !!msg.ok,
           values: msg.values || null,
