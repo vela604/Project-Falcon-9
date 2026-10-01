@@ -698,36 +698,28 @@
   
 <script>
 // ============================================================================
-// Telemetry recorder — compact per-second table.
+// Telemetry recorder — reads guide status from the ACTUAL source.
 //
-// Every sim-second, one compact row. Format: 2D array, first row is column
-// names. For a 700s run, ~40-55 KB total.
+// The guide runs in guidance.worker.js, NOT on the main thread. Main-thread
+// `Guidance.getGuideStatus()` always returns {active: null}, which is why
+// earlier recordings showed ph: "?" and guide: null.
 //
-// Apogee/perigee/altitude are computed LOCALLY from the active body's
-// inertial state — NOT read from guide status — so they're always
-// populated regardless of guide state. Guide columns (ph, ap, dv, tr, cv,
-// tv, bk) are null when the guide is not running.
-//
-// Columns:
-//   t    sim time (s, integer)
-//   ph   guide phase (2 char) or "?" if no guide running
-//   ap   ascent sub-phase (2 char)
-//   n    body count
-//   ai   active body index
-//   a    active alt (km, 2 dec)
-//   vr   radial velocity (m/s, 1 dec)
-//   vt   tangential velocity (m/s, 1 dec)
-//   ha   osculating apogee (km, 2 dec) — always populated
-//   hp   osculating perigee (km, 2 dec) — always populated
-//   dv   guide coast Δv (m/s, 2 dec, only in COAST_ROTATE)
-//   tr   guide coast t_rem (s, 1 dec, only in COAST_ROTATE)
-//   cv   guide circ current v (m/s, only in CIRCULARIZE)
-//   tv   guide circ target v (m/s, only in CIRCULARIZE)
-//   fl   active fuel (t, 2 dec)
-//   bk   stage-burn lock tilt (deg, only after lock)
+// The right toolbar already displays the real status (RUNNING etc.), which
+// means the callback `onGuidanceStatus` fires on every worker push. We wrap
+// it here so the recorder sees the same status object.
 // ============================================================================
 (function () {
   'use strict';
+
+  // ---- Wrap onGuidanceStatus (must be FIRST, before any guide runs) ----
+  if (typeof window.onGuidanceStatus === 'function' && !window.__onGuidanceStatusWrapped) {
+    const _orig = window.onGuidanceStatus;
+    window.onGuidanceStatus = function (status) {
+      window.__lastGuideStatus = status;
+      return _orig.apply(this, arguments);
+    };
+    window.__onGuidanceStatusWrapped = true;
+  }
 
   const PHASE_CODES = {
     'ASCENT': 'AS', 'MECO_SPOOL': 'MC', 'SEPARATED_AXIAL': 'SP',
@@ -755,7 +747,7 @@
   let _prevPhase = null;
   let _prevAscent = null;
   let _prevBodyCount = -1;
-  let _guideWasActive = null; // track guide-start/stop transitions
+  let _guideWasActive = null;
 
   const $ = (id) => document.getElementById(id);
   const btnRec = $('btnRecordData');
@@ -764,8 +756,6 @@
   const r2 = (v) => Number.isFinite(v) ? Math.round(v * 100) / 100 : null;
   const r1 = (v) => Number.isFinite(v) ? Math.round(v * 10) / 10 : null;
 
-  // Compute osculating elements from a body's own inertial state.
-  // Always works — no guide dependency.
   function _elems(b) {
     const r = Math.hypot(b.rx, b.ry);
     if (!(r > 0)) return { vr: null, vt: null, ha: null, hp: null };
@@ -793,21 +783,12 @@
   function _row() {
     const b = state.bodies[state.activeBodyIndex];
     if (!b) return null;
-
-    // Real sim: guide runs in guidance.worker.js, not on main thread.
-// Main-thread `Guidance.getGuideStatus()` always returns {active:null}
-// because no guide is active on THIS thread. The worker's status
-// arrives via onGuidanceStatus (workerBridge → controls.js), which
-// now caches it on window.__lastGuideStatus. Read that.
-const gs = window.__lastGuideStatus || {};
-const guideActive = !!gs.active;
-
+    const gs = window.__lastGuideStatus || {};
     const o = _elems(b);
     const alt_km = (Math.hypot(b.rx, b.ry) - CONFIG.EARTH_RADIUS) / 1000;
     const phCode = gs.phase
       ? (PHASE_CODES[gs.phase] || gs.phase.slice(0, 3))
       : '?';
-
     return [
       Math.floor(state.simTime),
       phCode,
@@ -834,14 +815,8 @@ const guideActive = !!gs.active;
     if (sec !== _lastSec) {
       _lastSec = sec;
       try {
-        const b = state.bodies[state.activeBodyIndex];
-        let gs = {};
-        if (typeof Guidance !== 'undefined' && Guidance.getGuideStatus) {
-          try { gs = Guidance.getGuideStatus() || {}; } catch (e) {}
-        }
-        const guideActiveNow = !!gs.active || !!(Guidance.getActiveGuide && Guidance.getActiveGuide());
-
-        // Event log
+        const gs = window.__lastGuideStatus || {};
+        const guideActiveNow = !!gs.active;
         if (guideActiveNow !== _guideWasActive) {
           _events.push({ t: state.simTime, e: 'guide', v: guideActiveNow ? 'start' : 'stop' });
           _guideWasActive = guideActiveNow;
@@ -858,7 +833,6 @@ const guideActive = !!gs.active;
           _events.push({ t: state.simTime, e: 'bodies', v: state.bodies.length });
           _prevBodyCount = state.bodies.length;
         }
-
         const row = _row();
         if (row) _rows.push(row);
         if (btnRec) btnRec.innerHTML = '<span class="btn-ic">⏺</span>' + _rows.length + 's';
@@ -886,8 +860,6 @@ const guideActive = !!gs.active;
       btnRec.style.color = 'var(--danger)';
     }
     if (btnDl) btnDl.disabled = true;
-    // Snapshot immediately at t=0 to make sure the first sample is captured
-    // even if the guide starts in the same tick.
     const r0 = _row();
     if (r0) _rows.push(r0);
     _lastSec = Math.floor(state.simTime);
@@ -907,24 +879,22 @@ const guideActive = !!gs.active;
   function _download() {
     if (_rows.length <= 1) return;
     const stack = (typeof getActiveStack === 'function') ? getActiveStack() : null;
-    const activeGuide = (typeof Guidance !== 'undefined' && Guidance.getActiveGuide)
-      ? Guidance.getActiveGuide() : null;
-
     const payload = {
       meta: {
         exportedAt: new Date().toISOString(),
         stack: stack ? stack.name : null,
-        guide: activeGuide,
+        guide: window.__lastGuideStatus ? window.__lastGuideStatus.active : null,
         startSimTime: _startSimTime,
         endSimTime: state.simTime,
         wallMs: performance.now() - _startWallMs,
         samples: _rows.length - 1,
-  guideDebug: {
-    cacheType: typeof window.__lastGuideStatus,
-    cacheActive: window.__lastGuideStatus ? window.__lastGuideStatus.active : undefined,
-    cachePhase: window.__lastGuideStatus ? window.__lastGuideStatus.phase : undefined,
-  },
-  env: {
+        guideDebug: {
+          wrapped: !!window.__onGuidanceStatusWrapped,
+          cacheType: typeof window.__lastGuideStatus,
+          cacheActive: window.__lastGuideStatus ? window.__lastGuideStatus.active : undefined,
+          cachePhase: window.__lastGuideStatus ? window.__lastGuideStatus.phase : undefined,
+        },
+        env: {
           w: (typeof wind !== 'undefined' && wind.enabled)
             ? (wind.speed + 'm/s@' + wind.directionDeg + 'deg') : 'off',
           atm: (typeof atmosphereEnabled !== 'undefined') ? atmosphereEnabled : null,
@@ -936,7 +906,6 @@ const guideActive = !!gs.active;
       events: _events,
       data: _rows.slice(1),
     };
-
     const json = JSON.stringify(payload);
     const blob = new Blob([json], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -948,7 +917,6 @@ const guideActive = !!gs.active;
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-    console.log('[record] downloaded. size=' + Math.round(json.length / 1024) + 'KB, samples=' + (_rows.length - 1));
   }
 
   if (btnRec) btnRec.addEventListener('click', () => {
