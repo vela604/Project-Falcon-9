@@ -1,0 +1,1489 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Guidance Numerical — Rocket Sim</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #060912; --panel: #0d1424; --panel-2: #101a30; --border: #1c2b45;
+  --cyan: #35d6ff; --orange: #ff9248; --green: #4ade80; --yellow: #ffd23f;
+  --danger: #ff5f7e; --purple: #a78bfa;
+  --text: #dbe6f5; --dim: #6b7d9c;
+  --font-head: 'Space Grotesk', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Consolas', monospace;
+}
+* { box-sizing: border-box; }
+html, body {
+  margin: 0; padding: 0; min-height: 100%;
+  background: var(--bg); color: var(--text);
+  font-family: var(--font-head); font-size: 13px;
+}
+#app { display: flex; flex-direction: column; min-height: 100vh; }
+
+/* ---- Top bar ---- */
+#topBar {
+  display: flex; align-items: baseline; gap: 14px; padding: 12px 24px;
+  background: linear-gradient(180deg, #101a30, #0b1220);
+  border-bottom: 1px solid var(--border);
+  font-family: var(--font-mono); font-size: 13px;
+}
+.brand { color: var(--cyan); font-weight: 700; letter-spacing: 0.5px; text-decoration: none; }
+.brand-sub { color: var(--dim); }
+.spacer { flex: 1; }
+.stack-label { color: var(--orange); font-size: 12px; }
+a.back { color: var(--dim); text-decoration: none; font-size: 12px; }
+a.back:hover { color: var(--cyan); }
+
+/* ---- Controls ---- */
+#controls, #envPanel, #presetPanel {
+  display: flex; align-items: center; gap: 12px; padding: 10px 24px;
+  background: var(--panel); border-bottom: 1px solid var(--border); flex-wrap: wrap;
+}
+#envPanel { background: #0a1020; gap: 24px; align-items: flex-start; }
+#controls label, #presetPanel label { color: var(--dim); font-family: var(--font-mono); font-size: 11.5px; }
+#controls select, #controls input[type=number],
+#presetPanel select {
+  background: var(--panel-2); border: 1px solid var(--border); color: var(--text);
+  padding: 6px 9px; border-radius: 6px;
+  font-family: var(--font-mono); font-size: 12px;
+}
+.btn {
+  background: var(--panel-2); border: 1px solid var(--border); color: var(--text);
+  padding: 7px 14px; border-radius: 7px; cursor: pointer;
+  font-family: var(--font-head); font-size: 12px;
+}
+.btn:hover { border-color: var(--cyan); color: var(--cyan); }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn-run { border-color: var(--green); color: var(--green); }
+.btn-run:hover { background: rgba(74,222,128,0.1); }
+.btn-stop { border-color: var(--danger); color: var(--danger); }
+.btn-stop:hover { background: rgba(255,95,126,0.1); }
+
+.env-group { display: flex; flex-direction: column; gap: 3px; }
+.env-title {
+  color: var(--cyan); font-family: var(--font-mono); font-size: 10px;
+  letter-spacing: 1px; text-transform: uppercase; margin-bottom: 3px;
+}
+.env-group label {
+  display: flex; align-items: center; gap: 6px;
+  font-family: var(--font-mono); font-size: 11.5px; color: var(--dim);
+}
+.env-group input[type=number] {
+  width: 60px; background: var(--panel-2); border: 1px solid var(--border);
+  color: var(--text); padding: 3px 6px; border-radius: 4px;
+  font-family: var(--font-mono); font-size: 11.5px;
+}
+.env-group input[type=checkbox] { accent-color: var(--cyan); }
+
+#presetStatus { color: var(--dim); font-family: var(--font-mono); font-size: 11px; margin-left: auto; }
+
+/* ---- Constants panel ---- */
+#constantsPanel {
+  background: #0a1020; border-bottom: 1px solid var(--border);
+  padding: 12px 24px 16px;
+  max-height: 46vh; overflow-y: auto;
+}
+.constants-title {
+  display: flex; align-items: baseline; justify-content: space-between;
+  color: var(--cyan); font-family: var(--font-mono); font-size: 11px;
+  letter-spacing: 1px; text-transform: uppercase; margin-bottom: 8px;
+}
+#constantsHint { color: var(--dim); font-size: 10.5px; letter-spacing: 0; text-transform: none; }
+
+.sec { margin-bottom: 10px; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: #0d1424; }
+.sec.is-important { border-color: rgba(53,214,255,0.35); background: rgba(53,214,255,0.04); }
+.sec-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 14px; cursor: pointer; user-select: none;
+  font-family: var(--font-mono); font-size: 11px; font-weight: 700;
+  letter-spacing: 0.8px; text-transform: uppercase; color: var(--cyan);
+  background: rgba(53,214,255,0.05);
+}
+.sec.is-important .sec-head { background: rgba(53,214,255,0.10); }
+.sec-head.no-toggle { cursor: default; }
+.sec-head .chev { transition: transform 0.15s; }
+.sec[data-collapsed="1"] .chev { transform: rotate(-90deg); }
+.sec[data-collapsed="1"] .sec-body { display: none; }
+.sec-body {
+  padding: 10px 14px 12px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 8px 18px;
+}
+.field-row { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.field-row label {
+  font-family: var(--font-mono); font-size: 10.5px; color: var(--dim);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.field-row input {
+  background: var(--bg); border: 1px solid var(--border); color: var(--text);
+  padding: 6px 9px; border-radius: 5px;
+  font-family: var(--font-mono); font-size: 12px; width: 100%;
+}
+.field-row input:focus { outline: none; border-color: var(--cyan); }
+.field-row input.changed { border-color: var(--orange); }
+
+/* ---- Main ---- */
+#main {
+  flex: 1; display: flex; flex-direction: column; gap: 14px;
+  padding: 14px 24px 24px; min-height: 0;
+}
+.card {
+  background: #0a1020; border: 1px solid var(--border);
+  border-radius: 8px; padding: 12px 16px;
+}
+.card-title {
+  color: var(--cyan); font-family: var(--font-mono); font-size: 11px;
+  letter-spacing: 1px; text-transform: uppercase;
+  margin-bottom: 8px;
+  display: flex; align-items: center; justify-content: space-between;
+}
+.run-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 8px 20px;
+  font-family: var(--font-mono); font-size: 12px;
+}
+.run-summary .k { color: var(--dim); }
+.run-summary .v { color: var(--text); }
+
+#filterRow { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+.filter-chip {
+  padding: 4px 10px; border-radius: 999px;
+  background: var(--panel-2); border: 1px solid var(--border); color: var(--dim);
+  cursor: pointer; font-family: var(--font-mono); font-size: 11px;
+}
+.filter-chip.active { color: var(--cyan); border-color: var(--cyan); background: rgba(53,214,255,0.1); }
+
+#capturesList { max-height: 60vh; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
+.capture {
+  border: 1px solid var(--border); border-radius: 6px;
+  padding: 8px 12px; background: #0d1424;
+  font-family: var(--font-mono); font-size: 11.5px;
+}
+.capture.type-phase  { border-left: 3px solid var(--cyan); }
+.capture.type-orbit  { border-left: 3px solid var(--green); }
+.capture.type-abort  { border-left: 3px solid var(--danger); }
+.capture.type-event  { border-left: 3px solid var(--yellow); }
+.capture.type-peak   { border-left: 3px solid var(--orange); }
+.capture.type-end    { border-left: 3px solid var(--purple); }
+.capture .head { display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; }
+.capture .time { color: var(--cyan); font-weight: 700; min-width: 78px; }
+.capture .label { color: var(--text); font-weight: 600; }
+.capture .body {
+  margin-top: 6px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 2px 18px; color: #c6d2e6;
+}
+.capture .body .k { color: var(--dim); }
+.capture .body .hi { color: var(--orange); }
+.capture .body .warn { color: var(--danger); }
+
+#compareBox { display: none; }
+#compareBox.show { display: block; }
+.compare-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 4px 20px; font-family: var(--font-mono); font-size: 12px;
+}
+.compare-row { display: flex; gap: 8px; }
+.compare-row .k { color: var(--dim); min-width: 150px; }
+.compare-row .a { color: #b8c7e0; }
+.compare-row .arrow { color: var(--dim); }
+.compare-row .b { color: var(--cyan); font-weight: 600; }
+.compare-row .b.bad { color: var(--danger); }
+.compare-row .b.good { color: var(--green); }
+
+#status {
+  color: var(--dim); font-family: var(--font-mono); font-size: 11.5px;
+  padding: 8px 24px;
+  background: var(--panel); border-top: 1px solid var(--border);
+  white-space: pre-wrap;
+}
+</style>
+</head>
+<body>
+<div id="app">
+
+  <div id="topBar">
+    <span class="brand">⚡ GUIDANCE NUMERICAL</span>
+    <span class="brand-sub">headless-parity · fast calibration</span>
+    <div class="spacer"></div>
+    <span class="stack-label" id="stackLabel">—</span>
+    <a class="back" href="index.html">← Home</a>
+  </div>
+
+  <div id="controls">
+    <label for="guideSelect">Guide:</label>
+    <select id="guideSelect"></select>
+    <label for="durationInput">Duration (s):</label>
+    <input id="durationInput" type="number" value="1500" min="10" max="7200" step="10" style="width:90px;">
+    <button class="btn btn-run" id="startBtn">▶ Run</button>
+    <button class="btn btn-stop" id="stopBtn" disabled>■ Stop</button>
+    <button class="btn" id="resetDefaultsBtn" title="Restore all constants to code defaults">↺ Reset to defaults</button>
+  </div>
+
+  <div id="envPanel">
+    <div class="env-group">
+      <div class="env-title">Wind</div>
+      <label><input type="checkbox" id="envWindEnabled"> Enabled</label>
+      <label>Speed <input type="number" id="envWindSpeed" value="0" step="1" min="0" max="60"> m/s</label>
+      <label>Dir <input type="number" id="envWindDir" value="0" step="5" min="0" max="360"> °</label>
+    </div>
+    <div class="env-group">
+      <div class="env-title">Fueling</div>
+      <label>Booster <input type="number" id="envBoosterFuel" value="100" step="5" min="0" max="100"> %</label>
+      <label>Stage <input type="number" id="envStageFuel" value="100" step="5" min="0" max="100"> %</label>
+    </div>
+    <div class="env-group">
+      <div class="env-title">Physics</div>
+      <label><input type="checkbox" id="envAtmosphere" checked> Atmosphere</label>
+      <label><input type="checkbox" id="envSlosh" checked> Fuel slosh</label>
+    </div>
+    <div class="env-group">
+      <div class="env-title">Guidance</div>
+      <label><input type="checkbox" id="envImu"> IMU noise</label>
+    </div>
+  </div>
+
+  <div id="presetPanel">
+    <label for="presetSelect">Preset:</label>
+    <select id="presetSelect" style="min-width:240px;"><option value="">— select a preset —</option></select>
+    <button class="btn" id="presetLoadBtn">Load</button>
+    <button class="btn" id="presetSaveBtn">Save as…</button>
+    <button class="btn" id="presetDeleteBtn">Delete</button>
+    <button class="btn" id="presetExportBtn">Export JSON</button>
+    <button class="btn" id="presetImportBtn">Import JSON</button>
+    <span id="presetStatus"></span>
+  </div>
+
+  <div id="constantsPanel">
+    <div class="constants-title">
+      <span>Constants</span>
+      <span id="constantsHint">Values apply on next Run.</span>
+    </div>
+    <div id="constantsHost"></div>
+  </div>
+
+  <div id="main">
+    <div class="card" id="summaryCard">
+      <div class="card-title">Run summary</div>
+      <div id="summaryBody" class="run-summary"><span class="k">No run yet.</span></div>
+    </div>
+    <div class="card" id="compareBox">
+      <div class="card-title">Compare with previous run</div>
+      <div id="compareBody" class="compare-grid"></div>
+    </div>
+    <div class="card" style="flex: 1; min-height: 0;">
+      <div class="card-title">
+        <span>Event captures</span>
+        <span id="captureCount" style="color: var(--dim);">0</span>
+      </div>
+      <div id="filterRow">
+        <span class="filter-chip active" data-type="all">all</span>
+        <span class="filter-chip" data-type="phase">phase</span>
+        <span class="filter-chip" data-type="orbit">orbit</span>
+        <span class="filter-chip" data-type="abort">abort</span>
+        <span class="filter-chip" data-type="event">event</span>
+        <span class="filter-chip" data-type="peak">peak</span>
+        <span class="filter-chip" data-type="end">end</span>
+      </div>
+      <div id="capturesList"></div>
+    </div>
+  </div>
+
+  <div id="status">Ready.</div>
+</div>
+
+<!-- ============================================================================
+     Sim script load order — MUST match headless/runner.js SIM_FILES exactly.
+     Anything that touches physics state or guidance state must be here, in
+     this order. Any missing file WILL break the sim (undefined globals).
+
+     Do NOT add render.js / rocketArt.js / telemetry.js — this page has no
+     canvas and no rendering.
+     ============================================================================ -->
+<script src="js/componentLibrary.js"></script>
+<script src="js/customDesign.js"></script>
+<script src="js/fleet.js"></script>
+<script src="js/config.js"></script>
+<script src="js/simJs/core/massProps.js"></script>
+<script src="js/simJs/core/environment.js"></script>
+<script src="js/simJs/core/vehicle.js"></script>
+<script src="js/simJs/core/rcs.js"></script>
+<script src="js/simJs/core/physics.js"></script>
+<script src="js/simJs/core/collision.js"></script>
+<script src="js/simJs/guidance/imu.js"></script>
+<script src="js/simJs/guidance/derivation.js"></script>
+<script src="js/simJs/guidance/guidercs.js"></script>
+<script src="js/simJs/guidance/guidance.js"></script>
+
+<!-- UI support (defaults for reset, preset CRUD, tooltip descriptions) -->
+<script src="js/guideConfigDefaults.js"></script>
+<script src="js/guidancePresets.js"></script>
+<script src="js/guideConstantDescriptions.js"></script>
+
+<script>
+(function () {
+  'use strict';
+
+  // ============================================================================
+  // Library cache — same pattern every other page uses. Without this, every
+  // getComponentType() call rebuilds the registry from seed + localStorage.
+  // physicsStep + Derivation together make ~30-80 such calls per tick.
+  // ============================================================================
+  (function patchLibraryCache() {
+    var _cache = null;
+    var _origLoadCL = loadComponentLibrary;
+    loadComponentLibrary = function () {
+      if (_cache) return _cache;
+      _cache = _origLoadCL();
+      return _cache;
+    };
+    if (typeof saveCustomComponentTypes === 'function') {
+      var _origSave = saveCustomComponentTypes;
+      saveCustomComponentTypes = function (types) {
+        _origSave(types); _cache = null;
+      };
+    }
+  })();
+
+  // ============================================================================
+  // UI element refs
+  // ============================================================================
+  const $ = (id) => document.getElementById(id);
+  const sel       = $('guideSelect');
+  const durInput  = $('durationInput');
+  const startBtn  = $('startBtn');
+  const stopBtn   = $('stopBtn');
+  const resetDefBtn = $('resetDefaultsBtn');
+  const constantsHost = $('constantsHost');
+  const summaryBody   = $('summaryBody');
+  const compareBox    = $('compareBox');
+  const compareBody   = $('compareBody');
+  const captureList   = $('capturesList');
+  const captureCnt    = $('captureCount');
+  const statusEl      = $('status');
+  const presetSel     = $('presetSelect');
+  const presetStat    = $('presetStatus');
+  const stackLabel    = $('stackLabel');
+
+  // ============================================================================
+  // Guide selection + config state
+  // ============================================================================
+  let currentGuide = '';
+  let currentValues = null;   // nested user-editable state
+  let defaultValues = null;   // code defaults, for Reset + "changed" indicator
+
+  // ============================================================================
+  // ============================================================================
+  // SIMULATION RUNTIME
+  // ============================================================================
+  // Modeled after headless/runner.js — same script scope, same init order,
+  // same tick order, same snapshot contract. THIS IS THE KEY INVARIANT:
+  //
+  //     loop:
+  //       Guidance.onSnapshot(snap@T)
+  //       physicsStep(dt)  // applies commands from that snapshot
+  //
+  // NOT the other way around. guidance_fast.html did physicsStep first, then
+  // onSnapshot — a 1-tick shift that systematically diverges results from the
+  // real physics.worker.js + guidance.worker.js pipeline. Do not "fix" this
+  // order.
+  // ============================================================================
+  // ============================================================================
+
+  // Snapshot builder. Matches runner.js's buildSnapshot() shape exactly —
+  // every field guidance reads from the snapshot must be here. Real sim
+  // (workerBridge.js) sends a structured clone; we send the live body
+  // references directly. Derivation reads-only, imu.js clones only when
+  // IMU is enabled — neither mutates state.bodies, so sharing the array
+  // is safe and 50× cheaper.
+  function buildSnapshot() {
+    // Physics writes _lastAccelX/_lastAccelY; guidance's snapshot field is
+    // `ax`/`ay`. Cheap loop — one assignment per body.
+    const bodies = state.bodies;
+    for (let i = 0; i < bodies.length; i++) {
+      const b = bodies[i];
+      b.ax = b._lastAccelX || 0;
+      b.ay = b._lastAccelY || 0;
+    }
+    return {
+      simTime: state.simTime,
+      activeBodyIndex: state.activeBodyIndex,
+      halted: !!state.halted,
+      wind: (typeof wind !== 'undefined') ? {
+        enabled: !!wind.enabled,
+        speed: wind.speed || 0,
+        directionDeg: wind.directionDeg || 0,
+      } : { enabled: false, speed: 0, directionDeg: 0 },
+      bodies: bodies,
+    };
+  }
+
+  // Local dispatch — same as runner.js's localDispatch(), same contract as
+  // physics.worker.js's dispatchCommand(). Guidance's `send()` calls land
+  // here, immediately mutating state. Commands take effect on the NEXT
+  // physicsStep.
+  function clampFlow(en, cmd) {
+    if (!(cmd > 0)) return 0;
+    return Math.max(Math.min(cmd, en.maxMassFlowRate || 0), en.minMassFlowRate || 0);
+  }
+  function localDispatch(msg) {
+    let b;
+    if (Number.isInteger(msg.targetBodyIdx) && msg.targetBodyIdx >= 0 &&
+        msg.targetBodyIdx < state.bodies.length) {
+      b = state.bodies[msg.targetBodyIdx];
+    } else {
+      b = state.bodies[state.activeBodyIndex];
+    }
+    if (!b) return;
+    switch (msg.type) {
+      case 'setGimbalRate': {
+        if (!b.engines) break;
+        const lim = CONFIG.GIMBAL_RATE_DEG_S;
+        const rate = Math.max(-lim, Math.min(lim, msg.degPerSec));
+        const onlyCenter = (msg.target === 'center');
+        b.engines.filter(en => en.gimbal && (!onlyCenter || en.isCenter))
+          .forEach(en => { en.targetGimbalRateDegS = rate; });
+        break;
+      }
+      case 'setGimbal': {
+        if (!b.engines) break;
+        const lim = CONFIG.GIMBAL_MAX_DEG;
+        const d = Math.max(-lim, Math.min(lim, msg.deg));
+        b.engines.filter(en => en.gimbal).forEach(en => {
+          en.targetGimbalDeg = d; en.targetGimbalRateDegS = NaN;
+        });
+        break;
+      }
+      case 'setAllThrottle': {
+        if (!b.engines) break;
+        b.engines.forEach(en => { en.targetMassFlowRate = clampFlow(en, msg.value); });
+        break;
+      }
+      case 'setCenterThrottle': {
+        if (!b.engines) break;
+        b.engines.filter(en => en.isCenter).forEach(en => {
+          en.targetMassFlowRate = clampFlow(en, msg.value);
+        });
+        break;
+      }
+      case 'setGroupThrottle': {
+        if (!b.engines) break;
+        (msg.angles || []).forEach(a => {
+          const en = b.engines.find(e => e.angleDeg === a);
+          if (en) en.targetMassFlowRate = clampFlow(en, msg.value);
+        });
+        break;
+      }
+      case 'rcs': {
+        if (!b.rcsCmd) b.rcsCmd = {};
+        b.rcsCmd[msg.key] = !!msg.on;
+        b.rcsDuty = null;
+        break;
+      }
+      case 'rcsDuty': {
+        if (msg.duties == null) b.rcsDuty = null;
+        else b.rcsDuty = msg.duties;
+        break;
+      }
+      case 'legs': {
+        if (!b.legs) b.legs = { deployed: false, progress: 0 };
+        b.legs.deployed = !!msg.deployed;
+        break;
+      }
+      case 'gridFinsDeploy': {
+        if (!b || !b.gridFins) break;
+        const gfType = (typeof bodyGridFinType === 'function') ? bodyGridFinType(b) : null;
+        const maxDeploy = (gfType && gfType.typeConstants &&
+            Number.isFinite(gfType.typeConstants.maxDeployDeg)) ?
+          gfType.typeConstants.maxDeployDeg : 90;
+        ['L', 'R', 'FB'].forEach(k => {
+          const f = b.gridFins[k];
+          if (!f) return;
+          if (msg.deployed) f.targetDeploy = 0;
+          else f.targetDeploy = (k === 'R') ? -maxDeploy : maxDeploy;
+        });
+        break;
+      }
+      case 'gridFinsControl': {
+        if (!b || !b.gridFins) break;
+        const f = b.gridFins.FB;
+        if (f && Number.isFinite(msg.controlDeg)) {
+          f.targetControl = Math.max(-90, Math.min(90, msg.controlDeg));
+        }
+        break;
+      }
+      case 'separate':   { if (typeof requestSeparate === 'function') requestSeparate(b); break; }
+      case 'splitFairing': { if (typeof splitFairingOnActiveBody === 'function') splitFairingOnActiveBody(b); break; }
+      case 'releasePayload': { if (typeof requestReleasePayload === 'function') requestReleasePayload(msg, b); break; }
+      case 'emergencyEject': { if (typeof emergencyEjectPayload === 'function') emergencyEjectPayload(b); break; }
+      case 'takeControl': { if (typeof takeControlOfBody === 'function') takeControlOfBody(msg.idx); break; }
+      case 'markIntentionalImpact': { if (b) b.intentionalImpact = true; break; }
+      default: break;
+    }
+  }
+
+
+// ============================================================================
+// Stack data handoff — MUST run before any guide starts.
+//
+// This is the same shape guidance_fast.html / guidance_tester.html /
+// workerBridge.js's _collectStackDataForGuidance() send to Derivation.
+// Without it, Derivation.getEnv() returns null, and the guide's boot-time
+// contract check throws on the first snapshot.
+//
+// Sent once per page-load. The stack doesn't change mid-session.
+// ============================================================================
+(function setupStackData() {
+  const members = (typeof getActiveStackMembers === 'function')
+    ? getActiveStackMembers() : [];
+  window.SIM_STACK_MEMBERS = members;
+
+  function _stripFns(obj) {
+    return JSON.parse(JSON.stringify(obj, (k, v) =>
+      (typeof v === 'function' ? undefined : v)));
+  }
+
+  function collectStackData() {
+    const typeIds = new Set();
+    members.forEach(m => {
+      if (m.engineTypeId) typeIds.add(m.engineTypeId);
+      if (m.recoveryTypeId && m.hasRecovery !== false) typeIds.add(m.recoveryTypeId);
+      if (m.rcsTypeId) typeIds.add(m.rcsTypeId);
+      if (m.bodyMetalTypeId) typeIds.add(m.bodyMetalTypeId);
+      if (m.legsMetalTypeId) typeIds.add(m.legsMetalTypeId);
+      if (m.payloadSpaceTypeId) typeIds.add(m.payloadSpaceTypeId);
+      if (m.payloadSpaceMetalTypeId) typeIds.add(m.payloadSpaceMetalTypeId);
+      if (m.fuel && m.fuel.typeId) typeIds.add(m.fuel.typeId);
+      if (m.engineThrusters) {
+        Object.keys(m.engineThrusters).forEach(gk => {
+          const g = m.engineThrusters[gk];
+          if (g && g.thrusterTypeId) typeIds.add(g.thrusterTypeId);
+        });
+      }
+      if (m.rcsThruster && m.rcsThruster.thrusterTypeId) typeIds.add(m.rcsThruster.thrusterTypeId);
+      if (m.payloadSpace && m.payloadSpace.typeId) typeIds.add(m.payloadSpace.typeId);
+      if (m.payloadSpace && m.payloadSpace.metalTypeId) typeIds.add(m.payloadSpace.metalTypeId);
+      if (m.chuteTypeId) typeIds.add(m.chuteTypeId);
+      if (m.gridFinTypeId) typeIds.add(m.gridFinTypeId);
+      if (m.gridFinMetalTypeId) typeIds.add(m.gridFinMetalTypeId);
+    });
+
+    const types = {};
+    typeIds.forEach(id => {
+      const t = (typeof getComponentType === 'function') ? getComponentType(id) : null;
+      if (t) types[id] = _stripFns(t);
+    });
+
+    const activeStk = (typeof getActiveStack === 'function') ? getActiveStack() : null;
+    const derived = (activeStk && activeStk.derived) ? activeStk.derived : null;
+
+    let stackPayloadMass = 0;
+    if (activeStk && activeStk.payloadId && typeof getPayload === 'function') {
+      const pl = getPayload(activeStk.payloadId);
+      if (pl && Number.isFinite(pl.mass)) stackPayloadMass = pl.mass;
+    }
+
+    return {
+      members: members.map(_stripFns),
+      types,
+      stackPayloadMass,
+      derived,
+      env: {
+        EARTH_RADIUS: CONFIG.EARTH_RADIUS,
+        GM_EARTH: CONFIG.GM_EARTH,
+        EARTH_OMEGA: CONFIG.EARTH_OMEGA,
+        LAUNCH_SITE_ALTITUDE: CONFIG.LAUNCH_SITE_ALTITUDE,
+        LAUNCH_SITE_ANGLE_0: CONFIG.LAUNCH_SITE_ANGLE_0,
+        G0: (typeof G0 !== 'undefined') ? G0 : 9.80665,
+        REMOTE_AREA_MID_WEST_DEG:
+          ((CONFIG.REMOTE_AREA_WEST_START_DEG || 0) +
+           (CONFIG.REMOTE_AREA_WEST_END_DEG || 0)) / 2,
+        REMOTE_AREA_WEST_START_DEG: CONFIG.REMOTE_AREA_WEST_START_DEG || 0,
+        REMOTE_AREA_WEST_END_DEG: CONFIG.REMOTE_AREA_WEST_END_DEG || 0,
+        PAYLOAD_EJECT_KICK_MPS: CONFIG.PAYLOAD_EJECT_KICK_MPS,
+        SEA_LEVEL_DENSITY: CONFIG.SEA_LEVEL_DENSITY,
+        SCALE_HEIGHT: CONFIG.SCALE_HEIGHT,
+        DRAG_CD: CONFIG.DRAG_CD,
+        DT: CONFIG.DT,
+        GIMBAL_MAX_DEG: CONFIG.GIMBAL_MAX_DEG,
+        GIMBAL_RATE_DEG_S: CONFIG.GIMBAL_RATE_DEG_S,
+      },
+    };
+  }
+
+  Derivation.setStackData(collectStackData());
+  console.log('[guidance-numerical] stack data sent to Derivation:',
+    members.length, 'members,', Object.keys(collectStackData().types).length, 'types');
+})();
+
+
+  Guidance.init(localDispatch);
+
+  // ---- Populate guide dropdown ----
+  const allGuides = (Guidance.listGuides && Guidance.listGuides()) || [];
+  const labelOf = (g) => (Guidance.getGuideStatusLabel && Guidance.getGuideStatusLabel(g)) || '';
+  sel.innerHTML = allGuides.length ?
+    allGuides.map(g => {
+      const lbl = labelOf(g);
+      return `<option value="${g}">${g}${lbl ? ' — ' + lbl : ''}</option>`;
+    }).join('') :
+    '<option value="">(no guides registered)</option>';
+
+  // ---- Active stack label ----
+  (function () {
+    try {
+      const stk = (typeof getActiveStack === 'function') ? getActiveStack() : null;
+      if (stk) {
+        const n = stk.members ? stk.members.length : 0;
+        stackLabel.textContent = `Stack: ${stk.name} (${n} members)`;
+      } else {
+        stackLabel.textContent = 'Stack: (none)';
+      }
+    } catch (e) { stackLabel.textContent = 'Stack: —'; }
+  })();
+
+  // ============================================================================
+  // Constants panel — rendered from Guidance.getGuideConfig()
+  // ============================================================================
+  const FLAT_SEP = '.';
+  function _getByPath(obj, path) {
+    const parts = path.split(FLAT_SEP);
+    let cur = obj;
+    for (const k of parts) {
+      if (cur == null || typeof cur !== 'object') return undefined;
+      cur = cur[k];
+    }
+    return cur;
+  }
+  function _setByPath(obj, path, value) {
+    const parts = path.split(FLAT_SEP);
+    let cur = obj;
+    for (let i = 0; i < parts.length - 1; i++) {
+      const k = parts[i];
+      if (cur[k] == null || typeof cur[k] !== 'object') cur[k] = {};
+      cur = cur[k];
+    }
+    cur[parts[parts.length - 1]] = value;
+  }
+
+  function _descFor(guideName, path) {
+    if (typeof GUIDE_CONSTANT_DESCRIPTIONS === 'undefined') return '';
+    const map = GUIDE_CONSTANT_DESCRIPTIONS[guideName];
+    if (!map) return '';
+    return map[path] || '';
+  }
+
+  function _mkSection(label, isImportant, collapsible) {
+    const sec = document.createElement('div');
+    sec.className = 'sec' + (isImportant ? ' is-important' : '');
+    const head = document.createElement('div');
+    head.className = 'sec-head' + (collapsible ? '' : ' no-toggle');
+    head.innerHTML = `<span>${label}</span>` + (collapsible ? '<span class="chev">▾</span>' : '');
+    if (collapsible) {
+      head.addEventListener('click', () => {
+        sec.dataset.collapsed = (sec.dataset.collapsed === '1') ? '0' : '1';
+      });
+    }
+    const body = document.createElement('div');
+    body.className = 'sec-body';
+    sec.appendChild(head);
+    sec.appendChild(body);
+    return { el: sec, body };
+  }
+
+  function _mkField(guideName, path, refVal) {
+    const row = document.createElement('div');
+    row.className = 'field-row';
+    const label = document.createElement('label');
+    label.textContent = path.split(FLAT_SEP).pop();
+    const desc = _descFor(guideName, path);
+    label.title = desc ? (path + ' — ' + desc) : path;
+    row.appendChild(label);
+
+    let input;
+    if (typeof refVal === 'boolean') {
+      input = document.createElement('input');
+      input.type = 'checkbox';
+      input.checked = !!_getByPath(currentValues, path);
+      input.addEventListener('change', () => {
+        _setByPath(currentValues, path, !!input.checked);
+        _refreshChanged(input, path);
+      });
+    } else if (typeof refVal === 'string') {
+      input = document.createElement('input');
+      input.type = 'text';
+      input.value = String(_getByPath(currentValues, path) ?? '');
+      input.addEventListener('input', () => {
+        _setByPath(currentValues, path, input.value);
+        _refreshChanged(input, path);
+      });
+    } else {
+      input = document.createElement('input');
+      input.type = 'number';
+      input.step = 'any';
+      const v = _getByPath(currentValues, path);
+      input.value = Number.isFinite(v) ? v : '';
+      input.addEventListener('input', () => {
+        const parsed = parseFloat(input.value);
+        if (Number.isFinite(parsed)) {
+          _setByPath(currentValues, path, parsed);
+          input.classList.remove('invalid');
+          _refreshChanged(input, path);
+        } else {
+          input.classList.add('invalid');
+        }
+      });
+    }
+    input.dataset.path = path;
+    input.title = label.title;
+    row.appendChild(input);
+    _refreshChanged(input, path);
+    return row;
+  }
+
+  function _refreshChanged(input, path) {
+    if (!defaultValues) return;
+    const def = _getByPath(defaultValues, path);
+    const cur = _getByPath(currentValues, path);
+    if (typeof def === 'number' && typeof cur === 'number') {
+      input.classList.toggle('changed', Math.abs(def - cur) > 1e-12);
+    } else {
+      input.classList.toggle('changed', def !== cur);
+    }
+  }
+
+  function renderConstants(guideName) {
+    const cfg = Guidance.getGuideConfig(guideName);
+    if (!cfg) {
+      constantsHost.innerHTML = '<div style="color:var(--dim);font-style:italic;padding:14px 4px;">This guide has no tunable constants.</div>';
+      currentValues = null;
+      return;
+    }
+    const defaults = (typeof getGuideDefaultPreset === 'function') ?
+      getGuideDefaultPreset(guideName) : null;
+    defaultValues = defaults ? JSON.parse(JSON.stringify(defaults.constants)) : JSON.parse(JSON.stringify(cfg));
+    currentValues = JSON.parse(JSON.stringify(cfg));
+
+    const important = (typeof getGuideImportantFields === 'function') ?
+      getGuideImportantFields(guideName) : [];
+    const impSet = new Set(important);
+
+    constantsHost.innerHTML = '';
+
+    // Important block first
+    if (important.length) {
+      const sec = _mkSection('Important', true, false);
+      important.forEach(path => {
+        const refVal = _getByPath(cfg, path);
+        if (refVal === undefined) return;
+        sec.body.appendChild(_mkField(guideName, path, refVal));
+      });
+      constantsHost.appendChild(sec.el);
+    }
+
+    // Root scalars
+    const rootScalars = [];
+    const objectGroups = [];
+    for (const k in cfg) {
+      if (impSet.has(k)) continue;
+      const v = cfg[k];
+      if (v !== null && typeof v === 'object' && !Array.isArray(v)) objectGroups.push(k);
+      else rootScalars.push(k);
+    }
+    if (rootScalars.length) {
+      const sec = _mkSection('Root', false, true);
+      rootScalars.forEach(k => {
+        if (impSet.has(k)) return;
+        sec.body.appendChild(_mkField(guideName, k, cfg[k]));
+      });
+      constantsHost.appendChild(sec.el);
+    }
+
+    // Object groups
+    objectGroups.forEach(gk => {
+      const subRef = cfg[gk];
+      const sec = _mkSection(gk, false, true);
+      for (const ck in subRef) {
+        const childPath = gk + FLAT_SEP + ck;
+        if (impSet.has(childPath)) continue;
+        const cv = subRef[ck];
+        if (cv !== null && typeof cv === 'object' && !Array.isArray(cv)) {
+          // Depth-3 subgroup — render a header + its children inline
+          const sub = document.createElement('div');
+          sub.style.gridColumn = '1 / -1';
+          sub.style.marginTop = '6px';
+          sub.style.fontSize = '10px';
+          sub.style.letterSpacing = '0.8px';
+          sub.style.textTransform = 'uppercase';
+          sub.style.color = 'var(--dim)';
+          sub.textContent = ck;
+          sec.body.appendChild(sub);
+          for (const gck in cv) {
+            const deepPath = childPath + FLAT_SEP + gck;
+            if (impSet.has(deepPath)) continue;
+            sec.body.appendChild(_mkField(guideName, deepPath, cv[gck]));
+          }
+        } else {
+          sec.body.appendChild(_mkField(guideName, childPath, cv));
+        }
+      }
+      constantsHost.appendChild(sec.el);
+    });
+  }
+
+  sel.addEventListener('change', () => {
+    currentGuide = sel.value;
+    if (currentGuide) {
+      renderConstants(currentGuide);
+      refreshPresets(currentGuide);
+    }
+  });
+
+  resetDefBtn.addEventListener('click', () => {
+    if (!currentGuide) return;
+    renderConstants(currentGuide);
+    statusEl.textContent = 'Constants reset to code defaults.';
+  });
+
+  // ============================================================================
+  // Preset management (via guidancePresets.js)
+  // ============================================================================
+  function refreshPresets(guideName) {
+    if (typeof getAllPresetsForGuide !== 'function') {
+      presetSel.innerHTML = '<option value="">— presets unavailable —</option>';
+      presetSel.disabled = true;
+      return;
+    }
+    const list = getAllPresetsForGuide(guideName);
+    presetSel.disabled = false;
+    if (!list.length) {
+      presetSel.innerHTML = '<option value="">— no presets —</option>';
+      return;
+    }
+    presetSel.innerHTML = '<option value="">— select a preset —</option>' +
+      list.map(p => `<option value="${p.id}">${p.name}${p.isDefault ? ' · DEFAULT' : ''}</option>`).join('');
+  }
+
+  $('presetLoadBtn').addEventListener('click', () => {
+    const id = presetSel.value;
+    if (!id) { presetStat.textContent = 'Select a preset first.'; return; }
+    const p = (typeof getPresetById === 'function') ? getPresetById(id) : null;
+    if (!p || !p.constants) { presetStat.textContent = 'Preset not found.'; return; }
+    // Validate strict against the current defaults schema
+    const ref = (typeof getGuideDefaultPreset === 'function') ? getGuideDefaultPreset(currentGuide) : null;
+    if (ref && typeof validateConstantsStrict === 'function') {
+      const v = validateConstantsStrict(p.constants, ref.constants);
+      if (!v.ok) { presetStat.textContent = 'Preset incompatible: ' + v.error; return; }
+    }
+    currentValues = JSON.parse(JSON.stringify(p.constants));
+    renderConstants(currentGuide);
+    presetStat.textContent = `Loaded "${p.name}".`;
+  });
+
+  $('presetSaveBtn').addEventListener('click', () => {
+    if (!currentGuide || !currentValues) return;
+    const name = prompt('Preset name:', 'Calibration run');
+    if (!name) return;
+    const stack = (typeof getActiveStack === 'function') ? getActiveStack() : null;
+    const rec = (typeof addUserPreset === 'function') ? addUserPreset({
+      name,
+      description: '',
+      guideName: currentGuide,
+      stackId: stack ? stack.id : '',
+      stackName: stack ? stack.name : '',
+      tags: [],
+      constants: JSON.parse(JSON.stringify(currentValues)),
+    }) : null;
+    if (rec) {
+      refreshPresets(currentGuide);
+      presetSel.value = rec.id;
+      presetStat.textContent = `Saved "${rec.name}".`;
+    } else {
+      presetStat.textContent = 'Save failed.';
+    }
+  });
+
+  $('presetDeleteBtn').addEventListener('click', () => {
+    const id = presetSel.value;
+    if (!id) { presetStat.textContent = 'Select a preset first.'; return; }
+    const p = (typeof getPresetById === 'function') ? getPresetById(id) : null;
+    if (!p || p.isDefault) { presetStat.textContent = 'Default presets cannot be deleted.'; return; }
+    if (!confirm(`Delete preset "${p.name}"?`)) return;
+    if (typeof deleteUserPreset === 'function' && deleteUserPreset(id)) {
+      refreshPresets(currentGuide);
+      presetStat.textContent = 'Deleted.';
+    } else {
+      presetStat.textContent = 'Delete failed.';
+    }
+  });
+
+  $('presetExportBtn').addEventListener('click', () => {
+    if (!currentValues) return;
+    const json = JSON.stringify(currentValues, null, 2);
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(json).then(
+        () => { presetStat.textContent = 'Copied ' + Object.keys(currentValues).length + ' top-level keys.'; },
+        () => { presetStat.textContent = 'Clipboard write failed.'; }
+      );
+    }
+  });
+
+  $('presetImportBtn').addEventListener('click', () => {
+    const raw = prompt('Paste constants JSON:');
+    if (!raw) return;
+    let parsed;
+    try { parsed = JSON.parse(raw); } catch (e) {
+      presetStat.textContent = 'JSON parse error: ' + e.message;
+      return;
+    }
+    const ref = (typeof getGuideDefaultPreset === 'function') ? getGuideDefaultPreset(currentGuide) : null;
+    if (ref && typeof validateConstantsStrict === 'function') {
+      const v = validateConstantsStrict(parsed, ref.constants);
+      if (!v.ok) { presetStat.textContent = 'Validation failed: ' + v.error; return; }
+    }
+    currentValues = JSON.parse(JSON.stringify(parsed));
+    renderConstants(currentGuide);
+    presetStat.textContent = 'Imported constants.';
+  });
+
+  // ============================================================================
+  // Environment setters — the same commands physics.worker.js receives via
+  // setWind / setAtmosphere / setSloshEnabled / setImuEnabled + the same
+  // per-member fuel distribution runner.js's setFueling() uses.
+  // ============================================================================
+  function applyEnvironment() {
+    if (typeof wind !== 'undefined') {
+      wind.enabled = $('envWindEnabled').checked;
+      wind.speed = parseFloat($('envWindSpeed').value) || 0;
+      wind.directionDeg = parseFloat($('envWindDir').value) || 0;
+    }
+    if (typeof atmosphereEnabled !== 'undefined') {
+      atmosphereEnabled = $('envAtmosphere').checked;
+    }
+    if (typeof CONFIG !== 'undefined') {
+      CONFIG.SLOSH_ENABLED = $('envSlosh').checked;
+    }
+    try { Guidance.setImuEnabled($('envImu').checked); } catch (e) {}
+  }
+
+  function applyFueling() {
+    const boosterPct = parseFloat($('envBoosterFuel').value);
+    const stagePct   = parseFloat($('envStageFuel').value);
+    const b = state.bodies[0];
+    if (!b || !Array.isArray(b.memberFuel) || !b.members) return;
+    const cap = (m, above) => (typeof memberMaxFuel === 'function')
+      ? memberMaxFuel(m, above) : 0;
+    b.memberFuel = b.members.map((m, i) => {
+      const c = cap(m, b.members[i + 1] || null);
+      if (m.stageRole === 'booster') return c * ((boosterPct != null ? boosterPct : 100) / 100);
+      if (m.stageRole === 'stage')   return c * ((stagePct   != null ? stagePct   : 100) / 100);
+      return 0;
+    });
+    b.fuelMass = b.memberFuel.reduce((s, x) => s + x, 0);
+  }
+
+  // ============================================================================
+  // Capture helpers — the metrics we track per event.
+  // ============================================================================
+  function captureState() {
+    const idx = state.activeBodyIndex;
+    const b = state.bodies[idx];
+    if (!b) return null;
+    const r = Math.hypot(b.rx, b.ry) || 1;
+    const alt_km = (r - CONFIG.EARTH_RADIUS) / 1000;
+    const ux = b.rx / r, uy = b.ry / r;
+    const ex = b.ry / r, ey = -b.rx / r;
+    const vr = b.vx * ux + b.vy * uy;
+    const vt = b.vx * ex + b.vy * ey;
+    const speed = Math.hypot(b.vx, b.vy);
+    const gs = (Guidance.getGuideStatus && Guidance.getGuideStatus()) || {};
+    // Two-body osculating elements from current INERTIAL state
+    const GM = CONFIG.GM_EARTH;
+    const E = 0.5 * (vr * vr + vt * vt) - GM / r;
+    const h = r * vt;
+    let apo_km = Infinity, peri_km = Infinity;
+    if (E < 0) {
+      const a = -GM / (2 * E);
+      const e = Math.sqrt(Math.max(0, 1 + 2 * E * h * h / (GM * GM)));
+      apo_km = (a * (1 + e) - CONFIG.EARTH_RADIUS) / 1000;
+      peri_km = (a * (1 - e) - CONFIG.EARTH_RADIUS) / 1000;
+    } else if (E > 0) {
+      const p = h * h / GM;
+      const e = Math.sqrt(Math.max(0, 1 + 2 * E * h * h / (GM * GM)));
+      peri_km = (p / (1 + e) - CONFIG.EARTH_RADIUS) / 1000;
+    }
+    const geom = (typeof geometryOf === 'function') ? geometryOf(b) : { M: 0 };
+    const fuel_t = (b.fuelMass || 0) / 1000;
+    const thrust_MN = (b.engines || []).reduce((s, e) => s + (e.currentF || 0), 0) / 1e6;
+    const mdot = (b.engines || []).reduce((s, e) => s + (e.massFlowRate || 0), 0);
+    return {
+      simTime: state.simTime,
+      phase: gs.phase || '?',
+      ascentPhase: gs.ascentPhase || null,
+      alt_km, vr, vt, speed,
+      apo_km, peri_km,
+      mass_t: geom.M / 1000, fuel_t,
+      thrust_MN, mdot,
+      bodies: state.bodies.length,
+      bodyTags: state.bodies.map(x =>
+        x.isActive ? 'A' : x.payloadBody ? 'P' : x.fairingHalf ? 'F' : x.isDiscarded ? 'B' : 'D'
+      ).join(','),
+      crashed: !!state.crashed,
+      landed: !!state.landed,
+      halted: !!state.halted,
+      circAchieved: !!gs.circAchieved,
+      circCurrentV: gs.circCurrentV,
+      circTargetV: gs.circTargetV,
+      coastDeltaV: gs.coastDeltaV,
+      coastTRem: gs.coastTRem,
+      apogeeKmGuide: gs.apogeeKm,
+      perigeeKmGuide: gs.perigeeKm,
+      stageBurnLocked: !!gs.stageBurnLocked,
+      suicideTrimDone: !!gs.suicideTrimDone,
+      suicideDlambdaDeg: gs.suicideDlambdaDeg,
+    };
+  }
+
+  // ============================================================================
+  // Run state + captures
+  // ============================================================================
+  let running = false;
+  let abort = false;
+  let captures = [];
+  let previousRun = null;
+
+  function fmt(n, d) { return Number.isFinite(n) ? n.toFixed(d) : '—'; }
+  function pushCapture(type, label, st) {
+    captures.push({ type, label, simTime: st.simTime, state: st });
+  }
+
+  function renderCaptures() {
+    const activeChip = document.querySelector('.filter-chip.active');
+    const filter = activeChip ? activeChip.dataset.type : 'all';
+    const shown = (filter === 'all') ? captures : captures.filter(c => c.type === filter);
+    captureCnt.textContent = shown.length + ' / ' + captures.length;
+    if (!shown.length) {
+      captureList.innerHTML = '<div style="color: var(--dim); padding: 12px;">No captures of this type.</div>';
+      return;
+    }
+    captureList.innerHTML = shown.map(c => {
+      const s = c.state;
+      const sub = s.ascentPhase ? ` <span style="color:var(--dim)">(ascent: ${s.ascentPhase})</span>` : '';
+      const apoStr = Number.isFinite(s.apo_km) ? fmt(s.apo_km, 1) + ' km' : '∞';
+      const periStr = Number.isFinite(s.peri_km) ? fmt(s.peri_km, 1) + ' km' : '—';
+      return `<div class="capture type-${c.type}">
+        <div class="head">
+          <span class="time">T+${fmt(c.simTime, 2)}s</span>
+          <span class="label">${c.label}</span>${sub}
+        </div>
+        <div class="body">
+          <span><span class="k">phase</span> ${s.phase}</span>
+          <span><span class="k">alt</span> ${fmt(s.alt_km, 2)} km</span>
+          <span><span class="k">vr</span> ${fmt(s.vr, 1)}</span>
+          <span><span class="k">vt</span> ${fmt(s.vt, 1)}</span>
+          <span><span class="k">|v|</span> ${fmt(s.speed, 1)}</span>
+          <span><span class="k">apogee</span> ${apoStr}</span>
+          <span><span class="k">perigee</span> ${periStr}</span>
+          <span><span class="k">mass</span> ${fmt(s.mass_t, 2)} t</span>
+          <span><span class="k">fuel</span> ${fmt(s.fuel_t, 2)} t</span>
+          <span><span class="k">thrust</span> ${fmt(s.thrust_MN, 3)} MN</span>
+          <span><span class="k">mdot</span> ${fmt(s.mdot, 1)} kg/s</span>
+          <span><span class="k">bodies</span> ${s.bodies} [${s.bodyTags}]</span>
+          ${Number.isFinite(s.circTargetV) ? `<span><span class="k">v_circ</span> ${fmt(s.circCurrentV, 1)} / ${fmt(s.circTargetV, 1)}</span>` : ''}
+          ${Number.isFinite(s.coastDeltaV) ? `<span><span class="k">coast Δv</span> ${fmt(s.coastDeltaV, 2)} m/s</span>` : ''}
+          ${Number.isFinite(s.coastTRem) ? `<span><span class="k">t_rem</span> ${fmt(s.coastTRem, 1)} s</span>` : ''}
+          ${s.crashed ? '<span class="warn">CRASHED</span>' : ''}
+          ${s.landed ? '<span class="hi">LANDED</span>' : ''}
+          ${s.halted ? '<span class="warn">HALTED</span>' : ''}
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  document.querySelectorAll('.filter-chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      document.querySelectorAll('.filter-chip').forEach(c => c.classList.remove('active'));
+      chip.classList.add('active');
+      renderCaptures();
+    });
+  });
+
+  // ============================================================================
+  // THE RUN — runner.js parity loop
+  // ============================================================================
+  function yieldToBrowser() {
+    return new Promise(resolve => setTimeout(resolve, 0));
+  }
+
+  async function run() {
+    if (running) return;
+    if (!currentGuide) { statusEl.textContent = 'No guide selected.'; return; }
+    if (!currentValues) { statusEl.textContent = 'No constants loaded.'; return; }
+
+    running = true; abort = false;
+    startBtn.disabled = true; stopBtn.disabled = false;
+    captures = [];
+
+    // ---- Capture tunables snapshot (for compare) ----
+    const runTunables = JSON.parse(JSON.stringify(currentValues));
+
+    // ---- Apply constants to the guide ----
+    // Fails loudly if a key is missing/malformed. Guidance.applyGuideConfig
+    // does a shallow merge and skips unknown top-level keys.
+    const applyOk = Guidance.applyGuideConfig(currentGuide, currentValues);
+    if (!applyOk) {
+      statusEl.textContent = 'applyGuideConfig failed — see console.';
+      running = false;
+      startBtn.disabled = false; stopBtn.disabled = true;
+      return;
+    }
+
+    // ---- Reset physics state to t=0, then apply environment + fueling ----
+    resetState(0);
+    applyEnvironment();
+    applyFueling();
+
+    // ---- Start guide ----
+    // NOTE: .start() runs FIRST, before any onSnapshot. Any commands it
+    // fires (typically cmdSetAllThrottle(Infinity)) are queued via
+    // localDispatch and applied on the first physicsStep below. This is
+    // EXACTLY the pattern headless/runner.js uses.
+    try { Guidance.stopGuide(); } catch (e) {}
+    try { Guidance.startGuide(currentGuide); } catch (e) {
+      console.error('[num] startGuide failed:', e);
+      statusEl.textContent = 'startGuide failed: ' + e.message;
+      running = false;
+      startBtn.disabled = false; stopBtn.disabled = true;
+      return;
+    }
+
+    // ---- Loop bounds ----
+    const durationS = Math.max(1, parseFloat(durInput.value) || 1500);
+    const dt = CONFIG.DT;
+    const maxTicks = Math.ceil(durationS / dt);
+
+    // ---- Event trackers ----
+    let prevPhase = null;
+    let prevAscentPhase = null;
+    let prevBodyCount = state.bodies.length;
+    let prevCrashed = false, prevLanded = false, prevHalted = false;
+    let prevCircAchieved = false;
+    let prevSplitDetected = false;
+    let prevFairingOpened = false;
+    let peakQ_kPa = -Infinity, peakQ_state = null;
+    let peakG = -Infinity, peakG_state = null;
+    let prevVrSign = 0;
+    let ticksRun = 0;
+    const t0 = performance.now();
+
+    // CHUNK_TICKS chosen so UI stays responsive even on slow machines.
+    // At ~50-100 µs per tick, 400 ticks ≈ 20-40 ms per chunk — fast enough
+    // to run, short enough to keep the UI alive between yields.
+    const CHUNK = 400;
+
+    for (let i = 0; i < maxTicks; i++) {
+      if (abort) break;
+      if (state.halted) break;
+
+      // ---- Runner.js tick order: snapshot → physics ----
+      const snap = buildSnapshot();
+      try { Guidance.onSnapshot(snap); } catch (ge) {
+        console.error('[num] onSnapshot failed at t=' + state.simTime.toFixed(2), ge);
+        statusEl.textContent = 'onSnapshot failed: ' + ge.message;
+        break;
+      }
+      physicsStep(dt);
+      ticksRun++;
+
+      // ---- Event detection + peak tracking ----
+      const gs = (Guidance.getGuideStatus && Guidance.getGuideStatus()) || {};
+      const body = state.bodies[state.activeBodyIndex];
+
+      if (body) {
+        // Phase transition
+        if (gs.phase && gs.phase !== prevPhase) {
+          const st = captureState();
+          if (st) pushCapture('phase', `PHASE → ${gs.phase}`, st);
+          prevPhase = gs.phase;
+        }
+        if (gs.ascentPhase && gs.ascentPhase !== prevAscentPhase) {
+          const st = captureState();
+          if (st) pushCapture('phase', `ascent: ${prevAscentPhase || '—'} → ${gs.ascentPhase}`, st);
+          prevAscentPhase = gs.ascentPhase;
+        }
+
+        // Orbit crossings (radial-velocity sign flip)
+        const r = Math.hypot(body.rx, body.ry) || 1;
+        const vrNow = (body.vx * body.rx + body.vy * body.ry) / r;
+        const vrSign = vrNow > 0 ? 1 : (vrNow < 0 ? -1 : 0);
+        if (prevVrSign !== 0 && vrSign !== 0 && vrSign !== prevVrSign) {
+          const st = captureState();
+          if (st) {
+            const isApo = (prevVrSign > 0 && vrSign < 0);
+            pushCapture('orbit', isApo ? 'APOGEE crossing' : 'PERIGEE crossing', st);
+          }
+        }
+        prevVrSign = vrSign;
+
+        // Body count change (staging, fairing split, payload release)
+        if (state.bodies.length !== prevBodyCount) {
+          const st = captureState();
+          if (st) pushCapture('event', `body count ${prevBodyCount} → ${state.bodies.length}`, st);
+          prevBodyCount = state.bodies.length;
+        }
+
+        // Split detected flag
+        if (gs.splitDetected && !prevSplitDetected) {
+          const st = captureState();
+          if (st) pushCapture('event', 'stage separation split', st);
+          prevSplitDetected = true;
+        }
+
+        // Fairing opened
+        if (gs.fairingOpened && !prevFairingOpened) {
+          const st = captureState();
+          if (st) pushCapture('event', 'fairing opened', st);
+          prevFairingOpened = true;
+        }
+
+        // Circularize achieved
+        if (gs.circAchieved && !prevCircAchieved) {
+          const st = captureState();
+          if (st) pushCapture('event', `circularize complete — v=${fmt(gs.circCurrentV, 1)} / ${fmt(gs.circTargetV, 1)} m/s`, st);
+          prevCircAchieved = true;
+        }
+
+        // Crash / landed / halted flips
+        if (state.crashed && !prevCrashed) {
+          const st = captureState(); if (st) pushCapture('abort', 'CRASHED', st);
+          prevCrashed = true;
+        }
+        if (state.landed && !prevLanded) {
+          const st = captureState(); if (st) pushCapture('event', 'LANDED', st);
+          prevLanded = true;
+        }
+        if (state.halted && !prevHalted) {
+          const st = captureState(); if (st) pushCapture('event', 'HALTED', st);
+          prevHalted = true;
+        }
+
+        // Peak Q / G
+        const alt = r - CONFIG.EARTH_RADIUS;
+        const wv = (typeof windInertialVector === 'function') ? windInertialVector(body.rx, body.ry) : { wx: 0, wy: 0 };
+        const sv = (typeof earthSurfaceVelocity === 'function') ? earthSurfaceVelocity(body.rx, body.ry) : { vx: 0, vy: 0 };
+        const relVx = body.vx - (wv.wx + sv.vx);
+        const relVy = body.vy - (wv.wy + sv.vy);
+        const sr = Math.hypot(relVx, relVy);
+        const rho = (typeof airDensity === 'function') ? airDensity(Math.max(0, alt)) : 0;
+        const Q_Pa = 0.5 * rho * sr * sr;
+        if (Q_Pa > peakQ_kPa) {
+          peakQ_kPa = Q_Pa;
+          peakQ_state = captureState();
+        }
+        const ax = body._lastAccelX || 0, ay = body._lastAccelY || 0;
+        const g_proper = Math.hypot(ax, ay) / 9.80665;
+        if (g_proper > peakG) {
+          peakG = g_proper;
+          peakG_state = captureState();
+        }
+      }
+
+      // ---- Yield + progress ----
+      if (i > 0 && i % CHUNK === 0) {
+        const wall = (performance.now() - t0) / 1000;
+        const tps = ticksRun / wall;
+        const pct = ((i / maxTicks) * 100).toFixed(1);
+        statusEl.textContent =
+          `Running… t=${state.simTime.toFixed(1)}s / ${durationS}s  ` +
+          `(${pct}%, ${ticksRun} ticks, ${tps.toFixed(0)} ticks/s, ${captures.length} captures)`;
+        await yieldToBrowser();
+      }
+    }
+
+    try { Guidance.stopGuide(); } catch (e) {}
+
+    // ---- Peak captures appended (chronological sort at the end) ----
+    if (peakQ_state) captures.push({ type: 'peak', label: `PEAK Q = ${(peakQ_kPa / 1000).toFixed(2)} kPa`, simTime: peakQ_state.simTime, state: peakQ_state });
+    if (peakG_state) captures.push({ type: 'peak', label: `PEAK G = ${peakG.toFixed(2)} g`, simTime: peakG_state.simTime, state: peakG_state });
+    {
+      const endState = captureState();
+      if (endState) captures.push({ type: 'end', label: 'RUN END', simTime: endState.simTime, state: endState });
+    }
+    captures.sort((a, b) => a.simTime - b.simTime);
+
+    // ---- Summary ----
+    const elapsedMs = performance.now() - t0;
+    const tps = ticksRun / (elapsedMs / 1000);
+    const finalSt = captures.length ? captures[captures.length - 1].state : null;
+    const summary = {
+      guide: currentGuide,
+      duration: durationS,
+      ticks: ticksRun,
+      wallSeconds: elapsedMs / 1000,
+      ticksPerSecond: tps,
+      finalPhase: finalSt ? finalSt.phase : '?',
+      crashed: !!state.crashed,
+      landed: !!state.landed,
+      halted: !!state.halted,
+      circAchieved: finalSt ? finalSt.circAchieved : false,
+      apogee_km: finalSt && Number.isFinite(finalSt.apo_km) ? finalSt.apo_km : null,
+      perigee_km: finalSt && Number.isFinite(finalSt.peri_km) ? finalSt.peri_km : null,
+      coastDeltaV: finalSt ? finalSt.coastDeltaV : null,
+      coastTRem: finalSt ? finalSt.coastTRem : null,
+      fuelLeft_t: finalSt ? finalSt.fuel_t : null,
+      maxQ_kPa: peakQ_kPa > 0 ? peakQ_kPa / 1000 : null,
+      maxG: peakG > 0 ? peakG : null,
+      capturesCount: captures.length,
+    };
+
+    summaryBody.innerHTML = Object.entries({
+      'guide': summary.guide,
+      'duration (s)': summary.duration,
+      'ticks run': summary.ticks,
+      'wall (s)': summary.wallSeconds.toFixed(2),
+      'ticks/s': summary.ticksPerSecond.toFixed(0),
+      'final phase': summary.finalPhase,
+      'crashed': summary.crashed ? 'YES' : 'no',
+      'landed': summary.landed ? 'YES' : 'no',
+      'halted': summary.halted ? 'YES' : 'no',
+      'circ achieved': summary.circAchieved ? 'YES' : 'no',
+      'final apogee (km)': summary.apogee_km != null ? summary.apogee_km.toFixed(2) : '—',
+      'final perigee (km)': summary.perigee_km != null ? summary.perigee_km.toFixed(2) : '—',
+      'coast Δv (m/s)': summary.coastDeltaV != null ? summary.coastDeltaV.toFixed(2) : '—',
+      'coast t_rem (s)': summary.coastTRem != null ? summary.coastTRem.toFixed(1) : '—',
+      'fuel left (t)': summary.fuelLeft_t != null ? summary.fuelLeft_t.toFixed(2) : '—',
+      'peak Q (kPa)': summary.maxQ_kPa != null ? summary.maxQ_kPa.toFixed(2) : '—',
+      'peak G': summary.maxG != null ? summary.maxG.toFixed(2) : '—',
+      'captures': summary.capturesCount,
+    }).map(([k, v]) => `<span><span class="k">${k}</span> <span class="v">${v}</span></span>`).join('');
+
+    // ---- Compare with previous run ----
+    const currentRun = {
+      meta: summary,
+      tunables: runTunables,
+    };
+
+    if (previousRun && previousRun.meta.guide === summary.guide) {
+      const prev = previousRun.meta;
+
+      // Constants diff
+      const flatPrev = flattenObj(previousRun.tunables);
+      const flatCur = flattenObj(currentRun.tunables);
+      const keys = new Set([...Object.keys(flatPrev), ...Object.keys(flatCur)]);
+      const constDiffs = [];
+      keys.forEach(k => {
+        const a = flatPrev[k], b = flatCur[k];
+        if (typeof a === 'number' && typeof b === 'number') {
+          if (Math.abs(a - b) > 1e-12) constDiffs.push(`<div class="compare-row"><span class="k">${k}</span><span class="a">${a}</span><span class="arrow">→</span><span class="b">${b}</span></div>`);
+        } else if (a !== b) {
+          constDiffs.push(`<div class="compare-row"><span class="k">${k}</span><span class="a">${a}</span><span class="arrow">→</span><span class="b">${b}</span></div>`);
+        }
+      });
+
+      // Metrics diff
+      const metricRows = [
+        ['final phase', prev.finalPhase, summary.finalPhase, null],
+        ['crashed', prev.crashed ? 'YES' : 'no', summary.crashed ? 'YES' : 'no',
+          (a, b) => (b === 'YES' && a !== 'YES') ? 'bad' : (a === 'YES' && b !== 'YES') ? 'good' : ''],
+        ['circ achieved', prev.circAchieved ? 'YES' : 'no', summary.circAchieved ? 'YES' : 'no',
+          (a, b) => (b === 'YES' && a !== 'YES') ? 'good' : ''],
+        ['final apogee (km)', prev.apogee_km != null ? prev.apogee_km.toFixed(2) : '—',
+          summary.apogee_km != null ? summary.apogee_km.toFixed(2) : '—', null],
+        ['final perigee (km)', prev.perigee_km != null ? prev.perigee_km.toFixed(2) : '—',
+          summary.perigee_km != null ? summary.perigee_km.toFixed(2) : '—', null],
+        ['coast Δv (m/s)', prev.coastDeltaV != null ? prev.coastDeltaV.toFixed(2) : '—',
+          summary.coastDeltaV != null ? summary.coastDeltaV.toFixed(2) : '—', null],
+        ['coast t_rem (s)', prev.coastTRem != null ? prev.coastTRem.toFixed(1) : '—',
+          summary.coastTRem != null ? summary.coastTRem.toFixed(1) : '—', null],
+        ['fuel left (t)', prev.fuelLeft_t != null ? prev.fuelLeft_t.toFixed(2) : '—',
+          summary.fuelLeft_t != null ? summary.fuelLeft_t.toFixed(2) : '—', null],
+        ['peak Q (kPa)', prev.maxQ_kPa != null ? prev.maxQ_kPa.toFixed(2) : '—',
+          summary.maxQ_kPa != null ? summary.maxQ_kPa.toFixed(2) : '—', null],
+        ['peak G', prev.maxG != null ? prev.maxG.toFixed(2) : '—',
+          summary.maxG != null ? summary.maxG.toFixed(2) : '—', null],
+      ];
+
+      let html = '<div style="grid-column: 1/-1; color: var(--dim); font-size: 11px; margin-bottom: 4px;">CONSTANTS CHANGED</div>';
+      if (constDiffs.length) html += constDiffs.join('');
+      else html += '<div style="grid-column: 1/-1; color: var(--dim); font-size: 11px;">(no constant changes)</div>';
+      html += '<div style="grid-column: 1/-1; margin-top: 8px;"><div style="color: var(--dim); font-size: 11px; margin-bottom: 4px;">METRICS</div></div>';
+      metricRows.forEach(([k, a, b, cmp]) => {
+        let cls = '';
+        if (typeof cmp === 'function') cls = cmp(a, b);
+        html += `<div class="compare-row"><span class="k">${k}</span><span class="a">${a}</span><span class="arrow">→</span><span class="b ${cls}">${b}</span></div>`;
+      });
+
+      compareBody.innerHTML = html;
+      compareBox.classList.add('show');
+    } else {
+      compareBox.classList.remove('show');
+    }
+    previousRun = currentRun;
+
+    renderCaptures();
+    statusEl.textContent = `Done. ${ticksRun} ticks in ${(elapsedMs / 1000).toFixed(2)}s — ` +
+      `${tps.toFixed(0)} ticks/s — ${captures.length} captures.`;
+
+    running = false;
+    startBtn.disabled = false;
+    stopBtn.disabled = true;
+  }
+
+  function flattenObj(obj, prefix, out) {
+    out = out || {}; prefix = prefix || '';
+    if (!obj || typeof obj !== 'object') return out;
+    Object.keys(obj).forEach(k => {
+      const v = obj[k];
+      const path = prefix ? prefix + '.' + k : k;
+      if (v && typeof v === 'object' && !Array.isArray(v)) flattenObj(v, path, out);
+      else out[path] = v;
+    });
+    return out;
+  }
+
+  startBtn.addEventListener('click', run);
+  stopBtn.addEventListener('click', () => { abort = true; statusEl.textContent = 'Aborting…'; });
+
+  // ============================================================================
+  // Boot
+  // ============================================================================
+  (function boot() {
+    if (!allGuides.length) {
+      statusEl.textContent = '⚠ No guides registered. Check that guidance.js loaded.';
+      return;
+    }
+    // Prefer leoInsertionV2 if present, else first
+    currentGuide = allGuides.includes('leoInsertionV2') ? 'leoInsertionV2' : allGuides[0];
+    sel.value = currentGuide;
+    renderConstants(currentGuide);
+    refreshPresets(currentGuide);
+
+    // Stack info as a status line
+    try {
+      const stk = (typeof getActiveStack === 'function') ? getActiveStack() : null;
+      const members = (typeof getActiveStackMembers === 'function') ? getActiveStackMembers() : [];
+      if (stk && members.length) {
+        statusEl.textContent = `Ready. Stack: ${stk.name} — ${members.map(m => m.name).join(' → ')}`;
+      } else {
+        statusEl.textContent = 'Ready. (no active stack in fleet)';
+      }
+    } catch (e) {
+      statusEl.textContent = 'Ready.';
+    }
+
+    console.log('[guidance-numerical] ready. Guides:', allGuides.join(', '));
+    console.log('[guidance-numerical] active stack:',
+      (typeof getActiveStack === 'function' && getActiveStack() || {}).name || '(none)');
+  })();
+})();
+</script>
+</body>
+</html>
