@@ -696,130 +696,162 @@
 <script src="js/simJs/view/fastForward.js"></script>
 <script src="js/simJs/main.js"></script>
   
-  <script>
+<script>
 // ============================================================================
-// Telemetry recorder — per-second capture + JSON download.
+// Telemetry recorder — COMPACT mode.
 //
-// Captures the ENTIRE sim state every integer sim-second: body positions/
-// velocities/attitudes, engine mass flows + gimbal, fuel per member, guide
-// phase + sub-phase, osculating orbital elements per body, all guide
-// internals (apogee, perigee, coast Δv, circ velocity, etc).
+// Every sim-second, one tiny row. Format is a 2D array — first row is the
+// column names, then 1 row per integer sim-second. For a 700s run this is
+// ~25-40 KB total (vs ~1 MB for the verbose JSON version).
 //
-// Output: one JSON file with { meta, samples }. Feed it to whoever needs
-// to compare runs — field-by-field diff between two JSONs pinpoints
-// exactly where two runs diverge.
+// Columns:
+//   t    sim time (s, integer)
+//   ph   phase (2-3 char code, see PHASE_CODES below)
+//   ap   ascent sub-phase (2 char, only during ASCENT)
+//   n    body count
+//   ai   active body index
+//   a    active alt (km, 2 dec)
+//   vr   active radial velocity (m/s, 1 dec)
+//   vt   active tangential velocity (m/s, 1 dec)
+//   ha   guide osculating apogee (km, 2 dec)
+//   hp   guide osculating perigee (km, 2 dec)
+//   dv   guide coast Δv (m/s, 2 dec, only during COAST_ROTATE)
+//   tr   guide coast t_rem (s, 1 dec, only during COAST_ROTATE)
+//   cv   guide circ current v (m/s, only during CIRCULARIZE)
+//   tv   guide circ target v (m/s, only during CIRCULARIZE)
+//   fl   active fuel (t, 2 dec)
+//   bk   stage_burn_lock tilt (deg, 1 dec, only after lock)
+//
+// Plus a separate "events" array capturing one-off moments (MECO, split,
+// fairing, eject, phase transitions) with timestamps — much easier to
+// spot divergence than scanning the whole table.
 // ============================================================================
 (function () {
   'use strict';
 
+  const PHASE_CODES = {
+    'ASCENT': 'AS', 'MECO_SPOOL': 'MC', 'SEPARATED_AXIAL': 'SP',
+    'STAGE_BURN': 'SB', 'RCS_BOOST': 'RB', 'COAST_ROTATE': 'CR',
+    'COAST_WAIT': 'CW', 'COAST_HOLD': 'CH', 'CIRCULARIZE': 'CI',
+    'COAST_ROTATE_2': 'C2', 'COAST_HOLD_2': 'H2', 'DONE': 'DN',
+    'SUICIDE_ROTATE': 'SR', 'SUICIDE_BURN': 'SU', 'SUICIDE_COAST': 'SC',
+  };
+  const ASC_CODES = {
+    'PRE_COAST': 'pc', 'PUSH': 'pu', 'COAST': 'co',
+    'HOLD': 'ho', 'COASTnAoADAMP': 'cd',
+  };
+
+  const COLUMNS = [
+    't', 'ph', 'ap', 'n', 'ai',
+    'a', 'vr', 'vt', 'ha', 'hp',
+    'dv', 'tr', 'cv', 'tv', 'fl', 'bk',
+  ];
+
   let _recording = false;
-  let _recorded = [];
-  let _lastRecordedSec = -1;
+  let _rows = [COLUMNS.slice()];
+  let _events = [];
+  let _lastSec = -1;
   let _startSimTime = 0;
   let _startWallMs = 0;
+  let _prevPhase = null;
+  let _prevAscent = null;
+  let _prevBodyCount = -1;
 
   const $ = (id) => document.getElementById(id);
   const btnRec = $('btnRecordData');
   const btnDl = $('btnDownloadData');
 
-  function _captureSnapshot() {
-    const t = state.simTime;
+  const r2 = (v) => Number.isFinite(v) ? Math.round(v * 100) / 100 : null;
+  const r1 = (v) => Number.isFinite(v) ? Math.round(v * 10) / 10 : null;
+
+  function _orbitalElems(b) {
+    const r = Math.hypot(b.rx, b.ry);
+    if (!(r > 0)) return { vr: null, vt: null, ha: null, hp: null };
+    const ux = b.rx / r, uy = b.ry / r;
+    const ex = uy, ey = -ux;
+    const vr = b.vx * ux + b.vy * uy;
+    const vt = b.vx * ex + b.vy * ey;
+    const GM = CONFIG.GM_EARTH;
+    const E = 0.5 * (vr * vr + vt * vt) - GM / r;
+    const h = r * vt;
+    let ha = null, hp = null;
+    if (E < 0) {
+      const a = -GM / (2 * E);
+      const e = Math.sqrt(Math.max(0, 1 + 2 * E * h * h / (GM * GM)));
+      ha = (a * (1 + e) - CONFIG.EARTH_RADIUS) / 1000;
+      hp = (a * (1 - e) - CONFIG.EARTH_RADIUS) / 1000;
+    } else if (E > 0) {
+      const p = h * h / GM;
+      const e = Math.sqrt(Math.max(0, 1 + 2 * E * h * h / (GM * GM)));
+      hp = (p / (1 + e) - CONFIG.EARTH_RADIUS) / 1000;
+    }
+    return { vr, vt, ha, hp };
+  }
+
+  function _row() {
     const gs = (typeof Guidance !== 'undefined' && Guidance.getGuideStatus)
       ? (Guidance.getGuideStatus() || {}) : {};
-
-    const bodies = state.bodies.map((b, i) => {
-      const r = Math.hypot(b.rx, b.ry);
-      const ux = r > 0 ? b.rx / r : 0;
-      const uy = r > 0 ? b.ry / r : 0;
-      const ex = uy, ey = -ux;
-      const vr = b.vx * ux + b.vy * uy;
-      const vt = b.vx * ex + b.vy * ey;
-
-      const GM = CONFIG.GM_EARTH;
-      const E = 0.5 * (vr * vr + vt * vt) - GM / r;
-      const h = r * vt;
-      let apo_km = null, peri_km = null;
-      if (E < 0) {
-        const a = -GM / (2 * E);
-        const e = Math.sqrt(Math.max(0, 1 + 2 * E * h * h / (GM * GM)));
-        apo_km = (a * (1 + e) - CONFIG.EARTH_RADIUS) / 1000;
-        peri_km = (a * (1 - e) - CONFIG.EARTH_RADIUS) / 1000;
-      } else if (E > 0) {
-        const p = h * h / GM;
-        const e = Math.sqrt(Math.max(0, 1 + 2 * E * h * h / (GM * GM)));
-        peri_km = (p / (1 + e) - CONFIG.EARTH_RADIUS) / 1000;
-      }
-
-      return {
-        i, id: b.id,
-        role: b.isActive ? 'active'
-          : b.payloadBody ? 'payload'
-          : b.fairingHalf ? 'fairing'
-          : b.isDiscarded ? 'discarded' : 'free',
-        rx: b.rx, ry: b.ry, vx: b.vx, vy: b.vy,
-        theta: b.theta, omega: b.omega,
-        alt_km: (r - CONFIG.EARTH_RADIUS) / 1000,
-        vr, vt,
-        apo_km, peri_km,
-        fuelMass: b.fuelMass,
-        memberFuel: Array.isArray(b.memberFuel) ? b.memberFuel.slice() : null,
-        crashed: !!b.crashed,
-        landed: !!b.landed,
-        payloadReleased: !!b.payloadReleased,
-        legs: b.legs ? { deployed: !!b.legs.deployed, progress: b.legs.progress || 0 } : null,
-        engines: (b.engines || []).map(e => ({
-          id: e.id, gimbal: !!e.gimbal, isCenter: !!e.isCenter,
-          massFlowRate: e.massFlowRate,
-          gimbalDeg: e.gimbalDeg,
-          currentF: e.currentF,
-        })),
-      };
-    });
-
-    return {
-      t,
-      activeBodyIndex: state.activeBodyIndex,
-      guide: {
-        phase: gs.phase || null,
-        ascentPhase: gs.ascentPhase || null,
-        mecoTriggered: !!gs.mecoTriggered,
-        splitDetected: !!gs.splitDetected,
-        fairingOpened: !!gs.fairingOpened,
-        stageBurnLocked: !!gs.stageBurnLocked,
-        stageBurnTargetTiltDeg: gs.stageBurnTargetTiltDeg,
-        apogeeKm: gs.apogeeKm,
-        perigeeKm: gs.perigeeKm,
-        coastDeltaV: gs.coastDeltaV,
-        coastTRem: gs.coastTRem,
-        coastVOrbital: gs.coastVOrbital,
-        circCurrentV: gs.circCurrentV,
-        circTargetV: gs.circTargetV,
-        circAchieved: !!gs.circAchieved,
-        coastTargetThetaDeg: gs.coastTargetThetaDeg,
-        coast2TargetThetaDeg: gs.coast2TargetThetaDeg,
-      },
-      bodies,
-    };
+    const b = state.bodies[state.activeBodyIndex];
+    if (!b) return null;
+    const o = _orbitalElems(b);
+    const alt_km = (Math.hypot(b.rx, b.ry) - CONFIG.EARTH_RADIUS) / 1000;
+    return [
+      Math.floor(state.simTime),
+      PHASE_CODES[gs.phase] || (gs.phase || '?'),
+      gs.ascentPhase ? (ASC_CODES[gs.ascentPhase] || gs.ascentPhase) : '',
+      state.bodies.length,
+      state.activeBodyIndex,
+      r2(alt_km),
+      r1(o.vr),
+      r1(o.vt),
+      r2(gs.apogeeKm),
+      r2(gs.perigeeKm),
+      Number.isFinite(gs.coastDeltaV) ? r2(gs.coastDeltaV) : null,
+      Number.isFinite(gs.coastTRem) ? r1(gs.coastTRem) : null,
+      Number.isFinite(gs.circCurrentV) ? r1(gs.circCurrentV) : null,
+      Number.isFinite(gs.circTargetV) ? r1(gs.circTargetV) : null,
+      r2((b.fuelMass || 0) / 1000),
+      gs.stageBurnLocked ? r1(gs.stageBurnTargetTiltDeg) : null,
+    ];
   }
 
   function _tick() {
     if (!_recording) return;
     const sec = Math.floor(state.simTime);
-    if (sec !== _lastRecordedSec) {
-      _lastRecordedSec = sec;
+    if (sec !== _lastSec) {
+      _lastSec = sec;
       try {
-        _recorded.push(_captureSnapshot());
-        if (btnRec) btnRec.innerHTML = '<span class="btn-ic">⏺</span>' + _recorded.length + 's';
-      } catch (e) {
-        console.error('[record] snapshot failed at t=' + state.simTime.toFixed(2), e);
+        const gs = (Guidance.getGuideStatus && Guidance.getGuideStatus()) || {};
+        // Event log — phase / ascent-sub-phase / body-count changes.
+        if (gs.phase && gs.phase !== _prevPhase) {
+          _events.push({ t: state.simTime, e: 'phase', v: gs.phase });
+          _prevPhase = gs.phase;
+        }
+        if (gs.ascentPhase && gs.ascentPhase !== _prevAscent) {
+          _events.push({ t: state.simTime, e: 'ascent', v: gs.ascentPhase });
+          _prevAscent = gs.ascentPhase;
+        }
+        if (state.bodies.length !== _prevBodyCount) {
+          _events.push({ t: state.simTime, e: 'bodies', v: state.bodies.length });
+          _prevBodyCount = state.bodies.length;
+        }
+        const row = _row();
+        if (row) _rows.push(row);
+        if (btnRec) btnRec.innerHTML = '<span class="btn-ic">⏺</span>' + _rows.length + 's';
+      } catch (err) {
+        console.error('[record] failed at t=' + state.simTime.toFixed(2), err);
       }
     }
     requestAnimationFrame(_tick);
   }
 
   function _startRecording() {
-    _recorded = [];
-    _lastRecordedSec = -1;
+    _rows = [COLUMNS.slice()];
+    _events = [];
+    _lastSec = -1;
+    _prevPhase = null;
+    _prevAscent = null;
+    _prevBodyCount = -1;
     _startSimTime = state.simTime;
     _startWallMs = performance.now();
     _recording = true;
@@ -830,7 +862,6 @@
     }
     if (btnDl) btnDl.disabled = true;
     requestAnimationFrame(_tick);
-    console.log('[record] started at simTime=' + _startSimTime.toFixed(3));
   }
 
   function _stopRecording() {
@@ -840,12 +871,11 @@
       btnRec.style.borderColor = '';
       btnRec.style.color = '';
     }
-    if (btnDl) btnDl.disabled = _recorded.length === 0;
-    console.log('[record] stopped. ' + _recorded.length + ' samples captured.');
+    if (btnDl) btnDl.disabled = _rows.length <= 1;
   }
 
   function _download() {
-    if (!_recorded.length) return;
+    if (_rows.length <= 1) return;
     const stack = (typeof getActiveStack === 'function') ? getActiveStack() : null;
     const activeGuide = (typeof Guidance !== 'undefined' && Guidance.getActiveGuide)
       ? Guidance.getActiveGuide() : null;
@@ -853,29 +883,23 @@
     const payload = {
       meta: {
         exportedAt: new Date().toISOString(),
-        stackId: stack ? stack.id : null,
-        stackName: stack ? stack.name : null,
-        stackMembers: (typeof getActiveStackMembers === 'function')
-          ? getActiveStackMembers().map(m => ({
-              id: m.id, name: m.name, role: m.stageRole,
-            }))
-          : [],
+        stack: stack ? stack.name : null,
         guide: activeGuide,
         startSimTime: _startSimTime,
         endSimTime: state.simTime,
-        startWallMs: _startWallMs,
-        endWallMs: performance.now(),
-        samplesCount: _recorded.length,
+        wallMs: performance.now() - _startWallMs,
+        samples: _rows.length - 1,
         env: {
-          windEnabled: (typeof wind !== 'undefined') ? !!wind.enabled : null,
-          windSpeed: (typeof wind !== 'undefined') ? wind.speed : null,
-          windDir: (typeof wind !== 'undefined') ? wind.directionDeg : null,
-          atmosphereEnabled: (typeof atmosphereEnabled !== 'undefined') ? atmosphereEnabled : null,
-          sloshEnabled: (typeof CONFIG !== 'undefined') ? CONFIG.SLOSH_ENABLED : null,
-          imuEnabled: (typeof imuEnabled !== 'undefined') ? imuEnabled : null,
+          w: (typeof wind !== 'undefined' && wind.enabled)
+            ? (wind.speed + 'm/s@' + wind.directionDeg + 'deg') : 'off',
+          atm: (typeof atmosphereEnabled !== 'undefined') ? atmosphereEnabled : null,
+          slosh: (typeof CONFIG !== 'undefined') ? CONFIG.SLOSH_ENABLED : null,
+          imu: (typeof imuEnabled !== 'undefined') ? imuEnabled : null,
         },
       },
-      samples: _recorded,
+      columns: _rows[0],
+      events: _events,
+      data: _rows.slice(1),
     };
 
     const json = JSON.stringify(payload);
@@ -884,23 +908,19 @@
     const a = document.createElement('a');
     const ts = new Date().toISOString().replace(/[:.]/g, '-');
     a.href = url;
-    a.download = 'rocket-sim-telemetry-' + ts + '.json';
+    a.download = 'rocket-telemetry-' + ts + '.json';
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-    console.log('[record] downloaded ' + _recorded.length + ' samples.');
+    console.log('[record] downloaded. size=' + Math.round(json.length / 1024) + 'KB, samples=' + (_rows.length - 1));
   }
 
-  function _toggle() {
+  if (btnRec) btnRec.addEventListener('click', () => {
     if (_recording) _stopRecording();
     else _startRecording();
-  }
-
-  if (btnRec) btnRec.addEventListener('click', _toggle);
+  });
   if (btnDl) btnDl.addEventListener('click', _download);
-
-  console.log('[record] ready.');
 })();
 </script>
 </body>
