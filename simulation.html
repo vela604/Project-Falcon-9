@@ -794,11 +794,13 @@
     const b = state.bodies[state.activeBodyIndex];
     if (!b) return null;
 
-    let gs = {};
-    if (typeof Guidance !== 'undefined' && Guidance.getGuideStatus) {
-      try { gs = Guidance.getGuideStatus() || {}; } catch (e) { gs = {}; }
-    }
-    const guideActive = !!gs.active || !!(Guidance.getActiveGuide && Guidance.getActiveGuide());
+    // Real sim: guide runs in guidance.worker.js, not on main thread.
+// Main-thread `Guidance.getGuideStatus()` always returns {active:null}
+// because no guide is active on THIS thread. The worker's status
+// arrives via onGuidanceStatus (workerBridge → controls.js), which
+// now caches it on window.__lastGuideStatus. Read that.
+const gs = window.__lastGuideStatus || {};
+const guideActive = !!gs.active;
 
     const o = _elems(b);
     const alt_km = (Math.hypot(b.rx, b.ry) - CONFIG.EARTH_RADIUS) / 1000;
@@ -833,11 +835,8 @@
       _lastSec = sec;
       try {
         const b = state.bodies[state.activeBodyIndex];
-        let gs = {};
-        if (typeof Guidance !== 'undefined' && Guidance.getGuideStatus) {
-          try { gs = Guidance.getGuideStatus() || {}; } catch (e) {}
-        }
-        const guideActiveNow = !!gs.active || !!(Guidance.getActiveGuide && Guidance.getActiveGuide());
+const gs = window.__lastGuideStatus || {};
+const guideActiveNow = !!gs.active;
 
         // Event log
         if (guideActiveNow !== _guideWasActive) {

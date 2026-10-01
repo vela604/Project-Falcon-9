@@ -1203,6 +1203,8 @@ const seq = Array.isArray(status.phaseSequence) && status.phaseSequence.length ?
 function onGuidanceStatus(status) {
   const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
   
+  window.__lastGuideStatus = status;
+  
   // Sync the guidance-active lock every time we hear from the worker.
   // Idempotent — the function bails if the state hasn't changed.
   _syncGuidanceLock(status);
