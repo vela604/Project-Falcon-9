@@ -698,33 +698,33 @@
   
 <script>
 // ============================================================================
-// Telemetry recorder — COMPACT mode.
+// Telemetry recorder — compact per-second table.
 //
-// Every sim-second, one tiny row. Format is a 2D array — first row is the
-// column names, then 1 row per integer sim-second. For a 700s run this is
-// ~25-40 KB total (vs ~1 MB for the verbose JSON version).
+// Every sim-second, one compact row. Format: 2D array, first row is column
+// names. For a 700s run, ~40-55 KB total.
+//
+// Apogee/perigee/altitude are computed LOCALLY from the active body's
+// inertial state — NOT read from guide status — so they're always
+// populated regardless of guide state. Guide columns (ph, ap, dv, tr, cv,
+// tv, bk) are null when the guide is not running.
 //
 // Columns:
 //   t    sim time (s, integer)
-//   ph   phase (2-3 char code, see PHASE_CODES below)
-//   ap   ascent sub-phase (2 char, only during ASCENT)
+//   ph   guide phase (2 char) or "?" if no guide running
+//   ap   ascent sub-phase (2 char)
 //   n    body count
 //   ai   active body index
 //   a    active alt (km, 2 dec)
-//   vr   active radial velocity (m/s, 1 dec)
-//   vt   active tangential velocity (m/s, 1 dec)
-//   ha   guide osculating apogee (km, 2 dec)
-//   hp   guide osculating perigee (km, 2 dec)
-//   dv   guide coast Δv (m/s, 2 dec, only during COAST_ROTATE)
-//   tr   guide coast t_rem (s, 1 dec, only during COAST_ROTATE)
-//   cv   guide circ current v (m/s, only during CIRCULARIZE)
-//   tv   guide circ target v (m/s, only during CIRCULARIZE)
+//   vr   radial velocity (m/s, 1 dec)
+//   vt   tangential velocity (m/s, 1 dec)
+//   ha   osculating apogee (km, 2 dec) — always populated
+//   hp   osculating perigee (km, 2 dec) — always populated
+//   dv   guide coast Δv (m/s, 2 dec, only in COAST_ROTATE)
+//   tr   guide coast t_rem (s, 1 dec, only in COAST_ROTATE)
+//   cv   guide circ current v (m/s, only in CIRCULARIZE)
+//   tv   guide circ target v (m/s, only in CIRCULARIZE)
 //   fl   active fuel (t, 2 dec)
-//   bk   stage_burn_lock tilt (deg, 1 dec, only after lock)
-//
-// Plus a separate "events" array capturing one-off moments (MECO, split,
-// fairing, eject, phase transitions) with timestamps — much easier to
-// spot divergence than scanning the whole table.
+//   bk   stage-burn lock tilt (deg, only after lock)
 // ============================================================================
 (function () {
   'use strict';
@@ -740,7 +740,6 @@
     'PRE_COAST': 'pc', 'PUSH': 'pu', 'COAST': 'co',
     'HOLD': 'ho', 'COASTnAoADAMP': 'cd',
   };
-
   const COLUMNS = [
     't', 'ph', 'ap', 'n', 'ai',
     'a', 'vr', 'vt', 'ha', 'hp',
@@ -756,6 +755,7 @@
   let _prevPhase = null;
   let _prevAscent = null;
   let _prevBodyCount = -1;
+  let _guideWasActive = null; // track guide-start/stop transitions
 
   const $ = (id) => document.getElementById(id);
   const btnRec = $('btnRecordData');
@@ -764,7 +764,9 @@
   const r2 = (v) => Number.isFinite(v) ? Math.round(v * 100) / 100 : null;
   const r1 = (v) => Number.isFinite(v) ? Math.round(v * 10) / 10 : null;
 
-  function _orbitalElems(b) {
+  // Compute osculating elements from a body's own inertial state.
+  // Always works — no guide dependency.
+  function _elems(b) {
     const r = Math.hypot(b.rx, b.ry);
     if (!(r > 0)) return { vr: null, vt: null, ha: null, hp: null };
     const ux = b.rx / r, uy = b.ry / r;
@@ -789,23 +791,32 @@
   }
 
   function _row() {
-    const gs = (typeof Guidance !== 'undefined' && Guidance.getGuideStatus)
-      ? (Guidance.getGuideStatus() || {}) : {};
     const b = state.bodies[state.activeBodyIndex];
     if (!b) return null;
-    const o = _orbitalElems(b);
+
+    let gs = {};
+    if (typeof Guidance !== 'undefined' && Guidance.getGuideStatus) {
+      try { gs = Guidance.getGuideStatus() || {}; } catch (e) { gs = {}; }
+    }
+    const guideActive = !!gs.active || !!(Guidance.getActiveGuide && Guidance.getActiveGuide());
+
+    const o = _elems(b);
     const alt_km = (Math.hypot(b.rx, b.ry) - CONFIG.EARTH_RADIUS) / 1000;
+    const phCode = gs.phase
+      ? (PHASE_CODES[gs.phase] || gs.phase.slice(0, 3))
+      : '?';
+
     return [
       Math.floor(state.simTime),
-      PHASE_CODES[gs.phase] || (gs.phase || '?'),
-      gs.ascentPhase ? (ASC_CODES[gs.ascentPhase] || gs.ascentPhase) : '',
+      phCode,
+      gs.ascentPhase ? (ASC_CODES[gs.ascentPhase] || gs.ascentPhase.slice(0, 2)) : '',
       state.bodies.length,
       state.activeBodyIndex,
       r2(alt_km),
       r1(o.vr),
       r1(o.vt),
-      r2(gs.apogeeKm),
-      r2(gs.perigeeKm),
+      r2(o.ha),
+      r2(o.hp),
       Number.isFinite(gs.coastDeltaV) ? r2(gs.coastDeltaV) : null,
       Number.isFinite(gs.coastTRem) ? r1(gs.coastTRem) : null,
       Number.isFinite(gs.circCurrentV) ? r1(gs.circCurrentV) : null,
@@ -821,8 +832,18 @@
     if (sec !== _lastSec) {
       _lastSec = sec;
       try {
-        const gs = (Guidance.getGuideStatus && Guidance.getGuideStatus()) || {};
-        // Event log — phase / ascent-sub-phase / body-count changes.
+        const b = state.bodies[state.activeBodyIndex];
+        let gs = {};
+        if (typeof Guidance !== 'undefined' && Guidance.getGuideStatus) {
+          try { gs = Guidance.getGuideStatus() || {}; } catch (e) {}
+        }
+        const guideActiveNow = !!gs.active || !!(Guidance.getActiveGuide && Guidance.getActiveGuide());
+
+        // Event log
+        if (guideActiveNow !== _guideWasActive) {
+          _events.push({ t: state.simTime, e: 'guide', v: guideActiveNow ? 'start' : 'stop' });
+          _guideWasActive = guideActiveNow;
+        }
         if (gs.phase && gs.phase !== _prevPhase) {
           _events.push({ t: state.simTime, e: 'phase', v: gs.phase });
           _prevPhase = gs.phase;
@@ -835,6 +856,7 @@
           _events.push({ t: state.simTime, e: 'bodies', v: state.bodies.length });
           _prevBodyCount = state.bodies.length;
         }
+
         const row = _row();
         if (row) _rows.push(row);
         if (btnRec) btnRec.innerHTML = '<span class="btn-ic">⏺</span>' + _rows.length + 's';
@@ -852,6 +874,7 @@
     _prevPhase = null;
     _prevAscent = null;
     _prevBodyCount = -1;
+    _guideWasActive = null;
     _startSimTime = state.simTime;
     _startWallMs = performance.now();
     _recording = true;
@@ -861,6 +884,11 @@
       btnRec.style.color = 'var(--danger)';
     }
     if (btnDl) btnDl.disabled = true;
+    // Snapshot immediately at t=0 to make sure the first sample is captured
+    // even if the guide starts in the same tick.
+    const r0 = _row();
+    if (r0) _rows.push(r0);
+    _lastSec = Math.floor(state.simTime);
     requestAnimationFrame(_tick);
   }
 
