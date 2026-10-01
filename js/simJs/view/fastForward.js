@@ -205,10 +205,24 @@ const w = new Worker('js/simJs/threads/fastforward.worker.js');
   if (el) el.textContent = 'CAPTURE: ' + m.sig;
   return;
 }
-      if (m.type === 'progress') {
-  // Fast tick — simTime only.
-  setProgress(m.simTime - _baseSimTime, durationS, m.simTime);
-} else if (m.type === 'guideStatus') {
+            if (m.type === 'progress') {
+        setProgress(m.simTime - _baseSimTime, durationS, m.simTime);
+        // Update main-thread state so the recorder (and any other reader)
+        // sees the fresh simTime + bodies every 1 sim-second, not every 10.
+        if (m.bodies && Array.isArray(m.bodies)) {
+          const _prevLen = state.bodies ? state.bodies.length : 0;
+          state.bodies = m.bodies;
+          state.simTime = m.simTime;
+          state.activeBodyIndex = m.activeBodyIndex || 0;
+          state.halted = !!m.halted;
+          if (m.bodies.length !== _prevLen &&
+            typeof refreshFollowBodySelect === 'function') {
+            refreshFollowBodySelect();
+          }
+        } else {
+          state.simTime = m.simTime;
+        }
+      } else if (m.type === 'guideStatus') {
   // Live phase-log update from the FF worker. Forward straight to
   // onGuidanceStatus so the mission-phase panel updates during FF
   // instead of freezing and jumping at the end.

@@ -231,12 +231,15 @@ for (let i = 0; i < maxTicks; i++) {
   // Fast progress ping — simTime only. Tiny payload, cheap to
   // postMessage 80×/sim-minute.
   if (i % progressEvery === 0) {
-    self.postMessage({
-      type: 'progress',
-      simTime: state.simTime,
-      elapsedS: state.simTime - startSimT,
-    });
-  }
+  self.postMessage({
+    type: 'progress',
+    simTime: state.simTime,
+    elapsedS: state.simTime - startSimT,
+    bodies: state.bodies,
+    activeBodyIndex: state.activeBodyIndex,
+    halted: !!state.halted,
+  });
+}
   
   // Slower full-body ping — heavier structured clone, only fired
   // every 10 sim-sec so the total transfer cost over a long FF is
