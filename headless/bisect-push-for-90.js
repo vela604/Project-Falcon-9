@@ -2,108 +2,52 @@
 // ============================================================================
 // headless/bisect-push-for-90.js
 //
-// STAGE_BURN_LOCK_TILT_DEG pinned at 89.999°.
+// STAGE_BURN_LOCK_TILT_DEG pinned at 90.0°.
+// CIRC_TRIGGER_LEAD_S pinned at 1.0s.
+// Bisect PUSH_MAX_GIMBAL_DEG to land circularize Δv on 100 m/s.
 //
-// Bisect PUSH_MAX_GIMBAL_DEG over [0.01, 1.00] to find the smallest push
-// where the circularize Δv stays ≤ DELTA_V_MAX (50 m/s). At that push,
-// time-to-apogee (t_rem) at the first COAST_WAIT tick after COAST_ROTATE
-// (1st pass) is minimized.
+// Direction: higher push → more horizontal velocity at cutoff → smaller Δv.
+//            lower  push → less horizontal velocity at cutoff → bigger Δv.
 //
-// Physical reasoning:
-//   - Higher push → more gravity turn → higher horizontal velocity at
-//     MECO → smaller circularize Δv needed.
-//   - Higher push → longer coast (t_rem) before circularize.
-//   - Lower push → shorter coast, but bigger Δv requirement.
-//   The binding constraint is Δv ≤ 50. Bisection finds the boundary.
+// Classification:
+//   crash / no Δv captured        → 'high' (lower pushHi)
+//   Δv > 100 + tol                → 'low'  (raise pushLo)
+//   Δv < 100 - tol                → 'high' (lower pushHi)
+//   |Δv - 100| ≤ tol              → 'target'
 //
-// Captured at the first COAST_WAIT tick after COAST_ROTATE (1st pass):
-//   t_rem  = time-to-apogee from Kepler (matches guidance.js _hTimeToApogee)
-//   deltaV = V_orb(r_apo) − V_apo      (matches guidance.js's coast plan)
+// Δv / t_rem captured inside guidance at 1st-pass COAST_ROTATE exit
+// (see leoInsertionV2) — the exact moment COAST_WAIT would begin, so
+// short COAST_WAIT phases that the outer loop skips are still captured.
 //
-// Classification of a run:
-//   crash / no COAST_WAIT / no t_rem → 'high'   (push too high → lower)
-//   Δv null OR Δv > DELTA_V_MAX       → 'low'    (push too low → raise)
-//   else                              → 'pass'   (candidate; try lower)
-//
-// Bisection: because a pass means "could still be lower", we move pushHi
-// down on pass. Answer is the smallest push that passes (≈ Δv boundary),
-// which yields minimum t_rem among all feasible pushes.
-//
-// Adaptive chunk granularity:
-//   bracket > CLOSE_BRACKET → CHUNK_COARSE = 8  (fast sweep)
-//   bracket ≤ CLOSE_BRACKET → CHUNK_FINE   = 1  (precise t_rem capture)
-// Cache key includes chunk, so a value first run coarsely is re-run finely
-// once the bracket closes.
+// After bisection:
+//   - take precise push
+//   - compute floor and ceil at 2 decimals
+//   - run both fresh
+//   - among {precise, floor, ceil}, pick the one with Δv closest to 100
+//   - report all three + winner
 // ============================================================================
 
 const fs = require('fs');
 const path = require('path');
 const { runSim } = require('./runner');
 
-const TILT_LOCK_FIXED = 89.999;
-const DELTA_V_MAX     = 50.0;    // m/s — circularize Δv hard limit
+const TILT_LOCK_FIXED = 90.0;
+const CIRC_LEAD_FIXED = 1.0;
+const DELTA_V_TARGET  = 100.0;
+const DELTA_V_TOL     = 5.0;
 const PRECISION       = 1e-4;
 const TOTAL_SIM_S     = 700;
-const MAX_ITER        = 120;
+const MAX_ITER        = 200;
 
 const CHUNK_COARSE    = 8;
 const CHUNK_FINE      = 1;
 const CLOSE_BRACKET   = 0.005;
 
-const PUSH_LO_INIT    = 0.01;
-const PUSH_HI_INIT    = 1.00;
+const PUSH_LO_INIT    = 0.3;
+const PUSH_HI_INIT    = 0.61;
 
 // ---------------------------------------------------------------------------
-// Kepler time-to-apogee — identical formula to guidance.js's _hTimeToApogee.
-// ---------------------------------------------------------------------------
-function timeToApogee(r, vr, vt, GM) {
-  if (!(r > 0)) return Infinity;
-  const E = 0.5 * (vr * vr + vt * vt) - GM / r;
-  if (E >= 0) return Infinity;
-  const a = -GM / (2 * E);
-  const h = r * vt;
-  const eSq = 1 + 2 * E * h * h / (GM * GM);
-  const e = Math.sqrt(Math.max(0, eSq));
-  if (e < 1e-9) return Math.PI * Math.sqrt(a * a * a / GM);
-  const cosE = (1 - r / a) / e;
-  const sinE = (r * vr) / (e * Math.sqrt(GM * a));
-  let E_an = Math.atan2(sinE, cosE);
-  if (E_an < 0) E_an += 2 * Math.PI;
-  const M = E_an - e * Math.sin(E_an);
-  const n = Math.sqrt(GM / (a * a * a));
-  if (M < Math.PI) return (Math.PI - M) / n;
-  return (3 * Math.PI - M) / n;
-}
-
-// ---------------------------------------------------------------------------
-// Circularize Δv — matches guidance.js's RCS_BOOST-done plan block.
-//   E     = specific orbital energy
-//   a     = semi-major axis
-//   h     = specific angular momentum
-//   e     = eccentricity
-//   r_apo = a·(1+e)             apogee radius after stage burn
-//   v_apo = |h| / r_apo         velocity at apogee (vr=0 there)
-//   v_orb = √(GM / r_apo)       circular orbital speed at that radius
-//   Δv    = v_orb − v_apo
-// Returns null if E ≥ 0 (escape / hyperbolic — no apogee).
-// ---------------------------------------------------------------------------
-function deltaVCircularize(r, vr, vt, GM) {
-  const E = 0.5 * (vr * vr + vt * vt) - GM / r;
-  if (E >= 0) return null;
-  const a = -GM / (2 * E);
-  const h = r * vt;
-  const eSq = 1 + 2 * E * h * h / (GM * GM);
-  const e = Math.sqrt(Math.max(0, eSq));
-  const rApo = a * (1 + e);
-  if (!(rApo > 0)) return null;
-  const vApo = Math.abs(h) / rApo;
-  const vOrb = Math.sqrt(GM / rApo);
-  return Math.max(0, vOrb - vApo);
-}
-
-// ---------------------------------------------------------------------------
-// One run: given a PUSH value and a tick-chunk size, return t_rem and Δv at
-// the first COAST_WAIT tick following COAST_ROTATE (1st pass).
+// One run.
 // ---------------------------------------------------------------------------
 function runOne(pushVal, chunkTicks) {
   const warm = runSim({ durationS: 0.05, quiet: true });
@@ -111,47 +55,53 @@ function runOne(pushVal, chunkTicks) {
   sim.reset(0);
   sim.setEnvironment({ atmosphere: true, slosh: true, imu: false });
   sim.applyTunables('leoInsertionV2', [
-    { path: 'ASCENT.PUSH_MAX_GIMBAL_DEG', value: pushVal },
-    { path: 'STAGE_BURN_LOCK_TILT_DEG',   value: TILT_LOCK_FIXED },
+    { path: 'ASCENT.PUSH_MAX_GIMBAL_DEG',   value: pushVal },
+    { path: 'STAGE_BURN_LOCK_TILT_DEG',     value: TILT_LOCK_FIXED },
+    { path: 'CIRC_TRIGGER_LEAD_S',          value: CIRC_LEAD_FIXED },
   ]);
   sim.setFueling(100, 100);
   sim.startGuide('leoInsertionV2');
 
   const dt = sim.CONFIG.DT;
   const totalTicks = Math.ceil(TOTAL_SIM_S / dt);
-  const GM = sim.CONFIG.GM_EARTH;
 
-  let prevPhase = null;
-  let tRem = null;
+  let abortReason = null;
+  let abortApogeeKm = null;
   let deltaV = null;
-  let tRemAtSimTime = null;
-  let exitedPhase = null;
+  let tRem = null;
+  let lastPhase = null;
 
   for (let i = 0; i < totalTicks; i += chunkTicks) {
     sim.step(Math.min(chunkTicks, totalTicks - i));
     const st = sim.getStatus();
     const gs = st.guideStatus || {};
     const phase = gs.phase;
+    lastPhase = phase;
     const a = st.bodies.find(b => b.isActive) || st.bodies[0];
-    if (!a) { exitedPhase = 'NO_BODY'; break; }
+    if (!a) { abortReason = 'NO_BODY'; break; }
 
-    // Capture on first COAST_WAIT tick after COAST_ROTATE (1st pass).
-    // (2nd-pass COAST_ROTATE exits to COAST_HOLD, not COAST_WAIT.)
-    if (tRem === null && prevPhase === 'COAST_ROTATE' && phase === 'COAST_WAIT') {
+    // STAGE_BURN vr monitor (fail-forward signal only — not the primary
+    // criterion any more, but a clean early-exit path when a value clearly
+    // isn't going to work).
+    if (phase === 'STAGE_BURN') {
       const rr = Math.hypot(a.rx, a.ry) || 1;
-      const ux = a.rx / rr, uy = a.ry / rr;
-      const ex = a.ry / rr, ey = -a.rx / rr;
-      const vr = a.vx * ux + a.vy * uy;
-      const vt = a.vx * ex + a.vy * ey;
-      tRem = timeToApogee(rr, vr, vt, GM);
-      deltaV = deltaVCircularize(rr, vr, vt, GM);
-      tRemAtSimTime = st.simTime;
-      exitedPhase = phase;
+      const vr = (a.vx * a.rx + a.vy * a.ry) / rr;
+      if (vr < 0) {
+        const apKm = Number.isFinite(gs.apogeeKm) ? gs.apogeeKm : null;
+        abortApogeeKm = apKm;
+        abortReason = 'VR_NEG';
+        break;
+      }
+    }
+
+    // Δv / t_rem become available once 1st-pass COAST_ROTATE exits.
+    if (gs.coastDeltaV !== null && gs.coastDeltaV !== undefined) {
+      deltaV = gs.coastDeltaV;
+      tRem = gs.coastTRem;
       break;
     }
 
-    if (st.crashed) { exitedPhase = 'CRASH'; break; }
-    prevPhase = phase;
+    if (st.crashed) { abortReason = 'CRASH'; break; }
   }
 
   sim.stopGuide();
@@ -161,18 +111,20 @@ function runOne(pushVal, chunkTicks) {
     chunkTicks,
     tRem: (tRem !== null && Number.isFinite(tRem)) ? tRem : null,
     deltaV: (deltaV !== null && Number.isFinite(deltaV)) ? deltaV : null,
-    tRemAtSimTime,
-    exitedPhase,
+    abortReason,
+    abortApogeeKm,
+    lastPhase,
     crashed: sim.getStatus().crashed,
   };
 }
 
-// 'high' → push too high, try lower; 'low' → push too low, raise it;
-// 'pass' → feasible, try lower to minimize t_rem.
 function classify(r) {
-  if (r.crashed || r.tRem === null) return 'high';
-  if (r.deltaV === null || r.deltaV > DELTA_V_MAX) return 'low';
-  return 'pass';
+  if (r.crashed) return 'high';
+  if (r.abortReason) return 'high';
+  if (r.deltaV === null) return 'high';
+  if (r.deltaV > DELTA_V_TARGET + DELTA_V_TOL) return 'low';
+  if (r.deltaV < DELTA_V_TARGET - DELTA_V_TOL) return 'high';
+  return 'target';
 }
 
 const cache = new Map();
@@ -185,68 +137,59 @@ function runOneCached(pushVal, chunkTicks) {
 }
 
 // ---------------------------------------------------------------------------
+// Format helper
+// ---------------------------------------------------------------------------
+function fmtR(r) {
+  const t = (r.tRem !== null) ? r.tRem.toFixed(1) + 's' : '—';
+  const d = (r.deltaV !== null) ? r.deltaV.toFixed(2) + 'm/s' : '—';
+  const ab = r.abortReason ? ('[' + r.abortReason +
+    (r.abortApogeeKm !== null ? '@' + r.abortApogeeKm.toFixed(0) + 'km' : '') + ']') : '';
+  return 't_rem=' + t.padStart(9) + '  Δv=' + d.padStart(12) +
+    '  phase=' + String(r.lastPhase || '?').padEnd(15) + '  ' + ab;
+}
+
+// ---------------------------------------------------------------------------
 // Bootstrap
 // ---------------------------------------------------------------------------
 console.log('=== bisect PUSH_MAX_GIMBAL_DEG ===');
-console.log('TILT_LOCK fixed    = ' + TILT_LOCK_FIXED + '°');
-console.log('Δv constraint      = ≤ ' + DELTA_V_MAX + ' m/s (circularize)');
-console.log('PRECISION          = ' + PRECISION);
-console.log('range              = [' + PUSH_LO_INIT + ', ' + PUSH_HI_INIT + ']');
+console.log('TILT_LOCK fixed = ' + TILT_LOCK_FIXED + '°');
+console.log('CIRC_LEAD fixed = ' + CIRC_LEAD_FIXED + ' s');
+console.log('Δv target       = ' + DELTA_V_TARGET + ' ± ' + DELTA_V_TOL + ' m/s');
+console.log('PRECISION       = ' + PRECISION);
+console.log('range           = [' + PUSH_LO_INIT + ', ' + PUSH_HI_INIT + ']');
 console.log('chunk: coarse=' + CHUNK_COARSE + ' (bracket > ' + CLOSE_BRACKET + '), fine=' + CHUNK_FINE);
 console.log('');
+
+let pushLo = PUSH_LO_INIT;
+let pushHi = PUSH_HI_INIT;
 
 function pickChunk() {
   return (pushHi - pushLo) > CLOSE_BRACKET ? CHUNK_COARSE : CHUNK_FINE;
 }
 
-let pushLo = PUSH_LO_INIT;
-let pushHi = PUSH_HI_INIT;
-
-console.log('initial run: push=' + pushLo + ' (expect Δv-fail / low side)…');
+console.log('initial: push=' + pushLo + '…');
 let rLo = runOneCached(pushLo, pickChunk());
-console.log('  t_rem=' + (rLo.tRem !== null ? rLo.tRem.toFixed(3) + 's' : 'FAIL') +
-  '  Δv=' + (rLo.deltaV !== null ? rLo.deltaV.toFixed(1) + 'm/s' : '—') +
-  '  exit=' + rLo.exitedPhase);
+let cLo = classify(rLo);
+console.log('  ' + fmtR(rLo) + '  → ' + cLo);
 
-console.log('initial run: push=' + pushHi + ' (expect pass / high side)…');
+console.log('initial: push=' + pushHi + '…');
 let rHi = runOneCached(pushHi, pickChunk());
-console.log('  t_rem=' + (rHi.tRem !== null ? rHi.tRem.toFixed(3) + 's' : 'FAIL') +
-  '  Δv=' + (rHi.deltaV !== null ? rHi.deltaV.toFixed(1) + 'm/s' : '—') +
-  '  exit=' + rHi.exitedPhase);
+let cHi = classify(rHi);
+console.log('  ' + fmtR(rHi) + '  → ' + cHi);
 console.log('');
 
-if (classify(rLo) === 'pass') {
-  console.log('WARNING: lo endpoint ALREADY passes (Δv ≤ ' + DELTA_V_MAX + ').');
-  console.log('         The Δv constraint might not bind in the range.');
+if (cLo === 'high' && cHi === 'high') {
+  console.log('WARNING: both endpoints on high side — bracket too low.');
 }
-if (classify(rHi) === 'low') {
-  console.log('WARNING: hi endpoint is Δv-FAIL (push too low for constraint).');
-  console.log('         Bracket inverted — results unreliable.');
+if (cLo === 'low' && cHi === 'low') {
+  console.log('WARNING: both endpoints on low side — bracket too high.');
 }
 console.log('');
-
-let bestPush = null;
-let bestTRem = null;
-let bestDeltaV = null;
-let bestChunk = null;
-
-function considerCandidate(push, r) {
-  if (r.tRem === null) return;
-  if (r.deltaV === null || r.deltaV > DELTA_V_MAX) return;
-  if (bestPush === null || r.tRem < bestTRem) {
-    bestPush = push;
-    bestTRem = r.tRem;
-    bestDeltaV = r.deltaV;
-    bestChunk = r.chunkTicks;
-  }
-}
-considerCandidate(pushLo, rLo);
-considerCandidate(pushHi, rHi);
 
 const trace = [rLo, rHi];
 
 // ---------------------------------------------------------------------------
-// Bisection (weighted on Δv when both endpoints have it)
+// Bisection
 // ---------------------------------------------------------------------------
 for (let iter = 0; iter < MAX_ITER; iter++) {
   if (pushHi - pushLo < PRECISION) break;
@@ -254,10 +197,9 @@ for (let iter = 0; iter < MAX_ITER; iter++) {
   const chunk = pickChunk();
 
   let pushMid;
-  const dL = rLo.deltaV;
-  const dH = rHi.deltaV;
-  if (dL !== null && dH !== null && Math.abs(dH - dL) > 1e-9) {
-    let ratio = (DELTA_V_MAX - dL) / (dH - dL);
+  if (rLo.deltaV !== null && rHi.deltaV !== null &&
+      Math.abs(rHi.deltaV - rLo.deltaV) > 1) {
+    let ratio = (DELTA_V_TARGET - rLo.deltaV) / (rHi.deltaV - rLo.deltaV);
     ratio = Math.max(0.05, Math.min(0.95, ratio));
     pushMid = pushLo + (pushHi - pushLo) * ratio;
   } else {
@@ -265,134 +207,149 @@ for (let iter = 0; iter < MAX_ITER; iter++) {
   }
 
   const rMid = runOneCached(pushMid, chunk);
+  const cMid = classify(rMid);
   trace.push(rMid);
-
-  const tStr = (rMid.tRem !== null) ? rMid.tRem.toFixed(4) + 's' : 'FAIL';
-  const dStr = (rMid.deltaV !== null) ? rMid.deltaV.toFixed(2) + 'm/s' : '—';
-  const c = classify(rMid);
-  const side = c === 'high' ? 'high→hi' : c === 'low' ? 'low→lo' : 'pass→hi';
 
   console.log(
     '#' + String(iter + 1).padStart(3) +
     '  push=' + pushMid.toFixed(6) +
-    '  t_rem=' + tStr.padStart(10) +
-    '  Δv=' + dStr.padStart(10) +
-    '  chunk=' + chunk +
+    '  ' + fmtR(rMid) +
     '  [' + pushLo.toFixed(6) + ', ' + pushHi.toFixed(6) + ']' +
-    '  → ' + side
+    '  → ' + cMid
   );
 
-  if (c === 'high') {
-    pushHi = pushMid;
-    rHi = rMid;
-  } else if (c === 'low') {
-    pushLo = pushMid;
-    rLo = rMid;
-  } else { // pass
-    pushHi = pushMid;
-    rHi = rMid;
-    considerCandidate(pushMid, rMid);
+  if (cMid === 'high') {
+    pushHi = pushMid; rHi = rMid;
+  } else if (cMid === 'low') {
+    pushLo = pushMid; rLo = rMid;
+  } else { // target — keep bisecting, treat like high to try to nail precise
+    pushHi = pushMid; rHi = rMid;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Precise result — closest Δv to target among all trace entries that
+// produced a valid Δv.
+// ---------------------------------------------------------------------------
+let precise = null;
+for (const r of trace) {
+  if (r.deltaV === null) continue;
+  if (precise === null ||
+      Math.abs(r.deltaV - DELTA_V_TARGET) < Math.abs(precise.deltaV - DELTA_V_TARGET)) {
+    precise = r;
   }
 }
 
 console.log('');
-console.log('=== HIGH-PRECISION RESULT ===');
-if (bestPush === null) {
-  console.log('No feasible push found (no run with Δv ≤ ' + DELTA_V_MAX + ').');
+console.log('=== PRECISE (high-precision bisection) ===');
+if (precise) {
+  console.log('push   = ' + precise.pushVal.toFixed(6));
+  console.log('Δv     = ' + precise.deltaV.toFixed(3) + ' m/s');
+  console.log('t_rem  = ' + (precise.tRem !== null ? precise.tRem.toFixed(2) + 's' : '—'));
 } else {
-  console.log('push   = ' + bestPush.toFixed(6));
-  console.log('t_rem  = ' + bestTRem.toFixed(4) + 's');
-  console.log('Δv     = ' + bestDeltaV.toFixed(3) + ' m/s');
-  console.log('chunk  = ' + bestChunk);
+  console.log('No run produced a valid Δv.');
 }
 console.log('final bracket: [' + pushLo.toFixed(6) + ', ' + pushHi.toFixed(6) + ']');
 console.log('');
 
 // ---------------------------------------------------------------------------
-// 2-decimal pass — always CHUNK_FINE.
-// Among candidates with Δv ≤ DELTA_V_MAX, pick min t_rem.
+// 2-decimal pass
 // ---------------------------------------------------------------------------
-let finalDecPush = null;
-let finalDecTRem = null;
-let finalDecDeltaV = null;
+let finalWinner = null;
+let candidates = [];
 
-if (bestPush !== null) {
-  const a = Math.floor(bestPush * 100) / 100;
-  const b = Math.ceil(bestPush * 100) / 100;
+if (precise) {
+  const a = Math.floor(precise.pushVal * 100) / 100;
+  const b = Math.ceil(precise.pushVal * 100) / 100;
 
-  console.log('=== 2-DECIMAL PASS ===');
-  console.log('bracketing ' + bestPush.toFixed(6) + ' → ' + a + ' and ' + b);
-
-  let rA = null, rB = null;
-  if (a === b) {
-    rA = runOneCached(a, CHUNK_FINE);
-    rB = rA;
-    console.log('  push=' + a.toFixed(2) +
-      '  t_rem=' + (rA.tRem !== null ? rA.tRem.toFixed(4) + 's' : 'FAIL') +
-      '  Δv=' + (rA.deltaV !== null ? rA.deltaV.toFixed(2) + 'm/s' : '—'));
-  } else {
-    rA = runOneCached(a, CHUNK_FINE);
-    rB = runOneCached(b, CHUNK_FINE);
-    trace.push(rA, rB);
-    console.log('  push=' + a.toFixed(2) +
-      '  t_rem=' + (rA.tRem !== null ? rA.tRem.toFixed(4) + 's' : 'FAIL') +
-      '  Δv=' + (rA.deltaV !== null ? rA.deltaV.toFixed(2) + 'm/s' : '—'));
-    console.log('  push=' + b.toFixed(2) +
-      '  t_rem=' + (rB.tRem !== null ? rB.tRem.toFixed(4) + 's' : 'FAIL') +
-      '  Δv=' + (rB.deltaV !== null ? rB.deltaV.toFixed(2) + 'm/s' : '—'));
-  }
-
-  const validA = (rA.tRem !== null && rA.deltaV !== null && rA.deltaV <= DELTA_V_MAX);
-  const validB = (rB.tRem !== null && rB.deltaV !== null && rB.deltaV <= DELTA_V_MAX);
-
-  if (validA && validB) {
-    if (rA.tRem <= rB.tRem) { finalDecPush = a; finalDecTRem = rA.tRem; finalDecDeltaV = rA.deltaV; }
-    else                    { finalDecPush = b; finalDecTRem = rB.tRem; finalDecDeltaV = rB.deltaV; }
-  } else if (validA) {
-    finalDecPush = a; finalDecTRem = rA.tRem; finalDecDeltaV = rA.deltaV;
-  } else if (validB) {
-    finalDecPush = b; finalDecTRem = rB.tRem; finalDecDeltaV = rB.deltaV;
-  } else {
-    console.log('  WARNING: neither 2-decimal candidate is Δv-feasible.');
-  }
-  if (finalDecPush !== null) {
-    console.log('  → picked push=' + finalDecPush.toFixed(2) +
-      '  t_rem=' + finalDecTRem.toFixed(4) + 's' +
-      '  Δv=' + finalDecDeltaV.toFixed(2) + 'm/s');
-  }
+  console.log('=== 2-DECIMAL CANDIDATES ===');
+  console.log('precise = ' + precise.pushVal.toFixed(6) + ' → floor=' + a.toFixed(2) + ' ceil=' + b.toFixed(2));
   console.log('');
+
+  const rA = (Math.abs(a - precise.pushVal) < 1e-9)
+    ? precise
+    : runOneCached(a, CHUNK_FINE);
+  const rB = (Math.abs(b - precise.pushVal) < 1e-9)
+    ? precise
+    : runOneCached(b, CHUNK_FINE);
+  if (rA !== precise) trace.push(rA);
+  if (rB !== precise && rB !== rA) trace.push(rB);
+
+  candidates = [
+    { label: 'precise', push: precise.pushVal, r: precise },
+    { label: 'floor',   push: a,               r: rA },
+    { label: 'ceil',    push: b,               r: rB },
+  ];
+
+  candidates.forEach(c => {
+    console.log(
+      '  ' + c.label.padEnd(8) +
+      '  push=' + c.push.toFixed(6) +
+      '  ' + fmtR(c.r)
+    );
+  });
+  console.log('');
+
+  const valid = candidates.filter(c => c.r.deltaV !== null);
+  if (valid.length) {
+    valid.forEach(c => {
+      c.dist = Math.abs(c.r.deltaV - DELTA_V_TARGET);
+    });
+    valid.sort((x, y) => x.dist - y.dist);
+    finalWinner = valid[0];
+  }
 }
 
 // ---------------------------------------------------------------------------
 // Final summary
 // ---------------------------------------------------------------------------
 console.log('=== FINAL ===');
-if (bestPush !== null) {
-  console.log('HIGH-PRECISION  push=' + bestPush.toFixed(6) +
-    '  t_rem=' + bestTRem.toFixed(4) + 's' +
-    '  Δv=' + bestDeltaV.toFixed(3) + 'm/s');
+if (precise) {
+  console.log('PRECISE    push=' + precise.pushVal.toFixed(6) +
+    '  Δv=' + precise.deltaV.toFixed(3) + ' m/s' +
+    '  t_rem=' + (precise.tRem !== null ? precise.tRem.toFixed(2) + 's' : '—'));
 }
-if (finalDecPush !== null) {
-  console.log('2-DECIMAL       push=' + finalDecPush.toFixed(2) +
-    '  t_rem=' + finalDecTRem.toFixed(4) + 's' +
-    '  Δv=' + finalDecDeltaV.toFixed(3) + 'm/s');
+candidates.forEach(c => {
+  if (c === finalWinner) return;
+  const dv = c.r.deltaV !== null ? c.r.deltaV.toFixed(3) + ' m/s' : '—';
+  const tr = c.r.tRem !== null ? c.r.tRem.toFixed(2) + 's' : '—';
+  console.log('           ' + c.label.padEnd(8) + ' push=' + c.push.toFixed(2) +
+    '  Δv=' + dv + '  t_rem=' + tr);
+});
+if (finalWinner) {
+  const dv = finalWinner.r.deltaV !== null ? finalWinner.r.deltaV.toFixed(3) + ' m/s' : '—';
+  const tr = finalWinner.r.tRem !== null ? finalWinner.r.tRem.toFixed(2) + 's' : '—';
+  console.log('');
+  console.log('★ WINNER   ' + finalWinner.label.padEnd(8) +
+    ' push=' + finalWinner.push.toFixed(2) +
+    '  Δv=' + dv + '  t_rem=' + tr);
+} else {
+  console.log('');
+  console.log('No winner — none of the candidates produced a valid Δv.');
 }
 
 // ---------------------------------------------------------------------------
-// Save JSON
+// Save
 // ---------------------------------------------------------------------------
 const outDir = path.resolve(__dirname, 'output');
 if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
 const outFile = path.join(outDir, 'bisect-push-90-' + Date.now() + '.json');
 fs.writeFileSync(outFile, JSON.stringify({
   tiltLockFixed: TILT_LOCK_FIXED,
-  deltaVMax: DELTA_V_MAX,
+  circLeadFixed: CIRC_LEAD_FIXED,
+  deltaVTarget: DELTA_V_TARGET,
+  deltaVTol: DELTA_V_TOL,
   precision: PRECISION,
   range: [PUSH_LO_INIT, PUSH_HI_INIT],
-  highPrecision: bestPush !== null
-    ? { push: bestPush, tRem: bestTRem, deltaV: bestDeltaV } : null,
-  twoDecimal: finalDecPush !== null
-    ? { push: finalDecPush, tRem: finalDecTRem, deltaV: finalDecDeltaV } : null,
+  precise: precise
+    ? { push: precise.pushVal, tRem: precise.tRem, deltaV: precise.deltaV } : null,
+  candidates: candidates.map(c => ({
+    label: c.label, push: c.push,
+    tRem: c.r.tRem, deltaV: c.r.deltaV,
+  })),
+  winner: finalWinner
+    ? { label: finalWinner.label, push: finalWinner.push,
+        tRem: finalWinner.r.tRem, deltaV: finalWinner.r.deltaV } : null,
   finalBracket: [pushLo, pushHi],
   trace,
 }, null, 2));

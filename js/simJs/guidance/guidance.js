@@ -3650,7 +3650,7 @@ const LEO_INSERTION_V2 = {
     PUSH_T_S: 4.8,
     // Calibrated for F9 Block 5 (all-gimbal octaweb). Bisection over
     
-    PUSH_MAX_GIMBAL_DEG: 0.0665,
+    PUSH_MAX_GIMBAL_DEG: 0.6,
     PUSH_EAST_SIGN: -1,
     HOLD_K_DAMP: 4.0,
     HOLD_MAX_AOA_DEG: 8,
@@ -3682,7 +3682,7 @@ MECO_APOGEE_KM: 150,
   // ---- STAGE_BURN ----
 // Cutoff margin: cut this much EARLY (in Δv terms), leaving a gap
 // for RCS_BOOST to trim. Coarse + fine split.
-STAGE_BURN_CUTOFF_MARGIN_MPS: 0.3,
+STAGE_BURN_CUTOFF_MARGIN_MPS: 0.0,
 // Attitude lock: once |θ_rel| first crosses this value, hold that
 // tilt for the rest of the burn. Sign captured at crossing.
 // Calibrated for F9 Block 5 — bisection over the vr-safety protocol
@@ -3702,7 +3702,7 @@ COAST_TARGET_TILT_DEG: -90,
   COAST_WAIT_BEFORE_APOGEE_S: 90,
   
   // Burn trigger: fire when t_rem ≤ startup + this lead.
-  CIRC_TRIGGER_LEAD_S: 3.0,
+  CIRC_TRIGGER_LEAD_S: 1.0,
 CIRC_DECAY_FRAC: 0.05,
   CIRC_ATT_KP: 0.5,
   CIRC_ATT_KD: 4.0,
@@ -3795,12 +3795,18 @@ coastTargetThetaInertial: null,
   circAchieved: false,
     // Suicide burn
   suicideBurnStartT: 0,
-    suicideImpactEf: null,
-    suicideDlambda: null,
-     // Once the trim has converged into the tolerance band, this latches
-  // true and RCS never fires again — prevents the bang-bang limit cycle
-  // that happens when we keep chasing sub-tick precision.
-  suicideTrimDone: false,
+  suicideImpactEf: null,
+  suicideDlambda: null,
+   // Once the trim has converged into the tolerance band, this latches
+// true and RCS never fires again — prevents the bang-bang limit cycle
+// that happens when we keep chasing sub-tick precision.
+suicideTrimDone: false,
+// Captured at COAST_ROTATE (1st pass) exit — the same instant COAST_WAIT
+// would begin. COAST_WAIT can be shorter than the headless outer loop's
+// chunk size, so the outer script may miss that phase entirely; storing
+// here lets it read the values later via getStatus regardless of phase.
+coastRotateEndDeltaV: null,
+coastRotateEndTRem: null,
     // Wall-clock sim time at which the trim phase started, used by the
     // SUICIDE_TRIM_MAX_S backstop.
     suicideTrimStartT: 0,
@@ -4332,12 +4338,39 @@ if (targetThetaRad === null || targetThetaRad === undefined) {
   break;
 }
 
-      const thetaErr = _hWrapPi(body.theta - targetThetaRad);
+            const thetaErr = _hWrapPi(body.theta - targetThetaRad);
       const omegaRel = body.omega;
 
       if (Math.abs(thetaErr) < LEO_INSERTION_V2.COAST_ROTATE_TOL_DEG * Math.PI / 180 &&
   Math.abs(omegaRel) < LEO_INSERTION_V2.COAST_ROTATE_OMEGA_TOL) {
   send(cmdRcsDuty(null, idx));
+  if (!_leoStateV2.coastRotateSecondPass) {
+    // Capture Δv and t_rem at the moment 1st-pass COAST_ROTATE finishes —
+    // the same physical instant COAST_WAIT would start. Computing it here
+    // (rather than in COAST_WAIT's own body) means the values are available
+    // even when the headless outer loop never observes the COAST_WAIT phase
+    // itself, which can be as short as a few ticks.
+    const r_cap = Math.hypot(body.rx, body.ry) || 1;
+    const ux_cap = body.rx / r_cap, uy_cap = body.ry / r_cap;
+    const ex_cap = body.ry / r_cap, ey_cap = -body.rx / r_cap;
+    const vr_cap = body.vx * ux_cap + body.vy * uy_cap;
+    const vt_cap = body.vx * ex_cap + body.vy * ey_cap;
+    const GM_cap = env.GM_EARTH;
+    _leoStateV2.coastRotateEndTRem = _hTimeToApogee(r_cap, vr_cap, vt_cap, GM_cap);
+    const E_cap = 0.5 * (vr_cap * vr_cap + vt_cap * vt_cap) - GM_cap / r_cap;
+    if (E_cap < 0) {
+      const a_cap = -GM_cap / (2 * E_cap);
+      const h_cap = r_cap * vt_cap;
+      const eSq_cap = 1 + 2 * E_cap * h_cap * h_cap / (GM_cap * GM_cap);
+      const e_cap = Math.sqrt(Math.max(0, eSq_cap));
+      const rApo_cap = a_cap * (1 + e_cap);
+      const vApo_cap = Math.abs(h_cap) / rApo_cap;
+      const vOrb_cap = Math.sqrt(GM_cap / rApo_cap);
+      _leoStateV2.coastRotateEndDeltaV = Math.max(0, vOrb_cap - vApo_cap);
+    } else {
+      _leoStateV2.coastRotateEndDeltaV = null;
+    }
+  }
   if (_leoStateV2.coastRotateSecondPass) {
     _leoStateV2.phase = 'COAST_HOLD';
     _leoStateV2.phaseStart = simT;
@@ -5027,11 +5060,13 @@ _leoStateV2.coastRotateSecondPass = false;
   _leoStateV2.circTargetV = 0;
   _leoStateV2.circErr = 0;
   _leoStateV2.circAchieved = false;
-  _leoStateV2.suicideBurnStartT = 0;
+    _leoStateV2.suicideBurnStartT = 0;
 _leoStateV2.suicideImpactEf = null;
 _leoStateV2.suicideDlambda = null;
 _leoStateV2.suicideTrimDone = false;
 _leoStateV2.suicideTrimStartT = 0;
+_leoStateV2.coastRotateEndDeltaV = null;
+_leoStateV2.coastRotateEndTRem = null;
 console.log('[leoInsertionV2] started');
 };
 
@@ -5071,8 +5106,10 @@ _leoTickV2.getStatus = function () {
     circErr: _leoStateV2.circErr,
     circAchieved: _leoStateV2.circAchieved,
     stageBurnLocked: _leoStateV2.stageBurnLocked,
-    stageBurnTargetTiltDeg: _leoStateV2.stageBurnTargetTiltDeg,
-      suicideImpactEfDeg: (_leoStateV2.suicideImpactEf != null) ?
+stageBurnTargetTiltDeg: _leoStateV2.stageBurnTargetTiltDeg,
+coastDeltaV: _leoStateV2.coastRotateEndDeltaV,
+coastTRem: _leoStateV2.coastRotateEndTRem,
+  suicideImpactEfDeg: (_leoStateV2.suicideImpactEf != null) ?
     _leoStateV2.suicideImpactEf * 180 / Math.PI : null,
     suicideDlambdaDeg: (_leoStateV2.suicideDlambda != null) ?
     _leoStateV2.suicideDlambda * 180 / Math.PI : null,

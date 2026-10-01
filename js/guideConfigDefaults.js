@@ -59,7 +59,7 @@ const GUIDE_DEFAULT_PRESETS = {
         // Calibrated for F9 Block 5 (all-gimbal octaweb). Bisection over
 // the MECO-tilt target band [55°, 60°] converged on 0.09576
 // (MECO fires at ~55.3° tilt, apogee 150.04 km, t=147.5s).
-PUSH_MAX_GIMBAL_DEG: 0.0665,
+PUSH_MAX_GIMBAL_DEG: 0.6,
         PUSH_EAST_SIGN: -1,
         HOLD_K_DAMP: 4.0,
         HOLD_MAX_AOA_DEG: 8,
@@ -78,7 +78,7 @@ PUSH_MAX_GIMBAL_DEG: 0.0665,
       FAIRING_OPEN_ALT_KM: 80,
       FAIRING_OPEN_ENABLED: true,
       TARGET_ORBIT_ALT_KM: 320,
-      STAGE_BURN_CUTOFF_MARGIN_MPS: 0.3,
+      STAGE_BURN_CUTOFF_MARGIN_MPS: 0.0,
 // Calibrated for F9 Block 5. Bisection over the vr-safety protocol
 // (min vr ≥ 0.5 m/s during STAGE_BURN, pause on vr slope reversal)
 // converged on 81.39° — 2.07 m/s of margin at the deepest vr dip.
@@ -89,7 +89,7 @@ STAGE_BURN_LOCK_TILT_DEG: 90,
       COAST_ROTATE_TOL_DEG: 0.5,
       COAST_ROTATE_OMEGA_TOL: 0.02,
       COAST_ROTATE_TIMEOUT_S: 240,
-      CIRC_TRIGGER_LEAD_S: 3.0,
+      CIRC_TRIGGER_LEAD_S: 1.0,
   CIRC_DECAY_FRAC: 0.05,
       CIRC_ATT_KP: 0.5,
       CIRC_ATT_KD: 4.0,
