@@ -9,59 +9,33 @@
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
 :root {
-  --bg: #060912;
-  --panel: #0d1424;
-  --panel-2: #101a30;
-  --border: #1c2b45;
-  --cyan: #35d6ff;
-  --green: #4ade80;
-  --danger: #ff5f7e;
-  --yellow: #ffd23f;
-  --text: #dbe6f5;
-  --dim: #6b7d9c;
+  --bg: #060912; --panel: #0d1424; --panel-2: #101a30; --border: #1c2b45;
+  --cyan: #35d6ff; --green: #4ade80; --yellow: #ffd23f; --danger: #ff5f7e;
+  --orange: #ff9248; --purple: #a78bfa;
+  --text: #dbe6f5; --dim: #6b7d9c;
   --font-head: 'Space Grotesk', system-ui, sans-serif;
   --font-mono: 'JetBrains Mono', 'Consolas', monospace;
 }
 * { box-sizing: border-box; }
-html, body {
-  margin: 0; padding: 0; min-height: 100%;
-  background: var(--bg); color: var(--text);
-  font-family: var(--font-head); font-size: 14px;
-}
+html, body { margin: 0; padding: 0; min-height: 100%; background: var(--bg); color: var(--text); font-family: var(--font-head); font-size: 13px; }
 #app { display: flex; flex-direction: column; min-height: 100vh; }
 
-#topBar {
-  display: flex; align-items: baseline; gap: 14px;
-  padding: 12px 24px;
+#topBar { display: flex; align-items: baseline; gap: 14px; padding: 12px 24px;
   background: linear-gradient(180deg, #101a30, #0b1220);
-  border-bottom: 1px solid var(--border);
-  font-family: var(--font-mono); font-size: 13px;
-}
+  border-bottom: 1px solid var(--border); font-family: var(--font-mono); font-size: 13px; }
 .brand { color: var(--cyan); font-weight: 700; letter-spacing: 0.5px; text-decoration: none; }
 .brand-sub { color: var(--dim); }
 .spacer { flex: 1; }
 a.back { color: var(--dim); text-decoration: none; font-size: 12px; }
 a.back:hover { color: var(--cyan); }
 
-#controls {
-  display: flex; align-items: center; gap: 14px;
-  padding: 12px 24px;
-  background: var(--panel);
-  border-bottom: 1px solid var(--border);
-  flex-wrap: wrap;
-}
+#controls { display: flex; align-items: center; gap: 12px; padding: 10px 24px; background: var(--panel); border-bottom: 1px solid var(--border); flex-wrap: wrap; }
 #controls label { color: var(--dim); font-family: var(--font-mono); font-size: 11.5px; }
 #controls select, #controls input[type=number] {
   background: var(--panel-2); border: 1px solid var(--border); color: var(--text);
-  padding: 7px 10px; border-radius: 6px;
-  font-family: var(--font-mono); font-size: 12.5px;
-}
-#controls select:focus, #controls input:focus { outline: none; border-color: var(--cyan); }
-.btn {
-  background: var(--panel-2); border: 1px solid var(--border); color: var(--text);
-  padding: 8px 16px; border-radius: 7px; cursor: pointer;
-  font-family: var(--font-head); font-size: 12.5px; font-weight: 500;
-}
+  padding: 6px 9px; border-radius: 6px; font-family: var(--font-mono); font-size: 12px; }
+.btn { background: var(--panel-2); border: 1px solid var(--border); color: var(--text);
+  padding: 7px 14px; border-radius: 7px; cursor: pointer; font-family: var(--font-head); font-size: 12px; }
 .btn:hover { border-color: var(--cyan); color: var(--cyan); }
 .btn-run { border-color: var(--green); color: var(--green); }
 .btn-run:hover { background: rgba(74,222,128,0.1); }
@@ -69,125 +43,67 @@ a.back:hover { color: var(--cyan); }
 .btn-stop:hover { background: rgba(255,95,126,0.1); }
 .btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
-#envPanel, #rangesPanel {
-  background: #0a1020;
-  border-bottom: 1px solid var(--border);
-  padding: 10px 24px 12px;
-}
-#envPanel { display: flex; gap: 28px; flex-wrap: wrap; align-items: flex-start; }
+#envPanel { display: flex; gap: 24px; flex-wrap: wrap; padding: 10px 24px 12px; background: #0a1020; border-bottom: 1px solid var(--border); }
 .env-group { display: flex; flex-direction: column; gap: 3px; }
-.env-title {
-  color: var(--cyan); font-family: var(--font-mono); font-size: 10px;
-  letter-spacing: 1px; text-transform: uppercase; margin-bottom: 3px;
-}
-.env-group label {
-  display: flex; align-items: center; gap: 6px;
-  font-family: var(--font-mono); font-size: 11.5px; color: var(--dim);
-}
-.env-group input[type=number] {
-  width: 62px; background: var(--panel-2); border: 1px solid var(--border);
-  color: var(--text); padding: 3px 6px; border-radius: 4px;
-  font-family: var(--font-mono); font-size: 11.5px;
-}
-.env-group input[type=number]:focus { outline: none; border-color: var(--cyan); }
+.env-title { color: var(--cyan); font-family: var(--font-mono); font-size: 10px; letter-spacing: 1px; text-transform: uppercase; margin-bottom: 3px; }
+.env-group label { display: flex; align-items: center; gap: 6px; font-family: var(--font-mono); font-size: 11.5px; color: var(--dim); }
+.env-group input[type=number] { width: 62px; background: var(--panel-2); border: 1px solid var(--border); color: var(--text); padding: 3px 6px; border-radius: 4px; font-family: var(--font-mono); font-size: 11.5px; }
 .env-group input[type=checkbox] { accent-color: var(--cyan); }
 
-/* --- 8-field ranges grid --- */
-.ranges-title {
-  color: var(--cyan); font-family: var(--font-mono); font-size: 10px;
-  letter-spacing: 1px; text-transform: uppercase; margin-bottom: 6px;
-}
-#rangesGrid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-  gap: 6px 20px;
-}
-.range-row {
-  display: flex; align-items: center; gap: 8px;
-  font-family: var(--font-mono); font-size: 11.5px;
-}
-.range-row label {
-  width: 92px;
-  color: var(--dim);
-  overflow: hidden; text-overflow: ellipsis;
-  flex-shrink: 0;
-}
-.range-row input[type=number] {
-  width: 86px; background: var(--panel-2); border: 1px solid var(--border);
-  color: var(--text); padding: 4px 6px; border-radius: 4px;
-  font-family: var(--font-mono); font-size: 11.5px;
-}
-.range-row input[type=number]:focus { outline: none; border-color: var(--cyan); }
-.range-row .sep { color: var(--dim); }
+#presetPanel { display: flex; align-items: center; gap: 10px; padding: 10px 24px; background: #0a1020; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+#presetPanel label { color: var(--dim); font-family: var(--font-mono); font-size: 11.5px; }
+#presetPanel select { min-width: 240px; background: var(--panel-2); border: 1px solid var(--border); color: var(--text); padding: 6px 9px; border-radius: 6px; font-family: var(--font-mono); font-size: 12px; }
+#presetStatus { color: var(--dim); font-family: var(--font-mono); font-size: 11px; margin-left: auto; }
 
-#tunables {
-  background: #0a1020;
-  border-bottom: 1px solid var(--border);
-  padding: 10px 24px 12px;
-}
-.tunables-title {
-  color: var(--cyan); font-family: var(--font-mono); font-size: 10px;
-  letter-spacing: 1px; text-transform: uppercase; margin-bottom: 6px;
-}
-#tunablesBody {
-  display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: 4px 18px;
-}
-.tunable-row { display: flex; align-items: center; gap: 8px;
-  font-family: var(--font-mono); font-size: 11.5px; }
-.tunable-row label { flex: 1; color: var(--dim); overflow: hidden; text-overflow: ellipsis; }
-.tunable-row input {
-  width: 100px; background: var(--panel-2); border: 1px solid var(--border);
-  color: var(--text); padding: 4px 6px; border-radius: 4px;
-  font-family: var(--font-mono); font-size: 11.5px;
-}
-.tunable-row input:focus { outline: none; border-color: var(--cyan); }
+#tunables { background: #0a1020; border-bottom: 1px solid var(--border); padding: 10px 24px 14px; }
+.tunables-title { color: var(--cyan); font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 1px; text-transform: uppercase; margin-bottom: 6px; }
+#tunablesBody { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 4px 18px; }
+.tunable-row { display: flex; align-items: center; gap: 8px; font-family: var(--font-mono); font-size: 11.5px; }
+.tunable-row label { flex: 1; color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tunable-row input { width: 110px; background: var(--panel-2); border: 1px solid var(--border); color: var(--text); padding: 4px 6px; border-radius: 4px; font-family: var(--font-mono); font-size: 11.5px; }
 
-#resultsPanel {
-  flex: 1;
-  background: #0a1020;
-  border-top: 1px solid var(--border);
-  padding: 12px 24px 20px;
-  display: flex; flex-direction: column; gap: 10px;
-  min-height: 0;
-}
-.results-bar {
-  display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
-}
-.results-bar label {
-  color: var(--dim); font-family: var(--font-mono); font-size: 11.5px;
-}
-.results-bar input[type=number], .results-bar select {
-  background: var(--panel-2); border: 1px solid var(--border); color: var(--text);
-  padding: 6px 9px; border-radius: 5px;
-  font-family: var(--font-mono); font-size: 12px;
-}
-.results-bar input:focus, .results-bar select:focus { outline: none; border-color: var(--cyan); }
-.results-summary {
-  font-family: var(--font-mono); font-size: 11.5px; color: var(--dim);
-}
-#resultsJson {
-  flex: 1;
-  margin: 0;
-  padding: 12px 16px;
-  background: #060912;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  color: #cdd8ec;
-  font-family: var(--font-mono); font-size: 11.5px;
-  line-height: 1.55;
-  overflow: auto;
-  min-height: 200px;
-  max-height: 60vh;
-  white-space: pre;
-}
+#main { flex: 1; display: flex; flex-direction: column; gap: 14px; padding: 14px 24px 24px; min-height: 0; }
 
-#status {
-  color: var(--dim); font-family: var(--font-mono); font-size: 11.5px;
-  padding: 8px 24px; background: var(--panel);
-  border-top: 1px solid var(--border);
-  white-space: pre-wrap;
-}
+.card { background: #0a1020; border: 1px solid var(--border); border-radius: 8px; padding: 12px 16px; }
+.card-title { color: var(--cyan); font-family: var(--font-mono); font-size: 11px; letter-spacing: 1px; text-transform: uppercase; margin-bottom: 8px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+
+.run-summary { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 8px 20px; font-family: var(--font-mono); font-size: 12px; }
+.run-summary .k { color: var(--dim); }
+.run-summary .v { color: var(--text); }
+
+#filterRow { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+.filter-chip { padding: 4px 10px; border-radius: 999px; background: var(--panel-2); border: 1px solid var(--border); color: var(--dim); cursor: pointer; font-family: var(--font-mono); font-size: 11px; }
+.filter-chip.active { color: var(--cyan); border-color: var(--cyan); background: rgba(53,214,255,0.1); }
+
+#capturesList { max-height: 60vh; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
+.capture { border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px; background: #0d1424; font-family: var(--font-mono); font-size: 11.5px; }
+.capture.type-phase  { border-left: 3px solid var(--cyan); }
+.capture.type-orbit  { border-left: 3px solid var(--green); }
+.capture.type-abort  { border-left: 3px solid var(--danger); }
+.capture.type-event  { border-left: 3px solid var(--yellow); }
+.capture.type-peak   { border-left: 3px solid var(--orange); }
+.capture.type-end    { border-left: 3px solid var(--purple); }
+.capture .head { display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; }
+.capture .time { color: var(--cyan); font-weight: 700; min-width: 78px; }
+.capture .label { color: var(--text); font-weight: 600; }
+.capture .sublabel { color: var(--dim); }
+.capture .body { margin-top: 6px; display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 2px 18px; color: #c6d2e6; }
+.capture .body .k { color: var(--dim); }
+.capture .body .hi { color: var(--orange); }
+.capture .body .warn { color: var(--danger); }
+
+#compareBox { display: none; }
+#compareBox.show { display: block; }
+.compare-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 4px 20px; font-family: var(--font-mono); font-size: 12px; }
+.compare-row { display: flex; gap: 8px; }
+.compare-row .k { color: var(--dim); min-width: 140px; }
+.compare-row .a { color: #b8c7e0; }
+.compare-row .arrow { color: var(--dim); }
+.compare-row .b { color: var(--cyan); font-weight: 600; }
+.compare-row .b.bad { color: var(--danger); }
+.compare-row .b.good { color: var(--green); }
+
+#status { color: var(--dim); font-family: var(--font-mono); font-size: 11.5px; padding: 8px 24px; background: var(--panel); border-top: 1px solid var(--border); white-space: pre-wrap; }
 </style>
 </head>
 <body>
@@ -195,7 +111,7 @@ a.back:hover { color: var(--cyan); }
 
   <div id="topBar">
     <span class="brand">⚡ GUIDANCE FAST</span>
-    <span class="brand-sub">Rocket Sim · headless data run</span>
+    <span class="brand-sub">numeric mission run · event captures</span>
     <div class="spacer"></div>
     <a class="back" href="index.html">← Home</a>
   </div>
@@ -204,9 +120,7 @@ a.back:hover { color: var(--cyan); }
     <label for="guideSelect">Guide:</label>
     <select id="guideSelect"></select>
     <label for="durationInput">Duration (s):</label>
-    <input id="durationInput" type="number" value="160" min="1" max="5000" step="10" style="width:90px;">
-    <label for="sampleInput">Sample (s):</label>
-    <input id="sampleInput" type="number" value="1" min="0.05" max="10" step="0.05" style="width:80px;">
+    <input id="durationInput" type="number" value="800" min="1" max="5000" step="10" style="width:90px;">
     <button class="btn btn-run" id="startBtn">▶ Run</button>
     <button class="btn btn-stop" id="stopBtn" disabled>■ Stop</button>
   </div>
@@ -233,35 +147,51 @@ a.back:hover { color: var(--cyan); }
     </div>
   </div>
 
-  <div id="rangesPanel">
-    <div class="ranges-title">Target Ranges (min / max) — units: km, m/s, kg</div>
-    <div id="rangesGrid"></div>
+  <div id="presetPanel">
+    <label for="presetSelect">Preset:</label>
+    <select id="presetSelect"><option value="">— select a preset —</option></select>
+    <button class="btn" id="presetLoadBtn">Load</button>
+    <button class="btn" id="presetSaveBtn">Save as…</button>
+    <button class="btn" id="presetDeleteBtn">Delete</button>
+    <button class="btn" id="presetExportBtn">Export</button>
+    <button class="btn" id="presetImportBtn">Import</button>
+    <span id="presetStatus"></span>
   </div>
 
   <div id="tunables" style="display:none;">
-    <div class="tunables-title">Constants</div>
+    <div class="tunables-title">Constants (tunable, session-only unless saved as preset)</div>
     <div id="tunablesBody"></div>
   </div>
 
-  <div id="resultsPanel">
-    <div class="results-bar">
-      <label for="topNInput">Show top:</label>
-      <input id="topNInput" type="number" value="20" min="1" max="1000" step="1" style="width:80px;">
-      <label for="eliminateSelect">Direct eliminate by:</label>
-      <select id="eliminateSelect">
-        <option value="">(none)</option>
-        <option value="down">downrange</option>
-        <option value="alt">altitude</option>
-        <option value="vt">velocity X (vt)</option>
-        <option value="vr">velocity Y (vr)</option>
-        <option value="fuelLeft">fuel mass left</option>
-        <option value="fuelUsed">fuel mass used</option>
-        <option value="apogee">apogee height</option>
-        <option value="vApogee">velocity at apogee</option>
-      </select>
+  <div id="main">
+
+    <div class="card" id="summaryCard">
+      <div class="card-title">Run summary</div>
+      <div id="summaryBody" class="run-summary"><span class="k">No run yet.</span></div>
     </div>
-    <div class="results-summary" id="resultsSummary">No run yet.</div>
-    <pre id="resultsJson">[]</pre>
+
+    <div class="card" id="compareBox">
+      <div class="card-title">Compare with previous run</div>
+      <div id="compareBody" class="compare-grid"></div>
+    </div>
+
+    <div class="card" style="flex: 1; min-height: 0;">
+      <div class="card-title">
+        <span>Event captures</span>
+        <span id="captureCount" style="color: var(--dim);">0</span>
+      </div>
+      <div id="filterRow">
+        <span class="filter-chip active" data-type="all">all</span>
+        <span class="filter-chip" data-type="phase">phase</span>
+        <span class="filter-chip" data-type="orbit">orbit</span>
+        <span class="filter-chip" data-type="abort">abort</span>
+        <span class="filter-chip" data-type="event">event</span>
+        <span class="filter-chip" data-type="peak">peak</span>
+        <span class="filter-chip" data-type="end">end</span>
+      </div>
+      <div id="capturesList"></div>
+    </div>
+
   </div>
 
   <div id="status">Ready.</div>
@@ -287,49 +217,18 @@ a.back:hover { color: var(--cyan); }
 <script src="js/simJs/guidance/guidercs.js"></script>
 <script src="js/simJs/guidance/guidance.js"></script>
 
-<!-- ============ 4. Fast boot ============ -->
+<!-- ============ 4. Preset store ============ -->
+<script src="js/guideConfigDefaults.js"></script>
+<script src="js/guidancePresets.js"></script>
+
+<!-- ============ 5. Boot ============ -->
 <script>
-(function() {
-    'use strict';
-    
-    // Payload nose radius — derived once at boot from the active stack's
-    // payload. Used by sampleNow()'s Sutton-Graves heat-flux column.
-    //   R_n = min(payload.width, payload.height) / 2
-    // Declared at IIFE scope so both run() and sampleNow() can see it.
-    let activePayloadRn = 1.0;
-    
-    // =====================================================================
-    // RANGE WEIGHTS — edit here. Applied per-field in scoring:
-    //   field_score = raw_score(0..100 for in-range, less outside, negative
-  //                 for sign-flipped samples) × weight
-  //   total       = Σ over the 8 fields
-  // =====================================================================
-  const RANGE_WEIGHTS = {
-    down:       1,
-    alt:        1,
-    vt:         1,
-    vr:         1,
-    fuelLeft:   1,
-    fuelUsed:   1,
-    apogee:     1,
-    vApogee:    1,
-  };
+(function () {
+  'use strict';
 
-  // Field metadata — key, label, and default range. Units shown in label.
-  const RANGE_FIELDS = [
-    { key: 'down',     label: 'downrange (km)',     defLo: 65,     defHi: 80     },
-    { key: 'alt',      label: 'altitude (km)',      defLo: 60,     defHi: 70     },
-    { key: 'vt',       label: 'velocity X vt (m/s)',defLo: 1250,   defHi: 1390   },
-    { key: 'vr',       label: 'velocity Y vr (m/s)',defLo: 830,    defHi: 970    },
-    { key: 'fuelLeft', label: 'fuel left (kg)',     defLo: 150000, defHi: 220000 },
-    { key: 'fuelUsed', label: 'fuel used (kg)',     defLo: 310000, defHi: 370000 },
-    { key: 'apogee',   label: 'apogee height (km)', defLo: 110,     defHi: 180    },
-    { key: 'vApogee',  label: 'vel at apogee (m/s)',defLo: 1400,   defHi: 1900   },
-  ];
-
-  // =====================================================================
-  // SPEED WIN #1 — cache loadComponentLibrary()
-  // =====================================================================
+  // ---------------------------------------------------------------------------
+  // Library cache (same pattern as other pages — componentLibrary hit hard)
+  // ---------------------------------------------------------------------------
   (function patchLibraryCache() {
     var _cache = null;
     var _origLoadCL = loadComponentLibrary;
@@ -341,47 +240,36 @@ a.back:hover { color: var(--cyan); }
     if (typeof saveCustomComponentTypes === 'function') {
       var _origSave = saveCustomComponentTypes;
       saveCustomComponentTypes = function (types) {
-        _origSave(types);
-        _cache = null;
+        _origSave(types); _cache = null;
       };
     }
   })();
 
-  // =====================================================================
-  // Stack data (one-time boot handoff to guidance)
-  // =====================================================================
+  // ---------------------------------------------------------------------------
+  // Stack handoff
+  // ---------------------------------------------------------------------------
   const members = (typeof getActiveStackMembers === 'function') ? getActiveStackMembers() : [];
   window.SIM_STACK_MEMBERS = members;
 
   function _stripFns(obj) {
     return JSON.parse(JSON.stringify(obj, (k, v) => (typeof v === 'function' ? undefined : v)));
   }
-
   function collectStackData() {
     const typeIds = new Set();
     members.forEach(m => {
-      if (m.engineTypeId) typeIds.add(m.engineTypeId);
-      if (m.recoveryTypeId && m.hasRecovery !== false) typeIds.add(m.recoveryTypeId);
-      if (m.rcsTypeId) typeIds.add(m.rcsTypeId);
-      if (m.bodyMetalTypeId) typeIds.add(m.bodyMetalTypeId);
-      if (m.legsMetalTypeId) typeIds.add(m.legsMetalTypeId);
-      if (m.payloadSpaceTypeId) typeIds.add(m.payloadSpaceTypeId);
-      if (m.payloadSpaceMetalTypeId) typeIds.add(m.payloadSpaceMetalTypeId);
+      ['engineTypeId','recoveryTypeId','rcsTypeId','bodyMetalTypeId','legsMetalTypeId',
+       'payloadSpaceTypeId','payloadSpaceMetalTypeId','chuteTypeId',
+       'gridFinTypeId','gridFinMetalTypeId'].forEach(k => { if (m[k]) typeIds.add(m[k]); });
       if (m.fuel && m.fuel.typeId) typeIds.add(m.fuel.typeId);
-      if (m.engineThrusters) {
-        Object.keys(m.engineThrusters).forEach(gk => {
-          const g = m.engineThrusters[gk];
-          if (g && g.thrusterTypeId) typeIds.add(g.thrusterTypeId);
-        });
-      }
+      if (m.engineThrusters) Object.keys(m.engineThrusters).forEach(gk => {
+        const g = m.engineThrusters[gk];
+        if (g && g.thrusterTypeId) typeIds.add(g.thrusterTypeId);
+      });
       if (m.rcsThruster && m.rcsThruster.thrusterTypeId) typeIds.add(m.rcsThruster.thrusterTypeId);
       if (m.payloadSpace && m.payloadSpace.typeId) typeIds.add(m.payloadSpace.typeId);
       if (m.payloadSpace && m.payloadSpace.metalTypeId) typeIds.add(m.payloadSpace.metalTypeId);
-        if (m.chuteTypeId) typeIds.add(m.chuteTypeId);
-  if (m.gridFinTypeId) typeIds.add(m.gridFinTypeId);
-  if (m.gridFinMetalTypeId) typeIds.add(m.gridFinMetalTypeId);
-  });
-  const types = {};
+    });
+    const types = {};
     typeIds.forEach(id => {
       const t = (typeof getComponentType === 'function') ? getComponentType(id) : null;
       if (t) types[id] = _stripFns(t);
@@ -394,100 +282,59 @@ a.back:hover { color: var(--cyan); }
       if (pl && Number.isFinite(pl.mass)) stackPayloadMass = pl.mass;
     }
     return {
-      members: members.map(_stripFns),
-      types,
-      stackPayloadMass,
-      derived,
+      members: members.map(_stripFns), types, stackPayloadMass, derived,
       env: {
-        EARTH_RADIUS: CONFIG.EARTH_RADIUS,
-        GM_EARTH: CONFIG.GM_EARTH,
+        EARTH_RADIUS: CONFIG.EARTH_RADIUS, GM_EARTH: CONFIG.GM_EARTH,
         EARTH_OMEGA: CONFIG.EARTH_OMEGA,
         LAUNCH_SITE_ALTITUDE: CONFIG.LAUNCH_SITE_ALTITUDE,
-  LAUNCH_SITE_ANGLE_0: CONFIG.LAUNCH_SITE_ANGLE_0,
-  G0: (typeof G0 !== 'undefined') ? G0 : 9.80665,
-  REMOTE_AREA_MID_WEST_DEG:
-  ((CONFIG.REMOTE_AREA_WEST_START_DEG || 0) + (CONFIG.REMOTE_AREA_WEST_END_DEG || 0)) / 2,
-  REMOTE_AREA_WEST_START_DEG: CONFIG.REMOTE_AREA_WEST_START_DEG || 0,
-  REMOTE_AREA_WEST_END_DEG: CONFIG.REMOTE_AREA_WEST_END_DEG || 0,
-  PAYLOAD_EJECT_KICK_MPS: CONFIG.PAYLOAD_EJECT_KICK_MPS,
-  SEA_LEVEL_DENSITY: CONFIG.SEA_LEVEL_DENSITY,
-        SCALE_HEIGHT: CONFIG.SCALE_HEIGHT,
-        DRAG_CD: CONFIG.DRAG_CD,
-        DT: CONFIG.DT,
-        GIMBAL_MAX_DEG: CONFIG.GIMBAL_MAX_DEG,
+        LAUNCH_SITE_ANGLE_0: CONFIG.LAUNCH_SITE_ANGLE_0,
+        G0: (typeof G0 !== 'undefined') ? G0 : 9.80665,
+        REMOTE_AREA_MID_WEST_DEG:
+          ((CONFIG.REMOTE_AREA_WEST_START_DEG || 0) + (CONFIG.REMOTE_AREA_WEST_END_DEG || 0)) / 2,
+        REMOTE_AREA_WEST_START_DEG: CONFIG.REMOTE_AREA_WEST_START_DEG || 0,
+        REMOTE_AREA_WEST_END_DEG: CONFIG.REMOTE_AREA_WEST_END_DEG || 0,
+        PAYLOAD_EJECT_KICK_MPS: CONFIG.PAYLOAD_EJECT_KICK_MPS,
+        SEA_LEVEL_DENSITY: CONFIG.SEA_LEVEL_DENSITY,
+        SCALE_HEIGHT: CONFIG.SCALE_HEIGHT, DRAG_CD: CONFIG.DRAG_CD,
+        DT: CONFIG.DT, GIMBAL_MAX_DEG: CONFIG.GIMBAL_MAX_DEG,
         GIMBAL_RATE_DEG_S: CONFIG.GIMBAL_RATE_DEG_S,
       },
     };
   }
-
   Derivation.setStackData(collectStackData());
 
-// Payload nose radius — read once. The payload doesn't change
-// mid-session.
-(function computePayloadRn() {
-  const stk = (typeof getActiveStack === 'function') ? getActiveStack() : null;
-  if (!stk || !stk.payloadId || typeof getPayload !== 'function') return;
-  const pl = getPayload(stk.payloadId);
-  if (!pl) return;
-  const w = Number.isFinite(pl.width) ? pl.width : 1;
-  const h = Number.isFinite(pl.height) ? pl.height : 1;
-  activePayloadRn = Math.max(0.05, Math.min(w, h) / 2);
-})();
-
-// =====================================================================
-// SPEED WIN #2 — reusable snapshot object.
-  // =====================================================================
-  const _snap = {
-    bodies: null, activeBodyIndex: 0, simTime: 0, halted: false,
-    wind: { enabled: false, speed: 0, directionDeg: 0 },
-  };
-  function refreshSnap() {
-    _snap.bodies = state.bodies;
-    _snap.activeBodyIndex = state.activeBodyIndex;
-    _snap.simTime = state.simTime;
-    _snap.halted = state.halted;
-    const w = (typeof wind !== 'undefined' && wind) ? wind : null;
-    _snap.wind.enabled = w ? !!w.enabled : false;
-    _snap.wind.speed = w ? (w.speed || 0) : 0;
-    _snap.wind.directionDeg = w ? (w.directionDeg || 0) : 0;
-  }
-
-  // =====================================================================
-  // Local dispatch
-  // =====================================================================
+  // ---------------------------------------------------------------------------
+  // Local dispatch — same as tester / fast
+  // ---------------------------------------------------------------------------
   function clampFlow(en, cmd) {
     if (!(cmd > 0)) return 0;
-    const capped = Math.min(cmd, en.maxMassFlowRate || 0);
-    return Math.max(capped, en.minMassFlowRate || 0);
+    return Math.max(Math.min(cmd, en.maxMassFlowRate || 0), en.minMassFlowRate || 0);
   }
   function localDispatch(msg) {
-  // resolveTargetBody mirror of physics.worker.js — honour targetBodyIdx
-  // when present, else fall back to the active body.
-  let b;
-  if (Number.isInteger(msg.targetBodyIdx) &&
-    msg.targetBodyIdx >= 0 && msg.targetBodyIdx < state.bodies.length) {
-    b = state.bodies[msg.targetBodyIdx];
-  } else {
-    b = state.bodies[state.activeBodyIndex];
-  }
-  if (!b) return;
-  switch (msg.type) {
+    let b;
+    if (Number.isInteger(msg.targetBodyIdx) &&
+        msg.targetBodyIdx >= 0 && msg.targetBodyIdx < state.bodies.length) {
+      b = state.bodies[msg.targetBodyIdx];
+    } else {
+      b = state.bodies[state.activeBodyIndex];
+    }
+    if (!b) return;
+    switch (msg.type) {
       case 'setGimbalRate': {
-  if (!b.engines) break;
-  const lim = CONFIG.GIMBAL_RATE_DEG_S;
-  const rate = Math.max(-lim, Math.min(lim, msg.degPerSec));
-  const onlyCenter = (msg.target === 'center');
-  b.engines.filter(en => en.gimbal && (!onlyCenter || en.isCenter))
-    .forEach(en => { en.targetGimbalRateDegS = rate; });
-  break;
-}
+        if (!b.engines) break;
+        const lim = CONFIG.GIMBAL_RATE_DEG_S;
+        const rate = Math.max(-lim, Math.min(lim, msg.degPerSec));
+        const onlyCenter = (msg.target === 'center');
+        b.engines.filter(en => en.gimbal && (!onlyCenter || en.isCenter))
+          .forEach(en => { en.targetGimbalRateDegS = rate; });
+        break;
+      }
       case 'setGimbal': {
         if (!b.engines) break;
         const lim = CONFIG.GIMBAL_MAX_DEG;
         const d = Math.max(-lim, Math.min(lim, msg.deg));
         b.engines.filter(en => en.gimbal).forEach(en => {
-          en.targetGimbalDeg = d;
-          en.targetGimbalRateDegS = NaN;
+          en.targetGimbalDeg = d; en.targetGimbalRateDegS = NaN;
         });
         break;
       }
@@ -511,98 +358,54 @@ a.back:hover { color: var(--cyan); }
         });
         break;
       }
-      case 'rcs': {
-        if (!b.rcsCmd) b.rcsCmd = {};
-        b.rcsCmd[msg.key] = !!msg.on;
-        b.rcsDuty = null;
-        break;
-      }
-      case 'rcsDuty': {
-  if (msg.duties == null) b.rcsDuty = null;
-  else b.rcsDuty = msg.duties;
-  break;
-}
-      case 'legs': {
-  if (!b.legs) b.legs = { deployed: false, progress: 0 };
-  b.legs.deployed = !!msg.deployed;
-  break;
-}
-// ---- Mission-event commands (LEO_INSERTION sequence) ----
-// All these are defined in physics.js and reachable as globals on
-// this page. Two-phase commands (separate, releasePayload) defer
-// the actual split until engine thrust has spooled to ~0 — the
-// _checkPending* hooks inside physicsStep handle the deferral, so
-// calling the request function is all that's needed here.
-case 'separate': {
-  if (typeof requestSeparate === 'function') requestSeparate(b);
-  break;
-}
-case 'splitFairing': {
-  if (typeof splitFairingOnActiveBody === 'function') splitFairingOnActiveBody(b);
-  break;
-}
-case 'releasePayload': {
-  if (typeof requestReleasePayload === 'function') requestReleasePayload(msg, b);
-  break;
-}
-case 'emergencyEject': {
-  if (typeof emergencyEjectPayload === 'function') emergencyEjectPayload(b);
-  break;
-}
-case 'takeControl': {
-  if (typeof takeControlOfBody === 'function') takeControlOfBody(msg.idx);
-  break;
-}
-default: break;
+      case 'rcs': { if (!b.rcsCmd) b.rcsCmd = {}; b.rcsCmd[msg.key] = !!msg.on; b.rcsDuty = null; break; }
+      case 'rcsDuty': { if (msg.duties == null) b.rcsDuty = null; else b.rcsDuty = msg.duties; break; }
+      case 'legs': { if (!b.legs) b.legs = { deployed: false, progress: 0 }; b.legs.deployed = !!msg.deployed; break; }
+      case 'separate': { if (typeof requestSeparate === 'function') requestSeparate(b); break; }
+      case 'splitFairing': { if (typeof splitFairingOnActiveBody === 'function') splitFairingOnActiveBody(b); break; }
+      case 'releasePayload': { if (typeof requestReleasePayload === 'function') requestReleasePayload(msg, b); break; }
+      case 'emergencyEject': { if (typeof emergencyEjectPayload === 'function') emergencyEjectPayload(b); break; }
+      case 'takeControl': { if (typeof takeControlOfBody === 'function') takeControlOfBody(msg.idx); break; }
+      default: break;
     }
   }
   Guidance.init(localDispatch);
 
-  // =====================================================================
-  // UI setup
-  // =====================================================================
-  const statusEl   = document.getElementById('status');
-  const sel        = document.getElementById('guideSelect');
-  const durInput   = document.getElementById('durationInput');
-  const sampInput  = document.getElementById('sampleInput');
-  const startBtn   = document.getElementById('startBtn');
-  const stopBtn    = document.getElementById('stopBtn');
-  const tunPanel   = document.getElementById('tunables');
-  const tunBody    = document.getElementById('tunablesBody');
-  const rangesGrid = document.getElementById('rangesGrid');
-  const topNInput  = document.getElementById('topNInput');
-  const elimSel    = document.getElementById('eliminateSelect');
-  const resultsSum = document.getElementById('resultsSummary');
-  const resultsJson= document.getElementById('resultsJson');
-
-  // Build the 8-field range grid.
-  rangesGrid.innerHTML = RANGE_FIELDS.map(f => `
-    <div class="range-row">
-      <label title="${f.key}">${f.label}</label>
-      <input type="number" data-key="${f.key}" data-end="lo" value="${f.defLo}" step="any">
-      <span class="sep">–</span>
-      <input type="number" data-key="${f.key}" data-end="hi" value="${f.defHi}" step="any">
-    </div>
-  `).join('');
+  // ---------------------------------------------------------------------------
+  // UI elements
+  // ---------------------------------------------------------------------------
+  const sel         = document.getElementById('guideSelect');
+  const durInput    = document.getElementById('durationInput');
+  const startBtn    = document.getElementById('startBtn');
+  const stopBtn     = document.getElementById('stopBtn');
+  const tunPanel    = document.getElementById('tunables');
+  const tunBody     = document.getElementById('tunablesBody');
+  const presetSel   = document.getElementById('presetSelect');
+  const presetStat  = document.getElementById('presetStatus');
+  const summaryBody = document.getElementById('summaryBody');
+  const captureList = document.getElementById('capturesList');
+  const captureCnt  = document.getElementById('captureCount');
+  const compareBox  = document.getElementById('compareBox');
+  const compareBody = document.getElementById('compareBody');
+  const statusEl    = document.getElementById('status');
 
   const guides = (Guidance.listGuides && Guidance.listGuides()) || [];
-const _labelOf = (g) => (Guidance.getGuideStatusLabel && Guidance.getGuideStatusLabel(g)) || '';
-sel.innerHTML = guides.length ?
-  guides.map(g => {
-    const lbl = _labelOf(g);
-    return `<option value="${g}">${g}${lbl ? ' — ' + lbl : ''}</option>`;
-  }).join('') :
-  '<option value="">(no guides registered)</option>';
-  
-  if (!members.length) {
-    statusEl.textContent = '⚠ No active stack in fleet.';
-  } else {
-    statusEl.textContent = `Active stack: ${members.map(m => m.name).join(' → ')}`;
-  }
+  const _labelOf = (g) => (Guidance.getGuideStatusLabel && Guidance.getGuideStatusLabel(g)) || '';
+  sel.innerHTML = guides.length ?
+    guides.map(g => {
+      const lbl = _labelOf(g);
+      return `<option value="${g}">${g}${lbl ? ' — ' + lbl : ''}</option>`;
+    }).join('') :
+    '<option value="">(no guides registered)</option>';
 
-  // --- Tunables ---
+  if (!members.length) statusEl.textContent = '⚠ No active stack in fleet.';
+  else statusEl.textContent = `Active stack: ${members.map(m => m.name).join(' → ')}`;
+
+  // ---------------------------------------------------------------------------
+  // Tunables
+  // ---------------------------------------------------------------------------
   function _stepFor(key) {
-    if (/SIGN|THRESHOLD|FRAC|K_DAMP|K_DQ|K_P|K_D|K_I|K_LEAD|T_SCALE/.test(key)) return 'any';
+    if (/SIGN|THRESHOLD|FRAC|K_DAMP|K_DQ|K_P|K_D|K_I|K_LEAD|T_SCALE|MARGIN|TOL|OMEGA/.test(key)) return 'any';
     if (/KM|_S$|S$/.test(key)) return 0.5;
     if (/DEG/.test(key)) return 0.1;
     if (/Q_SCALE|Q_REF/.test(key)) return 100;
@@ -623,19 +426,36 @@ sel.innerHTML = guides.length ?
         return Object.keys(c).map(k => ({ key: k, value: c[k], step: _stepFor(k) }));
       }
       if (guideName === 'leoInsertion' && typeof Guidance.getLeoInsertionConfig === 'function') {
-  const c = Guidance.getLeoInsertionConfig();
-  // Flatten top-level keys only (STAGE is nested — handled once
-  // stage logic lands).
-  return Object.keys(c).filter(k => typeof c[k] !== 'object').map(k =>
-    ({ key: k, value: c[k], step: _stepFor(k) }));
-}
+        const c = Guidance.getLeoInsertionConfig();
+        const out = [];
+        Object.keys(c).forEach(k => {
+          const v = c[k];
+          if (v && typeof v === 'object' && !Array.isArray(v)) {
+            Object.keys(v).forEach(kk => out.push({ key: k + '.' + kk, value: v[kk], step: _stepFor(kk) }));
+          } else out.push({ key: k, value: v, step: _stepFor(k) });
+        });
+        return out;
+      }
+      if (guideName === 'leoInsertionV2' && typeof Guidance.getLeoInsertionV2Config === 'function') {
+        const c = Guidance.getLeoInsertionV2Config();
+        const out = [];
+        Object.keys(c).forEach(k => {
+          const v = c[k];
+          if (v && typeof v === 'object' && !Array.isArray(v)) {
+            Object.keys(v).forEach(kk => out.push({ key: k + '.' + kk, value: v[kk], step: _stepFor(kk) }));
+          } else out.push({ key: k, value: v, step: _stepFor(k) });
+        });
+        return out;
+      }
       if (guideName === 'predictivePlusAoAPush') {
         return [{ key: 'SWEEP_S', value: 10.0, step: 0.5 }];
       }
     } catch (e) { console.warn('[fast] tunableFieldsFor', e); }
     return [];
   }
-  const tunablesState = {};
+
+  const tunablesState = {}; // guideName → { key: value }
+
   function renderTunablesFor(guideName) {
     const fields = tunableFieldsFor(guideName);
     if (!fields.length) { tunPanel.style.display = 'none'; tunBody.innerHTML = ''; return; }
@@ -646,15 +466,17 @@ sel.innerHTML = guides.length ?
     }
     tunBody.innerHTML = fields.map(f => {
       const v = tunablesState[guideName][f.key];
-      return `<div class="tunable-row"><label title="${f.key}">${f.key}</label><input type="number" data-key="${f.key}" value="${v}" step="${f.step}"></div>`;
+      return `<div class="tunable-row"><label title="${f.key}">${f.key}</label>
+        <input type="number" data-key="${f.key}" value="${v}" step="${f.step}"></div>`;
     }).join('');
     tunBody.querySelectorAll('input').forEach(inp => {
-      inp.addEventListener('input', (e) => {
+      inp.addEventListener('input', e => {
         const v = parseFloat(e.target.value);
         if (Number.isFinite(v)) tunablesState[guideName][e.target.dataset.key] = v;
       });
     });
   }
+
   function applyTunables(guideName) {
     const t = tunablesState[guideName];
     if (!t) return;
@@ -664,252 +486,316 @@ sel.innerHTML = guides.length ?
       else if (guideName === 'predictivePlus') Guidance.setPredictiveGains(t);
       else if (guideName === 'predictivePlusAoAPush') {
         if (Number.isFinite(t.SWEEP_S)) Guidance.setSweepDuration(t.SWEEP_S);
+      } else if (guideName === 'leoInsertion' || guideName === 'leoInsertionV2') {
+        const patch = {};
+        Object.keys(t).forEach(k => {
+          if (k.indexOf('.') >= 0) {
+            const [outer, inner] = k.split('.');
+            if (!patch[outer]) patch[outer] = {};
+            patch[outer][inner] = t[k];
+          } else patch[k] = t[k];
+        });
+        if (guideName === 'leoInsertion') Guidance.setLeoInsertion(patch);
+        else Guidance.setLeoInsertionV2(patch);
       }
     } catch (e) { console.warn('[fast] applyTunables', e); }
   }
-  sel.addEventListener('change', () => renderTunablesFor(sel.value));
-  if (guides.length) renderTunablesFor(sel.value);
 
-function readRanges() {
-  const out = {};
-  RANGE_FIELDS.forEach(f => {
-    const loEl = rangesGrid.querySelector(`input[data-key="${f.key}"][data-end="lo"]`);
-    const hiEl = rangesGrid.querySelector(`input[data-key="${f.key}"][data-end="hi"]`);
-    out[f.key] = {
-      lo: parseFloat(loEl.value),
-      hi: parseFloat(hiEl.value),
-    };
-  });
-  return out;
-}
+  sel.addEventListener('change', () => { renderTunablesFor(sel.value); refreshPresetList(); });
+  if (guides.length) { renderTunablesFor(sel.value); }
 
-// ---------------------------------------------------------------------------
-// Constants Import/Export — symmetric with the sim panel's shape.
-//
-//   Export: reads current tunables (flat dotted keys), un-flattens to the
-//           nested shape the sim panel and guideConfigDefaults use, copies
-//           to clipboard.
-//   Import: parses JSON (nested or flat), normalises to nested, validates
-//           strict against the current guide's code-default schema, then
-//           writes the flat form back into tunablesState and re-renders.
-//
-// Uses setByPath / validateConstantsStrict / getGuideDefaultPreset from
-// guidancePresets.js + guideConfigDefaults.js (loaded above).
-// ---------------------------------------------------------------------------
-function _flattenDotted(obj, prefix, out) {
-  out = out || {};
-  prefix = prefix || '';
-  if (!obj || typeof obj !== 'object') return out;
-  Object.keys(obj).forEach(k => {
-    const v = obj[k];
-    const path = prefix ? prefix + '.' + k : k;
-    if (v && typeof v === 'object' && !Array.isArray(v)) {
-      _flattenDotted(v, path, out);
-    } else {
-      out[path] = v;
-    }
-  });
-  return out;
-}
-
-function _normaliseToNested(obj) {
-  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return obj;
-  const keys = Object.keys(obj);
-  if (keys.some(k => k.includes('.'))) {
-    // Flat (dotted) → nested
-    const out = {};
-    keys.forEach(k => setByPath(out, k, obj[k]));
+  // ---------------------------------------------------------------------------
+  // Preset system — flat/nested helpers from guidancePresets.js are available.
+  // ---------------------------------------------------------------------------
+  function _flatten(obj, prefix, out) {
+    out = out || {}; prefix = prefix || '';
+    if (!obj || typeof obj !== 'object') return out;
+    Object.keys(obj).forEach(k => {
+      const v = obj[k];
+      const path = prefix ? prefix + '.' + k : k;
+      if (v && typeof v === 'object' && !Array.isArray(v)) _flatten(v, path, out);
+      else out[path] = v;
+    });
     return out;
   }
-  return obj;
-}
-
-// Build a nested reference from the current tunable fields — used as a
-// fallback if guideConfigDefaults doesn't have an entry for this guide.
-function _referenceFromFields(guideName) {
-  const def = (typeof getGuideDefaultPreset === 'function')
-    ? getGuideDefaultPreset(guideName) : null;
-  if (def && def.constants) return def.constants;
-  const fields = tunableFieldsFor(guideName);
-  const nested = {};
-  fields.forEach(f => setByPath(nested, f.key, f.value));
-  return nested;
-}
-
-function exportConstants() {
-  const guideName = sel.value;
-  if (!guideName) { statusEl.textContent = 'Select a guide first.'; return; }
-  const fields = tunableFieldsFor(guideName);
-  if (!fields.length) { statusEl.textContent = 'This guide has no tunable constants.'; return; }
-  const state = tunablesState[guideName] || {};
-  const nested = _normaliseToNested(state);
-  const json = JSON.stringify(nested, null, 2);
-  if (navigator.clipboard && navigator.clipboard.writeText) {
-    navigator.clipboard.writeText(json).then(
-      () => { statusEl.textContent = 'Exported ' + guideName + ' constants to clipboard.'; },
-      () => { statusEl.textContent = 'Clipboard write failed.'; }
-    );
-  } else {
-    const ta = document.createElement('textarea');
-    ta.value = json;
-    document.body.appendChild(ta);
-    ta.select();
-    try { document.execCommand('copy'); statusEl.textContent = 'Exported to clipboard.'; }
-    catch (e) { statusEl.textContent = 'Copy failed.'; }
-    document.body.removeChild(ta);
+  function _nestedFromFlat(flat) {
+    const out = {};
+    Object.keys(flat).forEach(k => setByPath(out, k, flat[k]));
+    return out;
   }
-}
 
-function openImportModal() {
-  const guideName = sel.value;
-  if (!guideName) { statusEl.textContent = 'Select a guide first.'; return; }
-  const fields = tunableFieldsFor(guideName);
-  if (!fields.length) { statusEl.textContent = 'This guide has no tunable constants.'; return; }
-  const modal = document.getElementById('importBackdrop');
-  document.getElementById('importText').value = '';
-  document.getElementById('importErr').style.display = 'none';
-  modal.style.display = 'flex';
-  document.getElementById('importText').focus();
-}
-
-function closeImportModal() {
-  document.getElementById('importBackdrop').style.display = 'none';
-}
-
-function confirmImport() {
-  const guideName = sel.value;
-  const raw = document.getElementById('importText').value;
-  const errEl = document.getElementById('importErr');
-  if (!raw.trim()) {
-    errEl.textContent = 'Paste constants JSON first.';
-    errEl.style.display = 'block';
-    return;
+  function currentTunablesFlat() {
+    return Object.assign({}, tunablesState[sel.value] || {});
   }
-  let parsed;
-  try { parsed = JSON.parse(raw); }
-  catch (e) {
-    errEl.textContent = 'JSON parse error: ' + e.message;
-    errEl.style.display = 'block';
-    return;
-  }
-  const nested = _normaliseToNested(parsed);
-  const reference = _referenceFromFields(guideName);
-  const v = validateConstantsStrict(nested, reference);
-  if (!v.ok) {
-    errEl.textContent = 'Validation failed: ' + v.error;
-    errEl.style.display = 'block';
-    return;
-  }
-  // Write back into tunablesState as dotted keys, then re-render.
-  const flat = _flattenDotted(nested);
-  tunablesState[guideName] = Object.assign({}, flat);
-  renderTunablesFor(guideName);
-  closeImportModal();
-  statusEl.textContent = 'Imported ' + Object.keys(flat).length + ' constants for ' + guideName + '.';
-}
 
-document.getElementById('exportBtn').addEventListener('click', exportConstants);
-document.getElementById('importBtn').addEventListener('click', openImportModal);
-document.getElementById('importCloseBtn').addEventListener('click', closeImportModal);
-document.getElementById('importCancelBtn').addEventListener('click', closeImportModal);
-document.getElementById('importConfirmBtn').addEventListener('click', confirmImport);
-document.getElementById('importBackdrop').addEventListener('click', (e) => {
-  if (e.target === document.getElementById('importBackdrop')) closeImportModal();
-});
-document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && document.getElementById('importBackdrop').style.display === 'flex') {
-    closeImportModal();
-  }
-});
-
-  // =====================================================================
-  // maxAlt / vApogee — osculating two-body orbit from current INERTIAL state.
-  // =====================================================================
-  function orbitalElements(r, vr, vt_inertial, GM, R) {
-    const E = 0.5 * (vr * vr + vt_inertial * vt_inertial) - GM / r;
-    if (E >= 0) {
-      // Escape — apogee is infinity, v_apogee is 0 (parabolic escape).
-      return { apogeeKm: Infinity, vApogee: 0 };
+  function refreshPresetList() {
+    const guideName = sel.value;
+    if (!guideName || typeof getAllPresetsForGuide !== 'function') {
+      presetSel.innerHTML = '<option value="">— presets unavailable —</option>';
+      presetSel.disabled = true; return;
     }
-    const a = -GM / (2 * E);
-    const h = r * vt_inertial;
+    const list = getAllPresetsForGuide(guideName);
+    presetSel.disabled = false;
+    if (!list.length) {
+      presetSel.innerHTML = '<option value="">— no presets —</option>'; return;
+    }
+    presetSel.innerHTML = '<option value="">— select a preset —</option>' +
+      list.map(p => `<option value="${p.id}">${p.name}${p.isDefault ? ' · DEFAULT' : ''}</option>`).join('');
+  }
+
+  document.getElementById('presetLoadBtn').addEventListener('click', () => {
+    const id = presetSel.value;
+    if (!id) { presetStat.textContent = 'Select a preset first.'; return; }
+    const p = getPresetById(id);
+    if (!p) return;
+    const ref = (typeof getGuideDefaultPreset === 'function') ? getGuideDefaultPreset(sel.value) : null;
+    if (ref && typeof validateConstantsStrict === 'function') {
+      const v = validateConstantsStrict(p.constants, ref.constants);
+      if (!v.ok) { presetStat.textContent = 'Preset incompatible: ' + v.error; return; }
+    }
+    const flat = _flatten(p.constants);
+    tunablesState[sel.value] = flat;
+    renderTunablesFor(sel.value);
+    presetStat.textContent = 'Loaded "' + p.name + '" (' + Object.keys(flat).length + ' keys).';
+  });
+
+  document.getElementById('presetSaveBtn').addEventListener('click', () => {
+    const name = prompt('Preset name:', 'F9 LEO tuned');
+    if (!name) return;
+    const guideName = sel.value;
+    if (!guideName) return;
+    const flat = currentTunablesFlat();
+    const nested = _nestedFromFlat(flat);
+    let stackId = '', stackName = '';
+    if (typeof getActiveStack === 'function') {
+      const stk = getActiveStack();
+      if (stk) { stackId = stk.id; stackName = stk.name; }
+    }
+    const rec = addUserPreset({
+      name, description: '', guideName, stackId, stackName,
+      tags: [], constants: nested,
+    });
+    if (rec) { refreshPresetList(); presetStat.textContent = 'Saved "' + rec.name + '".'; }
+    else presetStat.textContent = 'Save failed.';
+  });
+
+  document.getElementById('presetDeleteBtn').addEventListener('click', () => {
+    const id = presetSel.value;
+    if (!id) { presetStat.textContent = 'Select a preset first.'; return; }
+    const p = getPresetById(id);
+    if (!p || p.isDefault) { presetStat.textContent = 'Default presets cannot be deleted.'; return; }
+    if (!confirm('Delete preset "' + p.name + '"?')) return;
+    if (deleteUserPreset(id)) { refreshPresetList(); presetStat.textContent = 'Deleted.'; }
+  });
+
+  document.getElementById('presetExportBtn').addEventListener('click', () => {
+    const flat = currentTunablesFlat();
+    const nested = _nestedFromFlat(flat);
+    const json = JSON.stringify(nested, null, 2);
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(json).then(
+        () => { presetStat.textContent = 'Copied ' + Object.keys(flat).length + ' keys.'; },
+        () => { presetStat.textContent = 'Clipboard write failed.'; }
+      );
+    }
+  });
+
+  document.getElementById('presetImportBtn').addEventListener('click', () => {
+    const raw = prompt('Paste constants JSON:');
+    if (!raw) return;
+    let parsed;
+    try { parsed = JSON.parse(raw); }
+    catch (e) { presetStat.textContent = 'JSON parse error: ' + e.message; return; }
+    const guideName = sel.value;
+    const ref = (typeof getGuideDefaultPreset === 'function') ? getGuideDefaultPreset(guideName) : null;
+    const nested = (Object.keys(parsed).some(k => k.includes('.'))) ? _nestedFromFlat(parsed) : parsed;
+    if (ref && typeof validateConstantsStrict === 'function') {
+      const v = validateConstantsStrict(nested, ref.constants);
+      if (!v.ok) { presetStat.textContent = 'Validation failed: ' + v.error; return; }
+    }
+    tunablesState[guideName] = _flatten(nested);
+    renderTunablesFor(guideName);
+    presetStat.textContent = 'Imported ' + Object.keys(tunablesState[guideName]).length + ' keys.';
+  });
+
+  refreshPresetList();
+
+  // ---------------------------------------------------------------------------
+  // Capture logic
+  // ---------------------------------------------------------------------------
+  function _orbitalElements(rx, ry, vx, vy) {
+    const GM = CONFIG.GM_EARTH;
+    const r = Math.hypot(rx, ry);
+    const ux = rx / r, uy = ry / r;
+    const ex = ry / r, ey = -rx / r;
+    const vr = vx * ux + vy * uy;
+    const vt = vx * ex + vy * ey;
+    const E = 0.5 * (vr * vr + vt * vt) - GM / r;
+    const h = r * vt;
+    let apo_km = Infinity, peri_km = -Infinity, ecc = NaN, a_km = Infinity, vApo = 0;
     const eSq = 1 + 2 * E * h * h / (GM * GM);
     const e = Math.sqrt(Math.max(0, eSq));
-    const ra = a * (1 + e);
-    // Velocity at apogee: vr = 0 there, so |v| = vt = h / r_a.
-    const vApogee = (ra > 0) ? Math.abs(h) / ra : 0;
-    return { apogeeKm: (ra - R) / 1000, vApogee };
-  }
-
-  // =====================================================================
-  // Scoring
-  // =====================================================================
-  // raw score for one field vs its range. 100 = inside; 0..100 = outside,
-  // proportional to closeness (ratio-based); negative = sample sign-flip
-  // against a positive range (magnitude distance from lo).
-  function rawScore(v, lo, hi) {
-    if (!Number.isFinite(v) || !Number.isFinite(lo) || !Number.isFinite(hi)) return 0;
-    if (v >= lo && v <= hi) return 100;
-    if (v < lo) {
-      // Distance below lo, as a fraction of lo. lo > 0 normal case.
-      if (lo === 0) return 0;
-      return (v / lo) * 100;
+    ecc = e;
+    if (E < 0) {
+      const a = -GM / (2 * E);
+      a_km = a / 1000;
+      const ra = a * (1 + e);
+      const rp = a * (1 - e);
+      apo_km = (ra - CONFIG.EARTH_RADIUS) / 1000;
+      peri_km = (rp - CONFIG.EARTH_RADIUS) / 1000;
+      vApo = (ra > 0) ? Math.abs(h) / ra : 0;
+    } else {
+      apo_km = Infinity;
+      peri_km = (E > 0) ? ((h * h / GM / (1 + e)) - CONFIG.EARTH_RADIUS) / 1000 : -Infinity;
     }
-    // v > hi
-    if (v === 0) return 0;
-    return (hi / v) * 100;
+    return { r, vr, vt, apo_km, peri_km, ecc, a_km, vApo, h };
   }
 
-  function scoreSample(sample, ranges) {
-    let total = 0;
-    const breakdown = {};
-    for (const f of RANGE_FIELDS) {
-      const r = ranges[f.key];
-      const w = Number.isFinite(RANGE_WEIGHTS[f.key]) ? RANGE_WEIGHTS[f.key] : 1;
-      const rs = rawScore(sample[f.key], r.lo, r.hi);
-      const fs = rs * w;
-      breakdown[f.key] = { raw: rs, weight: w, score: fs };
-      total += fs;
-    }
-    return { total, breakdown };
-  }
-
-  function insideElimination(sample, ranges, elimKey) {
-    if (!elimKey) return true;
-    const r = ranges[elimKey];
-    if (!r || !Number.isFinite(r.lo) || !Number.isFinite(r.hi)) return true;
-    const v = sample[elimKey];
-    return Number.isFinite(v) && v >= r.lo && v <= r.hi;
-  }
-
-  function rankSamples(data, ranges, elimKey, topN) {
-    // Pre-filter by elimination field (if set).
-    const candidates = [];
-    for (let i = 0; i < data.length; i++) {
-      const s = data[i];
-      if (insideElimination(s, ranges, elimKey)) candidates.push({ s, idx: i });
-    }
-    // Score every candidate.
-    const scored = candidates.map(c => {
-      const { total, breakdown } = scoreSample(c.s, ranges);
-      return { s: c.s, idx: c.idx, total, breakdown };
+  function _captureState() {
+    const idx = state.activeBodyIndex;
+    const b = state.bodies[idx];
+    if (!b) return null;
+    const gs = (Guidance.getGuideStatus && Guidance.getGuideStatus()) || {};
+    const orb = _orbitalElements(b.rx, b.ry, b.vx, b.vy);
+    const r = orb.r;
+    const alt_km = (r - CONFIG.EARTH_RADIUS) / 1000;
+    const phiI = Math.atan2(b.rx, b.ry);
+    const phiEF = phiI - CONFIG.EARTH_OMEGA * state.simTime;
+    const down_km = (CONFIG.EARTH_RADIUS * (phiEF - (CONFIG.LAUNCH_SITE_ANGLE_0 || 0))) / 1000;
+    const localVert = Math.atan2(-b.rx, b.ry);
+    const theta_rel_deg = (b.theta - localVert) * 180 / Math.PI;
+    // Mass / fuel
+    let mass_t = 0;
+    try {
+      const geom = (typeof geometryOf === 'function') ? geometryOf(b) : null;
+      if (geom) mass_t = geom.M / 1000;
+    } catch (e) {}
+    const fuel_t = (b.fuelMass || 0) / 1000;
+    const fuelArr = Array.isArray(b.memberFuel) ? b.memberFuel.map(x => x / 1000) : [];
+    // Engines
+    let thrust_MN = 0, mdot_kgps = 0, gimbalSum = 0, gimbalCount = 0;
+    (b.engines || []).forEach(e => {
+      thrust_MN += (e.currentF || 0) / 1e6;
+      mdot_kgps += (e.massFlowRate || 0);
+      if (e.gimbal) { gimbalSum += (e.gimbalDeg || 0); gimbalCount++; }
     });
-    // Sort: total desc, tie → earlier time first.
-    scored.sort((a, b) => {
-      if (b.total !== a.total) return b.total - a.total;
-      return a.idx - b.idx;
-    });
-    return { candidates: scored, top: scored.slice(0, topN) };
+    const gimbal_avg_deg = gimbalCount > 0 ? gimbalSum / gimbalCount : 0;
+    // Aero / Q
+    const w = (typeof windInertialVector === 'function') ? windInertialVector(b.rx, b.ry) : { wx: 0, wy: 0 };
+    const sv = (typeof earthSurfaceVelocity === 'function') ? earthSurfaceVelocity(b.rx, b.ry) : { vx: 0, vy: 0 };
+    const relVx = b.vx - (w.wx + sv.vx);
+    const relVy = b.vy - (w.wy + sv.vy);
+    const speedRel = Math.hypot(relVx, relVy);
+    const rho = (typeof airDensity === 'function') ? airDensity(Math.max(0, alt_km * 1000)) : 0;
+    const Q_kPa = 0.5 * rho * speedRel * speedRel / 1000;
+    const cosT = Math.cos(b.theta), sinT = Math.sin(b.theta);
+    const velBodyX = speedRel > 1e-6 ? (relVx * cosT + relVy * sinT) : 0;
+    const sinAlpha = speedRel > 1e-6 ? Math.max(-1, Math.min(1, velBodyX / speedRel)) : 0;
+    const aoa_deg = Math.asin(sinAlpha) * 180 / Math.PI;
+    // Body list summary
+    const bodyList = state.bodies.map(x => {
+      const tag = x.isActive ? 'A' :
+        (x.payloadBody ? 'P' : x.fairingHalf ? 'F' : x.isDiscarded ? 'B' : 'D');
+      return tag;
+    }).join(',');
+    return {
+      simTime: state.simTime,
+      phase: gs.phase || '?',
+      ascentPhase: gs.ascentPhase || null,
+      alt_km, down_km,
+      vr: orb.vr, vt: orb.vt,
+      theta_rel_deg,
+      omega: b.omega,
+      apo_km: orb.apo_km, peri_km: orb.peri_km,
+      ecc: orb.ecc, a_km: orb.a_km, vApo: orb.vApo,
+      mass_t, fuel_t, fuelArr,
+      thrust_MN, gimbal_avg_deg, mdot_kgps,
+      Q_kPa, rho, aoa_deg,
+      coastDV: (gs.coastDeltaV != null) ? gs.coastDeltaV : null,
+      coastTRem: (gs.coastTRem != null) ? gs.coastTRem : null,
+      stageBurnLocked: !!gs.stageBurnLocked,
+      stageBurnTargetTiltDeg: gs.stageBurnTargetTiltDeg != null ? gs.stageBurnTargetTiltDeg : null,
+      circAchieved: !!gs.circAchieved,
+      bodyCount: state.bodies.length,
+      bodyList,
+      crashed: !!state.crashed, landed: !!state.landed, halted: !!state.halted,
+    };
   }
 
-  // =====================================================================
-  // Run loop
-  // =====================================================================
-  let running = false;
-  let abort = false;
+  function _fmt(n, d) { return Number.isFinite(n) ? n.toFixed(d) : '—'; }
 
-  function yieldToBrowser() {
-    return new Promise(resolve => setTimeout(resolve, 0));
+  function renderCaptures() {
+    const filter = document.querySelector('.filter-chip.active').dataset.type;
+    const shown = (filter === 'all') ? captures : captures.filter(c => c.type === filter);
+    captureCnt.textContent = shown.length + ' / ' + captures.length;
+    if (!shown.length) {
+      captureList.innerHTML = '<div style="color: var(--dim); padding: 12px;">No captures of this type.</div>';
+      return;
+    }
+    captureList.innerHTML = shown.map(c => {
+      const s = c.state;
+      const sub = s.ascentPhase ? ` <span class="sublabel">(ascent: ${s.ascentPhase})</span>` : '';
+      const apoStr = Number.isFinite(s.apo_km) ? _fmt(s.apo_km, 1) + ' km' : '∞';
+      const periStr = Number.isFinite(s.peri_km) ? _fmt(s.peri_km, 1) + ' km' : '—';
+      const fuelArrStr = s.fuelArr.length ? s.fuelArr.map(x => _fmt(x, 1)).join(' / ') + ' t' : '—';
+      return `<div class="capture type-${c.type}">
+        <div class="head">
+          <span class="time">T+${_fmt(c.simTime, 2)}s</span>
+          <span class="label">${c.label}</span>
+          ${sub}
+        </div>
+        <div class="body">
+          <span><span class="k">phase</span> ${s.phase}</span>
+          <span><span class="k">alt</span> ${_fmt(s.alt_km, 2)} km</span>
+          <span><span class="k">down</span> ${_fmt(s.down_km, 2)} km</span>
+          <span><span class="k">vr</span> ${_fmt(s.vr, 1)}</span>
+          <span><span class="k">vt</span> ${_fmt(s.vt, 1)}</span>
+          <span><span class="k">θ_rel</span> ${_fmt(s.theta_rel_deg, 3)}°</span>
+          <span><span class="k">ω</span> ${_fmt(s.omega, 5)}</span>
+          <span><span class="k">apogee</span> ${apoStr}</span>
+          <span><span class="k">perigee</span> ${periStr}</span>
+          <span><span class="k">e</span> ${_fmt(s.ecc, 4)}</span>
+          <span><span class="k">v_apo</span> ${_fmt(s.vApo, 1)}</span>
+          <span><span class="k">mass</span> ${_fmt(s.mass_t, 2)} t</span>
+          <span><span class="k">fuel</span> ${_fmt(s.fuel_t, 2)} t</span>
+          <span><span class="k">member fuel</span> ${fuelArrStr}</span>
+          <span><span class="k">thrust</span> ${_fmt(s.thrust_MN, 3)} MN</span>
+          <span><span class="k">mdot</span> ${_fmt(s.mdot_kgps, 1)} kg/s</span>
+          <span><span class="k">gimbal avg</span> ${_fmt(s.gimbal_avg_deg, 4)}°</span>
+          <span><span class="k">Q</span> ${_fmt(s.Q_kPa, 2)} kPa</span>
+          <span><span class="k">ρ</span> ${_fmt(s.rho, 5)}</span>
+          <span><span class="k">AoA</span> ${_fmt(s.aoa_deg, 3)}°</span>
+          <span><span class="k">coastΔv</span> ${s.coastDV != null ? _fmt(s.coastDV, 2) : '—'}</span>
+          <span><span class="k">coast t_rem</span> ${s.coastTRem != null ? _fmt(s.coastTRem, 1) : '—'}</span>
+          <span><span class="k">lock</span> ${s.stageBurnLocked ? 'Y @ ' + _fmt(s.stageBurnTargetTiltDeg, 1) + '°' : 'N'}</span>
+          <span><span class="k">bodies</span> ${s.bodyCount} [${s.bodyList}]</span>
+          ${s.crashed ? '<span class="warn">CRASHED</span>' : ''}
+          ${s.landed ? '<span class="hi">LANDED</span>' : ''}
+          ${s.halted ? '<span class="warn">HALTED</span>' : ''}
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  document.querySelectorAll('.filter-chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      document.querySelectorAll('.filter-chip').forEach(c => c.classList.remove('active'));
+      chip.classList.add('active');
+      renderCaptures();
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Run
+  // ---------------------------------------------------------------------------
+  let running = false, abort = false;
+  let captures = [];        // current run
+  let previousRun = null;   // { meta, tunables, summary, captures }
+
+  function yieldToBrowser() { return new Promise(r => setTimeout(r, 0)); }
+
+  function _pushCapture(type, label, st) {
+    captures.push({ type, label, simTime: st.simTime, state: st });
   }
 
   async function run() {
@@ -917,15 +803,11 @@ document.addEventListener('keydown', (e) => {
     const guideName = sel.value;
     if (!guideName) { statusEl.textContent = 'Select a guide first.'; return; }
 
-    running = true;
-    abort = false;
-    startBtn.disabled = true;
-    stopBtn.disabled = false;
+    running = true; abort = false;
+    startBtn.disabled = true; stopBtn.disabled = false;
 
     applyTunables(guideName);
-
-    // Read ranges ONCE (they don't change mid-run).
-    const ranges = readRanges();
+    captures = [];
 
     // Env
     if (typeof wind !== 'undefined' && wind) {
@@ -941,109 +823,149 @@ document.addEventListener('keydown', (e) => {
     CONFIG.SLOSH_ENABLED = document.getElementById('envSlosh').checked;
     try { Guidance.setImuEnabled(document.getElementById('envImu').checked); } catch (e) {}
 
-    const durationS = Math.max(1, parseFloat(durInput.value) || 160);
-    const sampleS = Math.max(0.05, parseFloat(sampInput.value) || 1);
+    const durationS = Math.max(1, parseFloat(durInput.value) || 800);
     const dt = CONFIG.DT;
     const maxTicks = Math.ceil(durationS / dt);
-    const sampleEveryTicks = Math.max(1, Math.round(sampleS / dt));
 
     resetState(0);
     try { Guidance.startGuide(guideName); } catch (e) { console.error('[fast] startGuide', e); }
 
-   const activeIdx = state.activeBodyIndex;
-// Per-body initial fuel — captured lazily the first time each body is
-// sampled, so a discarded booster that first appears mid-mission gets
-// its own fresh baseline (fuelUsed starts at 0 for it, not at whatever
-// the stack had at t=0).
-const initialFuelByBody = {};
-
-    const data = [];
-    const GM = CONFIG.GM_EARTH;
-    const R  = CONFIG.EARTH_RADIUS;
-    const OM = CONFIG.EARTH_OMEGA;
-
+    // State trackers for event detection
+    let prevPhase = null, prevAscentPhase = null;
+    let prevVrSign = 0;
+    let prevBodyCount = state.bodies.length;
+    let prevPayloadReleased = false;
+    let prevCrashed = false, prevLanded = false, prevHalted = false;
+    let stageBurnVrNegCaptured = false;
+    let peakQ = { value: -Infinity, state: null };
+    let peakG = { value: -Infinity, state: null };
     let ticksRun = 0;
     const t0 = performance.now();
-
-    function sampleNow() {
-  for (let bi = 0; bi < state.bodies.length; bi++) {
-    const b = state.bodies[bi];
-    if (!b) continue;
-    const bodyKey = 'b' + bi;
-    const tag = b.isActive ? 'A' : (b.isDiscarded ? 'B' : 'D' + bi);
-
-    if (!(bodyKey in initialFuelByBody)) {
-      initialFuelByBody[bodyKey] = b.fuelMass || 0;
-    }
-
-    const r = Math.hypot(b.rx, b.ry) || 1;
-    const ux = b.rx / r, uy = b.ry / r;
-    const ex = b.ry / r, ey = -b.rx / r;
-    const vr = b.vx * ux + b.vy * uy;
-    const vtInertial = b.vx * ex + b.vy * ey;
-    const vtRel = vtInertial - OM * r;
-    const phiI = Math.atan2(b.rx, b.ry);
-    const phiEF = phiI - OM * state.simTime;
-    const downArc = R * (phiEF - (CONFIG.LAUNCH_SITE_ANGLE_0 || 0));
-    const fuelLeft = b.fuelMass || 0;
-    const fuelUsed = initialFuelByBody[bodyKey] - fuelLeft;
-    const orb = orbitalElements(r, vr, vtInertial, GM, R);
-
-    let heatFlux = 0;
-    if (activePayloadRn > 0) {
-      const alt = r - R;
-      const rho = alt < 0 ? CONFIG.SEA_LEVEL_DENSITY
-                          : CONFIG.SEA_LEVEL_DENSITY * Math.exp(-alt / CONFIG.SCALE_HEIGHT);
-      const wv = (typeof windInertialVector === 'function')
-        ? windInertialVector(b.rx, b.ry) : { wx: 0, wy: 0 };
-      const svv = (typeof earthSurfaceVelocity === 'function')
-        ? earthSurfaceVelocity(b.rx, b.ry) : { vx: 0, vy: 0 };
-      const relVx = b.vx - (wv.wx + svv.vx);
-      const relVy = b.vy - (wv.wy + svv.vy);
-      const speedRel = Math.hypot(relVx, relVy);
-      if (rho > 0 && speedRel > 0) {
-        const K = 1.7415e-4;
-        heatFlux = K * Math.sqrt(rho / activePayloadRn) * speedRel * speedRel * speedRel;
-      }
-    }
-
-    data.push({
-      body: tag,
-      t: state.simTime,
-      down: downArc / 1000,
-      alt: (r - R) / 1000,
-      vt: vtRel,
-      vr: vr,
-      fuelLeft: fuelLeft,
-      fuelUsed: fuelUsed,
-      apogee: orb.apogeeKm,
-      vApogee: orb.vApogee,
-      heatFlux: heatFlux,
-    });
-  }
-}
-
-    sampleNow();
-
-    const CHUNK = 2000;
+    const CHUNK = 800;
 
     for (let i = 0; i < maxTicks; i++) {
       if (abort) break;
       if (state.halted) break;
 
-      refreshSnap();
-      Guidance.onSnapshot(_snap);
+      // Exact copy of fastforward.worker.js's proven loop:
+      //   1. updateLegs(dt) before physicsStep
+      //   2. physicsStep(dt)
+      //   3. raw state.bodies snapshot after (no .map projection —
+      //      derivation reads live body objects directly)
+      //   4. Guidance.onSnapshot
+      try { updateLegs(dt); } catch (le) { console.error('[fast] updateLegs', le); }
       physicsStep(dt);
       ticksRun++;
+      const snap = {
+        simTime: state.simTime,
+        activeBodyIndex: state.activeBodyIndex,
+        halted: !!state.halted,
+        wind: (typeof wind !== 'undefined') ? {
+          enabled: !!wind.enabled, speed: wind.speed || 0, directionDeg: wind.directionDeg || 0,
+        } : { enabled: false, speed: 0, directionDeg: 0 },
+        bodies: state.bodies,
+      };
+      try { Guidance.onSnapshot(snap); } catch (ge) { console.error('[fast] onSnapshot', ge); }
 
-      if ((i + 1) % sampleEveryTicks === 0) sampleNow();
+      // --- Capture logic (cheap: only on event) ---
+      const gs = (Guidance.getGuideStatus && Guidance.getGuideStatus()) || {};
+      const activeBody = state.bodies[state.activeBodyIndex];
+      if (activeBody) {
+        const orb = _orbitalElements(activeBody.rx, activeBody.ry, activeBody.vx, activeBody.vy);
+        const vrSign = orb.vr > 0 ? 1 : (orb.vr < 0 ? -1 : 0);
+
+        // Phase transition
+        if (gs.phase && gs.phase !== prevPhase) {
+          const st = _captureState();
+          if (st) _pushCapture('phase', `PHASE → ${gs.phase}`, st);
+          prevPhase = gs.phase;
+          stageBurnVrNegCaptured = false;
+        }
+        // Ascent sub-phase transition (leoInsertionV2 shows ascentPhase during ASCENT)
+        if (gs.ascentPhase && gs.ascentPhase !== prevAscentPhase) {
+          const st = _captureState();
+          if (st) _pushCapture('phase', `ascent: ${prevAscentPhase || '—'} → ${gs.ascentPhase}`, st);
+          prevAscentPhase = gs.ascentPhase;
+        }
+        // Orbit crossings
+        if (prevVrSign !== 0 && vrSign !== 0 && vrSign !== prevVrSign) {
+          const st = _captureState();
+          if (st) {
+            const isApo = (prevVrSign > 0 && vrSign < 0);
+            _pushCapture('orbit', isApo ? 'APOGEE crossing' : 'PERIGEE crossing', st);
+          }
+        }
+        prevVrSign = vrSign;
+        // STAGE_BURN vr negative = too high abort condition
+        if (gs.phase === 'STAGE_BURN' && orb.vr < 0 && !stageBurnVrNegCaptured) {
+          const st = _captureState();
+          if (st) _pushCapture('abort', 'STAGE_BURN: vr went negative', st);
+          stageBurnVrNegCaptured = true;
+        }
+      }
+      // Body count change
+      if (state.bodies.length !== prevBodyCount) {
+        const st = _captureState();
+        if (st) _pushCapture('event', `body count ${prevBodyCount} → ${state.bodies.length}`, st);
+        prevBodyCount = state.bodies.length;
+      }
+      // Payload release flip
+      {
+        const ab = state.bodies[state.activeBodyIndex];
+        const rel = !!(ab && ab.payloadReleased);
+        if (rel !== prevPayloadReleased) {
+          const st = _captureState();
+          if (st) _pushCapture('event', rel ? 'payload released' : 'payload un-released', st);
+          prevPayloadReleased = rel;
+        }
+      }
+      // Crash / landed / halted
+      {
+        if (state.crashed && !prevCrashed) {
+          const st = _captureState();
+          if (st) _pushCapture('abort', 'CRASHED', st);
+          prevCrashed = true;
+        }
+        if (state.landed && !prevLanded) {
+          const st = _captureState();
+          if (st) _pushCapture('event', 'LANDED', st);
+          prevLanded = true;
+        }
+        if (state.halted && !prevHalted) {
+          const st = _captureState();
+          if (st) _pushCapture('event', 'HALTED', st);
+          prevHalted = true;
+        }
+      }
+      // Peak Q / G — snapshot at every new max, keep latest
+      {
+        const ab = state.bodies[state.activeBodyIndex];
+        if (ab) {
+          const alt = Math.hypot(ab.rx, ab.ry) - CONFIG.EARTH_RADIUS;
+          const w = (typeof windInertialVector === 'function') ? windInertialVector(ab.rx, ab.ry) : { wx: 0, wy: 0 };
+          const sv = (typeof earthSurfaceVelocity === 'function') ? earthSurfaceVelocity(ab.rx, ab.ry) : { vx: 0, vy: 0 };
+          const relVx = ab.vx - (w.wx + sv.vx);
+          const relVy = ab.vy - (w.wy + sv.vy);
+          const sr = Math.hypot(relVx, relVy);
+          const rho = (typeof airDensity === 'function') ? airDensity(Math.max(0, alt)) : 0;
+          const Q = 0.5 * rho * sr * sr;
+          if (Q > peakQ.value) {
+            peakQ.value = Q;
+            peakQ.state = _captureState();
+          }
+          const gAcc = (typeof gravityAccel === 'function') ? gravityAccel(ab.rx, ab.ry) : { ax: 0, ay: 0 };
+          const g_proper = Math.hypot((ab._lastAccelX || 0) - 0, (ab._lastAccelY || 0) - 0) / 9.80665;
+          if (g_proper > peakG.value) {
+            peakG.value = g_proper;
+            peakG.state = _captureState();
+          }
+        }
+      }
 
       if (i > 0 && i % CHUNK === 0) {
         const wall = (performance.now() - t0) / 1000;
-        statusEl.textContent =
-          `Running… t=${state.simTime.toFixed(1)}s / ${durationS}s  ` +
-          `(${ticksRun} ticks, ${(ticksRun / wall).toFixed(0)} ticks/s, ` +
-          `${data.length} samples)`;
+        statusEl.textContent = `Running… t=${state.simTime.toFixed(1)}s / ${durationS}s  ` +
+          `(${ticksRun} ticks, ${(ticksRun / wall).toFixed(0)} ticks/s, ${captures.length} captures)`;
         await yieldToBrowser();
       }
     }
@@ -1053,66 +975,137 @@ const initialFuelByBody = {};
     const elapsedMs = performance.now() - t0;
     const tps = ticksRun / (elapsedMs / 1000);
 
-    // ---- Score & rank ----
-    const topN = Math.max(1, Math.min(1000, parseInt(topNInput.value, 10) || 20));
-    const elimKey = elimSel.value || '';
-    const { candidates, top } = rankSamples(data, ranges, elimKey, topN);
+    // Push peak captures now (they only had a snapshot saved, not a
+    // chronological push, so ordering is: phase/orbit/... first, then peak)
+    if (peakQ.state) captures.push({ type: 'peak', label: `PEAK Q = ${peakQ.value.toFixed(2)} Pa`, simTime: peakQ.state.simTime, state: peakQ.state });
+    if (peakG.state) captures.push({ type: 'peak', label: `PEAK G = ${peakG.value.toFixed(2)} g`, simTime: peakG.state.simTime, state: peakG.state });
+    // Final end snapshot
+    {
+      const st = _captureState();
+      if (st) captures.push({ type: 'end', label: 'RUN END', simTime: st.simTime, state: st });
+    }
+    // Sort by simTime (peak/end may be out of order)
+    captures.sort((a, b) => a.simTime - b.simTime);
 
-    window.__data    = data;
-    window.__ranges  = ranges;
-    window.__weights = RANGE_WEIGHTS;
-    window.__ranked  = candidates;
-    window.__top     = top;
-    window.__meta = {
+    // ---- Summary ----
+    const finalSt = captures.length ? captures[captures.length - 1].state : null;
+    const totalFuelUsed_t = (() => {
+      if (!finalSt) return 0;
+      // initial fuel load across all members was set by DEFAULT_FUEL_FRACTION
+      // — approximate as capacity * fuelPct. Compute exact by re-reading
+      // memberMaxFuel on the active stack bottom member at reset.
+      // Simpler: report final remaining fuel and the loaded pct.
+      return null;
+    })();
+
+    const summary = {
       guide: guideName,
       duration: durationS,
-      samplePeriod: sampleS,
       ticks: ticksRun,
       wallSeconds: elapsedMs / 1000,
       ticksPerSecond: tps,
-      crashed: !!state.crashed,
-      landed: !!state.landed,
-      halted: !!state.halted,
-      elimination: elimKey || null,
-      candidates: candidates.length,
-      totalSamples: data.length,
-      topN: topN,
+      finalPhase: finalSt ? finalSt.phase : '?',
+      crashed: !!(state.crashed),
+      landed: !!(state.landed),
+      halted: !!(state.halted),
+      apogee_km: finalSt ? finalSt.apo_km : null,
+      perigee_km: finalSt ? finalSt.peri_km : null,
+      coastDV: finalSt ? finalSt.coastDV : null,
+      coastTRem: finalSt ? finalSt.coastTRem : null,
+      circAchieved: finalSt ? finalSt.circAchieved : false,
+      fuelLeft_t: finalSt ? finalSt.fuel_t : null,
+      maxQ_kPa: peakQ.value > 0 ? peakQ.value / 1000 : null,
+      maxG: peakG.value > 0 ? peakG.value : null,
+      capturesCount: captures.length,
     };
 
-    // ---- DOM ----
-    resultsSum.textContent =
-      `${candidates.length} candidate${candidates.length === 1 ? '' : 's'} ` +
-      `(of ${data.length} samples)` +
-      (elimKey ? `  ·  eliminate by: ${elimKey}` : '') +
-      `  ·  showing top ${Math.min(topN, candidates.length)}`;
+    summaryBody.innerHTML = Object.entries({
+      'guide': summary.guide,
+      'duration (s)': summary.duration,
+      'ticks run': summary.ticks,
+      'wall (s)': summary.wallSeconds.toFixed(2),
+      'ticks/s': summary.ticksPerSecond.toFixed(0),
+      'final phase': summary.finalPhase,
+      'crashed': summary.crashed ? 'YES' : 'no',
+      'landed': summary.landed ? 'YES' : 'no',
+      'halted': summary.halted ? 'YES' : 'no',
+      'final apogee (km)': Number.isFinite(summary.apogee_km) ? summary.apogee_km.toFixed(2) : '—',
+      'final perigee (km)': Number.isFinite(summary.perigee_km) ? summary.perigee_km.toFixed(2) : '—',
+      'coast Δv (m/s)': summary.coastDV != null ? summary.coastDV.toFixed(2) : '—',
+      'coast t_rem (s)': summary.coastTRem != null ? summary.coastTRem.toFixed(1) : '—',
+      'circ achieved': summary.circAchieved ? 'YES' : 'no',
+      'fuel left (t)': summary.fuelLeft_t != null ? summary.fuelLeft_t.toFixed(2) : '—',
+      'peak Q (kPa)': summary.maxQ_kPa != null ? summary.maxQ_kPa.toFixed(2) : '—',
+      'peak G': summary.maxG != null ? summary.maxG.toFixed(2) : '—',
+      'captures': summary.capturesCount,
+    }).map(([k, v]) => `<span><span class="k">${k}</span> <span class="v">${v}</span></span>`).join('');
 
-    // Max possible total = Σ (raw_max × weight) = Σ (100 × weight) = 100 · Σ weights.
-let _wSum = 0;
-for (const f of RANGE_FIELDS) {
-  const w = Number.isFinite(RANGE_WEIGHTS[f.key]) ? RANGE_WEIGHTS[f.key] : 1;
-  _wSum += w;
-}
-const maxTotal = 100 * _wSum;
+    // ---- Compare with previous run ----
+    const currentRun = {
+      meta: summary,
+      tunables: Object.assign({}, tunablesState[guideName] || {}),
+      captures,
+    };
 
-resultsJson.textContent = JSON.stringify(top.map(t => ({
-  t: t.s.t,
-  percent: Number((t.total / maxTotal * 100).toFixed(3)),
-  total: Number(t.total.toFixed(3)),
-  ...Object.fromEntries(
-    Object.entries(t.s).filter(([k]) => k !== 't').map(([k, v]) => [k, Number.isFinite(v) ? Number(v.toFixed(4)) : v])
-  ),
-  score_breakdown: Object.fromEntries(
-    Object.entries(t.breakdown).map(([k, v]) => [k, Number(v.score.toFixed(3))])
-  ),
-})), null, 2);
+    if (previousRun && previousRun.meta.guide === summary.guide) {
+      const prev = previousRun.meta;
+      const rows = [];
+      const pushRow = (label, a, b, cmp) => {
+        let cls = '';
+        if (typeof cmp === 'function') cls = cmp(a, b);
+        rows.push(`<div class="compare-row"><span class="k">${label}</span>
+          <span class="a">${a}</span><span class="arrow">→</span>
+          <span class="b ${cls}">${b}</span></div>`);
+      };
+      // Constants diff
+      const prevT = previousRun.tunables || {};
+      const currT = currentRun.tunables || {};
+      const allKeys = new Set([...Object.keys(prevT), ...Object.keys(currT)]);
+      const constDiffs = [];
+      allKeys.forEach(k => {
+        const a = prevT[k], b = currT[k];
+        if (a !== b) constDiffs.push(`<div class="compare-row"><span class="k">${k}</span>
+          <span class="a">${a}</span><span class="arrow">→</span>
+          <span class="b">${b}</span></div>`);
+      });
+      if (constDiffs.length) {
+        compareBody.innerHTML = '<div style="grid-column: 1/-1;"><div style="color: var(--dim); font-size: 11px; margin-bottom: 4px;">CONSTANTS CHANGED</div>' +
+          constDiffs.join('') + '</div>';
+      } else {
+        compareBody.innerHTML = '<div style="grid-column: 1/-1; color: var(--dim); font-size: 11px;">(no constant changes)</div>';
+      }
+      // Metric diff
+      const metrics = [
+        ['final phase', prev.finalPhase, summary.finalPhase, null],
+        ['crashed', prev.crashed ? 'YES' : 'no', summary.crashed ? 'YES' : 'no', (a, b) => b === 'YES' && a !== 'YES' ? 'bad' : (a === 'YES' && b !== 'YES' ? 'good' : '')],
+        ['final apogee (km)', Number.isFinite(prev.apogee_km) ? prev.apogee_km.toFixed(2) : '—', Number.isFinite(summary.apogee_km) ? summary.apogee_km.toFixed(2) : '—', null],
+        ['final perigee (km)', Number.isFinite(prev.perigee_km) ? prev.perigee_km.toFixed(2) : '—', Number.isFinite(summary.perigee_km) ? summary.perigee_km.toFixed(2) : '—', null],
+        ['coast Δv (m/s)', prev.coastDV != null ? prev.coastDV.toFixed(2) : '—', summary.coastDV != null ? summary.coastDV.toFixed(2) : '—', null],
+        ['coast t_rem (s)', prev.coastTRem != null ? prev.coastTRem.toFixed(1) : '—', summary.coastTRem != null ? summary.coastTRem.toFixed(1) : '—', null],
+        ['circ achieved', prev.circAchieved ? 'YES' : 'no', summary.circAchieved ? 'YES' : 'no', (a, b) => b === 'YES' && a !== 'YES' ? 'good' : '' ],
+        ['fuel left (t)', prev.fuelLeft_t != null ? prev.fuelLeft_t.toFixed(2) : '—', summary.fuelLeft_t != null ? summary.fuelLeft_t.toFixed(2) : '—', null],
+        ['peak Q (kPa)', prev.maxQ_kPa != null ? prev.maxQ_kPa.toFixed(2) : '—', summary.maxQ_kPa != null ? summary.maxQ_kPa.toFixed(2) : '—', null],
+        ['peak G', prev.maxG != null ? prev.maxG.toFixed(2) : '—', summary.maxG != null ? summary.maxG.toFixed(2) : '—', null],
+      ];
+      compareBody.innerHTML += '<div style="grid-column: 1/-1; margin-top: 8px;"><div style="color: var(--dim); font-size: 11px; margin-bottom: 4px;">METRICS</div></div>';
+      metrics.forEach(([k, a, b, cmp]) => {
+        let cls = '';
+        if (typeof cmp === 'function') cls = cmp(a, b);
+        compareBody.innerHTML += `<div class="compare-row"><span class="k">${k}</span>
+          <span class="a">${a}</span><span class="arrow">→</span>
+          <span class="b ${cls}">${b}</span></div>`;
+      });
+      compareBox.classList.add('show');
+    } else {
+      compareBox.classList.remove('show');
+    }
 
-    statusEl.textContent =
-      `Done. ${ticksRun} ticks (${state.simTime.toFixed(2)}s sim) in ` +
-      `${(elapsedMs / 1000).toFixed(2)}s wall — ${tps.toFixed(0)} ticks/s — ` +
-      `${data.length} samples, ${candidates.length} candidates.  ` +
-      `Data in window.__data, ranked in window.__ranked, top in window.__top.`;
+    previousRun = currentRun;
 
-    console.log('[fast] run complete:', window.__meta);
+    // Render
+    renderCaptures();
+    statusEl.textContent = `Done. ${ticksRun} ticks in ${(elapsedMs / 1000).toFixed(2)}s — ` +
+      `${tps.toFixed(0)} ticks/s — ${captures.length} captures.`;
 
     running = false;
     startBtn.disabled = false;

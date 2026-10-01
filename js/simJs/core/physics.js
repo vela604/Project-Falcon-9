@@ -2845,10 +2845,21 @@ body.chute = (fairingMember && fairingMember.chuteTypeId) ?
   null;
 
 state.bodies.push(body);
-  
-  // The active body no longer carries cargo.
-  active.payloadId = null;
-  active.payloadReleased = true;
+// Same active-body flip as releasePayloadOnActiveBody — emergency eject
+// delivers a shielded package, control follows it so the user sees what
+// actually made it out.
+if (typeof takeControlOfBody === 'function') {
+  takeControlOfBody(state.bodies.length - 1);
+}
+if (typeof camera !== 'undefined') {
+  camera.followBodyIndex = state.bodies.length - 1;
+  camera.follow = true;
+  camera.mode = 'local';
+}
+
+// The active body no longer carries cargo.
+active.payloadId = null;
+active.payloadReleased = true;
   
   // Rebuild the active body's engines if we removed its bottom member
   // (edge case: active stack was only [fairing]? Can't happen — fairing
@@ -3293,9 +3304,23 @@ body.rx = payloadRx;
   body.payloadBody = { record: pl }; // render marker
   body.emergencyEject = emergency;   // render/cue can key off this later
   state.bodies.push(body);
-  active.payloadReleased = true;
-  active.payloadReleased = true;
-  active.payloadId = null; // ← add
+// Control transfers to the newly-released payload — active body flips
+// so camera / telemetry / figure panel follow the thing the user just
+// deployed. takeControlOfBody idles the old body's engines and RCS by
+// default; if a guide is flying the old body, its next snapshot
+// re-commands via its own mission-body lock, so nothing in the flight
+// is interrupted.
+if (typeof takeControlOfBody === 'function') {
+  takeControlOfBody(state.bodies.length - 1);
+}
+if (typeof camera !== 'undefined') {
+  camera.followBodyIndex = state.bodies.length - 1;
+  camera.follow = true;
+  camera.mode = 'local';
+}
+active.payloadReleased = true;
+active.payloadReleased = true;
+active.payloadId = null; // ← add
   
   lastPayloadReleaseId++;
   lastPayloadRelease = {
