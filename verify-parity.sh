@@ -2,20 +2,11 @@
 # ============================================================================
 # verify-parity.sh — confirm guidance-numerical.html produces byte-identical
 # results to headless/runner.js under the same constants + environment.
-#
-# Runs headless once with the guide's code-default constants and the same
-# env the HTML page starts with. Prints key metrics + a SHA-256 parity hash.
-# If the HTML's summary matches the hash, both pipelines are numerically
-# equivalent.
-#
-# Usage:
-#   bash verify-parity.sh
-#   bash verify-parity.sh --duration 800
 # ============================================================================
 set -euo pipefail
 cd "$(dirname "$0")"
 
-DURATION=900
+DURATION=1500
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --duration) DURATION="$2"; shift 2; ;;
@@ -40,23 +31,46 @@ echo " env        : atmosphere=on slosh=on imu=off wind=off"
 echo " fueling    : booster=100% stage=100%"
 echo ""
 
-TMP="$(mktemp -t parity.XXXXXX.json)"
-trap 'rm -f "$TMP"' EXIT
+TMP_JSON="$(mktemp -t parity.XXXXXX.json)"
+TMP_ERR="$(mktemp -t parity.XXXXXX.err)"
+trap 'rm -f "$TMP_JSON" "$TMP_ERR"' EXIT
 
-echo "→ running headless..."
-node headless/run.js \
-  --guide    "$GUIDE" \
-  --duration "$DURATION" \
-  --stack    "$STACK" \
-  --vehicle  "$VEHICLE" \
-  --env      "$ENV_JSON" \
-  --fueling  "$FUEL_JSON" \
-  --json > "$TMP" 2>/dev/null
+echo "→ running headless (quiet mode, JSON only on stdout)…"
+# --quiet is REQUIRED: without it, the guide's own console.log calls
+# ("[leoInsertionV2] started", phase transitions, etc.) are written to
+# stdout alongside the JSON and corrupt the parse.
+# stderr is captured separately so a real crash is still visible.
+if ! node headless/run.js \
+      --guide    "$GUIDE" \
+      --duration "$DURATION" \
+      --stack    "$STACK" \
+      --vehicle  "$VEHICLE" \
+      --env      "$ENV_JSON" \
+      --fueling  "$FUEL_JSON" \
+      --quiet \
+      --json > "$TMP_JSON" 2>"$TMP_ERR"; then
+  echo "✗ headless run failed."
+  echo "--- stderr ---"
+  cat "$TMP_ERR"
+  exit 1
+fi
 
-echo "→ extracting metrics + computing parity hash..."
+# Sanity: make sure stdout really is JSON (first non-whitespace char = '{')
+first_char=$(tr -d ' \t\n\r' < "$TMP_JSON" | head -c 1)
+if [[ "$first_char" != "{" ]]; then
+  echo "✗ headless stdout is not JSON (got: '${first_char}')."
+  echo "--- first 400 bytes of stdout ---"
+  head -c 400 "$TMP_JSON"
+  echo ""
+  echo "--- stderr ---"
+  cat "$TMP_ERR"
+  exit 1
+fi
+
+echo "→ extracting metrics + computing parity hash…"
 echo ""
 
-node - "$TMP" <<'NODE'
+node - "$TMP_JSON" <<'NODE'
 const fs = require('fs');
 const crypto = require('crypto');
 const file = process.argv[2];
@@ -66,7 +80,6 @@ const st  = r.status;
 const gs  = st.guideStatus || {};
 const b   = st.bodies.find(x => x.isActive) || st.bodies[0];
 
-// Osculating final orbit from inertial state (same formulas the page uses)
 const R  = 6371000;
 const GM = 3.986004418e14;
 const rr = Math.hypot(b.rx, b.ry) || 1;
@@ -103,8 +116,6 @@ console.log('peak G           : ' + r.tracker.maxG.toFixed(4));
 console.log('ticks run        : ' + r.ticksRun);
 console.log('bodies           : ' + st.bodies.length);
 
-// Composite signature — the SAME fields HTML shows in its summary card.
-// If the HTML prints the same signature, parity is confirmed.
 const sig = [
   st.simTime.toFixed(3),
   gs.phase || '',
