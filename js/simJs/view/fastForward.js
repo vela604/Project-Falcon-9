@@ -273,28 +273,23 @@ const w = new Worker('js/simJs/threads/fastforward.worker.js');
       }
     };
 
-    w.postMessage({
-  type: 'run',
-  storageKeys: buildStorageKeys(),
-  fullState: {
-    bodies: physData.bodies,
-    activeBodyIndex: physData.activeBodyIndex,
-    simTime: physData.simTime,
-    halted: !!physData.halted,
-  },
-  guidanceState: guideData,
-  stackData: stackData,
-  activeGuide: activeGuide,
-  envState: envState,
-  durationS: durationS,
-  // Two independent cadences, in ticks:
-  //   progressEveryTicks — tiny simTime-only ping, drives the
-  //                        progress bar + T+ clock smoothly
-  //   bodiesEveryTicks   — full body list for panel updates,
-  //                        heavier (structured clone), so slower
-  progressEveryTicks: 80, // 1 sim-sec
-  //bodiesEveryTicks: 800, // 10 sim-sec
-});
+        w.postMessage({
+      type: 'run',
+      storageKeys: buildStorageKeys(),
+      fullState: {
+        bodies: physData.bodies,
+        activeBodyIndex: physData.activeBodyIndex,
+        simTime: physData.simTime,
+        halted: !!physData.halted,
+      },
+      guidanceState: guideData,
+      stackData: stackData,
+      activeGuide: activeGuide,
+      envState: envState,
+      durationS: durationS,
+      progressEveryTicks: 80, // simTime-only ping, every 1 sim-sec
+      bodiesEveryTicks: 80, // FULL body snapshot, every 1 sim-sec
+    });
   }
 
   function onCancel() {
