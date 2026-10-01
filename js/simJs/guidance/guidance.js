@@ -1060,38 +1060,44 @@ const Guidance = (function () {
         const dv_with_margin = dv_spool_sb + LEO_INSERTION_V2.STAGE_BURN_CUTOFF_MARGIN_MPS;
 
         let apogeePredicted_margin = apogeeKm;
-        if (dv_with_margin > 0) {
-          const gimbalRad = (gimbals[0].gimbalDeg || 0) * Math.PI / 180;
-          const thetaThrust = body.theta - gimbalRad;
-          const thrustDirX = -Math.sin(thetaThrust);
-          const thrustDirY = Math.cos(thetaThrust);
-          const vx_pred = body.vx + thrustDirX * dv_with_margin;
-          const vy_pred = body.vy + thrustDirY * dv_with_margin;
-          const v2_pred = vx_pred * vx_pred + vy_pred * vy_pred;
-          const E_pred = 0.5 * v2_pred - GM_ap / r_ap;
-          if (E_pred < 0) {
-            const a_pred = -GM_ap / (2 * E_pred);
-            const h_pred = body.rx * vy_pred - body.ry * vx_pred;
-            const e_pred = Math.sqrt(Math.max(0,
-              1 + 2 * E_pred * h_pred * h_pred / (GM_ap * GM_ap)));
-            apogeePredicted_margin = (a_pred * (1 + e_pred) - R_ap) / 1000;
-          }
-        }
+if (dv_with_margin > 0) {
+  const gimbalRad = (gimbals[0].gimbalDeg || 0) * Math.PI / 180;
+  const thetaThrust = body.theta - gimbalRad;
+  const thrustDirX = -Math.sin(thetaThrust);
+  const thrustDirY = Math.cos(thetaThrust);
+  const vx_pred = body.vx + thrustDirX * dv_with_margin;
+  const vy_pred = body.vy + thrustDirY * dv_with_margin;
+  const v2_pred = vx_pred * vx_pred + vy_pred * vy_pred;
+  const E_pred = 0.5 * v2_pred - GM_ap / r_ap;
+  if (E_pred < 0) {
+    const a_pred = -GM_ap / (2 * E_pred);
+    const h_pred = body.rx * vy_pred - body.ry * vx_pred;
+    const e_pred = Math.sqrt(Math.max(0,
+      1 + 2 * E_pred * h_pred * h_pred / (GM_ap * GM_ap)));
+    apogeePredicted_margin = (a_pred * (1 + e_pred) - R_ap) / 1000;
+  }
+}
 
-        if (apogeeKm >= LEO_INSERTION_V2.TARGET_ORBIT_ALT_KM ||
-          apogeePredicted_margin >= LEO_INSERTION_V2.TARGET_ORBIT_ALT_KM) {
-          send(cmdSetAllThrottle(0));
-          send(cmdSetGimbalRate(0));
-          _leoStateV2.phase = 'RCS_BOOST';
-          _leoStateV2.phaseStart = simT;
-          console.log('[leoInsertionV2] STAGE_BURN cutoff — apogee ' +
-            apogeeKm.toFixed(1) + ' km (target ' +
-            LEO_INSERTION_V2.TARGET_ORBIT_ALT_KM + ') | perigee=' +
-            perigeeKm_sb.toFixed(1) + ' km, e=' + e_sb.toFixed(4) +
-            ' → RCS_BOOST');
-          break;
-        }
-        break;
+_leoStateV2.lastApogeePredicted = apogeePredicted_margin;
+_leoStateV2.lastDvSpool = dv_with_margin;
+_leoStateV2.lastMassM = dNext.massProps.M;
+_leoStateV2.lastTheta = body.theta;
+_leoStateV2.lastGimbalDeg = gimbals[0].gimbalDeg || 0;
+
+if (apogeeKm >= LEO_INSERTION_V2.TARGET_ORBIT_ALT_KM ||
+  apogeePredicted_margin >= LEO_INSERTION_V2.TARGET_ORBIT_ALT_KM) {
+  send(cmdSetAllThrottle(0));
+  send(cmdSetGimbalRate(0));
+  _leoStateV2.phase = 'RCS_BOOST';
+  _leoStateV2.phaseStart = simT;
+  console.log('[leoInsertionV2] STAGE_BURN cutoff — apogee ' +
+    apogeeKm.toFixed(1) + ' km (target ' +
+    LEO_INSERTION_V2.TARGET_ORBIT_ALT_KM + ') | perigee=' +
+    perigeeKm_sb.toFixed(1) + ' km, e=' + e_sb.toFixed(4) +
+    ' → RCS_BOOST');
+  break;
+}
+break;
       }
 
       case 'RCS_BOOST': {
@@ -1894,7 +1900,7 @@ const Guidance = (function () {
     console.log('[leoInsertionV2] stopped');
   };
 
-  _leoTickV2.getStatus = function () {
+  _leoTickV2.getStatus = function() {
     const base = {
       ticks: _leoStateV2.ticks,
       phase: _leoStateV2.phase,
@@ -1907,10 +1913,10 @@ const Guidance = (function () {
       perigeeKm: _leoStateV2.lastPerigeeKm,
       coastTBurnPractical: _leoStateV2.coastTBurnPractical,
       coastVOrbital: _leoStateV2.coastVOrbital,
-      coastTargetThetaDeg: (_leoStateV2.coastTargetThetaInertial != null)
-        ? _leoStateV2.coastTargetThetaInertial * 180 / Math.PI : null,
-      coast2TargetThetaDeg: (_leoStateV2.coast2TargetThetaInertial != null)
-        ? _leoStateV2.coast2TargetThetaInertial * 180 / Math.PI : null,
+      coastTargetThetaDeg: (_leoStateV2.coastTargetThetaInertial != null) ?
+        _leoStateV2.coastTargetThetaInertial * 180 / Math.PI : null,
+      coast2TargetThetaDeg: (_leoStateV2.coast2TargetThetaInertial != null) ?
+        _leoStateV2.coast2TargetThetaInertial * 180 / Math.PI : null,
       circCurrentV: _leoStateV2.circCurrentV,
       circTargetV: _leoStateV2.circTargetV,
       circErr: _leoStateV2.circErr,
@@ -1924,6 +1930,11 @@ const Guidance = (function () {
       suicideDlambdaDeg: (_leoStateV2.suicideDlambda != null) ?
         _leoStateV2.suicideDlambda * 180 / Math.PI : null,
       suicideTrimDone: !!_leoStateV2.suicideTrimDone,
+      apogeePredicted: _leoStateV2.lastApogeePredicted,
+      dvSpool: _leoStateV2.lastDvSpool,
+      massM: _leoStateV2.lastMassM,
+      theta: _leoStateV2.lastTheta,
+      gimbalDeg: _leoStateV2.lastGimbalDeg,
     };
     if (_leoStateV2.phase === 'ASCENT' && typeof _hTick !== 'undefined' &&
       typeof _hTick.getStatus === 'function') {

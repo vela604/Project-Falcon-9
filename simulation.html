@@ -733,10 +733,11 @@
     'HOLD': 'ho', 'COASTnAoADAMP': 'cd',
   };
   const COLUMNS = [
-    't', 'ph', 'ap', 'n', 'ai',
-    'a', 'vr', 'vt', 'ha', 'hp',
-    'dv', 'tr', 'cv', 'tv', 'fl', 'bk',
-  ];
+  't', 'ph', 'ap', 'n', 'ai',
+  'a', 'vr', 'vt', 'ha', 'hp',
+  'dv', 'tr', 'cv', 'tv', 'fl', 'bk',
+  'gap', 'gds', 'gmm', 'gth', 'ggb',
+];
 
   let _recording = false;
   let _rows = [COLUMNS.slice()];
@@ -790,23 +791,28 @@
       ? (PHASE_CODES[gs.phase] || gs.phase.slice(0, 3))
       : '?';
     return [
-      Math.floor(state.simTime),
-      phCode,
-      gs.ascentPhase ? (ASC_CODES[gs.ascentPhase] || gs.ascentPhase.slice(0, 2)) : '',
-      state.bodies.length,
-      state.activeBodyIndex,
-      r2(alt_km),
-      r1(o.vr),
-      r1(o.vt),
-      r2(o.ha),
-      r2(o.hp),
-      Number.isFinite(gs.coastDeltaV) ? r2(gs.coastDeltaV) : null,
-      Number.isFinite(gs.coastTRem) ? r1(gs.coastTRem) : null,
-      (gs.phase === 'CIRCULARIZE' && Number.isFinite(gs.circCurrentV)) ? r1(gs.circCurrentV): null,
-  (gs.phase === 'CIRCULARIZE' && Number.isFinite(gs.circTargetV)) ? r1(gs.circTargetV) : null,
-      r2((b.fuelMass || 0) / 1000),
-      gs.stageBurnLocked ? r1(gs.stageBurnTargetTiltDeg) : null,
-    ];
+  Math.floor(state.simTime),
+  phCode,
+  gs.ascentPhase ? (ASC_CODES[gs.ascentPhase] || gs.ascentPhase.slice(0, 2)) : '',
+  state.bodies.length,
+  state.activeBodyIndex,
+  r2(alt_km),
+  r1(o.vr),
+  r1(o.vt),
+  r2(o.ha),
+  r2(o.hp),
+  Number.isFinite(gs.coastDeltaV) ? r2(gs.coastDeltaV) : null,
+  Number.isFinite(gs.coastTRem) ? r1(gs.coastTRem) : null,
+  Number.isFinite(gs.circCurrentV) ? r1(gs.circCurrentV) : null,
+  Number.isFinite(gs.circTargetV) ? r1(gs.circTargetV) : null,
+  r2((b.fuelMass || 0) / 1000),
+  gs.stageBurnLocked ? r1(gs.stageBurnTargetTiltDeg) : null,
+  Number.isFinite(gs.apogeePredicted) ? r2(gs.apogeePredicted) : null,
+  Number.isFinite(gs.dvSpool) ? r2(gs.dvSpool) : null,
+  Number.isFinite(gs.massM) ? r2(gs.massM / 1000) : null,
+  Number.isFinite(gs.theta) ? r1(gs.theta * 180 / Math.PI) : null,
+  Number.isFinite(gs.gimbalDeg) ? r2(gs.gimbalDeg) : null,
+];
   }
 
   function _tick() {
