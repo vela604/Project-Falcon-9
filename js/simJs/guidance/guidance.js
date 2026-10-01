@@ -392,12 +392,12 @@ function _testGuideTick(snapshot) {
   const d = Derivation.derive(snapshot, idx);
   if (!d || !d.massProps) return;
   
-  // EXPERIMENT: 2× the opposing torque — overshoots deliberately so
-// we can see the reverse-direction response and how the loop
-// settles (or doesn't). Will be reverted to −1× once we understand
-// the dynamics.
-const targetTorque = -dragNext;
-_predictiveState.lastTarget = targetTorque;
+  // Fire RCS with exactly the opposing torque — cancel total torque
+// (engine + aero + gravity-gradient) each tick. Deadband/limit-cycle
+// problems are exactly what this guide was built to expose, per the
+// guidance log entry.
+const targetTorque = -d.torqueTotal;
+_testGuideState.lastTarget = targetTorque;
 
 // ---- 4. Convert to per-pod duties at PREDICTED COM ----
 
