@@ -171,41 +171,57 @@ const twr = typeParam(t, 'twr');
     return out;
   }
   
-  function _legComponents(rec, legsProgress) {
-    const out = [];
-    if (rec.hasRecovery === false) return out;
-    const recoveryType = getTypeById(rec.recoveryTypeId);
-    if (!recoveryType || recoveryType.kind !== 'legsOnVehicle') return out;
-    if (!recoveryType.capabilities || !recoveryType.capabilities.deploysOnVehicle) return out;
-    
-    const H = Number.isFinite(rec.height) ? rec.height : 0;
-    const W = Number.isFinite(rec.width) ? rec.width : 0;
-    const bodyH_forLegs = (rec.fuel && Number.isFinite(rec.fuel.tankHeight)) ? rec.fuel.tankHeight : H;
-    
-    const hingeY = -bodyH_forLegs * 0.004;
-    const legLength = bodyH_forLegs * 0.27;
-    const maxSweepRad = 125 * Math.PI / 180;
-    const hingeLocalY = -hingeY;
-    const sweep = (legsProgress || 0) * maxSweepRad;
-    const tipLocalY = hingeLocalY + legLength * Math.cos(sweep);
-    const midLocalY = (hingeLocalY + tipLocalY) / 2;
-    
-    const avgThickness = 0.065 * W;
-    const avgDepth = 0.04 * W;
-    const oneLegVolume = legLength * avgThickness * avgDepth;
-    const legsMetal = getTypeById(rec.legsMetalTypeId) || getTypeById(rec.bodyMetalTypeId);
-    const density = legsMetal ? (typeParam(legsMetal, 'density') || 0) : 0;
-    const legMass = oneLegVolume * density;
-    
-    const legXs = [-W / 2, W / 2, -W * 0.375, W * 0.375];
-    for (let i = 0; i < legXs.length; i++) {
-      out.push({
-        label: 'leg' + i, mass: legMass, comX: legXs[i], comY: midLocalY,
-        iOwn: _rodI(legMass, legLength),
-      });
-    }
-    return out;
+function _legComponents(rec, legsProgress) {
+  const out = [];
+  if (rec.hasRecovery === false) return out;
+  const recoveryType = getTypeById(rec.recoveryTypeId);
+  if (!recoveryType || recoveryType.kind !== 'legsOnVehicle') return out;
+  if (!recoveryType.capabilities || !recoveryType.capabilities.deploysOnVehicle) return out;
+
+  // Geometry comes from the boot handoff (see workerBridge.js's
+  // _collectStackDataForGuidance) — the type's hingeGeometry() and
+  // structuralVolume() are FUNCTIONS and don't survive structured-clone
+  // into this worker. The main thread resolves them once against THIS
+  // record's own tank dimensions and ships the numbers. Previously this
+  // block hardcoded the F9 leg's fractions (0.004, 0.27, 125°) which
+  // matched the shipped seed but would silently diverge from
+  // massProps.js the instant the seed was edited.
+  const md = (_stackData && _stackData.memberDerived && rec.id)
+    ? _stackData.memberDerived[rec.id] : null;
+  const ld = (md && md.legs) ? md.legs : null;
+  if (!ld) return out;
+
+  const W = Number.isFinite(rec.width) ? rec.width : 0;
+  const bodyW_forLegs = (rec.fuel && Number.isFinite(rec.fuel.tankWidth))
+    ? rec.fuel.tankWidth : W;
+
+  const hingeY = ld.hingeY;
+  const legLength = ld.legLength;
+  const maxSweepRad = ld.maxSweepRad;
+  const hingeLocalY = -hingeY;
+  const sweep = (legsProgress || 0) * maxSweepRad;
+  const tipLocalY = hingeLocalY + legLength * Math.cos(sweep);
+  const midLocalY = (hingeLocalY + tipLocalY) / 2;
+
+  const legsMetal = getTypeById(rec.legsMetalTypeId) ||
+    getTypeById(rec.bodyMetalTypeId);
+  const density = legsMetal ? (typeParam(legsMetal, 'density') || 0) : 0;
+  const legMass = ld.oneLegVolume * density;
+
+  // 4 legs, exactly mirroring massProps.js's _memberComponentsFull —
+  // at ±W/2 (front) and ±0.375W (back). The type's legCount is respected
+  // by physics only as a coincidence of the artwork; if the artwork is
+  // ever extended past 4, both sides change together.
+  const legXs = [-bodyW_forLegs / 2, bodyW_forLegs / 2,
+                 -bodyW_forLegs * 0.375, bodyW_forLegs * 0.375];
+  for (let i = 0; i < legXs.length; i++) {
+    out.push({
+      label: 'leg' + i, mass: legMass, comX: legXs[i], comY: midLocalY,
+      iOwn: _rodI(legMass, legLength),
+    });
   }
+  return out;
+}
   
   function _fuelComponents(rec, memberFuelMass, sloshOffset) {
     const out = [];
@@ -240,6 +256,15 @@ const twr = typeParam(t, 'twr');
 // data the boot handoff already carries for every other type.
 function _gridFinMassFor(rec) {
   if (!rec || !rec.hasGridFins) return 0;
+  // Prefer the boot-handoff value — same source as fleet.js's
+  // computeGridFinMass, no second inlined formula to drift out of sync.
+  const md = (_stackData && _stackData.memberDerived && rec.id) ?
+    _stackData.memberDerived[rec.id] : null;
+  if (md && md.gridFins && Number.isFinite(md.gridFins.totalMass)) {
+    return md.gridFins.totalMass;
+  }
+  // Fallback for an old handoff that predates memberDerived (keeps a
+  // stale page-load flying rather than silently massing the fins at 0).
   const type = getTypeById(rec.gridFinTypeId);
   const metal = getTypeById(rec.gridFinMetalTypeId);
   if (!type || !metal) return 0;
@@ -256,10 +281,10 @@ function _gridFinMassFor(rec) {
   const wallThickness = thickness * TC.WALL_THICKNESS_FACTOR;
   const cellPitch = cellWidth + wallThickness;
   const cellFill = 1 - Math.pow(cellWidth / cellPitch, 3);
-  const vOuter = span * chord * thickness;
-  const vMat = vOuter * cellFill * TC.SHELL_FACTOR;
+  const vMat = span * chord * thickness * cellFill * TC.SHELL_FACTOR;
   const perFinMass = vMat * density;
-  const finCount = (type.frame && Number.isFinite(type.frame.finCount)) ? type.frame.finCount : 4;
+  const finCount = (type.frame && Number.isFinite(type.frame.finCount)) ?
+    type.frame.finCount : 4;
   return perFinMass * finCount;
 }
 
@@ -478,7 +503,26 @@ function _stackMassProps(bodySnapshot, payloadMass) {
   const fuelTotal=bodySnapshot.fuelMass||0;
   const fa=Array.isArray(bodySnapshot.memberFuel)?bodySnapshot.memberFuel:null;
   const pm=Number.isFinite(payloadMass)?payloadMass:0;
-  const key=fuelTotal.toFixed(3)+'|'+(fa?fa.join(','):'')+'|'+pm.toFixed(3);
+  // Cache key MUST cover every dynamic input _stackMassPropsFull reads —
+  // otherwise a change in one of them yields a stale mass model. Notably:
+  //   * slosh.offset — shifts the fuel-slosh component's comX. During a
+  //     coast, fuelTotal is stable, so the old key held forever and the
+  //     CoM would freeze at whatever value it had at the start of the
+  //     coast even while slosh swung the true CoM side to side.
+  //   * legs.progress — moves leg components' comY during deploy/stow.
+  //   * gridFins deploy state — asymmetric L/R deploy shifts the fin
+  //     group's comX (see massProps.js's grid-fin branch).
+  const legsP=(bodySnapshot.legs && Number.isFinite(bodySnapshot.legs.progress))
+    ? bodySnapshot.legs.progress : 0;
+  const sloshO=(bodySnapshot.slosh && Number.isFinite(bodySnapshot.slosh.offset))
+    ? bodySnapshot.slosh.offset : 0;
+  const gf=bodySnapshot.gridFins;
+  const gfLd=(gf && gf.L && Number.isFinite(gf.L.deploy)) ? gf.L.deploy : 0;
+  const gfRd=(gf && gf.R && Number.isFinite(gf.R.deploy)) ? gf.R.deploy : 0;
+  const gfFd=(gf && gf.FB && Number.isFinite(gf.FB.deploy)) ? gf.FB.deploy : 0;
+  const key=fuelTotal.toFixed(3)+'|'+(fa?fa.join(','):'')+'|'+pm.toFixed(3)
+           +'|'+legsP.toFixed(6)+'|'+sloshO.toFixed(6)
+           +'|'+gfLd.toFixed(3)+'|'+gfRd.toFixed(3)+'|'+gfFd.toFixed(3);
   if(key===_smpKey && _smpVal) return _smpVal;
   const result=_stackMassPropsFull(bodySnapshot, payloadMass);
   _smpKey=key; _smpVal=result;

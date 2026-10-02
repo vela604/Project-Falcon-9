@@ -1071,17 +1071,34 @@ function workerLoop() {
     //   - Paused / stopped / halted: poll on the CONFIG.DT clock so we
     //     notice state flips promptly.
     if (running && !paused && !state.halted) {
-      _waitingForGuidance = true;
-      _guidanceWaitTimer = setTimeout(() => {
-        // Safety net — if guidance never acks (worker dead, port not yet
-        // connected), resume anyway after 100 ms so the sim can't hang.
-        if (_waitingForGuidance) {
-          _waitingForGuidance = false;
-          _guidanceWaitTimer = null;
-          workerLoop();
-        }
-      }, 100);
-    } else {
+  _waitingForGuidance = true;
+  _guidanceWaitTimer = setTimeout(() => {
+    // Safety net — if guidance never acks (worker dead, port not yet
+    // connected), resume anyway so the sim can't hang forever.
+    //
+    // The old value was 100 ms, which was generous compared to the
+    // typical ~1 ms round-trip but not generous enough for GC pauses
+    // or CPU contention spikes. When it fired during a slow-but-alive
+    // round-trip, physics stepped forward WITHOUT the current tick's
+    // guidance commands — a silent, intermittent break of the
+    // "command latency 0, 100% of the time" contract. 5000 ms is a
+    // genuine "worker is dead or port never connected" threshold, and
+    // logs loudly if it ever fires so the failure mode is visible
+    // instead of silently producing nondeterminism.
+    if (_waitingForGuidance) {
+      _waitingForGuidance = false;
+      _guidanceWaitTimer = null;
+      console.error(
+        '[physics_worker] guidance sync timeout at t=' +
+        state.simTime.toFixed(3) +
+        's — physics is stepping WITHOUT this tick\'s guidance commands. ' +
+        'Either the guidance worker is dead, the port failed to connect, ' +
+        'or the round-trip exceeded 5000 ms.'
+      );
+      workerLoop();
+    }
+  }, 5000);
+} else {
       setTimeout(workerLoop, CONFIG.DT * 1000);
     }
     }

@@ -156,6 +156,16 @@ if (msg.stackData && typeof Derivation !== 'undefined') {
 if (typeof Guidance !== 'undefined') {
   Guidance.init(localDispatch);
   if (msg.guidanceState) Guidance.importGuideState(msg.guidanceState);
+  // If 1x had no guide active, importGuideState sets _activeGuide to null
+  // and the rest of this run would be physics-only — the guide would sit
+  // idle and the FF would always "fail". Start the guide the main thread
+  // requested. startGuide is idempotent when the active name already
+  // matches, so a running 1x guide (whose state we just imported) is
+  // left untouched and this call is a no-op — no risk of clobbering a
+  // mid-mission state that was faithfully carried in.
+  if (msg.activeGuide) {
+    Guidance.startGuide(msg.activeGuide);
+  }
 }
     
     // ---- Persistent snapshot wrapper (zero alloc per tick) ----

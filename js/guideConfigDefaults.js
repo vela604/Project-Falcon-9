@@ -102,12 +102,21 @@ STAGE_BURN_LOCK_TILT_DEG: 90,
       SUICIDE_ATT_KD: 4.0,
       SUICIDE_PREDICT_DT_S: 2,
       SUICIDE_PREDICT_HORIZON_S: 4000,
-      SUICIDE_BURN_MAX_S: 600,
+          SUICIDE_BURN_MAX_S: 600,
       SUICIDE_BURN_COARSE_MARGIN_DEG: 10,
-      SUICIDE_TRIM_TOL_DEG: 0.005,
+      // These four were added to LEO_INSERTION_V2 in guidance.js but never
+      // copied into this default preset — which meant the modal (built from
+      // this preset's constants) never rendered inputs for them, "Reset to
+      // default" never touched them, and a save→load round-trip through the
+      // preset system silently dropped them back to whatever the code value
+      // happened to be at save-time. Values match guidance.js today.
+      SUICIDE_TRIM_TOL_DEG: 0.1,
+      SUICIDE_TRIM_FAR_DEG: 1.0,
+      SUICIDE_TRIM_MIN_DUTY: 0.15,
+      SUICIDE_TRIM_MAX_S: 120,
     },
     ['full-mission', 'pad-to-orbit', 'suicide-burn']
-  ),
+    ),
 
   leoInsertion: _mkDefault(
     'leoInsertion',

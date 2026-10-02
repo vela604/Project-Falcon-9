@@ -732,13 +732,13 @@
     'PRE_COAST': 'pc', 'PUSH': 'pu', 'COAST': 'co',
     'HOLD': 'ho', 'COASTnAoADAMP': 'cd',
   };
-  const COLUMNS = [
-  't', 'ph', 'ap', 'n', 'ai',
-  'a', 'vr', 'vt', 'ha', 'hp',
-  'dv', 'tr', 'cv', 'tv', 'fl', 'bk',
-  'gap', 'gds', 'gmm', 'gth', 'ggb',
-  'mdt', 'mxF', 'hAp', 'hPe', 'im0', 'if0',
-];
+    const COLUMNS = [
+    't', 'tE', 'ph', 'ap', 'n', 'ai',
+    'a', 'vr', 'vt', 'ha', 'hp',
+    'dv', 'tr', 'cv', 'tv', 'fl', 'bk',
+    'gap', 'gds', 'gmm', 'gth', 'ggb',
+    'mdt', 'mxF', 'hAp', 'hPe', 'im0', 'if0',
+  ];
 
   let _recording = false;
   let _rows = [COLUMNS.slice()];
@@ -791,35 +791,42 @@
     const phCode = gs.phase
       ? (PHASE_CODES[gs.phase] || gs.phase.slice(0, 3))
       : '?';
-    return [
-  Math.floor(state.simTime),
-  phCode,
-  gs.ascentPhase ? (ASC_CODES[gs.ascentPhase] || gs.ascentPhase.slice(0, 2)) : '',
-  state.bodies.length,
-  state.activeBodyIndex,
-  r2(alt_km),
-  r1(o.vr),
-  r1(o.vt),
-  r2(o.ha),
-  r2(o.hp),
-  Number.isFinite(gs.coastDeltaV) ? r2(gs.coastDeltaV) : null,
-  Number.isFinite(gs.coastTRem) ? r1(gs.coastTRem) : null,
-  Number.isFinite(gs.circCurrentV) ? r1(gs.circCurrentV) : null,
-  Number.isFinite(gs.circTargetV) ? r1(gs.circTargetV) : null,
-  r2((b.fuelMass || 0) / 1000),
-  gs.stageBurnLocked ? r1(gs.stageBurnTargetTiltDeg) : null,
-    Number.isFinite(gs.apogeePredicted) ? r2(gs.apogeePredicted) : null,
-  Number.isFinite(gs.dvSpool) ? r2(gs.dvSpool) : null,
-  Number.isFinite(gs.massM) ? r2(gs.massM / 1000) : null,
-  Number.isFinite(gs.theta) ? r1(gs.theta * 180 / Math.PI) : null,
-  Number.isFinite(gs.gimbalDeg) ? r2(gs.gimbalDeg) : null,
-  Number.isFinite(gs.mdotNow) ? r2(gs.mdotNow) : null,
-  Number.isFinite(gs.maxMFR) ? r2(gs.maxMFR) : null,
-  Number.isFinite(gs.apogeeState) ? r2(gs.apogeeState) : null,
-  Number.isFinite(gs.perigeeState) ? r2(gs.perigeeState) : null,
-  Number.isFinite(gs.initStackMass) ? r2(gs.initStackMass / 1000) : null,
-  Number.isFinite(gs.initFuelMass) ? r2(gs.initFuelMass / 1000) : null,
-];
+        return [
+      Math.floor(state.simTime),
+      // Exact (sub-tick) simTime. Rounding to whole seconds in the old 't'
+      // column made two runs separated by a fraction of a tick look
+      // bit-identical in the recording, and made bit-identical runs look
+      // different when frame-boundary sampling landed on opposite sides of
+      // an integer boundary. With 'tE' present, a comparison tool can align
+      // rows by nearest exact simTime and interpolate.
+      Number(state.simTime.toFixed(6)),
+      phCode,
+      gs.ascentPhase ? (ASC_CODES[gs.ascentPhase] || gs.ascentPhase.slice(0, 2)) : '',
+      state.bodies.length,
+      state.activeBodyIndex,
+      r2(alt_km),
+      r1(o.vr),
+      r1(o.vt),
+      r2(o.ha),
+      r2(o.hp),
+      Number.isFinite(gs.coastDeltaV) ? r2(gs.coastDeltaV) : null,
+      Number.isFinite(gs.coastTRem) ? r1(gs.coastTRem) : null,
+      Number.isFinite(gs.circCurrentV) ? r1(gs.circCurrentV) : null,
+      Number.isFinite(gs.circTargetV) ? r1(gs.circTargetV) : null,
+      r2((b.fuelMass || 0) / 1000),
+      gs.stageBurnLocked ? r1(gs.stageBurnTargetTiltDeg) : null,
+      Number.isFinite(gs.apogeePredicted) ? r2(gs.apogeePredicted) : null,
+      Number.isFinite(gs.dvSpool) ? r2(gs.dvSpool) : null,
+      Number.isFinite(gs.massM) ? r2(gs.massM / 1000) : null,
+      Number.isFinite(gs.theta) ? r1(gs.theta * 180 / Math.PI) : null,
+      Number.isFinite(gs.gimbalDeg) ? r2(gs.gimbalDeg) : null,
+      Number.isFinite(gs.mdotNow) ? r2(gs.mdotNow) : null,
+      Number.isFinite(gs.maxMFR) ? r2(gs.maxMFR) : null,
+      Number.isFinite(gs.apogeeState) ? r2(gs.apogeeState) : null,
+      Number.isFinite(gs.perigeeState) ? r2(gs.perigeeState) : null,
+      Number.isFinite(gs.initStackMass) ? r2(gs.initStackMass / 1000) : null,
+      Number.isFinite(gs.initFuelMass) ? r2(gs.initFuelMass / 1000) : null,
+    ];
   }
 
   function _tick() {
