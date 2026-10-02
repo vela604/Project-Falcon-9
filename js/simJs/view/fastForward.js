@@ -249,6 +249,15 @@ const w = new Worker('js/simJs/threads/fastforward.worker.js');
 } else if (m.type === 'done') {
   _state.pendingResult = m;
   _state.running = false;
+  // TEMP: auto-download per-tick dump on FF completion
+  if (m.tickDumpJson) {
+    const blob = new Blob([m.tickDumpJson], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'ff-dump.json';
+    a.click();
+    console.log('[FF] auto-downloaded ff-dump.json (' + (blob.size/1024/1024).toFixed(1) + ' MB)');
+  }
   try { w.terminate(); } catch (e) {}
   _state.ffWorker = null;
   

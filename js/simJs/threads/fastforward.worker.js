@@ -168,6 +168,9 @@ if (typeof Guidance !== 'undefined') {
   }
 }
     
+        // TEMP: per-tick dump for verification against runner.js
+    const __tickDump = [];
+    
     // ---- Persistent snapshot wrapper (zero alloc per tick) ----
 const dt = CONFIG.DT;
 const maxTicks = Math.ceil(msg.durationS / dt);
@@ -232,11 +235,29 @@ for (let i = 0; i < maxTicks; i++) {
   };
   
   // 5. Guidance tick on post-step state. Commands mutate state.bodies
-  //    targets; the NEXT iteration's physicsStep applies them.
-  try { Guidance.onSnapshot(snap); }
-  catch (ge) {
-    self.postMessage({ type: 'workerError', message: 'guidance: ' + ge.message, stack: ge.stack });
-  }
+//    targets; the NEXT iteration's physicsStep applies them.
+try { Guidance.onSnapshot(snap); }
+catch (ge) {
+  self.postMessage({ type: 'workerError', message: 'guidance: ' + ge.message, stack: ge.stack });
+}
+
+// TEMP: per-tick state dump
+__tickDump.push({
+  t: state.simTime,
+  activeBodyIndex: state.activeBodyIndex,
+  bodies: state.bodies.map(b => ({
+    rx: b.rx, ry: b.ry, vx: b.vx, vy: b.vy,
+    theta: b.theta, omega: b.omega,
+    fuelMass: b.fuelMass,
+    memberFuel: (b.memberFuel || []).slice(),
+    slosh: b.slosh ? { offset: b.slosh.offset, velocity: b.slosh.velocity } : null,
+    engines: (b.engines || []).map(e => ({
+      massFlowRate: e.massFlowRate,
+      gimbalDeg: e.gimbalDeg,
+      currentF: e.currentF,
+    })),
+  })),
+});
   
   // Fast progress ping — simTime only. Tiny payload, cheap to
   // postMessage 80×/sim-minute.
@@ -277,17 +298,18 @@ for (let i = 0; i < maxTicks; i++) {
 }
     
     // ---- Final export ----
-    self.postMessage({
-      type: 'done',
-      fullState: {
-        bodies: state.bodies,
-        activeBodyIndex: state.activeBodyIndex,
-        simTime: state.simTime,
-        halted: !!state.halted,
-      },
-      guidanceState: (typeof Guidance !== 'undefined' && Guidance.exportGuideState)
-        ? Guidance.exportGuideState() : null,
-    });
+self.postMessage({
+  type: 'done',
+  fullState: {
+    bodies: state.bodies,
+    activeBodyIndex: state.activeBodyIndex,
+    simTime: state.simTime,
+    halted: !!state.halted,
+  },
+  guidanceState: (typeof Guidance !== 'undefined' && Guidance.exportGuideState)
+    ? Guidance.exportGuideState() : null,
+  tickDumpJson: JSON.stringify(__tickDump),
+});
   } catch (err) {
     self.postMessage({ type: 'workerError', message: String(err), stack: err && err.stack });
   }
