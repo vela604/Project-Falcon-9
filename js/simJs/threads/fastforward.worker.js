@@ -311,6 +311,10 @@ function localDispatch(msg) {
     }
     case 'setGimbal': {
       if (!b.engines) break;
+      // Match physics.worker.js: a gimbal command unconditionally cancels
+      // any pending separate/release sequence on this body — same human-
+      // precedence rule, same call site.
+      if (typeof cancelPendingSequences === 'function') cancelPendingSequences(b);
       const lim = CONFIG.GIMBAL_MAX_DEG;
       const d = Math.max(-lim, Math.min(lim, msg.deg));
       b.engines.filter(e => e.gimbal).forEach(e => {
@@ -321,11 +325,18 @@ function localDispatch(msg) {
     }
     case 'setAllThrottle': {
       if (!b.engines) break;
+      // Match physics.worker.js: only NON-ZERO throttle commands cancel
+      // pending sequences. Guidance's DONE/CIRCULARIZE phases fire
+      // setAllThrottle(0) every tick as housekeeping; an unconditional
+      // cancel would clobber an in-flight pendingRelease waiting for
+      // engine spool-down, and the payload would never spawn.
+      if (msg.value > 0 && typeof cancelPendingSequences === 'function') cancelPendingSequences(b);
       b.engines.forEach(e => { e.targetMassFlowRate = clampFlow(e, msg.value); });
       break;
     }
     case 'setCenterThrottle': {
       if (!b.engines) break;
+      if (msg.value > 0 && typeof cancelPendingSequences === 'function') cancelPendingSequences(b);
       b.engines.filter(e => e.isCenter).forEach(e => {
         e.targetMassFlowRate = clampFlow(e, msg.value);
       });
@@ -333,6 +344,7 @@ function localDispatch(msg) {
     }
     case 'setGroupThrottle': {
       if (!b.engines) break;
+      if (msg.value > 0 && typeof cancelPendingSequences === 'function') cancelPendingSequences(b);
       (msg.angles || []).forEach(a => {
         const en = b.engines.find(e => e.angleDeg === a);
         if (en) en.targetMassFlowRate = clampFlow(en, msg.value);
@@ -346,8 +358,22 @@ function localDispatch(msg) {
       break;
     }
     case 'rcsDuty': {
-      if (msg.duties == null) b.rcsDuty = null;
-      else b.rcsDuty = msg.duties;
+      // Match physics.worker.js: null/undefined duties = relinquish duty
+      // control. Otherwise clamp every value to [0,1] — physics's
+      // guarantee that a noisy duty payload can't drive a nozzle past
+      // its physical envelope.
+      if (msg.duties == null) {
+        b.rcsDuty = null;
+        break;
+      }
+      const clampDuty = (v) => Math.max(0, Math.min(1, Number.isFinite(v) ? v : 0));
+      const duties = {};
+      const src = msg.duties || {};
+      Object.keys(src).forEach(podId => {
+        const d = src[podId] || {};
+        duties[podId] = { lat: clampDuty(d.lat), up: clampDuty(d.up), dn: clampDuty(d.dn) };
+      });
+      b.rcsDuty = duties;
       break;
     }
     case 'legs': {
@@ -371,9 +397,16 @@ function localDispatch(msg) {
     }
     case 'gridFinsControl': {
       if (!b || !b.gridFins) break;
+      // Match physics.worker.js: read the fin type's own control envelope
+      // rather than hardcoding 90°. A different fin type declares its own
+      // maxControlDeg on typeConstants.
+      const gfType = (typeof bodyGridFinType === 'function') ? bodyGridFinType(b) : null;
+      const maxCtrl = (gfType && gfType.typeConstants &&
+          Number.isFinite(gfType.typeConstants.maxControlDeg)) ?
+        gfType.typeConstants.maxControlDeg : 30;
       const f = b.gridFins.FB;
       if (f && Number.isFinite(msg.controlDeg)) {
-        f.targetControl = Math.max(-90, Math.min(90, msg.controlDeg));
+        f.targetControl = Math.max(-maxCtrl, Math.min(maxCtrl, msg.controlDeg));
       }
       break;
     }

@@ -65,6 +65,8 @@ let pendingTrajectoryTransfer = null;
 // the isolation property Phase 3 wants (guidance can only affect physics
 // through message types this worker already handles).
 let guidancePort = null;
+// [LATENCY TEST] variables
+let _latHist = {}, _latLastPrint = 0;
 
 // ---- Optimization #2: dedicated trajectory worker (see trajectory.worker.js) ----
 // The leapfrog integration used to run inline in workerLoop(), sharing this
@@ -205,7 +207,20 @@ self.onmessage = (e) => {
   if (msg.type === 'connectGuidance') {
     guidancePort = e.ports && e.ports[0];
     if (guidancePort) {
-      guidancePort.onmessage = (ge) => dispatchCommand(ge.data);
+      // [LATENCY TEST] how many physics ticks passed between the snapshot that
+      // produced a command and the moment physics receives that command.
+      guidancePort.onmessage = (ge) => {
+        const m = ge.data;
+        if (m && m._st !== undefined) {
+          const lat = Math.round((state.simTime - m._st) / CONFIG.DT);
+          _latHist[lat] = (_latHist[lat] || 0) + 1;
+          if (state.simTime - _latLastPrint >= 5) {
+            _latLastPrint = state.simTime;
+            self.postMessage({ type: 'latDbg', hist: _latHist, simTime: state.simTime });
+          }
+        }
+        dispatchCommand(m);
+      };
     }
     return;
   }

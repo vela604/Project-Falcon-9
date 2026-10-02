@@ -29,6 +29,9 @@ self.addEventListener('unhandledrejection', (e) => {
   });
 });
 
+// [LATENCY TEST] variables
+let _curSimT = 0, _lastSnapT = null, _gapHist = {}, _snapN = 0;
+
 let bootstrapped = false;
 
 // The physics MessagePort — set once, when main thread transfers it (see
@@ -83,7 +86,8 @@ self.onmessage = (e) => {
     case 'connectPhysicsPort': {
       physicsPort = e.ports && e.ports[0];
       if (physicsPort && typeof Guidance !== 'undefined') {
-        Guidance.init((cmd) => physicsPort.postMessage(cmd));
+        // [LATENCY TEST] stamp each command with the sim time of the snapshot that produced it
+        Guidance.init((cmd) => { cmd._st = _curSimT; physicsPort.postMessage(cmd); });
       }
       break;
     }
@@ -94,6 +98,17 @@ self.onmessage = (e) => {
 // Guidance.onSnapshot -> imu.js's global measure().
 case 'snapshot': {
   if (typeof Guidance === 'undefined') break;
+  // [LATENCY TEST] count gaps between consecutive snapshots (in ticks). 1 = normal.
+  {
+    const T = msg.data.simTime;
+    if (_lastSnapT !== null) {
+      const gap = Math.round((T - _lastSnapT) * 80);
+      _gapHist[gap] = (_gapHist[gap] || 0) + 1;
+    }
+    _lastSnapT = T;
+    _curSimT = T;
+    if (++_snapN % 400 === 0) self.postMessage({ type: 'snapDbg', hist: _gapHist });
+  }
   Guidance.onSnapshot(msg.data);
   // Throttled status push so main thread's right toolbar can show
   // live testGuide stats without spamming messages every tick.

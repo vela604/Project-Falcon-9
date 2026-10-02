@@ -1,3 +1,26 @@
+// [LATENCY TEST] on-screen overlay (no devtools needed)
+(function () {
+  const lines = { cmd: 'cmd latency: waiting…', snap: 'snap gap: waiting…' };
+  let el = null;
+  function fmt(hist, goodKey) {
+    const keys = Object.keys(hist).sort((a, b) => a - b);
+    let n = 0; keys.forEach(k => { n += hist[k]; });
+    if (!n) return '(no data)';
+    return keys.map(k => k + ':' + (100 * hist[k] / n).toFixed(1) + '%' + (k === goodKey ? '*' : '')).join('  ') + '  (n=' + n + ')';
+  }
+  window.__dbgShow = function (which, hist, simTime) {
+    if (!el) {
+      el = document.createElement('div');
+      el.style.cssText = 'position:fixed;left:6px;bottom:6px;z-index:2147483647;background:rgba(0,0,0,.8);' +
+        'color:#0f0;font:12px/1.4 monospace;padding:6px 8px;border-radius:4px;pointer-events:none;white-space:pre;';
+      document.body.appendChild(el);
+    }
+    if (which === 'cmd') lines.cmd = 'cmd latency (ticks)  ' + fmt(hist, '0') + (simTime ? '  t=' + simTime.toFixed(0) + 's' : '');
+    else lines.snap = 'snap gap (ticks)    ' + fmt(hist, '1');
+    el.textContent = lines.cmd + '\n' + lines.snap + '\n(* = ideal)';
+  };
+})();
+
 // ============================================================================
 // workerBridge.js — main thread side of the physics worker.
 // Owns the worker handle, sends commands, and maintains a read-only
@@ -25,6 +48,8 @@ const WorkerBridge = {
       const msg = e.data;
       if (msg.type === 'state') {
         applyStateSnapshot(msg.data);
+      } else if (msg.type === 'latDbg') {
+        window.__dbgShow('cmd', msg.hist, msg.simTime);
       } else if (msg.type === 'bootError') {
   console.error('[bridge] PHYSICS WORKER BOOT FAILED:', msg.message);
   console.error('[bridge] stack:', msg.stack);
@@ -359,7 +384,9 @@ const GuidanceBridge = {
     this.worker = new Worker('js/simJs/threads/guidance.worker.js');
     this.worker.onmessage = (e) => {
       const msg = e.data;
-      if (msg.type === 'bootError') {
+      if (msg.type === 'snapDbg') {
+        window.__dbgShow('snap', msg.hist);
+      } else if (msg.type === 'bootError') {
         console.error('[bridge] GUIDANCE WORKER BOOT FAILED:', msg.message);
         console.error('[bridge] stack:', msg.stack);
       } else if (msg.type === 'workerError') {
