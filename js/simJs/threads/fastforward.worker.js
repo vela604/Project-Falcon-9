@@ -155,6 +155,9 @@ if (msg.stackData && typeof Derivation !== 'undefined') {
 }
 if (typeof Guidance !== 'undefined') {
   Guidance.init(localDispatch);
+  
+
+  
   if (msg.guidanceState) Guidance.importGuideState(msg.guidanceState);
   // If 1x had no guide active, importGuideState sets _activeGuide to null
   // and the rest of this run would be physics-only — the guide would sit
@@ -166,6 +169,31 @@ if (typeof Guidance !== 'undefined') {
   if (msg.activeGuide) {
     Guidance.startGuide(msg.activeGuide);
   }
+  
+  if (typeof Guidance !== 'undefined') {
+  Guidance.init(localDispatch);
+  if (msg.guidanceState) Guidance.importGuideState(msg.guidanceState);
+  if (msg.activeGuide) {
+    Guidance.startGuide(msg.activeGuide);
+    // Prime AFTER start — _activeGuide ab set hai, tick actually run karega
+    const primeSnap = {
+      simTime: state.simTime,
+      activeBodyIndex: state.activeBodyIndex,
+      halted: !!state.halted,
+      wind: (typeof wind !== 'undefined') ? {
+        enabled: !!wind.enabled, speed: wind.speed || 0,
+        directionDeg: wind.directionDeg || 0,
+      } : { enabled: false, speed: 0, directionDeg: 0 },
+      bodies: state.bodies,
+    };
+    try { Guidance.onSnapshot(primeSnap); }
+    catch (e) {
+      self.postMessage({ type: 'workerError',
+        message: 'prime: ' + e.message, stack: e.stack });
+    }
+  }
+}
+  
 }
     
     // ---- Persistent snapshot wrapper (zero alloc per tick) ----
