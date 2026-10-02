@@ -205,25 +205,42 @@ self.onmessage = (e) => {
   // message goes through. Handled here (outside dispatchCommand) because
   // it needs e.ports, which only exists on the original MessageEvent. ----
   if (msg.type === 'connectGuidance') {
-    guidancePort = e.ports && e.ports[0];
-    if (guidancePort) {
+  guidancePort = e.ports && e.ports[0];
+  if (guidancePort) {
+    guidancePort.onmessage = (ge) => {
+      const m = ge.data;
+      
+      // Sync ack — guidance has finished processing the snapshot we
+      // sent and has queued all its commands. FIFO ordering guarantees
+      // those command messages arrived BEFORE this ack, so state is
+      // already mutated. Resume the physics loop.
+      if (m && m.type === '__guidanceReady') {
+        if (_waitingForGuidance) {
+          _waitingForGuidance = false;
+          if (_guidanceWaitTimer) {
+            clearTimeout(_guidanceWaitTimer);
+            _guidanceWaitTimer = null;
+          }
+          workerLoop();
+        }
+        return;
+      }
+      
       // [LATENCY TEST] how many physics ticks passed between the snapshot that
       // produced a command and the moment physics receives that command.
-      guidancePort.onmessage = (ge) => {
-        const m = ge.data;
-        if (m && m._st !== undefined) {
-          const lat = Math.round((state.simTime - m._st) / CONFIG.DT);
-          _latHist[lat] = (_latHist[lat] || 0) + 1;
-          if (state.simTime - _latLastPrint >= 5) {
-            _latLastPrint = state.simTime;
-            self.postMessage({ type: 'latDbg', hist: _latHist, simTime: state.simTime });
-          }
+      if (m && m._st !== undefined) {
+        const lat = Math.round((state.simTime - m._st) / CONFIG.DT);
+        _latHist[lat] = (_latHist[lat] || 0) + 1;
+        if (state.simTime - _latLastPrint >= 5) {
+          _latLastPrint = state.simTime;
+          self.postMessage({ type: 'latDbg', hist: _latHist, simTime: state.simTime });
         }
-        dispatchCommand(m);
-      };
-    }
-    return;
+      }
+      dispatchCommand(m);
+    };
   }
+  return;
+}
 
   dispatchCommand(msg);
 };
@@ -261,8 +278,10 @@ return b;
 function dispatchCommand(msg) {
   switch (msg.type) {
     case 'start':
-      running = true;
-      break;
+running = true;
+// Force the first step's pacing check to pass immediately.
+_lastStepWallTime = 0;
+break;
     case 'stop':
       running = false;
       break;
@@ -299,25 +318,14 @@ function dispatchCommand(msg) {
 // No-op — warp UI was removed. Kept as a recognised message type so
 // any stale code path doesn't fall through to the default branch.
 break;
-    case 'reset':
-// Reset must ALSO stop the sim loop. Without this, the physics
-// worker's workerLoop keeps ticking physicsStep every CONFIG.DT
-// seconds after the reset — because workerLoop only skips
-// physicsStep when `running` is false. That means between the user
-// clicking Reset and clicking Fast Forward, the sim advances by a
-// wall-clock-dependent number of ticks (80 ticks/sec × however many
-// seconds the user took). The FF capture then starts from a
-// different sim time every single run, which is the entire source
-// of "FF gives different results each time" non-determinism.
-//
-// Setting running=false here means: after Reset, the sim is
-// completely frozen at t=0. FF capture always gets exactly t=0
-// state. Deterministic.
-//
-// Also clear paused so the UI's simPaused flag (already set false
-// by controls.js) is mirrored on the worker side.
+        case 'reset':
+// Reset must ALSO stop the sim loop. ...
 running = false;
 paused = false;
+// Clear sync-to-guidance state so the next Start begins fresh.
+_waitingForGuidance = false;
+if (_guidanceWaitTimer) { clearTimeout(_guidanceWaitTimer); _guidanceWaitTimer = null; }
+_lastStepWallTime = 0;
 resetState(msg.alt || 0);
 break;
 
@@ -932,6 +940,16 @@ bc.accelY = b._lastAccelY || 0;
 }
 
 // ---- Worker loop ----
+// Sync-to-guidance state. When running, physics does not schedule its own
+// next iteration via setTimeout — it posts a snapshot, then waits for the
+// guidance worker to ack that it has consumed it and queued its commands.
+// This forces EVERY physicsStep to see commands derived from the
+// immediately preceding snapshot: cmd latency 0 at 100%, determinism
+// regardless of main-thread / worker jitter.
+let _waitingForGuidance = false;
+let _guidanceWaitTimer = null;
+let _lastStepWallTime = 0;
+
 function workerLoop() {
   // Only used by the hot-buffer starvation warning below. Physics stepping
   // is now purely per-iteration at CONFIG.DT cadence; wall-clock only
@@ -955,22 +973,24 @@ function workerLoop() {
   }
   
   if (running && !paused && !state.halted) {
-    // One step per loop iteration — identical to the FF worker's
-    // `for (i = 0; i < maxTicks; i++) physicsStep(dt)`.
-    //
-    // Why the old accumulator-based loop diverged: it ran 0, 1, or 2+
-    // steps in a single iteration depending on wall-clock jitter, but
-    // guidance gets ONE snapshot per loop iteration (not per step). A
-    // multi-step iteration meant guidance missed control ticks — visible
-    // drift from the FF run, which is perfectly 1:1.
-    //
-    // Trade-off: sim now runs at whatever rate the browser can sustain
-    // (target = CONFIG.DT via the setTimeout below). If the browser lags,
-    // sim time lags with it — matching FF exactly. Real-time accuracy is
-    // sacrificed for determinism.
-    physicsStep(CONFIG.DT);
-    if (state.halted) running = false;
+  // Wall-clock pacing: only step if CONFIG.DT has elapsed since the
+  // last step. Combined with the guidance-ack sync below, this keeps
+  // the sim at real-time (80 Hz) when possible, and slows gracefully
+  // when the guidance round-trip is longer than CONFIG.DT. Determinism
+  // is preserved either way — sim time always advances by exactly one
+  // CONFIG.DT per step, and every step sees the guidance commands
+  // derived from the previous snapshot.
+  const now = performance.now();
+  const target = CONFIG.DT * 1000;
+  if (_lastStepWallTime > 0 && now - _lastStepWallTime < target - 0.5) {
+    setTimeout(workerLoop, Math.max(0, target - (now - _lastStepWallTime)));
+    return;
   }
+  _lastStepWallTime = now;
+  
+  physicsStep(CONFIG.DT);
+  if (state.halted) running = false;
+}
 
   // Skip requesting the leapfrog compute entirely when no consumer wants
   // the trajectory (trajectory checkbox off) — `pendingTrajectoryTransfer`
@@ -1041,10 +1061,27 @@ function workerLoop() {
   data.hotBuffer = hotBuf.buffer;
   transfers.push(hotBuf.buffer);
 
-    self.postMessage({ type: 'state', data }, transfers);
-  
-  // Target: one loop iteration per physics step, matching FF 1:1.
-  // setTimeout granularity is typically ~4 ms in browsers, so the actual
-  // rate lands close to CONFIG.DT (12.5 ms) without drifting.
-  setTimeout(workerLoop, CONFIG.DT * 1000);
-  }
+        self.postMessage({ type: 'state', data }, transfers);
+    
+    // Scheduling:
+    //   - Running: wait for the guidance ack to the snapshot we just sent.
+    //     Ack arrives AFTER guidance has queued all its commands (FIFO
+    //     MessageChannel ordering), so the next physicsStep is guaranteed
+    //     to see them. 100% cmd latency 0.
+    //   - Paused / stopped / halted: poll on the CONFIG.DT clock so we
+    //     notice state flips promptly.
+    if (running && !paused && !state.halted) {
+      _waitingForGuidance = true;
+      _guidanceWaitTimer = setTimeout(() => {
+        // Safety net — if guidance never acks (worker dead, port not yet
+        // connected), resume anyway after 100 ms so the sim can't hang.
+        if (_waitingForGuidance) {
+          _waitingForGuidance = false;
+          _guidanceWaitTimer = null;
+          workerLoop();
+        }
+      }, 100);
+    } else {
+      setTimeout(workerLoop, CONFIG.DT * 1000);
+    }
+    }

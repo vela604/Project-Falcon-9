@@ -110,6 +110,15 @@ case 'snapshot': {
     if (++_snapN % 400 === 0) self.postMessage({ type: 'snapDbg', hist: _gapHist });
   }
   Guidance.onSnapshot(msg.data);
+  
+  // Sync ack — the physics worker is paused waiting for us. Sent AFTER
+  // onSnapshot (which is where all commands go out via Guidance.send) so
+  // MessageChannel FIFO ordering guarantees physics receives commands
+  // BEFORE the ack, and can step with them already applied.
+  if (physicsPort) {
+    physicsPort.postMessage({ type: '__guidanceReady' });
+  }
+  
   // Throttled status push so main thread's right toolbar can show
   // live testGuide stats without spamming messages every tick.
   _statusPushCounter++;
