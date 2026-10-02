@@ -1257,6 +1257,7 @@ members.forEach(m => {
     let prevVrSign = 0;
     let ticksRun = 0;
     const t0 = performance.now();
+    window.__tickDump = [];
 
     // CHUNK_TICKS chosen so UI stays responsive even on slow machines.
     // At ~50-100 µs per tick, 400 ticks ≈ 20-40 ms per chunk — fast enough
@@ -1284,6 +1285,24 @@ members.forEach(m => {
     statusEl.textContent = 'onSnapshot failed: ' + ge.message;
     break;
   }
+
+      // TEMP DUMP — per-tick state for verification
+window.__tickDump.push({
+  i: i,
+  t: state.simTime,
+  bodies: state.bodies.map(b => ({
+    rx: b.rx, ry: b.ry, vx: b.vx, vy: b.vy,
+    theta: b.theta, omega: b.omega,
+    fuelMass: b.fuelMass,
+    memberFuel: (b.memberFuel || []).slice(),
+    slosh: b.slosh ? { offset: b.slosh.offset, velocity: b.slosh.velocity } : null,
+    engines: (b.engines || []).map(e => ({
+      massFlowRate: e.massFlowRate,
+      gimbalDeg: e.gimbalDeg,
+      currentF: e.currentF,
+    })),
+  })),
+});
 
       // ---- Event detection + peak tracking ----
       const gs = (Guidance.getGuideStatus && Guidance.getGuideStatus()) || {};
