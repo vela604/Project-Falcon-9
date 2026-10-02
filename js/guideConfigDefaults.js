@@ -49,62 +49,74 @@ function _mkDefault(guideName, name, description, constants, tags) {
 const GUIDE_DEFAULT_PRESETS = {
 
   leoInsertionV2: _mkDefault(
-  'leoInsertionV2',
-  'F9 LEO — Baseline',
-  'Full autonomous mission: ascent → MECO → separation → circularization → payload deploy → suicide-burn deorbit. Calibrated for the Falcon 9 Block 3 default stack.',
-  {
-    ASCENT: {
-      INITIAL_COAST_S: 4.9,
-      PUSH_T_S: 4.8,
-      PUSH_MAX_GIMBAL_DEG: 0.6,
-      PUSH_EAST_SIGN: -1,
-      HOLD_K_DAMP: 4.0,
-      HOLD_MAX_AOA_DEG: 8,
-      HOLD_K_DQ: 0.005,
-      HOLD_Q_REF: 1000,
-      THROTTLE_FRAC: 1.0,
-      THROTTLE_ALT_LOW_KM: 8,
-      THROTTLE_ALT_HIGH_KM: 13,
-      THROTTLE_FRAC_LOW: 0.7,
-      COAST_DAMP_GAIN: 16,
-      COAST_DAMP_K: 4.0,
-      GIMBAL_TARGET: 'center',
+    'leoInsertionV2',
+    'F9 LEO — Baseline',
+    'Full autonomous mission: ascent → MECO → separation → circularization → payload deploy → suicide-burn deorbit. Calibrated for the Falcon 9 Block 3 default stack.',
+    {
+      ASCENT: {
+        INITIAL_COAST_S: 4.9,
+        PUSH_T_S: 4.8,
+        // Calibrated for F9 Block 5 (all-gimbal octaweb). Bisection over
+// the MECO-tilt target band [55°, 60°] converged on 0.09576
+// (MECO fires at ~55.3° tilt, apogee 150.04 km, t=147.5s).
+PUSH_MAX_GIMBAL_DEG: 0.6,
+        PUSH_EAST_SIGN: -1,
+        HOLD_K_DAMP: 4.0,
+        HOLD_MAX_AOA_DEG: 8,
+        HOLD_K_DQ: 0.005,
+        HOLD_Q_REF: 1000,
+        THROTTLE_FRAC: 1.0,
+        THROTTLE_ALT_LOW_KM: 8,
+        THROTTLE_ALT_HIGH_KM: 13,
+        THROTTLE_FRAC_LOW: 0.7,
+        COAST_DAMP_GAIN: 16,
+        COAST_DAMP_K: 4.0,
+      },
+      MECO_APOGEE_KM: 150,
+      AXIAL_SEP_TARGET_M: 10,
+      SPLIT_TIMEOUT_S: 10,
+      FAIRING_OPEN_ALT_KM: 80,
+      FAIRING_OPEN_ENABLED: true,
+      TARGET_ORBIT_ALT_KM: 320,
+      STAGE_BURN_CUTOFF_MARGIN_MPS: 0.0,
+// Calibrated for F9 Block 5. Bisection over the vr-safety protocol
+// (min vr ≥ 0.5 m/s during STAGE_BURN, pause on vr slope reversal)
+// converged on 81.39° — 2.07 m/s of margin at the deepest vr dip.
+// 81.42° fails the vr floor; 0.05° precision gave this as the
+// max safe value.
+STAGE_BURN_LOCK_TILT_DEG: 90,
+      COAST_TARGET_TILT_DEG: -90,
+      COAST_ROTATE_TOL_DEG: 0.5,
+      COAST_ROTATE_OMEGA_TOL: 0.02,
+      COAST_ROTATE_TIMEOUT_S: 240,
+      CIRC_TRIGGER_LEAD_S: 1.0,
+  CIRC_DECAY_FRAC: 0.05,
+      CIRC_ATT_KP: 0.5,
+      CIRC_ATT_KD: 4.0,
+      COAST_BURN_MULTIPLIER: 4.0,
+      SUICIDE_DELAY_AFTER_DEPLOY_S: 60,
+      SUICIDE_ROTATE_TOL_DEG: 1.0,
+      SUICIDE_ROTATE_OMEGA_TOL: 0.02,
+      SUICIDE_ROTATE_TIMEOUT_S: 120,
+      SUICIDE_ATT_KP: 0.5,
+      SUICIDE_ATT_KD: 4.0,
+      SUICIDE_PREDICT_DT_S: 2,
+      SUICIDE_PREDICT_HORIZON_S: 4000,
+          SUICIDE_BURN_MAX_S: 600,
+      SUICIDE_BURN_COARSE_MARGIN_DEG: 10,
+      // These four were added to LEO_INSERTION_V2 in guidance.js but never
+      // copied into this default preset — which meant the modal (built from
+      // this preset's constants) never rendered inputs for them, "Reset to
+      // default" never touched them, and a save→load round-trip through the
+      // preset system silently dropped them back to whatever the code value
+      // happened to be at save-time. Values match guidance.js today.
+      SUICIDE_TRIM_TOL_DEG: 0.1,
+      SUICIDE_TRIM_FAR_DEG: 1.0,
+      SUICIDE_TRIM_MIN_DUTY: 0.15,
+      SUICIDE_TRIM_MAX_S: 120,
     },
-    MECO_APOGEE_KM: 150,
-    AXIAL_SEP_TARGET_M: 10,
-    SPLIT_TIMEOUT_S: 10,
-    FAIRING_OPEN_ALT_KM: 80,
-    FAIRING_OPEN_ENABLED: true,
-    TARGET_ORBIT_ALT_KM: 320,
-    STAGE_BURN_CUTOFF_MARGIN_MPS: 0.0,
-    STAGE_BURN_LOCK_TILT_DEG: 90,
-    COAST_TARGET_TILT_DEG: -90,
-    COAST_ROTATE_TOL_DEG: 0.5,
-    COAST_ROTATE_OMEGA_TOL: 0.02,
-    COAST_ROTATE_TIMEOUT_S: 240,
-    COAST_WAIT_BEFORE_APOGEE_S: 90,
-    CIRC_TRIGGER_LEAD_S: 3.6,
-    CIRC_DECAY_FRAC: 0.05,
-    CIRC_ATT_KP: 0.5,
-    CIRC_ATT_KD: 4.0,
-    COAST_BURN_MULTIPLIER: 4.0,
-    SUICIDE_DELAY_AFTER_DEPLOY_S: 60,
-    SUICIDE_ROTATE_TOL_DEG: 1.0,
-    SUICIDE_ROTATE_OMEGA_TOL: 0.02,
-    SUICIDE_ROTATE_TIMEOUT_S: 120,
-    SUICIDE_ATT_KP: 0.5,
-    SUICIDE_ATT_KD: 4.0,
-    SUICIDE_PREDICT_DT_S: 2,
-    SUICIDE_PREDICT_HORIZON_S: 4000,
-    SUICIDE_BURN_MAX_S: 600,
-    SUICIDE_BURN_COARSE_MARGIN_DEG: 10,
-    SUICIDE_TRIM_TOL_DEG: 0.1,
-    SUICIDE_TRIM_FAR_DEG: 1.0,
-    SUICIDE_TRIM_MIN_DUTY: 0.15,
-    SUICIDE_TRIM_MAX_S: 120,
-  },
-  ['full-mission', 'pad-to-orbit', 'suicide-burn']
-),
+    ['full-mission', 'pad-to-orbit', 'suicide-burn']
+    ),
 
   leoInsertion: _mkDefault(
     'leoInsertion',
@@ -237,23 +249,23 @@ const GUIDE_DEFAULT_PRESETS = {
 // listed with an empty array) show no "Important" section.
 // ---------------------------------------------------------------------------
 const GUIDE_IMPORTANT_FIELDS = {
-  leoInsertionV2: [
-  'TARGET_ORBIT_ALT_KM',
-  'MECO_APOGEE_KM',
-  'ASCENT.INITIAL_COAST_S',
-  'ASCENT.PUSH_T_S',
-  'ASCENT.PUSH_MAX_GIMBAL_DEG',
-  // Max-Q throttle bucket — these four define where the rocket
-  // throttles down through the peak dynamic pressure and back up:
-  //   [LOW, HIGH) km → THROTTLE_FRAC_LOW;  outside → THROTTLE_FRAC.
-  'ASCENT.THROTTLE_ALT_LOW_KM',
-  'ASCENT.THROTTLE_ALT_HIGH_KM',
-  'ASCENT.THROTTLE_FRAC_LOW',
-  'ASCENT.THROTTLE_FRAC',
-  'STAGE_BURN_LOCK_TILT_DEG',
-  'STAGE_BURN_CUTOFF_MARGIN_MPS',
-  'SUICIDE_DELAY_AFTER_DEPLOY_S',
-],
+    leoInsertionV2: [
+      'TARGET_ORBIT_ALT_KM',
+      'ASCENT.PUSH_MAX_GIMBAL_DEG',
+      'STAGE_BURN_LOCK_TILT_DEG',
+      'ASCENT.PUSH_T_S',
+      'ASCENT.INITIAL_COAST_S',
+      'CIRC_TRIGGER_LEAD_S',
+      'MECO_APOGEE_KM',
+      // Max-Q throttle bucket — these four define where the rocket
+      // throttles down through the peak dynamic pressure and back up:
+      //   [LOW, HIGH) km → THROTTLE_FRAC_LOW;  outside → THROTTLE_FRAC.
+      'ASCENT.THROTTLE_ALT_LOW_KM',
+      'ASCENT.THROTTLE_ALT_HIGH_KM',
+      'ASCENT.THROTTLE_FRAC_LOW',
+      'ASCENT.THROTTLE_FRAC',
+      'STAGE_BURN_CUTOFF_MARGIN_MPS',
+    ],
   leoInsertion: [
     'TARGET_ORBIT_ALT_KM',
     'MECO_APOGEE_KM',
