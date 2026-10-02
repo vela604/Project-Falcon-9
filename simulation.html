@@ -737,6 +737,7 @@
   'a', 'vr', 'vt', 'ha', 'hp',
   'dv', 'tr', 'cv', 'tv', 'fl', 'bk',
   'gap', 'gds', 'gmm', 'gth', 'ggb',
+  'mdt', 'mxF', 'hAp', 'hPe', 'im0', 'if0',
 ];
 
   let _recording = false;
@@ -807,11 +808,17 @@
   Number.isFinite(gs.circTargetV) ? r1(gs.circTargetV) : null,
   r2((b.fuelMass || 0) / 1000),
   gs.stageBurnLocked ? r1(gs.stageBurnTargetTiltDeg) : null,
-  Number.isFinite(gs.apogeePredicted) ? r2(gs.apogeePredicted) : null,
+    Number.isFinite(gs.apogeePredicted) ? r2(gs.apogeePredicted) : null,
   Number.isFinite(gs.dvSpool) ? r2(gs.dvSpool) : null,
   Number.isFinite(gs.massM) ? r2(gs.massM / 1000) : null,
   Number.isFinite(gs.theta) ? r1(gs.theta * 180 / Math.PI) : null,
   Number.isFinite(gs.gimbalDeg) ? r2(gs.gimbalDeg) : null,
+  Number.isFinite(gs.mdotNow) ? r2(gs.mdotNow) : null,
+  Number.isFinite(gs.maxMFR) ? r2(gs.maxMFR) : null,
+  Number.isFinite(gs.apogeeState) ? r2(gs.apogeeState) : null,
+  Number.isFinite(gs.perigeeState) ? r2(gs.perigeeState) : null,
+  Number.isFinite(gs.initStackMass) ? r2(gs.initStackMass / 1000) : null,
+  Number.isFinite(gs.initFuelMass) ? r2(gs.initFuelMass / 1000) : null,
 ];
   }
 

@@ -793,13 +793,29 @@ const Guidance = (function () {
 
     // ---------- Init ----------
     if (!_leoStateV2.init) {
-      _leoStateV2.init = true;
-      _leoStateV2.phase = 'ASCENT';
-      _leoStateV2.phaseStart = simT;
-      _leoStateV2.initialBodyCount = snapshot.bodies.length;
-      _leoStateV2.preSplitBodyId = body.id || null;
-      _leoStateV2.stageIdx = idx;
-      _leoStateV2.missionBodyIdx = idx;
+  _leoStateV2.init = true;
+  _leoStateV2.phase = 'ASCENT';
+  _leoStateV2.phaseStart = simT;
+  _leoStateV2.initialBodyCount = snapshot.bodies.length;
+  _leoStateV2.preSplitBodyId = body.id || null;
+  _leoStateV2.stageIdx = idx;
+  _leoStateV2.missionBodyIdx = idx;
+  
+  // One-time capture of the stack mass and fuel the guide is actually
+  // flying with. This is the ground truth for what FF vs 1x see at
+  // t=0 — if the initial mass differs, the entire trajectory shifts.
+  try {
+    const initD = Derivation.derive(snapshot, idx);
+    if (initD && initD.massProps) {
+      _leoStateV2.initStackMass = initD.massProps.M;
+      _leoStateV2.initComH = initD.massProps.comY;
+      _leoStateV2.initI = initD.massProps.I;
+    }
+    _leoStateV2.initFuelMass = body.fuelMass;
+    _leoStateV2.initMemberFuel = Array.isArray(body.memberFuel) ? body.memberFuel.slice() : null;
+  } catch (e) {
+    console.error('[leoInsertionV2] init mass capture failed', e);
+  }
       if (typeof Guidance !== 'undefined' && Guidance.setMissionBody) {
         Guidance.setMissionBody(idx);
       }
@@ -1078,11 +1094,18 @@ if (dv_with_margin > 0) {
   }
 }
 
+// Debug — capture every input that feeds the cutoff condition.
+// Any of these differing between FF and 1x at the same simTime
+// is the exact root cause of divergent cutoff timing.
 _leoStateV2.lastApogeePredicted = apogeePredicted_margin;
 _leoStateV2.lastDvSpool = dv_with_margin;
 _leoStateV2.lastMassM = dNext.massProps.M;
 _leoStateV2.lastTheta = body.theta;
 _leoStateV2.lastGimbalDeg = gimbals[0].gimbalDeg || 0;
+_leoStateV2.lastMdotNow = mdot_now_sb;
+_leoStateV2.lastMaxMFR = maxMFR_sb;
+_leoStateV2.lastApogee = apogeeKm;
+_leoStateV2.lastPerigee = perigeeKm_sb;
 
 if (apogeeKm >= LEO_INSERTION_V2.TARGET_ORBIT_ALT_KM ||
   apogeePredicted_margin >= LEO_INSERTION_V2.TARGET_ORBIT_ALT_KM) {
@@ -1929,13 +1952,24 @@ break;
         _leoStateV2.suicideImpactEf * 180 / Math.PI : null,
       suicideDlambdaDeg: (_leoStateV2.suicideDlambda != null) ?
         _leoStateV2.suicideDlambda * 180 / Math.PI : null,
-      suicideTrimDone: !!_leoStateV2.suicideTrimDone,
-      apogeePredicted: _leoStateV2.lastApogeePredicted,
-      dvSpool: _leoStateV2.lastDvSpool,
-      massM: _leoStateV2.lastMassM,
-      theta: _leoStateV2.lastTheta,
-      gimbalDeg: _leoStateV2.lastGimbalDeg,
-    };
+        suicideTrimDone: !!_leoStateV2.suicideTrimDone,
+
+  // Debug — every input to the STAGE_BURN cutoff condition.
+  apogeePredicted: _leoStateV2.lastApogeePredicted,
+  dvSpool: _leoStateV2.lastDvSpool,
+  massM: _leoStateV2.lastMassM,
+  theta: _leoStateV2.lastTheta,
+  gimbalDeg: _leoStateV2.lastGimbalDeg,
+  mdotNow: _leoStateV2.lastMdotNow,
+  maxMFR: _leoStateV2.lastMaxMFR,
+  apogeeState: _leoStateV2.lastApogee,
+  perigeeState: _leoStateV2.lastPerigee,
+
+  // Initial values captured at guide start (t=0). Same in every row.
+  initStackMass: _leoStateV2.initStackMass,
+  initFuelMass: _leoStateV2.initFuelMass,
+  initI: _leoStateV2.initI,
+};
     if (_leoStateV2.phase === 'ASCENT' && typeof _hTick !== 'undefined' &&
       typeof _hTick.getStatus === 'function') {
       const hs = _hTick.getStatus();
