@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 
 const numRaw = JSON.parse(fs.readFileSync(path.resolve(__dirname, '..', 'numerical-dump.json'), 'utf8'));
-const runRaw = JSON.parse(fs.readFileSync(path.resolve(__dirname, '..', 'tester-dump.json'), 'utf8'));
+const runRaw = JSON.parse(fs.readFileSync(path.resolve(__dirname, '..', 'tester-dump1.json'), 'utf8'));
 
 // Dedupe by simTime (keep LAST entry per simTime)
 const numMap = new Map();
