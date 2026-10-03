@@ -248,11 +248,15 @@ const GUIDE_PHASE_SEQUENCES = {
 
   // ---- Guide state pack/unpack (for main-thread fast-forward) ----
   function exportGuideState() {
-    const out = { activeGuide: _activeGuide };
-    try {
-      out.hState = JSON.parse(JSON.stringify(_hState));
-      out.leoStateV2 = JSON.parse(JSON.stringify(_leoStateV2));
-      out.guideConfigs = {};
+  const out = { activeGuide: _activeGuide };
+  try {
+    // V2 state removed — _hState and _leoStateV2 no longer exist after
+    // the leoInsertionV2 migration to guidance-experiments.js. Referencing
+    // them here threw a ReferenceError on every export; try/catch swallowed
+    // it, but the crash truncated the payload to just { activeGuide } —
+    // so FF workers never received V3's mid-flight state and re-initialized
+    // from scratch. That's why FF wobbled / drifted / showed wrong apogee.
+    out.guideConfigs = {};
       Object.keys(_GUIDE_CONFIGS).forEach((name) => {
         out.guideConfigs[name] = getGuideConfig(name);
       });
@@ -288,12 +292,13 @@ if (_v3State.suicideBlock) out.v3SuicideBlock = _v3State.suicideBlock.getState()
     return out;
   }
 
-  function importGuideState(data) {
-    if (!data) return;
-    try {
-      if (data.hState) Object.assign(_hState, data.hState);
-      if (data.leoStateV2) Object.assign(_leoStateV2, data.leoStateV2);
-      if (data.activeGuide !== undefined) _activeGuide = data.activeGuide;
+function importGuideState(data) {
+  if (!data) return;
+  try {
+    // V2 state restore removed — _hState / _leoStateV2 no longer exist.
+    // (Guarded on `data.hState` before, so this never crashed, but the
+    // line was dead weight and confusing.)
+    if (data.activeGuide !== undefined) _activeGuide = data.activeGuide;
       if (data.guideConfigs && typeof data.guideConfigs === "object") {
         Object.keys(data.guideConfigs).forEach((name) => {
           const v = data.guideConfigs[name];
