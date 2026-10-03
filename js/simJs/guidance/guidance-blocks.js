@@ -1783,7 +1783,7 @@ setState(s) {
       SUICIDE_PREDICT_DT_S: 2,
       SUICIDE_PREDICT_HORIZON_S: 4000,
       SUICIDE_BURN_MAX_S: 600,
-      SUICIDE_BURN_COARSE_MARGIN_DEG: 10,
+      SUICIDE_BURN_COARSE_MARGIN_DEG: 0.5,
       SUICIDE_TRIM_TOL_DEG: 0.1,
       SUICIDE_TRIM_FAR_DEG: 1.0,
       SUICIDE_TRIM_MIN_DUTY: 0.15,
@@ -2126,26 +2126,25 @@ setState(s) {
             }
 
             const speedH = Math.hypot(body.vx, body.vy);
-            if (speedH > 1) {
-              const ux_v = body.vx / speedH;
-              const uy_v = body.vy / speedH;
-              const targetThetaRad = Math.atan2(ux_v, -uy_v);
-              const thetaErrH = _wrapPi(body.theta - targetThetaRad);
-              const I_nextH = dNext && dNext.massProps ? dNext.massProps.I : 0;
-              if (I_nextH > 0) {
-                const tau_hold =
-                  -I_nextH *
-                  (cfg.SUICIDE_ATT_KP * thetaErrH +
-                    cfg.SUICIDE_ATT_KD * body.omega);
-                const rHold = GuideRCS.targetTorqueRcsNoNetForce(
-                  snapshot,
-                  tau_hold,
-                  idx,
-                );
-                if (rHold && rHold.fires.length)
-                  _send(Guidance.cmdRcsDuty(rHold.duties, idx));
-              }
-            }
+let rHold = null;
+if (speedH > 1) {
+  const ux_v = body.vx / speedH;
+  const uy_v = body.vy / speedH;
+  const targetThetaRad = Math.atan2(ux_v, -uy_v);
+  const thetaErrH = _wrapPi(body.theta - targetThetaRad);
+  const I_nextH = dNext && dNext.massProps ? dNext.massProps.I : 0;
+  if (I_nextH > 0) {
+    const tau_hold =
+      -I_nextH *
+      (cfg.SUICIDE_ATT_KP * thetaErrH +
+        cfg.SUICIDE_ATT_KD * body.omega);
+    rHold = GuideRCS.targetTorqueRcsNoNetForce(
+      snapshot,
+      tau_hold,
+      idx,
+    );
+  }
+}
 
             const impact = _predictImpact(
               body.rx,
@@ -2187,28 +2186,48 @@ setState(s) {
               break;
             }
 
-            const direction = dLambdaDeg > 0 ? "up" : "dn";
-            const FAR = cfg.SUICIDE_TRIM_FAR_DEG;
-            const MIN_DUTY = cfg.SUICIDE_TRIM_MIN_DUTY;
-            let duty = Math.min(1, Math.abs(dLambdaDeg) / Math.max(FAR, 1e-6));
-            if (duty < MIN_DUTY) duty = MIN_DUTY;
+// TEMP DIAG
+if (_st.ticks % 40 === 0) {
+  console.error('[SUI] t=' + simT.toFixed(1) +
+    ' dLamDeg=' + dLambdaDeg.toFixed(4) +
+    ' dir=' + (dLambdaDeg > 0 ? 'UP(retro)' : 'DN(pro)') +
+    ' duty=' + duty.toFixed(3) +
+    ' impactEf=' + ((impact.phiEf * 180) / Math.PI).toFixed(3) +
+    ' targetEf=' + ((lambdaMidEf * 180) / Math.PI).toFixed(3) +
+    ' alt=' + ((Math.hypot(body.rx, body.ry) - env.EARTH_RADIUS) / 1000).toFixed(2));
+}
 
-            const duties = GuideRCS.postSeparationAxialDuty(
-              snapshot,
-              idx,
-              direction,
-            );
-            if (duties) {
-              Object.keys(duties).forEach((podId) => {
-                const dd = duties[podId];
-                if (!dd) return;
-                dd.up *= duty;
-                dd.dn *= duty;
-                dd.lat *= duty;
-              });
-              _send(Guidance.cmdRcsDuty(duties, idx));
-            }
-            break;
+            const direction = dLambdaDeg > 0 ? "up" : "dn";
+const FAR = cfg.SUICIDE_TRIM_FAR_DEG;
+const MIN_DUTY = cfg.SUICIDE_TRIM_MIN_DUTY;
+let duty = Math.min(1, Math.abs(dLambdaDeg) / Math.max(FAR, 1e-6));
+if (duty < MIN_DUTY) duty = MIN_DUTY;
+
+const duties = GuideRCS.postSeparationAxialDuty(snapshot, idx, direction);
+if (duties) {
+  Object.keys(duties).forEach(podId => {
+    const dd = duties[podId];
+    if (!dd) return;
+    dd.up *= duty;
+    dd.dn *= duty;
+    dd.lat *= duty;
+  });
+  // Merge with the attitude-hold duties computed above so
+  // trim no longer overwrites hold. Different nozzle axes
+  // (trim uses up/dn, hold uses lat + its own up/dn pairs),
+  // so the two compose on the same duty table.
+  if (rHold && rHold.duties) {
+    Object.keys(rHold.duties).forEach(podId => {
+      if (!duties[podId]) duties[podId] = { up: 0, dn: 0, lat: 0 };
+      const rh = rHold.duties[podId];
+      duties[podId].up = Math.min(1, duties[podId].up + (rh.up || 0));
+      duties[podId].dn = Math.min(1, duties[podId].dn + (rh.dn || 0));
+      duties[podId].lat = Math.min(1, duties[podId].lat + (rh.lat || 0));
+    });
+  }
+  _send(Guidance.cmdRcsDuty(duties, idx));
+}
+break;
           }
 
           default:
