@@ -623,7 +623,66 @@ a.back:hover { color: var(--cyan); }
       });
 
       const activeStk = (typeof getActiveStack === 'function') ? getActiveStack() : null;
-      const derived = (activeStk && activeStk.derived) ? activeStk.derived : null;
+
+// Pre-resolve every per-member derived value that derivation.js needs
+// but cannot reach: leg geometry + one-leg volume live inside a type's
+// frame.hingeGeometry()/structuralVolume() FUNCTIONS (stripped on the
+// structured clone into the guidance worker), and the grid-fin total
+// mass lives in fleet.js's computeGridFinMass(). Shipping the resolved
+// numbers once at handoff keeps guidance's mass model locked to physics
+// without needing a second inlined reimplementation that could drift.
+const memberDerived = {};
+members.forEach(m => {
+  if (!m || !m.id) return;
+  const out = {};
+
+  // Legs — resolve via the type's own functions, at THIS record's
+  // own tank dimensions (matching massProps.js's tankH/tankW inputs).
+  if (m.hasRecovery !== false && m.recoveryTypeId &&
+    typeof getComponentType === 'function') {
+    const rt = getComponentType(m.recoveryTypeId);
+    if (rt && rt.capabilities && rt.capabilities.deploysOnVehicle &&
+      rt.frame && typeof rt.frame.hingeGeometry === 'function' &&
+      typeof rt.frame.structuralVolume === 'function') {
+      const legH = (m.fuel && Number.isFinite(m.fuel.tankHeight)) ?
+        m.fuel.tankHeight :
+        (Number.isFinite(m.height) ? m.height : 0);
+      const legW = (m.fuel && Number.isFinite(m.fuel.tankWidth)) ?
+        m.fuel.tankWidth :
+        (Number.isFinite(m.width) ? m.width : 0);
+      const geo = rt.frame.hingeGeometry(legH);
+      const oneLegVolume = rt.frame.structuralVolume(legH, legW);
+      if (geo && Number.isFinite(geo.hingeY) &&
+        Number.isFinite(geo.legLength) &&
+        Number.isFinite(geo.maxSweepRad) &&
+        Number.isFinite(oneLegVolume)) {
+        out.legs = {
+          hingeY: geo.hingeY,
+          legLength: geo.legLength,
+          maxSweepRad: geo.maxSweepRad,
+          legCount: rt.frame.legCount || 4,
+          oneLegVolume,
+        };
+      }
+    }
+  }
+
+  // Grid fins — total mass from fleet.js's own computeGridFinMass.
+  if (m.hasGridFins && typeof computeGridFinMass === 'function') {
+    const gf = computeGridFinMass(m);
+    if (gf && Number.isFinite(gf.totalMass) && Number.isFinite(gf.perFinMass)) {
+      out.gridFins = {
+        totalMass: gf.totalMass,
+        perFinMass: gf.perFinMass,
+        finCount: gf.finCount,
+      };
+    }
+  }
+
+  memberDerived[m.id] = out;
+});
+
+const derived = (activeStk && activeStk.derived) ? activeStk.derived : null;
 
       let stackPayloadMass = 0;
       if (activeStk && activeStk.payloadId && typeof getPayload === 'function') {
@@ -632,11 +691,12 @@ a.back:hover { color: var(--cyan); }
       }
 
       return {
-        members: members.map(_stripFns),
-        types,
-        stackPayloadMass,
-        derived,
-        env: {
+  members: members.map(_stripFns),
+  types,
+  memberDerived,
+  stackPayloadMass,
+  derived,
+  env: {
           EARTH_RADIUS: CONFIG.EARTH_RADIUS,
           GM_EARTH: CONFIG.GM_EARTH,
           EARTH_OMEGA: CONFIG.EARTH_OMEGA,
