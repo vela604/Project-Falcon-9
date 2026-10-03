@@ -525,6 +525,10 @@ function maybeForwardGuidanceSnapshot() {
   emergencyEject: !!b.emergencyEject,
   payloadId: b.payloadId || null,
   payloadReleased: !!b.payloadReleased,
+  // Needed by insertion block's DONE-phase payload monitor. Without this
+  // the block never sees a payload body spawn, its payload-clear check
+  // stays false forever, and the 120 s confirm timeout fires instead.
+  payloadBody: b.payloadBody || null,
   members: b.members || [],
   // Per-member fuel — parallel array to members[]. Guidance's own
   // derivation.js reads this so its mass model matches physics's
