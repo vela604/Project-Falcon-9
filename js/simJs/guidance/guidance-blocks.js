@@ -2171,6 +2171,32 @@ if (speedH > 1) {
             const lambdaMidEf =
               (env.LAUNCH_SITE_ANGLE_0 || 0) - (midWestDeg * Math.PI) / 180;
             const dLambdaDeg = ((impact.phiEf - lambdaMidEf) * 180) / Math.PI;
+            
+            
+            // TEMP DIAG — every 20 ticks + first tick
+if (_st.suicideTrimStartT === simT || _st.ticks % 20 === 0) {
+  const _altKm = (Math.hypot(body.rx, body.ry) - env.EARTH_RADIUS) / 1000;
+  const _impDeg = impact && Number.isFinite(impact.phiEf)
+    ? (impact.phiEf * 180 / Math.PI) : NaN;
+  const _tgtDeg = (lambdaMidEf * 180 / Math.PI);
+  const _spd = Math.hypot(body.vx, body.vy) || 1;
+  const _uxV = body.vx / _spd, _uyV = body.vy / _spd;
+  const _tgtTheta = Math.atan2(_uxV, -_uyV);
+  let _dTh = body.theta - _tgtTheta;
+  while (_dTh > Math.PI) _dTh -= 2 * Math.PI;
+  while (_dTh < -Math.PI) _dTh += 2 * Math.PI;
+  const _tiltErrDeg = (_dTh * 180 / Math.PI);
+  console.error('[SUI] t=' + simT.toFixed(1) +
+    ' dLam=' + dLambdaDeg.toFixed(4) +
+    ' impEf=' + _impDeg.toFixed(3) +
+    ' tgtEf=' + _tgtDeg.toFixed(3) +
+    ' tgtTheta=' + (_tgtTheta * 180 / Math.PI).toFixed(1) +
+    ' bodyTheta=' + (body.theta * 180 / Math.PI).toFixed(1) +
+    ' tiltErrDeg=' + _tiltErrDeg.toFixed(2) +
+    ' alt=' + _altKm.toFixed(2));
+}
+
+
 
             if (Math.abs(dLambdaDeg) < cfg.SUICIDE_TRIM_TOL_DEG) {
               _st.suicideTrimDone = true;
