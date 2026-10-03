@@ -1287,18 +1287,6 @@ members.forEach(m => {
     break;
   }
 
-// TEMP DUMP — per-tick state JSON
-window.__tickDump = window.__tickDump || [];
-window.__tickDump.push({
-  i: i,
-  t: state.simTime,
-  bodies: state.bodies.map(b => ({
-    rx: b.rx, ry: b.ry, vx: b.vx, vy: b.vy,
-    theta: b.theta, omega: b.omega,
-    fuelMass: b.fuelMass,
-    memberFuel: (b.memberFuel || []).slice(),
-  })),
-});
 
 
       // TEMP DUMP — per-tick state for verification

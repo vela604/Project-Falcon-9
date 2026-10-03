@@ -1850,41 +1850,35 @@ if (ENABLE_PLOTS) pushPlotSample();
 
         // Peak Q / G
         const alt = r - CONFIG.EARTH_RADIUS;
-        const wv = (typeof windInertialVector === 'function') ? windInertialVector(body.rx, body.ry) : { wx: 0, wy: 0 };
-        const sv = (typeof earthSurfaceVelocity === 'function') ? earthSurfaceVelocity(body.rx, body.ry) : { vx: 0, vy: 0 };
-        const relVx = body.vx - (wv.wx + sv.vx);
-        const relVy = body.vy - (wv.wy + sv.vy);
-        const sr = Math.hypot(relVx, relVy);
-        const rho = (typeof airDensity === 'function') ? airDensity(Math.max(0, alt)) : 0;
         const Q_Pa = 0.5 * rho * sr * sr;
-        if (Q_Pa > peakQ_kPa) {
-          peakQ_kPa = Q_Pa;
-          peakQ_state = captureState();
-        }
-
-        for (let _bi = 0; _bi < state.bodies.length; _bi++) {
-          const _b = state.bodies[_bi];
-          const ax = _b._lastAccelX || 0;
-          const ay = _b._lastAccelY || 0;
-          const g_proper = Math.hypot(ax, ay) / 9.80665;
-          if (g_proper > peakG) {
-            peakG = g_proper;
-            peakG_state = captureState();
-          }
-        }
-      } // if (body)
-
-      // ---- Yield + progress + plot render ----
-if (i > 0 && i % CHUNK === 0) {
-  const wall = (performance.now() - t0) / 1000;
-  const tps = ticksRun / wall;
-  const pct = ((i / maxTicks) * 100).toFixed(1);
-  statusEl.textContent =
-    `Running… t=${state.simTime.toFixed(1)}s / ${durationS}s  ` +
-    `(${pct}%, ${ticksRun} ticks, ${tps.toFixed(0)} ticks/s, ${captures.length} captures)`;
-  if (ENABLE_PLOTS) Plots.renderAll();
-  await yieldToBrowser();
-}
+          if (Q_Pa > peakQ_kPa) {
+    peakQ_kPa = Q_Pa;
+    peakQ_state = captureState();
+  }
+  
+  // Peak G — every body, matches runner.js's tracker.maxG
+  for (let _bi = 0; _bi < state.bodies.length; _bi++) {
+    const _b = state.bodies[_bi];
+    const ax = _b._lastAccelX || 0;
+    const ay = _b._lastAccelY || 0;
+    const g_proper = Math.hypot(ax, ay) / 9.80665;
+    if (g_proper > peakG) {
+      peakG = g_proper;
+      peakG_state = captureState();
+    }
+  }
+  } // ←←← YE LINE MISSING THI — if (body) block close karta hai
+  
+  // ---- Yield + progress ----
+      if (i > 0 && i % CHUNK === 0) {
+        const wall = (performance.now() - t0) / 1000;
+        const tps = ticksRun / wall;
+        const pct = ((i / maxTicks) * 100).toFixed(1);
+        statusEl.textContent =
+          `Running… t=${state.simTime.toFixed(1)}s / ${durationS}s  ` +
+          `(${pct}%, ${ticksRun} ticks, ${tps.toFixed(0)} ticks/s, ${captures.length} captures)`;
+        await yieldToBrowser();
+      }
     }
 
     // Initial plot render (empty)
