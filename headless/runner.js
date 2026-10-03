@@ -37,6 +37,7 @@ const SIM_FILES = [
   'js/simJs/guidance/imu.js',
   'js/simJs/guidance/derivation.js',
   'js/simJs/guidance/guidercs.js',
+  'js/simJs/guidance/guidance-blocks.js',
   'js/simJs/guidance/guidance.js',
 ];
 

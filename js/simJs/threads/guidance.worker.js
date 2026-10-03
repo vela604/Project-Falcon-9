@@ -65,6 +65,7 @@ self.onmessage = (e) => {
   '../guidance/imu.js',
   '../guidance/derivation.js',
   '../guidance/guidercs.js',
+  '../guidance/guidance-blocks.js',
   '../guidance/guidance.js'
 );
       bootstrapped = true;

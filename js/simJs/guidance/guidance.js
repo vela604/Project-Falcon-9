@@ -23,8 +23,8 @@
 // ============================================================================
 
 const Guidance = (function () {
-  let _physicsSend = null;      // (msg) => void, wired by guidance.worker.js
-  let _lastRawSnapshot = null;  // most recent snapshot exactly as received
+  let _physicsSend = null; // (msg) => void, wired by guidance.worker.js
+  let _lastRawSnapshot = null; // most recent snapshot exactly as received
   let _lastMeasuredSnapshot = null; // post-IMU copy handed to tick()
 
   function init(physicsSendFn) {
@@ -34,8 +34,12 @@ const Guidance = (function () {
   // Forwarding stubs for boot-time stack data. Actual storage and all
   // accessors live in derivation.js, which owns the raw records and the
   // formulas that consume them.
-  function setStackData(data) { Derivation.setStackData(data); }
-  function getStackData() { return Derivation.getStackData(); }
+  function setStackData(data) {
+    Derivation.setStackData(data);
+  }
+  function getStackData() {
+    return Derivation.getStackData();
+  }
 
   // ---- IMU wiring ----
   function setImuEnabled(enabled) {
@@ -56,7 +60,7 @@ const Guidance = (function () {
     // recorded times are as precise as possible.
     if (_activeGuide && GUIDES[_activeGuide]) {
       const g = GUIDES[_activeGuide];
-      const st = (typeof g.getStatus === 'function') ? g.getStatus() : null;
+      const st = typeof g.getStatus === "function" ? g.getStatus() : null;
       const ph = st && st.phase;
       if (ph && ph !== _lastSeenPhase) {
         const nowT = _lastSimTime;
@@ -83,36 +87,58 @@ const Guidance = (function () {
   // further down maps these to friendly / merged / hidden labels.
   // ---------------------------------------------------------------------------
   const GUIDE_PHASE_SEQUENCES = {
-    leoInsertionV2: [
-      'ASCENT', 'MECO_SPOOL', 'SEPARATED_AXIAL', 'STAGE_BURN', 'RCS_BOOST',
-      'COAST_ROTATE', 'COAST_WAIT', 'COAST_HOLD', 'CIRCULARIZE',
-      'COAST_ROTATE_2', 'COAST_HOLD_2', 'DONE',
-      'SUICIDE_ROTATE', 'SUICIDE_BURN', 'SUICIDE_COAST',
-    ],
-  };
+  leoInsertionV2: [
+    'ASCENT', 'MECO_SPOOL', 'SEPARATED_AXIAL', 'STAGE_BURN', 'RCS_BOOST',
+    'COAST_ROTATE', 'COAST_WAIT', 'COAST_HOLD', 'CIRCULARIZE',
+    'COAST_ROTATE_2', 'COAST_HOLD_2', 'DONE',
+    'SUICIDE_ROTATE', 'SUICIDE_BURN', 'SUICIDE_COAST',
+  ],
+  leoInsertionV3: [
+    'ASCENT', 'MECO_SPOOL', 'SEPARATED_AXIAL', 'STAGE_BURN', 'RCS_BOOST',
+    'COAST_ROTATE', 'COAST_WAIT', 'COAST_HOLD', 'CIRCULARIZE',
+    'COAST_ROTATE_2', 'COAST_HOLD_2', 'DONE',
+    'SUICIDE_ROTATE', 'SUICIDE_BURN', 'SUICIDE_COAST',
+  ],
+};
 
   // ---- Phase timeline tracking ----------------------------------------------
   // Display-layer transform for the phase timeline. The phase machine's
   // internal names NEVER change here — this is purely how the sim page's
   // checkpoint panel labels things. See original file for the full rule set.
   const GUIDE_PHASE_DISPLAY = {
-    leoInsertionV2: {
-      COAST_ROTATE: 'COAST',
-      COAST_WAIT: 'COAST',
-      COAST_HOLD: 'COAST',
-      COAST_ROTATE_2: 'PAYLOAD DEPLOY',
-      COAST_HOLD_2: 'PAYLOAD DEPLOY',
-      MECO_SPOOL: 'MECO',
-      SEPARATED_AXIAL: 'SEPARATION',
-      STAGE_BURN: 'ORBIT BURN',
-      RCS_BOOST: 'APOGEE TRIM',
-      CIRCULARIZE: 'CIRCULARIZE',
-      DONE: 'MISSION COMPLETE',
-      SUICIDE_ROTATE: 'DEORBIT',
-      SUICIDE_BURN: 'DEORBIT',
-      SUICIDE_COAST: 'IMPACT',
-    },
-  };
+  leoInsertionV2: {
+    COAST_ROTATE: 'COAST',
+    COAST_WAIT: 'COAST',
+    COAST_HOLD: 'COAST',
+    COAST_ROTATE_2: 'PAYLOAD DEPLOY',
+    COAST_HOLD_2: 'PAYLOAD DEPLOY',
+    MECO_SPOOL: 'MECO',
+    SEPARATED_AXIAL: 'SEPARATION',
+    STAGE_BURN: 'ORBIT BURN',
+    RCS_BOOST: 'APOGEE TRIM',
+    CIRCULARIZE: 'CIRCULARIZE',
+    DONE: 'MISSION COMPLETE',
+    SUICIDE_ROTATE: 'DEORBIT',
+    SUICIDE_BURN: 'DEORBIT',
+    SUICIDE_COAST: 'IMPACT',
+  },
+  leoInsertionV3: {
+    COAST_ROTATE: 'COAST',
+    COAST_WAIT: 'COAST',
+    COAST_HOLD: 'COAST',
+    COAST_ROTATE_2: 'PAYLOAD DEPLOY',
+    COAST_HOLD_2: 'PAYLOAD DEPLOY',
+    MECO_SPOOL: 'MECO',
+    SEPARATED_AXIAL: 'SEPARATION',
+    STAGE_BURN: 'ORBIT BURN',
+    RCS_BOOST: 'APOGEE TRIM',
+    CIRCULARIZE: 'CIRCULARIZE',
+    DONE: 'MISSION COMPLETE',
+    SUICIDE_ROTATE: 'DEORBIT',
+    SUICIDE_BURN: 'DEORBIT',
+    SUICIDE_COAST: 'IMPACT',
+  },
+};
 
   // Apply the display transform to a raw (sequence, log) pair and return
   // the display-ready versions plus the current phase's display name.
@@ -120,14 +146,14 @@ const Guidance = (function () {
     const map = GUIDE_PHASE_DISPLAY[guideName] || {};
     const displaySeq = [];
     const rawToDisp = {};
-    rawSeq.forEach(ph => {
-      const disp = (ph in map) ? map[ph] : ph;
+    rawSeq.forEach((ph) => {
+      const disp = ph in map ? map[ph] : ph;
       rawToDisp[ph] = disp;
       if (disp === null) return; // hidden
       if (!displaySeq.includes(disp)) displaySeq.push(disp);
     });
     const displayLog = {};
-    rawSeq.forEach(ph => {
+    rawSeq.forEach((ph) => {
       const disp = rawToDisp[ph];
       if (disp === null) return; // hidden
       const e = rawLog[ph];
@@ -136,8 +162,10 @@ const Guidance = (function () {
       if (!cur) {
         displayLog[disp] = { startT: e.startT, endT: e.endT };
       } else {
-        if (Number.isFinite(e.startT) &&
-          (!Number.isFinite(cur.startT) || e.startT < cur.startT)) {
+        if (
+          Number.isFinite(e.startT) &&
+          (!Number.isFinite(cur.startT) || e.startT < cur.startT)
+        ) {
           cur.startT = e.startT;
         }
         if (e.endT === null || e.endT === undefined) {
@@ -147,7 +175,7 @@ const Guidance = (function () {
         }
       }
     });
-    const curDisp = rawCurrentPhase ? (rawToDisp[rawCurrentPhase] || null) : null;
+    const curDisp = rawCurrentPhase ? rawToDisp[rawCurrentPhase] || null : null;
     return { displaySeq, displayLog, curDisp };
   }
 
@@ -164,51 +192,74 @@ const Guidance = (function () {
   // not flagged). Kept as an object so getGuideStatusLabel keeps working
   // for any future guide that wants an inline annotation.
   const GUIDE_STATUS_LABELS = {};
-  function getGuideStatusLabel(name) { return GUIDE_STATUS_LABELS[name] || ''; }
+  function getGuideStatusLabel(name) {
+    return GUIDE_STATUS_LABELS[name] || "";
+  }
 
   function startGuide(name) {
     if (!name || !GUIDES[name]) {
-      console.warn('[guidance] startGuide: unknown guide', name);
+      console.warn("[guidance] startGuide: unknown guide", name);
       return false;
     }
     if (_activeGuide === name) return true;
-    if (_activeGuide && typeof GUIDES[_activeGuide].stop === 'function') {
-      try { GUIDES[_activeGuide].stop(); } catch (e) { console.error(e); }
+    if (_activeGuide && typeof GUIDES[_activeGuide].stop === "function") {
+      try {
+        GUIDES[_activeGuide].stop();
+      } catch (e) {
+        console.error(e);
+      }
     }
     _activeGuide = name;
     _phaseLog = {};
     _lastSeenPhase = null;
     _guideStartT = null;
-    if (typeof GUIDES[name].start === 'function') {
-      try { GUIDES[name].start(); } catch (e) { console.error(e); }
+    if (typeof GUIDES[name].start === "function") {
+      try {
+        GUIDES[name].start();
+      } catch (e) {
+        console.error(e);
+      }
     }
-    console.log('[guidance] started:', name);
+    console.log("[guidance] started:", name);
     return true;
   }
 
   function stopGuide() {
     if (!_activeGuide) return;
     const name = _activeGuide;
-    if (typeof GUIDES[name].stop === 'function') {
-      try { GUIDES[name].stop(); } catch (e) { console.error(e); }
+    if (typeof GUIDES[name].stop === "function") {
+      try {
+        GUIDES[name].stop();
+      } catch (e) {
+        console.error(e);
+      }
     }
     _activeGuide = null;
-    console.log('[guidance] stopped:', name);
+    console.log("[guidance] stopped:", name);
   }
 
   function setActiveGuide(name) {
-    _activeGuide = (name && GUIDES[name]) ? name : null;
+    _activeGuide = name && GUIDES[name] ? name : null;
   }
-  function getActiveGuide() { return _activeGuide; }
-  function listGuides() { return Object.keys(GUIDES); }
+  function getActiveGuide() {
+    return _activeGuide;
+  }
+  function listGuides() {
+    return Object.keys(GUIDES);
+  }
 
   function getGuideStatus() {
     if (!_activeGuide) return { active: null };
     const g = GUIDES[_activeGuide];
     const out = { active: _activeGuide };
-    if (typeof g.getStatus === 'function') Object.assign(out, g.getStatus());
+    if (typeof g.getStatus === "function") Object.assign(out, g.getStatus());
     const rawSeq = GUIDE_PHASE_SEQUENCES[_activeGuide] || [];
-    const transformed = _applyPhaseDisplay(_activeGuide, rawSeq, _phaseLog, out.phase);
+    const transformed = _applyPhaseDisplay(
+      _activeGuide,
+      rawSeq,
+      _phaseLog,
+      out.phase,
+    );
     out.phaseSequence = transformed.displaySeq;
     out.phaseLog = transformed.displayLog;
     out.phaseDisplay = transformed.curDisp;
@@ -224,15 +275,37 @@ const Guidance = (function () {
       out.hState = JSON.parse(JSON.stringify(_hState));
       out.leoStateV2 = JSON.parse(JSON.stringify(_leoStateV2));
       out.guideConfigs = {};
-      Object.keys(_GUIDE_CONFIGS).forEach(name => {
+      Object.keys(_GUIDE_CONFIGS).forEach((name) => {
         out.guideConfigs[name] = getGuideConfig(name);
       });
       out.phaseLog = JSON.parse(JSON.stringify(_phaseLog || {}));
-      out.lastSeenPhase = _lastSeenPhase;
-      out.guideStartT = _guideStartT;
-      out.lastSimTime = _lastSimTime;
+out.lastSeenPhase = _lastSeenPhase;
+out.guideStartT = _guideStartT;
+out.lastSimTime = _lastSimTime;
+
+// V3 mission state + block states for FF mid-flight support.
+out.v3State = {
+  init: _v3State.init,
+  ticks: _v3State.ticks,
+  missionPhase: _v3State.missionPhase,
+  missionPhaseStart: _v3State.missionPhaseStart,
+  stageIdx: _v3State.stageIdx,
+  boosterIdx: _v3State.boosterIdx,
+  preSplitBodyCount: _v3State.preSplitBodyCount,
+  mecoTriggered: _v3State.mecoTriggered,
+  splitDetected: _v3State.splitDetected,
+  fairingOpened: _v3State.fairingOpened,
+  deployCmdSimTime: _v3State.deployCmdSimTime,
+  insertionResult: _v3State.insertionResult,
+  suicideResult: _v3State.suicideResult,
+  lastAltKm: _v3State.lastAltKm,
+  lastAxialGap: _v3State.lastAxialGap,
+};
+if (_v3State.ascentBlock) out.v3AscentBlock = _v3State.ascentBlock.getState();
+if (_v3State.insertionBlock) out.v3InsertionBlock = _v3State.insertionBlock.getState();
+if (_v3State.suicideBlock) out.v3SuicideBlock = _v3State.suicideBlock.getState();
     } catch (e) {
-      console.warn('[guidance] exportGuideState failed', e);
+      console.warn("[guidance] exportGuideState failed", e);
     }
     return out;
   }
@@ -243,24 +316,53 @@ const Guidance = (function () {
       if (data.hState) Object.assign(_hState, data.hState);
       if (data.leoStateV2) Object.assign(_leoStateV2, data.leoStateV2);
       if (data.activeGuide !== undefined) _activeGuide = data.activeGuide;
-      if (data.guideConfigs && typeof data.guideConfigs === 'object') {
-        Object.keys(data.guideConfigs).forEach(name => {
+      if (data.guideConfigs && typeof data.guideConfigs === "object") {
+        Object.keys(data.guideConfigs).forEach((name) => {
           const v = data.guideConfigs[name];
-          if (v && typeof v === 'object') {
-            try { applyGuideConfig(name, v); } catch (e) {
-              console.warn('[guidance] importGuideState config restore failed for', name, e);
+          if (v && typeof v === "object") {
+            try {
+              applyGuideConfig(name, v);
+            } catch (e) {
+              console.warn(
+                "[guidance] importGuideState config restore failed for",
+                name,
+                e,
+              );
             }
           }
         });
       }
-      if (data.phaseLog && typeof data.phaseLog === 'object') {
+      if (data.phaseLog && typeof data.phaseLog === "object") {
         _phaseLog = JSON.parse(JSON.stringify(data.phaseLog));
       }
       if (data.lastSeenPhase !== undefined) _lastSeenPhase = data.lastSeenPhase;
       if (data.guideStartT !== undefined) _guideStartT = data.guideStartT;
       if (data.lastSimTime !== undefined) _lastSimTime = data.lastSimTime;
+
+// V3 restore
+if (data.v3State) {
+  Object.keys(data.v3State).forEach(k => { _v3State[k] = data.v3State[k]; });
+}
+if (data.v3AscentBlock) {
+  if (!_v3State.ascentBlock) {
+    _v3State.ascentBlock = FUNDAMENTAL_BLOCKS.ascent.createInstance();
+  }
+  _v3State.ascentBlock.setState(data.v3AscentBlock);
+}
+if (data.v3InsertionBlock) {
+  if (!_v3State.insertionBlock) {
+    _v3State.insertionBlock = FUNDAMENTAL_BLOCKS.insertion.createInstance();
+  }
+  _v3State.insertionBlock.setState(data.v3InsertionBlock);
+}
+if (data.v3SuicideBlock) {
+  if (!_v3State.suicideBlock) {
+    _v3State.suicideBlock = FUNDAMENTAL_BLOCKS.suicide.createInstance();
+  }
+  _v3State.suicideBlock.setState(data.v3SuicideBlock);
+}
     } catch (e) {
-      console.warn('[guidance] importGuideState failed', e);
+      console.warn("[guidance] importGuideState failed", e);
     }
   }
 
@@ -299,7 +401,7 @@ const Guidance = (function () {
   const _hState = {
     init: false,
     ticks: 0,
-    phase: 'PUSH',
+    phase: "PUSH",
     phaseStart: 0,
     currentDeltaDeg: 0,
     lastThrottleSent: undefined,
@@ -335,10 +437,10 @@ const Guidance = (function () {
     if (E >= 0) return Infinity;
     const a = -GM / (2 * E);
     const h = r * vt;
-    const eSq = 1 + 2 * E * h * h / (GM * GM);
+    const eSq = 1 + (2 * E * h * h) / (GM * GM);
     const e = Math.sqrt(Math.max(0, eSq));
     if (e < 1e-9) {
-      return Math.PI * Math.sqrt(a * a * a / GM);
+      return Math.PI * Math.sqrt((a * a * a) / GM);
     }
     const cosE = (1 - r / a) / e;
     const sinE = (r * vr) / (e * Math.sqrt(GM * a));
@@ -363,7 +465,7 @@ const Guidance = (function () {
     if (!dNow || !dNow.massProps) return;
 
     const env = Derivation.getEnv();
-    const dt = (env && Number.isFinite(env.DT)) ? env.DT : (1 / 80);
+    const dt = env && Number.isFinite(env.DT) ? env.DT : 1 / 80;
     const M = dNow.massProps.M;
     if (!(M > 0)) return;
 
@@ -375,12 +477,13 @@ const Guidance = (function () {
     // ---------- Init ----------
     if (!_hState.init) {
       _hState.init = true;
-      _hState.phase = 'PRE_COAST';
+      _hState.phase = "PRE_COAST";
       _hState.phaseStart = simT;
     }
 
     // ---------- Predict next-tick state ----------
-    const cosTc = Math.cos(dNow.theta), sinTc = Math.sin(dNow.theta);
+    const cosTc = Math.cos(dNow.theta),
+      sinTc = Math.sin(dNow.theta);
     const thrustIxC = dNow.thrustBodyX * cosTc - dNow.thrustBodyY * sinTc;
     const thrustIyC = dNow.thrustBodyX * sinTc + dNow.thrustBodyY * cosTc;
     const aIxC = dNow.gVecX + (thrustIxC + dNow.dragVecX) / M;
@@ -397,20 +500,33 @@ const Guidance = (function () {
     const sloshV_n = sloshNow.velocity || 0;
 
     const engines = body.engines || [];
-    const gimbalTarget = cfg.GIMBAL_TARGET || 'all';
-    const gimbals = engines.filter(e => e.gimbal && (gimbalTarget !== 'center' || e.isCenter));
+    const gimbalTarget = cfg.GIMBAL_TARGET || "all";
+    const gimbals = engines.filter(
+      (e) => e.gimbal && (gimbalTarget !== "center" || e.isCenter),
+    );
     if (!gimbals.length) return;
 
-    const g_N  = gimbals[0].gimbalDeg || 0;
-    const R_N  = Number.isFinite(gimbals[0].targetGimbalRateDegS)
-      ? gimbals[0].targetGimbalRateDegS : 0;
+    const g_N = gimbals[0].gimbalDeg || 0;
+    const R_N = Number.isFinite(gimbals[0].targetGimbalRateDegS)
+      ? gimbals[0].targetGimbalRateDegS
+      : 0;
     const g_N1 = g_N + R_N * dt;
 
-    const dNext = Derivation.deriveForState(snapshot, idx, {
-      rx: rx_n, ry: ry_n, vx: vx_n, vy: vy_n,
-      theta: theta_n, omega: omega_n,
-      slosh: { offset: sloshX_n, velocity: sloshV_n },
-    }, g_N1, cfg.GIMBAL_TARGET);
+    const dNext = Derivation.deriveForState(
+      snapshot,
+      idx,
+      {
+        rx: rx_n,
+        ry: ry_n,
+        vx: vx_n,
+        vy: vy_n,
+        theta: theta_n,
+        omega: omega_n,
+        slosh: { offset: sloshX_n, velocity: sloshV_n },
+      },
+      g_N1,
+      cfg.GIMBAL_TARGET,
+    );
     if (!dNext || !dNext.massProps) return;
 
     const τ_drag_next = dNext.torqueDrag;
@@ -436,15 +552,17 @@ const Guidance = (function () {
     const r2C = kC.u * kC.u + kC.v * kC.v;
     const PC = kC.v * kC.ax - kC.u * kC.ay;
     const QC = kC.u * kC.ax + kC.v * kC.ay;
-    const omegaAoANow = (r2C > 1e-6) ? (dNow.omega + PC / r2C) : 0;
-    const alphaAoANow = (r2C > 1e-6) ? (dNow.alphaAng - 2 * PC * QC / (r2C * r2C)) : 0;
+    const omegaAoANow = r2C > 1e-6 ? dNow.omega + PC / r2C : 0;
+    const alphaAoANow =
+      r2C > 1e-6 ? dNow.alphaAng - (2 * PC * QC) / (r2C * r2C) : 0;
 
     const kN = bodyFrameKinematics(dNext, dNext.massProps.M);
     const r2N = kN.u * kN.u + kN.v * kN.v;
-    const PN  = kN.v * kN.ax - kN.u * kN.ay;
-    const QN  = kN.u * kN.ax + kN.v * kN.ay;
-    const omegaAoANext = (r2N > 1e-6) ? (dNext.omega + PN / r2N) : 0;
-    const alphaAoANext = (r2N > 1e-6) ? (dNext.alphaAng - 2 * PN * QN / (r2N * r2N)) : 0;
+    const PN = kN.v * kN.ax - kN.u * kN.ay;
+    const QN = kN.u * kN.ax + kN.v * kN.ay;
+    const omegaAoANext = r2N > 1e-6 ? dNext.omega + PN / r2N : 0;
+    const alphaAoANext =
+      r2N > 1e-6 ? dNext.alphaAng - (2 * PN * QN) / (r2N * r2N) : 0;
 
     _hState.lastAoANowDeg = dNow.alphaDeg;
     _hState.lastAoANextDeg = dNext.alphaDeg;
@@ -454,45 +572,53 @@ const Guidance = (function () {
     _hState.lastAlphaAoANext = alphaAoANext;
 
     const Q_now = dNow.Q;
-    const dQ = (_hState.lastQ !== null) ? (Q_now - _hState.lastQ) / dt : 0;
+    const dQ = _hState.lastQ !== null ? (Q_now - _hState.lastQ) / dt : 0;
     _hState.lastQ = Q_now;
     _hState.lastDQ = dQ;
 
     // ---------- Phase transitions ----------
     const elapsed = simT - _hState.phaseStart;
 
-    if (_hState.phase === 'PRE_COAST') {
+    if (_hState.phase === "PRE_COAST") {
       if (elapsed >= cfg.INITIAL_COAST_S) {
-        _hState.phase = 'PUSH';
+        _hState.phase = "PUSH";
         _hState.phaseStart = simT;
 
-        const g_max_rad = (Number.isFinite(cfg.PUSH_MAX_GIMBAL_DEG) ? cfg.PUSH_MAX_GIMBAL_DEG : 0) * Math.PI / 180;
-        let A_gp = 0, B_gp = 0;
-        gimbals.forEach(e => {
+        const g_max_rad =
+          ((Number.isFinite(cfg.PUSH_MAX_GIMBAL_DEG)
+            ? cfg.PUSH_MAX_GIMBAL_DEG
+            : 0) *
+            Math.PI) /
+          180;
+        let A_gp = 0,
+          B_gp = 0;
+        gimbals.forEach((e) => {
           const F = (e.massFlowRate || 0) * (e.Ve || 0);
           A_gp += ((e.x || 0) - dNext.massProps.comX) * F;
           B_gp += F;
         });
         B_gp *= dNext.massProps.comY;
-        const tau_peak = A_gp * Math.cos(g_max_rad) + B_gp * Math.sin(g_max_rad);
+        const tau_peak =
+          A_gp * Math.cos(g_max_rad) + B_gp * Math.sin(g_max_rad);
         const Tp = cfg.PUSH_T_S;
-        const deltaRad = (I_next > 0) ? (tau_peak * Tp * Tp) / (2 * Math.PI * I_next) : 0;
-        _hState.currentDeltaDeg = deltaRad * 180 / Math.PI;
+        const deltaRad =
+          I_next > 0 ? (tau_peak * Tp * Tp) / (2 * Math.PI * I_next) : 0;
+        _hState.currentDeltaDeg = (deltaRad * 180) / Math.PI;
         _hState.lastLockedDeltaDeg = _hState.currentDeltaDeg;
       }
-    } else if (_hState.phase === 'PUSH') {
+    } else if (_hState.phase === "PUSH") {
       if (elapsed >= cfg.PUSH_T_S) {
-        _hState.phase = 'COAST';
+        _hState.phase = "COAST";
         _hState.phaseStart = simT;
       }
-    } else if (_hState.phase === 'COAST') {
+    } else if (_hState.phase === "COAST") {
       if (dNow.alphaDeg >= 0) {
-        _hState.phase = 'HOLD';
+        _hState.phase = "HOLD";
         _hState.phaseStart = simT;
       }
-    } else if (_hState.phase === 'HOLD') {
+    } else if (_hState.phase === "HOLD") {
       if (dNow.alphaDeg < 0) {
-        _hState.phase = 'COASTnAoADAMP';
+        _hState.phase = "COASTnAoADAMP";
         _hState.phaseStart = simT;
       }
     }
@@ -500,23 +626,26 @@ const Guidance = (function () {
 
     // ---------- τ_desired ----------
     let τ_desired = 0;
-    if (_hState.phase === 'PUSH') {
+    if (_hState.phase === "PUSH") {
       const T = cfg.PUSH_T_S;
-      const Δθ_rad = _hState.currentDeltaDeg * Math.PI / 180;
+      const Δθ_rad = (_hState.currentDeltaDeg * Math.PI) / 180;
       const A_ang = (2 * Math.PI * Δθ_rad) / (T * T);
       const omega_ang = (2 * Math.PI) / T;
       const tRel = Math.max(0, Math.min(T, elapsed));
-      τ_desired = cfg.PUSH_EAST_SIGN * I_next * A_ang * Math.sin(omega_ang * tRel);
+      τ_desired =
+        cfg.PUSH_EAST_SIGN * I_next * A_ang * Math.sin(omega_ang * tRel);
       _hState.lastTauDQ = 0;
-    } else if (_hState.phase === 'COAST' || _hState.phase === 'PRE_COAST') {
+    } else if (_hState.phase === "COAST" || _hState.phase === "PRE_COAST") {
       τ_desired = 0;
       _hState.lastTauDQ = 0;
-    } else if (_hState.phase === 'COASTnAoADAMP') {
-      τ_desired = (-I_next * cfg.COAST_DAMP_GAIN * dNext.alphaDeg) /
+    } else if (_hState.phase === "COASTnAoADAMP") {
+      τ_desired =
+        (-I_next * cfg.COAST_DAMP_GAIN * dNext.alphaDeg) /
         (cfg.COAST_DAMP_K * cfg.COAST_DAMP_K);
       _hState.lastTauDQ = 0;
-    } else { // HOLD
-      const useNow = (dQ < 0);
+    } else {
+      // HOLD
+      const useNow = dQ < 0;
       const I_use = useNow ? dNow.massProps.I : I_next;
       const alpha_use = useNow ? alphaAoANow : alphaAoANext;
       const omega_use = useNow ? omegaAoANow : omegaAoANext;
@@ -524,9 +653,10 @@ const Guidance = (function () {
       const τ_damp = -cfg.HOLD_K_DAMP * I_use * omega_use;
 
       const qRef = cfg.HOLD_Q_REF;
-      const f_dQ = (Number.isFinite(qRef) && qRef > 0) ?
-        0.5 * (1 - Math.tanh(dQ / qRef)) :
-        0.5;
+      const f_dQ =
+        Number.isFinite(qRef) && qRef > 0
+          ? 0.5 * (1 - Math.tanh(dQ / qRef))
+          : 0.5;
       const τ_dQ = -cfg.HOLD_K_DQ * I_use * f_dQ;
       _hState.lastTauDQ = τ_dQ;
 
@@ -540,8 +670,9 @@ const Guidance = (function () {
 
     const comX = dNext.massProps.comX;
     const comY = dNext.massProps.comY;
-    let A_g = 0, B_g = 0;
-    gimbals.forEach(e => {
+    let A_g = 0,
+      B_g = 0;
+    gimbals.forEach((e) => {
       const F = (e.massFlowRate || 0) * (e.Ve || 0);
       A_g += ((e.x || 0) - comX) * F;
       B_g += F;
@@ -555,14 +686,19 @@ const Guidance = (function () {
       const phi = Math.atan2(A_g, B_g);
       const w1 = _hWrapPi(Math.asin(ratio) - phi);
       const w2 = _hWrapPi(Math.PI - Math.asin(ratio) - phi);
-      g_req_rad = (Math.abs(w1) <= Math.abs(w2)) ? w1 : w2;
+      g_req_rad = Math.abs(w1) <= Math.abs(w2) ? w1 : w2;
     }
-    let g_req_deg = g_req_rad * 180 / Math.PI;
-    const MAX_ANG = (env && Number.isFinite(env.GIMBAL_MAX_DEG)) ? env.GIMBAL_MAX_DEG : 20;
-    if (Math.abs(g_req_deg) > MAX_ANG) g_req_deg = Math.sign(g_req_deg) * MAX_ANG;
+    let g_req_deg = (g_req_rad * 180) / Math.PI;
+    const MAX_ANG =
+      env && Number.isFinite(env.GIMBAL_MAX_DEG) ? env.GIMBAL_MAX_DEG : 20;
+    if (Math.abs(g_req_deg) > MAX_ANG)
+      g_req_deg = Math.sign(g_req_deg) * MAX_ANG;
 
     const R_req = (g_req_deg - g_N) / dt;
-    const MAX_RATE = (env && Number.isFinite(env.GIMBAL_RATE_DEG_S)) ? env.GIMBAL_RATE_DEG_S : 40;
+    const MAX_RATE =
+      env && Number.isFinite(env.GIMBAL_RATE_DEG_S)
+        ? env.GIMBAL_RATE_DEG_S
+        : 40;
     const R_cmd = Math.max(-MAX_RATE, Math.min(MAX_RATE, R_req));
 
     _hState.lastGRate = R_cmd;
@@ -573,45 +709,58 @@ const Guidance = (function () {
 
     // ---------- Throttle ----------
     let refMax = 0;
-    engines.forEach(e => { if (Number.isFinite(e.maxMassFlowRate) && e.maxMassFlowRate > refMax) refMax = e.maxMassFlowRate; });
+    engines.forEach((e) => {
+      if (Number.isFinite(e.maxMassFlowRate) && e.maxMassFlowRate > refMax)
+        refMax = e.maxMassFlowRate;
+    });
 
-    let thrFrac = (Number.isFinite(cfg.THROTTLE_FRAC) && cfg.THROTTLE_FRAC > 0) ?
-      Math.min(1, cfg.THROTTLE_FRAC) : 1.0;
+    let thrFrac =
+      Number.isFinite(cfg.THROTTLE_FRAC) && cfg.THROTTLE_FRAC > 0
+        ? Math.min(1, cfg.THROTTLE_FRAC)
+        : 1.0;
 
-    const thrLow = Number.isFinite(cfg.THROTTLE_ALT_LOW_KM) ? cfg.THROTTLE_ALT_LOW_KM : Infinity;
-    const thrHigh = Number.isFinite(cfg.THROTTLE_ALT_HIGH_KM) ? cfg.THROTTLE_ALT_HIGH_KM : -Infinity;
+    const thrLow = Number.isFinite(cfg.THROTTLE_ALT_LOW_KM)
+      ? cfg.THROTTLE_ALT_LOW_KM
+      : Infinity;
+    const thrHigh = Number.isFinite(cfg.THROTTLE_ALT_HIGH_KM)
+      ? cfg.THROTTLE_ALT_HIGH_KM
+      : -Infinity;
     if (altKm >= thrLow && altKm < thrHigh) {
-      const lowFrac = Number.isFinite(cfg.THROTTLE_FRAC_LOW) ? cfg.THROTTLE_FRAC_LOW : thrFrac;
+      const lowFrac = Number.isFinite(cfg.THROTTLE_FRAC_LOW)
+        ? cfg.THROTTLE_FRAC_LOW
+        : thrFrac;
       thrFrac = Math.max(0, Math.min(1, lowFrac));
     }
 
     const targetFlow = refMax * thrFrac;
-    if (_hState.lastThrottleSent === undefined ||
-      Math.abs(targetFlow - _hState.lastThrottleSent) > 0.5) {
+    if (
+      _hState.lastThrottleSent === undefined ||
+      Math.abs(targetFlow - _hState.lastThrottleSent) > 0.5
+    ) {
       send(cmdSetAllThrottle(targetFlow));
       _hState.lastThrottleSent = targetFlow;
     }
   }
 
-  _hTick.start = function() {
+  _hTick.start = function () {
     send(cmdSetAllThrottle(Infinity));
     _hState.init = false;
     _hState.ticks = 0;
-    _hState.phase = 'PRE_COAST';
+    _hState.phase = "PRE_COAST";
     _hState.phaseStart = 0;
     _hState.currentDeltaDeg = 0;
     _hState.lastThrottleSent = undefined;
     _hState.lastQ = null;
     _hState.lastDQ = 0;
-    console.log('[ascent sub-machine] started');
+    console.log("[ascent sub-machine] started");
   };
   _hTick.stop = function () {
     send(cmdSetAllThrottle(0));
     send(cmdSetGimbalRate(0));
     _hState.init = false;
-    console.log('[ascent sub-machine] stopped');
+    console.log("[ascent sub-machine] stopped");
   };
-  _hTick.getStatus = function() {
+  _hTick.getStatus = function () {
     return {
       ticks: _hState.ticks,
       phase: _hState.phase,
@@ -661,7 +810,7 @@ const Guidance = (function () {
       THROTTLE_FRAC_LOW: 0.7,
       COAST_DAMP_GAIN: 16,
       COAST_DAMP_K: 4.0,
-      GIMBAL_TARGET: 'center',
+      GIMBAL_TARGET: "center",
     },
 
     MECO_APOGEE_KM: 150,
@@ -683,7 +832,7 @@ const Guidance = (function () {
     COAST_ROTATE_TIMEOUT_S: 240,
     COAST_WAIT_BEFORE_APOGEE_S: 90,
 
-    CIRC_TRIGGER_LEAD_S: 1.0,
+    CIRC_TRIGGER_LEAD_S: 3.6,
     CIRC_DECAY_FRAC: 0.05,
     CIRC_ATT_KP: 0.5,
     CIRC_ATT_KD: 4.0,
@@ -708,7 +857,7 @@ const Guidance = (function () {
   const _leoStateV2 = {
     init: false,
     ticks: 0,
-    phase: 'ASCENT',
+    phase: "ASCENT",
     phaseStart: 0,
     mecoTriggered: false,
     splitDetected: false,
@@ -756,7 +905,11 @@ const Guidance = (function () {
     const dtPred = LEO_INSERTION_V2.SUICIDE_PREDICT_DT_S;
     const maxT = LEO_INSERTION_V2.SUICIDE_PREDICT_HORIZON_S;
 
-    let px = rx, py = ry, pvx = vx, pvy = vy, t = 0;
+    let px = rx,
+      py = ry,
+      pvx = vx,
+      pvy = vy,
+      t = 0;
     while (t < maxT) {
       const r = Math.hypot(px, py);
       if (r <= R) {
@@ -765,16 +918,18 @@ const Guidance = (function () {
         return { phiEf, tImpact: t, rImpact: r };
       }
       const r3 = r * r * r;
-      const ax = -GM * px / r3, ay = -GM * py / r3;
+      const ax = (-GM * px) / r3,
+        ay = (-GM * py) / r3;
       const vxh = pvx + 0.5 * ax * dtPred;
       const vyh = pvy + 0.5 * ay * dtPred;
       const nx = px + vxh * dtPred;
       const ny = py + vyh * dtPred;
       const nr = Math.hypot(nx, ny);
       const nr3 = nr * nr * nr;
-      pvx = vxh + 0.5 * (-GM * nx / nr3) * dtPred;
-      pvy = vyh + 0.5 * (-GM * ny / nr3) * dtPred;
-      px = nx; py = ny;
+      pvx = vxh + 0.5 * ((-GM * nx) / nr3) * dtPred;
+      pvy = vyh + 0.5 * ((-GM * ny) / nr3) * dtPred;
+      px = nx;
+      py = ny;
       t += dtPred;
     }
     return null;
@@ -782,67 +937,96 @@ const Guidance = (function () {
 
   function _leoTickV2(snapshot) {
     _leoStateV2.ticks++;
-    if (!snapshot || !Array.isArray(snapshot.bodies) || !snapshot.bodies.length) return;
+    if (!snapshot || !Array.isArray(snapshot.bodies) || !snapshot.bodies.length)
+      return;
 
     let idx = Number.isInteger(_leoStateV2.missionBodyIdx)
       ? _leoStateV2.missionBodyIdx
-      : (Number.isInteger(snapshot.activeBodyIndex) ? snapshot.activeBodyIndex : 0);
+      : Number.isInteger(snapshot.activeBodyIndex)
+        ? snapshot.activeBodyIndex
+        : 0;
     const body = snapshot.bodies[idx];
     if (!body) return;
     const simT = snapshot.simTime;
 
     // ---------- Init ----------
     if (!_leoStateV2.init) {
-  _leoStateV2.init = true;
-  _leoStateV2.phase = 'ASCENT';
-  _leoStateV2.phaseStart = simT;
-  _leoStateV2.initialBodyCount = snapshot.bodies.length;
-  _leoStateV2.preSplitBodyId = body.id || null;
-  _leoStateV2.stageIdx = idx;
-  _leoStateV2.missionBodyIdx = idx;
-  
-  // One-time capture of the stack mass and fuel the guide is actually
-  // flying with. This is the ground truth for what FF vs 1x see at
-  // t=0 — if the initial mass differs, the entire trajectory shifts.
-  try {
-    const initD = Derivation.derive(snapshot, idx);
-    if (initD && initD.massProps) {
-      _leoStateV2.initStackMass = initD.massProps.M;
-      _leoStateV2.initComH = initD.massProps.comY;
-      _leoStateV2.initI = initD.massProps.I;
-    }
-    _leoStateV2.initFuelMass = body.fuelMass;
-    _leoStateV2.initMemberFuel = Array.isArray(body.memberFuel) ? body.memberFuel.slice() : null;
-  } catch (e) {
-    console.error('[leoInsertionV2] init mass capture failed', e);
-  }
-      if (typeof Guidance !== 'undefined' && Guidance.setMissionBody) {
+      _leoStateV2.init = true;
+      _leoStateV2.phase = "ASCENT";
+      _leoStateV2.phaseStart = simT;
+      _leoStateV2.initialBodyCount = snapshot.bodies.length;
+      _leoStateV2.preSplitBodyId = body.id || null;
+      _leoStateV2.stageIdx = idx;
+      _leoStateV2.missionBodyIdx = idx;
+
+      // One-time capture of the stack mass and fuel the guide is actually
+      // flying with. This is the ground truth for what FF vs 1x see at
+      // t=0 — if the initial mass differs, the entire trajectory shifts.
+      try {
+        const initD = Derivation.derive(snapshot, idx);
+        if (initD && initD.massProps) {
+          _leoStateV2.initStackMass = initD.massProps.M;
+          _leoStateV2.initComH = initD.massProps.comY;
+          _leoStateV2.initI = initD.massProps.I;
+        }
+        _leoStateV2.initFuelMass = body.fuelMass;
+        _leoStateV2.initMemberFuel = Array.isArray(body.memberFuel)
+          ? body.memberFuel.slice()
+          : null;
+      } catch (e) {
+        console.error("[leoInsertionV2] init mass capture failed", e);
+      }
+      if (typeof Guidance !== "undefined" && Guidance.setMissionBody) {
         Guidance.setMissionBody(idx);
       }
-      if (typeof _hTick !== 'undefined' && typeof _hTick.start === 'function') {
-        try { _hTick.start(); } catch (e) { console.error('[leoInsertionV2] _hTick.start failed', e); }
+      if (typeof _hTick !== "undefined" && typeof _hTick.start === "function") {
+        try {
+          _hTick.start();
+        } catch (e) {
+          console.error("[leoInsertionV2] _hTick.start failed", e);
+        }
       }
 
       // Boot-time contract check — env + engine fields must be present.
       (function validateContracts() {
         const envLocal = Derivation.getEnv();
-        const requiredEnv = ['DT', 'GM_EARTH', 'EARTH_RADIUS', 'EARTH_OMEGA',
-          'GIMBAL_MAX_DEG', 'GIMBAL_RATE_DEG_S'];
-        const missEnv = requiredEnv.filter(k => !Number.isFinite(envLocal[k]));
+        const requiredEnv = [
+          "DT",
+          "GM_EARTH",
+          "EARTH_RADIUS",
+          "EARTH_OMEGA",
+          "GIMBAL_MAX_DEG",
+          "GIMBAL_RATE_DEG_S",
+        ];
+        const missEnv = requiredEnv.filter(
+          (k) => !Number.isFinite(envLocal[k]),
+        );
         if (missEnv.length) {
-          console.error('[leoInsertionV2] CONTRACT VIOLATION — env missing:',
-            missEnv.join(', '));
+          console.error(
+            "[leoInsertionV2] CONTRACT VIOLATION — env missing:",
+            missEnv.join(", "),
+          );
         }
         const eng = body.engines && body.engines[0];
-        if (!eng) { console.error('[leoInsertionV2] CONTRACT VIOLATION — no engine[0]'); return; }
-        const requiredEng = ['Ve', 'maxMassFlowRate', 'startupDurationS', 'shutdownDurationS'];
-        const missEng = requiredEng.filter(k => !Number.isFinite(eng[k]));
+        if (!eng) {
+          console.error("[leoInsertionV2] CONTRACT VIOLATION — no engine[0]");
+          return;
+        }
+        const requiredEng = [
+          "Ve",
+          "maxMassFlowRate",
+          "startupDurationS",
+          "shutdownDurationS",
+        ];
+        const missEng = requiredEng.filter((k) => !Number.isFinite(eng[k]));
         if (missEng.length) {
-          console.error('[leoInsertionV2] CONTRACT VIOLATION — engine missing:',
-            missEng.join(', '));
+          console.error(
+            "[leoInsertionV2] CONTRACT VIOLATION — engine missing:",
+            missEng.join(", "),
+          );
         }
       })();
-      console.log('[leoInsertionV2] started, phase ASCENT');
+      console.log("[leoInsertionV2] started, phase ASCENT");
     }
 
     // ---------- Derive current state + next-tick prediction ----------
@@ -856,7 +1040,8 @@ const Guidance = (function () {
 
     let dNext = null;
     if (M_d > 0) {
-      const cosT = Math.cos(d.theta), sinT = Math.sin(d.theta);
+      const cosT = Math.cos(d.theta),
+        sinT = Math.sin(d.theta);
       const thrustIx = d.thrustBodyX * cosT - d.thrustBodyY * sinT;
       const thrustIy = d.thrustBodyX * sinT + d.thrustBodyY * cosT;
       const aIx = d.gVecX + (thrustIx + d.dragVecX) / M_d;
@@ -880,15 +1065,16 @@ const Guidance = (function () {
     // Phase machine
     // ==========================================================
     switch (_leoStateV2.phase) {
-
-      case 'ASCENT': {
-        if (typeof _hTick === 'function') {
+      case "ASCENT": {
+        if (typeof _hTick === "function") {
           _hTick(snapshot, LEO_INSERTION_V2.ASCENT);
         }
         if (!_leoStateV2.mecoTriggered) {
           const r_m = Math.hypot(body.rx, body.ry);
-          const ux_m = body.rx / r_m, uy_m = body.ry / r_m;
-          const ex_m = body.ry / r_m, ey_m = -body.rx / r_m;
+          const ux_m = body.rx / r_m,
+            uy_m = body.ry / r_m;
+          const ex_m = body.ry / r_m,
+            ey_m = -body.rx / r_m;
           const vr_m = body.vx * ux_m + body.vy * uy_m;
           const vt_m = body.vx * ex_m + body.vy * ey_m;
           const GM_m = env.GM_EARTH;
@@ -897,112 +1083,157 @@ const Guidance = (function () {
           if (E_m < 0) {
             const a_m = -GM_m / (2 * E_m);
             const h_m = r_m * vt_m;
-            const e_m = Math.sqrt(Math.max(0, 1 + 2 * E_m * h_m * h_m / (GM_m * GM_m)));
+            const e_m = Math.sqrt(
+              Math.max(0, 1 + (2 * E_m * h_m * h_m) / (GM_m * GM_m)),
+            );
             apogeeKm = (a_m * (1 + e_m) - env.EARTH_RADIUS) / 1000;
           }
           _leoStateV2.lastApogeeKm = apogeeKm;
           if (apogeeKm >= LEO_INSERTION_V2.MECO_APOGEE_KM) {
             _leoStateV2.mecoTriggered = true;
-            _leoStateV2.phase = 'MECO_SPOOL';
+            _leoStateV2.phase = "MECO_SPOOL";
             _leoStateV2.phaseStart = simT;
-            if (typeof cmdSeparate === 'function') send(cmdSeparate());
-            console.log('[leoInsertionV2] MECO — apogee',
-              apogeeKm.toFixed(2), 'km — separation commanded');
+            if (typeof cmdSeparate === "function") send(cmdSeparate());
+            console.log(
+              "[leoInsertionV2] MECO — apogee",
+              apogeeKm.toFixed(2),
+              "km — separation commanded",
+            );
           }
         }
         break;
       }
 
-      case 'MECO_SPOOL': {
+      case "MECO_SPOOL": {
         if (snapshot.bodies.length > _leoStateV2.initialBodyCount) {
           _leoStateV2.splitDetected = true;
-          const stageIdx = _leoStateV2.preSplitBodyId != null
-            ? snapshot.bodies.findIndex(b => b.id === _leoStateV2.preSplitBodyId)
-            : idx;
-          const boosterIdx = snapshot.bodies.findIndex((b, i) =>
-            i !== stageIdx && b && !b.isActive);
-          _leoStateV2.stageIdx = (stageIdx >= 0) ? stageIdx : idx;
-          _leoStateV2.boosterIdx = (boosterIdx >= 0) ? boosterIdx : (1 - _leoStateV2.stageIdx);
-          _leoStateV2.phase = 'SEPARATED_AXIAL';
+          const stageIdx =
+            _leoStateV2.preSplitBodyId != null
+              ? snapshot.bodies.findIndex(
+                  (b) => b.id === _leoStateV2.preSplitBodyId,
+                )
+              : idx;
+          const boosterIdx = snapshot.bodies.findIndex(
+            (b, i) => i !== stageIdx && b && !b.isActive,
+          );
+          _leoStateV2.stageIdx = stageIdx >= 0 ? stageIdx : idx;
+          _leoStateV2.boosterIdx =
+            boosterIdx >= 0 ? boosterIdx : 1 - _leoStateV2.stageIdx;
+          _leoStateV2.phase = "SEPARATED_AXIAL";
           _leoStateV2.phaseStart = simT;
-          console.log('[leoInsertionV2] split detected — booster idx', _leoStateV2.boosterIdx,
-            'stage idx', _leoStateV2.stageIdx);
+          console.log(
+            "[leoInsertionV2] split detected — booster idx",
+            _leoStateV2.boosterIdx,
+            "stage idx",
+            _leoStateV2.stageIdx,
+          );
           break;
         }
         if (simT - _leoStateV2.phaseStart > LEO_INSERTION_V2.SPLIT_TIMEOUT_S) {
-          console.warn('[leoInsertionV2] split timeout');
-          _leoStateV2.phase = 'DONE';
+          console.warn("[leoInsertionV2] split timeout");
+          _leoStateV2.phase = "DONE";
         }
         break;
       }
 
-      case 'SEPARATED_AXIAL': {
+      case "SEPARATED_AXIAL": {
         const bIdx = _leoStateV2.boosterIdx;
         const sIdx = _leoStateV2.stageIdx;
-        if (bIdx < 0 || sIdx < 0) { _leoStateV2.phase = 'DONE'; break; }
+        if (bIdx < 0 || sIdx < 0) {
+          _leoStateV2.phase = "DONE";
+          break;
+        }
         const boosterBody = snapshot.bodies[bIdx];
         const stageBody = snapshot.bodies[sIdx];
-        if (!boosterBody || !stageBody) { _leoStateV2.phase = 'DONE'; break; }
+        if (!boosterBody || !stageBody) {
+          _leoStateV2.phase = "DONE";
+          break;
+        }
 
-        const boosterDuties = GuideRCS.postSeparationAxialDuty(snapshot, bIdx, 'dn');
+        const boosterDuties = GuideRCS.postSeparationAxialDuty(
+          snapshot,
+          bIdx,
+          "dn",
+        );
         if (boosterDuties) send(cmdRcsDuty(boosterDuties, bIdx));
-        const stageDuties = GuideRCS.postSeparationAxialDuty(snapshot, sIdx, 'up');
+        const stageDuties = GuideRCS.postSeparationAxialDuty(
+          snapshot,
+          sIdx,
+          "up",
+        );
         if (stageDuties) send(cmdRcsDuty(stageDuties, sIdx));
 
-        const boosterHeight = (boosterBody.members && boosterBody.members[0])
-          ? (boosterBody.members[0].height || 0) : 0;
+        const boosterHeight =
+          boosterBody.members && boosterBody.members[0]
+            ? boosterBody.members[0].height || 0
+            : 0;
         const upX = -Math.sin(stageBody.theta);
         const upY = Math.cos(stageBody.theta);
         const dx = stageBody.rx - boosterBody.rx;
         const dy = stageBody.ry - boosterBody.ry;
-        const axialGap = Math.max(0, (dx * upX + dy * upY) - boosterHeight);
+        const axialGap = Math.max(0, dx * upX + dy * upY - boosterHeight);
         _leoStateV2.lastAxialGap = axialGap;
 
         if (axialGap >= LEO_INSERTION_V2.AXIAL_SEP_TARGET_M) {
           send(cmdRcsDuty(null, sIdx));
           send(cmdRcsDuty(null, bIdx));
-          _leoStateV2.phase = 'STAGE_BURN';
+          _leoStateV2.phase = "STAGE_BURN";
           _leoStateV2.phaseStart = simT;
           _leoStateV2.lastApogeeSimT = 0;
-          console.log('[leoInsertionV2] axial gap', axialGap.toFixed(2),
-            'm — entering STAGE_BURN');
+          console.log(
+            "[leoInsertionV2] axial gap",
+            axialGap.toFixed(2),
+            "m — entering STAGE_BURN",
+          );
         }
         break;
       }
 
-      case 'STAGE_BURN': {
+      case "STAGE_BURN": {
         if (!dNext || !dNext.massProps) break;
-        const gimbals = (body.engines || []).filter(e => e.gimbal);
-        if (!gimbals.length) { _leoStateV2.phase = 'DONE'; break; }
+        const gimbals = (body.engines || []).filter((e) => e.gimbal);
+        if (!gimbals.length) {
+          _leoStateV2.phase = "DONE";
+          break;
+        }
 
         send(cmdSetAllThrottle(Infinity));
 
         const I_next = dNext.massProps.I;
         const localVert = Math.atan2(-body.rx, body.ry);
-        const currentTiltDeg = (body.theta - localVert) * 180 / Math.PI;
+        const currentTiltDeg = ((body.theta - localVert) * 180) / Math.PI;
 
-        if (!_leoStateV2.stageBurnLocked &&
-          Math.abs(currentTiltDeg) >= LEO_INSERTION_V2.STAGE_BURN_LOCK_TILT_DEG) {
+        if (
+          !_leoStateV2.stageBurnLocked &&
+          Math.abs(currentTiltDeg) >= LEO_INSERTION_V2.STAGE_BURN_LOCK_TILT_DEG
+        ) {
           _leoStateV2.stageBurnLocked = true;
-          _leoStateV2.stageBurnTargetTiltDeg = (currentTiltDeg >= 0)
-            ? LEO_INSERTION_V2.STAGE_BURN_LOCK_TILT_DEG
-            : -LEO_INSERTION_V2.STAGE_BURN_LOCK_TILT_DEG;
-          console.log('[leoInsertionV2] STAGE_BURN attitude locked at tilt ' +
-            _leoStateV2.stageBurnTargetTiltDeg.toFixed(1) + '° (θ_rel=' +
-            currentTiltDeg.toFixed(2) + '°)');
+          _leoStateV2.stageBurnTargetTiltDeg =
+            currentTiltDeg >= 0
+              ? LEO_INSERTION_V2.STAGE_BURN_LOCK_TILT_DEG
+              : -LEO_INSERTION_V2.STAGE_BURN_LOCK_TILT_DEG;
+          console.log(
+            "[leoInsertionV2] STAGE_BURN attitude locked at tilt " +
+              _leoStateV2.stageBurnTargetTiltDeg.toFixed(1) +
+              "° (θ_rel=" +
+              currentTiltDeg.toFixed(2) +
+              "°)",
+          );
         }
 
         let tau_desired;
         if (_leoStateV2.stageBurnLocked) {
-          const targetAbsTheta = localVert +
-            _leoStateV2.stageBurnTargetTiltDeg * Math.PI / 180;
+          const targetAbsTheta =
+            localVert + (_leoStateV2.stageBurnTargetTiltDeg * Math.PI) / 180;
           const thetaErr = _hWrapPi(body.theta - targetAbsTheta);
           const r2 = body.rx * body.rx + body.ry * body.ry;
           const h = body.rx * body.vy - body.ry * body.vx;
           const omegaLocalVert = r2 > 1 ? h / r2 : 0;
           const omegaRelToTarget = body.omega - omegaLocalVert;
-          tau_desired = -I_next * (LEO_INSERTION_V2.CIRC_ATT_KP * thetaErr
-                                 + LEO_INSERTION_V2.CIRC_ATT_KD * omegaRelToTarget);
+          tau_desired =
+            -I_next *
+            (LEO_INSERTION_V2.CIRC_ATT_KP * thetaErr +
+              LEO_INSERTION_V2.CIRC_ATT_KD * omegaRelToTarget);
         } else {
           const gain = LEO_INSERTION_V2.ASCENT.COAST_DAMP_GAIN;
           const kd = LEO_INSERTION_V2.ASCENT.COAST_DAMP_K;
@@ -1013,8 +1244,9 @@ const Guidance = (function () {
         const g_N = gimbals[0].gimbalDeg || 0;
         const comX1 = dNext.massProps.comX;
         const comY1 = dNext.massProps.comY;
-        let A_g = 0, B_g = 0;
-        gimbals.forEach(e => {
+        let A_g = 0,
+          B_g = 0;
+        gimbals.forEach((e) => {
           const F = (e.massFlowRate || 0) * (e.Ve || 0);
           A_g += ((e.x || 0) - comX1) * F;
           B_g += F;
@@ -1027,20 +1259,24 @@ const Guidance = (function () {
           const phi = Math.atan2(A_g, B_g);
           const w1 = _hWrapPi(Math.asin(ratio) - phi);
           const w2 = _hWrapPi(Math.PI - Math.asin(ratio) - phi);
-          g_req_rad = (Math.abs(w1) <= Math.abs(w2)) ? w1 : w2;
+          g_req_rad = Math.abs(w1) <= Math.abs(w2) ? w1 : w2;
         }
-        let g_req_deg = g_req_rad * 180 / Math.PI;
+        let g_req_deg = (g_req_rad * 180) / Math.PI;
         if (Math.abs(g_req_deg) > env.GIMBAL_MAX_DEG) {
           g_req_deg = Math.sign(g_req_deg) * env.GIMBAL_MAX_DEG;
         }
         const R_req = (g_req_deg - g_N) / dt;
-        const R_cmd = Math.max(-env.GIMBAL_RATE_DEG_S,
-                      Math.min(env.GIMBAL_RATE_DEG_S, R_req));
+        const R_cmd = Math.max(
+          -env.GIMBAL_RATE_DEG_S,
+          Math.min(env.GIMBAL_RATE_DEG_S, R_req),
+        );
         send(cmdSetGimbalRate(R_cmd));
 
         const r_ap = Math.hypot(body.rx, body.ry);
-        const ux_ap = body.rx / r_ap, uy_ap = body.ry / r_ap;
-        const ex_ap = body.ry / r_ap, ey_ap = -body.rx / r_ap;
+        const ux_ap = body.rx / r_ap,
+          uy_ap = body.ry / r_ap;
+        const ex_ap = body.ry / r_ap,
+          ey_ap = -body.rx / r_ap;
         const vr_ap = body.vx * ux_ap + body.vy * uy_ap;
         const vt_ap = body.vx * ex_ap + body.vy * ey_ap;
         const GM_ap = env.GM_EARTH;
@@ -1050,86 +1286,110 @@ const Guidance = (function () {
         if (E_ap < 0) {
           const a_ap = -GM_ap / (2 * E_ap);
           const h_ap = r_ap * vt_ap;
-          const e_ap = Math.sqrt(Math.max(0, 1 + 2 * E_ap * h_ap * h_ap / (GM_ap * GM_ap)));
+          const e_ap = Math.sqrt(
+            Math.max(0, 1 + (2 * E_ap * h_ap * h_ap) / (GM_ap * GM_ap)),
+          );
           apogeeKm = (a_ap * (1 + e_ap) - R_ap) / 1000;
         }
         _leoStateV2.lastApogeeKm = apogeeKm;
 
         const h_sb = r_ap * vt_ap;
-        const p_sb = h_sb * h_sb / GM_ap;
-        const e_sb = Math.sqrt(Math.max(0, 1 + 2 * E_ap * h_sb * h_sb / (GM_ap * GM_ap)));
-        const perigeeKm_sb = ((p_sb / (1 + e_sb)) - R_ap) / 1000;
+        const p_sb = (h_sb * h_sb) / GM_ap;
+        const e_sb = Math.sqrt(
+          Math.max(0, 1 + (2 * E_ap * h_sb * h_sb) / (GM_ap * GM_ap)),
+        );
+        const perigeeKm_sb = (p_sb / (1 + e_sb) - R_ap) / 1000;
         _leoStateV2.lastPerigeeKm = perigeeKm_sb;
 
         const spoolS = body.engines[0].shutdownDurationS;
-        let mdot_now_sb = 0, maxMFR_sb = 0;
-        (body.engines || []).forEach(e => {
-          mdot_now_sb += (e.massFlowRate || 0);
-          if (Number.isFinite(e.maxMassFlowRate) && e.maxMassFlowRate > maxMFR_sb) {
+        let mdot_now_sb = 0,
+          maxMFR_sb = 0;
+        (body.engines || []).forEach((e) => {
+          mdot_now_sb += e.massFlowRate || 0;
+          if (
+            Number.isFinite(e.maxMassFlowRate) &&
+            e.maxMassFlowRate > maxMFR_sb
+          ) {
             maxMFR_sb = e.maxMassFlowRate;
           }
         });
-        const t_spool_actual = (maxMFR_sb > 0 && mdot_now_sb > 0)
-          ? mdot_now_sb * spoolS / maxMFR_sb : spoolS;
-        const a_avg_sb = (mdot_now_sb / 2) * body.engines[0].Ve / Math.max(1, dNext.massProps.M);
+        const t_spool_actual =
+          maxMFR_sb > 0 && mdot_now_sb > 0
+            ? (mdot_now_sb * spoolS) / maxMFR_sb
+            : spoolS;
+        const a_avg_sb =
+          ((mdot_now_sb / 2) * body.engines[0].Ve) /
+          Math.max(1, dNext.massProps.M);
         const dv_spool_sb = a_avg_sb * t_spool_actual;
-        const dv_with_margin = dv_spool_sb + LEO_INSERTION_V2.STAGE_BURN_CUTOFF_MARGIN_MPS;
+        const dv_with_margin =
+          dv_spool_sb + LEO_INSERTION_V2.STAGE_BURN_CUTOFF_MARGIN_MPS;
 
         let apogeePredicted_margin = apogeeKm;
-if (dv_with_margin > 0) {
-  const gimbalRad = (gimbals[0].gimbalDeg || 0) * Math.PI / 180;
-  const thetaThrust = body.theta - gimbalRad;
-  const thrustDirX = -Math.sin(thetaThrust);
-  const thrustDirY = Math.cos(thetaThrust);
-  const vx_pred = body.vx + thrustDirX * dv_with_margin;
-  const vy_pred = body.vy + thrustDirY * dv_with_margin;
-  const v2_pred = vx_pred * vx_pred + vy_pred * vy_pred;
-  const E_pred = 0.5 * v2_pred - GM_ap / r_ap;
-  if (E_pred < 0) {
-    const a_pred = -GM_ap / (2 * E_pred);
-    const h_pred = body.rx * vy_pred - body.ry * vx_pred;
-    const e_pred = Math.sqrt(Math.max(0,
-      1 + 2 * E_pred * h_pred * h_pred / (GM_ap * GM_ap)));
-    apogeePredicted_margin = (a_pred * (1 + e_pred) - R_ap) / 1000;
-  }
-}
+        if (dv_with_margin > 0) {
+          const gimbalRad = ((gimbals[0].gimbalDeg || 0) * Math.PI) / 180;
+          const thetaThrust = body.theta - gimbalRad;
+          const thrustDirX = -Math.sin(thetaThrust);
+          const thrustDirY = Math.cos(thetaThrust);
+          const vx_pred = body.vx + thrustDirX * dv_with_margin;
+          const vy_pred = body.vy + thrustDirY * dv_with_margin;
+          const v2_pred = vx_pred * vx_pred + vy_pred * vy_pred;
+          const E_pred = 0.5 * v2_pred - GM_ap / r_ap;
+          if (E_pred < 0) {
+            const a_pred = -GM_ap / (2 * E_pred);
+            const h_pred = body.rx * vy_pred - body.ry * vx_pred;
+            const e_pred = Math.sqrt(
+              Math.max(0, 1 + (2 * E_pred * h_pred * h_pred) / (GM_ap * GM_ap)),
+            );
+            apogeePredicted_margin = (a_pred * (1 + e_pred) - R_ap) / 1000;
+          }
+        }
 
-// Debug — capture every input that feeds the cutoff condition.
-// Any of these differing between FF and 1x at the same simTime
-// is the exact root cause of divergent cutoff timing.
-_leoStateV2.lastApogeePredicted = apogeePredicted_margin;
-_leoStateV2.lastDvSpool = dv_with_margin;
-_leoStateV2.lastMassM = dNext.massProps.M;
-_leoStateV2.lastTheta = body.theta;
-_leoStateV2.lastGimbalDeg = gimbals[0].gimbalDeg || 0;
-_leoStateV2.lastMdotNow = mdot_now_sb;
-_leoStateV2.lastMaxMFR = maxMFR_sb;
-_leoStateV2.lastApogee = apogeeKm;
-_leoStateV2.lastPerigee = perigeeKm_sb;
+        // Debug — capture every input that feeds the cutoff condition.
+        // Any of these differing between FF and 1x at the same simTime
+        // is the exact root cause of divergent cutoff timing.
+        _leoStateV2.lastApogeePredicted = apogeePredicted_margin;
+        _leoStateV2.lastDvSpool = dv_with_margin;
+        _leoStateV2.lastMassM = dNext.massProps.M;
+        _leoStateV2.lastTheta = body.theta;
+        _leoStateV2.lastGimbalDeg = gimbals[0].gimbalDeg || 0;
+        _leoStateV2.lastMdotNow = mdot_now_sb;
+        _leoStateV2.lastMaxMFR = maxMFR_sb;
+        _leoStateV2.lastApogee = apogeeKm;
+        _leoStateV2.lastPerigee = perigeeKm_sb;
 
-if (apogeeKm >= LEO_INSERTION_V2.TARGET_ORBIT_ALT_KM ||
-  apogeePredicted_margin >= LEO_INSERTION_V2.TARGET_ORBIT_ALT_KM) {
-  send(cmdSetAllThrottle(0));
-  send(cmdSetGimbalRate(0));
-  _leoStateV2.phase = 'RCS_BOOST';
-  _leoStateV2.phaseStart = simT;
-  console.log('[leoInsertionV2] STAGE_BURN cutoff — apogee ' +
-    apogeeKm.toFixed(1) + ' km (target ' +
-    LEO_INSERTION_V2.TARGET_ORBIT_ALT_KM + ') | perigee=' +
-    perigeeKm_sb.toFixed(1) + ' km, e=' + e_sb.toFixed(4) +
-    ' → RCS_BOOST');
-  break;
-}
-break;
+        if (
+          apogeeKm >= LEO_INSERTION_V2.TARGET_ORBIT_ALT_KM ||
+          apogeePredicted_margin >= LEO_INSERTION_V2.TARGET_ORBIT_ALT_KM
+        ) {
+          send(cmdSetAllThrottle(0));
+          send(cmdSetGimbalRate(0));
+          _leoStateV2.phase = "RCS_BOOST";
+          _leoStateV2.phaseStart = simT;
+          console.log(
+            "[leoInsertionV2] STAGE_BURN cutoff — apogee " +
+              apogeeKm.toFixed(1) +
+              " km (target " +
+              LEO_INSERTION_V2.TARGET_ORBIT_ALT_KM +
+              ") | perigee=" +
+              perigeeKm_sb.toFixed(1) +
+              " km, e=" +
+              e_sb.toFixed(4) +
+              " → RCS_BOOST",
+          );
+          break;
+        }
+        break;
       }
 
-      case 'RCS_BOOST': {
+      case "RCS_BOOST": {
         send(cmdSetAllThrottle(0));
         send(cmdSetGimbalRate(0));
 
         const r_b = Math.hypot(body.rx, body.ry);
-        const ux_b = body.rx / r_b, uy_b = body.ry / r_b;
-        const ex_b = body.ry / r_b, ey_b = -body.rx / r_b;
+        const ux_b = body.rx / r_b,
+          uy_b = body.ry / r_b;
+        const ex_b = body.ry / r_b,
+          ey_b = -body.rx / r_b;
         const vr_b = body.vx * ux_b + body.vy * uy_b;
         const vt_b = body.vx * ex_b + body.vy * ey_b;
         const GM_b = env.GM_EARTH;
@@ -1139,17 +1399,23 @@ break;
         if (E_b < 0) {
           const a_b = -GM_b / (2 * E_b);
           const h_b = r_b * vt_b;
-          const e_b = Math.sqrt(Math.max(0, 1 + 2 * E_b * h_b * h_b / (GM_b * GM_b)));
+          const e_b = Math.sqrt(
+            Math.max(0, 1 + (2 * E_b * h_b * h_b) / (GM_b * GM_b)),
+          );
           apogeeKm_b = (a_b * (1 + e_b) - R_b) / 1000;
         }
         _leoStateV2.lastApogeeKm = apogeeKm_b;
 
         const h_b2 = r_b * vt_b;
-        const p_b = h_b2 * h_b2 / GM_b;
-        const e_b2 = Math.sqrt(Math.max(0, 1 + 2 * E_b * h_b2 * h_b2 / (GM_b * GM_b)));
-        _leoStateV2.lastPerigeeKm = ((p_b / (1 + e_b2)) - R_b) / 1000;
+        const p_b = (h_b2 * h_b2) / GM_b;
+        const e_b2 = Math.sqrt(
+          Math.max(0, 1 + (2 * E_b * h_b2 * h_b2) / (GM_b * GM_b)),
+        );
+        _leoStateV2.lastPerigeeKm = (p_b / (1 + e_b2) - R_b) / 1000;
 
-        const engineStillFiring = (body.engines || []).some(e => (e.massFlowRate || 0) > 1);
+        const engineStillFiring = (body.engines || []).some(
+          (e) => (e.massFlowRate || 0) > 1,
+        );
         if (engineStillFiring) {
           send(cmdRcsDuty(null, idx));
           break;
@@ -1159,14 +1425,20 @@ break;
         const prevErr = _leoStateV2._prevApogeeErr;
         _leoStateV2._prevApogeeErr = errKm;
 
-        const crossed = (prevErr !== null && prevErr !== undefined &&
-          ((prevErr < 0 && errKm >= 0) || (prevErr > 0 && errKm <= 0)));
+        const crossed =
+          prevErr !== null &&
+          prevErr !== undefined &&
+          ((prevErr < 0 && errKm >= 0) || (prevErr > 0 && errKm <= 0));
 
         if (crossed) {
           send(cmdRcsDuty(null, idx));
 
-          const r_c = r_b, vr_c = vr_b, vt_c = vt_b;
-          const GM_c = GM_b, R_c = R_b, E_c = E_b;
+          const r_c = r_b,
+            vr_c = vr_b,
+            vt_c = vt_b;
+          const GM_c = GM_b,
+            R_c = R_b,
+            E_c = E_b;
           const a_c = E_c < 0 ? -GM_c / (2 * E_c) : r_c;
           const h_c = r_b * vt_c;
           const e_c = e_b2;
@@ -1177,15 +1449,17 @@ break;
 
           const v2_c = body.vx * body.vx + body.vy * body.vy;
           const rv_c = body.rx * body.vx + body.ry * body.vy;
-          const ex_ecc = ((v2_c - GM_c / r_c) * body.rx - rv_c * body.vx) / GM_c;
-          const ey_ecc = ((v2_c - GM_c / r_c) * body.ry - rv_c * body.vy) / GM_c;
+          const ex_ecc =
+            ((v2_c - GM_c / r_c) * body.rx - rv_c * body.vx) / GM_c;
+          const ey_ecc =
+            ((v2_c - GM_c / r_c) * body.ry - rv_c * body.vy) / GM_c;
           const e_mag = Math.hypot(ex_ecc, ey_ecc);
           let thetaApo;
           if (e_mag > 1e-6) {
             const phiApo = Math.atan2(-ex_ecc, -ey_ecc);
             const rx_apo = r_apo * Math.sin(phiApo);
             const ry_apo = r_apo * Math.cos(phiApo);
-            const sDir = (vt_c >= 0) ? 1 : -1;
+            const sDir = vt_c >= 0 ? 1 : -1;
             thetaApo = Math.atan2(-sDir * ry_apo, -sDir * rx_apo);
           } else {
             thetaApo = Math.atan2(-body.vx, body.vy);
@@ -1202,26 +1476,39 @@ break;
             t_burn_ideal * LEO_INSERTION_V2.COAST_BURN_MULTIPLIER;
           _leoStateV2.coastVOrbital = v_orb;
 
-          _leoStateV2.phase = 'COAST_ROTATE';
+          _leoStateV2.phase = "COAST_ROTATE";
           _leoStateV2.phaseStart = simT;
           _leoStateV2.coastRotateStartTilt = null;
           _leoStateV2.coastRotateMid = null;
 
-          console.log('[leoInsertionV2] RCS_BOOST done — apogee ' +
-            apogeeKm_b.toFixed(2) + ' km, perigee=' + _leoStateV2.lastPerigeeKm.toFixed(1) +
-            ' km | V_apo=' + v_apo.toFixed(1) + ' V_orb=' + v_orb.toFixed(1) +
-            ' Δv=' + dv_needed.toFixed(1) + ' → COAST_ROTATE');
+          console.log(
+            "[leoInsertionV2] RCS_BOOST done — apogee " +
+              apogeeKm_b.toFixed(2) +
+              " km, perigee=" +
+              _leoStateV2.lastPerigeeKm.toFixed(1) +
+              " km | V_apo=" +
+              v_apo.toFixed(1) +
+              " V_orb=" +
+              v_orb.toFixed(1) +
+              " Δv=" +
+              dv_needed.toFixed(1) +
+              " → COAST_ROTATE",
+          );
           break;
         }
 
-        const direction = (errKm > 0) ? 'dn' : 'up';
-        const duties = GuideRCS.postSeparationAxialDuty(snapshot, idx, direction);
+        const direction = errKm > 0 ? "dn" : "up";
+        const duties = GuideRCS.postSeparationAxialDuty(
+          snapshot,
+          idx,
+          direction,
+        );
         if (duties) send(cmdRcsDuty(duties, idx));
         else send(cmdRcsDuty(null, idx));
         break;
       }
 
-      case 'COAST_ROTATE': {
+      case "COAST_ROTATE": {
         send(cmdSetAllThrottle(0));
         send(cmdSetGimbalRate(0));
 
@@ -1229,14 +1516,18 @@ break;
         if (elapsed >= LEO_INSERTION_V2.COAST_ROTATE_TIMEOUT_S) {
           send(cmdRcsDuty(null, idx));
           if (_leoStateV2.coastRotateSecondPass) {
-            _leoStateV2.phase = 'COAST_HOLD';
+            _leoStateV2.phase = "COAST_HOLD";
             _leoStateV2.phaseStart = simT;
-            console.log('[leoInsertionV2] COAST_ROTATE (2nd pass) timeout — COAST_HOLD');
+            console.log(
+              "[leoInsertionV2] COAST_ROTATE (2nd pass) timeout — COAST_HOLD",
+            );
           } else {
-            _leoStateV2.phase = 'COAST_WAIT';
+            _leoStateV2.phase = "COAST_WAIT";
             _leoStateV2.phaseStart = simT;
             _leoStateV2.coastRotateSecondPass = true;
-            console.log('[leoInsertionV2] COAST_ROTATE (1st pass) timeout — COAST_WAIT');
+            console.log(
+              "[leoInsertionV2] COAST_ROTATE (1st pass) timeout — COAST_WAIT",
+            );
           }
           break;
         }
@@ -1245,10 +1536,10 @@ break;
         if (targetThetaRad === null || targetThetaRad === undefined) {
           send(cmdRcsDuty(null, idx));
           if (_leoStateV2.coastRotateSecondPass) {
-            _leoStateV2.phase = 'COAST_HOLD';
+            _leoStateV2.phase = "COAST_HOLD";
             _leoStateV2.phaseStart = simT;
           } else {
-            _leoStateV2.phase = 'COAST_WAIT';
+            _leoStateV2.phase = "COAST_WAIT";
             _leoStateV2.phaseStart = simT;
             _leoStateV2.coastRotateSecondPass = true;
           }
@@ -1258,128 +1549,185 @@ break;
         const thetaErr = _hWrapPi(body.theta - targetThetaRad);
         const omegaRel = body.omega;
 
-        if (Math.abs(thetaErr) < LEO_INSERTION_V2.COAST_ROTATE_TOL_DEG * Math.PI / 180 &&
-          Math.abs(omegaRel) < LEO_INSERTION_V2.COAST_ROTATE_OMEGA_TOL) {
+        if (
+          Math.abs(thetaErr) <
+            (LEO_INSERTION_V2.COAST_ROTATE_TOL_DEG * Math.PI) / 180 &&
+          Math.abs(omegaRel) < LEO_INSERTION_V2.COAST_ROTATE_OMEGA_TOL
+        ) {
           send(cmdRcsDuty(null, idx));
           if (!_leoStateV2.coastRotateSecondPass) {
             const r_cap = Math.hypot(body.rx, body.ry) || 1;
-            const ux_cap = body.rx / r_cap, uy_cap = body.ry / r_cap;
-            const ex_cap = body.ry / r_cap, ey_cap = -body.rx / r_cap;
+            const ux_cap = body.rx / r_cap,
+              uy_cap = body.ry / r_cap;
+            const ex_cap = body.ry / r_cap,
+              ey_cap = -body.rx / r_cap;
             const vr_cap = body.vx * ux_cap + body.vy * uy_cap;
             const vt_cap = body.vx * ex_cap + body.vy * ey_cap;
             const GM_cap = env.GM_EARTH;
-            _leoStateV2.coastRotateEndTRem = _hTimeToApogee(r_cap, vr_cap, vt_cap, GM_cap);
-            const E_cap = 0.5 * (vr_cap * vr_cap + vt_cap * vt_cap) - GM_cap / r_cap;
+            _leoStateV2.coastRotateEndTRem = _hTimeToApogee(
+              r_cap,
+              vr_cap,
+              vt_cap,
+              GM_cap,
+            );
+            const E_cap =
+              0.5 * (vr_cap * vr_cap + vt_cap * vt_cap) - GM_cap / r_cap;
             if (E_cap < 0) {
               const a_cap = -GM_cap / (2 * E_cap);
               const h_cap = r_cap * vt_cap;
-              const eSq_cap = 1 + 2 * E_cap * h_cap * h_cap / (GM_cap * GM_cap);
+              const eSq_cap =
+                1 + (2 * E_cap * h_cap * h_cap) / (GM_cap * GM_cap);
               const e_cap = Math.sqrt(Math.max(0, eSq_cap));
               const rApo_cap = a_cap * (1 + e_cap);
               const vApo_cap = Math.abs(h_cap) / rApo_cap;
               const vOrb_cap = Math.sqrt(GM_cap / rApo_cap);
-              _leoStateV2.coastRotateEndDeltaV = Math.max(0, vOrb_cap - vApo_cap);
+              _leoStateV2.coastRotateEndDeltaV = Math.max(
+                0,
+                vOrb_cap - vApo_cap,
+              );
             } else {
               _leoStateV2.coastRotateEndDeltaV = null;
             }
           }
           if (_leoStateV2.coastRotateSecondPass) {
-            _leoStateV2.phase = 'COAST_HOLD';
+            _leoStateV2.phase = "COAST_HOLD";
             _leoStateV2.phaseStart = simT;
-            console.log('[leoInsertionV2] COAST_ROTATE (2nd pass) done at θ=' +
-              (body.theta * 180 / Math.PI).toFixed(2) + '° → COAST_HOLD');
+            console.log(
+              "[leoInsertionV2] COAST_ROTATE (2nd pass) done at θ=" +
+                ((body.theta * 180) / Math.PI).toFixed(2) +
+                "° → COAST_HOLD",
+            );
           } else {
-            _leoStateV2.phase = 'COAST_WAIT';
+            _leoStateV2.phase = "COAST_WAIT";
             _leoStateV2.phaseStart = simT;
             _leoStateV2.coastRotateSecondPass = true;
-            console.log('[leoInsertionV2] COAST_ROTATE (1st pass) done at θ=' +
-              (body.theta * 180 / Math.PI).toFixed(2) + '° → COAST_WAIT');
+            console.log(
+              "[leoInsertionV2] COAST_ROTATE (1st pass) done at θ=" +
+                ((body.theta * 180) / Math.PI).toFixed(2) +
+                "° → COAST_WAIT",
+            );
           }
           break;
         }
 
-        const I_next = (dNext && dNext.massProps) ? dNext.massProps.I : 0;
-        if (!(I_next > 0)) { send(cmdRcsDuty(null, idx)); break; }
-        const tau_desired = -I_next *
-          (LEO_INSERTION_V2.CIRC_ATT_KP * thetaErr
-         + LEO_INSERTION_V2.CIRC_ATT_KD * omegaRel);
+        const I_next = dNext && dNext.massProps ? dNext.massProps.I : 0;
+        if (!(I_next > 0)) {
+          send(cmdRcsDuty(null, idx));
+          break;
+        }
+        const tau_desired =
+          -I_next *
+          (LEO_INSERTION_V2.CIRC_ATT_KP * thetaErr +
+            LEO_INSERTION_V2.CIRC_ATT_KD * omegaRel);
 
-        const result = GuideRCS.targetTorqueRcsNoNetForce(snapshot, tau_desired, idx);
+        const result = GuideRCS.targetTorqueRcsNoNetForce(
+          snapshot,
+          tau_desired,
+          idx,
+        );
         if (result && result.fires.length) send(cmdRcsDuty(result.duties, idx));
         else send(cmdRcsDuty(null, idx));
         break;
       }
 
-      case 'COAST_WAIT': {
+      case "COAST_WAIT": {
         send(cmdSetAllThrottle(0));
         send(cmdSetGimbalRate(0));
         send(cmdRcsDuty(null, idx));
 
         const r_c = Math.hypot(body.rx, body.ry);
-        const ux_c = body.rx / r_c, uy_c = body.ry / r_c;
-        const ex_c = body.ry / r_c, ey_c = -body.rx / r_c;
+        const ux_c = body.rx / r_c,
+          uy_c = body.ry / r_c;
+        const ex_c = body.ry / r_c,
+          ey_c = -body.rx / r_c;
         const vr_c = body.vx * ux_c + body.vy * uy_c;
         const vt_c = body.vx * ex_c + body.vy * ey_c;
         const t_rem = _hTimeToApogee(r_c, vr_c, vt_c, env.GM_EARTH);
 
         if (t_rem <= LEO_INSERTION_V2.COAST_WAIT_BEFORE_APOGEE_S) {
-          _leoStateV2.phase = 'COAST_ROTATE';
+          _leoStateV2.phase = "COAST_ROTATE";
           _leoStateV2.phaseStart = simT;
           _leoStateV2.coastRotateStartTilt = null;
           _leoStateV2.coastRotateMid = null;
-          console.log('[leoInsertionV2] COAST_WAIT done — t_rem=' +
-            t_rem.toFixed(1) + 's ≤ ' +
-            LEO_INSERTION_V2.COAST_WAIT_BEFORE_APOGEE_S + 's → COAST_ROTATE (2nd pass)');
+          console.log(
+            "[leoInsertionV2] COAST_WAIT done — t_rem=" +
+              t_rem.toFixed(1) +
+              "s ≤ " +
+              LEO_INSERTION_V2.COAST_WAIT_BEFORE_APOGEE_S +
+              "s → COAST_ROTATE (2nd pass)",
+          );
           break;
         }
         break;
       }
 
-      case 'COAST_HOLD': {
+      case "COAST_HOLD": {
         send(cmdSetAllThrottle(0));
         send(cmdSetGimbalRate(0));
 
         const r_c = Math.hypot(body.rx, body.ry);
-        const ux_c = body.rx / r_c, uy_c = body.ry / r_c;
-        const ex_c = body.ry / r_c, ey_c = -body.rx / r_c;
+        const ux_c = body.rx / r_c,
+          uy_c = body.ry / r_c;
+        const ex_c = body.ry / r_c,
+          ey_c = -body.rx / r_c;
         const vr_c = body.vx * ux_c + body.vy * uy_c;
         const vt_c = body.vx * ex_c + body.vy * ey_c;
         const t_rem = _hTimeToApogee(r_c, vr_c, vt_c, env.GM_EARTH);
 
         const prevVr = _leoStateV2._prevVr;
         _leoStateV2._prevVr = vr_c;
-        const apogeePeak = (prevVr !== null && prevVr !== undefined
-          && prevVr > 0 && vr_c <= 0);
+        const apogeePeak =
+          prevVr !== null && prevVr !== undefined && prevVr > 0 && vr_c <= 0;
 
         const startupS = body.engines[0].startupDurationS;
         const triggerWindowS = startupS + LEO_INSERTION_V2.CIRC_TRIGGER_LEAD_S;
 
         if (t_rem <= triggerWindowS || apogeePeak) {
           send(cmdRcsDuty(null, idx));
-          _leoStateV2.phase = 'CIRCULARIZE';
+          _leoStateV2.phase = "CIRCULARIZE";
           _leoStateV2.phaseStart = simT;
-          console.log('[leoInsertionV2] burn trigger — ' +
-            (apogeePeak ? 'apogee peak'
-              : 't_rem=' + t_rem.toFixed(2) + 's ≤ ' + triggerWindowS.toFixed(2) + 's')
-            + ' — CIRCULARIZE');
+          console.log(
+            "[leoInsertionV2] burn trigger — " +
+              (apogeePeak
+                ? "apogee peak"
+                : "t_rem=" +
+                  t_rem.toFixed(2) +
+                  "s ≤ " +
+                  triggerWindowS.toFixed(2) +
+                  "s") +
+              " — CIRCULARIZE",
+          );
           break;
         }
 
-        if (dNext && dNext.massProps && _leoStateV2.coastTargetThetaInertial !== null) {
+        if (
+          dNext &&
+          dNext.massProps &&
+          _leoStateV2.coastTargetThetaInertial !== null
+        ) {
           const I_next = dNext.massProps.I;
-          const thetaErr = _hWrapPi(body.theta - _leoStateV2.coastTargetThetaInertial);
-          const tau_desired = -I_next * (LEO_INSERTION_V2.CIRC_ATT_KP * thetaErr
-                                       + LEO_INSERTION_V2.CIRC_ATT_KD * body.omega);
-          const result = GuideRCS.targetTorqueRcsNoNetForce(snapshot, tau_desired, idx);
-          if (result && result.fires.length) send(cmdRcsDuty(result.duties, idx));
+          const thetaErr = _hWrapPi(
+            body.theta - _leoStateV2.coastTargetThetaInertial,
+          );
+          const tau_desired =
+            -I_next *
+            (LEO_INSERTION_V2.CIRC_ATT_KP * thetaErr +
+              LEO_INSERTION_V2.CIRC_ATT_KD * body.omega);
+          const result = GuideRCS.targetTorqueRcsNoNetForce(
+            snapshot,
+            tau_desired,
+            idx,
+          );
+          if (result && result.fires.length)
+            send(cmdRcsDuty(result.duties, idx));
           else send(cmdRcsDuty(null, idx));
         }
         break;
       }
 
-      case 'CIRCULARIZE': {
+      case "CIRCULARIZE": {
         if (!dNext || !dNext.massProps) break;
-        const gimbals = (body.engines || []).filter(e => e.gimbal);
+        const gimbals = (body.engines || []).filter((e) => e.gimbal);
 
         const r_c = Math.hypot(body.rx, body.ry);
         const speed = Math.hypot(body.vx, body.vy);
@@ -1391,15 +1739,18 @@ break;
         _leoStateV2.circErr = v_err;
 
         const spoolS = body.engines[0].shutdownDurationS;
-        let mdot_now = 0, maxMFR = 0;
-        (body.engines || []).forEach(e => {
-          mdot_now += (e.massFlowRate || 0);
-          if (Number.isFinite(e.maxMassFlowRate) && e.maxMassFlowRate > maxMFR) maxMFR = e.maxMassFlowRate;
+        let mdot_now = 0,
+          maxMFR = 0;
+        (body.engines || []).forEach((e) => {
+          mdot_now += e.massFlowRate || 0;
+          if (Number.isFinite(e.maxMassFlowRate) && e.maxMassFlowRate > maxMFR)
+            maxMFR = e.maxMassFlowRate;
         });
-        const t_spool_actual = (maxMFR > 0 && mdot_now > 0)
-          ? mdot_now * spoolS / maxMFR : spoolS;
-        const dv_spool = (mdot_now / 2) * body.engines[0].Ve * t_spool_actual
-                       / Math.max(1, dNext.massProps.M);
+        const t_spool_actual =
+          maxMFR > 0 && mdot_now > 0 ? (mdot_now * spoolS) / maxMFR : spoolS;
+        const dv_spool =
+          ((mdot_now / 2) * body.engines[0].Ve * t_spool_actual) /
+          Math.max(1, dNext.massProps.M);
 
         const ejectionKick = env.PAYLOAD_EJECT_KICK_MPS || 0;
         const cutoffThreshold = dv_spool + ejectionKick;
@@ -1408,14 +1759,17 @@ break;
           _leoStateV2.circAchieved = true;
           send(cmdSetAllThrottle(0));
           send(cmdSetGimbalRate(0));
-          _leoStateV2.phase = 'COAST_ROTATE_2';
+          _leoStateV2.phase = "COAST_ROTATE_2";
           _leoStateV2.phaseStart = simT;
           _leoStateV2.coast2TargetThetaInertial = null;
           _leoStateV2.coast2RotateStartTilt = null;
           _leoStateV2.coast2RotateMid = null;
           _leoStateV2._prevVr2 = null;
-          console.log('[leoInsertionV2] CIRCULARIZE complete — v=' + speed.toFixed(1) +
-            ' → COAST_ROTATE_2');
+          console.log(
+            "[leoInsertionV2] CIRCULARIZE complete — v=" +
+              speed.toFixed(1) +
+              " → COAST_ROTATE_2",
+          );
           break;
         }
 
@@ -1425,21 +1779,27 @@ break;
           thrFrac = Math.max(0.4, 0.4 + 0.6 * (v_err / decayWindow));
         }
         let refMax = 0;
-        (body.engines || []).forEach(e => {
-          if (Number.isFinite(e.maxMassFlowRate) && e.maxMassFlowRate > refMax) refMax = e.maxMassFlowRate;
+        (body.engines || []).forEach((e) => {
+          if (Number.isFinite(e.maxMassFlowRate) && e.maxMassFlowRate > refMax)
+            refMax = e.maxMassFlowRate;
         });
         send(cmdSetAllThrottle(refMax * thrFrac));
 
         if (gimbals.length && _leoStateV2.coastTargetThetaInertial !== null) {
           const I_next = dNext.massProps.I;
-          const thetaErr = _hWrapPi(body.theta - _leoStateV2.coastTargetThetaInertial);
-          const tau_desired = -I_next * (LEO_INSERTION_V2.CIRC_ATT_KP * thetaErr
-                                       + LEO_INSERTION_V2.CIRC_ATT_KD * body.omega);
+          const thetaErr = _hWrapPi(
+            body.theta - _leoStateV2.coastTargetThetaInertial,
+          );
+          const tau_desired =
+            -I_next *
+            (LEO_INSERTION_V2.CIRC_ATT_KP * thetaErr +
+              LEO_INSERTION_V2.CIRC_ATT_KD * body.omega);
           const g_N = gimbals[0].gimbalDeg || 0;
           const comX1 = dNext.massProps.comX;
           const comY1 = dNext.massProps.comY;
-          let A_g = 0, B_g = 0;
-          gimbals.forEach(e => {
+          let A_g = 0,
+            B_g = 0;
+          gimbals.forEach((e) => {
             const F = (e.massFlowRate || 0) * (e.Ve || 0);
             A_g += ((e.x || 0) - comX1) * F;
             B_g += F;
@@ -1452,35 +1812,42 @@ break;
             const phi = Math.atan2(A_g, B_g);
             const w1 = _hWrapPi(Math.asin(ratio) - phi);
             const w2 = _hWrapPi(Math.PI - Math.asin(ratio) - phi);
-            g_req_rad = (Math.abs(w1) <= Math.abs(w2)) ? w1 : w2;
+            g_req_rad = Math.abs(w1) <= Math.abs(w2) ? w1 : w2;
           }
-          let g_req_deg = g_req_rad * 180 / Math.PI;
+          let g_req_deg = (g_req_rad * 180) / Math.PI;
           if (Math.abs(g_req_deg) > env.GIMBAL_MAX_DEG) {
             g_req_deg = Math.sign(g_req_deg) * env.GIMBAL_MAX_DEG;
           }
           const R_req = (g_req_deg - g_N) / dt;
-          const R_cmd = Math.max(-env.GIMBAL_RATE_DEG_S,
-                        Math.min(env.GIMBAL_RATE_DEG_S, R_req));
+          const R_cmd = Math.max(
+            -env.GIMBAL_RATE_DEG_S,
+            Math.min(env.GIMBAL_RATE_DEG_S, R_req),
+          );
           send(cmdSetGimbalRate(R_cmd));
         }
         break;
       }
 
-      case 'COAST_ROTATE_2': {
+      case "COAST_ROTATE_2": {
         send(cmdSetAllThrottle(0));
         send(cmdSetGimbalRate(0));
 
         let stillFiring = false;
-        (body.engines || []).forEach(e => { if ((e.massFlowRate || 0) > 1) stillFiring = true; });
-        if (stillFiring) { send(cmdRcsDuty(null, idx)); break; }
+        (body.engines || []).forEach((e) => {
+          if ((e.massFlowRate || 0) > 1) stillFiring = true;
+        });
+        if (stillFiring) {
+          send(cmdRcsDuty(null, idx));
+          break;
+        }
 
         const elapsed = simT - _leoStateV2.phaseStart;
         if (elapsed >= LEO_INSERTION_V2.COAST_ROTATE_TIMEOUT_S) {
           send(cmdRcsDuty(null, idx));
-          _leoStateV2.phase = 'COAST_HOLD_2';
+          _leoStateV2.phase = "COAST_HOLD_2";
           _leoStateV2.phaseStart = simT;
           _leoStateV2._prevVr2 = null;
-          console.log('[leoInsertionV2] COAST_ROTATE_2 timeout — COAST_HOLD_2');
+          console.log("[leoInsertionV2] COAST_ROTATE_2 timeout — COAST_HOLD_2");
           break;
         }
 
@@ -1489,28 +1856,34 @@ break;
           const r_c = Math.hypot(body.rx, body.ry);
           const v2_c = body.vx * body.vx + body.vy * body.vy;
           const rv_c = body.rx * body.vx + body.ry * body.vy;
-          const ex_ecc = ((v2_c - GM_c / r_c) * body.rx - rv_c * body.vx) / GM_c;
-          const ey_ecc = ((v2_c - GM_c / r_c) * body.ry - rv_c * body.vy) / GM_c;
+          const ex_ecc =
+            ((v2_c - GM_c / r_c) * body.rx - rv_c * body.vx) / GM_c;
+          const ey_ecc =
+            ((v2_c - GM_c / r_c) * body.ry - rv_c * body.vy) / GM_c;
           const e_mag = Math.hypot(ex_ecc, ey_ecc);
           let thetaApo;
           if (e_mag > 1e-6) {
             const phiApo = Math.atan2(-ex_ecc, -ey_ecc);
             const E_c = 0.5 * v2_c - GM_c / r_c;
-            const a_c = (E_c < 0) ? -GM_c / (2 * E_c) : r_c;
+            const a_c = E_c < 0 ? -GM_c / (2 * E_c) : r_c;
             const r_apo = a_c * (1 + e_mag);
             const rx_apo = r_apo * Math.sin(phiApo);
             const ry_apo = r_apo * Math.cos(phiApo);
             const vt_c = body.vx * (body.ry / r_c) + body.vy * (-body.rx / r_c);
-            const sDir = (vt_c >= 0) ? 1 : -1;
+            const sDir = vt_c >= 0 ? 1 : -1;
             thetaApo = Math.atan2(-sDir * ry_apo, -sDir * rx_apo);
           } else {
             const speed_c = Math.hypot(body.vx, body.vy);
-            thetaApo = (speed_c > 1) ? Math.atan2(-body.vx, body.vy) : body.theta;
+            thetaApo = speed_c > 1 ? Math.atan2(-body.vx, body.vy) : body.theta;
           }
           _leoStateV2.coast2TargetThetaInertial = thetaApo;
-          console.log('[leoInsertionV2] COAST_ROTATE_2 target θ=' +
-            (thetaApo * 180 / Math.PI).toFixed(4) + '° (e=' +
-            e_mag.toExponential(4) + ')');
+          console.log(
+            "[leoInsertionV2] COAST_ROTATE_2 target θ=" +
+              ((thetaApo * 180) / Math.PI).toFixed(4) +
+              "° (e=" +
+              e_mag.toExponential(4) +
+              ")",
+          );
         }
 
         const targetThetaRad = _leoStateV2.coast2TargetThetaInertial;
@@ -1525,77 +1898,119 @@ break;
         const thetaErr = _hWrapPi(body.theta - targetThetaRad);
         const omegaRel = body.omega;
 
-        if (Math.abs(thetaErr) < LEO_INSERTION_V2.COAST_ROTATE_TOL_DEG * Math.PI / 180 &&
-          Math.abs(omegaRel) < LEO_INSERTION_V2.COAST_ROTATE_OMEGA_TOL) {
+        if (
+          Math.abs(thetaErr) <
+            (LEO_INSERTION_V2.COAST_ROTATE_TOL_DEG * Math.PI) / 180 &&
+          Math.abs(omegaRel) < LEO_INSERTION_V2.COAST_ROTATE_OMEGA_TOL
+        ) {
           send(cmdRcsDuty(null, idx));
-          _leoStateV2.phase = 'COAST_HOLD_2';
+          _leoStateV2.phase = "COAST_HOLD_2";
           _leoStateV2.phaseStart = simT;
           _leoStateV2._prevVr2 = null;
-          console.log('[leoInsertionV2] COAST_ROTATE_2 done at θ=' +
-            (body.theta * 180 / Math.PI).toFixed(2) + '° → COAST_HOLD_2');
+          console.log(
+            "[leoInsertionV2] COAST_ROTATE_2 done at θ=" +
+              ((body.theta * 180) / Math.PI).toFixed(2) +
+              "° → COAST_HOLD_2",
+          );
           break;
         }
 
         const dirSign = Math.sign(deltaTotalRad) || 1;
         const currentDeltaRad = body.theta - startThetaRad;
         const midDeltaRad = deltaTotalRad / 2;
-        const crossed = (dirSign > 0)
-          ? (currentDeltaRad >= midDeltaRad)
-          : (currentDeltaRad <= midDeltaRad);
+        const crossed =
+          dirSign > 0
+            ? currentDeltaRad >= midDeltaRad
+            : currentDeltaRad <= midDeltaRad;
         const phaseSign = crossed ? -1 : 1;
         const tauCmd = phaseSign * dirSign * 1e9;
 
-        const result = GuideRCS.targetTorqueRcsNoNetForce(snapshot, tauCmd, idx);
+        const result = GuideRCS.targetTorqueRcsNoNetForce(
+          snapshot,
+          tauCmd,
+          idx,
+        );
         if (result && result.fires.length) send(cmdRcsDuty(result.duties, idx));
         else send(cmdRcsDuty(null, idx));
         break;
       }
 
-      case 'COAST_HOLD_2': {
+      case "COAST_HOLD_2": {
         send(cmdSetAllThrottle(0));
         send(cmdSetGimbalRate(0));
 
         const r_c = Math.hypot(body.rx, body.ry);
-        const ux_c = body.rx / r_c, uy_c = body.ry / r_c;
+        const ux_c = body.rx / r_c,
+          uy_c = body.ry / r_c;
         const vr_c = body.vx * ux_c + body.vy * uy_c;
 
         const prevVr = _leoStateV2._prevVr2;
         _leoStateV2._prevVr2 = vr_c;
-        const apogeePeak = (prevVr !== null && prevVr !== undefined
-          && prevVr > 0 && vr_c <= 0);
+        const apogeePeak =
+          prevVr !== null && prevVr !== undefined && prevVr > 0 && vr_c <= 0;
 
         if (apogeePeak) {
           send(cmdRcsDuty(null, idx));
-          if (typeof cmdReleasePayload === 'function') send(cmdReleasePayload());
-          _leoStateV2.phase = 'DONE';
-          console.log('[leoInsertionV2] payload released at apogee — alt=' +
-            ((r_c - env.EARTH_RADIUS) / 1000).toFixed(1) + ' km');
+          if (typeof cmdReleasePayload === "function")
+            send(cmdReleasePayload());
+          _leoStateV2.phase = "DONE";
+          console.log(
+            "[leoInsertionV2] payload released at apogee — alt=" +
+              ((r_c - env.EARTH_RADIUS) / 1000).toFixed(1) +
+              " km",
+          );
           break;
         }
 
-        if (dNext && dNext.massProps && _leoStateV2.coast2TargetThetaInertial !== null) {
+        if (
+          dNext &&
+          dNext.massProps &&
+          _leoStateV2.coast2TargetThetaInertial !== null
+        ) {
           const I_next = dNext.massProps.I;
-          const thetaErr = _hWrapPi(body.theta - _leoStateV2.coast2TargetThetaInertial);
-          const tau_desired = -I_next * (LEO_INSERTION_V2.CIRC_ATT_KP * thetaErr
-                                       + LEO_INSERTION_V2.CIRC_ATT_KD * body.omega);
-          const result = GuideRCS.targetTorqueRcsNoNetForce(snapshot, tau_desired, idx);
-          if (result && result.fires.length) send(cmdRcsDuty(result.duties, idx));
+          const thetaErr = _hWrapPi(
+            body.theta - _leoStateV2.coast2TargetThetaInertial,
+          );
+          const tau_desired =
+            -I_next *
+            (LEO_INSERTION_V2.CIRC_ATT_KP * thetaErr +
+              LEO_INSERTION_V2.CIRC_ATT_KD * body.omega);
+          const result = GuideRCS.targetTorqueRcsNoNetForce(
+            snapshot,
+            tau_desired,
+            idx,
+          );
+          if (result && result.fires.length)
+            send(cmdRcsDuty(result.duties, idx));
           else send(cmdRcsDuty(null, idx));
         }
         break;
       }
 
-      case 'DONE': {
+      case "DONE": {
         send(cmdSetAllThrottle(0));
         send(cmdSetGimbalRate(0));
 
-        if (dNext && dNext.massProps && _leoStateV2.coast2TargetThetaInertial !== null) {
+        if (
+          dNext &&
+          dNext.massProps &&
+          _leoStateV2.coast2TargetThetaInertial !== null
+        ) {
           const I_next = dNext.massProps.I;
-          const thetaErr = _hWrapPi(body.theta - _leoStateV2.coast2TargetThetaInertial);
-          const tau_desired = -I_next * (LEO_INSERTION_V2.CIRC_ATT_KP * thetaErr
-                                       + LEO_INSERTION_V2.CIRC_ATT_KD * body.omega);
-          const result = GuideRCS.targetTorqueRcsNoNetForce(snapshot, tau_desired, idx);
-          if (result && result.fires.length) send(cmdRcsDuty(result.duties, idx));
+          const thetaErr = _hWrapPi(
+            body.theta - _leoStateV2.coast2TargetThetaInertial,
+          );
+          const tau_desired =
+            -I_next *
+            (LEO_INSERTION_V2.CIRC_ATT_KP * thetaErr +
+              LEO_INSERTION_V2.CIRC_ATT_KD * body.omega);
+          const result = GuideRCS.targetTorqueRcsNoNetForce(
+            snapshot,
+            tau_desired,
+            idx,
+          );
+          if (result && result.fires.length)
+            send(cmdRcsDuty(result.duties, idx));
           else send(cmdRcsDuty(null, idx));
         }
 
@@ -1603,32 +2018,37 @@ break;
         if (dwellS >= LEO_INSERTION_V2.SUICIDE_DELAY_AFTER_DEPLOY_S) {
           send(cmdRcsDuty(null, idx));
           send(cmdMarkIntentionalImpact(idx));
-          _leoStateV2.phase = 'SUICIDE_ROTATE';
+          _leoStateV2.phase = "SUICIDE_ROTATE";
           _leoStateV2.phaseStart = simT;
-          console.log('[leoInsertionV2] DONE→SUICIDE_ROTATE after ' +
-            dwellS.toFixed(1) + 's dwell (marked intentional impact)');
+          console.log(
+            "[leoInsertionV2] DONE→SUICIDE_ROTATE after " +
+              dwellS.toFixed(1) +
+              "s dwell (marked intentional impact)",
+          );
         }
         break;
       }
 
-      case 'SUICIDE_ROTATE': {
+      case "SUICIDE_ROTATE": {
         send(cmdSetAllThrottle(0));
         send(cmdSetGimbalRate(0));
 
         const elapsed = simT - _leoStateV2.phaseStart;
         if (elapsed >= LEO_INSERTION_V2.SUICIDE_ROTATE_TIMEOUT_S) {
           send(cmdRcsDuty(null, idx));
-          _leoStateV2.phase = 'SUICIDE_BURN';
+          _leoStateV2.phase = "SUICIDE_BURN";
           _leoStateV2.phaseStart = simT;
           _leoStateV2.suicideBurnStartT = simT;
-          console.log('[leoInsertionV2] SUICIDE_ROTATE timeout — proceeding to burn');
+          console.log(
+            "[leoInsertionV2] SUICIDE_ROTATE timeout — proceeding to burn",
+          );
           break;
         }
 
         const speed = Math.hypot(body.vx, body.vy);
         if (speed < 1) {
           send(cmdRcsDuty(null, idx));
-          _leoStateV2.phase = 'SUICIDE_BURN';
+          _leoStateV2.phase = "SUICIDE_BURN";
           _leoStateV2.phaseStart = simT;
           _leoStateV2.suicideBurnStartT = simT;
           break;
@@ -1639,68 +2059,96 @@ break;
 
         const thetaErr = _hWrapPi(body.theta - targetThetaRad);
         const omegaRel = body.omega;
-        if (Math.abs(thetaErr) < LEO_INSERTION_V2.SUICIDE_ROTATE_TOL_DEG * Math.PI / 180 &&
-          Math.abs(omegaRel) < LEO_INSERTION_V2.SUICIDE_ROTATE_OMEGA_TOL) {
+        if (
+          Math.abs(thetaErr) <
+            (LEO_INSERTION_V2.SUICIDE_ROTATE_TOL_DEG * Math.PI) / 180 &&
+          Math.abs(omegaRel) < LEO_INSERTION_V2.SUICIDE_ROTATE_OMEGA_TOL
+        ) {
           send(cmdRcsDuty(null, idx));
-          _leoStateV2.phase = 'SUICIDE_BURN';
+          _leoStateV2.phase = "SUICIDE_BURN";
           _leoStateV2.phaseStart = simT;
           _leoStateV2.suicideBurnStartT = simT;
-          console.log('[leoInsertionV2] SUICIDE_ROTATE done — θ=' +
-            (body.theta * 180 / Math.PI).toFixed(2) + '° → SUICIDE_BURN');
+          console.log(
+            "[leoInsertionV2] SUICIDE_ROTATE done — θ=" +
+              ((body.theta * 180) / Math.PI).toFixed(2) +
+              "° → SUICIDE_BURN",
+          );
           break;
         }
 
-        const I_next = (dNext && dNext.massProps) ? dNext.massProps.I : 0;
-        if (!(I_next > 0)) { send(cmdRcsDuty(null, idx)); break; }
-        const tau_desired = -I_next *
-          (LEO_INSERTION_V2.SUICIDE_ATT_KP * thetaErr
-         + LEO_INSERTION_V2.SUICIDE_ATT_KD * omegaRel);
+        const I_next = dNext && dNext.massProps ? dNext.massProps.I : 0;
+        if (!(I_next > 0)) {
+          send(cmdRcsDuty(null, idx));
+          break;
+        }
+        const tau_desired =
+          -I_next *
+          (LEO_INSERTION_V2.SUICIDE_ATT_KP * thetaErr +
+            LEO_INSERTION_V2.SUICIDE_ATT_KD * omegaRel);
 
-        const result = GuideRCS.targetTorqueRcsNoNetForce(snapshot, tau_desired, idx);
+        const result = GuideRCS.targetTorqueRcsNoNetForce(
+          snapshot,
+          tau_desired,
+          idx,
+        );
         if (result && result.fires.length) send(cmdRcsDuty(result.duties, idx));
         else send(cmdRcsDuty(null, idx));
         break;
       }
 
-      case 'SUICIDE_BURN': {
+      case "SUICIDE_BURN": {
         const burnS = simT - _leoStateV2.suicideBurnStartT;
         if (burnS >= LEO_INSERTION_V2.SUICIDE_BURN_MAX_S) {
           send(cmdSetAllThrottle(0));
           send(cmdSetGimbalRate(0));
           send(cmdRcsDuty(null, idx));
-          _leoStateV2.phase = 'SUICIDE_COAST';
+          _leoStateV2.phase = "SUICIDE_COAST";
           _leoStateV2.phaseStart = simT;
-          console.log('[leoInsertionV2] SUICIDE_BURN safety timeout after ' +
-            burnS.toFixed(1) + 's');
+          console.log(
+            "[leoInsertionV2] SUICIDE_BURN safety timeout after " +
+              burnS.toFixed(1) +
+              "s",
+          );
           break;
         }
 
         const spoolS = body.engines[0].shutdownDurationS;
-        let mdot_now_sb = 0, maxMFR_sb = 0;
-        (body.engines || []).forEach(e => {
-          mdot_now_sb += (e.massFlowRate || 0);
-          if (Number.isFinite(e.maxMassFlowRate) && e.maxMassFlowRate > maxMFR_sb) {
+        let mdot_now_sb = 0,
+          maxMFR_sb = 0;
+        (body.engines || []).forEach((e) => {
+          mdot_now_sb += e.massFlowRate || 0;
+          if (
+            Number.isFinite(e.maxMassFlowRate) &&
+            e.maxMassFlowRate > maxMFR_sb
+          ) {
             maxMFR_sb = e.maxMassFlowRate;
           }
         });
-        const t_spool_sb = (maxMFR_sb > 0 && mdot_now_sb > 0)
-          ? mdot_now_sb * spoolS / maxMFR_sb : spoolS;
-        const dv_spool_sb = (mdot_now_sb / 2) * body.engines[0].Ve * t_spool_sb
-                          / Math.max(1, dNext.massProps.M);
+        const t_spool_sb =
+          maxMFR_sb > 0 && mdot_now_sb > 0
+            ? (mdot_now_sb * spoolS) / maxMFR_sb
+            : spoolS;
+        const dv_spool_sb =
+          ((mdot_now_sb / 2) * body.engines[0].Ve * t_spool_sb) /
+          Math.max(1, dNext.massProps.M);
 
         const ux_nose = -Math.sin(body.theta);
         const uy_nose = Math.cos(body.theta);
         const impact = _suicidePredictImpact(
-          body.rx, body.ry,
+          body.rx,
+          body.ry,
           body.vx + ux_nose * dv_spool_sb,
           body.vy + uy_nose * dv_spool_sb,
-          simT);
+          simT,
+        );
 
         if (impact) {
-          const lambdaMidEf = (env.LAUNCH_SITE_ANGLE_0 || 0) -
-            (env.REMOTE_AREA_MID_WEST_DEG || 0) * Math.PI / 180;
-          const lambdaCoarseEf = lambdaMidEf -
-            LEO_INSERTION_V2.SUICIDE_BURN_COARSE_MARGIN_DEG * Math.PI / 180;
+          const lambdaMidEf =
+            (env.LAUNCH_SITE_ANGLE_0 || 0) -
+            ((env.REMOTE_AREA_MID_WEST_DEG || 0) * Math.PI) / 180;
+          const lambdaCoarseEf =
+            lambdaMidEf -
+            (LEO_INSERTION_V2.SUICIDE_BURN_COARSE_MARGIN_DEG * Math.PI) / 180;
           const dLambda = impact.phiEf - lambdaCoarseEf;
           _leoStateV2.suicideImpactEf = impact.phiEf;
           _leoStateV2.suicideDlambda = dLambda;
@@ -1709,19 +2157,24 @@ break;
             send(cmdSetAllThrottle(0));
             send(cmdSetGimbalRate(0));
             send(cmdRcsDuty(null, idx));
-            _leoStateV2.phase = 'SUICIDE_COAST';
+            _leoStateV2.phase = "SUICIDE_COAST";
             _leoStateV2.phaseStart = simT;
-            console.log('[leoInsertionV2] SUICIDE_BURN coarse cutoff — impact_ef=' +
-              (impact.phiEf * 180 / Math.PI).toFixed(3) + '° coarse_ef=' +
-              (lambdaCoarseEf * 180 / Math.PI).toFixed(3) + '° dLambda=' +
-              (dLambda * 180 / Math.PI).toFixed(3) + '° → COAST');
+            console.log(
+              "[leoInsertionV2] SUICIDE_BURN coarse cutoff — impact_ef=" +
+                ((impact.phiEf * 180) / Math.PI).toFixed(3) +
+                "° coarse_ef=" +
+                ((lambdaCoarseEf * 180) / Math.PI).toFixed(3) +
+                "° dLambda=" +
+                ((dLambda * 180) / Math.PI).toFixed(3) +
+                "° → COAST",
+            );
             break;
           }
         }
 
         send(cmdSetAllThrottle(0.001));
 
-        const gimbals = (body.engines || []).filter(e => e.gimbal);
+        const gimbals = (body.engines || []).filter((e) => e.gimbal);
         if (gimbals.length && dNext && dNext.massProps) {
           const speed = Math.hypot(body.vx, body.vy);
           if (speed > 1) {
@@ -1730,13 +2183,16 @@ break;
             const targetThetaRad = Math.atan2(ux_v, -uy_v);
             const I_next = dNext.massProps.I;
             const thetaErr = _hWrapPi(body.theta - targetThetaRad);
-            const tau_desired = -I_next * (LEO_INSERTION_V2.SUICIDE_ATT_KP * thetaErr
-                                         + LEO_INSERTION_V2.SUICIDE_ATT_KD * body.omega);
+            const tau_desired =
+              -I_next *
+              (LEO_INSERTION_V2.SUICIDE_ATT_KP * thetaErr +
+                LEO_INSERTION_V2.SUICIDE_ATT_KD * body.omega);
             const g_N = gimbals[0].gimbalDeg || 0;
             const comX1 = dNext.massProps.comX;
             const comY1 = dNext.massProps.comY;
-            let A_g = 0, B_g = 0;
-            gimbals.forEach(e => {
+            let A_g = 0,
+              B_g = 0;
+            gimbals.forEach((e) => {
               const F = (e.massFlowRate || 0) * (e.Ve || 0);
               A_g += ((e.x || 0) - comX1) * F;
               B_g += F;
@@ -1749,22 +2205,24 @@ break;
               const phi = Math.atan2(A_g, B_g);
               const w1 = _hWrapPi(Math.asin(ratio) - phi);
               const w2 = _hWrapPi(Math.PI - Math.asin(ratio) - phi);
-              g_req_rad = (Math.abs(w1) <= Math.abs(w2)) ? w1 : w2;
+              g_req_rad = Math.abs(w1) <= Math.abs(w2) ? w1 : w2;
             }
-            let g_req_deg = g_req_rad * 180 / Math.PI;
+            let g_req_deg = (g_req_rad * 180) / Math.PI;
             if (Math.abs(g_req_deg) > env.GIMBAL_MAX_DEG) {
               g_req_deg = Math.sign(g_req_deg) * env.GIMBAL_MAX_DEG;
             }
             const R_req = (g_req_deg - g_N) / dt;
-            const R_cmd = Math.max(-env.GIMBAL_RATE_DEG_S,
-                          Math.min(env.GIMBAL_RATE_DEG_S, R_req));
+            const R_cmd = Math.max(
+              -env.GIMBAL_RATE_DEG_S,
+              Math.min(env.GIMBAL_RATE_DEG_S, R_req),
+            );
             send(cmdSetGimbalRate(R_cmd));
           }
         }
         break;
       }
 
-      case 'SUICIDE_COAST': {
+      case "SUICIDE_COAST": {
         send(cmdSetAllThrottle(0));
         send(cmdSetGimbalRate(0));
 
@@ -1777,11 +2235,17 @@ break;
           _leoStateV2.suicideTrimStartT = simT;
         }
 
-        if (simT - _leoStateV2.suicideTrimStartT > LEO_INSERTION_V2.SUICIDE_TRIM_MAX_S) {
+        if (
+          simT - _leoStateV2.suicideTrimStartT >
+          LEO_INSERTION_V2.SUICIDE_TRIM_MAX_S
+        ) {
           _leoStateV2.suicideTrimDone = true;
           send(cmdRcsDuty(null, idx));
-          console.log('[leoInsertionV2] SUICIDE_TRIM forced off after ' +
-            (simT - _leoStateV2.suicideTrimStartT).toFixed(1) + 's — trim timeout');
+          console.log(
+            "[leoInsertionV2] SUICIDE_TRIM forced off after " +
+              (simT - _leoStateV2.suicideTrimStartT).toFixed(1) +
+              "s — trim timeout",
+          );
           break;
         }
 
@@ -1791,46 +2255,68 @@ break;
           const uy_v = body.vy / speedH;
           const targetThetaRad = Math.atan2(ux_v, -uy_v);
           const thetaErrH = _hWrapPi(body.theta - targetThetaRad);
-          const I_nextH = (dNext && dNext.massProps) ? dNext.massProps.I : 0;
+          const I_nextH = dNext && dNext.massProps ? dNext.massProps.I : 0;
           if (I_nextH > 0) {
-            const tau_hold = -I_nextH *
+            const tau_hold =
+              -I_nextH *
               (LEO_INSERTION_V2.SUICIDE_ATT_KP * thetaErrH +
                 LEO_INSERTION_V2.SUICIDE_ATT_KD * body.omega);
-            const rHold = GuideRCS.targetTorqueRcsNoNetForce(snapshot, tau_hold, idx);
-            if (rHold && rHold.fires.length) send(cmdRcsDuty(rHold.duties, idx));
+            const rHold = GuideRCS.targetTorqueRcsNoNetForce(
+              snapshot,
+              tau_hold,
+              idx,
+            );
+            if (rHold && rHold.fires.length)
+              send(cmdRcsDuty(rHold.duties, idx));
           }
         }
 
-        const impact = _suicidePredictImpact(body.rx, body.ry, body.vx, body.vy, simT);
+        const impact = _suicidePredictImpact(
+          body.rx,
+          body.ry,
+          body.vx,
+          body.vy,
+          simT,
+        );
         if (!impact) {
-          const duties = GuideRCS.postSeparationAxialDuty(snapshot, idx, 'up');
+          const duties = GuideRCS.postSeparationAxialDuty(snapshot, idx, "up");
           if (duties) send(cmdRcsDuty(duties, idx));
           break;
         }
 
-        const lambdaMidEf = (env.LAUNCH_SITE_ANGLE_0 || 0) -
-          (env.REMOTE_AREA_MID_WEST_DEG || 0) * Math.PI / 180;
-        const dLambdaDeg = (impact.phiEf - lambdaMidEf) * 180 / Math.PI;
+        const lambdaMidEf =
+          (env.LAUNCH_SITE_ANGLE_0 || 0) -
+          ((env.REMOTE_AREA_MID_WEST_DEG || 0) * Math.PI) / 180;
+        const dLambdaDeg = ((impact.phiEf - lambdaMidEf) * 180) / Math.PI;
 
         if (Math.abs(dLambdaDeg) < LEO_INSERTION_V2.SUICIDE_TRIM_TOL_DEG) {
           _leoStateV2.suicideTrimDone = true;
           send(cmdRcsDuty(null, idx));
-          console.log('[leoInsertionV2] SUICIDE_TRIM converged — impact_ef=' +
-            (impact.phiEf * 180 / Math.PI).toFixed(3) + '° mid_ef=' +
-            (lambdaMidEf * 180 / Math.PI).toFixed(3) + '° dLambda=' +
-            dLambdaDeg.toFixed(3) + '° — all control off');
+          console.log(
+            "[leoInsertionV2] SUICIDE_TRIM converged — impact_ef=" +
+              ((impact.phiEf * 180) / Math.PI).toFixed(3) +
+              "° mid_ef=" +
+              ((lambdaMidEf * 180) / Math.PI).toFixed(3) +
+              "° dLambda=" +
+              dLambdaDeg.toFixed(3) +
+              "° — all control off",
+          );
           break;
         }
 
-        const direction = (dLambdaDeg > 0) ? 'up' : 'dn';
+        const direction = dLambdaDeg > 0 ? "up" : "dn";
         const FAR = LEO_INSERTION_V2.SUICIDE_TRIM_FAR_DEG;
         const MIN_DUTY = LEO_INSERTION_V2.SUICIDE_TRIM_MIN_DUTY;
         let duty = Math.min(1, Math.abs(dLambdaDeg) / Math.max(FAR, 1e-6));
         if (duty < MIN_DUTY) duty = MIN_DUTY;
 
-        const duties = GuideRCS.postSeparationAxialDuty(snapshot, idx, direction);
+        const duties = GuideRCS.postSeparationAxialDuty(
+          snapshot,
+          idx,
+          direction,
+        );
         if (duties) {
-          Object.keys(duties).forEach(podId => {
+          Object.keys(duties).forEach((podId) => {
             const d = duties[podId];
             if (!d) return;
             d.up *= duty;
@@ -1847,18 +2333,26 @@ break;
     }
 
     // ---------- Fairing open (independent, runs every tick) ----------
-    if (LEO_INSERTION_V2.FAIRING_OPEN_ENABLED &&
+    if (
+      LEO_INSERTION_V2.FAIRING_OPEN_ENABLED &&
       !_leoStateV2.fairingOpened &&
       _leoStateV2.splitDetected &&
-      _leoStateV2.lastAltKm >= LEO_INSERTION_V2.FAIRING_OPEN_ALT_KM) {
+      _leoStateV2.lastAltKm >= LEO_INSERTION_V2.FAIRING_OPEN_ALT_KM
+    ) {
       const stageBody = snapshot.bodies[_leoStateV2.stageIdx];
-      const hasFairing = !!(stageBody && stageBody.members &&
-        stageBody.members.some(m => m && m.stageRole === 'payloadSpace'));
+      const hasFairing = !!(
+        stageBody &&
+        stageBody.members &&
+        stageBody.members.some((m) => m && m.stageRole === "payloadSpace")
+      );
       if (hasFairing) {
         send(cmdSplitFairing());
         _leoStateV2.fairingOpened = true;
-        console.log('[leoInsertionV2] fairing open at',
-          _leoStateV2.lastAltKm.toFixed(2), 'km');
+        console.log(
+          "[leoInsertionV2] fairing open at",
+          _leoStateV2.lastAltKm.toFixed(2),
+          "km",
+        );
       }
     }
   }
@@ -1866,7 +2360,7 @@ break;
   _leoTickV2.start = function () {
     _leoStateV2.init = false;
     _leoStateV2.ticks = 0;
-    _leoStateV2.phase = 'ASCENT';
+    _leoStateV2.phase = "ASCENT";
     _leoStateV2.phaseStart = 0;
     _leoStateV2.mecoTriggered = false;
     _leoStateV2.splitDetected = false;
@@ -1906,24 +2400,26 @@ break;
     _leoStateV2.suicideTrimStartT = 0;
     _leoStateV2.coastRotateEndDeltaV = null;
     _leoStateV2.coastRotateEndTRem = null;
-    console.log('[leoInsertionV2] started');
+    console.log("[leoInsertionV2] started");
   };
 
   _leoTickV2.stop = function () {
     send(cmdSetAllThrottle(0));
     send(cmdSetGimbalRate(0));
     send(cmdRcsDuty(null));
-    if (typeof _hTick !== 'undefined' && typeof _hTick.stop === 'function') {
-      try { _hTick.stop(); } catch (e) {}
+    if (typeof _hTick !== "undefined" && typeof _hTick.stop === "function") {
+      try {
+        _hTick.stop();
+      } catch (e) {}
     }
     _leoStateV2.missionBodyIdx = null;
-    if (typeof Guidance !== 'undefined' && Guidance.setMissionBody) {
+    if (typeof Guidance !== "undefined" && Guidance.setMissionBody) {
       Guidance.setMissionBody(null);
     }
-    console.log('[leoInsertionV2] stopped');
+    console.log("[leoInsertionV2] stopped");
   };
 
-  _leoTickV2.getStatus = function() {
+  _leoTickV2.getStatus = function () {
     const base = {
       ticks: _leoStateV2.ticks,
       phase: _leoStateV2.phase,
@@ -1936,10 +2432,14 @@ break;
       perigeeKm: _leoStateV2.lastPerigeeKm,
       coastTBurnPractical: _leoStateV2.coastTBurnPractical,
       coastVOrbital: _leoStateV2.coastVOrbital,
-      coastTargetThetaDeg: (_leoStateV2.coastTargetThetaInertial != null) ?
-        _leoStateV2.coastTargetThetaInertial * 180 / Math.PI : null,
-      coast2TargetThetaDeg: (_leoStateV2.coast2TargetThetaInertial != null) ?
-        _leoStateV2.coast2TargetThetaInertial * 180 / Math.PI : null,
+      coastTargetThetaDeg:
+        _leoStateV2.coastTargetThetaInertial != null
+          ? (_leoStateV2.coastTargetThetaInertial * 180) / Math.PI
+          : null,
+      coast2TargetThetaDeg:
+        _leoStateV2.coast2TargetThetaInertial != null
+          ? (_leoStateV2.coast2TargetThetaInertial * 180) / Math.PI
+          : null,
       circCurrentV: _leoStateV2.circCurrentV,
       circTargetV: _leoStateV2.circTargetV,
       circErr: _leoStateV2.circErr,
@@ -1948,32 +2448,39 @@ break;
       stageBurnTargetTiltDeg: _leoStateV2.stageBurnTargetTiltDeg,
       coastDeltaV: _leoStateV2.coastRotateEndDeltaV,
       coastTRem: _leoStateV2.coastRotateEndTRem,
-      suicideImpactEfDeg: (_leoStateV2.suicideImpactEf != null) ?
-        _leoStateV2.suicideImpactEf * 180 / Math.PI : null,
-      suicideDlambdaDeg: (_leoStateV2.suicideDlambda != null) ?
-        _leoStateV2.suicideDlambda * 180 / Math.PI : null,
-        suicideTrimDone: !!_leoStateV2.suicideTrimDone,
+      suicideImpactEfDeg:
+        _leoStateV2.suicideImpactEf != null
+          ? (_leoStateV2.suicideImpactEf * 180) / Math.PI
+          : null,
+      suicideDlambdaDeg:
+        _leoStateV2.suicideDlambda != null
+          ? (_leoStateV2.suicideDlambda * 180) / Math.PI
+          : null,
+      suicideTrimDone: !!_leoStateV2.suicideTrimDone,
 
-  // Debug — every input to the STAGE_BURN cutoff condition.
-  apogeePredicted: _leoStateV2.lastApogeePredicted,
-  dvSpool: _leoStateV2.lastDvSpool,
-  massM: _leoStateV2.lastMassM,
-  theta: _leoStateV2.lastTheta,
-  gimbalDeg: _leoStateV2.lastGimbalDeg,
-  mdotNow: _leoStateV2.lastMdotNow,
-  maxMFR: _leoStateV2.lastMaxMFR,
-  apogeeState: _leoStateV2.lastApogee,
-  perigeeState: _leoStateV2.lastPerigee,
+      // Debug — every input to the STAGE_BURN cutoff condition.
+      apogeePredicted: _leoStateV2.lastApogeePredicted,
+      dvSpool: _leoStateV2.lastDvSpool,
+      massM: _leoStateV2.lastMassM,
+      theta: _leoStateV2.lastTheta,
+      gimbalDeg: _leoStateV2.lastGimbalDeg,
+      mdotNow: _leoStateV2.lastMdotNow,
+      maxMFR: _leoStateV2.lastMaxMFR,
+      apogeeState: _leoStateV2.lastApogee,
+      perigeeState: _leoStateV2.lastPerigee,
 
-  // Initial values captured at guide start (t=0). Same in every row.
-  initStackMass: _leoStateV2.initStackMass,
-  initFuelMass: _leoStateV2.initFuelMass,
-  initI: _leoStateV2.initI,
-};
-    if (_leoStateV2.phase === 'ASCENT' && typeof _hTick !== 'undefined' &&
-      typeof _hTick.getStatus === 'function') {
+      // Initial values captured at guide start (t=0). Same in every row.
+      initStackMass: _leoStateV2.initStackMass,
+      initFuelMass: _leoStateV2.initFuelMass,
+      initI: _leoStateV2.initI,
+    };
+    if (
+      _leoStateV2.phase === "ASCENT" &&
+      typeof _hTick !== "undefined" &&
+      typeof _hTick.getStatus === "function"
+    ) {
       const hs = _hTick.getStatus();
-      if (hs && Object.prototype.hasOwnProperty.call(hs, 'phase')) {
+      if (hs && Object.prototype.hasOwnProperty.call(hs, "phase")) {
         hs.ascentPhase = hs.phase;
         delete hs.phase;
       }
@@ -1984,23 +2491,423 @@ break;
 
   GUIDES.leoInsertionV2 = _leoTickV2;
 
+  
+
+
+
+// ============================================================================
+// leoInsertionV3 — composed mission guide using FUNDAMENTAL_BLOCKS.
+//
+// Mission-level glue:
+//   - ascent block (pad → MECO)
+//   - split detection (body count delta)
+//   - SEPARATED_AXIAL gap monitor (mission-level)
+//   - fairing auto-open (phase-independent, 80 km)
+//   - insertion block (stage burn → payload deployed)
+//   - DONE dwell (from deploy cmd tick — CORRECT; V2 counts from COAST_HOLD_2)
+//   - suicide block (retrograde align → burn → RCS trim → engines off)
+// ============================================================================
+
+const _v3State = {
+  init: false,
+  ticks: 0,
+  missionPhase: 'ASCENT',   // ASCENT | WAIT_SPLIT | SEPARATED_AXIAL | INSERTION | DONE_DWELL | SUICIDE | END
+  missionPhaseStart: 0,
+
+  stageIdx: -1,
+  boosterIdx: -1,
+  preSplitBodyCount: 0,
+
+  ascentBlock: null,
+  insertionBlock: null,
+  suicideBlock: null,
+
+  mecoTriggered: false,
+  splitDetected: false,
+  fairingOpened: false,
+  deployCmdSimTime: null,
+
+  insertionResult: null,
+  suicideResult: null,
+
+  lastAltKm: 0,
+  lastAxialGap: 0,
+};
+
+const _v3Config = {
+  ascent: null,
+  separation: { AXIAL_SEP_TARGET_M: 10, SPLIT_TIMEOUT_S: 10 },
+  insertion: null,
+  fairing: { HAS_FAIRING: true, FAIRING_OPEN_ALT_KM: 80, FAIRING_OPEN_ENABLED: true },
+  done: { SUICIDE_DELAY_AFTER_DEPLOY_S: 60, CIRC_ATT_KP: 0.5, CIRC_ATT_KD: 4.0, DEORBIT_ENABLED: true },
+  suicide: null,
+};
+
+(function _v3InitDefaults() {
+  const F = (typeof FUNDAMENTAL_BLOCKS !== 'undefined') ? FUNDAMENTAL_BLOCKS : null;
+  if (F && F.ascent) _v3Config.ascent = JSON.parse(JSON.stringify(F.ascent.defaultConstants));
+  if (F && F.insertion) _v3Config.insertion = JSON.parse(JSON.stringify(F.insertion.defaultConstants));
+  if (F && F.suicide) _v3Config.suicide = JSON.parse(JSON.stringify(F.suicide.defaultConstants));
+})();
+
+function _v3CurrentPhase() {
+  const mp = _v3State.missionPhase;
+  if (mp === 'ASCENT') return 'ASCENT';
+  if (mp === 'WAIT_SPLIT') return 'MECO_SPOOL';
+  if (mp === 'SEPARATED_AXIAL') return 'SEPARATED_AXIAL';
+  if (mp === 'INSERTION') {
+    if (_v3State.insertionBlock) return _v3State.insertionBlock.getStatus().phase;
+    return '?';
+  }
+  if (mp === 'DONE_DWELL') return 'DONE';
+  if (mp === 'SUICIDE') {
+    if (_v3State.suicideBlock) return _v3State.suicideBlock.getStatus().phase;
+    return '?';
+  }
+  return '?';
+}
+
+function _leoTickV3(snapshot) {
+  _v3State.ticks++;
+  if (!snapshot || !Array.isArray(snapshot.bodies) || !snapshot.bodies.length) return;
+  const simT = snapshot.simTime;
+
+  if (!_v3State.init) {
+    _v3State.init = true;
+    _v3State.missionPhase = 'ASCENT';
+    _v3State.missionPhaseStart = simT;
+    _v3State.preSplitBodyCount = snapshot.bodies.length;
+    _v3State.stageIdx = 0;
+    _v3State.boosterIdx = -1;
+
+    _v3State.ascentBlock = FUNDAMENTAL_BLOCKS.ascent.createInstance();
+    _v3State.ascentBlock.start(_v3Config.ascent, 0, {});
+  }
+
+  // ---- Mission-level fairing auto-open (phase-independent) ----
+  if (!_v3State.fairingOpened &&
+      _v3State.splitDetected &&
+      _v3Config.fairing.HAS_FAIRING &&
+      _v3Config.fairing.FAIRING_OPEN_ENABLED &&
+      _v3State.stageIdx >= 0) {
+    const stageBody = snapshot.bodies[_v3State.stageIdx];
+    if (stageBody) {
+      const env = Derivation.getEnv();
+      const altKm = (Math.hypot(stageBody.rx, stageBody.ry) - env.EARTH_RADIUS) / 1000;
+      _v3State.lastAltKm = altKm;
+      if (altKm >= _v3Config.fairing.FAIRING_OPEN_ALT_KM) {
+        const hasFairing = stageBody.members &&
+          stageBody.members.some(m => m && m.stageRole === 'payloadSpace');
+        if (hasFairing) {
+          const cmd = cmdSplitFairing();
+          cmd.targetBodyIdx = _v3State.stageIdx;
+          send(cmd);
+          _v3State.fairingOpened = true;
+          console.log('[leoInsertionV3] fairing open at t=' + simT.toFixed(2) +
+            ' alt=' + altKm.toFixed(2) + ' km');
+        }
+      }
+    }
+  }
+
+  switch (_v3State.missionPhase) {
+
+    case 'ASCENT': {
+      _v3State.ascentBlock.tick(snapshot);
+      if (_v3State.ascentBlock.isDone()) {
+        _v3State.mecoTriggered = true;
+        _v3State.missionPhase = 'WAIT_SPLIT';
+        _v3State.missionPhaseStart = simT;
+        _v3State.preSplitBodyCount = snapshot.bodies.length;
+      }
+      break;
+    }
+
+    case 'WAIT_SPLIT': {
+      if (snapshot.bodies.length > _v3State.preSplitBodyCount) {
+        _v3State.splitDetected = true;
+        _v3State.stageIdx = 0;
+        const boosterIdx = snapshot.bodies.findIndex((b, i) =>
+          i !== _v3State.stageIdx && b && !b.isActive);
+        _v3State.boosterIdx = boosterIdx >= 0 ? boosterIdx : 1;
+        _v3State.missionPhase = 'SEPARATED_AXIAL';
+        _v3State.missionPhaseStart = simT;
+        break;
+      }
+      if (simT - _v3State.missionPhaseStart > _v3Config.separation.SPLIT_TIMEOUT_S) {
+        console.warn('[leoInsertionV3] split timeout');
+        _v3State.missionPhase = 'END';
+      }
+      break;
+    }
+
+    case 'SEPARATED_AXIAL': {
+      const bIdx = _v3State.boosterIdx;
+      const sIdx = _v3State.stageIdx;
+      if (bIdx < 0 || sIdx < 0) { _v3State.missionPhase = 'END'; break; }
+      const boosterBody = snapshot.bodies[bIdx];
+      const stageBody = snapshot.bodies[sIdx];
+      if (!boosterBody || !stageBody) { _v3State.missionPhase = 'END'; break; }
+
+      const boosterDuties = GuideRCS.postSeparationAxialDuty(snapshot, bIdx, 'dn');
+      if (boosterDuties) { const c = cmdRcsDuty(boosterDuties, bIdx); send(c); }
+      const stageDuties = GuideRCS.postSeparationAxialDuty(snapshot, sIdx, 'up');
+      if (stageDuties) { const c = cmdRcsDuty(stageDuties, sIdx); send(c); }
+
+      const boosterHeight = (boosterBody.members && boosterBody.members[0])
+        ? (boosterBody.members[0].height || 0) : 0;
+      const upX = -Math.sin(stageBody.theta);
+      const upY = Math.cos(stageBody.theta);
+      const dx = stageBody.rx - boosterBody.rx;
+      const dy = stageBody.ry - boosterBody.ry;
+      const axialGap = Math.max(0, (dx * upX + dy * upY) - boosterHeight);
+      _v3State.lastAxialGap = axialGap;
+
+      if (axialGap >= _v3Config.separation.AXIAL_SEP_TARGET_M) {
+        send(cmdRcsDuty(null, sIdx));
+        send(cmdRcsDuty(null, bIdx));
+        _v3State.insertionBlock = FUNDAMENTAL_BLOCKS.insertion.createInstance();
+        _v3State.insertionBlock.start(_v3Config.insertion, sIdx, {});
+        _v3State.missionPhase = 'INSERTION';
+        _v3State.missionPhaseStart = simT;
+      }
+      break;
+    }
+
+    case 'INSERTION': {
+      _v3State.insertionBlock.tick(snapshot);
+      if (_v3State.insertionBlock.isDone()) {
+        _v3State.insertionResult = _v3State.insertionBlock.getResult();
+        _v3State.deployCmdSimTime = _v3State.insertionResult
+          ? _v3State.insertionResult.deployCommandSimTime : simT;
+        _v3State.missionPhase = 'DONE_DWELL';
+        _v3State.missionPhaseStart = simT;
+      }
+      break;
+    }
+
+    case 'DONE_DWELL': {
+      const stageBody = snapshot.bodies[_v3State.stageIdx];
+      if (stageBody && _v3State.insertionResult &&
+          _v3State.insertionResult.coast2TargetThetaInertial != null) {
+        const dNext = Derivation.derive(snapshot, _v3State.stageIdx);
+        const I_next = (dNext && dNext.massProps) ? dNext.massProps.I : 0;
+        if (I_next > 0) {
+          let thetaErr = stageBody.theta - _v3State.insertionResult.coast2TargetThetaInertial;
+          while (thetaErr > Math.PI) thetaErr -= 2 * Math.PI;
+          while (thetaErr < -Math.PI) thetaErr += 2 * Math.PI;
+          const tau_desired = -I_next *
+            (_v3Config.done.CIRC_ATT_KP * thetaErr +
+             _v3Config.done.CIRC_ATT_KD * stageBody.omega);
+          const result = GuideRCS.targetTorqueRcsNoNetForce(snapshot, tau_desired, _v3State.stageIdx);
+          if (result && result.fires.length) send(cmdRcsDuty(result.duties, _v3State.stageIdx));
+          else send(cmdRcsDuty(null, _v3State.stageIdx));
+        }
+      }
+
+      send(cmdSetAllThrottle(0));
+      send(cmdSetGimbalRate(0));
+
+      // Dwell measured from the DEPLOY COMMAND tick — the correct
+      // behaviour. V2 measured from COAST_HOLD_2 entry due to a missing
+      // phaseStart update, giving ~59.29s of actual dwell instead of 60s.
+      const deployT = _v3State.deployCmdSimTime != null
+        ? _v3State.deployCmdSimTime : _v3State.missionPhaseStart;
+      const dwellS = simT - deployT;
+
+      if (dwellS >= _v3Config.done.SUICIDE_DELAY_AFTER_DEPLOY_S) {
+        send(cmdRcsDuty(null, _v3State.stageIdx));
+
+        if (_v3Config.done.DEORBIT_ENABLED) {
+          send(cmdMarkIntentionalImpact(_v3State.stageIdx));
+          const env = Derivation.getEnv();
+          _v3State.suicideBlock = FUNDAMENTAL_BLOCKS.suicide.createInstance();
+          _v3State.suicideBlock.start(_v3Config.suicide, _v3State.stageIdx, {
+            restingArea: {
+              midWestDeg: env.REMOTE_AREA_MID_WEST_DEG,
+              westStartDeg: env.REMOTE_AREA_WEST_START_DEG,
+              westEndDeg: env.REMOTE_AREA_WEST_END_DEG,
+            },
+          });
+          _v3State.missionPhase = 'SUICIDE';
+          _v3State.missionPhaseStart = simT;
+          console.log('[leoInsertionV3] DONE_DWELL → SUICIDE at t=' + simT.toFixed(2));
+        } else {
+          _v3State.missionPhase = 'END';
+          _v3State.missionPhaseStart = simT;
+        }
+      }
+      break;
+    }
+
+    case 'SUICIDE': {
+      _v3State.suicideBlock.tick(snapshot);
+      if (_v3State.suicideBlock.isDone()) {
+        _v3State.suicideResult = _v3State.suicideBlock.getResult();
+        _v3State.missionPhase = 'END';
+        _v3State.missionPhaseStart = simT;
+        console.log('[leoInsertionV3] SUICIDE done at t=' + simT.toFixed(2));
+      }
+      break;
+    }
+
+    case 'END': {
+      send(cmdSetAllThrottle(0));
+      send(cmdSetGimbalRate(0));
+      break;
+    }
+
+    default: break;
+  }
+}
+
+_leoTickV3.start = function () {
+  _v3State.init = false;
+  _v3State.ticks = 0;
+  _v3State.missionPhase = 'ASCENT';
+  _v3State.missionPhaseStart = 0;
+  _v3State.stageIdx = -1;
+  _v3State.boosterIdx = -1;
+  _v3State.preSplitBodyCount = 0;
+  _v3State.ascentBlock = null;
+  _v3State.insertionBlock = null;
+  _v3State.suicideBlock = null;
+  _v3State.mecoTriggered = false;
+  _v3State.splitDetected = false;
+  _v3State.fairingOpened = false;
+  _v3State.deployCmdSimTime = null;
+  _v3State.insertionResult = null;
+  _v3State.suicideResult = null;
+  _v3State.lastAltKm = 0;
+  _v3State.lastAxialGap = 0;
+  console.log('[leoInsertionV3] started');
+};
+
+_leoTickV3.stop = function () {
+  if (_v3State.ascentBlock) { try { _v3State.ascentBlock.stop(); } catch (e) {} }
+  if (_v3State.insertionBlock) { try { _v3State.insertionBlock.stop(); } catch (e) {} }
+  if (_v3State.suicideBlock) { try { _v3State.suicideBlock.stop(); } catch (e) {} }
+  _v3State.ascentBlock = null;
+  _v3State.insertionBlock = null;
+  _v3State.suicideBlock = null;
+  console.log('[leoInsertionV3] stopped');
+};
+
+_leoTickV3.getStatus = function () {
+  const out = {
+    ticks: _v3State.ticks,
+    phase: _v3CurrentPhase(),
+    mecoTriggered: _v3State.mecoTriggered,
+    splitDetected: _v3State.splitDetected,
+    fairingOpened: _v3State.fairingOpened,
+    axialGap: _v3State.lastAxialGap,
+    altKm: _v3State.lastAltKm,
+  };
+
+  if ((_v3State.missionPhase === 'ASCENT') && _v3State.ascentBlock) {
+    const as = _v3State.ascentBlock.getStatus();
+    Object.assign(out, {
+      ascentPhase: as.ascentPhase,
+      ascentTicks: as.ticks,
+      elapsed: as.elapsed,
+      lockedDeltaDeg: as.lockedDeltaDeg,
+      aoaDeg: as.aoaDeg,
+      aoaNextDeg: as.aoaNextDeg,
+      omegaAoANow: as.omegaAoANow,
+      omegaAoANext: as.omegaAoANext,
+      alphaAoANow: as.alphaAoANow,
+      alphaAoANext: as.alphaAoANext,
+      dQ: as.dQ,
+      tauDQ: as.tauDQ,
+      tauDesired: as.tauDesired,
+      tauDrag: as.tauDrag,
+      tauTarget: as.tauTarget,
+      gRate: as.gRate,
+      gRadN: as.gRadN,
+      gReqDeg: as.gReqDeg,
+    });
+  }
+
+  if (_v3State.insertionBlock) {
+    const ins = _v3State.insertionBlock.getStatus();
+    Object.assign(out, {
+      stageBurnLocked: ins.stageBurnLocked,
+      stageBurnTargetTiltDeg: ins.stageBurnTargetTiltDeg,
+      apogeeKm: ins.apogeeKm,
+      perigeeKm: ins.perigeeKm,
+      coastTBurnPractical: ins.coastTBurnPractical,
+      coastVOrbital: ins.coastVOrbital,
+      coastTargetThetaDeg: ins.coastTargetThetaDeg,
+      coast2TargetThetaDeg: ins.coast2TargetThetaDeg,
+      circCurrentV: ins.circCurrentV,
+      circTargetV: ins.circTargetV,
+      circErr: ins.circErr,
+      circAchieved: ins.circAchieved,
+      coastDeltaV: ins.coastDeltaV,
+      coastTRem: ins.coastTRem,
+      deployCommandSimTime: ins.deployCommandSimTime,
+      payloadCleared: ins.payloadCleared,
+    });
+  }
+
+  if (_v3State.suicideBlock) {
+    const su = _v3State.suicideBlock.getStatus();
+    Object.assign(out, {
+      suicidePhase: su.phase,
+      suicideImpactEfDeg: su.suicideImpactEfDeg,
+      suicideDlambdaDeg: su.suicideDlambdaDeg,
+      suicideTrimDone: su.suicideTrimDone,
+    });
+  }
+
+  return out;
+};
+
+GUIDES.leoInsertionV3 = _leoTickV3;
+
+
   function setLeoInsertionV2(patch) {
     if (!patch) return;
-    Object.keys(patch).forEach(k => {
+    Object.keys(patch).forEach((k) => {
       if (!(k in LEO_INSERTION_V2)) return;
       const cur = LEO_INSERTION_V2[k];
       const nxt = patch[k];
-      if (cur && typeof cur === 'object' && !Array.isArray(cur) &&
-        nxt && typeof nxt === 'object' && !Array.isArray(nxt)) {
+      if (
+        cur &&
+        typeof cur === "object" &&
+        !Array.isArray(cur) &&
+        nxt &&
+        typeof nxt === "object" &&
+        !Array.isArray(nxt)
+      ) {
         Object.assign(cur, nxt);
       } else {
         LEO_INSERTION_V2[k] = nxt;
       }
     });
-    console.log('[leoInsertionV2] constants updated');
+    console.log("[leoInsertionV2] constants updated");
   }
-  function getLeoInsertionV2Config() { return { ...LEO_INSERTION_V2 }; }
+  function getLeoInsertionV2Config() {
+    return { ...LEO_INSERTION_V2 };
+  }
 
+
+  function setLeoInsertionV3(patch) {
+  if (!patch) return;
+  Object.keys(patch).forEach(k => {
+    if (!(k in _v3Config)) return;
+    const cur = _v3Config[k];
+    const nxt = patch[k];
+    if (cur && typeof cur === 'object' && !Array.isArray(cur) &&
+        nxt && typeof nxt === 'object' && !Array.isArray(nxt)) {
+      Object.assign(cur, nxt);
+    } else {
+      _v3Config[k] = nxt;
+    }
+  });
+  console.log('[leoInsertionV3] constants updated');
+}
+function getLeoInsertionV3Config() { return JSON.parse(JSON.stringify(_v3Config)); }
   // ============================================================================
   // Guide config API — table + accessors.
   //
@@ -2009,11 +2916,15 @@ break;
   // don't need any change.
   // ============================================================================
   const _GUIDE_CONFIGS = {
-    leoInsertionV2: {
-      get: () => getLeoInsertionV2Config(),
-      set: (vals) => setLeoInsertionV2(vals),
-    },
-  };
+  leoInsertionV2: {
+    get: () => getLeoInsertionV2Config(),
+    set: (vals) => setLeoInsertionV2(vals),
+  },
+  leoInsertionV3: {
+    get: () => getLeoInsertionV3Config(),
+    set: (vals) => setLeoInsertionV3(vals),
+  },
+};
 
   function getGuideConfig(name) {
     const entry = _GUIDE_CONFIGS[name];
@@ -2021,7 +2932,7 @@ break;
     try {
       return JSON.parse(JSON.stringify(entry.get()));
     } catch (e) {
-      console.error('[guidance] getGuideConfig clone failed for', name, e);
+      console.error("[guidance] getGuideConfig clone failed for", name, e);
       return null;
     }
   }
@@ -2033,7 +2944,7 @@ break;
       entry.set(values);
       return true;
     } catch (e) {
-      console.error('[guidance] applyGuideConfig failed for', name, e);
+      console.error("[guidance] applyGuideConfig failed for", name, e);
       return false;
     }
   }
@@ -2055,11 +2966,21 @@ break;
   function setMissionBody(idx) {
     _missionBodyIdx = Number.isInteger(idx) ? idx : null;
   }
-
+  // Stage 2 test hook — allows external code (headless/test-ascent-block.js)
+  // to register a temporary guide for verification. Not called by any
+  // production code path; safe to leave in place.
+  function _registerTestGuide(name, guideObj) {
+    if (!name || typeof guideObj !== "function") return false;
+    GUIDES[name] = guideObj;
+    return true;
+  }
   // ---- Outbound: single choke point for physics commands. ----
   function send(msg) {
     if (!_physicsSend) {
-      console.warn('[guidance] send() called before physics port connected:', msg);
+      console.warn(
+        "[guidance] send() called before physics port connected:",
+        msg,
+      );
       return;
     }
     if (_missionBodyIdx !== null && msg.targetBodyIdx === undefined) {
@@ -2069,32 +2990,60 @@ break;
   }
 
   // ---- Command builders. Shape-only; clamping is physics's job. ----
-  function cmdSetGroupThrottle(angles, kgPerSec) { return { type: 'setGroupThrottle', angles, value: kgPerSec }; }
-  function cmdSetCenterThrottle(kgPerSec) { return { type: 'setCenterThrottle', value: kgPerSec }; }
-  function cmdSetAllThrottle(kgPerSec) { return { type: 'setAllThrottle', value: kgPerSec }; }
-  function cmdRcs(key, on) { return { type: 'rcs', key, on: !!on }; }
-  function cmdLegs(deployed) { return { type: 'legs', deployed: !!deployed }; }
-  function cmdGridFinsDeploy(deployed) { return { type: 'gridFinsDeploy', deployed: !!deployed }; }
-  function cmdGridFinsControl(controlDeg) { return { type: 'gridFinsControl', controlDeg }; }
-  function cmdSeparate() { return { type: 'separate' }; }
-  function cmdSplitFairing() { return { type: 'splitFairing' }; }
-  function cmdReleasePayload() { return { type: 'releasePayload' }; }
-  function cmdEmergencyEject() { return { type: 'emergencyEject' }; }
-  function cmdTakeControl(idx) { return { type: 'takeControl', idx }; }
-  function cmdWarp(value) { return { type: 'warp', value }; }
-  function cmdSetFuelMass(value) { return { type: 'setFuelMass', value }; }
+  function cmdSetGroupThrottle(angles, kgPerSec) {
+    return { type: "setGroupThrottle", angles, value: kgPerSec };
+  }
+  function cmdSetCenterThrottle(kgPerSec) {
+    return { type: "setCenterThrottle", value: kgPerSec };
+  }
+  function cmdSetAllThrottle(kgPerSec) {
+    return { type: "setAllThrottle", value: kgPerSec };
+  }
+  function cmdRcs(key, on) {
+    return { type: "rcs", key, on: !!on };
+  }
+  function cmdLegs(deployed) {
+    return { type: "legs", deployed: !!deployed };
+  }
+  function cmdGridFinsDeploy(deployed) {
+    return { type: "gridFinsDeploy", deployed: !!deployed };
+  }
+  function cmdGridFinsControl(controlDeg) {
+    return { type: "gridFinsControl", controlDeg };
+  }
+  function cmdSeparate() {
+    return { type: "separate" };
+  }
+  function cmdSplitFairing() {
+    return { type: "splitFairing" };
+  }
+  function cmdReleasePayload() {
+    return { type: "releasePayload" };
+  }
+  function cmdEmergencyEject() {
+    return { type: "emergencyEject" };
+  }
+  function cmdTakeControl(idx) {
+    return { type: "takeControl", idx };
+  }
+  function cmdWarp(value) {
+    return { type: "warp", value };
+  }
+  function cmdSetFuelMass(value) {
+    return { type: "setFuelMass", value };
+  }
   function cmdSetGimbalRate(degPerSec, target) {
-    const msg = { type: 'setGimbalRate', degPerSec };
+    const msg = { type: "setGimbalRate", degPerSec };
     if (target) msg.target = target;
     return msg;
   }
   function cmdRcsDuty(duties, targetBodyIdx) {
-    const msg = { type: 'rcsDuty', duties };
+    const msg = { type: "rcsDuty", duties };
     if (Number.isInteger(targetBodyIdx)) msg.targetBodyIdx = targetBodyIdx;
     return msg;
   }
   function cmdMarkIntentionalImpact(targetBodyIdx) {
-    const msg = { type: 'markIntentionalImpact' };
+    const msg = { type: "markIntentionalImpact" };
     if (Number.isInteger(targetBodyIdx)) msg.targetBodyIdx = targetBodyIdx;
     return msg;
   }
@@ -2116,8 +3065,12 @@ break;
     getGuideStatus,
     getGuideStatusLabel,
     setLeoInsertionV2,
-    setMissionBody,
-    getLeoInsertionV2Config,
+setLeoInsertionV3,
+setMissionBody,
+getLeoInsertionV2Config,
+getLeoInsertionV3Config,
+// Stage 2 test hook — see _registerTestGuide below.
+_registerTestGuide,
     // Guide config API
     getGuideConfig,
     applyGuideConfig,
@@ -2148,7 +3101,11 @@ break;
     cmdRcsDuty,
     cmdMarkIntentionalImpact,
     // Debug getters
-    get lastRawSnapshot() { return _lastRawSnapshot; },
-    get lastMeasuredSnapshot() { return _lastMeasuredSnapshot; },
+    get lastRawSnapshot() {
+      return _lastRawSnapshot;
+    },
+    get lastMeasuredSnapshot() {
+      return _lastMeasuredSnapshot;
+    },
   };
 })();
