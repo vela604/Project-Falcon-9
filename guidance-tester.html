@@ -1683,6 +1683,8 @@ Plots.push(bi, {
     // Initial plot render (empty)
     Plots.renderAll();
 
+    const ENABLE_PLOTS = false;   // TEMP: toggle for verification
+
     for (let i = 0; i < maxTicks; i++) {
       if (abort) break;
       if (state.halted) break;
@@ -1716,8 +1718,10 @@ window.__tickDump.push({
   })),
 });
 
-      // ---- Push plot samples (per tick) ----
-      pushPlotSample();
+      
+
+// ---- Push plot samples (per tick) ----
+if (ENABLE_PLOTS) pushPlotSample();
 
       // ---- Event detection + peak tracking ----
       const gs = (Guidance.getGuideStatus && Guidance.getGuideStatus()) || {};
@@ -1811,20 +1815,20 @@ window.__tickDump.push({
       } // if (body)
 
       // ---- Yield + progress + plot render ----
-      if (i > 0 && i % CHUNK === 0) {
-        const wall = (performance.now() - t0) / 1000;
-        const tps = ticksRun / wall;
-        const pct = ((i / maxTicks) * 100).toFixed(1);
-        statusEl.textContent =
-          `Running… t=${state.simTime.toFixed(1)}s / ${durationS}s  ` +
-          `(${pct}%, ${ticksRun} ticks, ${tps.toFixed(0)} ticks/s, ${captures.length} captures)`;
-        Plots.renderAll();
-        await yieldToBrowser();
-      }
+if (i > 0 && i % CHUNK === 0) {
+  const wall = (performance.now() - t0) / 1000;
+  const tps = ticksRun / wall;
+  const pct = ((i / maxTicks) * 100).toFixed(1);
+  statusEl.textContent =
+    `Running… t=${state.simTime.toFixed(1)}s / ${durationS}s  ` +
+    `(${pct}%, ${ticksRun} ticks, ${tps.toFixed(0)} ticks/s, ${captures.length} captures)`;
+  if (ENABLE_PLOTS) Plots.renderAll();
+  await yieldToBrowser();
+}
     }
 
-    // Final plot render
-    Plots.renderAll();
+    // Initial plot render (empty)
+if (ENABLE_PLOTS) Plots.renderAll();
 
     const finalEndState = captureState();
 
