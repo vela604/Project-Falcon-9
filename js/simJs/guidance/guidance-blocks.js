@@ -2186,16 +2186,7 @@ if (speedH > 1) {
               break;
             }
 
-// TEMP DIAG
-if (_st.ticks % 40 === 0) {
-  console.error('[SUI] t=' + simT.toFixed(1) +
-    ' dLamDeg=' + dLambdaDeg.toFixed(4) +
-    ' dir=' + (dLambdaDeg > 0 ? 'UP(retro)' : 'DN(pro)') +
-    ' duty=' + duty.toFixed(3) +
-    ' impactEf=' + ((impact.phiEf * 180) / Math.PI).toFixed(3) +
-    ' targetEf=' + ((lambdaMidEf * 180) / Math.PI).toFixed(3) +
-    ' alt=' + ((Math.hypot(body.rx, body.ry) - env.EARTH_RADIUS) / 1000).toFixed(2));
-}
+
 
             const direction = dLambdaDeg > 0 ? "up" : "dn";
 const FAR = cfg.SUICIDE_TRIM_FAR_DEG;
