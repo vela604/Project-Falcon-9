@@ -391,7 +391,7 @@ a.back:hover { color: var(--cyan); }
   'use strict';
 
   // ============================================================================
-  // Library cache — same pattern the sim/tester pages use.
+  // Library cache — same as numerical.
   // ============================================================================
   (function patchLibraryCache() {
     var _cache = null;
@@ -438,7 +438,7 @@ a.back:hover { color: var(--cyan); }
   let defaultValues = null;
 
   // ============================================================================
-  // Body color palette — same as guidance_tester. Indexed by bodyIdx % 8.
+  // Plot palette
   // ============================================================================
   const BODY_COLORS = [
     '#35d6ff', '#ff9248', '#4ade80', '#ff5fa8',
@@ -446,13 +446,9 @@ a.back:hover { color: var(--cyan); }
   ];
 
   // ============================================================================
-  // SIMULATION RUNTIME — bit-exact parity with headless/runner.js.
+  // SIMULATION RUNTIME — identical to numerical's.
   //
-  // Tick order (matches physics.worker.js + guidance.worker.js pipeline):
-  //     loop:
-  //       physicsStep(dt)         — applies commands from previous tick
-  //       snap = buildSnapshot()  — post-step state
-  //       Guidance.onSnapshot(snap)
+  // Tick order: physicsStep → buildSnapshot → Guidance.onSnapshot.
   // ============================================================================
   function buildSnapshot() {
     const bodies = state.bodies;
@@ -579,7 +575,7 @@ a.back:hover { color: var(--cyan); }
   }
 
   // ============================================================================
-  // Stack data handoff — same shape all pages send to Derivation.
+  // Stack data handoff — MUST match numerical exactly (includes memberDerived).
   // ============================================================================
   (function setupStackData() {
     const members = (typeof getActiveStackMembers === 'function')
@@ -624,65 +620,53 @@ a.back:hover { color: var(--cyan); }
 
       const activeStk = (typeof getActiveStack === 'function') ? getActiveStack() : null;
 
-// Pre-resolve every per-member derived value that derivation.js needs
-// but cannot reach: leg geometry + one-leg volume live inside a type's
-// frame.hingeGeometry()/structuralVolume() FUNCTIONS (stripped on the
-// structured clone into the guidance worker), and the grid-fin total
-// mass lives in fleet.js's computeGridFinMass(). Shipping the resolved
-// numbers once at handoff keeps guidance's mass model locked to physics
-// without needing a second inlined reimplementation that could drift.
-const memberDerived = {};
-members.forEach(m => {
-  if (!m || !m.id) return;
-  const out = {};
+      // memberDerived — same as numerical.
+      const memberDerived = {};
+      members.forEach(m => {
+        if (!m || !m.id) return;
+        const out = {};
+        if (m.hasRecovery !== false && m.recoveryTypeId &&
+          typeof getComponentType === 'function') {
+          const rt = getComponentType(m.recoveryTypeId);
+          if (rt && rt.capabilities && rt.capabilities.deploysOnVehicle &&
+            rt.frame && typeof rt.frame.hingeGeometry === 'function' &&
+            typeof rt.frame.structuralVolume === 'function') {
+            const legH = (m.fuel && Number.isFinite(m.fuel.tankHeight)) ?
+              m.fuel.tankHeight :
+              (Number.isFinite(m.height) ? m.height : 0);
+            const legW = (m.fuel && Number.isFinite(m.fuel.tankWidth)) ?
+              m.fuel.tankWidth :
+              (Number.isFinite(m.width) ? m.width : 0);
+            const geo = rt.frame.hingeGeometry(legH);
+            const oneLegVolume = rt.frame.structuralVolume(legH, legW);
+            if (geo && Number.isFinite(geo.hingeY) &&
+              Number.isFinite(geo.legLength) &&
+              Number.isFinite(geo.maxSweepRad) &&
+              Number.isFinite(oneLegVolume)) {
+              out.legs = {
+                hingeY: geo.hingeY,
+                legLength: geo.legLength,
+                maxSweepRad: geo.maxSweepRad,
+                legCount: rt.frame.legCount || 4,
+                oneLegVolume,
+              };
+            }
+          }
+        }
+        if (m.hasGridFins && typeof computeGridFinMass === 'function') {
+          const gf = computeGridFinMass(m);
+          if (gf && Number.isFinite(gf.totalMass) && Number.isFinite(gf.perFinMass)) {
+            out.gridFins = {
+              totalMass: gf.totalMass,
+              perFinMass: gf.perFinMass,
+              finCount: gf.finCount,
+            };
+          }
+        }
+        memberDerived[m.id] = out;
+      });
 
-  // Legs — resolve via the type's own functions, at THIS record's
-  // own tank dimensions (matching massProps.js's tankH/tankW inputs).
-  if (m.hasRecovery !== false && m.recoveryTypeId &&
-    typeof getComponentType === 'function') {
-    const rt = getComponentType(m.recoveryTypeId);
-    if (rt && rt.capabilities && rt.capabilities.deploysOnVehicle &&
-      rt.frame && typeof rt.frame.hingeGeometry === 'function' &&
-      typeof rt.frame.structuralVolume === 'function') {
-      const legH = (m.fuel && Number.isFinite(m.fuel.tankHeight)) ?
-        m.fuel.tankHeight :
-        (Number.isFinite(m.height) ? m.height : 0);
-      const legW = (m.fuel && Number.isFinite(m.fuel.tankWidth)) ?
-        m.fuel.tankWidth :
-        (Number.isFinite(m.width) ? m.width : 0);
-      const geo = rt.frame.hingeGeometry(legH);
-      const oneLegVolume = rt.frame.structuralVolume(legH, legW);
-      if (geo && Number.isFinite(geo.hingeY) &&
-        Number.isFinite(geo.legLength) &&
-        Number.isFinite(geo.maxSweepRad) &&
-        Number.isFinite(oneLegVolume)) {
-        out.legs = {
-          hingeY: geo.hingeY,
-          legLength: geo.legLength,
-          maxSweepRad: geo.maxSweepRad,
-          legCount: rt.frame.legCount || 4,
-          oneLegVolume,
-        };
-      }
-    }
-  }
-
-  // Grid fins — total mass from fleet.js's own computeGridFinMass.
-  if (m.hasGridFins && typeof computeGridFinMass === 'function') {
-    const gf = computeGridFinMass(m);
-    if (gf && Number.isFinite(gf.totalMass) && Number.isFinite(gf.perFinMass)) {
-      out.gridFins = {
-        totalMass: gf.totalMass,
-        perFinMass: gf.perFinMass,
-        finCount: gf.finCount,
-      };
-    }
-  }
-
-  memberDerived[m.id] = out;
-});
-
-const derived = (activeStk && activeStk.derived) ? activeStk.derived : null;
+      const derived = (activeStk && activeStk.derived) ? activeStk.derived : null;
 
       let stackPayloadMass = 0;
       if (activeStk && activeStk.payloadId && typeof getPayload === 'function') {
@@ -691,12 +675,12 @@ const derived = (activeStk && activeStk.derived) ? activeStk.derived : null;
       }
 
       return {
-  members: members.map(_stripFns),
-  types,
-  memberDerived,
-  stackPayloadMass,
-  derived,
-  env: {
+        members: members.map(_stripFns),
+        types,
+        memberDerived,
+        stackPayloadMass,
+        derived,
+        env: {
           EARTH_RADIUS: CONFIG.EARTH_RADIUS,
           GM_EARTH: CONFIG.GM_EARTH,
           EARTH_OMEGA: CONFIG.EARTH_OMEGA,
@@ -725,7 +709,7 @@ const derived = (activeStk && activeStk.derived) ? activeStk.derived : null;
   Guidance.init(localDispatch);
 
   // ============================================================================
-  // Populate guide dropdown
+  // Guide dropdown
   // ============================================================================
   const allGuides = (Guidance.listGuides && Guidance.listGuides()) || [];
   const labelOf = (g) => (Guidance.getGuideStatusLabel && Guidance.getGuideStatusLabel(g)) || '';
@@ -749,7 +733,7 @@ const derived = (activeStk && activeStk.derived) ? activeStk.derived : null;
   })();
 
   // ============================================================================
-  // Constants panel
+  // Constants panel — identical to numerical.
   // ============================================================================
   const FLAT_SEP = '.';
   function _getByPath(obj, path) {
@@ -802,7 +786,6 @@ const derived = (activeStk && activeStk.derived) ? activeStk.derived : null;
     const desc = _descFor(guideName, path);
     label.title = desc ? (path + ' — ' + desc) : path;
     row.appendChild(label);
-
     let input;
     if (typeof refVal === 'boolean') {
       input = document.createElement('input');
@@ -853,7 +836,6 @@ const derived = (activeStk && activeStk.derived) ? activeStk.derived : null;
       input.classList.toggle('changed', def !== cur);
     }
   }
-
   function renderConstants(guideName) {
     const cfg = Guidance.getGuideConfig(guideName);
     if (!cfg) {
@@ -865,13 +847,10 @@ const derived = (activeStk && activeStk.derived) ? activeStk.derived : null;
       getGuideDefaultPreset(guideName) : null;
     defaultValues = defaults ? JSON.parse(JSON.stringify(defaults.constants)) : JSON.parse(JSON.stringify(cfg));
     currentValues = JSON.parse(JSON.stringify(cfg));
-
     const important = (typeof getGuideImportantFields === 'function') ?
       getGuideImportantFields(guideName) : [];
     const impSet = new Set(important);
-
     constantsHost.innerHTML = '';
-
     if (important.length) {
       const sec = _mkSection('Important', true, false);
       important.forEach(path => {
@@ -881,7 +860,6 @@ const derived = (activeStk && activeStk.derived) ? activeStk.derived : null;
       });
       constantsHost.appendChild(sec.el);
     }
-
     const rootScalars = [];
     const objectGroups = [];
     for (const k in cfg) {
@@ -898,7 +876,6 @@ const derived = (activeStk && activeStk.derived) ? activeStk.derived : null;
       });
       constantsHost.appendChild(sec.el);
     }
-
     objectGroups.forEach(gk => {
       const subRef = cfg[gk];
       const sec = _mkSection(gk, false, true);
@@ -943,7 +920,7 @@ const derived = (activeStk && activeStk.derived) ? activeStk.derived : null;
   });
 
   // ============================================================================
-  // Preset management
+  // Preset management — identical to numerical.
   // ============================================================================
   function refreshPresets(guideName) {
     if (typeof getAllPresetsForGuide !== 'function') {
@@ -1043,7 +1020,7 @@ const derived = (activeStk && activeStk.derived) ? activeStk.derived : null;
   });
 
   // ============================================================================
-  // Environment + fueling
+  // Environment + fueling — identical to numerical.
   // ============================================================================
   function applyEnvironment() {
     if (typeof wind !== 'undefined') {
@@ -1077,74 +1054,55 @@ const derived = (activeStk && activeStk.derived) ? activeStk.derived : null;
   }
 
   // ============================================================================
+  // PLOTS — read-only observers.
   // ============================================================================
-  // PLOTS
-  // ============================================================================
-  // ============================================================================
-  //
-  // Per-tick sample storage. Data capped so a long run (1500s+) doesn't
-  // blow up memory; older points dropped in chunks. Render down-samples
-  // to ~2000 points per series to keep draw time bounded.
-  //
-  // Body key: `b{index}`. Colors: BODY_COLORS[index % 8].
-  // ============================================================================
-  const PLOT_RENDER_MAX = 2500; // down-sample target for rendering
+  const PLOT_RENDER_MAX = 2500;
 
   const Plots = {
-  data: {
-    polar: {}, // { bodyKey: [{rx, ry, t}, ...] }
-    vr: {}, // { bodyKey: [{t, v}, ...] }
-    vt: {},
-    alt: {},
-    speed: {},
-    mass: {},
-    q: {},
-  },
-  
-  reset() {
-    for (const k in this.data) this.data[k] = {};
-  },
-  
-  _push(store, key, val) {
-    if (!store[key]) store[key] = [];
-    store[key].push(val);
-    // No cap. Every series keeps its full history from t=0 so the
-    // time-series plots always auto-fit to the entire mission and never
-    // truncate the beginning of the trace. Memory cost is fine for
-    // calibration work (a 1500s run at 80 Hz is ~120k points per series
-    // per body).
-  },
-  
-  push(bodyIdx, s) {
-    const key = 'b' + bodyIdx;
-    this._push(this.data.polar, key, { rx: s.rx, ry: s.ry, t: s.t });
-    this._push(this.data.vr, key, { t: s.t, v: s.vr });
-    this._push(this.data.vt, key, { t: s.t, v: s.vt });
-    this._push(this.data.alt, key, { t: s.t, v: s.altKm });
-    this._push(this.data.speed, key, { t: s.t, v: s.speed });
-    this._push(this.data.mass, key, { t: s.t, v: s.mass_t });
-    this._push(this.data.q, key, { t: s.t, v: s.q_kPa });
-  },
-  
-  renderAll() {
-    drawPolarPlot(this.data.polar);
-    drawTimeSeries('vrCanvas', this.data.vr, { forceZero: true });
-    drawTimeSeries('vtCanvas', this.data.vt, { forceZero: true });
-    drawTimeSeries('altCanvas', this.data.alt, { forceZero: true });
-    drawTimeSeries('speedCanvas', this.data.speed, { forceZero: true });
-    drawTimeSeries('massCanvas', this.data.mass, { forceZero: true });
-    drawTimeSeries('qCanvas', this.data.q, { forceZero: true });
-  },
-};
+    data: {
+      polar: {},
+      vr:    {},
+      vt:    {},
+      alt:   {},
+      speed: {},
+      mass:  {},
+      q:     {},
+    },
+    reset() {
+      for (const k in this.data) this.data[k] = {};
+    },
+    _push(store, key, val) {
+      if (!store[key]) store[key] = [];
+      store[key].push(val);
+    },
+    push(bodyIdx, s) {
+      const key = 'b' + bodyIdx;
+      this._push(this.data.polar, key, { rx: s.rx, ry: s.ry, t: s.t });
+      this._push(this.data.vr, key, { t: s.t, v: s.vr });
+      this._push(this.data.vt, key, { t: s.t, v: s.vt });
+      this._push(this.data.alt, key, { t: s.t, v: s.altKm });
+      this._push(this.data.speed, key, { t: s.t, v: s.speed });
+      this._push(this.data.mass, key, { t: s.t, v: s.mass_t });
+      this._push(this.data.q, key, { t: s.t, v: s.q_kPa });
+    },
+    renderAll() {
+      drawPolarPlot(this.data.polar);
+      drawTimeSeries('vrCanvas', this.data.vr, { forceZero: true });
+      drawTimeSeries('vtCanvas', this.data.vt, { forceZero: true });
+      drawTimeSeries('altCanvas', this.data.alt, { forceZero: true });
+      drawTimeSeries('speedCanvas', this.data.speed, { forceZero: true });
+      drawTimeSeries('massCanvas', this.data.mass, { forceZero: true });
+      drawTimeSeries('qCanvas', this.data.q, { forceZero: true });
+    },
+  };
 
-  // Called every tick from the run loop. Reads live state and pushes
-  // one sample per body. Cheap (array ops only).
+  // Pure-read plot sampler. Called once per tick from the loop, AFTER
+  // physicsStep + Guidance.onSnapshot. Reads only scalar fields off
+  // state.bodies — never calls geometryOf/currentGeometry, never touches
+  // any cache. Cannot affect the sim.
   function pushPlotSample() {
     const t = state.simTime;
-    const GM = CONFIG.GM_EARTH;
     const Re = CONFIG.EARTH_RADIUS;
-    const omegaE = CONFIG.EARTH_OMEGA;
-
     for (let bi = 0; bi < state.bodies.length; bi++) {
       const b = state.bodies[bi];
       const r = Math.hypot(b.rx, b.ry);
@@ -1153,30 +1111,32 @@ const derived = (activeStk && activeStk.derived) ? activeStk.derived : null;
       const ux = b.rx / r, uy = b.ry / r;
       const ex = b.ry / r, ey = -b.rx / r;
       const vr = b.vx * ux + b.vy * uy;
-      const vt = b.vx * ex + b.vy * ey; // inertial
+      const vt = b.vx * ex + b.vy * ey;
       const speed = Math.hypot(b.vx, b.vy);
       const altKm = (r - Re) / 1000;
-      const geom = (typeof geometryOf === 'function') ? geometryOf(b) : null;
-const mass_t = geom ? geom.M / 1000 : 0;
 
-const alt_m = Math.max(0, r - Re);
-const rho = (typeof airDensity === 'function') ? airDensity(alt_m) : 0;
-const sv = (typeof earthSurfaceVelocity === 'function') ? earthSurfaceVelocity(b.rx, b.ry) : { vx: 0, vy: 0 };
-const wv = (typeof windInertialVector === 'function') ? windInertialVector(b.rx, b.ry) : { wx: 0, wy: 0 };
-const relVx = b.vx - (sv.vx + wv.wx);
-const relVy = b.vy - (sv.vy + wv.wy);
-const speedRel = Math.hypot(relVx, relVy);
-const q_kPa = 0.5 * rho * speedRel * speedRel / 1000;
+      // Mass — read the cache that physicsStep already populated this
+      // tick. Never call geometryOf() from the plot sampler.
+      const mass_t = (b._geomCache && Number.isFinite(b._geomCache.M))
+        ? b._geomCache.M / 1000 : 0;
 
-Plots.push(bi, {
-  t, rx: b.rx, ry: b.ry,
-  vr, vt, altKm, speed,
-  mass_t, q_kPa,
-});
+      const alt_m = Math.max(0, r - Re);
+      const rho = (typeof airDensity === 'function') ? airDensity(alt_m) : 0;
+      const sv = (typeof earthSurfaceVelocity === 'function') ? earthSurfaceVelocity(b.rx, b.ry) : { vx: 0, vy: 0 };
+      const wv = (typeof windInertialVector === 'function') ? windInertialVector(b.rx, b.ry) : { wx: 0, wy: 0 };
+      const relVx = b.vx - (sv.vx + wv.wx);
+      const relVy = b.vy - (sv.vy + wv.wy);
+      const speedRel = Math.hypot(relVx, relVy);
+      const q_kPa = 0.5 * rho * speedRel * speedRel / 1000;
+
+      Plots.push(bi, {
+        t, rx: b.rx, ry: b.ry,
+        vr, vt, altKm, speed,
+        mass_t, q_kPa,
+      });
     }
   }
 
-  // ---- Down-sample for rendering ----
   function _downSample(arr, maxPoints) {
     if (!arr || arr.length <= maxPoints) return arr || [];
     const step = Math.ceil(arr.length / maxPoints);
@@ -1186,7 +1146,6 @@ Plots.push(bi, {
     return out;
   }
 
-  // ---- Formatter for axis tick labels ----
   function _fmtAxis(v) {
     if (!isFinite(v)) return '—';
     const a = Math.abs(v);
@@ -1200,205 +1159,164 @@ Plots.push(bi, {
     return v.toExponential(1);
   }
 
-  // ---- POLAR PLOT ----
-  // Earth at center, trajectory as arc. Altitudes exaggerated ×5 so LEO
-  // sits visibly above the surface. Earth-fixed angle — the pad stays put
-  // and the trajectory paints a proper ground track.
   function drawPolarPlot(polarData) {
-  const canvas = $('polarCanvas');
-  if (!canvas) return;
-  const dpr = window.devicePixelRatio || 1;
-  const cssW = canvas.clientWidth || 600;
-  const cssH = canvas.clientHeight || cssW;
-  const size = Math.min(cssW, cssH);
-  if (canvas.width !== Math.round(size * dpr) ||
-      canvas.height !== Math.round(size * dpr)) {
-    canvas.width  = Math.round(size * dpr);
-    canvas.height = Math.round(size * dpr);
-  }
-  const ctx = canvas.getContext('2d');
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.clearRect(0, 0, size, size);
-
-  const cx = size / 2, cy = size / 2;
-  const Re = CONFIG.EARTH_RADIUS;
-  const omegaE = CONFIG.EARTH_OMEGA;
-  const EXAG = 5;
-
-  // --- Project every trail point to earth-fixed display coords ---
-  // Display coords are Earth-centered (origin = Earth's center), with
-  // altitude exaggerated by EXAG so LEO sits visibly above the surface.
-  // A separate `projected` map holds the screen-independent projections
-  // so the original polar data stays untouched.
-  const projected = {};
-  let hasAny = false;
-  let minX = Infinity, maxX = -Infinity;
-  let minY = Infinity, maxY = -Infinity;
-
-  for (const key in polarData) {
-    const pts = polarData[key];
-    if (!pts || !pts.length) continue;
-    hasAny = true;
-    const xy = [];
-    for (let i = 0; i < pts.length; i++) {
-      const p = pts[i];
-      const r = Math.hypot(p.rx, p.ry);
-      const r_display = Re + (r - Re) * EXAG;
-      const phiI = Math.atan2(p.rx, p.ry);
-      const phiEF = phiI - omegaE * p.t;
-      const x = r_display * Math.sin(phiEF);
-      const y = r_display * Math.cos(phiEF);
-      xy.push({ x, y });
-      if (x < minX) minX = x;
-      if (x > maxX) maxX = x;
-      if (y < minY) minY = y;
-      if (y > maxY) maxY = y;
+    const canvas = $('polarCanvas');
+    if (!canvas) return;
+    const dpr = window.devicePixelRatio || 1;
+    const cssW = canvas.clientWidth || 600;
+    const cssH = canvas.clientHeight || cssW;
+    const size = Math.min(cssW, cssH);
+    if (canvas.width !== Math.round(size * dpr) ||
+        canvas.height !== Math.round(size * dpr)) {
+      canvas.width  = Math.round(size * dpr);
+      canvas.height = Math.round(size * dpr);
     }
-    projected[key] = xy;
-  }
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, size, size);
 
-  // Empty state — fall back to a small patch around the pad so the
-  // canvas isn't just black. Bounds are set in display coords.
-  if (!hasAny) {
-    const padPhi = CONFIG.LAUNCH_SITE_ANGLE_0 || 0;
-    const px = Re * Math.sin(padPhi);
-    const py = Re * Math.cos(padPhi);
-    const halfWindow = Re * 0.05;
-    minX = px - halfWindow; maxX = px + halfWindow;
-    minY = py - halfWindow; maxY = py + halfWindow;
-  }
+    const cx = size / 2, cy = size / 2;
+    const Re = CONFIG.EARTH_RADIUS;
+    const omegaE = CONFIG.EARTH_OMEGA;
+    const EXAG = 5;
 
-  // Guard against degenerate boxes (single point, or a trail so short
-  // it's effectively a dot) — pad them to a minimum extent so the
-  // scale computation never divides by ~0.
-  if (maxX - minX < 1) { const mid = (minX + maxX) / 2; minX = mid - 1; maxX = mid + 1; }
-  if (maxY - minY < 1) { const mid = (minY + maxY) / 2; minY = mid - 1; maxY = mid + 1; }
+    const projected = {};
+    let hasAny = false;
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
 
-  // 10% padding on all sides so the trail's tip/start aren't glued to
-  // the canvas edge.
-  const bpad = Math.max(maxX - minX, maxY - minY) * 0.10;
-  minX -= bpad; maxX += bpad;
-  minY -= bpad; maxY += bpad;
-
-  // --- Fit that box to the canvas, preserving aspect ratio ---
-  // scale is px-per-meter in display space.
-  const scale = Math.min(size / (maxX - minX), size / (maxY - minY));
-  const midX = (minX + maxX) / 2;
-  const midY = (minY + maxY) / 2;
-
-  // Display (x,y) → screen (px,py). Earth-fixed y increases "up" on the
-  // display, screen y increases "down", so the y axis is flipped.
-  const toS = (x, y) => ({
-    px: cx + (x - midX) * scale,
-    py: cy - (y - midY) * scale,
-  });
-
-  // --- Background: space ---
-  ctx.fillStyle = '#040610';
-  ctx.fillRect(0, 0, size, size);
-
-  // --- Earth: filled disc, centered at display (0,0). The disc may be
-  // huge (zoomed in near the pad) or partially off-canvas — we only
-  // draw it if it actually intersects the viewport at all. ---
-  const earthC = toS(0, 0);
-  const earthPx = Re * scale;
-  const earthVisible = earthPx > 0.5 &&
-    earthC.px + earthPx > 0 && earthC.px - earthPx < size &&
-    earthC.py + earthPx > 0 && earthC.py - earthPx < size;
-  if (earthVisible) {
-    ctx.fillStyle = '#0d2b12';
-    ctx.beginPath();
-    ctx.arc(earthC.px, earthC.py, earthPx, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(100,180,120,0.45)';
-    ctx.lineWidth = 1.5;
-    ctx.stroke();
-  }
-
-  // --- Body trails ---
-  // Draw every projected point but sub-sample when the count is huge so
-  // render time stays bounded. 8000 is a good balance: full detail at
-  // typical mission lengths, and at 1500s+ the trail is still visually
-  // smooth (one point every ~15 ticks).
-  const MAX_DRAW = 8000;
-  for (const key in projected) {
-    const xy = projected[key];
-    if (!xy || xy.length < 2) continue;
-    const bodyIdx = parseInt(key.slice(1), 10) || 0;
-    const color = BODY_COLORS[bodyIdx % BODY_COLORS.length];
-
-    const step = Math.max(1, Math.ceil(xy.length / MAX_DRAW));
-
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 1.8;
-    ctx.lineJoin = 'round';
-    ctx.beginPath();
-    let started = false;
-    for (let i = 0; i < xy.length; i += step) {
-      const s = toS(xy[i].x, xy[i].y);
-      if (!started) { ctx.moveTo(s.px, s.py); started = true; }
-      else ctx.lineTo(s.px, s.py);
+    for (const key in polarData) {
+      const pts = polarData[key];
+      if (!pts || !pts.length) continue;
+      hasAny = true;
+      const xy = [];
+      for (let i = 0; i < pts.length; i++) {
+        const p = pts[i];
+        const r = Math.hypot(p.rx, p.ry);
+        const r_display = Re + (r - Re) * EXAG;
+        const phiI = Math.atan2(p.rx, p.ry);
+        const phiEF = phiI - omegaE * p.t;
+        const x = r_display * Math.sin(phiEF);
+        const y = r_display * Math.cos(phiEF);
+        xy.push({ x, y });
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+      }
+      projected[key] = xy;
     }
-    // Always land on the actual last point so the tip isn't skipped by
-    // the sub-sample stride.
-    const lastXY = xy[xy.length - 1];
-    const lastS = toS(lastXY.x, lastXY.y);
-    if (started) ctx.lineTo(lastS.px, lastS.py);
-    ctx.stroke();
 
-    // Current position marker + label
-    ctx.fillStyle = color;
-    ctx.beginPath();
-    ctx.arc(lastS.px, lastS.py, 4, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(0,0,0,0.55)';
-    ctx.lineWidth = 1;
-    ctx.stroke();
+    if (!hasAny) {
+      const padPhi = CONFIG.LAUNCH_SITE_ANGLE_0 || 0;
+      const px = Re * Math.sin(padPhi), py = Re * Math.cos(padPhi);
+      const halfWindow = Re * 0.05;
+      minX = px - halfWindow; maxX = px + halfWindow;
+      minY = py - halfWindow; maxY = py + halfWindow;
+    }
+    if (maxX - minX < 1) { const mid = (minX + maxX) / 2; minX = mid - 1; maxX = mid + 1; }
+    if (maxY - minY < 1) { const mid = (minY + maxY) / 2; minY = mid - 1; maxY = mid + 1; }
+    const bpad = Math.max(maxX - minX, maxY - minY) * 0.10;
+    minX -= bpad; maxX += bpad;
+    minY -= bpad; maxY += bpad;
 
-    ctx.fillStyle = color;
-    ctx.font = 'bold 10px "JetBrains Mono", monospace';
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('b' + bodyIdx, lastS.px + 7, lastS.py);
-  }
+    const scale = Math.min(size / (maxX - minX), size / (maxY - minY));
+    const midX = (minX + maxX) / 2;
+    const midY = (minY + maxY) / 2;
 
-  // --- Launch pad marker (earth-fixed angle = LAUNCH_SITE_ANGLE_0) ---
-  {
-    const padPhi = CONFIG.LAUNCH_SITE_ANGLE_0 || 0;
-    const s = toS(Re * Math.sin(padPhi), Re * Math.cos(padPhi));
-    if (s.px > -20 && s.px < size + 20 && s.py > -20 && s.py < size + 20) {
-      ctx.fillStyle = '#ff5f7e';
+    const toS = (x, y) => ({
+      px: cx + (x - midX) * scale,
+      py: cy - (y - midY) * scale,
+    });
+
+    ctx.fillStyle = '#040610';
+    ctx.fillRect(0, 0, size, size);
+
+    const earthC = toS(0, 0);
+    const earthPx = Re * scale;
+    const earthVisible = earthPx > 0.5 &&
+      earthC.px + earthPx > 0 && earthC.px - earthPx < size &&
+      earthC.py + earthPx > 0 && earthC.py - earthPx < size;
+    if (earthVisible) {
+      ctx.fillStyle = '#0d2b12';
       ctx.beginPath();
-      ctx.arc(s.px, s.py, 5, 0, Math.PI * 2);
+      ctx.arc(earthC.px, earthC.py, earthPx, 0, Math.PI * 2);
       ctx.fill();
-      ctx.strokeStyle = 'rgba(0,0,0,0.6)';
+      ctx.strokeStyle = 'rgba(100,180,120,0.45)';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    }
+
+    const MAX_DRAW = 8000;
+    for (const key in projected) {
+      const xy = projected[key];
+      if (!xy || xy.length < 2) continue;
+      const bodyIdx = parseInt(key.slice(1), 10) || 0;
+      const color = BODY_COLORS[bodyIdx % BODY_COLORS.length];
+      const step = Math.max(1, Math.ceil(xy.length / MAX_DRAW));
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1.8;
+      ctx.lineJoin = 'round';
+      ctx.beginPath();
+      let started = false;
+      for (let i = 0; i < xy.length; i += step) {
+        const s = toS(xy[i].x, xy[i].y);
+        if (!started) { ctx.moveTo(s.px, s.py); started = true; }
+        else ctx.lineTo(s.px, s.py);
+      }
+      const lastXY = xy[xy.length - 1];
+      const lastS = toS(lastXY.x, lastXY.y);
+      if (started) ctx.lineTo(lastS.px, lastS.py);
+      ctx.stroke();
+
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(lastS.px, lastS.py, 4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(0,0,0,0.55)';
       ctx.lineWidth = 1;
       ctx.stroke();
-      ctx.fillStyle = '#ffffff';
+
+      ctx.fillStyle = color;
       ctx.font = 'bold 10px "JetBrains Mono", monospace';
       ctx.textAlign = 'left';
       ctx.textBaseline = 'middle';
-      ctx.fillText('PAD', s.px + 8, s.py);
+      ctx.fillText('b' + bodyIdx, lastS.px + 7, lastS.py);
+    }
+
+    {
+      const padPhi = CONFIG.LAUNCH_SITE_ANGLE_0 || 0;
+      const s = toS(Re * Math.sin(padPhi), Re * Math.cos(padPhi));
+      if (s.px > -20 && s.px < size + 20 && s.py > -20 && s.py < size + 20) {
+        ctx.fillStyle = '#ff5f7e';
+        ctx.beginPath();
+        ctx.arc(s.px, s.py, 5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(0,0,0,0.6)';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 10px "JetBrains Mono", monospace';
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('PAD', s.px + 8, s.py);
+      }
+    }
+
+    ctx.fillStyle = 'rgba(150,200,255,0.75)';
+    ctx.font = '10px "JetBrains Mono", monospace';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'bottom';
+    ctx.fillText('altitude ×' + EXAG + ' exaggerated · auto-fit view', 8, size - 8);
+
+    if (!hasAny) {
+      ctx.fillStyle = 'rgba(107,125,156,0.7)';
+      ctx.font = '12px "JetBrains Mono", monospace';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('(run a mission to see the trajectory)', cx, cy);
     }
   }
 
-  // --- Info overlay ---
-  ctx.fillStyle = 'rgba(150,200,255,0.75)';
-  ctx.font = '10px "JetBrains Mono", monospace';
-  ctx.textAlign = 'left';
-  ctx.textBaseline = 'bottom';
-  ctx.fillText('altitude ×' + EXAG + ' exaggerated · auto-fit view', 8, size - 8);
-
-  if (!hasAny) {
-    ctx.fillStyle = 'rgba(107,125,156,0.7)';
-    ctx.font = '12px "JetBrains Mono", monospace';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('(run a mission to see the trajectory)', cx, cy);
-  }
-}
-
-  // ---- TIME-SERIES PLOT ----
   function drawTimeSeries(canvasId, seriesMap, opts) {
     opts = opts || {};
     const canvas = $(canvasId);
@@ -1420,9 +1338,7 @@ Plots.push(bi, {
     const plotH = cssH - padT - padB;
     if (plotW < 10 || plotH < 10) return;
 
-    // Find ranges
-    let tMin = Infinity, tMax = -Infinity;
-    let vMin = Infinity, vMax = -Infinity;
+    let tMin = Infinity, tMax = -Infinity, vMin = Infinity, vMax = -Infinity;
     for (const key in seriesMap) {
       const arr = seriesMap[key];
       if (!arr || !arr.length) continue;
@@ -1437,20 +1353,16 @@ Plots.push(bi, {
     if (!isFinite(tMin)) { tMin = 0; tMax = 1; vMin = 0; vMax = 1; }
     if (tMax - tMin < 0.1) tMax = tMin + 0.1;
     if (vMax - vMin < 1e-9) { vMin -= 1; vMax += 1; }
-
     if (opts.forceZero) {
       if (vMin > 0) vMin = 0;
       if (vMax < 0) vMax = 0;
     }
-
     const vPad = (vMax - vMin) * 0.06 || 1;
-    vMin -= vPad;
-    vMax += vPad;
+    vMin -= vPad; vMax += vPad;
 
     const tx = (v) => padL + (v - tMin) / (tMax - tMin) * plotW;
     const ty = (v) => padT + plotH - (v - vMin) / (vMax - vMin) * plotH;
 
-    // Grid
     ctx.strokeStyle = 'rgba(255,255,255,0.06)';
     ctx.lineWidth = 1;
     ctx.beginPath();
@@ -1464,7 +1376,6 @@ Plots.push(bi, {
     }
     ctx.stroke();
 
-    // Zero line
     if (vMin < 0 && vMax > 0) {
       ctx.strokeStyle = 'rgba(255,255,255,0.18)';
       const y0 = ty(0);
@@ -1473,7 +1384,6 @@ Plots.push(bi, {
       ctx.stroke();
     }
 
-    // Axes
     ctx.strokeStyle = 'rgba(255,255,255,0.22)';
     ctx.beginPath();
     ctx.moveTo(padL, padT);
@@ -1481,7 +1391,6 @@ Plots.push(bi, {
     ctx.lineTo(padL + plotW, padT + plotH);
     ctx.stroke();
 
-    // Y labels
     ctx.fillStyle = 'rgba(107,125,156,0.9)';
     ctx.font = '9px "JetBrains Mono", monospace';
     ctx.textAlign = 'right';
@@ -1492,7 +1401,6 @@ Plots.push(bi, {
       ctx.fillText(_fmtAxis(v), padL - 4, y);
     }
 
-    // X labels
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
     for (let i = 0; i <= 4; i++) {
@@ -1501,14 +1409,12 @@ Plots.push(bi, {
       ctx.fillText(v.toFixed(0), x, padT + plotH + 4);
     }
 
-    // Traces
     for (const key in seriesMap) {
       const arr = seriesMap[key];
       if (!arr || arr.length < 2) continue;
       const bodyIdx = parseInt(key.slice(1), 10) || 0;
       const color = BODY_COLORS[bodyIdx % BODY_COLORS.length];
       const render = _downSample(arr, PLOT_RENDER_MAX);
-
       ctx.strokeStyle = color;
       ctx.lineWidth = 1.5;
       ctx.beginPath();
@@ -1518,17 +1424,13 @@ Plots.push(bi, {
         else ctx.lineTo(x, y);
       }
       ctx.stroke();
-
-      // Current value marker
       const last = arr[arr.length - 1];
-      const lx = tx(last.t), ly = ty(last.v);
       ctx.fillStyle = color;
       ctx.beginPath();
-      ctx.arc(lx, ly, 2.6, 0, Math.PI * 2);
+      ctx.arc(tx(last.t), ty(last.v), 2.6, 0, Math.PI * 2);
       ctx.fill();
     }
 
-    // Empty state
     let totalPoints = 0;
     for (const key in seriesMap) totalPoints += (seriesMap[key] || []).length;
     if (totalPoints === 0) {
@@ -1540,7 +1442,6 @@ Plots.push(bi, {
     }
   }
 
-  // Redraw on resize (canvas backing buffer must follow layout)
   let _resizeTimer = null;
   window.addEventListener('resize', () => {
     if (_resizeTimer) clearTimeout(_resizeTimer);
@@ -1554,7 +1455,7 @@ Plots.push(bi, {
   });
 
   // ============================================================================
-  // Capture helpers — the same state fields runner.js captures.
+  // Capture helpers — identical to numerical.
   // ============================================================================
   function captureState() {
     const idx = state.activeBodyIndex;
@@ -1614,9 +1515,6 @@ Plots.push(bi, {
     };
   }
 
-  // ============================================================================
-  // Run state + captures
-  // ============================================================================
   let running = false;
   let abort = false;
   let captures = [];
@@ -1678,13 +1576,13 @@ Plots.push(bi, {
     });
   });
 
-  // ============================================================================
-  // THE RUN — runner.js parity loop
-  // ============================================================================
   function yieldToBrowser() {
     return new Promise(resolve => setTimeout(resolve, 0));
   }
 
+  // ============================================================================
+  // RUN — mirrors numerical's loop exactly, plus a pure-read plot push.
+  // ============================================================================
   async function run() {
     if (running) return;
     if (!currentGuide) { statusEl.textContent = 'No guide selected.'; return; }
@@ -1693,7 +1591,6 @@ Plots.push(bi, {
     running = true; abort = false;
     startBtn.disabled = true; stopBtn.disabled = false;
     captures = [];
-    window.__tickDump = [];
 
     const runTunables = JSON.parse(JSON.stringify(currentValues));
 
@@ -1708,13 +1605,11 @@ Plots.push(bi, {
     resetState(0);
     applyEnvironment();
     applyFueling();
-
-    // Clear plots for a fresh run
     Plots.reset();
 
     try { Guidance.stopGuide(); } catch (e) {}
     try { Guidance.startGuide(currentGuide); } catch (e) {
-      console.error('[num] startGuide failed:', e);
+      console.error('[tester] startGuide failed:', e);
       statusEl.textContent = 'startGuide failed: ' + e.message;
       running = false;
       startBtn.disabled = false; stopBtn.disabled = true;
@@ -1738,52 +1633,49 @@ Plots.push(bi, {
     let ticksRun = 0;
     const t0 = performance.now();
 
+    window.__tickDump = [];
+
     const CHUNK = 400;
 
-    // Initial plot render (empty)
     Plots.renderAll();
-
-    const ENABLE_PLOTS = false;   // TEMP: toggle for verification
 
     for (let i = 0; i < maxTicks; i++) {
       if (abort) break;
       if (state.halted) break;
 
-      // ---- Real-sim tick order (1-tick pipeline latency) ----
       physicsStep(dt);
       ticksRun++;
 
       const snap = buildSnapshot();
 
       try { Guidance.onSnapshot(snap); } catch (ge) {
-        console.error('[num] onSnapshot failed at t=' + state.simTime.toFixed(2), ge);
+        console.error('[tester] onSnapshot failed at t=' + state.simTime.toFixed(2), ge);
         statusEl.textContent = 'onSnapshot failed: ' + ge.message;
         break;
       }
 
-window.__tickDump.push({
-  i: i,
-  t: state.simTime,
-  activeBodyIndex: state.activeBodyIndex,
-  bodies: state.bodies.map(b => ({
-    rx: b.rx, ry: b.ry, vx: b.vx, vy: b.vy,
-    theta: b.theta, omega: b.omega,
-    fuelMass: b.fuelMass,
-    memberFuel: (b.memberFuel || []).slice(),
-    engines: (b.engines || []).map(e => ({
-      massFlowRate: e.massFlowRate,
-      gimbalDeg: e.gimbalDeg,
-      currentF: e.currentF,
-    })),
-  })),
-});
+      // TEMP DUMP — per-tick state JSON (schema matches numerical)
+      window.__tickDump.push({
+        i: i,
+        t: state.simTime,
+        activeBodyIndex: state.activeBodyIndex,
+        bodies: state.bodies.map(b => ({
+          rx: b.rx, ry: b.ry, vx: b.vx, vy: b.vy,
+          theta: b.theta, omega: b.omega,
+          fuelMass: b.fuelMass,
+          memberFuel: (b.memberFuel || []).slice(),
+          engines: (b.engines || []).map(e => ({
+            massFlowRate: e.massFlowRate,
+            gimbalDeg: e.gimbalDeg,
+            currentF: e.currentF,
+          })),
+        })),
+      });
 
-      
+      // Plot push — pure reads only (no geometryOf, no state mutations).
+      pushPlotSample();
 
-// ---- Push plot samples (per tick) ----
-if (ENABLE_PLOTS) pushPlotSample();
-
-      // ---- Event detection + peak tracking ----
+      // Event detection — identical to numerical.
       const gs = (Guidance.getGuideStatus && Guidance.getGuideStatus()) || {};
       const body = state.bodies[state.activeBodyIndex];
 
@@ -1848,28 +1740,31 @@ if (ENABLE_PLOTS) pushPlotSample();
           prevHalted = true;
         }
 
-        // Peak Q / G
         const alt = r - CONFIG.EARTH_RADIUS;
+        const wv = (typeof windInertialVector === 'function') ? windInertialVector(body.rx, body.ry) : { wx: 0, wy: 0 };
+        const sv = (typeof earthSurfaceVelocity === 'function') ? earthSurfaceVelocity(body.rx, body.ry) : { vx: 0, vy: 0 };
+        const relVx = body.vx - (wv.wx + sv.vx);
+        const relVy = body.vy - (wv.wy + sv.vy);
+        const sr = Math.hypot(relVx, relVy);
+        const rho = (typeof airDensity === 'function') ? airDensity(Math.max(0, alt)) : 0;
         const Q_Pa = 0.5 * rho * sr * sr;
-          if (Q_Pa > peakQ_kPa) {
-    peakQ_kPa = Q_Pa;
-    peakQ_state = captureState();
-  }
-  
-  // Peak G — every body, matches runner.js's tracker.maxG
-  for (let _bi = 0; _bi < state.bodies.length; _bi++) {
-    const _b = state.bodies[_bi];
-    const ax = _b._lastAccelX || 0;
-    const ay = _b._lastAccelY || 0;
-    const g_proper = Math.hypot(ax, ay) / 9.80665;
-    if (g_proper > peakG) {
-      peakG = g_proper;
-      peakG_state = captureState();
-    }
-  }
-  } // ←←← YE LINE MISSING THI — if (body) block close karta hai
-  
-  // ---- Yield + progress ----
+        if (Q_Pa > peakQ_kPa) {
+          peakQ_kPa = Q_Pa;
+          peakQ_state = captureState();
+        }
+
+        for (let _bi = 0; _bi < state.bodies.length; _bi++) {
+          const _b = state.bodies[_bi];
+          const ax = _b._lastAccelX || 0;
+          const ay = _b._lastAccelY || 0;
+          const g_proper = Math.hypot(ax, ay) / 9.80665;
+          if (g_proper > peakG) {
+            peakG = g_proper;
+            peakG_state = captureState();
+          }
+        }
+      }
+
       if (i > 0 && i % CHUNK === 0) {
         const wall = (performance.now() - t0) / 1000;
         const tps = ticksRun / wall;
@@ -1877,12 +1772,12 @@ if (ENABLE_PLOTS) pushPlotSample();
         statusEl.textContent =
           `Running… t=${state.simTime.toFixed(1)}s / ${durationS}s  ` +
           `(${pct}%, ${ticksRun} ticks, ${tps.toFixed(0)} ticks/s, ${captures.length} captures)`;
+        Plots.renderAll();
         await yieldToBrowser();
       }
     }
 
-    // Initial plot render (empty)
-if (ENABLE_PLOTS) Plots.renderAll();
+    Plots.renderAll();
 
     const finalEndState = captureState();
 
@@ -1975,7 +1870,6 @@ if (ENABLE_PLOTS) Plots.renderAll();
 
     if (previousRun && previousRun.meta.guide === summary.guide) {
       const prev = previousRun.meta;
-
       const flatPrev = flattenObj(previousRun.tunables);
       const flatCur = flattenObj(currentRun.tunables);
       const keys = new Set([...Object.keys(flatPrev), ...Object.keys(flatCur)]);
@@ -2020,7 +1914,6 @@ if (ENABLE_PLOTS) Plots.renderAll();
         if (typeof cmp === 'function') cls = cmp(a, b);
         html += `<div class="compare-row"><span class="k">${k}</span><span class="a">${a}</span><span class="arrow">→</span><span class="b ${cls}">${b}</span></div>`;
       });
-
       compareBody.innerHTML = html;
       compareBox.classList.add('show');
     } else {
@@ -2060,12 +1953,11 @@ if (ENABLE_PLOTS) Plots.renderAll();
       statusEl.textContent = '⚠ No guides registered. Check that guidance.js loaded.';
       return;
     }
-    currentGuide = allGuides.includes('leoInsertionV2') ? 'leoInsertionV2' : allGuides[0];
+    currentGuide = allGuides.includes('leoInsertionV3') ? 'leoInsertionV3' : allGuides[0];
     sel.value = currentGuide;
     renderConstants(currentGuide);
     refreshPresets(currentGuide);
 
-    // Draw empty plots so layout is visible before first run.
     Plots.renderAll();
 
     try {
@@ -2080,7 +1972,7 @@ if (ENABLE_PLOTS) Plots.renderAll();
       statusEl.textContent = 'Ready.';
     }
 
-    console.log('[guidance-numerical] ready. Guides:', allGuides.join(', '));
+    console.log('[guidance-tester] ready. Guides:', allGuides.join(', '));
   })();
 })();
 </script>
