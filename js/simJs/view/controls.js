@@ -901,7 +901,31 @@ function bindGuidanceToolbar() {
   // Open by default so the user sees the new panel immediately.
   toolbar.classList.add('open');
   toggle.textContent = '›';
-  
+  // Sync hidden #guideSelect options with the registered guides at boot,
+// so a newly-added guide (e.g. leoInsertionV3) is selectable via the
+// right-toolbar Start even before the config modal is opened.
+try {
+  const allGuides = (typeof Guidance !== 'undefined' && Guidance.listGuides)
+    ? Guidance.listGuides() : [];
+  if (allGuides.length) {
+    const existing = new Set(Array.from(sel.options).map(o => o.value));
+    allGuides.forEach(g => {
+      if (!existing.has(g)) {
+        const opt = document.createElement('option');
+        opt.value = g;
+        opt.textContent = g;
+        sel.appendChild(opt);
+      }
+    });
+    // If currently selected value isn't in the list, default to the
+    // newest V3 if available, else V2, else first.
+    if (!allGuides.includes(sel.value)) {
+      sel.value = allGuides.includes('leoInsertionV3') ? 'leoInsertionV3'
+                : allGuides.includes('leoInsertionV2') ? 'leoInsertionV2'
+                : allGuides[0];
+    }
+  }
+} catch (e) { console.warn('guideSelect sync failed', e); }
   toggle.addEventListener('click', () => {
     toolbar.classList.toggle('open');
     toggle.textContent = toolbar.classList.contains('open') ? '›' : '‹';
@@ -1678,7 +1702,19 @@ function makeFieldRow(path, reference, values) {
 // selection.
 guideSel.addEventListener('change', () => {
   const hidden = document.getElementById('guideSelect');
-  if (hidden && guideSel.value) hidden.value = guideSel.value;
+  if (hidden && guideSel.value) {
+    // If the hidden dropdown doesn't yet have an option for this guide,
+    // add it. Without this, setting .value to a missing option silently
+    // leaves the previous value — Start reads the wrong guide, or none.
+    const hasOpt = Array.from(hidden.options).some(o => o.value === guideSel.value);
+    if (!hasOpt) {
+      const opt = document.createElement('option');
+      opt.value = guideSel.value;
+      opt.textContent = guideSel.value;
+      hidden.appendChild(opt);
+    }
+    hidden.value = guideSel.value;
+  }
   loadGuide(guideSel.value);
 });
 
