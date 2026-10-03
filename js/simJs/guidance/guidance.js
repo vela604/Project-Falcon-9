@@ -838,7 +838,7 @@ if (data.v3SuicideBlock) {
     CIRC_ATT_KD: 4.0,
     COAST_BURN_MULTIPLIER: 4.0,
 
-    SUICIDE_DELAY_AFTER_DEPLOY_S: 60,
+    SUICIDE_DELAY_AFTER_DEPLOY_S: 1800,
     SUICIDE_ROTATE_TOL_DEG: 1.0,
     SUICIDE_ROTATE_OMEGA_TOL: 0.02,
     SUICIDE_ROTATE_TIMEOUT_S: 120,
@@ -847,10 +847,10 @@ if (data.v3SuicideBlock) {
     SUICIDE_PREDICT_DT_S: 2,
     SUICIDE_PREDICT_HORIZON_S: 4000,
     SUICIDE_BURN_MAX_S: 600,
-    SUICIDE_BURN_COARSE_MARGIN_DEG: 10,
+    SUICIDE_BURN_COARSE_MARGIN_DEG: 0.5,
     SUICIDE_TRIM_TOL_DEG: 0.1,
-    SUICIDE_TRIM_FAR_DEG: 1.0,
-    SUICIDE_TRIM_MIN_DUTY: 0.15,
+    SUICIDE_TRIM_FAR_DEG: 0.5,
+    SUICIDE_TRIM_MIN_DUTY: 0.30,
     SUICIDE_TRIM_MAX_S: 120,
   };
 
@@ -2146,12 +2146,17 @@ if (data.v3SuicideBlock) {
           const lambdaMidEf =
             (env.LAUNCH_SITE_ANGLE_0 || 0) -
             ((env.REMOTE_AREA_MID_WEST_DEG || 0) * Math.PI) / 180;
-          const lambdaCoarseEf =
-            lambdaMidEf -
-            (LEO_INSERTION_V2.SUICIDE_BURN_COARSE_MARGIN_DEG * Math.PI) / 180;
-          const dLambda = impact.phiEf - lambdaCoarseEf;
-          _leoStateV2.suicideImpactEf = impact.phiEf;
-          _leoStateV2.suicideDlambda = dLambda;
+          const lambdaCoarseEf = lambdaMidEf -
+  LEO_INSERTION_V2.SUICIDE_BURN_COARSE_MARGIN_DEG * Math.PI / 180;
+let dLambda = impact.phiEf - lambdaCoarseEf;
+// Wrap to [-π, π] — same reason as SUICIDE_COAST's wrap:
+// impact and target can straddle the ±180° meridian, making the
+// raw difference off by ±2π. Without this the coarse cutoff
+// fires wildly early (impact ≈ +166° instead of near target).
+while (dLambda > Math.PI) dLambda -= 2 * Math.PI;
+while (dLambda < -Math.PI) dLambda += 2 * Math.PI;
+_leoStateV2.suicideImpactEf = impact.phiEf;
+_leoStateV2.suicideDlambda = dLambda;
 
           if (dLambda <= 0) {
             send(cmdSetAllThrottle(0));
@@ -2284,10 +2289,16 @@ if (data.v3SuicideBlock) {
           break;
         }
 
-        const lambdaMidEf =
-          (env.LAUNCH_SITE_ANGLE_0 || 0) -
-          ((env.REMOTE_AREA_MID_WEST_DEG || 0) * Math.PI) / 180;
-        const dLambdaDeg = ((impact.phiEf - lambdaMidEf) * 180) / Math.PI;
+        const lambdaMidEf = (env.LAUNCH_SITE_ANGLE_0 || 0) -
+  (env.REMOTE_AREA_MID_WEST_DEG || 0) * Math.PI / 180;
+let dLambdaDeg = (impact.phiEf - lambdaMidEf) * 180 / Math.PI;
+// Wrap to [-180, 180] so trim takes the short way around the
+// planet. Same bug that was fixed in the V3 suicide block: an
+// impact at +166° with target at -140° gives a raw diff of +306°,
+// misread as "impact far east, fire huge retrograde". The true
+// error is 54° east (the other way), needing only small prograde.
+while (dLambdaDeg > 180) dLambdaDeg -= 360;
+while (dLambdaDeg < -180) dLambdaDeg += 360;
 
         if (Math.abs(dLambdaDeg) < LEO_INSERTION_V2.SUICIDE_TRIM_TOL_DEG) {
           _leoStateV2.suicideTrimDone = true;
@@ -2539,7 +2550,7 @@ const _v3Config = {
   separation: { AXIAL_SEP_TARGET_M: 10, SPLIT_TIMEOUT_S: 10 },
   insertion: null,
   fairing: { HAS_FAIRING: true, FAIRING_OPEN_ALT_KM: 80, FAIRING_OPEN_ENABLED: true },
-  done: { SUICIDE_DELAY_AFTER_DEPLOY_S: 60, CIRC_ATT_KP: 0.5, CIRC_ATT_KD: 4.0, DEORBIT_ENABLED: true },
+  done: { SUICIDE_DELAY_AFTER_DEPLOY_S: 1800, CIRC_ATT_KP: 0.5, CIRC_ATT_KD: 4.0, DEORBIT_ENABLED: true },
   suicide: null,
 };
 

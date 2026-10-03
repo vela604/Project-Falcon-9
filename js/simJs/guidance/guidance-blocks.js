@@ -2022,16 +2022,23 @@ setState(s) {
             );
 
             if (impact) {
-              const lambdaMidEf =
-                (env.LAUNCH_SITE_ANGLE_0 || 0) - (midWestDeg * Math.PI) / 180;
-              const lambdaCoarseEf =
-                lambdaMidEf -
-                (cfg.SUICIDE_BURN_COARSE_MARGIN_DEG * Math.PI) / 180;
-              const dLambda = impact.phiEf - lambdaCoarseEf;
-              _st.suicideImpactEf = impact.phiEf;
-              _st.suicideDlambda = dLambda;
-
-              if (dLambda <= 0) {
+  const lambdaMidEf =
+    (env.LAUNCH_SITE_ANGLE_0 || 0) - (midWestDeg * Math.PI) / 180;
+  const lambdaCoarseEf =
+    lambdaMidEf -
+    (cfg.SUICIDE_BURN_COARSE_MARGIN_DEG * Math.PI) / 180;
+  let dLambda = impact.phiEf - lambdaCoarseEf;
+  // Wrap to [-π, π] for the same reason as the coast case:
+  // the raw difference can be ±2π off when impact and target
+  // straddle the ±180° meridian. Without this, cutoff fires
+  // wildly early (at impact ≈ +166° instead of near the target).
+  while (dLambda > Math.PI) dLambda -= 2 * Math.PI;
+  while (dLambda < -Math.PI) dLambda += 2 * Math.PI;
+  _st.suicideImpactEf = impact.phiEf;
+  _st.suicideDlambda = dLambda;
+  
+  if (dLambda <= 0) {
+    
                 _send(Guidance.cmdSetAllThrottle(0));
                 _send(Guidance.cmdSetGimbalRate(0));
                 _send(Guidance.cmdRcsDuty(null, idx));
@@ -2168,33 +2175,20 @@ if (speedH > 1) {
               break;
             }
 
-            const lambdaMidEf =
-              (env.LAUNCH_SITE_ANGLE_0 || 0) - (midWestDeg * Math.PI) / 180;
-            const dLambdaDeg = ((impact.phiEf - lambdaMidEf) * 180) / Math.PI;
+            const lambdaMidEf = (env.LAUNCH_SITE_ANGLE_0 || 0) -
+  midWestDeg * Math.PI / 180;
+let dLambdaDeg = (impact.phiEf - lambdaMidEf) * 180 / Math.PI;
+// Wrap to [-180°, 180°] so the trim takes the SHORT way around
+// the planet. Without this, an impact at +166° with target at
+// -140° gives a raw diff of +306°, which the code misreads as
+// "impact far east, need huge retrograde correction". The true
+// error is 54° EAST (the other way around), needing only small
+// prograde. Fires wrong direction otherwise.
+while (dLambdaDeg > 180) dLambdaDeg -= 360;
+while (dLambdaDeg < -180) dLambdaDeg += 360;
             
             
-            // TEMP DIAG — every 20 ticks + first tick
-if (_st.suicideTrimStartT === simT || _st.ticks % 20 === 0) {
-  const _altKm = (Math.hypot(body.rx, body.ry) - env.EARTH_RADIUS) / 1000;
-  const _impDeg = impact && Number.isFinite(impact.phiEf)
-    ? (impact.phiEf * 180 / Math.PI) : NaN;
-  const _tgtDeg = (lambdaMidEf * 180 / Math.PI);
-  const _spd = Math.hypot(body.vx, body.vy) || 1;
-  const _uxV = body.vx / _spd, _uyV = body.vy / _spd;
-  const _tgtTheta = Math.atan2(_uxV, -_uyV);
-  let _dTh = body.theta - _tgtTheta;
-  while (_dTh > Math.PI) _dTh -= 2 * Math.PI;
-  while (_dTh < -Math.PI) _dTh += 2 * Math.PI;
-  const _tiltErrDeg = (_dTh * 180 / Math.PI);
-  console.error('[SUI] t=' + simT.toFixed(1) +
-    ' dLam=' + dLambdaDeg.toFixed(4) +
-    ' impEf=' + _impDeg.toFixed(3) +
-    ' tgtEf=' + _tgtDeg.toFixed(3) +
-    ' tgtTheta=' + (_tgtTheta * 180 / Math.PI).toFixed(1) +
-    ' bodyTheta=' + (body.theta * 180 / Math.PI).toFixed(1) +
-    ' tiltErrDeg=' + _tiltErrDeg.toFixed(2) +
-    ' alt=' + _altKm.toFixed(2));
-}
+        
 
 
 
