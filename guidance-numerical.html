@@ -1206,7 +1206,7 @@ members.forEach(m => {
     running = true; abort = false;
     startBtn.disabled = true; stopBtn.disabled = false;
     captures = [];
-
+    window.__tickDump = [];
     // ---- Capture tunables snapshot (for compare) ----
     const runTunables = JSON.parse(JSON.stringify(currentValues));
 
@@ -1286,6 +1286,20 @@ members.forEach(m => {
     statusEl.textContent = 'onSnapshot failed: ' + ge.message;
     break;
   }
+
+// TEMP DUMP — per-tick state JSON
+window.__tickDump = window.__tickDump || [];
+window.__tickDump.push({
+  i: i,
+  t: state.simTime,
+  bodies: state.bodies.map(b => ({
+    rx: b.rx, ry: b.ry, vx: b.vx, vy: b.vy,
+    theta: b.theta, omega: b.omega,
+    fuelMass: b.fuelMass,
+    memberFuel: (b.memberFuel || []).slice(),
+  })),
+});
+
 
       // TEMP DUMP — per-tick state for verification
 window.__tickDump.push({
