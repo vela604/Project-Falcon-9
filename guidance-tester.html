@@ -1699,16 +1699,22 @@ Plots.push(bi, {
         break;
       }
 
-// TEMP DUMP — per-tick state JSON
+// TEMP DUMP — per-tick state JSON (schema matches runner)
 window.__tickDump = window.__tickDump || [];
 window.__tickDump.push({
   i: i,
   t: state.simTime,
+  activeBodyIndex: state.activeBodyIndex,
   bodies: state.bodies.map(b => ({
     rx: b.rx, ry: b.ry, vx: b.vx, vy: b.vy,
     theta: b.theta, omega: b.omega,
     fuelMass: b.fuelMass,
     memberFuel: (b.memberFuel || []).slice(),
+    engines: (b.engines || []).map(e => ({
+      massFlowRate: e.massFlowRate,
+      gimbalDeg: e.gimbalDeg,
+      currentF: e.currentF,
+    })),
   })),
 });
 
