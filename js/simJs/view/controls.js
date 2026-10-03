@@ -920,10 +920,9 @@ try {
     // If currently selected value isn't in the list, default to the
     // newest V3 if available, else V2, else first.
     if (!allGuides.includes(sel.value)) {
-      sel.value = allGuides.includes('leoInsertionV3') ? 'leoInsertionV3'
-                : allGuides.includes('leoInsertionV2') ? 'leoInsertionV2'
-                : allGuides[0];
-    }
+  sel.value = allGuides.includes('leoInsertionV3') ? 'leoInsertionV3' :
+    allGuides[0];
+}
   }
 } catch (e) { console.warn('guideSelect sync failed', e); }
   toggle.addEventListener('click', () => {
