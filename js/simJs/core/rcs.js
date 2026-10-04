@@ -306,50 +306,60 @@ function fireCornerPods(body, member, entries, ctx) {
   }
   
   // Per-pod lookup tables, keyed by this member's actual pod ids (b0.L1,
-  // b0.R2, ...) instead of the old literal TL/TR/BL/BR.
-  const pod = {}, isTop = {}, lateralSign = {};
-  let topL = null, topR = null, bottomL = null, bottomR = null;
-  entries.forEach(e => {
-    pod[e.podId] = { Fx: 0, Fy: 0 };
-    const top = e.offsetFromStackBase === yTopRaw;
-    isTop[e.podId] = top;
-    lateralSign[e.podId] = (e.side === 'L') ? +1 : -1;
-    if (e.side === 'L') { if (top) topL = e.podId; else bottomL = e.podId; }
-    else { if (top) topR = e.podId; else bottomR = e.podId; }
-  });
-  
-  // Gate whichever pod currently has the LONGER moment arm (see topIsLonger
-  // above). The other pod fires continuously at full force. This preserves
-  // the original zero-net-torque invariant under any CoM position.
-  function fireLateral(k) {
-    if (!k) return;
-    const isLongArm = topIsLonger ? isTop[k] : !isTop[k];
-    const on = isLongArm ? longArmLateralOn : true;
-    pod[k].Fx += on ? lateralSign[k] * f : 0;
+// b0.R2, ...) instead of the old literal TL/TR/BL/BR.
+//
+// pod[k] carries Fx, Fy (force components, for the torque/inertia math
+// further down) AND up/dn/lat (accumulated duty per nozzle axis, in
+// [0..1]). The render side reads the duty values to scale the RCS
+// particle spawn rate — high duty → dense continuous puff, low duty →
+// sparse bursts. Duty fields are counted additively and clamped at 1,
+// same ceiling the physics applies to the actual nozzle.
+const pod = {}, isTop = {}, lateralSign = {};
+let topL = null, topR = null, bottomL = null, bottomR = null;
+entries.forEach(e => {
+  pod[e.podId] = { Fx: 0, Fy: 0, up: 0, dn: 0, lat: 0 };
+  const top = e.offsetFromStackBase === yTopRaw;
+  isTop[e.podId] = top;
+  lateralSign[e.podId] = (e.side === 'L') ? +1 : -1;
+  if (e.side === 'L') { if (top) topL = e.podId; else bottomL = e.podId; }
+  else { if (top) topR = e.podId; else bottomR = e.podId; }
+});
+
+function fireLateral(k) {
+  if (!k) return;
+  const isLongArm = topIsLonger ? isTop[k] : !isTop[k];
+  const on = isLongArm ? longArmLateralOn : true;
+  if (on) {
+    pod[k].Fx += lateralSign[k] * f;
+    pod[k].lat = Math.min(1, pod[k].lat + 1);
   }
-  
-  function fireLateralFull(k) { if (k) pod[k].Fx += lateralSign[k] * f; }
-  
-  function fireVertical(k, sign) { if (k) pod[k].Fy += sign * f; }
-  
-  // PHASE 3 — Interface Fix, Issue 5: raw nozzle interface. Guidance
-  // commands the exact duty it wants on each pod; the long-arm
-  // torque-cancellation gate that the human boolean path (fireLateral /
-  // fireLateralFull, above) uses does NOT apply here. That gate exists
-  // to make a symmetric human "fire both toward this side" command
-  // produce zero net torque — a convenience for a binary input. Guidance
-  // has a continuous per-pod interface instead: if it wants balanced
-  // lateral firing, it computes the compensating duties itself and sends
-  // those. Physics applies exactly what it is given, full stop.
-  function fireLateralDuty(k, commandedDuty) {
-    if (commandedDuty <= 0) return;
-    pod[k].Fx += lateralSign[k] * commandedDuty * f;
-  }
-  
-  function fireVerticalDuty(k, sign, commandedDuty) {
-    if (commandedDuty <= 0) return;
-    pod[k].Fy += sign * commandedDuty * f;
-  }
+}
+
+function fireLateralFull(k) {
+  if (!k) return;
+  pod[k].Fx += lateralSign[k] * f;
+  pod[k].lat = Math.min(1, pod[k].lat + 1);
+}
+
+function fireVertical(k, sign) {
+  if (!k) return;
+  pod[k].Fy += sign * f;
+  if (sign > 0) pod[k].up = Math.min(1, pod[k].up + 1);
+  else pod[k].dn = Math.min(1, pod[k].dn + 1);
+}
+
+function fireLateralDuty(k, commandedDuty) {
+  if (commandedDuty <= 0) return;
+  pod[k].Fx += lateralSign[k] * commandedDuty * f;
+  pod[k].lat = Math.min(1, pod[k].lat + commandedDuty);
+}
+
+function fireVerticalDuty(k, sign, commandedDuty) {
+  if (commandedDuty <= 0) return;
+  pod[k].Fy += sign * commandedDuty * f;
+  if (sign > 0) pod[k].up = Math.min(1, pod[k].up + commandedDuty);
+  else pod[k].dn = Math.min(1, pod[k].dn + commandedDuty);
+}
   
   if (rcsDuty) {
     // PHASE 3: explicit per-pod, per-nozzle duty command (guidance). Keyed

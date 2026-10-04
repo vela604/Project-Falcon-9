@@ -2165,25 +2165,41 @@ podDefs.forEach(pd => {
   const plumeLen = W * 0.6;
   const fEps = 1;
   
-function drawGasPuff(cx, cy, dir, seed) {
-  const memberIdx = (Number.isInteger(opts.memberIdx) && opts.memberIdx >= 0) ?
-    opts.memberIdx : 0;
-  const bodyIdx = (Number.isInteger(opts.bodyIdx) && opts.bodyIdx >= 0) ?
-    opts.bodyIdx : 0;
+function drawGasPuff(cx, cy, dir, seed, duty) {
+  const memberIdx = (Number.isInteger(opts.memberIdx) && opts.memberIdx >= 0)
+    ? opts.memberIdx : 0;
+  const bodyIdx = (Number.isInteger(opts.bodyIdx) && opts.bodyIdx >= 0)
+    ? opts.bodyIdx : 0;
   // Pool is keyed by (body, member) so two bodies' same-index members
   // don't share particles across local frames.
   const poolKey = bodyIdx + '_' + memberIdx;
   const pool = _gasPoolFor(poolKey);
 
-  // ---- Spawn 1-2 new particles at the nozzle exit ----
-  const spawnN = (Math.random() < 0.5) ? 3 : 1;
+  // ---- Duty-scaled spawn ----
+  // duty is the accumulated nozzle duty this tick in [0..1]. High duty
+  // → dense continuous stream (2-3 particles/frame). Low duty → sparse
+  // puffs with visible gaps between them. Below ~5% duty, the pod is
+  // effectively dark — no spawns at all, so a mostly-off pod doesn't
+  // leave lingering haze.
+  const d = Math.max(0, Math.min(1, Number.isFinite(duty) ? duty : 1.0));
+  if (d < 0.05) return;
+
+  // Probabilistic particle count — expected value scales with duty.
+  // (Three independent coin flips give a range 0-3 with smooth ramp.)
+  let spawnN = 0;
+  if (Math.random() < d) spawnN++;
+  if (Math.random() < d * 0.7) spawnN++;
+  if (Math.random() < d * 0.35) spawnN++;
+
   for (let s = 0; s < spawnN; s++) {
     if (pool.particles.length >= _GAS_PARTICLE_CAP) break;
     const [dx, dy] = dir;
     const nx = -dy, ny = dx;
     // Emission speed — several plume-lengths per second so particles
-    // visibly travel away from the nozzle.
-    const speed = plumeLen * (4.0 + 0.8 * Math.random());
+    // visibly travel away from the nozzle. Slightly slower at low duty
+    // (weaker puff reads as gentler venting).
+    const dutySpeedScale = 0.75 + 0.25 * d;
+    const speed = plumeLen * (4.0 + 0.8 * Math.random()) * dutySpeedScale;
     // Perpendicular spread — small cone, not a laser beam.
     const spread = (Math.random() - 0.5) * 0.10;
     pool.particles.push({
@@ -2192,7 +2208,9 @@ function drawGasPuff(cx, cy, dir, seed) {
       vx: (dx + nx * spread) * speed,
       vy: (dy + ny * spread) * speed,
       age: 0,
-      life: 0.30 + 0.25 * Math.random(),
+      // Lifetime slightly shorter at low duty — the cloud dissipates
+      // faster when the emission is weak.
+      life: (0.30 + 0.25 * Math.random()) * (0.75 + 0.25 * d),
       r0: W * (0.040 + 0.020 * Math.random()),
       growRate: W * (0.40 + 0.40 * Math.random()),
     });
@@ -2236,8 +2254,8 @@ function drawGasPuff(cx, cy, dir, seed) {
   }
   
   Object.keys(corners).forEach(k => {
-    const [cxRaw, cy] = corners[k];
-    const pp = pod[k] || { Fx: 0, Fy: 0 };
+      const [cxRaw, cy] = corners[k];
+      const pp = pod[k] || { Fx: 0, Fy: 0, up: 0, dn: 0, lat: 0 };
     
     const podW = W * 0.05;
     const podH = W * 0.10;
@@ -2247,12 +2265,18 @@ function drawGasPuff(cx, cy, dir, seed) {
     const podX = cxRaw + sideSign * podW * 0.5 - podW / 2;
     const podY = cy - podH / 2;
     
-   if (Math.abs(pp.Fx) > fEps) drawGasPuff(cxRaw, cy, lateralDir[k], k.charCodeAt(k.length - 2));
-if (Math.abs(pp.Fy) > fEps) {
-  const vDir = pp.Fy > 0 ? [0, 1] : [0, -1];
-  const outX = cxRaw + sideSign * podW * 0.6;
-  drawGasPuff(outX, cy, vDir, k.charCodeAt(k.length - 1) + 3);
-}
+      if (Math.abs(pp.Fx) > fEps) {
+     const latDuty = Number.isFinite(pp.lat) ? pp.lat : 0;
+     drawGasPuff(cxRaw, cy, lateralDir[k], k.charCodeAt(k.length - 2), latDuty);
+   }
+   if (Math.abs(pp.Fy) > fEps) {
+     const vDir = pp.Fy > 0 ? [0, 1] : [0, -1];
+     const outX = cxRaw + sideSign * podW * 0.6;
+     const vDuty = (pp.Fy > 0) ?
+       (Number.isFinite(pp.up) ? pp.up : 0) :
+       (Number.isFinite(pp.dn) ? pp.dn : 0);
+     drawGasPuff(outX, cy, vDir, k.charCodeAt(k.length - 1) + 3, vDuty);
+   }
     
     ctx.save();
     
