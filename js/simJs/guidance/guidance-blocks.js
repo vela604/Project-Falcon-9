@@ -657,10 +657,12 @@ setState(s) {
     description:
       "Post-separation stage → target orbit → payload release. Ends once every expected payload body has spawned and cleared the stage.",
     defaultConstants: {
-      GIMBAL_TARGET: "all",
-      STAGE_BURN_CUTOFF_MARGIN_MPS: 0.0,
-      STAGE_BURN_LOCK_TILT_DEG: 90,
-      COAST_TARGET_TILT_DEG: -90,
+    GIMBAL_TARGET: "all",
+    STAGE_BURN_CUTOFF_MARGIN_MPS: 0.0,
+    STAGE_BURN_LOCK_TILT_DEG: 90,
+    STAGE_BURN_ATT_GAIN: 16,
+    STAGE_BURN_ATT_KD: 4,
+    COAST_TARGET_TILT_DEG: -90,
       COAST_ROTATE_TOL_DEG: 0.5,
       COAST_ROTATE_OMEGA_TOL: 0.02,
       COAST_ROTATE_TIMEOUT_S: 240,
@@ -872,10 +874,10 @@ setState(s) {
                 (cfg.CIRC_ATT_KP * thetaErr +
                   cfg.CIRC_ATT_KD * omegaRelToTarget);
             } else {
-              const gain = 16; // matches V2 (COAST_DAMP_GAIN for ascent)
-              const kd = 4; // matches V2 (COAST_DAMP_K for ascent)
-              tau_desired = (-I_next * gain * dNext.alphaDeg) / (kd * kd);
-            }
+  const gain = cfg.STAGE_BURN_ATT_GAIN;
+  const kd = cfg.STAGE_BURN_ATT_KD;
+  tau_desired = (-I_next * gain * dNext.alphaDeg) / (kd * kd);
+}
             const tau_target = tau_desired - dNext.torqueEnvironmental;
 
             const g_N = gimbals[0].gimbalDeg || 0;

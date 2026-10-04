@@ -1296,7 +1296,7 @@ ctx.translate(0, bellExitY_px);
   // Length and width multipliers. Vacuum plume is shorter and wider
   // — real MVac flame doesn't punch as far as a Merlin's, it spreads
   // radially once it clears the massive nozzle exit.
-  const lenMul = isSingleNozzle ? 0.55 : 1.0;
+  const lenMul = isSingleNozzle ? 0.30 : 1.0;
 const widthMul = isSingleNozzle ? 1.30 : 1.0;
 // Trail taper — vacuum plumes narrow as they dissipate, they don't
 // balloon outward like SL cluster plumes. 1.0 = full SL spread,
