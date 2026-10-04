@@ -1036,6 +1036,52 @@ function drawGridFinFace(ctx, pivotX, pivotY, topX, topY, wPx, hPx, cellPx, styl
   ctx.restore();
 }
 
+// Pusher-puff render — 4 small bursts at the TOP RIM of the stack.
+// Called from drawRocketArt for the top member when the physics worker
+// reports an active pusher event on this body. Draws in the member's own
+// local coordinate frame (origin at base, +Y down, nose at -H), so no
+// world-to-screen math is needed — the parent transform already did it.
+//
+// progress: 0 → just fired, expands outward + upward + fades over [0..1).
+function drawPusherPuffsAtRim(ctx, W, H, progress) {
+  const alpha = 1 - progress;
+  const halfW = W / 2;
+
+  // 4 puffs at the top rim — 2 per side, slightly offset vertically along
+  // the member's axis so they read as a small cluster, not one blob.
+  const defs = [
+    { sideX: -1, offsetY:  0.15 },
+    { sideX: -1, offsetY: -0.35 },
+    { sideX:  1, offsetY:  0.15 },
+    { sideX:  1, offsetY: -0.35 },
+  ];
+
+  defs.forEach(pd => {
+    // Base at the rim edge (top of this member, which is the top of the
+    // stack), nudged up/down along the member axis.
+    const baseX = pd.sideX * halfW;
+    const baseY = -H + pd.offsetY * W * 0.4;
+
+    // Motion: outward (away from centerline) + upward (toward nose / off
+    // the top of the stack), both scaled by W so puff geometry tracks
+    // vehicle width.
+    const outX = pd.sideX * progress * W * 1.4;
+    const outY = -progress * W * 0.6;
+    const cx = baseX + outX;
+    const cy = baseY + outY;
+
+    const radius = Math.max(4, 4 + progress * W * 0.9);
+
+    const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, radius);
+    g.addColorStop(0,    `rgba(240,248,255,${alpha * 0.92})`);
+    g.addColorStop(0.5,  `rgba(200,220,245,${alpha * 0.55})`);
+    g.addColorStop(1,    `rgba(160,190,220,0)`);
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+    ctx.fill();
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Engine bell — auto-sized from the record's actual thruster mass flow.
@@ -1071,6 +1117,8 @@ function getEngineBellDims_m(record) {
 function getEngineBellExitY_m(record) {
   return getEngineBellDims_m(record).exitY;
 }
+
+
 
 function drawRocketArt(ctx, W, H, mpp, opts) {
   opts = opts || {};
@@ -1131,13 +1179,21 @@ if (opts.stageRole === 'interstage') {
   ctx.lineTo(W / 2, -H + 0.5);
   ctx.stroke();
   // Bottom rim — same, where it meets the booster's hull top.
+    // Bottom rim — same, where it meets the booster's hull top.
   ctx.strokeStyle = 'rgba(0,0,0,0.5)';
   ctx.beginPath();
   ctx.moveTo(-W / 2, -0.5);
   ctx.lineTo(W / 2, -0.5);
   ctx.stroke();
+  
+  // Pusher puff — drawn BEFORE this branch's return so it actually
+  // fires for the interstage member. (The generic call at the end of
+  // drawRocketArt is unreachable for this role due to the early return.)
+  if (opts.pusherPuffProgress >= 0 && opts.pusherPuffProgress < 1) {
+    drawPusherPuffsAtRim(ctx, W, H, opts.pusherPuffProgress);
+  }
   return;
-}
+  }
 
 // ---- Payload space role: pure fairing shape, early exit. ----
 // PS-A: standalone shape renderer — no body/legs/RCS/engines for this
@@ -2134,9 +2190,16 @@ if (Math.abs(pp.Fy) > fEps) {
       ctx.stroke();
     }
     
-    ctx.restore();
-  });
-}
+        ctx.restore();
+    });
+    
+    // Pusher rim puff — drawn LAST so it sits on top of every other layer.
+    // Only fires when the caller (render.js) determined this is the top
+    // member of a body with an active pusher event.
+    if (opts.pusherPuffProgress >= 0 && opts.pusherPuffProgress < 1) {
+      drawPusherPuffsAtRim(ctx, W, H, opts.pusherPuffProgress);
+    }
+    }
 
 // ---------------------------------------------------------------------------
 // P4-D4: build the payload-space descriptor for a stage record. The payload

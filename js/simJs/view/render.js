@@ -1114,99 +1114,85 @@ function drawSeparationFlash() {
   ctx.restore();
 }
 
-// Pusher rim puff — small outward bursts at the top of the INTERSTAGE
-// band of the discarded stack, fired once at separation. 4 puffs, expand
-// outward + slightly downward, fade over ~0.7s. Purely visual.
-//
-// Anchor is nudged slightly BELOW the very top of the discarded stack so
-// the puffs read as venting from the interstage's own silhouette, not
-// floating in the gap above it.
+// Pusher rim puff — 4 small bursts at the interstage top rim of the
+// discarded stack, fired once at separation. Anchor is at the rim edge
+// (not inside the silhouette), and expansion goes outward + upward so
+// the puffs clear the interstage geometry and are actually visible.
 let _lastPusherPuffId = -1;
 let _pusherPuffLocalStart = 0;
 
 function drawPusherPuff() {
   const p = state.pusherPuff;
   if (!p) return;
-  if (p.id !== window.__lastLoggedPuffId) {
-  window.__lastLoggedPuffId = p.id;
-  console.log('[P5] rendering puff: id=' + p.id);
-}
+
   if (p.id !== _lastPusherPuffId) {
     _lastPusherPuffId = p.id;
     _pusherPuffLocalStart = performance.now();
   }
 
   const age = (performance.now() - _pusherPuffLocalStart) / 1000;
-  const DURATION = 0.7;
+  const DURATION = 1.0;
   if (age > DURATION) return;
 
-  const mpp = metersPerPixel();
-  const theta = p.theta;
+  // Follow the LIVE body (not the frozen position from separation) so the
+  // puff tracks the booster as it drifts away.
+  const bodyIdx = Number.isInteger(p.bodyIdx) ? p.bodyIdx : -1;
+  const body = (bodyIdx >= 0 && state.bodies && state.bodies[bodyIdx])
+    ? state.bodies[bodyIdx] : null;
+  const bx = body ? body.rx : p.rx;
+  const by = body ? body.ry : p.ry;
+  const theta = body ? body.theta : p.theta;
+
   const upX = -Math.sin(theta), upY = Math.cos(theta);
   const rX = Math.cos(theta), rY = Math.sin(theta);
 
-  // ---- Anchor: slightly BELOW the top of the stack, so the puffs sit
-  // on the interstage band, not above it. The nudge is a fraction of the
-  // half-width, giving a roughly constant visual offset regardless of
-  // stack scale.
-  const anchorOffset = p.topOffset - p.halfWidth * 0.5;
-  const anchorWx = p.rx + anchorOffset * upX;
-  const anchorWy = p.ry + anchorOffset * upY;
-  const [pxAnchor, pyAnchor] = worldToScreen(anchorWx, anchorWy);
+  // Anchor at the TOP RIM of the discarded stack (interstage top edge),
+  // not inside the interstage band.
+  const anchorWx = bx + p.topOffset * upX;
+  const anchorWy = by + p.topOffset * upY;
+  const [pxA, pyA] = worldToScreen(anchorWx, anchorWy);
 
-  // Half width in screen pixels, along the body's right axis.
-  const [pxRight, pyRight] = worldToScreen(
-    anchorWx + rX * p.halfWidth,
-    anchorWy + rY * p.halfWidth
-  );
-  const halfWpx = Math.hypot(pxRight - pxAnchor, pyRight - pyAnchor) || 1;
-  const rDirX = halfWpx > 0 ? (pxRight - pxAnchor) / halfWpx : 1;
-  const rDirY = halfWpx > 0 ? (pyRight - pyAnchor) / halfWpx : 0;
+  // Screen-space right/up unit vectors scaled by halfWidth.
+  const [pxR, pyR] = worldToScreen(bx + rX * p.halfWidth, by + rY * p.halfWidth);
+  const halfWpx = Math.hypot(pxR - pxA, pyR - pyA) || 20;
+  const rDirX = (pxR - pxA) / halfWpx;
+  const rDirY = (pyR - pyA) / halfWpx;
 
-  // Up direction on screen (opposite of body up in canvas coords — the
-  // body's +up maps to screen -Y through worldToScreen).
-  const [pxUp, pyUp] = worldToScreen(
-    anchorWx + upX * p.halfWidth,
-    anchorWy + upY * p.halfWidth
-  );
-  const upDirX = (pxUp - pxAnchor) / halfWpx;
-  const upDirY = (pyUp - pyAnchor) / halfWpx;
+  const [pxU, pyU] = worldToScreen(bx + upX * p.halfWidth, by + upY * p.halfWidth);
+  const uDirX = (pxU - pxA) / halfWpx;
+  const uDirY = (pyU - pyA) / halfWpx;
 
   const f = age / DURATION;
   const alpha = 1 - f;
 
-  // 2 puffs per side. Vertical spread keeps both at or below the rim —
-  // no puff above the interstage top.
   const puffDefs = [
-    { side: -1, upShift:  0.10 },
-    { side: -1, upShift: -0.50 },
-    { side:  1, upShift:  0.10 },
-    { side:  1, upShift: -0.50 },
+    { side: -1, offsetUp:  0.2 },
+    { side: -1, offsetUp: -0.6 },
+    { side:  1, offsetUp:  0.2 },
+    { side:  1, offsetUp: -0.6 },
   ];
 
   ctx.save();
 
   puffDefs.forEach(pd => {
-    // Base position along the rim, at the given vertical shift
-    const baseX = pxAnchor
-      + rDirX * pd.side * halfWpx
-      + upDirX * pd.upShift * halfWpx * 0.5;
-    const baseY = pyAnchor
-      + rDirY * pd.side * halfWpx
-      + upDirY * pd.upShift * halfWpx * 0.5;
+    const baseX = pxA + rDirX * pd.side * halfWpx + uDirX * pd.offsetUp * halfWpx * 0.6;
+    const baseY = pyA + rDirY * pd.side * halfWpx + uDirY * pd.offsetUp * halfWpx * 0.6;
 
-    // Motion: mostly outward, slight downward vent
-    const outDist = f * halfWpx * 1.0;
-    const downDist = f * halfWpx * 0.20;
-    const cx = baseX + rDirX * pd.side * outDist - upDirX * downDist;
-    const cy = baseY + rDirY * pd.side * outDist - upDirY * downDist;
+    // Strong outward + upward motion — puffs clear the interstage.
+    const outX = rDirX * pd.side * f * halfWpx * 1.4;
+    const outY = rDirY * pd.side * f * halfWpx * 1.4;
+    const upXv = uDirX * f * halfWpx * 0.7;
+    const upYv = uDirY * f * halfWpx * 0.7;
 
-    const radius = Math.max(2, 3 + f * halfWpx * 0.45);
+    const cx = baseX + outX + upXv;
+    const cy = baseY + outY + upYv;
+
+    const radius = Math.max(6, 6 + f * halfWpx * 0.9);
 
     const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, radius);
-    g.addColorStop(0,    `rgba(235,242,250,${alpha * 0.72})`);
-    g.addColorStop(0.45, `rgba(190,205,225,${alpha * 0.34})`);
-    g.addColorStop(1,    `rgba(150,170,200,0)`);
+    g.addColorStop(0,    `rgba(240,248,255,${alpha * 0.95})`);
+    g.addColorStop(0.5,  `rgba(200,220,245,${alpha * 0.55})`);
+    g.addColorStop(1,    `rgba(160,190,220,0)`);
     ctx.fillStyle = g;
     ctx.beginPath();
     ctx.arc(cx, cy, radius, 0, Math.PI * 2);
@@ -1217,14 +1203,11 @@ function drawPusherPuff() {
 }
 
 function drawRocket() {
-  // H1c: draw every body. Camera still follows the active body (via
-  // worldToLocal() in the camera-center calculation), but each body's
-  // geometry is drawn at its own position/orientation. Right now there is
-  // exactly one body, so this is visually identical to before.
   state.bodies.forEach((body, idx) => {
-    drawBodyRocket(body, idx === state.activeBodyIndex);
+    drawBodyRocket(body, idx === state.activeBodyIndex, idx);
   });
 }
+
 
 // Planet-view rocket marker. A small triangle whose vertex points along
 // the body's VELOCITY direction (in the inertial frame). Because screen-y
@@ -1262,10 +1245,33 @@ function drawBodyAsTriangle(body, isActive) {
   ctx.restore();
 }
 
-function drawBodyRocket(body, isActive) {
+// Pusher puff local-timer — same pattern as separationFlash and
+// payloadReleaseCue: the worker ships an id + capture-time; we key off
+// the id and use a local performance.now() origin so clocks don't need
+// to be shared across workers.
+let _puffLastId = -1;
+let _puffLocalStart = 0;
+
+function drawBodyRocket(body, isActive, bodyIdx) {
   if (camera.mode === 'planet') {
     drawBodyAsTriangle(body, isActive);
     return;
+  }
+  
+  // Pusher-puff progress for THIS body (0..1), or -1 when no active puff
+  // targets it. Computed here once so each member draw call can decide
+  // whether to render its own rim burst.
+  let puffProgress = -1;
+  if (state.pusherPuff && state.pusherPuff.bodyIdx === bodyIdx) {
+    const p = state.pusherPuff;
+    if (p.id !== _puffLastId) {
+      _puffLastId = p.id;
+      _puffLocalStart = performance.now();
+    }
+    const age = (performance.now() - _puffLocalStart) / 1000;
+    const DURATION = 1.0;
+    puffProgress = age / DURATION;
+    if (puffProgress >= 1) puffProgress = -1;
   }
   
   const mpp = metersPerPixel();
@@ -1678,15 +1684,21 @@ if (isSingleNozzle) {
 const hasFairingAbove = !!(memberAbove && memberAbove.stageRole === 'payloadSpace');
 
       ctx.save();
-      // Fairing's physical base sits `stageOverlapM` below the stage hull
-      // top — that overlap is where the fairing wraps the stage. Reduce
-      // the fairing's draw position by that much so the two members
-      // interlock instead of the fairing hovering above the stage.
-      const overlapPx = (m.stageRole === 'payloadSpace' && Number.isFinite(m.stageOverlapM)) ?
-        m.stageOverlapM / mpp : 0;
-      const placeY = yOffsetPx - overlapPx;
-      ctx.translate(0, -placeY);
-      drawRocketArt(ctx, mW, mH, mpp, {
+// Fairing's physical base sits `stageOverlapM` below the stage hull
+// top — that overlap is where the fairing wraps the stage. Reduce
+// the fairing's draw position by that much so the two members
+// interlock instead of the fairing hovering above the stage.
+const overlapPx = (m.stageRole === 'payloadSpace' && Number.isFinite(m.stageOverlapM)) ?
+  m.stageOverlapM / mpp : 0;
+const placeY = yOffsetPx - overlapPx;
+ctx.translate(0, -placeY);
+// Only the TOP member of the stack draws the pusher puff — the
+// pushers live at the interstage, which is the last member in the
+// booster's members array after separation.
+const isTopMember = (idx === stackMembers.length - 1);
+const puffForThisMember = (isTopMember && puffProgress >= 0) ?
+  puffProgress : -1;
+drawRocketArt(ctx, mW, mH, mpp, {
             legsProgress: (isActive && idx === 0) ? legs.progress : 0,
       legsState: isActive ? legs : null,
       // A5 — tell the drawer which member of the body this is, so its
@@ -1722,10 +1734,11 @@ const hasFairingAbove = !!(memberAbove && memberAbove.stageRole === 'payloadSpac
     // (buildEnginesForRecord is called on members[0] only). Passed so
     // the bell draw can rotate each nozzle by its current gimbalDeg.
     // Static previews and upper members get null → bells drawn at 0°.
-    liveEngines: (idx === 0) ? body.engines : null,
+      liveEngines: (idx === 0) ? body.engines : null,
+    pusherPuffProgress: puffForThisMember,
     ...payloadOpts,
   });
-                                       ctx.restore();
+  ctx.restore();
            
            // SZAD — for locked boosters, drawn after the member's drawRocketArt
            // returns. We're still inside the body's translate+rotate frame, so
@@ -1817,9 +1830,8 @@ drawRemoteArea();
 drawPredictedTrajectory();
 drawLaunchPad();
 drawGroundSteam(altitude);
-  drawRocket();
+    drawRocket();
   drawActiveBodyIndicator();
   drawSeparationFlash();
-  drawPusherPuff();
   drawPayloadReleaseCue();
   }
