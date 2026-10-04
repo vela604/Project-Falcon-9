@@ -1114,6 +1114,107 @@ function drawSeparationFlash() {
   ctx.restore();
 }
 
+// Pusher rim puff — small outward bursts at the top of the INTERSTAGE
+// band of the discarded stack, fired once at separation. 4 puffs, expand
+// outward + slightly downward, fade over ~0.7s. Purely visual.
+//
+// Anchor is nudged slightly BELOW the very top of the discarded stack so
+// the puffs read as venting from the interstage's own silhouette, not
+// floating in the gap above it.
+let _lastPusherPuffId = -1;
+let _pusherPuffLocalStart = 0;
+
+function drawPusherPuff() {
+  const p = state.pusherPuff;
+  if (!p) return;
+  if (p.id !== window.__lastLoggedPuffId) {
+  window.__lastLoggedPuffId = p.id;
+  console.log('[P5] rendering puff: id=' + p.id);
+}
+  if (p.id !== _lastPusherPuffId) {
+    _lastPusherPuffId = p.id;
+    _pusherPuffLocalStart = performance.now();
+  }
+
+  const age = (performance.now() - _pusherPuffLocalStart) / 1000;
+  const DURATION = 0.7;
+  if (age > DURATION) return;
+
+  const mpp = metersPerPixel();
+  const theta = p.theta;
+  const upX = -Math.sin(theta), upY = Math.cos(theta);
+  const rX = Math.cos(theta), rY = Math.sin(theta);
+
+  // ---- Anchor: slightly BELOW the top of the stack, so the puffs sit
+  // on the interstage band, not above it. The nudge is a fraction of the
+  // half-width, giving a roughly constant visual offset regardless of
+  // stack scale.
+  const anchorOffset = p.topOffset - p.halfWidth * 0.5;
+  const anchorWx = p.rx + anchorOffset * upX;
+  const anchorWy = p.ry + anchorOffset * upY;
+  const [pxAnchor, pyAnchor] = worldToScreen(anchorWx, anchorWy);
+
+  // Half width in screen pixels, along the body's right axis.
+  const [pxRight, pyRight] = worldToScreen(
+    anchorWx + rX * p.halfWidth,
+    anchorWy + rY * p.halfWidth
+  );
+  const halfWpx = Math.hypot(pxRight - pxAnchor, pyRight - pyAnchor) || 1;
+  const rDirX = halfWpx > 0 ? (pxRight - pxAnchor) / halfWpx : 1;
+  const rDirY = halfWpx > 0 ? (pyRight - pyAnchor) / halfWpx : 0;
+
+  // Up direction on screen (opposite of body up in canvas coords — the
+  // body's +up maps to screen -Y through worldToScreen).
+  const [pxUp, pyUp] = worldToScreen(
+    anchorWx + upX * p.halfWidth,
+    anchorWy + upY * p.halfWidth
+  );
+  const upDirX = (pxUp - pxAnchor) / halfWpx;
+  const upDirY = (pyUp - pyAnchor) / halfWpx;
+
+  const f = age / DURATION;
+  const alpha = 1 - f;
+
+  // 2 puffs per side. Vertical spread keeps both at or below the rim —
+  // no puff above the interstage top.
+  const puffDefs = [
+    { side: -1, upShift:  0.10 },
+    { side: -1, upShift: -0.50 },
+    { side:  1, upShift:  0.10 },
+    { side:  1, upShift: -0.50 },
+  ];
+
+  ctx.save();
+
+  puffDefs.forEach(pd => {
+    // Base position along the rim, at the given vertical shift
+    const baseX = pxAnchor
+      + rDirX * pd.side * halfWpx
+      + upDirX * pd.upShift * halfWpx * 0.5;
+    const baseY = pyAnchor
+      + rDirY * pd.side * halfWpx
+      + upDirY * pd.upShift * halfWpx * 0.5;
+
+    // Motion: mostly outward, slight downward vent
+    const outDist = f * halfWpx * 1.0;
+    const downDist = f * halfWpx * 0.20;
+    const cx = baseX + rDirX * pd.side * outDist - upDirX * downDist;
+    const cy = baseY + rDirY * pd.side * outDist - upDirY * downDist;
+
+    const radius = Math.max(2, 3 + f * halfWpx * 0.45);
+
+    const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, radius);
+    g.addColorStop(0,    `rgba(235,242,250,${alpha * 0.72})`);
+    g.addColorStop(0.45, `rgba(190,205,225,${alpha * 0.34})`);
+    g.addColorStop(1,    `rgba(150,170,200,0)`);
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+    ctx.fill();
+  });
+
+  ctx.restore();
+}
 
 function drawRocket() {
   // H1c: draw every body. Camera still follows the active body (via
@@ -1716,8 +1817,9 @@ drawRemoteArea();
 drawPredictedTrajectory();
 drawLaunchPad();
 drawGroundSteam(altitude);
-drawRocket();
+  drawRocket();
   drawActiveBodyIndicator();
   drawSeparationFlash();
+  drawPusherPuff();
   drawPayloadReleaseCue();
-}
+  }

@@ -753,6 +753,7 @@ const _snapCache = {
 };
 let _separationFlashCache = null;
 let _lastPayloadReleaseCache = null;
+let _pusherPuffCache = null;
 const _emptyForceObj = {};
 
 function _bodyCacheAt(i) {
@@ -787,16 +788,32 @@ function serializeForMain() {
   }
   
   if (lastPayloadRelease) {
-    const r = _lastPayloadReleaseCache || (_lastPayloadReleaseCache = {});
-    r.id = lastPayloadRelease.id;
-    r.rx = lastPayloadRelease.rx;
-    r.ry = lastPayloadRelease.ry;
-    r.ux = lastPayloadRelease.ux;
-    r.uy = lastPayloadRelease.uy;
-    out.lastPayloadRelease = r;
-  } else {
-    out.lastPayloadRelease = null;
-  }
+  const r = _lastPayloadReleaseCache || (_lastPayloadReleaseCache = {});
+  r.id = lastPayloadRelease.id;
+  r.rx = lastPayloadRelease.rx;
+  r.ry = lastPayloadRelease.ry;
+  r.ux = lastPayloadRelease.ux;
+  r.uy = lastPayloadRelease.uy;
+  out.lastPayloadRelease = r;
+} else {
+  out.lastPayloadRelease = null;
+}
+
+if (pusherPuff) {
+  const pp = _pusherPuffCache || (_pusherPuffCache = {});
+  pp.id = pusherPuff.id;
+  pp.rx = pusherPuff.rx;
+  pp.ry = pusherPuff.ry;
+  pp.theta = pusherPuff.theta;
+  pp.topOffset = pusherPuff.topOffset;
+  pp.halfWidth = pusherPuff.halfWidth;
+  out.pusherPuff = pp;
+  if (out.pusherPuff) {
+  console.log('[P2] serialize: id=' + out.pusherPuff.id);
+}
+} else {
+  out.pusherPuff = null;
+}
   
   out.activeBodyIndex = state.activeBodyIndex;
   out.simTime = state.simTime;
@@ -976,8 +993,11 @@ function workerLoop() {
     separationFlash = null;
   }
   if (lastPayloadRelease && performance.now() - lastPayloadRelease.t0Real > 2000) {
-    lastPayloadRelease = null;
-  }
+  lastPayloadRelease = null;
+}
+if (pusherPuff && performance.now() - pusherPuff.t0Real > 1000) {
+  pusherPuff = null;
+}
   
   if (running && !paused && !state.halted) {
   // Wall-clock pacing: only step if CONFIG.DT has elapsed since the

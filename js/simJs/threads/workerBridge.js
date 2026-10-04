@@ -268,15 +268,18 @@ for (let i = prevCount; i < newCount; i++) {
     }
 
     const payload = {
-      activeBodyIndex: snap.activeBodyIndex,
-      simTime: snap.simTime,
-      halted: snap.halted,
-      trajectory: fwdTraj,
-      lastForces: snap.lastForces,
-      separationFlash: snap.separationFlash,
-      lastPayloadRelease: snap.lastPayloadRelease, // ← add karo
-    };
-
+  activeBodyIndex: snap.activeBodyIndex,
+  simTime: snap.simTime,
+  halted: snap.halted,
+  trajectory: fwdTraj,
+  lastForces: snap.lastForces,
+  separationFlash: snap.separationFlash,
+  lastPayloadRelease: snap.lastPayloadRelease,
+  pusherPuff: snap.pusherPuff,
+};
+if (snap.pusherPuff) {
+  console.log('[P3] bridge forwarding: id=' + snap.pusherPuff.id);
+}
     // ---- Optimization #1, Step 4 ----
     // `newCount !== prevCount` (computed above) means a structural event
     // happened THIS tick (separation/fairing-split/payload-release) or this

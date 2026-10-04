@@ -166,7 +166,8 @@ self.onmessage = (e) => {
       if (msg.data.trajectory) state.trajectory = msg.data.trajectory;
       else if (!showTrajectory) state.trajectory = null; // ← ye add karo
       state.separationFlash = msg.data.separationFlash;
-      state.lastPayloadRelease = msg.data.lastPayloadRelease;
+state.lastPayloadRelease = msg.data.lastPayloadRelease;
+state.pusherPuff = msg.data.pusherPuff;
       
       if (msg.data.bodies) {
         // Structural sync — a body was added/removed this tick (separation,
@@ -186,6 +187,9 @@ self.onmessage = (e) => {
               b.lastRcs = rc.lastRcs; }
           });
         }
+        if (msg.data.pusherPuff) {
+  console.log('[P4] render-worker received: id=' + msg.data.pusherPuff.id);
+}
         
         self.postMessage({ type: 'returnRenderHotBuffer', buffer: hotArr.buffer }, [hotArr.buffer]);
       }

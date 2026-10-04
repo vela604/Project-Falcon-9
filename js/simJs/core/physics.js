@@ -45,6 +45,12 @@ globalThis.DEBUG_PHYSICS = false;
 let separationFlash = null;
 let separationFlashId = 0;
 
+// Pneumatic-pusher rim puff visual — emitted once at every stage
+// separation, at the top of the discarded stack, so the renderer can
+// draw 4 small outward bursts where the pushers physically fire.
+let pusherPuff = null;
+let pusherPuffId = 0;
+
 
 // Two-phase staging state. When the user requests a separation, the
 // booster's engines are commanded to zero FIRST and the split is deferred
@@ -3086,14 +3092,32 @@ active.ry = active.ry + discardedHeight_m * upY;
   // flash in every snapshot until expiry; render worker ignores snapshots
   // with the same id.
   separationFlashId++;
-  separationFlash = {
-    id: separationFlashId,
-    rx: active.rx,
-    ry: active.ry,
-    t0Real: performance.now(), // worker-local real time, for worker expiry
-  };
-  
-    state.bodies.push(discarded);
+separationFlash = {
+  id: separationFlashId,
+  rx: active.rx,
+  ry: active.ry,
+  t0Real: performance.now(), // worker-local real time, for worker expiry
+};
+
+// Pusher-puff visual — anchored on the DISCARDED body (the one that
+// actually carries the interstage + pushers). Top offset = sum of its
+// member hull heights, halfWidth = its base width / 2. Renderer draws
+// 4 small bursts at that rim.
+pusherPuffId++;
+pusherPuff = {
+  id: pusherPuffId,
+  rx: discarded.rx,
+  ry: discarded.ry,
+  theta: discarded.theta,
+  topOffset: _bodyHeightOf(discarded),
+  halfWidth: _bodyWidthOf(discarded) / 2,
+  t0Real: performance.now(),
+};
+console.log('[P1] pusherPuff created: id=' + pusherPuff.id +
+  ' topOffset=' + pusherPuff.topOffset.toFixed(2) +
+  ' halfWidth=' + pusherPuff.halfWidth.toFixed(2));
+state.bodies.push(discarded);
+
   rebuildEnginesForBody(active);
   
   // ---- Pneumatic pusher kick ----
