@@ -196,8 +196,9 @@ function applyStateSnapshot(snap) {
   state.bodies = snap.bodies;
 if (snap.pusherPuff) {
   console.log('[PUFF-ARRIVED] id=' + snap.pusherPuff.id +
-    ' topOffset=' + snap.pusherPuff.topOffset +
-    ' halfWidth=' + snap.pusherPuff.halfWidth);
+    ' bodyIdx=' + snap.pusherPuff.bodyIdx +
+    ' bodiesLen=' + state.bodies.length +
+    ' activeIdx=' + state.activeBodyIndex);
 }
   // ---- Optimization #1: fill in the hot numeric fields the buffer carries
   //      (they're absent from snap.bodies — see physics_worker.js's

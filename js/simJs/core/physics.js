@@ -3111,11 +3111,12 @@ pusherPuff = {
   theta: discarded.theta,
   topOffset: _bodyHeightOf(discarded),
   halfWidth: _bodyWidthOf(discarded) / 2,
+  // Index this body will occupy after the push below. Used by
+  // render.js to route the puff to the correct body.
+  bodyIdx: state.bodies.length,
   t0Real: performance.now(),
 };
-console.log('[P1] pusherPuff created: id=' + pusherPuff.id +
-  ' topOffset=' + pusherPuff.topOffset.toFixed(2) +
-  ' halfWidth=' + pusherPuff.halfWidth.toFixed(2));
+
 state.bodies.push(discarded);
 
   rebuildEnginesForBody(active);

@@ -807,10 +807,8 @@ if (pusherPuff) {
   pp.theta = pusherPuff.theta;
   pp.topOffset = pusherPuff.topOffset;
   pp.halfWidth = pusherPuff.halfWidth;
+  pp.bodyIdx = pusherPuff.bodyIdx;
   out.pusherPuff = pp;
-  if (out.pusherPuff) {
-  console.log('[P2] serialize: id=' + out.pusherPuff.id);
-}
 } else {
   out.pusherPuff = null;
 }
