@@ -630,10 +630,17 @@ const maxCtrl = (gfType && gfType.typeConstants &&
   break;
 }
     case 'markIntentionalImpact': {
-      const b = resolveTargetBody(msg.targetBodyIdx);
-      if (b) b.intentionalImpact = true;
-      break;
-    }
+  const b = resolveTargetBody(msg.targetBodyIdx);
+  if (b) b.intentionalImpact = true;
+  break;
+}
+case 'pusherTorque': {
+  const b = resolveTargetBody(msg.targetBodyIdx);
+  if (!b) break;
+  b._sepTorqueAngAccel = Number.isFinite(msg.angAccel) ? msg.angAccel : 0;
+  b._sepTorqueTargetOmega = Number.isFinite(msg.targetOmega) ? msg.targetOmega : null;
+  break;
+}
 
     // ---- Fast-forward support ----
 // captureFullState: return a DEEP CLONE of the worker's canonical

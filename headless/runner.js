@@ -237,7 +237,12 @@ globalThis.__sim = (function () {
       case 'releasePayload': { if (typeof requestReleasePayload === 'function') requestReleasePayload(msg, b); break; }
       case 'emergencyEject': { if (typeof emergencyEjectPayload === 'function') emergencyEjectPayload(b); break; }
       case 'takeControl': { if (typeof takeControlOfBody === 'function') takeControlOfBody(msg.idx); break; }
-      default: break;
+case 'pusherTorque': {
+  b._sepTorqueAngAccel = Number.isFinite(msg.angAccel) ? msg.angAccel : 0;
+  b._sepTorqueTargetOmega = Number.isFinite(msg.targetOmega) ? msg.targetOmega : null;
+  break;
+}
+default: break;
     }
   }
 

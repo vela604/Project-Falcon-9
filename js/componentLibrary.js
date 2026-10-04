@@ -555,11 +555,14 @@ function buildRcsThrusterColdGasSmall() {
     'Cold-gas thruster (small)',
     'Fixed-performance RCS nozzle type. Only mass flow rate is chosen per rocket build (≤ this type\'s max); thrust follows from it and the type\'s own Ve/efficiency.',
     {
-      // Real N₂ cold-gas: Isp ~55 s → Ve = 55 × 9.80665 = 539 m/s.
-      // (ESA: "only around 50 s at best"; other sources ~60 s; 55 s midpoint.)
-      ve: 539,
-      efficiency: 0.85, // cold-gas loses more to valve/nozzle losses than chemical
-      maxMassFlowRate: 0.5, // → per-nozzle thrust ≈ 0.5 × 539 ≈ 270 N
+      // Boosted ejecting velocity — above the cold-gas baseline (~539 m/s,
+// Isp ~55 s) to give the booster separation stronger authority
+// during the initial flip. Real F9 uses higher-pressure N2 and
+// separate pneumatic pushers; this consolidates that authority
+// into the RCS thruster spec.
+ve: 700,
+  efficiency: 0.85, // cold-gas loses more to valve/nozzle losses than chemical
+  maxMassFlowRate: 0.5, // → per-nozzle thrust ≈ 0.5 × 700 ≈ 350 N
     }
   );
 }

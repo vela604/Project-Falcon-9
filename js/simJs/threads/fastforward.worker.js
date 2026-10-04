@@ -442,9 +442,14 @@ function localDispatch(msg) {
       break;
     }
     case 'markIntentionalImpact': {
-      if (b) b.intentionalImpact = true;
-      break;
-    }
+  if (b) b.intentionalImpact = true;
+  break;
+}
+case 'pusherTorque': {
+  b._sepTorqueAngAccel = Number.isFinite(msg.angAccel) ? msg.angAccel : 0;
+  b._sepTorqueTargetOmega = Number.isFinite(msg.targetOmega) ? msg.targetOmega : null;
+  break;
+}
     default: break;
   }
 }

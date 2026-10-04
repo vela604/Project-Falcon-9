@@ -408,8 +408,13 @@ const _v3Config = {
   separation: {
   AXIAL_SEP_TARGET_M: 10,
   SPLIT_TIMEOUT_S: 10,
-  
   LATERAL_TRIGGER_MARGIN_M: 0.5,
+  // Pneumatic-pusher angular kick applied to the booster the moment
+  // split is detected. Constant angular acceleration up to the target
+  // omega, then off. Purely a torque, no visual. Sign determines
+  // rotation direction — flip sign to reverse.
+  BOOSTER_SEP_ANG_ACCEL_DEG_S2: -1,
+  BOOSTER_SEP_TARGET_OMEGA_DEG_S: 6,
 },
   insertion: null,
   fairing: { HAS_FAIRING: true, FAIRING_OPEN_ALT_KM: 80, FAIRING_OPEN_ENABLED: true },
@@ -545,22 +550,37 @@ function _leoTickV3(snapshot) {
     }
 
     case 'WAIT_SPLIT': {
-      if (snapshot.bodies.length > _v3State.preSplitBodyCount) {
-        _v3State.splitDetected = true;
-        _v3State.stageIdx = 0;
-        const boosterIdx = snapshot.bodies.findIndex((b, i) =>
-          i !== _v3State.stageIdx && b && !b.isActive);
-        _v3State.boosterIdx = boosterIdx >= 0 ? boosterIdx : 1;
-        _v3State.missionPhase = 'SEPARATED_AXIAL';
-        _v3State.missionPhaseStart = simT;
-        break;
-      }
-      if (simT - _v3State.missionPhaseStart > _v3Config.separation.SPLIT_TIMEOUT_S) {
-        console.warn('[leoInsertionV3] split timeout');
-        _v3State.missionPhase = 'END';
-      }
-      break;
+  if (snapshot.bodies.length > _v3State.preSplitBodyCount) {
+    _v3State.splitDetected = true;
+    _v3State.stageIdx = 0;
+    const boosterIdx = snapshot.bodies.findIndex((b, i) =>
+      i !== _v3State.stageIdx && b && !b.isActive);
+    _v3State.boosterIdx = boosterIdx >= 0 ? boosterIdx : 1;
+    
+    // Fire the pneumatic-pusher torque on the booster — one-shot
+    // angular kick so the booster tumbles away from the stage's
+    // axial line before MVac ignition.
+    const alphaDeg = _v3Config.separation.BOOSTER_SEP_ANG_ACCEL_DEG_S2;
+    const omegaDeg = _v3Config.separation.BOOSTER_SEP_TARGET_OMEGA_DEG_S;
+    if (Number.isFinite(alphaDeg) && alphaDeg !== 0 &&
+      Number.isFinite(omegaDeg) && omegaDeg > 0) {
+      send(cmdPusherTorque(
+        alphaDeg * Math.PI / 180,
+        omegaDeg * Math.PI / 180,
+        _v3State.boosterIdx
+      ));
     }
+    
+    _v3State.missionPhase = 'SEPARATED_AXIAL';
+    _v3State.missionPhaseStart = simT;
+    break;
+  }
+  if (simT - _v3State.missionPhaseStart > _v3Config.separation.SPLIT_TIMEOUT_S) {
+    console.warn('[leoInsertionV3] split timeout');
+    _v3State.missionPhase = 'END';
+  }
+  break;
+}
 
     case 'SEPARATED_AXIAL': {
   const bIdx = _v3State.boosterIdx;
@@ -987,10 +1007,15 @@ function getLeoInsertionV3Config() { return JSON.parse(JSON.stringify(_v3Config)
     return msg;
   }
   function cmdMarkIntentionalImpact(targetBodyIdx) {
-    const msg = { type: "markIntentionalImpact" };
-    if (Number.isInteger(targetBodyIdx)) msg.targetBodyIdx = targetBodyIdx;
-    return msg;
-  }
+  const msg = { type: "markIntentionalImpact" };
+  if (Number.isInteger(targetBodyIdx)) msg.targetBodyIdx = targetBodyIdx;
+  return msg;
+}
+function cmdPusherTorque(angAccelRadPerS2, targetOmegaRadPerS, targetBodyIdx) {
+  const msg = { type: "pusherTorque", angAccel: angAccelRadPerS2, targetOmega: targetOmegaRadPerS };
+  if (Number.isInteger(targetBodyIdx)) msg.targetBodyIdx = targetBodyIdx;
+  return msg;
+}
 
   return {
     init,
@@ -1041,7 +1066,8 @@ _registerTestGuide,
     cmdSetFuelMass,
     cmdSetGimbalRate,
     cmdRcsDuty,
-    cmdMarkIntentionalImpact,
+cmdMarkIntentionalImpact,
+cmdPusherTorque,
     // Debug getters
     get lastRawSnapshot() {
       return _lastRawSnapshot;

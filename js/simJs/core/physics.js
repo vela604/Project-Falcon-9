@@ -1985,6 +1985,26 @@ if (Number.isFinite(body._sepPushUntil) && state.simTime < body._sepPushUntil) {
   const accel = Number.isFinite(CONFIG.SEPARATION_ACC_CONST) ? CONFIG.SEPARATION_ACC_CONST : 6.0;
   extra.Fy -= geom.M * accel;
 }
+
+// Pneumatic-pusher torque — one-shot angular boost at separation.
+// Applies a constant angular acceleration `_sepTorqueAngAccel` (rad/s²)
+// up to `_sepTorqueTargetOmega` (rad/s), then turns off permanently.
+// No visual: purely an extra torque on `extra.torque`, same RK4 path
+// as every other force. Physical analog: the interstage's asymmetric
+// pushers impart an angular impulse as they extend, kicking the booster
+// into a tumble that carries it away from the stage's axial line before
+// second-stage MVac ignition.
+if (Number.isFinite(body._sepTorqueAngAccel) && body._sepTorqueAngAccel !== 0) {
+  const targetOmega = Number.isFinite(body._sepTorqueTargetOmega) ?
+    body._sepTorqueTargetOmega : Infinity;
+  if (Math.abs(body.omega) < targetOmega) {
+    extra.torque += geom.I * body._sepTorqueAngAccel;
+  } else {
+    // Target reached — turn off permanently.
+    body._sepTorqueAngAccel = 0;
+    body._sepTorqueTargetOmega = null;
+  }
+}
     
     // Fairing-recovery parachute — auto-deploy check + canopy drag +
     // nose-up restoring torque. Runs for every body with a non-null
