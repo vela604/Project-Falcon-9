@@ -1192,7 +1192,7 @@ function _stepAllGasPools() {
       p.age += dt;
       if (p.age >= p.life) { pool.particles.splice(i, 1); continue; }
       // Drag — gas decelerates as it disperses.
-      const drag = Math.exp(-2.2 * dt);
+      const drag = Math.exp(-1.2 * dt);
       p.vx *= drag;
       p.vy *= drag;
       p.x += p.vx * dt;
@@ -2166,21 +2166,26 @@ podDefs.forEach(pd => {
   const fEps = 1;
   
 function drawGasPuff(cx, cy, dir, seed) {
-  const memberIdx = (Number.isInteger(opts.memberIdx) && opts.memberIdx >= 0)
-    ? opts.memberIdx : 0;
-  const pool = _gasPoolFor(memberIdx);
+  const memberIdx = (Number.isInteger(opts.memberIdx) && opts.memberIdx >= 0) ?
+    opts.memberIdx : 0;
+  const bodyIdx = (Number.isInteger(opts.bodyIdx) && opts.bodyIdx >= 0) ?
+    opts.bodyIdx : 0;
+  // Pool is keyed by (body, member) so two bodies' same-index members
+  // don't share particles across local frames.
+  const poolKey = bodyIdx + '_' + memberIdx;
+  const pool = _gasPoolFor(poolKey);
 
   // ---- Spawn 1-2 new particles at the nozzle exit ----
-  const spawnN = (Math.random() < 0.5) ? 2 : 1;
+  const spawnN = (Math.random() < 0.5) ? 3 : 1;
   for (let s = 0; s < spawnN; s++) {
     if (pool.particles.length >= _GAS_PARTICLE_CAP) break;
     const [dx, dy] = dir;
     const nx = -dy, ny = dx;
     // Emission speed — several plume-lengths per second so particles
     // visibly travel away from the nozzle.
-    const speed = plumeLen * (2.6 + 0.8 * Math.random());
+    const speed = plumeLen * (4.0 + 0.8 * Math.random());
     // Perpendicular spread — small cone, not a laser beam.
-    const spread = (Math.random() - 0.5) * 0.30;
+    const spread = (Math.random() - 0.5) * 0.10;
     pool.particles.push({
       x: cx,
       y: cy,
@@ -2189,7 +2194,7 @@ function drawGasPuff(cx, cy, dir, seed) {
       age: 0,
       life: 0.30 + 0.25 * Math.random(),
       r0: W * (0.040 + 0.020 * Math.random()),
-      growRate: W * (0.70 + 0.40 * Math.random()),
+      growRate: W * (0.40 + 0.40 * Math.random()),
     });
   }
 

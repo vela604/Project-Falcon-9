@@ -398,23 +398,26 @@ const _v3State = {
   insertionResult: null,
   suicideResult: null,
 
-    lastAltKm: 0,
+      lastAltKm: 0,
     lastAxialGap: 0,
     lateralArmed: false,
+    // One-shot flag — pusher torque fires at most once per mission, only
+    // after the axial gap exceeds the stage bell height + margin.
+    pusherTorqueFired: false,
   };
 
 const _v3Config = {
   ascent: null,
   separation: {
-  AXIAL_SEP_TARGET_M: 10,
-  SPLIT_TIMEOUT_S: 10,
-  LATERAL_TRIGGER_MARGIN_M: 0.5,
-  // Pneumatic-pusher angular kick applied to the booster the moment
-  // split is detected. Constant angular acceleration up to the target
-  // omega, then off. Purely a torque, no visual. Sign determines
-  // rotation direction — flip sign to reverse.
+  // SEPARATED_AXIAL duration (s). Counted from the phase's entry (split
+  // detected), not from the axial gap. Replaces the old AXIAL_SEP_TARGET_M
+  // meter-based condition — the phase now always runs for exactly this
+  // many seconds, then hands off to INSERTION.
+  SEPARATION_DURATION_S: 3,
+  SPLIT_TIMEOUT_S: 15,
+  LATERAL_TRIGGER_MARGIN_M: 0.3,
   BOOSTER_SEP_ANG_ACCEL_DEG_S2: -1,
-  BOOSTER_SEP_TARGET_OMEGA_DEG_S: 6,
+  BOOSTER_SEP_TARGET_OMEGA_DEG_S: 10,
 },
   insertion: null,
   fairing: { HAS_FAIRING: true, FAIRING_OPEN_ALT_KM: 80, FAIRING_OPEN_ENABLED: true },
@@ -464,29 +467,14 @@ function _stageBellHeightForBody(stageBody) {
   return ent.value * g.massFlowRate;
 }
 
-// Physical height from a discarded body's position reference up to the top
-// of its stack. The base member's position sits at its engine bell exit
-// plane (bell hangs below base), so we add the bell height plus every
-// member's hull height. Used to compute the TRUE axial gap between the
-// stage's hull base and the top of the discarded structure — without this,
-// the raw `(stage - booster)·up` reads ~8m at the moment of split even
-// though the two bodies are physically touching.
+// Physical height of the top of a discarded body's stack, measured from
+// the body's own position (which is the bottom member's HULL BASE — the
+// base member's engine bell hangs BELOW this reference, into the flame
+// trench, and is NOT part of the top-side height). Sum of member hull
+// heights only.
 function _discardedStackTop_m(body) {
   if (!body || !Array.isArray(body.members) || !body.members.length) return 0;
   let h = 0;
-  const base = body.members[0];
-  if (base && base.engineTypeId && base.engineThrusters) {
-    const gg = base.engineThrusters.gimbal || base.engineThrusters.fixed;
-    if (gg && Number.isFinite(gg.massFlowRate)) {
-      const tt = Derivation.getTypeById(gg.thrusterTypeId);
-      if (tt && Array.isArray(tt.parameterSchema)) {
-        const ent = tt.parameterSchema.find(p => p.key === 'massFlowToBellHeight');
-        if (ent && Number.isFinite(ent.value)) {
-          h += ent.value * gg.massFlowRate;
-        }
-      }
-    }
-  }
   body.members.forEach(m => {
     if (Number.isFinite(m.height)) h += m.height;
   });
@@ -551,30 +539,20 @@ function _leoTickV3(snapshot) {
 
     case 'WAIT_SPLIT': {
   if (snapshot.bodies.length > _v3State.preSplitBodyCount) {
-    _v3State.splitDetected = true;
-    _v3State.stageIdx = 0;
-    const boosterIdx = snapshot.bodies.findIndex((b, i) =>
-      i !== _v3State.stageIdx && b && !b.isActive);
-    _v3State.boosterIdx = boosterIdx >= 0 ? boosterIdx : 1;
-    
-    // Fire the pneumatic-pusher torque on the booster — one-shot
-    // angular kick so the booster tumbles away from the stage's
-    // axial line before MVac ignition.
-    const alphaDeg = _v3Config.separation.BOOSTER_SEP_ANG_ACCEL_DEG_S2;
-    const omegaDeg = _v3Config.separation.BOOSTER_SEP_TARGET_OMEGA_DEG_S;
-    if (Number.isFinite(alphaDeg) && alphaDeg !== 0 &&
-      Number.isFinite(omegaDeg) && omegaDeg > 0) {
-      send(cmdPusherTorque(
-        alphaDeg * Math.PI / 180,
-        omegaDeg * Math.PI / 180,
-        _v3State.boosterIdx
-      ));
-    }
-    
-    _v3State.missionPhase = 'SEPARATED_AXIAL';
-    _v3State.missionPhaseStart = simT;
-    break;
-  }
+  _v3State.splitDetected = true;
+  _v3State.stageIdx = 0;
+  const boosterIdx = snapshot.bodies.findIndex((b, i) =>
+    i !== _v3State.stageIdx && b && !b.isActive);
+  _v3State.boosterIdx = boosterIdx >= 0 ? boosterIdx : 1;
+  _v3State.pusherTorqueFired = false;
+  // Pusher torque is NOT fired here — it waits in SEPARATED_AXIAL
+  // until the axial gap clears the stage's engine bell (see the
+  // arming check in that case). Firing at split-time would rotate
+  // the booster while its interstage still overlaps the MVac bell.
+  _v3State.missionPhase = 'SEPARATED_AXIAL';
+  _v3State.missionPhaseStart = simT;
+  break;
+}
   if (simT - _v3State.missionPhaseStart > _v3Config.separation.SPLIT_TIMEOUT_S) {
     console.warn('[leoInsertionV3] split timeout');
     _v3State.missionPhase = 'END';
@@ -599,17 +577,37 @@ function _leoTickV3(snapshot) {
   const axialGap = Math.max(0, (dx * upX + dy * upY) - discardedTop_m);
   _v3State.lastAxialGap = axialGap;
 
-  // ---- Lateral + negative-torque arming check.
-  // Booster's thrust comes on once the stage's engine bell has cleared
-  // the booster's top/interstage (bell height + margin). Bell height
-  // is derived per tick from the stage record's engine config, so a
-  // different stage engine produces a different trigger point
-  // automatically.
-  const stageBellH = _stageBellHeightForBody(stageBody);
-  const lateralMargin = Number.isFinite(_v3Config.separation.LATERAL_TRIGGER_MARGIN_M)
-    ? _v3Config.separation.LATERAL_TRIGGER_MARGIN_M : 0;
-  const lateralArmed = (stageBellH > 0) && (axialGap >= stageBellH + lateralMargin);
-  _v3State.lateralArmed = lateralArmed;
+  // ---- Bell-clearance arming check.
+// Booster's pusher torque fires once the stage's engine bell has
+// cleared the booster's top/interstage (bell height + margin), and
+// the lateral RCS kick arms at the same moment. Bell height is
+// derived per tick from the stage record's engine config, so a
+// different stage engine produces a different trigger point
+// automatically.
+const stageBellH = _stageBellHeightForBody(stageBody);
+const lateralMargin = Number.isFinite(_v3Config.separation.LATERAL_TRIGGER_MARGIN_M) ?
+  _v3Config.separation.LATERAL_TRIGGER_MARGIN_M : 0;
+const bellCleared = (stageBellH > 0) && (axialGap >= stageBellH + lateralMargin);
+const lateralArmed = bellCleared;
+_v3State.lateralArmed = lateralArmed;
+
+// ---- Pusher torque — one-shot, gated on bell clearance.
+// Physically: pneumatic pushers can't rotate the booster while
+// its interstage still overlaps the MVac bell; a rotation at that
+// moment would drive the interstage into the nozzle.
+if (bellCleared && !_v3State.pusherTorqueFired) {
+  const alphaDeg = _v3Config.separation.BOOSTER_SEP_ANG_ACCEL_DEG_S2;
+  const omegaDeg = _v3Config.separation.BOOSTER_SEP_TARGET_OMEGA_DEG_S;
+  if (Number.isFinite(alphaDeg) && alphaDeg !== 0 &&
+    Number.isFinite(omegaDeg) && omegaDeg > 0) {
+    send(cmdPusherTorque(
+      alphaDeg * Math.PI / 180,
+      omegaDeg * Math.PI / 180,
+      bIdx
+    ));
+    _v3State.pusherTorqueFired = true;
+  }
+}
 
   // ---- Booster duty assembly ----
   // Baseline: axial 'dn' on every pod (pushes booster tailward).
@@ -650,19 +648,23 @@ function _leoTickV3(snapshot) {
   if (boosterMerged) { const c = cmdRcsDuty(boosterMerged, bIdx); send(c); }
 
   // ---- Stage: axial 'up' duty only. No lateral on the stage.
-  const stageDuties = GuideRCS.postSeparationAxialDuty(snapshot, sIdx, 'up');
-  if (stageDuties) { const c = cmdRcsDuty(stageDuties, sIdx); send(c); }
+  // ---- Stage: axial 'up' duty only. No lateral on the stage.
+const stageDuties = GuideRCS.postSeparationAxialDuty(snapshot, sIdx, 'up');
+if (stageDuties) { const c = cmdRcsDuty(stageDuties, sIdx); send(c); }
 
-  if (axialGap >= _v3Config.separation.AXIAL_SEP_TARGET_M) {
-    send(cmdRcsDuty(null, sIdx));
-    send(cmdRcsDuty(null, bIdx));
-    _v3State.lateralArmed = false;
-    _v3State.insertionBlock = FUNDAMENTAL_BLOCKS.insertion.createInstance();
-    _v3State.insertionBlock.start(_v3Config.insertion, sIdx, {});
-    _v3State.missionPhase = 'INSERTION';
-    _v3State.missionPhaseStart = simT;
-  }
-  break;
+// Timeout-based handoff to INSERTION — fixed duration from the
+// phase's entry, independent of how far the axial gap has opened.
+const elapsedSep = simT - _v3State.missionPhaseStart;
+if (elapsedSep >= _v3Config.separation.SEPARATION_DURATION_S) {
+  send(cmdRcsDuty(null, sIdx));
+  send(cmdRcsDuty(null, bIdx));
+  _v3State.lateralArmed = false;
+  _v3State.insertionBlock = FUNDAMENTAL_BLOCKS.insertion.createInstance();
+  _v3State.insertionBlock.start(_v3Config.insertion, sIdx, {});
+  _v3State.missionPhase = 'INSERTION';
+  _v3State.missionPhaseStart = simT;
+}
+break;
 }
 
     case 'INSERTION': {
@@ -772,6 +774,7 @@ _leoTickV3.start = function () {
   _v3State.lastAltKm = 0;
 _v3State.lastAxialGap = 0;
 _v3State.lateralArmed = false;
+_v3State.pusherTorqueFired = false;
 console.log('[leoInsertionV3] started');
 };
 

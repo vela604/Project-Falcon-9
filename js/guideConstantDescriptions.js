@@ -34,9 +34,9 @@ const GUIDE_CONSTANT_DESCRIPTIONS = {
   'ascent.MECO_APOGEE_KM': 'Apogee target (km ASL) that triggers MECO. When the current ballistic apogee crosses this value, the ascent block fires the separation command.',
   
   // ---- separation (mission-level glue) ----
-  'separation.AXIAL_SEP_TARGET_M': 'Axial gap (m) between the discarded stack top and the stage hull base at which SEPARATED_AXIAL ends and the insertion block takes over.',
-  'separation.SPLIT_TIMEOUT_S': 'Maximum time (s) to wait for the split to physically appear after MECO. If the body count never grows, the mission aborts.',
-  'separation.LATERAL_TRIGGER_MARGIN_M': 'Margin (m) above the stage engine bell height before the booster lateral/negative-torque kick arms. Prevents firing while the bell still overlaps the interstage.',
+  'separation.SEPARATION_DURATION_S': 'Fixed duration (s) of the SEPARATED_AXIAL phase, counted from the phase entry (split detected). At the end of this window, the insertion block takes over — regardless of the axial gap.',
+'separation.SPLIT_TIMEOUT_S': 'Maximum time (s) to wait for the split to physically appear after MECO. If the body count never grows, the mission aborts.',
+'separation.LATERAL_TRIGGER_MARGIN_M': 'Margin (m) above the stage engine bell height before the booster lateral/negative-torque kick arms. Prevents firing while the bell still overlaps the interstage.',
   
   // ---- insertion (post-separation stage → payload deployed) ----
   'insertion.GIMBAL_TARGET': 'Which engines participate in gimbal control during the stage burn. "all" engages every gimbal-capable engine (single-nozzle MVac uses one, octaweb uses all).',

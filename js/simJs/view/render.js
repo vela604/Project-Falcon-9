@@ -1118,10 +1118,11 @@ function drawRocket() {
   // Step RCS puff particles once per frame (independent of whether pods
   // are still firing — particles that already exist should keep drifting).
   _stepAllGasPools();
-  // Clear pools if the user has switched to a different body — particle
-  // positions live in body-local coords and would be meaningless after
-  // a body change.
-  _resetGasPoolsIfBodyChanged(state.activeBodyIndex);
+  // Clear pools when the STRUCTURE changes — either the active body index
+  // or the body count. Pre-separation particles live in the old body's
+  // local frame; after a split they'd be drawn at the wrong place.
+  const gen = state.activeBodyIndex + ':' + (state.bodies ? state.bodies.length : 0);
+  _resetGasPoolsIfBodyChanged(gen);
   state.bodies.forEach((body, idx) => {
     drawBodyRocket(body, idx === state.activeBodyIndex, idx);
   });
@@ -1618,12 +1619,18 @@ const isTopMember = (idx === stackMembers.length - 1);
 const puffForThisMember = (isTopMember && puffProgress >= 0) ?
   puffProgress : -1;
 drawRocketArt(ctx, mW, mH, mpp, {
-            legsProgress: (isActive && idx === 0) ? legs.progress : 0,
+      legsProgress: (isActive && idx === 0) ? legs.progress : 0,
       legsState: isActive ? legs : null,
       // A5 — tell the drawer which member of the body this is, so its
       // pod-id lookups match the `b<memberIdx>.<side><idx>` keys that
       // computeRCSForBody filled into body.lastRcs.
       memberIdx: idx,
+      // Which body this member belongs to — needed so the RCS particle
+      // pool is keyed per (body, member), not per member alone. Without
+      // this, the stage's member 0 and the booster's member 0 share the
+      // same pool after separation, and their particles draw in the
+      // wrong body's local frame.
+      bodyIdx: bodyIdx,
       firing: (body.lastRcs && body.lastRcs.firing) || {},
       pod: (body.lastRcs && body.lastRcs.pod) || {},
       
