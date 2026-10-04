@@ -187,10 +187,6 @@ state.pusherPuff = msg.data.pusherPuff;
               b.lastRcs = rc.lastRcs; }
           });
         }
-        if (msg.data.pusherPuff) {
-  console.log('[P4] render-worker received: id=' + msg.data.pusherPuff.id);
-}
-        
         self.postMessage({ type: 'returnRenderHotBuffer', buffer: hotArr.buffer }, [hotArr.buffer]);
       }
       // else: hotBuffer arrived but we have no bodies yet to decode into
