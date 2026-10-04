@@ -1203,6 +1203,13 @@ function drawPusherPuff() {
 }
 
 function drawRocket() {
+  // Step RCS puff particles once per frame (independent of whether pods
+  // are still firing — particles that already exist should keep drifting).
+  _stepAllGasPools();
+  // Clear pools if the user has switched to a different body — particle
+  // positions live in body-local coords and would be meaningless after
+  // a body change.
+  _resetGasPoolsIfBodyChanged(state.activeBodyIndex);
   state.bodies.forEach((body, idx) => {
     drawBodyRocket(body, idx === state.activeBodyIndex, idx);
   });

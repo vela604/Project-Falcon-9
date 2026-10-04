@@ -1119,6 +1119,95 @@ function getEngineBellExitY_m(record) {
 }
 
 
+// Pre-rendered puff sprite. A soft white radial blob, built once per
+// worker, drawn via drawImage every frame. Replaces the old on-the-fly
+// ctx.filter='blur(...)' chain, which was expensive in OffscreenCanvas
+// and — on some browsers — silently no-op'd, leaving the puffs invisible.
+let _puffSprite = null;
+let _puffSpriteSize = 0;
+
+function _getPuffSprite() {
+  if (_puffSprite) return _puffSprite;
+  const S = 64;
+  let c = null;
+  if (typeof OffscreenCanvas !== 'undefined') {
+    try { c = new OffscreenCanvas(S, S); } catch (e) { c = null; }
+  }
+  if (!c && typeof document !== 'undefined' && document.createElement) {
+    c = document.createElement('canvas');
+    c.width = S;
+    c.height = S;
+  }
+  if (!c) { _puffSprite = false; return null; }
+  const cx = c.getContext('2d');
+  if (!cx) { _puffSprite = false; return null; }
+  // Layered alpha falloff — bright white core, cool outer haze.
+  const g = cx.createRadialGradient(S / 2, S / 2, 0, S / 2, S / 2, S / 2);
+  g.addColorStop(0.00, 'rgba(255,255,255,0.95)');
+  g.addColorStop(0.30, 'rgba(248,251,255,0.72)');
+  g.addColorStop(0.60, 'rgba(220,230,245,0.34)');
+  g.addColorStop(0.85, 'rgba(200,215,235,0.10)');
+  g.addColorStop(1.00, 'rgba(190,205,225,0)');
+  cx.fillStyle = g;
+  cx.beginPath();
+  cx.arc(S / 2, S / 2, S / 2, 0, Math.PI * 2);
+  cx.fill();
+  _puffSprite = c;
+  _puffSpriteSize = S;
+  return c;
+}
+// ============================================================================
+// Live RCS puff particles — body-local pool, keyed by member index.
+//
+// Each frame the pod is firing, drawGasPuff() spawns 1 particle at the
+// nozzle exit with velocity along the firing axis. Particles drift
+// outward with drag, grow as they age, and fade toward end-of-life.
+// This is what makes the puff feel like flowing gas rather than a static
+// cloud. Sprites are pre-rendered (see _getPuffSprite), so each particle
+// costs exactly one drawImage call — cheap.
+// ============================================================================
+const _gasPools = {};  // { memberIdx: { particles: [], stepBin: -1, drawBin: -1 } }
+let _gasActiveGen = -1;
+const _GAS_PARTICLE_CAP = 64;
+
+function _gasPoolFor(idx) {
+  let p = _gasPools[idx];
+  if (!p) {
+    p = { particles: [], stepBin: -1, drawBin: -1 };
+    _gasPools[idx] = p;
+  }
+  return p;
+}
+
+// Called once per frame from drawRocket() BEFORE any bodies draw.
+function _stepAllGasPools() {
+  const bin = Math.floor(performance.now() / 5);
+  for (const k in _gasPools) {
+    const pool = _gasPools[k];
+    if (bin === pool.stepBin) continue;
+    const dt = pool.stepBin < 0 ? 0.016 : Math.min(0.05, (bin - pool.stepBin) * 0.005);
+    pool.stepBin = bin;
+    for (let i = pool.particles.length - 1; i >= 0; i--) {
+      const p = pool.particles[i];
+      p.age += dt;
+      if (p.age >= p.life) { pool.particles.splice(i, 1); continue; }
+      // Drag — gas decelerates as it disperses.
+      const drag = Math.exp(-2.2 * dt);
+      p.vx *= drag;
+      p.vy *= drag;
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+    }
+  }
+}
+
+// Clear pools when the camera switches to a different body — particles
+// were spawned in the old body's local frame and would be meaningless.
+function _resetGasPoolsIfBodyChanged(gen) {
+  if (gen === _gasActiveGen) return;
+  _gasActiveGen = gen;
+  for (const k in _gasPools) delete _gasPools[k];
+}
 
 function drawRocketArt(ctx, W, H, mpp, opts) {
   opts = opts || {};
@@ -2076,47 +2165,55 @@ podDefs.forEach(pd => {
   const plumeLen = W * 0.6;
   const fEps = 1;
   
-  function drawGasPuff(cx, cy, dir, seed) {
+function drawGasPuff(cx, cy, dir, seed) {
+  const memberIdx = (Number.isInteger(opts.memberIdx) && opts.memberIdx >= 0)
+    ? opts.memberIdx : 0;
+  const pool = _gasPoolFor(memberIdx);
+
+  // ---- Spawn 1-2 new particles at the nozzle exit ----
+  const spawnN = (Math.random() < 0.5) ? 2 : 1;
+  for (let s = 0; s < spawnN; s++) {
+    if (pool.particles.length >= _GAS_PARTICLE_CAP) break;
     const [dx, dy] = dir;
-    const nx = -dy,
-      ny = dx;
-    const jitter = 1 + 0.10 * Math.sin(performance.now() * 0.05 + seed);
-    const len = plumeLen * jitter;
-    const tipX = cx + dx * len,
-      tipY = cy + dy * len;
-    const midX = cx + dx * len * 0.55,
-      midY = cy + dy * len * 0.55;
-    const spread = W * 0.05;
-    
-    const grad = ctx.createLinearGradient(cx, cy, tipX, tipY);
-    grad.addColorStop(0, 'rgba(130,225,255,0.95)');
-    grad.addColorStop(0.55, 'rgba(150,220,255,0.55)');
-    grad.addColorStop(1, 'rgba(170,220,255,0)');
-    ctx.fillStyle = grad;
-    ctx.beginPath();
-    ctx.moveTo(cx - nx * spread, cy - ny * spread);
-    ctx.quadraticCurveTo(midX - nx * spread * 0.7, midY - ny * spread * 0.7, tipX, tipY);
-    ctx.quadraticCurveTo(midX + nx * spread * 0.7, midY + ny * spread * 0.7, cx + nx * spread, cy + ny * spread);
-    ctx.closePath();
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(10,35,50,0.55)';
-    ctx.lineWidth = 0.8;
-    ctx.stroke();
-    
-    ctx.fillStyle = 'rgba(190,235,255,0.35)';
-    ctx.beginPath();
-    ctx.arc(midX, midY, spread * 0.9 * jitter, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = 'rgba(200,240,255,0.22)';
-    ctx.beginPath();
-    ctx.arc(tipX, tipY, spread * 1.1 * jitter, 0, Math.PI * 2);
-    ctx.fill();
-    
-    ctx.fillStyle = 'rgba(230,250,255,0.9)';
-    ctx.beginPath();
-    ctx.arc(cx + dx * W * 0.03, cy + dy * W * 0.03, spread * 0.6, 0, Math.PI * 2);
-    ctx.fill();
+    const nx = -dy, ny = dx;
+    // Emission speed — several plume-lengths per second so particles
+    // visibly travel away from the nozzle.
+    const speed = plumeLen * (2.6 + 0.8 * Math.random());
+    // Perpendicular spread — small cone, not a laser beam.
+    const spread = (Math.random() - 0.5) * 0.30;
+    pool.particles.push({
+      x: cx,
+      y: cy,
+      vx: (dx + nx * spread) * speed,
+      vy: (dy + ny * spread) * speed,
+      age: 0,
+      life: 0.30 + 0.25 * Math.random(),
+      r0: W * (0.040 + 0.020 * Math.random()),
+      growRate: W * (0.70 + 0.40 * Math.random()),
+    });
   }
+
+  // ---- Draw the pool once per 5 ms bin ----
+  const bin = Math.floor(performance.now() / 5);
+  if (bin === pool.drawBin) return;
+  pool.drawBin = bin;
+
+  const sprite = _getPuffSprite();
+  if (!sprite) return;
+
+  ctx.save();
+  for (let i = 0; i < pool.particles.length; i++) {
+    const p = pool.particles[i];
+    const f = p.age / p.life;
+    const r = p.r0 + p.growRate * p.age;
+    // Ease-out fade — bright at birth, gone at end of life.
+    const alpha = (1 - f) * (1 - f) * 0.85;
+    ctx.globalAlpha = alpha;
+    ctx.drawImage(sprite, p.x - r, p.y - r, r * 2, r * 2);
+  }
+  ctx.globalAlpha = 1;
+  ctx.restore();
+}
   
   function roundRectPath(x, y, w, h, r) {
     const rr = Math.min(r, w / 2, h / 2);
