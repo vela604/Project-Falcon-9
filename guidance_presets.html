@@ -229,6 +229,30 @@ a.back:hover { color: var(--cyan); }
 .preset-badge.tag { color: #7ee1ff; background: rgba(53,214,255,0.06); border: 1px solid rgba(53,214,255,0.20); }
 .preset-badge.outdated { color: var(--danger); background: rgba(255,95,126,0.08); border: 1px solid rgba(255,95,126,0.30); }
 
+/* Specs strip — separate from tags. Mission facts, not filter labels. */
+.preset-specs {
+  display: flex; gap: 28px; flex-wrap: wrap;
+  margin-top: 10px;
+  padding: 9px 0;
+  border-top: 1px dashed rgba(255,255,255,0.07);
+  border-bottom: 1px dashed rgba(255,255,255,0.07);
+}
+.preset-spec {
+  display: flex; align-items: baseline; gap: 8px;
+  font-family: var(--font-mono); font-size: 12.5px;
+}
+.preset-spec .spec-k {
+  font-size: 10px;
+  letter-spacing: 0.7px;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+.preset-spec .spec-v {
+  font-weight: 600;
+  color: var(--text);
+}
+.preset-spec.orbit .spec-v { color: var(--green); }
+.preset-spec.deploy .spec-v { color: var(--purple); }
 .preset-desc {
   font-size: 12.5px; color: var(--dim);
   line-height: 1.5;
@@ -590,15 +614,23 @@ padding: 7px 0;
       <label class="field-label" for="pmDesc">Description</label>
       <textarea class="field-textarea" id="pmDesc" rows="2" maxlength="400"></textarea>
       <div class="field-grid-2">
-        <div>
-          <label class="field-label" for="pmStack">Stack *</label>
-          <select class="field-select" id="pmStack"></select>
-        </div>
-        <div>
-          <label class="field-label" for="pmTags">Tags (comma-separated)</label>
-          <input class="field-input" type="text" id="pmTags" maxlength="200">
-        </div>
-      </div>
+  <div>
+    <label class="field-label" for="pmStack">Stack *</label>
+    <select class="field-select" id="pmStack"></select>
+  </div>
+  <div>
+    <label class="field-label" for="pmTags">Tags (comma-separated)</label>
+    <input class="field-input" type="text" id="pmTags" maxlength="200">
+  </div>
+</div>
+
+<div class="field-grid-2">
+  <div>
+    <label class="field-label" for="pmDeployTime">Payload deploy at T+ (seconds, optional)</label>
+    <input class="field-input" type="number" id="pmDeployTime" min="0" step="1" placeholder="e.g. 583">
+  </div>
+  <div></div>
+</div>
 
       <div style="display:flex;align-items:center;justify-content:space-between;margin-top:14px;">
         <span class="field-label" style="margin:0;">Constants</span>

@@ -280,8 +280,10 @@ out.v3State = {
   deployCmdSimTime: _v3State.deployCmdSimTime,
   insertionResult: _v3State.insertionResult,
   suicideResult: _v3State.suicideResult,
-  lastAltKm: _v3State.lastAltKm,
-  lastAxialGap: _v3State.lastAxialGap,
+    lastAltKm: _v3State.lastAltKm,
+    lastAxialGap: _v3State.lastAxialGap,
+    lateralArmed: _v3State.lateralArmed,
+
 };
 if (_v3State.ascentBlock) out.v3AscentBlock = _v3State.ascentBlock.getState();
 if (_v3State.insertionBlock) out.v3InsertionBlock = _v3State.insertionBlock.getState();
@@ -396,13 +398,19 @@ const _v3State = {
   insertionResult: null,
   suicideResult: null,
 
-  lastAltKm: 0,
-  lastAxialGap: 0,
-};
+    lastAltKm: 0,
+    lastAxialGap: 0,
+    lateralArmed: false,
+  };
 
 const _v3Config = {
   ascent: null,
-  separation: { AXIAL_SEP_TARGET_M: 10, SPLIT_TIMEOUT_S: 10 },
+  separation: {
+  AXIAL_SEP_TARGET_M: 10,
+  SPLIT_TIMEOUT_S: 10,
+  
+  LATERAL_TRIGGER_MARGIN_M: 0.5,
+},
   insertion: null,
   fairing: { HAS_FAIRING: true, FAIRING_OPEN_ALT_KM: 80, FAIRING_OPEN_ENABLED: true },
   done: { SUICIDE_DELAY_AFTER_DEPLOY_S: 1800, CIRC_ATT_KP: 0.5, CIRC_ATT_KD: 4.0, DEORBIT_ENABLED: true },
@@ -431,6 +439,53 @@ function _v3CurrentPhase() {
     return '?';
   }
   return '?';
+}
+
+// Computes the stage's engine bell height (meters) from the stage record.
+// Mirrors fleet.js's engineBellHeightForRecord but runs in the guidance
+// worker, where fleet.js isn't loaded. Reaches the same type registry
+// through Derivation.getTypeById, which came in with the boot stackData.
+// Returns 0 on any lookup failure — callers treat 0 as "unknown, skip".
+function _stageBellHeightForBody(stageBody) {
+  if (!stageBody || !stageBody.members || !stageBody.members.length) return 0;
+  const member = stageBody.members[0];
+  if (!member || !member.engineTypeId || !member.engineThrusters) return 0;
+  const g = member.engineThrusters.gimbal || member.engineThrusters.fixed;
+  if (!g || !Number.isFinite(g.massFlowRate)) return 0;
+  const t = Derivation.getTypeById(g.thrusterTypeId);
+  if (!t || !Array.isArray(t.parameterSchema)) return 0;
+  const ent = t.parameterSchema.find(p => p.key === 'massFlowToBellHeight');
+  if (!ent || !Number.isFinite(ent.value)) return 0;
+  return ent.value * g.massFlowRate;
+}
+
+// Physical height from a discarded body's position reference up to the top
+// of its stack. The base member's position sits at its engine bell exit
+// plane (bell hangs below base), so we add the bell height plus every
+// member's hull height. Used to compute the TRUE axial gap between the
+// stage's hull base and the top of the discarded structure — without this,
+// the raw `(stage - booster)·up` reads ~8m at the moment of split even
+// though the two bodies are physically touching.
+function _discardedStackTop_m(body) {
+  if (!body || !Array.isArray(body.members) || !body.members.length) return 0;
+  let h = 0;
+  const base = body.members[0];
+  if (base && base.engineTypeId && base.engineThrusters) {
+    const gg = base.engineThrusters.gimbal || base.engineThrusters.fixed;
+    if (gg && Number.isFinite(gg.massFlowRate)) {
+      const tt = Derivation.getTypeById(gg.thrusterTypeId);
+      if (tt && Array.isArray(tt.parameterSchema)) {
+        const ent = tt.parameterSchema.find(p => p.key === 'massFlowToBellHeight');
+        if (ent && Number.isFinite(ent.value)) {
+          h += ent.value * gg.massFlowRate;
+        }
+      }
+    }
+  }
+  body.members.forEach(m => {
+    if (Number.isFinite(m.height)) h += m.height;
+  });
+  return h;
 }
 
 function _leoTickV3(snapshot) {
@@ -508,37 +563,87 @@ function _leoTickV3(snapshot) {
     }
 
     case 'SEPARATED_AXIAL': {
-      const bIdx = _v3State.boosterIdx;
-      const sIdx = _v3State.stageIdx;
-      if (bIdx < 0 || sIdx < 0) { _v3State.missionPhase = 'END'; break; }
-      const boosterBody = snapshot.bodies[bIdx];
-      const stageBody = snapshot.bodies[sIdx];
-      if (!boosterBody || !stageBody) { _v3State.missionPhase = 'END'; break; }
+  const bIdx = _v3State.boosterIdx;
+  const sIdx = _v3State.stageIdx;
+  if (bIdx < 0 || sIdx < 0) { _v3State.missionPhase = 'END'; break; }
+  const boosterBody = snapshot.bodies[bIdx];
+  const stageBody = snapshot.bodies[sIdx];
+  if (!boosterBody || !stageBody) { _v3State.missionPhase = 'END'; break; }
 
-      const boosterDuties = GuideRCS.postSeparationAxialDuty(snapshot, bIdx, 'dn');
-      if (boosterDuties) { const c = cmdRcsDuty(boosterDuties, bIdx); send(c); }
-      const stageDuties = GuideRCS.postSeparationAxialDuty(snapshot, sIdx, 'up');
-      if (stageDuties) { const c = cmdRcsDuty(stageDuties, sIdx); send(c); }
+  // ---- True axial gap: stage hull base to top of discarded stack.
+  const discardedTop_m = _discardedStackTop_m(boosterBody);
+  const upX = -Math.sin(stageBody.theta);
+  const upY = Math.cos(stageBody.theta);
+  const dx = stageBody.rx - boosterBody.rx;
+  const dy = stageBody.ry - boosterBody.ry;
+  const axialGap = Math.max(0, (dx * upX + dy * upY) - discardedTop_m);
+  _v3State.lastAxialGap = axialGap;
 
-      const boosterHeight = (boosterBody.members && boosterBody.members[0])
-        ? (boosterBody.members[0].height || 0) : 0;
-      const upX = -Math.sin(stageBody.theta);
-      const upY = Math.cos(stageBody.theta);
-      const dx = stageBody.rx - boosterBody.rx;
-      const dy = stageBody.ry - boosterBody.ry;
-      const axialGap = Math.max(0, (dx * upX + dy * upY) - boosterHeight);
-      _v3State.lastAxialGap = axialGap;
+  // ---- Lateral + negative-torque arming check.
+  // Booster's thrust comes on once the stage's engine bell has cleared
+  // the booster's top/interstage (bell height + margin). Bell height
+  // is derived per tick from the stage record's engine config, so a
+  // different stage engine produces a different trigger point
+  // automatically.
+  const stageBellH = _stageBellHeightForBody(stageBody);
+  const lateralMargin = Number.isFinite(_v3Config.separation.LATERAL_TRIGGER_MARGIN_M)
+    ? _v3Config.separation.LATERAL_TRIGGER_MARGIN_M : 0;
+  const lateralArmed = (stageBellH > 0) && (axialGap >= stageBellH + lateralMargin);
+  _v3State.lateralArmed = lateralArmed;
 
-      if (axialGap >= _v3Config.separation.AXIAL_SEP_TARGET_M) {
-        send(cmdRcsDuty(null, sIdx));
-        send(cmdRcsDuty(null, bIdx));
-        _v3State.insertionBlock = FUNDAMENTAL_BLOCKS.insertion.createInstance();
-        _v3State.insertionBlock.start(_v3Config.insertion, sIdx, {});
-        _v3State.missionPhase = 'INSERTION';
-        _v3State.missionPhaseStart = simT;
+  // ---- Booster duty assembly ----
+  // Baseline: axial 'dn' on every pod (pushes booster tailward).
+  //
+  // Once lateral is armed, the left pods get a NEGATIVE-torque kick:
+  //   • Left pods: flip vertical to 'up' (Fy = +F) + keep lateral 'lat'
+  //   • Right pods: leave axial 'dn' as-is (Fy = −F)
+  //
+  // τ = rx · Fy. Left pods have rx < 0, so Fy > 0 → τ_L < 0.
+  // Right pods have rx > 0, so Fy < 0 → τ_R < 0.
+  // Both sides push the same way → net τ = −2·F·xOffset.
+  //
+  // Net vertical force = (+F on L) + (−F on R) = 0, so no vertical
+  // drift is introduced. Net lateral = +F on L only (booster drifts
+  // left of the stack, matching the intended lateral-kick behaviour).
+  //
+  // 'up' REPLACES the L pods' axial 'dn' rather than adding to it —
+  // firing both up and dn on the same pod would cancel to zero and
+  // waste propellant.
+  const boosterAxial = GuideRCS.postSeparationAxialDuty(snapshot, bIdx, 'dn');
+  let boosterMerged = boosterAxial ? Object.assign({}, boosterAxial) : {};
+
+  if (lateralArmed) {
+    const boosterPods = boosterBody.pods || [];
+    const latDuties = GuideRCS.postSeparationLateralDuty(snapshot, bIdx, 'L');
+    boosterPods.forEach(p => {
+      const pid = p.podId;
+      if (p.side === 'L') {
+        boosterMerged[pid] = {
+          up: 1,
+          dn: 0,
+          lat: (latDuties && latDuties[pid]) ? latDuties[pid].lat : 1,
+        };
       }
-      break;
-    }
+      // Right pods: keep axial 'dn' from boosterMerged, no change.
+    });
+  }
+  if (boosterMerged) { const c = cmdRcsDuty(boosterMerged, bIdx); send(c); }
+
+  // ---- Stage: axial 'up' duty only. No lateral on the stage.
+  const stageDuties = GuideRCS.postSeparationAxialDuty(snapshot, sIdx, 'up');
+  if (stageDuties) { const c = cmdRcsDuty(stageDuties, sIdx); send(c); }
+
+  if (axialGap >= _v3Config.separation.AXIAL_SEP_TARGET_M) {
+    send(cmdRcsDuty(null, sIdx));
+    send(cmdRcsDuty(null, bIdx));
+    _v3State.lateralArmed = false;
+    _v3State.insertionBlock = FUNDAMENTAL_BLOCKS.insertion.createInstance();
+    _v3State.insertionBlock.start(_v3Config.insertion, sIdx, {});
+    _v3State.missionPhase = 'INSERTION';
+    _v3State.missionPhaseStart = simT;
+  }
+  break;
+}
 
     case 'INSERTION': {
       _v3State.insertionBlock.tick(snapshot);
@@ -645,8 +750,9 @@ _leoTickV3.start = function () {
   _v3State.insertionResult = null;
   _v3State.suicideResult = null;
   _v3State.lastAltKm = 0;
-  _v3State.lastAxialGap = 0;
-  console.log('[leoInsertionV3] started');
+_v3State.lastAxialGap = 0;
+_v3State.lateralArmed = false;
+console.log('[leoInsertionV3] started');
 };
 
 _leoTickV3.stop = function () {

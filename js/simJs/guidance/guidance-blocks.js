@@ -53,11 +53,20 @@ const FUNDAMENTAL_BLOCKS = {
       THROTTLE_FRAC_LOW: 0.7,
       COAST_DAMP_GAIN: 16,
       COAST_DAMP_K: 4.0,
-      GIMBAL_TARGET: "center",
-      MECO_APOGEE_KM: 150,
-    },
-    importantFields: [],
-    createInstance: function () {
+        GIMBAL_TARGET: "center",
+    // MECO trigger mode. false → apogee-based (legacy, unchanged).
+    // true → fuel-based: fire MECO when the booster's tank has exactly
+    // MECO_TARGET_BOOSTER_FUEL_KG left AFTER the shutdown spool-down
+    // burns through its residual flow. MECO_APOGEE_KM is ignored when
+    // this is true.
+    MECO_TRIGGER_ON_FUEL: false,
+    // Residual booster tank fuel (kg) desired at the end of shutdown
+    // spool-down. Only read when MECO_TRIGGER_ON_FUEL is true.
+    MECO_TARGET_BOOSTER_FUEL_KG: 52915,
+    MECO_APOGEE_KM: 150,
+  },
+  importantFields: [],
+    createInstance: function() {
       // ---- Instance state ----
       let _constants = null;
       let _bodyIdx = null;
@@ -404,56 +413,118 @@ const FUNDAMENTAL_BLOCKS = {
 
       // ---- MECO check — mirrors V2's ASCENT case MECO trigger ----
       function _checkMeco(snapshot) {
-        const idx = _bodyIdx;
-        const body = snapshot.bodies[idx];
-        if (!body) return;
-
-        const env = Derivation.getEnv();
-        if (!env) return;
-
-        const simT = snapshot.simTime;
-        const r_m = Math.hypot(body.rx, body.ry);
-        const ux_m = body.rx / r_m,
-          uy_m = body.ry / r_m;
-        const ex_m = body.ry / r_m,
-          ey_m = -body.rx / r_m;
-        const vr_m = body.vx * ux_m + body.vy * uy_m;
-        const vt_m = body.vx * ex_m + body.vy * ey_m;
-        const GM_m = env.GM_EARTH;
-        const E_m = 0.5 * (vr_m * vr_m + vt_m * vt_m) - GM_m / r_m;
-        let apogeeKm = Infinity;
-        if (E_m < 0) {
-          const a_m = -GM_m / (2 * E_m);
-          const h_m = r_m * vt_m;
-          const e_m = Math.sqrt(
-            Math.max(0, 1 + (2 * E_m * h_m * h_m) / (GM_m * GM_m)),
-          );
-          apogeeKm = (a_m * (1 + e_m) - env.EARTH_RADIUS) / 1000;
-        }
-
-        _lastApogeeKm = apogeeKm;
-
-        if (apogeeKm >= _constants.MECO_APOGEE_KM) {
-          _mecoTriggered = true;
-          _mecoSimTime = simT;
-          _apogeeAtMeco_km = apogeeKm;
-          const localVert = Math.atan2(-body.rx, body.ry);
-          _tiltAtMeco_deg = ((body.theta - localVert) * 180) / Math.PI;
-
-          _send(Guidance.cmdSeparate());
-
-          _done = true;
-          _result = {
-            mecoSimTime: _mecoSimTime,
-            separationCommandedSimTime: _mecoSimTime,
-            apogeeAtMeco_km: _apogeeAtMeco_km,
-            tiltAtMeco_deg: _tiltAtMeco_deg,
-            bodyIdx: _bodyIdx,
-            initStackMass: _initStackMass,
-            initFuelMass: _initFuelMass,
-          };
-        }
-      }
+  const idx = _bodyIdx;
+  const body = snapshot.bodies[idx];
+  if (!body) return;
+  
+  const env = Derivation.getEnv();
+  if (!env) return;
+  
+  const simT = snapshot.simTime;
+  
+  // Always compute apogee — used both for the apogee-trigger path
+  // and for the diagnostic payload (recorded at MECO regardless of
+  // which trigger mode fired).
+  const r_m = Math.hypot(body.rx, body.ry);
+  const ux_m = body.rx / r_m,
+    uy_m = body.ry / r_m;
+  const ex_m = body.ry / r_m,
+    ey_m = -body.rx / r_m;
+  const vr_m = body.vx * ux_m + body.vy * uy_m;
+  const vt_m = body.vx * ex_m + body.vy * ey_m;
+  const GM_m = env.GM_EARTH;
+  const E_m = 0.5 * (vr_m * vr_m + vt_m * vt_m) - GM_m / r_m;
+  let apogeeKm = Infinity;
+  if (E_m < 0) {
+    const a_m = -GM_m / (2 * E_m);
+    const h_m = r_m * vt_m;
+    const e_m = Math.sqrt(
+      Math.max(0, 1 + (2 * E_m * h_m * h_m) / (GM_m * GM_m)),
+    );
+    apogeeKm = (a_m * (1 + e_m) - env.EARTH_RADIUS) / 1000;
+  }
+  _lastApogeeKm = apogeeKm;
+  
+  let shouldFire = false;
+  let boosterFuelNow = null;
+  
+  if (_constants.MECO_TRIGGER_ON_FUEL) {
+    // Fuel-based trigger: fire MECO the first tick where the current
+    // booster tank fuel minus the fuel that will still burn during
+    // the shutdown spool-down reaches MECO_TARGET_BOOSTER_FUEL_KG.
+    //
+    // Spool-down burn model (matches applyActuatorRateLimitsForBody's
+    // shutdown branch — a linear ramp from current mdot to zero over
+    // shutdownDurationS seconds scaled by mdot/maxMFR):
+    //   t_spool  = mdot_now * shutdownS / maxMFR
+    //   burn     = mdot_now * t_spool / 2
+    const engs = body.engines || [];
+// Spool-down burn = integral of the mass-flow ramp from current
+// value to zero. Each engine ramps independently at its own
+// rate (maxMassFlowRate / shutdownDurationS), so compute
+// per-engine and sum. All engines typically share the same
+// thruster type → same rate → same t_spool for each; but the
+// per-engine sum handles heterogeneous clusters too.
+let spoolBurn = 0;
+let mdot_now = 0;
+engs.forEach((e) => {
+  const mf = e.massFlowRate || 0;
+  const mM = e.maxMassFlowRate || 0;
+  mdot_now += mf;
+  if (mf > 0 && mM > 0) {
+    const sd = (Number.isFinite(e.shutdownDurationS) && e.shutdownDurationS > 0) ?
+      e.shutdownDurationS : 1.2;
+    const t = (mf * sd) / mM;
+    spoolBurn += (mf * t) / 2;
+  }
+});
+    
+    boosterFuelNow = (Array.isArray(body.memberFuel) &&
+        Number.isFinite(body.memberFuel[0])) ?
+      body.memberFuel[0] : 0;
+    
+    const residual = boosterFuelNow - spoolBurn;
+const target = Number.isFinite(_constants.MECO_TARGET_BOOSTER_FUEL_KG) ?
+  _constants.MECO_TARGET_BOOSTER_FUEL_KG : 0;
+// One-tick predictive: fire on the tick BEFORE residual would
+// drop below target. By the time the MECO command reaches
+// physics, one more physics step runs and burns mdot·dt more;
+// predicting that overshoot lets us hit the target almost
+// exactly (off by less than one tick's worth of fuel).
+//
+// residualNextTick = residual − mdot_now · dt
+//   fire when residualNextTick <= target
+const dt = env.DT;
+const burnThisTick = mdot_now * dt;
+const residualNextTick = residual - burnThisTick;
+if (residualNextTick <= target) shouldFire = true;
+  } else {
+    // Apogee-based trigger (legacy).
+    if (apogeeKm >= _constants.MECO_APOGEE_KM) shouldFire = true;
+  }
+  
+  if (shouldFire) {
+    _mecoTriggered = true;
+    _mecoSimTime = simT;
+    _apogeeAtMeco_km = Number.isFinite(apogeeKm) ? apogeeKm : null;
+    const localVert = Math.atan2(-body.rx, body.ry);
+    _tiltAtMeco_deg = ((body.theta - localVert) * 180) / Math.PI;
+    
+    _send(Guidance.cmdSeparate());
+    
+    _done = true;
+    _result = {
+      mecoSimTime: _mecoSimTime,
+      separationCommandedSimTime: _mecoSimTime,
+      apogeeAtMeco_km: _apogeeAtMeco_km,
+      tiltAtMeco_deg: _tiltAtMeco_deg,
+      bodyIdx: _bodyIdx,
+      initStackMass: _initStackMass,
+      initFuelMass: _initFuelMass,
+      boosterFuelAtMeco: boosterFuelNow,
+    };
+  }
+}
 
       // ---- Public instance ----
       return {
@@ -658,16 +729,29 @@ setState(s) {
       "Post-separation stage → target orbit → payload release. Ends once every expected payload body has spawned and cleared the stage.",
     defaultConstants: {
     GIMBAL_TARGET: "all",
-    STAGE_BURN_CUTOFF_MARGIN_MPS: 0.0,
-    STAGE_BURN_LOCK_TILT_DEG: 90,
-    STAGE_BURN_ATT_GAIN: 16,
-    STAGE_BURN_ATT_KD: 4,
+  STAGE_BURN_CUTOFF_MARGIN_MPS: 0.0,
+  STAGE_BURN_LOCK_TILT_DEG: 90,
+// AoA bootstrap margin + PD gains.
+  // AoA bootstrap margin + PD gains. AoA entering STAGE_BURN is ~1°
+// from gravity-gradient drift during the 10m axial wait; the
+// standard controller's torque spike on that first tick is violent
+// enough to wobble the stage. Bootstrap damps AoA below margin with
+// a critically-damped PD (kp, kd), then hands off to the standard
+// controller. For critical damping set kd ≈ 2·√kp.
+STAGE_BURN_AOA_MARGIN_DEG: 0.001,
+  STAGE_BURN_AOA_KP: 1.0,
+  STAGE_BURN_AOA_KD: 2.0,
+  // Target AoA offset from velocity during STAGE_BURN (deg). Zero =
+  // nose perfectly aligned (fastest tilt evolution). Small positive
+  // or negative value introduces a perpendicular thrust component
+  // that changes the natural tilt growth rate.
+  STAGE_BURN_AOA_BIAS_DEG: 0.86,
     COAST_TARGET_TILT_DEG: -90,
       COAST_ROTATE_TOL_DEG: 0.5,
       COAST_ROTATE_OMEGA_TOL: 0.02,
       COAST_ROTATE_TIMEOUT_S: 240,
       COAST_WAIT_BEFORE_APOGEE_S: 90,
-      CIRC_TRIGGER_LEAD_S: 3.6,
+      CIRC_TRIGGER_LEAD_S: 4.66,
       CIRC_DECAY_FRAC: 0.05,
       CIRC_ATT_KP: 0.5,
       CIRC_ATT_KD: 4.0,
@@ -694,15 +778,17 @@ setState(s) {
       // Sub-machine state — mirrors V2's _leoStateV2 slice relevant to
       // STAGE_BURN..COAST_HOLD_2 + DONE payload-monitor.
       const _st = {
-        init: false,
-        ticks: 0,
-        phase: "STAGE_BURN",
-        phaseStart: 0,
-        // STAGE_BURN
-        stageBurnLocked: false,
-        stageBurnTargetTiltDeg: 0,
-        lastApogeeKm: 0,
-        lastPerigeeKm: null,
+    init: false,
+    ticks: 0,
+    phase: "STAGE_BURN",
+    phaseStart: 0,
+    // STAGE_BURN
+    stageBurnLocked: false,
+    stageBurnTargetTiltDeg: 0,
+    stageBurnSpooled: false,
+    stageBurnAoaBootstrapped: false,
+    lastApogeeKm: 0,
+    lastPerigeeKm: null,
         // RCS_BOOST
         _prevApogeeErr: null,
         // COAST_ROTATE / COAST_WAIT / COAST_HOLD / CIRCULARIZE
@@ -846,39 +932,133 @@ setState(s) {
             _send(Guidance.cmdSetAllThrottle(Infinity));
 
             const I_next = dNext.massProps.I;
-            const localVert = Math.atan2(-body.rx, body.ry);
-            const currentTiltDeg = ((body.theta - localVert) * 180) / Math.PI;
+const localVert = Math.atan2(-body.rx, body.ry);
+const currentTiltDeg = ((body.theta - localVert) * 180) / Math.PI;
 
-            if (
-              !_st.stageBurnLocked &&
-              Math.abs(currentTiltDeg) >= cfg.STAGE_BURN_LOCK_TILT_DEG
-            ) {
-              _st.stageBurnLocked = true;
-              _st.stageBurnTargetTiltDeg =
-                currentTiltDeg >= 0
-                  ? cfg.STAGE_BURN_LOCK_TILT_DEG
-                  : -cfg.STAGE_BURN_LOCK_TILT_DEG;
-            }
-
-            let tau_desired;
-            if (_st.stageBurnLocked) {
-              const targetAbsTheta =
-                localVert + (_st.stageBurnTargetTiltDeg * Math.PI) / 180;
-              const thetaErr = _wrapPi(body.theta - targetAbsTheta);
-              const r2 = body.rx * body.rx + body.ry * body.ry;
-              const h = body.rx * body.vy - body.ry * body.vx;
-              const omegaLocalVert = r2 > 1 ? h / r2 : 0;
-              const omegaRelToTarget = body.omega - omegaLocalVert;
-              tau_desired =
-                -I_next *
-                (cfg.CIRC_ATT_KP * thetaErr +
-                  cfg.CIRC_ATT_KD * omegaRelToTarget);
-            } else {
-  const gain = cfg.STAGE_BURN_ATT_GAIN;
-  const kd = cfg.STAGE_BURN_ATT_KD;
-  tau_desired = (-I_next * gain * dNext.alphaDeg) / (kd * kd);
+// ---- Spool wait ----
+// Hold gimbal rate at 0 and skip attitude control until every engine
+// has reached >= 99% of its own max mass flow rate. Running attitude
+// control during engine startup transient just fights spool noise.
+if (!_st.stageBurnSpooled) {
+  let allFull = true;
+  const engsForSpool = body.engines || [];
+  for (let ei = 0; ei < engsForSpool.length; ei++) {
+    const e = engsForSpool[ei];
+    const maxF = Number.isFinite(e.maxMassFlowRate) ? e.maxMassFlowRate : 0;
+    const cur = Number.isFinite(e.massFlowRate) ? e.massFlowRate : 0;
+    if (maxF > 0 && cur < maxF * 0.99) { allFull = false; break; }
+  }
+  if (!allFull) {
+    _send(Guidance.cmdSetGimbalRate(0));
+    break;
+  }
+  _st.stageBurnSpooled = true;
 }
-            const tau_target = tau_desired - dNext.torqueEnvironmental;
+
+if (
+  !_st.stageBurnLocked &&
+  Math.abs(currentTiltDeg) >= cfg.STAGE_BURN_LOCK_TILT_DEG
+) {
+  _st.stageBurnLocked = true;
+  _st.stageBurnTargetTiltDeg =
+    currentTiltDeg >= 0
+      ? cfg.STAGE_BURN_LOCK_TILT_DEG
+      : -cfg.STAGE_BURN_LOCK_TILT_DEG;
+}
+
+// ---- Attitude torque ----
+// Bootstrap: AoA entering STAGE_BURN is ~1° from gravity-gradient drift
+// during the 10m axial wait. Standard controller's torque on that first
+// tick is violent enough to wobble the stage. Damp AoA to below
+// STAGE_BURN_AOA_MARGIN_DEG first, then hand off. Once handed off,
+// never return to the bootstrap branch — the standard controller takes
+// over from that tick onward.
+let tau_desired = null;
+const aoaDegNow = Number.isFinite(dNext.alphaDeg) ? dNext.alphaDeg : 0;
+
+if (!_st.stageBurnAoaBootstrapped) {
+  if (Math.abs(aoaDegNow) > cfg.STAGE_BURN_AOA_MARGIN_DEG) {
+    // PD on AoA — but using AoA's OWN rate, not raw body omega.
+    //
+    // Why raw omega doesn't work: during a powered burn the velocity
+    // vector itself rotates (gravity turn continues). A raw-omega PD
+    // sees ω_body == velocity-rotation-rate, reads "no rate", and
+    // holds AoA at whatever value the two happened to cancel at — a
+    // nonzero steady state. Using d(AoA)/dt = ω_body + P/r² (the true
+    // kinematic AoA rate including the drift term) drives AoA to zero
+    // at steady state.
+    const cosT = Math.cos(dNext.theta);
+    const sinT = Math.sin(dNext.theta);
+    const u = dNext.relVx * cosT + dNext.relVy * sinT;
+    const v = -dNext.relVx * sinT + dNext.relVy * cosT;
+    const thrustIx = dNext.thrustBodyX * cosT - dNext.thrustBodyY * sinT;
+    const thrustIy = dNext.thrustBodyX * sinT + dNext.thrustBodyY * cosT;
+    const Md = dNext.massProps.M;
+    const aIx = dNext.gVecX + (thrustIx + dNext.dragVecX) / Md;
+    const aIy = dNext.gVecY + (thrustIy + dNext.dragVecY) / Md;
+    const ax = aIx * cosT + aIy * sinT;
+    const ay = -aIx * sinT + aIy * cosT;
+    const r2 = u * u + v * v;
+    const P = v * ax - u * ay;
+    const omegaAoA = (r2 > 1e-6) ? (dNext.omega + P / r2) : dNext.omega;
+    
+    const aoaRadNow = aoaDegNow * Math.PI / 180;
+    const kp = cfg.STAGE_BURN_AOA_KP;
+    const kd = cfg.STAGE_BURN_AOA_KD;
+    tau_desired = -I_next * (kp * aoaRadNow + kd * omegaAoA);
+  } else {
+    _st.stageBurnAoaBootstrapped = true;
+    // Fall through to standard controller on this same tick.
+  }
+}
+
+if (tau_desired === null) {
+  if (_st.stageBurnLocked) {
+    const targetAbsTheta =
+      localVert + (_st.stageBurnTargetTiltDeg * Math.PI) / 180;
+    const thetaErr = _wrapPi(body.theta - targetAbsTheta);
+    const r2 = body.rx * body.rx + body.ry * body.ry;
+    const h = body.rx * body.vy - body.ry * body.vx;
+    const omegaLocalVert = r2 > 1 ? h / r2 : 0;
+    const omegaRelToTarget = body.omega - omegaLocalVert;
+    tau_desired =
+      -I_next *
+      (cfg.CIRC_ATT_KP * thetaErr +
+        cfg.CIRC_ATT_KD * omegaRelToTarget);
+  } else {
+  // Same PD-on-AoA as the bootstrap, but running continuously while
+  // STAGE_BURN is unlocked. Using AoA's own rate (ω_body + P/r²)
+  // rather than raw ω_body, so the controller sees the true attitude
+  // error against the velocity vector.
+  //
+  // AOA_BIAS_DEG shifts the target AoA away from zero. Nonzero bias
+  // means the nose is held slightly off-aligned with the velocity
+  // vector, giving thrust a small perpendicular component that
+  // slows (or accelerates, depending on sign) the natural gravity-
+  // turn tilt evolution during the burn.
+  const cosT2 = Math.cos(dNext.theta);
+  const sinT2 = Math.sin(dNext.theta);
+  const u2 = dNext.relVx * cosT2 + dNext.relVy * sinT2;
+  const v2 = -dNext.relVx * sinT2 + dNext.relVy * cosT2;
+  const tIx2 = dNext.thrustBodyX * cosT2 - dNext.thrustBodyY * sinT2;
+  const tIy2 = dNext.thrustBodyX * sinT2 + dNext.thrustBodyY * cosT2;
+  const Md2 = dNext.massProps.M;
+  const aIx2 = dNext.gVecX + (tIx2 + dNext.dragVecX) / Md2;
+  const aIy2 = dNext.gVecY + (tIy2 + dNext.dragVecY) / Md2;
+  const ax2 = aIx2 * cosT2 + aIy2 * sinT2;
+  const ay2 = -aIx2 * sinT2 + aIy2 * cosT2;
+  const rr2 = u2 * u2 + v2 * v2;
+  const P2 = v2 * ax2 - u2 * ay2;
+  const omegaAoA2 = (rr2 > 1e-6) ? (dNext.omega + P2 / rr2) : dNext.omega;
+  const aoaRad2 = aoaDegNow * Math.PI / 180;
+  const biasRad2 = (Number.isFinite(cfg.STAGE_BURN_AOA_BIAS_DEG) ? cfg.STAGE_BURN_AOA_BIAS_DEG : 0) * Math.PI / 180;
+  const aoaErr2 = aoaRad2 - biasRad2;
+  const kp2 = cfg.STAGE_BURN_AOA_KP;
+  const kd2 = cfg.STAGE_BURN_AOA_KD;
+  tau_desired = -I_next * (kp2 * aoaErr2 + kd2 * omegaAoA2);
+}
+}
+const tau_target = tau_desired - dNext.torqueEnvironmental;
 
             const g_N = gimbals[0].gimbalDeg || 0;
             const comX1 = dNext.massProps.comX;
@@ -1645,8 +1825,10 @@ setState(s) {
           _st.phase = "STAGE_BURN";
           _st.phaseStart = 0;
           _st.stageBurnLocked = false;
-          _st.stageBurnTargetTiltDeg = 0;
-          _st.lastApogeeKm = 0;
+_st.stageBurnTargetTiltDeg = 0;
+_st.stageBurnSpooled = false;
+_st.stageBurnAoaBootstrapped = false;
+_st.lastApogeeKm = 0;
           _st.lastPerigeeKm = null;
           _st._prevApogeeErr = null;
           _st.coastTargetThetaInertial = null;

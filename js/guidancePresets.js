@@ -85,18 +85,22 @@ function addUserPreset(data) {
   const list = loadUserPresets();
   const now = Date.now();
   const rec = {
-    id: genPresetId(),
-    name: (data && data.name ? String(data.name).trim() : '') || 'Unnamed Preset',
-    description: (data && data.description ? String(data.description).trim() : '') || '',
-    guideName: (data && data.guideName) || '',
-    stackId: (data && data.stackId) || '',
-    stackName: (data && data.stackName) || '',
-    tags: Array.isArray(data && data.tags) ? data.tags.map(String) : [],
-    constants: (data && data.constants) ? JSON.parse(JSON.stringify(data.constants)) : {},
-    createdAt: now,
-    updatedAt: now,
-    isDefault: false,
-  };
+  id: genPresetId(),
+  name: (data && data.name ? String(data.name).trim() : '') || 'Unnamed Preset',
+  description: (data && data.description ? String(data.description).trim() : '') || '',
+  guideName: (data && data.guideName) || '',
+  stackId: (data && data.stackId) || '',
+  stackName: (data && data.stackName) || '',
+  tags: Array.isArray(data && data.tags) ? data.tags.map(String) : [],
+  // Optional metadata — not part of constants, purely display/annotation.
+  // null when unspecified so it stays out of the presets page display.
+  payloadDeployTimeS: (data && Number.isFinite(data.payloadDeployTimeS)) ?
+    data.payloadDeployTimeS : null,
+  constants: (data && data.constants) ? JSON.parse(JSON.stringify(data.constants)) : {},
+  createdAt: now,
+  updatedAt: now,
+  isDefault: false,
+};
   if (!rec.guideName) {
     console.warn('[guidancePresets] addUserPreset: missing guideName, refusing');
     return null;

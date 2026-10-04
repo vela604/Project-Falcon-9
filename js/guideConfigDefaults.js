@@ -22,13 +22,13 @@
 // file must be updated in the same commit.
 // ============================================================================
 
-const GUIDE_DEFAULT_STACK_ID   = 'stk_falcon9-default';
-const GUIDE_DEFAULT_STACK_NAME = 'Falcon 9 Block 3';
+const GUIDE_DEFAULT_STACK_ID = 'stk_falcon9-b5';
+const GUIDE_DEFAULT_STACK_NAME = 'Falcon 9 Block 5';
 
 // ---------------------------------------------------------------------------
 // Default preset factory — stamps the shared metadata onto a constants bag.
 // ---------------------------------------------------------------------------
-function _mkDefault(guideName, name, description, constants, tags) {
+function _mkDefault(guideName, name, description, constants, tags, payloadDeployTimeS) {
   return {
     id: 'default:' + guideName,
     name,
@@ -37,6 +37,9 @@ function _mkDefault(guideName, name, description, constants, tags) {
     stackId: GUIDE_DEFAULT_STACK_ID,
     stackName: GUIDE_DEFAULT_STACK_NAME,
     tags: tags || [],
+    // Optional annotation — seconds from t=0 at which the payload is
+    // expected to deploy. Purely display metadata; not part of constants.
+    payloadDeployTimeS: Number.isFinite(payloadDeployTimeS) ? payloadDeployTimeS : null,
     constants,
     isDefault: true,
   };
@@ -115,43 +118,48 @@ STAGE_BURN_LOCK_TILT_DEG: 90,
   
 leoInsertionV3: _mkDefault(
   'leoInsertionV3',
-  'F9 LEO — V3 (Composed)',
-  'Same mission as V2 but composed from reusable blocks (ascent + insertion + suicide) with explicit mission-level glue. Correct dwell timing (60s from deploy command, not from COAST_HOLD_2 entry).',
+  'F9 LEO — 320 km',
+  'Autonomous Falcon 9 ascent to a 320 km LEO, payload deploy at apogee, and retrograde deorbit for a controlled resting-site impact. Tuned for the Block 5 stack with axial stage separation.',
   {
     ascent: {
-      INITIAL_COAST_S: 4.9,
-      PUSH_T_S: 4.8,
-      PUSH_MAX_GIMBAL_DEG: 0.6,
-      PUSH_EAST_SIGN: -1,
-      HOLD_K_DAMP: 4.0,
-      HOLD_MAX_AOA_DEG: 8,
-      HOLD_K_DQ: 0.005,
-      HOLD_Q_REF: 1000,
-      THROTTLE_FRAC: 1.0,
-      THROTTLE_ALT_LOW_KM: 8,
-      THROTTLE_ALT_HIGH_KM: 13,
-      THROTTLE_FRAC_LOW: 0.7,
-      COAST_DAMP_GAIN: 16,
-      COAST_DAMP_K: 4.0,
-      GIMBAL_TARGET: 'center',
-      MECO_APOGEE_KM: 150,
-    },
+  INITIAL_COAST_S: 4.9,
+  PUSH_T_S: 4.8,
+  PUSH_MAX_GIMBAL_DEG: 0.6,
+  PUSH_EAST_SIGN: -1,
+  HOLD_K_DAMP: 4.0,
+  HOLD_MAX_AOA_DEG: 8,
+  HOLD_K_DQ: 0.005,
+  HOLD_Q_REF: 1000,
+  THROTTLE_FRAC: 1.0,
+  THROTTLE_ALT_LOW_KM: 8,
+  THROTTLE_ALT_HIGH_KM: 13,
+  THROTTLE_FRAC_LOW: 0.7,
+  COAST_DAMP_GAIN: 16,
+  COAST_DAMP_K: 4.0,
+  GIMBAL_TARGET: 'center',
+  MECO_TRIGGER_ON_FUEL: false,
+  MECO_TARGET_BOOSTER_FUEL_KG: 52915,
+  MECO_APOGEE_KM: 150,
+},
     separation: {
-      AXIAL_SEP_TARGET_M: 10,
-      SPLIT_TIMEOUT_S: 10,
-    },
+  AXIAL_SEP_TARGET_M: 10,
+  SPLIT_TIMEOUT_S: 10,
+  LATERAL_TRIGGER_MARGIN_M: 0.5,
+},
     insertion: {
     GIMBAL_TARGET: 'all',
     STAGE_BURN_CUTOFF_MARGIN_MPS: 0.0,
     STAGE_BURN_LOCK_TILT_DEG: 90,
-    STAGE_BURN_ATT_GAIN: 16,
-    STAGE_BURN_ATT_KD: 4,
-    COAST_TARGET_TILT_DEG: -90,
-      COAST_ROTATE_TOL_DEG: 0.5,
-      COAST_ROTATE_OMEGA_TOL: 0.02,
-      COAST_ROTATE_TIMEOUT_S: 240,
-      COAST_WAIT_BEFORE_APOGEE_S: 90,
-      CIRC_TRIGGER_LEAD_S: 3.6,
+  STAGE_BURN_AOA_MARGIN_DEG: 0.001,
+  STAGE_BURN_AOA_KP: 1.0,
+  STAGE_BURN_AOA_KD: 2.0,
+  STAGE_BURN_AOA_BIAS_DEG: 0.86,
+  COAST_TARGET_TILT_DEG: -90,
+  COAST_ROTATE_TOL_DEG: 0.5,
+  COAST_ROTATE_OMEGA_TOL: 0.02,
+  COAST_ROTATE_TIMEOUT_S: 240,
+  COAST_WAIT_BEFORE_APOGEE_S: 90,
+  CIRC_TRIGGER_LEAD_S: 4.66,
       CIRC_DECAY_FRAC: 0.05,
       CIRC_ATT_KP: 0.5,
       CIRC_ATT_KD: 4.0,
@@ -187,8 +195,9 @@ leoInsertionV3: _mkDefault(
       SUICIDE_TRIM_MAX_S: 120,
     },
   },
-  ['full-mission', 'pad-to-orbit', 'suicide-burn', 'v3', 'composed']
-),
+  ['full-mission', 'expendable'],
+  600
+  ),
   
   leoInsertion: _mkDefault(
     'leoInsertion',
@@ -340,10 +349,14 @@ const GUIDE_IMPORTANT_FIELDS = {
     ],
   leoInsertionV3: [
   'insertion.TARGET_ORBIT_ALT_KM',
+  'ascent.MECO_TRIGGER_ON_FUEL',
+  'ascent.MECO_TARGET_BOOSTER_FUEL_KG',
   'ascent.PUSH_MAX_GIMBAL_DEG',
   'insertion.STAGE_BURN_LOCK_TILT_DEG',
   'ascent.PUSH_T_S',
   'ascent.INITIAL_COAST_S',
+  'insertion.STAGE_BURN_AOA_BIAS_DEG',
+  'insertion.STAGE_BURN_AOA_MARGIN_DEG',
   'insertion.CIRC_TRIGGER_LEAD_S',
   'ascent.MECO_APOGEE_KM',
   'ascent.THROTTLE_ALT_LOW_KM',

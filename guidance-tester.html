@@ -243,7 +243,7 @@ a.back:hover { color: var(--cyan); }
     <label for="guideSelect">Guide:</label>
     <select id="guideSelect"></select>
     <label for="durationInput">Duration (s):</label>
-    <input id="durationInput" type="number" value="1500" min="10" max="7200" step="10" style="width:90px;">
+    <input id="durationInput" type="number" value="600" min="10" max="7200" step="10" style="width:90px;">
     <button class="btn btn-run" id="startBtn">▶ Run</button>
     <button class="btn btn-stop" id="stopBtn" disabled>■ Stop</button>
     <button class="btn" id="resetDefaultsBtn" title="Restore all constants to code defaults">↺ Reset to defaults</button>
@@ -1059,42 +1059,115 @@ a.back:hover { color: var(--cyan); }
   const PLOT_RENDER_MAX = 2500;
 
   const Plots = {
-    data: {
+  data: {
+    polar: {},
+    vr: {},
+    vt: {},
+    alt: {},
+    speed: {},
+    mass: {},
+    q: {},
+  },
+  // Snapshot of the most recent previous run's plot data. Drawn faded
+  // behind the current run so successive runs can be compared visually.
+  // Archived by reset() at the start of each new run; wiped by clear().
+  previousData: null,
+  
+  _hasAnyData(d) {
+    if (!d) return false;
+    for (const k in d) {
+      if (d[k] && Object.keys(d[k]).length > 0) return true;
+    }
+    return false;
+  },
+  
+  // Called at the start of each run — archives current data as previous,
+  // then starts a fresh current container. If there was no data yet
+  // (first run on the page), previousData stays as-is (null).
+  reset() {
+    if (this._hasAnyData(this.data)) {
+      this.previousData = this.data;
+    }
+    this.data = {
       polar: {},
-      vr:    {},
-      vt:    {},
-      alt:   {},
+      vr: {},
+      vt: {},
+      alt: {},
       speed: {},
-      mass:  {},
-      q:     {},
-    },
-    reset() {
-      for (const k in this.data) this.data[k] = {};
-    },
-    _push(store, key, val) {
-      if (!store[key]) store[key] = [];
-      store[key].push(val);
-    },
-    push(bodyIdx, s) {
-      const key = 'b' + bodyIdx;
-      this._push(this.data.polar, key, { rx: s.rx, ry: s.ry, t: s.t });
-      this._push(this.data.vr, key, { t: s.t, v: s.vr });
-      this._push(this.data.vt, key, { t: s.t, v: s.vt });
-      this._push(this.data.alt, key, { t: s.t, v: s.altKm });
-      this._push(this.data.speed, key, { t: s.t, v: s.speed });
-      this._push(this.data.mass, key, { t: s.t, v: s.mass_t });
-      this._push(this.data.q, key, { t: s.t, v: s.q_kPa });
-    },
-    renderAll() {
-      drawPolarPlot(this.data.polar);
-      drawTimeSeries('vrCanvas', this.data.vr, { forceZero: true });
-      drawTimeSeries('vtCanvas', this.data.vt, { forceZero: true });
-      drawTimeSeries('altCanvas', this.data.alt, { forceZero: true });
-      drawTimeSeries('speedCanvas', this.data.speed, { forceZero: true });
-      drawTimeSeries('massCanvas', this.data.mass, { forceZero: true });
-      drawTimeSeries('qCanvas', this.data.q, { forceZero: true });
-    },
-  };
+      mass: {},
+      q: {},
+    };
+  },
+  
+  // Called by the "Clear plots" button — wipes everything, including
+  // the previous-run snapshot. Distinct from reset() on purpose.
+  clear() {
+    this.data = {
+      polar: {},
+      vr: {},
+      vt: {},
+      alt: {},
+      speed: {},
+      mass: {},
+      q: {},
+    };
+    this.previousData = null;
+  },
+  
+  _push(store, key, val) {
+    if (!store[key]) store[key] = [];
+    store[key].push(val);
+  },
+  push(bodyIdx, s) {
+    const key = 'b' + bodyIdx;
+    this._push(this.data.polar, key, { rx: s.rx, ry: s.ry, t: s.t });
+    this._push(this.data.vr, key, { t: s.t, v: s.vr });
+    this._push(this.data.vt, key, { t: s.t, v: s.vt });
+    this._push(this.data.alt, key, { t: s.t, v: s.altKm });
+    this._push(this.data.speed, key, { t: s.t, v: s.speed });
+    this._push(this.data.mass, key, { t: s.t, v: s.mass_t });
+    this._push(this.data.q, key, { t: s.t, v: s.q_kPa });
+  },
+  
+  renderAll() {
+    const hasPrev = this._hasAnyData(this.previousData);
+    
+    // Compute UNION polar bounds once, and pass to both passes. Without
+    // this the current pass's early-phase bounds are tiny (a 5% window
+    // around the pad) — the earth it draws at that scale is enormous
+    // and covers the faded trail from the previous run.
+    let polarBounds = null;
+    if (hasPrev) {
+      polarBounds = _computePolarBounds([this.previousData.polar, this.data.polar]);
+    }
+    
+    // Pass 1 — previous run, faded, behind.
+    if (hasPrev) {
+      drawPolarPlot(this.previousData.polar, { faded: true, suppressEmptyMessage: true, bounds: polarBounds });
+      drawTimeSeries('vrCanvas', this.previousData.vr, { forceZero: true, faded: true, suppressEmptyMessage: true });
+      drawTimeSeries('vtCanvas', this.previousData.vt, { forceZero: true, faded: true, suppressEmptyMessage: true });
+      drawTimeSeries('altCanvas', this.previousData.alt, { forceZero: true, faded: true, suppressEmptyMessage: true });
+      drawTimeSeries('speedCanvas', this.previousData.speed, { forceZero: true, faded: true, suppressEmptyMessage: true });
+      drawTimeSeries('massCanvas', this.previousData.mass, { forceZero: true, faded: true, suppressEmptyMessage: true });
+      drawTimeSeries('qCanvas', this.previousData.q, { forceZero: true, faded: true, suppressEmptyMessage: true });
+    }
+    // Pass 2 — current run, on top. skipClear keeps the faded trail
+// pixels; skipBackground keeps the previous pass's space fill and
+// earth disc from being repainted over them.
+drawPolarPlot(this.data.polar, {
+  skipClear: hasPrev,
+  skipBackground: hasPrev,
+  suppressEmptyMessage: hasPrev,
+  bounds: polarBounds,
+});
+    drawTimeSeries('vrCanvas', this.data.vr, { forceZero: true, skipClear: hasPrev, suppressEmptyMessage: hasPrev });
+    drawTimeSeries('vtCanvas', this.data.vt, { forceZero: true, skipClear: hasPrev, suppressEmptyMessage: hasPrev });
+    drawTimeSeries('altCanvas', this.data.alt, { forceZero: true, skipClear: hasPrev, suppressEmptyMessage: hasPrev });
+    drawTimeSeries('speedCanvas', this.data.speed, { forceZero: true, skipClear: hasPrev, suppressEmptyMessage: hasPrev });
+    drawTimeSeries('massCanvas', this.data.mass, { forceZero: true, skipClear: hasPrev, suppressEmptyMessage: hasPrev });
+    drawTimeSeries('qCanvas', this.data.q, { forceZero: true, skipClear: hasPrev, suppressEmptyMessage: hasPrev });
+  },
+};
 
   // Pure-read plot sampler. Called once per tick from the loop, AFTER
   // physicsStep + Guidance.onSnapshot. Reads only scalar fields off
@@ -1159,36 +1232,22 @@ a.back:hover { color: var(--cyan); }
     return v.toExponential(1);
   }
 
-  function drawPolarPlot(polarData) {
-    const canvas = $('polarCanvas');
-    if (!canvas) return;
-    const dpr = window.devicePixelRatio || 1;
-    const cssW = canvas.clientWidth || 600;
-    const cssH = canvas.clientHeight || cssW;
-    const size = Math.min(cssW, cssH);
-    if (canvas.width !== Math.round(size * dpr) ||
-        canvas.height !== Math.round(size * dpr)) {
-      canvas.width  = Math.round(size * dpr);
-      canvas.height = Math.round(size * dpr);
-    }
-    const ctx = canvas.getContext('2d');
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, size, size);
-
-    const cx = size / 2, cy = size / 2;
-    const Re = CONFIG.EARTH_RADIUS;
-    const omegaE = CONFIG.EARTH_OMEGA;
-    const EXAG = 5;
-
-    const projected = {};
-    let hasAny = false;
-    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-
+// Computes the display-space bounding box of one or more polar data
+// objects. Used to keep the faded (previous) and current pass at the
+// same scale, so the earth disc drawn by the current pass never covers
+// the faded trail underneath.
+function _computePolarBounds(dataArray) {
+  const Re = CONFIG.EARTH_RADIUS;
+  const omegaE = CONFIG.EARTH_OMEGA;
+  const EXAG = 5;
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  let hasAny = false;
+  for (const polarData of dataArray) {
+    if (!polarData) continue;
     for (const key in polarData) {
       const pts = polarData[key];
       if (!pts || !pts.length) continue;
       hasAny = true;
-      const xy = [];
       for (let i = 0; i < pts.length; i++) {
         const p = pts[i];
         const r = Math.hypot(p.rx, p.ry);
@@ -1197,22 +1256,95 @@ a.back:hover { color: var(--cyan); }
         const phiEF = phiI - omegaE * p.t;
         const x = r_display * Math.sin(phiEF);
         const y = r_display * Math.cos(phiEF);
-        xy.push({ x, y });
         if (x < minX) minX = x;
         if (x > maxX) maxX = x;
         if (y < minY) minY = y;
         if (y > maxY) maxY = y;
       }
-      projected[key] = xy;
     }
+  }
+  return { minX, maxX, minY, maxY, hasAny };
+}
 
-    if (!hasAny) {
-      const padPhi = CONFIG.LAUNCH_SITE_ANGLE_0 || 0;
-      const px = Re * Math.sin(padPhi), py = Re * Math.cos(padPhi);
-      const halfWindow = Re * 0.05;
-      minX = px - halfWindow; maxX = px + halfWindow;
-      minY = py - halfWindow; maxY = py + halfWindow;
+  function drawPolarPlot(polarData, opts) {
+  opts = opts || {};
+  const faded = !!opts.faded;
+  const skipClear = !!opts.skipClear;
+  const skipBackground = !!opts.skipBackground;
+  const suppressEmptyMessage = !!opts.suppressEmptyMessage;
+  const canvas = $('polarCanvas');
+  if (!canvas) return;
+  const dpr = window.devicePixelRatio || 1;
+  const cssW = canvas.clientWidth || 600;
+  const cssH = canvas.clientHeight || cssW;
+  const size = Math.min(cssW, cssH);
+  if (canvas.width !== Math.round(size * dpr) ||
+    canvas.height !== Math.round(size * dpr)) {
+    canvas.width = Math.round(size * dpr);
+    canvas.height = Math.round(size * dpr);
+  }
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  if (!skipClear) ctx.clearRect(0, 0, size, size);
+
+    const cx = size / 2, cy = size / 2;
+    const Re = CONFIG.EARTH_RADIUS;
+    const omegaE = CONFIG.EARTH_OMEGA;
+    const EXAG = 5;
+
+    const projected = {};
+for (const key in polarData) {
+  const pts = polarData[key];
+  if (!pts || !pts.length) continue;
+  const xy = [];
+  for (let i = 0; i < pts.length; i++) {
+    const p = pts[i];
+    const r = Math.hypot(p.rx, p.ry);
+    const r_display = Re + (r - Re) * EXAG;
+    const phiI = Math.atan2(p.rx, p.ry);
+    const phiEF = phiI - omegaE * p.t;
+    const x = r_display * Math.sin(phiEF);
+    const y = r_display * Math.cos(phiEF);
+    xy.push({ x, y });
+  }
+  projected[key] = xy;
+}
+
+let minX, maxX, minY, maxY, hasAny;
+if (opts.bounds && Number.isFinite(opts.bounds.minX)) {
+  // Precomputed union bounds — keeps the faded pass and current pass
+  // at the same scale, so the earth disc drawn by the current pass
+  // lands on exactly the same pixels as the one drawn by the faded
+  // pass and never covers the faded trail.
+  minX = opts.bounds.minX;
+  maxX = opts.bounds.maxX;
+  minY = opts.bounds.minY;
+  maxY = opts.bounds.maxY;
+  hasAny = !!opts.bounds.hasAny;
+} else {
+  minX = Infinity; maxX = -Infinity; minY = Infinity; maxY = -Infinity;
+  hasAny = false;
+  for (const key in projected) {
+    const xy = projected[key];
+    if (!xy || !xy.length) continue;
+    hasAny = true;
+    for (let i = 0; i < xy.length; i++) {
+      const p = xy[i];
+      if (p.x < minX) minX = p.x;
+      if (p.x > maxX) maxX = p.x;
+      if (p.y < minY) minY = p.y;
+      if (p.y > maxY) maxY = p.y;
     }
+  }
+}
+
+if (!hasAny) {
+  const padPhi = CONFIG.LAUNCH_SITE_ANGLE_0 || 0;
+  const px = Re * Math.sin(padPhi), py = Re * Math.cos(padPhi);
+  const halfWindow = Re * 0.05;
+  minX = px - halfWindow; maxX = px + halfWindow;
+  minY = py - halfWindow; maxY = py + halfWindow;
+}
     if (maxX - minX < 1) { const mid = (minX + maxX) / 2; minX = mid - 1; maxX = mid + 1; }
     if (maxY - minY < 1) { const mid = (minY + maxY) / 2; minY = mid - 1; maxY = mid + 1; }
     const bpad = Math.max(maxX - minX, maxY - minY) * 0.10;
@@ -1228,23 +1360,29 @@ a.back:hover { color: var(--cyan); }
       py: cy - (y - midY) * scale,
     });
 
-    ctx.fillStyle = '#040610';
-    ctx.fillRect(0, 0, size, size);
+    if (!skipBackground) {
+  ctx.fillStyle = '#040610';
+  ctx.fillRect(0, 0, size, size);
+}
 
     const earthC = toS(0, 0);
     const earthPx = Re * scale;
     const earthVisible = earthPx > 0.5 &&
       earthC.px + earthPx > 0 && earthC.px - earthPx < size &&
       earthC.py + earthPx > 0 && earthC.py - earthPx < size;
-    if (earthVisible) {
-      ctx.fillStyle = '#0d2b12';
-      ctx.beginPath();
-      ctx.arc(earthC.px, earthC.py, earthPx, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.strokeStyle = 'rgba(100,180,120,0.45)';
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
-    }
+    if (!skipBackground && earthVisible) {
+  ctx.fillStyle = '#0d2b12';
+  ctx.beginPath();
+  ctx.arc(earthC.px, earthC.py, earthPx, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(100,180,120,0.45)';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+}
+
+// Trail drawing starts here — faded alpha only affects the trail
+// and its markers, not the background or earth.
+if (faded) ctx.globalAlpha = 0.28;
 
     const MAX_DRAW = 8000;
     for (const key in projected) {
@@ -1268,25 +1406,29 @@ a.back:hover { color: var(--cyan); }
       if (started) ctx.lineTo(lastS.px, lastS.py);
       ctx.stroke();
 
-      ctx.fillStyle = color;
-      ctx.beginPath();
-      ctx.arc(lastS.px, lastS.py, 4, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.strokeStyle = 'rgba(0,0,0,0.55)';
-      ctx.lineWidth = 1;
-      ctx.stroke();
-
-      ctx.fillStyle = color;
-      ctx.font = 'bold 10px "JetBrains Mono", monospace';
-      ctx.textAlign = 'left';
-      ctx.textBaseline = 'middle';
-      ctx.fillText('b' + bodyIdx, lastS.px + 7, lastS.py);
+      // Current position marker + label — skip on the faded (previous)
+// pass, since the marker belongs to the "live" run only.
+if (!faded) {
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.arc(lastS.px, lastS.py, 4, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(0,0,0,0.55)';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  
+  ctx.fillStyle = color;
+  ctx.font = 'bold 10px "JetBrains Mono", monospace';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('b' + bodyIdx, lastS.px + 7, lastS.py);
+}
     }
 
-    {
-      const padPhi = CONFIG.LAUNCH_SITE_ANGLE_0 || 0;
-      const s = toS(Re * Math.sin(padPhi), Re * Math.cos(padPhi));
-      if (s.px > -20 && s.px < size + 20 && s.py > -20 && s.py < size + 20) {
+    if (!faded) {
+  const padPhi = CONFIG.LAUNCH_SITE_ANGLE_0 || 0;
+  const s = toS(Re * Math.sin(padPhi), Re * Math.cos(padPhi));
+  if (s.px > -20 && s.px < size + 20 && s.py > -20 && s.py < size + 20) {
         ctx.fillStyle = '#ff5f7e';
         ctx.beginPath();
         ctx.arc(s.px, s.py, 5, 0, Math.PI * 2);
@@ -1308,30 +1450,36 @@ a.back:hover { color: var(--cyan); }
     ctx.textBaseline = 'bottom';
     ctx.fillText('altitude ×' + EXAG + ' exaggerated · auto-fit view', 8, size - 8);
 
-    if (!hasAny) {
-      ctx.fillStyle = 'rgba(107,125,156,0.7)';
-      ctx.font = '12px "JetBrains Mono", monospace';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText('(run a mission to see the trajectory)', cx, cy);
-    }
+      if (!hasAny && !suppressEmptyMessage) {
+    ctx.fillStyle = 'rgba(107,125,156,0.7)';
+    ctx.font = '12px "JetBrains Mono", monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('(run a mission to see the trajectory)', cx, cy);
+  }
+  if (faded) ctx.globalAlpha = 1;
+  
   }
 
   function drawTimeSeries(canvasId, seriesMap, opts) {
-    opts = opts || {};
-    const canvas = $(canvasId);
-    if (!canvas) return;
-    const dpr = window.devicePixelRatio || 1;
-    const cssW = canvas.clientWidth || 400;
-    const cssH = canvas.clientHeight || 200;
-    if (canvas.width !== Math.round(cssW * dpr) ||
-        canvas.height !== Math.round(cssH * dpr)) {
-      canvas.width  = Math.round(cssW * dpr);
-      canvas.height = Math.round(cssH * dpr);
-    }
-    const ctx = canvas.getContext('2d');
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, cssW, cssH);
+  opts = opts || {};
+  const faded = !!opts.faded;
+  const skipClear = !!opts.skipClear;
+  const suppressEmptyMessage = !!opts.suppressEmptyMessage;
+  const canvas = $(canvasId);
+  if (!canvas) return;
+  const dpr = window.devicePixelRatio || 1;
+  const cssW = canvas.clientWidth || 400;
+  const cssH = canvas.clientHeight || 200;
+  if (canvas.width !== Math.round(cssW * dpr) ||
+    canvas.height !== Math.round(cssH * dpr)) {
+    canvas.width = Math.round(cssW * dpr);
+    canvas.height = Math.round(cssH * dpr);
+  }
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  if (!skipClear) ctx.clearRect(0, 0, cssW, cssH);
+  if (faded) ctx.globalAlpha = 0.28;
 
     const padL = 52, padR = 12, padT = 10, padB = 22;
     const plotW = cssW - padL - padR;
@@ -1423,23 +1571,26 @@ a.back:hover { color: var(--cyan); }
         if (i === 0) ctx.moveTo(x, y);
         else ctx.lineTo(x, y);
       }
-      ctx.stroke();
-      const last = arr[arr.length - 1];
-      ctx.fillStyle = color;
-      ctx.beginPath();
-      ctx.arc(tx(last.t), ty(last.v), 2.6, 0, Math.PI * 2);
-      ctx.fill();
-    }
+        ctx.stroke();
+  if (!faded) {
+    const last = arr[arr.length - 1];
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(tx(last.t), ty(last.v), 2.6, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  }
 
-    let totalPoints = 0;
-    for (const key in seriesMap) totalPoints += (seriesMap[key] || []).length;
-    if (totalPoints === 0) {
-      ctx.fillStyle = 'rgba(107,125,156,0.65)';
-      ctx.font = '11px "JetBrains Mono", monospace';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText('(no data yet)', padL + plotW / 2, padT + plotH / 2);
-    }
+      let totalPoints = 0;
+  for (const key in seriesMap) totalPoints += (seriesMap[key] || []).length;
+  if (totalPoints === 0 && !suppressEmptyMessage) {
+    ctx.fillStyle = 'rgba(107,125,156,0.65)';
+    ctx.font = '11px "JetBrains Mono", monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('(no data yet)', padL + plotW / 2, padT + plotH / 2);
+  }
+  if (faded) ctx.globalAlpha = 1;
   }
 
   let _resizeTimer = null;
@@ -1449,10 +1600,10 @@ a.back:hover { color: var(--cyan); }
   });
 
   clearPlotsBtn.addEventListener('click', () => {
-    Plots.reset();
-    Plots.renderAll();
-    statusEl.textContent = 'Plots cleared.';
-  });
+  Plots.clear();
+  Plots.renderAll();
+  statusEl.textContent = 'Plots cleared (both current and previous).';
+});
 
   // ============================================================================
   // Capture helpers — identical to numerical.
@@ -1616,7 +1767,7 @@ a.back:hover { color: var(--cyan); }
       return;
     }
 
-    const durationS = Math.max(1, parseFloat(durInput.value) || 1500);
+    const durationS = Math.max(1, parseFloat(durInput.value) || 600);
     const dt = CONFIG.DT;
     const maxTicks = Math.ceil(durationS / dt);
 

@@ -14,6 +14,79 @@
 
 const GUIDE_CONSTANT_DESCRIPTIONS = {
 
+  leoInsertionV3: {
+  // ---- ascent (pad → MECO) ----
+  'ascent.INITIAL_COAST_S': 'Pre-launch hold before PUSH begins. Engines spool up to full thrust during this window; attitude controller stays in PRE_COAST and applies zero torque.',
+  'ascent.PUSH_T_S': 'Duration of the PUSH phase — the initial eastward rotation. A half-sine torque profile of this length produces the target tilt delta.',
+  'ascent.PUSH_MAX_GIMBAL_DEG': 'Peak gimbal deflection used to estimate the achievable tilt delta during PUSH. Larger value → larger computed delta → more aggressive rotation.',
+  'ascent.PUSH_EAST_SIGN': 'Sign of the PUSH rotation. -1 tilts east (toward prograde). 1 tilts west (rarely used, mostly for testing).',
+  'ascent.HOLD_K_DAMP': 'Derivative gain in the HOLD phase attitude controller. Damps angular rate; higher value = stronger damping, less overshoot.',
+  'ascent.HOLD_MAX_AOA_DEG': 'Soft cap on AoA during HOLD. Values above this trigger extra damping to prevent the angle of attack from growing unbounded.',
+  'ascent.HOLD_K_DQ': 'Dynamic-pressure-derivative gain. Damps the rate of change of dynamic pressure to smooth transitions through max-Q.',
+  'ascent.HOLD_Q_REF': 'Reference dynamic pressure (Pa) for the HOLD_K_DQ blend. Larger value → weaker effect of dQ on the control torque.',
+  'ascent.THROTTLE_FRAC': 'Nominal throttle fraction outside the max-Q bucket. 1.0 = full throttle.',
+  'ascent.THROTTLE_ALT_LOW_KM': 'Lower edge of the max-Q throttle bucket (km AGL). Below this altitude, nominal throttle applies.',
+  'ascent.THROTTLE_ALT_HIGH_KM': 'Upper edge of the max-Q throttle bucket. Above this altitude, nominal throttle resumes.',
+  'ascent.THROTTLE_FRAC_LOW': 'Throttle fraction used inside the max-Q bucket (LOW .. HIGH km). Reduces thrust to limit peak aerodynamic load.',
+  'ascent.COAST_DAMP_GAIN': 'Proportional gain for the COASTnAoADAMP phase — damps residual AoA after HOLD disengages.',
+  'ascent.COAST_DAMP_K': 'Divisor base for the COASTnAoADAMP formula (gain / k²). Larger value → smaller torque, gentler damping.',
+  'ascent.GIMBAL_TARGET': 'Which engines participate in gimbal control during ascent. "center" = only the center engine (F9 legacy), "all" = every gimbal-capable engine.',
+  'ascent.MECO_APOGEE_KM': 'Apogee target (km ASL) that triggers MECO. When the current ballistic apogee crosses this value, the ascent block fires the separation command.',
+  
+  // ---- separation (mission-level glue) ----
+  'separation.AXIAL_SEP_TARGET_M': 'Axial gap (m) between the discarded stack top and the stage hull base at which SEPARATED_AXIAL ends and the insertion block takes over.',
+  'separation.SPLIT_TIMEOUT_S': 'Maximum time (s) to wait for the split to physically appear after MECO. If the body count never grows, the mission aborts.',
+  'separation.LATERAL_TRIGGER_MARGIN_M': 'Margin (m) above the stage engine bell height before the booster lateral/negative-torque kick arms. Prevents firing while the bell still overlaps the interstage.',
+  
+  // ---- insertion (post-separation stage → payload deployed) ----
+  'insertion.GIMBAL_TARGET': 'Which engines participate in gimbal control during the stage burn. "all" engages every gimbal-capable engine (single-nozzle MVac uses one, octaweb uses all).',
+  'insertion.STAGE_BURN_CUTOFF_MARGIN_MPS': 'Extra Δv margin (m/s) added to the spool-loss prediction when computing the STAGE_BURN cutoff apogee. Positive = burn slightly longer, overshoot apogee. Zero = exact prediction.',
+  'insertion.STAGE_BURN_LOCK_TILT_DEG': 'Tilt-from-local-vertical (deg) at which the stage-burn attitude controller locks onto a fixed target attitude. Below this threshold the controller tracks AoA; at or above it, the controller holds a fixed inertial tilt.',
+  'insertion.STAGE_BURN_AOA_MARGIN_DEG': 'AoA (deg) below which the bootstrap damper hands off to the standard controller. Smaller = tighter alignment before handoff but longer wait; 0.01–0.001 typical.',
+  'insertion.STAGE_BURN_AOA_KP': 'Proportional gain for the AoA-tracking PD controller. Larger = stronger restoring torque toward the target AoA.',
+  'insertion.STAGE_BURN_AOA_KD': 'Derivative gain for the AoA-tracking PD controller. Damping on d(AoA)/dt (which includes the velocity-vector rotation term). For critical damping, set ≈ 2·√KP.',
+  'insertion.STAGE_BURN_AOA_BIAS_DEG': 'Non-zero target AoA offset (deg) during STAGE_BURN. Shifts the nose slightly off the velocity vector, giving thrust a small perpendicular component that changes the natural tilt-growth rate. Sign-sensitive; tune empirically.',
+  'insertion.COAST_TARGET_TILT_DEG': 'Target inertial tilt (deg from local vertical) the stage holds during the circularization coast. -90 = nose retrograde (thrust along velocity).',
+  'insertion.COAST_ROTATE_TOL_DEG': 'Attitude tolerance (deg) for ending a COAST_ROTATE phase. Within this band and with low ω, the rotation is considered complete.',
+  'insertion.COAST_ROTATE_OMEGA_TOL': 'Angular-rate tolerance (rad/s) paired with COAST_ROTATE_TOL_DEG. Both must be satisfied for the rotation to end.',
+  'insertion.COAST_ROTATE_TIMEOUT_S': 'Maximum time (s) allowed for any COAST_ROTATE phase. On timeout, the controller advances regardless.',
+  'insertion.COAST_WAIT_BEFORE_APOGEE_S': 'Seconds before apogee at which COAST_WAIT ends and the second COAST_ROTATE begins. Larger = start aligning earlier.',
+  'insertion.CIRC_TRIGGER_LEAD_S': 'Lead time (s) before the circularize burn start. Added on top of engine startup duration to allow spool-up before the trigger tick.',
+  'insertion.CIRC_DECAY_FRAC': 'Fraction of the target orbital velocity within which the circularize throttle tapers. 0.05 = last 5% of velocity is burned at reduced throttle.',
+  'insertion.CIRC_ATT_KP': 'Attitude-hold proportional gain used during coast and circularize. Tightens attitude to the coast target tilt.',
+  'insertion.CIRC_ATT_KD': 'Attitude-hold derivative gain. Damps angular rate during holds.',
+  'insertion.COAST_BURN_MULTIPLIER': 'Safety multiplier applied to the computed ideal coast burn time. Larger = start aligning / planning earlier.',
+  'insertion.TARGET_ORBIT_ALT_KM': 'Mission target orbit altitude (km ASL). Drives STAGE_BURN cutoff and CIRCULARIZE target velocity.',
+  'insertion.PAYLOAD_CLEAR_DIST_M': 'Minimum separation distance (m) between stage and payload body for the payload to count as "cleared" and end the insertion block.',
+  'insertion.PAYLOAD_CONFIRM_TIMEOUT_S': 'Fail-safe: if the payload never confirms as cleared, the insertion block ends after this many seconds regardless.',
+  
+  // ---- fairing (mission-level glue) ----
+  'fairing.HAS_FAIRING': 'Whether the stack carries a payload fairing. When false, fairing auto-open is skipped entirely.',
+  'fairing.FAIRING_OPEN_ALT_KM': 'Altitude (km AGL) at which the fairing auto-splits. Runs phase-independently once the split is detected.',
+  'fairing.FAIRING_OPEN_ENABLED': 'Master toggle for fairing auto-open. Set false to fly without fairing separation.',
+  
+  // ---- done dwell (mission-level glue) ----
+  'done.SUICIDE_DELAY_AFTER_DEPLOY_S': 'Dwell time (s) between payload deploy and the start of the deorbit sequence. Counted from the deploy command tick. Long dwells (hundreds of seconds) park the stage in orbit before deorbit.',
+  'done.CIRC_ATT_KP': 'Attitude-hold proportional gain used during the done dwell. Duplicate of insertion.CIRC_ATT_KP, held separately so the dwell can be tuned independently.',
+  'done.CIRC_ATT_KD': 'Attitude-hold derivative gain during the done dwell. Duplicate of insertion.CIRC_ATT_KD.',
+  'done.DEORBIT_ENABLED': 'Master toggle for the deorbit sequence. When false, mission ends at payload deploy and the suicide block is never dispatched.',
+  
+  // ---- suicide (generic retrograde-deorbit block) ----
+  'suicide.SUICIDE_ROTATE_TOL_DEG': 'Attitude tolerance (deg) for the retrograde alignment at the start of the suicide block. Within this band and with low ω, the rotation completes.',
+  'suicide.SUICIDE_ROTATE_OMEGA_TOL': 'Angular-rate tolerance (rad/s) paired with SUICIDE_ROTATE_TOL_DEG.',
+  'suicide.SUICIDE_ROTATE_TIMEOUT_S': 'Maximum time (s) for the initial retrograde rotation. On timeout, the burn starts regardless.',
+  'suicide.SUICIDE_ATT_KP': 'Proportional gain for attitude tracking during the burn and coast. Larger = tighter attitude hold against disturbances.',
+  'suicide.SUICIDE_ATT_KD': 'Derivative gain for the same controller. Damps oscillation; too small causes wobble, too large causes sluggish response.',
+  'suicide.SUICIDE_PREDICT_DT_S': 'Time step (s) for the leapfrog ballistic impact predictor. Smaller = more accurate but slower.',
+  'suicide.SUICIDE_PREDICT_HORIZON_S': 'Maximum prediction horizon (s). If impact is not found within this window, the predictor returns null and the burn continues.',
+  'suicide.SUICIDE_BURN_MAX_S': 'Safety cap on total burn duration (s). If the burn runs past this, it cuts off and coasts.',
+  'suicide.SUICIDE_BURN_COARSE_MARGIN_DEG': 'Earth-fixed angular margin (deg) before the target resting-area meridian at which the burn cuts off. Larger = earlier cutoff, more coast, RCS trim has more work.',
+  'suicide.SUICIDE_TRIM_TOL_DEG': 'Impact-angle convergence tolerance (deg) for the RCS trim. When |dLambda| falls below this, trim ends and the block is done.',
+  'suicide.SUICIDE_TRIM_FAR_DEG': 'Impact-angle error (deg) at which the trim uses full duty. Errors smaller than this scale the duty proportionally.',
+  'suicide.SUICIDE_TRIM_MIN_DUTY': 'Minimum RCS trim duty. Prevents the trim from chattering around the target when the error is tiny.',
+  'suicide.SUICIDE_TRIM_MAX_S': 'Maximum duration (s) for the RCS trim after the burn. On timeout, trim ends regardless of convergence.',
+},
+  
   // ===========================================================
   // leoInsertionV2 — full autonomous mission to LEO + suicide burn
   // ===========================================================

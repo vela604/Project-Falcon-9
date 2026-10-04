@@ -28,11 +28,21 @@
 
   function clone(v) { return JSON.parse(JSON.stringify(v)); }
 
-  // Get all guides that have a config API (i.e. that this page cares
-// about). Uses the code-resident default-preset registry — every guide
-// with a default preset is one the user could tune.
+// Guides that are LIVE in guidance.js and should appear in this page's
+// UI. The full GUIDE_DEFAULT_PRESETS registry still contains old /
+// archived guides (leoInsertionV2, ascentAoaHold, predictive*) for
+// historical reference, but those aren't registered as active guides
+// anymore — showing them here would be misleading.
+//
+// Extend this list when a new guide becomes the production one.
+const CURRENT_GUIDES = ['leoInsertionV3'];
+
+// Get all guides that have a config API AND are still current. Used by
+// the sidebar, the reference section, and the "Add preset" modal's
+// guidance dropdown.
 function allConfigurableGuides() {
-  return Object.keys(GUIDE_DEFAULT_PRESETS);
+  return CURRENT_GUIDES.filter(g =>
+    Object.prototype.hasOwnProperty.call(GUIDE_DEFAULT_PRESETS, g));
 }
 
 // ---------------------------------------------------------------------------
@@ -110,6 +120,29 @@ function activeStack() {
     return String(s).replace(/[&<>"']/g, c =>
       ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   }
+
+// Reads a target orbit (km ASL) from a preset's constants. Handles both
+// the V3 nested path (constants.insertion.TARGET_ORBIT_ALT_KM) and the
+// V2 flat path (constants.TARGET_ORBIT_ALT_KM). Returns null if neither
+// is a finite number.
+function targetOrbitKm(constants) {
+  if (!constants) return null;
+  const nested = getByPath(constants, 'insertion.TARGET_ORBIT_ALT_KM');
+  if (Number.isFinite(nested)) return nested;
+  const flat = getByPath(constants, 'TARGET_ORBIT_ALT_KM');
+  if (Number.isFinite(flat)) return flat;
+  return null;
+}
+
+// Formats seconds as HH:MM:SS for the payload deploy tag.
+function formatHMS(totalSec) {
+  if (!Number.isFinite(totalSec) || totalSec < 0) return null;
+  const s = Math.floor(totalSec);
+  const hh = String(Math.floor(s / 3600)).padStart(2, '0');
+  const mm = String(Math.floor((s % 3600) / 60)).padStart(2, '0');
+  const ss = String(s % 60).padStart(2, '0');
+  return `${hh}:${mm}:${ss}`;
+}
 
   // ----------------------------------------------------------------
   // Sidebar — guidance list
@@ -212,22 +245,49 @@ function activeStack() {
     }
 
     const badges = [];
-    if (opts.mode === 'default') badges.push('<span class="preset-badge default">DEFAULT</span>');
-    if (p.stackName) badges.push(`<span class="preset-badge stack">${escapeHtml(p.stackName)}</span>`);
-    (p.tags || []).forEach(t =>
-      badges.push(`<span class="preset-badge tag">${escapeHtml(t)}</span>`));
-    if (outdated) badges.push('<span class="preset-badge outdated">OUTDATED SCHEMA</span>');
+if (opts.mode === 'default') badges.push('<span class="preset-badge default">DEFAULT</span>');
+if (p.stackName) badges.push(`<span class="preset-badge stack">${escapeHtml(p.stackName)}</span>`);
+(p.tags || []).forEach(t =>
+  badges.push(`<span class="preset-badge tag">${escapeHtml(t)}</span>`));
+if (outdated) badges.push('<span class="preset-badge outdated">OUTDATED SCHEMA</span>');
 
-    card.innerHTML = `
-      <div class="preset-head">
-        <div>
-          <div class="preset-name">${escapeHtml(p.name)}</div>
-          <div class="preset-meta">${badges.join('')}</div>
-        </div>
-      </div>
-      ${p.description ? `<div class="preset-desc">${escapeHtml(p.description)}</div>` : ''}
-      <div class="preset-actions"></div>
-    `;
+// ---- Specs strip — orbit + deploy time, kept OUT of the tag row so
+// they read as mission facts, not filterable tags. Rendered as their
+// own bordered strip below the name/badge line.
+const specs = [];
+const orbitKm = targetOrbitKm(p.constants);
+if (Number.isFinite(orbitKm)) {
+  specs.push(
+    `<div class="preset-spec orbit">` +
+    `<span class="spec-k">Target orbit</span>` +
+    `<span class="spec-v">${orbitKm.toFixed(0)} km</span>` +
+    `</div>`
+  );
+}
+const deployS = Number.isFinite(p.payloadDeployTimeS) ? p.payloadDeployTimeS : null;
+if (deployS != null) {
+  const hms = formatHMS(deployS);
+  if (hms) {
+    specs.push(
+      `<div class="preset-spec deploy">` +
+      `<span class="spec-k">Payload deploy</span>` +
+      `<span class="spec-v">T+${hms}</span>` +
+      `</div>`
+    );
+  }
+}
+
+card.innerHTML = `
+  <div class="preset-head">
+    <div>
+      <div class="preset-name">${escapeHtml(p.name)}</div>
+      <div class="preset-meta">${badges.join('')}</div>
+    </div>
+  </div>
+  ${specs.length ? `<div class="preset-specs">${specs.join('')}</div>` : ''}
+  ${p.description ? `<div class="preset-desc">${escapeHtml(p.description)}</div>` : ''}
+  <div class="preset-actions"></div>
+`;
 
     const actions = card.querySelector('.preset-actions');
     if (opts.mode === 'default') {
@@ -312,22 +372,25 @@ function activeStack() {
 
     // Fill fields
     if (_editingPresetId) {
-      const p = getUserPreset(_editingPresetId);
-      if (!p) { toast('Preset not found'); return; }
-      $('presetModalTitle').textContent = 'Edit Preset';
-      $('pmName').value = p.name;
-      $('pmDesc').value = p.description || '';
-      $('pmTags').value = (p.tags || []).join(', ');
-      guideSel.value = p.guideName;
+  const p = getUserPreset(_editingPresetId);
+  if (!p) { toast('Preset not found'); return; }
+  $('presetModalTitle').textContent = 'Edit Preset';
+  $('pmName').value = p.name;
+  $('pmDesc').value = p.description || '';
+  $('pmTags').value = (p.tags || []).join(', ');
+  $('pmDeployTime').value = Number.isFinite(p.payloadDeployTimeS) ?
+    String(p.payloadDeployTimeS) : '';
+  guideSel.value = p.guideName;
       if (p.stackId) stackSel.value = p.stackId;
       _modalReference = getGuideDefaultPreset(p.guideName)?.constants || null;
       _modalValues = clone(p.constants || {});
       renderModalFields();
     } else {
-      $('presetModalTitle').textContent = 'Add Preset';
-      $('pmName').value = '';
-      $('pmDesc').value = '';
-      $('pmTags').value = '';
+  $('presetModalTitle').textContent = 'Add Preset';
+  $('pmName').value = '';
+  $('pmDesc').value = '';
+  $('pmTags').value = '';
+  $('pmDeployTime').value = '';
       // Pre-fill guidance with sidebar selection, else first
       guideSel.value = _selectedGuide || guides[0] || '';
       // Pre-fill stack with active, else first
@@ -595,23 +658,38 @@ function collectKnownStacks() {
 
     const tags = $('pmTags').value.split(',').map(s => s.trim()).filter(Boolean);
 
-    if (_editingPresetId) {
-      const u = updateUserPreset(_editingPresetId, {
-        name, description: $('pmDesc').value.trim(),
-        guideName: guide, stackId, stackName, tags,
-        constants: r.values,
-      });
-      if (!u) { $('pmError').textContent = 'Update failed.'; $('pmError').style.display = ''; return; }
-      toast('Saved');
-    } else {
-      const c = addUserPreset({
-        name, description: $('pmDesc').value.trim(),
-        guideName: guide, stackId, stackName, tags,
-        constants: r.values,
-      });
-      if (!c) { $('pmError').textContent = 'Save failed.'; $('pmError').style.display = ''; return; }
-      toast('Preset added');
-    }
+// Optional deploy time — blank or invalid input → null (not saved).
+const rawDeploy = $('pmDeployTime').value.trim();
+let deployTimeS = null;
+if (rawDeploy !== '') {
+  const parsed = parseFloat(rawDeploy);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    $('pmError').textContent = 'Payload deploy time must be a non-negative number of seconds (or blank).';
+    $('pmError').style.display = '';
+    return;
+  }
+  deployTimeS = parsed;
+}
+
+if (_editingPresetId) {
+  const u = updateUserPreset(_editingPresetId, {
+    name, description: $('pmDesc').value.trim(),
+    guideName: guide, stackId, stackName, tags,
+    payloadDeployTimeS: deployTimeS,
+    constants: r.values,
+  });
+  if (!u) { $('pmError').textContent = 'Update failed.'; $('pmError').style.display = ''; return; }
+  toast('Saved');
+} else {
+  const c = addUserPreset({
+    name, description: $('pmDesc').value.trim(),
+    guideName: guide, stackId, stackName, tags,
+    payloadDeployTimeS: deployTimeS,
+    constants: r.values,
+  });
+  if (!c) { $('pmError').textContent = 'Save failed.'; $('pmError').style.display = ''; return; }
+  toast('Preset added');
+}
     closePresetModal();
     renderStats();
     renderSidebar();
