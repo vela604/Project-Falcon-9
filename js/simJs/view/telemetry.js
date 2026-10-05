@@ -1120,7 +1120,7 @@ function drawBasalView() {
 // neither touching nor floating. Center disc slightly larger so the
 // octaweb's core reads as visually distinct.
 const rOuter  = R * 0.28;
-const rCenter = R * 0.32;
+const rCenter = R * 0.30;
     const frac = e.Fmax > 0 ? e.currentF / e.Fmax : 0;
     const radius = e.isCenter ? rCenter : rOuter;
     
