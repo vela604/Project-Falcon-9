@@ -1923,6 +1923,36 @@ SUICIDE_DELAY_AFTER_DEPLOY_S   <span class="cmt">// orbit dwell before deorbit</
         </div>
       </div>
       <div class="exp-row">
+  <div class="exp-label">Physics</div>
+  <div class="exp-value">
+    <p>Five physics facts that the whole mission profile rests on.</p>
+
+    <p><strong>1. Analytic AoA derivatives — no finite differences.</strong>
+    The controller needs d(AoA)/dt every tick. A naive finite difference over a 1/80 s window amplifies any noise by 1/dt² = 6400×, which saturates the gimbal from float rounding alone. V3 instead computes both derivatives as exact algebra on body-frame velocity and acceleration:</p>
+    <pre>u   =  relVx·cosθ + relVy·sinθ
+v   = −relVx·sinθ + relVy·cosθ
+r²  =  u² + v²
+P   =  v·ax − u·ay
+Q   =  u·ax + v·ay
+
+ω_AoA = ω + P/r²
+α_AoA = α − 2·P·Q/r⁴</pre>
+    <p>No amplification, no filter, no phase lag.</p>
+
+    <p><strong>2. Predictive next-tick pipeline.</strong>
+    Guidance runs on a snapshot of state @ T. Its commands take effect on the physics step @ T+dt — one tick later. So the controller predicts S_{N+1} using current accelerations, and solves for the actuator command that lands the vehicle on target <em>at</em> S_{N+1}, not at S_N. A 1-tick horizon is exactly right for this architecture: a longer horizon overshoots because the rate command is overwritten every tick before it finishes acting.</p>
+
+    <p><strong>3. Net-zero-force RCS.</strong>
+    RCS is used during coasts to hold attitude without perturbing the trajectory. Firing any single pod produces both a torque and a linear force; over a 100+ s coast, asymmetric duty drifts the vehicle by meters. <code>targetTorqueRcsNoNetForce()</code> solves only balanced pairs — lateral (TR + BL or TL + BR) for small torques, vertical pairs (TL.dn + TR.up + BL.dn + BR.up) for large ones. Net linear force is zero by construction, so attitude corrections don't touch the orbit.</p>
+
+    <p><strong>4. Gravity-gradient torque.</strong>
+    A long body in a non-uniform gravity field has a restoring torque pulling its long axis toward local vertical: <code>τ = −1.5 · GM/r³ · I · sin(2β)</code>, where β is tilt from local vertical. For an F9 stack in LEO it's ~380 N·m — small but non-zero, and it's the dominant disturbance during long coasts. Guidance cancels it explicitly in the attitude holds; ignoring it would produce a slow, monotonic tilt drift that builds up over the apogee wait.</p>
+
+    <p><strong>5. Cutoff fires before the engine actually stops.</strong>
+    Every guidance cutoff (MECO, STAGE_BURN, CIRCULARIZE) predicts the Δv the engine will still produce during its shutdown spool — <code>dv_spool = ½ · ṁ · t_spool</code>, where <code>t_spool = ṁ · shutdownDurationS / maxMFR</code> — and fires the cutoff command early by exactly that amount. Without this, the extra velocity after the command is issued pushes apogee past target and circularization lands wrong; with it, velocity at actual engine-stop equals the target.</p>
+  </div>
+</div>
+      <div class="exp-row">
         <div class="exp-label">Result</div>
         <div class="exp-value">
           <strong>Payload delivered to the target orbit.</strong>
