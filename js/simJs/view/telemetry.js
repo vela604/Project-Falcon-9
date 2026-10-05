@@ -937,13 +937,21 @@ function drawFigurePanelFallback(body, w, h) {
   const W = W_m * scale, H = H_m * scale;
 
   // ---- Artwork ----
-  if (body && body.payloadBody && body.payloadBody.record) {
-    // Released payload — draw its own satellite artwork.
-    figCtx.save();
-    figCtx.translate(baseX, baseY);
-    drawPayloadArt(figCtx, W, H);
-    figCtx.restore();
-  } else if (body && body.fairingHalf && body.fairingHalf.record) {
+if (body && body.payloadBody && body.payloadBody.record) {
+  // Released payload — draw its own satellite artwork with the same
+  // open-progress the main canvas uses, so the unfolding animation is
+  // visible here too.
+  let _op = 0;
+  if (Number.isFinite(body.payloadOpenedAt) && state.simTime > body.payloadOpenedAt) {
+    const _dur = (typeof CONFIG !== 'undefined' && Number.isFinite(CONFIG.PAYLOAD_OPEN_DURATION_S)) ?
+      CONFIG.PAYLOAD_OPEN_DURATION_S : 2.5;
+    _op = Math.min(1, (state.simTime - body.payloadOpenedAt) / _dur);
+  }
+  figCtx.save();
+  figCtx.translate(baseX, baseY);
+  drawPayloadArt(figCtx, W, H, _op);
+  figCtx.restore();
+} else if (body && body.fairingHalf && body.fairingHalf.record) {
     // Fairing half — draw the fairing silhouette clipped to one lateral
     // half (same convention as render.js: +1 = right, -1 = left).
     const rec = body.fairingHalf.record;
