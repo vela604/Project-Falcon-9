@@ -630,6 +630,88 @@ function _redrawAllPreviews() {
 //   payloadFrustumAngleDeg frustum angle from horizontal, degrees (default 45)
 //   payloadCurveRatio      top-curve height / bulge radius (default 0.85)
 //   payloadColor           '#rrggbb' fill (default '#e9edf2')
+
+// Payload-space fairing silhouette renderer. Called from drawRocketArt
+// when the member's stageRole is 'payloadSpace'. Draws the classic
+// fairing profile (frustum + straight section + ogive) using the shape
+// opts supplied by the caller.
+function drawPayloadSpaceShape(ctx, W, H, mpp, opts) {
+  opts = opts || {};
+  const color = opts.payloadColor || '#e9edf2';
+
+  const capWidth_m = Number.isFinite(opts.payloadCapWidth) ? opts.payloadCapWidth : W * mpp;
+  const capR = (capWidth_m / 2) / mpp;
+
+  const bulgeWidth_m = Number.isFinite(opts.payloadBulgeWidth) ? opts.payloadBulgeWidth : capWidth_m;
+  const bulgeR = (bulgeWidth_m / 2) / mpp;
+  const frustumAngleDeg = Number.isFinite(opts.payloadFrustumAngleDeg) ? opts.payloadFrustumAngleDeg : 45;
+  const curveRatio = Number.isFinite(opts.payloadCurveRatio) ? opts.payloadCurveRatio : 0.85;
+
+  const angleRad = Math.max(1, Math.min(89, frustumAngleDeg)) * Math.PI / 180;
+  let frustumH = Math.abs(bulgeR - capR) / Math.tan(angleRad);
+  let curveH = curveRatio * bulgeR;
+  const mandatory = frustumH + curveH;
+  if (mandatory > H && mandatory > 0) {
+    const s = H / mandatory;
+    frustumH *= s;
+    curveH *= s;
+  }
+  const straightH = Math.max(0, H - frustumH - curveH);
+
+  const baseY = 0;
+  const frustumTopY = -frustumH;
+  const straightTopY = frustumTopY - straightH;
+  const tipY = -H;
+
+  const bodyPath = () => {
+    ctx.beginPath();
+    ctx.moveTo(-capR, baseY);
+    ctx.lineTo(-bulgeR, frustumTopY);
+    ctx.lineTo(-bulgeR, straightTopY);
+    ctx.bezierCurveTo(
+      -bulgeR * 0.98, straightTopY - curveH * 0.30,
+      -bulgeR * 0.45, tipY + curveH * 0.15,
+      0, tipY
+    );
+    ctx.bezierCurveTo(
+      bulgeR * 0.45, tipY + curveH * 0.15,
+      bulgeR * 0.98, straightTopY - curveH * 0.30,
+      bulgeR, straightTopY
+    );
+    ctx.lineTo(bulgeR, frustumTopY);
+    ctx.lineTo(capR, baseY);
+    ctx.closePath();
+  };
+
+  ctx.fillStyle = color;
+  ctx.strokeStyle = '#8b93a0';
+  ctx.lineWidth = 1.2;
+  bodyPath();
+  ctx.fill();
+  ctx.stroke();
+
+  const bodyDesign = opts.bodyDesign || { mode: 'solid', dslText: '' };
+  if ((bodyDesign.mode || 'solid') === 'dsl' &&
+    typeof parseAndValidateDesign === 'function' &&
+    typeof drawCustomDesignOps === 'function') {
+    const parsed = parseAndValidateDesign(bodyDesign.dslText || '');
+    if (parsed.ok && parsed.ops.length) {
+      const widestW_px = Math.max(capR, bulgeR) * 2;
+      ctx.save();
+      bodyPath();
+      ctx.clip();
+      drawCustomDesignOps(ctx, widestW_px, H, parsed.ops);
+      ctx.restore();
+    }
+  }
+
+  if (typeof applyCylindricalOverlay === 'function') {
+    const gradW = Math.max(capR, bulgeR) * 2;
+    bodyPath();
+    applyCylindricalOverlay(ctx, gradW);
+  }
+}
+
 // ============================================================================
 
 // Payload art — satellite bus + folding solar wings + dish. Renders in
@@ -911,98 +993,6 @@ function drawChuteArt(ctx, bodyTopY, mpp, chuteType, progress) {
 
 
 // Payload art — compact satellite with folded solar panels + small dish.
-function drawPayloadArt(ctx, W, H) {
-  // ---- Folded solar panels (thin, hugging the body sides) ----
-  const panelW = W * 0.15;
-  const panelH = H * 0.7;
-  const panelY = -H * 0.85;
-  [-1, 1].forEach(side => {
-    const px = side > 0 ? W / 2 : -(W / 2 + panelW);
-    const pg = ctx.createLinearGradient(px, 0, px + panelW, 0);
-    pg.addColorStop(0, '#1a3050');
-    pg.addColorStop(0.5, '#2c5a8a');
-    pg.addColorStop(1, '#0a1520');
-    ctx.fillStyle = pg;
-    ctx.fillRect(px, panelY, panelW, panelH);
-    ctx.strokeStyle = '#0a1520';
-    ctx.lineWidth = 0.6;
-    ctx.strokeRect(px, panelY, panelW, panelH);
-    // Horizontal grid lines (folded cells)
-    ctx.strokeStyle = 'rgba(120,180,255,0.4)';
-    ctx.lineWidth = 0.4;
-    for (let i = 1; i < 5; i++) {
-      const gy = panelY + (panelH * i / 5);
-      ctx.beginPath();
-      ctx.moveTo(px, gy);
-      ctx.lineTo(px + panelW, gy);
-      ctx.stroke();
-    }
-  });
-  
-  // ---- Main body ----
-  const bg = cachedGradient(ctx, 'mainBody', Math.round(W), () => {
-    const g = ctx.createLinearGradient(-W / 2, 0, W / 2, 0);
-    g.addColorStop(0, '#4a4e54');
-    g.addColorStop(0.5, '#c8d0d8');
-    g.addColorStop(1, '#3a3d43');
-    return g;
-  });
-  ctx.fillStyle = bg;
-  ctx.fillRect(-W / 2, -H, W, H);
-  ctx.strokeStyle = '#1c1e22';
-  ctx.lineWidth = 1;
-  ctx.strokeRect(-W / 2, -H, W, H);
-  
-  // Body seams
-  ctx.strokeStyle = 'rgba(20,24,30,0.4)';
-  ctx.lineWidth = 0.5;
-  [-0.25, 0.25].forEach(f => {
-    const y = -H * (0.5 + f);
-    ctx.beginPath();
-    ctx.moveTo(-W / 2, y);
-    ctx.lineTo(W / 2, y);
-    ctx.stroke();
-  });
-  
-  // Small dish on top edge
-  const dishR = W * 0.18;
-  ctx.save();
-  ctx.translate(0, -H);
-  ctx.beginPath();
-  ctx.arc(0, 0, dishR, Math.PI, 0, false);
-  const dg = cachedGradient(ctx, 'topDish', Math.round(dishR), () => {
-    const g = ctx.createRadialGradient(0, 0, dishR * 0.1, 0, 0, dishR);
-    g.addColorStop(0, '#e8eef5');
-    g.addColorStop(1, '#606870');
-    return g;
-  });
-  ctx.fillStyle = dg;
-  ctx.fill();
-  ctx.strokeStyle = '#1c1e22';
-  ctx.lineWidth = 0.7;
-  ctx.stroke();
-  ctx.restore();
-  
-  // Nozzle at base
-  const nzW = W * 0.35;
-  const nzH = H * 0.08;
-  ctx.fillStyle = '#1c1e22';
-  ctx.beginPath();
-  ctx.moveTo(-nzW / 2, 0);
-  ctx.lineTo(-nzW / 2 * 0.6, nzH);
-  ctx.lineTo(nzW / 2 * 0.6, nzH);
-  ctx.lineTo(nzW / 2, 0);
-  ctx.closePath();
-  ctx.fill();
-  
-  // Small blinking beacon
-  const blink = 0.5 + 0.5 * Math.sin(performance.now() * 0.004);
-  ctx.fillStyle = `rgba(255,60,50,${blink})`;
-  ctx.beginPath();
-  ctx.arc(0, -H * 0.55, W * 0.05, 0, Math.PI * 2);
-  ctx.fill();
-}
-
 // ============================================================================
 // Grid fin artwork — one fin as an axis-aligned rectangle with a lattice
 // overlay, hinged at a FIXED top-edge point (never re-centers).
