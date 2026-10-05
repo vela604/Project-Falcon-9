@@ -824,12 +824,13 @@ _leoTickV3.getStatus = function () {
   }
 
   if (_v3State.insertionBlock) {
-    const ins = _v3State.insertionBlock.getStatus();
-    Object.assign(out, {
-      stageBurnLocked: ins.stageBurnLocked,
-      stageBurnTargetTiltDeg: ins.stageBurnTargetTiltDeg,
-      apogeeKm: ins.apogeeKm,
-      perigeeKm: ins.perigeeKm,
+  const ins = _v3State.insertionBlock.getStatus();
+  Object.assign(out, {
+        stageBurnLocked: ins.stageBurnLocked,
+        stageBurnTargetTiltDeg: ins.stageBurnTargetTiltDeg,
+        circTriggerLeadS: ins.circTriggerLeadS,
+        apogeeKm: ins.apogeeKm,
+        perigeeKm: ins.perigeeKm,
       coastTBurnPractical: ins.coastTBurnPractical,
       coastVOrbital: ins.coastVOrbital,
       coastTargetThetaDeg: ins.coastTargetThetaDeg,

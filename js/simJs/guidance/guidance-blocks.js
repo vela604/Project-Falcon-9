@@ -811,10 +811,14 @@ STAGE_BURN_AOA_MARGIN_DEG: 0.001,
         coast2RotateStartTilt: null,
         coast2RotateMid: null,
         _prevVr2: null,
-        // DONE
-        deployCommandSimTime: null,
-        payloadCleared: false,
-      };
+          // DONE
+  deployCommandSimTime: null,
+    payloadCleared: false,
+    // Cached during tick — startupS + CIRC_TRIGGER_LEAD_S. Read by
+    // the direction HUD to display how much earlier the circ burn
+    // starts relative to apogee.
+    lastCircTriggerLeadS: 0,
+  };
 
       // Payload-monitor state
       let _payloadBodyCountAtDeploy = 0;
@@ -1877,15 +1881,44 @@ _st.lastApogeeKm = 0;
           return _result ? Object.assign({}, _result) : null;
         },
         getStatus() {
-          return {
-            phase: _st.phase,
-            ticks: _st.ticks,
-            stageBurnLocked: _st.stageBurnLocked,
-            stageBurnTargetTiltDeg: _st.stageBurnTargetTiltDeg,
-            apogeeKm: _st.lastApogeeKm,
-            perigeeKm: _st.lastPerigeeKm,
-            coastTBurnPractical: _st.coastTBurnPractical,
-            coastVOrbital: _st.coastVOrbital,
+    // Compute circ-burn trigger lead exactly ONCE per instance, then
+    // freeze. Value = stage engine's startupDurationS (from its
+    // thruster type spec) + mission CIRC_TRIGGER_LEAD_S. Both are
+    // constants; per-tick recompute would give the same answer every
+    // time, so we cache after the first successful compute.
+    if (_st._circLeadCached === undefined) {
+      let startupS = 0;
+      try {
+        const sd = (typeof Derivation !== 'undefined' && Derivation.getStackData) ?
+          Derivation.getStackData() : null;
+        if (sd && Array.isArray(sd.members)) {
+          for (let i = 0; i < sd.members.length; i++) {
+            const m = sd.members[i];
+            if (!m || m.stageRole !== 'stage') continue;
+            const g = m.engineThrusters &&
+              (m.engineThrusters.gimbal || m.engineThrusters.fixed);
+            if (!g || !g.thrusterTypeId) continue;
+            const t = Derivation.getTypeById(g.thrusterTypeId);
+            if (!t || !Array.isArray(t.parameterSchema)) continue;
+            const ent = t.parameterSchema.find(p => p.key === 'startupDurationS');
+            if (ent && Number.isFinite(ent.value)) { startupS = ent.value; break; }
+          }
+        }
+      } catch (e) {}
+      const userLead = (_constants && Number.isFinite(_constants.CIRC_TRIGGER_LEAD_S)) ?
+        _constants.CIRC_TRIGGER_LEAD_S : 0;
+      _st._circLeadCached = startupS + userLead;
+    }
+    return {
+      phase: _st.phase,
+      ticks: _st.ticks,
+      stageBurnLocked: _st.stageBurnLocked,
+      stageBurnTargetTiltDeg: _st.stageBurnTargetTiltDeg,
+      apogeeKm: _st.lastApogeeKm,
+      perigeeKm: _st.lastPerigeeKm,
+      coastTBurnPractical: _st.coastTBurnPractical,
+      coastVOrbital: _st.coastVOrbital,
+      circTriggerLeadS: _st._circLeadCached,
             coastTargetThetaDeg:
               _st.coastTargetThetaInertial != null
                 ? (_st.coastTargetThetaInertial * 180) / Math.PI
@@ -2049,13 +2082,38 @@ setState(s) {
       }
 
       function _tick(snapshot) {
-        _st.ticks++;
-        const idx = _bodyIdx;
-        const body = snapshot.bodies[idx];
-        if (!body) return;
-        const simT = snapshot.simTime;
-
-        if (!_st.init) {
+  _st.ticks++;
+  const idx = _bodyIdx;
+  const body = snapshot.bodies[idx];
+  if (!body) return;
+  const simT = snapshot.simTime;
+  
+// Cache circ-burn trigger lead exactly ONCE per instance.
+//
+// Fires the first tick where body.engines and _constants are both
+// populated. After that, the value is never recomputed — it's a
+// pure function of two constants (thruster type's startupDurationS
+// and the mission's CIRC_TRIGGER_LEAD_S), so caching it for the
+// life of this insertion block instance is exactly equivalent to
+// recomputing it, without the per-tick cost.
+//
+// Retry loop: on the split tick, engine arrays can still be empty
+// (rebuildEnginesForBody runs after members change). Waiting a
+// few ticks for them to populate is what the earlier single-shot
+// version missed.
+if (_st.lastCircTriggerLeadS === 0 &&
+  body.engines && body.engines.length &&
+  _constants) {
+  const s0 = body.engines[0].startupDurationS;
+  const userLead = _constants.CIRC_TRIGGER_LEAD_S;
+  const total = (Number.isFinite(s0) ? s0 : 0) +
+    (Number.isFinite(userLead) ? userLead : 0);
+  if (total > 0) {
+    _st.lastCircTriggerLeadS = total;
+  }
+}
+  
+  if (!_st.init) {
           _st.init = true;
           _st.phase = "SUICIDE_ROTATE";
           _st.phaseStart = simT;

@@ -1381,26 +1381,143 @@ if (b) {
 const _hudPastKarman = _hudAltKm > 100;
 
 // --- Countdown takeover ---
-if (b && _hudPastKarman) {
+// --- Continuous coast countdown ---
+// From COAST_ROTATE (after RCS_BOOST) the HUD switches to a persistent
+// time-to-apogee countdown. Hidden during CIRCULARIZE (burn), resumes
+// immediately after for the second apogee.
+const _gs = (typeof window !== 'undefined' && window.__lastGuideStatus) || {};
+const _phase = _gs.phase || '';
+const _COUNTDOWN_PHASES = {
+  COAST_ROTATE: 1, COAST_WAIT: 1, COAST_HOLD: 1,
+  COAST_ROTATE_2: 1, COAST_HOLD_2: 1, DONE: 1,
+};
+// Sticky deploy-time cache — the first finite deployCommandSimTime ever
+// seen is remembered forever, so the orbit countdown survives guide
+// stop, phase transitions into SUICIDE_*, or the user taking control of
+// another body (all of which clear the live guide-status fields).
+if (typeof window !== 'undefined' &&
+    window.__deployTimeCache == null &&
+    Number.isFinite(_gs.deployCommandSimTime)) {
+  window.__deployTimeCache = _gs.deployCommandSimTime;
+}
+// If the FOLLOWED body is the deployed payload, always show the orbit
+// countdown — regardless of what phase the guide is in or whether the
+// user is also flying some other body in the background.
+const _followingPayload = !!(b && b.payloadBody);
+if (b && (_COUNTDOWN_PHASES[_phase] || _followingPayload)) {
   const _r = Math.hypot(b.rx, b.ry);
   const _ux = b.rx / _r, _uy = b.ry / _r;
   const _ex = b.ry / _r, _ey = -b.rx / _r;
   const _vr = b.vx * _ux + b.vy * _uy;
   const _vt = b.vx * _ex + b.vy * _ey;
   const _tRem = _timeToApogeeKepler(_r, _vr, _vt, CONFIG.GM_EARTH);
-  const _thrustOn = (b.engines || []).some(e => (e.massFlowRate || 0) > 5);
-  if (Number.isFinite(_tRem) && _tRem > 0 && _tRem <= 10 && !_thrustOn) {
-    const cx = w / 2, cy = h / 2;
-    ctx.fillStyle = 'rgba(53,214,255,1)';
-    ctx.font = 'bold 46px "JetBrains Mono", monospace';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(Math.ceil(_tRem).toString(), cx, cy - 8);
-    ctx.font = 'bold 10px "JetBrains Mono", monospace';
-    ctx.fillStyle = 'rgba(255,210,63,0.95)';
-    ctx.fillText('SECONDS TO APOGEE', cx, cy + 32);
-    return;
+
+  if (Number.isFinite(_tRem) && _tRem > 0) {
+  // Format: mm:ss.hh (minutes can exceed 60 for a long coast).
+  const fmtT = (sec) => {
+    if (!Number.isFinite(sec) || sec < 0) sec = 0;
+    const total = Math.round(sec * 100);
+    const mm = Math.floor(total / 6000);
+    const ss = Math.floor((total % 6000) / 100);
+    const hundredths = total % 100;
+    return String(mm).padStart(2, '0') + ':' +
+      String(ss).padStart(2, '0') + '.' +
+      String(hundredths).padStart(2, '0');
+  };
+  
+  const _leadS = Number.isFinite(_gs.circTriggerLeadS) ?
+    _gs.circTriggerLeadS : 0;
+  
+  const cx = w / 2;
+  const cy = h / 2;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  
+  // ---- Deploy detection ----
+// Prefer the live guide-status value; fall back to the sticky cache
+// so the orbit countdown persists even after the guide has stopped.
+const _deployT = Number.isFinite(_gs.deployCommandSimTime) ?
+  _gs.deployCommandSimTime :
+  ((typeof window !== 'undefined' && Number.isFinite(window.__deployTimeCache)) ?
+    window.__deployTimeCache : null);
+  
+  if (_deployT != null) {
+  // ---- ORBIT MODE — payload is deployed ----
+  // Compute the payload's own orbit period from two-body mechanics.
+  // If the payload body has already been released, prefer its state
+  // (its orbit is the graded one); fall back to the active body if
+  // the payload isn't found yet (one-tick spawn latency).
+  const _pay = (state.bodies || []).find(x => x && x.payloadBody);
+  const _orbBody = _pay || state.bodies[state.activeBodyIndex];
+  let _periodS = 0;
+  if (_orbBody) {
+    const _rp = Math.hypot(_orbBody.rx, _orbBody.ry);
+    const _uxp = _orbBody.rx / _rp, _uyp = _orbBody.ry / _rp;
+    const _exp = _orbBody.ry / _rp, _eyp = -_orbBody.rx / _rp;
+    const _vrp = _orbBody.vx * _uxp + _orbBody.vy * _uyp;
+    const _vtp = _orbBody.vx * _exp + _orbBody.vy * _eyp;
+    const _GM = CONFIG.GM_EARTH;
+    const _Ep = 0.5 * (_vrp * _vrp + _vtp * _vtp) - _GM / _rp;
+    if (_Ep < 0) {
+      const _ap = -_GM / (2 * _Ep);
+      if (_ap > 0) {
+        _periodS = 2 * Math.PI * Math.sqrt((_ap * _ap * _ap) / _GM);
+      }
+    }
   }
+
+  const _orbitSec = Math.max(0, state.simTime - _deployT);
+  // Time left until one full orbit (period) completes from deploy.
+  // Floor at 0 — never goes negative even if the ship is a hair late.
+  const _remainS = Math.max(0, _periodS - _orbitSec);
+
+  // Line 1 — countdown to next same-point (period end).
+  ctx.fillStyle = 'rgba(74,222,128,1)';
+  ctx.font = 'bold 22px "JetBrains Mono", monospace';
+  ctx.fillText('T-' + fmtT(_remainS), cx, cy - 26);
+
+  ctx.fillStyle = 'rgba(255,210,63,0.95)';
+  ctx.font = 'bold 9px "JetBrains Mono", monospace';
+  ctx.fillText('TO ORBIT PERIOD', cx, cy - 10);
+
+  // Line 2 — the deploy moment itself, as a T+ stamp.
+  ctx.fillStyle = 'rgba(167,139,250,1)';
+  ctx.font = 'bold 15px "JetBrains Mono", monospace';
+  ctx.fillText('T+' + fmtT(_deployT), cx, cy + 12);
+
+  ctx.fillStyle = 'rgba(190,170,240,0.85)';
+  ctx.font = 'bold 8px "JetBrains Mono", monospace';
+  ctx.fillText('PAYLOAD DEPLOYED AT', cx, cy + 26);
+
+  return;
+}
+  
+  // ---- COAST MODE — payload not yet deployed ----
+  // Line 1 — T-mm:ss.hh time to apogee
+  ctx.fillStyle = 'rgba(53,214,255,1)';
+  ctx.font = 'bold 22px "JetBrains Mono", monospace';
+  ctx.fillText('T-' + fmtT(_tRem), cx, cy - 26);
+  
+  ctx.fillStyle = 'rgba(255,210,63,0.95)';
+  ctx.font = 'bold 9px "JetBrains Mono", monospace';
+  ctx.fillText('TO APOGEE', cx, cy - 10);
+  
+  // Line 2 — circ lead pre-circ, static zero post-circ.
+  const _isPostCirc = (_phase === 'COAST_ROTATE_2' ||
+    _phase === 'COAST_HOLD_2' ||
+    _phase === 'DONE');
+  const _line2Label = _isPostCirc ? 'PAYLOAD DEPLOY' : 'CIRCULARIZE BURN';
+  const _line2Value = _isPostCirc ? 0 : _leadS;
+  ctx.fillStyle = 'rgba(167,139,250,1)';
+  ctx.font = 'bold 15px "JetBrains Mono", monospace';
+  ctx.fillText('-' + fmtT(_line2Value), cx, cy + 12);
+  
+  ctx.fillStyle = 'rgba(190,170,240,0.85)';
+  ctx.font = 'bold 8px "JetBrains Mono", monospace';
+  ctx.fillText(_line2Label, cx, cy + 26);
+  
+  return;
+}
 }
   
   let coRotE = 0;              // co-rotation excess (east)
