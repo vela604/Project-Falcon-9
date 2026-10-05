@@ -932,7 +932,7 @@ torque += (e.x - pivotX) * fy - (ey - comH) * fx;
 // literally nothing rather than "free" thrust.
 function zeroThrust() { return { Fx: 0, Fy: 0, torque: 0, mdot: 0 }; }
 
-function zeroRCS() { return { Fx: 0, Fy: 0, torque: 0, mdot: 0, firing: {}, pod: {} }; }
+function zeroRCS() { return { Fx: 0, Fy: 0, torque: 0, mdot: 0, firing: {}, pod: {}, mode: {}, rising: {} }; }
 
 // ---------------------------------------------------------------------------
 // Aerodynamic drag + angle-of-attack torque.
@@ -1963,7 +1963,7 @@ updateGridFins(body, dt);
     const hasFuel = body.fuelMass > 0 && !body.crashed;
     const main = hasFuel ? computeMainThrustForBody(body, geom.comH, geom.comW) : zeroThrust();
     const rcs = hasFuel ? computeRCSForBody(body, geom.comH, geom.comW, dt) : zeroRCS();
-    body.lastRcs = { firing: rcs.firing || {}, pod: rcs.pod || {} };
+    body.lastRcs = { firing: rcs.firing || {}, pod: rcs.pod || {}, mode: rcs.mode || {}, rising: rcs.rising || {} };
     if (!hasFuel) body.engines.forEach(e => { e.currentF = 0; });
     
         const extra = {

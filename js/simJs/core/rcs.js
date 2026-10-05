@@ -315,15 +315,25 @@ function fireCornerPods(body, member, entries, ctx) {
 // sparse bursts. Duty fields are counted additively and clamped at 1,
 // same ceiling the physics applies to the actual nozzle.
 const pod = {}, isTop = {}, lateralSign = {};
+// Per-pod display mode: 'pwm' (boolean path through a PWM gate — should
+// render as one discrete pulse per period), 'continuous' (boolean
+// path without a gate, or the guidance per-tick duty path), 'off'.
+const podMode = {};
+// Per-pod rising-edge flag: true only on the tick the pod transitions
+// from not-firing to firing. Set for PWM-gated pods only.
+const podRising = {};
 let topL = null, topR = null, bottomL = null, bottomR = null;
 entries.forEach(e => {
   pod[e.podId] = { Fx: 0, Fy: 0, up: 0, dn: 0, lat: 0 };
+  podMode[e.podId] = 'off';
   const top = e.offsetFromStackBase === yTopRaw;
   isTop[e.podId] = top;
   lateralSign[e.podId] = (e.side === 'L') ? +1 : -1;
   if (e.side === 'L') { if (top) topL = e.podId; else bottomL = e.podId; }
   else { if (top) topR = e.podId; else bottomR = e.podId; }
 });
+// Previous-tick ON state for rising-edge detection on the PWM-gated pod.
+if (!clock.podOnPrev) clock.podOnPrev = {};
 
 function fireLateral(k) {
   if (!k) return;
@@ -332,13 +342,21 @@ function fireLateral(k) {
   if (on) {
     pod[k].Fx += lateralSign[k] * f;
     pod[k].lat = Math.min(1, pod[k].lat + 1);
+    podMode[k] = isLongArm ? 'pwm' : 'continuous';
+    if (isLongArm) {
+      const prev = !!clock.podOnPrev[k];
+      if (!prev) podRising[k] = true;
+    }
   }
+  clock.podOnPrev[k] = on;
 }
 
 function fireLateralFull(k) {
   if (!k) return;
   pod[k].Fx += lateralSign[k] * f;
   pod[k].lat = Math.min(1, pod[k].lat + 1);
+  podMode[k] = 'continuous';
+  clock.podOnPrev[k] = true;
 }
 
 function fireVertical(k, sign) {
@@ -346,12 +364,14 @@ function fireVertical(k, sign) {
   pod[k].Fy += sign * f;
   if (sign > 0) pod[k].up = Math.min(1, pod[k].up + 1);
   else pod[k].dn = Math.min(1, pod[k].dn + 1);
+  podMode[k] = 'continuous';
 }
 
 function fireLateralDuty(k, commandedDuty) {
   if (commandedDuty <= 0) return;
   pod[k].Fx += lateralSign[k] * commandedDuty * f;
   pod[k].lat = Math.min(1, pod[k].lat + commandedDuty);
+  podMode[k] = 'continuous';
 }
 
 function fireVerticalDuty(k, sign, commandedDuty) {
@@ -359,6 +379,7 @@ function fireVerticalDuty(k, sign, commandedDuty) {
   pod[k].Fy += sign * commandedDuty * f;
   if (sign > 0) pod[k].up = Math.min(1, pod[k].up + commandedDuty);
   else pod[k].dn = Math.min(1, pod[k].dn + commandedDuty);
+  podMode[k] = 'continuous';
 }
   
   if (rcsDuty) {
@@ -439,8 +460,8 @@ function fireVerticalDuty(k, sign, commandedDuty) {
   // "how hard is the primary/human-controlled pod set working").
   const dutyTop = 0.5 * ((appliedDuty[topL] || 0) + (appliedDuty[topR] || 0));
   
-  return { Fx, Fy, torque, mdot, firing, pod, dutyTop };
-}
+    return { Fx, Fy, torque, mdot, firing, pod, dutyTop, mode: podMode, rising: podRising };
+  }
 
 // Dispatch table: the ONLY place RCS `kind` is ever branched on. A future
 // non-4-corner kind gets its own fire-logic function added here — never a
@@ -464,8 +485,8 @@ function computeRCSForBody(body, comH, comW, dt) {
   });
   
   let Fx = 0, Fy = 0, torque = 0, mdot = 0;
-  const firing = {}, pod = {};
-  let dutyTop = 0;
+const firing = {}, pod = {}, mode = {}, rising = {};
+let dutyTop = 0;
   
   Object.keys(byMember).forEach(key => {
     const memberIdx = Number(key);
@@ -486,17 +507,19 @@ function computeRCSForBody(body, comH, comW, dt) {
     });
     if (!result) return;
     
-    Fx += result.Fx;
+        Fx += result.Fx;
     Fy += result.Fy;
     torque += result.torque;
     mdot += result.mdot;
     Object.assign(firing, result.firing);
     Object.assign(pod, result.pod);
+    if (result.mode) Object.assign(mode, result.mode);
+    if (result.rising) Object.assign(rising, result.rising);
     if (isBottom) dutyTop = result.dutyTop;
-  });
-  
-  return { Fx, Fy, torque, mdot, firing, pod, dutyTop };
-}
+    });
+    
+    return { Fx, Fy, torque, mdot, firing, pod, dutyTop, mode, rising };
+    }
 
 // Backwards-compat shim.
 function computeRCS(comH, dt) {

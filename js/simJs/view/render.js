@@ -1632,8 +1632,10 @@ drawRocketArt(ctx, mW, mH, mpp, {
       // wrong body's local frame.
       bodyIdx: bodyIdx,
       firing: (body.lastRcs && body.lastRcs.firing) || {},
-      pod: (body.lastRcs && body.lastRcs.pod) || {},
-      
+  pod: (body.lastRcs && body.lastRcs.pod) || {},
+  rcsMode: (body.lastRcs && body.lastRcs.mode) || {},
+  rcsRising: (body.lastRcs && body.lastRcs.rising) || {},
+  
         rcsTopY: m.params ? m.params.rcsTopY : undefined,
         rcsBottomY: m.params ? m.params.rcsBottomY : undefined,
         recoveryType: recType,

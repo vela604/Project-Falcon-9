@@ -2165,31 +2165,31 @@ podDefs.forEach(pd => {
   const plumeLen = W * 0.6;
   const fEps = 1;
   
-function drawGasPuff(cx, cy, dir, seed, duty) {
-  const memberIdx = (Number.isInteger(opts.memberIdx) && opts.memberIdx >= 0)
-    ? opts.memberIdx : 0;
-  const bodyIdx = (Number.isInteger(opts.bodyIdx) && opts.bodyIdx >= 0)
-    ? opts.bodyIdx : 0;
-  // Pool is keyed by (body, member) so two bodies' same-index members
-  // don't share particles across local frames.
+function drawGasPuff(cx, cy, dir, seed, duty, modeOpts) {
+  modeOpts = modeOpts || {};
+  const memberIdx = (Number.isInteger(opts.memberIdx) && opts.memberIdx >= 0) ?
+    opts.memberIdx : 0;
+  const bodyIdx = (Number.isInteger(opts.bodyIdx) && opts.bodyIdx >= 0) ?
+    opts.bodyIdx : 0;
   const poolKey = bodyIdx + '_' + memberIdx;
   const pool = _gasPoolFor(poolKey);
-
-  // ---- Duty-scaled spawn ----
-  // duty is the accumulated nozzle duty this tick in [0..1]. High duty
-  // → dense continuous stream (2-3 particles/frame). Low duty → sparse
-  // puffs with visible gaps between them. Below ~5% duty, the pod is
-  // effectively dark — no spawns at all, so a mostly-off pod doesn't
-  // leave lingering haze.
+  
   const d = Math.max(0, Math.min(1, Number.isFinite(duty) ? duty : 1.0));
-  if (d < 0.05) return;
-
-  // Probabilistic particle count — expected value scales with duty.
-  // (Three independent coin flips give a range 0-3 with smooth ramp.)
+  if (d < 0.05 && !modeOpts.burst) return;
+  
   let spawnN = 0;
-  if (Math.random() < d) spawnN++;
-  if (Math.random() < d * 0.7) spawnN++;
-  if (Math.random() < d * 0.35) spawnN++;
+  if (modeOpts.burst) {
+    // PWM pulse — fixed burst of particles, spawned all at once on the
+    // rising edge. Strength independent of duty (the pulse either
+    // happens or doesn't). 6 particles reads as a compact puff that
+    // expands and drifts, without overwhelming the frame.
+    spawnN = 6;
+  } else {
+    // Continuous mode — probabilistic per-frame spawn scaled by duty.
+    if (Math.random() < d) spawnN++;
+    if (Math.random() < d * 0.7) spawnN++;
+    if (Math.random() < d * 0.35) spawnN++;
+  }
 
   for (let s = 0; s < spawnN; s++) {
     if (pool.particles.length >= _GAS_PARTICLE_CAP) break;
@@ -2253,9 +2253,14 @@ function drawGasPuff(cx, cy, dir, seed, duty) {
     ctx.closePath();
   }
   
-  Object.keys(corners).forEach(k => {
+  const _rcsMode = opts.rcsMode || {};
+const _rcsRising = opts.rcsRising || {};
+
+Object.keys(corners).forEach(k => {
       const [cxRaw, cy] = corners[k];
       const pp = pod[k] || { Fx: 0, Fy: 0, up: 0, dn: 0, lat: 0 };
+      const _mode = _rcsMode[k] || 'continuous';
+      const _risingLat = !!(_rcsRising[k] && _rcsRising[k].lat);
     
     const podW = W * 0.05;
     const podH = W * 0.10;
@@ -2265,18 +2270,29 @@ function drawGasPuff(cx, cy, dir, seed, duty) {
     const podX = cxRaw + sideSign * podW * 0.5 - podW / 2;
     const podY = cy - podH / 2;
     
-      if (Math.abs(pp.Fx) > fEps) {
+         if (Math.abs(pp.Fx) > fEps) {
      const latDuty = Number.isFinite(pp.lat) ? pp.lat : 0;
-     drawGasPuff(cxRaw, cy, lateralDir[k], k.charCodeAt(k.length - 2), latDuty);
+     // PWM-gated pods only emit on rising edge — one discrete pulse per
+     // PWM period. Continuous pods emit ∝ duty every frame.
+     const emit = (_mode === 'pwm') ? _risingLat : true;
+     const _latOpts = emit ? null : { suppressed: true };
+     if (emit) {
+       drawGasPuff(cxRaw, cy, lateralDir[k], k.charCodeAt(k.length - 2), latDuty,
+                   { burst: _mode === 'pwm' });
+     }
    }
-   if (Math.abs(pp.Fy) > fEps) {
-     const vDir = pp.Fy > 0 ? [0, 1] : [0, -1];
-     const outX = cxRaw + sideSign * podW * 0.6;
-     const vDuty = (pp.Fy > 0) ?
-       (Number.isFinite(pp.up) ? pp.up : 0) :
-       (Number.isFinite(pp.dn) ? pp.dn : 0);
-     drawGasPuff(outX, cy, vDir, k.charCodeAt(k.length - 1) + 3, vDuty);
-   }
+if (Math.abs(pp.Fy) > fEps) {
+  const vDir = pp.Fy > 0 ? [0, 1] : [0, -1];
+  const outX = cxRaw + sideSign * podW * 0.6;
+  const vDuty = (pp.Fy > 0)
+    ? (Number.isFinite(pp.up) ? pp.up : 0)
+    : (Number.isFinite(pp.dn) ? pp.dn : 0);
+  // Vertical path is only used by boolean commands (human) — always
+  // continuous in practice, but respect mode for correctness.
+  if (_mode !== 'pwm') {
+    drawGasPuff(outX, cy, vDir, k.charCodeAt(k.length - 1) + 3, vDuty);
+  }
+}
     
     ctx.save();
     
