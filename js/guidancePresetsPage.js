@@ -254,6 +254,8 @@ if (outdated) badges.push('<span class="preset-badge outdated">OUTDATED SCHEMA</
 // ---- Specs strip — orbit + deploy time, kept OUT of the tag row so
 // they read as mission facts, not filterable tags. Rendered as their
 // own bordered strip below the name/badge line.
+// ---- Specs strip — orbit + MECO + deploy, kept OUT of the tag row
+// so they read as mission facts, not filterable tags.
 const specs = [];
 const orbitKm = targetOrbitKm(p.constants);
 if (Number.isFinite(orbitKm)) {
@@ -263,6 +265,18 @@ if (Number.isFinite(orbitKm)) {
     `<span class="spec-v">${orbitKm.toFixed(0)} km</span>` +
     `</div>`
   );
+}
+const mecoS = Number.isFinite(p.mecoTimeS) ? p.mecoTimeS : null;
+if (mecoS != null) {
+  const hms = formatHMS(mecoS);
+  if (hms) {
+    specs.push(
+      `<div class="preset-spec meco">` +
+      `<span class="spec-k">MECO</span>` +
+      `<span class="spec-v">T+${hms}</span>` +
+      `</div>`
+    );
+  }
 }
 const deployS = Number.isFinite(p.payloadDeployTimeS) ? p.payloadDeployTimeS : null;
 if (deployS != null) {
@@ -379,7 +393,9 @@ card.innerHTML = `
   $('pmDesc').value = p.description || '';
   $('pmTags').value = (p.tags || []).join(', ');
   $('pmDeployTime').value = Number.isFinite(p.payloadDeployTimeS) ?
-    String(p.payloadDeployTimeS) : '';
+  String(p.payloadDeployTimeS) : '';
+$('pmMecoTime').value = Number.isFinite(p.mecoTimeS) ?
+  String(p.mecoTimeS) : '';
   guideSel.value = p.guideName;
       if (p.stackId) stackSel.value = p.stackId;
       _modalReference = getGuideDefaultPreset(p.guideName)?.constants || null;
@@ -390,7 +406,8 @@ card.innerHTML = `
   $('pmName').value = '';
   $('pmDesc').value = '';
   $('pmTags').value = '';
-  $('pmDeployTime').value = '';
+$('pmDeployTime').value = '';
+$('pmMecoTime').value = '';
       // Pre-fill guidance with sidebar selection, else first
       guideSel.value = _selectedGuide || guides[0] || '';
       // Pre-fill stack with active, else first
@@ -659,6 +676,7 @@ function collectKnownStacks() {
     const tags = $('pmTags').value.split(',').map(s => s.trim()).filter(Boolean);
 
 // Optional deploy time — blank or invalid input → null (not saved).
+// Optional deploy/MECO times — blank or invalid → null (not saved).
 const rawDeploy = $('pmDeployTime').value.trim();
 let deployTimeS = null;
 if (rawDeploy !== '') {
@@ -670,12 +688,24 @@ if (rawDeploy !== '') {
   }
   deployTimeS = parsed;
 }
+const rawMeco = $('pmMecoTime').value.trim();
+let mecoTimeS = null;
+if (rawMeco !== '') {
+  const parsed = parseFloat(rawMeco);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    $('pmError').textContent = 'MECO time must be a non-negative number of seconds (or blank).';
+    $('pmError').style.display = '';
+    return;
+  }
+  mecoTimeS = parsed;
+}
 
 if (_editingPresetId) {
   const u = updateUserPreset(_editingPresetId, {
     name, description: $('pmDesc').value.trim(),
     guideName: guide, stackId, stackName, tags,
     payloadDeployTimeS: deployTimeS,
+    mecoTimeS: mecoTimeS,
     constants: r.values,
   });
   if (!u) { $('pmError').textContent = 'Update failed.'; $('pmError').style.display = ''; return; }
@@ -685,6 +715,7 @@ if (_editingPresetId) {
     name, description: $('pmDesc').value.trim(),
     guideName: guide, stackId, stackName, tags,
     payloadDeployTimeS: deployTimeS,
+    mecoTimeS: mecoTimeS,
     constants: r.values,
   });
   if (!c) { $('pmError').textContent = 'Save failed.'; $('pmError').style.display = ''; return; }

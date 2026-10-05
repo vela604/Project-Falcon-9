@@ -94,8 +94,10 @@ function addUserPreset(data) {
   tags: Array.isArray(data && data.tags) ? data.tags.map(String) : [],
   // Optional metadata — not part of constants, purely display/annotation.
   // null when unspecified so it stays out of the presets page display.
+  mecoTimeS: (data && Number.isFinite(data.mecoTimeS)) ?
+  data.mecoTimeS : null,
   payloadDeployTimeS: (data && Number.isFinite(data.payloadDeployTimeS)) ?
-    data.payloadDeployTimeS : null,
+  data.payloadDeployTimeS : null,
   constants: (data && data.constants) ? JSON.parse(JSON.stringify(data.constants)) : {},
   createdAt: now,
   updatedAt: now,

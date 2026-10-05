@@ -28,7 +28,7 @@ const GUIDE_DEFAULT_STACK_NAME = 'Falcon 9 Block 5';
 // ---------------------------------------------------------------------------
 // Default preset factory — stamps the shared metadata onto a constants bag.
 // ---------------------------------------------------------------------------
-function _mkDefault(guideName, name, description, constants, tags, payloadDeployTimeS) {
+function _mkDefault(guideName, name, description, constants, tags, mecoTimeS, payloadDeployTimeS) {
   return {
     id: 'default:' + guideName,
     name,
@@ -37,8 +37,9 @@ function _mkDefault(guideName, name, description, constants, tags, payloadDeploy
     stackId: GUIDE_DEFAULT_STACK_ID,
     stackName: GUIDE_DEFAULT_STACK_NAME,
     tags: tags || [],
-    // Optional annotation — seconds from t=0 at which the payload is
-    // expected to deploy. Purely display metadata; not part of constants.
+    // Optional annotations — seconds from t=0 for MECO and payload deploy.
+    // Purely display metadata; not part of constants.
+    mecoTimeS: Number.isFinite(mecoTimeS) ? mecoTimeS : null,
     payloadDeployTimeS: Number.isFinite(payloadDeployTimeS) ? payloadDeployTimeS : null,
     constants,
     isDefault: true,
@@ -138,7 +139,7 @@ leoInsertionV3: _mkDefault(
   COAST_DAMP_K: 4.0,
   GIMBAL_TARGET: 'center',
   MECO_TRIGGER_ON_FUEL: false,
-  MECO_TARGET_BOOSTER_FUEL_KG: 52915,
+  MECO_TARGET_BOOSTER_FUEL_KG: 52612,
   MECO_APOGEE_KM: 150,
 },
     separation: {
@@ -197,8 +198,9 @@ leoInsertionV3: _mkDefault(
       SUICIDE_TRIM_MAX_S: 120,
     },
   },
-  ['full-mission', 'expendable'],
-  600
+    ['full-mission', 'expendable'],
+  137,
+  590
   ),
   
   leoInsertion: _mkDefault(

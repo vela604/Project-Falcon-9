@@ -62,7 +62,7 @@ const FUNDAMENTAL_BLOCKS = {
     MECO_TRIGGER_ON_FUEL: false,
     // Residual booster tank fuel (kg) desired at the end of shutdown
     // spool-down. Only read when MECO_TRIGGER_ON_FUEL is true.
-    MECO_TARGET_BOOSTER_FUEL_KG: 52915,
+    MECO_TARGET_BOOSTER_FUEL_KG: 52612,
     MECO_APOGEE_KM: 150,
   },
   importantFields: [],

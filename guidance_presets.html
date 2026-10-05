@@ -252,6 +252,7 @@ a.back:hover { color: var(--cyan); }
   color: var(--text);
 }
 .preset-spec.orbit .spec-v { color: var(--green); }
+.preset-spec.meco .spec-v { color: var(--yellow); }
 .preset-spec.deploy .spec-v { color: var(--purple); }
 .preset-desc {
   font-size: 12.5px; color: var(--dim);
@@ -626,10 +627,13 @@ padding: 7px 0;
 
 <div class="field-grid-2">
   <div>
-    <label class="field-label" for="pmDeployTime">Payload deploy at T+ (seconds, optional)</label>
-    <input class="field-input" type="number" id="pmDeployTime" min="0" step="1" placeholder="e.g. 583">
+    <label class="field-label" for="pmMecoTime">MECO at T+ (seconds, optional)</label>
+    <input class="field-input" type="number" id="pmMecoTime" min="0" step="1" placeholder="e.g. 138">
   </div>
-  <div></div>
+  <div>
+    <label class="field-label" for="pmDeployTime">Payload deploy at T+ (seconds, optional)</label>
+    <input class="field-input" type="number" id="pmDeployTime" min="0" step="1" placeholder="e.g. 590">
+  </div>
 </div>
 
       <div style="display:flex;align-items:center;justify-content:space-between;margin-top:14px;">
