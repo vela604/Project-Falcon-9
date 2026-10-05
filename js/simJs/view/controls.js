@@ -112,7 +112,7 @@ function bindRCSButton(el, key) {
 let selectedForMerge = [];
 
 function angleGroupOf(angle) {
-  return mergeState.groups.find(g => g.angles.includes(angle));
+  return mergeState.groups.find(g => g.angles.includes(angle)) || null;
 }
 
 function handleEngineDotClick(angle) {
@@ -341,13 +341,29 @@ function bindSimControls() {
   });
   
   document.getElementById('btnReset').addEventListener('click', () => {
-    simRunning = false;
-    simPaused = false;
-    WorkerBridge.send({ type: 'reset', alt: 0 });
-    renderMergeDiagram();
+  simRunning = false;
+  simPaused = false;
+  
+  // Stop any running guide BEFORE resetting physics. The guidance
+  // worker keeps its own _activeGuide + mission state; without this,
+  // the guide stays "active" with a stale mid-mission phase, and
+  // clicking Start Guide again returns early (startGuide sees
+  // _activeGuide === name and no-ops). Physics resets but the guide
+  // appears permanently frozen.
+  if (typeof GuidanceBridge !== 'undefined' && GuidanceBridge.ready) {
+    GuidanceBridge.send({ type: 'guidanceCommand', action: 'stop' });
+  }
+  
+  WorkerBridge.send({ type: 'reset', alt: 0 });
+  renderMergeDiagram();
+  // Defer slider rebuild until the next physics snapshot has landed —
+  // calling it synchronously here reads stale (or empty) engines off
+  // the main-thread mirror and crashed at t=0 post-reset.
+  setTimeout(() => {
     renderOctaSliders();
     updateStatusBar();
-  });
+  }, 100);
+});
   
   // ---- Separate stage ----
   const sepBtn = document.getElementById('btnSeparate');

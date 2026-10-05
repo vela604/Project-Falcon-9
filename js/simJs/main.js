@@ -116,14 +116,19 @@ function renderOctaSliders() {
   rightHost.innerHTML = '';
   
   function buildSlider(angle, host) {
-    const engine = getEngine(angle);
-    const group = angleGroupOf(angle);
-    const color = groupColorOf(group.name);
-    // PHASE 1: engine state is mass flow rate (kg/s); the slider still
-    // shows percent of this engine's own max flow.
-    const maxFlow = engine.maxMassFlowRate || 1;
-    const flow = (engine.targetMassFlowRate !== undefined ? engine.targetMassFlowRate : engine.massFlowRate) || 0;
-    const startVal = Math.round((flow / maxFlow) * 100);
+  const engine = getEngine(angle);
+  // Defensive: at t=0 (or immediately after reset, before the next
+  // physics snapshot arrives), state.bodies may still be empty or
+  // carry no engines. Skip silently rather than crashing on undefined.
+  if (!engine) return;
+  const group = angleGroupOf(angle);
+  if (!group) return;
+  const color = groupColorOf(group.name);
+  // PHASE 1: engine state is mass flow rate (kg/s); the slider still
+  // shows percent of this engine's own max flow.
+  const maxFlow = engine.maxMassFlowRate || 1;
+  const flow = (engine.targetMassFlowRate !== undefined ? engine.targetMassFlowRate : engine.massFlowRate) || 0;
+  const startVal = Math.round((flow / maxFlow) * 100);
     
     const wrap = document.createElement('div');
     wrap.className = 'vslider-wrap';

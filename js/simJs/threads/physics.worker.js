@@ -318,16 +318,25 @@ break;
 // No-op — warp UI was removed. Kept as a recognised message type so
 // any stale code path doesn't fall through to the default branch.
 break;
-        case 'reset':
-// Reset must ALSO stop the sim loop. ...
-running = false;
-paused = false;
-// Clear sync-to-guidance state so the next Start begins fresh.
-_waitingForGuidance = false;
-if (_guidanceWaitTimer) { clearTimeout(_guidanceWaitTimer); _guidanceWaitTimer = null; }
-_lastStepWallTime = 0;
-resetState(msg.alt || 0);
-break;
+                case 'reset': {
+  // Reset must ALSO stop the sim loop.
+  // Capture whether the loop was suspended mid-guidance-wait, because
+  // clearing both the ack expectation and the 5 s fallback timer below
+  // leaves no next iteration scheduled — the loop dies permanently and
+  // the whole pipeline freezes (no snapshots, Start does nothing).
+  const wasWaiting = _waitingForGuidance;
+  running = false;
+  paused = false;
+  _waitingForGuidance = false;
+  if (_guidanceWaitTimer) { clearTimeout(_guidanceWaitTimer); _guidanceWaitTimer = null; }
+  _lastStepWallTime = 0;
+  resetState(msg.alt || 0);
+  // Kick the loop back to life if we just killed its only wake-up source.
+  if (wasWaiting) {
+    setTimeout(workerLoop, 0);
+  }
+  break;
+}
 
     case 'spawnInOrbit': {
       resetState(msg.alt || 400000);
