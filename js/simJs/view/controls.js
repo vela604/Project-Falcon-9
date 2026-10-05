@@ -1288,17 +1288,11 @@ function onGuidanceStatus(status) {
   if (!status || !status.active) {
     set('guideStatusText', 'STOPPED');
     set('guideStatusTicks', '—');
-    set('guideStatusTarget', '—');
-    set('guideStatusAchieved', '—');
-    set('guideStatusFires', '—');
     return;
   }
   set('guideStatusText', 'RUNNING');
 set('guideStatusTicks', String(status.ticks || 0));
-set('guideStatusTarget', Math.round(status.lastTarget || 0) + ' N·m');
-set('guideStatusAchieved', Math.round(status.lastAchieved || 0) + ' N·m');
-const fires = (status.lastFires || 0) + (status.lastSaturated ? ' · sat' : '');
-set('guideStatusFires', fires);
+
 
 
 }
