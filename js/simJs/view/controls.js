@@ -1067,7 +1067,13 @@ function _driveFarewell(status) {
     _farewellLastKey = '';
     return;
   }
-  const curPhase = status.phase || '';
+  // Prefer suicidePhase when set: the suicide block writes it as soon as
+  // it's active and never clears it, so it survives the END transition
+  // (where _v3CurrentPhase() returns '?' because missionPhase went to
+  // 'END'). Without this fallback, the GOOD BYE branch — which needs
+  // phase === 'SUICIDE_COAST' + trimDone — is unreachable: the tick
+  // trimDone first becomes true, missionPhase is already 'END'.
+  const curPhase = status.suicidePhase || status.phase || '';
   const curTrimDone = !!status.suicideTrimDone;
   
   // Message table — one entry per guidance phase of the suicide sequence.
@@ -1194,18 +1200,40 @@ const seq = Array.isArray(status.phaseSequence) && status.phaseSequence.length ?
   let doneCount = 0;
   
   seq.forEach(ph => {
-    const row = _phaseTrackRows[ph];
-    if (!row) return;
-    const entry = log[ph];
-    
-    let cls;
-    if (entry && entry.endT !== null && entry.endT !== undefined) {
-      cls = 'done'; doneCount++;
-    } else if (ph === curPhase) {
-      cls = 'active';
-    } else {
-      cls = 'future';
-    }
+  const row = _phaseTrackRows[ph];
+  if (!row) return;
+  const entry = log[ph];
+
+  // ---- Pending DEORBIT countdown ----
+  // During the post-deploy dwell (SUICIDE_DELAY_AFTER_DEPLOY_S), the
+  // DEORBIT row hasn't started yet (no log entry), but we know exactly
+  // when it will: deployCmdSimTime + suicideDelayS. Render that row in
+  // a special "pending" state — top shows current mission T+, bottom
+  // shows T- countdown to when the phase actually begins.
+  const isPending =
+    (ph === 'DEORBIT') &&
+    !entry &&
+    Number.isFinite(status.suicidePendingStartS) &&
+    status.simTime < status.suicidePendingStartS;
+
+  if (isPending) {
+    const remainS = status.suicidePendingStartS - status.simTime;
+    row.className = 'gp-row pending';
+    const tabsEl = row.querySelector('.gp-tabs');
+    const trelEl = row.querySelector('.gp-trel');
+    if (tabsEl) tabsEl.textContent = 'T+' + _fmtHMS(status.simTime);
+    if (trelEl) trelEl.textContent = '-' + _fmtHMS(remainS);
+    return;
+  }
+
+  let cls;
+  if (entry && entry.endT !== null && entry.endT !== undefined) {
+    cls = 'done'; doneCount++;
+  } else if (ph === curPhase) {
+    cls = 'active';
+  } else {
+    cls = 'future';
+  }
     
     const wasActive = row.classList.contains('active');
     // Always assign; CSS transitions handle the same-state no-op cheaply.

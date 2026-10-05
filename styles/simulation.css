@@ -1333,7 +1333,22 @@ canvas.mini-graph { width: 100%; height: 60px; background: var(--bg); border-rad
   align-items: stretch;
   min-height: 44px;
 }
-
+/* Pending row — a not-yet-started phase that we nevertheless know the
+   start time of (e.g. DEORBIT during the post-deploy dwell). Distinct
+   from 'future' (unknown) and 'active' (running now): the dot pulse is
+   slower and the text uses the yellow accent, so it reads as "scheduled". */
+.gp-row.pending .gp-dot {
+  background: var(--yellow);
+  box-shadow: 0 0 6px rgba(255, 210, 63, 0.6);
+  animation: gpPulse 2.2s ease-in-out infinite;
+}
+.gp-row.pending .gp-tabs {
+  color: var(--cyan);
+}
+.gp-row.pending .gp-trel {
+  color: var(--yellow);
+  font-weight: 600;
+}
 .gp-time {
   display: flex;
   flex-direction: column;

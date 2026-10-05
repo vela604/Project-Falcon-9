@@ -823,7 +823,17 @@ _leoTickV3.getStatus = function () {
     });
   }
 
-  if (_v3State.insertionBlock) {
+  // Deorbit schedule — exposed always (null until deploy happens), so the
+// phase-checkpoint UI can render a pending countdown on the DEORBIT
+// row during the SUICIDE_DELAY_AFTER_DEPLOY_S dwell window.
+out.suicideDelayS = _v3Config.done.SUICIDE_DELAY_AFTER_DEPLOY_S;
+out.suicidePendingStartS =
+  (Number.isFinite(_v3State.deployCmdSimTime) &&
+    Number.isFinite(_v3Config.done.SUICIDE_DELAY_AFTER_DEPLOY_S)) ?
+  (_v3State.deployCmdSimTime + _v3Config.done.SUICIDE_DELAY_AFTER_DEPLOY_S) :
+  null;
+
+if (_v3State.insertionBlock) {
   const ins = _v3State.insertionBlock.getStatus();
   Object.assign(out, {
         stageBurnLocked: ins.stageBurnLocked,

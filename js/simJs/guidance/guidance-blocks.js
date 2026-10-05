@@ -2003,7 +2003,11 @@ setState(s) {
       SUICIDE_BURN_COARSE_MARGIN_DEG: 0.5,
       SUICIDE_TRIM_TOL_DEG: 0.1,
       SUICIDE_TRIM_FAR_DEG: 1.0,
-      SUICIDE_TRIM_MIN_DUTY: 0.15,
+      // Lowered from 0.15 — at small errors (just above TOL), 15% duty
+// accumulates meaningful Δv over the long remaining fall time and
+// causes overshoot. 0.03 is close to RCS noise floor but still
+// enough to nudge.
+SUICIDE_TRIM_MIN_DUTY: 0.03,
       SUICIDE_TRIM_MAX_S: 120,
     },
     importantFields: [],
@@ -2022,9 +2026,9 @@ setState(s) {
         suicideBurnStartT: 0,
         suicideImpactEf: null,
         suicideDlambda: null,
-        suicideTrimDone: false,
-        suicideTrimStartT: 0,
-      };
+            suicideTrimDone: false,
+    suicideTrimStartT: 0,
+  };
 
       function _send(cmd) {
         if (!cmd) return;
@@ -2342,146 +2346,116 @@ if (_st.lastCircTriggerLeadS === 0 &&
 
           // ==========================================================
           case "SUICIDE_COAST": {
-            _send(Guidance.cmdSetAllThrottle(0));
-            _send(Guidance.cmdSetGimbalRate(0));
-
-            if (_st.suicideTrimDone) {
-              _send(Guidance.cmdRcsDuty(null, idx));
-              break;
-            }
-
-            if (_st.suicideTrimStartT === 0) {
-              _st.suicideTrimStartT = simT;
-            }
-
-            if (simT - _st.suicideTrimStartT > cfg.SUICIDE_TRIM_MAX_S) {
-              _st.suicideTrimDone = true;
-              _send(Guidance.cmdRcsDuty(null, idx));
-              _done = true;
-              _result = {
-                bodyIdx: _bodyIdx,
-                trimConverged: false,
-                trimTimedOut: true,
-                suicideImpactEfDeg:
-                  _st.suicideImpactEf != null
-                    ? (_st.suicideImpactEf * 180) / Math.PI
-                    : null,
-                suicideDlambdaDeg:
-                  _st.suicideDlambda != null
-                    ? (_st.suicideDlambda * 180) / Math.PI
-                    : null,
-              };
-              break;
-            }
-
-            const speedH = Math.hypot(body.vx, body.vy);
-let rHold = null;
-if (speedH > 1) {
-  const ux_v = body.vx / speedH;
-  const uy_v = body.vy / speedH;
-  const targetThetaRad = Math.atan2(ux_v, -uy_v);
-  const thetaErrH = _wrapPi(body.theta - targetThetaRad);
-  const I_nextH = dNext && dNext.massProps ? dNext.massProps.I : 0;
-  if (I_nextH > 0) {
-    const tau_hold =
-      -I_nextH *
-      (cfg.SUICIDE_ATT_KP * thetaErrH +
-        cfg.SUICIDE_ATT_KD * body.omega);
-    rHold = GuideRCS.targetTorqueRcsNoNetForce(
-      snapshot,
-      tau_hold,
-      idx,
-    );
+  _send(Guidance.cmdSetAllThrottle(0));
+  _send(Guidance.cmdSetGimbalRate(0));
+  
+  if (_st.suicideTrimDone) {
+    _send(Guidance.cmdRcsDuty(null, idx));
+    break;
   }
-}
-
-            const impact = _predictImpact(
-              body.rx,
-              body.ry,
-              body.vx,
-              body.vy,
-              simT,
-              cfg.SUICIDE_PREDICT_DT_S,
-              cfg.SUICIDE_PREDICT_HORIZON_S,
-              env.GM_EARTH,
-              env.EARTH_RADIUS,
-              env.EARTH_OMEGA,
-            );
-            if (!impact) {
-              const duties = GuideRCS.postSeparationAxialDuty(
-                snapshot,
-                idx,
-                "up",
-              );
-              if (duties) _send(Guidance.cmdRcsDuty(duties, idx));
-              break;
-            }
-
-            const lambdaMidEf = (env.LAUNCH_SITE_ANGLE_0 || 0) -
-  midWestDeg * Math.PI / 180;
-let dLambdaDeg = (impact.phiEf - lambdaMidEf) * 180 / Math.PI;
-// Wrap to [-180°, 180°] so the trim takes the SHORT way around
-// the planet. Without this, an impact at +166° with target at
-// -140° gives a raw diff of +306°, which the code misreads as
-// "impact far east, need huge retrograde correction". The true
-// error is 54° EAST (the other way around), needing only small
-// prograde. Fires wrong direction otherwise.
-while (dLambdaDeg > 180) dLambdaDeg -= 360;
-while (dLambdaDeg < -180) dLambdaDeg += 360;
-            
-            
-        
-
-
-
-            if (Math.abs(dLambdaDeg) < cfg.SUICIDE_TRIM_TOL_DEG) {
-              _st.suicideTrimDone = true;
-              _send(Guidance.cmdRcsDuty(null, idx));
-              _done = true;
-              _result = {
-                bodyIdx: _bodyIdx,
-                trimConverged: true,
-                trimTimedOut: false,
-                suicideImpactEfDeg: (impact.phiEf * 180) / Math.PI,
-                suicideDlambdaDeg: dLambdaDeg,
-              };
-              break;
-            }
-
-
-
-            const direction = dLambdaDeg > 0 ? "up" : "dn";
-const FAR = cfg.SUICIDE_TRIM_FAR_DEG;
-const MIN_DUTY = cfg.SUICIDE_TRIM_MIN_DUTY;
-let duty = Math.min(1, Math.abs(dLambdaDeg) / Math.max(FAR, 1e-6));
-if (duty < MIN_DUTY) duty = MIN_DUTY;
-
-const duties = GuideRCS.postSeparationAxialDuty(snapshot, idx, direction);
-if (duties) {
-  Object.keys(duties).forEach(podId => {
+  
+  if (_st.suicideTrimStartT === 0) _st.suicideTrimStartT = simT;
+  if (simT - _st.suicideTrimStartT > cfg.SUICIDE_TRIM_MAX_S) {
+    _st.suicideTrimDone = true;
+    _send(Guidance.cmdRcsDuty(null, idx));
+    _done = true;
+    _result = {
+      bodyIdx: _bodyIdx,
+      trimConverged: false,
+      trimTimedOut: true,
+      suicideImpactEfDeg: _st.suicideImpactEf != null ?
+        (_st.suicideImpactEf * 180) / Math.PI : null,
+      suicideDlambdaDeg: _st.suicideDlambda != null ?
+        (_st.suicideDlambda * 180) / Math.PI : null,
+    };
+    break;
+  }
+  
+  const lambdaMidEf =
+    (env.LAUNCH_SITE_ANGLE_0 || 0) - (midWestDeg * Math.PI) / 180;
+  
+  const impact = _predictImpact(
+    body.rx, body.ry, body.vx, body.vy, simT,
+    cfg.SUICIDE_PREDICT_DT_S, cfg.SUICIDE_PREDICT_HORIZON_S,
+    env.GM_EARTH, env.EARTH_RADIUS, env.EARTH_OMEGA);
+  
+  if (!impact) {
+    _send(Guidance.cmdRcsDuty(null, idx));
+    break;
+  }
+  
+  let E_rad = impact.phiEf - lambdaMidEf;
+  while (E_rad > Math.PI) E_rad -= 2 * Math.PI;
+  while (E_rad < -Math.PI) E_rad += 2 * Math.PI;
+  _st.suicideImpactEf = impact.phiEf;
+  _st.suicideDlambda = E_rad;
+  const E_deg = E_rad * 180 / Math.PI;
+  
+  // Converged → RCS off, done.
+  if (Math.abs(E_deg) < cfg.SUICIDE_TRIM_TOL_DEG) {
+    _st.suicideTrimDone = true;
+    _send(Guidance.cmdRcsDuty(null, idx));
+    _done = true;
+    _result = {
+      bodyIdx: _bodyIdx,
+      trimConverged: true,
+      trimTimedOut: false,
+      suicideImpactEfDeg: impact.phiEf * 180 / Math.PI,
+      suicideDlambdaDeg: E_deg,
+    };
+    break;
+  }
+  
+  // ---- Lead-compensated proportional trim ----
+  // dE/dt from last tick. Lead error predicts τ seconds ahead.
+  // When E is closing rapidly (dE has opposite sign to E),
+  // E_lead is smaller than E and can cross zero BEFORE E does,
+  // so firing stops before overshoot. τ tunes how far we look
+  // ahead.
+  const prevE = _st._prevTrimE_rad;
+  _st._prevTrimE_rad = E_rad;
+  const dE = (Number.isFinite(prevE) && dt > 0) ?
+    (E_rad - prevE) / dt : 0;
+  const tau = Number.isFinite(cfg.SUICIDE_TRIM_LEAD_S) ?
+    cfg.SUICIDE_TRIM_LEAD_S : 10;
+  const E_lead_deg = (E_rad + tau * dE) * 180 / Math.PI;
+  
+  // Direction from the LEAD error's sign (not raw E). When lead
+  // crosses zero, direction flips too — firing reverses to
+  // catch any residual drift.
+  const direction = E_lead_deg > 0 ? "up" : "dn";
+  
+  // Proportional duty on lead error. NO floor — duty freely
+  // goes to zero as E_lead → 0. That's the fix for overshoot:
+  // previously MIN_DUTY forced 3% firing at tiny errors, which
+  // accumulated into a huge overshoot over the remaining fall.
+  const FAR = cfg.SUICIDE_TRIM_FAR_DEG;
+  let duty = Math.min(1, Math.abs(E_lead_deg) / Math.max(FAR, 1e-6));
+  
+  // Deadband is a chatter guard, NOT a floor — it means "don't
+  // fire at all when lead error is negligible", not "fire at
+  // least this much".
+  const DEADBAND_DUTY = 0.02;
+  if (duty < DEADBAND_DUTY) {
+    _send(Guidance.cmdRcsDuty(null, idx));
+    break;
+  }
+  
+  const duties = GuideRCS.postSeparationAxialDuty(snapshot, idx, direction);
+  if (!duties) {
+    _send(Guidance.cmdRcsDuty(null, idx));
+    break;
+  }
+  Object.keys(duties).forEach((podId) => {
     const dd = duties[podId];
     if (!dd) return;
     dd.up *= duty;
     dd.dn *= duty;
     dd.lat *= duty;
   });
-  // Merge with the attitude-hold duties computed above so
-  // trim no longer overwrites hold. Different nozzle axes
-  // (trim uses up/dn, hold uses lat + its own up/dn pairs),
-  // so the two compose on the same duty table.
-  if (rHold && rHold.duties) {
-    Object.keys(rHold.duties).forEach(podId => {
-      if (!duties[podId]) duties[podId] = { up: 0, dn: 0, lat: 0 };
-      const rh = rHold.duties[podId];
-      duties[podId].up = Math.min(1, duties[podId].up + (rh.up || 0));
-      duties[podId].dn = Math.min(1, duties[podId].dn + (rh.dn || 0));
-      duties[podId].lat = Math.min(1, duties[podId].lat + (rh.lat || 0));
-    });
-  }
   _send(Guidance.cmdRcsDuty(duties, idx));
+  break;
 }
-break;
-          }
 
           default:
             break;
@@ -2506,9 +2480,9 @@ break;
           _st.suicideBurnStartT = 0;
           _st.suicideImpactEf = null;
           _st.suicideDlambda = null;
-          _st.suicideTrimDone = false;
-          _st.suicideTrimStartT = 0;
-        },
+              _st.suicideTrimDone = false;
+  _st.suicideTrimStartT = 0;
+  },
 
         tick(snapshot) {
           if (_done) return;
