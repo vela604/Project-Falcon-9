@@ -1427,81 +1427,138 @@ canvas.mini-graph { width: 100%; height: 60px; background: var(--bg); border-rad
 }
 
 /* ============================================================
-   Responsive — laptop / mid-size desktops (761px – 1440px).
-   Above 1440px, base full-desktop sizes apply.
-   Below 761px, mobile block applies (already exists).
+   LAPTOP / DESKTOP (>= 1024px) — compact layout.
+   Screen is already large, so every floating UI piece is scaled
+   down, and the panels are laid out so they never overlap:
+     - telemetry sits to the right of the left-toolbar handle and
+       slides over when the left toolbar opens
+     - panel dock (rocket figure etc.) sits to the left of the
+       right-toolbar handle and slides over when it opens
+   Phones/tablets (< 1024px) keep the original styles above.
    ============================================================ */
-@media (min-width: 761px) and (max-width: 1440px) {
-  html, body { font-size: 13px; }
+@media (min-width: 1024px) {
 
-  /* ---- Status bar ---- */
-  .tb-row { padding: 4px 10px; gap: 10px; }
-  .btn { padding: 4.5px 8px; font-size: 11px; }
+  /* ---------- top status bar ---------- */
+  #statusBar { font-size: 11.5px; }
+  .tb-row { padding: 4px 12px; gap: 12px; }
+  .tb-left, .tb-right { gap: 7px; }
+  .btn, .chip-toggle { padding: 4.5px 9px; font-size: 11px; border-radius: 6px; }
   .btn-ic { font-size: 11px; }
-  .chip-toggle { padding: 4.5px 8px; font-size: 11px; }
   .tb-brand { font-size: 13px; }
 
-  /* ---- Telemetry — narrower column, tighter rows ---- */
-  #telemetryPanel { width: 132px; padding: 7px 9px 9px; top: 8px; left: 8px; }
-  .tele-sym, .tele-val { font-size: 10.5px; }
-  .tele-head { font-size: 9.5px; margin-bottom: 5px; padding-bottom: 4px; }
-  .tele-row { padding: 2px 0; }
-
-  /* ---- Panel dock (Rocket figure, Basal, Wind, Fueling, Graphs, Glossary) ---- */
-  #panelDock {
-    width: 232px;
-    top: 8px;
-    right: 8px;
-    bottom: 8px;
+  /* ---------- telemetry (left) ---------- */
+  #telemetryPanel {
+    top: 8px; left: 30px;               /* clear of the left-toolbar handle */
+    width: 164px;
+    max-height: calc(100% - 16px);
+    padding: 7px 9px 8px;
+    border-radius: 8px;
+    transition: left 0.28s ease-out;
   }
-  .panel { padding: 9px; }
-  .panel-title { font-size: 11px; }
-  .panel-close { width: 22px; height: 22px; font-size: 11px; }
-  canvas#figureCanvas { height: 170px; }
-  canvas#basalCanvas  { height: 150px; }
+  #viewport:has(#leftToolbar.open) #telemetryPanel { left: 150px; }  /* toolbar content (120px) + handle */
+  .tele-head { font-size: 10px; margin-bottom: 5px; padding-bottom: 4px; }
+  .tele-row { padding: 1.5px 0; gap: 6px; }
+  .tele-sym { font-size: 10.5px; }
+  .tele-val { font-size: 10.5px; text-align: right; }
+  .tele-body-list { font-size: 9px; gap: 3px; }
+  .tele-body-block { padding: 3px 4px; }
+  .tb-line { line-height: 1.35; }
 
-  /* ---- THE OVERLAP FIX ----
-     Jab right toolbar open ho, panel dock ko left shift karo
-     taaki dono ek doosre ke upar na chadhein.
-     Right toolbar content ≈ 172 + handle 28 + gap ≈ 200px. */
-  #viewport:has(#rightToolbar.open) #panelDock {
-    right: 210px;
-  }
+  /* ---------- direction HUD ---------- */
+  #directionHUD { top: 8px; }
 
-  /* ---- Right toolbar (guidance) ---- */
-  #rightToolbar .rt-wrapper { transform: translateX(172px); }
-  #rightToolbar.open .rt-wrapper { transform: translateX(0); }
-  #rightToolbar .rt-content { width: 172px; padding: 12px 12px 12px 10px; }
-  #rightToolbar .rt-btn { font-size: 11px; padding: 7px 8px; }
-  #rightToolbar .rt-btn-config { font-size: 11px; padding: 7px 8px; }
-  #rightToolbar .rt-handle { width: 28px; height: 60px; font-size: 16px; }
-  #rightToolbar .rt-status { font-size: 10px; }
-
-  /* ---- Left toolbar ---- */
-  #leftToolbar .lt-wrapper { transform: translateX(-140px); }
-  #leftToolbar.open .lt-wrapper { transform: translateX(0); }
-  #leftToolbar .lt-content { width: 140px; padding: 12px 10px 12px 12px; }
-  #leftToolbar .lt-btn { font-size: 11px; padding: 7px 8px; }
-  #leftToolbar .lt-handle { width: 28px; height: 60px; font-size: 16px; }
-
-  /* ---- Bottom control cluster ---- */
-  .bc-inner { padding: 8px 10px; gap: 8px; }
-  .dir-btn { width: 36px; height: 36px; font-size: 12px; }
-  .rot-btn { width: 30px; height: 30px; font-size: 11px; }
-  input[type=range].vslider { width: 56px; margin: 18px -8px; }
-  #centerThrustSlider { width: 82px; }
-  .thrust-col { height: 122px; }
-  .thrust-quick-btn { font-size: 9px; padding: 3px 5px; }
-  .vslider-label { font-size: 8px; }
-  .vslider-value { font-size: 9.5px; }
+  /* ---------- bottom control cluster ---------- */
+  #bottomControls { padding: 0 8px calc(6px + env(safe-area-inset-bottom, 0px)); }
+  .bc-inner { gap: 10px; padding: 7px 12px; border-radius: 10px; }
+  .slider-rack { gap: 6px; }
+  .vslider-label { font-size: 7.5px; }
+  .vslider-value { font-size: 9px; }
+  input[type=range].vslider { width: 52px; margin: 19px -10px; }
+  .center-cluster { gap: 4px; }
+  .cc-row { gap: 4px; }
+  .cc-mid { gap: 6px; }
+  .cc-inner { gap: 4px; }
+  .cc-inner-col { gap: 4px; }
+  .dir-btn { width: 30px; height: 30px; font-size: 12px; border-radius: 6px; }
+  .rot-btn { width: 26px; height: 26px; font-size: 12px; border-radius: 6px; }
+  .corner-icon { width: 9px; height: 9px; border-width: 2px; }
+  .thrust-col { height: 104px; gap: 3px; }
+  #centerThrustSlider { width: 64px; height: 6px; }
   #centerThrustValue { font-size: 10px; }
+  .thrust-quick-btn { padding: 2px 4px; font-size: 8.5px; }
+  .thrust-col-label { font-size: 7.5px; }
 
-  /* ---- Direction HUD ---- */
-  #directionCanvas { width: 140px; height: 88px; }
+  /* ---------- panel dock (right) ---------- */
+  #panelDock {
+    top: 8px; right: 30px; bottom: 8px;  /* clear of the right-toolbar handle */
+    width: 210px; gap: 7px;
+    transition: right 0.28s ease-out;
+  }
+  #viewport:has(#rightToolbar.open) #panelDock { right: 176px; }  /* toolbar content (150px) + handle */
+  .panel { padding: 8px; border-radius: 8px; }
+  .panel-header { margin-bottom: 7px; padding-bottom: 6px; }
+  .panel-title { font-size: 11px; }
+  .panel-close { width: 20px; height: 20px; font-size: 10px; }
+  .panel-subtitle { font-size: 9.5px; margin: 8px 0 4px; }
+  .panel-hint { font-size: 9.5px; }
+  canvas#figureCanvas { height: clamp(130px, 24vh, 200px); }
+  canvas#basalCanvas  { height: clamp(90px, 15vh, 130px); }
+  canvas.mini-graph { height: 46px; }
+  .graph-block { margin-bottom: 8px; }
+  .graph-label { font-size: 9px; }
+  .glossary-row { font-size: 10px; }
+  #windCompass { width: 100px; height: 100px; }
+  #mergeSvg { max-width: 150px; }
+  .field-row { margin: 8px 0; }
+  .field-label { font-size: 10px; }
+  .fr-row { font-size: 10.5px; }
+  .fuel-hint, .fuel-warn { font-size: 10px; }
 
-  /* ---- Mission-phase track ---- */
-  #guidePhaseTrack { width: 210px; }
-  .gp-row { grid-template-columns: 66px 16px 1fr; }
-  .gp-name { font-size: 9.5px; }
-  .gp-time { font-size: 9px; }
+  /* ---------- left toolbar ---------- */
+  #leftToolbar .lt-wrapper { transform: translateX(-120px); }
+  #leftToolbar .lt-content {
+    width: 120px; max-height: 86vh;
+    padding: 10px 8px 10px 12px; gap: 6px;
+    border-radius: 0 8px 8px 0;
+  }
+  #leftToolbar .lt-section { gap: 5px; }
+  #leftToolbar .lt-btn { padding: 6px 6px; font-size: 10.5px; border-radius: 6px; }
+  #leftToolbar .lt-btn.lt-btn-sq { padding: 6px 0; }
+  #leftToolbar .lt-label { font-size: 9px; }
+  #leftToolbar .lt-select { font-size: 10px; padding: 4px 6px; border-radius: 6px; }
+  #leftToolbar .lt-handle { width: 20px; height: 52px; font-size: 14px; border-radius: 0 8px 8px 0; }
+
+  /* ---------- right toolbar ---------- */
+  #rightToolbar .rt-wrapper { transform: translateX(150px); }
+  #rightToolbar .rt-content {
+    width: 150px; max-height: 86vh;
+    padding: 10px 12px 10px 8px; gap: 6px;
+    border-radius: 8px 0 0 8px;
+  }
+  #rightToolbar .rt-section { gap: 5px; }
+  #rightToolbar .rt-section.rt-row { gap: 4px; }
+  #rightToolbar .rt-btn { padding: 6px 6px; font-size: 10.5px; border-radius: 6px; }
+  #rightToolbar .rt-status { font-size: 9.5px; line-height: 1.5; }
+  #rightToolbar .rt-handle { width: 20px; height: 52px; font-size: 14px; border-radius: 8px 0 0 8px; }
+
+  /* ---------- mission phase track (bottom-right) ---------- */
+  #guidePhaseTrack {
+    right: 8px; bottom: 8px; width: 200px;
+    padding: 7px 9px 6px 8px;
+  }
+  #guidePhaseTrack .gpt-header { font-size: 9px; }
+  .gp-row { grid-template-columns: 62px 14px 1fr; min-height: 34px; gap: 4px; }
+  .gp-time, .gp-tabs { font-size: 8.5px; }
+  .gp-trel { font-size: 8px; }
+  .gp-name { font-size: 9px; }
+}
+
+/* Short laptop screens (e.g. 1366x768): squeeze vertical space a bit more. */
+@media (min-width: 1024px) and (max-height: 820px) {
+  .tele-row { padding: 1px 0; }
+  .tele-sym, .tele-val { font-size: 10px; }
+  .thrust-col { height: 92px; }
+  input[type=range].vslider { margin: 16px -10px; }
+  canvas#figureCanvas { height: clamp(120px, 22vh, 170px); }
+  canvas#basalCanvas  { height: clamp(80px, 13vh, 110px); }
 }
