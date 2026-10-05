@@ -1541,16 +1541,84 @@ canvas.mini-graph { width: 100%; height: 60px; background: var(--bg); border-rad
   #rightToolbar .rt-status { font-size: 9.5px; line-height: 1.5; }
   #rightToolbar .rt-handle { width: 20px; height: 52px; font-size: 14px; border-radius: 8px 0 0 8px; }
 
-  /* ---------- mission phase track (bottom-right) ---------- */
-  #guidePhaseTrack {
-    right: 8px; bottom: 8px; width: 200px;
-    padding: 7px 9px 6px 8px;
-  }
-  #guidePhaseTrack .gpt-header { font-size: 9px; }
-  .gp-row { grid-template-columns: 62px 14px 1fr; min-height: 34px; gap: 4px; }
-  .gp-time, .gp-tabs { font-size: 8.5px; }
-  .gp-trel { font-size: 8px; }
-  .gp-name { font-size: 9px; }
+  /* ---------- mission phase track — horizontal bottom strip ---------- */
+#guidePhaseTrack {
+  /* Reposition: bottom strip, centered, just above the pilot cluster */
+  right: auto;
+  left: 50%;
+  top: auto;
+  bottom: 148px;                    /* clears #bottomControls */
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: calc(100vw - 360px);   /* don't hit side toolbars */
+  max-height: none;
+  padding: 6px 12px 5px;
+}
+
+#guidePhaseTrack .gpt-header {
+  margin-bottom: 4px;
+  padding-bottom: 4px;
+  font-size: 9px;
+}
+
+#guidePhaseTrack .gpt-list {
+  flex: 0 1 auto;                    /* was flex: 1 */
+  flex-direction: row;               /* vertical stack → horizontal row */
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-right: 0;
+  padding-bottom: 2px;
+  min-height: 0;
+  gap: 0;
+}
+#guidePhaseTrack .gpt-list::-webkit-scrollbar { height: 3px; }
+
+/* Each phase becomes a narrow vertical column */
+#guidePhaseTrack .gp-row {
+  display: flex;                     /* was grid */
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-height: 0;
+  min-width: 62px;
+  flex-shrink: 0;
+}
+
+#guidePhaseTrack .gp-time {
+  flex-direction: row;               /* time stamps side-by-side on top */
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding-right: 0;
+}
+#guidePhaseTrack .gp-tabs { font-size: 8.5px; }
+#guidePhaseTrack .gp-trel { font-size: 8px; }
+
+/* Dot column flips: was vertical line · dot · vertical line,
+   becomes horizontal line — dot — horizontal line */
+#guidePhaseTrack .gp-dotcol {
+  flex-direction: row;
+  align-items: center;
+  width: 100%;
+  padding: 0 2px;
+}
+#guidePhaseTrack .gp-line-in,
+#guidePhaseTrack .gp-line-out {
+  flex: 1;
+  width: auto;                       /* was 2px */
+  height: 2px;                       /* was auto (vertical) */
+  min-height: 0;
+  min-width: 6px;                    /* keep a stub even in narrow columns */
+}
+#guidePhaseTrack .gp-dot { margin: 0 2px; }   /* was margin: 3px 0 */
+
+#guidePhaseTrack .gp-name {
+  justify-content: center;
+  padding-left: 0;
+  text-align: center;
+  font-size: 9px;
+  letter-spacing: 0.4px;
+}
 }
 
 /* Short laptop screens (e.g. 1366x768): squeeze vertical space a bit more. */
