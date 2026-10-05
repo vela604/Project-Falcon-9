@@ -632,96 +632,172 @@ function _redrawAllPreviews() {
 //   payloadColor           '#rrggbb' fill (default '#e9edf2')
 // ============================================================================
 
-function drawPayloadSpaceShape(ctx, W, H, mpp, opts) {
-  opts = opts || {};
-  const color = opts.payloadColor || '#e9edf2';
+// Payload art — satellite bus + folding solar wings + dish. Renders in
+// one of two states, or any state in between:
+//   openProgress = 0  → stowed (panels folded against the bus)
+//   openProgress = 1  → deployed (wings extended, dish + antenna up)
+// The caller interpolates over PAYLOAD_OPEN_DURATION_S seconds.
+function drawPayloadArt(ctx, W, H, openProgress) {
+  const p = Math.max(0, Math.min(1, openProgress || 0));
   
-  // Dimensions arrive in METERS (matching every other params-bag field in
-  // this codebase) and get converted to px here via mpp — mirrors the
-  // capW_px/bulgeW_px conversion used by drawStageBody's inline payload
-  // renderer. Falls back to the member's own W (already px) when a
-  // specific field isn't supplied, so an incomplete opts bag still
-  // degrades to a plain cone sized to the member's own bounding box
-  // instead of NaN.
-  const capWidth_m = Number.isFinite(opts.payloadCapWidth) ? opts.payloadCapWidth : W * mpp;
-  const capR = (capWidth_m / 2) / mpp; // px
+  // ---- Solar wings ----
+  // Folded: thin strips hugging the bus at ±W/2, width W*0.15 each.
+  // Deployed: long wings sweeping outward, width W*1.3 each.
+  // Hinge rotates the wing outward by 12° so it reads as an unfolding
+  // mechanism, not just a sliding strip.
+  const wingH = H * 0.72;
+  const wingY = -H * 0.86;
+  const foldedW = W * 0.15;
+  const extendedW = W * 1.30;
+  const wingW = foldedW + (extendedW - foldedW) * p;
+  const wingTilt = p * 12 * Math.PI / 180;
   
-  // Single-kind renderer (`bulgedCapShape`). When bulgeWidth == capWidth,
-  // the frustum section (|bulgeR − capR| / tan(angle)) collapses to zero
-  // height and the shape reduces to a straight cylinder + ogive — that's
-  // the "nose cap" case; a genuine flared fairing is bulgeWidth > capWidth.
-  const bulgeWidth_m = Number.isFinite(opts.payloadBulgeWidth) ? opts.payloadBulgeWidth : capWidth_m;
-  const bulgeR = (bulgeWidth_m / 2) / mpp;
-  const frustumAngleDeg = Number.isFinite(opts.payloadFrustumAngleDeg) ? opts.payloadFrustumAngleDeg : 45;
-  const curveRatio = Number.isFinite(opts.payloadCurveRatio) ? opts.payloadCurveRatio : 0.85;
-  
-  // Formula-derived section heights.
-  const angleRad = Math.max(1, Math.min(89, frustumAngleDeg)) * Math.PI / 180;
-  let frustumH = Math.abs(bulgeR - capR) / Math.tan(angleRad);
-  let curveH = curveRatio * bulgeR;
-  const mandatory = frustumH + curveH;
-  if (mandatory > H && mandatory > 0) {
-    const s = H / mandatory;
-    frustumH *= s;
-    curveH *= s;
-  }
-  const straightH = Math.max(0, H - frustumH - curveH);
-  
-  const baseY = 0;
-  const frustumTopY = -frustumH;
-  const straightTopY = frustumTopY - straightH;
-  const tipY = -H;
-  
-  const bodyPath = () => {
-    ctx.beginPath();
-    // Left side: base → frustum → straight → ogive → tip
-    ctx.moveTo(-capR, baseY);
-    ctx.lineTo(-bulgeR, frustumTopY);
-    ctx.lineTo(-bulgeR, straightTopY);
-    ctx.bezierCurveTo(
-      -bulgeR * 0.98, straightTopY - curveH * 0.30,
-      -bulgeR * 0.45, tipY + curveH * 0.15,
-      0, tipY
-    );
-    // Right side: tip → ogive → straight → frustum → base
-    ctx.bezierCurveTo(
-      bulgeR * 0.45, tipY + curveH * 0.15,
-      bulgeR * 0.98, straightTopY - curveH * 0.30,
-      bulgeR, straightTopY
-    );
-    ctx.lineTo(bulgeR, frustumTopY);
-    ctx.lineTo(capR, baseY);
-    ctx.closePath();
-  };
-  
-  ctx.fillStyle = color;
-  ctx.strokeStyle = '#8b93a0';
-  ctx.lineWidth = 1.2;
-  bodyPath();
-  ctx.fill();
-  ctx.stroke();
-  
-  // DSL overlay (clipped to fairing silhouette).
-  const bodyDesign = opts.bodyDesign || { mode: 'solid', dslText: '' };
-  if ((bodyDesign.mode || 'solid') === 'dsl' &&
-    typeof parseAndValidateDesign === 'function' &&
-    typeof drawCustomDesignOps === 'function') {
-    const parsed = parseAndValidateDesign(bodyDesign.dslText || '');
-    if (parsed.ok && parsed.ops.length) {
-      const widestW_px = Math.max(capR, bulgeR) * 2;
-      ctx.save();
-      bodyPath();
-      ctx.clip();
-      drawCustomDesignOps(ctx, widestW_px, H, parsed.ops);
-      ctx.restore();
+  [-1, 1].forEach(side => {
+    ctx.save();
+    // Hinge at the bus edge, mid-height of the wing.
+    ctx.translate(side * (W / 2), wingY + wingH / 2);
+    ctx.rotate(side * wingTilt);
+    // Wing rect extends outward from the hinge.
+    const wx = side > 0 ? 0 : -wingW;
+    // Solar cell gradient — darker at the edges, bluish mid.
+    const wg = ctx.createLinearGradient(wx, 0, wx + wingW, 0);
+    wg.addColorStop(0, '#1a3050');
+    wg.addColorStop(0.35, '#2c5a8a');
+    wg.addColorStop(0.7, '#2a5280');
+    wg.addColorStop(1, '#0a1520');
+    ctx.fillStyle = wg;
+    ctx.fillRect(wx, -wingH / 2, wingW, wingH);
+    // Frame
+    ctx.strokeStyle = '#0a1520';
+    ctx.lineWidth = 0.7;
+    ctx.strokeRect(wx, -wingH / 2, wingW, wingH);
+    // Cell grid — vertical strips (many small cells across the wing)
+    ctx.strokeStyle = 'rgba(140,190,255,0.35)';
+    ctx.lineWidth = 0.4;
+    const cols = Math.max(4, Math.round((wingW / W) * 6));
+    for (let i = 1; i < cols; i++) {
+      const cx = wx + (wingW * i / cols);
+      ctx.beginPath();
+      ctx.moveTo(cx, -wingH / 2 + 1);
+      ctx.lineTo(cx, wingH / 2 - 1);
+      ctx.stroke();
     }
-  }
+    // Horizontal mid-seam
+    ctx.beginPath();
+    ctx.moveTo(wx, 0);
+    ctx.lineTo(wx + wingW, 0);
+    ctx.stroke();
+    // Hinge bracket (small dark block bridging bus edge to hinge)
+    ctx.fillStyle = '#3a3e44';
+    ctx.fillRect(-side * (W * 0.03), -wingH * 0.08, side * (W * 0.03), wingH * 0.16);
+    ctx.strokeStyle = '#0d1015';
+    ctx.lineWidth = 0.5;
+    ctx.strokeRect(-side * (W * 0.03), -wingH * 0.08, side * (W * 0.03), wingH * 0.16);
+    ctx.restore();
+  });
   
-  if (typeof applyCylindricalOverlay === 'function') {
-    const gradW = Math.max(capR, bulgeR) * 2;
-    bodyPath();
-    applyCylindricalOverlay(ctx, gradW);
-  }
+  // ---- Main bus ----
+  const bg = cachedGradient(ctx, 'mainBody', Math.round(W), () => {
+    const g = ctx.createLinearGradient(-W / 2, 0, W / 2, 0);
+    g.addColorStop(0, '#4a4e54');
+    g.addColorStop(0.5, '#c8d0d8');
+    g.addColorStop(1, '#3a3d43');
+    return g;
+  });
+  ctx.fillStyle = bg;
+  ctx.fillRect(-W / 2, -H, W, H);
+  ctx.strokeStyle = '#1c1e22';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(-W / 2, -H, W, H);
+  
+  // Horizontal equipment seams across the bus (3 bands)
+  ctx.strokeStyle = 'rgba(20,24,30,0.45)';
+  ctx.lineWidth = 0.5;
+  [-0.30, 0.05, 0.40].forEach(f => {
+    const y = -H * (0.5 + f);
+    ctx.beginPath();
+    ctx.moveTo(-W / 2, y);
+    ctx.lineTo(W / 2, y);
+    ctx.stroke();
+  });
+  
+  // Small instrument panel details — 2 tiny dark rectangles
+  ctx.fillStyle = 'rgba(15,18,24,0.65)';
+  ctx.fillRect(-W * 0.30, -H * 0.62, W * 0.16, H * 0.06);
+  ctx.fillRect(W * 0.10, -H * 0.44, W * 0.20, H * 0.05);
+  
+  // RCS thruster nubs at the four bus corners (base-side), always visible
+  ctx.fillStyle = '#1c1e22';
+  [-1, 1].forEach(sgn => {
+    ctx.fillRect(sgn * (W / 2) - sgn * W * 0.05 - (sgn > 0 ? 0 : W * 0.05),
+      -H * 0.05,
+      W * 0.05, H * 0.03);
+  });
+  
+  // ---- Dish / antenna assembly on top ----
+  // Stowed: flat, hugging the top of the bus.
+  // Deployed: rotated up ~55° and slightly wider.
+  const dishR_base = W * 0.20;
+  const dishR = dishR_base * (0.85 + 0.30 * p);
+  const mastH = H * (0.03 + 0.10 * p); // small mast grows
+  const dishAngle = p * 55 * Math.PI / 180; // rotates back
+  
+  ctx.save();
+  ctx.translate(0, -H); // top center of bus
+  // Mast
+  ctx.strokeStyle = '#2a2e34';
+  ctx.lineWidth = Math.max(1, W * 0.02);
+  ctx.beginPath();
+  ctx.moveTo(0, 0);
+  ctx.lineTo(0, -mastH);
+  ctx.stroke();
+  // Dish — rotate about the mast top
+  ctx.translate(0, -mastH);
+  ctx.rotate(dishAngle);
+  // Dish dish
+  const dg = cachedGradient(ctx, 'topDish', Math.round(dishR), () => {
+    const g = ctx.createRadialGradient(0, 0, dishR * 0.05, 0, 0, dishR);
+    g.addColorStop(0, '#eef3fa');
+    g.addColorStop(0.55, '#b9c2cd');
+    g.addColorStop(1, '#545c66');
+    return g;
+  });
+  ctx.fillStyle = dg;
+  ctx.beginPath();
+  ctx.arc(0, 0, dishR, Math.PI, 0, false); // upper semicircle
+  ctx.closePath();
+  ctx.fill();
+  ctx.strokeStyle = '#1c1e22';
+  ctx.lineWidth = 0.7;
+  ctx.stroke();
+  // Feed horn (small dot at focus)
+  ctx.fillStyle = '#e8eef5';
+  ctx.beginPath();
+  ctx.arc(0, -dishR * 0.35, Math.max(0.8, W * 0.02), 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+  
+  // ---- Base nozzle (existing) ----
+  const nzW = W * 0.35;
+  const nzH = H * 0.08;
+  ctx.fillStyle = '#1c1e22';
+  ctx.beginPath();
+  ctx.moveTo(-nzW / 2, 0);
+  ctx.lineTo(-nzW / 2 * 0.6, nzH);
+  ctx.lineTo(nzW / 2 * 0.6, nzH);
+  ctx.lineTo(nzW / 2, 0);
+  ctx.closePath();
+  ctx.fill();
+  
+  // ---- Blinking beacon (becomes green when deployed) ----
+  const blink = 0.5 + 0.5 * Math.sin(performance.now() * 0.004);
+  const beaconColor = (p > 0.5) ?
+    `rgba(74,222,128,${blink})` :
+    `rgba(255,60,50,${blink})`;
+  ctx.fillStyle = beaconColor;
+  ctx.beginPath();
+  ctx.arc(0, -H * 0.55, W * 0.05, 0, Math.PI * 2);
+  ctx.fill();
 }
 
 

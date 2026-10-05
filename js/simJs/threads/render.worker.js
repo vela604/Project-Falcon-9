@@ -178,15 +178,19 @@ state.pusherPuff = msg.data.pusherPuff;
         const hotArr = new Float64Array(msg.data.hotBuffer);
         decodeHotState(hotArr, state.bodies);
         
-        // RCS puff fix — apply the separately-sent rcsCmd/lastRcs onto the
-        // same body objects (mutate in place, matching decodeHotState's pattern).
-        if (msg.data.rcsSync) {
-          msg.data.rcsSync.forEach((rc, i) => {
-            const b = state.bodies[i];
-            if (b) { b.rcsCmd = rc.rcsCmd;
-              b.lastRcs = rc.lastRcs; }
-          });
-        }
+       // RCS puff fix — apply the separately-sent rcsCmd/lastRcs onto the
+// same body objects (mutate in place, matching decodeHotState's pattern).
+// payloadOpenedAt rides along the same channel — it's not in the
+// hot buffer either.
+if (msg.data.rcsSync) {
+  msg.data.rcsSync.forEach((rc, i) => {
+    const b = state.bodies[i];
+    if (!b) return;
+    b.rcsCmd = rc.rcsCmd;
+    b.lastRcs = rc.lastRcs;
+    b.payloadOpenedAt = rc.payloadOpenedAt;
+  });
+}
         self.postMessage({ type: 'returnRenderHotBuffer', buffer: hotArr.buffer }, [hotArr.buffer]);
       }
       // else: hotBuffer arrived but we have no bodies yet to decode into

@@ -397,8 +397,11 @@ const _v3State = {
 
   insertionResult: null,
   suicideResult: null,
-
-      lastAltKm: 0,
+  // One-shot flag — payload-open command fires exactly once per mission,
+  // at deployCmdSimTime + PAYLOAD_DEPLOY_OPEN_DELAY_S.
+  payloadOpenFired: false,
+  
+  lastAltKm: 0,
     lastAxialGap: 0,
     lateralArmed: false,
     // One-shot flag — pusher torque fires at most once per mission, only
@@ -421,8 +424,16 @@ const _v3Config = {
 },
   insertion: null,
   fairing: { HAS_FAIRING: true, FAIRING_OPEN_ALT_KM: 80, FAIRING_OPEN_ENABLED: true },
-  done: { SUICIDE_DELAY_AFTER_DEPLOY_S: 1800, CIRC_ATT_KP: 0.5, CIRC_ATT_KD: 4.0, DEORBIT_ENABLED: true },
-  suicide: null,
+  done: {
+  SUICIDE_DELAY_AFTER_DEPLOY_S: 1800,
+  CIRC_ATT_KP: 0.5,
+  CIRC_ATT_KD: 4.0,
+  DEORBIT_ENABLED: true,
+  // Delay (s) between the payload deploy command and firing the
+  // payload-open command (satellite unfolds its panels / dish).
+  PAYLOAD_DEPLOY_OPEN_DELAY_S: 5,
+},
+suicide: null,
 };
 
 (function _v3InitDefaults() {
@@ -699,7 +710,28 @@ break;
       }
 
       send(cmdSetAllThrottle(0));
-      send(cmdSetGimbalRate(0));
+send(cmdSetGimbalRate(0));
+
+// ---- Payload-open command ----
+// After deploy, wait PAYLOAD_DEPLOY_OPEN_DELAY_S seconds, then send
+// a one-shot open command to the deployed payload body. Finding the
+// body by scanning for the payloadBody marker — its index can shift
+// as other bodies spawn.
+if (!_v3State.payloadOpenFired &&
+  Number.isFinite(_v3State.deployCmdSimTime) &&
+  simT >= _v3State.deployCmdSimTime + _v3Config.done.PAYLOAD_DEPLOY_OPEN_DELAY_S) {
+  let _payIdx = -1;
+  for (let _i = 0; _i < snapshot.bodies.length; _i++) {
+    const _b = snapshot.bodies[_i];
+    if (_b && _b.payloadBody && !_b.payloadOpened) { _payIdx = _i; break; }
+  }
+  if (_payIdx >= 0) {
+    send(cmdOpenPayload(_payIdx));
+    _v3State.payloadOpenFired = true;
+  }
+}
+
+// Dwell measured from the DEPLOY COMMAND tick — the correct
 
       // Dwell measured from the DEPLOY COMMAND tick — the correct
       // behaviour. V2 measured from COAST_HOLD_2 entry due to a missing
@@ -770,8 +802,9 @@ _leoTickV3.start = function () {
   _v3State.fairingOpened = false;
   _v3State.deployCmdSimTime = null;
   _v3State.insertionResult = null;
-  _v3State.suicideResult = null;
-  _v3State.lastAltKm = 0;
+_v3State.suicideResult = null;
+_v3State.payloadOpenFired = false;
+_v3State.lastAltKm = 0;
 _v3State.lastAxialGap = 0;
 _v3State.lateralArmed = false;
 _v3State.pusherTorqueFired = false;
@@ -1027,6 +1060,11 @@ function getLeoInsertionV3Config() { return JSON.parse(JSON.stringify(_v3Config)
 }
 function cmdPusherTorque(angAccelRadPerS2, targetOmegaRadPerS, targetBodyIdx) {
   const msg = { type: "pusherTorque", angAccel: angAccelRadPerS2, targetOmega: targetOmegaRadPerS };
+  if (Number.isInteger(targetBodyIdx)) msg.targetBodyIdx = targetBodyIdx;
+  return msg;
+}
+function cmdOpenPayload(targetBodyIdx) {
+  const msg = { type: "openPayload" };
   if (Number.isInteger(targetBodyIdx)) msg.targetBodyIdx = targetBodyIdx;
   return msg;
 }

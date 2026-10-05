@@ -242,6 +242,12 @@ case 'pusherTorque': {
   b._sepTorqueTargetOmega = Number.isFinite(msg.targetOmega) ? msg.targetOmega : null;
   break;
 }
+case 'openPayload': {
+  if (!Number.isFinite(b.payloadOpenedAt)) {
+    b.payloadOpenedAt = state.simTime;
+  }
+  break;
+}
 default: break;
     }
   }

@@ -177,11 +177,12 @@ leoInsertionV3: _mkDefault(
       FAIRING_OPEN_ENABLED: true,
     },
     done: {
-      SUICIDE_DELAY_AFTER_DEPLOY_S: 1800,
-      CIRC_ATT_KP: 0.5,
-      CIRC_ATT_KD: 4.0,
-      DEORBIT_ENABLED: true,
-    },
+  SUICIDE_DELAY_AFTER_DEPLOY_S: 1800,
+  CIRC_ATT_KP: 0.5,
+  CIRC_ATT_KD: 4,
+  DEORBIT_ENABLED: true,
+  PAYLOAD_DEPLOY_OPEN_DELAY_S: 5,
+},
     suicide: {
       SUICIDE_ROTATE_TOL_DEG: 1.0,
       SUICIDE_ROTATE_OMEGA_TOL: 0.02,

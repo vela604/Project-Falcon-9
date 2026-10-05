@@ -571,8 +571,16 @@ const fuelFrac = bottomMaxFuel > 0 ?
       const plH = (pl.height || 1) / mpp,
         plW = (pl.width || 1) / mpp;
       figCtx.save();
-      figCtx.translate(baseX, baseY - payloadBaseY_m / mpp);
-      if (typeof drawPayloadArt === 'function') drawPayloadArt(figCtx, plW, plH);
+figCtx.translate(baseX, baseY - payloadBaseY_m / mpp);
+if (typeof drawPayloadArt === 'function') {
+  let op = 0;
+  if (body && Number.isFinite(body.payloadOpenedAt) && state.simTime > body.payloadOpenedAt) {
+    const dur = (typeof CONFIG !== 'undefined' && Number.isFinite(CONFIG.PAYLOAD_OPEN_DURATION_S)) ?
+      CONFIG.PAYLOAD_OPEN_DURATION_S : 2.5;
+    op = Math.min(1, (state.simTime - body.payloadOpenedAt) / dur);
+  }
+  drawPayloadArt(figCtx, plW, plH, op);
+}
       figCtx.fillStyle = 'rgba(150,220,255,0.85)';
       figCtx.font = '8px "JetBrains Mono", monospace';
       figCtx.textAlign = 'center';

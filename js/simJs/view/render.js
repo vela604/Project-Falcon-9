@@ -1542,20 +1542,30 @@ if (isSingleNozzle) {
     return;
   }
   
-  // I-d2: payload body — simple rectangle (height × width from its record).
-  if (body.payloadBody) {
-    const pl = body.payloadBody.record;
-    const plH_m = Number.isFinite(pl.height) ? pl.height : 1;
-    const plW_m = Number.isFinite(pl.width) ? pl.width : 1;
-    const plH_px = plH_m / mpp;
-    const plW_px = plW_m / mpp;
-    ctx.save();
-    drawPayloadArt(ctx, plW_px, plH_px);
-    ctx.restore();
-    ctx.restore(); // closes the outer drawBodyRocket save
-    
-    return;
+ // I-d2: payload body — simple rectangle (height × width from its record).
+if (body.payloadBody) {
+  const pl = body.payloadBody.record;
+  const plH_m = Number.isFinite(pl.height) ? pl.height : 1;
+  const plW_m = Number.isFinite(pl.width) ? pl.width : 1;
+  const plH_px = plH_m / mpp;
+  const plW_px = plW_m / mpp;
+  // Open progress — driven by the physics-side payloadOpenedAt marker,
+  // which guidance fires once PAYLOAD_DEPLOY_OPEN_DELAY_S after deploy.
+  // Render worker's state.simTime is the last snapshot's time; the
+  // delta gives us a smooth 0→1 unfolding animation.
+  let openProgress = 0;
+  if (Number.isFinite(body.payloadOpenedAt) && state.simTime > body.payloadOpenedAt) {
+    const dur = (typeof CONFIG !== 'undefined' && Number.isFinite(CONFIG.PAYLOAD_OPEN_DURATION_S)) ?
+      CONFIG.PAYLOAD_OPEN_DURATION_S : 2.5;
+    openProgress = Math.min(1, (state.simTime - body.payloadOpenedAt) / dur);
   }
+  ctx.save();
+  drawPayloadArt(ctx, plW_px, plH_px, openProgress);
+  ctx.restore();
+  ctx.restore();
+  
+  return;
+}
   
   if (stackMembers.length) {
   let yOffsetPx = 0;

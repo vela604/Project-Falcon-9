@@ -214,6 +214,10 @@ OCTA_RADIUS: ACTIVE_VEHICLE_FOR_HARDWARE.params.octaRadius, // m — radius of t
 // (see LEO_INSERTION_V2.CIRCULARIZE), so physics and guidance share the
 // same number via the env boot data.
 PAYLOAD_EJECT_KICK_MPS: 3.0, // normal release (coast phase)
+  // Time (s) the payload spends animating from "stowed" (panels folded
+  // against the bus) to "opened" (panels fully extended, dish deployed)
+  // after the open command fires. Visual only — no physics effect.
+  PAYLOAD_OPEN_DURATION_S: 2.5,
   PAYLOAD_EMERGENCY_KICK_MPS: 20.0, // emergency flag on releasePayloadOnActiveBody
   PAYLOAD_EMERGENCY_EJECT_KICK_MPS: 30.0, // emergencyEjectPayload (shielded unit, keeps fairing)
 

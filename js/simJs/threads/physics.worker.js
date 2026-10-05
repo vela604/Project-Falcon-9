@@ -650,6 +650,16 @@ case 'pusherTorque': {
   b._sepTorqueTargetOmega = Number.isFinite(msg.targetOmega) ? msg.targetOmega : null;
   break;
 }
+case 'openPayload': {
+  const b = resolveTargetBody(msg.targetBodyIdx);
+  if (!b) break;
+  // Idempotent — first open wins; subsequent opens are ignored so a
+  // re-fire doesn't restart the animation.
+  if (!Number.isFinite(b.payloadOpenedAt)) {
+    b.payloadOpenedAt = state.simTime;
+  }
+  break;
+}
 
     // ---- Fast-forward support ----
 // captureFullState: return a DEEP CLONE of the worker's canonical
@@ -950,6 +960,10 @@ ec.shutdownDurationS = en.shutdownDurationS;
 // so cloning it every tick is cheap, and guidance needs it for its
 // own stackMassProps (which reads per-tank levels after separation).
 bc.memberFuel = Array.isArray(b.memberFuel) ? b.memberFuel.slice() : [];
+// Payload-open timestamp — set once by the openPayload command, read by
+// the render side to animate the satellite unfolding.
+if (Number.isFinite(b.payloadOpenedAt)) bc.payloadOpenedAt = b.payloadOpenedAt;
+else delete bc.payloadOpenedAt;
 bc.rcsCmd = b.rcsCmd;
 // Phase 3 — Issue 6 restoration: same reasoning as
 // targetGimbalRateDegS above.

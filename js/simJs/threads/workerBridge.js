@@ -304,12 +304,15 @@ if (snap.pusherPuff) {
 payload.hotBuffer = renderHotBuf.buffer;
 transfers.push(renderHotBuf.buffer);
 
-// RCS puff fix: rcsCmd/lastRcs isn't part of the hot buffer schema,
-// so send it separately every tick (cheap — small objects, not a
-// full body/engine clone) so the render worker's puff logic sees
-// live RCS state instead of whatever was frozen at last full sync.
-payload.rcsSync = state.bodies.map(b => ({ rcsCmd: b.rcsCmd, lastRcs: b.lastRcs }));
-    }
+// Per-body fields that change at runtime but aren't in the hot-buffer
+// schema (rcsCmd/lastRcs for RCS visuals; payloadOpenedAt for satellite
+// unfolding). Sent every tick — small objects, cheap.
+payload.rcsSync = state.bodies.map(b => ({
+  rcsCmd: b.rcsCmd,
+  lastRcs: b.lastRcs,
+  payloadOpenedAt: b.payloadOpenedAt,
+}));
+}
 
     window._renderWorker.postMessage({ type: 'state', data: payload }, transfers);
   }
