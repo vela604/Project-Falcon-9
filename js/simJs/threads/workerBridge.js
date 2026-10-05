@@ -10,11 +10,10 @@
   }
   window.__dbgShow = function (which, hist, simTime) {
     if (!el) {
-      el = document.createElement('div');
-      el.style.cssText = 'position:fixed;left:6px;bottom:6px;z-index:2147483647;background:rgba(0,0,0,.8);' +
-        'color:#0f0;font:12px/1.4 monospace;padding:6px 8px;border-radius:4px;pointer-events:none;white-space:pre;';
-      document.body.appendChild(el);
-    }
+  el = document.createElement('div');
+  el.className = 'dbg-overlay';
+  document.body.appendChild(el);
+}
     if (which === 'cmd') lines.cmd = 'cmd latency (ticks)  ' + fmt(hist, '0') + (simTime ? '  t=' + simTime.toFixed(0) + 's' : '');
     else lines.snap = 'snap gap (ticks)    ' + fmt(hist, '1');
     el.textContent = lines.cmd + '\n' + lines.snap + '\n(* = ideal)';
