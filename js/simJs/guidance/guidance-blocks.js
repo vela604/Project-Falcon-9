@@ -40,9 +40,9 @@ const FUNDAMENTAL_BLOCKS = {
       "Pad → MECO. Fires engines, holds attitude to the MECO apogee target, and issues the separation command.",
     defaultConstants: {
       INITIAL_COAST_S: 4.9,
-      PUSH_T_S: 4.8,
-      PUSH_MAX_GIMBAL_DEG: 0.6,
-      PUSH_EAST_SIGN: -1,
+  PUSH_T_S: 4.82,
+  PUSH_MAX_GIMBAL_DEG: 0.60,
+  PUSH_EAST_SIGN: -1,
       HOLD_K_DAMP: 4.0,
       HOLD_MAX_AOA_DEG: 8,
       HOLD_K_DQ: 0.005,
@@ -745,13 +745,13 @@ STAGE_BURN_AOA_MARGIN_DEG: 0.001,
   // nose perfectly aligned (fastest tilt evolution). Small positive
   // or negative value introduces a perpendicular thrust component
   // that changes the natural tilt growth rate.
-  STAGE_BURN_AOA_BIAS_DEG: 0.86,
+  STAGE_BURN_AOA_BIAS_DEG: 0.59,
     COAST_TARGET_TILT_DEG: -90,
       COAST_ROTATE_TOL_DEG: 0.5,
       COAST_ROTATE_OMEGA_TOL: 0.02,
       COAST_ROTATE_TIMEOUT_S: 240,
       COAST_WAIT_BEFORE_APOGEE_S: 90,
-      CIRC_TRIGGER_LEAD_S: 4.66,
+      CIRC_TRIGGER_LEAD_S: 5.53,
       CIRC_DECAY_FRAC: 0.05,
       CIRC_ATT_KP: 0.5,
       CIRC_ATT_KD: 4.0,

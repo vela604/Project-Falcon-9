@@ -222,7 +222,7 @@ a.back:hover { color: var(--cyan); }
     <label for="guideSelect">Guide:</label>
     <select id="guideSelect"></select>
     <label for="durationInput">Duration (s):</label>
-    <input id="durationInput" type="number" value="1500" min="10" max="7200" step="10" style="width:90px;">
+    <input id="durationInput" type="number" value="620" min="10" max="7200" step="10" style="width:90px;">
     <button class="btn btn-run" id="startBtn">▶ Run</button>
     <button class="btn btn-stop" id="stopBtn" disabled>■ Stop</button>
     <button class="btn" id="resetDefaultsBtn" title="Restore all constants to code defaults">↺ Reset to defaults</button>
@@ -1246,7 +1246,7 @@ members.forEach(m => {
 }
 
     // ---- Loop bounds ----
-    const durationS = Math.max(1, parseFloat(durInput.value) || 1500);
+    const durationS = Math.max(1, parseFloat(durInput.value) || 620);
     const dt = CONFIG.DT;
     const maxTicks = Math.ceil(durationS / dt);
 
