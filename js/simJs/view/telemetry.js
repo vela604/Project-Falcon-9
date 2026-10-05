@@ -1113,7 +1113,7 @@ function drawBasalView() {
     // throttle setting — a fuel-starved engine correctly reads off even
     // if its slider is still held up.
     const frac = e.Fmax > 0 ? e.currentF / e.Fmax : 0;
-    const radius = e.isCenter ? 22 : 20;
+    const radius = e.isCenter ? (R * 0.32) : (R * 0.28);
     
     // Fill: faint disc at idle → solid white at full throttle. Alpha
     // ramps smoothly so mid-throttle reads as a soft grey, full throttle
