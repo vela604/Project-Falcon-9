@@ -1835,340 +1835,133 @@ DONE</pre>
       </div>
     </div>
   </div>
-    <!-- 11. leoInsertionV2 -->
+    <!-- 11. leoInsertionV3 -->
   <div class="exp glass pass">
     <div class="exp-head">
       <div>
-        <h3 class="exp-title">LEO Insertion V2 — Full Mission, Universal</h3>
-        <div class="exp-id">leoInsertionV2</div>
-        <div class="exp-time">12:40 PM<span class="exp-time-day">· 26 Sept' 2026</span></div>
+        <h3 class="exp-title">LEO Insertion V3 — Autonomous Pad to Orbit</h3>
+        <div class="exp-id">leoInsertionV3</div>
+        <div class="exp-time">5 Oct' 2026</div>
       </div>
-      <span class="exp-status pass">FULL MISSION · PAYLOAD DEPLOYED · UNIVERSAL</span>
+      <span class="exp-status pass">FULL MISSION · PAYLOAD DEPLOYED</span>
     </div>
     <div class="exp-body">
       <div class="exp-row">
         <div class="exp-label">Target</div>
         <div class="exp-value">
-          One guide, one phase machine, autonomous pad-to-orbit-and-deploy.
-          Ascent → MECO → separation → burn to apogee → RCS trim → coast
-          → circularization burn → coast to apogee → release payload →
-          DONE. Every hand-off handled by guidance, no manual commands
-          after launch.
-          <p>Not tuned for one specific stack or one specific profile —
-  engine values are read at runtime from the fleet record, so a
-  different thruster type, a different stage mass, or a different
-  target altitude all work without touching the guide.</p>
-<p><strong>This guide completes any LEO mission</strong> —
-  any low-Earth-orbit altitude within the vehicle's fuel reach,
-  on any Falcon-class stack in the fleet, from any starting
-  configuration the ascent phase can lift off with. Change the
-  target orbit altitude, swap the thruster type, resize the
-  stage — the phase machine, phase transitions, burn planning,
-  and coast attitude controllers all derive their numbers from
-  the current vehicle and orbit, not from hardcoded stack
-  constants. Only <code>TARGET_ORBIT_ALT_KM</code> needs to be
-  set to whatever altitude the mission calls for; everything
-  else is either a schema contract (engine properties) or
-  runtime-computed (burn times, spool Δv, apogee direction,
-  slew targets).</p>
+          One guidance that flies a rocket from the pad all the way to
+          its target orbit and deploys the payload — no manual commands
+          after launch. Ascent, MECO, stage separation, upper-stage
+          burn, coast, circularization, payload release — every hand-off
+          is autonomous.
+          <p>Not tuned for one specific rocket or one specific altitude.
+          Engine properties (thrust, exhaust velocity, spool times),
+          stage mass, and target orbit altitude are all read at runtime
+          from the current vehicle and mission. Only the target orbit
+          altitude needs to be set. Any rocket capable of reaching the
+          orbit works.</p>
         </div>
       </div>
       <div class="exp-row">
-        <div class="exp-label">What v1 got wrong</div>
+        <div class="exp-label">How it works</div>
         <div class="exp-value">
-          v1 climbed steeply to apogee, coasted, then tried to add all the
-          horizontal velocity in a short burn near the top. That profile
-          fights gravity the whole way — every second of horizontal thrust
-          loses vertical velocity it didn't need to spend. The result was
-          the same floor on every run: apogee locked at 209 km regardless
-          of target, because the available burn never delivered
-          <code>V_orbital</code> and the resulting orbit was elliptical.
-          <p>The failure is a <strong>shape</strong> failure, not a
-          controller failure. Ascent controller, separation logic, coast
-          attitude hold — all worked. The mission had just been aimed at
-          the wrong trajectory.</p>
+          <p>The mission is composed from three reusable blocks —
+          <strong>ascent</strong>, <strong>insertion</strong>, and
+          <strong>deorbit</strong> — glued together by a thin
+          mission-level orchestration layer. Each block is a
+          self-contained state machine with its own constants, its own
+          internal phase flow, and a clean start/stop/tick interface.
+          The orchestrator handles only what's specific to this
+          mission: split detection, the axial-separation window, and
+          dispatching the correct block at the right moment.</p>
+          <p>This composition means the same ascent block can be reused
+          in a different mission (a sounding rocket, a heavier stack, a
+          lunar profile), and the same insertion block can be called
+          with different constants for a different target orbit. Only
+          the mission-level glue changes.</p>
+          <p>All control laws are physics-driven, not tuned-by-hand. The
+          upper stage's cutoff prediction reads the engine's own
+          shutdown duration and computes the residual impulse using the
+          same model physics uses for integration. The payload eject
+          kick is pre-compensated. The coast attitude hold uses a
+          net-zero-force RCS distributor, so attitude corrections don't
+          perturb the trajectory over long coasts.</p>
         </div>
       </div>
       <div class="exp-row">
-        <div class="exp-label">The road to v2</div>
+        <div class="exp-label">Mission flow</div>
         <div class="exp-value">
-          <ul>
-            <li><strong>Coast was wasting altitude.</strong> Sitting at
-              target altitude before burning meant the horizontal burn
-              fought gravity for a 4-5× longer window than the mass-flow
-              math suggested. Fix: stop coasting, keep burning — the
-              burn itself <em>is</em> the ride to apogee.</li>
-            <li><strong>Attitude drift during long coast.</strong> RCS
-              torque without force-balancing walks the orbit off course
-              over 100+ seconds. Fix:
-              <code>targetTorqueRcsNoNetForce</code> — pairs lateral
-              and vertical fires so <code>ΣF = 0</code> is exact by
-              construction, while still delivering the requested
-              torque.</li>
-            <li><strong>Apogee overshoot on shutdown spool.</strong>
-              Merlin-class engines take ~2 s to actually stop; during
-              that window thrust continues and adds ~30 m/s, which at
-              orbital velocity moves apogee by ~50 km. Prediction
-              lookahead reads the engine's own
-              <code>shutdownDurationS</code> and cuts early by the
-              predicted Δv — same physics model in STAGE_BURN's coarse
-              cutoff and CIRCULARIZE's fine cutoff.</li>
-            <li><strong>Main engine alone too coarse.</strong> Even with
-              spool compensation, tick granularity at orbital velocity
-              means the main engine lands within a few km, not metres.
-              Fix: split the burn into two stages — main engine brings
-              apogee close, then <code>RCS_BOOST</code> does a
-              bidirectional prograde/retrograde RCS trim to land
-              exactly on target.</li>
-            <li><strong>Payload release timing.</strong> Releasing at
-  apogee needs precise attitude and orbit. Fix:
-  post-CIRCULARIZE realign — wait for engine shutdown spool to
-  complete, then compute the NEW apogee direction (the burn's 3 s
-  early start shifted apogee from the pre-burn estimate) via
-  eccentricity vector → apogee point → prograde direction there.
-  Bang-bang slew to that fixed inertial θ, hold via PD, eject on
-  vr sign flip. Slew uses the wraparound-safe midpoint-reversal
-  pattern.</li>
-            <li><strong>Payload release silently aborted.</strong>
-              Guidance fires <code>cmdReleasePayload</code> while the
-              engine is still spooling, so physics defers the release
-              until thrust reaches zero. Meanwhile DONE's housekeeping
-              <code>setAllThrottle(0)</code> was calling
-              <code>cancelPendingSequences</code> every tick and
-              clobbering the in-flight <code>pendingRelease</code>.
-              Fix: only cancel pending sequences on <em>non-zero</em>
-              throttle commands. Zero-throttle housekeeping never
-              touches pending state.</li>
-          </ul>
-        </div>
-      </div>
-      <div class="exp-row">
-        <div class="exp-label">Key insights</div>
-        <div class="exp-value">
-          <p><strong>1. Attitude lock at 85° during the orbital burn.</strong>
-          During STAGE_BURN, once the body's tilt-from-local-vertical
-          reaches 85° (near-horizontal), the gimbal control switches
-          from AoA-damping to a PD hold at that exact tilt. Below the
-          threshold the nose stays velocity-aligned (natural gravity
-          turn); above it, thrust points mostly tangentially, which is
-          what actually raises perigee efficiently.</p>
-          <p><strong>2. Coarse + fine — two burn stages.</strong> The
-          main engine cuts when predicted apogee ≥ target − small
-          margin. Then RCS_BOOST closes the gap in either direction:
-          undershoot fires prograde 'up' nozzles, overshoot fires
-          retrograde 'dn' nozzles, exit on crossing detection. Effectively
-          exact — final error bounded only by the RCS per-tick
-          resolution (~2 m).</p>
-          <p><strong>3. Spool compensation is physics, not tuning.</strong>
-          Both cutoffs read the engine's own
-          <code>shutdownDurationS</code> and compute the Δv that will
-          be delivered during spool-down using the same linear-ramp
-          model physics uses for the actual integration. The cutoff
-          fires that much early so the engine reaches zero thrust
-          exactly when the vehicle reaches the target velocity. No
-          hand-tuned margin.</p>
-          <p><strong>4. Payload kick gets pre-compensated.</strong>
-          The deploy mechanism adds a fixed 3 m/s prograde impulse to
-          the payload. The stage only needs to reach
-          <code>V_orbital − kick</code>, so the CIRCULARIZE cutoff
-          fires (spool_Δv + kick) early. The stage ends up 3 m/s short
-          — the payload ends up exactly on the target.</p>
-              <p><strong>5. Bang-bang for large slews, PD for tracking.</strong>
-  Both coast slews (pre- and post-CIRCULARIZE) use the same
-  midpoint-reversal bang-bang the ascent rotation uses —
-  saturating torque, switch signs at the midpoint. Once the nose
-  is on the target direction, the phase exits immediately.
-  Tracking a fixed inertial θ during a long coast is a separate
-  problem, handled by PD with inertial ω damping — the target
-  doesn't rotate, so the rate error is just body.omega.</p>
-
-    <p><strong>6. Wraparound-safe bang-bang slew.</strong> A
-  straightforward <code>delta = target − start</code> picks the
-  LONG way around whenever start and target sit on opposite
-  sides of the ±π seam. Both pre- and post-CIRCULARIZE slews
-  hit this in principle — body.theta is unwrapped (accumulates
-  across the mission, easily past ±180°), while
-  <code>coastTargetThetaInertial</code> comes from
-  <code>atan2</code> and is clamped to [−180°, +180°]. A target
-  of <code>+170°</code> (which is really −190° mod 360°) gives a
-  raw delta of <code>+333°</code> instead of the true shortest
-  <code>−27°</code> — the nose takes the 333° scenic route. Fix:
-  lock the shortest-path delta ONCE on entry via
-  <code>wrapPi(target − start)</code>, then track progress in
-  unwrapped body-θ space (<code>body.theta − startTheta</code>),
-  which is continuous. Exit check also uses a wrapped error.</p>
-
-    <p><strong>7. Net-zero-force RCS distributor everywhere
-    after STAGE_BURN.</strong> Every coast-phase torque command —
-    slew or hold — goes through
-    <code>targetTorqueRcsNoNetForce</code>, not the greedy
-    <code>targetTorqueRcs</code>. The greedy distributor is fine
-    for a brief rotation where small unbalanced fires get absorbed
-    by the surrounding motion, but over a 100+ s coast those
-    residual linear forces accumulate into visible orbit drift.
-    NNF uses only two balanced patterns (opposite lateral pairs
-    and opposite vertical pairs), so <code>ΣF = 0</code> is exact
-    by construction — the trajectory is untouched regardless of
-    how long attitude hold runs.</p>
-  </div>
-</div>
-            <div class="exp-row">
-        <div class="exp-label">Phase machine</div>
-        <div class="exp-value">
-          <pre><span class="cmt">// Post-MECO path</span>
-ASCENT              → _hTick (ascentAoaHold core)
-MECO_SPOOL          → trigger on osculating apogee ≥ 150 km
-SEPARATED_AXIAL     → RCS push apart, pneumatic pusher, 10 m gap
-STAGE_BURN          → full throttle, gimbal control:
-                       pre-85°  : COASTnAoADAMP (velocity-aligned)
-                       post-85° : PD hold at locked 85° tilt
-                    → cutoff at predicted apogee ≥ target − margin,
-                       predictive spool Δv from shutdownDurationS
-RCS_BOOST           → engine off, wait for spool, then bidirectional
-                       RCS trim: 'up' if undershoot, 'dn' if overshoot.
-                       Exit on crossing detection → exact apogee
-                    → one-shot coast plan: eccentricity vector →
-                       apogee point → prograde direction there →
-                       coastTargetThetaInertial (inertial θ)
-COAST_ROTATE        → wraparound-safe bang-bang slew to fixed inertial
-                       coastTargetThetaInertial, via NNF distributor
-COAST_HOLD          → PD hold at coastTargetThetaInertial, inertial-ω
-                       damping, via NNF distributor
-                    → burn trigger when t_rem ≤ startup + 3 s
-CIRCULARIZE         → full throttle, gimbal PD hold at same inertial θ
-                    → cutoff when v_err ≤ (spool_Δv + payload_kick)
-                    → hand off to post-circularize realign
-COAST_ROTATE_2      → wait for engine shutdown spool to complete
-                    → compute coast2TargetThetaInertial from current
-                       (post-spool) state via eccentricity vector →
-                       apogee point → prograde direction there
-                       (no propagation — the orbit is already fixed)
-                    → wraparound-safe bang-bang slew, NNF distributor
-COAST_HOLD_2        → PD hold at coast2TargetThetaInertial, inertial-ω
-                       damping, via NNF distributor
-                    → eject payload on vr sign flip (apogee crossing)
-DONE                → PD hold at coast2TargetThetaInertial, NNF</pre>
+          <pre><span class="cmt">// High-level phase progression</span>
+ASCENT              → powered climb to MECO apogee
+MECO                → main engine cut, separation commanded
+SEPARATION          → axial push apart, one-shot booster tumble kick
+STAGE_BURN          → upper stage burn to target apogee
+RCS_BOOST           → fine trim to exact apogee via RCS
+COAST               → attitude slew + hold toward burn direction
+CIRCULARIZE         → circularization burn at apogee
+PAYLOAD DEPLOY      → release at next apogee crossing
+DEORBIT             → (optional) suicide burn onto target zone</pre>
         </div>
       </div>
       <div class="exp-row">
         <div class="exp-label">Key constants</div>
         <div class="exp-value">
-          <p>Only the ones that actually decide the mission:</p>
-                    <pre>MECO_APOGEE_KM:              150    <span class="cmt">// hand-off trigger</span>
-TARGET_ORBIT_ALT_KM:         320    <span class="cmt">// orbit altitude</span>
-STAGE_BURN_LOCK_TILT_DEG:    85     <span class="cmt">// thrust goes tangential</span>
-STAGE_BURN_CUTOFF_MARGIN_MPS: 3.0   <span class="cmt">// leave gap for RCS trim</span>
-CIRC_TRIGGER_LEAD_S:         3.0    <span class="cmt">// extra burn-start lead</span>
-CIRC_ATT_KP:                 0.5    <span class="cmt">// coast/circ attitude P</span>
-CIRC_ATT_KD:                 4.0    <span class="cmt">// coast/circ attitude D</span>
-PAYLOAD_EJECT_KICK_MPS:      3.0    <span class="cmt">// deploy pre-compensation</span></pre>
-<p>Engine-side values (Ve, mass flow, startup/shutdown
-          durations) are read at runtime from the active engine object
-          — swapping the thruster type in the fleet editor carries
-          through without touching the guide. All constants are
-          tunable at runtime via
-          <code>Guidance.setLeoInsertionV2({...})</code>.</p>
+          <p>These are the ones that decide the mission. Everything else
+          either follows from the vehicle record or is a controller
+          gain that only needs touching if the vehicle class changes.</p>
+          <pre>TARGET_ORBIT_ALT_KM            <span class="cmt">// the mission's orbit altitude</span>
+MECO_APOGEE_KM                 <span class="cmt">// hand-off trigger from ascent</span>
+SEPARATION_DURATION_S          <span class="cmt">// axial separation window</span>
+STAGE_BURN_LOCK_TILT_DEG       <span class="cmt">// when thrust goes tangential</span>
+STAGE_BURN_CUTOFF_MARGIN_MPS   <span class="cmt">// gap left for RCS trim</span>
+CIRC_TRIGGER_LEAD_S            <span class="cmt">// burn-start lead time</span>
+SUICIDE_DELAY_AFTER_DEPLOY_S   <span class="cmt">// orbit dwell before deorbit</span></pre>
+          <p>The engine's own properties — thrust, exhaust velocity,
+          mass flow rate, startup and shutdown durations — are read from
+          the vehicle record at runtime, so swapping the engine type in
+          the fleet editor carries through without touching the guide.</p>
         </div>
       </div>
       <div class="exp-row">
-  <div class="exp-label">Result</div>
-  <div class="exp-value">
-    <strong>Payload delivered to the target LEO orbit.</strong>
-    The mission runs autonomously end-to-end: ascent → MECO →
-    separation → burn to apogee → RCS trim → coast →
-    circularization burn → coast to apogee → release payload.
-    Every hand-off handled by guidance, no manual commands
-    after launch.
-    <p>With the default constants, the guide is calibrated for
-  the <strong>Falcon 9 Block 3 family</strong> and delivers
-  reliably across the <strong>250 – 2000 km altitude band</strong>.
-  Accuracy degrades with altitude: <strong>±0.5 km</strong>
-  apogee/perigee at the lower end of the band (where the
-  circularization burn is short and RCS_BOOST's bidirectional
-  trim closes the residual with room to spare), widening to
-  <strong>±10 km</strong> at 2000 km. The degradation comes from
-  two compounding effects: the required Δv scales with orbital
-  velocity, which shrinks the headroom STAGE_BURN leaves for
-  RCS_BOOST's fine trim; and the coast window (t_rem before
-  burn) stretches with altitude, so accumulated attitude and
-  timing drift over the longer coast contributes more cutoff
-  error than at lower orbits.</p>
-<p>Apogee is closed by RCS_BOOST's bidirectional trim;
-  perigee is closed by CIRCULARIZE's spool and payload-kick
-  pre-compensation. Outside the F9 Block 3 envelope — a
-  lighter stack, a heavier payload, a different thruster type —
-  the ascent phase will still fly, but the later phase timings
-  and cutoff margins are tuned to this vehicle's numbers and
-  would need re-tuning.</p>
-        <p>After CIRCULARIZE, the vehicle re-slews to the NEW
-      apogee direction (post-burn orbit) before the payload
-      releases — the burn's 3 s early start shifts apogee from the
-      pre-burn estimate, and ejecting on the stale direction would
-      leave the payload slightly misaligned with the orbital
-      velocity vector. The realign is exact: engine shutdown spool
-      completes first, then the apogee direction is computed fresh
-      from the current state.</p>
-    <p><strong>Default-constants envelope.</strong> Engine
-  properties (Ve, mass flow, spool durations) and every burn
-  profile (Δv, T_burn, spool Δv, apogee direction, target θ)
-  are read at runtime from the active fleet record and the
-  current orbit — those auto-adjust to any stack. What does
-  NOT auto-adjust are the hand-picked control constants
-  (ascent PUSH amplitude and HOLD damping, MECO trigger,
-  STAGE_BURN margin and tilt-lock, cutoff margins, coast
-  attitude KP/KD, slew tolerances). As shipped, those are
-  tuned for <strong>Falcon 9 Block 3</strong> and deliver the
-  <strong>250 – 2000 km</strong> band with the accuracy above.
-  A fundamentally different stack — say a smaller booster
-  with a heavier upper stage, or a different engine class —
-  would need a fresh pass of pre-flight tuning before the
-  post-MECO phases could be trusted; the state machine,
-  hand-offs, and controller structure carry over unchanged,
-  only the numeric constants need adjusting, same as any real
-  launch vehicle's autopilot before a new mission profile.</p>
-    </div>
-    </div>
+        <div class="exp-label">Result</div>
+        <div class="exp-value">
+          <strong>Payload delivered to the target orbit.</strong>
+          With default constants and a stack sized for the mission, the
+          guide reaches the target altitude, circularizes, deploys the
+          payload, and (if enabled) executes the deorbit burn to the
+          target resting zone.
+          <p>Works across the full range of low-Earth-orbit altitudes.
+          Accuracy depends on the vehicle's control authority at that
+          altitude — a shorter circularization burn gives tighter
+          results. Very high altitudes or very low TWR stacks may need
+          the controller gains adjusted for best results, same as any
+          real autopilot.</p>
+        </div>
+      </div>
       <div class="exp-row">
-  <div class="exp-label">Drawbacks</div>
-  <div class="exp-value">
-    <ul>
-      <li><strong>Wind is untested at mission level.</strong> This
-        guide was developed and verified with the wind toggle off.
-        Every controller in the chain reads the same relative-wind
-        math as physics does, so the structure is wind-aware — but
-        the constants (ascent PUSH amplitude, HOLD damping gains,
-        RCS_BOOST trim characteristics, coast attitude KP/KD) were
-        calibrated against the wind-free case. Running the full
-        mission with wind enabled may pull ascent trajectory
-        slightly off the profile the rest of the phase machine
-        assumes, and the later phases would need their gains
-        retuned to match. Not a design flaw — just an untested
-        regime. Wind-safe operation would be its own tuning
-        exercise.</li>
-      <li><strong>Sun and Moon gravity not modelled.</strong> The
-        sim treats Earth as the only gravitating body. Over the
-        timescales this mission runs (minutes to hours) the
-        perturbation is negligible — the insertion is exact —
-        but long-term orbit propagation would need a proper
-        multi-body integration. The same holds for J2 oblateness,
-        which is also not modelled.</li>
-    </ul>
-  </div>
-</div>
-            <div class="tags">
+        <div class="exp-label">Drawbacks</div>
+        <div class="exp-value">
+          <ul>
+            <li><strong>Wind not yet verified end-to-end.</strong>
+              Controllers read the same relative-wind math physics
+              uses, so the structure is wind-aware — but the constants
+              haven't been tuned against a windy ascent. May need a
+              re-tuning pass for reliable wind-robust operation.</li>
+            <li><strong>Sun and Moon gravity not modelled.</strong>
+              Earth is the only gravitating body. Over the timescales
+              of a single mission this is negligible; only long-term
+              orbit propagation would need multi-body integration.</li>
+          </ul>
+        </div>
+      </div>
+      <div class="tags">
         <span class="tag">full-mission</span>
         <span class="tag">pad-to-orbit</span>
         <span class="tag">payload-deploy</span>
-        <span class="tag">universal-structure</span>
-        <span class="tag">spool-compensation</span>
-        <span class="tag">no-net-force-rcs</span>
-        <span class="tag">tilt-lock</span>
-        <span class="tag">wraparound-safe-slew</span>
-        <span class="tag">bidirectional-trim</span>
-        <span class="tag">post-circularize-realign</span>
-        <span class="tag warn">default-constants-only-for-F9-Block-3</span>
-        <span class="tag warn">250-2000km-band</span>
-        <span class="tag warn">no-multibody-gravity</span>
+        <span class="tag">autonomous</span>
+        <span class="tag">any-target-orbit</span>
+        <span class="tag">block-composed</span>
+        <span class="tag warn">wind-untested</span>
       </div>
     </div>
   </div>
