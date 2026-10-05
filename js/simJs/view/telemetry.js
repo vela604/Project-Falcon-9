@@ -1112,8 +1112,17 @@ function drawBasalView() {
     // Driven by ACTUAL delivered thrust (currentF / Fmax), not the
     // throttle setting — a fuel-starved engine correctly reads off even
     // if its slider is still held up.
+    // Engine disc radii as FRACTIONS of the frame ring radius (R), so the
+// octaweb reads correctly at any panel size. 8 outer engines sit on a
+// ring of radius R*0.95, so adjacent outer centers are
+//   2 · (0.95R) · sin(π/8) ≈ 0.727R
+// apart. Radius 0.30R leaves ~0.127R gap between adjacent outers —
+// neither touching nor floating. Center disc slightly larger so the
+// octaweb's core reads as visually distinct.
+const rOuter  = R * 0.30;
+const rCenter = R * 0.38;
     const frac = e.Fmax > 0 ? e.currentF / e.Fmax : 0;
-    const radius = e.isCenter ? (R * 0.32) : (R * 0.28);
+    const radius = e.isCenter ? rCenter : rOuter;
     
     // Fill: faint disc at idle → solid white at full throttle. Alpha
     // ramps smoothly so mid-throttle reads as a soft grey, full throttle
