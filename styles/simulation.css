@@ -1427,54 +1427,81 @@ canvas.mini-graph { width: 100%; height: 60px; background: var(--bg); border-rad
 }
 
 /* ============================================================
-   Responsive — laptop / mid-size desktops
-   Applies from 761px (mobile cut-off) up to 1440px.
-   Above 1440px, base full-size styles apply.
+   Responsive — laptop / mid-size desktops (761px – 1440px).
+   Above 1440px, base full-desktop sizes apply.
+   Below 761px, mobile block applies (already exists).
    ============================================================ */
 @media (min-width: 761px) and (max-width: 1440px) {
   html, body { font-size: 13px; }
 
-  /* Status bar — thinner rows */
-  .tb-row { padding: 4px 12px; }
-  .btn { padding: 5px 9px; font-size: 11.5px; }
-  .chip-toggle { padding: 5px 9px; font-size: 11.5px; }
+  /* ---- Status bar ---- */
+  .tb-row { padding: 4px 10px; gap: 10px; }
+  .btn { padding: 4.5px 8px; font-size: 11px; }
+  .btn-ic { font-size: 11px; }
+  .chip-toggle { padding: 4.5px 8px; font-size: 11px; }
+  .tb-brand { font-size: 13px; }
 
-  /* Telemetry */
-  #telemetryPanel { width: 138px; padding: 8px 10px 10px; }
-  .tele-sym, .tele-val { font-size: 11px; }
-  .tele-head { font-size: 10px; margin-bottom: 6px; }
+  /* ---- Telemetry — narrower column, tighter rows ---- */
+  #telemetryPanel { width: 132px; padding: 7px 9px 9px; top: 8px; left: 8px; }
+  .tele-sym, .tele-val { font-size: 10.5px; }
+  .tele-head { font-size: 9.5px; margin-bottom: 5px; padding-bottom: 4px; }
+  .tele-row { padding: 2px 0; }
 
-  /* Left toolbar */
-  #leftToolbar .lt-wrapper { transform: translateX(-138px); }
-  #leftToolbar .lt-content { width: 138px; padding: 12px 10px 12px 14px; }
-  #leftToolbar .lt-btn     { font-size: 11.5px; padding: 8px 8px; }
-  #leftToolbar .lt-handle  { width: 28px; height: 64px; font-size: 17px; }
+  /* ---- Panel dock (Rocket figure, Basal, Wind, Fueling, Graphs, Glossary) ---- */
+  #panelDock {
+    width: 232px;
+    top: 8px;
+    right: 8px;
+    bottom: 8px;
+  }
+  .panel { padding: 9px; }
+  .panel-title { font-size: 11px; }
+  .panel-close { width: 22px; height: 22px; font-size: 11px; }
+  canvas#figureCanvas { height: 170px; }
+  canvas#basalCanvas  { height: 150px; }
 
-  /* Right toolbar */
+  /* ---- THE OVERLAP FIX ----
+     Jab right toolbar open ho, panel dock ko left shift karo
+     taaki dono ek doosre ke upar na chadhein.
+     Right toolbar content ≈ 172 + handle 28 + gap ≈ 200px. */
+  #viewport:has(#rightToolbar.open) #panelDock {
+    right: 210px;
+  }
+
+  /* ---- Right toolbar (guidance) ---- */
   #rightToolbar .rt-wrapper { transform: translateX(172px); }
-  #rightToolbar .rt-content { width: 172px; padding: 12px 14px 12px 10px; }
-  #rightToolbar .rt-btn     { font-size: 11.5px; padding: 8px 8px; }
-  #rightToolbar .rt-handle  { width: 28px; height: 64px; font-size: 17px; }
+  #rightToolbar.open .rt-wrapper { transform: translateX(0); }
+  #rightToolbar .rt-content { width: 172px; padding: 12px 12px 12px 10px; }
+  #rightToolbar .rt-btn { font-size: 11px; padding: 7px 8px; }
+  #rightToolbar .rt-btn-config { font-size: 11px; padding: 7px 8px; }
+  #rightToolbar .rt-handle { width: 28px; height: 60px; font-size: 16px; }
+  #rightToolbar .rt-status { font-size: 10px; }
 
-  /* Panel dock */
-  #panelDock { width: 248px; }
-  .panel { padding: 10px; }
-  .panel-title { font-size: 11.5px; }
-  canvas#figureCanvas { height: 180px; }
-  canvas#basalCanvas  { height: 180px; }
+  /* ---- Left toolbar ---- */
+  #leftToolbar .lt-wrapper { transform: translateX(-140px); }
+  #leftToolbar.open .lt-wrapper { transform: translateX(0); }
+  #leftToolbar .lt-content { width: 140px; padding: 12px 10px 12px 12px; }
+  #leftToolbar .lt-btn { font-size: 11px; padding: 7px 8px; }
+  #leftToolbar .lt-handle { width: 28px; height: 60px; font-size: 16px; }
 
-  /* Pilot cluster */
-  .bc-inner    { padding: 10px 12px; gap: 10px; }
-  .dir-btn     { width: 38px; height: 38px; font-size: 13px; }
-  .rot-btn     { width: 32px; height: 32px; font-size: 12px; }
-  input[type=range].vslider { width: 60px; margin: 20px -8px; }
-  #centerThrustSlider { width: 86px; }
-  .thrust-col  { height: 130px; }
+  /* ---- Bottom control cluster ---- */
+  .bc-inner { padding: 8px 10px; gap: 8px; }
+  .dir-btn { width: 36px; height: 36px; font-size: 12px; }
+  .rot-btn { width: 30px; height: 30px; font-size: 11px; }
+  input[type=range].vslider { width: 56px; margin: 18px -8px; }
+  #centerThrustSlider { width: 82px; }
+  .thrust-col { height: 122px; }
   .thrust-quick-btn { font-size: 9px; padding: 3px 5px; }
+  .vslider-label { font-size: 8px; }
+  .vslider-value { font-size: 9.5px; }
+  #centerThrustValue { font-size: 10px; }
 
-  /* Direction HUD */
-  #directionCanvas { width: 148px; height: 94px; }
+  /* ---- Direction HUD ---- */
+  #directionCanvas { width: 140px; height: 88px; }
 
-  /* Mission-phase track */
-  #guidePhaseTrack { width: 220px; }
+  /* ---- Mission-phase track ---- */
+  #guidePhaseTrack { width: 210px; }
+  .gp-row { grid-template-columns: 66px 16px 1fr; }
+  .gp-name { font-size: 9.5px; }
+  .gp-time { font-size: 9px; }
 }
