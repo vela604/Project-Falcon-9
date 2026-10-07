@@ -2,7 +2,7 @@
  // ============================================================================
 // headless/regress-step1.js — Step 1 regression helper.
 //
-//   Capture:  node headless/regress-step1.js capture <out.json> [--duration 1500] [--tunables '<json>']
+//   Capture:  node headless/regress-step1.js capture <out.json> [--duration 700] [--quiet] [--tunables '<json>']
 //   Compare:  node headless/regress-step1.js compare <before.json> <after.json>
 //
 // Capture runs one leoInsertionV3 sim (quiet) and writes a compact, comparable
@@ -47,12 +47,19 @@ function diff(a, b, path, out) {
 const [mode, ...rest] = process.argv.slice(2);
 if (mode === 'capture') {
   const outFile = rest[0];
-  const opts = { guide: 'leoInsertionV3', durationS: 1500, quiet: true };
+  // Default 700 sim-s: payload deploys at ~600 s, so this covers MECO ->
+  // separation -> stage burn -> circ -> deploy. Progress line is printed
+  // (non-quiet) so you can see it is alive; pass --quiet to silence.
+  const opts = { guide: 'leoInsertionV3', durationS: 700, quiet: false };
   for (let i = 1; i < rest.length; i++) {
     if (rest[i] === '--duration') opts.durationS = parseFloat(rest[++i]);
     else if (rest[i] === '--tunables') opts.tunables = JSON.parse(rest[++i]);
+    else if (rest[i] === '--quiet') opts.quiet = true;
   }
+  console.log('starting sim: ' + opts.durationS + ' sim-s (first load of sim files takes a few seconds)...');
+  const t0 = Date.now();
   const res = runSim(opts);
+  console.log('sim done in ' + ((Date.now() - t0) / 1000).toFixed(1) + ' s wall');
   const c = compact(res);
   fs.writeFileSync(outFile, JSON.stringify(c, null, 1));
   const gs = c.guideStatus;
