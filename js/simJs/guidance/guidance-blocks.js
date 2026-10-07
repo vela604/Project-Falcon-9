@@ -491,8 +491,7 @@ const target = Number.isFinite(_constants.MECO_TARGET_BOOSTER_FUEL_KG) ?
 //   fire when residualNextTick <= target
 const dt = env.DT;
 const burnThisTick = mdot_now * dt;
-const residualNextTick = residual - burnThisTick;
-if (residualNextTick <= target) shouldFire = true;
+if (residual <= target) shouldFire = true;
   }
   
   if (shouldFire) {
