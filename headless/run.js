@@ -4,9 +4,9 @@
 //
 // Examples:
 //   node headless/run.js
-//   node headless/run.js --guide leoInsertionV2 --duration 1500
+//   node headless/run.js --guide leoInsertionV3 --duration 1500
 //   node headless/run.js --fueling '{"boosterPct":90,"stagePct":100}'
-//   node headless/run.js --tunables '[{"path":"ASCENT.PUSH_MAX_GIMBAL_DEG","value":0.16}]'
+//   node headless/run.js --tunables '[{"path":"ascent.PUSH_MAX_GIMBAL_DEG","value":0.16}]'
 //   node headless/run.js --json > result.json
 // ============================================================================
 
@@ -54,7 +54,7 @@ if (args.json) {
   console.log('maxQ:            ' + tr.maxQKPa.toFixed(1) + ' kPa');
   console.log('fuel used:       ' + (tr.initialFuelKg - st.bodies.reduce((s, b) => s + (b.fuelMass || 0), 0)).toFixed(0) + ' kg');
   console.log('bodies:');
-    st.bodies.forEach(b => {
+  st.bodies.forEach(b => {
     const status = b.crashed ? 'CRASHED' :
       b.landed ? 'LANDED' :
       b.settled ? 'settled' :
@@ -80,4 +80,4 @@ if (args.json) {
     console.log('  median: ' + median.toFixed(0) + ' ms');
     console.log('  last:   ' + ct[ct.length - 1].ms.toFixed(0) + ' ms  (t=' + ct[ct.length - 1].atSim.toFixed(0) + 's)');
   }
-  }
+}

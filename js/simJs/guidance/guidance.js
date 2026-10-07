@@ -1,9 +1,9 @@
 // ============================================================================
 // guidance.js — Production guidance orchestrator.
 //
-// SCOPE: this file ships EXACTLY ONE user-facing guide — leoInsertionV2 —
+// SCOPE: this file ships EXACTLY ONE user-facing guide — leoInsertionV3 —
 // plus the internal ascent sub-machine (_hTick / ASCENT_HOLD) that
-// leoInsertionV2's ASCENT phase delegates to. Every other guide that has
+// leoInsertionV3's ASCENT phase delegates to. Every other guide that has
 // ever existed (testGuide, predictiveTorque, predictivePlus, the AoA-push
 // family, ascentRR, ascentAoaHold-as-public-guide, leoInsertion v1,
 // gimbalPredictive2, predictVerifier) has been moved verbatim to
@@ -11,7 +11,7 @@
 // kept as an archive for the guidance_log.html history and for future
 // reference if we ever want to bring an experiment back.
 //
-// Everything here is scoped so that leoInsertionV2 is UNAFFECTED by the
+// Everything here is scoped so that leoInsertionV3 is UNAFFECTED by the
 // removal — the ascent sub-machine, config bag, phase log, command
 // builders, and export/import state all behave byte-for-byte the same as
 // they did in the pre-split file.
@@ -166,7 +166,7 @@ const GUIDE_PHASE_SEQUENCES = {
   let _guideStartT = null;
   let _lastSimTime = 0;
 
-  // Status labels — empty now that only leoInsertionV2 remains (which is
+  // Status labels — empty now that only leoInsertionV3 remains (which is
   // not flagged). Kept as an object so getGuideStatusLabel keeps working
   // for any future guide that wants an inline annotation.
   const GUIDE_STATUS_LABELS = {};
@@ -869,8 +869,6 @@ out.suicidePendingStartS =
 if (_v3State.insertionBlock) {
   const ins = _v3State.insertionBlock.getStatus();
   Object.assign(out, {
-        stageBurnLocked: ins.stageBurnLocked,
-        stageBurnTargetTiltDeg: ins.stageBurnTargetTiltDeg,
         circTriggerLeadS: ins.circTriggerLeadS,
         apogeeKm: ins.apogeeKm,
         perigeeKm: ins.perigeeKm,
@@ -926,7 +924,7 @@ function getLeoInsertionV3Config() { return JSON.parse(JSON.stringify(_v3Config)
   // ============================================================================
   // Guide config API — table + accessors.
   //
-  // Only leoInsertionV2 has tunable constants now. The table shape is kept
+  // Only leoInsertionV3 has tunable constants now. The table shape is kept
   // identical so callers (guidance modal, presets page, tester, fast page)
   // don't need any change.
   // ============================================================================

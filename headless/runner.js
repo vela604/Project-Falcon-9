@@ -8,10 +8,10 @@
 //   const { runSim } = require('./headless/runner');
 //   const result = runSim({
 //     stackId: 'stk_falcon9-b5',
-//     guide: 'leoInsertionV2',
+//     guide: 'leoInsertionV3',
 //     durationS: 1500,
 //     environment: { atmosphere: true, slosh: true, imu: false, wind: {enabled:false} },
-//     tunables: [{ path: 'ASCENT.PUSH_MAX_GIMBAL_DEG', value: 0.16 }],
+//     tunables: [{ path: 'ascent.PUSH_MAX_GIMBAL_DEG', value: 0.16 }],
 //     fueling: { boosterPct: 100, stagePct: 100 },
 //   });
 // ============================================================================
@@ -588,7 +588,7 @@ function runSim(options) {
   options = options || {};
   const stackId = options.stackId || 'stk_falcon9-b5';
   const vehicleId = options.vehicleId || 'falcon9-b5-booster';
-  const guide = options.guide || 'leoInsertionV2';
+  const guide = options.guide || 'leoInsertionV3';
   const durationS = Number.isFinite(options.durationS) ? options.durationS : 1500;
   const quiet = !!options.quiet;
 

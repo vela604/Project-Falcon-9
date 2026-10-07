@@ -1,0 +1,206 @@
+{
+  "_readme": "Tuner settings file for leoInsertionV3 (equivalent of V2's b5-leo.json). Sirf paanch tunables vary honge; baaki guidance constants code defaults pe rehte hain. Numbers jinke naam me 'calibrate' hai wo placeholders hain - baseline run ke baad fix karo (PROMPT.md Step 2).",
+  "schemaVersion": 1,
+  "name": "b5-leo-v3",
+
+  "mission": {
+    "stackId": "stk_falcon9-b5",
+    "vehicleId": "falcon9-b5-booster",
+    "guide": "leoInsertionV3",
+    "targetOrbitAltKm": 320,
+    "durationCapS": 900,
+    "_durationNote": "320 km pe pad->payload deploy ~600 s (manual best 590 s). 900 s sirf safety cap; payload cleared pe early stop hoga. Bade orbit (e.g. 2000 km) ke liye cap badhana padega - target altitude ke hisaab se config me set karo.",
+    "manualBenchmarkDeployTimeS": 590,
+    "quiet": true,
+    "fueling": { "boosterPct": 100, "stagePct": 100 },
+    "environment": {
+      "atmosphere": true,
+      "slosh": true,
+      "imu": false,
+      "wind": { "enabled": false, "speed": 0, "directionDeg": 0 }
+    },
+    "deorbit": false,
+    "_deorbitNote": "Deorbit hamesha SKIP (done.DEORBIT_ENABLED=false). Stage residual target 0-50 kg. Suicide-ON variant tuning scope me nahi."
+  },
+
+  "fixed": [
+    { "path": "insertion.TARGET_ORBIT_ALT_KM", "value": 320 },
+    { "path": "done.DEORBIT_ENABLED", "value": false }
+  ],
+  "_fixedNote": "Ye mission definition hain, tunables nahi. Har eval me tunables ke saath POORA set bhejna hai kyunki Guidance ka _v3Config cached sim instance me runs ke beech persist karta hai.",
+
+  "tunables": [
+    {
+      "id": "ascent_profile_constant",
+      "kind": "derived",
+      "writes": ["ascent.PUSH_MAX_GIMBAL_DEG", "ascent.PUSH_T_S"],
+      "unit": "deg*s^2",
+      "definition": "A = PUSH_MAX_GIMBAL_DEG * PUSH_T_S^2",
+      "anchorPushT_s": 4.82,
+      "gimbalQuantumDeg": 0.01,
+      "timeQuantumS": 0.0125,
+      "_timeQuantumNote": "1 sim tick = 1/80 s. T hamesha integer ticks (n/80) me rakho, float rounding drift se bachne ke liye.",
+      "boundsStatus": "provisional",
+      "lower": 9.0,
+      "upper": 20.0,
+      "initial": 13.94,
+      "scale": "linear",
+      "_note": "Default 0.60 deg x 4.82^2 = 13.94. Collapse: G_raw=A/T0^2 -> round 0.01 -> T_raw=sqrt(A/G) -> round 0.01 -> A_eff=G*T^2. CMA ko A_eff wapas feed karo."
+    },
+    {
+      "id": "stage_burn_aoa_bias",
+      "kind": "direct",
+      "path": "insertion.STAGE_BURN_AOA_BIAS_DEG",
+      "unit": "deg",
+      "quantum": 0.0001,
+      "lower": -0.5,
+      "upper": 2.5,
+      "initial": 0.59,
+      "scale": "linear"
+    },
+    {
+      "id": "stage_burn_aoa_margin",
+      "kind": "direct",
+      "path": "insertion.STAGE_BURN_AOA_MARGIN_DEG",
+      "unit": "deg",
+      "quantum": 0.0001,
+      "lower": 0.0001,
+      "upper": 0.05,
+      "initial": 0.001,
+      "scale": "log",
+      "_note": "Decades me vary hota hai, isliye log scale pe search."
+    },
+    {
+      "id": "circ_trigger_lead",
+      "kind": "direct",
+      "path": "insertion.CIRC_TRIGGER_LEAD_S",
+      "unit": "s",
+      "quantum": 0.0125,
+      "boundsStatus": "provisional",
+      "lower": 0.0,
+      "upper": 20.0,
+      "initial": 5.53,
+      "scale": "linear",
+      "_note": "Quantum = 1 sim tick (0.0125 s), integer ticks me store karo. Effective trigger window = engine startupDurationS + ye lead. Baseline run raw defaults (5.53, 4.82) pe hoga taaki manual 590 s result reproduce ho; lattice snapping uske baad shuru."
+    },
+    {
+      "id": "meco_target_booster_fuel",
+      "kind": "direct",
+      "path": "ascent.MECO_TARGET_BOOSTER_FUEL_KG",
+      "unit": "kg",
+      "quantum": 1,
+      "lower": 20000,
+      "upper": 110000,
+      "initial": 52612,
+      "scale": "linear"
+    }
+  ],
+
+  "scoring": {
+    "_note": "Score = LOWER IS BETTER. Hard fail => failPenalty + graded depth (taaki CMA ko slope mile, flat plateau nahi).",
+    "hardConstraints": {
+      "maxG": { "enabled": false, "_note": "runner tracker.maxG ki calculation GALAT hai - use mat karo. Evaluator hook me apni G-load (non-gravitational accel / g0) compute karo, Step 3 me verify karke tabhi enable karo." },
+      "maxQKPa": { "limit": 50.0, "calibrate": true, "calibrateFactorOverBaseline": 1.25 },
+      "crashed": false,
+      "circMinRadialVelocityMps": { "min": 0.0, "_note": "CIRCULARIZE phase ke poore dauraan vr >= 0. Negative = outright fail." },
+      "payloadMustBeReleasedAndCleared": true
+    },
+    "failPenalty": 1000000,
+    "softTerms": [
+      { "id": "apogeeErrKm",    "target": 320, "tolerance": 1.0,    "scale": 1.0,    "weight": 1000,  "mode": "deadzoneAbs" },
+      { "id": "perigeeErrKm",   "target": 320, "tolerance": 1.0,    "scale": 1.0,    "weight": 1000,  "mode": "deadzoneAbs" },
+      { "id": "eccentricity",   "target": 0,   "tolerance": 0.0005, "scale": 0.001,  "weight": 500,   "mode": "deadzoneAbs" },
+      { "id": "boosterFuelLeftKg", "direction": "maximize", "weightPerKg": 0.001 },
+      { "id": "timeToDeployS",     "direction": "minimize", "weightPerS": 0.0001 }
+    ],
+    "_hierarchyCheck": "Unit test likho: orbit error beat karna chahiye fuel ko, fuel beat kare time ko. Weights tabhi final jab ye test pass ho."
+  },
+
+  "phases": [
+    {
+      "id": 0, "name": "baseline",
+      "vary": [],
+      "eval": "full",
+      "purpose": "Defaults pe run, metrics + hard-limit calibration + deploy time + wall time naapo."
+    },
+    {
+      "id": 1, "name": "ascent_profile",
+      "vary": ["ascent_profile_constant"],
+      "eval": "full",
+      "_evalNote": "Full run ~600 sim-s hi hai (~6 s wall), isliye default full. Truncated (stopAtPhase COAST_ROTATE) optional speedup, sirf agar baseline me proxy valid dikhe.",
+      "objective": "apogee within tol + eccentricity/perigee proxy + stage fuel feasibility",
+      "method": "lattice grid scan + local refine (1-D)",
+      "_note": "Lattice discrete hai (G,T 0.01 rounding), isliye CMA nahi, grid+refine."
+    },
+    {
+      "id": 2, "name": "aoa_bias",
+      "vary": ["stage_burn_aoa_bias"],
+      "eval": "full",
+      "objective": "same as phase 1",
+      "method": "1-D scan + golden/Brent refine",
+      "failureModes": "bohot chhota bias => apogee target tak nahi pahunchta; bohot bada => apogee ok par eccentricity zyada"
+    },
+    {
+      "id": 3, "name": "aoa_margin",
+      "vary": ["stage_burn_aoa_margin"],
+      "eval": "full",
+      "method": "log-scale 1-D scan, tight range"
+    },
+    {
+      "id": 4, "name": "circ_lead",
+      "vary": ["circ_trigger_lead"],
+      "eval": "full",
+      "stopAt": "payload cleared",
+      "target": { "metric": "timeToNextApogeeAtCircBurnEndS", "value": 4.0, "acceptMin": 3.9, "acceptMax": 4.5 },
+      "hard": "circMinRadialVelocityMps >= 0",
+      "method": "monotone bisection on 0.01 lattice (zyada lead => burn end pe apogee se zyada door)"
+    },
+    {
+      "id": 5, "name": "meco_fuel",
+      "vary": ["meco_target_booster_fuel"],
+      "eval": "full",
+      "target": { "metric": "stageResidualFuelAfterEjectKg", "range": [0, 50] },
+      "method": "monotone scan + bisection: sabse BADI MECO fuel value jo abhi bhi residual target aur orbit hard constraints satisfy kare",
+      "_note": "MECO badhao => stage residual kam. Fail point se pehle back off. Baad me phase 1-4 anchors ka ek quick re-verify (max 2 loops)."
+    },
+    {
+      "id": 6, "name": "cma_refine",
+      "vary": ["ascent_profile_constant", "stage_burn_aoa_bias", "stage_burn_aoa_margin", "circ_trigger_lead"],
+      "freeze": ["meco_target_booster_fuel"],
+      "eval": "full",
+      "method": "CMA-ES 4-D, phases 1-5 ke anchors se warm start, normalised [0,1] space"
+    }
+  ],
+
+  "boundsPolicy": {
+    "_note": "Saare bounds PROVISIONAL hain (sirf 320 km manual tune se andaaza). 160 km aur 2000 km pe pehli runs ke baad narrow region confirm hoga.",
+    "autoExpand": true,
+    "expandWhenBestWithinFracOfEdge": 0.05,
+    "expandFactor": 1.5,
+    "maxExpansions": 3,
+    "recordLearnedBounds": "tuner/out/learned-bounds.json",
+    "_recordNote": "Har tune ke baad (targetAltKm -> final best values + jis region me score achha tha) save karo. Multiple altitudes ke results se future tuners ke liye narrow bounds / altitude-based initial guess nikalenge."
+  },
+
+  "cma": {
+    "popsize": 8,
+    "sigma0": 0.15,
+    "_sigma0Note": "Normalised space me. Warm start hai isliye chhota; cold start ka 0.3 nahi.",
+    "maxGenerations": 40,
+    "maxEvals": 400,
+    "plateau": { "patienceGenerations": 5, "minRelImprovement": 0.001 },
+    "tolX": 0.0001,
+    "seed": 12345,
+    "snapToLattice": true,
+    "feedBackEffectiveValues": true,
+    "cacheByLatticePoint": true,
+    "parallelWorkers": "auto",
+    "checkpointFile": "tuner/checkpoint.json"
+  },
+
+  "output": {
+    "bestConstantsFile": "tuner/out/b5-leo-v3.best.json",
+    "reportFile": "tuner/out/b5-leo-v3.report.md",
+    "logFile": "tuner/out/evals.jsonl"
+  }
+}

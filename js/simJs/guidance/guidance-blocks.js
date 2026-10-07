@@ -28,8 +28,9 @@ const FUNDAMENTAL_BLOCKS = {
   // ASCENT — pad → MECO_SPOOL
   //
   // Runs the ascent attitude sub-machine (PRE_COAST → PUSH → COAST →
-  // HOLD → COASTnAoADAMP), monitors apogee, and when apogee crosses
-  // MECO_APOGEE_KM: issues cmdSeparate() and ends.
+  // HOLD → COASTnAoADAMP), monitors the booster tank, and when the
+  // booster's residual fuel (after shutdown spool-down) reaches
+  // MECO_TARGET_BOOSTER_FUEL_KG: issues cmdSeparate() and ends.
   //
   // Body-locked to the launch stack (typically index 0).
   // ==========================================================================
@@ -37,7 +38,7 @@ const FUNDAMENTAL_BLOCKS = {
     name: "ascent",
     displayName: "Ascent",
     description:
-      "Pad → MECO. Fires engines, holds attitude to the MECO apogee target, and issues the separation command.",
+      "Pad → MECO. Fires engines, runs the ascent attitude sub-machine, and issues the separation command when the booster's residual fuel reaches the MECO fuel target.",
     defaultConstants: {
       INITIAL_COAST_S: 4.9,
   PUSH_T_S: 4.82,
@@ -54,16 +55,11 @@ const FUNDAMENTAL_BLOCKS = {
       COAST_DAMP_GAIN: 16,
       COAST_DAMP_K: 4.0,
         GIMBAL_TARGET: "center",
-    // MECO trigger mode. false → apogee-based (legacy, unchanged).
-    // true → fuel-based: fire MECO when the booster's tank has exactly
-    // MECO_TARGET_BOOSTER_FUEL_KG left AFTER the shutdown spool-down
-    // burns through its residual flow. MECO_APOGEE_KM is ignored when
-    // this is true.
-    MECO_TRIGGER_ON_FUEL: false,
-    // Residual booster tank fuel (kg) desired at the end of shutdown
-    // spool-down. Only read when MECO_TRIGGER_ON_FUEL is true.
+    // MECO is fuel-triggered (the only trigger): fire MECO when the
+    // booster's tank will have exactly MECO_TARGET_BOOSTER_FUEL_KG left
+    // AFTER the shutdown spool-down burns through its residual flow.
+    // Residual booster tank fuel (kg) desired at the end of spool-down.
     MECO_TARGET_BOOSTER_FUEL_KG: 52612,
-    MECO_APOGEE_KM: 150,
   },
   importantFields: [],
     createInstance: function() {
@@ -422,9 +418,8 @@ const FUNDAMENTAL_BLOCKS = {
   
   const simT = snapshot.simTime;
   
-  // Always compute apogee — used both for the apogee-trigger path
-  // and for the diagnostic payload (recorded at MECO regardless of
-  // which trigger mode fired).
+  // Always compute apogee — diagnostic only (recorded in the MECO
+  // result payload and status); it no longer gates the trigger.
   const r_m = Math.hypot(body.rx, body.ry);
   const ux_m = body.rx / r_m,
     uy_m = body.ry / r_m;
@@ -448,8 +443,8 @@ const FUNDAMENTAL_BLOCKS = {
   let shouldFire = false;
   let boosterFuelNow = null;
   
-  if (_constants.MECO_TRIGGER_ON_FUEL) {
-    // Fuel-based trigger: fire MECO the first tick where the current
+  {
+    // Fuel-based trigger (sole trigger): fire MECO the first tick where the current
     // booster tank fuel minus the fuel that will still burn during
     // the shutdown spool-down reaches MECO_TARGET_BOOSTER_FUEL_KG.
     //
@@ -498,9 +493,6 @@ const dt = env.DT;
 const burnThisTick = mdot_now * dt;
 const residualNextTick = residual - burnThisTick;
 if (residualNextTick <= target) shouldFire = true;
-  } else {
-    // Apogee-based trigger (legacy).
-    if (apogeeKm >= _constants.MECO_APOGEE_KM) shouldFire = true;
   }
   
   if (shouldFire) {
@@ -730,7 +722,6 @@ setState(s) {
     defaultConstants: {
     GIMBAL_TARGET: "all",
   STAGE_BURN_CUTOFF_MARGIN_MPS: 0.0,
-  STAGE_BURN_LOCK_TILT_DEG: 90,
 // AoA bootstrap margin + PD gains.
   // AoA bootstrap margin + PD gains. AoA entering STAGE_BURN is ~1°
 // from gravity-gradient drift during the 10m axial wait; the
@@ -783,8 +774,6 @@ STAGE_BURN_AOA_MARGIN_DEG: 0.001,
     phase: "STAGE_BURN",
     phaseStart: 0,
     // STAGE_BURN
-    stageBurnLocked: false,
-    stageBurnTargetTiltDeg: 0,
     stageBurnSpooled: false,
     stageBurnAoaBootstrapped: false,
     lastApogeeKm: 0,
@@ -936,8 +925,6 @@ STAGE_BURN_AOA_MARGIN_DEG: 0.001,
             _send(Guidance.cmdSetAllThrottle(Infinity));
 
             const I_next = dNext.massProps.I;
-const localVert = Math.atan2(-body.rx, body.ry);
-const currentTiltDeg = ((body.theta - localVert) * 180) / Math.PI;
 
 // ---- Spool wait ----
 // Hold gimbal rate at 0 and skip attitude control until every engine
@@ -957,17 +944,6 @@ if (!_st.stageBurnSpooled) {
     break;
   }
   _st.stageBurnSpooled = true;
-}
-
-if (
-  !_st.stageBurnLocked &&
-  Math.abs(currentTiltDeg) >= cfg.STAGE_BURN_LOCK_TILT_DEG
-) {
-  _st.stageBurnLocked = true;
-  _st.stageBurnTargetTiltDeg =
-    currentTiltDeg >= 0
-      ? cfg.STAGE_BURN_LOCK_TILT_DEG
-      : -cfg.STAGE_BURN_LOCK_TILT_DEG;
 }
 
 // ---- Attitude torque ----
@@ -1017,21 +993,10 @@ if (!_st.stageBurnAoaBootstrapped) {
 }
 
 if (tau_desired === null) {
-  if (_st.stageBurnLocked) {
-    const targetAbsTheta =
-      localVert + (_st.stageBurnTargetTiltDeg * Math.PI) / 180;
-    const thetaErr = _wrapPi(body.theta - targetAbsTheta);
-    const r2 = body.rx * body.rx + body.ry * body.ry;
-    const h = body.rx * body.vy - body.ry * body.vx;
-    const omegaLocalVert = r2 > 1 ? h / r2 : 0;
-    const omegaRelToTarget = body.omega - omegaLocalVert;
-    tau_desired =
-      -I_next *
-      (cfg.CIRC_ATT_KP * thetaErr +
-        cfg.CIRC_ATT_KD * omegaRelToTarget);
-  } else {
-  // Same PD-on-AoA as the bootstrap, but running continuously while
-  // STAGE_BURN is unlocked. Using AoA's own rate (ω_body + P/r²)
+  {
+  // Same PD-on-AoA as the bootstrap, but running continuously for the
+  // whole STAGE_BURN (single control law — no fixed-tilt lock mode).
+  // Using AoA's own rate (ω_body + P/r²)
   // rather than raw ω_body, so the controller sees the true attitude
   // error against the velocity vector.
   //
@@ -1828,8 +1793,6 @@ const tau_target = tau_desired - dNext.torqueEnvironmental;
           _st.ticks = 0;
           _st.phase = "STAGE_BURN";
           _st.phaseStart = 0;
-          _st.stageBurnLocked = false;
-_st.stageBurnTargetTiltDeg = 0;
 _st.stageBurnSpooled = false;
 _st.stageBurnAoaBootstrapped = false;
 _st.lastApogeeKm = 0;
@@ -1913,8 +1876,6 @@ _st.lastApogeeKm = 0;
     return {
       phase: _st.phase,
       ticks: _st.ticks,
-      stageBurnLocked: _st.stageBurnLocked,
-      stageBurnTargetTiltDeg: _st.stageBurnTargetTiltDeg,
       apogeeKm: _st.lastApogeeKm,
       perigeeKm: _st.lastPerigeeKm,
       coastTBurnPractical: _st.coastTBurnPractical,
