@@ -38,14 +38,14 @@
       "definition": "A = PUSH_MAX_GIMBAL_DEG * PUSH_T_S^2",
       "anchorPushT_s": 4.82,
       "gimbalQuantumDeg": 0.01,
-      "timeQuantumS": 0.0125,
-      "_timeQuantumNote": "1 sim tick = 1/80 s. T hamesha integer ticks (n/80) me rakho, float rounding drift se bachne ke liye.",
+      "pushTQuantumS": 0.000125,
+      "_timeQuantumNote": "PUSH_T_S CONTINUOUS hai (Step 3 tscan: 0.1-tick steps pe har metric badla). Isliye T fine grid pe: 0.01 tick = 0.000125 s, integer n * quantum. (circ lead alag hai: wo threshold hai, 1 tick granularity.)",
       "boundsStatus": "provisional",
       "lower": 9.0,
       "upper": 20.0,
       "initial": 13.94,
       "scale": "linear",
-      "_note": "Default 0.60 deg x 4.82^2 = 13.94. Collapse: G_raw=A/T0^2 -> round 0.01 -> T_raw=sqrt(A/G) -> round 0.01 -> A_eff=G*T^2. CMA ko A_eff wapas feed karo."
+      "_note": "Default 0.60 deg x 4.82^2 = 13.94. Collapse: G_raw=A/T0^2 -> round 0.01 -> T_raw=sqrt(A/G) -> round pushTQuantumS -> A_eff=G*T^2. CMA ko A_eff wapas feed karo."
     },
     {
       "id": "stage_burn_aoa_bias",
@@ -104,9 +104,14 @@
       "crashed": false,
       "circMinRadialVelocityMps": {
         "min": 0.0,
-        "softWeightPerMps": 1.0,
+        "softWeightPerMps": 0.01,
         "hardFloor": -2.0,
         "_note": "vr thodi der negative ja kar wapas positive ho sakta hai (physics). Isliye hard fail NAHI: vr_min < 'min' pe sirf chhota soft penalty (tie-breaker, softWeightPerMps per m/s), kyunki asli accuracy loss orbit terms (apogee/perigee/ecc) me already dikhta hai. Hard fail sirf vr_min < hardFloor (PROVISIONAL -2.0 m/s) pe, graded depth ke saath."
+      },
+      "circVrAtEndMinMps": {
+        "enabled": true,
+        "min": 0.05,
+        "_note": "Feasibility cliff (Step 3 tscan) circVrAtEnd=0 pe hai: neeche payload_not_cleared/no_final_orbit. Safety margin 0.05 m/s ~ 5 lead ticks ~ manual best (0.046). NOTE: 4 s margin target vrEnd~0.027 se match karta hai, isliye ye safety margin actual margin ko ~7 s pe rakhegi (3.9-4.5 window override). Program mature hone par min=0 kar do."
       },
       "payloadMustBeReleasedAndCleared": true
     },
@@ -115,8 +120,8 @@
       { "id": "apogeeErrKm",    "target": 320, "tolerance": 1.0,    "scale": 1.0,    "weight": 1000,  "mode": "deadzoneAbs" },
       { "id": "perigeeErrKm",   "target": 320, "tolerance": 1.0,    "scale": 1.0,    "weight": 1000,  "mode": "deadzoneAbs" },
       { "id": "eccentricity",   "target": 0,   "tolerance": 0.0005, "scale": 0.001,  "weight": 500,   "mode": "deadzoneAbs" },
-      { "id": "boosterFuelLeftKg", "direction": "maximize", "weightPerKg": 0.001 },
-      { "id": "timeToDeployS",     "direction": "minimize", "weightPerS": 0.0001 }
+      { "id": "boosterFuelLeftKg", "direction": "maximize", "weightPerKg": 0.01 },
+      { "id": "timeToDeployS",     "direction": "minimize", "weightPerS": 0.001 }
     ],
     "_hierarchyCheck": "Unit test likho: orbit error beat karna chahiye fuel ko, fuel beat kare time ko. Weights tabhi final jab ye test pass ho."
   },

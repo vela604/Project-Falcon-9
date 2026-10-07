@@ -28,6 +28,7 @@ async function t(name, fn) {
   try { await fn(); passed++; console.log('  ok   ' + name); }
   catch (e) { failed++; console.log('  FAIL ' + name + '\n       ' + (e && e.message)); }
 }
+const noCliff = c => { const k = JSON.parse(JSON.stringify(c)); k.scoring.hardConstraints.circVrAtEndMinMps.enabled = false; return k; };
 const near = (a, b, tol, msg) => assert.ok(Math.abs(a - b) <= tol, (msg || '') + ' expected ' + b + ' got ' + a);
 
 // ---------------------------------------------------------------------------
@@ -40,21 +41,21 @@ async function unit() {
   await t('collapse of default A=13.94 lands on lattice', () => {
     const c = ev.collapseAscent(tA, 13.94);
     near(c.G * 100, Math.round(c.G * 100), 1e-9, 'G on 0.01 grid');
-    near(c.T * 80, Math.round(c.T * 80), 1e-9, 'T on tick grid');
+    near(c.T / tA.pushTQuantumS, Math.round(c.T / tA.pushTQuantumS), 1e-6, 'T on fine grid');
     near(c.A_eff, 13.94, 13.94 * 0.004, 'A_eff within 0.4% of A');
   });
   await t('A_eff == G*T^2 exactly and ticks are integers', () => {
     for (let A = 9; A <= 20; A += 0.137) {
       const c = ev.collapseAscent(tA, A);
       assert.strictEqual(c.A_eff, c.G * c.T * c.T);
-      assert.ok(Number.isInteger(c.Tticks) && c.Tticks >= 1);
+      assert.ok(Number.isInteger(c.Tn) && c.Tn >= 1);
     }
   });
   await t('collapse(A_eff) stays within one lattice neighbour of collapse(A) (report only)', () => {
     let same = 0, n = 0;
     for (let A = 9; A <= 20; A += 0.0137) {
       const c1 = ev.collapseAscent(tA, A), c2 = ev.collapseAscent(tA, c1.A_eff);
-      n++; if (c1.Tticks === c2.Tticks && Math.abs(c1.G - c2.G) < 1e-9) same++;
+      n++; if (c1.Tn === c2.Tn && Math.abs(c1.G - c2.G) < 1e-9) same++;
       assert.ok(Math.abs(c2.A_eff - c1.A_eff) <= c1.A_eff * 0.01, 'feedback drift too large');
     }
     console.log('       A_eff re-collapse is an exact fixed point for ' + (100 * same / n).toFixed(1) + '% of A values');
@@ -129,6 +130,18 @@ async function unit() {
     // and it can never outweigh a real orbit error:
     const orbit = good(); orbit.apogeeKm = 322;
     assert.ok(ev.scoreMetrics(orbit, cfg).score - r0.score > ev.scoreMetrics(deeper, cfg).score - r0.score);
+  });
+  await t('cliff safety: circVrAtEnd below min = graded hard fail (deeper = worse); min=0 / disabled removes it', () => {
+    const cs = cfg.scoring.hardConstraints.circVrAtEndMinMps;
+    const a = good(); a.circVrAtEnd = cs.min - 0.02; const b = good(); b.circVrAtEnd = -0.4;
+    const ra = ev.scoreMetrics(a, cfg), rb = ev.scoreMetrics(b, cfg);
+    assert.ok(ra.hardFail && rb.hardFail && rb.score > ra.score, 'graded');
+    assert.ok(ra.failures.some(x => x.id === 'circ_end_vr_below_cliff_margin'));
+    const ok = good(); ok.circVrAtEnd = cs.min + 0.001;
+    assert.strictEqual(ev.scoreMetrics(ok, cfg).hardFail, false);
+    assert.strictEqual(ev.scoreMetrics(a, noCliff(cfg)).hardFail, false);
+    const z = JSON.parse(JSON.stringify(cfg)); z.scoring.hardConstraints.circVrAtEndMinMps.min = 0;
+    assert.strictEqual(ev.scoreMetrics(a, z).hardFail, false);
   });
   await t('within tolerance => no orbit penalty; maxQ/maxG placeholders are NOT enforced', () => {
     const m = good(); m.apogeeKm = 320.9; m.perigeeKm = 319.2; m.ecc = 0.0004; m.maxQKPa = 999; m.maxG = 99;
@@ -307,13 +320,13 @@ async function e2e() {
   });
   await t('peak altitude tracked (stage apogee of E1 at least)', () => assert.ok(full.metrics.stageMaxAltKm >= 320 - 1e-6));
   await t('score: perfect orbit, no penalty, reward = fuel - time term', () => {
-    const r = ev2.scoreMetrics(full.metrics, cfg);
+    const r = ev2.scoreMetrics(full.metrics, noCliff(cfg));   // stub orbit is circular: vrEnd~0 sits at the cliff by design
     assert.strictEqual(r.hardFail, false);
     near(r.score, -fuelW() * 52612 + timeW() * 50, 1e-9);
   });
   await t('lead=0 => burn ends after apogee => vr dips negative => soft penalty, not hard fail (stub dip is tiny)', () => {
     const r = ev2.evalCore(cfg, { circ_trigger_lead: 0 }, {});
-    const s = ev2.scoreMetrics(r.metrics, cfg);
+    const s = ev2.scoreMetrics(r.metrics, noCliff(cfg));
     assert.ok(r.metrics.circMinVr < 0, 'vr min ' + r.metrics.circMinVr);
     assert.strictEqual(s.hardFail, false);
     assert.ok(s.soft.circVrDip > 0);

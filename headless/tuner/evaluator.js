@@ -71,15 +71,18 @@ function snapDirect(t, x) {
 }
 
 // Ascent collapse (PROMPT "Ascent collapse (2 -> 1)"):
-//   G_raw = A/T0^2 -> round 0.01 deg -> T_raw = sqrt(A/G) -> round to 1 tick -> A_eff = G*T^2
+//   G_raw = A/T0^2 -> round 0.01 deg -> T_raw = sqrt(A/G) -> round to pushTQuantumS -> A_eff = G*T^2
+// Step 3 diag (tscan) showed ascent T is CONTINUOUS (not tick-quantised: PUSH_T_S is a shape parameter
+// of the half-sine pulse, not a tick counter), so T uses a fine grid (default 0.01 tick = 0.000125 s).
 function collapseAscent(t, A) {
   const T0 = t.anchorPushT_s;
   const gq = t.gimbalQuantumDeg;
+  const tq = t.pushTQuantumS || (1 / TICKS_PER_S);
   const cd = Math.max(1, Math.round((A / (T0 * T0)) / gq));
   const G = Number((cd * gq).toFixed(decimalsOf(gq)));
-  const Tticks = Math.max(1, Math.round(Math.sqrt(A / G) * TICKS_PER_S));
-  const T = Tticks / TICKS_PER_S;
-  return { cd, Tticks, G, T, A_eff: G * T * T };
+  const Tn = Math.max(1, Math.round(Math.sqrt(A / G) / tq));
+  const T = Number((Tn * tq).toFixed(7));
+  return { cd, Tn, Tticks: T * TICKS_PER_S, G, T, A_eff: G * T * T };
 }
 
 // Returns everything needed to fly + cache a candidate.
@@ -112,8 +115,8 @@ function snapValues(cfg, values, opts) {
     sim['ascent.PUSH_T_S'] = T;
   } else {
     const c = collapseAscent(tA, A);
-    eff.ascent_G = c.G; eff.ascent_T = c.T; eff.ascent_Tticks = c.Tticks; eff.A_eff = c.A_eff;
-    lat.ascent = [c.cd, c.Tticks];
+    eff.ascent_G = c.G; eff.ascent_T = c.T; eff.ascent_Tticks = c.Tticks; eff.ascent_Tn = c.Tn; eff.A_eff = c.A_eff;
+    lat.ascent = [c.cd, c.Tn];
     sim['ascent.PUSH_MAX_GIMBAL_DEG'] = c.G;
     sim['ascent.PUSH_T_S'] = c.T;
   }
@@ -288,6 +291,11 @@ function scoreMetrics(m, cfg, opts) {
     const vrHard = Number.isFinite(vc.hardFloor) ? vc.hardFloor : vrSoft;
     if (!m.circBurnStarted) add('circ_never_burned', 3000);
     else if (m.circMinVr !== null && m.circMinVr < vrHard) add('circ_vr_too_negative', 100 * (vrHard - m.circMinVr));
+    // Safety margin from the feasibility cliff (Step 3: cliff is at circVrAtEnd ~ 0). Set min to 0 to remove.
+    const cs = hc.circVrAtEndMinMps;
+    if (cs && cs.enabled !== false && m.circVrAtEnd !== null && m.circVrAtEnd < cs.min) {
+      add('circ_end_vr_below_cliff_margin', 1000 * (cs.min - m.circVrAtEnd));
+    }
     if (hc.payloadMustBeReleasedAndCleared !== false && !m.payloadCleared) add('payload_not_cleared', 2000);
     if (m.apogeeKm === null || m.perigeeKm === null) add('no_final_orbit', 3000);
   }
