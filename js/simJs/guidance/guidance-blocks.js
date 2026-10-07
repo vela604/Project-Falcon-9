@@ -1881,6 +1881,7 @@ _st.lastApogeeKm = 0;
           return _result ? Object.assign({}, _result) : null;
         },
         getStatus() {
+          //sehran
     // Compute circ-burn trigger lead exactly ONCE per instance, then
     // freeze. Value = stage engine's startupDurationS (from its
     // thruster type spec) + mission CIRC_TRIGGER_LEAD_S. Both are
