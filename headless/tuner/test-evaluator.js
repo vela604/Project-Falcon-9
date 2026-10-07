@@ -60,13 +60,12 @@ async function unit() {
     }
     console.log('       A_eff re-collapse is an exact fixed point for ' + (100 * same / n).toFixed(1) + '% of A values');
   });
-  await t('direct tunables snap: bias/margin 1e-4, lead integer ticks, meco 1 kg', () => {
+  await t('direct tunables snap: bias 1e-4, lead integer ticks, meco 1 kg', () => {
     const s = ev.snapValues(cfg, {
-      stage_burn_aoa_bias: 0.59004, stage_burn_aoa_margin: 0.00123456,
+      stage_burn_aoa_bias: 0.59004,
       circ_trigger_lead: 5.5301, meco_target_booster_fuel: 52612.4
     });
     assert.strictEqual(s.effective.bias, 0.59);
-    assert.strictEqual(s.effective.margin, 0.0012);
     assert.strictEqual(s.effective.lead, 442 / 80);        // 5.5301*80 = 442.4 -> 442 ticks
     assert.strictEqual(s.lattice.lead, 442);
     assert.strictEqual(s.effective.meco, 52612);
@@ -78,10 +77,10 @@ async function unit() {
     assert.strictEqual(s.simValues['insertion.CIRC_TRIGGER_LEAD_S'], 5.53);
     assert.strictEqual(s.simValues['ascent.MECO_TARGET_BOOSTER_FUEL_KG'], 52612);
   });
-  await t('payload always carries fixed + all 5 tunables (7 entries, TARGET_ALT override)', () => {
+  await t('payload always carries fixed + all 4 tunables (TARGET_ALT override)', () => {
     const sn = ev.snapValues(cfg, {});
     const p = ev.buildTunablePayload(cfg, sn, 160);
-    assert.strictEqual(p.length, cfg.fixed.length + 6);   // 5 tunables write 6 paths
+    assert.strictEqual(p.length, cfg.fixed.length + 5);   // 4 tunables write 5 paths
     assert.strictEqual(p.find(x => x.path === 'insertion.TARGET_ORBIT_ALT_KM').value, 160);
     assert.strictEqual(p.find(x => x.path === 'done.DEORBIT_ENABLED').value, false);
   });
@@ -143,11 +142,16 @@ async function unit() {
     const z = JSON.parse(JSON.stringify(cfg)); z.scoring.hardConstraints.circVrAtEndMinMps.min = 0;
     assert.strictEqual(ev.scoreMetrics(a, z).hardFail, false);
   });
-  await t('within tolerance => no orbit penalty; maxQ/maxG placeholders are NOT enforced', () => {
-    const m = good(); m.apogeeKm = 320.9; m.perigeeKm = 319.2; m.ecc = 0.0004; m.maxQKPa = 999; m.maxG = 99;
+  await t('within tolerance => no orbit penalty; calibrated maxQ/maxG limits ARE enforced (Step 3)', () => {
+    const hc = cfg.scoring.hardConstraints;
+    const m = good(); m.apogeeKm = 320.9; m.perigeeKm = 319.2; m.ecc = 0.0004; m.maxQKPa = hc.maxQKPa.limit - 1; m.maxG = hc.maxG.limit - 0.5;
     const r = ev.scoreMetrics(m, cfg);
     assert.strictEqual(r.hardFail, false);
     assert.strictEqual(r.soft.apogeeErrKm, 0); assert.strictEqual(r.soft.perigeeErrKm, 0); assert.strictEqual(r.soft.eccentricity, 0);
+    const q = good(); q.maxQKPa = hc.maxQKPa.limit + 1;
+    assert.ok(ev.scoreMetrics(q, cfg).failures.some(x => x.id === 'maxQ'));
+    const g = good(); g.maxG = hc.maxG.limit + 1;
+    assert.ok(ev.scoreMetrics(g, cfg).failures.some(x => x.id === 'maxG'));
   });
   await t('maxQ enforced once calibrated', () => {
     const c2 = JSON.parse(JSON.stringify(cfg)); c2.scoring.hardConstraints.maxQKPa = { limit: 40 };

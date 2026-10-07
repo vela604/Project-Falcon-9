@@ -17,7 +17,7 @@
 // the config's `initial`. Everything submitted to the sim is rounded to the
 // hardware least count (PROMPT.md); time constants are stored as INTEGER TICKS
 // (n/80 s). Ascent collapse (A -> G,T,A_eff) is done here; callers must feed
-// `effective.A_eff` (NOT the A they proposed) back to CMA-ES.
+// `effective.A_eff` (NOT the A they proposed) back to the search.
 // ============================================================================
 'use strict';
 
@@ -96,7 +96,6 @@ function snapValues(cfg, values, opts) {
 
   const tA = tunableById(cfg, 'ascent_profile_constant');
   const tB = tunableById(cfg, 'stage_burn_aoa_bias');
-  const tM = tunableById(cfg, 'stage_burn_aoa_margin');
   const tL = tunableById(cfg, 'circ_trigger_lead');
   const tF = tunableById(cfg, 'meco_target_booster_fuel');
 
@@ -121,7 +120,7 @@ function snapValues(cfg, values, opts) {
     sim['ascent.PUSH_T_S'] = c.T;
   }
   // --- direct ones ---
-  [[tB, 'bias'], [tM, 'margin'], [tL, 'lead'], [tF, 'meco']].forEach(([t, key]) => {
+  [[tB, 'bias'], [tL, 'lead'], [tF, 'meco']].forEach(([t, key]) => {
     const x = val(t.id);
     if (raw) {
       eff[key] = x; lat[key] = ['raw', x];
@@ -455,7 +454,7 @@ function resolveWorkers(cfg, o) {
   if (Number.isInteger(o.workers) && o.workers >= 0) return o.workers;
   const env = parseInt(process.env.TUNER_WORKERS, 10);
   if (Number.isInteger(env) && env >= 0) return env;
-  const c = cfg.cma && cfg.cma.parallelWorkers;
+  const c = cfg.evaluator && cfg.evaluator.parallelWorkers;
   if (Number.isInteger(c) && c >= 0) return c;
   return DEFAULT_WORKERS;                        // "auto" = 8 for now; override via option/env for cloud
 }

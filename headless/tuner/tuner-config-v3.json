@@ -1,5 +1,5 @@
 {
-  "_readme": "Tuner settings file for leoInsertionV3 (equivalent of V2's b5-leo.json). Sirf paanch tunables vary honge; baaki guidance constants code defaults pe rehte hain. Numbers jinke naam me 'calibrate' hai wo placeholders hain - baseline run ke baad fix karo (PROMPT.md Step 2).",
+  "_readme": "Tuner settings leoInsertionV3 (v2: guided search, CMA-ES hata). 4 tunables: A, bias, lead, MECO.",
   "schemaVersion": 1,
   "name": "b5-leo-v3",
   "mission": {
@@ -36,9 +36,13 @@
     {
       "path": "done.DEORBIT_ENABLED",
       "value": false
+    },
+    {
+      "path": "insertion.STAGE_BURN_AOA_MARGIN_DEG",
+      "value": 0.0001
     }
   ],
-  "_fixedNote": "Ye mission definition hain, tunables nahi. Har eval me tunables ke saath POORA set bhejna hai kyunki Guidance ka _v3Config cached sim instance me runs ke beech persist karta hai.",
+  "_fixedNote": "Ye mission definition hain, tunables nahi. Har eval me tunables ke saath POORA set bhejna hai kyunki Guidance ka _v3Config cached sim instance me runs ke beech persist karta hai. stage_burn_aoa_margin ab fixed (0.0001 = hardware accuracy), tunable nahi.",
   "tunables": [
     {
       "id": "ascent_profile_constant",
@@ -66,22 +70,11 @@
       "path": "insertion.STAGE_BURN_AOA_BIAS_DEG",
       "unit": "deg",
       "quantum": 0.0001,
-      "lower": -0.5,
+      "lower": -2,
       "upper": 2.5,
       "initial": 0.59,
-      "scale": "linear"
-    },
-    {
-      "id": "stage_burn_aoa_margin",
-      "kind": "direct",
-      "path": "insertion.STAGE_BURN_AOA_MARGIN_DEG",
-      "unit": "deg",
-      "quantum": 0.0001,
-      "lower": 0.0001,
-      "upper": 0.05,
-      "initial": 0.001,
-      "scale": "log",
-      "_note": "Decades me vary hota hai, isliye log scale pe search."
+      "scale": "linear",
+      "_note": "4 decimals. Bias -2 extreme => guided search A change karta hai."
     },
     {
       "id": "circ_trigger_lead",
@@ -144,7 +137,7 @@
         "target": 320,
         "tolerance": 1,
         "scale": 1,
-        "weight": 1000,
+        "weight": 3000,
         "mode": "deadzoneAbs"
       },
       {
@@ -152,7 +145,7 @@
         "target": 320,
         "tolerance": 1,
         "scale": 1,
-        "weight": 1000,
+        "weight": 3000,
         "mode": "deadzoneAbs"
       },
       {
@@ -160,7 +153,7 @@
         "target": 0,
         "tolerance": 0.0005,
         "scale": 0.001,
-        "weight": 500,
+        "weight": 1500,
         "mode": "deadzoneAbs"
       },
       {
@@ -171,101 +164,11 @@
       {
         "id": "timeToDeployS",
         "direction": "minimize",
-        "weightPerS": 0.001
+        "weightPerS": 0.0005
       }
     ],
     "_hierarchyCheck": "Unit test likho: orbit error beat karna chahiye fuel ko, fuel beat kare time ko. Weights tabhi final jab ye test pass ho."
   },
-  "phases": [
-    {
-      "id": 0,
-      "name": "baseline",
-      "vary": [],
-      "eval": "full",
-      "purpose": "Defaults pe run, metrics + hard-limit calibration + deploy time + wall time naapo."
-    },
-    {
-      "id": 1,
-      "name": "ascent_profile",
-      "vary": [
-        "ascent_profile_constant"
-      ],
-      "eval": "full",
-      "_evalNote": "Full run ~600 sim-s hi hai (~6 s wall), isliye default full. Truncated (stopAtPhase COAST_ROTATE) optional speedup, sirf agar baseline me proxy valid dikhe.",
-      "objective": "apogee within tol + eccentricity/perigee proxy + stage fuel feasibility",
-      "method": "lattice grid scan + local refine (1-D)",
-      "_note": "Lattice discrete hai (G,T 0.01 rounding), isliye CMA nahi, grid+refine."
-    },
-    {
-      "id": 2,
-      "name": "aoa_bias",
-      "vary": [
-        "stage_burn_aoa_bias"
-      ],
-      "eval": "full",
-      "objective": "same as phase 1",
-      "method": "1-D scan + golden/Brent refine",
-      "failureModes": "bohot chhota bias => apogee target tak nahi pahunchta; bohot bada => apogee ok par eccentricity zyada"
-    },
-    {
-      "id": 3,
-      "name": "aoa_margin",
-      "vary": [
-        "stage_burn_aoa_margin"
-      ],
-      "eval": "full",
-      "method": "log-scale 1-D scan, tight range"
-    },
-    {
-      "id": 4,
-      "name": "circ_lead",
-      "vary": [
-        "circ_trigger_lead"
-      ],
-      "eval": "full",
-      "stopAt": "payload cleared",
-      "target": {
-        "metric": "timeToNextApogeeAtCircBurnEndS",
-        "value": 4,
-        "acceptMin": 3.9,
-        "acceptMax": 4.5
-      },
-      "hard": "circMinRadialVelocityMps >= 0",
-      "method": "monotone bisection on 0.01 lattice (zyada lead => burn end pe apogee se zyada door)"
-    },
-    {
-      "id": 5,
-      "name": "meco_fuel",
-      "vary": [
-        "meco_target_booster_fuel"
-      ],
-      "eval": "full",
-      "target": {
-        "metric": "stageResidualFuelAfterEjectKg",
-        "range": [
-          0,
-          50
-        ]
-      },
-      "method": "monotone scan + bisection: sabse BADI MECO fuel value jo abhi bhi residual target aur orbit hard constraints satisfy kare",
-      "_note": "MECO badhao => stage residual kam. Fail point se pehle back off. Baad me phase 1-4 anchors ka ek quick re-verify (max 2 loops)."
-    },
-    {
-      "id": 6,
-      "name": "cma_refine",
-      "vary": [
-        "ascent_profile_constant",
-        "stage_burn_aoa_bias",
-        "stage_burn_aoa_margin",
-        "circ_trigger_lead"
-      ],
-      "freeze": [
-        "meco_target_booster_fuel"
-      ],
-      "eval": "full",
-      "method": "CMA-ES 4-D, phases 1-5 ke anchors se warm start, normalised [0,1] space"
-    }
-  ],
   "boundsPolicy": {
     "_note": "Saare bounds PROVISIONAL hain (sirf 320 km manual tune se andaaza). 160 km aur 2000 km pe pehli runs ke baad narrow region confirm hoga.",
     "autoExpand": true,
@@ -274,24 +177,6 @@
     "maxExpansions": 3,
     "recordLearnedBounds": "tuner/out/learned-bounds.json",
     "_recordNote": "Har tune ke baad (targetAltKm -> final best values + jis region me score achha tha) save karo. Multiple altitudes ke results se future tuners ke liye narrow bounds / altitude-based initial guess nikalenge."
-  },
-  "cma": {
-    "popsize": 8,
-    "sigma0": 0.15,
-    "_sigma0Note": "Normalised space me. Warm start hai isliye chhota; cold start ka 0.3 nahi.",
-    "maxGenerations": 40,
-    "maxEvals": 400,
-    "plateau": {
-      "patienceGenerations": 5,
-      "minRelImprovement": 0.001
-    },
-    "tolX": 0.0001,
-    "seed": 12345,
-    "snapToLattice": true,
-    "feedBackEffectiveValues": true,
-    "cacheByLatticePoint": true,
-    "parallelWorkers": "auto",
-    "checkpointFile": "tuner/checkpoint.json"
   },
   "output": {
     "bestConstantsFile": "tuner/out/b5-leo-v3.best.json",
@@ -302,5 +187,77 @@
     "fast": true,
     "stride": 4,
     "_note": "fast = runner speed-ups (globals/libCache/liveSnapshot); enabled by calibrate.js only after bit-identical equivalence check."
+  },
+  "guided": {
+    "_note": "PROMPT.md algorithm spec. E = eccentricity at COAST_ROTATE end (truncated eval).",
+    "bearableEcc": {
+      "eMin": null,
+      "eMax": null,
+      "_note": "Step 6 me manual-best E se calibrate; target E_max ke paas."
+    },
+    "inner1": {
+      "aStepG": 0.01,
+      "biasSteps": [
+        0.5,
+        0.1,
+        0.05,
+        0.01,
+        0.001,
+        0.0001
+      ],
+      "biasExtreme": -2,
+      "aIncreaseOnExtreme": true
+    },
+    "inner2": {
+      "leadSteps": [
+        1,
+        0.5,
+        0.1,
+        0.05,
+        0.01
+      ],
+      "marginAcceptS": [
+        4,
+        5
+      ],
+      "phase2AllowNegativeVr": true,
+      "vrEndBufferMps": 0.04
+    },
+    "mecoOuter": {
+      "signal": "stageResidualKg",
+      "target": [
+        0,
+        50
+      ],
+      "stepKg": 1,
+      "warmStart": [
+        {
+          "meco": 50000,
+          "G": 0.62,
+          "bias": 0.78,
+          "lead": 5.65
+        },
+        {
+          "meco": 52612,
+          "G": 0.6,
+          "bias": 0.59,
+          "lead": 5.53
+        },
+        {
+          "meco": 55000,
+          "bias": 1.16,
+          "lead": 4.46
+        }
+      ]
+    },
+    "checkpoint": {
+      "enabled": "decide in Step 4 (measure wall speedup first)",
+      "at": "COAST_ROTATE_END"
+    },
+    "polish": {
+      "aStepG": 0.01,
+      "biasStep": 0.0001,
+      "leadStepTicks": 1
+    }
   }
 }
