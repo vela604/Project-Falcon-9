@@ -1,14 +1,20 @@
 // ============================================================================
 // headless/tuner/diag-step3.js — follow-ups to calibrate.js (Step 3).
 //
-//   node headless/tuner/diag-step3.js [--config <p>] [--workers 6] [--mode all|det|iso|sweep]
+//   node headless/tuner/diag-step3.js [--config <p>] [--workers 6] [--mode all|det|iso|sweep|tscan]
 //        [--lead-from 5.50] [--lead-n 13] [--ascent-T 4.82]
+//        [--t-from 4.8125] [--t-step 0.00125] [--t-n 21]      (tscan only; NOT part of 'all')
 //
 //  det    Is a FRESH process bit-identical to a WARM one? Runs: fresh#1, fresh#2, then an in-process run
 //         after a different (snapped) run. Prints every metric that differs (key, value A, value B).
 //  iso    Which change moved deploy time 590 -> 747 s: ascent T 4.82->4.825, lead 5.53->5.525, or both?
 //  sweep  Lead scan in 1-tick (0.0125 s) steps around the manual best: shows how circ margin / vr / orbit
 //         respond to lead (is it monotone? smooth? sawtooth?). Needed before designing Phase 4.
+//
+//  tscan  Is ascent T continuous or tick-quantised? Scans raw ascent_T in sub-tick steps (default 0.1 tick =
+//         0.00125 s, from 385 to 387 ticks, lead fixed at 5.53). Quantised => plateaus (identical rows between
+//         tick boundaries 4.8125 / 4.825 / 4.8375); continuous => every row differs. Marks rows identical to the
+//         previous one with '=' . Also shows where the jump at 4.82->4.825 sits (a switch or a steep ramp?).
 //
 // Output is compact on purpose (paste it back). Full JSON goes to <config dir>/out/diag-step3.json.
 // ============================================================================
@@ -95,7 +101,7 @@ async function main() {
     out.det = { freshVsFresh: dAB, freshVsWarm: dAW };
   }
 
-  if (MODE === 'all' || MODE === 'iso' || MODE === 'sweep') {
+  if (MODE === 'all' || MODE === 'iso' || MODE === 'sweep' || MODE === 'tscan') {
     const ev = EV.createEvaluator(cfg, { workers: WORKERS });
     if (MODE === 'all' || MODE === 'iso') {
       head('ISO  what moved deploy time? (raw = un-snapped)');
@@ -121,6 +127,22 @@ async function main() {
       line(HDR);
       res.forEach((r, i) => line(row('lead ' + leads[i].toFixed(4), r)));
       out.sweep = leads.map((x, i) => ({ lead: x, metrics: res[i].metrics, score: res[i].score }));
+    }
+    if (MODE === 'tscan') {
+      head('TSCAN  raw ascent_T, lead=5.53, G=0.60');
+      const t0 = parseFloat(arg('t-from', '4.8125')), dt = parseFloat(arg('t-step', '0.00125')), nT = parseInt(arg('t-n', '21'), 10);
+      const Ts = [];
+      for (let k = 0; k < nT; k++) Ts.push(Math.round((t0 + k * dt) * 1e6) / 1e6);
+      const res = await Promise.all(Ts.map(T => ev.evaluateMany([{}], { snap: false, ascent_G: 0.60, ascent_T: T }).then(r => r[0])));
+      line('  ' + 'T'.padEnd(9) + 'ticks'.padStart(8) + ' ' + HDR.trim().replace(/^case\s+/, '').replace(/\s+/g, ' '));
+      let prev = null;
+      res.forEach((r, i) => {
+        const m = r.metrics;
+        const sig = [m.timeToDeployS, m.circEndMarginS, m.circBurnEndT, m.apogeeKm].join('|');
+        const same = prev === sig; prev = sig;
+        line('  ' + Ts[i].toFixed(5).padEnd(9) + (Ts[i] * 80).toFixed(2).padStart(8) + (same ? ' =' : '  ') + row('', r).trim());
+      });
+      out.tscan = Ts.map((T, i) => ({ T, metrics: res[i].metrics, score: res[i].score }));
     }
     line('\n  cache: ' + JSON.stringify(ev.cacheStats()));
     await ev.close();
