@@ -31,6 +31,7 @@ const GUIDE_CONSTANT_DESCRIPTIONS = {
   'ascent.COAST_DAMP_GAIN': 'Proportional gain for the COASTnAoADAMP phase — damps residual AoA after HOLD disengages.',
   'ascent.COAST_DAMP_K': 'Divisor base for the COASTnAoADAMP formula (gain / k²). Larger value → smaller torque, gentler damping.',
   'ascent.GIMBAL_TARGET': 'Which engines participate in gimbal control during ascent. "center" = only the center engine (F9 legacy), "all" = every gimbal-capable engine.',
+  'ascent.MECO_APOGEE_KM': 'Apogee target (km ASL) that triggers MECO. When the current ballistic apogee crosses this value, the ascent block fires the separation command.',
   
   // ---- separation (mission-level glue) ----
   'separation.SEPARATION_DURATION_S': 'Fixed duration (s) of the SEPARATED_AXIAL phase, counted from the phase entry (split detected). At the end of this window, the insertion block takes over — regardless of the axial gap.',
@@ -40,6 +41,7 @@ const GUIDE_CONSTANT_DESCRIPTIONS = {
   // ---- insertion (post-separation stage → payload deployed) ----
   'insertion.GIMBAL_TARGET': 'Which engines participate in gimbal control during the stage burn. "all" engages every gimbal-capable engine (single-nozzle MVac uses one, octaweb uses all).',
   'insertion.STAGE_BURN_CUTOFF_MARGIN_MPS': 'Extra Δv margin (m/s) added to the spool-loss prediction when computing the STAGE_BURN cutoff apogee. Positive = burn slightly longer, overshoot apogee. Zero = exact prediction.',
+  'insertion.STAGE_BURN_LOCK_TILT_DEG': 'Tilt-from-local-vertical (deg) at which the stage-burn attitude controller locks onto a fixed target attitude. Below this threshold the controller tracks AoA; at or above it, the controller holds a fixed inertial tilt.',
   'insertion.STAGE_BURN_AOA_MARGIN_DEG': 'AoA (deg) below which the bootstrap damper hands off to the standard controller. Smaller = tighter alignment before handoff but longer wait; 0.01–0.001 typical.',
   'insertion.STAGE_BURN_AOA_KP': 'Proportional gain for the AoA-tracking PD controller. Larger = stronger restoring torque toward the target AoA.',
   'insertion.STAGE_BURN_AOA_KD': 'Derivative gain for the AoA-tracking PD controller. Damping on d(AoA)/dt (which includes the velocity-vector rotation term). For critical damping, set ≈ 2·√KP.',
