@@ -44,6 +44,7 @@
 
       maxGLoad: 0, maxGLoadT: null,        // own G-load (thrust+drag)/(m*g0), body 0
       maxAccelRawG: 0,                     // sim's _lastAccel (diagnostic only)
+      gSeries: [],                         // [t, ownG, rawG, altKm] once per sim-second (G sanity check)
       stageMaxAltKm: 0,
       stageCrashed: false,
       anyCrashed: false,
@@ -279,6 +280,7 @@
     var ax = b0._lastAccelX || 0, ay = b0._lastAccelY || 0;
     var raw = Math.sqrt(ax * ax + ay * ay) / G0;
     if (raw > M.maxAccelRawG) M.maxAccelRawG = raw;
+    if ((M.ticks % 80) === 1) M.gSeries.push([simT, gl, raw, (Math.sqrt(b0.rx * b0.rx + b0.ry * b0.ry) - RE) / 1000]);
     var altKm = (Math.sqrt(b0.rx * b0.rx + b0.ry * b0.ry) - RE) / 1000;
     if (altKm > M.stageMaxAltKm) M.stageMaxAltKm = altKm;
     if (b0.crashed) M.stageCrashed = true;

@@ -18,7 +18,8 @@
 // Additive options (tuner): extraBootstrapCode (may define globalThis.__tickHook,
 // __stopWhen, __hookReset, __hookMetrics inside the sim vm), hookOptions
 // (JSON handed to the hook as globalThis.__hookOpts, reset every run),
-// resetGuideConfig (restore pristine guidance constants before tunables).
+// resetGuideConfig (restore pristine guidance constants before tunables),
+// fast: true | {globals, libCache, liveSnapshot} (speed only; results must stay bit-identical).
 // Result gains: stoppedEarly, hook.
 // ============================================================================
 
@@ -125,8 +126,39 @@ function bootstrapSnippet() {
   return `
 globalThis.__sim = (function () {
 
+  // ---- Opt-in library cache (see runner header: fast.libCache) ----
+  if (__FAST.libCache && typeof loadComponentLibrary === 'function') {
+    (function () {
+      var _cache = null;
+      var _origLoadCL = loadComponentLibrary;
+      loadComponentLibrary = function () { if (_cache) return _cache; _cache = _origLoadCL(); return _cache; };
+      if (typeof saveCustomComponentTypes === 'function') {
+        var _origSave = saveCustomComponentTypes;
+        saveCustomComponentTypes = function (types) { _origSave(types); _cache = null; };
+      }
+    })();
+  }
+
   // ---- Snapshot builder (mirrors tester page) ----
   function buildSnapshot() {
+    if (__FAST.liveSnapshot) {
+      const lb = state.bodies;
+      for (let i = 0; i < lb.length; i++) {
+        const b = lb[i];
+        b.ax = b._lastAccelX || 0;
+        b.ay = b._lastAccelY || 0;
+        if (typeof buildPodEntries === 'function') b.pods = buildPodEntries(b);
+      }
+      return {
+        simTime: state.simTime,
+        activeBodyIndex: state.activeBodyIndex,
+        halted: !!state.halted,
+        wind: (typeof wind !== 'undefined') ? {
+          enabled: !!wind.enabled, speed: wind.speed || 0, directionDeg: wind.directionDeg || 0,
+        } : { enabled: false, speed: 0, directionDeg: 0 },
+        bodies: lb,
+      };
+    }
     const bodies = state.bodies.map((b, i) => ({
       rx: b.rx, ry: b.ry, vx: b.vx, vy: b.vy, theta: b.theta, omega: b.omega,
       ax: b._lastAccelX || 0, ay: b._lastAccelY || 0,
@@ -593,26 +625,52 @@ members.forEach(m => {
 // ---------------------------------------------------------------------------
 const _instances = new Map();
 
-function _loadInstance(stackId, vehicleId, quiet, extraCode) {
+// Additive (tuner): `fast` = true | { globals, libCache, liveSnapshot }. Speed only; default OFF.
+//  globals      wrap the sim script in a function whose parameters shadow the sandbox
+//               globals (Math, JSON ...). In a vm context every bare-global lookup goes
+//               through a slow named-property interceptor (~6x in a microbenchmark).
+//  libCache     cache loadComponentLibrary() like guidance-numerical.html does. Without it
+//               each getComponentType() call rebuilds the registry from seed+localStorage
+//               (physicsStep + Derivation make ~30-80 such calls per tick).
+//  liveSnapshot hand guidance the live body objects (sets b.ax/b.ay/b.pods) instead of
+//               deep-copying every body each tick (what guidance-numerical.html does).
+const SHADOW_GLOBALS = ['Math', 'JSON', 'Number', 'Array', 'Object', 'String', 'Boolean',
+  'Float32Array', 'Float64Array', 'Int32Array', 'Uint8Array', 'Map', 'Set', 'isFinite', 'isNaN',
+  'parseInt', 'parseFloat', 'performance', 'console'];
+
+function _fastFlags(f) {
+  if (f === true) return { globals: true, libCache: true, liveSnapshot: true };
+  if (!f) return { globals: false, libCache: false, liveSnapshot: false };
+  return { globals: !!f.globals, libCache: !!f.libCache, liveSnapshot: !!f.liveSnapshot };
+}
+
+function _loadInstance(stackId, vehicleId, quiet, extraCode, fast) {
   const seedDump = seedStorageFromRegistry(stackId, vehicleId);
   const storage = makeMemoryStorage(seedDump);
   const ctx = vm.createContext(makeSandboxGlobals(storage, quiet));
-  const code = SIM_FILES
+  const boot = bootstrapSnippet().replace('globalThis.__sim = (function () {',
+    'globalThis.__sim = (function () {\nconst __FAST = ' + JSON.stringify(fast) + ';');
+  let code = SIM_FILES
     .map(f => fs.readFileSync(path.join(PROJECT_ROOT, f), 'utf8'))
-    .join('\n;\n') + '\n;\n' + bootstrapSnippet() +
+    .join('\n;\n') + '\n;\n' + boot +
     (extraCode ? '\n;\n' + extraCode : '');
+  if (fast.globals) {
+    const names = SHADOW_GLOBALS.join(',');
+    code = '(function(' + names + '){\n' + code + '\n;})(' + names + ');';
+  }
   vm.runInContext(code, ctx);
   return ctx.__sim;
 }
 
-function _getInstance(stackId, vehicleId, quiet, extraCode) {
+function _getInstance(stackId, vehicleId, quiet, extraCode, fast) {
   // Key includes a content hash of extraCode (not just its presence), so
   // different hook code never shares a cached instance.
   const key = stackId + '::' + vehicleId + '::' + (quiet ? 'q' : 'v') +
-    '::' + (extraCode ? 'X' + crypto.createHash('sha1').update(extraCode).digest('hex').slice(0, 12) : '-');
+    '::' + (extraCode ? 'X' + crypto.createHash('sha1').update(extraCode).digest('hex').slice(0, 12) : '-') +
+    '::f' + (fast.globals ? 'g' : '') + (fast.libCache ? 'l' : '') + (fast.liveSnapshot ? 's' : '');
   let inst = _instances.get(key);
   if (!inst) {
-    inst = _loadInstance(stackId, vehicleId, quiet, extraCode);
+    inst = _loadInstance(stackId, vehicleId, quiet, extraCode, fast);
     _instances.set(key, inst);
   }
   return inst;
@@ -629,7 +687,7 @@ function runSim(options) {
   const durationS = Number.isFinite(options.durationS) ? options.durationS : 1500;
   const quiet = !!options.quiet;
 
-  const sim = _getInstance(stackId, vehicleId, quiet, options.extraBootstrapCode);
+  const sim = _getInstance(stackId, vehicleId, quiet, options.extraBootstrapCode, _fastFlags(options.fast));
 
   sim.reset(0);
   // Opt-in: restore pristine guidance constants before applying this run's

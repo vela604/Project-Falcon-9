@@ -214,6 +214,7 @@ function extractMetrics(result, evalKind) {
     mecoT: fin(h.mecoT),
     // limits
     maxG: fin(h.maxGLoad), maxGT: fin(h.maxGLoadT), maxAccelRawG: fin(h.maxAccelRawG),
+    gSeries: h.gSeries || null,
     maxQKPa: fin(tr.maxQKPa),
     stageMaxAltKm: fin(h.stageMaxAltKm),
     stageCrashed: !!h.stageCrashed || !!(stage && stage.crashed),
@@ -358,6 +359,7 @@ function evalCore(cfg, values, opts) {
     environment: ms.environment,
     fueling: ms.fueling,
     quiet: true,
+    fast: opts.fast !== undefined ? opts.fast : !!(cfg.evaluator && cfg.evaluator.fast),
     tunables: buildTunablePayload(cfg, snapped, targetAltKm),
     resetGuideConfig: true,                     // never leak the previous eval's constants
     extraBootstrapCode: HOOK_CODE,
