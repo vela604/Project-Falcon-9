@@ -14,11 +14,18 @@
 //     tunables: [{ path: 'ascent.PUSH_MAX_GIMBAL_DEG', value: 0.16 }],
 //     fueling: { boosterPct: 100, stagePct: 100 },
 //   });
+//
+// Additive options (tuner): extraBootstrapCode (may define globalThis.__tickHook,
+// __stopWhen, __hookReset, __hookMetrics inside the sim vm), hookOptions
+// (JSON handed to the hook as globalThis.__hookOpts, reset every run),
+// resetGuideConfig (restore pristine guidance constants before tunables).
+// Result gains: stoppedEarly, hook.
 // ============================================================================
 
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
+const crypto = require('crypto');
 const { performance } = require('perf_hooks');
 
 const PROJECT_ROOT = path.resolve(__dirname, '..');
@@ -384,6 +391,17 @@ members.forEach(m => {
   Derivation.setStackData(collectStackData());
   Guidance.init(localDispatch);
 
+  // ---- Pristine guide-config snapshot (additive; used by options.resetGuideConfig) ----
+  // Guidance's _v3Config persists across runSim calls on a cached instance.
+  // Capturing it here (fresh instance, nothing applied yet) lets callers
+  // restore exact code defaults before applying a new tunable set.
+  const _pristineGuideCfg = {};
+  if (typeof Guidance.listGuidesWithConfig === 'function') {
+    Guidance.listGuidesWithConfig().forEach(function (n) {
+      _pristineGuideCfg[n] = Guidance.getGuideConfig(n);
+    });
+  }
+
   // ---- Tracker (reset per run) ----
   let tracker = null;
   function resetTracker() {
@@ -509,6 +527,13 @@ members.forEach(m => {
           if (qKPa > tracker.maxQKPa) tracker.maxQKPa = qKPa;
         }
 
+        // ---- Additive per-tick hook + early stop (tuner/evaluator) ----
+        // Both are no-ops unless extraBootstrapCode defined them.
+        if (typeof globalThis.__tickHook === 'function') globalThis.__tickHook(state, tracker);
+        if (typeof globalThis.__stopWhen === 'function' && globalThis.__stopWhen(state, tracker)) {
+          return { halted: !!state.halted, stopped: true, ticks: i + 1 };
+        }
+
         if (state.halted) return { halted: true, ticks: i + 1 };
       }
       return { halted: false, ticks: n };
@@ -544,6 +569,16 @@ members.forEach(m => {
 
         getTracker: () => ({ ...tracker }),
 
+    // ---- Additive helpers (tuner) ----
+    restoreGuideConfig: () => {
+      Object.keys(_pristineGuideCfg).forEach(function (n) {
+        Guidance.applyGuideConfig(n, JSON.parse(JSON.stringify(_pristineGuideCfg[n])));
+      });
+    },
+    setHookOptions: (o) => { globalThis.__hookOpts = o || {}; },
+    hookReset: () => { if (typeof globalThis.__hookReset === 'function') globalThis.__hookReset(); },
+    getHookMetrics: () => (typeof globalThis.__hookMetrics === 'function') ? globalThis.__hookMetrics() : null,
+
     // Slot for extra-bootstrap code (e.g. the profiler) to attach data.
     // Reads a global that the extraCode appended after this bootstrap
     // may set — undefined when nothing was appended.
@@ -571,8 +606,10 @@ function _loadInstance(stackId, vehicleId, quiet, extraCode) {
 }
 
 function _getInstance(stackId, vehicleId, quiet, extraCode) {
+  // Key includes a content hash of extraCode (not just its presence), so
+  // different hook code never shares a cached instance.
   const key = stackId + '::' + vehicleId + '::' + (quiet ? 'q' : 'v') +
-    '::' + (extraCode ? 'X' : '-');
+    '::' + (extraCode ? 'X' + crypto.createHash('sha1').update(extraCode).digest('hex').slice(0, 12) : '-');
   let inst = _instances.get(key);
   if (!inst) {
     inst = _loadInstance(stackId, vehicleId, quiet, extraCode);
@@ -595,6 +632,9 @@ function runSim(options) {
   const sim = _getInstance(stackId, vehicleId, quiet, options.extraBootstrapCode);
 
   sim.reset(0);
+  // Opt-in: restore pristine guidance constants before applying this run's
+  // tunables, so nothing leaks in from a previous run on this instance.
+  if (options.resetGuideConfig) sim.restoreGuideConfig();
   if (options.environment) sim.setEnvironment(options.environment);
   if (options.tunables && options.tunables.length) {
     sim.applyTunables(guide, options.tunables);
@@ -602,6 +642,10 @@ function runSim(options) {
   if (options.fueling) {
     sim.setFueling(options.fueling.boosterPct, options.fueling.stagePct);
   }
+
+  // Hook options are always (re)set so a previous run's stop mode cannot leak.
+  sim.setHookOptions(options.hookOptions || {});
+  sim.hookReset();
 
   const startOk = sim.startGuide(guide);
   const dt = sim.CONFIG.DT;
@@ -613,6 +657,7 @@ const CHUNK_TICKS = 800;
 let elapsed = 0;
 const t0 = performance.now();
 let halted = false;
+let stopped = false;
 const chunkTimes = [];
 while (elapsed < maxTicks) {
   const n = Math.min(CHUNK_TICKS, maxTicks - elapsed);
@@ -635,7 +680,9 @@ while (elapsed < maxTicks) {
     ' ph=' + gs.padEnd(12) +
     '   ');
 }
-  if (r.halted) { halted = true; break; }
+  if (r.halted) halted = true;
+  if (r.stopped) stopped = true;
+  if (r.halted || r.stopped) break;
 }
 if (!quiet) process.stdout.write('\n');
 const wallMs = performance.now() - t0;
@@ -644,6 +691,7 @@ const wallMs = performance.now() - t0;
 // phase info while a guide is still active.
 const status = sim.getStatus();
 const tracker = sim.getTracker();
+const hook = sim.getHookMetrics();   // null unless extraBootstrapCode defined __hookMetrics
 sim.stopGuide();
 status.chunkTimes = chunkTimes;
 
@@ -653,6 +701,8 @@ status.chunkTimes = chunkTimes;
   startOk,
   ticksRun: elapsed,
   haltedByLoop: halted,
+  stoppedEarly: stopped,
+  hook,
   wallMs,
   status,
   tracker,
