@@ -101,6 +101,7 @@ function bodiesFingerprint(r) {
 // ---------------------------------------------------------------------------
 if (flag('child-eval')) {
   const cfg = EV.loadConfig(CFG_PATH);
+  cfg.evaluator = Object.assign(cfg.evaluator || {}, { fast: process.env.TUNER_CAL_FAST === 'true' });
   const core = EV.evalCore(cfg, {}, Object.assign({}, RAW));
   process.stdout.write('@@CORE@@' + JSON.stringify(core) + '@@END@@');
   process.exit(0);
@@ -146,38 +147,48 @@ async function main() {
       '  -> projected full eval (~' + KNOWN.deployS.toFixed(0) + ' sim-s): ' +
       f((all / PROBE_S) * KNOWN.deployS / 1000, 1) + ' s');
 
-    head('2 EQUIV  (fast ALL vs hook-only reference, same window)');
-    const idBodies = JSON.stringify(bodiesFingerprint(hookRef)) === JSON.stringify(bodiesFingerprint(allRun));
-    const idHook = same(hookRef.hook, allRun.hook);
-    const idTr = JSON.stringify(hookRef.tracker) === JSON.stringify(allRun.tracker);
+    head('2 EQUIV  (fast modes vs hook-only reference, same window; largest bit-identical subset wins)');
     const idNoHook = JSON.stringify(bodiesFingerprint(refRun)) === JSON.stringify(bodiesFingerprint(hookRef));
-    line('  body states bit-identical : ' + idBodies);
-    line('  hook metrics identical    : ' + idHook);
-    line('  tracker identical         : ' + idTr);
     line('  hook does not perturb sim : ' + idNoHook);
-    const ok = idBodies && idHook && idTr;
-    report.equiv = { idBodies, idHook, idTr, idNoHook, ok };
-    if (ok) { fastChoice = true; line('  => fast mode ACCEPTED (bit-identical).'); }
-    else {
-      fastChoice = false;
-      line('  => fast mode REJECTED. Trying parts individually to find the culprit:');
-      for (const part of ['globals', 'libCache', 'liveSnapshot']) {
-        const r = runOnce(cfg, { [part]: true }, PROBE_S, {});
-        line('     ' + part.padEnd(13), JSON.stringify(bodiesFingerprint(hookRef)) === JSON.stringify(bodiesFingerprint(r)) ? 'identical' : 'DIFFERS');
-      }
+    const candidates = [
+      ['ALL', true],
+      ['globals+libCache', { globals: true, libCache: true }],
+      ['libCache', { libCache: true }],
+      ['globals', { globals: true }]
+    ];
+    const eqRes = [];
+    fastChoice = false;
+    let chosenName = 'none';
+    for (const [name, fast] of candidates) {
+      const r = (name === 'ALL') ? allRun : runOnce(cfg, fast, PROBE_S, {});
+      const idB = JSON.stringify(bodiesFingerprint(hookRef)) === JSON.stringify(bodiesFingerprint(r));
+      const idH = same(hookRef.hook, r.hook);
+      const idT = JSON.stringify(hookRef.tracker) === JSON.stringify(r.tracker);
+      const ok = idB && idH && idT;
+      eqRes.push({ name, idBodies: idB, idHook: idH, idTracker: idT, ok });
+      line('  ' + name.padEnd(18) + 'bodies=' + idB + ' hook=' + idH + ' tracker=' + idT + '  -> ' + (ok ? 'IDENTICAL' : 'DIFFERS'));
+      if (ok) { fastChoice = fast; chosenName = name; break; }
     }
+    line('  => fast mode: ' + chosenName + (fastChoice ? '  (accepted, bit-identical)' : '  (all rejected; evaluator.fast stays off)'));
+    report.equiv = { idNoHook, tried: eqRes, chosen: chosenName };
+    const ok = !!fastChoice;
     md.push('- perf probe (' + PROBE_S + ' sim-s): hook-only ' + ms(base) + ', fast ALL ' + ms(all) +
-      ' (x' + f(base / all, 1) + '); equivalence ' + (ok ? 'bit-identical -> evaluator.fast=true' : 'FAILED -> fast off'));
+      ' (x' + f(base / all, 1) + '); equivalence: ' + (ok ? 'bit-identical with fast=' + chosenName : 'FAILED -> fast off'));
   }
+  if (flag('skip-perf') && flag('fast')) fastChoice = true;   // known bit-identical (validated by a full-run baseline)
   cfg.evaluator.fast = fastChoice;
 
   // ======================= 3: BASELINE ======================================
   head('3 BASELINE (full run)');
-  const ev = EV.createEvaluator(cfg, { workers: WORKERS });
+  let ev, rawRes, snapRes, checks, mR;
+  const mdMark = md.length;
+  for (let attempt = 0; attempt < 2; attempt++) {
+  md.length = mdMark;
+  ev = EV.createEvaluator(cfg, { workers: WORKERS });
   const t0 = Date.now();
-  const rawRes = ev.evaluateSync({}, RAW);
+  rawRes = ev.evaluateSync({}, RAW);
   line('  raw defaults run wall: ' + ms(Date.now() - t0) + '  (fast=' + !!fastChoice + ')');
-  const snapRes = ev.evaluateSync({}, {});
+  snapRes = ev.evaluateSync({}, {});
   report.baselineRaw = rawRes; report.baselineSnapped = snapRes;
 
   const rows = [
@@ -209,8 +220,8 @@ async function main() {
   line('  effective values snapped:', JSON.stringify(snapRes.effective));
   line('  failures raw/snapped    :', JSON.stringify(rawRes.failures), JSON.stringify(snapRes.failures));
 
-  const mR = rawRes.metrics;
-  const checks = [];
+  mR = rawRes.metrics;
+  checks = [];
   const chk = (name, pass, detail) => { checks.push({ name, pass, detail }); line('  [' + (pass ? 'PASS' : 'FAIL') + '] ' + name + ' ' + (detail || '')); };
   chk('deploy time matches manual benchmark (~590 s)', mR.timeToDeployS !== null && Math.abs(mR.timeToDeployS - KNOWN.benchmarkS) < 2, '(' + f(mR.timeToDeployS, 2) + ' s)');
   chk('reproduces Step 2 live result (deploy)', mR.timeToDeployS !== null && Math.abs(mR.timeToDeployS - KNOWN.deployS) < 0.05, '(' + f(mR.timeToDeployS, 2) + ' vs ' + KNOWN.deployS + ')');
@@ -218,6 +229,12 @@ async function main() {
   chk('reproduces Step 2 live result (maxQ)', mR.maxQKPa !== null && Math.abs(mR.maxQKPa - KNOWN.maxQ) < 0.02, '(' + f(mR.maxQKPa, 2) + ' vs ' + KNOWN.maxQ + ')');
   report.checks = checks;
   if (!checks.every(c => c.pass)) line('  !! baseline does not match the known manual result -> do NOT trust calibration below until explained.');
+  if (checks.every(c => c.pass) || !fastChoice) break;
+  line('  !! full-run baseline mismatch WITH fast mode on -> fast disabled, re-running reference path (slow).');
+  await ev.close();
+  fastChoice = false; cfg.evaluator.fast = false;
+  md.push('- fast mode passed the probe window but FAILED the full-run baseline check -> fast disabled');
+  }
 
   // ======================= 4: G-LOAD ========================================
   head('4 G-LOAD sanity (own series vs sim raw accel)');
@@ -226,22 +243,29 @@ async function main() {
   if (gs.length) {
     const liftoff = gs.filter(r => r[0] >= 1 && r[0] <= 3);
     const gLift = liftoff.length ? Math.max.apply(null, liftoff.map(r => r[1])) : null;
-    const tMeco = mR.mecoT;
     let peak = gs[0];
     gs.forEach(r => { if (r[1] > peak[1]) peak = r; });
+    // own vs raw agreement while thrusting (raw also contains pad reaction at t<3 s and RCS, so skip those)
+    const ratios = gs.filter(r => r[1] > 0.3 && r[0] > 3).map(r => r[2] / r[1]).sort((x, y) => x - y);
+    const q = p => ratios.length ? ratios[Math.min(ratios.length - 1, Math.floor(p * ratios.length))] : null;
+    const rMed = q(0.5), rLo = q(0.05), rHi = q(0.95);
     line('  liftoff own G (t=1..3 s): ' + f(gLift, 2) + '   (expect ~1.3-1.5)');
-    line('  own peak G: ' + f(peak[1], 2) + ' @ t=' + f(peak[0], 0) + ' s, alt ' + f(peak[3], 1) + ' km; MECO t=' + f(tMeco, 1) + ' s');
-    line('  sim-raw peak: ' + f(mR.maxAccelRawG, 2) + '  (STATE: 5.30 vs own 4.82)');
+    line('  own peak (1 s samples): ' + f(peak[1], 2) + ' g @ t=' + f(peak[0], 0) + ' s (alt ' + f(peak[3], 1) + ' km);  booster-MECO t=' + f(mR.mecoT, 1) + ' s');
+    line('  own max (per tick) ' + f(mR.maxG, 3) + ' | sim-raw max ' + f(mR.maxAccelRawG, 3));
+    line('  raw/own while thrusting: median ' + f(rMed, 3) + ', p5 ' + f(rLo, 3) + ', p95 ' + f(rHi, 3) + '  (n=' + ratios.length + ')');
     line('  t[s]     ownG   rawG   alt[km]   (every ~20 s)');
     gs.forEach((r, i) => { if (i % 20 === 0) line('  ' + f(r[0], 0).padStart(5) + f(r[1], 2).padStart(9) + f(r[2], 2).padStart(7) + f(r[3], 1).padStart(10)); });
-    // where does raw exceed own by >0.3 g ?
-    const diverge = gs.filter(r => r[2] - r[1] > 0.3).map(r => r[0]);
-    if (diverge.length) line('  raw > own by >0.3 g at t = ' + diverge.slice(0, 12).map(x => x.toFixed(0)).join(', ') + (diverge.length > 12 ? ' ...' : '') + '  (look: separation kicks / RCS / slosh?)');
-    const nearMeco = tMeco !== null && Math.abs(peak[0] - tMeco) < 15;
-    gPass = gLift !== null && gLift >= 1.2 && gLift <= 1.6 && nearMeco;
-    line('  verdict: liftoff in range=' + (gLift >= 1.2 && gLift <= 1.6) + ', peak within 15 s of MECO=' + nearMeco + ' -> maxG ' + (gPass ? 'CAN be enabled' : 'stays DISABLED'));
-    report.gcheck = { gLift, peak, tMeco, pass: gPass };
-    md.push('', '- G-load: liftoff ' + f(gLift, 2) + ' g, own peak ' + f(peak[1], 2) + ' g @ ' + f(peak[0], 0) + ' s (MECO ' + f(tMeco, 0) + ' s), sim-raw peak ' + f(mR.maxAccelRawG, 2) + ' g -> ' + (gPass ? 'verified' : 'NOT verified, maxG stays disabled'));
+    const diverge = gs.filter(r => r[0] > 3 && r[2] - r[1] > 0.3).map(r => r[0]);
+    if (diverge.length) line('  raw > own by >0.3 g at t = ' + diverge.slice(0, 12).map(x => x.toFixed(0)).join(', ') + (diverge.length > 12 ? ' ...' : ''));
+    if (mR.rawPeak) line('  rawPeak :', JSON.stringify(mR.rawPeak));
+    if (mR.ownPeak) line('  ownPeak :', JSON.stringify(mR.ownPeak));
+    // NOTE: the G peak is expected at the END of the last long burn (stage lightens), NOT at booster MECO.
+    const liftOk = gLift !== null && gLift >= 1.2 && gLift <= 1.6;
+    const agreeOk = rLo !== null && rLo >= 0.85 && rHi <= 1.2;
+    gPass = liftOk && agreeOk;
+    line('  verdict: liftoff in range=' + liftOk + ', own within -15%/+20% of raw (p5..p95)=' + agreeOk + ' -> maxG ' + (gPass ? 'CAN be enabled (limit is relative to this own baseline)' : 'stays DISABLED'));
+    report.gcheck = { gLift, peak, rMed, rLo, rHi, pass: gPass };
+    md.push('', '- G-load: liftoff ' + f(gLift, 2) + ' g, own max ' + f(mR.maxG, 2) + ' g, sim-raw max ' + f(mR.maxAccelRawG, 2) + ' g, raw/own median ' + f(rMed, 2) + ' (p5 ' + f(rLo, 2) + ', p95 ' + f(rHi, 2) + ') -> ' + (gPass ? 'verified' : 'NOT verified, maxG stays disabled'));
   } else line('  no gSeries in metrics (old hook?)');
 
   // ======================= 5: CALIBRATION ===================================
@@ -294,25 +318,25 @@ async function main() {
       line('  ' + x.toFixed(2) + '   | ' + f(t.coastApoKm, 2).padStart(8) + f(t.coastPeriKm, 1).padStart(10) + f(t.coastEcc, 4).padStart(10) +
         ' | ' + f(F.apogeeKm, 2).padStart(9) + f(F.perigeeKm, 2).padStart(11) + f(F.ecc, 6).padStart(10) + '  | ' + (full[i].hardFail ? full[i].failures.map(z => z.id).join(',') : '-'));
     });
-    // rank agreement: coast apogee vs final apogee (Kendall-style concordance over pairs)
-    const pairs = [];
-    for (let i = 0; i < biasPts.length; i++) for (let j = i + 1; j < biasPts.length; j++) {
-      const da = trunc[j].metrics.coastApoKm - trunc[i].metrics.coastApoKm;
-      const db = full[j].metrics.apogeeKm - full[i].metrics.apogeeKm;
-      if (Number.isFinite(da) && Number.isFinite(db)) pairs.push(Math.sign(da) === Math.sign(db) || da === 0 || db === 0);
-    }
-    const conc = pairs.length ? pairs.filter(Boolean).length / pairs.length : 0;
-    // distance of the best-by-proxy from the best-by-full
-    const bestFull = full.reduce((bi, r, i) => (r.score < full[bi].score ? i : bi), 0);
-    const bestTr = trunc.reduce((bi, r, i) => (r.score < trunc[bi].score ? i : bi), 0);
-    const speed = (wFull / 1000) / (wTr / 1000);
-    line('  apogee-order concordance: ' + f(conc * 100, 0) + ' %   best(full)=bias ' + biasPts[bestFull] + '  best(truncated)=bias ' + biasPts[bestTr]);
+    // The stage burn steers apogee to the target regardless of bias, so coastApo is ~flat (useless as proxy).
+    // What varies is coast eccentricity/perigee. A usable proxy must (a) order the points like the full result
+    // does at the feasibility cliff, (b) be clearly faster.
+    const order = biasPts.map((x, i) => i).sort((i, j) => trunc[i].metrics.coastEcc - trunc[j].metrics.coastEcc);
+    let seenFail = false, cliffOk = true;
+    order.forEach(i => { if (full[i].hardFail) seenFail = true; else if (seenFail) cliffOk = false; });
+    const apoSpread = Math.max.apply(null, trunc.map(r => r.metrics.coastApoKm)) - Math.min.apply(null, trunc.map(r => r.metrics.coastApoKm));
+    const feas = full.map((r, i) => i).filter(i => !full[i].hardFail);
+    const bestFull = feas.length ? feas.reduce((bi, i) => (full[i].score < full[bi].score ? i : bi), feas[0]) : -1;
+    const speed = wFull / wTr;
+    line('  coastApo spread over sweep: ' + f(apoSpread, 3) + ' km (flat => not informative)');
+    line('  feasibility cliff ordered by coastEcc (all feasible below all infeasible): ' + cliffOk);
+    line('  best feasible by full score: bias ' + (bestFull >= 0 ? biasPts[bestFull] : 'none') + '   scores(full): ' + full.map(r => f(r.score, 1)).join(' | '));
     line('  wall (parallel x' + WORKERS + '): full ' + ms(wFull) + ', truncated ' + ms(wTr) + '  -> x' + f(speed, 2));
-    const valid = conc >= 0.9 && bestFull === bestTr && speed >= 1.5;
-    proxyVerdict = valid ? 'VALID (usable for Steps 4-5)' : 'NOT validated -> use full evals';
+    const valid = cliffOk && speed >= 1.5;
+    proxyVerdict = valid ? 'USABLE for feasibility bracketing only (coastEcc cliff), NOT for accuracy ranking' : 'NOT worth it -> use full evals';
     line('  verdict: ' + proxyVerdict);
-    report.proxy = { biasPts, conc, bestFull: biasPts[bestFull], bestTr: biasPts[bestTr], wFull, wTr, valid };
-    md.push('- truncated proxy: ' + proxyVerdict + ' (concordance ' + f(conc * 100, 0) + ' %, speed-up x' + f(speed, 2) + ')');
+    report.proxy = { biasPts, cliffOk, apoSpread, bestFull: bestFull >= 0 ? biasPts[bestFull] : null, wFull, wTr, speed, valid };
+    md.push('- truncated proxy: ' + proxyVerdict + ' (cliffOk ' + cliffOk + ', speed-up x' + f(speed, 2) + ', coastApo flat)');
   }
 
   // ======================= WRITE ============================================

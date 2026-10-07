@@ -44,6 +44,7 @@
 
       maxGLoad: 0, maxGLoadT: null,        // own G-load (thrust+drag)/(m*g0), body 0
       maxAccelRawG: 0,                     // sim's _lastAccel (diagnostic only)
+      rawPeak: null, ownPeak: null,        // details at the tick of the max raw / own G (mass, thrust, implied mass)
       gSeries: [],                         // [t, ownG, rawG, altKm] once per sim-second (G sanity check)
       stageMaxAltKm: 0,
       stageCrashed: false,
@@ -149,6 +150,16 @@
       }
     }
     return Math.sqrt(fx * fx + fy * fy) / (m * G0);
+  }
+
+  function peakInfo(b, gl, raw, t) {
+    var engs = b.engines || [], F = 0;
+    for (var i = 0; i < engs.length; i++) F += engs[i].currentF || 0;
+    var m = (b.dryMass || 0) + (b.fuelMass || 0);
+    var rc = false;
+    if (b.rcsCmd) for (var k in b.rcsCmd) if (b.rcsCmd[k]) { rc = true; break; }
+    return { t: t, own: gl, raw: raw, thrustN: F, massKg: m, dryKg: b.dryMass, fuelKg: b.fuelMass,
+             impliedMassKg: raw > 0.05 ? F / (raw * G0) : null, flowKgS: totalFlow(b), rcsCmdActive: rc || !!b.rcsDuty };
   }
 
   function totalFlow(b) {
@@ -276,10 +287,10 @@
 
     // G-load, altitude, crash (body 0 = the stack / the stage)
     var gl = gLoad(b0, st);
-    if (gl > M.maxGLoad) { M.maxGLoad = gl; M.maxGLoadT = simT; }
     var ax = b0._lastAccelX || 0, ay = b0._lastAccelY || 0;
     var raw = Math.sqrt(ax * ax + ay * ay) / G0;
-    if (raw > M.maxAccelRawG) M.maxAccelRawG = raw;
+    if (gl > M.maxGLoad) { M.maxGLoad = gl; M.maxGLoadT = simT; M.ownPeak = peakInfo(b0, gl, raw, simT); }
+    if (raw > M.maxAccelRawG) { M.maxAccelRawG = raw; M.rawPeak = peakInfo(b0, gl, raw, simT); }
     if ((M.ticks % 80) === 1) M.gSeries.push([simT, gl, raw, (Math.sqrt(b0.rx * b0.rx + b0.ry * b0.ry) - RE) / 1000]);
     var altKm = (Math.sqrt(b0.rx * b0.rx + b0.ry * b0.ry) - RE) / 1000;
     if (altKm > M.stageMaxAltKm) M.stageMaxAltKm = altKm;

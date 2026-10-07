@@ -205,6 +205,7 @@ function extractMetrics(result, evalKind) {
     circVrMinT: fin(c.vrMinT),
     circEndMarginS: fin(c.tToApoAtEndS),              // time to apogee of post-burn orbit
     circEndMarginPreApoS: fin(c.tToPreBurnApoAtEndS), // alt definition (pre-burn apogee direction)
+    circBurnStartT: fin(c.burnStartT), circBurnEndT: fin(c.burnEndT),
     circBurnS: (c.burnStartT !== null && c.burnEndT !== null) ? c.burnEndT - c.burnStartT : null,
     // fuel / timing
     boosterFuelLeftKg: h.split ? fin(h.split.boosterFuelKg) : null,
@@ -215,6 +216,7 @@ function extractMetrics(result, evalKind) {
     // limits
     maxG: fin(h.maxGLoad), maxGT: fin(h.maxGLoadT), maxAccelRawG: fin(h.maxAccelRawG),
     gSeries: h.gSeries || null,
+    rawPeak: h.rawPeak || null, ownPeak: h.ownPeak || null,
     maxQKPa: fin(tr.maxQKPa),
     stageMaxAltKm: fin(h.stageMaxAltKm),
     stageCrashed: !!h.stageCrashed || !!(stage && stage.crashed),
