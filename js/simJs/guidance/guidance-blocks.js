@@ -481,16 +481,15 @@ engs.forEach((e) => {
     const residual = boosterFuelNow - spoolBurn;
 const target = Number.isFinite(_constants.MECO_TARGET_BOOSTER_FUEL_KG) ?
   _constants.MECO_TARGET_BOOSTER_FUEL_KG : 0;
-// One-tick predictive: fire on the tick BEFORE residual would
-// drop below target. By the time the MECO command reaches
-// physics, one more physics step runs and burns mdot·dt more;
-// predicting that overshoot lets us hit the target almost
-// exactly (off by less than one tick's worth of fuel).
+// Fire when the projected post-shutdown residual (current fuel
+// minus the shutdown spool integral) reaches the target. The
+// spool integral already accounts for the full shutdown burn
+// including the tick the command propagates, so no separate
+// one-tick compensation is needed.
 //
-// residualNextTick = residual − mdot_now · dt
-//   fire when residualNextTick <= target
+
 const dt = env.DT;
-const burnThisTick = mdot_now * dt;
+
 if (residual <= target) shouldFire = true;
   }
   
