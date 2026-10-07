@@ -201,6 +201,8 @@ function extractMetrics(result, evalKind) {
     circBurnEnded: c.burnEndT !== null,
     circMinVr: fin(c.vrBurnMin),
     circPhaseMinVr: fin(c.vrPhaseMin),
+    circVrAtEnd: fin(c.vrAtEnd),                      // vr when the burn ended (recovery check)
+    circVrMinT: fin(c.vrMinT),
     circEndMarginS: fin(c.tToApoAtEndS),              // time to apogee of post-burn orbit
     circEndMarginPreApoS: fin(c.tToPreBurnApoAtEndS), // alt definition (pre-burn apogee direction)
     circBurnS: (c.burnStartT !== null && c.burnEndT !== null) ? c.burnEndT - c.burnStartT : null,
@@ -276,9 +278,13 @@ function scoreMetrics(m, cfg, opts) {
   if (truncated) {
     if (m.coastApoKm === null) add('no_coast_orbit', 3000);
   } else {
-    const vrMin = hc.circMinRadialVelocityMps ? hc.circMinRadialVelocityMps.min : 0;
+    // vr may dip below 0 and recover (physics); only a dip below hardFloor is a hard fail.
+    // Dips between hardFloor and `min` get a small soft penalty (see below).
+    const vc = hc.circMinRadialVelocityMps || {};
+    const vrSoft = Number.isFinite(vc.min) ? vc.min : 0;
+    const vrHard = Number.isFinite(vc.hardFloor) ? vc.hardFloor : vrSoft;
     if (!m.circBurnStarted) add('circ_never_burned', 3000);
-    else if (m.circMinVr !== null && m.circMinVr < vrMin) add('circ_vr_negative', 100 * (vrMin - m.circMinVr));
+    else if (m.circMinVr !== null && m.circMinVr < vrHard) add('circ_vr_too_negative', 100 * (vrHard - m.circMinVr));
     if (hc.payloadMustBeReleasedAndCleared !== false && !m.payloadCleared) add('payload_not_cleared', 2000);
     if (m.apogeeKm === null || m.perigeeKm === null) add('no_final_orbit', 3000);
   }
@@ -307,6 +313,13 @@ function scoreMetrics(m, cfg, opts) {
     soft[term.id] = p;
     if (p >= 0) pos += p; else neg += p;
   });
+  // vr-dip tie-breaker (full evals only): accuracy impact is already in the orbit terms.
+  if (!truncated && m.circMinVr !== null) {
+    const vc = hc.circMinRadialVelocityMps || {};
+    const vrSoft = Number.isFinite(vc.min) ? vc.min : 0;
+    const p = Math.min((vc.softWeightPerMps || 0) * Math.max(0, vrSoft - m.circMinVr), capEach);
+    soft.circVrDip = p; pos += p;
+  }
   return { score: pos + neg, hardFail: false, depth: 0, failures: [], soft };
 }
 

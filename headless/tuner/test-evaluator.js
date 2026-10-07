@@ -116,8 +116,19 @@ async function unit() {
     assert.ok(f(awful).hardFail === false && f(awful).score < cfg.scoring.failPenalty);
     assert.ok(f(crash).score > f(awful).score);
     assert.ok(f(crashLow).score > f(crash).score, 'lower altitude crash is deeper');
-    const a = good(); a.circMinVr = -1; const b = good(); b.circMinVr = -5;
-    assert.ok(f(b).score > f(a).score && f(a).hardFail);
+    const a = good(); a.circMinVr = -3; const b = good(); b.circMinVr = -8;
+    assert.ok(f(b).score > f(a).score && f(a).hardFail && f(b).hardFail);
+  });
+  await t('vr dip that recovers is NOT a hard fail: -0.38 m/s costs only a small tie-breaker', () => {
+    const m = good(); m.circMinVr = -0.38;
+    const r = ev.scoreMetrics(m, cfg), r0 = ev.scoreMetrics(good(), cfg);
+    assert.strictEqual(r.hardFail, false);
+    near(r.score - r0.score, 0.38 * cfg.scoring.hardConstraints.circMinRadialVelocityMps.softWeightPerMps, 1e-9);
+    const deeper = good(); deeper.circMinVr = -1.5;
+    assert.ok(ev.scoreMetrics(deeper, cfg).score > r.score, 'deeper dip scores worse');
+    // and it can never outweigh a real orbit error:
+    const orbit = good(); orbit.apogeeKm = 322;
+    assert.ok(ev.scoreMetrics(orbit, cfg).score - r0.score > ev.scoreMetrics(deeper, cfg).score - r0.score);
   });
   await t('within tolerance => no orbit penalty; maxQ/maxG placeholders are NOT enforced', () => {
     const m = good(); m.apogeeKm = 320.9; m.perigeeKm = 319.2; m.ecc = 0.0004; m.maxQKPa = 999; m.maxG = 99;
@@ -300,11 +311,13 @@ async function e2e() {
     assert.strictEqual(r.hardFail, false);
     near(r.score, -fuelW() * 52612 + timeW() * 50, 1e-9);
   });
-  await t('lead=0 => burn ends after apogee => vr<0 => graded hard fail', () => {
+  await t('lead=0 => burn ends after apogee => vr dips negative => soft penalty, not hard fail (stub dip is tiny)', () => {
     const r = ev2.evalCore(cfg, { circ_trigger_lead: 0 }, {});
     const s = ev2.scoreMetrics(r.metrics, cfg);
     assert.ok(r.metrics.circMinVr < 0, 'vr min ' + r.metrics.circMinVr);
-    assert.ok(s.hardFail && s.failures.some(f => f.id === 'circ_vr_negative'));
+    assert.strictEqual(s.hardFail, false);
+    assert.ok(s.soft.circVrDip > 0);
+    assert.ok(Number.isFinite(r.metrics.circVrAtEnd));
   });
   await t('monotone: more lead => larger end margin (bisection premise)', () => {
     const ms = [4, 5, 6, 7].map(l => ev2.evalCore(cfg, { circ_trigger_lead: l }, {}).metrics.circEndMarginS);
@@ -359,6 +372,22 @@ async function live() {
       ' circMinVr=' + m.circMinVr + ' endMargin=' + m.circEndMarginS + ' / pre-apo ' + m.circEndMarginPreApoS +
       '\n       booster fuel=' + m.boosterFuelLeftKg + ' stage residual=' + m.stageResidualKg + ' wall=' + m.wallMs.toFixed(0) + ' ms');
     assert.ok(m.payloadCleared, 'payload cleared');
+  });
+  await t('hook overhead: same ticks with vs without hook (explains eval wall time)', () => {
+    const { runSim } = require('../runner');
+    const ms = cfg.mission;
+    const sn = ev.snapValues(cfg, {}, rawOpts);
+    const tun = ev.buildTunablePayload(cfg, sn, ms.targetOrbitAltKm);
+    const base = { stackId: ms.stackId, vehicleId: ms.vehicleId, guide: ms.guide, durationS: a.metrics.simEndT,
+      environment: ms.environment, fueling: ms.fueling, quiet: true, tunables: tun, resetGuideConfig: true };
+    const plain = runSim(base);                                           // no hook (loads sim: first-run cost included)
+    const plain2 = runSim(base);                                          // warm instance
+    const hooked = runSim(Object.assign({}, base, { extraBootstrapCode: ev.HOOK_CODE, hookOptions: { stopAt: null } }));
+    const hooked2 = runSim(Object.assign({}, base, { extraBootstrapCode: ev.HOOK_CODE, hookOptions: { stopAt: null } }));
+    console.log('       cores=' + os.cpus().length + ' (' + os.cpus()[0].model + ')  ticks=' + plain2.ticksRun +
+      '\n       no hook: ' + plain.wallMs.toFixed(0) + ' ms cold / ' + plain2.wallMs.toFixed(0) + ' ms warm' +
+      '\n       hook   : ' + hooked.wallMs.toFixed(0) + ' ms cold / ' + hooked2.wallMs.toFixed(0) + ' ms warm' +
+      '\n       hook overhead (warm): ' + (100 * (hooked2.wallMs / plain2.wallMs - 1)).toFixed(1) + ' %');
   });
   await t('determinism: same eval again in-process is bit-identical', () => {
     const b = ev.evalCore(cfg, {}, rawOpts);

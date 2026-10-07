@@ -54,7 +54,7 @@
       circ: {
         entered: null,
         burnStartT: null, burnEndT: null,
-        vrBurnMin: null, vrPhaseMin: null,
+        vrBurnMin: null, vrMinT: null, vrAtEnd: null, vrPhaseMin: null,
         tToApoAtEndS: null,       // time to apogee of the POST-burn orbit
         tToPreBurnApoAtEndS: null,// time until vehicle reaches the PRE-burn apogee direction
         endApoKm: null, endPeriKm: null, endE: null,
@@ -235,14 +235,15 @@
         c.burnStartT = st.simTime;
         var e = el.e;
         if (e > 1e-9) { c.preApoDirX = -el.ex / e; c.preApoDirY = -el.ey / e; }
-        c.vrBurnMin = el.vr;
+        c.vrBurnMin = el.vr; c.vrMinT = st.simTime;
       }
       return;
     }
     if (c.burnEndT !== null) return;
-    if (el.vr < c.vrBurnMin) c.vrBurnMin = el.vr;
+    if (el.vr < c.vrBurnMin) { c.vrBurnMin = el.vr; c.vrMinT = st.simTime; }
     if (flow < thr) {
       c.burnEndT = st.simTime;
+      c.vrAtEnd = el.vr;
       c.tToApoAtEndS = el.tToApo;
       c.endApoKm = el.apoKm; c.endPeriKm = el.periKm; c.endE = el.e;
       if (c.preApoDirX !== null) {

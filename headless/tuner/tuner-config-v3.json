@@ -102,7 +102,12 @@
       "maxG": { "enabled": false, "_note": "runner tracker.maxG ki calculation GALAT hai - use mat karo. Evaluator hook me apni G-load (non-gravitational accel / g0) compute karo, Step 3 me verify karke tabhi enable karo." },
       "maxQKPa": { "limit": 50.0, "calibrate": true, "calibrateFactorOverBaseline": 1.25 },
       "crashed": false,
-      "circMinRadialVelocityMps": { "min": 0.0, "_note": "CIRCULARIZE phase ke poore dauraan vr >= 0. Negative = outright fail." },
+      "circMinRadialVelocityMps": {
+        "min": 0.0,
+        "softWeightPerMps": 1.0,
+        "hardFloor": -2.0,
+        "_note": "vr thodi der negative ja kar wapas positive ho sakta hai (physics). Isliye hard fail NAHI: vr_min < 'min' pe sirf chhota soft penalty (tie-breaker, softWeightPerMps per m/s), kyunki asli accuracy loss orbit terms (apogee/perigee/ecc) me already dikhta hai. Hard fail sirf vr_min < hardFloor (PROVISIONAL -2.0 m/s) pe, graded depth ke saath."
+      },
       "payloadMustBeReleasedAndCleared": true
     },
     "failPenalty": 1000000,
