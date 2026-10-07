@@ -346,6 +346,45 @@ async function e2e() {
     near(r.metrics.coastApoKm, 320, 1e-6); near(r.metrics.coastPeriKm, 200, 1e-6);
     assert.ok(r.metrics.ticksRun < full.metrics.ticksRun);
   });
+  await t('coastEnd eval (stride 1): stops at COAST_ROTATE -> COAST_WAIT, exact tick, entry != exit time', () => {
+    const r = ev2.evalCore(cfg, base, { eval: 'coastEnd', stride: 1 });
+    const m = r.metrics;
+    assert.strictEqual(m.evalKind, 'coastEnd');
+    assert.strictEqual(m.stopReason, 'coastRotateEnd');
+    assert.strictEqual(m.coastEndToPhase, 'COAST_WAIT');
+    assert.strictEqual(m.coastEndExactTick, true);
+    near(m.coastEndT, 25, 0.0126, 'exit time'); near(m.phaseT.COAST_ROTATE, 20, 0.0126, 'entry time');
+    near(m.coastEndApoKm, 320, 1e-6); near(m.coastEndPeriKm, 200, 1e-6);
+    near(m.coastEndEcc, 120e3 / (2 * RE + 520e3), 1e-9, 'coastEnd ecc (Kepler truth)');
+    assert.ok(Number.isFinite(m.coastEndVr) && Number.isFinite(m.stageFuelAtCoastEndKg));
+    assert.ok(m.stageFuelAtCoastEndKg < m.stageFuelAtCoastKg, 'fuel burns between entry and exit');
+    assert.ok(m.ticksRun < full.metrics.ticksRun);
+  });
+  await t('full eval also records coastEnd (entry vs exit comparable in one run)', () => {
+    assert.strictEqual(full.metrics.coastEndToPhase, 'COAST_WAIT');
+    // default stride 4 => capture may be up to 3 ticks late (this is WHY the mapper sends stride 1)
+    near(full.metrics.coastEndT, 25, 4 * 0.0125 + 1e-6);
+    const exact = ev2.evalCore(cfg, base, { stride: 1 }).metrics;
+    assert.strictEqual(exact.coastEndExactTick, true); near(exact.coastEndT, 25, 0.0126);
+  });
+  await t('coastEnd eval: scoreMetrics short-circuits (no crash, score = ecc), pool finalize path ok', async () => {
+    const e = ev2.createEvaluator(cfg, { workers: 2 });
+    const r = await e.evaluate(base, { eval: 'coastEnd', stride: 1 });
+    assert.strictEqual(r.evalKind, 'coastEnd'); assert.strictEqual(r.hardFail, false);
+    near(r.score, r.metrics.coastEndEcc, 0);
+    const bad = Object.assign({}, r.metrics, { coastEndEcc: null });
+    assert.ok(ev2.scoreMetrics(bad, cfg).failures.some(x => x.id === 'no_coast_end'));
+    await e.close();
+  });
+  await t('cache key separates evalKind and stride', async () => {
+    const e = ev2.createEvaluator(cfg, { workers: 0 });
+    await e.evaluate(base, { eval: 'coastEnd', stride: 1 });
+    await e.evaluate(base, { eval: 'coastEnd', stride: 4 });
+    await e.evaluate(base, { eval: 'truncated' });
+    await e.evaluate(base, { eval: 'coastEnd', stride: 1 });          // hit
+    assert.strictEqual(e.cacheStats().size, 3); assert.strictEqual(e.cacheStats().hits, 1);
+    await e.close();
+  });
   await t('determinism: two evals on the same instance are bit-identical', () => {
     const a = ev2.evalCore(cfg, { stage_burn_aoa_bias: 0.7 }, {}), b = ev2.evalCore(cfg, { stage_burn_aoa_bias: 0.7 }, {});
     delete a.metrics.wallMs; delete b.metrics.wallMs;

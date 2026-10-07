@@ -14,8 +14,11 @@
 //   globalThis.__hookOpts                  - set by runSim(hookOptions) per run
 //
 // hookOptions:
-//   stopAt        'payloadCleared' | 'coastRotate' | null   (default null)
-//   stride        guidance-status polling stride in ticks   (default 4)
+//   stopAt        'payloadCleared' | 'coastRotate' | 'coastRotateEnd' | null   (default null)
+//                 coastRotate    = stop at COAST_ROTATE entry (M.coast)
+//                 coastRotateEnd = stop at COAST_ROTATE -> next phase (COAST_WAIT) transition (M.coastEnd)
+//   stride        guidance-status polling stride in ticks   (default 4). Use 1 when a phase
+//                 transition must be caught on the exact tick (coastEnd).
 //   flowThreshKgS engines-off threshold for circ burn       (default 1)
 //   doneGraceS    stop this long after DONE phase if payload never cleared (30)
 //
@@ -38,6 +41,7 @@
       ticks: 0,
       simT: 0,
       curPhase: null,
+      lastPollTick: 0,            // tick index of the previous guidance poll
       phaseT: {},                 // phase name -> first sim time seen
       deadReason: null,           // set if mission ended abnormally
       stopReason: null,
@@ -53,6 +57,7 @@
       split: null,                // {t, boosterFuelKg, stageFuelKg}
       mecoT: null,
       coast: null,                // orbit + fuel at COAST_ROTATE entry
+      coastEnd: null,             // orbit + fuel at COAST_ROTATE exit (first tick of next phase, normally COAST_WAIT)
       circ: {
         entered: null,
         burnStartT: null, burnEndT: null,
@@ -197,10 +202,21 @@
 
   function poll(st, b0) {
     var s = Guidance.getGuideStatus();
+    var prevPollTick = M.lastPollTick;
+    M.lastPollTick = M.ticks;
     var simT = st.simTime;
     var ph = s && s.phase;
     if (ph && ph !== M.curPhase) {
+      var prevPh = M.curPhase;
       M.curPhase = ph;
+      // COAST_ROTATE -> next phase: capture on the first tick of the new phase.
+      // RCS boost + rotation happen INSIDE COAST_ROTATE, so entry state != exit state.
+      if (prevPh === 'COAST_ROTATE' && M.coastEnd === null) {
+        var ox = pubOrbit(bodyElements(b0));
+        ox.t = simT; ox.stageFuelKg = b0.fuelMass; ox.fromPhase = prevPh; ox.toPhase = ph;
+        ox.exactTick = (M.ticks - prevPollTick) === 1;   // false => transition may be up to stride-1 ticks late
+        M.coastEnd = ox;
+      }
       onPhaseEnter(ph, b0, simT);
       if (ph === '?') M.deadReason = 'guide_ended_abnormally';
     }
@@ -319,6 +335,7 @@
     if (M.stageCrashed) { M.stopReason = 'crashed'; return true; }
     if (M.deadReason) { M.stopReason = M.deadReason; return true; }
     if (o.stopAt === 'coastRotate' && M.coast) { M.stopReason = 'coastRotate'; return true; }
+    if (o.stopAt === 'coastRotateEnd' && M.coastEnd) { M.stopReason = 'coastRotateEnd'; return true; }
     if (M.cleared) {
       // Full evals stop once the payload is cleared. A circ burn that is
       // still spooling down is irrelevant here (burn ended long before deploy).

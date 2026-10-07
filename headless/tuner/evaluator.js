@@ -153,10 +153,24 @@ function buildTunablePayload(cfg, snapped, targetAltKm) {
   return out;
 }
 
+// Guidance polling stride: per-eval override (opts.stride, integer >= 1) beats config (default 4).
+// E-mapper sends stride 1 so the COAST_ROTATE -> COAST_WAIT transition is caught on its exact tick.
+function strideOf(cfg, opts) {
+  const o = opts && opts.stride;
+  if (Number.isInteger(o) && o >= 1) return o;
+  return (cfg.evaluator && cfg.evaluator.stride) || 4;
+}
+
+function evalKindOf(opts) {
+  const e = opts && opts.eval;
+  return e === 'truncated' ? 'truncated' : e === 'coastEnd' ? 'coastEnd' : 'full';
+}
+const STOP_AT = { truncated: 'coastRotate', coastEnd: 'coastRotateEnd', full: 'payloadCleared' };
+
 function contextHash(cfg, opts) {
   return stableHash({
     mission: cfg.mission, fixed: cfg.fixed, hook: stableHash(HOOK_CODE),
-    targetAltKm: targetAltOf(cfg, opts), stride: cfg.evaluator && cfg.evaluator.stride
+    targetAltKm: targetAltOf(cfg, opts), stride: strideOf(cfg, opts)
   });
 }
 
@@ -198,6 +212,15 @@ function extractMetrics(result, evalKind) {
     coastPeriKm: h.coast ? fin(h.coast.periKm) : null,
     coastEcc: h.coast ? fin(h.coast.e) : null,
     stageFuelAtCoastKg: h.coast ? fin(h.coast.stageFuelKg) : null,
+    // COAST_ROTATE exit (first tick of COAST_WAIT): the point the manual heuristic targets for E
+    coastEndApoKm: h.coastEnd ? fin(h.coastEnd.apoKm) : null,
+    coastEndPeriKm: h.coastEnd ? fin(h.coastEnd.periKm) : null,
+    coastEndEcc: h.coastEnd ? fin(h.coastEnd.e) : null,
+    coastEndVr: h.coastEnd ? fin(h.coastEnd.vr) : null,
+    stageFuelAtCoastEndKg: h.coastEnd ? fin(h.coastEnd.stageFuelKg) : null,
+    coastEndT: h.coastEnd ? fin(h.coastEnd.t) : null,
+    coastEndToPhase: h.coastEnd ? h.coastEnd.toPhase : null,
+    coastEndExactTick: h.coastEnd ? !!h.coastEnd.exactTick : null,
     // circ burn
     circBurnStarted: c.burnStartT !== null,
     circBurnEnded: c.burnEndT !== null,
@@ -263,6 +286,19 @@ function scoreMetrics(m, cfg, opts) {
   const failures = [];
   let depth = 0;
   const add = (id, d) => { failures.push({ id, depth: d }); depth += d; };
+
+  // coastEnd (E-mapper) evals: the score is NOT used by the mapper (it reads metrics.coastEndEcc).
+  // Short-circuit so the worker-pool finalize() path cannot crash on missing full-mission fields.
+  // Only pre-coast hard constraints apply; score = coastEndEcc as a harmless monotone number.
+  if (m.evalKind === 'coastEnd') {
+    if (m.stageCrashed) add('crashed', 5000);
+    if (constraintEnforced(hc.maxQKPa) && m.maxQKPa !== null && m.maxQKPa > hc.maxQKPa.limit) add('maxQ', 1000 * (m.maxQKPa - hc.maxQKPa.limit));
+    if (constraintEnforced(hc.maxG) && m.maxG !== null && m.maxG > hc.maxG.limit) add('maxG', 1000 * (m.maxG - hc.maxG.limit));
+    if (m.deadReason) add('mission_ended_abnormally', 3000);
+    if (m.coastEndEcc === null) add('no_coast_end', 3000);
+    if (failures.length) return { score: failPenalty + depth, hardFail: true, depth, failures, soft: null };
+    return { score: m.coastEndEcc, hardFail: false, depth: 0, failures: [], soft: null };
+  }
 
   // orbit used for graded depth in every failure (always gives CMA a slope)
   const oApo = truncated ? m.coastApoKm : m.apogeeKm;
@@ -353,10 +389,10 @@ function truncatedTerms(sc) {
 function evalCore(cfg, values, opts) {
   const { runSim } = require('../runner');
   opts = opts || {};
-  const evalKind = opts.eval === 'truncated' ? 'truncated' : 'full';
+  const evalKind = evalKindOf(opts);
   const targetAltKm = targetAltOf(cfg, opts);
   const snapped = snapValues(cfg, values, opts);
-  const stopAt = evalKind === 'truncated' ? 'coastRotate' : 'payloadCleared';
+  const stopAt = STOP_AT[evalKind];
   const ms = cfg.mission;
   const durationS = Number.isFinite(opts.durationCapS) ? opts.durationCapS : ms.durationCapS;
 
@@ -374,7 +410,7 @@ function evalCore(cfg, values, opts) {
     extraBootstrapCode: HOOK_CODE,
     hookOptions: {
       stopAt,
-      stride: (cfg.evaluator && cfg.evaluator.stride) || 4,
+      stride: strideOf(cfg, opts),
       flowThreshKgS: 1
     }
   });
@@ -468,7 +504,7 @@ function createEvaluator(cfg, o) {
 
   function key(values, opts) {
     const sn = snapValues(cfg, values, opts);
-    const k = contextHash(cfg, opts) + '|' + (opts && opts.eval === 'truncated' ? 'T' : 'F') +
+    const k = contextHash(cfg, opts) + '|' + evalKindOf(opts) + '|s' + strideOf(cfg, opts) +
       '|' + JSON.stringify(sn.lattice) + '|' + (opts && opts.durationCapS || '');
     return k;
   }
@@ -520,5 +556,5 @@ function createEvaluator(cfg, o) {
 
 module.exports = {
   createEvaluator, loadConfig, evalCore, snapValues, snapDirect, collapseAscent,
-  scoreMetrics, extractMetrics, buildTunablePayload, HOOK_CODE, TICKS_PER_S, DEFAULT_WORKERS
+  scoreMetrics, extractMetrics, buildTunablePayload, strideOf, evalKindOf, HOOK_CODE, TICKS_PER_S, DEFAULT_WORKERS
 };
