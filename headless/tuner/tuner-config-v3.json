@@ -39,10 +39,10 @@
     },
     {
       "path": "insertion.STAGE_BURN_AOA_MARGIN_DEG",
-      "value": 0.0001
+      "value": 0.001
     }
   ],
-  "_fixedNote": "Ye mission definition hain, tunables nahi. Har eval me tunables ke saath POORA set bhejna hai kyunki Guidance ka _v3Config cached sim instance me runs ke beech persist karta hai. stage_burn_aoa_margin ab fixed (0.0001 = hardware accuracy), tunable nahi.",
+  "_fixedNote": "Ye mission definition hain, tunables nahi. Har eval me tunables ke saath POORA set bhejna hai kyunki Guidance ka _v3Config cached sim instance me runs ke beech persist karta hai. stage_burn_aoa_margin ab fixed (0.001 = hardware accuracy), tunable nahi.",
   "tunables": [
     {
       "id": "ascent_profile_constant",
