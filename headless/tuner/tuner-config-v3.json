@@ -42,7 +42,7 @@
       "value": 0.001
     }
   ],
-  "_fixedNote": "Ye mission definition hain, tunables nahi. Har eval me tunables ke saath POORA set bhejna hai kyunki Guidance ka _v3Config cached sim instance me runs ke beech persist karta hai. stage_burn_aoa_margin ab fixed (0.001 = hardware accuracy), tunable nahi.",
+  "_fixedNote": "Ye mission definition hain, tunables nahi. Har eval me tunables ke saath POORA set bhejna hai kyunki Guidance ka _v3Config cached sim instance me runs ke beech persist karta hai. stage_burn_aoa_margin ab fixed (0.001), tunable nahi.",
   "tunables": [
     {
       "id": "ascent_profile_constant",
@@ -125,8 +125,8 @@
       },
       "circVrAtEndMinMps": {
         "enabled": true,
-        "min": 0.04,
-        "_note": "Feasibility cliff (Step 3 tscan) circVrAtEnd=0 pe hai: neeche payload_not_cleared/no_final_orbit. Safety margin 0.05 m/s ~ 5 lead ticks ~ manual best (0.046). NOTE: 4 s margin target vrEnd~0.027 se match karta hai, isliye ye safety margin actual margin ko ~7 s pe rakhegi (3.9-4.5 window override). Program mature hone par min=0 kar do."
+        "min": 0,
+        "_note": "Feasibility cliff (Step 3 tscan) circVrAtEnd=0 pe hai (neeche payload_not_cleared/no_final_orbit). Sirf sign check (vrEnd >= 0): magnitude ka koi absolute threshold nahi, kyunki vrEnd tick-slope orbit altitude pe depend karta hai (~0.001 high orbit, ~0.02 low). Margin khud target hai."
       },
       "payloadMustBeReleasedAndCleared": true
     },
@@ -196,18 +196,17 @@
       "_note": "Step 6 me manual-best E se calibrate; target E_max ke paas."
     },
     "inner1": {
-      "aStepG": 0.01,
-      "biasSteps": [
-        0.5,
-        0.1,
-        0.05,
-        0.01,
-        0.001,
-        0.0001
-      ],
-      "biasExtreme": -2,
-      "aIncreaseOnExtreme": true
-    },
+  "aStepG": 0.01,
+  "biasSteps": [0.5, 0.1, 0.05, 0.01, 0.001, 0.0001],
+  "biasHalfWidth": 0.3,
+  "eMaxGrowth": { "eOkInit": 0.171, "upMult": 1.5, "minRelGap": 0.03, "maxIters": 6 },
+  "tNeededS": 8.0,
+  "dAWindow": 0.5,
+  "topK": 3,
+  "safety": 0.05,
+  "retryTicks": 2,
+  "maxPasses": 3
+},
     "inner2": {
       "leadSteps": [
         1,
@@ -221,7 +220,7 @@
         5
       ],
       "phase2AllowNegativeVr": true,
-      "vrEndBufferMps": 0.04
+      "vrEndBufferMps": 0
     },
     "mecoOuter": {
       "signal": "stageResidualKg",
@@ -243,11 +242,7 @@
           "bias": 0.59,
           "lead": 5.53
         },
-        {
-          "meco": 55000,
-          "bias": 1.16,
-          "lead": 4.46
-        }
+        { "meco": 55000, "G": 0.60, "bias": 1.16, "lead": 4.46 }
       ]
     },
     "checkpoint": {

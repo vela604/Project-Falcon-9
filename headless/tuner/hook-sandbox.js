@@ -113,7 +113,10 @@
   function bodyElements(b) { return elements(b.rx, b.ry, b.vx, b.vy); }
 
   function pubOrbit(el) {
-    return { apoKm: el.apoKm, periKm: el.periKm, e: el.e, vr: el.vr, altKm: el.altKm, bound: el.bound };
+    // tToApoS: time until the next apogee passage (null if unbound). periodS: orbital period (needed to
+    // unwrap a circ-end margin that landed just past apogee: margin ~ period - small).
+    return { apoKm: el.apoKm, periKm: el.periKm, e: el.e, vr: el.vr, altKm: el.altKm, bound: el.bound,
+             tToApoS: el.tToApo, periodS: el.period };
   }
 
   // ---- G-load (non-gravitational accel / g0) --------------------------------

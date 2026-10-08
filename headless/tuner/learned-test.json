@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "signature": "6f1fea907d0ce9dc",
+  "mecos": {
+    "52612": {
+      "R": {
+        "oks": [
+          0.2
+        ],
+        "fails": [],
+        "inconclusive": []
+      }
+    }
+  }
+}

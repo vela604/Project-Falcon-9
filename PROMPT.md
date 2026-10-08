@@ -32,6 +32,11 @@ Hum `leoInsertionV3` guidance ke constants ko autonomously tune karne wala **off
 3. Boundary **non-monotone**: outer region (E>E_max) me high A <-> low bias; inner region me high A <-> high bias. Achievable region 2D **band** hai, curve nahi. "A:bias ratio" galat abstraction.
 4. Redundant (A, bias) solutions exist; chahiye wo jo E_max ke sabse paas + A sabse chhota (aggressive = fast).
 5. circ lead E ko affect nahi karta (E pehle measure ho chuka). Isliye (A, bias) fix hone ke baad lead alag inner scan hai.
+   **Correction (probe):** E (measurement) lead se independent hai, par *mission success* (E, lead) ka joint
+   function hai — E=0.26 pe fail "E_max exceed" nahi, "lead galat" ho sakta hai. Isliye **INNER-2 pehle, INNER-1 baad me**:
+   INNER-1 har candidate (A, bias) pe `tuneLead` (inner2.js) call karta hai. INNER-2 upper bound = t_to_apogee at
+   COAST_WAIT entry (`coastEndTToApoS`), phase duration nahi. E_max = min(physics E_max, timing E_max); stack-dependent
+   (learned-bounds.json me stack signature ke saath). Timing-bound pe knife-edge nahi, comfortable margin.
 6. Circ burn me vr ~4 s margin ke liye transiently negative hona legit hai. Phase 1: negative vr bina minimise; Phase 2: negative allow; Phase 3: margin 4–5 s pe stop. Practical abhi ~6–7 s. `circVrAtEndMinMps` (0.04) sirf tab 0 pe lao jab Phase 2 me jao.
 7. Trend: MECO↑ => bias↑ => lead↓. Reference points: MECO 50000 (G 0.62, lead 5.65, bias 0.78), MECO 55000 (lead 4.46, bias 1.16), baseline 52612 (0.60/5.53/0.59). Inhe warm-start + validation ke liye use karo.
 8. Scoring: **orbit error weight HIGH, time weight LOW** (time gentle profile se easily kam hota hai par accuracy bigadti hai).
@@ -105,7 +110,7 @@ Orbit error (apo, peri, ecc) HIGH weight, booster fuel medium, time LOW. Hierarc
 crosses E_max. Validate: MECO 50000/55000 ke manual (A, bias) band ke andar ya
 edge pe aane chahiye. Deliverable: `emap.js` + heatmap + E_max estimate.
 
-**STEP 7 — INNER-1 + INNER-2 + MECO outer.** Boundary tracer (per A, bias where
+**STEP 7 — INNER-2 (done, inner2.js) → INNER-1 + MECO outer.** (order swapped: lead pehle) Boundary tracer (per A, bias where
 E = E_max) + bias hybrid bisection + A step descent along boundary. Circ lead
 3-phase bisection (COAST_ROTATE end se resume). MECO outer loop: residual fuel
 into [0, 50] via bracket + 1-kg bisection. Validate vs manual (baseline, 50000,

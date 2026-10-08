@@ -130,7 +130,7 @@ async function unit() {
     const orbit = good(); orbit.apogeeKm = 322;
     assert.ok(ev.scoreMetrics(orbit, cfg).score - r0.score > ev.scoreMetrics(deeper, cfg).score - r0.score);
   });
-  await t('cliff safety: circVrAtEnd below min = graded hard fail (deeper = worse); min=0 / disabled removes it', () => {
+  await t('cliff safety: circVrAtEnd below min (= 0, sign check only) = graded hard fail (deeper = worse); disabled removes it', () => {
     const cs = cfg.scoring.hardConstraints.circVrAtEndMinMps;
     const a = good(); a.circVrAtEnd = cs.min - 0.02; const b = good(); b.circVrAtEnd = -0.4;
     const ra = ev.scoreMetrics(a, cfg), rb = ev.scoreMetrics(b, cfg);
@@ -139,8 +139,11 @@ async function unit() {
     const ok = good(); ok.circVrAtEnd = cs.min + 0.001;
     assert.strictEqual(ev.scoreMetrics(ok, cfg).hardFail, false);
     assert.strictEqual(ev.scoreMetrics(a, noCliff(cfg)).hardFail, false);
-    const z = JSON.parse(JSON.stringify(cfg)); z.scoring.hardConstraints.circVrAtEndMinMps.min = 0;
-    assert.strictEqual(ev.scoreMetrics(a, z).hardFail, false);
+    assert.strictEqual(cs.min, 0, 'config: circVrAtEndMinMps.min is 0 (no magnitude threshold)');
+    const tiny = good(); tiny.circVrAtEnd = 0.0279;                  // run case: small positive vrEnd must NOT hard fail
+    assert.strictEqual(ev.scoreMetrics(tiny, cfg).hardFail, false);
+    const zero = good(); zero.circVrAtEnd = 0;
+    assert.strictEqual(ev.scoreMetrics(zero, cfg).hardFail, false);
   });
   await t('within tolerance => no orbit penalty; calibrated maxQ/maxG limits ARE enforced (Step 3)', () => {
     const hc = cfg.scoring.hardConstraints;
@@ -357,6 +360,11 @@ async function e2e() {
     near(m.coastEndApoKm, 320, 1e-6); near(m.coastEndPeriKm, 200, 1e-6);
     near(m.coastEndEcc, 120e3 / (2 * RE + 520e3), 1e-9, 'coastEnd ecc (Kepler truth)');
     assert.ok(Number.isFinite(m.coastEndVr) && Number.isFinite(m.stageFuelAtCoastEndKg));
+    // stub E1 passes apogee at t=60 s; coast exit is at t~25.0 => ~35 s to apogee (INNER-2 lead_max)
+    near(m.coastEndTToApoS, 60 - m.coastEndT, 1e-3, 'coastEndTToApoS');
+    const aE1 = (2 * RE + 520e3) / 2;
+    near(m.coastEndPeriodS, 2 * Math.PI * Math.sqrt(aE1 * aE1 * aE1 / MUE), 1e-6, 'coastEndPeriodS');
+    assert.ok(m.coastTToApoS > m.coastEndTToApoS, 'entry is earlier than exit => more time to apogee');
     assert.ok(m.stageFuelAtCoastEndKg < m.stageFuelAtCoastKg, 'fuel burns between entry and exit');
     assert.ok(m.ticksRun < full.metrics.ticksRun);
   });

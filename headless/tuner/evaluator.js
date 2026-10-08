@@ -212,11 +212,15 @@ function extractMetrics(result, evalKind) {
     coastPeriKm: h.coast ? fin(h.coast.periKm) : null,
     coastEcc: h.coast ? fin(h.coast.e) : null,
     stageFuelAtCoastKg: h.coast ? fin(h.coast.stageFuelKg) : null,
+    coastTToApoS: h.coast ? fin(h.coast.tToApoS) : null,
     // COAST_ROTATE exit (first tick of COAST_WAIT): the point the manual heuristic targets for E
     coastEndApoKm: h.coastEnd ? fin(h.coastEnd.apoKm) : null,
     coastEndPeriKm: h.coastEnd ? fin(h.coastEnd.periKm) : null,
     coastEndEcc: h.coastEnd ? fin(h.coastEnd.e) : null,
     coastEndVr: h.coastEnd ? fin(h.coastEnd.vr) : null,
+    // time to apogee at COAST_WAIT entry == max useful circ trigger lead (lead above it triggers at entry)
+    coastEndTToApoS: h.coastEnd ? fin(h.coastEnd.tToApoS) : null,
+    coastEndPeriodS: h.coastEnd ? fin(h.coastEnd.periodS) : null,
     stageFuelAtCoastEndKg: h.coastEnd ? fin(h.coastEnd.stageFuelKg) : null,
     coastEndT: h.coastEnd ? fin(h.coastEnd.t) : null,
     coastEndToPhase: h.coastEnd ? h.coastEnd.toPhase : null,

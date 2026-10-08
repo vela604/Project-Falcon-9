@@ -1,0 +1,31 @@
+const path = require('path');
+const fs = require('fs');
+const { createEvaluator, loadConfig } = require('./evaluator');
+const I1 = require('./inner1');
+const argv = process.argv.slice(2);
+const arg = (k, d) => { const i = argv.indexOf('--' + k); return i < 0 ? d : argv[i + 1]; };
+(async () => {
+  const cfg = loadConfig(path.join(__dirname, 'tuner-config-v3.json'));
+  const meco = parseFloat(arg('meco', '52612'));
+  const workers = parseInt(arg('workers', '6'), 10);
+  const learnedFile = path.join(__dirname, 'learned-bounds.json');
+  const learned = I1.loadLearned(learnedFile, cfg);
+  const emapHints = fs.existsSync(path.join(__dirname, 'emap.csv'))
+    ? I1.emapHintsFromCsv(fs.readFileSync(path.join(__dirname, 'emap.csv'), 'utf8'), I1.params(cfg, {})) : [];
+  const ev = createEvaluator(cfg, { workers });
+  console.log('INNER-1: meco=' + meco + ' workers=' + workers + ' emapHints=' + emapHints.length);
+  const t0 = Date.now();
+  const r = await I1.searchBoundary(ev, cfg, { meco }, { learned, parallel: workers, emapHints, verbose: true });
+  console.log('\n=== result ===');
+  console.log('best:', r.best ? JSON.stringify({ id: r.best.id, G: r.best.G, T: r.best.T, bias: r.best.bias, E: r.best.E, lead: r.best.lead, marginS: r.best.marginS, deployEstS: r.best.deployEstS, score: r.best.score }) : null);
+  console.log('ranked:', r.ranked.length, 'fallback:', r.fallback.length, 'reason:', r.reason);
+  console.log('brackets:', JSON.stringify(r.brackets));
+  console.log('eFinal:', JSON.stringify(r.eFinal));
+  console.log('stats:', JSON.stringify(r.stats));
+  console.log('notes:', r.notes);
+  console.log('anomalies:', r.anomalies);
+  console.log('wall:', ((Date.now() - t0) / 60000).toFixed(1) + ' min');
+  I1.saveLearned(learnedFile, r.learned);
+  console.log('learned saved ->', learnedFile);
+  await ev.close();
+})().catch(e => { console.error(e); process.exit(1); });
