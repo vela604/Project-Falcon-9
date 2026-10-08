@@ -7,7 +7,8 @@ const arg = (k, d) => { const i = argv.indexOf('--' + k); return i < 0 ? d : arg
 (async () => {
   const cfg = loadConfig(path.join(__dirname, 'tuner-config-v3.json'));
   const meco = parseFloat(arg('meco', '52612'));
-  const workers = parseInt(arg('workers', '6'), 10);
+  const os = require('os');
+  const workers = parseInt(arg('workers', String(Math.max(2, Math.min(os.cpus().length - 2, 28)))), 10);
   const learnedFile = path.join(__dirname, 'learned-bounds.json');
   const learned = I1.loadLearned(learnedFile, cfg);
   const emapHints = fs.existsSync(path.join(__dirname, 'emap.csv'))
