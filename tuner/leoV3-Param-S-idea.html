@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>leoV3 Param Tuner (browser)</title>
+<style>
+:root {
+  --bg: #060912; --panel: #0d1424; --panel-2: #101a30; --border: #1c2b45;
+  --cyan: #35d6ff; --orange: #ff9248; --green: #4ade80; --yellow: #ffd23f;
+  --danger: #ff5f7e; --text: #dbe6f5; --dim: #6b7d9c;
+  --font-head: 'Space Grotesk', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Consolas', monospace;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--text);
+  font-family: var(--font-head); font-size: 13px; }
+#app { display: flex; flex-direction: column; min-height: 100vh; }
+#topBar { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px; padding: 10px 14px;
+  background: linear-gradient(180deg, #101a30, #0b1220); border-bottom: 1px solid var(--border);
+  font-family: var(--font-mono); }
+.brand { color: var(--cyan); font-weight: 700; }
+.dim { color: var(--dim); }
+.stack-label { color: var(--orange); font-size: 12px; }
+.panel { margin: 10px 14px; padding: 10px 12px; background: var(--panel);
+  border: 1px solid var(--border); border-radius: 6px; }
+.panel h3 { margin: 0 0 8px; font-size: 12px; letter-spacing: .5px; color: var(--cyan);
+  font-family: var(--font-mono); text-transform: uppercase; }
+button { background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
+  padding: 8px 12px; border-radius: 4px; font-family: var(--font-mono); font-size: 12px; }
+button:disabled { opacity: .4; }
+input[type=number] { width: 90px; background: var(--panel-2); color: var(--text);
+  border: 1px solid var(--border); padding: 4px; font-family: var(--font-mono); }
+#status { padding: 8px 14px; font-family: var(--font-mono); font-size: 12px; color: var(--yellow); }
+#log { font-family: var(--font-mono); font-size: 11px; white-space: pre-wrap; max-height: 40vh;
+  overflow: auto; color: var(--text); }
+.ok { color: var(--green); } .bad { color: var(--danger); }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="topBar">
+    <span class="brand">LEO V3 PARAM TUNER</span>
+    <span class="dim">browser · single-thread</span>
+    <span class="stack-label" id="stackLabel">Stack: …</span>
+  </div>
+  <div id="status">Booting…</div>
+
+  <div class="panel">
+    <h3>Engine (1) · Utils (2) · Eval (3)</h3>
+    <label>ticks <input type="number" id="smokeTicks" value="4000" min="100" step="100"></label>
+    <button id="smokeBtn" disabled>Smoke test</button>
+    <button id="dumpCfgBtn" disabled>Dump V3 config</button>
+    <button id="testBtn">Run self-tests</button>
+    <button id="applyChkBtn" disabled>Apply+verify baseline</button>
+  </div>
+
+  <div class="panel">
+    <h3>Run eval (Step 3)</h3>
+    <label>stopAt
+      <select id="stopAt">
+        <option value="FULL">FULL (payload cleared)</option>
+        <option value="DEPLOY">DEPLOY</option>
+        <option value="CIRC_END">CIRC_END</option>
+        <option value="COAST_WAIT_ENTRY">COAST_WAIT_ENTRY</option>
+      </select>
+    </label>
+    <button id="evalSnapBtn" disabled>Eval: snapped baseline</button>
+    <button id="evalRawBtn" disabled>Eval: raw baseline</button>
+    <button id="evalTwiceBtn" disabled>Determinism (x2)</button>
+    <button id="evalAbortBtn">Abort</button>
+  </div>
+
+  <div class="panel">
+    <h3>Log</h3>
+    <div id="log"></div>
+  </div>
+</div>
+
+<!-- ============================================================================
+     Sim engine scripts — reused from ../js/ (NOT copied). Order MUST match
+     guidance-numerical.html SIM_FILES exactly. No render.js / rocketArt.js /
+     telemetry.js (no canvas here).
+     ============================================================================ -->
+<script src="../js/componentLibrary.js"></script>
+<script src="../js/customDesign.js"></script>
+<script src="../js/fleet.js"></script>
+<script src="../js/config.js"></script>
+<script src="../js/simJs/core/massProps.js"></script>
+<script src="../js/simJs/core/environment.js"></script>
+<script src="../js/simJs/core/vehicle.js"></script>
+<script src="../js/simJs/core/rcs.js"></script>
+<script src="../js/simJs/core/physics.js"></script>
+<script src="../js/simJs/core/collision.js"></script>
+<script src="../js/simJs/guidance/imu.js"></script>
+<script src="../js/simJs/guidance/derivation.js"></script>
+<script src="../js/simJs/guidance/guidercs.js"></script>
+<script src="../js/simJs/guidance/guidance-blocks.js"></script>
+<script src="../js/simJs/guidance/guidance.js"></script>
+<script src="../js/guideConfigDefaults.js"></script>
+
+<!-- Tuner modules (Step 1: engine + config only; later steps add the rest) -->
+<script src="tuner-config.js"></script>
+<script src="tuner-engine.js"></script>
+<script src="tuner-utils.js"></script>
+<script src="tuner-hook.js"></script>
+<!-- Step 5-8: tuner-core.js · Step 9: tuner-ui.js -->
+
+<script>
+(function () {
+  'use strict';
+  const $ = (id) => document.getElementById(id);
+  const logEl = $('log'), statusEl = $('status');
+  function log(msg, cls) {
+    const line = document.createElement('div');
+    if (cls) line.className = cls;
+    line.textContent = msg;
+    logEl.appendChild(line);
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+  window.addEventListener('error', (e) => log('ERROR: ' + e.message, 'bad'));
+
+  const C = window.TunerConfig;
+
+  // Baseline values for the smoke test: raw defaults (reproduces manual run).
+  function baselineValues() {
+    const b = C.baselineRaw;
+    return {
+      ascent: { PUSH_MAX_GIMBAL_DEG: b.G, PUSH_T_S: b.T, MECO_TARGET_BOOSTER_FUEL_KG: b.meco },
+      insertion: {
+        TARGET_ORBIT_ALT_KM: C.fixed.targetAltKm,
+        STAGE_BURN_AOA_BIAS_DEG: b.bias,
+        STAGE_BURN_AOA_MARGIN_DEG: C.fixed.margin,
+        CIRC_TRIGGER_LEAD_S: b.lead,
+      },
+      done: { DEORBIT_ENABLED: C.fixed.deorbitEnabled },
+    };
+  }
+
+  function boot() {
+    try {
+      if (typeof Guidance === 'undefined') throw new Error('Guidance not loaded (check ../js paths)');
+      TunerEngine.init();
+      const guides = Guidance.listGuides();
+      if (!guides.includes(C.guideName)) throw new Error(C.guideName + ' not registered: ' + guides.join(','));
+
+      const stk = (typeof getActiveStack === 'function') ? getActiveStack() : null;
+      $('stackLabel').textContent = stk ? 'Stack: ' + stk.name : 'Stack: (none)';
+
+      const cfg = Guidance.getGuideConfig(C.guideName);
+      const a = cfg.ascent || {}, ins = cfg.insertion || {};
+      log('guides: ' + guides.join(', '), 'ok');
+      log('DT = ' + CONFIG.DT + ' s');
+      log('defaults: G=' + a.PUSH_MAX_GIMBAL_DEG + ' T=' + a.PUSH_T_S + ' MECO=' + a.MECO_TARGET_BOOSTER_FUEL_KG +
+          ' bias=' + ins.STAGE_BURN_AOA_BIAS_DEG + ' margin=' + ins.STAGE_BURN_AOA_MARGIN_DEG +
+          ' lead=' + ins.CIRC_TRIGGER_LEAD_S + ' alt=' + ins.TARGET_ORBIT_ALT_KM);
+      statusEl.textContent = 'Ready.';
+      $('smokeBtn').disabled = false; $('dumpCfgBtn').disabled = false; $('applyChkBtn').disabled = false;
+      ['evalSnapBtn','evalRawBtn','evalTwiceBtn'].forEach((id) => $(id).disabled = false);
+    } catch (e) {
+      statusEl.textContent = 'Boot failed: ' + e.message;
+      log('BOOT FAILED: ' + e.message, 'bad');
+      console.error(e);
+    }
+  }
+
+  $('smokeBtn').addEventListener('click', () => {
+    const n = Math.max(100, parseInt($('smokeTicks').value, 10) || 4000);
+    $('smokeBtn').disabled = true;
+    statusEl.textContent = 'Smoke test…';
+    setTimeout(() => {   // let the status paint first
+      try {
+        const r = TunerEngine.smokeTest(C.guideName, baselineValues(), C.env, n);
+        log('smoke: ' + r.ticks + ' ticks, t=' + r.simTime.toFixed(2) + ' s, phase=' + r.phase +
+            ', alt=' + (Number.isFinite(r.altKm) ? r.altKm.toFixed(2) : '?') + ' km, ' +
+            r.ticksPerSecond.toFixed(0) + ' ticks/s', 'ok');
+        statusEl.textContent = 'Smoke OK.';
+      } catch (e) {
+        log('SMOKE FAILED: ' + e.message, 'bad'); statusEl.textContent = 'Smoke failed.';
+        console.error(e);
+      }
+      $('smokeBtn').disabled = false;
+    }, 20);
+  });
+
+  $('dumpCfgBtn').addEventListener('click', () => {
+    log(JSON.stringify(Guidance.getGuideConfig(C.guideName), null, 1));
+  });
+
+  $('testBtn').addEventListener('click', () => {
+    const r = TunerUtils.runSelfTests();
+    r.lines.forEach((l) => log(l, l.startsWith('PASS') ? 'ok' : 'bad'));
+    log(r.ok ? 'SELF-TESTS: ALL PASS (' + r.lines.length + ')' : 'SELF-TESTS FAILED: ' + r.fails.join(', '), r.ok ? 'ok' : 'bad');
+  });
+
+  // Snap baseline -> applyGuideConfig -> getGuideConfig -> verify (prompt-web 3.4)
+  $('applyChkBtn').addEventListener('click', () => {
+    try {
+      const p = TunerUtils.fromRaw(C.baselineRaw);
+      const vals = TunerUtils.toValues(p, { targetAltKm: C.fixed.targetAltKm });
+      if (!Guidance.applyGuideConfig(C.guideName, vals)) throw new Error('applyGuideConfig returned false');
+      const v = TunerUtils.verifyApplied(p, Guidance.getGuideConfig(C.guideName), { targetAltKm: C.fixed.targetAltKm });
+      log('snapped baseline: ' + JSON.stringify(TunerUtils.describe(p)));
+      log(v.ok ? 'verifyApplied: OK (sim holds exact snapped values)' : 'verifyApplied MISMATCH: ' + JSON.stringify(v.mismatches), v.ok ? 'ok' : 'bad');
+    } catch (e) { log('APPLY CHECK FAILED: ' + e.message, 'bad'); console.error(e); }
+  });
+
+  // ---- Step 3: eval buttons ------------------------------------------------
+  const abortRef = { aborted: false };
+  const fmt = (x, d) => (Number.isFinite(x) ? x.toFixed(d) : String(x));
+  function summarize(m) {
+    return [
+      'end=' + m.endReason + '  ticks=' + m.ticks + '  t=' + fmt(m.simTimeEnd, 2) + 's  wall=' + (m.wallMs / 1000).toFixed(2) + 's  ' + m.ticksPerSecond.toFixed(0) + ' t/s',
+      'E@COAST_WAIT=' + fmt(m.eCoast, 6) + '  apo/peri@coast=' + fmt(m.apoCoastKm, 2) + '/' + fmt(m.periCoastKm, 2) + '  tToApo=' + fmt(m.tToApoCoastS, 1) + 's  alt=' + fmt(m.altCoastKm, 2),
+      'stage vrMin=' + fmt(m.vrMinStageBurn, 3) + (m.stageVrNeg ? '  NEGATIVE @alt ' + fmt(m.stageVrNegAltKm, 1) + ' km' : '  (ok)'),
+      'circ vrMin=' + fmt(m.vrMin, 3) + '  vrEnd=' + fmt(m.vrEnd, 4) + ' margin=' + fmt(m.marginS, 2) + 's | at engOff: vrEnd=' + fmt(m.vrEndOff, 4) + ' margin=' + fmt(m.marginOffS, 2) + 's',
+      'deploy=' + fmt(m.deployTimeS, 2) + 's  meco@' + fmt(m.mecoTimeS, 2) + 's  boosterFuel=' + fmt(m.boosterFuelLeftKg, 0) + ' kg  stageResidual=' + fmt(m.stageResidualKg, 1) + ' kg (@deploy ' + fmt(m.stageFuelAtDeployKg, 1) + ')',
+      'orbit apo/peri=' + fmt(m.apogeeKm, 3) + '/' + fmt(m.perigeeKm, 3) + '  ecc=' + (Number.isFinite(m.ecc) ? m.ecc.toExponential(2) : m.ecc),
+      'maxQ=' + fmt(m.maxQKPa, 2) + ' kPa  maxG(accel)=' + fmt(m.maxG, 3) + '  maxG(thrust)=' + fmt(m.maxGThrust, 3) + '  crashed=' + m.crashed + ' released=' + m.payloadReleased + ' cleared=' + m.payloadCleared,
+    ].join('\n');
+  }
+  function evalOpts() {
+    return { stopAt: $('stopAt').value, abortRef, onProgress: (p) => { statusEl.textContent = 'Running… t=' + p.simTime.toFixed(1) + ' s  ' + (p.phase || ''); } };
+  }
+  async function doEval(kind) {
+    abortRef.aborted = false;
+    ['evalSnapBtn','evalRawBtn','evalTwiceBtn'].forEach((id) => $(id).disabled = true);
+    try {
+      let m;
+      if (kind === 'raw') m = await TunerHook.runEvalValues(baselineValues(), evalOpts());
+      else m = await TunerHook.runEval(TunerUtils.fromRaw(C.baselineRaw), evalOpts());
+      log('--- eval ' + kind + ' (' + $('stopAt').value + ') ---'); log(summarize(m));
+      statusEl.textContent = 'Eval done.';
+      return m;
+    } catch (e) { log('EVAL FAILED: ' + e.message, 'bad'); statusEl.textContent = 'Eval failed.'; console.error(e); }
+    finally { ['evalSnapBtn','evalRawBtn','evalTwiceBtn'].forEach((id) => $(id).disabled = false); }
+  }
+  $('evalSnapBtn').addEventListener('click', () => doEval('snapped'));
+  $('evalRawBtn').addEventListener('click', () => doEval('raw'));
+  $('evalAbortBtn').addEventListener('click', () => { abortRef.aborted = true; });
+  $('evalTwiceBtn').addEventListener('click', async () => {
+    const a = await doEval('snapped'), b = await doEval('snapped');
+    if (!a || !b) return;
+    const skip = { wallMs: 1, ticksPerSecond: 1 };
+    const diffs = Object.keys(a).filter((k) => !skip[k] && !Object.is(a[k], b[k]));
+    log(diffs.length ? 'DETERMINISM FAIL: ' + diffs.join(', ') : 'DETERMINISM OK: all metrics bit-identical across 2 runs', diffs.length ? 'bad' : 'ok');
+  });
+
+  boot();
+})();
+</script>
+</body>
+</html>
