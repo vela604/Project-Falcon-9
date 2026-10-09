@@ -76,12 +76,12 @@
     // ---- Scoring (lower = better) ----
     scoring: {
       failPenalty: 1e6,
-      // Orbit (apo AND peri, each): tolerance is RELATIVE to the target altitude.
-      // tolFrac 0.001 = 0.1% of alt (0.32 km @320, 1 km @1000). Same score penalty for the same RELATIVE error.
-      // Penalty = pseudo-Huber on the excess e = max(0,|err| - tol)/tol:
-      //   penalty = weight * k * (sqrt(1 + (e/k)^2) - 1)     // quadratic near the edge, linear far
-      // @320 km: err 0.32 (tol) -> 0 | 0.38 -> 7 | 0.48 -> 47 | 0.64 -> 166 | 1 km -> ~540 | 5 km -> ~5500
-      orbit: { tolFrac: 0.001, weight: 400, k: 1 },
+      // Orbit (apo AND peri, each): tolerance is RELATIVE to target altitude — used as the REFERENCE SCALE, not a deadzone.
+// tolFrac 0.001 = 0.1% of alt (0.32 km @320, 1 km @1000). Same penalty for the same RELATIVE error (0.64@320 == 2@1000).
+// Penalty = pseudo-Huber on e = |err| / tol  (NO deadzone: only 0 error gives 0 penalty):
+//   penalty = weight * k * (sqrt(1 + (e/k)^2) - 1)     // quadratic near 0, linear far
+// @320 km: 0.05 km -> 3 | 0.15 -> 27 | 0.32 (tol) -> 104 | 0.5 -> 344 | 1 km -> 570 | 5 km -> 3650
+orbit: { tolFrac: 0.001, weight: 250, k: 1 },
       eccentricity: { target: 0, tol: 0.0005, scale: 0.001, weight: 1500 },   // unchanged
       boosterFuelLeftKgWeight: 0.01,   // 15000 kg range = 150 pts
       timeToDeploySWeight: 0.1,        // 600 s = 60 pts; 100 s = 10 pts

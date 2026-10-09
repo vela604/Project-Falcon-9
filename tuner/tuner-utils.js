@@ -150,10 +150,10 @@
   const curAlt = (alt) => (alt != null ? alt : C().fixed.targetAltKm);
   const orbitTolKm = (alt) => C().scoring.orbit.tolFrac * curAlt(alt);
   function orbitPenalty(errKm, alt) {
-    const O = C().scoring.orbit, tol = orbitTolKm(alt);
-    const e = Math.max(0, Math.abs(errKm) - tol) / tol;
-    return O.weight * O.k * (Math.sqrt(1 + (e / O.k) * (e / O.k)) - 1);
-  }
+  const O = C().scoring.orbit, tol = orbitTolKm(alt);
+  const e = Math.abs(errKm) / tol;                                     // NO deadzone: tol is only the reference scale
+  return O.weight * O.k * (Math.sqrt(1 + (e / O.k) * (e / O.k)) - 1);
+}
   // raw accuracy (sorting): |apo - alt| + |peri - alt|
   const orbitErrKm = (m, alt) => Math.abs(m.apogeeKm - curAlt(alt)) + Math.abs(m.perigeeKm - curAlt(alt));
 
@@ -291,18 +291,19 @@
 
     // 9. scoring: hierarchy orbit > fuel > time, fail > any pass
     const good = { crashed: false, payloadReleased: true, payloadCleared: true, vrEnd: 0.03, vrMin: -0.3,
-      maxQKPa: 24.8, maxG: 4.8, apogeeKm: 320.1, perigeeKm: 320.0, ecc: 1e-5, boosterFuelLeftKg: 2000, deployTimeS: 590 };
+  maxQKPa: 24.8, maxG: 4.8, apogeeKm: 320.0, perigeeKm: 320.0, ecc: 1e-5, boosterFuelLeftKg: 2000, deployTimeS: 590 };
     const s0 = score(good).score;
     const S = C().scoring;
-    t('weights: tolFrac 0.001, weight 400, k 1, time 0.1/s, fuel 0.01/kg',
-      S.orbit.tolFrac === 0.001 && S.orbit.weight === 400 && S.orbit.k === 1 && S.timeToDeploySWeight === 0.1 && S.boosterFuelLeftKgWeight === 0.01);
-    t('relative tol: 0.32 km @320, 1 km @1000, 0.3 km @300', Math.abs(orbitTolKm(320) - 0.32) < 1e-12 && Math.abs(orbitTolKm(1000) - 1) < 1e-12 && Math.abs(orbitTolKm(300) - 0.3) < 1e-12);
-    t('same relative error => same penalty (0.64@320 == 2@1000)', Math.abs(orbitPenalty(0.64, 320) - orbitPenalty(2, 1000)) < 1e-9);
-    t('inside tol => 0 penalty (0.152 km @320)', orbitPenalty(0.152, 320) === 0 && orbitPenalty(-0.32, 320) === 0);
-    t('1 km @320 ~ 540 pt', Math.abs(orbitPenalty(1, 320) - 540) < 5, orbitPenalty(1, 320).toFixed(1));
-    t('0.386 km @320 ~ 8 pt', Math.abs(orbitPenalty(0.386, 320) - 8.6) < 1, orbitPenalty(0.386, 320).toFixed(2));
-    t('5 km @320 ~ 5500 pt', Math.abs(orbitPenalty(5, 320) - 5500) < 300, orbitPenalty(5, 320).toFixed(0));
-    t('smooth: monotone, no cliff just beyond tol', orbitPenalty(0.321, 320) < 0.01 && orbitPenalty(0.5, 320) > orbitPenalty(0.4, 320) && orbitPenalty(-0.5, 320) === orbitPenalty(0.5, 320));
+    t('weights: tolFrac 0.001, weight 250, k 1, time 0.1/s, fuel 0.01/kg',
+  S.orbit.tolFrac === 0.001 && S.orbit.weight === 250 && S.orbit.k === 1 && S.timeToDeploySWeight === 0.1 && S.boosterFuelLeftKgWeight === 0.01);
+t('relative tol: 0.32 km @320, 1 km @1000, 0.3 km @300', Math.abs(orbitTolKm(320) - 0.32) < 1e-12 && Math.abs(orbitTolKm(1000) - 1) < 1e-12 && Math.abs(orbitTolKm(300) - 0.3) < 1e-12);
+t('same relative error => same penalty (0.64@320 == 2@1000)', Math.abs(orbitPenalty(0.64, 320) - orbitPenalty(2, 1000)) < 1e-9);
+t('no deadzone: 0 error -> 0, every err > 0 -> > 0', orbitPenalty(0, 320) === 0 && orbitPenalty(0.001, 320) > 0 && orbitPenalty(-0.001, 320) > 0);
+t('0.15 km @320 ~ 27 pt (was 0 with the deadzone)', Math.abs(orbitPenalty(0.15, 320) - 27) < 2, orbitPenalty(0.15, 320).toFixed(2));
+t('0.32 km @320 (tol) ~ 104 pt', Math.abs(orbitPenalty(0.32, 320) - 104) < 3, orbitPenalty(0.32, 320).toFixed(1));
+t('1 km @320 ~ 570 pt', Math.abs(orbitPenalty(1, 320) - 570) < 15, orbitPenalty(1, 320).toFixed(1));
+t('5 km @320 ~ 3650 pt', Math.abs(orbitPenalty(5, 320) - 3650) < 100, orbitPenalty(5, 320).toFixed(0));
+t('monotone in |err|, sign-symmetric, no cliff', orbitPenalty(0.5, 320) > orbitPenalty(0.4, 320) && orbitPenalty(-0.5, 320) === orbitPenalty(0.5, 320));
     const orbitWorse = score(Object.assign({}, good, { apogeeKm: 321 })).score - s0;                 // 1 km apo error
     const fuelRange  = score(Object.assign({}, good, { boosterFuelLeftKg: 2000 - 15000 })).score - s0; // 15000 kg range
     const timeRange  = score(Object.assign({}, good, { deployTimeS: 590 + 600 })).score - s0;         // 600 s range
@@ -313,8 +314,8 @@
       apogeeKm: 320, perigeeKm: 320, ecc: 1e-5, boosterFuelLeftKg: 60000, deployTimeS: 640 });
     t('typical score -536 (perfect orbit, 60000 fuel, 640 s)', typ.ok && Math.abs(typ.score + 536) < 0.01, typ.score.toFixed(3));
     t('score range realistic (-700..-400 for sane runs)', typ.score > -700 && typ.score < -400);
-    t('inside tolerance => orbit term 0', score(good).parts.apogee === 0 && score(good).parts.ecc === 0);
-
+    t('zero error => orbit term 0 (no tolerance deadzone)', score(good).parts.apogee === 0 && score(good).parts.ecc === 0);
+    
     // 9b. leaderboard rows + sort
     const mk = (o) => Object.assign({}, good, o);
     const P = (k) => Object.assign({}, bp, { meco: 52000 + k });

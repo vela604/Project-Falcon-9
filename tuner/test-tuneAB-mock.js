@@ -306,17 +306,18 @@ const nFlip = (r) => r.log.filter((l) => /flipping/.test(l)).length;
 
   // ======================= New score weights + leaderboard =======================
   const S = C.scoring;
-  t('weights cfg: orbit tolFrac 0.001 / weight 400 / k 1, time 0.1/s, fuel 0.01/kg, ecc unchanged',
-    S.orbit.tolFrac === 0.001 && S.orbit.weight === 400 && S.orbit.k === 1 && S.timeToDeploySWeight === 0.1 && S.boosterFuelLeftKgWeight === 0.01 && S.eccentricity.weight === 1500 && S.eccentricity.tol === 0.0005);
+  t('weights cfg: orbit tolFrac 0.001 / weight 250 / k 1, time 0.1/s, fuel 0.01/kg, ecc unchanged',
+  S.orbit.tolFrac === 0.001 && S.orbit.weight === 250 && S.orbit.k === 1 && S.timeToDeploySWeight === 0.1 && S.boosterFuelLeftKgWeight === 0.01 && S.eccentricity.weight === 1500 && S.eccentricity.tol === 0.0005);
   // replay of the real Phase B log with the new weights
   const gm = (o) => Object.assign({ crashed: false, payloadReleased: true, payloadCleared: true, vrEnd: 0.03, vrMin: -0.3, maxQKPa: 24.8, maxG: 4.8,
     apogeeKm: 320.0, perigeeKm: 320.0, ecc: 1e-5, boosterFuelLeftKg: 52625, deployTimeS: 659 }, o);
   const sc = (o) => U.score(gm(o)).score;
-  t('replay: 0.152 km apo error -> 0 penalty (inside 0.32 tol)', U.orbitPenalty(0.152, 320) === 0 && Math.abs(sc({ apogeeKm: 320.152 }) - sc({})) < 1e-9);
-  t('replay: 0.386 km apo error ~8 pt, more than a 16 s time gain (1.6 pt)', (() => { const pen = sc({ apogeeKm: 320.386 }) - sc({}); return pen > 7 && pen < 10 && pen > 16 * 0.1; })(), 'pen=' + (sc({ apogeeKm: 320.386 }) - sc({})).toFixed(2));
-  t('replay: 0.386 km apo @ 643 s loses to 0.152 km apo @ 659 s', sc({ apogeeKm: 320.386, deployTimeS: 643 }) > sc({ apogeeKm: 320.152, deployTimeS: 659 }));
+  t('replay: 0.152 km apo error ~27 pt (no deadzone)', (() => { const p = U.orbitPenalty(0.152, 320); return p > 24 && p < 30 && Math.abs(sc({ apogeeKm: 320.152 }) - sc({}) - p) < 1e-9; })(), 'p=' + U.orbitPenalty(0.152, 320).toFixed(1));
+t('replay: 0.386 km apo error ~160 pt, still more than a 16 s time gain (1.6 pt)', (() => { const p = U.orbitPenalty(0.386, 320); return p > 140 && p < 180 && p > 16 * 0.1; })(), 'p=' + U.orbitPenalty(0.386, 320).toFixed(1));
+t('replay: 0.386 km apo @ 643 s loses to 0.152 km apo @ 659 s', sc({ apogeeKm: 320.386, deployTimeS: 643 }) > sc({ apogeeKm: 320.152, deployTimeS: 659 }));
   t('replay: T=4.81 (623 s) beats T=4.815 (626 s) and start (659 s), same orbit', sc({ deployTimeS: 623 }) < sc({ deployTimeS: 626 }) && sc({ deployTimeS: 626 }) < sc({ deployTimeS: 659 }));
   t('replay: 100 s = 10 pt', Math.abs(sc({ deployTimeS: 759 }) - sc({}) - 10) < 1e-9);
+t('replay: 0 km error -> 0 orbit penalty', U.orbitPenalty(0, 320) === 0 && Math.abs(sc({ apogeeKm: 320, perigeeKm: 320 }) - sc({})) < 1e-9);
 
   // mock orbitFromE: apo error grows with E (real fit) -> Phase B climbing E costs accuracy
   { const apoErr = (E) => 0.1 + orbitErrOfE(E);   // apogeeKm = 320.1 + orbitErrOfE -> error vs 320 target

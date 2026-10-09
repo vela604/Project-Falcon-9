@@ -87,10 +87,12 @@ input[type=number] { width: 90px; background: var(--panel-2); color: var(--text)
 <button id="evalAbortBtn">Abort</button>
   </div>
 
-  <div class="panel">
-    <h3>Log</h3>
-    <div id="log"></div>
-  </div>
+  <div id="tunerUIHost"></div>
+
+<div class="panel">
+  <h3>Log</h3>
+  <div id="log"></div>
+</div>
 </div>
 
 <!-- ============================================================================
@@ -121,7 +123,7 @@ input[type=number] { width: 90px; background: var(--panel-2); color: var(--text)
 <script src="tuner-utils.js"></script>
 <script src="tuner-hook.js"></script>
 <script src="tuner-core.js"></script>
-<!-- Step 6-8: more of tuner-core.js · Step 9: tuner-ui.js -->
+<script src="tuner-ui.js"></script>
 
 <script>
 (function () {
@@ -171,8 +173,11 @@ input[type=number] { width: 90px; background: var(--panel-2); color: var(--text)
       log('defaults: G=' + a.PUSH_MAX_GIMBAL_DEG + ' T=' + a.PUSH_T_S + ' MECO=' + a.MECO_TARGET_BOOSTER_FUEL_KG +
           ' bias=' + ins.STAGE_BURN_AOA_BIAS_DEG + ' margin=' + ins.STAGE_BURN_AOA_MARGIN_DEG +
           ' lead=' + ins.CIRC_TRIGGER_LEAD_S + ' alt=' + ins.TARGET_ORBIT_ALT_KM);
-      statusEl.textContent = 'Ready.';
-      $('smokeBtn').disabled = false; $('dumpCfgBtn').disabled = false; $('applyChkBtn').disabled = false;
+      // mount the tuner UI (Step 9) — inputs, run/stop, progress, leaderboard with sort tabs
+if (window.TunerUI) window.TunerUI.mount($('tunerUIHost'), { log: (l) => log(l) });
+
+statusEl.textContent = 'Ready.';
+$('smokeBtn').disabled = false; $('dumpCfgBtn').disabled = false; $('applyChkBtn').disabled = false;
       ['evalSnapBtn','evalRawBtn','evalTwiceBtn','evalRefBtn','tuneLeadBtn','tuneABBtn','tuneRoughBtn','findMecoBtn','fullTuneBtn'].forEach((id) => $(id).disabled = false);
     } catch (e) {
       statusEl.textContent = 'Boot failed: ' + e.message;
