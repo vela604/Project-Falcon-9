@@ -80,6 +80,70 @@
     return null;
   }
 
+  // G-load, 1:1 from headless hook-sandbox.js gLoad(): vector sum of engine
+  // thrust (with gimbal) + drag, divided by (dryMass + fuelMass) * g0.
+  // Tracked on state.bodies[0] (the stage) for the WHOLE run, every tick.
+  function gLoad(b, Re) {
+    const m = (b.dryMass || 0) + (b.fuelMass || 0);
+    if (!(m > 0)) return 0;
+    const engs = b.engines || [];
+    let Fa = 0, Fl = 0;
+    for (let i = 0; i < engs.length; i++) {
+      const en = engs[i];
+      const f = en.currentF || 0;
+      if (!f) continue;
+      const g = (en.gimbalDeg || 0) * Math.PI / 180;
+      Fa += f * Math.cos(g);
+      Fl += f * Math.sin(g);
+    }
+    const ux = -Math.sin(b.theta), uy = Math.cos(b.theta);
+    let fx = Fa * ux + Fl * (-uy);
+    let fy = Fa * uy + Fl * ux;
+    if (typeof airDensity === 'function' && Number.isFinite(CONFIG.DRAG_CD) && b.width > 0) {
+      const r = Math.sqrt(b.rx * b.rx + b.ry * b.ry), alt = r - Re;
+      const rho = airDensity(Math.max(0, alt));
+      if (rho > 0) {
+        const sv = earthSurfaceVelocity(b.rx, b.ry);
+        const wv = windInertialVector(b.rx, b.ry);
+        const rvx = b.vx - (sv.vx + wv.wx), rvy = b.vy - (sv.vy + wv.wy);
+        const sp = Math.sqrt(rvx * rvx + rvy * rvy);
+        if (sp > 0) {
+          const area = Math.PI * (b.width / 2) * (b.width / 2);
+          const D = 0.5 * rho * sp * sp * CONFIG.DRAG_CD * area;
+          fx -= D * rvx / sp;
+          fy -= D * rvy / sp;
+        }
+      }
+    }
+    return Math.sqrt(fx * fx + fy * fy) / (m * G0);
+  }
+
+  // Stage body (2nd stage), looked up explicitly -- NOT via activeBodyIndex,
+  // which points at the payload once it is released/cleared (fuelMass = 0).
+  // Same idea as findBooster: split-off body whose members[0] is the stage.
+  function findStage(bodies) {
+    for (let i = 0; i < bodies.length; i++) {
+      const b = bodies[i];
+      if (b && !b.payloadBody && !b.fairingHalf && b.members && b.members[0] &&
+          b.members[0].stageRole === 'stage') return b;
+    }
+    // fallback: any non-payload body that has a stage member but no booster member
+    for (let i = 0; i < bodies.length; i++) {
+      const b = bodies[i];
+      if (!b || b.payloadBody || b.fairingHalf || !b.members) continue;
+      let hasStage = false, hasBooster = false;
+      for (let k = 0; k < b.members.length; k++) {
+        const r = b.members[k] && b.members[k].stageRole;
+        if (r === 'stage') hasStage = true; else if (r === 'booster') hasBooster = true;
+      }
+      if (hasStage && !hasBooster) return b;
+    }
+    const b0 = bodies[0];
+    if (b0 && !b0.payloadBody && !b0.fairingHalf && b0.members && b0.members.length &&
+        !b0.members.some((x) => x && x.stageRole === 'booster')) return b0;
+    return null;
+  }
+
   // Yield without setTimeout's 4 ms nested clamp.
   const _mc = (typeof MessageChannel !== 'undefined') ? new MessageChannel() : null;
   let _mcRes = null;
@@ -115,15 +179,18 @@
       eCoast: NaN, apoCoastKm: NaN, periCoastKm: NaN, tToApoCoastS: NaN,
       altCoastKm: NaN, vrCoast: NaN, vtCoast: NaN, coastEntryT: NaN,
       // ---- circ burn signals ----
-      vrMin: Infinity, vrEnd: NaN, marginS: NaN,          // at circAchieved tick
-      vrEndOff: NaN, marginOffS: NaN,                      // at engines-off tick
+      vrMin: Infinity,
+      vrEnd: NaN, marginS: NaN,                            // at engines-off tick (= manual 0.046 / 6.73 s; used by score)
+      vrEndAch: NaN, marginAch: NaN,                       // at circAchieved tick (diagnostic only)
       circStartT: NaN, circAchievedT: NaN, circEngOffT: NaN,
       // ---- mission outputs ----
       deployTimeS: NaN, mecoTimeS: NaN, boosterFuelLeftKg: NaN, stageResidualKg: NaN,
       stageFuelAtDeployKg: NaN,
       apogeeKm: NaN, perigeeKm: NaN, ecc: NaN,
       // ---- hard-constraint trackers ----
-      maxQKPa: 0, maxG: 0, maxGThrust: NaN,
+      maxQKPa: 0, maxG: 0,                      // maxG = headless gLoad on bodies[0], whole run
+      maxGPhase: null, maxGT: NaN, maxGPre: 0,   // where the peak happened / peak before COAST_WAIT
+      maxGAccel: 0,                              // diagnostic: |_lastAccel|/g0 on active body
     };
 
     const t0 = performance.now();
@@ -159,6 +226,14 @@
 
         if (state.crashed) { m.crashed = true; end('CRASHED'); i++; break; }
 
+        {
+          const b0 = state.bodies[0];
+          if (b0) {
+            const gL = gLoad(b0, Re);
+            if (gL > m.maxG) { m.maxG = gL; m.maxGPhase = lastPhase; m.maxGT = state.simTime; }
+            if (!coastWaitSeen && gL > m.maxGPre) m.maxGPre = gL;
+          }
+        }
         const b = state.bodies[state.activeBodyIndex];
         if (!b) continue;
         const rx = b.rx, ry = b.ry;
@@ -175,15 +250,9 @@
           const q = 0.5 * rho * (relVx * relVx + relVy * relVy);
           if (q > m.maxQKPa) m.maxQKPa = q;           // Pa for now, /1000 at the end
         }
+        // diagnostic only (active body, physics accel)
         const gA = Math.hypot(b._lastAccelX || 0, b._lastAccelY || 0) / G0;
-        if (gA > m.maxG) m.maxG = gA;
-        if (haveGeom && (i & 7) === 0 && b.engines) {
-          let F = 0; for (let k = 0; k < b.engines.length; k++) F += b.engines[k].currentF || 0;
-          if (F > 0) {
-            const M = geometryOf(b).M;
-            if (M > 0) { const gT = F / M / G0; if (!(gT <= m.maxGThrust)) m.maxGThrust = gT; }
-          }
-        }
+        if (gA > m.maxGAccel) m.maxGAccel = gA;
 
         // ---- phase polling (sparse in ASCENT / COAST_WAIT, every tick else) ----
         let gs = null;
@@ -215,17 +284,17 @@
           if (gs.circAchieved && !circAchSeen) {
             circAchSeen = true;
             const o = orbitOf(b, GM, Re);
-            m.vrEnd = o.vr; m.marginS = o.tToApo; m.circAchievedT = state.simTime;
+            m.vrEndAch = o.vr; m.marginAch = o.tToApo; m.circAchievedT = state.simTime;
           }
           if (!deploySeen && gs.deployCommandSimTime != null) {
             deploySeen = true;
             m.deployTimeS = gs.deployCommandSimTime;
-            m.stageFuelAtDeployKg = b.fuelMass;
+            { const st = findStage(state.bodies); m.stageFuelAtDeployKg = st ? st.fuelMass : NaN; }
             if (stopAt === 'DEPLOY') { end('DEPLOY'); i++; break; }
           }
           if (gs.payloadCleared) {
             m.payloadCleared = true;
-            m.stageResidualKg = b.fuelMass;
+            { const st = findStage(state.bodies); m.stageResidualKg = st ? st.fuelMass : NaN; }
             end('CLEARED'); i++; break;
           }
         }
@@ -247,7 +316,7 @@
             if (mdot <= 1e-9) {
               engOffSeen = true; circWindow = false;
               const o = orbitOf(b, GM, Re);
-              m.vrEndOff = o.vr; m.marginOffS = o.tToApo; m.circEngOffT = state.simTime;
+              m.vrEnd = o.vr; m.marginS = o.tToApo; m.circEngOffT = state.simTime;
               if (stopAt === 'CIRC_END') { end('CIRC_END'); i++; break; }
             }
           }

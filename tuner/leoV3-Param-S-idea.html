@@ -213,23 +213,24 @@ input[type=number] { width: 90px; background: var(--panel-2); color: var(--text)
       'end=' + m.endReason + '  ticks=' + m.ticks + '  t=' + fmt(m.simTimeEnd, 2) + 's  wall=' + (m.wallMs / 1000).toFixed(2) + 's  ' + m.ticksPerSecond.toFixed(0) + ' t/s',
       'E@COAST_WAIT=' + fmt(m.eCoast, 6) + '  apo/peri@coast=' + fmt(m.apoCoastKm, 2) + '/' + fmt(m.periCoastKm, 2) + '  tToApo=' + fmt(m.tToApoCoastS, 1) + 's  alt=' + fmt(m.altCoastKm, 2),
       'stage vrMin=' + fmt(m.vrMinStageBurn, 3) + (m.stageVrNeg ? '  NEGATIVE @alt ' + fmt(m.stageVrNegAltKm, 1) + ' km' : '  (ok)'),
-      'circ vrMin=' + fmt(m.vrMin, 3) + '  vrEnd=' + fmt(m.vrEnd, 4) + ' margin=' + fmt(m.marginS, 2) + 's | at engOff: vrEnd=' + fmt(m.vrEndOff, 4) + ' margin=' + fmt(m.marginOffS, 2) + 's',
+      'circ vrMin=' + fmt(m.vrMin, 3) + '  vrEnd(engOff)=' + fmt(m.vrEnd, 4) + ' margin=' + fmt(m.marginS, 2) + 's | at circAchieved: vrEnd=' + fmt(m.vrEndAch, 4) + ' margin=' + fmt(m.marginAch, 2) + 's',
       'deploy=' + fmt(m.deployTimeS, 2) + 's  meco@' + fmt(m.mecoTimeS, 2) + 's  boosterFuel=' + fmt(m.boosterFuelLeftKg, 0) + ' kg  stageResidual=' + fmt(m.stageResidualKg, 1) + ' kg (@deploy ' + fmt(m.stageFuelAtDeployKg, 1) + ')',
       'orbit apo/peri=' + fmt(m.apogeeKm, 3) + '/' + fmt(m.perigeeKm, 3) + '  ecc=' + (Number.isFinite(m.ecc) ? m.ecc.toExponential(2) : m.ecc),
-      'maxQ=' + fmt(m.maxQKPa, 2) + ' kPa  maxG(accel)=' + fmt(m.maxG, 3) + '  maxG(thrust)=' + fmt(m.maxGThrust, 3) + '  crashed=' + m.crashed + ' released=' + m.payloadReleased + ' cleared=' + m.payloadCleared,
+      'maxQ=' + fmt(m.maxQKPa, 2) + ' kPa  maxG=' + fmt(m.maxG, 3) + ' @' + m.maxGPhase + ' t=' + fmt(m.maxGT, 1) + 's  preCoast=' + fmt(m.maxGPre, 3) + '  (activeBody accel ' + fmt(m.maxGAccel, 3) + ')  crashed=' + m.crashed + ' released=' + m.payloadReleased + ' cleared=' + m.payloadCleared,
     ].join('\n');
   }
-  function evalOpts() {
-    return { stopAt: $('stopAt').value, abortRef, onProgress: (p) => { statusEl.textContent = 'Running… t=' + p.simTime.toFixed(1) + ' s  ' + (p.phase || ''); } };
+  function evalOpts(stopAt) {
+    return { stopAt, abortRef, onProgress: (p) => { statusEl.textContent = 'Running… t=' + p.simTime.toFixed(1) + ' s  ' + (p.phase || ''); } };
   }
-  async function doEval(kind) {
+  async function doEval(kind, stopAtArg) {
+    const stopAt = stopAtArg || $('stopAt').value;   // captured at start; select may change mid-run
     abortRef.aborted = false;
     ['evalSnapBtn','evalRawBtn','evalTwiceBtn'].forEach((id) => $(id).disabled = true);
     try {
       let m;
-      if (kind === 'raw') m = await TunerHook.runEvalValues(baselineValues(), evalOpts());
-      else m = await TunerHook.runEval(TunerUtils.fromRaw(C.baselineRaw), evalOpts());
-      log('--- eval ' + kind + ' (' + $('stopAt').value + ') ---'); log(summarize(m));
+      if (kind === 'raw') m = await TunerHook.runEvalValues(baselineValues(), evalOpts(stopAt));
+      else m = await TunerHook.runEval(TunerUtils.fromRaw(C.baselineRaw), evalOpts(stopAt));
+      log('--- eval ' + kind + ' (' + stopAt + ') ---'); log(summarize(m));
       statusEl.textContent = 'Eval done.';
       return m;
     } catch (e) { log('EVAL FAILED: ' + e.message, 'bad'); statusEl.textContent = 'Eval failed.'; console.error(e); }
@@ -239,7 +240,8 @@ input[type=number] { width: 90px; background: var(--panel-2); color: var(--text)
   $('evalRawBtn').addEventListener('click', () => doEval('raw'));
   $('evalAbortBtn').addEventListener('click', () => { abortRef.aborted = true; });
   $('evalTwiceBtn').addEventListener('click', async () => {
-    const a = await doEval('snapped'), b = await doEval('snapped');
+    const sa = $('stopAt').value;
+    const a = await doEval('snapped', sa), b = await doEval('snapped', sa);
     if (!a || !b) return;
     const skip = { wallMs: 1, ticksPerSecond: 1 };
     const diffs = Object.keys(a).filter((k) => !skip[k] && !Object.is(a[k], b[k]));
