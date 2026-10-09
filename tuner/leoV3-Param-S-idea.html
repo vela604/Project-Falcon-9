@@ -79,7 +79,8 @@ input[type=number] { width: 90px; background: var(--panel-2); color: var(--text)
     </label>
     <label>eMax <input type="number" id="abEmax" value="0.20" min="0.05" max="0.6" step="0.005"></label>
     <button id="tuneABBtn" disabled>Tune (A,bias) + lead (baseline)</button>
-    <button id="evalAbortBtn">Abort</button>
+<button id="tuneRoughBtn" disabled>Rough tune (Phase A)</button>
+<button id="evalAbortBtn">Abort</button>
   </div>
 
   <div class="panel">
@@ -168,7 +169,7 @@ input[type=number] { width: 90px; background: var(--panel-2); color: var(--text)
           ' lead=' + ins.CIRC_TRIGGER_LEAD_S + ' alt=' + ins.TARGET_ORBIT_ALT_KM);
       statusEl.textContent = 'Ready.';
       $('smokeBtn').disabled = false; $('dumpCfgBtn').disabled = false; $('applyChkBtn').disabled = false;
-      ['evalSnapBtn','evalRawBtn','evalTwiceBtn','evalRefBtn','tuneLeadBtn','tuneABBtn'].forEach((id) => $(id).disabled = false);
+      ['evalSnapBtn','evalRawBtn','evalTwiceBtn','evalRefBtn','tuneLeadBtn','tuneABBtn','tuneRoughBtn'].forEach((id) => $(id).disabled = false);
     } catch (e) {
       statusEl.textContent = 'Boot failed: ' + e.message;
       log('BOOT FAILED: ' + e.message, 'bad');
@@ -348,6 +349,31 @@ input[type=number] { width: 90px; background: var(--panel-2); color: var(--text)
       }
       statusEl.textContent = 'tuneAB done.';
     } catch (e) { log('TUNEAB ERROR: ' + e.message, 'bad'); statusEl.textContent = 'tuneAB error.'; console.error(e); }
+    finally { ids.forEach((id) => $(id).disabled = false); }
+  });
+
+    // ---- Phase A: tuneRough (any feasible point at this MECO, cheap) ----
+  $('tuneRoughBtn').addEventListener('click', async () => {
+    abortRef.aborted = false;
+    const ids = ['evalSnapBtn','evalRawBtn','evalTwiceBtn','evalRefBtn','tuneLeadBtn','tuneABBtn','tuneRoughBtn'];
+    ids.forEach((id) => $(id).disabled = true);
+    try {
+      const p = TunerUtils.fromRaw(C.baselineRaw);
+      log('--- tuneRough (Phase A: any feasible point at this MECO) ---');
+      const r = await TunerCore.tuneRough(p, {
+        abortRef, onLog: (l) => log(l),
+        onProgress: (q) => { statusEl.textContent = 'tuneRough… t=' + q.simTime.toFixed(1) + ' s ' + (q.phase || ''); },
+      });
+      log('=== tuneRough RESULT ok=' + r.ok + ' reason=' + r.reason + ' evals=' + r.evals +
+          ' (ab ' + r.evalBreakdown.ab + ', lead ' + r.evalBreakdown.lead + ', full ' + r.evalBreakdown.full + ') wall=' +
+          (r.wallMs / 1000).toFixed(1) + 's', r.ok ? 'ok' : 'bad');
+      if (r.ok) {
+        log('point: ' + JSON.stringify(TunerUtils.describe(r.point)));
+        log('E=' + fmt(r.E, 5) + '  lead=' + (r.lead && r.lead.lead) + '  residualKg=' + fmt(r.residualKg, 1) +
+            '  score=' + fmt(r.score, 3));
+      }
+      statusEl.textContent = 'tuneRough done.';
+    } catch (e) { log('TUNEROUGH ERROR: ' + e.message, 'bad'); console.error(e); }
     finally { ids.forEach((id) => $(id).disabled = false); }
   });
 
