@@ -9,8 +9,8 @@
 //     vrMin >= hard floor (-2 m/s)
 //   Each eval = runEval(point, {stopAt:'CIRC_END'}) (truncated sim).
 //
-// margin(lead) is steep (~28 s per s of lead, i.e. ~0.35 s per tick) and
-// monotone, so the search is a bracketed secant/bisection on the integer tick
+// SIGNED margin(lead) (hook: marginS < 0 = burn ended past apogee) is monotone and
+// steep near the apogee transition (~1.4 s per tick measured on the baseline), so the search is a bracketed secant/bisection on the integer tick
 // lattice, followed by (a) a feasibility walk if the band point violates vr
 // constraints, (b) a short descent to the lowest margin that is still in band.
 //
@@ -36,6 +36,7 @@
     const vrFloor = opts.vrMinFloor != null ? opts.vrMinFloor : L.vrMinHardFloorMps;
     const slope = opts.slopeSPerS || 28;                       // s of margin per s of lead (empirical)
     const maxEvals = opts.maxEvals || 30;
+    const firstCap = opts.firstStepCapTicks || 3;              // only 1 sample known: do not leap over the transition
     const cache = opts.cache || new U.EvalCache();
     const targetAltKm = opts.targetAltKm != null ? opts.targetAltKm : Cfg.fixed.targetAltKm;
     const leadOf = (li) => Number((li * q).toFixed(4));
@@ -78,6 +79,19 @@
       return r;
     }
 
+    // Local slope (s of signed margin per tick) from the two valid points nearest to
+    // the target; falls back to the slope guess. Near the apogee transition the real
+    // slope is much steeper than the guess, so measured data takes over from point 2.
+    function slopeTick() {
+      const v = [...pts.values()].filter((r) => Number.isFinite(r.margin))
+        .sort((a, b) => Math.abs(a.margin - mTgt) - Math.abs(b.margin - mTgt));
+      if (v.length >= 2 && v[0].li !== v[1].li) {
+        const s = (v[0].margin - v[1].margin) / (v[0].li - v[1].li);
+        if (s > 0.01) return s;
+      }
+      return slope * q;
+    }
+
     const dist = (r) => (r.margin < mLo ? mLo - r.margin : (r.margin > mHi ? r.margin - mHi : 0));
     function bestFeasible() {
       let best = null;
@@ -115,35 +129,46 @@
           } else next = Math.floor((lo.li + hi.li) / 2);
           next = Math.min(hi.li - 1, Math.max(lo.li + 1, next));
         } else if (hi) {                              // margin too high -> lead down
-          const d = Math.ceil((hi.margin - mTgt) / (slope * q));
-          next = hi.li - Math.min(60, Math.max(1, d));
-        } else {                                      // margin too low -> lead up
-          const d = Number.isFinite(lo.margin) ? Math.ceil((mTgt - lo.margin) / (slope * q)) : 8;
-          next = lo.li + Math.min(60, Math.max(1, d));
+          const d = Math.ceil((hi.margin - mTgt) / slopeTick());
+          next = hi.li - Math.min(pts.size < 2 ? firstCap : 60, Math.max(1, d));
+        } else {                                      // margin too low (or past apogee) -> lead up
+          const d = Number.isFinite(lo.margin) ? Math.ceil((mTgt - lo.margin) / slopeTick()) : 8;
+          next = lo.li + Math.min(pts.size < 2 ? firstCap : 60, Math.max(1, d));
         }
         if (next < 0) next = 0;
         if (pts.has(next)) break;                     // no new information
         note(await ev(next));
       }
 
-      // ---- 2) feasibility: if nothing feasible yet, walk up then bisect down ----
-      let best = bestFeasible();
-      if (!best) {
-        let bad = [...pts.values()].sort((a, b) => Math.abs(a.margin - mTgt) - Math.abs(b.margin - mTgt))[0];
-        say('no feasible point yet -> walking lead up from ' + bad.li);
-        let step = 1, good = null, badLi = bad.li;
-        while (step <= 32 && !good) {
-          const r = await ev(badLi + step);
-          if (r.feas) good = r; else { badLi = r.li; step *= 2; }
+      // ---- 2) feasibility: find the smallest feasible lead (vr constraints) ----
+      // Used when no feasible point sits inside the band yet. Assumes feasibility is
+      // monotone in lead (higher lead = gentler = more vrEnd).
+      const bisect = async (a, b) => {                // a infeasible, b feasible
+        while (b - a > 1) {
+          const mid = Math.floor((a + b) / 2);
+          const r = await ev(mid);
+          if (r.feas) b = mid; else a = mid;
         }
-        if (good) {
-          let a = badLi, b = good.li;                 // a infeasible, b feasible
-          while (b - a > 1) {
-            const mid = Math.floor((a + b) / 2);
-            const r = await ev(mid);
-            if (r.feas) b = mid; else a = mid;
+      };
+      let best = bestFeasible();
+      if (!best || !best.inBand) {
+        let F = null;                                 // feasible point with the smallest lead
+        for (const r of pts.values()) if (r.feas && (!F || r.li < F.li)) F = r;
+        if (!F) {
+          const bad = [...pts.values()].sort((x, y) => Math.abs(x.margin - mTgt) - Math.abs(y.margin - mTgt))[0];
+          say('no feasible point yet -> walking lead up from ' + bad.li);
+          let step = 1, badLi = bad.li;
+          while (step <= 32 && !F) {
+            const r = await ev(badLi + step);
+            if (r.feas) F = r; else { badLi = r.li; step *= 2; }
           }
-        } else reason = 'no feasible lead found (vr constraints)';
+          if (F) await bisect(badLi, F.li);
+          else reason = 'no feasible lead found (vr constraints)';
+        } else {
+          let I = null;                               // infeasible point just below F
+          for (const r of pts.values()) if (!r.feas && r.li < F.li && (!I || r.li > I.li)) I = r;
+          if (I) { say('vr constraint binds -> bisect ' + I.li + '..' + F.li); await bisect(I.li, F.li); }
+        }
         best = bestFeasible();
       }
 

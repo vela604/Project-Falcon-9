@@ -54,17 +54,27 @@
     const eps = 0.5 * (vr * vr + vt * vt) - GM / r;
     const h = r * vt;
     const e = Math.sqrt(Math.max(0, 1 + 2 * eps * h * h / (GM * GM)));
-    let apoKm = Infinity, periKm = Infinity;
+    let apoKm = Infinity, periKm = Infinity, periodS = Infinity;
     if (eps < 0) {
       const a = -GM / (2 * eps);
+      periodS = 2 * Math.PI * Math.sqrt((a * a * a) / GM);
       apoKm = (a * (1 + e) - Re) / 1000;
       periKm = (a * (1 - e) - Re) / 1000;
     } else if (eps > 0) {
       const p = h * h / GM;
       periKm = (p / (1 + e) - Re) / 1000;
     }
-    return { r, vr, vt, ecc: e, apoKm, periKm, altKm: (r - Re) / 1000,
+    return { r, vr, vt, ecc: e, apoKm, periKm, periodS, altKm: (r - Re) / 1000,
              tToApo: timeToApogee(r, vr, vt, GM) };
+  }
+
+  // Time to apogee as a SIGNED margin. timeToApogee() always returns the time to
+  // the NEXT apogee, so once the burn ends past apogee (vr < 0) it wraps to ~1
+  // period (thousands of s). Signed: vr >= 0 -> +tToApo; vr < 0 -> -(time since
+  // apogee) = tToApo - period. Monotone and ~linear in circ lead across apogee.
+  function signedMargin(o) {
+    if (!(o.vr < 0)) return o.tToApo;
+    return Number.isFinite(o.periodS) ? (o.tToApo - o.periodS) : -Infinity;
   }
 
   function findBooster(bodies) {
@@ -180,7 +190,8 @@
       altCoastKm: NaN, vrCoast: NaN, vtCoast: NaN, coastEntryT: NaN,
       // ---- circ burn signals ----
       vrMin: Infinity,
-      vrEnd: NaN, marginS: NaN,                            // at engines-off tick (= manual 0.046 / 6.73 s; used by score)
+      vrEnd: NaN, marginS: NaN,                            // engines-off tick; marginS is SIGNED (<0 = ended past apogee). Manual 0.046 / 6.73 s
+      marginRawS: NaN, periodEndS: NaN,                    // engOff: wrapped time-to-next-apogee, orbit period (diagnostic)
       vrEndAch: NaN, marginAch: NaN,                       // at circAchieved tick (diagnostic only)
       circStartT: NaN, circAchievedT: NaN, circEngOffT: NaN,
       // ---- mission outputs ----
@@ -284,7 +295,7 @@
           if (gs.circAchieved && !circAchSeen) {
             circAchSeen = true;
             const o = orbitOf(b, GM, Re);
-            m.vrEndAch = o.vr; m.marginAch = o.tToApo; m.circAchievedT = state.simTime;
+            m.vrEndAch = o.vr; m.marginAch = o.tToApo; m.circAchievedT = state.simTime;  // raw, diagnostic
           }
           if (!deploySeen && gs.deployCommandSimTime != null) {
             deploySeen = true;
@@ -316,7 +327,7 @@
             if (mdot <= 1e-9) {
               engOffSeen = true; circWindow = false;
               const o = orbitOf(b, GM, Re);
-              m.vrEnd = o.vr; m.marginS = o.tToApo; m.circEngOffT = state.simTime;
+              m.vrEnd = o.vr; m.marginS = signedMargin(o); m.marginRawS = o.tToApo; m.periodEndS = o.periodS; m.circEngOffT = state.simTime;
               if (stopAt === 'CIRC_END') { end('CIRC_END'); i++; break; }
             }
           }
