@@ -3,11 +3,10 @@
 > Naye chat me ye file + `multi-step-project.md` + "Next step" ki Attach list paste karo. Ye file akeli bhi project samjhane ke liye kaafi hai. Har step ke end pe isko regenerate karo.
 
 ## 1. Current status
-- **Last finished:** Step 4 — baseline validated in browser (phone). Hook bugs fixed (stage body lookup, maxG formula, vrEnd/margin = engOff).
-- **Verified by user (real sim):** raw/snapped/COAST_WAIT_ENTRY evals, determinism bit-identical (2 runs), ~5000-8000 t/s, FULL eval ~6-9 s. Baseline = manual on every metric (see section 10).
-- **Carry-over from Step 4 (not blocking Step 5):** E at COAST_WAIT for MECO 50000 / 55000 reference points + E_min/E_max estimate NOT measured yet. Button `Ref points E (3x COAST_WAIT)` added to html — user runs once, pastes 3 log lines, then fill section 10 + `TunerConfig.ecc.eMin/eMax`.
-- **Next:** Step 5 — INNER-2 `tuneLead` in `tuner-core.js` (design in section 11).
-- **Attach for Step 5:** `state.md`, `multi-step-project.md`, `prompt-web.md`, `tuner/` saari files (html, tuner-config.js, tuner-engine.js, tuner-utils.js, tuner-hook.js) + the 3 `Ref points E` log lines (if run).
+- **Last finished:** Step 5 code delivered — `tuner-core.js` (`TunerCore.tuneLead`) + html button `Tune lead (baseline)`. Logic mock-tested in node (monotone margin model, vr constraints binding/non-binding, impossible case); **real sim pe abhi chala nahi**.
+- **Verified by user earlier:** Step 4 baseline/determinism/speed (section 10). Ref points E button chala (section 10).
+- **Next (user):** `Tune lead (baseline)` dabao, log paste karo (tuneLead lines + RESULT + 2 FULL lines). Phir Step 5 ✅ -> Step 6.
+- **Next step after verify:** Step 6 — INNER-1 `tuneAB` (design in multi-step-project.md). Attach: `state.md`, `multi-step-project.md`, `prompt-web.md`, `tuner/` saari files (html, config, engine, utils, hook, core) + tuneLead log.
 
 ## 2. Project in 10 lines
 - User = SEHRAN. Falcon 9 Block 5 browser simulator (physics/guidance/render workers). Guidance = `leoInsertionV3`, target 320 km circular LEO.
@@ -26,7 +25,7 @@
 | tuner-config.js | `TunerConfig`: quanta, bounds, baseline, references, limits, scoring, modes, env (no logic) | Step 1 done (modes first-cut) |
 | tuner-utils.js | `TunerUtils`: lattice point {Gi,Tn,bi,li,meco} ints; `fromRaw, collapseA, aEff, step, key, inBounds, toValues(p,{targetAltKm}), describe, verifyApplied(p,cfg), EvalCache(p,stopAt), checkHard, score(m)->{score,ok,reasons,parts}, runSelfTests` | Step 2 done |
 | tuner-hook.js | `TunerHook.runEval(point,opts)` / `runEvalValues(values,opts)` async; `opts`: stopAt (COAST_WAIT_ENTRY\|CIRC_END\|DEPLOY\|FULL), env, durationCapS, abortRef, abortOnStageVrNeg (default true only for COAST_WAIT_ENTRY), onProgress, quiet. Returns metrics (below). Singleton guard (one eval at a time). `findStage`, `gLoad` (headless 1:1) inside | Step 3/4 done, **verified on real sim** |
-| tuner-core.js | tuneLead, tuneAB, findOptimalMeco, sweepE | Steps 5-8 |
+| tuner-core.js | `TunerCore.tuneLead(point, opts)` (Step 5, mock-tested); tuneAB, findOptimalMeco, sweepE | Step 5 code done; 6-8 pending |
 | tuner-ui.js | inputs, progress, ranked blocks, JSON | Step 9 |
 Delivered as separate files in `/mnt/user-data/outputs/tuner/` (no zip).
 
@@ -67,7 +66,7 @@ G 0.01 deg · T 0.000125 s (integer Tn) · bias 0.0001 deg · lead 0.0125 s (1 t
 ## 8. Open questions
 1. Self-tests + Apply+verify browser me pass? (node me pass hue; browser me user ne eval runs se indirectly confirm kiya — explicit button run pending, minor.)
 2. E_min/E_max actual values — needs the 3 reference-point runs (button added). Baseline E = 0.172278. Sweep default 0.25-0.35 is ABOVE manual-best E (~0.171-0.172): decide in Step 8 (change sweep default or confirm intent).
-3. Step 5: expected lead numbers in user's note (lead ~5.44-5.46 with margin 4-5 s) look inconsistent with baseline (lead 5.53 -> margin 6.72 s). Margin should move ~1 s per 1 s of lead, so margin 4-5 s probably needs lead ~3.3-3.8 s. Confirm intent (Step 5 start).
+3. (resolved) margin slope vs lead is ~28 s/s (user, headless INNER-2: lead 5.53 -> 6.72 s, 5.4375 -> 4.26 s), ~0.35 s per tick; expected tuned lead ~5.44-5.46, target margin band [4,5] s unchanged.
 4. `guidance-blocks.js` not needed so far (E and margins computed in hook).
 
 ## Metrics returned by runEval (current, Step 4)
@@ -100,14 +99,16 @@ apo/peri=320.111/319.999  ecc=8.32e-6  deploy=590.46  meco@134.81  boosterFuel=5
 E@COAST_WAIT=0.172278  apo/peri@coast=320.00/-1646.62  tToApo=49.7 s  alt@coast=318.10  stage vrMin=116.361
 ```
 - Speed: FULL ~47432 ticks ~8 s (5800-6100 t/s); COAST_WAIT_ENTRY stop = 41946 ticks, 6.9 s (6050 t/s) -> truncating saves only ~12% (coast entry is late, t=524 s of 593 s). CIRC_END should be ~36000-ish ticks per user estimate — measure in Step 5.
-- E at reference points: MECO 50000 = ? | 52612 = 0.172278 | 55000 = ?  (pending Ref points button)
-- E_min/E_max: pending (null in config).
+- E at manual-best reference points (user ran button): MECO 50000 (G .62, bias .78) E=0.171900, tToApo 52.7 s, stage vrMin 124.8 | 52612 (G .60, bias .59) E=0.172278, 49.7 s, 116.4 | 55000 (G .60, bias 1.16) E=0.149380, 80.5 s, 143.1. All apo=320.00, peri -1420..-1647 km at coast.
+- E_min/E_max: NOT derivable from these 3 points (they are manual-best, not band edges; E 0.149-0.172). Real E_max/E_min come from Step 6 (tuneAB boundary tracing). NOTE: sweep default 0.25-0.35 is far above all manual-best E (0.149-0.172) -> decide in Step 8 (likely change default range to ~0.14-0.20 or confirm intent).
 - Optional config touch-up: add `stageResidualKg: 848.7` to `TunerConfig.baselineResult`.
 
-## 11. Next: Step 5 design (INNER-2, lead search) — `tuner-core.js`
-- `tuneLead(point, opts)` -> `{ lead, leadTicks, marginS, vrEnd, vrMin, ok, evals, log[] }`. Uses `TunerHook.runEval(point_with_lead, { stopAt:'CIRC_END' })`; uses metrics `vrMin`, `vrEnd`, `marginS` (engOff), `endReason`, crashed. Lead on integer tick lattice (0.0125 s); EvalCache so repeated leads cost nothing.
-- Phase 1: reduce lead with no negative vr (vrMin >= 0): ladder 50, 20, 10, 5, 2, 1 ticks (hybrid bracket). Stop when margin < 5 s or vr goes negative.
-- Phase 2: negative vr allowed (vrMin >= hard floor -2 m/s), vrEnd >= 0 with buffer 0.02-0.05 (not 0), stop when margin in [4,5] s. vrEnd < 0 = infeasible side.
-- Output must be lattice-snapped; final FULL verify happens in later steps (INNER-1 / Phase A).
-- Test: baseline (G 0.60, T 4.82, bias 0.59, MECO 52612) -> must reach margin <= 6.72 s with vrEnd > 0. Report evals count and wall time.
+## 11. Step 5 — tuneLead (INNER-2), implemented in tuner-core.js
+- `TunerCore.tuneLead(point, opts)` async -> `{ok, inBand, reason, lead, leadTicks, marginS, vrEnd, vrMin, phase(1 if vrMin>=0 else 2), point, metrics, evals, cacheHits, wallMs, log[]}`. opts: `abortRef, onLog, onProgress, env, targetAltKm, maxEvals(30), cache(EvalCache, share across calls), marginBand, vrEndBuffer, vrMinFloor, slopeSPerS(28)`.
+- Eval = `TunerHook.runEval(p, {stopAt:'CIRC_END'})`, cached by lattice key (+stopAt).
+- Algorithm: (1) bracketed secant/bisection on integer ticks toward margin 4.5 s (first step from slope guess 28 s/s, |step|<=60 ticks); (2) if no in-band feasible point: find smallest feasible lead by bisecting between largest infeasible and smallest feasible (walk up 1,2,4..32 ticks if none feasible) — feasible = valid CIRC_END, vrMin >= -2, vrEnd >= 0.02; (3) descend up to 6 ticks while still in band + feasible (lowest margin in band). Selection key: [distance to band, margin].
+- Assumes margin and vr-feasibility are monotone in lead. Invalid eval (no CIRC_END/crash) is treated as margin = -inf (too low).
+- Mock tests (node): loose vr -> lead 435 ticks (5.4375 s) margin 4.27 in 3-6 evals; binding vr -> returns feasible out-of-band with reason; impossible -> ok=false.
+- HTML button `Tune lead (baseline)`: runs tuneLead on snapped baseline, then FULL evals of baseline vs tuned lead + `TunerUtils.score` comparison.
+- Done-when (pending real run): margin <= 6.72 s, vrEnd > 0, evals/wall printed, tuned score <= baseline score.
 

@@ -69,6 +69,7 @@ input[type=number] { width: 90px; background: var(--panel-2); color: var(--text)
     <button id="evalRawBtn" disabled>Eval: raw baseline</button>
     <button id="evalTwiceBtn" disabled>Determinism (x2)</button>
     <button id="evalRefBtn" disabled>Ref points E (3x COAST_WAIT)</button>
+    <button id="tuneLeadBtn" disabled>Tune lead (baseline)</button>
     <button id="evalAbortBtn">Abort</button>
   </div>
 
@@ -105,7 +106,8 @@ input[type=number] { width: 90px; background: var(--panel-2); color: var(--text)
 <script src="tuner-engine.js"></script>
 <script src="tuner-utils.js"></script>
 <script src="tuner-hook.js"></script>
-<!-- Step 5-8: tuner-core.js · Step 9: tuner-ui.js -->
+<script src="tuner-core.js"></script>
+<!-- Step 6-8: more of tuner-core.js · Step 9: tuner-ui.js -->
 
 <script>
 (function () {
@@ -157,7 +159,7 @@ input[type=number] { width: 90px; background: var(--panel-2); color: var(--text)
           ' lead=' + ins.CIRC_TRIGGER_LEAD_S + ' alt=' + ins.TARGET_ORBIT_ALT_KM);
       statusEl.textContent = 'Ready.';
       $('smokeBtn').disabled = false; $('dumpCfgBtn').disabled = false; $('applyChkBtn').disabled = false;
-      ['evalSnapBtn','evalRawBtn','evalTwiceBtn','evalRefBtn'].forEach((id) => $(id).disabled = false);
+      ['evalSnapBtn','evalRawBtn','evalTwiceBtn','evalRefBtn','tuneLeadBtn'].forEach((id) => $(id).disabled = false);
     } catch (e) {
       statusEl.textContent = 'Boot failed: ' + e.message;
       log('BOOT FAILED: ' + e.message, 'bad');
@@ -269,6 +271,37 @@ input[type=number] { width: 90px; background: var(--panel-2); color: var(--text)
       statusEl.textContent = 'Ref points done.';
     } catch (e) { log('REF FAILED: ' + e.message, 'bad'); console.error(e); }
     finally { ['evalSnapBtn','evalRawBtn','evalTwiceBtn','evalRefBtn'].forEach((id) => $(id).disabled = false); }
+  });
+
+  // ---- Step 5: INNER-2 lead search on the baseline (G, T, bias, MECO fixed) ----
+  $('tuneLeadBtn').addEventListener('click', async () => {
+    abortRef.aborted = false;
+    const ids = ['evalSnapBtn','evalRawBtn','evalTwiceBtn','evalRefBtn','tuneLeadBtn'];
+    ids.forEach((id) => $(id).disabled = true);
+    try {
+      const p = TunerUtils.fromRaw(C.baselineRaw);
+      log('--- tuneLead (baseline G/T/bias/MECO, CIRC_END evals) ---');
+      const r = await TunerCore.tuneLead(p, {
+        abortRef, onLog: (l) => log(l),
+        onProgress: (q) => { statusEl.textContent = 'tuneLead… t=' + q.simTime.toFixed(1) + ' s ' + (q.phase || ''); },
+      });
+      if (r.ok) {
+        log('RESULT lead=' + r.lead + ' leadTicks=' + r.leadTicks + ' margin=' + fmt(r.marginS, 2) + ' vrEnd=' + fmt(r.vrEnd, 4) +
+            ' vrMin=' + fmt(r.vrMin, 3) + ' ok=' + r.ok + ' inBand=' + r.inBand + ' phase=' + r.phase + ' evals=' + r.evals, r.inBand ? 'ok' : 'bad');
+        // end-to-end check: FULL eval of the baseline vs the tuned lead, scored
+        const base = await TunerHook.runEval(p, { stopAt: 'FULL', abortRef });
+        const tun = await TunerHook.runEval(r.point, { stopAt: 'FULL', abortRef });
+        const sb = TunerUtils.score(base), st = TunerUtils.score(tun);
+        log('FULL baseline lead ' + TunerUtils.describe(p).lead + ': score=' + sb.score.toFixed(3) + ' ok=' + sb.ok + ' deploy=' + fmt(base.deployTimeS, 2) +
+            ' apo/peri=' + fmt(base.apogeeKm, 3) + '/' + fmt(base.perigeeKm, 3) + ' resid=' + fmt(base.stageResidualKg, 1) + ' boosterFuel=' + fmt(base.boosterFuelLeftKg, 0));
+        log('FULL tuned    lead ' + r.lead + ': score=' + st.score.toFixed(3) + ' ok=' + st.ok + ' deploy=' + fmt(tun.deployTimeS, 2) +
+            ' apo/peri=' + fmt(tun.apogeeKm, 3) + '/' + fmt(tun.perigeeKm, 3) + ' resid=' + fmt(tun.stageResidualKg, 1) + ' boosterFuel=' + fmt(tun.boosterFuelLeftKg, 0) +
+            ' vrEnd=' + fmt(tun.vrEnd, 4) + ' margin=' + fmt(tun.marginS, 2) + ' maxG=' + fmt(tun.maxG, 3) + ' maxQ=' + fmt(tun.maxQKPa, 2) +
+            (st.score <= sb.score ? '  (better/equal)' : '  (WORSE than baseline)'), st.score <= sb.score ? 'ok' : 'bad');
+      } else log('tuneLead FAILED: ' + r.reason, 'bad');
+      statusEl.textContent = 'tuneLead done.';
+    } catch (e) { log('TUNELEAD ERROR: ' + e.message, 'bad'); statusEl.textContent = 'tuneLead error.'; console.error(e); }
+    finally { ids.forEach((id) => $(id).disabled = false); }
   });
 
   boot();

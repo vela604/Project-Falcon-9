@@ -31,7 +31,7 @@ Files padhe, gaps pakde, ye plan + `state.md` banaya.
 - **Hook fixes made here:** stage body lookup (`findStage`), maxG = headless gLoad on bodies[0], vrEnd/marginS = engines-off values, stopAt label capture.
 - **Pending (small):** run `Ref points E` button -> E for MECO 50000/55000 -> estimate E_min/E_max (write into state.md section 10 + config).
 
-## Step 5 — INNER-2: circ lead search
+## Step 5 — INNER-2: circ lead search  (code delivered, real-sim run pending)
 - **Attach:** `state.md`, `multi-step-project.md`, `prompt-web.md`, `tuner/` saari files, Ref points E log (if run).
 - **Deliver:** `tuneLead()` in `tuner-core.js` using `stopAt:'CIRC_END'` — Phase 1 (no negative vr; ladder 50/20/10/5/2/1 ticks), Phase 2 (negative allowed, vrMin >= -2, vrEnd (engOff) >= 0 with buffer 0.02–0.05), stop margin 4–5 s. Tick-lattice steps, EvalCache. Output `{lead, leadTicks, marginS, vrEnd, vrMin, ok, evals, log[]}`. Add a "Tune lead (baseline)" button in html.
 - **Done when:** baseline (A, bias, MECO 52612) pe lead search margin <= manual 6.72 s, vrEnd > 0, evals/wall reported.
