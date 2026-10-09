@@ -56,38 +56,22 @@ input[type=number] { width: 90px; background: var(--panel-2); color: var(--text)
   </div>
 
   <div class="panel">
-    <h3>Run eval (Step 3)</h3>
     <label>stopAt
-      <select id="stopAt">
-        <option value="FULL">FULL (payload cleared)</option>
-        <option value="DEPLOY">DEPLOY</option>
-        <option value="CIRC_END">CIRC_END</option>
-        <option value="COAST_WAIT_ENTRY">COAST_WAIT_ENTRY</option>
-      </select>
-    </label>
-    <button id="evalSnapBtn" disabled>Eval: snapped baseline</button>
-    <button id="evalRawBtn" disabled>Eval: raw baseline</button>
-    <button id="evalTwiceBtn" disabled>Determinism (x2)</button>
-    <button id="evalRefBtn" disabled>Ref points E (3x COAST_WAIT)</button>
-    <button id="tuneLeadBtn" disabled>Tune lead (baseline)</button>
-    <label>mode
-      <select id="abMode">
-        <option value="fast">fast</option>
-        <option value="fine" selected>fine</option>
-        <option value="accurate">accurate</option>
-      </select>
-    </label>
-    <label>eMax <input type="number" id="abEmax" value="0.20" min="0.05" max="0.6" step="0.005"></label>
-    <button id="tuneABBtn" disabled>Tune (A,bias) + lead (baseline)</button>
-<button id="tuneRoughBtn" disabled>Rough tune (Phase A)</button>
-<label>start <select id="mecoStartSel"><option value="0">ref MECO 50000</option><option value="1" selected>baseline 52612</option><option value="2">ref MECO 55000</option></select></label>
-<button id="findMecoBtn" disabled>Find optimal MECO (Phase A)</button>
-<label>B mode <select id="fullModeSel"><option value="fast">fast</option><option value="fine" selected>fine</option><option value="accurate">accurate</option></select></label>
-<button id="fullTuneBtn" disabled>Full tune (Phase A + B)</button>
-<button id="evalAbortBtn">Abort</button>
-  </div>
+    <select id="stopAt">
+      <option value="FULL">FULL</option>
+      <option value="DEPLOY">DEPLOY</option>
+      <option value="CIRC_END">CIRC_END</option>
+      <option value="COAST_WAIT_ENTRY">COAST_WAIT_ENTRY</option>
+    </select>
+  </label>
+  <button id="evalSnapBtn" disabled>Eval: snapped baseline</button>
+  <button id="evalRawBtn" disabled>Eval: raw baseline</button>
+  <button id="evalTwiceBtn" disabled>Determinism (x2)</button>
+  <button id="evalRefBtn" disabled>Ref points E (3x COAST_WAIT)</button>
+  <button id="evalAbortBtn">Abort</button>
+</div>
 
-  <div id="tunerUIHost"></div>
+<div id="tunerUIHost"></div>
 
 <div class="panel">
   <h3>Log</h3>
@@ -124,6 +108,7 @@ input[type=number] { width: 90px; background: var(--panel-2); color: var(--text)
 <script src="tuner-utils.js"></script>
 <script src="tuner-hook.js"></script>
 <script src="tuner-core.js"></script>
+<script src="tuner-strategy-example.js"></script>
 <script src="tuner-ui.js"></script>
 
 <script>
@@ -179,8 +164,8 @@ if (window.TunerUI) window.TunerUI.mount($('tunerUIHost'), { log: (l) => log(l) 
 
 statusEl.textContent = 'Ready.';
 $('smokeBtn').disabled = false; $('dumpCfgBtn').disabled = false; $('applyChkBtn').disabled = false;
-      ['evalSnapBtn','evalRawBtn','evalTwiceBtn','evalRefBtn','tuneLeadBtn','tuneABBtn','tuneRoughBtn','findMecoBtn','fullTuneBtn'].forEach((id) => $(id).disabled = false);
-    } catch (e) {
+      ['evalSnapBtn','evalRawBtn','evalTwiceBtn','evalRefBtn','smokeBtn','dumpCfgBtn','applyChkBtn'].forEach((id) => { const e = $(id); if (e) e.disabled = false; });
+      } catch (e) {
       statusEl.textContent = 'Boot failed: ' + e.message;
       log('BOOT FAILED: ' + e.message, 'bad');
       console.error(e);
@@ -294,7 +279,7 @@ $('smokeBtn').disabled = false; $('dumpCfgBtn').disabled = false; $('applyChkBtn
   });
 
   // ---- Step 5: INNER-2 lead search on the baseline (G, T, bias, MECO fixed) ----
-  $('tuneLeadBtn').addEventListener('click', async () => {
+  if ($('tuneLeadBtn')) $('tuneLeadBtn').addEventListener('click', async () => {
     abortRef.aborted = false;
     const ids = ['evalSnapBtn','evalRawBtn','evalTwiceBtn','evalRefBtn','tuneLeadBtn'];
     ids.forEach((id) => $(id).disabled = true);
@@ -325,7 +310,7 @@ $('smokeBtn').disabled = false; $('dumpCfgBtn').disabled = false; $('applyChkBtn
   });
 
   // ---- Step 6: INNER-1 (A, bias) joint search + lead per candidate, from the baseline ----
-  $('tuneABBtn').addEventListener('click', async () => {
+  if ($('tuneABBtn')) $('tuneABBtn').addEventListener('click', async () => {
     abortRef.aborted = false;
     const ids = ['evalSnapBtn','evalRawBtn','evalTwiceBtn','evalRefBtn','tuneLeadBtn','tuneABBtn'];
     ids.forEach((id) => $(id).disabled = true);
@@ -363,7 +348,7 @@ $('smokeBtn').disabled = false; $('dumpCfgBtn').disabled = false; $('applyChkBtn
   });
 
     // ---- Phase A: tuneRough (any feasible point at this MECO, cheap) ----
-  $('tuneRoughBtn').addEventListener('click', async () => {
+  if ($('tuneRoughBtn')) $('tuneRoughBtn').addEventListener('click', async () => {
     abortRef.aborted = false;
     const ids = ['evalSnapBtn','evalRawBtn','evalTwiceBtn','evalRefBtn','tuneLeadBtn','tuneABBtn','tuneRoughBtn'];
     ids.forEach((id) => $(id).disabled = true);
@@ -388,7 +373,7 @@ $('smokeBtn').disabled = false; $('dumpCfgBtn').disabled = false; $('applyChkBtn
   });
 
   // ---- Step 7: Phase A outer loop — findOptimalMeco (tuneRough per MECO, residual target [0,50] kg) ----
-  $('findMecoBtn').addEventListener('click', async () => {
+  if ($('findMecoBtn')) $('findMecoBtn').addEventListener('click', async () => {
     abortRef.aborted = false;
     const ids = ['evalSnapBtn','evalRawBtn','evalTwiceBtn','evalRefBtn','tuneLeadBtn','tuneABBtn','tuneRoughBtn','findMecoBtn','fullTuneBtn'];
     ids.forEach((id) => $(id).disabled = true);
@@ -421,7 +406,7 @@ $('smokeBtn').disabled = false; $('dumpCfgBtn').disabled = false; $('applyChkBtn
   });
 
   // ---- Full tune: Phase A (findOptimalMeco, upper part of residual band) + Phase B (tuneAB at that MECO, residual-guarded) ----
-  $('fullTuneBtn').addEventListener('click', async () => {
+  if ($('fullTuneBtn')) $('fullTuneBtn').addEventListener('click', async () => {
     abortRef.aborted = false;
     const ids = ['evalSnapBtn','evalRawBtn','evalTwiceBtn','evalRefBtn','tuneLeadBtn','tuneABBtn','tuneRoughBtn','findMecoBtn','fullTuneBtn'];
     ids.forEach((id) => $(id).disabled = true);

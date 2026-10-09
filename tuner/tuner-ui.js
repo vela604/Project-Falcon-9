@@ -1,6 +1,8 @@
 // ============================================================================
 // tuner-ui.js — Step 9: inputs, live progress, ranked leaderboard (sort tabs),
-// expandable result blocks, Copy / Download JSON, config panel (weights live, search next-run).
+// expandable result blocks, Copy / Download JSON, config panel.
+// Refs come from saved presets (guidancePresets.js), default preset first + fallback.
+// Strategy dropdown from TunerCore.listStrategies(); run dispatches to the selected strategy.
 // ============================================================================
 (function () {
   'use strict';
@@ -45,12 +47,12 @@
       '<button class="tui-tab' + (k === active ? ' on' : '') + '" data-act="sort" data-key="' + k + '">' + TAB_LABEL[k] + '</button>').join('') + '</div>';
   }
   function summaryLine(res) {
-  const a = res.phaseA, b = res.phaseB;
-  let s = 'status=' + res.status + ' · MECO ' + (res.meco != null ? res.meco : '–') + ' · band [' + (res.band || []).join(',') + '] kg · evals ' + res.evals +
-    (a && b ? ' (A ' + a.evals + ' + B ' + b.evals + ')' : '') + ' · wall ' + fmt(res.wallMs / 1000, 1) + ' s';
-  if (res.probe) s += ' · probe ' + res.probe.probedKg + ' kg → ' + (res.probe.ok ? 'used' : 'fell back to ' + res.probe.usedKg + ' kg');
-  return s;
-}
+    const a = res.phaseA, b = res.phaseB;
+    let s = 'status=' + res.status + ' · MECO ' + (res.meco != null ? res.meco : '–') + ' · band [' + (res.band || []).join(',') + '] kg · evals ' + res.evals +
+      (a && b ? ' (A ' + a.evals + ' + B ' + b.evals + ')' : '') + ' · wall ' + fmt(res.wallMs / 1000, 1) + ' s';
+    if (res.probe) s += ' · probe ' + (res.probe.probedKg != null ? res.probe.probedKg : res.probe.triedKg) + ' kg → ' + (res.probe.ok ? 'used' : 'fell back to ' + res.probe.usedKg + ' kg');
+    return s;
+  }
   function boardHtml(res, sortKey) {
     const rows = U().sortRows(res.leaderboard || [], sortKey);
     let h = '<div class="tui-sum ' + (res.ok ? 'tui-ok' : 'tui-bad') + '">' + (res.ok ? 'OK' : 'FAILED') + ' — ' + esc(summaryLine(res)) + '</div>';
@@ -61,22 +63,23 @@
     return h;
   }
   function parseLogLine(line, st) {
-  st = st || {};
-  if (/^=== Phase A/.test(line)) st.phase = 'Phase A (MECO search)';
-  else if (/^=== Phase B/.test(line)) st.phase = 'Phase B (A,bias,lead lanes)';
-  else if (/^=== MECO probe/.test(line)) st.phase = 'MECO probe';
-  let m = /^#(\d+) MECO=(\d+)/.exec(line);
-  if (m) { st.iter = +m[1]; st.meco = +m[2]; }
-  m = /^verify \[([^\]]+)\]/.exec(line);
-  if (m) { st.lane = m[1]; }
-  m = /▶ eval #(\d+) \[([^\]]+)\]/.exec(line);
-  if (m) { st.evalId = +m[1]; st.evalStop = m[2]; st.evalWaiting = true; }
-  m = /◀ eval #(\d+) /.exec(line);
-  if (m && st.evalId === +m[1]) { st.evalWaiting = false; }
-  m = /✗ eval #(\d+) ERROR: (.*)$/.exec(line);
-  if (m) { st.evalError = m[2]; st.evalWaiting = false; }
-  return st;
-}
+    st = st || {};
+    if (/^=== Phase A/.test(line)) st.phase = 'Phase A (MECO search)';
+    else if (/^=== Phase B/.test(line)) st.phase = 'Phase B (A,bias,lead lanes)';
+    else if (/^=== MECO probe/.test(line)) st.phase = 'MECO probe';
+    else if (/^=== Phase A: SKIPPED/.test(line)) st.phase = 'Phase A skipped';
+    let m = /^#(\d+) MECO=(-?\d+)/.exec(line);
+    if (m) { st.iter = +m[1]; st.meco = +m[2]; }
+    m = /^verify \[([^\]]+)\]/.exec(line);
+    if (m) { st.lane = m[1]; }
+    m = /▶ eval #(\d+) \[([^\]]+)\]/.exec(line);
+    if (m) { st.evalId = +m[1]; st.evalStop = m[2]; st.evalWaiting = true; st.evalError = null; }
+    m = /◀ eval #(\d+) /.exec(line);
+    if (m && st.evalId === +m[1]) { st.evalWaiting = false; }
+    m = /✗ eval #(\d+) ERROR: (.*)$/.exec(line);
+    if (m) { st.evalError = m[2]; st.evalWaiting = false; }
+    return st;
+  }
 
   const CSS = `
 .tui{font-family:var(--font-mono,monospace);font-size:12px}
@@ -123,7 +126,6 @@
     cur[parts[parts.length - 1]] = v;
   };
 
-  // Config fields shown in the UI. path = dot path into TunerConfig. group: 'rank' | 'search'.
   const CFG_FIELDS = [
     { id: 'tuiWOrbit', label: 'orbit weight', path: 'scoring.orbit.weight', group: 'rank', step: 10, min: 0 },
     { id: 'tuiWEcc', label: 'ecc weight', path: 'scoring.eccentricity.weight', group: 'rank', step: 100, min: 0 },
@@ -142,52 +144,55 @@
     opts = opts || {};
     const doc = root.document, cfg = C();
     if (!doc.getElementById('tuiStyle')) { const s = doc.createElement('style'); s.id = 'tuiStyle'; s.textContent = CSS; doc.head.appendChild(s); }
-  // Refs come from saved presets only (guidancePresets.js). The default preset is always present;
-// user-saved presets appear as well. Config references are no longer shown in the dropdown.
-function collectRefs() {
-  const out = [];
-  const push = (raw, src) => {
-    if (!raw) return;
-    const G = Number(raw.G), T = Number(raw.T), bias = Number(raw.bias), lead = Number(raw.lead), meco = Number(raw.meco);
-    if (![G, T, bias, lead, meco].every(Number.isFinite)) return;
-    out.push({ G, T, bias, lead, meco, alt: Number.isFinite(Number(raw.alt)) ? Number(raw.alt) : 320, name: raw.name || null, src });
-  };
-  try {
-    if (typeof getAllPresetsForGuide === 'function') {
-      const list = getAllPresetsForGuide(cfg.guideName) || [];
-      const defs = list.filter((p) => p.isDefault);
-      const users = list.filter((p) => !p.isDefault);
-      // default preset first, then user presets (alphabetical)
-      users.sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
-      defs.concat(users).forEach((meta) => {
-        const p = (typeof getPresetById === 'function') ? getPresetById(meta.id) : meta;
-        const c = p && p.constants; if (!c) return;
-        push({
-          G: c.ascent && c.ascent.PUSH_MAX_GIMBAL_DEG,
-          T: c.ascent && c.ascent.PUSH_T_S,
-          bias: c.insertion && c.insertion.STAGE_BURN_AOA_BIAS_DEG,
-          lead: c.insertion && c.insertion.CIRC_TRIGGER_LEAD_S,
-          meco: c.ascent && c.ascent.MECO_TARGET_BOOSTER_FUEL_KG,
-          alt: c.insertion && c.insertion.TARGET_ORBIT_ALT_KM,
-          name: p.name || (p.isDefault ? 'default' : ('preset ' + (meta.id || '?')))
-        }, p.isDefault ? 'default' : 'preset');
-      });
+
+    // ---- refs: presets only (default first, then user presets, fallback to baseline) ----
+    function collectRefs() {
+      const out = [];
+      const push = (raw, src) => {
+        if (!raw) return;
+        const G = Number(raw.G), T = Number(raw.T), bias = Number(raw.bias), lead = Number(raw.lead), meco = Number(raw.meco);
+        if (![G, T, bias, lead, meco].every(Number.isFinite)) return;
+        out.push({ G, T, bias, lead, meco, alt: Number.isFinite(Number(raw.alt)) ? Number(raw.alt) : 320, name: raw.name || null, src });
+      };
+      try {
+        if (typeof getAllPresetsForGuide === 'function') {
+          const list = getAllPresetsForGuide(cfg.guideName) || [];
+          const defs = list.filter((p) => p.isDefault);
+          const users = list.filter((p) => !p.isDefault);
+          users.sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+          defs.concat(users).forEach((meta) => {
+            const p = (typeof getPresetById === 'function') ? getPresetById(meta.id) : meta;
+            const c = p && p.constants; if (!c) return;
+            push({
+              G: c.ascent && c.ascent.PUSH_MAX_GIMBAL_DEG,
+              T: c.ascent && c.ascent.PUSH_T_S,
+              bias: c.insertion && c.insertion.STAGE_BURN_AOA_BIAS_DEG,
+              lead: c.insertion && c.insertion.CIRC_TRIGGER_LEAD_S,
+              meco: c.ascent && c.ascent.MECO_TARGET_BOOSTER_FUEL_KG,
+              alt: c.insertion && c.insertion.TARGET_ORBIT_ALT_KM,
+              name: p.name || (p.isDefault ? 'default' : ('preset ' + (meta.id || '?')))
+            }, p.isDefault ? 'default' : 'preset');
+          });
+        }
+      } catch (e) { try { console.warn('[tuner-ui] presets read failed:', e); } catch (_) {} }
+      if (!out.length) {
+        push({ G: cfg.baselineRaw.G, T: cfg.baselineRaw.T, bias: cfg.baselineRaw.bias, lead: cfg.baselineRaw.lead, meco: cfg.baselineRaw.meco, alt: 320, name: 'baseline (fallback)' }, 'fallback');
+      }
+      return out;
     }
-  } catch (e) { try { console.warn('[tuner-ui] presets read failed:', e); } catch (_) {} }
-  if (!out.length) {
-    // fallback: presets unavailable → show at least the current baseline so the UI is not empty
-    push({ G: cfg.baselineRaw.G, T: cfg.baselineRaw.T, bias: cfg.baselineRaw.bias, lead: cfg.baselineRaw.lead, meco: cfg.baselineRaw.meco, alt: 320, name: 'baseline (fallback)' }, 'fallback');
-  }
-  return out;
-}
-const REFS = collectRefs();
-const refs = REFS.map((r, i) =>
-  '<option value="' + i + '"' + '>' +
-  (r.src === 'preset' ? '★ ' : (r.src === 'default' ? '◆ ' : '')) +
-  (r.name ? esc(r.name) + ' · ' : '') +
-  'MECO ' + r.meco + ' · ' + r.alt + ' km</option>').join('');
-  
-    // default snapshot for Reset
+    const REFS = collectRefs();
+    const refs = REFS.map((r, i) =>
+      '<option value="' + i + '">' +
+      (r.src === 'preset' ? '★ ' : (r.src === 'default' ? '◆ ' : '')) +
+      (r.name ? esc(r.name) + ' · ' : '') +
+      'MECO ' + r.meco + ' · ' + r.alt + ' km</option>').join('');
+
+    const stratList = (typeof root.TunerCore.listStrategies === 'function') ? root.TunerCore.listStrategies() : ['guided'];
+    const stratOpts = stratList.map((n) => {
+      const s = root.TunerCore.getStrategy(n) || {};
+      return '<option value="' + esc(n) + '"' + (n === 'guided' ? ' selected' : '') + '>' + esc(s.label || n) + '</option>';
+    }).join('');
+
     const DEFAULTS = {};
     CFG_FIELDS.forEach((f) => { DEFAULTS[f.path] = getPath(cfg, f.path); });
 
@@ -199,19 +204,21 @@ const refs = REFS.map((r, i) =>
       (f.min != null ? ' min="' + f.min + '"' : '') + (f.max != null ? ' max="' + f.max + '"' : '') + '></label>').join('');
 
     el.innerHTML =
+      '<div class="panel tui"><h3>Tuner</h3>' +
       '<div class="row"><label>alt km <input type="number" id="tuiAlt" value="' + cfg.fixed.targetAltKm + '" step="1" min="150"></label>' +
-  '<label>start <select id="tuiStart">' + refs + '</select></label>' +
-  '<label>B mode <select id="tuiMode"><option value="fast">fast</option><option value="fine" selected>fine</option><option value="accurate">accurate</option></select></label>' +
-  '<label><input type="checkbox" id="tuiDeorbit"> deorbit ON (band 500-600 kg)</label>' +
-  '<label>duration cap s <input type="number" id="tuiDurCap" step="10" min="100"></label>' +
-  '<button id="tuiDurCapAuto" title="Use the suggested value for the current altitude">auto</button>' +
-  '<span class="tui-dim" id="tuiDurCapHint"></span></div>' +
+      '<label>strategy <select id="tuiStrategy">' + stratOpts + '</select></label>' +
+      '<label>start <select id="tuiStart">' + refs + '</select></label>' +
+      '<label>B mode <select id="tuiMode"><option value="fast">fast</option><option value="fine" selected>fine</option><option value="accurate">accurate</option></select></label>' +
+      '<label><input type="checkbox" id="tuiDeorbit"> deorbit ON (band 500-600 kg)</label>' +
+      '<label>duration cap s <input type="number" id="tuiDurCap" step="10" min="100"></label>' +
+      '<button id="tuiDurCapAuto" title="Use the suggested value for the current altitude">auto</button>' +
+      '<span class="tui-dim" id="tuiDurCapHint"></span></div>' +
       '<div class="row"><label><input type="checkbox" id="tuiAtm" checked> atmosphere</label><label><input type="checkbox" id="tuiSlosh" checked> slosh</label>' +
       '<label><input type="checkbox" id="tuiImu"> IMU</label><label><input type="checkbox" id="tuiWind"> wind</label>' +
       '<label>m/s <input type="number" id="tuiWindSpd" value="0" step="1" min="0"></label><label>dir° <input type="number" id="tuiWindDir" value="0" step="5"></label>' +
       '<label>booster % <input type="number" id="tuiBoost" value="100" min="0" max="100"></label><label>stage % <input type="number" id="tuiStage" value="100" min="0" max="100"></label></div>' +
       '<div class="row"><button class="go" id="tuiRun">Run tuner</button><button class="stop" id="tuiStop" disabled>Stop</button>' +
-      '<span class="tui-dim" id="tuiNote"></span></div></div>' +
+      '<span class="tui-dim" id="tuiStratDesc"></span><span class="tui-dim" id="tuiNote"></span></div></div>' +
       '<div class="panel tui"><h3>Config</h3>' +
       '<div class="cfgsec">Ranking — applies immediately (re-scores the leaderboard)</div><div class="cfgwrap">' + rankFields + '</div>' +
       '<div class="cfgsec">Search — applies to the next run</div><div class="cfgwrap">' + searchFields + '</div>' +
@@ -224,31 +231,62 @@ const refs = REFS.map((r, i) =>
 
     const $ = (id) => el.querySelector('#' + id);
     const S = { res: null, sort: 'score', alt: cfg.fixed.targetAltKm, rows: [], running: false, abortRef: { aborted: false }, refs: REFS };
-    S.alt = cfg.fixed.targetAltKm;
-const logBuf = [];
+    const logBuf = [];
 
-// ---- duration cap: auto-suggest for the current altitude, user can override ----
-let durCapDirty = false;
-function refreshDurCap(fromAlt) {
-  const alt = +$('tuiAlt').value || cfg.fixed.targetAltKm;
-  const sug = U().suggestDurationCap(alt);
-  $('tuiDurCapHint').textContent = 'auto ' + sug + ' s';
-  if (!durCapDirty || fromAlt) { $('tuiDurCap').value = sug; }
-}
-$('tuiDurCap').addEventListener('input', () => { durCapDirty = true; });
-$('tuiDurCapAuto').addEventListener('click', () => { durCapDirty = false; refreshDurCap(true); });
+    let durCapDirty = false;
+    function refreshDurCap(fromAlt) {
+      const alt = +$('tuiAlt').value || cfg.fixed.targetAltKm;
+      const sug = U().suggestDurationCap(alt);
+      $('tuiDurCapHint').textContent = 'auto ' + sug + ' s';
+      if (!durCapDirty || fromAlt) { $('tuiDurCap').value = sug; }
+    }
+    $('tuiDurCap').addEventListener('input', () => { durCapDirty = true; });
+    $('tuiDurCapAuto').addEventListener('click', () => { durCapDirty = false; refreshDurCap(true); });
+
+    function updateNote() {
+      const alt = +$('tuiAlt').value;
+      const ref = S.refs[+$('tuiStart').value];
+      const parts = [];
+      if (ref) {
+        const refAlt = ref.alt != null ? ref.alt : 320;
+        if (Math.abs(refAlt - alt) > 100) parts.push('start ref tuned for ' + refAlt + ' km; target ' + alt + ' km — expect more evals');
+      }
+      const MC2 = cfg.meco || {};
+      const probeStart = MC2.probeStartKg != null ? MC2.probeStartKg : 20000;
+      if (ref && ref.meco < probeStart) parts.push('ref MECO ' + ref.meco + ' < ' + probeStart + ': will probe MECO ' + probeStart + ' first (fallback ' + ref.meco + ')');
+      $('tuiNote').textContent = parts.join(' · ');
+    }
+    function updateStratDesc() {
+      const s = root.TunerCore.getStrategy($('tuiStrategy').value) || {};
+      $('tuiStratDesc').textContent = s.describe ? '— ' + s.describe : '';
+    }
+    let startAuto = true;
+    function autoPickRef() {
+      if (!startAuto) return;
+      const alt = +$('tuiAlt').value || cfg.fixed.targetAltKm;
+      let bestI = 0, bestD = Infinity, bestIsDef = false;
+      S.refs.forEach((r, i) => {
+        const d = Math.abs((r.alt != null ? r.alt : 320) - alt);
+        const isDef = r.src === 'default' || r.src === 'fallback';
+        if (d < bestD - 1e-9 || (Math.abs(d - bestD) < 1e-9 && isDef && !bestIsDef)) { bestD = d; bestI = i; bestIsDef = isDef; }
+      });
+      $('tuiStart').value = String(bestI);
+      updateNote();
+    }
+    $('tuiStart').addEventListener('change', () => { startAuto = false; updateNote(); });
+    $('tuiStrategy').addEventListener('change', updateStratDesc);
+    $('tuiAlt').addEventListener('input', () => { autoPickRef(); refreshDurCap(); });
 
     // ---- config panel ----
     function fillConfigInputs() {
-      CFG_FIELDS.forEach((f) => { const inp = $('f.id'); });
       CFG_FIELDS.forEach((f) => { const inp = el.querySelector('#' + f.id); if (inp) inp.value = getPath(cfg, f.path); });
     }
     function applyInputValue(inp) {
       const path = inp.dataset.path, group = inp.dataset.group;
       const v = parseFloat(inp.value);
-      if (!Number.isFinite(v)) { inp.value = getPath(cfg, path); return false; }        // invalid -> restore current
+      if (!Number.isFinite(v)) { inp.value = getPath(cfg, path); return false; }
       setPath(cfg, path, v);
-      return group === 'rank';                                                          // true => leaderboard needs re-score
+      return group === 'rank';
     }
     function rescoreAndRender() {
       if (!S.res) return;
@@ -302,33 +340,6 @@ $('tuiDurCapAuto').addEventListener('click', () => { durCapDirty = false; refres
     });
 
     // ---- run / stop / result ----
-function updateNote() {
-  const alt = +$('tuiAlt').value;
-  const ref = S.refs[+$('tuiStart').value];
-  const refAlt = ref && ref.alt != null ? ref.alt : 320;
-  const parts = [];
-  if (Math.abs(refAlt - alt) > 100) parts.push('start ref tuned for ' + refAlt + ' km; target ' + alt + ' km — expect more evals');
-const MC2 = cfg.meco || {};
-const probeStart = MC2.probeStartKg != null ? MC2.probeStartKg : 20000;
-if (ref && ref.meco < probeStart) parts.push('ref MECO ' + ref.meco + ' < ' + probeStart + ': will probe MECO ' + probeStart + ' first (fallback ' + ref.meco + ')');
-$('tuiNote').textContent = parts.join(' · ');
-}
-let startAuto = true;
-function autoPickRef() {
-  if (!startAuto) return;
-  const alt = +$('tuiAlt').value || cfg.fixed.targetAltKm;
-  let bestI = 0, bestD = Infinity, bestIsStart = false;
-  S.refs.forEach((r, i) => {
-    const d = Math.abs((r.alt != null ? r.alt : 320) - alt);
-    const isStart = r.meco === cfg.meco.start;
-    if (d < bestD - 1e-9 || (Math.abs(d - bestD) < 1e-9 && isStart && !bestIsStart)) { bestD = d; bestI = i; bestIsStart = isStart; }
-  });
-  $('tuiStart').value = String(bestI);
-  updateNote();
-}
-$('tuiStart').addEventListener('change', () => { startAuto = false; updateNote(); });
-$('tuiAlt').addEventListener('input', () => { autoPickRef(); refreshDurCap(); });
-
     function renderResult() {
       $('tuiResPanel').hidden = false;
       $('tuiRes').innerHTML = boardHtml(S.res, S.sort);
@@ -359,28 +370,30 @@ $('tuiAlt').addEventListener('input', () => { autoPickRef(); refreshDurCap(); })
         wind: { enabled: $('tuiWind').checked, speed: +$('tuiWindSpd').value || 0, directionDeg: +$('tuiWindDir').value || 0 },
         boosterPct: +$('tuiBoost').value, stagePct: +$('tuiStage').value };
       const prevDeorbit = cfg.fixed.deorbitEnabled; cfg.fixed.deorbitEnabled = deorbit;
-const capIn = parseInt($('tuiDurCap').value, 10);
-const prevCap = cfg.durationCapS;
-cfg.durationCapS = (Number.isFinite(capIn) && capIn >= 100) ? capIn : U().suggestDurationCap(alt);
-S.alt = alt;
-
+      const capIn = parseInt($('tuiDurCap').value, 10);
+      const prevCap = cfg.durationCapS;
+      cfg.durationCapS = (Number.isFinite(capIn) && capIn >= 100) ? capIn : U().suggestDurationCap(alt);
+      S.alt = alt;
       const st = { phase: 'starting' }, t0 = performance.now(), hs0 = Object.assign({}, root.TunerHook ? root.TunerHook.stats : {});
       let simInfo = '';
       const tick = () => {
         const hs = root.TunerHook ? root.TunerHook.stats : { evals: 0, ticks: 0, wallMs: 0 };
         const evals = hs.evals - (hs0.evals || 0), tps = (hs.ticks - (hs0.ticks || 0)) / Math.max(1e-9, (hs.wallMs - (hs0.wallMs || 0)) / 1000);
-        const evInfo = st.evalId ?
-  (st.evalWaiting ? ' · ▶ eval #' + st.evalId + ' [' + (st.evalStop || '?') + ']…' : ' · ◀ eval #' + st.evalId) :
-  '';
-$('tuiStat').textContent = st.phase + (st.iter ? ' · iter ' + st.iter + ' MECO ' + st.meco : '') + (st.lane ? ' · lane ' + st.lane : '') +
-  evInfo + ' · evals ' + evals + ' · ' + fmt((performance.now() - t0) / 1000, 0) + ' s · ' + fmt(tps, 0) + ' t/s' + simInfo;
-  $('tuiLast').textContent = logBuf.length ? logBuf[logBuf.length - 1] : '';
+        const evInfo = st.evalId ? (st.evalWaiting ? ' · ▶ eval #' + st.evalId + ' [' + (st.evalStop || '?') + ']…' : ' · ◀ eval #' + st.evalId) : '';
+        $('tuiStat').textContent = st.phase + (st.iter ? ' · iter ' + st.iter + ' MECO ' + st.meco : '') + (st.lane ? ' · lane ' + st.lane : '') +
+          evInfo + ' · evals ' + evals + ' · ' + fmt((performance.now() - t0) / 1000, 0) + ' s · ' + fmt(tps, 0) + ' t/s' + simInfo;
+        $('tuiLast').textContent = logBuf.length ? logBuf[logBuf.length - 1] : '';
         $('tuiLog').textContent = logBuf.slice(-300).join('\n');
       };
       const timer = setInterval(tick, 500);
       try {
-        const p = U().fromRaw({ G: ref.G, T: cfg.T0, bias: ref.bias, lead: ref.lead, meco: ref.meco });
-        const res = await root.TunerCore.runTuner(p, { mode, deorbit, env, targetAltKm: alt, abortRef: S.abortRef,
+        if (!ref) throw new Error('no reference selected (no presets available?)');
+        const p = U().fromRaw({ G: ref.G, T: ref.T != null ? ref.T : cfg.T0, bias: ref.bias, lead: ref.lead, meco: ref.meco });
+        const stratName = $('tuiStrategy').value || 'guided';
+        const strat = root.TunerCore.getStrategy(stratName);
+        if (!strat) throw new Error('unknown strategy: ' + stratName);
+        st.phase = '[' + stratName + '] starting';
+        const res = await strat.runTuner(p, { mode, deorbit, env, targetAltKm: alt, abortRef: S.abortRef,
           onLog: (l) => { logBuf.push(l); parseLogLine(l, st); if (opts.log) opts.log(l); },
           onProgress: (q) => { simInfo = ' · t=' + fmt(q.simTime, 0) + 's ' + (q.phase || ''); } });
         S.res = res; S.res.altKm = alt; S.sort = 'score'; renderResult();
@@ -389,18 +402,19 @@ $('tuiStat').textContent = st.phase + (st.iter ? ' · iter ' + st.iter + ' MECO 
         st.phase = 'ERROR: ' + e.message; logBuf.push('ERROR: ' + e.message); console.error(e);
       } finally {
         clearInterval(timer); tick();
-cfg.fixed.deorbitEnabled = prevDeorbit;
-cfg.durationCapS = prevCap;
-setSearchDisabled(false);
+        cfg.fixed.deorbitEnabled = prevDeorbit;
+        cfg.durationCapS = prevCap;
+        setSearchDisabled(false);
         S.running = false; $('tuiRun').disabled = false; $('tuiStop').disabled = true;
       }
     });
 
     fillConfigInputs();
-refreshDurCap(true);
-autoPickRef();
-return { state: S, render: renderResult };
-}
+    refreshDurCap(true);
+    autoPickRef();
+    updateStratDesc();
+    return { state: S, render: renderResult };
+  }
 
   root.TunerUI = { mount, rowJson, rowsJson, rowBlockHtml, tabsHtml, boardHtml, summaryLine, parseLogLine, keyValue, CFG_FIELDS, esc, fmt };
 })();

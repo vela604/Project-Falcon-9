@@ -22,12 +22,27 @@
 //
 // Pure async, no globals mutated except through TunerHook (singleton sim).
 // ============================================================================
-(function() {
-    'use strict';
-    const root = (typeof window !== 'undefined') ? window : globalThis;
-    
-    // Per-eval logger: wraps a hook's runEval so every sim call (fresh, not cache) prints a start and end line.
-    // The UI log ticks every 500ms and shows the last N lines, so silent stretches are visible as "▶ eval started, waiting…".
+(function () {
+  'use strict';
+  const root = (typeof window !== 'undefined') ? window : globalThis;
+
+  // ---- Strategy registry: name -> { name, label, describe, runTuner(point, opts) } ----
+  // Each strategy is a `runTuner(point, opts)` implementation. The built-in 'guided' strategy
+  // is registered at the bottom of this file. New strategies live in their own files
+  // (tuner-strategy-<name>.js) and call TunerCore.registerStrategy(...) after loading.
+  const STRATEGIES = Object.create(null);
+  function registerStrategy(name, spec) {
+    if (!name || typeof spec !== 'object' || typeof spec.runTuner !== 'function') {
+      throw new Error('registerStrategy: need {name, spec.runTuner}');
+    }
+    STRATEGIES[name] = Object.assign({ name }, spec);
+    return STRATEGIES[name];
+  }
+  function listStrategies() { return Object.keys(STRATEGIES); }
+  function getStrategy(name) { return STRATEGIES[name] || null; }
+
+  // Per-eval logger: wraps a hook's runEval so every sim call (fresh, not cache) prints a start and end line.
+  // The UI log ticks every 500ms and shows the last N lines, so silent stretches are visible as "▶ eval started, waiting…".
     function makeEvalLogger(log, baseHook) {
       const H = baseHook || root.TunerHook;
       let n = 0;
@@ -1007,6 +1022,17 @@ if (point.meco < probeStart) {
   return res;
 }
 
-  root.TunerCore = { tuneLead, tuneAB, tuneRough, findOptimalMeco, runTuner, residualBand, pickReference, makeEvalLogger };
-  
+  // built-in guided strategy (this file's tuneLead/tuneAB/tuneRough/findOptimalMeco/runTuner)
+registerStrategy('guided', {
+  label: 'Guided (MECO → A/bias → lead)',
+  describe: 'probe MECO → Phase A search (MECO) → Phase B lane search (G/T/bias) → lead per lane',
+  runTuner,
+});
+
+root.TunerCore = {
+  tuneLead, tuneAB, tuneRough, findOptimalMeco, runTuner,
+  residualBand, pickReference, makeEvalLogger,
+  registerStrategy, listStrategies, getStrategy, STRATEGIES,
+};
+
 })();
