@@ -24,6 +24,14 @@ function surf(p) {
   
   return { u, E, f1, b0 };
 }
+// ---- Phase A (Step 7) model: stage residual vs (MECO, G) ----
+// REAL data points available: G .60 -> 849.4 kg, G .59 -> 752.1 kg at MECO 52612 (tuneRough log) => +97.3 kg per 0.01 G.
+// residual(MECO) slope has NO real measurement yet (refs 50000/55000 were run only to COAST_WAIT): physics estimate (rocket eq,
+// booster dv per kg of MECO fuel ~0.015 m/s/kg, stage ve ~3400 m/s, stage ~120 t) = -0.4..-0.5 kg/kg, slightly convex.
+// Lead trend vs MECO is REAL (cfg.references, same G): 5.53 s -> 4.46 s over +2388 kg = -0.0358 ticks/kg.
+const RES = { r0: 848.7, slope: -0.4, curv: 2e-6, perG: 97.3 / 0.01, leadTicksPerKg: -0.0358 };
+const residualOf = (meco, G, m) => { m = m || RES; const d = meco - 52612; return m.r0 + m.slope * d + m.curv * d * d + m.perG * (G - 0.60); };
+const leadStar = (meco) => 442 + RES.leadTicksPerKg * (meco - 52612);   // lead tick that reaches vrEnd = 0.046 at this MECO
 const VR = [[0, 0.3], [0.007, 14], [0.12, 73], [0.35, 131], [0.5, 211], [0.58, 277], [0.66, 373], [0.705, 443]];
 function stageVr(E) {
   for (let i = 1; i < VR.length; i++) if (E <= VR[i][0]) { const [x0, y0] = VR[i - 1], [x1, y1] = VR[i]; return y0 + (y1 - y0) * (E - x0) / (x1 - x0); }
@@ -31,12 +39,13 @@ function stageVr(E) {
 }
 
 function makeHook(model) {
-  model = Object.assign({ trueEmax: 0.185, alwaysF1: false, f2Bias: Infinity }, model || {});
+  model = Object.assign({ trueEmax: 0.185, alwaysF1: false, f2Bias: Infinity, res: null }, model || {});
   const stats = { coast: 0, circ: 0, full: 0 };
   const circ = (p) => {
     const e = surf(p).E;
-    let vrEnd = 0.046 + 0.0101 * (p.li - 442);
-    if (e > model.trueEmax) vrEnd = -1;                       // downstream failure above the true E limit
+    let vrEnd = 0.046 + 0.0101 * (p.li - leadStar(p.meco || 52612));
+    if (e > model.trueEmax) vrEnd = -1;
+    if (residualOf(p.meco || 52612, U.gOf(p.Gi), model.res) < 0) vrEnd = -1;   // stage runs dry before the circ burn ends -> no orbit                       // downstream failure above the true E limit
     return { vrEnd, marginS: vrEnd / 0.00685, vrMin: Math.min(-0.38, vrEnd - 0.4) };
   };
   return {
@@ -55,7 +64,7 @@ function makeHook(model) {
       stats.full++;
       return Object.assign(base, c, { endReason: 'CLEARED', payloadReleased: true, payloadCleared: true, maxQKPa: 24.7, maxG: 4.8,
         apogeeKm: 320.1, perigeeKm: 320.0, ecc: 1e-5, boosterFuelLeftKg: 52625, deployTimeS: 590 + (U.aEff(p) - 13.94) * 2,
-        stageResidualKg: 848.7 - 0.4 * (p.meco - 52612) });
+        stageResidualKg: residualOf(p.meco, U.gOf(p.Gi), model.res) });
     },
   };
 }
@@ -139,6 +148,73 @@ const nFlip = (r) => r.log.filter((l) => /flipping/.test(l)).length;
   { const h = makeHook({ trueEmax: 0.30, alwaysF1: true });
     const r = await TunerCore.tuneAB(p0, { mode: 'fast', hook: h });
     t('impossible -> ok=false, finite evals', !r.ok && r.evalBreakdown.ab < 160, 'status=' + r.status + ' ab=' + r.evalBreakdown.ab); }
+  // ======================= Step 7: findOptimalMeco (Phase A outer loop) =======================
+  const band = [0, 50], inBand = (x) => x >= band[0] && x <= band[1];
+  const mecoRangeInBand = (() => { let a = null, b = null; for (let m = 50000; m <= 60000; m++) { const r = residualOf(m, 0.60); if (inBand(r)) { if (a == null) a = m; b = m; } } return [a, b]; })();
+  console.log('mock: residual(MECO) in [0,50] for MECO ' + mecoRangeInBand.join('..') + ' (G=0.60); residual(52612)=' + residualOf(52612, 0.60).toFixed(1));
+  t('mock7: residual(52612, G.60)=848.7 and G.59 = 751.4 (real 849.4 / 752.1)', Math.abs(residualOf(52612, 0.60) - 848.7) < 1e-9 && Math.abs(residualOf(52612, 0.59) - 751.4) < 0.01);
+  t('mock7: residual decreasing in MECO', residualOf(54000, 0.6) < residualOf(53000, 0.6) && residualOf(56000, 0.6) < residualOf(55000, 0.6));
+
+  const runFom = async (p, o, m) => { const h = makeHook(Object.assign({ trueEmax: 0.185 }, m || {})); const r = await TunerCore.findOptimalMeco(p, Object.assign({ hook: h }, o || {})); r.hook = h; return r; };
+  const p52 = U.fromRaw(C.baselineRaw);
+  const cons = (r) => r.history.every((e) => !e.ok || Math.abs(e.residualKg - residualOf(e.meco, U.gOf(e.point.Gi))) < 1e-6);
+
+  // 1) default run from baseline MECO: converges into [0,50]
+  const r1 = await runFom(p52);
+  console.log(r1.log.join('\n'));
+  t('fom: converges ok, residual in [0,50]', r1.ok && inBand(r1.residualKg), 'status=' + r1.status + ' MECO=' + r1.meco + ' resid=' + r1.residualKg);
+  t('fom: MECO in the analytic in-band range', r1.ok && r1.meco >= mecoRangeInBand[0] && r1.meco <= mecoRangeInBand[1]);
+  t('fom: output shape (meco, point, residualKg, score, history, evals, wallMs, log)', r1.point && Number.isFinite(r1.score) && r1.history.length >= 2 && r1.evals > 0 && typeof r1.wallMs === 'number' && r1.log.length > 0 && r1.point.meco === r1.meco);
+  t('fom: history entry = (meco, residual, point, evals); residual matches the model', r1.history.every((e) => 'meco' in e && 'residualKg' in e && 'point' in e && 'evals' in e) && cons(r1));
+  t('fom: evals = sum of history evals', r1.evals === r1.history.reduce((a, e) => a + e.evals, 0));
+  t('fom: first step <= ladder[0] (4000)', Math.abs(r1.history[1].meco - r1.history[0].meco) <= 4000, 'step=' + (r1.history[1].meco - r1.history[0].meco));
+  t('fom: direction rule (prev residual>50 -> next MECO up; prev fail/<0 -> next MECO down)', r1.history.slice(1).every((e, i) => { const q = r1.history[i]; return q.cls === 'up' ? e.meco > q.meco : (q.cls === 'down' || q.cls === 'fail') ? e.meco < q.meco : true; }) && r1.history.some((e) => e.cls === 'fail'));
+  t('fom: iterations <= 8 (interp-guided)', r1.history.length <= 8, 'iters=' + r1.history.length);
+  t('fom: tuned point is lattice-valid + keeps final MECO + hard-feasible', U.inBounds(r1.point) && r1.metrics.payloadCleared && r1.metrics.stageResidualKg === r1.residualKg);
+
+  // 2) warm start pays off: same MECO sequence, cold (baseline point, fresh cache) vs warm
+  { let cold = 0, warm = 0;
+    for (const e of r1.history.slice(1)) {
+      if (!e.ok) continue;
+      const hC = makeHook({ trueEmax: 0.185 });
+      const rc = await TunerCore.tuneRough(U.step(p52, { dmeco: e.meco - 52612 }), { hook: hC, roughRelax: 0 });
+      cold += rc.evals; warm += e.evals;
+    }
+    t('warm start: total evals (ok iterations > 1) <= cold start at the same MECOs', warm <= cold, 'warm=' + warm + ' cold=' + cold);
+    t('warm start: warm bias/lead shift recorded (trend: MECO up => bias up, lead down)',
+      r1.history.slice(1).filter((e) => e.warm.from < e.meco).every((e) => e.warm.dBiasQ >= 0 && e.warm.dLeadTicks <= 0),
+      r1.history.slice(1).map((e) => e.meco + ':' + e.warm.dBiasQ + 'q/' + e.warm.dLeadTicks + 't/' + e.warm.trend).join(' ')); }
+
+  // 3) bracket + 1-kg precision: band so narrow only ONE integer MECO satisfies it
+  { const mStar = 54650, rStar = residualOf(mStar, 0.60);
+    for (const interpOn of [true, false]) {
+      const r = await runFom(p52, { band: [rStar - 0.05, rStar + 0.05], interp: interpOn, maxIter: 24 });
+      t('1-kg precision (' + (interpOn ? 'interp' : 'pure bisect') + '): lands exactly on MECO ' + mStar, r.ok && r.meco === mStar, 'status=' + r.status + ' meco=' + r.meco + ' iters=' + r.history.length);
+      console.log('  [' + (interpOn ? 'interp' : 'bisect') + '] iters=' + r.history.length + ' evals=' + r.evals + ' MECO seq: ' + r.history.map((e) => e.meco).join(' '));
+    }
+    // band inside the 0.4 kg/kg lattice gap (no integer MECO has it) -> bracket closes at width 1, ok=false, closest returned
+    const rg = await runFom(p52, { band: [rStar + 0.05, rStar + 0.30] });
+    t('no integer MECO in band -> bracket closes to 1 kg, ok=false, closest point returned', !rg.ok && rg.bracket.hi - rg.bracket.lo === 1 && rg.meco != null && /bracket closed/.test(rg.status),
+      'status=' + rg.status + ' bracket=' + JSON.stringify(rg.bracket) + ' meco=' + rg.meco); }
+
+  // 4) other starts: below band (reference MECO 50000), above band (failures -> walk down), and the 55000 reference
+  for (const m0 of [50000, 55000, 58000]) {
+    const r = await runFom(U.fromRaw({ G: 0.60, T: 4.82, bias: 0.59 + 2.4e-4 * (m0 - 52612), lead: 5.525 - 0.0358 * 0.0125 * (m0 - 52612), meco: m0 }));
+    t('start MECO ' + m0 + ': converges into [0,50]', r.ok && inBand(r.residualKg) && cons(r), 'status=' + r.status + ' MECO=' + r.meco + ' iters=' + r.history.length + ' evals=' + r.evals);
+  }
+
+  // 5) residual curvature stronger / slope different: still converges
+  { const r = await runFom(p52, {}, { res: { r0: 848.7, slope: -0.6, curv: 1e-5, perG: 9730, leadTicksPerKg: -0.0358 } });
+    t('different slope/curvature (-0.6, 1e-5): converges', r.ok && inBand(r.residualKg), 'status=' + r.status + ' MECO=' + r.meco + ' iters=' + r.history.length); }
+
+  // 6) failure paths
+  { const r = await runFom(p52, {}, { alwaysF1: true });
+    t('impossible (F1 everywhere): ok=false, bounded evals, no point', !r.ok && r.point === null && r.evals < 400 && /no feasible/.test(r.status), 'status=' + r.status + ' evals=' + r.evals); }
+  { const ab = { aborted: true }; const r = await runFom(p52, { abortRef: ab });
+    t('abort: stops with status aborted and no evals', !r.ok && r.status === 'aborted' && r.hook.stats.coast + r.hook.stats.circ + r.hook.stats.full === 0); }
+  { const r = await runFom(p52, { maxIter: 2 });
+    t('maxIter respected', r.history.length <= 2 && !r.ok); }
+
   console.log(fails ? 'FAILS: ' + fails : 'ALL PASS');
   process.exit(fails ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(2); });

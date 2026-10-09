@@ -80,6 +80,8 @@ input[type=number] { width: 90px; background: var(--panel-2); color: var(--text)
     <label>eMax <input type="number" id="abEmax" value="0.20" min="0.05" max="0.6" step="0.005"></label>
     <button id="tuneABBtn" disabled>Tune (A,bias) + lead (baseline)</button>
 <button id="tuneRoughBtn" disabled>Rough tune (Phase A)</button>
+<label>start <select id="mecoStartSel"><option value="0">ref MECO 50000</option><option value="1" selected>baseline 52612</option><option value="2">ref MECO 55000</option></select></label>
+<button id="findMecoBtn" disabled>Find optimal MECO (Phase A)</button>
 <button id="evalAbortBtn">Abort</button>
   </div>
 
@@ -169,7 +171,7 @@ input[type=number] { width: 90px; background: var(--panel-2); color: var(--text)
           ' lead=' + ins.CIRC_TRIGGER_LEAD_S + ' alt=' + ins.TARGET_ORBIT_ALT_KM);
       statusEl.textContent = 'Ready.';
       $('smokeBtn').disabled = false; $('dumpCfgBtn').disabled = false; $('applyChkBtn').disabled = false;
-      ['evalSnapBtn','evalRawBtn','evalTwiceBtn','evalRefBtn','tuneLeadBtn','tuneABBtn','tuneRoughBtn'].forEach((id) => $(id).disabled = false);
+      ['evalSnapBtn','evalRawBtn','evalTwiceBtn','evalRefBtn','tuneLeadBtn','tuneABBtn','tuneRoughBtn','findMecoBtn'].forEach((id) => $(id).disabled = false);
     } catch (e) {
       statusEl.textContent = 'Boot failed: ' + e.message;
       log('BOOT FAILED: ' + e.message, 'bad');
@@ -374,6 +376,39 @@ input[type=number] { width: 90px; background: var(--panel-2); color: var(--text)
       }
       statusEl.textContent = 'tuneRough done.';
     } catch (e) { log('TUNEROUGH ERROR: ' + e.message, 'bad'); console.error(e); }
+    finally { ids.forEach((id) => $(id).disabled = false); }
+  });
+
+  // ---- Step 7: Phase A outer loop — findOptimalMeco (tuneRough per MECO, residual target [0,50] kg) ----
+  $('findMecoBtn').addEventListener('click', async () => {
+    abortRef.aborted = false;
+    const ids = ['evalSnapBtn','evalRawBtn','evalTwiceBtn','evalRefBtn','tuneLeadBtn','tuneABBtn','tuneRoughBtn','findMecoBtn'];
+    ids.forEach((id) => $(id).disabled = true);
+    try {
+      const ref = C.references[parseInt($('mecoStartSel').value, 10)];
+      const p = TunerUtils.fromRaw({ G: ref.G, T: C.T0, bias: ref.bias, lead: ref.lead, meco: ref.meco });
+      log('--- findOptimalMeco (Phase A) from MECO ' + ref.meco + ' ' + JSON.stringify(TunerUtils.describe(p)) + ' ---');
+      const r = await TunerCore.findOptimalMeco(p, {
+        abortRef, onLog: (l) => log(l),
+        onProgress: (q) => { statusEl.textContent = 'findOptimalMeco… t=' + q.simTime.toFixed(1) + ' s ' + (q.phase || ''); },
+      });
+      log('=== findOptimalMeco RESULT ok=' + r.ok + ' status=' + r.status + ' MECO=' + r.meco + ' residualKg=' + fmt(r.residualKg, 1) + ' iters=' + r.history.length +
+          ' evals=' + r.evals + ' (ab ' + r.evalBreakdown.ab + ', lead ' + r.evalBreakdown.lead + ', full ' + r.evalBreakdown.full + ') cacheHits=' + r.cacheHits +
+          ' wall=' + (r.wallMs / 1000).toFixed(1) + 's', r.ok ? 'ok' : 'bad');
+      log('history (MECO -> residual):', 'ok');
+      r.history.forEach((e) => log('  #' + e.iter + ' MECO=' + e.meco + ' [' + e.how + '] ' + e.cls.toUpperCase() + ' residual=' + fmt(e.residualKg, 1) +
+          (e.point ? ' G=' + TunerUtils.gOf(e.point.Gi) + ' bias=' + TunerUtils.biasOf(e.point.bi) + ' lead=' + e.point.li + 't E=' + fmt(e.E, 4) + ' score=' + fmt(e.score, 2) : ' (' + e.reason + ')') +
+          ' evals=' + e.evals));
+      if (r.point) {
+        const d = TunerUtils.describe(r.point);
+        log('final point: ' + JSON.stringify(d));
+        log('E=' + fmt(r.E, 5) + '  lead=' + (r.lead && r.lead.lead) + '  residualKg=' + fmt(r.residualKg, 1) + '  score=' + fmt(r.score, 3) +
+            '  deploy=' + fmt(r.metrics.deployTimeS, 2) + ' fuel=' + fmt(r.metrics.boosterFuelLeftKg, 0));
+        log('final JSON: ' + JSON.stringify({ ascent: { PUSH_MAX_GIMBAL_DEG: d.G, PUSH_T_S: d.T, MECO_TARGET_BOOSTER_FUEL_KG: d.meco },
+            insertion: { STAGE_BURN_AOA_BIAS_DEG: d.bias, CIRC_TRIGGER_LEAD_S: d.lead } }));
+      }
+      statusEl.textContent = 'findOptimalMeco done.';
+    } catch (e) { log('FINDMECO ERROR: ' + e.message, 'bad'); statusEl.textContent = 'findOptimalMeco error.'; console.error(e); }
     finally { ids.forEach((id) => $(id).disabled = false); }
   });
 

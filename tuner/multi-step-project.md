@@ -37,12 +37,12 @@ Files padhe, gaps pakde, ye plan + `state.md` banaya.
 - **Done when:** baseline (A, bias, MECO 52612) pe lead search margin <= manual 6.72 s, vrEnd > 0, evals/wall reported.
 - *(Order PROMPT.md ke correction se: lead pehle — INNER-1 har candidate pe isse call karega.)*
 
-## Step 6 — INNER-1: (A, bias) joint search  (code delivered + node mock-tested, real-sim run pending)
+## Step 6 — INNER-1: (A, bias) joint search  ✅ (real sim: 24 evals / ~3 min)
 - **Attach (verify chat):** `state.md`, `multi-step-project.md`, `tuner/` saari files + tuneAB log.
 - **Deliver:** `tuneAB()` — hard-lower check, push G down (1 gimbal), bias ladder (±0.5→0.1→0.05→0.01→…), extreme-bias → A relax + bias reset, E_max ke strictly neeche target, Fail-1/2/3 handling, truncated eval (COAST_WAIT entry).
 - **Done when:** baseline MECO pe manual-equal ya better (A, bias) mile; eval count ~ low (target ≪ 900).
 
-## Step 7 — Phase A: MECO outer loop
+## Step 7 — Phase A: MECO outer loop  (code delivered + mock ALL PASS, real run pending)
 - **Deliver:** `findOptimalMeco()` — start 52612, step 3000–5000 → 1000 → 200 (→ final bracket/1 kg), warm start (previous + trend MECO↑ ⇒ bias↑, lead↓), residual ∈ [0, 50] kg.
 - **Done when:** MECO converge, reference points (50000/55000) se sanity compare.
 
