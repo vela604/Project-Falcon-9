@@ -89,9 +89,9 @@
     // lead in ticks, bias in deg.
     modes: {
       // candidates = how many (A,bias) candidates tuneAB verifies with tuneLead + FULL eval
-      fast:     { gStep: 5, tStep: 5, biasStep: 0.05,  leadTicks: 8, eSamples: 5,  adaptive: false, candidates: 1 },
-      fine:     { gStep: 1, tStep: 2, biasStep: 0.01,  leadTicks: 3, eSamples: 8,  adaptive: false, candidates: 2 },
-      accurate: { gStep: 1, tStep: 1, biasStep: 0.001, leadTicks: 1, eSamples: 12, adaptive: true,  candidates: 3 },
+      fast:     { gStep: 5, tStep: 5, biasStep: 0.05,  leadTicks: 8, eSamples: 5,  adaptive: false, candidates: 1, tPhaseSteps: [] },
+      fine:     { gStep: 1, tStep: 2, biasStep: 0.01,  leadTicks: 3, eSamples: 8,  adaptive: false, candidates: 2, tPhaseSteps: [80, 40] },
+      accurate: { gStep: 1, tStep: 1, biasStep: 0.001, leadTicks: 1, eSamples: 12, adaptive: true,  candidates: 3, tPhaseSteps: null /* null = whole T ladder */ },
     },
 
     // ---- Default environment (UI overrides in Step 9) ----

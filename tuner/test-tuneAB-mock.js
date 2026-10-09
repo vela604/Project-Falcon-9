@@ -13,11 +13,15 @@ const U = TunerUtils, C = TunerConfig;
 const P = { b00: -0.0814, cG: 52.3908, c1: 4.4641, c2: -55.6542, w0: 0.0245, s: 0.1469, E1: 0.4102, E2: 0.272, w2: 0.1532 };
 function surf(p) {
   const G = U.gOf(p.Gi), T = U.tOf(p.Tn), bias = U.biasOf(p.bi), d = T - 4.82, A = G * T * T;
-  const b0 = P.b00 + P.cG * (G - 0.59) + P.c1 * d + P.c2 * d * d;
+  const b0 = P.b00 + P.cG * (G - 0.59) + P.c1 * d + P.c2 * d * d + 2.4e-4 * ((p.meco || 52612) - 52612);
   const w1 = P.w0 * Math.exp((A - 13.36) / P.s);
   const u = bias - b0, au = Math.abs(u);
   const E = P.E1 * (1 - Math.exp(-Math.pow(au / w1, 2))) + P.E2 * (1 - Math.exp(-au / P.w2));
-  const f1 = u < -0.0047 + 0.15 * (4.82 - T);               // F1 cliff, just left of the V minimum
+  // F1 cliff sits left of b0 at high A and moves RIGHT of b0 as A drops (real log: E at the F1 edge = 0.007 @A=13.47,
+  // 0.196 @A=13.25, 0.35 @A=13.24) -> the OK window [F1 edge, E=ceil] closes around A~13.2.
+  const f1 = u < -0.0047 + 0.0017 * (Math.exp((13.47 - A) / 0.1) - 1);
+  // MECO shifts the V minimum (refs: 52612 -> 55000 needs bias .59 -> 1.16 at same G)
+  
   return { u, E, f1, b0 };
 }
 const VR = [[0, 0.3], [0.007, 14], [0.12, 73], [0.35, 131], [0.5, 211], [0.58, 277], [0.66, 373], [0.705, 443]];
@@ -50,7 +54,8 @@ function makeHook(model) {
       if (o.stopAt === 'CIRC_END') { stats.circ++; return Object.assign(base, c, { endReason: 'CIRC_END' }); }
       stats.full++;
       return Object.assign(base, c, { endReason: 'CLEARED', payloadReleased: true, payloadCleared: true, maxQKPa: 24.7, maxG: 4.8,
-        apogeeKm: 320.1, perigeeKm: 320.0, ecc: 1e-5, boosterFuelLeftKg: 52625, deployTimeS: 590 + (U.aEff(p) - 13.94) * 2 });
+        apogeeKm: 320.1, perigeeKm: 320.0, ecc: 1e-5, boosterFuelLeftKg: 52625, deployTimeS: 590 + (U.aEff(p) - 13.94) * 2,
+        stageResidualKg: 848.7 - 0.4 * (p.meco - 52612) });
     },
   };
 }
@@ -80,8 +85,10 @@ const nFlip = (r) => r.log.filter((l) => /flipping/.test(l)).length;
   { const h = makeHook({ trueEmax: 0.30 });
     const r = await TunerCore.tuneAB(p0, { mode: 'fine', hook: h });
     t('dirOf: no flipping lines in a normal run', nFlip(r) === 0, 'flips=' + nFlip(r));
-    const g57 = r.log.some((l) => /AB#\d+ G=0\.57 /.test(l)) && r.log.some((l) => /AB#\d+ G=0\.56 /.test(l));
-    t('dirOf: crossing bisect gets past G=0.57 (real log stopped there)', g57); }
+    const lanes = r.candidates.map((c) => c.desc.G);
+    t('lanes: G=0.60 start, 0.59 and 0.58 each verified as candidates', [0.6, 0.59, 0.58].every((g) => lanes.includes(g)), 'G=' + [...new Set(lanes)].join(','));
+    t('lanes: every G lane (after start) climbed near the ceiling (E >= ceil-0.02)', r.candidates.filter((c) => c.tag !== 'start' && /^G=/.test(c.tag)).every((c) => c.E >= r.eMax.ceil - 0.02 || !c.ok || r.eMax.rounds > 0),
+      r.candidates.filter((c) => /^G=/.test(c.tag)).map((c) => c.tag + ':' + c.E.toFixed(3)).join(' ')); }
   // F1-start scan goes up (G=0.57 bias -1.5 is F1): must find OK without flipping
   { const h = makeHook({ trueEmax: 0.30 });
     const r = await TunerCore.tuneAB(pt(0.57, 4.82, -1.5), { mode: 'fine', hook: h });
@@ -103,9 +110,22 @@ const nFlip = (r) => r.log.filter((l) => /flipping/.test(l)).length;
       'candE=' + r.candidates.map((c) => c.E.toFixed(4)).join(',') + ' ceil=' + r.eMax.ceil.toFixed(4));
     t(mode + ': bias inside bounds', r.ok && r.best.desc.bias >= -2 && r.best.desc.bias <= 2.5, 'bias=' + (r.best && r.best.desc.bias));
     t(mode + ': candidates sorted', r.candidates.every((c, i, a) => i === 0 || a[i - 1].score <= c.score));
-    t(mode + ': AB evals bounded (<130)', r.evalBreakdown.ab < 130, 'ab=' + r.evalBreakdown.ab);
+    t(mode + ': AB evals bounded', r.evalBreakdown.ab < (mode === 'accurate' ? 160 : 130), 'ab=' + r.evalBreakdown.ab);
     t(mode + ': no flipping', nFlip(r) === 0);
   }
+  // ---- tuneRough (Phase A): any feasible point, cheap, warm start at other MECO values ----
+  for (const meco of [52612, 50000, 55000, 53500]) {
+    const h = makeHook({ trueEmax: 0.185 });
+    const pm = U.fromRaw({ G: 0.60, T: 4.82, bias: 0.59, lead: 5.525, meco });
+    const r = await TunerCore.tuneRough(pm, { hook: h });
+    console.log('[rough meco=' + meco + '] ok=' + r.ok + ' evals=' + r.evals + ' ' + JSON.stringify(r.evalBreakdown) + ' E=' + (r.E && r.E.toFixed(4)) + ' residual=' + r.residualKg);
+    t('rough meco=' + meco + ': ok, feasible, residual finite', r.ok && Number.isFinite(r.residualKg) && r.metrics.payloadCleared);
+    t('rough meco=' + meco + ': cheap (<=30 evals total, 1 FULL)', r.evals <= 30 && r.evalBreakdown.full === 1, 'evals=' + r.evals);
+    t('rough meco=' + meco + ': tuned point keeps this MECO', r.ok && r.point.meco === meco);
+  }
+  { const h = makeHook({ trueEmax: 0.30, alwaysF1: true });
+    const r = await TunerCore.tuneRough(U.fromRaw(C.baselineRaw), { hook: h });
+    t('rough impossible -> ok=false', !r.ok && r.evals < 60, 'reason=' + r.reason); }
   // no learning needed (true limit above guess)
   { const h = makeHook({ trueEmax: 0.30 });
     const r = await TunerCore.tuneAB(p0, { mode: 'fine', hook: h });

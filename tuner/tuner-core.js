@@ -334,27 +334,22 @@
       return null;
     }
 
-    // Push A down on one axis; every trial may be rescued by a local bias shift.
-    // Rescued trials teach a bias-per-step slope (A and bias trade off along an E isoline),
-    // so the next trial starts at the predicted bias (1 eval instead of a scan). A rescue that
-    // lands within 0.1 deg of the bias bound is the Fail3 "extreme bias" zone -> not accepted.
-    async function push(r, axis, steps, rescueStep, rescueK, maxIt) {
-      let best = r, slope = 0;                    // bias quanta per step unit
+    // One step of A down on one axis (G: -st gimbal quanta, T: -st Tn quanta); the trial is rescued by a local bias
+    // scan. `slopes[axis]` = bias quanta per step unit, learned from climbed (E~ceil) points of consecutive lanes
+    // (A and bias trade off along an E isoline, ~0.55 deg per 0.01 G in the real log) -> next trial starts at the
+    // predicted bias. A rescue within 0.1 deg of the bias bound is the Fail3 'extreme bias' zone -> rejected.
+    const slopes = { G: 0, T: 0 };
+    async function tryStep(r, axis, st) {
       const extreme = 1000;
-      for (const st of steps) {
-        for (let it = 0; it < maxIt; it++) {
-          let trial = axis === 'G' ? U.step(best.p, { dGi: -st }) : U.step(best.p, { dTn: -st });
-          if (slope) trial.bi = Math.max(biasLo, Math.min(biasHi, best.p.bi + Math.round(slope * st)));
-          const q = U.inBounds(trial) ? await findOk(trial, rescueStep, rescueK) : null;
-          if (!q || q.p.bi > biasHi - extreme || q.p.bi < biasLo + extreme) {
-            say('push ' + axis + ' step ' + st + ': stop at ' + dsc(best.p) + ' E=' + fmt(best.E, 5) +
-                (q ? '  (next needs extreme bias ' + U.biasOf(q.p.bi) + ')' : '')); break;
-          }
-          if (q.p.bi !== best.p.bi) slope = (q.p.bi - best.p.bi) / st;
-          best = q;
-        }
+      const trial = axis === 'G' ? U.step(r.p, { dGi: -st }) : U.step(r.p, { dTn: -st });
+      if (slopes[axis]) trial.bi = Math.max(biasLo, Math.min(biasHi, r.p.bi + Math.round(slopes[axis] * st)));
+      if (!U.inBounds(trial)) return null;
+      const q = await findOk(trial, axis === 'G' ? 1000 : 200, axis === 'G' ? 10 : 4);
+      if (!q || q.p.bi > biasHi - extreme || q.p.bi < biasLo + extreme) {
+        say('step ' + axis + ' -' + st + ' from ' + dsc(r.p) + ': ' + (q ? 'needs extreme bias ' + U.biasOf(q.p.bi) : 'no OK window (closed at ceil)'));
+        return null;
       }
-      return best;
+      return q;
     }
 
     // Raise E toward the ceiling (E is steep in bias near its minimum: ~0.4 per 0.02 deg in the real log, so a
@@ -384,8 +379,8 @@
       return best;
     }
 
-    const all = [];            // every verified candidate (all rounds)
-    let eOk = -Infinity, eBad = Infinity, leadHint = point.li, round = 0, startP = point, status = 'ok';
+    const all = [];            // every verified candidate
+    let eOk = -Infinity, eBad = Infinity, leadHint = point.li, relearns = 0, status = 'ok';
 
     async function verify(rc, tag) {
       const p = Object.assign({}, rc.p, { li: leadHint });
@@ -393,7 +388,7 @@
       const lr = await tuneLead(p, { hook: H, cache, abortRef: opts.abortRef, env: opts.env, targetAltKm,
         onProgress: opts.onProgress, onLog: opts.verbose ? (s) => say('    ' + s) : null });
       leadEvals += lr.evals;
-      const rec = { tag, round, point: rc.p, desc: U.describe(rc.p), E: rc.E, apoCoastKm: rc.m.apoCoastKm,
+      const rec = { tag, round: relearns, point: rc.p, desc: U.describe(rc.p), E: rc.E, apoCoastKm: rc.m.apoCoastKm,
         lead: { ok: lr.ok, inBand: lr.inBand, reason: lr.reason, lead: lr.lead, leadTicks: lr.leadTicks,
                 marginS: lr.marginS, vrEnd: lr.vrEnd, vrMin: lr.vrMin, phase: lr.phase },
         metrics: null, score: Cfg.scoring.failPenalty * 2, ok: false, reasons: [], parts: null, fullPoint: null };
@@ -411,57 +406,101 @@
       return rec;
     }
 
+    // One lane = one (G,T). Find its E-max edge (climbE) and verify it (tuneLead + FULL + score). If the verified edge
+    // point fails downstream (real log: E=0.196 at the F1 cliff -> no feasible lead), E_max is lowered and the SAME lane
+    // is re-climbed to the new ceiling from its visited OK points (cached, ~free) instead of restarting the search.
+    async function settle(q, tag, doClimb) {
+      let c = q, rec = null;
+      for (let k = 0; k <= maxRelearn; k++) {
+        if (doClimb) c = await climbE(c);
+        rec = await verify(c, tag + (k ? ' (E_max relearn ' + k + ')' : ''));
+        all.push(rec);
+        if (rec.ok) { eOk = Math.max(eOk, rec.E); return { c, rec }; }
+        if (k === maxRelearn) break;
+        eBad = Math.min(eBad, c.E);
+        eMax = (Number.isFinite(eOk) && eOk < eBad) ? (eOk + eBad) / 2 : eBad - (Cfg.ecc.eDropOnFail || 0.01);
+        ceil = eMax - eSafe; relearns++;
+        say('E_max learning: E=' + fmt(c.E, 5) + ' failed (' + rec.reasons.join(',') + ') -> eMax := ' + fmt(eMax, 4) +
+            '  (eOk=' + fmt(eOk, 5) + ' eBad=' + fmt(eBad, 5) + ')');
+        const lane = [...okPts.values()].filter((x) => x.p.Gi === c.p.Gi && x.p.Tn === c.p.Tn && x.E <= ceil && x.m)
+          .sort((x, y) => y.E - x.E);
+        if (!lane.length) { say('  lane has no OK point below the new ceiling -> lane dropped'); break; }
+        c = lane[0]; doClimb = true;
+      }
+      return { c, rec };
+    }
+
     try {
       say('tuneAB[' + (opts.mode || 'fine') + ']: start ' + dsc(point) + ' lead=' + point.li + 't  eMax=' + eMax +
           ' (ceil ' + ceil.toFixed(4) + ')  biasLadder=' + ladder.join('/') + ' Tladder=' + tLadder.join('/'));
-      for (round = 0; round <= maxRelearn; round++) {
-        ceil = eMax - eSafe;
-        say('--- round ' + round + '  eMax=' + fmt(eMax, 4) + ' ceil=' + fmt(ceil, 4) + ' ---');
-        let r, afterG, preClimb;
-        // Relearn rounds: the lower ceiling only invalidates points with E > ceil. Re-use the lowest-A point already
-        // visited with E <= new ceil (0 evals) instead of re-scanning from a relaxed A (cost ~80 evals in the mock).
-        const pool = round === 0 ? [] : [...okPts.values()].filter((x) => x.E <= ceil && x.m)
-          .sort((a, b) => U.aEff(a.p) - U.aEff(b.p));
-        if (pool.length) {
-          r = pool[0]; afterG = r; preClimb = pool[1] || r;
-          say('relearn: reuse visited ' + dsc(r.p) + ' E=' + fmt(r.E, 5) + ' (lowest A with E <= ceil)');
-        } else {
-          r = await startOk(startP);
-          if (!r) { status = 'no OK (A,bias) found (Fail3 exhausted)'; break; }
-          say('startOk: ' + dsc(r.p) + ' E=' + fmt(r.E, 5));
-          r = await push(r, 'G', [mode.gStep], 1000, 10, 40);    // G rescue: bias +-0.1 steps (isoline shift ~0.6 deg per G quantum)
-          afterG = r;
-          r = await push(r, 'T', tLadder, 200, 4, 4);            // T rescue: bias +-0.02 steps, <=4 steps/level
-          preClimb = r;
-        }
-        r = await climbE(r);
-        say('AB result: ' + dsc(r.p) + ' E=' + fmt(r.E, 5) + '  (AB evals so far ' + abEvals + ')');
+      const minGain = opts.minGain != null ? opts.minGain : 0;
+      const better = (rec, ref) => rec.ok && (!ref || rec.score < ref.score - minGain);
+      ceil = eMax - eSafe;
+      const r0 = await startOk(point);
+      if (!r0) { status = 'no OK (A,bias) found (Fail3 exhausted)'; throw new Stop('startOk'); }
+      say('startOk: ' + dsc(r0.p) + ' E=' + fmt(r0.E, 5));
 
-        // candidates: climbed min-A, pre-climb, back-off one G step
-        const cands = [{ rc: r, tag: 'minA-climbed' }];
-        if (mode.candidates > 1 && U.key(preClimb.p) !== U.key(r.p)) cands.push({ rc: preClimb, tag: 'minA-preclimb' });
-        if (mode.candidates > 2) {
-          const bo = await findOk(U.step(afterG.p, { dGi: mode.gStep }), 1000, 6);
-          if (bo && !cands.some((c) => U.key(c.rc.p) === U.key(bo.p))) cands.push({ rc: bo, tag: 'backoff-G' });
-        }
-        const recs = [];
-        for (const c of cands.slice(0, Math.max(1, mode.candidates))) recs.push(await verify(c.rc, c.tag));
-        recs.forEach((x) => all.push(x));
-        recs.filter((x) => x.ok).forEach((x) => { eOk = Math.max(eOk, x.E); });
+      // level 0: the start lane as is (reference score for the stop rule; cheap: lead is already ~right)
+      const s0 = await settle(r0, 'start', false);
+      let best = s0.rec.ok ? s0.rec : null, lane = s0.c, stopWhy = 'start failed';
 
-        const top = recs[0];
-        if (top.ok || round === maxRelearn) { if (!top.ok) status = 'top candidate failed; E_max relearn exhausted'; break; }
-        // E_max learning: the E edge we pushed to is not tolerated downstream
-        eBad = Math.min(eBad, top.E);
-        eMax = (Number.isFinite(eOk) && eOk < eBad) ? (eOk + eBad) / 2 : eBad - (Cfg.ecc.eDropOnFail || 0.01);
-        say('E_max learning: E=' + fmt(top.E, 5) + ' failed (' + top.reasons.join(',') + ') -> eMax := ' + fmt(eMax, 4) +
-            '  (eOk=' + fmt(eOk, 5) + ' eBad=' + fmt(eBad, 5) + ')');
-        const okRec = recs.find((x) => x.ok);
-        startP = okRec ? okRec.point : top.point;
+      if (opts.rough) {
+        // Phase A (rough): ANY feasible (G,T,bias,lead) at this MECO is enough -> no edge search, no A minimisation.
+        // If the start lane fails downstream, relax A (G +2 quanta each, bias re-found by scan) up to 3 times.
+        let rec = s0.rec;
+        for (let n = 1; !(rec && rec.ok) && n <= (opts.roughRelax != null ? opts.roughRelax : 3); n++) {
+          const rr = await startOk(U.step(r0.p, { dGi: 2 * n }));
+          if (!rr) break;
+          const ss = await settle(rr, 'rough-relax' + n, false);
+          rec = ss.rec;
+        }
+        best = rec && rec.ok ? rec : null;
+        stopWhy = best ? 'rough: feasible point found' : 'rough: no feasible point';
+        say(stopWhy);
+      } else {
+      // ---- G descent: every G level = find edge (climbE) + verify; continue only while the verified score improves ----
+      let windowClosed = false, levels = 0;
+      const maxLevels = opts.maxGLevels || 12;
+      while (levels++ < maxLevels) {
+        const q = await tryStep(lane, 'G', mode.gStep);
+        if (!q) { windowClosed = true; stopWhy = 'G window closed'; break; }
+        const s = await settle(q, 'G=' + U.gOf(q.p.Gi), true);
+        if (!s.rec || !s.rec.ok) { stopWhy = 'G level ' + U.gOf(q.p.Gi) + ' failed downstream'; windowClosed = true; break; }
+        if (s.c.p.bi !== lane.p.bi) slopes.G = (s.c.p.bi - lane.p.bi) / mode.gStep;
+        if (!better(s.rec, best)) { stopWhy = 'G level ' + U.gOf(q.p.Gi) + ' score not better (' + s.rec.score.toFixed(3) +
+                                              ' vs ' + (best ? best.score.toFixed(3) : 'n/a') + ')'; break; }
+        best = s.rec; lane = s.c;
       }
+      say('G descent stopped: ' + stopWhy);
+
+      // ---- T descent: only when G is exhausted by the window (not by score); coarse levels, fail-stop ----
+      // Gain of a T step is tiny (one 0.02 s T-level ~ one G quantum ~1.7% of A) but each verified step costs ~5 evals,
+      // so fine mode only tries the two coarse levels; fast skips T; accurate walks the whole ladder.
+      const tSteps = mode.tPhaseSteps || (opts.mode === 'fast' ? [] : (opts.mode === 'accurate' ? tLadder : [80, 40]));
+      if (windowClosed && tSteps.length && best) {
+        let fails = 0;
+        const tFailStop = opts.tFailStop != null ? opts.tFailStop : 2;
+        for (const st of tSteps) {
+          if (fails >= tFailStop) break;
+          let progressed = false;
+          for (let it = 0; it < 3; it++) {
+            const q = await tryStep(lane, 'T', st);
+            if (!q) break;
+            const s = await settle(q, 'T=' + U.tOf(q.p.Tn), true);
+            if (!s.rec || !s.rec.ok) break;
+            if (s.c.p.bi !== lane.p.bi) slopes.T = (s.c.p.bi - lane.p.bi) / st;
+            if (!better(s.rec, best)) break;
+            best = s.rec; lane = s.c; progressed = true;
+          }
+          fails = progressed ? 0 : fails + 1;
+        }
+        say('T descent done at ' + dsc(lane.p) + ' (' + fails + ' consecutive failed levels)');
+      }
+      }
+      if (!best) status = 'no candidate passed (lead/hard constraints)';
     } catch (e) {
       if (!(e instanceof Stop)) throw e;
-      status = 'stopped: ' + e.message;
+      if (status === 'ok') status = 'stopped: ' + e.message;
     }
 
     all.sort((a, b) => a.score - b.score);
@@ -469,7 +508,7 @@
     const evalsTotal = abEvals + leadEvals + fullEvals;
     const res = {
       ok: !!best, status, best, candidates: all,
-      eMax: { eMax, ceil, eOk: Number.isFinite(eOk) ? eOk : null, eBad: Number.isFinite(eBad) ? eBad : null, rounds: round },
+      eMax: { eMax, ceil, eOk: Number.isFinite(eOk) ? eOk : null, eBad: Number.isFinite(eBad) ? eBad : null, rounds: relearns },
       evals: evalsTotal, evalBreakdown: { ab: abEvals, lead: leadEvals, full: fullEvals }, cacheHits: cache.hits - hits0,
       wallMs: performance.now() - t0, log: lines,
     };
@@ -479,5 +518,26 @@
     return res;
   }
 
-  root.TunerCore = { tuneLead, tuneAB };
+  // ==========================================================================
+  // Phase A building block — tuneRough(point, opts): at the point's MECO find ANY feasible (G,T,bias,lead):
+  // coast reaches apo, E<=ceil, tuneLead ok, FULL passes hard limits. Then FULL metrics give the stage residual that
+  // the MECO outer loop (Step 7) steers on. ~10-15 AB evals + lead (~3) + 1 FULL; warm start = previous MECO's point.
+  // ==========================================================================
+  async function tuneRough(point, opts) {
+    opts = Object.assign({}, opts || {}, { rough: true, maxRelearn: 0 });
+    if (!opts.mode) opts.mode = 'fast';
+    const r = await tuneAB(point, opts);
+    const b = r.best;
+    const m = b && b.metrics;
+    return {
+      ok: !!b, reason: b ? 'ok' : r.status,
+      point: b ? b.fullPoint : null, E: b ? b.E : NaN, lead: b ? b.lead : null,
+      metrics: m || null,
+      residualKg: m && Number.isFinite(m.stageResidualKg) ? m.stageResidualKg : NaN,
+      score: b ? b.score : NaN,
+      evals: r.evals, evalBreakdown: r.evalBreakdown, cacheHits: r.cacheHits, wallMs: r.wallMs, log: r.log,
+    };
+  }
+
+  root.TunerCore = { tuneLead, tuneAB, tuneRough };
 })();
