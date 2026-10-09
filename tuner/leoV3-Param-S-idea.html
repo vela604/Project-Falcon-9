@@ -392,11 +392,11 @@ input[type=number] { width: 90px; background: var(--panel-2); color: var(--text)
         abortRef, onLog: (l) => log(l),
         onProgress: (q) => { statusEl.textContent = 'findOptimalMeco… t=' + q.simTime.toFixed(1) + ' s ' + (q.phase || ''); },
       });
-      log('=== findOptimalMeco RESULT ok=' + r.ok + ' status=' + r.status + ' MECO=' + r.meco + ' residualKg=' + fmt(r.residualKg, 1) + ' iters=' + r.history.length +
-          ' evals=' + r.evals + ' (ab ' + r.evalBreakdown.ab + ', lead ' + r.evalBreakdown.lead + ', full ' + r.evalBreakdown.full + ') cacheHits=' + r.cacheHits +
+      log('=== findOptimalMeco RESULT ok=' + r.ok + ' status=' + r.status + ' MECO=' + r.meco + ' residualKg=' + fmt(r.residualKg, 1) + ' G=' + r.G + ' gDrops=' + r.gDrops + ' failProbes=' + r.failingProbes + ' resOffset=' + fmt(r.resOffset, 1) + ' iters=' + r.iters +
+          ' evals=' + r.evals + ' (ab ' + r.evalBreakdown.ab + ', lead ' + r.evalBreakdown.lead + ', full ' + r.evalBreakdown.full + ', probeCoast ' + r.evalBreakdown.probeCoast + ', probeCirc ' + r.evalBreakdown.probeCirc + ') cacheHits=' + r.cacheHits +
           ' wall=' + (r.wallMs / 1000).toFixed(1) + 's', r.ok ? 'ok' : 'bad');
       log('history (MECO -> residual):', 'ok');
-      r.history.forEach((e) => log('  #' + e.iter + ' MECO=' + e.meco + ' [' + e.how + '] ' + e.cls.toUpperCase() + ' residual=' + fmt(e.residualKg, 1) +
+      r.history.forEach((e) => log('  #' + e.iter + ' MECO=' + e.meco + ' G=' + TunerUtils.gOf(e.gi) + ' [' + e.kind + ' ' + e.how + '] ' + e.cls.toUpperCase() + ' residual=' + fmt(e.residualKg, 1) +
           (e.point ? ' G=' + TunerUtils.gOf(e.point.Gi) + ' bias=' + TunerUtils.biasOf(e.point.bi) + ' lead=' + e.point.li + 't E=' + fmt(e.E, 4) + ' score=' + fmt(e.score, 2) : ' (' + e.reason + ')') +
           ' evals=' + e.evals));
       if (r.point) {

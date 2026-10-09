@@ -540,39 +540,47 @@
   }
 
   // ==========================================================================
-  // Phase A outer loop — findOptimalMeco(point, opts)
-  //   Steers MECO (booster fuel left at MECO, kg) until the stage residual of tuneRough's point is in [0, 50] kg.
-  //   residual(MECO) is DECREASING: MECO up -> booster burns less -> stage burns more -> less residual.
-  //   Direction rule: residual > band -> MECO up | residual < band (or tuneRough fails) -> MECO down.
-  //   1) unbracketed: ladder walk (opts.ladderKg, default cfg.meco.stepLadderKg [4000,1000,200]); once 2 feasible points
-  //      exist the step is a secant extrapolation (clamped to <= ladder[0]) instead of a blind ladder step.
-  //   2) bracketed (lo = highest MECO still too high a residual, hi = lowest MECO too low / failing): interpolation-guided
-  //      bisection (midpoint when hi is a failure with no residual, or when the last step did not halve the bracket)
-  //      down to bracket width <= bracketTolKg (default 1 kg).
-  //   Warm start: every tuneRough starts from the nearest tuned point, bias/lead shifted by the MECO trend
-  //   (MECO up => bias up, lead down), learned from history, default from cfg.references (same-G pair).
-  //   tuneRough runs with roughRelax=0 here: relaxing A moves the residual (~ -97 kg per 0.01 G) and would break the
-  //   monotone residual(MECO) the loop relies on; a failing MECO simply counts as "MECO down".
+  // Phase A outer loop v2 — findOptimalMeco(point, opts)
+  //   Steers the stage residual (kg of stage fuel left) into band [0,50] with TWO knobs:
+  //     MECO = fine knob (residual decreasing in MECO, slope ~ -0.03..-0.08 kg/kg, flattens + hits a feasibility CLIFF)
+  //     G    = coarse knob (1 quantum = -gQuantumKg residual, ~ -97.3 kg, AND the cliff moves out by ~2200 kg MECO)
+  //   Probes: FAST = COAST_WAIT (warm start) + 1 CIRC_END at the trend-predicted lead; residual = stageFuelEngOffKg + resOffset.
+  //     No lead search, no FULL. Only when a fast probe lands IN band -> confirm with tuneRough (FULL), which calibrates
+  //     resOffset (= real - fast). The first probe on a new G level is a full tuneRough (bias/lead of a new lane unknown).
+  //   Physics tolerance: tol = clamp(0.1*bandWidth/|slope|, 30, 300) kg (booster burns ~30 kg/tick: finer MECO = same sim).
+  //   Cliff-aware: after a failing MECO `hi` above feasible `lo`: r_opt = r_lo + slope*(hi - tol - lo). r_opt > band top =>
+  //     floor-limited at this G (no MECO can reach the band) -> G-drop (one quantum), then jump straight to the MECO the
+  //     residual model predicts at the new G (old probes are re-used as virtual points: r - gQuantumKg*dGi).
   // ==========================================================================
   async function findOptimalMeco(point, opts) {
     opts = opts || {};
-    const Cfg = root.TunerConfig, U = root.TunerUtils, Q = Cfg.quanta, L = Cfg.limits;
+    const Cfg = root.TunerConfig, U = root.TunerUtils, Q = Cfg.quanta, L = Cfg.limits, H = opts.hook || root.TunerHook;
+    const MC = Cfg.meco || {};
     const t0 = performance.now();
     const band = opts.band || L.residualTargetKg || [0, 50];
-    const bLo = band[0], bHi = band[1];
+    const bLo = band[0], bHi = band[1], bW = bHi - bLo;
     const aim = opts.aimKg != null ? opts.aimKg : (bLo + bHi) / 2;
-    const ladder = (opts.ladderKg || (Cfg.meco && Cfg.meco.stepLadderKg) || [4000, 1000, 200]).slice();
-    const tol = opts.bracketTolKg != null ? opts.bracketTolKg : 1;
-    const maxIter = opts.maxIter || 24, maxFailWalk = opts.maxFailWalk || 6, trendMinKg = opts.trendMinKg || 300;
-    const interp = opts.interp !== false;
+    const ladder0 = ((opts.ladderKg || MC.stepLadderKg || [4000, 1000, 200])[0]);
+    const gKg = opts.gQuantumKg != null ? opts.gQuantumKg : (MC.gQuantumKg || 97.3);
+    const gBiasQ0 = Math.round((opts.gBiasDegPerQ != null ? opts.gBiasDegPerQ : (MC.gBiasDegPerQ || 0.55)) / Q.bias);   // bias quanta per +1 Gi
+    const slopePrior = opts.slopePrior != null ? opts.slopePrior : (MC.slopePrior || -0.05);
+    const maxGDrops = opts.maxGDrops != null ? opts.maxGDrops : (MC.maxGDrops != null ? MC.maxGDrops : 3);
+    const maxIter = opts.maxIter || 16, maxFailWalk = opts.maxFailWalk || 6, trendMinKg = opts.trendMinKg || 300;
+    const fast = opts.fast !== false;
+    const rescueBi = opts.probeRescueBi || 100;            // 0.01 deg, one rescue step for a failing fast probe
     const mB = Cfg.bounds.meco, biB = [Math.round(Cfg.bounds.bias.lower / Q.bias), Math.round(Cfg.bounds.bias.upper / Q.bias)];
+    const targetAltKm = opts.targetAltKm != null ? opts.targetAltKm : Cfg.fixed.targetAltKm;
+    const ceil = (Cfg.ecc.eMax != null ? Cfg.ecc.eMax : Cfg.ecc.eMaxGuess) - (L.eSafetyMargin != null ? L.eSafetyMargin : 0.0005);
+    const apoTol = L.coastApoTolKm != null ? L.coastApoTolKm : 1;
     const cache = opts.cache || new U.EvalCache();
     const lines = [];
     const say = (s) => { lines.push(s); if (opts.onLog) opts.onLog(s); };
     const fmt = (x, d) => (Number.isFinite(x) ? x.toFixed(d) : String(x));
     const aborted = () => !!(opts.abortRef && opts.abortRef.aborted);
+    const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
+    const tolOf = (s) => clamp(0.1 * bW / Math.max(1e-6, Math.abs(s)), 30, 300);
 
-    // ---- MECO trend (bias quanta / kg, lead ticks / kg) ----
+    // ---- default MECO trend (bias quanta/kg, lead ticks/kg) from same-G reference pair ----
     function defaultTrend() {
       const refs = Cfg.references || []; let best = null;
       for (let i = 0; i < refs.length; i++) for (let j = i + 1; j < refs.length; j++) {
@@ -585,123 +593,236 @@
       return { bi: ((best.b.bias - best.a.bias) / Q.bias) / dm, li: ((best.b.lead - best.a.lead) / Q.lead) / dm, src: 'cfg.references' };
     }
     const dTrend = defaultTrend();
-    const seed = { meco: point.meco, point, ok: true, seed: true };
+    let gBiasQ = gBiasQ0;                          // learned after the first G-drop
+    let resOffset = 0, offsetKnown = false;        // real residual = fast raw + resOffset (offsetKnown = verified against a FULL at the same point)
+    const autoCalib = opts.autoCalib !== false, nearKg = opts.nearConfirmKg != null ? opts.nearConfirmKg : 80;
+
+    // ---- history ----
     const hist = [];
-    function trendFor(ref) {
-      const mates = hist.filter((h) => h.ok && h.point && h.point.Gi === ref.point.Gi && h.point.Tn === ref.point.Tn &&
-                                       h !== ref && Math.abs(h.meco - ref.meco) >= trendMinKg);
-      if (!mates.length) return dTrend;
-      mates.sort((a, b) => Math.abs(a.meco - ref.meco) - Math.abs(b.meco - ref.meco));
-      const m = mates[0], dm = ref.meco - m.meco;
-      let bi = (ref.point.bi - m.point.bi) / dm, li = (ref.point.li - m.point.li) / dm;
-      let src = 'learned';
-      if (!(bi >= 0)) { bi = dTrend.bi; src += '(bias->default)'; }   // physics prior: MECO up => bias up
-      if (!(li <= 0)) { li = dTrend.li; src += '(lead->default)'; }   // MECO up => lead down
-      return { bi, li, src };
-    }
-    function warmStart(target) {
-      const refs = hist.filter((h) => h.ok && h.point).concat([seed]);
-      refs.sort((a, b) => Math.abs(a.meco - target) - Math.abs(b.meco - target));   // stable: tuned points win ties vs the seed
-      const ref = refs[0], tr = trendFor(ref), dm = target - ref.meco;
-      const dbi = Math.round(tr.bi * dm), dli = Math.round(tr.li * dm);
-      const p = Object.assign({}, ref.point, {
-        meco: target,
-        bi: Math.max(biB[0], Math.min(biB[1], ref.point.bi + dbi)),
-        li: Math.max(0, ref.point.li + dli),
-      });
-      return { p, from: ref.meco, dbi, dli, src: tr.src };
+    let seq = 0, evals = 0;
+    const ev = { ab: 0, lead: 0, full: 0, probeCoast: 0, probeCirc: 0 };
+    const resid = (h) => (h.real ? h.residualKg : h.raw + resOffset);
+    const cls = (h) => (!h.ok ? 'fail' : (() => { const r = resid(h); return !Number.isFinite(r) ? 'fail' : r > bHi ? 'up' : r < bLo ? 'down' : 'in'; })());
+    const rAt = (h, gi) => resid(h) - gKg * (h.gi - gi);          // residual of h's MECO as it would be at G index gi
+    let curGi = point.Gi;
+    const here = () => hist.filter((h) => h.gi === curGi && !h.superseded);
+    const feasAll = () => hist.filter((h) => h.ok && !h.superseded && Number.isFinite(resid(h)));
+    // virtual class of a feasible entry at the current G level
+    const vcls = (h) => { const r = rAt(h, curGi); return r > bHi ? 'up' : r < bLo ? 'down' : 'in'; };
+    const lo = () => feasAll().filter((h) => vcls(h) === 'up').sort((a, b) => b.meco - a.meco)[0] || null;
+    const hi = () => {
+      const c = feasAll().filter((h) => vcls(h) === 'down').concat(here().filter((h) => !h.ok)).sort((a, b) => a.meco - b.meco);
+      const l = lo(); return c.filter((h) => !l || h.meco > l.meco)[0] || null;
+    };
+    let slopeMeasured = false;
+    function slopeNear(m) {                          // kg/kg from the two feasible points (virtualised to curGi) closest to m
+      const f = feasAll().sort((a, b) => Math.abs(a.meco - m) - Math.abs(b.meco - m));
+      for (let j = 1; j < f.length; j++) if (f[j].meco !== f[0].meco) {
+        const s = (rAt(f[j], curGi) - rAt(f[0], curGi)) / (f[j].meco - f[0].meco);
+        if (s < 0) { slopeMeasured = true; return s; }
+      }
+      slopeMeasured = false;
+      return slopePrior;
     }
 
-    // ---- classification + bracket ----
-    const classify = (ok, res) => (!ok || !Number.isFinite(res)) ? 'fail' : res > bHi ? 'up' : res < bLo ? 'down' : 'in';
-    const feas = () => hist.filter((h) => h.ok && Number.isFinite(h.residualKg));
-    const lo = () => hist.filter((h) => h.cls === 'up').sort((a, b) => b.meco - a.meco)[0] || null;
-    const hi = () => hist.filter((h) => h.cls === 'down' || h.cls === 'fail').sort((a, b) => a.meco - b.meco)[0] || null;
-    function secantSlope(near) {   // kg residual per kg MECO from the two feasible points closest to `near` (must be < 0)
-      const f = feas().sort((a, b) => Math.abs(a.meco - near) - Math.abs(b.meco - near));
-      for (let j = 1; j < f.length; j++) if (f[j].meco !== f[0].meco) {
-        const s = (f[j].residualKg - f[0].residualKg) / (f[j].meco - f[0].meco);
-        return s < 0 ? s : null;
-      }
-      return null;
+    // ---- warm start: nearest entry (same level preferred) shifted by MECO trend and G step ----
+    function trendFor(ref) {
+      const mates = hist.filter((h) => h.ok && h.point && h !== ref && h.point.Gi === ref.point.Gi && h.point.Tn === ref.point.Tn && !h.fastPoint &&
+                                       Math.abs(h.meco - ref.meco) >= trendMinKg);
+      if (!mates.length || ref.fastPoint) return dTrend;
+      mates.sort((a, b) => Math.abs(a.meco - ref.meco) - Math.abs(b.meco - ref.meco));
+      const m = mates[0], dm = ref.meco - m.meco;
+      let bi = (ref.point.bi - m.point.bi) / dm, li = (ref.point.li - m.point.li) / dm, src = 'learned';
+      if (!(bi >= 0)) { bi = dTrend.bi; src += '(bias->default)'; }
+      if (!(li <= 0)) { li = dTrend.li; src += '(lead->default)'; }
+      return { bi, li, src };
     }
+    const seed = { meco: point.meco, gi: point.Gi, point, ok: true, seed: true, real: true, residualKg: NaN };
+    function warmStart(target, gi) {
+      const refs = hist.filter((h) => h.ok && h.point && !h.superseded).concat([seed]);
+      refs.sort((a, b) => ((a.gi === gi ? 0 : 1e9) + Math.abs(a.meco - target)) - ((b.gi === gi ? 0 : 1e9) + Math.abs(b.meco - target)));
+      const ref = refs[0], tr = ref.fastPoint ? dTrend : trendFor(ref), dm = target - ref.meco, dg = gi - ref.point.Gi;
+      const dbi = Math.round(tr.bi * dm) + dg * gBiasQ, dli = Math.round(tr.li * dm);
+      const p = Object.assign({}, ref.point, { meco: target, Gi: gi,
+        bi: clamp(ref.point.bi + dbi, biB[0], biB[1]), li: Math.max(0, ref.point.li + dli) });
+      return { p, from: ref.meco, dbi, dli, dg, src: tr.src, ref };
+    }
+
+    // ---- fast probe: COAST_WAIT (warm) [+ <=1 bias rescue] + 1 CIRC_END at the predicted lead ----
+    function coastCls(m) {
+      if (m.endReason === 'STAGE_VR_NEG' || m.stageVrNeg || m.endReason === 'CRASHED') return 'F1';
+      if (m.endReason !== 'COAST_WAIT_ENTRY' || !Number.isFinite(m.eCoast)) return 'F2';
+      if (!(m.apoCoastKm >= targetAltKm - apoTol)) return 'F2';
+      return m.eCoast > ceil ? 'FE' : 'OK';
+    }
+    async function runCached(p, stopAt) {
+      let m = cache.get(p, stopAt);
+      if (!m) {
+        m = await H.runEval(p, { stopAt, targetAltKm, env: opts.env, abortRef: opts.abortRef, onProgress: opts.onProgress });
+        cache.set(p, stopAt, m);
+        if (stopAt === 'COAST_WAIT_ENTRY') { ev.probeCoast++; evals++; } else { ev.probeCirc++; evals++; }
+      }
+      return m;
+    }
+    async function fastProbe(p0) {
+      let n0 = evals, p = p0, c = null, m = null;
+      for (let k = 0; k <= 1; k++) {
+        if (!U.inBounds(p)) { c = 'OOB'; break; }
+        m = await runCached(p, 'COAST_WAIT_ENTRY'); c = coastCls(m);
+        if (c === 'OK' || k === 1 || aborted()) break;
+        p = Object.assign({}, p, { bi: clamp(p.bi + (c === 'F1' ? +1 : -1) * rescueBi, biB[0], biB[1]) });   // F1 -> bias up, FE/F2 -> down
+      }
+      if (c !== 'OK') return { ok: false, reason: 'coast ' + c, point: null, evals: evals - n0 };
+      const mc = await runCached(p, 'CIRC_END');
+      const fuel = mc.stageFuelEngOffKg;
+      if (mc.endReason !== 'CIRC_END' || !Number.isFinite(fuel) || fuel <= 0 || !(mc.vrEnd >= -0.5))
+        return { ok: false, reason: 'circ end=' + mc.endReason + ' fuel=' + fmt(fuel, 1) + ' vrEnd=' + fmt(mc.vrEnd, 3), point: p, evals: evals - n0 };
+      return { ok: true, reason: 'ok', point: p, raw: fuel, E: m.eCoast, vrEnd: mc.vrEnd, evals: evals - n0 };
+    }
+    async function full(p0) {                        // real tuneRough (FULL) — confirm / first probe on a level
+      const r = await tuneRough(p0, { mode: opts.mode || 'fast', hook: opts.hook, env: opts.env, targetAltKm, abortRef: opts.abortRef,
+        onProgress: opts.onProgress, cache, roughRelax: opts.roughRelax != null ? opts.roughRelax : 0,
+        onLog: opts.verbose ? (l) => say('      ' + l) : undefined });
+      evals += r.evals; ev.ab += r.evalBreakdown.ab; ev.lead += r.evalBreakdown.lead; ev.full += r.evalBreakdown.full;
+      return r;
+    }
+
+    // ---- next MECO (fine knob) at the current level; returns {meco,how} | {gdrop,why} | {stop} ----
     let prevW = null;
     function nextMeco() {
       const l = lo(), h = hi();
-      if (l && h) {                                   // ---- bracketed: bisect (interpolation-guided) ----
-        const w = h.meco - l.meco;
-        if (w <= tol) return { stop: 'bracket closed (width ' + w + ' kg)' };
-        if (w < 0) return { stop: 'non-monotone: lo ' + l.meco + ' >= hi ' + h.meco };
-        const forceMid = prevW != null && w > 0.5 * prevW;
-        prevW = w;
+      const sl = l ? slopeNear(l.meco) : slopePrior, tol = tolOf(sl);
+      if (l && h) {
+        const w = h.meco - l.meco, rl = rAt(l, curGi);
+        if (h.ok) {                                   // upper side is a real/virtual feasible point below the band
+          if (w <= tol) return { stop: 'bracket closed (width ' + w + ' kg <= tol ' + tol.toFixed(0) + ')' };
+        } else if (slopeMeasured) {                   // upper side is a FAILURE (cliff) -> optimistic floor test (needs a measured slope)
+          const rOpt = rl + sl * Math.max(0, h.meco - tol - l.meco);
+          if (rOpt > bHi) return { gdrop: true, why: 'cliff at ' + h.meco + ': r_opt=' + fmt(rOpt, 1) + ' > ' + bHi + ' (r_lo=' + fmt(rl, 1) + ' @' + l.meco + ', slope ' + sl.toFixed(4) + ', tol ' + tol.toFixed(0) + ')' };
+          if (w <= tol) return { gdrop: true, why: 'bracket closed on cliff (w=' + w + ' <= tol ' + tol.toFixed(0) + ') with r=' + fmt(rl, 1) };
+        } else if (w <= tol) return { gdrop: true, why: 'bracket closed on cliff (w=' + w + ' <= tol ' + tol.toFixed(0) + ') with r=' + fmt(rl, 1) };
+        const forceMid = prevW != null && w > 0.5 * prevW; prevW = w;
         let m = Math.round(l.meco + w / 2), how = 'bisect';
-        if (interp && !forceMid) {
-          if (Number.isFinite(h.residualKg) && l.residualKg > h.residualKg) {
-            m = Math.round(l.meco + (l.residualKg - aim) / (l.residualKg - h.residualKg) * w); how = 'interp';
-          } else {
-            const s = secantSlope(l.meco);
-            if (s) { m = Math.round(l.meco + (aim - l.residualKg) / s); how = 'secant'; }
-          }
+        if (!forceMid && h.ok) {                      // interpolate only against a real residual; a cliff gives no residual -> plain bisect
+          if (rAt(l, curGi) > rAt(h, curGi)) { m = Math.round(l.meco + (rl - aim) / (rl - rAt(h, curGi)) * w); how = 'interp'; }
+          else { m = Math.round(l.meco + (aim - rl) / sl); how = 'secant'; }
         }
-        return { meco: Math.max(l.meco + 1, Math.min(h.meco - 1, m)), how: how + (forceMid ? '(forced mid)' : ''), width: w };
+        return { meco: clamp(m, l.meco + Math.max(1, Math.round(tol / 2)), h.meco - Math.max(1, Math.round(tol / 2))), how: how + (forceMid ? '(forced mid)' : ''), width: w };
       }
-      // ---- unbracketed: only one side seen ----
-      const dir = l ? +1 : -1, ext = l || h;
-      const base = feas().sort((a, b) => b.seq - a.seq)[0];   // latest feasible point
-      let step = ladder[0], how = 'ladder';
-      const s = base ? secantSlope(base.meco) : null;
-      if (s) {
-        const mv = (aim - base.residualKg) / s;           // MECO move that would hit the aim
-        if (Math.sign(mv) === dir) { step = Math.max(1, Math.min(ladder[0], Math.abs(base.meco + mv - ext.meco))); how = 'secant'; }
+      if (l) {                                        // only "too high residual" seen -> go up (secant, <= ladder[0])
+        const rl = rAt(l, curGi), mv = (aim - rl) / sl;
+        const step = clamp(mv, tol, ladder0);
+        const base = hist.filter((x) => x.gi === curGi && !x.superseded).length ? 'secant' : 'model';
+        return { meco: Math.round(l.meco + step), how: base + (step >= ladder0 ? '(cap)' : ''), width: null };
       }
-      return { meco: Math.round(ext.meco + dir * step), how, width: null };
+      if (h) {                                        // only below-band / failure seen -> go down
+        const f = feasAll().filter((x) => x.meco < h.meco).sort((a, b) => b.meco - a.meco)[0];
+        return { meco: Math.round(f ? (f.meco + h.meco) / 2 : h.meco - ladder0), how: 'down', width: null };
+      }
+      return { stop: 'no data' };
     }
 
     // ---- main loop ----
-    let evals = 0, ev = { ab: 0, lead: 0, full: 0 }, status = 'maxIter', inBand = null, failWalk = 0, seq = 0;
-    say('findOptimalMeco: start MECO=' + point.meco + '  band=[' + bLo + ',' + bHi + '] aim=' + aim + ' ladder=' + ladder.join('/') +
-        ' tol=' + tol + ' kg  default trend: bias ' + (dTrend.bi * Q.bias * 1000).toFixed(3) + ' mdeg/kg, lead ' + (dTrend.li).toFixed(4) + ' ticks/kg (' + dTrend.src + ')');
-    let target = point.meco, how = 'start', width = null;
-    for (let it = 1; it <= maxIter; it++) {
+    let status = 'maxIter', inBand = null, failWalk = 0, gDrops = 0, iter = 0;
+    say('findOptimalMeco v2: start MECO=' + point.meco + ' G=' + U.gOf(point.Gi) + '  band=[' + bLo + ',' + bHi + '] aim=' + aim + ' ladder0=' + ladder0 + ' gQuantum=' + gKg +
+        ' kg  fast=' + fast + '  default trend: bias ' + (dTrend.bi * Q.bias * 1000).toFixed(3) + ' mdeg/kg, lead ' + dTrend.li.toFixed(4) + ' ticks/kg (' + dTrend.src + ')');
+    let target = point.meco, how = 'start', width = null, newLevel = true, first = true;
+    while (iter < maxIter) {
+      iter++;
       if (aborted()) { status = 'aborted'; break; }
       if (target < mB.lower || target > mB.upper) { status = 'MECO bound reached (' + target + ')'; break; }
-      const ws = it === 1 ? { p: Object.assign({}, point, { meco: target }), from: point.meco, dbi: 0, dli: 0, src: 'seed' } : warmStart(target);
-      const r = await tuneRough(ws.p, { mode: opts.mode || 'fast', hook: opts.hook, env: opts.env, targetAltKm: opts.targetAltKm, abortRef: opts.abortRef,
-        onProgress: opts.onProgress, cache, roughRelax: opts.roughRelax != null ? opts.roughRelax : 0,
-        onLog: opts.verbose ? (l) => say('      ' + l) : undefined });
-      const res = r.ok ? r.residualKg : NaN, cls = classify(r.ok, res);
-      const e = { iter: it, seq: ++seq, meco: target, how, ok: r.ok && Number.isFinite(res), cls, residualKg: res, E: r.E, score: r.score,
-        point: r.ok ? r.point : null, lead: r.lead, metrics: r.metrics, warm: { from: ws.from, dBiasQ: ws.dbi, dLeadTicks: ws.dli, trend: ws.src },
-        evals: r.evals, evalBreakdown: r.evalBreakdown, wallMs: r.wallMs, reason: r.reason };
-      hist.push(e); evals += r.evals; ev.ab += r.evalBreakdown.ab; ev.lead += r.evalBreakdown.lead; ev.full += r.evalBreakdown.full;
-      say('#' + it + ' MECO=' + target + ' [' + how + (width != null ? ' w=' + width : '') + ']  warm<-' + ws.from + ' (bias' + (ws.dbi >= 0 ? '+' : '') + ws.dbi + 'q lead' + (ws.dli >= 0 ? '+' : '') + ws.dli + 't)  ->  ' +
-          (r.ok ? 'residual=' + fmt(res, 1) + ' kg  ' + (r.point ? 'G=' + U.gOf(r.point.Gi) + ' bias=' + U.biasOf(r.point.bi) + ' lead=' + r.point.li + 't' : '') + ' E=' + fmt(r.E, 4) : 'FAIL (' + r.reason + ')') +
-          '  => ' + cls.toUpperCase() + '  evals=' + r.evals + ' (' + (r.wallMs / 1000).toFixed(1) + 's)');
+      const n0 = evals;
+      const ws = first ? { p: Object.assign({}, point, { meco: target }), from: point.meco, dbi: 0, dli: 0, dg: 0, src: 'seed' } : warmStart(target, curGi);
+      const useFull = first || newLevel || !fast;       // start, first probe on a new G level, or fast disabled
+      let e;
+      if (useFull) {
+        const r = await full(ws.p);
+        const res = r.ok ? r.residualKg : NaN;
+        e = { iter, seq: ++seq, meco: target, gi: curGi, how, kind: first ? 'start' : (newLevel ? 'level' : 'full'), real: true, ok: r.ok && Number.isFinite(res),
+              residualKg: res, E: r.E, score: r.score, point: r.ok ? r.point : null, lead: r.lead, metrics: r.metrics, reason: r.reason };
+        if (autoCalib && e.ok && r.point) {              // calibrate fast vs FULL at the SAME point: tuneLead already cached its CIRC_END (free)
+          const mc = cache.get(r.point, 'CIRC_END');
+          const raw = mc && mc.endReason === 'CIRC_END' && Number.isFinite(mc.stageFuelEngOffKg) ? mc.stageFuelEngOffKg
+                    : (r.metrics && Number.isFinite(r.metrics.stageFuelEngOffKg) ? r.metrics.stageFuelEngOffKg : NaN);
+          if (Number.isFinite(raw)) {
+            const old = resOffset; resOffset = res - raw; offsetKnown = true;
+            say('      resOffset calibrated at this point: real ' + fmt(res, 1) + ' - fast ' + fmt(raw, 1) + ' = ' + fmt(resOffset, 2) + ' kg' + (Math.abs(resOffset - old) > 1 ? ' (was ' + fmt(old, 1) + ')' : ''));
+          }
+        }
+        if (e.ok && ws.dg !== 0 && r.point) {            // learn bias shift per G step
+          const act = (r.point.bi - (ws.ref.point.bi + Math.round((ws.ref.fastPoint ? dTrend : trendFor(ws.ref)).bi * (target - ws.ref.meco)))) / ws.dg;
+          if (act > 0) { say('      learned gBias ' + (act * Q.bias).toFixed(3) + ' deg/Gi (was ' + (gBiasQ * Q.bias).toFixed(3) + ')'); gBiasQ = Math.round(act); }
+        }
+      } else {
+        const pr = await fastProbe(ws.p);
+        e = { iter, seq: ++seq, meco: target, gi: curGi, how, kind: 'fast', real: false, fastPoint: true, ok: pr.ok, raw: pr.raw, residualKg: NaN,
+              E: pr.E, score: NaN, point: pr.ok ? pr.point : null, lead: null, metrics: null, reason: pr.reason };
+        if (!pr.ok && pr.point && pr.reason.startsWith('coast')) e.point = null;
+      }
+      e.warm = { from: ws.from, dBiasQ: ws.dbi, dLeadTicks: ws.dli, trend: ws.src };
+      e.evals = evals - n0; if (!e.real && e.ok) e.residualKg = e.raw + resOffset;   // informational (decisions use raw+resOffset live)
+      hist.push(e);
+      let c = cls(e); e.cls = c;
+      const rr = e.real ? e.residualKg : (e.ok ? e.raw + resOffset : NaN);
+      say('#' + iter + ' MECO=' + target + ' G=' + U.gOf(curGi) + ' [' + e.kind + ' ' + how + (width != null ? ' w=' + width : '') + ']  warm<-' + ws.from + ' (bias' + (ws.dbi >= 0 ? '+' : '') + ws.dbi + 'q lead' + (ws.dli >= 0 ? '+' : '') + ws.dli + 't)  ->  ' +
+          (e.ok ? (e.real ? 'residual=' : 'fast residual~') + fmt(rr, 1) + ' kg' + (e.point ? ' bias=' + U.biasOf(e.point.bi) + ' lead=' + e.point.li + 't' : '') : 'FAIL (' + e.reason + ')') + '  => ' + c.toUpperCase() + '  evals=' + e.evals);
       if (aborted()) { status = 'aborted'; break; }
-      if (cls === 'in') { inBand = e; status = 'in band'; break; }
-      if (cls === 'fail' && !lo()) { if (++failWalk > maxFailWalk) { status = 'no feasible MECO (' + maxFailWalk + ' failing steps down)'; break; } } else failWalk = 0;
+
+      // fast probe says IN band -> confirm with a real tuneRough; calibrate resOffset
+      // offset not yet verified against a FULL and the fast estimate is within nearKg above the band -> confirm too (it may really be in band)
+      if (e.kind === 'fast' && c === 'up' && !offsetKnown && rr < bHi + nearKg) { c = 'in'; say('      near band with unverified fast offset -> confirm'); }
+      if (e.kind === 'fast' && c === 'in') {
+        const n1 = evals; iter++;
+        const cr = await full(Object.assign({}, e.point));
+        const res = cr.ok ? cr.residualKg : NaN;
+        const ce = { iter, seq: ++seq, meco: target, gi: curGi, how: 'confirm', kind: 'confirm', real: true, ok: cr.ok && Number.isFinite(res), residualKg: res, E: cr.E, score: cr.score,
+                     point: cr.ok ? cr.point : null, lead: cr.lead, metrics: cr.metrics, reason: cr.reason, warm: e.warm, evals: evals - n1 };
+        e.superseded = true; e.cls = 'superseded'; hist.push(ce);
+        if (ce.ok) { const old = resOffset; resOffset = res - e.raw; offsetKnown = true; say('      confirm: real ' + fmt(res, 1) + ' vs fast ' + fmt(e.raw + old, 1) + ' -> resOffset ' + fmt(old, 1) + ' -> ' + fmt(resOffset, 1) + ' kg'); }
+        c = cls(ce); ce.cls = c;
+        say('#' + iter + ' MECO=' + target + ' [confirm]  ' + (ce.ok ? 'residual=' + fmt(res, 1) + ' kg bias=' + U.biasOf(ce.point.bi) + ' lead=' + ce.point.li + 't' : 'FAIL (' + ce.reason + ')') + '  => ' + c.toUpperCase() + '  evals=' + ce.evals);
+        e = ce;
+      }
+      if (c === 'in') { inBand = e; status = 'in band'; break; }
+
+      first = false; newLevel = false;
+      if (!e.ok && !lo()) { if (++failWalk > maxFailWalk) { status = 'no feasible MECO (' + maxFailWalk + ' failing steps down)'; break; } } else failWalk = 0;
       if (opts.maxEvals && evals >= opts.maxEvals) { status = 'maxEvals'; break; }
-      const nx = nextMeco();
+      if (iter >= maxIter) break;
+      let nx = nextMeco();
+      if (nx.gdrop) {
+        if (gDrops >= maxGDrops) { status = 'floor-limited: ' + nx.why + ' (maxGDrops ' + maxGDrops + ')'; break; }
+        const np = Object.assign({}, point, { Gi: curGi - 1 });
+        if (!U.inBounds(np)) { status = 'floor-limited, G lower bound'; break; }
+        gDrops++; curGi--; newLevel = true; prevW = null;
+        say('  G-DROP #' + gDrops + ' -> G=' + U.gOf(curGi) + ' (' + nx.why + ')  predicted shift ' + (-gKg).toFixed(1) + ' kg, old probes re-used as virtual points');
+        nx = nextMeco();
+        if (nx.gdrop || nx.stop) { status = nx.stop || ('floor-limited again: ' + nx.why); break; }
+      }
       if (nx.stop) { status = nx.stop; break; }
+      // never re-probe a MECO that already has a real entry at this level
+      if (here().some((x) => x.meco === nx.meco)) nx.meco += 1;
       target = nx.meco; how = nx.how; width = nx.width;
     }
 
-    // ---- result: in-band point, else the closest feasible (lowest residual above the band, else highest below) ----
+    // ---- result ----
     let pick = inBand;
     if (!pick) {
-      const f = feas();
-      pick = f.filter((h) => h.cls === 'up').sort((a, b) => a.residualKg - b.residualKg)[0] ||
+      const f = hist.filter((h) => h.real && h.ok && !h.superseded && Number.isFinite(h.residualKg));
+      pick = f.filter((h) => h.residualKg > bHi).sort((a, b) => a.residualKg - b.residualKg)[0] ||
              f.sort((a, b) => Math.abs(a.residualKg - aim) - Math.abs(b.residualKg - aim))[0] || null;
     }
     const l = lo(), h = hi();
+    const nFail = hist.filter((x) => !x.ok && !x.superseded).length;
     const res = {
       ok: !!inBand, status, meco: pick ? pick.meco : null, point: pick ? pick.point : null, residualKg: pick ? pick.residualKg : NaN,
       score: pick ? pick.score : NaN, E: pick ? pick.E : NaN, lead: pick ? pick.lead : null, metrics: pick ? pick.metrics : null,
+      G: pick ? U.gOf(pick.gi) : U.gOf(curGi), iters: iter, gDrops, resOffset, failingProbes: nFail,
       bracket: { lo: l ? l.meco : null, hi: h ? h.meco : null }, history: hist, evals, evalBreakdown: ev, cacheHits: cache.hits,
       wallMs: performance.now() - t0, log: lines,
     };
-    say('=== findOptimalMeco ' + (res.ok ? 'OK' : 'NOT in band') + ': ' + status + ' | MECO=' + res.meco + ' residual=' + fmt(res.residualKg, 1) + ' kg | iters=' + hist.length +
-        ' evals=' + evals + ' (ab ' + ev.ab + ' lead ' + ev.lead + ' full ' + ev.full + ') wall=' + (res.wallMs / 1000).toFixed(1) + 's');
+    say('=== findOptimalMeco v2 ' + (res.ok ? 'OK' : 'NOT in band') + ': ' + status + ' | MECO=' + res.meco + ' G=' + res.G + ' residual=' + fmt(res.residualKg, 1) + ' kg | iters=' + iter +
+        ' gDrops=' + gDrops + ' failingProbes=' + nFail + ' resOffset=' + fmt(resOffset, 1) + ' evals=' + evals + ' (ab ' + ev.ab + ' lead ' + ev.lead + ' full ' + ev.full + ' probeCoast ' + ev.probeCoast + ' probeCirc ' + ev.probeCirc + ') wall=' + (res.wallMs / 1000).toFixed(1) + 's');
     return res;
   }
 

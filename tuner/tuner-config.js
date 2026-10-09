@@ -82,7 +82,11 @@
     },
 
     // ---- MECO outer loop ----
-    meco: { start: 52612, stepLadderKg: [4000, 1000, 200] },
+    meco: { start: 52612, stepLadderKg: [4000, 1000, 200],
+            gQuantumKg: 97.3,          // stage residual change per 0.01 G (real log: G .60 -> .59 = 849.4 -> 752.1)
+            gBiasDegPerQ: 0.55,        // bias moves ~0.52-0.6 deg per G quantum (same direction as G)
+            slopePrior: -0.05,         // kg residual per kg MECO when no 2 points yet (real curve: -0.08 .. -0.03)
+            maxGDrops: 3 },
 
     // ---- Accuracy modes (first cut — tuned in Step 10) ----
     // Steps are multiples of quanta. G in gimbal quanta, T in Tn quanta,

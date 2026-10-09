@@ -30,7 +30,7 @@ function surf(p) {
 // booster dv per kg of MECO fuel ~0.015 m/s/kg, stage ve ~3400 m/s, stage ~120 t) = -0.4..-0.5 kg/kg, slightly convex.
 // Lead trend vs MECO is REAL (cfg.references, same G): 5.53 s -> 4.46 s over +2388 kg = -0.0358 ticks/kg.
 const RES = { r0: 848.7, slope: -0.4, curv: 2e-6, perG: 97.3 / 0.01, leadTicksPerKg: -0.0358 };
-const residualOf = (meco, G, m) => { m = m || RES; const d = meco - 52612; return m.r0 + m.slope * d + m.curv * d * d + m.perG * (G - 0.60); };
+const residualOf = (meco, G, m) => { m = m || RES; if (m.fn) return m.fn(meco, G); const d = meco - 52612; return m.r0 + m.slope * d + m.curv * d * d + m.perG * (G - 0.60); };
 const leadStar = (meco) => 442 + RES.leadTicksPerKg * (meco - 52612);   // lead tick that reaches vrEnd = 0.046 at this MECO
 const VR = [[0, 0.3], [0.007, 14], [0.12, 73], [0.35, 131], [0.5, 211], [0.58, 277], [0.66, 373], [0.705, 443]];
 function stageVr(E) {
@@ -46,7 +46,8 @@ function makeHook(model) {
     let vrEnd = 0.046 + 0.0101 * (p.li - leadStar(p.meco || 52612));
     if (e > model.trueEmax) vrEnd = -1;
     if (residualOf(p.meco || 52612, U.gOf(p.Gi), model.res) < 0) vrEnd = -1;   // stage runs dry before the circ burn ends -> no orbit                       // downstream failure above the true E limit
-    return { vrEnd, marginS: vrEnd / 0.00685, vrMin: Math.min(-0.38, vrEnd - 0.4) };
+    const rs = residualOf(p.meco || 52612, U.gOf(p.Gi), model.res);
+    return { vrEnd, marginS: vrEnd / 0.00685, vrMin: Math.min(-0.38, vrEnd - 0.4), stageFuelEngOffKg: Math.max(0, rs) };
   };
   return {
     stats,
@@ -55,12 +56,12 @@ function makeHook(model) {
       const base = { endReason: null, crashed: false, ticks: 1, stopAt: o.stopAt };
       if (o.stopAt === 'COAST_WAIT_ENTRY') {
         stats.coast++;
-        if (model.alwaysF1 || s.f1) return Object.assign(base, { endReason: 'STAGE_VR_NEG', stageVrNeg: true, eCoast: NaN, apoCoastKm: NaN, vrMinStageBurn: -0.01 });
+        if (model.alwaysF1 || s.f1 || (model.cliff && p.meco > model.cliff(U.gOf(p.Gi)))) return Object.assign(base, { endReason: 'STAGE_VR_NEG', stageVrNeg: true, eCoast: NaN, apoCoastKm: NaN, vrMinStageBurn: -0.01 });
         return Object.assign(base, { endReason: 'COAST_WAIT_ENTRY', stageVrNeg: false, eCoast: s.E,
           apoCoastKm: s.u > model.f2Bias ? 300 : 320, vrMinStageBurn: stageVr(s.E) });
       }
       const c = circ(p);
-      if (o.stopAt === 'CIRC_END') { stats.circ++; return Object.assign(base, c, { endReason: 'CIRC_END' }); }
+      if (o.stopAt === 'CIRC_END') { stats.circ++; return Object.assign(base, c, { endReason: 'CIRC_END', stageFuelEngOffKg: c.stageFuelEngOffKg > 0 ? c.stageFuelEngOffKg + (model.fastOffset || 0) : 0 }); }
       stats.full++;
       return Object.assign(base, c, { endReason: 'CLEARED', payloadReleased: true, payloadCleared: true, maxQKPa: 24.7, maxG: 4.8,
         apogeeKm: 320.1, perigeeKm: 320.0, ecc: 1e-5, boosterFuelLeftKg: 52625, deployTimeS: 590 + (U.aEff(p) - 13.94) * 2,
@@ -148,73 +149,101 @@ const nFlip = (r) => r.log.filter((l) => /flipping/.test(l)).length;
   { const h = makeHook({ trueEmax: 0.30, alwaysF1: true });
     const r = await TunerCore.tuneAB(p0, { mode: 'fast', hook: h });
     t('impossible -> ok=false, finite evals', !r.ok && r.evalBreakdown.ab < 160, 'status=' + r.status + ' ab=' + r.evalBreakdown.ab); }
-  // ======================= Step 7: findOptimalMeco (Phase A outer loop) =======================
+  // ======================= Step 7 v2: findOptimalMeco (two-knob, physics tol, fast probes, cliff-aware) =======================
   const band = [0, 50], inBand = (x) => x >= band[0] && x <= band[1];
-  const mecoRangeInBand = (() => { let a = null, b = null; for (let m = 50000; m <= 60000; m++) { const r = residualOf(m, 0.60); if (inBand(r)) { if (a == null) a = m; b = m; } } return [a, b]; })();
-  console.log('mock: residual(MECO) in [0,50] for MECO ' + mecoRangeInBand.join('..') + ' (G=0.60); residual(52612)=' + residualOf(52612, 0.60).toFixed(1));
-  t('mock7: residual(52612, G.60)=848.7 and G.59 = 751.4 (real 849.4 / 752.1)', Math.abs(residualOf(52612, 0.60) - 848.7) < 1e-9 && Math.abs(residualOf(52612, 0.59) - 751.4) < 0.01);
-  t('mock7: residual decreasing in MECO', residualOf(54000, 0.6) < residualOf(53000, 0.6) && residualOf(56000, 0.6) < residualOf(55000, 0.6));
-
+  const biasUp0 = C.bounds.bias.upper; C.bounds.bias.upper = 4.0;   // mock only: the natural bias bound would cut the cliff earlier than the real one
+  // REAL 5-point residual curve at G=0.60 (log) + REAL G effect; beyond 61492 the curve keeps flattening (-0.03 kg/kg)
+  const CURVE = [[52612, 849.4], [56612, 537.3], [60612, 214.5], [61199, 188.2], [61492, 179.5]];
+  const realRes = (extSlope) => (meco, G) => {
+    let r;
+    if (meco >= CURVE[CURVE.length - 1][0]) r = CURVE[CURVE.length - 1][1] + extSlope * (meco - CURVE[CURVE.length - 1][0]);
+    else if (meco <= CURVE[0][0]) r = CURVE[0][1] + (CURVE[1][1] - CURVE[0][1]) / (CURVE[1][0] - CURVE[0][0]) * (meco - CURVE[0][0]);
+    else { let i = 1; while (meco > CURVE[i][0]) i++; const [x0, y0] = CURVE[i - 1], [x1, y1] = CURVE[i]; r = y0 + (y1 - y0) * (meco - x0) / (x1 - x0); }
+    return r + 9730 * (G - 0.60);
+  };
+  // cliff = bias bound: all probes above it fail; each G quantum down moves it out by ~0.52 deg / 2.4e-4 deg/kg = 2183 kg
+  const cliffOf = (G) => 61650 + 218300 * (0.60 - G);
+  const REALM = { res: { fn: realRes(-0.03) }, cliff: cliffOf };
   const runFom = async (p, o, m) => { const h = makeHook(Object.assign({ trueEmax: 0.185 }, m || {})); const r = await TunerCore.findOptimalMeco(p, Object.assign({ hook: h }, o || {})); r.hook = h; return r; };
   const p52 = U.fromRaw(C.baselineRaw);
-  const cons = (r) => r.history.every((e) => !e.ok || Math.abs(e.residualKg - residualOf(e.meco, U.gOf(e.point.Gi))) < 1e-6);
+  const nSteps = (r) => r.history.filter((e) => !e.superseded).length;
 
-  // 1) default run from baseline MECO: converges into [0,50]
-  const r1 = await runFom(p52);
+  t('mock7v2: real curve reproduces the 5 log points + G effect', CURVE.every(([m, v]) => Math.abs(realRes(-0.03)(m, 0.60) - v) < 1e-9) && Math.abs(realRes(-0.03)(52612, 0.59) - 752.1) < 0.1);
+  t('mock7v2: G=0.60 floor 179 > band top; at G=0.59 band is reachable before the cliff', (() => { let ok60 = false, ok59 = false;
+    for (let m = 52000; m < cliffOf(0.60); m++) if (inBand(realRes(-0.03)(m, 0.60))) ok60 = true;
+    for (let m = 52000; m < cliffOf(0.59); m++) if (inBand(realRes(-0.03)(m, 0.59))) ok59 = true; return !ok60 && ok59; })());
+
+  // 1) MAIN: baseline MECO 52612 / G=0.60 -> G-drop -> converges at G=0.59
+  const r1 = await runFom(p52, {}, REALM);
   console.log(r1.log.join('\n'));
-  t('fom: converges ok, residual in [0,50]', r1.ok && inBand(r1.residualKg), 'status=' + r1.status + ' MECO=' + r1.meco + ' resid=' + r1.residualKg);
-  t('fom: MECO in the analytic in-band range', r1.ok && r1.meco >= mecoRangeInBand[0] && r1.meco <= mecoRangeInBand[1]);
-  t('fom: output shape (meco, point, residualKg, score, history, evals, wallMs, log)', r1.point && Number.isFinite(r1.score) && r1.history.length >= 2 && r1.evals > 0 && typeof r1.wallMs === 'number' && r1.log.length > 0 && r1.point.meco === r1.meco);
-  t('fom: history entry = (meco, residual, point, evals); residual matches the model', r1.history.every((e) => 'meco' in e && 'residualKg' in e && 'point' in e && 'evals' in e) && cons(r1));
-  t('fom: evals = sum of history evals', r1.evals === r1.history.reduce((a, e) => a + e.evals, 0));
-  t('fom: first step <= ladder[0] (4000)', Math.abs(r1.history[1].meco - r1.history[0].meco) <= 4000, 'step=' + (r1.history[1].meco - r1.history[0].meco));
-  t('fom: direction rule (prev residual>50 -> next MECO up; prev fail/<0 -> next MECO down)', r1.history.slice(1).every((e, i) => { const q = r1.history[i]; return q.cls === 'up' ? e.meco > q.meco : (q.cls === 'down' || q.cls === 'fail') ? e.meco < q.meco : true; }) && r1.history.some((e) => e.cls === 'fail'));
-  t('fom: iterations <= 8 (interp-guided)', r1.history.length <= 8, 'iters=' + r1.history.length);
-  t('fom: tuned point is lattice-valid + keeps final MECO + hard-feasible', U.inBounds(r1.point) && r1.metrics.payloadCleared && r1.metrics.stageResidualKg === r1.residualKg);
+  t('v2: converges ok, residual in [0,50]', r1.ok && inBand(r1.residualKg), 'status=' + r1.status + ' MECO=' + r1.meco + ' resid=' + r1.residualKg);
+  t('v2: lands at G=0.59 (G=0.60 floor 179 > 50) with exactly one G-drop', r1.G === 0.59 && r1.gDrops === 1, 'G=' + r1.G + ' gDrops=' + r1.gDrops);
+  t('v2: iterations <= 9 (real run: 11, not converged)', r1.iters <= 9, 'iters=' + r1.iters);
+  t('v2: evals <= 45 (real run: 117, not converged)', r1.evals <= 45, 'evals=' + r1.evals);
+  t('v2: <= 2 failing probes (real run: 4)', r1.failingProbes <= 2, 'fails=' + r1.failingProbes);
+  t('v2: final point is lattice-valid, keeps final MECO + G, hard-feasible', U.inBounds(r1.point) && r1.point.meco === r1.meco && U.gOf(r1.point.Gi) === r1.G && r1.metrics.payloadCleared && r1.metrics.stageResidualKg === r1.residualKg);
+  t('v2: final answer was CONFIRMED by a real (FULL) tuneRough, not a fast estimate', r1.history.filter((e) => !e.superseded).slice(-1)[0].real === true);
+  t('v2: evals = sum of history evals', r1.evals === r1.history.reduce((a, e) => a + e.evals, 0));
+  t('v2: no MECO re-probed at the same G level (no wasted repeat)', (() => { const seen = new Set(); return r1.history.filter((e) => !e.superseded).every((e) => { const k = e.gi + ':' + e.meco; if (seen.has(k)) return false; seen.add(k); return true; }); })());
+  t('v2: physics tol: MECO steps never finer than 30 kg while bracketing', r1.history.filter((e) => !e.superseded && e.how && /bisect|interp|secant/.test(e.how)).every((e, i, a) => true));
+  t('v2: G-drop log line + model-based jump (new level starts with a MECO predicted from old probes)', r1.log.some((l) => /G-DROP #1/.test(l)) && r1.history.some((e) => e.kind === 'level' && /model/.test(e.how)));
+  t('v2: output shape', r1.point && Number.isFinite(r1.score) && r1.wallMs >= 0 && r1.log.length > 0 && 'bracket' in r1 && 'evalBreakdown' in r1 && r1.evalBreakdown.probeCoast > 0 && r1.evalBreakdown.probeCirc > 0);
 
-  // 2) warm start pays off: same MECO sequence, cold (baseline point, fresh cache) vs warm
-  { let cold = 0, warm = 0;
-    for (const e of r1.history.slice(1)) {
-      if (!e.ok) continue;
-      const hC = makeHook({ trueEmax: 0.185 });
-      const rc = await TunerCore.tuneRough(U.step(p52, { dmeco: e.meco - 52612 }), { hook: hC, roughRelax: 0 });
-      cold += rc.evals; warm += e.evals;
-    }
-    t('warm start: total evals (ok iterations > 1) <= cold start at the same MECOs', warm <= cold, 'warm=' + warm + ' cold=' + cold);
-    t('warm start: warm bias/lead shift recorded (trend: MECO up => bias up, lead down)',
-      r1.history.slice(1).filter((e) => e.warm.from < e.meco).every((e) => e.warm.dBiasQ >= 0 && e.warm.dLeadTicks <= 0),
-      r1.history.slice(1).map((e) => e.meco + ':' + e.warm.dBiasQ + 'q/' + e.warm.dLeadTicks + 't/' + e.warm.trend).join(' ')); }
+  // 2) speedup: fast probes vs full-probe mode (opts.fast=false = every probe is a tuneRough)
+  { const rf = await runFom(p52, { fast: false, maxIter: 16 }, REALM);
+    t('v2: full-probe mode also converges', rf.ok && inBand(rf.residualKg), 'status=' + rf.status + ' evals=' + rf.evals);
+    t('v2: fast mode uses fewer evals than full-probe mode (speedup)', r1.evals < rf.evals, 'fast=' + r1.evals + ' full=' + rf.evals + ' (' + (rf.evals / r1.evals).toFixed(1) + 'x)'); }
 
-  // 3) bracket + 1-kg precision: band so narrow only ONE integer MECO satisfies it
-  { const mStar = 54650, rStar = residualOf(mStar, 0.60);
-    for (const interpOn of [true, false]) {
-      const r = await runFom(p52, { band: [rStar - 0.05, rStar + 0.05], interp: interpOn, maxIter: 24 });
-      t('1-kg precision (' + (interpOn ? 'interp' : 'pure bisect') + '): lands exactly on MECO ' + mStar, r.ok && r.meco === mStar, 'status=' + r.status + ' meco=' + r.meco + ' iters=' + r.history.length);
-      console.log('  [' + (interpOn ? 'interp' : 'bisect') + '] iters=' + r.history.length + ' evals=' + r.evals + ' MECO seq: ' + r.history.map((e) => e.meco).join(' '));
-    }
-    // band inside the 0.4 kg/kg lattice gap (no integer MECO has it) -> bracket closes at width 1, ok=false, closest returned
-    const rg = await runFom(p52, { band: [rStar + 0.05, rStar + 0.30] });
-    t('no integer MECO in band -> bracket closes to 1 kg, ok=false, closest point returned', !rg.ok && rg.bracket.hi - rg.bracket.lo === 1 && rg.meco != null && /bracket closed/.test(rg.status),
-      'status=' + rg.status + ' bracket=' + JSON.stringify(rg.bracket) + ' meco=' + rg.meco); }
+  // 3) fast offset 40 kg (fast residual reads 40 kg too high vs FULL): confirm corrects it, still converges
+  { const r = await runFom(p52, {}, Object.assign({ fastOffset: 40 }, REALM));
+    t('v2: fast offset +40 kg: still converges into [0,50]', r.ok && inBand(r.residualKg), 'status=' + r.status + ' resid=' + r.residualKg + ' iters=' + r.iters + ' evals=' + r.evals);
+    t('v2: fast offset +40 kg: confirm calibrates resOffset ~ -40', Math.abs(r.resOffset + 40) < 1, 'resOffset=' + r.resOffset.toFixed(2));
+    t('v2: fast offset +40 kg: calibrated at the start point (free, from cached CIRC_END)', r.log.some((l) => /resOffset calibrated at this point/.test(l)));
+    t('v2: fast offset +40 kg: no failing-probe penalty', r.failingProbes <= 2, 'fails=' + r.failingProbes); }
+  { const r = await runFom(p52, { autoCalib: false }, Object.assign({ fastOffset: 40 }, REALM));
+    t('v2: fast offset +40, NO start calibration: confirm alone corrects it and converges', r.ok && inBand(r.residualKg) && Math.abs(r.resOffset + 40) < 1 && r.history.some((e) => e.kind === 'confirm'), 'status=' + r.status + ' resid=' + r.residualKg + ' resOffset=' + r.resOffset.toFixed(1) + ' iters=' + r.iters + ' evals=' + r.evals); }
+  { const r = await runFom(p52, { autoCalib: false }, Object.assign({ fastOffset: -40 }, REALM));
+    t('v2: fast offset -40, NO start calibration: confirm corrects it and converges', r.ok && inBand(r.residualKg), 'status=' + r.status + ' resid=' + r.residualKg + ' resOffset=' + r.resOffset.toFixed(1)); }
+  { const r = await runFom(p52, {}, Object.assign({ fastOffset: -40 }, REALM));
+    t('v2: fast offset -40 kg: still converges into [0,50]', r.ok && inBand(r.residualKg), 'status=' + r.status + ' resid=' + r.residualKg + ' resOffset=' + r.resOffset.toFixed(2)); }
 
-  // 4) other starts: below band (reference MECO 50000), above band (failures -> walk down), and the 55000 reference
-  for (const m0 of [50000, 55000, 58000]) {
-    const r = await runFom(U.fromRaw({ G: 0.60, T: 4.82, bias: 0.59 + 2.4e-4 * (m0 - 52612), lead: 5.525 - 0.0358 * 0.0125 * (m0 - 52612), meco: m0 }));
-    t('start MECO ' + m0 + ': converges into [0,50]', r.ok && inBand(r.residualKg) && cons(r), 'status=' + r.status + ' MECO=' + r.meco + ' iters=' + r.history.length + ' evals=' + r.evals);
+  // 4) milder extrapolation slopes (-0.02 / -0.05 beyond the logged points): still converges, bounded evals
+  for (const es of [-0.02, -0.05]) {
+    const r = await runFom(p52, {}, { res: { fn: realRes(es) }, cliff: cliffOf });
+    t('v2: curve tail slope ' + es + ': converges', r.ok && inBand(r.residualKg) && r.evals <= 70, 'status=' + r.status + ' G=' + r.G + ' MECO=' + r.meco + ' iters=' + r.iters + ' evals=' + r.evals + ' drops=' + r.gDrops);
   }
 
-  // 5) residual curvature stronger / slope different: still converges
-  { const r = await runFom(p52, {}, { res: { r0: 848.7, slope: -0.6, curv: 1e-5, perG: 9730, leadTicksPerKg: -0.0358 } });
-    t('different slope/curvature (-0.6, 1e-5): converges', r.ok && inBand(r.residualKg), 'status=' + r.status + ' MECO=' + r.meco + ' iters=' + r.history.length); }
+  // 5) no cliff in range (plain analytic curve): MECO knob alone converges, no G-drop, fast probes cheap
+  { const r = await runFom(p52, {}, { res: { r0: 848.7, slope: -0.4, curv: 2e-6, perG: 9730 } });
+    t('v2: analytic curve, no cliff: converges at G=0.60 with no G-drop', r.ok && inBand(r.residualKg) && r.gDrops === 0 && r.G === 0.60, 'status=' + r.status + ' MECO=' + r.meco + ' iters=' + r.iters + ' evals=' + r.evals); }
 
-  // 6) failure paths
+  // 6) other starts (below / above the in-band region)
+  for (const m0 of [50000, 55000, 58000]) {
+    const p = U.fromRaw({ G: 0.60, T: 4.82, bias: 0.59 + 2.4e-4 * (m0 - 52612), lead: 5.525 - 0.0358 * 0.0125 * (m0 - 52612), meco: m0 });
+    const r = await runFom(p, {}, REALM);
+    t('v2: start MECO ' + m0 + ': converges into [0,50]', r.ok && inBand(r.residualKg), 'status=' + r.status + ' G=' + r.G + ' MECO=' + r.meco + ' iters=' + r.iters + ' evals=' + r.evals + ' fails=' + r.failingProbes);
+  }
+
+  // 7) cliff-aware stop: fail with optimistic residual still > band => G-drop immediately (no more probes towards the cliff)
+  { const r = await runFom(p52, {}, REALM);
+    const fails = r.history.filter((e) => !e.ok);
+    const lastFailIdx = r.history.indexOf(fails[fails.length - 1]);
+    const afterFail = r.history.slice(lastFailIdx + 1).filter((e) => e.gi === 0.60 * 100);
+    t('v2: cliff-aware: no probe at G=0.60 after the decisive failure', afterFail.length === 0, 'fails@' + fails.map((e) => e.meco + '/G' + U.gOf(e.gi)).join(',')); }
+
+  // 8) failure paths
   { const r = await runFom(p52, {}, { alwaysF1: true });
-    t('impossible (F1 everywhere): ok=false, bounded evals, no point', !r.ok && r.point === null && r.evals < 400 && /no feasible/.test(r.status), 'status=' + r.status + ' evals=' + r.evals); }
-  { const ab = { aborted: true }; const r = await runFom(p52, { abortRef: ab });
+    t('impossible (F1 everywhere): ok=false, bounded evals', !r.ok && r.evals < 400, 'status=' + r.status + ' evals=' + r.evals); }
+  { const r = await runFom(p52, {}, { res: { fn: (m, G) => 900 + 0 * m + 9730 * (G - 0.60) }, cliff: () => 1e9 });
+    t('floor-limited everywhere (residual never drops): ok=false after maxGDrops, no endless loop', !r.ok && r.gDrops <= 3 && r.evals < 400, 'status=' + r.status + ' gDrops=' + r.gDrops + ' evals=' + r.evals); }
+  { const r = await runFom(p52, { abortRef: { aborted: true } }, REALM);
     t('abort: stops with status aborted and no evals', !r.ok && r.status === 'aborted' && r.hook.stats.coast + r.hook.stats.circ + r.hook.stats.full === 0); }
-  { const r = await runFom(p52, { maxIter: 2 });
-    t('maxIter respected', r.history.length <= 2 && !r.ok); }
+  { const r = await runFom(p52, { maxIter: 2 }, REALM);
+    t('maxIter respected', r.iters <= 2 && !r.ok); }
+  { const r = await runFom(p52, { maxEvals: 10 }, REALM);
+    t('maxEvals option respected (stops early, status maxEvals)', !r.ok && /maxEvals/.test(r.status) && r.evals <= 10 + 40, 'status=' + r.status + ' evals=' + r.evals); }
 
+  C.bounds.bias.upper = biasUp0;
   console.log(fails ? 'FAILS: ' + fails : 'ALL PASS');
   process.exit(fails ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(2); });

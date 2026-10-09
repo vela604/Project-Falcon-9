@@ -196,7 +196,7 @@
       circStartT: NaN, circAchievedT: NaN, circEngOffT: NaN,
       // ---- mission outputs ----
       deployTimeS: NaN, mecoTimeS: NaN, boosterFuelLeftKg: NaN, stageResidualKg: NaN,
-      stageFuelAtDeployKg: NaN,
+      stageFuelAtDeployKg: NaN, stageFuelEngOffKg: NaN,   // stage fuel at circ engines-off (fast-probe residual)
       apogeeKm: NaN, perigeeKm: NaN, ecc: NaN,
       // ---- hard-constraint trackers ----
       maxQKPa: 0, maxG: 0,                      // maxG = headless gLoad on bodies[0], whole run
@@ -328,6 +328,7 @@
               engOffSeen = true; circWindow = false;
               const o = orbitOf(b, GM, Re);
               m.vrEnd = o.vr; m.marginS = signedMargin(o); m.marginRawS = o.tToApo; m.periodEndS = o.periodS; m.circEngOffT = state.simTime;
+              { const st = findStage(state.bodies); m.stageFuelEngOffKg = st ? st.fuelMass : NaN; }
               if (stopAt === 'CIRC_END') { end('CIRC_END'); i++; break; }
             }
           }
