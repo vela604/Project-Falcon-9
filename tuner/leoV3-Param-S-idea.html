@@ -82,6 +82,8 @@ input[type=number] { width: 90px; background: var(--panel-2); color: var(--text)
 <button id="tuneRoughBtn" disabled>Rough tune (Phase A)</button>
 <label>start <select id="mecoStartSel"><option value="0">ref MECO 50000</option><option value="1" selected>baseline 52612</option><option value="2">ref MECO 55000</option></select></label>
 <button id="findMecoBtn" disabled>Find optimal MECO (Phase A)</button>
+<label>B mode <select id="fullModeSel"><option value="fast">fast</option><option value="fine" selected>fine</option><option value="accurate">accurate</option></select></label>
+<button id="fullTuneBtn" disabled>Full tune (Phase A + B)</button>
 <button id="evalAbortBtn">Abort</button>
   </div>
 
@@ -171,7 +173,7 @@ input[type=number] { width: 90px; background: var(--panel-2); color: var(--text)
           ' lead=' + ins.CIRC_TRIGGER_LEAD_S + ' alt=' + ins.TARGET_ORBIT_ALT_KM);
       statusEl.textContent = 'Ready.';
       $('smokeBtn').disabled = false; $('dumpCfgBtn').disabled = false; $('applyChkBtn').disabled = false;
-      ['evalSnapBtn','evalRawBtn','evalTwiceBtn','evalRefBtn','tuneLeadBtn','tuneABBtn','tuneRoughBtn','findMecoBtn'].forEach((id) => $(id).disabled = false);
+      ['evalSnapBtn','evalRawBtn','evalTwiceBtn','evalRefBtn','tuneLeadBtn','tuneABBtn','tuneRoughBtn','findMecoBtn','fullTuneBtn'].forEach((id) => $(id).disabled = false);
     } catch (e) {
       statusEl.textContent = 'Boot failed: ' + e.message;
       log('BOOT FAILED: ' + e.message, 'bad');
@@ -382,7 +384,7 @@ input[type=number] { width: 90px; background: var(--panel-2); color: var(--text)
   // ---- Step 7: Phase A outer loop — findOptimalMeco (tuneRough per MECO, residual target [0,50] kg) ----
   $('findMecoBtn').addEventListener('click', async () => {
     abortRef.aborted = false;
-    const ids = ['evalSnapBtn','evalRawBtn','evalTwiceBtn','evalRefBtn','tuneLeadBtn','tuneABBtn','tuneRoughBtn','findMecoBtn'];
+    const ids = ['evalSnapBtn','evalRawBtn','evalTwiceBtn','evalRefBtn','tuneLeadBtn','tuneABBtn','tuneRoughBtn','findMecoBtn','fullTuneBtn'];
     ids.forEach((id) => $(id).disabled = true);
     try {
       const ref = C.references[parseInt($('mecoStartSel').value, 10)];
@@ -409,6 +411,39 @@ input[type=number] { width: 90px; background: var(--panel-2); color: var(--text)
       }
       statusEl.textContent = 'findOptimalMeco done.';
     } catch (e) { log('FINDMECO ERROR: ' + e.message, 'bad'); statusEl.textContent = 'findOptimalMeco error.'; console.error(e); }
+    finally { ids.forEach((id) => $(id).disabled = false); }
+  });
+
+  // ---- Full tune: Phase A (findOptimalMeco, upper part of residual band) + Phase B (tuneAB at that MECO, residual-guarded) ----
+  $('fullTuneBtn').addEventListener('click', async () => {
+    abortRef.aborted = false;
+    const ids = ['evalSnapBtn','evalRawBtn','evalTwiceBtn','evalRefBtn','tuneLeadBtn','tuneABBtn','tuneRoughBtn','findMecoBtn','fullTuneBtn'];
+    ids.forEach((id) => $(id).disabled = true);
+    try {
+      const ref = C.references[parseInt($('mecoStartSel').value, 10)];
+      const p = TunerUtils.fromRaw({ G: ref.G, T: C.T0, bias: ref.bias, lead: ref.lead, meco: ref.meco });
+      const mode = $('fullModeSel').value;
+      log('--- Full tune (A+B, B mode=' + mode + ') from MECO ' + ref.meco + ' ' + JSON.stringify(TunerUtils.describe(p)) + ' ---');
+      const r = await TunerCore.runTuner(p, { mode, abortRef, onLog: (l) => log(l),
+        onProgress: (q) => { statusEl.textContent = 'Full tune… t=' + q.simTime.toFixed(1) + ' s ' + (q.phase || ''); } });
+      log('=== Full tune RESULT ok=' + r.ok + ' status=' + r.status + ' band=[' + r.band + '] evals=' + r.evals + ' wall=' + (r.wallMs / 1000).toFixed(1) + 's', r.ok ? 'ok' : 'bad');
+      if (r.phaseA) {
+        log('Phase A: ' + r.phaseA.status + ' MECO=' + r.phaseA.meco + ' G=' + r.phaseA.G + ' residual=' + fmt(r.phaseA.residualKg, 1) + ' deploy=' + fmt(r.phaseA.deployTimeS, 1) + ' evals=' + r.phaseA.evals);
+        r.phaseA.history.forEach((e) => log('  A#' + e.iter + ' MECO=' + e.meco + ' G=' + TunerUtils.gOf(e.gi) + ' [' + e.kind + ' ' + e.how + '] ' + e.cls.toUpperCase() + ' residual=' + fmt(e.residualKg, 1) + ' deploy=' + fmt(e.deployTimeS, 1) + ' evals=' + e.evals));
+      }
+      if (r.phaseB) {
+        log('Phase B candidates (ranked by score):');
+        r.phaseB.candidates.forEach((c) => log('  ' + (c.ok ? 'ok ' : 'x  ') + c.tag + ' score=' + fmt(c.score, 3) + ' E=' + fmt(c.E, 4) + ' ' + JSON.stringify(c.desc) +
+          (c.metrics ? ' residual=' + fmt(c.metrics.stageResidualKg, 1) + ' deploy=' + fmt(c.metrics.deployTimeS, 1) : '') + (c.ok ? '' : ' [' + c.reasons.join(',') + ']')));
+      }
+      if (r.bestPoint) {
+        const d = TunerUtils.describe(r.bestPoint);
+        log('BEST (' + r.bestSource + '): score=' + fmt(r.bestScore, 3) + ' residual=' + fmt(r.bestResidualKg, 1) + ' kg deploy=' + fmt(r.bestDeployS, 2) + ' s fuel=' + fmt(r.bestMetrics.boosterFuelLeftKg, 0) + ' apo/peri=' + fmt(r.bestMetrics.apogeeKm, 3) + '/' + fmt(r.bestMetrics.perigeeKm, 3));
+        log('final JSON: ' + JSON.stringify({ ascent: { PUSH_MAX_GIMBAL_DEG: d.G, PUSH_T_S: d.T, MECO_TARGET_BOOSTER_FUEL_KG: d.meco },
+            insertion: { STAGE_BURN_AOA_BIAS_DEG: d.bias, CIRC_TRIGGER_LEAD_S: d.lead } }));
+      }
+      statusEl.textContent = 'Full tune done.';
+    } catch (e) { log('FULLTUNE ERROR: ' + e.message, 'bad'); statusEl.textContent = 'Full tune error.'; console.error(e); }
     finally { ids.forEach((id) => $(id).disabled = false); }
   });
 

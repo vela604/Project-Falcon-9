@@ -66,7 +66,9 @@
       vrMinHardFloorMps: -2,        // PROVISIONAL
       vrEndBufferMps: [0.02, 0.05], // heuristic buffer (not 0)
       marginTargetS: [3.5, 5.5],    // widened (Step 6): 1 tick ~ 1.4 s of margin, [4,5] fits no tick
-      residualTargetKg: [0, 50],    // deorbit off
+      residualTargetKg: [100, 200],          // stage residual band, deorbit OFF (empirical: [0,50] empties the stage -> deploy +84 s)
+      residualTargetDeorbitOnKg: [500, 600], // deorbit ON / suicide burn: fuel reserve (used when fixed.deorbitEnabled)
+      residualPhaseAFrac: 0.5,               // Phase A (runTuner) aims into the UPPER part of the band: [lo+frac*w, hi] -> room for Phase B
       coastApoTolKm: 1,             // apo at COAST_WAIT must be >= targetAlt - tol (else Fail2)
       eSafetyMargin: 0.0005,        // keep E strictly below eMax (no knife edge)
     },

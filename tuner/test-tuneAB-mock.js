@@ -64,7 +64,7 @@ function makeHook(model) {
       if (o.stopAt === 'CIRC_END') { stats.circ++; return Object.assign(base, c, { endReason: 'CIRC_END', stageFuelEngOffKg: c.stageFuelEngOffKg > 0 ? c.stageFuelEngOffKg + (model.fastOffset || 0) : 0 }); }
       stats.full++;
       return Object.assign(base, c, { endReason: 'CLEARED', payloadReleased: true, payloadCleared: true, maxQKPa: 24.7, maxG: 4.8,
-        apogeeKm: 320.1, perigeeKm: 320.0, ecc: 1e-5, boosterFuelLeftKg: 52625, deployTimeS: 590 + (U.aEff(p) - 13.94) * 2,
+        apogeeKm: 320.1, perigeeKm: 320.0, ecc: 1e-5, boosterFuelLeftKg: 52625, deployTimeS: 590.46 + 0.00983 * (p.meco - 52612) + (U.aEff(p) - 13.94) * 2,   // fitted to 2 REAL points: MECO 52612 -> 590.46 s, MECO 61150 -> 674.4 s (deploy follows MECO, residual is only its proxy)
         stageResidualKg: residualOf(p.meco, U.gOf(p.Gi), model.res) });
     },
   };
@@ -164,7 +164,7 @@ const nFlip = (r) => r.log.filter((l) => /flipping/.test(l)).length;
   // cliff = bias bound: all probes above it fail; each G quantum down moves it out by ~0.52 deg / 2.4e-4 deg/kg = 2183 kg
   const cliffOf = (G) => 61650 + 218300 * (0.60 - G);
   const REALM = { res: { fn: realRes(-0.03) }, cliff: cliffOf };
-  const runFom = async (p, o, m) => { const h = makeHook(Object.assign({ trueEmax: 0.185 }, m || {})); const r = await TunerCore.findOptimalMeco(p, Object.assign({ hook: h }, o || {})); r.hook = h; return r; };
+  const runFom = async (p, o, m) => { const h = makeHook(Object.assign({ trueEmax: 0.185 }, m || {})); const r = await TunerCore.findOptimalMeco(p, Object.assign({ hook: h, band: [0, 50] }, o || {})); r.hook = h; return r; };   // v2 tests above use the OLD band [0,50] explicitly; new-band tests are below
   const p52 = U.fromRaw(C.baselineRaw);
   const nSteps = (r) => r.history.filter((e) => !e.superseded).length;
 
@@ -242,6 +242,64 @@ const nFlip = (r) => r.log.filter((l) => /flipping/.test(l)).length;
     t('maxIter respected', r.iters <= 2 && !r.ok); }
   { const r = await runFom(p52, { maxEvals: 10 }, REALM);
     t('maxEvals option respected (stops early, status maxEvals)', !r.ok && /maxEvals/.test(r.status) && r.evals <= 10 + 40, 'status=' + r.status + ' evals=' + r.evals); }
+
+
+  // ======================= Band change [100,200] / deorbit-on [500,600] + runTuner (Phase A + B) =======================
+  const inB = (x, b) => x >= b[0] && x <= b[1];
+  t('config: residualTargetKg = [100,200] (deorbit off)', JSON.stringify(C.limits.residualTargetKg) === '[100,200]');
+  t('config: residualTargetDeorbitOnKg = [500,600]', JSON.stringify(C.limits.residualTargetDeorbitOnKg) === '[500,600]');
+  t('residualBand(): follows cfg.fixed.deorbitEnabled and opts.deorbit', JSON.stringify(TunerCore.residualBand()) === '[100,200]' && JSON.stringify(TunerCore.residualBand({ deorbit: true })) === '[500,600]' &&
+    (() => { C.fixed.deorbitEnabled = true; const b = JSON.stringify(TunerCore.residualBand()); const b2 = JSON.stringify(TunerCore.residualBand({ deorbit: false })); C.fixed.deorbitEnabled = false; return b === '[500,600]' && b2 === '[100,200]'; })());
+  const runDef = async (p, o, m) => { const h = makeHook(Object.assign({ trueEmax: 0.185 }, m || {})); const r = await TunerCore.findOptimalMeco(p, Object.assign({ hook: h }, o || {})); r.hook = h; return r; };   // NO band opt: config-driven
+
+  // A) default config band [100,200], REAL curve: G=0.60 floor 179 is INSIDE this band -> no G-drop needed
+  const rB1 = await runDef(p52, {}, REALM);
+  console.log(rB1.log.join('\n'));
+  t('band[100,200] (config default): converges, residual in band, confirmed real', rB1.ok && inB(rB1.residualKg, [100, 200]) && JSON.stringify(rB1.band) === '[100,200]', 'status=' + rB1.status + ' G=' + rB1.G + ' MECO=' + rB1.meco + ' resid=' + rB1.residualKg.toFixed(1) + ' deploy=' + rB1.deployTimeS.toFixed(1) + ' iters=' + rB1.iters + ' evals=' + rB1.evals);
+  t('band[100,200]: deploy time shorter than with the [0,50] band (lower MECO)', rB1.deployTimeS < r1.deployTimeS && rB1.meco < r1.meco, 'deploy[100,200]=' + rB1.deployTimeS.toFixed(1) + ' deploy[0,50]=' + r1.deployTimeS.toFixed(1));
+  t('history rows carry deployTimeS (real rows finite, fast rows NaN)', rB1.history.every((e) => 'deployTimeS' in e && (e.real ? (!e.ok || Number.isFinite(e.deployTimeS)) : Number.isNaN(e.deployTimeS))) && /deploy=/.test(rB1.log.join('\n')));
+
+  // B) same band but the cliff sits lower (real run: 60612 failed at G=0.60, residual ~243 > 200) -> G-drop path
+  const REALM2 = { res: { fn: realRes(-0.03) }, cliff: (G) => 60500 + 218300 * (0.60 - G) };
+  const rB2 = await runDef(p52, {}, REALM2);
+  console.log(rB2.log.join('\n'));
+  t('band[100,200], low cliff (floor 214 > 200 at G=0.60): G-drop, converges', rB2.ok && inB(rB2.residualKg, [100, 200]) && rB2.gDrops >= 1, 'status=' + rB2.status + ' G=' + rB2.G + ' drops=' + rB2.gDrops + ' MECO=' + rB2.meco + ' resid=' + rB2.residualKg.toFixed(1) + ' iters=' + rB2.iters + ' evals=' + rB2.evals + ' fails=' + rB2.failingProbes);
+  t('band[100,200], low cliff: bounded cost (<= 10 iters, <= 50 evals, <= 3 failing probes)', rB2.iters <= 10 && rB2.evals <= 50 && rB2.failingProbes <= 3);
+
+  // C) deorbit ON band [500,600]
+  const rB3 = await runDef(p52, { deorbit: true }, REALM);
+  t('band[500,600] (deorbit on): converges at G=0.60, no G-drop, residual in band', rB3.ok && inB(rB3.residualKg, [500, 600]) && rB3.gDrops === 0 && rB3.G === 0.60 && JSON.stringify(rB3.band) === '[500,600]', 'status=' + rB3.status + ' MECO=' + rB3.meco + ' resid=' + rB3.residualKg.toFixed(1) + ' deploy=' + rB3.deployTimeS.toFixed(1) + ' iters=' + rB3.iters + ' evals=' + rB3.evals);
+  { C.fixed.deorbitEnabled = true; const r = await runDef(p52, {}, REALM); C.fixed.deorbitEnabled = false;
+    t('band[500,600] chosen from cfg.fixed.deorbitEnabled (config-driven, no opts)', r.ok && inB(r.residualKg, [500, 600]), 'resid=' + r.residualKg.toFixed(1)); }
+
+  // D) runTuner = Phase A + Phase B, coupled
+  const runT = async (p, o, m) => { const h = makeHook(Object.assign({ trueEmax: 0.185 }, m || {})); const r = await TunerCore.runTuner(p, Object.assign({ hook: h }, o || {})); r.hook = h; return r; };
+  const rt = await runT(p52, { mode: 'fine' }, REALM);
+  console.log(rt.log.filter((l) => /^===|residual guard|G descent|Phase|runTuner|tuneAB:/.test(l)).join('\n'));
+  t('runTuner: ok, shape {phaseA, phaseB, bestPoint, bestScore, bestMetrics, evals, breakdown, wallMs, log}', rt.ok && rt.phaseA && rt.phaseB && rt.bestPoint && Number.isFinite(rt.bestScore) && rt.bestMetrics && rt.evals > 0 && rt.breakdown && rt.breakdown.phaseA && rt.breakdown.phaseB && rt.wallMs >= 0 && rt.log.length > 0,
+    'status=' + rt.status + ' src=' + rt.bestSource);
+  t('runTuner: residual AFTER Phase B is inside [100,200]', inB(rt.bestResidualKg, [100, 200]) && inB(rt.bestMetrics.stageResidualKg, [100, 200]), 'resid=' + rt.bestResidualKg.toFixed(1));
+  t('runTuner: every verified Phase B candidate that is ok is in band (guard)', rt.phaseB.candidates.filter((c) => c.ok).every((c) => inB(c.metrics.stageResidualKg, [100, 200])),
+    rt.phaseB.candidates.map((c) => c.tag + ':' + (c.metrics ? c.metrics.stageResidualKg.toFixed(0) : '-') + (c.ok ? '' : '(x)')).join(' '));
+  t('runTuner: Phase B G descent was stopped by the residual guard (G=0.59 lane would give residual < 100)', rt.phaseB.log.some((l) => /residual guard/.test(l)) || rt.phaseB.candidates.every((c) => !c.metrics || inB(c.metrics.stageResidualKg, [100, 200])));
+  t('runTuner: best score <= Phase A score (Phase A point is the Phase B start lane)', rt.bestScore <= rt.phaseA.score + 1e-9, 'best=' + rt.bestScore.toFixed(3) + ' A=' + rt.phaseA.score.toFixed(3));
+  t('runTuner: best deploy < the [0,50] run, final point lattice-valid, MECO = Phase A MECO', rt.bestDeployS < r1.deployTimeS && U.inBounds(rt.bestPoint) && rt.bestPoint.meco === rt.phaseA.meco, 'deploy=' + rt.bestDeployS.toFixed(1) + ' MECO=' + rt.bestPoint.meco + ' G=' + U.gOf(rt.bestPoint.Gi));
+  t('runTuner: evals = Phase A + Phase B', rt.evals === rt.phaseA.evals + rt.phaseB.evals, 'A=' + rt.phaseA.evals + ' B=' + rt.phaseB.evals);
+  t('runTuner: Phase A aims into the upper part of the band ([150,200])', JSON.stringify(rt.phaseA.band) === '[150,200]' && inB(rt.phaseA.residualKg, [150, 200]), 'A resid=' + rt.phaseA.residualKg.toFixed(1));
+  // without the guard, Phase B would have gone to G=0.59 (residual < 100): prove the guard matters
+  { const h = makeHook({ trueEmax: 0.185, res: REALM.res, cliff: REALM.cliff });
+    const A = await TunerCore.findOptimalMeco(p52, { hook: h, band: [150, 200] });
+    const B = await TunerCore.tuneAB(A.point, { hook: h, mode: 'fine' });
+    t('guard matters: unguarded Phase B (tuneAB alone) leaves the band', B.best && !inB(B.best.metrics.stageResidualKg, [100, 200]), 'unguarded best G=' + (B.best && U.gOf(B.best.fullPoint.Gi)) + ' resid=' + (B.best && B.best.metrics.stageResidualKg.toFixed(1))); }
+  // low-cliff case (Phase A needs a G-drop first) + deorbit on
+  { const r = await runT(p52, { mode: 'fast' }, REALM2);
+    t('runTuner (low cliff, G-drop in Phase A, fast B): ok and in band', r.ok && inB(r.bestResidualKg, [100, 200]), 'status=' + r.status + ' G=' + (r.bestPoint && U.gOf(r.bestPoint.Gi)) + ' resid=' + r.bestResidualKg.toFixed(1) + ' evals=' + r.evals); }
+  { const r = await runT(p52, { mode: 'fast', deorbit: true }, REALM);
+    t('runTuner deorbit ON: ok and residual in [500,600]', r.ok && inB(r.bestResidualKg, [500, 600]) && JSON.stringify(r.band) === '[500,600]', 'status=' + r.status + ' resid=' + r.bestResidualKg.toFixed(1) + ' deploy=' + r.bestDeployS.toFixed(1)); }
+  { const r = await runT(p52, { mode: 'fast' }, { alwaysF1: true });
+    t('runTuner: Phase A failure -> ok=false, phaseB null, no crash', !r.ok && r.phaseB === null && /phase A failed/.test(r.status), r.status); }
+  { const r = await runT(p52, { mode: 'fast', abortRef: { aborted: true } }, REALM);
+    t('runTuner: abort -> no evals', !r.ok && r.hook.stats.coast + r.hook.stats.circ + r.hook.stats.full === 0); }
 
   C.bounds.bias.upper = biasUp0;
   console.log(fails ? 'FAILS: ' + fails : 'ALL PASS');
