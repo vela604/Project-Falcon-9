@@ -252,7 +252,13 @@
     let abEvals = 0, leadEvals = 0, fullEvals = 0;
     const hits0 = cache.hits;
 
-    const dirOf = (cls) => (cls === 'F2' ? -1 : 1);       // +1 = gentler
+    // Direction along BIAS that fixes each failure class (+1 = bias up, -1 = bias down).
+    // Verified on the real tuneAB log: along bias E(bias) is a V (E = |signed ecc|, min ~0), and
+    //   F1 (stage vr<0)  sits on the LOW-bias side  -> bias UP
+    //   FE (E > ceil)    sits on the HIGH-bias side -> bias DOWN (E fell monotonically 0.685 -> 0.123 for bias 0.59 -> -0.01 at G=0.59)
+    //   F2 (apo short)   not seen in the real log; spec (aggressive) -> bias DOWN, unverified.
+    // (Old rule FE=+1 was wrong: every FE scan walked uphill, then 'flipped', and scans at G=0.57 stepped over the OK window.)
+    const dirOf = (cls) => (cls === 'F1' ? 1 : -1);
     function classify(m) {
       if (m.endReason === 'STAGE_VR_NEG' || m.stageVrNeg || m.endReason === 'CRASHED') return 'F1';
       if (m.endReason !== 'COAST_WAIT_ENTRY' || !Number.isFinite(m.eCoast)) return 'F2';
@@ -262,6 +268,7 @@
     }
     const dsc = (p) => 'G=' + U.gOf(p.Gi) + ' T=' + U.tOf(p.Tn) + ' A=' + U.aEff(p).toFixed(4) + ' bias=' + U.biasOf(p.bi);
 
+    const okPts = new Map();   // every point that was OK when evaluated (re-checked against the current ceil on reuse)
     async function evAB(p) {
       if (!U.inBounds(p)) return { p, cls: 'OOB', E: NaN, m: null };
       if (opts.abortRef && opts.abortRef.aborted) throw new Stop('aborted');
@@ -273,6 +280,7 @@
         cache.set(p, 'COAST_WAIT_ENTRY', m); abEvals++; fresh = true;
       }
       const r = { p, cls: classify(m), E: m.eCoast, m };
+      if (r.cls === 'OK') okPts.set(U.key(p), r);
       if (fresh) say('  AB#' + abEvals + ' ' + dsc(p) + '  ' + r.cls + '  E=' + fmt(m.eCoast, 5) +
                      '  apo=' + fmt(m.apoCoastKm, 2) + '  stageVrMin=' + fmt(m.vrMinStageBurn, 2) + '  end=' + m.endReason);
       return r;
@@ -297,8 +305,10 @@
         }
         if (dirOf(r.cls) === -dir && dirOf(prev.cls) === dir) {
           // crossing: prev wants `dir`, r wants -dir  -> OK window lies between them
+          // The OK window between F1 and FE edges can be only ~0.01 deg wide (real log) -> bisect finer than the ladder floor.
+          const bisFloor = Math.max(1, Math.round(floorBi / 10));
           let a = prev.p.bi, b = r.p.bi, ca = prev.cls;
-          while (Math.abs(b - a) > floorBi) {
+          while (Math.abs(b - a) > bisFloor) {
             const mid = Math.round((a + b) / 2);
             if (mid === a || mid === b) break;
             const rm = await evAB(Object.assign({}, p0, { bi: mid }));
@@ -347,20 +357,31 @@
       return best;
     }
 
-    // Bias hill-climb on E (toward the ceiling, never above), both directions per level.
+    // Raise E toward the ceiling (E is steep in bias near its minimum: ~0.4 per 0.02 deg in the real log, so a
+    // fixed 0.01 ladder jumps from E~0.001 straight to FE). Go up in bias (E rises on that side) with doubling
+    // steps from a fine start until FE, then bisect OK|FE down to the finest bias resolution, stopping early when
+    // E lands in [ceil - eClimbTol, ceil]. Never returns a non-OK point.
     async function climbE(r) {
-      let cur = r, lastDir = 1;
-      for (const s of ladder) {
-        for (let moves = 0; moves < 8; moves++) {
-          let improved = false;
-          for (const d of [lastDir, -lastDir]) {
-            const q = await evAB(U.step(cur.p, { dbi: d * s }));
-            if (q.cls === 'OK' && q.E > cur.E + 1e-9) { cur = q; lastDir = d; improved = true; break; }
-          }
-          if (!improved) break;
-        }
+      const rq = Math.max(1, Math.round(floorBi / 10));          // finest bias resolution (0.001 fine, 0.0001 accurate)
+      const tolE = opts.eClimbTol != null ? opts.eClimbTol : 0.01;
+      const inWin = (x) => x.E >= ceil - tolE;
+      let best = r;
+      if (inWin(best)) return best;
+      let a = r, bad = null, st = 4 * rq;
+      while (!bad && a.p.bi < biasHi) {
+        const q = await evAB(U.step(a.p, { dbi: Math.min(st, biasHi - a.p.bi) }));
+        if (q.cls === 'OK') { if (q.E > best.E) best = q; a = q; if (inWin(q)) return q; st *= 2; }
+        else bad = q;
       }
-      return cur;
+      if (!bad) return best;
+      let b = bad;
+      while (b.p.bi - a.p.bi > 1) {                                // down to 1 quantum: E can move ~0.05 per 0.001 deg at low A
+        const mid = Math.floor((a.p.bi + b.p.bi) / 2);
+        if (mid <= a.p.bi) break;
+        const q = await evAB(Object.assign({}, a.p, { bi: mid }));
+        if (q.cls === 'OK') { if (q.E > best.E) best = q; a = q; if (inWin(q)) return q; } else b = q;
+      }
+      return best;
     }
 
     const all = [];            // every verified candidate (all rounds)
@@ -396,13 +417,23 @@
       for (round = 0; round <= maxRelearn; round++) {
         ceil = eMax - eSafe;
         say('--- round ' + round + '  eMax=' + fmt(eMax, 4) + ' ceil=' + fmt(ceil, 4) + ' ---');
-        let r = await startOk(startP);
-        if (!r) { status = 'no OK (A,bias) found (Fail3 exhausted)'; break; }
-        say('startOk: ' + dsc(r.p) + ' E=' + fmt(r.E, 5));
-        r = await push(r, 'G', [mode.gStep], 1000, 6, 40);     // G rescue: bias +-0.1 steps
-        const afterG = r;
-        r = await push(r, 'T', tLadder, 200, 4, 8);            // T rescue: bias +-0.02 steps
-        const preClimb = r;
+        let r, afterG, preClimb;
+        // Relearn rounds: the lower ceiling only invalidates points with E > ceil. Re-use the lowest-A point already
+        // visited with E <= new ceil (0 evals) instead of re-scanning from a relaxed A (cost ~80 evals in the mock).
+        const pool = round === 0 ? [] : [...okPts.values()].filter((x) => x.E <= ceil && x.m)
+          .sort((a, b) => U.aEff(a.p) - U.aEff(b.p));
+        if (pool.length) {
+          r = pool[0]; afterG = r; preClimb = pool[1] || r;
+          say('relearn: reuse visited ' + dsc(r.p) + ' E=' + fmt(r.E, 5) + ' (lowest A with E <= ceil)');
+        } else {
+          r = await startOk(startP);
+          if (!r) { status = 'no OK (A,bias) found (Fail3 exhausted)'; break; }
+          say('startOk: ' + dsc(r.p) + ' E=' + fmt(r.E, 5));
+          r = await push(r, 'G', [mode.gStep], 1000, 10, 40);    // G rescue: bias +-0.1 steps (isoline shift ~0.6 deg per G quantum)
+          afterG = r;
+          r = await push(r, 'T', tLadder, 200, 4, 4);            // T rescue: bias +-0.02 steps, <=4 steps/level
+          preClimb = r;
+        }
         r = await climbE(r);
         say('AB result: ' + dsc(r.p) + ' E=' + fmt(r.E, 5) + '  (AB evals so far ' + abEvals + ')');
 

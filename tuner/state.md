@@ -5,6 +5,7 @@
 ## 1. Current status
 - **Step 5 ✅** (user-confirmed). Config fix done: `limits.marginTargetS = [3.5, 5.5]`.
 - **Last finished:** Step 6 code delivered — `TunerCore.tuneAB` in `tuner-core.js` + html button `Tune (A,bias) + lead (baseline)` (mode select + eMax input) + config keys. Mock-tested in node (`test-tuneAB-mock.js`, synthetic E model, ALL PASS); **real sim pe abhi chala nahi**.
+- **Step 6 fix (this chat):** real log analysed -> dirOf fixed, climbE rewritten, relearn reuses visited points, mock refitted to real surface (ALL PASS). See section 13. **Real re-run pending.**
 - **Next (user):** page me mode=`fine`, eMax=0.20 pe `Tune (A,bias) + lead (baseline)` dabao; poora log paste karo (AB# lines, verify lines, `=== tuneAB RESULT`, candidates, baseline-vs-best line). Phir Step 6 ✅ -> Step 7.
 - **Next step after verify:** Step 7 — Phase A `findOptimalMeco()` (outer loop, residual 0–50 kg). Attach: `state.md`, `multi-step-project.md`, `prompt-web.md`, `tuner/` saari files (html, config, engine, utils, hook, core) + tuneAB log.
 
@@ -127,3 +128,13 @@ E@COAST_WAIT=0.172278  apo/peri@coast=320.00/-1646.62  tToApo=49.7 s  alt@coast=
 - Config also: `limits.marginTargetS [3.5,5.5]`, `modes.*.candidates`.
 - Mock (node, synthetic E(gentleness), true E-limit 0.185 below the 0.20 guess): fast/fine/accurate all ok, 2 relearn rounds, ab evals 83/82/102 (+ lead ~40-80, full 1-3); no-learn case 40 evals; F1 start recovers (43); impossible ⇒ ok=false at 30 evals. Mock is a pessimistic worst case (A↔bias isoline slide + learning from scratch); real sim eval count expected lower. **Each real eval ≈ 7 s ⇒ fine mode ~ (ab+lead+full) × 7 s; if the real log shows > ~60 AB evals, Step 10 tuning needed (bigger T ladder start, fewer bias levels).**
 - Done-when (pending real run): best score <= baseline score (button prints baseline vs best), A_eff < 13.94 or equal, evals reported.
+
+
+## 13. Step 6 fix after first real tuneAB log (AB#1..55)
+**Real surface facts (from log):**
+- E = |signed ecc| -> **V-shape in bias**, min ~0 at b0(G,T). Right of b0 E rises steeply then saturates (~0.7). F1 (stage vr<0) = cliff just LEFT of b0; FE = high-bias side. So **FE -> bias DOWN, F1 -> bias UP** (old code had FE=+1 = wrong; every FE scan walked uphill and 'flipped').
+- b0 moves ~0.52-0.6 deg bias per 0.01 G quantum (the 'G jump' 0.60->0.59: E .17->.69 at same bias), ~4.5 deg/s with T (curved). Bias wander 0.59 -> -0.85 is the A<->bias isoline, NOT a bug.
+- Steepness grows as A drops: OK window ~0.1 deg wide at T=4.80, ~0.01-0.02 at T=4.783. Bias bound -2 => G<~0.555 unreachable.
+- Old end state E=0.00138 = climbE fixed 0.01 ladder jumped over the window (E .001 -> .4 within 0.018 deg).
+**Code changes (tuner-core.js):** `dirOf` F1=+1/else -1 (F2 = -1, **unverified**, never seen in real log); crossing bisect resolution = floorBi/10 (0.001 fine); `climbE` = doubling up-steps from 4*rq then bisect OK|FE to 1 quantum, stops when E in [ceil-0.01, ceil]; G rescue K 6->10; T push <=4 steps/level; relearn rounds reuse lowest-A visited OK point with E<=new ceil (0 evals) instead of restarting from relaxed A.
+**Mock (test-tuneAB-mock.js):** surface fitted (scipy) to the real log: V-shape, F1 cliff, G jump, A-dependent steepness, stageVrMin follows E, bias bounds. Downstream `trueEmax` (lead fails above it) is still INVENTED. ALL PASS. Mock AB evals: fast ~49, fine ~73, accurate ~96 (target <60 for fine -> Step 10 tuning if real run is similar; main cost = T ladder fails on narrow windows).
