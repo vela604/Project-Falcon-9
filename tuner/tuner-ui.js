@@ -135,8 +135,50 @@
     opts = opts || {};
     const doc = root.document, cfg = C();
     if (!doc.getElementById('tuiStyle')) { const s = doc.createElement('style'); s.id = 'tuiStyle'; s.textContent = CSS; doc.head.appendChild(s); }
-    const refs = cfg.references.map((r, i) =>
-  '<option value="' + i + '"' + (r.meco === cfg.meco.start ? ' selected' : '') + '>ref MECO ' + r.meco + (r.alt != null ? ' · ' + r.alt + ' km' : '') + '</option>').join('');
+  // Refs come from saved presets only (guidancePresets.js). The default preset is always present;
+// user-saved presets appear as well. Config references are no longer shown in the dropdown.
+function collectRefs() {
+  const out = [];
+  const push = (raw, src) => {
+    if (!raw) return;
+    const G = Number(raw.G), T = Number(raw.T), bias = Number(raw.bias), lead = Number(raw.lead), meco = Number(raw.meco);
+    if (![G, T, bias, lead, meco].every(Number.isFinite)) return;
+    out.push({ G, T, bias, lead, meco, alt: Number.isFinite(Number(raw.alt)) ? Number(raw.alt) : 320, name: raw.name || null, src });
+  };
+  try {
+    if (typeof getAllPresetsForGuide === 'function') {
+      const list = getAllPresetsForGuide(cfg.guideName) || [];
+      const defs = list.filter((p) => p.isDefault);
+      const users = list.filter((p) => !p.isDefault);
+      // default preset first, then user presets (alphabetical)
+      users.sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+      defs.concat(users).forEach((meta) => {
+        const p = (typeof getPresetById === 'function') ? getPresetById(meta.id) : meta;
+        const c = p && p.constants; if (!c) return;
+        push({
+          G: c.ascent && c.ascent.PUSH_MAX_GIMBAL_DEG,
+          T: c.ascent && c.ascent.PUSH_T_S,
+          bias: c.insertion && c.insertion.STAGE_BURN_AOA_BIAS_DEG,
+          lead: c.insertion && c.insertion.CIRC_TRIGGER_LEAD_S,
+          meco: c.ascent && c.ascent.MECO_TARGET_BOOSTER_FUEL_KG,
+          alt: c.insertion && c.insertion.TARGET_ORBIT_ALT_KM,
+          name: p.name || (p.isDefault ? 'default' : ('preset ' + (meta.id || '?')))
+        }, p.isDefault ? 'default' : 'preset');
+      });
+    }
+  } catch (e) { try { console.warn('[tuner-ui] presets read failed:', e); } catch (_) {} }
+  if (!out.length) {
+    // fallback: presets unavailable → show at least the current baseline so the UI is not empty
+    push({ G: cfg.baselineRaw.G, T: cfg.baselineRaw.T, bias: cfg.baselineRaw.bias, lead: cfg.baselineRaw.lead, meco: cfg.baselineRaw.meco, alt: 320, name: 'baseline (fallback)' }, 'fallback');
+  }
+  return out;
+}
+const REFS = collectRefs();
+const refs = REFS.map((r, i) =>
+  '<option value="' + i + '"' + '>' +
+  (r.src === 'preset' ? '★ ' : (r.src === 'default' ? '◆ ' : '')) +
+  (r.name ? esc(r.name) + ' · ' : '') +
+  'MECO ' + r.meco + ' · ' + r.alt + ' km</option>').join('');
   
     // default snapshot for Reset
     const DEFAULTS = {};
@@ -174,7 +216,7 @@
       '<div class="panel tui" id="tuiResPanel" hidden><h3>Result · leaderboard</h3><div id="tuiRes"></div></div>';
 
     const $ = (id) => el.querySelector('#' + id);
-    const S = { res: null, sort: 'score', alt: cfg.fixed.targetAltKg || 320, rows: [], running: false, abortRef: { aborted: false } };
+    const S = { res: null, sort: 'score', alt: cfg.fixed.targetAltKm, rows: [], running: false, abortRef: { aborted: false }, refs: REFS };
     S.alt = cfg.fixed.targetAltKm;
 const logBuf = [];
 
@@ -255,7 +297,7 @@ $('tuiDurCapAuto').addEventListener('click', () => { durCapDirty = false; refres
     // ---- run / stop / result ----
 function updateNote() {
   const alt = +$('tuiAlt').value;
-  const ref = cfg.references[+$('tuiStart').value];
+  const ref = S.refs[+$('tuiStart').value];
   const refAlt = ref && ref.alt != null ? ref.alt : 320;
   const parts = [];
   if (Math.abs(refAlt - alt) > 100) parts.push('start ref tuned for ' + refAlt + ' km; target ' + alt + ' km — expect more evals');
@@ -269,7 +311,7 @@ function autoPickRef() {
   if (!startAuto) return;
   const alt = +$('tuiAlt').value || cfg.fixed.targetAltKm;
   let bestI = 0, bestD = Infinity, bestIsStart = false;
-  cfg.references.forEach((r, i) => {
+  S.refs.forEach((r, i) => {
     const d = Math.abs((r.alt != null ? r.alt : 320) - alt);
     const isStart = r.meco === cfg.meco.start;
     if (d < bestD - 1e-9 || (Math.abs(d - bestD) < 1e-9 && isStart && !bestIsStart)) { bestD = d; bestI = i; bestIsStart = isStart; }
@@ -305,7 +347,7 @@ $('tuiAlt').addEventListener('input', () => { autoPickRef(); refreshDurCap(); })
       $('tuiRun').disabled = true; $('tuiStop').disabled = false; $('tuiResPanel').hidden = true;
       setSearchDisabled(true);
       const alt = +$('tuiAlt').value || cfg.fixed.targetAltKm, mode = $('tuiMode').value, deorbit = $('tuiDeorbit').checked;
-      const ref = cfg.references[+$('tuiStart').value];
+      const ref = S.refs[+$('tuiStart').value];
       const env = { atmosphere: $('tuiAtm').checked, slosh: $('tuiSlosh').checked, imu: $('tuiImu').checked,
         wind: { enabled: $('tuiWind').checked, speed: +$('tuiWindSpd').value || 0, directionDeg: +$('tuiWindDir').value || 0 },
         boosterPct: +$('tuiBoost').value, stagePct: +$('tuiStage').value };
@@ -346,7 +388,7 @@ setSearchDisabled(false);
 
     fillConfigInputs();
 refreshDurCap(true);
-updateNote();
+autoPickRef();
 return { state: S, render: renderResult };
 }
 
