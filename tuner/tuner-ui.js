@@ -1,14 +1,6 @@
 // ============================================================================
 // tuner-ui.js — Step 9: inputs, live progress, ranked leaderboard (sort tabs),
-// expandable result blocks, Copy / Download JSON (Guidance.applyGuideConfig format).
-//
-//   TunerUI.mount(rootEl)         build the panels into rootEl and wire events
-//   TunerUI.render(res, opts)     (re)render a runTuner() result into the result panel
-// Pure helpers (no DOM, unit-tested in node): rowJson, rowsJson, rowBlockHtml, boardHtml,
-//   tabsHtml, parseLogLine, summaryLine, esc, fmt
-//
-// Needs (globals): TunerConfig, TunerUtils, TunerCore, TunerHook (stats only).
-// The sim is a singleton: one run at a time (Run disabled while running).
+// expandable result blocks, Copy / Download JSON, config panel (weights live, search next-run).
 // ============================================================================
 (function () {
   'use strict';
@@ -19,40 +11,28 @@
   const fmt = (x, d) => (Number.isFinite(x) ? x.toFixed(d) : '–');
   const TAB_LABEL = { score: 'Score', accuracy: 'Accuracy', fuel: 'Fuel', time: 'Time' };
 
-  // ---- pure helpers ---------------------------------------------------------
-  // Full config for one row (tunables + fixed set): shallow-merge safe for applyGuideConfig.
-  function rowJson(row, altKm) {
-    return U().toValues(row.point, { targetAltKm: altKm != null ? altKm : C().fixed.targetAltKm });
-  }
+  function rowJson(row, altKm) { return U().toValues(row.point, { targetAltKm: altKm != null ? altKm : C().fixed.targetAltKm }); }
   function rowsJson(res, rows, altKm) {
-    return {
-      meco: res.meco, band: res.band, targetAltKm: altKm,
+    return { meco: res.meco, band: res.band, targetAltKm: altKm,
       rows: rows.map((r, i) => ({ rank: i + 1, src: r.src, tag: r.tag, ok: r.ok, score: r.score, orbitErrKm: r.orbitErrKm, ecc: r.ecc,
-        fuelKg: r.fuelKg, deployS: r.deployS, residualKg: r.residualKg, config: rowJson(r, altKm) })),
-    };
+        fuelKg: r.fuelKg, deployS: r.deployS, residualKg: r.residualKg, config: rowJson(r, altKm) })) };
   }
-
-  // value highlighted for the active sort key
   function keyValue(r, key) {
     if (key === 'accuracy') return fmt(r.orbitErrKm, 3) + ' km';
     if (key === 'fuel') return fmt(r.fuelKg, 0) + ' kg';
     if (key === 'time') return fmt(r.deployS, 2) + ' s';
     return fmt(r.score, 3);
   }
-
   function rowBlockHtml(r, rank, key, idx, open) {
     const d = r.desc || {};
     const sum = '<span class="tui-rank">#' + rank + '</span> <span class="tui-key">' + esc(keyValue(r, key)) + '</span>' +
-      ' <span class="tui-dim">' + esc(r.src + ' ' + r.tag) + '</span>' +
-      (r.ok ? '' : ' <span class="tui-badge">REJECTED</span>');
-    const kv = [
-      ['score', fmt(r.score, 3)], ['orbit err', fmt(r.orbitErrKm, 3) + ' km'], ['apo / peri', fmt(r.apoKm, 3) + ' / ' + fmt(r.periKm, 3)],
+      ' <span class="tui-dim">' + esc(r.src + ' ' + r.tag) + '</span>' + (r.ok ? '' : ' <span class="tui-badge">REJECTED</span>');
+    const kv = [['score', fmt(r.score, 3)], ['orbit err', fmt(r.orbitErrKm, 3) + ' km'], ['apo / peri', fmt(r.apoKm, 3) + ' / ' + fmt(r.periKm, 3)],
       ['ecc', Number.isFinite(r.ecc) ? r.ecc.toExponential(2) : '–'], ['E@coast', fmt(r.E, 4)], ['fuel', fmt(r.fuelKg, 0) + ' kg'],
-      ['deploy', fmt(r.deployS, 2) + ' s'], ['residual', fmt(r.residualKg, 1) + ' kg'],
-    ].map((x) => '<span class="tui-k">' + x[0] + '</span><span>' + esc(x[1]) + '</span>').join('');
-    const pr = [
-      ['G', d.G], ['T', d.T], ['A_eff', d.A_eff], ['bias', d.bias], ['lead', d.lead + ' (' + d.leadTicks + 't)'], ['MECO', d.meco],
-    ].map((x) => '<span class="tui-k">' + x[0] + '</span><span>' + esc(x[1]) + '</span>').join('');
+      ['deploy', fmt(r.deployS, 2) + ' s'], ['residual', fmt(r.residualKg, 1) + ' kg']]
+      .map((x) => '<span class="tui-k">' + x[0] + '</span><span>' + esc(x[1]) + '</span>').join('');
+    const pr = [['G', d.G], ['T', d.T], ['A_eff', d.A_eff], ['bias', d.bias], ['lead', d.lead + ' (' + d.leadTicks + 't)'], ['MECO', d.meco]]
+      .map((x) => '<span class="tui-k">' + x[0] + '</span><span>' + esc(x[1]) + '</span>').join('');
     const parts = r.parts ? '<div class="tui-dim">parts: ' + esc(Object.keys(r.parts).map((k) => k + ' ' + fmt(r.parts[k], 2)).join(' · ')) + '</div>' : '';
     const why = (r.reasons && r.reasons.length) ? '<div class="tui-bad">' + esc(r.reasons.join(', ')) + '</div>' : '';
     return '<details class="tui-row' + (r.ok ? '' : ' tui-rej') + '"' + (open ? ' open' : '') + '><summary>' + sum + '</summary>' +
@@ -60,18 +40,15 @@
       '<div class="tui-btns"><button data-act="copy" data-idx="' + idx + '">Copy JSON</button>' +
       '<button data-act="dl" data-idx="' + idx + '">Download JSON</button></div></details>';
   }
-
   function tabsHtml(active) {
     return '<div class="tui-tabs">' + U().SORT_KEYS.map((k) =>
       '<button class="tui-tab' + (k === active ? ' on' : '') + '" data-act="sort" data-key="' + k + '">' + TAB_LABEL[k] + '</button>').join('') + '</div>';
   }
-
   function summaryLine(res) {
     const a = res.phaseA, b = res.phaseB;
     return 'status=' + res.status + ' · MECO ' + (res.meco != null ? res.meco : '–') + ' · band [' + (res.band || []).join(',') + '] kg · evals ' + res.evals +
       (a && b ? ' (A ' + a.evals + ' + B ' + b.evals + ')' : '') + ' · wall ' + fmt(res.wallMs / 1000, 1) + ' s';
   }
-
   function boardHtml(res, sortKey) {
     const rows = U().sortRows(res.leaderboard || [], sortKey);
     let h = '<div class="tui-sum ' + (res.ok ? 'tui-ok' : 'tui-bad') + '">' + (res.ok ? 'OK' : 'FAILED') + ' — ' + esc(summaryLine(res)) + '</div>';
@@ -81,8 +58,6 @@
     h += '<div class="tui-btns"><button data-act="copyall">Copy all JSON</button><button data-act="dlall">Download all JSON</button></div>';
     return h;
   }
-
-  // progress info from a runTuner log line
   function parseLogLine(line, st) {
     st = st || {};
     if (/^=== Phase A/.test(line)) st.phase = 'Phase A (MECO search)';
@@ -94,13 +69,13 @@
     return st;
   }
 
-  // ---- DOM part -------------------------------------------------------------
   const CSS = `
 .tui{font-family:var(--font-mono,monospace);font-size:12px}
 .tui .row{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center;margin:6px 0}
 .tui label{display:inline-flex;gap:4px;align-items:center;color:var(--dim,#6b7d9c)}
 .tui select,.tui input[type=number]{background:var(--panel-2,#101a30);color:var(--text,#dbe6f5);border:1px solid var(--border,#1c2b45);padding:4px;font-family:inherit;width:auto}
-.tui input[type=number]{width:70px}
+.tui input[type=number]{width:80px}
+.tui input[type=number]:disabled{opacity:.45}
 .tui button.go{background:#12351f;border-color:#2a7a47;color:var(--green,#4ade80)}
 .tui button.stop{background:#3a1520;border-color:#8a2a45;color:var(--danger,#ff5f7e)}
 .tui-stat{color:var(--yellow,#ffd23f);margin:4px 0}.tui-dim{color:var(--dim,#6b7d9c)}.tui-bad{color:var(--danger,#ff5f7e)}.tui-ok{color:var(--green,#4ade80)}
@@ -112,7 +87,11 @@
 .tui-badge{background:#3a1520;color:var(--danger,#ff5f7e);padding:0 4px;border-radius:3px}
 .tui-grid{display:grid;grid-template-columns:auto 1fr auto 1fr;gap:2px 10px;margin:6px 0}.tui-k{color:var(--dim,#6b7d9c)}
 .tui-btns{display:flex;gap:6px;margin:6px 0;flex-wrap:wrap}
-.tui pre{white-space:pre-wrap;max-height:30vh;overflow:auto;font-size:11px;margin:4px 0}`;
+.tui pre{white-space:pre-wrap;max-height:30vh;overflow:auto;font-size:11px;margin:4px 0}
+.tui .cfgsec{margin:6px 0 2px;color:var(--cyan,#35d6ff);font-size:11px;letter-spacing:.4px;text-transform:uppercase}
+.tui .cfgwrap{display:flex;flex-wrap:wrap;gap:8px 14px;margin:4px 0}
+.tui .cfgwrap label{color:var(--dim,#6b7d9c)}
+.tui textarea{width:100%;min-height:70px;background:var(--panel-2,#101a30);color:var(--text,#dbe6f5);border:1px solid var(--border,#1c2b45);font-family:inherit;font-size:11px;padding:4px;margin-top:4px}`;
 
   function copyText(txt) {
     if (root.navigator && root.navigator.clipboard && root.navigator.clipboard.writeText) return root.navigator.clipboard.writeText(txt);
@@ -128,33 +107,151 @@
     setTimeout(() => URL.revokeObjectURL(a.href), 2000);
   }
 
+  const getPath = (o, p) => p.split('.').reduce((x, k) => (x == null ? x : x[k]), o);
+  const setPath = (o, p, v) => {
+    const parts = p.split('.'); let cur = o;
+    for (let i = 0; i < parts.length - 1; i++) cur = cur[parts[i]];
+    cur[parts[parts.length - 1]] = v;
+  };
+
+  // Config fields shown in the UI. path = dot path into TunerConfig. group: 'rank' | 'search'.
+  const CFG_FIELDS = [
+    { id: 'tuiWOrbit', label: 'orbit weight', path: 'scoring.orbit.weight', group: 'rank', step: 10, min: 0 },
+    { id: 'tuiWEcc', label: 'ecc weight', path: 'scoring.eccentricity.weight', group: 'rank', step: 100, min: 0 },
+    { id: 'tuiWFuel', label: 'fuel weight', path: 'scoring.boosterFuelLeftKgWeight', group: 'rank', step: 0.001, min: 0 },
+    { id: 'tuiWTime', label: 'time weight', path: 'scoring.timeToDeploySWeight', group: 'rank', step: 0.01, min: 0 },
+    { id: 'tuiEMax', label: 'eMax guess', path: 'ecc.eMaxGuess', group: 'search', step: 0.01, min: 0.01, max: 0.6 },
+    { id: 'tuiResLo', label: 'band OFF lo', path: 'limits.residualTargetKg.0', group: 'search', step: 10 },
+    { id: 'tuiResHi', label: 'band OFF hi', path: 'limits.residualTargetKg.1', group: 'search', step: 10 },
+    { id: 'tuiResOnLo', label: 'band ON lo', path: 'limits.residualTargetDeorbitOnKg.0', group: 'search', step: 10 },
+    { id: 'tuiResOnHi', label: 'band ON hi', path: 'limits.residualTargetDeorbitOnKg.1', group: 'search', step: 10 },
+    { id: 'tuiMLo', label: 'margin lo s', path: 'limits.marginTargetS.0', group: 'search', step: 0.1 },
+    { id: 'tuiMHi', label: 'margin hi s', path: 'limits.marginTargetS.1', group: 'search', step: 0.1 },
+  ];
+
   function mount(el, opts) {
     opts = opts || {};
     const doc = root.document, cfg = C();
     if (!doc.getElementById('tuiStyle')) { const s = doc.createElement('style'); s.id = 'tuiStyle'; s.textContent = CSS; doc.head.appendChild(s); }
     const refs = cfg.references.map((r, i) => '<option value="' + i + '"' + (r.meco === cfg.meco.start ? ' selected' : '') + '>ref MECO ' + r.meco + '</option>').join('');
+
+    // default snapshot for Reset
+    const DEFAULTS = {};
+    CFG_FIELDS.forEach((f) => { DEFAULTS[f.path] = getPath(cfg, f.path); });
+
+    const rankFields = CFG_FIELDS.filter((f) => f.group === 'rank').map((f) =>
+      '<label>' + f.label + ' <input type="number" id="' + f.id + '" data-path="' + f.path + '" data-group="rank" step="' + (f.step || 1) + '"' +
+      (f.min != null ? ' min="' + f.min + '"' : '') + (f.max != null ? ' max="' + f.max + '"' : '') + '></label>').join('');
+    const searchFields = CFG_FIELDS.filter((f) => f.group === 'search').map((f) =>
+      '<label>' + f.label + ' <input type="number" id="' + f.id + '" data-path="' + f.path + '" data-group="search" step="' + (f.step || 1) + '"' +
+      (f.min != null ? ' min="' + f.min + '"' : '') + (f.max != null ? ' max="' + f.max + '"' : '') + '></label>').join('');
+
     el.innerHTML =
-      '<div class="panel tui"><h3>Tuner · Phase A + B</h3>' +
       '<div class="row"><label>alt km <input type="number" id="tuiAlt" value="' + cfg.fixed.targetAltKm + '" step="1" min="150"></label>' +
-      '<label>start <select id="tuiStart">' + refs + '</select></label>' +
-      '<label>B mode <select id="tuiMode"><option value="fast">fast</option><option value="fine" selected>fine</option><option value="accurate">accurate</option></select></label>' +
-      '<label><input type="checkbox" id="tuiDeorbit"> deorbit ON (band 500-600 kg)</label></div>' +
+  '<label>start <select id="tuiStart">' + refs + '</select></label>' +
+  '<label>B mode <select id="tuiMode"><option value="fast">fast</option><option value="fine" selected>fine</option><option value="accurate">accurate</option></select></label>' +
+  '<label><input type="checkbox" id="tuiDeorbit"> deorbit ON (band 500-600 kg)</label>' +
+  '<label>duration cap s <input type="number" id="tuiDurCap" step="10" min="100"></label>' +
+  '<button id="tuiDurCapAuto" title="Use the suggested value for the current altitude">auto</button>' +
+  '<span class="tui-dim" id="tuiDurCapHint"></span></div>' +
       '<div class="row"><label><input type="checkbox" id="tuiAtm" checked> atmosphere</label><label><input type="checkbox" id="tuiSlosh" checked> slosh</label>' +
       '<label><input type="checkbox" id="tuiImu"> IMU</label><label><input type="checkbox" id="tuiWind"> wind</label>' +
       '<label>m/s <input type="number" id="tuiWindSpd" value="0" step="1" min="0"></label><label>dir° <input type="number" id="tuiWindDir" value="0" step="5"></label>' +
       '<label>booster % <input type="number" id="tuiBoost" value="100" min="0" max="100"></label><label>stage % <input type="number" id="tuiStage" value="100" min="0" max="100"></label></div>' +
       '<div class="row"><button class="go" id="tuiRun">Run tuner</button><button class="stop" id="tuiStop" disabled>Stop</button>' +
       '<span class="tui-dim" id="tuiNote"></span></div></div>' +
+      '<div class="panel tui"><h3>Config</h3>' +
+      '<div class="cfgsec">Ranking — applies immediately (re-scores the leaderboard)</div><div class="cfgwrap">' + rankFields + '</div>' +
+      '<div class="cfgsec">Search — applies to the next run</div><div class="cfgwrap">' + searchFields + '</div>' +
+      '<div class="row"><button id="tuiExpBtn">Export config</button><button id="tuiImpBtn">Import config</button><button id="tuiRstBtn">Reset defaults</button>' +
+      '<span class="tui-dim" id="tuiCfgStatus"></span></div>' +
+      '<textarea id="tuiCfgIOText" placeholder="Paste config JSON here, then click Import (missing or invalid fields keep their current value)." hidden></textarea></div>' +
       '<div class="panel tui"><h3>Progress</h3><div class="tui-stat" id="tuiStat">idle</div><div class="tui-dim" id="tuiLast"></div>' +
       '<details><summary class="tui-dim">log</summary><pre id="tuiLog"></pre></details></div>' +
       '<div class="panel tui" id="tuiResPanel" hidden><h3>Result · leaderboard</h3><div id="tuiRes"></div></div>';
 
     const $ = (id) => el.querySelector('#' + id);
-    const S = { res: null, sort: 'score', alt: cfg.fixed.targetAltKm, rows: [], running: false, abortRef: { aborted: false } };
-    const logBuf = [];
+    const S = { res: null, sort: 'score', alt: cfg.fixed.targetAltKg || 320, rows: [], running: false, abortRef: { aborted: false } };
+    S.alt = cfg.fixed.targetAltKm;
+const logBuf = [];
 
+// ---- duration cap: auto-suggest for the current altitude, user can override ----
+let durCapDirty = false;
+function refreshDurCap(fromAlt) {
+  const alt = +$('tuiAlt').value || cfg.fixed.targetAltKm;
+  const sug = U().suggestDurationCap(alt);
+  $('tuiDurCapHint').textContent = 'auto ' + sug + ' s';
+  if (!durCapDirty || fromAlt) { $('tuiDurCap').value = sug; }
+}
+$('tuiDurCap').addEventListener('input', () => { durCapDirty = true; });
+$('tuiDurCapAuto').addEventListener('click', () => { durCapDirty = false; refreshDurCap(true); });
+
+    // ---- config panel ----
+    function fillConfigInputs() {
+      CFG_FIELDS.forEach((f) => { const inp = $('f.id'); });
+      CFG_FIELDS.forEach((f) => { const inp = el.querySelector('#' + f.id); if (inp) inp.value = getPath(cfg, f.path); });
+    }
+    function applyInputValue(inp) {
+      const path = inp.dataset.path, group = inp.dataset.group;
+      const v = parseFloat(inp.value);
+      if (!Number.isFinite(v)) { inp.value = getPath(cfg, path); return false; }        // invalid -> restore current
+      setPath(cfg, path, v);
+      return group === 'rank';                                                          // true => leaderboard needs re-score
+    }
+    function rescoreAndRender() {
+      if (!S.res) return;
+      S.res.leaderboard = (S.res.leaderboard || []).map((r) =>
+        U().makeRow(r.src, r.tag, r.point, r.metrics, r.extra || { E: r.E, targetAltKm: S.alt, reject: !r.ok, reasons: r.reasons }));
+      renderResult();
+    }
+    function setSearchDisabled(dis) {
+      CFG_FIELDS.filter((f) => f.group === 'search').forEach((f) => { const inp = el.querySelector('#' + f.id); if (inp) inp.disabled = dis; });
+    }
+    function cfgStatus(msg, cls) { const el2 = $('tuiCfgStatus'); el2.textContent = msg; el2.className = cls || 'tui-dim'; }
+
+    el.addEventListener('input', (ev) => {
+      const inp = ev.target.closest('input[data-path]'); if (!inp) return;
+      const isRank = applyInputValue(inp);
+      if (isRank) rescoreAndRender();
+    });
+
+    $('tuiExpBtn').addEventListener('click', () => {
+      const out = {};
+      CFG_FIELDS.forEach((f) => { out[f.path] = getPath(cfg, f.path); });
+      const txt = JSON.stringify(out, null, 2);
+      copyText(txt).then(() => cfgStatus('exported to clipboard (' + CFG_FIELDS.length + ' fields)', 'tui-ok'),
+                         () => { const ta = $('tuiCfgIOText'); ta.hidden = false; ta.value = txt; ta.select(); cfgStatus('clipboard unavailable — select + copy manually', 'tui-bad'); });
+    });
+    $('tuiImpBtn').addEventListener('click', () => {
+      const ta = $('tuiCfgIOText');
+      if (ta.hidden) { ta.hidden = false; ta.value = ''; ta.focus(); cfgStatus('paste JSON above, click Import again'); return; }
+      let parsed; try { parsed = JSON.parse(ta.value); } catch (e) { cfgStatus('JSON parse error: ' + e.message, 'tui-bad'); return; }
+      let ok = 0, skipped = 0, rankChanged = false;
+      CFG_FIELDS.forEach((f) => {
+        if (!(f.path in parsed)) { skipped++; return; }
+        const v = parsed[f.path];
+        if (typeof v !== 'number' || !Number.isFinite(v)) { skipped++; return; }
+        if (f.min != null && v < f.min) { skipped++; return; }
+        if (f.max != null && v > f.max) { skipped++; return; }
+        setPath(cfg, f.path, v);
+        const inp = el.querySelector('#' + f.id); if (inp) inp.value = v;
+        if (f.group === 'rank') rankChanged = true;
+        ok++;
+      });
+      if (rankChanged) rescoreAndRender();
+      ta.hidden = true;
+      cfgStatus('imported ' + ok + ' field' + (ok === 1 ? '' : 's') + (skipped ? ', ' + skipped + ' skipped (missing/invalid → kept current)' : ''), skipped ? 'tui-dim' : 'tui-ok');
+    });
+    $('tuiRstBtn').addEventListener('click', () => {
+      Object.keys(DEFAULTS).forEach((p) => setPath(cfg, p, DEFAULTS[p]));
+      fillConfigInputs();
+      rescoreAndRender();
+      cfgStatus('reset to page-load defaults', 'tui-ok');
+    });
+
+    // ---- run / stop / result ----
     function note() { $('tuiNote').textContent = (+$('tuiAlt').value !== 320) ? 'warm-start refs are tuned for 320 km: expect more evals' : ''; }
-    $('tuiAlt').addEventListener('input', note);
+$('tuiAlt').addEventListener('input', () => { note(); refreshDurCap(); });
 
     function renderResult() {
       $('tuiResPanel').hidden = false;
@@ -179,13 +276,18 @@
       if (S.running) return;
       S.running = true; S.abortRef = { aborted: false }; logBuf.length = 0; $('tuiLog').textContent = '';
       $('tuiRun').disabled = true; $('tuiStop').disabled = false; $('tuiResPanel').hidden = true;
+      setSearchDisabled(true);
       const alt = +$('tuiAlt').value || cfg.fixed.targetAltKm, mode = $('tuiMode').value, deorbit = $('tuiDeorbit').checked;
       const ref = cfg.references[+$('tuiStart').value];
       const env = { atmosphere: $('tuiAtm').checked, slosh: $('tuiSlosh').checked, imu: $('tuiImu').checked,
         wind: { enabled: $('tuiWind').checked, speed: +$('tuiWindSpd').value || 0, directionDeg: +$('tuiWindDir').value || 0 },
         boosterPct: +$('tuiBoost').value, stagePct: +$('tuiStage').value };
-      const prevDeorbit = cfg.fixed.deorbitEnabled; cfg.fixed.deorbitEnabled = deorbit;   // band + DEORBIT_ENABLED stay consistent
-      S.alt = alt;
+      const prevDeorbit = cfg.fixed.deorbitEnabled; cfg.fixed.deorbitEnabled = deorbit;
+const capIn = parseInt($('tuiDurCap').value, 10);
+const prevCap = cfg.durationCapS;
+cfg.durationCapS = (Number.isFinite(capIn) && capIn >= 100) ? capIn : U().suggestDurationCap(alt);
+S.alt = alt;
+
       const st = { phase: 'starting' }, t0 = performance.now(), hs0 = Object.assign({}, root.TunerHook ? root.TunerHook.stats : {});
       let simInfo = '';
       const tick = () => {
@@ -202,19 +304,24 @@
         const res = await root.TunerCore.runTuner(p, { mode, deorbit, env, targetAltKm: alt, abortRef: S.abortRef,
           onLog: (l) => { logBuf.push(l); parseLogLine(l, st); if (opts.log) opts.log(l); },
           onProgress: (q) => { simInfo = ' · t=' + fmt(q.simTime, 0) + 's ' + (q.phase || ''); } });
-        S.res = res; S.sort = 'score'; renderResult();
+        S.res = res; S.res.altKm = alt; S.sort = 'score'; renderResult();
         st.phase = res.ok ? 'done' : 'finished: ' + res.status;
       } catch (e) {
         st.phase = 'ERROR: ' + e.message; logBuf.push('ERROR: ' + e.message); console.error(e);
       } finally {
         clearInterval(timer); tick();
-        cfg.fixed.deorbitEnabled = prevDeorbit;
+cfg.fixed.deorbitEnabled = prevDeorbit;
+cfg.durationCapS = prevCap;
+setSearchDisabled(false);
         S.running = false; $('tuiRun').disabled = false; $('tuiStop').disabled = true;
       }
     });
-    note();
-    return { state: S, render: renderResult };
-  }
 
-  root.TunerUI = { mount, rowJson, rowsJson, rowBlockHtml, tabsHtml, boardHtml, summaryLine, parseLogLine, keyValue, esc, fmt };
+    fillConfigInputs();
+refreshDurCap(true);
+note();
+return { state: S, render: renderResult };
+}
+
+  root.TunerUI = { mount, rowJson, rowsJson, rowBlockHtml, tabsHtml, boardHtml, summaryLine, parseLogLine, keyValue, CFG_FIELDS, esc, fmt };
 })();

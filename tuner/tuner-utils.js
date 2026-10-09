@@ -134,7 +134,8 @@
     let depth = 0;
     const add = (r, d) => { reasons.push(r); depth += d; };
     if (m.crashed) add('crashed', 100);
-    if (!m.payloadReleased || !m.payloadCleared) add('payload_not_cleared', 50);
+if (m.endReason === 'CAP') add('duration_cap_hit', 80); // run hit durationCapS before payload clear
+if (!m.payloadReleased || !m.payloadCleared) add('payload_not_cleared', 50);
     if (![m.apogeeKm, m.perigeeKm, m.ecc].every(Number.isFinite)) add('no_final_orbit', 50);
     if (Number.isFinite(m.vrEnd) && m.vrEnd < L.vrEndMinMps) add('vrEnd_negative', 10 + (L.vrEndMinMps - m.vrEnd));
     if (Number.isFinite(m.vrMin) && m.vrMin < L.vrMinHardFloorMps) add('vrMin_below_floor', 10 + (L.vrMinHardFloorMps - m.vrMin));
@@ -155,7 +156,15 @@
   return O.weight * O.k * (Math.sqrt(1 + (e / O.k) * (e / O.k)) - 1);
 }
   // raw accuracy (sorting): |apo - alt| + |peri - alt|
-  const orbitErrKm = (m, alt) => Math.abs(m.apogeeKm - curAlt(alt)) + Math.abs(m.perigeeKm - curAlt(alt));
+const orbitErrKm = (m, alt) => Math.abs(m.apogeeKm - curAlt(alt)) + Math.abs(m.perigeeKm - curAlt(alt));
+
+// Suggested durationCapS for a target altitude: 770 s at 320 km (baseline + 30%), +50% per 320 km above.
+// Rough headroom only — real deploy time scales sublinearly. UI auto-fills, user can override.
+function suggestDurationCap(altKm) {
+  const a = curAlt(altKm);
+  const v = 770 * (1 + 0.5 * (a - 320) / 320);
+  return Math.ceil(v / 10) * 10;
+}
 
   // opts: { targetAltKm }. Returns { score, ok, reasons, parts }.
   function score(m, opts) {
@@ -193,10 +202,11 @@
       apoKm: fin(m.apogeeKm), periKm: fin(m.perigeeKm),
       apoErrKm: fin(m.apogeeKm - alt), periErrKm: fin(m.perigeeKm - alt),
       orbitErrKm: Number.isFinite(m.apogeeKm) && Number.isFinite(m.perigeeKm) ? orbitErrKm(m, alt) : NaN,
-      ecc: fin(m.ecc), fuelKg: fin(m.boosterFuelLeftKg), deployS: fin(m.deployTimeS),
-      residualKg: fin(m.stageResidualKg), reasons,
-    };
-  }
+          ecc: fin(m.ecc), fuelKg: fin(m.boosterFuelLeftKg), deployS: fin(m.deployTimeS),
+    residualKg: fin(m.stageResidualKg), reasons,
+    metrics: m, extra,   // kept so the UI can re-score when weights change (no re-run)
+  };
+}
 
   // Multi-sort; failed rows always last; input not mutated; stable.
   function sortRows(rows, sortKey) {
@@ -347,17 +357,23 @@ t('monotone in |err|, sign-symmetric, no cliff', orbitPenalty(0.5, 320) > orbitP
     t('graded depth: deeper fail scores higher', worser.score > worse.score);
     t('vrMin -0.38 only soft (still ok)', score(Object.assign({}, good, { vrMin: -0.38 })).ok);
 
-    // 10. cache
-    const cache = new EvalCache(); cache.set(bp, 'FULL', { x: 1 });
-    t('cache hit/miss by stopAt', cache.get(bp, 'FULL') && !cache.get(bp, 'COAST_WAIT_ENTRY'));
+    // 9c. duration cap: suggestion + hit flag
+t('suggestDurationCap: 770 @320, 1160 @640, 1590 @1000, 580 @160', suggestDurationCap(320) === 770 && suggestDurationCap(640) === 1160 && suggestDurationCap(1000) === 1590 && suggestDurationCap(160) === 580,
+  [160, 320, 640, 1000, 2000].map((a) => a + ':' + suggestDurationCap(a)).join(' '));
+const capHit = score(Object.assign({}, good, { endReason: 'CAP', payloadCleared: false, payloadReleased: false }));
+t('duration cap hit -> hard fail with reason duration_cap_hit', !capHit.ok && capHit.reasons.includes('duration_cap_hit') && capHit.reasons.includes('payload_not_cleared'));
+
+// 10. cache
+const cache = new EvalCache(); cache.set(bp, 'FULL', { x: 1 });
+t('cache hit/miss by stopAt', cache.get(bp, 'FULL') && !cache.get(bp, 'COAST_WAIT_ENTRY'));
 
     return { ok: fails.length === 0, lines: out, fails };
   }
 
   root.TunerUtils = {
-    gOf, tOf, biasOf, leadOf, snapG, snapT, snapBias, snapLead, snapMeco,
-    collapseA, aEff, fromRaw, step, key, inBounds, toValues, describe,
-    verifyApplied, EvalCache, checkHard, score, runSelfTests,
-    orbitTolKm, orbitPenalty, orbitErrKm, makeRow, sortRows, SORT_KEYS,
-  };
+  gOf, tOf, biasOf, leadOf, snapG, snapT, snapBias, snapLead, snapMeco,
+  collapseA, aEff, fromRaw, step, key, inBounds, toValues, describe,
+  verifyApplied, EvalCache, checkHard, score, runSelfTests,
+  orbitTolKm, orbitPenalty, orbitErrKm, makeRow, sortRows, SORT_KEYS, suggestDurationCap,
+};
 })();
