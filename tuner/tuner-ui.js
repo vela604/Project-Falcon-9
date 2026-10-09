@@ -61,15 +61,22 @@
     return h;
   }
   function parseLogLine(line, st) {
-    st = st || {};
-    if (/^=== Phase A/.test(line)) st.phase = 'Phase A (MECO search)';
-    else if (/^=== Phase B/.test(line)) st.phase = 'Phase B (A,bias,lead lanes)';
-    let m = /^#(\d+) MECO=(\d+)/.exec(line);
-    if (m) { st.iter = +m[1]; st.meco = +m[2]; }
-    m = /^verify \[([^\]]+)\]/.exec(line);
-    if (m) st.lane = m[1];
-    return st;
-  }
+  st = st || {};
+  if (/^=== Phase A/.test(line)) st.phase = 'Phase A (MECO search)';
+  else if (/^=== Phase B/.test(line)) st.phase = 'Phase B (A,bias,lead lanes)';
+  else if (/^=== MECO probe/.test(line)) st.phase = 'MECO probe';
+  let m = /^#(\d+) MECO=(\d+)/.exec(line);
+  if (m) { st.iter = +m[1]; st.meco = +m[2]; }
+  m = /^verify \[([^\]]+)\]/.exec(line);
+  if (m) { st.lane = m[1]; }
+  m = /▶ eval #(\d+) \[([^\]]+)\]/.exec(line);
+  if (m) { st.evalId = +m[1]; st.evalStop = m[2]; st.evalWaiting = true; }
+  m = /◀ eval #(\d+) /.exec(line);
+  if (m && st.evalId === +m[1]) { st.evalWaiting = false; }
+  m = /✗ eval #(\d+) ERROR: (.*)$/.exec(line);
+  if (m) { st.evalError = m[2]; st.evalWaiting = false; }
+  return st;
+}
 
   const CSS = `
 .tui{font-family:var(--font-mono,monospace);font-size:12px}
@@ -362,9 +369,12 @@ S.alt = alt;
       const tick = () => {
         const hs = root.TunerHook ? root.TunerHook.stats : { evals: 0, ticks: 0, wallMs: 0 };
         const evals = hs.evals - (hs0.evals || 0), tps = (hs.ticks - (hs0.ticks || 0)) / Math.max(1e-9, (hs.wallMs - (hs0.wallMs || 0)) / 1000);
-        $('tuiStat').textContent = st.phase + (st.iter ? ' · iter ' + st.iter + ' MECO ' + st.meco : '') + (st.lane ? ' · lane ' + st.lane : '') +
-          ' · evals ' + evals + ' · ' + fmt((performance.now() - t0) / 1000, 0) + ' s · ' + fmt(tps, 0) + ' t/s' + simInfo;
-        $('tuiLast').textContent = logBuf.length ? logBuf[logBuf.length - 1] : '';
+        const evInfo = st.evalId ?
+  (st.evalWaiting ? ' · ▶ eval #' + st.evalId + ' [' + (st.evalStop || '?') + ']…' : ' · ◀ eval #' + st.evalId) :
+  '';
+$('tuiStat').textContent = st.phase + (st.iter ? ' · iter ' + st.iter + ' MECO ' + st.meco : '') + (st.lane ? ' · lane ' + st.lane : '') +
+  evInfo + ' · evals ' + evals + ' · ' + fmt((performance.now() - t0) / 1000, 0) + ' s · ' + fmt(tps, 0) + ' t/s' + simInfo;
+  $('tuiLast').textContent = logBuf.length ? logBuf[logBuf.length - 1] : '';
         $('tuiLog').textContent = logBuf.slice(-300).join('\n');
       };
       const timer = setInterval(tick, 500);

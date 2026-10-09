@@ -22,11 +22,50 @@
 //
 // Pure async, no globals mutated except through TunerHook (singleton sim).
 // ============================================================================
-(function () {
-  'use strict';
-  const root = (typeof window !== 'undefined') ? window : globalThis;
-
-  async function tuneLead(point, opts) {
+(function() {
+    'use strict';
+    const root = (typeof window !== 'undefined') ? window : globalThis;
+    
+    // Per-eval logger: wraps a hook's runEval so every sim call (fresh, not cache) prints a start and end line.
+    // The UI log ticks every 500ms and shows the last N lines, so silent stretches are visible as "▶ eval started, waiting…".
+    function makeEvalLogger(log, baseHook) {
+      const H = baseHook || root.TunerHook;
+      let n = 0;
+      return function wrappedHook() {
+        return {
+          runEval: async (point, opts) => {
+            n++;
+            const id = n;
+            const o = opts || {};
+            const stopAt = o.stopAt || 'FULL';
+            const pt = 'G=' + (point.Gi * 0.01).toFixed(2) + ' T=' + (point.Tn * 0.000125).toFixed(4) +
+              ' b=' + (point.bi * 0.0001).toFixed(4) + ' l=' + point.li + 't m=' + point.meco;
+            log('  ▶ eval #' + id + ' [' + stopAt + '] ' + pt);
+            const t0 = (typeof performance !== 'undefined') ? performance.now() : Date.now();
+            try {
+              const m = await H.runEval(point, o);
+              const ms = ((typeof performance !== 'undefined') ? performance.now() : Date.now()) - t0;
+              const parts = ['end=' + (m.endReason || '?'), 'wall=' + (ms / 1000).toFixed(1) + 's'];
+              if (Number.isFinite(m.eCoast)) parts.push('E=' + m.eCoast.toFixed(4));
+              if (Number.isFinite(m.apoCoastKm)) parts.push('apoC=' + m.apoCoastKm.toFixed(1));
+              if (Number.isFinite(m.marginS)) parts.push('marg=' + m.marginS.toFixed(2));
+              if (Number.isFinite(m.vrEnd)) parts.push('vrEnd=' + m.vrEnd.toFixed(4));
+              if (Number.isFinite(m.stageResidualKg)) parts.push('resid=' + m.stageResidualKg.toFixed(1));
+              if (Number.isFinite(m.deployTimeS)) parts.push('deploy=' + m.deployTimeS.toFixed(1));
+              if (m.crashed) parts.push('CRASH');
+              if (m.payloadCleared) parts.push('CLEARED');
+              log('  ◀ eval #' + id + ' ' + parts.join(' '));
+              return m;
+            } catch (e) {
+              log('  ✗ eval #' + id + ' ERROR: ' + ((e && e.message) || e));
+              throw e;
+            }
+          }
+        };
+      };
+    }
+    
+    async function tuneLead(point, opts) {
     opts = opts || {};
     const Cfg = root.TunerConfig, U = root.TunerUtils, H = opts.hook || root.TunerHook;
     const L = Cfg.limits, q = Cfg.quanta.lead;
@@ -871,8 +910,12 @@ function residualBand(opts) {
   const frac = opts.residualPhaseAFrac != null ? opts.residualPhaseAFrac : (L.residualPhaseAFrac != null ? L.residualPhaseAFrac : 0.5);
   const bandA = opts.phaseABand || [band[0] + frac * (band[1] - band[0]), band[1]];
   const cache = opts.cache || new U.EvalCache();
-  const common = { hook: opts.hook, env: opts.env, targetAltKm: opts.targetAltKm, abortRef: opts.abortRef, onProgress: opts.onProgress, cache };
-  say('runTuner: residual band [' + band[0] + ',' + band[1] + '] kg (' + ((opts.deorbit != null ? opts.deorbit : Cfg.fixed.deorbitEnabled) ? 'deorbit ON' : 'deorbit OFF') + ')  Phase A band [' + fmt(bandA[0], 0) + ',' + fmt(bandA[1], 0) + ']  Phase B mode=' + (opts.mode || 'fine'));
+// wrap the hook so every fresh sim call prints "▶ eval #N ..." / "◀ eval #N end=... wall=...". Disable with opts.evalLog === false.
+const hookBase = opts.hook || root.TunerHook;
+const wrappedHook = (opts.evalLog === false) ? hookBase : makeEvalLogger((s) => say(s), hookBase)();
+const common = { hook: wrappedHook, env: opts.env, targetAltKm: opts.targetAltKm, abortRef: opts.abortRef, onProgress: opts.onProgress, cache };
+say('runTuner: residual band [' + band[0] + ',' + band[1] + '] kg (' + ((opts.deorbit != null ? opts.deorbit : Cfg.fixed.deorbitEnabled) ? 'deorbit ON' : 'deorbit OFF') + ')  Phase A band [' + fmt(bandA[0], 0) + ',' + fmt(bandA[1], 0) + ']  Phase B mode=' + (opts.mode || 'fine'));
+say('runTuner: evalLog=' + (opts.evalLog === false ? 'off' : 'on'));
 
   // ---- MECO probe (only when the ref MECO is BELOW probeStartKg) ----
 // For 320 km refs (MECO 52612) no probe is needed. For high orbits with ref MECO≈0, probe at probeStartKg;
@@ -964,6 +1007,6 @@ if (point.meco < probeStart) {
   return res;
 }
 
-  root.TunerCore = { tuneLead, tuneAB, tuneRough, findOptimalMeco, runTuner, residualBand, pickReference };
+  root.TunerCore = { tuneLead, tuneAB, tuneRough, findOptimalMeco, runTuner, residualBand, pickReference, makeEvalLogger };
   
 })();
