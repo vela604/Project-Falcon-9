@@ -38,6 +38,9 @@ function stageVr(E) {
   return 443 + (E - 0.705) * 400;
 }
 
+// real fit (Phase B log): E 0.139 -> apo err 0.003 km, 0.193 -> 0.15, 0.1985 -> 0.39  (apogeeKm = 320.1 + this)
+const orbitErrOfE = (E) => -0.1 + 0.003 + 164 * Math.pow(Math.max(0, E - 0.15), 2);
+
 function makeHook(model) {
   model = Object.assign({ trueEmax: 0.185, alwaysF1: false, f2Bias: Infinity, res: null }, model || {});
   const stats = { coast: 0, circ: 0, full: 0 };
@@ -64,7 +67,7 @@ function makeHook(model) {
       if (o.stopAt === 'CIRC_END') { stats.circ++; return Object.assign(base, c, { endReason: 'CIRC_END', stageFuelEngOffKg: c.stageFuelEngOffKg > 0 ? c.stageFuelEngOffKg + (model.fastOffset || 0) : 0 }); }
       stats.full++;
       return Object.assign(base, c, { endReason: 'CLEARED', payloadReleased: true, payloadCleared: true, maxQKPa: 24.7, maxG: 4.8,
-        apogeeKm: 320.1, perigeeKm: 320.0, ecc: 1e-5, boosterFuelLeftKg: 52625, deployTimeS: 590.46 + 0.00983 * (p.meco - 52612) + (U.aEff(p) - 13.94) * 2,   // fitted to 2 REAL points: MECO 52612 -> 590.46 s, MECO 61150 -> 674.4 s (deploy follows MECO, residual is only its proxy)
+        apogeeKm: 320.1 + (model.orbitFromE ? orbitErrOfE(s.E) : 0), perigeeKm: 320.0, ecc: 1e-5, boosterFuelLeftKg: (p.meco || 52612) + 13.5, deployTimeS: 590.46 + 0.00983 * (p.meco - 52612) + (U.aEff(p) - 13.94) * 2,   // fitted to 2 REAL points: MECO 52612 -> 590.46 s, MECO 61150 -> 674.4 s (deploy follows MECO, residual is only its proxy)
         stageResidualKg: residualOf(p.meco, U.gOf(p.Gi), model.res) });
     },
   };
@@ -300,6 +303,51 @@ const nFlip = (r) => r.log.filter((l) => /flipping/.test(l)).length;
     t('runTuner: Phase A failure -> ok=false, phaseB null, no crash', !r.ok && r.phaseB === null && /phase A failed/.test(r.status), r.status); }
   { const r = await runT(p52, { mode: 'fast', abortRef: { aborted: true } }, REALM);
     t('runTuner: abort -> no evals', !r.ok && r.hook.stats.coast + r.hook.stats.circ + r.hook.stats.full === 0); }
+
+  // ======================= New score weights + leaderboard =======================
+  const S = C.scoring;
+  t('weights cfg: orbit tolFrac 0.001 / weight 400 / k 1, time 0.1/s, fuel 0.01/kg, ecc unchanged',
+    S.orbit.tolFrac === 0.001 && S.orbit.weight === 400 && S.orbit.k === 1 && S.timeToDeploySWeight === 0.1 && S.boosterFuelLeftKgWeight === 0.01 && S.eccentricity.weight === 1500 && S.eccentricity.tol === 0.0005);
+  // replay of the real Phase B log with the new weights
+  const gm = (o) => Object.assign({ crashed: false, payloadReleased: true, payloadCleared: true, vrEnd: 0.03, vrMin: -0.3, maxQKPa: 24.8, maxG: 4.8,
+    apogeeKm: 320.0, perigeeKm: 320.0, ecc: 1e-5, boosterFuelLeftKg: 52625, deployTimeS: 659 }, o);
+  const sc = (o) => U.score(gm(o)).score;
+  t('replay: 0.152 km apo error -> 0 penalty (inside 0.32 tol)', U.orbitPenalty(0.152, 320) === 0 && Math.abs(sc({ apogeeKm: 320.152 }) - sc({})) < 1e-9);
+  t('replay: 0.386 km apo error ~8 pt, more than a 16 s time gain (1.6 pt)', (() => { const pen = sc({ apogeeKm: 320.386 }) - sc({}); return pen > 7 && pen < 10 && pen > 16 * 0.1; })(), 'pen=' + (sc({ apogeeKm: 320.386 }) - sc({})).toFixed(2));
+  t('replay: 0.386 km apo @ 643 s loses to 0.152 km apo @ 659 s', sc({ apogeeKm: 320.386, deployTimeS: 643 }) > sc({ apogeeKm: 320.152, deployTimeS: 659 }));
+  t('replay: T=4.81 (623 s) beats T=4.815 (626 s) and start (659 s), same orbit', sc({ deployTimeS: 623 }) < sc({ deployTimeS: 626 }) && sc({ deployTimeS: 626 }) < sc({ deployTimeS: 659 }));
+  t('replay: 100 s = 10 pt', Math.abs(sc({ deployTimeS: 759 }) - sc({}) - 10) < 1e-9);
+
+  // mock orbitFromE: apo error grows with E (real fit) -> Phase B climbing E costs accuracy
+  { const apoErr = (E) => 0.1 + orbitErrOfE(E);   // apogeeKm = 320.1 + orbitErrOfE -> error vs 320 target
+    t('mock orbitFromE: apo error vs 320 = 0.003 @E .139, ~0.39 @E .1985 (real fit ends), mid point within 0.16 km, grows with E', Math.abs(apoErr(0.139) - 0.003) < 0.01 && Math.abs(apoErr(0.1985) - 0.39) < 0.01 && Math.abs(apoErr(0.193) - 0.15) < 0.16 && apoErr(0.2) > apoErr(0.19), [0.139, 0.193, 0.1985].map((e) => apoErr(e).toFixed(3)).join('/')); }
+  t('mock fuel: boosterFuelLeftKg = meco + 13.5', await (async () => { const h = makeHook({}); const m = await h.runEval(Object.assign({}, p52, { meco: 60002 }), { stopAt: 'FULL' }); return Math.abs(m.boosterFuelLeftKg - 60015.5) < 1e-9; })());
+  { const rO = await runT(p52, { mode: 'fine' }, Object.assign({ orbitFromE: true }, REALM));
+    console.log(rO.log.filter((l) => /^===|runTuner|tuneAB:/.test(l)).join('\n'));
+    t('runTuner with orbitFromE: ok, residual in [100,200]', rO.ok && inB(rO.bestResidualKg, [100, 200]), 'status=' + rO.status + ' score=' + rO.bestScore.toFixed(3) + ' src=' + rO.bestSource);
+    t('runTuner with orbitFromE: best apo error small (inside ~0.5 km)', Math.abs(rO.bestMetrics.apogeeKm - 320) < 0.5, 'apo=' + rO.bestMetrics.apogeeKm.toFixed(3));
+
+    // ---- leaderboard ----
+    const lb = rO.leaderboard, alt = C.fixed.targetAltKm;
+    t('leaderboard: present, >= 1 row, meco = Phase A MECO', Array.isArray(lb) && lb.length >= 1 && rO.meco === rO.phaseA.meco, 'rows=' + (lb && lb.length));
+    t('leaderboard: no duplicate points (A+B merged)', new Set(lb.map((r) => U.key(r.point))).size === lb.length);
+    t('leaderboard: Phase A point merged with Phase B start lane (src has A and B)', lb.some((r) => /A/.test(r.src) && /B/.test(r.src)), lb.map((r) => r.src + '/' + r.tag).join(' | '));
+    t('leaderboard: row fields', lb.every((r) => ['src','tag','ok','point','desc','score','parts','E','apoKm','periKm','apoErrKm','periErrKm','orbitErrKm','ecc','fuelKg','deployS','residualKg','reasons'].every((k) => k in r)));
+    t('leaderboard: row values consistent (apoErr = apo - alt, orbitErr = |apoErr|+|periErr|)', lb.every((r) => Math.abs(r.apoErrKm - (r.apoKm - alt)) < 1e-9 && Math.abs(r.orbitErrKm - (Math.abs(r.apoErrKm) + Math.abs(r.periErrKm))) < 1e-9));
+    t('leaderboard: default order = score ascending, failed last', lb.every((r, i, a) => i === 0 || (a[i - 1].ok === r.ok ? (a[i - 1].score <= r.score) : a[i - 1].ok)));
+    t('leaderboard: best row score == runTuner bestScore', lb[0].ok && Math.abs(lb[0].score - rO.bestScore) < 1e-9, lb[0].score.toFixed(3) + ' vs ' + rO.bestScore.toFixed(3));
+    const snapLb = JSON.stringify(lb);
+    const ord = {}; U.SORT_KEYS.forEach((k) => { ord[k] = U.sortRows(lb, k); });
+    const mono = (rows, f, dir) => rows.filter((r) => r.ok).every((r, i, a) => i === 0 || (dir > 0 ? f(a[i - 1]) <= f(r) : f(a[i - 1]) >= f(r)));
+    t('leaderboard sort: score asc / accuracy asc / fuel desc / time asc', mono(ord.score, (r) => r.score, 1) && mono(ord.accuracy, (r) => r.orbitErrKm, 1) && mono(ord.fuel, (r) => r.fuelKg, -1) && mono(ord.time, (r) => r.deployS, 1));
+    t('leaderboard sort: rejected/failed rows last for every key', U.SORT_KEYS.every((k) => { const a = ord[k]; const firstBad = a.findIndex((r) => !r.ok); return firstBad < 0 || a.slice(firstBad).every((r) => !r.ok); }));
+    t('leaderboard sort: input not mutated', JSON.stringify(lb) === snapLb);
+    console.log('leaderboard (' + lb.length + ' rows): ' + lb.map((r) => r.src + ':' + r.tag + ' score=' + r.score.toFixed(2) + ' orbitErr=' + r.orbitErrKm.toFixed(3) + ' fuel=' + r.fuelKg.toFixed(0) + ' deploy=' + r.deployS.toFixed(1) + (r.ok ? '' : ' X')).join(' | ')); }
+  // different winners per key on a mock run where E-climb trades accuracy vs time
+  { const mkRows = (C2) => C2; const r = await runT(p52, { mode: 'fine' }, REALM);
+    t('leaderboard (plain mock): sorts without error, all 4 keys return same row set', U.SORT_KEYS.every((k) => U.sortRows(r.leaderboard, k).length === r.leaderboard.length)); }
+  { const r = await runT(p52, { mode: 'fast' }, { alwaysF1: true });
+    t('leaderboard: Phase A failure -> empty leaderboard, no crash', Array.isArray(r.leaderboard) && r.leaderboard.length === 0); }
 
   C.bounds.bias.upper = biasUp0;
   console.log(fails ? 'FAILS: ' + fails : 'ALL PASS');

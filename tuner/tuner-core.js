@@ -867,7 +867,7 @@
     say('=== Phase A: findOptimalMeco ===');
     const A = await findOptimalMeco(point, Object.assign({}, common, { band: bandA, onLog: opts.onLog ? (l) => say(l) : (l) => lines.push(l) }, opts.phaseA || {}));
     const res = { ok: false, status: '', phaseA: A, phaseB: null, band, bestPoint: null, bestScore: NaN, bestMetrics: null, bestResidualKg: NaN, bestDeployS: NaN,
-                  bestSource: null, evals: A.evals, breakdown: null, wallMs: 0, log: lines };
+                  bestSource: null, evals: A.evals, breakdown: null, wallMs: 0, log: lines, leaderboard: [], meco: A.meco };
     if (!A.ok || !A.point) { res.status = 'phase A failed: ' + A.status; res.wallMs = performance.now() - t0; say('runTuner: ' + res.status); return res; }
     if (opts.abortRef && opts.abortRef.aborted) { res.status = 'aborted'; res.wallMs = performance.now() - t0; return res; }
     say('=== Phase B: tuneAB at MECO=' + A.meco + ' (start G=' + U.gOf(A.point.Gi) + ' bias=' + U.biasOf(A.point.bi) + ' lead=' + A.point.li + 't, residual ' + fmt(A.residualKg, 1) + ' kg, residual guard [' + band[0] + ',' + band[1] + ']) ===');
@@ -884,6 +884,21 @@
       res.bestPoint = best.point; res.bestScore = best.score; res.bestMetrics = best.metrics; res.bestSource = best.src;
       res.bestResidualKg = best.metrics.stageResidualKg; res.bestDeployS = best.metrics.deployTimeS; res.ok = true; res.status = 'ok';
     } else res.status = 'phase B: no in-band candidate';
+    // leaderboard: every real FULL eval at the final MECO — Phase A confirmed/level/start + Phase B verified lanes
+    const alt = opts.targetAltKm != null ? opts.targetAltKm : Cfg.fixed.targetAltKm;
+    const rows = [], seen = new Map();
+    const addRow = (row) => {
+      const k = U.key(row.point);
+      if (seen.has(k)) { const o = seen.get(k); if (o.src.indexOf(row.src) < 0) o.src += '+' + row.src; return; }
+      seen.set(k, row); rows.push(row);
+    };
+    A.history.filter((e) => e.real && e.ok && e.metrics && e.point && e.meco === A.meco && e.gi === A.point.Gi)
+      .forEach((e) => addRow(U.makeRow('A', 'A:' + e.kind, e.point, e.metrics, { E: e.E, targetAltKm: alt })));
+    B.candidates.forEach((c) => { if (!c.metrics || !(c.fullPoint || c.point)) return;
+      addRow(U.makeRow('B', c.tag, c.fullPoint || c.point, c.metrics,
+        { E: c.E, targetAltKm: alt, reject: !!c.resFail, reasons: c.resFail ? c.reasons : [] })); });
+    res.leaderboard = U.sortRows(rows, 'score');
+    res.meco = A.meco;
     res.wallMs = performance.now() - t0;
     say('=== runTuner ' + (res.ok ? 'OK' : 'FAILED') + ': ' + res.status + (res.ok ? ' | best=' + res.bestSource + ' score=' + res.bestScore.toFixed(3) + ' residual=' + fmt(res.bestResidualKg, 1) + ' kg deploy=' + fmt(res.bestDeployS, 2) + 's ' + JSON.stringify(U.describe(res.bestPoint)) : '') +
         ' | evals=' + res.evals + ' (A ' + A.evals + ' + B ' + B.evals + ') wall=' + (res.wallMs / 1000).toFixed(1) + 's');

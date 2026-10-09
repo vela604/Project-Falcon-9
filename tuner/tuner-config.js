@@ -76,11 +76,15 @@
     // ---- Scoring (lower = better) ----
     scoring: {
       failPenalty: 1e6,
-      apogeeErrKm:  { target: 'targetAlt', tol: 1,      scale: 1,     weight: 3000 },
-      perigeeErrKm: { target: 'targetAlt', tol: 1,      scale: 1,     weight: 3000 },
-      eccentricity: { target: 0,           tol: 0.0005, scale: 0.001, weight: 1500 },
-      boosterFuelLeftKgWeight: 0.01,   // maximize
-      timeToDeploySWeight: 0.0005,     // minimize
+      // Orbit (apo AND peri, each): tolerance is RELATIVE to the target altitude.
+      // tolFrac 0.001 = 0.1% of alt (0.32 km @320, 1 km @1000). Same score penalty for the same RELATIVE error.
+      // Penalty = pseudo-Huber on the excess e = max(0,|err| - tol)/tol:
+      //   penalty = weight * k * (sqrt(1 + (e/k)^2) - 1)     // quadratic near the edge, linear far
+      // @320 km: err 0.32 (tol) -> 0 | 0.38 -> 7 | 0.48 -> 47 | 0.64 -> 166 | 1 km -> ~540 | 5 km -> ~5500
+      orbit: { tolFrac: 0.001, weight: 400, k: 1 },
+      eccentricity: { target: 0, tol: 0.0005, scale: 0.001, weight: 1500 },   // unchanged
+      boosterFuelLeftKgWeight: 0.01,   // 15000 kg range = 150 pts
+      timeToDeploySWeight: 0.1,        // 600 s = 60 pts; 100 s = 10 pts
     },
 
     // ---- MECO outer loop ----

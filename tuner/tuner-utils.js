@@ -146,6 +146,17 @@
   const deadzone = (x, target, tol, scale, w) =>
     w * Math.max(0, Math.abs(x - target) - tol) / scale;
 
+  // ---- orbit error: relative tolerance + pseudo-Huber penalty ----------------
+  const curAlt = (alt) => (alt != null ? alt : C().fixed.targetAltKm);
+  const orbitTolKm = (alt) => C().scoring.orbit.tolFrac * curAlt(alt);
+  function orbitPenalty(errKm, alt) {
+    const O = C().scoring.orbit, tol = orbitTolKm(alt);
+    const e = Math.max(0, Math.abs(errKm) - tol) / tol;
+    return O.weight * O.k * (Math.sqrt(1 + (e / O.k) * (e / O.k)) - 1);
+  }
+  // raw accuracy (sorting): |apo - alt| + |peri - alt|
+  const orbitErrKm = (m, alt) => Math.abs(m.apogeeKm - curAlt(alt)) + Math.abs(m.perigeeKm - curAlt(alt));
+
   // opts: { targetAltKm }. Returns { score, ok, reasons, parts }.
   function score(m, opts) {
     const S = C().scoring, L = C().limits;
@@ -155,8 +166,8 @@
       return { score: S.failPenalty + hard.depth * 1000, ok: false, reasons: hard.reasons, parts: null };
     }
     const parts = {
-      apogee:  deadzone(m.apogeeKm,  alt, S.apogeeErrKm.tol,  S.apogeeErrKm.scale,  S.apogeeErrKm.weight),
-      perigee: deadzone(m.perigeeKm, alt, S.perigeeErrKm.tol, S.perigeeErrKm.scale, S.perigeeErrKm.weight),
+      apogee:  orbitPenalty(m.apogeeKm - alt, alt),
+      perigee: orbitPenalty(m.perigeeKm - alt, alt),
       ecc:     deadzone(m.ecc, S.eccentricity.target, S.eccentricity.tol, S.eccentricity.scale, S.eccentricity.weight),
       fuel:    -S.boosterFuelLeftKgWeight * (m.boosterFuelLeftKg || 0),
       time:    S.timeToDeploySWeight * (m.deployTimeS || 0),
@@ -164,6 +175,45 @@
     };
     const total = parts.apogee + parts.perigee + parts.ecc + parts.fuel + parts.time + parts.vrSoft;
     return { score: total, ok: true, reasons: [], parts };
+  }
+
+  // ---- leaderboard rows -------------------------------------------------------
+  // extra: { E, targetAltKm, reject (bool: e.g. residual guard), reasons[] }
+  const SORT_KEYS = ['score', 'accuracy', 'fuel', 'time'];
+  function makeRow(src, tag, point, metrics, extra) {
+    extra = extra || {};
+    const m = metrics || {};
+    const alt = curAlt(extra.targetAltKm);
+    const sc = score(m, { targetAltKm: alt });
+    const fin = (x) => (Number.isFinite(x) ? x : NaN);
+    const reasons = (sc.reasons || []).concat(extra.reasons || []);
+    return {
+      src, tag, ok: sc.ok && !extra.reject, point, desc: describe(point), score: sc.score, parts: sc.parts,
+      E: extra.E != null ? extra.E : NaN,
+      apoKm: fin(m.apogeeKm), periKm: fin(m.perigeeKm),
+      apoErrKm: fin(m.apogeeKm - alt), periErrKm: fin(m.perigeeKm - alt),
+      orbitErrKm: Number.isFinite(m.apogeeKm) && Number.isFinite(m.perigeeKm) ? orbitErrKm(m, alt) : NaN,
+      ecc: fin(m.ecc), fuelKg: fin(m.boosterFuelLeftKg), deployS: fin(m.deployTimeS),
+      residualKg: fin(m.stageResidualKg), reasons,
+    };
+  }
+
+  // Multi-sort; failed rows always last; input not mutated; stable.
+  function sortRows(rows, sortKey) {
+    const inf = (x, d) => (Number.isFinite(x) ? x : d);
+    const cmp = {
+      score:    (a, b) => inf(a.score, Infinity) - inf(b.score, Infinity),
+      accuracy: (a, b) => (inf(a.orbitErrKm, Infinity) - inf(b.orbitErrKm, Infinity)) ||
+                          (inf(a.ecc, Infinity) - inf(b.ecc, Infinity)) || (inf(a.score, Infinity) - inf(b.score, Infinity)),
+      fuel:     (a, b) => inf(b.fuelKg, -Infinity) - inf(a.fuelKg, -Infinity),
+      time:     (a, b) => inf(a.deployS, Infinity) - inf(b.deployS, Infinity),
+    };
+    const f = cmp[sortKey || 'score'] || cmp.score;
+    return rows.map((r, i) => ({ r, i })).sort((x, y) => {
+      if (x.r.ok !== y.r.ok) return x.r.ok ? -1 : 1;
+      const c = f(x.r, y.r);
+      return (Number.isNaN(c) ? 0 : c) || (x.i - y.i);
+    }).map((x) => x.r);
   }
 
   // ---- self-tests (run in browser via button, and in node) -------------------
@@ -243,13 +293,51 @@
     const good = { crashed: false, payloadReleased: true, payloadCleared: true, vrEnd: 0.03, vrMin: -0.3,
       maxQKPa: 24.8, maxG: 4.8, apogeeKm: 320.1, perigeeKm: 320.0, ecc: 1e-5, boosterFuelLeftKg: 2000, deployTimeS: 590 };
     const s0 = score(good).score;
-    const orbitWorse = score(Object.assign({}, good, { apogeeKm: 320 + 1 + 0.05 })).score - s0;   // 0.05 km beyond tol
-    const fuelWorse  = score(Object.assign({}, good, { boosterFuelLeftKg: 2000 - 5000 })).score - s0; // 5000 kg less
-    const fuel10     = score(Object.assign({}, good, { boosterFuelLeftKg: 1990 })).score - s0;     // 10 kg less
-    const timeWorse  = score(Object.assign({}, good, { deployTimeS: 690 })).score - s0;           // +100 s
-    t('hierarchy: orbit(0.05 km over tol) > fuel(5000 kg)', orbitWorse > fuelWorse, orbitWorse.toFixed(2) + ' > ' + fuelWorse.toFixed(2));
-    t('hierarchy: fuel(10 kg) > time(100 s)', fuel10 > timeWorse, fuel10.toFixed(3) + ' > ' + timeWorse.toFixed(3));
+    const S = C().scoring;
+    t('weights: tolFrac 0.001, weight 400, k 1, time 0.1/s, fuel 0.01/kg',
+      S.orbit.tolFrac === 0.001 && S.orbit.weight === 400 && S.orbit.k === 1 && S.timeToDeploySWeight === 0.1 && S.boosterFuelLeftKgWeight === 0.01);
+    t('relative tol: 0.32 km @320, 1 km @1000, 0.3 km @300', Math.abs(orbitTolKm(320) - 0.32) < 1e-12 && Math.abs(orbitTolKm(1000) - 1) < 1e-12 && Math.abs(orbitTolKm(300) - 0.3) < 1e-12);
+    t('same relative error => same penalty (0.64@320 == 2@1000)', Math.abs(orbitPenalty(0.64, 320) - orbitPenalty(2, 1000)) < 1e-9);
+    t('inside tol => 0 penalty (0.152 km @320)', orbitPenalty(0.152, 320) === 0 && orbitPenalty(-0.32, 320) === 0);
+    t('1 km @320 ~ 540 pt', Math.abs(orbitPenalty(1, 320) - 540) < 5, orbitPenalty(1, 320).toFixed(1));
+    t('0.386 km @320 ~ 8 pt', Math.abs(orbitPenalty(0.386, 320) - 8.6) < 1, orbitPenalty(0.386, 320).toFixed(2));
+    t('5 km @320 ~ 5500 pt', Math.abs(orbitPenalty(5, 320) - 5500) < 300, orbitPenalty(5, 320).toFixed(0));
+    t('smooth: monotone, no cliff just beyond tol', orbitPenalty(0.321, 320) < 0.01 && orbitPenalty(0.5, 320) > orbitPenalty(0.4, 320) && orbitPenalty(-0.5, 320) === orbitPenalty(0.5, 320));
+    const orbitWorse = score(Object.assign({}, good, { apogeeKm: 321 })).score - s0;                 // 1 km apo error
+    const fuelRange  = score(Object.assign({}, good, { boosterFuelLeftKg: 2000 - 15000 })).score - s0; // 15000 kg range
+    const timeRange  = score(Object.assign({}, good, { deployTimeS: 590 + 600 })).score - s0;         // 600 s range
+    const time100    = score(Object.assign({}, good, { deployTimeS: 690 })).score - s0;
+    t('hierarchy: orbit(1 km) > fuel(15000 kg range) > time(600 s range)', orbitWorse > fuelRange && fuelRange > timeRange, orbitWorse.toFixed(1) + ' > ' + fuelRange.toFixed(1) + ' > ' + timeRange.toFixed(1));
+    t('100 s = 10 pt, 600 s = 60 pt', Math.abs(time100 - 10) < 1e-6 && Math.abs(timeRange - 60) < 1e-6);
+    const typ = score({ crashed: false, payloadReleased: true, payloadCleared: true, vrEnd: 0.03, vrMin: 0, maxQKPa: 24.8, maxG: 4.8,
+      apogeeKm: 320, perigeeKm: 320, ecc: 1e-5, boosterFuelLeftKg: 60000, deployTimeS: 640 });
+    t('typical score -536 (perfect orbit, 60000 fuel, 640 s)', typ.ok && Math.abs(typ.score + 536) < 0.01, typ.score.toFixed(3));
+    t('score range realistic (-700..-400 for sane runs)', typ.score > -700 && typ.score < -400);
     t('inside tolerance => orbit term 0', score(good).parts.apogee === 0 && score(good).parts.ecc === 0);
+
+    // 9b. leaderboard rows + sort
+    const mk = (o) => Object.assign({}, good, o);
+    const P = (k) => Object.assign({}, bp, { meco: 52000 + k });
+    const rowsIn = [
+      makeRow('A', 'a', P(1), mk({ apogeeKm: 320.05, boosterFuelLeftKg: 52000, deployTimeS: 600 }), { E: 0.1 }),
+      makeRow('B', 'b', P(2), mk({ apogeeKm: 320.30, boosterFuelLeftKg: 53000, deployTimeS: 640 }), { E: 0.15 }),
+      makeRow('B', 'c', P(3), mk({ apogeeKm: 320.0, perigeeKm: 320.0, ecc: 1e-6, boosterFuelLeftKg: 51000, deployTimeS: 700 }), { E: 0.12 }),
+      makeRow('B', 'x', P(4), mk({ crashed: true, boosterFuelLeftKg: 99999, deployTimeS: 1 }), { E: 0.2 }),
+      makeRow('B', 'r', P(5), mk({ boosterFuelLeftKg: 99998, deployTimeS: 2 }), { E: 0.2, reject: true, reasons: ['residual_out_of_band'] }),
+    ];
+    const snap = JSON.stringify(rowsIn);
+    const lastBad = (a) => !a[a.length - 1].ok && !a[a.length - 2].ok && a.slice(0, -2).every((r) => r.ok);
+    const bySc = sortRows(rowsIn, 'score'), byAc = sortRows(rowsIn, 'accuracy'), byFu = sortRows(rowsIn, 'fuel'), byTi = sortRows(rowsIn, 'time');
+    t('SORT_KEYS', JSON.stringify(SORT_KEYS) === '["score","accuracy","fuel","time"]');
+    t('row fields', ['src','tag','ok','point','desc','score','parts','E','apoKm','periKm','apoErrKm','periErrKm','orbitErrKm','ecc','fuelKg','deployS','residualKg','reasons'].every((k) => k in rowsIn[0]));
+    t('row: reject flag -> not ok, reason kept', !rowsIn[4].ok && rowsIn[4].reasons.includes('residual_out_of_band') && !rowsIn[3].ok);
+    t('sort: failed rows always last (all keys)', [bySc, byAc, byFu, byTi].every(lastBad));
+    t('sort score ascending', bySc.slice(0, 3).every((r, i, a) => i === 0 || a[i - 1].score <= r.score));
+    t('sort accuracy: orbitErr asc', byAc[0].tag === 'c' && byAc[1].tag === 'a' && byAc[2].tag === 'b');
+    t('sort fuel descending', byFu[0].tag === 'b' && byFu[1].tag === 'a' && byFu[2].tag === 'c');
+    t('sort time ascending', byTi[0].tag === 'a' && byTi[1].tag === 'b' && byTi[2].tag === 'c');
+    t('sort: different winners per key', new Set([bySc[0].tag, byAc[0].tag, byFu[0].tag, byTi[0].tag]).size >= 3, [bySc[0].tag, byAc[0].tag, byFu[0].tag, byTi[0].tag].join(','));
+    t('sort: input not mutated', JSON.stringify(rowsIn) === snap && bySc !== rowsIn);
     const crashed = score(Object.assign({}, good, { crashed: true }));
     t('hard fail >> any pass', !crashed.ok && crashed.score > 1e6 && crashed.score > s0 + 1e5);
     const noVr = score(Object.assign({}, good, { vrEnd: -0.01 }));
@@ -269,5 +357,6 @@
     gOf, tOf, biasOf, leadOf, snapG, snapT, snapBias, snapLead, snapMeco,
     collapseA, aEff, fromRaw, step, key, inBounds, toValues, describe,
     verifyApplied, EvalCache, checkHard, score, runSelfTests,
+    orbitTolKm, orbitPenalty, orbitErrKm, makeRow, sortRows, SORT_KEYS,
   };
 })();
