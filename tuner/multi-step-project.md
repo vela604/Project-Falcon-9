@@ -26,14 +26,15 @@ Files padhe, gaps pakde, ye plan + `state.md` banaya.
 - **Deliver:** `tuner-hook.js` + `runEval(values, {stopAt})` async, `stopAt` ∈ `COAST_WAIT_ENTRY | CIRC_END | DEPLOY | FULL`. `__tickDump` hataya (overhead), sab metrics (prompt-web §5 list) hook se. Tick order = state.md "Locked decisions" ke hisaab se.
 - **Done when:** ek eval chale, saare metrics fill, `runEval` pure async function (future worker-pool ready).
 
-## Step 4 — Baseline + determinism + calibration
-- **Goal:** baseline reproduce (raw: G 0.60, T 4.82, bias 0.59, lead 5.53, MECO 52612 → deploy ≈590.46 s, apo/peri 320.111/319.999, vrEnd 0.046, vrMin −0.380, margin 6.73 s).
-- **Deliver:** baseline-runner button, same-input-twice bit-identical check, t/s measurement, **E at COAST_WAIT entry** for baseline (+ MECO 50000/55000 reference points) → E_min/E_max estimate.
-- **Done when:** baseline match + determinism pass + E numbers state.md me likhe.
+## Step 4 — Baseline + determinism + calibration  ✅ (baseline/determinism/speed done; E reference points pending)
+- **Done:** baseline reproduced exactly (deploy 590.46, apo/peri 320.111/319.999, vrEnd 0.0460 engOff, margin 6.72, vrMin -0.380, maxQ 24.75, maxG 4.815, stageResidual 848.7, boosterFuel 52625), determinism bit-identical, ~6000 t/s phone, E@COAST_WAIT baseline = 0.172278.
+- **Hook fixes made here:** stage body lookup (`findStage`), maxG = headless gLoad on bodies[0], vrEnd/marginS = engines-off values, stopAt label capture.
+- **Pending (small):** run `Ref points E` button -> E for MECO 50000/55000 -> estimate E_min/E_max (write into state.md section 10 + config).
 
 ## Step 5 — INNER-2: circ lead search
-- **Deliver:** `tuneLead()` in `tuner-core.js` — Phase 1 (no negative vr), Phase 2 (negative allowed, vrEnd buffer 0.02–0.05), stop margin 4–5 s. Tick-lattice steps.
-- **Done when:** baseline (A, bias) pe lead search ≤ manual margin, vrEnd > 0.
+- **Attach:** `state.md`, `multi-step-project.md`, `prompt-web.md`, `tuner/` saari files, Ref points E log (if run).
+- **Deliver:** `tuneLead()` in `tuner-core.js` using `stopAt:'CIRC_END'` — Phase 1 (no negative vr; ladder 50/20/10/5/2/1 ticks), Phase 2 (negative allowed, vrMin >= -2, vrEnd (engOff) >= 0 with buffer 0.02–0.05), stop margin 4–5 s. Tick-lattice steps, EvalCache. Output `{lead, leadTicks, marginS, vrEnd, vrMin, ok, evals, log[]}`. Add a "Tune lead (baseline)" button in html.
+- **Done when:** baseline (A, bias, MECO 52612) pe lead search margin <= manual 6.72 s, vrEnd > 0, evals/wall reported.
 - *(Order PROMPT.md ke correction se: lead pehle — INNER-1 har candidate pe isse call karega.)*
 
 ## Step 6 — INNER-1: (A, bias) joint search

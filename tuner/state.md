@@ -3,15 +3,11 @@
 > Naye chat me ye file + `multi-step-project.md` + "Next step" ki Attach list paste karo. Ye file akeli bhi project samjhane ke liye kaafi hai. Har step ke end pe isko regenerate karo.
 
 ## 1. Current status
-- **Last finished:** Step 3 — `tuner-hook.js` (`TunerHook.runEval / runEvalValues`). Logic mock-sim se tested (stop modes, abort, E capture, circ signals); **real sim pe abhi chala nahi** — user ko buttons dabane hain.
-- **Verified by user:** Step 1 smoke (5.8k t/s phone), Step 2 self-tests 24/24 + apply/verify OK.
-- **Next:** Step 4 — Baseline + determinism + calibration (kaam: user ke run outputs padh ke metric definitions pakki karna).
-- **Before Step 4 (user):** page me ye 4 runs karke log paste karo:
-  1. `Eval: raw baseline`, stopAt=FULL
-  2. `Eval: snapped baseline`, stopAt=FULL
-  3. `Determinism (x2)`
-  4. `Eval: snapped baseline`, stopAt=COAST_WAIT_ENTRY (aur t/s)
-- **Attach for Step 4:** `state.md`, `multi-step-project.md`, `prompt-web.md`, `tuner/` ki saari .js + html, upar ke 4 runs ka log.
+- **Last finished:** Step 4 — baseline validated in browser (phone). Hook bugs fixed (stage body lookup, maxG formula, vrEnd/margin = engOff).
+- **Verified by user (real sim):** raw/snapped/COAST_WAIT_ENTRY evals, determinism bit-identical (2 runs), ~5000-8000 t/s, FULL eval ~6-9 s. Baseline = manual on every metric (see section 10).
+- **Carry-over from Step 4 (not blocking Step 5):** E at COAST_WAIT for MECO 50000 / 55000 reference points + E_min/E_max estimate NOT measured yet. Button `Ref points E (3x COAST_WAIT)` added to html — user runs once, pastes 3 log lines, then fill section 10 + `TunerConfig.ecc.eMin/eMax`.
+- **Next:** Step 5 — INNER-2 `tuneLead` in `tuner-core.js` (design in section 11).
+- **Attach for Step 5:** `state.md`, `multi-step-project.md`, `prompt-web.md`, `tuner/` saari files (html, tuner-config.js, tuner-engine.js, tuner-utils.js, tuner-hook.js) + the 3 `Ref points E` log lines (if run).
 
 ## 2. Project in 10 lines
 - User = SEHRAN. Falcon 9 Block 5 browser simulator (physics/guidance/render workers). Guidance = `leoInsertionV3`, target 320 km circular LEO.
@@ -25,11 +21,11 @@
 ## 3. Files (tuner/)
 | file | role | status |
 |---|---|---|
-| leoV3-Param-S-idea.html | UI shell + script tags (`../js/...`), boot, smoke test, log | Step 1 done (unverified in browser) |
+| leoV3-Param-S-idea.html | UI shell + script tags (`../js/...`), boot, smoke test, log, eval buttons (stopAt select, snapped/raw, determinism x2, Ref points E, abort). stopAt is captured at eval start | Step 1/3/4 done, verified |
 | tuner-engine.js | engine glue 1:1 from guidance-numerical.html. `TunerEngine.{init, prepareRun, tick, smokeTest, buildSnapshot, localDispatch, applyEnvironment(envObj), applyFueling(envObj)}` | Step 1 done |
 | tuner-config.js | `TunerConfig`: quanta, bounds, baseline, references, limits, scoring, modes, env (no logic) | Step 1 done (modes first-cut) |
 | tuner-utils.js | `TunerUtils`: lattice point {Gi,Tn,bi,li,meco} ints; `fromRaw, collapseA, aEff, step, key, inBounds, toValues(p,{targetAltKm}), describe, verifyApplied(p,cfg), EvalCache(p,stopAt), checkHard, score(m)->{score,ok,reasons,parts}, runSelfTests` | Step 2 done |
-| tuner-hook.js | `TunerHook.runEval(point,opts)` / `runEvalValues(values,opts)` async; `opts`: stopAt (COAST_WAIT_ENTRY\|CIRC_END\|DEPLOY\|FULL), env, durationCapS, abortRef, abortOnStageVrNeg (default true only for COAST_WAIT_ENTRY), onProgress, quiet. Returns metrics (below). Singleton guard (one eval at a time) | Step 3 done (mock-tested) |
+| tuner-hook.js | `TunerHook.runEval(point,opts)` / `runEvalValues(values,opts)` async; `opts`: stopAt (COAST_WAIT_ENTRY\|CIRC_END\|DEPLOY\|FULL), env, durationCapS, abortRef, abortOnStageVrNeg (default true only for COAST_WAIT_ENTRY), onProgress, quiet. Returns metrics (below). Singleton guard (one eval at a time). `findStage`, `gLoad` (headless 1:1) inside | Step 3/4 done, **verified on real sim** |
 | tuner-core.js | tuneLead, tuneAB, findOptimalMeco, sweepE | Steps 5-8 |
 | tuner-ui.js | inputs, progress, ranked blocks, JSON | Step 9 |
 Delivered as separate files in `/mnt/user-data/outputs/tuner/` (no zip).
@@ -69,18 +65,18 @@ G 0.01 deg · T 0.000125 s (integer Tn) · bias 0.0001 deg · lead 0.0125 s (1 t
 8. Delivery: files alag, zip nahi; `js/*` untouched.
 
 ## 8. Open questions
-1. Self-tests + Apply+verify browser me pass? (node me pass hue.)
-2. `guidance-blocks.js` upload nahi hua — Step 3/6 me zaroorat pade to chahiye: insertion block status me **eccentricity field nahi hai** (sirf apogeeKm/perigeeKm), isliye E hook me state se compute karenge (osculating e, same formula jaisa `captureState`/finalOrbit). Stage residual fuel + circ burn vr/margin ke liye bhi block status fields dekhne pad sakte hain.
-3. E_min/E_max actual values — Step 4 calibration.
-4. vrEnd/margin instant (circAchieved vs engines-off), maxG source, booster-fuel body identity (findBooster) — Step 4 baseline compare se confirm.
+1. Self-tests + Apply+verify browser me pass? (node me pass hue; browser me user ne eval runs se indirectly confirm kiya — explicit button run pending, minor.)
+2. E_min/E_max actual values — needs the 3 reference-point runs (button added). Baseline E = 0.172278. Sweep default 0.25-0.35 is ABOVE manual-best E (~0.171-0.172): decide in Step 8 (change sweep default or confirm intent).
+3. Step 5: expected lead numbers in user's note (lead ~5.44-5.46 with margin 4-5 s) look inconsistent with baseline (lead 5.53 -> margin 6.72 s). Margin should move ~1 s per 1 s of lead, so margin 4-5 s probably needs lead ~3.3-3.8 s. Confirm intent (Step 5 start).
+4. `guidance-blocks.js` not needed so far (E and margins computed in hook).
 
-## Metrics returned by runEval (Step 3)
+## Metrics returned by runEval (current, Step 4)
 endReason (COAST_WAIT_ENTRY/CIRC_END/DEPLOY/CLEARED/CRASHED/HALTED/CAP/STAGE_VR_NEG/ABORTED), ticks, simTimeEnd, wallMs, ticksPerSecond.
-(A,bias): `eCoast` (osculating e at first COAST_WAIT tick), apoCoastKm, periCoastKm, tToApoCoastS, altCoastKm, vrMinStageBurn, stageVrNeg(+AltKm,T).
-Circ: `vrMin` (CIRCULARIZE entry -> engines off), `vrEnd`/`marginS` at circAchieved tick, `vrEndOff`/`marginOffS` at engines-off tick (**Step 4 decides which matches manual 0.046 / 6.73 s**).
-Mission: deployTimeS (= guide deployCommandSimTime), mecoTimeS, boosterFuelLeftKg (booster body fuel at splitDetected), stageResidualKg (stage fuel at payloadCleared), stageFuelAtDeployKg, apogeeKm/perigeeKm/ecc (payload body orbit at end), payloadReleased/Cleared, crashed.
-Limits: maxQKPa (active body, alt<100 km), maxG (active body |_lastAccel|/g0), maxGThrust (sum currentF/M/g0, every 8 ticks) — **Step 4 compares with manual baseline G 4.815 and picks**.
-Perf notes: phase polled via getGuideStatus every tick except sparse (every 16) in ASCENT/COAST_WAIT; console.log muted during evals; yield via MessageChannel every ~40 ms.
+(A,bias): `eCoast` (osculating e at first COAST_WAIT tick), apoCoastKm, periCoastKm, tToApoCoastS, altCoastKm, vrCoast, vtCoast, coastEntryT, vrMinStageBurn, stageVrNeg(+AltKm,T).
+Circ: `vrMin` (CIRCULARIZE entry -> engines off), **`vrEnd`/`marginS` = engines-off tick (matches manual 0.046 / 6.73 s; used by score/checkHard)**, `vrEndAch`/`marginAch` = circAchieved tick (diagnostic only; vrEndAch is negative, margin garbage), circStartT, circAchievedT, circEngOffT.
+Mission: deployTimeS (= guide deployCommandSimTime), mecoTimeS, boosterFuelLeftKg (booster body fuel at splitDetected, via findBooster), **stageResidualKg / stageFuelAtDeployKg via `findStage`** (members[0].stageRole==='stage', fallback bodies[0]; NOT activeBodyIndex — that is payload after release), apogeeKm/perigeeKm/ecc (payload body orbit at end), payloadReleased/Cleared, crashed.
+Limits: maxQKPa (active body, alt<100 km). **maxG = headless `gLoad` 1:1 on `state.bodies[0]`, every tick, whole run**: |thrust vector (gimbal) + drag| / ((dryMass+fuelMass)*g0). Diagnostics: maxGPhase, maxGT, maxGPre (before COAST_WAIT), maxGAccel (active-body |_lastAccel|, NOT used for score; differs because active body = payload after split).
+Perf notes: phase polled via getGuideStatus every tick except sparse (every 16) in ASCENT/COAST_WAIT; console.log muted during evals; yield via MessageChannel every ~40 ms. Determinism check compares flat fields with Object.is -> never add object/array fields to metrics.
 
 ## Known facts from guidance.js (Step 1 recon)
 - Phases: ASCENT, MECO_SPOOL, SEPARATED_AXIAL, STAGE_BURN, RCS_BOOST, COAST_ROTATE, COAST_WAIT, COAST_HOLD, CIRCULARIZE, COAST_ROTATE_2, COAST_HOLD_2, DONE (+ SUICIDE_* ignored, deorbit off).
@@ -95,3 +91,23 @@ Perf notes: phase polled via getGuideStatus every tick except sparse (every 16) 
 - Step 1: tuner-engine.js (1:1 extract, env/fueling now take plain objects), tuner-config.js, shell html with boot + smoke test created. Syntax-checked with node; browser run pending.
 - Step 2: tuner-utils.js created. Metrics contract for score(): crashed, payloadReleased, payloadCleared, vrEnd, vrMin, maxQKPa, maxG, apogeeKm, perigeeKm, ecc, boosterFuelLeftKg, deployTimeS. Hard fail => 1e6 + depth*1000 (graded). Orbit terms = deadzone (tol 1 km / 0.0005), fuel -0.01/kg, time +0.0005/s, vrMin soft 0.01/(m/s). Hierarchy tests pass (orbit > fuel > time).
 - Step 3: tuner-hook.js created (+ HTML buttons: stopAt select, Eval snapped/raw, Determinism x2, Abort). Phase flow facts: STAGE_BURN -> RCS_BOOST -> COAST_ROTATE -> COAST_WAIT (first) -> COAST_ROTATE (2nd, at t_rem<=90 s) -> COAST_HOLD -> CIRCULARIZE (t_rem <= engine startup + CIRC_TRIGGER_LEAD_S) -> COAST_ROTATE_2 -> COAST_HOLD_2 -> DONE (release at apogee peak) -> payloadCleared.
+- Step 4: user ran 4 evals + determinism. Found/fixed: (a) stage fuel read from payload body (0.0) -> `findStage`; (b) maxG: active-body accel 5.300 vs manual 4.815 -> headless gLoad copied 1:1 on bodies[0], now 4.815 exact (peak @CIRCULARIZE t=572.8 s, preCoast 4.373; manual was whole-run max too, 6.02 limit = 4.815*1.25); (c) vrEnd/margin switched to engines-off values; (d) html stopAt label bug (select changed mid-run). Added `Ref points E` button.
+
+## 10. Step 4 results (baseline, raw == snapped, bit-identical x2)
+```
+stageResidual=848.7  vrEnd(engOff)=0.0460  margin=6.72  vrMin=-0.380  maxG=4.815  maxQ=24.75
+apo/peri=320.111/319.999  ecc=8.32e-6  deploy=590.46  meco@134.81  boosterFuel=52625
+E@COAST_WAIT=0.172278  apo/peri@coast=320.00/-1646.62  tToApo=49.7 s  alt@coast=318.10  stage vrMin=116.361
+```
+- Speed: FULL ~47432 ticks ~8 s (5800-6100 t/s); COAST_WAIT_ENTRY stop = 41946 ticks, 6.9 s (6050 t/s) -> truncating saves only ~12% (coast entry is late, t=524 s of 593 s). CIRC_END should be ~36000-ish ticks per user estimate — measure in Step 5.
+- E at reference points: MECO 50000 = ? | 52612 = 0.172278 | 55000 = ?  (pending Ref points button)
+- E_min/E_max: pending (null in config).
+- Optional config touch-up: add `stageResidualKg: 848.7` to `TunerConfig.baselineResult`.
+
+## 11. Next: Step 5 design (INNER-2, lead search) — `tuner-core.js`
+- `tuneLead(point, opts)` -> `{ lead, leadTicks, marginS, vrEnd, vrMin, ok, evals, log[] }`. Uses `TunerHook.runEval(point_with_lead, { stopAt:'CIRC_END' })`; uses metrics `vrMin`, `vrEnd`, `marginS` (engOff), `endReason`, crashed. Lead on integer tick lattice (0.0125 s); EvalCache so repeated leads cost nothing.
+- Phase 1: reduce lead with no negative vr (vrMin >= 0): ladder 50, 20, 10, 5, 2, 1 ticks (hybrid bracket). Stop when margin < 5 s or vr goes negative.
+- Phase 2: negative vr allowed (vrMin >= hard floor -2 m/s), vrEnd >= 0 with buffer 0.02-0.05 (not 0), stop when margin in [4,5] s. vrEnd < 0 = infeasible side.
+- Output must be lattice-snapped; final FULL verify happens in later steps (INNER-1 / Phase A).
+- Test: baseline (G 0.60, T 4.82, bias 0.59, MECO 52612) -> must reach margin <= 6.72 s with vrEnd > 0. Report evals count and wall time.
+
