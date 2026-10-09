@@ -3,10 +3,10 @@
 > Naye chat me ye file + `multi-step-project.md` + "Next step" ki Attach list paste karo. Ye file akeli bhi project samjhane ke liye kaafi hai. Har step ke end pe isko regenerate karo.
 
 ## 1. Current status
-- **Last finished:** Step 5 code delivered — `tuner-core.js` (`TunerCore.tuneLead`) + html button `Tune lead (baseline)`. Logic mock-tested in node (monotone margin model, vr constraints binding/non-binding, impossible case); **real sim pe abhi chala nahi**.
-- **Verified by user earlier:** Step 4 baseline/determinism/speed (section 10). Ref points E button chala (section 10).
-- **Next (user):** `Tune lead (baseline)` dabao, log paste karo (tuneLead lines + RESULT + 2 FULL lines). Phir Step 5 ✅ -> Step 6.
-- **Next step after verify:** Step 6 — INNER-1 `tuneAB` (design in multi-step-project.md). Attach: `state.md`, `multi-step-project.md`, `prompt-web.md`, `tuner/` saari files (html, config, engine, utils, hook, core) + tuneLead log.
+- **Step 5 ✅** (user-confirmed). Config fix done: `limits.marginTargetS = [3.5, 5.5]`.
+- **Last finished:** Step 6 code delivered — `TunerCore.tuneAB` in `tuner-core.js` + html button `Tune (A,bias) + lead (baseline)` (mode select + eMax input) + config keys. Mock-tested in node (`test-tuneAB-mock.js`, synthetic E model, ALL PASS); **real sim pe abhi chala nahi**.
+- **Next (user):** page me mode=`fine`, eMax=0.20 pe `Tune (A,bias) + lead (baseline)` dabao; poora log paste karo (AB# lines, verify lines, `=== tuneAB RESULT`, candidates, baseline-vs-best line). Phir Step 6 ✅ -> Step 7.
+- **Next step after verify:** Step 7 — Phase A `findOptimalMeco()` (outer loop, residual 0–50 kg). Attach: `state.md`, `multi-step-project.md`, `prompt-web.md`, `tuner/` saari files (html, config, engine, utils, hook, core) + tuneAB log.
 
 ## 2. Project in 10 lines
 - User = SEHRAN. Falcon 9 Block 5 browser simulator (physics/guidance/render workers). Guidance = `leoInsertionV3`, target 320 km circular LEO.
@@ -25,7 +25,8 @@
 | tuner-config.js | `TunerConfig`: quanta, bounds, baseline, references, limits, scoring, modes, env (no logic) | Step 1 done (modes first-cut) |
 | tuner-utils.js | `TunerUtils`: lattice point {Gi,Tn,bi,li,meco} ints; `fromRaw, collapseA, aEff, step, key, inBounds, toValues(p,{targetAltKm}), describe, verifyApplied(p,cfg), EvalCache(p,stopAt), checkHard, score(m)->{score,ok,reasons,parts}, runSelfTests` | Step 2 done |
 | tuner-hook.js | `TunerHook.runEval(point,opts)` / `runEvalValues(values,opts)` async; `opts`: stopAt (COAST_WAIT_ENTRY\|CIRC_END\|DEPLOY\|FULL), env, durationCapS, abortRef, abortOnStageVrNeg (default true only for COAST_WAIT_ENTRY), onProgress, quiet. Returns metrics (below). Singleton guard (one eval at a time). `findStage`, `gLoad` (headless 1:1) inside | Step 3/4 done, **verified on real sim** |
-| tuner-core.js | `TunerCore.tuneLead(point, opts)` (Step 5, mock-tested); tuneAB, findOptimalMeco, sweepE | Step 5 code done; 6-8 pending |
+| tuner-core.js | `TunerCore.tuneLead(point, opts)` (Step 5 ✅), `TunerCore.tuneAB(point, opts)` (Step 6, mock-tested, real run pending); findOptimalMeco, sweepE pending. Both accept `opts.hook` (inject mock for node tests; default `TunerHook`) | Step 5 ✅, Step 6 code done; 7-8 pending |
+| test-tuneAB-mock.js | node test (not loaded by html): `node test-tuneAB-mock.js` needs tuner-config/utils/core in same dir | Step 6 |
 | tuner-ui.js | inputs, progress, ranked blocks, JSON | Step 9 |
 Delivered as separate files in `/mnt/user-data/outputs/tuner/` (no zip).
 
@@ -115,3 +116,14 @@ E@COAST_WAIT=0.172278  apo/peri@coast=320.00/-1646.62  tToApo=49.7 s  alt@coast=
 - **Facts from that log:** vrEnd is linear in lead, ~0.0101 m/s per tick (442: +0.0460, 435: -0.0246, 375: -0.6304 ...); margin ~ vrEnd/0.00685 => ~1.4 s per tick near the transition (NOT 0.35). Band [4,5] s (1 s wide) < 1 tick of margin => may contain no tick; prediction: 440 (~3.8 s, vrEnd ~0.026) or 441 (~5.2 s, vrEnd ~0.036). Selection = nearest to band, tie -> smaller margin. Headless claim (5.4375 -> 4.26 s) does not match browser (435 is past apogee) — probably different bias/config in that headless run; browser is the reference.
 - Eval cost: CIRC_END eval ~7.7 s (10 evals = 76.9 s) -> truncation saves little (circ is at t~572 of 593 s). Budget Step 6/7 at ~7 s per eval whatever the stopAt.
 
+
+## 12. Step 6 — tuneAB (INNER-1), implemented in tuner-core.js
+- `TunerCore.tuneAB(point, opts)` async -> `{ok, status, best, candidates[], eMax:{eMax,ceil,eOk,eBad,rounds}, evals(total), evalBreakdown:{ab,lead,full}, cacheHits, wallMs, log[]}`. `best` = lowest-score candidate with `ok` (hard constraints pass). Candidate = `{tag, round, point (AB lattice pt), fullPoint (with tuned lead), desc, E, apoCoastKm, lead:{...tuneLead summary}, metrics (FULL), score, ok, reasons, parts}`.
+- opts: `mode ('fast'|'fine'|'accurate'; default fine), modeOverride, eMax (start guess; default Cfg.ecc.eMax ?? eMaxGuess = 0.20), biasFloor, maxEvalsAB (160), maxRelearn (2), targetAltKm, env, abortRef, onLog, onProgress, cache, verbose (print tuneLead lines), hook`.
+- COAST_WAIT eval classes (ceil = eMax − 0.0005): **F1** stage vr<0 / crash (→ gentle: bias up) · **F2** no coast apo >= target−1 km / never reached COAST_WAIT (→ aggressive: bias down) · **FE** E > ceil (→ gentle) · **OK**. *Spec-ambiguity noted:* prompt-web 2.2 says E>E_max → aggressive, but Step-B ("push A down, E crosses → 1 step back") and the ref points (bias .59→1.16: E .172→.149) say higher gentleness → lower E, so FE goes gentle; `findOk` flips direction empirically if E rises along the scan. **Verify with the real log** (look for "flipping" lines).
+- Flow per round: `startOk` (Fail3: scan bias ±0.5 steps, opposite class ⇒ bracket+bisect; no OK ⇒ A relax = G+2 quanta, bias reset, ≤6x) → `push G` down by mode.gStep (trial G−step at same bias; non-OK ⇒ `findOk` rescue ±0.1 bias, K=6; rescue fail ⇒ stop) → `push T` down (Tn ladder 160→mode.tStep halving, rescue ±0.02, K=4, ≤8 steps/level) → `climbE` (bias ladder 0.5…mode floor, both directions, E toward ceil, never above) → candidates (mode.candidates: 1 fast / 2 fine / 3 accurate: min-A-climbed, pre-climb, back-off G+gStep) → each: `tuneLead` (warm lead from previous candidate) + FULL eval + `TunerUtils.score`.
+- Rescued push steps learn a bias-per-step slope (A↔bias trade along an E isoline) and predict the next trial's bias (1 eval instead of a scan). A rescue landing within 0.1 deg of the bias bound (−2/2.5) is rejected (Fail3 "extreme bias" = A too low).
+- **E_max learning:** top candidate fails (tuneLead infeasible or hard-fail score) ⇒ eBad = its E; eMax := (eOk+eBad)/2 if a passing E is known, else eBad − 0.01; restart from the best passing point (else the failed one); ≤ maxRelearn rounds. Only lowers eMax (no raise). Config: `ecc.eMaxGuess 0.20`, `ecc.eDropOnFail 0.01`, `limits.eSafetyMargin 0.0005`, `limits.coastApoTolKm 1`.
+- Config also: `limits.marginTargetS [3.5,5.5]`, `modes.*.candidates`.
+- Mock (node, synthetic E(gentleness), true E-limit 0.185 below the 0.20 guess): fast/fine/accurate all ok, 2 relearn rounds, ab evals 83/82/102 (+ lead ~40-80, full 1-3); no-learn case 40 evals; F1 start recovers (43); impossible ⇒ ok=false at 30 evals. Mock is a pessimistic worst case (A↔bias isoline slide + learning from scratch); real sim eval count expected lower. **Each real eval ≈ 7 s ⇒ fine mode ~ (ab+lead+full) × 7 s; if the real log shows > ~60 AB evals, Step 10 tuning needed (bigger T ladder start, fewer bias levels).**
+- Done-when (pending real run): best score <= baseline score (button prints baseline vs best), A_eff < 13.94 or equal, evals reported.

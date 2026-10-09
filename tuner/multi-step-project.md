@@ -31,13 +31,14 @@ Files padhe, gaps pakde, ye plan + `state.md` banaya.
 - **Hook fixes made here:** stage body lookup (`findStage`), maxG = headless gLoad on bodies[0], vrEnd/marginS = engines-off values, stopAt label capture.
 - **Pending (small):** run `Ref points E` button -> E for MECO 50000/55000 -> estimate E_min/E_max (write into state.md section 10 + config).
 
-## Step 5 — INNER-2: circ lead search  (code delivered, real-sim run pending)
+## Step 5 — INNER-2: circ lead search  ✅
 - **Attach:** `state.md`, `multi-step-project.md`, `prompt-web.md`, `tuner/` saari files, Ref points E log (if run).
 - **Deliver:** `tuneLead()` in `tuner-core.js` using `stopAt:'CIRC_END'` — Phase 1 (no negative vr; ladder 50/20/10/5/2/1 ticks), Phase 2 (negative allowed, vrMin >= -2, vrEnd (engOff) >= 0 with buffer 0.02–0.05), stop margin 4–5 s. Tick-lattice steps, EvalCache. Output `{lead, leadTicks, marginS, vrEnd, vrMin, ok, evals, log[]}`. Add a "Tune lead (baseline)" button in html.
 - **Done when:** baseline (A, bias, MECO 52612) pe lead search margin <= manual 6.72 s, vrEnd > 0, evals/wall reported.
 - *(Order PROMPT.md ke correction se: lead pehle — INNER-1 har candidate pe isse call karega.)*
 
-## Step 6 — INNER-1: (A, bias) joint search
+## Step 6 — INNER-1: (A, bias) joint search  (code delivered + node mock-tested, real-sim run pending)
+- **Attach (verify chat):** `state.md`, `multi-step-project.md`, `tuner/` saari files + tuneAB log.
 - **Deliver:** `tuneAB()` — hard-lower check, push G down (1 gimbal), bias ladder (±0.5→0.1→0.05→0.01→…), extreme-bias → A relax + bias reset, E_max ke strictly neeche target, Fail-1/2/3 handling, truncated eval (COAST_WAIT entry).
 - **Done when:** baseline MECO pe manual-equal ya better (A, bias) mile; eval count ~ low (target ≪ 900).
 

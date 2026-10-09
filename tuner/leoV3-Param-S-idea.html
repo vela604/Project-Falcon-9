@@ -70,6 +70,15 @@ input[type=number] { width: 90px; background: var(--panel-2); color: var(--text)
     <button id="evalTwiceBtn" disabled>Determinism (x2)</button>
     <button id="evalRefBtn" disabled>Ref points E (3x COAST_WAIT)</button>
     <button id="tuneLeadBtn" disabled>Tune lead (baseline)</button>
+    <label>mode
+      <select id="abMode">
+        <option value="fast">fast</option>
+        <option value="fine" selected>fine</option>
+        <option value="accurate">accurate</option>
+      </select>
+    </label>
+    <label>eMax <input type="number" id="abEmax" value="0.20" min="0.05" max="0.6" step="0.005"></label>
+    <button id="tuneABBtn" disabled>Tune (A,bias) + lead (baseline)</button>
     <button id="evalAbortBtn">Abort</button>
   </div>
 
@@ -159,7 +168,7 @@ input[type=number] { width: 90px; background: var(--panel-2); color: var(--text)
           ' lead=' + ins.CIRC_TRIGGER_LEAD_S + ' alt=' + ins.TARGET_ORBIT_ALT_KM);
       statusEl.textContent = 'Ready.';
       $('smokeBtn').disabled = false; $('dumpCfgBtn').disabled = false; $('applyChkBtn').disabled = false;
-      ['evalSnapBtn','evalRawBtn','evalTwiceBtn','evalRefBtn','tuneLeadBtn'].forEach((id) => $(id).disabled = false);
+      ['evalSnapBtn','evalRawBtn','evalTwiceBtn','evalRefBtn','tuneLeadBtn','tuneABBtn'].forEach((id) => $(id).disabled = false);
     } catch (e) {
       statusEl.textContent = 'Boot failed: ' + e.message;
       log('BOOT FAILED: ' + e.message, 'bad');
@@ -301,6 +310,44 @@ input[type=number] { width: 90px; background: var(--panel-2); color: var(--text)
       } else log('tuneLead FAILED: ' + r.reason, 'bad');
       statusEl.textContent = 'tuneLead done.';
     } catch (e) { log('TUNELEAD ERROR: ' + e.message, 'bad'); statusEl.textContent = 'tuneLead error.'; console.error(e); }
+    finally { ids.forEach((id) => $(id).disabled = false); }
+  });
+
+  // ---- Step 6: INNER-1 (A, bias) joint search + lead per candidate, from the baseline ----
+  $('tuneABBtn').addEventListener('click', async () => {
+    abortRef.aborted = false;
+    const ids = ['evalSnapBtn','evalRawBtn','evalTwiceBtn','evalRefBtn','tuneLeadBtn','tuneABBtn'];
+    ids.forEach((id) => $(id).disabled = true);
+    try {
+      const mode = $('abMode').value;
+      const eMax = parseFloat($('abEmax').value);
+      const p = TunerUtils.fromRaw(C.baselineRaw);
+      log('--- tuneAB [' + mode + '] eMax=' + eMax + ' from baseline (COAST_WAIT evals + tuneLead + FULL per candidate) ---');
+      const r = await TunerCore.tuneAB(p, {
+        mode, eMax: Number.isFinite(eMax) ? eMax : undefined, abortRef, onLog: (l) => log(l),
+        onProgress: (q) => { statusEl.textContent = 'tuneAB… t=' + q.simTime.toFixed(1) + ' s ' + (q.phase || ''); },
+      });
+      log('=== tuneAB RESULT ok=' + r.ok + ' status=' + r.status + ' evals=' + r.evals + ' (ab ' + r.evalBreakdown.ab + ', lead ' +
+          r.evalBreakdown.lead + ', full ' + r.evalBreakdown.full + ') cacheHits=' + r.cacheHits + ' wall=' + (r.wallMs / 1000).toFixed(1) + 's', r.ok ? 'ok' : 'bad');
+      log('eMax learning: ' + JSON.stringify(r.eMax));
+      r.candidates.forEach((c, i) => {
+        const m = c.metrics;
+        log('#' + (i + 1) + ' [' + c.tag + ' r' + c.round + '] score=' + c.score.toFixed(3) + ' ok=' + c.ok + (c.reasons.length ? ' (' + c.reasons.join(',') + ')' : '') +
+            '  E=' + fmt(c.E, 5) + '  ' + JSON.stringify(c.desc) +
+            (m ? '  deploy=' + fmt(m.deployTimeS, 2) + ' apo/peri=' + fmt(m.apogeeKm, 3) + '/' + fmt(m.perigeeKm, 3) + ' vrEnd=' + fmt(m.vrEnd, 4) + ' vrMin=' + fmt(m.vrMin, 3) +
+                ' margin=' + fmt(m.marginS, 2) + ' maxQ=' + fmt(m.maxQKPa, 2) + ' maxG=' + fmt(m.maxG, 3) + ' fuel=' + fmt(m.boosterFuelLeftKg, 0) + ' resid=' + fmt(m.stageResidualKg, 1) : ''),
+            c.ok ? 'ok' : 'bad');
+      });
+      if (r.best) {
+        const base = await TunerHook.runEval(p, { stopAt: 'FULL', abortRef });
+        const sb = TunerUtils.score(base);
+        log('baseline (lead 5.525): score=' + sb.score.toFixed(3) + ' ok=' + sb.ok + ' deploy=' + fmt(base.deployTimeS, 2) + ' fuel=' + fmt(base.boosterFuelLeftKg, 0) +
+            '  ->  best ' + r.best.score.toFixed(3) + (r.best.score <= sb.score ? '  (better/equal)' : '  (WORSE than baseline)'), r.best.score <= sb.score ? 'ok' : 'bad');
+        log('best JSON: ' + JSON.stringify({ ascent: { PUSH_MAX_GIMBAL_DEG: r.best.desc.G, PUSH_T_S: r.best.desc.T, MECO_TARGET_BOOSTER_FUEL_KG: r.best.desc.meco },
+            insertion: { STAGE_BURN_AOA_BIAS_DEG: r.best.desc.bias, CIRC_TRIGGER_LEAD_S: r.best.desc.lead } }));
+      }
+      statusEl.textContent = 'tuneAB done.';
+    } catch (e) { log('TUNEAB ERROR: ' + e.message, 'bad'); statusEl.textContent = 'tuneAB error.'; console.error(e); }
     finally { ids.forEach((id) => $(id).disabled = false); }
   });
 

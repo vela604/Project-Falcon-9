@@ -54,6 +54,8 @@
     ecc: {
       sweepRange: [0.25, 0.35],
       eMin: null, eMax: null,
+      eMaxGuess: 0.20,            // Step 6 start guess; tuneAB learns/lowers it (orbit/vrEnd failures)
+      eDropOnFail: 0.01,          // eMax = eBad - this, when no passing E is known yet
       manualBestE: 0.171,
     },
 
@@ -63,8 +65,10 @@
       vrEndMinMps: 0,               // sign check only (vrEnd >= 0)
       vrMinHardFloorMps: -2,        // PROVISIONAL
       vrEndBufferMps: [0.02, 0.05], // heuristic buffer (not 0)
-      marginTargetS: [4, 5],
+      marginTargetS: [3.5, 5.5],    // widened (Step 6): 1 tick ~ 1.4 s of margin, [4,5] fits no tick
       residualTargetKg: [0, 50],    // deorbit off
+      coastApoTolKm: 1,             // apo at COAST_WAIT must be >= targetAlt - tol (else Fail2)
+      eSafetyMargin: 0.0005,        // keep E strictly below eMax (no knife edge)
     },
 
     // ---- Scoring (lower = better) ----
@@ -84,9 +88,10 @@
     // Steps are multiples of quanta. G in gimbal quanta, T in Tn quanta,
     // lead in ticks, bias in deg.
     modes: {
-      fast:     { gStep: 5, tStep: 5, biasStep: 0.05,  leadTicks: 8, eSamples: 5,  adaptive: false },
-      fine:     { gStep: 1, tStep: 2, biasStep: 0.01,  leadTicks: 3, eSamples: 8,  adaptive: false },
-      accurate: { gStep: 1, tStep: 1, biasStep: 0.001, leadTicks: 1, eSamples: 12, adaptive: true  },
+      // candidates = how many (A,bias) candidates tuneAB verifies with tuneLead + FULL eval
+      fast:     { gStep: 5, tStep: 5, biasStep: 0.05,  leadTicks: 8, eSamples: 5,  adaptive: false, candidates: 1 },
+      fine:     { gStep: 1, tStep: 2, biasStep: 0.01,  leadTicks: 3, eSamples: 8,  adaptive: false, candidates: 2 },
+      accurate: { gStep: 1, tStep: 1, biasStep: 0.001, leadTicks: 1, eSamples: 12, adaptive: true,  candidates: 3 },
     },
 
     // ---- Default environment (UI overrides in Step 9) ----
