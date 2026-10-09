@@ -54,7 +54,12 @@ input[type=number] { width: 90px; background: var(--panel-2); color: var(--text)
     <button id="testBtn">Run self-tests</button>
     <button id="applyChkBtn" disabled>Apply+verify baseline</button>
   </div>
-
+<div style="display:none">
+  <select id="abMode"><option value="fine" selected>fine</option></select>
+  <input id="abEmax" type="number" value="0.20">
+  <select id="mecoStartSel"><option value="1" selected>baseline</option></select>
+  <select id="fullModeSel"><option value="fine" selected>fine</option></select>
+</div>
   <div class="panel">
     <label>stopAt
     <select id="stopAt">
