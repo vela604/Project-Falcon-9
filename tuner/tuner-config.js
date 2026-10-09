@@ -25,7 +25,7 @@
       A:    { lower: 9,      upper: 20 },
       bias: { lower: -2,     upper: 2.5 },
       lead: { lower: 0,      upper: 20 },
-      meco: { lower: 20000,  upper: 110000 },
+      meco: { lower: 0,      upper: 110000 },
     },
 
     // ---- Fixed (mission definition, not tunable) ----
@@ -43,11 +43,13 @@
       vrEnd: 0.046, vrMin: -0.380, marginS: 6.73, maxQKPa: 24.75, maxG: 4.815,
     },
     // Warm-start reference points (trend: MECO up => bias up => lead down)
-    references: [
-      { meco: 50000, G: 0.62, bias: 0.78, lead: 5.65 },
-      { meco: 52612, G: 0.60, bias: 0.59, lead: 5.53 },
-      { meco: 55000, G: 0.60, bias: 1.16, lead: 4.46 },
-    ],
+    // Each ref = a manually-tuned feasible point. `alt` = target altitude (km). `T` defaults to T0 if missing.
+references: [
+  { meco: 50000, G: 0.62, T: 4.82, bias: 0.78, lead: 5.65, alt: 320 },
+  { meco: 52612, G: 0.60, T: 4.82, bias: 0.59, lead: 5.53, alt: 320 },
+  { meco: 55000, G: 0.60, T: 4.82, bias: 1.16, lead: 4.46, alt: 320 },
+  { meco: 0, G: 0.65, T: 4.82, bias: 0.59, lead: 7.82, alt: 2000 }, // manual 2000 km point (booster fully drained)
+],
 
     // ---- Eccentricity band at COAST_WAIT entry (PROVISIONAL) ----
     // User: sweep default 0.25-0.35. Manual-best E = 0.171 (user-confirmed; "1.7" was a typo).
@@ -89,10 +91,11 @@ orbit: { tolFrac: 0.001, weight: 250, k: 1 },
 
     // ---- MECO outer loop ----
     meco: { start: 52612, stepLadderKg: [4000, 1000, 200],
-            gQuantumKg: 97.3,          // stage residual change per 0.01 G (real log: G .60 -> .59 = 849.4 -> 752.1)
-            gBiasDegPerQ: 0.55,        // bias moves ~0.52-0.6 deg per G quantum (same direction as G)
-            slopePrior: -0.05,         // kg residual per kg MECO when no 2 points yet (real curve: -0.08 .. -0.03)
-            maxGDrops: 3 },
+        gQuantumKg: 97.3,          // stage residual change per 0.01 G (real log: G .60 -> .59 = 849.4 -> 752.1)
+        gBiasDegPerQ: 0.55,        // bias moves ~0.52-0.6 deg per G quantum (same direction as G)
+        slopePrior: -0.05,         // kg residual per kg MECO when no 2 points yet (real curve: -0.08 .. -0.03)
+        maxGDrops: 3,
+minUsefulKg: 20000 },     // if the ref MECO is below this, save nothing worthwhile → probe this value first (fallback to ref if it fails)
 
     // ---- Accuracy modes (first cut — tuned in Step 10) ----
     // Steps are multiples of quanta. G in gimbal quanta, T in Tn quanta,

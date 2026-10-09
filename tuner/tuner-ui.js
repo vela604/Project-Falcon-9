@@ -45,10 +45,12 @@
       '<button class="tui-tab' + (k === active ? ' on' : '') + '" data-act="sort" data-key="' + k + '">' + TAB_LABEL[k] + '</button>').join('') + '</div>';
   }
   function summaryLine(res) {
-    const a = res.phaseA, b = res.phaseB;
-    return 'status=' + res.status + ' · MECO ' + (res.meco != null ? res.meco : '–') + ' · band [' + (res.band || []).join(',') + '] kg · evals ' + res.evals +
-      (a && b ? ' (A ' + a.evals + ' + B ' + b.evals + ')' : '') + ' · wall ' + fmt(res.wallMs / 1000, 1) + ' s';
-  }
+  const a = res.phaseA, b = res.phaseB;
+  let s = 'status=' + res.status + ' · MECO ' + (res.meco != null ? res.meco : '–') + ' · band [' + (res.band || []).join(',') + '] kg · evals ' + res.evals +
+    (a && b ? ' (A ' + a.evals + ' + B ' + b.evals + ')' : '') + ' · wall ' + fmt(res.wallMs / 1000, 1) + ' s';
+  if (res.probe) s += ' · probe ' + res.probe.triedKg + ' kg → ' + (res.probe.ok ? 'used' : 'fell back to ' + res.probe.usedKg + ' kg');
+  return s;
+}
   function boardHtml(res, sortKey) {
     const rows = U().sortRows(res.leaderboard || [], sortKey);
     let h = '<div class="tui-sum ' + (res.ok ? 'tui-ok' : 'tui-bad') + '">' + (res.ok ? 'OK' : 'FAILED') + ' — ' + esc(summaryLine(res)) + '</div>';
@@ -133,8 +135,9 @@
     opts = opts || {};
     const doc = root.document, cfg = C();
     if (!doc.getElementById('tuiStyle')) { const s = doc.createElement('style'); s.id = 'tuiStyle'; s.textContent = CSS; doc.head.appendChild(s); }
-    const refs = cfg.references.map((r, i) => '<option value="' + i + '"' + (r.meco === cfg.meco.start ? ' selected' : '') + '>ref MECO ' + r.meco + '</option>').join('');
-
+    const refs = cfg.references.map((r, i) =>
+  '<option value="' + i + '"' + (r.meco === cfg.meco.start ? ' selected' : '') + '>ref MECO ' + r.meco + (r.alt != null ? ' · ' + r.alt + ' km' : '') + '</option>').join('');
+  
     // default snapshot for Reset
     const DEFAULTS = {};
     CFG_FIELDS.forEach((f) => { DEFAULTS[f.path] = getPath(cfg, f.path); });
@@ -250,8 +253,32 @@ $('tuiDurCapAuto').addEventListener('click', () => { durCapDirty = false; refres
     });
 
     // ---- run / stop / result ----
-    function note() { $('tuiNote').textContent = (+$('tuiAlt').value !== 320) ? 'warm-start refs are tuned for 320 km: expect more evals' : ''; }
-$('tuiAlt').addEventListener('input', () => { note(); refreshDurCap(); });
+function updateNote() {
+  const alt = +$('tuiAlt').value;
+  const ref = cfg.references[+$('tuiStart').value];
+  const refAlt = ref && ref.alt != null ? ref.alt : 320;
+  const parts = [];
+  if (Math.abs(refAlt - alt) > 100) parts.push('start ref tuned for ' + refAlt + ' km; target ' + alt + ' km — expect more evals');
+  const MC2 = cfg.meco || {};
+const minUseful = MC2.minUsefulKg != null ? MC2.minUsefulKg : 20000;
+if (ref && ref.meco < minUseful) parts.push('ref MECO ' + ref.meco + ' < ' + minUseful + ': run will probe MECO ' + minUseful + ' first (fallback ' + ref.meco + ')');
+  $('tuiNote').textContent = parts.join(' · ');
+}
+let startAuto = true;
+function autoPickRef() {
+  if (!startAuto) return;
+  const alt = +$('tuiAlt').value || cfg.fixed.targetAltKm;
+  let bestI = 0, bestD = Infinity, bestIsStart = false;
+  cfg.references.forEach((r, i) => {
+    const d = Math.abs((r.alt != null ? r.alt : 320) - alt);
+    const isStart = r.meco === cfg.meco.start;
+    if (d < bestD - 1e-9 || (Math.abs(d - bestD) < 1e-9 && isStart && !bestIsStart)) { bestD = d; bestI = i; bestIsStart = isStart; }
+  });
+  $('tuiStart').value = String(bestI);
+  updateNote();
+}
+$('tuiStart').addEventListener('change', () => { startAuto = false; updateNote(); });
+$('tuiAlt').addEventListener('input', () => { autoPickRef(); refreshDurCap(); });
 
     function renderResult() {
       $('tuiResPanel').hidden = false;
@@ -319,7 +346,7 @@ setSearchDisabled(false);
 
     fillConfigInputs();
 refreshDurCap(true);
-note();
+updateNote();
 return { state: S, render: renderResult };
 }
 

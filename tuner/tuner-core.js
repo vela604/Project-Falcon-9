@@ -557,8 +557,17 @@
   //     floor-limited at this G (no MECO can reach the band) -> G-drop (one quantum), then jump straight to the MECO the
   //     residual model predicts at the new G (old probes are re-used as virtual points: r - gQuantumKg*dGi).
   // ==========================================================================
-  // residual band for this run: deorbit ON -> residualTargetDeorbitOnKg, else residualTargetKg (opts.deorbit overrides cfg.fixed.deorbitEnabled)
-  function residualBand(opts) {
+  // Pick the reference point closest (by altitude) to the target. Missing `alt` defaults to 320 km.
+function pickReference(cfg, altKm) {
+  const refs = (cfg.references || []).slice();
+  if (!refs.length) return null;
+  const a = altKm != null ? altKm : ((cfg.fixed && cfg.fixed.targetAltKm) || 320);
+  refs.sort((x, y) => Math.abs((x.alt != null ? x.alt : 320) - a) - Math.abs((y.alt != null ? y.alt : 320) - a));
+  return refs[0];
+}
+
+// residual band for this run: deorbit ON -> residualTargetDeorbitOnKg, else residualTargetKg (opts.deorbit overrides cfg.fixed.deorbitEnabled)
+function residualBand(opts) {
     opts = opts || {};
     const Cfg = root.TunerConfig, L = Cfg.limits;
     const on = opts.deorbit != null ? !!opts.deorbit : !!(Cfg.fixed && Cfg.fixed.deorbitEnabled);
@@ -864,10 +873,26 @@
     const cache = opts.cache || new U.EvalCache();
     const common = { hook: opts.hook, env: opts.env, targetAltKm: opts.targetAltKm, abortRef: opts.abortRef, onProgress: opts.onProgress, cache };
     say('runTuner: residual band [' + band[0] + ',' + band[1] + '] kg (' + ((opts.deorbit != null ? opts.deorbit : Cfg.fixed.deorbitEnabled) ? 'deorbit ON' : 'deorbit OFF') + ')  Phase A band [' + fmt(bandA[0], 0) + ',' + fmt(bandA[1], 0) + ']  Phase B mode=' + (opts.mode || 'fine'));
-    say('=== Phase A: findOptimalMeco ===');
-    const A = await findOptimalMeco(point, Object.assign({}, common, { band: bandA, onLog: opts.onLog ? (l) => say(l) : (l) => lines.push(l) }, opts.phaseA || {}));
-    const res = { ok: false, status: '', phaseA: A, phaseB: null, band, bestPoint: null, bestScore: NaN, bestMetrics: null, bestResidualKg: NaN, bestDeployS: NaN,
-                  bestSource: null, evals: A.evals, breakdown: null, wallMs: 0, log: lines, leaderboard: [], meco: A.meco };
+
+// Min-useful probe: if the ref MECO is below minUsefulKg, we're not saving enough fuel to matter →
+// try minUsefulKg first (more conservative). If feasible, use it; otherwise fall back to the ref as-is.
+const MC = Cfg.meco || {};
+const minUseful = opts.minUsefulKg != null ? opts.minUsefulKg : (MC.minUsefulKg != null ? MC.minUsefulKg : 20000);
+let startPoint = point, probeInfo = null;
+if (point.meco < minUseful) {
+  const probed = Object.assign({}, point, { meco: minUseful });
+  say('=== Min-useful probe: ref MECO=' + point.meco + ' < ' + minUseful + ', trying MECO=' + minUseful + ' (G=' + U.gOf(probed.Gi) + ' bias=' + U.biasOf(probed.bi) + ' lead=' + probed.li + 't) ===');
+  const pr = await tuneRough(probed, Object.assign({}, common, { mode: 'fast', roughRelax: 0 }));
+  if (pr.ok) { startPoint = probed; probeInfo = { minUsefulKg: minUseful, triedKg: minUseful, usedKg: minUseful, ok: true, residualKg: pr.residualKg };
+    say('  probe OK at MECO ' + minUseful + ' → using it  evals=' + pr.evals + ' residual=' + fmt(pr.residualKg, 1) + ' kg'); }
+  else { probeInfo = { minUsefulKg: minUseful, triedKg: minUseful, usedKg: point.meco, ok: false, reason: pr.reason };
+    say('  probe FAILED at MECO ' + minUseful + ' (' + pr.reason + ') → using ref MECO ' + point.meco); }
+}
+
+say('=== Phase A: findOptimalMeco ===');
+const A = await findOptimalMeco(startPoint, Object.assign({}, common, { band: bandA, onLog: opts.onLog ? (l) => say(l) : (l) => lines.push(l) }, opts.phaseA || {}));
+const res = { ok: false, status: '', phaseA: A, phaseB: null, band, bestPoint: null, bestScore: NaN, bestMetrics: null, bestResidualKg: NaN, bestDeployS: NaN,
+              bestSource: null, evals: A.evals, breakdown: null, wallMs: 0, log: lines, leaderboard: [], meco: A.meco, probe: probeInfo };
     if (!A.ok || !A.point) { res.status = 'phase A failed: ' + A.status; res.wallMs = performance.now() - t0; say('runTuner: ' + res.status); return res; }
     if (opts.abortRef && opts.abortRef.aborted) { res.status = 'aborted'; res.wallMs = performance.now() - t0; return res; }
     say('=== Phase B: tuneAB at MECO=' + A.meco + ' (start G=' + U.gOf(A.point.Gi) + ' bias=' + U.biasOf(A.point.bi) + ' lead=' + A.point.li + 't, residual ' + fmt(A.residualKg, 1) + ' kg, residual guard [' + band[0] + ',' + band[1] + ']) ===');
@@ -905,5 +930,6 @@
     return res;
   }
 
-  root.TunerCore = { tuneLead, tuneAB, tuneRough, findOptimalMeco, runTuner, residualBand };
+  root.TunerCore = { tuneLead, tuneAB, tuneRough, findOptimalMeco, runTuner, residualBand, pickReference };
+  
 })();
