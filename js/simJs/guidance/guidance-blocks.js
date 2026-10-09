@@ -1962,7 +1962,7 @@ setState(s) {
       SUICIDE_BURN_MAX_S: 600,
       SUICIDE_BURN_COARSE_MARGIN_DEG: 0.5,
       SUICIDE_TRIM_TOL_DEG: 0.1,
-      SUICIDE_TRIM_FAR_DEG: 1.0,
+      SUICIDE_TRIM_FAR_DEG: 0.5,
       // Lowered from 0.15 — at small errors (just above TOL), 15% duty
 // accumulates meaningful Δv over the long remaining fall time and
 // causes overshoot. 0.03 is close to RCS noise floor but still

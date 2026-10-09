@@ -861,74 +861,108 @@ function residualBand(opts) {
   // opts: mode (Phase B, default 'fine'), band, deorbit, phaseA{...findOptimalMeco opts}, phaseB{...tuneAB opts}, hook, env, targetAltKm, abortRef, onLog, onProgress, cache
   // ==========================================================================
   async function runTuner(point, opts) {
-    opts = opts || {};
-    const Cfg = root.TunerConfig, U = root.TunerUtils, L = Cfg.limits;
-    const t0 = performance.now();
-    const lines = [];
-    const say = (s) => { lines.push(s); if (opts.onLog) opts.onLog(s); };
-    const fmt = (x, d) => (Number.isFinite(x) ? x.toFixed(d) : String(x));
-    const band = opts.band || residualBand(opts);
-    const frac = opts.residualPhaseAFrac != null ? opts.residualPhaseAFrac : (L.residualPhaseAFrac != null ? L.residualPhaseAFrac : 0.5);
-    const bandA = opts.phaseABand || [band[0] + frac * (band[1] - band[0]), band[1]];
-    const cache = opts.cache || new U.EvalCache();
-    const common = { hook: opts.hook, env: opts.env, targetAltKm: opts.targetAltKm, abortRef: opts.abortRef, onProgress: opts.onProgress, cache };
-    say('runTuner: residual band [' + band[0] + ',' + band[1] + '] kg (' + ((opts.deorbit != null ? opts.deorbit : Cfg.fixed.deorbitEnabled) ? 'deorbit ON' : 'deorbit OFF') + ')  Phase A band [' + fmt(bandA[0], 0) + ',' + fmt(bandA[1], 0) + ']  Phase B mode=' + (opts.mode || 'fine'));
+  opts = opts || {};
+  const Cfg = root.TunerConfig, U = root.TunerUtils, L = Cfg.limits;
+  const t0 = performance.now();
+  const lines = [];
+  const say = (s) => { lines.push(s); if (opts.onLog) opts.onLog(s); };
+  const fmt = (x, d) => (Number.isFinite(x) ? x.toFixed(d) : String(x));
+  const band = opts.band || residualBand(opts);
+  const frac = opts.residualPhaseAFrac != null ? opts.residualPhaseAFrac : (L.residualPhaseAFrac != null ? L.residualPhaseAFrac : 0.5);
+  const bandA = opts.phaseABand || [band[0] + frac * (band[1] - band[0]), band[1]];
+  const cache = opts.cache || new U.EvalCache();
+  const common = { hook: opts.hook, env: opts.env, targetAltKm: opts.targetAltKm, abortRef: opts.abortRef, onProgress: opts.onProgress, cache };
+  say('runTuner: residual band [' + band[0] + ',' + band[1] + '] kg (' + ((opts.deorbit != null ? opts.deorbit : Cfg.fixed.deorbitEnabled) ? 'deorbit ON' : 'deorbit OFF') + ')  Phase A band [' + fmt(bandA[0], 0) + ',' + fmt(bandA[1], 0) + ']  Phase B mode=' + (opts.mode || 'fine'));
 
-// Min-useful probe: if the ref MECO is below minUsefulKg, we're not saving enough fuel to matter →
-// try minUsefulKg first (more conservative). If feasible, use it; otherwise fall back to the ref as-is.
+  // ---- MECO probe (only when the ref MECO is BELOW probeStartKg) ----
+// For 320 km refs (MECO 52612) no probe is needed. For high orbits with ref MECO≈0, probe at probeStartKg;
+// if it fails, fall back to the REF MECO (not 0) and skip Phase A entirely (MECO fixed).
 const MC = Cfg.meco || {};
-const minUseful = opts.minUsefulKg != null ? opts.minUsefulKg : (MC.minUsefulKg != null ? MC.minUsefulKg : 20000);
-let startPoint = point, probeInfo = null;
-if (point.meco < minUseful) {
-  const probed = Object.assign({}, point, { meco: minUseful });
-  say('=== Min-useful probe: ref MECO=' + point.meco + ' < ' + minUseful + ', trying MECO=' + minUseful + ' (G=' + U.gOf(probed.Gi) + ' bias=' + U.biasOf(probed.bi) + ' lead=' + probed.li + 't) ===');
-  const pr = await tuneRough(probed, Object.assign({}, common, { mode: 'fast', roughRelax: 0 }));
-  if (pr.ok) { startPoint = probed; probeInfo = { minUsefulKg: minUseful, triedKg: minUseful, usedKg: minUseful, ok: true, residualKg: pr.residualKg };
-    say('  probe OK at MECO ' + minUseful + ' → using it  evals=' + pr.evals + ' residual=' + fmt(pr.residualKg, 1) + ' kg'); }
-  else { probeInfo = { minUsefulKg: minUseful, triedKg: minUseful, usedKg: point.meco, ok: false, reason: pr.reason };
-    say('  probe FAILED at MECO ' + minUseful + ' (' + pr.reason + ') → using ref MECO ' + point.meco); }
+const probeStart = opts.probeStartKg != null ? opts.probeStartKg : (MC.probeStartKg != null ? MC.probeStartKg : 20000);
+let startPoint = point, probeInfo = null, skipPhaseA = false;
+if (point.meco < probeStart) {
+  const probedPoint = Object.assign({}, point, { meco: probeStart });
+  say('=== MECO probe: ref MECO=' + point.meco + ' < ' + probeStart + ' → probing at ' + probeStart + ' (G=' + U.gOf(probedPoint.Gi) + ' bias=' + U.biasOf(probedPoint.bi) + ' lead=' + probedPoint.li + 't) ===');
+  const pr = await tuneRough(probedPoint, Object.assign({}, common, { mode: 'fast', roughRelax: 0 }));
+  if (pr.ok) {
+    startPoint = probedPoint;
+    probeInfo = { probedKg: probeStart, ok: true, usedKg: probeStart, residualKg: pr.residualKg, evals: pr.evals };
+    say('  probe OK at MECO ' + probeStart + ' → MECO search will refine  evals=' + pr.evals + ' residual=' + fmt(pr.residualKg, 1) + ' kg');
+  } else {
+    skipPhaseA = true;
+    probeInfo = { probedKg: probeStart, ok: false, usedKg: point.meco, reason: pr.reason, evals: pr.evals };
+    say('  probe FAILED at MECO ' + probeStart + ' (' + pr.reason + ') → MECO fixed at ref value ' + point.meco + ', Phase A skipped');
+  }
+} else {
+  say('=== MECO probe: skipped (ref MECO=' + point.meco + ' >= ' + probeStart + '; using ref as-is) ===');
 }
 
-say('=== Phase A: findOptimalMeco ===');
-const A = await findOptimalMeco(startPoint, Object.assign({}, common, { band: bandA, onLog: opts.onLog ? (l) => say(l) : (l) => lines.push(l) }, opts.phaseA || {}));
-const res = { ok: false, status: '', phaseA: A, phaseB: null, band, bestPoint: null, bestScore: NaN, bestMetrics: null, bestResidualKg: NaN, bestDeployS: NaN,
-              bestSource: null, evals: A.evals, breakdown: null, wallMs: 0, log: lines, leaderboard: [], meco: A.meco, probe: probeInfo };
-    if (!A.ok || !A.point) { res.status = 'phase A failed: ' + A.status; res.wallMs = performance.now() - t0; say('runTuner: ' + res.status); return res; }
-    if (opts.abortRef && opts.abortRef.aborted) { res.status = 'aborted'; res.wallMs = performance.now() - t0; return res; }
-    say('=== Phase B: tuneAB at MECO=' + A.meco + ' (start G=' + U.gOf(A.point.Gi) + ' bias=' + U.biasOf(A.point.bi) + ' lead=' + A.point.li + 't, residual ' + fmt(A.residualKg, 1) + ' kg, residual guard [' + band[0] + ',' + band[1] + ']) ===');
-    const B = await tuneAB(A.point, Object.assign({}, common, { mode: opts.mode || 'fine', residualBand: band, onLog: opts.onLog ? (l) => say(l) : (l) => lines.push(l) }, opts.phaseB || {}));
-    res.phaseB = B; res.evals = A.evals + B.evals;
-    res.breakdown = { phaseA: A.evalBreakdown, phaseB: B.evalBreakdown };
-    // best: lowest score among Phase B's verified lanes (start lane = Phase A point) and the Phase A confirmed point
-    const cands = [];
-    if (B.best) cands.push({ src: 'phaseB[' + B.best.tag + ']', point: B.best.fullPoint, score: B.best.score, metrics: B.best.metrics });
-    if (Number.isFinite(A.score) && A.metrics) cands.push({ src: 'phaseA', point: A.point, score: A.score, metrics: A.metrics });
-    cands.sort((a, b) => a.score - b.score);
-    const best = cands.find((c) => c.metrics && c.metrics.stageResidualKg >= band[0] && c.metrics.stageResidualKg <= band[1]) || null;
-    if (best) {
-      res.bestPoint = best.point; res.bestScore = best.score; res.bestMetrics = best.metrics; res.bestSource = best.src;
-      res.bestResidualKg = best.metrics.stageResidualKg; res.bestDeployS = best.metrics.deployTimeS; res.ok = true; res.status = 'ok';
-    } else res.status = 'phase B: no in-band candidate';
-    // leaderboard: every real FULL eval at the final MECO — Phase A confirmed/level/start + Phase B verified lanes
-    const alt = opts.targetAltKm != null ? opts.targetAltKm : Cfg.fixed.targetAltKm;
-    const rows = [], seen = new Map();
-    const addRow = (row) => {
-      const k = U.key(row.point);
-      if (seen.has(k)) { const o = seen.get(k); if (o.src.indexOf(row.src) < 0) o.src += '+' + row.src; return; }
-      seen.set(k, row); rows.push(row);
-    };
-    A.history.filter((e) => e.real && e.ok && e.metrics && e.point && e.meco === A.meco && e.gi === A.point.Gi)
-      .forEach((e) => addRow(U.makeRow('A', 'A:' + e.kind, e.point, e.metrics, { E: e.E, targetAltKm: alt })));
-    B.candidates.forEach((c) => { if (!c.metrics || !(c.fullPoint || c.point)) return;
-      addRow(U.makeRow('B', c.tag, c.fullPoint || c.point, c.metrics,
-        { E: c.E, targetAltKm: alt, reject: !!c.resFail, reasons: c.resFail ? c.reasons : [] })); });
-    res.leaderboard = U.sortRows(rows, 'score');
-    res.meco = A.meco;
-    res.wallMs = performance.now() - t0;
-    say('=== runTuner ' + (res.ok ? 'OK' : 'FAILED') + ': ' + res.status + (res.ok ? ' | best=' + res.bestSource + ' score=' + res.bestScore.toFixed(3) + ' residual=' + fmt(res.bestResidualKg, 1) + ' kg deploy=' + fmt(res.bestDeployS, 2) + 's ' + JSON.stringify(U.describe(res.bestPoint)) : '') +
-        ' | evals=' + res.evals + ' (A ' + A.evals + ' + B ' + B.evals + ') wall=' + (res.wallMs / 1000).toFixed(1) + 's');
-    return res;
+  // ---- Phase A: MECO search (skip if probe failed) ----
+  let A;
+  if (skipPhaseA) {
+    const rf = await tuneRough(startPoint, Object.assign({}, common, { mode: 'fast', roughRelax: 0 }));
+    if (!rf.ok) {
+      const res = { ok: false, status: 'MECO fixed fallback failed: ' + rf.reason, phaseA: null, phaseB: null, band,
+        bestPoint: null, bestScore: NaN, bestMetrics: null, bestResidualKg: NaN, bestDeployS: NaN, bestSource: null,
+        evals: probeInfo.evals + rf.evals, breakdown: null, wallMs: performance.now() - t0, log: lines, leaderboard: [], meco: fixedFallback, probe: probeInfo };
+      say('=== runTuner FAILED: ' + res.status + ' ===');
+      return res;
+    }
+    A = { ok: true, status: 'skipped (MECO fixed at ' + fixedFallback + ')', meco: fixedFallback, point: startPoint,
+      residualKg: rf.residualKg, score: rf.score, E: rf.E, lead: rf.lead, metrics: rf.metrics,
+      deployTimeS: rf.metrics ? rf.metrics.deployTimeS : NaN, band: [band[0], band[1]], G: U.gOf(startPoint.Gi),
+      iters: 0, gDrops: 0, resOffset: 0, failingProbes: 0, bracket: { lo: null, hi: null },
+      history: [{ iter: 1, seq: 1, meco: fixedFallback, gi: startPoint.Gi, how: 'fixed', kind: 'fixed', real: true, ok: true,
+        residualKg: rf.residualKg, E: rf.E, score: rf.score, point: startPoint, lead: rf.lead, metrics: rf.metrics,
+        deployTimeS: rf.metrics ? rf.metrics.deployTimeS : NaN }],
+      evals: rf.evals, evalBreakdown: rf.evalBreakdown, cacheHits: rf.cacheHits, wallMs: rf.wallMs, log: rf.log };
+    say('=== Phase A: SKIPPED (MECO fixed at ' + fixedFallback + ') ===');
+  } else {
+    say('=== Phase A: findOptimalMeco ===');
+    A = await findOptimalMeco(startPoint, Object.assign({}, common, { band: bandA, onLog: opts.onLog ? (l) => say(l) : (l) => lines.push(l) }, opts.phaseA || {}));
+    if (!A.ok || !A.point) { const res = { ok: false, status: 'phase A failed: ' + A.status, phaseA: A, phaseB: null, band, bestPoint: null, bestScore: NaN, bestMetrics: null, bestResidualKg: NaN, bestDeployS: NaN, bestSource: null, evals: A.evals, breakdown: null, wallMs: performance.now() - t0, log: lines, leaderboard: [], meco: A.meco, probe: probeInfo }; say('runTuner: ' + res.status); return res; }
+    if (opts.abortRef && opts.abortRef.aborted) { return { ok: false, status: 'aborted', phaseA: A, phaseB: null, band, evals: A.evals, log: lines, leaderboard: [], wallMs: performance.now() - t0, probe: probeInfo }; }
   }
+
+  // ---- Phase B: tuneAB at A.meco (guard only when MECO was searched, not fixed) ----
+  const phaseBGuard = skipPhaseA ? null : band;
+  say('=== Phase B: tuneAB at MECO=' + A.meco + ' (start G=' + U.gOf(A.point.Gi) + ' bias=' + U.biasOf(A.point.bi) + ' lead=' + A.point.li + 't, residual ' + fmt(A.residualKg, 1) + ' kg, guard ' + (phaseBGuard ? '[' + phaseBGuard[0] + ',' + phaseBGuard[1] + ']' : 'OFF (MECO fixed)') + ') ===');
+  const B = await tuneAB(A.point, Object.assign({}, common, { mode: opts.mode || 'fine', residualBand: phaseBGuard, onLog: opts.onLog ? (l) => say(l) : (l) => lines.push(l) }, opts.phaseB || {}));
+  const res = { ok: false, status: '', phaseA: A, phaseB: B, band, bestPoint: null, bestScore: NaN, bestMetrics: null, bestResidualKg: NaN, bestDeployS: NaN,
+                bestSource: null, evals: A.evals + B.evals, breakdown: { phaseA: A.evalBreakdown, phaseB: B.evalBreakdown },
+                wallMs: 0, log: lines, leaderboard: [], meco: A.meco, probe: probeInfo };
+
+  const cands = [];
+  if (B.best) cands.push({ src: 'phaseB[' + B.best.tag + ']', point: B.best.fullPoint, score: B.best.score, metrics: B.best.metrics });
+  if (Number.isFinite(A.score) && A.metrics) cands.push({ src: 'phaseA' + (skipPhaseA ? '(fixed)' : ''), point: A.point, score: A.score, metrics: A.metrics });
+  cands.sort((a, b) => a.score - b.score);
+  const best = skipPhaseA
+    ? cands.find((c) => c.metrics && c.metrics.payloadCleared) || null
+    : cands.find((c) => c.metrics && c.metrics.stageResidualKg >= band[0] && c.metrics.stageResidualKg <= band[1]) || null;
+  if (best) {
+    res.bestPoint = best.point; res.bestScore = best.score; res.bestMetrics = best.metrics; res.bestSource = best.src;
+    res.bestResidualKg = best.metrics.stageResidualKg; res.bestDeployS = best.metrics.deployTimeS; res.ok = true; res.status = 'ok';
+  } else res.status = skipPhaseA ? 'no cleared candidate' : 'phase B: no in-band candidate';
+
+  const alt = opts.targetAltKm != null ? opts.targetAltKm : Cfg.fixed.targetAltKm;
+  const rows = [], seen = new Map();
+  const addRow = (row) => {
+    const k = U.key(row.point);
+    if (seen.has(k)) { const o = seen.get(k); if (o.src.indexOf(row.src) < 0) o.src += '+' + row.src; return; }
+    seen.set(k, row); rows.push(row);
+  };
+  A.history.filter((e) => e.real && e.ok && e.metrics && e.point && e.meco === A.meco && e.gi === A.point.Gi)
+    .forEach((e) => addRow(U.makeRow('A', 'A:' + e.kind, e.point, e.metrics, { E: e.E, targetAltKm: alt })));
+  B.candidates.forEach((c) => { if (!c.metrics || !(c.fullPoint || c.point)) return;
+    addRow(U.makeRow('B', c.tag, c.fullPoint || c.point, c.metrics,
+      { E: c.E, targetAltKm: alt, reject: !!c.resFail, reasons: c.resFail ? c.reasons : [] })); });
+  res.leaderboard = U.sortRows(rows, 'score');
+  res.meco = A.meco;
+  res.wallMs = performance.now() - t0;
+  say('=== runTuner ' + (res.ok ? 'OK' : 'FAILED') + ': ' + res.status + (res.ok ? ' | best=' + res.bestSource + ' score=' + res.bestScore.toFixed(3) + ' residual=' + fmt(res.bestResidualKg, 1) + ' kg deploy=' + fmt(res.bestDeployS, 2) + 's ' + JSON.stringify(U.describe(res.bestPoint)) : '') +
+      ' | evals=' + res.evals + ' (A ' + A.evals + ' + B ' + B.evals + ') wall=' + (res.wallMs / 1000).toFixed(1) + 's');
+  return res;
+}
 
   root.TunerCore = { tuneLead, tuneAB, tuneRough, findOptimalMeco, runTuner, residualBand, pickReference };
   

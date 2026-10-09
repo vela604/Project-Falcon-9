@@ -48,7 +48,7 @@
   const a = res.phaseA, b = res.phaseB;
   let s = 'status=' + res.status + ' · MECO ' + (res.meco != null ? res.meco : '–') + ' · band [' + (res.band || []).join(',') + '] kg · evals ' + res.evals +
     (a && b ? ' (A ' + a.evals + ' + B ' + b.evals + ')' : '') + ' · wall ' + fmt(res.wallMs / 1000, 1) + ' s';
-  if (res.probe) s += ' · probe ' + res.probe.triedKg + ' kg → ' + (res.probe.ok ? 'used' : 'fell back to ' + res.probe.usedKg + ' kg');
+  if (res.probe) s += ' · probe ' + res.probe.probedKg + ' kg → ' + (res.probe.ok ? 'used' : 'fell back to ' + res.probe.usedKg + ' kg');
   return s;
 }
   function boardHtml(res, sortKey) {
@@ -259,10 +259,10 @@ function updateNote() {
   const refAlt = ref && ref.alt != null ? ref.alt : 320;
   const parts = [];
   if (Math.abs(refAlt - alt) > 100) parts.push('start ref tuned for ' + refAlt + ' km; target ' + alt + ' km — expect more evals');
-  const MC2 = cfg.meco || {};
-const minUseful = MC2.minUsefulKg != null ? MC2.minUsefulKg : 20000;
-if (ref && ref.meco < minUseful) parts.push('ref MECO ' + ref.meco + ' < ' + minUseful + ': run will probe MECO ' + minUseful + ' first (fallback ' + ref.meco + ')');
-  $('tuiNote').textContent = parts.join(' · ');
+const MC2 = cfg.meco || {};
+const probeStart = MC2.probeStartKg != null ? MC2.probeStartKg : 20000;
+if (ref && ref.meco < probeStart) parts.push('ref MECO ' + ref.meco + ' < ' + probeStart + ': will probe MECO ' + probeStart + ' first (fallback ' + ref.meco + ')');
+$('tuiNote').textContent = parts.join(' · ');
 }
 let startAuto = true;
 function autoPickRef() {

@@ -95,7 +95,8 @@ orbit: { tolFrac: 0.001, weight: 250, k: 1 },
         gBiasDegPerQ: 0.55,        // bias moves ~0.52-0.6 deg per G quantum (same direction as G)
         slopePrior: -0.05,         // kg residual per kg MECO when no 2 points yet (real curve: -0.08 .. -0.03)
         maxGDrops: 3,
-minUsefulKg: 20000 },     // if the ref MECO is below this, save nothing worthwhile → probe this value first (fallback to ref if it fails)
+probeStartKg: 20000,      // every run probes MECO at this value first (rough tune). If it fails → MECO fixed at fixedFallbackKg, no MECO search.
+fixedFallbackKg: 0 },     // fallback MECO when probe fails (booster drained: only option for high orbits)
 
     // ---- Accuracy modes (first cut — tuned in Step 10) ----
     // Steps are multiples of quanta. G in gimbal quanta, T in Tn quanta,
