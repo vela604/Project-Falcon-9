@@ -251,13 +251,15 @@
     // --- Direct prediction at Karman ---
     // Target: M_c should end with E_target.
     // We need ΔE_mech = E_target − E_now, delivered as work by stage fuel.
+    // Empirical correction: thrust is roughly tangential while velocity has a
+    // climb angle γ, so the useful work fraction is ~cos(γ_K). Reduces the
+    // naive Oberth + KE prediction error from ~18% to ~3% (see karman v3 run).
     const dE_needed = Etgt - E_now;
     const dPE = GM * mc * (1 / rK - 1 / rTarget);
-    // Assume burn happens with thrust ≈ along velocity, at speed ≈ vK (first-order).
-    // Work = mc·vK·Δv + ½·mc·Δv². Set work + dPE = dE_needed.
-    // Solve quadratic in Δv: ½·mc·Δv² + mc·vK·Δv + dPE − dE_needed = 0
-    const a = 0.5 * mc;
-    const b = mc * vK;
+    const C = Math.cos(gK);
+    // Solve quadratic in Δv: C·(mc·vK·Δv + ½·mc·Δv²) + dPE − dE_needed = 0
+    const a = C * 0.5 * mc;
+    const b = C * mc * vK;
     const c = dPE - dE_needed;
     const disc = b*b - 4*a*c;
     const dv_required = disc >= 0 ? (-b + Math.sqrt(disc)) / (2*a) : NaN;
@@ -270,7 +272,7 @@
     // ratio check for actual, formula-based
     const actual_dE = E_actual_final - E_now;
     const dv_actual = Ve * Math.log(Mi_stage / (mc + residual_actual));
-    const pred_dE = mc * vK * dv_actual + 0.5 * mc * dv_actual * dv_actual + dPE;
+    const pred_dE = C * (mc * vK * dv_actual + 0.5 * mc * dv_actual * dv_actual) + dPE;
 
     // Fill table
     const rows = [
@@ -288,7 +290,8 @@
       { k: 'E_target (M_c)',            v: Etgt.toExponential(4), u: 'J' },
       { k: 'ΔE needed',                 v: dE_needed.toExponential(4), u: 'J' },
       { k: 'ΔPE term (K→target)',       v: dPE.toExponential(4), u: 'J' },
-      { k: 'Δv required',               v: (Number.isFinite(dv_required)?dv_required.toFixed(2):'n/a'), u: 'm/s' },
+      { k: 'C = cos(γ_K)',              v: C.toFixed(6), u: '' },
+      { k: 'Δv required (corrected)',   v: (Number.isFinite(dv_required)?dv_required.toFixed(2):'n/a'), u: 'm/s' },
       { k: '',                          v: '', u: '' },
       { k: '--- PREDICTION (Karman) ---', v: '', u: '' },
       { k: 'predicted residual fuel',   v: (Number.isFinite(residual_predicted)?residual_predicted.toFixed(1):'n/a'), u: 'kg' },
@@ -319,7 +322,7 @@
       'karman:   r=' + rK.toFixed(2) + ' v=' + vK.toFixed(3) + ' γ=' + (gK/D2R).toFixed(4) + '° fuel=' + F_K.toFixed(2) + ' E=' + E_now.toExponential(6),
       'target:   r=' + rTarget.toFixed(2) + ' v=' + vTarget.toFixed(3) + ' E=' + Etgt.toExponential(6),
       'end:      r=' + lastR.toFixed(2) + ' v=' + lastV.toFixed(3) + ' fuel=' + residual_actual.toFixed(2) + ' E=' + E_actual_final.toExponential(6),
-      'M_c=' + mc.toFixed(4) + '  Ve=' + Ve.toFixed(4),
+      'M_c=' + mc.toFixed(4) + '  Ve=' + Ve.toFixed(4) + '  C=' + C.toFixed(6) + '  γ=' + (gK/D2R).toFixed(4) + '°',
       'dv_required=' + (Number.isFinite(dv_required)?dv_required.toFixed(4):'n/a') + '  Mi_stage=' + Mi_stage.toFixed(4) + '  Mf_required=' + (Number.isFinite(Mf_required)?Mf_required.toFixed(4):'n/a'),
       'predicted_residual=' + (Number.isFinite(residual_predicted)?residual_predicted.toFixed(4):'n/a') + '  actual=' + residual_actual.toFixed(4),
       'ratio_actual_formula=' + (actual_dE/pred_dE).toFixed(6),
