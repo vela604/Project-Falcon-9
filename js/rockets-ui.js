@@ -871,9 +871,9 @@ function renderStackValidationInto(targetId, v) {
 // SEQ-1b: preset sequence → fixed slot roles (bottom → top). Null = custom.
 function presetSlotRoles(sequence) {
   const PRESETS = {
-    'f9-standard': ['booster', 'interstage', 'stage', 'payloadSpace'],
-    'f9-legacy': ['booster', 'stage', 'payloadSpace'],
-    'f9-heavy': ['booster', 'interstage', 'stage', 'interstage', 'stage', 'payloadSpace'],
+    'standard': ['booster', 'interstage', 'stage', 'payloadSpace'],
+    'legacy': ['booster', 'stage', 'payloadSpace'],
+    'heavy': ['booster', 'interstage', 'stage', 'interstage', 'stage', 'payloadSpace'],
     'sso': ['booster', 'payloadSpace'],
   };
   return PRESETS[sequence] || null;
@@ -892,7 +892,7 @@ function openStackEditorNew() {
     '1'
   );
   if (seqPrompt === null) return;
-  const seqMap = { '1': 'f9-standard', '2': 'f9-heavy', '3': 'sso', '4': 'custom' };
+  const seqMap = { '1': 'standard', '2': 'heavy', '3': 'sso', '4': 'custom' };
   const sequence = seqMap[seqPrompt.trim()] || 'custom';
   
   editingStackId = null;
@@ -976,9 +976,9 @@ function renderStackSequenceHint() {
   const el = document.getElementById('stackSequenceHint');
   if (!el) return;
   const hints = {
-    'f9-standard': 'Preset: Booster → Interstage → Stage → Payload Space',
-    'f9-legacy': 'Preset (legacy): Booster → Stage → Payload Space',
-    'f9-heavy': 'Preset: Booster → Interstage → Stage → Interstage → Stage → Payload Space',
+    'standard': 'Preset: Booster → Interstage → Stage → Payload Space',
+    'legacy': 'Preset (legacy): Booster → Stage → Payload Space',
+    'heavy': 'Preset: Booster → Interstage → Stage → Interstage → Stage → Payload Space',
     'sso': 'Preset: Booster → Payload Space',
   };
   const text = hints[workingStackSequence];

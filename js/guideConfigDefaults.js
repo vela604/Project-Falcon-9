@@ -33,9 +33,9 @@ const GUIDE_DEFAULT_STACK_NAME = 'Falcon 9 Block 5';
 // every type, backward-compat). Empty array = never compatible.
 //
 // Stack types (see fleet.js's addStack / updateStack):
-//   'f9-standard'  Booster → Interstage → Stage → PayloadSpace
-//   'f9-legacy'    Booster → Stage → PayloadSpace   (no interstage member)
-//   'f9-heavy'     Booster → Int → Stage → Int → Stage → PayloadSpace
+//   'standard'  Booster → Interstage → Stage → PayloadSpace
+//   'legacy'    Booster → Stage → PayloadSpace   (no interstage member)
+//   'heavy'     Booster → Int → Stage → Int → Stage → PayloadSpace
 //   'sso'          Booster → PayloadSpace            (sounding rocket)
 //   'custom'       anything else
 // ============================================================================
@@ -43,10 +43,10 @@ const GUIDE_COMPATIBLE_STACK_TYPES = {
   // V3 inserts a stage + fairing + payload; needs those members present.
   // Heavy (two stages) not supported by current single-stage V3 logic.
   // SSO has no stage → not supported.
-  leoInsertionV3: ['f9-standard', 'f9-legacy'],
+  leoInsertionV3: ['standard', 'legacy'],
   // Same mission shape as V3.
-  leoInsertionV2: ['f9-standard', 'f9-legacy'],
-  leoInsertion:   ['f9-standard', 'f9-legacy'],
+  leoInsertionV2: ['standard', 'legacy'],
+  leoInsertion:   ['standard', 'legacy'],
   // Ascent-only guides: work with any stack that has a booster.
   // (No entry = compatible with everything, so they're left out on purpose.)
 };
@@ -84,7 +84,7 @@ function _mkDefault(guideName, name, description, constants, tags, mecoTimeS, pa
     payloadDeployTimeS: Number.isFinite(payloadDeployTimeS) ? payloadDeployTimeS : null,
     constants,
     isDefault: true,
-    stackType: (typeof stackType === 'string' && stackType) ? stackType : 'f9-standard',
+    stackType: (typeof stackType === 'string' && stackType) ? stackType : 'standard',
   };
 }
 

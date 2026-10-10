@@ -689,7 +689,7 @@ function seedFalcon9B5Stack() {
     id: 'stk_falcon9-b5',
     name: 'Falcon 9 Block 5',
     members: ['falcon9-b5-booster', 'falcon9-b5-interstage', 'falcon9-b5-stage', 'falcon9-b5-fairing'],
-    sequence: 'f9-standard',
+    sequence: 'standard',
     payloadId: 'pl_falcon9-default',
     locked: true,
   };
@@ -1283,6 +1283,11 @@ function loadStacks() {
             changed = true;
           }
         });
+        // [migration-29] Strip f9- prefix from sequence values (idempotent).
+        parsed.forEach(s => {
+          const m = { 'f9-standard': 'standard', 'f9-legacy': 'legacy', 'f9-heavy': 'heavy' };
+          if (s && m[s.sequence]) { s.sequence = m[s.sequence]; changed = true; }
+        });
         if (reconcileDefaultStacks(parsed)) changed = true;
         if (changed) saveStacks(parsed);
         _stacksCache = parsed;
@@ -1342,7 +1347,7 @@ function computeStackDerived(memberIds) {
 
 function addStack(data) {
   const stacks = loadStacks();
-  const VALID_SEQ = ['f9-standard', 'f9-legacy', 'f9-heavy', 'sso', 'custom'];
+  const VALID_SEQ = ['standard', 'legacy', 'heavy', 'sso', 'custom'];
   const memberIds = Array.isArray(data && data.members) ? [...data.members] : [];
   const rec = {
     id: genStackId(),
@@ -1366,7 +1371,7 @@ function updateStack(id, data) {
   const merged = { ...stacks[idx], ...data, id };
   if (merged.payloadId === undefined) merged.payloadId = null;
   if (!Array.isArray(merged.members)) merged.members = [];
-  const VALID_SEQ = ['f9-standard', 'f9-legacy', 'f9-heavy', 'sso', 'custom'];
+  const VALID_SEQ = ['standard', 'legacy', 'heavy', 'sso', 'custom'];
   if (!VALID_SEQ.includes(merged.sequence)) merged.sequence = 'custom';
   // Recompute derived (members may have changed, or an underlying member
   // record was edited). Always overwrite; never trust a stale cached copy.
@@ -1441,7 +1446,7 @@ function getActiveStackMembers() {
 }
 
 // Stack type — the stack's own `sequence` field IS its type:
-// 'f9-standard' | 'f9-legacy' | 'f9-heavy' | 'sso' | 'custom'.
+// 'standard' | 'legacy' | 'heavy' | 'sso' | 'custom'.
 // Used by the guidance/preset compatibility layer: a guidance declares
 // which stack types it can fly, a preset is bound to one stack type.
 function stackTypeOf(stk) {
@@ -2225,12 +2230,12 @@ function validateStack(members, fleet, stack) {
   // sequences fall through to the general rules below.
   const PRESET_ROLES = {
   // New 4-member F9 layout: interstage is now its own stack member.
-  'f9-standard': ['booster', 'interstage', 'stage', 'payloadSpace'],
+  'standard': ['booster', 'interstage', 'stage', 'payloadSpace'],
   // Legacy 3-member chain (pre-interstage-member architecture). Kept
   // alive for the frozen F9 Block 3 stack.
-  'f9-legacy': ['booster', 'stage', 'payloadSpace'],
+  'legacy': ['booster', 'stage', 'payloadSpace'],
   // Heavy variant: two stages, each with its own interstage.
-  'f9-heavy': ['booster', 'interstage', 'stage', 'interstage', 'stage', 'payloadSpace'],
+  'heavy': ['booster', 'interstage', 'stage', 'interstage', 'stage', 'payloadSpace'],
   // Sounding rocket — payload fairing directly above booster.
   'sso': ['booster', 'payloadSpace'],
 };

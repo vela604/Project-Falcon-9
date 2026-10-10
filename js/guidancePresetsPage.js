@@ -77,7 +77,7 @@ function listAllStacks() {
       type: s.sequence || 'custom',
     }));
   }
-  return [{ id: GUIDE_DEFAULT_STACK_ID, name: GUIDE_DEFAULT_STACK_NAME, type: 'f9-standard' }];
+  return [{ id: GUIDE_DEFAULT_STACK_ID, name: GUIDE_DEFAULT_STACK_NAME, type: 'standard' }];
 }
 
 // The "active" stack — the one the sim is flying. Reads the selection
@@ -455,7 +455,7 @@ $('pmMecoTime').value = '';
 // Deduped by id, default first, then active, then the rest.
 function collectKnownStacks() {
   const seen = new Map();
-  seen.set(GUIDE_DEFAULT_STACK_ID, { id: GUIDE_DEFAULT_STACK_ID, name: GUIDE_DEFAULT_STACK_NAME, type: 'f9-standard' });
+  seen.set(GUIDE_DEFAULT_STACK_ID, { id: GUIDE_DEFAULT_STACK_ID, name: GUIDE_DEFAULT_STACK_NAME, type: 'standard' });
   const act = activeStack();
   if (act && act.id && !seen.has(act.id)) seen.set(act.id, { id: act.id, name: act.name, type: act.type || 'custom' });
   listAllStacks().forEach(s => {

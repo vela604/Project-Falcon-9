@@ -1,0 +1,9 @@
+
+# Archived old tuner/headless experiments — not shipped, kept locally
+archive/
+
+# Personal notes / AI handoff docs — not tracked
+docs/
+
+# One-off patch scripts — kept locally for editing
+node-patch.js
