@@ -62,6 +62,7 @@
               const ms = ((typeof performance !== 'undefined') ? performance.now() : Date.now()) - t0;
               const parts = ['end=' + (m.endReason || '?'), 'wall=' + (ms / 1000).toFixed(1) + 's'];
               if (Number.isFinite(m.eCoast)) parts.push('E=' + m.eCoast.toFixed(4));
+if (Number.isFinite(m.coastDeltaV)) parts.push('Δv=' + m.coastDeltaV.toFixed(1));
               if (Number.isFinite(m.apoCoastKm)) parts.push('apoC=' + m.apoCoastKm.toFixed(1));
               if (Number.isFinite(m.marginS)) parts.push('marg=' + m.marginS.toFixed(2));
               if (Number.isFinite(m.vrEnd)) parts.push('vrEnd=' + m.vrEnd.toFixed(4));
@@ -309,7 +310,7 @@
   // F2b : Δv < bandLo — too aggressive — go gentle (bias DOWN)
   // FE  : Δv > bandHi — too gentle — go aggressive (bias UP)
   // OK  : Δv in band AND coast apo >= target - tol
-  const dirOf = (cls) => (cls === 'F1' || cls === 'FE') ? +1 : -1;
+  const dirOf = (cls) => (cls === 'F1' || cls === 'F2b') ? +1 : -1;
   function classify(m) {
     if (m.endReason === 'STAGE_VR_NEG' || m.stageVrNeg || m.endReason === 'CRASHED') return 'F1';
     if (m.endReason !== 'COAST_WAIT_ENTRY' || !Number.isFinite(m.eCoast)) return 'F2a';
@@ -376,16 +377,19 @@
 //   F1 / F2a (crash / coast bad)      -> G DOWN first (320 km baseline ka case)
 // Har G level pe wahi findOk bias-scan.
 async function startOk(p) {
-  const relaxStep = Math.max(2, mode.gStep), R = 6;
+  const relaxStep = Math.max(2, mode.gStep);
   const r0 = await evAB(p);
   if (r0.cls === 'OK') return r0;
+  // 0 pehle -> start G pe bias scan. Phir signal ke hisaab se G direction:
+  //   F2b (dv < band, gentle chahiye)  -> G DOWN first
+  //   FE  (dv > band, aggressive chahiye) -> G UP first
+  //   F1 / F2a -> G DOWN first
   let order;
-  if (r0.cls === 'F2b') order = [0, -1, +1, -2, +2, -3, +3, -4, +4, -5, +5, -6, +6];
-else if (r0.cls === 'FE') order = [0, +1, -1, +2, -2, +3, -3, +4, -4, +5, -5, +6, -6];
-else order = [0, -1, +1, -2, +2, -3, +3, -4, +4, -5, +5, -6, +6];
-say('startOk: start ' + dsc(p) + ' cls=' + r0.cls + ' -> G order [' + order.join(',') + ']');
+  if (r0.cls === 'FE') order = [0, +1, -1, +2, -2, +3, -3, +4, -4, +5, -5, +6, -6];
+  else order = [0, -1, +1, -2, +2, -3, +3, -4, +4, -5, +5, -6, +6];
+  say('startOk: start ' + dsc(p) + ' cls=' + r0.cls + ' -> G order [' + order.join(',') + ']');
   for (const mul of order) {
-    const p1 = U.step(p, { dGi: mul * relaxStep });
+    const p1 = mul === 0 ? p : U.step(p, { dGi: mul * relaxStep });
     if (!U.inBounds(p1)) continue;
     const r = await findOk(p1, ladder[0], 10);
     if (r) { say('startOk: OK at dGi=' + (mul * relaxStep) + ' (G=' + U.gOf(p1.Gi) + ')'); return r; }
