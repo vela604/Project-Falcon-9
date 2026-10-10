@@ -873,7 +873,7 @@ pre { padding: 12px 14px; font-size: 11.5px; }
     </p>
                <div class="hero-stats">
       <div class="hero-stat">
-        <div class="hero-stat-num">11</div>
+        <div class="hero-stat-num">12</div>
         <div class="hero-stat-label">Experiments</div>
       </div>
       <div class="hero-stat">
@@ -889,8 +889,8 @@ pre { padding: 12px 14px; font-size: 11.5px; }
         <div class="hero-stat-label">Failed</div>
       </div>
       <div class="hero-stat">
-        <div class="hero-stat-num" style="color:var(--cyan)">1</div>
-        <div class="hero-stat-label">Diagnostic</div>
+        <div class="hero-stat-num" style="color:var(--cyan)">2</div>
+        <div class="hero-stat-label">Tools</div>
       </div>
     </div>
   </header>
@@ -899,7 +899,7 @@ pre { padding: 12px 14px; font-size: 11.5px; }
     <div class="legend-item"><span class="legend-dot pass"></span>Accurate Win</div>
     <div class="legend-item"><span class="legend-dot partial"></span>Partial / Not Practical</div>
     <div class="legend-item"><span class="legend-dot fail"></span>Failed</div>
-    <div class="legend-item"><span class="legend-dot tool"></span>Diagnostic Tool</div>
+    <div class="legend-item"><span class="legend-dot tool"></span>Tool</div>
   </div>
 
   <!-- ==================== RCS PHASE ==================== -->
@@ -1992,6 +1992,64 @@ Q   =  u·ax + v·ay
         <span class="tag">any-target-orbit</span>
         <span class="tag">block-composed</span>
         <span class="tag warn">wind-untested</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== PRO-ALPHA ENGINE ==================== -->
+  <div class="section-header">Auto-Tuning Engine</div>
+
+  <div class="exp glass tool">
+    <div class="exp-head">
+      <div>
+        <h3 class="exp-title">Pro-Alpha Engine — Autonomous Guidance Tuner</h3>
+        <div class="exp-id">atlas-prism · engines/pro-alpha</div>
+        <div class="exp-time">10 Oct' 2026</div>
+      </div>
+      <span class="exp-status tool">TOOL</span>
+    </div>
+    <div class="exp-body">
+      <div class="exp-row">
+        <div class="exp-label">Target</div>
+        <div class="exp-value">
+          Automate the manual tuning loop for <code>leoInsertionV3</code>. Given a target orbit altitude and the active stack, the engine finds the five guidance constants — <code>G</code>, <code>T</code>, <code>bias</code>, <code>lead</code>, <code>MECO</code> — without a human in the loop. Replaces hours of manual bisection with a single browser run.
+        </div>
+      </div>
+      <div class="exp-row">
+        <div class="exp-label">Approach</div>
+        <div class="exp-value">
+          <p>A two-phase guided search built on top of physics-aware primitives. No black-box optimiser — every step reads a real mission signal and moves in a direction the physics justifies.</p>
+          <ul>
+            <li><strong>Phase A — MECO outer loop.</strong> Steers the post-deploy stage residual into a target band by adjusting booster cutoff. Cheap probes (COAST_WAIT + a single CIRC_END) estimate residual in a fraction of a full-mission eval; only near-band candidates get verified with a full <code>tuneRough</code>. A cliff-aware fallback detects when the residual floor is unreachable at the current thrust level and steps the gimbal quantum down one level, reusing every existing probe as a virtual data point at the new level.</li>
+            <li><strong>Phase B — lane sweep.</strong> At the final MECO, sweeps gimbal offset in coarse steps. Each lane is a fully-tuned candidate: find <code>(G, bias)</code> inside the coast Δv band, tune <code>lead</code>, run the full mission, score it. Warm-started lead carries across lanes because neighbouring lanes share nearly the same burn geometry.</li>
+            <li><strong>Scoring.</strong> Orbit accuracy dominates (relative tolerance 0.1% of target altitude, weight 250), then fuel margin, then deploy time. Continuous penalty curve — no deadzone, so a zero-error orbit is the only score that gets zero penalty.</li>
+          </ul>
+        </div>
+      </div>
+      <div class="exp-row">
+        <div class="exp-label">Search signal</div>
+        <div class="exp-value">
+          Coast Δv at COAST_WAIT entry — the velocity still needed to circularise the current coast orbit at the target altitude. This replaces the earlier eccentricity signal, which was ambiguous across altitudes. Δv is directly physical: a more aggressive ascent yields a smaller Δv budget, a gentler one yields a larger budget, and the band between the two is where the burn succeeds.
+        </div>
+      </div>
+      <div class="exp-row">
+        <div class="exp-label">Composition</div>
+        <div class="exp-value">
+          <p>The engine is a thin orchestration layer over five reusable primitives — <code>tuneLead</code>, <code>tuneAB</code>, <code>tuneRough</code>, <code>findOptimalMeco</code>, and the eval-cache-aware hook. It defines <em>what to do next</em> and lets the primitives handle <em>how</em>. Every other engine in the tuner composes from the same set, so behaviour stays consistent and improvements to a primitive benefit all engines at once.</p>
+        </div>
+      </div>
+      <div class="exp-row">
+        <div class="exp-label">Result</div>
+        <div class="exp-value">
+          <strong>Fully autonomous tuning, end to end.</strong> Starting from a baseline point and a target altitude, the engine produces a ranked leaderboard of verified candidates with complete metrics, constant JSON, and a clear winner. Baseline reproduction is exact; every candidate on the leaderboard is a real full-mission eval, not an estimate. Runs in the browser at sim speed, deterministic across reloads.
+        </div>
+      </div>
+      <div class="tags">
+        <span class="tag">autonomous-tuning</span>
+        <span class="tag">two-phase-search</span>
+        <span class="tag">physics-guided</span>
+        <span class="tag">deterministic</span>
+        <span class="tag">composable</span>
       </div>
     </div>
   </div>
