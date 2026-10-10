@@ -1025,7 +1025,7 @@ B.candidates.forEach((c) => { if (!c.metrics || !(c.fullPoint || c.point)) retur
 
   // built-in guided strategy (this file's tuneLead/tuneAB/tuneRough/findOptimalMeco/runTuner)
 registerStrategy('guided', {
-  label: 'Guided (MECO → A/bias → lead)',
+  label: 'Pro-Alpha Engine',
   describe: 'probe MECO → Phase A search (MECO) → Phase B lane search (G/T/bias) → lead per lane',
   runTuner,
 });
