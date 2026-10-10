@@ -2,11 +2,10 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Karman Energy Test</title>
+<title>Karman Direct Prediction</title>
 <style>
   :root { --bg:#060912; --panel:#0d1424; --border:#1c2b45; --text:#dbe6f5;
-          --cyan:#35d6ff; --green:#4ade80; --yellow:#ffd23f; --purple:#a78bfa; --dim:#6b7d9c; }
-  * { box-sizing: border-box; }
+          --cyan:#35d6ff; --green:#4ade80; --yellow:#ffd23f; --red:#ff5f7e; --dim:#6b7d9c; }
   body { margin:0; background:var(--bg); color:var(--text); font:13px/1.5 monospace; padding:20px; }
   h1 { font-size:15px; color:var(--cyan); margin:0 0 12px; letter-spacing:1px; text-transform:uppercase; }
   .panel { background:var(--panel); border:1px solid var(--border); border-radius:6px; padding:12px; margin-bottom:12px; }
@@ -14,52 +13,47 @@
            padding:8px 16px; border-radius:4px; font:inherit; cursor:pointer; margin-right:8px; }
   button:hover { border-color:var(--cyan); color:var(--cyan); }
   button:disabled { opacity:.4; cursor:not-allowed; }
+  select { background:#101a30; color:var(--text); border:1px solid var(--border);
+           padding:8px 12px; border-radius:4px; font:inherit; cursor:pointer; margin-right:8px; }
   #status { color:var(--yellow); margin:8px 0; min-height:1.2em; }
-  canvas { background:#060912; border:1px solid var(--border); border-radius:4px; display:block; margin-bottom:8px; }
-  .legend { display:flex; gap:16px; flex-wrap:wrap; font-size:11.5px; margin-bottom:8px; }
-  .legend span { display:inline-flex; align-items:center; gap:6px; }
-  .dot { width:10px; height:10px; border-radius:50%; }
-  .grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
-  @media(max-width:900px){ .grid{grid-template-columns:1fr;} }
+  table { border-collapse:collapse; font-size:12.5px; width:100%; margin-top:6px; }
+  th, td { padding:6px 10px; text-align:right; border-bottom:1px solid var(--border); }
+  th { color:var(--cyan); font-weight:600; }
+  td:first-child, th:first-child { text-align:left; color:var(--dim); }
+  tr.highlight td { background:rgba(74,222,128,0.06); }
+  tr.bad td { background:rgba(255,95,126,0.08); color:var(--red); }
   pre { background:#0a1020; border:1px solid var(--border); padding:8px; border-radius:4px;
-        font-size:11px; overflow:auto; max-height:240px; }
+        font-size:11.5px; overflow:auto; max-height:400px; line-height:1.5; }
 </style>
 </head>
 <body>
 
-<h1>Karman Energy Test — M_c live vs formula prediction</h1>
+<h1>Karman Direct Prediction — predicted fuel residual vs actual</h1>
 
 <div class="panel">
-  <button id="runBtn">Run baseline 320 km mission</button>
+  <label style="color:var(--dim);margin-right:8px;">Target:</label>
+  <select id="altSel">
+    <option value="320">320 km (baseline)</option>
+    <option value="2000">2000 km (ORB-2000)</option>
+  </select>
+  <button id="runBtn">Run</button>
   <button id="clearBtn">Clear</button>
   <div id="status">idle</div>
 </div>
 
 <div class="panel">
-  <div class="legend">
-    <span><span class="dot" style="background:#4ade80"></span>E_live(M_c) — actual</span>
-    <span><span class="dot" style="background:#35d6ff"></span>E_formula — predicted from fuel</span>
-    <span><span class="dot" style="background:#ffd23f"></span>E_target — final orbit</span>
-    <span><span class="dot" style="background:#a78bfa"></span>Trigger level (E_target − A_stage)</span>
-  </div>
-  <div class="grid">
-    <div>
-      <div style="font-size:11.5px;color:var(--dim);margin-bottom:4px;">Energy vs time (from Karman)</div>
-      <canvas id="chartTime" width="640" height="380"></canvas>
-    </div>
-    <div>
-      <div style="font-size:11.5px;color:var(--dim);margin-bottom:4px;">Energy gain vs stage fuel used</div>
-      <canvas id="chartFuel" width="640" height="380"></canvas>
-    </div>
-  </div>
+  <div style="font-size:11.5px;color:var(--dim);margin-bottom:6px;">Predicted at Karman vs actual at end</div>
+  <table id="resTable">
+    <thead><tr><th>quantity</th><th>value</th><th>units</th></tr></thead>
+    <tbody></tbody>
+  </table>
 </div>
 
 <div class="panel">
-  <div style="font-size:11.5px;color:var(--dim);margin-bottom:6px;">Numbers</div>
-  <pre id="numbers">—</pre>
+  <div style="font-size:11.5px;color:var(--dim);margin-bottom:6px;">Raw signals</div>
+  <pre id="raw">—</pre>
 </div>
 
-<!-- Sim scripts (same order as atlas-prism/index.html) -->
 <script src="../../js/componentLibrary.js"></script>
 <script src="../../js/customDesign.js"></script>
 <script src="../../js/fleet.js"></script>
@@ -76,7 +70,6 @@
 <script src="../../js/simJs/guidance/guidance-blocks.js"></script>
 <script src="../../js/simJs/guidance/guidance.js"></script>
 <script src="../../js/guideConfigDefaults.js"></script>
-
 <script src="../lib/config.js"></script>
 <script src="../lib/sim.js"></script>
 
@@ -85,13 +78,28 @@
   'use strict';
   const $ = (id) => document.getElementById(id);
   const GM = CONFIG.GM_EARTH, Re = CONFIG.EARTH_RADIUS, dt = CONFIG.DT;
-  const KARMAN_M = 100000;
-  const TARGET_ALT_M = 320000;
+  const KARMAN = 100000;
+  const D2R = Math.PI/180;
 
-  // M_c = stage dry + payload (fairing released before Karman at 80 km)
+  function findStage() {
+    for (const b of state.bodies) {
+      if (b && !b.payloadBody && !b.fairingHalf && b.members && b.members[0] &&
+          b.members[0].stageRole === 'stage') return b;
+    }
+    return null;
+  }
+
+  function bodyState(b) {
+    const r = Math.hypot(b.rx, b.ry);
+    const v = Math.hypot(b.vx, b.vy);
+    const vr = (b.vx*b.rx + b.vy*b.ry) / r;
+    const vt = (b.vx*b.ry - b.vy*b.rx) / r;
+    const gamma = Math.atan2(vr, vt);
+    return { r, v, vr, vt, gamma, altM: r - Re, t: state.simTime };
+  }
+
   function computeMc() {
     const stk = getActiveStack();
-    if (!stk) return null;
     const members = getActiveStackMembers();
     let stageDry = 0;
     members.forEach(m => {
@@ -101,173 +109,125 @@
       }
     });
     let payloadMass = 0;
-    if (stk.payloadId && typeof getPayload === 'function') {
+    if (stk && stk.payloadId && typeof getPayload === 'function') {
       const pl = getPayload(stk.payloadId);
       if (pl && Number.isFinite(pl.mass)) payloadMass = pl.mass;
     }
     return { mc: stageDry + payloadMass, stageDry, payloadMass };
   }
 
-  // Stack total mass (dry + fuel) over all bodies
-  function stackMass() {
-    let m = 0;
-    state.bodies.forEach(b => { m += (b.dryMass || 0) + (b.fuelMass || 0); });
-    return m;
+  function Eof(mc, r, v) { return 0.5 * mc * v * v - GM * mc / r; }
+  function Etarget(mc, altKm) {
+    const r = Re + altKm * 1000, v = Math.sqrt(GM / r);
+    return Eof(mc, r, v);
   }
 
-  // Active body's fuel (booster before sep, stage after)
-  function activeFuel() {
-    const b = state.bodies[state.activeBodyIndex];
-    return b ? (b.fuelMass || 0) : 0;
-  }
-
-  // Stage body fuel (only exists after split)
-  function stageFuel() {
-    for (const b of state.bodies) {
-      if (b && !b.payloadBody && !b.fairingHalf && b.members && b.members[0] &&
-          b.members[0].stageRole === 'stage') {
-        return b.fuelMass || 0;
+  function stageFuelNow() {
+    const st = findStage();
+    if (st && Number.isFinite(st.fuelMass)) return st.fuelMass;
+    const ab = state.bodies[state.activeBodyIndex];
+    if (ab && ab.members) {
+      for (let i = 0; i < ab.members.length; i++) {
+        if (ab.members[i] && ab.members[i].stageRole === 'stage') {
+          if (Array.isArray(ab.memberFuel) && Number.isFinite(ab.memberFuel[i])) return ab.memberFuel[i];
+        }
       }
     }
     return NaN;
   }
 
-  function bodyState() {
-    const b = state.bodies[state.activeBodyIndex];
-    if (!b) return null;
-    const r = Math.hypot(b.rx, b.ry);
-    const v = Math.hypot(b.vx, b.vy);
-    return { r, v, altM: r - Re };
-  }
-
-  // E of a body at fixed mass M_c
-  function Eof(mc, r, v) {
-    return 0.5 * mc * v * v - GM * mc / r;
-  }
-
-  // Target mechanical energy of M_c in circular orbit
-  function Etarget(mc) {
-    const r = Re + TARGET_ALT_M;
-    const v = Math.sqrt(GM / r);
-    return Eof(mc, r, v);
-  }
-
   function boot() {
-    if (typeof TunerEngine === 'undefined') { $('status').textContent = 'TunerEngine missing'; return false; }
-    if (typeof Guidance === 'undefined') { $('status').textContent = 'Guidance missing'; return false; }
-    TunerEngine.init();
-    return true;
+    if (typeof TunerEngine === 'undefined' || typeof Guidance === 'undefined') return false;
+    TunerEngine.init(); return true;
   }
 
-  function baselineValues() {
-    const b = TunerConfig.baselineRaw;
+  function pickRunConfig(altKm) {
+    const T = TunerConfig;
+    const ref = (T.references || []).find(r => r.alt === altKm);
+    if (ref) {
+      return {
+        values: {
+          ascent: { PUSH_MAX_GIMBAL_DEG: ref.G, PUSH_T_S: ref.T != null ? ref.T : T.T0,
+                    MECO_TARGET_BOOSTER_FUEL_KG: ref.meco },
+          insertion: { TARGET_ORBIT_ALT_KM: altKm,
+                       STAGE_BURN_AOA_BIAS_DEG: ref.bias,
+                       STAGE_BURN_AOA_MARGIN_DEG: 0.001,
+                       CIRC_TRIGGER_LEAD_S: ref.lead },
+          done: { DEORBIT_ENABLED: false },
+        },
+        durationCap: altKm <= 400 ? 800 : (altKm <= 800 ? 1200 : 2500),
+      };
+    }
+    const b = T.baselineRaw;
     return {
-      ascent: { PUSH_MAX_GIMBAL_DEG: b.G, PUSH_T_S: b.T, MECO_TARGET_BOOSTER_FUEL_KG: b.meco },
-      insertion: {
-        TARGET_ORBIT_ALT_KM: 320,
-        STAGE_BURN_AOA_BIAS_DEG: b.bias,
-        STAGE_BURN_AOA_MARGIN_DEG: 0.001,
-        CIRC_TRIGGER_LEAD_S: b.lead,
+      values: {
+        ascent: { PUSH_MAX_GIMBAL_DEG: b.G, PUSH_T_S: b.T, MECO_TARGET_BOOSTER_FUEL_KG: b.meco },
+        insertion: { TARGET_ORBIT_ALT_KM: altKm,
+                     STAGE_BURN_AOA_BIAS_DEG: b.bias,
+                     STAGE_BURN_AOA_MARGIN_DEG: 0.001,
+                     CIRC_TRIGGER_LEAD_S: b.lead },
+        done: { DEORBIT_ENABLED: false },
       },
-      done: { DEORBIT_ENABLED: false },
+      durationCap: 2500,
     };
   }
 
   function run() {
-    if (!boot()) return;
-
+    if (!boot()) { $('status').textContent = 'boot failed'; return; }
+    const altKm = parseFloat($('altSel').value);
     const mcInfo = computeMc();
-    if (!mcInfo || !mcInfo.mc) { $('status').textContent = 'M_c extraction failed'; return; }
     const mc = mcInfo.mc;
-
-    $('status').textContent = 'running…';
+    const cfg = pickRunConfig(altKm);
+    $('status').textContent = 'running ' + altKm + ' km…';
     $('runBtn').disabled = true;
 
     setTimeout(async () => {
       try {
-        const env = TunerConfig.env;
-        TunerEngine.prepareRun(TunerConfig.guideName, baselineValues(), env);
-
-        const samples = [];
-        let karman = null;
-        let stageBurnStartT = null;
-        const maxTicks = Math.ceil(700 / dt);
+        TunerEngine.prepareRun(TunerConfig.guideName, cfg.values, TunerConfig.env);
+        let karman = null, lastState = null, lastFuel = NaN, lastR = NaN, lastV = NaN;
+        const maxTicks = Math.ceil(cfg.durationCap / dt);
         let lastYield = performance.now();
 
         for (let i = 0; i < maxTicks; i++) {
           if (state.halted) break;
           TunerEngine.tick(dt);
 
-          const bs = bodyState();
-          if (!bs) continue;
-          const t = state.simTime;
-
-          // capture the Karman crossing moment
-          if (!karman && bs.altM >= KARMAN_M) {
-            karman = {
-              t, r: bs.r, v: bs.v,
-              mc,
-              Mi: stackMass(),
-              E0: Eof(mc, bs.r, bs.v),
-              stageFuel: stageFuel(),
-              fuel: activeFuel(),
-            };
-          }
-
-          // capture stage-burn start (first tick where stage fuel is dropping)
-          if (karman && stageBurnStartT === null) {
-            const sf = stageFuel();
-            if (Number.isFinite(sf) && sf > 0 && stageFuel._prev !== undefined && sf < stageFuel._prev - 0.01) {
-              stageBurnStartT = t;
-            }
-            stageFuel._prev = sf;
-          }
-
-          if (karman) {
-            const sf = stageFuel();
-            samples.push({
-              t,
-              dt: t - karman.t,
-              altM: bs.altM,
-              r: bs.r, v: bs.v,
-              stackMass: stackMass(),
-              stageFuel: Number.isFinite(sf) ? sf : NaN,
-              E: Eof(mc, bs.r, bs.v),
-              E0: karman.E0,
-            });
-          }
-
-          // payload cleared -> stop
+          const b = state.bodies[state.activeBodyIndex];
+          if (!b) continue;
+          const st = bodyState(b);
+          const sf = stageFuelNow();
           const gs = Guidance.getGuideStatus();
+
+          if (!karman && st.altM >= KARMAN) {
+            karman = Object.assign({}, st, { E: Eof(mc, st.r, st.v), stageFuel: sf });
+          }
+
+          lastState = st;
+          lastFuel = sf;
+          lastR = st.r; lastV = st.v;
+
           if (gs && gs.payloadCleared) break;
 
           if ((i & 255) === 255) {
             const now = performance.now();
             if (now - lastYield > 40) {
-              $('status').textContent = 'running… t=' + t.toFixed(1) + 's alt=' + (bs.altM/1000).toFixed(1) + 'km';
-              await new Promise(r => setTimeout(r, 0));
+              $('status').textContent = 't=' + st.t.toFixed(1) + 's alt=' + (st.altM/1000).toFixed(1) + 'km';
+              await new Promise(res => setTimeout(res, 0));
               lastYield = now;
             }
           }
         }
 
-        if (!karman) { $('status').textContent = 'never crossed Karman'; $('runBtn').disabled = false; return; }
+        if (!karman) { $('status').textContent = 'Karman never crossed'; $('runBtn').disabled = false; return; }
 
-        // Stage Ve — from the first tick after stage burn started
         let Ve = NaN;
-        const sb = samples.find(s => s.stageFuel < karman.stageFuel - 1);
-        if (sb) {
-          for (const b of state.bodies) {
-            if (b && !b.payloadBody && !b.fairingHalf && b.members && b.members[0] &&
-                b.members[0].stageRole === 'stage' && b.engines && b.engines.length) {
-              const e = b.engines[0];
-              if (Number.isFinite(e.Ve)) Ve = e.Ve;
-            }
-          }
+        const stb = findStage();
+        if (stb && stb.engines && stb.engines.length && Number.isFinite(stb.engines[0].Ve)) {
+          Ve = stb.engines[0].Ve;
         }
 
-        $('status').textContent = 'done — ' + samples.length + ' samples';
-        render(samples, karman, mc, Ve, mcInfo);
+        $('status').textContent = 'done';
+        render(karman, lastState, lastFuel, lastR, lastV, mc, mcInfo, Ve, altKm);
         $('runBtn').disabled = false;
       } catch (err) {
         console.error(err);
@@ -277,228 +237,105 @@
     }, 20);
   }
 
-  // ---------- rendering ----------
+  function render(karman, lastState, lastFuel, lastR, lastV, mc, mcInfo, Ve, altKm) {
+    const rTarget = Re + altKm * 1000;
+    const vTarget = Math.sqrt(GM / rTarget);
+    const Etgt = Eof(mc, rTarget, vTarget);
 
-  function drawAxes(ctx, W, H, xMin, xMax, yMin, yMax, xLabel, yLabel, title) {
-    const padL = 70, padR = 20, padT = 32, padB = 40;
-    const pw = W - padL - padR, ph = H - padT - padB;
-    const X = (x) => padL + (x - xMin) / (xMax - xMin) * pw;
-    const Y = (y) => padT + ph - (y - yMin) / (yMax - yMin) * ph;
+    const rK = karman.r, vK = karman.v, gK = karman.gamma;
+    const F_K = karman.stageFuel;
+    const E_now = karman.E;
+    const E_actual_final = Eof(mc, lastR, lastV);
+    const residual_actual = lastFuel;
 
-    ctx.fillStyle = '#060912'; ctx.fillRect(0, 0, W, H);
-    ctx.strokeStyle = 'rgba(255,255,255,0.08)'; ctx.lineWidth = 1;
-    for (let i = 0; i <= 4; i++) {
-      const y = padT + i * ph / 4;
-      ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(padL + pw, y); ctx.stroke();
-      const x = padL + i * pw / 4;
-      ctx.beginPath(); ctx.moveTo(x, padT); ctx.lineTo(x, padT + ph); ctx.stroke();
-    }
-    ctx.strokeStyle = 'rgba(255,255,255,0.25)';
-    ctx.beginPath(); ctx.moveTo(padL, padT); ctx.lineTo(padL, padT + ph); ctx.lineTo(padL + pw, padT + ph); ctx.stroke();
+    // --- Direct prediction at Karman ---
+    // Target: M_c should end with E_target.
+    // We need ΔE_mech = E_target − E_now, delivered as work by stage fuel.
+    const dE_needed = Etgt - E_now;
+    const dPE = GM * mc * (1 / rK - 1 / rTarget);
+    // Assume burn happens with thrust ≈ along velocity, at speed ≈ vK (first-order).
+    // Work = mc·vK·Δv + ½·mc·Δv². Set work + dPE = dE_needed.
+    // Solve quadratic in Δv: ½·mc·Δv² + mc·vK·Δv + dPE − dE_needed = 0
+    const a = 0.5 * mc;
+    const b = mc * vK;
+    const c = dPE - dE_needed;
+    const disc = b*b - 4*a*c;
+    const dv_required = disc >= 0 ? (-b + Math.sqrt(disc)) / (2*a) : NaN;
+    // Tsiolkovsky: Δv = Ve · ln(Mi_stage / (mc + residual))  →  solve for residual
+    // Mi_stage = mc + F_K
+    const Mi_stage = mc + F_K;
+    const Mf_required = Mi_stage / Math.exp(dv_required / Ve);
+    const residual_predicted = Mf_required - mc;
 
-    ctx.fillStyle = 'rgba(150,170,200,0.85)';
-    ctx.font = '10px monospace';
-    ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
-    for (let i = 0; i <= 4; i++) {
-      const y = yMax - i * (yMax - yMin) / 4;
-      ctx.fillText(fmtSci(y), padL - 6, padT + i * ph / 4);
-    }
-    ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-    for (let i = 0; i <= 4; i++) {
-      const x = xMin + i * (xMax - xMin) / 4;
-      ctx.fillText(fmtNum(x), padL + i * pw / 4, padT + ph + 6);
-    }
-    ctx.fillStyle = 'var(--cyan)';
-    ctx.font = 'bold 11px monospace';
-    ctx.textAlign = 'left'; ctx.textBaseline = 'top';
-    ctx.fillStyle = '#35d6ff';
-    ctx.fillText(title, padL, 8);
-    ctx.fillStyle = 'rgba(150,170,200,0.7)';
-    ctx.font = '10px monospace';
-    ctx.textAlign = 'center';
-    ctx.fillText(xLabel, padL + pw / 2, H - 16);
-    ctx.save();
-    ctx.translate(14, padT + ph / 2); ctx.rotate(-Math.PI / 2);
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText(yLabel, 0, 0);
-    ctx.restore();
-  }
+    // ratio check for actual, formula-based
+    const actual_dE = E_actual_final - E_now;
+    const dv_actual = Ve * Math.log(Mi_stage / (mc + residual_actual));
+    const pred_dE = mc * vK * dv_actual + 0.5 * mc * dv_actual * dv_actual + dPE;
 
-  function fmtNum(x) {
-    const a = Math.abs(x);
-    if (a >= 1e6) return (x/1e6).toFixed(1)+'M';
-    if (a >= 1e3) return (x/1e3).toFixed(1)+'k';
-    if (a >= 1) return x.toFixed(0);
-    if (a >= 0.01) return x.toFixed(2);
-    return x.toExponential(1);
-  }
-  function fmtSci(x) {
-    const a = Math.abs(x);
-    if (a >= 1e6) return (x/1e6).toFixed(2)+'e6';
-    if (a >= 1e3) return (x/1e3).toFixed(2)+'e3';
-    return x.toFixed(2);
-  }
-
-  function line(ctx, pts, color, dash) {
-    if (!pts.length) return;
-    ctx.strokeStyle = color; ctx.lineWidth = 1.8;
-    if (dash) ctx.setLineDash(dash); else ctx.setLineDash([]);
-    ctx.beginPath();
-    pts.forEach((p, i) => i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1]));
-    ctx.stroke(); ctx.setLineDash([]);
-  }
-
-  function render(samples, karman, mc, Ve, mcInfo) {
-    const Etgt = Etarget(mc);
-
-    // Stage fuel burnable (from Karman to end)
-    const stageFuelStart = karman.stageFuel;
-    // A_stage = energy stage fuel CAN deliver, per formula
-    // deltaV_full = Ve * ln(Mi / (Mi - fuel_burnable))
-    // But for the trigger line we want the FULL stage fuel as designed
-    // Use actual fuel burned during mission:
-    const lastSample = samples[samples.length - 1];
-    const totalFuelUsed = karman.Mi - lastSample.stackMass;
-    const stageFuelUsed = Number.isFinite(stageFuelStart) && Number.isFinite(lastSample.stageFuel)
-      ? stageFuelStart - lastSample.stageFuel : NaN;
-
-    // Determine Mi at Karman for formula: stack mass at Karman
-    const Mi = karman.Mi;
-    const v0 = karman.v;
-    const E0 = karman.E0;
-
-    // Plot A: energy vs time
-    const cvA = $('chartTime'); const ctxA = cvA.getContext('2d');
-    const tMax = samples.length ? samples[samples.length - 1].dt : 1;
-    const eMin = Math.min(E0, Etgt) - 5e8;
-    const eMax = Math.max(E0, Etgt) + 5e8;
-    drawAxes(ctxA, cvA.width, cvA.height, 0, tMax, eMin, eMax, 't from Karman (s)', 'E (J)', 'Energy vs time');
-
-    const padL = 70, padR = 20, padT = 32, padB = 40;
-    const pw = cvA.width - padL - padR, ph = cvA.height - padT - padB;
-    const XA = (x) => padL + (x - 0) / (tMax - 0) * pw;
-    const YA = (y) => padT + ph - (y - eMin) / (eMax - eMin) * ph;
-
-    // live curve
-    const liveA = samples.map(s => [XA(s.dt), YA(s.E)]);
-    line(ctxA, liveA, '#4ade80');
-    // target
-    line(ctxA, [[XA(0), YA(Etgt)], [XA(tMax), YA(Etgt)]], '#ffd23f', [6,4]);
-
-    // predicted formula curve (using total fuel used from Karman)
-    if (Number.isFinite(Ve) && Ve > 0) {
-      const predA = samples.map(s => {
-        const mf = Mi - s.stackMass;
-        if (mf <= 0 || mf >= Mi) return [XA(s.dt), YA(E0)];
-        const dv = Ve * Math.log(Mi / (Mi - mf));
-        const Ep = E0 + mc * v0 * dv + 0.5 * mc * dv * dv;
-        return [XA(s.dt), YA(Ep)];
-      });
-      line(ctxA, predA, '#35d6ff', [4,3]);
-    }
-
-    // trigger level = Etgt - A_stage (where A_stage = ideal stage fuel work)
-    if (Number.isFinite(stageFuelStart) && Number.isFinite(Ve) && Ve > 0) {
-      const mf_all = stageFuelStart; // all stage fuel present at Karman
-      const dv_all = Ve * Math.log(Mi / (Mi - mf_all));
-      const A_stage = mc * v0 * dv_all + 0.5 * mc * dv_all * dv_all;
-      const ETrig = Etgt - A_stage;
-      line(ctxA, [[XA(0), YA(ETrig)], [XA(tMax), YA(ETrig)]], '#a78bfa', [6,4]);
-    }
-
-    // mark MECO time
-    // find time where stackMass stops decreasing (MECO)
-    let mecoDt = NaN;
-    for (let i = 1; i < samples.length; i++) {
-      if (samples[i-1].stackMass - samples[i].stackMass > 1) {
-        // still burning
-      } else if (samples[i-1].stackMass - samples[i].stackMass > -1) {
-        mecoDt = samples[i].dt;
-        break;
-      }
-    }
-
-    // Plot B: energy gain vs stage fuel used
-    const cvB = $('chartFuel'); const ctxB = cvB.getContext('2d');
-    const fMax = Number.isFinite(stageFuelUsed) ? stageFuelUsed : 1;
-    const gMin = 0;
-    const gMax = Math.max(Math.abs(Etgt - E0), Math.abs((samples[samples.length-1]||{E:E0}).E - E0)) * 1.2;
-    drawAxes(ctxB, cvB.width, cvB.height, 0, fMax, gMin, gMax, 'stage fuel burned (kg)', 'ΔE (J)', 'Energy gain vs stage fuel');
-
-    const pwB = cvB.width - padL - padR, phB = cvB.height - padT - padB;
-    const XB = (x) => padL + (x - 0) / (fMax - 0) * pwB;
-    const YB = (y) => padT + phB - (y - gMin) / (gMax - gMin) * phB;
-
-    const liveB = [];
-    samples.forEach(s => {
-      if (!Number.isFinite(stageFuelStart) || !Number.isFinite(s.stageFuel)) return;
-      const used = stageFuelStart - s.stageFuel;
-      if (used < 0) return;
-      liveB.push([XB(used), YB(s.E - E0)]);
-    });
-    line(ctxB, liveB, '#4ade80');
-
-    // formula: ΔE = mc·v0·Δv + ½·mc·Δv²   Δv = Ve·ln(Mi/(Mi-mf_used))
-    if (Number.isFinite(Ve) && Ve > 0) {
-      const predB = [];
-      for (let mf = 0; mf <= fMax; mf += Math.max(1, fMax / 200)) {
-        if (mf >= Mi) break;
-        const dv = Ve * Math.log(Mi / (Mi - mf));
-        const dE = mc * v0 * dv + 0.5 * mc * dv * dv;
-        predB.push([XB(mf), YB(dE)]);
-      }
-      line(ctxB, predB, '#35d6ff', [4,3]);
-    }
-
-    // Etgt − E0 line
-    line(ctxB, [[XB(0), YB(Etgt - E0)], [XB(fMax), YB(Etgt - E0)]], '#ffd23f', [6,4]);
-
-    // numbers
-    const lines = [
-      'M_c           = ' + mc.toFixed(1) + ' kg  (stage dry ' + mcInfo.stageDry.toFixed(1) + ' + payload ' + mcInfo.payloadMass.toFixed(1) + ')',
-      'Mi @ Karman   = ' + Mi.toFixed(1) + ' kg',
-      'v0 @ Karman   = ' + v0.toFixed(2) + ' m/s',
-      'r0 @ Karman   = ' + (karman.r).toFixed(0) + ' m  (alt ' + ((karman.r-Re)/1000).toFixed(2) + ' km)',
-      'E0 (M_c)      = ' + E0.toExponential(4) + ' J',
-      'Etgt (M_c)    = ' + Etgt.toExponential(4) + ' J',
-      'ΔE required   = ' + (Etgt - E0).toExponential(4) + ' J',
-      'Stage fuel @K = ' + (Number.isFinite(stageFuelStart) ? stageFuelStart.toFixed(1) + ' kg' : 'n/a'),
-      'Stage Ve      = ' + (Number.isFinite(Ve) ? Ve.toFixed(1) + ' m/s' : 'n/a'),
-      'Fuel used tot = ' + totalFuelUsed.toFixed(1) + ' kg',
-      'Stage fuel us = ' + (Number.isFinite(stageFuelUsed) ? stageFuelUsed.toFixed(1) + ' kg' : 'n/a'),
-      '',
-      'E_live @end   = ' + lastSample.E.toExponential(4) + ' J',
-      'E_formula @en = ' + (function(){
-        if (!Number.isFinite(Ve)) return 'n/a';
-        const mf = Mi - lastSample.stackMass;
-        const dv = Ve * Math.log(Mi / (Mi - mf));
-        return (E0 + mc*v0*dv + 0.5*mc*dv*dv).toExponential(4) + ' J';
-      })(),
-      'Δ vs E_tgt    = ' + ((lastSample.E - Etgt) / 1e6).toFixed(2) + ' MJ',
+    // Fill table
+    const rows = [
+      { k: 'Target altitude',           v: altKm.toFixed(1), u: 'km' },
+      { k: '',                          v: '', u: '' },
+      { k: '--- AT KARMAN ---',         v: '', u: '' },
+      { k: 'altitude',                  v: (karman.altM/1000).toFixed(3), u: 'km' },
+      { k: 'r, v',                      v: rK.toFixed(0) + ', ' + vK.toFixed(2), u: 'm, m/s' },
+      { k: 'γ (flight path)',           v: (gK/D2R).toFixed(4), u: '°' },
+      { k: 'M_c',                       v: mc.toFixed(1), u: 'kg' },
+      { k: 'stage fuel @ Karman',       v: F_K.toFixed(1), u: 'kg' },
+      { k: 'Mi_stage (= mc + fuel)',    v: Mi_stage.toFixed(1), u: 'kg' },
+      { k: 'Ve (stage)',                v: Ve.toFixed(2), u: 'm/s' },
+      { k: 'E_now (M_c)',               v: E_now.toExponential(4), u: 'J' },
+      { k: 'E_target (M_c)',            v: Etgt.toExponential(4), u: 'J' },
+      { k: 'ΔE needed',                 v: dE_needed.toExponential(4), u: 'J' },
+      { k: 'ΔPE term (K→target)',       v: dPE.toExponential(4), u: 'J' },
+      { k: 'Δv required',               v: (Number.isFinite(dv_required)?dv_required.toFixed(2):'n/a'), u: 'm/s' },
+      { k: '',                          v: '', u: '' },
+      { k: '--- PREDICTION (Karman) ---', v: '', u: '' },
+      { k: 'predicted residual fuel',   v: (Number.isFinite(residual_predicted)?residual_predicted.toFixed(1):'n/a'), u: 'kg' },
+      { k: '',                          v: '', u: '' },
+      { k: '--- ACTUAL (end) ---',      v: '', u: '' },
+      { k: 'altitude',                  v: (lastState.altM/1000).toFixed(3), u: 'km' },
+      { k: 'r, v',                      v: lastR.toFixed(0) + ', ' + lastV.toFixed(2), u: 'm, m/s' },
+      { k: 'residual fuel',             v: residual_actual.toFixed(1), u: 'kg' },
+      { k: 'E_final actual',            v: E_actual_final.toExponential(4), u: 'J' },
+      { k: '',                          v: '', u: '' },
+      { k: '--- ERROR ---',             v: '', u: '' },
+      { k: 'predicted − actual',        v: (Number.isFinite(residual_predicted)?(residual_predicted - residual_actual).toFixed(1):'n/a'), u: 'kg' },
+      { k: 'relative',                  v: (Number.isFinite(residual_predicted)?((residual_predicted - residual_actual)/Math.max(1,residual_actual)*100).toFixed(2):'n/a'), u: '%' },
+      { k: '',                          v: '', u: '' },
+      { k: 'actual ΔE (K→end)',         v: actual_dE.toExponential(4), u: 'J' },
+      { k: 'formula ΔE (same fuel)',    v: pred_dE.toExponential(4), u: 'J' },
+      { k: 'ratio actual/formula',      v: (actual_dE/pred_dE).toFixed(4), u: '' },
     ];
-    $('numbers').textContent = lines.join('\n');
+    const tbody = document.querySelector('#resTable tbody');
+    tbody.innerHTML = rows.map(r => {
+      const cls = r.k.includes('ERROR') || r.k.includes('predicted') ? '' : '';
+      return '<tr' + (r.k === 'predicted residual fuel' || r.k === 'residual fuel' ? ' class="highlight"' : '') +
+             '><td>' + r.k + '</td><td>' + r.v + '</td><td style="color:var(--dim)">' + r.u + '</td></tr>';
+    }).join('');
 
-    // color legend
-    ctxA.fillStyle = '#4ade80'; ctxA.font = '10px monospace'; ctxA.textAlign='left';
-    ctxA.fillText('live', padL+4, padT+12);
-    ctxA.fillStyle = '#35d6ff'; ctxA.fillText('formula', padL+40, padT+12);
-    ctxA.fillStyle = '#ffd23f'; ctxA.fillText('target', padL+104, padT+12);
-    ctxA.fillStyle = '#a78bfa'; ctxA.fillText('trigger', padL+156, padT+12);
+    // raw dump
+    const raw = [
+      'karman:   r=' + rK.toFixed(2) + ' v=' + vK.toFixed(3) + ' γ=' + (gK/D2R).toFixed(4) + '° fuel=' + F_K.toFixed(2) + ' E=' + E_now.toExponential(6),
+      'target:   r=' + rTarget.toFixed(2) + ' v=' + vTarget.toFixed(3) + ' E=' + Etgt.toExponential(6),
+      'end:      r=' + lastR.toFixed(2) + ' v=' + lastV.toFixed(3) + ' fuel=' + residual_actual.toFixed(2) + ' E=' + E_actual_final.toExponential(6),
+      'M_c=' + mc.toFixed(4) + '  Ve=' + Ve.toFixed(4),
+      'dv_required=' + (Number.isFinite(dv_required)?dv_required.toFixed(4):'n/a') + '  Mi_stage=' + Mi_stage.toFixed(4) + '  Mf_required=' + (Number.isFinite(Mf_required)?Mf_required.toFixed(4):'n/a'),
+      'predicted_residual=' + (Number.isFinite(residual_predicted)?residual_predicted.toFixed(4):'n/a') + '  actual=' + residual_actual.toFixed(4),
+      'ratio_actual_formula=' + (actual_dE/pred_dE).toFixed(6),
+    ].join('\n');
+    $('raw').textContent = raw;
   }
 
   function clear() {
-    ['chartTime','chartFuel'].forEach(id => {
-      const c = $(id); const ctx = c.getContext('2d');
-      ctx.fillStyle = '#060912'; ctx.fillRect(0, 0, c.width, c.height);
-    });
-    $('numbers').textContent = '—';
+    document.querySelector('#resTable tbody').innerHTML = '';
+    $('raw').textContent = '—';
     $('status').textContent = 'idle';
   }
-
   $('runBtn').addEventListener('click', run);
   $('clearBtn').addEventListener('click', clear);
   clear();
-  $('status').textContent = 'ready — click Run';
+  $('status').textContent = 'ready';
 })();
 </script>
 </body>
