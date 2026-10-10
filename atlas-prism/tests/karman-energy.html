@@ -256,7 +256,7 @@
     // naive Oberth + KE prediction error from ~18% to ~3% (see karman v3 run).
     const dE_needed = Etgt - E_now;
     const dPE = GM * mc * (1 / rK - 1 / rTarget);
-    const C = Math.cos(gK) * 1.024;  // empirical: +2.4% over cos(γ) matches Karman→orbit work fraction
+    const C = Math.cos(gK) * 1.027;  // empirical: +2.7% over cos(γ). Two data points: 1.031 (baseline 320km), 1.0226 (MECO 50000). Averaged.
     // Solve quadratic in Δv: C·(mc·vK·Δv + ½·mc·Δv²) + dPE − dE_needed = 0
     const a = C * 0.5 * mc;
     const b = C * mc * vK;
