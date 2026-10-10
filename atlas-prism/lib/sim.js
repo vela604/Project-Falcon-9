@@ -1,5 +1,5 @@
 // ============================================================================
-// tuner-engine.js — sim engine glue, extracted 1:1 from guidance-numerical.html
+// sim.js — sim engine glue, extracted 1:1 from guidance-numerical.html
 // (library-cache patch, buildSnapshot, clampFlow/localDispatch, stack-data
 // handoff). Logic is NOT changed; only wrapped so the page can call it, and
 // environment/fueling now take a plain object instead of reading DOM inputs.
@@ -378,7 +378,7 @@ members.forEach(m => {
 
   // Run-start sequence, identical order to guidance-numerical.html run():
   // applyGuideConfig -> resetState(0) -> env -> fueling -> stop -> start.
-  // `values` must already be lattice-snapped (tuner-utils does that, Step 2).
+  // `values` must already be lattice-snapped (lattice does that, Step 2).
   function prepareRun(guideName, values, env) {
     if (!Guidance.applyGuideConfig(guideName, values)) {
       throw new Error('applyGuideConfig failed');

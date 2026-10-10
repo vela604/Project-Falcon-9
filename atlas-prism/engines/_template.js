@@ -1,5 +1,5 @@
 // ============================================================================
-// tuner-strategy-example.js — TEMPLATE for a new tuner strategy.
+// strategy-template.js — TEMPLATE for a new tuner strategy.
 //
 // A strategy is one file that calls TunerCore.registerStrategy(name, spec).
 // spec = { label, describe, runTuner(point, opts) }.

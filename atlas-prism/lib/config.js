@@ -1,6 +1,6 @@
 // ============================================================================
-// tuner-config.js — constants only (no logic). Source of truth: prompt-web.md
-// + tuner-config-v3.json. Values marked PROVISIONAL get calibrated in Step 4.
+// config.js — constants only (no logic). Source of truth: prompt-web.md
+// + config-v3.json. Values marked PROVISIONAL get calibrated in Step 4.
 // ============================================================================
 (function () {
   'use strict';
@@ -20,7 +20,7 @@
     },
     T0: 4.82,                       // anchor T for G_raw = A / T0^2
 
-    // ---- Search bounds (PROVISIONAL, from tuner-config-v3.json) ----
+    // ---- Search bounds (PROVISIONAL, from config-v3.json) ----
     bounds: {
       A:    { lower: 9,      upper: 20 },
       bias: { lower: -2,     upper: 2.5 },
@@ -72,7 +72,7 @@ ecc: {
       residualPhaseAFrac: 0.5,               // Phase A (runTuner) aims into the UPPER part of the band: [lo+frac*w, hi] -> room for Phase B
         coastApoTolKm: 1, // apo at COAST_WAIT must be >= targetAlt - tol (else Fail2)
     coastDeltaVbandMps: [600, 700], // Step Δv 1/4 — soft target band, universal across altitudes
-    coastDeltaVguardMps: [700, 900], // wide guard (informational only — NOT wired into checkHard, see tuner-utils note)
+    coastDeltaVguardMps: [700, 900], // wide guard (informational only — NOT wired into checkHard, see lattice note)
   },
 
     // ---- Scoring (lower = better) ----

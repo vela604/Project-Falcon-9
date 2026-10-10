@@ -1,5 +1,5 @@
 // ============================================================================
-// tuner-hook.js — per-tick metrics + runEval (Step 3)
+// hook.js — per-tick metrics + runEval (Step 3)
 //
 // runEval(point, opts)        lattice point -> snapped values -> sim -> metrics
 // runEvalValues(values, opts) same, but raw values (used for the off-lattice

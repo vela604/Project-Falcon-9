@@ -107,13 +107,15 @@ input[type=number] { width: 90px; background: var(--panel-2); color: var(--text)
 <script src="../js/guidancePresets.js"></script>
 
 <!-- Tuner modules (Step 1: engine + config only; later steps add the rest) -->
-<script src="tuner-config.js"></script>
-<script src="tuner-engine.js"></script>
-<script src="tuner-utils.js"></script>
-<script src="tuner-hook.js"></script>
-<script src="tuner-core.js"></script>
-<script src="tuner-strategy-example.js"></script>
-<script src="tuner-ui.js"></script>
+<script src="lib/config.js"></script>
+<script src="lib/sim.js"></script>
+<script src="lib/lattice.js"></script>
+<script src="lib/hook.js"></script>
+<script src="lib/registry.js"></script>
+<script src="lib/primitives.js"></script>
+<script src="engines/pro-alpha.js"></script>
+<script src="engines/_template.js"></script>
+<script src="ui/host.js"></script>
 
 <script>
 (function () {

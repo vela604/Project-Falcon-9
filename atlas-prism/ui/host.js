@@ -1,5 +1,5 @@
 // ============================================================================
-// tuner-ui.js — Step 9: inputs, live progress, ranked leaderboard (sort tabs),
+// host.js — Step 9: inputs, live progress, ranked leaderboard (sort tabs),
 // expandable result blocks, Copy / Download JSON, config panel.
 // Refs come from saved presets (guidancePresets.js), default preset first + fallback.
 // Strategy dropdown from TunerCore.listStrategies(); run dispatches to the selected strategy.
@@ -174,7 +174,7 @@
             }, p.isDefault ? 'default' : 'preset');
           });
         }
-      } catch (e) { try { console.warn('[tuner-ui] presets read failed:', e); } catch (_) {} }
+      } catch (e) { try { console.warn('[host] presets read failed:', e); } catch (_) {} }
       if (!out.length) {
         push({ G: cfg.baselineRaw.G, T: cfg.baselineRaw.T, bias: cfg.baselineRaw.bias, lead: cfg.baselineRaw.lead, meco: cfg.baselineRaw.meco, alt: 320, name: 'baseline (fallback)' }, 'fallback');
       }

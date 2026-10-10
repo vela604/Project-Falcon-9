@@ -1,5 +1,5 @@
 // ============================================================================
-// tuner-utils.js — lattice snap, (G,T) collapse, applied-value verification,
+// lattice.js — lattice snap, (G,T) collapse, applied-value verification,
 // scoring. Pure functions (no sim access) except verifyApplied(), which takes
 // the cfg object returned by Guidance.getGuideConfig().
 //
@@ -126,7 +126,7 @@
   }
 
   // ---- hard constraints + score ---------------------------------------------
-  // metrics fields (filled by tuner-hook.js, Step 3):
+  // metrics fields (filled by hook.js, Step 3):
   //   crashed, payloadReleased, payloadCleared, vrEnd, vrMin, maxQKPa, maxG,
   //   apogeeKm, perigeeKm, ecc, boosterFuelLeftKg, deployTimeS
   // NOTE (Step Δv 1/4): coastDeltaV is intentionally NOT a hard constraint.

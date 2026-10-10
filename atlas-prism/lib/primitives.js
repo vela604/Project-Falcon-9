@@ -1,85 +1,10 @@
-// ============================================================================
-// tuner-core.js — search algorithms. Step 5: tuneLead (INNER-2). Step 6: tuneAB. Step 7: tuneRough + findOptimalMeco (Phase A).
-//
-// tuneLead(point, opts) -> Promise<result>
-//   Finds the circ trigger lead (integer ticks, 0.0125 s) for a fixed
-//   (G, T, bias, MECO) so that the circ burn ends with margin (time to apogee
-//   at engines-off) inside the target band [4, 5] s, while
-//     vrEnd (engines-off) >= buffer low (0.02 m/s, never exactly 0)
-//     vrMin >= hard floor (-2 m/s)
-//   Each eval = runEval(point, {stopAt:'CIRC_END'}) (truncated sim).
-//
-// SIGNED margin(lead) (hook: marginS < 0 = burn ended past apogee) is monotone and
-// steep near the apogee transition (~1.4 s per tick measured on the baseline), so the search is a bracketed secant/bisection on the integer tick
-// lattice, followed by (a) a feasibility walk if the band point violates vr
-// constraints, (b) a short descent to the lowest margin that is still in band.
-//
-// Selection key (lower is better): [distance to band, margin]. So an in-band
-// feasible point always beats an out-of-band one, and inside the band the
-// smaller margin wins (heuristic: "minimize margin without breaking vr").
-// `phase` = 1 if the chosen point has vrMin >= 0 (no negative vr at all),
-// else 2 (negative vr tolerated, recovery expected).
-//
-// Pure async, no globals mutated except through TunerHook (singleton sim).
-// ============================================================================
+// primitives.js — search algorithm building blocks.
+// Load order: AFTER lib/hook.js + lib/registry.js, BEFORE engines/*.js.
 (function () {
   'use strict';
   const root = (typeof window !== 'undefined') ? window : globalThis;
+  const T = root.TunerCore = root.TunerCore || {};
 
-  // ---- Strategy registry: name -> { name, label, describe, runTuner(point, opts) } ----
-  // Each strategy is a `runTuner(point, opts)` implementation. The built-in 'guided' strategy
-  // is registered at the bottom of this file. New strategies live in their own files
-  // (tuner-strategy-<name>.js) and call TunerCore.registerStrategy(...) after loading.
-  const STRATEGIES = Object.create(null);
-  function registerStrategy(name, spec) {
-    if (!name || typeof spec !== 'object' || typeof spec.runTuner !== 'function') {
-      throw new Error('registerStrategy: need {name, spec.runTuner}');
-    }
-    STRATEGIES[name] = Object.assign({ name }, spec);
-    return STRATEGIES[name];
-  }
-  function listStrategies() { return Object.keys(STRATEGIES); }
-  function getStrategy(name) { return STRATEGIES[name] || null; }
-
-  // Per-eval logger: wraps a hook's runEval so every sim call (fresh, not cache) prints a start and end line.
-  // The UI log ticks every 500ms and shows the last N lines, so silent stretches are visible as "▶ eval started, waiting…".
-    function makeEvalLogger(log, baseHook) {
-      const H = baseHook || root.TunerHook;
-      let n = 0;
-      return function wrappedHook() {
-        return {
-          runEval: async (point, opts) => {
-            n++;
-            const id = n;
-            const o = opts || {};
-            const stopAt = o.stopAt || 'FULL';
-            const pt = 'G=' + (point.Gi * 0.01).toFixed(2) + ' T=' + (point.Tn * 0.000125).toFixed(4) +
-              ' b=' + (point.bi * 0.0001).toFixed(4) + ' l=' + point.li + 't m=' + point.meco;
-            log('  ▶ eval #' + id + ' [' + stopAt + '] ' + pt);
-            const t0 = (typeof performance !== 'undefined') ? performance.now() : Date.now();
-            try {
-              const m = await H.runEval(point, o);
-              const ms = ((typeof performance !== 'undefined') ? performance.now() : Date.now()) - t0;
-              const parts = ['end=' + (m.endReason || '?'), 'wall=' + (ms / 1000).toFixed(1) + 's'];
-              if (Number.isFinite(m.eCoast)) parts.push('E=' + m.eCoast.toFixed(4));
-if (Number.isFinite(m.coastDeltaV)) parts.push('Δv=' + m.coastDeltaV.toFixed(1));
-              if (Number.isFinite(m.apoCoastKm)) parts.push('apoC=' + m.apoCoastKm.toFixed(1));
-              if (Number.isFinite(m.marginS)) parts.push('marg=' + m.marginS.toFixed(2));
-              if (Number.isFinite(m.vrEnd)) parts.push('vrEnd=' + m.vrEnd.toFixed(4));
-              if (Number.isFinite(m.stageResidualKg)) parts.push('resid=' + m.stageResidualKg.toFixed(1));
-              if (Number.isFinite(m.deployTimeS)) parts.push('deploy=' + m.deployTimeS.toFixed(1));
-              if (m.crashed) parts.push('CRASH');
-              if (m.payloadCleared) parts.push('CLEARED');
-              log('  ◀ eval #' + id + ' ' + parts.join(' '));
-              return m;
-            } catch (e) {
-              log('  ✗ eval #' + id + ' ERROR: ' + ((e && e.message) || e));
-              throw e;
-            }
-          }
-        };
-      };
-    }
     
     async function tuneLead(point, opts) {
     opts = opts || {};
@@ -264,19 +189,6 @@ if (Number.isFinite(m.coastDeltaV)) parts.push('Δv=' + m.coastDeltaV.toFixed(1)
     }
   }
 
-  // ==========================================================================
-  // Step 6 — tuneAB (INNER-1): (G, T, bias) joint search, MECO + lead start fixed.
-  //
-  // Signal eval = runEval(p, {stopAt:'COAST_WAIT_ENTRY'}) -> eCoast, apoCoastKm,
-  // stageVrNeg. Classes (ceiling = eMax - eSafetyMargin):
-  //   F1 : stage-burn vr < 0 (or crash)        -> too aggressive -> go GENTLE  (bias up / G up / T up)
-  //   F2 : apo at coast < target - tol, or run never reached COAST_WAIT -> go AGGRESSIVE
-  //   FE : E > ceiling                          -> go GENTLE (push-down step B: "E cross -> back off";
-  //        ref data: higher bias => lower E). Direction is double-checked empirically in findOk.
-  //   OK : none of the above
-  // Flow: startOk (Fail3 relax) -> push G down -> push T down -> bias climb (E toward ceiling)
-  //       -> candidates -> tuneLead + FULL eval + score -> E_max learning (<= maxRelearn rounds).
-  // ==========================================================================
  async function tuneAB(point, opts) {
   opts = opts || {};
   const Cfg = root.TunerConfig, U = root.TunerUtils, H = opts.hook || root.TunerHook;
@@ -554,11 +466,6 @@ async function startOk(p) {
   return res;
 }
 
-  // ==========================================================================
-  // Phase A building block — tuneRough(point, opts): at the point's MECO find ANY feasible (G,T,bias,lead):
-  // coast reaches apo, E<=ceil, tuneLead ok, FULL passes hard limits. Then FULL metrics give the stage residual that
-  // the MECO outer loop (Step 7) steers on. ~10-15 AB evals + lead (~3) + 1 FULL; warm start = previous MECO's point.
-  // ==========================================================================
   async function tuneRough(point, opts) {
     opts = Object.assign({}, opts || {}, { rough: true, maxRelearn: 0 });
     if (!opts.mode) opts.mode = 'fast';
@@ -575,20 +482,6 @@ async function startOk(p) {
     };
   }
 
-  // ==========================================================================
-  // Phase A outer loop v2 — findOptimalMeco(point, opts)
-  //   Steers the stage residual (kg of stage fuel left) into band [0,50] with TWO knobs:
-  //     MECO = fine knob (residual decreasing in MECO, slope ~ -0.03..-0.08 kg/kg, flattens + hits a feasibility CLIFF)
-  //     G    = coarse knob (1 quantum = -gQuantumKg residual, ~ -97.3 kg, AND the cliff moves out by ~2200 kg MECO)
-  //   Probes: FAST = COAST_WAIT (warm start) + 1 CIRC_END at the trend-predicted lead; residual = stageFuelEngOffKg + resOffset.
-  //     No lead search, no FULL. Only when a fast probe lands IN band -> confirm with tuneRough (FULL), which calibrates
-  //     resOffset (= real - fast). The first probe on a new G level is a full tuneRough (bias/lead of a new lane unknown).
-  //   Physics tolerance: tol = clamp(0.1*bandWidth/|slope|, 30, 300) kg (booster burns ~30 kg/tick: finer MECO = same sim).
-  //   Cliff-aware: after a failing MECO `hi` above feasible `lo`: r_opt = r_lo + slope*(hi - tol - lo). r_opt > band top =>
-  //     floor-limited at this G (no MECO can reach the band) -> G-drop (one quantum), then jump straight to the MECO the
-  //     residual model predicts at the new G (old probes are re-used as virtual points: r - gQuantumKg*dGi).
-  // ==========================================================================
-  // Pick the reference point closest (by altitude) to the target. Missing `alt` defaults to 320 km.
 function pickReference(cfg, altKm) {
   const refs = (cfg.references || []).slice();
   if (!refs.length) return null;
@@ -597,13 +490,13 @@ function pickReference(cfg, altKm) {
   return refs[0];
 }
 
-// residual band for this run: deorbit ON -> residualTargetDeorbitOnKg, else residualTargetKg (opts.deorbit overrides cfg.fixed.deorbitEnabled)
 function residualBand(opts) {
     opts = opts || {};
     const Cfg = root.TunerConfig, L = Cfg.limits;
     const on = opts.deorbit != null ? !!opts.deorbit : !!(Cfg.fixed && Cfg.fixed.deorbitEnabled);
     return (on ? (L.residualTargetDeorbitOnKg || [500, 600]) : (L.residualTargetKg || [100, 200])).slice();
   }
+
 
   async function findOptimalMeco(point, opts) {
     opts = opts || {};
@@ -904,136 +797,8 @@ p = Object.assign({}, p, { bi: clamp(p.bi + ((c === 'F1' || c === 'FE') ? +1 : -
     return res;
   }
 
-
-  // ==========================================================================
-  // runTuner(point, opts) — Phase A (findOptimalMeco) + Phase B (tuneAB at that MECO), coupled (Option C + guard):
-  //   * Phase A aims into the UPPER part of the residual band [lo + residualPhaseAFrac*w, hi] (headroom for Phase B),
-  //   * Phase B (tuneAB) runs with residualBand = the FULL band: any lane whose FULL stage residual leaves the band is rejected
-  //     (G descent stops there), so the final answer is always in band. The Phase A point is Phase B's start lane (reference score).
-  //   * best = lowest-score verified candidate (Phase A point included).
-  // opts: mode (Phase B, default 'fine'), band, deorbit, phaseA{...findOptimalMeco opts}, phaseB{...tuneAB opts}, hook, env, targetAltKm, abortRef, onLog, onProgress, cache
-  // ==========================================================================
-  async function runTuner(point, opts) {
-  opts = opts || {};
-  const Cfg = root.TunerConfig, U = root.TunerUtils, L = Cfg.limits;
-  const t0 = performance.now();
-  const lines = [];
-  const say = (s) => { lines.push(s); if (opts.onLog) opts.onLog(s); };
-  const fmt = (x, d) => (Number.isFinite(x) ? x.toFixed(d) : String(x));
-  const band = opts.band || residualBand(opts);
-  const frac = opts.residualPhaseAFrac != null ? opts.residualPhaseAFrac : (L.residualPhaseAFrac != null ? L.residualPhaseAFrac : 0.5);
-  const bandA = opts.phaseABand || [band[0] + frac * (band[1] - band[0]), band[1]];
-  const cache = opts.cache || new U.EvalCache();
-// wrap the hook so every fresh sim call prints "▶ eval #N ..." / "◀ eval #N end=... wall=...". Disable with opts.evalLog === false.
-const hookBase = opts.hook || root.TunerHook;
-const wrappedHook = (opts.evalLog === false) ? hookBase : makeEvalLogger((s) => say(s), hookBase)();
-const common = { hook: wrappedHook, env: opts.env, targetAltKm: opts.targetAltKm, abortRef: opts.abortRef, onProgress: opts.onProgress, cache };
-say('runTuner: residual band [' + band[0] + ',' + band[1] + '] kg (' + ((opts.deorbit != null ? opts.deorbit : Cfg.fixed.deorbitEnabled) ? 'deorbit ON' : 'deorbit OFF') + ')  Phase A band [' + fmt(bandA[0], 0) + ',' + fmt(bandA[1], 0) + ']  Phase B mode=' + (opts.mode || 'fine'));
-say('runTuner: evalLog=' + (opts.evalLog === false ? 'off' : 'on'));
-
-  // ---- MECO probe (only when the ref MECO is BELOW probeStartKg) ----
-// For 320 km refs (MECO 52612) no probe is needed. For high orbits with ref MECO≈0, probe at probeStartKg;
-// if it fails, fall back to the REF MECO (not 0) and skip Phase A entirely (MECO fixed).
-const MC = Cfg.meco || {};
-const probeStart = opts.probeStartKg != null ? opts.probeStartKg : (MC.probeStartKg != null ? MC.probeStartKg : 20000);
-let startPoint = point, probeInfo = null, skipPhaseA = false;
-if (point.meco < probeStart) {
-  const probedPoint = Object.assign({}, point, { meco: probeStart });
-  say('=== MECO probe: ref MECO=' + point.meco + ' < ' + probeStart + ' → probing at ' + probeStart + ' (G=' + U.gOf(probedPoint.Gi) + ' bias=' + U.biasOf(probedPoint.bi) + ' lead=' + probedPoint.li + 't) ===');
-  const pr = await tuneRough(probedPoint, Object.assign({}, common, { mode: 'fast', roughRelax: 0 }));
-  if (pr.ok) {
-    startPoint = probedPoint;
-    probeInfo = { probedKg: probeStart, ok: true, usedKg: probeStart, residualKg: pr.residualKg, evals: pr.evals };
-    say('  probe OK at MECO ' + probeStart + ' → MECO search will refine  evals=' + pr.evals + ' residual=' + fmt(pr.residualKg, 1) + ' kg');
-  } else {
-    skipPhaseA = true;
-    probeInfo = { probedKg: probeStart, ok: false, usedKg: point.meco, reason: pr.reason, evals: pr.evals };
-    say('  probe FAILED at MECO ' + probeStart + ' (' + pr.reason + ') → MECO fixed at ref value ' + point.meco + ', Phase A skipped');
-  }
-} else {
-  say('=== MECO probe: skipped (ref MECO=' + point.meco + ' >= ' + probeStart + '; using ref as-is) ===');
-}
-
-  // ---- Phase A: MECO search (skip if probe failed) ----
-  let A;
-  if (skipPhaseA) {
-    const rf = await tuneRough(startPoint, Object.assign({}, common, { mode: 'fast', roughRelax: 0 }));
-    if (!rf.ok) {
-      const res = { ok: false, status: 'MECO fixed fallback failed: ' + rf.reason, phaseA: null, phaseB: null, band,
-        bestPoint: null, bestScore: NaN, bestMetrics: null, bestResidualKg: NaN, bestDeployS: NaN, bestSource: null,
-        evals: probeInfo.evals + rf.evals, breakdown: null, wallMs: performance.now() - t0, log: lines, leaderboard: [], meco: fixedFallback, probe: probeInfo };
-      say('=== runTuner FAILED: ' + res.status + ' ===');
-      return res;
-    }
-    A = { ok: true, status: 'skipped (MECO fixed at ' + fixedFallback + ')', meco: fixedFallback, point: startPoint,
-      residualKg: rf.residualKg, score: rf.score, deltaV: rf.deltaV, lead: rf.lead, metrics: rf.metrics,
-      deployTimeS: rf.metrics ? rf.metrics.deployTimeS : NaN, band: [band[0], band[1]], G: U.gOf(startPoint.Gi),
-      iters: 0, gDrops: 0, resOffset: 0, failingProbes: 0, bracket: { lo: null, hi: null },
-      history: [{ iter: 1, seq: 1, meco: fixedFallback, gi: startPoint.Gi, how: 'fixed', kind: 'fixed', real: true, ok: true,
-        residualKg: rf.residualKg, E: rf.E, score: rf.score, point: startPoint, lead: rf.lead, metrics: rf.metrics,
-        deployTimeS: rf.metrics ? rf.metrics.deployTimeS : NaN }],
-      evals: rf.evals, evalBreakdown: rf.evalBreakdown, cacheHits: rf.cacheHits, wallMs: rf.wallMs, log: rf.log };
-    say('=== Phase A: SKIPPED (MECO fixed at ' + fixedFallback + ') ===');
-  } else {
-    say('=== Phase A: findOptimalMeco ===');
-    A = await findOptimalMeco(startPoint, Object.assign({}, common, { band: bandA, onLog: opts.onLog ? (l) => say(l) : (l) => lines.push(l) }, opts.phaseA || {}));
-    if (!A.ok || !A.point) { const res = { ok: false, status: 'phase A failed: ' + A.status, phaseA: A, phaseB: null, band, bestPoint: null, bestScore: NaN, bestMetrics: null, bestResidualKg: NaN, bestDeployS: NaN, bestSource: null, evals: A.evals, breakdown: null, wallMs: performance.now() - t0, log: lines, leaderboard: [], meco: A.meco, probe: probeInfo }; say('runTuner: ' + res.status); return res; }
-    if (opts.abortRef && opts.abortRef.aborted) { return { ok: false, status: 'aborted', phaseA: A, phaseB: null, band, evals: A.evals, log: lines, leaderboard: [], wallMs: performance.now() - t0, probe: probeInfo }; }
-  }
-
-  // ---- Phase B: tuneAB at A.meco (guard only when MECO was searched, not fixed) ----
-  const phaseBGuard = skipPhaseA ? null : band;
-  say('=== Phase B: tuneAB at MECO=' + A.meco + ' (start G=' + U.gOf(A.point.Gi) + ' bias=' + U.biasOf(A.point.bi) + ' lead=' + A.point.li + 't, residual ' + fmt(A.residualKg, 1) + ' kg, guard ' + (phaseBGuard ? '[' + phaseBGuard[0] + ',' + phaseBGuard[1] + ']' : 'OFF (MECO fixed)') + ') ===');
-  // Step Δv 4/4: Phase B is a coarse multi-sample, not a single-optimum descent.
-// opts.phaseB can override (e.g. { sweep: false } to fall back to score-guarded descent).
-const B = await tuneAB(A.point, Object.assign({}, common, { mode: opts.mode || 'fine', residualBand: phaseBGuard, sweep: true, onLog: opts.onLog ? (l) => say(l) : (l) => lines.push(l) }, opts.phaseB || {}));
-const res = { ok: false, status: '', phaseA: A, phaseB: B, band, bestPoint: null, bestScore: NaN, bestMetrics: null, bestResidualKg: NaN, bestDeployS: NaN,
-                bestSource: null, evals: A.evals + B.evals, breakdown: { phaseA: A.evalBreakdown, phaseB: B.evalBreakdown },
-                wallMs: 0, log: lines, leaderboard: [], meco: A.meco, probe: probeInfo };
-
-  const cands = [];
-  if (B.best) cands.push({ src: 'phaseB[' + B.best.tag + ']', point: B.best.fullPoint, score: B.best.score, metrics: B.best.metrics });
-  if (Number.isFinite(A.score) && A.metrics) cands.push({ src: 'phaseA' + (skipPhaseA ? '(fixed)' : ''), point: A.point, score: A.score, metrics: A.metrics });
-  cands.sort((a, b) => a.score - b.score);
-  const best = skipPhaseA
-    ? cands.find((c) => c.metrics && c.metrics.payloadCleared) || null
-    : cands.find((c) => c.metrics && c.metrics.stageResidualKg >= band[0] && c.metrics.stageResidualKg <= band[1]) || null;
-  if (best) {
-    res.bestPoint = best.point; res.bestScore = best.score; res.bestMetrics = best.metrics; res.bestSource = best.src;
-    res.bestResidualKg = best.metrics.stageResidualKg; res.bestDeployS = best.metrics.deployTimeS; res.ok = true; res.status = 'ok';
-  } else res.status = skipPhaseA ? 'no cleared candidate' : 'phase B: no in-band candidate';
-
-  const alt = opts.targetAltKm != null ? opts.targetAltKm : Cfg.fixed.targetAltKm;
-  const rows = [], seen = new Map();
-  const addRow = (row) => {
-    const k = U.key(row.point);
-    if (seen.has(k)) { const o = seen.get(k); if (o.src.indexOf(row.src) < 0) o.src += '+' + row.src; return; }
-    seen.set(k, row); rows.push(row);
-  };
-  A.history.filter((e) => e.real && e.ok && e.metrics && e.point && e.meco === A.meco && e.gi === A.point.Gi)
-  .forEach((e) => addRow(U.makeRow('A', 'A:' + e.kind, e.point, e.metrics, { deltaV: e.deltaV, targetAltKm: alt })));
-B.candidates.forEach((c) => { if (!c.metrics || !(c.fullPoint || c.point)) return;
-  addRow(U.makeRow('B', c.tag, c.fullPoint || c.point, c.metrics,
-    { deltaV: c.deltaV, targetAltKm: alt, reject: !!c.resFail, reasons: c.resFail ? c.reasons : [] })); });
-    res.leaderboard = U.sortRows(rows, 'score');
-  res.meco = A.meco;
-  res.wallMs = performance.now() - t0;
-  say('=== runTuner ' + (res.ok ? 'OK' : 'FAILED') + ': ' + res.status + (res.ok ? ' | best=' + res.bestSource + ' score=' + res.bestScore.toFixed(3) + ' residual=' + fmt(res.bestResidualKg, 1) + ' kg deploy=' + fmt(res.bestDeployS, 2) + 's ' + JSON.stringify(U.describe(res.bestPoint)) : '') +
-      ' | evals=' + res.evals + ' (A ' + A.evals + ' + B ' + B.evals + ') wall=' + (res.wallMs / 1000).toFixed(1) + 's');
-  return res;
-}
-
-  // built-in guided strategy (this file's tuneLead/tuneAB/tuneRough/findOptimalMeco/runTuner)
-registerStrategy('guided', {
-  label: 'Pro-Alpha Engine',
-  describe: 'probe MECO → Phase A search (MECO) → Phase B lane search (G/T/bias) → lead per lane',
-  runTuner,
-});
-
-root.TunerCore = {
-  tuneLead, tuneAB, tuneRough, findOptimalMeco, runTuner,
-  residualBand, pickReference, makeEvalLogger,
-  registerStrategy, listStrategies, getStrategy, STRATEGIES,
-};
-
+  Object.assign(T, {
+    tuneLead, tuneAB, tuneRough, findOptimalMeco,
+    pickReference, residualBand,
+  });
 })();
