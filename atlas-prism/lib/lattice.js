@@ -380,7 +380,7 @@ t('cache hit/miss by stopAt', cache.get(bp, 'FULL') && !cache.get(bp, 'COAST_WAI
   t('Δv: 320 km baseline (599) not hard-failed', score(m).ok);
   t('Δv: 2000 km manual (925) not hard-failed', score(Object.assign({}, m, { coastDeltaV: 925 })).ok);
   t('Δv: NaN not hard-failed', score(Object.assign({}, m, { coastDeltaV: NaN })).ok);
-  t('config: coastDeltaVbandMps = [750,850]', JSON.stringify(C().limits.coastDeltaVbandMps) === '[750,850]');
+  t('config: coastDeltaVbandMps = [600,700]', JSON.stringify(C().limits.coastDeltaVbandMps) === '[600,700]');
   t('config: coastDeltaVguardMps = [700,900]', JSON.stringify(C().limits.coastDeltaVguardMps) === '[700,900]');
   t('config: eMaxGuess / eDropOnFail / eSafetyMargin removed',
     C().ecc.eMaxGuess === undefined && C().ecc.eDropOnFail === undefined && C().limits.eSafetyMargin === undefined);
