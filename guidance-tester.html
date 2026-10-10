@@ -847,18 +847,19 @@ default: break;
       input.classList.toggle('changed', def !== cur);
     }
   }
-  function renderConstants(guideName) {
-    const cfg = Guidance.getGuideConfig(guideName);
-    if (!cfg) {
-      constantsHost.innerHTML = '<div style="color:var(--dim);font-style:italic;padding:14px 4px;">This guide has no tunable constants.</div>';
-      currentValues = null;
-      return;
-    }
-    const defaults = (typeof getGuideDefaultPreset === 'function') ?
-      getGuideDefaultPreset(guideName) : null;
-    defaultValues = defaults ? JSON.parse(JSON.stringify(defaults.constants)) : JSON.parse(JSON.stringify(cfg));
-    currentValues = JSON.parse(JSON.stringify(cfg));
-    const important = (typeof getGuideImportantFields === 'function') ?
+  function renderConstants(guideName, opts) {
+  opts = opts || {};
+  const cfg = Guidance.getGuideConfig(guideName);
+  if (!cfg) {
+    constantsHost.innerHTML = '<div style="color:var(--dim);font-style:italic;padding:14px 4px;">This guide has no tunable constants.</div>';
+    currentValues = null;
+    return;
+  }
+  const defaults = (typeof getGuideDefaultPreset === 'function') ?
+    getGuideDefaultPreset(guideName) : null;
+  defaultValues = defaults ? JSON.parse(JSON.stringify(defaults.constants)) : JSON.parse(JSON.stringify(cfg));
+  if (!opts.preserveValues) currentValues = JSON.parse(JSON.stringify(cfg));
+  const important = (typeof getGuideImportantFields === 'function') ?
       getGuideImportantFields(guideName) : [];
     const impSet = new Set(important);
     constantsHost.innerHTML = '';
@@ -960,8 +961,8 @@ default: break;
       if (!v.ok) { presetStat.textContent = 'Preset incompatible: ' + v.error; return; }
     }
     currentValues = JSON.parse(JSON.stringify(p.constants));
-    renderConstants(currentGuide);
-    presetStat.textContent = `Loaded "${p.name}".`;
+renderConstants(currentGuide, { preserveValues: true });
+presetStat.textContent = `Loaded "${p.name}".`;
   });
 
   $('presetSaveBtn').addEventListener('click', () => {
@@ -1026,8 +1027,8 @@ default: break;
       if (!v.ok) { presetStat.textContent = 'Validation failed: ' + v.error; return; }
     }
     currentValues = JSON.parse(JSON.stringify(parsed));
-    renderConstants(currentGuide);
-    presetStat.textContent = 'Imported constants.';
+renderConstants(currentGuide, { preserveValues: true });
+presetStat.textContent = 'Imported constants.';
   });
 
   // ============================================================================
