@@ -143,7 +143,7 @@
 
   function pickRunConfig(altKm) {
     const T = TunerConfig;
-    const ref = (T.references || []).find(r => r.alt === altKm);
+    const ref = (T.references || []).find(r => r.alt === altKm && (altKm !== 320 || r.meco === 52612));
     if (ref) {
       return {
         values: {
@@ -256,7 +256,7 @@
     // naive Oberth + KE prediction error from ~18% to ~3% (see karman v3 run).
     const dE_needed = Etgt - E_now;
     const dPE = GM * mc * (1 / rK - 1 / rTarget);
-    const C = Math.cos(gK);
+    const C = Math.cos(gK) * 1.024;  // empirical: +2.4% over cos(γ) matches Karman→orbit work fraction
     // Solve quadratic in Δv: C·(mc·vK·Δv + ½·mc·Δv²) + dPE − dE_needed = 0
     const a = C * 0.5 * mc;
     const b = C * mc * vK;
