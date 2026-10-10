@@ -71,7 +71,7 @@ ecc: {
       residualTargetDeorbitOnKg: [500, 600], // deorbit ON / suicide burn: fuel reserve (used when fixed.deorbitEnabled)
       residualPhaseAFrac: 0.5,               // Phase A (runTuner) aims into the UPPER part of the band: [lo+frac*w, hi] -> room for Phase B
         coastApoTolKm: 1, // apo at COAST_WAIT must be >= targetAlt - tol (else Fail2)
-    coastDeltaVbandMps: [750, 850], // Step Δv 1/4 — soft target band, universal across altitudes
+    coastDeltaVbandMps: [600, 700], // Step Δv 1/4 — soft target band, universal across altitudes
     coastDeltaVguardMps: [700, 900], // wide guard (informational only — NOT wired into checkHard, see tuner-utils note)
   },
 
