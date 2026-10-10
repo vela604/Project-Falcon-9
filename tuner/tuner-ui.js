@@ -30,9 +30,8 @@
     const sum = '<span class="tui-rank">#' + rank + '</span> <span class="tui-key">' + esc(keyValue(r, key)) + '</span>' +
       ' <span class="tui-dim">' + esc(r.src + ' ' + r.tag) + '</span>' + (r.ok ? '' : ' <span class="tui-badge">REJECTED</span>');
     const kv = [['score', fmt(r.score, 3)], ['orbit err', fmt(r.orbitErrKm, 3) + ' km'], ['apo / peri', fmt(r.apoKm, 3) + ' / ' + fmt(r.periKm, 3)],
-      ['ecc', Number.isFinite(r.ecc) ? r.ecc.toExponential(2) : '–'], ['E@coast', fmt(r.E, 4)], ['fuel', fmt(r.fuelKg, 0) + ' kg'],
-      ['deploy', fmt(r.deployS, 2) + ' s'], ['residual', fmt(r.residualKg, 1) + ' kg']]
-      .map((x) => '<span class="tui-k">' + x[0] + '</span><span>' + esc(x[1]) + '</span>').join('');
+  ['ecc', Number.isFinite(r.ecc) ? r.ecc.toExponential(2) : '–'], ['Δv', fmt(r.deltaV, 0) + ' m/s'], ['fuel', fmt(r.fuelKg, 0) + ' kg'],
+  ['deploy', fmt(r.deployS, 2) + ' s'], ['residual', fmt(r.residualKg, 1) + ' kg']].map((x) => '<span class="tui-k">' + x[0] + '</span><span>' + esc(x[1]) + '</span>').join('');
     const pr = [['G', d.G], ['T', d.T], ['A_eff', d.A_eff], ['bias', d.bias], ['lead', d.lead + ' (' + d.leadTicks + 't)'], ['MECO', d.meco]]
       .map((x) => '<span class="tui-k">' + x[0] + '</span><span>' + esc(x[1]) + '</span>').join('');
     const parts = r.parts ? '<div class="tui-dim">parts: ' + esc(Object.keys(r.parts).map((k) => k + ' ' + fmt(r.parts[k], 2)).join(' · ')) + '</div>' : '';

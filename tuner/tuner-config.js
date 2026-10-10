@@ -51,15 +51,14 @@ references: [
   { meco: 0, G: 0.65, T: 4.82, bias: 0.59, lead: 7.82, alt: 2000 }, // manual 2000 km point (booster fully drained)
 ],
 
-    // ---- Eccentricity band at COAST_WAIT entry (PROVISIONAL) ----
-    // User: sweep default 0.25-0.35. Manual-best E = 0.171 (user-confirmed; "1.7" was a typo).
-    ecc: {
-      sweepRange: [0.25, 0.35],
-      eMin: null, eMax: null,
-      eMaxGuess: 0.20,            // Step 6 start guess; tuneAB learns/lowers it (orbit/vrEnd failures)
-      eDropOnFail: 0.01,          // eMax = eBad - this, when no passing E is known yet
-      manualBestE: 0.171,
-    },
+    // DEPRECATED (Step Δv 1/4): E is no longer the search signal. Search uses coastDeltaV
+// (see limits.coastDeltaVbandMps). ecc weights in scoring.eccentricity are UNCHANGED —
+// ecc is still scored, just not searched toward.
+ecc: {
+  sweepRange: [0.25, 0.35],   // DEPRECATED — reference only
+  eMin: null, eMax: null,     // DEPRECATED
+  manualBestE: 0.171,         // DEPRECATED — historical reference
+},
 
     // ---- Hard limits ----
     limits: {
@@ -71,9 +70,10 @@ references: [
       residualTargetKg: [100, 200],          // stage residual band, deorbit OFF (empirical: [0,50] empties the stage -> deploy +84 s)
       residualTargetDeorbitOnKg: [500, 600], // deorbit ON / suicide burn: fuel reserve (used when fixed.deorbitEnabled)
       residualPhaseAFrac: 0.5,               // Phase A (runTuner) aims into the UPPER part of the band: [lo+frac*w, hi] -> room for Phase B
-      coastApoTolKm: 1,             // apo at COAST_WAIT must be >= targetAlt - tol (else Fail2)
-      eSafetyMargin: 0.0005,        // keep E strictly below eMax (no knife edge)
-    },
+        coastApoTolKm: 1, // apo at COAST_WAIT must be >= targetAlt - tol (else Fail2)
+    coastDeltaVbandMps: [750, 850], // Step Δv 1/4 — soft target band, universal across altitudes
+    coastDeltaVguardMps: [700, 900], // wide guard (informational only — NOT wired into checkHard, see tuner-utils note)
+  },
 
     // ---- Scoring (lower = better) ----
     scoring: {

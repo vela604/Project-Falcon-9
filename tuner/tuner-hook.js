@@ -187,7 +187,8 @@
       // ---- (A, bias) signals ----
       vrMinStageBurn: Infinity, stageVrNeg: false, stageVrNegAltKm: NaN, stageVrNegT: NaN,
       eCoast: NaN, apoCoastKm: NaN, periCoastKm: NaN, tToApoCoastS: NaN,
-      altCoastKm: NaN, vrCoast: NaN, vtCoast: NaN, coastEntryT: NaN,
+  altCoastKm: NaN, vrCoast: NaN, vtCoast: NaN, coastEntryT: NaN,
+  coastDeltaV: NaN, // v_circ(target) − v_apo_of_current_coast_orbit, at COAST_WAIT entry, from Guidance.getGuideStatus().coastDeltaV
       // ---- circ burn signals ----
       vrMin: Infinity,
       vrEnd: NaN, marginS: NaN,                            // engines-off tick; marginS is SIGNED (<0 = ended past apogee). Manual 0.046 / 6.73 s
@@ -274,13 +275,16 @@
           const ph = gs.phase;
           if (ph !== lastPhase) {
             if (ph === 'COAST_WAIT' && !coastWaitSeen) {
-              coastWaitSeen = true;
-              const o = orbitOf(b, GM, Re);
-              m.eCoast = o.ecc; m.apoCoastKm = o.apoKm; m.periCoastKm = o.periKm;
-              m.tToApoCoastS = o.tToApo; m.altCoastKm = o.altKm; m.vrCoast = o.vr; m.vtCoast = o.vt;
-              m.coastEntryT = state.simTime;
-              if (stopAt === 'COAST_WAIT_ENTRY') { end('COAST_WAIT_ENTRY'); i++; break; }
-            }
+  coastWaitSeen = true;
+  const o = orbitOf(b, GM, Re);
+  m.eCoast = o.ecc; m.apoCoastKm = o.apoKm; m.periCoastKm = o.periKm;
+  m.tToApoCoastS = o.tToApo; m.altCoastKm = o.altKm; m.vrCoast = o.vr; m.vtCoast = o.vt;
+  m.coastEntryT = state.simTime;
+  // Δv signal (Step Δv 1/4): guidance publishes coastDeltaV = v_circ(target_alt) − v_apo(current coast orbit)
+  // by the time COAST_WAIT is entered (set at end of COAST_ROTATE in guidance-blocks.js).
+  m.coastDeltaV = (gs && Number.isFinite(gs.coastDeltaV)) ? gs.coastDeltaV : NaN;
+  if (stopAt === 'COAST_WAIT_ENTRY') { end('COAST_WAIT_ENTRY'); i++; break; }
+}
             if (ph === 'CIRCULARIZE' && !circWindow && !circAchSeen) {
               circWindow = true; m.circStartT = state.simTime;
             }

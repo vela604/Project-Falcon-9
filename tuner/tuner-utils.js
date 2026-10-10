@@ -129,11 +129,16 @@
   // metrics fields (filled by tuner-hook.js, Step 3):
   //   crashed, payloadReleased, payloadCleared, vrEnd, vrMin, maxQKPa, maxG,
   //   apogeeKm, perigeeKm, ecc, boosterFuelLeftKg, deployTimeS
-  function checkHard(m) {
-    const L = C().limits, reasons = [];
-    let depth = 0;
-    const add = (r, d) => { reasons.push(r); depth += d; };
-    if (m.crashed) add('crashed', 100);
+  // NOTE (Step Δv 1/4): coastDeltaV is intentionally NOT a hard constraint.
+// Real reference points: 320 km baseline Δv=599, 2000 km manual Δv=925. Both fall
+// outside limits.coastDeltaVguardMps=[700,900]. Making it hard-fail would reject
+// every known-good manual point. Guard values remain in config for informational
+// use by search algorithms (tuneAB) — not scoring.
+function checkHard(m) {
+  const L = C().limits, reasons = [];
+  let depth = 0;
+  const add = (r, d) => { reasons.push(r); depth += d; };
+  if (m.crashed) add('crashed', 100);
 if (m.endReason === 'CAP') add('duration_cap_hit', 80); // run hit durationCapS before payload clear
 if (!m.payloadReleased || !m.payloadCleared) add('payload_not_cleared', 50);
     if (![m.apogeeKm, m.perigeeKm, m.ecc].every(Number.isFinite)) add('no_final_orbit', 50);
@@ -198,7 +203,7 @@ function suggestDurationCap(altKm) {
     const reasons = (sc.reasons || []).concat(extra.reasons || []);
     return {
       src, tag, ok: sc.ok && !extra.reject, point, desc: describe(point), score: sc.score, parts: sc.parts,
-      E: extra.E != null ? extra.E : NaN,
+  deltaV: fin(m.coastDeltaV),
       apoKm: fin(m.apogeeKm), periKm: fin(m.perigeeKm),
       apoErrKm: fin(m.apogeeKm - alt), periErrKm: fin(m.perigeeKm - alt),
       orbitErrKm: Number.isFinite(m.apogeeKm) && Number.isFinite(m.perigeeKm) ? orbitErrKm(m, alt) : NaN,
@@ -366,6 +371,21 @@ t('duration cap hit -> hard fail with reason duration_cap_hit', !capHit.ok && ca
 // 10. cache
 const cache = new EvalCache(); cache.set(bp, 'FULL', { x: 1 });
 t('cache hit/miss by stopAt', cache.get(bp, 'FULL') && !cache.get(bp, 'COAST_WAIT_ENTRY'));
+
+// 11. Δv signal contract (Step Δv 1/4)
+{
+  const m = { crashed: false, payloadReleased: true, payloadCleared: true, vrEnd: 0.03, vrMin: -0.3,
+    maxQKPa: 24.8, maxG: 4.8, apogeeKm: 320, perigeeKm: 320, ecc: 1e-5,
+    boosterFuelLeftKg: 2000, deployTimeS: 590, coastDeltaV: 599 };
+  t('Δv: 320 km baseline (599) not hard-failed', score(m).ok);
+  t('Δv: 2000 km manual (925) not hard-failed', score(Object.assign({}, m, { coastDeltaV: 925 })).ok);
+  t('Δv: NaN not hard-failed', score(Object.assign({}, m, { coastDeltaV: NaN })).ok);
+  t('config: coastDeltaVbandMps = [750,850]', JSON.stringify(C().limits.coastDeltaVbandMps) === '[750,850]');
+  t('config: coastDeltaVguardMps = [700,900]', JSON.stringify(C().limits.coastDeltaVguardMps) === '[700,900]');
+  t('config: eMaxGuess / eDropOnFail / eSafetyMargin removed',
+    C().ecc.eMaxGuess === undefined && C().ecc.eDropOnFail === undefined && C().limits.eSafetyMargin === undefined);
+}
+
 
     return { ok: fails.length === 0, lines: out, fails };
   }

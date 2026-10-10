@@ -168,3 +168,95 @@ E@COAST_WAIT=0.172278  apo/peri@coast=320.00/-1646.62  tToApo=49.7 s  alt@coast=
 **HTML:** new `B mode` select + `Full tune (Phase A + B)` button (prints Phase A history, ranked Phase B candidates, best + final JSON). `Find optimal MECO (Phase A)` stays (Phase A only, band from config).
 **Mock additions:** [100,200] default band (no G-drop with the real curve; G-drop path with a low cliff), [500,600] deorbit-on, config-driven deorbit flag, runTuner (residual after Phase B in band, guard matters: unguarded tuneAB goes to G=0.59 residual 95), deploy time in history rows (mock deploy = fit of the 2 real points vs MECO). Old v2 tests now pass `band:[0,50]` explicitly.
 **Next (user):** browser: `Full tune (Phase A + B)` from baseline 52612; paste log. Watch: Phase A band [150,200] reached with how many G-drops, `residual guard` lines in Phase B, deploy time, resOffset.
+
+---
+
+## Δv REFACTOR — 6-step chat series (Steps 17-22)
+
+**Motivation**: E (eccentricity at COAST_WAIT) was the search signal; user handoff said retire it entirely
+(no eCoast search signal, no eMaxGuess, no eSafetyMargin, no climbE, no E_max learning).
+New signal = `coastDeltaV` (v_circ(target_alt) − v_apo(current_coast_orbit)), captured at COAST_WAIT entry
+from `Guidance.getGuideStatus().coastDeltaV`. Universal target band `[750, 850]` m/s for all altitudes.
+
+**Real anchors**: 320 km baseline Δv=599 (G=0.60, b=0.59). 2000 km manual Δv=925 (G=0.65, b=0.59).
+Both outside the wide guard `[700, 900]` — hence guard is informational only, NOT a hard constraint.
+
+**Physics direction (user-confirmed)**: aggressive (G↑ bias↑) → Δv smaller. gentle (G↓ bias↓) → Δv larger.
+
+### 17. Step Δv 1/4 — config + hook + utils
+- `tuner-hook.js`: `m.coastDeltaV` added, captured at COAST_WAIT entry from `gs.coastDeltaV`.
+- `tuner-config.js`: REMOVED `ecc.eMaxGuess`, `ecc.eDropOnFail`, `limits.eSafetyMargin`.
+  ADDED `limits.coastDeltaVbandMps=[750,850]`, `limits.coastDeltaVguardMps=[700,900]`.
+  `ecc` block deprecate-marked (kept as reference).
+- `tuner-utils.js`: `checkHard` UNCHANGED — Δv NOT hard-fail (would reject both 599 and 925 refs).
+  Score weights unchanged. Self-test added for Δv contract.
+- **Known breakage after this step**: `tuner-core.js` still referenced `Cfg.ecc.eMaxGuess` → NaN. Fixed in Step 18.
+
+### 18. Step Δv 2/4 — tuneAB rewritten (coastDeltaV classify)
+- `tuneAB` replaced. Classify: `F1` (crash) | `F2a` (no coast / apo short / Δv NaN) |
+  `F2b` (Δv < 750) | `FE` (Δv > 850) | `OK`.
+- `dirOf`: `F1`/`FE` → bias +1; `F2a`/`F2b` → bias −1. No 'flipping' (E gone).
+- `climbE` REMOVED. `settle()` = verify only. No `eMax/ceil/eSafe/maxRelearn`.
+- Result `eMax` field retained as **deprecated stub** (`{eMax:null, ceil:null, eOk:null, eBad:null, rounds:0, removed:true}`) for UI/mock compat.
+- **Data-driven risk flagged**: 320 km baseline Δv=599 < bandLo=750 → F2b → tuner drives bias↓
+  toward F1 cliff. Band reachability at 320 km UNKNOWN, to be shown by real sim.
+
+### 19. Step Δv 3/4 — findOptimalMeco refactor (coastCls Δv-based, ceil gone)
+- `ceil` local (from `Cfg.ecc.eMax ?? eMaxGuess − eSafetyMargin`) REMOVED.
+  Replaced with `dVband` / `bandLo` / `bandHi` (from `limits.coastDeltaVbandMps`).
+- `coastCls` rewrite: F1 | F2a | F2b | FE | OK (same classes as tuneAB classify).
+- `fastProbe` rescue bias direction: F1+FE → +1; F2a+F2b → −1.
+- Residual classify (`cls(h)`: up/down/in/fail) UNTOUCHED — MECO steering unchanged.
+  `lo()/hi()/nextMeco()/trendFor()/warmStart()` untouched.
+- `tuner-core.js` me ab `eMaxGuess` / `eSafetyMargin` ka **koi reference nahi**.
+- **Expected breakage**: mock (no `coastDeltaV` field). Fixed Step 22.
+
+### 20. Step Δv 4/4 — runTuner Phase B multi-sample (sweep mode)
+- `tuneAB` me `opts.sweep` branch added: coarse G sweep (stride = `mode.gStep*3` default, ~6 samples),
+  NO score-guard (enumerate all OK lanes), NO T descent, fail-stop after 2 consecutive downstream fails.
+  Reuses `tryStep`/`settle`/`verify`/`leadHint` warm-start.
+- `runTuner` Phase B now defaults `sweep: true`. `residualBand` guard still active.
+  `opts.phaseB.sweep = false` to fall back to score-guarded descent.
+- Tunables: `opts.sweepStride`, `opts.sweepMaxSamples`, `opts.sweepFailStop`, `opts.sweepTagSuffix`.
+- Result shape unchanged: `B.candidates` now typically 4–6 verified lanes; leaderboard auto-includes all.
+
+### 21. Step Δv 5/4+ — E → Δv display cleanup (multi-file)
+- Removed E as *field* from tuneRough, findOptimalMeco (history/fast/confirm/probe returns + result assembly),
+  runTuner (leaderboard + Phase A skip-branch), makeRow, rowBlockHtml, strategy-example.
+- Source of truth: `metrics.coastDeltaV`. `makeRow` reads it directly from metrics.
+- UI `rowBlockHtml` detail grid shows `Δv <n> m/s` where `E@coast` was.
+  `SORT_KEYS` unchanged (`['score','accuracy','fuel','time']`) — no Δv sort key added (not requested).
+- `m.eCoast` metric still exists (used only by classify/coastCls for "did coast wait happen" detection, not a signal).
+- `tuneAB.eMax` result stub still present (deprecated).
+
+### 22. Step Δv 5/5 — mock rewritten (Δv-based, no E)
+- `test-tuneAB-mock.js` FULL rewrite: synthetic Δv surface (**INVENTED**, direction from user).
+  Real-fit pieces KEPT: lead↔vrEnd slope (0.0101 m/s per tick), 5-point residual curve,
+  cliff model (bias-bound at G=0.60 ~ 61650, +2183 kg per G quantum).
+- Assertions cover: F1/F2b direction, F1-start recovery, tuneAB finds OK, tuneRough returns deltaV,
+  findOptimalMeco converges (residual outer loop, orthogonal to Δv), runTuner sweep produces ≥2 candidates
+  with deltaV, config regression (band present, eMaxGuess/eDropOnFail/eSafetyMargin removed),
+  makeRow reads `coastDeltaV`, no legacy `E` field anywhere.
+- **Assumption-free warning**: band [750,850] reachability on the mock is a property of the INVENTED surface,
+  NOT a claim about the real 320 km sim. Real verification needed.
+
+---
+
+## Pending / next steps
+
+1. **Real-sim verification (Step Δv 6)**: run tuner from baseline 320 km, paste log.
+   Watch: `startOk` finds OK in band? Or bias scan hits F1 first? Phase B multiple candidates?
+   Decide from DATA whether band [750,850] is reachable at 320 km as-is, or needs altitude-dependent widening.
+2. **Cleanup (Step Δv 7)**:
+   - Delete `tuneAB.eMax` result stub once UI/mock no longer read it.
+   - Grep `tuner-ui.js` for `eMax` / "E_max learning" log line references — remove if dead.
+   - Decide `m.eCoast`: keep (still used by classify detection) or rename to `coastReached` (bool).
+3. **Older pre-Δv pendings (still open, lower priority)**:
+   - `startOk` bidirectional G relax (currently positive-only, up-relax).
+   - `bounds.A.upper = 20` expand (higher orbits need G up to 2+).
+   - `maxFailWalk = 6` bump for high-MECO walks.
+   - 2000 km real verification run.
+
+## Files touched in Δv refactor
+`tuner-hook.js`, `tuner-config.js`, `tuner-utils.js`, `tuner-core.js`, `tuner-ui.js`,
+`tuner-strategy-example.js`, `test-tuneAB-mock.js`. `leoV3-Param-S-idea.html` untouched.

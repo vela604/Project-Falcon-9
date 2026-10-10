@@ -59,7 +59,7 @@
     // Example: just run tuneRough at the start point and return.
     const rr = await T.tuneRough(point, { hook, env: opts.env, targetAltKm, abortRef: opts.abortRef, cache, mode: 'fast' });
     const m = rr.metrics;
-    const row = m && rr.point ? U.makeRow('E', 'example', rr.point, m, { E: rr.E, targetAltKm }) : null;
+    const row = m && rr.point ? U.makeRow('E', 'example', rr.point, m, { deltaV: rr.deltaV, targetAltKm }) : null;
     const res = {
       ok: !!rr.ok, status: rr.ok ? 'ok' : rr.reason,
       bestPoint: rr.point, bestScore: rr.score, bestMetrics: m,
