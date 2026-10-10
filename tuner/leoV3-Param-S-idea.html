@@ -56,7 +56,6 @@ input[type=number] { width: 90px; background: var(--panel-2); color: var(--text)
   </div>
 <div style="display:none">
   <select id="abMode"><option value="fine" selected>fine</option></select>
-  <input id="abEmax" type="number" value="0.20">
   <select id="mecoStartSel"><option value="1" selected>baseline</option></select>
   <select id="fullModeSel"><option value="fine" selected>fine</option></select>
 </div>
@@ -72,7 +71,7 @@ input[type=number] { width: 90px; background: var(--panel-2); color: var(--text)
   <button id="evalSnapBtn" disabled>Eval: snapped baseline</button>
   <button id="evalRawBtn" disabled>Eval: raw baseline</button>
   <button id="evalTwiceBtn" disabled>Determinism (x2)</button>
-  <button id="evalRefBtn" disabled>Ref points E (3x COAST_WAIT)</button>
+  <button id="evalRefBtn" disabled>Ref points Δv (3x COAST_WAIT)</button>
   <button id="evalAbortBtn">Abort</button>
 </div>
 
@@ -224,7 +223,7 @@ $('smokeBtn').disabled = false; $('dumpCfgBtn').disabled = false; $('applyChkBtn
   function summarize(m) {
     return [
       'end=' + m.endReason + '  ticks=' + m.ticks + '  t=' + fmt(m.simTimeEnd, 2) + 's  wall=' + (m.wallMs / 1000).toFixed(2) + 's  ' + m.ticksPerSecond.toFixed(0) + ' t/s',
-      'E@COAST_WAIT=' + fmt(m.eCoast, 6) + '  apo/peri@coast=' + fmt(m.apoCoastKm, 2) + '/' + fmt(m.periCoastKm, 2) + '  tToApo=' + fmt(m.tToApoCoastS, 1) + 's  alt=' + fmt(m.altCoastKm, 2),
+      'Δv@COAST_WAIT=' + fmt(m.coastDeltaV, 1) + ' m/s  apo/peri@coast=' + fmt(m.apoCoastKm, 2) + '/' + fmt(m.periCoastKm, 2) + '  tToApo=' + fmt(m.tToApoCoastS, 1) + 's  alt=' + fmt(m.altCoastKm, 2),
       'stage vrMin=' + fmt(m.vrMinStageBurn, 3) + (m.stageVrNeg ? '  NEGATIVE @alt ' + fmt(m.stageVrNegAltKm, 1) + ' km' : '  (ok)'),
       'circ vrMin=' + fmt(m.vrMin, 3) + '  vrEnd(engOff)=' + fmt(m.vrEnd, 4) + ' margin=' + fmt(m.marginS, 2) + 's | at circAchieved: vrEnd=' + fmt(m.vrEndAch, 4) + ' margin=' + fmt(m.marginAch, 2) + 's',
       'deploy=' + fmt(m.deployTimeS, 2) + 's  meco@' + fmt(m.mecoTimeS, 2) + 's  boosterFuel=' + fmt(m.boosterFuelLeftKg, 0) + ' kg  stageResidual=' + fmt(m.stageResidualKg, 1) + ' kg (@deploy ' + fmt(m.stageFuelAtDeployKg, 1) + ')',
@@ -275,9 +274,9 @@ $('smokeBtn').disabled = false; $('dumpCfgBtn').disabled = false; $('applyChkBtn
     try {
       for (const r of C.references) {
         const m = await TunerHook.runEvalValues(refValues(r), { stopAt: 'COAST_WAIT_ENTRY', abortOnStageVrNeg: false, abortRef });
-        log('REF MECO ' + r.meco + ' (G ' + r.G + ' bias ' + r.bias + '): E=' + fmt(m.eCoast, 6) + '  apo/peri=' + fmt(m.apoCoastKm, 2) + '/' + fmt(m.periCoastKm, 2) +
-            '  tToApo=' + fmt(m.tToApoCoastS, 1) + 's  stageVrMin=' + fmt(m.vrMinStageBurn, 3) + '  end=' + m.endReason + '  ' + (m.wallMs / 1000).toFixed(1) + 's', 'ok');
-      }
+        log('REF MECO ' + r.meco + ' (G ' + r.G + ' bias ' + r.bias + '): Δv=' + fmt(m.coastDeltaV, 1) + ' m/s  apo/peri=' + fmt(m.apoCoastKm, 2) + '/' + fmt(m.periCoastKm, 2) +
+  '  tToApo=' + fmt(m.tToApoCoastS, 1) + 's  stageVrMin=' + fmt(m.vrMinStageBurn, 3) + '  end=' + m.endReason + '  ' + (m.wallMs / 1000).toFixed(1) + 's', 'ok');
+  }
       statusEl.textContent = 'Ref points done.';
     } catch (e) { log('REF FAILED: ' + e.message, 'bad'); console.error(e); }
     finally { ['evalSnapBtn','evalRawBtn','evalTwiceBtn','evalRefBtn'].forEach((id) => $(id).disabled = false); }

@@ -370,16 +370,29 @@
     return null;
   }
 
-  async function startOk(p) {
-    const relaxStep = Math.max(2, mode.gStep), R = 6;
-    for (let n = 0; n <= R; n++) {
-      const p1 = U.step(p, { dGi: n * relaxStep });
-      const r = await findOk(p1, ladder[0], 10);
-      if (r) { if (n) say('startOk: A relaxed by ' + n * relaxStep + ' gimbal quanta'); return r; }
-      say('startOk: no OK bias at ' + dsc(p1) + ' -> relax A');
-    }
-    return null;
+// startOk: start point classify karo, us class se G direction.
+//   F2b (Δv < bandLo, too aggressive) -> G DOWN first
+//   FE  (Δv > bandHi, too gentle)     -> G UP first
+//   F1 / F2a (crash / coast bad)      -> G DOWN first (320 km baseline ka case)
+// Har G level pe wahi findOk bias-scan.
+async function startOk(p) {
+  const relaxStep = Math.max(2, mode.gStep), R = 6;
+  const r0 = await evAB(p);
+  if (r0.cls === 'OK') return r0;
+  let order;
+  if (r0.cls === 'F2b') order = [0, -1, +1, -2, +2, -3, +3, -4, +4, -5, +5, -6, +6];
+else if (r0.cls === 'FE') order = [0, +1, -1, +2, -2, +3, -3, +4, -4, +5, -5, +6, -6];
+else order = [0, -1, +1, -2, +2, -3, +3, -4, +4, -5, +5, -6, +6];
+say('startOk: start ' + dsc(p) + ' cls=' + r0.cls + ' -> G order [' + order.join(',') + ']');
+  for (const mul of order) {
+    const p1 = U.step(p, { dGi: mul * relaxStep });
+    if (!U.inBounds(p1)) continue;
+    const r = await findOk(p1, ladder[0], 10);
+    if (r) { say('startOk: OK at dGi=' + (mul * relaxStep) + ' (G=' + U.gOf(p1.Gi) + ')'); return r; }
+    say('startOk: no OK bias at ' + dsc(p1));
   }
+  return null;
+}
 
   const slopes = { G: 0, T: 0 };
   async function tryStep(r, axis, st) {
@@ -760,10 +773,23 @@ p = Object.assign({}, p, { bi: clamp(p.bi + ((c === 'F1' || c === 'FE') ? +1 : -
         const base = hist.filter((x) => x.gi === curGi && !x.superseded).length ? 'secant' : 'model';
         return { meco: Math.round(l.meco + step), how: base + (step >= ladder0 ? '(cap)' : ''), width: null };
       }
-      if (h) {                                        // only below-band / failure seen -> go down
-        const f = feasAll().filter((x) => x.meco < h.meco).sort((a, b) => b.meco - a.meco)[0];
-        return { meco: Math.round(f ? (f.meco + h.meco) / 2 : h.meco - ladder0), how: 'down', width: null };
-      }
+      if (h) {
+  // Base off LATEST failing entry at this level (was h = lowest failing MECO — caused repeated
+  // 52612 -> 56612 loops and 56613 stuck). Latest reason decides direction:
+  //   coast/Δv fail -> UP     (user manual 320 km: 52612 -> 56612 -> 60612)
+  //   crash (F1)    -> DOWN
+  //   undecidable   -> UP from latest
+  const latest = hist.filter((x) => x.gi === curGi && !x.superseded).slice(-1)[0] || h;
+  const rsn = (latest.reason || '') + ' ' + (latest.cls || '');
+  const coast = /F2a|F2b|coast|apo|Δv|deltaV/i.test(rsn) || (Number.isFinite(latest.deltaV) && latest.deltaV < bLo);
+  const crash = /F1|crash|stageVrNeg|STAGE_VR_NEG/i.test(rsn);
+  if (coast && !crash) return { meco: Math.round(latest.meco + ladder0), how: 'up(coast)', width: null };
+  if (crash && !coast) {
+    const f = feasAll().filter((x) => x.meco < latest.meco).sort((a, b) => b.meco - a.meco)[0];
+    return { meco: Math.round(f ? (f.meco + latest.meco) / 2 : latest.meco - ladder0), how: 'down(crash)', width: null };
+  }
+  return { meco: Math.round(latest.meco + ladder0), how: 'up(alt)', width: null };
+}
       return { stop: 'no data' };
     }
 

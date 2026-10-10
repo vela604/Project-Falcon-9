@@ -260,3 +260,23 @@ Both outside the wide guard `[700, 900]` — hence guard is informational only, 
 ## Files touched in Δv refactor
 `tuner-hook.js`, `tuner-config.js`, `tuner-utils.js`, `tuner-core.js`, `tuner-ui.js`,
 `tuner-strategy-example.js`, `test-tuneAB-mock.js`. `leoV3-Param-S-idea.html` untouched.
+
+## 23. Step Δv 6 — HTML display cleanup (leoV3-Param-S-idea.html)
+
+- `summarize()` line 2: `E@COAST_WAIT=...` → `Δv@COAST_WAIT=<n> m/s` (active — Eval snapped/raw/determinism buttons ise log karte hain).
+- `evalRefBtn` handler: log line `E=` → `Δv=` (m.coastDeltaV from Step 17).
+- `evalRefBtn` button label: "Ref points E (3x COAST_WAIT)" → "Ref points Δv (3x COAST_WAIT)".
+- Removed hidden `<input id="abEmax">` (dead — tuneAB no longer takes eMax opt).
+- **Left as-is (dead, never executed)**: `if ($('tuneABBtn'))`, `if ($('tuneRoughBtn'))`,
+  `if ($('findMecoBtn'))`, `if ($('fullTuneBtn'))` handler blocks still contain `.E` / `eMax:` refs
+  inside — those button IDs don't exist in the HTML, so the blocks never run. Optional cleanup.
+- `m.eCoast` metric still present in hook (used by classify detection only — "did COAST_WAIT happen").
+  Display-side gone. Consider rename to `coastReached` in a future pass.
+
+## 24. Step Δv 7 — tuner-ui.js config panel: eMax guess → Δv band
+
+- `CFG_FIELDS` me `tuiEMax` (path `ecc.eMaxGuess`, which was removed in Step 17) hataya.
+  Replaced with two fields: `tuiDvLo` / `tuiDvHi` bound to `limits.coastDeltaVbandMps.0/1`.
+- Guard band `limits.coastDeltaVguardMps` ko UI me nahi dikhaya (informational only, not search signal).
+- Live re-score on rank fields unaffected (these are `group: 'search'`, apply next run).
+- Export/Import config: `CFG_FIELDS`-driven, so eMax key automatically drops from export, Δv keys auto-included.
