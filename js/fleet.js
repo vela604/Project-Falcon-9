@@ -1440,6 +1440,17 @@ function getActiveStackMembers() {
   return stk.members.map(id => fleet.find(r => r.id === id)).filter(Boolean);
 }
 
+// Stack type — the stack's own `sequence` field IS its type:
+// 'f9-standard' | 'f9-legacy' | 'f9-heavy' | 'sso' | 'custom'.
+// Used by the guidance/preset compatibility layer: a guidance declares
+// which stack types it can fly, a preset is bound to one stack type.
+function stackTypeOf(stk) {
+  return (stk && stk.sequence) ? stk.sequence : 'custom';
+}
+function getActiveStackType() {
+  return stackTypeOf(getActiveStack());
+}
+
 // Combined aggregates for a stack (bottom→top). If any member is infeasible
 // (e.g. stage with negative payload), its contribution is treated as 0 and
 // a warning is set — callers should surface it but shouldn't crash.

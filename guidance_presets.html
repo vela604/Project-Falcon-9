@@ -226,6 +226,7 @@ a.back:hover { color: var(--cyan); }
 }
 .preset-badge.default { color: var(--yellow); background: rgba(255,210,63,0.10); border: 1px solid rgba(255,210,63,0.30); }
 .preset-badge.stack { color: var(--dim); background: rgba(107,125,156,0.10); border: 1px solid rgba(107,125,156,0.25); }
+.preset-badge.stacktype { color: #7ee1ff; background: rgba(53,214,255,0.05); border: 1px solid rgba(53,214,255,0.18); text-transform: none; }
 .preset-badge.tag { color: #7ee1ff; background: rgba(53,214,255,0.06); border: 1px solid rgba(53,214,255,0.20); }
 .preset-badge.outdated { color: var(--danger); background: rgba(255,95,126,0.08); border: 1px solid rgba(255,95,126,0.30); }
 
@@ -259,6 +260,20 @@ a.back:hover { color: var(--cyan); }
   line-height: 1.5;
   margin: 6px 0 8px;
 }
+
+.preset-stackline {
+  font-family: var(--font-mono); font-size: 11.5px;
+  color: var(--dim); margin: 6px 0 2px;
+}
+.preset-stackline .sl-name { color: var(--text); font-weight: 600; }
+.preset-stackline .sl-type {
+  color: #7ee1ff; margin-left: 6px;
+  padding: 1px 6px; border-radius: 3px;
+  background: rgba(53,214,255,0.06);
+  border: 1px solid rgba(53,214,255,0.20);
+  font-size: 10px;
+}
+
 .preset-actions {
   display: flex; gap: 8px; flex-wrap: wrap;
 }

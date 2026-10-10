@@ -63,6 +63,14 @@ function getUserPresetsForGuide(guideName) {
   return loadUserPresets().filter(p => p.guideName === guideName);
 }
 
+// Presets for a guide that are applicable to a specific stack TYPE
+// (stack.sequence). Legacy presets without a stackType are still returned
+// (backward compat). Sorted default-first, then user insertion order.
+function getPresetsForGuideAndStack(guideName, stackType) {
+  const all = getAllPresetsForGuide(guideName);
+  return all.filter(p => !p.stackType || p.stackType === stackType);
+}
+
 // Union of default + user presets for a given guide. Default always first.
 // Order within each group is insertion order (default = single, user = chronological).
 function getAllPresetsForGuide(guideName) {
@@ -91,6 +99,9 @@ function addUserPreset(data) {
   guideName: (data && data.guideName) || '',
   stackId: (data && data.stackId) || '',
   stackName: (data && data.stackName) || '',
+  // Stack TYPE (the stack's `sequence`) — this preset only applies on
+  // stacks of matching type. Empty = legacy preset (any stack, tolerated).
+  stackType: (data && typeof data.stackType === 'string') ? data.stackType : '',
   tags: Array.isArray(data && data.tags) ? data.tags.map(String) : [],
   // Optional metadata — not part of constants, purely display/annotation.
   // null when unspecified so it stays out of the presets page display.
@@ -118,6 +129,8 @@ function updateUserPreset(id, patch) {
   if (idx < 0) return null;
   const merged = { ...list[idx], ...patch, id, isDefault: false, updatedAt: Date.now() };
   // Constants deep-copied so caller's object can't be mutated later
+
+if (typeof patch.stackType === 'string') merged.stackType = patch.stackType;
   if (patch.constants) {
     merged.constants = JSON.parse(JSON.stringify(patch.constants));
   }

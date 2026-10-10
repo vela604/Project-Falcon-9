@@ -921,8 +921,8 @@ function bindGuidanceToolbar() {
 // so a newly-added guide (e.g. leoInsertionV3) is selectable via the
 // right-toolbar Start even before the config modal is opened.
 try {
-  const allGuides = (typeof Guidance !== 'undefined' && Guidance.listGuides)
-    ? Guidance.listGuides() : [];
+  const allGuides = (typeof Guidance !== 'undefined' && Guidance.listGuides) ?
+    Guidance.listGuides() : [];
   if (allGuides.length) {
     const existing = new Set(Array.from(sel.options).map(o => o.value));
     allGuides.forEach(g => {
@@ -933,12 +933,9 @@ try {
         sel.appendChild(opt);
       }
     });
-    // If currently selected value isn't in the list, default to the
-    // newest V3 if available, else V2, else first.
     if (!allGuides.includes(sel.value)) {
-  sel.value = allGuides.includes('leoInsertionV3') ? 'leoInsertionV3' :
-    allGuides[0];
-}
+      sel.value = allGuides.includes('leoInsertionV3') ? 'leoInsertionV3' : allGuides[0];
+    }
   }
 } catch (e) { console.warn('guideSelect sync failed', e); }
   toggle.addEventListener('click', () => {
@@ -947,14 +944,38 @@ try {
   });
   
   startBtn.addEventListener('click', () => {
-    const name = sel.value;
-    if (!name) { alert('Select a guidance first'); return; }
-    if (typeof GuidanceBridge === 'undefined' || !GuidanceBridge.ready) {
-      console.warn('[guidance toolbar] guidance worker not ready yet');
+  const name = sel.value;
+  if (!name) { alert('Select a guidance first'); return; }
+  
+  // Gate 1 — stack type compatibility (declarative check).
+  const stackType = (typeof getActiveStackType === 'function') ? getActiveStackType() : null;
+  if (stackType && typeof isGuideCompatibleWithStackType === 'function' &&
+    !isGuideCompatibleWithStackType(name, stackType)) {
+    alert('Guide "' + name + '" is not compatible with this stack type ("' + stackType + '").\n' +
+      'Switch to a compatible stack or pick another guide.');
+    return;
+  }
+  
+  // Gate 2 — must have an applicable preset for this stack type. A guide
+  // can be nominally compatible yet have no user preset tuned for the
+  // CURRENT stack — starting without one would run code defaults and
+  // silently mis-tune the flight. Require at least one applicable
+  // preset (default-preset for the guide counts).
+  if (stackType && typeof getPresetsForGuideAndStack === 'function') {
+    const applicable = getPresetsForGuideAndStack(name, stackType);
+    if (!applicable.length) {
+      alert('No preset for "' + name + '" on this stack type ("' + stackType + '").\n' +
+        'Open the Guidance System modal and save a preset for this stack first.');
       return;
     }
-    GuidanceBridge.send({ type: 'guidanceCommand', action: 'start', guideName: name });
-  });
+  }
+  
+  if (typeof GuidanceBridge === 'undefined' || !GuidanceBridge.ready) {
+    console.warn('[guidance toolbar] guidance worker not ready yet');
+    return;
+  }
+  GuidanceBridge.send({ type: 'guidanceCommand', action: 'start', guideName: name });
+});
   
     stopBtn.addEventListener('click', () => {
     if (typeof GuidanceBridge === 'undefined') return;
@@ -1384,18 +1405,19 @@ let _renderToken = 0; // async guard for rapid guide switches
   // ----------------------------------------------------------------
   // Dropdowns
   // ----------------------------------------------------------------
-  function populateGuideDropdown() {
+    function populateGuideDropdown() {
   const all = (typeof Guidance !== 'undefined' && Guidance.listGuides) ?
     Guidance.listGuides() :
     [];
   const withCfg = (typeof Guidance !== 'undefined' && Guidance.listGuidesWithConfig) ?
     new Set(Guidance.listGuidesWithConfig()) :
     new Set();
+  // NOTE: unfiltered here on purpose. The modal is where presets get
+  // SAVED for a stack — filtering by stack type would prevent saving a
+  // preset for a guide the user wants to enable on this stack later.
+  // The START gate (bindGuidanceToolbar) is the real compatibility check.
   guideSel.innerHTML = all.length ?
     all.map(g => {
-      // Failed-experiment marker comes first (short, loud). Then the
-      // "no tunable constants" note, if applicable. Both suffixes are
-      // display-only — the option value stays the bare guide name.
       const statusLabel = (typeof Guidance.getGuideStatusLabel === 'function') ?
         (Guidance.getGuideStatusLabel(g) || '') :
         '';
@@ -1409,26 +1431,35 @@ let _renderToken = 0; // async guard for rapid guide switches
 }
 
   function populatePresetDropdown(guideName) {
-    if (typeof getAllPresetsForGuide !== 'function') {
-      presetSel.innerHTML = '<option value="">— presets module unavailable —</option>';
-      presetSel.disabled = true;
-      return;
-    }
-    const list = getAllPresetsForGuide(guideName);
-    if (!list.length) {
-      presetSel.innerHTML = '<option value="">— no presets —</option>';
-      presetSel.disabled = true;
-      return;
-    }
-    presetSel.disabled = false;
-    presetSel.innerHTML = '<option value="">— select a preset —</option>' +
-      list.map(p => {
-        const tag = p.isDefault ? 'DEFAULT' : 'USER';
-        const stack = p.stackName || '(no stack)';
-        return `<option value="${p.id}">${p.name} · [${tag}] · ${stack}</option>`;
-      }).join('');
-    presetSel.value = '';
+  if (typeof getAllPresetsForGuide !== 'function') {
+    presetSel.innerHTML = '<option value="">— presets module unavailable —</option>';
+    presetSel.disabled = true;
+    return;
   }
+  // Filter by active stack type — only presets tuned for THIS stack
+  // are shown. Legacy presets without a stackType are tolerated (any
+  // stack) so old user presets don't vanish.
+  const stackType = (typeof getActiveStackType === 'function') ? getActiveStackType() : null;
+  const list = (stackType && typeof getPresetsForGuideAndStack === 'function') ?
+    getPresetsForGuideAndStack(guideName, stackType) :
+    getAllPresetsForGuide(guideName);
+  if (!list.length) {
+    presetSel.innerHTML = stackType ?
+      '<option value="">— no presets for stack type "' + stackType + '" —</option>' :
+      '<option value="">— no presets —</option>';
+    presetSel.disabled = true;
+    return;
+  }
+  presetSel.disabled = false;
+  presetSel.innerHTML = '<option value="">— select a preset —</option>' +
+    list.map(p => {
+      const tag = p.isDefault ? 'DEFAULT' : 'USER';
+      const stack = p.stackName || '(no stack)';
+      const stype = p.stackType ? ' · ' + p.stackType : '';
+      return `<option value="${p.id}">${p.name} · [${tag}] · ${stack}${stype}</option>`;
+    }).join('');
+  presetSel.value = '';
+}
 
   // ----------------------------------------------------------------
   // Field rendering
@@ -1740,9 +1771,6 @@ function makeFieldRow(path, reference, values) {
 guideSel.addEventListener('change', () => {
   const hidden = document.getElementById('guideSelect');
   if (hidden && guideSel.value) {
-    // If the hidden dropdown doesn't yet have an option for this guide,
-    // add it. Without this, setting .value to a missing option silently
-    // leaves the previous value — Start reads the wrong guide, or none.
     const hasOpt = Array.from(hidden.options).some(o => o.value === guideSel.value);
     if (!hasOpt) {
       const opt = document.createElement('option');
@@ -1834,14 +1862,35 @@ guideSel.addEventListener('change', () => {
 
   // Save as preset sub-panel
   btnSave.addEventListener('click', () => {
-    savePanel.style.display = '';
-    pastePanel.style.display = 'none';
-    saveErr.style.display = 'none';
-    saveName.value = '';
-    saveDesc.value = '';
-    saveTags.value = '';
-    saveName.focus();
-  });
+  savePanel.style.display = '';
+  pastePanel.style.display = 'none';
+  saveErr.style.display = 'none';
+  saveName.value = '';
+  saveDesc.value = '';
+  saveTags.value = '';
+  // Show which stack this preset will be bound to (feedback — the user
+  // needs to know the preset is stack-specific before hitting Save).
+  let stackLine = document.getElementById('gcmSaveStackLine');
+  if (!stackLine) {
+    stackLine = document.createElement('div');
+    stackLine.id = 'gcmSaveStackLine';
+    stackLine.style.fontSize = '11.5px';
+    stackLine.style.color = 'var(--dim, #6b7d9c)';
+    stackLine.style.margin = '2px 0 8px';
+    stackLine.style.fontFamily = 'var(--font-mono, monospace)';
+    saveName.parentNode.insertBefore(stackLine, saveName);
+  }
+  let stkInfo = '(no active stack)';
+  if (typeof getActiveStack === 'function') {
+    const stk = getActiveStack();
+    if (stk) {
+      const stkType = (typeof getActiveStackType === 'function') ? getActiveStackType() : (stk.sequence || 'custom');
+      stkInfo = stk.name + '  [' + stkType + ']';
+    }
+  }
+  stackLine.textContent = 'Stack: ' + stkInfo;
+  saveName.focus();
+});
   saveCancel.addEventListener('click', () => {
     savePanel.style.display = 'none';
     saveErr.style.display = 'none';
@@ -1865,21 +1914,28 @@ guideSel.addEventListener('change', () => {
       saveErr.style.display = '';
       return;
     }
-    let stackId = '', stackName = '';
-    if (typeof getActiveStack === 'function') {
-      const stk = getActiveStack();
-      if (stk) { stackId = stk.id; stackName = stk.name; }
-    }
-    const tags = saveTags.value.split(',').map(s => s.trim()).filter(Boolean);
-    const rec = addUserPreset({
-      name,
-      description: saveDesc.value.trim(),
-      guideName: _activeGuide,
-      stackId,
-      stackName,
-      tags,
-      constants: r.values,
-    });
+    let stackId = '', stackName = '', stackType = '';
+if (typeof getActiveStack === 'function') {
+  const stk = getActiveStack();
+  if (stk) {
+    stackId = stk.id;
+    stackName = stk.name;
+    stackType = (typeof getActiveStackType === 'function')
+      ? (getActiveStackType() || '')
+      : (stk.sequence || '');
+  }
+}
+const tags = saveTags.value.split(',').map(s => s.trim()).filter(Boolean);
+const rec = addUserPreset({
+  name,
+  description: saveDesc.value.trim(),
+  guideName: _activeGuide,
+  stackId,
+  stackName,
+  stackType,
+  tags,
+  constants: r.values,
+});
     if (!rec) {
       saveErr.textContent = 'Save failed. See console.';
       saveErr.style.display = '';

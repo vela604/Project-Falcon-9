@@ -25,6 +25,47 @@
 const GUIDE_DEFAULT_STACK_ID = 'stk_falcon9-b5';
 const GUIDE_DEFAULT_STACK_NAME = 'Falcon 9 Block 5';
 
+// ============================================================================
+// Guidance ↔ stack-type compatibility.
+//
+// Each guidance declares which stack types (a stack's own `sequence` field)
+// it is allowed to run on. Absent entry = no restriction (compatible with
+// every type, backward-compat). Empty array = never compatible.
+//
+// Stack types (see fleet.js's addStack / updateStack):
+//   'f9-standard'  Booster → Interstage → Stage → PayloadSpace
+//   'f9-legacy'    Booster → Stage → PayloadSpace   (no interstage member)
+//   'f9-heavy'     Booster → Int → Stage → Int → Stage → PayloadSpace
+//   'sso'          Booster → PayloadSpace            (sounding rocket)
+//   'custom'       anything else
+// ============================================================================
+const GUIDE_COMPATIBLE_STACK_TYPES = {
+  // V3 inserts a stage + fairing + payload; needs those members present.
+  // Heavy (two stages) not supported by current single-stage V3 logic.
+  // SSO has no stage → not supported.
+  leoInsertionV3: ['f9-standard', 'f9-legacy'],
+  // Same mission shape as V3.
+  leoInsertionV2: ['f9-standard', 'f9-legacy'],
+  leoInsertion:   ['f9-standard', 'f9-legacy'],
+  // Ascent-only guides: work with any stack that has a booster.
+  // (No entry = compatible with everything, so they're left out on purpose.)
+};
+
+function getCompatibleStackTypes(guideName) {
+  const list = GUIDE_COMPATIBLE_STACK_TYPES[guideName];
+  return Array.isArray(list) ? list.slice() : null;   // null = all types allowed
+}
+function isGuideCompatibleWithStackType(guideName, stackType) {
+  const list = GUIDE_COMPATIBLE_STACK_TYPES[guideName];
+  if (!Array.isArray(list)) return true;              // no restriction
+  return list.includes(stackType);
+}
+function getCompatibleGuidesForStackType(stackType) {
+  const guides = Object.keys(GUIDE_DEFAULT_PRESETS);
+  return guides.filter(g => isGuideCompatibleWithStackType(g, stackType));
+}
+
+
 // ---------------------------------------------------------------------------
 // Default preset factory — stamps the shared metadata onto a constants bag.
 // ---------------------------------------------------------------------------
@@ -43,6 +84,7 @@ function _mkDefault(guideName, name, description, constants, tags, mecoTimeS, pa
     payloadDeployTimeS: Number.isFinite(payloadDeployTimeS) ? payloadDeployTimeS : null,
     constants,
     isDefault: true,
+    stackType: (typeof stackType === 'string' && stackType) ? stackType : 'f9-standard',
   };
 }
 

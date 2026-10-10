@@ -71,9 +71,13 @@ function _readLSArray(key) {
 function listAllStacks() {
   const stacks = _readLSArray(_STACKS_KEY);
   if (stacks.length) {
-    return stacks.map(s => ({ id: s.id, name: s.name || s.id }));
+    return stacks.map(s => ({
+      id: s.id,
+      name: s.name || s.id,
+      type: s.sequence || 'custom',
+    }));
   }
-  return [{ id: GUIDE_DEFAULT_STACK_ID, name: GUIDE_DEFAULT_STACK_NAME }];
+  return [{ id: GUIDE_DEFAULT_STACK_ID, name: GUIDE_DEFAULT_STACK_NAME, type: 'f9-standard' }];
 }
 
 // The "active" stack — the one the sim is flying. Reads the selection
@@ -244,13 +248,22 @@ function formatHMS(totalSec) {
       }
     }
 
-    const badges = [];
-if (opts.mode === 'default') badges.push('<span class="preset-badge default">DEFAULT</span>');
-if (p.stackName) badges.push(`<span class="preset-badge stack">${escapeHtml(p.stackName)}</span>`);
-(p.tags || []).forEach(t =>
-  badges.push(`<span class="preset-badge tag">${escapeHtml(t)}</span>`));
-if (outdated) badges.push('<span class="preset-badge outdated">OUTDATED SCHEMA</span>');
-
+        const badges = [];
+    if (opts.mode === 'default') badges.push('<span class="preset-badge default">DEFAULT</span>');
+    (p.tags || []).forEach(t =>
+      badges.push(`<span class="preset-badge tag">${escapeHtml(t)}</span>`));
+    if (outdated) badges.push('<span class="preset-badge outdated">OUTDATED SCHEMA</span>');
+    
+    // Dedicated stack line — this preset is bound to exactly one stack type
+    // (and usually one stack name). Show it prominently so the reader knows
+    // before trying to apply it elsewhere.
+    let stackLine = '';
+    if (p.stackName || p.stackType) {
+      const parts = [];
+      if (p.stackName) parts.push(`<span class="sl-name">${escapeHtml(p.stackName)}</span>`);
+      if (p.stackType) parts.push(`<span class="sl-type">${escapeHtml(p.stackType)}</span>`);
+      stackLine = `<div class="preset-stackline">Stack: ${parts.join(' ')}</div>`;
+    }
 // ---- Specs strip — orbit + deploy time, kept OUT of the tag row so
 // they read as mission facts, not filterable tags. Rendered as their
 // own bordered strip below the name/badge line.
@@ -298,6 +311,7 @@ card.innerHTML = `
       <div class="preset-meta">${badges.join('')}</div>
     </div>
   </div>
+  ${stackLine}
   ${specs.length ? `<div class="preset-specs">${specs.join('')}</div>` : ''}
   ${p.description ? `<div class="preset-desc">${escapeHtml(p.description)}</div>` : ''}
   <div class="preset-actions"></div>
@@ -380,9 +394,9 @@ card.innerHTML = `
     // Active stack first if present; else fall back to whatever stacks
     // show up in existing presets. Always include the F9 default.
     const stackSel = $('pmStack');
-    const stacks = collectKnownStacks();
-    stackSel.innerHTML = stacks.map(s =>
-      `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('');
+const stacks = collectKnownStacks();
+stackSel.innerHTML = stacks.map(s =>
+  `<option value="${s.id}" data-stacktype="${escapeHtml(s.type || '')}">${escapeHtml(s.name)}</option>`).join('');
 
     // Fill fields
     if (_editingPresetId) {
@@ -441,15 +455,15 @@ $('pmMecoTime').value = '';
 // Deduped by id, default first, then active, then the rest.
 function collectKnownStacks() {
   const seen = new Map();
-  seen.set(GUIDE_DEFAULT_STACK_ID, { id: GUIDE_DEFAULT_STACK_ID, name: GUIDE_DEFAULT_STACK_NAME });
+  seen.set(GUIDE_DEFAULT_STACK_ID, { id: GUIDE_DEFAULT_STACK_ID, name: GUIDE_DEFAULT_STACK_NAME, type: 'f9-standard' });
   const act = activeStack();
-  if (act && act.id && !seen.has(act.id)) seen.set(act.id, { id: act.id, name: act.name });
+  if (act && act.id && !seen.has(act.id)) seen.set(act.id, { id: act.id, name: act.name, type: act.type || 'custom' });
   listAllStacks().forEach(s => {
     if (!seen.has(s.id)) seen.set(s.id, s);
   });
   loadUserPresets().forEach(p => {
     if (p.stackId && !seen.has(p.stackId)) {
-      seen.set(p.stackId, { id: p.stackId, name: p.stackName || p.stackId });
+      seen.set(p.stackId, { id: p.stackId, name: p.stackName || p.stackId, type: p.stackType || '' });
     }
   });
   return [...seen.values()];
@@ -664,9 +678,12 @@ function collectKnownStacks() {
   $('presetModalSave').addEventListener('click', () => {
     const name = $('pmName').value.trim();
     const guide = $('pmGuide').value;
-    const stackId = $('pmStack').value;
-    const stackName = ($('pmStack').selectedOptions[0] || {}).text || stackId;
-    if (!name) { $('pmError').textContent = 'Name is required.'; $('pmError').style.display = ''; return; }
+    const stackSelEl = $('pmStack');
+const stackId = stackSelEl.value;
+const stackOpt = stackSelEl.selectedOptions[0] || {};
+const stackName = stackOpt.text || stackId;
+const stackType = (stackOpt.dataset && stackOpt.dataset.stacktype) || '';
+if (!name) { $('pmError').textContent = 'Name is required.'; $('pmError').style.display = ''; return; }
     if (!guide) { $('pmError').textContent = 'Guidance is required.'; $('pmError').style.display = ''; return; }
     if (!stackId) { $('pmError').textContent = 'Stack is required.'; $('pmError').style.display = ''; return; }
 
@@ -703,7 +720,7 @@ if (rawMeco !== '') {
 if (_editingPresetId) {
   const u = updateUserPreset(_editingPresetId, {
     name, description: $('pmDesc').value.trim(),
-    guideName: guide, stackId, stackName, tags,
+    guideName: guide, stackId, stackName, stackType, tags,
     payloadDeployTimeS: deployTimeS,
     mecoTimeS: mecoTimeS,
     constants: r.values,
@@ -713,7 +730,7 @@ if (_editingPresetId) {
 } else {
   const c = addUserPreset({
     name, description: $('pmDesc').value.trim(),
-    guideName: guide, stackId, stackName, tags,
+    guideName: guide, stackId, stackName, stackType, tags,
     payloadDeployTimeS: deployTimeS,
     mecoTimeS: mecoTimeS,
     constants: r.values,
