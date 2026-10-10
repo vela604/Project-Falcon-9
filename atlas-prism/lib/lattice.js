@@ -345,7 +345,7 @@ t('monotone in |err|, sign-symmetric, no cliff', orbitPenalty(0.5, 320) > orbitP
     const lastBad = (a) => !a[a.length - 1].ok && !a[a.length - 2].ok && a.slice(0, -2).every((r) => r.ok);
     const bySc = sortRows(rowsIn, 'score'), byAc = sortRows(rowsIn, 'accuracy'), byFu = sortRows(rowsIn, 'fuel'), byTi = sortRows(rowsIn, 'time');
     t('SORT_KEYS', JSON.stringify(SORT_KEYS) === '["score","accuracy","fuel","time"]');
-    t('row fields', ['src','tag','ok','point','desc','score','parts','E','apoKm','periKm','apoErrKm','periErrKm','orbitErrKm','ecc','fuelKg','deployS','residualKg','reasons'].every((k) => k in rowsIn[0]));
+    t('row fields', ['src','tag','ok','point','desc','score','parts','deltaV','apoKm','periKm','apoErrKm','periErrKm','orbitErrKm','ecc','fuelKg','deployS','residualKg','reasons'].every((k) => k in rowsIn[0]));
     t('row: reject flag -> not ok, reason kept', !rowsIn[4].ok && rowsIn[4].reasons.includes('residual_out_of_band') && !rowsIn[3].ok);
     t('sort: failed rows always last (all keys)', [bySc, byAc, byFu, byTi].every(lastBad));
     t('sort score ascending', bySc.slice(0, 3).every((r, i, a) => i === 0 || a[i - 1].score <= r.score));
