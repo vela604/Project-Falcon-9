@@ -2,10 +2,12 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Karman Direct Prediction</title>
+<title>Karman Energy Test v5</title>
 <style>
   :root { --bg:#060912; --panel:#0d1424; --border:#1c2b45; --text:#dbe6f5;
-          --cyan:#35d6ff; --green:#4ade80; --yellow:#ffd23f; --red:#ff5f7e; --dim:#6b7d9c; }
+          --cyan:#35d6ff; --green:#4ade80; --yellow:#ffd23f; --purple:#a78bfa;
+          --orange:#ff9248; --red:#ff5f7e; --dim:#6b7d9c; }
+  * { box-sizing: border-box; }
   body { margin:0; background:var(--bg); color:var(--text); font:13px/1.5 monospace; padding:20px; }
   h1 { font-size:15px; color:var(--cyan); margin:0 0 12px; letter-spacing:1px; text-transform:uppercase; }
   .panel { background:var(--panel); border:1px solid var(--border); border-radius:6px; padding:12px; margin-bottom:12px; }
@@ -16,19 +18,19 @@
   select { background:#101a30; color:var(--text); border:1px solid var(--border);
            padding:8px 12px; border-radius:4px; font:inherit; cursor:pointer; margin-right:8px; }
   #status { color:var(--yellow); margin:8px 0; min-height:1.2em; }
-  table { border-collapse:collapse; font-size:12.5px; width:100%; margin-top:6px; }
-  th, td { padding:6px 10px; text-align:right; border-bottom:1px solid var(--border); }
+  table { border-collapse:collapse; font-size:12px; width:100%; margin-top:6px; }
+  th, td { padding:5px 10px; text-align:right; border-bottom:1px solid var(--border); }
   th { color:var(--cyan); font-weight:600; }
   td:first-child, th:first-child { text-align:left; color:var(--dim); }
+  tr.heading td { background:rgba(53,214,255,0.06); color:var(--cyan); font-weight:600; }
   tr.highlight td { background:rgba(74,222,128,0.06); }
-  tr.bad td { background:rgba(255,95,126,0.08); color:var(--red); }
   pre { background:#0a1020; border:1px solid var(--border); padding:8px; border-radius:4px;
         font-size:11.5px; overflow:auto; max-height:400px; line-height:1.5; }
 </style>
 </head>
 <body>
 
-<h1>Karman Direct Prediction — predicted fuel residual vs actual</h1>
+<h1>Karman Direct Prediction v5 — Methods A / B / C</h1>
 
 <div class="panel">
   <label style="color:var(--dim);margin-right:8px;">Target:</label>
@@ -79,7 +81,7 @@
   const $ = (id) => document.getElementById(id);
   const GM = CONFIG.GM_EARTH, Re = CONFIG.EARTH_RADIUS, dt = CONFIG.DT;
   const KARMAN = 100000;
-  const D2R = Math.PI/180;
+  const D2R = Math.PI / 180;
 
   function findStage() {
     for (const b of state.bodies) {
@@ -92,8 +94,8 @@
   function bodyState(b) {
     const r = Math.hypot(b.rx, b.ry);
     const v = Math.hypot(b.vx, b.vy);
-    const vr = (b.vx*b.rx + b.vy*b.ry) / r;
-    const vt = (b.vx*b.ry - b.vy*b.rx) / r;
+    const vr = (b.vx * b.rx + b.vy * b.ry) / r;
+    const vt = (b.vx * b.ry - b.vy * b.rx) / r;
     const gamma = Math.atan2(vr, vt);
     return { r, v, vr, vt, gamma, altM: r - Re, t: state.simTime };
   }
@@ -136,14 +138,38 @@
     return NaN;
   }
 
+  function designMdot(stb) {
+    // Prefer the stage member's recorded engineThrusters (design flow rate,
+    // always valid — the live engine massFlowRate reads 0 after cutoff).
+    if (stb && stb.members && stb.members[0] && stb.members[0].engineThrusters) {
+      const et = stb.members[0].engineThrusters;
+      const g = et.gimbal || et.fixed;
+      if (g && Number.isFinite(g.massFlowRate)) return g.massFlowRate;
+    }
+    // Fallback: sum live engines' max mass flow
+    if (stb && stb.engines && stb.engines.length) {
+      let tot = 0;
+      stb.engines.forEach(e => { tot += (e.maxMassFlowRate || e.massFlowRate || 0); });
+      if (tot > 0) return tot;
+    }
+    return NaN;
+  }
+
   function boot() {
     if (typeof TunerEngine === 'undefined' || typeof Guidance === 'undefined') return false;
-    TunerEngine.init(); return true;
+    TunerEngine.init();
+    return true;
   }
 
   function pickRunConfig(altKm) {
     const T = TunerConfig;
-    const ref = (T.references || []).find(r => r.alt === altKm && (altKm !== 320 || r.meco === 52612));
+    // For 320 km: use baseline (MECO 52612). For others: match altitude.
+    let ref = null;
+    if (altKm === 320) {
+      ref = (T.references || []).find(r => r.alt === 320 && r.meco === 52612) || null;
+    } else {
+      ref = (T.references || []).find(r => r.alt === altKm) || null;
+    }
     if (ref) {
       return {
         values: {
@@ -184,7 +210,8 @@
     setTimeout(async () => {
       try {
         TunerEngine.prepareRun(TunerConfig.guideName, cfg.values, TunerConfig.env);
-        let karman = null, lastState = null, lastFuel = NaN, lastR = NaN, lastV = NaN;
+        let karman = null;
+        let lastState = null, lastFuel = NaN, lastR = NaN, lastV = NaN;
         const maxTicks = Math.ceil(cfg.durationCap / dt);
         let lastYield = performance.now();
 
@@ -204,7 +231,8 @@
 
           lastState = st;
           lastFuel = sf;
-          lastR = st.r; lastV = st.v;
+          lastR = st.r;
+          lastV = st.v;
 
           if (gs && gs.payloadCleared) break;
 
@@ -220,25 +248,13 @@
 
         if (!karman) { $('status').textContent = 'Karman never crossed'; $('runBtn').disabled = false; return; }
 
+        // Read Ve and mdot from the stage body (post-cutoff: use design flow)
         let Ve = NaN, mdot = NaN;
         const stb = findStage();
         if (stb && stb.engines && stb.engines.length) {
-      if (Number.isFinite(stb.engines[0].Ve)) Ve = stb.engines[0].Ve;
-      // Preferred: design mass flow from the stage member record (always valid)
-      if (stb.members && stb.members[0] && stb.members[0].engineThrusters) {
-        const et = stb.members[0].engineThrusters;
-        const g = et.gimbal || et.fixed;
-        if (g && Number.isFinite(g.massFlowRate)) mdot = g.massFlowRate;
-      }
-      // Fallback: sum live max flows
-      if (!Number.isFinite(mdot)) {
-        let tot = 0;
-        stb.engines.forEach(e => { tot += (e.maxMassFlowRate || e.massFlowRate || 0); });
-        mdot = tot > 0 ? tot : NaN;
-      }
-    });
-          mdot = tot > 0 ? tot : NaN;
+          if (Number.isFinite(stb.engines[0].Ve)) Ve = stb.engines[0].Ve;
         }
+        mdot = designMdot(stb);
 
         $('status').textContent = 'done';
         render(karman, lastState, lastFuel, lastR, lastV, mc, mcInfo, Ve, mdot, altKm);
@@ -251,7 +267,10 @@
     }, 20);
   }
 
-  function render(karman, lastState, lastFuel, lastR, lastV, mc, mcInfo, Ve, mdot, altKm) {
+  // ---------------------------------------------------------------------------
+  // Core prediction logic — three methods, all evaluated at Karman state.
+  // ---------------------------------------------------------------------------
+  function predict(karman, lastState, lastFuel, lastR, lastV, mc, Ve, mdot, altKm) {
     const rTarget = Re + altKm * 1000;
     const vTarget = Math.sqrt(GM / rTarget);
     const Etgt = Eof(mc, rTarget, vTarget);
@@ -262,165 +281,176 @@
     const E_actual_final = Eof(mc, lastR, lastV);
     const residual_actual = lastFuel;
 
-    // --- Direct prediction at Karman ---
-    // Target: M_c should end with E_target.
-    // We need ΔE_mech = E_target − E_now, delivered as work by stage fuel.
-    // Empirical correction: thrust is roughly tangential while velocity has a
-    // climb angle γ, so the useful work fraction is ~cos(γ_K). Reduces the
-    // naive Oberth + KE prediction error from ~18% to ~3% (see karman v3 run).
     const dE_needed = Etgt - E_now;
     const dPE = GM * mc * (1 / rK - 1 / rTarget);
-    const C = Math.cos(gK) * 1.027;  // empirical: +2.7% over cos(γ). Two data points: 1.031 (baseline 320km), 1.0226 (MECO 50000). Averaged.
-    // Solve quadratic in Δv: C·(mc·vK·Δv + ½·mc·Δv²) + dPE − dE_needed = 0
-    const a = C * 0.5 * mc;
-    const b = C * mc * vK;
-    const c = dPE - dE_needed;
-    const disc = b*b - 4*a*c;
-    const dv_required = disc >= 0 ? (-b + Math.sqrt(disc)) / (2*a) : NaN;
-    // Tsiolkovsky: Δv = Ve · ln(Mi_stage / (mc + residual))  →  solve for residual
-    // Mi_stage = mc + F_K
+    const C = Math.cos(gK) * 1.027; // empirical from two runs
+
     const Mi_stage = mc + F_K;
-    const Mf_required = Mi_stage / Math.exp(dv_required / Ve);
-    const residual_predicted = Mf_required - mc;
 
-    // ratio check for actual, formula-based
-    const actual_dE = E_actual_final - E_now;
-    const dv_actual = Ve * Math.log(Mi_stage / (mc + residual_actual));
-    const pred_dE = C * (mc * vK * dv_actual + 0.5 * mc * dv_actual * dv_actual) + dPE;
+    // ---- Method A: cos(γ) corrected quadratic ----
+    // Solve: C·(mc·vK·Δv + ½·mc·Δv²) + dPE = dE_needed
+    let dv_required_A = NaN, residual_A = NaN;
+    {
+      const a = C * 0.5 * mc;
+      const b = C * mc * vK;
+      const c = dPE - dE_needed;
+      const disc = b * b - 4 * a * c;
+      if (disc >= 0) {
+        dv_required_A = (-b + Math.sqrt(disc)) / (2 * a);
+        const Mf_req = Mi_stage / Math.exp(dv_required_A / Ve);
+        residual_A = Mf_req - mc;
+      }
+    }
 
-    // ---------- Method B — kinematic x(T) = ΔE_needed / F ----------
-    // User's idea: work = F·x(T); solve x(T) = ΔE_needed / F for T.
-    // x(t) = (v0+Ve)·t + Ve·((M-r·t)/r)·ln((M-r·t)/M)
-    let mf_kin_B = NaN, T_kin_B = NaN, x_required = NaN;
-    if (Number.isFinite(mdot) && mdot > 0 && Number.isFinite(Ve)) {
+    // ---- Method B: kinematic F·x(T) = ΔE_needed (user's x(t) formula) ----
+    // x(t) = (v0 + Ve)·t + Ve·((M − r·t)/r)·ln((M − r·t)/M)
+    let T_B = NaN, mf_B = NaN, residual_B = NaN, xRequired = NaN;
+    if (Number.isFinite(mdot) && mdot > 0 && Number.isFinite(Ve) && F_K > 0) {
       const F = mdot * Ve;
-      x_required = dE_needed / F;
+      xRequired = dE_needed / F;
       const r = mdot;
       const M = Mi_stage;
-      const Tmax = F_K / r;  // fuel exhausted
-      const xT = (T) => {
+      const Tmax = F_K / r;
+      const xOfT = (T) => {
         if (T <= 0) return 0;
         const mT = M - r * T;
         if (mT <= 1) return Infinity;
         return (vK + Ve) * T + Ve * (mT / r) * Math.log(mT / M);
       };
-      let lo = 0, hi = Tmax;
-      if (xT(hi) < x_required) { T_kin_B = Tmax; mf_kin_B = F_K; }
-      else {
+      const xAtTmax = xOfT(Tmax);
+      if (xAtTmax < xRequired) {
+        T_B = Tmax; mf_B = F_K;
+      } else {
+        let lo = 0, hi = Tmax;
         for (let it = 0; it < 80; it++) {
           const mid = (lo + hi) / 2;
-          if (xT(mid) < x_required) lo = mid; else hi = mid;
+          if (xOfT(mid) < xRequired) lo = mid; else hi = mid;
         }
-        T_kin_B = (lo + hi) / 2;
-        mf_kin_B = r * T_kin_B;
+        T_B = (lo + hi) / 2;
+        mf_B = r * T_B;
       }
+      residual_B = Mi_stage - mf_B - mc;
     }
-    const residual_kin_B = Number.isFinite(mf_kin_B) ? (Mi_stage - mf_kin_B - mc) : NaN;
 
-    // ---------- Method C — kinematic with ejecta-KE correction ----------
-    // F·x(T) includes KE of fuel that later gets ejected. Subtract approximate
-    // ejecta KE = ½ · (mf/3) · (v_avg - Ve)² — first-order guess.
-    // Solve F·x(T) = ΔE_needed + KE_ejecta_est(T) numerically.
-    let mf_kin_C = NaN, T_kin_C = NaN;
-    if (Number.isFinite(mdot) && mdot > 0 && Number.isFinite(Ve)) {
+    // ---- Method C: kinematic with ejecta-KE correction ----
+    // Objective: F·x(T) − ½·(mf/3)·(v_avg − Ve)² = dE_needed
+    let T_C = NaN, mf_C = NaN, residual_C = NaN;
+    if (Number.isFinite(mdot) && mdot > 0 && Number.isFinite(Ve) && F_K > 0) {
       const F = mdot * Ve;
       const r = mdot;
       const M = Mi_stage;
       const Tmax = F_K / r;
-      const vAt = (T) => vK + Ve * Math.log(M / (M - r * T));
-      const xT = (T) => {
+      const xOfT = (T) => {
         if (T <= 0) return 0;
         const mT = M - r * T;
         if (mT <= 1) return Infinity;
         return (vK + Ve) * T + Ve * (mT / r) * Math.log(mT / M);
       };
-      // objective: F·x(T) − KE_ejecta(T) = ΔE_needed
+      const vAt = (T) => vK + Ve * Math.log(M / (M - r * T));
       const f = (T) => {
         if (T <= 0) return 0;
         const mf = r * T;
         const vAvg = (vK + vAt(T)) / 2;
         const keEj = 0.5 * (mf / 3) * Math.pow(Math.max(0, vAvg - Ve), 2);
-        return F * xT(T) - keEj;
+        return F * xOfT(T) - keEj;
       };
-      let lo = 0, hi = Tmax;
-      if (f(hi) < dE_needed) { T_kin_C = Tmax; mf_kin_C = F_K; }
-      else {
+      if (f(Tmax) < dE_needed) {
+        T_C = Tmax; mf_C = F_K;
+      } else {
+        let lo = 0, hi = Tmax;
         for (let it = 0; it < 80; it++) {
           const mid = (lo + hi) / 2;
           if (f(mid) < dE_needed) lo = mid; else hi = mid;
         }
-        T_kin_C = (lo + hi) / 2;
-        mf_kin_C = r * T_kin_C;
+        T_C = (lo + hi) / 2;
+        mf_C = r * T_C;
       }
+      residual_C = Mi_stage - mf_C - mc;
     }
-    const residual_kin_C = Number.isFinite(mf_kin_C) ? (Mi_stage - mf_kin_C - mc) : NaN;
 
-    // Fill table
+    return {
+      rTarget, vTarget, Etgt, rK, vK, gK, F_K, E_now, E_actual_final, residual_actual,
+      dE_needed, dPE, C, Mi_stage,
+      dv_required_A, residual_A,
+      T_B, mf_B, residual_B, xRequired,
+      T_C, mf_C, residual_C,
+    };
+  }
+
+  function render(karman, lastState, lastFuel, lastR, lastV, mc, mcInfo, Ve, mdot, altKm) {
+    const P = predict(karman, lastState, lastFuel, lastR, lastV, mc, Ve, mdot, altKm);
+    const {
+      Etgt, rK, vK, gK, F_K, E_now, E_actual_final, residual_actual,
+      dE_needed, dPE, C, Mi_stage,
+      dv_required_A, residual_A,
+      T_B, mf_B, residual_B, xRequired,
+      T_C, mf_C, residual_C,
+    } = P;
+
     const rows = [
-      { k: 'Target altitude',           v: altKm.toFixed(1), u: 'km' },
-      { k: '',                          v: '', u: '' },
-      { k: '--- AT KARMAN ---',         v: '', u: '' },
+      { h: 'Target' },
+      { k: 'altitude',                  v: altKm.toFixed(1), u: 'km' },
+
+      { h: 'At Karman' },
       { k: 'altitude',                  v: (karman.altM/1000).toFixed(3), u: 'km' },
       { k: 'r, v',                      v: rK.toFixed(0) + ', ' + vK.toFixed(2), u: 'm, m/s' },
       { k: 'γ (flight path)',           v: (gK/D2R).toFixed(4), u: '°' },
       { k: 'M_c',                       v: mc.toFixed(1), u: 'kg' },
-      { k: 'stage fuel @ Karman',       v: F_K.toFixed(1), u: 'kg' },
+      { k: 'stage fuel',                v: F_K.toFixed(1), u: 'kg' },
       { k: 'Mi_stage (= mc + fuel)',    v: Mi_stage.toFixed(1), u: 'kg' },
       { k: 'Ve (stage)',                v: Ve.toFixed(2), u: 'm/s' },
+      { k: 'mdot (design)',             v: (Number.isFinite(mdot)?mdot.toFixed(2):'n/a'), u: 'kg/s' },
+      { k: 'F = mdot·Ve',               v: (Number.isFinite(mdot)?(mdot*Ve/1000).toFixed(1):'n/a'), u: 'kN' },
       { k: 'E_now (M_c)',               v: E_now.toExponential(4), u: 'J' },
       { k: 'E_target (M_c)',            v: Etgt.toExponential(4), u: 'J' },
       { k: 'ΔE needed',                 v: dE_needed.toExponential(4), u: 'J' },
       { k: 'ΔPE term (K→target)',       v: dPE.toExponential(4), u: 'J' },
-      { k: 'C = cos(γ_K)',              v: C.toFixed(6), u: '' },
-      { k: 'Δv required (corrected)',   v: (Number.isFinite(dv_required)?dv_required.toFixed(2):'n/a'), u: 'm/s' },
-      { k: '',                          v: '', u: '' },
-      { k: '--- PREDICTION (Karman) ---', v: '', u: '' },
-      { k: 'A: predicted residual fuel', v: (Number.isFinite(residual_predicted)?residual_predicted.toFixed(1):'n/a'), u: 'kg' },
-      { k: 'A: error vs actual',       v: (Number.isFinite(residual_predicted)?(residual_predicted - residual_actual).toFixed(1):'n/a'), u: 'kg' },
-      { k: '',                          v: '', u: '' },
-      { k: 'mdot stage',                v: (Number.isFinite(mdot)?mdot.toFixed(2):'n/a'), u: 'kg/s' },
-      { k: 'F = mdot·Ve',               v: (Number.isFinite(mdot)?(mdot*Ve/1000).toFixed(1):'n/a'), u: 'kN' },
-      { k: 'x_required = ΔE/F',         v: (Number.isFinite(x_required)?(x_required/1000).toFixed(2):'n/a'), u: 'km' },
-      { k: 'B: T_burn predicted',       v: (Number.isFinite(T_kin_B)?T_kin_B.toFixed(2):'n/a'), u: 's' },
-      { k: 'B: residual (kinematic)',   v: (Number.isFinite(residual_kin_B)?residual_kin_B.toFixed(1):'n/a'), u: 'kg' },
-      { k: 'B: error vs actual',        v: (Number.isFinite(residual_kin_B)?(residual_kin_B - residual_actual).toFixed(1):'n/a'), u: 'kg' },
-      { k: 'C: T_burn predicted',       v: (Number.isFinite(T_kin_C)?T_kin_C.toFixed(2):'n/a'), u: 's' },
-      { k: 'C: residual (kin + ejecta)', v: (Number.isFinite(residual_kin_C)?residual_kin_C.toFixed(1):'n/a'), u: 'kg' },
-      { k: 'C: error vs actual',        v: (Number.isFinite(residual_kin_C)?(residual_kin_C - residual_actual).toFixed(1):'n/a'), u: 'kg' },
-      { k: '',                          v: '', u: '' },
-      { k: '--- ACTUAL (end) ---',      v: '', u: '' },
+      { k: 'C = cos(γ_K)·1.027',        v: C.toFixed(6), u: '' },
+
+      { h: 'Method A — cos(γ) corrected' },
+      { k: 'Δv required',               v: (Number.isFinite(dv_required_A)?dv_required_A.toFixed(2):'n/a'), u: 'm/s' },
+      { k: 'A: predicted residual',     v: (Number.isFinite(residual_A)?residual_A.toFixed(1):'n/a'), u: 'kg' },
+      { k: 'A: error vs actual',        v: (Number.isFinite(residual_A)?(residual_A - residual_actual).toFixed(1):'n/a'), u: 'kg' },
+      { k: 'A: relative error',         v: (Number.isFinite(residual_A)?((residual_A - residual_actual)/Math.max(1,residual_actual)*100).toFixed(2):'n/a'), u: '%' },
+
+      { h: 'Method B — kinematic F·x(T)' },
+      { k: 'x_required = ΔE/F',         v: (Number.isFinite(xRequired)?(xRequired/1000).toFixed(2):'n/a'), u: 'km' },
+      { k: 'B: T_burn predicted',       v: (Number.isFinite(T_B)?T_B.toFixed(2):'n/a'), u: 's' },
+      { k: 'B: fuel burned predicted',  v: (Number.isFinite(mf_B)?mf_B.toFixed(1):'n/a'), u: 'kg' },
+      { k: 'B: predicted residual',     v: (Number.isFinite(residual_B)?residual_B.toFixed(1):'n/a'), u: 'kg' },
+      { k: 'B: error vs actual',        v: (Number.isFinite(residual_B)?(residual_B - residual_actual).toFixed(1):'n/a'), u: 'kg' },
+      { k: 'B: relative error',         v: (Number.isFinite(residual_B)?((residual_B - residual_actual)/Math.max(1,residual_actual)*100).toFixed(2):'n/a'), u: '%' },
+
+      { h: 'Method C — kinematic + ejecta KE' },
+      { k: 'C: T_burn predicted',       v: (Number.isFinite(T_C)?T_C.toFixed(2):'n/a'), u: 's' },
+      { k: 'C: fuel burned predicted',  v: (Number.isFinite(mf_C)?mf_C.toFixed(1):'n/a'), u: 'kg' },
+      { k: 'C: predicted residual',     v: (Number.isFinite(residual_C)?residual_C.toFixed(1):'n/a'), u: 'kg' },
+      { k: 'C: error vs actual',        v: (Number.isFinite(residual_C)?(residual_C - residual_actual).toFixed(1):'n/a'), u: 'kg' },
+      { k: 'C: relative error',         v: (Number.isFinite(residual_C)?((residual_C - residual_actual)/Math.max(1,residual_actual)*100).toFixed(2):'n/a'), u: '%' },
+
+      { h: 'Actual (end)' },
       { k: 'altitude',                  v: (lastState.altM/1000).toFixed(3), u: 'km' },
       { k: 'r, v',                      v: lastR.toFixed(0) + ', ' + lastV.toFixed(2), u: 'm, m/s' },
       { k: 'residual fuel',             v: residual_actual.toFixed(1), u: 'kg' },
       { k: 'E_final actual',            v: E_actual_final.toExponential(4), u: 'J' },
-      { k: '',                          v: '', u: '' },
-      { k: '--- ERROR ---',             v: '', u: '' },
-      { k: 'predicted − actual',        v: (Number.isFinite(residual_predicted)?(residual_predicted - residual_actual).toFixed(1):'n/a'), u: 'kg' },
-      { k: 'relative',                  v: (Number.isFinite(residual_predicted)?((residual_predicted - residual_actual)/Math.max(1,residual_actual)*100).toFixed(2):'n/a'), u: '%' },
-      { k: '',                          v: '', u: '' },
-      { k: 'actual ΔE (K→end)',         v: actual_dE.toExponential(4), u: 'J' },
-      { k: 'formula ΔE (same fuel)',    v: pred_dE.toExponential(4), u: 'J' },
-      { k: 'ratio actual/formula',      v: (actual_dE/pred_dE).toFixed(4), u: '' },
     ];
+
     const tbody = document.querySelector('#resTable tbody');
     tbody.innerHTML = rows.map(r => {
-      const cls = r.k.includes('ERROR') || r.k.includes('predicted') ? '' : '';
-      return '<tr' + (r.k === 'predicted residual fuel' || r.k === 'residual fuel' ? ' class="highlight"' : '') +
-             '><td>' + r.k + '</td><td>' + r.v + '</td><td style="color:var(--dim)">' + r.u + '</td></tr>';
+      if (r.h) return '<tr class="heading"><td colspan="3">' + r.h + '</td></tr>';
+      const hl = /residual$/.test(r.k) && !r.k.startsWith('A:') && !r.k.startsWith('B:') && !r.k.startsWith('C:');
+      return '<tr' + (hl ? ' class="highlight"' : '') + '><td>' + r.k + '</td><td>' + r.v + '</td><td style="color:var(--dim)">' + r.u + '</td></tr>';
     }).join('');
 
-    // raw dump
     const raw = [
-      'karman:   r=' + rK.toFixed(2) + ' v=' + vK.toFixed(3) + ' γ=' + (gK/D2R).toFixed(4) + '° fuel=' + F_K.toFixed(2) + ' E=' + E_now.toExponential(6),
-      'target:   r=' + rTarget.toFixed(2) + ' v=' + vTarget.toFixed(3) + ' E=' + Etgt.toExponential(6),
-      'end:      r=' + lastR.toFixed(2) + ' v=' + lastV.toFixed(3) + ' fuel=' + residual_actual.toFixed(2) + ' E=' + E_actual_final.toExponential(6),
-      'M_c=' + mc.toFixed(4) + '  Ve=' + Ve.toFixed(4) + '  C=' + C.toFixed(6) + '  γ=' + (gK/D2R).toFixed(4) + '°',
-      'dv_required=' + (Number.isFinite(dv_required)?dv_required.toFixed(4):'n/a') + '  Mi_stage=' + Mi_stage.toFixed(4) + '  Mf_required=' + (Number.isFinite(Mf_required)?Mf_required.toFixed(4):'n/a'),
-      'A_predicted_residual=' + (Number.isFinite(residual_predicted)?residual_predicted.toFixed(4):'n/a') + '  actual=' + residual_actual.toFixed(4),
-      'B_residual=' + (Number.isFinite(residual_kin_B)?residual_kin_B.toFixed(4):'n/a') + '  T_B=' + (Number.isFinite(T_kin_B)?T_kin_B.toFixed(3):'n/a'),
-      'C_residual=' + (Number.isFinite(residual_kin_C)?residual_kin_C.toFixed(4):'n/a') + '  T_C=' + (Number.isFinite(T_kin_C)?T_kin_C.toFixed(3):'n/a'),
-      'mdot=' + mdot.toFixed(4) + '  F=' + (mdot*Ve).toFixed(1),
-      'ratio_actual_formula=' + (actual_dE/pred_dE).toFixed(6),
+      'karman: r=' + rK.toFixed(2) + ' v=' + vK.toFixed(3) + ' γ=' + (gK/D2R).toFixed(4) + '° fuel=' + F_K.toFixed(2) + ' E=' + E_now.toExponential(6),
+      'target: r=' + P.rTarget.toFixed(2) + ' v=' + P.vTarget.toFixed(3) + ' E=' + Etgt.toExponential(6),
+      'end:    r=' + lastR.toFixed(2) + ' v=' + lastV.toFixed(3) + ' fuel=' + residual_actual.toFixed(2) + ' E=' + E_actual_final.toExponential(6),
+      'M_c=' + mc.toFixed(4) + '  Ve=' + Ve.toFixed(4) + '  mdot=' + (Number.isFinite(mdot)?mdot.toFixed(4):'n/a') + '  C=' + C.toFixed(6),
+      'A: dv_req=' + (Number.isFinite(dv_required_A)?dv_required_A.toFixed(4):'n/a') + '  residual=' + (Number.isFinite(residual_A)?residual_A.toFixed(4):'n/a'),
+      'B: x_req=' + (Number.isFinite(xRequired)?xRequired.toFixed(1):'n/a') + '  T=' + (Number.isFinite(T_B)?T_B.toFixed(4):'n/a') + '  mf=' + (Number.isFinite(mf_B)?mf_B.toFixed(2):'n/a') + '  residual=' + (Number.isFinite(residual_B)?residual_B.toFixed(4):'n/a'),
+      'C: T=' + (Number.isFinite(T_C)?T_C.toFixed(4):'n/a') + '  mf=' + (Number.isFinite(mf_C)?mf_C.toFixed(2):'n/a') + '  residual=' + (Number.isFinite(residual_C)?residual_C.toFixed(4):'n/a'),
+      'actual residual=' + residual_actual.toFixed(4),
     ].join('\n');
     $('raw').textContent = raw;
   }
@@ -430,6 +460,7 @@
     $('raw').textContent = '—';
     $('status').textContent = 'idle';
   }
+
   $('runBtn').addEventListener('click', run);
   $('clearBtn').addEventListener('click', clear);
   clear();
