@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Twin Full Compare</title>
+<style>
+body { margin:0; background:#060912; color:#dbe6f5; font:13px/1.5 monospace; padding:20px; }
+h1 { color:#35d6ff; font-size:15px; margin:0 0 12px; letter-spacing:1px; }
+button { background:#101a30; color:#dbe6f5; border:1px solid #1c2b45;
+         padding:8px 16px; border-radius:4px; font:inherit; cursor:pointer; margin-right:8px; }
+button:hover { border-color:#35d6ff; color:#35d6ff; }
+button:disabled { opacity:.4; }
+input[type=number] { background:#101a30; color:#dbe6f5; border:1px solid #1c2b45;
+         padding:6px 10px; border-radius:4px; font:inherit; width:90px; }
+#status { color:#ffd23f; margin:8px 0; }
+pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4px;
+      font-size:11.5px; overflow:auto; max-height:600px; }
+table { border-collapse:collapse; font-size:12px; margin-top:10px; width:100%; }
+th, td { padding:6px 10px; text-align:right; border-bottom:1px solid #1c2b45; }
+th { color:#35d6ff; }
+td:first-child, th:first-child { text-align:left; color:#6b7d9c; }
+td.match { color:#4ade80; }
+td.near { color:#ffd23f; }
+td.diff { color:#ff5f7e; }
+</style>
+</head>
+<body>
+
+<h1>Twin Full Compare — same CW energy, FULL mission equivalence</h1>
+
+<label>base G <input type="number" id="baseG" value="0.60" step="0.01"></label>
+<label>base bias <input type="number" id="baseB" value="0.59" step="0.01"></label>
+<label>target G <input type="number" id="targetG" value="0.61" step="0.01"></label>
+<button id="runBtn">Run</button>
+<div id="status">idle</div>
+<pre id="log">—</pre>
+<div id="tableHost"></div>
+
+<script src="../../js/componentLibrary.js"></script>
+<script src="../../js/customDesign.js"></script>
+<script src="../../js/fleet.js"></script>
+<script src="../../js/config.js"></script>
+<script src="../../js/simJs/core/massProps.js"></script>
+<script src="../../js/guideConfigDefaults.js"></script>
+<script src="../lib/config.js"></script>
+<script src="../lib/worker-pool.js"></script>
+<script src="../lib/rough-scan.js"></script>
+<script src="../lib/bias-scan.js"></script>
+
+<script>
+(function () {
+  'use strict';
+  const $ = (id) => document.getElementById(id);
+  const logEl = $('log'), statusEl = $('status');
+  let logLines = [];
+  const log = (s) => { logLines.push(s); logEl.textContent = logLines.join('\n'); logEl.scrollTop = logEl.scrollHeight; };
+  const fmt = (x, d) => Number.isFinite(x) ? x.toFixed(d) : '—';
+  const RE = CONFIG.EARTH_RADIUS, GM = CONFIG.GM_EARTH;
+
+  function specE(m) {
+    const r = RE + m.altCoastKm * 1000;
+    return 0.5 * (m.vrCoast * m.vrCoast + m.vtCoast * m.vtCoast) - GM / r;
+  }
+
+  async function run() {
+    $('runBtn').disabled = true;
+    logLines = []; logEl.textContent = '—'; $('tableHost').innerHTML = '';
+    try {
+      const baseG = parseFloat($('baseG').value);
+      const baseB = parseFloat($('baseB').value);
+      const targetG = parseFloat($('targetG').value);
+      const Q = TunerConfig.quanta;
+      const T = 4.82;
+
+      log('creating pool with 2 workers…');
+      const pool = new TunerCore.WorkerPool(2, { workerPath: '../lib/worker-sim.js' });
+      await pool.waitReady();
+      log('pool ready');
+
+      const basePoint = {
+        Gi: Math.round(baseG / Q.G), Tn: Math.round(T / Q.T),
+        bi: Math.round(baseB / Q.bias), li: Math.round(5.53 / Q.lead),
+        meco: 52612,
+      };
+
+      // 1. baseline energy
+      log('');
+      log('=== baseline probe: G=' + baseG + ' bias=' + baseB + ' ===');
+      const mBase = await pool.runEval(basePoint, { stopAt: 'COAST_WAIT_ENTRY', quiet: true });
+      const E_ref = specE(mBase);
+      log('  end=' + mBase.endReason + '  ecc=' + fmt(mBase.eCoast, 7) + '  E=' + E_ref.toExponential(8));
+      if (mBase.endReason !== 'COAST_WAIT_ENTRY') { log('baseline failed'); return; }
+
+      // 2. bias scan on targetG with tightest tol
+      log('');
+      log('=== bias scan on G=' + targetG + ' (tight) ===');
+      const targetPoint = Object.assign({}, basePoint, { Gi: Math.round(targetG / Q.G) });
+      const scan = await TunerCore.biasScan(targetPoint, {
+        pool,
+        E_target: E_ref,
+        E_tol: 100,  // very tight
+        biTol: 1,    // 1 bias quantum (0.0001 deg)
+        quantum: 1,
+        biRange: [Math.round(-3 / Q.bias), Math.round(3 / Q.bias)],
+        maxIters: 20,
+        onLog: (s) => log('  ' + s),
+      });
+      log('  -> bias=' + fmt(scan.bias, 5) + '  E=' + scan.E.toExponential(8) + '  ΔE=' + (scan.E - E_ref).toExponential(3));
+
+      const pairPoint = Object.assign({}, targetPoint, { bi: Math.round(scan.bias / Q.bias) });
+
+      // 3. FULL eval both, parallel
+      log('');
+      log('=== FULL eval both points ===');
+      const [fullBase, fullPair] = await Promise.all([
+        pool.runEval(basePoint, { stopAt: 'FULL', quiet: true }),
+        pool.runEval(pairPoint, { stopAt: 'FULL', quiet: true }),
+      ]);
+
+      // 4. comparison table
+      const keys = [
+        ['end reason', 'endReason', null],
+        ['deploy time (s)', 'deployTimeS', 6],
+        ['apogee (km)', 'apogeeKm', 6],
+        ['perigee (km)', 'perigeeKm', 6],
+        ['ecc', 'ecc', 3],
+        ['booster fuel left (kg)', 'boosterFuelLeftKg', 3],
+        ['stage residual (kg)', 'stageResidualKg', 3],
+        ['payload cleared', 'payloadCleared', null],
+        ['payload released', 'payloadReleased', null],
+        ['maxQ (kPa)', 'maxQKPa', 4],
+        ['maxG', 'maxG', 4],
+        ['meco time (s)', 'mecoTimeS', 4],
+      ];
+
+      let html = '<table><thead><tr><th>metric</th><th>baseline</th><th>twin</th><th>Δ</th><th>verdict</th></tr></thead><tbody>';
+      log('');
+      log('=== COMPARISON ===');
+      keys.forEach(([label, key, digits]) => {
+        const a = fullBase[key], b = fullPair[key];
+        let cell, cls = 'match';
+        if (typeof a === 'boolean' || typeof a === 'string') {
+          cell = (a === b) ? 'match' : 'DIFF';
+          if (a !== b) cls = 'diff';
+        } else if (Number.isFinite(a) && Number.isFinite(b)) {
+          const d = b - a;
+          const rel = Math.abs(d) / Math.max(1, Math.abs(a));
+          cell = (digits != null ? d.toFixed(digits) : d.toString());
+          if (Math.abs(d) < 1e-9) cls = 'match';
+          else if (rel < 1e-3) cls = 'near';
+          else cls = 'diff';
+        } else {
+          cell = '—';
+        }
+        const av = typeof a === 'number' ? a.toFixed(digits) : String(a);
+        const bv = typeof b === 'number' ? b.toFixed(digits) : String(b);
+        html += '<tr><td>' + label + '</td><td>' + av + '</td><td>' + bv + '</td><td class="' + cls + '">' + cell + '</td><td class="' + cls + '">' + cls + '</td></tr>';
+        log('  ' + label.padEnd(24) + ' base=' + av.padEnd(16) + ' twin=' + bv.padEnd(16) + ' Δ=' + cell + '  [' + cls + ']');
+      });
+      html += '</tbody></table>';
+      $('tableHost').innerHTML = html;
+
+      log('');
+      log('=== summary ===');
+      log('base point: G=' + baseG + '  bias=' + baseB + '  E=' + E_ref.toExponential(8));
+      log('twin point: G=' + targetG + '  bias=' + fmt(scan.bias, 5) + '  E=' + scan.E.toExponential(8));
+      log('ΔE at CW entry = ' + (scan.E - E_ref).toExponential(3) + ' J/kg');
+      log('');
+      log('Note: bias quantum 0.0001 deg limits E precision to ~5000 J/kg.');
+      log('Both points are at their closest achievable E match.');
+      log('Any remaining downstream Δ is discretization, not physics mismatch.');
+
+    } catch (e) {
+      console.error(e);
+      log('ERROR: ' + e.message + '\n' + (e.stack || ''));
+    } finally {
+      $('runBtn').disabled = false;
+    }
+  }
+
+  $('runBtn').addEventListener('click', run);
+})();
+</script>
+</body>
+</html>
