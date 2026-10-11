@@ -315,9 +315,9 @@ self.onmessage = async (e) => {
               ok: sc.ok, lead: lr.lead, margin: lr.marginS, vrEnd: lr.vrEnd,
               score: sc.score, reasons: sc.reasons, metrics: m,
               evals: lr.evals + 1,
-              capHit: !fullRes.ok,
-              capReason: fullRes.reason || null,
-              simEnd: fullRes.simTime,
+              capHit: !okFull,
+              capReason: okFull ? null : 'cap',
+              simEnd: state.simTime,
             };
           }
         }
