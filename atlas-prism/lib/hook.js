@@ -355,6 +355,12 @@
       m.maxQKPa = m.maxQKPa / 1000;
       m.crashed = m.crashed || !!state.crashed;
 
+      // Stage fuel at the stop tick (used by rough-scan to predict final residual).
+      {
+        const stb = findStage(state.bodies);
+        m.stageFuelAtStopKg = stb ? stb.fuelMass : NaN;
+      }
+
       // payload present? final orbit = payload body (mission-graded orbit)
       const pb = state.bodies.find((x) => x && x.payloadBody);
       m.payloadReleased = !!pb;
