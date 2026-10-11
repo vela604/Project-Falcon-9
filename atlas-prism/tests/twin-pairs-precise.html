@@ -228,18 +228,11 @@ td.fail { color:#ff5f7e; }
       const E_ref = specE(mBase);
       log('  E_ref = ' + E_ref.toFixed(6) + ' J/kg  ecc=' + fmt(mBase.eCoast, 7));
 
-      // 10 G values from A=10 to A=15 (evenly spaced)
-      // A = G * T^2, T = 4.82 → G = A / 23.2324
-      const Gs = [];
-      const gLow = 10 / (T * T), gHigh = 15 / (T * T);
-      for (let i = 0; i < 10; i++) {
-        const A_target = 10 + i * (15 - 10) / 9;
-        const G_raw = A_target / (T * T);
-        const G_snapped = Math.round(G_raw * 100) / 100;
-        if (!Gs.includes(G_snapped)) Gs.push(G_snapped);
-      }
+      // 11 G values — contour exists only for G >= ~0.575 (A >= ~13.35).
+      // A = G * T^2, T = 4.82.
+      const Gs = [0.575, 0.58, 0.585, 0.59, 0.595, 0.60, 0.605, 0.61, 0.62, 0.63, 0.65];
       log('');
-      log('G values (A=10..15, snapped to 0.01): ' + Gs.map(g => g.toFixed(2) + '(A=' + (g*T*T).toFixed(2) + ')').join(', '));
+      log('G values: ' + Gs.map(g => g.toFixed(3) + '(A=' + (g*T*T).toFixed(3) + ')').join(', '));
 
       // init live state
       Gs.forEach(g => {
