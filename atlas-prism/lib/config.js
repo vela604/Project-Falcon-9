@@ -112,15 +112,17 @@ fixedFallbackKg: 0 },     // fallback MECO when probe fails (booster drained: on
     // Each ref = (stack, alt, fuel%, MECO) -> residualKg. User adds as they test.
     // rough-scan uses these to pick the narrowest possible MECO bracket.
     roughRefs: [
-      { stackId: 'stk_falcon9-b5', altKm: 320, fuelPct: 100, meco: 52612, residualKg: 848.7 },
+      { stackId: 'stk_falcon9-b5', altKm: 320, fuelPct: 100,
+        meco: 52612, G: 0.60, T: 4.82, bias: 0.59,  lead: 5.53, residualKg: 849 },
+      { stackId: 'stk_falcon9-b5', altKm: 320, fuelPct: 100,
+        meco: 60002, G: 0.59, T: 4.82, bias: 1.804, lead: 3.90, residualKg: 190 },
     ],
     roughScan: {
-      minRange: [20000, 80000],       // fallback bracket (booster residual fuel kg)
-      safetyKg: 40,                    // keep 40 kg from either band edge -> [140, 160]
-      ratio: 1.618033988749895,        // golden ratio, geometric probe distribution
+      minRange: [20000, 80000],
+      safetyKg: 40,
+      ratio: 1.618033988749895,
       maxIters: 8,
       targetResidualKg: 150,
-      defaultSlopeKgPerKg: -0.08,      // kg residual per kg MECO (only used when 1 ref)
     },
 
     // ---- Default environment (UI overrides in Step 9) ----
