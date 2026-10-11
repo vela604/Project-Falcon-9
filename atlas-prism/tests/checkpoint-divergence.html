@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Checkpoint Divergence Diagnostic</title>
+<style>
+body { margin:0; background:#060912; color:#dbe6f5; font:13px/1.5 monospace; padding:20px; }
+h1 { color:#35d6ff; font-size:15px; margin:0 0 12px; letter-spacing:1px; }
+button { background:#101a30; color:#dbe6f5; border:1px solid #1c2b45;
+         padding:8px 16px; border-radius:4px; font:inherit; cursor:pointer; margin-right:8px; }
+#status { color:#ffd23f; margin:8px 0; min-height:1.2em; }
+pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4px;
+      font-size:11.5px; overflow:auto; max-height:600px; }
+</style>
+</head>
+<body>
+
+<h1>Divergence: reference run vs restore run</h1>
+
+<button id="runBtn">Run diagnostic</button>
+<div id="status">idle</div>
+<pre id="log">—</pre>
+
+<script src="../../js/componentLibrary.js"></script>
+<script src="../../js/customDesign.js"></script>
+<script src="../../js/fleet.js"></script>
+<script src="../../js/config.js"></script>
+<script src="../../js/simJs/core/massProps.js"></script>
+<script src="../../js/simJs/core/environment.js"></script>
+<script src="../../js/simJs/core/vehicle.js"></script>
+<script src="../../js/simJs/core/rcs.js"></script>
+<script src="../../js/simJs/core/physics.js"></script>
+<script src="../../js/simJs/core/collision.js"></script>
+<script src="../../js/simJs/guidance/imu.js"></script>
+<script src="../../js/simJs/guidance/derivation.js"></script>
+<script src="../../js/simJs/guidance/guidercs.js"></script>
+<script src="../../js/simJs/guidance/guidance-blocks.js"></script>
+<script src="../../js/simJs/guidance/guidance.js"></script>
+<script src="../../js/guideConfigDefaults.js"></script>
+<script src="../lib/config.js"></script>
+<script src="../lib/sim.js"></script>
+
+<script>
+(function () {
+  'use strict';
+  const $ = (id) => document.getElementById(id);
+  const DT = CONFIG.DT;
+  const logEl = $('log');
+  let logLines = [];
+  const log = (s) => { logLines.push(s); logEl.textContent = logLines.join('\n'); logEl.scrollTop = logEl.scrollHeight; };
+
+  function deepClone(x, memo) {
+    memo = memo || new WeakMap();
+    if (x === null || typeof x !== 'object') return x;
+    if (memo.has(x)) return memo.get(x);
+    if (Array.isArray(x)) {
+      const arr = []; memo.set(x, arr);
+      for (let i = 0; i < x.length; i++) arr[i] = deepClone(x[i], memo);
+      return arr;
+    }
+    const out = {}; memo.set(x, out);
+    for (const k of Object.keys(x)) out[k] = deepClone(x[k], memo);
+    return out;
+  }
+
+  function bodyState(b) {
+    if (!b) return null;
+    return {
+      rx: b.rx, ry: b.ry, vx: b.vx, vy: b.vy,
+      theta: b.theta, omega: b.omega,
+      fuelMass: b.fuelMass,
+      memberFuel: b.memberFuel ? b.memberFuel.slice() : null,
+      legsDeployed: b.legs ? b.legs.deployed : null,
+      legsProgress: b.legs ? b.legs.progress : null,
+    };
+  }
+
+  function captureFull() {
+    const stateKeys = Object.keys(state);
+    const st = {};
+    stateKeys.forEach(k => {
+      if (k === 'bodies') return;
+      try { st[k] = deepClone(state[k]); } catch (e) { st[k] = null; }
+    });
+    return {
+      bodies: deepClone(state.bodies),
+      stateKeysSnapshot: st,
+      simTime: state.simTime,
+      activeBodyIndex: state.activeBodyIndex,
+      guidanceState: Guidance.exportGuideState(),
+    };
+  }
+
+  function restoreFull(snap) {
+    Object.keys(snap.stateKeysSnapshot).forEach(k => {
+      try { state[k] = deepClone(snap.stateKeysSnapshot[k]); } catch (e) {}
+    });
+    state.simTime = snap.simTime;
+    state.activeBodyIndex = snap.activeBodyIndex;
+    const sb = snap.bodies;
+    while (state.bodies.length > sb.length) state.bodies.pop();
+    while (state.bodies.length < sb.length) state.bodies.push({});
+    for (let i = 0; i < sb.length; i++) {
+      const src = sb[i], dst = state.bodies[i];
+      Object.keys(dst).forEach(k => { delete dst[k]; });
+      Object.keys(src).forEach(k => { dst[k] = deepClone(src[k]); });
+    }
+    const ab = state.bodies[state.activeBodyIndex];
+    if (ab) {
+      ['rx','ry','vx','vy','theta','omega','dryMass','fuelMass'].forEach(k => {
+        try { state[k] = ab[k]; } catch (e) {}
+      });
+    }
+    const g = deepClone(snap.guidanceState);
+    Guidance.importGuideState(g);
+  }
+
+  function boot() {
+    if (typeof TunerEngine === 'undefined' || typeof Guidance === 'undefined') return false;
+    TunerEngine.init(); return true;
+  }
+
+  function baselineValues() {
+    const b = TunerConfig.baselineRaw;
+    return {
+      ascent: { PUSH_MAX_GIMBAL_DEG: b.G, PUSH_T_S: b.T, MECO_TARGET_BOOSTER_FUEL_KG: b.meco },
+      insertion: { TARGET_ORBIT_ALT_KM: 320,
+                   STAGE_BURN_AOA_BIAS_DEG: b.bias,
+                   STAGE_BURN_AOA_MARGIN_DEG: 0.001,
+                   CIRC_TRIGGER_LEAD_S: b.lead },
+      done: { DEORBIT_ENABLED: false },
+    };
+  }
+
+  function dumpTick(tag) {
+    const b0 = state.bodies[state.activeBodyIndex];
+    const st = bodyState(b0);
+    const gs = Guidance.getGuideStatus();
+    const topKeys = ['rx','ry','vx','vy','theta','omega','fuelMass'].map(k => k + '=' + (Number.isFinite(state[k]) ? state[k].toFixed(4) : state[k])).join(' ');
+    const b0Keys = st ? ('b0: rx=' + st.rx.toFixed(4) + ' ry=' + st.ry.toFixed(4) + ' vx=' + st.vx.toFixed(4) + ' vy=' + st.vy.toFixed(4) + ' theta=' + st.theta.toFixed(4) + ' omega=' + st.omega.toFixed(4) + ' fuel=' + st.fuelMass.toFixed(4)) : 'no body';
+    return tag + ' t=' + state.simTime.toFixed(4) + ' ph=' + (gs.phase || '?') +
+           ' | top ' + topKeys + ' | ' + b0Keys;
+  }
+
+  async function run() {
+    if (!boot()) { $('status').textContent = 'boot failed'; return; }
+    logLines = [];
+    log('start');
+
+    try {
+      TunerEngine.prepareRun('leoInsertionV3', baselineValues(), TunerConfig.env);
+
+      // Advance to SA entry
+      let prevPhase = null, snap = null;
+      const maxTicks = Math.ceil(500 / DT);
+      for (let i = 0; i < maxTicks; i++) {
+        if (state.halted) break;
+        TunerEngine.tick(DT);
+        const gs = Guidance.getGuideStatus();
+        const ph = gs.phase;
+        if (ph !== prevPhase && ph === 'SEPARATED_AXIAL' && !snap) {
+          snap = captureFull();
+          log('=== snapshot at SA entry t=' + state.simTime.toFixed(4) + ' ===');
+          log(dumpTick('snapshot'));
+          break;
+        }
+        prevPhase = ph;
+      }
+      if (!snap) { log('no snapshot'); return; }
+
+      // ---- Phase 1: continue forward, record 100 ticks ----
+      log('');
+      log('=== Reference: continue from SA entry, 100 ticks ===');
+      const refTrail = [];
+      for (let i = 0; i < 100; i++) {
+        TunerEngine.tick(DT);
+        const b0 = state.bodies[state.activeBodyIndex];
+        refTrail.push({
+          i: i + 1, t: state.simTime,
+          rx: b0.rx, ry: b0.ry, vx: b0.vx, vy: b0.vy, theta: b0.theta, omega: b0.omega, fuel: b0.fuelMass,
+          phase: Guidance.getGuideStatus().phase,
+        });
+      }
+      log('ref[1]   ' + JSON.stringify(refTrail[0]));
+      log('ref[10]  ' + JSON.stringify(refTrail[9]));
+      log('ref[50]  ' + JSON.stringify(refTrail[49]));
+      log('ref[100] ' + JSON.stringify(refTrail[99]));
+
+      // ---- Phase 2: restore and continue, compare ----
+      log('');
+      log('=== Restore: back to snapshot, continue 100 ticks ===');
+      restoreFull(snap);
+      log(dumpTick('restored'));
+      const testTrail = [];
+      for (let i = 0; i < 100; i++) {
+        TunerEngine.tick(DT);
+        const b0 = state.bodies[state.activeBodyIndex];
+        testTrail.push({
+          i: i + 1, t: state.simTime,
+          rx: b0.rx, ry: b0.ry, vx: b0.vx, vy: b0.vy, theta: b0.theta, omega: b0.omega, fuel: b0.fuelMass,
+          phase: Guidance.getGuideStatus().phase,
+        });
+      }
+      log('test[1]  ' + JSON.stringify(testTrail[0]));
+      log('test[10] ' + JSON.stringify(testTrail[9]));
+      log('test[50] ' + JSON.stringify(testTrail[49]));
+      log('test[100]' + JSON.stringify(testTrail[99]));
+
+      // ---- Phase 3: find first divergence ----
+      log('');
+      log('=== Divergence ===');
+      let firstDiff = -1;
+      for (let i = 0; i < 100; i++) {
+        const a = refTrail[i], b = testTrail[i];
+        const eps = 1e-9;
+        const same =
+          Math.abs(a.rx - b.rx) < eps &&
+          Math.abs(a.ry - b.ry) < eps &&
+          Math.abs(a.vx - b.vx) < eps &&
+          Math.abs(a.vy - b.vy) < eps &&
+          Math.abs(a.theta - b.theta) < eps &&
+          Math.abs(a.omega - b.omega) < eps &&
+          Math.abs(a.fuel - b.fuel) < eps;
+        if (!same) { firstDiff = i + 1; break; }
+      }
+      if (firstDiff === -1) {
+        log('NO divergence in 100 ticks — checkpoint is exact');
+      } else {
+        log('first divergence at tick ' + firstDiff);
+        const a = refTrail[firstDiff - 1], b = testTrail[firstDiff - 1];
+        log('ref [' + firstDiff + ']  rx=' + a.rx.toFixed(6) + ' ry=' + a.ry.toFixed(6) + ' vx=' + a.vx.toFixed(6) + ' vy=' + a.vy.toFixed(6) + ' theta=' + a.theta.toFixed(6) + ' omega=' + a.omega.toFixed(6) + ' fuel=' + a.fuel.toFixed(6) + ' ph=' + a.phase);
+        log('test[' + firstDiff + ']  rx=' + b.rx.toFixed(6) + ' ry=' + b.ry.toFixed(6) + ' vx=' + b.vx.toFixed(6) + ' vy=' + b.vy.toFixed(6) + ' theta=' + b.theta.toFixed(6) + ' omega=' + b.omega.toFixed(6) + ' fuel=' + b.fuel.toFixed(6) + ' ph=' + b.phase);
+        log('deltas: drx=' + (b.rx - a.rx).toExponential(3) + ' dry=' + (b.ry - a.ry).toExponential(3) +
+            ' dvx=' + (b.vx - a.vx).toExponential(3) + ' dvy=' + (b.vy - a.vy).toExponential(3) +
+            ' dtheta=' + (b.theta - a.theta).toExponential(3) + ' domega=' + (b.omega - a.omega).toExponential(3) +
+            ' dfuel=' + (b.fuel - a.fuel).toExponential(3));
+      }
+
+      $('status').textContent = 'done';
+    } catch (e) {
+      console.error(e);
+      log('ERROR: ' + e.message + '\n' + e.stack);
+    }
+  }
+
+  $('runBtn').addEventListener('click', run);
+  $('status').textContent = 'ready';
+})();
+</script>
+</body>
+</html>
