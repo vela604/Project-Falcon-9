@@ -197,7 +197,8 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
         prevPhase = phase;
       }
 
-      if (gs && gs.payloadReleased && !snaps.__released) {
+      // DONE phase entry = payload release command fired (deployCommandSimTime set)
+      if (phase === 'DONE' && !snaps.__released) {
         snaps.__released = snapNow(b, mcBase);
         endReason = 'payload-released';
       }
@@ -252,8 +253,11 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
       // required phases
       const need = ['COAST_WAIT', 'CIRCULARIZE', 'COAST_ROTATE_2'];
       const missing = need.filter(k => !snaps[k]);
+      // payload released = DONE phase (or COAST_HOLD_2 if DONE not reached)
+      if (!snaps.__released && snaps['COAST_HOLD_2']) snaps.__released = snaps['COAST_HOLD_2'];
+      if (!snaps.__released && snaps['DONE']) snaps.__released = snaps['DONE'];
       if (missing.length || !snaps.__released) {
-        $('status').textContent = 'missing: ' + missing.join(',') + (snaps.__released ? '' : ',__released');
+        $('status').textContent = 'missing: ' + missing.join(',') + (snaps.__released ? '' : ', payload-release snapshot');
         $('raw').textContent = 'phases seen: ' + Object.keys(snaps).join(', ');
         $('runBtn').disabled = false; return;
       }
