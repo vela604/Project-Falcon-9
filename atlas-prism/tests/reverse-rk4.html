@@ -389,6 +389,25 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
       const lead_actual = ig.t - cw.t;
       const lead_err = lead_pred - lead_actual;
 
+      // ---- CORRECTION CANDIDATES ----
+      // Each: name + correction value C such that lead_pred_corrected = lead_pred + C.
+      // Goal: |error_corrected| small AND consistent across configs.
+      const dv_burn = Ve * Math.log(trueOff.mass / ig.mass);   // Tsiolkovsky
+      const v_cw = cw.vMag;
+      const T_c = T_coast_pred;
+      const T_b = T_burn_pred;
+
+      const corr_cands = [
+        { name: 'A: -R1vel*T_c/v_cw',        C: -errR1_vel * T_c / v_cw },
+        { name: 'B: -R1pos/v_cw',             C: -errR1_pos / v_cw },
+        { name: 'C: -R2vel*T_c/v_cw',        C: -errR2_vel * T_c / v_cw },
+        { name: 'D: -R2pos/v_cw',             C: -errR2_pos / v_cw },
+        { name: 'E: -R1vel*T_b/dv_burn',     C: -errR1_vel * T_b / Math.max(1, dv_burn) },
+        { name: 'F: -R1vel*T_c/dv_burn',     C: -errR1_vel * T_c / Math.max(1, dv_burn) },
+        { name: 'G: -R1pos*T_c/(v_cw*T_b)',  C: -errR1_pos * T_c / Math.max(1, v_cw * T_b) },
+        { name: 'H: -err * T_c/T_b',          C: -lead_err * T_c / Math.max(1, T_b) },
+      ];
+
       const rows = [
         { h: 'Forward reference' },
         { k: 'COAST_WAIT t',     v: fmt(cw.t, 3) + ' s  fuel=' + fmt(cw.fuel, 1) },
@@ -421,6 +440,11 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
         { k: 'lead_actual',      v: fmt(lead_actual, 4) + ' s' },
         { k: 'error',            v: fmt(lead_err, 4) + ' s' },
       ];
+      corr_cands.forEach(c => {
+        const corrected = lead_pred + c.C;
+        const cerr = corrected - lead_actual;
+        rows.push({ k: c.name + '  C=' + fmt(c.C, 5), v: 'lead=' + fmt(corrected, 4) + ' err=' + fmt(cerr, 5) });
+      });
 
       const tb = $('t').querySelector('tbody');
       tb.innerHTML = rows.map(r => r.h
