@@ -173,7 +173,14 @@
 
     const matching = pickRefs(refs, stackId, altKm, fuelPct);
     const interp = buildInterp(matching);
-    const init = pickInitialRange(matching, interp, minRange, safetyKg);
+    let init;
+    if (opts._forceLo != null && opts._forceHi != null) {
+      init = { lo: opts._forceLo, hi: opts._forceHi,
+               source: 'forced-override',
+               target: (opts._forceLo + opts._forceHi) / 2 };
+    } else {
+      init = pickInitialRange(matching, interp, minRange, safetyKg);
+    }
     say('refs matched: ' + matching.length + (interp ? ' (interp ready)' : ' (no interp)'));
     say('initial bracket: [' + init.lo.toFixed(0) + ', ' + init.hi.toFixed(0) + ']  source=' + init.source +
         '  target=' + (Number.isFinite(init.target) ? init.target.toFixed(0) : '?'));
