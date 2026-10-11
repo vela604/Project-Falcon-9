@@ -28,7 +28,15 @@
     constructor(n, opts) {
       opts = opts || {};
       this.n = Math.max(1, n | 0);
-      this.workerPath = opts.workerPath || this._resolveDefaultPath();
+      let _defPath = 'worker-sim.js';
+      try {
+        const cur = (typeof document !== 'undefined' && document.currentScript) ? document.currentScript.src : '';
+        if (cur) {
+          const dir = cur.substring(0, cur.lastIndexOf('/'));
+          _defPath = dir + '/worker-sim.js';
+        }
+      } catch (e) {}
+      this.workerPath = opts.workerPath || _defPath;
       this.workers = [];
       this.ready = new Array(this.n).fill(false);
       this.readyErrors = new Array(this.n).fill(null);
