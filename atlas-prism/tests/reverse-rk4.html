@@ -337,7 +337,7 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
 
       // ---- validation 1: reverse burn using captured profile, stop when fuel = fuel_cw ----
       $('status').textContent = 'reverse burn (captured profile)…';
-      const RB = reverseBurnTo(trueOff, burnProfile, Ve, (m) => m <= ig.mass);
+      const RB = reverseBurnToFuel(trueOff, burnProfile, Ve, (m) => m <= ig.mass);
       const R1_S = RB.S;
       const errR1_pos = dist(R1_S, ig);
       const errR1_vel = vdist(R1_S, ig);
