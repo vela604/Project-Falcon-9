@@ -97,16 +97,24 @@
   // Gaps: target→p1 = d, p1→p2 = d·φ, ..., p_last→edge = d·φ^k.
   // Sum: d·(φ^(k+1)-1)/(φ-1) = room → solve d.
   // Edges are virtual anchors (no worker there). All probes strictly inside.
-  function distributeProbes(lo, hi, target, N, ratio, quantumKg) {
+  function distributeProbes(lo, hi, target, N, ratio, quantumKg, includeEdges) {
     if (N < 1) return [];
     const loI = Math.round(lo), hiI = Math.round(hi);
     if (hiI - loI < 1) return [];
     let T = Math.round(target);
     if (T < loI) T = loI;
     if (T > hiI) T = hiI;
-    if (N === 1) return [T];
 
-    const kTotal = N - 1;
+    // Edge probes only on first iteration — after that, bracket is trusted.
+    const edgeProbes = [];
+    let interiorN = N;
+    if (includeEdges && hiI - loI > 1) {
+      edgeProbes.push(loI, hiI);
+      interiorN = Math.max(1, N - 2);
+    }
+    if (interiorN === 1) return edgeProbes.length ? edgeProbes.concat([T]).slice(0, N) : [T];
+
+    const kTotal = interiorN - 1;
     const roomL = T - loI, roomR = hiI - T;
 
     let kL, kR;
@@ -130,8 +138,9 @@
     spread(roomL, kL, -1);
     spread(roomR, kR, +1);
 
+    const merged = edgeProbes.concat(probes);
     const seen = new Set();
-    return probes.filter(m => { if (seen.has(m)) return false; seen.add(m); return true; });
+    return merged.filter(m => { if (seen.has(m)) return false; seen.add(m); return true; });
   }
 
   function snapPoint(raw, meco, Q) {
@@ -196,7 +205,7 @@
     for (let iter = 0; iter < maxIters; iter++) {
       if (hi - lo < quantumKg) { say('bracket collapsed < quantum at iter ' + iter); break; }
       say('=== iter ' + (iter + 1) + '  bracket [' + lo.toFixed(0) + ', ' + hi.toFixed(0) + '] target=' + target.toFixed(0) + ' ===');
-      const probes = distributeProbes(lo, hi, target, pool.n, ratio, quantumKg);
+      const probes = distributeProbes(lo, hi, target, pool.n, ratio, quantumKg, iter === 0);
       say('probes: ' + probes.map(m => m.toFixed(0)).join(', '));
       if (!probes.length) { say('no valid probes'); break; }
 
@@ -263,7 +272,9 @@
       // refine target using observed preds
       const withPred = rows.filter(r => Number.isFinite(r.pred));
       const upP = withPred.filter(r => r.cls === 'up');
-      const dnP = withPred.filter(r => r.cls === 'down');
+      // A neg-pred fail is still a valid data point below the band (finite pred);
+      // only exclude COAST_WAIT failures (no pred) and IN (already handled above).
+      const dnP = withPred.filter(r => r.cls === 'down' || r.cls === 'fail');
       if (upP.length && dnP.length) {
         const a = upP[upP.length - 1], b = dnP[0];
         const s = (b.pred - a.pred) / (b.meco - a.meco);
