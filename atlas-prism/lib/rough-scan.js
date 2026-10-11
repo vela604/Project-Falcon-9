@@ -205,8 +205,6 @@
         if (interp) {
           const raw = interp(meco);
           p = snapPoint(raw, meco, Q);
-          say('  probe ' + meco + ' -> G=' + (p.Gi * Q.G).toFixed(3) + ' bias=' + (p.bi * Q.bias).toFixed(3) +
-              ' lead=' + (p.li * Q.lead).toFixed(3) + ' (interp)');
         } else {
           p = Object.assign({}, basePoint, { meco });
         }
@@ -233,10 +231,14 @@
       rows.sort((a, b) => a.meco - b.meco);
       for (const row of rows) {
         history.push(row);
-        if (row.cls === 'in') say('  ' + row.meco + '  IN   pred=' + row.pred.toFixed(1));
-        else if (row.cls === 'up') say('  ' + row.meco + '  UP   pred=' + row.pred.toFixed(1));
-        else if (row.cls === 'down') say('  ' + row.meco + '  DOWN pred=' + row.pred.toFixed(1));
-        else say('  ' + row.meco + '  FAIL ' + row.reason);
+        const pt = row.point || {};
+        const Gs = Number.isFinite(pt.Gi) ? (pt.Gi * Q.G).toFixed(3) : '—';
+        const bs = Number.isFinite(pt.bi) ? (pt.bi * Q.bias).toFixed(3) : '—';
+        const ls = Number.isFinite(pt.li) ? (pt.li * Q.lead).toFixed(3) : '—';
+        const tag = row.cls === 'in' ? 'IN  ' : row.cls === 'up' ? 'UP  ' : row.cls === 'down' ? 'DOWN' : 'FAIL';
+        const predStr = Number.isFinite(row.pred) ? 'pred=' + row.pred.toFixed(1) + ' kg' : 'pred=—';
+        say('  ' + row.meco + '  ' + tag + '  G=' + Gs + ' b=' + bs + ' lead=' + ls + '  ' + predStr +
+            (row.cls === 'fail' ? '  (' + row.reason + ')' : ''));
       }
 
       const inHits = rows.filter(r => r.cls === 'in').sort((a, b) => b.meco - a.meco);
