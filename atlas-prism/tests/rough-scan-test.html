@@ -22,6 +22,9 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
 <h1>Rough Scan — parallel MECO search</h1>
 
 <label>workers <input type="number" id="nW" value="4" min="1" max="8"></label>
+<label style="margin-left:12px">override lo <input type="number" id="ovrLo" value="50000" step="1000"></label>
+<label>hi <input type="number" id="ovrHi" value="70000" step="1000"></label>
+<label><input type="checkbox" id="ovrEnable"> force bracket</label>
 <button id="runBtn">Run rough scan</button>
 <button id="verifyBtn" disabled>Verify MECO (tuneRough)</button>
 <button id="clearBtn">Clear</button>
@@ -89,7 +92,12 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
 
       log('');
       log('starting rough scan…');
+      const ovrOn = $('ovrEnable').checked;
+      const ovrLo = parseInt($('ovrLo').value, 10);
+      const ovrHi = parseInt($('ovrHi').value, 10);
       const r = await TunerCore.roughScan(basePoint, {
+        _forceLo: ovrOn ? ovrLo : undefined,
+        _forceHi: ovrOn ? ovrHi : undefined,
         pool,
         mc: info.mc, Ve: info.Ve,
         stackId: info.stackId,
