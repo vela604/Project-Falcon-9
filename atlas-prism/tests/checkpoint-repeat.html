@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><title>Repeat test</title>
+<style>body{margin:0;background:#060912;color:#dbe6f5;font:13px/1.5 monospace;padding:20px}
+button{background:#101a30;color:#dbe6f5;border:1px solid #1c2b45;padding:8px 16px;border-radius:4px;font:inherit;cursor:pointer}
+pre{background:#0a1020;border:1px solid #1c2b45;padding:8px;border-radius:4px;font-size:11px;overflow:auto;max-height:500px}</style>
+</head><body>
+
+<button id="runBtn">Run</button>
+<pre id="log">—</pre>
+
+<script src="../../js/componentLibrary.js"></script>
+<script src="../../js/customDesign.js"></script>
+<script src="../../js/fleet.js"></script>
+<script src="../../js/config.js"></script>
+<script src="../../js/simJs/core/massProps.js"></script>
+<script src="../../js/simJs/core/environment.js"></script>
+<script src="../../js/simJs/core/vehicle.js"></script>
+<script src="../../js/simJs/core/rcs.js"></script>
+<script src="../../js/simJs/core/physics.js"></script>
+<script src="../../js/simJs/core/collision.js"></script>
+<script src="../../js/simJs/guidance/imu.js"></script>
+<script src="../../js/simJs/guidance/derivation.js"></script>
+<script src="../../js/simJs/guidance/guidercs.js"></script>
+<script src="../../js/simJs/guidance/guidance-blocks.js"></script>
+<script src="../../js/simJs/guidance/guidance.js"></script>
+<script src="../../js/guideConfigDefaults.js"></script>
+<script src="../lib/config.js"></script>
+<script src="../lib/sim.js"></script>
+
+<script>
+(function () {
+  'use strict';
+  const $ = (id) => document.getElementById(id);
+  const DT = CONFIG.DT;
+  let logLines = [];
+  const log = (s) => { logLines.push(s); $('log').textContent = logLines.join('\n'); $('log').scrollTop = $('log').scrollHeight; };
+
+  function deepClone(x, memo) {
+    memo = memo || new WeakMap();
+    if (x === null || typeof x !== 'object') return x;
+    if (memo.has(x)) return memo.get(x);
+    if (Array.isArray(x)) { const a = []; memo.set(x, a); for (let i = 0; i < x.length; i++) a[i] = deepClone(x[i], memo); return a; }
+    const o = {}; memo.set(x, o); for (const k of Object.keys(x)) o[k] = deepClone(x[k], memo); return o;
+  }
+  function capture() {
+    const st = {};
+    Object.keys(state).forEach(k => { if (k === 'bodies') return; try { st[k] = deepClone(state[k]); } catch (e) { st[k] = null; } });
+    return { bodies: deepClone(state.bodies), st, simTime: state.simTime, activeBodyIndex: state.activeBodyIndex, gs: Guidance.exportGuideState() };
+  }
+  function restore(snap) {
+    Object.keys(snap.st).forEach(k => { try { state[k] = deepClone(snap.st[k]); } catch (e) {} });
+    state.simTime = snap.simTime;
+    state.activeBodyIndex = snap.activeBodyIndex;
+    const sb = snap.bodies;
+    while (state.bodies.length > sb.length) state.bodies.pop();
+    while (state.bodies.length < sb.length) state.bodies.push({});
+    for (let i = 0; i < sb.length; i++) {
+      const src = sb[i], dst = state.bodies[i];
+      Object.keys(dst).forEach(k => { delete dst[k]; });
+      Object.keys(src).forEach(k => { dst[k] = deepClone(src[k]); });
+    }
+    const ab = state.bodies[state.activeBodyIndex];
+    if (ab) ['rx','ry','vx','vy','theta','omega','dryMass','fuelMass'].forEach(k => { try { state[k] = ab[k]; } catch (e) {} });
+    Guidance.importGuideState(deepClone(snap.gs));
+  }
+  function boot() { if (typeof TunerEngine === 'undefined') return false; TunerEngine.init(); return true; }
+  function baselineValues() {
+    const b = TunerConfig.baselineRaw;
+    return { ascent: { PUSH_MAX_GIMBAL_DEG: b.G, PUSH_T_S: b.T, MECO_TARGET_BOOSTER_FUEL_KG: b.meco },
+      insertion: { TARGET_ORBIT_ALT_KM: 320, STAGE_BURN_AOA_BIAS_DEG: b.bias, STAGE_BURN_AOA_MARGIN_DEG: 0.001, CIRC_TRIGGER_LEAD_S: b.lead },
+      done: { DEORBIT_ENABLED: false } };
+  }
+  function engSnap() {
+    const b = state.bodies[0];
+    if (!b || !b.engines || !b.engines.length) return 'no eng';
+    const e = b.engines[0];
+    return 'mf=' + (e.massFlowRate || 0).toFixed(2) + ' tmf=' + (Number.isFinite(e.targetMassFlowRate) ? e.targetMassFlowRate.toFixed(2) : e.targetMassFlowRate) +
+      ' gd=' + (e.gimbalDeg || 0).toFixed(4) + ' tgrd=' + (Number.isFinite(e.targetGimbalRateDegS) ? e.targetGimbalRateDegS.toFixed(3) : e.targetGimbalRateDegS) +
+      ' cf=' + (e.currentF || 0).toFixed(0) + ' nBodies=' + state.bodies.length + ' active=' + state.activeBodyIndex;
+  }
+
+  async function runFromSnapshot(snap, toTick) {
+    restore(snap);
+    for (let i = 1; i <= toTick; i++) {
+      TunerEngine.tick(DT);
+      if (i === 1148) log('  tick 1148: ' + engSnap());
+      if (i === 1149) log('  tick 1149: ' + engSnap());
+      if ((i & 255) === 255) await new Promise(r => setTimeout(r, 0));
+    }
+  }
+
+  async function run() {
+    if (!boot()) { log('boot fail'); return; }
+    logLines = [];
+    try {
+      TunerEngine.prepareRun('leoInsertionV3', baselineValues(), TunerConfig.env);
+      let prev = null, snap = null;
+      for (let i = 0; i < 5000; i++) {
+        TunerEngine.tick(DT);
+        const ph = Guidance.getGuideStatus().phase;
+        if (ph !== prev && ph === 'SEPARATED_AXIAL' && !snap) { snap = capture(); log('snapshot at SA entry t=' + state.simTime.toFixed(4)); break; }
+        prev = ph;
+      }
+
+      log('');
+      log('=== REF: continue from snapshot ===');
+      for (let i = 1; i <= 1149; i++) { TunerEngine.tick(DT); if (i === 1148) log('  tick 1148: ' + engSnap()); if (i === 1149) log('  tick 1149: ' + engSnap()); }
+
+      log('');
+      log('=== TEST1: restore + run ===');
+      await runFromSnapshot(snap, 1149);
+
+      log('');
+      log('=== TEST2: restore + run AGAIN ===');
+      await runFromSnapshot(snap, 1149);
+
+      log('');
+      log('done');
+    } catch (e) { log('ERR ' + e.message + '\n' + e.stack); }
+  }
+  $('runBtn').addEventListener('click', run);
+})();
+</script>
+</body></html>
