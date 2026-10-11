@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Checkpoint Divergence — full SA→CW</title>
+<title>Divergence — extended</title>
 <style>
 body { margin:0; background:#060912; color:#dbe6f5; font:13px/1.5 monospace; padding:20px; }
 h1 { color:#35d6ff; font-size:15px; margin:0 0 12px; letter-spacing:1px; }
@@ -10,14 +10,14 @@ button { background:#101a30; color:#dbe6f5; border:1px solid #1c2b45;
          padding:8px 16px; border-radius:4px; font:inherit; cursor:pointer; margin-right:8px; }
 #status { color:#ffd23f; margin:8px 0; min-height:1.2em; }
 pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4px;
-      font-size:11.5px; overflow:auto; max-height:600px; }
+      font-size:11px; overflow:auto; max-height:600px; }
 </style>
 </head>
 <body>
 
-<h1>Checkpoint Divergence — SA to CW full trail</h1>
+<h1>Divergence — SA entry to 500 ticks (past STAGE_BURN start)</h1>
 
-<button id="runBtn">Run diagnostic</button>
+<button id="runBtn">Run</button>
 <div id="status">idle</div>
 <pre id="log">—</pre>
 
@@ -53,11 +53,7 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
     memo = memo || new WeakMap();
     if (x === null || typeof x !== 'object') return x;
     if (memo.has(x)) return memo.get(x);
-    if (Array.isArray(x)) {
-      const arr = []; memo.set(x, arr);
-      for (let i = 0; i < x.length; i++) arr[i] = deepClone(x[i], memo);
-      return arr;
-    }
+    if (Array.isArray(x)) { const arr = []; memo.set(x, arr); for (let i = 0; i < x.length; i++) arr[i] = deepClone(x[i], memo); return arr; }
     const out = {}; memo.set(x, out);
     for (const k of Object.keys(x)) out[k] = deepClone(x[k], memo);
     return out;
@@ -66,23 +62,12 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
   function captureFull() {
     const stateKeys = Object.keys(state);
     const st = {};
-    stateKeys.forEach(k => {
-      if (k === 'bodies') return;
-      try { st[k] = deepClone(state[k]); } catch (e) { st[k] = null; }
-    });
-    return {
-      bodies: deepClone(state.bodies),
-      stateKeysSnapshot: st,
-      simTime: state.simTime,
-      activeBodyIndex: state.activeBodyIndex,
-      guidanceState: Guidance.exportGuideState(),
-    };
+    stateKeys.forEach(k => { if (k === 'bodies') return; try { st[k] = deepClone(state[k]); } catch (e) { st[k] = null; } });
+    return { bodies: deepClone(state.bodies), stateKeysSnapshot: st, simTime: state.simTime, activeBodyIndex: state.activeBodyIndex, guidanceState: Guidance.exportGuideState() };
   }
 
   function restoreFull(snap) {
-    Object.keys(snap.stateKeysSnapshot).forEach(k => {
-      try { state[k] = deepClone(snap.stateKeysSnapshot[k]); } catch (e) {}
-    });
+    Object.keys(snap.stateKeysSnapshot).forEach(k => { try { state[k] = deepClone(snap.stateKeysSnapshot[k]); } catch (e) {} });
     state.simTime = snap.simTime;
     state.activeBodyIndex = snap.activeBodyIndex;
     const sb = snap.bodies;
@@ -94,13 +79,8 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
       Object.keys(src).forEach(k => { dst[k] = deepClone(src[k]); });
     }
     const ab = state.bodies[state.activeBodyIndex];
-    if (ab) {
-      ['rx','ry','vx','vy','theta','omega','dryMass','fuelMass'].forEach(k => {
-        try { state[k] = ab[k]; } catch (e) {}
-      });
-    }
-    const g = deepClone(snap.guidanceState);
-    Guidance.importGuideState(g);
+    if (ab) ['rx','ry','vx','vy','theta','omega','dryMass','fuelMass'].forEach(k => { try { state[k] = ab[k]; } catch (e) {} });
+    Guidance.importGuideState(deepClone(snap.guidanceState));
   }
 
   function boot() {
@@ -112,42 +92,63 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
     const b = TunerConfig.baselineRaw;
     return {
       ascent: { PUSH_MAX_GIMBAL_DEG: b.G, PUSH_T_S: b.T, MECO_TARGET_BOOSTER_FUEL_KG: b.meco },
-      insertion: { TARGET_ORBIT_ALT_KM: 320,
-                   STAGE_BURN_AOA_BIAS_DEG: b.bias,
-                   STAGE_BURN_AOA_MARGIN_DEG: 0.001,
-                   CIRC_TRIGGER_LEAD_S: b.lead },
+      insertion: { TARGET_ORBIT_ALT_KM: 320, STAGE_BURN_AOA_BIAS_DEG: b.bias, STAGE_BURN_AOA_MARGIN_DEG: 0.001, CIRC_TRIGGER_LEAD_S: b.lead },
       done: { DEORBIT_ENABLED: false },
     };
   }
 
-  // Run from current state until CW entry, capture phase transitions + final state.
-  async function runToCW(tag) {
-    const transitions = [];
-    let prevPhase = Guidance.getGuideStatus().phase;
-    transitions.push({ ph: prevPhase, t: state.simTime, tick: 0 });
-    const maxTicks = Math.ceil(500 / DT);
-    let finalCW = null;
-    for (let i = 0; i < maxTicks; i++) {
-      if (state.halted) break;
-      TunerEngine.tick(DT);
-      const gs = Guidance.getGuideStatus();
-      const ph = gs.phase;
-      if (ph !== prevPhase) {
-        transitions.push({ ph, t: state.simTime, tick: i + 1 });
-        prevPhase = ph;
-      }
-      if (ph === 'COAST_WAIT') {
-        const b0 = state.bodies[state.activeBodyIndex];
-        finalCW = {
-          t: state.simTime,
-          rx: b0.rx, ry: b0.ry, vx: b0.vx, vy: b0.vy, theta: b0.theta, omega: b0.omega, fuel: b0.fuelMass,
-          numBodies: state.bodies.length,
-        };
-        break;
-      }
-      if ((i & 1023) === 1023) await new Promise(r => setTimeout(r, 0));
+  function snapTick() {
+    // capture active body + stage body key fields (for divergence detection)
+    const out = { bodies: [] };
+    for (let i = 0; i < state.bodies.length; i++) {
+      const b = state.bodies[i];
+      out.bodies.push({
+        rx: b.rx, ry: b.ry, vx: b.vx, vy: b.vy,
+        theta: b.theta, omega: b.omega,
+        fuelMass: b.fuelMass,
+        dryMass: b.dryMass,
+        memberFuel: b.memberFuel ? b.memberFuel.slice() : null,
+        enginesGimbal: b.engines ? b.engines.map(e => e.gimbalDeg || 0) : null,
+        enginesFlow: b.engines ? b.engines.map(e => e.massFlowRate || 0) : null,
+        sloshOffset: b.slosh ? b.slosh.offset : null,
+        sloshVel: b.slosh ? b.slosh.velocity : null,
+      });
     }
-    return { transitions, finalCW };
+    out.t = state.simTime;
+    out.activeIdx = state.activeBodyIndex;
+    out.phase = Guidance.getGuideStatus().phase;
+    return out;
+  }
+
+  function diffTicks(a, b) {
+    if (a.bodies.length !== b.bodies.length) return 'bodyCount';
+    for (let i = 0; i < a.bodies.length; i++) {
+      const x = a.bodies[i], y = b.bodies[i];
+      const eps = 1e-9;
+      const fields = ['rx','ry','vx','vy','theta','omega','fuelMass'];
+      for (const f of fields) {
+        if (Math.abs(x[f] - y[f]) > eps) return 'body' + i + '.' + f + ' d=' + (y[f] - x[f]).toExponential(3);
+      }
+      if (x.memberFuel && y.memberFuel) {
+        for (let k = 0; k < x.memberFuel.length; k++) {
+          if (Math.abs(x.memberFuel[k] - y.memberFuel[k]) > eps) return 'body' + i + '.mf[' + k + '] d=' + (y.memberFuel[k] - x.memberFuel[k]).toExponential(3);
+        }
+      }
+      if (x.enginesGimbal && y.enginesGimbal) {
+        for (let k = 0; k < x.enginesGimbal.length; k++) {
+          if (Math.abs(x.enginesGimbal[k] - y.enginesGimbal[k]) > eps) return 'body' + i + '.gimbal[' + k + '] d=' + (y.enginesGimbal[k] - x.enginesGimbal[k]).toExponential(3);
+        }
+      }
+      if (x.enginesFlow && y.enginesFlow) {
+        for (let k = 0; k < x.enginesFlow.length; k++) {
+          if (Math.abs(x.enginesFlow[k] - y.enginesFlow[k]) > eps) return 'body' + i + '.flow[' + k + '] d=' + (y.enginesFlow[k] - x.enginesFlow[k]).toExponential(3);
+        }
+      }
+      if (x.sloshOffset != null && y.sloshOffset != null) {
+        if (Math.abs(x.sloshOffset - y.sloshOffset) > eps) return 'body' + i + '.sloshOff d=' + (y.sloshOffset - x.sloshOffset).toExponential(3);
+      }
+    }
+    return null;
   }
 
   async function run() {
@@ -157,8 +158,6 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
 
     try {
       TunerEngine.prepareRun('leoInsertionV3', baselineValues(), TunerConfig.env);
-
-      // advance to SA entry
       let prevPhase = null, snap = null;
       const maxTicks = Math.ceil(500 / DT);
       for (let i = 0; i < maxTicks; i++) {
@@ -168,61 +167,63 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
         const ph = gs.phase;
         if (ph !== prevPhase && ph === 'SEPARATED_AXIAL' && !snap) {
           snap = captureFull();
-          log('=== snapshot at SA entry t=' + state.simTime.toFixed(4) + ' ===');
+          log('snapshot at SA entry t=' + state.simTime.toFixed(4));
           break;
         }
         prevPhase = ph;
       }
       if (!snap) { log('no snapshot'); return; }
 
-      // reference run
-      $('status').textContent = 'reference run…';
-      log('');
-      log('=== REFERENCE: run SA → CW ===');
-      const ref = await runToCW('ref');
-      log('transitions:');
-      ref.transitions.forEach(tr => log('  t=' + tr.t.toFixed(4) + ' ph=' + tr.ph + ' tick=' + tr.tick));
-      if (ref.finalCW) {
-        log('CW final: t=' + ref.finalCW.t.toFixed(4) + ' rx=' + ref.finalCW.rx.toFixed(4) + ' ry=' + ref.finalCW.ry.toFixed(4) + ' vx=' + ref.finalCW.vx.toFixed(4) + ' vy=' + ref.finalCW.vy.toFixed(4) + ' theta=' + ref.finalCW.theta.toFixed(6) + ' omega=' + ref.finalCW.omega.toFixed(6) + ' fuel=' + ref.finalCW.fuel.toFixed(4) + ' bodies=' + ref.finalCW.numBodies);
+      const N = 500;
+      $('status').textContent = 'ref trail (' + N + ' ticks)…';
+      const refTrail = [];
+      for (let i = 0; i < N; i++) {
+        TunerEngine.tick(DT);
+        refTrail.push(snapTick());
+        if ((i & 127) === 127) await new Promise(r => setTimeout(r, 0));
       }
 
-      // restore and re-run
-      $('status').textContent = 'restore + test run…';
-      log('');
-      log('=== RESTORE + TEST: run SA → CW ===');
+      $('status').textContent = 'test trail…';
       restoreFull(snap);
-      const test = await runToCW('test');
-      log('transitions:');
-      test.transitions.forEach(tr => log('  t=' + tr.t.toFixed(4) + ' ph=' + tr.ph + ' tick=' + tr.tick));
-      if (test.finalCW) {
-        log('CW final: t=' + test.finalCW.t.toFixed(4) + ' rx=' + test.finalCW.rx.toFixed(4) + ' ry=' + test.finalCW.ry.toFixed(4) + ' vx=' + test.finalCW.vx.toFixed(4) + ' vy=' + test.finalCW.vy.toFixed(4) + ' theta=' + test.finalCW.theta.toFixed(6) + ' omega=' + test.finalCW.omega.toFixed(6) + ' fuel=' + test.finalCW.fuel.toFixed(4) + ' bodies=' + test.finalCW.numBodies);
+      const testTrail = [];
+      for (let i = 0; i < N; i++) {
+        TunerEngine.tick(DT);
+        testTrail.push(snapTick());
+        if ((i & 127) === 127) await new Promise(r => setTimeout(r, 0));
       }
 
-      // compare transitions
       log('');
-      log('=== COMPARE ===');
-      const n = Math.max(ref.transitions.length, test.transitions.length);
-      for (let i = 0; i < n; i++) {
-        const a = ref.transitions[i], b = test.transitions[i];
-        if (!a) { log('#' + i + ' ref=— test=' + b.ph + '@' + b.t.toFixed(4)); break; }
-        if (!b) { log('#' + i + ' ref=' + a.ph + '@' + a.t.toFixed(4) + ' test=—'); break; }
-        if (a.ph !== b.ph || Math.abs(a.t - b.t) > 1e-9) {
-          log('FIRST DIVERGENCE at transition #' + i);
-          log('  ref  t=' + a.t.toFixed(6) + ' ph=' + a.ph + ' tick=' + a.tick);
-          log('  test t=' + b.t.toFixed(6) + ' ph=' + b.ph + ' tick=' + b.tick);
-          log('  dt=' + (b.t - a.t).toExponential(4));
-          break;
+      log('=== COMPARE ' + N + ' ticks ===');
+      let firstDiff = -1, firstReason = null;
+      for (let i = 0; i < N; i++) {
+        const d = diffTicks(refTrail[i], testTrail[i]);
+        if (d) { firstDiff = i; firstReason = d; break; }
+      }
+      if (firstDiff < 0) { log('NO divergence in ' + N + ' ticks'); }
+      else {
+        log('first divergence at tick ' + (firstDiff + 1) + '  reason=' + firstReason);
+        const a = refTrail[firstDiff], b = testTrail[firstDiff];
+        log('ref  t=' + a.t.toFixed(6) + ' ph=' + a.phase);
+        log('test t=' + b.t.toFixed(6) + ' ph=' + b.phase);
+        log('dt=' + (b.t - a.t).toExponential(4) + ' s');
+        for (let i = 0; i < a.bodies.length; i++) {
+          const x = a.bodies[i], y = b.bodies[i];
+          log('body' + i + ': ref rx=' + x.rx.toFixed(6) + ' vx=' + x.vx.toFixed(6) + ' th=' + x.theta.toFixed(6) + ' om=' + x.omega.toFixed(6) + ' fuel=' + x.fuelMass.toFixed(6));
+          log('body' + i + ': tst rx=' + y.rx.toFixed(6) + ' vx=' + y.vx.toFixed(6) + ' th=' + y.theta.toFixed(6) + ' om=' + y.omega.toFixed(6) + ' fuel=' + y.fuelMass.toFixed(6));
         }
       }
-      if (ref.finalCW && test.finalCW) {
-        const d = (k) => (test.finalCW[k] - ref.finalCW[k]);
-        log('');
-        log('Final CW state deltas:');
-        log('  dt=' + d('t').toExponential(4) + ' s');
-        log('  drx=' + d('rx').toExponential(4) + ' dry=' + d('ry').toExponential(4));
-        log('  dvx=' + d('vx').toExponential(4) + ' dvy=' + d('vy').toExponential(4));
-        log('  dtheta=' + d('theta').toExponential(4) + ' domega=' + d('omega').toExponential(4));
-        log('  dfuel=' + d('fuel').toExponential(4));
+
+      // also print transitions of both
+      log('');
+      log('REF transitions:');
+      let prevPh = null;
+      for (let i = 0; i < N; i++) {
+        if (refTrail[i].phase !== prevPh) { log('  tick ' + (i+1) + ' t=' + refTrail[i].t.toFixed(4) + ' ph=' + refTrail[i].phase); prevPh = refTrail[i].phase; }
+      }
+      log('TEST transitions:');
+      prevPh = null;
+      for (let i = 0; i < N; i++) {
+        if (testTrail[i].phase !== prevPh) { log('  tick ' + (i+1) + ' t=' + testTrail[i].t.toFixed(4) + ' ph=' + testTrail[i].phase); prevPh = testTrail[i].phase; }
       }
 
       $('status').textContent = 'done';
