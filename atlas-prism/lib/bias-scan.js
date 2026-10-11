@@ -111,9 +111,20 @@
       let newLo = lo, newHi = hi;
 
       if (los.length && his.length) {
-        // Classic bracket: closest lo below, closest hi above.
-        newLo = Math.max(...los);
-        newHi = Math.min(...his);
+        // Find the closest LO/HI pair by bias — that's the crossing.
+        // E vs bias can be increasing OR decreasing (V-shape), so we cannot
+        // assume lo-bias < hi-bias.
+        let bestGap = Infinity, pL = null, pH = null;
+        for (const l of los) {
+          for (const h of his) {
+            const gap = Math.abs(l - h);
+            if (gap < bestGap) { bestGap = gap; pL = l; pH = h; }
+          }
+        }
+        if (pL != null && pH != null) {
+          newLo = Math.min(pL, pH);
+          newHi = Math.max(pL, pH);
+        }
       } else if (los.length) {
         // All valid probes are "lo" (E below target). Shrink from above.
         // Fail probes below that point act as the low boundary marker
