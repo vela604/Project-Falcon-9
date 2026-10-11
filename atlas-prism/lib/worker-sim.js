@@ -95,6 +95,33 @@ self.onmessage = async (e) => {
       result = await TunerHook.runEval(payload.point, payload.opts || {});
     } else if (type === 'runEvalValues') {
       result = await TunerHook.runEvalValues(payload.values, payload.opts || {});
+    } else if (type === 'probeWithLead') {
+      // Full chain: tuneLead + FULL eval, returns score.
+      const point = payload.point;
+      const altKm = payload.altKm != null ? payload.altKm : 320;
+      const cache = new TunerUtils.EvalCache();
+      const lr = await TunerCore.tuneLead(point, {
+        hook: TunerHook, cache, targetAltKm: altKm,
+      });
+      if (!lr.ok) {
+        result = { ok: false, reason: 'lead_failed: ' + lr.reason, lead: lr.lead, margin: lr.marginS, evals: lr.evals };
+      } else {
+        const m = await TunerHook.runEval(lr.point, { stopAt: 'FULL', targetAltKm: altKm, quiet: true });
+        const sc = TunerUtils.score(m, { targetAltKm: altKm });
+        result = {
+          ok: sc.ok, lead: lr.lead, margin: lr.marginS, vrEnd: lr.vrEnd,
+          score: sc.score, reasons: sc.reasons, parts: sc.parts,
+          metrics: {
+            endReason: m.endReason, deployTimeS: m.deployTimeS,
+            apogeeKm: m.apogeeKm, perigeeKm: m.perigeeKm, ecc: m.ecc,
+            boosterFuelLeftKg: m.boosterFuelLeftKg, stageResidualKg: m.stageResidualKg,
+            maxQKPa: m.maxQKPa, maxG: m.maxG,
+            payloadCleared: m.payloadCleared, payloadReleased: m.payloadReleased,
+            crashed: m.crashed,
+          },
+          evals: lr.evals + 1,
+        };
+      }
     } else if (type === 'ping') {
       result = { pong: true, hasTunerEngine: typeof TunerEngine !== 'undefined' };
     } else {
