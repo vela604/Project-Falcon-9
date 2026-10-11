@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Worker Pool Test</title>
+<style>
+body { margin:0; background:#060912; color:#dbe6f5; font:13px/1.5 monospace; padding:20px; }
+h1 { color:#35d6ff; font-size:15px; margin:0 0 12px; letter-spacing:1px; }
+button { background:#101a30; color:#dbe6f5; border:1px solid #1c2b45;
+         padding:8px 16px; border-radius:4px; font:inherit; cursor:pointer; margin-right:8px; }
+button:hover { border-color:#35d6ff; color:#35d6ff; }
+button:disabled { opacity:.4; }
+input[type=number] { background:#101a30; color:#dbe6f5; border:1px solid #1c2b45;
+         padding:8px 10px; border-radius:4px; font:inherit; width:70px; }
+#status { color:#ffd23f; margin:8px 0; min-height:1.2em; }
+pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4px;
+      font-size:11.5px; overflow:auto; max-height:500px; }
+</style>
+</head>
+<body>
+
+<h1>Worker Pool — parallel runEval test</h1>
+
+<label>workers <input type="number" id="nW" value="4" min="1" max="8"></label>
+<button id="runBtn">Run test</button>
+<button id="clearBtn">Clear</button>
+<div id="status">idle</div>
+<pre id="log">—</pre>
+
+<!-- Only the pool + config, no sim files needed on main thread -->
+<script src="../lib/config.js"></script>
+<script src="../lib/worker-pool.js"></script>
+
+<script>
+(function () {
+  'use strict';
+  const $ = (id) => document.getElementById(id);
+  const logEl = $('log');
+  let logLines = [];
+  const log = (s) => { logLines.push(s); logEl.textContent = logLines.join('\n'); logEl.scrollTop = logEl.scrollHeight; };
+  const fmt = (x, d) => Number.isFinite(x) ? x.toFixed(d) : String(x);
+
+  async function run() {
+    $('runBtn').disabled = true;
+    logLines = [];
+    try {
+      const n = Math.max(1, Math.min(8, parseInt($('nW').value, 10) || 4));
+      log('creating pool with ' + n + ' workers…');
+      const pool = new TunerCore.WorkerPool(n);
+      const t0 = performance.now();
+      await pool.waitReady();
+      log('pool ready in ' + fmt((performance.now() - t0) / 1000, 2) + ' s');
+      log('worker stats: ' + JSON.stringify(pool.stats()));
+
+      // ping all workers
+      log('');
+      log('ping test…');
+      const pings = await Promise.all(Array.from({ length: n }, () => pool.ping()));
+      pings.forEach((r, i) => log('  worker ' + i + ': ' + JSON.stringify(r)));
+
+      // prepare test points — same MECO ladder as baseline
+      const Q = TunerConfig.quanta;
+      const mecos = [40000, 50000, 60000, 70000];
+
+      log('');
+      log('running ' + mecos.length + ' COAST_WAIT evals across pool…');
+
+      const t1 = performance.now();
+      const results = await Promise.all(mecos.map(meco => {
+        const point = {
+          Gi: 60, Tn: Math.round(4.82 / Q.T),
+          bi: Math.round(0.59 / Q.bias),
+          li: Math.round(5.53 / Q.lead),
+          meco,
+        };
+        return pool.runEval(point, { stopAt: 'COAST_WAIT_ENTRY', quiet: true })
+          .then(m => ({ meco, m }))
+          .catch(e => ({ meco, error: e.message }));
+      }));
+      const wallParallel = (performance.now() - t1) / 1000;
+
+      log('parallel wall = ' + fmt(wallParallel, 2) + ' s');
+      log('');
+
+      results.forEach((r, i) => {
+        if (r.error) { log('  meco=' + r.meco + '  ERROR: ' + r.error); return; }
+        log('  meco=' + r.meco +
+            '  end=' + r.m.endReason +
+            '  E=' + fmt(r.m.eCoast, 6) +
+            '  Δv=' + fmt(r.m.coastDeltaV, 2) +
+            '  wall=' + fmt(r.m.wallMs / 1000, 2) + 's');
+      });
+
+      // sequential timing estimate
+      const totalEval = results.reduce((s, r) => s + (r.m ? r.m.wallMs : 0), 0) / 1000;
+      log('');
+      log('sum of individual wall times = ' + fmt(totalEval, 2) + ' s');
+      log('speedup ≈ ' + fmt(totalEval / wallParallel, 2) + 'x');
+
+      log('');
+      log('final stats: ' + JSON.stringify(pool.stats()));
+      log('done');
+    } catch (e) {
+      console.error(e);
+      log('ERROR: ' + e.message + '\n' + (e.stack || ''));
+    } finally {
+      $('runBtn').disabled = false;
+    }
+  }
+
+  $('runBtn').addEventListener('click', run);
+  $('clearBtn').addEventListener('click', () => {
+    logLines = []; logEl.textContent = '—'; $('status').textContent = 'idle';
+  });
+  $('status').textContent = 'ready';
+})();
+</script>
+</body>
+</html>
