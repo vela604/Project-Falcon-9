@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Reverse RK4 — validate chain</title>
+<title>Reverse RK4 — replay validation</title>
 <style>
 body { margin:0; background:#060912; color:#dbe6f5; font:13px/1.5 monospace; padding:20px; }
 h1 { color:#35d6ff; font-size:15px; margin:0 0 12px; letter-spacing:1px; }
@@ -17,14 +17,13 @@ th { color:#35d6ff; }
 td:first-child, th:first-child { text-align:left; color:#6b7d9c; }
 tr.heading td { background:rgba(53,214,255,0.06); color:#35d6ff; font-weight:600; }
 tr.hl td { background:rgba(74,222,128,0.06); }
-tr.bad td { background:rgba(255,95,126,0.08); color:#ff5f7e; }
 pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4px;
       font-size:11.5px; overflow:auto; max-height:320px; }
 </style>
 </head>
 <body>
 
-<h1>Reverse RK4 — phase-chain validation</h1>
+<h1>Reverse RK4 — replay validation</h1>
 
 <button id="runBtn">Run baseline + reverse</button>
 <button id="clearBtn">Clear</button>
@@ -67,110 +66,74 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
   }
   function stageFuelNow() {
     const st = findStage();
-    if (st && Number.isFinite(st.fuelMass)) return st.fuelMass;
-    return NaN;
+    return (st && Number.isFinite(st.fuelMass)) ? st.fuelMass : NaN;
   }
+  function boot() {
+    if (typeof TunerEngine === 'undefined' || typeof Guidance === 'undefined') return false;
+    TunerEngine.init(); return true;
+  }
+  function baselineValues() {
+    const b = TunerConfig.baselineRaw;
+    return {
+      ascent: { PUSH_MAX_GIMBAL_DEG: b.G, PUSH_T_S: b.T, MECO_TARGET_BOOSTER_FUEL_KG: b.meco },
+      insertion: { TARGET_ORBIT_ALT_KM: 320,
+                   STAGE_BURN_AOA_BIAS_DEG: b.bias,
+                   STAGE_BURN_AOA_MARGIN_DEG: 0.001,
+                   CIRC_TRIGGER_LEAD_S: b.lead },
+      done: { DEORBIT_ENABLED: false },
+    };
+  }
+  function fmt(x, d) { return Number.isFinite(x) ? x.toFixed(d) : '—'; }
+  function dist(a, b) { return Math.hypot(a.r.x - b.r.x, a.r.y - b.r.y); }
+  function vdist(a, b) { return Math.hypot(a.v.x - b.v.x, a.v.y - b.v.y); }
 
-  // ---------------- reverse physics ----------------
-  const SUBSTEPS = 4;
-
+  // -------- reverse physics --------
   function gravity(r) {
     const rM = Math.hypot(r.x, r.y), k = -GM / (rM * rM * rM);
     return { x: k * r.x, y: k * r.y };
   }
 
-  // Forward-time derivative. Thrust active if t in [tIg, tOff].
-  // Thrust direction = tangential (perp to r), signed so it aligns with velocity (prograde).
-  // Mass flow = mdotMax, constant, from burn.tIg to burn.tOff.
-  function deriv(S, t, burn) {
-    const g = gravity(S.r);
-    let aTx = 0, aTy = 0;
-    if (burn && t >= burn.tIg && t < burn.tOff && S.m > 0) {
-      const rM = Math.hypot(S.r.x, S.r.y);
-      let tx = S.r.y / rM, ty = -S.r.x / rM;
-      const dot = S.v.x * tx + S.v.y * ty;
-      if (dot < 0) { tx = -tx; ty = -ty; }
-      const aT = burn.mdot * burn.Ve / S.m;
-      aTx = aT * tx;
-      aTy = aT * ty;
-    }
-    return {
-      drx: S.v.x, dry: S.v.y,
-      dvx: g.x + aTx, dvy: g.y + aTy,
-      dm: (burn && t >= burn.tIg && t < burn.tOff) ? -burn.mdot : 0,
-    };
-  }
-
-  function combine(S, k, sc) {
-    return {
-      r: { x: S.r.x + sc * k.drx, y: S.r.y + sc * k.dry },
-      v: { x: S.v.x + sc * k.dvx, y: S.v.y + sc * k.dvy },
-      m: S.m + sc * k.dm,
-    };
-  }
-
-  // RK4 step with step size h (h negative for reverse).
-  function rk4(S, t, burn, h) {
-    const k1 = deriv(S, t, burn);
-    const k2 = deriv(combine(S, k1, h / 2), t + h / 2, burn);
-    const k3 = deriv(combine(S, k2, h / 2), t + h / 2, burn);
-    const k4 = deriv(combine(S, k3, h), t + h, burn);
-    return {
-      r: {
-        x: S.r.x + h / 6 * (k1.drx + 2 * k2.drx + 2 * k3.drx + k4.drx),
-        y: S.r.y + h / 6 * (k1.dry + 2 * k2.dry + 2 * k3.dry + k4.dry),
-      },
-      v: {
-        x: S.v.x + h / 6 * (k1.dvx + 2 * k2.dvx + 2 * k3.dvx + k4.dvx),
-        y: S.v.y + h / 6 * (k1.dvy + 2 * k2.dvy + 2 * k3.dvy + k4.dvy),
-      },
-      m: S.m + h / 6 * (k1.dm + 2 * k2.dm + 2 * k3.dm + k4.dm),
-    };
-  }
-
-  function reverseLeg(S0, tStart, tEnd, burn) {
-    // integrate from tStart backward to tEnd
-    let S = { r: { x: S0.r.x, y: S0.r.y }, v: { x: S0.v.x, y: S0.v.y }, m: S0.m };
-    let t = tStart;
-    const total = tStart - tEnd;
-    const h = -DT / SUBSTEPS;
-    const steps = Math.round(total / DT) * SUBSTEPS;
-    for (let i = 0; i < steps; i++) S = rk4(S, t, burn, h), t += h;
-    return { S, t };
-  }
-
-  // Reverse burn using recorded mdot profile. Thrust prograde (velocity dir).
+  // Reverse burn using recorded mdot profile. Thrust = prograde (velocity dir).
   function reverseBurnProfile(trueOffState, profile, Ve) {
     profile = profile.slice().sort((a, b) => a.t - b.t);
+    if (!profile.length) return { S: { r: trueOffState.r, v: trueOffState.v, m: trueOffState.mass }, t: trueOffState.t };
+
     let S = {
       r: { x: trueOffState.r.x, y: trueOffState.r.y },
       v: { x: trueOffState.v.x, y: trueOffState.v.y },
-      m: trueOffState.mass,
+      m: Number.isFinite(trueOffState.mass) ? trueOffState.mass : 0,
     };
     let t = trueOffState.t;
+
+    // find last profile sample with t <= trueOffState.t
     let idx = profile.length - 1;
     while (idx >= 0 && profile[idx].t > t) idx--;
 
+    // walk backwards through samples
     while (idx >= 0) {
       const sample = profile[idx];
-      const dtSeg = sample.t - t;
+      const dtSeg = sample.t - t;   // should be <= 0
       if (dtSeg >= 0) { idx--; continue; }
-      const steps = Math.max(1, Math.round(-dtSeg / (DT / 4)));
+
+      const SUB = 4;
+      const steps = Math.max(1, Math.round(-dtSeg * 80 * SUB)); // ~80Hz * substeps
       const h = dtSeg / steps;
       const mdot = sample.mdot;
 
-      for (let k = 0; k < steps; k++) {
-        const deriv = (st) => {
-          const g = gravity(st.r);
-          const vM = Math.hypot(st.v.x, st.v.y) || 1;
-          const ux = st.v.x / vM, uy = st.v.y / vM;
-          const aT = mdot * Ve / Math.max(1, st.m);
-          return {
-            drx: st.v.x, dry: st.v.y,
-            dvx: g.x + aT * ux, dvy: g.y + aT * uy,
-            dm: -mdot,
-          };
+      // local deriv — thrust prograde, gravity, fuel flowing
+      function deriv(st) {
+        const g = gravity(st.r);
+        const vM = Math.hypot(st.v.x, st.v.y) || 1;
+        const ux = st.v.x / vM, uy = st.v.y / vM;
+        const aT = mdot * Ve / Math.max(1, st.m);
+        return {
+          drx: st.v.x, dry: st.v.y,
+          dvx: g.x + aT * ux, dvy: g.y + aT * uy,
+          dm: -mdot,
         };
+      }
+
+      for (let k = 0; k < steps; k++) {
         const c1 = deriv(S);
         const S2 = { r: { x: S.r.x + h/2*c1.drx, y: S.r.y + h/2*c1.dry },
                      v: { x: S.v.x + h/2*c1.dvx, y: S.v.y + h/2*c1.dvy },
@@ -198,11 +161,126 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
     return { S, t };
   }
 
-  function dist(a, b) { return Math.hypot(a.r.x - b.r.x, a.r.y - b.r.y); }
-  function vdist(a, b) { return Math.hypot(a.v.x - b.v.x, a.v.y - b.v.y); }
-  function fmt(x, d) { return Number.isFinite(x) ? x.toFixed(d) : '—'; }
+  function reverseBallistic(fromState, tStart, tEnd) {
+    let S = {
+      r: { x: fromState.r.x, y: fromState.r.y },
+      v: { x: fromState.v.x, y: fromState.v.y },
+      m: fromState.m,
+    };
+    let t = tStart;
+    const h = -DT / 4;
+    const steps = Math.round((tStart - tEnd) / DT) * 4;
+    for (let i = 0; i < steps; i++) {
+      const deriv = (st) => {
+        const g = gravity(st.r);
+        return { drx: st.v.x, dry: st.v.y, dvx: g.x, dvy: g.y, dm: 0 };
+      };
+      const c1 = deriv(S);
+      const S2 = { r: { x: S.r.x + h/2*c1.drx, y: S.r.y + h/2*c1.dry },
+                   v: { x: S.v.x + h/2*c1.dvx, y: S.v.y + h/2*c1.dvy }, m: S.m };
+      const c2 = deriv(S2);
+      const S3 = { r: { x: S.r.x + h/2*c2.drx, y: S.r.y + h/2*c2.dry },
+                   v: { x: S.v.x + h/2*c2.dvx, y: S.v.y + h/2*c2.dvy }, m: S.m };
+      const c3 = deriv(S3);
+      const S4 = { r: { x: S.r.x + h*c3.drx, y: S.r.y + h*c3.dry },
+                   v: { x: S.v.x + h*c3.dvx, y: S.v.y + h*c3.dvy }, m: S.m };
+      const c4 = deriv(S4);
+      S = { r: { x: S.r.x + h/6*(c1.drx + 2*c2.drx + 2*c3.drx + c4.drx),
+                 y: S.r.y + h/6*(c1.dry + 2*c2.dry + 2*c3.dry + c4.dry) },
+            v: { x: S.v.x + h/6*(c1.dvx + 2*c2.dvx + 2*c3.dvx + c4.dvx),
+                 y: S.v.y + h/6*(c1.dvy + 2*c2.dvy + 2*c3.dvy + c4.dvy) },
+            m: S.m };
+      t += h;
+    }
+    return { S, t };
+  }
 
-  // ---------------- forward capture ----------------
+  // -------- forward --------
+  async function forward() {
+    TunerEngine.prepareRun(TunerConfig.guideName, baselineValues(), TunerConfig.env);
+    const mcBase = 0; // placeholder; recomputed post-run
+    const snaps = {};
+    const burnProfile = [];
+    let trueOff = null;
+    let prevPhase = null;
+    let endReason = 'loop';
+    const maxTicks = Math.ceil(800 / DT);
+    let lastYield = performance.now();
+
+    for (let i = 0; i < maxTicks; i++) {
+      if (state.halted) { endReason = 'halted'; break; }
+      TunerEngine.tick(DT);
+      const b = state.bodies[state.activeBodyIndex];
+      if (!b) continue;
+      const gs = Guidance.getGuideStatus();
+      const phase = gs ? gs.phase : '?';
+
+      if (phase !== prevPhase) {
+        if (!snaps[phase]) snaps[phase] = snapNow(b, mcBase);
+        prevPhase = phase;
+      }
+
+      // Burn profile capture: CIRCULARIZE + spool-down in COAST_ROTATE_2
+      if (b.engines && b.engines.length &&
+          (phase === 'CIRCULARIZE' || (phase === 'COAST_ROTATE_2' && !trueOff))) {
+        let md = 0;
+        b.engines.forEach(e => { md += e.massFlowRate || 0; });
+        if (md > 0.001) {
+          burnProfile.push({
+            t: state.simTime,
+            mdot: md,
+            r: { x: b.rx, y: b.ry },
+            v: { x: b.vx, y: b.vy },
+          });
+        } else if (phase === 'COAST_ROTATE_2' && burnProfile.length > 0 && !trueOff) {
+          trueOff = snapNow(b, mcBase);
+        }
+      }
+
+      if (gs && gs.payloadCleared) { endReason = 'payload-cleared'; break; }
+
+      if ((i & 255) === 255) {
+        const now = performance.now();
+        if (now - lastYield > 40) {
+          $('status').textContent = 't=' + state.simTime.toFixed(1) + 's ph=' + phase;
+          await new Promise(r => setTimeout(r, 0));
+          lastYield = now;
+        }
+      }
+    }
+
+    // post-run: real mcBase, Ve, mdot
+    const stbFinal = findStage();
+    let Ve = NaN, mdotDesign = NaN, mcBaseReal = 0;
+    if (stbFinal && stbFinal.members && stbFinal.members[0]) {
+      const mRec = stbFinal.members[0];
+      if (mRec.stageRole === 'stage' && typeof stageDerivedMasses === 'function') {
+        const d = stageDerivedMasses(mRec);
+        if (d && !d.infeasible) mcBaseReal = d.dryMassNoPayload;
+      }
+      if (mRec.engineThrusters) {
+        const g = mRec.engineThrusters.gimbal || mRec.engineThrusters.fixed;
+        if (g && Number.isFinite(g.massFlowRate)) mdotDesign = g.massFlowRate;
+      }
+    }
+    const stk = getActiveStack();
+    if (stk && stk.payloadId && typeof getPayload === 'function') {
+      const pl = getPayload(stk.payloadId);
+      if (pl && Number.isFinite(pl.mass)) mcBaseReal += pl.mass;
+    }
+    if (stbFinal && stbFinal.engines && stbFinal.engines.length) {
+      if (Number.isFinite(stbFinal.engines[0].Ve)) Ve = stbFinal.engines[0].Ve;
+    }
+
+    // fix all masses
+    for (const k of Object.keys(snaps)) {
+      const sn = snaps[k];
+      if (sn && Number.isFinite(sn.fuel)) sn.mass = mcBaseReal + sn.fuel;
+    }
+    if (trueOff && Number.isFinite(trueOff.fuel)) trueOff.mass = mcBaseReal + trueOff.fuel;
+
+    return { snaps, burnProfile, trueOff, mcBase: mcBaseReal, Ve, mdotDesign, endReason };
+  }
 
   function snapNow(b, mcBase) {
     const sf = stageFuelNow();
@@ -217,225 +295,88 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
     };
   }
 
-  async function forward() {
-    TunerEngine.prepareRun(TunerConfig.guideName, baselineValues(), TunerConfig.env);
-
-    // mcBase / Ve / mdot computed AFTER split (below), from live stage body
-    let mcBase = 0;
-
-    const snaps = {};
-    const burnProfile = [];
-    let trueOff = null;
-    let prevPhase = null, endReason = 'loop';
-
-    const maxTicks = Math.ceil(800 / DT);
-    let lastYield = performance.now();
-    for (let i = 0; i < maxTicks; i++) {
-      if (state.halted) { endReason = 'halted'; break; }
-      TunerEngine.tick(DT);
-      const b = state.bodies[state.activeBodyIndex];
-      if (!b) continue;
-      const gs = Guidance.getGuideStatus();
-      const phase = gs ? gs.phase : '?';
-
-      if (phase !== prevPhase) {
-        // capture at every phase entry
-        if (!snaps[phase]) snaps[phase] = snapNow(b, mcBase);
-        prevPhase = phase;
-      }
-
-      // DONE phase entry = payload release command fired (deployCommandSimTime set)
-      if (phase === 'DONE' && !snaps.__released) {
-        snaps.__released = snapNow(b, mcBase);
-        endReason = 'payload-released';
-      }
-      // burn profile: capture every tick with mdot > 0 during CIRCULARIZE
-      // or during the spool-down window in COAST_ROTATE_2
-      if (b.engines && b.engines.length && (phase === 'CIRCULARIZE' || (phase === 'COAST_ROTATE_2' && !trueOff))) {
-        let md = 0;
-        b.engines.forEach(e => { md += e.massFlowRate || 0; });
-        if (md > 0.001) {
-          burnProfile.push({
-            t: state.simTime,
-            mdot: md,
-            r: { x: b.rx, y: b.ry },
-            v: { x: b.vx, y: b.vy },
-          });
-        } else if (phase === 'COAST_ROTATE_2' && burnProfile.length > 0) {
-          // fuel stopped flowing — this is the true burn-off tick
-          if (!trueOff) {
-            trueOff = snapNow(b, mcBase);
-            trueOff.t = state.simTime;
-          }
-        }
-      }
-      if (gs && gs.payloadCleared) { endReason = 'payload-cleared'; break; }
-
-      if ((i & 255) === 255) {
-        const now = performance.now();
-        if (now - lastYield > 40) {
-          $('status').textContent = 't=' + state.simTime.toFixed(1) + 's ph=' + phase;
-          await new Promise(r => setTimeout(r, 0));
-          lastYield = now;
-        }
-      }
-    }
-
-    // ----- post-split: fetch stage body, mcBase, Ve, mdot -----
-    const stbFinal = findStage();
-    let Ve = NaN, mdot = NaN, mcBaseReal = 0;
-
-    if (stbFinal && stbFinal.members && stbFinal.members[0]) {
-      const mRec = stbFinal.members[0];
-      if (mRec.stageRole === 'stage' && typeof stageDerivedMasses === 'function') {
-        const d = stageDerivedMasses(mRec);
-        if (d && !d.infeasible) mcBaseReal = d.dryMassNoPayload;
-      }
-      if (mRec.engineThrusters) {
-        const g = mRec.engineThrusters.gimbal || mRec.engineThrusters.fixed;
-        if (g && Number.isFinite(g.massFlowRate)) mdot = g.massFlowRate;
-      }
-    }
-    const stk = getActiveStack();
-    if (stk && stk.payloadId && typeof getPayload === 'function') {
-      const pl = getPayload(stk.payloadId);
-      if (pl && Number.isFinite(pl.mass)) mcBaseReal += pl.mass;
-    }
-    if (stbFinal && stbFinal.engines && stbFinal.engines.length) {
-      if (Number.isFinite(stbFinal.engines[0].Ve)) Ve = stbFinal.engines[0].Ve;
-    }
-
-    // recompute each snapshot's mass with the correct mcBaseReal
-    if (mcBaseReal > 0) {
-      for (const k of Object.keys(snaps)) {
-        const sn = snaps[k];
-        if (sn && Number.isFinite(sn.fuel)) sn.mass = mcBaseReal + sn.fuel;
-      }
-    }
-
-    if (trueOff && mcBaseReal > 0 && Number.isFinite(trueOff.fuel)) trueOff.mass = mcBaseReal + trueOff.fuel;
-    return { snaps, burnProfile, trueOff, mcBase: mcBaseReal, Ve, mdot, endReason };
-  }
-
-  function baselineValues() {
-    const b = TunerConfig.baselineRaw;
-    return {
-      ascent: { PUSH_MAX_GIMBAL_DEG: b.G, PUSH_T_S: b.T, MECO_TARGET_BOOSTER_FUEL_KG: b.meco },
-      insertion: { TARGET_ORBIT_ALT_KM: 320,
-                   STAGE_BURN_AOA_BIAS_DEG: b.bias,
-                   STAGE_BURN_AOA_MARGIN_DEG: 0.001,
-                   CIRC_TRIGGER_LEAD_S: b.lead },
-      done: { DEORBIT_ENABLED: false },
-    };
-  }
-
-  // ---------------- main ----------------
-
+  // -------- main --------
   async function run() {
-    if (typeof TunerEngine === 'undefined' || typeof Guidance === 'undefined') {
-      $('status').textContent = 'boot failed'; return;
-    }
-    TunerEngine.init();
+    if (!boot()) { $('status').textContent = 'boot failed'; return; }
     $('runBtn').disabled = true;
-
     try {
       $('status').textContent = 'forward…';
-      const { snaps, mcBase, Ve, mdot, endReason } = await forward();
+      const { snaps, burnProfile, trueOff, mcBase, Ve, mdotDesign, endReason } = await forward();
 
-      // required phases
-      const need = ['COAST_WAIT', 'CIRCULARIZE', 'COAST_ROTATE_2'];
-      const missing = need.filter(k => !snaps[k]);
-      // payload released = DONE phase (or COAST_HOLD_2 if DONE not reached)
-      if (!snaps.__released && snaps['COAST_HOLD_2']) snaps.__released = snaps['COAST_HOLD_2'];
-      if (!snaps.__released && snaps['DONE']) snaps.__released = snaps['DONE'];
-      if (missing.length || !snaps.__released) {
-        $('status').textContent = 'missing: ' + missing.join(',') + (snaps.__released ? '' : ', payload-release snapshot');
-        $('raw').textContent = 'phases seen: ' + Object.keys(snaps).join(', ');
+      if (!snaps['COAST_WAIT'] || !snaps['CIRCULARIZE'] || !trueOff || !burnProfile.length) {
+        $('status').textContent = 'missing data';
+        $('raw').textContent = 'cw=' + !!snaps['COAST_WAIT'] + ' ig=' + !!snaps['CIRCULARIZE'] +
+                               ' trueOff=' + !!trueOff + ' profile=' + burnProfile.length +
+                               '\nphases=' + Object.keys(snaps).join(',');
         $('runBtn').disabled = false; return;
       }
 
       const cw = snaps['COAST_WAIT'];
       const ig = snaps['CIRCULARIZE'];
-      const off = snaps['COAST_ROTATE_2'];
-      const pay = snaps.__released;
 
-      const tIg = ig.t, tOff = off.t, tPay = pay.t, tCw = cw.t;
+      // debug sanity
+      console.log('[reverse] mcBase=', mcBase, ' Ve=', Ve, ' trueOff.mass=', trueOff.mass,
+                  ' trueOff.fuel=', trueOff.fuel, ' profile.length=', burnProfile.length,
+                  ' first.t=', burnProfile[0].t, ' last.t=', burnProfile[burnProfile.length-1].t,
+                  ' first.mdot=', burnProfile[0].mdot, ' last.mdot=', burnProfile[burnProfile.length-1].mdot);
 
-      const burn = { tIg, tOff, mdot, Ve };
-
-      // ------------ reverse legs ------------
-
-      // reverse burn via recorded profile (trueOff state back to CIRCULARIZE entry)
-      if (!trueOff || !burnProfile.length) {
-        $('status').textContent = 'no burn profile or trueOff — check forward capture';
-        $('runBtn').disabled = false; return;
-      }
-      $('status').textContent = 'reverse R1 (profile burn)…';
+      $('status').textContent = 'reverse R1 (profile)…';
       const R1 = reverseBurnProfile(trueOff, burnProfile, Ve);
-      const S_ig_from_R1 = R1.S;
+      const errR1_pos = dist(R1.S, ig);
+      const errR1_vel = vdist(R1.S, ig);
+      const errR1_mass = Math.abs(R1.S.m - ig.mass);
 
-      $('status').textContent = 'reverse R2 (off → ig)…';
-      const S_ig_init = { r: { x: ig.r.x, y: ig.r.y }, v: { x: ig.v.x, y: ig.v.y }, m: ig.mass };
-      const R2 = reverseLeg(S_ig_init, tIg, tCw, null);     // reverse ballistic
-      const S_cw_from_R2 = R2.S;
-
-      // Compare
-      const errR1_pos = dist(S_ig_from_R1, ig);
-      const errR1_vel = vdist(S_ig_from_R1, ig);
-      const errR1_mass = Math.abs(S_ig_from_R1.m - ig.mass);
-      const errR2_pos = dist(S_cw_from_R2, cw);
-      const errR2_vel = vdist(S_cw_from_R2, cw);
-      const errR2_mass = Math.abs(S_cw_from_R2.m - cw.mass);
+      $('status').textContent = 'reverse R2 (ballistic)…';
+      const R2 = reverseBallistic(
+        { r: ig.r, v: ig.v, m: ig.mass },
+        ig.t, cw.t
+      );
+      const errR2_pos = dist(R2.S, cw);
+      const errR2_vel = vdist(R2.S, cw);
+      const errR2_mass = Math.abs(R2.S.m - cw.mass);
 
       const rows = [
-        { h: 'Forward — key phases' },
-        { k: 'phase / t',     v: '' },
-        { k: 'COAST_WAIT',    v: fmt(tCw, 3) + ' s  fuel=' + fmt(cw.fuel, 1) },
-        { k: 'CIRCULARIZE',   v: fmt(tIg, 3) + ' s  fuel=' + fmt(ig.fuel, 1) },
-        { k: 'COAST_ROT_2',   v: fmt(tOff, 3) + ' s  fuel=' + fmt(off.fuel, 1) },
-        { k: 'payload rel',   v: fmt(tPay, 3) + ' s  fuel=' + fmt(pay.fuel, 1) },
+        { h: 'Forward' },
+        { k: 'COAST_WAIT t',   v: fmt(cw.t, 3) + ' s  fuel=' + fmt(cw.fuel, 1) },
+        { k: 'CIRCULARIZE t',  v: fmt(ig.t, 3) + ' s  fuel=' + fmt(ig.fuel, 1) },
+        { k: 'trueOff t',      v: fmt(trueOff.t, 3) + ' s  fuel=' + fmt(trueOff.fuel, 1) },
+        { k: 'burn dur',       v: fmt(trueOff.t - ig.t, 3) + ' s' },
+        { k: 'fuel burned',    v: fmt(ig.fuel - trueOff.fuel, 2) + ' kg' },
+        { k: 'avg mdot',       v: fmt((ig.fuel - trueOff.fuel)/(trueOff.t - ig.t), 2) + ' kg/s' },
+        { k: 'profile samples',v: burnProfile.length },
 
-        { h: 'Engine params' },
-        { k: 'Ve',            v: fmt(Ve, 2) },
-        { k: 'mdot',          v: fmt(mdot, 2) },
-        { k: 'T_burn (off−ig)', v: fmt(tOff - tIg, 3) + ' s' },
-        { k: 'mcBase',        v: fmt(mcBase, 2) + ' kg' },
+        { h: 'Engine' },
+        { k: 'Ve',             v: fmt(Ve, 2) },
+        { k: 'mdot design',    v: fmt(mdotDesign, 2) },
+        { k: 'mcBase',         v: fmt(mcBase, 2) + ' kg' },
 
-        { h: 'Forward state vectors' },
-        { k: 'COAST_WAIT  r', v: fmt(cw.r.x, 1) + ', ' + fmt(cw.r.y, 1) },
-        { k: 'COAST_WAIT  v', v: fmt(cw.v.x, 3) + ', ' + fmt(cw.v.y, 3) },
-        { k: 'CIRCULARIZE r', v: fmt(ig.r.x, 1) + ', ' + fmt(ig.r.y, 1) },
-        { k: 'CIRCULARIZE v', v: fmt(ig.v.x, 3) + ', ' + fmt(ig.v.y, 3) },
-        { k: 'COAST_ROT_2 r', v: fmt(off.r.x, 1) + ', ' + fmt(off.r.y, 1) },
-        { k: 'COAST_ROT_2 v', v: fmt(off.v.x, 3) + ', ' + fmt(off.v.y, 3) },
+        { h: 'R1 — reverse replay burn (trueOff → ig)' },
+        { k: 'pred r',         v: fmt(R1.S.r.x, 1) + ', ' + fmt(R1.S.r.y, 1) },
+        { k: 'actual r',       v: fmt(ig.r.x, 1) + ', ' + fmt(ig.r.y, 1) },
+        { k: 'pos err',        v: fmt(errR1_pos, 3) + ' m' },
+        { k: 'vel err',        v: fmt(errR1_vel, 6) + ' m/s' },
+        { k: 'mass err',       v: fmt(errR1_mass, 4) + ' kg' },
 
-        { h: 'R1 — reverse burn (off → ig)' },
-        { k: 'pred r',   v: fmt(S_ig_from_R1.r.x, 1) + ', ' + fmt(S_ig_from_R1.r.y, 1) },
-        { k: 'pred v',   v: fmt(S_ig_from_R1.v.x, 3) + ', ' + fmt(S_ig_from_R1.v.y, 3) },
-        { k: 'pos err',  v: fmt(errR1_pos, 3) + ' m' },
-        { k: 'vel err',  v: fmt(errR1_vel, 4) + ' m/s' },
-        { k: 'mass err', v: fmt(errR1_mass, 3) + ' kg' },
-
-        { h: 'R2 — reverse ballistic (ig → coast_wait)' },
-        { k: 'pred r',   v: fmt(S_cw_from_R2.r.x, 1) + ', ' + fmt(S_cw_from_R2.r.y, 1) },
-        { k: 'pred v',   v: fmt(S_cw_from_R2.v.x, 3) + ', ' + fmt(S_cw_from_R2.v.y, 3) },
-        { k: 'pos err',  v: fmt(errR2_pos, 3) + ' m' },
-        { k: 'vel err',  v: fmt(errR2_vel, 6) + ' m/s' },
-        { k: 'mass err', v: fmt(errR2_mass, 4) + ' kg' },
+        { h: 'R2 — reverse ballistic (ig → cw)' },
+        { k: 'pos err',        v: fmt(errR2_pos, 3) + ' m' },
+        { k: 'vel err',        v: fmt(errR2_vel, 8) + ' m/s' },
+        { k: 'mass err',       v: fmt(errR2_mass, 5) + ' kg' },
       ];
 
       const tb = $('t').querySelector('tbody');
-      tb.innerHTML = rows.map(r => {
-        if (r.h) return '<tr class="heading"><td colspan="2">' + r.h + '</td></tr>';
-        const isErr = /err/.test(r.k) && !/carry/.test(r.k);
-        return '<tr' + (isErr ? ' class="hl"' : '') + '><td>' + r.k + '</td><td>' + r.v + '</td></tr>';
-      }).join('');
+      tb.innerHTML = rows.map(r => r.h
+        ? '<tr class="heading"><td colspan="2">' + r.h + '</td></tr>'
+        : '<tr' + (/err/.test(r.k) ? ' class="hl"' : '') + '><td>' + r.k + '</td><td>' + r.v + '</td></tr>'
+      ).join('');
 
       $('raw').textContent = [
         'endReason=' + endReason,
-        'phases=' + Object.keys(snaps).filter(k => k !== '__released').join(','),
-        'R1 pos_err=' + errR1_pos.toFixed(3) + ' m  vel_err=' + errR1_vel.toFixed(4) + ' m/s  mass_err=' + errR1_mass.toFixed(3) + ' kg',
-        'R2 pos_err=' + errR2_pos.toFixed(3) + ' m  vel_err=' + errR2_vel.toFixed(6) + ' m/s  mass_err=' + errR2_mass.toFixed(4) + ' kg',
+        'profile[0]: t=' + burnProfile[0].t.toFixed(4) + ' mdot=' + burnProfile[0].mdot.toFixed(3),
+        'profile[last]: t=' + burnProfile[burnProfile.length-1].t.toFixed(4) + ' mdot=' + burnProfile[burnProfile.length-1].mdot.toFixed(3),
+        'trueOff: t=' + trueOff.t.toFixed(4) + ' fuel=' + trueOff.fuel.toFixed(2) + ' mass=' + trueOff.mass.toFixed(2),
+        'ig: t=' + ig.t.toFixed(4) + ' fuel=' + ig.fuel.toFixed(2) + ' mass=' + ig.mass.toFixed(2),
+        'R1 pos_err=' + errR1_pos.toFixed(3) + ' m  vel_err=' + errR1_vel.toFixed(6) + ' m/s  mass_err=' + errR1_mass.toFixed(4) + ' kg',
+        'R2 pos_err=' + errR2_pos.toFixed(3) + ' m  vel_err=' + errR2_vel.toFixed(8) + ' m/s  mass_err=' + errR2_mass.toFixed(5) + ' kg',
       ].join('\n');
 
       $('status').textContent = 'done';
