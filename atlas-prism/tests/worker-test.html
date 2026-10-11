@@ -46,7 +46,7 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
     try {
       const n = Math.max(1, Math.min(8, parseInt($('nW').value, 10) || 4));
       log('creating pool with ' + n + ' workers…');
-      const pool = new TunerCore.WorkerPool(n);
+      const pool = new TunerCore.WorkerPool(n, { workerPath: '../lib/worker-sim.js' });
       const t0 = performance.now();
       await pool.waitReady();
       log('pool ready in ' + fmt((performance.now() - t0) / 1000, 2) + ' s');
