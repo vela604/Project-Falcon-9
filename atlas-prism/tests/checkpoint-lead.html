@@ -11,28 +11,18 @@ button { background:#101a30; color:#dbe6f5; border:1px solid #1c2b45;
 button:hover { border-color:#35d6ff; color:#35d6ff; }
 button:disabled { opacity:.4; }
 #status { color:#ffd23f; margin:8px 0; min-height:1.2em; }
-table { border-collapse:collapse; font-size:12px; width:100%; margin-top:8px; }
-th, td { padding:5px 10px; text-align:right; border-bottom:1px solid #1c2b45; }
-th { color:#35d6ff; }
-td:first-child, th:first-child { text-align:left; color:#6b7d9c; }
-tr.heading td { background:rgba(53,214,255,0.06); color:#35d6ff; font-weight:600; }
-tr.hl td { background:rgba(74,222,128,0.06); }
 pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4px;
-      font-size:11.5px; overflow:auto; max-height:280px; }
+      font-size:11.5px; overflow:auto; max-height:400px; }
 </style>
 </head>
 <body>
 
-<h1>Checkpoint Lead Convergence</h1>
+<h1>Checkpoint Lead — Pro-Alpha tuneLead from COAST_HOLD</h1>
 
-<select id="presetSel" style="background:#101a30;color:#dbe6f5;border:1px solid #1c2b45;
-        padding:8px 12px;border-radius:4px;font:inherit;cursor:pointer;margin-right:8px;"></select>
-<button id="runBtn">Run + converge</button>
-<button id="clearBtn">Clear</button>
+<button id="runBtn">Run</button>
 <div id="status">idle</div>
-
-<table id="t"><tbody></tbody></table>
-<pre id="raw">—</pre>
+<pre id="log">—</pre>
+<pre id="result">—</pre>
 
 <script src="../../js/componentLibrary.js"></script>
 <script src="../../js/customDesign.js"></script>
@@ -50,19 +40,22 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
 <script src="../../js/simJs/guidance/guidance-blocks.js"></script>
 <script src="../../js/simJs/guidance/guidance.js"></script>
 <script src="../../js/guideConfigDefaults.js"></script>
-<script src="../../js/guidancePresets.js"></script>
+
 <script src="../lib/config.js"></script>
 <script src="../lib/sim.js"></script>
+<script src="../lib/lattice.js"></script>
+<script src="../lib/hook.js"></script>
+<script src="../lib/registry.js"></script>
+<script src="../lib/primitives.js"></script>
 
 <script>
 (function () {
   'use strict';
   const $ = (id) => document.getElementById(id);
   const GM = CONFIG.GM_EARTH, Re = CONFIG.EARTH_RADIUS, DT = CONFIG.DT;
-  const LEAD_QUANTUM = 0.0125;
-
-  function fmt(x, d) { return Number.isFinite(x) ? x.toFixed(d) : '—'; }
-  function deepClone(x) { return JSON.parse(JSON.stringify(x)); }
+  const logEl = $('log'), resEl = $('result');
+  let logLines = [];
+  const log = (s) => { logLines.push(s); logEl.textContent = logLines.join('\n'); logEl.scrollTop = logEl.scrollHeight; };
 
   function findStage() {
     for (const b of state.bodies) {
@@ -72,10 +65,10 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
     return null;
   }
 
-  function timeToApogee(rx, ry, vx, vy) {
-    const r = Math.hypot(rx, ry);
-    const vr = (vx * rx + vy * ry) / r;
-    const vt = (vx * ry - vy * rx) / r;
+  function timeToApogee(b) {
+    const r = Math.hypot(b.rx, b.ry);
+    const vr = (b.vx * b.rx + b.vy * b.ry) / r;
+    const vt = (b.vx * b.ry - b.vy * b.rx) / r;
     const E = 0.5 * (vr * vr + vt * vt) - GM / r;
     if (E >= 0) return Infinity;
     const a = -GM / (2 * E);
@@ -92,37 +85,35 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
     return M < Math.PI ? (Math.PI - M) / n : (3 * Math.PI - M) / n;
   }
 
+  function periodOf(b) {
+    const r = Math.hypot(b.rx, b.ry);
+    const vr = (b.vx * b.rx + b.vy * b.ry) / r;
+    const vt = (b.vx * b.ry - b.vy * b.rx) / r;
+    const E = 0.5 * (vr * vr + vt * vt) - GM / r;
+    if (E >= 0) return Infinity;
+    const a = -GM / (2 * E);
+    return 2 * Math.PI * Math.sqrt((a * a * a) / GM);
+  }
+
   function boot() {
     if (typeof TunerEngine === 'undefined' || typeof Guidance === 'undefined') return false;
     TunerEngine.init(); return true;
   }
 
-  function presetValues() {
-    const sel = $('presetSel');
-    const id = sel && sel.value;
-    let preset = null;
-    if (id) {
-      if (typeof getPresetById === 'function') preset = getPresetById(id);
-      if (!preset && typeof getGuideDefaultPreset === 'function' && id.startsWith('default:')) {
-        preset = getGuideDefaultPreset(id.slice(8));
-      }
-    }
-    if (preset && preset.constants) return { values: preset.constants, guideName: preset.guideName || 'leoInsertionV3' };
+  function baselineValues() {
     const b = TunerConfig.baselineRaw;
     return {
-      values: {
-        ascent: { PUSH_MAX_GIMBAL_DEG: b.G, PUSH_T_S: b.T, MECO_TARGET_BOOSTER_FUEL_KG: b.meco },
-        insertion: { TARGET_ORBIT_ALT_KM: 320,
-                     STAGE_BURN_AOA_BIAS_DEG: b.bias,
-                     STAGE_BURN_AOA_MARGIN_DEG: 0.001,
-                     CIRC_TRIGGER_LEAD_S: b.lead },
-        done: { DEORBIT_ENABLED: false },
-      },
-      guideName: 'leoInsertionV3',
+      ascent: { PUSH_MAX_GIMBAL_DEG: b.G, PUSH_T_S: b.T, MECO_TARGET_BOOSTER_FUEL_KG: b.meco },
+      insertion: { TARGET_ORBIT_ALT_KM: 320,
+                   STAGE_BURN_AOA_BIAS_DEG: b.bias,
+                   STAGE_BURN_AOA_MARGIN_DEG: 0.001,
+                   CIRC_TRIGGER_LEAD_S: b.lead },
+      done: { DEORBIT_ENABLED: false },
     };
   }
 
-  let g_snapshot = null;
+  // --- Snapshot/restore helpers ---
+  function deepClone(x) { return JSON.parse(JSON.stringify(x)); }
 
   function captureSnapshot() {
     return {
@@ -168,228 +159,150 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
     Guidance.importGuideState(g);
   }
 
-  async function attempt(lead) {
-    restoreSnapshot(g_snapshot, lead);
-    let circStartT = NaN, circEndT = NaN, marginS = NaN, vrEnd = NaN, payloadT = NaN;
-    let prevPhase = Guidance.getGuideStatus().phase;
-    window._vrTrace = [];
-    window._abortReason = null;
-    // Scale cap by target altitude: baseline 320km needs ~60s post-CW,
-    // high orbits (2000km) need ~500s (longer stage burn + coast).
-    const tgtAlt = (g_snapshot && g_snapshot.__targetAltKm) ? g_snapshot.__targetAltKm : 320;
-    const capS = 400;   // CH → burn → CH_2 → payload
-    const maxTicks = Math.ceil(capS / DT);
-    for (let i = 0; i < maxTicks; i++) {
-      if (state.halted) break;
-      TunerEngine.tick(DT);
-      const gs = Guidance.getGuideStatus();
-      const phase = gs.phase;
-      if (phase === 'CIRCULARIZE' && prevPhase !== 'CIRCULARIZE') circStartT = state.simTime;
-      if (phase === 'COAST_ROTATE_2' && prevPhase !== 'COAST_ROTATE_2') {
-        circEndT = state.simTime;
-        const stb = findStage();
-        if (stb) {
-          const r = Math.hypot(stb.rx, stb.ry);
-          const vr = (stb.vx * stb.rx + stb.vy * stb.ry) / r;
-          const vt = (stb.vx * stb.ry - stb.vy * stb.rx) / r;
-          vrEnd = vr;
-          const tApo = timeToApogee(stb.rx, stb.ry, stb.vx, stb.vy);
-          const E = 0.5 * (vr * vr + vt * vt) - GM / r;
-          let periodS = NaN;
-          if (E < 0) { const a = -GM / (2 * E); periodS = 2 * Math.PI * Math.sqrt((a*a*a) / GM); }
-          marginS = vr < 0 ? (tApo - periodS) : tApo;
-        }
-      }
-      if (gs.payloadCleared) { payloadT = state.simTime; break; }
-      // Early abort: if we're stuck in CH_2/CR_2 and vr has crossed negative,
-      // payload peak is missed, next peak is ~period away. Abort.
-      if ((phase === 'COAST_HOLD_2' || phase === 'COAST_ROTATE_2') && i > 20) {
-        const stb = findStage();
-        if (stb) {
-          const rr = Math.hypot(stb.rx, stb.ry);
-          const vvr = (stb.vx * stb.rx + stb.vy * stb.ry) / rr;
-          if (vvr < -0.5) {   // clearly past apogee
-            window._abortReason = 'CH_2 vr<0 (missed peak)';
-            break;
+  // --- Checkpoint-based hook that mimics TunerHook.runEval(..., stopAt: 'CIRC_END') ---
+  function makeCheckpointHook(snap, appliedConfig) {
+    return {
+      runEval: async (point, opts) => {
+        const stopAt = opts && opts.stopAt;
+        if (stopAt !== 'CIRC_END') throw new Error('checkpoint hook only supports CIRC_END');
+        const lead = point.li * TunerConfig.quanta.lead;
+        restoreSnapshot(snap, lead);
+
+        let vrEnd = NaN, marginS = NaN, vrMin = Infinity;
+        let circAch = false, engOff = false;
+        let crashed = false;
+        let prevPhase = Guidance.getGuideStatus().phase;
+        const maxTicks = Math.ceil(400 / DT);
+
+        for (let i = 0; i < maxTicks; i++) {
+          if (state.halted) break;
+          TunerEngine.tick(DT);
+          if (state.crashed) { crashed = true; break; }
+          const gs = Guidance.getGuideStatus();
+          const ph = gs.phase;
+
+          // track vrMin during CIRCULARIZE
+          if (ph === 'CIRCULARIZE') {
+            const b = state.bodies[state.activeBodyIndex];
+            const r = Math.hypot(b.rx, b.ry);
+            const vr = (b.vx * b.rx + b.vy * b.ry) / r;
+            if (vr < vrMin) vrMin = vr;
           }
+
+          if (gs.circAchieved && !circAch) circAch = true;
+
+          // detect engines-off after CIRCULARIZE
+          if (circAch && !engOff) {
+            const b = state.bodies[state.activeBodyIndex];
+            let mdot = 0;
+            (b.engines || []).forEach(e => { mdot += e.massFlowRate || 0; });
+            if (mdot <= 1e-9) {
+              engOff = true;
+              const stb = findStage();
+              if (stb) {
+                const r = Math.hypot(stb.rx, stb.ry);
+                const vr = (stb.vx * stb.rx + stb.vy * stb.ry) / r;
+                const vt = (stb.vx * stb.ry - stb.vy * stb.rx) / r;
+                const tApo = timeToApogee(stb);
+                const per = periodOf(stb);
+                vrEnd = vr;
+                marginS = vr < 0 ? (tApo - per) : tApo;
+              }
+              break;
+            }
+          }
+          prevPhase = ph;
+          if ((i & 255) === 255) await new Promise(r => setTimeout(r, 0));
         }
+
+        // shape per TunerHook contract (subset that tuneLead reads)
+        return {
+          endReason: (circAch && engOff) ? 'CIRC_END' : (crashed ? 'CRASHED' : 'CAP'),
+          crashed,
+          vrEnd, marginS, vrMin,
+          ticks: 0, simTimeEnd: state.simTime, wallMs: 0,
+        };
       }
-      // debug: CH_2 vr tracking
-      if (phase === 'COAST_HOLD_2' || phase === 'COAST_ROTATE_2') {
-        const stb = findStage();
-        if (stb) {
-          const r = Math.hypot(stb.rx, stb.ry);
-          const vr = (stb.vx * stb.rx + stb.vy * stb.ry) / r;
-          if (!window._vrTrace) window._vrTrace = [];
-          if (window._vrTrace.length < 3) window._vrTrace.push({ t: state.simTime, vr, phase });
-          else { window._vrTrace[window._vrTrace.length-1] = { t: state.simTime, vr, phase }; }
-        }
-      }
-      prevPhase = phase;
-      if ((i & 255) === 255) await new Promise(r => setTimeout(r, 0));
-    }
-    const gsEnd = Guidance.getGuideStatus();
-    return { lead, circStartT, circEndT, marginS, vrEnd, payloadT,
-             lastPhase: gsEnd.phase, lastSimTime: state.simTime,
-             halted: state.halted, crashed: state.crashed,
-             vrTrace: (window._vrTrace || []).slice(0, 3),
-             abort: window._abortReason || null };
+    };
   }
 
   async function run() {
     if (!boot()) { $('status').textContent = 'boot failed'; return; }
     $('runBtn').disabled = true;
+    logLines = [];
+    log('forward to COAST_HOLD entry…');
+
     try {
-      $('status').textContent = 'forward to COAST_WAIT entry…';
-      const pv = presetValues();
-      const _alt = pv.values && pv.values.insertion && pv.values.insertion.TARGET_ORBIT_ALT_KM;
-      const _meco = pv.values && pv.values.ascent && pv.values.ascent.MECO_TARGET_BOOSTER_FUEL_KG;
-      const _G = pv.values && pv.values.ascent && pv.values.ascent.PUSH_MAX_GIMBAL_DEG;
-      $('status').textContent = '[visible preset header] guide=' + pv.guideName + ' alt=' + _alt + ' meco=' + _meco + ' G=' + _G;
-      console.log('[visible preset] guide=' + pv.guideName + ' alt=' + _alt + ' meco=' + _meco + ' G=' + _G + ' lead=' + (pv.values.insertion && pv.values.insertion.CIRC_TRIGGER_LEAD_S));
-      await new Promise(r => setTimeout(r, 100));
-      TunerEngine.prepareRun(pv.guideName, pv.values, TunerConfig.env);
-      let prevPhase = null, snapshotCaptured = false;
-      const maxTicks = Math.ceil(5000 / DT);   // forward scan: enough for 2000 km CH entry
+      TunerEngine.prepareRun('leoInsertionV3', baselineValues(), TunerConfig.env);
+      let prevPhase = null, snap = null;
+      const maxTicks = Math.ceil(5000 / DT);
+
       for (let i = 0; i < maxTicks; i++) {
         if (state.halted) break;
         TunerEngine.tick(DT);
         const gs = Guidance.getGuideStatus();
-        const phase = gs.phase;
-        if (phase !== prevPhase) {
-          if (phase === 'COAST_HOLD' && !snapshotCaptured) {
-            g_snapshot = captureSnapshot();
-            const cfgs = g_snapshot.guidanceState && g_snapshot.guidanceState.guideConfigs;
-            const ins = cfgs && cfgs.leoInsertionV3 && cfgs.leoInsertionV3.insertion;
-            g_snapshot.__targetAltKm = (ins && Number.isFinite(ins.TARGET_ORBIT_ALT_KM)) ? ins.TARGET_ORBIT_ALT_KM : 320;
-            snapshotCaptured = true;
-          }
-          prevPhase = phase;
+        const ph = gs.phase;
+        if (ph !== prevPhase && ph === 'COAST_HOLD' && !snap) {
+          snap = captureSnapshot();
+          log('snapshot at CH entry, simTime=' + state.simTime.toFixed(3));
         }
-        if (gs.payloadCleared) break;
+        prevPhase = ph;
+        if (snap && gs.payloadCleared) break;
         if ((i & 255) === 255) {
-          $('status').textContent = 'forward t=' + state.simTime.toFixed(1) + ' ph=' + phase;
+          $('status').textContent = 'forward t=' + state.simTime.toFixed(1) + ' ph=' + ph;
           await new Promise(r => setTimeout(r, 0));
         }
       }
+      if (!snap) { log('no CH snapshot captured'); $('runBtn').disabled = false; return; }
 
-      if (!g_snapshot) { $('status').textContent = 'no snapshot captured'; $('runBtn').disabled = false; return; }
+      // read current config lead from snapshot
+      const cfg = snap.guidanceState.guideConfigs.leoInsertionV3;
+      const leadConfig = cfg.insertion.CIRC_TRIGGER_LEAD_S;
+      log('config lead = ' + leadConfig + ' s');
 
-      $('status').textContent = 'bisecting lead…';
-      const results = [];
-      const targetMargin = 4.5;
-      let loTicks = Math.round(3.5 / LEAD_QUANTUM);
-      let hiTicks = Math.round(8.0 / LEAD_QUANTUM);
+      // lattice point — only li matters (state is already at CH)
+      const point = {
+        Gi: Math.round((cfg.ascent.PUSH_MAX_GIMBAL_DEG) / TunerConfig.quanta.G),
+        Tn: Math.round((cfg.ascent.PUSH_T_S) / TunerConfig.quanta.T),
+        bi: Math.round((cfg.insertion.STAGE_BURN_AOA_BIAS_DEG) / TunerConfig.quanta.bias),
+        li: Math.round(leadConfig / TunerConfig.quanta.lead),
+        meco: cfg.ascent.MECO_TARGET_BOOSTER_FUEL_KG,
+      };
+      log('point li=' + point.li + ' (lead=' + (point.li * TunerConfig.quanta.lead) + 's)');
 
-      // 1st attempt at baseline lead
-      const baseTicks = Math.round(5.53 / LEAD_QUANTUM);
-      const r0 = await attempt(baseTicks * LEAD_QUANTUM);
-      results.push(r0);
-      if (Number.isFinite(r0.marginS) && r0.marginS >= targetMargin) hiTicks = baseTicks;
-      else loTicks = baseTicks;
-
-      // bisect
-      for (let iter = 0; iter < 10; iter++) {
-        const midTicks = Math.round((loTicks + hiTicks) / 2);
-        if (midTicks === loTicks || midTicks === hiTicks) break;
-        const r = await attempt(midTicks * LEAD_QUANTUM);
-        results.push(r);
-        $('status').textContent = 'iter ' + (iter+1) + ' lead=' + (midTicks * LEAD_QUANTUM).toFixed(4) + 's margin=' + fmt(r.marginS, 3) + 's';
-        if (Number.isFinite(r.marginS) && r.marginS >= targetMargin) hiTicks = midTicks;
-        else loTicks = midTicks;
-      }
-
-      // pick best (closest to target margin, feasible)
-      let best = null;
-      for (const r of results) {
-        if (!Number.isFinite(r.marginS) || r.vrEnd < 0) continue;
-        if (!best || Math.abs(r.marginS - targetMargin) < Math.abs(best.marginS - targetMargin)) best = r;
-      }
-
-      // Expand range: if best sits at the upper boundary and its margin is
-      // still below target, the true optimum is further out. Probe higher.
-      const upperBoundary = hiTicks * LEAD_QUANTUM;
-      for (let exp = 0; exp < 3; exp++) {
-        if (!best) break;
-        if (best.lead < upperBoundary - LEAD_QUANTUM * 2) break;
-        if (best.marginS >= targetMargin) break;   // already reached target
-        const nextTick = hiTicks + Math.round(1.0 / LEAD_QUANTUM);
-        const rr = await attempt(nextTick * LEAD_QUANTUM);
-        results.push(rr);
-        $('status').textContent = 'expand hi lead=' + (nextTick * LEAD_QUANTUM).toFixed(4) + ' marg=' + fmt(rr.marginS, 3);
-        if (rr.vrEnd >= 0 && Math.abs(rr.marginS - targetMargin) < Math.abs(best.marginS - targetMargin)) best = rr;
-        hiTicks = nextTick;
-        upperBoundary = hiTicks * LEAD_QUANTUM;
-      }
-
-      const rows = [
-        { h: 'Snapshot at COAST_WAIT entry' },
-        { k: 'snapshot phase', v: 'COAST_HOLD entry' },
-        { k: 'simTime', v: fmt(g_snapshot.simTime, 4) + ' s' },
-        { k: 'bodies', v: g_snapshot.bodies.length + '' },
-        { h: 'Attempts' },
-      ];
-      results.forEach((r, i) => {
-        rows.push({ k: '#' + (i+1) + ' lead=' + fmt(r.lead, 4),
-          v: 'circStart=' + fmt(r.circStartT, 3) + ' circEnd=' + fmt(r.circEndT, 3) + ' marg=' + fmt(r.marginS, 3) + ' vrEnd=' + fmt(r.vrEnd, 5) + ' pay=' + fmt(r.payloadT, 3) + ' lastPh=' + (r.lastPhase || '?') + ' t=' + fmt(r.lastSimTime, 1) + (r.halted ? ' HALTED' : '') + (r.crashed ? ' CRASH' : '') + (r.abort ? ' ABORT' : '') });
+      log('calling TunerCore.tuneLead with checkpoint hook…');
+      const hook = makeCheckpointHook(snap, cfg);
+      const result = await TunerCore.tuneLead(point, {
+        hook,
+        onLog: (s) => log('  ' + s),
       });
-      if (best) {
-        rows.push({ h: 'Best' });
-        rows.push({ k: 'lead', v: fmt(best.lead, 4) + ' s' });
-        rows.push({ k: 'margin', v: fmt(best.marginS, 4) + ' s' });
-        rows.push({ k: 'vrEnd', v: fmt(best.vrEnd, 5) + ' m/s' });
-      }
 
-      const tb = $('t').querySelector('tbody');
-      tb.innerHTML = rows.map(r => r.h
-        ? '<tr class="heading"><td colspan="2">' + r.h + '</td></tr>'
-        : '<tr' + (r.k === 'lead' || r.k === 'margin' || r.k === 'vrEnd' ? ' class="hl"' : '') +
-          '><td>' + r.k + '</td><td style="font-size:11px">' + r.v + '</td></tr>'
-      ).join('');
-
-      $('raw').textContent = results.map(r =>
-        'lead=' + r.lead.toFixed(4) + ' margin=' + fmt(r.marginS, 4) + ' vrEnd=' + fmt(r.vrEnd, 5) + ' circEnd=' + fmt(r.circEndT, 3) + ' payload=' + fmt(r.payloadT, 3)
-      ).join('\n');
+      log('--- done ---');
+      resEl.textContent = JSON.stringify({
+        ok: result.ok,
+        inBand: result.inBand,
+        reason: result.reason,
+        lead: result.lead,
+        leadTicks: result.leadTicks,
+        marginS: result.marginS,
+        vrEnd: result.vrEnd,
+        vrMin: result.vrMin,
+        phase: result.phase,
+        evals: result.evals,
+        wallMs: result.wallMs,
+      }, null, 2);
 
       $('status').textContent = 'done';
       $('runBtn').disabled = false;
     } catch (e) {
       console.error(e);
-      $('status').textContent = 'ERROR: ' + e.message;
+      log('ERROR: ' + e.message);
+      $('status').textContent = 'ERROR';
       $('runBtn').disabled = false;
     }
   }
 
   $('runBtn').addEventListener('click', run);
-  $('clearBtn').addEventListener('click', () => {
-    $('t').querySelector('tbody').innerHTML = '';
-    $('raw').textContent = '—';
-    $('status').textContent = 'idle';
-  });
-  // populate preset dropdown (default + user presets)
-  (function populatePresets() {
-    const sel = $('presetSel');
-    if (!sel) return;
-    const opts = [];
-    if (typeof GUIDE_DEFAULT_PRESETS === 'object') {
-      Object.keys(GUIDE_DEFAULT_PRESETS).forEach(g => {
-        const p = GUIDE_DEFAULT_PRESETS[g];
-        if (p && p.id) opts.push({ id: p.id, label: '[default] ' + g + ' — ' + p.name });
-      });
-    }
-    if (typeof loadUserPresets === 'function') {
-      try {
-        loadUserPresets().forEach(p => {
-          if (p && p.id) opts.push({ id: p.id, label: '[user] ' + p.guideName + ' — ' + p.name });
-        });
-      } catch (e) {}
-    }
-    if (!opts.length) { sel.innerHTML = '<option value="">(no presets)</option>'; return; }
-    sel.innerHTML = opts.map(o => '<option value="' + o.id + '">' + o.label + '</option>').join('');
-    const def = opts.find(o => o.id === 'default:leoInsertionV3');
-    if (def) sel.value = def.id;
-  })();
-
   $('status').textContent = 'ready';
 })();
 </script>
