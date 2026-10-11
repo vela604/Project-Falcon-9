@@ -289,9 +289,20 @@ self.onmessage = async (e) => {
             result = { ok: false, reason: 'lead_failed: ' + lr.reason, lead: lr.lead, margin: lr.marginS, evals: lr.evals };
           } else {
             // ---- 4. FULL eval from CH with best lead ----
+            // Tick until payload PHYSICALLY clears (gs.payloadCleared === true).
+            // 'DONE' phase fires at deploy COMMAND, not at payload clear — the payload
+            // physically clears ~10-30 s later. Stopping at DONE left gsEnd.payloadCleared
+            // false → false "duration_cap_hit + payload_not_cleared" hard-fail.
             emit('probe', tag + ' FULL lead=' + lr.lead.toFixed(4));
             restoreSnap(chSnap, newBias, lr.lead);
-            const okFull = await tickUntilPhase(['DONE'], 300) || Guidance.getGuideStatus().payloadCleared;
+            let okFull = false;
+            const _capTicksFull = Math.ceil(300 / CONFIG.DT);
+            for (let _i = 0; _i < _capTicksFull; _i++) {
+              if (state.halted) break;
+              TunerEngine.tick(CONFIG.DT);
+              const _gs = Guidance.getGuideStatus();
+              if (_gs && _gs.payloadCleared) { okFull = true; break; }
+            }
             const gsEnd = Guidance.getGuideStatus();
             const stb = findStageBody();
             const m = {
