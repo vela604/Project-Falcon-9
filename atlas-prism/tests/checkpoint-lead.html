@@ -19,6 +19,8 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
 
 <h1>Checkpoint Lead — Pro-Alpha tuneLead from COAST_HOLD</h1>
 
+<select id="presetSel" style="background:#101a30;color:#dbe6f5;border:1px solid #1c2b45;
+        padding:8px 12px;border-radius:4px;font:inherit;cursor:pointer;margin-right:8px;min-width:340px;"></select>
 <button id="runBtn">Run</button>
 <div id="status">idle</div>
 <pre id="log">—</pre>
@@ -40,6 +42,7 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
 <script src="../../js/simJs/guidance/guidance-blocks.js"></script>
 <script src="../../js/simJs/guidance/guidance.js"></script>
 <script src="../../js/guideConfigDefaults.js"></script>
+<script src="../../js/guidancePresets.js"></script>
 
 <script src="../lib/config.js"></script>
 <script src="../lib/sim.js"></script>
@@ -101,6 +104,16 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
   }
 
   function baselineValues() {
+    const sel = $('presetSel');
+    const id = sel && sel.value;
+    if (id && typeof getPresetById === 'function') {
+      const preset = getPresetById(id);
+      if (preset && preset.constants) {
+        const out = JSON.parse(JSON.stringify(preset.constants));
+        if (!out.done) out.done = { DEORBIT_ENABLED: false };
+        return out;
+      }
+    }
     const b = TunerConfig.baselineRaw;
     return {
       ascent: { PUSH_MAX_GIMBAL_DEG: b.G, PUSH_T_S: b.T, MECO_TARGET_BOOSTER_FUEL_KG: b.meco },
@@ -303,6 +316,28 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
   }
 
   $('runBtn').addEventListener('click', run);
+  (function populatePresets() {
+    const sel = $('presetSel');
+    if (!sel) return;
+    const GUIDE = 'leoInsertionV3';
+    const opts = [];
+    if (typeof GUIDE_DEFAULT_PRESETS === 'object' && GUIDE_DEFAULT_PRESETS[GUIDE]) {
+      const p = GUIDE_DEFAULT_PRESETS[GUIDE];
+      if (p && p.id) opts.push({ id: p.id, label: '[default] ' + p.name });
+    }
+    if (typeof loadUserPresets === 'function') {
+      try {
+        loadUserPresets().forEach(p => {
+          if (p && p.id && p.guideName === GUIDE) opts.push({ id: p.id, label: '[user] ' + p.name });
+        });
+      } catch (e) {}
+    }
+    if (!opts.length) { sel.innerHTML = '<option value="">(no leoInsertionV3 presets)</option>'; return; }
+    sel.innerHTML = opts.map(o => '<option value="' + o.id + '">' + o.label + '</option>').join('');
+    const def = opts.find(o => o.id === 'default:leoInsertionV3');
+    if (def) sel.value = def.id;
+  })();
+
   $('status').textContent = 'ready';
 })();
 </script>
