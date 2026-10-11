@@ -122,25 +122,30 @@ td.fail { color:#ff5f7e; }
     }
 
     // ---- Phase 1: coarse scan to bracket E_ref ----
+    // Expand from BASE bias (not slope-guess) — contour surrounds it,
+    // and slope-guess can be wildly off for large |ΔG|.
     state.phase = 'coarse scan';
-    // Slope-informed starting guess
-    const guess = baseBias + (G - 0.60) * 45;   // ~0.45 deg/0.01G
-    const coarseStep = 0.6;
-
-    // Try an expanding ladder of coarse offsets around guess
-    // Start tight, expand outward
-    const offsets = [0, -1, +1, -2, +2, -3, +3, -4, +4, -5, +5, -6, +6];
     const seen = new Set();
     const valid = [];
-    for (const o of offsets) {
-      const b = guess + o * coarseStep;
-      const bR = Math.round(b * 1e10) / 1e10;
-      if (seen.has(bR)) continue;
-      seen.add(bR);
-      const r = await ev(b);
-      if (r.ok) valid.push(r);
-      if (valid.length >= 2) {
-        // Check if we have a bracket
+
+    // First probe base bias
+    const b0 = baseBias;
+    const r0 = await ev(b0);
+    if (r0.ok) valid.push(r0);
+
+    // Geometric expansion of step in BOTH directions
+    // step sizes: 0.2, 0.4, 0.8, 1.6, 2.4, 3.2, 4.0
+    const steps = [0.2, 0.4, 0.8, 1.6, 2.4, 3.2, 4.0];
+    for (const step of steps) {
+      for (const dir of [1, -1]) {
+        const b = b0 + dir * step;
+        if (Math.abs(b) > 5) continue;
+        const bR = Math.round(b * 1e10) / 1e10;
+        if (seen.has(bR)) continue;
+        seen.add(bR);
+        const r = await ev(b);
+        if (r.ok) valid.push(r);
+        // Check bracket
         let above = null, below = null;
         for (const v of valid) {
           if (v.E >= E_ref && (!above || v.E < above.E)) above = v;
@@ -148,6 +153,12 @@ td.fail { color:#ff5f7e; }
         }
         if (above && below) break;
       }
+      let above = null, below = null;
+      for (const v of valid) {
+        if (v.E >= E_ref && (!above || v.E < above.E)) above = v;
+        if (v.E <= E_ref && (!below || v.E > below.E)) below = v;
+      }
+      if (above && below) break;
     }
 
     // ---- Phase 2: bracket detection ----
