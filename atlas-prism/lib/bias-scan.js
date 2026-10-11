@@ -107,10 +107,36 @@
 
       const los = rows.filter(r => r.cls === 'lo').map(r => r.bi);
       const his = rows.filter(r => r.cls === 'hi').map(r => r.bi);
-      const newLo = los.length ? Math.max(...los) : lo;
-      const newHi = his.length ? Math.min(...his) : hi;
+      const fails = rows.filter(r => r.cls === 'fail').map(r => r.bi);
+      let newLo = lo, newHi = hi;
+
+      if (los.length && his.length) {
+        // Classic bracket: closest lo below, closest hi above.
+        newLo = Math.max(...los);
+        newHi = Math.min(...his);
+      } else if (los.length) {
+        // All valid probes are "lo" (E below target). Shrink from above.
+        // Fail probes below that point act as the low boundary marker
+        // (the boundary between crash and valid is somewhere between them,
+        // but we only need a valid probe; probing again at the fail site
+        // would waste an eval).
+        newHi = Math.min(...los);
+        const failsBelow = fails.filter(x => x < newHi);
+        if (failsBelow.length) newLo = Math.max(...failsBelow);
+        // else: keep old lo (crash not observed in this batch).
+      } else if (his.length) {
+        // All valid probes are "hi" (E above target). Shrink from below.
+        newLo = Math.max(...his);
+        const failsAbove = fails.filter(x => x > newLo);
+        if (failsAbove.length) newHi = Math.min(...failsAbove);
+      } else {
+        say('all probes failed — no info to bracket');
+        break;
+      }
+
       if (newLo >= newHi) { say('bracket collapsed without convergence'); break; }
       if (newLo === lo && newHi === hi) { say('no progress'); break; }
+      say('  bracket -> [' + (newLo*Q.bias).toFixed(4) + ', ' + (newHi*Q.bias).toFixed(4) + ']');
       lo = newLo; hi = newHi;
       // refine target via observed slope
       const valid = rows.filter(r => Number.isFinite(r.E) && r.cls !== 'fail');
