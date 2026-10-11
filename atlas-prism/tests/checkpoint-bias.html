@@ -106,6 +106,13 @@ tr.match td { background:rgba(74,222,128,0.06); }
   }
 
   function captureSnapshot() {
+    // Debug: capture ALL enumerable state keys, not just the known ones
+    const stateKeys = Object.keys(state);
+    const stateSnapshot = {};
+    stateKeys.forEach(k => {
+      if (k === 'bodies') return;
+      try { stateSnapshot[k] = JSON.parse(JSON.stringify(state[k])); } catch (e) { stateSnapshot[k] = null; }
+    });
     return {
       bodies: deepClone(state.bodies),
       simTime: state.simTime,
@@ -113,11 +120,18 @@ tr.match td { background:rgba(74,222,128,0.06); }
       halted: state.halted,
       landed: state.landed,
       crashed: state.crashed,
+      stateKeysSnapshot: stateSnapshot,
       guidanceState: Guidance.exportGuideState(),
     };
   }
 
   function restoreSnapshot(snap, newBias) {
+    // Restore every captured state key, then overwrite bodies separately.
+    if (snap.stateKeysSnapshot) {
+      Object.keys(snap.stateKeysSnapshot).forEach(k => {
+        try { state[k] = JSON.parse(JSON.stringify(snap.stateKeysSnapshot[k])); } catch (e) {}
+      });
+    }
     state.simTime = snap.simTime;
     state.activeBodyIndex = snap.activeBodyIndex;
     state.halted = snap.halted;
@@ -158,6 +172,11 @@ tr.match td { background:rgba(74,222,128,0.06); }
       if (ph !== prevPhase && ph === targetPhase && !snap && captureAt === 'enter') {
         snap = captureSnapshot();
         log('snapshot ' + targetPhase + ' entry: t=' + state.simTime.toFixed(3));
+        log('  state keys: ' + Object.keys(state).join(','));
+        const gks = Object.keys(snap.guidanceState);
+        log('  guidanceState keys: ' + gks.join(','));
+        const v3ks = snap.guidanceState.v3State ? Object.keys(snap.guidanceState.v3State) : [];
+        log('  v3State keys: ' + v3ks.join(','));
       }
       if (ph === 'COAST_WAIT' && !refState) {
         refState = {
