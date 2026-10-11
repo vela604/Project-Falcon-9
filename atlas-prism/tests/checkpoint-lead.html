@@ -173,6 +173,7 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
     let circStartT = NaN, circEndT = NaN, marginS = NaN, vrEnd = NaN, payloadT = NaN;
     let prevPhase = Guidance.getGuideStatus().phase;
     window._vrTrace = [];
+    window._abortReason = null;
     // Scale cap by target altitude: baseline 320km needs ~60s post-CW,
     // high orbits (2000km) need ~500s (longer stage burn + coast).
     const tgtAlt = (g_snapshot && g_snapshot.__targetAltKm) ? g_snapshot.__targetAltKm : 320;
@@ -200,6 +201,19 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
         }
       }
       if (gs.payloadCleared) { payloadT = state.simTime; break; }
+      // Early abort: if we're stuck in CH_2/CR_2 and vr has crossed negative,
+      // payload peak is missed, next peak is ~period away. Abort.
+      if ((phase === 'COAST_HOLD_2' || phase === 'COAST_ROTATE_2') && i > 20) {
+        const stb = findStage();
+        if (stb) {
+          const rr = Math.hypot(stb.rx, stb.ry);
+          const vvr = (stb.vx * stb.rx + stb.vy * stb.ry) / rr;
+          if (vvr < -0.5) {   // clearly past apogee
+            window._abortReason = 'CH_2 vr<0 (missed peak)';
+            break;
+          }
+        }
+      }
       // debug: CH_2 vr tracking
       if (phase === 'COAST_HOLD_2' || phase === 'COAST_ROTATE_2') {
         const stb = findStage();
@@ -218,7 +232,8 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
     return { lead, circStartT, circEndT, marginS, vrEnd, payloadT,
              lastPhase: gsEnd.phase, lastSimTime: state.simTime,
              halted: state.halted, crashed: state.crashed,
-             vrTrace: (window._vrTrace || []).slice(0, 3) };
+             vrTrace: (window._vrTrace || []).slice(0, 3),
+             abort: window._abortReason || null };
   }
 
   async function run() {
@@ -291,6 +306,22 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
         if (!best || Math.abs(r.marginS - targetMargin) < Math.abs(best.marginS - targetMargin)) best = r;
       }
 
+      // Expand range: if best sits at the upper boundary and its margin is
+      // still below target, the true optimum is further out. Probe higher.
+      const upperBoundary = hiTicks * LEAD_QUANTUM;
+      for (let exp = 0; exp < 3; exp++) {
+        if (!best) break;
+        if (best.lead < upperBoundary - LEAD_QUANTUM * 2) break;
+        if (best.marginS >= targetMargin) break;   // already reached target
+        const nextTick = hiTicks + Math.round(1.0 / LEAD_QUANTUM);
+        const rr = await attempt(nextTick * LEAD_QUANTUM);
+        results.push(rr);
+        $('status').textContent = 'expand hi lead=' + (nextTick * LEAD_QUANTUM).toFixed(4) + ' marg=' + fmt(rr.marginS, 3);
+        if (rr.vrEnd >= 0 && Math.abs(rr.marginS - targetMargin) < Math.abs(best.marginS - targetMargin)) best = rr;
+        hiTicks = nextTick;
+        upperBoundary = hiTicks * LEAD_QUANTUM;
+      }
+
       const rows = [
         { h: 'Snapshot at COAST_WAIT entry' },
         { k: 'snapshot phase', v: 'COAST_HOLD entry' },
@@ -300,7 +331,7 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
       ];
       results.forEach((r, i) => {
         rows.push({ k: '#' + (i+1) + ' lead=' + fmt(r.lead, 4),
-          v: 'circStart=' + fmt(r.circStartT, 3) + ' circEnd=' + fmt(r.circEndT, 3) + ' marg=' + fmt(r.marginS, 3) + ' vrEnd=' + fmt(r.vrEnd, 5) + ' pay=' + fmt(r.payloadT, 3) + ' lastPh=' + (r.lastPhase || '?') + ' t=' + fmt(r.lastSimTime, 1) + (r.halted ? ' HALTED' : '') + (r.crashed ? ' CRASH' : '') });
+          v: 'circStart=' + fmt(r.circStartT, 3) + ' circEnd=' + fmt(r.circEndT, 3) + ' marg=' + fmt(r.marginS, 3) + ' vrEnd=' + fmt(r.vrEnd, 5) + ' pay=' + fmt(r.payloadT, 3) + ' lastPh=' + (r.lastPhase || '?') + ' t=' + fmt(r.lastSimTime, 1) + (r.halted ? ' HALTED' : '') + (r.crashed ? ' CRASH' : '') + (r.abort ? ' ABORT' : '') });
       });
       if (best) {
         rows.push({ h: 'Best' });
