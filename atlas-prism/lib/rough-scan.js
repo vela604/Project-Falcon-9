@@ -222,10 +222,12 @@
         }
         const pred = (mc + m.stageFuelAtStopKg) * Math.exp(-m.coastDeltaV / Ve) - mc;
         let cls;
-        if (pred > bandHi) cls = 'up';
+        if (pred < 0) cls = 'fail';                    // stage fuel insufficient for circ burn
+        else if (pred > bandHi) cls = 'up';
         else if (pred < bandLo) cls = 'down';
         else cls = 'in';
-        return { meco: r.meco, cls, pred, m, point: r.point };
+        return { meco: r.meco, cls, pred, m, point: r.point,
+                 reason: cls === 'fail' ? 'neg-pred (stage-fuel-insufficient)' : null };
       });
 
       rows.sort((a, b) => a.meco - b.meco);
