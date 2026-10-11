@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Rough Scan Test</title>
+<style>
+body { margin:0; background:#060912; color:#dbe6f5; font:13px/1.5 monospace; padding:20px; }
+h1 { color:#35d6ff; font-size:15px; margin:0 0 12px; letter-spacing:1px; }
+button { background:#101a30; color:#dbe6f5; border:1px solid #1c2b45;
+         padding:8px 16px; border-radius:4px; font:inherit; cursor:pointer; margin-right:8px; }
+button:hover { border-color:#35d6ff; color:#35d6ff; }
+button:disabled { opacity:.4; }
+input[type=number] { background:#101a30; color:#dbe6f5; border:1px solid #1c2b45;
+         padding:6px 10px; border-radius:4px; font:inherit; width:80px; }
+#status { color:#ffd23f; margin:8px 0; min-height:1.2em; }
+pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4px;
+      font-size:11.5px; overflow:auto; max-height:500px; }
+</style>
+</head>
+<body>
+
+<h1>Rough Scan — parallel MECO search</h1>
+
+<label>workers <input type="number" id="nW" value="4" min="1" max="8"></label>
+<button id="runBtn">Run rough scan</button>
+<button id="clearBtn">Clear</button>
+<div id="status">idle</div>
+<pre id="log">—</pre>
+<pre id="result">—</pre>
+
+<script src="../../js/componentLibrary.js"></script>
+<script src="../../js/customDesign.js"></script>
+<script src="../../js/fleet.js"></script>
+<script src="../../js/config.js"></script>
+<script src="../../js/simJs/core/massProps.js"></script>
+<script src="../../js/guideConfigDefaults.js"></script>
+
+<script src="../lib/config.js"></script>
+<script src="../lib/worker-pool.js"></script>
+<script src="../lib/rough-scan.js"></script>
+
+<script>
+(function () {
+  'use strict';
+  const $ = (id) => document.getElementById(id);
+  const logEl = $('log'), resEl = $('result');
+  let logLines = [];
+  const log = (s) => { logLines.push(s); logEl.textContent = logLines.join('\n'); logEl.scrollTop = logEl.scrollHeight; };
+  const fmt = (x, d) => Number.isFinite(x) ? x.toFixed(d) : String(x);
+
+  // compute mc and Ve from the active stack
+  function computeMcVe() {
+    const members = (typeof getActiveStackMembers === 'function') ? getActiveStackMembers() : [];
+    const stage = members.find(m => m && m.stageRole === 'stage');
+    if (!stage) return null;
+    const d = (typeof stageDerivedMasses === 'function') ? stageDerivedMasses(stage) : null;
+    if (!d || d.infeasible) return null;
+    const stk = (typeof getActiveStack === 'function') ? getActiveStack() : null;
+    const pl = (stk && stk.payloadId && typeof getPayload === 'function') ? getPayload(stk.payloadId) : null;
+    const mc = d.dryMassNoPayload + (pl && Number.isFinite(pl.mass) ? pl.mass : 0);
+    const Ve = d.effectiveVe;
+    return { mc, Ve, stackId: stk ? stk.id : null };
+  }
+
+  async function run() {
+    $('runBtn').disabled = true;
+    logLines = [];
+    try {
+      const info = computeMcVe();
+      if (!info) { log('failed to compute mc/Ve from active stack'); return; }
+      log('mc = ' + info.mc.toFixed(2) + ' kg, Ve = ' + info.Ve.toFixed(2) + ' m/s, stackId = ' + info.stackId);
+
+      const n = Math.max(1, Math.min(8, parseInt($('nW').value, 10) || 4));
+      log('creating pool with ' + n + ' workers…');
+      const pool = new TunerCore.WorkerPool(n, { workerPath: '../lib/worker-sim.js' });
+      await pool.waitReady();
+      log('pool ready');
+
+      // baseline point (only meco will be overwritten per probe)
+      const Q = TunerConfig.quanta;
+      const basePoint = {
+        Gi: 60, Tn: Math.round(4.82 / Q.T),
+        bi: Math.round(0.59 / Q.bias),
+        li: Math.round(5.53 / Q.lead),
+        meco: 52612,   // overwritten per probe
+      };
+
+      log('');
+      log('starting rough scan…');
+      const r = await TunerCore.roughScan(basePoint, {
+        pool,
+        mc: info.mc, Ve: info.Ve,
+        stackId: info.stackId,
+        altKm: 320, fuelPct: 100,
+        onLog: (s) => log('  ' + s),
+      });
+
+      log('');
+      log('=== RESULT ===');
+      resEl.textContent = JSON.stringify({
+        ok: r.ok,
+        reason: r.reason,
+        meco: r.meco,
+        predictedResidual: r.predictedResidual,
+        evals: r.evals,
+        wallMs: r.wallMs,
+        iters: r.log.filter(l => /iter /.test(l)).length,
+      }, null, 2);
+
+      log('done');
+    } catch (e) {
+      console.error(e);
+      log('ERROR: ' + e.message + '\n' + (e.stack || ''));
+    } finally {
+      $('runBtn').disabled = false;
+    }
+  }
+
+  $('runBtn').addEventListener('click', run);
+  $('clearBtn').addEventListener('click', () => {
+    logLines = []; logEl.textContent = '—'; resEl.textContent = '—'; $('status').textContent = 'idle';
+  });
+  $('status').textContent = 'ready';
+})();
+</script>
+</body>
+</html>
