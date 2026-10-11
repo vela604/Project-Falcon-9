@@ -120,15 +120,12 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
       const h = dtSeg / steps;
       const mdot = sample.mdot;
 
-      // local deriv — thrust prograde, gravity, fuel flowing
+      // local deriv — replay captured total accel (thrust+gravity)
+      // from forward sim. Reverse becomes exact.
       function deriv(st) {
-        const g = gravity(st.r);
-        const vM = Math.hypot(st.v.x, st.v.y) || 1;
-        const ux = st.v.x / vM, uy = st.v.y / vM;
-        const aT = mdot * Ve / Math.max(1, st.m);
         return {
           drx: st.v.x, dry: st.v.y,
-          dvx: g.x + aT * ux, dvy: g.y + aT * uy,
+          dvx: sample.ax, dvy: sample.ay,
           dm: -mdot,
         };
       }
@@ -229,6 +226,9 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
           burnProfile.push({
             t: state.simTime,
             mdot: md,
+            theta: b.theta,
+            ax: b._lastAccelX || 0,
+            ay: b._lastAccelY || 0,
             r: { x: b.rx, y: b.ry },
             v: { x: b.vx, y: b.vy },
           });
