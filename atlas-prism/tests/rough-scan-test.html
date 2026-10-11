@@ -48,7 +48,7 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
   let logLines = [];
   const log = (s) => { logLines.push(s); logEl.textContent = logLines.join('\n'); logEl.scrollTop = logEl.scrollHeight; };
   const fmt = (x, d) => Number.isFinite(x) ? x.toFixed(d) : String(x);
-  let _lastMeco = null, _lastPoint = null, _lastMc = null, _lastVe = null;
+  let _lastMeco = null, _lastPoint = null, _lastMc = null, _lastVe = null, _lastPred = null;
 
   // compute mc and Ve from the active stack
   function computeMcVe() {
@@ -109,7 +109,7 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
         iters: r.log.filter(l => /iter /.test(l)).length,
       }, null, 2);
 
-      if (r.ok) { _lastMeco = r.meco; _lastPoint = r.point; _lastMc = info.mc; _lastVe = info.Ve; $('verifyBtn').disabled = false; }
+      if (r.ok) { _lastMeco = r.meco; _lastPoint = r.point; _lastMc = info.mc; _lastVe = info.Ve; _lastPred = r.predictedResidual; $('verifyBtn').disabled = false; }
       log('done');
     } catch (e) {
       console.error(e);
@@ -137,7 +137,7 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
       const fullPoint = Object.assign({}, _lastPoint, { meco: _lastMeco });
       const m = await pool.runEval(fullPoint, { stopAt: 'FULL', quiet: true });
       log('actual end=' + m.endReason + '  residual=' + fmt(m.stageResidualKg, 1) + ' kg  deploy=' + fmt(m.deployTimeS, 1) + 's  cleared=' + m.payloadCleared);
-      log('predicted was 149.2 kg.  delta=' + fmt(m.stageResidualKg - 149.2, 1) + ' kg');
+      log('predicted was ' + fmt(_lastPred, 1) + ' kg.  delta=' + fmt(m.stageResidualKg - _lastPred, 1) + ' kg');
       await pool.terminate();
     } catch (e) {
       log('VERIFY ERROR: ' + e.message);
