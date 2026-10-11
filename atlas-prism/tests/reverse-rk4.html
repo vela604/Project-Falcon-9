@@ -161,22 +161,8 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
   async function forward() {
     TunerEngine.prepareRun(TunerConfig.guideName, baselineValues(), TunerConfig.env);
 
-    // mcBase = stage dry (no payload, no fairing) + payload
-    const stb = findStage();
+    // mcBase / Ve / mdot computed AFTER split (below), from live stage body
     let mcBase = 0;
-    if (stb && stb.members && typeof stageDerivedMasses === 'function') {
-      for (const m of stb.members) {
-        if (m && m.stageRole === 'stage') {
-          const d = stageDerivedMasses(m);
-          if (d && !d.infeasible) { mcBase += d.dryMassNoPayload; break; }
-        }
-      }
-    }
-    const stk = getActiveStack();
-    if (stk && stk.payloadId && typeof getPayload === 'function') {
-      const pl = getPayload(stk.payloadId);
-      if (pl && Number.isFinite(pl.mass)) mcBase += pl.mass;
-    }
 
     const snaps = {};
     let prevPhase = null, endReason = 'loop';
@@ -214,15 +200,39 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
       }
     }
 
-    // engine params
-    let Ve = NaN, mdot = NaN;
-    if (stb && stb.engines && stb.engines.length) Ve = stb.engines[0].Ve;
-    if (stb && stb.members && stb.members[0] && stb.members[0].engineThrusters) {
-      const g = stb.members[0].engineThrusters.gimbal || stb.members[0].engineThrusters.fixed;
-      if (g && Number.isFinite(g.massFlowRate)) mdot = g.massFlowRate;
+    // ----- post-split: fetch stage body, mcBase, Ve, mdot -----
+    const stbFinal = findStage();
+    let Ve = NaN, mdot = NaN, mcBaseReal = 0;
+
+    if (stbFinal && stbFinal.members && stbFinal.members[0]) {
+      const mRec = stbFinal.members[0];
+      if (mRec.stageRole === 'stage' && typeof stageDerivedMasses === 'function') {
+        const d = stageDerivedMasses(mRec);
+        if (d && !d.infeasible) mcBaseReal = d.dryMassNoPayload;
+      }
+      if (mRec.engineThrusters) {
+        const g = mRec.engineThrusters.gimbal || mRec.engineThrusters.fixed;
+        if (g && Number.isFinite(g.massFlowRate)) mdot = g.massFlowRate;
+      }
+    }
+    const stk = getActiveStack();
+    if (stk && stk.payloadId && typeof getPayload === 'function') {
+      const pl = getPayload(stk.payloadId);
+      if (pl && Number.isFinite(pl.mass)) mcBaseReal += pl.mass;
+    }
+    if (stbFinal && stbFinal.engines && stbFinal.engines.length) {
+      if (Number.isFinite(stbFinal.engines[0].Ve)) Ve = stbFinal.engines[0].Ve;
     }
 
-    return { snaps, mcBase, Ve, mdot, endReason };
+    // recompute each snapshot's mass with the correct mcBaseReal
+    if (mcBaseReal > 0) {
+      for (const k of Object.keys(snaps)) {
+        const sn = snaps[k];
+        if (sn && Number.isFinite(sn.fuel)) sn.mass = mcBaseReal + sn.fuel;
+      }
+    }
+
+    return { snaps, mcBase: mcBaseReal, Ve, mdot, endReason };
   }
 
   function baselineValues() {
