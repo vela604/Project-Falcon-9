@@ -196,6 +196,16 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
       for (let i = 0; i < N; i++) {
         TunerEngine.tick(DT);
         refTrail.push(snapTick());
+        if (i >= 1144 && i <= 1155) {
+          const b0 = state.bodies[0];
+          const e0 = b0 && b0.engines && b0.engines[0];
+          log('REF  tick ' + (i+1) + ' t=' + state.simTime.toFixed(4) + ' ph=' + Guidance.getGuideStatus().phase +
+              ' active=' + state.activeBodyIndex + ' nB=' + state.bodies.length +
+              ' b0.roles=' + JSON.stringify(b0 && b0.members ? b0.members.map(m=>m&&m.stageRole) : null) +
+              ' b0.mf=' + (e0 ? (e0.massFlowRate||0).toFixed(2) : '-') +
+              ' b0.tmf=' + (e0 ? e0.targetMassFlowRate : '-') +
+              ' b0.gd=' + (e0 ? (e0.gimbalDeg||0).toFixed(4) : '-'));
+        }
         if ((i & 255) === 255) await new Promise(r => setTimeout(r, 0));
       }
 
@@ -205,6 +215,16 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
       for (let i = 0; i < N; i++) {
         TunerEngine.tick(DT);
         testTrail.push(snapTick());
+        if (i >= 1144 && i <= 1155) {
+          const b0 = state.bodies[0];
+          const e0 = b0 && b0.engines && b0.engines[0];
+          log('TEST tick ' + (i+1) + ' t=' + state.simTime.toFixed(4) + ' ph=' + Guidance.getGuideStatus().phase +
+              ' active=' + state.activeBodyIndex + ' nB=' + state.bodies.length +
+              ' b0.roles=' + JSON.stringify(b0 && b0.members ? b0.members.map(m=>m&&m.stageRole) : null) +
+              ' b0.mf=' + (e0 ? (e0.massFlowRate||0).toFixed(2) : '-') +
+              ' b0.tmf=' + (e0 ? e0.targetMassFlowRate : '-') +
+              ' b0.gd=' + (e0 ? (e0.gimbalDeg||0).toFixed(4) : '-'));
+        }
         if ((i & 255) === 255) await new Promise(r => setTimeout(r, 0));
       }
 
