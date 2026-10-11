@@ -172,7 +172,11 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
     restoreSnapshot(g_snapshot, lead);
     let circStartT = NaN, circEndT = NaN, marginS = NaN, vrEnd = NaN, payloadT = NaN;
     let prevPhase = Guidance.getGuideStatus().phase;
-    const maxTicks = Math.ceil(250 / DT);
+    // Scale cap by target altitude: baseline 320km needs ~60s post-CW,
+    // high orbits (2000km) need ~500s (longer stage burn + coast).
+    const tgtAlt = (g_snapshot && g_snapshot.__targetAltKm) ? g_snapshot.__targetAltKm : 320;
+    const capS = 60 + tgtAlt * 1.2 + 300;
+    const maxTicks = Math.ceil(capS / DT);
     for (let i = 0; i < maxTicks; i++) {
       if (state.halted) break;
       TunerEngine.tick(DT);
@@ -198,7 +202,10 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
       prevPhase = phase;
       if ((i & 255) === 255) await new Promise(r => setTimeout(r, 0));
     }
-    return { lead, circStartT, circEndT, marginS, vrEnd, payloadT };
+    const gsEnd = Guidance.getGuideStatus();
+    return { lead, circStartT, circEndT, marginS, vrEnd, payloadT,
+             lastPhase: gsEnd.phase, lastSimTime: state.simTime,
+             halted: state.halted, crashed: state.crashed };
   }
 
   async function run() {
@@ -218,6 +225,9 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
         if (phase !== prevPhase) {
           if (phase === 'COAST_WAIT' && !snapshotCaptured) {
             g_snapshot = captureSnapshot();
+            const cfgs = g_snapshot.guidanceState && g_snapshot.guidanceState.guideConfigs;
+            const ins = cfgs && cfgs.leoInsertionV3 && cfgs.leoInsertionV3.insertion;
+            g_snapshot.__targetAltKm = (ins && Number.isFinite(ins.TARGET_ORBIT_ALT_KM)) ? ins.TARGET_ORBIT_ALT_KM : 320;
             snapshotCaptured = true;
           }
           prevPhase = phase;
@@ -270,7 +280,7 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
       ];
       results.forEach((r, i) => {
         rows.push({ k: '#' + (i+1) + ' lead=' + fmt(r.lead, 4),
-          v: 'circStart=' + fmt(r.circStartT, 3) + ' circEnd=' + fmt(r.circEndT, 3) + ' marg=' + fmt(r.marginS, 3) + ' vrEnd=' + fmt(r.vrEnd, 5) + ' pay=' + fmt(r.payloadT, 3) });
+          v: 'circStart=' + fmt(r.circStartT, 3) + ' circEnd=' + fmt(r.circEndT, 3) + ' marg=' + fmt(r.marginS, 3) + ' vrEnd=' + fmt(r.vrEnd, 5) + ' pay=' + fmt(r.payloadT, 3) + ' lastPh=' + (r.lastPhase || '?') + ' t=' + fmt(r.lastSimTime, 1) + (r.halted ? ' HALTED' : '') + (r.crashed ? ' CRASH' : '') });
       });
       if (best) {
         rows.push({ h: 'Best' });
