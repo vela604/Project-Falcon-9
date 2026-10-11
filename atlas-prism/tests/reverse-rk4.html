@@ -354,7 +354,7 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
       // ---- prediction: lead = burn duration + ballistic duration ----
       const T_burn_pred = trueOff.t - RB.t;      // time from burn-end going back to burn-start
       const T_coast_pred = RB.t - RB2.t;         // further back to reach cw condition
-      const lead_pred = T_burn_pred + T_coast_pred;
+      const lead_pred = T_coast_pred;   // lead = COAST_WAIT to CIRCULARIZE start
       const lead_actual = ig.t - cw.t;
       const lead_err = lead_pred - lead_actual;
 
