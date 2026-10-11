@@ -139,6 +139,65 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
     return { S, t };
   }
 
+  // Reverse burn using recorded mdot profile. Thrust prograde (velocity dir).
+  function reverseBurnProfile(trueOffState, profile, Ve) {
+    profile = profile.slice().sort((a, b) => a.t - b.t);
+    let S = {
+      r: { x: trueOffState.r.x, y: trueOffState.r.y },
+      v: { x: trueOffState.v.x, y: trueOffState.v.y },
+      m: trueOffState.mass,
+    };
+    let t = trueOffState.t;
+    let idx = profile.length - 1;
+    while (idx >= 0 && profile[idx].t > t) idx--;
+
+    while (idx >= 0) {
+      const sample = profile[idx];
+      const dtSeg = sample.t - t;
+      if (dtSeg >= 0) { idx--; continue; }
+      const steps = Math.max(1, Math.round(-dtSeg / (DT / 4)));
+      const h = dtSeg / steps;
+      const mdot = sample.mdot;
+
+      for (let k = 0; k < steps; k++) {
+        const deriv = (st) => {
+          const g = gravity(st.r);
+          const vM = Math.hypot(st.v.x, st.v.y) || 1;
+          const ux = st.v.x / vM, uy = st.v.y / vM;
+          const aT = mdot * Ve / Math.max(1, st.m);
+          return {
+            drx: st.v.x, dry: st.v.y,
+            dvx: g.x + aT * ux, dvy: g.y + aT * uy,
+            dm: -mdot,
+          };
+        };
+        const c1 = deriv(S);
+        const S2 = { r: { x: S.r.x + h/2*c1.drx, y: S.r.y + h/2*c1.dry },
+                     v: { x: S.v.x + h/2*c1.dvx, y: S.v.y + h/2*c1.dvy },
+                     m: S.m + h/2*c1.dm };
+        const c2 = deriv(S2);
+        const S3 = { r: { x: S.r.x + h/2*c2.drx, y: S.r.y + h/2*c2.dry },
+                     v: { x: S.v.x + h/2*c2.dvx, y: S.v.y + h/2*c2.dvy },
+                     m: S.m + h/2*c2.dm };
+        const c3 = deriv(S3);
+        const S4 = { r: { x: S.r.x + h*c3.drx, y: S.r.y + h*c3.dry },
+                     v: { x: S.v.x + h*c3.dvx, y: S.v.y + h*c3.dvy },
+                     m: S.m + h*c3.dm };
+        const c4 = deriv(S4);
+        S = {
+          r: { x: S.r.x + h/6*(c1.drx + 2*c2.drx + 2*c3.drx + c4.drx),
+               y: S.r.y + h/6*(c1.dry + 2*c2.dry + 2*c3.dry + c4.dry) },
+          v: { x: S.v.x + h/6*(c1.dvx + 2*c2.dvx + 2*c3.dvx + c4.dvx),
+               y: S.v.y + h/6*(c1.dvy + 2*c2.dvy + 2*c3.dvy + c4.dvy) },
+          m: S.m + h/6*(c1.dm + 2*c2.dm + 2*c3.dm + c4.dm),
+        };
+        t += h;
+      }
+      idx--;
+    }
+    return { S, t };
+  }
+
   function dist(a, b) { return Math.hypot(a.r.x - b.r.x, a.r.y - b.r.y); }
   function vdist(a, b) { return Math.hypot(a.v.x - b.v.x, a.v.y - b.v.y); }
   function fmt(x, d) { return Number.isFinite(x) ? x.toFixed(d) : '—'; }
@@ -165,6 +224,8 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
     let mcBase = 0;
 
     const snaps = {};
+    const burnProfile = [];
+    let trueOff = null;
     let prevPhase = null, endReason = 'loop';
 
     const maxTicks = Math.ceil(800 / DT);
@@ -187,6 +248,26 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
       if (phase === 'DONE' && !snaps.__released) {
         snaps.__released = snapNow(b, mcBase);
         endReason = 'payload-released';
+      }
+      // burn profile: capture every tick with mdot > 0 during CIRCULARIZE
+      // or during the spool-down window in COAST_ROTATE_2
+      if (b.engines && b.engines.length && (phase === 'CIRCULARIZE' || (phase === 'COAST_ROTATE_2' && !trueOff))) {
+        let md = 0;
+        b.engines.forEach(e => { md += e.massFlowRate || 0; });
+        if (md > 0.001) {
+          burnProfile.push({
+            t: state.simTime,
+            mdot: md,
+            r: { x: b.rx, y: b.ry },
+            v: { x: b.vx, y: b.vy },
+          });
+        } else if (phase === 'COAST_ROTATE_2' && burnProfile.length > 0) {
+          // fuel stopped flowing — this is the true burn-off tick
+          if (!trueOff) {
+            trueOff = snapNow(b, mcBase);
+            trueOff.t = state.simTime;
+          }
+        }
       }
       if (gs && gs.payloadCleared) { endReason = 'payload-cleared'; break; }
 
@@ -232,7 +313,8 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
       }
     }
 
-    return { snaps, mcBase: mcBaseReal, Ve, mdot, endReason };
+    if (trueOff && mcBaseReal > 0 && Number.isFinite(trueOff.fuel)) trueOff.mass = mcBaseReal + trueOff.fuel;
+    return { snaps, burnProfile, trueOff, mcBase: mcBaseReal, Ve, mdot, endReason };
   }
 
   function baselineValues() {
@@ -283,9 +365,13 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
 
       // ------------ reverse legs ------------
 
-      $('status').textContent = 'reverse R1 (pay → off)…';
-      const S_off_init = { r: { x: off.r.x, y: off.r.y }, v: { x: off.v.x, y: off.v.y }, m: off.mass };
-      const R1 = reverseLeg(S_off_init, tOff, tIg, burn);   // reverse burn
+      // reverse burn via recorded profile (trueOff state back to CIRCULARIZE entry)
+      if (!trueOff || !burnProfile.length) {
+        $('status').textContent = 'no burn profile or trueOff — check forward capture';
+        $('runBtn').disabled = false; return;
+      }
+      $('status').textContent = 'reverse R1 (profile burn)…';
+      const R1 = reverseBurnProfile(trueOff, burnProfile, Ve);
       const S_ig_from_R1 = R1.S;
 
       $('status').textContent = 'reverse R2 (off → ig)…';
