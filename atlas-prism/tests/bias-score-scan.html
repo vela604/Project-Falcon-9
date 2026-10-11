@@ -136,6 +136,10 @@ tr.fail td { color:#ff5f7e; }
         perWorker[msg.tag] = { phase: msg.phase, detail: msg.detail, ts: msg.ts };
         renderProgressFeed();
       };
+      pool.onProgress = (msg) => {
+        perWorker[msg.tag] = { phase: msg.phase, detail: msg.detail, ts: msg.ts };
+        renderProgressFeed();
+      };
       await pool.waitReady();
       log('pool ready');
       log('');
@@ -147,16 +151,27 @@ tr.fail td { color:#ff5f7e; }
       const liveTimer = setInterval(() => { liveState.update(); renderProgressFeed(); }, 300);
 
       // dispatch all bias probes to pool
+      // 1) setupSA on all workers (dispatch as many parallel jobs)
+      const baseValues = {
+        ascent: { PUSH_MAX_GIMBAL_DEG: G, PUSH_T_S: T, MECO_TARGET_BOOSTER_FUEL_KG: meco },
+        insertion: { TARGET_ORBIT_ALT_KM: altKm, STAGE_BURN_AOA_BIAS_DEG: 1.8, STAGE_BURN_AOA_MARGIN_DEG: 0.001, CIRC_TRIGGER_LEAD_S: 5.53 },
+        done: { DEORBIT_ENABLED: false },
+      };
+      log('dispatching setupSA to ' + n + ' workers…');
+      statusEl.textContent = 'setup SA snapshots…';
+      const setupJobs = [];
+      for (let i = 0; i < n; i++) setupJobs.push(pool.runJob('setupSA', { values: baseValues }));
+      const setupResults = await Promise.all(setupJobs);
+      const setupOk = setupResults.filter(r => r.ok).length;
+      log('setupSA: ' + setupOk + '/' + n + ' workers ready');
+      if (!setupOk) { log('all setupSA failed'); statusEl.textContent = 'setup failed'; return; }
+
+      // 2) bias probes via probeBiasCheckpoint
       const tasks = biases.map(bias => {
-        const point = {
-          Gi: Math.round(G / Q.G), Tn: Math.round(T / Q.T),
-          bi: Math.round(bias / Q.bias), li: Math.round(5.53 / Q.lead),
-          meco,
-        };
         const key = bias.toFixed(4);
         liveState.inflight[key] = { t0: performance.now() };
         liveState.update();
-        return pool.runJob('probeWithLead', { point, altKm })
+        return pool.runJob('probeBiasCheckpoint', { bias, altKm })
           .then(r => {
             delete liveState.inflight[key];
             liveState.done++;
