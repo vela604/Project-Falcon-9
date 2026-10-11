@@ -128,27 +128,22 @@ tr.match td { background:rgba(74,222,128,0.06); }
   }
 
   function captureSnapshot() {
-    // Debug: capture ALL enumerable state keys, not just the known ones
-    const stateKeys = Object.keys(state);
-    const stateSnapshot = {};
-    stateKeys.forEach(k => {
+    const st = {};
+    Object.keys(state).forEach(k => {
       if (k === 'bodies') return;
-      try { stateSnapshot[k] = deepClone(state[k]); } catch (e) { stateSnapshot[k] = null; }
+      try { st[k] = deepClone(state[k]); } catch (e) { st[k] = null; }
     });
     return {
       bodies: deepClone(state.bodies),
+      stateKeysSnapshot: st,
       simTime: state.simTime,
       activeBodyIndex: state.activeBodyIndex,
-      halted: state.halted,
-      landed: state.landed,
-      crashed: state.crashed,
-      stateKeysSnapshot: stateSnapshot,
       guidanceState: Guidance.exportGuideState(),
     };
   }
 
   function restoreSnapshot(snap, newBias) {
-    // Restore every captured state key, then overwrite bodies separately.
+    // Restore every captured state key first.
     if (snap.stateKeysSnapshot) {
       Object.keys(snap.stateKeysSnapshot).forEach(k => {
         try { state[k] = deepClone(snap.stateKeysSnapshot[k]); } catch (e) {}
@@ -156,36 +151,34 @@ tr.match td { background:rgba(74,222,128,0.06); }
     }
     state.simTime = snap.simTime;
     state.activeBodyIndex = snap.activeBodyIndex;
-    state.halted = snap.halted;
-    state.landed = snap.landed;
-    state.crashed = snap.crashed;
 
+    // Restore bodies element-wise (keep object identity where possible).
     const sb = snap.bodies;
     while (state.bodies.length > sb.length) state.bodies.pop();
     while (state.bodies.length < sb.length) state.bodies.push({});
-
     for (let i = 0; i < sb.length; i++) {
       const src = sb[i], dst = state.bodies[i];
       Object.keys(dst).forEach(k => { delete dst[k]; });
       Object.keys(src).forEach(k => { dst[k] = deepClone(src[k]); });
     }
 
-    // Sync top-level physics aliases from the restored active body.
-    // state.rx/ry/vx/vy/theta/omega/dryMass/fuelMass mirror the active body.
-    {
-      const ab = state.bodies[state.activeBodyIndex];
-      if (ab) {
-        try { state.rx = ab.rx; } catch (e) {}
-        try { state.ry = ab.ry; } catch (e) {}
-        try { state.vx = ab.vx; } catch (e) {}
-        try { state.vy = ab.vy; } catch (e) {}
-        try { state.theta = ab.theta; } catch (e) {}
-        try { state.omega = ab.omega; } catch (e) {}
-        try { state.dryMass = ab.dryMass; } catch (e) {}
-        try { state.fuelMass = ab.fuelMass; } catch (e) {}
+    // Sync top-level physics aliases from restored active body.
+    const ab = state.bodies[state.activeBodyIndex];
+    if (ab) ['rx','ry','vx','vy','theta','omega','dryMass','fuelMass'].forEach(k => {
+      try { state[k] = ab[k]; } catch (e) {}
+    });
+
+    // Re-link _lastBottomMember by id (deep clone breaks the reference
+    // physics.js uses to decide whether to preserve engine state).
+    for (const b of state.bodies) {
+      if (!b || !b.members || !b.members.length) continue;
+      if (b._lastBottomMember && b._lastBottomMember.id) {
+        const match = b.members.find(m => m && m.id === b._lastBottomMember.id);
+        if (match) b._lastBottomMember = match;
       }
     }
 
+    // Override bias.
     const g = deepClone(snap.guidanceState);
     if (newBias !== undefined && newBias !== null) {
       if (g.guideConfigs && g.guideConfigs.leoInsertionV3 && g.guideConfigs.leoInsertionV3.insertion) {
