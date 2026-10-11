@@ -175,7 +175,7 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
     // Scale cap by target altitude: baseline 320km needs ~60s post-CW,
     // high orbits (2000km) need ~500s (longer stage burn + coast).
     const tgtAlt = (g_snapshot && g_snapshot.__targetAltKm) ? g_snapshot.__targetAltKm : 320;
-    const capS = 60 + tgtAlt * 1.2 + 300;
+    const capS = 300;
     const maxTicks = Math.ceil(capS / DT);
     for (let i = 0; i < maxTicks; i++) {
       if (state.halted) break;
@@ -223,7 +223,7 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
         const gs = Guidance.getGuideStatus();
         const phase = gs.phase;
         if (phase !== prevPhase) {
-          if (phase === 'COAST_WAIT' && !snapshotCaptured) {
+          if (phase === 'COAST_HOLD' && !snapshotCaptured) {
             g_snapshot = captureSnapshot();
             const cfgs = g_snapshot.guidanceState && g_snapshot.guidanceState.guideConfigs;
             const ins = cfgs && cfgs.leoInsertionV3 && cfgs.leoInsertionV3.insertion;
@@ -274,6 +274,7 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
 
       const rows = [
         { h: 'Snapshot at COAST_WAIT entry' },
+        { k: 'snapshot phase', v: 'COAST_HOLD entry' },
         { k: 'simTime', v: fmt(g_snapshot.simTime, 4) + ' s' },
         { k: 'bodies', v: g_snapshot.bodies.length + '' },
         { h: 'Attempts' },
