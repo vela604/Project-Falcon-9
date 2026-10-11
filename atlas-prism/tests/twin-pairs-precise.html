@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Twin Pairs Precise — 1 J/kg target, N-core bisection</title>
+<title>Twin Pairs Precise — 10 A values, auto bracket, 1 J/kg</title>
 <style>
 body { margin:0; background:#060912; color:#dbe6f5; font:13px/1.5 monospace; padding:20px; }
 h1 { color:#35d6ff; font-size:15px; margin:0 0 12px; letter-spacing:1px; }
@@ -12,26 +12,31 @@ button:hover { border-color:#35d6ff; color:#35d6ff; }
 button:disabled { opacity:.4; }
 input[type=number] { background:#101a30; color:#dbe6f5; border:1px solid #1c2b45;
          padding:6px 10px; border-radius:4px; font:inherit; width:90px; }
-#status { color:#ffd23f; margin:8px 0; }
+#status { color:#ffd23f; margin:8px 0; min-height:1.2em; }
+#live { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4px;
+        font-size:11px; margin:8px 0; }
 pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4px;
-      font-size:11.5px; overflow:auto; max-height:500px; }
+      font-size:11px; overflow:auto; max-height:350px; }
 canvas { background:#060912; border:1px solid #1c2b45; border-radius:4px; display:block; margin-top:10px; }
 table { border-collapse:collapse; font-size:12px; margin:10px 0; width:100%; }
-th, td { padding:6px 10px; text-align:right; border-bottom:1px solid #1c2b45; }
+th, td { padding:6px 8px; text-align:right; border-bottom:1px solid #1c2b45; }
 th { color:#35d6ff; }
 td:first-child, th:first-child { text-align:left; color:#6b7d9c; }
 td.match { color:#4ade80; font-weight:600; }
+td.close { color:#ffd23f; }
+td.fail { color:#ff5f7e; }
 </style>
 </head>
 <body>
 
-<h1>Twin Pairs Precise — N-core bias bisection, 1 J/kg target</h1>
+<h1>Twin Pairs Precise — 10 A values, auto-bracket, live progress</h1>
 
 <label>workers <input type="number" id="nW" value="6" min="1" max="8"></label>
 <label style="margin-left:12px">base G <input type="number" id="baseG" value="0.60" step="0.01"></label>
 <label>base bias <input type="number" id="baseB" value="0.59" step="0.01"></label>
 <button id="runBtn">Run</button>
 <div id="status">idle</div>
+<div id="live"></div>
 <pre id="log">—</pre>
 <canvas id="chart" width="900" height="480"></canvas>
 <div id="tableHost"></div>
@@ -49,15 +54,33 @@ td.match { color:#4ade80; font-weight:600; }
 (function () {
   'use strict';
   const $ = (id) => document.getElementById(id);
-  const logEl = $('log'), statusEl = $('status');
+  const logEl = $('log'), statusEl = $('status'), liveEl = $('live');
   let logLines = [];
-  const log = (s) => { logLines.push(s); logEl.textContent = logLines.join('\n'); logEl.scrollTop = logEl.scrollHeight; };
+  const log = (s) => { logLines.push(s); if (logLines.length > 400) logLines.shift(); logEl.textContent = logLines.join('\n'); logEl.scrollTop = logEl.scrollHeight; };
   const fmt = (x, d) => Number.isFinite(x) ? x.toFixed(d) : '—';
   const RE = CONFIG.EARTH_RADIUS, GM = CONFIG.GM_EARTH;
   const T = 4.82;
-  const BIAS_TOL = 1e-9;   // deg, bisection stop
-  const E_TOL = 1.0;       // J/kg, primary stop
-  const MAX_ITERS = 45;
+  const E_TOL = 1.0;         // J/kg target
+  const BIAS_TOL = 1e-9;     // deg minimum step
+
+  // per-G live state
+  const live = {};
+
+  function renderLive() {
+    const keys = Object.keys(live).sort((a, b) => parseFloat(a) - parseFloat(b));
+    if (!keys.length) { liveEl.textContent = '(no active tasks)'; return; }
+    let html = '';
+    keys.forEach(k => {
+      const s = live[k];
+      const bar = '█'.repeat(Math.min(30, s.evals));
+      const statusTxt = s.done ? (s.ok ? '✓ DONE' : '~ CLOSE') : 'RUNNING';
+      const eTxt = Number.isFinite(s.E) ? s.E.toFixed(3) : '—';
+      const dTxt = Number.isFinite(s.dE) ? (s.dE >= 0 ? '+' : '') + s.dE.toFixed(3) : '—';
+      html += 'G=' + k + '  ' + statusTxt + '  ' + bar + '  evals=' + s.evals +
+              '  last b=' + fmt(s.b, 8) + '  E=' + eTxt + '  ΔE=' + dTxt + '  (' + s.phase + ')\n';
+    });
+    liveEl.textContent = html;
+  }
 
   function specE(m) {
     const r = RE + m.altCoastKm * 1000;
@@ -75,48 +98,83 @@ td.match { color:#4ade80; font-weight:600; }
     };
   }
 
-  // one G task: bisect bias to hit E_ref
-  async function bisectG(pool, G, E_ref, guessBias, tag, onLog) {
+  async function evalAt(pool, G, b) {
+    const m = await pool.runEvalValues(rawValues(G, b, 5.53, 52612), { stopAt: 'COAST_WAIT_ENTRY', quiet: true });
+    const ok = m.endReason === 'COAST_WAIT_ENTRY' && Number.isFinite(m.eCoast);
+    const E = ok ? specE(m) : NaN;
+    return { b, E, ok, ecc: m.eCoast, end: m.endReason };
+  }
+
+  async function bisectG(pool, Gkey, G, E_ref, baseBias) {
+    const state = live[Gkey];
     const evals = [];
-    async function evalAt(b) {
-      const m = await pool.runEvalValues(rawValues(G, b, 5.53, 52612), { stopAt: 'COAST_WAIT_ENTRY', quiet: true });
-      const ok = m.endReason === 'COAST_WAIT_ENTRY' && Number.isFinite(m.eCoast);
-      const E = ok ? specE(m) : NaN;
-      evals.push({ b, E, ok });
-      if (onLog) onLog(tag + ' b=' + b.toFixed(10) + (ok ? ' E=' + E.toFixed(4) + ' ΔE=' + (E - E_ref).toFixed(4) : ' ' + m.endReason));
-      return { b, E, ok };
+
+    async function ev(b) {
+      state.b = b; state.phase = 'evaluating'; renderLive();
+      const r = await evalAt(pool, G, b);
+      state.evals++;
+      evals.push(r);
+      state.E = r.E;
+      state.dE = Number.isFinite(r.E) ? (r.E - E_ref) : NaN;
+      if (!r.ok) state.phase = r.end;
+      renderLive();
+      return r;
     }
 
-    // initial bracket via 3 probes
-    const r1 = await evalAt(guessBias - 0.15);
-    const r2 = await evalAt(guessBias);
-    const r3 = await evalAt(guessBias + 0.15);
-    const probes = [r1, r2, r3].filter(p => p.ok);
-    if (probes.length < 2) {
-      const bestP = evals.filter(e => e.ok).sort((a, b) => Math.abs(a.E - E_ref) - Math.abs(b.E - E_ref))[0];
-      return { G, ok: false, reason: 'no valid probes', bias: bestP ? bestP.b : NaN, E: bestP ? bestP.E : NaN, evals: evals.length };
+    // ---- Phase 1: coarse scan to bracket E_ref ----
+    state.phase = 'coarse scan';
+    // Slope-informed starting guess
+    const guess = baseBias + (G - 0.60) * 45;   // ~0.45 deg/0.01G
+    const coarseStep = 0.6;
+
+    // Try an expanding ladder of coarse offsets around guess
+    // Start tight, expand outward
+    const offsets = [0, -1, +1, -2, +2, -3, +3, -4, +4, -5, +5, -6, +6];
+    const seen = new Set();
+    const valid = [];
+    for (const o of offsets) {
+      const b = guess + o * coarseStep;
+      const bR = Math.round(b * 1e10) / 1e10;
+      if (seen.has(bR)) continue;
+      seen.add(bR);
+      const r = await ev(b);
+      if (r.ok) valid.push(r);
+      if (valid.length >= 2) {
+        // Check if we have a bracket
+        let above = null, below = null;
+        for (const v of valid) {
+          if (v.E >= E_ref && (!above || v.E < above.E)) above = v;
+          if (v.E <= E_ref && (!below || v.E > below.E)) below = v;
+        }
+        if (above && below) break;
+      }
     }
 
-    // find bracket: one side E>ref (lo by slope), other E<ref
+    // ---- Phase 2: bracket detection ----
     let above = null, below = null;
-    for (const p of probes) {
-      if (p.E >= E_ref && (!above || p.E < above.E)) above = p;
-      if (p.E <= E_ref && (!below || p.E > below.E)) below = p;
+    for (const v of valid) {
+      if (v.E >= E_ref && (!above || v.E < above.E)) above = v;
+      if (v.E <= E_ref && (!below || v.E > below.E)) below = v;
     }
+
     if (!above || !below) {
-      const bestP = probes.sort((a, b) => Math.abs(a.E - E_ref) - Math.abs(b.E - E_ref))[0];
-      return { G, ok: false, reason: 'no bracket', bias: bestP.b, E: bestP.E, evals: evals.length };
+      // No bracket in coarse range. Return closest valid.
+      const bestClose = valid.sort((a, b) => Math.abs(a.E - E_ref) - Math.abs(b.E - E_ref))[0];
+      if (!bestClose) return { G, ok: false, reason: 'no valid probes' };
+      state.done = true; state.ok = false; state.phase = 'no bracket';
+      renderLive();
+      return { G, ok: false, reason: 'no bracket', bias: bestClose.b, E: bestClose.E, deltaE: bestClose.E - E_ref, ecc: bestClose.ecc, evals: evals.length };
     }
 
-    let bA = above.b, bB = below.b;  // bA has E >= ref, bB has E <= ref
+    // ---- Phase 3: bisect ----
+    state.phase = 'bisecting';
+    let bA = above.b, bB = below.b;  // bA: E >= ref; bB: E <= ref
     let best = Math.abs(above.E - E_ref) < Math.abs(below.E - E_ref) ? above : below;
-    let iters = 0;
 
-    for (let it = 0; it < MAX_ITERS; it++) {
-      iters++;
+    for (let i = 0; i < 60; i++) {
       if (Math.abs(bA - bB) < BIAS_TOL) break;
       const mid = (bA + bB) / 2;
-      const r = await evalAt(mid);
+      const r = await ev(mid);
       if (!r.ok) break;
       const dE = r.E - E_ref;
       if (Math.abs(dE) < Math.abs(best.E - E_ref)) best = r;
@@ -124,20 +182,26 @@ td.match { color:#4ade80; font-weight:600; }
       if (r.E >= E_ref) bA = mid; else bB = mid;
     }
 
-    return { G, ok: true, bias: best.b, E: best.E, deltaE: best.E - E_ref, iters, evals: evals.length };
+    state.done = true;
+    state.ok = Math.abs(best.E - E_ref) < E_TOL;
+    state.phase = state.ok ? 'converged' : 'close';
+    renderLive();
+    return { G, ok: state.ok, bias: best.b, E: best.E, deltaE: best.E - E_ref, ecc: best.ecc, evals: evals.length };
   }
 
   async function run() {
     $('runBtn').disabled = true;
-    logLines = []; logEl.textContent = '—'; $('tableHost').innerHTML = '';
+    logLines = []; logEl.textContent = '—'; $('tableHost').innerHTML = ''; liveEl.textContent = '';
+    Object.keys(live).forEach(k => delete live[k]);
+
     const ctx = $('chart').getContext('2d');
     ctx.fillStyle = '#060912'; ctx.fillRect(0, 0, 900, 480);
+    const liveTimer = setInterval(renderLive, 250);
 
     try {
       const n = Math.max(1, Math.min(8, parseInt($('nW').value, 10) || 6));
       const baseG = parseFloat($('baseG').value);
       const baseB = parseFloat($('baseB').value);
-      const Q = TunerConfig.quanta;
 
       statusEl.textContent = 'creating pool…';
       log('creating pool with ' + n + ' workers…');
@@ -153,47 +217,68 @@ td.match { color:#4ade80; font-weight:600; }
       const E_ref = specE(mBase);
       log('  E_ref = ' + E_ref.toFixed(6) + ' J/kg  ecc=' + fmt(mBase.eCoast, 7));
 
-      // G list — valid lattice G
-      const Gs = [0.575, 0.58, 0.59, 0.61, 0.62, 0.63];
-      // slope0 ~0.5 deg/0.01G, extrapolate guess
-      const guessAt = (g) => baseB + (g - baseG) / 0.01 * 0.5;
+      // 10 G values from A=10 to A=15 (evenly spaced)
+      // A = G * T^2, T = 4.82 → G = A / 23.2324
+      const Gs = [];
+      const gLow = 10 / (T * T), gHigh = 15 / (T * T);
+      for (let i = 0; i < 10; i++) {
+        const A_target = 10 + i * (15 - 10) / 9;
+        const G_raw = A_target / (T * T);
+        const G_snapped = Math.round(G_raw * 100) / 100;
+        if (!Gs.includes(G_snapped)) Gs.push(G_snapped);
+      }
+      log('');
+      log('G values (A=10..15, snapped to 0.01): ' + Gs.map(g => g.toFixed(2) + '(A=' + (g*T*T).toFixed(2) + ')').join(', '));
+
+      // init live state
+      Gs.forEach(g => {
+        live[g.toFixed(2)] = { evals: 0, b: NaN, E: NaN, dE: NaN, phase: 'queued', done: false, ok: false };
+      });
+      renderLive();
 
       log('');
-      log('=== parallel bisection at ' + Gs.length + ' G values, target |ΔE| < ' + E_TOL + ' J/kg ===');
-      statusEl.textContent = 'bisecting…';
+      log('=== parallel bisection, target |ΔE| < ' + E_TOL + ' J/kg, bias tol 1e-9 deg ===');
+      statusEl.textContent = 'bisecting ' + Gs.length + ' G values…';
 
-      // launch all in parallel; pool dispatches 1 eval at a time per worker
-      const tasks = Gs.map(g => bisectG(pool, g, E_ref, guessAt(g), 'G=' + g.toFixed(3), null));
+      const tasks = Gs.map(g => bisectG(pool, g.toFixed(2), g, E_ref, baseB));
       const results = await Promise.all(tasks);
+
+      clearInterval(liveTimer);
+      renderLive();
 
       const wall = (performance.now() - t0) / 1000;
       log('');
       log('=== results (wall ' + fmt(wall, 1) + 's) ===');
 
       // Table
-      let html = '<table><thead><tr><th>G</th><th>A</th><th>bias (deg, 10dp)</th><th>E (J/kg)</th><th>ΔE</th><th>|ΔE|</th><th>ecc</th><th>iters</th><th>evals</th></tr></thead><tbody>';
-      html += '<tr><td>' + baseG.toFixed(3) + '</td><td>' + (baseG*T*T).toFixed(5) + '</td><td>' + baseB.toFixed(10) + '</td><td>' + E_ref.toFixed(3) + '</td><td>0.000</td><td class="match">0</td><td>' + fmt(mBase.eCoast, 7) + '</td><td>—</td><td>1 (baseline)</td></tr>';
+      let html = '<table><thead><tr><th>G</th><th>A</th><th>bias (10dp)</th><th>E (J/kg)</th><th>ΔE</th><th>|ΔE|</th><th>ecc</th><th>evals</th><th>status</th></tr></thead><tbody>';
+      html += '<tr><td>' + baseG.toFixed(2) + '</td><td>' + (baseG*T*T).toFixed(4) + '</td><td>' + baseB.toFixed(10) + '</td><td>' + E_ref.toFixed(4) + '</td><td>0.0000</td><td class="match">0</td><td>' + fmt(mBase.eCoast, 7) + '</td><td>1</td><td>baseline</td></tr>';
       results.sort((a, b) => a.G - b.G);
+      let allOk = true, totalEvals = 0;
       results.forEach(r => {
-        const cls = Number.isFinite(r.deltaE) && Math.abs(r.deltaE) < 1 ? 'match' : '';
-        html += '<tr><td>' + r.G.toFixed(3) + '</td><td>' + (r.G*T*T).toFixed(5) + '</td><td>' + fmt(r.bias, 10) + '</td><td>' + (Number.isFinite(r.E) ? r.E.toFixed(3) : '—') + '</td><td>' + (Number.isFinite(r.deltaE) ? (r.deltaE >= 0 ? '+' : '') + r.deltaE.toFixed(4) : '—') + '</td><td class="' + cls + '">' + (Number.isFinite(r.deltaE) ? Math.abs(r.deltaE).toFixed(4) : '—') + '</td><td>' + (r.ecc ? fmt(r.ecc, 7) : '—') + '</td><td>' + (r.iters || 0) + '</td><td>' + (r.evals || 0) + '</td></tr>';
-        log('  G=' + r.G.toFixed(3) + '  bias=' + fmt(r.bias, 10) + '  E=' + (Number.isFinite(r.E) ? r.E.toFixed(4) : '—') + '  |ΔE|=' + (Number.isFinite(r.deltaE) ? Math.abs(r.deltaE).toFixed(4) : '—') + '  evals=' + r.evals + (r.ok ? '' : '  [' + r.reason + ']'));
+        totalEvals += r.evals || 0;
+        const abs = Number.isFinite(r.deltaE) ? Math.abs(r.deltaE) : NaN;
+        let cls = 'fail', status;
+        if (r.ok && abs < 1) { cls = 'match'; status = 'MATCH'; }
+        else if (Number.isFinite(abs) && abs < 50) { cls = 'close'; status = 'CLOSE'; allOk = false; }
+        else { cls = 'fail'; status = 'FAIL'; allOk = false; }
+        html += '<tr><td>' + r.G.toFixed(2) + '</td><td>' + (r.G*T*T).toFixed(4) + '</td><td>' + fmt(r.bias, 10) + '</td><td>' + (Number.isFinite(r.E) ? r.E.toFixed(4) : '—') + '</td><td>' + (Number.isFinite(r.deltaE) ? (r.deltaE >= 0 ? '+' : '') + r.deltaE.toFixed(4) : '—') + '</td><td class="' + cls + '">' + (Number.isFinite(abs) ? abs.toFixed(4) : '—') + '</td><td>' + (r.ecc ? fmt(r.ecc, 7) : '—') + '</td><td>' + (r.evals || 0) + '</td><td class="' + cls + '">' + status + (r.reason ? ' (' + r.reason + ')' : '') + '</td></tr>';
+        log('  G=' + r.G.toFixed(2) + '  bias=' + fmt(r.bias, 10) + '  E=' + (Number.isFinite(r.E) ? r.E.toFixed(4) : '—') + '  |ΔE|=' + (Number.isFinite(abs) ? abs.toFixed(4) : '—') + '  evals=' + r.evals + (r.ok ? '' : '  [' + (r.reason || 'close') + ']'));
       });
       html += '</tbody></table>';
       $('tableHost').innerHTML = html;
 
-      // chart
+      // Chart
       const pts = [{ A: baseG*T*T, bias: baseB, tag: 'baseline', ok: true }];
-      results.forEach(r => pts.push({ A: r.G*T*T, bias: r.bias, tag: 'G=' + r.G.toFixed(3), ok: r.ok }));
+      results.forEach(r => pts.push({ A: r.G*T*T, bias: r.bias, tag: 'G=' + r.G.toFixed(2), ok: r.ok }));
       drawChart(ctx, pts);
 
-      statusEl.textContent = 'done — ' + fmt(wall, 1) + 's';
-      log('');
-      log('total wall ' + fmt(wall, 1) + 's  (N=' + n + ' workers)');
+      statusEl.textContent = 'done — ' + fmt(wall, 1) + 's, ' + totalEvals + ' evals, ' + (allOk ? 'ALL MATCH' : 'some close/fail');
     } catch (e) {
       console.error(e);
       log('ERROR: ' + e.message + '\n' + (e.stack || ''));
     } finally {
+      clearInterval(liveTimer);
       $('runBtn').disabled = false;
     }
   }
@@ -203,11 +288,11 @@ td.match { color:#4ade80; font-weight:600; }
     const padL = 90, padR = 40, padT = 30, padB = 60;
     const pw = W - padL - padR, ph = H - padT - padB;
 
-    const aMin = Math.min(...pts.map(p => p.A)) - 0.03;
-    const aMax = Math.max(...pts.map(p => p.A)) + 0.03;
+    const aMin = Math.min(...pts.map(p => p.A)) - 0.1;
+    const aMax = Math.max(...pts.map(p => p.A)) + 0.1;
     const bVals = pts.map(p => p.bias).filter(Number.isFinite);
-    const bMin = Math.min(...bVals) - 0.1;
-    const bMax = Math.max(...bVals) + 0.1;
+    const bMin = Math.min(...bVals) - 0.3;
+    const bMax = Math.max(...bVals) + 0.3;
 
     const X = (a) => padL + (a - aMin) / (aMax - aMin) * pw;
     const Y = (b) => padT + ph - (b - bMin) / (bMax - bMin) * ph;
@@ -226,12 +311,12 @@ td.match { color:#4ade80; font-weight:600; }
     ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
     for (let i = 0; i <= 5; i++) {
       const b = bMin + i * (bMax - bMin) / 5;
-      ctx.fillText(b.toFixed(3), padL - 8, padT + ph - i * ph / 5);
+      ctx.fillText(b.toFixed(2), padL - 8, padT + ph - i * ph / 5);
     }
     ctx.textAlign = 'center'; ctx.textBaseline = 'top';
     for (let i = 0; i <= 5; i++) {
       const a = aMin + i * (aMax - aMin) / 5;
-      ctx.fillText(a.toFixed(3), padL + i * pw / 5, padT + ph + 8);
+      ctx.fillText(a.toFixed(2), padL + i * pw / 5, padT + ph + 8);
     }
     ctx.fillStyle = '#35d6ff'; ctx.font = 'bold 12px monospace';
     ctx.fillText('A = G · T²  (T=4.82)', padL + pw / 2, H - 24);
@@ -241,7 +326,6 @@ td.match { color:#4ade80; font-weight:600; }
     ctx.fillText('bias (deg)', 0, 0);
     ctx.restore();
 
-    // connecting line
     const sorted = pts.slice().sort((a, b) => a.A - b.A);
     ctx.strokeStyle = '#35d6ff'; ctx.lineWidth = 2;
     ctx.beginPath();
@@ -251,7 +335,6 @@ td.match { color:#4ade80; font-weight:600; }
     });
     ctx.stroke();
 
-    // points
     sorted.forEach(p => {
       const x = X(p.A), y = Y(p.bias);
       ctx.fillStyle = p.tag === 'baseline' ? '#4ade80' : (p.ok ? '#ffd23f' : '#ff5f7e');
