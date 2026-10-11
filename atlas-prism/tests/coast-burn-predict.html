@@ -154,13 +154,24 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
         if (g && Number.isFinite(g.massFlowRate)) mdot = g.massFlowRate;
       }
 
-      // mc = stage dry + payload
-      let mc = stb ? (stb.dryMass || 0) : 0;
+      // mc = stage dry (WITHOUT fairing, WITHOUT payload) + payload mass
+      // stb.dryMass already includes fairing + payload contributions, so we
+      // rebuild mc from the raw stage member's derived dry mass instead.
+      let mc = 0;
       const stk = getActiveStack();
+      if (stb && stb.members && typeof stageDerivedMasses === 'function') {
+        for (const m of stb.members) {
+          if (m && m.stageRole === 'stage') {
+            const d = stageDerivedMasses(m);
+            if (d && !d.infeasible) { mc += d.dryMassNoPayload; break; }
+          }
+        }
+      }
       if (stk && stk.payloadId && typeof getPayload === 'function') {
         const pl = getPayload(stk.payloadId);
-        if (pl) mc += pl.mass;
+        if (pl && Number.isFinite(pl.mass)) mc += pl.mass;
       }
+      if (!(mc > 0)) mc = stb ? (stb.dryMass || 0) : 0;   // fallback
 
       // Prediction: at coast_wait, fuel = F_cw. Ideal Δv = coastDeltaV.
       // Tsiolkovsky: F_burn = Mi·(1 − exp(−Δv/Ve)), Mi = mc + F_cw
