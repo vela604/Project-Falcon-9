@@ -223,9 +223,20 @@
         let Ve = NaN, mdot = NaN;
         const stb = findStage();
         if (stb && stb.engines && stb.engines.length) {
-          if (Number.isFinite(stb.engines[0].Ve)) Ve = stb.engines[0].Ve;
-          let tot = 0;
-          stb.engines.forEach(e => { tot += e.massFlowRate || 0; });
+      if (Number.isFinite(stb.engines[0].Ve)) Ve = stb.engines[0].Ve;
+      // Preferred: design mass flow from the stage member record (always valid)
+      if (stb.members && stb.members[0] && stb.members[0].engineThrusters) {
+        const et = stb.members[0].engineThrusters;
+        const g = et.gimbal || et.fixed;
+        if (g && Number.isFinite(g.massFlowRate)) mdot = g.massFlowRate;
+      }
+      // Fallback: sum live max flows
+      if (!Number.isFinite(mdot)) {
+        let tot = 0;
+        stb.engines.forEach(e => { tot += (e.maxMassFlowRate || e.massFlowRate || 0); });
+        mdot = tot > 0 ? tot : NaN;
+      }
+    });
           mdot = tot > 0 ? tot : NaN;
         }
 
