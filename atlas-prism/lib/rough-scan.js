@@ -93,70 +93,45 @@
     return { lo: minRange[0], hi: minRange[1], source: 'fallback' };
   }
 
-  // Geometric cumulative distribution: gaps are d, d*r, d*r^2, ...
-  // probes at target ± (d, d+dr, d+dr+dr^2, ...)
+  // Geometric probe distribution from target outward.
+  // Gaps: target→p1 = d, p1→p2 = d·φ, ..., p_last→edge = d·φ^k.
+  // Sum: d·(φ^(k+1)-1)/(φ-1) = room → solve d.
+  // Edges are virtual anchors (no worker there). All probes strictly inside.
   function distributeProbes(lo, hi, target, N, ratio, quantumKg) {
     if (N < 1) return [];
-    if (N === 1) return [Math.round(Math.max(lo, Math.min(hi, target)))];
-    const roomL = Math.max(0, target - lo);
-    const roomR = Math.max(0, hi - target);
+    const loI = Math.round(lo), hiI = Math.round(hi);
+    if (hiI - loI < 1) return [];
+    let T = Math.round(target);
+    if (T < loI) T = loI;
+    if (T > hiI) T = hiI;
+    if (N === 1) return [T];
+
+    const kTotal = N - 1;
+    const roomL = T - loI, roomR = hiI - T;
+
     let kL, kR;
-    if ((N - 1) % 2 === 0) { kL = kR = (N - 1) / 2; }
-    else if (roomL > roomR) { kL = Math.ceil((N - 1) / 2); kR = Math.floor((N - 1) / 2); }
-    else { kR = Math.ceil((N - 1) / 2); kL = Math.floor((N - 1) / 2); }
-    function d1(room, k) {
-      if (k === 0 || room <= 0) return 0;
-      if (k === 1) return room;
-      return room * (ratio - 1) / (Math.pow(ratio, k) - 1);
-    }
-    let dL = d1(roomL, kL), dR = d1(roomR, kR);
-    if (dL > 0 && dL < quantumKg) {
-      dL = quantumKg;
-      // recompute ratio locally so outermost = roomL
-      if (roomL > dL && kL > 1) {
-        // solve r from dL*(r^k-1)/(r-1)=roomL; approximate by increasing ratio
-        let r = ratio;
-        for (let i = 0; i < 40; i++) {
-          const f = dL * (Math.pow(r, kL) - 1) / (r - 1) - roomL;
-          if (Math.abs(f) < 1) break;
-          r = r * (1 + f / roomL * 0.5);
-          r = Math.max(1.01, Math.min(5, r));
-        }
-        dR = dR; // keep other side unchanged
-        // Apply local ratio
-        var localRatioL = r;
+    if (roomL < quantumKg && roomR < quantumKg) return [T];
+    else if (roomL < quantumKg) { kL = 0; kR = kTotal; }
+    else if (roomR < quantumKg) { kL = kTotal; kR = 0; }
+    else if (kTotal % 2 === 0) { kL = kR = kTotal / 2; }
+    else if (roomL > roomR) { kL = Math.ceil(kTotal / 2); kR = Math.floor(kTotal / 2); }
+    else { kR = Math.ceil(kTotal / 2); kL = Math.floor(kTotal / 2); }
+
+    const probes = [T];
+    function spread(room, k, sign) {
+      if (k <= 0 || room <= 0) return;
+      const d = room * (ratio - 1) / (Math.pow(ratio, k + 1) - 1);
+      for (let i = 1; i <= k; i++) {
+        const dist = d * (Math.pow(ratio, i) - 1) / (ratio - 1);
+        const m = Math.round(T + sign * dist);
+        if (m > loI && m < hiI && m !== T) probes.push(m);
       }
     }
-    if (dR > 0 && dR < quantumKg) {
-      dR = quantumKg;
-      if (roomR > dR && kR > 1) {
-        let r = ratio;
-        for (let i = 0; i < 40; i++) {
-          const f = dR * (Math.pow(r, kR) - 1) / (r - 1) - roomR;
-          if (Math.abs(f) < 1) break;
-          r = r * (1 + f / roomR * 0.5);
-          r = Math.max(1.01, Math.min(5, r));
-        }
-        var localRatioR = r;
-      }
-    }
-    const rL = localRatioL || ratio;
-    const rR = localRatioR || ratio;
-    const probes = [Math.round(target)];
-    let cum = 0;
-    for (let i = 0; i < kL; i++) {
-      cum += dL * Math.pow(rL, i);
-      probes.push(Math.round(target - cum));
-    }
-    cum = 0;
-    for (let i = 0; i < kR; i++) {
-      cum += dR * Math.pow(rR, i);
-      probes.push(Math.round(target + cum));
-    }
+    spread(roomL, kL, -1);
+    spread(roomR, kR, +1);
+
     const seen = new Set();
-    return probes
-      .filter(m => m >= lo && m <= hi)
-      .filter(m => { if (seen.has(m)) return false; seen.add(m); return true; });
+    return probes.filter(m => { if (seen.has(m)) return false; seen.add(m); return true; });
   }
 
   function snapPoint(raw, meco, Q) {
