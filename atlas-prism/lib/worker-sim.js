@@ -24,9 +24,11 @@ self.localStorage = (function() {
   };
 })();
 
-// NOTE: do NOT alias window=self. Sim files are worker-safe already
-// (physics.worker.js loads the same set). Some files check window.document
-// and crash if window exists but document doesn't.
+// Alias window=self so sim files referencing window.* work in the worker.
+// localStorage is already stubbed above; self.addEventListener exists in workers.
+// window.document is deliberately NOT stubbed — files that need it will throw,
+// and we can add a targeted stub if that specific access shows up.
+self.window = self;
 
 // ---- 2. Job state ----
 let _loaded = false;
