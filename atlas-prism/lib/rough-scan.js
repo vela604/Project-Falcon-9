@@ -184,9 +184,31 @@
     const interp = buildInterp(matching);
     let init;
     if (opts._forceLo != null && opts._forceHi != null) {
+      // Override uses the same slope-based target as pickInitialRange,
+      // so the first probe batch is informative (not a blind midpoint).
+      let target = (opts._forceLo + opts._forceHi) / 2;
+      if (interp) {
+        // find crossing of interp residual with 150 (or bracket edges if out of range)
+        const lo = opts._forceLo, hi = opts._forceHi;
+        const step = Math.max(50, (hi - lo) / 200);
+        let prev = null, cross150 = null;
+        for (let m = lo; m <= hi; m += step) {
+          const r = interp(m).residualKg;
+          if (prev && prev.r > 150 && r <= 150 && cross150 == null) {
+            const k = (150 - prev.r) / (r - prev.r);
+            cross150 = prev.m + k * (m - prev.m);
+          }
+          prev = { m, r };
+          if (cross150 != null) break;
+        }
+        if (cross150 != null) {
+          // also sanity check for edge crossings if residuals don't hit 150
+          target = Math.max(lo + 100, Math.min(hi - 100, cross150));
+        }
+      }
       init = { lo: opts._forceLo, hi: opts._forceHi,
-               source: 'forced-override',
-               target: (opts._forceLo + opts._forceHi) / 2 };
+               source: 'forced-override' + (target !== (opts._forceLo + opts._forceHi) / 2 ? '+slope-target' : ''),
+               target };
     } else {
       init = pickInitialRange(matching, interp, minRange, safetyKg);
     }
