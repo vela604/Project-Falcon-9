@@ -220,10 +220,13 @@
 
         if (!karman) { $('status').textContent = 'Karman never crossed'; $('runBtn').disabled = false; return; }
 
-        let Ve = NaN;
+        let Ve = NaN, mdot = NaN;
         const stb = findStage();
-        if (stb && stb.engines && stb.engines.length && Number.isFinite(stb.engines[0].Ve)) {
-          Ve = stb.engines[0].Ve;
+        if (stb && stb.engines && stb.engines.length) {
+          if (Number.isFinite(stb.engines[0].Ve)) Ve = stb.engines[0].Ve;
+          let tot = 0;
+          stb.engines.forEach(e => { tot += e.massFlowRate || 0; });
+          mdot = tot > 0 ? tot : NaN;
         }
 
         $('status').textContent = 'done';
