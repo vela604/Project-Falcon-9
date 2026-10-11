@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Twin Pairs Precise — 1 J/kg target, N-core bisection</title>
+<style>
+body { margin:0; background:#060912; color:#dbe6f5; font:13px/1.5 monospace; padding:20px; }
+h1 { color:#35d6ff; font-size:15px; margin:0 0 12px; letter-spacing:1px; }
+button { background:#101a30; color:#dbe6f5; border:1px solid #1c2b45;
+         padding:8px 16px; border-radius:4px; font:inherit; cursor:pointer; margin-right:8px; }
+button:hover { border-color:#35d6ff; color:#35d6ff; }
+button:disabled { opacity:.4; }
+input[type=number] { background:#101a30; color:#dbe6f5; border:1px solid #1c2b45;
+         padding:6px 10px; border-radius:4px; font:inherit; width:90px; }
+#status { color:#ffd23f; margin:8px 0; }
+pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4px;
+      font-size:11.5px; overflow:auto; max-height:500px; }
+canvas { background:#060912; border:1px solid #1c2b45; border-radius:4px; display:block; margin-top:10px; }
+table { border-collapse:collapse; font-size:12px; margin:10px 0; width:100%; }
+th, td { padding:6px 10px; text-align:right; border-bottom:1px solid #1c2b45; }
+th { color:#35d6ff; }
+td:first-child, th:first-child { text-align:left; color:#6b7d9c; }
+td.match { color:#4ade80; font-weight:600; }
+</style>
+</head>
+<body>
+
+<h1>Twin Pairs Precise — N-core bias bisection, 1 J/kg target</h1>
+
+<label>workers <input type="number" id="nW" value="6" min="1" max="8"></label>
+<label style="margin-left:12px">base G <input type="number" id="baseG" value="0.60" step="0.01"></label>
+<label>base bias <input type="number" id="baseB" value="0.59" step="0.01"></label>
+<button id="runBtn">Run</button>
+<div id="status">idle</div>
+<pre id="log">—</pre>
+<canvas id="chart" width="900" height="480"></canvas>
+<div id="tableHost"></div>
+
+<script src="../../js/componentLibrary.js"></script>
+<script src="../../js/customDesign.js"></script>
+<script src="../../js/fleet.js"></script>
+<script src="../../js/config.js"></script>
+<script src="../../js/simJs/core/massProps.js"></script>
+<script src="../../js/guideConfigDefaults.js"></script>
+<script src="../lib/config.js"></script>
+<script src="../lib/worker-pool.js"></script>
+
+<script>
+(function () {
+  'use strict';
+  const $ = (id) => document.getElementById(id);
+  const logEl = $('log'), statusEl = $('status');
+  let logLines = [];
+  const log = (s) => { logLines.push(s); logEl.textContent = logLines.join('\n'); logEl.scrollTop = logEl.scrollHeight; };
+  const fmt = (x, d) => Number.isFinite(x) ? x.toFixed(d) : '—';
+  const RE = CONFIG.EARTH_RADIUS, GM = CONFIG.GM_EARTH;
+  const T = 4.82;
+  const BIAS_TOL = 1e-9;   // deg, bisection stop
+  const E_TOL = 1.0;       // J/kg, primary stop
+  const MAX_ITERS = 45;
+
+  function specE(m) {
+    const r = RE + m.altCoastKm * 1000;
+    return 0.5 * (m.vrCoast * m.vrCoast + m.vtCoast * m.vtCoast) - GM / r;
+  }
+
+  function rawValues(G, bias, leadSec, meco) {
+    return {
+      ascent: { PUSH_MAX_GIMBAL_DEG: G, PUSH_T_S: T, MECO_TARGET_BOOSTER_FUEL_KG: meco },
+      insertion: { TARGET_ORBIT_ALT_KM: 320,
+                   STAGE_BURN_AOA_BIAS_DEG: bias,
+                   STAGE_BURN_AOA_MARGIN_DEG: 0.001,
+                   CIRC_TRIGGER_LEAD_S: leadSec },
+      done: { DEORBIT_ENABLED: false },
+    };
+  }
+
+  // one G task: bisect bias to hit E_ref
+  async function bisectG(pool, G, E_ref, guessBias, tag, onLog) {
+    const evals = [];
+    async function evalAt(b) {
+      const m = await pool.runEvalValues(rawValues(G, b, 5.53, 52612), { stopAt: 'COAST_WAIT_ENTRY', quiet: true });
+      const ok = m.endReason === 'COAST_WAIT_ENTRY' && Number.isFinite(m.eCoast);
+      const E = ok ? specE(m) : NaN;
+      evals.push({ b, E, ok });
+      if (onLog) onLog(tag + ' b=' + b.toFixed(10) + (ok ? ' E=' + E.toFixed(4) + ' ΔE=' + (E - E_ref).toFixed(4) : ' ' + m.endReason));
+      return { b, E, ok };
+    }
+
+    // initial bracket via 3 probes
+    const r1 = await evalAt(guessBias - 0.15);
+    const r2 = await evalAt(guessBias);
+    const r3 = await evalAt(guessBias + 0.15);
+    const probes = [r1, r2, r3].filter(p => p.ok);
+    if (probes.length < 2) {
+      const bestP = evals.filter(e => e.ok).sort((a, b) => Math.abs(a.E - E_ref) - Math.abs(b.E - E_ref))[0];
+      return { G, ok: false, reason: 'no valid probes', bias: bestP ? bestP.b : NaN, E: bestP ? bestP.E : NaN, evals: evals.length };
+    }
+
+    // find bracket: one side E>ref (lo by slope), other E<ref
+    let above = null, below = null;
+    for (const p of probes) {
+      if (p.E >= E_ref && (!above || p.E < above.E)) above = p;
+      if (p.E <= E_ref && (!below || p.E > below.E)) below = p;
+    }
+    if (!above || !below) {
+      const bestP = probes.sort((a, b) => Math.abs(a.E - E_ref) - Math.abs(b.E - E_ref))[0];
+      return { G, ok: false, reason: 'no bracket', bias: bestP.b, E: bestP.E, evals: evals.length };
+    }
+
+    let bA = above.b, bB = below.b;  // bA has E >= ref, bB has E <= ref
+    let best = Math.abs(above.E - E_ref) < Math.abs(below.E - E_ref) ? above : below;
+    let iters = 0;
+
+    for (let it = 0; it < MAX_ITERS; it++) {
+      iters++;
+      if (Math.abs(bA - bB) < BIAS_TOL) break;
+      const mid = (bA + bB) / 2;
+      const r = await evalAt(mid);
+      if (!r.ok) break;
+      const dE = r.E - E_ref;
+      if (Math.abs(dE) < Math.abs(best.E - E_ref)) best = r;
+      if (Math.abs(dE) < E_TOL) { best = r; break; }
+      if (r.E >= E_ref) bA = mid; else bB = mid;
+    }
+
+    return { G, ok: true, bias: best.b, E: best.E, deltaE: best.E - E_ref, iters, evals: evals.length };
+  }
+
+  async function run() {
+    $('runBtn').disabled = true;
+    logLines = []; logEl.textContent = '—'; $('tableHost').innerHTML = '';
+    const ctx = $('chart').getContext('2d');
+    ctx.fillStyle = '#060912'; ctx.fillRect(0, 0, 900, 480);
+
+    try {
+      const n = Math.max(1, Math.min(8, parseInt($('nW').value, 10) || 6));
+      const baseG = parseFloat($('baseG').value);
+      const baseB = parseFloat($('baseB').value);
+      const Q = TunerConfig.quanta;
+
+      statusEl.textContent = 'creating pool…';
+      log('creating pool with ' + n + ' workers…');
+      const pool = new TunerCore.WorkerPool(n, { workerPath: '../lib/worker-sim.js' });
+      await pool.waitReady();
+      log('pool ready');
+      const t0 = performance.now();
+
+      // baseline
+      log('');
+      log('=== baseline G=' + baseG + ' bias=' + baseB + ' ===');
+      const mBase = await pool.runEvalValues(rawValues(baseG, baseB, 5.53, 52612), { stopAt: 'COAST_WAIT_ENTRY', quiet: true });
+      const E_ref = specE(mBase);
+      log('  E_ref = ' + E_ref.toFixed(6) + ' J/kg  ecc=' + fmt(mBase.eCoast, 7));
+
+      // G list — valid lattice G
+      const Gs = [0.575, 0.58, 0.59, 0.61, 0.62, 0.63];
+      // slope0 ~0.5 deg/0.01G, extrapolate guess
+      const guessAt = (g) => baseB + (g - baseG) / 0.01 * 0.5;
+
+      log('');
+      log('=== parallel bisection at ' + Gs.length + ' G values, target |ΔE| < ' + E_TOL + ' J/kg ===');
+      statusEl.textContent = 'bisecting…';
+
+      // launch all in parallel; pool dispatches 1 eval at a time per worker
+      const tasks = Gs.map(g => bisectG(pool, g, E_ref, guessAt(g), 'G=' + g.toFixed(3), null));
+      const results = await Promise.all(tasks);
+
+      const wall = (performance.now() - t0) / 1000;
+      log('');
+      log('=== results (wall ' + fmt(wall, 1) + 's) ===');
+
+      // Table
+      let html = '<table><thead><tr><th>G</th><th>A</th><th>bias (deg, 10dp)</th><th>E (J/kg)</th><th>ΔE</th><th>|ΔE|</th><th>ecc</th><th>iters</th><th>evals</th></tr></thead><tbody>';
+      html += '<tr><td>' + baseG.toFixed(3) + '</td><td>' + (baseG*T*T).toFixed(5) + '</td><td>' + baseB.toFixed(10) + '</td><td>' + E_ref.toFixed(3) + '</td><td>0.000</td><td class="match">0</td><td>' + fmt(mBase.eCoast, 7) + '</td><td>—</td><td>1 (baseline)</td></tr>';
+      results.sort((a, b) => a.G - b.G);
+      results.forEach(r => {
+        const cls = Number.isFinite(r.deltaE) && Math.abs(r.deltaE) < 1 ? 'match' : '';
+        html += '<tr><td>' + r.G.toFixed(3) + '</td><td>' + (r.G*T*T).toFixed(5) + '</td><td>' + fmt(r.bias, 10) + '</td><td>' + (Number.isFinite(r.E) ? r.E.toFixed(3) : '—') + '</td><td>' + (Number.isFinite(r.deltaE) ? (r.deltaE >= 0 ? '+' : '') + r.deltaE.toFixed(4) : '—') + '</td><td class="' + cls + '">' + (Number.isFinite(r.deltaE) ? Math.abs(r.deltaE).toFixed(4) : '—') + '</td><td>' + (r.ecc ? fmt(r.ecc, 7) : '—') + '</td><td>' + (r.iters || 0) + '</td><td>' + (r.evals || 0) + '</td></tr>';
+        log('  G=' + r.G.toFixed(3) + '  bias=' + fmt(r.bias, 10) + '  E=' + (Number.isFinite(r.E) ? r.E.toFixed(4) : '—') + '  |ΔE|=' + (Number.isFinite(r.deltaE) ? Math.abs(r.deltaE).toFixed(4) : '—') + '  evals=' + r.evals + (r.ok ? '' : '  [' + r.reason + ']'));
+      });
+      html += '</tbody></table>';
+      $('tableHost').innerHTML = html;
+
+      // chart
+      const pts = [{ A: baseG*T*T, bias: baseB, tag: 'baseline', ok: true }];
+      results.forEach(r => pts.push({ A: r.G*T*T, bias: r.bias, tag: 'G=' + r.G.toFixed(3), ok: r.ok }));
+      drawChart(ctx, pts);
+
+      statusEl.textContent = 'done — ' + fmt(wall, 1) + 's';
+      log('');
+      log('total wall ' + fmt(wall, 1) + 's  (N=' + n + ' workers)');
+    } catch (e) {
+      console.error(e);
+      log('ERROR: ' + e.message + '\n' + (e.stack || ''));
+    } finally {
+      $('runBtn').disabled = false;
+    }
+  }
+
+  function drawChart(ctx, pts) {
+    const W = 900, H = 480;
+    const padL = 90, padR = 40, padT = 30, padB = 60;
+    const pw = W - padL - padR, ph = H - padT - padB;
+
+    const aMin = Math.min(...pts.map(p => p.A)) - 0.03;
+    const aMax = Math.max(...pts.map(p => p.A)) + 0.03;
+    const bVals = pts.map(p => p.bias).filter(Number.isFinite);
+    const bMin = Math.min(...bVals) - 0.1;
+    const bMax = Math.max(...bVals) + 0.1;
+
+    const X = (a) => padL + (a - aMin) / (aMax - aMin) * pw;
+    const Y = (b) => padT + ph - (b - bMin) / (bMax - bMin) * ph;
+
+    ctx.strokeStyle = 'rgba(255,255,255,0.08)'; ctx.lineWidth = 1;
+    for (let i = 0; i <= 5; i++) {
+      const y = padT + i * ph / 5;
+      ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(padL + pw, y); ctx.stroke();
+      const x = padL + i * pw / 5;
+      ctx.beginPath(); ctx.moveTo(x, padT); ctx.lineTo(x, padT + ph); ctx.stroke();
+    }
+    ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+    ctx.beginPath(); ctx.moveTo(padL, padT); ctx.lineTo(padL, padT + ph); ctx.lineTo(padL + pw, padT + ph); ctx.stroke();
+
+    ctx.fillStyle = 'rgba(150,170,200,0.9)'; ctx.font = '11px monospace';
+    ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+    for (let i = 0; i <= 5; i++) {
+      const b = bMin + i * (bMax - bMin) / 5;
+      ctx.fillText(b.toFixed(3), padL - 8, padT + ph - i * ph / 5);
+    }
+    ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+    for (let i = 0; i <= 5; i++) {
+      const a = aMin + i * (aMax - aMin) / 5;
+      ctx.fillText(a.toFixed(3), padL + i * pw / 5, padT + ph + 8);
+    }
+    ctx.fillStyle = '#35d6ff'; ctx.font = 'bold 12px monospace';
+    ctx.fillText('A = G · T²  (T=4.82)', padL + pw / 2, H - 24);
+    ctx.save();
+    ctx.translate(24, padT + ph / 2); ctx.rotate(-Math.PI / 2);
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('bias (deg)', 0, 0);
+    ctx.restore();
+
+    // connecting line
+    const sorted = pts.slice().sort((a, b) => a.A - b.A);
+    ctx.strokeStyle = '#35d6ff'; ctx.lineWidth = 2;
+    ctx.beginPath();
+    sorted.forEach((p, i) => {
+      const x = X(p.A), y = Y(p.bias);
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+
+    // points
+    sorted.forEach(p => {
+      const x = X(p.A), y = Y(p.bias);
+      ctx.fillStyle = p.tag === 'baseline' ? '#4ade80' : (p.ok ? '#ffd23f' : '#ff5f7e');
+      ctx.beginPath(); ctx.arc(x, y, 5, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#dbe6f5'; ctx.font = '10px monospace';
+      ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
+      ctx.fillText(p.tag, x + 8, y - 6);
+    });
+  }
+
+  $('runBtn').addEventListener('click', run);
+  $('status').textContent = 'ready';
+})();
+</script>
+</body>
+</html>
