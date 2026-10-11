@@ -283,6 +283,10 @@ out.v3State = {
     lastAltKm: _v3State.lastAltKm,
     lastAxialGap: _v3State.lastAxialGap,
     lateralArmed: _v3State.lateralArmed,
+    // One-shot mission flags — must survive export/import so a checkpoint
+    // restore does not leave them "already fired" from a previous run.
+    pusherTorqueFired: _v3State.pusherTorqueFired,
+    payloadOpenFired: _v3State.payloadOpenFired,
 
 };
 if (_v3State.ascentBlock) out.v3AscentBlock = _v3State.ascentBlock.getState();
