@@ -30,6 +30,12 @@ self.localStorage = (function() {
 // and we can add a targeted stub if that specific access shows up.
 self.window = self;
 
+// Worker tag for live progress messages
+const _workerTag = 'w' + Math.random().toString(36).slice(2, 6);
+function emit(phase, detail) {
+  try { self.postMessage({ type: 'progress', tag: _workerTag, phase, detail, ts: Date.now() }); } catch (e) {}
+}
+
 // ---- 2. Job state ----
 let _loaded = false;
 let _bootError = null;
@@ -203,13 +209,16 @@ self.onmessage = async (e) => {
     } else if (type === 'setupSA') {
       // Run G/T/MECO point until SEPARATED_AXIAL entry, save snapshot in worker.
       const values = payload.values;
+      emit('setupSA', 'start');
       self.TunerEngine.prepareRun(self.TunerConfig.guideName, values, payload.env || self.TunerConfig.env);
       const maxTicks = Math.ceil(300 / self.CONFIG.DT);
       const reached = await tickUntil(() => currentPhase() === 'SEPARATED_AXIAL', maxTicks);
       if (!reached) {
+        emit('setupSA', 'fail phase=' + currentPhase());
         result = { ok: false, reason: 'SA not reached, phase=' + currentPhase() };
       } else {
         _saSnapshot = captureSA();
+        emit('setupSA', 'done t=' + _saSnapshot.simTime.toFixed(2));
         result = { ok: true, simTime: _saSnapshot.simTime };
       }
     } else if (type === 'probeBiasCheckpoint') {
@@ -218,13 +227,17 @@ self.onmessage = async (e) => {
       else {
         const newBias = payload.bias;
         const altKm = payload.altKm != null ? payload.altKm : 320;
+        const tag = 'b=' + newBias.toFixed(3);
+        emit('probe', tag + ' restore+runToCH');
         restoreSA(_saSnapshot, newBias);
         // Run from SA to CH entry
         const maxTicks = Math.ceil(800 / self.CONFIG.DT);
         const reached = await tickUntil(() => currentPhase() === 'COAST_HOLD', maxTicks);
         if (!reached) {
+          emit('probe', tag + ' CH_FAIL phase=' + currentPhase());
           result = { ok: false, reason: 'CH not reached after restore, phase=' + currentPhase() };
         } else {
+          emit('probe', tag + ' reached CH, tuneLead');
           // Build a point at CH — tuneLead only needs Gi,Tn,bi,li,meco for lattice key; the actual sim state is already restored.
           const Q = self.TunerConfig.quanta;
           const c = self.Guidance.getGuideConfig('leoInsertionV3');
@@ -237,9 +250,12 @@ self.onmessage = async (e) => {
           };
           // tuneLead with a checkpoint-based hook: each CIRC_END eval restores SA, sets bias + new lead, runs to CH + CIRC_END.
           const cache = new self.TunerUtils.EvalCache();
+          let _evalN = 0;
           const CPHook = {
             runEval: async (p2, o) => {
+              _evalN++;
               const lead = p2.li * Q.lead;
+              emit('probe', tag + ' eval#' + _evalN + ' lead=' + lead.toFixed(4));
               restoreSA(_saSnapshot, newBias);
               // Override lead in guidance config
               const g = self.Guidance.getGuideConfig('leoInsertionV3');
@@ -289,9 +305,11 @@ self.onmessage = async (e) => {
             }
           };
           const lr = await self.TunerCore.tuneLead(point, { hook: CPHook, cache, targetAltKm: altKm });
+          emit('probe', tag + ' tuneLead done ok=' + lr.ok + ' lead=' + (lr.lead || 'n/a'));
           if (!lr.ok) {
             result = { ok: false, reason: 'lead_failed: ' + lr.reason, lead: lr.lead, margin: lr.marginS, evals: lr.evals };
           } else {
+            emit('probe', tag + ' FULL eval');
             // Run FULL eval from SA with bias + best lead
             restoreSA(_saSnapshot, newBias);
             const gFull = self.Guidance.getGuideConfig('leoInsertionV3');
@@ -308,6 +326,7 @@ self.onmessage = async (e) => {
               deployTimeS: gsEnd.deployCommandSimTime,
             };
             const sc = self.TunerUtils.score(m, { targetAltKm: altKm });
+            emit('probe', tag + ' FULL score=' + (sc.score != null ? sc.score.toFixed(2) : '?') + ' cleared=' + m.payloadCleared);
             result = {
               ok: sc.ok, lead: lr.lead, margin: lr.marginS, vrEnd: lr.vrEnd,
               score: sc.score, reasons: sc.reasons,
