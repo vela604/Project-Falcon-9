@@ -24,8 +24,9 @@ self.localStorage = (function() {
   };
 })();
 
-// Some sim files may reference window; alias to self so nothing crashes.
-self.window = self;
+// NOTE: do NOT alias window=self. Sim files are worker-safe already
+// (physics.worker.js loads the same set). Some files check window.document
+// and crash if window exists but document doesn't.
 
 // ---- 2. Job state ----
 let _loaded = false;

@@ -28,7 +28,7 @@
     constructor(n, opts) {
       opts = opts || {};
       this.n = Math.max(1, n | 0);
-      this.workerPath = opts.workerPath || 'lib/worker-sim.js';
+      this.workerPath = opts.workerPath || this._resolveDefaultPath();
       this.workers = [];
       this.ready = new Array(this.n).fill(false);
       this.readyErrors = new Array(this.n).fill(null);
