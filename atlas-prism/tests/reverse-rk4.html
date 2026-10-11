@@ -146,14 +146,14 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
 
   async function forward() {
     TunerEngine.prepareRun(TunerConfig.guideName, baselineValues(), TunerConfig.env);
-    const s = { karman: null, ign: null, off: null, pay: null };
+    const s = { karman: null, ign: null, off: null, pay: null, last: null, endReason: 'loop-end', lastGS: null };
     const traj = [];
     let prevFuel = NaN, sawBurn = false, burnStopCounter = 0;
     const maxTicks = Math.ceil(800 / DT);
     let lastYield = performance.now();
 
     for (let i = 0; i < maxTicks; i++) {
-      if (state.halted) break;
+      if (state.halted) { s.endReason = 'halted'; break; }
       TunerEngine.tick(DT);
       const b = state.bodies[state.activeBodyIndex];
       if (!b) continue;
@@ -178,9 +178,11 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
       if (!s.pay && gs && gs.payloadReleased) s.pay = Object.assign({}, sp, { fuel: sf });
 
       traj.push({ t: sp.t, altM: sp.altM, r: sp.r, v: sp.v, fuel: sf });
+      s.last = Object.assign({}, sp, { fuel: sf });
+      s.lastGS = gs;
       prevFuel = sf;
 
-      if (gs && gs.payloadCleared) break;
+      if (gs && gs.payloadCleared) { s.endReason = 'payload-cleared'; break; }
       if ((i & 255) === 255) {
         const now = performance.now();
         if (now - lastYield > 40) {
@@ -189,6 +191,10 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
           lastYield = now;
         }
       }
+    }
+    if (!s.pay && s.last) {
+      s.pay = s.last;
+      s.payFallback = true;
     }
     return { s, traj };
   }
@@ -273,8 +279,9 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
     try {
       $('status').textContent = 'forward…';
       const { s, traj } = await forward();
-      if (!s.karman || !s.ign || !s.off || !s.pay) {
-        $('status').textContent = 'missing snapshots: karman=' + !!s.karman + ' ign=' + !!s.ign + ' off=' + !!s.off + ' pay=' + !!s.pay;
+      if (!s.karman || !s.ign || !s.off) {
+        $('status').textContent = 'missing snapshots: karman=' + !!s.karman + ' ign=' + !!s.ign + ' off=' + !!s.off + ' pay=' + !!s.pay + ' last=' + !!s.last;
+        $('raw').textContent = 'endReason=' + s.endReason + '\nlastGS=' + JSON.stringify(s.lastGS);
         $('runBtn').disabled = false; return;
       }
 
@@ -344,6 +351,8 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
         { k: 'margin (pay-off, s)',   v: fmt(s.pay.t - s.off.t, 3) },
         { k: 'T_burn sim (off-ign)',  v: fmt(s.off.t - s.ign.t, 3) },
         { k: 'fuel burned (kg)',      v: fmt(mfBurned, 2) },
+        { k: 'end reason',            v: s.endReason },
+        { k: 'pay fallback?',         v: s.payFallback ? 'yes (used last state)' : 'no' },
 
         { h: 'Engine params' },
         { k: 'Ve (m/s)',              v: fmt(Ve, 3) },
@@ -434,7 +443,8 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
 
       // raw
       $('raw').textContent = [
-        'forward: tK=' + s.karman.t.toFixed(3) + ' tIgn=' + s.ign.t.toFixed(3) + ' tOff=' + s.off.t.toFixed(3) + ' tPay=' + s.pay.t.toFixed(3),
+        'forward: tK=' + s.karman.t.toFixed(3) + ' tIgn=' + s.ign.t.toFixed(3) + ' tOff=' + s.off.t.toFixed(3) + ' tPay=' + (s.pay ? s.pay.t.toFixed(3) : 'n/a'),
+        'endReason=' + s.endReason + '  lastGS=' + JSON.stringify({ phase: s.lastGS && s.lastGS.phase, payloadReleased: s.lastGS && s.lastGS.payloadReleased, payloadCleared: s.lastGS && s.lastGS.payloadCleared }),
         'lead_actual=' + lead_actual.toFixed(4) + '  T_burn_sim=' + (s.off.t - s.ign.t).toFixed(3) + '  T_burn_model=' + T_total.toFixed(3),
         'PhaseA err pos=' + errA_pos.toFixed(3) + ' m  vel=' + errA_vel.toFixed(4) + ' m/s',
         'PhaseB err pos=' + errB_pos.toFixed(3) + ' m  vel=' + errB_vel.toFixed(6) + ' m/s',
