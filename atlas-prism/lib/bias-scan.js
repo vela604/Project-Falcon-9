@@ -148,8 +148,31 @@
         const failsAbove = fails.filter(x => x > newLo);
         if (failsAbove.length) newHi = Math.min(...failsAbove);
       } else {
-        say('all probes failed — no info to bracket');
-        break;
+        // All probes in this iteration failed. Parent bracket still has
+        // valid points from earlier iterations — reuse them.
+        if (fails.length === 0) { say('no classes seen — break'); break; }
+        const validAll = history.filter(r => Number.isFinite(r.E) && r.cls !== 'fail');
+        if (!validAll.length) { say('no valid points exist anywhere — break'); break; }
+        // Closest-to-target valid point
+        validAll.sort((a, b) => Math.abs(a.E - E_target) - Math.abs(b.E - E_target));
+        const best = validAll[0];
+        // Which side did the fails cluster on?
+        const avgFail = fails.reduce((sum, x) => sum + x, 0) / fails.length;
+        if (avgFail < best.bi) {
+          const maxFailLeft = Math.max(...fails.filter(x => x < best.bi));
+          newLo = maxFailLeft; newHi = best.bi;
+        } else {
+          const minFailRight = Math.min(...fails.filter(x => x > best.bi));
+          newLo = best.bi; newHi = minFailRight;
+        }
+        if (newLo >= newHi || (newLo === lo && newHi === hi)) {
+          say('  tightened bracket is degenerate — returning global best (b=' + (best.bi * Q.bias).toFixed(4) + ' E=' + best.E.toExponential(4) + ' Δ=' + ((best.E - E_target) / 1e5).toFixed(2) + 'e5)');
+          return { ok: false, reason: 'target-unreachable',
+                   bias: best.bi * Q.bias, biasQ: best.bi,
+                   E: best.E, ecc: best.ecc, metrics: best.m,
+                   history, evals, wallMs: performance.now() - t0, log: lines };
+        }
+        say('  bracket tightened from parent valid + fails -> [' + (newLo * Q.bias).toFixed(4) + ', ' + (newHi * Q.bias).toFixed(4) + ']');
       }
 
       if (newLo >= newHi || (newLo === lo && newHi === hi)) {
