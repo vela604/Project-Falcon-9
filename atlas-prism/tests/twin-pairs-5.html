@@ -96,7 +96,7 @@ td:first-child, th:first-child { text-align:left; color:#6b7d9c; }
       if (mBase.endReason !== 'COAST_WAIT_ENTRY') { log('baseline failed'); return; }
 
       // G values to scan (baseline G excluded)
-      const Gs = [0.55, 0.57, 0.58, 0.59, 0.61, 0.62, 0.63];
+      const Gs = [0.575, 0.58, 0.585, 0.59, 0.60, 0.61, 0.615, 0.62, 0.625, 0.63];
       const results = [];
       const t1 = performance.now();
 
@@ -109,12 +109,15 @@ td:first-child, th:first-child { text-align:left; color:#6b7d9c; }
           const r = await TunerCore.biasScan(p, {
             pool,
             E_target: E_ref,
-            E_tol: 2e5,  // 0.2e6 tolerance for pairing (loose)
-            biRange: [Math.round(-3 / Q.bias), Math.round(3 / Q.bias)],
+            E_tol: 1e4,        // 1e4 J/kg — tight
+            biTol: Math.max(1, Math.round(0.0001 / Q.bias)),  // 0.0001 deg
+            quantum: Math.max(1, Math.round(0.005 / Q.bias)), // ~0.005 deg
+            biRange: [Math.round(-6 / Q.bias), Math.round(6 / Q.bias)],
+            maxIters: 16,
             onLog: (s) => log('  ' + s),
           });
           results.push({ G: g, A: g * T * T, bias: r.bias, biasQ: r.biasQ, E: r.E, ecc: r.ecc, ok: r.ok, evals: r.evals });
-          log('  -> G=' + g.toFixed(2) + ' A=' + (g*T*T).toFixed(4) + ' bias=' + fmt(r.bias, 4) + ' E=' + r.E.toExponential(6) + ' ok=' + r.ok);
+          log('  -> G=' + g.toFixed(2) + ' A=' + (g*T*T).toFixed(5) + ' bias=' + fmt(r.bias, 5) + ' E=' + r.E.toExponential(6) + ' ΔE=' + ((r.E - E_ref) / 1e4).toFixed(2) + 'e4 ok=' + r.ok);
         } catch (e) {
           log('  scan failed: ' + e.message);
           results.push({ G: g, A: g * T * T, bias: NaN, E: NaN, ok: false });
@@ -129,7 +132,7 @@ td:first-child, th:first-child { text-align:left; color:#6b7d9c; }
       let html = '<table><thead><tr><th>G</th><th>A (=G·T²)</th><th>bias (deg)</th><th>E (J/kg)</th><th>ecc</th><th>ok</th></tr></thead><tbody>';
       html += '<tr style="background:rgba(74,222,128,0.1)"><td>' + baseG.toFixed(2) + '</td><td>' + (baseG*T*T).toFixed(4) + '</td><td>' + baseB.toFixed(4) + '</td><td>' + E_ref.toExponential(5) + '</td><td>' + fmt(mBase.eCoast, 5) + '</td><td>BASELINE</td></tr>';
       results.forEach(r => {
-        html += '<tr><td>' + r.G.toFixed(2) + '</td><td>' + r.A.toFixed(4) + '</td><td>' + fmt(r.bias, 4) + '</td><td>' + (Number.isFinite(r.E) ? r.E.toExponential(5) : '—') + '</td><td>' + fmt(r.ecc, 5) + '</td><td>' + (r.ok ? '✓' : '~') + '</td></tr>';
+        html += '<tr><td>' + r.G.toFixed(2) + '</td><td>' + r.A.toFixed(5) + '</td><td>' + fmt(r.bias, 5) + '</td><td>' + (Number.isFinite(r.E) ? r.E.toExponential(6) : '—') + '</td><td>' + fmt(r.ecc, 6) + '</td><td>ΔE=' + (Number.isFinite(r.E) ? ((r.E - E_ref)/1e4).toFixed(1) + 'e4' : '—') + '  ' + (r.ok ? '✓' : '~') + '</td></tr>';
       });
       html += '</tbody></table>';
       tableHost.innerHTML = html;
@@ -142,9 +145,9 @@ td:first-child, th:first-child { text-align:left; color:#6b7d9c; }
 
       log('');
       log('=== twin pairs (baseline + each) ===');
-      log('baseline: A=' + (baseG*T*T).toFixed(4) + ' bias=' + baseB.toFixed(4) + '  E=' + E_ref.toExponential(6));
+      log('baseline: A=' + (baseG*T*T).toFixed(5) + ' bias=' + baseB.toFixed(5) + '  E=' + E_ref.toExponential(6));
       valid.forEach(r => {
-        log('A=' + r.A.toFixed(4) + ' (G=' + r.G.toFixed(2) + ')  bias=' + fmt(r.bias, 4) + '  E=' + r.E.toExponential(6) + '  ΔE=' + ((r.E - E_ref) / 1e5).toFixed(2) + 'e5');
+        log('A=' + r.A.toFixed(5) + ' (G=' + r.G.toFixed(2) + ')  bias=' + fmt(r.bias, 5) + '  E=' + r.E.toExponential(6) + '  ΔE=' + ((r.E - E_ref) / 1e4).toFixed(2) + 'e4');
       });
 
       statusEl.textContent = 'done — ' + fmt(wall, 1) + 's';
