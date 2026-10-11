@@ -81,35 +81,35 @@ let _saSnapshot = null;
 
 function captureSnap() {
   const st = {};
-  Object.keys(self.state).forEach(k => { if (k === 'bodies') return; try { st[k] = deepClone(self.state[k]); } catch (e) { st[k] = null; } });
+  Object.keys(state).forEach(k => { if (k === 'bodies') return; try { st[k] = deepClone(state[k]); } catch (e) { st[k] = null; } });
   return {
-    bodies: deepClone(self.state.bodies),
+    bodies: deepClone(state.bodies),
     stateKeysSnapshot: st,
-    simTime: self.state.simTime,
-    activeBodyIndex: self.state.activeBodyIndex,
-    guidanceState: self.Guidance.exportGuideState(),
+    simTime: state.simTime,
+    activeBodyIndex: state.activeBodyIndex,
+    guidanceState: Guidance.exportGuideState(),
   };
 }
 
 function restoreSnap(snap, biasOverride, leadOverride) {
   Object.keys(snap.stateKeysSnapshot).forEach(k => {
-    try { self.state[k] = deepClone(snap.stateKeysSnapshot[k]); } catch (e) {}
+    try { state[k] = deepClone(snap.stateKeysSnapshot[k]); } catch (e) {}
   });
-  self.state.simTime = snap.simTime;
-  self.state.activeBodyIndex = snap.activeBodyIndex;
+  state.simTime = snap.simTime;
+  state.activeBodyIndex = snap.activeBodyIndex;
   const sb = snap.bodies;
-  while (self.state.bodies.length > sb.length) self.state.bodies.pop();
-  while (self.state.bodies.length < sb.length) self.state.bodies.push({});
+  while (state.bodies.length > sb.length) state.bodies.pop();
+  while (state.bodies.length < sb.length) state.bodies.push({});
   for (let i = 0; i < sb.length; i++) {
-    const src = sb[i], dst = self.state.bodies[i];
+    const src = sb[i], dst = state.bodies[i];
     Object.keys(dst).forEach(k => { delete dst[k]; });
     Object.keys(src).forEach(k => { dst[k] = deepClone(src[k]); });
   }
-  const ab = self.state.bodies[self.state.activeBodyIndex];
+  const ab = state.bodies[state.activeBodyIndex];
   if (ab) ['rx','ry','vx','vy','theta','omega','dryMass','fuelMass'].forEach(k => {
-    try { self.state[k] = ab[k]; } catch (e) {}
+    try { state[k] = ab[k]; } catch (e) {}
   });
-  for (const b of self.state.bodies) {
+  for (const b of state.bodies) {
     if (!b || !b.members || !b.members.length) continue;
     if (b._lastBottomMember && b._lastBottomMember.id) {
       const m = b.members.find(mm => mm && mm.id === b._lastBottomMember.id);
@@ -130,19 +130,19 @@ function restoreSnap(snap, biasOverride, leadOverride) {
       if (g.v3InsertionBlock.st) delete g.v3InsertionBlock.st._circLeadCached;
     }
   }
-  self.Guidance.importGuideState(g);
+  Guidance.importGuideState(g);
 }
 
 function phaseNow() {
-  const gs = self.Guidance.getGuideStatus();
+  const gs = Guidance.getGuideStatus();
   return gs && gs.phase;
 }
 
 async function tickUntilPhase(targetPhases, maxS) {
-  const maxTicks = Math.ceil(maxS / self.CONFIG.DT);
+  const maxTicks = Math.ceil(maxS / CONFIG.DT);
   for (let i = 0; i < maxTicks; i++) {
-    if (self.state.halted) return false;
-    self.TunerEngine.tick(self.CONFIG.DT);
+    if (state.halted) return false;
+    TunerEngine.tick(CONFIG.DT);
     const ph = phaseNow();
     if (targetPhases.indexOf(ph) >= 0) return true;
   }
@@ -150,7 +150,7 @@ async function tickUntilPhase(targetPhases, maxS) {
 }
 
 function findStageBody() {
-  for (const b of self.state.bodies) {
+  for (const b of state.bodies) {
     if (b && !b.payloadBody && !b.fairingHalf && b.members && b.members[0] && b.members[0].stageRole === 'stage') return b;
   }
   return null;
@@ -162,7 +162,7 @@ function extractCircMetrics() {
   const r = Math.hypot(stb.rx, stb.ry);
   const vr = (stb.vx * stb.rx + stb.vy * stb.ry) / r;
   const vt = (stb.vx * stb.ry - stb.vy * stb.rx) / r;
-  const GM = self.CONFIG.GM_EARTH;
+  const GM = CONFIG.GM_EARTH;
   const E = 0.5 * (vr * vr + vt * vt) - GM / r;
   let per = 0, tApo = Infinity;
   if (E < 0) {
@@ -215,7 +215,7 @@ self.onmessage = async (e) => {
       result = await TunerHook.runEvalValues(payload.values, payload.opts || {});
     } else if (type === 'setupSA') {
       emit('setupSA', 'running ascent');
-      self.TunerEngine.prepareRun(self.TunerConfig.guideName, payload.values, payload.env || self.TunerConfig.env);
+      TunerEngine.prepareRun(TunerConfig.guideName, payload.values, payload.env || TunerConfig.env);
       const ok = await tickUntilPhase(['SEPARATED_AXIAL'], 300);
       if (!ok) {
         emit('setupSA', 'FAIL ' + phaseNow());
@@ -230,7 +230,7 @@ self.onmessage = async (e) => {
       else {
         const newBias = payload.bias;
         const altKm = payload.altKm != null ? payload.altKm : 320;
-        const Q = self.TunerConfig.quanta;
+        const Q = TunerConfig.quanta;
         const tag = 'b=' + newBias.toFixed(3);
 
         // ---- 1. Restore SA + bias, run to COAST_HOLD ----
@@ -246,7 +246,7 @@ self.onmessage = async (e) => {
           emit('probe', tag + ' CH captured t=' + chSnap.simTime.toFixed(2) + ', tuneLead');
 
           // ---- 3. tuneLead with CH-based hook ----
-          const cache = new self.TunerUtils.EvalCache();
+          const cache = new TunerUtils.EvalCache();
           let evalN = 0;
           const CPHook = {
             runEval: async (p2, o) => {
@@ -256,14 +256,14 @@ self.onmessage = async (e) => {
               restoreSnap(chSnap, newBias, lead);
               const ok = await tickUntilPhase(['COAST_ROTATE_2'], 300);
               if (!ok) {
-                return { endReason: self.state.halted ? 'HALTED' : 'CAP', crashed: !!self.state.crashed, vrEnd: NaN, marginS: NaN, vrMin: NaN };
+                return { endReason: state.halted ? 'HALTED' : 'CAP', crashed: !!state.crashed, vrEnd: NaN, marginS: NaN, vrMin: NaN };
               }
               const m = extractCircMetrics();
-              return { endReason: 'CIRC_END', crashed: !!self.state.crashed, vrEnd: m.vrEnd, marginS: m.marginS, vrMin: m.vrMin };
+              return { endReason: 'CIRC_END', crashed: !!state.crashed, vrEnd: m.vrEnd, marginS: m.marginS, vrMin: m.vrMin };
             }
           };
           // Lattice point (needed for cache key only)
-          const cfg = self.Guidance.getGuideConfig('leoInsertionV3');
+          const cfg = Guidance.getGuideConfig('leoInsertionV3');
           const point = {
             Gi: Math.round(cfg.ascent.PUSH_MAX_GIMBAL_DEG / Q.G),
             Tn: Math.round(cfg.ascent.PUSH_T_S / Q.T),
@@ -271,7 +271,7 @@ self.onmessage = async (e) => {
             li: Math.round(cfg.insertion.CIRC_TRIGGER_LEAD_S / Q.lead),
             meco: cfg.ascent.MECO_TARGET_BOOSTER_FUEL_KG,
           };
-          const lr = await self.TunerCore.tuneLead(point, { hook: CPHook, cache, targetAltKm: altKm });
+          const lr = await TunerCore.tuneLead(point, { hook: CPHook, cache, targetAltKm: altKm });
           emit('probe', tag + ' tuneLead ok=' + lr.ok + ' lead=' + (Number.isFinite(lr.lead) ? lr.lead.toFixed(4) : 'n/a') + ' evals=' + lr.evals);
 
           if (!lr.ok) {
@@ -280,12 +280,12 @@ self.onmessage = async (e) => {
             // ---- 4. FULL eval from CH with best lead ----
             emit('probe', tag + ' FULL lead=' + lr.lead.toFixed(4));
             restoreSnap(chSnap, newBias, lr.lead);
-            const okFull = await tickUntilPhase(['DONE'], 300) || self.Guidance.getGuideStatus().payloadCleared;
-            const gsEnd = self.Guidance.getGuideStatus();
+            const okFull = await tickUntilPhase(['DONE'], 300) || Guidance.getGuideStatus().payloadCleared;
+            const gsEnd = Guidance.getGuideStatus();
             const stb = findStageBody();
             const m = {
               endReason: gsEnd.payloadCleared ? 'CLEARED' : 'CAP',
-              crashed: !!self.state.crashed,
+              crashed: !!state.crashed,
               payloadReleased: !!gsEnd.payloadCleared,
               payloadCleared: !!gsEnd.payloadCleared,
               deployTimeS: gsEnd.deployCommandSimTime,
@@ -293,12 +293,12 @@ self.onmessage = async (e) => {
               boosterFuelLeftKg: NaN, stageResidualKg: stb ? stb.fuelMass : NaN,
               maxQKPa: NaN, maxG: NaN,
             };
-            const pb = self.state.bodies.find(x => x && x.payloadBody);
+            const pb = state.bodies.find(x => x && x.payloadBody);
             if (pb) {
-              const o = self.TunerHook.orbitOf(pb, self.CONFIG.GM_EARTH, self.CONFIG.EARTH_RADIUS);
+              const o = TunerHook.orbitOf(pb, CONFIG.GM_EARTH, CONFIG.EARTH_RADIUS);
               m.apogeeKm = o.apoKm; m.perigeeKm = o.periKm; m.ecc = o.ecc;
             }
-            const sc = self.TunerUtils.score(m, { targetAltKm: altKm });
+            const sc = TunerUtils.score(m, { targetAltKm: altKm });
             emit('probe', tag + ' FULL score=' + (sc.score != null ? sc.score.toFixed(2) : '?') + ' cleared=' + m.payloadCleared);
             result = {
               ok: sc.ok, lead: lr.lead, margin: lr.marginS, vrEnd: lr.vrEnd,
