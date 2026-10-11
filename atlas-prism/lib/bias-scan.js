@@ -57,6 +57,12 @@
 
     const history = [];
     let evals = 0;
+    let globalBest = null;
+    const trackBest = (row) => {
+      if (!Number.isFinite(row.E)) return;
+      const d = Math.abs(row.E - E_target);
+      if (!globalBest || d < Math.abs(globalBest.E - E_target)) globalBest = row;
+    };
 
     say('biasScan: E_target = ' + E_target.toExponential(4) + ' J/kg  range=[' + (lo*Q.bias).toFixed(4) + ',' + (hi*Q.bias).toFixed(4) + '] deg  tol=' + (biTol*Q.bias).toFixed(4) + ' deg');
 
@@ -90,6 +96,7 @@
       rows.sort((a, b) => a.bi - b.bi);
       for (const row of rows) {
         history.push(row);
+        trackBest(row);
         const bDeg = (row.bi * Q.bias).toFixed(4);
         if (row.cls === 'in') say('  b=' + bDeg + '  IN   E=' + row.E.toExponential(4) + '  ecc=' + row.ecc.toFixed(5));
         else if (row.cls === 'lo') say('  b=' + bDeg + '  LO   E=' + row.E.toExponential(4) + '  ecc=' + row.ecc.toFixed(5) + '  dE=' + (row.E-E_target).toExponential(2));
@@ -145,8 +152,18 @@
         break;
       }
 
-      if (newLo >= newHi) { say('bracket collapsed without convergence'); break; }
-      if (newLo === lo && newHi === hi) { say('no progress'); break; }
+      if (newLo >= newHi || (newLo === lo && newHi === hi)) {
+        // Bracket exhausted. Return global best from any iteration.
+        if (globalBest) {
+          say('  bracket exhausted -> returning global best (b=' + (globalBest.bi * Q.bias).toFixed(4) + ' E=' + globalBest.E.toExponential(4) + ' Δ=' + ((globalBest.E - E_target) / 1e5).toFixed(2) + 'e5)');
+          return { ok: false, reason: 'bracket-exhausted',
+                   bias: globalBest.bi * Q.bias, biasQ: globalBest.bi,
+                   E: globalBest.E, ecc: globalBest.ecc, metrics: globalBest.m,
+                   history, evals, wallMs: performance.now() - t0, log: lines };
+        }
+        say('bracket exhausted, no valid candidates');
+        break;
+      }
       say('  bracket -> [' + (newLo*Q.bias).toFixed(4) + ', ' + (newHi*Q.bias).toFixed(4) + ']');
       lo = newLo; hi = newHi;
       // refine target via observed slope
@@ -168,7 +185,7 @@
 
     const cands = history.filter(r => Number.isFinite(r.E));
     cands.sort((a, b) => Math.abs(a.E - E_target) - Math.abs(b.E - E_target));
-    const fb = cands[0] || null;
+    const fb = globalBest || cands[0] || null;
     return { ok: false, reason: 'no-in-tol',
              bias: fb ? fb.bi * Q.bias : null, biasQ: fb ? fb.bi : null,
              E: fb ? fb.E : NaN, ecc: fb ? fb.ecc : NaN, metrics: fb ? fb.m : null,
