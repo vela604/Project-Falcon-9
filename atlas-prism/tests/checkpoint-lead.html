@@ -172,10 +172,11 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
     restoreSnapshot(g_snapshot, lead);
     let circStartT = NaN, circEndT = NaN, marginS = NaN, vrEnd = NaN, payloadT = NaN;
     let prevPhase = Guidance.getGuideStatus().phase;
+    window._vrTrace = [];
     // Scale cap by target altitude: baseline 320km needs ~60s post-CW,
     // high orbits (2000km) need ~500s (longer stage burn + coast).
     const tgtAlt = (g_snapshot && g_snapshot.__targetAltKm) ? g_snapshot.__targetAltKm : 320;
-    const capS = 300;
+    const capS = 400;   // CH → burn → CH_2 → payload
     const maxTicks = Math.ceil(capS / DT);
     for (let i = 0; i < maxTicks; i++) {
       if (state.halted) break;
@@ -199,13 +200,25 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
         }
       }
       if (gs.payloadCleared) { payloadT = state.simTime; break; }
+      // debug: CH_2 vr tracking
+      if (phase === 'COAST_HOLD_2' || phase === 'COAST_ROTATE_2') {
+        const stb = findStage();
+        if (stb) {
+          const r = Math.hypot(stb.rx, stb.ry);
+          const vr = (stb.vx * stb.rx + stb.vy * stb.ry) / r;
+          if (!window._vrTrace) window._vrTrace = [];
+          if (window._vrTrace.length < 3) window._vrTrace.push({ t: state.simTime, vr, phase });
+          else { window._vrTrace[window._vrTrace.length-1] = { t: state.simTime, vr, phase }; }
+        }
+      }
       prevPhase = phase;
       if ((i & 255) === 255) await new Promise(r => setTimeout(r, 0));
     }
     const gsEnd = Guidance.getGuideStatus();
     return { lead, circStartT, circEndT, marginS, vrEnd, payloadT,
              lastPhase: gsEnd.phase, lastSimTime: state.simTime,
-             halted: state.halted, crashed: state.crashed };
+             halted: state.halted, crashed: state.crashed,
+             vrTrace: (window._vrTrace || []).slice(0, 3) };
   }
 
   async function run() {
@@ -222,7 +235,7 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
       await new Promise(r => setTimeout(r, 100));
       TunerEngine.prepareRun(pv.guideName, pv.values, TunerConfig.env);
       let prevPhase = null, snapshotCaptured = false;
-      const maxTicks = Math.ceil(800 / DT);
+      const maxTicks = Math.ceil(5000 / DT);   // forward scan: enough for 2000 km CH entry
       for (let i = 0; i < maxTicks; i++) {
         if (state.halted) break;
         TunerEngine.tick(DT);
