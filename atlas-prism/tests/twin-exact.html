@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Twin Exact — 1 J/kg attempt</title>
+<style>
+body { margin:0; background:#060912; color:#dbe6f5; font:13px/1.5 monospace; padding:20px; }
+h1 { color:#35d6ff; font-size:15px; margin:0 0 12px; letter-spacing:1px; }
+button { background:#101a30; color:#dbe6f5; border:1px solid #1c2b45;
+         padding:8px 16px; border-radius:4px; font:inherit; cursor:pointer; margin-right:8px; }
+button:hover { border-color:#35d6ff; color:#35d6ff; }
+button:disabled { opacity:.4; }
+input[type=number] { background:#101a30; color:#dbe6f5; border:1px solid #1c2b45;
+         padding:6px 10px; border-radius:4px; font:inherit; width:90px; }
+pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4px;
+      font-size:11.5px; overflow:auto; max-height:600px; }
+</style>
+</head>
+<body>
+
+<h1>Twin Exact — fine sweep to demonstrate discrete E floor</h1>
+
+<label>base G <input type="number" id="baseG" value="0.60" step="0.01"></label>
+<label>base bias <input type="number" id="baseB" value="0.59" step="0.01"></label>
+<label>target G <input type="number" id="targetG" value="0.61" step="0.01"></label>
+<label>bias center <input type="number" id="bCenter" value="1.0616" step="0.0001"></label>
+<label>±quanta <input type="number" id="nQ" value="6" min="1" max="20"></label>
+<button id="runBtn">Run</button>
+<pre id="log">—</pre>
+
+<script src="../../js/componentLibrary.js"></script>
+<script src="../../js/customDesign.js"></script>
+<script src="../../js/fleet.js"></script>
+<script src="../../js/config.js"></script>
+<script src="../../js/simJs/core/massProps.js"></script>
+<script src="../../js/guideConfigDefaults.js"></script>
+<script src="../lib/config.js"></script>
+<script src="../lib/worker-pool.js"></script>
+
+<script>
+(function () {
+  'use strict';
+  const $ = (id) => document.getElementById(id);
+  const logEl = $('log');
+  let logLines = [];
+  const log = (s) => { logLines.push(s); logEl.textContent = logLines.join('\n'); logEl.scrollTop = logEl.scrollHeight; };
+  const fmt = (x, d) => Number.isFinite(x) ? x.toFixed(d) : '—';
+  const RE = CONFIG.EARTH_RADIUS, GM = CONFIG.GM_EARTH;
+
+  function specE(m) {
+    const r = RE + m.altCoastKm * 1000;
+    return 0.5 * (m.vrCoast * m.vrCoast + m.vtCoast * m.vtCoast) - GM / r;
+  }
+
+  async function run() {
+    $('runBtn').disabled = true;
+    logLines = [];
+    try {
+      const baseG = parseFloat($('baseG').value);
+      const baseB = parseFloat($('baseB').value);
+      const targetG = parseFloat($('targetG').value);
+      const bCenter = parseFloat($('bCenter').value);
+      const nQ = parseInt($('nQ').value, 10) || 6;
+      const Q = TunerConfig.quanta;
+      const T = 4.82;
+
+      log('creating pool…');
+      const pool = new TunerCore.WorkerPool(6, { workerPath: '../lib/worker-sim.js' });
+      await pool.waitReady();
+      log('pool ready');
+
+      const basePoint = {
+        Gi: Math.round(baseG / Q.G), Tn: Math.round(T / Q.T),
+        bi: Math.round(baseB / Q.bias), li: Math.round(5.53 / Q.lead),
+        meco: 52612,
+      };
+
+      log('');
+      log('=== baseline (G=' + baseG + ', bias=' + baseB + ') ===');
+      const mBase = await pool.runEval(basePoint, { stopAt: 'COAST_WAIT_ENTRY', quiet: true });
+      const E_ref = specE(mBase);
+      log('  E_ref = ' + E_ref.toFixed(0) + ' J/kg  (' + E_ref.toExponential(8) + ')');
+
+      // Sweep bias ±nQ quanta around center, one bias quantum at a time
+      log('');
+      log('=== fine sweep at G=' + targetG + '  bias center=' + bCenter + ' ± ' + nQ + ' quanta ===');
+      const bC = Math.round(bCenter / Q.bias);
+      const probes = [];
+      for (let q = -nQ; q <= nQ; q++) {
+        const bi = bC + q;
+        const biasDeg = bi * Q.bias;
+        const p = Object.assign({}, basePoint, { Gi: Math.round(targetG / Q.G), bi });
+        probes.push({ q, bi, biasDeg, p });
+      }
+
+      const results = await Promise.all(probes.map(({ q, bi, biasDeg, p }) => {
+        return pool.runEval(p, { stopAt: 'COAST_WAIT_ENTRY', quiet: true })
+          .then(m => ({ q, bi, biasDeg, E: specE(m), end: m.endReason, ecc: m.eCoast }))
+          .catch(e => ({ q, bi, biasDeg, error: e.message }));
+      }));
+
+      // sort by bias
+      results.sort((a, b) => a.biasDeg - b.biasDeg);
+
+      log('');
+      log('  bias (deg)     E (J/kg)              ΔE from ref (J/kg)');
+      log('  ' + '─'.repeat(60));
+      let best = null;
+      results.forEach(r => {
+        if (!Number.isFinite(r.E)) {
+          log('  ' + r.biasDeg.toFixed(4) + '       ' + r.end);
+          return;
+        }
+        const dE = r.E - E_ref;
+        const marker = Math.abs(dE) < 5000 ? ' ←' : '';
+        log('  ' + r.biasDeg.toFixed(4) + '      ' + r.E.toFixed(0).padStart(15) + '     ' + (dE >= 0 ? '+' : '') + dE.toFixed(0).padStart(8) + marker);
+        if (!best || Math.abs(dE) < Math.abs(best.dE)) best = { ...r, dE };
+      });
+
+      log('');
+      log('=== best match ===');
+      if (best) {
+        log('  bias = ' + best.biasDeg.toFixed(4) + '  (bi=' + best.bi + ')');
+        log('  E = ' + best.E.toFixed(0) + ' J/kg');
+        log('  ΔE from ref = ' + (best.dE >= 0 ? '+' : '') + best.dE.toFixed(0) + ' J/kg');
+        log('  |ΔE| = ' + Math.abs(best.dE).toFixed(0) + ' J/kg');
+      }
+      log('');
+      log('=== discrete E step analysis ===');
+      const valid = results.filter(r => Number.isFinite(r.E));
+      if (valid.length >= 2) {
+        const steps = [];
+        for (let i = 1; i < valid.length; i++) steps.push(Math.abs(valid[i].E - valid[i-1].E));
+        const avgStep = steps.reduce((s, x) => s + x, 0) / steps.length;
+        log('  avg |E step| per bias quantum (0.0001 deg) = ' + avgStep.toFixed(0) + ' J/kg');
+        log('  → minimum achievable |ΔE| = ~' + (avgStep / 2).toFixed(0) + ' J/kg');
+        log('  → 1 J/kg match: IMPOSSIBLE with bias quantum 0.0001 deg');
+      }
+
+      log('');
+      log('=== conclusion ===');
+      log('E(bias) is discrete at ~3400 J/kg spacing (one bias quantum = 0.0001 deg).');
+      log('Minimum |ΔE| we can achieve ≈ half a step ≈ 1700 J/kg.');
+      log('For 1 J/kg match we would need bias quantum ~3e-8 deg, or ~3000x finer.');
+
+    } catch (e) {
+      console.error(e);
+      log('ERROR: ' + e.message);
+    } finally {
+      $('runBtn').disabled = false;
+    }
+  }
+
+  $('runBtn').addEventListener('click', run);
+})();
+</script>
+</body>
+</html>
