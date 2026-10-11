@@ -120,12 +120,16 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
       const h = dtSeg / steps;
       const mdot = sample.mdot;
 
-      // local deriv — replay captured total accel (thrust+gravity)
-      // from forward sim. Reverse becomes exact.
+      // local deriv — thrust along body axis (theta), plus gravity.
+      const theta = sample.theta || 0;
+      const ux = -Math.sin(theta);
+      const uy = Math.cos(theta);
       function deriv(st) {
+        const g = gravity(st.r);
+        const aT = mdot * Ve / Math.max(1, st.m);
         return {
           drx: st.v.x, dry: st.v.y,
-          dvx: sample.ax, dvy: sample.ay,
+          dvx: g.x + aT * ux, dvy: g.y + aT * uy,
           dm: -mdot,
         };
       }
