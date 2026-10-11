@@ -2,20 +2,20 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Divergence — extended</title>
+<title>Divergence — strict compare</title>
 <style>
-body { margin:0; background:#060912; color:#dbe6f5; font:13px/1.5 monospace; padding:20px; }
-h1 { color:#35d6ff; font-size:15px; margin:0 0 12px; letter-spacing:1px; }
+body { margin:0; background:#060912; color:#dbe6f5; font:12px/1.5 monospace; padding:16px; }
+h1 { color:#35d6ff; font-size:14px; margin:0 0 10px; letter-spacing:1px; }
 button { background:#101a30; color:#dbe6f5; border:1px solid #1c2b45;
          padding:8px 16px; border-radius:4px; font:inherit; cursor:pointer; margin-right:8px; }
-#status { color:#ffd23f; margin:8px 0; min-height:1.2em; }
+#status { color:#ffd23f; margin:8px 0; }
 pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4px;
       font-size:11px; overflow:auto; max-height:600px; }
 </style>
 </head>
 <body>
 
-<h1>Divergence — SA entry to 500 ticks (past STAGE_BURN start)</h1>
+<h1>Divergence — strict compare, all engine/cmd fields</h1>
 
 <button id="runBtn">Run</button>
 <div id="status">idle</div>
@@ -60,9 +60,8 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
   }
 
   function captureFull() {
-    const stateKeys = Object.keys(state);
     const st = {};
-    stateKeys.forEach(k => { if (k === 'bodies') return; try { st[k] = deepClone(state[k]); } catch (e) { st[k] = null; } });
+    Object.keys(state).forEach(k => { if (k === 'bodies') return; try { st[k] = deepClone(state[k]); } catch (e) { st[k] = null; } });
     return { bodies: deepClone(state.bodies), stateKeysSnapshot: st, simTime: state.simTime, activeBodyIndex: state.activeBodyIndex, guidanceState: Guidance.exportGuideState() };
   }
 
@@ -98,18 +97,23 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
   }
 
   function snapTick() {
-    // capture active body + stage body key fields (for divergence detection)
     const out = { bodies: [] };
     for (let i = 0; i < state.bodies.length; i++) {
       const b = state.bodies[i];
+      const eng = (b.engines || []).map(e => ({
+        gd: e.gimbalDeg, tgd: e.targetGimbalDeg, tgrd: e.targetGimbalRateDegS,
+        mf: e.massFlowRate, tmf: e.targetMassFlowRate, cf: e.currentF,
+        vs: e.Ve, mmf: e.maxMassFlowRate,
+      }));
       out.bodies.push({
         rx: b.rx, ry: b.ry, vx: b.vx, vy: b.vy,
         theta: b.theta, omega: b.omega,
-        fuelMass: b.fuelMass,
-        dryMass: b.dryMass,
+        fuelMass: b.fuelMass, dryMass: b.dryMass,
         memberFuel: b.memberFuel ? b.memberFuel.slice() : null,
-        enginesGimbal: b.engines ? b.engines.map(e => e.gimbalDeg || 0) : null,
-        enginesFlow: b.engines ? b.engines.map(e => e.massFlowRate || 0) : null,
+        memberRoles: b.members ? b.members.map(m => m && m.stageRole) : null,
+        engines: eng,
+        rcsCmd: b.rcsCmd ? JSON.stringify(b.rcsCmd) : null,
+        rcsDuty: b.rcsDuty ? JSON.stringify(b.rcsDuty) : null,
         sloshOffset: b.slosh ? b.slosh.offset : null,
         sloshVel: b.slosh ? b.slosh.velocity : null,
       });
@@ -117,36 +121,47 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
     out.t = state.simTime;
     out.activeIdx = state.activeBodyIndex;
     out.phase = Guidance.getGuideStatus().phase;
+    out.nBodies = state.bodies.length;
     return out;
   }
 
+  function cmpVal(a, b, path) {
+    if (a === b) return null;
+    if (typeof a === 'number' && typeof b === 'number') return path + ' d=' + (b - a).toExponential(6);
+    return path + ' ref=' + JSON.stringify(a) + ' test=' + JSON.stringify(b);
+  }
+
   function diffTicks(a, b) {
-    if (a.bodies.length !== b.bodies.length) return 'bodyCount';
+    if (a.nBodies !== b.nBodies) return 'nBodies ' + a.nBodies + ' vs ' + b.nBodies;
+    if (a.activeIdx !== b.activeIdx) return 'activeIdx';
     for (let i = 0; i < a.bodies.length; i++) {
       const x = a.bodies[i], y = b.bodies[i];
-      const eps = 1e-9;
-      const fields = ['rx','ry','vx','vy','theta','omega','fuelMass'];
-      for (const f of fields) {
-        if (Math.abs(x[f] - y[f]) > eps) return 'body' + i + '.' + f + ' d=' + (y[f] - x[f]).toExponential(3);
+      let r;
+      for (const f of ['rx','ry','vx','vy','theta','omega','fuelMass','dryMass']) {
+        if ((r = cmpVal(x[f], y[f], 'body' + i + '.' + f))) return r;
       }
       if (x.memberFuel && y.memberFuel) {
         for (let k = 0; k < x.memberFuel.length; k++) {
-          if (Math.abs(x.memberFuel[k] - y.memberFuel[k]) > eps) return 'body' + i + '.mf[' + k + '] d=' + (y.memberFuel[k] - x.memberFuel[k]).toExponential(3);
+          if ((r = cmpVal(x.memberFuel[k], y.memberFuel[k], 'body' + i + '.mf[' + k + ']'))) return r;
         }
       }
-      if (x.enginesGimbal && y.enginesGimbal) {
-        for (let k = 0; k < x.enginesGimbal.length; k++) {
-          if (Math.abs(x.enginesGimbal[k] - y.enginesGimbal[k]) > eps) return 'body' + i + '.gimbal[' + k + '] d=' + (y.enginesGimbal[k] - x.enginesGimbal[k]).toExponential(3);
+      if (x.memberRoles && y.memberRoles) {
+        for (let k = 0; k < x.memberRoles.length; k++) {
+          if ((r = cmpVal(x.memberRoles[k], y.memberRoles[k], 'body' + i + '.role[' + k + ']'))) return r;
         }
       }
-      if (x.enginesFlow && y.enginesFlow) {
-        for (let k = 0; k < x.enginesFlow.length; k++) {
-          if (Math.abs(x.enginesFlow[k] - y.enginesFlow[k]) > eps) return 'body' + i + '.flow[' + k + '] d=' + (y.enginesFlow[k] - x.enginesFlow[k]).toExponential(3);
+      if (x.engines && y.engines) {
+        for (let k = 0; k < Math.min(x.engines.length, y.engines.length); k++) {
+          const ex = x.engines[k], ey = y.engines[k];
+          for (const f of ['gd','tgd','tgrd','mf','tmf','cf','vs','mmf']) {
+            if ((r = cmpVal(ex[f], ey[f], 'body' + i + '.eng[' + k + '].' + f))) return r;
+          }
         }
       }
-      if (x.sloshOffset != null && y.sloshOffset != null) {
-        if (Math.abs(x.sloshOffset - y.sloshOffset) > eps) return 'body' + i + '.sloshOff d=' + (y.sloshOffset - x.sloshOffset).toExponential(3);
-      }
+      if ((r = cmpVal(x.rcsCmd, y.rcsCmd, 'body' + i + '.rcsCmd'))) return r;
+      if ((r = cmpVal(x.rcsDuty, y.rcsDuty, 'body' + i + '.rcsDuty'))) return r;
+      if ((r = cmpVal(x.sloshOffset, y.sloshOffset, 'body' + i + '.sloshOff'))) return r;
+      if ((r = cmpVal(x.sloshVel, y.sloshVel, 'body' + i + '.sloshVel'))) return r;
     }
     return null;
   }
@@ -180,7 +195,7 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
       for (let i = 0; i < N; i++) {
         TunerEngine.tick(DT);
         refTrail.push(snapTick());
-        if ((i & 127) === 127) await new Promise(r => setTimeout(r, 0));
+        if ((i & 255) === 255) await new Promise(r => setTimeout(r, 0));
       }
 
       $('status').textContent = 'test trail…';
@@ -189,42 +204,47 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
       for (let i = 0; i < N; i++) {
         TunerEngine.tick(DT);
         testTrail.push(snapTick());
-        if ((i & 127) === 127) await new Promise(r => setTimeout(r, 0));
+        if ((i & 255) === 255) await new Promise(r => setTimeout(r, 0));
       }
 
       log('');
-      log('=== COMPARE ' + N + ' ticks ===');
-      let firstDiff = -1, firstReason = null;
+      log('=== STRICT COMPARE ' + N + ' ticks ===');
+      let firstDiff = -1, reason = null;
       for (let i = 0; i < N; i++) {
         const d = diffTicks(refTrail[i], testTrail[i]);
-        if (d) { firstDiff = i; firstReason = d; break; }
+        if (d) { firstDiff = i; reason = d; break; }
       }
       if (firstDiff < 0) { log('NO divergence in ' + N + ' ticks'); }
       else {
-        log('first divergence at tick ' + (firstDiff + 1) + '  reason=' + firstReason);
+        log('first divergence at tick ' + (firstDiff + 1) + ' t=' + refTrail[firstDiff].t.toFixed(4) + ' ph=' + refTrail[firstDiff].phase);
+        log('reason: ' + reason);
+        // dump body0 engine details
         const a = refTrail[firstDiff], b = testTrail[firstDiff];
-        log('ref  t=' + a.t.toFixed(6) + ' ph=' + a.phase);
-        log('test t=' + b.t.toFixed(6) + ' ph=' + b.phase);
-        log('dt=' + (b.t - a.t).toExponential(4) + ' s');
         for (let i = 0; i < a.bodies.length; i++) {
           const x = a.bodies[i], y = b.bodies[i];
-          log('body' + i + ': ref rx=' + x.rx.toFixed(6) + ' vx=' + x.vx.toFixed(6) + ' th=' + x.theta.toFixed(6) + ' om=' + x.omega.toFixed(6) + ' fuel=' + x.fuelMass.toFixed(6));
-          log('body' + i + ': tst rx=' + y.rx.toFixed(6) + ' vx=' + y.vx.toFixed(6) + ' th=' + y.theta.toFixed(6) + ' om=' + y.omega.toFixed(6) + ' fuel=' + y.fuelMass.toFixed(6));
+          if (!x.engines || !x.engines.length) continue;
+          log('--- body' + i + ' roles=' + JSON.stringify(x.memberRoles) + ' ---');
+          for (let k = 0; k < x.engines.length; k++) {
+            const ex = x.engines[k], ey = y.engines[k];
+            const de = [];
+            for (const f of ['gd','tgd','tgrd','mf','tmf','cf']) {
+              if (ex[f] !== ey[f]) de.push(f + ' ref=' + ex[f] + ' test=' + ey[f]);
+            }
+            if (de.length) log('  eng[' + k + ']: ' + de.join(' | '));
+          }
+          if (x.rcsCmd !== y.rcsCmd) log('  rcsCmd ref=' + x.rcsCmd + ' test=' + y.rcsCmd);
+          if (x.rcsDuty !== y.rcsDuty) log('  rcsDuty ref=' + x.rcsDuty + ' test=' + y.rcsDuty);
         }
       }
 
-      // also print transitions of both
+      // transitions
       log('');
       log('REF transitions:');
       let prevPh = null;
-      for (let i = 0; i < N; i++) {
-        if (refTrail[i].phase !== prevPh) { log('  tick ' + (i+1) + ' t=' + refTrail[i].t.toFixed(4) + ' ph=' + refTrail[i].phase); prevPh = refTrail[i].phase; }
-      }
+      for (let i = 0; i < N; i++) if (refTrail[i].phase !== prevPh) { log('  tick ' + (i+1) + ' t=' + refTrail[i].t.toFixed(4) + ' ph=' + refTrail[i].phase); prevPh = refTrail[i].phase; }
       log('TEST transitions:');
       prevPh = null;
-      for (let i = 0; i < N; i++) {
-        if (testTrail[i].phase !== prevPh) { log('  tick ' + (i+1) + ' t=' + testTrail[i].t.toFixed(4) + ' ph=' + testTrail[i].phase); prevPh = testTrail[i].phase; }
-      }
+      for (let i = 0; i < N; i++) if (testTrail[i].phase !== prevPh) { log('  tick ' + (i+1) + ' t=' + testTrail[i].t.toFixed(4) + ' ph=' + testTrail[i].phase); prevPh = testTrail[i].phase; }
 
       $('status').textContent = 'done';
     } catch (e) {
