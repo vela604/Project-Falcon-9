@@ -37,6 +37,7 @@ tr.fail td { color:#ff5f7e; }
 <label>step <input type="number" id="bStep" value="0.25" step="0.05"></label>
 <button id="runBtn">Run scan</button>
 <div id="status">idle</div>
+<div id="feed" style="background:#050b16;border:1px solid #1c2b45;padding:8px;border-radius:4px;font-size:11px;margin:8px 0;white-space:pre;color:#9ef;max-height:200px;overflow:auto;"></div>
 <div id="live" style="background:#0a1020;border:1px solid #1c2b45;padding:10px;border-radius:4px;font-size:12px;margin:8px 0;white-space:pre;"></div>
 <pre id="log">—</pre>
 <canvas id="chart" width="900" height="480"></canvas>
@@ -60,6 +61,22 @@ tr.fail td { color:#ff5f7e; }
   const log = (s) => { logLines.push(s); logEl.textContent = logLines.join('\n'); logEl.scrollTop = logEl.scrollHeight; };
   const fmt = (x, d) => Number.isFinite(x) ? x.toFixed(d) : '—';
   const T = 4.82;
+
+  const perWorker = {};   // tag -> { phase, detail, ts }
+
+  function renderProgressFeed() {
+    const el = document.getElementById('feed');
+    if (!el) return;
+    const keys = Object.keys(perWorker).sort();
+    if (!keys.length) { el.textContent = '(waiting for progress…)'; return; }
+    let lines = [];
+    keys.forEach(k => {
+      const w = perWorker[k];
+      const ago = ((Date.now() - w.ts) / 1000).toFixed(1);
+      lines.push('[' + k + '] ' + w.phase.padEnd(10) + '  ' + w.detail + '  (' + ago + 's ago)');
+    });
+    el.textContent = lines.join('\n');
+  }
 
   const liveState = {
     total: 0, done: 0, running: 0, failed: 0,
@@ -115,6 +132,10 @@ tr.fail td { color:#ff5f7e; }
 
       log('creating pool ' + n + ' workers…');
       const pool = new TunerCore.WorkerPool(n, { workerPath: '../lib/worker-sim.js' });
+      pool.onProgress = (msg) => {
+        perWorker[msg.tag] = { phase: msg.phase, detail: msg.detail, ts: msg.ts };
+        renderProgressFeed();
+      };
       await pool.waitReady();
       log('pool ready');
       log('');
@@ -123,7 +144,7 @@ tr.fail td { color:#ff5f7e; }
 
       const t0 = performance.now();
       let done = 0;
-      const liveTimer = setInterval(() => liveState.update(), 400);
+      const liveTimer = setInterval(() => { liveState.update(); renderProgressFeed(); }, 300);
 
       // dispatch all bias probes to pool
       const tasks = biases.map(bias => {
