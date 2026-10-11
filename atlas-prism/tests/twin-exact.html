@@ -124,7 +124,7 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
       const MAX_ITERS = 40;
       const B_TOL = 1e-10;
 
-      while (iters < MAX_ITERS && (hi.b - lo.b) > B_TOL) {
+      while (iters < MAX_ITERS && Math.abs(hi.b - lo.b) > B_TOL) {
         iters++;
         const mid = (lo.b + hi.b) / 2;
         const r = await evalAt(pool, targetG, mid, 5.53, 52612);
@@ -132,6 +132,8 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
         const dE = r.E - E_ref;
         log('  iter ' + iters + ' b=' + mid.toFixed(10) + '  E=' + r.E.toFixed(4) + '  ΔE=' + (dE >= 0 ? '+' : '') + dE.toFixed(4) + ' J/kg');
         if (Math.abs(dE) < Math.abs(best.E - E_ref)) best = { b: mid, E: r.E, ecc: r.ecc };
+        // Slope is negative: lo (lower E) is at higher bias, hi (higher E) is at lower bias.
+        // So if new mid has E < E_ref, it's the new lo (higher b); else new hi (lower b).
         if (dE < 0) lo = { b: mid, E: r.E }; else hi = { b: mid, E: r.E };
         if (Math.abs(dE) < 1.0) { log('  -> hit |ΔE| < 1 J/kg at iter ' + iters); break; }
       }
