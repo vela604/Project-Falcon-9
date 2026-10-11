@@ -139,9 +139,9 @@ function phaseNow() {
 }
 
 async function tickUntilCleared(maxS) {
-  const maxTicks = Math.ceil(maxS / self.CONFIG.DT);
+  const maxTicks = Math.ceil(maxS / CONFIG.DT);
   for (let i = 0; i < maxTicks; i++) {
-    if (state.halted) return { ok: false, reason: 'halted', simTime: state.simTime };
+    if (state.halted) return { ok: false, reason: 'halted', simTime: state.simTime, gs: Guidance.getGuideStatus() };
     TunerEngine.tick(CONFIG.DT);
     const gs = Guidance.getGuideStatus();
     if (gs && gs.payloadCleared) return { ok: true, simTime: state.simTime, gs };
@@ -315,6 +315,9 @@ self.onmessage = async (e) => {
               ok: sc.ok, lead: lr.lead, margin: lr.marginS, vrEnd: lr.vrEnd,
               score: sc.score, reasons: sc.reasons, metrics: m,
               evals: lr.evals + 1,
+              capHit: !fullRes.ok,
+              capReason: fullRes.reason || null,
+              simEnd: fullRes.simTime,
             };
           }
         }
