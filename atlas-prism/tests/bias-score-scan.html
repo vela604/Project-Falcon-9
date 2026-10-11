@@ -37,6 +37,7 @@ tr.fail td { color:#ff5f7e; }
 <label>step <input type="number" id="bStep" value="0.25" step="0.05"></label>
 <button id="runBtn">Run scan</button>
 <div id="status">idle</div>
+<div id="live" style="background:#0a1020;border:1px solid #1c2b45;padding:10px;border-radius:4px;font-size:12px;margin:8px 0;white-space:pre;"></div>
 <pre id="log">—</pre>
 <canvas id="chart" width="900" height="480"></canvas>
 <div id="tableHost"></div>
@@ -60,6 +61,30 @@ tr.fail td { color:#ff5f7e; }
   const fmt = (x, d) => Number.isFinite(x) ? x.toFixed(d) : '—';
   const T = 4.82;
 
+  const liveState = {
+    total: 0, done: 0, running: 0, failed: 0,
+    startMs: 0,
+    inflight: {},   // bias -> { t0, phase }
+    results: [],
+    update() {
+      const el = document.getElementById('live');
+      if (!el) return;
+      const elapsed = (performance.now() - this.startMs) / 1000;
+      const pct = this.total ? (100 * this.done / this.total) : 0;
+      const barW = 40;
+      const filled = Math.round(barW * pct / 100);
+      const bar = '█'.repeat(filled) + '░'.repeat(barW - filled);
+      const rate = this.done > 0 ? (this.done / Math.max(0.1, elapsed)).toFixed(2) : '—';
+      const eta = (this.done > 0 && this.done < this.total) ? ((this.total - this.done) / (this.done / Math.max(0.1, elapsed))).toFixed(0) : '—';
+      const runB = Object.keys(this.inflight).slice(0, 6).join(', ') + (Object.keys(this.inflight).length > 6 ? ', …' : '');
+      let lines = [];
+      lines.push('[' + bar + '] ' + this.done + '/' + this.total + '  (' + pct.toFixed(1) + '%)   failed=' + this.failed);
+      lines.push('elapsed=' + elapsed.toFixed(0) + 's   rate=' + rate + ' probe/s   ETA=' + eta + 's   inflight=' + Object.keys(this.inflight).length);
+      lines.push('running: ' + (runB || '(none)'));
+      el.textContent = lines.join('\n');
+    }
+  };
+
   async function run() {
     $('runBtn').disabled = true;
     logLines = []; logEl.textContent = '—'; $('tableHost').innerHTML = '';
@@ -79,6 +104,15 @@ tr.fail td { color:#ff5f7e; }
       const biases = [];
       for (let b = bLo; b <= bHi + 1e-9; b += bStep) biases.push(Math.round(b * 1e4) / 1e4);
 
+      liveState.total = biases.length;
+      liveState.done = 0;
+      liveState.failed = 0;
+      liveState.running = 0;
+      liveState.startMs = performance.now();
+      liveState.inflight = {};
+      liveState.results = [];
+      liveState.update();
+
       log('creating pool ' + n + ' workers…');
       const pool = new TunerCore.WorkerPool(n, { workerPath: '../lib/worker-sim.js' });
       await pool.waitReady();
@@ -89,6 +123,7 @@ tr.fail td { color:#ff5f7e; }
 
       const t0 = performance.now();
       let done = 0;
+      const liveTimer = setInterval(() => liveState.update(), 400);
 
       // dispatch all bias probes to pool
       const tasks = biases.map(bias => {
@@ -97,13 +132,25 @@ tr.fail td { color:#ff5f7e; }
           bi: Math.round(bias / Q.bias), li: Math.round(5.53 / Q.lead),
           meco,
         };
+        const key = bias.toFixed(4);
+        liveState.inflight[key] = { t0: performance.now() };
+        liveState.update();
         return pool.runJob('probeWithLead', { point, altKm })
           .then(r => {
-            done++;
-            statusEl.textContent = 'done ' + done + '/' + biases.length + '  (b=' + bias.toFixed(3) + ')';
+            delete liveState.inflight[key];
+            liveState.done++;
+            if (!r.ok) liveState.failed++;
+            liveState.results.push({ bias, ...r });
+            liveState.update();
             return { bias, ...r };
           })
-          .catch(e => ({ bias, ok: false, reason: 'error: ' + e.message }));
+          .catch(e => {
+            delete liveState.inflight[key];
+            liveState.done++;
+            liveState.failed++;
+            liveState.update();
+            return { bias, ok: false, reason: 'error: ' + e.message };
+          });
       });
 
       const results = await Promise.all(tasks);
@@ -155,6 +202,8 @@ tr.fail td { color:#ff5f7e; }
       // "peak = better" visual.
       drawChart(ctx, results);
 
+      clearInterval(liveTimer);
+      liveState.update();
       statusEl.textContent = 'done in ' + fmt(wall, 1) + 's';
     } catch (e) {
       console.error(e);
