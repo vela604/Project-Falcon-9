@@ -26,6 +26,8 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
 
 <h1>Reverse RK4 — lead prediction from target orbit</h1>
 
+<select id="presetSel" style="background:#101a30;color:#dbe6f5;border:1px solid #1c2b45;
+        padding:8px 12px;border-radius:4px;font:inherit;cursor:pointer;margin-right:8px;"></select>
 <button id="runBtn">Run baseline + reverse</button>
 <button id="clearBtn">Clear</button>
 <div id="status">idle</div>
@@ -49,6 +51,7 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
 <script src="../../js/simJs/guidance/guidance-blocks.js"></script>
 <script src="../../js/simJs/guidance/guidance.js"></script>
 <script src="../../js/guideConfigDefaults.js"></script>
+<script src="../../js/guidancePresets.js"></script>
 <script src="../lib/config.js"></script>
 <script src="../lib/sim.js"></script>
 
@@ -73,15 +76,29 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
     if (typeof TunerEngine === 'undefined' || typeof Guidance === 'undefined') return false;
     TunerEngine.init(); return true;
   }
-  function baselineValues() {
+  function presetValues() {
+    const sel = $('presetSel');
+    const id = sel && sel.value;
+    let preset = null;
+    if (id) {
+      if (typeof getPresetById === 'function') preset = getPresetById(id);
+      if (!preset && typeof getGuideDefaultPreset === 'function' && id.startsWith('default:')) {
+        preset = getGuideDefaultPreset(id.slice(8));
+      }
+    }
+    if (preset && preset.constants) return { values: preset.constants, guideName: preset.guideName || 'leoInsertionV3' };
+    // fallback baseline
     const b = TunerConfig.baselineRaw;
     return {
-      ascent: { PUSH_MAX_GIMBAL_DEG: b.G, PUSH_T_S: b.T, MECO_TARGET_BOOSTER_FUEL_KG: b.meco },
-      insertion: { TARGET_ORBIT_ALT_KM: 320,
-                   STAGE_BURN_AOA_BIAS_DEG: b.bias,
-                   STAGE_BURN_AOA_MARGIN_DEG: 0.001,
-                   CIRC_TRIGGER_LEAD_S: b.lead },
-      done: { DEORBIT_ENABLED: false },
+      values: {
+        ascent: { PUSH_MAX_GIMBAL_DEG: b.G, PUSH_T_S: b.T, MECO_TARGET_BOOSTER_FUEL_KG: b.meco },
+        insertion: { TARGET_ORBIT_ALT_KM: 320,
+                     STAGE_BURN_AOA_BIAS_DEG: b.bias,
+                     STAGE_BURN_AOA_MARGIN_DEG: 0.001,
+                     CIRC_TRIGGER_LEAD_S: b.lead },
+        done: { DEORBIT_ENABLED: false },
+      },
+      guideName: 'leoInsertionV3',
     };
   }
   function fmt(x, d) { return Number.isFinite(x) ? x.toFixed(d) : '—'; }
@@ -253,7 +270,8 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
 
   // -------- forward --------
   async function forward() {
-    TunerEngine.prepareRun(TunerConfig.guideName, baselineValues(), TunerConfig.env);
+    const pv = presetValues();
+    TunerEngine.prepareRun(pv.guideName, pv.values, TunerConfig.env);
     const snaps = {};
     const burnProfile = [];
     let trueOff = null;
@@ -476,6 +494,34 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
     $('raw').textContent = '—';
     $('status').textContent = 'idle';
   });
+  // populate preset dropdown
+  (function populatePresets() {
+    const sel = $('presetSel');
+    if (!sel) return;
+    const opts = [];
+    if (typeof GUIDE_DEFAULT_PRESETS === 'object') {
+      Object.keys(GUIDE_DEFAULT_PRESETS).forEach(g => {
+        const p = GUIDE_DEFAULT_PRESETS[g];
+        if (p && p.id) opts.push({ id: p.id, label: '[default] ' + g + ' — ' + p.name });
+      });
+    }
+    if (typeof loadUserPresets === 'function') {
+      try {
+        loadUserPresets().forEach(p => {
+          if (p && p.id) opts.push({ id: p.id, label: '[user] ' + p.guideName + ' — ' + p.name });
+        });
+      } catch (e) {}
+    }
+    if (!opts.length) {
+      sel.innerHTML = '<option value="">(no presets available)</option>';
+      return;
+    }
+    sel.innerHTML = opts.map(o => '<option value="' + o.id + '">' + o.label + '</option>').join('');
+    // default: pick baseline preset
+    const def = opts.find(o => o.id === 'default:leoInsertionV3');
+    if (def) sel.value = def.id;
+  })();
+
   $('status').textContent = 'ready';
 })();
 </script>
