@@ -143,9 +143,6 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
       const steps = Math.max(1, Math.round(-dtSeg * 80 * SUB));
       const h = dtSeg / steps;
       const mdot = sample.mdot;
-      const theta = sample.theta || 0;
-      const ux = -Math.sin(theta);
-      const uy = Math.cos(theta);
 
       for (let k = 0; k < steps; k++) {
         if (stopFuelFn && stopFuelFn(S.m)) return { S, t, stopped: true };
@@ -154,7 +151,8 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
           const aT = mdot * Ve / Math.max(1, st.m);
           return {
             drx: st.v.x, dry: st.v.y,
-            dvx: g.x + aT * ux, dvy: g.y + aT * uy,
+            dvx: g.x + aT * (st.v.x / Math.max(1, Math.hypot(st.v.x, st.v.y))),
+            dvy: g.y + aT * (st.v.y / Math.max(1, Math.hypot(st.v.x, st.v.y))),
             dm: -mdot,
           };
         };
