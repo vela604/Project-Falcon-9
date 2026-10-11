@@ -121,83 +121,90 @@ td.fail { color:#ff5f7e; }
       return r;
     }
 
-    // ---- Phase 1: coarse scan to bracket E_ref ----
-    // Expand from BASE bias (not slope-guess) — contour surrounds it,
-    // and slope-guess can be wildly off for large |ΔG|.
-    state.phase = 'coarse scan';
-    const seen = new Set();
-    const valid = [];
-
-    // First probe base bias
-    const b0 = baseBias;
-    const r0 = await ev(b0);
-    if (r0.ok) valid.push(r0);
-
-    // Geometric expansion of step in BOTH directions
-    // step sizes: 0.2, 0.4, 0.8, 1.6, 2.4, 3.2, 4.0
-    const steps = [0.2, 0.4, 0.8, 1.6, 2.4, 3.2, 4.0];
-    for (const step of steps) {
-      for (const dir of [1, -1]) {
-        const b = b0 + dir * step;
-        if (Math.abs(b) > 5) continue;
-        const bR = Math.round(b * 1e10) / 1e10;
-        if (seen.has(bR)) continue;
-        seen.add(bR);
-        const r = await ev(b);
-        if (r.ok) valid.push(r);
-        // Check bracket
-        let above = null, below = null;
-        for (const v of valid) {
-          if (v.E >= E_ref && (!above || v.E < above.E)) above = v;
-          if (v.E <= E_ref && (!below || v.E > below.E)) below = v;
-        }
-        if (above && below) break;
-      }
-      let above = null, below = null;
-      for (const v of valid) {
-        if (v.E >= E_ref && (!above || v.E < above.E)) above = v;
-        if (v.E <= E_ref && (!below || v.E > below.E)) below = v;
-      }
-      if (above && below) break;
-    }
-
-    // ---- Phase 2: bracket detection ----
-    let above = null, below = null;
-    for (const v of valid) {
-      if (v.E >= E_ref && (!above || v.E < above.E)) above = v;
-      if (v.E <= E_ref && (!below || v.E > below.E)) below = v;
-    }
-
-    if (!above || !below) {
-      // No bracket in coarse range. Return closest valid.
-      const bestClose = valid.sort((a, b) => Math.abs(a.E - E_ref) - Math.abs(b.E - E_ref))[0];
-      if (!bestClose) return { G, ok: false, reason: 'no valid probes' };
-      state.done = true; state.ok = false; state.phase = 'no bracket';
+    // 1. base probe
+    state.phase = 'base';
+    const r0 = await ev(baseBias);
+    if (r0.ok && Math.abs(r0.E - E_ref) < E_TOL) {
+      state.done = true; state.ok = true; state.phase = 'converged';
       renderLive();
-      return { G, ok: false, reason: 'no bracket', bias: bestClose.b, E: bestClose.E, deltaE: bestClose.E - E_ref, ecc: bestClose.ecc, evals: evals.length };
+      return { G, ok: true, bias: r0.b, E: r0.E, deltaE: r0.E - E_ref, ecc: r0.ecc, evals: evals.length };
     }
 
-    // ---- Phase 3: bisect ----
-    state.phase = 'bisecting';
-    let bA = above.b, bB = below.b;  // bA: E >= ref; bB: E <= ref
-    let best = Math.abs(above.E - E_ref) < Math.abs(below.E - E_ref) ? above : below;
+    // 2. probe both directions to pick walk direction (whichever reduces |dE|)
+    state.phase = 'direction';
+    const h0 = 0.05;
+    const rP = await ev(baseBias + h0);
+    const rM = await ev(baseBias - h0);
+    const dBase = Math.abs(r0.E - E_ref);
+    const dPos = rP.ok ? Math.abs(rP.E - E_ref) : Infinity;
+    const dNeg = rM.ok ? Math.abs(rM.E - E_ref) : Infinity;
+    let dir;
+    if (dPos < dNeg) dir = +1; else dir = -1;
+    if (!rP.ok && rM.ok) dir = -1;
+    if (!rM.ok && rP.ok) dir = +1;
 
-    for (let i = 0; i < 60; i++) {
-      if (Math.abs(bA - bB) < BIAS_TOL) break;
-      const mid = (bA + bB) / 2;
-      const r = await ev(mid);
-      if (!r.ok) break;
-      const dE = r.E - E_ref;
-      if (Math.abs(dE) < Math.abs(best.E - E_ref)) best = r;
-      if (Math.abs(dE) < E_TOL) { best = r; break; }
-      if (r.E >= E_ref) bA = mid; else bB = mid;
+    // bracket tracking: above (E >= ref) and below (E <= ref)
+    let above = null, below = null;
+    const track = (r) => {
+      if (!r || !r.ok) return;
+      if (r.E >= E_ref) { if (!above || r.E < above.E) above = r; }
+      if (r.E <= E_ref) { if (!below || r.E > below.E) below = r; }
+    };
+    track(r0); track(rP); track(rM);
+
+    // 3. walk in chosen direction, growing step, until sign flip
+    state.phase = 'walk ' + (dir > 0 ? '+' : '-');
+    let step = 0.1;
+    let curB = baseBias;
+    const MAX_WALK = 30;
+    let walked = 0;
+
+    for (let i = 0; i < MAX_WALK; i++) {
+      if (above && below) break;
+      step = Math.min(3.0, step * 1.6);
+      curB += dir * step;
+      if (Math.abs(curB) > 25) break;
+      const r = await ev(curB);
+      if (!r.ok) {
+        walked++;
+        if (walked > 8) break;   // too many fails in a row
+        continue;
+      }
+      walked = 0;
+      track(r);
+      if (Math.abs(r.E - E_ref) < E_TOL) { above = r; below = r; break; }
     }
 
-    state.done = true;
-    state.ok = Math.abs(best.E - E_ref) < E_TOL;
-    state.phase = state.ok ? 'converged' : 'close';
+    // 4. bracket found -> bisect
+    if (above && below) {
+      state.phase = 'bisect';
+      let bA = above.b, bB = below.b;
+      let best = Math.abs(above.E - E_ref) < Math.abs(below.E - E_ref) ? above : below;
+
+      for (let it = 0; it < 60; it++) {
+        if (Math.abs(bA - bB) < BIAS_TOL) break;
+        const mid = (bA + bB) / 2;
+        const r = await ev(mid);
+        if (!r.ok) break;
+        const dE = r.E - E_ref;
+        if (Math.abs(dE) < Math.abs(best.E - E_ref)) best = r;
+        if (Math.abs(dE) < E_TOL) { best = r; break; }
+        if (r.E >= E_ref) bA = mid; else bB = mid;
+      }
+      state.done = true;
+      state.ok = Math.abs(best.E - E_ref) < E_TOL;
+      state.phase = state.ok ? 'converged' : 'close';
+      renderLive();
+      return { G, ok: state.ok, bias: best.b, E: best.E, deltaE: best.E - E_ref, ecc: best.ecc, evals: evals.length };
+    }
+
+    // 5. no bracket — return closest valid
+    const valid = evals.filter(e => e.ok);
+    const best = valid.sort((a, b) => Math.abs(a.E - E_ref) - Math.abs(b.E - E_ref))[0];
+    state.done = true; state.ok = false; state.phase = 'no bracket';
     renderLive();
-    return { G, ok: state.ok, bias: best.b, E: best.E, deltaE: best.E - E_ref, ecc: best.ecc, evals: evals.length };
+    if (!best) return { G, ok: false, reason: 'all fail', evals: evals.length };
+    return { G, ok: false, reason: 'no bracket', bias: best.b, E: best.E, deltaE: best.E - E_ref, ecc: best.ecc, evals: evals.length };
   }
 
   async function run() {
