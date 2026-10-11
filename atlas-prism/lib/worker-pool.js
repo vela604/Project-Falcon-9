@@ -15,6 +15,19 @@
   'use strict';
   const root = (typeof window !== 'undefined') ? window : globalThis;
   const T = root.TunerCore = root.TunerCore || {};
+
+  // Resolve worker-sim.js path ONCE at module load time (when document.currentScript
+  // is still valid). At constructor time (click handler), currentScript is null.
+  const _DEFAULT_WORKER_PATH = (function () {
+    try {
+      const cur = (typeof document !== 'undefined' && document.currentScript) ? document.currentScript.src : '';
+      if (cur) {
+        const dir = cur.substring(0, cur.lastIndexOf('/'));
+        return dir + '/worker-sim.js';
+      }
+    } catch (e) {}
+    return 'worker-sim.js';
+  })();
   
   const LS_KEYS = [
     'rocketSim.fleet.v1', 'rocketSim.selectedId.v1',
@@ -28,15 +41,7 @@
     constructor(n, opts) {
       opts = opts || {};
       this.n = Math.max(1, n | 0);
-      let _defPath = 'worker-sim.js';
-      try {
-        const cur = (typeof document !== 'undefined' && document.currentScript) ? document.currentScript.src : '';
-        if (cur) {
-          const dir = cur.substring(0, cur.lastIndexOf('/'));
-          _defPath = dir + '/worker-sim.js';
-        }
-      } catch (e) {}
-      this.workerPath = opts.workerPath || _defPath;
+      this.workerPath = opts.workerPath || _DEFAULT_WORKER_PATH;
       this.workers = [];
       this.ready = new Array(this.n).fill(false);
       this.readyErrors = new Array(this.n).fill(null);
