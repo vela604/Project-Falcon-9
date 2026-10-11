@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Twin Pairs — 5 (G, bias) mappings + chart</title>
+<style>
+body { margin:0; background:#060912; color:#dbe6f5; font:13px/1.5 monospace; padding:20px; }
+h1 { color:#35d6ff; font-size:15px; margin:0 0 12px; letter-spacing:1px; }
+button { background:#101a30; color:#dbe6f5; border:1px solid #1c2b45;
+         padding:8px 16px; border-radius:4px; font:inherit; cursor:pointer; margin-right:8px; }
+button:hover { border-color:#35d6ff; color:#35d6ff; }
+button:disabled { opacity:.4; }
+input[type=number] { background:#101a30; color:#dbe6f5; border:1px solid #1c2b45;
+         padding:6px 10px; border-radius:4px; font:inherit; width:80px; }
+#status { color:#ffd23f; margin:8px 0; }
+pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4px;
+      font-size:11.5px; overflow:auto; max-height:400px; }
+canvas { background:#060912; border:1px solid #1c2b45; border-radius:4px; display:block; margin-top:10px; }
+table { border-collapse:collapse; font-size:12px; margin:10px 0; width:100%; }
+th, td { padding:6px 10px; text-align:right; border-bottom:1px solid #1c2b45; }
+th { color:#35d6ff; }
+td:first-child, th:first-child { text-align:left; color:#6b7d9c; }
+</style>
+</head>
+<body>
+
+<h1>Twin Pairs — 5 G values, chart A vs bias</h1>
+
+<label>workers <input type="number" id="nW" value="4" min="1" max="8"></label>
+<label style="margin-left:12px">base G <input type="number" id="baseG" value="0.60" step="0.01"></label>
+<label>base bias <input type="number" id="baseB" value="0.59" step="0.01"></label>
+<button id="runBtn">Run</button>
+<div id="status">idle</div>
+<pre id="log">—</pre>
+<canvas id="chart" width="720" height="420"></canvas>
+<div id="tableHost"></div>
+
+<script src="../../js/componentLibrary.js"></script>
+<script src="../../js/customDesign.js"></script>
+<script src="../../js/fleet.js"></script>
+<script src="../../js/config.js"></script>
+<script src="../../js/simJs/core/massProps.js"></script>
+<script src="../../js/guideConfigDefaults.js"></script>
+<script src="../lib/config.js"></script>
+<script src="../lib/worker-pool.js"></script>
+<script src="../lib/rough-scan.js"></script>
+<script src="../lib/bias-scan.js"></script>
+
+<script>
+(function () {
+  'use strict';
+  const $ = (id) => document.getElementById(id);
+  const logEl = $('log'), statusEl = $('status'), tableHost = $('tableHost');
+  let logLines = [];
+  const log = (s) => { logLines.push(s); logEl.textContent = logLines.join('\n'); logEl.scrollTop = logEl.scrollHeight; };
+  const fmt = (x, d) => Number.isFinite(x) ? x.toFixed(d) : '—';
+  const RE = CONFIG.EARTH_RADIUS, GM = CONFIG.GM_EARTH;
+
+  function specE(m) {
+    if (!Number.isFinite(m.vrCoast) || !Number.isFinite(m.vtCoast) || !Number.isFinite(m.altCoastKm)) return NaN;
+    const r = RE + m.altCoastKm * 1000;
+    return 0.5 * (m.vrCoast * m.vrCoast + m.vtCoast * m.vtCoast) - GM / r;
+  }
+
+  async function run() {
+    $('runBtn').disabled = true;
+    logLines = []; logEl.textContent = '—'; tableHost.innerHTML = '';
+    const ctx = $('chart').getContext('2d');
+    ctx.fillStyle = '#060912'; ctx.fillRect(0, 0, 720, 420);
+
+    try {
+      const n = Math.max(1, Math.min(8, parseInt($('nW').value, 10) || 4));
+      const baseG = parseFloat($('baseG').value);
+      const baseB = parseFloat($('baseB').value);
+      const Q = TunerConfig.quanta;
+      const T = 4.82;
+
+      statusEl.textContent = 'creating pool…';
+      log('creating pool with ' + n + ' workers…');
+      const pool = new TunerCore.WorkerPool(n, { workerPath: '../lib/worker-sim.js' });
+      await pool.waitReady();
+      log('pool ready');
+      const t0 = performance.now();
+
+      // baseline
+      const basePoint = {
+        Gi: Math.round(baseG / Q.G), Tn: Math.round(T / Q.T),
+        bi: Math.round(baseB / Q.bias), li: Math.round(5.53 / Q.lead),
+        meco: 52612,
+      };
+      log('');
+      log('=== baseline (G=' + baseG + ', bias=' + baseB + ') ===');
+      const mBase = await pool.runEval(basePoint, { stopAt: 'COAST_WAIT_ENTRY', quiet: true });
+      const E_ref = specE(mBase);
+      log('  ecc=' + fmt(mBase.eCoast, 6) + '  E=' + E_ref.toExponential(6) + '  vr=' + fmt(mBase.vrCoast, 3) + '  vt=' + fmt(mBase.vtCoast, 3) + '  alt=' + fmt(mBase.altCoastKm, 3));
+      if (mBase.endReason !== 'COAST_WAIT_ENTRY') { log('baseline failed'); return; }
+
+      // G values to scan (baseline G excluded)
+      const Gs = [0.55, 0.57, 0.58, 0.59, 0.61, 0.62, 0.63];
+      const results = [];
+      const t1 = performance.now();
+
+      for (const g of Gs) {
+        statusEl.textContent = 'bias scan at G=' + g;
+        log('');
+        log('=== scanning G=' + g.toFixed(2) + '  A=' + (g * T * T).toFixed(4) + ' ===');
+        const p = Object.assign({}, basePoint, { Gi: Math.round(g / Q.G) });
+        try {
+          const r = await TunerCore.biasScan(p, {
+            pool,
+            E_target: E_ref,
+            E_tol: 2e5,  // 0.2e6 tolerance for pairing (loose)
+            biRange: [Math.round(-3 / Q.bias), Math.round(3 / Q.bias)],
+            onLog: (s) => log('  ' + s),
+          });
+          results.push({ G: g, A: g * T * T, bias: r.bias, biasQ: r.biasQ, E: r.E, ecc: r.ecc, ok: r.ok, evals: r.evals });
+          log('  -> G=' + g.toFixed(2) + ' A=' + (g*T*T).toFixed(4) + ' bias=' + fmt(r.bias, 4) + ' E=' + r.E.toExponential(6) + ' ok=' + r.ok);
+        } catch (e) {
+          log('  scan failed: ' + e.message);
+          results.push({ G: g, A: g * T * T, bias: NaN, E: NaN, ok: false });
+        }
+      }
+
+      const wall = (performance.now() - t1) / 1000;
+      log('');
+      log('=== all scans done in ' + fmt(wall, 1) + 's ===');
+
+      // Table
+      let html = '<table><thead><tr><th>G</th><th>A (=G·T²)</th><th>bias (deg)</th><th>E (J/kg)</th><th>ecc</th><th>ok</th></tr></thead><tbody>';
+      html += '<tr style="background:rgba(74,222,128,0.1)"><td>' + baseG.toFixed(2) + '</td><td>' + (baseG*T*T).toFixed(4) + '</td><td>' + baseB.toFixed(4) + '</td><td>' + E_ref.toExponential(5) + '</td><td>' + fmt(mBase.eCoast, 5) + '</td><td>BASELINE</td></tr>';
+      results.forEach(r => {
+        html += '<tr><td>' + r.G.toFixed(2) + '</td><td>' + r.A.toFixed(4) + '</td><td>' + fmt(r.bias, 4) + '</td><td>' + (Number.isFinite(r.E) ? r.E.toExponential(5) : '—') + '</td><td>' + fmt(r.ecc, 5) + '</td><td>' + (r.ok ? '✓' : '~') + '</td></tr>';
+      });
+      html += '</tbody></table>';
+      tableHost.innerHTML = html;
+
+      // Chart: A (X) vs bias (Y)
+      const valid = results.filter(r => Number.isFinite(r.bias));
+      const allPts = [{ A: baseG * T * T, bias: baseB, tag: 'baseline' }]
+        .concat(valid.map(r => ({ A: r.A, bias: r.bias, tag: 'G=' + r.G.toFixed(2) })));
+      drawChart(ctx, allPts);
+
+      log('');
+      log('=== twin pairs (baseline + each) ===');
+      log('baseline: A=' + (baseG*T*T).toFixed(4) + ' bias=' + baseB.toFixed(4) + '  E=' + E_ref.toExponential(6));
+      valid.forEach(r => {
+        log('A=' + r.A.toFixed(4) + ' (G=' + r.G.toFixed(2) + ')  bias=' + fmt(r.bias, 4) + '  E=' + r.E.toExponential(6) + '  ΔE=' + ((r.E - E_ref) / 1e5).toFixed(2) + 'e5');
+      });
+
+      statusEl.textContent = 'done — ' + fmt(wall, 1) + 's';
+      log('');
+      log('total wall = ' + fmt((performance.now() - t0) / 1000, 1) + 's');
+    } catch (e) {
+      console.error(e);
+      log('ERROR: ' + e.message + '\n' + (e.stack || ''));
+    } finally {
+      $('runBtn').disabled = false;
+    }
+  }
+
+  function drawChart(ctx, pts) {
+    const W = 720, H = 420;
+    const padL = 80, padR = 30, padT = 30, padB = 50;
+    const pw = W - padL - padR, ph = H - padT - padB;
+
+    const aMin = Math.min(...pts.map(p => p.A)) - 0.05;
+    const aMax = Math.max(...pts.map(p => p.A)) + 0.05;
+    const bMin = Math.min(...pts.map(p => p.bias)) - 0.1;
+    const bMax = Math.max(...pts.map(p => p.bias)) + 0.1;
+
+    const X = (a) => padL + (a - aMin) / (aMax - aMin) * pw;
+    const Y = (b) => padT + ph - (b - bMin) / (bMax - bMin) * ph;
+
+    // grid
+    ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+    ctx.lineWidth = 1;
+    for (let i = 0; i <= 4; i++) {
+      const y = padT + i * ph / 4;
+      ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(padL + pw, y); ctx.stroke();
+      const x = padL + i * pw / 4;
+      ctx.beginPath(); ctx.moveTo(x, padT); ctx.lineTo(x, padT + ph); ctx.stroke();
+    }
+
+    // axes
+    ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+    ctx.beginPath(); ctx.moveTo(padL, padT); ctx.lineTo(padL, padT + ph); ctx.lineTo(padL + pw, padT + ph); ctx.stroke();
+
+    // labels
+    ctx.fillStyle = 'rgba(150,170,200,0.9)';
+    ctx.font = '11px monospace';
+    ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+    for (let i = 0; i <= 4; i++) {
+      const b = bMin + i * (bMax - bMin) / 4;
+      ctx.fillText(b.toFixed(2), padL - 6, padT + ph - i * ph / 4);
+    }
+    ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+    for (let i = 0; i <= 4; i++) {
+      const a = aMin + i * (aMax - aMin) / 4;
+      ctx.fillText(a.toFixed(3), padL + i * pw / 4, padT + ph + 8);
+    }
+    ctx.fillStyle = '#35d6ff';
+    ctx.font = 'bold 12px monospace';
+    ctx.fillText('A = G · T²  (T=4.82)', padL + pw / 2, H - 20);
+    ctx.save();
+    ctx.translate(20, padT + ph / 2); ctx.rotate(-Math.PI / 2);
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('bias (deg)', 0, 0);
+    ctx.restore();
+
+    // line connecting points (sorted by A)
+    const sorted = pts.slice().sort((a, b) => a.A - b.A);
+    ctx.strokeStyle = '#35d6ff';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    sorted.forEach((p, i) => {
+      const x = X(p.A), y = Y(p.bias);
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+
+    // points
+    sorted.forEach(p => {
+      const x = X(p.A), y = Y(p.bias);
+      ctx.fillStyle = p.tag === 'baseline' ? '#4ade80' : '#ffd23f';
+      ctx.beginPath(); ctx.arc(x, y, 5, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#dbe6f5';
+      ctx.font = '10px monospace';
+      ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
+      ctx.fillText(p.tag, x + 8, y - 6);
+    });
+  }
+
+  $('runBtn').addEventListener('click', run);
+  $('status').textContent = 'ready';
+})();
+</script>
+</body>
+</html>
