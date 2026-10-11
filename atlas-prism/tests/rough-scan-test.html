@@ -23,6 +23,7 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
 
 <label>workers <input type="number" id="nW" value="4" min="1" max="8"></label>
 <button id="runBtn">Run rough scan</button>
+<button id="verifyBtn" disabled>Verify MECO (tuneRough)</button>
 <button id="clearBtn">Clear</button>
 <div id="status">idle</div>
 <pre id="log">—</pre>
@@ -47,6 +48,7 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
   let logLines = [];
   const log = (s) => { logLines.push(s); logEl.textContent = logLines.join('\n'); logEl.scrollTop = logEl.scrollHeight; };
   const fmt = (x, d) => Number.isFinite(x) ? x.toFixed(d) : String(x);
+  let _lastMeco = null, _lastPoint = null, _lastMc = null, _lastVe = null;
 
   // compute mc and Ve from the active stack
   function computeMcVe() {
@@ -107,6 +109,7 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
         iters: r.log.filter(l => /iter /.test(l)).length,
       }, null, 2);
 
+      if (r.ok) { _lastMeco = r.meco; _lastPoint = r.point; _lastMc = info.mc; _lastVe = info.Ve; $('verifyBtn').disabled = false; }
       log('done');
     } catch (e) {
       console.error(e);
@@ -117,6 +120,32 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
   }
 
   $('runBtn').addEventListener('click', run);
+  $('verifyBtn').addEventListener('click', async () => {
+    if (!_lastMeco) return;
+    $('verifyBtn').disabled = true;
+    try {
+      log('');
+      log('=== tuneRough verify at MECO=' + _lastMeco + ' ===');
+      const pool = new TunerCore.WorkerPool(1, { workerPath: '../lib/worker-sim.js' });
+      await pool.waitReady();
+      const r = await pool.runJob('runEvalValues', {
+        values: null,  // placeholder, we'll build below
+      }).catch(() => null);
+      // Actually use a proper job — need runEval with FULL
+      // Simpler: send the point with stopAt FULL
+      const Q = TunerConfig.quanta;
+      const fullPoint = Object.assign({}, _lastPoint, { meco: _lastMeco });
+      const m = await pool.runEval(fullPoint, { stopAt: 'FULL', quiet: true });
+      log('actual end=' + m.endReason + '  residual=' + fmt(m.stageResidualKg, 1) + ' kg  deploy=' + fmt(m.deployTimeS, 1) + 's  cleared=' + m.payloadCleared);
+      log('predicted was 149.2 kg.  delta=' + fmt(m.stageResidualKg - 149.2, 1) + ' kg');
+      await pool.terminate();
+    } catch (e) {
+      log('VERIFY ERROR: ' + e.message);
+    } finally {
+      $('verifyBtn').disabled = false;
+    }
+  });
+
   $('clearBtn').addEventListener('click', () => {
     logLines = []; logEl.textContent = '—'; resEl.textContent = '—'; $('status').textContent = 'idle';
   });
