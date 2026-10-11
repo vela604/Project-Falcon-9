@@ -63,7 +63,7 @@
       for (let i = 0; i < this.n; i++) {
         let w;
         try {
-          w = new Worker(this.workerPath);
+          w = new Worker(this.workerPath + (this.workerPath.indexOf('?') < 0 ? '?v=' + Date.now() : ''));   // cache-bust: workers aggressively cache
         } catch (e) {
           this.readyErrors[i] = 'Worker construction failed: ' + e.message;
           continue;
