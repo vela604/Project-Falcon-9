@@ -60,7 +60,29 @@ tr.match td { background:rgba(74,222,128,0.06); }
   let logLines = [];
   const log = (s) => { logLines.push(s); logEl.textContent = logLines.join('\n'); logEl.scrollTop = logEl.scrollHeight; };
 
-  function deepClone(x) { return JSON.parse(JSON.stringify(x)); }
+  function deepClone(x, memo) {
+    memo = memo || new WeakMap();
+    if (x === null || typeof x !== 'object') return x;
+    if (memo.has(x)) return memo.get(x);
+    if (Array.isArray(x)) {
+      const arr = []; memo.set(x, arr);
+      for (let i = 0; i < x.length; i++) arr[i] = deepClone(x[i], memo);
+      return arr;
+    }
+    if (x instanceof Map) {
+      const m = new Map(); memo.set(x, m);
+      x.forEach((v, k) => m.set(deepClone(k, memo), deepClone(v, memo)));
+      return m;
+    }
+    if (x instanceof Set) {
+      const s = new Set(); memo.set(x, s);
+      x.forEach(v => s.add(deepClone(v, memo)));
+      return s;
+    }
+    const out = {}; memo.set(x, out);
+    for (const k of Object.keys(x)) out[k] = deepClone(x[k], memo);
+    return out;
+  }
 
   function findStage() {
     for (const b of state.bodies) {
@@ -111,7 +133,7 @@ tr.match td { background:rgba(74,222,128,0.06); }
     const stateSnapshot = {};
     stateKeys.forEach(k => {
       if (k === 'bodies') return;
-      try { stateSnapshot[k] = JSON.parse(JSON.stringify(state[k])); } catch (e) { stateSnapshot[k] = null; }
+      try { stateSnapshot[k] = deepClone(state[k]); } catch (e) { stateSnapshot[k] = null; }
     });
     return {
       bodies: deepClone(state.bodies),
@@ -129,7 +151,7 @@ tr.match td { background:rgba(74,222,128,0.06); }
     // Restore every captured state key, then overwrite bodies separately.
     if (snap.stateKeysSnapshot) {
       Object.keys(snap.stateKeysSnapshot).forEach(k => {
-        try { state[k] = JSON.parse(JSON.stringify(snap.stateKeysSnapshot[k])); } catch (e) {}
+        try { state[k] = deepClone(snap.stateKeysSnapshot[k]); } catch (e) {}
       });
     }
     state.simTime = snap.simTime;
@@ -146,6 +168,22 @@ tr.match td { background:rgba(74,222,128,0.06); }
       const src = sb[i], dst = state.bodies[i];
       Object.keys(dst).forEach(k => { delete dst[k]; });
       Object.keys(src).forEach(k => { dst[k] = deepClone(src[k]); });
+    }
+
+    // Sync top-level physics aliases from the restored active body.
+    // state.rx/ry/vx/vy/theta/omega/dryMass/fuelMass mirror the active body.
+    {
+      const ab = state.bodies[state.activeBodyIndex];
+      if (ab) {
+        try { state.rx = ab.rx; } catch (e) {}
+        try { state.ry = ab.ry; } catch (e) {}
+        try { state.vx = ab.vx; } catch (e) {}
+        try { state.vy = ab.vy; } catch (e) {}
+        try { state.theta = ab.theta; } catch (e) {}
+        try { state.omega = ab.omega; } catch (e) {}
+        try { state.dryMass = ab.dryMass; } catch (e) {}
+        try { state.fuelMass = ab.fuelMass; } catch (e) {}
+      }
     }
 
     const g = deepClone(snap.guidanceState);
@@ -204,6 +242,14 @@ tr.match td { background:rgba(74,222,128,0.06); }
     const maxTicks = Math.ceil(500 / DT);
     for (let i = 0; i < maxTicks; i++) {
       if (state.halted) break;
+      if (i === 0) {
+        const b0 = state.bodies[state.activeBodyIndex];
+        log('  post-restore pre-tick: state.rx=' + (Number.isFinite(state.rx)?state.rx.toFixed(3):state.rx) +
+            ' body.rx=' + (b0 && Number.isFinite(b0.rx)?b0.rx.toFixed(3):'?') +
+            ' simTime=' + state.simTime.toFixed(3) +
+            ' missionPhase=' + (snap.guidanceState.v3State ? snap.guidanceState.v3State.missionPhase : '?') +
+            ' ticks=' + (snap.guidanceState.v3State ? snap.guidanceState.v3State.ticks : '?'));
+      }
       TunerEngine.tick(DT);
       const gs = Guidance.getGuideStatus();
       const ph = gs.phase;
