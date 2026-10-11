@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Bias Scan — energy match</title>
+<style>
+body { margin:0; background:#060912; color:#dbe6f5; font:13px/1.5 monospace; padding:20px; }
+h1 { color:#35d6ff; font-size:15px; margin:0 0 12px; letter-spacing:1px; }
+button { background:#101a30; color:#dbe6f5; border:1px solid #1c2b45;
+         padding:8px 16px; border-radius:4px; font:inherit; cursor:pointer; margin-right:8px; }
+button:hover { border-color:#35d6ff; color:#35d6ff; }
+button:disabled { opacity:.4; }
+input[type=number] { background:#101a30; color:#dbe6f5; border:1px solid #1c2b45;
+         padding:6px 10px; border-radius:4px; font:inherit; width:90px; }
+#status { color:#ffd23f; margin:8px 0; }
+pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4px;
+      font-size:11.5px; overflow:auto; max-height:500px; }
+</style>
+</head>
+<body>
+
+<h1>Bias Scan — fixed A, match baseline CW energy</h1>
+
+<label>workers <input type="number" id="nW" value="4" min="1" max="8"></label>
+<label style="margin-left:12px">new G <input type="number" id="newG" value="0.61" step="0.01"></label>
+<label>baseline G <input type="number" id="baseG" value="0.60" step="0.01"></label>
+<label>baseline bias <input type="number" id="baseB" value="0.59" step="0.01"></label>
+<button id="runBtn">Run</button>
+<pre id="log">—</pre>
+
+<script src="../../js/componentLibrary.js"></script>
+<script src="../../js/customDesign.js"></script>
+<script src="../../js/fleet.js"></script>
+<script src="../../js/config.js"></script>
+<script src="../../js/simJs/core/massProps.js"></script>
+<script src="../../js/guideConfigDefaults.js"></script>
+<script src="../lib/config.js"></script>
+<script src="../lib/worker-pool.js"></script>
+<script src="../lib/rough-scan.js"></script>
+<script src="../lib/bias-scan.js"></script>
+
+<script>
+(function () {
+  'use strict';
+  const $ = (id) => document.getElementById(id);
+  const logEl = $('log');
+  let logLines = [];
+  const log = (s) => { logLines.push(s); logEl.textContent = logLines.join('\n'); logEl.scrollTop = logEl.scrollHeight; };
+  const fmt = (x, d) => Number.isFinite(x) ? x.toFixed(d) : '—';
+
+  async function run() {
+    $('runBtn').disabled = true;
+    logLines = [];
+    try {
+      const n = Math.max(1, Math.min(8, parseInt($('nW').value, 10) || 4));
+      const newG = parseFloat($('newG').value);
+      const baseG = parseFloat($('baseG').value);
+      const baseB = parseFloat($('baseB').value);
+      const Q = TunerConfig.quanta;
+
+      log('creating pool…');
+      const pool = new TunerCore.WorkerPool(n, { workerPath: '../lib/worker-sim.js' });
+      await pool.waitReady();
+      log('pool ready');
+
+      const T = 4.82;
+      const basePoint = {
+        Gi: Math.round(baseG / Q.G), Tn: Math.round(T / Q.T),
+        bi: Math.round(baseB / Q.bias), li: Math.round(5.53 / Q.lead),
+        meco: 52612,
+      };
+
+      // 1) baseline energy
+      log('');
+      log('=== baseline probe: G=' + baseG + ' bias=' + baseB + ' ===');
+      const RE = CONFIG.EARTH_RADIUS, GM = CONFIG.GM_EARTH;
+      const mBase = await pool.runEval(basePoint, { stopAt: 'COAST_WAIT_ENTRY', quiet: true });
+      const rBase = RE + mBase.altCoastKm * 1000;
+      const E_ref = 0.5 * (mBase.vrCoast * mBase.vrCoast + mBase.vtCoast * mBase.vtCoast) - GM / rBase;
+      log('  end=' + mBase.endReason + '  ecc=' + fmt(mBase.eCoast, 6) + '  E=' + E_ref.toExponential(6) + ' J/kg');
+      log('  vr=' + fmt(mBase.vrCoast, 3) + '  vt=' + fmt(mBase.vtCoast, 3) + '  alt=' + fmt(mBase.altCoastKm, 3) + ' km');
+      if (mBase.endReason !== 'COAST_WAIT_ENTRY') { log('baseline failed'); return; }
+
+      // 2) bias scan on new G
+      log('');
+      log('=== bias scan: new G=' + newG + ' (A=' + (newG * T * T).toFixed(4) + ')  E_target=' + E_ref.toExponential(4) + ' ===');
+      const newPoint = Object.assign({}, basePoint, { Gi: Math.round(newG / Q.G) });
+      const r = await TunerCore.biasScan(newPoint, {
+        pool,
+        E_target: E_ref,
+        E_tol: 1e5,
+        biRange: [Math.round(-3 / Q.bias), Math.round(3 / Q.bias)],
+        onLog: (s) => log('  ' + s),
+      });
+
+      log('');
+      log('=== RESULT ===');
+      if (r.ok) {
+        log('new A = ' + (newG * T * T).toFixed(4) + ',  bias = ' + fmt(r.bias, 4) + '  E=' + r.E.toExponential(6));
+        log('ΔE vs baseline = ' + ((r.E - E_ref) / 1e5).toFixed(3) + 'e5 J/kg');
+        log('ecc = ' + fmt(r.ecc, 5));
+        log('evals = ' + r.evals + '  wall = ' + fmt(r.wallMs / 1000, 2) + 's');
+        log('');
+        log('Twin pair:');
+        log('  (' + baseG.toFixed(2) + ', bias=' + baseB.toFixed(4) + ')  E=' + E_ref.toExponential(6));
+        log('  (' + newG.toFixed(2) + ', bias=' + fmt(r.bias, 4) + ')  E=' + r.E.toExponential(6));
+      } else {
+        log('not converged: ' + r.reason);
+        log('closest: bias=' + fmt(r.bias, 4) + ' E=' + r.E.toExponential(6) + ' (Δ=' + ((r.E - E_ref) / 1e5).toFixed(3) + 'e5)');
+      }
+    } catch (e) {
+      console.error(e);
+      log('ERROR: ' + e.message + '\n' + (e.stack || ''));
+    } finally {
+      $('runBtn').disabled = false;
+    }
+  }
+
+  $('runBtn').addEventListener('click', run);
+})();
+</script>
+</body>
+</html>
