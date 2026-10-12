@@ -475,10 +475,14 @@ tr.fail td{color:#8a4a55;}
       '<button class="suggest" id="zSuggest">Suggest</button>' +
       '</div>' +
       '<div class="row">' +
-      '<label>bias lo <input type="number" id="zBlo" step="0.001" value="1.4"></label>' +
-      '<label>bias hi <input type="number" id="zBhi" step="0.001" value="2.2"></label>' +
+      '<label>bias lo <input type="number" id="zBlo" step="0.001" value="-4"></label>' +
+      '<label>bias hi <input type="number" id="zBhi" step="0.001" value="4"></label>' +
       '<label>N results <input type="number" id="zN" step="1" min="2" value="9"></label>' +
+      '<button class="suggest" id="zFindRange">Find range</button>' +
       '<span class="dim" id="zStepInfo"></span>' +
+      '</div>' +
+      '<div class="row" id="zRangeHintRow" style="display:none">' +
+      '<span class="warn">Valid bias range: <b id="zRangeHint"></b></span>' +
       '</div>' +
       '<div class="row">' +
       '<button class="primary" id="zRun">Run ZETA-HELIX 1R</button>' +
@@ -569,6 +573,7 @@ tr.fail td{color:#8a4a55;}
     });
 
     $('zRun').addEventListener('click', () => runZeta());
+    $('zFindRange').addEventListener('click', () => findBiasRange());
   }
 
   function wireConvo() {
@@ -730,6 +735,88 @@ tr.fail td{color:#8a4a55;}
       $('zStatus').innerHTML = '<span class="bad">ERROR: ' + esc(e.message) + '</span>';
     } finally {
       S.running = false;
+      $('zRun').disabled = false;
+    }
+  }
+
+  // ========================================================================
+  // FIND BIAS RANGE — coarse scan [-4,+4] step 1.0 to detect valid window
+  // ========================================================================
+  async function findBiasRange() {
+    if (S.running) { alert('A run is in progress.'); return; }
+    if (!S.pool || !S.poolReady) { alert('pool not ready'); return; }
+    S.running = true; S.t0 = performance.now();
+    $('zFindRange').disabled = true;
+    $('zRun').disabled = true;
+    $('zRangeHintRow').style.display = 'none';
+    $('zStatus').textContent = 'finding range…';
+
+    try {
+      const meco = parseInt($('zMeco').value, 10);
+      const G = parseFloat($('zG').value);
+      const T = parseFloat($('zT').value);
+      if (![meco, G, T].every(Number.isFinite)) throw new Error('invalid MECO/G/T');
+
+      const SCAN_LO = -4, SCAN_HI = 4, SCAN_STEP = 1.0;
+      const biases = [];
+      for (let b = SCAN_LO; b <= SCAN_HI + 1e-9; b += SCAN_STEP) {
+        biases.push(Math.round(b * 10000) / 10000);
+      }
+      log('FIND RANGE: MECO=' + meco + ' G=' + G + ' T=' + T +
+          '  scan [' + SCAN_LO + ',' + SCAN_HI + '] step ' + SCAN_STEP + ' → ' + biases.length + ' probes');
+
+      const tasks = biases.map((bias) =>
+        S.pool.runJob('probeBiasCheckpoint', { bias, altKm: S.orbitKm })
+          .then((r) => ({ bias, ...r }))
+          .catch((e) => ({ bias, ok: false, reason: 'error: ' + e.message }))
+      );
+
+      let done = 0;
+      const ticker = setInterval(() => {
+        $('zStatus').textContent = 'finding range… ' + done + '/' + biases.length;
+      }, 400);
+
+      const results = await Promise.all(tasks.map((p) => p.then((r) => { done++; return r; })));
+      clearInterval(ticker);
+
+      // Validity = mission reached orbit (payload cleared, no crash). NOT
+      // score-ok — we want the full usable bias window regardless of ranking.
+      const classified = results.map((r) => ({
+        bias: r.bias,
+        valid: !!(r.metrics && r.metrics.payloadCleared && !r.metrics.crashed),
+        r,
+      }));
+
+      classified.forEach((c) => {
+        const info = c.r.metrics
+          ? 'apo=' + fmt(c.r.metrics.apogeeKm, 2) + ' peri=' + fmt(c.r.metrics.perigeeKm, 2) +
+            ' cleared=' + c.r.metrics.payloadCleared + ' crashed=' + c.r.metrics.crashed
+          : (c.r.reason || 'no metrics');
+        log('  bias=' + c.bias.toFixed(4).padStart(7) + '  ' +
+            (c.valid ? 'VALID' : 'FAIL ') + '  ' + info);
+      });
+
+      const valids = classified.filter((c) => c.valid);
+      if (!valids.length) {
+        $('zStatus').innerHTML = '<span class="bad">no valid bias found in [-4, +4]</span>';
+        log('FIND RANGE: no valid probes');
+      } else {
+        const minB = valids[0].bias;
+        const maxB = valids[valids.length - 1].bias;
+        $('zRangeHint').textContent = '[' + minB.toFixed(4) + ', ' + maxB.toFixed(4) + '] deg  (' +
+          valids.length + '/' + biases.length + ' valid)';
+        $('zRangeHintRow').style.display = 'flex';
+        $('zStatus').innerHTML = '<span class="ok">valid range: [' +
+          minB.toFixed(3) + ', ' + maxB.toFixed(3) + ']</span>';
+        log('FIND RANGE: valid range = [' + minB.toFixed(4) + ', ' + maxB.toFixed(4) +
+            ']  (' + valids.length + '/' + biases.length + ')');
+      }
+    } catch (e) {
+      log('FIND RANGE ERROR: ' + e.message);
+      $('zStatus').innerHTML = '<span class="bad">ERROR: ' + esc(e.message) + '</span>';
+    } finally {
+      S.running = false;
+      $('zFindRange').disabled = false;
       $('zRun').disabled = false;
     }
   }
