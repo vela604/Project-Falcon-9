@@ -379,6 +379,43 @@ tr.fail td{color:#8a4a55;}
     };
   }
 
+  // Re-run setupSA on every worker with the caller's values. Needed because
+  // the SA snapshot baked at LOCK uses 320-km defaults (meco=60494, G=0.60).
+  // Any ZETA/CONVO run with a different MECO/G/T would restore that wrong
+  // SA and fail every bias probe — stage fuel insufficient at the wrong
+  // MECO. Calling this before each batch guarantees the SA snapshot matches
+  // the panel's current MECO/G/T.
+  async function ensureSA(values) {
+    if (!S.pool || !S.poolReady) throw new Error('pool not ready');
+    const n = S.pool.n;
+    log('setupSA (refresh): MECO=' + values.ascent.MECO_TARGET_BOOSTER_FUEL_KG +
+        ' G=' + values.ascent.PUSH_MAX_GIMBAL_DEG +
+        ' T=' + values.ascent.PUSH_T_S + ' alt=' + values.insertion.TARGET_ORBIT_ALT_KM + ' km…');
+    const jobs = [];
+    for (let i = 0; i < n; i++) jobs.push(S.pool.runJob('setupSA', { values }));
+    const results = await Promise.all(jobs);
+    const okN = results.filter((r) => r.ok).length;
+    log('setupSA (refresh): ' + okN + '/' + n + ' ready');
+    if (!okN) throw new Error('setupSA refresh failed (' + okN + '/' + n + ')');
+  }
+
+  function saValuesFor(meco, G, T, biasFallback, leadFallback) {
+    return {
+      ascent: {
+        PUSH_MAX_GIMBAL_DEG: G,
+        PUSH_T_S: T,
+        MECO_TARGET_BOOSTER_FUEL_KG: meco,
+      },
+      insertion: {
+        TARGET_ORBIT_ALT_KM: S.orbitKm,
+        STAGE_BURN_AOA_BIAS_DEG: (biasFallback != null ? biasFallback : 1.8),
+        STAGE_BURN_AOA_MARGIN_DEG: TunerConfig.fixed.margin,
+        CIRC_TRIGGER_LEAD_S: (leadFallback != null ? leadFallback : 5.525),
+      },
+      done: { DEORBIT_ENABLED: !!TunerConfig.fixed.deorbitEnabled },
+    };
+  }
+
   function residualBandFor(suicideOn) {
     const L = TunerConfig.limits;
     return suicideOn
@@ -733,6 +770,10 @@ tr.fail td{color:#8a4a55;}
 
       S.last.meco = meco; S.last.G = G; S.last.T = T;
 
+      // Refresh SA snapshot to match this panel's MECO/G/T.
+      const saVals = saValuesFor(meco, G, T, 1.8, 5.525);
+      await ensureSA(saVals);
+
       const tasks = biases.map((bias) => {
         return S.pool.runJob('probeBiasCheckpoint', { bias, altKm: S.orbitKm })
           .then((r) => ({ bias, ...r, stackId: S.stackId, meco, G, T, batchId }))
@@ -930,6 +971,10 @@ tr.fail td{color:#8a4a55;}
       log('FIND RANGE: MECO=' + meco + ' G=' + G + ' T=' + T +
           '  bidirectional 0→±4 step 0.5 → ' + biases.length + ' probes');
 
+      // Refresh SA snapshot to match this panel's MECO/G/T.
+      const saVals = saValuesFor(meco, G, T, 1.8, 5.525);
+      await ensureSA(saVals);
+
       const results = await _runProbeBatch(biases, meco, G, T);
       recordZetaResults(results, meco, G);
 
@@ -1002,6 +1047,10 @@ tr.fail td{color:#8a4a55;}
           ' margin=[' + mLo + ',' + mHi + ']');
 
       S.last.meco = meco; S.last.G = G; S.last.T = T; S.last.bias = bias;
+
+      // Refresh SA snapshot to match this panel's MECO/G/T.
+      const saVals = saValuesFor(meco, G, T, bias, 5.525);
+      await ensureSA(saVals);
 
       const r = await S.pool.runJob('probeBiasCheckpoint', {
         bias, altKm: S.orbitKm, marginBand: [mLo, mHi],
