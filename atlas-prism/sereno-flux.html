@@ -68,25 +68,39 @@ button.suggest:hover:not(:disabled){color:var(--yellow);border-color:var(--yello
   white-space:pre;color:#9ef;
 }
 #logFeed div{margin:0;}
-table{border-collapse:collapse;font-size:11.5px;width:100%;margin-top:8px;}
-th,td{padding:5px 8px;text-align:right;border-bottom:1px solid var(--border);white-space:nowrap;}
-th{color:var(--cyan);font-weight:600;text-align:right;}
-td:first-child,th:first-child{text-align:left;}
-tr.best td{background:rgba(74,222,128,.08);color:var(--green);}
+
+/* ==== ZETA results: table scroll + chart area ==== */
+#resultsPanel{display:none;}
+#tableScroll{
+  max-height:460px;
+  overflow:auto;
+  border:1px solid var(--border);
+  border-radius:4px;
+  margin-top:8px;
+}
+#tableScroll table{border-collapse:collapse;font-size:11.5px;width:100%;}
+#tableScroll thead th{
+  position:sticky;top:0;
+  background:var(--panel);
+  z-index:1;
+  color:var(--cyan);font-weight:600;text-align:right;
+  padding:7px 8px;
+  border-bottom:1px solid var(--border);
+}
+#tableScroll thead th:first-child{text-align:left;}
+#tableScroll td{padding:5px 8px;text-align:right;border-bottom:1px solid rgba(28,43,69,0.5);white-space:nowrap;}
+#tableScroll td:first-child{text-align:left;}
+tr.batch-odd td{background:rgba(53,214,255,0.035);}
+tr.batch-even td{background:transparent;}
+tr.best td{background:rgba(74,222,128,.10) !important;color:var(--green);}
 tr.fail td{color:#8a4a55;}
-tr.groupsep td{border-top:2px solid var(--border);padding-top:10px;}
+
 .charts{display:flex;flex-wrap:wrap;gap:14px;margin-top:12px;}
 .chartCard{background:var(--panel);border:1px solid var(--border);border-radius:6px;padding:10px;}
 .chartCard .ttl{font-size:11px;color:var(--cyan);letter-spacing:1px;margin-bottom:6px;}
 .chartCard canvas{display:block;border-radius:3px;}
 .stat{color:var(--yellow);}
-.kvGrid{display:grid;grid-template-columns:auto 1fr auto 1fr;gap:4px 14px;margin:8px 0;font-size:12px;}
-.kvGrid .k{color:var(--dim);}
 .badge{display:inline-block;padding:1px 6px;border-radius:3px;font-size:10px;letter-spacing:.5px;}
-.badge.run{background:#0d2530;color:var(--cyan);}
-.badge.ok{background:#0d2a15;color:var(--green);}
-.badge.err{background:#3a1520;color:var(--danger);}
-.badge.dim{background:var(--panel2);color:var(--dim);}
 </style>
 </head>
 <body>
@@ -141,15 +155,15 @@ tr.groupsep td{border-top:2px solid var(--border);padding-top:10px;}
     <div id="logFeed"></div>
   </section>
 
-  <!-- ============ RESULTS ============ -->
+  <!-- ============ ZETA-ONLY RESULTS ============ -->
   <section class="panel" id="resultsPanel">
-    <h2>Results</h2>
+    <h2>ZETA-HELIX Results</h2>
     <div class="row">
-      <button id="dlJson" class="suggest">Download all runs (JSON)</button>
-      <button id="clearRuns" class="reset">Clear runs</button>
-      <span class="dim" id="runStats">0 runs</span>
+      <button id="dlJson" class="suggest">Download ZETA JSON</button>
+      <button id="clearRuns" class="reset">Clear ZETA runs</button>
+      <span class="dim" id="runStats">0 rows · 0 batches</span>
     </div>
-    <div id="tableHost"><div class="dim">No runs yet.</div></div>
+    <div id="tableScroll"><div id="tableHost"><div class="dim">No ZETA runs yet.</div></div></div>
     <div id="chartHost" class="charts"></div>
   </section>
 
@@ -186,9 +200,6 @@ tr.groupsep td{border-top:2px solid var(--border);padding-top:10px;}
   const fmt = (x, d) => Number.isFinite(x) ? x.toFixed(d) : '–';
   const Q = () => TunerConfig.quanta;
 
-  // ========================================================================
-  // STATE
-  // ========================================================================
   const S = {
     locked: false,
     stackId: null,
@@ -196,14 +207,16 @@ tr.groupsep td{border-top:2px solid var(--border);padding-top:10px;}
     pool: null,
     poolReady: false,
     tab: null,
-    runs: [],        // cumulative probeBiasCheckpoint / roughScan results
-    last: {         // last-known values for suggestions
-      meco: null, G: null, T: null, bias: null, lead: null,
-    },
+    // per-engine result stores
+    optRuns: [],
+    zetaRuns: [],
+    zetaBatch: 0,
+    convoRuns: [],
+    last: { meco: null, G: null, T: null, bias: null, lead: null },
     mc: null, Ve: null,
     running: false,
     t0: 0,
-    workerProgress: {},   // tag -> {phase, detail, ts}
+    workerProgress: {},
     logLines: [],
   };
 
@@ -221,7 +234,7 @@ tr.groupsep td{border-top:2px solid var(--border);padding-top:10px;}
     ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
   // ========================================================================
-  // STACK FILTER — only default-family, standard-sequence locked stacks
+  // STACK FILTER
   // ========================================================================
   function eligibleStacks() {
     const out = [];
@@ -229,8 +242,8 @@ tr.groupsep td{border-top:2px solid var(--border);padding-top:10px;}
     try { stacks = (typeof loadStacks === 'function') ? loadStacks() : []; } catch (e) {}
     for (const stk of stacks) {
       if (!stk) continue;
-      if (stk.sequence !== 'standard') continue;   // standard only
-      if (!stk.locked) continue;                    // default (seeded) only
+      if (stk.sequence !== 'standard') continue;
+      if (!stk.locked) continue;
       out.push(stk);
     }
     return out;
@@ -257,10 +270,8 @@ tr.groupsep td{border-top:2px solid var(--border);padding-top:10px;}
     const km = parseInt($('orbitKm').value, 10);
     if (!Number.isFinite(km) || km < 150) { $('lockStatus').innerHTML = '<span class="bad">invalid orbit km</span>'; return; }
 
-    // Select stack for the sim + worker hydration
     try { setSelectedStackId(stkId); } catch (e) {}
 
-    // compute mc / Ve for rough-scan
     const info = computeMcVe(stkId);
     if (!info) { $('lockStatus').innerHTML = '<span class="bad">stack has no feasible stage (mc/Ve)</span>'; return; }
     S.mc = info.mc; S.Ve = info.Ve;
@@ -276,7 +287,6 @@ tr.groupsep td{border-top:2px solid var(--border);padding-top:10px;}
 
     $('main').style.display = 'block';
 
-    // create pool
     log('creating worker pool…');
     const n = (typeof TunerCore.defaultWorkers === 'function') ? TunerCore.defaultWorkers() : 4;
     S.pool = new TunerCore.WorkerPool(n, { workerPath: 'lib/worker-sim.js' });
@@ -288,7 +298,6 @@ tr.groupsep td{border-top:2px solid var(--border);padding-top:10px;}
     S.poolReady = true;
     log('pool ready (' + n + ' workers)');
 
-    // setupSA on all workers (with baseline values from selected stack)
     log('setupSA on ' + n + ' workers…');
     const baseValues = baselineValuesForStack(stkId, km);
     const jobs = [];
@@ -298,7 +307,6 @@ tr.groupsep td{border-top:2px solid var(--border);padding-top:10px;}
     log('setupSA: ' + okN + '/' + n + ' ready');
     if (!okN) { log('setupSA all failed — check worker console'); return; }
 
-    // select first tab by default
     setTab('optmeco');
   }
 
@@ -306,12 +314,14 @@ tr.groupsep td{border-top:2px solid var(--border);padding-top:10px;}
     if (!S.locked) return;
     const ok = confirm(
       'RESET will unlock the session and clear ALL runs in this page.\n' +
-      'Save your results (Download JSON) BEFORE resetting.\n\nContinue?'
+      'Save your ZETA results (Download JSON) BEFORE resetting.\n\nContinue?'
     );
     if (!ok) return;
 
     if (S.pool) { S.pool.terminate().catch(() => {}); S.pool = null; S.poolReady = false; }
-    S.locked = false; S.stackId = null; S.runs = []; S.last = { meco: null, G: null, T: null, bias: null, lead: null };
+    S.locked = false; S.stackId = null;
+    S.optRuns = []; S.zetaRuns = []; S.convoRuns = []; S.zetaBatch = 0;
+    S.last = { meco: null, G: null, T: null, bias: null, lead: null };
     S.workerProgress = {};
     S.logLines = [];
     $('lockBtn').disabled = false;
@@ -322,7 +332,7 @@ tr.groupsep td{border-top:2px solid var(--border);padding-top:10px;}
     $('main').style.display = 'none';
     $('logFeed').innerHTML = '';
     $('progressBar').innerHTML = '<span class="dim">idle</span>';
-    renderResults();
+    $('resultsPanel').style.display = 'none';
     S.tab = null;
     document.querySelectorAll('.big-tab').forEach((t) => t.classList.remove('active'));
   }
@@ -346,7 +356,6 @@ tr.groupsep td{border-top:2px solid var(--border);padding-top:10px;}
   }
 
   function baselineValuesForStack(stackId, km) {
-    // Approximate: use defaults from seed, overridden by ref values if available.
     const C = TunerConfig;
     const ref = (C.references || [])[0] || { G: 0.60, T: 4.82, bias: 0.59, lead: 5.53, meco: 52612 };
     return {
@@ -371,8 +380,6 @@ tr.groupsep td{border-top:2px solid var(--border);padding-top:10px;}
       : (L.residualTargetKg || [100, 200]).slice();
   }
 
-  function currentTab() { return S.tab; }
-
   // ========================================================================
   // TABS
   // ========================================================================
@@ -381,7 +388,9 @@ tr.groupsep td{border-top:2px solid var(--border);padding-top:10px;}
     document.querySelectorAll('.big-tab').forEach((t) => {
       t.classList.toggle('active', t.dataset.tab === name);
     });
+    $('resultsPanel').style.display = (name === 'zeta') ? 'block' : 'none';
     renderTabPanel();
+    if (name === 'zeta') renderZetaTable();
   }
 
   document.querySelectorAll('.big-tab').forEach((el) => {
@@ -393,7 +402,7 @@ tr.groupsep td{border-top:2px solid var(--border);padding-top:10px;}
   });
 
   // ========================================================================
-  // TAB PANEL RENDERERS
+  // TAB PANELS
   // ========================================================================
   function renderTabPanel() {
     const host = $('tabPanel');
@@ -404,7 +413,6 @@ tr.groupsep td{border-top:2px solid var(--border);padding-top:10px;}
     wireTabPanel();
   }
 
-  // ---- COMMON: suicide row ----
   function commonRowHtml() {
     return '<div class="row"><label><input type="checkbox" id="suicideChk"> suicide ON</label>' +
       '<span class="dim" id="bandHint"></span></div>';
@@ -417,12 +425,9 @@ tr.groupsep td{border-top:2px solid var(--border);padding-top:10px;}
     if (el) el.textContent = 'residual band: [' + b[0] + ', ' + b[1] + '] kg';
   }
 
-  // ---- OPT-MECO ----
   function panelOptMecoHtml() {
-    const MC = TunerConfig.meco || {};
     const R = TunerConfig.roughScan || {};
     const range = R.minRange || [20000, 80000];
-    const lastMeco = S.last.meco;
     return '<h2>OPT-MECO X5 — parallel MECO sweep</h2>' +
       commonRowHtml() +
       '<div class="row">' +
@@ -435,7 +440,6 @@ tr.groupsep td{border-top:2px solid var(--border);padding-top:10px;}
       '<label>MECO lo kg <input type="number" id="oMecoLo" step="500" value="' + range[0] + '"></label>' +
       '<label>MECO hi kg <input type="number" id="oMecoHi" step="500" value="' + range[1] + '"></label>' +
       '<button class="suggest" id="oSuggest">Suggest range</button>' +
-      (lastMeco ? '<span class="dim">last MECO=' + lastMeco + '</span>' : '') +
       '</div>' +
       '<div class="row">' +
       '<button class="primary" id="oRun">Run OPT-MECO X5</button>' +
@@ -443,7 +447,6 @@ tr.groupsep td{border-top:2px solid var(--border);padding-top:10px;}
       '</div>';
   }
 
-  // ---- ZETA ----
   function panelZetaHtml() {
     const sugMeco = S.last.meco != null ? S.last.meco : 60494;
     const sugG = S.last.G != null ? S.last.G : 0.60;
@@ -468,7 +471,6 @@ tr.groupsep td{border-top:2px solid var(--border);padding-top:10px;}
       '</div>';
   }
 
-  // ---- CONVO ----
   function panelConvoHtml() {
     const sugMeco = S.last.meco != null ? S.last.meco : 60494;
     const sugG = S.last.G != null ? S.last.G : 0.60;
@@ -487,7 +489,7 @@ tr.groupsep td{border-top:2px solid var(--border);padding-top:10px;}
       '<div class="row">' +
       '<label>margin lo s <input type="number" id="cMLo" step="0.1" value="' + MB[0] + '"></label>' +
       '<label>margin hi s <input type="number" id="cMHi" step="0.1" value="' + MB[1] + '"></label>' +
-      '<span class="dim">(no suggest for margin)</span>' +
+      '<span class="dim">(margin band not suggested)</span>' +
       '</div>' +
       '<div class="row">' +
       '<button class="primary" id="cRun">Run CONVO-LEAD E2</button>' +
@@ -495,9 +497,6 @@ tr.groupsep td{border-top:2px solid var(--border);padding-top:10px;}
       '</div>';
   }
 
-  // ========================================================================
-  // WIRING PER TAB
-  // ========================================================================
   function wireTabPanel() {
     const sChk = $('suicideChk');
     if (sChk) { sChk.addEventListener('change', updateBandHint); updateBandHint(); }
@@ -509,7 +508,6 @@ tr.groupsep td{border-top:2px solid var(--border);padding-top:10px;}
 
   function wireOptMeco() {
     $('oSuggest').addEventListener('click', () => {
-      // suggest from roughRefs matching current stack
       const refs = (TunerConfig.roughRefs || []).filter((r) => !r.stackId || r.stackId === S.stackId);
       if (!refs.length) { log('suggest: no roughRefs for stack ' + S.stackId); return; }
       const mecos = refs.map((r) => r.meco).sort((a, b) => a - b);
@@ -517,7 +515,6 @@ tr.groupsep td{border-top:2px solid var(--border);padding-top:10px;}
       const hi = Math.min(120000, mecos[mecos.length - 1] + 4000);
       $('oMecoLo').value = lo;
       $('oMecoHi').value = hi;
-      // also suggest G/T/bias/lead from nearest ref
       const nearest = refs.reduce((a, b) =>
         Math.abs((b.meco || 0) - (S.last.meco || 60000)) < Math.abs((a.meco || 0) - (S.last.meco || 60000)) ? b : a);
       $('oG').value = nearest.G;
@@ -526,7 +523,6 @@ tr.groupsep td{border-top:2px solid var(--border);padding-top:10px;}
       $('oLead').value = nearest.lead;
       log('OPT-MECO suggest: MECO [' + lo + ',' + hi + '] from ' + refs.length + ' refs');
     });
-
     $('oRun').addEventListener('click', () => runOptMeco());
   }
 
@@ -568,12 +564,11 @@ tr.groupsep td{border-top:2px solid var(--border);padding-top:10px;}
       if (S.last.bias != null) $('cBias').value = S.last.bias;
       log('CONVO suggest: MECO=' + S.last.meco + ' G=' + S.last.G + ' T=' + S.last.T + ' bias=' + S.last.bias);
     });
-
     $('cRun').addEventListener('click', () => runConvo());
   }
 
   // ========================================================================
-  // RUN: OPT-MECO X5
+  // RUN: OPT-MECO X5 (no table, no json)
   // ========================================================================
   async function runOptMeco() {
     if (S.running) return;
@@ -589,7 +584,6 @@ tr.groupsep td{border-top:2px solid var(--border);padding-top:10px;}
       const lead = parseFloat($('oLead').value);
       const mecoLo = parseInt($('oMecoLo').value, 10);
       const mecoHi = parseInt($('oMecoHi').value, 10);
-      const suicide = $('suicideChk').checked;
 
       if (![G, T, bias, lead, mecoLo, mecoHi].every(Number.isFinite)) throw new Error('invalid fields');
       if (mecoHi <= mecoLo) throw new Error('MECO hi <= lo');
@@ -600,7 +594,7 @@ tr.groupsep td{border-top:2px solid var(--border);padding-top:10px;}
         Tn: Math.round(T / q.T),
         bi: Math.round(bias / q.bias),
         li: Math.round(lead / q.lead),
-        meco: mecoLo,   // overridden per probe by roughScan
+        meco: mecoLo,
       };
 
       log('OPT-MECO: G=' + G + ' T=' + T + ' bias=' + bias + ' lead=' + lead +
@@ -621,19 +615,10 @@ tr.groupsep td{border-top:2px solid var(--border);padding-top:10px;}
         S.last.meco = r.meco;
         S.last.G = G; S.last.T = T; S.last.bias = bias; S.last.lead = lead;
         $('oStatus').innerHTML = '<span class="ok">MECO=' + r.meco + '  pred=' + fmt(r.predictedResidual, 1) + ' kg  evals=' + r.evals + '</span>';
-        // push a synthetic "run" row so it shows in the results table
-        S.runs.push({
-          kind: 'OPT-MECO',
-          meco: r.meco, G, T, bias, lead,
-          predictedResidual: r.predictedResidual,
-          evals: r.evals, wallMs: r.wallMs, ok: true,
-          at: Date.now(),
-        });
       } else {
         log('OPT-MECO FAILED: ' + r.reason);
         $('oStatus').innerHTML = '<span class="bad">FAILED: ' + esc(r.reason) + '</span>';
       }
-      renderResults();
     } catch (e) {
       log('OPT-MECO ERROR: ' + e.message);
       $('oStatus').innerHTML = '<span class="bad">ERROR: ' + esc(e.message) + '</span>';
@@ -644,7 +629,7 @@ tr.groupsep td{border-top:2px solid var(--border);padding-top:10px;}
   }
 
   // ========================================================================
-  // RUN: ZETA-HELIX 1R (bias scan)
+  // RUN: ZETA-HELIX 1R (own table + json + charts)
   // ========================================================================
   async function runZeta() {
     if (S.running) return;
@@ -660,7 +645,6 @@ tr.groupsep td{border-top:2px solid var(--border);padding-top:10px;}
       const bLo = parseFloat($('zBlo').value);
       const bHi = parseFloat($('zBhi').value);
       const N = parseInt($('zN').value, 10);
-      const suicide = $('suicideChk').checked;
       if (![meco, G, T, bLo, bHi, N].every(Number.isFinite) || N < 2 || bHi <= bLo)
         throw new Error('invalid fields');
 
@@ -676,37 +660,31 @@ tr.groupsep td{border-top:2px solid var(--border);padding-top:10px;}
         if (b > bHi + 1e-9) break;
         biases.push(Math.round(b * 10000) / 10000);
       }
-      log('ZETA: MECO=' + meco + ' G=' + G + ' T=' + T + ' biases N=' + biases.length + ' step=' + stepDeg.toFixed(4) + ' deg');
+      const batchId = ++S.zetaBatch;
+      log('ZETA[batch ' + batchId + ']: MECO=' + meco + ' G=' + G + ' T=' + T +
+          ' N=' + biases.length + ' step=' + stepDeg.toFixed(4) + ' deg');
       log('  biases: ' + biases.join(', '));
 
-      // Update last-known for suggestions
       S.last.meco = meco; S.last.G = G; S.last.T = T;
 
-      // Dispatch all bias jobs in parallel
       const tasks = biases.map((bias) => {
-        const tag = 'b=' + bias.toFixed(4);
         return S.pool.runJob('probeBiasCheckpoint', { bias, altKm: S.orbitKm })
-          .then((r) => ({ bias, ...r, stackId: S.stackId, meco, G, T }))
-          .catch((e) => ({ bias, ok: false, reason: 'error: ' + e.message, stackId: S.stackId, meco, G, T }));
+          .then((r) => ({ bias, ...r, stackId: S.stackId, meco, G, T, batchId }))
+          .catch((e) => ({ bias, ok: false, reason: 'error: ' + e.message, stackId: S.stackId, meco, G, T, batchId }));
       });
 
-      // Fire and forget as they complete
       let done = 0;
-      const listener = setInterval(() => {
+      const ticker = setInterval(() => {
         $('zStatus').textContent = 'running… ' + done + '/' + tasks.length;
       }, 500);
 
-      const results = await Promise.all(tasks.map((p) => p.then((r) => {
-        done++;
-        return r;
-      })));
-      clearInterval(listener);
+      const results = await Promise.all(tasks.map((p) => p.then((r) => { done++; return r; })));
+      clearInterval(ticker);
 
-      // Push all to S.runs
       let okN = 0, best = null;
       for (const r of results) {
-        S.runs.push({
-          kind: 'ZETA',
+        S.zetaRuns.push({
+          batchId,
           meco, G, T, bias: r.bias,
           ok: !!r.ok, score: r.score, lead: r.lead, margin: r.margin, vrEnd: r.vrEnd,
           eCoast: r.eCoast,
@@ -717,25 +695,21 @@ tr.groupsep td{border-top:2px solid var(--border);padding-top:10px;}
           boosterFuelLeftKg: r.metrics ? r.metrics.boosterFuelLeftKg : null,
           stageResidualKg: r.metrics ? r.metrics.stageResidualKg : null,
           reason: r.reason || (r.reasons && r.reasons.join(',')) || '',
-          stackId: S.stackId,
           at: Date.now(),
         });
-        if (r.ok) {
-          okN++;
-          if (!best || r.score < best.score) best = r;
-        }
+        if (r.ok) { okN++; if (!best || r.score < best.score) best = r; }
       }
       if (best) {
         S.last.bias = best.bias;
         if (best.lead != null) S.last.lead = best.lead;
       }
-      log('ZETA done: ' + okN + '/' + results.length + ' ok' +
+      log('ZETA[batch ' + batchId + '] done: ' + okN + '/' + results.length + ' ok' +
           (best ? '  best bias=' + best.bias + ' score=' + fmt(best.score, 3) : ''));
       $('zStatus').innerHTML = okN
-        ? '<span class="ok">done: ' + okN + '/' + results.length + ' ok' +
-          (best ? '  best bias=' + best.bias.toFixed(4) + ' score=' + fmt(best.score, 3) : '') + '</span>'
+        ? '<span class="ok">batch ' + batchId + ': ' + okN + '/' + results.length + ' ok' +
+          (best ? '  best b=' + best.bias.toFixed(4) + ' s=' + fmt(best.score, 3) : '') + '</span>'
         : '<span class="bad">all failed</span>';
-      renderResults();
+      renderZetaTable();
     } catch (e) {
       log('ZETA ERROR: ' + e.message);
       $('zStatus').innerHTML = '<span class="bad">ERROR: ' + esc(e.message) + '</span>';
@@ -746,7 +720,7 @@ tr.groupsep td{border-top:2px solid var(--border);padding-top:10px;}
   }
 
   // ========================================================================
-  // RUN: CONVO-LEAD E2 (single point lead search)
+  // RUN: CONVO-LEAD E2 (no table, no json)
   // ========================================================================
   async function runConvo() {
     if (S.running) return;
@@ -762,7 +736,6 @@ tr.groupsep td{border-top:2px solid var(--border);padding-top:10px;}
       const bias = parseFloat($('cBias').value);
       const mLo = parseFloat($('cMLo').value);
       const mHi = parseFloat($('cMHi').value);
-      const suicide = $('suicideChk').checked;
       if (![meco, G, T, bias, mLo, mHi].every(Number.isFinite) || mHi <= mLo)
         throw new Error('invalid fields');
 
@@ -775,22 +748,6 @@ tr.groupsep td{border-top:2px solid var(--border);padding-top:10px;}
         bias, altKm: S.orbitKm, marginBand: [mLo, mHi],
       }).catch((e) => ({ ok: false, reason: 'error: ' + e.message }));
 
-      S.runs.push({
-        kind: 'CONVO',
-        meco, G, T, bias,
-        ok: !!r.ok, score: r.score, lead: r.lead, margin: r.margin, vrEnd: r.vrEnd,
-        eCoast: r.eCoast,
-        apogeeKm: r.metrics ? r.metrics.apogeeKm : null,
-        perigeeKm: r.metrics ? r.metrics.perigeeKm : null,
-        ecc: r.metrics ? r.metrics.ecc : null,
-        deployTimeS: r.metrics ? r.metrics.deployTimeS : null,
-        boosterFuelLeftKg: r.metrics ? r.metrics.boosterFuelLeftKg : null,
-        stageResidualKg: r.metrics ? r.metrics.stageResidualKg : null,
-        reason: r.reason || (r.reasons && r.reasons.join(',')) || '',
-        stackId: S.stackId,
-        at: Date.now(),
-      });
-
       if (r.ok) {
         if (r.lead != null) S.last.lead = r.lead;
         log('CONVO OK: lead=' + fmt(r.lead, 4) + ' margin=' + fmt(r.margin, 2) + ' score=' + fmt(r.score, 3));
@@ -799,7 +756,6 @@ tr.groupsep td{border-top:2px solid var(--border);padding-top:10px;}
         log('CONVO FAILED: ' + (r.reason || 'unknown'));
         $('cStatus').innerHTML = '<span class="bad">FAILED: ' + esc(r.reason || '') + '</span>';
       }
-      renderResults();
     } catch (e) {
       log('CONVO ERROR: ' + e.message);
       $('cStatus').innerHTML = '<span class="bad">ERROR: ' + esc(e.message) + '</span>';
@@ -810,7 +766,7 @@ tr.groupsep td{border-top:2px solid var(--border);padding-top:10px;}
   }
 
   // ========================================================================
-  // PROGRESS RENDER
+  // PROGRESS
   // ========================================================================
   function renderProgress() {
     const el = $('progressBar');
@@ -831,22 +787,25 @@ tr.groupsep td{border-top:2px solid var(--border);padding-top:10px;}
   setInterval(renderProgress, 300);
 
   // ========================================================================
-  // RESULTS TABLE + CHARTS
+  // ZETA TABLE (only place a table exists)
   // ========================================================================
-  function renderResults() {
+  function renderZetaTable() {
     const host = $('tableHost');
     const stats = $('runStats');
     if (!host) return;
-    if (stats) stats.textContent = S.runs.length + ' runs';
 
-    if (!S.runs.length) {
-      host.innerHTML = '<div class="dim">No runs yet.</div>';
+    if (!S.zetaRuns.length) {
+      host.innerHTML = '<div class="dim">No ZETA runs yet.</div>';
       $('chartHost').innerHTML = '';
+      if (stats) stats.textContent = '0 rows · 0 batches';
       return;
     }
 
-    // Sort: score ascending, ok first
-    const rows = S.runs.slice().sort((a, b) => {
+    const batches = new Set(S.zetaRuns.map((r) => r.batchId)).size;
+    if (stats) stats.textContent = S.zetaRuns.length + ' rows · ' + batches + ' batches';
+
+    // Sort: ok first, then score ascending
+    const rows = S.zetaRuns.slice().sort((a, b) => {
       const ak = a.ok ? 0 : 1, bk = b.ok ? 0 : 1;
       if (ak !== bk) return ak - bk;
       const as = Number.isFinite(a.score) ? a.score : 1e12;
@@ -854,14 +813,17 @@ tr.groupsep td{border-top:2px solid var(--border);padding-top:10px;}
       return as - bs;
     });
 
-    const header = ['#', 'engine', 'MECO', 'G', 'T', 'bias', 'score', 'eCoast', 'lead', 'margin',
+    const header = ['#', 'batch', 'MECO', 'G', 'T', 'bias', 'score', 'eCoast', 'lead', 'margin',
       'vrEnd', 'apo', 'peri', 'ecc', 'deploy', 'fuel', 'resid', 'ok', 'reason'];
     let html = '<table><thead><tr>' + header.map((h) => '<th>' + h + '</th>').join('') + '</tr></thead><tbody>';
     rows.forEach((r, i) => {
-      const cls = r.ok ? (i === 0 ? 'best' : '') : 'fail';
-      html += '<tr class="' + cls + '">' +
+      const cls = [];
+      cls.push(r.batchId % 2 === 0 ? 'batch-even' : 'batch-odd');
+      if (r.ok && i === 0) cls.push('best');
+      if (!r.ok) cls.push('fail');
+      html += '<tr class="' + cls.join(' ') + '">' +
         '<td>' + (i + 1) + '</td>' +
-        '<td>' + esc(r.kind) + '</td>' +
+        '<td>' + r.batchId + '</td>' +
         '<td>' + (r.meco != null ? r.meco : '–') + '</td>' +
         '<td>' + fmt(r.G, 3) + '</td>' +
         '<td>' + fmt(r.T, 4) + '</td>' +
@@ -890,14 +852,11 @@ tr.groupsep td{border-top:2px solid var(--border);padding-top:10px;}
   function renderCharts() {
     const host = $('chartHost');
     if (!host) return;
-
-    // Only ZETA rows have (meco, G, bias) -> score
-    const zetaRows = S.runs.filter((r) => r.kind === 'ZETA');
-    if (!zetaRows.length) { host.innerHTML = ''; return; }
+    if (!S.zetaRuns.length) { host.innerHTML = ''; return; }
 
     // Group by (meco, G)
     const groups = new Map();
-    for (const r of zetaRows) {
+    for (const r of S.zetaRuns) {
       const key = r.meco + '|' + r.G;
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key).push(r);
@@ -908,7 +867,8 @@ tr.groupsep td{border-top:2px solid var(--border);padding-top:10px;}
 
     let idx = 0;
     for (const [key, rows] of groups.entries()) {
-      const [meco, G] = key.split('|');
+      const parts = key.split('|');
+      const meco = parts[0], G = parts[1];
       const sorted = rows.slice().sort((a, b) => a.bias - b.bias);
       const card = document.createElement('div');
       card.className = 'chartCard';
@@ -945,7 +905,6 @@ tr.groupsep td{border-top:2px solid var(--border);padding-top:10px;}
     const X = (b) => padL + (b - bMin) / Math.max(1e-9, bMax - bMin) * pw;
     const Y = (s) => padT + ph - (s - sLo) / Math.max(1e-9, sHi - sLo) * ph;
 
-    // grid
     ctx.strokeStyle = 'rgba(255,255,255,0.07)';
     for (let i = 0; i <= 4; i++) {
       const y = padT + i * ph / 4;
@@ -954,7 +913,6 @@ tr.groupsep td{border-top:2px solid var(--border);padding-top:10px;}
     ctx.strokeStyle = 'rgba(255,255,255,0.25)';
     ctx.beginPath(); ctx.moveTo(padL, padT); ctx.lineTo(padL, padT + ph); ctx.lineTo(padL + pw, padT + ph); ctx.stroke();
 
-    // axis labels
     ctx.fillStyle = '#6b7d9c'; ctx.font = '10px monospace';
     ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
     for (let i = 0; i <= 4; i++) {
@@ -969,7 +927,6 @@ tr.groupsep td{border-top:2px solid var(--border);padding-top:10px;}
     ctx.fillStyle = '#35d6ff';
     ctx.fillText('bias (deg)', padL + pw / 2, H - 14);
 
-    // line + points
     ctx.strokeStyle = color; ctx.lineWidth = 1.6;
     ctx.beginPath();
     let started = false;
@@ -994,29 +951,30 @@ tr.groupsep td{border-top:2px solid var(--border);padding-top:10px;}
   }
 
   // ========================================================================
-  // DOWNLOAD
+  // ZETA-ONLY DOWNLOAD / CLEAR
   // ========================================================================
   $('dlJson').addEventListener('click', () => {
+    if (!S.zetaRuns.length) { alert('No ZETA runs to download.'); return; }
     const payload = {
       generatedAt: new Date().toISOString(),
       stackId: S.stackId, orbitKm: S.orbitKm,
       mc: S.mc, Ve: S.Ve,
-      runs: S.runs,
+      runs: S.zetaRuns,
     };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = 'sereno-flux-' + Date.now() + '.json';
+    a.download = 'sereno-zeta-' + Date.now() + '.json';
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(a.href), 2000);
   });
 
   $('clearRuns').addEventListener('click', () => {
-    if (!S.runs.length) return;
-    const ok = confirm('Clear ALL runs in this page? (Save JSON first.)');
+    if (!S.zetaRuns.length) return;
+    const ok = confirm('Clear ALL ZETA runs in this page? (Save JSON first.)');
     if (!ok) return;
-    S.runs = [];
-    renderResults();
+    S.zetaRuns = [];
+    renderZetaTable();
   });
 
   // ========================================================================
@@ -1026,7 +984,7 @@ tr.groupsep td{border-top:2px solid var(--border);padding-top:10px;}
   $('resetBtn').addEventListener('click', doReset);
 
   try {
-    if (typeof loadStacks === 'function') loadStacks();  // hydrate
+    if (typeof loadStacks === 'function') loadStacks();
     populateStackSelect();
   } catch (e) {
     console.error(e);
