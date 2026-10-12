@@ -445,6 +445,7 @@ tr.fail td{color:#8a4a55;}
       '<label>bias <input type="number" id="oBias" step="0.001" value="0.59"></label>' +
       '<label>lead s <input type="number" id="oLead" step="0.0125" value="5.525"></label>' +
       '<label><input type="checkbox" id="oAutoRescue" checked> auto bias rescue</label>' +
+      '<label>pred floor kg <input type="number" id="oPredFloor" step="10" value="-200" style="width:80px"></label>' +
       '</div>' +
       '<div class="dim" style="font-size:11px;margin-top:-2px;">' +
       'auto bias rescue: agar stage burn fail ho (STAGE_VR_NEG), worker khud bias ladder try karega ' +
@@ -671,6 +672,7 @@ tr.fail td{color:#8a4a55;}
         altKm: S.orbitKm, fuelPct: 100,
         minRange: [mecoLo, mecoHi],
         _forceLo: mecoLo, _forceHi: mecoHi,
+        predFloorKg: parseFloat($('oPredFloor').value) || 0,
         onLog: (s) => log('  ' + s),
       });
 
