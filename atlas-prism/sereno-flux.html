@@ -442,6 +442,11 @@ tr.fail td{color:#8a4a55;}
       '<label>T <input type="number" id="oT" step="0.001" value="4.82"></label>' +
       '<label>bias <input type="number" id="oBias" step="0.001" value="0.59"></label>' +
       '<label>lead s <input type="number" id="oLead" step="0.0125" value="5.525"></label>' +
+      '<label><input type="checkbox" id="oAutoRescue" checked> auto bias rescue</label>' +
+      '</div>' +
+      '<div class="dim" style="font-size:11px;margin-top:-2px;">' +
+      'auto bias rescue: agar stage burn fail ho (STAGE_VR_NEG), worker khud bias ladder try karega ' +
+      '(±0.3 … +5.0 deg). Bad MECO+G+bias ke liye bhi OPT-MECO chal jaayega. Slow worst-case (~14 evals per probe).' +
       '</div>' +
       '<div class="row">' +
       '<label>MECO lo kg <input type="number" id="oMecoLo" step="500" value="' + range[0] + '"></label>' +
@@ -612,8 +617,44 @@ tr.fail td{color:#8a4a55;}
       log('OPT-MECO: G=' + G + ' T=' + T + ' bias=' + bias + ' lead=' + lead +
           '  MECO range [' + mecoLo + ',' + mecoHi + ']  mc=' + fmt(S.mc, 1) + ' Ve=' + fmt(S.Ve, 1));
 
+      const autoRescue = $('oAutoRescue') && $('oAutoRescue').checked;
+
+      // FACADE POOL — same interface as WorkerPool, but each
+      // COAST_WAIT_ENTRY probe tries a bias ladder if the initial bias
+      // fails. Bypasses only the probe path; non-COAST stopAts pass
+      // through unchanged. Ladder climbs bias first (STAGE_VR_NEG is
+      // rescued by higher bias) then steps down. Breaks early on
+      // non-STAGE_VR_NEG failures (bias won't help F2a / crash).
+      const RESCUE_LADDER = [0, 0.3, 0.6, 1.0, 1.5, 2.0, 3.0, 4.0, 5.0, -0.3, -0.6, -1.0, -1.5, -2.0];
+      const rescQB = Math.max(1, Math.round(0.3 / Q().bias));
+      const rescuePool = !autoRescue ? S.pool : {
+        n: S.pool.n,
+        async runEval(point, opts) {
+          if (!opts || opts.stopAt !== 'COAST_WAIT_ENTRY') return S.pool.runEval(point, opts);
+          for (let li = 0; li < RESCUE_LADDER.length; li++) {
+            const d = RESCUE_LADDER[li];
+            const p2 = Object.assign({}, point, {
+              bi: point.bi + Math.round(d / Q().bias),
+            });
+            const m = await S.pool.runEval(p2, opts);
+            if (m.endReason === 'COAST_WAIT_ENTRY' &&
+                Number.isFinite(m.stageFuelAtStopKg) &&
+                Number.isFinite(m.coastDeltaV)) {
+              m._rescueBias = (point.bi * Q().bias) + d;
+              m._rescueSteps = li;
+              return m;
+            }
+            // Only STAGE_VR_NEG benefits from a bias change. F2a (no
+            // coast), CRASHED, CAP → bail immediately (bias won't fix).
+            if (m.endReason !== 'STAGE_VR_NEG' && !m.stageVrNeg) break;
+          }
+          return { endReason: 'STAGE_VR_NEG', stageVrNeg: true };
+        },
+      };
+
+      log('  auto bias rescue: ' + (autoRescue ? 'ON (ladder ' + RESCUE_LADDER.length + ' steps)' : 'OFF'));
       const r = await TunerCore.roughScan(basePoint, {
-        pool: S.pool,
+        pool: rescuePool,
         mc: S.mc, Ve: S.Ve,
         stackId: S.stackId,
         altKm: S.orbitKm, fuelPct: 100,
