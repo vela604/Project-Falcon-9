@@ -177,16 +177,6 @@ tr.fail td{color:#8a4a55;}
 <script src="../js/fleet.js"></script>
 <script src="../js/config.js"></script>
 <script src="../js/simJs/core/massProps.js"></script>
-<script src="../js/simJs/core/environment.js"></script>
-<script src="../js/simJs/core/vehicle.js"></script>
-<script src="../js/simJs/core/rcs.js"></script>
-<script src="../js/simJs/core/physics.js"></script>
-<script src="../js/simJs/core/collision.js"></script>
-<script src="../js/simJs/guidance/imu.js"></script>
-<script src="../js/simJs/guidance/derivation.js"></script>
-<script src="../js/simJs/guidance/guidercs.js"></script>
-<script src="../js/simJs/guidance/guidance-blocks.js"></script>
-<script src="../js/simJs/guidance/guidance.js"></script>
 <script src="../js/guideConfigDefaults.js"></script>
 
 <script src="lib/config.js"></script>
@@ -368,18 +358,20 @@ tr.fail td{color:#8a4a55;}
   }
 
   function baselineValuesForStack(stackId, km) {
+    // Known-good F9 Block 5 standard stack @ 320 km setupSA baseline
+    // (identical to bias-score-scan.html).
     const C = TunerConfig;
-    const ref = (C.references || [])[0] || { G: 0.60, T: 4.82, bias: 0.59, lead: 5.53, meco: 52612 };
     return {
       ascent: {
-        PUSH_MAX_GIMBAL_DEG: ref.G, PUSH_T_S: ref.T != null ? ref.T : C.T0,
-        MECO_TARGET_BOOSTER_FUEL_KG: ref.meco,
+        PUSH_MAX_GIMBAL_DEG: 0.60,
+        PUSH_T_S: 4.82,
+        MECO_TARGET_BOOSTER_FUEL_KG: 60494,
       },
       insertion: {
         TARGET_ORBIT_ALT_KM: km,
-        STAGE_BURN_AOA_BIAS_DEG: ref.bias,
+        STAGE_BURN_AOA_BIAS_DEG: 1.8,
         STAGE_BURN_AOA_MARGIN_DEG: C.fixed.margin,
-        CIRC_TRIGGER_LEAD_S: ref.lead,
+        CIRC_TRIGGER_LEAD_S: 5.53,
       },
       done: { DEORBIT_ENABLED: !!C.fixed.deorbitEnabled },
     };
