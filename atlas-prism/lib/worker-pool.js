@@ -80,6 +80,10 @@
     
     _onMessage(i, e) {
       const msg = e.data || {};
+      if (msg.type === 'progress') {
+        if (this.onProgress) { try { this.onProgress(msg); } catch (_) {} }
+        return;
+      }
       if (msg.type === 'ready') {
         if (msg.error) {
           this.readyErrors[i] = msg.error;

@@ -245,9 +245,29 @@ self.onmessage = async (e) => {
         const tag = 'b=' + newBias.toFixed(3);
 
         // ---- 1. Restore SA + bias, run to COAST_HOLD ----
+        // (inline loop so we can snag eCoast when COAST_WAIT is entered — needed by SERENO FLUX table)
         emit('probe', tag + ' restore+runToCH');
         restoreSnap(_saSnapshot, newBias, null);
-        const okCH = await tickUntilPhase(['COAST_HOLD'], 800);
+        let okCH = false;
+        let eCoastAtCW = NaN;
+        const _chTicks = Math.ceil(800 / CONFIG.DT);
+        for (let _i = 0; _i < _chTicks; _i++) {
+          if (state.halted) break;
+          TunerEngine.tick(CONFIG.DT);
+          const _gs = Guidance.getGuideStatus();
+          if (!Number.isFinite(eCoastAtCW) && _gs && _gs.phase === 'COAST_WAIT') {
+            const _stb = findStageBody();
+            if (_stb) {
+              const _r = Math.hypot(_stb.rx, _stb.ry);
+              const _vr = (_stb.vx * _stb.rx + _stb.vy * _stb.ry) / _r;
+              const _vt = (_stb.vx * _stb.ry - _stb.vy * _stb.rx) / _r;
+              const _E = 0.5 * (_vr*_vr + _vt*_vt) - CONFIG.GM_EARTH / _r;
+              const _h = _r * _vt;
+              eCoastAtCW = Math.sqrt(Math.max(0, 1 + 2 * _E * _h * _h / (CONFIG.GM_EARTH * CONFIG.GM_EARTH)));
+            }
+          }
+          if (_gs && _gs.phase === 'COAST_HOLD') { okCH = true; break; }
+        }
         if (!okCH) {
           emit('probe', tag + ' CH_FAIL ' + phaseNow());
           result = { ok: false, reason: 'CH not reached: ' + phaseNow() };
@@ -282,7 +302,7 @@ self.onmessage = async (e) => {
             li: Math.round(cfg.insertion.CIRC_TRIGGER_LEAD_S / Q.lead),
             meco: cfg.ascent.MECO_TARGET_BOOSTER_FUEL_KG,
           };
-          const lr = await TunerCore.tuneLead(point, { hook: CPHook, cache, targetAltKm: altKm });
+          const lr = await TunerCore.tuneLead(point, { hook: CPHook, cache, targetAltKm: altKm, marginBand: payload.marginBand });
           emit('probe', tag + ' tuneLead ok=' + lr.ok + ' lead=' + (Number.isFinite(lr.lead) ? lr.lead.toFixed(4) : 'n/a') + ' evals=' + lr.evals);
 
           if (!lr.ok) {
@@ -329,6 +349,7 @@ self.onmessage = async (e) => {
               capHit: !okFull,
               capReason: okFull ? null : 'cap',
               simEnd: state.simTime,
+              eCoast: eCoastAtCW,
             };
           }
         }
