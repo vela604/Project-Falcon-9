@@ -249,12 +249,21 @@
                            ' < ' + (altKm - apoTol).toFixed(1) };
         }
         const pred = (mc + m.stageFuelAtStopKg) * Math.exp(-m.coastDeltaV / Ve) - mc;
+        // predFloor lets the caller relax the ideal-Tsiolkovsky negative
+        // rejection. The formula ignores gravity/thrust losses (which
+        // would make the actual need LARGER) but also ignores guidance's
+        // conservative Δv estimate and the payload eject kick (which
+        // make the actual need SMALLER). Net error on 2000 km targets
+        // can be tens to hundreds of kg, so a small negative pred can
+        // still circularize successfully.
+        const predFloor = (opts.predFloorKg != null) ? opts.predFloorKg : 0;
         let cls;
-        if (pred < 0) cls = 'fail';                    // stage fuel insufficient for circ burn
+        if (pred < predFloor) cls = 'fail';
         else if (pred > bandHi) cls = 'up';
         else if (pred < bandLo) cls = 'down';
         else cls = 'in';
         return { meco: r.meco, cls, pred, m, point: r.point,
+                 stageFuelKg: m.stageFuelAtStopKg, coastDV: m.coastDeltaV,
                  reason: cls === 'fail' ? 'neg-pred (stage-fuel-insufficient)' : null };
       });
 
@@ -266,7 +275,11 @@
         const bs = Number.isFinite(pt.bi) ? (pt.bi * Q.bias).toFixed(3) : '—';
         const ls = Number.isFinite(pt.li) ? (pt.li * Q.lead).toFixed(3) : '—';
         const tag = row.cls === 'in' ? 'IN  ' : row.cls === 'up' ? 'UP  ' : row.cls === 'down' ? 'DOWN' : 'FAIL';
-        const predStr = Number.isFinite(row.pred) ? 'pred=' + row.pred.toFixed(1) + ' kg' : 'pred=—';
+        const predStr = Number.isFinite(row.pred)
+          ? 'pred=' + row.pred.toFixed(1) + ' kg  sf=' +
+            (Number.isFinite(row.stageFuelKg) ? row.stageFuelKg.toFixed(0) : '?') + '  dV=' +
+            (Number.isFinite(row.coastDV) ? row.coastDV.toFixed(0) : '?')
+          : 'pred=—';
         say('  ' + row.meco + '  ' + tag + '  G=' + Gs + ' b=' + bs + ' lead=' + ls + '  ' + predStr +
             (row.cls === 'fail' ? '  (' + row.reason + ')' : ''));
       }
@@ -301,7 +314,8 @@
       }
     }
 
-    const cands = history.filter(r => Number.isFinite(r.pred) && r.pred <= 200 && r.pred >= 0);
+    const predFloorFinal = (opts.predFloorKg != null) ? opts.predFloorKg : 0;
+    const cands = history.filter(r => Number.isFinite(r.pred) && r.pred <= 200 && r.pred >= predFloorFinal);
     cands.sort((a, b) => Math.abs(a.pred - targetRes) - Math.abs(b.pred - targetRes));
     const fb = cands[0] || null;
     if (fb) say('fallback: MECO=' + fb.meco + ' pred=' + fb.pred.toFixed(1));
