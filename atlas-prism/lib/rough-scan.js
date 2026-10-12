@@ -233,6 +233,21 @@
         if (m.endReason !== 'COAST_WAIT_ENTRY' || !Number.isFinite(m.coastDeltaV) || !Number.isFinite(m.stageFuelAtStopKg)) {
           return { meco: r.meco, cls: 'fail', reason: m.endReason };
         }
+        // Apogee guard — without this, a wrong-MECO probe can enter
+        // COAST_WAIT with a coast orbit whose apogee is far below the
+        // target altitude. coastDeltaV then compares v_circ(target) to
+        // v_apo(much-lower-orbit), so the pred residual lands in-band
+        // for a physically impossible point (e.g. 2000 km target
+        // reported "in band" at MECO 63260 while the actual apogee is
+        // hundreds of km short).
+        const apoTol = (root.TunerConfig && root.TunerConfig.limits &&
+                        root.TunerConfig.limits.coastApoTolKm != null)
+          ? root.TunerConfig.limits.coastApoTolKm : 1;
+        if (!(m.apoCoastKm >= altKm - apoTol)) {
+          return { meco: r.meco, cls: 'fail',
+                   reason: 'apo_short ' + (Number.isFinite(m.apoCoastKm) ? m.apoCoastKm.toFixed(1) : '?') +
+                           ' < ' + (altKm - apoTol).toFixed(1) };
+        }
         const pred = (mc + m.stageFuelAtStopKg) * Math.exp(-m.coastDeltaV / Ve) - mc;
         let cls;
         if (pred < 0) cls = 'fail';                    // stage fuel insufficient for circ burn
