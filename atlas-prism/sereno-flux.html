@@ -217,19 +217,31 @@ tr.fail td{color:#8a4a55;}
     running: false,
     t0: 0,
     workerProgress: {},
-    logLines: [],
+    logs: { optmeco: [], zeta: [], convo: [] },
   };
 
   const log = (s) => {
     const t = new Date().toISOString().slice(11,19);
-    S.logLines.push('[' + t + '] ' + s);
-    if (S.logLines.length > 400) S.logLines.shift();
+    const line = '[' + t + '] ' + s;
+    // Route to current engine's buffer. Before a tab is picked (pool /
+    // setupSA happen right after lock), seed all three — those are
+    // shared session-init messages.
+    const targets = S.tab ? [S.tab] : ['optmeco', 'zeta', 'convo'];
+    for (const k of targets) {
+      S.logs[k].push(line);
+      if (S.logs[k].length > 400) S.logs[k].shift();
+    }
+    renderLogFeed();
+  };
+
+  function renderLogFeed() {
     const el = $('logFeed');
     if (!el) return;
-    el.innerHTML = S.logLines.slice(-200).map((l) =>
-      '<div>' + esc(l) + '</div>').join('');
+    const k = S.tab || 'optmeco';
+    const lines = (S.logs[k] || []).slice(-200);
+    el.innerHTML = lines.map((l) => '<div>' + esc(l) + '</div>').join('');
     el.scrollTop = el.scrollHeight;
-  };
+  }
   const esc = (s) => String(s).replace(/[&<>"']/g, (c) =>
     ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
@@ -323,7 +335,7 @@ tr.fail td{color:#8a4a55;}
     S.optRuns = []; S.zetaRuns = []; S.convoRuns = []; S.zetaBatch = 0;
     S.last = { meco: null, G: null, T: null, bias: null, lead: null };
     S.workerProgress = {};
-    S.logLines = [];
+    S.logs = { optmeco: [], zeta: [], convo: [] };
     $('lockBtn').disabled = false;
     $('stackSel').disabled = false;
     $('orbitKm').disabled = false;
@@ -390,6 +402,9 @@ tr.fail td{color:#8a4a55;}
     });
     $('resultsPanel').style.display = (name === 'zeta') ? 'block' : 'none';
     renderTabPanel();
+    renderLogFeed();
+    S.workerProgress = {};   // fresh per-tab progress
+    renderProgress();
     if (name === 'zeta') renderZetaTable();
   }
 
@@ -775,7 +790,7 @@ tr.fail td{color:#8a4a55;}
     const tags = Object.keys(S.workerProgress).sort();
     const elapsed = ((performance.now() - S.t0) / 1000).toFixed(0);
     const now = Date.now();
-    const parts = ['<span class="stat">elapsed ' + elapsed + 's</span>'];
+    const parts = ['<span class="stat">[' + (S.tab || '—') + '] elapsed ' + elapsed + 's</span>'];
     tags.forEach((k) => {
       const w = S.workerProgress[k];
       const ago = ((now - w.ts) / 1000).toFixed(1);
