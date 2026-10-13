@@ -12,6 +12,7 @@
   input { background:#1b212b; color:#d6dde6; border:1px solid #333c4a; border-radius:4px; padding:4px; width:64px; }
   button { background:#2b6cb0; color:#fff; border:0; border-radius:4px; padding:8px 12px; font:inherit; }
   button.alt { background:#4a5568; }
+  select { background:#1b212b; color:#d6dde6; border:1px solid #333c4a; border-radius:4px; padding:4px; }
   button:disabled { opacity:.5; }
   pre { background:#080a0e; border:1px solid #232a35; border-radius:4px; padding:8px; overflow-x:auto; white-space:pre; min-height:120px; max-height:60vh; overflow-y:auto; }
   .ok { color:#68d391; } .bad { color:#fc8181; } .dim { color:#8896a8; }
@@ -20,6 +21,12 @@
 <body>
 <h1>Step 3 · boundary search · F9 B5</h1>
 <div class="row">
+  <label>preset <select id="preset">
+    <option value="2000">2000 km manual</option>
+    <option value="320">320 km baseline</option>
+  </select></label>
+</div>
+<div class="row">
   <label>alt km <input id="alt" value="2000"></label>
   <label>T s <input id="T" value="4.82"></label>
   <label>lead s <input id="lead" value="7.82"></label>
@@ -27,10 +34,13 @@
   <label>|bias|° <input id="bmax" value="3"></label>
   <label>apo tol km <input id="tol" value="2"></label>
   <label>workers <input id="nw" value="0"></label>
+  <label>K <input id="K" value="7" style="width:40px"></label>
 </div>
 <div class="row">
-  <button id="run">Run boundary search</button>
-  <button id="scan" class="alt">Full scan (G 0.55–0.75 × ±bias)</button>
+  <button id="run">1 Boundary search</button>
+  <button id="map" class="alt">2 Map window (COAST)</button>
+  <button id="best">3 Best: CIRC_END on K pts</button>
+  <button id="scan" class="alt">Full scan</button>
   <button id="copy" class="alt">Copy log</button>
 </div>
 <pre id="log"></pre>
@@ -49,17 +59,18 @@ const Search = (function () {
   //   side 'low'  -> smallest passing Gi   (G_min when bias = +bmax)
   //   side 'high' -> largest  passing Gi   (G_max when bias = -bmax)
   // Needs the sweep already evaluated (cached inside evalFn).
-  async function edge(evalFn, bias, side, log) {
+  async function edge(evalFn, bias, side, log, gridArg) {
+    const GR = gridArg || GRID;
     let evals = 0;
     const ev = async (gi) => { evals++; return evalFn(gi, bias); };
     const sweep = {};
-    for (const gi of GRID) sweep[gi] = await ev(gi);            // cached -> cheap when shared
-    const pass = GRID.filter((g) => sweep[g].ok);
+    for (const gi of GR) sweep[gi] = await ev(gi);            // cached -> cheap when shared
+    const pass = GR.filter((g) => sweep[g].ok);
     if (!pass.length) return { status: 'NO_PASS_IN_SWEEP', bias, side, evals };
 
     if (side === 'low') {
       const p = Math.min.apply(null, pass);
-      const below = GRID.filter((g) => g < p);
+      const below = GR.filter((g) => g < p);
       if (!below.length) return { status: 'AT_RANGE_EDGE', bias, side, Gi: p, evals,
         note: 'passes at G=' + (p / 100).toFixed(2) + ' (range floor): true edge is below the range' };
       let fail = Math.max.apply(null, below), good = p;       // fail < good
@@ -71,7 +82,7 @@ const Search = (function () {
       return { status: 'FOUND', bias, side, Gi: good, failGi: fail, evals };
     } else {
       const p = Math.max.apply(null, pass);
-      const above = GRID.filter((g) => g > p);
+      const above = GR.filter((g) => g > p);
       if (!above.length) return { status: 'AT_RANGE_EDGE', bias, side, Gi: p, evals,
         note: 'passes at G=' + (p / 100).toFixed(2) + ' (range ceiling): true edge is above the range' };
       let fail = Math.min.apply(null, above), good = p;       // good < fail
@@ -86,14 +97,34 @@ const Search = (function () {
 
   // Sweep passes sanity: pass set at a fixed bias should be one contiguous run.
   function contiguous(cache, bias) {
-    const gis = Object.keys(cache).map(Number).filter((g) => cache[g].bias === bias).sort((a, b) => a - b);
-    const flags = gis.map((g) => cache[g].ok);
+    const recs = Object.keys(cache).map((k) => cache[k]).filter((r) => r.bias === bias).sort((a, b) => a.Gi - b.Gi);
+    const flags = recs.map((r) => r.ok);
     let runs = 0;
     for (let i = 0; i < flags.length; i++) if (flags[i] && (i === 0 || !flags[i - 1])) runs++;
-    return { runs, gis, flags };
+    return { runs, gis: recs.map((r) => r.Gi), flags };
   }
 
-  return { GRID, G_LO, G_HI, edge, contiguous };
+  const FINE = []; for (let g = G_LO; g <= G_HI; g++) FINE.push(g);
+
+  // Pick K candidates spread evenly over the coastDeltaV range of the OK points (min and max included).
+  function pickCandidates(recs, K) {
+    const ok = recs.filter((r) => r.ok && Number.isFinite(r.dv)).sort((a, b) => a.dv - b.dv);
+    if (ok.length <= K) return ok;
+    const out = [], used = new Set();
+    for (let i = 0; i < K; i++) {
+      const idx = Math.round(i * (ok.length - 1) / (K - 1));
+      if (!used.has(idx)) { used.add(idx); out.push(ok[idx]); }
+    }
+    return out;
+  }
+  function pearson(xs, ys) {
+    const n = xs.length; if (n < 3) return NaN;
+    const mx = xs.reduce((a, b) => a + b, 0) / n, my = ys.reduce((a, b) => a + b, 0) / n;
+    let sxy = 0, sxx = 0, syy = 0;
+    for (let i = 0; i < n; i++) { const dx = xs[i] - mx, dy = ys[i] - my; sxy += dx * dy; sxx += dx * dx; syy += dy * dy; }
+    return (sxx > 0 && syy > 0) ? sxy / Math.sqrt(sxx * syy) : NaN;
+  }
+  return { GRID, FINE, G_LO, G_HI, edge, contiguous, pickCandidates, pearson };
 })();
 </script>
 
@@ -127,13 +158,22 @@ async function getPool() {
   return pool;
 }
 
+const PRESETS = {
+  '2000': { alt: 2000, T: 4.82, lead: 7.82, meco: 0 },
+  '320':  { alt: 320,  T: 4.82, lead: 5.53, meco: 52612 },
+};
+$('preset').onchange = () => {
+  const p = PRESETS[$('preset').value];
+  $('alt').value = p.alt; $('T').value = p.T; $('lead').value = p.lead; $('meco').value = p.meco;
+};
+
 function params() {
   const alt = parseFloat($('alt').value);
   const T = parseFloat($('T').value), lead = parseFloat($('lead').value);
   return {
     alt, tol: parseFloat($('tol').value), bmax: parseFloat($('bmax').value),
     Tn: Math.round(T / 0.000125), li: Math.round(lead / 0.0125),
-    meco: Math.round(parseFloat($('meco').value)),
+    meco: Math.round(parseFloat($('meco').value)), K: parseInt($('K').value, 10) || 7,
   };
 }
 
@@ -146,6 +186,16 @@ function classify(m, P) {
     return (m.apoCoastKm >= P.alt - P.tol) ? 'OK' : 'APO_SHORT';
   }
   return 'OTHER:' + m.endReason;
+}
+const f1 = (x, d) => Number.isFinite(x) ? x.toFixed(d) : '--';
+
+// Evaluator is kept across buttons (cache reused) until the parameters change.
+let EV = null, EVKEY = '';
+function getEv(P) {
+  const key = JSON.stringify([P.alt, P.Tn, P.li, P.meco, P.tol]);
+  if (EV && key === EVKEY) return EV;
+  EVKEY = key; EV = makeEvalFn(P);
+  return EV;
 }
 
 function makeEvalFn(P) {
@@ -162,15 +212,14 @@ function makeEvalFn(P) {
     }).then((m) => {
       const cls = classify(m, P);
       const rec = {
-        Gi, bias, cls, ok: cls === 'OK', end: m.endReason,
+        Gi, bi, bias, cls, ok: cls === 'OK', end: m.endReason,
         maxOmega: m.maxOmega, vrMin: m.vrMinStageBurn, apoC: m.apoCoastKm,
-        dv: m.coastDeltaV, vrNegAlt: m.stageVrNegAltKm, wall: m.wallMs,
+        dv: m.coastDeltaV, fuelStop: m.stageFuelAtStopKg, vrNegAlt: m.stageVrNegAltKm, wall: m.wallMs,
       };
       cache[key] = rec;
-      const f = (x, d) => Number.isFinite(x) ? x.toFixed(d) : '--';
       log('G=' + (Gi / 100).toFixed(2) + ' b=' + (bias >= 0 ? '+' : '') + bias.toFixed(2) +
-        '  ' + cls.padEnd(9) + ' maxΩ=' + f(rec.maxOmega, 2) + '°/s  vrMin=' + f(rec.vrMin, 1) +
-        '  apoC=' + f(rec.apoC, 1) + '  Δv=' + f(rec.dv, 1) + '  ' + (rec.wall / 1000).toFixed(1) + 's',
+        '  ' + cls.padEnd(9) + ' maxΩ=' + f1(rec.maxOmega, 2) + '°/s  vrMin=' + f1(rec.vrMin, 1) +
+        '  apoC=' + f1(rec.apoC, 1) + '  Δv=' + f1(rec.dv, 1) + '  ' + (rec.wall / 1000).toFixed(1) + 's',
         rec.ok ? 'ok' : 'bad');
       return rec;
     });
@@ -183,72 +232,122 @@ function makeEvalFn(P) {
 function fmtEdge(r) {
   const g = (x) => (x / 100).toFixed(2);
   if (r.status === 'FOUND') return r.side === 'low'
-    ? 'smallest pass G=' + g(r.Gi) + '  (G=' + g(r.failGi) + ' fails)  [' + r.evals + ' lookups]'
-    : 'largest  pass G=' + g(r.Gi) + '  (G=' + g(r.failGi) + ' fails)  [' + r.evals + ' lookups]';
+    ? 'smallest pass G=' + g(r.Gi) + '  (G=' + g(r.failGi) + ' fails)'
+    : 'largest  pass G=' + g(r.Gi) + '  (G=' + g(r.failGi) + ' fails)';
   if (r.status === 'AT_RANGE_EDGE') return 'NO BOUNDARY IN RANGE: ' + r.note;
-  return 'NO PASS in coarse sweep (0.55,0.60,0.65,0.70,0.75) -> run Full scan';
+  return 'NO PASS in fine sweep (G 0.55..0.75): window empty at this bias';
 }
 
-$('run').onclick = async () => {
-  $('run').disabled = $('scan').disabled = true;
-  try {
-    const P = params();
-    await getPool();
-    const ev = makeEvalFn(P);
-    const B = P.bmax;
-    log('--- boundary search  alt=' + P.alt + ' T=' + (P.Tn * 0.000125) + ' lead=' + (P.li * 0.0125) +
-      ' meco=' + P.meco + '  parent bias ±' + B + ' ---', 'dim');
-    // Warm the coarse sweep for both biases in parallel (fills the cache; all 4 edge searches reuse it).
-    await Promise.all(Search.GRID.flatMap((g) => [ev(g, +B), ev(g, -B)]));
-    log('--- bisection ---', 'dim');
-    const [A, Bd, A2, B2] = await Promise.all([
-      Search.edge(ev, +B, 'low', log),     // Search A : G_min   (bias = +B)
-      Search.edge(ev, -B, 'high', log),    // Search B : G_max   (bias = -B)
-      Search.edge(ev, +B, 'high', log),    // extra    : top edge of the +B window
-      Search.edge(ev, -B, 'low', log),     // extra    : bottom edge of the -B window
-    ]);
-    log('');
-    log('=== RESULT ===');
-    log('G_min  (bias=+' + B + '): ' + fmtEdge(A));
-    log('G_max  (bias=-' + B + '): ' + fmtEdge(Bd));
-    log('extra  top    edge at bias=+' + B + ': ' + fmtEdge(A2), 'dim');
-    log('extra  bottom edge at bias=-' + B + ': ' + fmtEdge(B2), 'dim');
-    if (A.status === 'FOUND' && Bd.status === 'FOUND')
-      log('safe G zone ≈ [' + (A.Gi / 100).toFixed(2) + ', ' + (Bd.Gi / 100).toFixed(2) + ']  width ' + ((Bd.Gi - A.Gi) / 100).toFixed(2) + '°');
-    for (const b of [+B, -B]) {
-      const c = Search.contiguous(ev.cache, b);
-      if (c.runs > 1) log('WARNING bias ' + b + ': pass set not contiguous in tried G (' + c.runs + ' runs) -> bisection assumption broken, use Full scan', 'bad');
-    }
-    log('total evals run: ' + Object.keys(ev.cache).length);
-  } catch (e) {
-    log('ERROR: ' + (e && e.message || e), 'bad');
+// Edge search; if the coarse sweep sees no pass, retry once on the 1-step grid (narrow windows, e.g. 320 km).
+async function edgeAuto(ev, bias, side) {
+  let r = await Search.edge(ev, bias, side, log);
+  if (r.status === 'NO_PASS_IN_SWEEP') {
+    log('(bias ' + bias + ' ' + side + ': coarse sweep empty -> fine 1-step sweep)', 'dim');
+    r = await Search.edge(ev, bias, side, log, Search.FINE);
   }
-  $('run').disabled = $('scan').disabled = false;
-};
+  return r;
+}
 
-$('scan').onclick = async () => {
-  $('run').disabled = $('scan').disabled = true;
-  try {
-    const P = params();
-    await getPool();
-    const ev = makeEvalFn(P);
-    const B = P.bmax;
-    log('--- full scan alt=' + P.alt + ' biases ±' + B + ' (' + (21 * 2) + ' evals) ---', 'dim');
-    const jobs = [];
-    for (let g = Search.G_LO; g <= Search.G_HI; g++) jobs.push(ev(g, +B), ev(g, -B));
-    await Promise.all(jobs);
-    log('');
-    log('G     | b=+' + B + '                 | b=-' + B);
-    for (let g = Search.G_LO; g <= Search.G_HI; g++) {
-      const p = ev.cache[g + '|' + Math.round(B / 0.0001)], n = ev.cache[g + '|' + Math.round(-B / 0.0001)];
-      const s = (r) => (r.cls.padEnd(9) + ' Ω' + (Number.isFinite(r.maxOmega) ? r.maxOmega.toFixed(1) : '--')).padEnd(22);
-      log((g / 100).toFixed(2) + '  | ' + s(p) + '| ' + s(n));
-    }
-  } catch (e) {
-    log('ERROR: ' + (e && e.message || e), 'bad');
+function busy(on) { ['run', 'map', 'best', 'scan'].forEach((id) => { $(id).disabled = on; }); }
+async function guarded(fn) {
+  busy(true);
+  try { await fn(); } catch (e) { log('ERROR: ' + (e && e.message || e), 'bad'); }
+  busy(false);
+}
+function header(P, what) {
+  log('--- ' + what + '  alt=' + P.alt + ' T=' + (P.Tn * 0.000125) + ' lead=' + (P.li * 0.0125) +
+    ' meco=' + P.meco + '  parent bias ±' + P.bmax + ' ---', 'dim');
+}
+
+$('run').onclick = () => guarded(async () => {
+  const P = params(); await getPool(); const ev = getEv(P), B = P.bmax;
+  header(P, 'boundary search');
+  await Promise.all(Search.GRID.flatMap((g) => [ev(g, +B), ev(g, -B)]));
+  log('--- bisection ---', 'dim');
+  const [A, Bd, A2, B2] = await Promise.all([
+    edgeAuto(ev, +B, 'low'),     // Search A : G_min (bias = +B)
+    edgeAuto(ev, -B, 'high'),    // Search B : G_max (bias = -B)
+    edgeAuto(ev, +B, 'high'),    // extra    : top edge of the +B window
+    edgeAuto(ev, -B, 'low'),     // extra    : bottom edge of the -B window
+  ]);
+  log(''); log('=== RESULT ===');
+  log('G_min  (bias=+' + B + '): ' + fmtEdge(A));
+  log('G_max  (bias=-' + B + '): ' + fmtEdge(Bd));
+  log('extra  top    edge at bias=+' + B + ': ' + fmtEdge(A2), 'dim');
+  log('extra  bottom edge at bias=-' + B + ': ' + fmtEdge(B2), 'dim');
+  if (A.status === 'FOUND' && Bd.status === 'FOUND')
+    log('safe G zone ≈ [' + (A.Gi / 100).toFixed(2) + ', ' + (Bd.Gi / 100).toFixed(2) + ']  width ' + ((Bd.Gi - A.Gi) / 100).toFixed(2) + '°');
+  for (const b of [+B, -B]) {
+    const c = Search.contiguous(ev.cache, b);
+    if (c.runs > 1) log('WARNING bias ' + b + ': pass set not contiguous in tried G (' + c.runs + ' runs) -> bisection assumption broken, use Full scan', 'bad');
   }
-  $('run').disabled = $('scan').disabled = false;
-};
+  log('total evals run: ' + Object.keys(ev.cache).length);
+});
+
+// ---- Stage 2: window map, G (0.02 step) x bias (1 deg step). Cell = coastDeltaV if OK else class tag ----
+function biasList(B) { const out = []; for (let b = -Math.floor(B); b <= Math.floor(B); b++) out.push(b); return out; }
+$('map').onclick = () => guarded(async () => {
+  const P = params(); await getPool(); const ev = getEv(P);
+  const bl = biasList(P.bmax), gl = [];
+  for (let g = Search.G_LO; g <= Search.G_HI; g += 2) gl.push(g);
+  header(P, 'window map (' + (bl.length * gl.length) + ' COAST evals)');
+  const jobs = []; for (const g of gl) for (const b of bl) jobs.push(ev(g, b));
+  await Promise.all(jobs);
+  log(''); log('cell = coastDeltaV (m/s) if OK, F1 = stage vr<0, APO = apo short, X = other');
+  log('G     ' + bl.map((b) => ((b >= 0 ? '+' : '') + b).padStart(6)).join(''));
+  for (const g of gl) {
+    log((g / 100).toFixed(2) + '  ' + bl.map((b) => {
+      const r = ev.cache[g + '|' + Math.round(b / 0.0001)];
+      const s = r.ok ? f1(r.dv, 0) : (r.cls === 'F1_BURN' ? 'F1' : r.cls === 'APO_SHORT' ? 'APO' : 'X');
+      return s.padStart(6);
+    }).join(''), 'dim');
+  }
+});
+
+// ---- Stage 3: CIRC_END + tuneLead on K candidates spread over the Δv range of OK points ----
+$('best').onclick = () => guarded(async () => {
+  const P = params(); await getPool(); const ev = getEv(P);
+  let recs = Object.keys(ev.cache).map((k) => ev.cache[k]);
+  if (!recs.some((r) => r.ok)) { log('no OK points cached: run "2 Map window" first', 'bad'); return; }
+  const cand = Search.pickCandidates(recs, P.K);
+  header(P, 'CIRC_END + tuneLead on ' + cand.length + ' points');
+  const runs = await Promise.all(cand.map((c) => {
+    const point = { Gi: c.Gi, Tn: P.Tn, bi: c.bi, li: P.li, meco: P.meco };
+    return pool.runJob('tuneLead', { point, opts: { targetAltKm: P.alt, maxEvals: 30 } })
+      .then((r) => { log('tuned G=' + (c.Gi / 100).toFixed(2) + ' b=' + c.bias + ' -> ' + (r.ok ? 'lead=' + f1(r.lead, 3) : 'FAIL') +
+        ' evals=' + r.evals + ' (' + (r.wallMs / 1000).toFixed(0) + 's)', r.ok ? 'ok' : 'bad'); return { c, r }; })
+      .catch((e) => { log('tuneLead ERROR G=' + (c.Gi / 100) + ' b=' + c.bias + ': ' + e.message, 'bad'); return { c, r: null }; });
+  }));
+  log(''); log('=== CIRC_END table (sorted by coastDeltaV) ===');
+  log('G     bias    Δv   fuelStop  lead  margin vrEnd   vrMin  residual  band evals  maxΩ');
+  const rows = runs.filter((x) => x.r).sort((a, b) => a.c.dv - b.c.dv);
+  for (const { c, r } of rows) {
+    log((c.Gi / 100).toFixed(2) + '  ' + ((c.bias >= 0 ? '+' : '') + c.bias).padStart(4) + ' ' + f1(c.dv, 0).padStart(5) +
+      f1(c.fuelStop, 0).padStart(10) + f1(r.lead, 2).padStart(7) + f1(r.marginS, 2).padStart(7) + f1(r.vrEnd, 3).padStart(7) +
+      f1(r.vrMin, 2).padStart(8) + f1(r.stageFuelEngOffKg, 0).padStart(9) + (r.inBand ? '   yes' : '    NO') +
+      String(r.evals).padStart(6) + f1(r.maxOmega, 1).padStart(7), r.ok ? 'ok' : 'bad');
+  }
+  const good = rows.filter((x) => x.r.ok && Number.isFinite(x.r.stageFuelEngOffKg));
+  const cor = (fx, fy) => Search.pearson(good.map(fx), good.map(fy));
+  log('');
+  log('corr(Δv, lead)=' + f1(cor((x) => x.c.dv, (x) => x.r.lead), 2) +
+    '  corr(Δv, residual)=' + f1(cor((x) => x.c.dv, (x) => x.r.stageFuelEngOffKg), 2) +
+    '  corr(fuelStop, residual)=' + f1(cor((x) => x.c.fuelStop, (x) => x.r.stageFuelEngOffKg), 2) + '   (n=' + good.length + ')');
+});
+
+$('scan').onclick = () => guarded(async () => {
+  const P = params(); await getPool(); const ev = getEv(P), B = P.bmax;
+  header(P, 'full scan (' + (21 * 2) + ' evals)');
+  const jobs = [];
+  for (let g = Search.G_LO; g <= Search.G_HI; g++) jobs.push(ev(g, +B), ev(g, -B));
+  await Promise.all(jobs);
+  log(''); log('G     | b=+' + B + '                 | b=-' + B);
+  for (let g = Search.G_LO; g <= Search.G_HI; g++) {
+    const p = ev.cache[g + '|' + Math.round(B / 0.0001)], n = ev.cache[g + '|' + Math.round(-B / 0.0001)];
+    const s = (r) => (r.cls.padEnd(9) + ' Ω' + f1(r.maxOmega, 1)).padEnd(22);
+    log((g / 100).toFixed(2) + '  | ' + s(p) + '| ' + s(n));
+  }
+});
 
 $('copy').onclick = () => { navigator.clipboard && navigator.clipboard.writeText(logText); };
 </script>

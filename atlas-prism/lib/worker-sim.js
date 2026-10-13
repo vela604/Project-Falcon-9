@@ -224,6 +224,22 @@ self.onmessage = async (e) => {
       result = await TunerHook.runEval(payload.point, payload.opts || {});
     } else if (type === 'runEvalValues') {
       result = await TunerHook.runEvalValues(payload.values, payload.opts || {});
+    } else if (type === 'tuneLead') {
+      // Bootstrap Step 3b: tune lead for one lattice point (CIRC_END evals), entirely inside this worker.
+      // payload: { point, opts: { targetAltKm, maxEvals } }. Returns scalars only (no log array bloat > 40 lines).
+      const o = payload.opts || {};
+      const cache = new TunerUtils.EvalCache();
+      const lr = await TunerCore.tuneLead(payload.point, {
+        hook: TunerHook, cache, targetAltKm: o.targetAltKm, maxEvals: o.maxEvals || 30,
+      });
+      const mm = lr.metrics || {};
+      result = {
+        ok: lr.ok, inBand: lr.inBand, reason: lr.reason, lead: lr.lead, leadTicks: lr.leadTicks,
+        marginS: lr.marginS, vrEnd: lr.vrEnd, vrMin: lr.vrMin, evals: lr.evals, wallMs: lr.wallMs,
+        stageFuelEngOffKg: mm.stageFuelEngOffKg, coastDeltaV: mm.coastDeltaV, apoCoastKm: mm.apoCoastKm,
+        maxG: mm.maxG, maxQKPa: mm.maxQKPa, maxOmega: mm.maxOmega,
+        log: (lr.log || []).slice(-40),
+      };
     } else if (type === 'setupSA') {
       emit('setupSA', 'running ascent');
       TunerEngine.prepareRun(TunerConfig.guideName, payload.values, payload.env || TunerConfig.env);
