@@ -206,6 +206,7 @@
       stageFuelAtDeployKg: NaN, stageFuelEngOffKg: NaN,   // stage fuel at circ engines-off (fast-probe residual)
       apogeeKm: NaN, perigeeKm: NaN, ecc: NaN,
       // ---- hard-constraint trackers ----
+      maxOmega: 0,                               // deg/s, max |body.omega| on the active body during STAGE_BURN (tumble / saturation signal)
       maxQKPa: 0, maxG: 0,                      // maxG = headless gLoad on bodies[0], whole run
       maxGPhase: null, maxGT: NaN, maxGPre: 0,   // where the peak happened / peak before COAST_WAIT
       maxGAccel: 0,                              // diagnostic: |_lastAccel|/g0 on active body
@@ -327,6 +328,7 @@
 
         // ---- per-tick signals gated on the (possibly stale) phase ----
         if (lastPhase === 'STAGE_BURN') {
+          { const wd = Math.abs(b.omega) * 57.29577951308232; if (wd > m.maxOmega) m.maxOmega = wd; }
           if (vr < m.vrMinStageBurn) m.vrMinStageBurn = vr;
           if (vr < 0 && !m.stageVrNeg) {
             m.stageVrNeg = true; m.stageVrNegAltKm = (altM) / 1000; m.stageVrNegT = state.simTime;
