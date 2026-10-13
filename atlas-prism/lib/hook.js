@@ -173,7 +173,12 @@
     const Cfg = root.TunerConfig;
     const stopAt = opts.stopAt || 'FULL';
     const env = opts.env || Cfg.env;
-    const capS = opts.durationCapS || Cfg.durationCapS;
+    // Altitude-aware static cap (Step 1): explicit opts.durationCapS wins; else max(Cfg cap, suggestDurationCap(alt)).
+    // 320 km -> 770 (unchanged); 2000 km -> ~2790. Tightened dynamically at COAST_WAIT entry (see below).
+    const _capAlt = opts.targetAltKm != null ? opts.targetAltKm : (Cfg.fixed && Cfg.fixed.targetAltKm);
+    const _sugCap = (Number.isFinite(_capAlt) && root.TunerUtils && root.TunerUtils.suggestDurationCap)
+      ? root.TunerUtils.suggestDurationCap(_capAlt) : 0;
+    const capS = opts.durationCapS || Math.max(Cfg.durationCapS, _sugCap);
     const quiet = opts.quiet !== false;
     const abortOnStageVrNeg = opts.abortOnStageVrNeg != null
       ? !!opts.abortOnStageVrNeg : (stopAt === 'COAST_WAIT_ENTRY');
@@ -183,6 +188,7 @@
 
     const m = {
       stopAt, endReason: null, ticks: 0, simTimeEnd: NaN, wallMs: 0,
+      capS, capKind: 'static', capTightenedS: NaN, // cap that applied; 'dynamic' once tightened at COAST_WAIT entry
       crashed: false, payloadReleased: false, payloadCleared: false,
       // ---- (A, bias) signals ----
       vrMinStageBurn: Infinity, stageVrNeg: false, stageVrNegAltKm: NaN, stageVrNegT: NaN,
@@ -215,7 +221,7 @@
       }
 
       const dt = CONFIG.DT, GM = CONFIG.GM_EARTH, Re = CONFIG.EARTH_RADIUS;
-      const maxTicks = Math.ceil(capS / dt);
+      let maxTicks = Math.ceil(capS / dt);
       const haveQ = typeof airDensity === 'function';
       const haveWind = typeof windInertialVector === 'function';
       const haveSurf = typeof earthSurfaceVelocity === 'function';
@@ -284,6 +290,11 @@
   // by the time COAST_WAIT is entered (set at end of COAST_ROTATE in guidance-blocks.js).
   m.coastDeltaV = (gs && Number.isFinite(gs.coastDeltaV)) ? gs.coastDeltaV : NaN;
   if (stopAt === 'COAST_WAIT_ENTRY') { end('COAST_WAIT_ENTRY'); i++; break; }
+  // Dynamic cap: coast takes tToApo, then CH->CIRC->clear ~60 s. Allow +400 s margin. Only ever tightens.
+  if (Number.isFinite(o.tToApo) && o.tToApo > 0) {
+    const dynTicks = i + Math.ceil((o.tToApo + 400) / dt);
+    if (dynTicks < maxTicks) { maxTicks = dynTicks; m.capKind = 'dynamic'; m.capTightenedS = state.simTime + o.tToApo + 400; }
+  }
 }
             if (ph === 'CIRCULARIZE' && !circWindow && !circAchSeen) {
               circWindow = true; m.circStartT = state.simTime;

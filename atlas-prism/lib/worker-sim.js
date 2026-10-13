@@ -250,7 +250,9 @@ self.onmessage = async (e) => {
         restoreSnap(_saSnapshot, newBias, null);
         let okCH = false;
         let eCoastAtCW = NaN;
-        const _chTicks = Math.ceil(800 / CONFIG.DT);
+        // CH is reached ~tToApo after COAST_WAIT -> 800 s is wrong above ~500 km (2000 km: CH at ~1890 s).
+        const _chCapS = Math.max(800, (TunerUtils.suggestDurationCap ? TunerUtils.suggestDurationCap(altKm) : 800));
+        const _chTicks = Math.ceil(_chCapS / CONFIG.DT);
         for (let _i = 0; _i < _chTicks; _i++) {
           if (state.halted) break;
           TunerEngine.tick(CONFIG.DT);
@@ -269,8 +271,8 @@ self.onmessage = async (e) => {
           if (_gs && _gs.phase === 'COAST_HOLD') { okCH = true; break; }
         }
         if (!okCH) {
-          emit('probe', tag + ' CH_FAIL ' + phaseNow());
-          result = { ok: false, reason: 'CH not reached: ' + phaseNow() };
+          emit('probe', tag + ' CH_FAIL ' + phaseNow() + (state.halted ? ' HALTED' : ' CAP@' + _chCapS + 's'));
+          result = { ok: false, reason: 'CH not reached: ' + phaseNow() + (state.halted ? ' (halted)' : ' (cap ' + _chCapS + 's)') };
         } else {
           // ---- 2. Capture local CH snapshot ----
           const chSnap = captureSnap();
