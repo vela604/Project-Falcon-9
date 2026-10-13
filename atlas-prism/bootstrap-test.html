@@ -51,6 +51,7 @@
   <label>bias res° <input id="bres" value="0.01" style="width:54px"></label>
   <button id="range">4 Bias range at G</button>
   <button id="trace" class="alt">5 Trace band over G</button>
+  <label><input type="checkbox" id="strict0" style="width:auto"> strict 0 (stop when bias=0 fails)</label>
   <button id="copy" class="alt">Copy log</button>
 </div>
 <pre id="log"></pre>
@@ -427,27 +428,33 @@ async function rangeAtG(ev, Gi, b0, B, res) {
   return { Gi, lo, hi, width: hi - lo, mid: (lo + hi) / 2, clipLo: dn.clipped, clipHi: up.clipped, nonContig: up.nonContig || dn.nonContig };
 }
 
-// Step 1: find ANY passing (G, bias). Order: coarse G first, then every G; biases {0, +B, -B} at each G.
+// Step 1: anchor = a G where bias=0 passes. Fallback (clearly logged): +/-B, then bias grid at a fixed G.
 async function findSeed(ev, P, gseed) {
-  const bs = [0, Math.round(P.bmax / 0.0001), -Math.round(P.bmax / 0.0001)];
-  let cands = [];
+  const Bi = Math.round(P.bmax / 0.0001);
   if (gseed != null) {
-    // fixed G: bias grid ordered by |bias|, step 0.25 deg (a window ~0.3-0.5 deg wide at fixed G is expected)
-    const st = Math.round(0.25 / 0.0001), Bi = Math.round(P.bmax / 0.0001);
-    for (let b = 0; b <= Bi; b += st) { cands.push({ Gi: gseed, bi: b }); if (b) cands.push({ Gi: gseed, bi: -b }); }
-  } else {
-    const seen = new Set();
-    for (const g of Search.GRID.concat(Search.FINE)) { if (seen.has(g)) continue; seen.add(g); for (const b of bs) cands.push({ Gi: g, bi: b }); }
+    log('anchor try: G=' + gfmt(gseed) + ' bias=0', 'dim');
+    const r0 = await ev(gseed, 0);
+    if (r0.ok) return r0;
+    log('G=' + gfmt(gseed) + ': bias=0 does NOT pass (' + r0.cls + (r0.why ? ':' + r0.why : '') + ') -> fallback: bias grid 0.25° at this G', 'bad');
+    const st = Math.round(0.25 / 0.0001), c = [];
+    for (let b = st; b <= Bi; b += st) c.push({ Gi: gseed, bi: b }, { Gi: gseed, bi: -b });
+    return anyPass(ev, c);
   }
-  log('seed search: up to ' + cands.length + ' probes, batches of ' + NW, 'dim');
-  return anyPass(ev, cands);
+  const zero = Search.FINE.map((g) => ({ Gi: g, bi: 0 }));
+  log('anchor search: bias=0 at every G ' + gfmt(Search.range.lo) + '..' + gfmt(Search.range.hi) + ' (' + zero.length + ' probes, batches of ' + NW + ')', 'dim');
+  const hit = await anyPass(ev, zero);
+  if (hit) return hit;
+  log('NO G passes at bias=0 in ' + gfmt(Search.range.lo) + '..' + gfmt(Search.range.hi) + ' -> fallback: bias=+/-' + P.bmax + ' (coarse G, then every G)', 'bad');
+  const bs = [Bi, -Bi], seen = new Set(), c = [];
+  for (const g of Search.GRID.concat(Search.FINE)) { if (seen.has(g)) continue; seen.add(g); for (const b of bs) c.push({ Gi: g, bi: b }); }
+  return anyPass(ev, c);
 }
 
 function rangeLine(r, prev) {
   const sh = prev ? ((r.mid - prev.mid) * 0.0001) : NaN;
   return gfmt(r.Gi) + '  ' + bfmt(r.lo) + ' ' + bfmt(r.hi) + '  w=' + (r.width * 0.0001).toFixed(4) +
     '  mid=' + bfmt(Math.round(r.mid)) + '  shift=' + (Number.isFinite(sh) ? (sh >= 0 ? '+' : '') + sh.toFixed(4) : '--') +
-    (r.clipLo ? ' CLIP-' : '') + (r.clipHi ? ' CLIP+' : '') + (r.nonContig ? ' NONCONTIG' : '');
+    (r.lo <= 0 && r.hi >= 0 ? ' has0' : ' no0') + (r.clipLo ? ' CLIP-' : '') + (r.clipHi ? ' CLIP+' : '') + (r.nonContig ? ' NONCONTIG' : '');
 }
 
 $('range').onclick = () => guarded(async () => {
@@ -458,8 +465,8 @@ $('range').onclick = () => guarded(async () => {
   QUIET = true;
   try {
     const seed = await findSeed(ev, P, gseed);
-    if (!seed) { log('no passing point found' + (gseed != null ? ' at this G (window < 0.25° wide or empty)' : ' anywhere in G range at biases {0,±' + P.bmax + '}'), 'bad'); return; }
-    log('seed pass: G=' + gfmt(seed.Gi) + ' b=' + bfmt(seed.bi) + '  Δv=' + f1(seed.dv, 0) + '/' + f1(seed.dvMax, 0), 'ok');
+    if (!seed) { log('no passing point found (bias=0, then fallbacks)', 'bad'); return; }
+    log('ANCHOR: G=' + gfmt(seed.Gi) + ' bias=' + bfmt(seed.bi) + (seed.bi === 0 ? ' (bias=0 pass)' : ' (FALLBACK, not a bias=0 anchor)') + '  Δv=' + f1(seed.dv, 0) + '/' + f1(seed.dvMax, 0), 'ok');
     const r = await rangeAtG(ev, seed.Gi, seed.bi, P.bmax, res);
     log(''); log('=== BIAS RANGE ==='); log('G     lo      hi       width    mid      shift');
     log(rangeLine(r, null), 'ok');
@@ -477,7 +484,8 @@ $('trace').onclick = () => guarded(async () => {
   try {
     const seed = await findSeed(ev, P, gseed);
     if (!seed) { log('no passing point found, nothing to trace', 'bad'); return; }
-    log('seed pass: G=' + gfmt(seed.Gi) + ' b=' + bfmt(seed.bi), 'ok');
+    log('ANCHOR: G=' + gfmt(seed.Gi) + ' bias=' + bfmt(seed.bi) + (seed.bi === 0 ? ' (bias=0 pass)' : ' (FALLBACK, not a bias=0 anchor)'), 'ok');
+    const strict0 = $('strict0').checked;
     const r0 = await rangeAtG(ev, seed.Gi, seed.bi, P.bmax, res);
     const rows = { [seed.Gi]: r0 };
     for (const dir of [+1, -1]) {
@@ -485,7 +493,16 @@ $('trace').onclick = () => guarded(async () => {
       for (;;) {
         Gi += dir;
         if (Gi < Search.range.lo || Gi > Search.range.hi) { log('G range end at ' + gfmt(Gi - dir), 'dim'); break; }
-        // candidates ordered by distance from predicted centre; spacing <= half the previous width
+        // 1) SEHRAN anchor: try bias=0 at this G first
+        const z = await ev(Gi, 0);
+        if (z.ok) {
+          const rz = await rangeAtG(ev, Gi, 0, P.bmax, res);
+          rows[Gi] = rz; log(rangeLine(rz, prev), 'ok');
+          shift = rz.mid - prev.mid; prev = rz; continue;
+        }
+        log('G=' + gfmt(Gi) + ': bias=0 fails (' + z.cls + (z.why ? ':' + z.why : '') + ')' + (strict0 ? ' -> strict0: stop this side' : ' -> following band'), 'dim');
+        if (strict0) break;
+        // 2) fallback: candidates ordered by distance from predicted centre; spacing <= half the previous width
         const c = Math.round(prev.mid + shift), st = Math.max(Math.round(0.05 / 0.0001), Math.round(prev.width / 2));
         const cands = [{ Gi, bi: Math.max(-Bi, Math.min(Bi, c)) }];
         for (let d = st; d <= 2 * Bi; d += st) for (const s of [+1, -1]) { const b = c + s * d; if (b >= -Bi && b <= Bi) cands.push({ Gi, bi: b }); }
