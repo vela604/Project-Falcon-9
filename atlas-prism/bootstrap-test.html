@@ -45,6 +45,12 @@
   <button id="map" class="alt">2 Map window (COAST)</button>
   <button id="best">3 Best: CIRC_END on K pts</button>
   <button id="scan" class="alt">Full scan</button>
+</div>
+<div class="row">
+  <label>G seed <input id="gseed" value="" placeholder="auto" style="width:54px"></label>
+  <label>bias res° <input id="bres" value="0.01" style="width:54px"></label>
+  <button id="range">4 Bias range at G</button>
+  <button id="trace" class="alt">5 Trace band over G</button>
   <button id="copy" class="alt">Copy log</button>
 </div>
 <pre id="log"></pre>
@@ -156,12 +162,12 @@ function log(s, cls) {
   logEl.scrollTop = logEl.scrollHeight;
 }
 
-let pool = null;
+let pool = null, NW = 4, QUIET = false;
 async function getPool() {
   if (pool) return pool;
   let n = parseInt($('nw').value, 10);
   if (!(n > 0)) n = TunerCore.defaultWorkers();
-  pool = new TunerCore.WorkerPool(n);
+  pool = new TunerCore.WorkerPool(n); NW = n;
   log('pool: ' + n + ' workers, booting...', 'dim');
   await pool.waitReady();
   const errs = pool.readyErrors.filter(Boolean);
@@ -243,7 +249,7 @@ function makeEvalFn(P) {
         why: cls !== 'FAIL_PHYS' ? '' : (m.coastDeltaV > m.circDvMaxMps ? 'fuel_short' : 'time_short'), vrNegAlt: m.stageVrNegAltKm, wall: m.wallMs,
       };
       cache[key] = rec;
-      log('G=' + (Gi / 100).toFixed(2) + ' b=' + (bias >= 0 ? '+' : '') + bias.toFixed(2) +
+      if (!QUIET) log('G=' + (Gi / 100).toFixed(2) + ' b=' + (bias >= 0 ? '+' : '') + bias.toFixed(3) +
         '  ' + cls.padEnd(9) + ' maxΩ=' + f1(rec.maxOmega, 2) + '°/s  vrMin=' + f1(rec.vrMin, 1) +
         '  apoC=' + f1(rec.apoC, 1) + '  Δv=' + f1(rec.dv, 1) + '/' + f1(rec.dvMax, 0) +
         '  tBurn=' + f1(rec.tBurn, 0) + '/' + f1(rec.tApo, 0) + 's' + (rec.why ? ' ' + rec.why : '') +
@@ -280,7 +286,7 @@ async function edgeAuto(ev, bias, side) {
   return r;
 }
 
-function busy(on) { ['run', 'map', 'best', 'scan'].forEach((id) => { $(id).disabled = on; }); }
+function busy(on) { ['run', 'map', 'best', 'scan', 'range', 'trace'].forEach((id) => { $(id).disabled = on; }); }
 async function guarded(fn) {
   busy(true);
   try { await fn(); } catch (e) { log('ERROR: ' + (e && e.message || e), 'bad'); }
@@ -366,6 +372,141 @@ $('best').onclick = () => guarded(async () => {
   log('corr(Δv, lead)=' + f1(cor((x) => x.c.dv, (x) => x.r.lead), 2) +
     '  corr(Δv, residual)=' + f1(cor((x) => x.c.dv, (x) => x.r.stageFuelEngOffKg), 2) +
     '  corr(fuelStop, residual)=' + f1(cor((x) => x.c.fuelStop, (x) => x.r.stageFuelEngOffKg), 2) + '   (n=' + good.length + ')');
+});
+
+
+// ============================================================================
+// Bias-range tools (Step 4/5). Everything works in integer bias units bi = 0.0001 deg.
+// Pass set at fixed G is assumed to be ONE contiguous bias interval (cliffs at both ends).
+// ============================================================================
+const pc = (r) => r.ok ? 'P' : r.cls === 'F1_BURN' ? 'F' : r.cls === 'APO_SHORT' ? 'A' : r.cls === 'FAIL_PHYS' ? 'H' : 'X';
+const bfmt = (bi) => ((bi >= 0 ? '+' : '') + (bi * 0.0001).toFixed(4));
+const gfmt = (gi) => (gi / 100).toFixed(2);
+
+// First passing record among ordered candidates [{Gi, bi}], evaluated in parallel batches of NW.
+async function anyPass(ev, cands) {
+  for (let i = 0; i < cands.length; i += NW) {
+    const rs = await Promise.all(cands.slice(i, i + NW).map((c) => ev(c.Gi, c.bi * 0.0001)));
+    const hit = rs.find((r) => r.ok);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+// Largest passing t in (t0, bound] where t = sign*bi. k-ary search: k probes per round, bracket shrinks (k+1)x.
+async function edgeBias(ev, Gi, b0, sign, bound, res, k, tag) {
+  const at = (t) => ev(Gi, sign * t * 0.0001);
+  let lo = sign * b0, hi = bound, rounds = 0, nonContig = false;      // lo passes
+  if (lo >= hi) return { t: lo, clipped: true, rounds: 0, nonContig };
+  const rb = await at(hi);
+  if (rb.ok) return { t: hi, clipped: true, rounds: 0, nonContig };   // passes all the way to the parent bound
+  while (hi - lo > res) {
+    rounds++;
+    const pts = [];
+    for (let j = 1; j <= k; j++) { const t = lo + Math.round((hi - lo) * j / (k + 1)); if (t > lo && t < hi && !pts.includes(t)) pts.push(t); }
+    if (!pts.length) break;
+    const rs = await Promise.all(pts.map(at));
+    let j = 0, nlo = lo, nhi = hi;
+    while (j < pts.length && rs[j].ok) { nlo = pts[j]; j++; }
+    if (j < pts.length) { nhi = pts[j]; for (let q = j + 1; q < pts.length; q++) if (rs[q].ok) nonContig = true; }
+    log('   G=' + gfmt(Gi) + ' ' + tag + ' r' + rounds + ': ' + pts.map((t, i) => bfmt(sign * t) + pc(rs[i])).join(' ') +
+      '  -> [' + bfmt(sign * nlo) + ', ' + bfmt(sign * nhi) + ']', 'dim');
+    lo = nlo; hi = nhi;
+  }
+  return { t: lo, clipped: false, rounds, nonContig };
+}
+
+// Full bias interval at G, starting from one known-passing bias b0. Both branches run concurrently.
+async function rangeAtG(ev, Gi, b0, B, res) {
+  const bound = Math.round(B / 0.0001), k = Math.max(2, Math.ceil(NW / 2));
+  const [up, dn] = await Promise.all([
+    edgeBias(ev, Gi, b0, +1, bound, res, k, '+side'),
+    edgeBias(ev, Gi, b0, -1, bound, res, k, '-side'),
+  ]);
+  const lo = -dn.t, hi = up.t;
+  return { Gi, lo, hi, width: hi - lo, mid: (lo + hi) / 2, clipLo: dn.clipped, clipHi: up.clipped, nonContig: up.nonContig || dn.nonContig };
+}
+
+// Step 1: find ANY passing (G, bias). Order: coarse G first, then every G; biases {0, +B, -B} at each G.
+async function findSeed(ev, P, gseed) {
+  const bs = [0, Math.round(P.bmax / 0.0001), -Math.round(P.bmax / 0.0001)];
+  let cands = [];
+  if (gseed != null) {
+    // fixed G: bias grid ordered by |bias|, step 0.25 deg (a window ~0.3-0.5 deg wide at fixed G is expected)
+    const st = Math.round(0.25 / 0.0001), Bi = Math.round(P.bmax / 0.0001);
+    for (let b = 0; b <= Bi; b += st) { cands.push({ Gi: gseed, bi: b }); if (b) cands.push({ Gi: gseed, bi: -b }); }
+  } else {
+    const seen = new Set();
+    for (const g of Search.GRID.concat(Search.FINE)) { if (seen.has(g)) continue; seen.add(g); for (const b of bs) cands.push({ Gi: g, bi: b }); }
+  }
+  log('seed search: up to ' + cands.length + ' probes, batches of ' + NW, 'dim');
+  return anyPass(ev, cands);
+}
+
+function rangeLine(r, prev) {
+  const sh = prev ? ((r.mid - prev.mid) * 0.0001) : NaN;
+  return gfmt(r.Gi) + '  ' + bfmt(r.lo) + ' ' + bfmt(r.hi) + '  w=' + (r.width * 0.0001).toFixed(4) +
+    '  mid=' + bfmt(Math.round(r.mid)) + '  shift=' + (Number.isFinite(sh) ? (sh >= 0 ? '+' : '') + sh.toFixed(4) : '--') +
+    (r.clipLo ? ' CLIP-' : '') + (r.clipHi ? ' CLIP+' : '') + (r.nonContig ? ' NONCONTIG' : '');
+}
+
+$('range').onclick = () => guarded(async () => {
+  const P = params(); await getPool(); const ev = getEv(P);
+  const res = Math.max(1, Math.round(parseFloat($('bres').value) / 0.0001));
+  const gs = $('gseed').value.trim(); const gseed = gs ? Math.round(parseFloat(gs) * 100) : null;
+  header(P, 'bias range at G' + (gseed != null ? '=' + gfmt(gseed) : ' (auto seed)'));
+  QUIET = true;
+  try {
+    const seed = await findSeed(ev, P, gseed);
+    if (!seed) { log('no passing point found' + (gseed != null ? ' at this G (window < 0.25° wide or empty)' : ' anywhere in G range at biases {0,±' + P.bmax + '}'), 'bad'); return; }
+    log('seed pass: G=' + gfmt(seed.Gi) + ' b=' + bfmt(seed.bi) + '  Δv=' + f1(seed.dv, 0) + '/' + f1(seed.dvMax, 0), 'ok');
+    const r = await rangeAtG(ev, seed.Gi, seed.bi, P.bmax, res);
+    log(''); log('=== BIAS RANGE ==='); log('G     lo      hi       width    mid      shift');
+    log(rangeLine(r, null), 'ok');
+    log('evals so far: ' + Object.keys(ev.cache).length);
+  } finally { QUIET = false; }
+});
+
+$('trace').onclick = () => guarded(async () => {
+  const P = params(); await getPool(); const ev = getEv(P);
+  const res = Math.max(1, Math.round(parseFloat($('bres').value) / 0.0001));
+  const gs = $('gseed').value.trim(); const gseed = gs ? Math.round(parseFloat(gs) * 100) : null;
+  header(P, 'trace band over G');
+  QUIET = true;
+  const Bi = Math.round(P.bmax / 0.0001);
+  try {
+    const seed = await findSeed(ev, P, gseed);
+    if (!seed) { log('no passing point found, nothing to trace', 'bad'); return; }
+    log('seed pass: G=' + gfmt(seed.Gi) + ' b=' + bfmt(seed.bi), 'ok');
+    const r0 = await rangeAtG(ev, seed.Gi, seed.bi, P.bmax, res);
+    const rows = { [seed.Gi]: r0 };
+    for (const dir of [+1, -1]) {
+      let prev = r0, shift = 0, Gi = seed.Gi;
+      for (;;) {
+        Gi += dir;
+        if (Gi < Search.range.lo || Gi > Search.range.hi) { log('G range end at ' + gfmt(Gi - dir), 'dim'); break; }
+        // candidates ordered by distance from predicted centre; spacing <= half the previous width
+        const c = Math.round(prev.mid + shift), st = Math.max(Math.round(0.05 / 0.0001), Math.round(prev.width / 2));
+        const cands = [{ Gi, bi: Math.max(-Bi, Math.min(Bi, c)) }];
+        for (let d = st; d <= 2 * Bi; d += st) for (const s of [+1, -1]) { const b = c + s * d; if (b >= -Bi && b <= Bi) cands.push({ Gi, bi: b }); }
+        const hit = await anyPass(ev, cands);
+        if (!hit) { log('G=' + gfmt(Gi) + ': no pass in [-' + P.bmax + ',+' + P.bmax + '] (spacing ' + (st * 0.0001).toFixed(3) + '°) -> band ends this side', 'dim'); break; }
+        const r = await rangeAtG(ev, Gi, hit.bi, P.bmax, res);
+        rows[Gi] = r; log(rangeLine(r, prev), 'ok');
+        shift = r.mid - prev.mid; prev = r;
+      }
+    }
+    log(''); log('=== BAND (ascending G) ===');
+    log('G     lo      hi       width    mid      shift    overlap-with-prev');
+    const gis = Object.keys(rows).map(Number).sort((a, b) => a - b);
+    gis.forEach((g, i) => {
+      const r = rows[g], pr = i ? rows[gis[i - 1]] : null;
+      const ov = pr ? ((Math.min(r.hi, pr.hi) - Math.max(r.lo, pr.lo)) * 0.0001) : NaN;
+      log(rangeLine(r, pr) + '   ov=' + (Number.isFinite(ov) ? ov.toFixed(4) : '--'));
+    });
+    log('G rows: ' + gis.length + '   total evals: ' + Object.keys(ev.cache).length);
+    log('ov > 0 -> adjacent G windows overlap; ov < 0 -> gap (touch hypothesis needs ov ≈ 0)', 'dim');
+  } finally { QUIET = false; }
 });
 
 $('scan').onclick = () => guarded(async () => {
