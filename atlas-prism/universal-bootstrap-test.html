@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>atlas-prism · universal bootstrap</title>
+<style>
+  body { background:#0e1116; color:#d6dde6; font:13px/1.45 ui-monospace,Menlo,Consolas,monospace; margin:0; padding:10px; }
+  h1 { font-size:15px; margin:0 0 8px; }
+  .row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:6px 0; }
+  label { display:flex; gap:4px; align-items:center; }
+  input { background:#1b212b; color:#d6dde6; border:1px solid #333c4a; border-radius:4px; padding:4px; width:62px; }
+  button { background:#2b6cb0; color:#fff; border:0; border-radius:4px; padding:8px 12px; font:inherit; }
+  button.alt { background:#4a5568; } button:disabled { opacity:.5; }
+  pre { background:#080a0e; border:1px solid #232a35; border-radius:4px; padding:8px; overflow-x:auto; white-space:pre; min-height:120px; max-height:62vh; overflow-y:auto; }
+  .ok { color:#68d391; } .bad { color:#fc8181; } .dim { color:#8896a8; } .hi { color:#f6e05e; }
+  #status { color:#f6e05e; min-height:1.3em; }
+</style>
+</head>
+<body>
+<h1>Universal bootstrap · alt → MECO + G list + bias ranges</h1>
+<div class="row">
+  <label>alt km <input id="alt" value="320"></label>
+  <label>K (G count) <input id="K" value="3" style="width:38px"></label>
+  <label>|bias|° <input id="bmax" value="3" style="width:38px"></label>
+  <label>workers <input id="nw" value="0" style="width:38px"></label>
+</div>
+<div class="row">
+  <label>MECO lo <input id="mlo" value="0"></label>
+  <label>hi <input id="mhi" value="90000"></label>
+  <label>coarse n <input id="mn" value="7" style="width:38px"></label>
+  <label>MECO quantum <input id="mq" value="50" style="width:48px"></label>
+</div>
+<div class="row">
+  <label>G lo <input id="glo" value="0.30" style="width:48px"></label>
+  <label>hi <input id="ghi" value="0.75" style="width:48px"></label>
+  <label>coarse G step <input id="gstep" value="0.02" style="width:48px"></label>
+  <label>T s <input id="T" value="4.82" style="width:48px"></label>
+</div>
+<div class="row">
+  <label>pred target kg <input id="pt" value="150" style="width:48px"></label>
+  <label>pred min kg <input id="pmin" value="100" style="width:48px"></label>
+  <label>apo tol -/+ km <input id="tol" value="2" style="width:38px"><input id="tolhi" value="20" style="width:38px"></label>
+  <label>t frac <input id="tfrac" value="0.9" style="width:40px"></label>
+  <label>trim % <input id="trim" value="10" style="width:38px"></label>
+</div>
+<div class="row">
+  <button id="go">Run bootstrap</button>
+  <button id="stop" class="alt">Stop</button>
+  <button id="copy" class="alt">Copy log</button>
+</div>
+<div id="status">idle</div>
+<pre id="log"></pre>
+
+<script src="lib/worker-pool.js"></script>
+<script>
+// ============================================================================
+// Pure logic (testable without DOM / pool)
+// ============================================================================
+const UB = (function () {
+  const BQ = 0.0001;                                    // bias quantum, deg
+  const pass = (r, P) => !!(r && r.ok && Number.isFinite(r.pred) && r.pred >= P.predMin);
+  const maxPred = (recs, P) => recs.filter((r) => pass(r, P)).reduce((b, r) => (!b || r.pred > b.pred) ? r : b, null);
+
+  // Largest passing t in (t0, bound], t = sign*bi. k-ary search, k probes per round. ev(Gi, bi) -> rec.
+  async function edgeBias(ev, P, Gi, b0, sign, bound, res, k, onRound) {
+    const at = (t) => ev(Gi, sign * t);
+    let lo = sign * b0, hi = bound, nonContig = false;                // lo passes
+    if (lo >= hi) return { t: lo, clipped: true, nonContig };
+    if (pass(await at(hi), P)) return { t: hi, clipped: true, nonContig };
+    while (hi - lo > res) {
+      const pts = [];
+      for (let j = 1; j <= k; j++) { const t = lo + Math.round((hi - lo) * j / (k + 1)); if (t > lo && t < hi && !pts.includes(t)) pts.push(t); }
+      if (!pts.length) break;
+      const rs = await Promise.all(pts.map(at));
+      let j = 0, nlo = lo, nhi = hi;
+      while (j < pts.length && pass(rs[j], P)) { nlo = pts[j]; j++; }
+      if (j < pts.length) { nhi = pts[j]; for (let q = j + 1; q < pts.length; q++) if (pass(rs[q], P)) nonContig = true; }
+      if (onRound) onRound(sign, pts, rs, nlo, nhi);
+      lo = nlo; hi = nhi;
+    }
+    return { t: lo, clipped: false, nonContig };
+  }
+
+  async function rangeAtG(ev, P, Gi, b0, k, onRound) {
+    const bound = Math.round(P.bmax / BQ), res = Math.max(1, Math.round(P.bres / BQ));
+    const [up, dn] = await Promise.all([
+      edgeBias(ev, P, Gi, b0, +1, bound, res, k, onRound),
+      edgeBias(ev, P, Gi, b0, -1, bound, res, k, onRound),
+    ]);
+    const lo = -dn.t, hi = up.t;
+    return { Gi, lo, hi, width: hi - lo, mid: (lo + hi) / 2, clipLo: dn.clipped, clipHi: up.clipped, nonContig: up.nonContig || dn.nonContig };
+  }
+
+  // Pattern search for the max-pred passing point near `seed` at MECO M. Returns best rec or null.
+  async function localBest(ev, P, M, seed, cap) {
+    cap = cap || 140;
+    const Bi = Math.round(P.bmax / BQ), gLo = P.gLoI, gHi = P.gHiI;
+    let used = 0;
+    const evalSet = async (pts) => {
+      const fresh = pts.filter((p) => p.Gi >= gLo && p.Gi <= gHi && Math.abs(p.bi) <= Bi);
+      used += fresh.length;
+      return Promise.all(fresh.map((p) => ev(M, p.Gi, p.bi)));
+    };
+    let c = { Gi: seed.Gi, bi: seed.bi }, best = null;
+    let rG = 2, sb = Math.round(0.5 / BQ);
+    // phase 1: find any passing point, doubling the pattern
+    for (; ;) {
+      const pts = [{ Gi: c.Gi, bi: c.bi }];
+      for (const dg of [-1, 0, 1]) for (const db of [-1, 0, 1]) if (dg || db) pts.push({ Gi: c.Gi + dg * rG, bi: c.bi + db * sb });
+      best = maxPred(await evalSet(pts), P);
+      if (best) break;
+      rG *= 2; sb *= 2;
+      if (rG > 16 || used > cap) return null;
+    }
+    c = { Gi: best.Gi, bi: best.bi };
+    // phase 2: pattern search (move on improvement, shrink otherwise)
+    while (used < cap) {
+      const pts = [];
+      for (const dg of [-1, 0, 1]) for (const db of [-1, 0, 1]) if (dg || db) pts.push({ Gi: c.Gi + dg * rG, bi: c.bi + db * sb });
+      const nb = maxPred(await evalSet(pts), P);
+      if (nb && nb.pred > best.pred + 0.5) { best = nb; c = { Gi: nb.Gi, bi: nb.bi }; continue; }
+      if (rG > 1) { rG = Math.ceil(rG / 2); sb = Math.max(1, Math.round(sb / 2)); }
+      else if (sb > Math.round(0.03 / BQ)) sb = Math.round(sb / 2);
+      else break;
+    }
+    return best;
+  }
+
+  // Pick K G rows: the row holding the best pred first, then the widest rows >= 2 quanta apart.
+  function pickRows(rows, K, bestGi) {
+    const arr = Object.keys(rows).map((g) => rows[g]);
+    const chosen = [];
+    const first = arr.find((r) => r.Gi === bestGi) || arr.slice().sort((a, b) => b.width - a.width)[0];
+    if (!first) return [];
+    chosen.push(first);
+    for (const r of arr.slice().sort((a, b) => b.width - a.width)) {
+      if (chosen.length >= K) break;
+      if (chosen.every((c) => Math.abs(c.Gi - r.Gi) >= 2)) chosen.push(r);
+    }
+    return chosen.sort((a, b) => a.Gi - b.Gi);
+  }
+
+  return { BQ, pass, maxPred, edgeBias, rangeAtG, localBest, pickRows };
+})();
+</script>
+
+<script>
+// ============================================================================
+// Page glue
+// ============================================================================
+const $ = (id) => document.getElementById(id);
+const logEl = $('log'); let logText = '';
+function log(s, cls) { logText += s + '\n'; const d = document.createElement('span'); if (cls) d.className = cls; d.textContent = s + '\n'; logEl.appendChild(d); logEl.scrollTop = logEl.scrollHeight; }
+const f1 = (x, d) => Number.isFinite(x) ? x.toFixed(d) : '--';
+const gfmt = (gi) => (gi / 100).toFixed(2);
+const bfmt = (bi) => ((bi >= 0 ? '+' : '') + (bi * UB.BQ).toFixed(4));
+let pool = null, NW = 4, STOP = false, EVALS = 0;
+
+async function getPool() {
+  if (pool) return pool;
+  let n = parseInt($('nw').value, 10); if (!(n > 0)) n = TunerCore.defaultWorkers();
+  pool = new TunerCore.WorkerPool(n); NW = n;
+  log('pool: ' + n + ' workers, booting...', 'dim');
+  await pool.waitReady();
+  const errs = pool.readyErrors.filter(Boolean);
+  if (errs.length) log('worker boot errors: ' + errs.join(' | '), 'bad');
+  return pool;
+}
+
+function params() {
+  const num = (id) => parseFloat($(id).value);
+  const P = {
+    alt: num('alt'), K: parseInt($('K').value, 10) || 3, bmax: num('bmax'),
+    mLo: Math.round(num('mlo')), mHi: Math.round(num('mhi')), mN: Math.max(3, parseInt($('mn').value, 10) || 7), mq: Math.max(1, Math.round(num('mq'))),
+    gLoI: Math.round(num('glo') * 100), gHiI: Math.round(num('ghi') * 100), gStep: Math.max(1, Math.round(num('gstep') * 100)),
+    Tn: Math.round(num('T') / 0.000125), li: Math.round(5.53 / 0.0125),
+    predTarget: num('pt'), predMin: num('pmin'), tol: num('tol'), tolHi: num('tolhi'), tfrac: num('tfrac'), trim: num('trim') / 100,
+    bres: 0.01,
+  };
+  return P;
+}
+
+function classify(m, P) {
+  if (m.endReason === 'STAGE_VR_NEG') return 'F1_BURN';
+  if (m.crashed || m.endReason === 'CRASHED') return 'CRASH';
+  if (m.endReason !== 'COAST_WAIT_ENTRY') return 'OTHER:' + m.endReason;
+  if (!Number.isFinite(m.apoCoastKm)) return 'OTHER:noApo';
+  if (m.apoCoastKm < P.alt - P.tol) return 'APO_SHORT';
+  if (m.apoCoastKm > P.alt + P.tolHi) return 'APO_LONG';
+  if (!Number.isFinite(m.circDvMaxMps) || !Number.isFinite(m.circTBurnS) || !Number.isFinite(m.tToApoCoastS)) return 'OTHER:noPhys';
+  if (m.coastDeltaV > m.circDvMaxMps) return 'FAIL_PHYS';
+  if (m.circTBurnS > P.tfrac * m.tToApoCoastS) return 'FAIL_PHYS';
+  return 'OK';
+}
+
+function makeEv(P) {
+  const cache = new Map(), inflight = new Map();
+  const fn = (M, Gi, bi) => {
+    const key = M + '|' + Gi + '|' + bi;
+    if (cache.has(key)) return Promise.resolve(cache.get(key));
+    if (inflight.has(key)) return inflight.get(key);
+    if (STOP) return Promise.reject(new Error('stopped'));
+    const point = { Gi, Tn: P.Tn, bi, li: P.li, meco: M };
+    const p = pool.runEval(point, { stopAt: 'COAST_WAIT_ENTRY', abortOnStageVrNeg: true, targetAltKm: P.alt, quiet: true }).then((m) => {
+      const cls = classify(m, P);
+      const pred = (Number.isFinite(m.circM0Kg) && Number.isFinite(m.circVe) && Number.isFinite(m.coastDeltaV))
+        ? m.circM0Kg * Math.exp(-m.coastDeltaV / m.circVe) - m.circDryKg : NaN;
+      const rec = { M, Gi, bi, cls, ok: cls === 'OK', pred, dv: m.coastDeltaV, apoC: m.apoCoastKm, wall: m.wallMs };
+      cache.set(key, rec); inflight.delete(key); EVALS++;
+      if (EVALS % 10 === 0) $('status').textContent = 'evals done: ' + EVALS;
+      return rec;
+    });
+    inflight.set(key, p); return p;
+  };
+  fn.cache = cache;
+  fn.byM = (M) => Array.from(cache.values()).filter((r) => r.M === M);
+  return fn;
+}
+
+const gOf = (rec) => rec ? rec.pred : NaN;
+function linspace(a, b, n) { const out = []; for (let i = 0; i < n; i++) out.push(Math.round((a + (b - a) * i / (n - 1)) / 10) * 10); return out; }
+
+// ---------------- Phase A: coarse MECO map ----------------
+async function phaseA(ev, P) {
+  const Ms = linspace(P.mLo, P.mHi, P.mN), Bi = Math.round(P.bmax / UB.BQ);
+  const Gs = []; for (let g = P.gLoI; g <= P.gHiI; g += P.gStep) Gs.push(g);
+  const rows = [+Bi, 0, -Bi];
+  log('PHASE A  coarse MECO map: ' + Ms.length + ' MECO x ' + rows.length + ' bias rows x ' + Gs.length + ' G = ' + (Ms.length * rows.length * Gs.length) + ' evals max', 'hi');
+  const jobs = [];
+  for (const M of Ms) for (const b of rows) for (const g of Gs) jobs.push(ev(M, g, b));
+  await Promise.all(jobs);
+  const table = Ms.map((M) => {
+    const recs = ev.byM(M), np = recs.filter((r) => UB.pass(r, P)).length, best = UB.maxPred(recs, P);
+    const cnt = {}; recs.forEach((r) => { cnt[r.cls] = (cnt[r.cls] || 0) + 1; });
+    return { M, np, best, cnt };
+  });
+  log('MECO     pass  bestPred  at(G,b)            other classes');
+  table.forEach((t) => log(String(t.M).padEnd(8) + String(t.np).padStart(5) + f1(t.best ? t.best.pred : NaN, 0).padStart(10) + '  ' +
+    (t.best ? (gfmt(t.best.Gi) + ',' + bfmt(t.best.bi)) : '--').padEnd(18) + ' ' + Object.keys(t.cnt).filter((k) => k !== 'OK').map((k) => k + ':' + t.cnt[k]).join(' '), t.best ? 'ok' : 'dim'));
+  return table;
+}
+
+// ---------------- Phase B: refine MECO frontier ----------------
+async function phaseB(ev, P, table) {
+  const feas = table.filter((t) => t.best && t.best.pred >= P.predTarget);
+  let lo, hi, seed;
+  if (feas.length) {
+    const top = feas[feas.length - 1]; lo = top.M; seed = top.best;
+    const above = table.filter((t) => t.M > lo); hi = above.length ? above[0].M : lo;
+  } else {
+    const any = table.filter((t) => t.best);
+    if (!any.length) return null;
+    const mx = any.reduce((a, b) => (b.best.pred > a.best.pred ? b : a));
+    log('no MECO reaches pred>=' + P.predTarget + ' on the coarse map; best is MECO ' + mx.M + ' (pred ' + f1(mx.best.pred, 0) + ') -> searching below it', 'bad');
+    hi = mx.M; lo = table[0].M; seed = mx.best;
+    if (lo >= hi) return { M: mx.M, best: mx.best };
+  }
+  const known = { [lo]: seed };
+  log('PHASE B  MECO bracket [' + lo + ', ' + hi + ']  seed G=' + gfmt(seed.Gi) + ' b=' + bfmt(seed.bi) + ' pred=' + f1(seed.pred, 0), 'hi');
+  let bestKnown = feas.length ? { M: lo, best: seed } : null;
+  const k = Math.max(2, Math.min(4, NW - 1));
+  for (let round = 1; round <= 8 && hi - lo > P.mq; round++) {
+    const Mp = []; for (let j = 1; j <= k; j++) { const m = Math.round((lo + (hi - lo) * j / (k + 1)) / 10) * 10; if (m > lo && m < hi && !Mp.includes(m)) Mp.push(m); }
+    if (!Mp.length) break;
+    const res = await Promise.all(Mp.map((M) => UB.localBest(ev, P, M, seed).then((b) => ({ M, b }))));
+    log('  r' + round + ': ' + res.map((r) => r.M + (r.b ? ('=' + f1(r.b.pred, 0)) : '=none')).join('  '), 'dim');
+    let nlo = lo, nhi = hi;
+    res.sort((a, b) => a.M - b.M);
+    for (const r of res) { if (r.b && r.b.pred >= P.predTarget) { nlo = r.M; seed = r.b; bestKnown = { M: r.M, best: r.b }; } }
+    const above = res.filter((r) => r.M > nlo && !(r.b && r.b.pred >= P.predTarget));
+    if (above.length) nhi = above[0].M; else if (nlo > lo) nhi = hi;
+    if (nlo === lo && nhi === hi) { nhi = res[0].M; }   // nothing feasible: shrink downward
+    lo = nlo; hi = nhi;
+  }
+  if (!bestKnown) {
+    // never reached predTarget: fall back to the highest MECO that has any passing point
+    const fb = await UB.localBest(ev, P, lo, seed);
+    bestKnown = fb ? { M: lo, best: fb } : null;
+  }
+  return bestKnown;
+}
+
+// ---------------- Phase C: trace band at M*, choose G rows ----------------
+async function phaseC(ev, P, M, anchor) {
+  const evM = (Gi, bi) => ev(M, Gi, bi);
+  const k = Math.max(2, Math.ceil(NW / 2));
+  const Bi = Math.round(P.bmax / UB.BQ);
+  log('PHASE C  band trace at MECO=' + M + ' anchor G=' + gfmt(anchor.Gi) + ' b=' + bfmt(anchor.bi) + ' pred=' + f1(anchor.pred, 0), 'hi');
+  const rows = {};
+  const r0 = await UB.rangeAtG(evM, P, anchor.Gi, anchor.bi, k); rows[anchor.Gi] = r0;
+  const line = (r, prev) => gfmt(r.Gi) + '  ' + bfmt(r.lo) + ' ' + bfmt(r.hi) + '  w=' + (r.width * UB.BQ).toFixed(3) + (r.clipLo ? ' CLIP-' : '') + (r.clipHi ? ' CLIP+' : '') + (r.nonContig ? ' NONCONTIG' : '');
+  log(line(r0), 'ok');
+  const span = 12;
+  for (const dir of [+1, -1]) {
+    let prev = r0, shift = 0, Gi = anchor.Gi;
+    for (let n = 0; n < span; n++) {
+      if (STOP) return rows;
+      Gi += dir; if (Gi < P.gLoI || Gi > P.gHiI) break;
+      const c = Math.round(prev.mid + shift), st = Math.max(Math.round(0.05 / UB.BQ), Math.round(prev.width / 2));
+      const cands = [Math.max(-Bi, Math.min(Bi, c))];
+      for (let d = st; d <= 2 * Bi; d += st) for (const s of [+1, -1]) { const b = c + s * d; if (b >= -Bi && b <= Bi) cands.push(b); }
+      let hit = null;
+      for (let i = 0; i < cands.length && !hit; i += NW) {
+        const rs = await Promise.all(cands.slice(i, i + NW).map((b) => evM(Gi, b)));
+        hit = rs.find((r) => UB.pass(r, P)) || null;
+      }
+      if (!hit) { log('G=' + gfmt(Gi) + ': no pass -> band ends this side', 'dim'); break; }
+      const r = await UB.rangeAtG(evM, P, Gi, hit.bi, k);
+      rows[Gi] = r; log(line(r), 'ok'); shift = r.mid - prev.mid; prev = r;
+    }
+  }
+  return rows;
+}
+
+function report(P, M, anchor, rows) {
+  const chosen = UB.pickRows(rows, P.K, anchor.Gi);
+  log(''); log('=============== BOOTSTRAP RESULT  alt=' + P.alt + ' km ===============', 'hi');
+  log('MECO = ' + M + '   (best pred residual ' + f1(anchor.pred, 0) + ' kg at G=' + gfmt(anchor.Gi) + ' bias=' + bfmt(anchor.bi) + ')', 'ok');
+  log('coast-feasible only (COAST_WAIT + circ physics + pred>=' + P.predMin + '): FULL/tuneLead NOT yet verified -> use the score scan next');
+  for (const r of chosen) {
+    const w = r.width, tr = Math.round(w * P.trim);
+    const lo = r.lo + tr, hi = r.hi - tr;
+    const rawW = (r.width * UB.BQ).toFixed(3);
+    const step = Math.max(0.01, Math.round(((hi - lo) * UB.BQ / 10) * 100) / 100);
+    log('G=' + gfmt(r.Gi) + '  window [' + bfmt(r.lo) + ', ' + bfmt(r.hi) + '] w=' + rawW + (r.clipLo ? ' CLIP-' : '') + (r.clipHi ? ' CLIP+' : '));
+    log('   score-scan inputs ->  G ' + (r.Gi / 100).toFixed(2) + '   MECO ' + M + '   alt ' + P.alt + '   bias lo ' + (lo * UB.BQ).toFixed(3) + '   hi ' + (hi * UB.BQ).toFixed(3) + '   step ' + step.toFixed(2), 'ok');
+  }
+}
+
+$('go').onclick = async () => {
+  $('go').disabled = true; STOP = false; EVALS = 0;
+  const t0 = performance.now();
+  try {
+    const P = params(); await getPool(); const ev = makeEv(P);
+    log('--- universal bootstrap  alt=' + P.alt + '  T=' + (P.Tn * 0.000125) + '  K=' + P.K + '  predTarget=' + P.predTarget + ' predMin=' + P.predMin + ' ---', 'dim');
+    $('status').textContent = 'phase A...';
+    const table = await phaseA(ev, P);
+    $('status').textContent = 'phase B...';
+    const bk = await phaseB(ev, P, table);
+    if (!bk || !bk.best) { log('NO feasible point at any MECO tried. Widen MECO range / G range, or lower pred min.', 'bad'); return; }
+    $('status').textContent = 'phase C...';
+    const rows = await phaseC(ev, P, bk.M, bk.best);
+    report(P, bk.M, bk.best, rows);
+    log('total evals: ' + EVALS + '   wall ' + ((performance.now() - t0) / 1000).toFixed(0) + 's');
+  } catch (e) { log('ERROR: ' + (e && e.message || e), 'bad'); }
+  $('status').textContent = 'done'; $('go').disabled = false;
+};
+$('stop').onclick = () => { STOP = true; $('status').textContent = 'stopping...'; };
+$('copy').onclick = () => { navigator.clipboard && navigator.clipboard.writeText(logText); };
+</script>
+</body>
+</html>
