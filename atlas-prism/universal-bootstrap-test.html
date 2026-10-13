@@ -323,7 +323,7 @@ function report(P, M, anchor, rows) {
     const lo = r.lo + tr, hi = r.hi - tr;
     const rawW = (r.width * UB.BQ).toFixed(3);
     const step = Math.max(0.01, Math.round(((hi - lo) * UB.BQ / 10) * 100) / 100);
-    log('G=' + gfmt(r.Gi) + '  window [' + bfmt(r.lo) + ', ' + bfmt(r.hi) + '] w=' + rawW + (r.clipLo ? ' CLIP-' : '') + (r.clipHi ? ' CLIP+' : '));
+    log('G=' + gfmt(r.Gi) + '  window [' + bfmt(r.lo) + ', ' + bfmt(r.hi) + '] w=' + rawW + (r.clipLo ? ' CLIP-' : '') + (r.clipHi ? ' CLIP+' : ''));
     log('   score-scan inputs ->  G ' + (r.Gi / 100).toFixed(2) + '   MECO ' + M + '   alt ' + P.alt + '   bias lo ' + (lo * UB.BQ).toFixed(3) + '   hi ' + (hi * UB.BQ).toFixed(3) + '   step ' + step.toFixed(2), 'ok');
   }
 }
