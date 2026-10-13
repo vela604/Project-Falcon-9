@@ -25,6 +25,9 @@
     <option value="2000">2000 km manual</option>
     <option value="320">320 km baseline</option>
   </select></label>
+  <label>G lo <input id="glo" value="0.30" style="width:48px"></label>
+  <label>G hi <input id="ghi" value="0.75" style="width:48px"></label>
+  <label>map step <input id="mstep" value="0.03" style="width:48px"></label>
 </div>
 <div class="row">
   <label>alt km <input id="alt" value="2000"></label>
@@ -52,8 +55,17 @@
 // Gi = G in 0.01 deg units (integer). Pass = cls 'OK'.
 // ============================================================================
 const Search = (function () {
-  const GRID = [55, 60, 65, 70, 75];            // coarse sweep, 0.55 .. 0.75
-  const G_LO = 55, G_HI = 75;
+  const range = { lo: 30, hi: 75 };             // G search range in 0.01 units (0.30 .. 0.75)
+  const GRID = [];                              // coarse sweep (step 0.05), filled by setRange
+  const FINE = [];                              // every 0.01, filled by setRange
+  function setRange(lo, hi) {
+    range.lo = lo; range.hi = hi;
+    GRID.length = 0; FINE.length = 0;
+    for (let g = lo; g <= hi; g += 5) GRID.push(g);
+    if (GRID[GRID.length - 1] !== hi) GRID.push(hi);
+    for (let g = lo; g <= hi; g++) FINE.push(g);
+  }
+  setRange(30, 75);
 
   // Find one edge of the passing interval at fixed bias.
   //   side 'low'  -> smallest passing Gi   (G_min when bias = +bmax)
@@ -104,7 +116,6 @@ const Search = (function () {
     return { runs, gis: recs.map((r) => r.Gi), flags };
   }
 
-  const FINE = []; for (let g = G_LO; g <= G_HI; g++) FINE.push(g);
 
   // Pick K candidates spread evenly over the coastDeltaV range of the OK points (min and max included).
   function pickCandidates(recs, K) {
@@ -124,7 +135,7 @@ const Search = (function () {
     for (let i = 0; i < n; i++) { const dx = xs[i] - mx, dy = ys[i] - my; sxy += dx * dy; sxx += dx * dx; syy += dy * dy; }
     return (sxx > 0 && syy > 0) ? sxy / Math.sqrt(sxx * syy) : NaN;
   }
-  return { GRID, FINE, G_LO, G_HI, edge, contiguous, pickCandidates, pearson };
+  return { GRID, FINE, range, setRange, edge, contiguous, pickCandidates, pearson };
 })();
 </script>
 
@@ -168,12 +179,19 @@ $('preset').onchange = () => {
 };
 
 function params() {
+  const P = params0();
+  Search.setRange(P.glo, P.ghi);
+  return P;
+}
+function params0() {
   const alt = parseFloat($('alt').value);
   const T = parseFloat($('T').value), lead = parseFloat($('lead').value);
   return {
     alt, tol: parseFloat($('tol').value), bmax: parseFloat($('bmax').value),
     Tn: Math.round(T / 0.000125), li: Math.round(lead / 0.0125),
     meco: Math.round(parseFloat($('meco').value)), K: parseInt($('K').value, 10) || 7,
+    glo: Math.round(parseFloat($('glo').value) * 100), ghi: Math.round(parseFloat($('ghi').value) * 100),
+    mstep: Math.max(1, Math.round(parseFloat($('mstep').value) * 100)),
   };
 }
 
@@ -235,7 +253,7 @@ function fmtEdge(r) {
     ? 'smallest pass G=' + g(r.Gi) + '  (G=' + g(r.failGi) + ' fails)'
     : 'largest  pass G=' + g(r.Gi) + '  (G=' + g(r.failGi) + ' fails)';
   if (r.status === 'AT_RANGE_EDGE') return 'NO BOUNDARY IN RANGE: ' + r.note;
-  return 'NO PASS in fine sweep (G 0.55..0.75): window empty at this bias';
+  return 'NO PASS in fine sweep (whole G range): window empty at this bias';
 }
 
 // Edge search; if the coarse sweep sees no pass, retry once on the 1-step grid (narrow windows, e.g. 320 km).
@@ -264,19 +282,20 @@ $('run').onclick = () => guarded(async () => {
   header(P, 'boundary search');
   await Promise.all(Search.GRID.flatMap((g) => [ev(g, +B), ev(g, -B)]));
   log('--- bisection ---', 'dim');
+  // WIDEST bracket: low-G edge uses the most aggressive turn (-B), high-G edge the most resisting (+B).
   const [A, Bd, A2, B2] = await Promise.all([
-    edgeAuto(ev, +B, 'low'),     // Search A : G_min (bias = +B)
-    edgeAuto(ev, -B, 'high'),    // Search B : G_max (bias = -B)
-    edgeAuto(ev, +B, 'high'),    // extra    : top edge of the +B window
-    edgeAuto(ev, -B, 'low'),     // extra    : bottom edge of the -B window
+    edgeAuto(ev, -B, 'low'),     // Search A : G_min (bias = -B)
+    edgeAuto(ev, +B, 'high'),    // Search B : G_max (bias = +B)
+    edgeAuto(ev, -B, 'high'),    // extra    : top edge of the -B window
+    edgeAuto(ev, +B, 'low'),     // extra    : bottom edge of the +B window
   ]);
   log(''); log('=== RESULT ===');
-  log('G_min  (bias=+' + B + '): ' + fmtEdge(A));
-  log('G_max  (bias=-' + B + '): ' + fmtEdge(Bd));
-  log('extra  top    edge at bias=+' + B + ': ' + fmtEdge(A2), 'dim');
-  log('extra  bottom edge at bias=-' + B + ': ' + fmtEdge(B2), 'dim');
+  log('G_min  (bias=-' + B + '): ' + fmtEdge(A));
+  log('G_max  (bias=+' + B + '): ' + fmtEdge(Bd));
+  log('extra  top    edge at bias=-' + B + ': ' + fmtEdge(A2), 'dim');
+  log('extra  bottom edge at bias=+' + B + ': ' + fmtEdge(B2), 'dim');
   if (A.status === 'FOUND' && Bd.status === 'FOUND')
-    log('safe G zone ≈ [' + (A.Gi / 100).toFixed(2) + ', ' + (Bd.Gi / 100).toFixed(2) + ']  width ' + ((Bd.Gi - A.Gi) / 100).toFixed(2) + '°');
+    log('widest G bracket ≈ [' + (A.Gi / 100).toFixed(2) + ', ' + (Bd.Gi / 100).toFixed(2) + ']  width ' + ((Bd.Gi - A.Gi) / 100).toFixed(2) + '° (corners at different biases)');
   for (const b of [+B, -B]) {
     const c = Search.contiguous(ev.cache, b);
     if (c.runs > 1) log('WARNING bias ' + b + ': pass set not contiguous in tried G (' + c.runs + ' runs) -> bisection assumption broken, use Full scan', 'bad');
@@ -289,7 +308,7 @@ function biasList(B) { const out = []; for (let b = -Math.floor(B); b <= Math.fl
 $('map').onclick = () => guarded(async () => {
   const P = params(); await getPool(); const ev = getEv(P);
   const bl = biasList(P.bmax), gl = [];
-  for (let g = Search.G_LO; g <= Search.G_HI; g += 2) gl.push(g);
+  for (let g = Search.range.lo; g <= Search.range.hi; g += P.mstep) gl.push(g);
   header(P, 'window map (' + (bl.length * gl.length) + ' COAST evals)');
   const jobs = []; for (const g of gl) for (const b of bl) jobs.push(ev(g, b));
   await Promise.all(jobs);
@@ -337,12 +356,12 @@ $('best').onclick = () => guarded(async () => {
 
 $('scan').onclick = () => guarded(async () => {
   const P = params(); await getPool(); const ev = getEv(P), B = P.bmax;
-  header(P, 'full scan (' + (21 * 2) + ' evals)');
+  header(P, 'full scan (' + (Search.FINE.length * 2) + ' evals)');
   const jobs = [];
-  for (let g = Search.G_LO; g <= Search.G_HI; g++) jobs.push(ev(g, +B), ev(g, -B));
+  for (const g of Search.FINE) jobs.push(ev(g, +B), ev(g, -B));
   await Promise.all(jobs);
   log(''); log('G     | b=+' + B + '                 | b=-' + B);
-  for (let g = Search.G_LO; g <= Search.G_HI; g++) {
+  for (const g of Search.FINE) {
     const p = ev.cache[g + '|' + Math.round(B / 0.0001)], n = ev.cache[g + '|' + Math.round(-B / 0.0001)];
     const s = (r) => (r.cls.padEnd(9) + ' Ω' + f1(r.maxOmega, 1)).padEnd(22);
     log((g / 100).toFixed(2) + '  | ' + s(p) + '| ' + s(n));
