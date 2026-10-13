@@ -194,6 +194,12 @@
       vrMinStageBurn: Infinity, stageVrNeg: false, stageVrNegAltKm: NaN, stageVrNegT: NaN,
       eCoast: NaN, apoCoastKm: NaN, periCoastKm: NaN, tToApoCoastS: NaN,
   altCoastKm: NaN, vrCoast: NaN, vtCoast: NaN, coastEntryT: NaN,
+  // ---- circ-burn physics feasibility at COAST_WAIT entry (all values read from the sim, no constants) ----
+  // Same formula guidance uses at coast-rotate end: fuel = M*(1-exp(-dv/Ve)), t = fuel/maxMassFlowRate (engines[0]).
+  circM0Kg: NaN, circDryKg: NaN, circVe: NaN, circMdotMax: NaN,
+  circDvMaxMps: NaN,     // Ve*ln(M0/dry): all stage fuel burned, payload still attached
+  circFuelNeedKg: NaN,   // M0*(1-exp(-coastDeltaV/Ve))
+  circTBurnS: NaN,       // circFuelNeedKg / maxMassFlowRate
   coastDeltaV: NaN, // v_circ(target) − v_apo_of_current_coast_orbit, at COAST_WAIT entry, from Guidance.getGuideStatus().coastDeltaV
       // ---- circ burn signals ----
       vrMin: Infinity,
@@ -290,6 +296,18 @@
   // Δv signal (Step Δv 1/4): guidance publishes coastDeltaV = v_circ(target_alt) − v_apo(current coast orbit)
   // by the time COAST_WAIT is entered (set at end of COAST_ROTATE in guidance-blocks.js).
   m.coastDeltaV = (gs && Number.isFinite(gs.coastDeltaV)) ? gs.coastDeltaV : NaN;
+  {
+    const en0 = b.engines && b.engines[0];
+    const dry = b.dryMass || 0, fuel = b.fuelMass || 0, m0 = dry + fuel;
+    if (en0 && m0 > 0 && dry > 0 && Number.isFinite(en0.Ve) && en0.Ve > 0) {
+      m.circM0Kg = m0; m.circDryKg = dry; m.circVe = en0.Ve; m.circMdotMax = en0.maxMassFlowRate;
+      m.circDvMaxMps = en0.Ve * Math.log(m0 / dry);
+      if (Number.isFinite(m.coastDeltaV)) {
+        m.circFuelNeedKg = m0 * (1 - Math.exp(-m.coastDeltaV / en0.Ve));
+        if (en0.maxMassFlowRate > 0) m.circTBurnS = m.circFuelNeedKg / en0.maxMassFlowRate;
+      }
+    }
+  }
   if (stopAt === 'COAST_WAIT_ENTRY') { end('COAST_WAIT_ENTRY'); i++; break; }
   // Dynamic cap: coast takes tToApo, then CH->CIRC->clear ~60 s. Allow +400 s margin. Only ever tightens.
   if (Number.isFinite(o.tToApo) && o.tToApo > 0) {
