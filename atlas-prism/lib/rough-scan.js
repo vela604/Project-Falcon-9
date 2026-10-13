@@ -221,7 +221,7 @@
         } else {
           p = Object.assign({}, basePoint, { meco });
         }
-        return pool.runEval(p, { stopAt: 'COAST_WAIT_ENTRY', quiet: true })
+        return pool.runEval(p, { stopAt: 'COAST_WAIT_ENTRY', quiet: true, targetAltKm: altKm })
           .then(m => ({ meco, m, point: p }))
           .catch(e => ({ meco, error: e.message }));
       }));
@@ -233,13 +233,37 @@
         if (m.endReason !== 'COAST_WAIT_ENTRY' || !Number.isFinite(m.coastDeltaV) || !Number.isFinite(m.stageFuelAtStopKg)) {
           return { meco: r.meco, cls: 'fail', reason: m.endReason };
         }
+        // Apogee guard — without this, a wrong-MECO probe can enter
+        // COAST_WAIT with a coast orbit whose apogee is far below the
+        // target altitude. coastDeltaV then compares v_circ(target) to
+        // v_apo(much-lower-orbit), so the pred residual lands in-band
+        // for a physically impossible point (e.g. 2000 km target
+        // reported "in band" at MECO 63260 while the actual apogee is
+        // hundreds of km short).
+        const apoTol = (root.TunerConfig && root.TunerConfig.limits &&
+                        root.TunerConfig.limits.coastApoTolKm != null)
+          ? root.TunerConfig.limits.coastApoTolKm : 1;
+        if (!(m.apoCoastKm >= altKm - apoTol)) {
+          return { meco: r.meco, cls: 'fail',
+                   reason: 'apo_short ' + (Number.isFinite(m.apoCoastKm) ? m.apoCoastKm.toFixed(1) : '?') +
+                           ' < ' + (altKm - apoTol).toFixed(1) };
+        }
         const pred = (mc + m.stageFuelAtStopKg) * Math.exp(-m.coastDeltaV / Ve) - mc;
+        // predFloor lets the caller relax the ideal-Tsiolkovsky negative
+        // rejection. The formula ignores gravity/thrust losses (which
+        // would make the actual need LARGER) but also ignores guidance's
+        // conservative Δv estimate and the payload eject kick (which
+        // make the actual need SMALLER). Net error on 2000 km targets
+        // can be tens to hundreds of kg, so a small negative pred can
+        // still circularize successfully.
+        const predFloor = (opts.predFloorKg != null) ? opts.predFloorKg : 0;
         let cls;
-        if (pred < 0) cls = 'fail';                    // stage fuel insufficient for circ burn
+        if (pred < predFloor) cls = 'fail';
         else if (pred > bandHi) cls = 'up';
         else if (pred < bandLo) cls = 'down';
         else cls = 'in';
         return { meco: r.meco, cls, pred, m, point: r.point,
+                 stageFuelKg: m.stageFuelAtStopKg, coastDV: m.coastDeltaV,
                  reason: cls === 'fail' ? 'neg-pred (stage-fuel-insufficient)' : null };
       });
 
@@ -251,7 +275,11 @@
         const bs = Number.isFinite(pt.bi) ? (pt.bi * Q.bias).toFixed(3) : '—';
         const ls = Number.isFinite(pt.li) ? (pt.li * Q.lead).toFixed(3) : '—';
         const tag = row.cls === 'in' ? 'IN  ' : row.cls === 'up' ? 'UP  ' : row.cls === 'down' ? 'DOWN' : 'FAIL';
-        const predStr = Number.isFinite(row.pred) ? 'pred=' + row.pred.toFixed(1) + ' kg' : 'pred=—';
+        const predStr = Number.isFinite(row.pred)
+          ? 'pred=' + row.pred.toFixed(1) + ' kg  sf=' +
+            (Number.isFinite(row.stageFuelKg) ? row.stageFuelKg.toFixed(0) : '?') + '  dV=' +
+            (Number.isFinite(row.coastDV) ? row.coastDV.toFixed(0) : '?')
+          : 'pred=—';
         say('  ' + row.meco + '  ' + tag + '  G=' + Gs + ' b=' + bs + ' lead=' + ls + '  ' + predStr +
             (row.cls === 'fail' ? '  (' + row.reason + ')' : ''));
       }
@@ -286,7 +314,8 @@
       }
     }
 
-    const cands = history.filter(r => Number.isFinite(r.pred) && r.pred <= 200 && r.pred >= 0);
+    const predFloorFinal = (opts.predFloorKg != null) ? opts.predFloorKg : 0;
+    const cands = history.filter(r => Number.isFinite(r.pred) && r.pred <= 200 && r.pred >= predFloorFinal);
     cands.sort((a, b) => Math.abs(a.pred - targetRes) - Math.abs(b.pred - targetRes));
     const fb = cands[0] || null;
     if (fb) say('fallback: MECO=' + fb.meco + ' pred=' + fb.pred.toFixed(1));
