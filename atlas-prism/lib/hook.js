@@ -298,7 +298,14 @@
   m.coastDeltaV = (gs && Number.isFinite(gs.coastDeltaV)) ? gs.coastDeltaV : NaN;
   {
     const en0 = b.engines && b.engines[0];
-    const dry = b.dryMass || 0, fuel = b.fuelMass || 0, m0 = dry + fuel;
+    // b.dryMass is a STALE cached scalar for bodies with members (physics.js derivatives() says so): it is set at
+    // stage separation (fairing still on) and never refreshed by splitFairingOnActiveBody -> ~1905 kg too high.
+    // The integrator uses currentGeometry(b).M (fresh stackMassProps), so use the same number here.
+    const fuel = b.fuelMass || 0;
+    const geom = (typeof currentGeometry === 'function' && b.members && b.members.length) ? currentGeometry(b) : null;
+    const m0 = (geom && Number.isFinite(geom.M) && geom.M > fuel) ? geom.M : (b.dryMass || 0) + fuel;
+    const dry = m0 - fuel;
+    m.circDryStaleKg = b.dryMass || 0;   // diagnostic: stale cached value (expect ~ +1905 vs circDryKg before fairing fix)
     if (en0 && m0 > 0 && dry > 0 && Number.isFinite(en0.Ve) && en0.Ve > 0) {
       m.circM0Kg = m0; m.circDryKg = dry; m.circVe = en0.Ve; m.circMdotMax = en0.maxMassFlowRate;
       m.circDvMaxMps = en0.Ve * Math.log(m0 / dry);
