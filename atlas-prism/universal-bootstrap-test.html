@@ -39,7 +39,9 @@
 </div>
 <div class="row">
   <label>pred target kg <input id="pt" value="150" style="width:48px"></label>
-  <label>pred min kg <input id="pmin" value="100" style="width:48px"></label>
+  <label>pred min kg <input id="pmin" value="110" style="width:48px"></label>
+  <label>pred max kg <input id="pmax" value="190" style="width:48px"></label>
+  <label>bias rows <input id="nbr" value="5" style="width:34px"></label>
   <label>apo tol -/+ km <input id="tol" value="2" style="width:38px"><input id="tolhi" value="20" style="width:38px"></label>
   <label>t frac <input id="tfrac" value="0.9" style="width:40px"></label>
   <label>k corr <input id="kc" value="0" style="width:40px"></label>
@@ -64,7 +66,14 @@
 const UB = (function () {
   const BQ = 0.0001;                                    // bias quantum, deg
   const pass = (r, P) => !!(r && r.ok && Number.isFinite(r.pred) && r.pred >= P.predMin);
-  const maxPred = (recs, P) => recs.filter((r) => pass(r, P)).reduce((b, r) => (!b || r.pred > b.pred) ? r : b, null);
+  // Rank (lower = better). Objective = shortest mission time INSIDE the residual band [predMin, predMax].
+  // Above the band (too much spare fuel) ranks after every in-band point, closer-to-band first. Below predMin / not OK = Infinity.
+  const key = (r, P) => {
+    if (!pass(r, P) || !Number.isFinite(r.tEst)) return Infinity;
+    if (r.pred <= P.predMax) return r.tEst;
+    return 1e6 + (r.pred - P.predMax);
+  };
+  const maxPred = (recs, P) => recs.filter((r) => pass(r, P)).reduce((b, r) => (!b || key(r, P) < key(b, P)) ? r : b, null);
 
   // Largest passing t in (t0, bound], t = sign*bi. k-ary search, k probes per round. ev(Gi, bi) -> rec.
   async function edgeBias(ev, P, Gi, b0, sign, bound, res, k, onRound) {
@@ -123,7 +132,7 @@ const UB = (function () {
       const pts = [];
       for (const dg of [-1, 0, 1]) for (const db of [-1, 0, 1]) if (dg || db) pts.push({ Gi: c.Gi + dg * rG, bi: c.bi + db * sb });
       const nb = maxPred(await evalSet(pts), P);
-      if (nb && nb.pred > best.pred + 0.5) { best = nb; c = { Gi: nb.Gi, bi: nb.bi }; continue; }
+      if (nb && key(nb, P) < key(best, P) - 0.5) { best = nb; c = { Gi: nb.Gi, bi: nb.bi }; continue; }
       if (rG > 1) { rG = Math.ceil(rG / 2); sb = Math.max(1, Math.round(sb / 2)); }
       else if (sb > Math.round(0.03 / BQ)) sb = Math.round(sb / 2);
       else break;
@@ -145,7 +154,7 @@ const UB = (function () {
     return chosen.sort((a, b) => a.Gi - b.Gi);
   }
 
-  return { BQ, pass, maxPred, edgeBias, rangeAtG, localBest, pickRows };
+  return { BQ, pass, key, maxPred, edgeBias, rangeAtG, localBest, pickRows };
 })();
 </script>
 
@@ -179,7 +188,7 @@ function params() {
     mLo: Math.round(num('mlo')), mHi: Math.round(num('mhi')), mN: Math.max(3, parseInt($('mn').value, 10) || 7), mq: Math.max(1, Math.round(num('mq'))),
     gLoI: Math.round(num('glo') * 100), gHiI: Math.round(num('ghi') * 100), gStep: Math.max(1, Math.round(num('gstep') * 100)),
     Tn: Math.round(num('T') / 0.000125), li: Math.round(5.53 / 0.0125),
-    predTarget: num('pt'), predMin: num('pmin'), tol: num('tol'), tolHi: num('tolhi'), tfrac: num('tfrac'), kc: num('kc'), dvMin: num('dvmin'), tbMin: num('tbmin'), tApoMax: num('tapomax') || 0, trim: num('trim') / 100,
+    predTarget: num('pt'), predMin: num('pmin'), predMax: num('pmax'), nbr: Math.max(3, parseInt($('nbr').value, 10) || 5), tol: num('tol'), tolHi: num('tolhi'), tfrac: num('tfrac'), kc: num('kc'), dvMin: num('dvmin'), tbMin: num('tbmin'), tApoMax: num('tapomax') || 0, trim: num('trim') / 100,
     bres: 0.01,
   };
   return P;
@@ -213,7 +222,8 @@ function makeEv(P) {
       const cls = classify(m, P);
       const pred = (Number.isFinite(m.circM0Kg) && Number.isFinite(m.circVe) && Number.isFinite(m.coastDeltaV))
         ? m.circM0Kg * Math.exp(-m.coastDeltaV / m.circVe) - m.circDryKg + P.kc * m.coastDeltaV : NaN;   // + empirical k*dv (5-pt fit, resid <= ~5 kg)
-      const rec = { M, Gi, bi, cls, ok: cls === 'OK', pred, dv: m.coastDeltaV, apoC: m.apoCoastKm, wall: m.wallMs };
+      const rec = { M, Gi, bi, cls, ok: cls === 'OK', pred, dv: m.coastDeltaV, apoC: m.apoCoastKm, wall: m.wallMs,
+        tApo: m.tToApoCoastS, tEst: m.simTimeEnd + m.tToApoCoastS + 15 };   // coast-entry time + coast + ~15 s (circ+clear), from 530.7+116.3 -> 659 s ref
       cache.set(key, rec); inflight.delete(key); EVALS++;
       if (EVALS % 10 === 0) $('status').textContent = 'evals done: ' + EVALS;
       return rec;
@@ -232,7 +242,7 @@ function linspace(a, b, n) { const out = []; for (let i = 0; i < n; i++) out.pus
 async function phaseA(ev, P) {
   const Ms = linspace(P.mLo, P.mHi, P.mN), Bi = Math.round(P.bmax / UB.BQ);
   const Gs = []; for (let g = P.gLoI; g <= P.gHiI; g += P.gStep) Gs.push(g);
-  const rows = [+Bi, 0, -Bi];
+  const rows = []; for (let j = 0; j < P.nbr; j++) rows.push(Math.round(-Bi + 2 * Bi * j / (P.nbr - 1)));
   log('PHASE A  coarse MECO map: ' + Ms.length + ' MECO x ' + rows.length + ' bias rows x ' + Gs.length + ' G = ' + (Ms.length * rows.length * Gs.length) + ' evals max', 'hi');
   const jobs = [];
   for (const M of Ms) for (const b of rows) for (const g of Gs) jobs.push(ev(M, g, b));
@@ -242,50 +252,58 @@ async function phaseA(ev, P) {
     const cnt = {}; recs.forEach((r) => { cnt[r.cls] = (cnt[r.cls] || 0) + 1; });
     return { M, np, best, cnt };
   });
-  log('MECO     pass  bestPred  at(G,b)            other classes');
-  table.forEach((t) => log(String(t.M).padEnd(8) + String(t.np).padStart(5) + f1(t.best ? t.best.pred : NaN, 0).padStart(10) + '  ' +
+  log('MECO     pass  bestPred  tEst   at(G,b)            other classes');
+  table.forEach((t) => log(String(t.M).padEnd(8) + String(t.np).padStart(5) + f1(t.best ? t.best.pred : NaN, 0).padStart(10) + f1(t.best ? t.best.tEst : NaN, 0).padStart(6) + '  ' +
     (t.best ? (gfmt(t.best.Gi) + ',' + bfmt(t.best.bi)) : '--').padEnd(18) + ' ' + Object.keys(t.cnt).filter((k) => k !== 'OK').map((k) => k + ':' + t.cnt[k]).join(' '), t.best ? 'ok' : 'dim'));
   return table;
 }
 
-// ---------------- Phase B: refine MECO frontier ----------------
+// ---------------- Phase B: joint (MECO, G, bias) search on rank = min mission time inside residual band ----------------
+async function jointSearch(ev, P, seed, cap, tag) {
+  const Bi = Math.round(P.bmax / UB.BQ);
+  let c = { M: seed.M, Gi: seed.Gi, bi: seed.bi }, best = seed, used = 0;
+  let sM = Math.max(P.mq, 2000), rG = 2, sb = Math.round(0.5 / UB.BQ);
+  const minSb = Math.round(0.03 / UB.BQ);
+  while (used < cap && !STOP) {
+    const pts = [];
+    for (const dm of [-1, 0, 1]) for (const dg of [-1, 0, 1]) for (const db of [-1, 0, 1]) {
+      if (!dm && !dg && !db) continue;
+      const M = Math.round((c.M + dm * sM) / 10) * 10, Gi = c.Gi + dg * rG, bi = c.bi + db * sb;
+      if (M < P.mLo || M > P.mHi || Gi < P.gLoI || Gi > P.gHiI || Math.abs(bi) > Bi) continue;
+      pts.push({ M, Gi, bi });
+    }
+    used += pts.length;
+    const rs = await Promise.all(pts.map((p) => ev(p.M, p.Gi, p.bi)));
+    const nb = UB.maxPred(rs, P);
+    if (nb && UB.key(nb, P) < UB.key(best, P) - 0.5) {
+      best = nb; c = { M: nb.M, Gi: nb.Gi, bi: nb.bi };
+      log('  ' + tag + ' M=' + nb.M + ' G=' + gfmt(nb.Gi) + ' b=' + bfmt(nb.bi) + ' pred=' + f1(nb.pred, 0) + ' tEst=' + f1(nb.tEst, 0) + 's tApo=' + f1(nb.tApo, 0), 'dim');
+      continue;
+    }
+    let shrunk = false;
+    if (sM > P.mq) { sM = Math.max(P.mq, Math.round(sM / 2 / 10) * 10); shrunk = true; }
+    if (rG > 1) { rG = Math.ceil(rG / 2); shrunk = true; }
+    if (sb > minSb) { sb = Math.max(minSb, Math.round(sb / 2)); shrunk = true; }
+    if (!shrunk) break;
+  }
+  return best;
+}
+
 async function phaseB(ev, P, table) {
-  const feas = table.filter((t) => t.best && t.best.pred >= P.predTarget);
-  let lo, hi, seed;
-  if (feas.length) {
-    const top = feas[feas.length - 1]; lo = top.M; seed = top.best;
-    const above = table.filter((t) => t.M > lo); hi = above.length ? above[0].M : lo;
-  } else {
-    const any = table.filter((t) => t.best);
-    if (!any.length) return null;
-    const mx = any.reduce((a, b) => (b.best.pred > a.best.pred ? b : a));
-    log('no MECO reaches pred>=' + P.predTarget + ' on the coarse map; best is MECO ' + mx.M + ' (pred ' + f1(mx.best.pred, 0) + ') -> searching below it', 'bad');
-    hi = mx.M; lo = table[0].M; seed = mx.best;
-    if (lo >= hi) return { M: mx.M, best: mx.best };
+  const all = Array.from(ev.cache.values()).filter((r) => Number.isFinite(UB.key(r, P)));
+  if (!all.length) return null;
+  all.sort((a, b) => UB.key(a, P) - UB.key(b, P));
+  const seeds = [];
+  for (const r of all) { if (seeds.length >= 3) break; if (seeds.every((q) => Math.abs(q.M - r.M) >= 1000 || Math.abs(q.bi - r.bi) >= 5000)) seeds.push(r); }
+  log('PHASE B  joint search (M,G,bias) -> min mission time with pred in [' + P.predMin + ', ' + P.predMax + ']  seeds: ' +
+    seeds.map((r) => r.M + '/' + gfmt(r.Gi) + '/' + bfmt(r.bi) + ' pred ' + f1(r.pred, 0) + ' t ' + f1(r.tEst, 0)).join(' | '), 'hi');
+  let champ = null;
+  for (let i = 0; i < seeds.length && !STOP; i++) {
+    const b = await jointSearch(ev, P, seeds[i], 130, 's' + (i + 1));
+    log('  seed ' + (i + 1) + ' -> M=' + b.M + ' G=' + gfmt(b.Gi) + ' b=' + bfmt(b.bi) + ' pred=' + f1(b.pred, 0) + ' tEst=' + f1(b.tEst, 0) + 's' + (b.pred <= P.predMax ? '  IN BAND' : '  above band'), 'ok');
+    if (!champ || UB.key(b, P) < UB.key(champ, P)) champ = b;
   }
-  const known = { [lo]: seed };
-  log('PHASE B  MECO bracket [' + lo + ', ' + hi + ']  seed G=' + gfmt(seed.Gi) + ' b=' + bfmt(seed.bi) + ' pred=' + f1(seed.pred, 0), 'hi');
-  let bestKnown = feas.length ? { M: lo, best: seed } : null;
-  const k = Math.max(2, Math.min(4, NW - 1));
-  for (let round = 1; round <= 8 && hi - lo > P.mq; round++) {
-    const Mp = []; for (let j = 1; j <= k; j++) { const m = Math.round((lo + (hi - lo) * j / (k + 1)) / 10) * 10; if (m > lo && m < hi && !Mp.includes(m)) Mp.push(m); }
-    if (!Mp.length) break;
-    const res = await Promise.all(Mp.map((M) => UB.localBest(ev, P, M, seed).then((b) => ({ M, b }))));
-    log('  r' + round + ': ' + res.map((r) => r.M + (r.b ? ('=' + f1(r.b.pred, 0)) : '=none')).join('  '), 'dim');
-    let nlo = lo, nhi = hi;
-    res.sort((a, b) => a.M - b.M);
-    for (const r of res) { if (r.b && r.b.pred >= P.predTarget) { nlo = r.M; seed = r.b; bestKnown = { M: r.M, best: r.b }; } }
-    const above = res.filter((r) => r.M > nlo && !(r.b && r.b.pred >= P.predTarget));
-    if (above.length) nhi = above[0].M; else if (nlo > lo) nhi = hi;
-    if (nlo === lo && nhi === hi) { nhi = res[0].M; }   // nothing feasible: shrink downward
-    lo = nlo; hi = nhi;
-  }
-  if (!bestKnown) {
-    // never reached predTarget: fall back to the highest MECO that has any passing point
-    const fb = await UB.localBest(ev, P, lo, seed);
-    bestKnown = fb ? { M: lo, best: fb } : null;
-  }
-  return bestKnown;
+  return champ ? { M: champ.M, best: champ } : null;
 }
 
 // ---------------- Phase C: trace band at M*, choose G rows ----------------
@@ -330,7 +348,7 @@ async function verifyPoint(P, M, Gi, bi) {
   const fp = { Gi, Tn: P.Tn, bi, li: lr.leadTicks, meco: M };
   const m = await pool.runEval(fp, { targetAltKm: P.alt, quiet: true });
   out.evals++;
-  out.payloadCleared = !!m.payloadCleared; out.apo = m.apogeeKm; out.peri = m.perigeeKm; out.vrEnd = m.vrEnd; out.resid = m.stageResidualKg;
+  out.tEnd = m.simTimeEnd; out.payloadCleared = !!m.payloadCleared; out.apo = m.apogeeKm; out.peri = m.perigeeKm; out.vrEnd = m.vrEnd; out.resid = m.stageResidualKg;
   out.full = out.inBand && lr.lead >= 1 && out.payloadCleared && Math.abs(m.apogeeKm - P.alt) <= 0.5 && Math.abs(m.perigeeKm - P.alt) <= 0.5 && m.vrEnd >= 0;
   return out;
 }
@@ -347,7 +365,7 @@ async function phaseD(P, M, chosen) {
       EVALS += v.evals; res.push(v);
       const tag = v.full ? 'VERIFIED-FULL' : (v.tuneOk ? (!v.inBand ? 'MARGIN-OUT-OF-BAND' : (v.lead < 1 ? 'LEAD-AT-EDGE' : 'FULL-FAIL')) : 'tuneLead-FAIL');
       log('  G=' + gfmt(v.Gi) + ' b=' + bfmt(v.bi) + '  ' + tag + (v.tuneOk ? '  lead=' + v.lead.toFixed(4) + ' margin=' + f1(v.margin, 2) : '  (' + v.reason + ')') +
-        (v.payloadCleared !== undefined ? '  cleared=' + v.payloadCleared + ' apo=' + f1(v.apo, 2) + ' peri=' + f1(v.peri, 2) + ' vrEnd=' + f1(v.vrEnd, 2) + ' resid=' + f1(v.resid, 0) : ''), v.full ? 'ok' : 'bad');
+        (v.payloadCleared !== undefined ? '  cleared=' + v.payloadCleared + ' apo=' + f1(v.apo, 2) + ' peri=' + f1(v.peri, 2) + ' vrEnd=' + f1(v.vrEnd, 2) + ' resid=' + f1(v.resid, 0) + ' T=' + f1(v.tEnd, 0) + 's' : ''), v.full ? 'ok' : 'bad');
     }
   }
   return res;
@@ -356,7 +374,7 @@ async function phaseD(P, M, chosen) {
 function report(P, M, anchor, rows) {
   const chosen = UB.pickRows(rows, P.K, anchor.Gi);
   log(''); log('=============== BOOTSTRAP RESULT  alt=' + P.alt + ' km ===============', 'hi');
-  log('MECO = ' + M + '   (best pred residual ' + f1(anchor.pred, 0) + ' kg at G=' + gfmt(anchor.Gi) + ' bias=' + bfmt(anchor.bi) + ')', 'ok');
+  log('MECO = ' + M + '   (pred ' + f1(anchor.pred, 0) + ' kg, tEst ' + f1(anchor.tEst, 0) + ' s at G=' + gfmt(anchor.Gi) + ' bias=' + bfmt(anchor.bi) + ')', 'ok');
   log('candidates below are COAST-FEASIBLE ONLY (ideal-Tsiolkovsky filter). Phase D verifies them with tuneLead+FULL.', 'dim');
   for (const r of chosen) {
     const w = r.width, tr = Math.round(w * P.trim);
@@ -374,7 +392,7 @@ $('go').onclick = async () => {
   const t0 = performance.now();
   try {
     const P = params(); await getPool(); const ev = makeEv(P);
-    log('--- universal bootstrap  alt=' + P.alt + '  T=' + (P.Tn * 0.000125) + '  K=' + P.K + '  predTarget=' + P.predTarget + ' predMin=' + P.predMin + ' ---', 'dim');
+    log('--- universal bootstrap  alt=' + P.alt + '  T=' + (P.Tn * 0.000125) + '  K=' + P.K + '  residual band [' + P.predMin + ', ' + P.predMax + ']  bias rows=' + P.nbr + ' ---', 'dim');
     $('status').textContent = 'phase A...';
     const table = await phaseA(ev, P);
     $('status').textContent = 'phase B...';
@@ -387,7 +405,7 @@ $('go').onclick = async () => {
     const ver = await phaseD(P, bk.M, chosen);
     const good = ver.filter((v) => v.full);
     log(''); log('=============== VERIFIED-FULL: ' + good.length + ' / ' + ver.length + ' ===============', good.length ? 'hi' : 'bad');
-    for (const v of good) log('G=' + gfmt(v.Gi) + '  MECO=' + v.M + '  bias=' + bfmt(v.bi) + '  lead=' + v.lead.toFixed(4) + '  resid=' + f1(v.resid, 0) + (v.resid >= 100 && v.resid <= 200 ? '  [in 100-200 band]' : '  [outside band]'), 'ok');
+    for (const v of good) log('G=' + gfmt(v.Gi) + '  MECO=' + v.M + '  bias=' + bfmt(v.bi) + '  lead=' + v.lead.toFixed(4) + '  T=' + f1(v.tEnd, 0) + 's  resid=' + f1(v.resid, 0) + (v.resid >= 100 && v.resid <= 200 ? '  [in 100-200 band]' : '  [outside band]'), 'ok');
     if (!good.length) log('No FULL-verified point at this MECO. Next: try next-best MECO from phase B bracket.', 'bad');
     log('total evals: ' + EVALS + '   wall ' + ((performance.now() - t0) / 1000).toFixed(0) + 's');
   } catch (e) { log('ERROR: ' + (e && e.message || e), 'bad'); }
