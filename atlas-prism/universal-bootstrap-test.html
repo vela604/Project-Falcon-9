@@ -42,6 +42,7 @@
   <label>pred min kg <input id="pmin" value="110" style="width:48px"></label>
   <label>ideal 0=fast..1=ideal <input id="ideal" value="0.5" style="width:40px"></label>
   <label>bias rows <input id="nbr" value="5" style="width:34px"></label>
+  <label>D pts <input id="dpts" value="5" style="width:34px"></label>
   <label>apo tol -/+ km <input id="tol" value="2" style="width:38px"><input id="tolhi" value="20" style="width:38px"></label>
   <label>t frac <input id="tfrac" value="0.9" style="width:40px"></label>
   <label>k corr <input id="kc" value="0" style="width:40px"></label>
@@ -82,7 +83,7 @@ const UB = (function () {
     if (!ps.length) { P.norm = null; return null; }
     const ts = ps.map((r) => r.tEst), ms = ps.map((r) => r.M);
     const tLo = Math.min(...ts), tHi = Math.max(...ts), mLo = Math.min(...ms), mHi = Math.max(...ms);
-    P.norm = { tLo, tSpan: Math.max(1, tHi - tLo), mLo, mSpan: Math.max(1, mHi - mLo) };
+    P.norm = { tLo, tSpan: Math.max(1, P.tScale * tLo), mLo, mSpan: Math.max(1, mHi - mLo, (P.mHi - P.mLo) / 3) };   // robust: ignores far outliers; never degenerate when only one MECO passes
     return P.norm;
   }
   const maxPred = (recs, P) => recs.filter((r) => pass(r, P)).reduce((b, r) => (!b || key(r, P) < key(b, P)) ? r : b, null);
@@ -200,7 +201,7 @@ function params() {
     mLo: Math.round(num('mlo')), mHi: Math.round(num('mhi')), mN: Math.max(3, parseInt($('mn').value, 10) || 7), mq: Math.max(1, Math.round(num('mq'))),
     gLoI: Math.round(num('glo') * 100), gHiI: Math.round(num('ghi') * 100), gStep: Math.max(1, Math.round(num('gstep') * 100)),
     Tn: Math.round(num('T') / 0.000125), li: Math.round(5.53 / 0.0125),
-    predTarget: num('pt'), predMin: num('pmin'), ideal: Math.min(1, Math.max(0, parseFloat($('ideal').value) || 0)), eps: 0.002, nbr: Math.max(3, parseInt($('nbr').value, 10) || 5), tol: num('tol'), tolHi: num('tolhi'), tfrac: num('tfrac'), kc: num('kc'), dvMin: num('dvmin'), tbMin: num('tbmin'), tApoMax: num('tapomax') || 0, trim: num('trim') / 100,
+    predTarget: num('pt'), predMin: num('pmin'), ideal: Math.min(1, Math.max(0, parseFloat($('ideal').value) || 0)), eps: 0.002, tScale: 0.3, dpts: Math.max(3, parseInt($('dpts').value, 10) || 5), nbr: Math.max(3, parseInt($('nbr').value, 10) || 5), tol: num('tol'), tolHi: num('tolhi'), tfrac: num('tfrac'), kc: num('kc'), dvMin: num('dvmin'), tbMin: num('tbmin'), tApoMax: num('tapomax') || 0, trim: num('trim') / 100,
     bres: 0.01,
   };
   return P;
@@ -368,12 +369,12 @@ async function verifyPoint(P, M, Gi, bi, ev) {
 }
 
 async function phaseD(P, M, chosen, ev) {
-  log(''); log('PHASE D  verify (tuneLead CIRC_END -> FULL) on ' + chosen.length + ' rows x up to 3 biases', 'hi');
+  log(''); log('PHASE D  verify (tuneLead CIRC_END -> FULL) on ' + chosen.length + ' rows x ' + P.dpts + ' biases', 'hi');
   const res = [];
   for (const r of chosen) {
     if (STOP) break;
     const w = r.hi - r.lo;
-    const biases = [Math.round((r.lo + r.hi) / 2), Math.round(r.lo + 0.3 * w), Math.round(r.lo + 0.7 * w)];
+    const biases = []; for (let q = 0; q < P.dpts; q++) biases.push(Math.round(r.lo + w * (0.15 + 0.75 * q / (P.dpts - 1))));   // T falls with bias/lead -> sample the whole window up to 90%
     const rs = await Promise.all(biases.map((bi) => verifyPoint(P, M, r.Gi, bi, ev)));
     for (const v of rs) {
       EVALS += v.evals; res.push(v);
@@ -421,6 +422,7 @@ $('go').onclick = async () => {
     const ver = await phaseD(P, bk.M, chosen, ev);
     const good = ver.filter((v) => v.full);
     log(''); log('=============== VERIFIED-FULL: ' + good.length + ' / ' + ver.length + ' ===============', good.length ? 'hi' : 'bad');
+    good.sort((a, b) => a.tEnd - b.tEnd);
     for (const v of good) log('G=' + gfmt(v.Gi) + '  MECO=' + v.M + '  bias=' + bfmt(v.bi) + '  lead=' + v.lead.toFixed(4) + '  T=' + f1(v.tEnd, 0) + 's  resid=' + f1(v.resid, 0) + (v.resid >= 100 && v.resid <= 200 ? '  [in 100-200 band]' : '  [outside band]'), 'ok');
     if (!good.length) log('No FULL-verified point at this MECO. Next: try next-best MECO from phase B bracket.', 'bad');
     log('total evals: ' + EVALS + '   wall ' + ((performance.now() - t0) / 1000).toFixed(0) + 's');
