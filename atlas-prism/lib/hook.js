@@ -309,10 +309,15 @@
     }
   }
   if (stopAt === 'COAST_WAIT_ENTRY') { end('COAST_WAIT_ENTRY'); i++; break; }
-  // Dynamic cap: coast takes tToApo, then CH->CIRC->clear ~60 s. Allow +400 s margin. Only ever tightens.
+  // Dynamic cap: coast takes tToApo, then CH->CIRC->clear ~60 s. Allow +400 s margin. Tightens, or grows (bounded by opts.durationCapMaxS, default 4000 s) when static cap < needed.
   if (Number.isFinite(o.tToApo) && o.tToApo > 0) {
     const dynTicks = i + Math.ceil((o.tToApo + 400) / dt);
     if (dynTicks < maxTicks) { maxTicks = dynTicks; m.capKind = 'dynamic'; m.capTightenedS = state.simTime + o.tToApo + 400; }
+    else if (dynTicks > maxTicks) {   // long-coast trajectories: static cap would CAP before apogee -> GROW, bounded by hard ceiling
+      const hardTicks = Math.ceil((opts.durationCapMaxS || 4000) / dt);
+      const g = Math.min(dynTicks, hardTicks);
+      if (g > maxTicks) { maxTicks = g; m.capKind = 'grown'; m.capTightenedS = state.simTime + o.tToApo + 400; }
+    }
   }
 }
             if (ph === 'CIRCULARIZE' && !circWindow && !circAchSeen) {
