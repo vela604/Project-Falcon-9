@@ -40,7 +40,7 @@
 <div class="row">
   <label>pred target kg <input id="pt" value="150" style="width:48px"></label>
   <label>pred min kg <input id="pmin" value="110" style="width:48px"></label>
-  <label>pred max kg <input id="pmax" value="190" style="width:48px"></label>
+  <label>ideal 0=fast..1=ideal <input id="ideal" value="0.5" style="width:40px"></label>
   <label>bias rows <input id="nbr" value="5" style="width:34px"></label>
   <label>apo tol -/+ km <input id="tol" value="2" style="width:38px"><input id="tolhi" value="20" style="width:38px"></label>
   <label>t frac <input id="tfrac" value="0.9" style="width:40px"></label>
@@ -66,13 +66,25 @@
 const UB = (function () {
   const BQ = 0.0001;                                    // bias quantum, deg
   const pass = (r, P) => !!(r && r.ok && Number.isFinite(r.pred) && r.pred >= P.predMin);
-  // Rank (lower = better). Objective = shortest mission time INSIDE the residual band [predMin, predMax].
-  // Above the band (too much spare fuel) ranks after every in-band point, closer-to-band first. Below predMin / not OK = Infinity.
+  // Rank (lower = better). Hard constraint: pass() = coast-OK and pred >= predMin (NO upper bound on residual: extra fuel is fine).
+  // Soft objective: cost = (1-w)*timeN + w*fuelN, w = P.ideal in [0,1].
+  //   timeN = tEst normalised over Phase-A passing records  (0 = fastest seen)
+  //   fuelN = 1 - MECOn  (bigger MECO = more booster fuel kept, per user; 0 = most fuel saved)
+  // w=0 -> fastest mission above the residual floor.  w=1 -> most booster fuel saved / stage-only-orbit style (long coast OK).
   const key = (r, P) => {
-    if (!pass(r, P) || !Number.isFinite(r.tEst)) return Infinity;
-    if (r.pred <= P.predMax) return r.tEst;
-    return 1e6 + (r.pred - P.predMax);
+    if (!pass(r, P) || !Number.isFinite(r.tEst) || !P.norm) return Infinity;
+    const n = P.norm;
+    const tN = (r.tEst - n.tLo) / n.tSpan, fN = 1 - (r.M - n.mLo) / n.mSpan;
+    return (1 - P.ideal) * tN + P.ideal * fN;
   };
+  function setNorm(recs, P) {
+    const ps = recs.filter((r) => pass(r, P) && Number.isFinite(r.tEst));
+    if (!ps.length) { P.norm = null; return null; }
+    const ts = ps.map((r) => r.tEst), ms = ps.map((r) => r.M);
+    const tLo = Math.min(...ts), tHi = Math.max(...ts), mLo = Math.min(...ms), mHi = Math.max(...ms);
+    P.norm = { tLo, tSpan: Math.max(1, tHi - tLo), mLo, mSpan: Math.max(1, mHi - mLo) };
+    return P.norm;
+  }
   const maxPred = (recs, P) => recs.filter((r) => pass(r, P)).reduce((b, r) => (!b || key(r, P) < key(b, P)) ? r : b, null);
 
   // Largest passing t in (t0, bound], t = sign*bi. k-ary search, k probes per round. ev(Gi, bi) -> rec.
@@ -132,7 +144,7 @@ const UB = (function () {
       const pts = [];
       for (const dg of [-1, 0, 1]) for (const db of [-1, 0, 1]) if (dg || db) pts.push({ Gi: c.Gi + dg * rG, bi: c.bi + db * sb });
       const nb = maxPred(await evalSet(pts), P);
-      if (nb && key(nb, P) < key(best, P) - 0.5) { best = nb; c = { Gi: nb.Gi, bi: nb.bi }; continue; }
+      if (nb && key(nb, P) < key(best, P) - P.eps) { best = nb; c = { Gi: nb.Gi, bi: nb.bi }; continue; }
       if (rG > 1) { rG = Math.ceil(rG / 2); sb = Math.max(1, Math.round(sb / 2)); }
       else if (sb > Math.round(0.03 / BQ)) sb = Math.round(sb / 2);
       else break;
@@ -154,7 +166,7 @@ const UB = (function () {
     return chosen.sort((a, b) => a.Gi - b.Gi);
   }
 
-  return { BQ, pass, key, maxPred, edgeBias, rangeAtG, localBest, pickRows };
+  return { BQ, pass, key, setNorm, maxPred, edgeBias, rangeAtG, localBest, pickRows };
 })();
 </script>
 
@@ -188,7 +200,7 @@ function params() {
     mLo: Math.round(num('mlo')), mHi: Math.round(num('mhi')), mN: Math.max(3, parseInt($('mn').value, 10) || 7), mq: Math.max(1, Math.round(num('mq'))),
     gLoI: Math.round(num('glo') * 100), gHiI: Math.round(num('ghi') * 100), gStep: Math.max(1, Math.round(num('gstep') * 100)),
     Tn: Math.round(num('T') / 0.000125), li: Math.round(5.53 / 0.0125),
-    predTarget: num('pt'), predMin: num('pmin'), predMax: num('pmax'), nbr: Math.max(3, parseInt($('nbr').value, 10) || 5), tol: num('tol'), tolHi: num('tolhi'), tfrac: num('tfrac'), kc: num('kc'), dvMin: num('dvmin'), tbMin: num('tbmin'), tApoMax: num('tapomax') || 0, trim: num('trim') / 100,
+    predTarget: num('pt'), predMin: num('pmin'), ideal: Math.min(1, Math.max(0, parseFloat($('ideal').value) || 0)), eps: 0.002, nbr: Math.max(3, parseInt($('nbr').value, 10) || 5), tol: num('tol'), tolHi: num('tolhi'), tfrac: num('tfrac'), kc: num('kc'), dvMin: num('dvmin'), tbMin: num('tbmin'), tApoMax: num('tapomax') || 0, trim: num('trim') / 100,
     bres: 0.01,
   };
   return P;
@@ -203,7 +215,7 @@ function classify(m, P) {
   if (m.apoCoastKm > P.alt + P.tolHi) return 'APO_LONG';
   if (!Number.isFinite(m.circDvMaxMps) || !Number.isFinite(m.circTBurnS) || !Number.isFinite(m.tToApoCoastS)) return 'OTHER:noPhys';
   // regime gates (from 3 known-good vs 3 bogus: dv 555/696 vs 20-30, tBurn 11/14.5 vs <1). Stage must NOT nearly finish the orbit itself.
-  if (m.coastDeltaV < P.dvMin || m.circTBurnS < P.tbMin) return 'NEAR_ORBIT';
+  if (m.coastDeltaV < P.dvMin * (1 - P.ideal) || m.circTBurnS < P.tbMin * (1 - P.ideal)) return 'NEAR_ORBIT';   // gates relax as ideal->1 (stage-only orbit is then WANTED)
   if (P.tApoMax > 0 && m.tToApoCoastS > P.tApoMax) return 'LONG_COAST';
   // NOTE: old 'dv > dvMax' fuel check removed: known-good G=0.59/MECO 60002 has dv 555 > dvMax 535 and still succeeds. Fuel is judged by corrected pred.
   if (m.circTBurnS > P.tfrac * m.tToApoCoastS) return 'FAIL_PHYS';
@@ -248,7 +260,7 @@ async function phaseA(ev, P) {
   for (const M of Ms) for (const b of rows) for (const g of Gs) jobs.push(ev(M, g, b));
   await Promise.all(jobs);
   const table = Ms.map((M) => {
-    const recs = ev.byM(M), np = recs.filter((r) => UB.pass(r, P)).length, best = UB.maxPred(recs, P);
+    const recs = ev.byM(M), np = recs.filter((r) => UB.pass(r, P)).length, best = recs.filter((r) => UB.pass(r, P)).reduce((b, r) => (!b || r.pred > b.pred) ? r : b, null);
     const cnt = {}; recs.forEach((r) => { cnt[r.cls] = (cnt[r.cls] || 0) + 1; });
     return { M, np, best, cnt };
   });
@@ -275,9 +287,9 @@ async function jointSearch(ev, P, seed, cap, tag) {
     used += pts.length;
     const rs = await Promise.all(pts.map((p) => ev(p.M, p.Gi, p.bi)));
     const nb = UB.maxPred(rs, P);
-    if (nb && UB.key(nb, P) < UB.key(best, P) - 0.5) {
+    if (nb && UB.key(nb, P) < UB.key(best, P) - P.eps) {
       best = nb; c = { M: nb.M, Gi: nb.Gi, bi: nb.bi };
-      log('  ' + tag + ' M=' + nb.M + ' G=' + gfmt(nb.Gi) + ' b=' + bfmt(nb.bi) + ' pred=' + f1(nb.pred, 0) + ' tEst=' + f1(nb.tEst, 0) + 's tApo=' + f1(nb.tApo, 0), 'dim');
+      log('  ' + tag + ' M=' + nb.M + ' G=' + gfmt(nb.Gi) + ' b=' + bfmt(nb.bi) + ' pred=' + f1(nb.pred, 0) + ' tEst=' + f1(nb.tEst, 0) + 's tApo=' + f1(nb.tApo, 0) + ' cost=' + UB.key(nb, P).toFixed(3), 'dim');
       continue;
     }
     let shrunk = false;
@@ -295,12 +307,12 @@ async function phaseB(ev, P, table) {
   all.sort((a, b) => UB.key(a, P) - UB.key(b, P));
   const seeds = [];
   for (const r of all) { if (seeds.length >= 3) break; if (seeds.every((q) => Math.abs(q.M - r.M) >= 1000 || Math.abs(q.bi - r.bi) >= 5000)) seeds.push(r); }
-  log('PHASE B  joint search (M,G,bias) -> min mission time with pred in [' + P.predMin + ', ' + P.predMax + ']  seeds: ' +
+  log('PHASE B  joint search (M,G,bias) -> cost=(1-w)*time+w*fuel, w=' + P.ideal + ', pred>=' + P.predMin + '  seeds: ' +
     seeds.map((r) => r.M + '/' + gfmt(r.Gi) + '/' + bfmt(r.bi) + ' pred ' + f1(r.pred, 0) + ' t ' + f1(r.tEst, 0)).join(' | '), 'hi');
   let champ = null;
   for (let i = 0; i < seeds.length && !STOP; i++) {
     const b = await jointSearch(ev, P, seeds[i], 130, 's' + (i + 1));
-    log('  seed ' + (i + 1) + ' -> M=' + b.M + ' G=' + gfmt(b.Gi) + ' b=' + bfmt(b.bi) + ' pred=' + f1(b.pred, 0) + ' tEst=' + f1(b.tEst, 0) + 's' + (b.pred <= P.predMax ? '  IN BAND' : '  above band'), 'ok');
+    log('  seed ' + (i + 1) + ' -> M=' + b.M + ' G=' + gfmt(b.Gi) + ' b=' + bfmt(b.bi) + ' pred=' + f1(b.pred, 0) + ' tEst=' + f1(b.tEst, 0) + 's' + '  cost=' + UB.key(b, P).toFixed(3), 'ok');
     if (!champ || UB.key(b, P) < UB.key(champ, P)) champ = b;
   }
   return champ ? { M: champ.M, best: champ } : null;
@@ -340,30 +352,32 @@ async function phaseC(ev, P, M, anchor) {
 
 
 // ---- PHASE D: real verification. tuneLead (CIRC_END) -> FULL eval. Only FULL-passing rows are "verified". ----
-async function verifyPoint(P, M, Gi, bi) {
+async function verifyPoint(P, M, Gi, bi, ev) {
   const point = { Gi, Tn: P.Tn, bi, li: P.li, meco: M };
   const lr = await pool.runJob('tuneLead', { point, opts: { targetAltKm: P.alt, maxEvals: 30 } });
-  const out = { Gi, bi, M, lead: lr.lead, evals: lr.evals || 0, tuneOk: !!lr.ok, reason: lr.reason, full: false, inBand: !!lr.inBand, margin: lr.marginS };
+  const rec0 = await ev(M, Gi, bi);
+  const idealReg = Number.isFinite(rec0.dv) && rec0.dv < P.dvMin;   // stage ~circularises itself: margin band [4,5] unreachable with lead>=0 (diag: margin 18-76 s)
+  const out = { idealReg, Gi, bi, M, lead: lr.lead, evals: lr.evals || 0, tuneOk: !!lr.ok, reason: lr.reason, full: false, inBand: !!lr.inBand, margin: lr.marginS };
   if (!lr.ok || !Number.isFinite(lr.leadTicks)) return out;
   const fp = { Gi, Tn: P.Tn, bi, li: lr.leadTicks, meco: M };
   const m = await pool.runEval(fp, { targetAltKm: P.alt, quiet: true });
   out.evals++;
   out.tEnd = m.simTimeEnd; out.payloadCleared = !!m.payloadCleared; out.apo = m.apogeeKm; out.peri = m.perigeeKm; out.vrEnd = m.vrEnd; out.resid = m.stageResidualKg;
-  out.full = out.inBand && lr.lead >= 1 && out.payloadCleared && Math.abs(m.apogeeKm - P.alt) <= 0.5 && Math.abs(m.perigeeKm - P.alt) <= 0.5 && m.vrEnd >= 0;
+  out.full = (idealReg || (out.inBand && lr.lead >= 1)) && out.payloadCleared && Math.abs(m.apogeeKm - P.alt) <= 0.5 && Math.abs(m.perigeeKm - P.alt) <= 0.5 && m.vrEnd >= 0;
   return out;
 }
 
-async function phaseD(P, M, chosen) {
+async function phaseD(P, M, chosen, ev) {
   log(''); log('PHASE D  verify (tuneLead CIRC_END -> FULL) on ' + chosen.length + ' rows x up to 3 biases', 'hi');
   const res = [];
   for (const r of chosen) {
     if (STOP) break;
     const w = r.hi - r.lo;
     const biases = [Math.round((r.lo + r.hi) / 2), Math.round(r.lo + 0.3 * w), Math.round(r.lo + 0.7 * w)];
-    const rs = await Promise.all(biases.map((bi) => verifyPoint(P, M, r.Gi, bi)));
+    const rs = await Promise.all(biases.map((bi) => verifyPoint(P, M, r.Gi, bi, ev)));
     for (const v of rs) {
       EVALS += v.evals; res.push(v);
-      const tag = v.full ? 'VERIFIED-FULL' : (v.tuneOk ? (!v.inBand ? 'MARGIN-OUT-OF-BAND' : (v.lead < 1 ? 'LEAD-AT-EDGE' : 'FULL-FAIL')) : 'tuneLead-FAIL');
+      const tag = v.full ? (v.idealReg ? 'VERIFIED-FULL(ideal regime, margin n/a)' : 'VERIFIED-FULL') : (v.tuneOk ? (!v.inBand ? 'MARGIN-OUT-OF-BAND' : (v.lead < 1 ? 'LEAD-AT-EDGE' : 'FULL-FAIL')) : 'tuneLead-FAIL');
       log('  G=' + gfmt(v.Gi) + ' b=' + bfmt(v.bi) + '  ' + tag + (v.tuneOk ? '  lead=' + v.lead.toFixed(4) + ' margin=' + f1(v.margin, 2) : '  (' + v.reason + ')') +
         (v.payloadCleared !== undefined ? '  cleared=' + v.payloadCleared + ' apo=' + f1(v.apo, 2) + ' peri=' + f1(v.peri, 2) + ' vrEnd=' + f1(v.vrEnd, 2) + ' resid=' + f1(v.resid, 0) + ' T=' + f1(v.tEnd, 0) + 's' : ''), v.full ? 'ok' : 'bad');
     }
@@ -392,9 +406,11 @@ $('go').onclick = async () => {
   const t0 = performance.now();
   try {
     const P = params(); await getPool(); const ev = makeEv(P);
-    log('--- universal bootstrap  alt=' + P.alt + '  T=' + (P.Tn * 0.000125) + '  K=' + P.K + '  residual band [' + P.predMin + ', ' + P.predMax + ']  bias rows=' + P.nbr + ' ---', 'dim');
+    log('--- universal bootstrap  alt=' + P.alt + '  T=' + (P.Tn * 0.000125) + '  K=' + P.K + '  pred>=' + P.predMin + '  ideal=' + P.ideal + '  bias rows=' + P.nbr + ' ---', 'dim');
     $('status').textContent = 'phase A...';
     const table = await phaseA(ev, P);
+    const nrm = UB.setNorm(Array.from(ev.cache.values()), P);
+    if (nrm) log('norm: tEst ' + nrm.tLo.toFixed(0) + '..' + (nrm.tLo + nrm.tSpan).toFixed(0) + ' s,  MECO ' + nrm.mLo + '..' + (nrm.mLo + nrm.mSpan) + '  ideal=' + P.ideal, 'dim');
     $('status').textContent = 'phase B...';
     const bk = await phaseB(ev, P, table);
     if (!bk || !bk.best) { log('NO feasible point at any MECO tried. Widen MECO range / G range, or lower pred min.', 'bad'); return; }
@@ -402,7 +418,7 @@ $('go').onclick = async () => {
     const rows = await phaseC(ev, P, bk.M, bk.best);
     const chosen = report(P, bk.M, bk.best, rows);
     $('status').textContent = 'phase D (verify)...';
-    const ver = await phaseD(P, bk.M, chosen);
+    const ver = await phaseD(P, bk.M, chosen, ev);
     const good = ver.filter((v) => v.full);
     log(''); log('=============== VERIFIED-FULL: ' + good.length + ' / ' + ver.length + ' ===============', good.length ? 'hi' : 'bad');
     for (const v of good) log('G=' + gfmt(v.Gi) + '  MECO=' + v.M + '  bias=' + bfmt(v.bi) + '  lead=' + v.lead.toFixed(4) + '  T=' + f1(v.tEnd, 0) + 's  resid=' + f1(v.resid, 0) + (v.resid >= 100 && v.resid <= 200 ? '  [in 100-200 band]' : '  [outside band]'), 'ok');
