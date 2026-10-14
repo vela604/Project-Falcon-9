@@ -42,6 +42,10 @@
   <label>pred min kg <input id="pmin" value="100" style="width:48px"></label>
   <label>apo tol -/+ km <input id="tol" value="2" style="width:38px"><input id="tolhi" value="20" style="width:38px"></label>
   <label>t frac <input id="tfrac" value="0.9" style="width:40px"></label>
+  <label>k corr <input id="kc" value="0.53" style="width:40px"></label>
+  <label>dv min <input id="dvmin" value="150" style="width:40px"></label>
+  <label>tBurn min <input id="tbmin" value="3" style="width:34px"></label>
+  <label>tToApo max (0=off) <input id="tapomax" value="0" style="width:44px"></label>
   <label>trim % <input id="trim" value="10" style="width:38px"></label>
 </div>
 <div class="row">
@@ -175,7 +179,7 @@ function params() {
     mLo: Math.round(num('mlo')), mHi: Math.round(num('mhi')), mN: Math.max(3, parseInt($('mn').value, 10) || 7), mq: Math.max(1, Math.round(num('mq'))),
     gLoI: Math.round(num('glo') * 100), gHiI: Math.round(num('ghi') * 100), gStep: Math.max(1, Math.round(num('gstep') * 100)),
     Tn: Math.round(num('T') / 0.000125), li: Math.round(5.53 / 0.0125),
-    predTarget: num('pt'), predMin: num('pmin'), tol: num('tol'), tolHi: num('tolhi'), tfrac: num('tfrac'), trim: num('trim') / 100,
+    predTarget: num('pt'), predMin: num('pmin'), tol: num('tol'), tolHi: num('tolhi'), tfrac: num('tfrac'), kc: num('kc'), dvMin: num('dvmin'), tbMin: num('tbmin'), tApoMax: num('tapomax') || 0, trim: num('trim') / 100,
     bres: 0.01,
   };
   return P;
@@ -189,7 +193,10 @@ function classify(m, P) {
   if (m.apoCoastKm < P.alt - P.tol) return 'APO_SHORT';
   if (m.apoCoastKm > P.alt + P.tolHi) return 'APO_LONG';
   if (!Number.isFinite(m.circDvMaxMps) || !Number.isFinite(m.circTBurnS) || !Number.isFinite(m.tToApoCoastS)) return 'OTHER:noPhys';
-  if (m.coastDeltaV > m.circDvMaxMps) return 'FAIL_PHYS';
+  // regime gates (from 3 known-good vs 3 bogus: dv 555/696 vs 20-30, tBurn 11/14.5 vs <1). Stage must NOT nearly finish the orbit itself.
+  if (m.coastDeltaV < P.dvMin || m.circTBurnS < P.tbMin) return 'NEAR_ORBIT';
+  if (P.tApoMax > 0 && m.tToApoCoastS > P.tApoMax) return 'LONG_COAST';
+  // NOTE: old 'dv > dvMax' fuel check removed: known-good G=0.59/MECO 60002 has dv 555 > dvMax 535 and still succeeds. Fuel is judged by corrected pred.
   if (m.circTBurnS > P.tfrac * m.tToApoCoastS) return 'FAIL_PHYS';
   return 'OK';
 }
@@ -205,7 +212,7 @@ function makeEv(P) {
     const p = pool.runEval(point, { stopAt: 'COAST_WAIT_ENTRY', abortOnStageVrNeg: true, targetAltKm: P.alt, quiet: true }).then((m) => {
       const cls = classify(m, P);
       const pred = (Number.isFinite(m.circM0Kg) && Number.isFinite(m.circVe) && Number.isFinite(m.coastDeltaV))
-        ? m.circM0Kg * Math.exp(-m.coastDeltaV / m.circVe) - m.circDryKg : NaN;
+        ? m.circM0Kg * Math.exp(-m.coastDeltaV / m.circVe) - m.circDryKg + P.kc * m.coastDeltaV : NaN;   // + empirical k*dv (5-pt fit, resid <= ~5 kg)
       const rec = { M, Gi, bi, cls, ok: cls === 'OK', pred, dv: m.coastDeltaV, apoC: m.apoCoastKm, wall: m.wallMs };
       cache.set(key, rec); inflight.delete(key); EVALS++;
       if (EVALS % 10 === 0) $('status').textContent = 'evals done: ' + EVALS;
