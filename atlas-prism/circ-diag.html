@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>atlas-prism · circ diag</title>
+<style>
+body{background:#0e1116;color:#d6dde6;font:12px/1.4 ui-monospace,Menlo,monospace;margin:0;padding:10px}
+textarea,input{background:#1b212b;color:#d6dde6;border:1px solid #333c4a;border-radius:4px;padding:4px}
+textarea{width:95%;height:70px} input{width:52px} button{background:#2b6cb0;color:#fff;border:0;border-radius:4px;padding:8px 12px;font:inherit;margin:4px 4px 4px 0}
+pre{background:#080a0e;border:1px solid #232a35;padding:8px;overflow:auto;white-space:pre;max-height:65vh}
+.ok{color:#68d391}.bad{color:#fc8181}.dim{color:#8896a8}.hi{color:#f6e05e}
+</style></head><body>
+<div>alt <input id="alt" value="320"> T s <input id="T" value="4.82"> lead lo <input id="llo" value="3"> hi <input id="lhi" value="12"> step <input id="lst" value="0.5"> workers <input id="nw" value="0"></div>
+<div>cases (one per line: G MECO bias) — first = failing bootstrap point, rest = known-good for comparison (EDIT G of known-good!)</div>
+<textarea id="cases">0.62 63460 2.8709
+0.60 63460 2.2026
+0.65 60002 1.80</textarea><br>
+<button id="go">Run diag</button><button id="copy">Copy log</button>
+<div id="status" class="hi"></div><pre id="log"></pre>
+<script src="lib/worker-pool.js"></script>
+<script>
+const $=id=>document.getElementById(id);let txt='';
+function log(s,c){txt+=s+'\n';const d=document.createElement('span');if(c)d.className=c;d.textContent=s+'\n';$('log').appendChild(d);$('log').scrollTop=1e9;}
+const f=(x,d)=>Number.isFinite(x)?x.toFixed(d):'--';
+let pool=null;
+async function getPool(){if(pool)return pool;let n=parseInt($('nw').value,10);if(!(n>0))n=TunerCore.defaultWorkers();pool=new TunerCore.WorkerPool(n);await pool.waitReady();return pool;}
+$('go').onclick=async()=>{
+ $('go').disabled=true;
+ try{
+  await getPool();
+  const alt=parseFloat($('alt').value),Tn=Math.round(parseFloat($('T').value)/0.000125);
+  const lo=parseFloat($('llo').value),hi=parseFloat($('lhi').value),st=parseFloat($('lst').value);
+  const leads=[];for(let l=lo;l<=hi+1e-9;l+=st)leads.push(Math.round(l/0.0125));
+  const cases=$('cases').value.split('\n').map(s=>s.trim().split(/\s+/).map(Number)).filter(a=>a.length>=3&&a.every(Number.isFinite));
+  for(const [G,M,b] of cases){
+   const Gi=Math.round(G*100),bi=Math.round(b/0.0001);
+   const base={Gi,Tn,bi,li:Math.round(5.53/0.0125),meco:M};
+   $('status').textContent='COAST '+G+' '+M+' '+b;
+   const c=await pool.runEval(base,{stopAt:'COAST_WAIT_ENTRY',abortOnStageVrNeg:true,targetAltKm:alt,quiet:true});
+   const pred=c.circM0Kg*Math.exp(-c.coastDeltaV/c.circVe)-c.circDryKg;
+   log('');log('=== G='+G+' MECO='+M+' bias='+b+' ===','hi');
+   log('COAST_WAIT: end='+c.endReason+' apoC='+f(c.apoCoastKm,1)+' dv='+f(c.coastDeltaV,1)+' dvMax='+f(c.circDvMaxMps,1)+' tBurn='+f(c.circTBurnS,1)+' tToApo='+f(c.tToApoCoastS,1)+' pred='+f(pred,0)+' stageVrMin='+f(c.vrMinStageBurn,2),'dim');
+   log('lead(s)  end        vrMin    vrEnd   margin  fuelOff  apoC   feas','dim');
+   const rows=[];
+   for(let i=0;i<leads.length;i+=8){
+    const rs=await Promise.all(leads.slice(i,i+8).map(li=>pool.runEval({...base,li},{stopAt:'CIRC_END',targetAltKm:alt,quiet:true}).then(m=>({li,m}))));
+    rows.push(...rs);
+    $('status').textContent='circ sweep '+rows.length+'/'+leads.length;
+   }
+   for(const {li,m} of rows){
+    const feas=m.endReason==='CIRC_END'&&!m.crashed&&m.vrEnd>=0.02&&m.vrMin>=0;
+    log((li*0.0125).toFixed(2).padStart(6)+'  '+String(m.endReason).padEnd(10)+' '+f(m.vrMin,2).padStart(8)+' '+f(m.vrEnd,2).padStart(8)+' '+f(m.marginS,2).padStart(7)+' '+f(m.stageFuelEngOffKg,0).padStart(7)+' '+f(m.apoCoastKm,1).padStart(7)+'  '+(feas?'FEAS':'-'),feas?'ok':'bad');
+   }
+  }
+ }catch(e){log('ERROR '+(e&&e.message||e),'bad');}
+ $('status').textContent='done';$('go').disabled=false;
+};
+$('copy').onclick=()=>navigator.clipboard&&navigator.clipboard.writeText(txt);
+</script></body></html>
