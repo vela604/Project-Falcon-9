@@ -204,6 +204,47 @@ function extractCircMetrics() {
 }
 
 
+// ---- Level 4: CH pre-roll (lead-independent prefix shared by all tuneLead evals) ----
+// In COAST_HOLD the ONLY lead-dependent thing is the trigger  t_rem <= startupS + lead  (guidance-blocks COAST_HOLD).
+// So every lead <= maxLead shares the trajectory up to the last tick where t_rem > startupS + maxLead.
+// We roll the live sim (sitting exactly at CH entry) to the first tick with t_rem <= startupS + maxLead + GUARD,
+// i.e. t_rem is still > startupS + maxLead => no lead <= maxLead can have triggered yet. Snapshot there.
+const PREROLL_MAX_LEAD_S = 20;
+const PREROLL_GUARD_S = 1.0;      // >> DT: first tick inside the window still has t_rem > startupS + maxLead
+let _lastPreroll = null;
+function _tRemNow() {
+  const b = state.bodies[state.activeBodyIndex];
+  if (!b) return { t: NaN, vr: NaN };
+  const r = Math.hypot(b.rx, b.ry);
+  const vr = (b.vx * b.rx + b.vy * b.ry) / r;
+  const vt = (b.vx * b.ry - b.vy * b.rx) / r;
+  return { t: TunerHook.timeToApogee(r, vr, vt, CONFIG.GM_EARTH), vr };
+}
+function prerollToTrigger(maxLeadS, capS) {
+  const out = { ok: false, reason: null, maxLeadS, ticks: 0, simTime: NaN, tRem: NaN, startupS: NaN };
+  const b0 = state.bodies[state.activeBodyIndex];
+  const eng = b0 && b0.engines && b0.engines[0];
+  const startupS = eng ? eng.startupDurationS : NaN;
+  out.startupS = startupS;
+  if (!Number.isFinite(startupS)) { out.reason = 'no startupDurationS'; return out; }
+  const W = startupS + maxLeadS + PREROLL_GUARD_S;
+  let s = _tRemNow();
+  if (!(s.t > W)) { out.reason = 'CH entry already inside window (tRem=' + s.t + ')'; return out; }
+  const n = Math.ceil(capS / CONFIG.DT);
+  for (let i = 0; i < n; i++) {
+    if (state.halted) { out.reason = 'halted'; return out; }
+    TunerEngine.tick(CONFIG.DT);
+    out.ticks++;
+    if (phaseNow() !== 'COAST_HOLD') { out.reason = 'left COAST_HOLD: ' + phaseNow(); return out; }
+    s = _tRemNow();
+    if (s.t <= W) {
+      if (!(s.vr > 0) || !(s.t > startupS + maxLeadS)) { out.reason = 'unsafe stop vr=' + s.vr + ' tRem=' + s.t; return out; }
+      out.ok = true; out.tRem = s.t; out.simTime = state.simTime; return out;
+    }
+  }
+  out.reason = 'cap'; return out;
+}
+
 // ---- Step 1: portability-test helpers (ladder / fingerprint / scan) ----
 let _ladder = [];
 function scanSnap(x) {
@@ -364,6 +405,21 @@ self.onmessage = async (e) => {
           const chSnap = captureSnap();
           emit('probe', tag + ' CH captured t=' + chSnap.simTime.toFixed(2) + ', tuneLead');
 
+          // ---- 2b. Level 4: pre-roll CH -> just before earliest trigger of maxLead; snapshot it ----
+          const maxLeadS = payload.maxLeadS != null ? payload.maxLeadS : PREROLL_MAX_LEAD_S;
+          let preSnap = null, _forceCH = false;
+          let pre = { ok: false, reason: 'disabled' };
+          if (maxLeadS > 0 && payload.preroll !== false) {
+            const tp0 = Date.now();
+            pre = prerollToTrigger(maxLeadS, _chCapS);
+            if (pre.ok) preSnap = captureSnap();
+            pre.wallMs = Date.now() - tp0;
+            emit('probe', tag + ' preroll ok=' + pre.ok + ' ticks=' + pre.ticks + (pre.ok ? ' tRem=' + pre.tRem.toFixed(2) : ' ' + pre.reason));
+          }
+          _lastPreroll = pre;
+          // leads beyond maxLead (tuneLead can wander up) fall back to the plain CH snapshot
+          const snapFor = (lead) => (preSnap && !_forceCH && lead <= maxLeadS) ? preSnap : chSnap;
+
           // ---- 3. tuneLead with CH-based hook ----
           const cache = new TunerUtils.EvalCache();
           let evalN = 0;
@@ -372,7 +428,7 @@ self.onmessage = async (e) => {
               evalN++;
               const lead = p2.li * Q.lead;
               emit('probe', tag + ' eval#' + evalN + ' lead=' + lead.toFixed(4));
-              restoreSnap(chSnap, newBias, lead);
+              restoreSnap(snapFor(lead), newBias, lead);
               // Measure EXACTLY like hook.js CIRC_END: window opens at phase CIRCULARIZE, vrMin tracked inside it,
               // vrEnd / signed margin read at the engines-off tick (not after COAST_ROTATE_2).
               let circWindow = false, circAchSeen = false, vrMinC = Infinity, res = null;
@@ -405,6 +461,19 @@ self.onmessage = async (e) => {
               return { endReason: 'CIRC_END', crashed: !!state.crashed, vrEnd: res.vrEnd, marginS: res.marginS, vrMin: res.vrMin };
             }
           };
+          // Optional equivalence sweep: same lead from CH vs from pre-roll snap, compare with Object.is.
+          if (Array.isArray(payload.leadSweep) && payload.leadSweep.length) {
+            const rows = [];
+            for (const L of payload.leadSweep) {
+              const p2 = { li: Math.round(L / Q.lead) };
+              _forceCH = true;  const t1 = Date.now(); const a = await CPHook.runEval(p2); const wa = Date.now() - t1;
+              _forceCH = false; const t2 = Date.now(); const b = await CPHook.runEval(p2); const wb = Date.now() - t2;
+              const keys = ['endReason', 'crashed', 'vrEnd', 'marginS', 'vrMin'];
+              const bad = keys.filter(k => !Object.is(a[k], b[k]));
+              rows.push({ lead: p2.li * Q.lead, usedPre: !!(preSnap && p2.li * Q.lead <= maxLeadS), identical: bad.length === 0, bad, marginS: a.marginS, vrEnd: a.vrEnd, wallCH: wa, wallPre: wb });
+            }
+            _lastPreroll = Object.assign({}, pre, { sweep: rows });
+          }
           // Lattice point (needed for cache key only)
           const cfg = Guidance.getGuideConfig('leoInsertionV3');
           const point = {
@@ -426,7 +495,7 @@ self.onmessage = async (e) => {
             // physically clears ~10-30 s later. Stopping at DONE left gsEnd.payloadCleared
             // false → false "duration_cap_hit + payload_not_cleared" hard-fail.
             emit('probe', tag + ' FULL lead=' + lr.lead.toFixed(4));
-            restoreSnap(chSnap, newBias, lr.lead);
+            restoreSnap(snapFor(lr.lead), newBias, lr.lead);
             let okFull = false;
             const _capTicksFull = Math.ceil(300 / CONFIG.DT);
             for (let _i = 0; _i < _capTicksFull; _i++) {
@@ -523,11 +592,12 @@ self.onmessage = async (e) => {
       const t0 = Date.now();
       const altKm = payload.altKm != null ? payload.altKm : 320;
       const values = TunerUtils.toValues(payload.point, { targetAltKm: altKm });
+      _lastPreroll = null;
       const r1 = await _job('setupSA', { values });
       if (!r1.ok) { result = { ok: false, reason: 'setupSA: ' + r1.reason, wallMs: Date.now() - t0 }; }
       else {
-        result = await _job('probeBiasCheckpoint', { bias: values.insertion.STAGE_BURN_AOA_BIAS_DEG, altKm, marginBand: payload.marginBand });
-        result.saSimTime = r1.simTime; result.wallMs = Date.now() - t0;
+        result = await _job('probeBiasCheckpoint', { bias: values.insertion.STAGE_BURN_AOA_BIAS_DEG, altKm, marginBand: payload.marginBand, maxLeadS: payload.maxLeadS, preroll: payload.preroll, leadSweep: payload.leadSweep });
+        result.saSimTime = r1.simTime; result.wallMs = Date.now() - t0; result.preroll = _lastPreroll;
       }
     } else {
       throw new Error('unknown job type: ' + type);

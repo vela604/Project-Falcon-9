@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>atlas-prism · Level 4 pre-roll equivalence</title>
+<style>
+body{background:#0e1116;color:#d6dde6;font:12px/1.4 ui-monospace,Menlo,monospace;margin:0;padding:10px}
+textarea,input{background:#1b212b;color:#d6dde6;border:1px solid #333c4a;border-radius:4px;padding:4px}
+textarea{width:95%;height:70px} input{width:52px} button{background:#2b6cb0;color:#fff;border:0;border-radius:4px;padding:8px 12px;font:inherit;margin:4px 4px 4px 0}
+pre{background:#080a0e;border:1px solid #232a35;padding:8px;overflow:auto;white-space:pre;max-height:65vh}
+.ok{color:#68d391}.bad{color:#fc8181}.dim{color:#8896a8}.hi{color:#f6e05e}
+</style></head><body>
+<div>T s <input id="T" value="4.82"> workers <input id="nw" value="0"> maxLead s <input id="ml" value="20"></div>
+<div>cases: alt G MECO bias (one per line)</div>
+<textarea id="cases">320 0.60 63460 2.1689
+320 0.58 60000 1.177
+2000 0.65 0 0.59</textarea><br>
+<button id="go">A (verifyChain, no preroll) vs B (verifyChain + preroll + lead sweep)</button><button id="copy">Copy log</button>
+<div id="status" class="hi"></div><pre id="log"></pre>
+<script src="lib/worker-pool.js"></script>
+<script>
+const $=id=>document.getElementById(id);let txt='';
+function log(s,c){txt+=s+'\n';const d=document.createElement('span');if(c)d.className=c;d.textContent=s+'\n';$('log').appendChild(d);$('log').scrollTop=1e9;}
+const f=(x,d)=>Number.isFinite(x)?x.toFixed(d):'--';
+let pool=null;
+async function getPool(){if(pool)return pool;let n=parseInt($('nw').value,10);if(!(n>0))n=TunerCore.defaultWorkers();pool=new TunerCore.WorkerPool(n);await pool.waitReady();return pool;}
+$('go').onclick=async()=>{
+ $('go').disabled=true;
+ try{
+  await getPool();
+  const Tn=Math.round(parseFloat($('T').value)/0.000125), ml=parseFloat($('ml').value);
+  const cases=$('cases').value.split('\n').map(s=>s.trim().split(/\s+/).map(Number)).filter(a=>a.length>=4&&a.every(Number.isFinite));
+  const sweep=[0,2.5,5.525,12,ml-0.1,ml,ml+5];
+  let allOk=true;
+  for(const [alt,G,M,b] of cases){
+   const point={Gi:Math.round(G*100),Tn,bi:Math.round(b/0.0001),li:Math.round(5.53/0.0125),meco:M};
+   log('');log('=== alt='+alt+' G='+G+' MECO='+M+' bias='+b+' ===','hi');
+   $('status').textContent='A '+alt+'/'+G+'/'+M;
+   let A,B;const ta=performance.now(),tb0=0;
+   try{A=await pool.runJob('verifyChain',{point,altKm:alt,preroll:false});}catch(e){A={ok:false,reason:e.message||String(e)};}
+   A.ms=performance.now()-ta;
+   $('status').textContent='B '+alt+'/'+G+'/'+M;
+   const tb=performance.now();
+   try{B=await pool.runJob('verifyChain',{point,altKm:alt,maxLeadS:ml,leadSweep:sweep});}catch(e){B={ok:false,reason:e.message||String(e)};}
+   B.ms=performance.now()-tb;
+   const sw=(B.preroll&&B.preroll.sweep)||[];
+   const swMs=sw.reduce((s,r)=>s+r.wallCH+r.wallPre,0);   // sweep time is test overhead, not production
+   const Bprod=B.ms-swMs;
+   const a=A.metrics||{},bm=B.metrics||{};
+   log('A no-preroll: ok='+A.ok+' lead='+f(A.lead,4)+' margin='+f(A.margin,3)+' evals='+A.evals+' resid='+f(a.stageResidualKg,3)+' T='+f(A.simEnd,3)+'  wall='+(A.ms/1000).toFixed(1)+'s','dim');
+   log('B preroll   : ok='+B.ok+' lead='+f(B.lead,4)+' margin='+f(B.margin,3)+' evals='+B.evals+' resid='+f(bm.stageResidualKg,3)+' T='+f(B.simEnd,3)+'  wall(prod)='+(Bprod/1000).toFixed(1)+'s','dim');
+   const pr=B.preroll||{};
+   log('preroll: ok='+pr.ok+' ticks='+pr.ticks+' tRem='+f(pr.tRem,2)+' startup='+f(pr.startupS,2)+' wall='+f(pr.wallMs/1000,2)+'s'+(pr.reason?' reason='+pr.reason:''),pr.ok?'ok':'bad');
+   sw.forEach(r=>log('  lead='+f(r.lead,4)+' usedPre='+r.usedPre+' identical='+r.identical+(r.bad.length?' BAD:'+r.bad.join(','):'')+' margin='+f(r.marginS,3)+'  CH '+r.wallCH+'ms -> pre '+r.wallPre+'ms',r.identical?'ok':'bad'));
+   const keys=['apogeeKm','perigeeKm','ecc','stageResidualKg','deployTimeS'];
+   const badM=keys.filter(k=>!Object.is(a[k],bm[k]));
+   const same=Object.is(A.lead,B.lead)&&Object.is(A.margin,B.margin)&&Object.is(A.simEnd,B.simEnd)&&A.evals===B.evals&&badM.length===0&&sw.every(r=>r.identical)&&pr.ok;
+   allOk=allOk&&same;
+   log('BIT-EXACT chain: '+same+(badM.length?'  diff metrics: '+badM.join(','):'')+'   speedup x'+(A.ms/Bprod).toFixed(2),same?'ok':'bad');
+  }
+  log('');log(allOk?'VERDICT: PASS':'VERDICT: FAIL',allOk?'ok':'bad');
+ }catch(e){log('ERROR '+(e&&e.message||e),'bad');}
+ $('status').textContent='done';$('go').disabled=false;
+};
+$('copy').onclick=()=>navigator.clipboard&&navigator.clipboard.writeText(txt);
+</script></body></html>
