@@ -67,7 +67,7 @@
 // ============================================================================
 const UB = (function () {
   const BQ = 0.0001;                                    // bias quantum, deg
-  const pass = (r, P) => !!(r && r.ok && Number.isFinite(r.pred) && r.pred >= P.predMin && r.pred <= P.predMax);
+  const pass = (r, P) => !!(r && r.ok && Number.isFinite(r.pred) && r.pred >= P.predMin);
   // Rank (lower = better). Hard constraint: pass() = coast-OK and pred >= predMin (NO upper bound on residual: extra fuel is fine).
   // Soft objective: cost = (1-w)*timeN + w*fuelN, w = P.ideal in [0,1].
   //   timeN = tEst normalised over Phase-A passing records  (0 = fastest seen)
@@ -84,7 +84,7 @@ const UB = (function () {
     if (!ps.length) { P.norm = null; return null; }
     const ts = ps.map((r) => r.tEst), ms = ps.map((r) => r.M);
     const tLo = Math.min(...ts), tHi = Math.max(...ts), mLo = Math.min(...ms), mHi = Math.max(...ms);
-    P.norm = { tLo, tSpan: Math.max(1, P.tScale * tLo), mLo, mSpan: Math.max(1, mHi - mLo, (P.mHi - P.mLo) / 3) };   // robust: ignores far outliers; never degenerate when only one MECO passes
+    P.norm = { tLo, tSpan: Math.max(1, tHi - tLo), mLo, mSpan: Math.max(1, mHi - mLo, (P.mHi - P.mLo) / 3) };   // robust: ignores far outliers; never degenerate when only one MECO passes
     return P.norm;
   }
   const maxPred = (recs, P) => recs.filter((r) => pass(r, P)).reduce((b, r) => (!b || key(r, P) < key(b, P)) ? r : b, null);
