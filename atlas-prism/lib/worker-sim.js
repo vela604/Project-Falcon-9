@@ -441,7 +441,7 @@ self.onmessage = async (e) => {
           emit('probe', tag + ' tuneLead ok=' + lr.ok + ' lead=' + (Number.isFinite(lr.lead) ? lr.lead.toFixed(4) : 'n/a') + ' evals=' + lr.evals);
 
           if (!lr.ok) {
-            result = { ok: false, tuneOk: false, reason: 'lead_failed: ' + lr.reason, lead: lr.lead, margin: lr.marginS, evals: lr.evals };
+            result = { ok: false, tuneOk: false, reason: 'lead_failed: ' + lr.reason, lead: lr.lead, margin: lr.marginS, evals: lr.evals, log: (lr.log || []).slice(-40) };
           } else {
             // ---- 4. FULL eval from CH with best lead ----
             // Tick until payload PHYSICALLY clears (gs.payloadCleared === true).
