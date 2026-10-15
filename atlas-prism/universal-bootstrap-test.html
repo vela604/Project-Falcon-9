@@ -310,13 +310,15 @@ async function phaseB(ev, P, table) {
   for (const r of all) { if (seeds.length >= 3) break; if (seeds.every((q) => Math.abs(q.M - r.M) >= 1000 || Math.abs(q.bi - r.bi) >= 5000)) seeds.push(r); }
   log('PHASE B  joint search (M,G,bias) -> cost=(1-w)*time+w*fuel, w=' + P.ideal + ', pred>=' + P.predMin + '  seeds: ' +
     seeds.map((r) => r.M + '/' + gfmt(r.Gi) + '/' + bfmt(r.bi) + ' pred ' + f1(r.pred, 0) + ' t ' + f1(r.tEst, 0)).join(' | '), 'hi');
-  let champ = null;
+  let champ = null; const bests = [];
   for (let i = 0; i < seeds.length && !STOP; i++) {
     const b = await jointSearch(ev, P, seeds[i], 130, 's' + (i + 1));
     log('  seed ' + (i + 1) + ' -> M=' + b.M + ' G=' + gfmt(b.Gi) + ' b=' + bfmt(b.bi) + ' pred=' + f1(b.pred, 0) + ' tEst=' + f1(b.tEst, 0) + 's' + '  cost=' + UB.key(b, P).toFixed(3), 'ok');
+    bests.push(b);
     if (!champ || UB.key(b, P) < UB.key(champ, P)) champ = b;
   }
-  return champ ? { M: champ.M, best: champ } : null;
+  bests.sort((a, b) => UB.key(a, P) - UB.key(b, P));
+  return champ ? { M: champ.M, best: champ, champs: bests } : null;
 }
 
 // ---------------- Phase C: trace band at M*, choose G rows ----------------
@@ -359,7 +361,15 @@ async function verifyPoint(P, M, Gi, bi, ev) {
   const rec0 = await ev(M, Gi, bi);
   const idealReg = Number.isFinite(rec0.dv) && rec0.dv < P.dvMin;   // stage ~circularises itself: margin band [4,5] unreachable with lead>=0 (diag: margin 18-76 s)
   const out = { idealReg, Gi, bi, M, lead: lr.lead, evals: lr.evals || 0, tuneOk: !!lr.ok, reason: lr.reason, full: false, inBand: !!lr.inBand, margin: lr.marginS };
-  if (!lr.ok || !Number.isFinite(lr.leadTicks)) return out;
+  if (!lr.ok || !Number.isFinite(lr.leadTicks)) {
+    // auto-diagnose WHY tuneLead failed: one CIRC_END eval at a mid lead (5.5 s). endReason!=CIRC_END + tiny fuelOff => fuel ran out.
+    try {
+      const dm = await pool.runEval({ ...point, li: Math.round(5.5 / 0.0125) }, { stopAt: 'CIRC_END', targetAltKm: P.alt, quiet: true });
+      out.evals++;
+      out.diag = 'end=' + dm.endReason + ' vrMin=' + f1(dm.vrMin, 2) + ' vrEnd=' + f1(dm.vrEnd, 2) + ' margin=' + f1(dm.marginS, 1) + ' fuelOff=' + f1(dm.stageFuelEngOffKg, 0) + ' pred=' + f1(rec0.pred, 0);
+    } catch (e) { out.diag = 'diag error'; }
+    return out;
+  }
   const fp = { Gi, Tn: P.Tn, bi, li: lr.leadTicks, meco: M };
   const m = await pool.runEval(fp, { targetAltKm: P.alt, quiet: true });
   out.evals++;
@@ -379,7 +389,7 @@ async function phaseD(P, M, chosen, ev) {
     for (const v of rs) {
       EVALS += v.evals; res.push(v);
       const tag = v.full ? (v.idealReg ? 'VERIFIED-FULL(ideal regime, margin n/a)' : 'VERIFIED-FULL') : (v.tuneOk ? (!v.inBand ? 'MARGIN-OUT-OF-BAND' : (v.lead < 1 ? 'LEAD-AT-EDGE' : 'FULL-FAIL')) : 'tuneLead-FAIL');
-      log('  G=' + gfmt(v.Gi) + ' b=' + bfmt(v.bi) + '  ' + tag + (v.tuneOk ? '  lead=' + v.lead.toFixed(4) + ' margin=' + f1(v.margin, 2) : '  (' + v.reason + ')') +
+      log('  G=' + gfmt(v.Gi) + ' b=' + bfmt(v.bi) + '  ' + tag + (v.tuneOk ? '  lead=' + v.lead.toFixed(4) + ' margin=' + f1(v.margin, 2) : '  (' + v.reason + ')  @lead5.5: ' + (v.diag || '')) +
         (v.payloadCleared !== undefined ? '  cleared=' + v.payloadCleared + ' apo=' + f1(v.apo, 2) + ' peri=' + f1(v.peri, 2) + ' vrEnd=' + f1(v.vrEnd, 2) + ' resid=' + f1(v.resid, 0) + ' T=' + f1(v.tEnd, 0) + 's' : ''), v.full ? 'ok' : 'bad');
     }
   }
@@ -415,16 +425,23 @@ $('go').onclick = async () => {
     $('status').textContent = 'phase B...';
     const bk = await phaseB(ev, P, table);
     if (!bk || !bk.best) { log('NO feasible point at any MECO tried. Widen MECO range / G range, or lower pred min.', 'bad'); return; }
-    $('status').textContent = 'phase C...';
-    const rows = await phaseC(ev, P, bk.M, bk.best);
-    const chosen = report(P, bk.M, bk.best, rows);
-    $('status').textContent = 'phase D (verify)...';
-    const ver = await phaseD(P, bk.M, chosen, ev);
-    const good = ver.filter((v) => v.full);
-    log(''); log('=============== VERIFIED-FULL: ' + good.length + ' / ' + ver.length + ' ===============', good.length ? 'hi' : 'bad');
-    good.sort((a, b) => a.tEnd - b.tEnd);
-    for (const v of good) log('G=' + gfmt(v.Gi) + '  MECO=' + v.M + '  bias=' + bfmt(v.bi) + '  lead=' + v.lead.toFixed(4) + '  T=' + f1(v.tEnd, 0) + 's  resid=' + f1(v.resid, 0) + (v.resid >= 100 && v.resid <= 200 ? '  [in 100-200 band]' : '  [outside band]'), 'ok');
-    if (!good.length) log('No FULL-verified point at this MECO. Next: try next-best MECO from phase B bracket.', 'bad');
+    // Try Phase B champions in rank order until one yields >=1 FULL-verified point (coast-feasible != verified: see 800 km run).
+    let good = [], tried = 0;
+    for (const ch of bk.champs) {
+      if (STOP || good.length) break;
+      tried++;
+      if (tried > 1) { log(''); log('>>> fallback: champion #' + tried + '  M=' + ch.M + ' G=' + gfmt(ch.Gi) + ' b=' + bfmt(ch.bi) + ' pred=' + f1(ch.pred, 0) + ' tEst=' + f1(ch.tEst, 0), 'hi'); }
+      $('status').textContent = 'phase C (champ ' + tried + ')...';
+      const rows = await phaseC(ev, P, ch.M, ch);
+      const chosen = report(P, ch.M, ch, rows);
+      $('status').textContent = 'phase D (champ ' + tried + ')...';
+      const ver = await phaseD(P, ch.M, chosen, ev);
+      good = ver.filter((v) => v.full);
+      log(''); log('=============== VERIFIED-FULL: ' + good.length + ' / ' + ver.length + '  (champion ' + tried + '/' + bk.champs.length + ') ===============', good.length ? 'hi' : 'bad');
+      good.sort((a, b) => a.tEnd - b.tEnd);
+      for (const v of good) log('G=' + gfmt(v.Gi) + '  MECO=' + v.M + '  bias=' + bfmt(v.bi) + '  lead=' + v.lead.toFixed(4) + '  T=' + f1(v.tEnd, 0) + 's  resid=' + f1(v.resid, 0) + (v.resid >= 100 && v.resid <= 200 ? '  [in 100-200 band]' : '  [outside band]'), 'ok');
+    }
+    if (!good.length) log('No FULL-verified point from any Phase B champion. Run circ-diag on the top champion (check endReason / fuelOff) before changing anything else.', 'bad');
     log('total evals: ' + EVALS + '   wall ' + ((performance.now() - t0) / 1000).toFixed(0) + 's');
   } catch (e) { log('ERROR: ' + (e && e.message || e), 'bad'); }
   $('status').textContent = 'done'; $('go').disabled = false;
