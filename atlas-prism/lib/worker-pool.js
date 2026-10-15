@@ -172,12 +172,16 @@
         const inf = this._saInflight.get(key);
         if (inf) { await inf.catch(() => {}); continue; }
         this.saStats.build++;
-        const p = this.runJob('saRun', { point, opts }).then((r) => {
+        // Leader runs ascent ONLY (stopAtCheckpoint) -> snap published right away -> waiters unblock after ~2s, not after a full eval.
+        const p = this.runJob('saRun', { point, opts, build: true }).then((r) => {
           this.snaps.set(key, r.snap ? { snap: r.snap } : { fail: r.metrics });
           return r;
         });
         this._saInflight.set(key, p);
-        try { return (await p).metrics; } finally { this._saInflight.delete(key); }
+        let r;
+        try { r = await p; } finally { this._saInflight.delete(key); }
+        if (!r.snap) return r.metrics;   // run ended before SA: metrics are final (bias-independent)
+        return (await this.runJob('saRun', { point, opts, snap: r.snap })).metrics;   // leader resumes like everyone else
       }
     }
 

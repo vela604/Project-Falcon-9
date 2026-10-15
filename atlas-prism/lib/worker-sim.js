@@ -311,6 +311,7 @@ self.onmessage = async (e) => {
       } else {
         const cpOut = {};
         o.cpAtPhase = 'SEPARATED_AXIAL'; o.onCheckpoint = captureSnap; o.cpOut = cpOut;
+        if (payload.build) o.stopAtCheckpoint = true;   // saBuild: ascent only, stop right after SA snapshot (~2s); metrics then partial, use snap
         const m = await TunerHook.runEvalValues(values, o);
         result = { ok: true, metrics: m, snap: cpOut.cp || null };
       }
