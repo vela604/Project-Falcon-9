@@ -294,6 +294,26 @@ self.onmessage = async (e) => {
       result = await TunerHook.runEval(payload.point, payload.opts || {});
     } else if (type === 'runEvalValues') {
       result = await TunerHook.runEvalValues(payload.values, payload.opts || {});
+    } else if (type === 'saRun') {
+      // Level 2: COAST_WAIT_ENTRY-style eval with SA snapshot sharing.
+      //   no payload.snap -> live run (same as runEval) that captures the SA checkpoint on the way; returns { metrics, snap }
+      //                      (snap null if the run ended before SA: metrics are then bias-independent and final)
+      //   payload.snap    -> restore SA checkpoint (+ this point's bias/lead), continue; returns { metrics }
+      // payload: { point, opts, snap? }.  metrics shape == TunerHook.runEval.
+      const o = Object.assign({}, payload.opts || {});
+      const altKm = o.targetAltKm != null ? o.targetAltKm : TunerConfig.fixed.targetAltKm;
+      o.targetAltKm = altKm; o.verifyPoint = payload.point;
+      const values = TunerUtils.toValues(payload.point, { targetAltKm: altKm });
+      if (payload.snap) {
+        const bias = values.insertion.STAGE_BURN_AOA_BIAS_DEG, lead = values.insertion.CIRC_TRIGGER_LEAD_S;
+        o.resume = { cp: payload.snap, restore: (s) => restoreSnap(s, bias, lead, null) };
+        result = { ok: true, metrics: await TunerHook.runEvalValues(values, o) };
+      } else {
+        const cpOut = {};
+        o.cpAtPhase = 'SEPARATED_AXIAL'; o.onCheckpoint = captureSnap; o.cpOut = cpOut;
+        const m = await TunerHook.runEvalValues(values, o);
+        result = { ok: true, metrics: m, snap: cpOut.cp || null };
+      }
     } else if (type === 'tuneLead') {
       // Bootstrap Step 3b: tune lead for one lattice point (CIRC_END evals), entirely inside this worker.
       // payload: { point, opts: { targetAltKm, maxEvals } }. Returns scalars only (no log array bloat > 40 lines).

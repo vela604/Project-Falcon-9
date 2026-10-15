@@ -231,7 +231,7 @@ function makeEv(P) {
     if (inflight.has(key)) return inflight.get(key);
     if (STOP) return Promise.reject(new Error('stopped'));
     const point = { Gi, Tn: P.Tn, bi, li: P.li, meco: M };
-    const p = pool.runEval(point, { stopAt: 'COAST_WAIT_ENTRY', abortOnStageVrNeg: true, targetAltKm: P.alt, quiet: true }).then((m) => {
+    const p = pool.runEvalSA(point, { stopAt: 'COAST_WAIT_ENTRY', abortOnStageVrNeg: true, targetAltKm: P.alt, quiet: true }).then((m) => {
       const cls = classify(m, P);
       const pred = (Number.isFinite(m.circM0Kg) && Number.isFinite(m.circVe) && Number.isFinite(m.coastDeltaV))
         ? m.circM0Kg * Math.exp(-m.coastDeltaV / m.circVe) - m.circDryKg + P.kc * m.coastDeltaV : NaN;   // + empirical k*dv (5-pt fit, resid <= ~5 kg)
@@ -416,10 +416,11 @@ $('go').onclick = async () => {
   $('go').disabled = true; STOP = false; EVALS = 0;
   const t0 = performance.now();
   try {
-    const P = params(); await getPool(); const ev = makeEv(P);
+    const P = params(); await getPool(); pool.snaps.clear(); pool.saStats = { build: 0, hit: 0, failHit: 0 }; const ev = makeEv(P);
     log('--- universal bootstrap  alt=' + P.alt + '  T=' + (P.Tn * 0.000125) + '  K=' + P.K + '  pred>=' + P.predMin + '  ideal=' + P.ideal + '  bias rows=' + P.nbr + ' ---', 'dim');
     $('status').textContent = 'phase A...';
     const table = await phaseA(ev, P);
+    log('SA share: build=' + pool.saStats.build + ' reuse=' + pool.saStats.hit + ' preSAfail=' + pool.saStats.failHit + ' stored=' + pool.snaps.size + ' evicted=' + pool.snaps.evicted, 'dim');
     const nrm = UB.setNorm(Array.from(ev.cache.values()), P);
     if (nrm) log('norm: tEst ' + nrm.tLo.toFixed(0) + '..' + (nrm.tLo + nrm.tSpan).toFixed(0) + ' s,  MECO ' + nrm.mLo + '..' + (nrm.mLo + nrm.mSpan) + '  ideal=' + P.ideal, 'dim');
     $('status').textContent = 'phase B...';

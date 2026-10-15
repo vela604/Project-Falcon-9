@@ -37,6 +37,16 @@
     'rocketSim.payloadSplitDone.v1',
   ];
   
+  // Main-thread LRU of SA checkpoints. Entry: { snap } (resume point) or { fail } (run ended before SA -> final metrics).
+  class SnapStore {
+    constructor(max) { this.max = max || 200; this.map = new Map(); }
+    get(k) { if (!this.map.has(k)) return undefined; const v = this.map.get(k); this.map.delete(k); this.map.set(k, v); return v; }
+    set(k, v) { this.map.delete(k); this.map.set(k, v); while (this.map.size > this.max) { this.map.delete(this.map.keys().next().value); this.evicted++; } }
+    clear() { this.map.clear(); }
+    get size() { return this.map.size; }
+  }
+  SnapStore.prototype.evicted = 0;
+
   class WorkerPool {
     constructor(n, opts) {
       opts = opts || {};
@@ -50,6 +60,9 @@
       this.pending = new Map(); // jobId -> { resolve, reject, type }
       this.nextId = 0;
       this._stats = { dispatched: 0, completed: 0, errored: 0 };
+      this.snaps = new SnapStore(opts.snapMax || 200);
+      this._saInflight = new Map();
+      this.saStats = { build: 0, hit: 0, failHit: 0 };
       this._initPromise = null;
       this._init();
     }
@@ -143,6 +156,31 @@
       return this.runJob('runEval', { point, opts });
     }
     
+    // Level 2: same result as runEval(point, opts), but points sharing (alt, G, T, MECO) share one SA checkpoint.
+    // First caller per key runs live (and captures); the rest resume from the checkpoint. Call pool.snaps.clear() when config/env changes.
+    async runEvalSA(point, opts) {
+      opts = opts || {};
+      const alt = opts.targetAltKm != null ? opts.targetAltKm : '';
+      const key = alt + '|' + point.Gi + '|' + point.Tn + '|' + point.meco;
+      for (;;) {
+        const ent = this.snaps.get(key);
+        if (ent) {
+          if (ent.fail) { this.saStats.failHit++; return ent.fail; }
+          this.saStats.hit++;
+          return (await this.runJob('saRun', { point, opts, snap: ent.snap })).metrics;
+        }
+        const inf = this._saInflight.get(key);
+        if (inf) { await inf.catch(() => {}); continue; }
+        this.saStats.build++;
+        const p = this.runJob('saRun', { point, opts }).then((r) => {
+          this.snaps.set(key, r.snap ? { snap: r.snap } : { fail: r.metrics });
+          return r;
+        });
+        this._saInflight.set(key, p);
+        try { return (await p).metrics; } finally { this._saInflight.delete(key); }
+      }
+    }
+
     runEvalValues(values, opts) {
       return this.runJob('runEvalValues', { values, opts });
     }
@@ -180,5 +218,6 @@
   }
   
   T.WorkerPool = WorkerPool;
+  T.SnapStore = SnapStore;
   T.defaultWorkers = defaultWorkers;
 })();

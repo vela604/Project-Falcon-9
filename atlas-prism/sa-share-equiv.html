@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>atlas-prism · SA share equivalence</title>
+<style>
+body{background:#0e1116;color:#d6dde6;font:12px/1.4 ui-monospace,Menlo,monospace;margin:0;padding:10px}
+textarea,input{background:#1b212b;color:#d6dde6;border:1px solid #333c4a;border-radius:4px;padding:4px}
+textarea{width:95%;height:60px} input{width:200px} button{background:#2b6cb0;color:#fff;border:0;border-radius:4px;padding:8px 12px;font:inherit;margin:4px 4px 4px 0}
+pre{background:#080a0e;border:1px solid #232a35;padding:8px;overflow:auto;white-space:pre;max-height:65vh}
+.ok{color:#68d391}.bad{color:#fc8181}.dim{color:#8896a8}.hi{color:#f6e05e}
+</style></head><body>
+<div>T s <input id="T" value="4.82" style="width:52px"> workers <input id="nw" value="0" style="width:40px"> biases <input id="bs" value="0.2 0.6 1.0 1.4 1.8"></div>
+<div>cases: alt G MECO (one per line)</div>
+<textarea id="cases">320 0.58 60000
+320 0.60 63460
+2000 0.65 0</textarea><br>
+<button id="go">A (5x scratch runEval) vs B (1 SA + 4 resume)</button><button id="copy">Copy log</button>
+<div id="status" class="hi"></div><pre id="log"></pre>
+<script src="lib/worker-pool.js"></script>
+<script>
+const $=id=>document.getElementById(id);let txt='';
+function log(s,c){txt+=s+'\n';const d=document.createElement('span');if(c)d.className=c;d.textContent=s+'\n';$('log').appendChild(d);$('log').scrollTop=1e9;}
+let pool=null;
+async function getPool(){if(pool)return pool;let n=parseInt($('nw').value,10);if(!(n>0))n=TunerCore.defaultWorkers();pool=new TunerCore.WorkerPool(n);await pool.waitReady();return pool;}
+const SKIP={wallMs:1,ticksPerSecond:1};
+function diff(a,b){const bad=[];for(const k of new Set([...Object.keys(a),...Object.keys(b)])){if(SKIP[k])continue;if(!Object.is(a[k],b[k]))bad.push(k+' ('+a[k]+' vs '+b[k]+')');}return bad;}
+$('go').onclick=async()=>{
+ $('go').disabled=true;
+ try{
+  await getPool();
+  const Tn=Math.round(parseFloat($('T').value)/0.000125);
+  const bs=$('bs').value.trim().split(/\s+/).map(Number).filter(Number.isFinite);
+  const cases=$('cases').value.split('\n').map(s=>s.trim().split(/\s+/).map(Number)).filter(a=>a.length>=3&&a.every(Number.isFinite));
+  let allOk=true;
+  for(const [alt,G,M] of cases){
+   log('');log('=== alt='+alt+' G='+G+' MECO='+M+' biases='+bs.join(',')+' ===','hi');
+   $('status').textContent=alt+'/'+G+'/'+M;
+   const pts=bs.map(b=>({Gi:Math.round(G*100),Tn,bi:Math.round(b/0.0001),li:Math.round(5.53/0.0125),meco:M}));
+   const o={stopAt:'COAST_WAIT_ENTRY',abortOnStageVrNeg:true,targetAltKm:alt,quiet:true};
+   const ta=performance.now();const A=await Promise.all(pts.map(p=>pool.runEval(p,o)));const wa=performance.now()-ta;
+   pool.snaps.clear();pool.saStats={build:0,hit:0,failHit:0};
+   const tb=performance.now();const B=await Promise.all(pts.map(p=>pool.runEvalSA(p,o)));const wb=performance.now()-tb;
+   B.forEach((m,i)=>{const bad=diff(A[i],m);if(bad.length)allOk=false;
+    log('bias='+bs[i]+'  '+A[i].endReason+'/'+m.endReason+'  apo='+(+A[i].apoCoastKm).toFixed(2)+'  '+(bad.length?'MISMATCH: '+bad.slice(0,8).join('; '):'identical ('+Object.keys(m).length+' keys)'),bad.length?'bad':'ok');});
+   log('A wall='+(wa/1000).toFixed(1)+'s  B wall='+(wb/1000).toFixed(1)+'s  speedup x'+(wa/wb).toFixed(2)+'  SA: build='+pool.saStats.build+' reuse='+pool.saStats.hit+' preSAfail='+pool.saStats.failHit,'dim');
+  }
+  log('');log(allOk?'ALL BIT-EXACT':'MISMATCHES FOUND',allOk?'ok':'bad');
+ }catch(e){log('ERROR '+(e&&e.message||e),'bad');}
+ $('status').textContent='done';$('go').disabled=false;
+};
+$('copy').onclick=()=>navigator.clipboard&&navigator.clipboard.writeText(txt);
+</script></body></html>

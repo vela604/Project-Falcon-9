@@ -163,6 +163,9 @@
     return new Promise((res) => setTimeout(res, 0));
   }
 
+  // Level 2 (SA snapshot sharing): bias-independent prefix metrics carried inside a checkpoint.
+  const CP_KEYS = ['maxG', 'maxGPhase', 'maxGT', 'maxGPre', 'maxQKPa', 'maxGAccel', 'mecoTimeS', 'boosterFuelLeftKg',
+    'vrMinStageBurn', 'stageVrNeg', 'stageVrNegAltKm', 'stageVrNegT', 'maxOmega'];
   const stats = { evals: 0, ticks: 0, wallMs: 0 };
   let busy = false;
 
@@ -242,7 +245,16 @@
       let ended = false;
       const end = (reason) => { m.endReason = reason; ended = true; };
 
+      // ---- Level 2: checkpoint / resume (opts.cpAtPhase+onCheckpoint+cpOut[+stopAtCheckpoint]; opts.resume={cp,restore}) ----
+      let cpPending = false, cpDone = false;
       let i = 0;
+      if (opts.resume) {
+        const rs = opts.resume, L = rs.cp.loop;
+        rs.restore(rs.cp.snap);
+        lastPhase = L.lastPhase; mecoSeen = L.mecoSeen; splitSeen = L.splitSeen; deploySeen = L.deploySeen; vrMinCirc = L.vrMinCirc;
+        CP_KEYS.forEach((k) => { m[k] = rs.cp.m[k]; });
+        i = rs.cp.i + 1; cpDone = true;
+      }
       for (; i < maxTicks; i++) {
         if (state.halted) { end('HALTED'); break; }
         if (abortRef && abortRef.aborted) { end('ABORTED'); break; }
@@ -331,6 +343,7 @@
               circWindow = true; m.circStartT = state.simTime;
             }
             lastPhase = ph;
+            if (opts.cpAtPhase && !cpDone && ph === opts.cpAtPhase) cpPending = true;
           }
           if (!mecoSeen && gs.mecoTriggered) { mecoSeen = true; m.mecoTimeS = state.simTime; }
           if (!splitSeen && gs.splitDetected) {
@@ -379,6 +392,15 @@
               if (stopAt === 'CIRC_END') { end('CIRC_END'); i++; break; }
             }
           }
+        }
+
+        // ---- checkpoint: end of a fully processed tick, so resume continues at i+1 with identical loop state ----
+        if (cpPending) {
+          cpPending = false; cpDone = true;
+          const cp = { snap: opts.onCheckpoint(), i, loop: { lastPhase, mecoSeen, splitSeen, deploySeen, vrMinCirc }, m: {} };
+          CP_KEYS.forEach((k) => { cp.m[k] = m[k]; });
+          if (opts.cpOut) opts.cpOut.cp = cp;
+          if (opts.stopAtCheckpoint) { end('CHECKPOINT'); i++; break; }
         }
 
         // ---- cooperative yield (time-sliced, no per-chunk clamp) ----
