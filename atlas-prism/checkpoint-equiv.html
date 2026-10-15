@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>atlas-prism · checkpoint equivalence</title>
+<style>
+body{background:#0e1116;color:#d6dde6;font:12px/1.4 ui-monospace,Menlo,monospace;margin:0;padding:10px}
+textarea,input{background:#1b212b;color:#d6dde6;border:1px solid #333c4a;border-radius:4px;padding:4px}
+textarea{width:95%;height:70px} input{width:52px} button{background:#2b6cb0;color:#fff;border:0;border-radius:4px;padding:8px 12px;font:inherit;margin:4px 4px 4px 0}
+pre{background:#080a0e;border:1px solid #232a35;padding:8px;overflow:auto;white-space:pre;max-height:65vh}
+.ok{color:#68d391}.bad{color:#fc8181}.dim{color:#8896a8}.hi{color:#f6e05e}
+</style></head><body>
+<div>T s <input id="T" value="4.82"> workers <input id="nw" value="0"></div>
+<div>cases: alt G MECO bias (one per line)</div>
+<textarea id="cases">320 0.60 63460 2.1689
+320 0.59 60002 1.804
+2000 0.65 0 0.59</textarea><br>
+<button id="go">Run A (scratch tuneLead+FULL) vs B (checkpoint verifyChain)</button><button id="copy">Copy log</button>
+<div id="status" class="hi"></div><pre id="log"></pre>
+<script src="lib/worker-pool.js"></script>
+<script>
+const $=id=>document.getElementById(id);let txt='';
+function log(s,c){txt+=s+'\n';const d=document.createElement('span');if(c)d.className=c;d.textContent=s+'\n';$('log').appendChild(d);$('log').scrollTop=1e9;}
+const f=(x,d)=>Number.isFinite(x)?x.toFixed(d):'--';
+let pool=null;
+async function getPool(){if(pool)return pool;let n=parseInt($('nw').value,10);if(!(n>0))n=TunerCore.defaultWorkers();pool=new TunerCore.WorkerPool(n);await pool.waitReady();return pool;}
+$('go').onclick=async()=>{
+ $('go').disabled=true;
+ try{
+  await getPool();
+  const Tn=Math.round(parseFloat($('T').value)/0.000125);
+  const cases=$('cases').value.split('\n').map(s=>s.trim().split(/\s+/).map(Number)).filter(a=>a.length>=4&&a.every(Number.isFinite));
+  for(const [alt,G,M,b] of cases){
+   const point={Gi:Math.round(G*100),Tn,bi:Math.round(b/0.0001),li:Math.round(5.53/0.0125),meco:M};
+   log('');log('=== alt='+alt+' G='+G+' MECO='+M+' bias='+b+' ===','hi');
+   $('status').textContent='A '+alt+'/'+G+'/'+M;
+   let A={};const ta=performance.now();
+   try{
+    const lr=await pool.runJob('tuneLead',{point,opts:{targetAltKm:alt,maxEvals:30}});
+    A.tune=lr;
+    if(lr.ok){const fm=await pool.runEval({...point,li:lr.leadTicks},{targetAltKm:alt,quiet:true});A.full=fm;}
+   }catch(e){A.err=e.message||String(e);}
+   A.ms=performance.now()-ta;
+   $('status').textContent='B '+alt+'/'+G+'/'+M;
+   let B={};const tb=performance.now();
+   try{B=await pool.runJob('verifyChain',{point,altKm:alt});}catch(e){B={ok:false,reason:e.message||String(e)};}
+   B.ms=performance.now()-tb;
+   const a=A.full||{};const bm=B.metrics||{};
+   log('A scratch : tuneOk='+(A.tune&&A.tune.ok)+' lead='+f(A.tune&&A.tune.lead,4)+' margin='+f(A.tune&&A.tune.marginS,2)+' evals='+(A.tune&&A.tune.evals)+' | FULL apo='+f(a.apogeeKm,2)+' peri='+f(a.perigeeKm,2)+' resid='+f(a.stageResidualKg,0)+' T='+f(a.simTimeEnd,1)+'  wall='+(A.ms/1000).toFixed(1)+'s'+(A.err?' ERR '+A.err:''),'dim');
+   log('B checkpt : ok='+B.ok+' lead='+f(B.lead,4)+' margin='+f(B.margin,2)+' evals='+B.evals+' | FULL apo='+f(bm.apogeeKm,2)+' peri='+f(bm.perigeeKm,2)+' resid='+f(bm.stageResidualKg,0)+' T='+f(B.simEnd,1)+'  wall='+(B.ms/1000).toFixed(1)+'s'+(B.reason?' ('+B.reason+')':''),'dim');
+   const same=A.tune&&A.tune.ok&&B.lead!=null&&Math.abs(A.tune.lead-B.lead)<1e-9;
+   log('lead identical: '+same+'   dLead='+f(B.lead-(A.tune&&A.tune.lead),4)+'   dResid='+f(bm.stageResidualKg-a.stageResidualKg,1)+'   dT='+f(B.simEnd-a.simTimeEnd,2)+'   speedup x'+(A.ms/B.ms).toFixed(2),same?'ok':'bad');
+  }
+ }catch(e){log('ERROR '+(e&&e.message||e),'bad');}
+ $('status').textContent='done';$('go').disabled=false;
+};
+$('copy').onclick=()=>navigator.clipboard&&navigator.clipboard.writeText(txt);
+</script></body></html>

@@ -218,6 +218,7 @@ self.onmessage = async (e) => {
   }
 
   try {
+    const _job = async (type, payload) => {
     let result;
 
     if (type === 'runEval') {
@@ -267,7 +268,8 @@ self.onmessage = async (e) => {
         let okCH = false;
         let eCoastAtCW = NaN;
         // CH is reached ~tToApo after COAST_WAIT -> 800 s is wrong above ~500 km (2000 km: CH at ~1890 s).
-        const _chCapS = Math.max(800, (TunerUtils.suggestDurationCap ? TunerUtils.suggestDurationCap(altKm) : 800));
+        // Was max(800, suggestDurationCap(alt)) = 800 s at 320 km -> long-coast points (tToApo 1300-1700 s) never reached CH. Hook grows its cap dynamically; here use a hard ceiling (loop breaks at CH anyway).
+        const _chCapS = payload.chCapS || 4000;
         const _chTicks = Math.ceil(_chCapS / CONFIG.DT);
         for (let _i = 0; _i < _chTicks; _i++) {
           if (state.halted) break;
@@ -303,12 +305,36 @@ self.onmessage = async (e) => {
               const lead = p2.li * Q.lead;
               emit('probe', tag + ' eval#' + evalN + ' lead=' + lead.toFixed(4));
               restoreSnap(chSnap, newBias, lead);
-              const ok = await tickUntilPhase(['COAST_ROTATE_2'], 300);
-              if (!ok) {
-                return { endReason: state.halted ? 'HALTED' : 'CAP', crashed: !!state.crashed, vrEnd: NaN, marginS: NaN, vrMin: NaN };
+              // Measure EXACTLY like hook.js CIRC_END: window opens at phase CIRCULARIZE, vrMin tracked inside it,
+              // vrEnd / signed margin read at the engines-off tick (not after COAST_ROTATE_2).
+              let circWindow = false, circAchSeen = false, vrMinC = Infinity, res = null;
+              const capT = Math.ceil(300 / CONFIG.DT);
+              for (let _k = 0; _k < capT; _k++) {
+                if (state.halted) break;
+                TunerEngine.tick(CONFIG.DT);
+                const gs = Guidance.getGuideStatus();
+                const stb = findStageBody();
+                if (!stb || !gs) continue;
+                const r = Math.hypot(stb.rx, stb.ry);
+                const vr = (stb.vx * stb.rx + stb.vy * stb.ry) / r;
+                if (gs.phase === 'CIRCULARIZE' && !circWindow && !circAchSeen) circWindow = true;
+                if (gs.circAchieved && !circAchSeen) circAchSeen = true;
+                if (circWindow) {
+                  if (vr < vrMinC) vrMinC = vr;
+                  if (circAchSeen) {
+                    let mdot = 0; const en = stb.engines;
+                    if (en) for (let q = 0; q < en.length; q++) mdot += en[q].massFlowRate || 0;
+                    if (mdot <= 1e-9) {
+                      const o = TunerHook.orbitOf(stb, CONFIG.GM_EARTH, CONFIG.EARTH_RADIUS);
+                      const marginS = !(o.vr < 0) ? o.tToApo : (Number.isFinite(o.periodS) ? (o.tToApo - o.periodS) : -Infinity);
+                      res = { vrEnd: o.vr, marginS, vrMin: vrMinC };
+                      break;
+                    }
+                  }
+                }
               }
-              const m = extractCircMetrics();
-              return { endReason: 'CIRC_END', crashed: !!state.crashed, vrEnd: m.vrEnd, marginS: m.marginS, vrMin: m.vrMin };
+              if (!res) return { endReason: state.halted ? 'HALTED' : 'CAP', crashed: !!state.crashed, vrEnd: NaN, marginS: NaN, vrMin: NaN };
+              return { endReason: 'CIRC_END', crashed: !!state.crashed, vrEnd: res.vrEnd, marginS: res.marginS, vrMin: res.vrMin };
             }
           };
           // Lattice point (needed for cache key only)
@@ -324,7 +350,7 @@ self.onmessage = async (e) => {
           emit('probe', tag + ' tuneLead ok=' + lr.ok + ' lead=' + (Number.isFinite(lr.lead) ? lr.lead.toFixed(4) : 'n/a') + ' evals=' + lr.evals);
 
           if (!lr.ok) {
-            result = { ok: false, reason: 'lead_failed: ' + lr.reason, lead: lr.lead, margin: lr.marginS, evals: lr.evals };
+            result = { ok: false, tuneOk: false, reason: 'lead_failed: ' + lr.reason, lead: lr.lead, margin: lr.marginS, evals: lr.evals };
           } else {
             // ---- 4. FULL eval from CH with best lead ----
             // Tick until payload PHYSICALLY clears (gs.payloadCleared === true).
@@ -361,7 +387,7 @@ self.onmessage = async (e) => {
             const sc = TunerUtils.score(m, { targetAltKm: altKm });
             emit('probe', tag + ' FULL score=' + (sc.score != null ? sc.score.toFixed(2) : '?') + ' cleared=' + m.payloadCleared);
             result = {
-              ok: sc.ok, lead: lr.lead, margin: lr.marginS, vrEnd: lr.vrEnd,
+              ok: sc.ok, tuneOk: true, inBand: lr.inBand, leadTicks: lr.leadTicks, lead: lr.lead, margin: lr.marginS, vrEnd: lr.vrEnd,
               score: sc.score, reasons: sc.reasons, metrics: m,
               evals: lr.evals + 1,
               capHit: !okFull,
@@ -374,9 +400,25 @@ self.onmessage = async (e) => {
       }
     } else if (type === 'ping') {
       result = { pong: true, tag: _workerTag, hasTunerEngine: typeof TunerEngine !== 'undefined' };
+    } else if (type === 'verifyChain') {
+      // Checkpoint pipeline in ONE worker (snapshots are worker-local, pool has no pinning):
+      //   ascent -> SEPARATED_AXIAL snapshot -> (restore, bias) -> COAST_HOLD snapshot -> tuneLead from CH -> FULL from CH.
+      // payload: { point (lattice), altKm, marginBand? }.  Same result shape as probeBiasCheckpoint + wallMs/saSimTime.
+      const t0 = Date.now();
+      const altKm = payload.altKm != null ? payload.altKm : 320;
+      const values = TunerUtils.toValues(payload.point, { targetAltKm: altKm });
+      const r1 = await _job('setupSA', { values });
+      if (!r1.ok) { result = { ok: false, reason: 'setupSA: ' + r1.reason, wallMs: Date.now() - t0 }; }
+      else {
+        result = await _job('probeBiasCheckpoint', { bias: values.insertion.STAGE_BURN_AOA_BIAS_DEG, altKm, marginBand: payload.marginBand });
+        result.saSimTime = r1.simTime; result.wallMs = Date.now() - t0;
+      }
     } else {
       throw new Error('unknown job type: ' + type);
     }
+    return result;
+    };
+    const result = await _job(type, payload);
     self.postMessage({ id, ok: true, result });
   } catch (err) {
     self.postMessage({ id, ok: false, error: (err && err.message) || String(err) });

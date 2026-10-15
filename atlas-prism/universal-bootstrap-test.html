@@ -357,7 +357,9 @@ async function phaseC(ev, P, M, anchor) {
 // ---- PHASE D: real verification. tuneLead (CIRC_END) -> FULL eval. Only FULL-passing rows are "verified". ----
 async function verifyPoint(P, M, Gi, bi, ev) {
   const point = { Gi, Tn: P.Tn, bi, li: P.li, meco: M };
-  const lr = await pool.runJob('tuneLead', { point, opts: { targetAltKm: P.alt, maxEvals: 30 } });
+  // Checkpoint chain in ONE worker (SA + CH snapshots, tuneLead + FULL from CH). Verified bit-exact vs scratch path on 3 cases (checkpoint-equiv), ~4-5.5x faster.
+  const ch = await pool.runJob('verifyChain', { point, altKm: P.alt });
+  const lr = { ok: !!ch.tuneOk, inBand: ch.inBand, reason: ch.reason, lead: ch.lead, leadTicks: ch.leadTicks, marginS: ch.margin, evals: ch.evals };
   const rec0 = await ev(M, Gi, bi);
   const idealReg = Number.isFinite(rec0.dv) && rec0.dv < P.dvMin;   // stage ~circularises itself: margin band [4,5] unreachable with lead>=0 (diag: margin 18-76 s)
   const out = { idealReg, Gi, bi, M, lead: lr.lead, evals: lr.evals || 0, tuneOk: !!lr.ok, reason: lr.reason, full: false, inBand: !!lr.inBand, margin: lr.marginS };
@@ -370,16 +372,14 @@ async function verifyPoint(P, M, Gi, bi, ev) {
     } catch (e) { out.diag = 'diag error'; }
     return out;
   }
-  const fp = { Gi, Tn: P.Tn, bi, li: lr.leadTicks, meco: M };
-  const m = await pool.runEval(fp, { targetAltKm: P.alt, quiet: true });
-  out.evals++;
-  out.tEnd = m.simTimeEnd; out.payloadCleared = !!m.payloadCleared; out.apo = m.apogeeKm; out.peri = m.perigeeKm; out.vrEnd = m.vrEnd; out.resid = m.stageResidualKg;
-  out.full = (idealReg || (out.inBand && lr.lead >= 1)) && out.payloadCleared && Math.abs(m.apogeeKm - P.alt) <= 0.5 && Math.abs(m.perigeeKm - P.alt) <= 0.5 && m.vrEnd >= 0;
+  const m = ch.metrics || {};   // FULL already run from CH inside verifyChain (ch.evals counts it)
+  out.tEnd = ch.simEnd; out.payloadCleared = !!m.payloadCleared; out.apo = m.apogeeKm; out.peri = m.perigeeKm; out.vrEnd = ch.vrEnd; out.resid = m.stageResidualKg;
+  out.full = (idealReg || (out.inBand && lr.lead >= 1)) && out.payloadCleared && Math.abs(m.apogeeKm - P.alt) <= 0.5 && Math.abs(m.perigeeKm - P.alt) <= 0.5 && ch.vrEnd >= 0;
   return out;
 }
 
 async function phaseD(P, M, chosen, ev) {
-  log(''); log('PHASE D  verify (tuneLead CIRC_END -> FULL) on ' + chosen.length + ' rows x ' + P.dpts + ' biases', 'hi');
+  log(''); log('PHASE D  verify (checkpoint chain: SA -> CH -> tuneLead -> FULL) on ' + chosen.length + ' rows x ' + P.dpts + ' biases', 'hi');
   const res = [];
   for (const r of chosen) {
     if (STOP) break;
