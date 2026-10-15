@@ -20,6 +20,7 @@
     const cache = opts.cache || new U.EvalCache();
     const targetAltKm = opts.targetAltKm != null ? opts.targetAltKm : Cfg.fixed.targetAltKm;
     const leadOf = (li) => Number((li * q).toFixed(4));
+    const LEAD_MAX_TICKS = Math.round(20 / q);   // hard cap: 20 s max lead
     const t0 = performance.now();
 
     const pts = new Map();           // li -> record
@@ -32,6 +33,7 @@
 
     async function ev(li) {
       if (li < 0) li = 0;
+      if (li > LEAD_MAX_TICKS) li = LEAD_MAX_TICKS;
       if (pts.has(li)) return pts.get(li);
       if (opts.abortRef && opts.abortRef.aborted) throw new Stop('aborted');
       const p = Object.assign({}, point, { li });
@@ -116,6 +118,7 @@
           next = lo.li + Math.min(pts.size < 2 ? firstCap : 60, Math.max(1, d));
         }
         if (next < 0) next = 0;
+        if (next > LEAD_MAX_TICKS) next = LEAD_MAX_TICKS;
         if (pts.has(next)) break;                     // no new information
         note(await ev(next));
       }

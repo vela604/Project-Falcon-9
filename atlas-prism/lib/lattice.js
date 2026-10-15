@@ -84,6 +84,7 @@
         STAGE_BURN_AOA_BIAS_DEG: biasOf(p.bi),
         STAGE_BURN_AOA_MARGIN_DEG: f.margin,
         CIRC_TRIGGER_LEAD_S: leadOf(p.li),
+        COAST_WAIT_BEFORE_APOGEE_S: f.coastWaitBeforeApogeeS,
       },
       done: { DEORBIT_ENABLED: f.deorbitEnabled },
     };

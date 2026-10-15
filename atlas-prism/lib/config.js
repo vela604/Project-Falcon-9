@@ -33,6 +33,7 @@
       margin: 0.001,            // STAGE_BURN_AOA_MARGIN_DEG — fixed, never tuned (decided)
       deorbitEnabled: false,    // done.DEORBIT_ENABLED
       targetAltKm: 320,         // default; UI overrides
+      coastWaitBeforeApogeeS: 50, // COAST_WAIT_BEFORE_APOGEE_S override (guidance-blocks default 90)
     },
 
     // ---- Baseline (raw defaults; reproduces manual 590.46 s run) ----
