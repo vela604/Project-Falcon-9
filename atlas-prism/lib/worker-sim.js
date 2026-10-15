@@ -91,7 +91,7 @@ function captureSnap() {
   };
 }
 
-function restoreSnap(snap, biasOverride, leadOverride) {
+function restoreSnap(snap, biasOverride, leadOverride, mecoOverride) {
   Object.keys(snap.stateKeysSnapshot).forEach(k => {
     try { state[k] = deepClone(snap.stateKeysSnapshot[k]); } catch (e) {}
   });
@@ -117,6 +117,12 @@ function restoreSnap(snap, biasOverride, leadOverride) {
     }
   }
   const g = deepClone(snap.guidanceState);
+  if (mecoOverride != null) {
+    if (g.guideConfigs && g.guideConfigs.leoInsertionV3 && g.guideConfigs.leoInsertionV3.ascent) {
+      g.guideConfigs.leoInsertionV3.ascent.MECO_TARGET_BOOSTER_FUEL_KG = mecoOverride;
+    }
+    if (g.v3AscentBlock && g.v3AscentBlock.constants) g.v3AscentBlock.constants.MECO_TARGET_BOOSTER_FUEL_KG = mecoOverride;
+  }
   if (biasOverride != null && g.guideConfigs && g.guideConfigs.leoInsertionV3 && g.guideConfigs.leoInsertionV3.insertion) {
     g.guideConfigs.leoInsertionV3.insertion.STAGE_BURN_AOA_BIAS_DEG = biasOverride;
   }
@@ -195,6 +201,68 @@ function extractCircMetrics() {
   }
   const marginS = vr < 0 ? (tApo - per) : tApo;
   return { vrEnd: vr, marginS, vrMin: -1, tApo, per };
+}
+
+
+// ---- Step 1: portability-test helpers (ladder / fingerprint / scan) ----
+let _ladder = [];
+function scanSnap(x) {
+  const out = { fn: 0, sym: 0, nan: 0, inf: 0, nonPlain: 0, nodes: 0, paths: [] };
+  const seen = new WeakSet();
+  (function w(v, p) {
+    const t = typeof v;
+    if (t === 'function') { out.fn++; if (out.paths.length < 12) out.paths.push('fn@' + p); return; }
+    if (t === 'symbol') { out.sym++; return; }
+    if (t === 'number') { if (Number.isNaN(v)) out.nan++; else if (!Number.isFinite(v)) out.inf++; return; }
+    if (v === null || t !== 'object') return;
+    if (seen.has(v)) return; seen.add(v); out.nodes++;
+    const pr = Object.getPrototypeOf(v);
+    if (pr !== Object.prototype && pr !== Array.prototype && pr !== null) { out.nonPlain++; if (out.paths.length < 12) out.paths.push('proto@' + p); }
+    for (const k of Object.keys(v)) w(v[k], p + '.' + k);
+  })(x, '');
+  return out;
+}
+// Same spool/residual formula as ascent block _checkMeco: snapshot is valid for MECO target M iff residualProj > M.
+function mecoResidual() {
+  const b = state.bodies[0]; if (!b) return NaN;
+  let spool = 0;
+  (b.engines || []).forEach(e => {
+    const mf = e.massFlowRate || 0, mM = e.maxMassFlowRate || 0;
+    if (mf > 0 && mM > 0) { const sd = (Number.isFinite(e.shutdownDurationS) && e.shutdownDurationS > 0) ? e.shutdownDurationS : 1.2; spool += (mf * (mf * sd / mM)) / 2; }
+  });
+  const f = (Array.isArray(b.memberFuel) && Number.isFinite(b.memberFuel[0])) ? b.memberFuel[0] : 0;
+  return f - spool;
+}
+function fingerprint() {
+  const f = { simTime: state.simTime, nb: state.bodies.length };
+  state.bodies.forEach((b, i) => {
+    if (!b) return;
+    ['rx','ry','vx','vy','theta','omega','fuelMass','dryMass'].forEach(k => { f['b' + i + '.' + k] = b[k]; });
+    (b.engines || []).forEach((e, j) => { f['b' + i + 'e' + j + '.mf'] = e.massFlowRate; f['b' + i + 'e' + j + '.g'] = e.gimbalDeg; });
+  });
+  return f;
+}
+async function runToCW(tCheck, capS) {
+  const fp = {}, ol = console.log; console.log = function () {};
+  try {
+    let got = false;
+    const n = Math.ceil(capS / CONFIG.DT);
+    for (let i = 0; i < n; i++) {
+      if (state.halted) break;
+      TunerEngine.tick(CONFIG.DT);
+      if (!got && state.simTime >= tCheck) { fp.check = fingerprint(); got = true; }
+      const gs = Guidance.getGuideStatus();
+      if (gs && gs.phase === 'COAST_WAIT') {
+        fp.cw = fingerprint();
+        const stb = findStageBody();
+        if (stb) { const o = TunerHook.orbitOf(stb, CONFIG.GM_EARTH, CONFIG.EARTH_RADIUS); fp.cw.eCoast = o.ecc; fp.cw.tToApo = o.tToApo; fp.cw.apoKm = o.apoKm; fp.cw.periKm = o.periKm; }
+        fp.cw.coastDeltaV = gs.coastDeltaV;
+        break;
+      }
+    }
+    fp.reached = !!fp.cw;
+    return fp;
+  } finally { console.log = ol; }
 }
 
 // ---- message handler ----
@@ -398,6 +466,54 @@ self.onmessage = async (e) => {
           }
         }
       }
+    } else if (type === 'ladderBuild') {
+      // Step 1: ascent ladder. payload { point (meco should be 0 = never fires early), altKm, stepS }
+      const t0 = Date.now(), altKm = payload.altKm != null ? payload.altKm : 320;
+      const values = TunerUtils.toValues(payload.point, { targetAltKm: altKm });
+      const ol = console.log; console.log = function () {};
+      try {
+        TunerEngine.prepareRun(TunerConfig.guideName, values, payload.env || TunerConfig.env);
+        const stepTicks = Math.max(1, Math.round((payload.stepS || 2) / CONFIG.DT));
+        _ladder = [];
+        const maxT = Math.ceil(400 / CONFIG.DT);
+        for (let i = 1; i <= maxT; i++) {
+          if (state.halted) break;
+          TunerEngine.tick(CONFIG.DT);
+          const gs = Guidance.getGuideStatus();
+          if (!gs || gs.phase !== 'ASCENT' || gs.mecoTriggered) break;
+          if (i % stepTicks === 0) _ladder.push({ tick: i, simTime: state.simTime, residualProj: mecoResidual(), snap: captureSnap() });
+        }
+      } finally { console.log = ol; }
+      const last = _ladder[_ladder.length - 1];
+      let cloneOk = null, cloneErr = null, jsonBytes = null;
+      if (last) {
+        try { jsonBytes = JSON.stringify(last.snap).length; } catch (e) { jsonBytes = 'ERR ' + e.message; }
+        try { structuredClone(last.snap); cloneOk = true; } catch (e) { cloneOk = false; cloneErr = e.message; }
+      }
+      result = {
+        ok: !!last, n: _ladder.length, wallMs: Date.now() - t0,
+        times: _ladder.map(x => +x.simTime.toFixed(3)), residuals: _ladder.map(x => Math.round(x.residualProj)),
+        jsonBytes, cloneOk, cloneErr, scan: last ? scanSnap(last.snap) : null,
+      };
+    } else if (type === 'ladderGet') {
+      // payload { M } -> last snapshot whose projected MECO residual is still > M (prefix identical for that MECO)
+      let idx = -1;
+      for (let i = 0; i < _ladder.length; i++) if (_ladder[i].residualProj > payload.M) idx = i;
+      result = idx < 0 ? { ok: false, reason: 'no snapshot above M' } : { ok: true, idx, simTime: _ladder[idx].simTime, residualProj: _ladder[idx].residualProj, snap: _ladder[idx].snap };
+    } else if (type === 'runScratch' || type === 'runFromSnap') {
+      // payload { point (target: meco=M, bias, lead), altKm, tCheck, snap? , capS }
+      const altKm = payload.altKm != null ? payload.altKm : 320, t0 = Date.now();
+      const values = TunerUtils.toValues(payload.point, { targetAltKm: altKm });
+      const ol = console.log; console.log = function () {};
+      try {
+        TunerEngine.prepareRun(TunerConfig.guideName, values, payload.env || TunerConfig.env);   // resetState(0) + env + fueling + startGuide
+        if (type === 'runFromSnap') {
+          restoreSnap(payload.snap, values.insertion.STAGE_BURN_AOA_BIAS_DEG, values.insertion.CIRC_TRIGGER_LEAD_S, values.ascent.MECO_TARGET_BOOSTER_FUEL_KG);
+        }
+      } finally { console.log = ol; }
+      const fp = await runToCW(payload.tCheck, payload.capS || 1500);
+      fp.wallMs = Date.now() - t0;
+      result = fp;
     } else if (type === 'ping') {
       result = { pong: true, tag: _workerTag, hasTunerEngine: typeof TunerEngine !== 'undefined' };
     } else if (type === 'verifyChain') {

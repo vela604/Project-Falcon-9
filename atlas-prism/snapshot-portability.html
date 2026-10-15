@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>atlas-prism · snapshot portability (Step 1)</title>
+<style>
+body{background:#0e1116;color:#d6dde6;font:12px/1.4 ui-monospace,Menlo,monospace;margin:0;padding:10px}
+input{background:#1b212b;color:#d6dde6;border:1px solid #333c4a;border-radius:4px;padding:4px;width:64px}
+button{background:#2b6cb0;color:#fff;border:0;border-radius:4px;padding:8px 12px;font:inherit;margin:4px 4px 4px 0}
+pre{background:#080a0e;border:1px solid #232a35;padding:8px;overflow:auto;white-space:pre-wrap;max-height:70vh}
+.ok{color:#68d391}.bad{color:#fc8181}.dim{color:#8896a8}.hi{color:#f6e05e}
+</style></head><body>
+<div>alt <input id="alt" value="320"> G <input id="G" value="0.58"> T <input id="T" value="4.82"> MECO <input id="M" value="60000"> bias <input id="b" value="1.177"> lead <input id="l" value="5.53"></div>
+<div>ladder step s <input id="step" value="2"> <label><input type="checkbox" id="diff" checked style="width:auto"> ladder built with DIFFERENT bias/lead (tests Level-1 independence)</label></div>
+<button id="go">Run portability test</button><button id="copy">Copy log</button>
+<div id="status" class="hi"></div><pre id="log"></pre>
+<script>
+const $=id=>document.getElementById(id);let txt='';
+function log(s,c){txt+=s+'\n';const d=document.createElement('span');if(c)d.className=c;d.textContent=s+'\n';$('log').appendChild(d);$('log').scrollTop=1e9;}
+const LS=['rocketSim.fleet.v1','rocketSim.selectedId.v1','rocketSim.stacks.v1','rocketSim.selectedStackId.v1','rocketSim.families.v1','rocketSim.selectedFamilyId.v1','rocketSim.componentLibrary.v1','rocketSim.payloads.v1','rocketSim.payloadSplitDone.v1'];
+// Raw single-worker wrapper (pool has no worker pinning; this test needs it).
+class W{
+ constructor(name){this.name=name;this.n=0;this.p=new Map();const keys={};LS.forEach(k=>{try{keys[k]=localStorage.getItem(k);}catch(e){keys[k]=null;}});
+  this.w=new Worker('lib/worker-sim.js?v='+Date.now());
+  this.ready=new Promise((res,rej)=>{this.w.onmessage=e=>{const m=e.data||{};
+    if(m.type==='ready'){m.error?rej(new Error(name+' boot: '+m.error)):res();return;}
+    if(m.type==='progress')return;
+    const j=this.p.get(m.id);if(!j)return;this.p.delete(m.id);m.ok?j.res(m.result):j.rej(new Error(name+': '+m.error));};
+   this.w.onerror=e=>rej(new Error(name+' worker error '+(e.message||'')));});
+  this.w.postMessage({type:'hydrate',payload:{keys}});}
+ job(type,payload){return new Promise((res,rej)=>{const id=this.n++;this.p.set(id,{res,rej});this.w.postMessage({id,type,payload});});}
+}
+function cmp(a,b){let n=0,bad=0,maxd=0,first=null;
+ for(const k of new Set([...Object.keys(a||{}),...Object.keys(b||{})])){n++;const x=a?a[k]:undefined,y=b?b[k]:undefined;
+  if(!Object.is(x,y)){bad++;const d=Math.abs(x-y);if(Number.isFinite(d)&&d>maxd)maxd=d;if(!first)first=k+': '+x+' vs '+y;}}
+ return{n,bad,maxd,first};}
+function report(tag,ref,got){
+ let all=true;
+ for(const key of ['check','cw']){const c=cmp(ref[key],got[key]);const ok=c.bad===0&&c.n>0;all=all&&ok;
+  log('  '+tag+' @'+key+': '+(ok?'IDENTICAL':'MISMATCH')+'  fields='+c.n+' bad='+c.bad+' maxAbs='+c.maxd.toExponential(2)+(c.first?'  first '+c.first:''),ok?'ok':'bad');}
+ return all;}
+$('go').onclick=async()=>{
+ $('go').disabled=true;
+ try{
+  const alt=+$('alt').value,G=+$('G').value,Tn=Math.round(+$('T').value/0.000125),M=+$('M').value,bias=+$('b').value,lead=+$('l').value;
+  const mk=(meco,b,l)=>({Gi:Math.round(G*100),Tn,bi:Math.round(b/0.0001),li:Math.round(l/0.0125),meco});
+  const target=mk(M,bias,lead);
+  const ladderPt=$('diff').checked?mk(0,0.5,4.0):mk(0,bias,lead);
+  log('target '+JSON.stringify(target),'hi');log('ladder '+JSON.stringify(ladderPt),'dim');
+  $('status').textContent='booting 3 workers';
+  const W1=new W('W1'),W2=new W('W2'),W3=new W('W3');await Promise.all([W1.ready,W2.ready,W3.ready]);
+
+  // (a) ladder + clone/size scan
+  $('status').textContent='(a) ladder build on W1';
+  const L=await W1.job('ladderBuild',{point:ladderPt,altKm:alt,stepS:+$('step').value});
+  log('\n(a) LADDER ok='+L.ok+' snaps='+L.n+' wall='+(L.wallMs/1000).toFixed(1)+'s  t=['+L.times[0]+' .. '+L.times[L.n-1]+']','hi');
+  if(!L.ok)throw new Error('ladder failed');
+  log('  residualProj kg (first..last): '+L.residuals[0]+' .. '+L.residuals[L.n-1]+'   spacing ~'+Math.round((L.residuals[0]-L.residuals[L.n-1])/Math.max(1,L.n-1))+' kg/step','dim');
+  log('  last snap: JSON='+(typeof L.jsonBytes==='number'?(L.jsonBytes/1024).toFixed(1)+' KB':L.jsonBytes)+'  structuredClone='+(L.cloneOk?'OK':'FAIL '+L.cloneErr),L.cloneOk?'ok':'bad');
+  const s=L.scan;
+  log('  scan: nodes='+s.nodes+' functions='+s.fn+' symbols='+s.sym+' nonPlainProto='+s.nonPlain+' NaN='+s.nan+' Inf='+s.inf+(s.paths.length?'\n  paths: '+s.paths.join(', '):''),(s.fn||s.sym||s.nonPlain)?'bad':'ok');
+  log('  (NaN/Inf survive structuredClone; only JSON would null them — transport here is postMessage, so fine)','dim');
+
+  // pick snapshot + ship to main thread (this IS the cross-thread transfer test)
+  $('status').textContent='fetch snapshot for M='+M;
+  const t0=performance.now();const P=await W1.job('ladderGet',{M});
+  if(!P.ok)throw new Error('ladderGet: '+P.reason);
+  log('\nsnapshot picked idx='+P.idx+' t='+P.simTime.toFixed(3)+' residualProj='+Math.round(P.residualProj)+' > M='+M+'  transfer='+(performance.now()-t0).toFixed(0)+' ms','dim');
+  const tCheck=P.simTime+20;
+
+  // (b) reference scratch on clean W2 || dirty-then-restore on W3 || restore on W1 (ladder-polluted)
+  $('status').textContent='(b) scratch W2 | dirty+restore W3 | restore W1';
+  const pr=W2.job('runScratch',{point:target,altKm:alt,tCheck});
+  const p3=(async()=>{
+    // make W3 dirty: a full different eval (different G/MECO/bias) before the restore
+    await W3.job('runEval',{point:mk(55000,0.9,5.0),opts:{stopAt:'COAST_WAIT_ENTRY',targetAltKm:alt,quiet:true}});
+    return W3.job('runFromSnap',{point:target,altKm:alt,snap:P.snap,tCheck});})();
+  const p1=W1.job('runFromSnap',{point:target,altKm:alt,snap:P.snap,tCheck});
+  const [ref,r3,r1]=await Promise.all([pr,p3,p1]);
+  log('\n(b) SCRATCH ref (clean W2): reached CW='+ref.reached+' t='+(ref.cw&&ref.cw.simTime.toFixed(2))+' eCoast='+(ref.cw&&ref.cw.eCoast)+' wall='+(ref.wallMs/1000).toFixed(1)+'s','hi');
+  if(!ref.reached)throw new Error('scratch did not reach COAST_WAIT');
+  log('    restore W3 (dirty, other worker): wall='+(r3.wallMs/1000).toFixed(1)+'s');
+  const ok3=report('W3 dirty ',ref,r3);
+  log('    restore W1 (same worker as ladder): wall='+(r1.wallMs/1000).toFixed(1)+'s');
+  const ok1=report('W1 same  ',ref,r1);
+  log('');
+  if(ok3&&ok1)log('VERDICT: PASS — mid-ascent snapshot is portable & bit-identical (incl. MECO'+($('diff').checked?'+bias+lead':'')+' override). Step 2 can go ahead.','ok');
+  else log('VERDICT: FAIL — see first mismatching field above. Check physics.js module-level globals / sub-state NaN->null in ascent getState. Fallback: (G,T) worker pinning.','bad');
+ }catch(e){log('ERROR '+(e&&e.message||e),'bad');}
+ $('status').textContent='done';$('go').disabled=false;
+};
+$('copy').onclick=()=>navigator.clipboard&&navigator.clipboard.writeText(txt);
+</script></body></html>
