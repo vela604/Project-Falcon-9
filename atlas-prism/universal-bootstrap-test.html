@@ -54,6 +54,8 @@
 </div>
 <div class="row">
   <button id="go">Run bootstrap</button>
+  <input id="dbgCase" value="800 0.62 36000 2.27" placeholder="alt G MECO bias" style="width:180px">
+  <button class="alt" id="dbgGo">Debug single</button>
   <button id="stop" class="alt">Stop</button>
   <button id="copy" class="alt">Copy log</button>
 </div>
@@ -450,6 +452,37 @@ $('go').onclick = async () => {
   } catch (e) { log('ERROR: ' + (e && e.message || e), 'bad'); }
   $('status').textContent = 'done'; $('go').disabled = false;
 };
+$('dbgGo').onclick = async () => {
+    $('dbgGo').disabled = true; STOP = false; EVALS = 0;
+    try {
+      const parts = $('dbgCase').value.trim().split(/\s+/).map(Number);
+      const [alt, G, M, b] = parts;
+      if (![alt, G, M, b].every(Number.isFinite)) throw new Error('bad input: alt G MECO bias');
+      await getPool();
+      const P = params(); P.alt = alt;
+      const Gi = Math.round(G * 100), Tn = Math.round(4.82 / 0.000125), bi = Math.round(b / 0.0001), li = Math.round(5.53 / 0.0125);
+      const point = { Gi, Tn, bi, li, meco: Math.round(M) };
+      log('');
+      log('=== DEBUG single  alt=' + alt + '  G=' + G + '  MECO=' + M + '  bias=' + b + ' ===', 'hi');
+      log('lattice: ' + JSON.stringify(point), 'dim');
+      const ev = makeEv(P);
+      const t0 = performance.now();
+      const v = await verifyPoint(P, M, Gi, bi, ev);
+      const ms = performance.now() - t0;
+      log('');
+      const tag = v.full ? (v.idealReg ? 'VERIFIED-FULL(ideal regime)' : 'VERIFIED-FULL') : (v.tuneOk ? (!v.inBand ? 'MARGIN-OUT-OF-BAND' : (v.lead < 1 ? 'LEAD-AT-EDGE' : 'FULL-FAIL')) : 'tuneLead-FAIL');
+      log('RESULT: ' + tag + '  wall=' + (ms/1000).toFixed(1) + 's', v.full ? 'ok' : 'bad');
+      log('  tuneOk=' + v.tuneOk + ' inBand=' + v.inBand + ' lead=' + f1(v.lead, 4) + ' leadTicks=' + v.leadTicks + ' margin=' + f1(v.margin, 3) + ' evals=' + v.evals + ' reason=' + (v.reason || '-'), 'dim');
+      log('  pred=' + f1(v.pred, 0), 'dim');
+      if (v.payloadCleared !== undefined) log('  cleared=' + v.payloadCleared + ' apo=' + f1(v.apo, 3) + ' peri=' + f1(v.peri, 3) + ' vrEnd=' + f1(v.vrEnd, 4) + ' resid=' + f1(v.resid, 0) + ' Δ=' + f1(v.resid - v.pred, 0) + ' T=' + f1(v.tEnd, 1) + 's', 'dim');
+      if (v.diag) log('  @lead5.5 diag: ' + v.diag, 'dim');
+      if (v.tlog && v.tlog.length) {
+        log('  --- tuneLead log (' + v.tlog.length + ' lines) ---', 'dim');
+        v.tlog.forEach(l => log('  ' + l, 'dim'));
+      }
+    } catch (e) { log('DEBUG ERROR: ' + (e && e.message || e), 'bad'); }
+    $('dbgGo').disabled = false;
+  };
 $('stop').onclick = () => { STOP = true; $('status').textContent = 'stopping...'; };
 $('copy').onclick = () => { navigator.clipboard && navigator.clipboard.writeText(logText); };
 </script>
