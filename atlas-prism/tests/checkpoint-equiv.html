@@ -15,13 +15,13 @@ pre{background:#080a0e;border:1px solid #232a35;padding:8px;overflow:auto;white-
 2000 0.65 0 0.59</textarea><br>
 <button id="go">Run A (scratch tuneLead+FULL) vs B (checkpoint verifyChain)</button><button id="copy">Copy log</button>
 <div id="status" class="hi"></div><pre id="log"></pre>
-<script src="lib/worker-pool.js"></script>
+<script src="../lib/worker-pool.js"></script>
 <script>
 const $=id=>document.getElementById(id);let txt='';
 function log(s,c){txt+=s+'\n';const d=document.createElement('span');if(c)d.className=c;d.textContent=s+'\n';$('log').appendChild(d);$('log').scrollTop=1e9;}
 const f=(x,d)=>Number.isFinite(x)?x.toFixed(d):'--';
 let pool=null;
-async function getPool(){if(pool)return pool;let n=parseInt($('nw').value,10);if(!(n>0))n=TunerCore.defaultWorkers();pool=new TunerCore.WorkerPool(n);await pool.waitReady();return pool;}
+async function getPool(){if(pool)return pool;let n=parseInt($('nw').value,10);if(!(n>0))n=TunerCore.defaultWorkers();pool=new TunerCore.WorkerPool(n, { workerPath: '../lib/worker-sim.js' });await pool.waitReady();return pool;}
 $('go').onclick=async()=>{
  $('go').disabled=true;
  try{

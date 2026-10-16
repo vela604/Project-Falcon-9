@@ -56,7 +56,7 @@
 </div>
 <pre id="log"></pre>
 
-<script src="lib/worker-pool.js"></script>
+<script src="../lib/worker-pool.js"></script>
 <script>
 // ============================================================================
 // Pure search logic (no DOM, no pool) — evalFn(Gi, bias) -> Promise<{ok, cls, ...}>
@@ -168,7 +168,7 @@ async function getPool() {
   if (pool) return pool;
   let n = parseInt($('nw').value, 10);
   if (!(n > 0)) n = TunerCore.defaultWorkers();
-  pool = new TunerCore.WorkerPool(n); NW = n;
+  pool = new TunerCore.WorkerPool(n, { workerPath: '../lib/worker-sim.js' }); NW = n;
   log('pool: ' + n + ' workers, booting...', 'dim');
   await pool.waitReady();
   const errs = pool.readyErrors.filter(Boolean);

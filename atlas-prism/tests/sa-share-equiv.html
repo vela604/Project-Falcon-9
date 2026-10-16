@@ -15,12 +15,12 @@ pre{background:#080a0e;border:1px solid #232a35;padding:8px;overflow:auto;white-
 2000 0.65 0</textarea><br>
 <button id="go">A (5x scratch runEval) vs B (1 SA + 4 resume)</button><button id="copy">Copy log</button>
 <div id="status" class="hi"></div><pre id="log"></pre>
-<script src="lib/worker-pool.js"></script>
+<script src="../lib/worker-pool.js"></script>
 <script>
 const $=id=>document.getElementById(id);let txt='';
 function log(s,c){txt+=s+'\n';const d=document.createElement('span');if(c)d.className=c;d.textContent=s+'\n';$('log').appendChild(d);$('log').scrollTop=1e9;}
 let pool=null;
-async function getPool(){if(pool)return pool;let n=parseInt($('nw').value,10);if(!(n>0))n=TunerCore.defaultWorkers();pool=new TunerCore.WorkerPool(n);await pool.waitReady();return pool;}
+async function getPool(){if(pool)return pool;let n=parseInt($('nw').value,10);if(!(n>0))n=TunerCore.defaultWorkers();pool=new TunerCore.WorkerPool(n, { workerPath: '../lib/worker-sim.js' });await pool.waitReady();return pool;}
 const SKIP={wallMs:1,ticksPerSecond:1};
 function diff(a,b){const bad=[];for(const k of new Set([...Object.keys(a),...Object.keys(b)])){if(SKIP[k])continue;if(!Object.is(a[k],b[k]))bad.push(k+' ('+a[k]+' vs '+b[k]+')');}return bad;}
 $('go').onclick=async()=>{

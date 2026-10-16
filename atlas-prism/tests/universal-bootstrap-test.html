@@ -62,8 +62,8 @@
 <div id="status">idle</div>
 <pre id="log"></pre>
 
-<script src="lib/worker-pool.js"></script>
-<script src="lib/bootstrap.js"></script>
+<script src="../lib/worker-pool.js"></script>
+<script src="../lib/bootstrap.js"></script>
 <script>
 (function () {
   'use strict';
@@ -95,7 +95,7 @@
   async function getPool() {
     if (pool) return pool;
     let n = parseInt($('nw').value, 10); if (!(n > 0)) n = TunerCore.defaultWorkers();
-    pool = new TunerCore.WorkerPool(n);
+    pool = new TunerCore.WorkerPool(n, { workerPath: '../lib/worker-sim.js' });
     log('pool: ' + n + ' workers, booting...', 'dim');
     await pool.waitReady();
     const errs = pool.readyErrors.filter(Boolean);
