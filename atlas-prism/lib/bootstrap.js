@@ -253,18 +253,34 @@
     return champ ? { M: champ.M, best: champ, champs: bests } : null;
   }
 
+  // ---------------- Anchor search (used in force modes) ----------------
+  async function findAnchorBias(ctx, ev, P, M, Gi) {
+    const tries = [0, -0.5, 0.5, -1, 1, -1.5, 1.5, -2, 2, -2.5, 2.5, -3, 3];
+    const Bi = Math.round(P.bmax / UB.BQ);
+    for (const b of tries) {
+      const bi = Math.round(b / UB.BQ);
+      if (Math.abs(bi) > Bi) continue;
+      const r = await ev(M, Gi, bi);
+      if (UB.pass(r, P)) {
+        return { M, Gi, bi, pred: r.pred, tEst: r.tEst, dv: r.dv, apoC: r.apoC, anchorHit: b };
+      }
+    }
+    return null;
+  }
+
   // ---------------- Phase C ----------------
-  async function phaseC(ctx, ev, P, M, anchor) {
+  async function phaseC(ctx, ev, P, M, anchor, forceGi) {
     const onLog = ctx.onLog, NW = ctx.NW;
     const evM = (Gi, bi) => ev(M, Gi, bi);
     const k = Math.max(2, Math.ceil(NW / 2));
     const Bi = Math.round(P.bmax / UB.BQ);
-    onLog('PHASE C  band trace at MECO=' + M + ' anchor G=' + gfmt(anchor.Gi) + ' b=' + bfmt(anchor.bi) + ' pred=' + f1(anchor.pred, 0), 'hi');
+    onLog('PHASE C  band trace at MECO=' + M + ' anchor G=' + gfmt(anchor.Gi) + ' b=' + bfmt(anchor.bi) + ' pred=' + f1(anchor.pred, 0) + (forceGi != null ? '  [force G]' : ''), 'hi');
     const rows = {};
     const r0 = await UB.rangeAtG(evM, P, anchor.Gi, anchor.bi, k);
     rows[anchor.Gi] = r0;
     const line = (r) => gfmt(r.Gi) + '  ' + bfmt(r.lo) + ' ' + bfmt(r.hi) + '  w=' + (r.width * UB.BQ).toFixed(3) + (r.clipLo ? ' CLIP-' : '') + (r.clipHi ? ' CLIP+' : '') + (r.nonContig ? ' NONCONTIG' : '');
     onLog(line(r0), 'ok');
+    if (forceGi != null) { onLog('(force G — single G row, no trace)', 'dim'); return rows; }
     const span = 12;
     for (const dir of [+1, -1]) {
       let prev = r0, shift = 0, Gi = anchor.Gi;
@@ -369,20 +385,39 @@
     const ev = makeEv(ctx);
     const out = { ok: false, status: '', champs: [], good: [], table: null, rows: {}, chosen: [], evals: 0, wallMs: 0, error: null };
     try {
-      ctx.onLog('--- universal bootstrap  alt=' + P.alt + '  T=' + (P.Tn * 0.000125) + '  K=' + P.K + '  pred [' + P.predMin + ',' + P.predMax + ']  ideal=' + P.ideal + '  bias rows=' + P.nbr + ' ---', 'dim');
-      ctx.onStatus('phase A...');
-      const table = await phaseA(ctx, ev, P);
-      out.table = table;
-      ctx.onLog('SA share: build=' + ctx.pool.saStats.build + ' reuse=' + ctx.pool.saStats.hit + ' preSAfail=' + ctx.pool.saStats.failHit + ' stored=' + ctx.pool.snaps.size + ' evicted=' + ctx.pool.snaps.evicted, 'dim');
-      const nrm = UB.setNorm(Array.from(ev.cache.values()), P);
-      if (nrm) ctx.onLog('norm: tEst ' + nrm.tLo.toFixed(0) + '..' + (nrm.tLo + nrm.tSpan).toFixed(0) + ' s,  MECO ' + nrm.mLo + '..' + (nrm.mLo + nrm.mSpan) + '  ideal=' + P.ideal, 'dim');
-      ctx.onStatus('phase B...');
-      const bk = await phaseB(ctx, ev, P);
-      if (!bk || !bk.best) {
-        out.status = 'no feasible point at any MECO';
-        ctx.onLog('NO feasible point at any MECO tried. Widen MECO range / G range, or lower pred min.', 'bad');
-        out.evals = ctx.evals.n; out.wallMs = nowMs() - t0;
-        return out;
+      ctx.onLog('--- universal bootstrap  alt=' + P.alt + '  T=' + (P.Tn * 0.000125) + '  K=' + P.K + '  pred [' + P.predMin + ',' + P.predMax + ']  ideal=' + P.ideal + '  bias rows=' + P.nbr +
+        (opts.forceMeco != null ? '  FORCE MECO=' + opts.forceMeco : '') +
+        (opts.forceGi != null ? '  FORCE G=' + gfmt(opts.forceGi) : '') + ' ---', 'dim');
+      let bk = null;
+      if (opts.forceMeco != null) {
+        // Force mode: skip Phase A/B. Need an anchor (passing G, bias) at fixed M.
+        const Gi = opts.forceGi != null ? opts.forceGi : Math.round((P.gLoI + P.gHiI) / 2);
+        ctx.onStatus('force: anchor search at M=' + opts.forceMeco + ' G=' + gfmt(Gi) + '...');
+        ctx.onLog('Phase A/B skipped (force MECO=' + opts.forceMeco + ') — finding anchor bias at G=' + gfmt(Gi), 'warn');
+        const anchor = await findAnchorBias(ctx, ev, P, opts.forceMeco, Gi);
+        if (!anchor) {
+          out.status = 'no feasible bias at force (M, G)';
+          ctx.onLog('No feasible bias found at M=' + opts.forceMeco + ' G=' + gfmt(Gi) + ' (tried bias ∈ [-3, +3])', 'bad');
+          out.evals = ctx.evals.n; out.wallMs = nowMs() - t0;
+          return out;
+        }
+        ctx.onLog('anchor found: bias=' + bfmt(anchor.bi) + ' pred=' + f1(anchor.pred, 0) + ' tEst=' + f1(anchor.tEst, 0) + 's', 'ok');
+        bk = { M: opts.forceMeco, best: anchor, champs: [anchor] };
+      } else {
+        ctx.onStatus('phase A...');
+        const table = await phaseA(ctx, ev, P);
+        out.table = table;
+        ctx.onLog('SA share: build=' + ctx.pool.saStats.build + ' reuse=' + ctx.pool.saStats.hit + ' preSAfail=' + ctx.pool.saStats.failHit + ' stored=' + ctx.pool.snaps.size + ' evicted=' + ctx.pool.snaps.evicted, 'dim');
+        const nrm = UB.setNorm(Array.from(ev.cache.values()), P);
+        if (nrm) ctx.onLog('norm: tEst ' + nrm.tLo.toFixed(0) + '..' + (nrm.tLo + nrm.tSpan).toFixed(0) + ' s,  MECO ' + nrm.mLo + '..' + (nrm.mLo + nrm.mSpan) + '  ideal=' + P.ideal, 'dim');
+        ctx.onStatus('phase B...');
+        bk = await phaseB(ctx, ev, P);
+        if (!bk || !bk.best) {
+          out.status = 'no feasible point at any MECO';
+          ctx.onLog('NO feasible point at any MECO tried. Widen MECO range / G range, or lower pred min.', 'bad');
+          out.evals = ctx.evals.n; out.wallMs = nowMs() - t0;
+          return out;
+        }
       }
       out.champs = bk.champs;
       let good = [], tried = 0;
@@ -391,7 +426,7 @@
         tried++;
         if (tried > 1) { ctx.onLog(''); ctx.onLog('>>> fallback: champion #' + tried + '  M=' + ch.M + ' G=' + gfmt(ch.Gi) + ' b=' + bfmt(ch.bi) + ' pred=' + f1(ch.pred, 0) + ' tEst=' + f1(ch.tEst, 0), 'hi'); }
         ctx.onStatus('phase C (champ ' + tried + ')...');
-        const rows = await phaseC(ctx, ev, P, ch.M, ch);
+        const rows = await phaseC(ctx, ev, P, ch.M, ch, opts.forceGi);
         out.rows[ch.M] = rows;
         const chosen = report(ctx, P, ch.M, ch, rows);
         out.chosen = chosen;

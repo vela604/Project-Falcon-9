@@ -813,11 +813,6 @@ details.adv .row{margin:8px 0 0;}
   async function runOptMeco() {
     if (S.running) return;
     if (!S.pool || !S.poolReady) { alert('pool not ready'); return; }
-    if (S.optMode === 'fm' || S.optMode === 'fg') {
-      log('OPT-MECO: Force modes coming in A1d (use Range MECO + Range G for now)');
-      $('oStatus').innerHTML = '<span class="warn">Force modes coming next</span>';
-      return;
-    }
 
     S.running = true; S.t0 = performance.now();
     $('oRun').disabled = true;
@@ -825,13 +820,28 @@ details.adv .row{margin:8px 0 0;}
     $('oResultHost').style.display = 'none';
 
     try {
+      const mode = S.optMode || 'rr';
       const P = params();
-      if (!(P.gLoI < P.gHiI)) throw new Error('G lo >= G hi');
-      if (!(P.mLo < P.mHi)) throw new Error('MECO lo >= MECO hi');
+      const forceMeco = (mode === 'fm' || mode === 'fg') ? parseInt($('oMeco').value, 10) : null;
+      const forceGi = (mode === 'fg') ? Math.round(parseFloat($('oG').value) * 100) : null;
+
+      if (mode === 'rr') {
+        if (!(P.gLoI < P.gHiI)) throw new Error('G lo >= G hi');
+        if (!(P.mLo < P.mHi)) throw new Error('MECO lo >= MECO hi');
+      } else if (mode === 'fm') {
+        if (!Number.isFinite(forceMeco) || forceMeco < 0) throw new Error('invalid force MECO');
+        if (!(P.gLoI < P.gHiI)) throw new Error('G lo >= G hi');
+      } else if (mode === 'fg') {
+        if (!Number.isFinite(forceMeco) || forceMeco < 0) throw new Error('invalid force MECO');
+        if (!Number.isFinite(forceGi) || forceGi <= 0) throw new Error('invalid force G');
+      }
       if (!Number.isFinite(P.predMin) || P.predMin < 0) throw new Error('invalid resid min');
       if (!Number.isFinite(P.predTarget) || P.predTarget < P.predMin + 50) throw new Error('resid target must be >= resid min + 50');
 
-      log('OPT-MECO: mode=rr MECO [' + P.mLo + ',' + P.mHi + ']  G [' + (P.gLoI/100).toFixed(2) + ',' + (P.gHiI/100).toFixed(2) + ']  ideal=' + P.ideal);
+      log('OPT-MECO: mode=' + mode +
+        (forceMeco != null ? '  MECO=' + forceMeco : '  MECO [' + P.mLo + ',' + P.mHi + ']') +
+        (forceGi != null ? '  G=' + (forceGi/100).toFixed(2) : '  G [' + (P.gLoI/100).toFixed(2) + ',' + (P.gHiI/100).toFixed(2) + ']') +
+        '  ideal=' + P.ideal);
 
       S.pool.snaps.clear(); S.pool.saStats = { build: 0, hit: 0, failHit: 0 };
       const r = await TunerCore.runBootstrap({
@@ -839,6 +849,8 @@ details.adv .row{margin:8px 0 0;}
         params: P,
         onLog: (line) => log(line),
         onStatus: (st) => { $('oStatus').textContent = st; },
+        forceMeco: forceMeco,
+        forceGi: forceGi,
       });
       S.optResult = r;
       renderOptResult(r);
