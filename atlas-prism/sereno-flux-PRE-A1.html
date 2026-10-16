@@ -1,0 +1,1304 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>SERENO FLUX ENGINE</title>
+<style>
+:root{
+  --bg:#05070e; --panel:#0b1220; --panel2:#101a30; --border:#1c2b45;
+  --cyan:#35d6ff; --orange:#ff9248; --green:#4ade80; --yellow:#ffd23f;
+  --danger:#ff5f7e; --text:#dbe6f5; --dim:#6b7d9c;
+}
+*{box-sizing:border-box;}
+html,body{margin:0;background:var(--bg);color:var(--text);font:13px/1.5 'JetBrains Mono','Consolas',monospace;}
+#app{max-width:1400px;margin:0 auto;padding:14px;}
+header{display:flex;align-items:baseline;gap:14px;padding:10px 0;border-bottom:1px solid var(--border);margin-bottom:14px;}
+header h1{margin:0;font-size:16px;letter-spacing:3px;color:var(--cyan);font-weight:700;}
+header .sub{color:var(--dim);font-size:11px;letter-spacing:1px;}
+.panel{background:var(--panel);border:1px solid var(--border);border-radius:6px;padding:12px 14px;margin-bottom:12px;}
+.panel h2{margin:0 0 10px;font-size:11px;letter-spacing:1.5px;color:var(--cyan);font-weight:600;text-transform:uppercase;}
+.row{display:flex;flex-wrap:wrap;gap:10px 14px;align-items:center;margin:6px 0;}
+.row label{display:inline-flex;gap:6px;align-items:center;color:var(--dim);}
+input[type=number],input[type=text],select{
+  background:var(--panel2);color:var(--text);border:1px solid var(--border);
+  padding:6px 8px;border-radius:4px;font:inherit;font-size:12px;
+}
+input[type=number]{width:100px;}
+input[type=number]:disabled,input:disabled,select:disabled{opacity:.45;}
+button{
+  background:var(--panel2);color:var(--text);border:1px solid var(--border);
+  padding:8px 14px;border-radius:4px;font:inherit;font-size:12px;cursor:pointer;
+  transition:border-color .12s,color .12s;
+}
+button:hover:not(:disabled){border-color:var(--cyan);color:var(--cyan);}
+button:disabled{opacity:.35;cursor:not-allowed;}
+button.primary{background:#0d2530;border-color:#2a7a8f;color:var(--cyan);font-weight:600;}
+button.primary:hover:not(:disabled){background:#123540;border-color:var(--cyan);}
+button.lock{background:#1a3018;border-color:#3a7a3a;color:var(--green);font-weight:600;}
+button.reset{background:#3a1520;border-color:#8a2a45;color:var(--danger);font-weight:600;}
+button.suggest{font-size:11px;padding:6px 10px;color:var(--yellow);border-color:#5a4a1a;}
+button.suggest:hover:not(:disabled){color:var(--yellow);border-color:var(--yellow);}
+.dim{color:var(--dim);}
+.ok{color:var(--green);}
+.bad{color:var(--danger);}
+.warn{color:var(--yellow);}
+.big-tabs{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:12px;}
+.big-tab{
+  background:var(--panel);border:1px solid var(--border);border-radius:6px;
+  padding:14px 16px;cursor:pointer;text-align:left;position:relative;
+  transition:border-color .15s,background .15s;
+}
+.big-tab:hover{border-color:#2a5a70;}
+.big-tab.active{border-color:var(--cyan);background:#0d1a2a;box-shadow:0 0 0 1px rgba(53,214,255,.15) inset;}
+.big-tab .ttl{font-size:14px;letter-spacing:1.5px;color:var(--cyan);font-weight:700;margin-bottom:4px;}
+.big-tab .desc{font-size:11px;color:var(--dim);line-height:1.4;}
+.big-tab.locked{opacity:.35;cursor:not-allowed;}
+.big-tab.locked:hover{border-color:var(--border);}
+#tabPanel{background:var(--panel);border:1px solid var(--border);border-radius:6px;padding:14px;margin-bottom:12px;}
+#progressBar{
+  background:var(--panel2);border:1px solid var(--border);border-radius:4px;
+  padding:8px 12px;margin-bottom:8px;font-size:11px;min-height:2em;
+  display:flex;flex-wrap:wrap;gap:12px;align-items:center;
+}
+#progressBar .tag{color:var(--orange);font-weight:600;}
+#progressBar .detail{color:var(--dim);}
+#logFeed{
+  background:#050b16;border:1px solid var(--border);border-radius:4px;
+  padding:8px;font-size:10.5px;max-height:180px;overflow:auto;
+  white-space:pre;color:#9ef;
+}
+#logFeed div{margin:0;}
+
+/* ==== ZETA results: table scroll + chart area ==== */
+#resultsPanel{display:none;}
+#tableScroll{
+  max-height:460px;
+  overflow:auto;
+  border:1px solid var(--border);
+  border-radius:4px;
+  margin-top:8px;
+}
+#tableScroll table{border-collapse:collapse;font-size:11.5px;width:100%;}
+#tableScroll thead th{
+  position:sticky;top:0;
+  background:var(--panel);
+  z-index:1;
+  color:var(--cyan);font-weight:600;text-align:right;
+  padding:7px 8px;
+  border-bottom:1px solid var(--border);
+}
+#tableScroll thead th:first-child{text-align:left;}
+#tableScroll td{padding:5px 8px;text-align:right;border-bottom:1px solid rgba(28,43,69,0.5);white-space:nowrap;}
+#tableScroll td:first-child{text-align:left;}
+tr.batch-odd td{background:rgba(53,214,255,0.035);}
+tr.batch-even td{background:transparent;}
+tr.best td{background:rgba(74,222,128,.10) !important;color:var(--green);}
+tr.fail td{color:#8a4a55;}
+
+.charts{display:flex;flex-wrap:wrap;gap:14px;margin-top:12px;}
+.chartCard{background:var(--panel);border:1px solid var(--border);border-radius:6px;padding:10px;}
+.chartCard .ttl{font-size:11px;color:var(--cyan);letter-spacing:1px;margin-bottom:6px;}
+.chartCard canvas{display:block;border-radius:3px;}
+.stat{color:var(--yellow);}
+.badge{display:inline-block;padding:1px 6px;border-radius:3px;font-size:10px;letter-spacing:.5px;}
+</style>
+</head>
+<body>
+<div id="app">
+
+<header>
+  <h1>SERENO FLUX ENGINE</h1>
+  <span class="sub">atlas-prism · LEO V3 · stack-locked session</span>
+</header>
+
+<!-- ==================== LOCK BAR ==================== -->
+<section class="panel" id="lockBar">
+  <h2>Session Lock</h2>
+  <div class="row">
+    <label>stack <select id="stackSel"></select></label>
+    <label>target orbit km <input type="number" id="orbitKm" value="320" min="150" step="10"></label>
+    <button class="lock" id="lockBtn">LOCK</button>
+    <button class="reset" id="resetBtn" disabled>RESET</button>
+    <span class="dim" id="lockStatus">Select stack + orbit, then LOCK to start.</span>
+  </div>
+  <div class="dim" style="font-size:11px;margin-top:4px;">
+    Filter: only locked (default) standard-sequence stacks. Only <code>leoInsertionV3</code>.
+  </div>
+</section>
+
+<!-- ==================== MAIN (hidden until lock) ==================== -->
+<main id="main" style="display:none">
+
+  <!-- ============ BIG TABS ============ -->
+  <div class="big-tabs">
+    <div class="big-tab" data-tab="optmeco">
+      <div class="ttl">OPT-MECO X5</div>
+      <div class="desc">Parallel MECO sweep. Finds the MECO that lands stage residual fuel in the target band at minimum fuel cost.</div>
+    </div>
+    <div class="big-tab" data-tab="zeta">
+      <div class="ttl">ZETA-HELIX 1R</div>
+      <div class="desc">Bias landscape scan. N evenly-spaced bias points at fixed MECO + G + T. Each point runs a full checkpoint mission and is scored.</div>
+    </div>
+    <div class="big-tab" data-tab="convo">
+      <div class="ttl">CONVO-LEAD E2</div>
+      <div class="desc">Lead refinement. Locks MECO + G + T + bias, sweeps the circularization lead to hit the target margin window.</div>
+    </div>
+  </div>
+
+  <!-- ============ TAB PANEL ============ -->
+  <section id="tabPanel"></section>
+
+  <!-- ============ PROGRESS ============ -->
+  <section class="panel">
+    <h2>Progress</h2>
+    <div id="progressBar"><span class="dim">idle</span></div>
+    <div id="logFeed"></div>
+  </section>
+
+  <!-- ============ ZETA-ONLY RESULTS ============ -->
+  <section class="panel" id="resultsPanel">
+    <h2>ZETA-HELIX Results</h2>
+    <div class="row">
+      <button id="dlJson" class="suggest">Download ZETA JSON</button>
+      <button id="clearRuns" class="reset">Clear ZETA runs</button>
+      <span class="dim" id="runStats">0 rows · 0 batches</span>
+    </div>
+    <div id="tableScroll"><div id="tableHost"><div class="dim">No ZETA runs yet.</div></div></div>
+    <div id="chartHost" class="charts"></div>
+  </section>
+
+</main>
+
+</div>
+
+<!-- ==================== SIM / TUNER SCRIPTS ==================== -->
+<script src="../js/componentLibrary.js"></script>
+<script src="../js/customDesign.js"></script>
+<script src="../js/fleet.js"></script>
+<script src="../js/config.js"></script>
+<script src="../js/simJs/core/massProps.js"></script>
+<script src="../js/guideConfigDefaults.js"></script>
+
+<script src="lib/config.js"></script>
+<script src="lib/worker-pool.js"></script>
+<script src="lib/rough-scan.js"></script>
+
+<script>
+(function () {
+  'use strict';
+  const $ = (id) => document.getElementById(id);
+  const fmt = (x, d) => Number.isFinite(x) ? x.toFixed(d) : '–';
+  const Q = () => TunerConfig.quanta;
+
+  const S = {
+    locked: false,
+    stackId: null,
+    orbitKm: 320,
+    pool: null,
+    poolReady: false,
+    tab: null,
+    // per-engine result stores
+    optRuns: [],
+    zetaRuns: [],
+    zetaBatch: 0,
+    convoRuns: [],
+    last: { meco: null, G: null, T: null, bias: null, lead: null },
+    mc: null, Ve: null,
+    running: false,
+    t0: 0,
+    workerProgress: {},
+    logs: { optmeco: [], zeta: [], convo: [] },
+    zetaRange: {},   // "meco|G" -> { valids:[], fails:[] }
+  };
+
+  const log = (s) => {
+    const t = new Date().toISOString().slice(11,19);
+    const line = '[' + t + '] ' + s;
+    // Route to current engine's buffer. Before a tab is picked (pool /
+    // setupSA happen right after lock), seed all three — those are
+    // shared session-init messages.
+    const targets = S.tab ? [S.tab] : ['optmeco', 'zeta', 'convo'];
+    for (const k of targets) {
+      S.logs[k].push(line);
+      if (S.logs[k].length > 400) S.logs[k].shift();
+    }
+    renderLogFeed();
+  };
+
+  function renderLogFeed() {
+    const el = $('logFeed');
+    if (!el) return;
+    const k = S.tab || 'optmeco';
+    const lines = (S.logs[k] || []).slice(-200);
+    el.innerHTML = lines.map((l) => '<div>' + esc(l) + '</div>').join('');
+    el.scrollTop = el.scrollHeight;
+  }
+  const esc = (s) => String(s).replace(/[&<>"']/g, (c) =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+  // ========================================================================
+  // STACK FILTER
+  // ========================================================================
+  function eligibleStacks() {
+    const out = [];
+    let stacks = [];
+    try { stacks = (typeof loadStacks === 'function') ? loadStacks() : []; } catch (e) {}
+    for (const stk of stacks) {
+      if (!stk) continue;
+      if (stk.sequence !== 'standard') continue;
+      if (!stk.locked) continue;
+      out.push(stk);
+    }
+    return out;
+  }
+
+  function populateStackSelect() {
+    const sel = $('stackSel');
+    const list = eligibleStacks();
+    if (!list.length) {
+      sel.innerHTML = '<option value="">(no eligible standard stacks)</option>';
+      return;
+    }
+    sel.innerHTML = list.map((s) =>
+      '<option value="' + esc(s.id) + '">' + esc(s.name) + ' · ' + s.members.length + ' members</option>'
+    ).join('');
+  }
+
+  // ========================================================================
+  // LOCK / RESET
+  // ========================================================================
+  async function doLock() {
+    const stkId = $('stackSel').value;
+    if (!stkId) { $('lockStatus').innerHTML = '<span class="bad">no eligible stack</span>'; return; }
+    const km = parseInt($('orbitKm').value, 10);
+    if (!Number.isFinite(km) || km < 150) { $('lockStatus').innerHTML = '<span class="bad">invalid orbit km</span>'; return; }
+
+    try { setSelectedStackId(stkId); } catch (e) {}
+
+    const info = computeMcVe(stkId);
+    if (!info) { $('lockStatus').innerHTML = '<span class="bad">stack has no feasible stage (mc/Ve)</span>'; return; }
+    S.mc = info.mc; S.Ve = info.Ve;
+
+    S.stackId = stkId; S.orbitKm = km; S.locked = true;
+
+    $('lockBtn').disabled = true;
+    $('stackSel').disabled = true;
+    $('orbitKm').disabled = true;
+    $('resetBtn').disabled = false;
+    $('lockStatus').innerHTML = '<span class="ok">LOCKED</span> · ' +
+      esc(stkId) + ' · ' + km + ' km · mc=' + fmt(info.mc, 1) + ' kg · Ve=' + fmt(info.Ve, 1) + ' m/s';
+
+    $('main').style.display = 'block';
+
+    log('creating worker pool…');
+    const n = (typeof TunerCore.defaultWorkers === 'function') ? TunerCore.defaultWorkers() : 4;
+    S.pool = new TunerCore.WorkerPool(n, { workerPath: 'lib/worker-sim.js' });
+    S.pool.onProgress = (msg) => {
+      S.workerProgress[msg.tag] = { phase: msg.phase, detail: msg.detail, ts: msg.ts };
+      renderProgress();
+    };
+    await S.pool.waitReady();
+    S.poolReady = true;
+    log('pool ready (' + n + ' workers)');
+
+    log('setupSA on ' + n + ' workers…');
+    const baseValues = baselineValuesForStack(stkId, km);
+    const jobs = [];
+    for (let i = 0; i < n; i++) jobs.push(S.pool.runJob('setupSA', { values: baseValues }));
+    const results = await Promise.all(jobs);
+    const okN = results.filter((r) => r.ok).length;
+    log('setupSA: ' + okN + '/' + n + ' ready');
+    if (!okN) { log('setupSA all failed — check worker console'); return; }
+
+    setTab('optmeco');
+  }
+
+  function doReset() {
+    if (!S.locked) return;
+    const ok = confirm(
+      'RESET will unlock the session and clear ALL runs in this page.\n' +
+      'Save your ZETA results (Download JSON) BEFORE resetting.\n\nContinue?'
+    );
+    if (!ok) return;
+
+    if (S.pool) { S.pool.terminate().catch(() => {}); S.pool = null; S.poolReady = false; }
+    S.locked = false; S.stackId = null;
+    S.optRuns = []; S.zetaRuns = []; S.convoRuns = []; S.zetaBatch = 0;
+    S.last = { meco: null, G: null, T: null, bias: null, lead: null };
+    S.workerProgress = {};
+    S.logs = { optmeco: [], zeta: [], convo: [] };
+    S.zetaRange = {};
+    $('lockBtn').disabled = false;
+    $('stackSel').disabled = false;
+    $('orbitKm').disabled = false;
+    $('resetBtn').disabled = true;
+    $('lockStatus').textContent = 'Select stack + orbit, then LOCK to start.';
+    $('main').style.display = 'none';
+    $('logFeed').innerHTML = '';
+    $('progressBar').innerHTML = '<span class="dim">idle</span>';
+    $('resultsPanel').style.display = 'none';
+    S.tab = null;
+    document.querySelectorAll('.big-tab').forEach((t) => t.classList.remove('active'));
+  }
+
+  // ========================================================================
+  // HELPERS
+  // ========================================================================
+  function computeMcVe(stackId) {
+    let stk = null;
+    try { stk = (typeof getStack === 'function') ? getStack(stackId) : null; } catch (e) {}
+    if (!stk) return null;
+    const fleet = (typeof loadFleet === 'function') ? loadFleet() : [];
+    const members = stk.members.map((id) => fleet.find((r) => r.id === id)).filter(Boolean);
+    const stage = members.find((m) => m && m.stageRole === 'stage');
+    if (!stage) return null;
+    const d = (typeof stageDerivedMasses === 'function') ? stageDerivedMasses(stage) : null;
+    if (!d || d.infeasible) return null;
+    const pl = (stk.payloadId && typeof getPayload === 'function') ? getPayload(stk.payloadId) : null;
+    const mc = d.dryMassNoPayload + (pl && Number.isFinite(pl.mass) ? pl.mass : 0);
+    return { mc, Ve: d.effectiveVe };
+  }
+
+  function baselineValuesForStack(stackId, km) {
+    // Known-good F9 Block 5 standard stack @ 320 km setupSA baseline
+    // (identical to bias-score-scan.html).
+    const C = TunerConfig;
+    return {
+      ascent: {
+        PUSH_MAX_GIMBAL_DEG: 0.60,
+        PUSH_T_S: 4.82,
+        MECO_TARGET_BOOSTER_FUEL_KG: 60494,
+      },
+      insertion: {
+        TARGET_ORBIT_ALT_KM: km,
+        STAGE_BURN_AOA_BIAS_DEG: 1.8,
+        STAGE_BURN_AOA_MARGIN_DEG: C.fixed.margin,
+        CIRC_TRIGGER_LEAD_S: 5.53,
+      },
+      done: { DEORBIT_ENABLED: !!C.fixed.deorbitEnabled },
+    };
+  }
+
+  // Re-run setupSA on every worker with the caller's values. Needed because
+  // the SA snapshot baked at LOCK uses 320-km defaults (meco=60494, G=0.60).
+  // Any ZETA/CONVO run with a different MECO/G/T would restore that wrong
+  // SA and fail every bias probe — stage fuel insufficient at the wrong
+  // MECO. Calling this before each batch guarantees the SA snapshot matches
+  // the panel's current MECO/G/T.
+  async function ensureSA(values) {
+    if (!S.pool || !S.poolReady) throw new Error('pool not ready');
+    const n = S.pool.n;
+    log('setupSA (refresh): MECO=' + values.ascent.MECO_TARGET_BOOSTER_FUEL_KG +
+        ' G=' + values.ascent.PUSH_MAX_GIMBAL_DEG +
+        ' T=' + values.ascent.PUSH_T_S + ' alt=' + values.insertion.TARGET_ORBIT_ALT_KM + ' km…');
+    const jobs = [];
+    for (let i = 0; i < n; i++) jobs.push(S.pool.runJob('setupSA', { values }));
+    const results = await Promise.all(jobs);
+    const okN = results.filter((r) => r.ok).length;
+    log('setupSA (refresh): ' + okN + '/' + n + ' ready');
+    if (!okN) throw new Error('setupSA refresh failed (' + okN + '/' + n + ')');
+  }
+
+  function saValuesFor(meco, G, T, biasFallback, leadFallback) {
+    return {
+      ascent: {
+        PUSH_MAX_GIMBAL_DEG: G,
+        PUSH_T_S: T,
+        MECO_TARGET_BOOSTER_FUEL_KG: meco,
+      },
+      insertion: {
+        TARGET_ORBIT_ALT_KM: S.orbitKm,
+        STAGE_BURN_AOA_BIAS_DEG: (biasFallback != null ? biasFallback : 1.8),
+        STAGE_BURN_AOA_MARGIN_DEG: TunerConfig.fixed.margin,
+        CIRC_TRIGGER_LEAD_S: (leadFallback != null ? leadFallback : 5.525),
+      },
+      done: { DEORBIT_ENABLED: !!TunerConfig.fixed.deorbitEnabled },
+    };
+  }
+
+  function residualBandFor(suicideOn) {
+    const L = TunerConfig.limits;
+    return suicideOn
+      ? (L.residualTargetDeorbitOnKg || [500, 600]).slice()
+      : (L.residualTargetKg || [100, 200]).slice();
+  }
+
+  // ========================================================================
+  // TABS
+  // ========================================================================
+  function setTab(name) {
+    S.tab = name;
+    document.querySelectorAll('.big-tab').forEach((t) => {
+      t.classList.toggle('active', t.dataset.tab === name);
+    });
+    $('resultsPanel').style.display = (name === 'zeta') ? 'block' : 'none';
+    renderTabPanel();
+    renderLogFeed();
+    S.workerProgress = {};   // fresh per-tab progress
+    renderProgress();
+    if (name === 'zeta') renderZetaTable();
+  }
+
+  document.querySelectorAll('.big-tab').forEach((el) => {
+    el.addEventListener('click', () => {
+      if (!S.locked) { alert('LOCK a stack first.'); return; }
+      if (S.running) { alert('A run is in progress.'); return; }
+      setTab(el.dataset.tab);
+    });
+  });
+
+  // ========================================================================
+  // TAB PANELS
+  // ========================================================================
+  function renderTabPanel() {
+    const host = $('tabPanel');
+    if (S.tab === 'optmeco') host.innerHTML = panelOptMecoHtml();
+    else if (S.tab === 'zeta') host.innerHTML = panelZetaHtml();
+    else if (S.tab === 'convo') host.innerHTML = panelConvoHtml();
+    else { host.innerHTML = '<div class="dim">Pick a tab above.</div>'; return; }
+    wireTabPanel();
+  }
+
+  function commonRowHtml() {
+    return '<div class="row"><label><input type="checkbox" id="suicideChk"> suicide ON</label>' +
+      '<span class="dim" id="bandHint"></span></div>';
+  }
+
+  function updateBandHint() {
+    const on = $('suicideChk') && $('suicideChk').checked;
+    const b = residualBandFor(on);
+    const el = $('bandHint');
+    if (el) el.textContent = 'residual band: [' + b[0] + ', ' + b[1] + '] kg';
+  }
+
+  function panelOptMecoHtml() {
+    const R = TunerConfig.roughScan || {};
+    const range = R.minRange || [20000, 80000];
+    return '<h2>OPT-MECO X5 — parallel MECO sweep</h2>' +
+      commonRowHtml() +
+      '<div class="row">' +
+      '<label>G <input type="number" id="oG" step="0.01" value="0.60"></label>' +
+      '<label>T <input type="number" id="oT" step="0.001" value="4.82"></label>' +
+      '<label>bias <input type="number" id="oBias" step="0.001" value="0.59"></label>' +
+      '<label>lead s <input type="number" id="oLead" step="0.0125" value="5.525"></label>' +
+      '<label><input type="checkbox" id="oAutoRescue" checked> auto bias rescue</label>' +
+      '<label>pred floor kg <input type="number" id="oPredFloor" step="10" value="-200" style="width:80px"></label>' +
+      '</div>' +
+      '<div class="dim" style="font-size:11px;margin-top:-2px;">' +
+      'auto bias rescue: agar stage burn fail ho (STAGE_VR_NEG), worker khud bias ladder try karega ' +
+      '(±0.3 … +5.0 deg). Bad MECO+G+bias ke liye bhi OPT-MECO chal jaayega. Slow worst-case (~14 evals per probe).' +
+      '</div>' +
+      '<div class="row">' +
+      '<label>MECO lo kg <input type="number" id="oMecoLo" step="500" value="' + range[0] + '"></label>' +
+      '<label>MECO hi kg <input type="number" id="oMecoHi" step="500" value="' + range[1] + '"></label>' +
+      '<button class="suggest" id="oSuggest">Suggest range</button>' +
+      '</div>' +
+      '<div class="row">' +
+      '<button class="primary" id="oRun">Run OPT-MECO X5</button>' +
+      '<span class="dim" id="oStatus"></span>' +
+      '</div>';
+  }
+
+  function panelZetaHtml() {
+    const sugMeco = S.last.meco != null ? S.last.meco : 60494;
+    const sugG = S.last.G != null ? S.last.G : 0.60;
+    const sugT = S.last.T != null ? S.last.T : 4.82;
+    return '<h2>ZETA-HELIX 1R — bias landscape scan</h2>' +
+      commonRowHtml() +
+      '<div class="row">' +
+      '<label>MECO kg <input type="number" id="zMeco" step="1" value="' + sugMeco + '"></label>' +
+      '<label>G <input type="number" id="zG" step="0.01" value="' + sugG + '"></label>' +
+      '<label>T <input type="number" id="zT" step="0.001" value="' + sugT + '"></label>' +
+      '<button class="suggest" id="zSuggest">Suggest</button>' +
+      '</div>' +
+      '<div class="row">' +
+      '<label>bias lo <input type="number" id="zBlo" step="0.001" value="-4"></label>' +
+      '<label>bias hi <input type="number" id="zBhi" step="0.001" value="4"></label>' +
+      '<label>N results <input type="number" id="zN" step="1" min="2" value="9"></label>' +
+      '<button class="suggest" id="zFindRange">Find range</button>' +
+      '<span class="dim" id="zStepInfo"></span>' +
+      '</div>' +
+      '<div class="row" id="zRangeHintRow" style="display:none">' +
+      '<span class="warn">Valid bias range: <b id="zRangeHint"></b></span>' +
+      '</div>' +
+      '<div class="row">' +
+      '<button class="primary" id="zRun">Run ZETA-HELIX 1R</button>' +
+      '<span class="dim" id="zStatus"></span>' +
+      '</div>';
+  }
+
+  function panelConvoHtml() {
+    const sugMeco = S.last.meco != null ? S.last.meco : 60494;
+    const sugG = S.last.G != null ? S.last.G : 0.60;
+    const sugT = S.last.T != null ? S.last.T : 4.82;
+    const sugBias = S.last.bias != null ? S.last.bias : 1.8;
+    const MB = (TunerConfig.limits.marginTargetS || [3.5, 5.5]);
+    return '<h2>CONVO-LEAD E2 — circularization lead refinement</h2>' +
+      commonRowHtml() +
+      '<div class="row">' +
+      '<label>MECO kg <input type="number" id="cMeco" step="1" value="' + sugMeco + '"></label>' +
+      '<label>G <input type="number" id="cG" step="0.01" value="' + sugG + '"></label>' +
+      '<label>T <input type="number" id="cT" step="0.001" value="' + sugT + '"></label>' +
+      '<label>bias <input type="number" id="cBias" step="0.001" value="' + sugBias + '"></label>' +
+      '<button class="suggest" id="cSuggest">Suggest</button>' +
+      '</div>' +
+      '<div class="row">' +
+      '<label>margin lo s <input type="number" id="cMLo" step="0.1" value="' + MB[0] + '"></label>' +
+      '<label>margin hi s <input type="number" id="cMHi" step="0.1" value="' + MB[1] + '"></label>' +
+      '<span class="dim">(margin band not suggested)</span>' +
+      '</div>' +
+      '<div class="row">' +
+      '<button class="primary" id="cRun">Run CONVO-LEAD E2</button>' +
+      '<span class="dim" id="cStatus"></span>' +
+      '</div>';
+  }
+
+  function wireTabPanel() {
+    const sChk = $('suicideChk');
+    if (sChk) { sChk.addEventListener('change', updateBandHint); updateBandHint(); }
+
+    if (S.tab === 'optmeco') wireOptMeco();
+    else if (S.tab === 'zeta') wireZeta();
+    else if (S.tab === 'convo') wireConvo();
+  }
+
+  function wireOptMeco() {
+    $('oSuggest').addEventListener('click', () => {
+      const refs = (TunerConfig.roughRefs || []).filter((r) => !r.stackId || r.stackId === S.stackId);
+      if (!refs.length) { log('suggest: no roughRefs for stack ' + S.stackId); return; }
+      const mecos = refs.map((r) => r.meco).sort((a, b) => a - b);
+      const lo = Math.max(10000, mecos[0] - 4000);
+      const hi = Math.min(120000, mecos[mecos.length - 1] + 4000);
+      $('oMecoLo').value = lo;
+      $('oMecoHi').value = hi;
+      const nearest = refs.reduce((a, b) =>
+        Math.abs((b.meco || 0) - (S.last.meco || 60000)) < Math.abs((a.meco || 0) - (S.last.meco || 60000)) ? b : a);
+      $('oG').value = nearest.G;
+      $('oT').value = nearest.T || TunerConfig.T0;
+      $('oBias').value = nearest.bias;
+      $('oLead').value = nearest.lead;
+      log('OPT-MECO suggest: MECO [' + lo + ',' + hi + '] from ' + refs.length + ' refs');
+    });
+    $('oRun').addEventListener('click', () => runOptMeco());
+  }
+
+  function wireZeta() {
+    const upd = () => {
+      const lo = parseFloat($('zBlo').value);
+      const hi = parseFloat($('zBhi').value);
+      const N = parseInt($('zN').value, 10);
+      const info = $('zStepInfo');
+      if (!Number.isFinite(lo) || !Number.isFinite(hi) || !Number.isFinite(N) || N < 2 || hi <= lo) {
+        info.textContent = '';
+        return;
+      }
+      const quantum = Q().bias;
+      const rangeQ = (hi - lo) / quantum;
+      let stepQ = Math.floor(rangeQ / N);
+      if (stepQ < 1) stepQ = 1;
+      const stepDeg = stepQ * quantum;
+      info.textContent = 'step = ' + stepQ + 'q = ' + stepDeg.toFixed(4) + ' deg';
+    };
+    ['zBlo', 'zBhi', 'zN'].forEach((id) => $(id) && $(id).addEventListener('input', upd));
+    upd();
+
+    // Re-evaluate range display when MECO/G changes (per-key lookup)
+    const refreshRange = () => {
+      const m = parseInt($('zMeco').value, 10);
+      const g = parseFloat($('zG').value);
+      if (Number.isFinite(m) && Number.isFinite(g)) displayRangeFor(m, g);
+    };
+    ['zMeco', 'zG'].forEach((id) => $(id) && $(id).addEventListener('input', refreshRange));
+    refreshRange();
+
+    $('zSuggest').addEventListener('click', () => {
+      if (S.last.meco != null) $('zMeco').value = S.last.meco;
+      if (S.last.G != null) $('zG').value = S.last.G;
+      if (S.last.T != null) $('zT').value = S.last.T;
+      log('ZETA suggest: MECO=' + S.last.meco + ' G=' + S.last.G + ' T=' + S.last.T);
+    });
+
+    $('zRun').addEventListener('click', () => runZeta());
+    $('zFindRange').addEventListener('click', () => findBiasRange());
+  }
+
+  function wireConvo() {
+    $('cSuggest').addEventListener('click', () => {
+      if (S.last.meco != null) $('cMeco').value = S.last.meco;
+      if (S.last.G != null) $('cG').value = S.last.G;
+      if (S.last.T != null) $('cT').value = S.last.T;
+      if (S.last.bias != null) $('cBias').value = S.last.bias;
+      log('CONVO suggest: MECO=' + S.last.meco + ' G=' + S.last.G + ' T=' + S.last.T + ' bias=' + S.last.bias);
+    });
+    $('cRun').addEventListener('click', () => runConvo());
+  }
+
+  // ========================================================================
+  // RUN: OPT-MECO X5 (no table, no json)
+  // ========================================================================
+  async function runOptMeco() {
+    if (S.running) return;
+    if (!S.pool || !S.poolReady) { alert('pool not ready'); return; }
+    S.running = true; S.t0 = performance.now();
+    $('oRun').disabled = true;
+    $('oStatus').textContent = 'running…';
+
+    try {
+      const G = parseFloat($('oG').value);
+      const T = parseFloat($('oT').value);
+      const bias = parseFloat($('oBias').value);
+      const lead = parseFloat($('oLead').value);
+      const mecoLo = parseInt($('oMecoLo').value, 10);
+      const mecoHi = parseInt($('oMecoHi').value, 10);
+
+      if (![G, T, bias, lead, mecoLo, mecoHi].every(Number.isFinite)) throw new Error('invalid fields');
+      if (mecoHi <= mecoLo) throw new Error('MECO hi <= lo');
+
+      const q = Q();
+      const basePoint = {
+        Gi: Math.round(G / q.G),
+        Tn: Math.round(T / q.T),
+        bi: Math.round(bias / q.bias),
+        li: Math.round(lead / q.lead),
+        meco: mecoLo,
+      };
+
+      log('OPT-MECO: G=' + G + ' T=' + T + ' bias=' + bias + ' lead=' + lead +
+          '  MECO range [' + mecoLo + ',' + mecoHi + ']  mc=' + fmt(S.mc, 1) + ' Ve=' + fmt(S.Ve, 1));
+
+      const autoRescue = $('oAutoRescue') && $('oAutoRescue').checked;
+
+      // FACADE POOL — same interface as WorkerPool, but each
+      // COAST_WAIT_ENTRY probe tries a bias ladder if the initial bias
+      // fails. Bypasses only the probe path; non-COAST stopAts pass
+      // through unchanged. Ladder climbs bias first (STAGE_VR_NEG is
+      // rescued by higher bias) then steps down. Breaks early on
+      // non-STAGE_VR_NEG failures (bias won't help F2a / crash).
+      const RESCUE_LADDER = [0, 0.3, 0.6, 1.0, 1.5, 2.0, 3.0, 4.0, 5.0, -0.3, -0.6, -1.0, -1.5, -2.0];
+      const rescQB = Math.max(1, Math.round(0.3 / Q().bias));
+      const rescuePool = !autoRescue ? S.pool : {
+        n: S.pool.n,
+        async runEval(point, opts) {
+          if (!opts || opts.stopAt !== 'COAST_WAIT_ENTRY') return S.pool.runEval(point, opts);
+          for (let li = 0; li < RESCUE_LADDER.length; li++) {
+            const d = RESCUE_LADDER[li];
+            const p2 = Object.assign({}, point, {
+              bi: point.bi + Math.round(d / Q().bias),
+            });
+            const m = await S.pool.runEval(p2, opts);
+            if (m.endReason === 'COAST_WAIT_ENTRY' &&
+                Number.isFinite(m.stageFuelAtStopKg) &&
+                Number.isFinite(m.coastDeltaV)) {
+              m._rescueBias = (point.bi * Q().bias) + d;
+              m._rescueSteps = li;
+              return m;
+            }
+            // Only STAGE_VR_NEG benefits from a bias change. F2a (no
+            // coast), CRASHED, CAP → bail immediately (bias won't fix).
+            if (m.endReason !== 'STAGE_VR_NEG' && !m.stageVrNeg) break;
+          }
+          return { endReason: 'STAGE_VR_NEG', stageVrNeg: true };
+        },
+      };
+
+      log('  auto bias rescue: ' + (autoRescue ? 'ON (ladder ' + RESCUE_LADDER.length + ' steps)' : 'OFF'));
+      const r = await TunerCore.roughScan(basePoint, {
+        pool: rescuePool,
+        mc: S.mc, Ve: S.Ve,
+        stackId: S.stackId,
+        altKm: S.orbitKm, fuelPct: 100,
+        minRange: [mecoLo, mecoHi],
+        _forceLo: mecoLo, _forceHi: mecoHi,
+        predFloorKg: parseFloat($('oPredFloor').value) || 0,
+        onLog: (s) => log('  ' + s),
+      });
+
+      if (r.ok) {
+        log('OPT-MECO OK: MECO=' + r.meco + ' predResidual=' + fmt(r.predictedResidual, 1) + ' kg evals=' + r.evals);
+        S.last.meco = r.meco;
+        S.last.G = G; S.last.T = T; S.last.bias = bias; S.last.lead = lead;
+        $('oStatus').innerHTML = '<span class="ok">MECO=' + r.meco + '  pred=' + fmt(r.predictedResidual, 1) + ' kg  evals=' + r.evals + '</span>';
+      } else {
+        log('OPT-MECO FAILED: ' + r.reason);
+        $('oStatus').innerHTML = '<span class="bad">FAILED: ' + esc(r.reason) + '</span>';
+      }
+    } catch (e) {
+      log('OPT-MECO ERROR: ' + e.message);
+      $('oStatus').innerHTML = '<span class="bad">ERROR: ' + esc(e.message) + '</span>';
+    } finally {
+      S.running = false;
+      $('oRun').disabled = false;
+    }
+  }
+
+  // ========================================================================
+  // RUN: ZETA-HELIX 1R (own table + json + charts)
+  // ========================================================================
+  async function runZeta() {
+    if (S.running) return;
+    if (!S.pool || !S.poolReady) { alert('pool not ready'); return; }
+    S.running = true; S.t0 = performance.now();
+    $('zRun').disabled = true;
+    $('zStatus').textContent = 'running…';
+
+    try {
+      const meco = parseInt($('zMeco').value, 10);
+      const G = parseFloat($('zG').value);
+      const T = parseFloat($('zT').value);
+      const bLo = parseFloat($('zBlo').value);
+      const bHi = parseFloat($('zBhi').value);
+      const N = parseInt($('zN').value, 10);
+      if (![meco, G, T, bLo, bHi, N].every(Number.isFinite) || N < 2 || bHi <= bLo)
+        throw new Error('invalid fields');
+
+      const quantum = Q().bias;
+      const rangeQ = (bHi - bLo) / quantum;
+      let stepQ = Math.floor(rangeQ / N);
+      if (stepQ < 1) stepQ = 1;
+      const stepDeg = stepQ * quantum;
+
+      const biases = [];
+      for (let i = 0; i < N; i++) {
+        const b = bLo + i * stepDeg;
+        if (b > bHi + 1e-9) break;
+        biases.push(Math.round(b * 10000) / 10000);
+      }
+      const batchId = ++S.zetaBatch;
+      log('ZETA[batch ' + batchId + ']: MECO=' + meco + ' G=' + G + ' T=' + T +
+          ' N=' + biases.length + ' step=' + stepDeg.toFixed(4) + ' deg');
+      log('  biases: ' + biases.join(', '));
+
+      S.last.meco = meco; S.last.G = G; S.last.T = T;
+
+      // Refresh SA snapshot to match this panel's MECO/G/T.
+      const saVals = saValuesFor(meco, G, T, 1.8, 5.525);
+      await ensureSA(saVals);
+
+      const tasks = biases.map((bias) => {
+        return S.pool.runJob('probeBiasCheckpoint', { bias, altKm: S.orbitKm })
+          .then((r) => ({ bias, ...r, stackId: S.stackId, meco, G, T, batchId }))
+          .catch((e) => ({ bias, ok: false, reason: 'error: ' + e.message, stackId: S.stackId, meco, G, T, batchId }));
+      });
+
+      let done = 0;
+      const ticker = setInterval(() => {
+        $('zStatus').textContent = 'running… ' + done + '/' + tasks.length;
+      }, 500);
+
+      const results = await Promise.all(tasks.map((p) => p.then((r) => { done++; return r; })));
+      clearInterval(ticker);
+
+      let okN = 0, best = null;
+      for (const r of results) {
+        S.zetaRuns.push({
+          batchId,
+          meco, G, T, bias: r.bias,
+          ok: !!r.ok, score: r.score, lead: r.lead, margin: r.margin, vrEnd: r.vrEnd,
+          eCoast: r.eCoast,
+          apogeeKm: r.metrics ? r.metrics.apogeeKm : null,
+          perigeeKm: r.metrics ? r.metrics.perigeeKm : null,
+          ecc: r.metrics ? r.metrics.ecc : null,
+          deployTimeS: r.metrics ? r.metrics.deployTimeS : null,
+          boosterFuelLeftKg: r.metrics ? r.metrics.boosterFuelLeftKg : null,
+          stageResidualKg: r.metrics ? r.metrics.stageResidualKg : null,
+          reason: r.reason || (r.reasons && r.reasons.join(',')) || '',
+          at: Date.now(),
+        });
+        if (r.ok) { okN++; if (!best || r.score < best.score) best = r; }
+      }
+      // Record into per-(meco,G) range so future runs tighten the bounds
+      recordZetaResults(results, meco, G);
+      displayRangeFor(meco, G);
+
+      if (best) {
+        S.last.bias = best.bias;
+        if (best.lead != null) S.last.lead = best.lead;
+      }
+      log('ZETA[batch ' + batchId + '] done: ' + okN + '/' + results.length + ' ok' +
+          (best ? '  best bias=' + best.bias + ' score=' + fmt(best.score, 3) : ''));
+      $('zStatus').innerHTML = okN
+        ? '<span class="ok">batch ' + batchId + ': ' + okN + '/' + results.length + ' ok' +
+          (best ? '  best b=' + best.bias.toFixed(4) + ' s=' + fmt(best.score, 3) : '') + '</span>'
+        : '<span class="bad">all failed</span>';
+      renderZetaTable();
+    } catch (e) {
+      log('ZETA ERROR: ' + e.message);
+      $('zStatus').innerHTML = '<span class="bad">ERROR: ' + esc(e.message) + '</span>';
+    } finally {
+      S.running = false;
+      $('zRun').disabled = false;
+    }
+  }
+
+  // ========================================================================
+  // ZETA RANGE TRACKING (per meco|G)
+  // ========================================================================
+  function _rangeKey(meco, G) { return meco + '|' + G; }
+
+  function recordZetaResults(results, meco, G) {
+    const key = _rangeKey(meco, G);
+    if (!S.zetaRange[key]) S.zetaRange[key] = { valids: [], fails: [] };
+    const r = S.zetaRange[key];
+    for (const res of results) {
+      const bias = res.bias;
+      if (!Number.isFinite(bias)) continue;
+      const valid = !!(res.metrics && res.metrics.payloadCleared && !res.metrics.crashed);
+      const arr = valid ? r.valids : r.fails;
+      if (!arr.includes(bias)) arr.push(bias);
+    }
+    r.valids.sort((a, b) => a - b);
+    r.fails.sort((a, b) => a - b);
+  }
+
+  function computeRangeFor(meco, G) {
+    const r = S.zetaRange[_rangeKey(meco, G)];
+    if (!r || !r.valids.length) return null;
+    const vMin = r.valids[0];
+    const vMax = r.valids[r.valids.length - 1];
+    const failsBelow = r.fails.filter((b) => b < vMin - 1e-9);
+    const failsAbove = r.fails.filter((b) => b > vMax + 1e-9);
+    const lo = failsBelow.length ? Math.max.apply(null, failsBelow) : null;
+    const hi = failsAbove.length ? Math.min.apply(null, failsAbove) : null;
+    // Interior fails = fail strictly inside [vMin, vMax] — if present, the
+    // range is not truly contiguous; flag it.
+    const interior = r.fails.filter((b) => b > vMin + 1e-9 && b < vMax - 1e-9);
+    return { vMin, vMax, lo, hi, interior };
+  }
+
+  function displayRangeFor(meco, G) {
+    const row = $('zRangeHintRow');
+    const hint = $('zRangeHint');
+    if (!row || !hint) return;
+    const range = computeRangeFor(meco, G);
+    if (!range) {
+      const r = S.zetaRange[_rangeKey(meco, G)];
+      if (r && r.fails.length) {
+        hint.textContent = 'no valid bias yet at MECO=' + meco + ' G=' + G +
+          '  (' + r.fails.length + ' fails recorded)';
+        hint.style.color = 'var(--danger)';
+        row.style.display = 'flex';
+      } else {
+        row.style.display = 'none';
+      }
+      return;
+    }
+    const loStr = range.lo != null ? range.lo.toFixed(4) : '?';
+    const hiStr = range.hi != null ? range.hi.toFixed(4) : '?';
+    const safe = range.lo != null && range.hi != null;
+    let txt = 'Valid bias range: [' + loStr + ', ' + hiStr + '] deg' +
+      (safe ? ' (safety-checked)' : ' (edge not found)') +
+      '  ·  valid [' + range.vMin.toFixed(4) + ', ' + range.vMax.toFixed(4) + ']';
+    if (range.interior.length) {
+      txt += '  ·  ⚠ interior fails: ' + range.interior.map((x) => x.toFixed(3)).join(', ');
+    }
+    hint.textContent = txt;
+    hint.style.color = safe && !range.interior.length ? 'var(--yellow)' : 'var(--orange)';
+    row.style.display = 'flex';
+  }
+
+  // ========================================================================
+  // BIAS BATCH — dispatch N probeBiasCheckpoint jobs in parallel
+  // ========================================================================
+  async function _runProbeBatch(biases, meco, G, T) {
+    const tasks = biases.map((bias) =>
+      S.pool.runJob('probeBiasCheckpoint', { bias, altKm: S.orbitKm })
+        .then((r) => ({ bias, ...r, meco, G, T }))
+        .catch((e) => ({ bias, ok: false, reason: 'error: ' + e.message, meco, G, T }))
+    );
+    let done = 0;
+    const ticker = setInterval(() => {
+      $('zStatus').textContent = 'running… ' + done + '/' + biases.length;
+    }, 400);
+    const out = await Promise.all(tasks.map((p) => p.then((r) => { done++; return r; })));
+    clearInterval(ticker);
+    return out;
+  }
+
+  // ========================================================================
+  // G RESCUE — try neighbouring G values if no valid bias in current G
+  // ========================================================================
+  async function _gRescue(meco, T, currentG) {
+    const G_LADDER = [0.05, -0.05, 0.10, -0.10, 0.15, -0.15, 0.20, -0.20, 0.25, -0.25];
+    const PROBE_BIASES = [0, 1, -1, 2, -2];
+    log('  G rescue: ' + G_LADDER.length + ' G steps, ' + PROBE_BIASES.length + ' biases each');
+    for (const dG of G_LADDER) {
+      const G = Math.round((currentG + dG) * 100) / 100;
+      if (G <= 0) continue;
+      const results = await _runProbeBatch(PROBE_BIASES, meco, G, T);
+      recordZetaResults(results, meco, G);
+      const hasValid = results.some((r) => r.metrics && r.metrics.payloadCleared && !r.metrics.crashed);
+      if (!hasValid) { log('  G rescue: G=' + G + ' — no valid'); continue; }
+      log('  G rescue: valid at G=' + G + ' — expanding bias range');
+      const expanded = [];
+      for (let d = 0.5; d <= 4 + 1e-9; d += 0.5) {
+        expanded.push(Math.round(d * 10000) / 10000);
+        expanded.push(-Math.round(d * 10000) / 10000);
+      }
+      const more = await _runProbeBatch(expanded, meco, G, T);
+      recordZetaResults(more, meco, G);
+      const range = computeRangeFor(meco, G);
+      return { G, range };
+    }
+    return null;
+  }
+
+  // ========================================================================
+  // FIND BIAS RANGE — bidirectional 0→±4 step 0.5, G rescue on miss
+  // ========================================================================
+  async function findBiasRange() {
+    if (S.running) { alert('A run is in progress.'); return; }
+    if (!S.pool || !S.poolReady) { alert('pool not ready'); return; }
+    S.running = true; S.t0 = performance.now();
+    $('zFindRange').disabled = true;
+    $('zRun').disabled = true;
+    $('zStatus').textContent = 'finding range…';
+
+    try {
+      const meco = parseInt($('zMeco').value, 10);
+      const G = parseFloat($('zG').value);
+      const T = parseFloat($('zT').value);
+      if (![meco, G, T].every(Number.isFinite)) throw new Error('invalid MECO/G/T');
+
+      // Bidirectional scan list: 0, +0.5, -0.5, +1.0, -1.0, ..., +4.0, -4.0
+      const biases = [];
+      for (let d = 0; d <= 4 + 1e-9; d += 0.5) {
+        if (d === 0) biases.push(0);
+        else {
+          biases.push(Math.round(d * 10000) / 10000);
+          biases.push(-Math.round(d * 10000) / 10000);
+        }
+      }
+      log('FIND RANGE: MECO=' + meco + ' G=' + G + ' T=' + T +
+          '  bidirectional 0→±4 step 0.5 → ' + biases.length + ' probes');
+
+      // Refresh SA snapshot to match this panel's MECO/G/T.
+      const saVals = saValuesFor(meco, G, T, 1.8, 5.525);
+      await ensureSA(saVals);
+
+      const results = await _runProbeBatch(biases, meco, G, T);
+      recordZetaResults(results, meco, G);
+
+      // Log each probe
+      results.slice().sort((a, b) => a.bias - b.bias).forEach((r) => {
+        const valid = !!(r.metrics && r.metrics.payloadCleared && !r.metrics.crashed);
+        const info = r.metrics
+          ? 'apo=' + fmt(r.metrics.apogeeKm, 2) + ' peri=' + fmt(r.metrics.perigeeKm, 2) +
+            ' cleared=' + r.metrics.payloadCleared + ' crashed=' + r.metrics.crashed
+          : (r.reason || 'no metrics');
+        log('  bias=' + r.bias.toFixed(4).padStart(8) + '  ' +
+            (valid ? 'VALID' : 'FAIL ') + '  ' + info);
+      });
+
+      const hasValid = results.some((r) => r.metrics && r.metrics.payloadCleared && !r.metrics.crashed);
+
+      if (!hasValid) {
+        log('FIND RANGE: no valid bias at G=' + G + ' — trying G rescue');
+        const rescued = await _gRescue(meco, T, G);
+        if (rescued) {
+          $('zG').value = rescued.G;
+          S.last.G = rescued.G;
+          displayRangeFor(meco, rescued.G);
+          $('zStatus').innerHTML = '<span class="ok">G rescue: G=' + rescued.G +
+            '  range ' + (rescued.range ? '[' + (rescued.range.lo != null ? rescued.range.lo.toFixed(3) : '?') + ', ' +
+              (rescued.range.hi != null ? rescued.range.hi.toFixed(3) : '?') + ']' : '—') + '</span>';
+          log('FIND RANGE (G rescue): G=' + rescued.G + ' done');
+        } else {
+          $('zStatus').innerHTML = '<span class="bad">no valid (G, bias) in ±0.25 G / ±4 bias</span>';
+          log('FIND RANGE: G rescue exhausted');
+        }
+      } else {
+        displayRangeFor(meco, G);
+        const r = computeRangeFor(meco, G);
+        $('zStatus').innerHTML = '<span class="ok">range ' +
+          (r ? '[' + (r.lo != null ? r.lo.toFixed(3) : '?') + ', ' + (r.hi != null ? r.hi.toFixed(3) : '?') + ']' : '—') +
+          '</span>';
+      }
+    } catch (e) {
+      log('FIND RANGE ERROR: ' + e.message);
+      $('zStatus').innerHTML = '<span class="bad">ERROR: ' + esc(e.message) + '</span>';
+    } finally {
+      S.running = false;
+      $('zFindRange').disabled = false;
+      $('zRun').disabled = false;
+    }
+  }
+
+  // ========================================================================
+  // RUN: CONVO-LEAD E2 (no table, no json)
+  // ========================================================================
+  async function runConvo() {
+    if (S.running) return;
+    if (!S.pool || !S.poolReady) { alert('pool not ready'); return; }
+    S.running = true; S.t0 = performance.now();
+    $('cRun').disabled = true;
+    $('cStatus').textContent = 'running…';
+
+    try {
+      const meco = parseInt($('cMeco').value, 10);
+      const G = parseFloat($('cG').value);
+      const T = parseFloat($('cT').value);
+      const bias = parseFloat($('cBias').value);
+      const mLo = parseFloat($('cMLo').value);
+      const mHi = parseFloat($('cMHi').value);
+      if (![meco, G, T, bias, mLo, mHi].every(Number.isFinite) || mHi <= mLo)
+        throw new Error('invalid fields');
+
+      log('CONVO: MECO=' + meco + ' G=' + G + ' T=' + T + ' bias=' + bias +
+          ' margin=[' + mLo + ',' + mHi + ']');
+
+      S.last.meco = meco; S.last.G = G; S.last.T = T; S.last.bias = bias;
+
+      // Refresh SA snapshot to match this panel's MECO/G/T.
+      const saVals = saValuesFor(meco, G, T, bias, 5.525);
+      await ensureSA(saVals);
+
+      const r = await S.pool.runJob('probeBiasCheckpoint', {
+        bias, altKm: S.orbitKm, marginBand: [mLo, mHi],
+      }).catch((e) => ({ ok: false, reason: 'error: ' + e.message }));
+
+      if (r.ok) {
+        if (r.lead != null) S.last.lead = r.lead;
+        log('CONVO OK: lead=' + fmt(r.lead, 4) + ' margin=' + fmt(r.margin, 2) + ' score=' + fmt(r.score, 3));
+        $('cStatus').innerHTML = '<span class="ok">lead=' + fmt(r.lead, 4) + '  margin=' + fmt(r.margin, 2) + 's  score=' + fmt(r.score, 3) + '</span>';
+      } else {
+        log('CONVO FAILED: ' + (r.reason || 'unknown'));
+        $('cStatus').innerHTML = '<span class="bad">FAILED: ' + esc(r.reason || '') + '</span>';
+      }
+    } catch (e) {
+      log('CONVO ERROR: ' + e.message);
+      $('cStatus').innerHTML = '<span class="bad">ERROR: ' + esc(e.message) + '</span>';
+    } finally {
+      S.running = false;
+      $('cRun').disabled = false;
+    }
+  }
+
+  // ========================================================================
+  // PROGRESS
+  // ========================================================================
+  function renderProgress() {
+    const el = $('progressBar');
+    if (!el) return;
+    if (!S.running) { el.innerHTML = '<span class="dim">idle</span>'; return; }
+    const tags = Object.keys(S.workerProgress).sort();
+    const elapsed = ((performance.now() - S.t0) / 1000).toFixed(0);
+    const now = Date.now();
+    const parts = ['<span class="stat">[' + (S.tab || '—') + '] elapsed ' + elapsed + 's</span>'];
+    tags.forEach((k) => {
+      const w = S.workerProgress[k];
+      const ago = ((now - w.ts) / 1000).toFixed(1);
+      parts.push('<span class="tag">' + esc(k) + '</span><span class="detail">' +
+        esc(w.phase) + ' · ' + esc(w.detail) + ' (' + ago + 's)</span>');
+    });
+    el.innerHTML = parts.join(' <span class="dim">│</span> ');
+  }
+  setInterval(renderProgress, 300);
+
+  // ========================================================================
+  // ZETA TABLE (only place a table exists)
+  // ========================================================================
+  function renderZetaTable() {
+    const host = $('tableHost');
+    const stats = $('runStats');
+    if (!host) return;
+
+    if (!S.zetaRuns.length) {
+      host.innerHTML = '<div class="dim">No ZETA runs yet.</div>';
+      $('chartHost').innerHTML = '';
+      if (stats) stats.textContent = '0 rows · 0 batches';
+      return;
+    }
+
+    const batches = new Set(S.zetaRuns.map((r) => r.batchId)).size;
+    if (stats) stats.textContent = S.zetaRuns.length + ' rows · ' + batches + ' batches';
+
+    // Sort: ok first, then score ascending
+    const rows = S.zetaRuns.slice().sort((a, b) => {
+      const ak = a.ok ? 0 : 1, bk = b.ok ? 0 : 1;
+      if (ak !== bk) return ak - bk;
+      const as = Number.isFinite(a.score) ? a.score : 1e12;
+      const bs = Number.isFinite(b.score) ? b.score : 1e12;
+      return as - bs;
+    });
+
+    const header = ['#', 'batch', 'MECO', 'G', 'T', 'bias', 'score', 'eCoast', 'lead', 'margin',
+      'vrEnd', 'apo', 'peri', 'ecc', 'deploy', 'fuel', 'resid', 'ok', 'reason'];
+    let html = '<table><thead><tr>' + header.map((h) => '<th>' + h + '</th>').join('') + '</tr></thead><tbody>';
+    rows.forEach((r, i) => {
+      const cls = [];
+      cls.push(r.batchId % 2 === 0 ? 'batch-even' : 'batch-odd');
+      if (r.ok && i === 0) cls.push('best');
+      if (!r.ok) cls.push('fail');
+      html += '<tr class="' + cls.join(' ') + '">' +
+        '<td>' + (i + 1) + '</td>' +
+        '<td>' + r.batchId + '</td>' +
+        '<td>' + (r.meco != null ? r.meco : '–') + '</td>' +
+        '<td>' + fmt(r.G, 3) + '</td>' +
+        '<td>' + fmt(r.T, 4) + '</td>' +
+        '<td>' + (r.bias != null ? r.bias.toFixed(4) : '–') + '</td>' +
+        '<td>' + fmt(r.score, 3) + '</td>' +
+        '<td>' + (Number.isFinite(r.eCoast) ? r.eCoast.toExponential(3) : '–') + '</td>' +
+        '<td>' + fmt(r.lead, 4) + '</td>' +
+        '<td>' + fmt(r.margin, 2) + '</td>' +
+        '<td>' + fmt(r.vrEnd, 4) + '</td>' +
+        '<td>' + fmt(r.apogeeKm, 3) + '</td>' +
+        '<td>' + fmt(r.perigeeKm, 3) + '</td>' +
+        '<td>' + (Number.isFinite(r.ecc) ? r.ecc.toExponential(2) : '–') + '</td>' +
+        '<td>' + fmt(r.deployTimeS, 2) + '</td>' +
+        '<td>' + fmt(r.boosterFuelLeftKg, 0) + '</td>' +
+        '<td>' + fmt(r.stageResidualKg, 1) + '</td>' +
+        '<td>' + (r.ok ? '✓' : '✗') + '</td>' +
+        '<td style="text-align:left;color:var(--dim)">' + esc(r.reason || '') + '</td>' +
+        '</tr>';
+    });
+    html += '</tbody></table>';
+    host.innerHTML = html;
+
+    renderCharts();
+  }
+
+  function renderCharts() {
+    const host = $('chartHost');
+    if (!host) return;
+    if (!S.zetaRuns.length) { host.innerHTML = ''; return; }
+
+    // Group by (meco, G)
+    const groups = new Map();
+    for (const r of S.zetaRuns) {
+      const key = r.meco + '|' + r.G;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(r);
+    }
+
+    host.innerHTML = '';
+    const colors = ['#35d6ff', '#ff9248', '#4ade80', '#ffd23f', '#c084fc', '#ff5f7e', '#a3e635'];
+
+    let idx = 0;
+    for (const [key, rows] of groups.entries()) {
+      const parts = key.split('|');
+      const meco = parts[0], G = parts[1];
+      const sorted = rows.slice().sort((a, b) => a.bias - b.bias);
+      const card = document.createElement('div');
+      card.className = 'chartCard';
+      card.innerHTML = '<div class="ttl">MECO=' + meco + '  G=' + G + '</div>' +
+        '<canvas width="440" height="260"></canvas>';
+      host.appendChild(card);
+      const canvas = card.querySelector('canvas');
+      drawChart(canvas, sorted, colors[idx % colors.length]);
+      idx++;
+    }
+  }
+
+  function drawChart(canvas, rows, color) {
+    const ctx = canvas.getContext('2d');
+    const W = canvas.width, H = canvas.height;
+    const padL = 60, padR = 20, padT = 20, padB = 40;
+    const pw = W - padL - padR, ph = H - padT - padB;
+    ctx.fillStyle = '#05070e'; ctx.fillRect(0, 0, W, H);
+
+    const bs = rows.map((r) => r.bias);
+    const bMin = Math.min.apply(null, bs), bMax = Math.max.apply(null, bs);
+    const validScores = rows.filter((r) => r.ok && Number.isFinite(r.score)).map((r) => r.score);
+    if (!validScores.length) {
+      ctx.fillStyle = '#ff5f7e'; ctx.font = '12px monospace';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('no successful runs', W / 2, H / 2);
+      return;
+    }
+    const sMin = Math.min.apply(null, validScores);
+    const sMax = Math.max.apply(null, validScores);
+    const sPad = Math.max(1, (sMax - sMin) * 0.1);
+    const sLo = sMin - sPad, sHi = sMax + sPad;
+
+    const X = (b) => padL + (b - bMin) / Math.max(1e-9, bMax - bMin) * pw;
+    const Y = (s) => padT + ph - (s - sLo) / Math.max(1e-9, sHi - sLo) * ph;
+
+    ctx.strokeStyle = 'rgba(255,255,255,0.07)';
+    for (let i = 0; i <= 4; i++) {
+      const y = padT + i * ph / 4;
+      ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(padL + pw, y); ctx.stroke();
+    }
+    ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+    ctx.beginPath(); ctx.moveTo(padL, padT); ctx.lineTo(padL, padT + ph); ctx.lineTo(padL + pw, padT + ph); ctx.stroke();
+
+    ctx.fillStyle = '#6b7d9c'; ctx.font = '10px monospace';
+    ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+    for (let i = 0; i <= 4; i++) {
+      const s = sLo + i * (sHi - sLo) / 4;
+      ctx.fillText(s.toFixed(2), padL - 6, padT + ph - i * ph / 4);
+    }
+    ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+    for (let i = 0; i <= 4; i++) {
+      const b = bMin + i * (bMax - bMin) / 4;
+      ctx.fillText(b.toFixed(3), padL + i * pw / 4, padT + ph + 6);
+    }
+    ctx.fillStyle = '#35d6ff';
+    ctx.fillText('bias (deg)', padL + pw / 2, H - 14);
+
+    ctx.strokeStyle = color; ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    let started = false;
+    for (const r of rows) {
+      if (!r.ok || !Number.isFinite(r.score)) continue;
+      const x = X(r.bias), y = Y(r.score);
+      if (!started) { ctx.moveTo(x, y); started = true; } else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+
+    for (const r of rows) {
+      const x = X(r.bias);
+      if (r.ok && Number.isFinite(r.score)) {
+        const y = Y(r.score);
+        ctx.fillStyle = color;
+        ctx.beginPath(); ctx.arc(x, y, 3.5, 0, Math.PI * 2); ctx.fill();
+      } else {
+        ctx.fillStyle = '#ff5f7e';
+        ctx.beginPath(); ctx.arc(x, padT + ph - 6, 3, 0, Math.PI * 2); ctx.fill();
+      }
+    }
+  }
+
+  // ========================================================================
+  // ZETA-ONLY DOWNLOAD / CLEAR
+  // ========================================================================
+  $('dlJson').addEventListener('click', () => {
+    if (!S.zetaRuns.length) { alert('No ZETA runs to download.'); return; }
+    const payload = {
+      generatedAt: new Date().toISOString(),
+      stackId: S.stackId, orbitKm: S.orbitKm,
+      mc: S.mc, Ve: S.Ve,
+      runs: S.zetaRuns,
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'sereno-zeta-' + Date.now() + '.json';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  });
+
+  $('clearRuns').addEventListener('click', () => {
+    if (!S.zetaRuns.length) return;
+    const ok = confirm('Clear ALL ZETA runs in this page? (Save JSON first.)');
+    if (!ok) return;
+    S.zetaRuns = [];
+    renderZetaTable();
+  });
+
+  // ========================================================================
+  // BOOT
+  // ========================================================================
+  $('lockBtn').addEventListener('click', doLock);
+  $('resetBtn').addEventListener('click', doReset);
+
+  try {
+    if (typeof loadStacks === 'function') loadStacks();
+    populateStackSelect();
+  } catch (e) {
+    console.error(e);
+    $('lockStatus').innerHTML = '<span class="bad">boot: ' + esc(e.message) + '</span>';
+  }
+})();
+</script>
+</body>
+</html>
