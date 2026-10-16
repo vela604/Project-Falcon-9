@@ -212,17 +212,17 @@ details.adv .row{margin:8px 0 0;}
 </div>
 
 <!-- ==================== SIM / TUNER SCRIPTS ==================== -->
-<script src="../js/componentLibrary.js"></script>
-<script src="../js/customDesign.js"></script>
-<script src="../js/fleet.js"></script>
-<script src="../js/config.js"></script>
-<script src="../js/simJs/core/massProps.js"></script>
-<script src="../js/guideConfigDefaults.js"></script>
+<script src="../../js/componentLibrary.js"></script>
+<script src="../../js/customDesign.js"></script>
+<script src="../../js/fleet.js"></script>
+<script src="../../js/config.js"></script>
+<script src="../../js/simJs/core/massProps.js"></script>
+<script src="../../js/guideConfigDefaults.js"></script>
 
-<script src="lib/config.js"></script>
-<script src="lib/worker-pool.js"></script>
-<script src="lib/rough-scan.js"></script>
-<script src="lib/bootstrap.js"></script>
+<script src="../lib/config.js"></script>
+<script src="../lib/worker-pool.js"></script>
+<script src="../lib/rough-scan.js"></script>
+<script src="../lib/bootstrap.js"></script>
 
 <script>
 (function () {
@@ -357,7 +357,7 @@ details.adv .row{margin:8px 0 0;}
 
     log('creating worker pool…');
     const n = (typeof TunerCore.defaultWorkers === 'function') ? TunerCore.defaultWorkers() : 4;
-    S.pool = new TunerCore.WorkerPool(n, { workerPath: 'lib/worker-sim.js' });
+    S.pool = new TunerCore.WorkerPool(n, { workerPath: '../lib/worker-sim.js' });
     S.pool.onProgress = (msg) => {
       S.workerProgress[msg.tag] = { phase: msg.phase, detail: msg.detail, ts: msg.ts };
       renderProgress();
