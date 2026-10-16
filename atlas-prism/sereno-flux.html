@@ -119,6 +119,18 @@ details.adv .row{margin:8px 0 0;}
 .sug-row .g{color:var(--cyan);font-weight:600;width:60px;}
 .sug-row .rng{color:var(--yellow);flex:1;}
 .sug-row .act{color:var(--dim);font-size:10.5px;letter-spacing:.5px;}
+
+/* ===== Double slider ===== */
+.dblslider{display:inline-flex;align-items:center;gap:8px;vertical-align:middle;}
+.dblslider .slidergroup{position:relative;width:180px;height:22px;display:inline-block;flex:0 0 auto;}
+.dblslider .track{position:absolute;top:50%;left:0;right:0;height:4px;transform:translateY(-50%);background:var(--border);border-radius:2px;pointer-events:none;}
+.dblslider .fill{position:absolute;top:50%;height:4px;transform:translateY(-50%);background:var(--cyan);border-radius:2px;pointer-events:none;}
+.dblslider input[type=range]{position:absolute;top:0;left:0;width:100%;height:100%;-webkit-appearance:none;appearance:none;background:transparent;pointer-events:none;margin:0;padding:0;}
+.dblslider input[type=range]::-webkit-slider-runnable-track{background:transparent;border:none;}
+.dblslider input[type=range]::-moz-range-track{background:transparent;border:none;}
+.dblslider input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;pointer-events:auto;width:14px;height:14px;background:var(--cyan);border:2px solid #0d1a2a;border-radius:50%;cursor:pointer;margin-top:-5px;}
+.dblslider input[type=range]::-moz-range-thumb{pointer-events:auto;width:14px;height:14px;background:var(--cyan);border:2px solid #0d1a2a;border-radius:50%;cursor:pointer;border:0;}
+.dblslider input[type=number]{width:78px;text-align:right;font-size:11.5px;padding:4px 6px;}
 </style>
 </head>
 <body>
@@ -501,8 +513,14 @@ details.adv .row{margin:8px 0 0;}
       '</div>' +
       // Mode-specific MECO
       '<div class="row mode-row" data-modes="rr">' +
-      '<label>MECO lo <input type="number" id="oMecoLo" step="500" value="0"></label>' +
-      '<label>MECO hi <input type="number" id="oMecoHi" step="500" value="90000"></label>' +
+      '<div class="dblslider" id="oMecoSlider" data-key="MECO">' +
+      '<input type="number" id="oMecoLo" data-rk="lo" step="500" min="0" max="120000" value="0">' +
+      '<div class="slidergroup"><div class="track"></div><div class="fill"></div>' +
+      '<input type="range" data-rk="rlo" min="0" max="120000" step="500" value="0">' +
+      '<input type="range" data-rk="rhi" min="0" max="120000" step="500" value="90000">' +
+      '</div>' +
+      '<input type="number" id="oMecoHi" data-rk="hi" step="500" min="0" max="120000" value="90000">' +
+      '</div>' +
       '<label>coarse n <input type="number" id="oMn" step="1" min="3" value="7" style="width:60px"></label>' +
       '</div>' +
       '<div class="row mode-row" data-modes="fm fg" style="display:none;">' +
@@ -510,8 +528,14 @@ details.adv .row{margin:8px 0 0;}
       '</div>' +
       // Mode-specific G
       '<div class="row mode-row" data-modes="rr fm">' +
-      '<label>G lo <input type="number" id="oGlo" step="0.01" min="0" max="1.2" value="0.30"></label>' +
-      '<label>G hi <input type="number" id="oGhi" step="0.01" min="0" max="1.2" value="0.75"></label>' +
+      '<div class="dblslider" id="oGSlider" data-key="G">' +
+      '<input type="number" id="oGlo" data-rk="lo" step="0.01" min="0" max="1.2" value="0.30">' +
+      '<div class="slidergroup"><div class="track"></div><div class="fill"></div>' +
+      '<input type="range" data-rk="rlo" min="0" max="1.2" step="0.01" value="0.30">' +
+      '<input type="range" data-rk="rhi" min="0" max="1.2" step="0.01" value="0.75">' +
+      '</div>' +
+      '<input type="number" id="oGhi" data-rk="hi" step="0.01" min="0" max="1.2" value="0.75">' +
+      '</div>' +
       '<label>G step <input type="number" id="oGstep" step="0.005" value="0.02" style="width:70px"></label>' +
       '</div>' +
       '<div class="row mode-row" data-modes="fg" style="display:none;">' +
@@ -652,10 +676,85 @@ details.adv .row{margin:8px 0 0;}
       });
     }
 
+    // Double sliders
+    S._gSlider = initDblSlider($('oGSlider'), 0.02);
+    S._mecoSlider = initDblSlider($('oMecoSlider'), 500);
+
     // Restore previous result
     if (S.optResult) renderOptResult(S.optResult);
 
     $('oRun').addEventListener('click', () => runOptMeco());
+  }
+
+  function initDblSlider(root, minGap) {
+    if (!root) return null;
+    const numLo = root.querySelector('input[type=number][data-rk="lo"]');
+    const numHi = root.querySelector('input[type=number][data-rk="hi"]');
+    const rLo = root.querySelector('input[type=range][data-rk="rlo"]');
+    const rHi = root.querySelector('input[type=range][data-rk="rhi"]');
+    const fill = root.querySelector('.fill');
+    if (!numLo || !numHi || !rLo || !rHi || !fill) return null;
+    const minV = parseFloat(rLo.min);
+    const maxV = parseFloat(rLo.max);
+    const isInt = (step) => step >= 1;
+    const fmt = (v) => isInt(parseFloat(rLo.step)) ? String(Math.round(v)) : parseFloat(v).toFixed(2);
+    let suppress = false;
+
+    function render() {
+      const l = parseFloat(numLo.value);
+      const h = parseFloat(numHi.value);
+      const span = maxV - minV;
+      const lp = (l - minV) / span * 100;
+      const hp = (h - minV) / span * 100;
+      fill.style.left = lp + '%';
+      fill.style.width = Math.max(0, hp - lp) + '%';
+      if (!suppress) {
+        rLo.value = l;
+        rHi.value = h;
+      }
+    }
+
+    function fromNum(side) {
+      let l = parseFloat(numLo.value);
+      let h = parseFloat(numHi.value);
+      if (!Number.isFinite(l)) l = minV;
+      if (!Number.isFinite(h)) h = maxV;
+      if (side === 'lo' && l > h - minGap) h = l + minGap;
+      if (side === 'hi' && h < l + minGap) l = h - minGap;
+      l = Math.max(minV, Math.min(maxV, l));
+      h = Math.max(minV, Math.min(maxV, h));
+      suppress = true;
+      numLo.value = fmt(l);
+      numHi.value = fmt(h);
+      suppress = false;
+      render();
+    }
+
+    function fromRange(which) {
+      let l = parseFloat(rLo.value);
+      let h = parseFloat(rHi.value);
+      if (which === 'lo' && l > h - minGap) {
+        h = l + minGap;
+        rHi.value = h;
+      }
+      if (which === 'hi' && h < l + minGap) {
+        l = h - minGap;
+        rLo.value = l;
+      }
+      suppress = true;
+      numLo.value = fmt(l);
+      numHi.value = fmt(h);
+      suppress = false;
+      render();
+    }
+
+    numLo.addEventListener('input', () => fromNum('lo'));
+    numHi.addEventListener('input', () => fromNum('hi'));
+    rLo.addEventListener('input', () => fromRange('lo'));
+    rHi.addEventListener('input', () => fromRange('hi'));
+
+    render();
+    return { render, get: () => [parseFloat(numLo.value), parseFloat(numHi.value)] };
   }
 
   function applyOptMode() {
