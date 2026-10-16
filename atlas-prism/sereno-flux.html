@@ -1028,10 +1028,12 @@ details.adv .row{margin:8px 0 0;}
   }
 
   function fillZetaFromSuggestion(ds) {
-    const M = parseFloat(ds.meco);
-    const G = parseFloat(ds.g);
-    const bLo = parseFloat(ds.blo);
-    const bHi = parseFloat(ds.bhi);
+    const q4 = (v) => Math.round(parseFloat(v) * 10000) / 10000;
+    const qG = (v) => Math.round(parseFloat(v) * 100) / 100;
+    const M = parseInt(ds.meco, 10);
+    const G = qG(ds.g);
+    const bLo = q4(ds.blo);
+    const bHi = q4(ds.bhi);
     S.last.meco = M; S.last.G = G;
     if (S.optResult && S.optResult.good) {
       const hit = S.optResult.good.find((v) => v.M === M && Math.abs(v.Gi / 100 - G) < 0.005);
