@@ -390,6 +390,8 @@ details.adv .row{margin:8px 0 0;}
     if (S.pool) { S.pool.terminate().catch(() => {}); S.pool = null; S.poolReady = false; }
     S.locked = false; S.stackId = null;
     S.optRuns = []; S.zetaRuns = []; S.convoRuns = []; S.zetaBatch = 0;
+    S.optResult = null;
+    S.optMode = 'rr';
     S.last = { meco: null, G: null, T: null, bias: null, lead: null };
     S.workerProgress = {};
     S.logs = { optmeco: [], zeta: [], convo: [] };
@@ -403,6 +405,8 @@ details.adv .row{margin:8px 0 0;}
     $('logFeed').innerHTML = '';
     $('progressBar').innerHTML = '<span class="dim">idle</span>';
     $('resultsPanel').style.display = 'none';
+    if ($('tabPanel')) $('tabPanel').innerHTML = '';
+    if ($('oResultHost')) { $('oResultHost').innerHTML = ''; $('oResultHost').style.display = 'none'; }
     S.tab = null;
     document.querySelectorAll('.big-tab').forEach((t) => t.classList.remove('active'));
   }
@@ -649,8 +653,10 @@ details.adv .row{margin:8px 0 0;}
         const tMin = Tends.length ? Math.round(Math.min.apply(null, Tends)) : null;
         const tMax = Tends.length ? Math.round(Math.max.apply(null, Tends)) : null;
         const isRec = bestGi != null && Math.abs(Gi - bestGi) < 1;
-        const info = (Tends.length ? 'T ≈ ' + tMin + '–' + tMax + 's' : 'T n/a') +
-                     (resids.length ? ' · resid ' + rMin + '–' + rMax + ' kg' : '');
+        let info = '';
+        if (Tends.length) info = 'T ≈ ' + tMin + '–' + tMax + 's';
+        if (resids.length) info += (info ? ' · ' : '') + 'resid ' + rMin + '–' + rMax + ' kg';
+        if (!info) info = 'unverified (Phase C window)';
         html += '<div class="chip' + (isRec ? ' rec' : '') + '" data-meco="' + M + '" data-g="' + G + '" data-blo="' + bLo + '" data-bhi="' + bHi + '">' +
           '<span class="g">G=' + G.toFixed(2) + '</span>' +
           '<span class="rng">[' + bLo.toFixed(3) + ', ' + bHi.toFixed(3) + ']</span>' +
@@ -1007,9 +1013,10 @@ details.adv .row{margin:8px 0 0;}
           const tMin = Tends.length ? Math.round(Math.min.apply(null, Tends)) : null;
           const tMax = Tends.length ? Math.round(Math.max.apply(null, Tends)) : null;
           const isRec = bestGi != null && Math.abs(Gi - bestGi) < 1;
-          const info = (Tends.length ? 'T ≈ ' + tMin + '–' + tMax + 's' : 'T n/a') +
-                       (resids.length ? ' · resid ' + rMin + '–' + rMax + ' kg' : '') +
-                       '  (Phase C window · hard-fail edges excluded by ZETA)';
+          let info = '';
+          if (Tends.length) info = 'T ≈ ' + tMin + '–' + tMax + 's';
+          if (resids.length) info += (info ? ' · ' : '') + 'resid ' + rMin + '–' + rMax + ' kg';
+          if (!info) info = 'unverified (Phase C window only)';
           html += '<div class="sug-row" data-meco="' + M + '" data-g="' + G + '" data-blo="' + bLo + '" data-bhi="' + bHi + '">' +
             '<span class="g">G=' + G.toFixed(2) + '</span>' +
             '<span class="rng">bias [' + bLo.toFixed(3) + ', ' + bHi.toFixed(3) + ']</span>' +
