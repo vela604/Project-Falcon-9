@@ -212,13 +212,14 @@
     }
   }
   
-  // Auto-detect a safe worker count.
+  // Auto-detect worker count. Uses all cores minus 1 (main thread).
+  // Browsers may throttle some high-core machines, but users can override
+  // via the "workers" field in the UI.
   function defaultWorkers() {
     const hc = (typeof navigator !== 'undefined' && navigator.hardwareConcurrency) ?
       navigator.hardwareConcurrency :
       4;
-    // Leave 1 for the main thread, cap at 8 (browsers throttle beyond that).
-    return Math.max(1, Math.min(8, hc - 1));
+    return Math.max(1, hc - 1);
   }
   
   T.WorkerPool = WorkerPool;
