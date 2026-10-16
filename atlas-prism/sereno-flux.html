@@ -101,6 +101,24 @@ tr.fail td{color:#8a4a55;}
 .chartCard canvas{display:block;border-radius:3px;}
 .stat{color:var(--yellow);}
 .badge{display:inline-block;padding:1px 6px;border-radius:3px;font-size:10px;letter-spacing:.5px;}
+
+/* ===== OPT-MECO v2 (bootstrap) ===== */
+.mode-tabs{display:flex;gap:6px;margin:8px 0 12px;}
+.mode-tab{background:var(--panel2);border:1px solid var(--border);padding:7px 12px;border-radius:4px;cursor:pointer;font-size:11.5px;letter-spacing:.5px;color:var(--dim);font-family:inherit;}
+.mode-tab:hover{border-color:#2a5a70;color:var(--text);}
+.mode-tab.active{background:#0d2530;border-color:var(--cyan);color:var(--cyan);font-weight:600;}
+details.adv{background:var(--panel2);border:1px solid var(--border);border-radius:4px;padding:8px 12px;margin:10px 0;}
+details.adv summary{cursor:pointer;color:var(--dim);font-size:11.5px;list-style:none;user-select:none;letter-spacing:.5px;}
+details.adv summary::-webkit-details-marker{display:none;}
+details.adv summary:before{content:'▸ ';color:var(--cyan);}
+details.adv[open] summary:before{content:'▾ ';}
+details.adv .row{margin:8px 0 0;}
+.sug-list{margin-top:10px;}
+.sug-row{display:flex;gap:12px;align-items:center;padding:8px 12px;border:1px solid var(--border);border-radius:4px;margin:4px 0;background:var(--panel2);cursor:pointer;font-size:12px;transition:border-color .12s,background .12s;}
+.sug-row:hover{border-color:var(--cyan);background:#0d1a2a;}
+.sug-row .g{color:var(--cyan);font-weight:600;width:60px;}
+.sug-row .rng{color:var(--yellow);flex:1;}
+.sug-row .act{color:var(--dim);font-size:10.5px;letter-spacing:.5px;}
 </style>
 </head>
 <body>
@@ -182,6 +200,7 @@ tr.fail td{color:#8a4a55;}
 <script src="lib/config.js"></script>
 <script src="lib/worker-pool.js"></script>
 <script src="lib/rough-scan.js"></script>
+<script src="lib/bootstrap.js"></script>
 
 <script>
 (function () {
@@ -209,6 +228,8 @@ tr.fail td{color:#8a4a55;}
     workerProgress: {},
     logs: { optmeco: [], zeta: [], convo: [] },
     zetaRange: {},   // "meco|G" -> { valids:[], fails:[] }
+    optMode: 'rr',   // 'rr' | 'fm' | 'fg'
+    optResult: null, // last runBootstrap result
   };
 
   const log = (s) => {
@@ -472,31 +493,67 @@ tr.fail td{color:#8a4a55;}
   }
 
   function panelOptMecoHtml() {
-    const R = TunerConfig.roughScan || {};
-    const range = R.minRange || [20000, 80000];
-    return '<h2>OPT-MECO X5 — parallel MECO sweep</h2>' +
-      commonRowHtml() +
-      '<div class="row">' +
-      '<label>G <input type="number" id="oG" step="0.01" value="0.60"></label>' +
-      '<label>T <input type="number" id="oT" step="0.001" value="4.82"></label>' +
-      '<label>bias <input type="number" id="oBias" step="0.001" value="0.59"></label>' +
-      '<label>lead s <input type="number" id="oLead" step="0.0125" value="5.525"></label>' +
-      '<label><input type="checkbox" id="oAutoRescue" checked> auto bias rescue</label>' +
-      '<label>pred floor kg <input type="number" id="oPredFloor" step="10" value="-200" style="width:80px"></label>' +
+    return '<h2>OPT-MECO — Universal Bootstrap</h2>' +
+      '<div class="mode-tabs">' +
+      '<button class="mode-tab active" data-mode="rr">Range MECO + Range G</button>' +
+      '<button class="mode-tab" data-mode="fm">Force MECO</button>' +
+      '<button class="mode-tab" data-mode="fg">Force MECO + Force G</button>' +
       '</div>' +
-      '<div class="dim" style="font-size:11px;margin-top:-2px;">' +
-      'auto bias rescue: agar stage burn fail ho (STAGE_VR_NEG), worker khud bias ladder try karega ' +
-      '(±0.3 … +5.0 deg). Bad MECO+G+bias ke liye bhi OPT-MECO chal jaayega. Slow worst-case (~14 evals per probe).' +
+      // Mode-specific MECO
+      '<div class="row mode-row" data-modes="rr">' +
+      '<label>MECO lo <input type="number" id="oMecoLo" step="500" value="0"></label>' +
+      '<label>MECO hi <input type="number" id="oMecoHi" step="500" value="90000"></label>' +
+      '<label>coarse n <input type="number" id="oMn" step="1" min="3" value="7" style="width:60px"></label>' +
+      '</div>' +
+      '<div class="row mode-row" data-modes="fm fg" style="display:none;">' +
+      '<label>MECO kg <input type="number" id="oMeco" step="1" value="62000"></label>' +
+      '</div>' +
+      // Mode-specific G
+      '<div class="row mode-row" data-modes="rr fm">' +
+      '<label>G lo <input type="number" id="oGlo" step="0.01" min="0" max="1.2" value="0.30"></label>' +
+      '<label>G hi <input type="number" id="oGhi" step="0.01" min="0" max="1.2" value="0.75"></label>' +
+      '<label>G step <input type="number" id="oGstep" step="0.005" value="0.02" style="width:70px"></label>' +
+      '</div>' +
+      '<div class="row mode-row" data-modes="fg" style="display:none;">' +
+      '<label>G <input type="number" id="oG" step="0.01" min="0" max="1.2" value="0.60"></label>' +
+      '</div>' +
+      // Common
+      '<div class="row">' +
+      '<label>K (G count) <input type="number" id="oK" step="1" min="1" max="10" value="3" style="width:60px"></label>' +
+      '<label>ideal <input type="range" id="oIdeal" min="0" max="1" step="0.05" value="0.5" style="width:120px;padding:0;"><span class="dim" id="oIdealVal" style="min-width:32px;">0.50</span></label>' +
+      '<label><input type="checkbox" id="suicideChk"> suicide ON</label>' +
+      '<span class="dim" id="bandHint"></span>' +
+      '</div>' +
+      // Advanced
+      '<details class="adv">' +
+      '<summary>Advanced</summary>' +
+      '<div class="row">' +
+      '<label>T s <input type="number" id="oTadv" step="0.001" value="4.82" style="width:70px"></label>' +
+      '<label>resid min kg <input type="number" id="oPmin" step="10" value="100" style="width:70px"></label>' +
+      '<label>resid target kg <input type="number" id="oPmax" step="10" value="150" style="width:70px"></label>' +
+      '<label>dv min <input type="number" id="oDvmin" step="10" value="150" style="width:70px"></label>' +
+      '<label>tBurn min <input type="number" id="oTbmin" step="0.5" value="3" style="width:70px"></label>' +
       '</div>' +
       '<div class="row">' +
-      '<label>MECO lo kg <input type="number" id="oMecoLo" step="500" value="' + range[0] + '"></label>' +
-      '<label>MECO hi kg <input type="number" id="oMecoHi" step="500" value="' + range[1] + '"></label>' +
-      '<button class="suggest" id="oSuggest">Suggest range</button>' +
+      '<label>MECO quantum <input type="number" id="oMq" step="10" value="50" style="width:70px"></label>' +
+      '<label>parent |bias|° <input type="number" id="oBmax" step="0.5" value="3" style="width:60px"></label>' +
+      '<label>bias rows <input type="number" id="oNbr" step="1" min="3" value="5" style="width:60px"></label>' +
+      '<label>D pts <input type="number" id="oDpts" step="1" min="3" value="5" style="width:60px"></label>' +
+      '<label>trim % <input type="number" id="oTrim" step="1" value="10" style="width:60px"></label>' +
       '</div>' +
       '<div class="row">' +
-      '<button class="primary" id="oRun">Run OPT-MECO X5</button>' +
+      '<label>apo tol - km <input type="number" id="oTol" step="0.5" value="2" style="width:60px"></label>' +
+      '<label>apo tol + km <input type="number" id="oTolhi" step="1" value="20" style="width:60px"></label>' +
+      '<label>t frac <input type="number" id="oTfrac" step="0.05" value="0.9" style="width:60px"></label>' +
+      '<label>k corr <input type="number" id="oKc" step="0.05" value="0" style="width:60px"></label>' +
+      '<label>tToApo max <input type="number" id="oTapomax" step="100" value="0" style="width:70px"></label>' +
+      '</div>' +
+      '</details>' +
+      '<div class="row">' +
+      '<button class="primary" id="oRun">Run OPT-MECO</button>' +
       '<span class="dim" id="oStatus"></span>' +
-      '</div>';
+      '</div>' +
+      '<div id="oResultHost" style="display:none;margin-top:10px;"></div>';
   }
 
   function panelZetaHtml() {
@@ -563,23 +620,51 @@ tr.fail td{color:#8a4a55;}
   }
 
   function wireOptMeco() {
-    $('oSuggest').addEventListener('click', () => {
-      const refs = (TunerConfig.roughRefs || []).filter((r) => !r.stackId || r.stackId === S.stackId);
-      if (!refs.length) { log('suggest: no roughRefs for stack ' + S.stackId); return; }
-      const mecos = refs.map((r) => r.meco).sort((a, b) => a - b);
-      const lo = Math.max(10000, mecos[0] - 4000);
-      const hi = Math.min(120000, mecos[mecos.length - 1] + 4000);
-      $('oMecoLo').value = lo;
-      $('oMecoHi').value = hi;
-      const nearest = refs.reduce((a, b) =>
-        Math.abs((b.meco || 0) - (S.last.meco || 60000)) < Math.abs((a.meco || 0) - (S.last.meco || 60000)) ? b : a);
-      $('oG').value = nearest.G;
-      $('oT').value = nearest.T || TunerConfig.T0;
-      $('oBias').value = nearest.bias;
-      $('oLead').value = nearest.lead;
-      log('OPT-MECO suggest: MECO [' + lo + ',' + hi + '] from ' + refs.length + ' refs');
+    // Mode tabs
+    document.querySelectorAll('#tabPanel .mode-tab').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        S.optMode = btn.dataset.mode;
+        applyOptMode();
+      });
     });
+    applyOptMode();
+
+    // Ideal slider
+    const idealInp = $('oIdeal');
+    const idealVal = $('oIdealVal');
+    if (idealInp && idealVal) {
+      const upd = () => { idealVal.textContent = parseFloat(idealInp.value).toFixed(2); };
+      idealInp.addEventListener('input', upd);
+      upd();
+    }
+
+    // Suicide checkbox
+    const sChk = $('suicideChk');
+    if (sChk) { sChk.addEventListener('change', updateBandHint); updateBandHint(); }
+
+    // Dependency: predMin → predTarget (min gap 50)
+    const pmin = $('oPmin');
+    const pmax = $('oPmax');
+    if (pmin && pmax) {
+      pmin.addEventListener('input', () => {
+        const v = parseFloat(pmin.value);
+        if (Number.isFinite(v) && parseFloat(pmax.value) < v + 50) pmax.value = Math.round(v + 50);
+      });
+    }
+
+    // Restore previous result
+    if (S.optResult) renderOptResult(S.optResult);
+
     $('oRun').addEventListener('click', () => runOptMeco());
+  }
+
+  function applyOptMode() {
+    const mode = S.optMode || 'rr';
+    document.querySelectorAll('#tabPanel .mode-tab').forEach((b) => b.classList.toggle('active', b.dataset.mode === mode));
+    document.querySelectorAll('#tabPanel .mode-row').forEach((row) => {
+      const modes = row.dataset.modes.split(' ');
+      row.style.display = modes.includes(mode) ? '' : 'none';
+    });
   }
 
   function wireZeta() {
@@ -636,91 +721,135 @@ tr.fail td{color:#8a4a55;}
   // ========================================================================
   // RUN: OPT-MECO X5 (no table, no json)
   // ========================================================================
+  function params() {
+    const num = (id) => parseFloat($(id).value);
+    return {
+      alt: S.orbitKm,
+      K: Math.max(1, parseInt($('oK').value, 10) || 3),
+      bmax: num('oBmax') || 3,
+      mLo: Math.round(num('oMecoLo')),
+      mHi: Math.round(num('oMecoHi')),
+      mN: Math.max(3, parseInt($('oMn').value, 10) || 7),
+      mq: Math.max(1, Math.round(num('oMq'))),
+      gLoI: Math.round(num('oGlo') * 100),
+      gHiI: Math.round(num('oGhi') * 100),
+      gStep: Math.max(1, Math.round(num('oGstep') * 100)),
+      Tn: Math.round((num('oTadv') || 4.82) / 0.000125),
+      li: Math.round(5.53 / 0.0125),
+      predTarget: num('oPmax'),
+      predMin: num('oPmin'),
+      predMax: num('oPmax'),
+      ideal: Math.min(1, Math.max(0, parseFloat($('oIdeal').value) || 0.5)),
+      eps: 0.002, tScale: 0.3,
+      dpts: Math.max(3, parseInt($('oDpts').value, 10) || 5),
+      nbr: Math.max(3, parseInt($('oNbr').value, 10) || 5),
+      tol: num('oTol'), tolHi: num('oTolhi'),
+      tfrac: num('oTfrac'), kc: num('oKc'),
+      dvMin: num('oDvmin'), tbMin: num('oTbmin'),
+      tApoMax: num('oTapomax') || 0,
+      trim: num('oTrim') / 100,
+      bres: 0.01,
+    };
+  }
+
+  function renderOptResult(r) {
+    const host = $('oResultHost');
+    if (!host) return;
+    if (!r || !r.good || !r.good.length) {
+      host.style.display = 'block';
+      host.innerHTML = '<div class="bad">No verified points. ' + esc(r && r.status || '') + '</div>';
+      return;
+    }
+    // Group by MECO then G
+    const byM = new Map();
+    for (const v of r.good) {
+      if (!byM.has(v.M)) byM.set(v.M, []);
+      byM.get(v.M).push(v);
+    }
+    let html = '<div class="dim" style="font-size:11px;margin-bottom:6px;">Verified points — click a row to fill ZETA-HELIX:</div>';
+    html += '<div class="sug-list">';
+    for (const [M, pts] of byM.entries()) {
+      const byG = new Map();
+      for (const v of pts) {
+        const G = v.Gi / 100;
+        if (!byG.has(G)) byG.set(G, []);
+        byG.get(G).push(v);
+      }
+      for (const [G, gpts] of byG.entries()) {
+        const biases = gpts.map((x) => x.bi * 0.0001).sort((a, b) => a - b);
+        const bLo = biases[0], bHi = biases[biases.length - 1];
+        const resids = gpts.map((x) => x.resid).filter(Number.isFinite);
+        const rMin = resids.length ? Math.round(Math.min.apply(null, resids)) : '–';
+        const rMax = resids.length ? Math.round(Math.max.apply(null, resids)) : '–';
+        html += '<div class="sug-row" data-meco="' + M + '" data-g="' + G + '" data-blo="' + bLo + '" data-bhi="' + bHi + '">' +
+          '<span class="g">G=' + G.toFixed(2) + '</span>' +
+          '<span class="rng">bias [' + bLo.toFixed(3) + ', ' + bHi.toFixed(3) + ']</span>' +
+          '<span class="dim">' + gpts.length + ' pt · resid ' + rMin + '–' + rMax + ' kg</span>' +
+          '<span class="act">→ ZETA</span>' +
+          '</div>';
+      }
+    }
+    html += '</div>';
+    host.style.display = 'block';
+    host.innerHTML = html;
+    host.querySelectorAll('.sug-row').forEach((row) => {
+      row.addEventListener('click', () => fillZetaFromSuggestion(row.dataset));
+    });
+  }
+
+  function fillZetaFromSuggestion(ds) {
+    const M = parseFloat(ds.meco);
+    const G = parseFloat(ds.g);
+    const bLo = parseFloat(ds.blo);
+    const bHi = parseFloat(ds.bhi);
+    setTab('zeta');
+    if ($('zMeco')) $('zMeco').value = M;
+    if ($('zG')) $('zG').value = G;
+    if ($('zBlo')) $('zBlo').value = bLo;
+    if ($('zBhi')) $('zBhi').value = bHi;
+    log('ZETA auto-filled: MECO=' + M + ' G=' + G + ' bias [' + bLo.toFixed(3) + ', ' + bHi.toFixed(3) + ']');
+  }
+
   async function runOptMeco() {
     if (S.running) return;
     if (!S.pool || !S.poolReady) { alert('pool not ready'); return; }
+    if (S.optMode === 'fm' || S.optMode === 'fg') {
+      log('OPT-MECO: Force modes coming in A1d (use Range MECO + Range G for now)');
+      $('oStatus').innerHTML = '<span class="warn">Force modes coming next</span>';
+      return;
+    }
+
     S.running = true; S.t0 = performance.now();
     $('oRun').disabled = true;
     $('oStatus').textContent = 'running…';
+    $('oResultHost').style.display = 'none';
 
     try {
-      const G = parseFloat($('oG').value);
-      const T = parseFloat($('oT').value);
-      const bias = parseFloat($('oBias').value);
-      const lead = parseFloat($('oLead').value);
-      const mecoLo = parseInt($('oMecoLo').value, 10);
-      const mecoHi = parseInt($('oMecoHi').value, 10);
+      const P = params();
+      if (!(P.gLoI < P.gHiI)) throw new Error('G lo >= G hi');
+      if (!(P.mLo < P.mHi)) throw new Error('MECO lo >= MECO hi');
+      if (!Number.isFinite(P.predMin) || P.predMin < 0) throw new Error('invalid resid min');
+      if (!Number.isFinite(P.predTarget) || P.predTarget < P.predMin + 50) throw new Error('resid target must be >= resid min + 50');
 
-      if (![G, T, bias, lead, mecoLo, mecoHi].every(Number.isFinite)) throw new Error('invalid fields');
-      if (mecoHi <= mecoLo) throw new Error('MECO hi <= lo');
+      log('OPT-MECO: mode=rr MECO [' + P.mLo + ',' + P.mHi + ']  G [' + (P.gLoI/100).toFixed(2) + ',' + (P.gHiI/100).toFixed(2) + ']  ideal=' + P.ideal);
 
-      const q = Q();
-      const basePoint = {
-        Gi: Math.round(G / q.G),
-        Tn: Math.round(T / q.T),
-        bi: Math.round(bias / q.bias),
-        li: Math.round(lead / q.lead),
-        meco: mecoLo,
-      };
-
-      log('OPT-MECO: G=' + G + ' T=' + T + ' bias=' + bias + ' lead=' + lead +
-          '  MECO range [' + mecoLo + ',' + mecoHi + ']  mc=' + fmt(S.mc, 1) + ' Ve=' + fmt(S.Ve, 1));
-
-      const autoRescue = $('oAutoRescue') && $('oAutoRescue').checked;
-
-      // FACADE POOL — same interface as WorkerPool, but each
-      // COAST_WAIT_ENTRY probe tries a bias ladder if the initial bias
-      // fails. Bypasses only the probe path; non-COAST stopAts pass
-      // through unchanged. Ladder climbs bias first (STAGE_VR_NEG is
-      // rescued by higher bias) then steps down. Breaks early on
-      // non-STAGE_VR_NEG failures (bias won't help F2a / crash).
-      const RESCUE_LADDER = [0, 0.3, 0.6, 1.0, 1.5, 2.0, 3.0, 4.0, 5.0, -0.3, -0.6, -1.0, -1.5, -2.0];
-      const rescQB = Math.max(1, Math.round(0.3 / Q().bias));
-      const rescuePool = !autoRescue ? S.pool : {
-        n: S.pool.n,
-        async runEval(point, opts) {
-          if (!opts || opts.stopAt !== 'COAST_WAIT_ENTRY') return S.pool.runEval(point, opts);
-          for (let li = 0; li < RESCUE_LADDER.length; li++) {
-            const d = RESCUE_LADDER[li];
-            const p2 = Object.assign({}, point, {
-              bi: point.bi + Math.round(d / Q().bias),
-            });
-            const m = await S.pool.runEval(p2, opts);
-            if (m.endReason === 'COAST_WAIT_ENTRY' &&
-                Number.isFinite(m.stageFuelAtStopKg) &&
-                Number.isFinite(m.coastDeltaV)) {
-              m._rescueBias = (point.bi * Q().bias) + d;
-              m._rescueSteps = li;
-              return m;
-            }
-            // Only STAGE_VR_NEG benefits from a bias change. F2a (no
-            // coast), CRASHED, CAP → bail immediately (bias won't fix).
-            if (m.endReason !== 'STAGE_VR_NEG' && !m.stageVrNeg) break;
-          }
-          return { endReason: 'STAGE_VR_NEG', stageVrNeg: true };
-        },
-      };
-
-      log('  auto bias rescue: ' + (autoRescue ? 'ON (ladder ' + RESCUE_LADDER.length + ' steps)' : 'OFF'));
-      const r = await TunerCore.roughScan(basePoint, {
-        pool: rescuePool,
-        mc: S.mc, Ve: S.Ve,
-        stackId: S.stackId,
-        altKm: S.orbitKm, fuelPct: 100,
-        minRange: [mecoLo, mecoHi],
-        _forceLo: mecoLo, _forceHi: mecoHi,
-        predFloorKg: parseFloat($('oPredFloor').value) || 0,
-        onLog: (s) => log('  ' + s),
+      S.pool.snaps.clear(); S.pool.saStats = { build: 0, hit: 0, failHit: 0 };
+      const r = await TunerCore.runBootstrap({
+        pool: S.pool,
+        params: P,
+        onLog: (line) => log(line),
+        onStatus: (st) => { $('oStatus').textContent = st; },
       });
-
-      if (r.ok) {
-        log('OPT-MECO OK: MECO=' + r.meco + ' predResidual=' + fmt(r.predictedResidual, 1) + ' kg evals=' + r.evals);
-        S.last.meco = r.meco;
-        S.last.G = G; S.last.T = T; S.last.bias = bias; S.last.lead = lead;
-        $('oStatus').innerHTML = '<span class="ok">MECO=' + r.meco + '  pred=' + fmt(r.predictedResidual, 1) + ' kg  evals=' + r.evals + '</span>';
-      } else {
-        log('OPT-MECO FAILED: ' + r.reason);
-        $('oStatus').innerHTML = '<span class="bad">FAILED: ' + esc(r.reason) + '</span>';
+      S.optResult = r;
+      renderOptResult(r);
+      $('oStatus').innerHTML = r.ok
+        ? '<span class="ok">OK — ' + r.good.length + ' verified · ' + r.evals + ' evals · ' + (r.wallMs/1000).toFixed(0) + 's</span>'
+        : '<span class="bad">' + esc(r.status || 'failed') + '</span>';
+      if (r.ok && r.good.length) {
+        const best = r.good[0];
+        S.last.meco = best.M;
+        S.last.G = best.Gi / 100;
+        S.last.bias = best.bi * 0.0001;
       }
     } catch (e) {
       log('OPT-MECO ERROR: ' + e.message);
