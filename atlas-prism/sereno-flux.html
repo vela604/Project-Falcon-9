@@ -576,7 +576,7 @@ details.adv .row{margin:8px 0 0;}
       '<div class="row">' +
       '<label>T s <input type="number" id="oTadv" step="0.001" value="4.82" style="width:70px"></label>' +
       '<label>resid min kg <input type="number" id="oPmin" step="10" value="100" style="width:70px"></label>' +
-      '<label>resid target kg <input type="number" id="oPmax" step="10" value="150" style="width:70px"></label>' +
+      '<label>resid target kg <input type="number" id="oPmax" step="10" value="200" style="width:70px"></label>' +
       '<label>dv min <input type="number" id="oDvmin" step="10" value="150" style="width:70px"></label>' +
       '<label>tBurn min <input type="number" id="oTbmin" step="0.5" value="3" style="width:70px"></label>' +
       '</div>' +
@@ -696,7 +696,7 @@ details.adv .row{margin:8px 0 0;}
           const floor = band[0];
           if (parseFloat(pminInp.value) < floor) {
             pminInp.value = floor;
-            pmaxInp.value = Math.round(floor + 50);
+            pmaxInp.value = Math.round(floor + 100);
           }
         }
       });
@@ -707,13 +707,18 @@ details.adv .row{margin:8px 0 0;}
       if (pminInp && parseFloat(pminInp.value) < band0[0]) pminInp.value = band0[0];
     }
 
-    // Dependency: predMin → predTarget (min gap 50)
+    // Dependency: predMin → predTarget (min gap 100, both keep residual band sane)
     const pmin = $('oPmin');
     const pmax = $('oPmax');
     if (pmin && pmax) {
       pmin.addEventListener('input', () => {
         const v = parseFloat(pmin.value);
-        if (Number.isFinite(v) && parseFloat(pmax.value) < v + 50) pmax.value = Math.round(v + 50);
+        if (Number.isFinite(v) && parseFloat(pmax.value) < v + 100) pmax.value = Math.round(v + 100);
+      });
+      pmax.addEventListener('input', () => {
+        const v = parseFloat(pmax.value);
+        const lo = parseFloat(pmin.value);
+        if (Number.isFinite(v) && Number.isFinite(lo) && v < lo + 100) pmax.value = Math.round(lo + 100);
       });
     }
 
@@ -971,17 +976,20 @@ details.adv .row{margin:8px 0 0;}
       const forceGi = (mode === 'fg') ? Math.round(parseFloat($('oG').value) * 100) : null;
 
       if (mode === 'rr') {
-        if (!(P.gLoI < P.gHiI)) throw new Error('G lo >= G hi');
-        if (!(P.mLo < P.mHi)) throw new Error('MECO lo >= MECO hi');
+        if (P.mLo === P.mHi) throw new Error('MECO lo == hi — use Force MECO mode instead');
+        if (P.gLoI === P.gHiI) throw new Error('G lo == hi — use Force MECO + Force G mode instead');
+        if (!(P.gLoI < P.gHiI)) throw new Error('G lo > G hi');
+        if (!(P.mLo < P.mHi)) throw new Error('MECO lo > MECO hi');
       } else if (mode === 'fm') {
         if (!Number.isFinite(forceMeco) || forceMeco < 0) throw new Error('invalid force MECO');
-        if (!(P.gLoI < P.gHiI)) throw new Error('G lo >= G hi');
+        if (P.gLoI === P.gHiI) throw new Error('G lo == hi — use Force MECO + Force G mode instead');
+        if (!(P.gLoI < P.gHiI)) throw new Error('G lo > G hi');
       } else if (mode === 'fg') {
         if (!Number.isFinite(forceMeco) || forceMeco < 0) throw new Error('invalid force MECO');
         if (!Number.isFinite(forceGi) || forceGi <= 0) throw new Error('invalid force G');
       }
       if (!Number.isFinite(P.predMin) || P.predMin < 0) throw new Error('invalid resid min');
-      if (!Number.isFinite(P.predTarget) || P.predTarget < P.predMin + 50) throw new Error('resid target must be >= resid min + 50');
+      if (!Number.isFinite(P.predTarget) || P.predTarget < P.predMin + 100) throw new Error('resid target must be >= resid min + 100 (residual band needs width)');
 
       log('OPT-MECO: mode=' + mode +
         (forceMeco != null ? '  MECO=' + forceMeco : '  MECO [' + P.mLo + ',' + P.mHi + ']') +
