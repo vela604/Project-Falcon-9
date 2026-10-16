@@ -2053,7 +2053,290 @@ Q   =  u·ax + v·ay
       </div>
     </div>
   </div>
-
+<!-- ==================== SERENO FLUX ENGINE ==================== -->
+<div class="exp glass tool pass">
+  <div class="exp-head">
+    <div>
+      <h3 class="exp-title">SERENO FLUX ENGINE — Multi-Engine Guidance Tuner</h3>
+      <div class="exp-id">atlas-prism · sereno-flux.html</div>
+      <div class="exp-time">2:35 PM <span class="exp-time-day">· Fri, Oct' 16 2026</span></div>
+    </div>
+    <span class="exp-status tool">TOOL</span>
+  </div>
+  <div class="exp-body">
+    <div class="exp-row">
+      <div class="exp-label">Target</div>
+      <div class="exp-value">
+        A browser-based multi-engine tuning suite for
+        <code>leoInsertionV3</code>. Locks a stack and a target orbit, then
+        runs three engines over a shared worker pool to produce a final
+        ranked leaderboard of feasible
+        <code>(MECO, G, bias, lead)</code> points. No backend, no build
+        step. Every search step reads a real mission signal — coast Δv,
+        predicted residual, verified FULL orbit — no black-box optimiser.
+        <p>Session model: <strong>LOCK</strong> a stack + orbit, run
+        engines in order, click a suggested range to carry it forward.
+        Every run is deterministic and reproducible: same inputs, same
+        outputs, bit-exact across reloads.</p>
+      </div>
+    </div>
+    <div class="exp-row">
+      <div class="exp-label">Architecture</div>
+      <div class="exp-value">
+        <p>Three engines, one shared pipeline:</p>
+        <ul>
+          <li><strong>OPT-MECO</strong> — universal bootstrap. Finds MECO +
+          G list + bias range per G. Phase A/B/C/D pipeline. Three modes:
+          Range MECO + Range G, Force MECO, Force MECO + Force G.</li>
+          <li><strong>ZETA-HELIX 1R</strong> — bias landscape scan. N
+          evenly spaced biases over a range, parallel FULL missions,
+          score-wise leaderboard + per-(MECO, G) charts.</li>
+          <li><strong>CONVO-LEAD E2</strong> — circularization lead
+          refinement. Locks (MECO, G, T, bias), sweeps lead against a
+          margin band via an interior bisection loop.</li>
+        </ul>
+        <p>Under the hood: <code>lib/bootstrap.js</code> (universal
+        bootstrap pipeline), <code>lib/worker-pool.js</code> (N-sim worker
+        pool), <code>lib/worker-sim.js</code> (per-worker sim + SA/CH
+        snapshot jobs), <code>lib/primitives.js</code> (lead / AB / rough /
+        MECO search), <code>lib/lattice.js</code> (snap, score, verify).</p>
+      </div>
+    </div>
+    <div class="exp-row">
+      <div class="exp-label">OPT-MECO — universal bootstrap</div>
+      <div class="exp-value">
+        <p>The engine's job is <em>feasibility</em>: hand ZETA a MECO, a
+        set of G values, and a bias range for each G — the widest band
+        inside which the coast filter says the burn can physically
+        succeed. Verified points inside that band confirm the window is
+        real. The engine does not search for the best score; that is
+        ZETA's job.</p>
+        <p><strong>Phase A — coarse MECO map.</strong> Seven MECO values ×
+        five bias rows × every G quantum, run against
+        <code>COAST_WAIT_ENTRY</code>. Each eval classified into
+        <code>OK / F1_BURN / APO_SHORT / APO_LONG / FAIL_PHYS /
+        NEAR_ORBIT / LONG_COAST</code>. Cheapest full pass of the search
+        space; produces a coarse table of where the burn succeeds at
+        all.</p>
+        <p><strong>Phase B — joint (M, G, bias) refinement.</strong> Three
+        seeds — the top-three rows by cost — each run a pattern search
+        that shrinks MECO, G, and bias steps simultaneously. Cost function
+        <code>cost = (1−w)·timeN + w·fuelN</code>, with <code>w</code>
+        the user's ideal slider (0 = fastest, 1 = most fuel saved). A
+        champion list is retained (spaced ≥ 1 kg MECO or ≥ 0.5° bias
+        apart) so if the top champion cannot verify, the next gets a
+        turn.</p>
+        <p><strong>Phase C — band trace.</strong> At the chosen MECO, walk
+        G outward from the anchor. At each G, run a two-sided bias
+        bisection to find <code>[bias_lo, bias_hi]</code>. Near the edges,
+        the ideal-Tsiolkovsky residual proxy gives the coast-feasible
+        window; if a window collapses on one side, G is dropped. The
+        trace produces a table of <code>G → (bias_lo, bias_hi)</code>
+        rows.</p>
+        <p><strong>Phase D — verification.</strong> Five bias samples per
+        chosen G row (spread across the window, 15% → 90%) are run
+        through <code>verifyChain</code>: SA snapshot → CH snapshot →
+        <code>tuneLead</code> → FULL eval. Only FULL-passing points count
+        as verified. If zero verify from champion #1, the engine falls
+        back to champion #2, then #3.</p>
+        <p><strong>Force modes.</strong> Force MECO skips A and B (Phase C
+        anchors itself on a fixed MECO via a scan of bias ∈ [−3, +3]).
+        Force MECO + Force G skips Phase C's trace loop entirely and
+        produces a single (MECO, G) row with its bias window — fastest
+        useful OPT-MECO run for a known-good MECO.</p>
+      </div>
+    </div>
+    <div class="exp-row">
+      <div class="exp-label">ZETA-HELIX 1R</div>
+      <div class="exp-value">
+        <p>Given a (MECO, G, T, bias range), ZETA runs N FULL missions at
+        evenly-spaced biases across the range — all parallel, all through
+        the same SA/CH checkpoint pipeline. Each result carries the full
+        mission metrics: score, apo/peri, ecc, deploy time, residual,
+        lead, margin. The leaderboard is sorted score-ascending; the best
+        row is highlighted. Charts group runs by (MECO, G) and plot score
+        vs bias.</p>
+        <p><strong>Why few evals suffice (empirical).</strong> The score
+        landscape inside a coast-feasible window has one dominant minimum
+        and monotonic wings. The wings are similar magnitude — a bad
+        orbit on one side penalizes about as much as a bad orbit on the
+        other — so the global minimum is a single localized basin that a
+        modest sample catches. Additional samples past ~15 mostly
+        re-confirm the same valley; the incremental improvement from a
+        1000-point sweep versus a 15-point sweep has been observed to be
+        a few points on the scoring scale. This is a property of the
+        physics, not a heuristic: the burn geometry forces a smooth
+        trade-off between bias and residual inside the window. See ZETA's
+        log output for the reported per-run score landscape to confirm on
+        any specific (stack, altitude).</p>
+        <p><strong>Range discovery.</strong> ZETA itself does not find
+        ranges — it consumes them. Ranges come from OPT-MECO's Phase C
+        table. Chips on the ZETA panel carry the last OPT-MECO run's
+        per-G windows and auto-fill on click. Edges that hard-fail during
+        the scan (orbit error above tolerance, payload not cleared) are
+        ranked last by the score function — no manual filtering
+        required.</p>
+      </div>
+    </div>
+    <div class="exp-row">
+      <div class="exp-label">CONVO-LEAD E2</div>
+      <div class="exp-value">
+        Locks (MECO, G, T, bias) and searches for the circularization
+        lead that lands signed margin inside a target band. Internally
+        dispatches one <code>probeBiasCheckpoint</code> job, which runs
+        <code>tuneLead</code> — a slope-guided interior bisection on the
+        tick lattice — then a FULL eval of the winner. Lead search is
+        warm-started from the previous (MECO, G, bias) cluster, so
+        successive CONVO runs converge faster. Useful when a ZETA winner
+        needs its lead tightened to a specific margin window (e.g.
+        3.5–5.5 s).
+      </div>
+    </div>
+    <div class="exp-row">
+      <div class="exp-label">Optimisations</div>
+      <div class="exp-value">
+        <p>Six layers stack to keep bootstrap wall-time at ~5–20 minutes
+        even at high altitudes:</p>
+        <ul>
+          <li><strong>SA snapshot sharing.</strong> All biases in a
+          <code>(MECO, G, T)</code> group share a single ascent snapshot
+          up to <code>SEPARATED_AXIAL</code>. Bias is applied after
+          separation, so the prefix is identical. On a coarse 455-eval
+          Phase A, this turns 455 ascents into 91 — measured
+          <code>build=91 reuse=364</code> in the 1000 km log.</li>
+          <li><strong>CH checkpoint chain.</strong>
+          <code>verifyChain</code> runs ascent → SA snapshot → (restore,
+          bias) → CH snapshot → <code>tuneLead</code> → FULL, all inside
+          one worker. Every <code>tuneLead</code> eval restores from the
+          CH snapshot instead of re-flying the ascent + stage burn +
+          coast to COAST_HOLD. Measured 4–5× speedup versus a scratch
+          FULL per candidate in <code>checkpoint-equiv</code>.</li>
+          <li><strong>Snapshot portability.</strong> Snapshots are plain
+          objects, verified <code>structuredClone</code>-safe and
+          bit-identical across workers via <code>postMessage</code>. The
+          pool round-robins jobs freely — no worker pinning needed, so a
+          full-core CPU stays fully saturated on heterogeneous
+          batches.</li>
+          <li><strong>Cooperative full-core pool.</strong> Default worker
+          count = <code>hardwareConcurrency − 1</code> with no upper cap.
+          Cache-bust on worker URL ensures fresh scripts on every reload.
+          Progress events streamed per worker so a hung worker is visible
+          immediately.</li>
+          <li><strong>Two-signal classification.</strong> Phase A uses
+          <code>COAST_WAIT_ENTRY</code> (cheap) to reject the vast
+          majority of bad (MECO, G, bias) combinations. Only survivors
+          reach Phase C's bisection and Phase D's FULL verify.
+          Classification is exhaustive: <code>F1_BURN</code>,
+          <code>APO_SHORT</code>, <code>APO_LONG</code>,
+          <code>NEAR_ORBIT</code>, <code>LONG_COAST</code>,
+          <code>FAIL_PHYS</code>, <code>OTHER:*</code>, and
+          <code>OK</code> — so every rejected point has a named
+          reason.</li>
+          <li><strong>Predicted residual with one calibrated term.</strong>
+          The ideal Tsiolkovsky proxy <code>pred = M₀·e<sup>−Δv/Ve</sup> −
+          m_dry + k·Δv</code> estimates post-circ stage residual without
+          flying the burn. Mass properties come from the live
+          <code>currentGeometry(b).M</code>, not the stale cached
+          <code>b.dryMass</code> — a fix that corrected a systemic
+          ~1905 kg (fairing) error and dropped prediction error to ±15 kg
+          across the working altitude range.</li>
+        </ul>
+      </div>
+    </div>
+    <div class="exp-row">
+      <div class="exp-label">Search signal</div>
+      <div class="exp-value">
+        <p>Three signals drive the search, each cheap-to-measure and
+        directly physical:</p>
+        <ul>
+          <li><strong>Coast Δv at COAST_WAIT entry</strong> — the velocity
+          still needed to circularize the current coast orbit at target
+          altitude. Phase A/B classification uses this. Replaces the
+          earlier eccentricity signal, which was ambiguous across
+          altitudes.</li>
+          <li><strong>Predicted residual</strong> — the ideal-Tsiolkovsky
+          formula above. Drives Phase C's per-G band trace; the inside of
+          the band is where the coast filter says the burn succeeds.</li>
+          <li><strong>Full mission score</strong> — orbit accuracy
+          (relative to a fixed 0.3 km tolerance, weight 250, pseudo-Huber),
+          then ecc, then fuel, then deploy time. Only
+          <code>verifyChain</code> FULLs feed the leaderboard; every row
+          is real, not estimated.</li>
+        </ul>
+      </div>
+    </div>
+    <div class="exp-row">
+      <div class="exp-label">Convergence</div>
+      <div class="exp-value">
+        <p>OPT-MECO does not iterate to a fixed point — it narrows a
+        bracket. Coarse Phase A gives a coarse table; Phase B refines the
+        three most promising seeds simultaneously; Phase C traces the
+        resulting G band; Phase D confirms the bias samples inside that
+        band. Total eval count for a Range MECO + Range G run at 1000 km:
+        ~1259 across Phase A (455), Phase B (three seeds × ~130 each),
+        Phase C (up to ~250), and Phase D (15 verifyChain calls, each
+        ~20 inner evals). Wall time ~20 minutes on a 7-worker pool.</p>
+        <p>Force MECO skips A and B: 1 anchor scan (≤13 cheap evals) + 1
+        Phase C trace + 5 Phase D verify calls. Typical wall time ~2–4
+        minutes per (MECO, G) pair. Force MECO + Force G is the fastest
+        useful OPT-MECO: 1 anchor scan + 1 single-G band trace + 5 Phase
+        D verify calls — under 2 minutes on the same hardware.</p>
+        <p>ZETA samples uniformly over the caller-provided range. There is
+        no inner loop — the leaderboard is the result. Convergence here
+        means "score landscape is well-enough sampled to trust the top
+        row," which the empirical observations above address.</p>
+      </div>
+    </div>
+    <div class="exp-row">
+      <div class="exp-label">Accuracy</div>
+      <div class="exp-value">
+        <p>Every leaderboard row is a real FULL mission, not an estimate.
+        Orbit tolerance for Phase D verification is <strong>0.3 km
+        absolute</strong>, altitude-independent — same percentage penalty
+        for the same absolute error at 320 km and 2000 km. Residual floor
+        is the lower bound of the active residual band: 100 kg (deorbit
+        OFF) or 500 kg (deorbit ON). Below the floor is a hard fail —
+        <code>residual_below_floor</code> — so a saturated stage with
+        5 kg of propellant left cannot be ranked above a point with
+        150 kg of margin.</p>
+        <p>Cross-check: on 320 km F9 B5, the current best via ZETA at
+        <code>MECO=62000, G=0.60, bias=2.5492</code> gives
+        <code>score=77.7, resid=157 kg, deploy=769 s,
+        apo/peri=320.007/319.977</code>. On 800 km the best is
+        <code>MECO=36000, G=0.62, bias=2.714, score=114.9, resid=126 kg,
+        deploy=1148 s</code>. Both verified FULL.</p>
+      </div>
+    </div>
+    <div class="exp-row">
+      <div class="exp-label">Result</div>
+      <div class="exp-value">
+        <strong>End-to-end tuning from a locked stack and target
+        orbit.</strong> OPT-MECO produces a table of coast-feasible
+        <code>(MECO, G, bias range)</code> rows with verified samples
+        inside. ZETA produces a score-ranked leaderboard with per-run
+        missions fully resolved down to <code>(MECO, G, T, bias, lead,
+        residual, apo/peri)</code>. CONVO-LEAD tightens the lead on any
+        chosen row to a specific margin band. Determinism verified
+        bit-exact across reloads; SA/CH checkpoint chains verified
+        bit-identical versus the scratch path. Runs in the browser at sim
+        speed, ~5–20 minutes per full bootstrap depending on mode and
+        altitude.
+      </div>
+    </div>
+    <div class="tags">
+      <span class="tag">multi-engine</span>
+      <span class="tag">browser-based</span>
+      <span class="tag">any-target-orbit</span>
+      <span class="tag">universal-bootstrap</span>
+      <span class="tag">snapshot-shared</span>
+      <span class="tag">full-core-pool</span>
+      <span class="tag">deterministic</span>
+      <span class="tag">physics-guided</span>
+      <span class="tag">verified-full</span>
+      <span class="tag">bit-exact</span>
+    </div>
+  </div>
+</div>
   <div class="section-header">Lessons That Survived Every Iteration</div>
 
   <div class="exp glass">
