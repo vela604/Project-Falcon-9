@@ -131,6 +131,16 @@ details.adv .row{margin:8px 0 0;}
 .dblslider input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;pointer-events:auto;width:14px;height:14px;background:var(--cyan);border:2px solid #0d1a2a;border-radius:50%;cursor:pointer;margin-top:-5px;}
 .dblslider input[type=range]::-moz-range-thumb{pointer-events:auto;width:14px;height:14px;background:var(--cyan);border:2px solid #0d1a2a;border-radius:50%;cursor:pointer;border:0;}
 .dblslider input[type=number]{width:78px;text-align:right;font-size:11.5px;padding:4px 6px;}
+
+/* ===== Suggestion chips + recommended badge ===== */
+.chip-row{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0;padding:8px;background:var(--panel2);border:1px solid var(--border);border-radius:4px;}
+.chip{display:inline-flex;gap:8px;align-items:center;padding:6px 10px;border:1px solid var(--border);border-radius:4px;background:var(--panel);cursor:pointer;font-size:11.5px;transition:border-color .12s,background .12s;}
+.chip:hover{border-color:var(--cyan);background:#0d1a2a;}
+.chip.rec{border-color:var(--green);background:#0a1e10;}
+.chip .g{color:var(--cyan);font-weight:600;}
+.chip .rng{color:var(--yellow);}
+.chip .rec-tag{color:var(--green);font-size:10px;letter-spacing:.5px;font-weight:600;}
+.rec-badge{display:inline-block;padding:1px 6px;border-radius:3px;background:#1a3018;color:var(--green);font-size:9.5px;letter-spacing:.5px;font-weight:600;margin-left:6px;}
 </style>
 </head>
 <body>
@@ -491,7 +501,7 @@ details.adv .row{margin:8px 0 0;}
     renderLogFeed();
     S.workerProgress = {};   // fresh per-tab progress
     renderProgress();
-    if (name === 'zeta') renderZetaTable();
+    if (name === 'zeta') { renderZetaTable(); renderSuggestionChips($('zChipRow')); }
   }
 
   document.querySelectorAll('.big-tab').forEach((el) => {
@@ -602,11 +612,56 @@ details.adv .row{margin:8px 0 0;}
       '<div id="oResultHost" style="display:none;margin-top:10px;"></div>';
   }
 
+  function renderSuggestionChips(host) {
+    if (!host) return;
+    if (!S.optResult || !S.optResult.good || !S.optResult.good.length) {
+      host.innerHTML = '<span class="dim" style="font-size:11px;">No OPT-MECO suggestions yet — run OPT-MECO first.</span>';
+      return;
+    }
+    const byM = new Map();
+    for (const v of S.optResult.good) {
+      if (!byM.has(v.M)) byM.set(v.M, []);
+      byM.get(v.M).push(v);
+    }
+    const bestGi = S.optResult.bestGi;
+    let html = '';
+    for (const [M, pts] of byM.entries()) {
+      const byG = new Map();
+      for (const v of pts) {
+        const G = v.Gi / 100;
+        if (!byG.has(G)) byG.set(G, []);
+        byG.get(G).push(v);
+      }
+      for (const [G, gpts] of byG.entries()) {
+        const biases = gpts.map((x) => x.bi * 0.0001).sort((a, b) => a - b);
+        const bLo = biases[0], bHi = biases[biases.length - 1];
+        const T = gpts.map((x) => x.tEnd).filter(Number.isFinite);
+        const tMin = T.length ? Math.round(Math.min.apply(null, T)) : '–';
+        const resids = gpts.map((x) => x.resid).filter(Number.isFinite);
+        const rMin = resids.length ? Math.round(Math.min.apply(null, resids)) : '–';
+        const rMax = resids.length ? Math.round(Math.max.apply(null, resids)) : '–';
+        const isRec = bestGi != null && Math.abs(Math.round(G * 100) - bestGi) < 1;
+        html += '<div class="chip' + (isRec ? ' rec' : '') + '" data-meco="' + M + '" data-g="' + G + '" data-blo="' + bLo + '" data-bhi="' + bHi + '">' +
+          '<span class="g">G=' + G.toFixed(2) + '</span>' +
+          '<span class="rng">[' + bLo.toFixed(3) + ', ' + bHi.toFixed(3) + ']</span>' +
+          '<span class="dim">T≈' + tMin + 's · resid ' + rMin + '–' + rMax + '</span>' +
+          (isRec ? '<span class="rec-tag">★ rec</span>' : '') +
+          '</div>';
+      }
+    }
+    host.innerHTML = html;
+    host.querySelectorAll('.chip').forEach((chip) => {
+      chip.addEventListener('click', () => fillZetaFromSuggestion(chip.dataset));
+    });
+  }
+
   function panelZetaHtml() {
     const sugMeco = S.last.meco != null ? S.last.meco : 60494;
     const sugG = S.last.G != null ? S.last.G : 0.60;
     const sugT = S.last.T != null ? S.last.T : 4.82;
     return '<h2>ZETA-HELIX 1R — bias landscape scan</h2>' +
+      '<div class="dim" style="font-size:11px;margin-bottom:4px;">Suggestions from last OPT-MECO run (click to fill):</div>' +
+      '<div class="chip-row" id="zChipRow"></div>' +
       commonRowHtml() +
       '<div class="row">' +
       '<label>MECO kg <input type="number" id="zMeco" step="1" value="' + sugMeco + '"></label>' +
@@ -850,6 +905,7 @@ details.adv .row{margin:8px 0 0;}
 
     $('zRun').addEventListener('click', () => runZeta());
     $('zFindRange').addEventListener('click', () => findBiasRange());
+    renderSuggestionChips($('zChipRow'));
   }
 
   function wireConvo() {
@@ -920,16 +976,19 @@ details.adv .row{margin:8px 0 0;}
         if (!byG.has(G)) byG.set(G, []);
         byG.get(G).push(v);
       }
+      const bestGi = r.bestGi;
       for (const [G, gpts] of byG.entries()) {
         const biases = gpts.map((x) => x.bi * 0.0001).sort((a, b) => a - b);
         const bLo = biases[0], bHi = biases[biases.length - 1];
         const resids = gpts.map((x) => x.resid).filter(Number.isFinite);
         const rMin = resids.length ? Math.round(Math.min.apply(null, resids)) : '–';
         const rMax = resids.length ? Math.round(Math.max.apply(null, resids)) : '–';
+        const isRec = bestGi != null && Math.abs(Math.round(G * 100) - bestGi) < 1;
         html += '<div class="sug-row" data-meco="' + M + '" data-g="' + G + '" data-blo="' + bLo + '" data-bhi="' + bHi + '">' +
           '<span class="g">G=' + G.toFixed(2) + '</span>' +
           '<span class="rng">bias [' + bLo.toFixed(3) + ', ' + bHi.toFixed(3) + ']</span>' +
           '<span class="dim">' + gpts.length + ' pt · resid ' + rMin + '–' + rMax + ' kg</span>' +
+          (isRec ? '<span class="rec-badge">★ RECOMMENDED</span>' : '') +
           '<span class="act">→ ZETA</span>' +
           '</div>';
       }
@@ -1007,6 +1066,7 @@ details.adv .row{margin:8px 0 0;}
       });
       S.optResult = r;
       renderOptResult(r);
+      if ($('zChipRow')) renderSuggestionChips($('zChipRow'));
       $('oStatus').innerHTML = r.ok
         ? '<span class="ok">OK — ' + r.good.length + ' verified · ' + r.evals + ' evals · ' + (r.wallMs/1000).toFixed(0) + 's</span>'
         : '<span class="bad">' + esc(r.status || 'failed') + '</span>';

@@ -420,6 +420,7 @@
         }
       }
       out.champs = bk.champs;
+      out.bestGi = bk.best ? bk.best.Gi : null;
       let good = [], tried = 0;
       for (const ch of bk.champs) {
         if (abort(ctx) || good.length) break;
