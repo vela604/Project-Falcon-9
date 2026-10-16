@@ -358,6 +358,7 @@ async function phaseC(ev, P, M, anchor) {
 
 
 // ---- PHASE D: real verification. tuneLead (CIRC_END) -> FULL eval. Only FULL-passing rows are "verified". ----
+const ORBIT_TOL_FRAC = 0.001;   // = TunerConfig.scoring.orbit.tolFrac (0.1% of alt: 0.32 km @320, 0.8 @800, 2 @2000)
 async function verifyPoint(P, M, Gi, bi, ev) {
   const point = { Gi, Tn: P.Tn, bi, li: P.li, meco: M };
   // Checkpoint chain in ONE worker (SA + CH snapshots, tuneLead + FULL from CH). Verified bit-exact vs scratch path on 3 cases (checkpoint-equiv), ~4-5.5x faster.
@@ -377,7 +378,7 @@ async function verifyPoint(P, M, Gi, bi, ev) {
   }
   const m = ch.metrics || {};   // FULL already run from CH inside verifyChain (ch.evals counts it)
   out.tEnd = ch.simEnd; out.payloadCleared = !!m.payloadCleared; out.apo = m.apogeeKm; out.peri = m.perigeeKm; out.vrEnd = ch.vrEnd; out.resid = m.stageResidualKg;
-  out.full = (idealReg || (out.inBand && lr.lead >= 1)) && out.payloadCleared && Math.abs(m.apogeeKm - P.alt) <= 0.5 && Math.abs(m.perigeeKm - P.alt) <= 0.5 && ch.vrEnd >= 0;
+  out.full = (idealReg || (out.inBand && lr.lead >= 1)) && out.payloadCleared && Math.abs(m.apogeeKm - P.alt) <= ORBIT_TOL_FRAC * P.alt && Math.abs(m.perigeeKm - P.alt) <= ORBIT_TOL_FRAC * P.alt && ch.vrEnd >= 0;
   return out;
 }
 
