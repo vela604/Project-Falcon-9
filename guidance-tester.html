@@ -297,7 +297,7 @@ a.back:hover { color: var(--cyan); }
     <div class="plot-card main">
       <div class="plot-title">
         <span>Earth Polar Trajectory</span>
-        <span class="hint">earth-fixed · altitude ×5 exaggerated</span>
+        <span class="hint">earth-fixed · altitude ×1 exaggerated</span>
       </div>
       <canvas id="polarCanvas"></canvas>
     </div>
@@ -1251,7 +1251,7 @@ drawPolarPlot(this.data.polar, {
 function _computePolarBounds(dataArray) {
   const Re = CONFIG.EARTH_RADIUS;
   const omegaE = CONFIG.EARTH_OMEGA;
-  const EXAG = 5;
+  const EXAG = 1;
   let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
   let hasAny = false;
   for (const polarData of dataArray) {
@@ -1302,7 +1302,7 @@ function _computePolarBounds(dataArray) {
     const cx = size / 2, cy = size / 2;
     const Re = CONFIG.EARTH_RADIUS;
     const omegaE = CONFIG.EARTH_OMEGA;
-    const EXAG = 5;
+    const EXAG = 1;
 
     const projected = {};
 for (const key in polarData) {
