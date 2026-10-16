@@ -173,10 +173,10 @@ if (!m.payloadReleased || !m.payloadCleared) add('payload_not_cleared', 50);
 
   // ---- orbit error: relative tolerance + pseudo-Huber penalty ----------------
   const curAlt = (alt) => (alt != null ? alt : C().fixed.targetAltKm);
-  const orbitTolKm = (alt) => C().scoring.orbit.tolFrac * curAlt(alt);
-  function orbitPenalty(errKm, alt) {
-  const O = C().scoring.orbit, tol = orbitTolKm(alt);
-  const e = Math.abs(errKm) / tol;                                     // NO deadzone: tol is only the reference scale
+  const orbitTolKm = () => C().scoring.orbit.tolKm;   // absolute km, no alt scaling
+  function orbitPenalty(errKm) {
+  const O = C().scoring.orbit, tol = O.tolKm;
+  const e = Math.abs(errKm) / tol;                                     // NO deadzone, absolute tol (same for all alt)
   return O.weight * O.k * (Math.sqrt(1 + (e / O.k) * (e / O.k)) - 1);
 }
   // raw accuracy (sorting): |apo - alt| + |peri - alt|
@@ -199,8 +199,8 @@ function suggestDurationCap(altKm) {
       return { score: S.failPenalty + hard.depth * 1000, ok: false, reasons: hard.reasons, parts: null };
     }
     const parts = {
-      apogee:  orbitPenalty(m.apogeeKm - alt, alt),
-      perigee: orbitPenalty(m.perigeeKm - alt, alt),
+      apogee:  orbitPenalty(m.apogeeKm - alt),
+      perigee: orbitPenalty(m.perigeeKm - alt),
       ecc:     deadzone(m.ecc, S.eccentricity.target, S.eccentricity.tol, S.eccentricity.scale, S.eccentricity.weight),
       fuel:    -S.boosterFuelLeftKgWeight * (m.boosterFuelLeftKg || 0),
       time:    S.timeToDeploySWeight * (m.deployTimeS || 0),
@@ -217,7 +217,7 @@ function suggestDurationCap(altKm) {
     extra = extra || {};
     const m = metrics || {};
     const alt = curAlt(extra.targetAltKm);
-    const sc = score(m, { targetAltKm: alt });
+    const sc = score(m);
     const fin = (x) => (Number.isFinite(x) ? x : NaN);
     const reasons = (sc.reasons || []).concat(extra.reasons || []);
     return {
@@ -328,16 +328,16 @@ function suggestDurationCap(altKm) {
   maxQKPa: 24.8, maxG: 4.8, apogeeKm: 320.0, perigeeKm: 320.0, ecc: 1e-5, boosterFuelLeftKg: 2000, deployTimeS: 590 };
     const s0 = score(good).score;
     const S = C().scoring;
-    t('weights: tolFrac 0.001, weight 250, k 1, time 0.1/s, fuel 0.01/kg',
-  S.orbit.tolFrac === 0.001 && S.orbit.weight === 250 && S.orbit.k === 1 && S.timeToDeploySWeight === 0.1 && S.boosterFuelLeftKgWeight === 0.01);
-t('relative tol: 0.32 km @320, 1 km @1000, 0.3 km @300', Math.abs(orbitTolKm(320) - 0.32) < 1e-12 && Math.abs(orbitTolKm(1000) - 1) < 1e-12 && Math.abs(orbitTolKm(300) - 0.3) < 1e-12);
-t('same relative error => same penalty (0.64@320 == 2@1000)', Math.abs(orbitPenalty(0.64, 320) - orbitPenalty(2, 1000)) < 1e-9);
-t('no deadzone: 0 error -> 0, every err > 0 -> > 0', orbitPenalty(0, 320) === 0 && orbitPenalty(0.001, 320) > 0 && orbitPenalty(-0.001, 320) > 0);
-t('0.15 km @320 ~ 27 pt (was 0 with the deadzone)', Math.abs(orbitPenalty(0.15, 320) - 27) < 2, orbitPenalty(0.15, 320).toFixed(2));
-t('0.32 km @320 (tol) ~ 104 pt', Math.abs(orbitPenalty(0.32, 320) - 104) < 3, orbitPenalty(0.32, 320).toFixed(1));
-t('1 km @320 ~ 570 pt', Math.abs(orbitPenalty(1, 320) - 570) < 15, orbitPenalty(1, 320).toFixed(1));
-t('5 km @320 ~ 3650 pt', Math.abs(orbitPenalty(5, 320) - 3650) < 100, orbitPenalty(5, 320).toFixed(0));
-t('monotone in |err|, sign-symmetric, no cliff', orbitPenalty(0.5, 320) > orbitPenalty(0.4, 320) && orbitPenalty(-0.5, 320) === orbitPenalty(0.5, 320));
+    t('weights: tolKm 0.3, weight 250, k 1, time 0.1/s, fuel 0.01/kg',
+  S.orbit.tolKm === 0.3 && S.orbit.weight === 250 && S.orbit.k === 1 && S.timeToDeploySWeight === 0.1 && S.boosterFuelLeftKgWeight === 0.01);
+t('orbit tol absolute (alt-independent): 0.3 km everywhere', orbitTolKm(320) === 0.3 && orbitTolKm(2000) === 0.3 && orbitTolKm(100) === 0.3);
+t('same absolute error => same penalty at any alt (0.5 km @320 == @2000)', orbitPenalty(0.5) === orbitPenalty(0.5));
+t('no deadzone: 0 error -> 0, every err > 0 -> > 0', orbitPenalty(0) === 0 && orbitPenalty(0.001) > 0 && orbitPenalty(-0.001) > 0);
+t('0.15 km @320 ~ 27 pt (was 0 with the deadzone)', Math.abs(orbitPenalty(0.15) - 27) < 2, orbitPenalty(0.15).toFixed(2));
+t('0.32 km @320 (tol) ~ 104 pt', Math.abs(orbitPenalty(0.32) - 104) < 3, orbitPenalty(0.32).toFixed(1));
+t('1 km @320 ~ 570 pt', Math.abs(orbitPenalty(1) - 570) < 15, orbitPenalty(1).toFixed(1));
+t('5 km @320 ~ 3650 pt', Math.abs(orbitPenalty(5) - 3650) < 100, orbitPenalty(5).toFixed(0));
+t('monotone in |err|, sign-symmetric, no cliff', orbitPenalty(0.5) > orbitPenalty(0.4) && orbitPenalty(-0.5) === orbitPenalty(0.5));
     const orbitWorse = score(Object.assign({}, good, { apogeeKm: 321 })).score - s0;                 // 1 km apo error
     const fuelRange  = score(Object.assign({}, good, { boosterFuelLeftKg: 2000 - 15000 })).score - s0; // 15000 kg range
     const timeRange  = score(Object.assign({}, good, { deployTimeS: 590 + 600 })).score - s0;         // 600 s range

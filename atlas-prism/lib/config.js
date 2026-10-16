@@ -84,7 +84,7 @@ ecc: {
 // Penalty = pseudo-Huber on e = |err| / tol  (NO deadzone: only 0 error gives 0 penalty):
 //   penalty = weight * k * (sqrt(1 + (e/k)^2) - 1)     // quadratic near 0, linear far
 // @320 km: 0.05 km -> 3 | 0.15 -> 27 | 0.32 (tol) -> 104 | 0.5 -> 344 | 1 km -> 570 | 5 km -> 3650
-orbit: { tolFrac: 0.001, weight: 250, k: 1 },
+orbit: { tolKm: 0.3, weight: 250, k: 1 },   // absolute, alt-independent
       eccentricity: { target: 0, tol: 0.0005, scale: 0.001, weight: 1500 },   // unchanged
       boosterFuelLeftKgWeight: 0.01,   // 15000 kg range = 150 pts
       timeToDeploySWeight: 0.1,        // 600 s = 60 pts; 100 s = 10 pts
