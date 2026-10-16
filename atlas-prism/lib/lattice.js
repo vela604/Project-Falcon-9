@@ -154,6 +154,15 @@ if (!m.payloadReleased || !m.payloadCleared) add('payload_not_cleared', 50);
         add('residual_below_floor_' + m.stageResidualKg.toFixed(0) + '_lt_' + floor, 30 + (floor - m.stageResidualKg));
       }
     }
+    // Residual floor: below the target band's lower bound = hard fail (safety).
+    // Uses the active band (deorbit ON vs OFF) ka lower bound.
+    {
+      const band = C().fixed.deorbitEnabled ? (L.residualTargetDeorbitOnKg || [500, 600]) : (L.residualTargetKg || [100, 200]);
+      const floor = band[0];
+      if (Number.isFinite(m.stageResidualKg) && m.stageResidualKg < floor) {
+        add('residual_below_floor_' + m.stageResidualKg.toFixed(0) + '_lt_' + floor, 30 + (floor - m.stageResidualKg));
+      }
+    }
     if (Number.isFinite(m.maxQKPa) && m.maxQKPa > L.maxQKPa) add('maxQ', 100 * (m.maxQKPa / L.maxQKPa - 1));
     if (Number.isFinite(m.maxG) && m.maxG > L.maxG) add('maxG', 100 * (m.maxG / L.maxG - 1));
     return { ok: reasons.length === 0, reasons, depth };
