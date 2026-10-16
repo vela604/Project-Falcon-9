@@ -954,6 +954,24 @@ details.adv .row{margin:8px 0 0;}
       host.innerHTML = '<div class="bad">No verified points. ' + esc(r && r.status || '') + '</div>';
       return;
     }
+    const totalVerified = r.good.length;
+    const mode = S.optMode || 'rr';
+    const modeLabel = mode === 'rr' ? 'Range MECO + Range G' : mode === 'fm' ? 'Force MECO' : 'Force MECO + Force G';
+    const summaryHtml =
+      '<div style="padding:10px 12px;background:#0a1e10;border:1px solid #1e5030;border-radius:4px;margin-bottom:10px;">' +
+      '<div style="color:var(--green);font-weight:600;letter-spacing:.5px;margin-bottom:4px;">✓ OPT-MECO complete — ' + totalVerified + ' verified feasible point' + (totalVerified === 1 ? '' : 's') + '</div>' +
+      '<div class="dim" style="font-size:11.5px;line-height:1.5;">' +
+      'Mode: <b>' + modeLabel + '</b> · MECO <b>' + (r.champs && r.champs.length ? r.champs[0].M : '—') + '</b> · ' +
+      'evals ' + r.evals + ' · wall ' + (r.wallMs/1000).toFixed(0) + 's<br>' +
+      'Neeche har <b>G</b> ke liye ek <b>bias range</b> hai. Is range ke andar ke saare values ' +
+      '<b>mission-feasible</b> hain (coast filter + verified sample). Edge values hard-fail ho sakti hain — ' +
+      'unhe ZETA khud reject karega.<br>' +
+      '<b>Best score dhundhne ke liye</b>: kisi bhi range pe click karo → ZETA-HELIX 1R me inputs auto-fill ho jaayenge. ' +
+      'Wahan N results (jaise 9-15) daal ke <b>Run ZETA-HELIX</b> dabao — parallel bias scan chalega aur score-wise leaderboard milega.' +
+      '</div></div>' +
+      '<div class="dim" style="font-size:11px;margin-bottom:6px;letter-spacing:.5px;">Suggested ranges (click to send to ZETA-HELIX):</div>';
+    // Replace the original header line below with the summary
+    
     // Group by MECO then G
     const byM = new Map();
     for (const v of r.good) {
@@ -1003,8 +1021,17 @@ details.adv .row{margin:8px 0 0;}
       }
     }
     html += '</div>';
+    const ctaHtml =
+      '<div style="padding:10px 12px;background:#0d1a2a;border:1px solid #2a5a70;border-radius:4px;margin-top:10px;">' +
+      '<div style="color:var(--cyan);font-weight:600;font-size:11.5px;letter-spacing:.5px;margin-bottom:4px;">Next step — find the best score inside a range</div>' +
+      '<div class="dim" style="font-size:11.5px;line-height:1.5;">' +
+      '1. Upar koi bhi range pe <b>click</b> karo → ZETA-HELIX 1R tab khulega aur MECO/G/bias lo-hi auto-fill ho jaayenge.<br>' +
+      '2. ZETA me <b>N results</b> set karo (jaise 9-15 — jitne zyada, utna finer score landscape).<br>' +
+      '3. <b>Run ZETA-HELIX 1R</b> dabao — parallel bias scan chalega, koi edge fail hua to leaderboard me last rank pe chala jaayega.<br>' +
+      '4. Best-score row automatically highlight hogi. Wahi tumhara final point hai (MECO / G / bias / lead sab us row me).' +
+      '</div></div>';
     host.style.display = 'block';
-    host.innerHTML = html;
+    host.innerHTML = summaryHtml + html + ctaHtml;
     host.querySelectorAll('.sug-row').forEach((row) => {
       row.addEventListener('click', () => fillZetaFromSuggestion(row.dataset));
     });
