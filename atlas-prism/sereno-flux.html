@@ -252,6 +252,7 @@ details.adv .row{margin:8px 0 0;}
     zetaRange: {},   // "meco|G" -> { valids:[], fails:[] }
     optMode: 'rr',   // 'rr' | 'fm' | 'fg'
     optResult: null, // last runBootstrap result
+    suicide: false,  // shared across tabs (persists on tab switch)
   };
 
   const log = (s) => {
@@ -525,13 +526,12 @@ details.adv .row{margin:8px 0 0;}
   }
 
   function commonRowHtml() {
-    return '<div class="row"><label><input type="checkbox" id="suicideChk"> suicide ON</label>' +
+    return '<div class="row"><label><input type="checkbox" id="suicideChk"' + (S.suicide ? ' checked' : '') + '> suicide ON</label>' +
       '<span class="dim" id="bandHint"></span></div>';
   }
 
   function updateBandHint() {
-    const on = $('suicideChk') && $('suicideChk').checked;
-    const b = residualBandFor(on);
+    const b = residualBandFor(S.suicide);
     const el = $('bandHint');
     if (el) el.textContent = 'residual band: [' + b[0] + ', ' + b[1] + '] kg';
   }
@@ -669,6 +669,7 @@ details.adv .row{margin:8px 0 0;}
     const sugMeco = S.last.meco != null ? S.last.meco : 60494;
     const sugG = S.last.G != null ? S.last.G : 0.60;
     const sugT = S.last.T != null ? S.last.T : 4.82;
+    // (Suicide checkbox rendered by commonRowHtml below — shared via S.suicide)
     return '<h2>ZETA-HELIX 1R — bias landscape scan</h2>' +
       '<div class="dim" style="font-size:11px;margin-bottom:4px;">Suggestions from last OPT-MECO run (click to fill):</div>' +
       '<div class="chip-row" id="zChipRow"></div>' +
@@ -677,17 +678,12 @@ details.adv .row{margin:8px 0 0;}
       '<label>MECO kg <input type="number" id="zMeco" step="1" value="' + sugMeco + '"></label>' +
       '<label>G <input type="number" id="zG" step="0.01" value="' + sugG + '"></label>' +
       '<label>T <input type="number" id="zT" step="0.001" value="' + sugT + '"></label>' +
-      '<button class="suggest" id="zSuggest">Suggest</button>' +
       '</div>' +
       '<div class="row">' +
       '<label>bias lo <input type="number" id="zBlo" step="0.001" value="-4"></label>' +
       '<label>bias hi <input type="number" id="zBhi" step="0.001" value="4"></label>' +
       '<label>N results <input type="number" id="zN" step="1" min="2" value="9"></label>' +
-      '<button class="suggest" id="zFindRange">Find range</button>' +
       '<span class="dim" id="zStepInfo"></span>' +
-      '</div>' +
-      '<div class="row" id="zRangeHintRow" style="display:none">' +
-      '<span class="warn">Valid bias range: <b id="zRangeHint"></b></span>' +
       '</div>' +
       '<div class="row">' +
       '<button class="primary" id="zRun">Run ZETA-HELIX 1R</button>' +
@@ -723,7 +719,11 @@ details.adv .row{margin:8px 0 0;}
 
   function wireTabPanel() {
     const sChk = $('suicideChk');
-    if (sChk) { sChk.addEventListener('change', updateBandHint); updateBandHint(); }
+    if (sChk) {
+      sChk.checked = S.suicide;
+      sChk.addEventListener('change', () => { S.suicide = sChk.checked; updateBandHint(); });
+      updateBandHint();
+    }
 
     if (S.tab === 'optmeco') wireOptMeco();
     else if (S.tab === 'zeta') wireZeta();
@@ -897,24 +897,7 @@ details.adv .row{margin:8px 0 0;}
     ['zBlo', 'zBhi', 'zN'].forEach((id) => $(id) && $(id).addEventListener('input', upd));
     upd();
 
-    // Re-evaluate range display when MECO/G changes (per-key lookup)
-    const refreshRange = () => {
-      const m = parseInt($('zMeco').value, 10);
-      const g = parseFloat($('zG').value);
-      if (Number.isFinite(m) && Number.isFinite(g)) displayRangeFor(m, g);
-    };
-    ['zMeco', 'zG'].forEach((id) => $(id) && $(id).addEventListener('input', refreshRange));
-    refreshRange();
-
-    $('zSuggest').addEventListener('click', () => {
-      if (S.last.meco != null) $('zMeco').value = S.last.meco;
-      if (S.last.G != null) $('zG').value = S.last.G;
-      if (S.last.T != null) $('zT').value = S.last.T;
-      log('ZETA suggest: MECO=' + S.last.meco + ' G=' + S.last.G + ' T=' + S.last.T);
-    });
-
     $('zRun').addEventListener('click', () => runZeta());
-    $('zFindRange').addEventListener('click', () => findBiasRange());
     renderSuggestionChips($('zChipRow'));
   }
 
