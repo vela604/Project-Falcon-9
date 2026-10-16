@@ -157,7 +157,7 @@ function updateTelemetry() {
   const dual = (rel, inertial, digits) => `${fmt(rel, digits)} (${fmt(inertial, digits)})`;
   
   set('t-x', `${fmt(arcDistance, 1)} m (${arcAngleDeg.toFixed(4)}°)`);
-set('t-h', fmt(altitude, 1)); // frame-independent
+set('t-h', fmt(altitude, 3)); // frame-independent
 
 // ---- Osculating orbital elements (two-body, from current inertial state) ----
 //   E = ½(vr² + vt_inertial²) − GM/r        specific energy
@@ -183,16 +183,16 @@ set('t-h', fmt(altitude, 1)); // frame-independent
   const altA = Number.isFinite(r_a) ? (r_a - R_e) / 1000 : Infinity;
   const vApo = (Number.isFinite(r_a) && r_a > 0) ? Math.abs(h_orb) / r_a : 0;
   
-  set('t-apogee', Number.isFinite(altA) ? fmt(altA, 1) + ' km' : '∞ (escape)');
-  set('t-perigee', fmt(altP, 1) + ' km');
+  set('t-apogee', Number.isFinite(altA) ? fmt(altA, 3) + ' km' : '∞ (escape)');
+  set('t-perigee', fmt(altP, 3) + ' km');
   set('t-vapo', fmt(vApo, 0) + ' m/s');
 }
 
 set('t-v', dual(speedRelative, speedInertial, 2)); // rel (inertial)
 set('t-vr', fmt(vRadial, 2)); // frame-independent
   set('t-vt', dual(vTangentialRelative, vTangentialInertial, 2)); // rel (inertial)
-  set('t-theta', dual(thetaRelative, thetaInertial, 2)); // rel-to-local (inertial)
-  set('t-omega', dual(omegaRelative, omegaInertial, 3)); // rel-to-earth (inertial)
+  set('t-theta', dual(thetaRelative, thetaInertial, 4)); // rel-to-local (inertial)
+  set('t-omega', dual(omegaRelative, omegaInertial, 4)); // rel-to-earth (inertial)
   
   set('t-m', fmt(geom.M, 0));
 // Fuel readout — bottom member's own tank only. Engines only exist on
@@ -208,8 +208,8 @@ set('t-vr', fmt(vRadial, 2)); // frame-independent
 }
   set('t-Ft', fmt(ENGINES.reduce((s, e) => s + e.currentF, 0), 0));
   
-  set('t-gimbal', centerEngine ? fmt(centerEngine.gimbalDeg, 1) : '—');  set('t-torque', fmt(lastForces.mainTorque + lastForces.rcsTorque + (lastForces.dragTorque || 0), 0));
-  set('t-aoa', fmt(lastForces.aoaDeg || 0, 2));
+  set('t-gimbal', centerEngine ? fmt(centerEngine.gimbalDeg, 2) : '—');  set('t-torque', fmt(lastForces.mainTorque + lastForces.rcsTorque + (lastForces.dragTorque || 0), 0));
+  set('t-aoa', fmt(lastForces.aoaDeg || 0, 4));
   set('t-g', fmt(grav.g, 3));
   set('t-rho', fmt(rho, 4));
   set('t-duty', Math.round((lastForces.dutyTop || 0) * 100) + '%');
