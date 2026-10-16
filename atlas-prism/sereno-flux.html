@@ -300,6 +300,27 @@ details.adv .row{margin:8px 0 0;}
   // ========================================================================
   // LOCK / RESET
   // ========================================================================
+  // Pre-fill OPT panel defaults from last-known references (roughRefs).
+  // Called after lock. Never overwrites if the panel is currently visible
+  // and running.
+  function prefillOptFromRefs(stackId) {
+    const refs = (TunerConfig.roughRefs || []).filter((r) => !r.stackId || r.stackId === stackId);
+    if (!refs.length) return;
+    const mecos = refs.map((r) => r.meco).sort((a, b) => a - b);
+    const lo = Math.max(0, mecos[0] - 4000);
+    const hi = Math.min(120000, mecos[mecos.length - 1] + 4000);
+    const Gs = refs.map((r) => r.G).filter(Number.isFinite);
+    const gLo = Gs.length ? Math.max(0, Math.min.apply(null, Gs) - 0.05) : 0.30;
+    const gHi = Gs.length ? Math.min(1.2, Math.max.apply(null, Gs) + 0.05) : 0.75;
+    if ($('oMecoLo')) $('oMecoLo').value = Math.round(lo);
+    if ($('oMecoHi')) $('oMecoHi').value = Math.round(hi);
+    if ($('oGlo')) $('oGlo').value = Math.round(gLo * 100) / 100;
+    if ($('oGhi')) $('oGhi').value = Math.round(gHi * 100) / 100;
+    // Slider render refresh
+    if (S._gSlider) S._gSlider.render();
+    if (S._mecoSlider) S._mecoSlider.render();
+  }
+
   async function doLock() {
     const stkId = $('stackSel').value;
     if (!stkId) { $('lockStatus').innerHTML = '<span class="bad">no eligible stack</span>'; return; }
@@ -343,6 +364,7 @@ details.adv .row{margin:8px 0 0;}
     log('setupSA: ' + okN + '/' + n + ' ready');
     if (!okN) { log('setupSA all failed — check worker console'); return; }
 
+    prefillOptFromRefs(stkId);
     setTab('optmeco');
   }
 
@@ -662,9 +684,28 @@ details.adv .row{margin:8px 0 0;}
       upd();
     }
 
-    // Suicide checkbox
+    // Suicide checkbox → band changes → predMin floor follows
     const sChk = $('suicideChk');
-    if (sChk) { sChk.addEventListener('change', updateBandHint); updateBandHint(); }
+    if (sChk) {
+      sChk.addEventListener('change', () => {
+        updateBandHint();
+        const band = residualBandFor(sChk.checked);
+        const pminInp = $('oPmin');
+        const pmaxInp = $('oPmax');
+        if (pminInp && pmaxInp) {
+          const floor = band[0];
+          if (parseFloat(pminInp.value) < floor) {
+            pminInp.value = floor;
+            pmaxInp.value = Math.round(floor + 50);
+          }
+        }
+      });
+      updateBandHint();
+      // Initial sync
+      const band0 = residualBandFor(sChk.checked);
+      const pminInp = $('oPmin');
+      if (pminInp && parseFloat(pminInp.value) < band0[0]) pminInp.value = band0[0];
+    }
 
     // Dependency: predMin → predTarget (min gap 50)
     const pmin = $('oPmin');
@@ -901,6 +942,11 @@ details.adv .row{margin:8px 0 0;}
     const G = parseFloat(ds.g);
     const bLo = parseFloat(ds.blo);
     const bHi = parseFloat(ds.bhi);
+    S.last.meco = M; S.last.G = G;
+    if (S.optResult && S.optResult.good) {
+      const hit = S.optResult.good.find((v) => v.M === M && Math.abs(v.Gi / 100 - G) < 0.005);
+      if (hit) { S.last.bias = hit.bi * 0.0001; if (Number.isFinite(hit.lead)) S.last.lead = hit.lead; }
+    }
     setTab('zeta');
     if ($('zMeco')) $('zMeco').value = M;
     if ($('zG')) $('zG').value = G;
