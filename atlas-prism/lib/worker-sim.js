@@ -266,6 +266,29 @@ async function runToCW(tCheck, capS) {
   } finally { console.log = ol; }
 }
 
+
+// ---- ops counter (telemetry only; no effect on sim results) ----
+// Counts TunerEngine.tick calls and posts throttled deltas: { type:'ops', tag, n }.
+let _opsAcc = 0, _simAcc = 0, _opsT = 0;
+function _flushOps() {
+  const n = _opsAcc; if (!n) return;
+  const sim = _simAcc; _opsAcc = 0; _simAcc = 0; _opsT = Date.now();
+  try { self.postMessage({ type: 'ops', tag: _workerTag, n, s: sim }); } catch (e) {}
+}
+function _installOps() {
+  try {
+    const E = (typeof TunerEngine !== 'undefined') ? TunerEngine : null;
+    if (!E || E.__opsWrapped || typeof E.tick !== 'function') return;
+    const t = E.tick;
+    E.tick = function () {
+      _simAcc += +arguments[0] || 0;   // tick(dt): dt = simulated seconds
+      if ((++_opsAcc & 255) === 0 && Date.now() - _opsT > 250) _flushOps();
+      return t.apply(this, arguments);
+    };
+    E.__opsWrapped = true;
+  } catch (e) {}
+}
+
 // ---- message handler ----
 self.onmessage = async (e) => {
   const msg = e.data || {};
@@ -275,6 +298,7 @@ self.onmessage = async (e) => {
     self.localStorage._populate(payload && payload.keys);
     try {
       _loadSim();
+      _installOps();
       self.postMessage({ type: 'ready', tag: _workerTag });
     } catch (err) {
       self.postMessage({ type: 'ready', error: _bootError, tag: _workerTag });
@@ -558,8 +582,10 @@ self.onmessage = async (e) => {
     return result;
     };
     const result = await _job(type, payload);
+    _flushOps();
     self.postMessage({ id, ok: true, result });
   } catch (err) {
+    _flushOps();
     self.postMessage({ id, ok: false, error: (err && err.message) || String(err) });
   }
 };

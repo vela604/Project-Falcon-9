@@ -107,7 +107,6 @@ body.fx .tm{display:grid;}
   .big-tab::before{font-size:22px;top:8px;} .big-tab .desc{display:none;} .big-tab.active .desc{display:block;max-width:80%;}
   .panel,#tabPanel{padding:13px;} .tm{grid-template-columns:repeat(2,1fr);} .tm div:nth-child(2){border-right:0;}
   .tm div:nth-child(-n+2){border-bottom:1px solid var(--line);}
-  .dblslider{flex-wrap:wrap;} .dblslider .slidergroup{width:150px;}
   .refbar .lg{display:block;} .refbar .lg i:first-child{margin-left:0;}
 }
 
@@ -149,3 +148,91 @@ body.fx #progressBar{display:none;}   /* raw line stays in the DOM (the engine w
 .wk.s-busy{border-left-color:var(--amber);background:rgba(255,203,107,.05);} .wk.s-busy u{color:var(--amber);} .wk.s-busy .d{color:rgba(255,255,255,.86);}
 .wk.s-idle{border-left-color:var(--line2);} .wk.s-idle u{color:var(--faint);} .wk.s-idle .h b{color:var(--dim);}
 @media (max-width:820px){.strip b{font-size:15px;} .strip span{font-size:8px;letter-spacing:.12em;} .wkgrid{grid-template-columns:repeat(auto-fill,minmax(128px,1fr));}}
+
+/* ---- telemetry v3: strip flag/units, boot state, worker meta line, dense mode (32+ cores) ---- */
+.strip span .prompt{flex:0 0 auto;}
+.strip b small{font:400 10px var(--mono);letter-spacing:.08em;color:var(--dim);margin-left:6px;}
+#tmFlag{color:var(--faint);}
+body[data-state=ready] #tmFlag{color:var(--green);border-color:var(--green);}
+body[data-state=running] #tmFlag{color:var(--amber);border-color:var(--amber);}
+.wk.s-boot{border-left-color:var(--line2);} .wk.s-boot u{color:var(--faint);}
+.wk.s-fail{border-left-color:var(--red);} .wk.s-fail u{color:var(--red);}
+.wk .n{margin-top:2px;font-size:9px;letter-spacing:.04em;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.wkgrid.dense{grid-template-columns:repeat(auto-fill,minmax(104px,1fr));gap:6px;}
+.wkgrid.dense .wk{padding:5px 7px;} .wkgrid.dense .wk .h em,.wkgrid.dense .wk .n{display:none;}
+.wkgrid.dense .wk .d{font-size:9px;-webkit-line-clamp:1;}
+@media (max-width:820px){.tm{grid-template-columns:repeat(2,1fr);} .strip{grid-template-columns:repeat(2,1fr);} .strip > div:nth-child(2){border-right:0;} .strip > div:nth-child(-n+2){border-bottom:1px solid var(--line);}}
+
+/* ---- strip: 4 cells ---- */
+.strip{grid-template-columns:repeat(4,1fr);} .strip b{font-size:16px;}
+.strip b small.x{color:var(--green);margin-left:4px;font-size:9px;vertical-align:baseline;}
+.strip > div:nth-child(4) b{color:var(--green);}
+
+/* ---- run result: worker box fill = share of average work ---- */
+.wk.s-done{background:linear-gradient(90deg,var(--rc) 0,var(--rc) var(--fill,0%),#000 var(--fill,0%));border-left-color:var(--rcs);}
+.wk.s-done.r-a{--rc:rgba(74,222,128,.22);--rcs:var(--green);}
+.wk.s-done.r-b{--rc:rgba(53,214,255,.20);--rcs:var(--cyan);}
+.wk.s-done.r-c{--rc:rgba(255,176,32,.20);--rcs:var(--amber);}
+.wk.s-done .d{font-size:12px;font-weight:700;color:#fff;}
+.wk.s-done .n{color:var(--dim);}
+.wkgrid.dense .wk.s-done .d{font-size:10px;} .wkgrid.dense .wk.s-done .n{display:block;font-size:8.5px;}
+.wksum{margin:-4px 0 12px;padding:7px 12px;border:1px solid var(--line);font-size:10.5px;color:var(--dim);line-height:1.7;}
+.wksum:empty{display:none;} .wksum b{color:#fff;} .wksum .k{color:var(--green);letter-spacing:.16em;font-weight:700;margin-right:10px;}
+
+/* ---- OPT-MECO double slider ---- */
+.dblslider{display:grid;grid-template-columns:86px minmax(150px,1fr) 86px;grid-template-areas:"lbl lbl lbl" "lo bar hi" ". sc .";
+  gap:3px 12px;align-items:center;flex:1 1 380px;max-width:560px;}
+.dblslider > .dbl-lbl{grid-area:lbl;font-size:9.5px;letter-spacing:.18em;text-transform:uppercase;color:var(--ph);font-weight:700;}
+.dblslider > .dbl-lbl em{font-style:normal;letter-spacing:.08em;color:var(--faint);margin-left:8px;font-weight:400;text-transform:none;}
+.dblslider > input[data-rk=lo]{grid-area:lo;} .dblslider > input[data-rk=hi]{grid-area:hi;}
+.dblslider input[type=number]{width:100%;text-align:center;padding:5px 4px;border:1px solid var(--line2);background:#000;color:#fff;}
+.dblslider input[type=number]:focus{outline:0;border-color:var(--ph);}
+.dblslider > .slidergroup{grid-area:bar;width:100%;height:30px;}
+.dblslider .track{height:6px;margin-top:-3px;background:rgba(255,255,255,.10);border:1px solid var(--line);
+  background-image:repeating-linear-gradient(90deg,transparent 0,transparent calc(25% - 1px),var(--line2) calc(25% - 1px),var(--line2) 25%);}
+.dblslider .fill{height:6px;background:var(--ph);opacity:.9;box-shadow:0 0 0 1px var(--ph);}
+.dblslider input[type=range]::-webkit-slider-thumb{width:13px;height:24px;margin-top:-9px;background:#fff;}
+.dblslider input[type=range]::-moz-range-thumb{width:13px;height:24px;background:#fff;border:0;border-radius:0;}
+.dblslider input[data-rk=rlo]::-webkit-slider-thumb{clip-path:polygon(0 0,55% 0,100% 50%,55% 100%,0 100%);}
+.dblslider input[data-rk=rhi]::-webkit-slider-thumb{clip-path:polygon(45% 0,100% 0,100% 100%,45% 100%,0 50%);}
+.dblslider input[data-rk=rlo]::-moz-range-thumb{clip-path:polygon(0 0,55% 0,100% 50%,55% 100%,0 100%);}
+.dblslider input[data-rk=rhi]::-moz-range-thumb{clip-path:polygon(45% 0,100% 0,100% 100%,45% 100%,0 50%);}
+.dblslider input[type=range]:hover::-webkit-slider-thumb,.dblslider input[type=range]:active::-webkit-slider-thumb{background:var(--ph);}
+.dblslider input[type=range]:hover::-moz-range-thumb,.dblslider input[type=range]:active::-moz-range-thumb{background:var(--ph);}
+.dblslider .dbl-sc{grid-area:sc;display:flex;justify-content:space-between;font-size:9px;color:var(--faint);letter-spacing:.06em;margin-top:-4px;}
+@media (max-width:820px){.dblslider{grid-template-columns:72px minmax(90px,1fr) 72px;flex-basis:100%;}}
+.strip{grid-template-columns:1.3fr 1fr 1fr 1fr;} .strip span{letter-spacing:.12em;}
+@media (max-width:820px){.strip{grid-template-columns:repeat(2,1fr);}}
+
+/* ---- uniform fields: same width + height everywhere (main rows, advanced, convo, sliders) ---- */
+:root{--fld-w:96px;--fld-h:32px;}
+.row label input[type=number],.row label input[type=text]{width:var(--fld-w);height:var(--fld-h);box-sizing:border-box;}
+details.adv > .row{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:14px 18px;align-items:end;margin:12px 0;}
+details.adv > .row label{min-width:0;justify-content:flex-end;}
+details.adv > .row label input[type=number]{width:100%;}
+@media (max-width:760px){details.adv > .row{grid-template-columns:repeat(3,minmax(0,1fr));}}
+@media (max-width:420px){details.adv > .row{grid-template-columns:repeat(2,minmax(0,1fr));}}
+
+/* slider: number boxes share the field height; thumbs centred on the bar */
+.dblslider{grid-template-columns:var(--fld-w) minmax(150px,1fr) var(--fld-w);}
+.dblslider input[type=number]{height:var(--fld-h);box-sizing:border-box;}
+.row > .dblslider ~ label{align-self:flex-start;}
+.dblslider input[type=range]::-webkit-slider-runnable-track{height:30px;background:transparent;border:0;}
+.dblslider input[type=range]::-moz-range-track{height:30px;background:transparent;border:0;}
+.dblslider input[type=range]::-webkit-slider-thumb{margin-top:3px;}
+@media (max-width:820px){.dblslider{grid-template-columns:var(--fld-w) minmax(90px,1fr) var(--fld-w);}}
+
+/* ---- double slider: thumb centre must line up with the % used by .fill (inset inputs by half a thumb) ---- */
+.dblslider input[type=range]{left:-6.5px;width:calc(100% + 13px);}
+
+/* ---- ideal slider: bipolar fill from the centre (0.5) out to the thumb; nothing at 0.5 ---- */
+#oIdeal{--a:.5;--b:.5;}
+#oIdeal::-webkit-slider-runnable-track{height:4px;
+  background:linear-gradient(90deg,transparent calc(50% - .5px),var(--dim) 0,var(--dim) calc(50% + .5px),transparent 0),
+             linear-gradient(90deg,transparent calc(4.5px + (100% - 9px) * var(--a)),var(--ph) 0,var(--ph) calc(4.5px + (100% - 9px) * var(--b)),transparent 0),
+             var(--line2);}
+#oIdeal::-moz-range-track{height:4px;
+  background:linear-gradient(90deg,transparent calc(50% - .5px),var(--dim) 0,var(--dim) calc(50% + .5px),transparent 0),
+             linear-gradient(90deg,transparent calc(4.5px + (100% - 9px) * var(--a)),var(--ph) 0,var(--ph) calc(4.5px + (100% - 9px) * var(--b)),transparent 0),
+             var(--line2);}
+#oIdeal::-webkit-slider-thumb{margin-top:-5px;}

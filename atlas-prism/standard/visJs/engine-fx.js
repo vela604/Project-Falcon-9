@@ -2,13 +2,16 @@
    ENGINE FX — visuals only. Event-driven (MutationObserver): no timers, no rAF loops.
    Reads the DOM the engine already renders; never calls engine code or touches workers.
    Page works without this file; it only adds: log colours + level gutter, status chips,
-   telemetry readout, keyboard shortcuts, title font. Every hook is optional.
+   telemetry (run strip, worker boxes, phase cells), keyboard shortcuts, title font. Every hook is optional.
+   Worker boxes: observes TunerCore.WorkerPool (prototype wrappers that only READ and then call the original).
    ========================================================================== */
 (function () {
   'use strict';
   var $ = function (id) { return document.getElementById(id); };
   var body = document.body;
   body.classList.add('fx');
+  var T = { evals: 0, evalTs: [], lead: '—', margin: '—' };          // per-phase counters (reset on tab change)
+  var W = { pool: null, n: 0, slots: [], rate: 0, evalRate: 0, last: 0, lastT: 0, timer: 0, ran: false, raf: 0, active: false, t0: 0, t1: 0 };
 
   // title font (user's szadFont.js, wordmark only). Safe if the file is absent.
   try { if (typeof loadSzadFont === 'function') loadSzadFont(); } catch (e) {}
@@ -62,8 +65,10 @@
       d.setAttribute('data-h', '1');
       var m = /pool ready \((\d+) workers?\)/.exec(raw);
       if (m) workers = m[1];
+      var c = /CONVO OK: lead=(\S+) margin=(\S+)/.exec(raw);
+      if (c) { T.lead = c[1]; T.margin = c[2] + 's'; requestPaint(); }
     }
-    if (workers) { setText('stWorkersN', workers); setText('tmWorkers', workers); }
+    if (workers) setText('stWorkersN', workers);
     if (logObs) logObs.observe(logEl, { childList: true });
   }
   if (logEl) {
@@ -88,36 +93,240 @@
       body.setAttribute('data-state', st);
       setText('stStateN', st);
       document.title = running ? '▶ ' + baseTitle : baseTitle;
+      setText('tmFlag', running ? 'WAIT' : st === 'ready' ? 'READY' : 'IDLE');
     }
   }
   function setPhase() {
     var a = document.querySelector('.big-tab.active');
-    setText('stPhaseN', a ? (PHASE[a.getAttribute('data-tab')] || '—') : '—');
+    var k = a ? a.getAttribute('data-tab') : '';
+    setText('stPhaseN', a ? (PHASE[k] || '—') : '—');
+    setText('tmPhaseLbl', ({ optmeco: 'meco', zeta: 'zeta', convo: 'convo' }[k] || 'run') + ' elapsed');
+    if (k !== phaseKey) { phaseKey = k; T.evals = 0; T.evalTs = []; T.lead = '—'; T.margin = '—'; }
+    requestPaint();
   }
+  var phaseKey = '';
 
-  /* ---------- 3. telemetry readout (parsed from what the engine already prints) ---------- */
+  /* ---------- 3. telemetry: run strip (elapsed · ops/s · total ops) + phase cells ---------- */
   function pad(n) { return (n < 10 ? '0' : '') + n; }
+  function fmtBig(n) {   // 1.2K · 3.45M · 12.3B · 1.00T
+    if (!isFinite(n) || n < 0) return '—';
+    var U = [['T', 1e12], ['B', 1e9], ['M', 1e6], ['K', 1e3]];
+    for (var i = 0; i < U.length; i++) if (n >= U[i][1]) {
+      var v = n / U[i][1];
+      return (v >= 100 ? v.toFixed(0) : v >= 10 ? v.toFixed(1) : v.toFixed(2)) + U[i][0];
+    }
+    return String(Math.round(n));
+  }
+  function setHTML(id, v) { var el = $(id); if (el && el.getAttribute('data-v') !== v) { el.setAttribute('data-v', v); el.innerHTML = v; } }
   function tmElapsed() {
     var m = /elapsed (\d+)s/.exec(prog ? prog.textContent : '');
     if (!m) return;
     var s = +m[1];
     setText('tmElapsed', pad(Math.floor(s / 3600)) + ':' + pad(Math.floor(s % 3600 / 60)) + ':' + pad(s % 60));
   }
-  function tmRows() {
-    var m = /(\d+) rows/.exec(($('runStats') || {}).textContent || '');
-    setText('tmRows', m ? m[1] : '0');
-    var b = document.querySelector('#tableHost tr.best td:nth-child(7)');
-    setText('tmBest', b ? b.textContent : '—');
+  function onProg() { setState(); tmElapsed(); checkFinal(); }
+
+  function totalSim() { var t = 0; for (var i = 0; i < W.slots.length; i++) t += W.slots[i].sim; return t; }
+  function fmtDur(sec) {
+    if (!isFinite(sec)) return '—';
+    if (sec < 60) return sec.toFixed(sec < 10 ? 2 : 1) + 's';
+    var m = Math.floor(sec / 60), sc = Math.floor(sec % 60);
+    if (m < 60) return m + 'm ' + pad(sc) + 's';
+    var h = Math.floor(m / 60); m %= 60;
+    if (h < 24) return h + 'h ' + pad(m) + 'm';
+    return Math.floor(h / 24) + 'd ' + pad(h % 24) + 'h';
   }
-  function onProg() { setState(); tmElapsed(); }
+  function busyCount() { var c = 0; for (var i = 0; i < W.slots.length; i++) if (W.slots[i].state === 'busy' || W.slots[i].state === 'setup') c++; return c; }
+  function totalTicks() { var t = 0; for (var i = 0; i < W.slots.length; i++) t += W.slots[i].ticks; return t; }
+
+  var PHASE_TM = {
+    optmeco: ['evals done', 'queued', 'evals / s', 'workers busy'],
+    zeta:    ['zeta rows', 'best score', 'batches', 'workers busy'],
+    convo:   ['probes done', 'lead', 'margin', 'workers busy']
+  };
+  function paintTm() {
+    var k = PHASE_TM[phaseKey] ? phaseKey : 'zeta', L = PHASE_TM[k], v;
+    var rs = ($('runStats') || {}).textContent || '';
+    var mr = /(\d+) rows/.exec(rs), mb = /(\d+) batches/.exec(rs);
+    var bt = document.querySelector('#tableHost tr.best td:nth-child(7)');
+    var busy = W.slots.length ? busyCount() + ' / ' + W.n : '—';
+    var q = W.pool && W.pool.queue ? W.pool.queue.length : 0;
+    if (k === 'optmeco') v = [T.evals, q, W.evalRate.toFixed(2), busy];
+    else if (k === 'zeta') v = [mr ? mr[1] : '0', bt ? bt.textContent : '—', mb ? mb[1] : '0', busy];
+    else v = [T.evals, T.lead, T.margin, busy];
+    for (var i = 0; i < 4; i++) { setText('tmL' + (i + 1), L[i]); setText('tmV' + (i + 1), String(v[i])); }
+  }
+
+  /* ---------- 3b. worker boxes (read-only observer on TunerCore.WorkerPool) ---------- */
+  var JL = { setupSA: 'SETUP-SA', probeBiasCheckpoint: 'PROBE', saRun: 'SA-RUN', runEval: 'EVAL', runEvalValues: 'EVAL',
+             tuneLead: 'TUNE-LEAD', ladderBuild: 'LADDER', ladderGet: 'LADDER', runScratch: 'SCRATCH', runFromSnap: 'RESUME',
+             verifyChain: 'VERIFY', ping: 'PING' };
+  var EVAL_T = { runEval: 1, runEvalValues: 1, saRun: 1, probeBiasCheckpoint: 1, tuneLead: 1 };
+  var ST = { boot: 'BOOT', ready: 'READY', setup: 'SETUP', busy: 'BUSY', idle: 'IDLE', fail: 'FAIL' };
+  function num(x) { var v = +x; return isFinite(v) ? String(+v.toPrecision(5)) : String(x); }
+  function describe(job) {
+    var p = job.payload || {}, pt = p.point || {}, a = [];
+    if (job.type === 'saRun') a.push(p.build ? 'build checkpoint' : 'resume checkpoint');
+    if (pt.meco != null) a.push('MECO ' + Math.round(pt.meco));
+    if (pt.Gi != null) a.push('G ' + num(pt.Gi));
+    if (pt.Tn != null) a.push('T ' + num(pt.Tn));
+    if (p.bias != null) a.push('bias ' + (+p.bias).toFixed(4));
+    return a.join(' · ') || job.type;
+  }
+  function newSlot() { return { state: 'boot', job: '', desc: '', detail: '', dts: 0, t0: 0, done: 0, ticks: 0, sim: 0, busyMs: 0, share: 0, res: false, el: null, c: {} }; }
+
+  function attach(pool) {
+    W.pool = pool; W.n = pool.n || (pool.workers && pool.workers.length) || 0;
+    W.slots = []; W.ran = false; W.active = false; W.t0 = W.t1 = 0; W.rate = 0; W.evalRate = 0; W.last = 0; W.lastT = Date.now();
+    T.evals = 0; T.evalTs = [];
+    var grid = $('wkGrid'); if (!grid) return;
+    grid.innerHTML = '';
+    grid.className = 'wkgrid' + (W.n > 12 ? ' dense' : '');
+    for (var i = 0; i < W.n; i++) {
+      var s = newSlot(), el = document.createElement('div');
+      el.className = 'wk s-boot';
+      el.innerHTML = '<div class="h"><b>W' + pad(i + 1) + '</b><em></em><u>BOOT</u></div><div class="d"></div><div class="n"></div>';
+      s.el = el; s.r = { em: el.children[0].children[1], u: el.children[0].children[2], d: el.children[1], n: el.children[2] };
+      grid.appendChild(el); W.slots.push(s);
+    }
+    requestPaint();
+  }
+  function detach() { W.pool = null; W.active = false; W.slots = []; W.n = 0; W.rate = 0; var g = $('wkGrid'); if (g) g.innerHTML = ''; stopTimer(); requestPaint(); }
+
+  function obsMsg(pool, i, msg) {
+    if (pool !== W.pool) return;
+    var s = W.slots[i]; if (!s) return;
+    if (msg.type === 'progress') { s.detail = String(msg.detail == null ? '' : msg.detail); s.dts = Date.now(); }
+    else if (msg.type === 'ops') { s.ticks += +msg.n || 0; s.sim += +msg.s || 0; }
+    else if (msg.type === 'ready') { s.state = msg.error ? 'fail' : 'ready'; if (msg.error) s.desc = String(msg.error); }
+    else if (msg.id != null) {   // job finished (the pool has not removed it from pending yet)
+      var job = pool.pending && pool.pending.get(msg.id);
+      s.done++; s.detail = ''; s.state = W.ran ? 'idle' : 'ready';
+      if (W.active && s.t0) s.busyMs += Date.now() - s.t0;
+      if (job && EVAL_T[job.type]) { T.evals++; T.evalTs.push(Date.now()); }
+      if (job) s.desc = 'last: ' + (JL[job.type] || job.type) + (msg.ok === false ? ' (failed)' : '');
+      s.job = '';
+    } else return;
+    if (msg.id != null) checkFinal();
+    requestPaint();
+  }
+  function runBtnBusy() { return ['oRun', 'zRun', 'cRun'].some(function (id) { var b = $(id); return !!(b && b.disabled); }); }
+  /* a run starts when work is dispatched while an engine's Run button is disabled (lock warm-up is not a run) */
+  function startRun() {
+    W.active = true; W.t0 = Date.now(); W.t1 = 0; W.rate = 0; W.evalRate = 0; W.last = 0; W.lastT = W.t0;
+    T.evals = 0; T.evalTs = [];
+    for (var i = 0; i < W.slots.length; i++) { var s = W.slots[i]; s.ticks = 0; s.sim = 0; s.done = 0; s.busyMs = 0; s.share = 0; s.res = false; }
+    var sm = $('wkSum'); if (sm) sm.textContent = '';
+  }
+  /* run is over when the Run button is enabled again and every worker is idle -> freeze result */
+  function checkFinal() {
+    var p = W.pool; if (!W.active || !p || runBtnBusy() || busyCount()) return;
+    if ((p.pending && p.pending.size) || (p.queue && p.queue.length)) return;
+    W.active = false; W.t1 = Date.now(); W.rate = 0; W.evalRate = 0; stopTimer();
+    var tot = totalTicks(), avg = W.n ? tot / W.n : 0;
+    for (var i = 0; i < W.slots.length; i++) { var s = W.slots[i]; s.share = avg ? s.ticks / avg * 100 : 0; s.res = tot > 0; if (s.state !== 'fail') s.state = 'idle'; }
+    if (tot > 0) {
+      var wall = Math.max(0.001, (W.t1 - W.t0) / 1000), sim = totalSim();
+      var el = $('wkSum');
+      if (el) el.innerHTML = '<span class="k">RESULT</span>total <b>' + fmtBig(tot) + '</b> ops · avg <b>' + fmtBig(avg) +
+        '</b> ops/worker · avg speed <b>' + fmtBig(avg / wall) + '</b> ops/s/worker (<b>' + fmtBig(tot / wall) + '</b> total) · wall <b>' + fmtDur(wall) +
+        '</b> · sim <b>' + fmtDur(sim) + '</b> (<b>×' + fmtBig(sim / wall) + '</b>)';
+    }
+    requestPaint();
+  }
+  function obsDispatch(pool, avBefore, pendBefore) {
+    if (pool !== W.pool) return;
+    if (!W.active && runBtnBusy()) startRun();
+    var took = avBefore.filter(function (x) { return pool.available.indexOf(x) < 0; }), k = 0;
+    pool.pending.forEach(function (job, id) {
+      if (pendBefore.has(id)) return;
+      var s = W.slots[took[k++]]; if (!s) return;
+      var setup = job.type === 'setupSA';
+      s.state = setup ? 'setup' : 'busy'; s.job = JL[job.type] || job.type; s.desc = describe(job); s.detail = ''; s.t0 = Date.now();
+      if (!setup) W.ran = true;
+      s.res = false;
+    });
+    ensureTimer(); requestPaint();
+  }
+  function hookPool() {
+    var WP = window.TunerCore && window.TunerCore.WorkerPool;
+    if (!WP || WP.prototype.__fx) return !!WP;
+    var P = WP.prototype, oInit = P._init, oMsg = P._onMessage, oDisp = P._dispatch, oTerm = P.terminate;
+    P.__fx = 1;
+    if (oInit) P._init = function () { var r = oInit.apply(this, arguments); try { attach(this); } catch (e) {} return r; };
+    if (oMsg) P._onMessage = function (i, e) { try { obsMsg(this, i, (e && e.data) || {}); } catch (x) {} return oMsg.apply(this, arguments); };
+    if (oDisp) P._dispatch = function () {
+      var av = [], pk = null;
+      try { av = this.available.slice(); pk = new Set(this.pending.keys()); } catch (x) {}
+      var r = oDisp.apply(this, arguments);
+      try { if (pk) obsDispatch(this, av, pk); } catch (x) {}
+      return r;
+    };
+    if (oTerm) P.terminate = function () { var me = this; try { if (me === W.pool) detach(); } catch (x) {} return oTerm.apply(this, arguments); };
+    return true;
+  }
+  if (!hookPool()) window.addEventListener('load', hookPool);
+
+  /* paint: coalesced to one rAF; the 1 s timer exists only while workers are busy */
+  function requestPaint() { if (!W.raf) W.raf = requestAnimationFrame(paintAll); }
+  function paintAll() {
+    W.raf = 0;
+    var now = Date.now();
+    for (var i = 0; i < W.slots.length; i++) {
+      var s = W.slots[i], st = s.state, c = s.c, r = s.r, d;
+      if (c.st !== st) { c.st = st; r.u.textContent = ST[st] || st; }
+      var cls = 'wk s-' + st + (s.res ? ' s-done ' + (s.share >= 90 ? 'r-a' : s.share >= 60 ? 'r-b' : 'r-c') : '');
+      if (c.cls !== cls) { c.cls = cls; s.el.className = cls; }
+      var fill = s.res ? Math.min(100, s.share).toFixed(0) + '%' : '';
+      if (c.fill !== fill) { c.fill = fill; if (fill) s.el.style.setProperty('--fill', fill); else s.el.style.removeProperty('--fill'); }
+      var em = (st === 'busy' || st === 'setup') ? s.job : '';
+      if (c.em !== em) { c.em = em; r.em.textContent = em; }
+      if (st === 'busy' || st === 'setup') {
+        d = (s.dts >= s.t0 && s.detail ? s.detail : s.desc) + ' · ' + Math.floor((now - s.t0) / 1000) + 's';
+      } else if (s.res) d = s.share.toFixed(0) + '% of avg';
+      else d = st === 'ready' ? 'awaiting job' : st === 'boot' ? 'starting sim…' : (s.desc || '');
+      if (c.d !== d) { c.d = d; r.d.textContent = d; }
+      var n = s.res ? fmtBig(s.ticks) + ' ops · ' + fmtBig(s.busyMs ? s.ticks / (s.busyMs / 1000) : 0) + '/s' : 'jobs ' + s.done + ' · ' + fmtBig(s.ticks) + ' ops';
+      if (c.n !== n) { c.n = n; r.n.textContent = n; }
+    }
+    var tot = totalTicks();
+    setHTML('tmOps', fmtBig(W.rate) + '<small>ops/s</small>');
+    setHTML('tmTotal', fmtBig(tot) + '<small>ops</small>');
+    var simT = totalSim(), wall = W.t0 ? ((W.t1 || now) - W.t0) / 1000 : 0;
+    setHTML('tmSim', simT > 0 ? fmtDur(simT) + (wall > 0.5 ? '<small class="x">×' + fmtBig(simT / wall) + '</small>' : '') : '—');
+    paintTm();
+  }
+  function tick() {
+    var now = Date.now(), tot = totalTicks(), dt = (now - W.lastT) / 1000;
+    if (dt > 0) W.rate = Math.max(0, (tot - W.last) / dt);
+    W.last = tot; W.lastT = now;
+    while (T.evalTs.length && now - T.evalTs[0] > 10000) T.evalTs.shift();
+    W.evalRate = T.evalTs.length / 10;
+    if (!busyCount()) { W.rate = 0; W.evalRate = 0; stopTimer(); }
+    paintAll();
+  }
+  function ensureTimer() { if (!W.timer) { W.last = totalTicks(); W.lastT = Date.now(); W.timer = setInterval(tick, 1000); } }
+  function stopTimer() { if (W.timer) { clearInterval(W.timer); W.timer = 0; } }
 
   if (main) new MutationObserver(setState).observe(main, { attributes: true, attributeFilter: ['style'] });
   if (prog) new MutationObserver(onProg).observe(prog, { childList: true });
   var tabs = document.querySelector('.big-tabs');
   if (tabs) new MutationObserver(setPhase).observe(tabs, { attributes: true, subtree: true, attributeFilter: ['class'] });
-  var rs = $('runStats'); if (rs) new MutationObserver(tmRows).observe(rs, { childList: true, characterData: true, subtree: true });
-  var th = $('tableHost'); if (th) new MutationObserver(tmRows).observe(th, { childList: true });
-  setState(); setPhase(); tmRows();
+  var rs = $('runStats'); if (rs) new MutationObserver(requestPaint).observe(rs, { childList: true, characterData: true, subtree: true });
+  var th = $('tableHost'); if (th) new MutationObserver(requestPaint).observe(th, { childList: true });
+  setState(); setPhase(); requestPaint();
+
+  /* ---------- 3c. ideal slider: bipolar fill (CSS vars --a/--b = fill span as 0..1 of the track) ---------- */
+  function paintIdeal(el) {
+    if (!el || el.id !== 'oIdeal') return;
+    var lo = +el.min || 0, hi = +el.max || 1, p = (+el.value - lo) / ((hi - lo) || 1), c = 0.5;
+    el.style.setProperty('--a', String(Math.min(p, c)));
+    el.style.setProperty('--b', String(Math.max(p, c)));
+  }
+  document.addEventListener('input', function (e) { paintIdeal(e.target); }, true);
+  var tp = $('tabPanel');
+  if (tp) new MutationObserver(function () { paintIdeal($('oIdeal')); }).observe(tp, { childList: true });
+  paintIdeal($('oIdeal'));
 
   /* ---------- 4. keyboard: 1/2/3 = phase, Ctrl/Cmd+Enter = run current ---------- */
   var ORDER = ['optmeco', 'zeta', 'convo'], RUN = { optmeco: 'oRun', zeta: 'zRun', convo: 'cRun' };
