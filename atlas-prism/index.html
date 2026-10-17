@@ -4,87 +4,365 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Atlas Prism — Guidance Parameters Hub</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;800&display=swap">
 <style>
-:root{--bg:#05070e;--panel:#0b1220;--panel2:#101a30;--border:#1c2b45;--cyan:#35d6ff;--green:#4ade80;--yellow:#ffd23f;--text:#dbe6f5;--dim:#6b7d9c;--orange:#ff9248;}
-*{box-sizing:border-box;}
-html,body{margin:0;background:var(--bg);color:var(--text);font:13px/1.5 'JetBrains Mono','Consolas',monospace;}
-#app{max-width:1200px;margin:0 auto;padding:20px 14px;}
-header{padding:14px 0;border-bottom:1px solid var(--border);margin-bottom:24px;}
-header h1{margin:0 0 4px;font-size:20px;letter-spacing:2px;color:var(--cyan);font-weight:700;}
-header .sub{color:var(--dim);font-size:12px;}
-.section-header{color:var(--cyan);font-size:11px;letter-spacing:1.5px;margin:22px 0 10px;font-weight:600;text-transform:uppercase;}
-.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:14px;}
-.card{background:var(--panel);border:1px solid var(--border);border-radius:6px;padding:16px;transition:border-color .15s,background .15s;cursor:pointer;text-decoration:none;color:var(--text);display:block;}
-.card:hover{border-color:var(--cyan);background:#0d1a2a;}
-.card-title{color:var(--cyan);font-weight:600;font-size:14px;letter-spacing:1px;margin-bottom:6px;}
-.card-desc{color:var(--dim);font-size:11.5px;line-height:1.5;}
-.card-tags{margin-top:10px;display:flex;flex-wrap:wrap;gap:5px;}
-.tag{display:inline-block;padding:2px 7px;border-radius:3px;background:var(--panel2);color:var(--dim);font-size:10px;letter-spacing:.5px;}
-.tag.primary{background:#0d2530;color:var(--cyan);}
-.tag.warn{background:#2a1a0a;color:var(--yellow);}
-.tag.green{background:#0a1e10;color:var(--green);}
-.section{background:var(--panel);border:1px solid var(--border);border-radius:6px;padding:18px;margin-bottom:16px;}
-.section-head{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:12px;}
-.section-title{color:var(--cyan);font-weight:600;font-size:14px;letter-spacing:1px;}
-.section-sub{color:var(--dim);font-size:11.5px;}
-.empty{color:var(--dim);font-size:11.5px;padding:16px;text-align:center;border:1px dashed var(--border);border-radius:4px;}
-.breadcrumb{color:var(--dim);font-size:11px;margin-bottom:6px;}
-.breadcrumb a{color:var(--cyan);text-decoration:none;}
-.breadcrumb a:hover{text-decoration:underline;}
+:root{--c:#35d6ff;--a:#ffb020;--g:#4ade80;--r:#ff4d5e;--v:#a78bfa;--dim:rgba(255,255,255,.55);--line:rgba(255,255,255,.15);
+--mono:'JetBrains Mono','Consolas','Menlo',monospace;--disp:'SpaceXFont','Arial Black','Helvetica Neue',Arial,sans-serif}
+*{box-sizing:border-box}
+html{background:#000;scroll-behavior:smooth}
+body{margin:0;background:#000;color:#fff;font:13px/1.55 var(--mono);overflow-x:hidden}
+canvas#bg{position:fixed;inset:0;width:100%;height:100%;z-index:0;display:block}
+main{position:relative;max-width:1240px;margin:0 auto;padding:0 18px 60px}
+a{color:inherit}
+nav{position:sticky;top:10px;z-index:5;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px;padding:9px 14px;border:1px solid var(--line);border-radius:14px;background:rgba(0,0,0,.55);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);font-size:12px}
+nav a{text-decoration:none;color:var(--dim)}nav a:hover{color:#fff}
+nav .l{display:flex;gap:16px;align-items:center}nav .l b{color:#fff;font-weight:800;letter-spacing:.04em}
+nav .r{display:flex;gap:8px}
+.btn{display:inline-flex;align-items:center;gap:8px;padding:9px 16px;border-radius:10px;border:1px solid rgba(255,255,255,.5);text-decoration:none;font-weight:600;font-size:12.5px;color:#fff;transition:background .15s,color .15s}
+.btn:hover,.btn:focus-visible{background:#fff;color:#000;outline:none}
+.btn.p{background:#fff;color:#000;border-color:#fff}.btn.p:hover{background:var(--c);border-color:var(--c)}
+.hero{min-height:calc(100vh - 70px);display:flex;flex-direction:column;justify-content:center;padding-bottom:5vh}
+h1{margin:0;font:400 clamp(52px,14.5vw,210px)/.86 var(--disp);letter-spacing:-.01em;color:#fff;mix-blend-mode:difference;white-space:nowrap}
+.lead{margin:20px 0 0;font-size:clamp(14px,1.6vw,18px);font-weight:800;color:#fff;mix-blend-mode:difference}
+.tl{margin:8px 0 0;max-width:600px;color:#fff;mix-blend-mode:difference}
+.cta{display:flex;flex-wrap:wrap;gap:10px;margin-top:22px}
+.pipe{display:flex;flex-wrap:wrap;gap:8px;margin-top:26px}
+.st{border:1px solid var(--line);border-radius:10px;padding:7px 12px;background:rgba(0,0,0,.55);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);font-size:11.5px;color:var(--dim);min-width:130px}
+.st b{display:block;color:#fff;font-size:12px}.st.on{border-color:var(--c);color:#fff;box-shadow:0 0 18px rgba(53,214,255,.25)}.st.dn b{color:var(--g)}
+.st i{display:block;height:2px;margin-top:6px;background:rgba(255,255,255,.12)}.st i u{display:block;height:100%;width:0;background:var(--c)}
+.kv{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;font-size:11.5px;color:var(--dim)}.kv span{padding:3px 10px;border:1px solid var(--line);border-radius:99px;background:rgba(0,0,0,.45)}.kv b{color:#fff}
+h2{margin:60px 0 14px;font:800 clamp(18px,2.4vw,28px)/1.1 var(--mono);color:#fff;mix-blend-mode:difference}
+.glass{background:rgba(0,0,0,.62);backdrop-filter:blur(20px) saturate(1.5);-webkit-backdrop-filter:blur(20px) saturate(1.5);border:1px solid var(--line);border-radius:16px;padding:18px;box-shadow:inset 0 1px 0 rgba(255,255,255,.2),0 20px 50px rgba(0,0,0,.45)}
+.eng{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,440px),1fr));gap:16px}
+.card{display:flex;flex-direction:column;gap:10px;text-decoration:none;color:#fff;padding:24px;transition:border-color .2s,transform .2s,box-shadow .2s}
+.card.main{border-color:rgba(255,255,255,.7);box-shadow:inset 0 1px 0 rgba(255,255,255,.3),0 0 0 1px rgba(53,214,255,.25),0 0 50px rgba(53,214,255,.18)}
+.card:hover,.card:focus-visible{border-color:var(--c);transform:translateY(-3px);outline:none}
+.card-title{font-size:19px;font-weight:800;color:#fff}.card.main .card-title{color:var(--c)}
+.card-desc{color:var(--dim);font-size:12.5px;flex:1}
+.tags{display:flex;flex-wrap:wrap;gap:6px}
+.tag{padding:2px 8px;border-radius:5px;background:rgba(255,255,255,.09);color:var(--dim);font-size:10.5px}
+.tag.p{background:rgba(53,214,255,.18);color:var(--c)}.tag.g{background:rgba(74,222,128,.16);color:var(--g)}
+.go{align-self:flex-start;margin-top:6px}
+.stack{display:flex;align-items:baseline;gap:14px;margin:0 0 12px;flex-wrap:wrap}.stack b{font-size:14px}.stack span{color:var(--dim);font-size:11.5px}
+.soon{padding:20px;text-align:center;border:1px dashed var(--line);border-radius:14px;color:var(--dim);background:rgba(0,0,0,.5)}
+.row{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px}
+.wide{margin-top:14px}
+.ph{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px;color:var(--dim);font-size:11.5px}.ph b{color:#fff;font-size:13px}
+.big{font:800 40px/1 var(--mono)}.big small{font:400 12px var(--mono);color:var(--dim);margin-left:6px}
+.sub{color:var(--dim);font-size:11.5px;margin-top:6px}
+.lanes{display:grid;grid-template-columns:repeat(auto-fill,minmax(64px,1fr));gap:5px}
+.lanes div{border:1px solid var(--line);border-radius:6px;padding:3px 5px;font-size:10px;color:var(--dim);background:rgba(255,255,255,.03)}.lanes div.on{border-color:var(--c);color:var(--c);background:rgba(53,214,255,.08)}
+canvas#par{width:100%;height:150px;display:block}
+.log{height:250px;overflow:hidden;font-size:11.5px;line-height:1.5;display:flex;flex-direction:column;justify-content:flex-end;white-space:pre}
+.log p{margin:0;overflow:hidden;text-overflow:ellipsis}
+.t1{color:var(--c)}.t2{color:var(--g)}.t3{color:var(--a)}.t4{color:var(--r)}.t0{color:var(--dim)}
+.scroll{overflow-x:auto}
+.tbl{width:100%;border-collapse:collapse;font-size:11.5px;white-space:nowrap}
+.tbl th{color:var(--dim);font-weight:400;text-align:right;padding:5px 8px;border-bottom:1px solid var(--line)}
+.tbl td{text-align:right;padding:5px 8px;border-bottom:1px solid rgba(255,255,255,.06)}
+.tbl th:first-child,.tbl td:first-child{text-align:left}.tbl tr:first-child td{color:var(--c)}
+.eq{color:var(--a);margin:2px 0 14px;overflow-x:auto;white-space:nowrap}
+.sc{display:grid;grid-template-columns:110px 1fr 80px;gap:10px;align-items:center;margin:8px 0;font-size:12px}
+.sc .t{height:8px;background:rgba(255,255,255,.1);border-radius:9px;overflow:hidden}.sc .t i{display:block;height:100%;width:0;border-radius:9px;transition:width .5s}
+.sc em{font-style:normal;text-align:right;color:var(--dim)}
+footer{margin-top:50px;font-size:11px;color:#fff;mix-blend-mode:difference}
+@media(max-width:600px){.sc{grid-template-columns:80px 1fr 64px}}
 </style>
+<script src="../js/szadFont.js" onerror="void 0"></script>
 </head>
 <body>
-<div id="app">
-<header>
-  <div class="breadcrumb"><a href="../index.html">← Mission Console</a></div>
+<canvas id="bg" aria-hidden="true"></canvas>
+<main>
+<nav><div class="l"><a href="../index.html">← Mission Console</a><b>ATLAS PRISM</b></div>
+<div class="r"><a class="btn p" href="standard/sereno-flux.html">Sereno Flux</a><a class="btn" href="standard/pro-alpha.html">Pro-Alpha</a></div></nav>
+
+<section class="hero">
   <h1>ATLAS PRISM</h1>
-  <div class="sub">Guidance Parameters Hub</div>
-</header>
+  <p class="lead">Guidance Parameters Hub</p>
+  <p class="tl">Tune the guidance constants for a target orbit. Pick an engine below; the background replays how a Sereno Flux search converges.</p>
+  <div class="cta"><a class="btn p" href="standard/sereno-flux.html">Open Sereno Flux</a><a class="btn" href="standard/pro-alpha.html">Open Pro-Alpha</a><a class="btn" href="#eng">All engines</a></div>
+  <div class="pipe" id="pipe"></div>
+  <div class="kv"><span>run <b id="hN">0</b> of ~1,165</span><span>engine clock <b id="hE">00:00</b></span><span>best score <b id="hS">—</b></span></div>
+</section>
 
-<div class="section-header">Rocket Types</div>
-
-<div class="section">
-  <div class="section-head">
-    <div>
-      <div class="section-title">Standard</div>
-      <div class="section-sub">Standard stack · 4-member · leoInsertionV3</div>
-    </div>
-    <span class="tag primary">READY</span>
-  </div>
-  <div class="grid">
-    <a class="card" href="standard/sereno-flux.html">
-      <div class="card-title">★ SERENO FLUX ENGINE</div>
-      <div class="card-desc">
-        Multi-engine tuning suite. OPT-MECO (universal bootstrap for MECO + G + bias ranges) → ZETA-HELIX 1R (score-ranked bias landscape scan) → CONVO-LEAD E2 (lead refinement). Full-core worker pool, snapshot-shared, altitude-agnostic. Recommended path for any target orbit.
-      </div>
-      <div class="card-tags">
-        <span class="tag">multi-engine</span>
-        <span class="tag">universal</span>
-        <span class="tag primary">recommended</span>
-        <span class="tag green">snapshot-shared</span>
-      </div>
-    </a>
-    <a class="card" href="standard/pro-alpha.html">
-      <div class="card-title">Pro-Alpha Engine</div>
-      <div class="card-desc">
-        Single-thread tuner. Two-phase guided search (MECO outer loop → lane sweep) over the five guidance constants. Fastest path for the 320 km F9 reference point. Deterministic, leaderboard-ranked, drop-in baseline reproduction.
-      </div>
-      <div class="card-tags">
-        <span class="tag">single-thread</span>
-        <span class="tag">320 km reference</span>
-        <span class="tag green">baseline-exact</span>
-      </div>
-    </a>
-  </div>
+<h2 id="eng">Rocket types</h2>
+<div class="stack"><b>Standard</b><span>Standard stack · 4-member · leoInsertionV3</span><span class="tag p">READY</span></div>
+<div class="eng">
+  <a class="glass card main" href="standard/sereno-flux.html">
+    <div class="card-title">★ SERENO FLUX ENGINE</div>
+    <div class="card-desc">Multi-engine tuning suite. OPT-MECO (universal bootstrap for MECO + G + bias ranges) → ZETA-HELIX 1R (score-ranked bias landscape scan) → CONVO-LEAD E2 (lead refinement). Full-core worker pool, snapshot-shared, altitude-agnostic. Recommended path for any target orbit.</div>
+    <div class="tags"><span class="tag">multi-engine</span><span class="tag">universal</span><span class="tag p">recommended</span><span class="tag g">snapshot-shared</span></div>
+    <span class="btn p go">Open engine</span>
+  </a>
+  <a class="glass card" href="standard/pro-alpha.html">
+    <div class="card-title">Pro-Alpha Engine</div>
+    <div class="card-desc">Single-thread tuner. Two-phase guided search (MECO outer loop → lane sweep) over the five guidance constants. Fastest path for the 320 km F9 reference point. Deterministic, leaderboard-ranked, drop-in baseline reproduction.</div>
+    <div class="tags"><span class="tag">single-thread</span><span class="tag">320 km reference</span><span class="tag g">baseline-exact</span></div>
+    <span class="btn go">Open engine</span>
+  </a>
 </div>
+<h2>Other rocket types</h2>
+<div class="soon">Heavy · Starship — coming soon</div>
 
-<div class="section-header">Other Rocket Types</div>
-
-<div class="empty">
-  Heavy · Starship — coming soon
+<h2>Live preview: a Sereno Flux search</h2>
+<div class="row">
+  <div class="glass"><div class="ph"><b>Throughput</b><span id="wk">—</span></div><div class="big"><span id="tp">0.0</span><small>sims/s</small></div><div class="sub" id="tpS">each run is a full ascent integration</div></div>
+  <div class="glass"><div class="ph"><b>Workers</b><span>live runs</span></div><div class="lanes" id="lanes"></div></div>
+  <div class="glass"><div class="ph"><b>Bias landscape</b><span>ε vs bias (°)</span></div><canvas id="par" width="320" height="150"></canvas></div>
 </div>
-
-
-</div>
+<div class="glass wide"><div class="ph"><b>Engine log</b><span id="ls">—</span></div><div class="log" id="log"></div></div>
+<div class="glass wide"><div class="ph"><b>Ranked runs</b><span id="lbs">ZETA runs · ok first, score ascending</span></div>
+<div class="scroll"><table class="tbl"><thead><tr><th>#</th><th>batch</th><th>MECO</th><th>G</th><th>T</th><th>bias</th><th>score</th><th>eCoast</th><th>lead</th><th>margin</th><th>vrEnd</th><th>apo</th><th>peri</th><th>ecc</th><th>deploy</th><th>fuel</th><th>resid</th><th>ok</th></tr></thead><tbody id="lb"></tbody></table></div></div>
+<div class="glass wide"><div class="ph"><b>Score of the current best</b><span>lower is better</span></div>
+  <div class="eq">S = J(ε) + 0.1·t<sub>deploy</sub>,  J = 250·k·(√(1 + (ε/k)²) − 1)</div>
+  <div class="sc"><span>Orbit error</span><div class="t"><i id="s1" style="background:var(--c)"></i></div><em id="v1"></em></div>
+  <div class="sc"><span>Deploy time</span><div class="t"><i id="s2" style="background:var(--a)"></i></div><em id="v2"></em></div>
+  
+  <div class="sub">Pseudo-Huber keeps small errors smooth and large ones linear, so one bad orbit cannot dominate.</div></div>
+<footer>Background: a reduced ascent model following the Sereno Flux pipeline (OPT-MECO phases A–D, then ZETA-HELIX). Run rates per worker come from real logs and are shown at ×8 time-lapse. Altitude is drawn ×3.5.</footer>
+</main>
+<script>
+(()=>{
+"use strict";
+if(typeof loadSzadFont==='function')loadSzadFont();
+const $=id=>document.getElementById(id),rnd=Math.random,RM=matchMedia('(prefers-reduced-motion:reduce)').matches;
+/*SIMSTART*/
+const TGT=.05,VE=.5,A0=1.3,TAU=VE/A0,TB=TAU*(1-1/22),TS=806,VC=7.905,XA=3.5,KM=6371,DEG=.015,OFF=3.65;
+function sim(p){
+  const tm=p.f*TB,dt=.004;let r=1,th=0,vr=0,vt=0,t=0,ok=true,iM=-1,hM=0;const pts=[];
+  for(let i=0;i<900;i++){
+    if(iM<0&&t>=tm){iM=pts.length/2;hM=(r-1)*KM}
+    let ar=0,at=0;
+    if(t<tm){const a=A0/(1-t/TAU)*Math.min(1,(tm-t)/dt),x=Math.max(0,t-p.k),ph=Math.min(1.5708,1.5708*(1-Math.exp(-p.g*x/TAU))+p.d);ar=a*Math.cos(ph);at=a*Math.sin(ph)}
+    vr+=(vt*vt/r-1/(r*r)+ar)*dt;vt+=(-vr*vt/r+at)*dt;r+=vr*dt;th+=vt/r*dt;t+=dt;
+    if(r<1&&t>.02){ok=false;pts.push(r,th);break}
+    if(i%2==0)pts.push(r,th);
+    if(t>tm+.55)break;
+  }
+  const en=(vr*vr+vt*vt)/2-1/r,a=-1/(2*en),h=r*vt,e=Math.sqrt(Math.max(0,1+2*en*h*h));
+  const apo=a*(1+e)-1,peri=a*(1-e)-1;let why='';
+  if(!ok)why='crash';else if(en>=0)why='escape';else if(peri<.005)why='suborbital';
+  const aE=(Math.min(apo,2)-TGT)*KM,pE=(Math.max(peri,-1)-TGT)*KM,err=Math.abs(aE)+Math.abs(pE);
+  if(!why&&err>2000)why='orbit miss';
+  return{pts,err,aE,pE,e,valid:!why,why,iM:iM<0?pts.length/2-1:iM,hM,dvM:VE*VC*Math.log(1/(1-tm/TAU)),vEnd:Math.sqrt(vr*vr+vt*vt)*VC,T:tm*TS};
+}
+const fOf=M=>.9+(80000-M)/35000*.07,gOf=G=>4.9+(.61-G)*10,hs=x=>(Math.sin(x*997.13)+1)/2;
+/* integrator decides validity/orbit; deploy, lead, margin, resid follow trends fitted to real Sereno Flux tables */
+function evalRun(q){
+  const r=sim({f:fOf(q.M),g:gOf(q.G),k:.04,d:(q.b-OFF)*DEG});r.q=q;
+  const lo=1.97+(q.G-.61)*35,rel=q.b-lo+.132,miss=Math.max(0,lo-q.b),h=hs(q.b);
+  r.lead=Math.max(0,(q.b-lo)*3.95);r.deploy=Math.round(1553-629*rel+(56830-q.M)*.03);
+  r.eC=Math.max(.004,.0233+rel*.102);r.resid=Math.max(60,Math.round(352-150*rel+(56830-q.M)*.16));
+  const dl=Math.round((h-.5)*12);r.pred=r.resid-dl;r.dl=dl;
+  r.margin=r.lead>.05?3.6+h*.7:Math.min(13,4.5+miss*18);r.vr=r.lead>.05?.0245+h*.004:.03+miss*.4;
+  r.apo=400+Math.max(0,r.aE)/1500;r.peri=400+Math.min(0,r.pE)/1500;r.ecc=Math.abs(r.apo-r.peri)/(r.apo+r.peri+12742);
+  const eps=r.err/3000;r.J=250*(Math.sqrt(1+eps*eps)-1);r.tt=.1*r.deploy;r.S=r.J+r.tt;
+  r.cls=r.valid?'':r.why=='suborbital'?'F1_BURN':r.why=='orbit miss'?'NEAR_ORBIT':'FAIL_PHYS';
+  return r;
+}
+const f4=(x,d)=>(x>=0?'+':'')+x.toFixed(d==null?4:d),best=(a,k)=>a.reduce((m,r)=>!m||k(r)<k(m)?r:m,null);
+let NORM={t0:600,t1:1700,p0:0,p1:500};
+const cost=r=>.5*(r.deploy-NORM.t0)/(NORM.t1-NORM.t0)+.5*(r.pred-NORM.p0)/(NORM.p1-NORM.p0);
+function winOf(res,M,G){
+  const v=res.filter(r=>r.valid);if(!v.length)return null;
+  const bs=v.map(r=>r.q.b).sort((x,y)=>x-y);let lo=bs[0],hi=bs[bs.length-1],nc=false;
+  for(let i=1;i<bs.length;i++)if(bs[i]-bs[i-1]>.125)nc=true;
+  let clip='';
+  if(lo<=-2.99){clip='CLIP-'}else{let bad=lo-.12,ok=lo;for(let k=0;k<6;k++){const m=(bad+ok)/2;if(evalRun({M,G,b:m}).valid)ok=m;else bad=m}lo=ok}
+  if(hi>=2.99){clip='CLIP+'}else{let bad=hi+.12,ok=hi;for(let k=0;k<6;k++){const m=(bad+ok)/2;if(evalRun({M,G,b:m}).valid)ok=m;else bad=m}hi=ok}
+  return{G,lo,hi,w:hi-lo,tag:nc?'NONCONTIG':clip,M};
+}
+function* camp(){
+  const Ms=[0,1,2,3,4,5,6].map(i=>Math.round((45000+i*35000/6)/10)*10),Gs=[...Array(13)].map((_,j)=>.5+j*.25/12),Bs=[-3,-1.5,0,1.5,3],NZ=[42,35,23];
+  let L=[],ev=0;for(const M of Ms)for(const b of Bs)for(const G of Gs)L.push({M,G,b});
+  let res=yield{st:0,name:'PHASE A',list:L,head:[[1,'OPT-MECO: mode=rr  MECO [45000,80000]  G [0.50,0.75]  ideal=0.5'],[1,'--- universal bootstrap  alt=400  T=4.82  K=3  pred [100,200]  ideal=0.5  bias rows=5 ---'],[1,'PHASE A  coarse MECO map: 7 MECO x 5 bias rows x 13 G = 455 evals max']],
+    done:res=>{
+      const o=[[0,'MECO     pass  bestPred  tEst   at(G,b)            other classes']];
+      for(const M of Ms){const rr=res.filter(r=>r.q.M===M),ps=rr.filter(r=>r.valid&&r.pred>=1),bp=best(ps,r=>r.pred),c={};
+        rr.filter(r=>!r.valid).forEach(r=>c[r.cls]=(c[r.cls]||0)+1);
+        const cs=Object.entries(c).sort((x,y)=>y[1]-x[1]).map(e=>e.join(':')).join(' ');
+        o.push([ps.length?2:0,String(M).padEnd(10)+String(ps.length).padEnd(6)+(bp?String(bp.pred).padEnd(10)+String(bp.deploy).padEnd(7)+(bp.q.G.toFixed(2)+','+f4(bp.q.b)).padEnd(19):'--'.padEnd(36))+cs])}
+      const n=res.length,bd=Math.round(n*.2);o.push([0,'SA share: build='+bd+' reuse='+(n-bd)+' preSAfail=0 stored='+bd+' evicted=0']);
+      const pa=res.filter(r=>r.valid);if(pa.length){NORM={t0:Math.min(...pa.map(r=>r.deploy)),t1:Math.max(...pa.map(r=>r.deploy)),p0:Math.min(...pa.map(r=>r.pred)),p1:Math.max(...pa.map(r=>r.pred))};
+        if(NORM.t1-NORM.t0<50)NORM.t1=NORM.t0+50;if(NORM.p1-NORM.p0<50)NORM.p1=NORM.p0+50;
+        o.push([0,'norm: tEst '+NORM.t0+'..'+NORM.t1+' s,  MECO '+Math.min(...pa.map(r=>r.q.M))+'..'+Math.max(...pa.map(r=>r.q.M))+'  ideal=0.5'])}
+      return o}};
+  ev+=res.length;
+  let pool=res.filter(r=>r.valid&&r.pred>=100);if(pool.length<3)pool=res.filter(r=>r.valid);if(pool.length<3)pool=res.slice().sort((a,b)=>a.err-b.err).slice(0,3);
+  const seeds=pool.sort((a,b)=>cost(a)-cost(b)).slice(0,3);
+  L=[];seeds.forEach((s,k)=>{for(let i=0;i<100;i++){const sf=1-i/130;L.push({M:Math.round(Math.max(45000,Math.min(80000,s.q.M+(rnd()-.5)*5000*sf))),G:Math.max(.5,Math.min(.75,s.q.G+(rnd()-.5)*.06*sf)),b:Math.max(-3,Math.min(3,s.q.b+(rnd()-.5)*1.6*sf)),seed:k})}});
+  const sl=r=>r.q.M+'/'+r.q.G.toFixed(2)+'/'+f4(r.q.b)+' pred '+r.pred+' t '+r.deploy;
+  res=yield{st:1,name:'PHASE B',list:L,head:[[1,'PHASE B  joint search (M,G,bias) -> cost=(1-w)*time+w*fuel, w=0.5, pred>=100  seeds: '+seeds.map(sl).join(' | ')]],
+    done:res=>{const o=[];
+      for(let k=0;k<3;k++){const rs=res.filter(r=>r.q.seed===k&&r.valid&&r.pred>=100);let m=null,n=0;
+        for(const r of rs)if(!m||cost(r)<cost(m)){m=r;if(++n<=3)o.push([0,'  s'+(k+1)+' M='+r.q.M+' G='+r.q.G.toFixed(2)+' b='+f4(r.q.b)+' pred='+r.pred+' tEst='+r.deploy+'s tApo='+Math.round(r.deploy*.35)+' cost='+cost(r).toFixed(3)])}
+        o.push(m?[2,'  seed '+(k+1)+' -> M='+m.q.M+' G='+m.q.G.toFixed(2)+' b='+f4(m.q.b)+' pred='+m.pred+' floorMargin='+f4(m.pred-100,0)+' tEst='+m.deploy+'s  cost='+cost(m).toFixed(3)]:[3,'  seed '+(k+1)+' -> no feasible point'])}
+      return o}};
+  ev+=res.length;
+  const feas=res.filter(r=>r.valid&&r.pred>=100),anchor=best(feas.length?feas:seeds,r=>feas.length?cost(r):r.err),M0=anchor.q.M,G0=anchor.q.G;
+  const wins=[];let lastW=null;
+  for(const dir of[1,-1])for(let step=dir==1?0:1;step<=4;step++){
+    const G=Math.min(.75,Math.max(.5,G0+dir*step*.01));L=[];for(let k=0;k<=50;k++)L.push({M:M0,G,b:-3+k*.12});
+    res=yield{st:2,name:'PHASE C',list:L,head:(step==0&&dir==1)?[[1,'PHASE C  band trace at MECO='+M0+' anchor G='+G0.toFixed(2)+' b='+f4(anchor.q.b)+' pred='+anchor.pred]]:null,
+      done:res=>{lastW=winOf(res,M0,G);return lastW?[lastW.tag?3:0,[G.toFixed(2)+'  '+f4(lastW.lo)+' '+f4(lastW.hi)+'  w='+lastW.w.toFixed(3)+' '+lastW.tag]]:[3,['G='+G.toFixed(2)+': no pass -> band ends this side']]}};
+    ev+=res.length;
+    if(!lastW)break;wins.push(lastW);
+  }
+  const byW=wins.slice().sort((a,b)=>b.w-a.w),cand=[wins.find(w=>Math.abs(w.G-G0)<1e-9)||byW[0],byW.find(w=>w.G!==G0&&!w.tag.startsWith('NON'))||byW[1]||byW[0]];
+  const sc=w=>({lo:w.lo+.1*w.w,hi:w.hi-.08*w.w}),hd=[[0,''],[1,'=============== BOOTSTRAP RESULT  alt=400 km ==============='],[0,'MECO = '+M0+'   (pred '+anchor.pred+' kg, tEst '+anchor.deploy+' s at G='+G0.toFixed(2)+' bias='+f4(anchor.q.b)+')'],[0,'candidates below are COAST-FEASIBLE ONLY (ideal-Tsiolkovsky filter). Phase D verifies them with tuneLead+FULL.']];
+  L=[];cand.forEach(w=>{const q=sc(w);hd.push([0,'G='+w.G.toFixed(2)+'  window ['+f4(w.lo)+', '+f4(w.hi)+'] w='+w.w.toFixed(3)+' '+w.tag],[0,'   score-scan inputs ->  G '+w.G.toFixed(2)+'   MECO '+M0+'   alt 400   bias lo '+q.lo.toFixed(3)+'   hi '+q.hi.toFixed(3)+'   step '+((q.hi-q.lo)/10).toFixed(2)]);
+    for(let i=0;i<5;i++)L.push({M:M0,G:w.G,b:q.lo+(q.hi-q.lo)*i/4})});
+  hd.push([0,''],[1,'PHASE D  verify (checkpoint chain: SA -> CH -> tuneLead -> FULL) on 2 rows x 5 biases']);
+  const evAt=()=>ev;
+  res=yield{st:3,name:'PHASE D',list:L,head:hd,done:res=>{const o=[];let nv=0;
+    res.forEach(r=>{const ideal=r.lead<.05,tag=!r.valid?'FULL-FAIL':ideal?'VERIFIED-FULL(ideal regime, margin n/a)':hs(r.q.b)>.5?'VERIFIED-FULL':'LEAD-AT-EDGE';if(r.valid&&tag[0]=='V')nv++;
+      r.tag=tag;o.push([!r.valid?4:tag[0]=='V'?2:3,'  G='+r.q.G.toFixed(2)+' b='+f4(r.q.b)+'  '+tag+'  lead='+r.lead.toFixed(4)+' margin='+r.margin.toFixed(2)+'  pred='+r.pred+'  Δ='+r.dl+'  cleared='+r.valid+' apo='+r.apo.toFixed(2)+' peri='+r.peri.toFixed(2)+' vrEnd='+r.vr.toFixed(2)+' resid='+r.resid+' T='+r.deploy+'s'])});
+    o.push([0,''],[1,'=============== VERIFIED-FULL: '+nv+' / '+res.length+'  (champion 1/3) ===============']);
+    res.filter(r=>r.valid&&r.tag[0]=='V').sort((a,b)=>a.S-b.S).slice(0,4).forEach(r=>o.push([0,'G='+r.q.G.toFixed(2)+'  MECO='+M0+'  bias='+f4(r.q.b)+'  lead='+r.lead.toFixed(4)+'  T='+r.deploy+'s  resid='+r.resid+'  ['+(r.resid>=100&&r.resid<=200?'in 100-200 band':'outside band')+']']));
+    o.push([0,'total evals: '+(evAt()+res.length)+'   wall @WALL@s']);return o}};
+  ev+=res.length;
+  const zw=byW.slice(0,3);
+  for(let n=1;n<=zw.length;n++){
+    const w=zw[n-1],N=NZ[n-1],step=(w.hi-w.lo)/N,bl=[];L=[];for(let i=0;i<N;i++){const b=w.lo+i*step;bl.push(+b.toFixed(4));L.push({M:M0,G:w.G,b})}
+    const tg='MECO='+M0+' G='+w.G.toFixed(2)+' T=4.82';
+    res=yield{st:4,name:'ZETA-HELIX',batch:n,list:L,head:[[1,'ZETA auto-filled: MECO='+M0+' G='+w.G.toFixed(2)+' bias ['+w.lo.toFixed(3)+', '+w.hi.toFixed(3)+']'],[1,'ZETA[batch '+n+']: '+tg+' N='+N+' step='+step.toFixed(4)+' deg'],[0,'  biases: '+bl.join(', ')],[0,'setupSA (refresh): '+tg+' alt=400 km…']],
+      done:res=>{const ok=res.filter(r=>r.valid),w=best(ok,r=>r.S);return[[0,'setupSA (refresh): ready'],[2,'ZETA[batch '+n+'] done: '+ok.length+'/'+N+' ok'+(w?'  best bias='+w.q.b.toFixed(4)+' score='+w.S.toFixed(3):'')]]}};
+  }
+}
+/*SIMEND*/
+/* ---- driver ---- */
+const nW=Math.max(2,Math.min(15,(navigator.hardwareConcurrency||8)-1)),TL=RM?30:8,DUR=1300,PW=[.194,.15,.15,.06,.048];
+const SN=['PHASE A','PHASE B','PHASE C','PHASE D','ZETA-HELIX'],EXP=[455,300,300,10,100];
+let gen,batch=null,hist=[],zrows=[],done=0,t0=0,bestAll=null,ct=[],logs=[],pause=0,cmp=[],curNow=0,ENG0=0,evalN=0;
+const clk=s=>{const d=new Date(ENG0+s*1000);return[d.getHours(),d.getMinutes(),d.getSeconds()].map(x=>String(x).padStart(2,'0')).join(':')};
+const esec=()=>(curNow-t0)/1000*TL;
+function log(c,s,off){logs.push([c,'['+clk(esec()+(off||0))+'] '+s]);if(logs.length>13)logs.shift();$('log').innerHTML=logs.map(l=>'<p class="t'+l[0]+'">'+l[1].replace(/&/g,'&amp;').replace(/</g,'&lt;')+'</p>').join('')}
+function nextBatch(res,now){
+  const s=gen.next(res);
+  if(s.done){log(2,'campaign complete');pause=now+8000;batch=null;return}
+  const sp=s.value,runs=sp.list.map(evalRun),rate=PW[sp.st]*nW*TL*(.9+rnd()*.2),st=now+500;evalN+=runs.length;
+  runs.forEach((r,i)=>{r.st=st+(i+1)/rate*1000-DUR;r.cs=r.st+DUR;r.lane=i%nW;r.stage=sp.st;r.batch=sp.batch||0;remap(r)});
+  hist=hist.filter(r=>now-r.cs<45000);hist.push(...runs);
+  batch={sp,runs,i:0,end:runs[runs.length-1].cs,st,rate};
+  if(sp.head)sp.head.forEach(l=>{log(l[0],l[1]);});
+}
+function finish(now){
+  const b=batch,sp=b.sp;
+  if(sp.done){const o=sp.done(b.runs);if(o.length&&typeof o[0][1]==='string'||(o[0]&&Array.isArray(o[1])))void 0;
+    (Array.isArray(o[1])&&typeof o[0]==='number'?[[o[0],o[1][0]]]:o).forEach(l=>log(l[0],String(l[1]).replace('@WALL@',Math.round(esec()))))}
+  cmp.push(b);nextBatch(b.runs,now);
+}
+/* ---- canvas ---- */
+const cv=$('bg'),cx=cv.getContext('2d');let W,H,R,cxE,cyE,A0a,sy=0,mono;
+function size(){
+  const d=Math.min(2,devicePixelRatio||1);W=innerWidth;H=innerHeight;cv.width=W*d;cv.height=H*d;cx.setTransform(d,0,0,d,0,0);
+  R=Math.max(W*.8,H*.45);cxE=W/2;cyE=H*.56+R;A0a=-Math.PI/2-.4*W/R;mono=getComputedStyle(document.body).fontFamily;
+  for(const r of hist)remap(r);
+}
+function remap(r){
+  const K=1.7,n=r.pts.length/2,o=new Float32Array(n*2);
+  for(let i=0;i<n;i++){const a=A0a+r.pts[2*i+1]*K,rr=R*(1+(r.pts[2*i]-1)*XA);o[2*i]=rr*Math.cos(a);o[2*i+1]=rr*Math.sin(a)}
+  r.xy=o;
+}
+const ease=x=>x<0?0:x>1?1:x*x*(3-2*x);
+function trace(r,p){const n=r.xy.length/2,m=Math.max(2,Math.floor(n*p));cx.moveTo(cxE+r.xy[0],cyE+sy+r.xy[1]);for(let i=1;i<m;i++)cx.lineTo(cxE+r.xy[2*i],cyE+sy+r.xy[2*i+1])}
+function note(r,i,dx,dy,L,col){
+  const x=cxE+r.xy[2*i],y=cyE+sy+r.xy[2*i+1];if(y<-20||y>H)return;
+  const tx=Math.min(Math.max(x+dx,8),W-190),ty=y+dy;
+  cx.strokeStyle=col;cx.lineWidth=1;cx.beginPath();cx.moveTo(x,y);cx.lineTo(tx,ty);cx.lineTo(tx+160,ty);cx.stroke();
+  cx.fillStyle=col;cx.fillRect(x-3,y-3,6,6);
+  cx.font='11px '+mono;const h=L.length*14+6;
+  cx.fillStyle='rgba(0,0,0,.6)';cx.fillRect(tx,ty-h,168,h);
+  L.forEach((s,k)=>{cx.fillStyle=k==0?col:k==L.length-1?'rgba(255,255,255,.5)':'#fff';cx.fillText(s,tx+4,ty-h+13+k*14)});
+}
+function frame(now){
+  requestAnimationFrame(frame);curNow=now;
+  sy=RM?0:Math.min(scrollY,H*1.4)*.6;const cy=cyE+sy,fade=Math.max(.12,1-scrollY/(H*1.3));
+  if(!gen&&(!pause||now>pause)){
+    gen=camp();hist=[];cmp=[];zrows=[];done=0;bestAll=null;ct=[];t0=now;evalN=0;ENG0=Date.now();logs=[];
+    log(0,'creating worker pool…');log(0,'pool ready ('+nW+' workers)');log(0,'setupSA on '+nW+' workers…');log(0,'setupSA: '+nW+'/'+nW+' ready',3);
+    nextBatch(null,now);for(const d of $('pipe').children)d.className='st'}
+  if(batch){
+    while(batch.i<batch.runs.length&&batch.runs[batch.i].cs<=now){
+      const r=batch.runs[batch.i++];done++;ct.push(r.cs);if(r.stage==4)zrows.push(r);
+      if(r.valid&&(!bestAll||r.S<bestAll.S)){bestAll=r;ui1()}
+    }
+    if(batch.i>=batch.runs.length&&now>=batch.end)finish(now);
+  }else if(pause&&now>pause){gen=null}
+  cx.clearRect(0,0,W,H);
+  const g1=cx.createRadialGradient(cxE,cy,R-170,cxE,cy,R);g1.addColorStop(0,'rgba(0,0,0,0)');g1.addColorStop(1,'rgba(40,110,170,.45)');
+  cx.fillStyle=g1;cx.beginPath();cx.arc(cxE,cy,R,0,6.2832);cx.fill();
+  cx.globalAlpha=.2*fade;cx.strokeStyle='#35d6ff';cx.lineWidth=1;cx.beginPath();
+  for(let k=1;k<9;k++){cx.moveTo(cxE+R-k*R*.03,cy);cx.arc(cxE,cy,R-k*R*.03,0,6.2832)}
+  const sp=W/R*.9+.3;for(let a=-1.5708-sp;a<-1.5708+sp;a+=.04){cx.moveTo(cxE+R*.76*Math.cos(a),cy+R*.76*Math.sin(a));cx.lineTo(cxE+R*Math.cos(a),cy+R*Math.sin(a))}
+  cx.stroke();cx.globalAlpha=1;
+  cx.globalCompositeOperation='lighter';
+  const g2=cx.createRadialGradient(cxE,cy,R-6,cxE,cy,R+170);
+  g2.addColorStop(0,'rgba(255,255,255,.95)');g2.addColorStop(.05,'rgba(160,220,255,.55)');g2.addColorStop(.3,'rgba(53,214,255,.16)');g2.addColorStop(1,'rgba(0,0,0,0)');
+  cx.globalAlpha=fade;cx.fillStyle=g2;cx.beginPath();cx.arc(cxE,cy,R+170,0,6.2832);cx.fill();
+  cx.globalCompositeOperation='source-over';
+  cx.strokeStyle='#fff';cx.lineWidth=2;cx.beginPath();cx.arc(cxE,cy,R,0,6.2832);cx.stroke();
+  cx.globalAlpha=.6*fade;cx.lineWidth=1;cx.beginPath();
+  for(let a=-1.5708-sp,i=0;a<-1.5708+sp;a+=.0105,i++){const L=i%10==0?12:5,c=Math.cos(a),s=Math.sin(a);cx.moveTo(cxE+(R+3)*c,cy+(R+3)*s);cx.lineTo(cxE+(R+3+L)*c,cy+(R+3+L)*s)}
+  cx.stroke();
+  cx.globalAlpha=fade;cx.setLineDash([4,7]);
+  cx.strokeStyle='rgba(255,176,32,.6)';cx.beginPath();cx.arc(cxE,cy,R*(1+.0157*XA),0,6.2832);cx.stroke();
+  cx.strokeStyle='rgba(53,214,255,.75)';cx.beginPath();cx.arc(cxE,cy,R*(1+TGT*XA),0,6.2832);cx.stroke();cx.setLineDash([]);
+  cx.font='10px '+mono;cx.fillStyle='rgba(255,176,32,.9)';cx.fillText('100 km (Kármán)',12,cy-R*(1+.0157*XA)+14);
+  cx.fillStyle='rgba(53,214,255,.95)';cx.fillText('target 400 km',12,cy-R*(1+TGT*XA)-6);
+  const sty=[['#ff4d5e',.4,1],['#ff4d5e',.09,1],['#35d6ff',.85,1.3],['#35d6ff',.33,1]];
+  for(let gi=0;gi<4;gi++){
+    cx.globalAlpha=sty[gi][1]*fade;cx.strokeStyle=sty[gi][0];cx.lineWidth=sty[gi][2];cx.beginPath();
+    for(const r of hist){if(!r.xy)continue;const p=RM?(now>=r.cs?1:0):ease((now-r.st)/DUR);if(p<=0)continue;
+      const k=(r.valid?2:0)+((now-r.cs<5000)?0:1);if(k===gi)trace(r,p)}
+    cx.stroke();
+  }
+  cx.globalAlpha=fade;cx.fillStyle='#fff';
+  for(const r of hist){if(!r.xy||now<r.st||now>=r.cs)continue;const p=ease((now-r.st)/DUR),n=r.xy.length/2,m=Math.max(1,Math.floor(n*p))-1;cx.beginPath();cx.arc(cxE+r.xy[2*m],cy+r.xy[2*m+1],2.2,0,6.2832);cx.fill()}
+  const b=bestAll;
+  if(b&&b.xy){
+    cx.globalAlpha=fade;cx.lineWidth=2.6;cx.strokeStyle='#fff';cx.shadowColor='#35d6ff';cx.shadowBlur=16;cx.beginPath();trace(b,1);cx.stroke();cx.shadowBlur=0;
+    const n=b.xy.length/2,tM=Math.round(154-(b.q.M-45000)/35000*24);
+    note(b,0,10,52,['t = 0 s','T/W = '+A0.toFixed(2),'F = ṁvₑ + (pₑ−pₐ)Aₑ'],'#ffb020');
+    note(b,b.iM,-30,-70,['MECO  T+'+tM+' s','h = '+b.hM.toFixed(0)+' km','Δv = '+b.dvM.toFixed(2)+' km/s','Δv = Isp·g₀·ln(m₀/m₁)'],'#35d6ff');
+    note(b,n-1,-150,-86,['insertion','v = '+b.vEnd.toFixed(2)+' km/s','apo '+b.apo.toFixed(2)+' km','v = √(μ(2/r − 1/a))'],'#4ade80');
+  }
+  cx.globalAlpha=1;
+  if(now-last>150){last=now;ui2(now)}
+}
+let last=0;
+/* ---- DOM ---- */
+const pipe=$('pipe');SN.forEach(n=>{const d=document.createElement('div');d.className='st';d.innerHTML='<b>'+n+'</b><span>0 runs</span><i><u></u></i>';pipe.appendChild(d)});
+const lanes=$('lanes');for(let i=0;i<nW;i++){const d=document.createElement('div');d.textContent='W'+i+' idle';lanes.appendChild(d)}
+$('wk').textContent=nW+' workers · time-lapse ×'+TL;
+const mm=s=>String(Math.floor(s/60)).padStart(2,'0')+':'+String(Math.floor(s%60)).padStart(2,'0');
+function ui1(){const x=bestAll,m=Math.max(x.J,x.tt,1);$('hS').textContent=x.S.toFixed(2);
+  [[x.J,'s1','v1'],[x.tt,'s2','v2']].forEach(([v,s,t])=>{$(s).style.width=Math.min(100,v/m*100)+'%';$(t).textContent='+'+v.toFixed(1)})}
+function ui2(now){
+  $('hN').textContent=done;$('hE').textContent=mm(esec());
+  ct=ct.filter(t=>now-t<6000);const rate=ct.length/Math.min(6,Math.max(1,(now-t0)/1000))/TL;
+  $('tp').textContent=rate.toFixed(2);$('tpS').textContent=(rate/nW).toFixed(3)+' sims/s per worker · each run a full ascent';
+  const cs=batch?batch.sp.st:4;
+  [...pipe.children].forEach((d,i)=>{const bs=cmp.filter(c=>c.sp.st==i),tot=bs.reduce((s,c)=>s+c.runs.length,0)+(batch&&batch.sp.st==i?batch.i:0);
+    d.className='st'+(batch&&i==cs?' on':(i<cs||!batch&&tot)?' dn':'');d.children[1].textContent=tot+(i==2?' runs':'/'+EXP[i]);d.querySelector('u').style.width=Math.min(100,tot/EXP[i]*100)+'%'});
+  [...lanes.children].forEach(d=>{d.className='';d.textContent=d.textContent.split(' ')[0]+' idle'});
+  if(batch)for(let i=Math.max(0,batch.i-1);i<Math.min(batch.runs.length,batch.i+nW+3);i++){const r=batch.runs[i];if(now>=r.st&&now<r.cs){const d=lanes.children[r.lane];d.className='on';d.textContent='W'+r.lane+' #'+(done+i-batch.i+1)}}
+  $('ls').textContent=batch?batch.sp.name+(batch.sp.batch?' · batch '+batch.sp.batch+'/3':''):'complete';
+  const rows=zrows.slice().sort((a,b)=>(b.valid-a.valid)||a.S-b.S).slice(0,8);
+  $('lb').innerHTML=rows.map((r,i)=>'<tr><td>'+(i+1)+'</td><td>'+r.batch+'</td><td>'+r.q.M+'</td><td>'+r.q.G.toFixed(3)+'</td><td>4.8200</td><td>'+r.q.b.toFixed(4)+'</td><td>'+r.S.toFixed(3)+'</td><td>'+r.eC.toExponential(3)+'</td><td>'+r.lead.toFixed(4)+'</td><td>'+r.margin.toFixed(2)+'</td><td>'+r.vr.toFixed(4)+'</td><td>'+r.apo.toFixed(3)+'</td><td>'+r.peri.toFixed(3)+'</td><td>'+r.ecc.toExponential(2)+'</td><td>'+r.deploy.toFixed(2)+'</td><td>–</td><td>'+r.resid.toFixed(1)+'</td><td>'+(r.valid?'✓':'✗ '+r.cls)+'</td></tr>').join('')||'<tr><td colspan="18" style="text-align:left;color:var(--dim)">No ZETA runs yet.</td></tr>';
+  landscape(now);
+}
+function landscape(now){
+  const c=$('par'),g=c.getContext('2d'),w=c.width,h=c.height;g.clearRect(0,0,w,h);g.strokeStyle='rgba(255,255,255,.18)';g.strokeRect(.5,.5,w-1,h-1);
+  if(!batch)return;const pts=batch.runs.filter(r=>r.cs<=now);if(!pts.length)return;
+  const xs=pts.map(r=>r.q.b),x0=Math.min(...xs),x1=Math.max(...xs,x0+.05),ys=pts.map(r=>Math.log10(Math.min(r.err,2e4)+1)),y0=Math.min(...ys),y1=Math.max(...ys,y0+.2);
+  for(const r of pts){const x=8+(r.q.b-x0)/(x1-x0)*(w-16),y=h-8-(Math.log10(Math.min(r.err,2e4)+1)-y0)/(y1-y0)*(h-16);
+    g.fillStyle=r.valid?'#35d6ff':'rgba(255,77,94,.55)';g.beginPath();g.arc(x,y,r.valid?2.6:1.8,0,6.2832);g.fill()}
+  g.fillStyle='rgba(255,255,255,.5)';g.font='9px monospace';g.fillText(x0.toFixed(2)+'°',6,h-12);g.fillText(x1.toFixed(2)+'°',w-44,h-12);
+}
+addEventListener('resize',size);size();requestAnimationFrame(frame);
+})();
+</script>
 </body>
 </html>
