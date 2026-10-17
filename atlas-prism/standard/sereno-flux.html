@@ -2,216 +2,125 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>SERENO FLUX ENGINE</title>
-<style>
-:root{
-  --bg:#05070e; --panel:#0b1220; --panel2:#101a30; --border:#1c2b45;
-  --cyan:#35d6ff; --orange:#ff9248; --green:#4ade80; --yellow:#ffd23f;
-  --danger:#ff5f7e; --text:#dbe6f5; --dim:#6b7d9c;
-}
-*{box-sizing:border-box;}
-html,body{margin:0;background:var(--bg);color:var(--text);font:13px/1.5 'JetBrains Mono','Consolas',monospace;}
-#app{max-width:1400px;margin:0 auto;padding:14px;}
-header{display:flex;align-items:baseline;gap:14px;padding:10px 0;border-bottom:1px solid var(--border);margin-bottom:14px;}
-header h1{margin:0;font-size:16px;letter-spacing:3px;color:var(--cyan);font-weight:700;}
-header .sub{color:var(--dim);font-size:11px;letter-spacing:1px;}
-.panel{background:var(--panel);border:1px solid var(--border);border-radius:6px;padding:12px 14px;margin-bottom:12px;}
-.panel h2{margin:0 0 10px;font-size:11px;letter-spacing:1.5px;color:var(--cyan);font-weight:600;text-transform:uppercase;}
-.row{display:flex;flex-wrap:wrap;gap:10px 14px;align-items:center;margin:6px 0;}
-.row label{display:inline-flex;gap:6px;align-items:center;color:var(--dim);}
-input[type=number],input[type=text],select{
-  background:var(--panel2);color:var(--text);border:1px solid var(--border);
-  padding:6px 8px;border-radius:4px;font:inherit;font-size:12px;
-}
-input[type=number]{width:100px;}
-input[type=number]:disabled,input:disabled,select:disabled{opacity:.45;}
-button{
-  background:var(--panel2);color:var(--text);border:1px solid var(--border);
-  padding:8px 14px;border-radius:4px;font:inherit;font-size:12px;cursor:pointer;
-  transition:border-color .12s,color .12s;
-}
-button:hover:not(:disabled){border-color:var(--cyan);color:var(--cyan);}
-button:disabled{opacity:.35;cursor:not-allowed;}
-button.primary{background:#0d2530;border-color:#2a7a8f;color:var(--cyan);font-weight:600;}
-button.primary:hover:not(:disabled){background:#123540;border-color:var(--cyan);}
-button.lock{background:#1a3018;border-color:#3a7a3a;color:var(--green);font-weight:600;}
-button.reset{background:#3a1520;border-color:#8a2a45;color:var(--danger);font-weight:600;}
-button.suggest{font-size:11px;padding:6px 10px;color:var(--yellow);border-color:#5a4a1a;}
-button.suggest:hover:not(:disabled){color:var(--yellow);border-color:var(--yellow);}
-.dim{color:var(--dim);}
-.ok{color:var(--green);}
-.bad{color:var(--danger);}
-.warn{color:var(--yellow);}
-.big-tabs{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:12px;}
-.big-tab{
-  background:var(--panel);border:1px solid var(--border);border-radius:6px;
-  padding:14px 16px;cursor:pointer;text-align:left;position:relative;
-  transition:border-color .15s,background .15s;
-}
-.big-tab:hover{border-color:#2a5a70;}
-.big-tab.active{border-color:var(--cyan);background:#0d1a2a;box-shadow:0 0 0 1px rgba(53,214,255,.15) inset;}
-.big-tab .ttl{font-size:14px;letter-spacing:1.5px;color:var(--cyan);font-weight:700;margin-bottom:4px;}
-.big-tab .desc{font-size:11px;color:var(--dim);line-height:1.4;}
-.big-tab.locked{opacity:.35;cursor:not-allowed;}
-.big-tab.locked:hover{border-color:var(--border);}
-#tabPanel{background:var(--panel);border:1px solid var(--border);border-radius:6px;padding:14px;margin-bottom:12px;}
-#progressBar{
-  background:var(--panel2);border:1px solid var(--border);border-radius:4px;
-  padding:8px 12px;margin-bottom:8px;font-size:11px;min-height:2em;
-  display:flex;flex-wrap:wrap;gap:12px;align-items:center;
-}
-#progressBar .tag{color:var(--orange);font-weight:600;}
-#progressBar .detail{color:var(--dim);}
-#logFeed{
-  background:#050b16;border:1px solid var(--border);border-radius:4px;
-  padding:8px;font-size:10.5px;max-height:180px;overflow:auto;
-  white-space:pre;color:#9ef;
-}
-#logFeed div{margin:0;}
-
-/* ==== ZETA results: table scroll + chart area ==== */
-#resultsPanel{display:none;}
-#tableScroll{
-  max-height:460px;
-  overflow:auto;
-  border:1px solid var(--border);
-  border-radius:4px;
-  margin-top:8px;
-}
-#tableScroll table{border-collapse:collapse;font-size:11.5px;width:100%;}
-#tableScroll thead th{
-  position:sticky;top:0;
-  background:var(--panel);
-  z-index:1;
-  color:var(--cyan);font-weight:600;text-align:right;
-  padding:7px 8px;
-  border-bottom:1px solid var(--border);
-}
-#tableScroll thead th:first-child{text-align:left;}
-#tableScroll td{padding:5px 8px;text-align:right;border-bottom:1px solid rgba(28,43,69,0.5);white-space:nowrap;}
-#tableScroll td:first-child{text-align:left;}
-tr.batch-odd td{background:rgba(53,214,255,0.035);}
-tr.batch-even td{background:transparent;}
-tr.best td{background:rgba(74,222,128,.10) !important;color:var(--green);}
-tr.fail td{color:#8a4a55;}
-
-.charts{display:flex;flex-wrap:wrap;gap:14px;margin-top:12px;}
-.chartCard{background:var(--panel);border:1px solid var(--border);border-radius:6px;padding:10px;}
-.chartCard .ttl{font-size:11px;color:var(--cyan);letter-spacing:1px;margin-bottom:6px;}
-.chartCard canvas{display:block;border-radius:3px;}
-.stat{color:var(--yellow);}
-.badge{display:inline-block;padding:1px 6px;border-radius:3px;font-size:10px;letter-spacing:.5px;}
-
-/* ===== OPT-MECO v2 (bootstrap) ===== */
-.mode-tabs{display:flex;gap:6px;margin:8px 0 12px;}
-.mode-tab{background:var(--panel2);border:1px solid var(--border);padding:7px 12px;border-radius:4px;cursor:pointer;font-size:11.5px;letter-spacing:.5px;color:var(--dim);font-family:inherit;}
-.mode-tab:hover{border-color:#2a5a70;color:var(--text);}
-.mode-tab.active{background:#0d2530;border-color:var(--cyan);color:var(--cyan);font-weight:600;}
-details.adv{background:var(--panel2);border:1px solid var(--border);border-radius:4px;padding:8px 12px;margin:10px 0;}
-details.adv summary{cursor:pointer;color:var(--dim);font-size:11.5px;list-style:none;user-select:none;letter-spacing:.5px;}
-details.adv summary::-webkit-details-marker{display:none;}
-details.adv summary:before{content:'▸ ';color:var(--cyan);}
-details.adv[open] summary:before{content:'▾ ';}
-details.adv .row{margin:8px 0 0;}
-.sug-list{margin-top:10px;}
-.sug-row{display:flex;gap:12px;align-items:center;padding:8px 12px;border:1px solid var(--border);border-radius:4px;margin:4px 0;background:var(--panel2);cursor:pointer;font-size:12px;transition:border-color .12s,background .12s;}
-.sug-row:hover{border-color:var(--cyan);background:#0d1a2a;}
-.sug-row .g{color:var(--cyan);font-weight:600;width:60px;}
-.sug-row .rng{color:var(--yellow);flex:1;}
-.sug-row .act{color:var(--dim);font-size:10.5px;letter-spacing:.5px;}
-
-/* ===== Double slider ===== */
-.dblslider{display:inline-flex;align-items:center;gap:8px;vertical-align:middle;}
-.dblslider .slidergroup{position:relative;width:180px;height:22px;display:inline-block;flex:0 0 auto;}
-.dblslider .track{position:absolute;top:50%;left:0;right:0;height:4px;transform:translateY(-50%);background:var(--border);border-radius:2px;pointer-events:none;}
-.dblslider .fill{position:absolute;top:50%;height:4px;transform:translateY(-50%);background:var(--cyan);border-radius:2px;pointer-events:none;}
-.dblslider input[type=range]{position:absolute;top:0;left:0;width:100%;height:100%;-webkit-appearance:none;appearance:none;background:transparent;pointer-events:none;margin:0;padding:0;}
-.dblslider input[type=range]::-webkit-slider-runnable-track{background:transparent;border:none;}
-.dblslider input[type=range]::-moz-range-track{background:transparent;border:none;}
-.dblslider input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;pointer-events:auto;width:14px;height:14px;background:var(--cyan);border:2px solid #0d1a2a;border-radius:50%;cursor:pointer;margin-top:-5px;}
-.dblslider input[type=range]::-moz-range-thumb{pointer-events:auto;width:14px;height:14px;background:var(--cyan);border:2px solid #0d1a2a;border-radius:50%;cursor:pointer;border:0;}
-.dblslider input[type=number]{width:78px;text-align:right;font-size:11.5px;padding:4px 6px;}
-
-/* ===== Suggestion chips + recommended badge ===== */
-.chip-row{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0;padding:8px;background:var(--panel2);border:1px solid var(--border);border-radius:4px;}
-.chip{display:inline-flex;gap:8px;align-items:center;padding:6px 10px;border:1px solid var(--border);border-radius:4px;background:var(--panel);cursor:pointer;font-size:11.5px;transition:border-color .12s,background .12s;}
-.chip:hover{border-color:var(--cyan);background:#0d1a2a;}
-.chip.rec{border-color:var(--green);background:#0a1e10;}
-.chip .g{color:var(--cyan);font-weight:600;}
-.chip .rng{color:var(--yellow);}
-.chip .rec-tag{color:var(--green);font-size:10px;letter-spacing:.5px;font-weight:600;}
-.rec-badge{display:inline-block;padding:1px 6px;border-radius:3px;background:#1a3018;color:var(--green);font-size:9.5px;letter-spacing:.5px;font-weight:600;margin-left:6px;}
-</style>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="styles/engine-theme.css">
+<link rel="stylesheet" href="styles/sereno-flux.css">
+<script src="../js/szadFont.js" onerror="void 0"></script>
 </head>
-<body>
+<body data-state="idle">
 <div id="app">
 
+<!-- ==================== COMMAND BAR ==================== -->
 <header>
-  <h1>SERENO FLUX ENGINE</h1>
-  <span class="sub">atlas-prism · LEO V3 · stack-locked session</span>
+  <a class="back" href="../index.html">&lsaquo; Atlas Prism</a>
+  <h1>SERENO <em>FLUX</em></h1>
+  <span class="crumb">engine <b>/</b> leoInsertionV3 <b>/</b> stack-locked</span>
+  <div class="chips">
+    <span class="st" id="stState">state <b id="stStateN">idle</b></span>
+    <span class="st" id="stPhase">phase <b id="stPhaseN">&mdash;</b></span>
+    <span class="st" id="stWorkers">workers <b id="stWorkersN">&mdash;</b></span>
+  </div>
 </header>
 
-<!-- ==================== LOCK BAR ==================== -->
-<section class="panel" id="lockBar">
-  <h2>Session Lock</h2>
-  <div class="row">
-    <label>stack <select id="stackSel"></select></label>
-    <label>target orbit km <input type="number" id="orbitKm" value="320" min="150" step="10"></label>
-    <button class="lock" id="lockBtn">LOCK</button>
-    <button class="reset" id="resetBtn" disabled>RESET</button>
-    <span class="dim" id="lockStatus">Select stack + orbit, then LOCK to start.</span>
+<!-- ==================== SESSION STRIP ==================== -->
+<section class="panel row" id="lockBar">
+  <div class="lbl"><span class="tag">0x00</span>Session</div>
+  <label>stack <select id="stackSel"></select></label>
+  <label>target orbit km <input type="number" id="orbitKm" value="320" min="150" step="10"></label>
+  <div class="btns">
+    <button class="lock" id="lockBtn">Lock</button>
+    <button class="reset" id="resetBtn" disabled>Reset</button>
   </div>
-  <div class="dim" style="font-size:11px;margin-top:4px;">
-    Filter: only locked (default) standard-sequence stacks. Only <code>leoInsertionV3</code>.
-  </div>
+  <span class="dim" id="lockStatus">Select stack + orbit, then LOCK to start.</span>
+  <div class="hint">locked standard-sequence stacks only &middot; guidance leoInsertionV3 only</div>
 </section>
 
 <!-- ==================== MAIN (hidden until lock) ==================== -->
 <main id="main" style="display:none">
 
-  <!-- ============ BIG TABS ============ -->
+  <!-- pipeline rail -->
   <div class="big-tabs">
     <div class="big-tab" data-tab="optmeco">
+      <span class="hex">phase A&ndash;D &middot; 400&ndash;1000 evals</span>
       <div class="ttl">OPT-MECO X5</div>
       <div class="desc">Parallel MECO sweep. Finds the MECO that lands stage residual fuel in the target band at minimum fuel cost.</div>
     </div>
     <div class="big-tab" data-tab="zeta">
+      <span class="hex">N-point scan &middot; fixed MECO&middot;G&middot;T</span>
       <div class="ttl">ZETA-HELIX 1R</div>
       <div class="desc">Bias landscape scan. N evenly-spaced bias points at fixed MECO + G + T. Each point runs a full checkpoint mission and is scored.</div>
     </div>
     <div class="big-tab" data-tab="convo">
+      <span class="hex">optional &middot; custom lead tune</span>
       <div class="ttl">CONVO-LEAD E2</div>
       <div class="desc">Lead refinement. Locks MECO + G + T + bias, sweeps the circularization lead to hit the target margin window.</div>
     </div>
   </div>
 
-  <!-- ============ TAB PANEL ============ -->
-  <section id="tabPanel"></section>
+  <!-- control | telemetry -->
+  <div class="workgrid">
+    <section id="tabPanel"></section>
 
-  <!-- ============ PROGRESS ============ -->
-  <section class="panel">
-    <h2>Progress</h2>
-    <div id="progressBar"><span class="dim">idle</span></div>
-    <div id="logFeed"></div>
-  </section>
+    <section class="panel" id="progressPanel">
+      <h2><span class="tag">0x02</span>Telemetry</h2>
+      <div class="tm">
+        <div><span>elapsed</span><b id="tmElapsed">00:00:00</b></div>
+        <div><span>zeta rows</span><b id="tmRows">0</b></div>
+        <div><span>best score</span><b id="tmBest">&mdash;</b></div>
+        <div><span>workers</span><b id="tmWorkers">&mdash;</b></div>
+      </div>
+      <div id="progressBar"><span class="dim">idle</span></div>
+      <div id="logFeed"></div>
+    </section>
+  </div>
 
-  <!-- ============ ZETA-ONLY RESULTS ============ -->
-  <section class="panel" id="resultsPanel">
-    <h2>ZETA-HELIX Results</h2>
+  <!-- results -->
+  <section class="panel" id="resultsPanel" style="margin-top:14px">
+    <h2><span class="tag">0x03</span>ZETA-HELIX results</h2>
     <div class="row">
       <button id="dlJson" class="suggest">Download ZETA JSON</button>
       <button id="clearRuns" class="reset">Clear ZETA runs</button>
-      <span class="dim" id="runStats">0 rows · 0 batches</span>
+      <span class="dim" id="runStats">0 rows &middot; 0 batches</span>
     </div>
-    <div id="tableScroll"><div id="tableHost"><div class="dim">No ZETA runs yet.</div></div></div>
+    <div id="tableScroll"><div id="tableHost"><div class="dim" style="padding:10px 12px">No ZETA runs yet.</div></div></div>
     <div id="chartHost" class="charts"></div>
   </section>
 
 </main>
 
+<!-- ==================== STANDBY (CSS hides it once #main is shown) ==================== -->
+<section class="panel" id="standby">
+  <h2><span class="tag">0x01</span>Standby &middot; awaiting session lock</h2>
+<pre><span class="a">OPT-MECO X5</span> <span class="d">&mdash;&mdash;&mdash;&mdash;&rsaquo;</span> <span class="m">FIND RANGE</span> <span class="d">&mdash;&mdash;&mdash;&mdash;&rsaquo;</span> <span class="v">ZETA-HELIX 1R</span> <span class="d">- - &rsaquo;</span> <span class="m">CONVO-LEAD E2</span>
+<span class="d">phases A B C D</span>      <span class="d">bias window / G</span>      <span class="d">N-point bias scan</span>    <span class="d">optional</span>
+
+<span class="m">A</span> coarse map    <span class="d">7 MECO &times; 5 bias(-3..+3) &times; 13 G = 455 evals</span>
+<span class="m">B</span> joint search  <span class="d">best (MECO, G) neighbourhood</span>
+<span class="m">C</span> band trace    <span class="d">feasible bias window per G</span>
+<span class="m">D</span> verify        <span class="d">SA &rarr; CH &rarr; tuneLead &rarr; FULL</span>
+
+<span class="g">&#9658;</span> pick stack + target orbit above, press <span class="g">LOCK</span> to spin up the worker pool.</pre>
+</section>
+
+<!-- ==================== REFERENCE ==================== -->
+<footer class="refbar">
+  <div><span class="k">score</span><span class="f">S = J(&epsilon;) + 0.1&middot;t_deploy</span> &nbsp;
+    <span class="k">J</span><span class="f">= 250&middot;k&middot;(&radic;(1+(&epsilon;/k)&sup2;) &minus; 1), k=1</span> &nbsp;
+    <span class="k">&epsilon;</span><span class="f">= |apo err| + |peri err|</span> <span class="src">&middot; pseudo-Huber, lattice.js</span></div>
+  <div><span class="k">keys</span><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> phase &nbsp; <kbd>Ctrl</kbd>+<kbd>Enter</kbd> run current phase</div>
+  <div class="lg"><span class="k">colour</span>
+    <i style="background:var(--cyan)"></i>input / key
+    <i style="background:var(--amber)"></i>value / cost
+    <i style="background:var(--violet)"></i>phase / orbit
+    <i style="background:var(--green)"></i>ok / best
+    <i style="background:var(--red)"></i>fail</div>
+</footer>
+
 </div>
 
-<!-- ==================== SIM / TUNER SCRIPTS ==================== -->
 <script src="../../js/componentLibrary.js"></script>
 <script src="../../js/customDesign.js"></script>
 <script src="../../js/fleet.js"></script>
@@ -1593,7 +1502,7 @@ details.adv .row{margin:8px 0 0;}
     const W = canvas.width, H = canvas.height;
     const padL = 60, padR = 20, padT = 20, padB = 40;
     const pw = W - padL - padR, ph = H - padT - padB;
-    ctx.fillStyle = '#05070e'; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
 
     const bs = rows.map((r) => r.bias);
     const bMin = Math.min.apply(null, bs), bMax = Math.max.apply(null, bs);
@@ -1620,7 +1529,7 @@ details.adv .row{margin:8px 0 0;}
     ctx.strokeStyle = 'rgba(255,255,255,0.25)';
     ctx.beginPath(); ctx.moveTo(padL, padT); ctx.lineTo(padL, padT + ph); ctx.lineTo(padL + pw, padT + ph); ctx.stroke();
 
-    ctx.fillStyle = '#6b7d9c'; ctx.font = '10px monospace';
+    ctx.fillStyle = 'rgba(255,255,255,0.55)'; ctx.font = '10px monospace';
     ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
     for (let i = 0; i <= 4; i++) {
       const s = sLo + i * (sHi - sLo) / 4;
@@ -1651,9 +1560,21 @@ details.adv .row{margin:8px 0 0;}
         ctx.fillStyle = color;
         ctx.beginPath(); ctx.arc(x, y, 3.5, 0, Math.PI * 2); ctx.fill();
       } else {
-        ctx.fillStyle = '#ff5f7e';
+        ctx.fillStyle = '#ff4d5e';
         ctx.beginPath(); ctx.arc(x, padT + ph - 6, 3, 0, Math.PI * 2); ctx.fill();
       }
+    }
+    // best point: white ring + drop line + label
+    let bestR = null;
+    for (const r of rows) if (r.ok && Number.isFinite(r.score) && (!bestR || r.score < bestR.score)) bestR = r;
+    if (bestR) {
+      const bx = X(bestR.bias), by = Y(bestR.score), right = bx > W * 0.7;
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.arc(bx, by, 7, 0, Math.PI * 2); ctx.stroke();
+      ctx.setLineDash([2, 3]); ctx.beginPath(); ctx.moveTo(bx, by + 7); ctx.lineTo(bx, padT + ph); ctx.stroke(); ctx.setLineDash([]);
+      ctx.fillStyle = '#fff'; ctx.font = '10px monospace';
+      ctx.textAlign = right ? 'right' : 'left'; ctx.textBaseline = 'bottom';
+      ctx.fillText('best ' + bestR.score.toFixed(2) + ' @ ' + bestR.bias.toFixed(4), bx + (right ? -10 : 10), by - 8);
     }
   }
 
@@ -1699,5 +1620,6 @@ details.adv .row{margin:8px 0 0;}
   }
 })();
 </script>
+<script src="visJs/engine-fx.js"></script>
 </body>
 </html>
