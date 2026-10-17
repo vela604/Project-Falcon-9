@@ -5,14 +5,18 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Atlas Prism — Guidance Parameters Hub</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;800&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;800&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>
 :root{--c:#35d6ff;--a:#ffb020;--g:#4ade80;--r:#ff4d5e;--v:#a78bfa;--dim:rgba(255,255,255,.55);--line:rgba(255,255,255,.15);
 --mono:'JetBrains Mono','Consolas','Menlo',monospace;--disp:'SpaceXFont','Arial Black','Helvetica Neue',Arial,sans-serif}
 *{box-sizing:border-box}
 html{background:#000;scroll-behavior:smooth}
 body{margin:0;background:#000;color:#fff;font:13px/1.55 var(--mono);overflow-x:hidden}
-canvas#bg{position:fixed;inset:0;width:100%;height:100%;z-index:0;display:block}
+canvas#fx,canvas#bg{position:fixed;left:0;top:0;width:100%;height:100%;z-index:0;display:block;pointer-events:none}
+canvas#bg{will-change:transform,opacity}
+@supports(animation-timeline:scroll()){
+canvas#bg{animation:bgscroll linear both;animation-timeline:scroll(root block);animation-range:0px var(--pr,1200px)}
+@keyframes bgscroll{to{transform:translate3d(0,var(--ps,720px),0);opacity:.12}}}
 main{position:relative;max-width:1240px;margin:0 auto;padding:0 18px 60px}
 a{color:inherit}
 nav{position:sticky;top:10px;z-index:5;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px;padding:9px 14px;border:1px solid var(--line);border-radius:14px;background:rgba(0,0,0,.55);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);font-size:12px}
@@ -74,6 +78,7 @@ footer{margin-top:50px;font-size:11px;color:#fff;mix-blend-mode:difference}
 <script src="../js/szadFont.js" onerror="void 0"></script>
 </head>
 <body>
+<canvas id="fx" aria-hidden="true"></canvas>
 <canvas id="bg" aria-hidden="true"></canvas>
 <main>
 <nav><div class="l"><a href="../index.html">← Mission Console</a><b>ATLAS PRISM</b></div>
@@ -267,37 +272,71 @@ function finish(now){
   cmp.push(b);nextBatch(b.runs,now);
 }
 /* ---- canvas ---- */
-const cv=$('bg'),cx=cv.getContext('2d');let W,H,R,cxE,cyE,A0a,sy=0,mono;
+const cv=$('bg'),cx=cv.getContext('2d'),fv=$('fx'),fc=fv.getContext('2d');let W=0,H=0,R,cxE,cyE,A0a,sy=0,mono;
+const COARSE=matchMedia('(pointer:coarse)').matches;
+/* probe = largest viewport height (lvh). On mobile Chrome innerHeight changes when the URL bar hides; lvh does not, so layout never shifts */
+const probe=document.createElement('div');probe.style.cssText='position:fixed;left:0;top:0;width:1px;height:100lvh;visibility:hidden;pointer-events:none';document.body.appendChild(probe);
 function size(){
-  const d=Math.min(2,devicePixelRatio||1);W=innerWidth;H=innerHeight;cv.width=W*d;cv.height=H*d;cx.setTransform(d,0,0,d,0,0);
+  const w=innerWidth,h=COARSE?(probe.offsetHeight||innerHeight):innerHeight;
+  if(w===W&&h===H)return;
+  const d=Math.min(2,devicePixelRatio||1);W=w;H=h;
+  for(const c of[cv,fv]){c.width=W*d;c.height=H*d;c.style.width=W+'px';c.style.height=H+'px'}
+  cx.setTransform(d,0,0,d,0,0);fc.setTransform(d,0,0,d,0,0);
+  document.documentElement.style.setProperty('--pr',H*1.4+'px');document.documentElement.style.setProperty('--ps',H*.84+'px');
   R=Math.max(W*.8,H*.45);cxE=W/2;cyE=H*.56+R;A0a=-Math.PI/2-.4*W/R;mono=getComputedStyle(document.body).fontFamily;
-  for(const f of fl){f.w=0;if(f.px!=null){f.px=Math.min(f.px,W);f.py=Math.min(f.py,H)}}
-  for(const r of hist)remap(r);
+  buildFl();for(const r of hist)remap(r);
 }
+/* scroll parallax: CSS scroll-timeline (compositor, no lag); JS fallback where unsupported */
+if(!(window.CSS&&CSS.supports&&CSS.supports('animation-timeline','scroll()'))){let q=0;
+  addEventListener('scroll',()=>{if(q)return;q=requestAnimationFrame(()=>{q=0;cv.style.transform='translate3d(0,'+Math.min(scrollY,H*1.4)*.6+'px,0)';cv.style.opacity=Math.max(.12,1-scrollY/(H*1.3))})},{passive:true})}
 function remap(r){
   const K=1.7,n=r.pts.length/2,o=new Float32Array(n*2);
   for(let i=0;i<n;i++){const a=A0a+r.pts[2*i+1]*K,rr=R*(1+(r.pts[2*i]-1)*XA);o[2*i]=rr*Math.cos(a);o[2*i+1]=rr*Math.sin(a)}
   r.xy=o;
 }
 const ease=x=>x<0?0:x>1?1:x*x*(3-2*x);
-/* ---- drifting formulae: whole-screen random walk, wraps at edges ---- */
+/* ---- drifting formulae: own canvas, own font, token-coloured, evenly spread ---- */
+const FM='"IBM Plex Mono","DejaVu Sans Mono","Cambria Math",Menlo,Consolas,monospace';
 const FX=['v = √(μ(2/r − 1/a))','Δv = Isp·g₀·ln(m₀/m₁)','T/W = F / (m·g₀)','T = 2π√(a³/μ)','S = J(ε) + 0.1·t_deploy','J = 250·k·(√(1+(ε/k)²) − 1)','ε = |apo − alt| + |peri − alt|','φ(t) = φ₀(1 − e^(−G·t/τ)) + bias','dv_r/dt = v_t²/r − μ/r² + a·cosφ','dv_t/dt = −v_r·v_t/r + a·sinφ','F = ṁvₑ + (pₑ − pₐ)Aₑ','e = √(1 + 2εh²/μ²)','a = −μ / 2ε','m(t) = m₀ − ṁ·t','q = ½ρv²','Δv_circ = √(μ/r) − v_apo','r_a = a(1+e)   r_p = a(1−e)','h = r·v_t','ε = v²/2 − μ/r','ln(m₀/m₁) = Δv / (Isp·g₀)','lead = t_apo − t_burn','resid ∈ [100, 200] kg','cost = (1−w)·t + w·fuel','bias ∈ [−3°, +3°]','MECO ∈ T+130…154 s','∂S/∂bias → 0','sims/s ≈ 0.8 × threads','θ̇ = v_t / r'];
-const FC=['#ffffff','#35d6ff','#ffb020','#4ade80','#a78bfa','#ffffff','#35d6ff'];
-const fl=FX.map((s,i)=>{const sp=5+rnd()*16,an=rnd()*6.2832;return{s,x:rnd(),y:rnd(),vx:Math.cos(an)*sp,vy:Math.sin(an)*sp,sz:10+Math.floor(rnd()*9),a:.14+rnd()*.26,c:FC[i%FC.length],rot:(rnd()-.5)*.3,w:0}});
+const FB=['#ffffff','#35d6ff','#ffb020','#4ade80','#c4b5fd','#ff7a93'];
+const shuf=a=>{for(let i=a.length-1;i>0;i--){const j=Math.floor(rnd()*(i+1));[a[i],a[j]]=[a[j],a[i]]}return a};
+/* each formula has one base colour; numbers, '=' / relations, operators, brackets, greek and functions get their own accents */
+function tok(s,base){
+  const alt=(c,o)=>c===base?o:c,out=[],re=/\s+|\d+(?:\.\d+)?|[²³₀-₉]+|[=≈∈→]|[+−\-·×\/^]|[()\[\]|]|[ΔεφθμπρτΣ∂√½ṁ]|ln|[A-Za-z_]+̇?|./gu;let m;
+  while((m=re.exec(s))){const t=m[0];let c=base;
+    if(/^\s+$/.test(t))c=null;
+    else if(/^[\d²³₀-₉]/.test(t))c=alt('#ffb020','#ff9248');
+    else if(/^[=≈∈→]$/.test(t))c=alt('#ffffff','#fde68a');
+    else if(/^[+−\-·×\/^]$/.test(t))c=alt('#ff7a93','#ffffff');
+    else if(/^[()\[\]|]$/.test(t))c=alt('#a78bfa','#7dd3fc');
+    else if(/^[ΔεφθμπρτΣ∂√½ṁ]$/.test(t))c=alt('#35d6ff','#a5f3fc');
+    else if(t==='ln')c=alt('#4ade80','#bbf7d0');
+    out.push({t,c})}
+  return out}
+let fl=[];
+function buildFl(){
+  /* fewer + smaller on phones, more + bigger on desktop; stratified grid so they stay evenly spread */
+  const N=Math.max(8,Math.min(16,Math.round(W*H/80000))),sc=Math.max(.75,Math.min(1.5,W/960));
+  const cols=Math.max(2,Math.round(Math.sqrt(N*W/H))),rows=Math.ceil(N/cols),cells=shuf([...Array(cols*rows).keys()]).slice(0,N),str=shuf(FX.slice()).slice(0,N);
+  const dir=.3+rnd()*.5;
+  fl=str.map((s,i)=>{const sp=(4+rnd()*8)*sc,an=dir+(rnd()-.5)*.8,c=cells[i];
+    return{tk:tok(s,FB[i%FB.length]),tw:null,w:0,px:((c%cols)+.15+rnd()*.7)/cols*W,py:(Math.floor(c/cols)+.15+rnd()*.7)/rows*H,
+      vx:Math.cos(an)*sp,vy:Math.sin(an)*sp,sz:Math.round((10+rnd()*5)*sc),a:.3+rnd()*.28,rot:(rnd()-.5)*.24}})}
+if(document.fonts&&document.fonts.load)document.fonts.load('14px "IBM Plex Mono"').then(()=>fl.forEach(f=>f.w=0),()=>{});
 let pt=0;
-function drift(now,fade){
+function drift(now){
   const dt=RM?0:Math.min(.05,(now-pt)/1000);pt=now;
-  cx.save();cx.globalCompositeOperation='source-over';
+  fc.clearRect(0,0,W,H);
   for(const f of fl){
-    cx.font=f.sz+'px '+mono;if(!f.w)f.w=cx.measureText(f.s).width;
-    if(f.px==null){f.px=f.x*W;f.py=f.y*H}
+    fc.font=f.sz+'px '+FM;
+    if(!f.w){let x=0;f.tw=f.tk.map(k=>{const o=x;x+=fc.measureText(k.t).width;return o});f.w=x}
     f.px+=f.vx*dt;f.py+=f.vy*dt;
     if(f.px>W+10)f.px=-f.w-10;else if(f.px<-f.w-10)f.px=W+10;
     if(f.py>H+20)f.py=-20;else if(f.py<-20)f.py=H+20;
-    cx.globalAlpha=f.a*Math.max(.55,fade);cx.fillStyle=f.c;
-    cx.save();cx.translate(f.px,f.py);cx.rotate(f.rot);cx.fillText(f.s,0,0);cx.restore();
-  }
-  cx.restore();
+    fc.globalAlpha=f.a;fc.save();fc.translate(f.px,f.py);fc.rotate(f.rot);
+    for(let i=0;i<f.tk.length;i++){const k=f.tk[i];if(k.c){fc.fillStyle=k.c;fc.fillText(k.t,f.tw[i],0)}}
+    fc.restore()}
+  fc.globalAlpha=1;
 }
 function trace(r,p){const n=r.xy.length/2,m=Math.max(2,Math.floor(n*p));cx.moveTo(cxE+r.xy[0],cyE+sy+r.xy[1]);for(let i=1;i<m;i++)cx.lineTo(cxE+r.xy[2*i],cyE+sy+r.xy[2*i+1])}
 function note(r,i,dx,dy,L,col){
@@ -311,7 +350,7 @@ function note(r,i,dx,dy,L,col){
 }
 function frame(now){
   requestAnimationFrame(frame);curNow=now;
-  sy=RM?0:Math.min(scrollY,H*1.4)*.6;const cy=cyE+sy,fade=Math.max(.12,1-scrollY/(H*1.3));
+  const cy=cyE,fade=1;
   if(!gen&&(!pause||now>pause)){
     gen=camp();hist=[];cmp=[];zrows=[];done=0;bestAll=null;ct=[];t0=now;evalN=0;ENG0=Date.now();logs=[];
     log(0,'creating worker pool…');log(0,'pool ready ('+nW+' workers)');log(0,'setupSA on '+nW+' workers…');log(0,'setupSA: '+nW+'/'+nW+' ready',3);
@@ -344,7 +383,7 @@ function frame(now){
   cx.strokeStyle='rgba(53,214,255,.75)';cx.beginPath();cx.arc(cxE,cy,R*(1+TGT*XA),0,6.2832);cx.stroke();cx.setLineDash([]);
   cx.font='10px '+mono;cx.fillStyle='rgba(255,176,32,.9)';cx.fillText('100 km (Kármán)',12,cy-R*(1+.0157*XA)+14);
   cx.fillStyle='rgba(53,214,255,.95)';cx.fillText('target 400 km',12,cy-R*(1+TGT*XA)-6);
-  drift(now,fade);
+  drift(now);
   const sty=[['#ff4d5e',.4,1],['#ff4d5e',.09,1],['#35d6ff',.85,1.3],['#35d6ff',.33,1]];
   for(let gi=0;gi<4;gi++){
     cx.globalAlpha=sty[gi][1]*fade;cx.strokeStyle=sty[gi][0];cx.lineWidth=sty[gi][2];cx.beginPath();
