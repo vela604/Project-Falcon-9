@@ -23,7 +23,9 @@ nav .r{display:flex;gap:8px}
 .btn:hover,.btn:focus-visible{background:#fff;color:#000;outline:none}
 .btn.p{background:#fff;color:#000;border-color:#fff}.btn.p:hover{background:var(--c);border-color:var(--c)}
 .hero{min-height:calc(100vh - 70px);display:flex;flex-direction:column;justify-content:center;padding-bottom:5vh}
-h1{margin:0;font:400 clamp(52px,14.5vw,210px)/.86 var(--disp);letter-spacing:-.01em;color:#fff;mix-blend-mode:difference;white-space:nowrap}
+.hero>*{min-width:0;max-width:100%}
+h1{margin:0;width:100%;font:400 clamp(40px,11vw,210px)/.86 var(--disp);letter-spacing:-.01em;color:#fff;mix-blend-mode:difference;white-space:nowrap}
+h1 span{display:inline-block}
 .lead{margin:20px 0 0;font-size:clamp(14px,1.6vw,18px);font-weight:800;color:#fff;mix-blend-mode:difference}
 .tl{margin:8px 0 0;max-width:600px;color:#fff;mix-blend-mode:difference}
 .cta{display:flex;flex-wrap:wrap;gap:10px;margin-top:22px}
@@ -78,12 +80,12 @@ footer{margin-top:50px;font-size:11px;color:#fff;mix-blend-mode:difference}
 <div class="r"><a class="btn p" href="standard/sereno-flux.html">Sereno Flux</a><a class="btn" href="standard/pro-alpha.html">Pro-Alpha</a></div></nav>
 
 <section class="hero">
-  <h1>ATLAS PRISM</h1>
+  <h1><span id="ttl">ATLAS PRISM</span></h1>
   <p class="lead">Guidance Parameters Hub</p>
   <p class="tl">Tune the guidance constants for a target orbit. Pick an engine below; the background replays how a Sereno Flux search converges.</p>
   <div class="cta"><a class="btn p" href="standard/sereno-flux.html">Open Sereno Flux</a><a class="btn" href="standard/pro-alpha.html">Open Pro-Alpha</a><a class="btn" href="#eng">All engines</a></div>
   <div class="pipe" id="pipe"></div>
-  <div class="kv"><span>run <b id="hN">0</b> of ~1,165</span><span>engine clock <b id="hE">00:00</b></span><span>best score <b id="hS">—</b></span></div>
+  <div class="kv"><span>run <b id="hN">0</b> of ~1,270</span><span>engine clock <b id="hE">00:00</b></span><span>best score <b id="hS">—</b></span></div>
 </section>
 
 <h2 id="eng">Rocket types</h2>
@@ -125,8 +127,19 @@ footer{margin-top:50px;font-size:11px;color:#fff;mix-blend-mode:difference}
 <script>
 (()=>{
 "use strict";
-if(typeof loadSzadFont==='function')loadSzadFont();
 const $=id=>document.getElementById(id),rnd=Math.random,RM=matchMedia('(prefers-reduced-motion:reduce)').matches;
+/* title fit: measure the real glyph run at 100px, then scale to the container so a wide display font can never overflow */
+function fitTitle(){
+  const h=document.querySelector('h1'),s=$('ttl');if(!h||!s)return;
+  const av=h.parentElement.clientWidth;if(!av)return;
+  h.style.fontSize='100px';const w=s.getBoundingClientRect().width;if(!w)return;
+  h.style.fontSize=Math.max(28,Math.min(210,100*av/w*.985))+'px';
+}
+let szP;try{if(typeof loadSzadFont==='function')szP=loadSzadFont()}catch(e){}
+fitTitle();addEventListener('resize',fitTitle);
+if(document.fonts){document.fonts.ready.then(fitTitle);document.fonts.addEventListener&&document.fonts.addEventListener('loadingdone',fitTitle)}
+if(szP&&szP.then)szP.then(fitTitle,()=>{});
+[250,800,2000,4000].forEach(t=>setTimeout(fitTitle,t));
 /*SIMSTART*/
 const TGT=.05,VE=.5,A0=1.3,TAU=VE/A0,TB=TAU*(1-1/22),TS=806,VC=7.905,XA=3.5,KM=6371,DEG=.015,OFF=3.65;
 function sim(p){
@@ -258,6 +271,7 @@ const cv=$('bg'),cx=cv.getContext('2d');let W,H,R,cxE,cyE,A0a,sy=0,mono;
 function size(){
   const d=Math.min(2,devicePixelRatio||1);W=innerWidth;H=innerHeight;cv.width=W*d;cv.height=H*d;cx.setTransform(d,0,0,d,0,0);
   R=Math.max(W*.8,H*.45);cxE=W/2;cyE=H*.56+R;A0a=-Math.PI/2-.4*W/R;mono=getComputedStyle(document.body).fontFamily;
+  for(const f of fl){f.w=0;if(f.px!=null){f.px=Math.min(f.px,W);f.py=Math.min(f.py,H)}}
   for(const r of hist)remap(r);
 }
 function remap(r){
@@ -266,6 +280,25 @@ function remap(r){
   r.xy=o;
 }
 const ease=x=>x<0?0:x>1?1:x*x*(3-2*x);
+/* ---- drifting formulae: whole-screen random walk, wraps at edges ---- */
+const FX=['v = √(μ(2/r − 1/a))','Δv = Isp·g₀·ln(m₀/m₁)','T/W = F / (m·g₀)','T = 2π√(a³/μ)','S = J(ε) + 0.1·t_deploy','J = 250·k·(√(1+(ε/k)²) − 1)','ε = |apo − alt| + |peri − alt|','φ(t) = φ₀(1 − e^(−G·t/τ)) + bias','dv_r/dt = v_t²/r − μ/r² + a·cosφ','dv_t/dt = −v_r·v_t/r + a·sinφ','F = ṁvₑ + (pₑ − pₐ)Aₑ','e = √(1 + 2εh²/μ²)','a = −μ / 2ε','m(t) = m₀ − ṁ·t','q = ½ρv²','Δv_circ = √(μ/r) − v_apo','r_a = a(1+e)   r_p = a(1−e)','h = r·v_t','ε = v²/2 − μ/r','ln(m₀/m₁) = Δv / (Isp·g₀)','lead = t_apo − t_burn','resid ∈ [100, 200] kg','cost = (1−w)·t + w·fuel','bias ∈ [−3°, +3°]','MECO ∈ T+130…154 s','∂S/∂bias → 0','sims/s ≈ 0.8 × threads','θ̇ = v_t / r'];
+const FC=['#ffffff','#35d6ff','#ffb020','#4ade80','#a78bfa','#ffffff','#35d6ff'];
+const fl=FX.map((s,i)=>{const sp=5+rnd()*16,an=rnd()*6.2832;return{s,x:rnd(),y:rnd(),vx:Math.cos(an)*sp,vy:Math.sin(an)*sp,sz:10+Math.floor(rnd()*9),a:.14+rnd()*.26,c:FC[i%FC.length],rot:(rnd()-.5)*.3,w:0}});
+let pt=0;
+function drift(now,fade){
+  const dt=RM?0:Math.min(.05,(now-pt)/1000);pt=now;
+  cx.save();cx.globalCompositeOperation='source-over';
+  for(const f of fl){
+    cx.font=f.sz+'px '+mono;if(!f.w)f.w=cx.measureText(f.s).width;
+    if(f.px==null){f.px=f.x*W;f.py=f.y*H}
+    f.px+=f.vx*dt;f.py+=f.vy*dt;
+    if(f.px>W+10)f.px=-f.w-10;else if(f.px<-f.w-10)f.px=W+10;
+    if(f.py>H+20)f.py=-20;else if(f.py<-20)f.py=H+20;
+    cx.globalAlpha=f.a*Math.max(.55,fade);cx.fillStyle=f.c;
+    cx.save();cx.translate(f.px,f.py);cx.rotate(f.rot);cx.fillText(f.s,0,0);cx.restore();
+  }
+  cx.restore();
+}
 function trace(r,p){const n=r.xy.length/2,m=Math.max(2,Math.floor(n*p));cx.moveTo(cxE+r.xy[0],cyE+sy+r.xy[1]);for(let i=1;i<m;i++)cx.lineTo(cxE+r.xy[2*i],cyE+sy+r.xy[2*i+1])}
 function note(r,i,dx,dy,L,col){
   const x=cxE+r.xy[2*i],y=cyE+sy+r.xy[2*i+1];if(y<-20||y>H)return;
@@ -300,7 +333,7 @@ function frame(now){
   cx.globalCompositeOperation='lighter';
   const g2=cx.createRadialGradient(cxE,cy,R-6,cxE,cy,R+170);
   g2.addColorStop(0,'rgba(255,255,255,.95)');g2.addColorStop(.05,'rgba(160,220,255,.55)');g2.addColorStop(.3,'rgba(53,214,255,.16)');g2.addColorStop(1,'rgba(0,0,0,0)');
-  cx.globalAlpha=fade;cx.fillStyle=g2;cx.beginPath();cx.arc(cxE,cy,R+170,0,6.2832);cx.fill();
+  cx.globalAlpha=fade;cx.fillStyle=g2;cx.beginPath();cx.arc(cxE,cy,R+170,0,6.2832);cx.arc(cxE,cy,R-6,0,6.2832,true);cx.fill();
   cx.globalCompositeOperation='source-over';
   cx.strokeStyle='#fff';cx.lineWidth=2;cx.beginPath();cx.arc(cxE,cy,R,0,6.2832);cx.stroke();
   cx.globalAlpha=.6*fade;cx.lineWidth=1;cx.beginPath();
@@ -311,6 +344,7 @@ function frame(now){
   cx.strokeStyle='rgba(53,214,255,.75)';cx.beginPath();cx.arc(cxE,cy,R*(1+TGT*XA),0,6.2832);cx.stroke();cx.setLineDash([]);
   cx.font='10px '+mono;cx.fillStyle='rgba(255,176,32,.9)';cx.fillText('100 km (Kármán)',12,cy-R*(1+.0157*XA)+14);
   cx.fillStyle='rgba(53,214,255,.95)';cx.fillText('target 400 km',12,cy-R*(1+TGT*XA)-6);
+  drift(now,fade);
   const sty=[['#ff4d5e',.4,1],['#ff4d5e',.09,1],['#35d6ff',.85,1.3],['#35d6ff',.33,1]];
   for(let gi=0;gi<4;gi++){
     cx.globalAlpha=sty[gi][1]*fade;cx.strokeStyle=sty[gi][0];cx.lineWidth=sty[gi][2];cx.beginPath();
