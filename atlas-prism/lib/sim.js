@@ -36,6 +36,7 @@
     const bodies = state.bodies;
     for (let i = 0; i < bodies.length; i++) {
       const b = bodies[i];
+      if (b.dormant) continue;
         b.ax = b._lastAccelX || 0;
   b.ay = b._lastAccelY || 0;
   // CRITICAL: guidance reads body.pods for every RCS command
@@ -390,8 +391,36 @@ members.forEach(m => {
     Guidance.startGuide(guideName);
   }
 
+  // ---- Far-body dormancy (opt-in, default OFF; enable with TunerEngine.setDormant(true)) ----
+  // A non-stage, non-payload body (booster, fairing halves) that is farther than _dormGapM from the
+  // stage is flagged dormant: physicsStep, collision broad-phase and the snapshot pod build skip it.
+  // Meant to be result-neutral for the stage trajectory; confirm with RUN DORMANT VERIFY in sereno-bench.html. The decision depends only on
+  // state.simTime and body positions, so every path (full run / restored snapshot) flags the same ticks.
+  let _dormOn = false, _dormGapM = 100000, _dormEvery = 200;
+  function setDormant(on, gapM, every) {
+    _dormOn = !!on;
+    if (gapM > 0) _dormGapM = gapM;
+    if (every > 0) _dormEvery = every | 0;
+  }
+  function _updateDormancy(dt) {
+    if ((Math.round(state.simTime / dt) % _dormEvery) !== 0) return;
+    const bs = state.bodies;
+    let st = null;
+    for (let i = 0; i < bs.length; i++) {
+      const b = bs[i];
+      if (b && !b.payloadBody && !b.fairingHalf && b.members && b.members[0] && b.members[0].stageRole === 'stage') { st = b; break; }
+    }
+    if (!st) return;
+    for (let i = 0; i < bs.length; i++) {
+      const b = bs[i];
+      if (!b || b === st || b.dormant || b.payloadBody) continue;
+      if (Math.hypot(b.rx - st.rx, b.ry - st.ry) > _dormGapM) b.dormant = true;
+    }
+  }
+
   // One tick, exact pipeline order. Returns the snapshot used by guidance.
   function tick(dt) {
+    if (_dormOn) _updateDormancy(dt);
     physicsStep(dt);
     const snap = buildSnapshot();
     Guidance.onSnapshot(snap);
@@ -419,7 +448,7 @@ members.forEach(m => {
   }
 
   window.TunerEngine = {
-    init, prepareRun, tick, smokeTest, buildSnapshot, localDispatch,
+    init, prepareRun, tick, smokeTest, buildSnapshot, localDispatch, setDormant,
     applyEnvironment, applyFueling, DEFAULT_ENV,
   };
 })();

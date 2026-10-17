@@ -31,6 +31,8 @@
   <button id="bQuick">RUN QUICK (~4 min)</button>
   <button id="bDeep" class="alt">RUN DEEP (real probes, ~8 min)</button>
   <button id="bExp" class="alt">RUN EXP (coast, ~1 min)</button>
+  <button id="bVer" class="alt">RUN VERIFY (stage-only, ~2 min)</button>
+  <button id="bDorm" class="alt">RUN DORMANT VERIFY (~4 min)</button>
   <button id="bCopy" class="alt">COPY REPORT</button>
 </div>
 <div id="st">idle</div>
@@ -212,6 +214,63 @@
     }
   }
 
+
+  // ---------- E. verify: is the stage independent of booster/fairings after COAST_WAIT? ----------
+  async function verPhase(stkId, km) {
+    const st = newStats(1), vals = baselineValues(km);
+    status('verify: boot');
+    const pool = await makePool(1, stkId, st);
+    status('verify: setupSA');
+    const sa = await pool.runJob('setupSA', { values: vals });
+    if (!sa.ok) throw new Error('setupSA failed: ' + sa.reason);
+    status('verify: running (3 runs)');
+    const r = await pool.runJob('benchVerify', { ticks: 150000 });
+    await pool.terminate();
+    if (r.err) P('VERIFY ERROR: ' + r.err);
+    if (!r.coastReached) { P('VERIFY: coast not reached'); return; }
+    const A = r.A, A2 = r.A2, B = r.B;
+    const d = (x) => x === -1 ? 'IDENTICAL' : x === -2 ? 'LENGTH DIFFERS' : 'DIFFERS by tick ~' + x;
+    P('--- E. verify (1 worker, from COAST_WAIT to DONE+300 ticks) ---');
+    P('ticks A ' + A.n + ' · A2 ' + A2.n + ' · B ' + B.n + ' · bodies at end A ' + A.nb + ' / B ' + B.nb);
+    P('CONTROL  A vs A2 (same run twice): ' + d(r.divAA2));
+    P('TEST     A vs B  (stage-only)    : ' + d(r.divAB));
+    P('  final stage state equal: ' + r.fsEqAB + ' · final guidance fields equal: ' + r.gsEqAB + ' · phase timeline equal: ' + r.phasesEqAB);
+    P('phases A: ' + A.phases.join(' '));
+    if (!r.phasesEqAB) P('phases B: ' + B.phases.join(' '));
+    P('final A: ' + JSON.stringify(A.gs));
+    if (!r.gsEqAB) P('final B: ' + JSON.stringify(B.gs));
+    P('wall: A ' + f(A.ms / 1000, 1) + 's · A2 ' + f(A2.ms / 1000, 1) + 's · B ' + f(B.ms / 1000, 1) + 's -> B is x' + f(A2.ms / B.ms, 2) + ' faster');
+    P('clearance stage vs others in A (m, bounding-circle gap; <=0 means broad-phase overlap):');
+    A.gaps.forEach((g) => P('  ' + g.role.padEnd(8) + ' start ' + f(g.first, 0) + ' · min ' + f(g.min, 0) + ' @tick ' + g.minTick + ' · end ' + f(g.last, 0)));
+    P('collision contacts in A: ticks ' + A.contacts.ticks + ' · pairs ' + JSON.stringify(A.contacts.pairs) + (A.contacts.err ? ' · ERR ' + A.contacts.err : ''));
+  }
+
+
+  // ---------- F. dormant verify: SA -> DONE, dormancy off vs on ----------
+  async function dormPhase(stkId, km) {
+    const st = newStats(1), vals = baselineValues(km);
+    status('dormant: boot');
+    const pool = await makePool(1, stkId, st);
+    status('dormant: setupSA');
+    const sa = await pool.runJob('setupSA', { values: vals });
+    if (!sa.ok) throw new Error('setupSA failed: ' + sa.reason);
+    status('dormant: running (7 runs)');
+    const r = await pool.runJob('benchDormant', { ticks: 200000 });
+    await pool.terminate();
+    if (r.err) P('DORMANT ERROR: ' + r.err);
+    P('--- F. dormant verify (SA -> DONE+300 ticks, flag off vs on, bit-exact stage+payload hash) ---');
+    let all = true;
+    r.sets.forEach((S) => {
+      const tag = 'bias ' + S.ov[0] + ' lead ' + S.ov[1];
+      all = all && S.eqOn && (S.eqOn37 !== false);
+      P('[' + tag + ']  ticks ' + S.off.n + ' · off ' + f(S.off.ms / 1000, 1) + 's · on ' + f(S.on.ms / 1000, 1) + 's -> x' + f(S.off.ms / S.on.ms, 2));
+      P('   off vs on(200): ' + (S.eqOn ? 'IDENTICAL' : 'DIFFERENT  off ' + JSON.stringify(S.off.gs) + '  on ' + JSON.stringify(S.on.gs)));
+      if (S.on37) P('   off vs on(37) : ' + (S.eqOn37 ? 'IDENTICAL' : 'DIFFERENT') + '  (different check period)');
+      P('   dormant at ticks (body idx:tick): ' + JSON.stringify(S.on.dorm));
+    });
+    P('VERDICT: ' + (all && !r.err ? 'ALL IDENTICAL -> safe to set DORMANT_ON=true' : 'NOT IDENTICAL -> keep DORMANT_ON=false, paste this report'));
+  }
+
   // ---------- verdict ----------
   function verdict() {
     const a = NS[0], z = NS[NS.length - 1];
@@ -282,7 +341,39 @@
       await expPhase(stkId, km);
       status('done');
     } catch (e) { P('ERROR: ' + (e && e.message || e)); status('error'); }
-    finally { try { if (wl) wl.release(); } catch (e) {} running = false; $('bQuick').disabled = $('bDeep').disabled = $('bExp').disabled = false; }
+    finally { try { if (wl) wl.release(); } catch (e) {} running = false; $('bQuick').disabled = $('bDeep').disabled = $('bExp').disabled = false; $('bDorm').disabled = false; }
+  };
+  $('bVer').onclick = async () => {
+    if (running) return; running = true;
+    const bs = ['bQuick', 'bDeep', 'bExp', 'bVer'];
+    bs.forEach((i) => { $(i).disabled = true; });
+    lines.length = 0;
+    let wl = null; try { if (navigator.wakeLock) wl = await navigator.wakeLock.request('screen'); } catch (e) {}
+    try {
+      const stkId = $('stackSel').value, km = parseInt($('km').value, 10) || 320;
+      if (!stkId) throw new Error('no eligible stack');
+      P('SERENO BENCH VERIFY ' + new Date().toISOString().slice(0, 19));
+      P('cores ' + hc + ' · stack ' + stkId + ' · ' + km + 'km');
+      await verPhase(stkId, km);
+      status('done');
+    } catch (e) { P('ERROR: ' + (e && e.message || e)); status('error'); }
+    finally { try { if (wl) wl.release(); } catch (e) {} running = false; bs.forEach((i) => { $(i).disabled = false; }); }
+  };
+  $('bDorm').onclick = async () => {
+    if (running) return; running = true;
+    const bs = ['bQuick', 'bDeep', 'bExp', 'bVer', 'bDorm'];
+    bs.forEach((i) => { $(i).disabled = true; });
+    lines.length = 0;
+    let wl = null; try { if (navigator.wakeLock) wl = await navigator.wakeLock.request('screen'); } catch (e) {}
+    try {
+      const stkId = $('stackSel').value, km = parseInt($('km').value, 10) || 320;
+      if (!stkId) throw new Error('no eligible stack');
+      P('SERENO BENCH DORMANT ' + new Date().toISOString().slice(0, 19));
+      P('cores ' + hc + ' · stack ' + stkId + ' · ' + km + 'km');
+      await dormPhase(stkId, km);
+      status('done');
+    } catch (e) { P('ERROR: ' + (e && e.message || e)); status('error'); }
+    finally { try { if (wl) wl.release(); } catch (e) {} running = false; bs.forEach((i) => { $(i).disabled = false; }); }
   };
   $('bQuick').onclick = () => run(false);
   $('bDeep').onclick = () => run(true);

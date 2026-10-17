@@ -280,7 +280,7 @@
     S.pool = new TunerCore.WorkerPool(n, { workerPath: '../lib/worker-sim.js' });
     S.pool.onProgress = (msg) => {
       S.workerProgress[msg.tag] = { phase: msg.phase, detail: msg.detail, ts: msg.ts };
-      renderProgress();
+      markProgress();   // throttled: the 500 ms ticker below does the actual DOM rebuild
     };
     await S.pool.waitReady();
     S.poolReady = true;
@@ -1415,7 +1415,17 @@
     });
     el.innerHTML = parts.join(' <span class="dim">│</span> ');
   }
-  setInterval(renderProgress, 300);
+  // Throttled progress UI (visuals only; never touches the sim). Worker messages only mark the bar dirty;
+  // the DOM is rebuilt at most every 500 ms (and at least every 1 s so the "(Ns ago)" values refresh),
+  // never while the tab is hidden. ?ui=0 in the page URL turns the live bar off during runs (A/B test of UI cost).
+  const UI_LITE = new URLSearchParams(location.search).get('ui') === '0';
+  let _progDirty = false, _progLast = 0;
+  function markProgress() { _progDirty = true; }
+  setInterval(() => {
+    if (UI_LITE || document.hidden) return;
+    const now = performance.now();
+    if (_progDirty || now - _progLast >= 1000) { _progDirty = false; _progLast = now; renderProgress(); }
+  }, 500);
 
   // ========================================================================
   // ZETA TABLE (only place a table exists)

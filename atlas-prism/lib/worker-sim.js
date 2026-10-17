@@ -270,6 +270,8 @@ async function runToCW(tCheck, capS) {
 // ---- PROF (telemetry only; sim results untouched). Set PROF_ON=false to remove all overhead. ----
 // PROF_BENCH adds ~0.3 s once per setupSA (micro-benchmark on the SA snapshot); set false after measuring.
 const PROF_ON = true, PROF_BENCH = true;
+// Far-body dormancy (booster/fairings skipped once >100 km from the stage). Verified IDENTICAL (RUN DORMANT VERIFY, 3 param sets). Set false to disable.
+const DORMANT_ON = false;
 let _tk = 0;   // tick counter (incremented in the ops wrapper)
 const _P = { restore: 0, capture: 0, prep: 0, job: 0, ch: 0, chT: 0, circ: 0, circT: 0, full: 0, fullT: 0 };
 function _flushProf() {
@@ -421,6 +423,112 @@ function _benchExp(N, values) {
   return R;
 }
 
+
+// ---- VERIFY (telemetry only, never shipped): after COAST_WAIT, is the stage trajectory independent of booster/fairings? ----
+// Runs from the COAST_WAIT snapshot: A (all bodies), A2 (control, same as A), B (stage body only). Hashes the stage state every tick (bit-exact).
+function _benchVerify(maxTicks) {
+  const R = {}, sv = Object.assign({}, _P), ol = console.log; console.log = function () {};
+  const raw = self.__profRaw || {}, rs = raw.rs || restoreSnap, cs = raw.cs || captureSnap;
+  const tick = (TunerEngine.__rawTick || TunerEngine.tick).bind(TunerEngine), dt = CONFIG.DT;
+  const dv = new DataView(new ArrayBuffer(8)), KEYS = ['rx', 'ry', 'vx', 'vy', 'theta', 'omega'];
+  const isStage = (b) => b && !b.payloadBody && !b.fairingHalf && b.members && b.members[0] && b.members[0].stageRole === 'stage';
+  const role = (b) => !b ? '?' : b.fairingHalf ? 'fairing' : b.payloadBody ? 'payload' : isStage(b) ? 'stage' : 'booster';
+  try {
+    rs(_saSnapshot, null, null, null);
+    let k = 0, cw = false;
+    for (; k < 45000; k++) { if (state.halted) break; tick(dt); const g = Guidance.getGuideStatus(); if (g && g.phase === 'COAST_WAIT') { cw = true; break; } }
+    R.coastReached = cw;
+    if (!cw) return R;
+    const snapCW = cs();
+    const run = (mode) => {
+      rs(snapCW, 1.8, 5.5, null);
+      if (mode === 'stage') { const si = state.bodies.findIndex(isStage); state.bodies = [state.bodies[si]]; state.activeBodyIndex = 0; }
+      let h = 2166136261 >>> 0, n = 0, ph = '', stopAt = -1, gs = null;
+      const cps = [], phases = [], gaps = new Map(), contacts = { ticks: 0, pairs: {} };
+      const t0 = performance.now();
+      for (; n < maxTicks; n++) {
+        if (state.halted) break;
+        tick(dt);
+        gs = Guidance.getGuideStatus(); const phase = gs && gs.phase;
+        const st = findStageBody();
+        if (st) for (let q = 0; q < 6; q++) { dv.setFloat64(0, st[KEYS[q]]); h = Math.imul(h ^ dv.getUint32(0), 16777619); h = Math.imul(h ^ dv.getUint32(4), 16777619); }
+        if ((n % 100) === 99) cps.push(h >>> 0);
+        if (phase !== ph) { ph = phase; phases.push(n + ':' + phase); }
+        if (mode === 'gap' && st) {
+          try {
+            const c0 = _bodyBoundingCenter(st), r0 = _bodyBoundingRadius(st);
+            for (const b of state.bodies) {
+              if (b === st) continue;
+              const c = _bodyBoundingCenter(b), gap = Math.hypot(c.x - c0.x, c.y - c0.y) - (_bodyBoundingRadius(b) + r0);
+              let m = gaps.get(b); if (!m) { m = { role: role(b), first: gap, firstTick: n, min: gap, minTick: n, last: gap }; gaps.set(b, m); }
+              if (gap < m.min) { m.min = gap; m.minTick = n; } m.last = gap;
+            }
+            const cc = state.collisionContacts;
+            if (cc && cc.length) { contacts.ticks++; for (const c of cc) { const key = role(state.bodies[c.i]) + '-' + role(state.bodies[c.j]); contacts.pairs[key] = (contacts.pairs[key] || 0) + 1; } }
+          } catch (e) { contacts.err = (e && e.message) || String(e); }
+        }
+        if (stopAt < 0 && phase === 'DONE') stopAt = n + 300;
+        if (stopAt >= 0 && n >= stopAt) break;
+      }
+      const st = findStageBody(), fs = {};
+      if (st) KEYS.forEach((q) => { fs[q] = st[q]; });
+      const pick = {}; if (gs) ['phase', 'coastDeltaV', 'circErr', 'apogeeKm', 'perigeeKm', 'circAchieved', 'payloadCleared'].forEach((q) => { pick[q] = gs[q]; });
+      return { n, h: h >>> 0, cps, phases, fs, gs: pick, ms: performance.now() - t0, gaps: Array.from(gaps.values()), contacts, nb: state.bodies.length, simTime: state.simTime };
+    };
+    const A = run('gap'), A2 = run('full'), B = run('stage');
+    const first = (x, y) => { const m = Math.min(x.cps.length, y.cps.length); for (let i = 0; i < m; i++) if (x.cps[i] !== y.cps[i]) return (i + 1) * 100; return (x.cps.length !== y.cps.length || x.n !== y.n) ? -2 : -1; };
+    R.A = A; R.A2 = A2; R.B = B;
+    R.divAA2 = first(A, A2); R.divAB = first(A, B);   // -1 identical, -2 lengths differ, else tick (<=)
+    R.gsEqAB = JSON.stringify(A.gs) === JSON.stringify(B.gs); R.fsEqAB = JSON.stringify(A.fs) === JSON.stringify(B.fs);
+    R.phasesEqAB = JSON.stringify(A.phases) === JSON.stringify(B.phases);
+  } catch (e) { R.err = (e && e.message) || String(e); }
+  finally { console.log = ol; Object.assign(_P, sv); try { rs(_saSnapshot, null, null, null); } catch (e) {} }
+  R.tag = _workerTag;
+  return R;
+}
+
+
+// ---- DORMANT VERIFY (telemetry only): SA -> DONE, dormancy off vs on, bit-exact stage hash ----
+function _benchDormant(maxTicks) {
+  const R = { sets: [] }, sv = Object.assign({}, _P), ol = console.log; console.log = function () {};
+  const raw = self.__profRaw || {}, rs = raw.rs || restoreSnap;
+  const tick = (TunerEngine.__rawTick || TunerEngine.tick).bind(TunerEngine), dt = CONFIG.DT;
+  const dv = new DataView(new ArrayBuffer(8)), KEYS = ['rx', 'ry', 'vx', 'vy', 'theta', 'omega', 'fuelMass', 'dryMass'];
+  const mix = (h, x) => { dv.setFloat64(0, x); h = Math.imul(h ^ dv.getUint32(0), 16777619); return Math.imul(h ^ dv.getUint32(4), 16777619); };
+  const run = (ov, on, every) => {
+    rs(_saSnapshot, ov[0], ov[1], ov[2]);
+    TunerEngine.setDormant(on, 100000, every);
+    let h = 2166136261 >>> 0, hp = 2166136261 >>> 0, n = 0, stopAt = -1, gs = null; const dorm = {}; const t0 = performance.now();
+    for (; n < maxTicks; n++) {
+      if (state.halted) break;
+      tick(dt);
+      gs = Guidance.getGuideStatus(); const phase = gs && gs.phase;
+      const st = findStageBody();
+      if (st) for (let q = 0; q < KEYS.length; q++) h = mix(h, st[KEYS[q]]);
+      if ((n & 63) === 0) for (let i = 0; i < state.bodies.length; i++) { const b = state.bodies[i]; if (b && b.dormant && dorm[i] === undefined) dorm[i] = n; }
+      if (stopAt < 0 && phase === 'DONE') stopAt = n + 300;
+      if (stopAt >= 0 && n >= stopAt) break;
+    }
+    const ms = performance.now() - t0;
+    for (const b of state.bodies) if (b && b.payloadBody) for (let q = 0; q < KEYS.length; q++) hp = mix(hp, b[KEYS[q]]);
+    const pick = {}; if (gs) ['phase', 'coastDeltaV', 'circErr', 'apogeeKm', 'perigeeKm', 'circAchieved', 'payloadCleared'].forEach((q) => { pick[q] = gs[q]; });
+    return { n, h: h >>> 0, hp: hp >>> 0, ms, gs: pick, dorm, nb: state.bodies.length };
+  };
+  const eq = (a, b) => a.n === b.n && a.h === b.h && a.hp === b.hp && JSON.stringify(a.gs) === JSON.stringify(b.gs);
+  try {
+    const sets = [[null, null, null], [1.8, 5.5, null], [0.5, 3.0, null]];
+    sets.forEach((ov, si) => {
+      const off = run(ov, false, 200), on = run(ov, true, 200);
+      const S = { ov, off, on, eqOn: eq(off, on) };
+      if (si === 0) { const on37 = run(ov, true, 37); S.on37 = on37; S.eqOn37 = eq(off, on37); }
+      R.sets.push(S);
+    });
+  } catch (e) { R.err = (e && e.message) || String(e); }
+  finally { console.log = ol; Object.assign(_P, sv); try { TunerEngine.setDormant(DORMANT_ON); rs(_saSnapshot, null, null, null); } catch (e) {} }
+  R.tag = _workerTag;
+  return R;
+}
+
 // ---- ops counter (telemetry only; no effect on sim results) ----
 // Counts TunerEngine.tick calls and posts throttled deltas: { type:'ops', tag, n }.
 let _opsAcc = 0, _simAcc = 0, _opsT = 0;
@@ -456,6 +564,7 @@ self.onmessage = async (e) => {
       _loadSim();
       _installOps();
       _installProf();
+      if (DORMANT_ON) { try { TunerEngine.setDormant(true); } catch (e) {} }
       self.postMessage({ type: 'ready', tag: _workerTag });
     } catch (err) {
       self.postMessage({ type: 'ready', error: _bootError, tag: _workerTag });
@@ -727,6 +836,10 @@ self.onmessage = async (e) => {
       result = fp;
     } else if (type === 'benchExp') {
       result = _benchExp(payload.ticks || 1500, payload.values);
+    } else if (type === 'benchDormant') {
+      result = _benchDormant(payload.ticks || 200000);
+    } else if (type === 'benchVerify') {
+      result = _benchVerify(payload.ticks || 150000);
     } else if (type === 'benchLoop') {
       result = _benchLoop(payload.ticks || 2000, payload.values);
     } else if (type === 'ping') {

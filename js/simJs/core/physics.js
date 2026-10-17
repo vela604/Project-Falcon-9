@@ -1907,6 +1907,7 @@ const speedRel = Math.hypot(relVx, relVy);
   if (!state.bodies.length) return;
   
   state.bodies.forEach((body, idx) => {
+    if (body.dormant) return;   // far-body dormancy (tuner only, set by sim.js; undefined elsewhere)
     // ---- FIX: Sleep early-out ----
     // Ek settled body ko tab tak koi physics nahi milti jab tak user
     // koi input na de. Isse gravity-vs-impulse ka per-tick residual

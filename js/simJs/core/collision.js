@@ -71,7 +71,7 @@ function broadPhaseCollisionPairs() {
   const circles = bodies.map(b => ({
     c: _bodyBoundingCenter(b),
     r: _bodyBoundingRadius(b),
-    newborn: (state.simTime - (b.bornAt ?? -Infinity)) < _bodyGracePeriod(b),
+    newborn: !!b.dormant || (state.simTime - (b.bornAt ?? -Infinity)) < _bodyGracePeriod(b),   // dormant = skipped like newborn
   }));
   
   for (let i = 0; i < n; i++) {
