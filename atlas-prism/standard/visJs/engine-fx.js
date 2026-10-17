@@ -227,10 +227,13 @@
     for (var i = 0; i < W.slots.length; i++) { var s = W.slots[i]; s.share = avg ? s.ticks / avg * 100 : 0; s.res = tot > 0; if (s.state !== 'fail') s.state = 'idle'; }
     if (tot > 0) {
       var wall = Math.max(0.001, (W.t1 - W.t0) / 1000), sim = totalSim();
+      var busySum = 0; for (var q = 0; q < W.slots.length; q++) busySum += W.slots[q].busyMs / 1000;
+      var util = W.n ? busySum / (W.n * wall) * 100 : 0, perCore = busySum > 0 ? tot / busySum : 0;
       var el = $('wkSum');
       if (el) el.innerHTML = '<span class="k">RESULT</span>total <b>' + fmtBig(tot) + '</b> ops · avg <b>' + fmtBig(avg) +
         '</b> ops/worker · avg speed <b>' + fmtBig(avg / wall) + '</b> ops/s/worker (<b>' + fmtBig(tot / wall) + '</b> total) · wall <b>' + fmtDur(wall) +
-        '</b> · sim <b>' + fmtDur(sim) + '</b> (<b>×' + fmtBig(sim / wall) + '</b>)';
+        '</b> · sim <b>' + fmtDur(sim) + '</b> (<b>×' + fmtBig(sim / wall) + '</b>)' +
+        '<br>worker utilization <b>' + util.toFixed(0) + '%</b> (busy time ÷ workers × wall) · speed per busy worker <b>' + fmtBig(perCore) + '</b> ops/s';
     }
     requestPaint();
   }
@@ -279,6 +282,12 @@
       if (c.cls !== cls) { c.cls = cls; s.el.className = cls; }
       var fill = s.res ? Math.min(100, s.share).toFixed(0) + '%' : '';
       if (c.fill !== fill) { c.fill = fill; if (fill) s.el.style.setProperty('--fill', fill); else s.el.style.removeProperty('--fill'); }
+      var over = s.res && s.share > 100 ? Math.min(100, s.share - 100) : 0;   // work beyond 100% of avg -> second, darker green lap
+      if (c.over !== over) {
+        c.over = over;
+        if (over) { s.el.style.setProperty('--over', over.toFixed(0) + '%'); s.el.style.setProperty('--oa', (0.22 + 0.5 * over / 100).toFixed(2)); }
+        else { s.el.style.removeProperty('--over'); s.el.style.removeProperty('--oa'); }
+      }
       var em = (st === 'busy' || st === 'setup') ? s.job : '';
       if (c.em !== em) { c.em = em; r.em.textContent = em; }
       if (st === 'busy' || st === 'setup') {

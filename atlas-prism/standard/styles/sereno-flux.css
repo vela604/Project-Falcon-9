@@ -236,3 +236,9 @@ details.adv > .row label input[type=number]{width:100%;}
              linear-gradient(90deg,transparent calc(4.5px + (100% - 9px) * var(--a)),var(--ph) 0,var(--ph) calc(4.5px + (100% - 9px) * var(--b)),transparent 0),
              var(--line2);}
 #oIdeal::-webkit-slider-thumb{margin-top:-5px;}
+
+/* result fill: 0-100% = base fill; anything above 100% of avg = a second, darker green overlay from the left (114% -> 14% wide) */
+.wk.s-done{background:
+  linear-gradient(90deg,rgba(0,120,50,var(--oa,.4)) 0,rgba(0,120,50,var(--oa,.4)) var(--over,0%),transparent var(--over,0%)),
+  linear-gradient(90deg,var(--rc) 0,var(--rc) var(--fill,0%),#000 var(--fill,0%));}
+.wk.s-done.r-a{--rc:rgba(74,222,128,.30);}

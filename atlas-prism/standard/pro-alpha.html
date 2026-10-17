@@ -2,85 +2,77 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>leoV3 Param Tuner (browser)</title>
-<style>
-:root {
-  --bg: #060912; --panel: #0d1424; --panel-2: #101a30; --border: #1c2b45;
-  --cyan: #35d6ff; --orange: #ff9248; --green: #4ade80; --yellow: #ffd23f;
-  --danger: #ff5f7e; --text: #dbe6f5; --dim: #6b7d9c;
-  --font-head: 'Space Grotesk', system-ui, sans-serif;
-  --font-mono: 'JetBrains Mono', 'Consolas', monospace;
-}
-* { box-sizing: border-box; }
-html, body { margin: 0; background: var(--bg); color: var(--text);
-  font-family: var(--font-head); font-size: 13px; }
-#app { display: flex; flex-direction: column; min-height: 100vh; }
-#topBar { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px; padding: 10px 14px;
-  background: linear-gradient(180deg, #101a30, #0b1220); border-bottom: 1px solid var(--border);
-  font-family: var(--font-mono); }
-.brand { color: var(--cyan); font-weight: 700; }
-.dim { color: var(--dim); }
-.stack-label { color: var(--orange); font-size: 12px; }
-.panel { margin: 10px 14px; padding: 10px 12px; background: var(--panel);
-  border: 1px solid var(--border); border-radius: 6px; }
-.panel h3 { margin: 0 0 8px; font-size: 12px; letter-spacing: .5px; color: var(--cyan);
-  font-family: var(--font-mono); text-transform: uppercase; }
-button { background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
-  padding: 8px 12px; border-radius: 4px; font-family: var(--font-mono); font-size: 12px; }
-button:disabled { opacity: .4; }
-input[type=number] { width: 90px; background: var(--panel-2); color: var(--text);
-  border: 1px solid var(--border); padding: 4px; font-family: var(--font-mono); }
-#status { padding: 8px 14px; font-family: var(--font-mono); font-size: 12px; color: var(--yellow); }
-#log { font-family: var(--font-mono); font-size: 11px; white-space: pre-wrap; max-height: 40vh;
-  overflow: auto; color: var(--text); }
-.ok { color: var(--green); } .bad { color: var(--danger); }
-</style>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PRO ALPHA ENGINE</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="styles/engine-theme.css">
+<link rel="stylesheet" href="styles/pro-alpha.css">
+<script src="../js/szadFont.js" onerror="void 0"></script>
 </head>
-<body>
+<body data-state="idle">
 <div id="app">
-  <div id="topBar">
-    <span class="brand">LEO V3 PARAM TUNER</span>
-    <span class="dim">browser · single-thread</span>
-    <span class="stack-label" id="stackLabel">Stack: …</span>
-  </div>
-  <div id="status">Booting…</div>
 
-  <div class="panel">
-    <h3>Engine (1) · Utils (2) · Eval (3)</h3>
+<!-- ==================== COMMAND BAR ==================== -->
+<header>
+  <a class="back" href="../index.html">&lsaquo; Atlas Prism</a>
+  <h1>PRO <em>ALPHA</em></h1>
+  <span class="crumb">engine <b>/</b> leoInsertionV3 <b>/</b> param tuner <b>/</b> single-thread</span>
+  <div class="chips">
+    <span class="st" id="stState">state <b id="stStateN">idle</b></span>
+    <span class="st" id="stStack"><b id="stackLabel">Stack: &hellip;</b></span>
+  </div>
+</header>
+
+<!-- status line (script writes into #status) -->
+<div id="status">Booting&hellip;</div>
+
+<!-- ==================== 0x01 · ENGINE / UTILS ==================== -->
+<section class="panel">
+  <h2><span class="tag">0x01</span>Engine &middot; Utils &middot; Eval</h2>
+  <div class="row">
     <label>ticks <input type="number" id="smokeTicks" value="4000" min="100" step="100"></label>
-    <button id="smokeBtn" disabled>Smoke test</button>
+    <button class="primary" id="smokeBtn" disabled>Smoke test</button>
     <button id="dumpCfgBtn" disabled>Dump V3 config</button>
     <button id="testBtn">Run self-tests</button>
-    <button id="applyChkBtn" disabled>Apply+verify baseline</button>
+    <button id="applyChkBtn" disabled>Apply + verify baseline</button>
   </div>
+</section>
+
 <div style="display:none">
   <select id="abMode"><option value="fine" selected>fine</option></select>
   <select id="mecoStartSel"><option value="1" selected>baseline</option></select>
   <select id="fullModeSel"><option value="fine" selected>fine</option></select>
 </div>
-  <div class="panel">
-    <label>stopAt
-    <select id="stopAt">
-      <option value="FULL">FULL</option>
-      <option value="DEPLOY">DEPLOY</option>
-      <option value="CIRC_END">CIRC_END</option>
-      <option value="COAST_WAIT_ENTRY">COAST_WAIT_ENTRY</option>
-    </select>
-  </label>
-  <button id="evalSnapBtn" disabled>Eval: snapped baseline</button>
-  <button id="evalRawBtn" disabled>Eval: raw baseline</button>
-  <button id="evalTwiceBtn" disabled>Determinism (x2)</button>
-  <button id="evalRefBtn" disabled>Ref points Δv (3x COAST_WAIT)</button>
-  <button id="evalAbortBtn">Abort</button>
-</div>
 
+<!-- ==================== 0x02 · EVAL ==================== -->
+<section class="panel">
+  <h2><span class="tag">0x02</span>Evaluate baseline</h2>
+  <div class="row">
+    <label>stop at
+      <select id="stopAt">
+        <option value="FULL">FULL</option>
+        <option value="DEPLOY">DEPLOY</option>
+        <option value="CIRC_END">CIRC_END</option>
+        <option value="COAST_WAIT_ENTRY">COAST_WAIT_ENTRY</option>
+      </select>
+    </label>
+    <button id="evalSnapBtn" disabled>Eval: snapped baseline</button>
+    <button id="evalRawBtn" disabled>Eval: raw baseline</button>
+    <button id="evalTwiceBtn" disabled>Determinism (x2)</button>
+    <button id="evalRefBtn" disabled>Ref points &Delta;v (3x COAST_WAIT)</button>
+    <button class="reset" id="evalAbortBtn">Abort</button>
+  </div>
+</section>
+
+<!-- tuner UI (host.js) mounts here -->
 <div id="tunerUIHost"></div>
 
-<div class="panel">
-  <h3>Log</h3>
+<!-- ==================== 0x03 · LOG ==================== -->
+<section class="panel">
+  <h2><span class="tag">0x07</span>Log</h2>
   <div id="log"></div>
-</div>
+</section>
 </div>
 
 <!-- ============================================================================
@@ -166,7 +158,11 @@ input[type=number] { width: 90px; background: var(--panel-2); color: var(--text)
           ' bias=' + ins.STAGE_BURN_AOA_BIAS_DEG + ' margin=' + ins.STAGE_BURN_AOA_MARGIN_DEG +
           ' lead=' + ins.CIRC_TRIGGER_LEAD_S + ' alt=' + ins.TARGET_ORBIT_ALT_KM);
       // mount the tuner UI (Step 9) — inputs, run/stop, progress, leaderboard with sort tabs
-if (window.TunerUI) window.TunerUI.mount($('tunerUIHost'), { log: (l) => log(l) });
+if (window.TunerUI) window.TunerUI.mount($('tunerUIHost'), {
+  log: (l) => log(l),
+  // tuner runs drive the header state chip + status line (the status mirror below stands down while a run is active)
+  onState: (state, text) => { document.body.toggleAttribute('data-tui', state === 'running'); document.body.setAttribute('data-state', state); document.getElementById('stStateN').textContent = state; statusEl.textContent = text; }
+});
 
 statusEl.textContent = 'Ready.';
 $('smokeBtn').disabled = false; $('dumpCfgBtn').disabled = false; $('applyChkBtn').disabled = false;
@@ -445,6 +441,25 @@ $('smokeBtn').disabled = false; $('dumpCfgBtn').disabled = false; $('applyChkBtn
   });
 
   boot();
+})();
+</script>
+
+<script>
+// header state chip follows the status line (idle / running / ready / error); no changes to the tuner script itself
+(function () {
+  var st = document.getElementById('status'), sn = document.getElementById('stStateN');
+  function sync() {
+    if (document.body.hasAttribute('data-tui')) return;
+    var t = st.textContent || '', v;
+    if (/fail|error/i.test(t)) v = 'error';
+    else if (/^boot/i.test(t)) v = 'idle';
+    else if (/\u2026|\.\.\./.test(t)) v = 'running';
+    else if (/^(ready|.*\b(done|ok)\.?)$/i.test(t)) v = 'ready';
+    else v = 'idle';
+    document.body.setAttribute('data-state', v); sn.textContent = v;
+  }
+  new MutationObserver(sync).observe(st, { childList: true, characterData: true, subtree: true });
+  sync();
 })();
 </script>
 </body>

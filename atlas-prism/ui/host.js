@@ -11,6 +11,23 @@
 
   const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const fmt = (x, d) => (Number.isFinite(x) ? x.toFixed(d) : '–');
+  const pad2 = (n) => (n < 10 ? '0' : '') + n;
+  function fmtBig(n) {   // 1.2K · 3.45M · 12.3B · 1.00T
+    if (!Number.isFinite(n) || n < 0) return '–';
+    const U2 = [['T', 1e12], ['B', 1e9], ['M', 1e6], ['K', 1e3]];
+    for (let i = 0; i < U2.length; i++) if (n >= U2[i][1]) { const v = n / U2[i][1]; return (v >= 100 ? v.toFixed(0) : v >= 10 ? v.toFixed(1) : v.toFixed(2)) + U2[i][0]; }
+    return String(Math.round(n));
+  }
+  function fmtDur(sec) {
+    if (!Number.isFinite(sec)) return '–';
+    if (sec < 60) return sec.toFixed(sec < 10 ? 2 : 1) + 's';
+    let m = Math.floor(sec / 60); const sc = Math.floor(sec % 60);
+    if (m < 60) return m + 'm ' + pad2(sc) + 's';
+    let h = Math.floor(m / 60); m %= 60;
+    if (h < 24) return h + 'h ' + pad2(m) + 'm';
+    return Math.floor(h / 24) + 'd ' + pad2(h % 24) + 'h';
+  }
+  const fmtClock = (s) => { s = Math.max(0, Math.floor(s)); return pad2(Math.floor(s / 3600)) + ':' + pad2(Math.floor(s % 3600 / 60)) + ':' + pad2(s % 60); };
   const TAB_LABEL = { score: 'Score', accuracy: 'Accuracy', fuel: 'Fuel', time: 'Time' };
 
   function rowJson(row, altKm) { return U().toValues(row.point, { targetAltKm: altKm != null ? altKm : C().fixed.targetAltKm }); }
@@ -81,28 +98,91 @@
   }
 
   const CSS = `
-.tui{font-family:var(--font-mono,monospace);font-size:12px}
-.tui .row{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center;margin:6px 0}
-.tui label{display:inline-flex;gap:4px;align-items:center;color:var(--dim,#6b7d9c)}
-.tui select,.tui input[type=number]{background:var(--panel-2,#101a30);color:var(--text,#dbe6f5);border:1px solid var(--border,#1c2b45);padding:4px;font-family:inherit;width:auto}
-.tui input[type=number]{width:80px}
-.tui input[type=number]:disabled{opacity:.45}
-.tui button.go{background:#12351f;border-color:#2a7a47;color:var(--green,#4ade80)}
-.tui button.stop{background:#3a1520;border-color:#8a2a45;color:var(--danger,#ff5f7e)}
-.tui-stat{color:var(--yellow,#ffd23f);margin:4px 0}.tui-dim{color:var(--dim,#6b7d9c)}.tui-bad{color:var(--danger,#ff5f7e)}.tui-ok{color:var(--green,#4ade80)}
-.tui-sum{margin:4px 0 8px;word-break:break-word}
-.tui-tabs{display:flex;gap:4px;margin:6px 0}.tui-tab.on{background:#0f3a4a;border-color:var(--cyan,#35d6ff);color:var(--cyan,#35d6ff)}
-.tui-row{border:1px solid var(--border,#1c2b45);border-radius:4px;margin:4px 0;padding:4px 8px;background:var(--panel-2,#101a30)}
-.tui-row summary{cursor:pointer;word-break:break-word}.tui-rej{opacity:.55}
-.tui-rank{color:var(--orange,#ff9248);font-weight:700}.tui-key{color:var(--cyan,#35d6ff);font-weight:700}
-.tui-badge{background:#3a1520;color:var(--danger,#ff5f7e);padding:0 4px;border-radius:3px}
-.tui-grid{display:grid;grid-template-columns:auto 1fr auto 1fr;gap:2px 10px;margin:6px 0}.tui-k{color:var(--dim,#6b7d9c)}
-.tui-btns{display:flex;gap:6px;margin:6px 0;flex-wrap:wrap}
-.tui pre{white-space:pre-wrap;max-height:30vh;overflow:auto;font-size:11px;margin:4px 0}
-.tui .cfgsec{margin:6px 0 2px;color:var(--cyan,#35d6ff);font-size:11px;letter-spacing:.4px;text-transform:uppercase}
-.tui .cfgwrap{display:flex;flex-wrap:wrap;gap:8px 14px;margin:4px 0}
-.tui .cfgwrap label{color:var(--dim,#6b7d9c)}
-.tui textarea{width:100%;min-height:70px;background:var(--panel-2,#101a30);color:var(--text,#dbe6f5);border:1px solid var(--border,#1c2b45);font-family:inherit;font-size:11px;padding:4px;margin-top:4px}`;
+/* tuner UI — pro-alpha look (uses engine-theme.css tokens; fallbacks keep it usable standalone) */
+.tui{font-family:var(--mono,monospace);font-size:12px}
+.tui-cols{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:14px;align-items:start;margin-bottom:14px}
+.tui-col{min-width:0}.tui-col>.panel{margin-bottom:14px}.tui-col>.panel:last-child{margin-bottom:0}
+@media (max-width:1100px){.tui-cols{grid-template-columns:minmax(0,1fr)}}
+.tui .row{margin:10px 0}
+.tui .row label input[type=number]{width:var(--fld-w,96px);height:var(--fld-h,32px);box-sizing:border-box}
+.tui select{height:var(--fld-h,32px);min-width:140px;max-width:100%}
+.tui #tuiStart,.tui #tuiStrategy{min-width:220px}
+.tui input[type=number]:disabled{opacity:.4}
+.tui button.go{background:#fff;color:#000;border-color:#fff}
+.tui button.go:hover:not(:disabled){background:var(--ph,#a78bfa);border-color:var(--ph,#a78bfa);color:#000}
+.tui button.stop{color:var(--red,#ff4d5e);border-color:rgba(255,77,94,.55)}
+.tui button.stop:hover:not(:disabled){background:var(--red,#ff4d5e);border-color:var(--red,#ff4d5e);color:#000}
+.tui .row button{height:var(--fld-h,32px);padding-top:0;padding-bottom:0}
+.tui-dim{color:var(--dim,#8a8a8a)}.tui-bad{color:var(--red,#ff4d5e)}.tui-ok{color:var(--green,#4ade80)}
+.tui .row > .tui-dim{align-self:center;font-size:11px}
+
+/* config */
+.tui .cfgsec{display:flex;align-items:center;gap:10px;margin:14px 0 10px;color:var(--ph,#a78bfa);font-size:9.5px;letter-spacing:.18em;text-transform:uppercase;font-weight:700}
+.tui .cfgsec::after{content:"";flex:1;height:1px;background:var(--line,#333)}
+.tui .cfgwrap{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px 18px;margin:6px 0 12px}
+.tui .cfgwrap label{display:flex;flex-direction:column;gap:3px;min-width:0;justify-content:flex-end;font:400 9.5px var(--mono,monospace);letter-spacing:.16em;text-transform:uppercase;color:var(--dim,#8a8a8a)}
+.tui .cfgwrap label input[type=number]{width:100%;height:var(--fld-h,32px);box-sizing:border-box}
+@media (max-width:700px){.tui .cfgwrap{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.tui textarea{width:100%;min-height:70px;background:#000;color:#fff;border:1px solid var(--line2,#555);font-family:inherit;font-size:11px;padding:6px 8px;margin-top:6px;border-radius:0;outline:0}
+.tui textarea:focus{border-color:var(--ph,#a78bfa)}
+
+/* telemetry: run strip (4 equal cells) + phase cells + status prompt */
+.tui-strip,.tui-tm{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));margin:0 0 12px;border:1px solid var(--line,#333)}
+.tui-strip{border-color:var(--line2,#555);grid-template-columns:1.3fr 1fr 1fr 1fr}
+.tui-strip>div,.tui-tm>div{padding:9px 12px;border-right:1px solid var(--line,#333);min-width:0}
+.tui-strip>div:last-child,.tui-tm>div:last-child{border-right:0}
+.tui-strip span,.tui-tm span{display:flex;align-items:center;gap:8px;font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim,#8a8a8a);white-space:nowrap}
+.tui-strip span em{font-style:normal;overflow:hidden;text-overflow:ellipsis}
+.tui-strip span small{font-size:8px;letter-spacing:.12em;color:var(--faint,#666);border:1px solid var(--line,#333);padding:0 4px}
+.tui-strip b,.tui-tm b{display:block;margin-top:2px;font:700 16px/1.25 var(--mono,monospace);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tui-tm b{font-size:18px}
+.tui-strip b small{font:400 10px var(--mono,monospace);letter-spacing:.08em;color:var(--dim,#8a8a8a);margin-left:6px;border:0;padding:0}
+.tui-strip b small.x{color:var(--green,#4ade80);margin-left:4px;font-size:9px}
+.tui-strip>div:nth-child(1) b{color:var(--cyan,#35d6ff)}.tui-strip>div:nth-child(2) b{color:var(--amber,#ffb020)}
+.tui-strip>div:nth-child(3) b{color:var(--violet,#a78bfa)}.tui-strip>div:nth-child(4) b{color:var(--green,#4ade80)}
+.tui-tm>div:nth-child(1) b{color:var(--cyan,#35d6ff)}.tui-tm>div:nth-child(2) b{color:var(--amber,#ffb020)}
+.tui-tm>div:nth-child(3) b{color:var(--violet,#a78bfa)}.tui-tm>div:nth-child(4) b{color:var(--green,#4ade80)}
+.tui-spin{display:none;flex:0 0 auto;width:9px;height:9px;border:1.5px solid var(--line2,#555);border-top-color:var(--amber,#ffb020);border-radius:50%;animation:tuisp .8s linear infinite}
+.tui-prompt{color:var(--green,#4ade80);font-weight:700;font-style:normal}
+.tui.is-running .tui-spin{display:inline-block}.tui.is-running .tui-prompt{display:none}
+.tui #tuiFlag.is-running{color:var(--amber,#ffb020);border-color:var(--amber,#ffb020)}
+.tui #tuiFlag.is-ready{color:var(--green,#4ade80);border-color:var(--green,#4ade80)}
+.tui #tuiFlag.is-error{color:var(--red,#ff4d5e);border-color:var(--red,#ff4d5e)}
+@keyframes tuisp{to{transform:rotate(360deg)}}
+@media (max-width:820px){.tui-strip,.tui-tm{grid-template-columns:repeat(2,minmax(0,1fr))}.tui-strip>div:nth-child(2),.tui-tm>div:nth-child(2){border-right:0}
+  .tui-strip>div:nth-child(-n+2),.tui-tm>div:nth-child(-n+2){border-bottom:1px solid var(--line,#333)}}
+.tui-stat{display:flex;gap:10px;align-items:flex-start;padding:8px 12px;margin:0 0 10px;border:1px solid var(--line,#333);color:var(--amber,#ffb020);word-break:break-word;min-height:2.6em}
+.tui-stat::before{content:"$";color:var(--green,#4ade80);font-weight:700}
+.tui-runsum{margin:0 0 10px;padding:7px 12px;border:1px solid var(--line,#333);font-size:10.5px;color:var(--dim,#8a8a8a);line-height:1.7}
+.tui-runsum:empty{display:none}.tui-runsum b{color:#fff}.tui-runsum .k{color:var(--green,#4ade80);letter-spacing:.16em;font-weight:700;margin-right:10px}
+.tui-last{min-height:1.6em;margin-bottom:6px;font-size:11px;word-break:break-word}
+.tui details.tui-logd{margin-top:6px}.tui details.tui-logd>summary{cursor:pointer;color:var(--dim,#8a8a8a);font-size:10.5px;letter-spacing:.2em;text-transform:uppercase;list-style:none}
+.tui details.tui-logd>summary::-webkit-details-marker{display:none}
+.tui details.tui-logd>summary::before{content:"+ ";color:var(--ph,#a78bfa)}.tui details.tui-logd[open]>summary::before{content:"\\2212 "}
+.tui pre{white-space:pre-wrap;max-height:34vh;overflow:auto;font-size:11px;line-height:1.6;margin:8px 0 0;padding:8px 12px;background:#000;border:1px solid var(--line,#333);color:rgba(255,255,255,.78)}
+
+/* leaderboard */
+.tui-sum{margin:0 0 12px;padding:8px 12px;border:1px solid var(--line2,#555);word-break:break-word}
+.tui-sum.tui-ok{border-color:rgba(74,222,128,.5);background:rgba(74,222,128,.05)}
+.tui-sum.tui-bad{border-color:rgba(255,77,94,.5);background:rgba(255,77,94,.06)}
+.tui-tabs{display:flex;flex-wrap:wrap;width:max-content;max-width:100%;margin:4px 0 12px;border:1px solid var(--line2,#555)}
+.tui-tab{background:transparent;color:var(--dim,#8a8a8a);border:0;border-right:1px solid var(--line,#333);padding:8px 14px;border-radius:0;font:500 10.5px var(--mono,monospace);letter-spacing:.1em;text-transform:uppercase}
+.tui-tab:last-child{border-right:0}.tui-tab.on{background:#fff;color:#000;font-weight:700}
+.tui-row{border:1px solid var(--line,#333);border-left:2px solid var(--line2,#555);margin:6px 0;padding:0;background:#000}
+.tui-row:hover{border-color:#fff}
+#tuiRes details.tui-row:first-of-type{border-left-color:var(--green,#4ade80)}
+.tui-row summary{cursor:pointer;word-break:break-word;padding:8px 14px}
+.tui-row[open] summary{border-bottom:1px solid var(--line,#333)}
+.tui-row>:not(summary){margin-left:14px;margin-right:14px}
+.tui-rej{border-left-color:var(--red,#ff4d5e)!important;opacity:.7}
+.tui-rank{color:#fff;font-weight:700;margin-right:6px}.tui-key{color:var(--amber,#ffb020);font-weight:700}
+.tui-badge{color:var(--red,#ff4d5e);border:1px solid rgba(255,77,94,.55);padding:0 6px;font-size:9.5px;letter-spacing:.12em}
+.tui-grid{display:grid;grid-template-columns:auto 1fr auto 1fr;gap:3px 14px;margin:10px 14px}
+.tui-grid span:not(.tui-k){color:var(--amber,#ffb020)}.tui-k{color:var(--dim,#8a8a8a)}
+.tui-btns{display:flex;gap:8px;margin:10px 14px 12px;flex-wrap:wrap}
+#tuiRes>.tui-btns{margin:12px 0 0}
+.tui-row .tui-btns button,#tuiRes>.tui-btns button{padding:7px 12px;font-size:10px}
+@media (max-width:700px){.tui-grid{grid-template-columns:auto 1fr}}`;
 
   function copyText(txt) {
     if (root.navigator && root.navigator.clipboard && root.navigator.clipboard.writeText) return root.navigator.clipboard.writeText(txt);
@@ -203,8 +283,7 @@
       '<label>' + f.label + ' <input type="number" id="' + f.id + '" data-path="' + f.path + '" data-group="search" step="' + (f.step || 1) + '"' +
       (f.min != null ? ' min="' + f.min + '"' : '') + (f.max != null ? ' max="' + f.max + '"' : '') + '></label>').join('');
 
-    el.innerHTML =
-      '<div class="panel tui"><h3>Tuner</h3>' +
+    const rowsTop =
       '<div class="row"><label>alt km <input type="number" id="tuiAlt" value="' + cfg.fixed.targetAltKm + '" step="1" min="150"></label>' +
       '<label>strategy <select id="tuiStrategy">' + stratOpts + '</select></label>' +
       '<label>start <select id="tuiStart">' + refs + '</select></label>' +
@@ -212,22 +291,38 @@
       '<label><input type="checkbox" id="tuiDeorbit"> deorbit ON (band 500-600 kg)</label>' +
       '<label>duration cap s <input type="number" id="tuiDurCap" step="10" min="100"></label>' +
       '<button id="tuiDurCapAuto" title="Use the suggested value for the current altitude">auto</button>' +
-      '<span class="tui-dim" id="tuiDurCapHint"></span></div>' +
+      '<span class="tui-dim" id="tuiDurCapHint"></span></div>';
+    el.innerHTML =
+      '<div class="tui-cols"><div class="tui-col">' +
+      '<div class="panel tui"><h2><span class="tag">0x03</span>Tuner</h2>' + rowsTop +
       '<div class="row"><label><input type="checkbox" id="tuiAtm" checked> atmosphere</label><label><input type="checkbox" id="tuiSlosh" checked> slosh</label>' +
       '<label><input type="checkbox" id="tuiImu"> IMU</label><label><input type="checkbox" id="tuiWind"> wind</label>' +
-      '<label>m/s <input type="number" id="tuiWindSpd" value="0" step="1" min="0"></label><label>dir° <input type="number" id="tuiWindDir" value="0" step="5"></label>' +
+      '<label>m/s <input type="number" id="tuiWindSpd" value="0" step="1" min="0"></label><label>dir&deg; <input type="number" id="tuiWindDir" value="0" step="5"></label>' +
       '<label>booster % <input type="number" id="tuiBoost" value="100" min="0" max="100"></label><label>stage % <input type="number" id="tuiStage" value="100" min="0" max="100"></label></div>' +
       '<div class="row"><button class="go" id="tuiRun">Run tuner</button><button class="stop" id="tuiStop" disabled>Stop</button>' +
       '<span class="tui-dim" id="tuiStratDesc"></span><span class="tui-dim" id="tuiNote"></span></div></div>' +
-      '<div class="panel tui"><h3>Config</h3>' +
-      '<div class="cfgsec">Ranking — applies immediately (re-scores the leaderboard)</div><div class="cfgwrap">' + rankFields + '</div>' +
-      '<div class="cfgsec">Search — applies to the next run</div><div class="cfgwrap">' + searchFields + '</div>' +
+      '<div class="panel tui"><h2><span class="tag">0x04</span>Config</h2>' +
+      '<div class="cfgsec">Ranking &mdash; applies immediately (re-scores the leaderboard)</div><div class="cfgwrap">' + rankFields + '</div>' +
+      '<div class="cfgsec">Search &mdash; applies to the next run</div><div class="cfgwrap">' + searchFields + '</div>' +
       '<div class="row"><button id="tuiExpBtn">Export config</button><button id="tuiImpBtn">Import config</button><button id="tuiRstBtn">Reset defaults</button>' +
       '<span class="tui-dim" id="tuiCfgStatus"></span></div>' +
       '<textarea id="tuiCfgIOText" placeholder="Paste config JSON here, then click Import (missing or invalid fields keep their current value)." hidden></textarea></div>' +
-      '<div class="panel tui"><h3>Progress</h3><div class="tui-stat" id="tuiStat">idle</div><div class="tui-dim" id="tuiLast"></div>' +
-      '<details><summary class="tui-dim">log</summary><pre id="tuiLog"></pre></details></div>' +
-      '<div class="panel tui" id="tuiResPanel" hidden><h3>Result · leaderboard</h3><div id="tuiRes"></div></div>';
+      '</div><div class="tui-col">' +
+      '<div class="panel tui" id="tuiTelePanel"><h2><span class="tag">0x05</span>Telemetry</h2>' +
+      '<div class="tui-strip">' +
+      '<div><span><i class="tui-prompt">$</i><i class="tui-spin"></i><em>elapsed</em><small id="tuiFlag">IDLE</small></span><b id="tuiElapsed">00:00:00</b></div>' +
+      '<div><span><em>operations / s</em></span><b id="tuiOps">&mdash;</b></div>' +
+      '<div><span><em>total operations</em></span><b id="tuiTotal">0</b></div>' +
+      '<div><span><em>total sim time</em></span><b id="tuiSim">&mdash;</b></div></div>' +
+      '<div class="tui-stat" id="tuiStat">idle</div>' +
+      '<div class="tui-tm">' +
+      '<div><span>evals</span><b id="tuiEvals">0</b></div><div><span>iter</span><b id="tuiIter">&mdash;</b></div>' +
+      '<div><span>MECO kg</span><b id="tuiMeco">&mdash;</b></div><div><span>lane</span><b id="tuiLane">&mdash;</b></div></div>' +
+      '<div class="tui-runsum" id="tuiRunSum"></div>' +
+      '<div class="tui-dim tui-last" id="tuiLast"></div>' +
+      '<details class="tui-logd"><summary>log</summary><pre id="tuiLog"></pre></details></div>' +
+      '</div></div>' +
+      '<div class="panel tui" id="tuiResPanel" hidden><h2><span class="tag">0x06</span>Result &middot; leaderboard</h2><div id="tuiRes"></div></div>';
 
     const $ = (id) => el.querySelector('#' + id);
     const S = { res: null, sort: 'score', alt: cfg.fixed.targetAltKm, rows: [], running: false, abortRef: { aborted: false }, refs: REFS };
@@ -339,6 +434,20 @@
       cfgStatus('reset to page-load defaults', 'tui-ok');
     });
 
+    // ---- telemetry helpers ----
+    const setHtml = (id, v) => { const n = $(id); if (n && n.getAttribute('data-v') !== v) { n.setAttribute('data-v', v); n.innerHTML = v; } };
+    const emit = (state, text) => { try { if (opts.onState) opts.onState(state, text); } catch (_) {} };
+    function setRunning(on, endState) {
+      const panel = $('tuiTelePanel'); if (panel) panel.classList.toggle('is-running', on);
+      const f = $('tuiFlag'); if (f) { f.className = 'is-' + (on ? 'running' : (endState || 'idle')); f.textContent = on ? 'WAIT' : (endState === 'error' ? 'ERROR' : endState === 'ready' ? 'DONE' : 'IDLE'); }
+    }
+    function resetTele(clearSum) {
+      ['tuiElapsed'].forEach((i) => { $(i).textContent = '00:00:00'; });
+      setHtml('tuiOps', '–'); setHtml('tuiTotal', '0<small>ops</small>'); setHtml('tuiSim', '–');
+      $('tuiEvals').textContent = '0'; $('tuiIter').textContent = '–'; $('tuiMeco').textContent = '–'; $('tuiLane').textContent = '–';
+      if (clearSum) $('tuiRunSum').textContent = '';
+    }
+
     // ---- run / stop / result ----
     function renderResult() {
       $('tuiResPanel').hidden = false;
@@ -376,14 +485,39 @@
       S.alt = alt;
       const st = { phase: 'starting' }, t0 = performance.now(), hs0 = Object.assign({}, root.TunerHook ? root.TunerHook.stats : {});
       let simInfo = '';
+      // "operations" = TunerEngine.tick calls actually executed (same definition as the Sereno worker counter).
+      // NOTE: TunerHook's m.ticks / stats.ticks is the loop index, so a resumed (checkpoint) eval also counts the ticks it skipped.
+      const DT = (typeof CONFIG !== 'undefined' && CONFIG && CONFIG.DT) || 0.02;
+      let tickCount = 0, simAcc = 0, lastTotal = 0, lastEvals = 0, lastSim = 0;
+      const eng = root.TunerEngine, origTick = eng && eng.tick;
+      if (origTick) eng.tick = function () { tickCount++; simAcc += +arguments[0] || DT; return origTick.apply(this, arguments); };
+      const samples = [];
+      resetTele(true);
+      setRunning(true);
+      emit('running', 'Tuner starting…');
       const tick = () => {
+        const now = performance.now();
         const hs = root.TunerHook ? root.TunerHook.stats : { evals: 0, ticks: 0, wallMs: 0 };
-        const evals = hs.evals - (hs0.evals || 0), tps = (hs.ticks - (hs0.ticks || 0)) / Math.max(1e-9, (hs.wallMs - (hs0.wallMs || 0)) / 1000);
+        const evals = hs.evals - (hs0.evals || 0);
+        const total = tickCount;
+        lastTotal = total; lastEvals = evals; lastSim = simAcc;
+        samples.push([now, total]); while (samples.length > 2 && now - samples[0][0] > 2000) samples.shift();
+        const rate = samples.length > 1 ? Math.max(0, (total - samples[0][1]) / ((now - samples[0][0]) / 1000)) : 0;
+        const wall = (now - t0) / 1000, sim = simAcc;
         const evInfo = st.evalId ? (st.evalWaiting ? ' · ▶ eval #' + st.evalId + ' [' + (st.evalStop || '?') + ']…' : ' · ◀ eval #' + st.evalId) : '';
-        $('tuiStat').textContent = st.phase + (st.iter ? ' · iter ' + st.iter + ' MECO ' + st.meco : '') + (st.lane ? ' · lane ' + st.lane : '') +
-          evInfo + ' · evals ' + evals + ' · ' + fmt((performance.now() - t0) / 1000, 0) + ' s · ' + fmt(tps, 0) + ' t/s' + simInfo;
+        const line = st.phase + evInfo + simInfo;
+        $('tuiStat').textContent = line;
+        $('tuiElapsed').textContent = fmtClock(wall);
+        setHtml('tuiOps', S.running ? fmtBig(rate) + '<small>ops/s</small>' : '0<small>ops/s</small>');
+        setHtml('tuiTotal', fmtBig(total) + '<small>ops</small>');
+        setHtml('tuiSim', total > 0 ? fmtDur(sim) + (wall > 0.5 ? '<small class="x">×' + fmtBig(sim / wall) + '</small>' : '') : '–');
+        $('tuiEvals').textContent = evals;
+        $('tuiIter').textContent = st.iter != null ? st.iter : '–';
+        $('tuiMeco').textContent = st.meco != null ? st.meco : '–';
+        $('tuiLane').textContent = st.lane || '–';
         $('tuiLast').textContent = logBuf.length ? logBuf[logBuf.length - 1] : '';
         $('tuiLog').textContent = logBuf.slice(-300).join('\n');
+        if (S.running) emit('running', line);
       };
       const timer = setInterval(tick, 500);
       try {
@@ -395,17 +529,26 @@
         st.phase = '[' + stratName + '] starting';
         const res = await strat.runTuner(p, { mode, deorbit, env, targetAltKm: alt, abortRef: S.abortRef,
           onLog: (l) => { logBuf.push(l); parseLogLine(l, st); if (opts.log) opts.log(l); },
-          onProgress: (q) => { simInfo = ' · t=' + fmt(q.simTime, 0) + 's ' + (q.phase || ''); } });
+          onProgress: (q) => { simInfo = ' · t=' + fmt(q.simTime, 0) + 's ' + (q.phase || '') } });
         S.res = res; S.res.altKm = alt; S.sort = 'score'; renderResult();
         st.phase = res.ok ? 'done' : 'finished: ' + res.status;
       } catch (e) {
         st.phase = 'ERROR: ' + e.message; logBuf.push('ERROR: ' + e.message); console.error(e);
       } finally {
-        clearInterval(timer); tick();
+        clearInterval(timer);
+        if (origTick && eng.tick !== origTick) eng.tick = origTick;
         cfg.fixed.deorbitEnabled = prevDeorbit;
         cfg.durationCapS = prevCap;
         setSearchDisabled(false);
         S.running = false; $('tuiRun').disabled = false; $('tuiStop').disabled = true;
+        tick();
+        // result line: whole-run totals (a new run resets everything above)
+        const wallS = Math.max(0.001, (performance.now() - t0) / 1000), simS = lastSim, failed = /^ERROR/.test(st.phase) || /finished/.test(st.phase);
+        if (lastTotal > 0) $('tuiRunSum').innerHTML = '<span class="k">RESULT</span>total <b>' + fmtBig(lastTotal) + '</b> ops · <b>' + lastEvals + '</b> evals · avg <b>' +
+          fmtBig(lastEvals ? lastTotal / lastEvals : 0) + '</b> ops/eval · avg speed <b>' + fmtBig(lastTotal / wallS) + '</b> ops/s · wall <b>' + fmtDur(wallS) +
+          '</b> · sim <b>' + fmtDur(simS) + '</b> (<b>×' + fmtBig(simS / wallS) + '</b>)';
+        setRunning(false, failed ? 'error' : 'ready');
+        emit(failed ? 'error' : 'ready', st.phase);
       }
     });
 
