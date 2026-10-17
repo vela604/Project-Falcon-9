@@ -271,7 +271,7 @@ async function runToCW(tCheck, capS) {
 // PROF_BENCH adds ~0.3 s once per setupSA (micro-benchmark on the SA snapshot); set false after measuring.
 const PROF_ON = true, PROF_BENCH = true;
 // Far-body dormancy (booster/fairings skipped once >100 km from the stage). Verified IDENTICAL (RUN DORMANT VERIFY, 3 param sets). Set false to disable.
-const DORMANT_ON = false;
+const DORMANT_ON = true;
 let _tk = 0;   // tick counter (incremented in the ops wrapper)
 const _P = { restore: 0, capture: 0, prep: 0, job: 0, ch: 0, chT: 0, circ: 0, circT: 0, full: 0, fullT: 0 };
 function _flushProf() {
