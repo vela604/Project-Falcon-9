@@ -267,6 +267,91 @@ async function runToCW(tCheck, capS) {
 }
 
 
+// ---- PROF (telemetry only; sim results untouched). Set PROF_ON=false to remove all overhead. ----
+// PROF_BENCH adds ~0.3 s once per setupSA (micro-benchmark on the SA snapshot); set false after measuring.
+const PROF_ON = true, PROF_BENCH = true;
+let _tk = 0;   // tick counter (incremented in the ops wrapper)
+const _P = { restore: 0, capture: 0, prep: 0, job: 0, ch: 0, chT: 0, circ: 0, circT: 0, full: 0, fullT: 0 };
+function _flushProf() {
+  if (!PROF_ON) return;
+  const d = {}; let any = false;
+  for (const k in _P) { if (_P[k]) { d[k] = _P[k]; any = true; _P[k] = 0; } }
+  if (any) { try { self.postMessage({ type: 'prof', tag: _workerTag, d }); } catch (e) {} }
+}
+function _installProf() {
+  if (!PROF_ON || self.__profWrapped) return;
+  try {
+    const rs = restoreSnap, cs = captureSnap, pr = TunerEngine.prepareRun;
+    restoreSnap = function () { const t = performance.now(); try { return rs.apply(this, arguments); } finally { _P.restore += performance.now() - t; } };
+    captureSnap = function () { const t = performance.now(); try { return cs.apply(this, arguments); } finally { _P.capture += performance.now() - t; } };
+    TunerEngine.prepareRun = function () { const t = performance.now(); try { return pr.apply(this, arguments); } finally { _P.prep += performance.now() - t; } };
+    self.__profRaw = { rs, cs };
+    self.__profWrapped = true;
+  } catch (e) {}
+}
+// Micro-benchmark from the SA snapshot (state is restored to SA afterwards; every later job starts with prepareRun/restoreSnap anyway).
+function _bench() {
+  const B = {}, sv = Object.assign({}, _P), ol = console.log; console.log = function () {};
+  const raw = (self.__profRaw || {}), rs = raw.rs || restoreSnap, cs = raw.cs || captureSnap;
+  const tick = TunerEngine.__rawTick || TunerEngine.tick;   // unwrapped: bench ticks are not counted as ops
+  try {
+    const per = (fn, n) => { const a = performance.now(); for (let i = 0; i < n; i++) fn(); return (performance.now() - a) / n; };
+    B.gsUs = per(() => Guidance.getGuideStatus(), 2000) * 1000;
+    B.capMs = per(() => cs(), 5);
+    B.resMs = per(() => rs(_saSnapshot, null, null, null), 5);
+    try { B.snapKB = JSON.stringify(_saSnapshot).length / 1024; } catch (e) { B.snapKB = -1; }
+    const N = 500;
+    rs(_saSnapshot, null, null, null);
+    let a = performance.now(), n = 0;
+    for (; n < N; n++) { if (state.halted) break; tick.call(TunerEngine, CONFIG.DT); }
+    B.tickUs = (performance.now() - a) / Math.max(1, n) * 1000;
+    rs(_saSnapshot, null, null, null);
+    a = performance.now(); n = 0;
+    for (; n < N; n++) { if (state.halted) break; tick.call(TunerEngine, CONFIG.DT); Guidance.getGuideStatus(); }
+    B.tickGsUs = (performance.now() - a) / Math.max(1, n) * 1000;
+    rs(_saSnapshot, null, null, null);
+  } catch (e) { B.err = (e && e.message) || String(e); }
+  finally { console.log = ol; Object.assign(_P, sv); }
+  try { self.postMessage({ type: 'prof', tag: _workerTag, bench: B }); } catch (e) {}
+}
+
+// Fixed-work loop shapes for the standalone bench page (sereno-bench.html). Telemetry only: starts from the SA snapshot, leaves state at SA.
+function _benchLoop(N, values) {
+  const R = {}, sv = Object.assign({}, _P), ol = console.log; console.log = function () {};
+  const raw = self.__profRaw || {}, rs = raw.rs || restoreSnap, cs = raw.cs || captureSnap;
+  const tick = (TunerEngine.__rawTick || TunerEngine.tick).bind(TunerEngine), dt = CONFIG.DT;
+  const run = (name, snap, step) => {
+    rs(snap, null, null, null);
+    const a = performance.now(); let n = 0;
+    for (; n < N; n++) { if (state.halted) break; step(); }
+    R[name] = (performance.now() - a) / Math.max(1, n) * 1000; R[name + 'N'] = n;
+  };
+  try {
+    run('raw', _saSnapshot, () => tick(dt));
+    run('gs', _saSnapshot, () => { tick(dt); Guidance.getGuideStatus(); });
+    run('circ', _saSnapshot, () => { tick(dt); const gs = Guidance.getGuideStatus(); const stb = findStageBody(); if (stb && gs) Math.hypot(stb.rx, stb.ry); });
+    // advance to COAST_WAIT (stage burn + rotate), then the same shapes in coast
+    rs(_saSnapshot, null, null, null);
+    const t0 = performance.now(); let k = 0, cw = false;
+    for (; k < 45000; k++) { if (state.halted) break; tick(dt); const g = Guidance.getGuideStatus(); if (g && g.phase === 'COAST_WAIT') { cw = true; break; } }
+    R.toCoastMs = performance.now() - t0; R.toCoastTicks = k; R.coastReached = cw;
+    if (cw) {
+      const snapCW = cs();
+      run('cwRaw', snapCW, () => tick(dt));
+      run('cwGs', snapCW, () => { tick(dt); Guidance.getGuideStatus(); });
+      // tuneLead-eval shape: restore + 400 ticks (gs + findStageBody), x5
+      const a = performance.now(); let n = 0;
+      for (let r = 0; r < 5; r++) { rs(snapCW, 1.8, 5.5, null); for (let i = 0; i < 400; i++) { if (state.halted) break; tick(dt); Guidance.getGuideStatus(); findStageBody(); n++; } }
+      R.cycle = (performance.now() - a) / Math.max(1, n) * 1000; R.cycleN = n;
+    }
+    rs(_saSnapshot, null, null, null);
+    if (values) { const a = performance.now(); TunerEngine.prepareRun(TunerConfig.guideName, values, TunerConfig.env); R.prepMs = performance.now() - a; }
+  } catch (e) { R.err = (e && e.message) || String(e); }
+  finally { console.log = ol; Object.assign(_P, sv); }
+  R.tag = _workerTag;
+  return R;
+}
+
 // ---- ops counter (telemetry only; no effect on sim results) ----
 // Counts TunerEngine.tick calls and posts throttled deltas: { type:'ops', tag, n }.
 let _opsAcc = 0, _simAcc = 0, _opsT = 0;
@@ -281,11 +366,13 @@ function _installOps() {
     if (!E || E.__opsWrapped || typeof E.tick !== 'function') return;
     const t = E.tick;
     E.tick = function () {
+      _tk++;
       _simAcc += +arguments[0] || 0;   // tick(dt): dt = simulated seconds
       if ((++_opsAcc & 255) === 0 && Date.now() - _opsT > 250) _flushOps();
       return t.apply(this, arguments);
     };
     E.__opsWrapped = true;
+    E.__rawTick = t;
   } catch (e) {}
 }
 
@@ -299,6 +386,7 @@ self.onmessage = async (e) => {
     try {
       _loadSim();
       _installOps();
+      _installProf();
       self.postMessage({ type: 'ready', tag: _workerTag });
     } catch (err) {
       self.postMessage({ type: 'ready', error: _bootError, tag: _workerTag });
@@ -365,6 +453,7 @@ self.onmessage = async (e) => {
       } else {
         _saSnapshot = captureSnap();
         emit('setupSA', 'saved at t=' + _saSnapshot.simTime.toFixed(2));
+        if (PROF_ON && PROF_BENCH) _bench();
         result = { ok: true, simTime: _saSnapshot.simTime };
       }
     } else if (type === 'probeBiasCheckpoint') {
@@ -379,6 +468,7 @@ self.onmessage = async (e) => {
         // (inline loop so we can snag eCoast when COAST_WAIT is entered — needed by SERENO FLUX table)
         emit('probe', tag + ' restore+runToCH');
         restoreSnap(_saSnapshot, newBias, null);
+        const _pc0 = performance.now(), _pk0 = _tk;
         let okCH = false;
         let eCoastAtCW = NaN;
         // CH is reached ~tToApo after COAST_WAIT -> 800 s is wrong above ~500 km (2000 km: CH at ~1890 s).
@@ -402,6 +492,7 @@ self.onmessage = async (e) => {
           }
           if (_gs && _gs.phase === 'COAST_HOLD') { okCH = true; break; }
         }
+        _P.ch += performance.now() - _pc0; _P.chT += _tk - _pk0;
         if (!okCH) {
           emit('probe', tag + ' CH_FAIL ' + phaseNow() + (state.halted ? ' HALTED' : ' CAP@' + _chCapS + 's'));
           result = { ok: false, reason: 'CH not reached: ' + phaseNow() + (state.halted ? ' (halted)' : ' (cap ' + _chCapS + 's)') };
@@ -420,6 +511,7 @@ self.onmessage = async (e) => {
               const lead = p2.li * Q.lead;
               emit('probe', tag + ' eval#' + evalN + ' lead=' + lead.toFixed(4));
               restoreSnap(chSnap, newBias, lead);
+              const _pe0 = performance.now(), _pek0 = _tk;
               // Measure EXACTLY like hook.js CIRC_END: window opens at phase CIRCULARIZE, vrMin tracked inside it,
               // vrEnd / signed margin read at the engines-off tick (not after COAST_ROTATE_2).
               let circWindow = false, circAchSeen = false, vrMinC = Infinity, res = null;
@@ -448,6 +540,7 @@ self.onmessage = async (e) => {
                   }
                 }
               }
+              _P.circ += performance.now() - _pe0; _P.circT += _tk - _pek0;
               if (!res) return { endReason: state.halted ? 'HALTED' : 'CAP', crashed: !!state.crashed, vrEnd: NaN, marginS: NaN, vrMin: NaN };
               return { endReason: 'CIRC_END', crashed: !!state.crashed, vrEnd: res.vrEnd, marginS: res.marginS, vrMin: res.vrMin };
             }
@@ -474,6 +567,7 @@ self.onmessage = async (e) => {
             // false → false "duration_cap_hit + payload_not_cleared" hard-fail.
             emit('probe', tag + ' FULL lead=' + lr.lead.toFixed(4));
             restoreSnap(chSnap, newBias, lr.lead);
+            const _pf0 = performance.now(), _pfk0 = _tk;
             let okFull = false;
             const _capTicksFull = Math.ceil(300 / CONFIG.DT);
             for (let _i = 0; _i < _capTicksFull; _i++) {
@@ -482,6 +576,7 @@ self.onmessage = async (e) => {
               const _gs = Guidance.getGuideStatus();
               if (_gs && _gs.payloadCleared) { okFull = true; break; }
             }
+            _P.full += performance.now() - _pf0; _P.fullT += _tk - _pfk0;
             const gsEnd = Guidance.getGuideStatus();
             const stb = findStageBody();
             const m = {
@@ -561,6 +656,8 @@ self.onmessage = async (e) => {
       const fp = await runToCW(payload.tCheck, payload.capS || 1500);
       fp.wallMs = Date.now() - t0;
       result = fp;
+    } else if (type === 'benchLoop') {
+      result = _benchLoop(payload.ticks || 2000, payload.values);
     } else if (type === 'ping') {
       result = { pong: true, tag: _workerTag, hasTunerEngine: typeof TunerEngine !== 'undefined' };
     } else if (type === 'verifyChain') {
@@ -581,11 +678,13 @@ self.onmessage = async (e) => {
     }
     return result;
     };
+    const _j0 = performance.now();
     const result = await _job(type, payload);
-    _flushOps();
+    _P.job += performance.now() - _j0;
+    _flushOps(); _flushProf();
     self.postMessage({ id, ok: true, result });
   } catch (err) {
-    _flushOps();
+    _flushOps(); _flushProf();
     self.postMessage({ id, ok: false, error: (err && err.message) || String(err) });
   }
 };

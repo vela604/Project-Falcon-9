@@ -173,7 +173,7 @@
     if (p.bias != null) a.push('bias ' + (+p.bias).toFixed(4));
     return a.join(' · ') || job.type;
   }
-  function newSlot() { return { state: 'boot', job: '', desc: '', detail: '', dts: 0, t0: 0, done: 0, ticks: 0, sim: 0, busyMs: 0, share: 0, res: false, el: null, c: {} }; }
+  function newSlot() { return { state: 'boot', job: '', desc: '', detail: '', dts: 0, t0: 0, done: 0, ticks: 0, sim: 0, busyMs: 0, share: 0, res: false, el: null, c: {}, p: {}, bench: null }; }
 
   function attach(pool) {
     W.pool = pool; W.n = pool.n || (pool.workers && pool.workers.length) || 0;
@@ -198,6 +198,10 @@
     var s = W.slots[i]; if (!s) return;
     if (msg.type === 'progress') { s.detail = String(msg.detail == null ? '' : msg.detail); s.dts = Date.now(); }
     else if (msg.type === 'ops') { s.ticks += +msg.n || 0; s.sim += +msg.s || 0; }
+    else if (msg.type === 'prof') {   // telemetry from worker-sim.js (timers + bench); read-only
+      if (msg.d) for (var pk in msg.d) s.p[pk] = (s.p[pk] || 0) + (+msg.d[pk] || 0);
+      if (msg.bench) s.bench = msg.bench;
+    }
     else if (msg.type === 'ready') { s.state = msg.error ? 'fail' : 'ready'; if (msg.error) s.desc = String(msg.error); }
     else if (msg.id != null) {   // job finished (the pool has not removed it from pending yet)
       var job = pool.pending && pool.pending.get(msg.id);
@@ -215,10 +219,35 @@
   function startRun() {
     W.active = true; W.t0 = Date.now(); W.t1 = 0; W.rate = 0; W.evalRate = 0; W.last = 0; W.lastT = W.t0;
     T.evals = 0; T.evalTs = [];
-    for (var i = 0; i < W.slots.length; i++) { var s = W.slots[i]; s.ticks = 0; s.sim = 0; s.done = 0; s.busyMs = 0; s.share = 0; s.res = false; }
+    for (var i = 0; i < W.slots.length; i++) { var s = W.slots[i]; s.ticks = 0; s.sim = 0; s.done = 0; s.busyMs = 0; s.share = 0; s.res = false; s.p = {}; }
     var sm = $('wkSum'); if (sm) sm.textContent = '';
   }
   /* run is over when the Run button is enabled again and every worker is idle -> freeze result */
+  function med(a) { a = a.filter(isFinite).sort(function (x, y) { return x - y; }); return a.length ? a[a.length >> 1] : NaN; }
+  function f1(x, d) { return isFinite(x) ? x.toFixed(d) : '—'; }
+  /* PROF line: where worker busy time goes (restore / capture / prepare / rest = ticks + polling), per-section us/tick, bench per worker */
+  function profLine() {
+    var S = {}, busy = 0, i, k, any = false;
+    for (i = 0; i < W.slots.length; i++) {
+      var s = W.slots[i]; busy += s.busyMs;
+      for (k in s.p) { S[k] = (S[k] || 0) + s.p[k]; any = true; }
+    }
+    var out = '';
+    if (any && busy > 0) {
+      var pc = function (v) { return '<b>' + f1((v || 0) / busy * 100, 0) + '%</b>'; };
+      var rest = busy - (S.restore || 0) - (S.capture || 0) - (S.prep || 0);
+      out += '<br><span class="k">PROF</span>of busy: restore ' + pc(S.restore) + ' · capture ' + pc(S.capture) + ' · prepare ' + pc(S.prep) + ' · rest (ticks+polling) ' + pc(rest);
+      var us = function (ms, t) { return t > 0 ? '<b>' + f1(ms * 1000 / t, 0) + '</b>' : '—'; };
+      if (S.chT || S.circT || S.fullT) out += '<br>µs/tick: coast ' + us(S.ch, S.chT) + ' (' + fmtBig(S.chT || 0) + ' ticks) · circ-eval ' + us(S.circ, S.circT) + ' (' + fmtBig(S.circT || 0) + ') · full ' + us(S.full, S.fullT) + ' (' + fmtBig(S.fullT || 0) + ')';
+    }
+    var bs = [], tk = [], tg = [], gs = [], cp = [], rs = [], kb = [];
+    for (i = 0; i < W.slots.length; i++) { var b = W.slots[i].bench; if (!b || b.err) continue; bs.push(b); tk.push(b.tickUs); tg.push(b.tickGsUs); gs.push(b.gsUs); cp.push(b.capMs); rs.push(b.resMs); kb.push(b.snapKB); }
+    if (bs.length) {
+      var mn = Math.min.apply(null, tk), mx = Math.max.apply(null, tk);
+      out += '<br>bench (' + bs.length + ' workers, median): tick <b>' + f1(med(tk), 0) + 'µs</b> (min ' + f1(mn, 0) + ' · max ' + f1(mx, 0) + ') · tick+getGuideStatus <b>' + f1(med(tg), 0) + 'µs</b> · getGuideStatus <b>' + f1(med(gs), 1) + 'µs</b> · capture <b>' + f1(med(cp), 1) + 'ms</b> · restore <b>' + f1(med(rs), 1) + 'ms</b> · snap <b>' + f1(med(kb), 0) + 'KB</b>';
+    }
+    return out;
+  }
   function checkFinal() {
     var p = W.pool; if (!W.active || !p || runBtnBusy() || busyCount()) return;
     if ((p.pending && p.pending.size) || (p.queue && p.queue.length)) return;
@@ -227,13 +256,10 @@
     for (var i = 0; i < W.slots.length; i++) { var s = W.slots[i]; s.share = avg ? s.ticks / avg * 100 : 0; s.res = tot > 0; if (s.state !== 'fail') s.state = 'idle'; }
     if (tot > 0) {
       var wall = Math.max(0.001, (W.t1 - W.t0) / 1000), sim = totalSim();
-      var busySum = 0; for (var q = 0; q < W.slots.length; q++) busySum += W.slots[q].busyMs / 1000;
-      var util = W.n ? busySum / (W.n * wall) * 100 : 0, perCore = busySum > 0 ? tot / busySum : 0;
       var el = $('wkSum');
       if (el) el.innerHTML = '<span class="k">RESULT</span>total <b>' + fmtBig(tot) + '</b> ops · avg <b>' + fmtBig(avg) +
         '</b> ops/worker · avg speed <b>' + fmtBig(avg / wall) + '</b> ops/s/worker (<b>' + fmtBig(tot / wall) + '</b> total) · wall <b>' + fmtDur(wall) +
-        '</b> · sim <b>' + fmtDur(sim) + '</b> (<b>×' + fmtBig(sim / wall) + '</b>)' +
-        '<br>worker utilization <b>' + util.toFixed(0) + '%</b> (busy time ÷ workers × wall) · speed per busy worker <b>' + fmtBig(perCore) + '</b> ops/s';
+        '</b> · sim <b>' + fmtDur(sim) + '</b> (<b>×' + fmtBig(sim / wall) + '</b>)' + profLine();
     }
     requestPaint();
   }
@@ -282,12 +308,6 @@
       if (c.cls !== cls) { c.cls = cls; s.el.className = cls; }
       var fill = s.res ? Math.min(100, s.share).toFixed(0) + '%' : '';
       if (c.fill !== fill) { c.fill = fill; if (fill) s.el.style.setProperty('--fill', fill); else s.el.style.removeProperty('--fill'); }
-      var over = s.res && s.share > 100 ? Math.min(100, s.share - 100) : 0;   // work beyond 100% of avg -> second, darker green lap
-      if (c.over !== over) {
-        c.over = over;
-        if (over) { s.el.style.setProperty('--over', over.toFixed(0) + '%'); s.el.style.setProperty('--oa', (0.22 + 0.5 * over / 100).toFixed(2)); }
-        else { s.el.style.removeProperty('--over'); s.el.style.removeProperty('--oa'); }
-      }
       var em = (st === 'busy' || st === 'setup') ? s.job : '';
       if (c.em !== em) { c.em = em; r.em.textContent = em; }
       if (st === 'busy' || st === 'setup') {
