@@ -30,6 +30,7 @@
 <div class="row">
   <button id="bQuick">RUN QUICK (~4 min)</button>
   <button id="bDeep" class="alt">RUN DEEP (real probes, ~8 min)</button>
+  <button id="bExp" class="alt">RUN EXP (coast, ~1 min)</button>
   <button id="bCopy" class="alt">COPY REPORT</button>
 </div>
 <div id="st">idle</div>
@@ -174,6 +175,43 @@
     await sleep(800);
   }
 
+  // ---------- D. experiment: coast tick breakdown + extra-bodies test ----------
+  async function expPhase(stkId, km) {
+    const st = newStats(1), vals = baselineValues(km);
+    status('exp: boot');
+    const pool = await makePool(1, stkId, st);
+    status('exp: setupSA');
+    const sa = await pool.runJob('setupSA', { values: vals });
+    if (!sa.ok) throw new Error('setupSA failed: ' + sa.reason);
+    status('exp: running');
+    const r = await pool.runJob('benchExp', { ticks: 1500, values: vals });
+    await pool.terminate();
+    if (r.err) P('EXP ERROR: ' + r.err);
+    if (!r.coastReached) { P('EXP: coast not reached'); return; }
+    P('--- D. coast experiment (1 worker, from COAST_WAIT, us per tick/call) ---');
+    P('bodies ' + r.nBodies + ' [' + r.roles + '] · to-coast ' + r.toCoastTicks + ' ticks');
+    const g = (x, d) => f(x, d === undefined ? 0 : d);
+    P('tick breakdown (all bodies):');
+    P('  physics only    ' + g(r.physOnly) + '   (' + g(r.physOnly / r.tickAll * 100) + '% of tick)');
+    P('  + buildSnapshot ' + g(r.physSnap) + '   (snapshot ' + g(r.physSnap - r.physOnly) + ')');
+    P('  full tick       ' + g(r.tickAll) + '   (guidance+IMU ' + g(r.tickAll - r.physSnap) + ')');
+    P('  tick + getGS    ' + g(r.tickAllGs));
+    P('direct: buildSnapshot ' + g(r.buildSnap, 1) + ' · onSnapshot ' + g(r.onSnap, 1) + ' · getGS ' + g(r.gs, 1) + ' · collision ' + g(r.collision, 1));
+    P('per-body per-call us:');
+    const cols = ['currentGeometry', 'buildPodEntries', 'fillGeom', 'slosh', 'thrust', 'rcs', 'drag', 'deriv', 'ground', 'lowAlt'];
+    P('  ' + 'body'.padEnd(9) + cols.map((c) => c.slice(0, 7).padStart(8)).join(''));
+    let sum = 0;
+    r.perBody.forEach((o) => {
+      P('  ' + (o.role + '/' + o.members).padEnd(9) + cols.map((c) => g(o[c], 1).padStart(8)).join(''));
+      cols.forEach((c) => { if (Number.isFinite(o[c])) sum += o[c]; });
+    });
+    P('  sum of listed calls over all bodies: ' + g(sum) + ' us (deriv x4 per RK4 not included)');
+    if (r.oneBodyPhys !== undefined) {
+      P('STAGE-ONLY (experiment, changes sim): physics ' + g(r.oneBodyPhys) + ' vs ' + g(r.physOnly) + ' -> x' + f(r.physOnly / r.oneBodyPhys, 2) +
+        ' · tick+gs ' + g(r.oneBodyTickGs) + ' vs ' + g(r.tickAllGs) + ' -> x' + f(r.tickAllGs / r.oneBodyTickGs, 2) + ' faster');
+    }
+  }
+
   // ---------- verdict ----------
   function verdict() {
     const a = NS[0], z = NS[NS.length - 1];
@@ -231,6 +269,21 @@
       running = false; $('bQuick').disabled = $('bDeep').disabled = false;
     }
   }
+  $('bExp').onclick = async () => {
+    if (running) return; running = true;
+    $('bQuick').disabled = $('bDeep').disabled = $('bExp').disabled = true;
+    lines.length = 0;
+    let wl = null; try { if (navigator.wakeLock) wl = await navigator.wakeLock.request('screen'); } catch (e) {}
+    try {
+      const stkId = $('stackSel').value, km = parseInt($('km').value, 10) || 320;
+      if (!stkId) throw new Error('no eligible stack');
+      P('SERENO BENCH EXP ' + new Date().toISOString().slice(0, 19));
+      P('cores ' + hc + ' · stack ' + stkId + ' · ' + km + 'km');
+      await expPhase(stkId, km);
+      status('done');
+    } catch (e) { P('ERROR: ' + (e && e.message || e)); status('error'); }
+    finally { try { if (wl) wl.release(); } catch (e) {} running = false; $('bQuick').disabled = $('bDeep').disabled = $('bExp').disabled = false; }
+  };
   $('bQuick').onclick = () => run(false);
   $('bDeep').onclick = () => run(true);
   $('bCopy').onclick = async () => {

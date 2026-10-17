@@ -352,6 +352,75 @@ function _benchLoop(N, values) {
   return R;
 }
 
+// ---- EXPERIMENT (telemetry only, never shipped): where does a coast tick go, and what would dropping the extra bodies save? ----
+// Starts from the SA snapshot, runs to COAST_WAIT, then measures from that point. State is left dirty; every later job restores anyway.
+function _benchExp(N, values) {
+  const R = { perBody: [] }, sv = Object.assign({}, _P), ol = console.log; console.log = function () {};
+  const raw = self.__profRaw || {}, rs = raw.rs || restoreSnap, cs = raw.cs || captureSnap;
+  const tick = (TunerEngine.__rawTick || TunerEngine.tick).bind(TunerEngine), dt = CONFIG.DT;
+  const T = (fn, n) => { const a = performance.now(); let i = 0; for (; i < n; i++) { if (state.halted) break; fn(); } return (performance.now() - a) / Math.max(1, i) * 1000; };   // us per call
+  const role = (b) => !b ? '?' : b.fairingHalf ? 'fairing' : b.payloadBody ? 'payload' : (b.members && b.members[0] && b.members[0].stageRole) || 'free';
+  try {
+    rs(_saSnapshot, null, null, null);
+    let k = 0, cw = false;
+    for (; k < 45000; k++) { if (state.halted) break; tick(dt); const g = Guidance.getGuideStatus(); if (g && g.phase === 'COAST_WAIT') { cw = true; break; } }
+    R.coastReached = cw; R.toCoastTicks = k;
+    if (!cw) return R;
+    const snapCW = cs();
+    const back = () => rs(snapCW, 1.8, 5.5, null);
+    back();
+    R.nBodies = state.bodies.length; R.roles = state.bodies.map(role).join(',');
+
+    // 1. tick decomposition (all bodies)
+    back(); R.physOnly = T(() => physicsStep(dt), N);
+    back(); R.physSnap = T(() => { physicsStep(dt); TunerEngine.buildSnapshot(); }, N);
+    back(); R.tickAll = T(() => tick(dt), N);
+    back(); R.tickAllGs = T(() => { tick(dt); Guidance.getGuideStatus(); }, N);
+
+    // 2. per-function, per-body micro timings (same inputs repeated; state restored afterwards)
+    back();
+    const K = 1000, groundR = CONFIG.EARTH_RADIUS + (CONFIG.LAUNCH_SITE_ALTITUDE || 0);
+    const safe = (f) => { try { return f(); } catch (e) { return NaN; } };
+    for (let i = 0; i < state.bodies.length; i++) {
+      const b = state.bodies[i], o = { role: role(b), members: (b.members || []).length };
+      const g = currentGeometry(b);
+      const ex = { Fx: 0, Fy: 0, torque: 0, M: g.M, I: g.I, comH: g.comH, comW: g.comW || 0, height: _bodyHeightOf(b), aero: null, gridFins: null, _lastAero: null, _tickAero: null };
+      ex.aero = bodyAeroProfile(b); ex.gridFins = bodyGridFinProfile(b, ex.aero);
+      ex._tickAero = computeDragAero(b, ex);
+      o.currentGeometry = safe(() => T(() => currentGeometry(b), K));
+      o.buildPodEntries = safe(() => T(() => buildPodEntries(b), K));
+      o.fillGeom = safe(() => T(() => bottomTankFillGeometry(b), K));
+      o.slosh = safe(() => T(() => applySloshStep(b, dt, false), K));
+      o.thrust = safe(() => T(() => computeMainThrustForBody(b, g.comH, g.comW), K));
+      o.rcs = safe(() => T(() => computeRCSForBody(b, g.comH, g.comW, dt), K));
+      o.drag = safe(() => T(() => computeDragAero(b, ex), K));
+      o.deriv = safe(() => T(() => derivatives(b, ex), K));
+      o.ground = safe(() => T(() => resolveGroundContact(b, groundR, g), K));
+      o.lowAlt = safe(() => T(() => _lowestPointAltitude(b, groundR), K));
+      R.perBody.push(o);
+    }
+    R.collision = safe(() => T(() => narrowPhaseCollisionContacts(broadPhaseCollisionPairs()), K));
+    R.buildSnap = safe(() => T(() => TunerEngine.buildSnapshot(), K));
+    const snap = TunerEngine.buildSnapshot();
+    R.onSnap = safe(() => T(() => Guidance.onSnapshot(snap), K));
+    R.gs = safe(() => T(() => Guidance.getGuideStatus(), K));
+
+    // 3. what if only the stage body existed in coast? (changes the sim: experiment only)
+    back();
+    const si = state.bodies.findIndex((b) => role(b) === 'stage');
+    R.stageIdx = si;
+    if (si >= 0) {
+      state.bodies = [state.bodies[si]]; state.activeBodyIndex = 0;
+      R.oneBodyPhys = T(() => physicsStep(dt), N);
+      back(); state.bodies = [state.bodies[si]]; state.activeBodyIndex = 0;
+      R.oneBodyTickGs = T(() => { tick(dt); Guidance.getGuideStatus(); }, N);
+    }
+  } catch (e) { R.err = (e && e.message) || String(e); }
+  finally { console.log = ol; Object.assign(_P, sv); try { rs(_saSnapshot, null, null, null); } catch (e) {} }
+  R.tag = _workerTag;
+  return R;
+}
+
 // ---- ops counter (telemetry only; no effect on sim results) ----
 // Counts TunerEngine.tick calls and posts throttled deltas: { type:'ops', tag, n }.
 let _opsAcc = 0, _simAcc = 0, _opsT = 0;
@@ -656,6 +725,8 @@ self.onmessage = async (e) => {
       const fp = await runToCW(payload.tCheck, payload.capS || 1500);
       fp.wallMs = Date.now() - t0;
       result = fp;
+    } else if (type === 'benchExp') {
+      result = _benchExp(payload.ticks || 1500, payload.values);
     } else if (type === 'benchLoop') {
       result = _benchLoop(payload.ticks || 2000, payload.values);
     } else if (type === 'ping') {
