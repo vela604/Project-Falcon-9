@@ -175,4 +175,335 @@ edited 2 files worker-sim.js and sereno-bench.html and pending task mein kuch ye
 #1 [pending] Add benchExp job to worker-sim.js
 #2 [pending] Add RUN EXP button to sereno-bench.html
 
-aur fir limit exceeded
+iske baad fir bahut saari baat cheet hui aur bahut kuch hua aur kuch naye cheez add hue dormant aur UI throtlle kuch aise hi aur current file abhi aisa hai ko upload kar rha hun
+
+fir latest mein maine verify karke result diya
+
+$
+zeta elapsed
+READY
+00:01:49
+operations / s
+0ops/s
+total operations
+759Kops
+total sim time
+2h 38m×87
+W01
+IDLE
+121% of avg
+131K ops · 1.22K/s
+W02
+IDLE
+87% of avg
+94.8K ops · 997/s
+W03
+IDLE
+93% of avg
+101K ops · 1.00K/s
+W04
+IDLE
+110% of avg
+119K ops · 1.10K/s
+W05
+IDLE
+75% of avg
+81.8K ops · 901/s
+W06
+IDLE
+99% of avg
+107K ops · 1.04K/s
+W07
+IDLE
+114% of avg
+124K ops · 3.67K/s
+RESULTtotal 759K ops · avg 108K ops/worker · avg speed 989 ops/s/worker (6.92K total) · wall 1m 49s · sim 2h 38m (×87)
+PROFof busy: restore 0% · capture 0% · prepare 0% · rest (ticks+polling) 100%
+µs/tick: coast 1102 (322K ticks) · circ-eval 590 (317K) · full 472 (44.9K)
+bench (7 workers, median): tick 435µs (min 257 · max 794) · tick+getGuideStatus 570µs · getGuideStatus 6.1µs · capture 0.7ms · restore 0.9ms · snap 24KB
+
+Are bahut fast hogya hai ab, dormant on false hai jabki tab bhi
+
+Dormant on mein: kuch der starting mein slow tha par fir incredible 2x speed hogya
+$
+zeta elapsed
+READY
+00:01:39
+operations / s
+0ops/s
+total operations
+759Kops
+total sim time
+2h 38m×95
+W01
+IDLE
+121% of avg
+131K ops · 1.33K/s
+W02
+IDLE
+110% of avg
+119K ops · 1.22K/s
+W03
+IDLE
+93% of avg
+101K ops · 1.09K/s
+W04
+IDLE
+99% of avg
+107K ops · 1.15K/s
+W05
+IDLE
+114% of avg
+124K ops · 1.27K/s
+W06
+IDLE
+75% of avg
+81.8K ops · 1.04K/s
+W07
+IDLE
+87% of avg
+94.8K ops · 1.10K/s
+RESULTtotal 759K ops · avg 108K ops/worker · avg speed 1.09K ops/s/worker (7.61K total) · wall 1m 39s · sim 2h 38m (×95)
+PROFof busy: restore 0% · capture 0% · prepare 0% · rest (ticks+polling) 100%
+µs/tick: coast 963 (322K ticks) · circ-eval 704 (317K) · full 505 (44.9K)
+bench (7 workers, median): tick 743µs (min 400 · max 862) · tick+getGuideStatus 641µs · getGuideStatus 7.0µs · capture 0.3ms · restore 0.4ms · snap 24KB
+
+claude: Dono runs ke ops (759K) aur tick counts (coast 322K, circ-eval 317K, full 44.9K) pichle chaaron runs jaise hi hain. Matlab dormancy on/off aur naye UI ke saath bhi sim wahi chala hai, sirf speed badli hai.
+Run
+Wall
+coast µs/tick
+Purana UI, dormant OFF
+2m 18s
+1378
+Purana UI, dormant ON
+2m 04s
+1203
+Naya UI, dormant OFF
+1m 49s
+1102
+Naya UI, dormant ON
+1m 39s
+963
+Maine pehla block OFF aur doosra ON padha hai, jaisa tumne likha.
+Dormancy ka fayda ~9-10% hai. Dono pairs (purane UI aur naye UI) mein wahi mila, to ye bharosemand hai. circ-eval ka µs/tick ON mein 590 se 704 gaya, par wo noise hai kyunki tick count wahi hai.
+UI throttle ka fayda ~20% dikha. Dono pairs mein naya UI ~20% tez nikla (2m18→1m49 aur 2m04→1m39). Maine 1-3% ka andaaza diya tha, wo galat nikla. Ye pakka nahi hai kyunki phone ka run-to-run noise 10-20% hai. Fir bhi dono pairs mein ek jaisa asar hona isi taraf ishara karta hai ki main thread workers ka CPU kha raha tha.
+"Shuru mein slow, phir 2x" ka kaaran main pakka nahi bata sakta. Shayad phone ka CPU frequency ramp-up ya setupSA ka ascent hai. Dormancy ka gain itna bada nahi hai.
+Sabse saaf test ye hoga: naye sereno-flux.html pe normal URL aur ?ui=0 ke saath ek-ek run, beech mein phone thanda karke. Ye zaroori nahi hai, bas ye jaanna ho ki UI ka kitna hissa tha.
+Abhi DORMANT_ON = true aur naya UI dono rakho. Total ab ~2m18 se ~1m39, yaani ~28% tez hai, aur sim bit-identical hai.
+Agla chhota lever phase-log getPhase() hai (~5-7%, guidance-blocks.js aur guidance.js mein chhota edit). Banau, ya yahin ruk ke OPT-MECO aur CONVO pe bhi ek baar dekh lo?
+
+me: Tum actually kya karne wale ho mujhe thora risk lag rha hai to kya tum bata skte ho ki tum 100% sure ho khudmein ki main working sim aur baaki sab break to nahi hoga
+
+claude: Nahi, 100% sure main nahi hu, aur kisi bhi sim change ke baare mein ye kehna jhooth hoga. Sach ye hai ki kya pakka hai aur kya nahi.
+Ab tak jo badla (aur kitna pakka hai):
+UI throttle (sereno-flux.html): sirf progress bar ka DOM rebuild. Sim ko nahi chhoota, to isme sim ka risk nahi hai.
+Dormancy (physics.js ki 1 line, collision.js ki 1 line, sim.js): ye sim-adjacent hai. Isme pakka ye hai:
+3 param sets pe SA→DONE bit-exact identical, aur Determinism (x2) OK.
+ZETA ke 4 runs mein ops aur tick counts bilkul same.
+Code mein booster/fairing ka data sirf split ke waqt padha jaata hai.
+Jo abhi test nahi hua:
+OPT-MECO aur CONVO ka asli run.
+Doosre stacks. Tumhara test stack Falcon 9 hai, aur 320 km orbit.
+Koi 3-stage ya alag vehicle (kyunki "stage se 100 km door wali non-payload body dormant" ka rule har layout pe maine nahi dekha).
+Rollback hamesha ek line ka hai: DORMANT_ON = false aur sim pehle jaisa chalega, kyunki flag off ho to body.dormant kabhi set hi nahi hota. Tumhare paas purani files bhi hain.
+Agla patch (getPhase()) kya karega:
+onSnapshot har tick getStatus() ka bada object banata hai sirf phase string ke liye. Main ek chhota getPhase() jodunga jo wahi string deta hai (getStatus().phase aur _v3CurrentPhase() same cheez hain).
+Ek cheez abhi verify nahi hui: ascent block aur suicide block ka getStatus() side-effect-free hai ya nahi. Insertion block ka verify ho chuka hai. Isliye patch banane se pehle main wo dono padhunga. Agar koi bhi side effect nikla, patch nahi banaunga.
+Fayda sirf ~5-7% hai. Dormancy aur UI ke baad ye bahut chhota hai.
+Meri honest salah: abhi naya sim patch mat banwao. Pehle ye karo, taaki jo ho chuka hai wo pakka ho jaaye:
+OPT-MECO ka ek run DORMANT_ON = false aur phir true ke saath. Final result barabar aana chahiye.
+CONVO ka bhi ek run, same tareeke se.
+Agar tum kabhi doosra stack ya 3-stage vehicle chalaoge, to wahan bhi ek baar bench ka RUN DORMANT VERIFY chala lena.
+Agar ye teeno bhi identical aaye, tabhi getPhase() pe chalenge, ya fir yahin ruk jaao. Tum batao, kaunsa raasta lena hai?
+
+me: Chalo tum getPhase pe kaam karo mera approval hai pehle padhlo aur confirm ho jao fir purana aur naya ka cross check karne ka test banao fir apply kar denge final
+
+claude: Theek hai. Pehle ascent, insertion aur suicide blocks ke getStatus() padhta hu, taaki purity pakki ho. Patch uske baad banega.
+
+aur beech mein hi limit exceed hogya aur claude ke thinking mein last kuch ye tha 
+
+cd /home/claude && cp /mnt/user-data/uploads/guidance-blocks.js /mnt/user-data/uploads/guidance.js . && python3 - <<'EOF'
+import re
+def rd(p): return open(p).read()
+def wr(p,s): open(p,'w').write(s)
+def sub(p, old, new, count=1):
+    s = rd(p); assert s.count(old) == count, (p, old[:70], s.count(old)); wr(p, s.replace(old, new))
+
+# ================= guidance-blocks.js =================
+s = rd('guidance-blocks.js')
+# --- insertion block: extract the lazy circ-lead cache into _primeLead(), add getPhase() ---
+start_marker = "          //sehran\n"
+i0 = s.index("        getStatus() {\n" + start_marker)
+cache_start = s.index("    // Compute circ-burn trigger lead exactly ONCE per instance", i0)
+cache_end_marker = "      _st._circLeadCached = startupS + userLead;\n    }\n"
+cache_end = s.index(cache_end_marker, cache_start) + len(cache_end_marker)
+cache_block = s[cache_start:cache_end]
+assert cache_block.count("_circLeadCached") == 3, cache_block.count("_circLeadCached")
+# replace inline block in getStatus with a call
+s = s[:cache_start] + "    _primeLead();\n" + s[cache_end:]
+# add getPhase() before getStatus
+s = s.replace("        getStatus() {\n" + start_marker,
+              "        // Cheap phase read. Primes the circ-lead cache exactly like getStatus() always did, so exported block state is unchanged.\n"
+              "        getPhase() {\n          _primeLead();\n          return _st.phase;\n        },\n\n"
+              "        getStatus() {\n" + start_marker, 1)
+# define _primeLead() in the closure body, right before the `return {` that opens this instance's object
+ret = s.rfind("return {", 0, s.index("        getPhase() {\n          _primeLead();"))
+line_start = s.rfind("\n", 0, ret) + 1
+indent = s[line_start:ret]
+func = ("      // Circ-lead cache (moved out of getStatus unchanged; idempotent).\n"
+        "      function _primeLead() {\n" + cache_block + "      }\n\n")
+s = s[:line_start] + func + s[line_start:]
+wr('guidance-blocks.js', s)
+
+# --- suicide block: add getPhase ---
+sub('guidance-blocks.js',
+ "        getStatus() {\n          return {\n            phase: _st.phase,\n            ticks: _st.ticks,\n            suicideImpactEfDeg:",
+ "        getPhase() {\n          return _st.phase;\n        },\n        getStatus() {\n          return {\n            phase: _st.phase,\n            ticks: _st.ticks,\n            suicideImpactEfDeg:")
+
+# ================= guidance.js =================
+sub('guidance.js',
+ "  let _lastMeasuredSnapshot = null; // post-IMU copy handed to tick()\n",
+ "  let _lastMeasuredSnapshot = null; // post-IMU copy handed to tick()\n  let _fastPhase = false; // opt-in: phase-log reads g.getPhase() instead of building the full getStatus() object every tick\n  function setFastPhase(on) { _fastPhase = !!on; }\n")
+sub('guidance.js',
+ '      const st = typeof g.getStatus === "function" ? g.getStatus() : null;\n      const ph = st && st.phase;\n',
+ '      let ph;\n      if (_fastPhase && typeof g.getPhase === "function") ph = g.getPhase();\n      else {\n        const st = typeof g.getStatus === "function" ? g.getStatus() : null;\n        ph = st && st.phase;\n      }\n')
+sub('guidance.js',
+ "    if (_v3State.insertionBlock) return _v3State.insertionBlock.getStatus().phase;",
+ "    if (_v3State.insertionBlock) return _v3State.insertionBlock.getPhase ? _v3State.insertionBlock.getPhase() : _v3State.insertionBlock.getStatus().phase;")
+sub('guidance.js',
+ "    if (_v3State.suicideBlock) return _v3State.suicideBlock.getStatus().phase;",
+ "    if (_v3State.suicideBlock) return _v3State.suicideBlock.getPhase ? _v3State.suicideBlock.getPhase() : _v3State.suicideBlock.getStatus().phase;")
+sub('guidance.js',
+ "GUIDES.leoInsertionV3 = _leoTickV3;\n",
+ "// Cheap phase accessor for the per-tick phase log (see onSnapshot). Same string as getStatus().phase.\n"
+ "// Calling the insertion block's getPhase() first primes its lazy circ-lead cache at the same tick getStatus() used to.\n"
+ "_leoTickV3.getPhase = function () {\n"
+ "  const ib = _v3State.insertionBlock;\n"
+ "  if (ib && ib.getPhase) ib.getPhase();\n"
+ "  return _v3CurrentPhase();\n"
+ "};\n\nGUIDES.leoInsertionV3 = _leoTickV3;\n")
+sub('guidance.js', "    exportGuideState,\n    importGuideState,\n", "    exportGuideState,\n    importGuideState,\n    setFastPhase,\n")
+
+# ================= worker-sim.js =================
+sub('worker-sim.js', "const DORMANT_ON = true;", "const DORMANT_ON = true;\n// Cheap phase-log read in Guidance.onSnapshot. Default OFF; set true only after RUN PHASE VERIFY says IDENTICAL.\nconst FASTPHASE_ON = false;")
+sub('worker-sim.js', "      if (DORMANT_ON) { try { TunerEngine.setDormant(true); } catch (e) {} }\n",
+    "      if (DORMANT_ON) { try { TunerEngine.setDormant(true); } catch (e) {} }\n      if (FASTPHASE_ON) { try { Guidance.setFastPhase(true); } catch (e) {} }\n")
+
+bp = r'''
+// ---- PHASE VERIFY (telemetry only): Guidance fast phase-log off vs on, SA -> DONE, bit-exact ----
+// Compares: stage hash, payload hash, hashes of full exportGuideState() + getGuideStatus() at checkpoints (phase log, block state, circ-lead cache included).
+// Mode 'gs': probe-style loop (getGuideStatus every tick). Mode 'nogs': nobody reads status per tick (checks the lazy-cache priming).
+function _benchPhase(maxTicks) {
+  const R = { sets: [] }, sv = Object.assign({}, _P), ol = console.log; console.log = function () {};
+  const raw = self.__profRaw || {}, rs = raw.rs || restoreSnap;
+  const tick = (TunerEngine.__rawTick || TunerEngine.tick).bind(TunerEngine), dt = CONFIG.DT;
+  const dv = new DataView(new ArrayBuffer(8)), KEYS = ['rx', 'ry', 'vx', 'vy', 'theta', 'omega', 'fuelMass', 'dryMass'];
+  const mix = (h, x) => { dv.setFloat64(0, x); h = Math.imul(h ^ dv.getUint32(0), 16777619); return Math.imul(h ^ dv.getUint32(4), 16777619); };
+  const sh = (s) => { let h = 2166136261; for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619); return h >>> 0; };
+  const snapHash = () => { let a = 0, b = 0; try { a = sh(JSON.stringify(Guidance.exportGuideState())); } catch (e) { a = -1; } try { b = sh(JSON.stringify(Guidance.getGuideStatus())); } catch (e) { b = -1; } return a + ':' + b; };
+  const run = (ov, fast, mode, cap) => {
+    rs(_saSnapshot, ov[0], ov[1], ov[2]);
+    Guidance.setFastPhase(fast);
+    let h = 2166136261 >>> 0, hp = 2166136261 >>> 0, n = 0, stopAt = -1, gs = null; const cps = []; const t0 = performance.now();
+    for (; n < cap; n++) {
+      if (state.halted) break;
+      tick(dt);
+      let phase = null;
+      if (mode === 'gs') { gs = Guidance.getGuideStatus(); phase = gs && gs.phase; }
+      const st = findStageBody();
+      if (st) for (let q = 0; q < KEYS.length; q++) h = mix(h, st[KEYS[q]]);
+      if ((n % 10000) === 9999) cps.push(snapHash());
+      if (mode === 'gs') { if (stopAt < 0 && phase === 'DONE') stopAt = n + 300; if (stopAt >= 0 && n >= stopAt) break; }
+    }
+    const ms = performance.now() - t0;
+    cps.push('end ' + snapHash());
+    for (const b of state.bodies) if (b && b.payloadBody) for (let q = 0; q < KEYS.length; q++) hp = mix(hp, b[KEYS[q]]);
+    return { n, h: h >>> 0, hp: hp >>> 0, ms, cps };
+  };
+  const diff = (a, b) => {
+    const d = [];
+    if (a.n !== b.n) d.push('ticks');
+    if (a.h !== b.h) d.push('stage');
+    if (a.hp !== b.hp) d.push('payload');
+    if (JSON.stringify(a.cps) !== JSON.stringify(b.cps)) d.push('guidance-state/status');
+    return d;
+  };
+  try {
+    const sets = [[null, null, null], [1.8, 5.5, null], [0.5, 3.0, null]];
+    sets.forEach((ov, si) => {
+      const off = run(ov, false, 'gs', maxTicks), on = run(ov, true, 'gs', maxTicks);
+      const S = { ov, off, on, d: diff(off, on) };
+      if (si === 0) { const o2 = run(ov, false, 'nogs', 60000), n2 = run(ov, true, 'nogs', 60000); S.nogs = { off: o2, on: n2, d: diff(o2, n2) }; }
+      R.sets.push(S);
+    });
+  } catch (e) { R.err = (e && e.message) || String(e); }
+  finally { console.log = ol; Object.assign(_P, sv); try { Guidance.setFastPhase(FASTPHASE_ON); rs(_saSnapshot, null, null, null); } catch (e) {} }
+  R.tag = _workerTag;
+  return R;
+}
+'''
+sub('worker-sim.js', "// ---- ops counter (telemetry only; no effect on sim results) ----", bp + "\n// ---- ops counter (telemetry only; no effect on sim results) ----")
+sub('worker-sim.js', "    } else if (type === 'benchDormant') {",
+    "    } else if (type === 'benchPhase') {\n      result = _benchPhase(payload.ticks || 120000);\n    } else if (type === 'benchDormant') {")
+
+# ================= sereno-bench.html =================
+sub('sereno-bench.html', '  <button id="bCopy" class="alt">COPY REPORT</button>',
+    '  <button id="bPh" class="alt">RUN PHASE VERIFY (~5 min)</button>\n  <button id="bCopy" class="alt">COPY REPORT</button>')
+phase = r'''
+  // ---------- G. phase verify: fast phase-log off vs on ----------
+  async function phPhase(stkId, km) {
+    const st = newStats(1), vals = baselineValues(km);
+    status('phase: boot');
+    const pool = await makePool(1, stkId, st);
+    status('phase: setupSA');
+    const sa = await pool.runJob('setupSA', { values: vals });
+    if (!sa.ok) throw new Error('setupSA failed: ' + sa.reason);
+    status('phase: running (8 runs)');
+    const r = await pool.runJob('benchPhase', { ticks: 120000 });
+    await pool.terminate();
+    if (r.err) P('PHASE ERROR: ' + r.err);
+    P('--- G. phase verify (SA -> DONE or 120K ticks; fast phase-log off vs on) ---');
+    let all = !r.err;
+    r.sets.forEach((S) => {
+      all = all && S.d.length === 0 && (!S.nogs || S.nogs.d.length === 0);
+      P('[bias ' + S.ov[0] + ' lead ' + S.ov[1] + ']  ticks ' + S.off.n + ' · off ' + f(S.off.ms / 1000, 1) + 's · on ' + f(S.on.ms / 1000, 1) + 's -> x' + f(S.off.ms / S.on.ms, 2));
+      P('   gs-loop  off vs on: ' + (S.d.length ? 'DIFFERENT in ' + S.d.join(', ') : 'IDENTICAL (stage, payload, guidance state + status at ' + S.off.cps.length + ' checkpoints)'));
+      if (S.nogs) P('   no-gs loop (60K ticks, nobody reads status): ' + (S.nogs.d.length ? 'DIFFERENT in ' + S.nogs.d.join(', ') : 'IDENTICAL') + ' · off ' + f(S.nogs.off.ms / 1000, 1) + 's · on ' + f(S.nogs.on.ms / 1000, 1) + 's -> x' + f(S.nogs.off.ms / S.nogs.on.ms, 2));
+    });
+    P('VERDICT: ' + (all ? 'ALL IDENTICAL -> safe to set FASTPHASE_ON=true' : 'NOT IDENTICAL -> keep FASTPHASE_ON=false, paste this report'));
+  }
+'''
+sub('sereno-bench.html', "  // ---------- verdict ----------", phase + "\n  // ---------- verdict ----------")
+handler = r'''  $('bPh').onclick = async () => {
+    if (running) return; running = true;
+    const bs = ['bQuick', 'bDeep', 'bExp', 'bVer', 'bDorm', 'bPh'];
+    bs.forEach((i) => { $(i).disabled = true; });
+    lines.length = 0;
+    let wl = null; try { if (navigator.wakeLock) wl = await navigator.wakeLock.request('screen'); } catch (e) {}
+    try {
+      const stkId = $('stackSel').value, km = parseInt($('km').value, 10) || 320;
+      if (!stkId) throw new Error('no eligible stack');
+      P('SERENO BENCH PHASE ' + new Date().toISOString().slice(0, 19));
+      P('cores ' + hc + ' · stack ' + stkId + ' · ' + km + 'km');
+      await phPhase(stkId, km);
+      status('done');
+    } catch (e) { P('ERROR: ' + (e && e.message || e)); status('error'); }
+    finally { try { if (wl) wl.release(); } catch (e) {} running = false; bs.forEach((i) => { $(i).disabled = false; }); }
+  };
+'''
+sub('sereno-bench.html', "  $('bQuick').onclick = () => run(false);", handler + "  $('bQuick').onclick = () => run(false);")
+s = rd('sereno-bench.html')
+s = s.replace("$('bDorm').disabled = false;", "$('bDorm').disabled = false; $('bPh').disabled = false;")
+wr('sereno-bench.html', s)
+EOF
+for f in guidance-blocks.js guidance.js worker-sim.js; do node --check $f && echo "$f OK"; done
+python3 - <<'EOF'
+import re
+h=open('/home/claude/sereno-bench.html').read()
+open('/tmp/b3.js','w').write(re.findall(r'<script>(.*?)</script>',h,re.S)[-1])
+EOF
+node --check /tmp/b3.js && echo "bench html OK"
+echo "=== diff guidance-blocks.js"; diff /mnt/user-data/uploads/guidance-blocks.js guidance-blocks.js
+echo "=== diff guidance.js"; diff /mnt/user-data/uploads/guidance.js guidance.js
+
+ab aage tum smjh ke batao kya karna hai yaa tum smjh ke adhura kaam poora karo
