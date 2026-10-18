@@ -1835,13 +1835,13 @@ DONE</pre>
       </div>
     </div>
   </div>
-    <!-- 11. leoInsertionV3 -->
+   <!-- 11. leoInsertionV3 -->
   <div class="exp glass pass">
     <div class="exp-head">
       <div>
         <h3 class="exp-title">LEO Insertion V3 — Autonomous Pad to Orbit</h3>
         <div class="exp-id">leoInsertionV3</div>
-        <div class="exp-time">11:40 AM <span class="exp-time-day">· Mon, Oct' 5 2026</span></div>
+        <div class="exp-time">03:53 AM <span class="exp-time-day">· Mon, Oct' 19 2026</span></div>
       </div>
       <span class="exp-status pass">FULL MISSION · PAYLOAD DEPLOYED</span>
     </div>
@@ -1855,11 +1855,11 @@ DONE</pre>
           burn, coast, circularization, payload release — every hand-off
           is autonomous.
           <p>Not tuned for one specific rocket or one specific altitude.
-          Engine properties (thrust, exhaust velocity, spool times),
-          stage mass, and target orbit altitude are all read at runtime
-          from the current vehicle and mission. Only the target orbit
-          altitude needs to be set. Any rocket capable of reaching the
-          orbit works.</p>
+          Engine properties (thrust, exhaust velocity, spool times,
+          gimbal limits), stage mass, and target orbit altitude are all
+          read at runtime from the current vehicle and mission. Only the
+          target orbit altitude needs to be set. Any rocket capable of
+          reaching the orbit works.</p>
         </div>
       </div>
       <div class="exp-row">
@@ -1867,7 +1867,7 @@ DONE</pre>
         <div class="exp-value">
           <p>The mission is composed from three reusable blocks —
           <strong>ascent</strong>, <strong>insertion</strong>, and
-          <strong>deorbit</strong> — glued together by a thin
+          <strong>suicide</strong> (deorbit) — glued together by a thin
           mission-level orchestration layer. Each block is a
           self-contained state machine with its own constants, its own
           internal phase flow, and a clean start/stop/tick interface.
@@ -1886,19 +1886,28 @@ DONE</pre>
           kick is pre-compensated. The coast attitude hold uses a
           net-zero-force RCS distributor, so attitude corrections don't
           perturb the trajectory over long coasts.</p>
+          <p>The gimbal is treated as a real accel-limited actuator:
+          every block commands an angular acceleration, and physics
+          integrates rate and angle within the engine's own limits. The
+          attitude laws that drive it (ascent HOLD and STAGE_BURN) are
+          now full PID, so a steady disturbance such as gravity-gradient
+          drift no longer leaves a residual AoA error.</p>
         </div>
       </div>
       <div class="exp-row">
         <div class="exp-label">Mission flow</div>
         <div class="exp-value">
           <pre><span class="cmt">// High-level phase progression</span>
-ASCENT              → powered climb to MECO apogee
-MECO                → main engine cut, separation commanded
+ASCENT              → powered climb (PRE_COAST → PUSH → COAST → HOLD)
+MECO                → main engine cut at booster residual-fuel target,
+                      separation commanded
 SEPARATION          → axial push apart, one-shot booster tumble kick
-STAGE_BURN          → upper stage burn to target apogee
+STAGE_BURN          → upper stage burn to target apogee (AoA PID)
 RCS_BOOST           → fine trim to exact apogee via RCS
-COAST               → attitude slew + hold toward burn direction
+COAST_ROTATE        → attitude slew toward burn direction
+COAST_HOLD / WAIT   → attitude hold until apogee is close
 CIRCULARIZE         → circularization burn at apogee
+COAST_ROTATE_2/HOLD_2 → attitude set for release
 PAYLOAD DEPLOY      → release at next apogee crossing
 DEORBIT             → (optional) suicide burn onto target zone</pre>
         </div>
@@ -1910,22 +1919,33 @@ DEORBIT             → (optional) suicide burn onto target zone</pre>
           either follows from the vehicle record or is a controller
           gain that only needs touching if the vehicle class changes.</p>
           <pre>TARGET_ORBIT_ALT_KM            <span class="cmt">// the mission's orbit altitude</span>
-MECO_APOGEE_KM                 <span class="cmt">// hand-off trigger from ascent</span>
+MECO_TARGET_BOOSTER_FUEL_KG    <span class="cmt">// hand-off trigger from ascent (residual fuel)</span>
 SEPARATION_DURATION_S          <span class="cmt">// axial separation window</span>
-STAGE_BURN_LOCK_TILT_DEG       <span class="cmt">// when thrust goes tangential</span>
-STAGE_BURN_CUTOFF_MARGIN_MPS   <span class="cmt">// gap left for RCS trim</span>
+STAGE_BURN_AOA_BIAS_DEG        <span class="cmt">// target AoA offset during STAGE_BURN</span>
+STAGE_BURN_CUTOFF_MARGIN_MPS   <span class="cmt">// gap left for RCS trim (default 0)</span>
 CIRC_TRIGGER_LEAD_S            <span class="cmt">// burn-start lead time</span>
+COAST_WAIT_BEFORE_APOGEE_S     <span class="cmt">// when the burn-direction slew starts</span>
 SUICIDE_DELAY_AFTER_DEPLOY_S   <span class="cmt">// orbit dwell before deorbit</span></pre>
           <p>The engine's own properties — thrust, exhaust velocity,
-          mass flow rate, startup and shutdown durations — are read from
-          the vehicle record at runtime, so swapping the engine type in
-          the fleet editor carries through without touching the guide.</p>
+          mass flow rate, startup and shutdown durations, gimbal angle,
+          rate and accel limits — are read from the vehicle record at
+          runtime, so swapping the engine type in the fleet editor
+          carries through without touching the guide.</p>
+          <p><strong>Tuned baseline:</strong>
+          <code>PUSH_MAX_GIMBAL_DEG</code> = 0.61,
+          <code>STAGE_BURN_AOA_BIAS_DEG</code> = 0.59,
+          <code>CIRC_TRIGGER_LEAD_S</code> = 5.64. Full simulation
+          run verified: payload delivered with the PID attitude laws.</p>
+          <p>Fixed constants (not tunable, not part of retuning):
+          <code>STAGE_BURN_AOA_KI</code> = 1.0,
+          <code>STAGE_BURN_AOA_BIAS_RATE_DEG_S</code> = 0.5,
+          <code>HOLD_PD_KI</code> = 0.3.</p>
         </div>
       </div>
       <div class="exp-row">
   <div class="exp-label">Physics</div>
   <div class="exp-value">
-    <p>Five physics facts that the whole mission profile rests on.</p>
+    <p>Seven physics facts that the whole mission profile rests on.</p>
 
     <p><strong>1. Analytic AoA derivatives — no finite differences.</strong>
     The controller needs d(AoA)/dt every tick. A naive finite difference over a 1/80 s window amplifies any noise by 1/dt² = 6400×, which saturates the gimbal from float rounding alone. V3 instead computes both derivatives as exact algebra on body-frame velocity and acceleration:</p>
@@ -1940,16 +1960,22 @@ Q   =  u·ax + v·ay
     <p>No amplification, no filter, no phase lag.</p>
 
     <p><strong>2. Predictive next-tick pipeline.</strong>
-    Guidance runs on a snapshot of state @ T. Its commands take effect on the physics step @ T+dt — one tick later. So the controller predicts S_{N+1} using current accelerations, and solves for the actuator command that lands the vehicle on target <em>at</em> S_{N+1}, not at S_N. A 1-tick horizon is exactly right for this architecture: a longer horizon overshoots because the rate command is overwritten every tick before it finishes acting.</p>
+    Guidance runs on a snapshot of state @ T. Its commands take effect on the physics step @ T+dt — one tick later. So the controller predicts S_{N+1} using current accelerations, and solves for the torque that lands the vehicle on target <em>at</em> S_{N+1}, not at S_N. A 1-tick horizon is exactly right for this architecture: a longer horizon overshoots because the command is overwritten every tick before it finishes acting.</p>
 
-    <p><strong>3. Net-zero-force RCS.</strong>
+    <p><strong>3. Accel-limited gimbal (angular-acceleration commands).</strong>
+    The gimbal is not an ideal angle servo. Guidance sends an angular acceleration α (deg/s²); physics integrates rate and then angle, clamped to the engine's own <code>gimbalAccelDegS2</code>, <code>gimbalRateDegS</code> and <code>gimbalMaxDeg</code> (all thruster-type properties). α comes from a 2-tick Newtonian law that reaches the requested angle with zero rate, re-solved every tick, plus a braking guard that caps speed at 0.9·√(2·aMax·|gap|) so a saturated α cannot overshoot. The slider path in physics uses the same law, so human and guidance commands behave identically.</p>
+
+    <p><strong>4. Net-zero-force RCS.</strong>
     RCS is used during coasts to hold attitude without perturbing the trajectory. Firing any single pod produces both a torque and a linear force; over a 100+ s coast, asymmetric duty drifts the vehicle by meters. <code>targetTorqueRcsNoNetForce()</code> solves only balanced pairs — lateral (TR + BL or TL + BR) for small torques, vertical pairs (TL.dn + TR.up + BL.dn + BR.up) for large ones. Net linear force is zero by construction, so attitude corrections don't touch the orbit.</p>
 
-    <p><strong>4. Gravity-gradient torque.</strong>
-    A long body in a non-uniform gravity field has a restoring torque pulling its long axis toward local vertical: <code>τ = −1.5 · GM/r³ · I · sin(2β)</code>, where β is tilt from local vertical. For an F9 stack in LEO it's ~380 N·m — small but non-zero, and it's the dominant disturbance during long coasts. Guidance cancels it explicitly in the attitude holds; ignoring it would produce a slow, monotonic tilt drift that builds up over the apogee wait.</p>
+    <p><strong>5. Gravity-gradient torque.</strong>
+    A long body in a non-uniform gravity field has a restoring torque pulling its long axis toward local vertical: <code>τ = −1.5 · GM/r³ · I · sin(2β)</code>, where β is tilt from local vertical. For an F9 stack in LEO it's ~380 N·m — small but non-zero, and it's the dominant disturbance during long coasts. Guidance cancels it explicitly in the attitude holds; ignoring it would produce a slow, monotonic tilt drift that builds up over the apogee wait. The same drift leaves ~1° of AoA entering STAGE_BURN, which is why that controller now has an integral term and starts from the measured AoA instead of zeroing first.</p>
 
-    <p><strong>5. Cutoff fires before the engine actually stops.</strong>
-    Every guidance cutoff (MECO, STAGE_BURN, CIRCULARIZE) predicts the Δv the engine will still produce during its shutdown spool — <code>dv_spool = ½ · ṁ · t_spool</code>, where <code>t_spool = ṁ · shutdownDurationS / maxMFR</code> — and fires the cutoff command early by exactly that amount. Without this, the extra velocity after the command is issued pushes apogee past target and circularization lands wrong; with it, velocity at actual engine-stop equals the target.</p>
+    <p><strong>6. PID attitude laws with a seeded, ramped target.</strong>
+    STAGE_BURN holds AoA with a PID (KP = KD = 4, KI = 1). The AoA target is seeded with the current AoA and ramped to the bias value at 0.5°/s, so there is no zeroing phase and no step in the command at burn start. The integrator is conditional (it only accumulates while |error| &lt; 0.05°) and clamped, which prevents wind-up during the large initial transient. Ascent HOLD uses the same idea with a smaller integral (KI = 0.3), reset in PUSH, COAST and PRE_COAST.</p>
+
+    <p><strong>7. Cutoff fires before the engine actually stops.</strong>
+    Every guidance cutoff (MECO, STAGE_BURN, CIRCULARIZE) predicts the Δv the engine will still produce during its shutdown spool — <code>dv_spool = ½ · ṁ · Ve · t_spool / M</code>, where <code>t_spool = ṁ · shutdownDurationS / maxMFR</code> — and fires the cutoff command early by exactly that amount (plus the payload eject kick on the circularization burn). Without this, the extra velocity after the command is issued pushes apogee past target and circularization lands wrong; with it, velocity at actual engine-stop equals the target.</p>
   </div>
 </div>
       <div class="exp-row">
@@ -1991,10 +2017,13 @@ Q   =  u·ax + v·ay
         <span class="tag">autonomous</span>
         <span class="tag">any-target-orbit</span>
         <span class="tag">block-composed</span>
+        <span class="tag">pid-attitude</span>
+        <span class="tag">accel-limited-gimbal</span>
         <span class="tag warn">wind-untested</span>
       </div>
     </div>
   </div>
+
 
   <!-- ==================== PRO-ALPHA ENGINE ==================== -->
   <div class="section-header">Auto-Tuning Engine</div>
