@@ -1021,6 +1021,12 @@ function getLeoInsertionV3Config() { return JSON.parse(JSON.stringify(_v3Config)
   function cmdGridFinsDeploy(deployed) {
     return { type: "gridFinsDeploy", deployed: !!deployed };
   }
+  // Per-fin deploy angles (deg, signed, same convention as the fin state:
+  // 0 = deployed, L/FB +90 & R -90 = stowed, opposite sign = swung toward the
+  // nose). angles = { L?, R?, FB? }; omitted fins keep their current target.
+  function cmdGridFinsDeployAngles(angles) {
+    return { type: "gridFinsDeploy", angles: Object.assign({}, angles) };
+  }
   function cmdGridFinsControl(controlDeg) {
     return { type: "gridFinsControl", controlDeg };
   }
@@ -1115,6 +1121,7 @@ _registerTestGuide,
     cmdRcs,
     cmdLegs,
     cmdGridFinsDeploy,
+    cmdGridFinsDeployAngles,
     cmdGridFinsControl,
     cmdSeparate,
     cmdSplitFairing,

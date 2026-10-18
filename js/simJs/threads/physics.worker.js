@@ -531,6 +531,19 @@ b.omega = msg.omega || 0;
         gfType.typeConstants.maxDeployDeg : 90;
       // Deployed: all targets → 0. Stowed: per-fin sign (L=+, R=−, FB=+;
       // FB covers both F and B, which mirror internally).
+      // Per-fin angle command: msg.angles = { L?, R?, FB? } in the SAME signed
+      // convention as the fin state (0 = deployed; L/FB +maxDeploy and R
+      // -maxDeploy = stowed; the opposite sign swings the fin toward the
+      // nose). Missing keys leave that fin's target untouched.
+      if (msg.angles && typeof msg.angles === 'object') {
+        ['L', 'R', 'FB'].forEach(k => {
+          const f = b.gridFins[k];
+          const v = msg.angles[k];
+          if (!f || !Number.isFinite(v)) return;
+          f.targetDeploy = Math.max(-maxDeploy, Math.min(maxDeploy, v));
+        });
+        break;
+      }
       ['L', 'R', 'FB'].forEach(k => {
         const f = b.gridFins[k];
         if (!f) return;
@@ -923,6 +936,8 @@ if (b.gridFins) {
     if (!src || !dst) return;
     dst.targetDeploy = src.targetDeploy;
     dst.targetControl = src.targetControl;
+    if (Number.isFinite(src.deployRate)) dst.deployRate = src.deployRate;
+    if (Number.isFinite(src.controlRate)) dst.controlRate = src.controlRate;
   });
 } else {
   bc.gridFins = null;

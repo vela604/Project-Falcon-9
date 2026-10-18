@@ -196,9 +196,9 @@ function _makeBody() {
   // targetDeploy / targetControl are the commanded goals; updateGridFins()
   // slews current toward target at the fin type's own rate constants.
   gridFins: {
-    L: { deploy: 90, control: 0, targetDeploy: 90, targetControl: 0 },
-    R: { deploy: -90, control: 0, targetDeploy: -90, targetControl: 0 },
-    FB: { deploy: 90, control: 0, targetDeploy: 90, targetControl: 0 },
+    L: { deploy: 90, control: 0, targetDeploy: 90, targetControl: 0, deployRate: 0, controlRate: 0 },
+    R: { deploy: -90, control: 0, targetDeploy: -90, targetControl: 0, deployRate: 0, controlRate: 0 },
+    FB: { deploy: 90, control: 0, targetDeploy: 90, targetControl: 0, deployRate: 0, controlRate: 0 },
   },
 // Phase 2B.1 — last tick's tank proper acceleration along its own
 // axial direction (accelerometer-on-the-tank reading; gravity already
@@ -330,18 +330,23 @@ function updateGridFins(body, dt) {
   // with a different envelope only edits its own typeConstants.
   const maxDeployDeg = Number.isFinite(TC.maxDeployDeg) ? TC.maxDeployDeg : 90;
   const maxControlDeg = Number.isFinite(TC.maxControlDeg) ? TC.maxControlDeg : 30;
-  const deployMaxDelta = deployRate * dt;
-  const controlMaxDelta = controlRate * dt;
-  
+  // Accel-limited actuators (same law as the gimbal slider path): angular
+  // accel + rate + angle limits. Accel is a fin-type property
+  // (typeConstants.maxDeployAccelDegS2 / maxControlAccelDegS2; fallbacks
+  // 100 / 200 deg/s^2). CONFIG.GRIDFIN_ACCEL_OVERRIDE (number, Infinity
+  // allowed) forces both; Infinity == the old rate-only linear slew.
+  const _ov = (typeof CONFIG !== 'undefined') ? CONFIG.GRIDFIN_ACCEL_OVERRIDE : undefined;
+  const _ovOk = (typeof _ov === 'number' && _ov > 0);
+  const deployAcc = _ovOk ? _ov : (Number.isFinite(TC.maxDeployAccelDegS2) ? TC.maxDeployAccelDegS2 : 100);
+  const controlAcc = _ovOk ? _ov : (Number.isFinite(TC.maxControlAccelDegS2) ? TC.maxControlAccelDegS2 : 200);
+
   ['L', 'R', 'FB'].forEach(k => {
     const f = body.gridFins[k];
     if (!f) return;
-    // Deploy slew — target clamped to the type's own envelope.
+    // Deploy channel (L, R, FB) — target clamped to the type's own envelope
+    // (symmetric: a fin may also swing past the hull toward the nose).
     if (Number.isFinite(f.targetDeploy)) {
-      const clampedTarget = Math.max(-maxDeployDeg, Math.min(maxDeployDeg, f.targetDeploy));
-      const d = clampedTarget - f.deploy;
-      if (Math.abs(d) <= deployMaxDelta) f.deploy = clampedTarget;
-      else f.deploy += Math.sign(d) * deployMaxDelta;
+      _gfSlewAccel(f, 'deploy', 'deployRate', f.targetDeploy, dt, deployAcc, deployRate, -maxDeployDeg, maxDeployDeg);
     }
     // Control only on FB; L/R are locked at 0 (rotating about X would
     // leave the 2D plane). Lock rule still applies: any non-zero deploy
@@ -349,13 +354,30 @@ function updateGridFins(body, dt) {
     if (k === 'FB') {
       if (f.deploy !== 0) f.targetControl = 0;
       if (Number.isFinite(f.targetControl)) {
-        const clampedCtrl = Math.max(-maxControlDeg, Math.min(maxControlDeg, f.targetControl));
-        const c = clampedCtrl - f.control;
-        if (Math.abs(c) <= controlMaxDelta) f.control = clampedCtrl;
-        else f.control += Math.sign(c) * controlMaxDelta;
+        _gfSlewAccel(f, 'control', 'controlRate', f.targetControl, dt, controlAcc, controlRate, -maxControlDeg, maxControlDeg);
       }
     }
   });
+}
+
+// One accel-limited slew step for a fin angle (deg). State: f[angKey] (angle),
+// f[rateKey] (deg/s, guarded so fast-forward / restored bodies without it
+// start at 0). Accel -> rate -> angle clamps; rate zeroed on hitting a stop.
+// Snaps EXACTLY onto the target once within 0.01 deg and slower than 2 deg/s
+// (other code tests deploy === 0 / !== 0 for the lock rule and the UI).
+function _gfSlewAccel(f, angKey, rateKey, target, dt, aMax, vMax, lo, hi) {
+  let g = Number.isFinite(f[angKey]) ? f[angKey] : 0;
+  let v = Number.isFinite(f[rateKey]) ? f[rateKey] : 0;
+  const t = Math.max(lo, Math.min(hi, target));
+  let a = _gimbalAlphaCmdPhys(t, g, v, dt, aMax);
+  a = Math.max(-aMax, Math.min(aMax, a));
+  v = Math.max(-vMax, Math.min(vMax, v + a * dt));
+  g += v * dt;
+  if (g > hi) { g = hi; if (v > 0) v = 0; }
+  else if (g < lo) { g = lo; if (v < 0) v = 0; }
+  if (Math.abs(t - g) < 0.01 && Math.abs(v) < 2) { g = t; v = 0; }
+  f[angKey] = g;
+  f[rateKey] = v;
 }
 
 

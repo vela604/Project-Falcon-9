@@ -412,6 +412,19 @@ function localDispatch(msg) {
       const maxDeploy = (gfType && gfType.typeConstants &&
           Number.isFinite(gfType.typeConstants.maxDeployDeg)) ?
         gfType.typeConstants.maxDeployDeg : 90;
+      // Per-fin angle command: msg.angles = { L?, R?, FB? } in the SAME signed
+      // convention as the fin state (0 = deployed; L/FB +maxDeploy and R
+      // -maxDeploy = stowed; the opposite sign swings the fin toward the
+      // nose). Missing keys leave that fin's target untouched.
+      if (msg.angles && typeof msg.angles === 'object') {
+        ['L', 'R', 'FB'].forEach(k => {
+          const f = b.gridFins[k];
+          const v = msg.angles[k];
+          if (!f || !Number.isFinite(v)) return;
+          f.targetDeploy = Math.max(-maxDeploy, Math.min(maxDeploy, v));
+        });
+        break;
+      }
       ['L', 'R', 'FB'].forEach(k => {
         const f = b.gridFins[k];
         if (!f) return;
