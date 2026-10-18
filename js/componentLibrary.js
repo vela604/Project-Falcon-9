@@ -1,3 +1,4 @@
+// pre acceleration of gimbal commit
 // ============================================================================
 // componentLibrary.js — Shared data layer for the Components Library
 // (Technology Bay). This is the registry of reusable HARDWARE MODULE
