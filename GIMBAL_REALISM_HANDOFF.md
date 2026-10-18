@@ -1,3 +1,60 @@
+## UPDATE (6th session) — SABSE PEHLE YE PADHO (ye section 5th-session section ko bhi supersede karta hai jahan conflict ho)
+
+Likha: 2026-10-18 (same din). Hinglish. Is section ko GIMBAL_REALISM_HANDOFF.md ke sabse upar paste karo.
+
+### A. Is session mein files badli (outputs se repo mein copy karni hain)
+
+1. `atlas-prism/lib/worker-sim.js` — `traceRun` ka patch-merge fix. Pehle sirf wahi keys patch hoti thi jo `TunerUtils.toValues()` ke `values` mein hon (ascent mein sirf PUSH_MAX_GIMBAL_DEG, PUSH_T_S, MECO_TARGET_BOOSTER_FUEL_KG) -> `HOLD_K_DAMP` "PATCH MISSING" aata tha. Ab keys `Guidance.getGuideConfig(TunerConfig.guideName)` ke asli config se validate hoti hain (`setLeoInsertionV3` section par Object.assign karta hai, to extra keys sim tak jaati hain). `_v3Config` runs ke beech persist karta hai, isliye extra patched keys `finally` mein purani value par restore hoti hain (`_patchRestore`). Typo wali key ab bhi PATCH MISSING dikhati hai.
+2. `js/simJs/guidance/guidance-blocks.js` — ascent block mein:
+   - Naye constants (defaultConstants): `HOLD_LAW` (ab default `"aoa_pd"`, purana `"legacy"`), `HOLD_PD_KP: 1.0`, `HOLD_PD_KD: 2.0`, `GIMBAL_CMD_TAU_S` (ab default `0.1`, `0` = purana deadbeat command).
+   - `aoa_pd`: HOLD aur COASTnAoADAMP dono mein `tau_desired = -I_next * (HOLD_PD_KP * aoaRad + HOLD_PD_KD * omegaAoANext)`, `aoaRad = dNext.alphaDeg` (stage-burn wale PD jaisa, bina bias). `tau_dQ` hata hua. (~line 358-372)
+   - Command shaping: ascent site (~line 418-440) par target gimbal low-pass: `gCmdFilt += (1 - exp(-dt/GIMBAL_CMD_TAU_S)) * (g_req_deg - gCmdFilt)`, seed = measured gimbal, sirf aoa_pd + (HOLD ya COASTnAoADAMP) mein; `R_req` aur `_gimbalCmdMsg` ko `g_cmd_deg` jaata hai. Baaki 3 sites (~1109, ~1598, ~2351: insertion/suicide) NAHI chhede.
+   - Purana behaviour reproduce karne ke liye patch: `{"ascent":{"HOLD_LAW":"legacy","GIMBAL_CMD_TAU_S":0}}`.
+3. `atlas-prism/tests/gimbal-accel-compare.html` — window stats mein 2 nayi lines: `chatter size` (steps >= 0.02°, unmein flips, rms dG/tick) aur `ascent attitude (tumble check)` (max|omega|, tilt range, tilt@30/60/100/end). Sirf stats, sim wahi.
+
+Sab files `node --check` pass. Koi sim chalaya nahi gaya mere taraf se; sab natije user ke bench runs se hain.
+
+IMPORTANT: defaults flip hone se OFF baseline badal gaya. Purana `baselineRaw` {G:0.60,T:4.82,bias:0.59,lead:5.53,meco:52612} ka "590.46 s DONE, circDv 696" result ab default se reproduce NAHI hoga (ab vt@coast ~4943 m/s, cap 1500 s). Wo result sirf legacy patch se milega.
+
+### B. Natije / findings
+
+**B1. HOLD_K_DAMP sweep (legacy law, patch ab sahi lagta tha), window 9-13 s, OFF rateCmd flips (321 samples):** K=0.5: 231, 1: 200, 2: 103, 4 (default): 44, 8: 64. Minimum K=4 ke paas; K=8 par finite-a runs ascent mein OFF ke kaafi paas rahe. Constants se chatter nahi gaya.
+
+**B2. Code finding (user ki galatfehmi sahi ki):** ascent HOLD (legacy) mein omega term pehle se hai (`omegaAoANext = omega + P/r^2`, stage-burn wala hi). Asal farq: legacy `tau = -I*(alphaAoA + K_DAMP*omegaAoA)`: AoA angle ka term hai hi nahi (AoA ko hold karta hai) aur `alphaAoA` (AoA ki angular accel, `dNext.alphaAng` se) hai. Stage-burn: `tau = -I*(kp*aoa + kd*omegaAoA)`, kp=1, kd=2, accel term nahi. Ascent ka phase machine: COAST -> HOLD jab `dNow.alphaDeg >= 0`; HOLD -> COASTnAoADAMP jab `< 0` (wapas HOLD nahi); COASTnAoADAMP legacy mein sirf P (`-I*GAIN*alphaDeg/K^2`, D nahi).
+
+**B3. aoa_pd akela chatter nahi hataya:** OFF window 9-13 s flips 231/232 (har tick), rms dG/tick 0.42° (legacy 0.18°). Mera pehla hypothesis (alpha-accel term ka algebraic loop) GALAT nikla. Par tumble nahi: ascent max|omega| 0.43 deg/s, tilt monotonic 0 -> -3.1 (30 s) -> -11.5 (60 s) -> -26.8 (100 s) -> -35.7 (MECO 134.7 s), legacy -35.1 deg.
+
+**B4. Chatter ka hypothesis (consistent hai, PROVEN nahi):** guidance `dNext` ko stale `g_N1 = g_N + R_N*dt` par derive karti hai, jabki bench mein command usi tick apply hota hai (sim.js tick: physicsStep -> snapshot -> Guidance.onSnapshot). `omegaAoA` ke andar `P/r^2 ~ F*sin(g)/(M*u)` (thrust ka lateral hissa) hai, to `g_req` apne hi purane guess par depend karta hai. Deadbeat command `R=(g_req-g_N)/dt` ke saath loop gain `c ~ -kd*I/(M*L*u)`; `c < -1/3` par Nyquist par marginal -> rail (40 deg/s = 0.5 deg/tick) par limit cycle. `u` HOLD ke shuru (t~10 s) mein sabse kam, isliye wahin chatter. Python toy (parameters mere andaaze, asli vehicle ke nahi) ne yahi pattern dikhaya: u<=100 m/s par rail-to-rail, u>=200 par shant; dt 1/80 -> 1/400 par rms ~5x kam par flips phir bhi har tick. Zaroorat padne par validate: window 20-24 s (speed zyada, chatter kam hona chahiye).
+
+**B5. Fix `GIMBAL_CMD_TAU_S = 0.1` (default ab):** per-tick gain ~dt/tau, response dt-independent (residual dt ke saath ghatta hai). Result (aoa_pd + tau 0.1): OFF window 9-13 s flips 1, rms dG/tick 0.013°, steps>=0.02°: 8; ON a=inf/800/400/200 sab ~1 flip, rms ~0.013°; peak |rate| ~5-11 deg/s (rail nahi); alpha saturation ~0%; ascent sab runs mein lagbhag same (tilt@MECO -33.9, vt@coast 4941-4944 for OFF/inf/800/400, 4852 for a=200). Matlab finite `a` ab ascent mein tuning ko disturb nahi karta.
+
+**B6. STAGE_BURN check (window 150-160 s):** gimbal range +-0.004 deg, rms 0.0001 deg, 0 big steps — chatter nahi, par gimbal lagbhag idle hai, isliye "slow hota to chatter aata" test nahi hua. Insertion sites par filter abhi NAHI lagaya (burn/CIRCULARIZE bias/lead ke tuned numbers badal jaate). Jab landing/hover jaisi slow phases aayen ya chatter dikhe tab shared helper bana kar 4 sites par optional (default 0) lagana.
+
+**B7. Open mamla (chatter nahi): RCS_BOOST duration jhool karti hai.** Code (`guidance-blocks.js` ~1221-1270): RCS_BOOST mein throttle 0 aur `cmdSetGimbalRate(0)` — gimbal chatter yahan ho hi nahi sakta (isliye 440-520 s window chatter ke liye bekaar). Phase tab khatam hoti hai jab apogee error ka sign badle (`crossed`). Duration: legacy baseline ~8 s, aoa_pd runs mein OFF/a=800/a=200 ~18-22 s, par a=inf aur a=400 ~76-82 s, phir COAST_ROTATE ~1005 s tak atka (a=inf COAST_HOLD@1029.7, a=400 COAST_HOLD@1245.1, DONE koi nahi). Ascent aur STAGE_BURN in runs mein identical, first deviation RCS_BOOST ke andar (~459 s, dtilt>0.1). Hypothesis (unverified): RCS push attitude par depend karta hai aur chhote tilt difference se apogee crossing late hoti hai (knife-edge).
+
+### C. Decisions / user ke rules
+
+- User ne decide kiya: hold law aoa_pd, gimbal accel ON, OFF model hata kar ON par hi retune. Chatter ko model ka hissa nahi rehne dena; limitation sirf DT (phone par 1/80, real space X 1/400) ho aur dt chhota karne par problem ghate.
+- `config.js` mein `GIMBAL_ACCEL_ON` abhi bhi `false`. Page par true karne se pehle: (1) `snapDbg` gap=1 verify, (2) bench aur page mein same value, (3) NEW: bench mein guidance command usi tick apply hota hai (latency 0); page mein worker latency 1 tick ho sakti hai. Gap=1 aaye to `R_req = (g_req - g_N)/dt` ki jagah `g_N1` wala version (ya filter ke saath dobara verify) dekhna padega.
+- Token bachao: badi files poori mat padho (`grep -n` + `sed -n a,bp`). GIT MERGE RISK (5th-session section F) ab bhi lagu: `workerBridge.js` aur `fastforward_worker.js` overwrite mat karo, pehle diff.
+
+### D. Agle kadam (is order mein)
+
+1. Teeno files repo mein copy (guidance-blocks.js, worker-sim.js, compare html), page hard-refresh. Check: OFF Determinism x2 + bit-identical (compare page mein "CONTROL bit-identical" aata hai).
+2. **ON par retune shuru** (G, T, bias, lead, meco via bootstrap/tuner) `GIMBAL_ACCEL_ON=true` per-job, `a` ke liye suggestion 200 (sabse shant) ya user ka real actuator number. Har result mein RCS_BOOST duration dekho: agar points ke beech 10x badalti hai to B7 (apogee error vs time ka plot add karke) investigate karo.
+3. Optional validate: window 20-24 s chatter; `GIMBAL_CMD_TAU_S` 0.05 / 0.2 compare; dt=1/400 par rms.
+4. Insertion sites (~1109, ~1598, ~2351) par shared filter helper (default 0) — landing/slow phases ke liye.
+5. Agar kabhi root-cause fix chahiye: self-consistent g_req (tau_target(g) ko g ke saath solve, secant 2-3 `deriveForState` calls/tick) — toy mein chatter hata deta hai, code mein invasive.
+6. Purane items: page ON `snapDbg` gap=1, per-engine property refactor (`gimbalAccelDegS2`, `GIMBAL_RATE_DEG_S`, `GIMBAL_MAX_DEG`), grid fins, bench sweep metric "gimbal travel 0.3 s after throttle(0)", `trajectory_worker.js` flag ON check.
+
+### E. Agle chat mein upload karwao
+
+`GIMBAL_REALISM_HANDOFF.md` (updated), `guidance-blocks.js` (naya), `worker-sim.js` (naya), `sim.js`, `tests/gimbal-accel-compare.html` (naya), `config.js`. Zaroorat par: `lattice.js`, `bootstrap.js`, `physics.js` (~873-905 gimbal branch). Natije "Copy summary" se.
+
+Next chat ki pehli line: "GIMBAL_REALISM_HANDOFF.md padho, UPDATE (6th session) section D step 2 (ON par retune) se shuru karo."
+
+---
+
 # GIMBAL REALISM — Handoff (is chat ka poora kaam, next chat ke liye)
 
 Likha: 2026-10-18. Bhasha: Hinglish. Is file ko padhne ke baad naye chat ko user se kuch re-explain nahi karwana chahiye.

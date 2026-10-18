@@ -632,13 +632,20 @@ self.onmessage = async (e) => {
       const values = payload.values || TunerUtils.toValues(_pt, { targetAltKm: altKm });
       // Optional deep-merge of constants into values (applied to every run so comparisons stay apples-to-apples).
       const patchMissing = [];
-      if (payload.patch) (function mg(t, p, path) {
-        Object.keys(p).forEach(k => {
-          const pv = p[k];
-          if (pv && typeof pv === 'object' && !Array.isArray(pv)) { if (t[k] && typeof t[k] === 'object') mg(t[k], pv, path + k + '.'); else patchMissing.push(path + k); }
-          else if (k in t) t[k] = pv; else patchMissing.push(path + k);
+      const _patchRestore = {};   // section -> {key: oldValue} for patched keys that toValues() does not carry (restored in finally; _v3Config persists across runs)
+      if (payload.patch) {
+        const _curCfg = Guidance.getGuideConfig(TunerConfig.guideName) || {};
+        Object.keys(payload.patch).forEach(sec => {
+          const ps = payload.patch[sec];
+          if (!ps || typeof ps !== 'object' || Array.isArray(ps) || !(values[sec] || _curCfg[sec])) { patchMissing.push(sec); return; }
+          if (!values[sec] || typeof values[sec] !== 'object') values[sec] = {};
+          Object.keys(ps).forEach(k => {
+            if (k in values[sec]) values[sec][k] = ps[k];
+            else if (_curCfg[sec] && (k in _curCfg[sec])) { (_patchRestore[sec] = _patchRestore[sec] || {})[k] = _curCfg[sec][k]; values[sec][k] = ps[k]; }
+            else patchMissing.push(sec + '.' + k);
+          });
         });
-      })(values, payload.patch, '');
+      }
       const every = Math.max(1, payload.every || 4), maxTicks = Math.ceil((payload.capS || 1500) / CONFIG.DT);
       const sv = { on: CONFIG.GIMBAL_ACCEL_ON, a: CONFIG.GIMBAL_ACCEL_DEG_S2 };
       if (payload.accelOn != null) CONFIG.GIMBAL_ACCEL_ON = !!payload.accelOn;
@@ -673,6 +680,7 @@ self.onmessage = async (e) => {
         CONFIG.GIMBAL_ACCEL_ON = sv.on; CONFIG.GIMBAL_ACCEL_DEG_S2 = sv.a;
         try { TunerEngine.refreshStackData(); } catch (e) {}
         try { Guidance.stopGuide(); } catch (e) {}
+        if (Object.keys(_patchRestore).length) { try { Guidance.applyGuideConfig(TunerConfig.guideName, _patchRestore); } catch (e) {} }
       }
       result = { ok: true, patchMissing, endReason, ticks, simTime: state.simTime, accelOn: payload.accelOn, accelDegS2: payload.accelDegS2, phases, cols: C };
     } else if (type === 'setupSA') {

@@ -219,6 +219,20 @@
           maxStep: dG.reduce((m, x) => Math.max(m, Math.abs(x)), 0),
           gMin: Math.min.apply(null, idx.map(i => r.d.gimbal[i])), gMax: Math.max.apply(null, idx.map(i => r.d.gimbal[i])),
           rcMax: !r.accelOn ? Math.max.apply(null, idx.map(i => Math.abs(r.d.cmdRate[i] || 0))) : null };
+        {   // amplitude of the chatter (is it real motion or tiny dither?) + ascent attitude sanity (tumble check)
+          const thr = 0.02, big = dG.map(x => Math.abs(x) >= thr ? x : null), W2 = r.m.win;
+          W2.bigFlips = flips(big); W2.nBig = big.filter(x => x != null).length;
+          W2.rms = Math.sqrt(dG.reduce((a, x) => a + x * x, 0) / Math.max(1, dG.length));
+          const ph = (r.res && r.res.phases) || [], pe = ph.find(p => p.phase !== 'ASCENT'), tEnd = pe ? pe.t : Infinity;
+          const om = (r.res && r.res.cols && r.res.cols.omega) || [];
+          let mo = 0, tiMax = -1e9, tiMin = 1e9;
+          for (let i = 0; i < r.d.t.length && r.d.t[i] <= tEnd; i++) {
+            if (om[i] != null) mo = Math.max(mo, Math.abs(om[i]) * 180 / Math.PI);
+            tiMax = Math.max(tiMax, r.d.tilt[i]); tiMin = Math.min(tiMin, r.d.tilt[i]);
+          }
+          const at = (T) => { let b = -1, bd = 1e9; for (let i = 0; i < r.d.t.length; i++) { const d0 = Math.abs(r.d.t[i] - T); if (d0 < bd) { bd = d0; b = i; } } return b >= 0 ? r.d.tilt[b] : NaN; };
+          W2.att = { maxOmega: mo, tiMin: tiMin, tiMax: tiMax, t30: at(30), t60: at(60), t100: at(100), tEnd: isFinite(tEnd) ? at(tEnd) : NaN, tEndS: tEnd };
+        }
       }
       if (r.accelOn) {
         let cur = null;
@@ -264,6 +278,9 @@
       if (W && W.n) l += '\n    window ' + $('hi0').value + '-' + $('hi1').value + 's' + (W.hires ? '' : ' (NOT hi-res)') + ': samples=' + W.n + ' gimbal-dir-flips=' + W.gFlips +
         (W.aFlips != null ? ' alpha-sign-flips=' + W.aFlips : '') + (W.rcFlips != null ? ' rateCmd-sign-flips=' + W.rcFlips + ' max|rateCmd|=' + f(W.rcMax, 1) : '') +
         ' max|dG/tick|=' + f(W.maxStep, 4) + '° gimbal range [' + f(W.gMin, 3) + ', ' + f(W.gMax, 3) + ']';
+      if (W && W.n && W.att) l += '\n    chatter size: steps>=0.02°: ' + W.nBig + ' (flips among them ' + W.bigFlips + '), rms dG/tick=' + f(W.rms, 4) + '°' +
+        '\n    ascent attitude (tumble check): max|omega|=' + f(W.att.maxOmega, 2) + ' °/s, tilt range [' + f(W.att.tiMin, 1) + ', ' + f(W.att.tiMax, 1) + ']°, tilt@30/60/100/end(' + f(W.att.tEndS, 1) + 's)=' +
+        f(W.att.t30, 1) + '/' + f(W.att.t60, 1) + '/' + f(W.att.t100, 1) + '/' + f(W.att.tEnd, 1) + '°';
       notes += l + '\n'; txt += l + '\n';
     });
     $('tbl').innerHTML = h + '<pre>' + notes.replace(/</g, '&lt;') + '</pre><div class="dim">circΔv≈ and apo/peri use the "mu" box + Earth R=6371 km on the state at first COAST phase entry (approximation; sim hook metrics are the authority).</div>';

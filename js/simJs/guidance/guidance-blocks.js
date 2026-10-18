@@ -91,6 +91,14 @@ const FUNDAMENTAL_BLOCKS = {
       HOLD_MAX_AOA_DEG: 8,
       HOLD_K_DQ: 0.005,
       HOLD_Q_REF: 1000,
+      // HOLD attitude law: "legacy" = accel+rate feedback (no AoA-angle term);
+      // "aoa_pd" = stage-burn style PD on AoA angle + AoA rate (tau = -I*(KP*aoa + KD*omegaAoA)), no bias,
+      // applied for both HOLD and COASTnAoADAMP phases.
+      HOLD_LAW: "aoa_pd",
+      HOLD_PD_KP: 1.0,
+      HOLD_PD_KD: 2.0,
+      // Seconds. >0 low-passes the commanded gimbal in aoa_pd HOLD (removes the 1-tick limit cycle). 0 = old deadbeat command.
+      GIMBAL_CMD_TAU_S: 0.1,
       THROTTLE_FRAC: 1.0,
       THROTTLE_ALT_LOW_KM: 8,
       THROTTLE_ALT_HIGH_KM: 13,
@@ -349,10 +357,16 @@ const FUNDAMENTAL_BLOCKS = {
         } else if (_sub.phase === "COAST" || _sub.phase === "PRE_COAST") {
           tau_desired = 0;
           _sub.lastTauDQ = 0;
-        } else if (_sub.phase === "COASTnAoADAMP") {
+        } else if (_sub.phase === "COASTnAoADAMP" && cfg.HOLD_LAW !== "aoa_pd") {
           tau_desired =
             (-I_next * cfg.COAST_DAMP_GAIN * dNext.alphaDeg) /
             (cfg.COAST_DAMP_K * cfg.COAST_DAMP_K);
+          _sub.lastTauDQ = 0;
+        } else if (cfg.HOLD_LAW === "aoa_pd") {
+          // Same PD-on-AoA as STAGE_BURN: uses AoA's own rate (omega + P/r^2), no accel term,
+          // so no dependence of tau_desired on the gimbal being solved (no 1-tick sign-flip loop).
+          const aoaRadPD = (Number.isFinite(dNext.alphaDeg) ? dNext.alphaDeg : 0) * Math.PI / 180;
+          tau_desired = -I_next * (cfg.HOLD_PD_KP * aoaRadPD + cfg.HOLD_PD_KD * omegaAoANext);
           _sub.lastTauDQ = 0;
         } else {
           const useNow = dQ < 0;
@@ -403,7 +417,21 @@ const FUNDAMENTAL_BLOCKS = {
         if (Math.abs(g_req_deg) > MAX_ANG)
           g_req_deg = Math.sign(g_req_deg) * MAX_ANG;
 
-        const R_req = (g_req_deg - g_N) / dt;
+        // Command shaping (ascent HOLD, aoa_pd only): the target gimbal is low-passed with a PHYSICAL time
+        // constant GIMBAL_CMD_TAU_S (seconds, dt-independent). A deadbeat command (reach g_req in ONE tick) on a
+        // target that depends on the stale next-gimbal guess g_N1 is marginal at low airspeed and limit-cycles at
+        // Nyquist; per-tick loop gain here is ~dt/tau, so the residual jitter vanishes as dt -> 0.
+        let g_cmd_deg = g_req_deg;
+        const _tauC = cfg.GIMBAL_CMD_TAU_S;
+        if (cfg.HOLD_LAW === "aoa_pd" && Number.isFinite(_tauC) && _tauC > 0 &&
+            (_sub.phase === "HOLD" || _sub.phase === "COASTnAoADAMP")) {
+          if (!Number.isFinite(_sub.gCmdFilt)) _sub.gCmdFilt = g_N;   // seed from measured gimbal on entry
+          _sub.gCmdFilt += (1 - Math.exp(-dt / _tauC)) * (g_req_deg - _sub.gCmdFilt);
+          g_cmd_deg = _sub.gCmdFilt;
+        } else {
+          _sub.gCmdFilt = NaN;
+        }
+        const R_req = (g_cmd_deg - g_N) / dt;
         const MAX_RATE =
           env && Number.isFinite(env.GIMBAL_RATE_DEG_S)
             ? env.GIMBAL_RATE_DEG_S
@@ -414,7 +442,7 @@ const FUNDAMENTAL_BLOCKS = {
         _sub.lastGRadN = g_N;
         _sub.lastGReqDeg = g_req_deg;
 
-        _send(_gimbalCmdMsg(R_cmd, g_req_deg, gimbals[0], dt, env, cfg.GIMBAL_TARGET));
+        _send(_gimbalCmdMsg(R_cmd, g_cmd_deg, gimbals[0], dt, env, cfg.GIMBAL_TARGET));
 
         let refMax = 0;
         engines.forEach((e) => {
