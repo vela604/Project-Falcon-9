@@ -322,6 +322,10 @@ function buildGridFinSerratedF9() {
   // control loop, not a slow mechanical deploy.
   maxSlewDeployingDegS: 18,
   maxSlewControllingDegS: 40,
+  // Angular accel limits (deg/s^2), same law as thruster gimbalAccelDegS2.
+  // Control 0->30 deg ~0.85 s; deploy 0->90 deg ~5.1 s (rate cap 18).
+  maxControlAccelDegS2: 200,
+  maxDeployAccelDegS2: 100,
 },
     capabilities: {
       deploysOnVehicle: true,
