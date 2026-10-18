@@ -4,7 +4,76 @@ Likha: 2026-10-18. Bhasha: Hinglish. Is file ko padhne ke baad naye chat ko user
 
 ---
 
-## STATUS (4th session) — PAGE PATH BHI PATCH HO GAYA (flag OFF default)
+## UPDATE (5th session) — SABSE PEHLE YE PADHO (ye section neeche ke purane sections ko supersede karta hai jahan conflict ho)
+
+Likha: 2026-10-18 (same din, 5th session). **Is session mein koi aur patch pending nahi hai; sab files user ko di ja chuki hain. Last step (HOLD_K_DAMP patch experiment) abhi CHALA NAHI hai** (user ke aakhri paste mein wahi purana run tha, bina patch ke).
+
+### A. Is session mein kya badla (ya check hua)
+
+**Bugs jo mile aur fix hue (ye sab flag-OFF mein numerics nahi badalte):**
+1. `workerBridge.js` (~559-563): guidance snapshot ke engine projection mein `gimbalRateActDegS` aur `targetGimbalAccelDegS2` NAHI the. Guidance `|| 0` fallback se padhti hai, to page path mein flag ON par guidance ko actual rate hamesha 0 dikhti (chupchap galat). Dono fields projection mein jod diye.
+2. `fastforward_worker.js` (`localDispatch`, ~314-345): `setGimbalAccel` case tha hi nahi (`default: break` se ignore). Case joda (sim.js wale handler jaisa, clamp `CONFIG.GIMBAL_ACCEL_DEG_S2`, field `degPerSec2`); `setGimbal`/`setGimbalRate` ab `targetGimbalAccelDegS2 = NaN` bhi karte hain.
+3. `atlas-prism/lib/sim.js`: `setupStackData()` ke andar `collectStackData` local hai aur `Derivation.setStackData` sirf ek baar (load par) chalta hai. Bench mein per-run flag badalne ke liye module-level `_refreshStackData` hook banaya, `TunerEngine.refreshStackData()` export hua. (Pehli attempt scope galat thi, ab theek.)
+
+**Static audit (sirf code padh kar, sim chalaya nahi):** saari uploaded files `node --check` OK. Hot buffer stride sirf `HOT_STATE_FLOATS_PER_ENGINE` constant se nikalta hai (stateBuffer.js), kahin hardcoded 3 nahi. `render_worker.js` `decodeHotState` use karta hai (safe). `guidance_worker.js` `stackData` ko seedha `Derivation.setStackData(msg.data)` ko deta hai. `fastForward.js` stackData `_collectStackDataForGuidance()` (workerBridge.js:619) se leta hai, jisme `GIMBAL_ACCEL_ON/DEG_S2` pehle se hain. `physics_worker.js` `serializeForMain` har tick cache overwrite karta hai (cold clone fields stale nahi). **Ye abhi bhi unverified:** `trajectory_worker.js` flag ON par; page realtime mein `snapDbg` gap=1.
+
+**Teeno pipelines ka status (code level):** page (physics worker + guidance worker) OK; fast-forward OK; bench (atlas-prism) OK. User ne ON mode mein Determinism check kar liya (pass). Flag ab bhi `config.js` mein `GIMBAL_ACCEL_ON: false` default.
+
+### B. Naya test harness (bench) — ye ab main diagnostic tool hai
+
+- `atlas-prism/lib/worker-sim.js`: naya job **`traceRun`**. Payload: `{ raw | point | values, altKm, accelOn, accelDegS2, every (ticks, default 4), capS (1500), hiT0, hiT1 (is window mein har tick), patch (JSON, values mein deep-merge; missing keys `patchMissing` mein), env }`. Point priority: values > point > `TunerUtils.fromRaw(raw || TunerConfig.baselineRaw)`. CONFIG ko per-job set/restore karta hai, `TunerEngine.refreshStackData()` prepareRun se pehle aur restore ke baad. Return: `{ok, patchMissing, endReason, ticks, simTime, phases[], cols{t, cmdRate, rx, ry, alt, vx, vy, theta, omega, gimbal, gimbalRate, alpha, gimbalTgt, thrust, fuel}}`.
+- `atlas-prism/tests/gimbal-accel-compare.html` (naya, koi external lib nahi, canvas charts): pool = `TunerCore.WorkerPool(n, {workerPath:'../lib/worker-sim.js'})`, jobs `pool.runJob('traceRun', ...)`; sirf `../lib/worker-pool.js` load karta hai. Chalata hai OFF + ON(a list, default inf/800/400/200) + OFF control. 11 panels (alt, vt, vr, tilt = theta - localVertical, gimbal, rate, alpha, OFF rate cmd, Δvt/Δtilt/Δalt vs OFF), summary table (coast-phase state, approx apo/peri/circΔv with mu box, peak gimbal/rate, alpha sat %), "first deviation vs OFF" onset (Δtilt>0.1°, Δvt>5 m/s, Δgimbal>0.05°), alpha-saturation windows, aur **hi-res window stats (default 9-13 s)**: gimbal-dir flips, alpha/rateCmd sign flips, max |dG/tick|, gimbal range. Input box **"values patch JSON (all runs)"** (e.g. `{"ascent":{"HOLD_K_DAMP":1}}`), jo sab runs par lagta hai; "PATCH MISSING keys" log mein bad dikhega.
+- Baseline point `TunerConfig.baselineRaw = {G:0.60, T:4.82, bias:0.59, lead:5.53, meco:52612}` OFF mein 590.46 s run reproduce karta hai (hook: circ Δv@COAST 696.3). Page ka approx circΔv 696 us se match karta hai.
+- Point lattice format (bootstrap.js): `{Gi: round(G*100), Tn: round(T/0.000125), bi: round(bias/0.0001), li: round(lead/0.0125), meco}`; `toValues`/`fromRaw` `lattice.js` mein hain (wo file kabhi upload nahi hui; `TunerUtils.toValues/fromRaw` export hain).
+
+### C. Natije (baseline point, jo OFF ke liye tuned hai)
+
+| run | end | t end | vt@coast | circΔv≈ | note |
+|---|---|---|---|---|---|
+| OFF (+control bit-identical) | DONE | 590.5 | 7026 | 696 | |
+| ON a=inf | DONE | 645.4 | 7071 | 651 | structure OFF jaisa, par bit-identical nahi |
+| ON a=800 | cap/fail | 1500 | 6084 | 1635 | |
+| ON a=400 | cap/fail | 1500 | 5676 | 2043 | COAST_WAIT/ROTATE/HOLD/CIRCULARIZE sab 509.6 s par = circ lead cross (user ka purana symptom) |
+| ON a=200 | cap/fail | 1500 | 5573 | 2147 | |
+
+- Alpha saturation sirf ~1.1-1.4% samples, par teeno finite-a runs mein ascent mein t≈10.1-12 s ke beech saturation windows hain aur pehla trajectory deviation (Δtilt>0.1°) ASCENT mein hi 58-73 s par aata hai.
+- `a=inf` ka mission end 55 s late (645 vs 590) **bug nahi**: `COAST_HOLD_2 -> DONE` apogee crossing (vr + -> <=0) ka wait karta hai (`guidance-blocks.js` ~1694-1710); final eccentricity thodi alag (320.3 vs 320.1) se crossing late aati hai.
+- Sab ON runs (a=inf bhi) OFF se pehle gimbal deviation t=10.1 s par dikhate hain (>0.05°).
+
+### D. **KEY FINDING: jitter OFF mein bhi hai (pre-existing limit cycle, ON ka bug nahi)**
+
+Window 9-13 s (hi-res, 80 Hz):
+- OFF: rateCmd sign flips **44**, max|rateCmd| = 40 (rate limit rail), gimbal range [-1.199, +0.499], max |dG/tick| 0.5°.
+- ON a=inf: gimbal flips 38, alpha flips 46, range [-1.25, 0.499]. ON a=800: 96/106. a=400: 92/110. a=200: 112/121 (finite a mein flips badhte hain, per-tick step ghatta hai).
+- Matlab ascent ke outer loop mein t≈10.1 s se ~11 Hz bang-bang limit cycle hai jo instant-gimbal ke saath chhup jaata tha (sim ke liye harmless, par real actuator mein 40 deg/s rail-to-rail unrealistic). Finite alpha use isi cycle ko badal deti hai -> butterfly effect, trajectory ASCENT mein hi diverge.
+- **Kahan se shuru:** `guidance-blocks.js` ascent: PRE_COAST (INITIAL_COAST_S 4.9) -> PUSH (PUSH_T_S 4.82, ends ~9.72 s) -> COAST (tau_desired=0) -> **HOLD jab `dNow.alphaDeg >= 0` (~10.1 s)**. Phase transitions ~line 320-340, tau law ~line 354-372 (HOLD: `tau_accel = -I*alphaAoA`, `tau_damp = -HOLD_K_DAMP*I*omegaAoA`, `tau_dQ`), `g_req` solve ~392-417, `g_N1` (next-tick gimbal prediction) ~line 227 (ON mein `_gimbalNextAngle`). 4 call sites: ~417, ~1085-1102, ~1574-1591, ~2327-2344.
+- **Offline node test** (`_gimbalAlphaCmd` akele, dt=0.0125, a=400): static steps aur slow sinusoid par koi chatter nahi, overshoot nahi; chatter tabhi jab target har tick alternate kare. Matlab alpha law shayad doshi nahi, `g_req` khud jitter karta hai (hypothesis, unverified).
+- **Hypothesis (unverified):** HOLD law deadbeat-jaisa high-gain loop hai jisme one-tick delay + `g_N1` dependence hai -> limit cycle.
+
+### E. Agle kadam (is order mein)
+
+1. **Pending experiment (abhi chala nahi):** gimbal-accel-compare.html mein patch `{"ascent":{"HOLD_K_DAMP":1}}`, phir 2, 0.5. Window stats dekho (OFF aur ON dono ke flips kam hue?). Agar log mein **PATCH MISSING** aaye to HOLD_K_DAMP `values.ascent` mein nahi hai: pata karo ascent constants kahan se aate hain (`defaultConstants` guidance-blocks.js ~line 100; `TunerUtils.toValues`/`guideConfigDefaults.js`). `COAST_DAMP_GAIN`/`COAST_DAMP_K` bhi try kar sakte ho (COASTnAoADAMP phase).
+2. Agar constants se limit cycle nahi jata: **ON-only `g_req` limiter/blend** 4 sites par (flag OFF = bit-identical), ya `g_N1`/delay model ka sahi hona dekho. Fix ke baad comparison dobara: goal = a=inf ≈ OFF aur finite a (200-800) stable, window flips kam.
+3. a=inf mein bhi t=10.1 par Δgimbal>0.05° kyun (first-tick behaviour ON vs OFF: timing ya g_N1 ka farq?) samjho.
+4. User ka plan: bugs/model sahi hone ke baad **OFF model hata do, ON par hi retune** (bootstrap/tuner, MECO/G/T/bias). Pehle "OFF tuned point par ON chalana" fair comparison nahi hai (knife-edge optimum).
+5. Baaki purane items: OFF Determinism x2 + bit-identical (is session ke edits ke baad dobara), page ON `snapDbg` gap=1, per-engine property refactor (`gimbalAccelDegS2`, `GIMBAL_RATE_DEG_S`, `GIMBAL_MAX_DEG` ek saath), grid fins, bench sweep metric "gimbal travel 0.3 s after throttle(0)".
+
+### F. Dhyan rakhne ki baatein
+
+- **GIT MERGE RISK:** user ne `git pull` kiya jisme `js/simJs/threads/fastforward.worker.js` (+14/-1) aur `threads/workerBridge.js` (+3) remote se badle. Mere diye `fastforward_worker.js` aur `workerBridge.js` purane upload par based hain; **overwrite mat karo, pehle `diff`/git diff karke sirf mere edits (upar A.1, A.2) latest par apply karo.** Agar wo remote changes user ke apne push hain jisme mere patches pehle se hain, to dobara apply ki zaroorat nahi.
+- Repo tree (user ne diya): main sim `js/simJs/{core,guidance,threads,view}`; bench `atlas-prism/{lib,tests,standard,engines,ui}`; configs `js/config.js`, `js/componentLibrary.js`, `js/fleet.js`. Upload hui files flat naam mein hain (`physics_worker.js` = `threads/physics.worker.js`, `guidance_worker.js` = `threads/guidance.worker.js`, `worker-sim.js` = `atlas-prism/lib/`).
+- User Hinglish mein baat karta hai; **token bachao**: badi files poori mat padho, `grep -n` + `sed -n a,bp` se targeted lines. "Butterfly effect" ka user ko pata hai: chhoti cheez poore mission ko badal sakti hai, isliye final verdict tuned (retuned) results se, ek fixed point ke final Δv se nahi.
+- Hot buffer / env wiring ki detail upar A mein hai; `GIMBAL_ACCEL_ON` kabhi bhi page mein TRUE karne se pehle (1) `snapDbg` gap=1, (2) bench aur page mein same value.
+
+### G. Agle chat mein upload karwao
+
+`GIMBAL_REALISM_HANDOFF.md` (ye file), `guidance-blocks.js`, `worker-sim.js`, `sim.js`, `tests/gimbal-accel-compare.html`, `config.js`. Experiment ke natije (window stats + summary table, "Copy summary" button se). Zaroorat padne par: `physics.js` (sirf ~873-905 gimbal branch), `workerBridge.js`, `fastforward_worker.js`, `lattice.js`, `componentLibrary.js` (per-engine refactor ke liye).
+
+Next chat ki pehli line: "GIMBAL_REALISM_HANDOFF.md padho, UPDATE (5th session) ke section E step 1 se shuru karo."
+
+---
+
+## (PURANA) STATUS (4th session) — upar 5th session ka update supersede karta hai — PAGE PATH BHI PATCH HO GAYA (flag OFF default)
 
 Ab tak patched (sab `GIMBAL_ACCEL_ON` ke peeche, default false): `config.js, physics.js, vehicle.js, sim.js, guidance.js, guidance-blocks.js, physics_worker.js, stateBuffer.js, workerBridge.js`.
 - `workerBridge.js` (~762): guidance `env` mein `GIMBAL_ACCEL_ON`, `GIMBAL_ACCEL_DEG_S2` (page path ab bench jaisa).

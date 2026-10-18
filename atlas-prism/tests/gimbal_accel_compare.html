@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>atlas-prism · gimbal accel ON vs OFF</title>
+<style>
+  body { background:#0e1116; color:#d6dde6; font:13px/1.45 ui-monospace,Menlo,Consolas,monospace; margin:0; padding:10px; }
+  h1 { font-size:15px; margin:0 0 8px; }
+  .row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:6px 0; }
+  label { display:flex; gap:4px; align-items:center; }
+  input[type=text] { background:#1b212b; color:#d6dde6; border:1px solid #333c4a; border-radius:4px; padding:4px; width:62px; }
+  button { background:#2b6cb0; color:#fff; border:0; border-radius:4px; padding:8px 12px; font:inherit; }
+  button.alt { background:#4a5568; } button:disabled { opacity:.5; }
+  #status { color:#f6e05e; min-height:1.3em; }
+  pre { background:#080a0e; border:1px solid #232a35; border-radius:4px; padding:8px; overflow:auto; white-space:pre; max-height:30vh; margin:6px 0; }
+  .ok { color:#68d391; } .bad { color:#fc8181; } .dim { color:#8896a8; } .hi { color:#f6e05e; }
+  #grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(460px,1fr)); gap:8px; margin-top:8px; }
+  canvas { width:100%; height:230px; background:#080a0e; border:1px solid #232a35; border-radius:4px; }
+  #legend span { margin-right:14px; white-space:nowrap; }
+  table { border-collapse:collapse; margin:6px 0; }
+  td, th { border:1px solid #232a35; padding:3px 7px; text-align:right; }
+  th { background:#161c26; } td:first-child, th:first-child { text-align:left; }
+  .tw { overflow-x:auto; }
+</style>
+</head>
+<body>
+<h1>Gimbal accel model · full-mission ON vs OFF (same tuned point)</h1>
+<div class="row">
+  <label>G <input type="text" id="G" value="0.60"></label>
+  <label>T <input type="text" id="T" value="4.82"></label>
+  <label>bias <input type="text" id="bias" value="0.59"></label>
+  <label>lead <input type="text" id="lead" value="5.53"></label>
+  <label>MECO <input type="text" id="meco" value="52612"></label>
+  <label>alt km <input type="text" id="alt" value="320" style="width:44px"></label>
+</div>
+<div class="row">
+  <label>a_max list (deg/s², inf ok) <input type="text" id="amax" value="inf, 800, 400, 200" style="width:170px"></label>
+  <label>sample every (ticks) <input type="text" id="every" value="4" style="width:34px"></label>
+  <label>cap s <input type="text" id="cap" value="1500" style="width:48px"></label>
+  <label>workers <input type="text" id="nw" value="0" style="width:34px"></label>
+  <label><input type="checkbox" id="ctl" checked> control (OFF twice)</label>
+  <label>hi-res window s <input type="text" id="hi0" value="9" style="width:34px"> to <input type="text" id="hi1" value="13" style="width:34px"></label>
+  <label>values patch JSON (all runs) <input type="text" id="patch" value="" placeholder='{"ascent":{"HOLD_K_DAMP":1}}' style="width:260px"></label>
+  <label>mu <input type="text" id="mu" value="3.986004418e14" style="width:110px"></label>
+</div>
+<div class="row">
+  <button id="go">Run comparison</button>
+  <label>t from <input type="text" id="tmin" value="0" style="width:44px"> to <input type="text" id="tmax" value="" placeholder="end" style="width:44px"></label>
+  <button class="alt" id="redraw">Redraw</button>
+  <button class="alt" id="copy">Copy summary</button>
+</div>
+<div id="status">idle</div>
+<div id="legend"></div>
+<div class="tw"><div id="tbl"></div></div>
+<pre id="log"></pre>
+<div id="grid"></div>
+
+<script src="../lib/worker-pool.js"></script>
+<script>
+(function () {
+  'use strict';
+  const $ = (id) => document.getElementById(id);
+  const COLORS = ['#e2e8f0', '#68d391', '#63b3ed', '#f6ad55', '#fc8181', '#b794f4', '#f687b3', '#a0aec0'];
+  const RE = 6371000;
+  const logEl = $('log'); let logText = '';
+  function log(s, cls) { logText += s + '\n'; const d = document.createElement('span'); if (cls) d.className = cls; d.textContent = s + '\n'; logEl.appendChild(d); logEl.scrollTop = logEl.scrollHeight; }
+
+  let pool = null, runs = [], summaryText = '';
+  async function getPool() {
+    if (pool) return pool;
+    let n = parseInt($('nw').value, 10); if (!(n > 0)) n = TunerCore.defaultWorkers();
+    pool = new TunerCore.WorkerPool(n, { workerPath: '../lib/worker-sim.js' });
+    log('pool: ' + n + ' workers, booting...', 'dim');
+    await pool.waitReady();
+    const errs = pool.readyErrors.filter(Boolean);
+    if (errs.length) log('worker boot errors: ' + errs.join(' | '), 'bad');
+    return pool;
+  }
+
+  // ---------- derived series + metrics ----------
+  const wrap = (a) => { while (a > Math.PI) a -= 2 * Math.PI; while (a < -Math.PI) a += 2 * Math.PI; return a; };
+  function derive(run) {
+    const c = run.res.cols, n = c.t.length, mu = parseFloat($('mu').value) || 3.986004418e14;
+    const d = { t: c.t, alt: c.alt, vt: [], vr: [], tilt: [], gimbal: c.gimbal, rate: c.gimbalRate, alpha: c.alpha, tgt: c.gimbalTgt, cmdRate: c.cmdRate };
+    for (let i = 0; i < n; i++) {
+      const r = Math.hypot(c.rx[i], c.ry[i]);
+      d.vt.push((c.vx[i] * c.ry[i] - c.vy[i] * c.rx[i]) / r);
+      d.vr.push((c.vx[i] * c.rx[i] + c.vy[i] * c.ry[i]) / r);
+      d.tilt.push(wrap(c.theta[i] - Math.atan2(-c.rx[i], c.ry[i])) * 180 / Math.PI);
+    }
+    d.orbit = (i) => {   // approx apo/peri/circ-dv at apogee (km, m/s). Uses user mu.
+      const rx = c.rx[i], ry = c.ry[i], vx = c.vx[i], vy = c.vy[i], r = Math.hypot(rx, ry);
+      const eps = (vx * vx + vy * vy) / 2 - mu / r; if (!(eps < 0)) return null;
+      const a = -mu / (2 * eps), h = rx * vy - ry * vx, e = Math.sqrt(Math.max(0, 1 + 2 * eps * h * h / (mu * mu)));
+      const ra = a * (1 + e), rp = a * (1 - e), va = Math.abs(h) / ra;
+      return { apo: (ra - RE) / 1000, peri: (rp - RE) / 1000, circDv: Math.sqrt(mu / ra) - va };
+    };
+    run.d = d;
+    // metrics
+    let pg = 0, pr = 0, sat = 0, nal = 0, me = 0;
+    const lim = run.accelOn ? run.a : 0;
+    for (let i = 0; i < n; i++) {
+      pg = Math.max(pg, Math.abs(d.gimbal[i])); pr = Math.max(pr, Math.abs(d.rate[i]));
+      if (d.alpha[i] != null) { nal++; if (lim && Math.abs(d.alpha[i]) >= 0.999 * lim) sat++; }
+      if (d.tgt[i] != null) me = Math.max(me, Math.abs(d.tgt[i] - d.gimbal[i]));
+    }
+    const ph = run.res.phases;
+    let ci = ph.findIndex(p => /COAST/i.test(p.phase)); if (ci < 0) ci = Math.min(1, ph.length - 1);
+    let idx = n - 1; if (ci >= 0) { const tt = ph[ci].t; for (let i = 0; i < n; i++) if (c.t[i] >= tt) { idx = i; break; } }
+    run.m = {
+      end: run.res.endReason, tEnd: run.res.simTime, ticks: run.res.ticks, peakG: pg, peakR: pr,
+      satPct: nal ? 100 * sat / nal : null, maxErr: me,
+      coastPhase: ci >= 0 ? ph[ci].phase : '-', coastT: ci >= 0 ? ph[ci].t : null,
+      coastAlt: d.alt[idx], coastVt: d.vt[idx], coastVr: d.vr[idx], coastTilt: d.tilt[idx], coastOrb: d.orbit(idx),
+      endOrb: d.orbit(n - 1), endAlt: d.alt[n - 1], maxAlt: Math.max.apply(null, d.alt),
+      phases: ph.map(p => p.phase + '@' + p.t.toFixed(1)).join(' '),
+    };
+  }
+
+  function interp(xs, ys, x) {
+    const n = xs.length; if (!n || x < xs[0] || x > xs[n - 1]) return null;
+    let lo = 0, hi = n - 1; while (hi - lo > 1) { const m = (lo + hi) >> 1; if (xs[m] <= x) lo = m; else hi = m; }
+    const f = (x - xs[lo]) / ((xs[hi] - xs[lo]) || 1); return ys[lo] + f * (ys[hi] - ys[lo]);
+  }
+  function diffSeries(run, base, key) {
+    return run.d.t.map((t, i) => { const b = interp(base.d.t, base.d[key], t); return b == null ? null : run.d[key][i] - b; });
+  }
+
+  // ---------- tiny canvas chart ----------
+  function niceStep(range) { const p = Math.pow(10, Math.floor(Math.log10(range))), f = range / p; return (f < 1.5 ? 1 : f < 3 ? 2 : f < 7 ? 5 : 10) * p; }
+  function chart(cv, title, ylab, series, xmin, xmax, markers) {
+    const dpr = window.devicePixelRatio || 1, W = cv.clientWidth, H = cv.clientHeight;
+    cv.width = W * dpr; cv.height = H * dpr;
+    const g = cv.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H);
+    const L = 56, R = 8, T = 20, B = 22, pw = W - L - R, ph = H - T - B;
+    let ymin = Infinity, ymax = -Infinity;
+    series.forEach(s => s.x.forEach((x, i) => { if (x < xmin || x > xmax) return; const y = s.y[i]; if (y == null || !isFinite(y)) return; if (y < ymin) ymin = y; if (y > ymax) ymax = y; }));
+    g.fillStyle = '#d6dde6'; g.font = '12px ui-monospace,Menlo,Consolas,monospace'; g.fillText(title + (ylab ? '  [' + ylab + ']' : ''), L, 13);
+    if (!isFinite(ymin)) { g.fillStyle = '#8896a8'; g.fillText('no data', L + 10, T + 20); return; }
+    if (ymin === ymax) { ymin -= 1; ymax += 1; }
+    const pad = (ymax - ymin) * 0.05; ymin -= pad; ymax += pad;
+    const X = (x) => L + (x - xmin) / (xmax - xmin) * pw, Y = (y) => T + ph - (y - ymin) / (ymax - ymin) * ph;
+    g.strokeStyle = '#232a35'; g.fillStyle = '#8896a8'; g.lineWidth = 1;
+    const ys = niceStep((ymax - ymin) / 5), xs = niceStep((xmax - xmin) / 6);
+    for (let y = Math.ceil(ymin / ys) * ys; y <= ymax; y += ys) { g.beginPath(); g.moveTo(L, Y(y)); g.lineTo(L + pw, Y(y)); g.stroke(); g.fillText((Math.abs(y) < 1e-9 ? 0 : +y.toPrecision(4)) + '', 2, Y(y) + 4); }
+    for (let x = Math.ceil(xmin / xs) * xs; x <= xmax; x += xs) { g.beginPath(); g.moveTo(X(x), T); g.lineTo(X(x), T + ph); g.stroke(); g.fillText(+x.toPrecision(5) + '', X(x) - 10, H - 6); }
+    if (ymin < 0 && ymax > 0) { g.strokeStyle = '#4a5568'; g.beginPath(); g.moveTo(L, Y(0)); g.lineTo(L + pw, Y(0)); g.stroke(); }
+    (markers || []).forEach(m => { if (m.t < xmin || m.t > xmax) return; g.save(); g.setLineDash([3, 4]); g.strokeStyle = '#4a5568'; g.beginPath(); g.moveTo(X(m.t), T); g.lineTo(X(m.t), T + ph); g.stroke(); g.restore(); g.fillStyle = '#6b7a8d'; g.save(); g.translate(X(m.t) + 3, T + ph - 3); g.rotate(-Math.PI / 2); g.font = '10px ui-monospace,monospace'; g.fillText(m.phase, 0, 0); g.restore(); });
+    series.forEach(s => {
+      g.strokeStyle = s.color; g.lineWidth = s.dash ? 1 : 1.5; g.setLineDash(s.dash ? [5, 4] : []); g.beginPath();
+      let pen = false;
+      for (let i = 0; i < s.x.length; i++) {
+        const x = s.x[i], y = s.y[i];
+        if (x < xmin || x > xmax || y == null || !isFinite(y)) { pen = false; continue; }
+        if (!pen) { g.moveTo(X(x), Y(y)); pen = true; } else g.lineTo(X(x), Y(y));
+      }
+      g.stroke(); g.setLineDash([]);
+    });
+  }
+
+  const PANELS = [
+    { id: 'alt', title: 'Altitude', ylab: 'km', key: 'alt' },
+    { id: 'vt', title: 'Tangential (east) velocity', ylab: 'm/s', key: 'vt' },
+    { id: 'vr', title: 'Radial velocity', ylab: 'm/s', key: 'vr' },
+    { id: 'tilt', title: 'Tilt from local vertical (theta - localVertical)', ylab: 'deg', key: 'tilt' },
+    { id: 'gimbal', title: 'Gimbal angle', ylab: 'deg', key: 'gimbal' },
+    { id: 'rate', title: 'Gimbal rate (actual state; 0 when OFF)', ylab: 'deg/s', key: 'rate' },
+    { id: 'alpha', title: 'Alpha command (ON only)', ylab: 'deg/s²', key: 'alpha' },
+    { id: 'cmdr', title: 'Guidance RATE command (OFF run only; ~ (g_req - g)/dt)', ylab: 'deg/s', key: 'cmdRate', offOnly: true },
+    { id: 'dvt', title: 'Δ tangential velocity vs OFF', ylab: 'm/s', key: 'vt', diff: true },
+    { id: 'dtilt', title: 'Δ tilt vs OFF', ylab: 'deg', key: 'tilt', diff: true },
+    { id: 'dalt', title: 'Δ altitude vs OFF', ylab: 'km', key: 'alt', diff: true },
+  ];
+  function ensureCanvases() {
+    const grid = $('grid'); if (grid.children.length === PANELS.length) return;
+    grid.innerHTML = ''; PANELS.forEach(p => { const c = document.createElement('canvas'); c.id = 'cv_' + p.id; grid.appendChild(c); });
+  }
+  function redraw() {
+    if (!runs.length) return; ensureCanvases();
+    const base = runs[0];
+    const tmin = parseFloat($('tmin').value) || 0;
+    let tmax = parseFloat($('tmax').value); if (!(tmax > tmin)) tmax = Math.max.apply(null, runs.map(r => r.d.t[r.d.t.length - 1]));
+    const markers = base.res.phases;
+    PANELS.forEach(p => {
+      const series = [];
+      runs.forEach(r => {
+        if (p.id === 'alpha' && !r.accelOn) return;
+        if (p.offOnly && r.accelOn) return;
+        if (p.diff && r === base) return;
+        series.push({ label: r.label, color: r.color, dash: r.dash, x: r.d.t, y: p.diff ? diffSeries(r, base, p.key) : r.d[p.key] });
+      });
+      chart($('cv_' + p.id), p.title, p.ylab, series, tmin, tmax, markers);
+    });
+  }
+
+  // ---------- divergence onset + alpha saturation windows ----------
+  function phaseAt(ph, t) { let p = '-'; for (const x of ph) { if (x.t <= t) p = x.phase; else break; } return p; }
+  function analyze() {
+    const base = runs[0];
+    runs.forEach(r => {
+      r.m.onset = []; r.m.satWin = [];
+      if (r !== base) {
+        [['tilt', 0.1, '°'], ['vt', 5, ' m/s'], ['gimbal', 0.05, '°']].forEach(k => {
+          const dd = diffSeries(r, base, k[0]);
+          for (let i = 0; i < dd.length; i++) if (dd[i] != null && Math.abs(dd[i]) > k[1]) {
+            r.m.onset.push('Δ' + k[0] + '>' + k[1] + k[2] + ' @t=' + r.d.t[i].toFixed(1) + ' (' + phaseAt(r.res.phases, r.d.t[i]) + ')'); break;
+          }
+        });
+      }
+      {   // jitter stats inside hi-res window (consecutive full-rate samples only)
+        const w0 = parseFloat($('hi0').value), w1 = parseFloat($('hi1').value), dtS = 0.0125;
+        const idx = []; for (let i = 0; i < r.d.t.length; i++) if (r.d.t[i] >= w0 && r.d.t[i] <= w1) idx.push(i);
+        const flips = (arr) => { let n = 0, pv = 0; arr.forEach(x => { if (x == null || x === 0) return; const sg = Math.sign(x); if (pv && sg !== pv) n++; pv = sg; }); return n; };
+        const dG = []; for (let k = 1; k < idx.length; k++) dG.push(r.d.gimbal[idx[k]] - r.d.gimbal[idx[k - 1]]);
+        const ok = idx.length > 2 && Math.abs((r.d.t[idx[1]] - r.d.t[idx[0]]) - dtS) < 0.0011;
+        r.m.win = { n: idx.length, hires: ok, gFlips: flips(dG), aFlips: r.accelOn ? flips(idx.map(i => r.d.alpha[i])) : null,
+          rcFlips: !r.accelOn ? flips(idx.map(i => r.d.cmdRate[i])) : null,
+          maxStep: dG.reduce((m, x) => Math.max(m, Math.abs(x)), 0),
+          gMin: Math.min.apply(null, idx.map(i => r.d.gimbal[i])), gMax: Math.max.apply(null, idx.map(i => r.d.gimbal[i])),
+          rcMax: !r.accelOn ? Math.max.apply(null, idx.map(i => Math.abs(r.d.cmdRate[i] || 0))) : null };
+      }
+      if (r.accelOn) {
+        let cur = null;
+        for (let i = 0; i < r.d.t.length; i++) {
+          const al = r.d.alpha[i], sat = al != null && Math.abs(al) >= 0.999 * r.a;
+          if (sat) { if (!cur) cur = { t0: r.d.t[i], t1: r.d.t[i] }; else cur.t1 = r.d.t[i]; }
+          else if (cur) { r.m.satWin.push(cur); cur = null; }
+        }
+        if (cur) r.m.satWin.push(cur);
+      }
+    });
+  }
+
+  // ---------- summary table ----------
+  const f = (v, d) => (v == null || !isFinite(v)) ? '-' : (+v).toFixed(d);
+  function table() {
+    const cols = [
+      ['run', r => r.label], ['end', r => r.m.end], ['t end s', r => f(r.m.tEnd, 1)],
+      ['coast phase', r => r.m.coastPhase], ['t@coast', r => f(r.m.coastT, 1)],
+      ['alt@coast km', r => f(r.m.coastAlt, 1)], ['vt@coast m/s', r => f(r.m.coastVt, 0)], ['vr@coast m/s', r => f(r.m.coastVr, 1)], ['tilt@coast °', r => f(r.m.coastTilt, 2)],
+      ['apo@coast km', r => r.m.coastOrb ? f(r.m.coastOrb.apo, 1) : '-'], ['peri@coast km', r => r.m.coastOrb ? f(r.m.coastOrb.peri, 0) : '-'], ['circΔv≈ m/s', r => r.m.coastOrb ? f(r.m.coastOrb.circDv, 0) : '-'],
+      ['final alt km', r => f(r.m.endAlt, 1)], ['final apo/peri km', r => r.m.endOrb ? f(r.m.endOrb.apo, 1) + '/' + f(r.m.endOrb.peri, 1) : '-'],
+      ['peak |gimbal| °', r => f(r.m.peakG, 3)], ['peak |rate| °/s', r => f(r.m.peakR, 2)], ['alpha sat %', r => r.m.satPct == null ? '-' : f(r.m.satPct, 1)], ['max |tgt-gimbal| °', r => f(r.m.maxErr, 3)],
+    ];
+    let h = '<table><tr>' + cols.map(c => '<th>' + c[0] + '</th>').join('') + '</tr>';
+    let txt = cols.map(c => c[0]).join(' | ') + '\n';
+    runs.forEach(r => {
+      const cells = cols.map(c => c[1](r));
+      h += '<tr><td style="color:' + r.color + '">' + cells[0] + '</td>' + cells.slice(1).map(x => '<td>' + x + '</td>').join('') + '</tr>';
+      txt += cells.join(' | ') + '\n';
+    });
+    h += '</table>';
+    runs.forEach(r => { txt += r.label + ' phases: ' + r.m.phases + '\n'; });
+    let notes = '';
+    runs.forEach(r => {
+      let l = r.label + ':';
+      if (r.m.onset.length) l += '  first deviation vs OFF -> ' + r.m.onset.join(' | ');
+      if (r.accelOn) {
+        const w = r.m.satWin; l += '  alpha-sat windows: ' + w.length;
+        if (w.length) l += ' [' + w.slice(0, 8).map(x => x.t0.toFixed(1) + '-' + x.t1.toFixed(1) + 's ' + phaseAt(r.res.phases, x.t0)).join(', ') + (w.length > 8 ? ', ...' : '') + ']';
+      }
+      const W = r.m.win;
+      if (W && W.n) l += '\n    window ' + $('hi0').value + '-' + $('hi1').value + 's' + (W.hires ? '' : ' (NOT hi-res)') + ': samples=' + W.n + ' gimbal-dir-flips=' + W.gFlips +
+        (W.aFlips != null ? ' alpha-sign-flips=' + W.aFlips : '') + (W.rcFlips != null ? ' rateCmd-sign-flips=' + W.rcFlips + ' max|rateCmd|=' + f(W.rcMax, 1) : '') +
+        ' max|dG/tick|=' + f(W.maxStep, 4) + '° gimbal range [' + f(W.gMin, 3) + ', ' + f(W.gMax, 3) + ']';
+      notes += l + '\n'; txt += l + '\n';
+    });
+    $('tbl').innerHTML = h + '<pre>' + notes.replace(/</g, '&lt;') + '</pre><div class="dim">circΔv≈ and apo/peri use the "mu" box + Earth R=6371 km on the state at first COAST phase entry (approximation; sim hook metrics are the authority).</div>';
+    summaryText = txt;
+  }
+
+  // ---------- run ----------
+  $('go').onclick = async () => {
+    $('go').disabled = true; runs = []; logEl.textContent = ''; logText = '';
+    try {
+      await getPool();
+      const raw = { G: parseFloat($('G').value), T: parseFloat($('T').value), bias: parseFloat($('bias').value), lead: parseFloat($('lead').value), meco: parseFloat($('meco').value) };
+      const altKm = parseFloat($('alt').value) || 320, every = parseInt($('every').value, 10) || 4, capS = parseFloat($('cap').value) || 1500;
+      const amax = $('amax').value.split(/[ ,]+/).filter(Boolean).map(s => /^inf/i.test(s) ? 1e7 : parseFloat(s)).filter(Number.isFinite);
+      const plan = [{ label: 'OFF', accelOn: false, color: COLORS[0] }];
+      amax.forEach((a, i) => plan.push({ label: 'ON a=' + (a >= 1e7 ? 'inf' : a), accelOn: true, a, color: COLORS[1 + (i % 6)] }));
+      if ($('ctl').checked) plan.push({ label: 'OFF (control)', accelOn: false, color: COLORS[7], dash: true });
+      let patchObj = null; const ptxt = $('patch').value.trim();
+      if (ptxt) { try { patchObj = JSON.parse(ptxt); } catch (e) { throw new Error('patch JSON invalid: ' + e.message); } }
+      log('raw=' + JSON.stringify(raw) + (patchObj ? ' patch=' + JSON.stringify(patchObj) : '') + ' alt=' + altKm + ' runs=' + plan.length, 'dim');
+      let done = 0; $('status').textContent = 'running 0/' + plan.length;
+      const results = await Promise.all(plan.map(p => pool.runJob('traceRun', {
+        raw, altKm, every, capS, accelOn: p.accelOn, accelDegS2: p.a, hiT0: parseFloat($('hi0').value), hiT1: parseFloat($('hi1').value), patch: patchObj,
+      }).then(res => { p.res = res; done++; $('status').textContent = 'running ' + done + '/' + plan.length; if (res.patchMissing && res.patchMissing.length) log(p.label + ' PATCH MISSING keys: ' + res.patchMissing.join(', '), 'bad'); log(p.label + ': ' + res.endReason + ' t=' + res.simTime.toFixed(1) + 's ticks=' + res.ticks, 'dim'); return p; })
+        .catch(e => { log(p.label + ' FAILED: ' + ((e && e.message) || e), 'bad'); p.res = null; return p; })));
+      runs = results.filter(p => p.res && p.res.cols && p.res.cols.t.length);
+      if (!runs.length || runs[0].label !== 'OFF') throw new Error('OFF baseline run missing — cannot compare');
+      runs.forEach(derive); analyze();
+      $('legend').innerHTML = runs.map(r => '<span style="color:' + r.color + '">■ ' + r.label + (r.dash ? ' (dashed)' : '') + '</span>').join('');
+      table(); redraw();
+      const ctl = runs.find(r => r.dash);
+      if (ctl) {
+        const b = runs[0]; let mx = 0;
+        ['alt', 'vt', 'tilt', 'gimbal'].forEach(k => { const n = Math.min(b.d[k].length, ctl.d[k].length); for (let i = 0; i < n; i++) mx = Math.max(mx, Math.abs(b.d[k][i] - ctl.d[k][i])); });
+        const same = b.d.t.length === ctl.d.t.length && mx === 0;
+        log('CONTROL (OFF vs OFF): ' + (same ? 'bit-identical traces' : 'MISMATCH maxabs=' + mx + ' lens ' + b.d.t.length + '/' + ctl.d.t.length), same ? 'ok' : 'bad');
+      }
+      $('status').textContent = 'done';
+    } catch (e) { log('ERROR: ' + ((e && e.message) || e), 'bad'); $('status').textContent = 'error'; }
+    $('go').disabled = false;
+  };
+  $('redraw').onclick = redraw;
+  window.addEventListener('resize', redraw);
+  $('copy').onclick = () => { navigator.clipboard && navigator.clipboard.writeText(summaryText + '\n' + logText); };
+})();
+</script>
+</body>
+</html>

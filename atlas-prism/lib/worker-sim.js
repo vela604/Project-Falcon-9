@@ -621,6 +621,60 @@ self.onmessage = async (e) => {
         maxG: mm.maxG, maxQKPa: mm.maxQKPa, maxOmega: mm.maxOmega,
         log: (lr.log || []).slice(-40),
       };
+    } else if (type === 'traceRun') {
+      // Full-mission trace for gimbal-accel ON/OFF comparison.
+      // payload { point | values, altKm, accelOn, accelDegS2, every (ticks, default 4), capS (default 1500), env }
+      // Returns columnar arrays (simTime, phase, alt, speeds, pitch, gimbal angle/rate/alpha) + phase-change events.
+      if (Object.isFrozen(CONFIG)) throw new Error('CONFIG frozen: cannot override GIMBAL_ACCEL_ON');
+      const altKm = payload.altKm != null ? payload.altKm : 320;
+      // Point source priority: values > point (lattice) > raw {G,T,bias,lead,meco} via TunerUtils.fromRaw > TunerConfig.baselineRaw
+      const _pt = payload.point || TunerUtils.fromRaw(payload.raw || TunerConfig.baselineRaw);
+      const values = payload.values || TunerUtils.toValues(_pt, { targetAltKm: altKm });
+      // Optional deep-merge of constants into values (applied to every run so comparisons stay apples-to-apples).
+      const patchMissing = [];
+      if (payload.patch) (function mg(t, p, path) {
+        Object.keys(p).forEach(k => {
+          const pv = p[k];
+          if (pv && typeof pv === 'object' && !Array.isArray(pv)) { if (t[k] && typeof t[k] === 'object') mg(t[k], pv, path + k + '.'); else patchMissing.push(path + k); }
+          else if (k in t) t[k] = pv; else patchMissing.push(path + k);
+        });
+      })(values, payload.patch, '');
+      const every = Math.max(1, payload.every || 4), maxTicks = Math.ceil((payload.capS || 1500) / CONFIG.DT);
+      const sv = { on: CONFIG.GIMBAL_ACCEL_ON, a: CONFIG.GIMBAL_ACCEL_DEG_S2 };
+      if (payload.accelOn != null) CONFIG.GIMBAL_ACCEL_ON = !!payload.accelOn;
+      if (payload.accelDegS2 != null) CONFIG.GIMBAL_ACCEL_DEG_S2 = payload.accelDegS2;
+      const C = { t: [], cmdRate: [], rx: [], ry: [], alt: [], vx: [], vy: [], theta: [], omega: [], gimbal: [], gimbalRate: [], alpha: [], gimbalTgt: [], thrust: [], fuel: [] };
+      const phases = []; let lastPh = null, endReason = 'cap', ticks = 0;
+      const ol = console.log; console.log = function () {};
+      try {
+        TunerEngine.refreshStackData();
+        TunerEngine.prepareRun(TunerConfig.guideName, values, payload.env || TunerConfig.env);
+        for (let i = 1; i <= maxTicks; i++) {
+          if (state.halted) { endReason = 'halted'; break; }
+          TunerEngine.tick(CONFIG.DT); ticks = i;
+          const gs = Guidance.getGuideStatus() || {};
+          if (gs.phase !== lastPh) { lastPh = gs.phase; phases.push({ t: +state.simTime.toFixed(3), phase: gs.phase }); if (gs.phase === 'DONE') { endReason = 'DONE'; } }
+          const inWin = payload.hiT0 != null && state.simTime >= payload.hiT0 && state.simTime <= payload.hiT1;   // full-rate samples inside [hiT0,hiT1]
+          if (i % every === 0 || inWin || endReason === 'DONE') {
+            const b = state.bodies[state.activeBodyIndex]; if (!b) continue;
+            const g = (b.engines || []).find(en => en.gimbal) || {};
+            let F = 0; for (const en of (b.engines || [])) F += en.currentF || 0;
+            C.t.push(+state.simTime.toFixed(3)); C.alt.push(gs.altKm != null ? gs.altKm : (Math.hypot(b.rx, b.ry) - CONFIG.EARTH_RADIUS) / 1000);
+            C.rx.push(b.rx); C.ry.push(b.ry); C.vx.push(b.vx); C.vy.push(b.vy); C.theta.push(b.theta); C.omega.push(b.omega);
+            C.gimbal.push(g.gimbalDeg || 0); C.gimbalRate.push(g.gimbalRateActDegS || 0);
+            C.alpha.push(Number.isFinite(g.targetGimbalAccelDegS2) ? g.targetGimbalAccelDegS2 : null);
+            C.gimbalTgt.push(Number.isFinite(g.targetGimbalDeg) ? g.targetGimbalDeg : null);
+            C.cmdRate.push(Number.isFinite(g.targetGimbalRateDegS) ? g.targetGimbalRateDegS : null); C.thrust.push(F); C.fuel.push(b.fuelMass);
+          }
+          if (endReason === 'DONE') break;
+        }
+      } finally {
+        console.log = ol;
+        CONFIG.GIMBAL_ACCEL_ON = sv.on; CONFIG.GIMBAL_ACCEL_DEG_S2 = sv.a;
+        try { TunerEngine.refreshStackData(); } catch (e) {}
+        try { Guidance.stopGuide(); } catch (e) {}
+      }
+      result = { ok: true, patchMissing, endReason, ticks, simTime: state.simTime, accelOn: payload.accelOn, accelDegS2: payload.accelDegS2, phases, cols: C };
     } else if (type === 'setupSA') {
       emit('setupSA', 'running ascent');
       TunerEngine.prepareRun(TunerConfig.guideName, payload.values, payload.env || TunerConfig.env);

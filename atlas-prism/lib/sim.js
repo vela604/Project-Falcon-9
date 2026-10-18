@@ -191,6 +191,7 @@ default: break;
 
 
   // ---- Stack data handoff (1:1, now a callable function) ----
+  let _refreshStackData = function () {};   // set inside setupStackData (collectStackData is local to it)
   function setupStackData() {
   const members = (typeof getActiveStackMembers === 'function')
     ? getActiveStackMembers() : [];
@@ -333,6 +334,7 @@ members.forEach(m => {
   }
 
   Derivation.setStackData(collectStackData());
+  _refreshStackData = function () { Derivation.setStackData(collectStackData()); };
   console.log('[guidance-numerical] stack data sent to Derivation:',
     members.length, 'members,', Object.keys(collectStackData().types).length, 'types');
   }
@@ -461,6 +463,8 @@ members.forEach(m => {
 
   window.TunerEngine = {
     init, prepareRun, tick, smokeTest, buildSnapshot, localDispatch, setDormant,
+    // Re-push CONFIG-derived env (e.g. GIMBAL_ACCEL_ON) into guidance; setStackData otherwise runs once per load.
+    refreshStackData() { _refreshStackData(); },
     applyEnvironment, applyFueling, DEFAULT_ENV,
   };
 })();
