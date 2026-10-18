@@ -83,29 +83,32 @@ function localDispatch(msg) {
   switch (msg.type) {
     case 'setGimbalRate': {
       if (!b.engines) break;
-      const lim = CONFIG.GIMBAL_RATE_DEG_S;
-      const rate = Math.max(-lim, Math.min(lim, msg.degPerSec));
       const onlyCenter = (msg.target === 'center');
       b.engines.filter(en => en.gimbal && (!onlyCenter || en.isCenter))
-        .forEach(en => { en.targetGimbalRateDegS = rate; en.targetGimbalAccelDegS2 = NaN; });
+        .forEach(en => {
+          const lim = en.gimbalRateDegS;
+          en.targetGimbalRateDegS = Math.max(-lim, Math.min(lim, msg.degPerSec));
+          en.targetGimbalAccelDegS2 = NaN;
+        });
       break;
     }
     case 'setGimbalAccel': {
-      // Guidance alpha command (deg/s^2). Only meaningful when CONFIG.GIMBAL_ACCEL_ON (physics ignores it otherwise).
+      // Guidance alpha command (deg/s^2), clamped to each engine's own accel limit.
       if (!b.engines) break;
-      const lim = CONFIG.GIMBAL_ACCEL_DEG_S2;
-      const acc = Math.max(-lim, Math.min(lim, msg.degPerSec2));
       const onlyCenter = (msg.target === 'center');
       b.engines.filter(en => en.gimbal && (!onlyCenter || en.isCenter))
-        .forEach(en => { en.targetGimbalAccelDegS2 = acc; });
+        .forEach(en => {
+          const lim = en.gimbalAccelDegS2;
+          en.targetGimbalAccelDegS2 = Math.max(-lim, Math.min(lim, msg.degPerSec2));
+        });
       break;
     }
     case 'setGimbal': {
       if (!b.engines) break;
-      const lim = CONFIG.GIMBAL_MAX_DEG;
-      const d = Math.max(-lim, Math.min(lim, msg.deg));
       b.engines.filter(en => en.gimbal).forEach(en => {
-        en.targetGimbalDeg = d; en.targetGimbalRateDegS = NaN; en.targetGimbalAccelDegS2 = NaN;
+        const lim = en.gimbalMaxDeg;
+        en.targetGimbalDeg = Math.max(-lim, Math.min(lim, msg.deg));
+        en.targetGimbalRateDegS = NaN; en.targetGimbalAccelDegS2 = NaN;
       });
       break;
     }
@@ -327,8 +330,6 @@ members.forEach(m => {
         DT: CONFIG.DT,
         GIMBAL_MAX_DEG: CONFIG.GIMBAL_MAX_DEG,
         GIMBAL_RATE_DEG_S: CONFIG.GIMBAL_RATE_DEG_S,
-        GIMBAL_ACCEL_ON: CONFIG.GIMBAL_ACCEL_ON,
-        GIMBAL_ACCEL_DEG_S2: CONFIG.GIMBAL_ACCEL_DEG_S2,
       },
     };
   }
@@ -463,7 +464,7 @@ members.forEach(m => {
 
   window.TunerEngine = {
     init, prepareRun, tick, smokeTest, buildSnapshot, localDispatch, setDormant,
-    // Re-push CONFIG-derived env (e.g. GIMBAL_ACCEL_ON) into guidance; setStackData otherwise runs once per load.
+    // Re-push CONFIG-derived env into guidance; setStackData otherwise runs once per load.
     refreshStackData() { _refreshStackData(); },
     applyEnvironment, applyFueling, DEFAULT_ENV,
   };

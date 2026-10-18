@@ -313,22 +313,25 @@ function localDispatch(msg) {
   switch (msg.type) {
     case 'setGimbalRate': {
       if (!b.engines) break;
-      const lim = CONFIG.GIMBAL_RATE_DEG_S;
-      const rate = Math.max(-lim, Math.min(lim, msg.degPerSec));
       const onlyCenter = (msg.target === 'center');
       b.engines.filter(e => e.gimbal && (!onlyCenter || e.isCenter))
-        .forEach(e => { e.targetGimbalRateDegS = rate; e.targetGimbalAccelDegS2 = NaN; });
+        .forEach(e => {
+          const lim = e.gimbalRateDegS;
+          e.targetGimbalRateDegS = Math.max(-lim, Math.min(lim, msg.degPerSec));
+          e.targetGimbalAccelDegS2 = NaN;
+        });
       break;
     }
     case 'setGimbalAccel': {
-      // Guidance alpha command (deg/s^2). Only meaningful when CONFIG.GIMBAL_ACCEL_ON (physics ignores it otherwise).
+      // Guidance alpha command (deg/s^2), clamped per engine to its own accel limit.
       // Mirrors sim.js / physics.worker.js handler.
       if (!b.engines) break;
-      const lim = CONFIG.GIMBAL_ACCEL_DEG_S2;
-      const acc = Math.max(-lim, Math.min(lim, msg.degPerSec2));
       const onlyCenter = (msg.target === 'center');
       b.engines.filter(e => e.gimbal && (!onlyCenter || e.isCenter))
-        .forEach(e => { e.targetGimbalAccelDegS2 = acc; });
+        .forEach(e => {
+          const lim = e.gimbalAccelDegS2;
+          e.targetGimbalAccelDegS2 = Math.max(-lim, Math.min(lim, msg.degPerSec2));
+        });
       break;
     }
     case 'setGimbal': {
@@ -337,10 +340,9 @@ function localDispatch(msg) {
       // any pending separate/release sequence on this body — same human-
       // precedence rule, same call site.
       if (typeof cancelPendingSequences === 'function') cancelPendingSequences(b);
-      const lim = CONFIG.GIMBAL_MAX_DEG;
-      const d = Math.max(-lim, Math.min(lim, msg.deg));
       b.engines.filter(e => e.gimbal).forEach(e => {
-        e.targetGimbalDeg = d;
+        const lim = e.gimbalMaxDeg;
+        e.targetGimbalDeg = Math.max(-lim, Math.min(lim, msg.deg));
         e.targetGimbalRateDegS = NaN;
         e.targetGimbalAccelDegS2 = NaN;
       });

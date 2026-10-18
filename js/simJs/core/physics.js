@@ -821,6 +821,22 @@ function _updateEngineVeForBody(body) {
   });
 }
 
+// Slider-angle tracking law for the gimbal actuator. COPY of _gimbalAlphaCmd in
+// guidance-blocks.js (keep the two in sync): 2-tick Newtonian law that reaches
+// g_req with zero rate, clamped to +-aMax, with a braking guard so a saturated
+// alpha cannot overshoot.
+function _gimbalAlphaCmdPhys(g_req, g_N, v, dt, aMax) {
+  const cl = (x, lo, hi) => (x < lo ? lo : (x > hi ? hi : x));
+  const d = g_req - g_N;
+  let a = cl((d / dt - v) / dt, -aMax, aMax);
+  const vcap = 0.9 * Math.sqrt(2 * aMax * Math.abs(d));
+  const vnew = v + a * dt;
+  if (Math.abs(vnew) > vcap && vnew * d > 0) {
+    a = cl((Math.sign(d) * vcap - v) / dt, -aMax, aMax);
+  }
+  return a;
+}
+
 // ---------------------------------------------------------------------------
 // Rate-limited actuator application. Called once per tick from controls.js
 // with the *desired* throttle/gimbal targets; this function moves the actual
@@ -871,38 +887,29 @@ function applyActuatorRateLimitsForBody(body, dt) {
       // fires, which is what makes "human always wins" work without this
       // function needing to know anything about precedence itself: by the
       // time this runs, there simply IS no active rate command anymore).
-      if (CONFIG.GIMBAL_ACCEL_ON && (Number.isFinite(e.targetGimbalAccelDegS2) || Number.isFinite(e.targetGimbalRateDegS))) {
-        // Angular-acceleration mode: the rate is a STATE and changes at most CONFIG.GIMBAL_ACCEL_DEG_S2.
-        // Accel command (guidance alpha) wins; a rate command is tracked through the same accel limit
-        // (so e.g. 'rate 0' brakes instead of stopping instantly). Rate first, then angle (semi-implicit).
-        const aMax = CONFIG.GIMBAL_ACCEL_DEG_S2, vMax = CONFIG.GIMBAL_RATE_DEG_S;
-        let v = e.gimbalRateActDegS || 0;
-        let a;
-        if (Number.isFinite(e.targetGimbalAccelDegS2)) a = e.targetGimbalAccelDegS2;
-        else a = (Math.max(-vMax, Math.min(vMax, e.targetGimbalRateDegS)) - v) / dt;
-        a = Math.max(-aMax, Math.min(aMax, a));
-        v = Math.max(-vMax, Math.min(vMax, v + a * dt));
-        e.gimbalDeg += v * dt;
-        const gLim = CONFIG.GIMBAL_MAX_DEG;
-        if (e.gimbalDeg > gLim) { e.gimbalDeg = gLim; if (v > 0) v = 0; }
-        else if (e.gimbalDeg < -gLim) { e.gimbalDeg = -gLim; if (v < 0) v = 0; }
-        e.gimbalRateActDegS = v;
-      } else if (Number.isFinite(e.targetGimbalRateDegS)) {
-        // Rate mode: integrate directly, ignore targetGimbalDeg entirely
-        // (per the spec's arbitration rule — it's not being slewed
-        // toward, it's stale until a human command overwrites it).
-        e.gimbalDeg += e.targetGimbalRateDegS * dt;
-        e.gimbalDeg = Math.max(-CONFIG.GIMBAL_MAX_DEG, Math.min(CONFIG.GIMBAL_MAX_DEG, e.gimbalDeg));
-      } else {
-        // Existing angle-slew path (human slider), unchanged.
-        const _gPrev = e.gimbalDeg;
-        const mg = CONFIG.GIMBAL_RATE_DEG_S * dt;
-        const gt = e.targetGimbalDeg !== undefined ? e.targetGimbalDeg : e.gimbalDeg;
-        if (gt > e.gimbalDeg) e.gimbalDeg = Math.min(gt, e.gimbalDeg + mg);
-        else e.gimbalDeg = Math.max(gt, e.gimbalDeg - mg);
-        e.gimbalDeg = Math.max(-CONFIG.GIMBAL_MAX_DEG, Math.min(CONFIG.GIMBAL_MAX_DEG, e.gimbalDeg));
-        if (CONFIG.GIMBAL_ACCEL_ON) e.gimbalRateActDegS = (e.gimbalDeg - _gPrev) / dt; // keep rate state continuous
+      // Single actuator model (accel-limited): the gimbal RATE is a state and
+      // changes by at most e.gimbalAccelDegS2 per second, |rate| <= e.gimbalRateDegS,
+      // |angle| <= e.gimbalMaxDeg (all thruster-type properties, see vehicle.js).
+      // Command priority: guidance accel (alpha) > guidance rate > slider angle.
+      // A rate command is tracked through the same accel limit (so 'rate 0'
+      // brakes instead of stopping instantly); the slider angle is tracked with
+      // the same 2-tick law guidance uses (_gimbalAlphaCmdPhys). Rate first,
+      // then angle (semi-implicit).
+      const aMax = e.gimbalAccelDegS2, vMax = e.gimbalRateDegS, gLim = e.gimbalMaxDeg;
+      let v = e.gimbalRateActDegS || 0;
+      let a;
+      if (Number.isFinite(e.targetGimbalAccelDegS2)) a = e.targetGimbalAccelDegS2;
+      else if (Number.isFinite(e.targetGimbalRateDegS)) a = (Math.max(-vMax, Math.min(vMax, e.targetGimbalRateDegS)) - v) / dt;
+      else {
+        const gt = Number.isFinite(e.targetGimbalDeg) ? Math.max(-gLim, Math.min(gLim, e.targetGimbalDeg)) : e.gimbalDeg;
+        a = _gimbalAlphaCmdPhys(gt, e.gimbalDeg, v, dt, aMax);
       }
+      a = Math.max(-aMax, Math.min(aMax, a));
+      v = Math.max(-vMax, Math.min(vMax, v + a * dt));
+      e.gimbalDeg += v * dt;
+      if (e.gimbalDeg > gLim) { e.gimbalDeg = gLim; if (v > 0) v = 0; }
+      else if (e.gimbalDeg < -gLim) { e.gimbalDeg = -gLim; if (v < 0) v = 0; }
+      e.gimbalRateActDegS = v;
     }
   });
 }

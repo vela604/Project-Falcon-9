@@ -557,10 +557,14 @@ function maybeForwardGuidanceSnapshot() {
   massFlowRate: e.massFlowRate,
   currentF: e.currentF,
   gimbalDeg: e.gimbalDeg,
+  targetGimbalDeg: e.targetGimbalDeg,
   targetGimbalRateDegS: e.targetGimbalRateDegS,
-  // Gimbal accel model (read by guidance only when GIMBAL_ACCEL_ON): actual rate state + pending alpha cmd.
+  // Gimbal accel model: actual rate state + pending alpha cmd + this engine's actuator limits.
   gimbalRateActDegS: e.gimbalRateActDegS,
   targetGimbalAccelDegS2: e.targetGimbalAccelDegS2,
+  gimbalMaxDeg: e.gimbalMaxDeg,
+  gimbalRateDegS: e.gimbalRateDegS,
+  gimbalAccelDegS2: e.gimbalAccelDegS2,
   startupDurationS: e.startupDurationS,
   shutdownDurationS: e.shutdownDurationS,
 })),
@@ -760,12 +764,11 @@ return {
     // Physics tick period. Needed by guidance to predict next-tick
     // state (position/velocity/attitude extrapolation).
     DT: CONFIG.DT,
-    // Gimbal envelope — guidance clamps to the same limits physics does.
+    // Gimbal envelope: guidance now reads gimbalMaxDeg / gimbalRateDegS / gimbalAccelDegS2
+    // from each engine in the snapshot (thruster-type properties). These two env keys are
+    // legacy (booster-params values), no longer read by guidance-blocks.js.
     GIMBAL_MAX_DEG: CONFIG.GIMBAL_MAX_DEG,
     GIMBAL_RATE_DEG_S: CONFIG.GIMBAL_RATE_DEG_S,
-    // Gimbal angular-acceleration model (guidance solves alpha instead of rate when ON).
-    GIMBAL_ACCEL_ON: CONFIG.GIMBAL_ACCEL_ON,
-    GIMBAL_ACCEL_DEG_S2: CONFIG.GIMBAL_ACCEL_DEG_S2,
   },
   };
 }

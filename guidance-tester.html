@@ -490,19 +490,32 @@ a.back:hover { color: var(--cyan); }
     switch (msg.type) {
       case 'setGimbalRate': {
         if (!b.engines) break;
-        const lim = CONFIG.GIMBAL_RATE_DEG_S;
-        const rate = Math.max(-lim, Math.min(lim, msg.degPerSec));
         const onlyCenter = (msg.target === 'center');
         b.engines.filter(en => en.gimbal && (!onlyCenter || en.isCenter))
-          .forEach(en => { en.targetGimbalRateDegS = rate; });
+          .forEach(en => {
+            const lim = en.gimbalRateDegS;   // per-engine (thruster-type property)
+            en.targetGimbalRateDegS = Math.max(-lim, Math.min(lim, msg.degPerSec));
+            en.targetGimbalAccelDegS2 = NaN;
+          });
+        break;
+      }
+      case 'setGimbalAccel': {
+        // Guidance alpha command (deg/s^2), clamped per engine. Mirrors sim.js.
+        if (!b.engines) break;
+        const onlyCenter = (msg.target === 'center');
+        b.engines.filter(en => en.gimbal && (!onlyCenter || en.isCenter))
+          .forEach(en => {
+            const lim = en.gimbalAccelDegS2;
+            en.targetGimbalAccelDegS2 = Math.max(-lim, Math.min(lim, msg.degPerSec2));
+          });
         break;
       }
       case 'setGimbal': {
         if (!b.engines) break;
-        const lim = CONFIG.GIMBAL_MAX_DEG;
-        const d = Math.max(-lim, Math.min(lim, msg.deg));
         b.engines.filter(en => en.gimbal).forEach(en => {
-          en.targetGimbalDeg = d; en.targetGimbalRateDegS = NaN;
+          const lim = en.gimbalMaxDeg;
+          en.targetGimbalDeg = Math.max(-lim, Math.min(lim, msg.deg));
+          en.targetGimbalRateDegS = NaN; en.targetGimbalAccelDegS2 = NaN;
         });
         break;
       }

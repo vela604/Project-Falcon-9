@@ -622,10 +622,11 @@ self.onmessage = async (e) => {
         log: (lr.log || []).slice(-40),
       };
     } else if (type === 'traceRun') {
-      // Full-mission trace for gimbal-accel ON/OFF comparison.
-      // payload { point | values, altKm, accelOn, accelDegS2, every (ticks, default 4), capS (default 1500), env }
+      // Full-mission trace for gimbal-accel comparison (a sweep via the test-only CONFIG.GIMBAL_ACCEL_OVERRIDE;
+      // Infinity = unlimited accel baseline, undefined/omitted = thruster-type value).
+      // payload { point | values, altKm, accelDegS2, every (ticks, default 4), capS (default 1500), env }
       // Returns columnar arrays (simTime, phase, alt, speeds, pitch, gimbal angle/rate/alpha) + phase-change events.
-      if (Object.isFrozen(CONFIG)) throw new Error('CONFIG frozen: cannot override GIMBAL_ACCEL_ON');
+      if (Object.isFrozen(CONFIG)) throw new Error('CONFIG frozen: cannot set GIMBAL_ACCEL_OVERRIDE');
       const altKm = payload.altKm != null ? payload.altKm : 320;
       // Point source priority: values > point (lattice) > raw {G,T,bias,lead,meco} via TunerUtils.fromRaw > TunerConfig.baselineRaw
       const _pt = payload.point || TunerUtils.fromRaw(payload.raw || TunerConfig.baselineRaw);
@@ -647,9 +648,8 @@ self.onmessage = async (e) => {
         });
       }
       const every = Math.max(1, payload.every || 4), maxTicks = Math.ceil((payload.capS || 1500) / CONFIG.DT);
-      const sv = { on: CONFIG.GIMBAL_ACCEL_ON, a: CONFIG.GIMBAL_ACCEL_DEG_S2 };
-      if (payload.accelOn != null) CONFIG.GIMBAL_ACCEL_ON = !!payload.accelOn;
-      if (payload.accelDegS2 != null) CONFIG.GIMBAL_ACCEL_DEG_S2 = payload.accelDegS2;
+      const sv = { a: CONFIG.GIMBAL_ACCEL_OVERRIDE };
+      CONFIG.GIMBAL_ACCEL_OVERRIDE = (payload.accelDegS2 != null) ? payload.accelDegS2 : undefined;   // read by vehicle.js when engines are built (prepareRun)
       const C = { t: [], cmdRate: [], rx: [], ry: [], alt: [], vx: [], vy: [], theta: [], omega: [], gimbal: [], gimbalRate: [], alpha: [], gimbalTgt: [], thrust: [], fuel: [] };
       const phases = []; let lastPh = null, endReason = 'cap', ticks = 0;
       const ol = console.log; console.log = function () {};
@@ -677,12 +677,12 @@ self.onmessage = async (e) => {
         }
       } finally {
         console.log = ol;
-        CONFIG.GIMBAL_ACCEL_ON = sv.on; CONFIG.GIMBAL_ACCEL_DEG_S2 = sv.a;
+        CONFIG.GIMBAL_ACCEL_OVERRIDE = sv.a;
         try { TunerEngine.refreshStackData(); } catch (e) {}
         try { Guidance.stopGuide(); } catch (e) {}
         if (Object.keys(_patchRestore).length) { try { Guidance.applyGuideConfig(TunerConfig.guideName, _patchRestore); } catch (e) {} }
       }
-      result = { ok: true, patchMissing, endReason, ticks, simTime: state.simTime, accelOn: payload.accelOn, accelDegS2: payload.accelDegS2, phases, cols: C };
+      result = { ok: true, patchMissing, endReason, ticks, simTime: state.simTime, accelDegS2: payload.accelDegS2, phases, cols: C };
     } else if (type === 'setupSA') {
       emit('setupSA', 'running ascent');
       TunerEngine.prepareRun(TunerConfig.guideName, payload.values, payload.env || TunerConfig.env);

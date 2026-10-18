@@ -64,6 +64,16 @@ function buildEnginesForRecord(rec) {
     // vehicle picks them up with zero changes here.
     const startupDurationEnt = t.parameterSchema.find(p => p.key === 'startupDurationS');
     const shutdownDurationEnt = t.parameterSchema.find(p => p.key === 'shutdownDurationS');
+    // Gimbal actuator limits are a property of the thruster TYPE (not a
+    // global CONFIG): travel range, slew rate, angular acceleration. The
+    // physics limiter, command handlers and guidance all read them from the
+    // engine object. CONFIG.GIMBAL_ACCEL_OVERRIDE is a test-only hook for
+    // bench sweeps (undefined in production => thruster value used).
+    const _gp = k => { const ent = t.parameterSchema.find(p => p.key === k); return ent ? ent.value : undefined; };
+    const gimbalMaxDeg = _gp('gimbalMaxDeg');
+    const gimbalRateDegS = _gp('gimbalRateDegS');
+    const gimbalAccelDegS2 = (CONFIG.GIMBAL_ACCEL_OVERRIDE > 0)   // > 0 (not isFinite): Infinity = unlimited-accel baseline run
+      ? CONFIG.GIMBAL_ACCEL_OVERRIDE : _gp('gimbalAccelDegS2');
     const Fmax = maxMassFlowRate * ve;
     // Engine bell height for THIS record — used to place each engine at the
     // bell exit plane (below the hull base) so torque calc pivots correctly
@@ -95,6 +105,10 @@ function buildEnginesForRecord(rec) {
       maxMassFlowRate,
       minMassFlowRate,
       massFlowRateRateFrac,
+      // Gimbal actuator envelope (thruster-type properties, see above).
+      gimbalMaxDeg,
+      gimbalRateDegS,
+      gimbalAccelDegS2,
       // PART B: undefined today (see comment above) — physics.js's rate
       // limiter treats a non-finite value here as "use my own default".
       startupDurationS: startupDurationEnt ? startupDurationEnt.value : undefined,
@@ -103,7 +117,7 @@ function buildEnginesForRecord(rec) {
       massFlowRate: 0,
       targetMassFlowRate: 0,
       gimbalDeg: 0,
-      gimbalRateActDegS: 0, // actual gimbal rate state (used only when CONFIG.GIMBAL_ACCEL_ON)
+      gimbalRateActDegS: 0, // actual gimbal rate state (deg/s) integrated by the accel-limited actuator model
       targetGimbalDeg: 0,
       // PHASE 3: NaN = no active guidance rate command — the sentinel
       // applyActuatorRateLimitsForBody (physics.js) checks via
@@ -113,7 +127,7 @@ function buildEnginesForRecord(rec) {
       // resets it back to NaN each time, since an angle command always
       // takes precedence over an in-progress rate command.
       targetGimbalRateDegS: NaN,
-      targetGimbalAccelDegS2: NaN, // guidance alpha command (deg/s^2); NaN = none. Only used when CONFIG.GIMBAL_ACCEL_ON
+      targetGimbalAccelDegS2: NaN, // guidance alpha command (deg/s^2); NaN = none
       currentF: 0,
     });
   });

@@ -1,4 +1,3 @@
-// pre acceleration of gimbal commit
 // ============================================================================
 // componentLibrary.js — Shared data layer for the Components Library
 // (Technology Bay). This is the registry of reusable HARDWARE MODULE
@@ -405,6 +404,7 @@ const THRUSTER_CHEMICAL_SCHEMA = [
   { key: 'gimbalCapable', label: 'Gimbal capable', unit: 'bool' },
   { key: 'gimbalMaxDeg', label: 'Gimbal range', unit: 'deg', min: 0, max: 45 },
   { key: 'gimbalRateDegS', label: 'Gimbal slew rate', unit: 'deg/s', min: 1 },
+  { key: 'gimbalAccelDegS2', label: 'Gimbal angular accel', unit: 'deg/s2', min: 1 },
   { key: 'minThrottleFrac', label: 'Throttle floor', unit: 'frac', min: 0, max: 0.95 },
   { key: 'maxThrottleRateFrac', label: 'Throttle change rate', unit: '/s', min: 0.01 },
   // Spool transients — real turbopump spin-up/spin-down times. Crossing
@@ -481,6 +481,7 @@ function buildThrusterMerlin1D() {
   gimbalCapable: true,
       gimbalMaxDeg: 8,
       gimbalRateDegS: 40,
+      gimbalAccelDegS2: 200,
       minThrottleFrac: 0.39,
       maxThrottleRateFrac: 0.5,
       startupDurationS: 3.0,
@@ -514,6 +515,7 @@ function buildThrusterMerlin1DVac() {
   gimbalCapable: true,
       gimbalMaxDeg: 8,
       gimbalRateDegS: 40,
+      gimbalAccelDegS2: 200,
       minThrottleFrac: 0.39,
       maxThrottleRateFrac: 0.5,
       startupDurationS: 3.0,

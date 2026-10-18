@@ -431,15 +431,14 @@ b.omega = msg.omega || 0;
   if (!b) break;
   if (typeof cancelPendingSequences === 'function') cancelPendingSequences(b);
   if (!b.engines) break;
-  const lim = CONFIG.GIMBAL_MAX_DEG;
-  const d = Math.max(-lim, Math.min(lim, msg.deg));
   // PHASE 3 human precedence: an angle command from the human UI (slider)
   // always wins over an in-progress guidance rate command — clear the
   // rate field back to NaN so applyActuatorRateLimitsForBody's rate
   // branch falls through to the angle-slew branch below on the very next
   // tick, using the targetGimbalDeg this sets.
   b.engines.filter(en => en.gimbal).forEach(en => {
-    en.targetGimbalDeg = d;
+    const lim = en.gimbalMaxDeg;   // per-engine (thruster-type property)
+    en.targetGimbalDeg = Math.max(-lim, Math.min(lim, msg.deg));
     en.targetGimbalRateDegS = NaN;
     en.targetGimbalAccelDegS2 = NaN;
   });
@@ -447,7 +446,7 @@ b.omega = msg.omega || 0;
 }
     // PHASE 3: rate, not angle — guidance commands how fast the gimbal
     // should move, physics integrates. See applyActuatorRateLimitsForBody
-    // in physics.js for the integration + clamp-to-GIMBAL_MAX_DEG side.
+    // in physics.js for the integration + clamp-to-gimbalMaxDeg side.
     // Does NOT touch targetGimbalDeg (ignored while rate mode is active,
     // per the arbitration rule — ignoring it rather than writing to it
     // means setGimbal doesn't need to know rate mode exists to win back
@@ -455,23 +454,26 @@ b.omega = msg.omega || 0;
         case 'setGimbalRate': {
   const b = resolveTargetBody(msg.targetBodyIdx);
   if (!b || !b.engines) break;
-  const lim = CONFIG.GIMBAL_RATE_DEG_S;
-  const rate = Math.max(-lim, Math.min(lim, msg.degPerSec));
   const onlyCenter = (msg.target === 'center');
   b.engines.filter(en => en.gimbal && (!onlyCenter || en.isCenter))
-    .forEach(en => { en.targetGimbalRateDegS = rate; en.targetGimbalAccelDegS2 = NaN; });
+    .forEach(en => {
+      const lim = en.gimbalRateDegS;   // per-engine (thruster-type property)
+      en.targetGimbalRateDegS = Math.max(-lim, Math.min(lim, msg.degPerSec));
+      en.targetGimbalAccelDegS2 = NaN;
+    });
   break;
 }
-    // Guidance alpha command (deg/s^2). Only acted on by physics when CONFIG.GIMBAL_ACCEL_ON
+    // Guidance alpha command (deg/s^2), clamped per engine to its own accel limit
     // (see applyActuatorRateLimitsForBody in physics.js). Mirrors sim.js 'setGimbalAccel'.
     case 'setGimbalAccel': {
   const b = resolveTargetBody(msg.targetBodyIdx);
   if (!b || !b.engines) break;
-  const lim = CONFIG.GIMBAL_ACCEL_DEG_S2;
-  const acc = Math.max(-lim, Math.min(lim, msg.degPerSec2));
   const onlyCenter = (msg.target === 'center');
   b.engines.filter(en => en.gimbal && (!onlyCenter || en.isCenter))
-    .forEach(en => { en.targetGimbalAccelDegS2 = acc; });
+    .forEach(en => {
+      const lim = en.gimbalAccelDegS2;
+      en.targetGimbalAccelDegS2 = Math.max(-lim, Math.min(lim, msg.degPerSec2));
+    });
   break;
 }
     case 'rcs': {
@@ -959,10 +961,14 @@ ec.targetGimbalDeg = en.targetGimbalDeg;
 // round-trip back to the main-thread mirror and the guidance
 // snapshot, otherwise it appears to vanish every tick.
 ec.targetGimbalRateDegS = en.targetGimbalRateDegS;
-// Gimbal accel model (only meaningful when CONFIG.GIMBAL_ACCEL_ON): guidance reads the actual
-// gimbal rate state and the pending alpha command to solve its next alpha.
+// Gimbal accel model: guidance reads the actual gimbal rate state and the pending alpha
+// command to solve its next alpha, plus this engine's actuator limits (thruster-type
+// properties; constants, so cold-path cost only).
 ec.gimbalRateActDegS = en.gimbalRateActDegS;
 ec.targetGimbalAccelDegS2 = en.targetGimbalAccelDegS2;
+ec.gimbalMaxDeg = en.gimbalMaxDeg;
+ec.gimbalRateDegS = en.gimbalRateDegS;
+ec.gimbalAccelDegS2 = en.gimbalAccelDegS2;
 // Spool transients — needed by guidance (STAGE_BURN predictive
 // cutoff, CIRCULARIZE spool Δv compensation) and anything else
 // that wants to know how long the engine takes to spin up/down.

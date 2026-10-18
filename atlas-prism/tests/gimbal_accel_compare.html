@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>atlas-prism · gimbal accel ON vs OFF</title>
+<title>atlas-prism · gimbal accel a-sweep</title>
 <style>
   body { background:#0e1116; color:#d6dde6; font:13px/1.45 ui-monospace,Menlo,Consolas,monospace; margin:0; padding:10px; }
   h1 { font-size:15px; margin:0 0 8px; }
@@ -25,7 +25,7 @@
 </style>
 </head>
 <body>
-<h1>Gimbal accel model · full-mission ON vs OFF (same tuned point)</h1>
+<h1>Gimbal accel model · full-mission a-sweep (same tuned point; baseline = first a in the list)</h1>
 <div class="row">
   <label>G <input type="text" id="G" value="0.60"></label>
   <label>T <input type="text" id="T" value="4.82"></label>
@@ -39,7 +39,7 @@
   <label>sample every (ticks) <input type="text" id="every" value="4" style="width:34px"></label>
   <label>cap s <input type="text" id="cap" value="1500" style="width:48px"></label>
   <label>workers <input type="text" id="nw" value="0" style="width:34px"></label>
-  <label><input type="checkbox" id="ctl" checked> control (OFF twice)</label>
+  <label><input type="checkbox" id="ctl" checked> control (baseline a twice)</label>
   <label>hi-res window s <input type="text" id="hi0" value="9" style="width:34px"> to <input type="text" id="hi1" value="13" style="width:34px"></label>
   <label>values patch JSON (all runs) <input type="text" id="patch" value="" placeholder='{"ascent":{"HOLD_K_DAMP":1}}' style="width:260px"></label>
   <label>mu <input type="text" id="mu" value="3.986004418e14" style="width:110px"></label>
@@ -99,7 +99,7 @@
     run.d = d;
     // metrics
     let pg = 0, pr = 0, sat = 0, nal = 0, me = 0;
-    const lim = run.accelOn ? run.a : 0;
+    const lim = run.a;   // every run is accel-limited now (baseline a=inf -> 1e7, never saturates)
     for (let i = 0; i < n; i++) {
       pg = Math.max(pg, Math.abs(d.gimbal[i])); pr = Math.max(pr, Math.abs(d.rate[i]));
       if (d.alpha[i] != null) { nal++; if (lim && Math.abs(d.alpha[i]) >= 0.999 * lim) sat++; }
@@ -165,12 +165,11 @@
     { id: 'vr', title: 'Radial velocity', ylab: 'm/s', key: 'vr' },
     { id: 'tilt', title: 'Tilt from local vertical (theta - localVertical)', ylab: 'deg', key: 'tilt' },
     { id: 'gimbal', title: 'Gimbal angle', ylab: 'deg', key: 'gimbal' },
-    { id: 'rate', title: 'Gimbal rate (actual state; 0 when OFF)', ylab: 'deg/s', key: 'rate' },
-    { id: 'alpha', title: 'Alpha command (ON only)', ylab: 'deg/s²', key: 'alpha' },
-    { id: 'cmdr', title: 'Guidance RATE command (OFF run only; ~ (g_req - g)/dt)', ylab: 'deg/s', key: 'cmdRate', offOnly: true },
-    { id: 'dvt', title: 'Δ tangential velocity vs OFF', ylab: 'm/s', key: 'vt', diff: true },
-    { id: 'dtilt', title: 'Δ tilt vs OFF', ylab: 'deg', key: 'tilt', diff: true },
-    { id: 'dalt', title: 'Δ altitude vs OFF', ylab: 'km', key: 'alt', diff: true },
+    { id: 'rate', title: 'Gimbal rate (actual state)', ylab: 'deg/s', key: 'rate' },
+    { id: 'alpha', title: 'Alpha command', ylab: 'deg/s²', key: 'alpha' },
+    { id: 'dvt', title: 'Δ tangential velocity vs baseline', ylab: 'm/s', key: 'vt', diff: true },
+    { id: 'dtilt', title: 'Δ tilt vs baseline', ylab: 'deg', key: 'tilt', diff: true },
+    { id: 'dalt', title: 'Δ altitude vs baseline', ylab: 'km', key: 'alt', diff: true },
   ];
   function ensureCanvases() {
     const grid = $('grid'); if (grid.children.length === PANELS.length) return;
@@ -185,8 +184,6 @@
     PANELS.forEach(p => {
       const series = [];
       runs.forEach(r => {
-        if (p.id === 'alpha' && !r.accelOn) return;
-        if (p.offOnly && r.accelOn) return;
         if (p.diff && r === base) return;
         series.push({ label: r.label, color: r.color, dash: r.dash, x: r.d.t, y: p.diff ? diffSeries(r, base, p.key) : r.d[p.key] });
       });
@@ -214,11 +211,11 @@
         const flips = (arr) => { let n = 0, pv = 0; arr.forEach(x => { if (x == null || x === 0) return; const sg = Math.sign(x); if (pv && sg !== pv) n++; pv = sg; }); return n; };
         const dG = []; for (let k = 1; k < idx.length; k++) dG.push(r.d.gimbal[idx[k]] - r.d.gimbal[idx[k - 1]]);
         const ok = idx.length > 2 && Math.abs((r.d.t[idx[1]] - r.d.t[idx[0]]) - dtS) < 0.0011;
-        r.m.win = { n: idx.length, hires: ok, gFlips: flips(dG), aFlips: r.accelOn ? flips(idx.map(i => r.d.alpha[i])) : null,
-          rcFlips: !r.accelOn ? flips(idx.map(i => r.d.cmdRate[i])) : null,
+        r.m.win = { n: idx.length, hires: ok, gFlips: flips(dG), aFlips: flips(idx.map(i => r.d.alpha[i])),
+          rcFlips: null,
           maxStep: dG.reduce((m, x) => Math.max(m, Math.abs(x)), 0),
           gMin: Math.min.apply(null, idx.map(i => r.d.gimbal[i])), gMax: Math.max.apply(null, idx.map(i => r.d.gimbal[i])),
-          rcMax: !r.accelOn ? Math.max.apply(null, idx.map(i => Math.abs(r.d.cmdRate[i] || 0))) : null };
+          rcMax: null };
         {   // amplitude of the chatter (is it real motion or tiny dither?) + ascent attitude sanity (tumble check)
           const thr = 0.02, big = dG.map(x => Math.abs(x) >= thr ? x : null), W2 = r.m.win;
           W2.bigFlips = flips(big); W2.nBig = big.filter(x => x != null).length;
@@ -234,7 +231,7 @@
           W2.att = { maxOmega: mo, tiMin: tiMin, tiMax: tiMax, t30: at(30), t60: at(60), t100: at(100), tEnd: isFinite(tEnd) ? at(tEnd) : NaN, tEndS: tEnd };
         }
       }
-      if (r.accelOn) {
+      {
         let cur = null;
         for (let i = 0; i < r.d.t.length; i++) {
           const al = r.d.alpha[i], sat = al != null && Math.abs(al) >= 0.999 * r.a;
@@ -269,8 +266,8 @@
     let notes = '';
     runs.forEach(r => {
       let l = r.label + ':';
-      if (r.m.onset.length) l += '  first deviation vs OFF -> ' + r.m.onset.join(' | ');
-      if (r.accelOn) {
+      if (r.m.onset.length) l += '  first deviation vs baseline -> ' + r.m.onset.join(' | ');
+      {
         const w = r.m.satWin; l += '  alpha-sat windows: ' + w.length;
         if (w.length) l += ' [' + w.slice(0, 8).map(x => x.t0.toFixed(1) + '-' + x.t1.toFixed(1) + 's ' + phaseAt(r.res.phases, x.t0)).join(', ') + (w.length > 8 ? ', ...' : '') + ']';
       }
@@ -295,19 +292,21 @@
       const raw = { G: parseFloat($('G').value), T: parseFloat($('T').value), bias: parseFloat($('bias').value), lead: parseFloat($('lead').value), meco: parseFloat($('meco').value) };
       const altKm = parseFloat($('alt').value) || 320, every = parseInt($('every').value, 10) || 4, capS = parseFloat($('cap').value) || 1500;
       const amax = $('amax').value.split(/[ ,]+/).filter(Boolean).map(s => /^inf/i.test(s) ? 1e7 : parseFloat(s)).filter(Number.isFinite);
-      const plan = [{ label: 'OFF', accelOn: false, color: COLORS[0] }];
-      amax.forEach((a, i) => plan.push({ label: 'ON a=' + (a >= 1e7 ? 'inf' : a), accelOn: true, a, color: COLORS[1 + (i % 6)] }));
-      if ($('ctl').checked) plan.push({ label: 'OFF (control)', accelOn: false, color: COLORS[7], dash: true });
+      if (!amax.length) throw new Error('a_max list is empty');
+      const aLbl = (a) => 'a=' + (a >= 1e7 ? 'inf' : a);
+      const plan = amax.map((a, i) => ({ label: aLbl(a) + (i === 0 ? ' (baseline)' : ''), a, color: COLORS[i % 7] }));
+      // control = the baseline a run a second time (must be bit-identical: determinism check)
+      if ($('ctl').checked) plan.push({ label: aLbl(amax[0]) + ' (control)', a: amax[0], color: COLORS[7], dash: true });
       let patchObj = null; const ptxt = $('patch').value.trim();
       if (ptxt) { try { patchObj = JSON.parse(ptxt); } catch (e) { throw new Error('patch JSON invalid: ' + e.message); } }
       log('raw=' + JSON.stringify(raw) + (patchObj ? ' patch=' + JSON.stringify(patchObj) : '') + ' alt=' + altKm + ' runs=' + plan.length, 'dim');
       let done = 0; $('status').textContent = 'running 0/' + plan.length;
       const results = await Promise.all(plan.map(p => pool.runJob('traceRun', {
-        raw, altKm, every, capS, accelOn: p.accelOn, accelDegS2: p.a, hiT0: parseFloat($('hi0').value), hiT1: parseFloat($('hi1').value), patch: patchObj,
+        raw, altKm, every, capS, accelDegS2: p.a, hiT0: parseFloat($('hi0').value), hiT1: parseFloat($('hi1').value), patch: patchObj,
       }).then(res => { p.res = res; done++; $('status').textContent = 'running ' + done + '/' + plan.length; if (res.patchMissing && res.patchMissing.length) log(p.label + ' PATCH MISSING keys: ' + res.patchMissing.join(', '), 'bad'); log(p.label + ': ' + res.endReason + ' t=' + res.simTime.toFixed(1) + 's ticks=' + res.ticks, 'dim'); return p; })
         .catch(e => { log(p.label + ' FAILED: ' + ((e && e.message) || e), 'bad'); p.res = null; return p; })));
       runs = results.filter(p => p.res && p.res.cols && p.res.cols.t.length);
-      if (!runs.length || runs[0].label !== 'OFF') throw new Error('OFF baseline run missing — cannot compare');
+      if (!runs.length || runs[0].label !== plan[0].label) throw new Error('baseline run missing — cannot compare');
       runs.forEach(derive); analyze();
       $('legend').innerHTML = runs.map(r => '<span style="color:' + r.color + '">■ ' + r.label + (r.dash ? ' (dashed)' : '') + '</span>').join('');
       table(); redraw();
@@ -316,7 +315,7 @@
         const b = runs[0]; let mx = 0;
         ['alt', 'vt', 'tilt', 'gimbal'].forEach(k => { const n = Math.min(b.d[k].length, ctl.d[k].length); for (let i = 0; i < n; i++) mx = Math.max(mx, Math.abs(b.d[k][i] - ctl.d[k][i])); });
         const same = b.d.t.length === ctl.d.t.length && mx === 0;
-        log('CONTROL (OFF vs OFF): ' + (same ? 'bit-identical traces' : 'MISMATCH maxabs=' + mx + ' lens ' + b.d.t.length + '/' + ctl.d.t.length), same ? 'ok' : 'bad');
+        log('CONTROL (baseline vs baseline): ' + (same ? 'bit-identical traces' : 'MISMATCH maxabs=' + mx + ' lens ' + b.d.t.length + '/' + ctl.d.t.length), same ? 'ok' : 'bad');
       }
       $('status').textContent = 'done';
     } catch (e) { log('ERROR: ' + ((e && e.message) || e), 'bad'); $('status').textContent = 'error'; }
