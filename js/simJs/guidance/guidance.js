@@ -1050,6 +1050,11 @@ function getLeoInsertionV3Config() { return JSON.parse(JSON.stringify(_v3Config)
     if (target) msg.target = target;
     return msg;
   }
+  function cmdSetGimbalAccel(degPerSec2, target) {
+    const msg = { type: "setGimbalAccel", degPerSec2 };
+    if (target) msg.target = target;
+    return msg;
+  }
   function cmdRcsDuty(duties, targetBodyIdx) {
     const msg = { type: "rcsDuty", duties };
     if (Number.isInteger(targetBodyIdx)) msg.targetBodyIdx = targetBodyIdx;
@@ -1119,6 +1124,7 @@ _registerTestGuide,
     cmdWarp,
     cmdSetFuelMass,
     cmdSetGimbalRate,
+    cmdSetGimbalAccel,
     cmdRcsDuty,
 cmdMarkIntentionalImpact,
 cmdPusherTorque,

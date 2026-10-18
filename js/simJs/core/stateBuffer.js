@@ -56,9 +56,9 @@ const HOT_STATE_MAX_ENGINES_PER_BODY = 16; // covers octaweb-merlin9 (1 center +
 // [16] gridFin.R.deploy  (deg, signed — 0 deployed, −90 stowed)
 // [17] gridFin.FB.deploy (deg, signed — 0 deployed, +90 stowed)
 // [18] gridFin.FB.control (deg, signed — F=+v, B=−v mirror)
-// [19 .. 19 + N*3)  per-engine: massFlowRate (kg/s), currentF, gimbalDeg
+// [19 .. 19 + N*4)  per-engine: massFlowRate (kg/s), currentF, gimbalDeg, gimbalRateActDegS (deg/s; gimbal accel model, 0 when GIMBAL_ACCEL_ON is off)
 const HOT_STATE_BODY_HEADER_FLOATS = 19;
-const HOT_STATE_FLOATS_PER_ENGINE = 3; // massFlowRate, currentF, gimbalDeg
+const HOT_STATE_FLOATS_PER_ENGINE = 4; // massFlowRate, currentF, gimbalDeg, gimbalRateActDegS
 const HOT_STATE_BODY_STRIDE =
   HOT_STATE_BODY_HEADER_FLOATS + HOT_STATE_MAX_ENGINES_PER_BODY * HOT_STATE_FLOATS_PER_ENGINE;
 
@@ -114,23 +114,23 @@ function encodeHotState(buf, bodies) {
     // Float64Array round-trip cleanly (unlike undefined, which would become
     // 0 and be indistinguishable from a real ω of zero).
     buf[base + 12] = (b.slosh && Number.isFinite(b.slosh.omega)) ? b.slosh.omega : NaN;
-// Phase 2B.3 — same NaN-sentinel treatment as sloshOmega above: the
-// derived damping ratio is written every tick on the worker but was
-// never shipped to the main thread until now.
-buf[base + 13] = (b.slosh && Number.isFinite(b.slosh.zeta)) ? b.slosh.zeta : NaN;
-// Fairing-recovery chute — 0 means either "no chute" or "not yet
-// deployed"; both render identically (nothing above the fairing).
-// Once deployed, ramps 0→1 across (lineStretchTime + openingTime).
-buf[base + 14] = (b.chute && Number.isFinite(b.chute.progress)) ? b.chute.progress : 0;
-// Grid fins — 4 scalars. Missing state defaults to stowed (90/…/90) so a
-// body that predates the feature reads as fully retracted.
-const gf = b.gridFins;
-buf[base + 15] = (gf && gf.L && Number.isFinite(gf.L.deploy)) ? gf.L.deploy : 90;
-buf[base + 16] = (gf && gf.R && Number.isFinite(gf.R.deploy)) ? gf.R.deploy : -90;
-buf[base + 17] = (gf && gf.FB && Number.isFinite(gf.FB.deploy)) ? gf.FB.deploy : 90;
-buf[base + 18] = (gf && gf.FB && Number.isFinite(gf.FB.control)) ? gf.FB.control : 0;
-
-const engines = b.engines || [];
+    // Phase 2B.3 — same NaN-sentinel treatment as sloshOmega above: the
+    // derived damping ratio is written every tick on the worker but was
+    // never shipped to the main thread until now.
+    buf[base + 13] = (b.slosh && Number.isFinite(b.slosh.zeta)) ? b.slosh.zeta : NaN;
+    // Fairing-recovery chute — 0 means either "no chute" or "not yet
+    // deployed"; both render identically (nothing above the fairing).
+    // Once deployed, ramps 0→1 across (lineStretchTime + openingTime).
+    buf[base + 14] = (b.chute && Number.isFinite(b.chute.progress)) ? b.chute.progress : 0;
+    // Grid fins — 4 scalars. Missing state defaults to stowed (90/…/90) so a
+    // body that predates the feature reads as fully retracted.
+    const gf = b.gridFins;
+    buf[base + 15] = (gf && gf.L && Number.isFinite(gf.L.deploy)) ? gf.L.deploy : 90;
+    buf[base + 16] = (gf && gf.R && Number.isFinite(gf.R.deploy)) ? gf.R.deploy : -90;
+    buf[base + 17] = (gf && gf.FB && Number.isFinite(gf.FB.deploy)) ? gf.FB.deploy : 90;
+    buf[base + 18] = (gf && gf.FB && Number.isFinite(gf.FB.control)) ? gf.FB.control : 0;
+    
+    const engines = b.engines || [];
     const usedEngines = Math.min(engines.length, HOT_STATE_MAX_ENGINES_PER_BODY);
     if (engines.length > HOT_STATE_MAX_ENGINES_PER_BODY) truncatedEngines = true;
     buf[base + 7] = usedEngines;
@@ -142,6 +142,7 @@ const engines = b.engines || [];
       buf[eb + 0] = e.massFlowRate;
       buf[eb + 1] = e.currentF;
       buf[eb + 2] = e.gimbalDeg;
+      buf[eb + 3] = e.gimbalRateActDegS || 0;
     }
   }
   
@@ -193,30 +194,30 @@ function decodeHotState(buf, bodies) {
     // Phase 2B.1 — NaN round-trips fine through Float64Array and is what
     // the telemetry layer checks for to render "—" instead of a fake 0.
     b.slosh.omega = buf[base + 12];
-// Phase 2B.3 — same NaN-sentinel discipline as omega above.
-b.slosh.zeta = buf[base + 13];
-// Chute — decode into a stable {progress} holder. The full chute
-// object (typeId, deployed) arrives on the cold snapshot path once;
-// this hot field only updates progress every tick.
-if (!b.chute) b.chute = { progress: 0 };
-b.chute.progress = buf[base + 14];
-// Grid fins — lazy-init the shape (with stowed defaults) if this body
-// predates the feature, then overwrite the 4 hot scalars. targetDeploy /
-// targetControl are cold (set only by an actual command) and stay
-// whatever they were — decode doesn't touch them.
-if (!b.gridFins) {
-  b.gridFins = {
-    L: { deploy: 90, control: 0, targetDeploy: 90, targetControl: 0 },
-    R: { deploy: -90, control: 0, targetDeploy: -90, targetControl: 0 },
-    FB: { deploy: 90, control: 0, targetDeploy: 90, targetControl: 0 },
-  };
-}
-b.gridFins.L.deploy = buf[base + 15];
-b.gridFins.R.deploy = buf[base + 16];
-b.gridFins.FB.deploy = buf[base + 17];
-b.gridFins.FB.control = buf[base + 18];
-
-const engines = b.engines || [];
+    // Phase 2B.3 — same NaN-sentinel discipline as omega above.
+    b.slosh.zeta = buf[base + 13];
+    // Chute — decode into a stable {progress} holder. The full chute
+    // object (typeId, deployed) arrives on the cold snapshot path once;
+    // this hot field only updates progress every tick.
+    if (!b.chute) b.chute = { progress: 0 };
+    b.chute.progress = buf[base + 14];
+    // Grid fins — lazy-init the shape (with stowed defaults) if this body
+    // predates the feature, then overwrite the 4 hot scalars. targetDeploy /
+    // targetControl are cold (set only by an actual command) and stay
+    // whatever they were — decode doesn't touch them.
+    if (!b.gridFins) {
+      b.gridFins = {
+        L: { deploy: 90, control: 0, targetDeploy: 90, targetControl: 0 },
+        R: { deploy: -90, control: 0, targetDeploy: -90, targetControl: 0 },
+        FB: { deploy: 90, control: 0, targetDeploy: 90, targetControl: 0 },
+      };
+    }
+    b.gridFins.L.deploy = buf[base + 15];
+    b.gridFins.R.deploy = buf[base + 16];
+    b.gridFins.FB.deploy = buf[base + 17];
+    b.gridFins.FB.control = buf[base + 18];
+    
+    const engines = b.engines || [];
     const usedEngines = Math.min(buf[base + 7], engines.length, HOT_STATE_MAX_ENGINES_PER_BODY);
     const engBase = base + HOT_STATE_BODY_HEADER_FLOATS;
     for (let j = 0; j < usedEngines; j++) {
@@ -225,6 +226,7 @@ const engines = b.engines || [];
       e.massFlowRate = buf[eb + 0];
       e.currentF = buf[eb + 1];
       e.gimbalDeg = buf[eb + 2];
+      e.gimbalRateActDegS = buf[eb + 3];
     }
   }
   

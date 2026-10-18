@@ -31,6 +31,7 @@ const DEFAULT_VEHICLE = {
     engineThrustRate: 0.5,
     gimbalMaxDeg: 20,
     gimbalRateDegS: 40,
+    gimbalAccelDegS2: 400, // deg/s^2 max gimbal angular acceleration (ASSUMPTION ~400, plausible 200-800; used only when GIMBAL_ACCEL_ON)
     legDeployRate: 0.5, // fraction of full travel per second (~2s to fully deploy/stow)
     rcsThrust: 1100,
     rcsVe: 2200,
@@ -179,6 +180,9 @@ OCTA_RADIUS: ACTIVE_VEHICLE_FOR_HARDWARE.params.octaRadius, // m — radius of t
   ENGINE_THRUST_RATE: ACTIVE_VEHICLE_FOR_HARDWARE.params.engineThrustRate, // max change rate, fraction of F_MAX per second
   GIMBAL_MAX_DEG: ACTIVE_VEHICLE_FOR_HARDWARE.params.gimbalMaxDeg, // ± degrees (gimbal-capable engines)
   GIMBAL_RATE_DEG_S: ACTIVE_VEHICLE_FOR_HARDWARE.params.gimbalRateDegS, // deg/sec max slew rate
+  // Gimbal angular-acceleration model (rate no longer changes instantly). OFF = old behaviour, bit-identical.
+  GIMBAL_ACCEL_ON: false,
+  GIMBAL_ACCEL_DEG_S2: (ACTIVE_VEHICLE_FOR_HARDWARE.params.gimbalAccelDegS2 !== undefined) ? ACTIVE_VEHICLE_FOR_HARDWARE.params.gimbalAccelDegS2 : 400, // deg/s^2
   
   // ---------------- RCS (4 advanced pods) ----------------
   RCS_THRUST: ACTIVE_VEHICLE_FOR_HARDWARE.params.rcsThrust, // N, fixed magnitude per nozzle

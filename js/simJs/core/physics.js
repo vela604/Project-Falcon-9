@@ -102,6 +102,7 @@ function rebuildEnginesForBody(body) {
         e.massFlowRate = old.massFlowRate;
         e.targetMassFlowRate = old.targetMassFlowRate;
         e.gimbalDeg = old.gimbalDeg;
+        if (old.gimbalRateActDegS !== undefined) e.gimbalRateActDegS = old.gimbalRateActDegS;
         e.targetGimbalDeg = old.targetGimbalDeg;
         e.currentF = old.currentF;
       }
@@ -870,7 +871,23 @@ function applyActuatorRateLimitsForBody(body, dt) {
       // fires, which is what makes "human always wins" work without this
       // function needing to know anything about precedence itself: by the
       // time this runs, there simply IS no active rate command anymore).
-      if (Number.isFinite(e.targetGimbalRateDegS)) {
+      if (CONFIG.GIMBAL_ACCEL_ON && (Number.isFinite(e.targetGimbalAccelDegS2) || Number.isFinite(e.targetGimbalRateDegS))) {
+        // Angular-acceleration mode: the rate is a STATE and changes at most CONFIG.GIMBAL_ACCEL_DEG_S2.
+        // Accel command (guidance alpha) wins; a rate command is tracked through the same accel limit
+        // (so e.g. 'rate 0' brakes instead of stopping instantly). Rate first, then angle (semi-implicit).
+        const aMax = CONFIG.GIMBAL_ACCEL_DEG_S2, vMax = CONFIG.GIMBAL_RATE_DEG_S;
+        let v = e.gimbalRateActDegS || 0;
+        let a;
+        if (Number.isFinite(e.targetGimbalAccelDegS2)) a = e.targetGimbalAccelDegS2;
+        else a = (Math.max(-vMax, Math.min(vMax, e.targetGimbalRateDegS)) - v) / dt;
+        a = Math.max(-aMax, Math.min(aMax, a));
+        v = Math.max(-vMax, Math.min(vMax, v + a * dt));
+        e.gimbalDeg += v * dt;
+        const gLim = CONFIG.GIMBAL_MAX_DEG;
+        if (e.gimbalDeg > gLim) { e.gimbalDeg = gLim; if (v > 0) v = 0; }
+        else if (e.gimbalDeg < -gLim) { e.gimbalDeg = -gLim; if (v < 0) v = 0; }
+        e.gimbalRateActDegS = v;
+      } else if (Number.isFinite(e.targetGimbalRateDegS)) {
         // Rate mode: integrate directly, ignore targetGimbalDeg entirely
         // (per the spec's arbitration rule — it's not being slewed
         // toward, it's stale until a human command overwrites it).
@@ -878,11 +895,13 @@ function applyActuatorRateLimitsForBody(body, dt) {
         e.gimbalDeg = Math.max(-CONFIG.GIMBAL_MAX_DEG, Math.min(CONFIG.GIMBAL_MAX_DEG, e.gimbalDeg));
       } else {
         // Existing angle-slew path (human slider), unchanged.
+        const _gPrev = e.gimbalDeg;
         const mg = CONFIG.GIMBAL_RATE_DEG_S * dt;
         const gt = e.targetGimbalDeg !== undefined ? e.targetGimbalDeg : e.gimbalDeg;
         if (gt > e.gimbalDeg) e.gimbalDeg = Math.min(gt, e.gimbalDeg + mg);
         else e.gimbalDeg = Math.max(gt, e.gimbalDeg - mg);
         e.gimbalDeg = Math.max(-CONFIG.GIMBAL_MAX_DEG, Math.min(CONFIG.GIMBAL_MAX_DEG, e.gimbalDeg));
+        if (CONFIG.GIMBAL_ACCEL_ON) e.gimbalRateActDegS = (e.gimbalDeg - _gPrev) / dt; // keep rate state continuous
       }
     }
   });

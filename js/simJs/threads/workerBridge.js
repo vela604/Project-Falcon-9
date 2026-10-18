@@ -760,6 +760,9 @@ return {
     // Gimbal envelope — guidance clamps to the same limits physics does.
     GIMBAL_MAX_DEG: CONFIG.GIMBAL_MAX_DEG,
     GIMBAL_RATE_DEG_S: CONFIG.GIMBAL_RATE_DEG_S,
+    // Gimbal angular-acceleration model (guidance solves alpha instead of rate when ON).
+    GIMBAL_ACCEL_ON: CONFIG.GIMBAL_ACCEL_ON,
+    GIMBAL_ACCEL_DEG_S2: CONFIG.GIMBAL_ACCEL_DEG_S2,
   },
   };
 }

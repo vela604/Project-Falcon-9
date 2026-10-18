@@ -441,6 +441,7 @@ b.omega = msg.omega || 0;
   b.engines.filter(en => en.gimbal).forEach(en => {
     en.targetGimbalDeg = d;
     en.targetGimbalRateDegS = NaN;
+    en.targetGimbalAccelDegS2 = NaN;
   });
   break;
 }
@@ -458,7 +459,19 @@ b.omega = msg.omega || 0;
   const rate = Math.max(-lim, Math.min(lim, msg.degPerSec));
   const onlyCenter = (msg.target === 'center');
   b.engines.filter(en => en.gimbal && (!onlyCenter || en.isCenter))
-    .forEach(en => { en.targetGimbalRateDegS = rate; });
+    .forEach(en => { en.targetGimbalRateDegS = rate; en.targetGimbalAccelDegS2 = NaN; });
+  break;
+}
+    // Guidance alpha command (deg/s^2). Only acted on by physics when CONFIG.GIMBAL_ACCEL_ON
+    // (see applyActuatorRateLimitsForBody in physics.js). Mirrors sim.js 'setGimbalAccel'.
+    case 'setGimbalAccel': {
+  const b = resolveTargetBody(msg.targetBodyIdx);
+  if (!b || !b.engines) break;
+  const lim = CONFIG.GIMBAL_ACCEL_DEG_S2;
+  const acc = Math.max(-lim, Math.min(lim, msg.degPerSec2));
+  const onlyCenter = (msg.target === 'center');
+  b.engines.filter(en => en.gimbal && (!onlyCenter || en.isCenter))
+    .forEach(en => { en.targetGimbalAccelDegS2 = acc; });
   break;
 }
     case 'rcs': {
@@ -946,6 +959,10 @@ ec.targetGimbalDeg = en.targetGimbalDeg;
 // round-trip back to the main-thread mirror and the guidance
 // snapshot, otherwise it appears to vanish every tick.
 ec.targetGimbalRateDegS = en.targetGimbalRateDegS;
+// Gimbal accel model (only meaningful when CONFIG.GIMBAL_ACCEL_ON): guidance reads the actual
+// gimbal rate state and the pending alpha command to solve its next alpha.
+ec.gimbalRateActDegS = en.gimbalRateActDegS;
+ec.targetGimbalAccelDegS2 = en.targetGimbalAccelDegS2;
 // Spool transients — needed by guidance (STAGE_BURN predictive
 // cutoff, CIRCULARIZE spool Δv compensation) and anything else
 // that wants to know how long the engine takes to spin up/down.

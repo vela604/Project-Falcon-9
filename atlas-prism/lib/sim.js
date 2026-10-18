@@ -87,7 +87,17 @@ function localDispatch(msg) {
       const rate = Math.max(-lim, Math.min(lim, msg.degPerSec));
       const onlyCenter = (msg.target === 'center');
       b.engines.filter(en => en.gimbal && (!onlyCenter || en.isCenter))
-        .forEach(en => { en.targetGimbalRateDegS = rate; });
+        .forEach(en => { en.targetGimbalRateDegS = rate; en.targetGimbalAccelDegS2 = NaN; });
+      break;
+    }
+    case 'setGimbalAccel': {
+      // Guidance alpha command (deg/s^2). Only meaningful when CONFIG.GIMBAL_ACCEL_ON (physics ignores it otherwise).
+      if (!b.engines) break;
+      const lim = CONFIG.GIMBAL_ACCEL_DEG_S2;
+      const acc = Math.max(-lim, Math.min(lim, msg.degPerSec2));
+      const onlyCenter = (msg.target === 'center');
+      b.engines.filter(en => en.gimbal && (!onlyCenter || en.isCenter))
+        .forEach(en => { en.targetGimbalAccelDegS2 = acc; });
       break;
     }
     case 'setGimbal': {
@@ -95,7 +105,7 @@ function localDispatch(msg) {
       const lim = CONFIG.GIMBAL_MAX_DEG;
       const d = Math.max(-lim, Math.min(lim, msg.deg));
       b.engines.filter(en => en.gimbal).forEach(en => {
-        en.targetGimbalDeg = d; en.targetGimbalRateDegS = NaN;
+        en.targetGimbalDeg = d; en.targetGimbalRateDegS = NaN; en.targetGimbalAccelDegS2 = NaN;
       });
       break;
     }
@@ -316,6 +326,8 @@ members.forEach(m => {
         DT: CONFIG.DT,
         GIMBAL_MAX_DEG: CONFIG.GIMBAL_MAX_DEG,
         GIMBAL_RATE_DEG_S: CONFIG.GIMBAL_RATE_DEG_S,
+        GIMBAL_ACCEL_ON: CONFIG.GIMBAL_ACCEL_ON,
+        GIMBAL_ACCEL_DEG_S2: CONFIG.GIMBAL_ACCEL_DEG_S2,
       },
     };
   }

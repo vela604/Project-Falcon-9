@@ -23,6 +23,49 @@
 // Loaded BEFORE guidance.js in every context (worker + page).
 // ============================================================================
 
+// ============================================================================
+// Gimbal angular-acceleration helpers (active only when env.GIMBAL_ACCEL_ON).
+// Shared by every block that commands the gimbal; the same law is meant to be
+// reused later for grid fins. OFF => _gimbalCmdMsg returns exactly the old
+// rate command, so behaviour is bit-identical.
+// ============================================================================
+function _gClamp(x, lo, hi) { return x < lo ? lo : (x > hi ? hi : x); }
+
+// 2-tick Newtonian law (final rate vf = 0): alpha so that the gimbal reaches
+// g_req with zero rate after 2 ticks, re-solved every tick (receding horizon),
+// clamped to +-aMax, plus a braking guard so a SATURATED alpha cannot overshoot:
+// when heading toward the target faster than sqrt(2*aMax*|gap|), cap the speed.
+function _gimbalAlphaCmd(g_req, g_N, v, dt, aMax, vMax) {
+  const d = g_req - g_N;
+  let a = _gClamp((d / dt - v) / dt, -aMax, aMax);
+  const vcap = 0.9 * Math.sqrt(2 * aMax * Math.abs(d));
+  const vnew = v + a * dt;
+  if (Math.abs(vnew) > vcap && vnew * d > 0) {
+    a = _gClamp((Math.sign(d) * vcap - v) / dt, -aMax, aMax);
+  }
+  return a;
+}
+
+// Predicted gimbal angle one tick ahead if the CURRENT command is left unchanged
+// (mirrors the physics branch in applyActuatorRateLimitsForBody).
+function _gimbalNextAngle(e, dt, env) {
+  const aMax = env.GIMBAL_ACCEL_DEG_S2, vMax = env.GIMBAL_RATE_DEG_S;
+  const g = e.gimbalDeg || 0, v = e.gimbalRateActDegS || 0;
+  let a = 0;
+  if (Number.isFinite(e.targetGimbalAccelDegS2)) a = e.targetGimbalAccelDegS2;
+  else if (Number.isFinite(e.targetGimbalRateDegS)) a = (_gClamp(e.targetGimbalRateDegS, -vMax, vMax) - v) / dt;
+  a = _gClamp(a, -aMax, aMax);
+  return g + _gClamp(v + a * dt, -vMax, vMax) * dt;
+}
+
+// The one place that decides which gimbal command message to send.
+function _gimbalCmdMsg(R_cmd, g_req_deg, gimbal0, dt, env, target) {
+  if (!env || !env.GIMBAL_ACCEL_ON) return Guidance.cmdSetGimbalRate(R_cmd, target);
+  const alpha = _gimbalAlphaCmd(g_req_deg, gimbal0.gimbalDeg || 0, gimbal0.gimbalRateActDegS || 0,
+    dt, env.GIMBAL_ACCEL_DEG_S2, env.GIMBAL_RATE_DEG_S);
+  return Guidance.cmdSetGimbalAccel(alpha, target);
+}
+
 const FUNDAMENTAL_BLOCKS = {
   // ==========================================================================
   // ASCENT — pad → MECO_SPOOL
@@ -181,7 +224,7 @@ const FUNDAMENTAL_BLOCKS = {
         const R_N = Number.isFinite(gimbals[0].targetGimbalRateDegS)
           ? gimbals[0].targetGimbalRateDegS
           : 0;
-        const g_N1 = g_N + R_N * dt;
+        const g_N1 = (env && env.GIMBAL_ACCEL_ON) ? _gimbalNextAngle(gimbals[0], dt, env) : g_N + R_N * dt;
 
         const dNext = Derivation.deriveForState(
           snapshot,
@@ -371,7 +414,7 @@ const FUNDAMENTAL_BLOCKS = {
         _sub.lastGRadN = g_N;
         _sub.lastGReqDeg = g_req_deg;
 
-        _send(Guidance.cmdSetGimbalRate(R_cmd, cfg.GIMBAL_TARGET));
+        _send(_gimbalCmdMsg(R_cmd, g_req_deg, gimbals[0], dt, env, cfg.GIMBAL_TARGET));
 
         let refMax = 0;
         engines.forEach((e) => {
@@ -1056,7 +1099,7 @@ const tau_target = tau_desired - dNext.torqueEnvironmental;
               -env.GIMBAL_RATE_DEG_S,
               Math.min(env.GIMBAL_RATE_DEG_S, R_req),
             );
-            _send(Guidance.cmdSetGimbalRate(R_cmd));
+            _send(_gimbalCmdMsg(R_cmd, g_req_deg, gimbals[0], dt, env));
 
             const r_ap = Math.hypot(body.rx, body.ry);
             const ux_ap = body.rx / r_ap,
@@ -1545,7 +1588,7 @@ const tau_target = tau_desired - dNext.torqueEnvironmental;
                 -env.GIMBAL_RATE_DEG_S,
                 Math.min(env.GIMBAL_RATE_DEG_S, R_req),
               );
-              _send(Guidance.cmdSetGimbalRate(R_cmd));
+              _send(_gimbalCmdMsg(R_cmd, g_req_deg, gimbals[0], dt, env));
             }
             break;
           }
@@ -2298,7 +2341,7 @@ if (_st.lastCircTriggerLeadS === 0 &&
                   -env.GIMBAL_RATE_DEG_S,
                   Math.min(env.GIMBAL_RATE_DEG_S, R_req),
                 );
-                _send(Guidance.cmdSetGimbalRate(R_cmd));
+                _send(_gimbalCmdMsg(R_cmd, g_req_deg, gimbals[0], dt, env));
               }
             }
             break;

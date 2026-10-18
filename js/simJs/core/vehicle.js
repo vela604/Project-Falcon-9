@@ -31,20 +31,20 @@ function buildEnginesForRecord(rec) {
     const g = rec.engineThrusters && rec.engineThrusters[gk];
     if (!g) return;
     const t = (typeof getComponentType === 'function') ? getComponentType(g.thrusterTypeId) : null;
-if (!t) return;
-// veVacuum is the hardware's vacuum Ve — constant. Ve is LIVE:
-//   Ve(Pa) = veVacuum − atmosphericPenalty × Pa
-// recomputed per tick in physics.js's _updateEngineVeForBody(). It's
-// seeded with the vacuum value here so a body sitting in vacuum (or
-// read before the first tick) shows the correct upper bound.
-const veVacuumEnt = t.parameterSchema.find(p => p.key === 'veVacuum');
-const penaltyEnt = t.parameterSchema.find(p => p.key === 'atmosphericPenalty');
-if (!veVacuumEnt) return;
-const veVacuum = veVacuumEnt.value;
-const atmosphericPenalty = penaltyEnt ? penaltyEnt.value : 0;
-const ve = veVacuum;
-// PHASE 1: g.massFlowRate is this engine's build-time-chosen MAX mass
-// flow rate (kg/s) — the thruster type's maxMassFlowRate, capped at
+    if (!t) return;
+    // veVacuum is the hardware's vacuum Ve — constant. Ve is LIVE:
+    //   Ve(Pa) = veVacuum − atmosphericPenalty × Pa
+    // recomputed per tick in physics.js's _updateEngineVeForBody(). It's
+    // seeded with the vacuum value here so a body sitting in vacuum (or
+    // read before the first tick) shows the correct upper bound.
+    const veVacuumEnt = t.parameterSchema.find(p => p.key === 'veVacuum');
+    const penaltyEnt = t.parameterSchema.find(p => p.key === 'atmosphericPenalty');
+    if (!veVacuumEnt) return;
+    const veVacuum = veVacuumEnt.value;
+    const atmosphericPenalty = penaltyEnt ? penaltyEnt.value : 0;
+    const ve = veVacuum;
+    // PHASE 1: g.massFlowRate is this engine's build-time-chosen MAX mass
+    // flow rate (kg/s) — the thruster type's maxMassFlowRate, capped at
     // build time. Thrust is derived (massFlowRate × Ve), never stored
     // independently.
     const maxMassFlowRate = g.massFlowRate;
@@ -64,7 +64,7 @@ const ve = veVacuum;
     // vehicle picks them up with zero changes here.
     const startupDurationEnt = t.parameterSchema.find(p => p.key === 'startupDurationS');
     const shutdownDurationEnt = t.parameterSchema.find(p => p.key === 'shutdownDurationS');
-        const Fmax = maxMassFlowRate * ve;
+    const Fmax = maxMassFlowRate * ve;
     // Engine bell height for THIS record — used to place each engine at the
     // bell exit plane (below the hull base) so torque calc pivots correctly
     // and the renderer's plume anchor sits at the nozzle exit.
@@ -103,6 +103,7 @@ const ve = veVacuum;
       massFlowRate: 0,
       targetMassFlowRate: 0,
       gimbalDeg: 0,
+      gimbalRateActDegS: 0, // actual gimbal rate state (used only when CONFIG.GIMBAL_ACCEL_ON)
       targetGimbalDeg: 0,
       // PHASE 3: NaN = no active guidance rate command — the sentinel
       // applyActuatorRateLimitsForBody (physics.js) checks via
@@ -112,6 +113,7 @@ const ve = veVacuum;
       // resets it back to NaN each time, since an angle command always
       // takes precedence over an in-progress rate command.
       targetGimbalRateDegS: NaN,
+      targetGimbalAccelDegS2: NaN, // guidance alpha command (deg/s^2); NaN = none. Only used when CONFIG.GIMBAL_ACCEL_ON
       currentF: 0,
     });
   });
