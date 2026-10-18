@@ -558,6 +558,9 @@ function maybeForwardGuidanceSnapshot() {
   currentF: e.currentF,
   gimbalDeg: e.gimbalDeg,
   targetGimbalRateDegS: e.targetGimbalRateDegS,
+  // Gimbal accel model (read by guidance only when GIMBAL_ACCEL_ON): actual rate state + pending alpha cmd.
+  gimbalRateActDegS: e.gimbalRateActDegS,
+  targetGimbalAccelDegS2: e.targetGimbalAccelDegS2,
   startupDurationS: e.startupDurationS,
   shutdownDurationS: e.shutdownDurationS,
 })),

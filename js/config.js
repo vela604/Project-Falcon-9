@@ -181,7 +181,7 @@ OCTA_RADIUS: ACTIVE_VEHICLE_FOR_HARDWARE.params.octaRadius, // m — radius of t
   GIMBAL_MAX_DEG: ACTIVE_VEHICLE_FOR_HARDWARE.params.gimbalMaxDeg, // ± degrees (gimbal-capable engines)
   GIMBAL_RATE_DEG_S: ACTIVE_VEHICLE_FOR_HARDWARE.params.gimbalRateDegS, // deg/sec max slew rate
   // Gimbal angular-acceleration model (rate no longer changes instantly). OFF = old behaviour, bit-identical.
-  GIMBAL_ACCEL_ON: false,
+  GIMBAL_ACCEL_ON: true,
   GIMBAL_ACCEL_DEG_S2: (ACTIVE_VEHICLE_FOR_HARDWARE.params.gimbalAccelDegS2 !== undefined) ? ACTIVE_VEHICLE_FOR_HARDWARE.params.gimbalAccelDegS2 : 400, // deg/s^2
   
   // ---------------- RCS (4 advanced pods) ----------------
