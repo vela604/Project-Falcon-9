@@ -98,9 +98,11 @@ const FUNDAMENTAL_BLOCKS = {
   PUSH_MAX_GIMBAL_DEG: 0.60,
   PUSH_EAST_SIGN: -1,
       // HOLD attitude law (the only one): stage-burn style PD on AoA angle + AoA rate
-      // (tau = -I*(KP*aoa + KD*omegaAoA)), no bias, applied for both HOLD and COASTnAoADAMP phases.
+      // (tau = -I*(KP*aoa + KD*omegaAoA + KI*int(aoa))), no bias, applied for both HOLD and COASTnAoADAMP phases.
       HOLD_PD_KP: 1.0,
       HOLD_PD_KD: 2.0,
+      // Integral gain on AoA (fixed constant, not tuned). Removes the PD static AoA offset (grows with q). KI < KP*KD.
+      HOLD_PD_KI: 0.3,
       // Seconds. >0 low-passes the commanded gimbal in aoa_pd HOLD (removes the 1-tick limit cycle). 0 = old deadbeat command.
       GIMBAL_CMD_TAU_S: 0.1,
       THROTTLE_FRAC: 1.0,
@@ -353,14 +355,22 @@ const FUNDAMENTAL_BLOCKS = {
           tau_desired =
             cfg.PUSH_EAST_SIGN * I_next * A_ang * Math.sin(omega_ang * tRel);
           _sub.lastTauDQ = 0;
+          _sub.aoaInt = 0;
         } else if (_sub.phase === "COAST" || _sub.phase === "PRE_COAST") {
           tau_desired = 0;
+          _sub.aoaInt = 0;
           _sub.lastTauDQ = 0;
         } else {
           // Same PD-on-AoA as STAGE_BURN: uses AoA's own rate (omega + P/r^2), no accel term,
           // so no dependence of tau_desired on the gimbal being solved (no 1-tick sign-flip loop).
           const aoaRadPD = (Number.isFinite(dNext.alphaDeg) ? dNext.alphaDeg : 0) * Math.PI / 180;
-          tau_desired = -I_next * (cfg.HOLD_PD_KP * aoaRadPD + cfg.HOLD_PD_KD * omegaAoANext);
+          // PID: conditional integration (|aoa| < 0.05 deg) + clamp; reset outside HOLD/COASTnAoADAMP.
+          const _kiH = Number.isFinite(cfg.HOLD_PD_KI) ? cfg.HOLD_PD_KI : 0.3;
+          if (!Number.isFinite(_sub.aoaInt)) _sub.aoaInt = 0;
+          if (Math.abs(aoaRadPD) < 0.05 * Math.PI / 180) {
+            _sub.aoaInt = Math.max(-0.005, Math.min(0.005, _sub.aoaInt + aoaRadPD * dt));
+          }
+          tau_desired = -I_next * (cfg.HOLD_PD_KP * aoaRadPD + cfg.HOLD_PD_KD * omegaAoANext + _kiH * _sub.aoaInt);
           _sub.lastTauDQ = 0;
         }
         _sub.lastTauDesired = tau_desired;
@@ -764,16 +774,15 @@ setState(s) {
     defaultConstants: {
     GIMBAL_TARGET: "all",
   STAGE_BURN_CUTOFF_MARGIN_MPS: 0.0,
-// AoA bootstrap margin + PD gains.
-  // AoA bootstrap margin + PD gains. AoA entering STAGE_BURN is ~1°
-// from gravity-gradient drift during the 10m axial wait; the
-// standard controller's torque spike on that first tick is violent
-// enough to wobble the stage. Bootstrap damps AoA below margin with
-// a critically-damped PD (kp, kd), then hands off to the standard
-// controller. For critical damping set kd ≈ 2·√kp.
-STAGE_BURN_AOA_MARGIN_DEG: 0.001,
-  STAGE_BURN_AOA_KP: 1.0,
-  STAGE_BURN_AOA_KD: 2.0,
+// STAGE_BURN AoA PID gains. AoA entering STAGE_BURN is ~1° from
+  // gravity-gradient drift during the 10m axial wait. The target is seeded
+  // with the current AoA and ramped straight to the bias (no zeroing phase).
+  STAGE_BURN_AOA_KP: 4.0,
+  STAGE_BURN_AOA_KD: 4.0,
+  // Integral gain (1/s^3 on AoA) + bias ramp rate. Fixed constants, NOT in the
+  // tunable key list (not part of retuning). KI < KP*KD for stability.
+  STAGE_BURN_AOA_KI: 1.0,
+  STAGE_BURN_AOA_BIAS_RATE_DEG_S: 0.5,
   // Target AoA offset from velocity during STAGE_BURN (deg). Zero =
   // nose perfectly aligned (fastest tilt evolution). Small positive
   // or negative value introduces a perpendicular thrust component
@@ -817,7 +826,9 @@ STAGE_BURN_AOA_MARGIN_DEG: 0.001,
     phaseStart: 0,
     // STAGE_BURN
     stageBurnSpooled: false,
-    stageBurnAoaBootstrapped: false,
+    stageBurnAoaSeeded: false,
+    sbBiasEff: NaN,
+    sbAoaInt: 0,
     lastApogeeKm: 0,
     lastPerigeeKm: null,
         // RCS_BOOST
@@ -989,54 +1000,28 @@ if (!_st.stageBurnSpooled) {
 }
 
 // ---- Attitude torque ----
-// Bootstrap: AoA entering STAGE_BURN is ~1° from gravity-gradient drift
-// during the 10m axial wait. Standard controller's torque on that first
-// tick is violent enough to wobble the stage. Damp AoA to below
-// STAGE_BURN_AOA_MARGIN_DEG first, then hand off. Once handed off,
-// never return to the bootstrap branch — the standard controller takes
-// over from that tick onward.
+// PID on AoA. AoA entering STAGE_BURN is ~1° from gravity-gradient drift
+// during the 10m axial wait. On the first control tick the bias target is
+// seeded with the current AoA (zero error => no torque spike) and then
+// ramped straight to STAGE_BURN_AOA_BIAS_DEG.
 let tau_desired = null;
 const aoaDegNow = Number.isFinite(dNext.alphaDeg) ? dNext.alphaDeg : 0;
-
-if (!_st.stageBurnAoaBootstrapped) {
-  if (Math.abs(aoaDegNow) > cfg.STAGE_BURN_AOA_MARGIN_DEG) {
-    // PD on AoA — but using AoA's OWN rate, not raw body omega.
-    //
-    // Why raw omega doesn't work: during a powered burn the velocity
-    // vector itself rotates (gravity turn continues). A raw-omega PD
-    // sees ω_body == velocity-rotation-rate, reads "no rate", and
-    // holds AoA at whatever value the two happened to cancel at — a
-    // nonzero steady state. Using d(AoA)/dt = ω_body + P/r² (the true
-    // kinematic AoA rate including the drift term) drives AoA to zero
-    // at steady state.
-    const cosT = Math.cos(dNext.theta);
-    const sinT = Math.sin(dNext.theta);
-    const u = dNext.relVx * cosT + dNext.relVy * sinT;
-    const v = -dNext.relVx * sinT + dNext.relVy * cosT;
-    const thrustIx = dNext.thrustBodyX * cosT - dNext.thrustBodyY * sinT;
-    const thrustIy = dNext.thrustBodyX * sinT + dNext.thrustBodyY * cosT;
-    const Md = dNext.massProps.M;
-    const aIx = dNext.gVecX + (thrustIx + dNext.dragVecX) / Md;
-    const aIy = dNext.gVecY + (thrustIy + dNext.dragVecY) / Md;
-    const ax = aIx * cosT + aIy * sinT;
-    const ay = -aIx * sinT + aIy * cosT;
-    const r2 = u * u + v * v;
-    const P = v * ax - u * ay;
-    const omegaAoA = (r2 > 1e-6) ? (dNext.omega + P / r2) : dNext.omega;
-    
-    const aoaRadNow = aoaDegNow * Math.PI / 180;
-    const kp = cfg.STAGE_BURN_AOA_KP;
-    const kd = cfg.STAGE_BURN_AOA_KD;
-    tau_desired = -I_next * (kp * aoaRadNow + kd * omegaAoA);
-  } else {
-    _st.stageBurnAoaBootstrapped = true;
-    // Fall through to standard controller on this same tick.
-  }
+// PID integrator (conditional integration + clamp).
+const SB_KI = Number.isFinite(cfg.STAGE_BURN_AOA_KI) ? cfg.STAGE_BURN_AOA_KI : 1.0;
+const SB_BIAS_RATE = Number.isFinite(cfg.STAGE_BURN_AOA_BIAS_RATE_DEG_S) ? cfg.STAGE_BURN_AOA_BIAS_RATE_DEG_S : 0.5;
+const SB_I_GATE_RAD = 0.05 * Math.PI / 180;
+const SB_INT_MAX = 0.005; // rad*s  => max KI*int = 5e-3 rad/s^2 at KI=1
+if (!Number.isFinite(_st.sbAoaInt)) _st.sbAoaInt = 0;
+// Seed on first tick (see above); afterwards ramp toward the bias at SB_BIAS_RATE.
+if (!_st.stageBurnAoaSeeded) {
+  _st.stageBurnAoaSeeded = true;
+  _st.sbBiasEff = aoaDegNow;
+  _st.sbAoaInt = 0;
 }
 
 if (tau_desired === null) {
   {
-  // Same PD-on-AoA as the bootstrap, but running continuously for the
+  // PID-on-AoA, running continuously for the
   // whole STAGE_BURN (single control law — no fixed-tilt lock mode).
   // Using AoA's own rate (ω_body + P/r²)
   // rather than raw ω_body, so the controller sees the true attitude
@@ -1062,11 +1047,19 @@ if (tau_desired === null) {
   const P2 = v2 * ax2 - u2 * ay2;
   const omegaAoA2 = (rr2 > 1e-6) ? (dNext.omega + P2 / rr2) : dNext.omega;
   const aoaRad2 = aoaDegNow * Math.PI / 180;
-  const biasRad2 = (Number.isFinite(cfg.STAGE_BURN_AOA_BIAS_DEG) ? cfg.STAGE_BURN_AOA_BIAS_DEG : 0) * Math.PI / 180;
+  // Bias is ramped (rate-limited) from 0 to its target so the target never steps.
+  const biasTgt = Number.isFinite(cfg.STAGE_BURN_AOA_BIAS_DEG) ? cfg.STAGE_BURN_AOA_BIAS_DEG : 0;
+  if (!Number.isFinite(_st.sbBiasEff)) _st.sbBiasEff = 0;
+  const _biasStepMax = SB_BIAS_RATE * dt;
+  _st.sbBiasEff += Math.max(-_biasStepMax, Math.min(_biasStepMax, biasTgt - _st.sbBiasEff));
+  const biasRad2 = _st.sbBiasEff * Math.PI / 180;
   const aoaErr2 = aoaRad2 - biasRad2;
+  if (Math.abs(aoaErr2) < SB_I_GATE_RAD) {
+    _st.sbAoaInt = Math.max(-SB_INT_MAX, Math.min(SB_INT_MAX, _st.sbAoaInt + aoaErr2 * dt));
+  }
   const kp2 = cfg.STAGE_BURN_AOA_KP;
   const kd2 = cfg.STAGE_BURN_AOA_KD;
-  tau_desired = -I_next * (kp2 * aoaErr2 + kd2 * omegaAoA2);
+  tau_desired = -I_next * (kp2 * aoaErr2 + kd2 * omegaAoA2 + SB_KI * _st.sbAoaInt);
 }
 }
 const tau_target = tau_desired - dNext.torqueEnvironmental;
@@ -1828,7 +1821,9 @@ const tau_target = tau_desired - dNext.torqueEnvironmental;
           _st.phase = "STAGE_BURN";
           _st.phaseStart = 0;
 _st.stageBurnSpooled = false;
-_st.stageBurnAoaBootstrapped = false;
+_st.stageBurnAoaSeeded = false;
+_st.sbBiasEff = NaN;
+_st.sbAoaInt = 0;
 _st.lastApogeeKm = 0;
           _st.lastPerigeeKm = null;
           _st._prevApogeeErr = null;
