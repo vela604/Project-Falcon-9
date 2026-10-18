@@ -56,7 +56,7 @@ const HOT_STATE_MAX_ENGINES_PER_BODY = 16; // covers octaweb-merlin9 (1 center +
 // [16] gridFin.R.deploy  (deg, signed — 0 deployed, −90 stowed)
 // [17] gridFin.FB.deploy (deg, signed — 0 deployed, +90 stowed)
 // [18] gridFin.FB.control (deg, signed — F=+v, B=−v mirror)
-// [19 .. 19 + N*4)  per-engine: massFlowRate (kg/s), currentF, gimbalDeg, gimbalRateActDegS (deg/s; gimbal accel model, 0 when GIMBAL_ACCEL_ON is off)
+// [19 .. 19 + N*4)  per-engine: massFlowRate (kg/s), currentF, gimbalDeg, gimbalRateActDegS (deg/s; accel-limited gimbal actuator state)
 const HOT_STATE_BODY_HEADER_FLOATS = 19;
 const HOT_STATE_FLOATS_PER_ENGINE = 4; // massFlowRate, currentF, gimbalDeg, gimbalRateActDegS
 const HOT_STATE_BODY_STRIDE =
