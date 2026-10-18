@@ -79,7 +79,7 @@
     const C = TunerConfig;
     return {
       ascent: { PUSH_MAX_GIMBAL_DEG: 0.60, PUSH_T_S: 4.82, MECO_TARGET_BOOSTER_FUEL_KG: 60494 },
-      insertion: { TARGET_ORBIT_ALT_KM: km, STAGE_BURN_AOA_BIAS_DEG: 1.8, STAGE_BURN_AOA_MARGIN_DEG: C.fixed.margin, CIRC_TRIGGER_LEAD_S: 5.53 },
+      insertion: { TARGET_ORBIT_ALT_KM: km, STAGE_BURN_AOA_BIAS_DEG: 1.8, CIRC_TRIGGER_LEAD_S: 5.53 },
       done: { DEORBIT_ENABLED: !!C.fixed.deorbitEnabled },
     };
   }

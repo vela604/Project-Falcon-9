@@ -82,7 +82,6 @@
       insertion: {
         TARGET_ORBIT_ALT_KM: opts.targetAltKm != null ? opts.targetAltKm : f.targetAltKm,
         STAGE_BURN_AOA_BIAS_DEG: biasOf(p.bi),
-        STAGE_BURN_AOA_MARGIN_DEG: f.margin,
         CIRC_TRIGGER_LEAD_S: leadOf(p.li),
         COAST_WAIT_BEFORE_APOGEE_S: f.coastWaitBeforeApogeeS,
       },
@@ -316,7 +315,7 @@ function suggestDurationCap(altKm) {
 
     // 7. toValues carries the whole fixed set
     const v = toValues(bp, { targetAltKm: 320 });
-    t('toValues has margin 0.001 + deorbit false', v.insertion.STAGE_BURN_AOA_MARGIN_DEG === 0.001 &&
+    t('toValues has no AoA margin key + deorbit false', !('STAGE_BURN_AOA_MARGIN_DEG' in v.insertion) &&
       v.done.DEORBIT_ENABLED === false && v.insertion.TARGET_ORBIT_ALT_KM === 320);
 
     // 8. bounds

@@ -133,7 +133,6 @@
       insertion: {
         TARGET_ORBIT_ALT_KM: C.fixed.targetAltKm,
         STAGE_BURN_AOA_BIAS_DEG: b.bias,
-        STAGE_BURN_AOA_MARGIN_DEG: C.fixed.margin,
         CIRC_TRIGGER_LEAD_S: b.lead,
       },
       done: { DEORBIT_ENABLED: C.fixed.deorbitEnabled },
@@ -155,7 +154,7 @@
       log('guides: ' + guides.join(', '), 'ok');
       log('DT = ' + CONFIG.DT + ' s');
       log('defaults: G=' + a.PUSH_MAX_GIMBAL_DEG + ' T=' + a.PUSH_T_S + ' MECO=' + a.MECO_TARGET_BOOSTER_FUEL_KG +
-          ' bias=' + ins.STAGE_BURN_AOA_BIAS_DEG + ' margin=' + ins.STAGE_BURN_AOA_MARGIN_DEG +
+          ' bias=' + ins.STAGE_BURN_AOA_BIAS_DEG +
           ' lead=' + ins.CIRC_TRIGGER_LEAD_S + ' alt=' + ins.TARGET_ORBIT_ALT_KM);
       // mount the tuner UI (Step 9) — inputs, run/stop, progress, leaderboard with sort tabs
 if (window.TunerUI) window.TunerUI.mount($('tunerUIHost'), {
