@@ -32,7 +32,7 @@ td.fail { color:#ff5f7e; }
 <h1>Twin Pairs Precise — 10 A values, auto-bracket, live progress</h1>
 
 <label>workers <input type="number" id="nW" value="6" min="1" max="8"></label>
-<label style="margin-left:12px">base G <input type="number" id="baseG" value="0.60" step="0.01"></label>
+<label style="margin-left:12px">base G <input type="number" id="baseG" value="0.61" step="0.01"></label>
 <label>base bias <input type="number" id="baseB" value="0.59" step="0.01"></label>
 <button id="runBtn">Run</button>
 <div id="status">idle</div>
@@ -99,7 +99,7 @@ td.fail { color:#ff5f7e; }
   }
 
   async function evalAt(pool, G, b) {
-    const m = await pool.runEvalValues(rawValues(G, b, 5.53, 52612), { stopAt: 'COAST_WAIT_ENTRY', quiet: true });
+    const m = await pool.runEvalValues(rawValues(G, b, 5.64, 52612), { stopAt: 'COAST_WAIT_ENTRY', quiet: true });
     const ok = m.endReason === 'COAST_WAIT_ENTRY' && Number.isFinite(m.eCoast);
     const E = ok ? specE(m) : NaN;
     return { b, E, ok, ecc: m.eCoast, end: m.endReason };
@@ -231,13 +231,13 @@ td.fail { color:#ff5f7e; }
       // baseline
       log('');
       log('=== baseline G=' + baseG + ' bias=' + baseB + ' ===');
-      const mBase = await pool.runEvalValues(rawValues(baseG, baseB, 5.53, 52612), { stopAt: 'COAST_WAIT_ENTRY', quiet: true });
+      const mBase = await pool.runEvalValues(rawValues(baseG, baseB, 5.64, 52612), { stopAt: 'COAST_WAIT_ENTRY', quiet: true });
       const E_ref = specE(mBase);
       log('  E_ref = ' + E_ref.toFixed(6) + ' J/kg  ecc=' + fmt(mBase.eCoast, 7));
 
       // 11 G values — contour exists only for G >= ~0.575 (A >= ~13.35).
       // A = G * T^2, T = 4.82.
-      const Gs = [0.575, 0.58, 0.585, 0.59, 0.595, 0.60, 0.605, 0.61, 0.62, 0.63, 0.65];
+      const Gs = [0.575, 0.58, 0.585, 0.59, 0.595, 0.61, 0.615, 0.61, 0.62, 0.63, 0.65];
       log('');
       log('G values: ' + Gs.map(g => g.toFixed(3) + '(A=' + (g*T*T).toFixed(3) + ')').join(', '));
 

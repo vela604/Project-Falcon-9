@@ -20,7 +20,7 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
 
 <h1>Twin Exact — raw bias 1e-9 precision, aim |ΔE| &lt; 1 J/kg</h1>
 
-<label>base G <input type="number" id="baseG" value="0.60" step="0.01"></label>
+<label>base G <input type="number" id="baseG" value="0.61" step="0.01"></label>
 <label>base bias <input type="number" id="baseB" value="0.59" step="0.01"></label>
 <label>target G <input type="number" id="targetG" value="0.61" step="0.01"></label>
 <label>initial bias guess <input type="number" id="bGuess" value="1.0616" step="0.0001"></label>
@@ -86,7 +86,7 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
 
       log('');
       log('=== baseline (G=' + baseG + ', bias=' + baseB + ') ===');
-      const mb = await evalAt(pool, baseG, baseB, 5.53, 52612);
+      const mb = await evalAt(pool, baseG, baseB, 5.64, 52612);
       if (!mb.ok) { log('baseline failed: ' + mb.end); return; }
       const E_ref = mb.E;
       log('  E_ref = ' + E_ref.toFixed(6) + ' J/kg');
@@ -100,7 +100,7 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
       // Find bracket around bGuess
       const probes = [bGuess - 0.001, bGuess, bGuess + 0.001];
       const results = await Promise.all(probes.map(b =>
-        evalAt(pool, targetG, b, 5.53, 52612).then(r => ({ b, ...r }))
+        evalAt(pool, targetG, b, 5.64, 52612).then(r => ({ b, ...r }))
       ));
       results.sort((a, b) => a.b - b.b);
       results.forEach(r => {
@@ -127,7 +127,7 @@ pre { background:#0a1020; border:1px solid #1c2b45; padding:8px; border-radius:4
       while (iters < MAX_ITERS && Math.abs(hi.b - lo.b) > B_TOL) {
         iters++;
         const mid = (lo.b + hi.b) / 2;
-        const r = await evalAt(pool, targetG, mid, 5.53, 52612);
+        const r = await evalAt(pool, targetG, mid, 5.64, 52612);
         if (!r.ok) { log('  iter ' + iters + ' mid=' + mid.toFixed(10) + ' FAIL ' + r.end); break; }
         const dE = r.E - E_ref;
         log('  iter ' + iters + ' b=' + mid.toFixed(10) + '  E=' + r.E.toFixed(4) + '  ΔE=' + (dE >= 0 ? '+' : '') + dE.toFixed(4) + ' J/kg');

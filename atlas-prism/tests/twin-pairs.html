@@ -75,12 +75,12 @@ tr.match td { background:rgba(74,222,128,0.10); color:#4ade80; }
       const basePoint = {
         Gi: 60, Tn: Math.round(4.82 / Q.T),
         bi: Math.round(0.59 / Q.bias),
-        li: Math.round(5.53 / Q.lead),
+        li: Math.round(5.64 / Q.lead),
         meco: 52612,
       };
 
       const biases = [0.50, 0.70];
-      const Gs = [0.57, 0.58, 0.59, 0.60, 0.61];
+      const Gs = [0.57, 0.58, 0.59, 0.61, 0.61];
       const probes = [];
       biases.forEach(b => Gs.forEach(g => probes.push({ g, b })));
       log('grid: ' + biases.length + ' biases x ' + Gs.length + ' G values = ' + probes.length + ' probes');

@@ -29,7 +29,7 @@ tr.fail td { color:#ff5f7e; }
 <h1>Bias Score Scan — fixed MECO, fixed G, sweep bias</h1>
 
 <label>workers <input type="number" id="nW" value="6" min="1" max="8"></label>
-<label style="margin-left:12px">G <input type="number" id="gIn" value="0.60" step="0.01"></label>
+<label style="margin-left:12px">G <input type="number" id="gIn" value="0.61" step="0.01"></label>
 <label>MECO <input type="number" id="mecoIn" value="60494" step="1"></label>
 <label>alt km <input type="number" id="altIn" value="320" step="1"></label>
 <label>bias lo <input type="number" id="bLo" value="2" step="0.1"></label>
@@ -154,7 +154,7 @@ tr.fail td { color:#ff5f7e; }
       // 1) setupSA on all workers (dispatch as many parallel jobs)
       const baseValues = {
         ascent: { PUSH_MAX_GIMBAL_DEG: G, PUSH_T_S: T, MECO_TARGET_BOOSTER_FUEL_KG: meco },
-        insertion: { TARGET_ORBIT_ALT_KM: altKm, STAGE_BURN_AOA_BIAS_DEG: 1.8, STAGE_BURN_AOA_MARGIN_DEG: 0.001, CIRC_TRIGGER_LEAD_S: 5.53 },
+        insertion: { TARGET_ORBIT_ALT_KM: altKm, STAGE_BURN_AOA_BIAS_DEG: 1.8, STAGE_BURN_AOA_MARGIN_DEG: 0.001, CIRC_TRIGGER_LEAD_S: 5.64 },
         done: { DEORBIT_ENABLED: false },
       };
       log('dispatching setupSA to ' + n + ' workers…');

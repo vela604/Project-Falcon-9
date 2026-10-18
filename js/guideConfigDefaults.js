@@ -167,7 +167,7 @@ leoInsertionV3: _mkDefault(
     ascent: {
     INITIAL_COAST_S: 4.9,
     PUSH_T_S: 4.82,
-    PUSH_MAX_GIMBAL_DEG: 0.60,
+    PUSH_MAX_GIMBAL_DEG: 0.61,
     PUSH_EAST_SIGN: -1,
   HOLD_PD_KP: 1.0,
   HOLD_PD_KD: 2.0,
@@ -201,7 +201,7 @@ leoInsertionV3: _mkDefault(
   COAST_ROTATE_OMEGA_TOL: 0.02,
   COAST_ROTATE_TIMEOUT_S: 240,
   COAST_WAIT_BEFORE_APOGEE_S: 90,
-  CIRC_TRIGGER_LEAD_S: 5.53,
+  CIRC_TRIGGER_LEAD_S: 5.64,
       CIRC_DECAY_FRAC: 0.05,
       CIRC_ATT_KP: 0.5,
       CIRC_ATT_KD: 4.0,

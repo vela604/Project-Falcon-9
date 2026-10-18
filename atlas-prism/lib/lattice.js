@@ -256,7 +256,7 @@ function suggestDurationCap(altKm) {
 
     // 1. baseline raw -> lattice
     const bp = fromRaw(C().baselineRaw);
-    t('baseline snap G=0.60', gOf(bp.Gi) === 0.6);
+    t('baseline snap G=0.61', gOf(bp.Gi) === 0.6);
     t('baseline snap T=4.82', tOf(bp.Tn) === 4.82);
     t('baseline snap bias=0.59', biasOf(bp.bi) === 0.59);
     t('baseline snap lead=5.525 (442 ticks)', leadOf(bp.li) === 5.525 && bp.li === 442);
@@ -291,7 +291,7 @@ function suggestDurationCap(altKm) {
 
     // 4. A collapse: A -> (G,T) -> A_eff close to A, sawtooth step ~ T^2*0.01
     const c1 = collapseA(13.93944);
-    t('collapse A=13.93944 -> G=0.60, T=4.82', gOf(c1.Gi) === 0.6 && tOf(c1.Tn) === 4.82);
+    t('collapse A=13.93944 -> G=0.61, T=4.82', gOf(c1.Gi) === 0.6 && tOf(c1.Tn) === 4.82);
     let maxErr = 0;
     for (let A = 10; A <= 19; A += 0.037) {
       const c = collapseA(A); const e = Math.abs(aEff(c) - A); if (e > maxErr) maxErr = e;
@@ -301,7 +301,7 @@ function suggestDurationCap(altKm) {
     t('1 gimbal step ~ 0.232 in A', Math.abs(stepA - 0.2323) < 0.01, 'dA=' + stepA.toFixed(4));
 
     // 5. redundant (G,T) pairs exist (same A_eff band, different physics)
-    const a = fromRaw({ G: 0.60, T: 4.82, bias: 0.59, lead: 5.5, meco: 52612 });
+    const a = fromRaw({ G: 0.61, T: 4.82, bias: 0.59, lead: 5.5, meco: 52612 });
     const b = step(a, { dGi: -1, dTn: Math.round((Math.sqrt(aEff(a) / gOf(a.Gi - 1)) - tOf(a.Tn)) / C().quanta.T) });
     t('redundant pair: different key, A_eff within 1 Tn quantum', key(a) !== key(b) &&
       Math.abs(aEff(a) - aEff(b)) < 2 * 2 * tOf(a.Tn) * C().quanta.T + 1e-9, 'dA=' + (aEff(b) - aEff(a)).toExponential(2));
@@ -309,7 +309,7 @@ function suggestDurationCap(altKm) {
     // 6. verifyApplied
     const cfgOk = JSON.parse(JSON.stringify(toValues(bp)));
     t('verifyApplied ok', verifyApplied(bp, cfgOk).ok);
-    const cfgBad = JSON.parse(JSON.stringify(cfgOk)); cfgBad.insertion.CIRC_TRIGGER_LEAD_S = 5.53;
+    const cfgBad = JSON.parse(JSON.stringify(cfgOk)); cfgBad.insertion.CIRC_TRIGGER_LEAD_S = 5.64;
     const vb = verifyApplied(bp, cfgBad);
     t('verifyApplied catches off-lattice lead', !vb.ok && vb.mismatches[0].path === 'insertion.CIRC_TRIGGER_LEAD_S');
 

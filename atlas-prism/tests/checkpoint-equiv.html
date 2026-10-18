@@ -10,7 +10,7 @@ pre{background:#080a0e;border:1px solid #232a35;padding:8px;overflow:auto;white-
 </style></head><body>
 <div>T s <input id="T" value="4.82"> workers <input id="nw" value="0"></div>
 <div>cases: alt G MECO bias (one per line)</div>
-<textarea id="cases">320 0.60 63460 2.1689
+<textarea id="cases">320 0.61 63460 2.1689
 320 0.59 60002 1.804
 2000 0.65 0 0.59</textarea><br>
 <button id="go">Run A (scratch tuneLead+FULL) vs B (checkpoint verifyChain)</button><button id="copy">Copy log</button>
@@ -29,7 +29,7 @@ $('go').onclick=async()=>{
   const Tn=Math.round(parseFloat($('T').value)/0.000125);
   const cases=$('cases').value.split('\n').map(s=>s.trim().split(/\s+/).map(Number)).filter(a=>a.length>=4&&a.every(Number.isFinite));
   for(const [alt,G,M,b] of cases){
-   const point={Gi:Math.round(G*100),Tn,bi:Math.round(b/0.0001),li:Math.round(5.53/0.0125),meco:M};
+   const point={Gi:Math.round(G*100),Tn,bi:Math.round(b/0.0001),li:Math.round(5.64/0.0125),meco:M};
    log('');log('=== alt='+alt+' G='+G+' MECO='+M+' bias='+b+' ===','hi');
    $('status').textContent='A '+alt+'/'+G+'/'+M;
    let A={};const ta=performance.now();

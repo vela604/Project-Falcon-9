@@ -28,7 +28,7 @@ td.diff { color:#ff5f7e; }
 
 <h1>Twin Full Compare — same CW energy, FULL mission equivalence</h1>
 
-<label>base G <input type="number" id="baseG" value="0.60" step="0.01"></label>
+<label>base G <input type="number" id="baseG" value="0.61" step="0.01"></label>
 <label>base bias <input type="number" id="baseB" value="0.59" step="0.01"></label>
 <label>target G <input type="number" id="targetG" value="0.61" step="0.01"></label>
 <button id="runBtn">Run</button>
@@ -79,7 +79,7 @@ td.diff { color:#ff5f7e; }
 
       const basePoint = {
         Gi: Math.round(baseG / Q.G), Tn: Math.round(T / Q.T),
-        bi: Math.round(baseB / Q.bias), li: Math.round(5.53 / Q.lead),
+        bi: Math.round(baseB / Q.bias), li: Math.round(5.64 / Q.lead),
         meco: 52612,
       };
 

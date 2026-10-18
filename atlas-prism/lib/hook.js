@@ -3,7 +3,7 @@
 //
 // runEval(point, opts)        lattice point -> snapped values -> sim -> metrics
 // runEvalValues(values, opts) same, but raw values (used for the off-lattice
-//                             baseline: lead 5.53 is NOT on the 0.0125 grid)
+//                             baseline: lead 5.64 is NOT on the 0.0125 grid)
 //
 // Both are ASYNC and pure with respect to the caller: everything the search
 // needs comes back in the returned metrics object, nothing is read from

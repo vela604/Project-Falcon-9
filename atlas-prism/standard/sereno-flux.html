@@ -355,21 +355,21 @@
     const C = TunerConfig;
     return {
       ascent: {
-        PUSH_MAX_GIMBAL_DEG: 0.60,
+        PUSH_MAX_GIMBAL_DEG: 0.61,
         PUSH_T_S: 4.82,
         MECO_TARGET_BOOSTER_FUEL_KG: 60494,
       },
       insertion: {
         TARGET_ORBIT_ALT_KM: km,
         STAGE_BURN_AOA_BIAS_DEG: 1.8,
-        CIRC_TRIGGER_LEAD_S: 5.53,
+        CIRC_TRIGGER_LEAD_S: 5.64,
       },
       done: { DEORBIT_ENABLED: !!C.fixed.deorbitEnabled },
     };
   }
 
   // Re-run setupSA on every worker with the caller's values. Needed because
-  // the SA snapshot baked at LOCK uses 320-km defaults (meco=60494, G=0.60).
+  // the SA snapshot baked at LOCK uses 320-km defaults (meco=60494, G=0.61).
   // Any ZETA/CONVO run with a different MECO/G/T would restore that wrong
   // SA and fail every bias probe — stage fuel insufficient at the wrong
   // MECO. Calling this before each batch guarantees the SA snapshot matches
@@ -497,7 +497,7 @@
       '<label>G step <input type="number" id="oGstep" step="0.005" value="0.02"></label>' +
       '</div>' +
       '<div class="row mode-row" data-modes="fg" style="display:none;">' +
-      '<label>G <input type="number" id="oG" step="0.01" min="0" max="1.2" value="0.60"></label>' +
+      '<label>G <input type="number" id="oG" step="0.01" min="0" max="1.2" value="0.61"></label>' +
       '</div>' +
       // Common
       '<div class="row">' +
@@ -595,7 +595,7 @@
 
   function panelZetaHtml() {
     const sugMeco = S.last.meco != null ? S.last.meco : 62000;
-    const sugG = S.last.G != null ? S.last.G : 0.60;
+    const sugG = S.last.G != null ? S.last.G : 0.61;
     const sugT = S.last.T != null ? S.last.T : 4.82;
     // (Suicide checkbox rendered by commonRowHtml below — shared via S.suicide)
     return '<h2>ZETA-HELIX 1R — bias landscape scan</h2>' +
@@ -621,7 +621,7 @@
 
   function panelConvoHtml() {
     const sugMeco = S.last.meco != null ? S.last.meco : 62000;
-    const sugG = S.last.G != null ? S.last.G : 0.60;
+    const sugG = S.last.G != null ? S.last.G : 0.61;
     const sugT = S.last.T != null ? S.last.T : 4.82;
     const sugBias = S.last.bias != null ? S.last.bias : 2.6428;
     const MB = (TunerConfig.limits.marginTargetS || [3.5, 5.5]);
@@ -857,7 +857,7 @@
       gHiI: Math.round(num('oGhi') * 100),
       gStep: Math.max(1, Math.round(num('oGstep') * 100)),
       Tn: Math.round((num('oTadv') || 4.82) / 0.000125),
-      li: Math.round(5.53 / 0.0125),
+      li: Math.round(5.64 / 0.0125),
       predTarget: num('oPmax'),
       predMin: num('oPmin'),
       predMax: num('oPmax'),

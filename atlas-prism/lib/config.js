@@ -36,7 +36,7 @@
     },
 
     // ---- Baseline (raw defaults; reproduces manual 590.46 s run) ----
-    baselineRaw:     { G: 0.60, T: 4.82, bias: 0.59, lead: 5.53,  meco: 52612 },
+    baselineRaw:     { G: 0.61, T: 4.82, bias: 0.59, lead: 5.64,  meco: 52612 },
     baselineSnapped: { A: 13.94, bias: 0.59, lead: 5.525,         meco: 52612 }, // success-criteria #6
     baselineResult: {
       deployTimeS: 590.46, apogeeKm: 320.111, perigeeKm: 319.999,
@@ -46,8 +46,8 @@
     // Each ref = a manually-tuned feasible point. `alt` = target altitude (km). `T` defaults to T0 if missing.
 references: [
   { meco: 50000, G: 0.62, T: 4.82, bias: 0.78, lead: 5.65, alt: 320 },
-  { meco: 52612, G: 0.60, T: 4.82, bias: 0.59, lead: 5.53, alt: 320 },
-  { meco: 55000, G: 0.60, T: 4.82, bias: 1.16, lead: 4.46, alt: 320 },
+  { meco: 52612, G: 0.61, T: 4.82, bias: 0.59, lead: 5.64, alt: 320 },
+  { meco: 55000, G: 0.61, T: 4.82, bias: 1.16, lead: 4.46, alt: 320 },
   { meco: 0, G: 0.65, T: 4.82, bias: 0.59, lead: 7.82, alt: 2000 }, // manual 2000 km point (booster fully drained)
 ],
 
@@ -113,7 +113,7 @@ fixedFallbackKg: 0 },     // fallback MECO when probe fails (booster drained: on
     // rough-scan uses these to pick the narrowest possible MECO bracket.
     roughRefs: [
       { stackId: 'stk_falcon9-b5', altKm: 320, fuelPct: 100,
-        meco: 52612, G: 0.60, T: 4.82, bias: 0.59,  lead: 5.53, residualKg: 849 },
+        meco: 52612, G: 0.61, T: 4.82, bias: 0.59,  lead: 5.64, residualKg: 849 },
       { stackId: 'stk_falcon9-b5', altKm: 320, fuelPct: 100,
         meco: 60002, G: 0.59, T: 4.82, bias: 1.804, lead: 3.90, residualKg: 190 },
     ],

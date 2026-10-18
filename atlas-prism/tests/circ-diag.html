@@ -11,7 +11,7 @@ pre{background:#080a0e;border:1px solid #232a35;padding:8px;overflow:auto;white-
 <div>alt <input id="alt" value="320"> T s <input id="T" value="4.82"> lead lo <input id="llo" value="3"> hi <input id="lhi" value="12"> step <input id="lst" value="0.5"> workers <input id="nw" value="0"></div>
 <div>cases (one per line: G MECO bias) — first = failing bootstrap point, rest = known-good for comparison (EDIT G of known-good!)</div>
 <textarea id="cases">0.62 63460 2.8709
-0.60 63460 2.2026
+0.61 63460 2.2026
 0.65 60002 1.80</textarea><br>
 <button id="go">Run diag</button><button id="copy">Copy log</button>
 <div id="status" class="hi"></div><pre id="log"></pre>
@@ -32,7 +32,7 @@ $('go').onclick=async()=>{
   const cases=$('cases').value.split('\n').map(s=>s.trim().split(/\s+/).map(Number)).filter(a=>a.length>=3&&a.every(Number.isFinite));
   for(const [G,M,b] of cases){
    const Gi=Math.round(G*100),bi=Math.round(b/0.0001);
-   const base={Gi,Tn,bi,li:Math.round(5.53/0.0125),meco:M};
+   const base={Gi,Tn,bi,li:Math.round(5.64/0.0125),meco:M};
    $('status').textContent='COAST '+G+' '+M+' '+b;
    const c=await pool.runEval(base,{stopAt:'COAST_WAIT_ENTRY',abortOnStageVrNeg:true,targetAltKm:alt,quiet:true});
    const pred=c.circM0Kg*Math.exp(-c.coastDeltaV/c.circVe)-c.circDryKg;

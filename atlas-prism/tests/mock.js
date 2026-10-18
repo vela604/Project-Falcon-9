@@ -5,7 +5,7 @@
 // Direction is what the user confirmed:
 //   aggressive profile (G↑, bias↑)  → Δv smaller
 //   gentle    profile (G↓, bias↓)   → Δv larger
-// Real anchors: 320 km baseline Δv=599 (G=0.60, b=0.59); 2000 km manual Δv=925 (G=0.65, b=0.59).
+// Real anchors: 320 km baseline Δv=599 (G=0.61, b=0.59); 2000 km manual Δv=925 (G=0.65, b=0.59).
 // Different altitudes → cannot fit a same-altitude slope. Slopes below are
 // ARBITRARY, chosen so band [750,850] is reachable in a few quanta from baseline.
 // Do NOT use this mock to conclude anything about real 320 km band reachability.
@@ -23,7 +23,7 @@ require('../engines/pro-alpha.js');
 const U = TunerUtils, C = TunerConfig;
 
 // ---------- Δv surface (INVENTED) ----------
-// Baseline Gi=60 (G=0.60), bi=5900 (bias=0.59), Δv0 = 599.
+// Baseline Gi=60 (G=0.61), bi=5900 (bias=0.59), Δv0 = 599.
 // Higher G → lower Δv (kG=15 per quantum); higher bias → lower Δv (kb=0.5 per quantum).
 // F1 cliff at bi < 2000 + 200*(60 - Gi).
 function dvOf(p) {
@@ -40,13 +40,13 @@ function leadStar(meco) { return 442 - 0.0358*(meco - 52612); }
 const CURVE5 = [[52612, 849.4], [56612, 537.3], [60612, 214.5], [61199, 188.2], [61492, 179.5]];
 // Linear monotonic residual surface for mock convergence tests.
 // 849.4 at baseline MECO, -0.09 kg/kg, +9730 kg per G quantum above
-// 0.60. Deliberately simple so findOptimalMeco converges in ~4 iters;
+// 0.61. Deliberately simple so findOptimalMeco converges in ~4 iters;
 // the real-sim nonlinearity is exercised by browser runs, not here.
 // CURVE5 is kept above for reference.
 function realRes(meco, G) {
-  return 849.4 + (meco - 52612) * (-0.09) + 9730 * (G - 0.60);
+  return 849.4 + (meco - 52612) * (-0.09) + 9730 * (G - 0.61);
 }
-const cliffReal = (G) => 63000 + 218300*(0.60 - G);
+const cliffReal = (G) => 63000 + 218300*(0.61 - G);
 
 // ---------- makeHook ----------
 function makeHook(model) {
@@ -109,14 +109,14 @@ const pt = (G,T,bias, li) => U.fromRaw({ G, T, bias, lead: (li!=null?li:5.525), 
 
 (async () => {
   // ---- 0. surface sanity ----
-  const base = pt(0.60, 4.82, 0.59);
+  const base = pt(0.61, 4.82, 0.59);
   t('Δv: baseline = 599', Math.abs(dvOf(base) - 599) < 1e-9, 'dv=' + dvOf(base));
   t('Δv: G↓ → Δv↑', dvOf(pt(0.59,4.82,0.59)) > dvOf(base));
-  t('Δv: bias↓ → Δv↑', dvOf(pt(0.60,4.82,0.49)) > dvOf(base));
+  t('Δv: bias↓ → Δv↑', dvOf(pt(0.61,4.82,0.49)) > dvOf(base));
   t('Δv: G↑ → Δv↓', dvOf(pt(0.61,4.82,0.59)) < dvOf(base));
-  t('Δv: bias↑ → Δv↓', dvOf(pt(0.60,4.82,0.69)) < dvOf(base));
+  t('Δv: bias↑ → Δv↓', dvOf(pt(0.61,4.82,0.69)) < dvOf(base));
   t('F1: baseline not F1', base.bi >= f1BiOf(60));
-  t('F1: b=0.10 at G=0.60 is F1', pt(0.60,4.82,0.10).bi < f1BiOf(60));
+  t('F1: b=0.10 at G=0.61 is F1', pt(0.61,4.82,0.10).bi < f1BiOf(60));
 
   // ---- 1. hook contract ----
   {
@@ -124,7 +124,7 @@ const pt = (G,T,bias, li) => U.fromRaw({ G, T, bias, lead: (li!=null?li:5.525), 
     const m = await h.runEval(base, { stopAt: 'COAST_WAIT_ENTRY' });
     t('hook: coastDeltaV = 599 at baseline', Math.abs(m.coastDeltaV - 599) < 1e-9);
     t('hook: baseline Δv < 750 (would classify F2b)', m.coastDeltaV < 750);
-    const mF1 = await h.runEval(pt(0.60,4.82,0.10), { stopAt: 'COAST_WAIT_ENTRY' });
+    const mF1 = await h.runEval(pt(0.61,4.82,0.10), { stopAt: 'COAST_WAIT_ENTRY' });
     t('hook: F1 reports coastDeltaV=NaN + stageVrNeg', !Number.isFinite(mF1.coastDeltaV) && mF1.stageVrNeg);
   }
 
@@ -149,7 +149,7 @@ const pt = (G,T,bias, li) => U.fromRaw({ G, T, bias, lead: (li!=null?li:5.525), 
   // ---- 3. F1-start recovery ----
   {
     const h = makeHook({});
-    const r = await TunerCore.tuneAB(pt(0.60,4.82,0.10), { mode: 'fine', hook: h, maxEvalsAB: 300 });
+    const r = await TunerCore.tuneAB(pt(0.61,4.82,0.10), { mode: 'fine', hook: h, maxEvalsAB: 300 });
     t('tuneAB F1-start: ok', r.ok, 'status=' + r.status);
     if (r.ok) t('tuneAB F1-start: best Δv in band', r.best.deltaV >= C.limits.coastDeltaVbandMps[0] && r.best.deltaV <= C.limits.coastDeltaVbandMps[1], 'Δv=' + r.best.deltaV.toFixed(1));
   }

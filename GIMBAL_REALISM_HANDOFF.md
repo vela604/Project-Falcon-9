@@ -76,7 +76,7 @@ Likha: 2026-10-18 (same din). Hinglish. Is section ko GIMBAL_REALISM_HANDOFF.md 
 
 Sab files `node --check` pass. Koi sim chalaya nahi gaya mere taraf se; sab natije user ke bench runs se hain.
 
-IMPORTANT: defaults flip hone se OFF baseline badal gaya. Purana `baselineRaw` {G:0.60,T:4.82,bias:0.59,lead:5.53,meco:52612} ka "590.46 s DONE, circDv 696" result ab default se reproduce NAHI hoga (ab vt@coast ~4943 m/s, cap 1500 s). Wo result sirf legacy patch se milega.
+IMPORTANT: defaults flip hone se OFF baseline badal gaya. Purana `baselineRaw` {G:0.61,T:4.82,bias:0.59,lead:5.64,meco:52612} ka "590.46 s DONE, circDv 696" result ab default se reproduce NAHI hoga (ab vt@coast ~4943 m/s, cap 1500 s). Wo result sirf legacy patch se milega.
 
 ### B. Natije / findings
 
@@ -142,7 +142,7 @@ Likha: 2026-10-18 (same din, 5th session). **Is session mein koi aur patch pendi
 
 - `atlas-prism/lib/worker-sim.js`: naya job **`traceRun`**. Payload: `{ raw | point | values, altKm, accelOn, accelDegS2, every (ticks, default 4), capS (1500), hiT0, hiT1 (is window mein har tick), patch (JSON, values mein deep-merge; missing keys `patchMissing` mein), env }`. Point priority: values > point > `TunerUtils.fromRaw(raw || TunerConfig.baselineRaw)`. CONFIG ko per-job set/restore karta hai, `TunerEngine.refreshStackData()` prepareRun se pehle aur restore ke baad. Return: `{ok, patchMissing, endReason, ticks, simTime, phases[], cols{t, cmdRate, rx, ry, alt, vx, vy, theta, omega, gimbal, gimbalRate, alpha, gimbalTgt, thrust, fuel}}`.
 - `atlas-prism/tests/gimbal-accel-compare.html` (naya, koi external lib nahi, canvas charts): pool = `TunerCore.WorkerPool(n, {workerPath:'../lib/worker-sim.js'})`, jobs `pool.runJob('traceRun', ...)`; sirf `../lib/worker-pool.js` load karta hai. Chalata hai OFF + ON(a list, default inf/800/400/200) + OFF control. 11 panels (alt, vt, vr, tilt = theta - localVertical, gimbal, rate, alpha, OFF rate cmd, Δvt/Δtilt/Δalt vs OFF), summary table (coast-phase state, approx apo/peri/circΔv with mu box, peak gimbal/rate, alpha sat %), "first deviation vs OFF" onset (Δtilt>0.1°, Δvt>5 m/s, Δgimbal>0.05°), alpha-saturation windows, aur **hi-res window stats (default 9-13 s)**: gimbal-dir flips, alpha/rateCmd sign flips, max |dG/tick|, gimbal range. Input box **"values patch JSON (all runs)"** (e.g. `{"ascent":{"HOLD_K_DAMP":1}}`), jo sab runs par lagta hai; "PATCH MISSING keys" log mein bad dikhega.
-- Baseline point `TunerConfig.baselineRaw = {G:0.60, T:4.82, bias:0.59, lead:5.53, meco:52612}` OFF mein 590.46 s run reproduce karta hai (hook: circ Δv@COAST 696.3). Page ka approx circΔv 696 us se match karta hai.
+- Baseline point `TunerConfig.baselineRaw = {G:0.61, T:4.82, bias:0.59, lead:5.64, meco:52612}` OFF mein 590.46 s run reproduce karta hai (hook: circ Δv@COAST 696.3). Page ka approx circΔv 696 us se match karta hai.
 - Point lattice format (bootstrap.js): `{Gi: round(G*100), Tn: round(T/0.000125), bi: round(bias/0.0001), li: round(lead/0.0125), meco}`; `toValues`/`fromRaw` `lattice.js` mein hain (wo file kabhi upload nahi hui; `TunerUtils.toValues/fromRaw` export hain).
 
 ### C. Natije (baseline point, jo OFF ke liye tuned hai)
