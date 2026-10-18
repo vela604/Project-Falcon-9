@@ -1,3 +1,65 @@
+## UPDATE (7th session) — SABSE PEHLE YE PADHO (6th-session section ke upar paste karo)
+
+Likha: 2026-10-18 raat. Hinglish. Koi patch abhi apply NAHI hua; ye session sirf verify + audit + plan tha.
+
+### A. Verify ho chuka
+- Page par `GIMBAL_ACCEL_ON=true` ke saath overlay: `snap gap 1:100%`, `cmd latency 0:100%`. Matlab page path bench jaisa hai (g_N1 wala version ki zaroorat nahi).
+
+### B. User ke decisions (7th session)
+1. `a_max = 200 deg/s^2`, retune 320 km par.
+2. **Flag hatao.** Accel model hamesha ON. Purana OFF model git tag `pre-gimbal-accel` mein rahega (user ko tag lagana hai).
+3. `gimbalAccelDegS2`, `gimbalRateDegS`, `gimbalMaxDeg` **engine/thruster type ki property** (componentLibrary.js), global CONFIG nahi.
+4. Guidance mein `HOLD_LAW` flag bhi hatao; `aoa_pd` hi ek law rahe.
+5. RCS_BOOST duration ka B7 abhi hypothesis: retune ke baad har point ka duration dekho, 10x jhoole to apogee-error-vs-time plot add karo.
+6. Mera suggestion (user ne confirm nahi kiya): human slider (angle-slew path) bhi accel-limited ho, ek hi actuator model.
+
+### C. Grep se mila (g_all.txt) — kaam ki poori list
+
+**Behaviour-preserving fact:** abhi `CONFIG.GIMBAL_MAX_DEG/RATE` booster ke `params` se aate hain (bridgePerfParams, fleet.js ~2722). Merlin-1d aur merlin-1d-vac dono 8 deg / 40 deg/s hain. Isliye per-engine refactor se numbers nahi badlenge (sirf a: 400 -> 200 jaan-bujh kar). Bonus: pehle separation ke baad stage (MVacD) ke engines bhi booster ke limits par chalte the; per-engine se wo bug theek.
+
+**1. componentLibrary.js** (`THRUSTER_CHEMICAL_SCHEMA` ~390-410, values ~481, ~514): schema mein `{key:'gimbalAccelDegS2', label:'Gimbal angular accel', unit:'deg/s2', min:1}` jodo AUR `merlin-1d` + `merlin-1d-vac` dono ki values mein `gimbalAccelDegS2: 200`. `withFixedValues` extra/missing key par THROW karta hai, ek bhi chhoota to poora page crash.
+
+**2. vehicle.js `buildEnginesForRecord`** (~22-120): thruster `t.parameterSchema` se `gimbalAccelDegS2`, `gimbalRateDegS`, `gimbalMaxDeg` padh kar engine object mein copy (jaise `minMassFlowRate`). Bench sweep ke liye test-only hook: `CONFIG.GIMBAL_ACCEL_OVERRIDE` (default undefined) agar finite ho to `gimbalAccelDegS2` ko override kare.
+
+**3. physics.js `applyActuatorRateLimitsForBody`** (~862-905): `CONFIG.GIMBAL_ACCEL_ON` check hatao; `aMax=e.gimbalAccelDegS2, vMax=e.gimbalRateDegS, gLim=e.gimbalMaxDeg`. Teen branch (accel/rate cmd, slider angle) ek mein: slider angle ko `_gimbalAlphaCmd` jaise law se (physics.js mein copy rakho, comment: guidance-blocks wale ke saath match). `physics.js:105` rebuild-copy waisa hi.
+
+**4. Command handlers — per-engine clamp (forEach ke andar `en.gimbalMaxDeg` etc.):**
+- `atlas-prism/lib/sim.js` 86 (rate), 96 (accel), 105 (angle)
+- `js/simJs/threads/physics.worker.js` 434, 458, 470
+- `js/simJs/threads/fastforward.worker.js` 316, 327, 340
+- **`guidance-numerical.html` (461-475) aur `guidance-tester.html` (491-505)**: inke apne `localDispatch` copy mein `setGimbalAccel` case HAI HI NAHI aur `collectStackData` mein GIMBAL_ACCEL env nahi. Physics ab hamesha accel mode mein hogi aur guidance alpha bhejegi, to in pages par gimbal HILEGA HI NAHI. Inhe sim.js ke handlers jaisa karna zaroori.
+
+**5. Guidance tak limits:**
+- `physics.worker.js serializeForMain` (~957-965 `ec.*`) aur `workerBridge.js` engine projection (~560): teeno naye fields jodo (constants, cold path theek).
+- bench (`sim.js buildSnapshot`) aur FF worker seedha body objects use karte hain, wahan kuch nahi.
+- `guidance-blocks.js`: `_gimbalAlphaCmd/_gimbalNextAngle/_gimbalCmdMsg` (27-66) env ki jagah engine fields; OFF branch (63) hatao; `g_N1` ternary (235) simplify; `MAX_ANG/MAX_RATE` sites: 415-439 (ascent), 1122-1128 (STAGE_BURN), 1611-1617 (CIRCULARIZE), 2364-2370 (suicide) -> `gimbals[0].gimbalMaxDeg/gimbalRateDegS`. Transition mein env fallback rakh sakte ho, baad mein hatao.
+- `guidance-experiments.js` archive hai, ISKO MAT CHHEDO.
+- `workerBridge.js` ~764-768, `sim.js` ~328-331, guidance-*.html env: `GIMBAL_ACCEL_*` env keys hatao.
+
+**6. Flag/config safai:** `js/config.js` 34, 184, 185 (`GIMBAL_ACCEL_ON`, `GIMBAL_ACCEL_DEG_S2`, `params.gimbalAccelDegS2`). `CONFIG.GIMBAL_MAX_DEG` sirf `js/simJs/main.js` 193/197 (slider) ke liye bacha; baad mein engine se. Comments: `stateBuffer.js:59`, `vehicle.js:106,116`, `physics.worker.js:962-966`.
+
+**7. Legacy HOLD law (ascent block):** `guidance-blocks.js` 90-107 defaults (`HOLD_K_DAMP, HOLD_MAX_AOA_DEG, HOLD_K_DQ, HOLD_Q_REF, HOLD_LAW, COAST_DAMP_GAIN, COAST_DAMP_K`), branches ~360-390, `cfg.HOLD_LAW` check ~426. `HOLD_MAX_AOA_DEG` code mein kahin padha hi nahi jaata. Ye dono hatane se pehle readers: `js/guideConfigDefaults.js` (V3 preset ~257-266; baaki 110-119/172-181/306-315 V2/legacy guides ke hain, chhedo mat), `js/guideConstantDescriptions.js` lowercase `ascent.*` entries 23-32 (V3). **Dhyan:** guideConfigDefaults ka V3 preset hi modal ka `_referenceConstants` hai: naye keys (`HOLD_PD_KP`, `HOLD_PD_KD`, `GIMBAL_CMD_TAU_S`) preset + descriptions mein jodo warna modal mein dikhenge nahi. Purane keys wale USER presets (localStorage) `validateConstantsStrict` mein fail honge: user ko re-save karna padega. Preset mein `MECO_TRIGGER_ON_FUEL` bhi hai jo block mein hai hi nahi (harmless).
+
+**8. Bench:** `worker-sim.js traceRun` 626-652, 680-685: `accelOn` override hatao; `accelDegS2` -> `CONFIG.GIMBAL_ACCEL_OVERRIDE`, finally mein restore. `atlas-prism/tests/gimbal_accel_compare.html`: OFF/control-OFF runs hatao, baseline = pehli (a=inf) run, `accelOn` references (102, 188-189, 217-221, 237, 273, 298-300, 306). Control run ab "same a do baar" ho.
+
+**9. Retune (asli maqsad):** a=200, `GIMBAL_CMD_TAU_S=0.1`, bootstrap/tuner se (G,T,bias,lead,meco). `baselineRaw` (atlas-prism/lib/config.js:40) purana OFF-tuned hai, retune ke baad update.
+
+### D. Abhi UNSEEN files (inpar grep ka context chahiye)
+Ye command chalao, output file bhejo:
+`git --no-pager grep -nE "gimbalDeg|gimbalRate|targetGimbal|\.gimbal\b|gimbalCapable" -- js/simJs/guidance/derivation.js js/simJs/guidance/imu.js js/simJs/view js/rockets-core.js js/components.js atlas-prism/lib/hook.js atlas-prism/ui | cut -c1-200 > g2.txt`
+- **imu.js (SABSE ZAROORI):** `measure()` engines ko whitelist se copy karta ho to IMU ON par `gimbalRateActDegS` + naye per-engine fields guidance tak nahi pahunchenge (abhi bhi, tab tak bug chhupa tha kyunki IMU default OFF).
+- derivation.js: engine fields kaise padhta hai.
+- render.js/telemetry.js: sirf `gimbalDeg` padhte honge (rocketArt.js aur controls.js check ho chuki, kuch nahi chahiye).
+- `grep -il gimbal` ki baaki list (hook.js, lattice.js, atlas config.js, ui/host.js, pro-alpha etc.) shayad sirf `PUSH_MAX_GIMBAL_DEG` ki wajah se hai: noise.
+
+### E. Verify order (patch ke baad)
+1. Syntax: `node --check` har badli file. 2. Page load (withFixedValues crash na kare). 3. Compare page: a=200 run = pehle wale "ON a=200" jaisa (ascent identical expected). 4. Determinism x2 + control bit-identical. 5. Page: `snapDbg` overlay dobara + guidance-tester/numerical pages par gimbal hilta hai. 6. Phir retune.
+
+Next chat ki pehli line: "GIMBAL_REALISM_HANDOFF.md padho, UPDATE (7th session) section C ke hisaab se patch banao; pehle D wala g2.txt dekho."
+
+Upload karna: GIMBAL_REALISM_HANDOFF.md (updated), g2.txt, imu.js, derivation.js, plus badalne wali files (componentLibrary, vehicle, physics, physics.worker, fastforward.worker, workerBridge, guidance-blocks, config, sim, worker-sim, gimbal_accel_compare, guidance-numerical.html, guidance-tester.html, guideConfigDefaults, guideConstantDescriptions, main.js).
+
+
 ## UPDATE (6th session) — SABSE PEHLE YE PADHO (ye section 5th-session section ko bhi supersede karta hai jahan conflict ho)
 
 Likha: 2026-10-18 (same din). Hinglish. Is section ko GIMBAL_REALISM_HANDOFF.md ke sabse upar paste karo.
