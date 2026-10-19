@@ -28,6 +28,7 @@ const GUIDE_CONSTANT_DESCRIPTIONS = {
   'ascent.THROTTLE_ALT_LOW_KM': 'Lower edge of the max-Q throttle bucket (km AGL). Below this altitude, nominal throttle applies.',
   'ascent.THROTTLE_ALT_HIGH_KM': 'Upper edge of the max-Q throttle bucket. Above this altitude, nominal throttle resumes.',
   'ascent.THROTTLE_FRAC_LOW': 'Throttle fraction used inside the max-Q bucket (LOW .. HIGH km). Reduces thrust to limit peak aerodynamic load.',
+  'ascent.MECO_TARGET_BOOSTER_FUEL_KG': 'Residual booster tank fuel (kg) wanted at the end of the shutdown spool-down. MECO fires when the projected fuel left after that spool burn reaches this value. Higher = earlier MECO and more fuel kept for boostback and landing; lower = longer ascent burn and less fuel left.',
   'ascent.GIMBAL_TARGET': 'Which engines participate in gimbal control during ascent. "center" = only the center engine (F9 legacy), "all" = every gimbal-capable engine.',
   
   // ---- separation (mission-level glue) ----
