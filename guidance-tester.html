@@ -1887,6 +1887,106 @@ if (!faded) {
   // ============================================================================
   // Capture helpers — identical to numerical.
   // ============================================================================
+  // Coast dv / t_rem snapshot — refreshed at COAST_HOLD_2 entry.
+  //
+  // At COAST_WAIT, guidance publishes gs.coastDeltaV = v_circ(target) - v_apo(current).
+  // We infer targetVcirc = gs.coastDeltaV + v_apo_at_wait, so we can later
+  // recompute deltaV from any subsequent orbit. At COAST_HOLD_2 (first entry),
+  // we recompute deltaV = targetVcirc - v_apo_now, and t_rem = time-to-apogee.
+  // All subsequent captures use the refreshed values.
+  //
+  // If guidance itself refreshes gs.coastDeltaV at COAST_HOLD_2 (value differs
+  // from what we saw at COAST_WAIT), we trust guidance over our recompute.
+  //
+  // Phase name default is 'COAST_HOLD_2'; adjust _isHold2() if your guidance
+  // uses a different string.
+  let _coastSnap = {
+    targetVcirc: null,
+    waitVapo: null,
+    waitDeltaV: null,
+    waitTRem: null,
+    deltaV: null,
+    tRem: null,
+    snappedHold2: false,
+  };
+
+  function _resetCoastSnap() {
+    _coastSnap.targetVcirc = null;
+    _coastSnap.waitVapo = null;
+    _coastSnap.waitDeltaV = null;
+    _coastSnap.waitTRem = null;
+    _coastSnap.deltaV = null;
+    _coastSnap.tRem = null;
+    _coastSnap.snappedHold2 = false;
+  }
+
+  function _isCoastWait(p) { return p === 'COAST_WAIT' || p === 'COAST_WAIT_ENTRY'; }
+  function _isHold2(p) { return p === 'COAST_HOLD_2' || p === 'COAST_HOLD2'; }
+
+  // v_apo and time-to-next-apogee. t_apo is 1:1 with hook.js timeToApogee().
+  function _orbitSnapshot(b) {
+    if (!b) return null;
+    const GM = CONFIG.GM_EARTH;
+    const r = Math.hypot(b.rx, b.ry) || 1;
+    const ux = b.rx / r, uy = b.ry / r;
+    const ex = b.ry / r, ey = -b.rx / r;
+    const vr = b.vx * ux + b.vy * uy;
+    const vt = b.vx * ex + b.vy * ey;
+    const eps = 0.5 * (vr * vr + vt * vt) - GM / r;
+    const h = r * vt;
+    let vApo = NaN, tApo = Infinity;
+    if (eps < 0) {
+      const a = -GM / (2 * eps);
+      const e = Math.sqrt(Math.max(0, 1 + 2 * eps * h * h / (GM * GM)));
+      if (e > 1e-12) vApo = h / (a * (1 + e));
+      if (e < 1e-9) {
+        tApo = Math.PI * Math.sqrt((a * a * a) / GM);
+      } else {
+        const cosE = (1 - r / a) / e;
+        const sinE = (r * vr) / (e * Math.sqrt(GM * a));
+        let Ean = Math.atan2(sinE, cosE);
+        if (Ean < 0) Ean += 2 * Math.PI;
+        const M = Ean - e * Math.sin(Ean);
+        const n = Math.sqrt(GM / (a * a * a));
+        tApo = (M < Math.PI) ? (Math.PI - M) / n : (3 * Math.PI - M) / n;
+      }
+    }
+    return { r, vr, vt, vApo, tApo };
+  }
+
+  // Called each tick BEFORE phase-change detection so COAST_HOLD_2 transition
+  // capture already shows refreshed values.
+  function _coastSnapUpdate(gs, b) {
+    if (!gs || !b) return;
+    if (_isCoastWait(gs.phase) && _coastSnap.targetVcirc == null &&
+        Number.isFinite(gs.coastDeltaV)) {
+      const o = _orbitSnapshot(b);
+      if (o && Number.isFinite(o.vApo)) {
+        _coastSnap.waitVapo = o.vApo;
+        _coastSnap.waitDeltaV = gs.coastDeltaV;
+        _coastSnap.waitTRem = gs.coastTRem;
+        _coastSnap.targetVcirc = gs.coastDeltaV + o.vApo;
+      }
+    }
+    if (_isHold2(gs.phase) && !_coastSnap.snappedHold2) {
+      if (Number.isFinite(gs.coastDeltaV) && _coastSnap.waitDeltaV != null &&
+          gs.coastDeltaV !== _coastSnap.waitDeltaV) {
+        _coastSnap.deltaV = gs.coastDeltaV;
+        _coastSnap.tRem = gs.coastTRem;
+        _coastSnap.snappedHold2 = true;
+        return;
+      }
+      if (Number.isFinite(_coastSnap.targetVcirc)) {
+        const o = _orbitSnapshot(b);
+        if (o && Number.isFinite(o.vApo)) {
+          _coastSnap.deltaV = _coastSnap.targetVcirc - o.vApo;
+          _coastSnap.tRem = o.tApo;
+          _coastSnap.snappedHold2 = true;
+        }
+      }
+    }
+  }
+
   function captureState() {
     const idx = state.activeBodyIndex;
     const b = state.bodies[idx];
@@ -1937,8 +2037,8 @@ if (!faded) {
       circAchieved: !!gs.circAchieved,
       circCurrentV: gs.circCurrentV,
       circTargetV: gs.circTargetV,
-      coastDeltaV: gs.coastDeltaV,
-      coastTRem: gs.coastTRem,
+      coastDeltaV: _coastSnap.snappedHold2 ? _coastSnap.deltaV : gs.coastDeltaV,
+      coastTRem: _coastSnap.snappedHold2 ? _coastSnap.tRem : gs.coastTRem,
       apogeeKmGuide: gs.apogeeKm,
       perigeeKmGuide: gs.perigeeKm,
       stageBurnLocked: !!gs.stageBurnLocked,
@@ -2023,6 +2123,7 @@ if (!faded) {
     running = true; abort = false;
     startBtn.disabled = true; stopBtn.disabled = false;
     captures = [];
+    _resetCoastSnap();
 
     const runTunables = JSON.parse(JSON.stringify(currentValues));
     RunStamp.begin();
@@ -2113,6 +2214,7 @@ if (!faded) {
 
       // Event detection — identical to numerical.
       const gs = (Guidance.getGuideStatus && Guidance.getGuideStatus()) || {};
+      _coastSnapUpdate(gs, state.bodies[state.activeBodyIndex]);
       RunStamp.track(gs, state.simTime);
       const body = state.bodies[state.activeBodyIndex];
 
