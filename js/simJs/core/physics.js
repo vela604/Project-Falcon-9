@@ -821,7 +821,7 @@ function applySloshStep(body, dt, coupleOmega) {
 // actually produced. Fmax/Fmin also refreshed because both scale linearly
 // with Ve; the throttle-% UI and TWR readouts read them.
 //
-// Pa comes from environment.js's airPressure(altitude) — same exponential
+// Pa comes from environment.js's airPressure(altitude) — same US76
 // atmosphere model airDensity() uses, same atmosphereEnabled toggle, so
 // turning atmosphere off zeroes both drag and Ve penalty.
 // ---------------------------------------------------------------------------
@@ -1187,16 +1187,11 @@ function _gfSmooth(x, a, b) {
   return t * t * (3 - 2 * t);
 }
 
-// ISA-style speed of sound (the sim's atmosphere is a bare exponential and
-// carries no temperature, so Mach is estimated from standard-atmosphere T).
+// Speed of sound for the grid-fin Mach number. Comes from the same US76
+// temperature profile as the density and pressure (environment.js), so the
+// Mach number and the atmosphere can never disagree.
 function _gfSpeedOfSound(alt) {
-  const h = Math.max(0, alt);
-  let T;
-  if (h < 11000) T = 288.15 - 0.0065 * h;
-  else if (h < 20000) T = 216.65;
-  else if (h < 47000) T = 216.65 + 0.001 * (h - 20000);
-  else T = 270.65;
-  return Math.sqrt(1.4 * 287.05 * T);
+  return speedOfSound(Math.max(0, alt));
 }
 
 function _gfMachFactors(M) {
@@ -1420,7 +1415,10 @@ const rho = airDensity(altitude);
   });
   const effectiveArea = totalAeff || (Math.PI * (profile.refWidth / 2) ** 2);
   
-  const dragMag = 0.5 * rho * CONFIG.DRAG_CD * effectiveArea * speedRel * speedRel;
+  // Hull Cd depends on Mach number (transonic wave-drag rise) and, far above
+  // the atmosphere proper, on free-molecular flow. See hullDragCoefficient().
+  const cdHull = hullDragCoefficient(speedRel, altitude);
+  const dragMag = 0.5 * rho * cdHull * effectiveArea * speedRel * speedRel;
   const Fdx = speedRel > 0 ? -dragMag * relVx / speedRel : 0;
   const Fdy = speedRel > 0 ? -dragMag * relVy / speedRel : 0;
   
