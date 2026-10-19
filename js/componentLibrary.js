@@ -829,7 +829,6 @@ function seedComponentLibrary() {
     buildLegsSwingout4(),
     buildCatchFitting2Pin(),
     buildRcs4Pod2Nozzle(),
-    buildRcs4Pod2Nozzle(),
 buildGridFinSerratedF9(),
 
 
@@ -841,7 +840,6 @@ buildGridFinSerratedF9(),
   buildFuelRp1LoxChilled(),
   
   buildMetalAlLiAlloy(),
-    buildMetalCarbonComposite(),
     buildMetalCarbonComposite(),
 buildMetalTitaniumAlloy(),
     buildPneumaticPusherN2(),
