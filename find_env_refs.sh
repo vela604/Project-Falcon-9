@@ -28,6 +28,11 @@ trap 'rm -rf "$TMP"' EXIT
 # Folders / files that are never interesting (applied on top of .gitignore).
 SKIP_RE='(^|/)(node_modules|\.git|dist|build|\.next|coverage)/|\.min\.js$|\.map$|(^|/)package-lock\.json$|(^|/)env_refs\.txt$'
 
+# Extra files to leave out: guidance-experiments (not needed) and the four
+# files already patched (their matches are just noise now). Paths are
+# relative to the project root. Add more lines to the regex with |
+SKIP_FILES_RE='(^|/)guidance-experiments\.js$|^js/simJs/core/(physics|environment)\.js$|^js/simJs/guidance/derivation\.js$|^js/config\.js$'
+
 # ---- 1. build the list of files to search, honouring .gitignore ----------
 # Preferred: ask git. It respects every .gitignore (nested ones, global
 # ignore, .git/info/exclude). Works even if ROOT is not a git repo
@@ -47,7 +52,7 @@ else
 fi
 
 # drop junk folders, then split into code and docs
-tr '\0' '\n' < "$TMP/all" | grep -vE "$SKIP_RE" | tr '\n' '\0' > "$TMP/filtered"
+tr '\0' '\n' < "$TMP/all" | grep -vE "$SKIP_RE" | grep -vE "$SKIP_FILES_RE" | tr '\n' '\0' > "$TMP/filtered"
 grep -zE '\.(js|mjs|cjs|ts|jsx|tsx|html|htm)$' "$TMP/filtered" > "$TMP/code"
 grep -zE '\.(md|txt)$'                          "$TMP/filtered" > "$TMP/docs"
 
