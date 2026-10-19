@@ -1,65 +1,92 @@
 <!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>Merlin 1D — plume from sea level to vacuum</title>
+<title>Merlin 1D — atmospheric plume study</title>
 <style>
-:root{--ink:#e9dccb;--dim:#8d8378;--hot:#ff8a3d}
-html,body{margin:0;height:100%;background:#05060a;color:var(--ink);font:15px/1.3 system-ui,sans-serif;overflow:hidden}
+:root{color-scheme:dark;--ink:#f4eee5;--dim:#a59b90;--hot:#ff9a56;--line:#ffffff20;--glass:#080b10cc}
+*{box-sizing:border-box}
+html,body{margin:0;width:100%;height:100%;background:#05070b;color:var(--ink);font:14px/1.35 Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;overflow:hidden}
 canvas{position:fixed;inset:0;width:100%;height:100%;display:block;touch-action:none}
-.ui{position:fixed;left:0;right:0;bottom:0;padding:14px 18px calc(14px + env(safe-area-inset-bottom,0px));
-display:grid;grid-template-columns:auto 1fr auto;gap:18px;align-items:center;
-background:linear-gradient(transparent,rgba(5,6,10,.85) 55%)}
-.out{min-width:8.5em}.out b{font-size:28px;font-weight:600;font-variant-numeric:tabular-nums;letter-spacing:-.01em}
-.out span{display:block;color:var(--dim);font-size:12px;font-variant-numeric:tabular-nums}
-.sl{display:flex;flex-direction:column;gap:4px}.sl div{display:flex;justify-content:space-between;color:var(--dim);font-size:12px}
-input[type=range]{width:100%;accent-color:var(--hot);height:28px;margin:0}
-button{font:inherit;font-weight:600;color:#14100c;background:var(--hot);border:0;border-radius:999px;padding:11px 22px;min-width:96px}
-button.on{background:#3a2a1f;color:var(--hot);box-shadow:inset 0 0 0 1.5px var(--hot)}
-button:focus-visible,input:focus-visible{outline:2px solid #fff;outline-offset:2px}
-@media(max-width:560px){.ui{grid-template-columns:1fr auto}.sl{grid-column:1/-1;order:3}}
+.topbar{position:fixed;top:0;left:0;right:0;padding:22px 26px;display:flex;justify-content:space-between;align-items:flex-start;gap:20px;pointer-events:none;background:linear-gradient(#05070bc9,transparent)}
+.brand{display:flex;align-items:center;gap:10px;font-size:12px;font-weight:750;letter-spacing:.16em}
+.mark{width:9px;height:9px;border-radius:50%;background:var(--hot);box-shadow:0 0 18px #ff8b48}
+.brand small{display:block;color:var(--dim);font-size:10px;font-weight:550;letter-spacing:.11em;margin-top:4px}
+.tag{border:1px solid var(--line);border-radius:999px;padding:7px 11px;color:#d6cec4;background:#080b1070;font-size:10px;letter-spacing:.12em;text-transform:uppercase}
+.telemetry{position:fixed;top:74px;left:26px;display:flex;gap:9px;pointer-events:none}
+.card{min-width:122px;padding:12px 14px;border:1px solid var(--line);border-radius:11px;background:var(--glass);backdrop-filter:blur(12px)}
+.card b{display:block;font-size:21px;font-weight:620;letter-spacing:-.04em;font-variant-numeric:tabular-nums;white-space:nowrap}
+.card span{display:block;color:var(--dim);font-size:10px;letter-spacing:.1em;text-transform:uppercase;margin-top:3px}
+.card.state b{font-size:12px;letter-spacing:.1em;color:#c9b7a6;padding-top:5px}
+.ui{position:fixed;left:0;right:0;bottom:0;padding:54px 26px calc(20px + env(safe-area-inset-bottom,0px));display:grid;grid-template-columns:minmax(260px,1fr) auto;gap:16px 22px;align-items:end;background:linear-gradient(transparent,#05070be8 44%,#05070bf2)}
+.sl{display:flex;flex-direction:column;gap:8px;max-width:760px}.slhead{display:flex;justify-content:space-between;align-items:baseline;color:var(--dim);font-size:11px;letter-spacing:.04em}.slhead strong{color:var(--ink);font-weight:580}
+input[type=range]{width:100%;accent-color:var(--hot);height:24px;margin:0;cursor:ew-resize}
+.ends{display:flex;justify-content:space-between;color:#8e8881;font-size:10px;letter-spacing:.04em}
+.actions{display:flex;align-items:center;gap:13px}
+.hint{max-width:230px;color:#8e8881;font-size:10px;line-height:1.4;text-align:right}
+button{font:inherit;font-weight:650;color:#19110b;background:var(--hot);border:0;border-radius:7px;padding:13px 22px;min-width:132px;cursor:pointer;box-shadow:0 3px 16px #ff8b4829}
+button.on{background:#24170f;color:#ffb17c;box-shadow:inset 0 0 0 1px #ff9a5680}
+button:focus-visible,input:focus-visible{outline:2px solid #fff;outline-offset:3px}
+.note{position:fixed;right:26px;top:76px;max-width:245px;color:#b4ada5a8;font-size:10px;text-align:right;line-height:1.5;pointer-events:none}
+@media(max-width:680px){.topbar{padding:17px}.telemetry{left:17px;top:65px;gap:6px}.card{min-width:0;padding:9px 10px}.card b{font-size:17px}.card span{font-size:8px}.card.state b{font-size:10px}.note{display:none}.ui{padding:44px 17px calc(16px + env(safe-area-inset-bottom,0px));grid-template-columns:1fr;gap:12px}.actions{justify-content:space-between}.hint{text-align:left}.slhead{font-size:10px}.ends{font-size:9px}}
+@media(max-width:380px){.card{padding:8px}.card b{font-size:15px}.brand{font-size:10px}.tag{font-size:8px}.actions{gap:5px}.hint{font-size:9px;max-width:145px}button{min-width:116px;padding:12px}}
 </style></head><body>
 <canvas id="c"></canvas>
+<header class="topbar">
+ <div class="brand"><span class="mark"></span><div>MERLIN 1D<small>SINGLE SEA-LEVEL ENGINE · CONCEPTUAL VIEW</small></div></div>
+ <div class="tag">LOX / RP-1 · GAS GENERATOR</div>
+</header>
+<div class="telemetry" aria-live="polite">
+ <div class="card"><b id="F">0 kN</b><span>Model thrust</span></div>
+ <div class="card"><b id="P">101.3 kPa</b><span id="A">0 m · sea level</span></div>
+ <div class="card state"><b id="Q">STANDBY</b><span>Sequence</span></div>
+</div>
+<div class="note">Reference: <a href="https://www.spacex.com/vehicles/falcon-9/" target="_blank" rel="noopener">SpaceX Falcon 9</a> · 845 kN, LOX/RP‑1.<br>Plume, ignition timing, and test stand are illustrative—not CAD, flight data, or CFD. Drag to orbit.</div>
 <div class="ui">
- <div class="out"><b id="F">0 kN</b><span id="P">101.3 kPa ambient</span></div>
- <label class="sl"><input id="s" type="range" min="0" max="1" step="0.0005" value="0" aria-label="Ambient pressure">
-  <div><span>Sea level</span><span>Vacuum</span></div></label>
- <button id="b">Ignite</button>
+ <label class="sl"><div class="slhead"><strong>Standard-atmosphere altitude</strong><span id="altread">0 km</span></div>
+  <input id="s" type="range" min="0" max="1" step="0.0005" value="0" aria-label="Ambient altitude from sea level to near space">
+  <div class="ends"><span>0 km · SEA LEVEL</span><span>80 km · NEAR SPACE</span></div></label>
+ <div class="actions"><span class="hint">Ambient-pressure sweep only; this is not a vehicle ascent simulation.</span><button id="b">Ignite engine</button></div>
 </div>
 <script>
 /* =====================================================================
-   MERLIN-1D-CLASS PLUME  —  raw WebGL2, one fragment shader, no libraries.
-   Why no Three.js: the whole scene is one analytic ray-marched volume plus an
-   SDF engine. A scene graph would add weight and nothing else, and a single
-   fullscreen pass lets me scale resolution adaptively to hold 60 fps.
+   MERLIN 1D-CLASS SINGLE ENGINE STUDY — procedural WebGL2, no external assets.
+   Reference points: LOX/RP-1 gas-generator cycle, 9.7 MPa class chamber
+   pressure, 16:1 sea-level nozzle expansion ratio, and 845 kN public
+   sea-level thrust figure. Geometry is scaled to that exit diameter class.
+   ISA pressure is evaluated across the altitude control; the engine is held
+   still so this is an ambient sweep, not a simulated flight trajectory.
 
-   PHYSICS (all in JS, evaluated every frame from the slider; shader receives
-   only the derived numbers — nothing is switched by altitude):
-   1. Nozzle: area ratio eps=16 -> exit Mach Me by solving the isentropic
-      area-Mach relation (gamma 1.22, typical RP-1/LOX exhaust). Exit pressure
-      pe = pc*(1+(g-1)/2 Me^2)^(-g/(g-1)).
-   2. Free-jet expansion to ambient: if pa is reached isentropically the jet
-      Mach is Mj = f(pc/pa). Prandtl-Meyer turning at the lip is
-      theta = nu(Mj) - nu(Me): negative (plume contracts) when over-expanded,
-      positive (flares) when under-expanded.
-   3. Plume equilibrium radius rj = re*sqrt(A(Mj)/A(Me)) (mass conservation).
-   4. Shock-cell length: Prandtl's  L = 1.306 * Dj * sqrt(Mj^2-1).
-   5. Boundary: r(x) = rj + (re-rj)cos(kx) + (theta/k) sin(kx), k = 2pi/L.
-      This matches r(0)=re and r'(0)=theta exactly and is periodic with the
-      true cell length; shear-layer mixing damps it downstream.
-   6. Thrust: F = pc*At*Cf, Cf = momentum term + (pe-pa)/pc * eps.
-   SIMPLIFICATIONS (honest list): quasi-1D streamtubes instead of the full
-   method of characteristics (so no Mach-disk or barrel-shock curvature),
-   boundary lip angle is soft-capped (~57 deg) to keep the vacuum bell
-   renderable (real flow turns up to ~100+ deg then thins out invisibly),
-   radiation is a plausible emission model (density x diamond compression),
-   not a spectral solve. A real version would run MOC or CFD (e.g. Cart3D).
+   THRUST uses the ideal nozzle momentum + pressure correction. That is a
+   reference model, not a Merlin performance deck. Plume shape is a deliberately
+   restrained quasi-1D / shock-cell approximation. It omits injector and
+   turbomachinery detail, startup hardware sequence, separated-flow topology,
+   chemistry, radiative spectra, 3D CFD, and launch-site weather. The startup
+   ramp, metal temperatures, test-stand floor, and deluge haze are visual
+   interpretations, not recovered flight telemetry.
    ===================================================================== */
-const G=1.22, EPS=16, PC=10e6, RE=0.497, RT=RE/Math.sqrt(EPS), AT=Math.PI*RT*RT, PA0=101325;
+const G=1.22, EPS=16, PC=9.7e6, PA0=101325, AT=.05393477137697607, RT=Math.sqrt(AT/Math.PI), RE=RT*Math.sqrt(EPS);
 const Aq=M=>1/M*Math.pow((2/(G+1))*(1+(G-1)/2*M*M),(G+1)/(2*(G-1)));
 const nu=M=>{const a=Math.sqrt((G+1)/(G-1));return a*Math.atan(Math.sqrt(M*M-1)/a)-Math.atan(Math.sqrt(M*M-1))};
 const machFromP=r=>Math.sqrt(2/(G-1)*(Math.pow(r,(G-1)/G)-1));
 let Me=2;{let lo=1.0001,hi=12;for(let i=0;i<60;i++){Me=(lo+hi)/2;Aq(Me)<EPS?lo=Me:hi=Me}}
 const GAM=Math.sqrt(2*G*G/(G-1)*Math.pow(2/(G+1),(G+1)/(G-1)));
+function isaPressure(h){
+  const g=9.80665,R=287.05287;
+  if(h<=11000)return PA0*Math.pow((288.15-.0065*h)/288.15,g/(R*.0065));
+  const p11=22632.06;
+  if(h<=20000)return p11*Math.exp(-g*(h-11000)/(R*216.65));
+  const p20=5474.89;
+  if(h<=32000)return p20*Math.pow((216.65+.001*(h-20000))/216.65,-g/(R*.001));
+  const p32=868.02;
+  if(h<=47000)return p32*Math.pow((228.65+.0028*(h-32000))/228.65,-g/(R*.0028));
+  const p47=110.91;
+  if(h<=51000)return p47*Math.exp(-g*(h-47000)/(R*270.65));
+  const p51=66.94;
+  if(h<=71000)return p51*Math.pow((270.65-.0028*(h-51000))/270.65,g/(R*.0028));
+  const p71=3.956;
+  if(h<=80000)return p71*Math.exp(-g*(h-71000)/(R*214.65));
+  return .886*Math.exp(-(h-80000)/6500);
+}
 function solve(pa,pc){
   const pe=pc*Math.pow(1+(G-1)/2*Me*Me,-G/(G-1));
   const Mj=Math.max(1.05,machFromP(pc/pa));
@@ -77,9 +104,9 @@ const VS=`#version 300 es
 in vec2 a;void main(){gl_Position=vec4(a,0,1);}`;
 const FS=`#version 300 es
 precision highp float;
-uniform vec2 uRes;uniform float uT,uRj,uTh,uL,uSM,uSat,uE,uAB,uThr,uFl,uRc,uShake;
+uniform vec2 uRes;uniform float uT,uRj,uTh,uL,uSM,uSat,uE,uAB,uThr,uFl,uRc,uShake,uAlt;
 uniform vec3 uCam,uTgt;out vec4 o;
-const float RE=0.497,RT=0.1243,LN=1.6;
+const float RE=0.5241,RT=0.1310,LN=1.6;
 float hash(vec2 p){p=fract(p*vec2(123.34,456.21));p+=dot(p,p+45.32);return fract(p.x*p.y);}
 float vn(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);
  return mix(mix(hash(i),hash(i+vec2(1,0)),f.x),mix(hash(i+vec2(0,1)),hash(i+1.),f.x),f.y);}
@@ -99,7 +126,29 @@ vec2 map(vec3 p){   // x = distance, y = material (1 nozzle, 2 chamber, 3 turbop
  tp=min(tp,cap(p,vec3(.36,LN+.62,0),vec3(.08,LN+.58,0),.03));
  tp=min(tp,cap(p,vec3(.36,LN+.2,0),vec3(.47,LN-.4,0),.026));
  tp=min(tp,cap(p,vec3(.28,LN+.25,0),vec3(.12,LN+.3,0),.025));
- vec2 r=vec2(dn,1.);if(ch<r.x)r=vec2(ch,2.);if(tp<r.x)r=vec2(tp,3.);return r;}
+  float stand=1e3;
+  if(uAlt<18.){
+   float a=-1.12,b=1.12,y0=-6.28,y1=2.25;
+   stand=min(stand,cap(p,vec3(a,y0,a),vec3(a,y1,a),.055));
+   stand=min(stand,cap(p,vec3(a,y0,b),vec3(a,y1,b),.055));
+   stand=min(stand,cap(p,vec3(b,y0,a),vec3(b,y1,a),.055));
+   stand=min(stand,cap(p,vec3(b,y0,b),vec3(b,y1,b),.055));
+   stand=min(stand,cap(p,vec3(a,y1,a),vec3(b,y1,a),.065));
+   stand=min(stand,cap(p,vec3(a,y1,b),vec3(b,y1,b),.065));
+   stand=min(stand,cap(p,vec3(a,y1,a),vec3(a,y1,b),.065));
+   stand=min(stand,cap(p,vec3(b,y1,a),vec3(b,y1,b),.065));
+   stand=min(stand,cap(p,vec3(a,-5.8,a),vec3(b,1.9,a),.035));
+   stand=min(stand,cap(p,vec3(b,-5.8,a),vec3(a,1.9,a),.035));
+   stand=min(stand,cap(p,vec3(a,-5.8,b),vec3(b,1.9,b),.035));
+   stand=min(stand,cap(p,vec3(b,-5.8,b),vec3(a,1.9,b),.035));
+   stand=min(stand,cap(p,vec3(a,-5.8,a),vec3(a,1.9,b),.035));
+   stand=min(stand,cap(p,vec3(a,-5.8,b),vec3(a,1.9,a),.035));
+   stand=min(stand,cap(p,vec3(b,-5.8,a),vec3(b,1.9,b),.035));
+   stand=min(stand,cap(p,vec3(b,-5.8,b),vec3(b,1.9,a),.035));
+   stand=min(stand,cap(p,vec3(a,-4.8,a),vec3(b,-4.8,a),.075));
+   stand=min(stand,cap(p,vec3(a,-4.8,b),vec3(b,-4.8,b),.075));
+  }
+  vec2 r=vec2(dn,1.);if(ch<r.x)r=vec2(ch,2.);if(tp<r.x)r=vec2(tp,3.);if(stand<r.x)r=vec2(stand,4.);return r;}
 vec3 nrm(vec3 p){vec2 e=vec2(.002,-.002);
  return normalize(e.xyy*map(p+e.xyy).x+e.yyx*map(p+e.yyx).x+e.yxy*map(p+e.yxy).x+e.xxx*map(p+e.xxx).x);}
 float bnd(float xa){ // plume boundary, same closed form as the JS physics
@@ -111,16 +160,40 @@ void main(){
  vec3 ro=uCam+uShake*vec3(sin(uT*61.),sin(uT*47.+2.),0.)*.004*uE;
  vec3 ww=normalize(uTgt-ro),uu=normalize(cross(ww,vec3(0,1,0))),vv=cross(uu,ww);
  vec3 rd=normalize(uv.x*uu+uv.y*vv+1.6*ww);
- vec3 bg=mix(vec3(.012,.014,.022),vec3(.03,.025,.03),smoothstep(-1.,1.,uv.y*-.5+.3));
+ float atm=1.-smoothstep(24.,82.,uAlt);
+ float viewUp=clamp(rd.y*.5+.5,0.,1.);
+ vec3 space=vec3(.003,.005,.012);
+ vec3 sky=mix(vec3(.055,.10,.17),vec3(.20,.36,.55),pow(viewUp,.7));
+ float haze=exp(-abs(rd.y)*9.)*atm;
+ vec3 bg=mix(space,sky,atm*(.12+.75*pow(viewUp,.7)));
+ bg=mix(bg,vec3(.38,.47,.56),haze*.52);
+ float stars=step(.9987,hash(floor(gl_FragCoord.xy*.55)))*smoothstep(38.,68.,uAlt);
+ bg+=stars*vec3(.62,.72,.92);
 
  // ---------- engine: sphere trace inside a bounding sphere ----------
- vec3 col=bg;float tE=1e4;
- vec3 oc=ro-vec3(0,1.2,0);float bb=dot(oc,rd),cc=dot(oc,oc)-3.2,hh=bb*bb-cc;
+ vec3 col=bg;float tE=1e4,tGround=1e4;
+ float groundVis=1.-smoothstep(1.5,15.,uAlt);
+ if(groundVis>.001&&abs(rd.y)>1e-5){float tg=(-6.3-ro.y)/rd.y;if(tg>0.)tGround=tg;}
+ if(tGround<1e3&&groundVis>.001){
+  vec3 gp=ro+rd*tGround;
+  float n=vn(gp.xz*.7);
+  float deck=1.-smoothstep(4.7,5.2,max(abs(gp.x),abs(gp.z)));
+  float seams=step(.985,fract(gp.x*1.5))*deck+step(.985,fract(gp.z*1.5))*deck;
+  vec3 concrete=mix(vec3(.045,.052,.061),vec3(.105,.112,.118),n*.45);
+  concrete=mix(concrete,vec3(.075,.079,.081),deck*.8);
+  concrete-=seams*.025;
+  float steam=exp(-dot(gp.xz,gp.xz)*.12)*uThr*groundVis*(.16+.24*vn(gp.xz*.24+uT*.08));
+  concrete=mix(concrete,vec3(.46,.49,.49),clamp(steam,0.,.42));
+  float fireGlow=exp(-dot(gp.xz,gp.xz)*.45)*uThr*groundVis;
+  concrete+=fireGlow*vec3(.48,.12,.025);
+  col=mix(bg,concrete,groundVis);
+ }
+  vec3 oc=ro-vec3(0,-2.,0);float bb=dot(oc,rd),cc=dot(oc,oc)-51.,hh=bb*bb-cc;
  if(hh>0.){float t=max(0.,-bb-sqrt(hh));
   for(int i=0;i<90;i++){vec2 m=map(ro+rd*t);if(m.x<.0007){tE=t;break;}t+=m.x;if(t>-bb+sqrt(hh))break;}
   if(tE<1e3){vec3 p=ro+rd*tE;vec3 n=nrm(p);float mat=map(p).y;
    float yy=p.y/LN,rho=length(p.xz);
-   vec3 base=mat==1.?vec3(.30,.29,.28):mat==2.?vec3(.42,.40,.38):vec3(.55,.52,.47);
+    vec3 base=mat==1.?vec3(.30,.29,.28):mat==2.?vec3(.42,.40,.38):mat==3.?vec3(.55,.52,.47):vec3(.105,.12,.135);
    // heat tint: gold -> violet-blue temper colours towards the throat
    float heat=smoothstep(.35,1.,yy)*step(mat,1.5);
    base=mix(base,mix(vec3(.55,.40,.16),vec3(.25,.22,.45),smoothstep(.7,1.,yy)),heat*.7);
@@ -144,7 +217,7 @@ void main(){
  float A=dot(rd.xz,rd.xz),B=dot(ro.xz,rd.xz),C=dot(ro.xz,ro.xz)-uRc*uRc,D=B*B-A*C;
  if(A>1e-6){if(D>0.){float s=sqrt(D);ts=vec2(max(ts.x,(-B-s)/A),min(ts.y,(-B+s)/A));}else ts=vec2(1.,0.);}
  else if(C>0.)ts=vec2(1.,0.);
- ts.x=max(ts.x,0.);ts.y=min(ts.y,tE);
+ ts.x=max(ts.x,0.);ts.y=min(ts.y,min(tE,tGround));
  vec3 em=vec3(0.);float T=1.;
  if(ts.y>ts.x&&uThr>.002){
   const int N=72;float dt=(ts.y-ts.x)/float(N);
@@ -153,7 +226,8 @@ void main(){
    vec3 p=ro+rd*t;float xa=-p.y,rho=length(p.xz);
    float rb=xa<0.?rw(p.y):bnd(xa);float q=rho/rb;if(q>2.6)continue;
    float inside=smoothstep(1.05,.88,q);
-   float dens=min(pow(RE/rb,2.),4.)*(1.-.45*q*q)*exp(-max(xa,0.)/(25.*RE));  // streamtube: rho ~ 1/A
+   float turb=.88+.12*vn(vec2(xa*3.7-uT*1.4,q*15.+uT*.35));
+   float dens=min(pow(RE/rb,2.),4.)*(1.-.45*q*q)*exp(-max(xa,0.)/(25.*RE))*turb;  // streamtube: rho ~ 1/A
    dens*=smoothstep(uE*1.8,uE*1.0,xa);
    // Diamonds: compression focus where the cell phase hits pi; phase is skewed by
    // rho*sqrt(Mj^2-1) so that each diamond is a cone (Mach-angle lean), not a flat slab.
@@ -165,8 +239,12 @@ void main(){
    c=mix(c,vec3(1.,.95,.9),clamp(dm*uSat*1.2,0.,1.));
    float edge=exp(-pow((q-1.)/.08,2.))*dens*uAB;                       // afterburning shear layer
    float halo=(q>1.?exp(-(q-1.)*4.):0.)*dens*.07*(.4+uAB);
+   float billow=vn(vec2(rho*4.1+uT*.5,xa*2.2-uT*.32));
+   float steam=groundVis*uThr*smoothstep(5.4,6.6,xa)*(1.-smoothstep(8.8,10.5,xa))
+      *exp(-pow((rho-(.82+.24*billow))/.72,2.))*(.35+.65*billow);
+   em+=T*dt*1.15*steam*vec3(.42,.48,.51);
    em+=T*dt*1.5*(gl*c+edge*vec3(1.,.3,.07)*1.6+halo*vec3(1.,.4,.12));
-   T*=exp(-dens*inside*.12*dt);
+   T*=exp(-(dens*inside*.12+steam*.18)*dt);
   }}
  col=col*T+em*uThr+uFl*vec3(1.,.8,.55)*exp(-length(uv)*2.)*.6;
  col=1.-exp(-col*1.25);col=pow(col,vec3(.4545));
@@ -181,12 +259,12 @@ const pr=gl.createProgram();gl.attachShader(pr,sh(gl.VERTEX_SHADER,VS));gl.attac
 gl.linkProgram(pr);gl.useProgram(pr);
 gl.bindBuffer(gl.ARRAY_BUFFER,gl.createBuffer());gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,3,-1,-1,3]),gl.STATIC_DRAW);
 const al=gl.getAttribLocation(pr,'a');gl.enableVertexAttribArray(al);gl.vertexAttribPointer(al,2,gl.FLOAT,false,0,0);
-const U={};['uRes','uT','uRj','uTh','uL','uSM','uSat','uE','uAB','uThr','uFl','uRc','uShake','uCam','uTgt'].forEach(n=>U[n]=gl.getUniformLocation(pr,n));
+const U={};['uRes','uT','uRj','uTh','uL','uSM','uSat','uE','uAB','uThr','uFl','uRc','uShake','uAlt','uCam','uTgt'].forEach(n=>U[n]=gl.getUniformLocation(pr,n));
 
 /* ---------------- state / UI ---------------- */
-const sl=document.getElementById('s'),btn=document.getElementById('b'),oF=document.getElementById('F'),oP=document.getElementById('P');
-let thr=0,on=false,flash=0,sS=0,E=3.4,az=.5,drag=null,scale=.7,tPrev=performance.now(),acc=0,nf=0,cd=12,cy=0;
-btn.onclick=()=>{on=!on;btn.classList.toggle('on',on);btn.textContent=on?'Shut down':'Ignite';if(on){flash=1;audio()}};
+const sl=document.getElementById('s'),btn=document.getElementById('b'),oF=document.getElementById('F'),oP=document.getElementById('P'),oA=document.getElementById('A'),oQ=document.getElementById('Q'),oAlt=document.getElementById('altread');
+let thr=0,on=false,flash=0,startClock=0,sS=0,E=3.4,az=.5,drag=null,scale=.7,tPrev=performance.now(),acc=0,nf=0,cd=12,cy=0;
+btn.onclick=()=>{if(!on){on=true;startClock=0;flash=1;audio()}else{on=false}btn.classList.toggle('on',on);btn.textContent=on?'Cut off engine':'Ignite engine'};
 cv.addEventListener('pointerdown',e=>drag=e.clientX);addEventListener('pointerup',()=>drag=null);
 addEventListener('pointermove',e=>{if(drag!==null){az-=(e.clientX-drag)*.006;drag=e.clientX}});
 
@@ -202,13 +280,16 @@ function frame(now){
   acc+=dt;nf++;if(acc>.6){const ms=acc/nf*1000;if(ms>18)scale=Math.max(.3,scale-.07);else if(ms<12)scale=Math.min(1,scale+.04);acc=nf=0}
   const W=Math.max(2,Math.round(innerWidth*Math.min(devicePixelRatio,2)*scale)),H=Math.max(2,Math.round(innerHeight*Math.min(devicePixelRatio,2)*scale));
   if(cv.width!==W||cv.height!==H){cv.width=W;cv.height=H;gl.viewport(0,0,W,H)}
-  // pressure slider is logarithmic: 101325 Pa -> 1 Pa
+  // Slider follows the 1976 Standard Atmosphere through 80 km (~1 Pa).
   sS+=(+sl.value-sS)*Math.min(1,dt*14);
-  const pa=PA0*Math.exp(-sS*Math.log(PA0));
-  thr+=((on?1:0)-thr)*Math.min(1,dt*(on?5:3));flash=Math.max(0,flash-dt*2.5);
+  const altM=sS*80000,pa=isaPressure(altM);
+  if(on){startClock+=dt;thr=Math.min(1,startClock/1.8);thr=thr*thr*(3-2*thr)}
+  else thr*=Math.exp(-dt*4.5);
+  if(thr<.002)thr=0;
+  flash=Math.max(0,flash-dt*2.3);
   const pc=PC*(.35+.65*thr), S=solve(pa,pc);
   // framing: derived from the physical shell-cell length so nothing is cropped
-  const Et=Math.min(12,Math.max(3.4,.85*S.L));E+=(Et-E)*Math.min(1,dt*3);
+  const Et=thr>.03?Math.min(12,Math.max(3,.85*S.L)):1.7;E+=(Et-E)*Math.min(1,dt*3);
   let Rc=0;for(let i=0;i<48;i++)Rc=Math.max(Rc,bound(E*1.8*i/47,S));Rc=Math.min(Rc,40)+.3;
   const top=2.4,Ht=top+1.8*E,Rv=Math.min(bound(E,S),30),asp=innerWidth/innerHeight;
   const dT=1.6*.5*Math.max(Ht,2*Rv/asp)*1.08,tgtY=(top-1.8*E)/2;cd+=(dT-cd)*Math.min(1,dt*3);cy+=(tgtY-cy)*Math.min(1,dt*3);
@@ -218,15 +299,19 @@ function frame(now){
   gl.uniform1f(U.uRj,S.rj);gl.uniform1f(U.uTh,S.theta);gl.uniform1f(U.uL,S.L);gl.uniform1f(U.uSM,S.sM);
   gl.uniform1f(U.uSat,Math.tanh(.5*Math.abs(Math.log(S.R))));              // diamond strength from pe/pa
   gl.uniform1f(U.uE,E);gl.uniform1f(U.uRc,Rc);
-  gl.uniform1f(U.uAB,.12+.88*Math.pow(paN,.35));                           // afterburn needs ambient O2
+  gl.uniform1f(U.uAlt,altM/1000);
+  gl.uniform1f(U.uAB,.88*Math.pow(paN,.35));                                // ambient oxygen falls with pressure
   gl.uniform1f(U.uThr,thr*(1+flash*1.5));gl.uniform1f(U.uFl,flash*thr);
   gl.uniform1f(U.uShake,thr*Math.sqrt(paN)*.9+thr*.1);
   gl.uniform3f(U.uCam,Math.sin(az)*cd,cy+cd*.06,Math.cos(az)*cd);gl.uniform3f(U.uTgt,0,cy,0);
   gl.drawArrays(gl.TRIANGLES,0,3);
-  const F=S.F*thr*thr*(thr>.01?1:0)/Math.max(thr,1e-3)*Math.min(1,thr*1.0)/Math.min(1,thr||1);
-  oF.textContent=Math.round(thr>.005?S.F*Math.min(1,thr*1.4)/1000:0)+' kN';
-  oP.textContent=(pa>=1000?(pa/1000).toFixed(1)+' kPa':pa>=10?pa.toFixed(0)+' Pa':'≈ vacuum')+' ambient';
-  if(gain){gain.gain.value=thr*(.03+.5*Math.sqrt(paN));lp.frequency.value=250+900*Math.sqrt(paN)}
+  oF.textContent=Math.round(thr>.005?S.F*thr/1000:0)+' kN';
+  oP.textContent=pa>=1000?(pa/1000).toFixed(1)+' kPa':pa>=10?pa.toFixed(0)+' Pa':pa.toFixed(2)+' Pa';
+  const altText=altM<1000?Math.round(altM)+' m':(altM/1000).toFixed(1)+' km';
+  oA.textContent=altM<.5?'0 m · sea level':altM>70000?altText+' · near-space':altText+' · ISA';
+  oAlt.textContent=altText;
+  oQ.textContent=!on?(thr>.025?'TAIL-OFF':'STANDBY'):startClock<.18?'IGNITION':startClock<1.8?'CHAMBER RAMP':'RUNNING';
+  if(gain){gain.gain.value=thr*(.03+.5*Math.sqrt(paN))*Math.sqrt(paN);lp.frequency.value=250+900*Math.sqrt(paN)}
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
