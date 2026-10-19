@@ -226,6 +226,70 @@ a.back:hover { color: var(--cyan); }
   background: var(--panel); border-top: 1px solid var(--border);
   white-space: pre-wrap;
 }
+
+/* ═══════════════════════════════════════════════════════════════════
+   Patch — blueprint backdrop, visuals toggle, progress bar,
+   tabular numerals, .invalid state
+   ═══════════════════════════════════════════════════════════════════ */
+
+body::before {
+  content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 0;
+  background-image:
+    linear-gradient(rgba(53,214,255,0.020) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(53,214,255,0.020) 1px, transparent 1px);
+  background-size: 44px 44px;
+}
+#app { position: relative; z-index: 1; }
+
+.toggle-switch {
+  display: inline-flex; align-items: center; gap: 7px;
+  cursor: pointer; user-select: none;
+  font-family: var(--font-mono); font-size: 11.5px; color: var(--dim);
+  padding: 2px 6px; border-radius: 4px; border: 1px solid transparent;
+}
+.toggle-switch:hover { border-color: var(--border); }
+.toggle-switch input { display: none; }
+.toggle-switch .track {
+  position: relative; width: 30px; height: 16px;
+  background: var(--panel-2); border: 1px solid var(--border);
+  border-radius: 999px; flex-shrink: 0;
+}
+.toggle-switch .thumb {
+  position: absolute; top: 1px; left: 1px; width: 12px; height: 12px;
+  background: var(--dim); border-radius: 50%;
+}
+.toggle-switch input:checked + .track {
+  background: rgba(53,214,255,0.15); border-color: var(--cyan);
+}
+.toggle-switch input:checked + .track .thumb {
+  left: 15px; background: var(--cyan);
+}
+.toggle-switch input:checked ~ .lbl { color: var(--cyan); }
+
+#status { display: flex; align-items: center; gap: 16px; }
+#statusText { flex: 1; white-space: pre-wrap; }
+
+.progress-bar {
+  width: 180px; height: 4px; background: var(--panel-2);
+  border-radius: 2px; overflow: hidden; display: none; flex-shrink: 0;
+}
+.progress-bar.show { display: block; }
+.progress-fill {
+  height: 100%; background: var(--cyan); width: 0%;
+  transition: width 0.15s linear;
+}
+
+.field-row input.invalid {
+  border-color: var(--danger);
+  background: rgba(255,95,126,0.06);
+}
+
+.run-summary .v,
+.capture .body,
+.compare-row .a,
+.compare-row .b,
+.compare-grid { font-variant-numeric: tabular-nums; }
+
 </style>
 </head>
 <body>
@@ -235,6 +299,11 @@ a.back:hover { color: var(--cyan); }
     <span class="brand">⚡ GUIDANCE NUMERICAL</span>
     <span class="brand-sub">headless-parity · fast calibration</span>
     <div class="spacer"></div>
+    <label class="toggle-switch" title="Off = pure numerical run, no plotting. Maximum speed.">
+      <input type="checkbox" id="visualsToggle" checked>
+      <span class="track"><span class="thumb"></span></span>
+      <span class="lbl">Visuals</span>
+    </label>
     <span class="stack-label" id="stackLabel">—</span>
     <a class="back" href="index.html">← Home</a>
   </div>
@@ -360,7 +429,10 @@ a.back:hover { color: var(--cyan); }
     </div>
   </div>
 
-  <div id="status">Ready.</div>
+  <div id="status">
+    <span id="statusText">Ready.</span>
+    <div class="progress-bar" id="progressBar"><div class="progress-fill" id="progressFill"></div></div>
+  </div>
 </div>
 
 <!-- ============================================================================
@@ -426,9 +498,58 @@ a.back:hover { color: var(--cyan); }
   const captureList   = $('capturesList');
   const captureCnt    = $('captureCount');
   const statusEl      = $('status');
+  const statusTextEl  = $('statusText');
+  const progressBarEl = $('progressBar');
+  const progressFillEl= $('progressFill');
   const presetSel     = $('presetSelect');
   const presetStat    = $('presetStatus');
   const stackLabel    = $('stackLabel');
+
+  // ============================================================================
+  // Visuals flag + G-load helper (hook.js parity)
+  // ============================================================================
+  let visualsEnabled = true;
+
+  // Proper acceleration (G-load) — 1:1 port from hook.js gLoad().
+  // Thrust (with gimbal) + drag vector sum ÷ (dryMass + fuelMass) * g0.
+  // NOTE: b.dryMass is the STALE cached scalar after fairing split
+  // (~+1905 kg high). Kept as-is for exact parity with hook.js / headless.
+  function gLoad(b, Re) {
+    const m = (b.dryMass || 0) + (b.fuelMass || 0);
+    if (!(m > 0)) return 0;
+    const engs = b.engines || [];
+    let Fa = 0, Fl = 0;
+    for (let i = 0; i < engs.length; i++) {
+      const en = engs[i];
+      const f = en.currentF || 0;
+      if (!f) continue;
+      const g = (en.gimbalDeg || 0) * Math.PI / 180;
+      Fa += f * Math.cos(g);
+      Fl += f * Math.sin(g);
+    }
+    const ux = -Math.sin(b.theta), uy = Math.cos(b.theta);
+    let fx = Fa * ux + Fl * (-uy);
+    let fy = Fa * uy + Fl * ux;
+    if (typeof airDensity === 'function' && Number.isFinite(CONFIG.DRAG_CD) && b.width > 0) {
+      const r = Math.sqrt(b.rx * b.rx + b.ry * b.ry), alt = r - Re;
+      const rho = airDensity(Math.max(0, alt));
+      if (rho > 0) {
+        const sv = earthSurfaceVelocity(b.rx, b.ry);
+        const wv = windInertialVector(b.rx, b.ry);
+        const rvx = b.vx - (sv.vx + wv.wx), rvy = b.vy - (sv.vy + wv.wy);
+        const sp = Math.sqrt(rvx * rvx + rvy * rvy);
+        if (sp > 0) {
+          const area = Math.PI * (b.width / 2) * (b.width / 2);
+          const cd = (typeof hullDragCoefficient === 'function')
+            ? hullDragCoefficient(sp, Math.max(0, alt)) : CONFIG.DRAG_CD;
+          const D = 0.5 * rho * sp * sp * cd * area;
+          fx -= D * rvx / sp;
+          fy -= D * rvy / sp;
+        }
+      }
+    }
+    return Math.sqrt(fx * fx + fy * fy) / (m * 9.80665);
+  }
 
   // ============================================================================
   // Guide selection + config state
@@ -944,7 +1065,7 @@ default: break;
   resetDefBtn.addEventListener('click', () => {
     if (!currentGuide) return;
     renderConstants(currentGuide);
-    statusEl.textContent = 'Constants reset to code defaults.';
+    statusTextEl.textContent = 'Constants reset to code defaults.';
   });
 
   // ============================================================================
@@ -1024,6 +1145,7 @@ presetStat.textContent = `Loaded "${p.name}".`;
       guideName: currentGuide,
       stackId: stack ? stack.id : '',
       stackName: stack ? stack.name : '',
+      stackType: stack ? stack.type : '',
       tags: [],
       constants: JSON.parse(JSON.stringify(currentValues)),
       ...RunStamp.stampFor(currentGuide, currentValues),
@@ -1121,113 +1243,118 @@ presetStat.textContent = 'Imported constants.';
   const PLOT_RENDER_MAX = 2500;
 
   const Plots = {
-  data: {
-    polar: {},
-    vr: {},
-    vt: {},
-    alt: {},
-    speed: {},
-    mass: {},
-    q: {},
-  },
-  // Snapshot of the most recent previous run's plot data. Drawn faded
-  // behind the current run so successive runs can be compared visually.
-  // Archived by reset() at the start of each new run; wiped by clear().
+  data: { polar: {}, vr: {}, vt: {}, alt: {}, speed: {}, mass: {}, q: {} },
   previousData: null,
-  
+  _prevRendered: false,
+  _fixedBounds: null,
+  _lastPushTime: {},
+  _DECIMATE_DT: 0.10,   // 10 Hz plot sample rate
+
   _hasAnyData(d) {
     if (!d) return false;
-    for (const k in d) {
-      if (d[k] && Object.keys(d[k]).length > 0) return true;
-    }
+    for (const k in d) if (d[k] && Object.keys(d[k]).length) return true;
     return false;
   },
-  
-  // Called at the start of each run — archives current data as previous,
-  // then starts a fresh current container. If there was no data yet
-  // (first run on the page), previousData stays as-is (null).
-  reset() {
+
+  // Called at start of each run. Archives current -> previous, and locks
+  // bounds ONCE so subsequent renderAll() calls skip O(n) recompute.
+  reset(durationS) {
     if (this._hasAnyData(this.data)) {
       this.previousData = this.data;
+      this._prevRendered = false;
+      this._fixedBounds = this._computeFixedBounds(this.previousData, durationS);
     }
-    this.data = {
-      polar: {},
-      vr: {},
-      vt: {},
-      alt: {},
-      speed: {},
-      mass: {},
-      q: {},
-    };
+    this.data = { polar: {}, vr: {}, vt: {}, alt: {}, speed: {}, mass: {}, q: {} };
+    this._lastPushTime = {};
   },
-  
-  // Called by the "Clear plots" button — wipes everything, including
-  // the previous-run snapshot. Distinct from reset() on purpose.
+
   clear() {
-    this.data = {
-      polar: {},
-      vr: {},
-      vt: {},
-      alt: {},
-      speed: {},
-      mass: {},
-      q: {},
-    };
+    this.data = { polar: {}, vr: {}, vt: {}, alt: {}, speed: {}, mass: {}, q: {} };
     this.previousData = null;
+    this._prevRendered = false;
+    this._fixedBounds = null;
+    this._lastPushTime = {};
   },
-  
+
+  _computeFixedBounds(prev, durationS) {
+    // Polar: prev-run bounds + 30% margin. If current run flies wildly
+    // further, points may clip — cheap tradeoff for cached bounds.
+    const polarB = _computePolarBounds([prev.polar]);
+    if (polarB && polarB.hasAny) {
+      const mX = (polarB.maxX - polarB.minX) * 0.30;
+      const mY = (polarB.maxY - polarB.minY) * 0.30;
+      polarB.minX -= mX; polarB.maxX += mX;
+      polarB.minY -= mY; polarB.maxY += mY;
+    }
+    const out = { polar: polarB };
+    for (const k of ['vr', 'vt', 'alt', 'speed', 'mass', 'q']) {
+      let vMin = Infinity, vMax = -Infinity, tMax = 0;
+      for (const bodyKey in prev[k]) {
+        const arr = prev[k][bodyKey];
+        for (let i = 0; i < arr.length; i++) {
+          const p = arr[i];
+          if (p.v < vMin) vMin = p.v;
+          if (p.v > vMax) vMax = p.v;
+          if (p.t > tMax) tMax = p.t;
+        }
+      }
+      if (!isFinite(vMin)) { vMin = 0; vMax = 1; }
+      if (vMin > 0) vMin = 0;
+      if (vMax < 0) vMax = 0;
+      const pad = (vMax - vMin) * 0.20 || 1;
+      out[k] = {
+        tMin: 0,
+        tMax: Math.max(tMax, durationS || 0) * 1.02,
+        vMin: vMin - pad,
+        vMax: vMax + pad,
+      };
+    }
+    return out;
+  },
+
   _push(store, key, val) {
     if (!store[key]) store[key] = [];
     store[key].push(val);
   },
+
   push(bodyIdx, s) {
     const key = 'b' + bodyIdx;
+    const last = this._lastPushTime[key];
+    if (last != null && s.t - last < this._DECIMATE_DT) return;
+    this._lastPushTime[key] = s.t;
     this._push(this.data.polar, key, { rx: s.rx, ry: s.ry, t: s.t });
-    this._push(this.data.vr, key, { t: s.t, v: s.vr });
-    this._push(this.data.vt, key, { t: s.t, v: s.vt });
-    this._push(this.data.alt, key, { t: s.t, v: s.altKm });
+    this._push(this.data.vr,    key, { t: s.t, v: s.vr });
+    this._push(this.data.vt,    key, { t: s.t, v: s.vt });
+    this._push(this.data.alt,   key, { t: s.t, v: s.altKm });
     this._push(this.data.speed, key, { t: s.t, v: s.speed });
-    this._push(this.data.mass, key, { t: s.t, v: s.mass_t });
-    this._push(this.data.q, key, { t: s.t, v: s.q_kPa });
+    this._push(this.data.mass,  key, { t: s.t, v: s.mass_t });
+    this._push(this.data.q,     key, { t: s.t, v: s.q_kPa });
   },
-  
+
   renderAll() {
     const hasPrev = this._hasAnyData(this.previousData);
-    
-    // Compute UNION polar bounds once, and pass to both passes. Without
-    // this the current pass's early-phase bounds are tiny (a 5% window
-    // around the pad) — the earth it draws at that scale is enormous
-    // and covers the faded trail from the previous run.
-    let polarBounds = null;
-    if (hasPrev) {
-      polarBounds = _computePolarBounds([this.previousData.polar, this.data.polar]);
+    const fixed = this._fixedBounds;
+
+    // Previous run drawn ONCE, then cached as canvas pixels.
+    if (hasPrev && !this._prevRendered) {
+      drawPolarPlot(this.previousData.polar, { faded: true, suppressEmptyMessage: true, bounds: fixed && fixed.polar });
+      drawTimeSeries('vrCanvas',    this.previousData.vr,    { forceZero: true, faded: true, suppressEmptyMessage: true, bounds: fixed && fixed.vr });
+      drawTimeSeries('vtCanvas',    this.previousData.vt,    { forceZero: true, faded: true, suppressEmptyMessage: true, bounds: fixed && fixed.vt });
+      drawTimeSeries('altCanvas',   this.previousData.alt,   { forceZero: true, faded: true, suppressEmptyMessage: true, bounds: fixed && fixed.alt });
+      drawTimeSeries('speedCanvas', this.previousData.speed, { forceZero: true, faded: true, suppressEmptyMessage: true, bounds: fixed && fixed.speed });
+      drawTimeSeries('massCanvas',  this.previousData.mass,  { forceZero: true, faded: true, suppressEmptyMessage: true, bounds: fixed && fixed.mass });
+      drawTimeSeries('qCanvas',     this.previousData.q,     { forceZero: true, faded: true, suppressEmptyMessage: true, bounds: fixed && fixed.q });
+      this._prevRendered = true;
     }
-    
-    // Pass 1 — previous run, faded, behind.
-    if (hasPrev) {
-      drawPolarPlot(this.previousData.polar, { faded: true, suppressEmptyMessage: true, bounds: polarBounds });
-      drawTimeSeries('vrCanvas', this.previousData.vr, { forceZero: true, faded: true, suppressEmptyMessage: true });
-      drawTimeSeries('vtCanvas', this.previousData.vt, { forceZero: true, faded: true, suppressEmptyMessage: true });
-      drawTimeSeries('altCanvas', this.previousData.alt, { forceZero: true, faded: true, suppressEmptyMessage: true });
-      drawTimeSeries('speedCanvas', this.previousData.speed, { forceZero: true, faded: true, suppressEmptyMessage: true });
-      drawTimeSeries('massCanvas', this.previousData.mass, { forceZero: true, faded: true, suppressEmptyMessage: true });
-      drawTimeSeries('qCanvas', this.previousData.q, { forceZero: true, faded: true, suppressEmptyMessage: true });
-    }
-    // Pass 2 — current run, on top. skipClear keeps the faded trail
-// pixels; skipBackground keeps the previous pass's space fill and
-// earth disc from being repainted over them.
-drawPolarPlot(this.data.polar, {
-  skipClear: hasPrev,
-  skipBackground: hasPrev,
-  suppressEmptyMessage: hasPrev,
-  bounds: polarBounds,
-});
-    drawTimeSeries('vrCanvas', this.data.vr, { forceZero: true, skipClear: hasPrev, suppressEmptyMessage: hasPrev });
-    drawTimeSeries('vtCanvas', this.data.vt, { forceZero: true, skipClear: hasPrev, suppressEmptyMessage: hasPrev });
-    drawTimeSeries('altCanvas', this.data.alt, { forceZero: true, skipClear: hasPrev, suppressEmptyMessage: hasPrev });
-    drawTimeSeries('speedCanvas', this.data.speed, { forceZero: true, skipClear: hasPrev, suppressEmptyMessage: hasPrev });
-    drawTimeSeries('massCanvas', this.data.mass, { forceZero: true, skipClear: hasPrev, suppressEmptyMessage: hasPrev });
-    drawTimeSeries('qCanvas', this.data.q, { forceZero: true, skipClear: hasPrev, suppressEmptyMessage: hasPrev });
+
+    const skip = hasPrev && this._prevRendered;
+    drawPolarPlot(this.data.polar, { skipClear: skip, skipBackground: skip, suppressEmptyMessage: skip, bounds: fixed && fixed.polar });
+    drawTimeSeries('vrCanvas',    this.data.vr,    { forceZero: true, skipClear: skip, suppressEmptyMessage: skip, bounds: fixed && fixed.vr });
+    drawTimeSeries('vtCanvas',    this.data.vt,    { forceZero: true, skipClear: skip, suppressEmptyMessage: skip, bounds: fixed && fixed.vt });
+    drawTimeSeries('altCanvas',   this.data.alt,   { forceZero: true, skipClear: skip, suppressEmptyMessage: skip, bounds: fixed && fixed.alt });
+    drawTimeSeries('speedCanvas', this.data.speed, { forceZero: true, skipClear: skip, suppressEmptyMessage: skip, bounds: fixed && fixed.speed });
+    drawTimeSeries('massCanvas',  this.data.mass,  { forceZero: true, skipClear: skip, suppressEmptyMessage: skip, bounds: fixed && fixed.mass });
+    drawTimeSeries('qCanvas',     this.data.q,     { forceZero: true, skipClear: skip, suppressEmptyMessage: skip, bounds: fixed && fixed.q });
   },
 };
 
@@ -1548,19 +1675,25 @@ if (!faded) {
     const plotH = cssH - padT - padB;
     if (plotW < 10 || plotH < 10) return;
 
-    let tMin = Infinity, tMax = -Infinity, vMin = Infinity, vMax = -Infinity;
-    for (const key in seriesMap) {
-      const arr = seriesMap[key];
-      if (!arr || !arr.length) continue;
-      for (let i = 0; i < arr.length; i++) {
-        const p = arr[i];
-        if (p.t < tMin) tMin = p.t;
-        if (p.t > tMax) tMax = p.t;
-        if (p.v < vMin) vMin = p.v;
-        if (p.v > vMax) vMax = p.v;
+    let tMin, tMax, vMin, vMax;
+    if (opts.bounds) {
+      tMin = opts.bounds.tMin; tMax = opts.bounds.tMax;
+      vMin = opts.bounds.vMin; vMax = opts.bounds.vMax;
+    } else {
+      tMin = Infinity; tMax = -Infinity; vMin = Infinity; vMax = -Infinity;
+      for (const key in seriesMap) {
+        const arr = seriesMap[key];
+        if (!arr || !arr.length) continue;
+        for (let i = 0; i < arr.length; i++) {
+          const p = arr[i];
+          if (p.t < tMin) tMin = p.t;
+          if (p.t > tMax) tMax = p.t;
+          if (p.v < vMin) vMin = p.v;
+          if (p.v > vMax) vMax = p.v;
+        }
       }
+      if (!isFinite(tMin)) { tMin = 0; tMax = 1; vMin = 0; vMax = 1; }
     }
-    if (!isFinite(tMin)) { tMin = 0; tMax = 1; vMin = 0; vMax = 1; }
     if (tMax - tMin < 0.1) tMax = tMin + 0.1;
     if (vMax - vMin < 1e-9) { vMin -= 1; vMax += 1; }
     if (opts.forceZero) {
@@ -1658,14 +1791,31 @@ if (!faded) {
   let _resizeTimer = null;
   window.addEventListener('resize', () => {
     if (_resizeTimer) clearTimeout(_resizeTimer);
-    _resizeTimer = setTimeout(() => Plots.renderAll(), 120);
+    _resizeTimer = setTimeout(() => {
+      if (!visualsEnabled) return;
+      // Canvas pixels are wiped on resize — must redraw previous run.
+      Plots._prevRendered = false;
+      Plots.renderAll();
+    }, 120);
   });
 
   clearPlotsBtn.addEventListener('click', () => {
   Plots.clear();
   Plots.renderAll();
-  statusEl.textContent = 'Plots cleared (both current and previous).';
+  statusTextEl.textContent = 'Plots cleared (both current and previous).';
 });
+
+  // Visuals ON/OFF — off means pure numerical, no plotting (max speed).
+  $('visualsToggle').addEventListener('change', (e) => {
+    visualsEnabled = !!e.target.checked;
+    if (!visualsEnabled) {
+      Plots.clear();
+      try { Plots.renderAll(); } catch (_) {}
+      statusTextEl.textContent = 'Visuals OFF — pure numerical mode (no plotting).';
+    } else {
+      statusTextEl.textContent = 'Visuals ON — plotting enabled.';
+    }
+  });
 
   // ============================================================================
   // Capture helpers — identical to numerical.
@@ -1696,7 +1846,9 @@ if (!faded) {
       const e = Math.sqrt(Math.max(0, 1 + 2 * E * h * h / (GM * GM)));
       peri_km = (p / (1 + e) - CONFIG.EARTH_RADIUS) / 1000;
     }
-    const geom = (typeof geometryOf === 'function') ? geometryOf(b) : { M: 0 };
+    const geom = (b._geomCache && Number.isFinite(b._geomCache.M))
+      ? b._geomCache
+      : ((typeof geometryOf === 'function') ? geometryOf(b) : { M: 0 });
     const fuel_t = (b.fuelMass || 0) / 1000;
     const thrust_MN = (b.engines || []).reduce((s, e) => s + (e.currentF || 0), 0) / 1e6;
     const mdot = (b.engines || []).reduce((s, e) => s + (e.massFlowRate || 0), 0);
@@ -1798,8 +1950,8 @@ if (!faded) {
   // ============================================================================
   async function run() {
     if (running) return;
-    if (!currentGuide) { statusEl.textContent = 'No guide selected.'; return; }
-    if (!currentValues) { statusEl.textContent = 'No constants loaded.'; return; }
+    if (!currentGuide) { statusTextEl.textContent = 'No guide selected.'; return; }
+    if (!currentValues) { statusTextEl.textContent = 'No constants loaded.'; return; }
 
     running = true; abort = false;
     startBtn.disabled = true; stopBtn.disabled = false;
@@ -1810,7 +1962,7 @@ if (!faded) {
 
     const applyOk = Guidance.applyGuideConfig(currentGuide, currentValues);
     if (!applyOk) {
-      statusEl.textContent = 'applyGuideConfig failed — see console.';
+      statusTextEl.textContent = 'applyGuideConfig failed — see console.';
       running = false;
       startBtn.disabled = false; stopBtn.disabled = true;
       return;
@@ -1819,12 +1971,12 @@ if (!faded) {
     resetState(0);
     applyEnvironment();
     applyFueling();
-    Plots.reset();
+    Plots.reset(Math.max(1, parseFloat(durInput.value) || 600));
 
     try { Guidance.stopGuide(); } catch (e) {}
     try { Guidance.startGuide(currentGuide); } catch (e) {
       console.error('[tester] startGuide failed:', e);
-      statusEl.textContent = 'startGuide failed: ' + e.message;
+      statusTextEl.textContent = 'startGuide failed: ' + e.message;
       running = false;
       startBtn.disabled = false; stopBtn.disabled = true;
       return;
@@ -1843,6 +1995,7 @@ if (!faded) {
     let prevFairingOpened = false;
     let peakQ_kPa = -Infinity, peakQ_state = null;
     let peakG = -Infinity, peakG_state = null;
+    let peakG_phase = null, peakG_t = NaN, peakGAscent = 0;
     let prevVrSign = 0;
     let ticksRun = 0;
     const t0 = performance.now();
@@ -1851,7 +2004,7 @@ if (!faded) {
 
     const CHUNK = 400;
 
-    Plots.renderAll();
+    if (visualsEnabled) Plots.renderAll();
 
     for (let i = 0; i < maxTicks; i++) {
       if (abort) break;
@@ -1864,30 +2017,32 @@ if (!faded) {
 
       try { Guidance.onSnapshot(snap); } catch (ge) {
         console.error('[tester] onSnapshot failed at t=' + state.simTime.toFixed(2), ge);
-        statusEl.textContent = 'onSnapshot failed: ' + ge.message;
+        statusTextEl.textContent = 'onSnapshot failed: ' + ge.message;
         break;
       }
 
-      // TEMP DUMP — per-tick state JSON (schema matches numerical)
-      window.__tickDump.push({
-        i: i,
-        t: state.simTime,
-        activeBodyIndex: state.activeBodyIndex,
-        bodies: state.bodies.map(b => ({
-          rx: b.rx, ry: b.ry, vx: b.vx, vy: b.vy,
-          theta: b.theta, omega: b.omega,
-          fuelMass: b.fuelMass,
-          memberFuel: (b.memberFuel || []).slice(),
-          engines: (b.engines || []).map(e => ({
-            massFlowRate: e.massFlowRate,
-            gimbalDeg: e.gimbalDeg,
-            currentF: e.currentF,
+      // Debug-only — off by default. Set window.__DEBUG_TICKDUMP = true from console.
+      if (window.__DEBUG_TICKDUMP === true) {
+        window.__tickDump.push({
+          i: i,
+          t: state.simTime,
+          activeBodyIndex: state.activeBodyIndex,
+          bodies: state.bodies.map(b => ({
+            rx: b.rx, ry: b.ry, vx: b.vx, vy: b.vy,
+            theta: b.theta, omega: b.omega,
+            fuelMass: b.fuelMass,
+            memberFuel: (b.memberFuel || []).slice(),
+            engines: (b.engines || []).map(e => ({
+              massFlowRate: e.massFlowRate,
+              gimbalDeg: e.gimbalDeg,
+              currentF: e.currentF,
+            })),
           })),
-        })),
-      });
+        });
+      }
 
-      // Plot push — pure reads only (no geometryOf, no state mutations).
-      pushPlotSample();
+      // Plot push — pure reads only. Skipped entirely when visuals off.
+      if (visualsEnabled) pushPlotSample();
 
       // Event detection — identical to numerical.
       const gs = (Guidance.getGuideStatus && Guidance.getGuideStatus()) || {};
@@ -1968,14 +2123,18 @@ if (!faded) {
           peakQ_state = captureState();
         }
 
-        for (let _bi = 0; _bi < state.bodies.length; _bi++) {
-          const _b = state.bodies[_bi];
-          const ax = _b._lastAccelX || 0;
-          const ay = _b._lastAccelY || 0;
-          const g_proper = Math.hypot(ax, ay) / 9.80665;
-          if (g_proper > peakG) {
-            peakG = g_proper;
+        // Proper G-load on bodies[0], 1:1 with hook.js gLoad().
+        const b0 = state.bodies[0];
+        if (b0) {
+          const gL = gLoad(b0, CONFIG.EARTH_RADIUS);
+          if (gL > peakG) {
+            peakG = gL;
+            peakG_phase = gs.phase || prevPhase || '—';
+            peakG_t = state.simTime;
             peakG_state = captureState();
+          }
+          if ((gs.phase === 'ASCENT' || gs.phase === 'STAGE_BURN') && gL > peakGAscent) {
+            peakGAscent = gL;
           }
         }
       }
@@ -1983,16 +2142,20 @@ if (!faded) {
       if (i > 0 && i % CHUNK === 0) {
         const wall = (performance.now() - t0) / 1000;
         const tps = ticksRun / wall;
-        const pct = ((i / maxTicks) * 100).toFixed(1);
-        statusEl.textContent =
+        const pct = (i / maxTicks) * 100;
+        statusTextEl.textContent =
           `Running… t=${state.simTime.toFixed(1)}s / ${durationS}s  ` +
-          `(${pct}%, ${ticksRun} ticks, ${tps.toFixed(0)} ticks/s, ${captures.length} captures)`;
-        Plots.renderAll();
+          `(${pct.toFixed(1)}%, ${ticksRun} ticks, ${tps.toFixed(0)} ticks/s, ${captures.length} captures)`;
+        progressBarEl.classList.add('show');
+        progressFillEl.style.width = pct.toFixed(1) + '%';
+        if (visualsEnabled) Plots.renderAll();
         await yieldToBrowser();
       }
     }
 
-    Plots.renderAll();
+    if (visualsEnabled) Plots.renderAll();
+    progressBarEl.classList.remove('show');
+    progressFillEl.style.width = '0%';
 
     const finalEndState = captureState();
 
@@ -2138,7 +2301,7 @@ if (!faded) {
     previousRun = currentRun;
 
     renderCaptures();
-    statusEl.textContent = `Done. ${ticksRun} ticks in ${(elapsedMs / 1000).toFixed(2)}s — ` +
+    statusTextEl.textContent = `Done. ${ticksRun} ticks in ${(elapsedMs / 1000).toFixed(2)}s — ` +
       `${tps.toFixed(0)} ticks/s — ${captures.length} captures.`;
 
     running = false;
@@ -2159,14 +2322,14 @@ if (!faded) {
   }
 
   startBtn.addEventListener('click', run);
-  stopBtn.addEventListener('click', () => { abort = true; statusEl.textContent = 'Aborting…'; });
+  stopBtn.addEventListener('click', () => { abort = true; statusTextEl.textContent = 'Aborting…'; });
 
   // ============================================================================
   // Boot
   // ============================================================================
   (function boot() {
     if (!allGuides.length) {
-      statusEl.textContent = '⚠ No guides registered. Check that guidance.js loaded.';
+      statusTextEl.textContent = '⚠ No guides registered. Check that guidance.js loaded.';
       return;
     }
     currentGuide = allGuides.includes('leoInsertionV3') ? 'leoInsertionV3' : allGuides[0];
@@ -2174,18 +2337,18 @@ if (!faded) {
     renderConstants(currentGuide);
     refreshPresets(currentGuide);
 
-    Plots.renderAll();
+    if (visualsEnabled) Plots.renderAll();
 
     try {
       const stk = (typeof getActiveStack === 'function') ? getActiveStack() : null;
       const members = (typeof getActiveStackMembers === 'function') ? getActiveStackMembers() : [];
       if (stk && members.length) {
-        statusEl.textContent = `Ready. Stack: ${stk.name} — ${members.map(m => m.name).join(' → ')}`;
+        statusTextEl.textContent = `Ready. Stack: ${stk.name} — ${members.map(m => m.name).join(' → ')}`;
       } else {
-        statusEl.textContent = 'Ready. (no active stack in fleet)';
+        statusTextEl.textContent = 'Ready. (no active stack in fleet)';
       }
     } catch (e) {
-      statusEl.textContent = 'Ready.';
+      statusTextEl.textContent = 'Ready.';
     }
 
     console.log('[guidance-tester] ready. Guides:', allGuides.join(', '));
