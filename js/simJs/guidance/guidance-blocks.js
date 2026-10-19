@@ -95,7 +95,7 @@ const FUNDAMENTAL_BLOCKS = {
     defaultConstants: {
       INITIAL_COAST_S: 4.9,
   PUSH_T_S: 4.82,
-  PUSH_MAX_GIMBAL_DEG: 0.61,
+  PUSH_MAX_GIMBAL_DEG: 0.64,
   PUSH_EAST_SIGN: -1,
       // HOLD attitude law (the only one): stage-burn style PD on AoA angle + AoA rate
       // (tau = -I*(KP*aoa + KD*omegaAoA + KI*int(aoa))), no bias, applied for both HOLD and COASTnAoADAMP phases.
@@ -787,7 +787,7 @@ setState(s) {
   // nose perfectly aligned (fastest tilt evolution). Small positive
   // or negative value introduces a perpendicular thrust component
   // that changes the natural tilt growth rate.
-  STAGE_BURN_AOA_BIAS_DEG: 0.59,
+  STAGE_BURN_AOA_BIAS_DEG: 0.827,
     COAST_TARGET_TILT_DEG: -90,
       COAST_ROTATE_TOL_DEG: 0.5,
       COAST_ROTATE_OMEGA_TOL: 0.02,
