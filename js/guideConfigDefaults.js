@@ -178,7 +178,6 @@ leoInsertionV3: _mkDefault(
   THROTTLE_ALT_HIGH_KM: 13,
   THROTTLE_FRAC_LOW: 0.7,
   GIMBAL_TARGET: 'center',
-  MECO_TRIGGER_ON_FUEL: true,
   MECO_TARGET_BOOSTER_FUEL_KG: 52612,
 },
     separation: {
@@ -393,7 +392,6 @@ const GUIDE_IMPORTANT_FIELDS = {
     ],
   leoInsertionV3: [
   'insertion.TARGET_ORBIT_ALT_KM',
-  'ascent.MECO_TRIGGER_ON_FUEL',
   'ascent.MECO_TARGET_BOOSTER_FUEL_KG',
   'ascent.PUSH_MAX_GIMBAL_DEG',
   'ascent.PUSH_T_S',
