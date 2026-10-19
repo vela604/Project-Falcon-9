@@ -132,7 +132,21 @@ const CONFIG = {
   
   SEA_LEVEL_DENSITY: 1.225, // kg/m^3
   SEA_LEVEL_PRESSURE: 101325, // Pa (standard atmosphere, sea level)
-  SCALE_HEIGHT: 8500, // m (exponential atmosphere model)
+  // SCALE_HEIGHT is the OLD single-exponential atmosphere constant. airDensity()
+  // and airPressure() now use the US Standard Atmosphere 1976 (environment.js)
+  // and no longer read it. Kept only in case other files (rendering, sky
+  // colour, telemetry) still use it.
+  SCALE_HEIGHT: 8500, // m (legacy, not used by the atmosphere model)
+
+  // ---------------- Hull drag at very high altitude ----------------
+  // Free-molecular drag coefficient (satellite-style value). The hull Cd
+  // blends from the Mach-dependent continuum value (DRAG_CD x f(Mach)) to
+  // this value between the two altitudes below. See hullDragCoefficient()
+  // in environment.js. Only affects orbital decay; density is negligible
+  // at these altitudes for the ascent.
+  DRAG_CD_FREE_MOLECULAR: 2.2,
+  DRAG_FM_ALT_START_M: 90000,
+  DRAG_FM_ALT_FULL_M: 160000,
   
   // Launch-site altitude above sea level (m). 0 = sea-level pad (current
   // default). Change this when a launch site sits on elevated terrain:

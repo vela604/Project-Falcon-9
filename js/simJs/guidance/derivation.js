@@ -47,6 +47,95 @@ const Derivation = (function () {
   const _AERO_CNALPHA_NOSE = 2.0;
   const _AERO_CD_CROSSFLOW = 1.2;
   
+
+  // ============================================================
+  // Atmosphere + hull drag coefficient.
+  // COPY of environment.js (US Standard Atmosphere 1976, hullDragCoefficient)
+  // — this worker cannot load environment.js, so it carries its own copy.
+  // KEEP THE TWO IN SYNC: if the table or the Cd curve changes there,
+  // change it here too, or guidance and physics will disagree on the drag.
+  // ============================================================
+  const _ATM = (function () {
+    const R = 287.05287, g0 = 9.80665, r0 = 6356766;
+    const Hb = [0, 11000, 20000, 32000, 47000, 51000, 71000];
+    const Tb = [288.15, 216.65, 216.65, 228.65, 270.65, 270.65, 214.65];
+    const Lb = [-0.0065, 0, 0.001, 0.0028, 0, -0.0028, -0.002];
+    const Pb = [101325];
+    for (let i = 1; i < Hb.length; i++) {
+      const dH = Hb[i] - Hb[i - 1];
+      Pb[i] = (Lb[i - 1] === 0) ?
+        Pb[i - 1] * Math.exp(-g0 * dH / (R * Tb[i - 1])) :
+        Pb[i - 1] * Math.pow((Tb[i - 1] + Lb[i - 1] * dH) / Tb[i - 1], -g0 / (R * Lb[i - 1]));
+    }
+    const UP = [
+      [86, 6.958e-6, 186.87], [90, 3.416e-6, 186.87], [100, 5.604e-7, 195.08],
+      [110, 9.708e-8, 240.0], [120, 2.222e-8, 360.0], [130, 8.152e-9, 469.27],
+      [140, 3.831e-9, 559.63], [150, 2.076e-9, 634.39], [160, 1.233e-9, 696.29],
+      [180, 5.194e-10, 790.07], [200, 2.541e-10, 854.56], [250, 6.073e-11, 941.33],
+      [300, 1.916e-11, 976.01], [350, 7.014e-12, 990.06], [400, 2.803e-12, 995.83],
+      [450, 1.184e-12, 998.22], [500, 5.215e-13, 999.24], [600, 1.137e-13, 999.85],
+      [700, 3.070e-14, 999.97], [800, 1.136e-14, 999.99], [900, 5.759e-15, 1000.0],
+      [1000, 3.561e-15, 1000.0],
+    ];
+    const upZ = UP.map(r => r[0] * 1000), upLnRho = UP.map(r => Math.log(r[1])), upT = UP.map(r => r[2]);
+    const out = { T: 288.15, P: 101325, rho: 1.225 };
+    function state(altM) {
+      const h = altM < 0 ? 0 : altM;
+      if (h < 86000) {
+        const H = r0 * h / (r0 + h);
+        let i = Hb.length - 1;
+        while (i > 0 && H < Hb[i]) i--;
+        const dH = H - Hb[i], T = Tb[i] + Lb[i] * dH;
+        const P = (Lb[i] === 0) ? Pb[i] * Math.exp(-g0 * dH / (R * Tb[i])) : Pb[i] * Math.pow(T / Tb[i], -g0 / (R * Lb[i]));
+        out.T = T; out.P = P; out.rho = P / (R * T);
+        return out;
+      }
+      const n = upZ.length;
+      let i = 0;
+      while (i < n - 2 && h > upZ[i + 1]) i++;
+      const t = (h - upZ[i]) / (upZ[i + 1] - upZ[i]);
+      const rho = Math.exp(upLnRho[i] + t * (upLnRho[i + 1] - upLnRho[i]));
+      const T = h >= upZ[n - 1] ? upT[n - 1] : upT[i] + t * (upT[i + 1] - upT[i]);
+      out.T = T; out.rho = rho; out.P = rho * R * T;
+      return out;
+    }
+    return { state };
+  })();
+
+  const _HULL_CD = (function () {
+    const xs = [0, 0.6, 0.8, 0.9, 1.0, 1.1, 1.2, 1.5, 2.0, 3.0, 4.0, 6.0, 10.0];
+    const ys = [0.60, 0.62, 0.75, 0.95, 1.35, 1.55, 1.50, 1.25, 1.00, 0.78, 0.68, 0.60, 0.55];
+    const n = xs.length, h = [], d = [], m = new Array(n);
+    for (let i = 0; i < n - 1; i++) { h[i] = xs[i + 1] - xs[i]; d[i] = (ys[i + 1] - ys[i]) / h[i]; }
+    m[0] = d[0]; m[n - 1] = d[n - 2];
+    for (let i = 1; i < n - 1; i++) {
+      if (d[i - 1] * d[i] <= 0) m[i] = 0;
+      else { const w1 = 2 * h[i] + h[i - 1], w2 = h[i] + 2 * h[i - 1]; m[i] = (w1 + w2) / (w1 / d[i - 1] + w2 / d[i]); }
+    }
+    function f(M) {
+      if (!(M > xs[0])) return ys[0];
+      if (M >= xs[n - 1]) return ys[n - 1];
+      let i = 0;
+      while (M > xs[i + 1]) i++;
+      const t = (M - xs[i]) / h[i], t2 = t * t, t3 = t2 * t;
+      return (2 * t3 - 3 * t2 + 1) * ys[i] + (t3 - 2 * t2 + t) * h[i] * m[i] + (-2 * t3 + 3 * t2) * ys[i + 1] + (t3 - t2) * h[i] * m[i + 1];
+    }
+    return { f };
+  })();
+
+  // Same as hullDragCoefficient() in environment.js.
+  function _hullCd(speedRel, altitude) {
+    const a = Math.sqrt(1.4 * 287.05287 * _ATM.state(altitude).T);
+    const cdContinuum = _envNum('DRAG_CD', 0.6) * _HULL_CD.f(a > 0 ? speedRel / a : 0);
+    const cdFM = _envNum('DRAG_CD_FREE_MOLECULAR', 2.2);
+    const alt0 = _envNum('DRAG_FM_ALT_START_M', 90000);
+    const alt1 = _envNum('DRAG_FM_ALT_FULL_M', 160000);
+    if (altitude <= alt0) return cdContinuum;
+    const x = Math.min(1, (altitude - alt0) / (alt1 - alt0));
+    const w = x * x * (3 - 2 * x);
+    return cdContinuum * (1 - w) + cdFM * w;
+  }
+
   // ============================================================
   // Small helpers
   // ============================================================
@@ -571,7 +660,7 @@ function _soloBodyMassProps(body) {
     return { wx: dirX * wind.speed, wy: dirY * wind.speed };
   }
   
-  function _memberAero(member, refWidth, rho, speedRel, sinAlpha) {
+  function _memberAero(member, refWidth, rho, speedRel, sinAlpha, altitude) {
     const H = Number.isFinite(member.height) ? member.height : 0;
     const W = Number.isFinite(member.width) ? member.width : 0;
     const isTapered = (member.stageRole === 'nose') || (member.stageRole === 'payloadSpace');
@@ -579,7 +668,7 @@ function _soloBodyMassProps(body) {
     const aAxial = Math.PI * (W / 2) ** 2;
     const aSide = W * H;
     const aEff = aAxial * (1 - wCross) + aSide * wCross;
-    const cd = _envNum('DRAG_CD', 0.6);
+    const cd = _hullCd(speedRel, altitude);
     const drag = (rho > 0 && speedRel > 1e-3)
       ? 0.5 * rho * cd * aEff * speedRel * speedRel : 0;
     const cpBodyFrac = isTapered
@@ -630,6 +719,46 @@ function derive(snapshot, bodyIdx, payloadMass, noCache) {
   return result;
 }
 
+  // Virtual engine-bell member below the bottom hull. COPY of the one in
+  // physics.js's bodyAeroProfile() (width = min(cluster span, hull width),
+  // height = single-bell height). Returns null if the record has no bell.
+  function _bellMember(rec) {
+    if (!rec) return null;
+    const role = rec.stageRole || 'rocket';
+    if (role !== 'booster' && role !== 'stage' && role !== 'rocket') return null;
+    const layout = rec.engineTypeId ? getTypeById(rec.engineTypeId) : null;
+    if (!layout) return null;
+    const g = rec.engineThrusters && (rec.engineThrusters.gimbal || rec.engineThrusters.fixed);
+    if (!g || !Number.isFinite(g.massFlowRate)) return null;
+    const t = getTypeById(g.thrusterTypeId);
+    const kH = typeParam(t, 'massFlowToBellHeight');
+    const kD = typeParam(t, 'massFlowToBellDiameter');
+    if (!Number.isFinite(kH) || !Number.isFinite(kD)) return null;
+    const height = kH * g.massFlowRate;
+    const bellDia = kD * g.massFlowRate;
+    const nSlots = (layout.frame && Array.isArray(layout.frame.slots)) ? layout.frame.slots.length : 1;
+    const hullW = Number.isFinite(rec.width) ? rec.width : 3.9;
+    const octaR = (rec.params && Number.isFinite(rec.params.octaRadius)) ? rec.params.octaRadius : 1.7;
+    const width = (nSlots === 1) ? bellDia : Math.min(hullW, octaR * 2 + bellDia);
+    return (height > 0 && width > 0) ? { width, height } : null;
+  }
+
+  // Presented drag area — same rule as computeDragAero() in physics.js:
+  // sum over every member, plus the virtual engine-bell member, of
+  //   aAxial·(1 − wCross) + aSide·wCross ,   wCross = |sin α|.
+  function _effectiveDragArea(members, sinAlpha, refWidth) {
+    const wCross = Math.min(1, Math.abs(sinAlpha));
+    let total = 0;
+    members.forEach(m => {
+      const W = Number.isFinite(m.width) ? m.width : 0;
+      const H = Number.isFinite(m.height) ? m.height : 0;
+      total += Math.PI * (W / 2) ** 2 * (1 - wCross) + W * H * wCross;
+    });
+    const bell = _bellMember(members[0]);
+    if (bell) total += Math.PI * (bell.width / 2) ** 2 * (1 - wCross) + bell.width * bell.height * wCross;
+    return total || Math.PI * (refWidth / 2) ** 2;
+  }
+
 function _deriveImpl(snapshot, bodyIdx, payloadMass) {
   const idx = Number.isInteger(bodyIdx) ? bodyIdx : (snapshot.activeBodyIndex || 0);
   const body = snapshot.bodies[idx];
@@ -651,9 +780,8 @@ function _deriveImpl(snapshot, bodyIdx, payloadMass) {
     const gVecX = r > 0 ? -gMag * rx / r : 0;
     const gVecY = r > 0 ? -gMag * ry / r : 0;
     
-    const rho = altitudeASL < 0
-      ? env.SEA_LEVEL_DENSITY
-      : env.SEA_LEVEL_DENSITY * Math.exp(-altitudeASL / env.SCALE_HEIGHT);
+    // US76 atmosphere — same model as physics (environment.js).
+    const rho = _ATM.state(altitudeASL).rho;
     
     const w = _windInertial(rx, ry, snapshot.wind);
     const omegaE = env.EARTH_OMEGA || 0;
@@ -668,15 +796,21 @@ function _deriveImpl(snapshot, bodyIdx, payloadMass) {
     const sinAlpha = speedRel > 1e-6 ? Math.max(-1, Math.min(1, velBodyX / speedRel)) : 0;
     const alphaDeg = Math.asin(sinAlpha) * 180 / Math.PI;
     
-    let axialArea = 0;
-    members.forEach(m => {
-      const W = m.width || 0;
-      axialArea += Math.PI * (W / 2) ** 2;
-    });
-    if (axialArea <= 0 && body.width) axialArea = Math.PI * (body.width / 2) ** 2;
-    const dragCd = env.DRAG_CD || 0.6;
+    // Drag area follows physics (attitude-dependent, includes the engine bell).
+    let maxW = 0;
+    members.forEach(m => { if (Number.isFinite(m.width) && m.width > maxW) maxW = m.width; });
+    if (maxW <= 0 && body.width) maxW = body.width;
+    let dragArea;
+    if (hasMembers) {
+      dragArea = _effectiveDragArea(members, sinAlpha, maxW);
+    } else {
+      const wC = Math.min(1, Math.abs(sinAlpha));
+      const sW = _bodyWidthOf(body), sH = _bodyHeightOf(body);
+      dragArea = Math.PI * (sW / 2) ** 2 * (1 - wC) + sW * sH * wC;
+    }
+    const dragCd = _hullCd(speedRel, altitudeASL);
     const dragMag = (rho > 0 && speedRel > 1e-3)
-      ? 0.5 * rho * dragCd * axialArea * speedRel * speedRel : 0;
+      ? 0.5 * rho * dragCd * dragArea * speedRel * speedRel : 0;
     const dragVecX = speedRel > 1e-6 ? -dragMag * relVx / speedRel : 0;
     const dragVecY = speedRel > 1e-6 ? -dragMag * relVy / speedRel : 0;
     
@@ -732,7 +866,7 @@ const massProps = hasMembers ?
           comLocalY = combined.comY;
           memberMass = combined.M;
         }
-        const aero = _memberAero(m, refWidth, rho, speedRel, sinAlpha);
+        const aero = _memberAero(m, refWidth, rho, speedRel, sinAlpha, altitudeASL);
         const entry = {
           index: i, id: m.id, role: m.stageRole || 'rocket',
           H, W, baseY: cumY,
@@ -755,7 +889,7 @@ const massProps = hasMembers ?
       const soloH = _bodyHeightOf(body);
       const soloAero = _memberAero(
         { stageRole: null, width: soloW, height: soloH },
-        refWidth || soloW, rho, speedRel, sinAlpha
+        refWidth || soloW, rho, speedRel, sinAlpha, altitudeASL
       );
       const soloComY = soloH * 0.5;
       memberBreakdown = [{

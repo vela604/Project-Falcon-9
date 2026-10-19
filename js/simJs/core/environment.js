@@ -33,22 +33,180 @@ function altitudeFromR(r) {
   return r - CONFIG.EARTH_RADIUS;
 }
 
-// Exponential atmosphere model: rho(h) = rho0 * e^(-h / scaleHeight).
+// ---------------------------------------------------------------------------
+// Atmosphere — U.S. Standard Atmosphere 1976 (US76).
+//
+//   0 – 86 km (geometric): the seven standard temperature layers. Pressure
+//   follows from the hydrostatic equation and density from the ideal-gas law,
+//   so density, pressure and temperature are mutually consistent:
+//
+//     T(H)  = Tb + Lb·(H − Hb)                         (geopotential H)
+//     P(H)  = Pb·(T/Tb)^(−g0 / (R·Lb))     if Lb ≠ 0
+//           = Pb·exp(−g0·(H − Hb) / (R·Tb)) if Lb = 0
+//     ρ     = P / (R·T)
+//     H     = r0·h / (r0 + h)                  r0 = 6 356 766 m
+//
+//   86 – 1000 km: US76 tabulated density and kinetic temperature, with
+//   log-linear interpolation of density (density falls close to
+//   exponentially between table rows). Above 1000 km density continues
+//   with the slope of the last table segment.
+//
+// Above 86 km pressure is estimated as ρ·R·T with the sea-level gas constant.
+// The true mean molecular weight changes there, so it is only approximate;
+// the value is below 0.4 Pa, which changes nozzle exhaust velocity by less
+// than 0.01 m/s, so it does not affect engine performance.
+//
+// US76 describes MODERATE solar activity. Real density at orbital altitude
+// changes by roughly a factor of 10 over the solar cycle.
+// ---------------------------------------------------------------------------
+const _ATM = (function () {
+  const R = 287.05287; // J/(kg·K), specific gas constant of dry air
+  const g0 = 9.80665; // m/s²
+  const r0 = 6356766; // m, US76 reference radius for geopotential height
+  const Hb = [0, 11000, 20000, 32000, 47000, 51000, 71000]; // layer bases (geopotential m)
+  const Tb = [288.15, 216.65, 216.65, 228.65, 270.65, 270.65, 214.65]; // K at layer bases
+  const Lb = [-0.0065, 0, 0.001, 0.0028, 0, -0.0028, -0.002]; // K/m
+  const Pb = [101325];
+  for (let i = 1; i < Hb.length; i++) {
+    const dH = Hb[i] - Hb[i - 1];
+    Pb[i] = (Lb[i - 1] === 0) ?
+      Pb[i - 1] * Math.exp(-g0 * dH / (R * Tb[i - 1])) :
+      Pb[i - 1] * Math.pow((Tb[i - 1] + Lb[i - 1] * dH) / Tb[i - 1], -g0 / (R * Lb[i - 1]));
+  }
+  // Upper atmosphere table: [geometric altitude km, density kg/m³, kinetic temperature K]
+  const UP = [
+    [86, 6.958e-6, 186.87], [90, 3.416e-6, 186.87], [100, 5.604e-7, 195.08],
+    [110, 9.708e-8, 240.0], [120, 2.222e-8, 360.0], [130, 8.152e-9, 469.27],
+    [140, 3.831e-9, 559.63], [150, 2.076e-9, 634.39], [160, 1.233e-9, 696.29],
+    [180, 5.194e-10, 790.07], [200, 2.541e-10, 854.56], [250, 6.073e-11, 941.33],
+    [300, 1.916e-11, 976.01], [350, 7.014e-12, 990.06], [400, 2.803e-12, 995.83],
+    [450, 1.184e-12, 998.22], [500, 5.215e-13, 999.24], [600, 1.137e-13, 999.85],
+    [700, 3.070e-14, 999.97], [800, 1.136e-14, 999.99], [900, 5.759e-15, 1000.0],
+    [1000, 3.561e-15, 1000.0],
+  ];
+  const upZ = UP.map(r => r[0] * 1000);
+  const upLnRho = UP.map(r => Math.log(r[1]));
+  const upT = UP.map(r => r[2]);
+  const out = { T: 288.15, P: 101325, rho: 1.225 }; // reused scratch object (no per-call allocation)
+
+  function state(altM) {
+    const h = altM < 0 ? 0 : altM;
+    if (h < 86000) {
+      const H = r0 * h / (r0 + h);
+      let i = Hb.length - 1;
+      while (i > 0 && H < Hb[i]) i--;
+      const dH = H - Hb[i];
+      const T = Tb[i] + Lb[i] * dH;
+      const P = (Lb[i] === 0) ?
+        Pb[i] * Math.exp(-g0 * dH / (R * Tb[i])) :
+        Pb[i] * Math.pow(T / Tb[i], -g0 / (R * Lb[i]));
+      out.T = T; out.P = P; out.rho = P / (R * T);
+      return out;
+    }
+    const n = upZ.length;
+    let i = 0;
+    while (i < n - 2 && h > upZ[i + 1]) i++;
+    const t = (h - upZ[i]) / (upZ[i + 1] - upZ[i]); // t > 1 above the table: extrapolate
+    const lnRho = upLnRho[i] + t * (upLnRho[i + 1] - upLnRho[i]);
+    const T = h >= upZ[n - 1] ? upT[n - 1] : upT[i] + t * (upT[i + 1] - upT[i]);
+    const rho = Math.exp(lnRho);
+    out.T = T; out.rho = rho; out.P = rho * R * T;
+    return out;
+  }
+  return { state };
+})();
+
+// Mass density, kg/m³. Zero when the atmosphere toggle is off.
 function airDensity(altitude) {
   if (!atmosphereEnabled) return 0;
-  if (altitude < 0) return CONFIG.SEA_LEVEL_DENSITY;
-  return CONFIG.SEA_LEVEL_DENSITY * Math.exp(-altitude / CONFIG.SCALE_HEIGHT);
+  return _ATM.state(altitude).rho;
 }
 
-// Static ambient pressure from the same exponential atmosphere model.
-//   P(h) = P0 · exp(-h / scaleHeight)
-// Same shape as airDensity(), same atmosphereEnabled guard, so toggling
-// "Atmosphere" off zeroes both density and pressure. Altitudes below sea
-// level clamp to sea-level pressure (no negative dip).
+// Static ambient pressure, Pa. Same atmosphereEnabled guard as airDensity(),
+// so toggling "Atmosphere" off zeroes both density and pressure.
 function airPressure(altitude) {
   if (!atmosphereEnabled) return 0;
-  if (altitude < 0) return CONFIG.SEA_LEVEL_PRESSURE;
-  return CONFIG.SEA_LEVEL_PRESSURE * Math.exp(-altitude / CONFIG.SCALE_HEIGHT);
+  return _ATM.state(altitude).P;
+}
+
+// Ambient temperature, K (not gated by the toggle; it is a property of the
+// reference atmosphere, used for the speed of sound).
+function airTemperature(altitude) {
+  return _ATM.state(altitude).T;
+}
+
+// Speed of sound, m/s: a = sqrt(γ·R·T), γ = 1.4. Below 86 km this is the
+// physical value; above it the air is too thin for a sound speed to mean
+// much, but the value is only used to form a Mach number there.
+function speedOfSound(altitude) {
+  return Math.sqrt(1.4 * 287.05287 * _ATM.state(altitude).T);
+}
+
+// ---------------------------------------------------------------------------
+// Hull drag coefficient as a function of Mach number and altitude.
+//
+//   Cd = Cd_ref · f(Mach)                                (continuum flow)
+//   Cd = (1 − w)·Cd_continuum + w·Cd_free_molecular       (blend with altitude)
+//
+// f(Mach) is the usual slender-body shape: flat subsonic, a steep rise
+// through the transonic range (wave drag) to a peak near Mach 1.1, then a
+// gradual fall through the supersonic range to a hypersonic plateau.
+// It is normalised so that f(2.0) = 1, so CONFIG.DRAG_CD is the Cd the hull
+// has at Mach 2 (in the middle of the ascent). With Cd_ref = 0.6 this gives
+// about 0.36 subsonic, 0.93 at the transonic peak and 0.33 hypersonic.
+//
+// A smooth, monotone-preserving cubic (Fritsch–Carlson / PCHIP) joins the
+// table nodes, so the drag has no kinks when Mach sweeps through the peak.
+//
+// Free-molecular flow: once the mean free path becomes comparable to the
+// vehicle size the air no longer behaves like a continuum and the drag
+// coefficient of a body rises to about 2.2 (the value used for satellites).
+// The blend runs from CONFIG.DRAG_FM_ALT_START_M to DRAG_FM_ALT_FULL_M.
+// This only matters for orbital decay; at those altitudes the density is
+// too low to change an ascent.
+// ---------------------------------------------------------------------------
+const _HULL_CD = (function () {
+  const xs = [0, 0.6, 0.8, 0.9, 1.0, 1.1, 1.2, 1.5, 2.0, 3.0, 4.0, 6.0, 10.0];
+  const ys = [0.60, 0.62, 0.75, 0.95, 1.35, 1.55, 1.50, 1.25, 1.00, 0.78, 0.68, 0.60, 0.55];
+  const n = xs.length, h = [], d = [], m = new Array(n);
+  for (let i = 0; i < n - 1; i++) { h[i] = xs[i + 1] - xs[i]; d[i] = (ys[i + 1] - ys[i]) / h[i]; }
+  m[0] = d[0]; m[n - 1] = d[n - 2];
+  for (let i = 1; i < n - 1; i++) {
+    if (d[i - 1] * d[i] <= 0) m[i] = 0;
+    else {
+      const w1 = 2 * h[i] + h[i - 1], w2 = h[i] + 2 * h[i - 1];
+      m[i] = (w1 + w2) / (w1 / d[i - 1] + w2 / d[i]);
+    }
+  }
+  function f(M) {
+    if (!(M > xs[0])) return ys[0];
+    if (M >= xs[n - 1]) return ys[n - 1];
+    let i = 0;
+    while (M > xs[i + 1]) i++;
+    const t = (M - xs[i]) / h[i], t2 = t * t, t3 = t2 * t;
+    return (2 * t3 - 3 * t2 + 1) * ys[i] + (t3 - 2 * t2 + t) * h[i] * m[i] +
+      (-2 * t3 + 3 * t2) * ys[i + 1] + (t3 - t2) * h[i] * m[i + 1];
+  }
+  return { f };
+})();
+
+// Dimensionless Cd multiplier vs Mach (equals 1 at Mach 2).
+function hullCdMachFactor(mach) {
+  return _HULL_CD.f(mach);
+}
+
+// Absolute hull Cd for a given airspeed (m/s, relative to the air) and altitude (m).
+// Physics and guidance should both call this so they agree on the drag.
+function hullDragCoefficient(speedRel, altitude) {
+  const a = speedOfSound(altitude);
+  const cdContinuum = CONFIG.DRAG_CD * _HULL_CD.f(a > 0 ? speedRel / a : 0);
+  const cdFM = Number.isFinite(CONFIG.DRAG_CD_FREE_MOLECULAR) ? CONFIG.DRAG_CD_FREE_MOLECULAR : 2.2;
+  const alt0 = Number.isFinite(CONFIG.DRAG_FM_ALT_START_M) ? CONFIG.DRAG_FM_ALT_START_M : 90000;
+  const alt1 = Number.isFinite(CONFIG.DRAG_FM_ALT_FULL_M) ? CONFIG.DRAG_FM_ALT_FULL_M : 160000;
+  if (altitude <= alt0) return cdContinuum;
+  const x = Math.min(1, (altitude - alt0) / (alt1 - alt0));
+  const w = x * x * (3 - 2 * x); // smoothstep
+  return cdContinuum * (1 - w) + cdFM * w;
 }
 
 // ---------------- Wind ----------------
