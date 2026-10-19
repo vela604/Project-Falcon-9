@@ -1323,12 +1323,13 @@ ctx.translate(0, bellExitY_px);
   // Length and width multipliers. Vacuum plume is shorter and wider
   // — real MVac flame doesn't punch as far as a Merlin's, it spreads
   // radially once it clears the massive nozzle exit.
-  const lenMul = isSingleNozzle ? 0.30 : 1.0;
-const widthMul = isSingleNozzle ? 1.30 : 1.0;
+  const _vs = (() => { const a = Math.hypot(body.rx, body.ry) - CONFIG.EARTH_RADIUS; const r = (typeof airDensity === 'function') ? airDensity(Math.max(0, a)) : 0; const t = r > 0 ? (-2 - Math.log10(r)) / 4 : 1; const s = Math.min(1, Math.max(0, t)); return s * s * (3 - 2 * s); })();
+  const lenMul = isSingleNozzle ? 0.30 + 0.25 * _vs : 1.0;
+const widthMul = isSingleNozzle ? 1.30 + 1.2 * _vs : 1.0;
 // Trail taper — vacuum plumes narrow as they dissipate, they don't
 // balloon outward like SL cluster plumes. 1.0 = full SL spread,
 // 0.55 = about half-width trail. Booster cluster keeps 1.0.
-const trailMul = isSingleNozzle ? 0.40 : 1.0;
+const trailMul = isSingleNozzle ? 0.40 + 1.3 * _vs : 1.0;
   
   const tNow = performance.now() * 0.01;
   const flameLen = H * (0.6 + 1.6 * totalThrottle) * lenMul;
