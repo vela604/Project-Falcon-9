@@ -119,7 +119,8 @@
         const sp = Math.sqrt(rvx * rvx + rvy * rvy);
         if (sp > 0) {
           const area = Math.PI * (b.width / 2) * (b.width / 2);
-          const D = 0.5 * rho * sp * sp * CONFIG.DRAG_CD * area;
+          const cd = (typeof hullDragCoefficient === "function") ? hullDragCoefficient(sp, Math.max(0, alt)) : CONFIG.DRAG_CD;
+          const D = 0.5 * rho * sp * sp * cd * area;
           fx -= D * rvx / sp;
           fy -= D * rvy / sp;
         }

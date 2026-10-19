@@ -1,0 +1,671 @@
+
+==================================================================
+## 1. ATMOSPHERE FUNCTIONS
+## Callers of the atmosphere API. Any file that calls these needs environment.js loaded in the same context (main thread / physics worker / guidance worker).
+==================================================================
+atlas-prism/lib/hook.js:112:    if (typeof airDensity === 'function' && Number.isFinite(CONFIG.DRAG_CD) && b.width > 0) {
+atlas-prism/lib/hook.js:114:      const rho = airDensity(Math.max(0, alt));
+atlas-prism/lib/hook.js:235:      const haveQ = typeof airDensity === 'function';
+atlas-prism/lib/hook.js:286:          const rho = airDensity(Math.max(0, altM));
+atlas-prism/lib/sim.js:359:    if (typeof atmosphereEnabled !== 'undefined') {
+atlas-prism/lib/sim.js:360:      atmosphereEnabled = !!env.atmosphere;
+guidance-numerical.html:1059:  // setWind / setAtmosphere / setSloshEnabled / setImuEnabled + the same
+guidance-numerical.html:1068:    if (typeof atmosphereEnabled !== 'undefined') {
+guidance-numerical.html:1069:      atmosphereEnabled = $('envAtmosphere').checked;
+guidance-numerical.html:1414:        const rho = (typeof airDensity === 'function') ? airDensity(Math.max(0, alt)) : 0;
+guidance-tester.html:1056:    if (typeof atmosphereEnabled !== 'undefined') {
+guidance-tester.html:1057:      atmosphereEnabled = $('envAtmosphere').checked;
+guidance-tester.html:1222:      const rho = (typeof airDensity === 'function') ? airDensity(alt_m) : 0;
+guidance-tester.html:1925:        const rho = (typeof airDensity === 'function') ? airDensity(Math.max(0, alt)) : 0;
+js/simJs/main.js:245:    atmosphereEnabled = e.target.checked;
+js/simJs/main.js:246:    WorkerBridge.send({ type: 'setAtmosphere', enabled: e.target.checked });
+js/simJs/threads/fastforward.worker.js:142:  if (typeof msg.envState.atmosphereEnabled === 'boolean' && typeof atmosphereEnabled !== 'undefined') {
+js/simJs/threads/fastforward.worker.js:143:    atmosphereEnabled = msg.envState.atmosphereEnabled;
+js/simJs/threads/physics.worker.js:619:    case 'setAtmosphere': {
+js/simJs/threads/physics.worker.js:621:      // are immediate: airDensity() returns 0 on the very next physics
+js/simJs/threads/physics.worker.js:623:      atmosphereEnabled = !!msg.enabled;
+js/simJs/view/fastForward.js:181:// setWind / setAtmosphere / setSloshEnabled messages; the FF worker
+js/simJs/view/fastForward.js:192:  atmosphereEnabled: !!(typeof atmosphereEnabled !== 'undefined' && atmosphereEnabled),
+js/simJs/view/render.js:233:  const rho = airDensity(Math.max(0, altitude));
+js/simJs/view/telemetry.js:149:  const rho = airDensity(Math.max(0, altitude));
+js/simJs/view/telemetry.js:714:    const rho_m = (typeof airDensity === 'function') ? airDensity(Math.max(0, alt_m)) : 0;
+simulation.html:920:          atm: (typeof atmosphereEnabled !== 'undefined') ? atmosphereEnabled : null,
+
+==================================================================
+## 2. OLD EXPONENTIAL-MODEL CONSTANTS
+## These belonged to the old rho0*exp(-h/H) model. Anything still reading them is using the OLD atmosphere and must switch to airDensity()/airPressure().
+==================================================================
+atlas-prism/lib/sim.js:327:        SEA_LEVEL_DENSITY: CONFIG.SEA_LEVEL_DENSITY,
+atlas-prism/lib/sim.js:328:        SCALE_HEIGHT: CONFIG.SCALE_HEIGHT,
+guidance-numerical.html:711:        SEA_LEVEL_DENSITY: CONFIG.SEA_LEVEL_DENSITY,
+guidance-numerical.html:712:        SCALE_HEIGHT: CONFIG.SCALE_HEIGHT,
+guidance-tester.html:720:          SEA_LEVEL_DENSITY: CONFIG.SEA_LEVEL_DENSITY,
+guidance-tester.html:721:          SCALE_HEIGHT: CONFIG.SCALE_HEIGHT,
+js/components.js:110:    const P_sl = (typeof CONFIG !== 'undefined' && Number.isFinite(CONFIG.SEA_LEVEL_PRESSURE)) ?
+js/components.js:111:      CONFIG.SEA_LEVEL_PRESSURE : 101325;
+js/home.js:57:  const P_sl = (typeof CONFIG !== 'undefined' && Number.isFinite(CONFIG.SEA_LEVEL_PRESSURE))
+js/home.js:58:    ? CONFIG.SEA_LEVEL_PRESSURE : 101325;
+js/simJs/threads/workerBridge.js:761:    SEA_LEVEL_DENSITY: CONFIG.SEA_LEVEL_DENSITY,
+js/simJs/threads/workerBridge.js:762:    SCALE_HEIGHT: CONFIG.SCALE_HEIGHT,
+js/simJs/view/render.js:234:  const densityFrac = Math.min(1, rho / CONFIG.SEA_LEVEL_DENSITY); // 1 = sea level, 0 = vacuum
+js/simJs/view/telemetry.js:44:  'ρ': 'Local air density (kg/m³). Exponential model: ρ = ρ₀ · exp(−h / scaleHeight).',
+
+==================================================================
+## 3. HAND-WRITTEN EXPONENTIAL ATMOSPHERE
+## Copies of the old formula written inline (rendering, telemetry, predictors, guidance).
+==================================================================
+
+==================================================================
+## 4. MAGIC NUMBERS FROM STANDARD ATMOSPHERES
+## Hard-coded sea-level values, ISA temperatures and sound speed. Each one is a private atmosphere that will disagree with the new model.
+==================================================================
+js/componentLibrary.js:475:  atmosphericPenalty: 0.002807, // (veVacuum − 282 s·g₀) / 101325
+js/components.js:111:      CONFIG.SEA_LEVEL_PRESSURE : 101325;
+js/home.js:58:    ? CONFIG.SEA_LEVEL_PRESSURE : 101325;
+
+==================================================================
+## 5. DRAG COEFFICIENT AND DRAG FORCE
+## Every drag calculation. All of them must use hullDragCoefficient() (physics side) or _hullCd() (guidance worker) instead of a constant Cd.
+==================================================================
+atlas-prism/lib/hook.js:112:    if (typeof airDensity === 'function' && Number.isFinite(CONFIG.DRAG_CD) && b.width > 0) {
+atlas-prism/lib/hook.js:122:          const D = 0.5 * rho * sp * sp * CONFIG.DRAG_CD * area;
+atlas-prism/lib/sim.js:329:        DRAG_CD: CONFIG.DRAG_CD,
+atlas-prism/lib/worker-sim.js:390:      ex.aero = bodyAeroProfile(b); ex.gridFins = bodyGridFinProfile(b, ex.aero);
+atlas-prism/lib/worker-sim.js:391:      ex._tickAero = computeDragAero(b, ex);
+atlas-prism/lib/worker-sim.js:398:      o.drag = safe(() => T(() => computeDragAero(b, ex), K));
+guidance-numerical.html:713:        DRAG_CD: CONFIG.DRAG_CD,
+guidance-tester.html:722:          DRAG_CD: CONFIG.DRAG_CD,
+js/fleet.js:12:// dragCd) stay top-level since they don't belong to any one component type.
+js/fleet.js:15://     height, width, dryMass, fuelMassMax, dragCd,
+js/fleet.js:467:    dragCd: 0.6,
+js/fleet.js:513:    dragCd: 0.3,
+js/fleet.js:544:    height: 39.7, width: 3.7, dragCd: 0.6,
+js/fleet.js:610:    height: 10.1, width: 3.7, dragCd: 0.6,
+js/fleet.js:643:    height: 13.1, width: 5.2, dragCd: 0.4,
+js/fleet.js:789:    dragCd: r.dragCd !== undefined ? r.dragCd : defaults.dragCd,
+js/fleet.js:1107:      dragCd: Number.isFinite(rec.dragCd) ? rec.dragCd : 0.4,
+js/fleet.js:2795:    dragCd: 0.3,
+js/fleet.js:2813:    dragCd: Number.isFinite(data && data.dragCd) ? data.dragCd : 0.3,
+js/rockets-core.js:34:// Only the truly universal fields (height/width/mass/dragCd, which don't
+js/rockets-core.js:43:  { id: 'f-dragCd', key: 'dragCd' },
+js/rockets-ui.js:532:        <span>Cd ${p.dragCd}</span>
+js/rockets-ui.js:571:    dragCd: src.dragCd,
+js/rockets-ui.js:593:  set('pd-dragCd', p.dragCd);
+js/rockets-ui.js:666:  document.getElementById('pl-dragCd').value = p.dragCd;
+js/rockets-ui.js:726:  const dragCd = parseFloat(document.getElementById('pl-dragCd').value);
+js/rockets-ui.js:728:if (![mass, height, width, dragCd].every(Number.isFinite)) {
+js/rockets-ui.js:736:const payloadData = { name, mass, height, width, dragCd, maxHeatFlux: maxHeatFluxSafe };
+js/rockets-ui.js:823:    document.getElementById('sd-plCd').textContent = pl.dragCd;
+js/rockets-ui.js:1357:  set('d-dragCd', r.dragCd);
+js/rockets-ui.js:1597:    dragCd: 0.4,
+js/rockets-ui.js:1868:      dragCd: parseFloat(document.getElementById('f-dragCd').value) || 0.4,
+js/rockets-ui.js:1891:    dragCd: parseFloat(document.getElementById('f-dragCd').value) || 0.4,
+js/rockets-ui.js:1918:dragCd: parseFloat(document.getElementById('f-dragCd').value) || 0.4,
+js/simJs/core/rcs.js:149:  const aeroProfile = (typeof bodyAeroProfile === 'function') ? bodyAeroProfile(body) : null;
+js/simJs/threads/workerBridge.js:763:    DRAG_CD: CONFIG.DRAG_CD,
+js/simJs/view/controls.js:561:  // equator), same helper computeDragAero() already uses for atmosphere.
+js/simJs/view/telemetry.js:254:  // convention physics.js's computeDragAero uses (co-rotating atmosphere
+js/simJs/view/telemetry.js:384:// physics.js's computeDragAero() uses (see AERO_CP_NOSE_FRAC/AERO_CP_BODY_FRAC
+js/simJs/view/telemetry.js:394:  // computeDragAero() in physics.js, otherwise the panel shows a phantom
+js/simJs/view/telemetry.js:421:// local center-of-pressure (same nose⇄body-tube blend computeDragAero()
+js/simJs/view/telemetry.js:821:    // computeDragAero()'s per-member normal-force split in physics.js.
+rockets-earth.html:173:                    <dd id="d-dragCd">—</dd>
+rockets-earth.html:567:    <div class="field"><label for="f-dragCd">Drag coefficient</label>
+rockets-earth.html:568:      <div class="input-unit"><input type="number" id="f-dragCd" min="0" step="0.01" required><span>Cd</span></div>
+rockets-earth.html:858:              <dd id="pd-dragCd">—</dd>
+rockets-earth.html:896:    <div class="field"><label for="pl-dragCd">Drag coefficient</label>
+rockets-earth.html:897:      <div class="input-unit"><input type="number" id="pl-dragCd" min="0" step="0.1" required><span>Cd</span></div>
+
+==================================================================
+## 6. ENV DATA HANDED TO THE GUIDANCE WORKER
+## The guidance worker cannot load environment.js; it gets an env object. Find where that object is BUILT so the new keys (DRAG_CD_FREE_MOLECULAR, DRAG_FM_ALT_START_M, DRAG_FM_ALT_FULL_M) can be added.
+==================================================================
+atlas-prism/lib/bias-scan.js:46:    const RE = root.CONFIG ? root.CONFIG.EARTH_RADIUS : 6371000;
+atlas-prism/lib/bias-scan.js:47:    const GM = root.CONFIG ? root.CONFIG.GM_EARTH : 3.986e14;
+atlas-prism/lib/config.js:129:    env: {
+atlas-prism/lib/sim.js:10:// Derivation.setStackData runs ONCE per page load, before any guide starts.
+atlas-prism/lib/sim.js:314:      env: {
+atlas-prism/lib/sim.js:315:        EARTH_RADIUS: CONFIG.EARTH_RADIUS,
+atlas-prism/lib/sim.js:316:        GM_EARTH: CONFIG.GM_EARTH,
+atlas-prism/lib/sim.js:337:  Derivation.setStackData(collectStackData());
+atlas-prism/lib/sim.js:338:  _refreshStackData = function () { Derivation.setStackData(collectStackData()); };
+atlas-prism/lib/sim.js:467:    // Re-push CONFIG-derived env into guidance; setStackData otherwise runs once per load.
+atlas-prism/ui/host.js:478:      const env = { atmosphere: $('tuiAtm').checked, slosh: $('tuiSlosh').checked, imu: $('tuiImu').checked,
+guidance-numerical.html:577:// Without it, Derivation.getEnv() returns null, and the guide's boot-time
+guidance-numerical.html:698:      env: {
+guidance-numerical.html:699:        EARTH_RADIUS: CONFIG.EARTH_RADIUS,
+guidance-numerical.html:700:        GM_EARTH: CONFIG.GM_EARTH,
+guidance-numerical.html:721:  Derivation.setStackData(collectStackData());
+guidance-tester.html:707:        env: {
+guidance-tester.html:708:          EARTH_RADIUS: CONFIG.EARTH_RADIUS,
+guidance-tester.html:709:          GM_EARTH: CONFIG.GM_EARTH,
+guidance-tester.html:730:    Derivation.setStackData(collectStackData());
+js/simJs/guidance/guidance-blocks.js:194:        const env = Derivation.getEnv();
+js/simJs/guidance/guidance-blocks.js:470:  const env = Derivation.getEnv();
+js/simJs/guidance/guidance-blocks.js:938:        const env = Derivation.getEnv();
+js/simJs/guidance/guidance-blocks.js:2119:        const env = Derivation.getEnv();
+js/simJs/guidance/guidance.js:37:  function setStackData(data) {
+js/simJs/guidance/guidance.js:38:    Derivation.setStackData(data);
+js/simJs/guidance/guidance.js:524:      const env = Derivation.getEnv();
+js/simJs/guidance/guidance.js:752:          const env = Derivation.getEnv();
+js/simJs/guidance/guidance.js:1088:    setStackData,
+js/simJs/threads/fastforward.worker.js:155:  Derivation.setStackData(msg.stackData);
+js/simJs/threads/guidance.worker.js:180:  if (typeof Derivation !== 'undefined') Derivation.setStackData(msg.data);
+js/simJs/threads/workerBridge.js:743:  env: {
+js/simJs/threads/workerBridge.js:744:      EARTH_RADIUS: CONFIG.EARTH_RADIUS,
+js/simJs/threads/workerBridge.js:745:      GM_EARTH: CONFIG.GM_EARTH,
+simulation.html:917:        env: {
+
+==================================================================
+## 7. WHICH CONTEXTS LOAD environment.js / config.js / guidance files
+## Shows every <script> and importScripts. A context that uses airDensity() but never loads environment.js (or loads an old copy) will break or disagree.
+==================================================================
+atlas-prism/index.html:82:<script src="../js/szadFont.js" onerror="void 0"></script>
+atlas-prism/lib/sim.js:241:    // Pre-resolve every per-member derived value that derivation.js needs
+atlas-prism/lib/worker-pool.js:79:          w = new Worker(this.workerPath + (this.workerPath.indexOf('?') < 0 ? '?v=' + Date.now() : ''));   // cache-bust: workers aggressively cache
+atlas-prism/lib/worker-sim.js:37:    importScripts(
+atlas-prism/lib/worker-sim.js:43:      '../../js/simJs/core/environment.js',
+atlas-prism/lib/worker-sim.js:49:      '../../js/simJs/guidance/derivation.js',
+atlas-prism/standard/pro-alpha.html:11:<script src="../js/szadFont.js" onerror="void 0"></script>
+atlas-prism/standard/pro-alpha.html:83:<script src="../../js/componentLibrary.js"></script>
+atlas-prism/standard/pro-alpha.html:84:<script src="../../js/customDesign.js"></script>
+atlas-prism/standard/pro-alpha.html:85:<script src="../../js/fleet.js"></script>
+atlas-prism/standard/pro-alpha.html:86:<script src="../../js/config.js"></script>
+atlas-prism/standard/pro-alpha.html:87:<script src="../../js/simJs/core/massProps.js"></script>
+atlas-prism/standard/pro-alpha.html:88:<script src="../../js/simJs/core/environment.js"></script>
+atlas-prism/standard/pro-alpha.html:89:<script src="../../js/simJs/core/vehicle.js"></script>
+atlas-prism/standard/pro-alpha.html:90:<script src="../../js/simJs/core/rcs.js"></script>
+atlas-prism/standard/pro-alpha.html:91:<script src="../../js/simJs/core/physics.js"></script>
+atlas-prism/standard/pro-alpha.html:92:<script src="../../js/simJs/core/collision.js"></script>
+atlas-prism/standard/pro-alpha.html:93:<script src="../../js/simJs/guidance/imu.js"></script>
+atlas-prism/standard/pro-alpha.html:94:<script src="../../js/simJs/guidance/derivation.js"></script>
+atlas-prism/standard/pro-alpha.html:95:<script src="../../js/simJs/guidance/guidercs.js"></script>
+atlas-prism/standard/pro-alpha.html:96:<script src="../../js/simJs/guidance/guidance-blocks.js"></script>
+atlas-prism/standard/pro-alpha.html:97:<script src="../../js/simJs/guidance/guidance.js"></script>
+atlas-prism/standard/pro-alpha.html:98:<script src="../../js/guideConfigDefaults.js"></script>
+atlas-prism/standard/pro-alpha.html:99:<script src="../../js/guidancePresets.js"></script>
+atlas-prism/standard/pro-alpha.html:102:<script src="../lib/config.js"></script>
+atlas-prism/standard/pro-alpha.html:103:<script src="../lib/sim.js"></script>
+atlas-prism/standard/pro-alpha.html:104:<script src="../lib/lattice.js"></script>
+atlas-prism/standard/pro-alpha.html:105:<script src="../lib/hook.js"></script>
+atlas-prism/standard/pro-alpha.html:106:<script src="../lib/registry.js"></script>
+atlas-prism/standard/pro-alpha.html:107:<script src="../lib/primitives.js"></script>
+atlas-prism/standard/pro-alpha.html:108:<script src="../engines/pro-alpha.js"></script>
+atlas-prism/standard/pro-alpha.html:109:<script src="../engines/_template.js"></script>
+atlas-prism/standard/pro-alpha.html:110:<script src="../ui/host.js"></script>
+atlas-prism/standard/sereno-bench.html:41:<script src="../../js/componentLibrary.js"></script>
+atlas-prism/standard/sereno-bench.html:42:<script src="../../js/customDesign.js"></script>
+atlas-prism/standard/sereno-bench.html:43:<script src="../../js/fleet.js"></script>
+atlas-prism/standard/sereno-bench.html:44:<script src="../../js/config.js"></script>
+atlas-prism/standard/sereno-bench.html:45:<script src="../../js/simJs/core/massProps.js"></script>
+atlas-prism/standard/sereno-bench.html:46:<script src="../../js/guideConfigDefaults.js"></script>
+atlas-prism/standard/sereno-bench.html:47:<script src="../lib/config.js"></script>
+atlas-prism/standard/sereno-bench.html:48:<script src="../lib/worker-pool.js"></script>
+atlas-prism/standard/sereno-bench.html:97:    for (let i = 0; i < n; i++) ws.push(new Worker(url));
+atlas-prism/standard/sereno-flux.html:11:<script src="../js/szadFont.js" onerror="void 0"></script>
+atlas-prism/standard/sereno-flux.html:135:<script src="../../js/componentLibrary.js"></script>
+atlas-prism/standard/sereno-flux.html:136:<script src="../../js/customDesign.js"></script>
+atlas-prism/standard/sereno-flux.html:137:<script src="../../js/fleet.js"></script>
+atlas-prism/standard/sereno-flux.html:138:<script src="../../js/config.js"></script>
+atlas-prism/standard/sereno-flux.html:139:<script src="../../js/simJs/core/massProps.js"></script>
+atlas-prism/standard/sereno-flux.html:140:<script src="../../js/guideConfigDefaults.js"></script>
+atlas-prism/standard/sereno-flux.html:142:<script src="../lib/config.js"></script>
+atlas-prism/standard/sereno-flux.html:143:<script src="../lib/worker-pool.js"></script>
+atlas-prism/standard/sereno-flux.html:144:<script src="../lib/rough-scan.js"></script>
+atlas-prism/standard/sereno-flux.html:145:<script src="../lib/bootstrap.js"></script>
+atlas-prism/standard/sereno-flux.html:1646:<script src="visJs/engine-fx.js"></script>
+atlas-prism/tests/gimbal_accel_compare.html:59:<script src="../lib/worker-pool.js"></script>
+components.html:71:  <script src="js/componentLibrary.js"></script>
+components.html:72:  <script src="js/components.js"></script>
+components.html:73:  <script src="js/techBayBackground.js"></script>
+guidance-numerical.html:311:<script src="js/componentLibrary.js"></script>
+guidance-numerical.html:312:<script src="js/customDesign.js"></script>
+guidance-numerical.html:313:<script src="js/fleet.js"></script>
+guidance-numerical.html:314:<script src="js/config.js"></script>
+guidance-numerical.html:315:<script src="js/simJs/core/massProps.js"></script>
+guidance-numerical.html:316:<script src="js/simJs/core/environment.js"></script>
+guidance-numerical.html:317:<script src="js/simJs/core/vehicle.js"></script>
+guidance-numerical.html:318:<script src="js/simJs/core/rcs.js"></script>
+guidance-numerical.html:319:<script src="js/simJs/core/physics.js"></script>
+guidance-numerical.html:320:<script src="js/simJs/core/collision.js"></script>
+guidance-numerical.html:321:<script src="js/simJs/guidance/imu.js"></script>
+guidance-numerical.html:322:<script src="js/simJs/guidance/derivation.js"></script>
+guidance-numerical.html:323:<script src="js/simJs/guidance/guidercs.js"></script>
+guidance-numerical.html:324:<script src="js/simJs/guidance/guidance-blocks.js"></script>
+guidance-numerical.html:325:<script src="js/simJs/guidance/guidance.js"></script>
+guidance-numerical.html:328:<script src="js/guideConfigDefaults.js"></script>
+guidance-numerical.html:329:<script src="js/guidancePresets.js"></script>
+guidance-numerical.html:330:<script src="js/guideConstantDescriptions.js"></script>
+guidance-numerical.html:397:  // real physics.worker.js + guidance.worker.js pipeline. Do not "fix" this
+guidance-numerical.html:625:    // Pre-resolve every per-member derived value that derivation.js needs
+guidance-tester.html:369:<script src="js/componentLibrary.js"></script>
+guidance-tester.html:370:<script src="js/customDesign.js"></script>
+guidance-tester.html:371:<script src="js/fleet.js"></script>
+guidance-tester.html:372:<script src="js/config.js"></script>
+guidance-tester.html:373:<script src="js/simJs/core/massProps.js"></script>
+guidance-tester.html:374:<script src="js/simJs/core/environment.js"></script>
+guidance-tester.html:375:<script src="js/simJs/core/vehicle.js"></script>
+guidance-tester.html:376:<script src="js/simJs/core/rcs.js"></script>
+guidance-tester.html:377:<script src="js/simJs/core/physics.js"></script>
+guidance-tester.html:378:<script src="js/simJs/core/collision.js"></script>
+guidance-tester.html:379:<script src="js/simJs/guidance/imu.js"></script>
+guidance-tester.html:380:<script src="js/simJs/guidance/derivation.js"></script>
+guidance-tester.html:381:<script src="js/simJs/guidance/guidercs.js"></script>
+guidance-tester.html:382:<script src="js/simJs/guidance/guidance-blocks.js"></script>
+guidance-tester.html:383:<script src="js/simJs/guidance/guidance.js"></script>
+guidance-tester.html:385:<script src="js/guideConfigDefaults.js"></script>
+guidance-tester.html:386:<script src="js/guidancePresets.js"></script>
+guidance-tester.html:387:<script src="js/guideConstantDescriptions.js"></script>
+guidance_presets.html:721:<script src="js/guideConfigDefaults.js"></script>
+guidance_presets.html:722:<script src="js/guidancePresets.js"></script>
+guidance_presets.html:723:<script src="js/guideConstantDescriptions.js"></script>
+guidance_presets.html:724:<script src="js/guidancePresetsPage.js"></script>
+index.html:165:  <script src="js/componentLibrary.js"></script>
+index.html:166:<script src="js/customDesign.js"></script>
+index.html:167:<script src="js/fleet.js"></script>
+index.html:168:<script src="js/config.js"></script>
+index.html:169:<script src="js/szadFont.js"></script>
+index.html:170:<script src="js/simJs/view/rocketArt.js"></script>
+index.html:171:  <script src="js/home.js"></script>
+index.html:172:  <script src="js/mars-bg.js"></script>
+js/simJs/core/massProps.js:369:  // pass tankH/tankW to structuralVolume) and derivation.js's own
+js/simJs/guidance/guidance.js:21://   - derivation.js → Derivation.*   : mass props, per-member aero
+js/simJs/guidance/guidance.js:26:  let _physicsSend = null; // (msg) => void, wired by guidance.worker.js
+js/simJs/guidance/guidance.js:35:  // accessors live in derivation.js, which owns the raw records and the
+js/simJs/guidance/guidance.js:49:  // Called once per snapshot from guidance.worker.js. Applies (or skips)
+js/simJs/guidance/guidercs.js:5:// Runs inside guidance.worker.js. Uses Derivation for comX/comY/F_max.
+js/simJs/guidance/imu.js:5:// inside guidance.worker.js. Never imports anything, never touches `state`
+js/simJs/main.js:438:    const renderWorker = new Worker('js/simJs/threads/render.worker.js');
+js/simJs/main.js:478:    // hydrate FIRST — this is what triggers importScripts inside the worker.
+js/simJs/threads/fastforward.worker.js:24:// ---- localStorage shim BEFORE importScripts ----
+js/simJs/threads/fastforward.worker.js:59:    importScripts(
+js/simJs/threads/fastforward.worker.js:65:      '../core/environment.js',
+js/simJs/threads/fastforward.worker.js:72:      '../guidance/derivation.js',
+js/simJs/threads/fastforward.worker.js:80:// derivation.js. Without this cache, every call rebuilds the entire
+js/simJs/threads/guidance.worker.js:2:// guidance.worker.js — Phase 3: guidance's own thread.
+js/simJs/threads/guidance.worker.js:6:// importScripts list below: config.js, fleet.js, componentLibrary.js,
+js/simJs/threads/guidance.worker.js:51:  // ---- Boot: hydrate + importScripts, same pattern as the other three
+js/simJs/threads/guidance.worker.js:63:      importScripts(
+js/simJs/threads/guidance.worker.js:66:  '../guidance/derivation.js',
+js/simJs/threads/physics.worker.js:6:// populates a localStorage shim, and ONLY THEN runs importScripts. If we
+js/simJs/threads/physics.worker.js:120:      importScripts(
+js/simJs/threads/physics.worker.js:126:        '../core/environment.js',
+js/simJs/threads/physics.worker.js:141:      trajectoryWorker = new Worker('trajectory.worker.js');
+js/simJs/threads/physics.worker.js:202:  // whose other end guidance.worker.js already holds — from this point on
+js/simJs/threads/physics.worker.js:620:      // Toggle global in the worker's own environment.js copy. Effects
+js/simJs/threads/render.worker.js:52:    importScripts(
+js/simJs/threads/render.worker.js:59:  '../core/environment.js',
+js/simJs/threads/trajectory.worker.js:23:// environment.js, or stateBuffer.js — none of that is reachable from
+js/simJs/threads/trajectory.worker.js:33://   out { type:'ready' }                      — importScripts done.
+js/simJs/threads/trajectory.worker.js:77:      importScripts(
+js/simJs/threads/workerBridge.js:45:    this.worker = new Worker('js/simJs/threads/physics.worker.js');
+js/simJs/threads/workerBridge.js:388:    this.worker = new Worker('js/simJs/threads/guidance.worker.js');
+js/simJs/threads/workerBridge.js:538:  // derivation.js reads this so its mass model matches physics's
+js/simJs/threads/workerBridge.js:598:// and guidance.worker.js's 'connectPhysicsPort' handlers). Called once both
+js/simJs/threads/workerBridge.js:648:  // Grid-fin hardware types — needed by derivation.js's inlined grid-fin
+js/simJs/threads/workerBridge.js:661:  // Pre-resolve every per-member derived value that derivation.js needs
+js/simJs/threads/workerBridge.js:731:// guidance's derivation.js reads these instead of recomputing, so its
+js/simJs/threads/workerShims.js:3:// js/simJs/threads/workerShims.js. Its only consumer is guidance.worker.js
+js/simJs/threads/workerShims.js:5:// localStorage shim rather than importScripts this file).
+js/simJs/view/fastForward.js:197:const w = new Worker('js/simJs/threads/fastforward.worker.js');
+js/simJs/view/rocketArt.js:314:// page and added to the render worker's importScripts). Family name and
+js/simJs/view/telemetry.js:1216:// environment.js: 0° = East (right), 90° = Up/outward (top), 180° = West,
+js/szadFont.js:10:// In the render worker it's added to importScripts ahead of rocketArt.js.
+rockets-earth.html:917:  <script src="js/componentLibrary.js"></script>
+rockets-earth.html:918:  <script src="js/customDesign.js"></script> <!-- ← ye line chahiye -->
+rockets-earth.html:919:  <script src="js/fleet.js"></script>
+rockets-earth.html:920:  <script src="js/config.js"></script>
+rockets-earth.html:921:  <script src="js/szadFont.js"></script>
+rockets-earth.html:922:<script src="js/simJs/view/rocketArt.js"></script>
+rockets-earth.html:923:  <script src="js/rockets-core.js"></script>
+rockets-earth.html:924:  <script src="js/rockets-ui.js"></script>
+rockets-earth.html:925:  <script src="js/fleet-slide.js"></script>
+rockets-earth.html:926:  <script src="js/earth-texture2.js"></script>
+rockets-earth.html:927:  <script src="js/fleet-earth.js"></script>
+simulation.html:504:  <script src="js/componentLibrary.js"></script>
+simulation.html:526:  <script src="js/customDesign.js"></script>
+simulation.html:527:  <script src="js/fleet.js"></script>
+simulation.html:528:  <script src="js/config.js"></script>
+simulation.html:534:  <script src="js/guideConfigDefaults.js"></script>
+simulation.html:535:  <script src="js/guidancePresets.js"></script>
+simulation.html:536:  <script src="js/boot-checks.js"></script>
+simulation.html:538:  <script src="js/simJs/core/massProps.js"></script>
+simulation.html:539:  <script src="js/simJs/core/environment.js"></script>
+simulation.html:540:  <script src="js/simJs/core/vehicle.js"></script>
+simulation.html:541:  <script src="js/simJs/core/rcs.js"></script>
+simulation.html:542:  <script src="js/simJs/core/physics.js"></script>
+simulation.html:543:  <script src="js/simJs/core/collision.js"></script>
+simulation.html:544:  <script src="js/simJs/core/trajectoryMath.js"></script>
+simulation.html:545:  <script src="js/simJs/core/stateBuffer.js"></script>
+simulation.html:548:  <script src="js/simJs/threads/workerBridge.js"></script>
+simulation.html:682:<script src="js/simJs/guidance/imu.js"></script>
+simulation.html:683:<script src="js/simJs/guidance/derivation.js"></script>
+simulation.html:684:<script src="js/simJs/guidance/guidercs.js"></script>
+simulation.html:685:<script src="js/simJs/guidance/guidance-blocks.js"></script>
+simulation.html:686:<script src="js/simJs/guidance/guidance.js"></script>
+simulation.html:689:<script src="js/szadFont.js"></script>
+simulation.html:690:<script src="js/simJs/view/controls.js"></script>
+simulation.html:691:<script src="js/simJs/view/rocketArt.js"></script>
+simulation.html:692:  <script src="js/simJs/view/predictedTrajectory.js"></script>
+simulation.html:693:  <script src="js/simJs/view/render.js"></script>
+simulation.html:694: <script src="js/simJs/view/telemetry.js"></script>
+simulation.html:695:<script src="js/simJs/view/fastForward.js"></script>
+simulation.html:696:<script src="js/simJs/main.js"></script>
+simulation.html:702:// The guide runs in guidance.worker.js, NOT on the main thread. Main-thread
+
+==================================================================
+## 8. DYNAMIC PRESSURE, MACH AND MAX-Q
+## Anything computing q = 0.5*rho*v^2, Mach or max-Q. The numbers change with the new atmosphere and the transonic Cd.
+==================================================================
+atlas-prism/lib/config.js:43:      vrEnd: 0.046, vrMin: -0.380, marginS: 6.73, maxQKPa: 24.75, maxG: 4.815,
+atlas-prism/lib/config.js:65:      maxQKPa: 31, maxG: 6.02,
+atlas-prism/lib/hook.js:122:          const D = 0.5 * rho * sp * sp * CONFIG.DRAG_CD * area;
+atlas-prism/lib/hook.js:167:  const CP_KEYS = ['maxG', 'maxGPhase', 'maxGT', 'maxGPre', 'maxQKPa', 'maxGAccel', 'mecoTimeS', 'boosterFuelLeftKg',
+atlas-prism/lib/hook.js:219:      maxQKPa: 0, maxG: 0,                      // maxG = headless gLoad on bodies[0], whole run
+atlas-prism/lib/hook.js:281:        // ---- maxQ (only where air matters) / maxG (active body) ----
+atlas-prism/lib/hook.js:287:          const q = 0.5 * rho * (relVx * relVx + relVy * relVy);
+atlas-prism/lib/hook.js:288:          if (q > m.maxQKPa) m.maxQKPa = q;           // Pa for now, /1000 at the end
+atlas-prism/lib/hook.js:420:      m.maxQKPa = m.maxQKPa / 1000;
+atlas-prism/lib/lattice.js:130:  //   crashed, payloadReleased, payloadCleared, vrEnd, vrMin, maxQKPa, maxG,
+atlas-prism/lib/lattice.js:165:    if (Number.isFinite(m.maxQKPa) && m.maxQKPa > L.maxQKPa) add('maxQ', 100 * (m.maxQKPa / L.maxQKPa - 1));
+atlas-prism/lib/lattice.js:327:  maxQKPa: 24.8, maxG: 4.8, apogeeKm: 320.0, perigeeKm: 320.0, ecc: 1e-5, boosterFuelLeftKg: 2000, deployTimeS: 590 };
+atlas-prism/lib/lattice.js:346:    const typ = score({ crashed: false, payloadReleased: true, payloadCleared: true, vrEnd: 0.03, vrMin: 0, maxQKPa: 24.8, maxG: 4.8,
+atlas-prism/lib/lattice.js:379:    const worse = score(Object.assign({}, good, { maxQKPa: 40 })), worser = score(Object.assign({}, good, { maxQKPa: 60 }));
+atlas-prism/lib/lattice.js:396:    maxQKPa: 24.8, maxG: 4.8, apogeeKm: 320, perigeeKm: 320, ecc: 1e-5,
+atlas-prism/lib/worker-pool.js:216:  // Browsers may throttle some high-core machines, but users can override
+atlas-prism/lib/worker-sim.js:621:        maxG: mm.maxG, maxQKPa: mm.maxQKPa, maxOmega: mm.maxOmega,
+atlas-prism/lib/worker-sim.js:830:              maxQKPa: NaN, maxG: NaN,
+atlas-prism/standard/pro-alpha.html:228:      'maxQ=' + fmt(m.maxQKPa, 2) + ' kPa  maxG=' + fmt(m.maxG, 3) + ' @' + m.maxGPhase + ' t=' + fmt(m.maxGT, 1) + 's  preCoast=' + fmt(m.maxGPre, 3) + '  (activeBody accel ' + fmt(m.maxGAc
+atlas-prism/standard/pro-alpha.html:305:            ' vrEnd=' + fmt(tun.vrEnd, 4) + ' margin=' + fmt(tun.marginS, 2) + ' maxG=' + fmt(tun.maxG, 3) + ' maxQ=' + fmt(tun.maxQKPa, 2) +
+atlas-prism/standard/pro-alpha.html:335:                ' margin=' + fmt(m.marginS, 2) + ' maxQ=' + fmt(m.maxQKPa, 2) + ' maxG=' + fmt(m.maxG, 3) + ' fuel=' + fmt(m.boosterFuelLeftKg, 0) + ' resid=' + fmt(m.stageResidualKg, 1) : '
+guidance-numerical.html:1288:    // CHUNK_TICKS chosen so UI stays responsive even on slow machines.
+guidance-numerical.html:1415:        const Q_Pa = 0.5 * rho * sr * sr;
+guidance-numerical.html:1519:      maxQ_kPa: peakQ_kPa > 0 ? peakQ_kPa / 1000 : null,
+guidance-numerical.html:1540:      'peak Q (kPa)': summary.maxQ_kPa != null ? summary.maxQ_kPa.toFixed(2) : '—',
+guidance-numerical.html:1585:        ['peak Q (kPa)', prev.maxQ_kPa != null ? prev.maxQ_kPa.toFixed(2) : '—',
+guidance-numerical.html:1586:          summary.maxQ_kPa != null ? summary.maxQ_kPa.toFixed(2) : '—', null],
+guidance-tester.html:1228:      const q_kPa = 0.5 * rho * speedRel * speedRel / 1000;
+guidance-tester.html:1926:        const Q_Pa = 0.5 * rho * sr * sr;
+guidance-tester.html:2018:      maxQ_kPa: peakQ_kPa > 0 ? peakQ_kPa / 1000 : null,
+guidance-tester.html:2040:      'peak Q (kPa)': summary.maxQ_kPa != null ? summary.maxQ_kPa.toFixed(2) : '—',
+guidance-tester.html:2078:        ['peak Q (kPa)', prev.maxQ_kPa != null ? prev.maxQ_kPa.toFixed(2) : '—',
+guidance-tester.html:2079:          summary.maxQ_kPa != null ? summary.maxQ_kPa.toFixed(2) : '—', null],
+guidance_log.html:1157:          Phase machine — <code>east</code> (S sec) → <code>west</code>
+guidance_log.html:1450:          Max-Q to post-Max-Q — with no hand-tuning per launch profile.
+guidance_log.html:1477:        enough post-Max-Q: the gimbal kept chasing a growing AoA
+guidance_log.html:1495:      <li><strong>v5 — τ_dQ east nudge.</strong> Post-Max-Q the
+guidance_log.html:1505:        pre-Max-Q and post-Max-Q regimes want opposite things:
+guidance_log.html:1560:          − K_dQ · I · f(dQ)      <span class="cmt">// post-Max-Q east nudge</span>
+guidance_log.html:1565:8 ≤ alt &lt; 13 km    → 70%   <span class="cmt">// Max-Q throttle bucket</span>
+guidance_log.html:1586:              (post-Max-Q). Fills the gap the rate damper leaves open,
+guidance_log.html:1616:      Max-Q without any per-profile tuning. Torque trace clean, gimbal
+guidance_log.html:1618:      at any point. A 70% throttle bucket across 8–13 km (the Max-Q
+guidance_log.html:1633:              phase machine will need re-tuning — the PUSH amplitude and
+guidance_log.html:1645:              to hand the guide a target apogee / downrange / Max-Q and
+guidance_log.html:1680:          LEO. One guide, one phase machine, every hand-off autonomous. The
+guidance_log.html:1734:          <pre><span class="cmt">// Phase machine — one switch, one tick per phase</span>
+guidance_log.html:1735:ASCENT              → delegate to _hTick (ascentAoaHold's full machine)
+guidance_log.html:1828:        <span class="tag">phase-machine</span>
+guidance_log.html:1872:          self-contained state machine with its own constants, its own
+js/componentLibrary.js:727:// high strength-to-weight and heat tolerance (fins see max-Q and reentry
+js/guideConfigDefaults.js:385:      // Max-Q throttle bucket — these four define where the rocket
+js/guideConstantDescriptions.js:27:  'ascent.THROTTLE_FRAC': 'Nominal throttle fraction outside the max-Q bucket. 1.0 = full throttle.',
+js/guideConstantDescriptions.js:28:  'ascent.THROTTLE_ALT_LOW_KM': 'Lower edge of the max-Q throttle bucket (km AGL). Below this altitude, nominal throttle applies.',
+js/guideConstantDescriptions.js:29:  'ascent.THROTTLE_ALT_HIGH_KM': 'Upper edge of the max-Q throttle bucket. Above this altitude, nominal throttle resumes.',
+js/guideConstantDescriptions.js:30:  'ascent.THROTTLE_FRAC_LOW': 'Throttle fraction used inside the max-Q bucket (LOW .. HIGH km). Reduces thrust to limit peak aerodynamic load.',
+js/guideConstantDescriptions.js:91:    // --- ascent sub-machine ---
+js/guideConstantDescriptions.js:105:      'Gain of the post-Max-Q east nudge (dynamic-pressure trend term). Never flips west; larger = stronger push back to the gravity-turn profile.',
+js/guideConstantDescriptions.js:109:      'Base throttle fraction outside the Max-Q bucket. 1.0 = full.',
+js/guideConstantDescriptions.js:111:      'Max-Q throttle bucket — low edge, km AGL. At or above this altitude the throttle drops to THROTTLE_FRAC_LOW.',
+js/guideConstantDescriptions.js:113:      'Max-Q throttle bucket — high edge, km AGL. At or above this altitude the throttle returns to THROTTLE_FRAC.',
+js/guideConstantDescriptions.js:115:      'Throttle fraction inside the Max-Q bucket. 0.7 = 70% (reduces aerodynamic stress at peak Q).',
+js/guideConstantDescriptions.js:129:      'Safety timeout — if the split is not detected within this many seconds after the separation command, the phase machine advances anyway.',
+js/guideConstantDescriptions.js:209:      'Gain of the post-Max-Q east nudge.',
+js/guideConstantDescriptions.js:213:      'Base throttle fraction outside the Max-Q bucket.',
+js/guideConstantDescriptions.js:215:      'Max-Q throttle bucket — low edge, km AGL.',
+js/guideConstantDescriptions.js:217:      'Max-Q throttle bucket — high edge, km AGL.',
+js/guideConstantDescriptions.js:219:      'Throttle fraction inside the Max-Q bucket.',
+js/guideConstantDescriptions.js:297:      'Gain of the post-Max-Q east nudge (dynamic-pressure trend term).',
+js/guideConstantDescriptions.js:301:      'Base throttle fraction outside the Max-Q bucket.',
+js/guideConstantDescriptions.js:303:      'Max-Q throttle bucket — low edge, km AGL.',
+js/guideConstantDescriptions.js:305:      'Max-Q throttle bucket — high edge, km AGL.',
+js/guideConstantDescriptions.js:307:      'Throttle fraction inside the Max-Q bucket.',
+js/guideConstantDescriptions.js:339:      'Altitude AGL (km) at which rotations pause for Max-Q.',
+js/guideConstantDescriptions.js:341:      'Altitude AGL (km) at which rotations resume after the Max-Q pause.',
+js/guideConstantDescriptions.js:343:      'Max-Q throttle bucket — low edge, km AGL.',
+js/guideConstantDescriptions.js:345:      'Max-Q throttle bucket — high edge, km AGL.',
+js/guideConstantDescriptions.js:347:      'Throttle fraction inside the Max-Q bucket.',
+js/guideConstantDescriptions.js:349:      'Throttle fraction outside the Max-Q bucket. 1.0 = full.',
+js/simJs/guidance/guidance-blocks.js:83:  // Runs the ascent attitude sub-machine (PRE_COAST → PUSH → COAST →
+js/simJs/guidance/guidance-blocks.js:94:      "Pad → MECO. Fires engines, runs the ascent attitude sub-machine, and issues the separation command when the booster's residual fuel reaches the MECO fuel target.",
+js/simJs/guidance/guidance-blocks.js:128:      // Sub-machine state — mirrors the module-level _hState in guidance.js
+js/simJs/guidance/guidance-blocks.js:184:      // ---- Sub-machine tick — verbatim from guidance.js's _hTick ----
+js/simJs/guidance/guidance-blocks.js:185:      function _tickSubMachine(snapshot) {
+js/simJs/guidance/guidance-blocks.js:592:          // Reset sub-machine state
+js/simJs/guidance/guidance-blocks.js:657:          _tickSubMachine(snapshot);
+js/simJs/guidance/guidance-blocks.js:820:      // Sub-machine state — mirrors V2's _leoStateV2 slice relevant to
+js/simJs/guidance/guidance.js:5:// plus the internal ascent sub-machine (_hTick / ASCENT_HOLD) that
+js/simJs/guidance/guidance.js:15:// removal — the ascent sub-machine, config bag, phase log, command
+js/simJs/guidance/guidance.js:99:  // Display-layer transform for the phase timeline. The phase machine's
+js/simJs/threads/physics.worker.js:700:// physics steps depending on machine load, making the captured state
+js/simJs/threads/physics.worker.js:709:  // depended on wall-clock timing — machine load could shift the
+js/simJs/threads/workerBridge.js:467:// render worker's hot-buffer machinery: guidance's snapshot needs to be a
+js/simJs/view/fastForward.js:372:  // and phase timers in the guide's state, causing phase-machine
+js/simJs/view/rocketArt.js:1311:// any of the engine / legs / body machinery below.
+js/simJs/view/telemetry.js:263:  const _qPa = 0.5 * rho * _qSpeedRel * _qSpeedRel;
+js/simJs/view/telemetry.js:715:    const q_m = 0.5 * rho_m * speedBody * speedBody;
+
+==================================================================
+## 9. PRESSURE-DEPENDENT ENGINE PERFORMANCE
+## Nozzle exhaust velocity depends on ambient pressure. Thrust and Isp shift slightly because pressure now follows US76 (lower than before at 11-30 km).
+==================================================================
+js/componentLibrary.js:395:    { key: 'veVacuum', label: 'Exhaust velocity (vacuum)', unit: 'm/s', min: 500 },
+js/componentLibrary.js:396:    { key: 'atmosphericPenalty', label: 'Atmospheric penalty', unit: 'm²·s/kg', min: 0 },
+js/componentLibrary.js:453:// vacuum Ve is the hardware's actual vacuum performance; atmosphericPenalty
+js/componentLibrary.js:466:// tick as veVacuum − atmosphericPenalty × Pa.
+js/componentLibrary.js:472:    'Falcon 9 Block 5 sea-level engine. Ve(Pa) = veVacuum − atmosphericPenalty × Pa recomputed per tick. Vacuum Isp ≈ 311 s; sea-level Isp ≈ 282 s. Throttle floor 39%. Gimbal range 8°.',
+js/componentLibrary.js:474:  veVacuum: 3049.87, // 311 s × 9.80665
+js/componentLibrary.js:475:  atmosphericPenalty: 0.002807, // (veVacuum − 282 s·g₀) / 101325
+js/componentLibrary.js:508:  veVacuum: 3412.71, // 348 s × 9.80665
+js/componentLibrary.js:509:  atmosphericPenalty: 0.02290,
+js/components.js:96:// computed from the schema's own veVacuum / atmosphericPenalty. Whole
+js/components.js:103:  const veVac = valOf('veVacuum');
+js/components.js:104:  const penalty = valOf('atmosphericPenalty');
+js/fleet.js:1707:const ve = t.parameterSchema.find(p => p.key === 'veVacuum').value;
+js/fleet.js:2000:const ve = t.parameterSchema.find(p => p.key === 'veVacuum').value;
+js/fleet.js:2696:    const veEntry = t.parameterSchema.find(p => p.key === 'veVacuum');
+js/home.js:112:  const veVac = (t.parameterSchema.find(p => p.key === 'veVacuum') || {}).value;
+js/home.js:113:  const penalty = (t.parameterSchema.find(p => p.key === 'atmosphericPenalty') || {}).value;
+js/home.js:121:  // Ve range: vac (upper) and SL (lower, from atmosphericPenalty).
+js/rockets-core.js:594:  const ve = valOf('veVacuum'),
+js/simJs/core/massProps.js:330:// Post-Ve-live schema: chemical thrusters use veVacuum (the
+js/simJs/core/massProps.js:332:// by physics.js's _updateEngineVeForBody, not in the mass model.
+js/simJs/core/massProps.js:334:const veEntry = t.parameterSchema.find(p => p.key === 'veVacuum');
+js/simJs/core/vehicle.js:35:    // veVacuum is the hardware's vacuum Ve — constant. Ve is LIVE:
+js/simJs/core/vehicle.js:36:    //   Ve(Pa) = veVacuum − atmosphericPenalty × Pa
+js/simJs/core/vehicle.js:37:    // recomputed per tick in physics.js's _updateEngineVeForBody(). It's
+js/simJs/core/vehicle.js:40:    const veVacuumEnt = t.parameterSchema.find(p => p.key === 'veVacuum');
+js/simJs/core/vehicle.js:41:    const penaltyEnt = t.parameterSchema.find(p => p.key === 'atmosphericPenalty');
+js/simJs/core/vehicle.js:42:    if (!veVacuumEnt) return;
+js/simJs/core/vehicle.js:43:    const veVacuum = veVacuumEnt.value;
+js/simJs/core/vehicle.js:44:    const atmosphericPenalty = penaltyEnt ? penaltyEnt.value : 0;
+js/simJs/core/vehicle.js:45:    const ve = veVacuum;
+js/simJs/core/vehicle.js:100:      veVacuum,
+js/simJs/core/vehicle.js:101:      atmosphericPenalty,
+
+==================================================================
+## 10. RENDERING / UI / TELEMETRY OF THE ATMOSPHERE
+## Sky colour, atmosphere fade, density readouts, toggles. These should read the same atmosphere (or be updated if they use their own).
+==================================================================
+atlas-prism/index.html:242:  const sc=w=>({lo:w.lo+.1*w.w,hi:w.hi-.08*w.w}),hd=[[0,''],[1,'=============== BOOTSTRAP RESULT  alt=400 km ==============='],[0,'MECO = '+M0+'   (pred '+anchor.pred+' kg, tEst '+anchor.deploy+' s at G=
+atlas-prism/lib/bootstrap.js:360:    onLog('candidates below are COAST-FEASIBLE ONLY (ideal-Tsiolkovsky filter). Phase D verifies them with tuneLead+FULL.', 'dim');
+atlas-prism/lib/config.js:130:      atmosphere: true, slosh: true, imu: false,
+atlas-prism/lib/hook.js:112:    if (typeof airDensity === 'function' && Number.isFinite(CONFIG.DRAG_CD) && b.width > 0) {
+atlas-prism/lib/hook.js:114:      const rho = airDensity(Math.max(0, alt));
+atlas-prism/lib/hook.js:115:      if (rho > 0) {
+atlas-prism/lib/hook.js:122:          const D = 0.5 * rho * sp * sp * CONFIG.DRAG_CD * area;
+atlas-prism/lib/hook.js:235:      const haveQ = typeof airDensity === 'function';
+atlas-prism/lib/hook.js:286:          const rho = airDensity(Math.max(0, altM));
+atlas-prism/lib/hook.js:287:          const q = 0.5 * rho * (relVx * relVx + relVy * relVy);
+atlas-prism/lib/rough-scan.js:252:        // predFloor lets the caller relax the ideal-Tsiolkovsky negative
+atlas-prism/lib/sim.js:346:    atmosphere: true, slosh: true, imu: false,
+atlas-prism/lib/sim.js:359:    if (typeof atmosphereEnabled !== 'undefined') {
+atlas-prism/lib/sim.js:360:      atmosphereEnabled = !!env.atmosphere;
+atlas-prism/ui/host.js:298:      '<div class="row"><label><input type="checkbox" id="tuiAtm" checked> atmosphere</label><label><input type="checkbox" id="tuiSlosh" checked> slosh</label>' +
+atlas-prism/ui/host.js:478:      const env = { atmosphere: $('tuiAtm').checked, slosh: $('tuiSlosh').checked, imu: $('tuiImu').checked,
+guidance-numerical.html:245:      <label><input type="checkbox" id="envAtmosphere" checked> Atmosphere</label>
+guidance-numerical.html:1059:  // setWind / setAtmosphere / setSloshEnabled / setImuEnabled + the same
+guidance-numerical.html:1068:    if (typeof atmosphereEnabled !== 'undefined') {
+guidance-numerical.html:1069:      atmosphereEnabled = $('envAtmosphere').checked;
+guidance-numerical.html:1414:        const rho = (typeof airDensity === 'function') ? airDensity(Math.max(0, alt)) : 0;
+guidance-numerical.html:1415:        const Q_Pa = 0.5 * rho * sr * sr;
+guidance-tester.html:267:      <label><input type="checkbox" id="envAtmosphere" checked> Atmosphere</label>
+guidance-tester.html:1056:    if (typeof atmosphereEnabled !== 'undefined') {
+guidance-tester.html:1057:      atmosphereEnabled = $('envAtmosphere').checked;
+guidance-tester.html:1222:      const rho = (typeof airDensity === 'function') ? airDensity(alt_m) : 0;
+guidance-tester.html:1228:      const q_kPa = 0.5 * rho * speedRel * speedRel / 1000;
+guidance-tester.html:1925:        const rho = (typeof airDensity === 'function') ? airDensity(Math.max(0, alt)) : 0;
+guidance-tester.html:1926:        const Q_Pa = 0.5 * rho * sr * sr;
+guidance_log.html:1715:              (√(GM/r_a)), Δv, required fuel via Tsiolkovsky, burn
+guidance_log.html:1816:              unmodelled.</strong> The burn planning (Tsiolkovsky + ṁ)
+guidance_log.html:2161:        the ideal-Tsiolkovsky residual proxy gives the coast-feasible
+guidance_log.html:2265:          The ideal Tsiolkovsky proxy <code>pred = M₀·e<sup>−Δv/Ve</sup> −
+guidance_log.html:2286:          <li><strong>Predicted residual</strong> — the ideal-Tsiolkovsky
+js/componentLibrary.js:396:    { key: 'atmosphericPenalty', label: 'Atmospheric penalty', unit: 'm²·s/kg', min: 0 },
+js/componentLibrary.js:453:// vacuum Ve is the hardware's actual vacuum performance; atmosphericPenalty
+js/componentLibrary.js:466:// tick as veVacuum − atmosphericPenalty × Pa.
+js/componentLibrary.js:472:    'Falcon 9 Block 5 sea-level engine. Ve(Pa) = veVacuum − atmosphericPenalty × Pa recomputed per tick. Vacuum Isp ≈ 311 s; sea-level Isp ≈ 282 s. Throttle floor 39%. Gimbal range 8°.',
+js/componentLibrary.js:475:  atmosphericPenalty: 0.002807, // (veVacuum − 282 s·g₀) / 101325
+js/componentLibrary.js:506:    'Falcon 9 Block 5 vacuum-optimized upper-stage engine. Large exit nozzle ⇒ big atmospheric penalty; nearly zero thrust at sea level. Vacuum Isp = 348 s. Throttle floor 39%, gimbal 8°.',
+js/componentLibrary.js:509:  atmosphericPenalty: 0.02290,
+js/components.js:96:// computed from the schema's own veVacuum / atmosphericPenalty. Whole
+js/components.js:104:  const penalty = valOf('atmosphericPenalty');
+js/earth-texture2.js:2:window.EARTH_TEX={day:"data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBUODAsLDBkSEw8VHhsgHx4bHR0hJTApISMtJB0dKjkqLTEzNjY2ICg7Pzo0PjA1NjP/2wBDAQkJCQwLDBgODhgzIh0iMzMzMzMzMzMzMzMzM
+js/earth-textures.js:2:window.EARTH_TEX={day:"data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAkGBwgHBgkIBwgKCgkLDRYPDQwMDRsUFRAWIB0iIiAdHx8kKDQsJCYxJx8fLT0tMTU3Ojo6Iys/RD84QzQ5Ojf/2wBDAQoKCg0MDRoPDxo3JR8lNzc3Nzc3Nzc3Nzc3N
+js/fleet-earth.js:4://     map, Milky-Way star map. Sunrise on the limb, atmosphere rim, sun flare,
+js/fleet-earth.js:25:    'uniform vec2 uRes, uCenter, uSun; uniform float uRad, uRot, uTime, uSky, uFlare; uniform vec3 uL;',
+js/fleet-earth.js:42:    '  float c0 = cos(uSky), s0 = sin(uSky);',
+js/fleet-earth.js:46:    // atmosphere glow outside the limb
+js/fleet-earth.js:106:  ['uRes', 'uCenter', 'uSun', 'uRad', 'uRot', 'uTime', 'uSky', 'uFlare', 'uL', 'tDay', 'tNight', 'tStars'].forEach(function (n) { U[n] = gl.getUniformLocation(prog, n); });
+js/fleet-earth.js:216:    gl.uniform1f(U.uRot, rot); gl.uniform1f(U.uTime, t); gl.uniform1f(U.uSky, rot * 0.15); gl.uniform1f(U.uFlare, 1 - 0.55 * sf);
+js/guideConstantDescriptions.js:133:      'Altitude AGL (km) at which the fairing splits — once the vehicle is out of the dense atmosphere.',
+js/home.js:113:  const penalty = (t.parameterSchema.find(p => p.key === 'atmosphericPenalty') || {}).value;
+js/home.js:121:  // Ve range: vac (upper) and SL (lower, from atmosphericPenalty).
+js/mars-bg.js:5://     upper right, dusty atmosphere glow. It sits in the exact centre.
+js/mars-bg.js:126:    // atmosphere halo
+js/simJs/core/massProps.js:331:// hardware's vacuum Ve) — atmospheric penalty is applied at runtime
+js/simJs/core/vehicle.js:36:    //   Ve(Pa) = veVacuum − atmosphericPenalty × Pa
+js/simJs/core/vehicle.js:41:    const penaltyEnt = t.parameterSchema.find(p => p.key === 'atmosphericPenalty');
+js/simJs/core/vehicle.js:44:    const atmosphericPenalty = penaltyEnt ? penaltyEnt.value : 0;
+js/simJs/core/vehicle.js:101:      atmosphericPenalty,
+js/simJs/main.js:244:  bind('toggleAtmosphere', 'change', (e) => {
+js/simJs/main.js:245:    atmosphereEnabled = e.target.checked;
+js/simJs/main.js:246:    WorkerBridge.send({ type: 'setAtmosphere', enabled: e.target.checked });
+js/simJs/threads/fastforward.worker.js:132:// The physics worker receives wind / atmosphere / slosh / IMU toggles
+js/simJs/threads/fastforward.worker.js:135:// atmosphere on, slosh on, IMU off) and diverge from normal play.
+js/simJs/threads/fastforward.worker.js:142:  if (typeof msg.envState.atmosphereEnabled === 'boolean' && typeof atmosphereEnabled !== 'undefined') {
+js/simJs/threads/fastforward.worker.js:143:    atmosphereEnabled = msg.envState.atmosphereEnabled;
+js/simJs/threads/physics.worker.js:619:    case 'setAtmosphere': {
+js/simJs/threads/physics.worker.js:621:      // are immediate: airDensity() returns 0 on the very next physics
+js/simJs/threads/physics.worker.js:623:      atmosphereEnabled = !!msg.enabled;
+js/simJs/view/controls.js:561:  // equator), same helper computeDragAero() already uses for atmosphere.
+js/simJs/view/controls.js:844://           atmosphere/slosh/IMU toggles.
+js/simJs/view/controls.js:869:  ['toggleAtmosphere', 'toggleSlosh', 'toggleImu'].forEach(id => {
+js/simJs/view/fastForward.js:181:// setWind / setAtmosphere / setSloshEnabled messages; the FF worker
+js/simJs/view/fastForward.js:183:// (wind off, atmosphere on, slosh on, IMU off) regardless of what
+js/simJs/view/fastForward.js:192:  atmosphereEnabled: !!(typeof atmosphereEnabled !== 'undefined' && atmosphereEnabled),
+js/simJs/view/render.js:232:function drawSky(altitude) {
+js/simJs/view/render.js:233:  const rho = airDensity(Math.max(0, altitude));
+js/simJs/view/render.js:234:  const densityFrac = Math.min(1, rho / CONFIG.SEA_LEVEL_DENSITY); // 1 = sea level, 0 = vacuum
+js/simJs/view/render.js:235:  // Interpolate: dense (blue sky) -> thin (deep space black), with a violet transition band.
+js/simJs/view/render.js:236:  const skyBlue = [30, 60, 110];
+js/simJs/view/render.js:242:    c = lerpColor(midViolet, skyBlue, t);
+js/simJs/view/render.js:277:  // Earth disc = only the visible sky region gets painted.
+js/simJs/view/render.js:359:    // disc. Anchor labels 8px above it so they land in the visible sky.
+js/simJs/view/render.js:1752:  drawSky(altitude);
+js/simJs/view/rocketArt.js:1050:    // stay transparent so whatever's behind (hull, sky, another fin)
+js/simJs/view/telemetry.js:39:  'α': 'Angle of attack (deg) — angle between the body axis and the relative wind (vehicle velocity minus the co-rotating atmosphere). Drives both drag and the aero torque.',
+js/simJs/view/telemetry.js:44:  'ρ': 'Local air density (kg/m³). Exponential model: ρ = ρ₀ · exp(−h / scaleHeight).',
+js/simJs/view/telemetry.js:149:  const rho = airDensity(Math.max(0, altitude));
+js/simJs/view/telemetry.js:214:  set('t-rho', fmt(rho, 4));
+js/simJs/view/telemetry.js:254:  // convention physics.js's computeDragAero uses (co-rotating atmosphere
+js/simJs/view/telemetry.js:263:  const _qPa = 0.5 * rho * _qSpeedRel * _qSpeedRel;
+js/simJs/view/telemetry.js:393:  // Atmosphere co-rotates with Earth — subtract that too, same as
+js/simJs/view/telemetry.js:714:    const rho_m = (typeof airDensity === 'function') ? airDensity(Math.max(0, alt_m)) : 0;
+js/simJs/view/telemetry.js:1347:// atmosphere), not the rocket:
+js/simJs/view/telemetry.js:1349://   atmosphere at altitude r   : ω·r        (east, in local frame)
+js/simJs/view/telemetry.js:1395:// there's no atmosphere to steer against. Two behaviours kick in:
+js/simJs/view/telemetry.js:1609:// there's effectively no atmosphere. Suppress the arrow so the HUD
+simulation.html:39:            <label class="chip-toggle"><input type="checkbox" id="toggleAtmosphere" checked><span>Atmosphere</span></label>
+simulation.html:106:          <div class="tele-row"><span class="tele-sym">ρ</span><span class="tele-val" id="t-rho">0</span></div>
+simulation.html:620:  body.guide-active label.chip-toggle:has(#toggleAtmosphere[disabled]),
+simulation.html:920:          atm: (typeof atmosphereEnabled !== 'undefined') ? atmosphereEnabled : null,
+
+==================================================================
+## 11. DOCUMENTS THAT DESCRIBE THE OLD MODEL
+## Markdown/text that still says exponential atmosphere, scale height 8500 m or constant Cd.
+==================================================================
+LEOINSERTION-V3.md:327:ρ    = ρ₀ · exp(−altitude / H)                 (ρ₀ at or below sea level)
+envir.md:29:Guidance worker environment.js load nahi kar sakta, kyunki file ke header mein hi likha hai ki wo bilkul self-contained hai. Isliye maine US76 atmosphere aur hull Cd ki copy seedhe derivation.js ke andar daal di hai. P
+
+==================================================================
+## SUMMARY: matching lines per file (all groups combined)
+==================================================================
+     44 guidance-numerical.html
+     42 guidance-tester.html
+     36 simulation.html
+     30 atlas-prism/standard/pro-alpha.html
+     28 js/guideConstantDescriptions.js
+     23 js/simJs/view/telemetry.js
+     22 guidance_log.html
+     20 atlas-prism/lib/hook.js
+     18 js/componentLibrary.js
+     17 rockets-earth.html
+     16 atlas-prism/lib/sim.js
+     15 js/simJs/core/vehicle.js
+     14 js/simJs/threads/workerBridge.js
+     14 js/simJs/threads/physics.worker.js
+     14 js/fleet.js
+     13 js/rockets-ui.js
+     12 js/simJs/threads/fastforward.worker.js
+     12 js/simJs/guidance/guidance.js
+     12 js/simJs/guidance/guidance-blocks.js
+     12 atlas-prism/standard/sereno-flux.html
+     11 js/simJs/view/render.js
+      9 atlas-prism/standard/sereno-bench.html
+      8 js/home.js
+      8 js/components.js
+      8 index.html
+      8 atlas-prism/lib/worker-sim.js
+      7 js/simJs/view/fastForward.js
+      7 js/simJs/main.js
+      6 js/simJs/threads/guidance.worker.js
+      6 js/fleet-earth.js
+      6 atlas-prism/lib/lattice.js
+      5 js/simJs/core/massProps.js
+      4 js/simJs/view/controls.js
+      4 guidance_presets.html
+      4 atlas-prism/lib/config.js
+      3 js/simJs/view/rocketArt.js
+      3 js/simJs/threads/trajectory.worker.js
+      3 js/rockets-core.js
+      3 components.html
+      3 atlas-prism/ui/host.js
+      2 js/simJs/threads/workerShims.js
+      2 js/simJs/threads/render.worker.js
+      2 js/mars-bg.js
+      2 atlas-prism/lib/worker-pool.js
+      2 atlas-prism/lib/bias-scan.js
+      2 atlas-prism/index.html
+      1 js/szadFont.js
+      1 js/simJs/guidance/imu.js
+      1 js/simJs/guidance/guidercs.js
+      1 js/simJs/core/rcs.js
+      1 js/guideConfigDefaults.js
+      1 js/earth-textures.js
+      1 js/earth-texture2.js
+      1 envir.md
+      1 atlas-prism/tests/gimbal_accel_compare.html
+      1 atlas-prism/lib/rough-scan.js
+      1 atlas-prism/lib/bootstrap.js
+      1 LEOINSERTION-V3.md

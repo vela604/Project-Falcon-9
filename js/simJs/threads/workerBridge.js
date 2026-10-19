@@ -761,6 +761,9 @@ return {
     SEA_LEVEL_DENSITY: CONFIG.SEA_LEVEL_DENSITY,
     SCALE_HEIGHT: CONFIG.SCALE_HEIGHT,
     DRAG_CD: CONFIG.DRAG_CD,
+    DRAG_CD_FREE_MOLECULAR: CONFIG.DRAG_CD_FREE_MOLECULAR,
+    DRAG_FM_ALT_START_M: CONFIG.DRAG_FM_ALT_START_M,
+    DRAG_FM_ALT_FULL_M: CONFIG.DRAG_FM_ALT_FULL_M,
     // Physics tick period. Needed by guidance to predict next-tick
     // state (position/velocity/attitude extrapolation).
     DT: CONFIG.DT,

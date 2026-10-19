@@ -41,7 +41,7 @@ const NOTATION_GLOSSARY = {
   
   // ---- Environment ----
   'g': 'Local gravitational acceleration (m/s²). Falls with altitude (inverse-square).',
-  'ρ': 'Local air density (kg/m³). Exponential model: ρ = ρ₀ · exp(−h / scaleHeight).',
+  'ρ': 'Local air density (kg/m³). US Standard Atmosphere 1976 (7 temperature layers to 86 km, density table above).',
   
   // ---- RCS ----
   'D↑': 'RCS top-pod lateral duty (%). Average of the two top pods\' actually applied lateral-nozzle duty this tick — source-agnostic (human boolean commands and guidance raw-duty commands both end up here, and the human path\'s torque-balancing gate shows up as a reduced fraction on whichever pod it damped). 0 = no top-pod lateral firing, 1 = both top pods at full.',
