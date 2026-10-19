@@ -1245,10 +1245,10 @@ presetStat.textContent = 'Imported constants.';
   const Plots = {
   data: { polar: {}, vr: {}, vt: {}, alt: {}, speed: {}, mass: {}, q: {} },
   previousData: null,
-  _prevRendered: false,
-  _fixedBounds: null,
+  _prevBounds: null,
+  _liveBounds: null,
   _lastPushTime: {},
-  _DECIMATE_DT: 0.10,   // 10 Hz plot sample rate
+  _DECIMATE_DT: 0.10,
 
   _hasAnyData(d) {
     if (!d) return false;
@@ -1256,60 +1256,126 @@ presetStat.textContent = 'Imported constants.';
     return false;
   },
 
-  // Called at start of each run. Archives current -> previous, and locks
-  // bounds ONCE so subsequent renderAll() calls skip O(n) recompute.
+  _emptyLiveBounds() {
+    const s = {};
+    for (const k of ['vr', 'vt', 'alt', 'speed', 'mass', 'q']) {
+      s[k] = { tMax: 0, vMin: Infinity, vMax: -Infinity };
+    }
+    return {
+      polar: { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity, hasAny: false },
+      series: s,
+    };
+  },
+
   reset(durationS) {
     if (this._hasAnyData(this.data)) {
       this.previousData = this.data;
-      this._prevRendered = false;
-      this._fixedBounds = this._computeFixedBounds(this.previousData, durationS);
+      this._prevBounds = this._computePrevBounds(this.previousData);
     }
     this.data = { polar: {}, vr: {}, vt: {}, alt: {}, speed: {}, mass: {}, q: {} };
     this._lastPushTime = {};
+    this._liveBounds = this._emptyLiveBounds();
   },
 
   clear() {
     this.data = { polar: {}, vr: {}, vt: {}, alt: {}, speed: {}, mass: {}, q: {} };
     this.previousData = null;
-    this._prevRendered = false;
-    this._fixedBounds = null;
+    this._prevBounds = null;
+    this._liveBounds = this._emptyLiveBounds();
     this._lastPushTime = {};
   },
 
-  _computeFixedBounds(prev, durationS) {
-    // Polar: prev-run bounds + 30% margin. If current run flies wildly
-    // further, points may clip — cheap tradeoff for cached bounds.
-    const polarB = _computePolarBounds([prev.polar]);
-    if (polarB && polarB.hasAny) {
-      const mX = (polarB.maxX - polarB.minX) * 0.30;
-      const mY = (polarB.maxY - polarB.minY) * 0.30;
-      polarB.minX -= mX; polarB.maxX += mX;
-      polarB.minY -= mY; polarB.maxY += mY;
-    }
-    const out = { polar: polarB };
+  _computePrevBounds(prev) {
+    const polar = _computePolarBounds([prev.polar]);
+    const series = {};
     for (const k of ['vr', 'vt', 'alt', 'speed', 'mass', 'q']) {
-      let vMin = Infinity, vMax = -Infinity, tMax = 0;
+      let tMax = 0, vMin = Infinity, vMax = -Infinity;
       for (const bodyKey in prev[k]) {
         const arr = prev[k][bodyKey];
         for (let i = 0; i < arr.length; i++) {
           const p = arr[i];
+          if (p.t > tMax) tMax = p.t;
           if (p.v < vMin) vMin = p.v;
           if (p.v > vMax) vMax = p.v;
-          if (p.t > tMax) tMax = p.t;
         }
+      }
+      series[k] = { tMax, vMin, vMax };
+    }
+    return { polar, series };
+  },
+
+  _updateLiveBounds(s) {
+    const omegaE = CONFIG.EARTH_OMEGA;
+    const r = Math.hypot(s.rx, s.ry);
+    const phiI = Math.atan2(s.rx, s.ry);
+    const phiEF = phiI - omegaE * s.t;
+    const x = r * Math.sin(phiEF);
+    const y = r * Math.cos(phiEF);
+    const P = this._liveBounds.polar;
+    if (x < P.minX) P.minX = x;
+    if (x > P.maxX) P.maxX = x;
+    if (y < P.minY) P.minY = y;
+    if (y > P.maxY) P.maxY = y;
+    P.hasAny = true;
+    const upd = (k, v) => {
+      const b = this._liveBounds.series[k];
+      if (s.t > b.tMax) b.tMax = s.t;
+      if (v < b.vMin) b.vMin = v;
+      if (v > b.vMax) b.vMax = v;
+    };
+    upd('vr', s.vr);
+    upd('vt', s.vt);
+    upd('alt', s.altKm);
+    upd('speed', s.speed);
+    upd('mass', s.mass_t);
+    upd('q', s.q_kPa);
+  },
+
+  _getEffectiveBounds() {
+    const polar = { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity, hasAny: false };
+    const fp = this._prevBounds && this._prevBounds.polar;
+    const lp = this._liveBounds.polar;
+    if (fp && fp.hasAny) {
+      if (fp.minX < polar.minX) polar.minX = fp.minX;
+      if (fp.maxX > polar.maxX) polar.maxX = fp.maxX;
+      if (fp.minY < polar.minY) polar.minY = fp.minY;
+      if (fp.maxY > polar.maxY) polar.maxY = fp.maxY;
+      polar.hasAny = true;
+    }
+    if (lp.hasAny) {
+      if (lp.minX < polar.minX) polar.minX = lp.minX;
+      if (lp.maxX > polar.maxX) polar.maxX = lp.maxX;
+      if (lp.minY < polar.minY) polar.minY = lp.minY;
+      if (lp.maxY > polar.maxY) polar.maxY = lp.maxY;
+      polar.hasAny = true;
+    }
+    const series = {};
+    for (const k of ['vr', 'vt', 'alt', 'speed', 'mass', 'q']) {
+      const f = this._prevBounds && this._prevBounds.series[k];
+      const l = this._liveBounds.series[k];
+      let tMax = 0, vMin = Infinity, vMax = -Infinity;
+      if (f) {
+        if (f.tMax > tMax) tMax = f.tMax;
+        if (f.vMin < vMin) vMin = f.vMin;
+        if (f.vMax > vMax) vMax = f.vMax;
+      }
+      if (l && l.tMax > 0) {
+        if (l.tMax > tMax) tMax = l.tMax;
+        if (l.vMin < vMin) vMin = l.vMin;
+        if (l.vMax > vMax) vMax = l.vMax;
       }
       if (!isFinite(vMin)) { vMin = 0; vMax = 1; }
       if (vMin > 0) vMin = 0;
       if (vMax < 0) vMax = 0;
-      const pad = (vMax - vMin) * 0.20 || 1;
-      out[k] = {
+      const pad = (vMax - vMin) * 0.10 || 1;
+      series[k] = {
         tMin: 0,
-        tMax: Math.max(tMax, durationS || 0) * 1.02,
+        tMax: (tMax * 1.02) || 1,
         vMin: vMin - pad,
         vMax: vMax + pad,
       };
     }
-    return out;
+    return { polar, series };
   },
 
   _push(store, key, val) {
@@ -1329,32 +1395,35 @@ presetStat.textContent = 'Imported constants.';
     this._push(this.data.speed, key, { t: s.t, v: s.speed });
     this._push(this.data.mass,  key, { t: s.t, v: s.mass_t });
     this._push(this.data.q,     key, { t: s.t, v: s.q_kPa });
+    this._updateLiveBounds(s);
   },
 
   renderAll() {
     const hasPrev = this._hasAnyData(this.previousData);
-    const fixed = this._fixedBounds;
+    const eff = this._getEffectiveBounds();
 
-    // Previous run drawn ONCE, then cached as canvas pixels.
-    if (hasPrev && !this._prevRendered) {
-      drawPolarPlot(this.previousData.polar, { faded: true, suppressEmptyMessage: true, bounds: fixed && fixed.polar });
-      drawTimeSeries('vrCanvas',    this.previousData.vr,    { forceZero: true, faded: true, suppressEmptyMessage: true, bounds: fixed && fixed.vr });
-      drawTimeSeries('vtCanvas',    this.previousData.vt,    { forceZero: true, faded: true, suppressEmptyMessage: true, bounds: fixed && fixed.vt });
-      drawTimeSeries('altCanvas',   this.previousData.alt,   { forceZero: true, faded: true, suppressEmptyMessage: true, bounds: fixed && fixed.alt });
-      drawTimeSeries('speedCanvas', this.previousData.speed, { forceZero: true, faded: true, suppressEmptyMessage: true, bounds: fixed && fixed.speed });
-      drawTimeSeries('massCanvas',  this.previousData.mass,  { forceZero: true, faded: true, suppressEmptyMessage: true, bounds: fixed && fixed.mass });
-      drawTimeSeries('qCanvas',     this.previousData.q,     { forceZero: true, faded: true, suppressEmptyMessage: true, bounds: fixed && fixed.q });
-      this._prevRendered = true;
+    if (hasPrev) {
+      drawPolarPlot(this.previousData.polar, { faded: true, suppressEmptyMessage: true, bounds: eff.polar });
+      drawTimeSeries('vrCanvas',    this.previousData.vr,    { forceZero: true, faded: true, suppressEmptyMessage: true, bounds: eff.series.vr });
+      drawTimeSeries('vtCanvas',    this.previousData.vt,    { forceZero: true, faded: true, suppressEmptyMessage: true, bounds: eff.series.vt });
+      drawTimeSeries('altCanvas',   this.previousData.alt,   { forceZero: true, faded: true, suppressEmptyMessage: true, bounds: eff.series.alt });
+      drawTimeSeries('speedCanvas', this.previousData.speed, { forceZero: true, faded: true, suppressEmptyMessage: true, bounds: eff.series.speed });
+      drawTimeSeries('massCanvas',  this.previousData.mass,  { forceZero: true, faded: true, suppressEmptyMessage: true, bounds: eff.series.mass });
+      drawTimeSeries('qCanvas',     this.previousData.q,     { forceZero: true, faded: true, suppressEmptyMessage: true, bounds: eff.series.q });
     }
 
-    const skip = hasPrev && this._prevRendered;
-    drawPolarPlot(this.data.polar, { skipClear: skip, skipBackground: skip, suppressEmptyMessage: skip, bounds: fixed && fixed.polar });
-    drawTimeSeries('vrCanvas',    this.data.vr,    { forceZero: true, skipClear: skip, suppressEmptyMessage: skip, bounds: fixed && fixed.vr });
-    drawTimeSeries('vtCanvas',    this.data.vt,    { forceZero: true, skipClear: skip, suppressEmptyMessage: skip, bounds: fixed && fixed.vt });
-    drawTimeSeries('altCanvas',   this.data.alt,   { forceZero: true, skipClear: skip, suppressEmptyMessage: skip, bounds: fixed && fixed.alt });
-    drawTimeSeries('speedCanvas', this.data.speed, { forceZero: true, skipClear: skip, suppressEmptyMessage: skip, bounds: fixed && fixed.speed });
-    drawTimeSeries('massCanvas',  this.data.mass,  { forceZero: true, skipClear: skip, suppressEmptyMessage: skip, bounds: fixed && fixed.mass });
-    drawTimeSeries('qCanvas',     this.data.q,     { forceZero: true, skipClear: skip, suppressEmptyMessage: skip, bounds: fixed && fixed.q });
+    drawPolarPlot(this.data.polar, {
+      skipClear: hasPrev,
+      skipBackground: hasPrev,
+      suppressEmptyMessage: hasPrev,
+      bounds: eff.polar,
+    });
+    drawTimeSeries('vrCanvas',    this.data.vr,    { forceZero: true, skipClear: hasPrev, suppressEmptyMessage: hasPrev, bounds: eff.series.vr });
+    drawTimeSeries('vtCanvas',    this.data.vt,    { forceZero: true, skipClear: hasPrev, suppressEmptyMessage: hasPrev, bounds: eff.series.vt });
+    drawTimeSeries('altCanvas',   this.data.alt,   { forceZero: true, skipClear: hasPrev, suppressEmptyMessage: hasPrev, bounds: eff.series.alt });
+    drawTimeSeries('speedCanvas', this.data.speed, { forceZero: true, skipClear: hasPrev, suppressEmptyMessage: hasPrev, bounds: eff.series.speed });
+    drawTimeSeries('massCanvas',  this.data.mass,  { forceZero: true, skipClear: hasPrev, suppressEmptyMessage: hasPrev, bounds: eff.series.mass });
+    drawTimeSeries('qCanvas',     this.data.q,     { forceZero: true, skipClear: hasPrev, suppressEmptyMessage: hasPrev, bounds: eff.series.q });
   },
 };
 
@@ -1793,8 +1862,6 @@ if (!faded) {
     if (_resizeTimer) clearTimeout(_resizeTimer);
     _resizeTimer = setTimeout(() => {
       if (!visualsEnabled) return;
-      // Canvas pixels are wiped on resize — must redraw previous run.
-      Plots._prevRendered = false;
       Plots.renderAll();
     }, 120);
   });
