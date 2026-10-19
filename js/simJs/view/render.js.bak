@@ -1172,6 +1172,126 @@ function drawBodyAsTriangle(body, isActive) {
 let _puffLastId = -1;
 let _puffLocalStart = 0;
 
+// ---------------------------------------------------------------------------
+// Vacuum plume (upper stage), volumetric. With no ambient air the exhaust
+// leaves the bell at a huge turning angle and balloons into a soft, round,
+// umbrella-like cloud (it never goes back past the exit plane). The cloud is
+// shaded per pixel on a small cached canvas and scaled up (so it stays soft):
+//   density  ~ 1/r^2-ish falloff from a virtual source just behind the nozzle,
+//   shape    = ellipse "dome" (depth B, half-width A) with a wobbling edge,
+//   rim      = slightly brighter shell at the dome surface,
+//   striation = smooth angular noise (3 scales) that bows outward with r,
+//   colour   = white-hot core -> cream -> tan as the density falls.
+// Local frame: origin = nozzle exit centre, +y points away from the rocket.
+// sp: 0 = dense air .. 1 = hard vacuum, thr: 0..1 throttle, t: anim clock.
+// ---------------------------------------------------------------------------
+const _vpHash = (i) => { const s = Math.sin(i * 127.1) * 43758.5453; return s - Math.floor(s); };
+const _vpN = (x) => { const i = Math.floor(x), f = x - i, u = f * f * (3 - 2 * f); return _vpHash(i) * (1 - u) + _vpHash(i + 1) * u; };
+const _vpSS = (a, b, x) => { const v = Math.min(1, Math.max(0, (x - a) / (b - a))); return v * v * (3 - 2 * v); };
+let _vpCv = null, _vpCx = null, _vpImg = null, _vpW = 0, _vpH = 0;
+function _vpSurface(w, h) {
+  if (!_vpCv) {
+    _vpCv = (typeof OffscreenCanvas !== 'undefined') ? new OffscreenCanvas(w, h) :
+      ((typeof document !== 'undefined') ? document.createElement('canvas') : null);
+    if (!_vpCv) return null;
+  }
+  if (_vpW !== w || _vpH !== h) {
+    _vpCv.width = w; _vpCv.height = h;
+    _vpCx = _vpCv.getContext('2d');
+    _vpImg = _vpCx.createImageData(w, h);
+    _vpW = w; _vpH = h;
+  }
+  return _vpCx;
+}
+function drawVacuumPlume(ctx, W, thr, sp, t) {
+  const exitR = W * 0.37;
+  const aMax = (52 + 36 * sp) * Math.PI / 180;           // max spread, always < 90 deg
+  const B = W * (2.2 + 0.8 * sp) * (0.75 + 0.25 * thr);  // dome depth
+  const A = B * (0.5 + 0.4 * sp);                        // dome half-width
+  const k = 0.35 + 0.65 * thr;
+  const sy = -exitR * 0.4;                               // virtual source
+  const X0 = -A * 1.15, X1 = A * 1.15, Y0 = -0.14 * B, Y1 = 1.15 * B;
+  const NX = Math.max(32, Math.min(144, Math.round((X1 - X0) / 2.5)));
+  const NY = Math.max(24, Math.min(160, Math.round(NX * (Y1 - Y0) / (X1 - X0))));
+  const c2 = _vpSurface(NX, NY);
+  if (!c2) return;
+  const d = _vpImg.data, dxc = (X1 - X0) / NX, dyc = (Y1 - Y0) / NY;
+  for (let j = 0; j < NY; j++) {
+    const y = Y0 + (j + 0.5) * dyc;
+    for (let i = 0; i < NX; i++) {
+      const o = (j * NX + i) * 4;
+      const x = X0 + (i + 0.5) * dxc;
+      if (y < -0.12 * B) { d[o + 3] = 0; continue; }
+      const dy = y - sy, r = Math.sqrt(x * x + dy * dy), th = Math.atan2(x, dy);
+      const sa = Math.sin(th) / A, ca = Math.cos(th) / B;
+      const Rb = (1 / Math.sqrt(sa * sa + ca * ca)) * (1 + 0.05 * (_vpN(th * 5 + t * 0.4) - 0.5));
+      const rho = r / Rb;
+      if (rho > 1.15) { d[o + 3] = 0; continue; }
+      const aw = 1 - _vpSS(0.5, 1.0, Math.abs(th) / (aMax * (1 + 0.12 * (_vpN(t * 0.3 + th * 2) - 0.5))));
+      const core = 1 / (1 + Math.pow(r / (0.18 * B), 1.6));
+      const ef = 1 - _vpSS(0.55, 1.02, rho);
+      const rim = 0.12 * Math.exp(-Math.pow((rho - 0.88) / 0.09, 2));
+      const u = th * (1 - 0.18 * Math.min(rho, 1));
+      const bw = Math.min(1, Math.max(0, (0.067 / (2.2 * dxc / Math.max(r, 1)) - 1) / 1.5));   // fade the finer band where the grid can't resolve it
+      const s = 0.6 * _vpN(u * 7 + t * 0.15) + 0.4 * (0.5 + bw * (_vpN(u * 15 + 7.3 + t * 0.4) - 0.5));
+      const sc = 0.62 + 0.8 * _vpSS(0.2, 0.8, s);
+      const cl = 0.85 + 0.3 * _vpN(rho * 9 + u * 5 + t * 0.3);
+      const yf = _vpSS(-0.1 * B, 0.12 * B, y);
+      const I = ((0.4 + 0.72 * core) * ef + rim) * aw * yf * sc * cl * k * 1.3;
+      let R, G, Bc;
+      if (I < 0.3) { const f = I / 0.3; R = 170 + 52 * f; G = 122 + 50 * f; Bc = 88 + 37 * f; }
+      else if (I < 0.7) { const f = (I - 0.3) / 0.4; R = 222 + 28 * f; G = 172 + 54 * f; Bc = 125 + 61 * f; }
+      else { const f = Math.min(1, (I - 0.7) / 0.5); R = 250 + 5 * f; G = 226 + 26 * f; Bc = 186 + 60 * f; }
+      d[o] = R; d[o + 1] = G; d[o + 2] = Bc;
+      d[o + 3] = Math.min(0.95, I * 0.95) * 255;
+    }
+  }
+  c2.putImageData(_vpImg, 0, 0);
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(_vpCv, X0, Y0, X1 - X0, Y1 - Y0);
+  // fine curved ribs (vector, so they stay crisp at any zoom), faint on top of the cloud
+  ctx.lineCap = 'round';
+  const rg = ctx.createRadialGradient(0, 0, 0, 0, 0, B * 1.05);
+  rg.addColorStop(0, 'rgba(255,250,240,1)');
+  rg.addColorStop(0.5, 'rgba(244,214,172,0.7)');
+  rg.addColorStop(1, 'rgba(226,182,136,0)');
+  ctx.strokeStyle = rg;
+  for (let i = 0; i < 110; i++) {
+    const u = 0.95 * (2 * (i + 0.5) / 110 - 1);
+    const h1 = _vpHash(i * 1.7 + 3), h2 = _vpHash(i * 2.9 + 11);
+    const al = u * aMax;
+    const rr = 0.8 + 0.2 * h2;
+    const ex = A * rr * Math.sin(al), ey = B * rr * Math.cos(al), px = exitR * 0.9 * u;
+    const gam = Math.atan2(ex - px, ey);
+    const beta = Math.max(-1.45, Math.min(1.45, gam * 1.15));
+    const dl = Math.hypot(ex - px, ey) * 0.6;
+    const fl = 0.5 + 0.5 * Math.sin(t * (0.4 + 0.9 * h2) + i * 1.7);
+    ctx.globalAlpha = (0.08 + 0.16 * h1) * (0.6 + 0.4 * fl) * (1 - 0.5 * Math.abs(u)) * k;
+    ctx.lineWidth = Math.max(0.8, W * 0.02 * (0.6 + 0.8 * h2));
+    ctx.beginPath();
+    ctx.moveTo(px, 0);
+    ctx.quadraticCurveTo(px + Math.sin(beta) * dl, Math.cos(beta) * dl, ex, ey);
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+  // hot bloom, kept below the exit plane so it never glows behind the stage
+  ctx.beginPath();
+  ctx.rect(-B, 0, 2 * B, B * 1.2);
+  ctx.clip();
+  const hc = ctx.createRadialGradient(0, 0, 0, 0, 0, B * 0.3);
+  hc.addColorStop(0, 'rgba(255,252,246,' + 0.9 * k + ')');
+  hc.addColorStop(0.3, 'rgba(255,236,205,' + 0.4 * k + ')');
+  hc.addColorStop(1, 'rgba(255,220,170,0)');
+  ctx.fillStyle = hc;
+  ctx.beginPath();
+  ctx.arc(0, 0, B * 0.3, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
 function drawBodyRocket(body, isActive, bodyIdx) {
   if (camera.mode === 'planet') {
     drawBodyAsTriangle(body, isActive);
@@ -1323,12 +1443,13 @@ ctx.translate(0, bellExitY_px);
   // Length and width multipliers. Vacuum plume is shorter and wider
   // — real MVac flame doesn't punch as far as a Merlin's, it spreads
   // radially once it clears the massive nozzle exit.
-  const lenMul = isSingleNozzle ? 0.30 : 1.0;
-const widthMul = isSingleNozzle ? 1.30 : 1.0;
+  const _vs = (() => { const a = Math.hypot(body.rx, body.ry) - CONFIG.EARTH_RADIUS; const r = (typeof airDensity === 'function') ? airDensity(Math.max(0, a)) : 0; const t = r > 0 ? (-2 - Math.log10(r)) / 4 : 1; const s = Math.min(1, Math.max(0, t)); return s * s * (3 - 2 * s); })();
+  const lenMul = isSingleNozzle ? 0.30 + 0.25 * _vs : 1.0;
+const widthMul = isSingleNozzle ? 1.30 + 1.2 * _vs : 1.0;
 // Trail taper — vacuum plumes narrow as they dissipate, they don't
 // balloon outward like SL cluster plumes. 1.0 = full SL spread,
 // 0.55 = about half-width trail. Booster cluster keeps 1.0.
-const trailMul = isSingleNozzle ? 0.40 : 1.0;
+const trailMul = isSingleNozzle ? 0.40 + 1.3 * _vs : 1.0;
   
   const tNow = performance.now() * 0.01;
   const flameLen = H * (0.6 + 1.6 * totalThrottle) * lenMul;
@@ -1380,6 +1501,9 @@ if (isSingleNozzle) {
     ctx.closePath();
   }
   
+  if (isSingleNozzle) {
+    drawVacuumPlume(ctx, W, totalThrottle, _vs, tNow);
+  } else {
   ctx.save();
   ctx.filter = 'blur(11px)';
   gasConePath(W * 1.0 * plumeScale * widthMul, W * 2.7 * plumeScale * widthMul * trailMul, 1.0, 0, 14, fullShift * 1.0);
@@ -1442,6 +1566,7 @@ if (isSingleNozzle) {
   ctx.filter = 'none';
   ctx.globalCompositeOperation = 'source-over';
   ctx.restore();
+  }
   
   ctx.globalCompositeOperation = 'lighter';
   const flare = ctx.createRadialGradient(0, W * 0.05, 0, fullShift * 0.05, W * 0.05, W * 0.9 * plumeScale);
