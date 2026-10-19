@@ -991,6 +991,38 @@ renderConstants(currentGuide, { preserveValues: true });
 presetStat.textContent = `Loaded "${p.name}".`;
   });
 
+  // ---- RunStamp: remembers MECO / payload-deploy time of the last run that
+  // reached the "done" phase; attached to "Save as…" only if the constants
+  // being saved are exactly the ones that run used. Otherwise nothing is added.
+  const RunStamp = (function () {
+    let cur = null, last = null;
+    const pos = (x) => typeof x === 'number' && isFinite(x) && x > 0;
+    const stable = (v) => Array.isArray(v) ? v.map(stable)
+      : (v && typeof v === 'object') ? Object.keys(v).sort().reduce((o, k) => (o[k] = stable(v[k]), o), {}) : v;
+    const key = (v) => JSON.stringify(stable(v));
+    return {
+      begin() { cur = { meco: null, deploy: null, clearT: null, done: false }; last = null; },
+      track(gs, t) {
+        if (!cur || !gs) return;
+        if (cur.meco === null && gs.mecoTriggered && pos(t)) cur.meco = t;
+        if (cur.deploy === null && pos(gs.deployCommandSimTime)) cur.deploy = gs.deployCommandSimTime;
+        if (cur.clearT === null && gs.payloadCleared && pos(t)) cur.clearT = t;
+        if (!cur.done && /^done$/i.test(String(gs.phase || ''))) cur.done = true;
+      },
+      finish(guide, constants) {
+        const c = cur; cur = null; last = null;
+        if (!c || !c.done) return;
+        last = { guide, key: key(constants), mecoTimeS: c.meco, payloadDeployTimeS: c.deploy !== null ? c.deploy : c.clearT };
+      },
+      stampFor(guide, values) {
+        const o = {};
+        if (!last || last.guide !== guide || last.key !== key(values)) return o;
+        if (last.mecoTimeS !== null) o.mecoTimeS = Math.round(last.mecoTimeS);
+        if (last.payloadDeployTimeS !== null) o.payloadDeployTimeS = Math.round(last.payloadDeployTimeS);
+        return o;
+      },
+    };
+  })();
   $('presetSaveBtn').addEventListener('click', () => {
     if (!currentGuide || !currentValues) return;
     const name = prompt('Preset name:', 'Calibration run');
@@ -1004,11 +1036,13 @@ presetStat.textContent = `Loaded "${p.name}".`;
       stackName: stack ? stack.name : '',
       tags: [],
       constants: JSON.parse(JSON.stringify(currentValues)),
+      ...RunStamp.stampFor(currentGuide, currentValues),
     }) : null;
     if (rec) {
       refreshPresets(currentGuide);
       presetSel.value = rec.id;
       presetStat.textContent = `Saved "${rec.name}".`;
+      if (rec.mecoTimeS != null) presetStat.textContent += ` (MECO t=${rec.mecoTimeS.toFixed(0)}s` + (rec.payloadDeployTimeS != null ? `, deploy t=${rec.payloadDeployTimeS.toFixed(0)}s` : "") + ")";
     } else {
       presetStat.textContent = 'Save failed.';
     }
@@ -1237,6 +1271,7 @@ presetStat.textContent = 'Imported constants.';
     window.__tickDump = [];
     // ---- Capture tunables snapshot (for compare) ----
     const runTunables = JSON.parse(JSON.stringify(currentValues));
+    RunStamp.begin();
 
     // ---- Apply constants to the guide ----
     // Fails loudly if a key is missing/malformed. Guidance.applyGuideConfig
@@ -1337,6 +1372,7 @@ window.__tickDump.push({
 
       // ---- Event detection + peak tracking ----
       const gs = (Guidance.getGuideStatus && Guidance.getGuideStatus()) || {};
+      RunStamp.track(gs, state.simTime);
       const body = state.bodies[state.activeBodyIndex];
 
       if (body) {
@@ -1503,6 +1539,7 @@ if (orbitBody) {
   };
 }
 
+    RunStamp.finish(currentGuide, runTunables);
 const summary = {
       guide: currentGuide,
       duration: durationS,

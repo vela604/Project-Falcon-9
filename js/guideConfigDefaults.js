@@ -238,8 +238,8 @@ leoInsertionV3: _mkDefault(
     },
   },
     ['full-mission', 'expendable'],
-  137,
-  590
+  135,
+  596
   ),
   
   leoInsertion: _mkDefault(
