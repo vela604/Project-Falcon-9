@@ -9,29 +9,56 @@
 #     bash find_env_refs.sh /path/to/project
 #
 # (no argument = current folder). It writes env_refs.txt in the folder you
-# ran it from, and prints a per-file summary at the end. Upload env_refs.txt
-# and every place that needs a patch can be found from it.
+# ran it from, and prints a per-file summary at the end. Files ignored by
+# .gitignore (archives, build output, etc.) are skipped automatically.
+# Upload env_refs.txt and every place that needs a patch can be found from it.
 #
-# Needs only bash and grep (Linux, macOS, or Git Bash / WSL on Windows).
+# Needs bash, grep and git (git is only used to read .gitignore) (Linux, macOS, or Git Bash / WSL on Windows).
 # ---------------------------------------------------------------------------
 
 ROOT="${1:-.}"
-OUT="env_refs.txt"
+OUT="$(pwd)/env_refs.txt"
 : > "$OUT"
 
-EXCLUDES=(--exclude-dir=node_modules --exclude-dir=.git --exclude-dir=dist
-          --exclude-dir=build --exclude-dir=.next --exclude-dir=coverage
-          --exclude=env_refs.txt --exclude=*.min.js --exclude=*.map
-          --exclude=package-lock.json)
-CODE=(--include=*.js --include=*.mjs --include=*.cjs --include=*.ts
-      --include=*.jsx --include=*.tsx --include=*.html --include=*.htm)
-DOCS=(--include=*.md --include=*.txt)
+cd "$ROOT" || { echo "Cannot open $ROOT"; exit 1; }
+
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+
+# Folders / files that are never interesting (applied on top of .gitignore).
+SKIP_RE='(^|/)(node_modules|\.git|dist|build|\.next|coverage)/|\.min\.js$|\.map$|(^|/)package-lock\.json$|(^|/)env_refs\.txt$'
+
+# ---- 1. build the list of files to search, honouring .gitignore ----------
+# Preferred: ask git. It respects every .gitignore (nested ones, global
+# ignore, .git/info/exclude). Works even if ROOT is not a git repo
+# (a throw-away git dir is used just to read the .gitignore files).
+if command -v git >/dev/null 2>&1; then
+  if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    git ls-files -z --cached --others --exclude-standard > "$TMP/all"
+    MODE="git repo (.gitignore respected)"
+  else
+    git --git-dir="$TMP/gd" init -q 2>/dev/null
+    git --git-dir="$TMP/gd" --work-tree="$(pwd)" ls-files -z --others --exclude-standard > "$TMP/all"
+    MODE="plain folder (.gitignore files read, respected)"
+  fi
+else
+  find . -type f -print0 | sed -z 's|^\./||' > "$TMP/all"
+  MODE="WARNING: git not found, .gitignore NOT respected"
+fi
+
+# drop junk folders, then split into code and docs
+tr '\0' '\n' < "$TMP/all" | grep -vE "$SKIP_RE" | tr '\n' '\0' > "$TMP/filtered"
+grep -zE '\.(js|mjs|cjs|ts|jsx|tsx|html|htm)$' "$TMP/filtered" > "$TMP/code"
+grep -zE '\.(md|txt)$'                          "$TMP/filtered" > "$TMP/docs"
+
+echo "Mode: $MODE"
+echo "Searching $(tr -cd '\0' < "$TMP/code" | wc -c) code files and $(tr -cd '\0' < "$TMP/docs" | wc -c) doc files."
 
 # group <title> <why it matters> <regex> [docs]
 group () {
   local title="$1" why="$2" regex="$3" kind="${4:-code}"
-  local -a inc
-  if [ "$kind" = "docs" ]; then inc=("${DOCS[@]}"); else inc=("${CODE[@]}"); fi
+  local list="$TMP/code"
+  [ "$kind" = "docs" ] && list="$TMP/docs"
   {
     echo
     echo "=================================================================="
@@ -39,8 +66,9 @@ group () {
     echo "## $why"
     echo "=================================================================="
   } >> "$OUT"
-  grep -rnE "${EXCLUDES[@]}" "${inc[@]}" -e "$regex" "$ROOT" 2>/dev/null \
-    | cut -c1-230 >> "$OUT"
+  if [ -s "$list" ]; then
+    xargs -0 grep -nHE -e "$regex" < "$list" 2>/dev/null | cut -c1-230 >> "$OUT"
+  fi
 }
 
 group "1. ATMOSPHERE FUNCTIONS" \
