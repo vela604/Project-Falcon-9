@@ -807,6 +807,10 @@ setState(s) {
       // insertion ends after this many seconds anyway so the mission can
       // continue.
       PAYLOAD_CONFIRM_TIMEOUT_S: 120,
+      // COAST_HOLD_2 axial trim: drive apogee dv gap (= v_circ(rapo) - v_apo)
+      // to the eject kick. Net-force RCS only, no floor duty.
+      COAST_HOLD_2_TRIM_TOL_MPS: 0.01,
+      COAST_HOLD_2_TRIM_FAR_MPS: 1.0,
     },
     importantFields: [],
     createInstance: function () {
@@ -916,6 +920,24 @@ setState(s) {
           if (d >= _constants.PAYLOAD_CLEAR_DIST_M) cleared++;
         }
         return cleared;
+      }
+
+      // Merge two {pod:{up,dn,lat}} RCS duty maps (simple sum + clamp).
+      function _mergeRcsDuties(a, b) {
+        if (!a && !b) return null;
+        const out = {};
+        const pods = new Set();
+        if (a) Object.keys(a).forEach(function (p) { pods.add(p); });
+        if (b) Object.keys(b).forEach(function (p) { pods.add(p); });
+        pods.forEach(function (pod) {
+          const da = (a && a[pod]) || { up: 0, dn: 0, lat: 0 };
+          const db = (b && b[pod]) || { up: 0, dn: 0, lat: 0 };
+          const up = Math.min(1, (da.up || 0) + (db.up || 0));
+          const dn = Math.min(1, (da.dn || 0) + (db.dn || 0));
+          const lat = Math.min(1, (da.lat || 0) + (db.lat || 0));
+          if (up > 0 || dn > 0 || lat > 0) out[pod] = { up: up, dn: dn, lat: lat };
+        });
+        return Object.keys(out).length ? out : null;
       }
 
       // ---- Main tick ----
@@ -1681,11 +1703,49 @@ const tau_target = tau_desired - dNext.torqueEnvironmental;
             _send(Guidance.cmdSetAllThrottle(0));
             _send(Guidance.cmdSetGimbalRate(0));
 
+            const GM_c = env.GM_EARTH;
             const r_c = Math.hypot(body.rx, body.ry);
-            const ux_c = body.rx / r_c,
-              uy_c = body.ry / r_c;
+            const ux_c = body.rx / r_c, uy_c = body.ry / r_c;
+            const ex_c = body.ry / r_c, ey_c = -body.rx / r_c;
             const vr_c = body.vx * ux_c + body.vy * uy_c;
+            const vt_c = body.vx * ex_c + body.vy * ey_c;
 
+            // Live apogee velocity direction — re-derived each tick from the
+            // current orbit. (COAST_ROTATE_2 still uses the snapped value.)
+            const v2_c = body.vx * body.vx + body.vy * body.vy;
+            const rv_c = body.rx * body.vx + body.ry * body.vy;
+            const ex_ecc = ((v2_c - GM_c / r_c) * body.rx - rv_c * body.vx) / GM_c;
+            const ey_ecc = ((v2_c - GM_c / r_c) * body.ry - rv_c * body.vy) / GM_c;
+            const e_mag = Math.hypot(ex_ecc, ey_ecc);
+            const E_c = 0.5 * v2_c - GM_c / r_c;
+            const a_c = E_c < 0 ? -GM_c / (2 * E_c) : r_c;
+            const r_apo_live = a_c * (1 + e_mag);
+            const h_live = r_c * vt_c;
+            const v_apo_live = r_apo_live > 0 ? Math.abs(h_live) / r_apo_live : 0;
+            const v_circ_at_apo = r_apo_live > 0 ? Math.sqrt(GM_c / r_apo_live) : 0;
+            const gap = v_circ_at_apo - v_apo_live;
+            const targetGap = Number.isFinite(env.PAYLOAD_EJECT_KICK_MPS)
+              ? env.PAYLOAD_EJECT_KICK_MPS : 0;
+            const dvError = gap - targetGap;
+            _st.coastHold2GapMps = gap;
+            _st.coastHold2DvErrorMps = dvError;
+            _st.coastHold2VcircAtApo = v_circ_at_apo;
+            _st.coastHold2VapoLive = v_apo_live;
+
+            let thetaApoLive;
+            if (e_mag > 1e-6) {
+              const phiApo = Math.atan2(-ex_ecc, -ey_ecc);
+              const rx_apo = r_apo_live * Math.sin(phiApo);
+              const ry_apo = r_apo_live * Math.cos(phiApo);
+              const sDir = vt_c >= 0 ? 1 : -1;
+              thetaApoLive = Math.atan2(-sDir * ry_apo, -sDir * rx_apo);
+            } else {
+              const speed_c = Math.hypot(body.vx, body.vy);
+              thetaApoLive = speed_c > 1 ? Math.atan2(-body.vx, body.vy) : body.theta;
+            }
+            _st.coast2TargetThetaLive = thetaApoLive;
+
+            // Apogee-peak FIRST — unconditional eject (trim state irrelevant).
             const prevVr = _st._prevVr2;
             _st._prevVr2 = vr_c;
             const apogeePeak =
@@ -1705,27 +1765,49 @@ const tau_target = tau_desired - dNext.torqueEnvironmental;
               break;
             }
 
-            if (
-              dNext &&
-              dNext.massProps &&
-              _st.coast2TargetThetaInertial !== null
-            ) {
+            // Attitude hold — torque-only RCS toward LIVE apogee direction.
+            let attDuties = null;
+            if (dNext && dNext.massProps) {
               const I_next = dNext.massProps.I;
-              const thetaErr = _wrapPi(
-                body.theta - _st.coast2TargetThetaInertial,
-              );
+              const thetaErr = _wrapPi(body.theta - thetaApoLive);
               const tau_desired =
-                -I_next *
-                (cfg.CIRC_ATT_KP * thetaErr + cfg.CIRC_ATT_KD * body.omega);
-              const result = GuideRCS.targetTorqueRcsNoNetForce(
-                snapshot,
-                tau_desired,
-                idx,
-              );
-              if (result && result.fires.length)
-                _send(Guidance.cmdRcsDuty(result.duties, idx));
-              else _send(Guidance.cmdRcsDuty(null, idx));
+                -I_next * (cfg.CIRC_ATT_KP * thetaErr + cfg.CIRC_ATT_KD * body.omega);
+              const result = GuideRCS.targetTorqueRcsNoNetForce(snapshot, tau_desired, idx);
+              if (result && result.fires.length) attDuties = result.duties;
             }
+
+            // Axial trim — net-force RCS only. Drive gap to eject kick.
+            // dvError > 0 -> too slow -> prograde ("up").
+            // dvError < 0 -> too fast -> retrograde ("dn").
+            let axialDuties = null;
+            const TRIM_TOL = Number.isFinite(cfg.COAST_HOLD_2_TRIM_TOL_MPS)
+              ? cfg.COAST_HOLD_2_TRIM_TOL_MPS : 0.01;
+            const TRIM_FAR = Number.isFinite(cfg.COAST_HOLD_2_TRIM_FAR_MPS)
+              ? cfg.COAST_HOLD_2_TRIM_FAR_MPS : 1.0;
+            const DEADBAND_DUTY = 0.02;
+            if (Math.abs(dvError) > TRIM_TOL) {
+              const direction = dvError > 0 ? "up" : "dn";
+              const duty = Math.min(1, Math.abs(dvError) / Math.max(TRIM_FAR, 1e-6));
+              if (duty >= DEADBAND_DUTY) {
+                const raw = GuideRCS.postSeparationAxialDuty(snapshot, idx, direction);
+                if (raw) {
+                  axialDuties = {};
+                  Object.keys(raw).forEach(function (pod) {
+                    const d = raw[pod];
+                    if (!d) return;
+                    axialDuties[pod] = {
+                      up: (d.up || 0) * duty,
+                      dn: (d.dn || 0) * duty,
+                      lat: (d.lat || 0) * duty,
+                    };
+                  });
+                }
+              }
+            }
+
+            const merged = _mergeRcsDuties(attDuties, axialDuties);
+            if (merged) _send(Guidance.cmdRcsDuty(merged, idx));
+            else _send(Guidance.cmdRcsDuty(null, idx));
             break;
           }
 
@@ -1846,6 +1928,11 @@ _st.lastApogeeKm = 0;
           _st._prevVr2 = null;
           _st.deployCommandSimTime = null;
           _st.payloadCleared = false;
+          _st.coast2TargetThetaLive = null;
+          _st.coastHold2GapMps = null;
+          _st.coastHold2DvErrorMps = null;
+          _st.coastHold2VcircAtApo = null;
+          _st.coastHold2VapoLive = null;
 
           _payloadBodyCountAtDeploy = 0;
           _deployCmdTick = -1;
@@ -1922,6 +2009,14 @@ _st.lastApogeeKm = 0;
             circTargetV: _st.circTargetV,
             circErr: _st.circErr,
             circAchieved: _st.circAchieved,
+            coastHold2TargetThetaLiveDeg:
+              _st.coast2TargetThetaLive != null
+                ? (_st.coast2TargetThetaLive * 180) / Math.PI
+                : null,
+            coastHold2GapMps: _st.coastHold2GapMps,
+            coastHold2DvErrorMps: _st.coastHold2DvErrorMps,
+            coastHold2VcircAtApo: _st.coastHold2VcircAtApo,
+            coastHold2VapoLive: _st.coastHold2VapoLive,
             coastDeltaV: _st.coastRotateEndDeltaV,
             coastTRem: _st.coastRotateEndTRem,
             deployCommandSimTime: _st.deployCommandSimTime,
