@@ -2069,8 +2069,8 @@ if (!faded) {
     captureList.innerHTML = shown.map(c => {
       const s = c.state;
       const sub = s.ascentPhase ? ` <span style="color:var(--dim)">(ascent: ${s.ascentPhase})</span>` : '';
-      const apoStr = Number.isFinite(s.apo_km) ? fmt(s.apo_km, 1) + ' km' : '∞';
-      const periStr = Number.isFinite(s.peri_km) ? fmt(s.peri_km, 1) + ' km' : '—';
+      const apoStr = Number.isFinite(s.apo_km) ? fmt(s.apo_km, 3) + ' km' : '∞';
+      const periStr = Number.isFinite(s.peri_km) ? fmt(s.peri_km, 3) + ' km' : '—';
       return `<div class="capture type-${c.type}">
         <div class="head">
           <span class="time">T+${fmt(c.simTime, 2)}s</span>
@@ -2078,10 +2078,10 @@ if (!faded) {
         </div>
         <div class="body">
           <span><span class="k">phase</span> ${s.phase}</span>
-          <span><span class="k">alt</span> ${fmt(s.alt_km, 2)} km</span>
-          <span><span class="k">vr</span> ${fmt(s.vr, 1)}</span>
-          <span><span class="k">vt</span> ${fmt(s.vt, 1)}</span>
-          <span><span class="k">|v|</span> ${fmt(s.speed, 1)}</span>
+          <span><span class="k">alt</span> ${fmt(s.alt_km, 3)} km</span>
+          <span><span class="k">vr</span> ${fmt(s.vr, 0)}</span>
+          <span><span class="k">vt</span> ${fmt(s.vt, 0)}</span>
+          <span><span class="k">|v|</span> ${fmt(s.speed, 0)}</span>
           <span><span class="k">apogee</span> ${apoStr}</span>
           <span><span class="k">perigee</span> ${periStr}</span>
           <span><span class="k">mass</span> ${fmt(s.mass_t, 2)} t</span>
@@ -2089,9 +2089,9 @@ if (!faded) {
           <span><span class="k">thrust</span> ${fmt(s.thrust_MN, 3)} MN</span>
           <span><span class="k">mdot</span> ${fmt(s.mdot, 1)} kg/s</span>
           <span><span class="k">bodies</span> ${s.bodies} [${s.bodyTags}]</span>
-          ${Number.isFinite(s.circTargetV) ? `<span><span class="k">v_circ</span> ${fmt(s.circCurrentV, 1)} / ${fmt(s.circTargetV, 1)}</span>` : ''}
+          ${Number.isFinite(s.circTargetV) ? `<span><span class="k">v_circ</span> ${fmt(s.circCurrentV, 2)} / ${fmt(s.circTargetV, 2)}</span>` : ''}
           ${Number.isFinite(s.coastDeltaV) ? `<span><span class="k">coast Δv</span> ${fmt(s.coastDeltaV, 2)} m/s</span>` : ''}
-          ${Number.isFinite(s.coastTRem) ? `<span><span class="k">t_rem</span> ${fmt(s.coastTRem, 1)} s</span>` : ''}
+          ${Number.isFinite(s.coastTRem) ? `<span><span class="k">t_rem</span> ${fmt(s.coastTRem, 2)} s</span>` : ''}
           ${s.crashed ? '<span class="warn">CRASHED</span>' : ''}
           ${s.landed ? '<span class="hi">LANDED</span>' : ''}
           ${s.halted ? '<span class="warn">HALTED</span>' : ''}
