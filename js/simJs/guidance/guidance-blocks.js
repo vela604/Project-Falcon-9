@@ -809,8 +809,8 @@ setState(s) {
       PAYLOAD_CONFIRM_TIMEOUT_S: 120,
       // COAST_HOLD_2 axial trim: drive apogee dv gap (= v_circ(rapo) - v_apo)
       // to the eject kick. Net-force RCS only, no floor duty.
-      COAST_HOLD_2_TRIM_TOL_MPS: 0.01,
-      COAST_HOLD_2_TRIM_FAR_MPS: 1.0,
+      COAST_HOLD_2_TRIM_TOL_MPS: 0.001,
+      COAST_HOLD_2_TRIM_FAR_MPS: 0.05,
     },
     importantFields: [],
     createInstance: function () {
@@ -1781,9 +1781,9 @@ const tau_target = tau_desired - dNext.torqueEnvironmental;
             // dvError < 0 -> too fast -> retrograde ("dn").
             let axialDuties = null;
             const TRIM_TOL = Number.isFinite(cfg.COAST_HOLD_2_TRIM_TOL_MPS)
-              ? cfg.COAST_HOLD_2_TRIM_TOL_MPS : 0.01;
+              ? cfg.COAST_HOLD_2_TRIM_TOL_MPS : 0.00001;
             const TRIM_FAR = Number.isFinite(cfg.COAST_HOLD_2_TRIM_FAR_MPS)
-              ? cfg.COAST_HOLD_2_TRIM_FAR_MPS : 1.0;
+              ? cfg.COAST_HOLD_2_TRIM_FAR_MPS : 0.0;
             const DEADBAND_DUTY = 0.02;
             if (Math.abs(dvError) > TRIM_TOL) {
               const direction = dvError > 0 ? "up" : "dn";
