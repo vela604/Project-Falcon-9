@@ -57,6 +57,8 @@ const GUIDE_CONSTANT_DESCRIPTIONS = {
   'insertion.TARGET_ORBIT_ALT_KM': 'Mission target orbit altitude (km ASL). Drives STAGE_BURN cutoff and CIRCULARIZE target velocity.',
   'insertion.PAYLOAD_CLEAR_DIST_M': 'Minimum separation distance (m) between stage and payload body for the payload to count as "cleared" and end the insertion block.',
   'insertion.PAYLOAD_CONFIRM_TIMEOUT_S': 'Fail-safe: if the payload never confirms as cleared, the insertion block ends after this many seconds regardless.',
+  'insertion.COAST_HOLD_2_TRIM_TOL_MPS': 'Convergence tolerance (m/s) for the COAST_HOLD_2 axial deltaV trim. Once |gap - eject_kick| falls below this, axial RCS firing stops. Smaller = tighter final orbit, but more RCS chatter at the boundary.',
+  'insertion.COAST_HOLD_2_TRIM_FAR_MPS': 'Error (m/s) at which the COAST_HOLD_2 axial trim uses full RCS duty. Duty scales as min(1, |dvError| / FAR). Smaller = more aggressive at small errors (faster convergence, overshoot risk).',
   
   // ---- fairing (mission-level glue) ----
   'fairing.HAS_FAIRING': 'Whether the stack carries a payload fairing. When false, fairing auto-open is skipped entirely.',

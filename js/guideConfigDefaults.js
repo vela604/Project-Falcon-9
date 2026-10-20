@@ -208,6 +208,8 @@ leoInsertionV3: _mkDefault(
       TARGET_ORBIT_ALT_KM: 320,
       PAYLOAD_CLEAR_DIST_M: 20,
       PAYLOAD_CONFIRM_TIMEOUT_S: 120,
+      COAST_HOLD_2_TRIM_TOL_MPS: 0.001,
+      COAST_HOLD_2_TRIM_FAR_MPS: 0.05,
     },
     fairing: {
       HAS_FAIRING: true,
