@@ -50,6 +50,9 @@ const NOTATION_GLOSSARY = {
   'TWR': 'Thrust-to-weight ratio at full throttle: (max thrust) / (current mass × g₀). Below 1 means the vehicle cannot lift off.',
   'B': 'Number of active bodies in the scene. Format: total (discarded) — discarded boosters, spent stages, released fairing halves and payloads each count as one.',
   'T+': 'Mission elapsed time, mm:ss.s.',
+
+  'ε': 'Specific orbital energy (MJ/kg) — ε = v²/2 − GM/r. Negative for bound orbits, becomes less negative as the vehicle gains energy. Zero = parabolic escape, positive = hyperbolic escape. Frame-independent (radial direction and total speed are the same in both inertial and Earth-fixed frames).',
+  'Δv': 'Remaining propulsive capability (m/s) — Tsiolkovsky rocket equation Δv = Ve · ln(m0 / mf). Uses the active body\'s current total mass, the bottom member\'s remaining propellant (the only fuel its engines can reach), and the mass-flow-weighted exhaust velocity Ve of its current engine cluster. Zero for engine-less bodies (released payloads, split fairings).',
 };
 
 // Time from current 2-body state to the next apogee (seconds). Exact
@@ -186,6 +189,8 @@ set('t-h', fmt(altitude, 3)); // frame-independent
   set('t-apogee', Number.isFinite(altA) ? fmt(altA, 3) + ' km' : '∞ (escape)');
   set('t-perigee', fmt(altP, 3) + ' km');
   set('t-vapo', fmt(vApo, 0) + ' m/s');
+  // Specific orbital energy — same formula the tester HUD and plots use.
+  set('t-energy', fmt(E_orb / 1e6, 2) + ' MJ/kg');
 }
 
 set('t-v', dual(speedRelative, speedInertial, 2)); // rel (inertial)
@@ -205,6 +210,38 @@ set('t-vr', fmt(vRadial, 2)); // frame-independent
   const _bottomFuel = (_ab && Array.isArray(_ab.memberFuel) && Number.isFinite(_ab.memberFuel[0]))
     ? _ab.memberFuel[0] : state.fuelMass;
   set('t-mf', fmt(_bottomFuel, 0));
+}
+
+// Remaining Δv to target orbit = v_circ(target_alt) − v_current (inertial).
+// This is the actual speed still needed to reach orbital velocity. On the pad
+// the vehicle already carries Earth's rotation (465 m/s east, inertial), so
+// the number starts near 7260 m/s, not 7725. Zero at orbital velocity;
+// negative if overshooting.
+{
+  const GM_dv = CONFIG.GM_EARTH;
+  const Re_dv = CONFIG.EARTH_RADIUS;
+  let targetAltKm_dv = 320;
+  try {
+    // Try common locations for the mission target altitude.
+    if (typeof CONFIG !== 'undefined') {
+      if (Number.isFinite(CONFIG.TARGET_ORBIT_ALT_KM)) targetAltKm_dv = CONFIG.TARGET_ORBIT_ALT_KM;
+      else if (Number.isFinite(CONFIG.TARGET_ORBIT_ALTITUDE_KM)) targetAltKm_dv = CONFIG.TARGET_ORBIT_ALTITUDE_KM;
+    }
+    if (typeof Guidance !== 'undefined' && Guidance.getGuideConfig) {
+      const gc = Guidance.getGuideConfig();
+      if (gc && gc.insertion && Number.isFinite(gc.insertion.TARGET_ORBIT_ALT_KM))
+        targetAltKm_dv = gc.insertion.TARGET_ORBIT_ALT_KM;
+      else if (gc && Number.isFinite(gc.TARGET_ORBIT_ALT_KM))
+        targetAltKm_dv = gc.TARGET_ORBIT_ALT_KM;
+    }
+    if (typeof window !== 'undefined' && typeof window.__getGuideTargetAltKm === 'function') {
+      const v = window.__getGuideTargetAltKm();
+      if (Number.isFinite(v) && v > 0) targetAltKm_dv = v;
+    }
+  } catch (e) {}
+  const v_target_orbit = Math.sqrt(GM_dv / (Re_dv + targetAltKm_dv * 1000));
+  const dv = v_target_orbit - speedInertial;
+  set('t-dv', fmt(dv, 0) + ' m/s');
 }
   set('t-Ft', fmt(ENGINES.reduce((s, e) => s + e.currentF, 0), 0));
   

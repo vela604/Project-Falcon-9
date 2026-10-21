@@ -98,18 +98,38 @@
     const pane = $('paneTele'); if (!pane) return;
     const card = pane.querySelector('.plot-card.main');
     const cell = (label, id, unit, bar) => '<div class="cell"><span class="lbl">' + label + '</span><span class="val"><b id="' + id + '">–</b><i>' + unit + '</i></span><span class="bar"><span id="' + bar + '"></span></span></div>';
+    const cellBi = (label, id, unit, barL, barR, markL, markR) =>
+      '<div class="cell"><span class="lbl">' + label + '</span><span class="val"><b id="' + id + '">–</b><i>' + unit + '</i></span>' +
+      '<span class="bar bi">' +
+      '<span class="sublbl sl">Apo <b id="hudApo">–</b></span>' +
+      '<span class="sublbl sr">Peri <b id="hudPeri">–</b></span>' +
+      '<span class="fill-l" id="' + barL + '"></span>' +
+      '<span class="fill-r" id="' + barR + '"></span>' +
+      '<span class="tmark-l" id="' + markL + '"></span>' +
+      '<span class="tmark-r" id="' + markR + '"></span>' +
+      '</span></div>';
+    const cellT = (label, id, unit, bar, mark) =>
+      '<div class="cell"><span class="lbl">' + label + '</span><span class="val"><b id="' + id + '">–</b><i>' + unit + '</i></span>' +
+      '<span class="bar"><span class="tmark" id="' + mark + '"></span><span id="' + bar + '"></span></span></div>';
+    const cellQ = (label, id, unit, bar) =>
+      '<div class="cell"><span class="lbl">' + label + '</span>' +
+      '<span class="val"><b id="' + id + '">–</b><i>' + unit + '</i><span class="sub" id="hudQPeak"></span></span>' +
+      '<span class="bar"><span id="' + bar + '"></span></span></div>';
     const deck = document.createElement('section'); deck.className = 'deck'; deck.id = 'deck';
     const view = document.createElement('div'); view.className = 'deck-view';
     if (card) view.appendChild(card);
     view.insertAdjacentHTML('beforeend', '<div class="verdict" id="verdict" aria-live="polite"><div><span class="v-big" id="vBig"></span><span class="v-sub" id="vSub"></span></div></div>');
     const read = document.createElement('div'); read.className = 'deck-read';
     read.innerHTML =
-      '<div class="met"><span class="lbl">Mission time</span><span class="met-val" id="hudMet">T+ 00:00.0</span></div>' +
+      '<div class="met"><span class="lbl">Mission time</span><span class="met-val" id="hudMet">T+ 00:00:00</span></div>' +
       '<div class="phase"><span class="lbl">Flight phase</span><b id="hudPhase">Standing by</b></div>' +
       '<div class="inst">' +
-      cell('Altitude', 'hudAlt', 'km', 'barAlt') + cell('Speed', 'hudVel', 'm/s', 'barVel') +
-      cell('Climb rate', 'hudVr', 'm/s', 'barVr') + cell('Horizontal speed', 'hudVt', 'm/s', 'barVt') +
-      cell('Dynamic pressure', 'hudQ', 'kPa', 'barQ') + cell('Mass', 'hudMass', 't', 'barMass') +
+      cellBi('Altitude', 'hudAlt', 'km', 'barAltL', 'barAltR', 'tmarkAltL', 'tmarkAltR') +
+      cellT('Speed', 'hudVel', 'm/s', 'barVel', 'tmarkVel') +
+      cell('Climb rate', 'hudVr', 'm/s', 'barVr') +
+      cell('Horizontal speed', 'hudVt', 'm/s', 'barVt') +
+      cellQ('Dynamic pressure', 'hudQ', 'kPa', 'barQ') +
+      cellT('Orbital energy', 'hudEnergy', 'MJ/kg', 'barEnergy', 'tmarkEnergy') +
       '</div>';
     deck.append(view, read);
     pane.insertBefore(deck, pane.firstChild);
@@ -195,6 +215,25 @@
       return b && Number.isFinite(b.rx) ? b : null;
     } catch (e) { return null; }
   }
+  function getTargetAltKm() {
+    try {
+      if (typeof window.__getGuideTargetAltKm === 'function') {
+        const v = window.__getGuideTargetAltKm();
+        if (Number.isFinite(v) && v > 0) return v;
+      }
+    } catch (e) {}
+    try {
+      const gs = (typeof Guidance !== 'undefined' && Guidance.getGuideStatus && Guidance.getGuideStatus()) || {};
+      if (Number.isFinite(gs.coastVOrbital) && gs.coastVOrbital > 0) {
+        const GM = CONFIG.GM_EARTH, Re = CONFIG.EARTH_RADIUS;
+        const rr = GM / (gs.coastVOrbital * gs.coastVOrbital);
+        const aalt = (rr - Re) / 1000;
+        if (aalt > 10 && aalt < 5000) return aalt;
+      }
+    } catch (e) {}
+    return 320;
+  }
+
   function readout() {
     const b = liveBody(); if (!b) return;
     let Re, r;
@@ -211,18 +250,85 @@
       const rx = b.vx - (sv.vx + wv.wx), ry = b.vy - (sv.vy + wv.wy);
       q = .5 * rho * (rx * rx + ry * ry) / 1000;
     } catch (e) { /* atmosphere helpers unavailable */ }
-    const m = (b._geomCache && Number.isFinite(b._geomCache.M)) ? b._geomCache.M / 1000 : 0;
-    if (m > massMax) massMax = m;
     skyTarget = Math.max(0, alt);
 
-    const mm = Math.floor(t / 60), ss = t - mm * 60;
-    set('hudMet', 'T+ ' + String(mm).padStart(2, '0') + ':' + (ss < 10 ? '0' : '') + ss.toFixed(1));
-    set('hudAlt', fx(alt, alt < 100 ? 1 : 0)); bar('barAlt', alt / 200);
-    set('hudVel', fx(sp, 0));  bar('barVel', sp / 8000);
+    // Max-Q tracking (must run before Q display).
+    if (q > qMax) qMax = q;
+    else if (!maxQDone && qMax > 3 && q < qMax * .92) {
+      maxQDone = true;
+      toast('Max Q passed at T+' + t.toFixed(1) + ' s, ' + qMax.toFixed(1) + ' kPa');
+    }
+
+    // Mission clock — HH:MM:SS, no decimals.
+    const totalSec = Math.floor(t);
+    const hh = Math.floor(totalSec / 3600);
+    const mm = Math.floor((totalSec - hh * 3600) / 60);
+    const ss = totalSec - hh * 3600 - mm * 60;
+    set('hudMet', 'T+ ' + String(hh).padStart(2, '0') + ':' +
+      String(mm).padStart(2, '0') + ':' + String(ss).padStart(2, '0'));
+
+    // ---- Target orbit (constant per run) ----
+    const GM = CONFIG.GM_EARTH;
+    const targetAlt = getTargetAltKm();
+    const targetVcirc = Math.sqrt(GM / (Re + targetAlt * 1000));
+
+    // ---- Altitude: bidirectional apogee (left) / perigee (right) ----
+    const E = 0.5 * (vr * vr + vt * vt) - GM / r;
+    const hOrb = r * vt;
+    let apo_km = null, peri_km = null;
+    if (E < 0) {
+      const a = -GM / (2 * E);
+      const e = Math.sqrt(Math.max(0, 1 + 2 * E * hOrb * hOrb / (GM * GM)));
+      apo_km = (a * (1 + e) - Re) / 1000;
+      peri_km = (a * (1 - e) - Re) / 1000;
+    } else {
+      apo_km = Infinity;
+      peri_km = -1;
+    }
+    const periClamped = Math.max(0, peri_km);
+    const apoClamped  = Number.isFinite(apo_km) ? Math.max(0, apo_km) : 1e9;
+    const altScale = Math.max(targetAlt * 1.20, apoClamped * 1.02, periClamped * 1.02);
+    const apoFillPct  = Math.min(50, (apoClamped  / altScale) * 50);
+    const periFillPct = Math.min(50, (periClamped / altScale) * 50);
+    const altMarkPct  = (targetAlt / altScale) * 50;
+    { const n = $('barAltL'); if (n) n.style.width = apoFillPct.toFixed(2) + '%'; }
+    { const n = $('barAltR'); if (n) n.style.width = periFillPct.toFixed(2) + '%'; }
+    { const n = $('tmarkAltL'); if (n) n.style.left = (50 - altMarkPct).toFixed(2) + '%'; }
+    { const n = $('tmarkAltR'); if (n) n.style.left = (50 + altMarkPct).toFixed(2) + '%'; }
+    set('hudApo',  Number.isFinite(apo_km) ? fx(apo_km, 1) : '∞');
+    set('hudPeri', peri_km < 0 ? '0' : fx(peri_km, 1));
+    set('hudAlt',  fx(alt, alt < 100 ? 1 : 0));
+
+    // ---- Speed: fill toward target orbital speed, marker at target ----
+    const speedScale = targetVcirc * 1.20;
+    const speedFill  = Math.min(1, sp / speedScale);
+    { const n = $('barVel'); if (n) n.style.width = (speedFill * 100).toFixed(2) + '%'; }
+    { const n = $('tmarkVel'); if (n) n.style.left = (100 / 1.20).toFixed(2) + '%'; }
+    set('hudVel', fx(sp, 0));
+
+    // ---- Climb rate + horizontal speed (unchanged) ----
     set('hudVr', fx(vr, 0));   bar('barVr', Math.abs(vr) / 3000);
     set('hudVt', fx(vt, 0));   bar('barVt', Math.abs(vt) / 8000);
-    set('hudQ', fx(q, 1));     bar('barQ', q / 40);
-    set('hudMass', fx(m, 1));  bar('barMass', massMax > 0 ? m / massMax : 0);
+
+    // ---- Dynamic pressure: live value + peak label ----
+    const qScale = Math.max(qMax * 1.10, 1);
+    bar('barQ', q / qScale);
+    set('hudQ', fx(q, 1));
+    set('hudQPeak', qMax > 0.1 ? 'peak ' + qMax.toFixed(1) : '');
+
+    // ---- Orbital energy: fill from sea-level ref toward target ----
+    const eps = 0.5 * (vr * vr + vt * vt) - GM / r;
+    // Pad reference: v=0 at surface → eps = -GM/Re, NOT -GM/(2Re).
+    // (-GM/(2Re) is the circular-orbit energy at surface radius, which
+    // is ~half as negative as the actual pad value and made the bar
+    // stay at 0% through the entire ascent burn.)
+    const epsSurface = -GM / Re;
+    const epsTarget  = -GM / (2 * (Re + targetAlt * 1000));
+    const epsRange = epsTarget - epsSurface;
+    const energyFill = Math.max(0, Math.min(1, (eps - epsSurface) / (epsRange / 0.85)));
+    { const n = $('barEnergy'); if (n) n.style.width = (energyFill * 100).toFixed(2) + '%'; }
+    { const n = $('tmarkEnergy'); if (n) n.style.left = '85%'; }
+    set('hudEnergy', (eps / 1e6).toFixed(2));
 
     try {
       const gs = (typeof Guidance !== 'undefined' && Guidance.getGuideStatus && Guidance.getGuideStatus()) || {};
@@ -233,9 +339,6 @@
         set('hudPhase', human(curPhase));
       }
     } catch (e) { /* guidance not ready */ }
-
-    if (q > qMax) qMax = q;
-    else if (!maxQDone && qMax > 3 && q < qMax * .92) { maxQDone = true; toast('Max Q passed at T+' + t.toFixed(1) + ' s, ' + qMax.toFixed(1) + ' kPa'); }
 
     const now = performance.now();
     if (ribDirty || (body.classList.contains('is-running') && now - ribAt > 500)) { renderRibbon(t); ribAt = now; ribDirty = false; }
@@ -301,6 +404,22 @@
     if (m['ticks/s']) setKpi('kTps', m['ticks/s']);
     const bad = m['crashed'] === 'YES', ok = m['circ achieved'] === 'YES', landed = m['landed'] === 'YES';
     setKpi('kOutcome', bad ? 'CRASHED' : ok ? 'ORBIT ✓' : landed ? 'LANDED' : 'DONE', bad ? 'bad' : ok ? 'good' : '');
+
+    // Sync HUD phase label to the run's final phase. Guidance is stopped
+    // by the time the summary fires, so the readout loop can never see the
+    // last transition (e.g. COAST_HOLD_2 -> DONE) on its own -- it freezes
+    // on whatever phase was last visible while the guide was still active.
+    const finalPhase = m['final phase'];
+    if (finalPhase && finalPhase !== '—' && finalPhase !== curPhase) {
+      curPhase = finalPhase;
+      if (!phaseColors[curPhase]) phaseColors[curPhase] = PAL[Object.keys(phaseColors).length % PAL.length];
+      const endT = (typeof state !== 'undefined' && state && Number.isFinite(state.simTime)) ? state.simTime : 0;
+      phases.push({ n: curPhase, t0: endT, c: phaseColors[curPhase] });
+      ribDirty = true;
+      set('hudPhase', human(curPhase));
+      renderRibbon(endT);
+    }
+
     showVerdict(bad ? 'Vehicle lost' : ok ? 'Orbit achieved' : landed ? 'Landed' : 'Run complete', bad ? 'bad' : ok ? 'good' : '');
   }
   if (sum) new MutationObserver(syncSummary).observe(sum, { childList: true });

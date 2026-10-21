@@ -124,6 +124,90 @@ body.is-running .met-val{text-shadow:0 0 34px rgba(255,107,44,.7)}
 .cell:nth-child(5) .bar>span{background:var(--flame)}
 .cell:nth-child(1) .bar>span{background:var(--flame-hot)}
 
+
+/* ── Bar augmentation: target marker + bidirectional (apogee/perigee) ── */
+.bar { position: relative; }
+.bar > .tmark,
+.bar > .tmark-l,
+.bar > .tmark-r {
+  position: absolute;
+  top: -3px;
+  height: calc(100% + 6px);
+  width: 2px;
+  display: block;
+  background: var(--flame-hot);
+  transition: none;
+  z-index: 2;
+  pointer-events: none;
+  box-shadow: 0 0 4px rgba(255,196,119,.55);
+}
+.bar.bi { margin-top: 16px; }
+.bar.bi::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: -2px;
+  height: calc(100% + 4px);
+  width: 1px;
+  margin-left: -0.5px;
+  background: rgba(255,255,255,.45);
+  z-index: 3;
+  pointer-events: none;
+}
+.bar.bi > .fill-l {
+  position: absolute;
+  top: 0;
+  right: 50%;
+  height: 100%;
+  width: 0;
+  background: var(--ice);
+  transition: width .25s linear;
+}
+.bar.bi > .fill-r {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  height: 100%;
+  width: 0;
+  background: var(--go);
+  transition: width .25s linear;
+}
+.bar.bi > .sublbl {
+  position: absolute;
+  top: -15px;
+  width: auto;
+  height: auto;
+  display: block;
+  background: transparent;
+  transition: none;
+  font-size: 9.5px;
+  color: var(--dim);
+  font-stretch: 85%;
+  white-space: nowrap;
+  font-weight: 500;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+.bar.bi > .sublbl.sl { left: 0; }
+.bar.bi > .sublbl.sr { right: 0; }
+.bar.bi > .sublbl b {
+  color: var(--ink-2);
+  font-weight: 700;
+  font-size: 10.5px;
+  margin-left: 3px;
+  text-transform: none;
+  font-stretch: 90%;
+}
+.cell .val .sub {
+  font-size: 10.5px;
+  color: var(--dim);
+  font-stretch: 85%;
+  margin-left: 8px;
+  font-weight: 500;
+  letter-spacing: .02em;
+  text-transform: none;
+}
+
 /* phase ribbon */
 #phaseRibbon{display:flex;gap:2px;min-height:42px;align-items:stretch;background:var(--glass);border:1px solid var(--line);border-radius:2px;padding:4px;overflow:hidden}
 #phaseRibbon .seg{flex:1 1 0;min-width:8px;padding:7px 9px;border-left:3px solid var(--pc);background:color-mix(in srgb,var(--pc) 18%,transparent);font-size:12.5px;font-stretch:80%;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--ink)}

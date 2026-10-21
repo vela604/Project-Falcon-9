@@ -100,7 +100,7 @@
       <div class="kpi" id="kPeri" style="--c:var(--green)"><div class="kl">Perigee</div><div class="kv"><span class="kv-num">—</span><span class="ku">km</span></div></div>
       <div class="kpi" id="kQ" style="--c:var(--orange)"><div class="kl">Peak Q</div><div class="kv"><span class="kv-num">—</span><span class="ku">kPa</span></div></div>
       <div class="kpi" id="kG" style="--c:var(--yellow)"><div class="kl">Peak G</div><div class="kv"><span class="kv-num">—</span><span class="ku">g</span></div></div>
-      <div class="kpi" id="kFuel" style="--c:var(--cyan)"><div class="kl">Fuel left</div><div class="kv"><span class="kv-num">—</span><span class="ku">t</span></div></div>
+      <div class="kpi" id="kFuel" style="--c:var(--cyan)"><div class="kl">Fuel (b+s)</div><div class="kv"><span class="kv-num">—</span><span class="ku">t</span></div></div>
       <div class="kpi" id="kTps" style="--c:var(--purple)"><div class="kl">Throughput</div><div class="kv"><span class="kv-num">—</span><span class="ku">t/s</span></div></div>
       </div>
 <!-- ============ MAIN POLAR PLOT ============ -->
@@ -115,12 +115,8 @@
     <!-- ============ TIME-SERIES PLOTS ============ -->
     <div class="plot-grid">
       <div class="plot-card">
-        <div class="plot-title"><span>Radial velocity (vr)</span><span class="hint">m/s</span></div>
-        <canvas id="vrCanvas"></canvas>
-      </div>
-      <div class="plot-card">
-        <div class="plot-title"><span>Tangential velocity (vt)</span><span class="hint">m/s · inertial</span></div>
-        <canvas id="vtCanvas"></canvas>
+        <div class="plot-title"><span>Orbital energy</span><span class="hint">MJ/kg · specific</span></div>
+        <canvas id="energyCanvas"></canvas>
       </div>
       <div class="plot-card">
         <div class="plot-title"><span>Altitude</span><span class="hint">km</span></div>
@@ -131,13 +127,21 @@
         <canvas id="speedCanvas"></canvas>
       </div>
       <div class="plot-card">
-  <div class="plot-title"><span>Mass</span><span class="hint">t · dry + fuel + payload</span></div>
-  <canvas id="massCanvas"></canvas>
-</div>
-<div class="plot-card">
-  <div class="plot-title"><span>Dynamic pressure Q</span><span class="hint">kPa</span></div>
-  <canvas id="qCanvas"></canvas>
-</div>
+        <div class="plot-title"><span>Tangential velocity (vt)</span><span class="hint">m/s · inertial</span></div>
+        <canvas id="vtCanvas"></canvas>
+      </div>
+      <div class="plot-card">
+        <div class="plot-title"><span>Radial velocity (vr)</span><span class="hint">m/s</span></div>
+        <canvas id="vrCanvas"></canvas>
+      </div>
+      <div class="plot-card">
+        <div class="plot-title"><span>Dynamic pressure Q</span><span class="hint">kPa</span></div>
+        <canvas id="qCanvas"></canvas>
+      </div>
+      <div class="plot-card">
+        <div class="plot-title"><span>Mass</span><span class="hint">t · dry + fuel + payload</span></div>
+        <canvas id="massCanvas"></canvas>
+      </div>
     </div>
 
     <!-- ============ SUMMARY ============ -->
@@ -749,6 +753,18 @@ default: break;
     getGuideDefaultPreset(guideName) : null;
   defaultValues = defaults ? JSON.parse(JSON.stringify(defaults.constants)) : JSON.parse(JSON.stringify(cfg));
   if (!opts.preserveValues) currentValues = JSON.parse(JSON.stringify(cfg));
+  // Expose current target-orbit altitude to the read-only presentation layer
+  // (guidance-tester-ui.js) without forcing it to guess the guide name.
+  window.__getGuideTargetAltKm = function () {
+    try {
+      if (currentValues && currentValues.insertion &&
+          Number.isFinite(currentValues.insertion.TARGET_ORBIT_ALT_KM))
+        return currentValues.insertion.TARGET_ORBIT_ALT_KM;
+      if (currentValues && Number.isFinite(currentValues.TARGET_ORBIT_ALT_KM))
+        return currentValues.TARGET_ORBIT_ALT_KM;
+      return 320;
+    } catch (e) { return 320; }
+  };
   const important = (typeof getGuideImportantFields === 'function') ?
       getGuideImportantFields(guideName) : [];
     const impSet = new Set(important);
@@ -996,7 +1012,7 @@ presetStat.textContent = 'Imported constants.';
   const PLOT_RENDER_MAX = 2500;
 
   const Plots = {
-  data: { polar: {}, vr: {}, vt: {}, alt: {}, speed: {}, mass: {}, q: {} },
+  data: { polar: {}, vr: {}, vt: {}, alt: {}, speed: {}, mass: {}, q: {}, energy: {} },
   previousData: null,
   _prevBounds: null,
   _liveBounds: null,
@@ -1011,7 +1027,7 @@ presetStat.textContent = 'Imported constants.';
 
   _emptyLiveBounds() {
     const s = {};
-    for (const k of ['vr', 'vt', 'alt', 'speed', 'mass', 'q']) {
+    for (const k of ['vr', 'vt', 'alt', 'speed', 'mass', 'q', 'energy']) {
       s[k] = { tMax: 0, vMin: Infinity, vMax: -Infinity };
     }
     return {
@@ -1025,13 +1041,13 @@ presetStat.textContent = 'Imported constants.';
       this.previousData = this.data;
       this._prevBounds = this._computePrevBounds(this.previousData);
     }
-    this.data = { polar: {}, vr: {}, vt: {}, alt: {}, speed: {}, mass: {}, q: {} };
+    this.data = { polar: {}, vr: {}, vt: {}, alt: {}, speed: {}, mass: {}, q: {}, energy: {} };
     this._lastPushTime = {};
     this._liveBounds = this._emptyLiveBounds();
   },
 
   clear() {
-    this.data = { polar: {}, vr: {}, vt: {}, alt: {}, speed: {}, mass: {}, q: {} };
+    this.data = { polar: {}, vr: {}, vt: {}, alt: {}, speed: {}, mass: {}, q: {}, energy: {} };
     this.previousData = null;
     this._prevBounds = null;
     this._liveBounds = this._emptyLiveBounds();
@@ -1041,7 +1057,7 @@ presetStat.textContent = 'Imported constants.';
   _computePrevBounds(prev) {
     const polar = _computePolarBounds([prev.polar]);
     const series = {};
-    for (const k of ['vr', 'vt', 'alt', 'speed', 'mass', 'q']) {
+    for (const k of ['vr', 'vt', 'alt', 'speed', 'mass', 'q', 'energy']) {
       let tMax = 0, vMin = Infinity, vMax = -Infinity;
       for (const bodyKey in prev[k]) {
         const arr = prev[k][bodyKey];
@@ -1082,6 +1098,23 @@ presetStat.textContent = 'Imported constants.';
     upd('speed', s.speed);
     upd('mass', s.mass_t);
     upd('q', s.q_kPa);
+    upd('energy', s.energy_MJkg);
+  },
+
+  _computeTargets() {
+    let targetAltKm = 320;
+    try {
+      if (typeof window.__getGuideTargetAltKm === 'function') {
+        const v = window.__getGuideTargetAltKm();
+        if (Number.isFinite(v) && v > 0) targetAltKm = v;
+      }
+    } catch (e) {}
+    const GM = CONFIG.GM_EARTH;
+    const Re = CONFIG.EARTH_RADIUS;
+    const rTarget = Re + targetAltKm * 1000;
+    const vCirc = Math.sqrt(GM / rTarget);
+    const epsTarget = -GM / (2 * rTarget) / 1e6;
+    return { altitude: targetAltKm, speed: vCirc, vt: vCirc, vr: 0, energy: epsTarget };
   },
 
   _getEffectiveBounds() {
@@ -1103,8 +1136,14 @@ presetStat.textContent = 'Imported constants.';
       if (lp.maxY > polar.maxY) polar.maxY = lp.maxY;
       polar.hasAny = true;
     }
+    const targets = this._computeTargets();
+    const targetMap = {
+      vr: targets.vr, vt: targets.vt,
+      alt: targets.altitude, speed: targets.speed,
+      energy: targets.energy,
+    };
     const series = {};
-    for (const k of ['vr', 'vt', 'alt', 'speed', 'mass', 'q']) {
+    for (const k of ['vr', 'vt', 'alt', 'speed', 'mass', 'q', 'energy']) {
       const f = this._prevBounds && this._prevBounds.series[k];
       const l = this._liveBounds.series[k];
       let tMax = 0, vMin = Infinity, vMax = -Infinity;
@@ -1118,9 +1157,16 @@ presetStat.textContent = 'Imported constants.';
         if (l.vMin < vMin) vMin = l.vMin;
         if (l.vMax > vMax) vMax = l.vMax;
       }
+      const hasData = (tMax > 0);
       if (!isFinite(vMin)) { vMin = 0; vMax = 1; }
-      if (vMin > 0) vMin = 0;
-      if (vMax < 0) vMax = 0;
+      if (hasData && targetMap[k] != null && Number.isFinite(targetMap[k])) {
+        if (targetMap[k] < vMin) vMin = targetMap[k];
+        if (targetMap[k] > vMax) vMax = targetMap[k];
+      }
+      if (k !== 'energy') {
+        if (vMin > 0) vMin = 0;
+        if (vMax < 0) vMax = 0;
+      }
       const pad = (vMax - vMin) * 0.10 || 1;
       series[k] = {
         tMin: 0,
@@ -1149,35 +1195,35 @@ presetStat.textContent = 'Imported constants.';
     this._push(this.data.speed, key, { t: s.t, v: s.speed });
     this._push(this.data.mass,  key, { t: s.t, v: s.mass_t });
     this._push(this.data.q,     key, { t: s.t, v: s.q_kPa });
+    this._push(this.data.energy,key, { t: s.t, v: s.energy_MJkg });
     this._updateLiveBounds(s);
   },
 
   renderAll() {
     const hasPrev = this._hasAnyData(this.previousData);
     const eff = this._getEffectiveBounds();
+    const targets = this._computeTargets();
+    const skip = hasPrev;
 
     if (hasPrev) {
       drawPolarPlot(this.previousData.polar, { faded: true, suppressEmptyMessage: true, bounds: eff.polar });
-      drawTimeSeries('vrCanvas',    this.previousData.vr,    { forceZero: true, faded: true, suppressEmptyMessage: true, bounds: eff.series.vr });
-      drawTimeSeries('vtCanvas',    this.previousData.vt,    { forceZero: true, faded: true, suppressEmptyMessage: true, bounds: eff.series.vt });
-      drawTimeSeries('altCanvas',   this.previousData.alt,   { forceZero: true, faded: true, suppressEmptyMessage: true, bounds: eff.series.alt });
-      drawTimeSeries('speedCanvas', this.previousData.speed, { forceZero: true, faded: true, suppressEmptyMessage: true, bounds: eff.series.speed });
-      drawTimeSeries('massCanvas',  this.previousData.mass,  { forceZero: true, faded: true, suppressEmptyMessage: true, bounds: eff.series.mass });
-      drawTimeSeries('qCanvas',     this.previousData.q,     { forceZero: true, faded: true, suppressEmptyMessage: true, bounds: eff.series.q });
+      drawTimeSeries('energyCanvas', this.previousData.energy, { faded: true, suppressEmptyMessage: true, bounds: eff.series.energy, target: targets.energy });
+      drawTimeSeries('altCanvas',    this.previousData.alt,    { forceZero: true, faded: true, suppressEmptyMessage: true, bounds: eff.series.alt,    target: targets.altitude });
+      drawTimeSeries('speedCanvas',  this.previousData.speed,  { forceZero: true, faded: true, suppressEmptyMessage: true, bounds: eff.series.speed,  target: targets.speed });
+      drawTimeSeries('vtCanvas',     this.previousData.vt,     { forceZero: true, faded: true, suppressEmptyMessage: true, bounds: eff.series.vt,     target: targets.vt });
+      drawTimeSeries('vrCanvas',     this.previousData.vr,     { forceZero: true, faded: true, suppressEmptyMessage: true, bounds: eff.series.vr,     target: targets.vr });
+      drawTimeSeries('qCanvas',      this.previousData.q,      { forceZero: true, faded: true, suppressEmptyMessage: true, bounds: eff.series.q });
+      drawTimeSeries('massCanvas',   this.previousData.mass,   { forceZero: true, faded: true, suppressEmptyMessage: true, bounds: eff.series.mass });
     }
 
-    drawPolarPlot(this.data.polar, {
-      skipClear: hasPrev,
-      skipBackground: hasPrev,
-      suppressEmptyMessage: hasPrev,
-      bounds: eff.polar,
-    });
-    drawTimeSeries('vrCanvas',    this.data.vr,    { forceZero: true, skipClear: hasPrev, suppressEmptyMessage: hasPrev, bounds: eff.series.vr });
-    drawTimeSeries('vtCanvas',    this.data.vt,    { forceZero: true, skipClear: hasPrev, suppressEmptyMessage: hasPrev, bounds: eff.series.vt });
-    drawTimeSeries('altCanvas',   this.data.alt,   { forceZero: true, skipClear: hasPrev, suppressEmptyMessage: hasPrev, bounds: eff.series.alt });
-    drawTimeSeries('speedCanvas', this.data.speed, { forceZero: true, skipClear: hasPrev, suppressEmptyMessage: hasPrev, bounds: eff.series.speed });
-    drawTimeSeries('massCanvas',  this.data.mass,  { forceZero: true, skipClear: hasPrev, suppressEmptyMessage: hasPrev, bounds: eff.series.mass });
-    drawTimeSeries('qCanvas',     this.data.q,     { forceZero: true, skipClear: hasPrev, suppressEmptyMessage: hasPrev, bounds: eff.series.q });
+    drawPolarPlot(this.data.polar, { skipClear: skip, skipBackground: skip, suppressEmptyMessage: skip, bounds: eff.polar, targetAltKm: targets.altitude });
+    drawTimeSeries('energyCanvas', this.data.energy, { skipClear: skip, suppressEmptyMessage: skip, bounds: eff.series.energy, target: targets.energy });
+    drawTimeSeries('altCanvas',    this.data.alt,    { forceZero: true, skipClear: skip, suppressEmptyMessage: skip, bounds: eff.series.alt,    target: targets.altitude });
+    drawTimeSeries('speedCanvas',  this.data.speed,  { forceZero: true, skipClear: skip, suppressEmptyMessage: skip, bounds: eff.series.speed,  target: targets.speed });
+    drawTimeSeries('vtCanvas',     this.data.vt,     { forceZero: true, skipClear: skip, suppressEmptyMessage: skip, bounds: eff.series.vt,     target: targets.vt });
+    drawTimeSeries('vrCanvas',     this.data.vr,     { forceZero: true, skipClear: skip, suppressEmptyMessage: skip, bounds: eff.series.vr,     target: targets.vr });
+    drawTimeSeries('qCanvas',      this.data.q,      { forceZero: true, skipClear: skip, suppressEmptyMessage: skip, bounds: eff.series.q });
+    drawTimeSeries('massCanvas',   this.data.mass,   { forceZero: true, skipClear: skip, suppressEmptyMessage: skip, bounds: eff.series.mass });
   },
 };
 
@@ -1213,11 +1259,14 @@ presetStat.textContent = 'Imported constants.';
       const relVy = b.vy - (sv.vy + wv.wy);
       const speedRel = Math.hypot(relVx, relVy);
       const q_kPa = 0.5 * rho * speedRel * speedRel / 1000;
+      const eps = 0.5 * (vr * vr + vt * vt) - CONFIG.GM_EARTH / r;
+      const energy_MJkg = eps / 1e6;
 
       Plots.push(bi, {
         t, rx: b.rx, ry: b.ry,
         vr, vt, altKm, speed,
         mass_t, q_kPa,
+        energy_MJkg,
       });
     }
   }
@@ -1390,6 +1439,21 @@ if (!hasAny) {
   ctx.strokeStyle = 'rgba(100,180,120,0.45)';
   ctx.lineWidth = 1.5;
   ctx.stroke();
+}
+
+if (!faded && opts.targetAltKm != null && Number.isFinite(opts.targetAltKm) && opts.targetAltKm > 0) {
+  const targetPx = (Re + opts.targetAltKm * 1000) * scale;
+  if (targetPx > 1 && targetPx < size * 20) {
+    ctx.save();
+    ctx.strokeStyle = 'rgba(255, 180, 100, 0.55)';
+    ctx.lineWidth = 1.2;
+    ctx.setLineDash([6, 5]);
+    ctx.beginPath();
+    ctx.arc(earthC.px, earthC.py, targetPx, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
 }
 
 // Trail drawing starts here — faded alpha only affects the trail
@@ -1573,6 +1637,25 @@ if (!faded) {
       const v = tMin + i * (tMax - tMin) / 4;
       const x = padL + i * plotW / 4;
       ctx.fillText(v.toFixed(0), x, padT + plotH + 4);
+    }
+
+    if (opts.target != null && Number.isFinite(opts.target) && opts.target >= vMin && opts.target <= vMax) {
+      const yT = ty(opts.target);
+      ctx.save();
+      ctx.strokeStyle = 'rgba(255, 180, 100, 0.62)';
+      ctx.lineWidth = 1.2;
+      ctx.setLineDash([6, 5]);
+      ctx.beginPath();
+      ctx.moveTo(padL, yT);
+      ctx.lineTo(padL + plotW, yT);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = 'rgba(255, 200, 140, 0.9)';
+      ctx.font = 'bold 9px "JetBrains Mono", monospace';
+      ctx.textAlign = 'right';
+      ctx.textBaseline = 'bottom';
+      ctx.fillText('target ' + _fmtAxis(opts.target), padL + plotW - 4, yT - 2);
+      ctx.restore();
     }
 
     for (const key in seriesMap) {
@@ -1770,7 +1853,19 @@ if (!faded) {
     const geom = (b._geomCache && Number.isFinite(b._geomCache.M))
       ? b._geomCache
       : ((typeof geometryOf === 'function') ? geometryOf(b) : { M: 0 });
-    const fuel_t = (b.fuelMass || 0) / 1000;
+    // Fuel left: sum across booster + stage (skip payload & fairing halves,
+    // which never carry propellant). The active body is often the payload
+    // after deploy, so its fuelMass is 0 — don't use it alone.
+    let fuel_t = 0, fuelBooster_t = 0, fuelStage_t = 0;
+    for (let bi = 0; bi < state.bodies.length; bi++) {
+      const bb = state.bodies[bi];
+      if (!bb || bb.payloadBody || bb.fairingHalf) continue;
+      const f = (bb.fuelMass || 0) / 1000;
+      fuel_t += f;
+      const role = bb.members && bb.members[0] ? bb.members[0].stageRole : null;
+      if (role === 'booster') fuelBooster_t += f;
+      else if (role === 'stage') fuelStage_t += f;
+    }
     const thrust_MN = (b.engines || []).reduce((s, e) => s + (e.currentF || 0), 0) / 1e6;
     const mdot = (b.engines || []).reduce((s, e) => s + (e.massFlowRate || 0), 0);
     return {
@@ -1780,6 +1875,7 @@ if (!faded) {
       alt_km, vr, vt, speed,
       apo_km, peri_km,
       mass_t: geom.M / 1000, fuel_t,
+      fuelBooster_t, fuelStage_t,
       thrust_MN, mdot,
       bodies: state.bodies.length,
       bodyTags: state.bodies.map(x =>
@@ -2141,6 +2237,8 @@ if (!faded) {
       coastDeltaV: finalSt ? finalSt.coastDeltaV : null,
       coastTRem: finalSt ? finalSt.coastTRem : null,
       fuelLeft_t: finalSt ? finalSt.fuel_t : null,
+      fuelBooster_t: finalSt ? finalSt.fuelBooster_t : null,
+      fuelStage_t: finalSt ? finalSt.fuelStage_t : null,
       maxQ_kPa: peakQ_kPa > 0 ? peakQ_kPa / 1000 : null,
       maxG: peakG > 0 ? peakG : null,
       capturesCount: captures.length,
@@ -2162,6 +2260,8 @@ if (!faded) {
       'final perigee (km)': summary.perigee_km != null ? summary.perigee_km.toFixed(2) : '—',
       'coast Δv (m/s)': summary.coastDeltaV != null ? summary.coastDeltaV.toFixed(2) : '—',
       'coast t_rem (s)': summary.coastTRem != null ? summary.coastTRem.toFixed(1) : '—',
+      'booster fuel (t)': summary.fuelBooster_t != null ? summary.fuelBooster_t.toFixed(2) : '—',
+      'stage fuel (t)': summary.fuelStage_t != null ? summary.fuelStage_t.toFixed(2) : '—',
       'fuel left (t)': summary.fuelLeft_t != null ? summary.fuelLeft_t.toFixed(2) : '—',
       'peak Q (kPa)': summary.maxQ_kPa != null ? summary.maxQ_kPa.toFixed(2) : '—',
       'peak G': summary.maxG != null ? summary.maxG.toFixed(2) : '—',
