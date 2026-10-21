@@ -1,0 +1,2283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Guidance Numerical — Rocket Sim</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles/guidance-tester.css">
+</head>
+<body>
+<canvas id="fxCanvas"></canvas>
+<div id="toasts"></div>
+<div id="app">
+
+  <div id="topBar">
+    <button class="menu-btn" id="menuBtn" aria-label="Menu">☰</button>
+    <div class="logo">🚀</div>
+    <div class="brand-wrap"><span class="brand">GUIDANCE NUMERICAL</span><span class="brand-sub">mission control · headless-parity calibration</span></div>
+    <div class="spacer"></div>
+    <div class="mon">
+      <span class="chip state"><span class="dot"></span><b id="monState">IDLE</b></span>
+      <span class="chip">⏱ <b id="monElapsed">0.0s</b></span>
+      <span class="chip">◔ <b id="monProg">0%</b></span>
+      <span class="chip">FPS <b id="monFps">–</b></span>
+      <span class="chip">MEM <b id="monMem">–</b></span>
+      <span class="chip">🕒 <b id="monClock">--:--:--</b></span>
+    </div>
+    <label class="toggle-switch" title="Off = pure numerical run, no plotting. Maximum speed.">
+      <input type="checkbox" id="visualsToggle" checked>
+      <span class="track"><span class="thumb"></span></span>
+      <span class="lbl">Visuals</span>
+    </label>
+    <span class="stack-label" id="stackLabel">—</span>
+    <a class="back" href="index.html">← Home</a>
+  </div>
+
+  <div class="shell">
+  <aside id="sidebar">
+    <div id="controls">
+      <div class="side-title" style="grid-column:1/-1">Mission control</div>
+      <label for="guideSelect">Guide</label>
+      <select id="guideSelect"></select>
+      <label for="durationInput">Duration (s)</label>
+      <input id="durationInput" type="number" value="600" min="10" max="7200" step="10">
+      <button class="btn btn-run" id="startBtn">▶ Run</button>
+      <button class="btn btn-stop" id="stopBtn" disabled>■ Stop</button>
+      <button class="btn" id="resetDefaultsBtn" title="Restore all constants to code defaults">↺ Defaults</button>
+      <button class="btn" id="clearPlotsBtn" title="Clear all plots">⌫ Clear plots</button>
+    </div>
+    <div id="envPanel">
+      <div class="side-title">Environment</div>
+  <div class="env-group">
+      <div class="env-title">Wind</div>
+      <label><input type="checkbox" id="envWindEnabled"> Enabled</label>
+      <label>Speed <input type="number" id="envWindSpeed" value="0" step="1" min="0" max="60"> m/s</label>
+      <label>Dir <input type="number" id="envWindDir" value="0" step="5" min="0" max="360"> °</label>
+    </div>
+    <div class="env-group">
+      <div class="env-title">Fueling</div>
+      <label>Booster <input type="number" id="envBoosterFuel" value="100" step="5" min="0" max="100"> %</label>
+      <label>Stage <input type="number" id="envStageFuel" value="100" step="5" min="0" max="100"> %</label>
+    </div>
+    <div class="env-group">
+      <div class="env-title">Physics</div>
+      <label><input type="checkbox" id="envAtmosphere" checked> Atmosphere</label>
+      <label><input type="checkbox" id="envSlosh" checked> Fuel slosh</label>
+    </div>
+    <div class="env-group">
+      <div class="env-title">Guidance</div>
+      <label><input type="checkbox" id="envImu"> IMU noise</label>
+    </div>
+</div>
+    <div id="presetPanel">
+      <div class="side-title">Presets</div>
+    <label for="presetSelect">Preset:</label>
+    <select id="presetSelect" style="min-width:240px;"><option value="">— select a preset —</option></select>
+    <button class="btn" id="presetLoadBtn">Load</button>
+    <button class="btn" id="presetSaveBtn">Save as…</button>
+    <button class="btn" id="presetDeleteBtn">Delete</button>
+    <button class="btn" id="presetExportBtn">Export JSON</button>
+    <button class="btn" id="presetImportBtn">Import JSON</button>
+    <span id="presetStatus"></span>
+    </div>
+  </aside>
+
+  <div id="main">
+    <div class="tabs">
+      <button class="tab active" data-pane="paneTele">📡 Telemetry</button>
+      <button class="tab" data-pane="paneConst">🎛 Constants</button>
+      <button class="tab" data-pane="paneEvents">⚑ Events &amp; Compare</button>
+    </div>
+
+    <section class="pane active" id="paneTele">
+      <div id="kpiStrip">
+      <div class="kpi" id="kOutcome" style="--c:var(--cyan)"><div class="kl">Outcome</div><div class="kv"><span class="kv-num">—</span><span class="ku"></span></div></div>
+      <div class="kpi" id="kPhase" style="--c:var(--purple)"><div class="kl">Final phase</div><div class="kv"><span class="kv-num">—</span><span class="ku"></span></div></div>
+      <div class="kpi" id="kApo" style="--c:var(--green)"><div class="kl">Apogee</div><div class="kv"><span class="kv-num">—</span><span class="ku">km</span></div></div>
+      <div class="kpi" id="kPeri" style="--c:var(--green)"><div class="kl">Perigee</div><div class="kv"><span class="kv-num">—</span><span class="ku">km</span></div></div>
+      <div class="kpi" id="kQ" style="--c:var(--orange)"><div class="kl">Peak Q</div><div class="kv"><span class="kv-num">—</span><span class="ku">kPa</span></div></div>
+      <div class="kpi" id="kG" style="--c:var(--yellow)"><div class="kl">Peak G</div><div class="kv"><span class="kv-num">—</span><span class="ku">g</span></div></div>
+      <div class="kpi" id="kFuel" style="--c:var(--cyan)"><div class="kl">Fuel left</div><div class="kv"><span class="kv-num">—</span><span class="ku">t</span></div></div>
+      <div class="kpi" id="kTps" style="--c:var(--purple)"><div class="kl">Throughput</div><div class="kv"><span class="kv-num">—</span><span class="ku">t/s</span></div></div>
+      </div>
+<!-- ============ MAIN POLAR PLOT ============ -->
+    <div class="plot-card main reveal">
+      <div class="plot-title">
+        <span>Earth Polar Trajectory</span>
+        <span class="hint">earth-fixed · altitude ×1 exaggerated</span>
+      </div>
+      <canvas id="polarCanvas"></canvas>
+    </div>
+
+    <!-- ============ TIME-SERIES PLOTS ============ -->
+    <div class="plot-grid">
+      <div class="plot-card">
+        <div class="plot-title"><span>Radial velocity (vr)</span><span class="hint">m/s</span></div>
+        <canvas id="vrCanvas"></canvas>
+      </div>
+      <div class="plot-card">
+        <div class="plot-title"><span>Tangential velocity (vt)</span><span class="hint">m/s · inertial</span></div>
+        <canvas id="vtCanvas"></canvas>
+      </div>
+      <div class="plot-card">
+        <div class="plot-title"><span>Altitude</span><span class="hint">km</span></div>
+        <canvas id="altCanvas"></canvas>
+      </div>
+      <div class="plot-card">
+        <div class="plot-title"><span>Speed</span><span class="hint">m/s · inertial</span></div>
+        <canvas id="speedCanvas"></canvas>
+      </div>
+      <div class="plot-card">
+  <div class="plot-title"><span>Mass</span><span class="hint">t · dry + fuel + payload</span></div>
+  <canvas id="massCanvas"></canvas>
+</div>
+<div class="plot-card">
+  <div class="plot-title"><span>Dynamic pressure Q</span><span class="hint">kPa</span></div>
+  <canvas id="qCanvas"></canvas>
+</div>
+    </div>
+
+    <!-- ============ SUMMARY ============ -->
+
+    <div class="card reveal" id="summaryCard">
+      <div class="card-title">Run summary</div>
+      <div id="summaryBody" class="run-summary"><span class="k">No run yet.</span></div>
+    </div>
+    </section>
+
+    <section class="pane" id="paneConst">
+      <div id="constantsPanel">
+        <div class="constants-title"><span>Constants</span><span id="constantsHint">Values apply on next Run.</span></div>
+        <div id="constantsHost"></div>
+      </div>
+    </section>
+
+    <section class="pane" id="paneEvents">
+      <div class="card" id="compareBox">
+        <div class="card-title">Compare with previous run</div>
+        <div id="compareBody" class="compare-grid"></div>
+      </div>
+    <!-- ============ EVENT CAPTURES ============ -->
+    <div class="card">
+      <div class="card-title">
+        <span>Event captures</span>
+        <span id="captureCount" style="color: var(--dim);">0</span>
+      </div>
+      <div id="filterRow">
+        <span class="filter-chip active" data-type="all">all</span>
+        <span class="filter-chip" data-type="phase">phase</span>
+        <span class="filter-chip" data-type="orbit">orbit</span>
+        <span class="filter-chip" data-type="abort">abort</span>
+        <span class="filter-chip" data-type="event">event</span>
+        <span class="filter-chip" data-type="peak">peak</span>
+        <span class="filter-chip" data-type="end">end</span>
+      </div>
+      <div id="capturesList"></div>
+    </div>
+
+    </section>
+  </div>
+  </div>
+
+  <div id="status">
+    <span id="statusText">Ready.</span>
+    <div class="progress-bar" id="progressBar"><div class="progress-fill" id="progressFill"></div></div>
+  </div>
+</div>
+
+<!-- ============================================================================
+     Sim script load order — MUST match headless/runner.js SIM_FILES exactly.
+     ============================================================================ -->
+<script src="js/componentLibrary.js"></script>
+<script src="js/customDesign.js"></script>
+<script src="js/fleet.js"></script>
+<script src="js/config.js"></script>
+<script src="js/simJs/core/massProps.js"></script>
+<script src="js/simJs/core/environment.js"></script>
+<script src="js/simJs/core/vehicle.js"></script>
+<script src="js/simJs/core/rcs.js"></script>
+<script src="js/simJs/core/physics.js"></script>
+<script src="js/simJs/core/collision.js"></script>
+<script src="js/simJs/guidance/imu.js"></script>
+<script src="js/simJs/guidance/derivation.js"></script>
+<script src="js/simJs/guidance/guidercs.js"></script>
+<script src="js/simJs/guidance/guidance-blocks.js"></script>
+<script src="js/simJs/guidance/guidance.js"></script>
+
+<script src="js/guideConfigDefaults.js"></script>
+<script src="js/guidancePresets.js"></script>
+<script src="js/guideConstantDescriptions.js"></script>
+
+<script>
+(function () {
+  'use strict';
+
+  // ============================================================================
+  // Library cache — same as numerical.
+  // ============================================================================
+  (function patchLibraryCache() {
+    var _cache = null;
+    var _origLoadCL = loadComponentLibrary;
+    loadComponentLibrary = function () {
+      if (_cache) return _cache;
+      _cache = _origLoadCL();
+      return _cache;
+    };
+    if (typeof saveCustomComponentTypes === 'function') {
+      var _origSave = saveCustomComponentTypes;
+      saveCustomComponentTypes = function (types) {
+        _origSave(types); _cache = null;
+      };
+    }
+  })();
+
+  // ============================================================================
+  // UI element refs
+  // ============================================================================
+  const $ = (id) => document.getElementById(id);
+  const sel       = $('guideSelect');
+  const durInput  = $('durationInput');
+  const startBtn  = $('startBtn');
+  const stopBtn   = $('stopBtn');
+  const resetDefBtn = $('resetDefaultsBtn');
+  const clearPlotsBtn = $('clearPlotsBtn');
+  const constantsHost = $('constantsHost');
+  const summaryBody   = $('summaryBody');
+  const compareBox    = $('compareBox');
+  const compareBody   = $('compareBody');
+  const captureList   = $('capturesList');
+  const captureCnt    = $('captureCount');
+  const statusEl      = $('status');
+  const statusTextEl  = $('statusText');
+  const progressBarEl = $('progressBar');
+  const progressFillEl= $('progressFill');
+  const presetSel     = $('presetSelect');
+  const presetStat    = $('presetStatus');
+  const stackLabel    = $('stackLabel');
+
+  // ============================================================================
+  // Visuals flag + G-load helper (hook.js parity)
+  // ============================================================================
+  let visualsEnabled = true;
+
+  // Proper acceleration (G-load) — 1:1 port from hook.js gLoad().
+  // Thrust (with gimbal) + drag vector sum ÷ (dryMass + fuelMass) * g0.
+  // NOTE: b.dryMass is the STALE cached scalar after fairing split
+  // (~+1905 kg high). Kept as-is for exact parity with hook.js / headless.
+  function gLoad(b, Re) {
+    const m = (b.dryMass || 0) + (b.fuelMass || 0);
+    if (!(m > 0)) return 0;
+    const engs = b.engines || [];
+    let Fa = 0, Fl = 0;
+    for (let i = 0; i < engs.length; i++) {
+      const en = engs[i];
+      const f = en.currentF || 0;
+      if (!f) continue;
+      const g = (en.gimbalDeg || 0) * Math.PI / 180;
+      Fa += f * Math.cos(g);
+      Fl += f * Math.sin(g);
+    }
+    const ux = -Math.sin(b.theta), uy = Math.cos(b.theta);
+    let fx = Fa * ux + Fl * (-uy);
+    let fy = Fa * uy + Fl * ux;
+    if (typeof airDensity === 'function' && Number.isFinite(CONFIG.DRAG_CD) && b.width > 0) {
+      const r = Math.sqrt(b.rx * b.rx + b.ry * b.ry), alt = r - Re;
+      const rho = airDensity(Math.max(0, alt));
+      if (rho > 0) {
+        const sv = earthSurfaceVelocity(b.rx, b.ry);
+        const wv = windInertialVector(b.rx, b.ry);
+        const rvx = b.vx - (sv.vx + wv.wx), rvy = b.vy - (sv.vy + wv.wy);
+        const sp = Math.sqrt(rvx * rvx + rvy * rvy);
+        if (sp > 0) {
+          const area = Math.PI * (b.width / 2) * (b.width / 2);
+          const cd = (typeof hullDragCoefficient === 'function')
+            ? hullDragCoefficient(sp, Math.max(0, alt)) : CONFIG.DRAG_CD;
+          const D = 0.5 * rho * sp * sp * cd * area;
+          fx -= D * rvx / sp;
+          fy -= D * rvy / sp;
+        }
+      }
+    }
+    return Math.sqrt(fx * fx + fy * fy) / (m * 9.80665);
+  }
+
+  // ============================================================================
+  // Guide selection + config state
+  // ============================================================================
+  let currentGuide = '';
+  let currentValues = null;
+  let defaultValues = null;
+
+  // ============================================================================
+  // Plot palette
+  // ============================================================================
+  const BODY_COLORS = [
+    '#35d6ff', '#ff9248', '#4ade80', '#ff5fa8',
+    '#a78bfa', '#ffd23f', '#7ee1ff', '#ff5f7e',
+  ];
+
+  // ============================================================================
+  // SIMULATION RUNTIME — identical to numerical's.
+  //
+  // Tick order: physicsStep → buildSnapshot → Guidance.onSnapshot.
+  // ============================================================================
+  function buildSnapshot() {
+    const bodies = state.bodies;
+    for (let i = 0; i < bodies.length; i++) {
+      const b = bodies[i];
+      b.ax = b._lastAccelX || 0;
+      b.ay = b._lastAccelY || 0;
+      if (typeof buildPodEntries === 'function') {
+        b.pods = buildPodEntries(b);
+      }
+    }
+    return {
+      simTime: state.simTime,
+      activeBodyIndex: state.activeBodyIndex,
+      halted: !!state.halted,
+      wind: (typeof wind !== 'undefined') ? {
+        enabled: !!wind.enabled,
+        speed: wind.speed || 0,
+        directionDeg: wind.directionDeg || 0,
+      } : { enabled: false, speed: 0, directionDeg: 0 },
+      bodies: bodies,
+    };
+  }
+
+  function clampFlow(en, cmd) {
+    if (!(cmd > 0)) return 0;
+    return Math.max(Math.min(cmd, en.maxMassFlowRate || 0), en.minMassFlowRate || 0);
+  }
+
+  function localDispatch(msg) {
+    let b;
+    if (Number.isInteger(msg.targetBodyIdx) && msg.targetBodyIdx >= 0 &&
+        msg.targetBodyIdx < state.bodies.length) {
+      b = state.bodies[msg.targetBodyIdx];
+    } else {
+      b = state.bodies[state.activeBodyIndex];
+    }
+    if (!b) return;
+    switch (msg.type) {
+      case 'setGimbalRate': {
+        if (!b.engines) break;
+        const onlyCenter = (msg.target === 'center');
+        b.engines.filter(en => en.gimbal && (!onlyCenter || en.isCenter))
+          .forEach(en => {
+            const lim = en.gimbalRateDegS;   // per-engine (thruster-type property)
+            en.targetGimbalRateDegS = Math.max(-lim, Math.min(lim, msg.degPerSec));
+            en.targetGimbalAccelDegS2 = NaN;
+          });
+        break;
+      }
+      case 'setGimbalAccel': {
+        // Guidance alpha command (deg/s^2), clamped per engine. Mirrors sim.js.
+        if (!b.engines) break;
+        const onlyCenter = (msg.target === 'center');
+        b.engines.filter(en => en.gimbal && (!onlyCenter || en.isCenter))
+          .forEach(en => {
+            const lim = en.gimbalAccelDegS2;
+            en.targetGimbalAccelDegS2 = Math.max(-lim, Math.min(lim, msg.degPerSec2));
+          });
+        break;
+      }
+      case 'setGimbal': {
+        if (!b.engines) break;
+        b.engines.filter(en => en.gimbal).forEach(en => {
+          const lim = en.gimbalMaxDeg;
+          en.targetGimbalDeg = Math.max(-lim, Math.min(lim, msg.deg));
+          en.targetGimbalRateDegS = NaN; en.targetGimbalAccelDegS2 = NaN;
+        });
+        break;
+      }
+      case 'setAllThrottle': {
+        if (!b.engines) break;
+        b.engines.forEach(en => { en.targetMassFlowRate = clampFlow(en, msg.value); });
+        break;
+      }
+      case 'setCenterThrottle': {
+        if (!b.engines) break;
+        b.engines.filter(en => en.isCenter).forEach(en => {
+          en.targetMassFlowRate = clampFlow(en, msg.value);
+        });
+        break;
+      }
+      case 'setGroupThrottle': {
+        if (!b.engines) break;
+        (msg.angles || []).forEach(a => {
+          const en = b.engines.find(e => e.angleDeg === a);
+          if (en) en.targetMassFlowRate = clampFlow(en, msg.value);
+        });
+        break;
+      }
+      case 'rcs': {
+        if (!b.rcsCmd) b.rcsCmd = {};
+        b.rcsCmd[msg.key] = !!msg.on;
+        b.rcsDuty = null;
+        break;
+      }
+      case 'rcsDuty': {
+        if (msg.duties == null) b.rcsDuty = null;
+        else b.rcsDuty = msg.duties;
+        break;
+      }
+      case 'legs': {
+        if (!b.legs) b.legs = { deployed: false, progress: 0 };
+        b.legs.deployed = !!msg.deployed;
+        break;
+      }
+      case 'gridFinsDeploy': {
+        if (!b || !b.gridFins) break;
+        const gfType = (typeof bodyGridFinType === 'function') ? bodyGridFinType(b) : null;
+        const maxDeploy = (gfType && gfType.typeConstants &&
+            Number.isFinite(gfType.typeConstants.maxDeployDeg)) ?
+          gfType.typeConstants.maxDeployDeg : 90;
+        ['L', 'R', 'FB'].forEach(k => {
+          const f = b.gridFins[k];
+          if (!f) return;
+          if (msg.deployed) f.targetDeploy = 0;
+          else f.targetDeploy = (k === 'R') ? -maxDeploy : maxDeploy;
+        });
+        break;
+      }
+      case 'gridFinsControl': {
+        if (!b || !b.gridFins) break;
+        const f = b.gridFins.FB;
+        if (f && Number.isFinite(msg.controlDeg)) {
+          f.targetControl = Math.max(-90, Math.min(90, msg.controlDeg));
+        }
+        break;
+      }
+      case 'separate': { if (typeof requestSeparate === 'function') requestSeparate(b); break; }
+      case 'splitFairing': { if (typeof splitFairingOnActiveBody === 'function') splitFairingOnActiveBody(b); break; }
+      case 'releasePayload': { if (typeof requestReleasePayload === 'function') requestReleasePayload(msg, b); break; }
+      case 'emergencyEject': { if (typeof emergencyEjectPayload === 'function') emergencyEjectPayload(b); break; }
+      case 'takeControl': { if (typeof takeControlOfBody === 'function') takeControlOfBody(msg.idx); break; }
+case 'markIntentionalImpact': { if (b) b.intentionalImpact = true; break; }
+case 'pusherTorque': {
+  b._sepTorqueAngAccel = Number.isFinite(msg.angAccel) ? msg.angAccel : 0;
+  b._sepTorqueTargetOmega = Number.isFinite(msg.targetOmega) ? msg.targetOmega : null;
+  break;
+}
+case 'openPayload': {
+  if (!Number.isFinite(b.payloadOpenedAt)) {
+    b.payloadOpenedAt = state.simTime;
+  }
+  break;
+}
+default: break;
+    }
+  }
+
+  // ============================================================================
+  // Stack data handoff — MUST match numerical exactly (includes memberDerived).
+  // ============================================================================
+  (function setupStackData() {
+    const members = (typeof getActiveStackMembers === 'function')
+      ? getActiveStackMembers() : [];
+    window.SIM_STACK_MEMBERS = members;
+
+    function _stripFns(obj) {
+      return JSON.parse(JSON.stringify(obj, (k, v) =>
+        (typeof v === 'function' ? undefined : v)));
+    }
+
+    function collectStackData() {
+      const typeIds = new Set();
+      members.forEach(m => {
+        if (m.engineTypeId) typeIds.add(m.engineTypeId);
+        if (m.recoveryTypeId && m.hasRecovery !== false) typeIds.add(m.recoveryTypeId);
+        if (m.rcsTypeId) typeIds.add(m.rcsTypeId);
+        if (m.bodyMetalTypeId) typeIds.add(m.bodyMetalTypeId);
+        if (m.legsMetalTypeId) typeIds.add(m.legsMetalTypeId);
+        if (m.payloadSpaceTypeId) typeIds.add(m.payloadSpaceTypeId);
+        if (m.payloadSpaceMetalTypeId) typeIds.add(m.payloadSpaceMetalTypeId);
+        if (m.fuel && m.fuel.typeId) typeIds.add(m.fuel.typeId);
+        if (m.engineThrusters) {
+          Object.keys(m.engineThrusters).forEach(gk => {
+            const g = m.engineThrusters[gk];
+            if (g && g.thrusterTypeId) typeIds.add(g.thrusterTypeId);
+          });
+        }
+        if (m.rcsThruster && m.rcsThruster.thrusterTypeId) typeIds.add(m.rcsThruster.thrusterTypeId);
+        if (m.payloadSpace && m.payloadSpace.typeId) typeIds.add(m.payloadSpace.typeId);
+        if (m.payloadSpace && m.payloadSpace.metalTypeId) typeIds.add(m.payloadSpace.metalTypeId);
+        if (m.chuteTypeId) typeIds.add(m.chuteTypeId);
+        if (m.gridFinTypeId) typeIds.add(m.gridFinTypeId);
+        if (m.gridFinMetalTypeId) typeIds.add(m.gridFinMetalTypeId);
+      });
+
+      const types = {};
+      typeIds.forEach(id => {
+        const t = (typeof getComponentType === 'function') ? getComponentType(id) : null;
+        if (t) types[id] = _stripFns(t);
+      });
+
+      const activeStk = (typeof getActiveStack === 'function') ? getActiveStack() : null;
+
+      // memberDerived — same as numerical.
+      const memberDerived = {};
+      members.forEach(m => {
+        if (!m || !m.id) return;
+        const out = {};
+        if (m.hasRecovery !== false && m.recoveryTypeId &&
+          typeof getComponentType === 'function') {
+          const rt = getComponentType(m.recoveryTypeId);
+          if (rt && rt.capabilities && rt.capabilities.deploysOnVehicle &&
+            rt.frame && typeof rt.frame.hingeGeometry === 'function' &&
+            typeof rt.frame.structuralVolume === 'function') {
+            const legH = (m.fuel && Number.isFinite(m.fuel.tankHeight)) ?
+              m.fuel.tankHeight :
+              (Number.isFinite(m.height) ? m.height : 0);
+            const legW = (m.fuel && Number.isFinite(m.fuel.tankWidth)) ?
+              m.fuel.tankWidth :
+              (Number.isFinite(m.width) ? m.width : 0);
+            const geo = rt.frame.hingeGeometry(legH);
+            const oneLegVolume = rt.frame.structuralVolume(legH, legW);
+            if (geo && Number.isFinite(geo.hingeY) &&
+              Number.isFinite(geo.legLength) &&
+              Number.isFinite(geo.maxSweepRad) &&
+              Number.isFinite(oneLegVolume)) {
+              out.legs = {
+                hingeY: geo.hingeY,
+                legLength: geo.legLength,
+                maxSweepRad: geo.maxSweepRad,
+                legCount: rt.frame.legCount || 4,
+                oneLegVolume,
+              };
+            }
+          }
+        }
+        if (m.hasGridFins && typeof computeGridFinMass === 'function') {
+          const gf = computeGridFinMass(m);
+          if (gf && Number.isFinite(gf.totalMass) && Number.isFinite(gf.perFinMass)) {
+            out.gridFins = {
+              totalMass: gf.totalMass,
+              perFinMass: gf.perFinMass,
+              finCount: gf.finCount,
+            };
+          }
+        }
+        memberDerived[m.id] = out;
+      });
+
+      const derived = (activeStk && activeStk.derived) ? activeStk.derived : null;
+
+      let stackPayloadMass = 0;
+      if (activeStk && activeStk.payloadId && typeof getPayload === 'function') {
+        const pl = getPayload(activeStk.payloadId);
+        if (pl && Number.isFinite(pl.mass)) stackPayloadMass = pl.mass;
+      }
+
+      return {
+        members: members.map(_stripFns),
+        types,
+        memberDerived,
+        stackPayloadMass,
+        derived,
+        env: {
+          EARTH_RADIUS: CONFIG.EARTH_RADIUS,
+          GM_EARTH: CONFIG.GM_EARTH,
+          EARTH_OMEGA: CONFIG.EARTH_OMEGA,
+          LAUNCH_SITE_ALTITUDE: CONFIG.LAUNCH_SITE_ALTITUDE,
+          LAUNCH_SITE_ANGLE_0: CONFIG.LAUNCH_SITE_ANGLE_0,
+          G0: (typeof G0 !== 'undefined') ? G0 : 9.80665,
+          REMOTE_AREA_MID_WEST_DEG:
+            ((CONFIG.REMOTE_AREA_WEST_START_DEG || 0) +
+             (CONFIG.REMOTE_AREA_WEST_END_DEG || 0)) / 2,
+          REMOTE_AREA_WEST_START_DEG: CONFIG.REMOTE_AREA_WEST_START_DEG || 0,
+          REMOTE_AREA_WEST_END_DEG: CONFIG.REMOTE_AREA_WEST_END_DEG || 0,
+          PAYLOAD_EJECT_KICK_MPS: CONFIG.PAYLOAD_EJECT_KICK_MPS,
+          SEA_LEVEL_DENSITY: CONFIG.SEA_LEVEL_DENSITY,
+          SCALE_HEIGHT: CONFIG.SCALE_HEIGHT,
+          DRAG_CD: CONFIG.DRAG_CD,
+          DRAG_CD_FREE_MOLECULAR: CONFIG.DRAG_CD_FREE_MOLECULAR,
+          DRAG_FM_ALT_START_M: CONFIG.DRAG_FM_ALT_START_M,
+          DRAG_FM_ALT_FULL_M: CONFIG.DRAG_FM_ALT_FULL_M,
+          DT: CONFIG.DT,
+          GIMBAL_MAX_DEG: CONFIG.GIMBAL_MAX_DEG,
+          GIMBAL_RATE_DEG_S: CONFIG.GIMBAL_RATE_DEG_S,
+        },
+      };
+    }
+
+    Derivation.setStackData(collectStackData());
+  })();
+
+  Guidance.init(localDispatch);
+
+  // ============================================================================
+  // Guide dropdown
+  // ============================================================================
+  const allGuides = (Guidance.listGuides && Guidance.listGuides()) || [];
+  const labelOf = (g) => (Guidance.getGuideStatusLabel && Guidance.getGuideStatusLabel(g)) || '';
+  sel.innerHTML = allGuides.length ?
+    allGuides.map(g => {
+      const lbl = labelOf(g);
+      return `<option value="${g}">${g}${lbl ? ' — ' + lbl : ''}</option>`;
+    }).join('') :
+    '<option value="">(no guides registered)</option>';
+
+  (function () {
+    try {
+      const stk = (typeof getActiveStack === 'function') ? getActiveStack() : null;
+      if (stk) {
+        const n = stk.members ? stk.members.length : 0;
+        stackLabel.textContent = `Stack: ${stk.name} (${n} members)`;
+      } else {
+        stackLabel.textContent = 'Stack: (none)';
+      }
+    } catch (e) { stackLabel.textContent = 'Stack: —'; }
+  })();
+
+  // ============================================================================
+  // Constants panel — identical to numerical.
+  // ============================================================================
+  const FLAT_SEP = '.';
+  function _getByPath(obj, path) {
+    const parts = path.split(FLAT_SEP);
+    let cur = obj;
+    for (const k of parts) {
+      if (cur == null || typeof cur !== 'object') return undefined;
+      cur = cur[k];
+    }
+    return cur;
+  }
+  function _setByPath(obj, path, value) {
+    const parts = path.split(FLAT_SEP);
+    let cur = obj;
+    for (let i = 0; i < parts.length - 1; i++) {
+      const k = parts[i];
+      if (cur[k] == null || typeof cur[k] !== 'object') cur[k] = {};
+      cur = cur[k];
+    }
+    cur[parts[parts.length - 1]] = value;
+  }
+  function _descFor(guideName, path) {
+    if (typeof GUIDE_CONSTANT_DESCRIPTIONS === 'undefined') return '';
+    const map = GUIDE_CONSTANT_DESCRIPTIONS[guideName];
+    if (!map) return '';
+    return map[path] || '';
+  }
+  function _mkSection(label, isImportant, collapsible) {
+    const sec = document.createElement('div');
+    sec.className = 'sec' + (isImportant ? ' is-important' : '');
+    const head = document.createElement('div');
+    head.className = 'sec-head' + (collapsible ? '' : ' no-toggle');
+    head.innerHTML = `<span>${label}</span>` + (collapsible ? '<span class="chev">▾</span>' : '');
+    if (collapsible) {
+      head.addEventListener('click', () => {
+        sec.dataset.collapsed = (sec.dataset.collapsed === '1') ? '0' : '1';
+      });
+    }
+    const body = document.createElement('div');
+    body.className = 'sec-body';
+    sec.appendChild(head);
+    sec.appendChild(body);
+    return { el: sec, body };
+  }
+  function _mkField(guideName, path, refVal) {
+    const row = document.createElement('div');
+    row.className = 'field-row';
+    const label = document.createElement('label');
+    label.textContent = path.split(FLAT_SEP).pop();
+    const desc = _descFor(guideName, path);
+    label.title = desc ? (path + ' — ' + desc) : path;
+    row.appendChild(label);
+    let input;
+    if (typeof refVal === 'boolean') {
+      input = document.createElement('input');
+      input.type = 'checkbox';
+      input.checked = !!_getByPath(currentValues, path);
+      input.addEventListener('change', () => {
+        _setByPath(currentValues, path, !!input.checked);
+        _refreshChanged(input, path);
+      });
+    } else if (typeof refVal === 'string') {
+      input = document.createElement('input');
+      input.type = 'text';
+      input.value = String(_getByPath(currentValues, path) ?? '');
+      input.addEventListener('input', () => {
+        _setByPath(currentValues, path, input.value);
+        _refreshChanged(input, path);
+      });
+    } else {
+      input = document.createElement('input');
+      input.type = 'number';
+      input.step = 'any';
+      const v = _getByPath(currentValues, path);
+      input.value = Number.isFinite(v) ? v : '';
+      input.addEventListener('input', () => {
+        const parsed = parseFloat(input.value);
+        if (Number.isFinite(parsed)) {
+          _setByPath(currentValues, path, parsed);
+          input.classList.remove('invalid');
+          _refreshChanged(input, path);
+        } else {
+          input.classList.add('invalid');
+        }
+      });
+    }
+    input.dataset.path = path;
+    input.title = label.title;
+    row.appendChild(input);
+    _refreshChanged(input, path);
+    return row;
+  }
+  function _refreshChanged(input, path) {
+    if (!defaultValues) return;
+    const def = _getByPath(defaultValues, path);
+    const cur = _getByPath(currentValues, path);
+    if (typeof def === 'number' && typeof cur === 'number') {
+      input.classList.toggle('changed', Math.abs(def - cur) > 1e-12);
+    } else {
+      input.classList.toggle('changed', def !== cur);
+    }
+  }
+  function renderConstants(guideName, opts) {
+  opts = opts || {};
+  const cfg = Guidance.getGuideConfig(guideName);
+  if (!cfg) {
+    constantsHost.innerHTML = '<div style="color:var(--dim);font-style:italic;padding:14px 4px;">This guide has no tunable constants.</div>';
+    currentValues = null;
+    return;
+  }
+  const defaults = (typeof getGuideDefaultPreset === 'function') ?
+    getGuideDefaultPreset(guideName) : null;
+  defaultValues = defaults ? JSON.parse(JSON.stringify(defaults.constants)) : JSON.parse(JSON.stringify(cfg));
+  if (!opts.preserveValues) currentValues = JSON.parse(JSON.stringify(cfg));
+  const important = (typeof getGuideImportantFields === 'function') ?
+      getGuideImportantFields(guideName) : [];
+    const impSet = new Set(important);
+    constantsHost.innerHTML = '';
+    if (important.length) {
+      const sec = _mkSection('Important', true, false);
+      important.forEach(path => {
+        const refVal = _getByPath(cfg, path);
+        if (refVal === undefined) return;
+        sec.body.appendChild(_mkField(guideName, path, refVal));
+      });
+      constantsHost.appendChild(sec.el);
+    }
+    const rootScalars = [];
+    const objectGroups = [];
+    for (const k in cfg) {
+      if (impSet.has(k)) continue;
+      const v = cfg[k];
+      if (v !== null && typeof v === 'object' && !Array.isArray(v)) objectGroups.push(k);
+      else rootScalars.push(k);
+    }
+    if (rootScalars.length) {
+      const sec = _mkSection('Root', false, true);
+      rootScalars.forEach(k => {
+        if (impSet.has(k)) return;
+        sec.body.appendChild(_mkField(guideName, k, cfg[k]));
+      });
+      constantsHost.appendChild(sec.el);
+    }
+    objectGroups.forEach(gk => {
+      const subRef = cfg[gk];
+      const sec = _mkSection(gk, false, true);
+      for (const ck in subRef) {
+        const childPath = gk + FLAT_SEP + ck;
+        if (impSet.has(childPath)) continue;
+        const cv = subRef[ck];
+        if (cv !== null && typeof cv === 'object' && !Array.isArray(cv)) {
+          const sub = document.createElement('div');
+          sub.style.gridColumn = '1 / -1';
+          sub.style.marginTop = '6px';
+          sub.style.fontSize = '10px';
+          sub.style.letterSpacing = '0.8px';
+          sub.style.textTransform = 'uppercase';
+          sub.style.color = 'var(--dim)';
+          sub.textContent = ck;
+          sec.body.appendChild(sub);
+          for (const gck in cv) {
+            const deepPath = childPath + FLAT_SEP + gck;
+            if (impSet.has(deepPath)) continue;
+            sec.body.appendChild(_mkField(guideName, deepPath, cv[gck]));
+          }
+        } else {
+          sec.body.appendChild(_mkField(guideName, childPath, cv));
+        }
+      }
+      constantsHost.appendChild(sec.el);
+    });
+  }
+
+  sel.addEventListener('change', () => {
+    currentGuide = sel.value;
+    if (currentGuide) {
+      renderConstants(currentGuide);
+      refreshPresets(currentGuide);
+    }
+  });
+  resetDefBtn.addEventListener('click', () => {
+    if (!currentGuide) return;
+    renderConstants(currentGuide);
+    statusTextEl.textContent = 'Constants reset to code defaults.';
+  });
+
+  // ============================================================================
+  // Preset management — identical to numerical.
+  // ============================================================================
+  function refreshPresets(guideName) {
+    if (typeof getAllPresetsForGuide !== 'function') {
+      presetSel.innerHTML = '<option value="">— presets unavailable —</option>';
+      presetSel.disabled = true;
+      return;
+    }
+    const list = getAllPresetsForGuide(guideName);
+    presetSel.disabled = false;
+    if (!list.length) {
+      presetSel.innerHTML = '<option value="">— no presets —</option>';
+      return;
+    }
+    presetSel.innerHTML = '<option value="">— select a preset —</option>' +
+      list.map(p => `<option value="${p.id}">${p.name}${p.isDefault ? ' · DEFAULT' : ''}</option>`).join('');
+  }
+
+  $('presetLoadBtn').addEventListener('click', () => {
+    const id = presetSel.value;
+    if (!id) { presetStat.textContent = 'Select a preset first.'; return; }
+    const p = (typeof getPresetById === 'function') ? getPresetById(id) : null;
+    if (!p || !p.constants) { presetStat.textContent = 'Preset not found.'; return; }
+    const ref = (typeof getGuideDefaultPreset === 'function') ? getGuideDefaultPreset(currentGuide) : null;
+    if (ref && typeof validateConstantsStrict === 'function') {
+      const v = validateConstantsStrict(p.constants, ref.constants);
+      if (!v.ok) { presetStat.textContent = 'Preset incompatible: ' + v.error; return; }
+    }
+    currentValues = JSON.parse(JSON.stringify(p.constants));
+renderConstants(currentGuide, { preserveValues: true });
+presetStat.textContent = `Loaded "${p.name}".`;
+  });
+
+  // ---- RunStamp: remembers MECO / payload-deploy time of the last run that
+  // reached the "done" phase; attached to "Save as…" only if the constants
+  // being saved are exactly the ones that run used. Otherwise nothing is added.
+  const RunStamp = (function () {
+    let cur = null, last = null;
+    const pos = (x) => typeof x === 'number' && isFinite(x) && x > 0;
+    const stable = (v) => Array.isArray(v) ? v.map(stable)
+      : (v && typeof v === 'object') ? Object.keys(v).sort().reduce((o, k) => (o[k] = stable(v[k]), o), {}) : v;
+    const key = (v) => JSON.stringify(stable(v));
+    return {
+      begin() { cur = { meco: null, deploy: null, clearT: null, done: false }; last = null; },
+      track(gs, t) {
+        if (!cur || !gs) return;
+        if (cur.meco === null && gs.mecoTriggered && pos(t)) cur.meco = t;
+        if (cur.deploy === null && pos(gs.deployCommandSimTime)) cur.deploy = gs.deployCommandSimTime;
+        if (cur.clearT === null && gs.payloadCleared && pos(t)) cur.clearT = t;
+        if (!cur.done && /^done$/i.test(String(gs.phase || ''))) cur.done = true;
+      },
+      finish(guide, constants) {
+        const c = cur; cur = null; last = null;
+        if (!c || !c.done) return;
+        last = { guide, key: key(constants), mecoTimeS: c.meco, payloadDeployTimeS: c.deploy !== null ? c.deploy : c.clearT };
+      },
+      stampFor(guide, values) {
+        const o = {};
+        if (!last || last.guide !== guide || last.key !== key(values)) return o;
+        if (last.mecoTimeS !== null) o.mecoTimeS = Math.round(last.mecoTimeS);
+        if (last.payloadDeployTimeS !== null) o.payloadDeployTimeS = Math.round(last.payloadDeployTimeS);
+        return o;
+      },
+    };
+  })();
+  $('presetSaveBtn').addEventListener('click', () => {
+    if (!currentGuide || !currentValues) return;
+    const name = prompt('Preset name:', 'Calibration run');
+    if (!name) return;
+    const stack = (typeof getActiveStack === 'function') ? getActiveStack() : null;
+    const rec = (typeof addUserPreset === 'function') ? addUserPreset({
+      name,
+      description: '',
+      guideName: currentGuide,
+      stackId: stack ? stack.id : '',
+      stackName: stack ? stack.name : '',
+      stackType: stack ? stack.type : '',
+      tags: [],
+      constants: JSON.parse(JSON.stringify(currentValues)),
+      ...RunStamp.stampFor(currentGuide, currentValues),
+    }) : null;
+    if (rec) {
+      refreshPresets(currentGuide);
+      presetSel.value = rec.id;
+      presetStat.textContent = `Saved "${rec.name}".`;
+      if (rec.mecoTimeS != null) presetStat.textContent += ` (MECO t=${rec.mecoTimeS.toFixed(0)}s` + (rec.payloadDeployTimeS != null ? `, deploy t=${rec.payloadDeployTimeS.toFixed(0)}s` : "") + ")";
+    } else {
+      presetStat.textContent = 'Save failed.';
+    }
+  });
+
+  $('presetDeleteBtn').addEventListener('click', () => {
+    const id = presetSel.value;
+    if (!id) { presetStat.textContent = 'Select a preset first.'; return; }
+    const p = (typeof getPresetById === 'function') ? getPresetById(id) : null;
+    if (!p || p.isDefault) { presetStat.textContent = 'Default presets cannot be deleted.'; return; }
+    if (!confirm(`Delete preset "${p.name}"?`)) return;
+    if (typeof deleteUserPreset === 'function' && deleteUserPreset(id)) {
+      refreshPresets(currentGuide);
+      presetStat.textContent = 'Deleted.';
+    } else {
+      presetStat.textContent = 'Delete failed.';
+    }
+  });
+
+  $('presetExportBtn').addEventListener('click', () => {
+    if (!currentValues) return;
+    const json = JSON.stringify(currentValues, null, 2);
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(json).then(
+        () => { presetStat.textContent = 'Copied ' + Object.keys(currentValues).length + ' top-level keys.'; },
+        () => { presetStat.textContent = 'Clipboard write failed.'; }
+      );
+    }
+  });
+
+  $('presetImportBtn').addEventListener('click', () => {
+    const raw = prompt('Paste constants JSON:');
+    if (!raw) return;
+    let parsed;
+    try { parsed = JSON.parse(raw); } catch (e) {
+      presetStat.textContent = 'JSON parse error: ' + e.message;
+      return;
+    }
+    const ref = (typeof getGuideDefaultPreset === 'function') ? getGuideDefaultPreset(currentGuide) : null;
+    if (ref && typeof validateConstantsStrict === 'function') {
+      const v = validateConstantsStrict(parsed, ref.constants);
+      if (!v.ok) { presetStat.textContent = 'Validation failed: ' + v.error; return; }
+    }
+    currentValues = JSON.parse(JSON.stringify(parsed));
+renderConstants(currentGuide, { preserveValues: true });
+presetStat.textContent = 'Imported constants.';
+  });
+
+  // ============================================================================
+  // Environment + fueling — identical to numerical.
+  // ============================================================================
+  function applyEnvironment() {
+    if (typeof wind !== 'undefined') {
+      wind.enabled = $('envWindEnabled').checked;
+      wind.speed = parseFloat($('envWindSpeed').value) || 0;
+      wind.directionDeg = parseFloat($('envWindDir').value) || 0;
+    }
+    if (typeof atmosphereEnabled !== 'undefined') {
+      atmosphereEnabled = $('envAtmosphere').checked;
+    }
+    if (typeof CONFIG !== 'undefined') {
+      CONFIG.SLOSH_ENABLED = $('envSlosh').checked;
+    }
+    try { Guidance.setImuEnabled($('envImu').checked); } catch (e) {}
+  }
+
+  function applyFueling() {
+    const boosterPct = parseFloat($('envBoosterFuel').value);
+    const stagePct   = parseFloat($('envStageFuel').value);
+    const b = state.bodies[0];
+    if (!b || !Array.isArray(b.memberFuel) || !b.members) return;
+    const cap = (m, above) => (typeof memberMaxFuel === 'function')
+      ? memberMaxFuel(m, above) : 0;
+    b.memberFuel = b.members.map((m, i) => {
+      const c = cap(m, b.members[i + 1] || null);
+      if (m.stageRole === 'booster') return c * ((boosterPct != null ? boosterPct : 100) / 100);
+      if (m.stageRole === 'stage')   return c * ((stagePct   != null ? stagePct   : 100) / 100);
+      return 0;
+    });
+    b.fuelMass = b.memberFuel.reduce((s, x) => s + x, 0);
+  }
+
+  // ============================================================================
+  // PLOTS — read-only observers.
+  // ============================================================================
+  const PLOT_RENDER_MAX = 2500;
+
+  const Plots = {
+  data: { polar: {}, vr: {}, vt: {}, alt: {}, speed: {}, mass: {}, q: {} },
+  previousData: null,
+  _prevBounds: null,
+  _liveBounds: null,
+  _lastPushTime: {},
+  _DECIMATE_DT: 0.10,
+
+  _hasAnyData(d) {
+    if (!d) return false;
+    for (const k in d) if (d[k] && Object.keys(d[k]).length) return true;
+    return false;
+  },
+
+  _emptyLiveBounds() {
+    const s = {};
+    for (const k of ['vr', 'vt', 'alt', 'speed', 'mass', 'q']) {
+      s[k] = { tMax: 0, vMin: Infinity, vMax: -Infinity };
+    }
+    return {
+      polar: { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity, hasAny: false },
+      series: s,
+    };
+  },
+
+  reset(durationS) {
+    if (this._hasAnyData(this.data)) {
+      this.previousData = this.data;
+      this._prevBounds = this._computePrevBounds(this.previousData);
+    }
+    this.data = { polar: {}, vr: {}, vt: {}, alt: {}, speed: {}, mass: {}, q: {} };
+    this._lastPushTime = {};
+    this._liveBounds = this._emptyLiveBounds();
+  },
+
+  clear() {
+    this.data = { polar: {}, vr: {}, vt: {}, alt: {}, speed: {}, mass: {}, q: {} };
+    this.previousData = null;
+    this._prevBounds = null;
+    this._liveBounds = this._emptyLiveBounds();
+    this._lastPushTime = {};
+  },
+
+  _computePrevBounds(prev) {
+    const polar = _computePolarBounds([prev.polar]);
+    const series = {};
+    for (const k of ['vr', 'vt', 'alt', 'speed', 'mass', 'q']) {
+      let tMax = 0, vMin = Infinity, vMax = -Infinity;
+      for (const bodyKey in prev[k]) {
+        const arr = prev[k][bodyKey];
+        for (let i = 0; i < arr.length; i++) {
+          const p = arr[i];
+          if (p.t > tMax) tMax = p.t;
+          if (p.v < vMin) vMin = p.v;
+          if (p.v > vMax) vMax = p.v;
+        }
+      }
+      series[k] = { tMax, vMin, vMax };
+    }
+    return { polar, series };
+  },
+
+  _updateLiveBounds(s) {
+    const omegaE = CONFIG.EARTH_OMEGA;
+    const r = Math.hypot(s.rx, s.ry);
+    const phiI = Math.atan2(s.rx, s.ry);
+    const phiEF = phiI - omegaE * s.t;
+    const x = r * Math.sin(phiEF);
+    const y = r * Math.cos(phiEF);
+    const P = this._liveBounds.polar;
+    if (x < P.minX) P.minX = x;
+    if (x > P.maxX) P.maxX = x;
+    if (y < P.minY) P.minY = y;
+    if (y > P.maxY) P.maxY = y;
+    P.hasAny = true;
+    const upd = (k, v) => {
+      const b = this._liveBounds.series[k];
+      if (s.t > b.tMax) b.tMax = s.t;
+      if (v < b.vMin) b.vMin = v;
+      if (v > b.vMax) b.vMax = v;
+    };
+    upd('vr', s.vr);
+    upd('vt', s.vt);
+    upd('alt', s.altKm);
+    upd('speed', s.speed);
+    upd('mass', s.mass_t);
+    upd('q', s.q_kPa);
+  },
+
+  _getEffectiveBounds() {
+    const polar = { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity, hasAny: false };
+    if (!this._liveBounds) this._liveBounds = this._emptyLiveBounds();
+    const fp = this._prevBounds && this._prevBounds.polar;
+    const lp = this._liveBounds.polar;
+    if (fp && fp.hasAny) {
+      if (fp.minX < polar.minX) polar.minX = fp.minX;
+      if (fp.maxX > polar.maxX) polar.maxX = fp.maxX;
+      if (fp.minY < polar.minY) polar.minY = fp.minY;
+      if (fp.maxY > polar.maxY) polar.maxY = fp.maxY;
+      polar.hasAny = true;
+    }
+    if (lp.hasAny) {
+      if (lp.minX < polar.minX) polar.minX = lp.minX;
+      if (lp.maxX > polar.maxX) polar.maxX = lp.maxX;
+      if (lp.minY < polar.minY) polar.minY = lp.minY;
+      if (lp.maxY > polar.maxY) polar.maxY = lp.maxY;
+      polar.hasAny = true;
+    }
+    const series = {};
+    for (const k of ['vr', 'vt', 'alt', 'speed', 'mass', 'q']) {
+      const f = this._prevBounds && this._prevBounds.series[k];
+      const l = this._liveBounds.series[k];
+      let tMax = 0, vMin = Infinity, vMax = -Infinity;
+      if (f) {
+        if (f.tMax > tMax) tMax = f.tMax;
+        if (f.vMin < vMin) vMin = f.vMin;
+        if (f.vMax > vMax) vMax = f.vMax;
+      }
+      if (l && l.tMax > 0) {
+        if (l.tMax > tMax) tMax = l.tMax;
+        if (l.vMin < vMin) vMin = l.vMin;
+        if (l.vMax > vMax) vMax = l.vMax;
+      }
+      if (!isFinite(vMin)) { vMin = 0; vMax = 1; }
+      if (vMin > 0) vMin = 0;
+      if (vMax < 0) vMax = 0;
+      const pad = (vMax - vMin) * 0.10 || 1;
+      series[k] = {
+        tMin: 0,
+        tMax: (tMax * 1.02) || 1,
+        vMin: vMin - pad,
+        vMax: vMax + pad,
+      };
+    }
+    return { polar, series };
+  },
+
+  _push(store, key, val) {
+    if (!store[key]) store[key] = [];
+    store[key].push(val);
+  },
+
+  push(bodyIdx, s) {
+    const key = 'b' + bodyIdx;
+    const last = this._lastPushTime[key];
+    if (last != null && s.t - last < this._DECIMATE_DT) return;
+    this._lastPushTime[key] = s.t;
+    this._push(this.data.polar, key, { rx: s.rx, ry: s.ry, t: s.t });
+    this._push(this.data.vr,    key, { t: s.t, v: s.vr });
+    this._push(this.data.vt,    key, { t: s.t, v: s.vt });
+    this._push(this.data.alt,   key, { t: s.t, v: s.altKm });
+    this._push(this.data.speed, key, { t: s.t, v: s.speed });
+    this._push(this.data.mass,  key, { t: s.t, v: s.mass_t });
+    this._push(this.data.q,     key, { t: s.t, v: s.q_kPa });
+    this._updateLiveBounds(s);
+  },
+
+  renderAll() {
+    const hasPrev = this._hasAnyData(this.previousData);
+    const eff = this._getEffectiveBounds();
+
+    if (hasPrev) {
+      drawPolarPlot(this.previousData.polar, { faded: true, suppressEmptyMessage: true, bounds: eff.polar });
+      drawTimeSeries('vrCanvas',    this.previousData.vr,    { forceZero: true, faded: true, suppressEmptyMessage: true, bounds: eff.series.vr });
+      drawTimeSeries('vtCanvas',    this.previousData.vt,    { forceZero: true, faded: true, suppressEmptyMessage: true, bounds: eff.series.vt });
+      drawTimeSeries('altCanvas',   this.previousData.alt,   { forceZero: true, faded: true, suppressEmptyMessage: true, bounds: eff.series.alt });
+      drawTimeSeries('speedCanvas', this.previousData.speed, { forceZero: true, faded: true, suppressEmptyMessage: true, bounds: eff.series.speed });
+      drawTimeSeries('massCanvas',  this.previousData.mass,  { forceZero: true, faded: true, suppressEmptyMessage: true, bounds: eff.series.mass });
+      drawTimeSeries('qCanvas',     this.previousData.q,     { forceZero: true, faded: true, suppressEmptyMessage: true, bounds: eff.series.q });
+    }
+
+    drawPolarPlot(this.data.polar, {
+      skipClear: hasPrev,
+      skipBackground: hasPrev,
+      suppressEmptyMessage: hasPrev,
+      bounds: eff.polar,
+    });
+    drawTimeSeries('vrCanvas',    this.data.vr,    { forceZero: true, skipClear: hasPrev, suppressEmptyMessage: hasPrev, bounds: eff.series.vr });
+    drawTimeSeries('vtCanvas',    this.data.vt,    { forceZero: true, skipClear: hasPrev, suppressEmptyMessage: hasPrev, bounds: eff.series.vt });
+    drawTimeSeries('altCanvas',   this.data.alt,   { forceZero: true, skipClear: hasPrev, suppressEmptyMessage: hasPrev, bounds: eff.series.alt });
+    drawTimeSeries('speedCanvas', this.data.speed, { forceZero: true, skipClear: hasPrev, suppressEmptyMessage: hasPrev, bounds: eff.series.speed });
+    drawTimeSeries('massCanvas',  this.data.mass,  { forceZero: true, skipClear: hasPrev, suppressEmptyMessage: hasPrev, bounds: eff.series.mass });
+    drawTimeSeries('qCanvas',     this.data.q,     { forceZero: true, skipClear: hasPrev, suppressEmptyMessage: hasPrev, bounds: eff.series.q });
+  },
+};
+
+  // Pure-read plot sampler. Called once per tick from the loop, AFTER
+  // physicsStep + Guidance.onSnapshot. Reads only scalar fields off
+  // state.bodies — never calls geometryOf/currentGeometry, never touches
+  // any cache. Cannot affect the sim.
+  function pushPlotSample() {
+    const t = state.simTime;
+    const Re = CONFIG.EARTH_RADIUS;
+    for (let bi = 0; bi < state.bodies.length; bi++) {
+      const b = state.bodies[bi];
+      const r = Math.hypot(b.rx, b.ry);
+      if (!(r > 1)) continue;
+
+      const ux = b.rx / r, uy = b.ry / r;
+      const ex = b.ry / r, ey = -b.rx / r;
+      const vr = b.vx * ux + b.vy * uy;
+      const vt = b.vx * ex + b.vy * ey;
+      const speed = Math.hypot(b.vx, b.vy);
+      const altKm = (r - Re) / 1000;
+
+      // Mass — read the cache that physicsStep already populated this
+      // tick. Never call geometryOf() from the plot sampler.
+      const mass_t = (b._geomCache && Number.isFinite(b._geomCache.M))
+        ? b._geomCache.M / 1000 : 0;
+
+      const alt_m = Math.max(0, r - Re);
+      const rho = (typeof airDensity === 'function') ? airDensity(alt_m) : 0;
+      const sv = (typeof earthSurfaceVelocity === 'function') ? earthSurfaceVelocity(b.rx, b.ry) : { vx: 0, vy: 0 };
+      const wv = (typeof windInertialVector === 'function') ? windInertialVector(b.rx, b.ry) : { wx: 0, wy: 0 };
+      const relVx = b.vx - (sv.vx + wv.wx);
+      const relVy = b.vy - (sv.vy + wv.wy);
+      const speedRel = Math.hypot(relVx, relVy);
+      const q_kPa = 0.5 * rho * speedRel * speedRel / 1000;
+
+      Plots.push(bi, {
+        t, rx: b.rx, ry: b.ry,
+        vr, vt, altKm, speed,
+        mass_t, q_kPa,
+      });
+    }
+  }
+
+  function _downSample(arr, maxPoints) {
+    if (!arr || arr.length <= maxPoints) return arr || [];
+    const step = Math.ceil(arr.length / maxPoints);
+    const out = [];
+    for (let i = 0; i < arr.length; i += step) out.push(arr[i]);
+    if (out[out.length - 1] !== arr[arr.length - 1]) out.push(arr[arr.length - 1]);
+    return out;
+  }
+
+  function _fmtAxis(v) {
+    if (!isFinite(v)) return '—';
+    const a = Math.abs(v);
+    if (a >= 1e6) return (v / 1e6).toFixed(1) + 'M';
+    if (a >= 1e4) return (v / 1e3).toFixed(0) + 'k';
+    if (a >= 100) return v.toFixed(0);
+    if (a >= 10) return v.toFixed(1);
+    if (a >= 1) return v.toFixed(2);
+    if (a >= 0.01) return v.toFixed(3);
+    if (a === 0) return '0';
+    return v.toExponential(1);
+  }
+
+// Computes the display-space bounding box of one or more polar data
+// objects. Used to keep the faded (previous) and current pass at the
+// same scale, so the earth disc drawn by the current pass never covers
+// the faded trail underneath.
+function _computePolarBounds(dataArray) {
+  const Re = CONFIG.EARTH_RADIUS;
+  const omegaE = CONFIG.EARTH_OMEGA;
+  const EXAG = 1;
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  let hasAny = false;
+  for (const polarData of dataArray) {
+    if (!polarData) continue;
+    for (const key in polarData) {
+      const pts = polarData[key];
+      if (!pts || !pts.length) continue;
+      hasAny = true;
+      for (let i = 0; i < pts.length; i++) {
+        const p = pts[i];
+        const r = Math.hypot(p.rx, p.ry);
+        const r_display = Re + (r - Re) * EXAG;
+        const phiI = Math.atan2(p.rx, p.ry);
+        const phiEF = phiI - omegaE * p.t;
+        const x = r_display * Math.sin(phiEF);
+        const y = r_display * Math.cos(phiEF);
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+      }
+    }
+  }
+  return { minX, maxX, minY, maxY, hasAny };
+}
+
+  function drawPolarPlot(polarData, opts) {
+  opts = opts || {};
+  const faded = !!opts.faded;
+  const skipClear = !!opts.skipClear;
+  const skipBackground = !!opts.skipBackground;
+  const suppressEmptyMessage = !!opts.suppressEmptyMessage;
+  const canvas = $('polarCanvas');
+  if (!canvas) return;
+  const dpr = window.devicePixelRatio || 1;
+  const cssW = canvas.clientWidth || 600;
+  const cssH = canvas.clientHeight || cssW;
+  const size = Math.min(cssW, cssH);
+  if (canvas.width !== Math.round(size * dpr) ||
+    canvas.height !== Math.round(size * dpr)) {
+    canvas.width = Math.round(size * dpr);
+    canvas.height = Math.round(size * dpr);
+  }
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  if (!skipClear) ctx.clearRect(0, 0, size, size);
+
+    const cx = size / 2, cy = size / 2;
+    const Re = CONFIG.EARTH_RADIUS;
+    const omegaE = CONFIG.EARTH_OMEGA;
+    const EXAG = 1;
+
+    const projected = {};
+for (const key in polarData) {
+  const pts = polarData[key];
+  if (!pts || !pts.length) continue;
+  const xy = [];
+  for (let i = 0; i < pts.length; i++) {
+    const p = pts[i];
+    const r = Math.hypot(p.rx, p.ry);
+    const r_display = Re + (r - Re) * EXAG;
+    const phiI = Math.atan2(p.rx, p.ry);
+    const phiEF = phiI - omegaE * p.t;
+    const x = r_display * Math.sin(phiEF);
+    const y = r_display * Math.cos(phiEF);
+    xy.push({ x, y });
+  }
+  projected[key] = xy;
+}
+
+let minX, maxX, minY, maxY, hasAny;
+if (opts.bounds && Number.isFinite(opts.bounds.minX)) {
+  // Precomputed union bounds — keeps the faded pass and current pass
+  // at the same scale, so the earth disc drawn by the current pass
+  // lands on exactly the same pixels as the one drawn by the faded
+  // pass and never covers the faded trail.
+  minX = opts.bounds.minX;
+  maxX = opts.bounds.maxX;
+  minY = opts.bounds.minY;
+  maxY = opts.bounds.maxY;
+  hasAny = !!opts.bounds.hasAny;
+} else {
+  minX = Infinity; maxX = -Infinity; minY = Infinity; maxY = -Infinity;
+  hasAny = false;
+  for (const key in projected) {
+    const xy = projected[key];
+    if (!xy || !xy.length) continue;
+    hasAny = true;
+    for (let i = 0; i < xy.length; i++) {
+      const p = xy[i];
+      if (p.x < minX) minX = p.x;
+      if (p.x > maxX) maxX = p.x;
+      if (p.y < minY) minY = p.y;
+      if (p.y > maxY) maxY = p.y;
+    }
+  }
+}
+
+if (!hasAny) {
+  const padPhi = CONFIG.LAUNCH_SITE_ANGLE_0 || 0;
+  const px = Re * Math.sin(padPhi), py = Re * Math.cos(padPhi);
+  const halfWindow = Re * 0.05;
+  minX = px - halfWindow; maxX = px + halfWindow;
+  minY = py - halfWindow; maxY = py + halfWindow;
+}
+    if (maxX - minX < 1) { const mid = (minX + maxX) / 2; minX = mid - 1; maxX = mid + 1; }
+    if (maxY - minY < 1) { const mid = (minY + maxY) / 2; minY = mid - 1; maxY = mid + 1; }
+    const bpad = Math.max(maxX - minX, maxY - minY) * 0.10;
+    minX -= bpad; maxX += bpad;
+    minY -= bpad; maxY += bpad;
+
+    const scale = Math.min(size / (maxX - minX), size / (maxY - minY));
+    const midX = (minX + maxX) / 2;
+    const midY = (minY + maxY) / 2;
+
+    const toS = (x, y) => ({
+      px: cx + (x - midX) * scale,
+      py: cy - (y - midY) * scale,
+    });
+
+    if (!skipBackground) {
+  ctx.fillStyle = '#040610';
+  ctx.fillRect(0, 0, size, size);
+}
+
+    const earthC = toS(0, 0);
+    const earthPx = Re * scale;
+    const earthVisible = earthPx > 0.5 &&
+      earthC.px + earthPx > 0 && earthC.px - earthPx < size &&
+      earthC.py + earthPx > 0 && earthC.py - earthPx < size;
+    if (!skipBackground && earthVisible) {
+  ctx.fillStyle = '#0d2b12';
+  ctx.beginPath();
+  ctx.arc(earthC.px, earthC.py, earthPx, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(100,180,120,0.45)';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+}
+
+// Trail drawing starts here — faded alpha only affects the trail
+// and its markers, not the background or earth.
+if (faded) ctx.globalAlpha = 0.28;
+
+    const MAX_DRAW = 8000;
+    for (const key in projected) {
+      const xy = projected[key];
+      if (!xy || xy.length < 2) continue;
+      const bodyIdx = parseInt(key.slice(1), 10) || 0;
+      const color = BODY_COLORS[bodyIdx % BODY_COLORS.length];
+      const step = Math.max(1, Math.ceil(xy.length / MAX_DRAW));
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1.8;
+      ctx.lineJoin = 'round';
+      ctx.beginPath();
+      let started = false;
+      for (let i = 0; i < xy.length; i += step) {
+        const s = toS(xy[i].x, xy[i].y);
+        if (!started) { ctx.moveTo(s.px, s.py); started = true; }
+        else ctx.lineTo(s.px, s.py);
+      }
+      const lastXY = xy[xy.length - 1];
+      const lastS = toS(lastXY.x, lastXY.y);
+      if (started) ctx.lineTo(lastS.px, lastS.py);
+      ctx.stroke();
+
+      // Current position marker + label — skip on the faded (previous)
+// pass, since the marker belongs to the "live" run only.
+if (!faded) {
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.arc(lastS.px, lastS.py, 4, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(0,0,0,0.55)';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  
+  ctx.fillStyle = color;
+  ctx.font = 'bold 10px "JetBrains Mono", monospace';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('b' + bodyIdx, lastS.px + 7, lastS.py);
+}
+    }
+
+    if (!faded) {
+  const padPhi = CONFIG.LAUNCH_SITE_ANGLE_0 || 0;
+  const s = toS(Re * Math.sin(padPhi), Re * Math.cos(padPhi));
+  if (s.px > -20 && s.px < size + 20 && s.py > -20 && s.py < size + 20) {
+        ctx.fillStyle = '#ff5f7e';
+        ctx.beginPath();
+        ctx.arc(s.px, s.py, 5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(0,0,0,0.6)';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 10px "JetBrains Mono", monospace';
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('PAD', s.px + 8, s.py);
+      }
+    }
+
+    ctx.fillStyle = 'rgba(150,200,255,0.75)';
+    ctx.font = '10px "JetBrains Mono", monospace';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'bottom';
+    ctx.fillText('altitude ×' + EXAG + ' exaggerated · auto-fit view', 8, size - 8);
+
+      if (!hasAny && !suppressEmptyMessage) {
+    ctx.fillStyle = 'rgba(107,125,156,0.7)';
+    ctx.font = '12px "JetBrains Mono", monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('(run a mission to see the trajectory)', cx, cy);
+  }
+  if (faded) ctx.globalAlpha = 1;
+  
+  }
+
+  function drawTimeSeries(canvasId, seriesMap, opts) {
+  opts = opts || {};
+  const faded = !!opts.faded;
+  const skipClear = !!opts.skipClear;
+  const suppressEmptyMessage = !!opts.suppressEmptyMessage;
+  const canvas = $(canvasId);
+  if (!canvas) return;
+  const dpr = window.devicePixelRatio || 1;
+  const cssW = canvas.clientWidth || 400;
+  const cssH = canvas.clientHeight || 200;
+  if (canvas.width !== Math.round(cssW * dpr) ||
+    canvas.height !== Math.round(cssH * dpr)) {
+    canvas.width = Math.round(cssW * dpr);
+    canvas.height = Math.round(cssH * dpr);
+  }
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  if (!skipClear) ctx.clearRect(0, 0, cssW, cssH);
+  if (faded) ctx.globalAlpha = 0.28;
+
+    const padL = 52, padR = 12, padT = 10, padB = 22;
+    const plotW = cssW - padL - padR;
+    const plotH = cssH - padT - padB;
+    if (plotW < 10 || plotH < 10) return;
+
+    let tMin, tMax, vMin, vMax;
+    if (opts.bounds) {
+      tMin = opts.bounds.tMin; tMax = opts.bounds.tMax;
+      vMin = opts.bounds.vMin; vMax = opts.bounds.vMax;
+    } else {
+      tMin = Infinity; tMax = -Infinity; vMin = Infinity; vMax = -Infinity;
+      for (const key in seriesMap) {
+        const arr = seriesMap[key];
+        if (!arr || !arr.length) continue;
+        for (let i = 0; i < arr.length; i++) {
+          const p = arr[i];
+          if (p.t < tMin) tMin = p.t;
+          if (p.t > tMax) tMax = p.t;
+          if (p.v < vMin) vMin = p.v;
+          if (p.v > vMax) vMax = p.v;
+        }
+      }
+      if (!isFinite(tMin)) { tMin = 0; tMax = 1; vMin = 0; vMax = 1; }
+    }
+    if (tMax - tMin < 0.1) tMax = tMin + 0.1;
+    if (vMax - vMin < 1e-9) { vMin -= 1; vMax += 1; }
+    if (opts.forceZero) {
+      if (vMin > 0) vMin = 0;
+      if (vMax < 0) vMax = 0;
+    }
+    const vPad = (vMax - vMin) * 0.06 || 1;
+    vMin -= vPad; vMax += vPad;
+
+    const tx = (v) => padL + (v - tMin) / (tMax - tMin) * plotW;
+    const ty = (v) => padT + plotH - (v - vMin) / (vMax - vMin) * plotH;
+
+    ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let i = 0; i <= 4; i++) {
+      const y = padT + i * plotH / 4;
+      ctx.moveTo(padL, y); ctx.lineTo(padL + plotW, y);
+    }
+    for (let i = 0; i <= 4; i++) {
+      const x = padL + i * plotW / 4;
+      ctx.moveTo(x, padT); ctx.lineTo(x, padT + plotH);
+    }
+    ctx.stroke();
+
+    if (vMin < 0 && vMax > 0) {
+      ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+      const y0 = ty(0);
+      ctx.beginPath();
+      ctx.moveTo(padL, y0); ctx.lineTo(padL + plotW, y0);
+      ctx.stroke();
+    }
+
+    ctx.strokeStyle = 'rgba(255,255,255,0.22)';
+    ctx.beginPath();
+    ctx.moveTo(padL, padT);
+    ctx.lineTo(padL, padT + plotH);
+    ctx.lineTo(padL + plotW, padT + plotH);
+    ctx.stroke();
+
+    ctx.fillStyle = 'rgba(107,125,156,0.9)';
+    ctx.font = '9px "JetBrains Mono", monospace';
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    for (let i = 0; i <= 4; i++) {
+      const v = vMax - i * (vMax - vMin) / 4;
+      const y = padT + i * plotH / 4;
+      ctx.fillText(_fmtAxis(v), padL - 4, y);
+    }
+
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    for (let i = 0; i <= 4; i++) {
+      const v = tMin + i * (tMax - tMin) / 4;
+      const x = padL + i * plotW / 4;
+      ctx.fillText(v.toFixed(0), x, padT + plotH + 4);
+    }
+
+    for (const key in seriesMap) {
+      const arr = seriesMap[key];
+      if (!arr || arr.length < 2) continue;
+      const bodyIdx = parseInt(key.slice(1), 10) || 0;
+      const color = BODY_COLORS[bodyIdx % BODY_COLORS.length];
+      const render = _downSample(arr, PLOT_RENDER_MAX);
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      for (let i = 0; i < render.length; i++) {
+        const x = tx(render[i].t), y = ty(render[i].v);
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+        ctx.stroke();
+  if (!faded) {
+    const last = arr[arr.length - 1];
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(tx(last.t), ty(last.v), 2.6, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  }
+
+      let totalPoints = 0;
+  for (const key in seriesMap) totalPoints += (seriesMap[key] || []).length;
+  if (totalPoints === 0 && !suppressEmptyMessage) {
+    ctx.fillStyle = 'rgba(107,125,156,0.65)';
+    ctx.font = '11px "JetBrains Mono", monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('(no data yet)', padL + plotW / 2, padT + plotH / 2);
+  }
+  if (faded) ctx.globalAlpha = 1;
+  }
+
+  let _resizeTimer = null;
+  window.addEventListener('resize', () => {
+    if (_resizeTimer) clearTimeout(_resizeTimer);
+    _resizeTimer = setTimeout(() => {
+      if (!visualsEnabled) return;
+      Plots.renderAll();
+    }, 120);
+  });
+
+  clearPlotsBtn.addEventListener('click', () => {
+  Plots.clear();
+  Plots.renderAll();
+  statusTextEl.textContent = 'Plots cleared (both current and previous).';
+});
+
+  // Visuals ON/OFF — off means pure numerical, no plotting (max speed).
+  $('visualsToggle').addEventListener('change', (e) => {
+    visualsEnabled = !!e.target.checked;
+    if (!visualsEnabled) {
+      Plots.clear();
+      try { Plots.renderAll(); } catch (_) {}
+      statusTextEl.textContent = 'Visuals OFF — pure numerical mode (no plotting).';
+    } else {
+      statusTextEl.textContent = 'Visuals ON — plotting enabled.';
+    }
+  });
+
+  // ============================================================================
+  // Capture helpers — identical to numerical.
+  // ============================================================================
+  // Coast dv / t_rem snapshot — refreshed at COAST_HOLD_2 entry.
+  //
+  // At COAST_WAIT, guidance publishes gs.coastDeltaV = v_circ(target) - v_apo(current).
+  // We infer targetVcirc = gs.coastDeltaV + v_apo_at_wait, so we can later
+  // recompute deltaV from any subsequent orbit. At COAST_HOLD_2 (first entry),
+  // we recompute deltaV = targetVcirc - v_apo_now, and t_rem = time-to-apogee.
+  // All subsequent captures use the refreshed values.
+  //
+  // If guidance itself refreshes gs.coastDeltaV at COAST_HOLD_2 (value differs
+  // from what we saw at COAST_WAIT), we trust guidance over our recompute.
+  //
+  // Phase name default is 'COAST_HOLD_2'; adjust _isHold2() if your guidance
+  // uses a different string.
+  let _coastSnap = {
+    targetVcirc: null,
+    waitVapo: null,
+    waitDeltaV: null,
+    waitTRem: null,
+    deltaV: null,
+    tRem: null,
+    snappedHold2: false,
+  };
+
+  function _resetCoastSnap() {
+    _coastSnap.targetVcirc = null;
+    _coastSnap.waitVapo = null;
+    _coastSnap.waitDeltaV = null;
+    _coastSnap.waitTRem = null;
+    _coastSnap.deltaV = null;
+    _coastSnap.tRem = null;
+    _coastSnap.snappedHold2 = false;
+  }
+
+  function _isCoastWait(p) { return p === 'COAST_WAIT' || p === 'COAST_WAIT_ENTRY'; }
+  function _isHold2(p) { return p === 'COAST_HOLD_2' || p === 'COAST_HOLD2'; }
+
+  // v_apo and time-to-next-apogee. t_apo is 1:1 with hook.js timeToApogee().
+  function _orbitSnapshot(b) {
+    if (!b) return null;
+    const GM = CONFIG.GM_EARTH;
+    const r = Math.hypot(b.rx, b.ry) || 1;
+    const ux = b.rx / r, uy = b.ry / r;
+    const ex = b.ry / r, ey = -b.rx / r;
+    const vr = b.vx * ux + b.vy * uy;
+    const vt = b.vx * ex + b.vy * ey;
+    const eps = 0.5 * (vr * vr + vt * vt) - GM / r;
+    const h = r * vt;
+    let vApo = NaN, tApo = Infinity;
+    if (eps < 0) {
+      const a = -GM / (2 * eps);
+      const e = Math.sqrt(Math.max(0, 1 + 2 * eps * h * h / (GM * GM)));
+      if (e > 1e-12) vApo = h / (a * (1 + e));
+      if (e < 1e-9) {
+        tApo = Math.PI * Math.sqrt((a * a * a) / GM);
+      } else {
+        const cosE = (1 - r / a) / e;
+        const sinE = (r * vr) / (e * Math.sqrt(GM * a));
+        let Ean = Math.atan2(sinE, cosE);
+        if (Ean < 0) Ean += 2 * Math.PI;
+        const M = Ean - e * Math.sin(Ean);
+        const n = Math.sqrt(GM / (a * a * a));
+        tApo = (M < Math.PI) ? (Math.PI - M) / n : (3 * Math.PI - M) / n;
+      }
+    }
+    return { r, vr, vt, vApo, tApo };
+  }
+
+  // Called each tick BEFORE phase-change detection so COAST_HOLD_2 transition
+  // capture already shows refreshed values.
+  function _coastSnapUpdate(gs, b) {
+    if (!gs || !b) return;
+    if (_isCoastWait(gs.phase) && _coastSnap.targetVcirc == null &&
+        Number.isFinite(gs.coastDeltaV)) {
+      const o = _orbitSnapshot(b);
+      if (o && Number.isFinite(o.vApo)) {
+        _coastSnap.waitVapo = o.vApo;
+        _coastSnap.waitDeltaV = gs.coastDeltaV;
+        _coastSnap.waitTRem = gs.coastTRem;
+        _coastSnap.targetVcirc = gs.coastDeltaV + o.vApo;
+      }
+    }
+    if (_isHold2(gs.phase) && !_coastSnap.snappedHold2) {
+      if (Number.isFinite(gs.coastDeltaV) && _coastSnap.waitDeltaV != null &&
+          gs.coastDeltaV !== _coastSnap.waitDeltaV) {
+        _coastSnap.deltaV = gs.coastDeltaV;
+        _coastSnap.tRem = gs.coastTRem;
+        _coastSnap.snappedHold2 = true;
+        return;
+      }
+      if (Number.isFinite(_coastSnap.targetVcirc)) {
+        const o = _orbitSnapshot(b);
+        if (o && Number.isFinite(o.vApo)) {
+          _coastSnap.deltaV = _coastSnap.targetVcirc - o.vApo;
+          _coastSnap.tRem = o.tApo;
+          _coastSnap.snappedHold2 = true;
+        }
+      }
+    }
+  }
+
+  function captureState() {
+    const idx = state.activeBodyIndex;
+    const b = state.bodies[idx];
+    if (!b) return null;
+    const r = Math.hypot(b.rx, b.ry) || 1;
+    const alt_km = (r - CONFIG.EARTH_RADIUS) / 1000;
+    const ux = b.rx / r, uy = b.ry / r;
+    const ex = b.ry / r, ey = -b.rx / r;
+    const vr = b.vx * ux + b.vy * uy;
+    const vt = b.vx * ex + b.vy * ey;
+    const speed = Math.hypot(b.vx, b.vy);
+    const gs = (Guidance.getGuideStatus && Guidance.getGuideStatus()) || {};
+    const GM = CONFIG.GM_EARTH;
+    const E = 0.5 * (vr * vr + vt * vt) - GM / r;
+    const h = r * vt;
+    let apo_km = Infinity, peri_km = Infinity;
+    if (E < 0) {
+      const a = -GM / (2 * E);
+      const e = Math.sqrt(Math.max(0, 1 + 2 * E * h * h / (GM * GM)));
+      apo_km = (a * (1 + e) - CONFIG.EARTH_RADIUS) / 1000;
+      peri_km = (a * (1 - e) - CONFIG.EARTH_RADIUS) / 1000;
+    } else if (E > 0) {
+      const p = h * h / GM;
+      const e = Math.sqrt(Math.max(0, 1 + 2 * E * h * h / (GM * GM)));
+      peri_km = (p / (1 + e) - CONFIG.EARTH_RADIUS) / 1000;
+    }
+    const geom = (b._geomCache && Number.isFinite(b._geomCache.M))
+      ? b._geomCache
+      : ((typeof geometryOf === 'function') ? geometryOf(b) : { M: 0 });
+    const fuel_t = (b.fuelMass || 0) / 1000;
+    const thrust_MN = (b.engines || []).reduce((s, e) => s + (e.currentF || 0), 0) / 1e6;
+    const mdot = (b.engines || []).reduce((s, e) => s + (e.massFlowRate || 0), 0);
+    return {
+      simTime: state.simTime,
+      phase: gs.phase || '?',
+      ascentPhase: gs.ascentPhase || null,
+      alt_km, vr, vt, speed,
+      apo_km, peri_km,
+      mass_t: geom.M / 1000, fuel_t,
+      thrust_MN, mdot,
+      bodies: state.bodies.length,
+      bodyTags: state.bodies.map(x =>
+        x.isActive ? 'A' : x.payloadBody ? 'P' : x.fairingHalf ? 'F' : x.isDiscarded ? 'B' : 'D'
+      ).join(','),
+      crashed: !!state.crashed,
+      landed: !!state.landed,
+      halted: !!state.halted,
+      circAchieved: !!gs.circAchieved,
+      circCurrentV: gs.circCurrentV,
+      circTargetV: gs.circTargetV,
+      coastDeltaV: _coastSnap.snappedHold2 ? _coastSnap.deltaV : gs.coastDeltaV,
+      coastTRem: _coastSnap.snappedHold2 ? _coastSnap.tRem : gs.coastTRem,
+      apogeeKmGuide: gs.apogeeKm,
+      perigeeKmGuide: gs.perigeeKm,
+      stageBurnLocked: !!gs.stageBurnLocked,
+      suicideTrimDone: !!gs.suicideTrimDone,
+      suicideDlambdaDeg: gs.suicideDlambdaDeg,
+    };
+  }
+
+  let running = false;
+  let abort = false;
+  let captures = [];
+  let previousRun = null;
+
+  function fmt(n, d) { return Number.isFinite(n) ? n.toFixed(d) : '—'; }
+  function pushCapture(type, label, st) {
+    captures.push({ type, label, simTime: st.simTime, state: st });
+  }
+
+  function renderCaptures() {
+    const activeChip = document.querySelector('.filter-chip.active');
+    const filter = activeChip ? activeChip.dataset.type : 'all';
+    const shown = (filter === 'all') ? captures : captures.filter(c => c.type === filter);
+    captureCnt.textContent = shown.length + ' / ' + captures.length;
+    if (!shown.length) {
+      captureList.innerHTML = '<div style="color: var(--dim); padding: 12px;">No captures of this type.</div>';
+      return;
+    }
+    captureList.innerHTML = shown.map(c => {
+      const s = c.state;
+      const sub = s.ascentPhase ? ` <span style="color:var(--dim)">(ascent: ${s.ascentPhase})</span>` : '';
+      const apoStr = Number.isFinite(s.apo_km) ? fmt(s.apo_km, 3) + ' km' : '∞';
+      const periStr = Number.isFinite(s.peri_km) ? fmt(s.peri_km, 3) + ' km' : '—';
+      return `<div class="capture type-${c.type}">
+        <div class="head">
+          <span class="time">T+${fmt(c.simTime, 2)}s</span>
+          <span class="label">${c.label}</span>${sub}
+        </div>
+        <div class="body">
+          <span><span class="k">phase</span> ${s.phase}</span>
+          <span><span class="k">alt</span> ${fmt(s.alt_km, 3)} km</span>
+          <span><span class="k">vr</span> ${fmt(s.vr, 0)}</span>
+          <span><span class="k">vt</span> ${fmt(s.vt, 0)}</span>
+          <span><span class="k">|v|</span> ${fmt(s.speed, 0)}</span>
+          <span><span class="k">apogee</span> ${apoStr}</span>
+          <span><span class="k">perigee</span> ${periStr}</span>
+          <span><span class="k">mass</span> ${fmt(s.mass_t, 2)} t</span>
+          <span><span class="k">fuel</span> ${fmt(s.fuel_t, 2)} t</span>
+          <span><span class="k">thrust</span> ${fmt(s.thrust_MN, 3)} MN</span>
+          <span><span class="k">mdot</span> ${fmt(s.mdot, 1)} kg/s</span>
+          <span><span class="k">bodies</span> ${s.bodies} [${s.bodyTags}]</span>
+          ${Number.isFinite(s.circTargetV) ? `<span><span class="k">v_circ</span> ${fmt(s.circCurrentV, 2)} / ${fmt(s.circTargetV, 2)}</span>` : ''}
+          ${Number.isFinite(s.coastDeltaV) ? `<span><span class="k">coast Δv</span> ${fmt(s.coastDeltaV, 2)} m/s</span>` : ''}
+          ${Number.isFinite(s.coastTRem) ? `<span><span class="k">t_rem</span> ${fmt(s.coastTRem, 2)} s</span>` : ''}
+          ${s.crashed ? '<span class="warn">CRASHED</span>' : ''}
+          ${s.landed ? '<span class="hi">LANDED</span>' : ''}
+          ${s.halted ? '<span class="warn">HALTED</span>' : ''}
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  document.querySelectorAll('.filter-chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      document.querySelectorAll('.filter-chip').forEach(c => c.classList.remove('active'));
+      chip.classList.add('active');
+      renderCaptures();
+    });
+  });
+
+  function yieldToBrowser() {
+    return new Promise(resolve => setTimeout(resolve, 0));
+  }
+
+  // ============================================================================
+  // RUN — mirrors numerical's loop exactly, plus a pure-read plot push.
+  // ============================================================================
+  async function run() {
+    if (running) return;
+    if (!currentGuide) { statusTextEl.textContent = 'No guide selected.'; return; }
+    if (!currentValues) { statusTextEl.textContent = 'No constants loaded.'; return; }
+
+    running = true; abort = false;
+    startBtn.disabled = true; stopBtn.disabled = false;
+    captures = [];
+    _resetCoastSnap();
+
+    const runTunables = JSON.parse(JSON.stringify(currentValues));
+    RunStamp.begin();
+
+    const applyOk = Guidance.applyGuideConfig(currentGuide, currentValues);
+    if (!applyOk) {
+      statusTextEl.textContent = 'applyGuideConfig failed — see console.';
+      running = false;
+      startBtn.disabled = false; stopBtn.disabled = true;
+      return;
+    }
+
+    resetState(0);
+    applyEnvironment();
+    applyFueling();
+    Plots.reset(Math.max(1, parseFloat(durInput.value) || 600));
+
+    try { Guidance.stopGuide(); } catch (e) {}
+    try { Guidance.startGuide(currentGuide); } catch (e) {
+      console.error('[tester] startGuide failed:', e);
+      statusTextEl.textContent = 'startGuide failed: ' + e.message;
+      running = false;
+      startBtn.disabled = false; stopBtn.disabled = true;
+      return;
+    }
+
+    const durationS = Math.max(1, parseFloat(durInput.value) || 600);
+    const dt = CONFIG.DT;
+    const maxTicks = Math.ceil(durationS / dt);
+
+    let prevPhase = null;
+    let prevAscentPhase = null;
+    let prevBodyCount = state.bodies.length;
+    let prevCrashed = false, prevLanded = false, prevHalted = false;
+    let prevCircAchieved = false;
+    let prevSplitDetected = false;
+    let prevFairingOpened = false;
+    let peakQ_kPa = -Infinity, peakQ_state = null;
+    let peakG = -Infinity, peakG_state = null;
+    let peakG_phase = null, peakG_t = NaN, peakGAscent = 0;
+    let prevVrSign = 0;
+    let ticksRun = 0;
+    const t0 = performance.now();
+
+    window.__tickDump = [];
+
+    const CHUNK = 400;
+
+    if (visualsEnabled) Plots.renderAll();
+
+    for (let i = 0; i < maxTicks; i++) {
+      if (abort) break;
+      if (state.halted) break;
+
+      physicsStep(dt);
+      ticksRun++;
+
+      const snap = buildSnapshot();
+
+      try { Guidance.onSnapshot(snap); } catch (ge) {
+        console.error('[tester] onSnapshot failed at t=' + state.simTime.toFixed(2), ge);
+        statusTextEl.textContent = 'onSnapshot failed: ' + ge.message;
+        break;
+      }
+
+      // Debug-only — off by default. Set window.__DEBUG_TICKDUMP = true from console.
+      if (window.__DEBUG_TICKDUMP === true) {
+        window.__tickDump.push({
+          i: i,
+          t: state.simTime,
+          activeBodyIndex: state.activeBodyIndex,
+          bodies: state.bodies.map(b => ({
+            rx: b.rx, ry: b.ry, vx: b.vx, vy: b.vy,
+            theta: b.theta, omega: b.omega,
+            fuelMass: b.fuelMass,
+            memberFuel: (b.memberFuel || []).slice(),
+            engines: (b.engines || []).map(e => ({
+              massFlowRate: e.massFlowRate,
+              gimbalDeg: e.gimbalDeg,
+              currentF: e.currentF,
+            })),
+          })),
+        });
+      }
+
+      // Plot push — pure reads only. Skipped entirely when visuals off.
+      if (visualsEnabled) pushPlotSample();
+
+      // Event detection — identical to numerical.
+      const gs = (Guidance.getGuideStatus && Guidance.getGuideStatus()) || {};
+      _coastSnapUpdate(gs, state.bodies[state.activeBodyIndex]);
+      RunStamp.track(gs, state.simTime);
+      const body = state.bodies[state.activeBodyIndex];
+
+      if (body) {
+        if (gs.phase && gs.phase !== prevPhase) {
+          const st = captureState();
+          if (st) pushCapture('phase', `PHASE → ${gs.phase}`, st);
+          prevPhase = gs.phase;
+        }
+        if (gs.ascentPhase && gs.ascentPhase !== prevAscentPhase) {
+          const st = captureState();
+          if (st) pushCapture('phase', `ascent: ${prevAscentPhase || '—'} → ${gs.ascentPhase}`, st);
+          prevAscentPhase = gs.ascentPhase;
+        }
+
+        const r = Math.hypot(body.rx, body.ry) || 1;
+        const vrNow = (body.vx * body.rx + body.vy * body.ry) / r;
+        const vrSign = vrNow > 0 ? 1 : (vrNow < 0 ? -1 : 0);
+        if (prevVrSign !== 0 && vrSign !== 0 && vrSign !== prevVrSign) {
+          const st = captureState();
+          if (st) {
+            const isApo = (prevVrSign > 0 && vrSign < 0);
+            pushCapture('orbit', isApo ? 'APOGEE crossing' : 'PERIGEE crossing', st);
+          }
+        }
+        prevVrSign = vrSign;
+
+        if (state.bodies.length !== prevBodyCount) {
+          const st = captureState();
+          if (st) pushCapture('event', `body count ${prevBodyCount} → ${state.bodies.length}`, st);
+          prevBodyCount = state.bodies.length;
+        }
+
+        if (gs.splitDetected && !prevSplitDetected) {
+          const st = captureState();
+          if (st) pushCapture('event', 'stage separation split', st);
+          prevSplitDetected = true;
+        }
+
+        if (gs.fairingOpened && !prevFairingOpened) {
+          const st = captureState();
+          if (st) pushCapture('event', 'fairing opened', st);
+          prevFairingOpened = true;
+        }
+
+        if (gs.circAchieved && !prevCircAchieved) {
+          const st = captureState();
+          if (st) pushCapture('event', `circularize complete — v=${fmt(gs.circCurrentV, 1)} / ${fmt(gs.circTargetV, 1)} m/s`, st);
+          prevCircAchieved = true;
+        }
+
+        if (state.crashed && !prevCrashed) {
+          const st = captureState(); if (st) pushCapture('abort', 'CRASHED', st);
+          prevCrashed = true;
+        }
+        if (state.landed && !prevLanded) {
+          const st = captureState(); if (st) pushCapture('event', 'LANDED', st);
+          prevLanded = true;
+        }
+        if (state.halted && !prevHalted) {
+          const st = captureState(); if (st) pushCapture('event', 'HALTED', st);
+          prevHalted = true;
+        }
+
+        const alt = r - CONFIG.EARTH_RADIUS;
+        const wv = (typeof windInertialVector === 'function') ? windInertialVector(body.rx, body.ry) : { wx: 0, wy: 0 };
+        const sv = (typeof earthSurfaceVelocity === 'function') ? earthSurfaceVelocity(body.rx, body.ry) : { vx: 0, vy: 0 };
+        const relVx = body.vx - (wv.wx + sv.vx);
+        const relVy = body.vy - (wv.wy + sv.vy);
+        const sr = Math.hypot(relVx, relVy);
+        const rho = (typeof airDensity === 'function') ? airDensity(Math.max(0, alt)) : 0;
+        const Q_Pa = 0.5 * rho * sr * sr;
+        if (Q_Pa > peakQ_kPa) {
+          peakQ_kPa = Q_Pa;
+          peakQ_state = captureState();
+        }
+
+        // Proper G-load on bodies[0], 1:1 with hook.js gLoad().
+        const b0 = state.bodies[0];
+        if (b0) {
+          const gL = gLoad(b0, CONFIG.EARTH_RADIUS);
+          if (gL > peakG) {
+            peakG = gL;
+            peakG_phase = gs.phase || prevPhase || '—';
+            peakG_t = state.simTime;
+            peakG_state = captureState();
+          }
+          if ((gs.phase === 'ASCENT' || gs.phase === 'STAGE_BURN') && gL > peakGAscent) {
+            peakGAscent = gL;
+          }
+        }
+      }
+
+      if (i > 0 && i % CHUNK === 0) {
+        const wall = (performance.now() - t0) / 1000;
+        const tps = ticksRun / wall;
+        const pct = (i / maxTicks) * 100;
+        statusTextEl.textContent =
+          `Running… t=${state.simTime.toFixed(1)}s / ${durationS}s  ` +
+          `(${pct.toFixed(1)}%, ${ticksRun} ticks, ${tps.toFixed(0)} ticks/s, ${captures.length} captures)`;
+        progressBarEl.classList.add('show');
+        progressFillEl.style.width = pct.toFixed(1) + '%';
+        if (visualsEnabled) Plots.renderAll();
+        await yieldToBrowser();
+      }
+    }
+
+    if (visualsEnabled) Plots.renderAll();
+    progressBarEl.classList.remove('show');
+    progressFillEl.style.width = '0%';
+
+    const finalEndState = captureState();
+
+    try { Guidance.stopGuide(); } catch (e) {}
+
+    if (peakQ_state) captures.push({ type: 'peak', label: `PEAK Q = ${(peakQ_kPa / 1000).toFixed(2)} kPa`, simTime: peakQ_state.simTime, state: peakQ_state });
+    if (peakG_state) captures.push({ type: 'peak', label: `PEAK G = ${peakG.toFixed(2)} g`, simTime: peakG_state.simTime, state: peakG_state });
+    if (finalEndState) captures.push({ type: 'end', label: 'RUN END', simTime: finalEndState.simTime, state: finalEndState });
+    captures.sort((a, b) => a.simTime - b.simTime);
+
+    const elapsedMs = performance.now() - t0;
+    const tps = ticksRun / (elapsedMs / 1000);
+    const finalSt = captures.length ? captures[captures.length - 1].state : null;
+
+    const payloadBody = state.bodies.find(b => b && b.payloadBody);
+    const orbitBody = payloadBody || state.bodies[state.activeBodyIndex];
+    let finalOrbit = null;
+    if (orbitBody) {
+      const r_f = Math.hypot(orbitBody.rx, orbitBody.ry) || 1;
+      const ux_f = orbitBody.rx / r_f, uy_f = orbitBody.ry / r_f;
+      const ex_f = orbitBody.ry / r_f, ey_f = -orbitBody.rx / r_f;
+      const vr_f = orbitBody.vx * ux_f + orbitBody.vy * uy_f;
+      const vt_f = orbitBody.vx * ex_f + orbitBody.vy * ey_f;
+      const GM_f = CONFIG.GM_EARTH;
+      const E_f = 0.5 * (vr_f * vr_f + vt_f * vt_f) - GM_f / r_f;
+      const h_f = r_f * vt_f;
+      let apo_km_f = Infinity, peri_km_f = Infinity;
+      if (E_f < 0) {
+        const a_f = -GM_f / (2 * E_f);
+        const e_f = Math.sqrt(Math.max(0, 1 + 2 * E_f * h_f * h_f / (GM_f * GM_f)));
+        apo_km_f = (a_f * (1 + e_f) - CONFIG.EARTH_RADIUS) / 1000;
+        peri_km_f = (a_f * (1 - e_f) - CONFIG.EARTH_RADIUS) / 1000;
+      } else if (E_f > 0) {
+        const p_f = h_f * h_f / GM_f;
+        const e_f = Math.sqrt(Math.max(0, 1 + 2 * E_f * h_f * h_f / (GM_f * GM_f)));
+        peri_km_f = (p_f / (1 + e_f) - CONFIG.EARTH_RADIUS) / 1000;
+      }
+      finalOrbit = {
+        apo_km: apo_km_f,
+        peri_km: peri_km_f,
+        alt_km: (r_f - CONFIG.EARTH_RADIUS) / 1000,
+        isPayload: !!payloadBody,
+      };
+    }
+
+    RunStamp.finish(currentGuide, runTunables);
+    const summary = {
+      guide: currentGuide,
+      duration: durationS,
+      ticks: ticksRun,
+      wallSeconds: elapsedMs / 1000,
+      ticksPerSecond: tps,
+      finalPhase: finalSt ? finalSt.phase : '?',
+      crashed: !!state.crashed,
+      landed: !!state.landed,
+      halted: !!state.halted,
+      circAchieved: finalSt ? finalSt.circAchieved : false,
+      apogee_km: finalSt && Number.isFinite(finalSt.apo_km) ? finalSt.apo_km : null,
+      perigee_km: finalSt && Number.isFinite(finalSt.peri_km) ? finalSt.peri_km : null,
+      coastDeltaV: finalSt ? finalSt.coastDeltaV : null,
+      coastTRem: finalSt ? finalSt.coastTRem : null,
+      fuelLeft_t: finalSt ? finalSt.fuel_t : null,
+      maxQ_kPa: peakQ_kPa > 0 ? peakQ_kPa / 1000 : null,
+      maxG: peakG > 0 ? peakG : null,
+      capturesCount: captures.length,
+      finalOrbit,
+    };
+
+    summaryBody.innerHTML = Object.entries({
+      'guide': summary.guide,
+      'duration (s)': summary.duration,
+      'ticks run': summary.ticks,
+      'wall (s)': summary.wallSeconds.toFixed(2),
+      'ticks/s': summary.ticksPerSecond.toFixed(0),
+      'final phase': summary.finalPhase,
+      'crashed': summary.crashed ? 'YES' : 'no',
+      'landed': summary.landed ? 'YES' : 'no',
+      'halted': summary.halted ? 'YES' : 'no',
+      'circ achieved': summary.circAchieved ? 'YES' : 'no',
+      'final apogee (km)': summary.apogee_km != null ? summary.apogee_km.toFixed(2) : '—',
+      'final perigee (km)': summary.perigee_km != null ? summary.perigee_km.toFixed(2) : '—',
+      'coast Δv (m/s)': summary.coastDeltaV != null ? summary.coastDeltaV.toFixed(2) : '—',
+      'coast t_rem (s)': summary.coastTRem != null ? summary.coastTRem.toFixed(1) : '—',
+      'fuel left (t)': summary.fuelLeft_t != null ? summary.fuelLeft_t.toFixed(2) : '—',
+      'peak Q (kPa)': summary.maxQ_kPa != null ? summary.maxQ_kPa.toFixed(2) : '—',
+      'peak G': summary.maxG != null ? summary.maxG.toFixed(2) : '—',
+      'captures': summary.capturesCount,
+    }).map(([k, v]) => `<span><span class="k">${k}</span> <span class="v">${v}</span></span>`).join('');
+
+    const currentRun = { meta: summary, tunables: runTunables };
+
+    if (previousRun && previousRun.meta.guide === summary.guide) {
+      const prev = previousRun.meta;
+      const flatPrev = flattenObj(previousRun.tunables);
+      const flatCur = flattenObj(currentRun.tunables);
+      const keys = new Set([...Object.keys(flatPrev), ...Object.keys(flatCur)]);
+      const constDiffs = [];
+      keys.forEach(k => {
+        const a = flatPrev[k], b = flatCur[k];
+        if (typeof a === 'number' && typeof b === 'number') {
+          if (Math.abs(a - b) > 1e-12) constDiffs.push(`<div class="compare-row"><span class="k">${k}</span><span class="a">${a}</span><span class="arrow">→</span><span class="b">${b}</span></div>`);
+        } else if (a !== b) {
+          constDiffs.push(`<div class="compare-row"><span class="k">${k}</span><span class="a">${a}</span><span class="arrow">→</span><span class="b">${b}</span></div>`);
+        }
+      });
+
+      const metricRows = [
+        ['final phase', prev.finalPhase, summary.finalPhase, null],
+        ['crashed', prev.crashed ? 'YES' : 'no', summary.crashed ? 'YES' : 'no',
+          (a, b) => (b === 'YES' && a !== 'YES') ? 'bad' : (a === 'YES' && b !== 'YES') ? 'good' : ''],
+        ['circ achieved', prev.circAchieved ? 'YES' : 'no', summary.circAchieved ? 'YES' : 'no',
+          (a, b) => (b === 'YES' && a !== 'YES') ? 'good' : ''],
+        ['final apogee (km)', prev.apogee_km != null ? prev.apogee_km.toFixed(2) : '—',
+          summary.apogee_km != null ? summary.apogee_km.toFixed(2) : '—', null],
+        ['final perigee (km)', prev.perigee_km != null ? prev.perigee_km.toFixed(2) : '—',
+          summary.perigee_km != null ? summary.perigee_km.toFixed(2) : '—', null],
+        ['coast Δv (m/s)', prev.coastDeltaV != null ? prev.coastDeltaV.toFixed(2) : '—',
+          summary.coastDeltaV != null ? summary.coastDeltaV.toFixed(2) : '—', null],
+        ['coast t_rem (s)', prev.coastTRem != null ? prev.coastTRem.toFixed(1) : '—',
+          summary.coastTRem != null ? summary.coastTRem.toFixed(1) : '—', null],
+        ['fuel left (t)', prev.fuelLeft_t != null ? prev.fuelLeft_t.toFixed(2) : '—',
+          summary.fuelLeft_t != null ? summary.fuelLeft_t.toFixed(2) : '—', null],
+        ['peak Q (kPa)', prev.maxQ_kPa != null ? prev.maxQ_kPa.toFixed(2) : '—',
+          summary.maxQ_kPa != null ? summary.maxQ_kPa.toFixed(2) : '—', null],
+        ['peak G', prev.maxG != null ? prev.maxG.toFixed(2) : '—',
+          summary.maxG != null ? summary.maxG.toFixed(2) : '—', null],
+      ];
+
+      let html = '<div style="grid-column: 1/-1; color: var(--dim); font-size: 11px; margin-bottom: 4px;">CONSTANTS CHANGED</div>';
+      if (constDiffs.length) html += constDiffs.join('');
+      else html += '<div style="grid-column: 1/-1; color: var(--dim); font-size: 11px;">(no constant changes)</div>';
+      html += '<div style="grid-column: 1/-1; margin-top: 8px;"><div style="color: var(--dim); font-size: 11px; margin-bottom: 4px;">METRICS</div></div>';
+      metricRows.forEach(([k, a, b, cmp]) => {
+        let cls = '';
+        if (typeof cmp === 'function') cls = cmp(a, b);
+        html += `<div class="compare-row"><span class="k">${k}</span><span class="a">${a}</span><span class="arrow">→</span><span class="b ${cls}">${b}</span></div>`;
+      });
+      compareBody.innerHTML = html;
+      compareBox.classList.add('show');
+    } else {
+      compareBox.classList.remove('show');
+    }
+    previousRun = currentRun;
+
+    renderCaptures();
+    statusTextEl.textContent = `Done. ${ticksRun} ticks in ${(elapsedMs / 1000).toFixed(2)}s — ` +
+      `${tps.toFixed(0)} ticks/s — ${captures.length} captures.`;
+
+    running = false;
+    startBtn.disabled = false;
+    stopBtn.disabled = true;
+  }
+
+  function flattenObj(obj, prefix, out) {
+    out = out || {}; prefix = prefix || '';
+    if (!obj || typeof obj !== 'object') return out;
+    Object.keys(obj).forEach(k => {
+      const v = obj[k];
+      const path = prefix ? prefix + '.' + k : k;
+      if (v && typeof v === 'object' && !Array.isArray(v)) flattenObj(v, path, out);
+      else out[path] = v;
+    });
+    return out;
+  }
+
+  startBtn.addEventListener('click', run);
+  stopBtn.addEventListener('click', () => { abort = true; statusTextEl.textContent = 'Aborting…'; });
+
+  // ============================================================================
+  // Boot
+  // ============================================================================
+  (function boot() {
+    if (!allGuides.length) {
+      statusTextEl.textContent = '⚠ No guides registered. Check that guidance.js loaded.';
+      return;
+    }
+    currentGuide = allGuides.includes('leoInsertionV3') ? 'leoInsertionV3' : allGuides[0];
+    sel.value = currentGuide;
+    renderConstants(currentGuide);
+    refreshPresets(currentGuide);
+
+    if (visualsEnabled) Plots.renderAll();
+
+    try {
+      const stk = (typeof getActiveStack === 'function') ? getActiveStack() : null;
+      const members = (typeof getActiveStackMembers === 'function') ? getActiveStackMembers() : [];
+      if (stk && members.length) {
+        statusTextEl.textContent = `Ready. Stack: ${stk.name} — ${members.map(m => m.name).join(' → ')}`;
+      } else {
+        statusTextEl.textContent = 'Ready. (no active stack in fleet)';
+      }
+    } catch (e) {
+      statusTextEl.textContent = 'Ready.';
+    }
+
+    console.log('[guidance-tester] ready. Guides:', allGuides.join(', '));
+  })();
+})();
+</script>
+<script src="js/guidance-tester-ui.js"></script>
+</body>
+</html>
