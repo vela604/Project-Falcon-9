@@ -344,3 +344,37 @@ body.is-running .met-val{text-shadow:0 0 34px rgba(255,107,44,.7)}
   .kpi .kv-num{font-size:28px}
 }
 @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}#ignite{display:none}}
+
+
+/* ── Fix: sidebar backdrop should stay BELOW the sidebar ─────────────
+   Previously body.nav-open::after (z:70) lived in body's root stacking
+   context while #sidebar (z:80) lived inside #app (z:1, own context),
+   so effective root-z of sidebar was 1 — the backdrop covered it and
+   blocked clicks. Moving the pseudo onto #app puts it in the same
+   context as the sidebar, where 80 > 70 works as intended. */
+body.nav-open::after { content: none !important; }
+body.nav-open #app::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,.55);
+  z-index: 70;
+  pointer-events: auto;
+}
+
+/* ── Fix: topbar/status horizontal overflow ───────────────────────────
+   .mon chips carry white-space:nowrap, so on mid-width viewports the
+   sum of topbar children exceeded the viewport and pushed a horizontal
+   scrollbar onto html/body — which then compressed every other element
+   to make room for the scrollbar. Allowing flex-wrap gives the flex
+   container an escape valve: extra children wrap to a second line
+   instead of overflowing. */
+#topBar, #status { flex-wrap: wrap; }
+.mon { flex-wrap: wrap; max-width: 100%; }
+.brand-wrap { min-width: 0; }
+
+/* Progressive chip hiding so the topbar stays single-row longer.
+   Chips are ordered: state, elapsed, progress, FPS, MEM, clock. */
+@media (max-width: 1320px) { .mon .chip:nth-child(n+6) { display: none; } }
+@media (max-width: 1200px) { .mon .chip:nth-child(n+5) { display: none; } }
+@media (max-width: 1080px) { .mon .chip:nth-child(n+4) { display: none; } }
