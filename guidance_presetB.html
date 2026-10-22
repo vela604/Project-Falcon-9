@@ -420,6 +420,8 @@ a.back:hover{box-shadow:0 6px 24px rgba(111,176,255,.35)}
   box-shadow:0 4px 20px rgba(0,0,0,.45),inset 0 1px 0 rgba(255,200,140,.12)}
 .sky-label .sky-txt::before{content:'';position:absolute;left:-18px;top:50%;width:14px;height:1px;
   background:linear-gradient(to right,transparent,rgba(255,179,71,.7));transform:translateY(-50%)}
+.sky-label.flip .sky-txt{left:auto;right:22px}
+.sky-label.flip .sky-txt::before{left:auto;right:-18px;background:linear-gradient(to left,transparent,rgba(255,179,71,.7))}
 @media(prefers-reduced-motion:reduce){
   .sky-label .sky-ring{animation:none;opacity:.5}
 }
@@ -763,26 +765,80 @@ var GAIN = 1.8;
   }
 
   // === Exact Targets ===
+  // (RA in hours, Dec in degrees, J2000)
   var CONSTELLATIONS = [
-    {name:'Andromeda (M31)',ra:0.712,dec:41.27},
-    {name:'Pleiades (M45)',ra:3.790,dec:24.12},
-    {name:'Ursa Minor (Polaris)',ra:2.530,dec:89.26},
-    {name:'Ursa Major (Dubhe)',ra:11.06,dec:61.75},
-    {name:'Cassiopeia',ra:0.675,dec:56.53},
-    {name:'Cygnus (Deneb)',ra:20.69,dec:45.28},
-    {name:'Lyra (Vega)',ra:18.61,dec:38.78},
-    {name:'Aquila (Altair)',ra:19.85,dec:8.87},
-    {name:'Orion (Betelgeuse)',ra:5.91,dec:7.40},
-    {name:'Perseus (Mirfak)',ra:3.40,dec:49.86},
-    {name:'Taurus (Aldebaran)',ra:4.59,dec:16.50},
-    {name:'Gemini (Pollux)',ra:7.57,dec:31.88}
+    {name:'Ursa Major',ra:12.0,dec:56},{name:'Ursa Minor',ra:15.4,dec:75},
+    {name:'Cassiopeia',ra:1.0,dec:60.5},{name:'Cepheus',ra:22.3,dec:69},
+    {name:'Cygnus',ra:20.4,dec:42},{name:'Lyra',ra:18.85,dec:36.5},
+    {name:'Draco',ra:17.2,dec:60},{name:'Hercules',ra:17.0,dec:30},
+    {name:'Bootes',ra:14.7,dec:30},{name:'Corona Borealis',ra:15.85,dec:31.5},
+    {name:'Aquila',ra:19.7,dec:8},{name:'Sagitta',ra:19.8,dec:18.5},
+    {name:'Vulpecula',ra:20.2,dec:25},{name:'Delphinus',ra:20.65,dec:14.5},
+    {name:'Equuleus',ra:21.2,dec:9.5},{name:'Pegasus',ra:23.6,dec:21},
+    {name:'Andromeda',ra:1.1,dec:37},{name:'Triangulum',ra:2.1,dec:33},
+    {name:'Aries',ra:2.6,dec:22},{name:'Perseus',ra:3.3,dec:46},
+    {name:'Auriga',ra:5.7,dec:42},{name:'Taurus',ra:4.8,dec:20},
+    {name:'Gemini',ra:7.0,dec:24},{name:'Orion',ra:5.6,dec:0},
+    {name:'Canis Minor',ra:7.6,dec:6},{name:'Cancer',ra:8.6,dec:20},
+    {name:'Leo',ra:10.9,dec:17},{name:'Leo Minor',ra:10.0,dec:33},
+    {name:'Lynx',ra:8.0,dec:45},{name:'Canes Venatici',ra:13.1,dec:40},
+    {name:'Coma Berenices',ra:12.9,dec:24},{name:'Lacerta',ra:22.5,dec:45},
+    {name:'Camelopardalis',ra:5.0,dec:67},{name:'Virgo',ra:13.2,dec:-3},
+    {name:'Ophiuchus',ra:17.4,dec:-5}
   ];
 
+  // g = generic glow (r in objScale units, c = rgb, a = alpha); no g = drawn by special code in drawDSOs
   var DEEP_SKY = [
-    {name:'Andromeda Galaxy',ra:.712,dec:41.27},
-    {name:'Orion Nebula (M42)',ra:5.588,dec:-5.39},
-    {name:'Ring Nebula (M57)',ra:18.893,dec:33.03},
-    {name:'Hercules Cluster (M13)',ra:16.695,dec:36.46}
+    {name:'Andromeda Galaxy (M31)',ra:.712,dec:41.27},
+    {name:'Triangulum Galaxy (M33)',ra:1.564,dec:30.66,g:{r:.9,c:'200,215,255',a:.22}},
+    {name:'Pleiades (M45)',ra:3.79,dec:24.12},
+    {name:'Double Cluster (NGC 869/884)',ra:2.345,dec:57.13},
+    {name:'Hercules Cluster (M13)',ra:16.695,dec:36.46},
+    {name:'Orion Nebula (M42)',ra:5.588,dec:-5.39,g:{r:.8,c:'255,170,200',a:.30}},
+    {name:'Ring Nebula (M57)',ra:18.893,dec:33.03,g:{r:.5,c:'160,230,255',a:.45}},
+    {name:'Dumbbell Nebula (M27)',ra:19.993,dec:22.72,g:{r:.5,c:'170,255,210',a:.35}},
+    {name:'Whirlpool Galaxy (M51)',ra:13.498,dec:47.20,g:{r:.5,c:'230,235,255',a:.30}},
+    {name:'Pinwheel Galaxy (M101)',ra:14.053,dec:54.35,g:{r:.6,c:'230,235,255',a:.22}},
+    {name:'Bode\u2019s Galaxy (M81)',ra:9.926,dec:69.07,g:{r:.6,c:'255,240,220',a:.30}},
+    {name:'Beehive Cluster (M44)',ra:8.667,dec:19.67,g:{r:.9,c:'255,245,225',a:.22}},
+    {name:'Globular Cluster (M92)',ra:17.285,dec:43.136,g:{r:.4,c:'255,245,225',a:.34}},
+    {name:'Globular Cluster (M3)',ra:13.703,dec:28.38,g:{r:.4,c:'255,245,225',a:.34}},
+    {name:'Globular Cluster (M15)',ra:21.5,dec:12.167,g:{r:.4,c:'255,245,225',a:.34}},
+    {name:'Gemini Cluster (M35)',ra:6.148,dec:24.34,g:{r:.6,c:'210,225,255',a:.22}},
+    {name:'Auriga Cluster (M37)',ra:5.87,dec:32.55,g:{r:.5,c:'255,240,220',a:.24}},
+    {name:'Cluster (M34)',ra:2.702,dec:42.78,g:{r:.6,c:'210,225,255',a:.20}},
+    {name:'Cluster (M39)',ra:21.53,dec:48.43,g:{r:.6,c:'210,225,255',a:.20}},
+    {name:'Crab Nebula (M1)',ra:5.575,dec:22.01,g:{r:.4,c:'255,200,160',a:.32}},
+    {name:'North America Nebula',ra:20.98,dec:44.33,g:{r:1.4,c:'255,130,150',a:.12}},
+    {name:'Veil Nebula',ra:20.94,dec:31.7,g:{r:1.0,c:'150,200,255',a:.14}},
+    {name:'Heart Nebula (IC 1805)',ra:2.55,dec:61.45,g:{r:1.0,c:'255,110,130',a:.12}},
+    {name:'California Nebula',ra:4.01,dec:36.42,g:{r:1.2,c:'255,100,120',a:.10}}
+  ];
+
+  // [name, RA h, Dec deg, V mag, B-V, constellation]
+  var NAMED_STARS = [
+    ['Polaris',2.530,89.264,1.98,0.60,'Ursa Minor'],['Kochab',14.845,74.156,2.08,1.47,'Ursa Minor'],['Pherkad',15.345,71.834,3.05,0.05,'Ursa Minor'],
+    ['Dubhe',11.062,61.751,1.79,1.07,'Ursa Major'],['Merak',11.031,56.382,2.37,-0.02,'Ursa Major'],['Phecda',11.897,53.695,2.44,0.00,'Ursa Major'],
+    ['Megrez',12.257,57.033,3.31,0.08,'Ursa Major'],['Alioth',12.900,55.960,1.77,-0.02,'Ursa Major'],['Mizar',13.399,54.925,2.04,0.02,'Ursa Major'],['Alkaid',13.792,49.313,1.86,-0.19,'Ursa Major'],
+    ['Schedar',0.675,56.537,2.24,1.17,'Cassiopeia'],['Caph',0.153,59.150,2.28,0.34,'Cassiopeia'],['Navi',0.945,60.717,2.47,-0.15,'Cassiopeia'],['Ruchbah',1.430,60.235,2.68,0.13,'Cassiopeia'],['Segin',1.907,63.670,3.38,-0.15,'Cassiopeia'],
+    ['Alderamin',21.310,62.586,2.45,0.22,'Cepheus'],['Alfirk',21.478,70.561,3.23,-0.22,'Cepheus'],['Errai',23.655,77.633,3.21,1.03,'Cepheus'],
+    ['Deneb',20.690,45.280,1.25,0.09,'Cygnus'],['Sadr',20.370,40.257,2.20,0.67,'Cygnus'],['Albireo',19.512,27.960,3.18,1.10,'Cygnus'],['Gienah',20.770,33.970,2.46,1.03,'Cygnus'],['Delta Cygni',19.750,45.131,2.87,-0.03,'Cygnus'],
+    ['Vega',18.615,38.784,0.03,0.00,'Lyra'],['Sheliak',18.834,33.363,3.52,0.00,'Lyra'],['Sulafat',18.982,32.690,3.24,-0.05,'Lyra'],
+    ['Altair',19.846,8.868,0.76,0.22,'Aquila'],['Tarazed',19.771,10.613,2.72,1.52,'Aquila'],['Alshain',19.922,6.407,3.71,0.86,'Aquila'],
+    ['Markab',23.079,15.205,2.49,-0.04,'Pegasus'],['Scheat',23.063,28.083,2.42,1.67,'Pegasus'],['Algenib',0.220,15.184,2.83,-0.19,'Pegasus'],['Enif',21.736,9.875,2.39,1.52,'Pegasus'],
+    ['Alpheratz',0.140,29.091,2.06,-0.11,'Andromeda'],['Mirach',1.162,35.621,2.05,1.58,'Andromeda'],['Almach',2.065,42.330,2.26,1.37,'Andromeda'],
+    ['Hamal',2.120,23.462,2.00,1.15,'Aries'],['Sheratan',1.911,20.808,2.64,0.13,'Aries'],['Menkar',3.038,4.090,2.53,1.63,'Cetus'],
+    ['Mirfak',3.405,49.861,1.79,0.48,'Perseus'],['Algol',3.136,40.956,2.12,-0.05,'Perseus'],
+    ['Capella',5.278,45.998,0.08,0.80,'Auriga'],['Menkalinan',5.992,44.947,1.90,0.08,'Auriga'],
+    ['Betelgeuse',5.919,7.407,0.50,1.85,'Orion'],['Rigel',5.242,-8.202,0.13,-0.03,'Orion'],['Bellatrix',5.419,6.350,1.64,-0.22,'Orion'],
+    ['Alnitak',5.679,-1.943,1.74,-0.21,'Orion'],['Alnilam',5.604,-1.202,1.69,-0.18,'Orion'],['Mintaka',5.533,-0.299,2.23,-0.18,'Orion'],['Saiph',5.796,-9.670,2.07,-0.17,'Orion'],
+    ['Aldebaran',4.599,16.509,0.86,1.54,'Taurus'],['Elnath',5.438,28.608,1.65,-0.13,'Taurus'],['Alcyone',3.791,24.105,2.87,-0.09,'Taurus'],
+    ['Castor',7.577,31.888,1.58,0.03,'Gemini'],['Pollux',7.755,28.026,1.14,1.00,'Gemini'],['Procyon',7.655,5.225,0.34,0.42,'Canis Minor'],
+    ['Regulus',10.140,11.967,1.35,-0.11,'Leo'],['Algieba',10.333,19.842,2.01,1.14,'Leo'],['Zosma',11.235,20.524,2.56,0.13,'Leo'],['Denebola',11.818,14.572,2.14,0.09,'Leo'],
+    ['Arcturus',14.261,19.182,-0.05,1.23,'Bootes'],['Muphrid',13.911,18.398,2.68,0.58,'Bootes'],['Alphecca',15.578,26.715,2.23,0.03,'Corona Borealis'],
+    ['Cor Caroli',12.934,38.318,2.90,-0.12,'Canes Venatici'],['Vindemiatrix',13.036,10.959,2.83,0.94,'Virgo'],['Spica',13.420,-11.161,0.97,-0.23,'Virgo'],
+    ['Thuban',14.073,64.376,3.65,-0.05,'Draco'],['Eltanin',17.943,51.489,2.23,1.52,'Draco'],['Rastaban',17.507,52.301,2.79,0.99,'Draco'],
+    ['Rasalhague',17.582,12.560,2.07,0.16,'Ophiuchus'],['Kornephoros',16.504,21.490,2.77,0.94,'Hercules'],['Rasalgethi',17.244,14.390,3.48,1.16,'Hercules']
   ];
 
   // === Star Catalog ===
@@ -815,6 +871,16 @@ var GAIN = 1.8;
     var p = row.trim().split(/\s+/).map(Number);
     if (p.length < 6 || p.some(isNaN)) return;
     STARS.push({ ra:(p[0]+p[1]/60)*15*DEG, dec:(p[2]+p[3]/60)*DEG, m:p[4], bv:p[5] });
+  });
+
+  // named stars missing from the catalog get added, so every marker lands on a visible star
+  NAMED_STARS.forEach(function(n){
+    var ra=n[1]*15*DEG, dec=n[2]*DEG, found=false;
+    for (var i=0;i<STARS.length;i++){
+      var c=Math.sin(dec)*Math.sin(STARS[i].dec)+Math.cos(dec)*Math.cos(STARS[i].dec)*Math.cos(ra-STARS[i].ra);
+      if (c>Math.cos(0.4*DEG)){ found=true; break; }
+    }
+    if(!found) STARS.push({ra:ra,dec:dec,m:n[3],bv:n[4]});
   });
 
   // === B-V -> RGB ===
@@ -1028,6 +1094,12 @@ var GAIN = 1.8;
     if (dc2) glow(x, dc2.x, dc2.y, 0.42*objScale, 0.42*objScale, 0, '235,240,255', 0.34);
     var m13 = skyToScreen(16.695*15*DEG, 36.46*DEG);
     if (m13) glow(x, m13.x, m13.y, 0.22*objScale, 0.22*objScale, 0, '255,245,225', 0.34);
+    for (var di = 0; di < DEEP_SKY.length; di++) {
+      var d = DEEP_SKY[di]; if (!d.g) continue;
+      var dp = skyToScreen(d.ra*15*DEG, d.dec*DEG); if (!dp) continue;
+      var rr = Math.max(2.2, d.g.r*objScale);
+      glow(x, dp.x, dp.y, rr, rr, 0, d.g.c, d.g.a);
+    }
   }
 
   function paintTw(t) {
@@ -1049,33 +1121,78 @@ var GAIN = 1.8;
   }
 
   // === Labels & Crosshairs ===
+  var mwRotEl = document.getElementById('mwRot'), mwWrapEl = document.getElementById('milkyWrap');
+  var ALL_TARGETS = [], seen = {}, lastName = '', activeMark = null;
+  CONSTELLATIONS.forEach(function(o){ ALL_TARGETS.push({name:o.name, tag:'\u2726', type:'constellation', ra:o.ra, dec:o.dec}); });
+  DEEP_SKY.forEach(function(o){ ALL_TARGETS.push({name:o.name, tag:'\u25C6', type:'deep-sky', ra:o.ra, dec:o.dec}); });
+  NAMED_STARS.forEach(function(o){ ALL_TARGETS.push({name:o[0]+' \u00B7 '+o[5], tag:'\u2605', type:'star', ra:o[1], dec:o[2]}); });
+
+  function cssMatrix(el) {
+    try {
+      var t = getComputedStyle(el).transform;
+      return (!t || t === 'none') ? new DOMMatrix() : new DOMMatrix(t);
+    } catch (e) { return { a:1,b:0,c:0,d:1,e:0,f:0 }; }
+  }
+
+  // canvas screen position -> real viewport position (the canvas drifts/rotates and parallax-scrolls)
+  function toViewport(sx, sy) {
+    var ox = innerWidth/2, oy = innerHeight/2;
+    var m = cssMatrix(mwRotEl), w = cssMatrix(mwWrapEl);
+    var dx = sx - ox, dy = sy - oy;
+    return {
+      x: m.a*dx + m.c*dy + m.e + ox + w.e,
+      y: m.b*dx + m.d*dy + m.f + oy + w.f
+    };
+  }
+
+  function project(o) {
+    var p = skyToScreen(o.ra*15*DEG, o.dec*DEG);
+    if (!p) return null;
+    return toViewport(p.x - (cW - innerWidth)/2, p.y - (cH - innerHeight)/2);
+  }
+
   function computeVisible() {
     visObjs = [];
-    var margin = 60, topSafe = 120, bottomSafe = innerHeight - 60; 
-    var offX = (cW - innerWidth)/2, offY = (cH - innerHeight)/2;
-    
-    function addObj(name, type, raH, decDeg) {
-      var p = skyToScreen(raH*15*DEG, decDeg*DEG);
-      if (!p) return;
-      var sxp = p.x - offX, syp = p.y - offY;
-      if (sxp > margin && sxp < innerWidth - margin && syp > topSafe && syp < bottomSafe) {
-        visObjs.push({ name: name, type: type, sx: sxp, sy: syp });
-      }
+    var margin = 60, topSafe = 120, bottomSafe = innerHeight - 60;
+    for (var i = 0; i < ALL_TARGETS.length; i++) {
+      var o = ALL_TARGETS[i], p = project(o);
+      if (!p) continue;
+      if (p.x > margin && p.x < innerWidth - margin && p.y > topSafe && p.y < bottomSafe)
+        visObjs.push({ o:o, sx:p.x, sy:p.y });
     }
-    
-    for (var i = 0; i < CONSTELLATIONS.length; i++)
-      addObj(CONSTELLATIONS[i].name, 'constellation', CONSTELLATIONS[i].ra, CONSTELLATIONS[i].dec);
-    for (var j = 0; j < DEEP_SKY.length; j++)
-      addObj(DEEP_SKY[j].name, 'deep-sky', DEEP_SKY[j].ra, DEEP_SKY[j].dec);
+  }
+
+  function pickTarget() {
+    var fresh = visObjs.filter(function(v){ return !seen[v.o.name] && v.o.name !== lastName; });
+    if (!fresh.length) { seen = {}; fresh = visObjs.filter(function(v){ return v.o.name !== lastName; }); }
+    if (!fresh.length) fresh = visObjs;
+    // mix the types: stars 50%, constellations 30%, deep-sky 20%
+    var w = { star:.5, constellation:.3, 'deep-sky':.2 }, pool = {}, tot = 0, k;
+    fresh.forEach(function(v){ (pool[v.o.type] = pool[v.o.type] || []).push(v); });
+    for (k in pool) tot += w[k];
+    var r = Math.random()*tot, type = null;
+    for (k in pool) { r -= w[k]; if (r <= 0) { type = k; break; } }
+    if (!type) type = Object.keys(pool)[0];
+    var list = pool[type];
+    return list[Math.floor(Math.random()*list.length)];
+  }
+
+  function placeMark() {
+    if (!activeMark) return;
+    var p = project(activeMark.o); if (!p) return;
+    activeMark.target.style.left = p.x + 'px'; activeMark.target.style.top = p.y + 'px';
+    activeMark.el.style.left = p.x + 'px';     activeMark.el.style.top = p.y + 'px';
   }
 
   function showLabel() {
     computeVisible();
     labelHost.innerHTML = '';
+    activeMark = null;
     if (visObjs.length === 0) { labelTimer = setTimeout(showLabel, 2500); return; }
-    
-    var pick = visObjs[Math.floor(Math.random()*visObjs.length)];
-    
+
+    var pick = pickTarget();
+    seen[pick.o.name] = 1; lastName = pick.o.name;
+
     var target = document.createElement('div');
     target.className = 'sky-target';
     target.style.left = pick.sx + 'px';
@@ -1084,28 +1201,34 @@ var GAIN = 1.8;
     requestAnimationFrame(function(){ target.classList.add('on'); });
 
     var el = document.createElement('div');
-    el.className = 'sky-label';
+    el.className = 'sky-label' + ((pick.sx + 60 + pick.o.name.length*9.5 > innerWidth - 8) ? ' flip' : '');
     el.style.left = pick.sx + 'px';
     el.style.top = pick.sy + 'px';
-    var tag = pick.type === 'deep-sky' ? '◆' : '✦';
-    el.innerHTML = '<div class="sky-txt">' + tag + ' ' + pick.name + '</div>';
+    el.innerHTML = '<div class="sky-txt">' + pick.o.tag + ' ' + pick.o.name + '</div>';
     labelHost.appendChild(el);
     requestAnimationFrame(function(){ el.classList.add('on'); });
 
+    var mark = { o:pick.o, target:target, el:el };
+    activeMark = mark;
+
     var holdMs = 3800, fadeMs = 950, gapMs = 800 + Math.random()*1200;
-    
-    setTimeout(function(){ 
-      el.classList.remove('on'); 
+
+    setTimeout(function(){
+      el.classList.remove('on');
       target.classList.remove('on');
     }, holdMs);
-    
-    setTimeout(function(){ 
-      if (el.parentNode) el.remove(); 
+
+    setTimeout(function(){
+      if (el.parentNode) el.remove();
       if (target.parentNode) target.remove();
+      if (activeMark === mark) activeMark = null;
     }, holdMs + fadeMs);
-    
+
     labelTimer = setTimeout(showLabel, holdMs + fadeMs + gapMs);
   }
+
+  // keep the marker glued to its star while the page scrolls (background parallax)
+  addEventListener('scroll', placeMark, { passive: true });
 
   // === Init ===
   build();
