@@ -817,7 +817,8 @@ var GAIN = 1.8;
     ['Arcturus',14.261,19.182,-0.05,1.23,'Bootes'],['Muphrid',13.911,18.398,2.68,0.58,'Bootes'],['Alphecca',15.578,26.715,2.23,0.03,'Corona Borealis'],
     ['Cor Caroli',12.934,38.318,2.90,-0.12,'Canes Venatici'],['Vindemiatrix',13.036,10.959,2.83,0.94,'Virgo'],['Spica',13.420,-11.161,0.97,-0.23,'Virgo'],
     ['Thuban',14.073,64.376,3.65,-0.05,'Draco'],['Eltanin',17.943,51.489,2.23,1.52,'Draco'],['Rastaban',17.507,52.301,2.79,0.99,'Draco'],
-    ['Rasalhague',17.582,12.560,2.07,0.16,'Ophiuchus'],['Kornephoros',16.504,21.490,2.77,0.94,'Hercules'],['Rasalgethi',17.244,14.390,3.48,1.16,'Hercules']
+    ['Rasalhague',17.582,12.560,2.07,0.16,'Ophiuchus'],['Kornephoros',16.504,21.490,2.77,0.94,'Hercules'],['Rasalgethi',17.244,14.390,3.48,1.16,'Hercules'],
+    ['Sirius',6.752,-16.716,-1.46,0.00,'Canis Major'],['Antares',16.490,-26.432,1.06,1.83,'Scorpius']
   ];
 
   // === Star Catalog ===
@@ -1141,20 +1142,43 @@ var GAIN = 1.8;
     }
   }
 
-  function pickTarget() {
-    var fresh = visObjs.filter(function(v){ return !seen[v.o.name] && v.o.name !== lastName; });
-    if (!fresh.length) { seen = {}; fresh = visObjs.filter(function(v){ return v.o.name !== lastName; }); }
-    if (!fresh.length) fresh = visObjs;
-    // mix the types: stars 50%, constellations 30%, deep-sky 20%
-    var w = { star:.5, constellation:.3, 'deep-sky':.2 }, pool = {}, tot = 0, k;
-    fresh.forEach(function(v){ (pool[v.o.type] = pool[v.o.type] || []).push(v); });
-    for (k in pool) tot += w[k];
-    var r = Math.random()*tot, type = null;
-    for (k in pool) { r -= w[k]; if (r <= 0) { type = k; break; } }
-    if (!type) type = Object.keys(pool)[0];
-    var list = pool[type];
-    return list[Math.floor(Math.random()*list.length)];
+// === Priority Queue (Most Famous First) ===
+var PRIORITY_QUEUE = [
+  'Andromeda Galaxy (M31)', 'Orion Nebula (M42)', 'Pleiades (M45)', 
+  'Orion', 'Ursa Major', 'Cassiopeia', 'Polaris', 'Vega', 'Cygnus', 
+  'Betelgeuse', 'Hercules Cluster (M13)', 'Ring Nebula (M57)', 
+  'Taurus', 'Ursa Minor', 'Lyra', 'Pegasus', 'Andromeda', 'Perseus',
+  'Double Cluster (NGC 869/884)', 'Whirlpool Galaxy (M51)', 'Sirius',
+  'Bootes', 'Arcturus', 'Cepheus', 'Gemini', 'Draco'
+];
+
+function pickTarget() {
+  var fresh = visObjs.filter(function(v){ return !seen[v.o.name] && v.o.name !== lastName; });
+  if (!fresh.length) { seen = {}; fresh = visObjs.filter(function(v){ return v.o.name !== lastName; }); }
+  if (!fresh.length) fresh = visObjs;
+
+  // 1. Try to find the highest priority famous object that is currently visible on screen
+  for (var i = 0; i < PRIORITY_QUEUE.length; i++) {
+    var targetName = PRIORITY_QUEUE[i];
+    if (seen[targetName]) continue; // Skip if already shown recently
+    
+    var match = fresh.find(function(v) {
+      return v.o.name === targetName || v.o.name.startsWith(targetName + ' ') || v.o.name.startsWith(targetName + ' ·');
+    });
+    if (match) return match;
   }
+
+  // 2. Fallback: If none of the famous objects are visible, pick a random one
+  // mix the types: stars 40%, constellations 40%, deep-sky 20%
+  var w = { star:.4, constellation:.4, 'deep-sky':.2 }, pool = {}, tot = 0, k;
+  fresh.forEach(function(v){ (pool[v.o.type] = pool[v.o.type] || []).push(v); });
+  for (k in pool) tot += w[k];
+  var r = Math.random()*tot, type = null;
+  for (k in pool) { r -= w[k]; if (r <= 0) { type = k; break; } }
+  if (!type) type = Object.keys(pool)[0];
+  var list = pool[type];
+  return list[Math.floor(Math.random()*list.length)];
+}
 
   /* ---- constellation stick figures: points by star name, or extra [RA h, Dec deg] ---- */
   var NS_IDX = {};
@@ -1449,7 +1473,7 @@ var GAIN = 1.8;
     svg.classList.add('on');
 
     var total = still ? 400 : Math.max(typeEnd, figEnd);
-    var holdMs = 3000, fadeMs = 700, gapMs = 700 + Math.random()*1200;
+    var holdMs = 3500, fadeMs = 700, gapMs = 400 + Math.random()*600;
     later(function(){ m.car = null; svg.classList.remove('on'); svg.classList.add('out'); }, total + holdMs);
     later(function(){ if (activeMark === m) { clearMarks(); } }, total + holdMs + fadeMs);
 
