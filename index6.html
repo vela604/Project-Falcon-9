@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#000000">
+<title>ZADS</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Michroma&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<style>
+:root{--cy:#1fe9ff;--gr:#35f5c8;--brand:"Michroma",sans-serif}
+*{box-sizing:border-box;margin:0;padding:0}
+html{background:#000}
+body{background:#000;color:#fff;font:15px/1.5 "Share Tech Mono",monospace;overflow-x:hidden;-webkit-font-smoothing:antialiased}
+a{color:inherit;text-decoration:none}
+a:focus-visible{outline:2px solid var(--cy);outline-offset:3px}
+#c{position:fixed;inset:0;width:100%;height:100%;z-index:0}
+main,footer{position:relative;z-index:1}
+#mission{height:560vh}
+#hero{height:100svh;display:grid;place-items:center;position:relative}
+#brand{font:400 min(19vw,360px)/1 var(--brand);letter-spacing:.03em;color:#fff;mix-blend-mode:difference;margin-right:-.03em}
+#brand span{display:inline-block;opacity:0;transform:translateY(.25em);transition:opacity .7s,transform .9s cubic-bezier(.16,1,.3,1);transition-delay:calc(var(--i)*90ms)}
+.go #brand span{opacity:1;transform:none}
+.cue{position:absolute;bottom:max(24px,env(safe-area-inset-bottom));font-size:12px;color:var(--gr);opacity:0;transition:opacity 1s 3s}
+.go .cue{opacity:.8}
+.cue::after{content:"";display:block;width:1px;height:40px;margin:8px auto 0;background:linear-gradient(var(--gr),transparent);animation:d 2s ease-in-out infinite}
+@keyframes d{0%{transform:scaleY(0);transform-origin:top}50%{transform:scaleY(1);transform-origin:top}51%{transform-origin:bottom}100%{transform:scaleY(0);transform-origin:bottom}}
+#list{width:min(100%,680px);padding:14vh clamp(20px,6vw,90px) 16vh}
+.row{display:flex;flex-direction:column;justify-content:center;min-height:24vh;padding:16px 0 16px 18px;border-left:1px solid #1fe9ff30;color:#ffffff59;transition:color .35s,padding .45s cubic-bezier(.16,1,.3,1),border-color .35s,background .35s}
+.row b{display:block;font:400 clamp(20px,3.4vw,38px)/1.15 "Michroma",sans-serif}
+.row span{display:block;margin-top:6px;color:var(--gr);opacity:.75;font-size:14px}
+.row.on{color:#fff;padding-left:32px;border-color:var(--gr);background:linear-gradient(90deg,#1fe9ff22,transparent 75%)}
+#hud{position:fixed;left:clamp(16px,3vw,40px);bottom:max(18px,env(safe-area-inset-bottom));z-index:2;font-size:12px;line-height:1.7;color:var(--gr);opacity:0;transition:opacity 1s 3s;pointer-events:none;mix-blend-mode:difference}
+#flash{position:fixed;inset:0;z-index:5;background:#d8fff6;opacity:0;pointer-events:none;transition:opacity .3s}.fl #flash{opacity:1}
+.go #hud{position:fixed;left:clamp(16px,3vw,40px);bottom:max(18px,env(safe-area-inset-bottom));z-index:2;font-size:12px;line-height:1.7;color:var(--gr);opacity:0;transition:opacity 1s 3s;pointer-events:none;mix-blend-mode:difference}
+#flash{position:fixed;inset:0;z-index:5;background:#d8fff6;opacity:0;pointer-events:none;transition:opacity .3s}.fl #flash{opacity:1}
+#hud b{font:400 12px "Michroma",sans-serif}
+footer{padding:28px clamp(20px,6vw,90px) max(28px,env(safe-area-inset-bottom));font-size:12px;color:#ffffff88;border-top:1px solid #1fe9ff22;background:#000a}
+footer b{color:#fff;font-weight:400}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition-duration:.01s!important;transition-delay:0s!important}}
+
+body::after{content:"";position:fixed;inset:0;z-index:4;pointer-events:none;background:radial-gradient(ellipse at center,transparent 55%,#000c 100%),repeating-linear-gradient(0deg,#0000 0 2px,#00000038 2px 3px)}
+
+a,.row{-webkit-tap-highlight-color:transparent;-webkit-touch-callout:none;user-select:none}
+.row{position:relative;overflow:hidden;--g:#35f5c8;transition:color .35s,padding .45s cubic-bezier(.16,1,.3,1),border-color .35s,background .35s,transform .15s}
+.row:active{transform:scale(.985)}
+.row::before{content:"";position:absolute;inset:14px 10px;opacity:0;pointer-events:none;transition:inset .35s cubic-bezier(.16,1,.3,1),opacity .3s;background:linear-gradient(var(--g),var(--g)) 0 0/16px 2px,linear-gradient(var(--g),var(--g)) 0 0/2px 16px,linear-gradient(var(--g),var(--g)) 100% 0/16px 2px,linear-gradient(var(--g),var(--g)) 100% 0/2px 16px,linear-gradient(var(--g),var(--g)) 0 100%/16px 2px,linear-gradient(var(--g),var(--g)) 0 100%/2px 16px,linear-gradient(var(--g),var(--g)) 100% 100%/16px 2px,linear-gradient(var(--g),var(--g)) 100% 100%/2px 16px;background-repeat:no-repeat}
+.row.on::before{opacity:1;inset:6px 6px}
+.row::after{content:"";position:absolute;inset:0;pointer-events:none;background:linear-gradient(100deg,transparent 30%,#d6fff6d9 50%,transparent 70%);transform:translateX(-110%)}
+.row.fire{--g:#fff;border-color:#fff;background:linear-gradient(90deg,#35f5c855,transparent)}
+.row.fire::before{opacity:1;inset:0}
+.row.fire::after{animation:sweep .55s cubic-bezier(.5,0,.2,1) forwards}
+.row.fire b{color:#fff;text-shadow:0 0 18px #1fe9ff,0 0 4px #fff;animation:jit .45s steps(2) infinite}
+@keyframes sweep{to{transform:translateX(110%)}}
+@keyframes jit{25%{transform:translateX(3px) skewX(-6deg)}50%{transform:translateX(-3px)}75%{transform:translateX(2px) skewX(4deg)}}
+</style>
+</head>
+<body>
+<canvas id="c" aria-hidden="true"></canvas>
+<div id="hud" aria-hidden="true"><span id="ha"></span><br><span id="hv"></span><br><b id="hs"></b></div>
+<div id="flash"></div>
+<main>
+  <section id="hero">
+    <h1 id="brand" aria-label="ZADS"><span style="--i:0">Z</span><span style="--i:1">A</span><span style="--i:2">D</span><span style="--i:3">S</span></h1>
+    <p class="cue">scroll</p>
+  </section>
+  <div id="mission"></div>
+    <nav id="list" aria-label="Modules">
+    <a class="row" href="simulation.html"><b>Flight Simulator</b><span>manual control, live telemetry</span></a>
+    <a class="row" href="rockets-earth.html"><b>Vehicle Fleet</b><span>rockets, engines, mass specs</span></a>
+    <a class="row" href="components.html"><b>Components Library</b><span>engines, recovery, RCS</span></a>
+    <a class="row" href="guidance_preset6.html"><b>Guidance Presets</b><span>named constant sets</span></a>
+    <a class="row" href="guidance-tester2.html"><b>Guidance Numerical</b><span>headless tuning, plots</span></a>
+    <a class="row" href="atlas-prism/index.html"><b>Atlas Prism</b><span>multi-engine tuning hub</span></a>
+    <a class="row" href="guidance_log.html"><b>Guidance Log</b><span>every algorithm tried</span></a>
+  </nav>
+</main>
+<footer>Idea &amp; research by <b>Sehran</b> · code assist: DeepSeek V4.1 Flash, Claude Sonnet 5.5</footer>
+<script src="js/szadFont.js"></script>
+<script>
+// ZADS home — a scroll-driven ascent: launch complex -> hot staging -> orbit. Canvas 2D, wireframe 3D.
+// Idea & research: Sehran. Code assist: DeepSeek V4.1 Flash, Claude Sonnet 5.5.
+(function () {
+  const $ = s => document.querySelector(s), RM = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const cv = $('#c'), x = cv.getContext('2d');
+  let W, H, D, grad, atm;
+  const size = () => {
+    D = Math.min(devicePixelRatio || 1, 1.75); W = cv.width = innerWidth * D; H = cv.height = innerHeight * D;
+    grad = x.createLinearGradient(0, 0, 0, H); grad.addColorStop(0, '#1fe9ff'); grad.addColorStop(.55, '#35f5c8'); grad.addColorStop(1, '#4dff8c');
+    atm = x.createLinearGradient(0, H * .5, 0, H); atm.addColorStop(0, 'rgba(31,233,255,0)'); atm.addColorStop(1, 'rgba(31,233,255,.2)');
+  };
+  addEventListener('resize', size); size();
+
+  /* ---------- procedural wireframe vehicles (metres) ---------- */
+  const L = (g, a, b, c, d, e, f) => g.push(a, b, c, d, e, f), TAU = 6.2832;
+  function ring(g, ox, y, oz, r, n) { for (let i = 0; i < n; i++) { const a = i / n * TAU, b = (i + 1) / n * TAU; L(g, ox + r * Math.cos(a), y, oz + r * Math.sin(a), ox + r * Math.cos(b), y, oz + r * Math.sin(b)); } }
+  function rev(g, P, ox, nl, rs, sub) {
+    const rows = [];
+    for (let i = 0; i < P.length - 1; i++) { const a = P[i], b = P[i + 1], n = Math.max(1, Math.round(Math.abs(b[0] - a[0]) / sub)); for (let j = 0; j < n; j++) rows.push([a[0] + (b[0] - a[0]) * j / n, a[1] + (b[1] - a[1]) * j / n]); }
+    rows.push(P[P.length - 1]);
+    rows.forEach((r, i) => {
+      if (r[1] > .01) ring(g, ox, r[0], 0, r[1], rs);
+      if (i) for (let k = 0; k < nl; k++) { const c = Math.cos(k / nl * TAU), s = Math.sin(k / nl * TAU), p = rows[i - 1]; L(g, ox + p[1] * c, p[0], p[1] * s, ox + r[1] * c, r[0], r[1] * s); }
+    });
+  }
+  const engines = (g, ox, er, gr) => gr.forEach(([n, r]) => { for (let i = 0; i < n; i++) { const a = i / n * TAU, cx = ox + r * Math.cos(a), cz = r * Math.sin(a); ring(g, cx, 0, cz, er * .55, 8); ring(g, cx, -1.3, cz, er, 8); for (let k = 0; k < 4; k++) { const b = k * 1.5708; L(g, cx + er * .55 * Math.cos(b), 0, cz + er * .55 * Math.sin(b), cx + er * Math.cos(b), -1.3, cz + er * Math.sin(b)); } } });
+  // deployed grid fin: thin horizontal lattice plate (cells open along the airflow)
+  function gfin(g, ox, ang, r0, y0, h, sp, w) {
+    const c = Math.cos(ang), s = Math.sin(ang), r1 = r0 + sp, Q = (r, y, tt) => [ox + r * c - s * tt, y, r * s + c * tt];
+    [y0, y0 + h].forEach(y => {
+      [[r0, -w / 2, r1, -w / 2], [r1, -w / 2, r1, w / 2], [r1, w / 2, r0, w / 2], [r0, w / 2, r0, -w / 2]].forEach(e => L(g, ...Q(e[0], y, e[1]), ...Q(e[2], y, e[3])));
+      for (let i = 1; i < 5; i++) { const r = r0 + sp * i / 5; L(g, ...Q(r, y, -w / 2), ...Q(r, y, w / 2)); }
+      for (let i = 1; i < 4; i++) { const tt = -w / 2 + w * i / 4; L(g, ...Q(r0, y, tt), ...Q(r1, y, tt)); }
+    });
+    [r0, r1].forEach(r => [-w / 2, w / 2].forEach(tt => L(g, ...Q(r, y0, tt), ...Q(r, y0 + h, tt))));
+  }
+  // aerodynamic fairing / raceway: raised rib on the hull with a sloped top
+  function fair(g, ang, y0, y1, w, dep, sl) {
+    const c = Math.cos(ang), s = Math.sin(ang), Q = (r, y, tt) => [r * c - s * tt, y, r * s + c * tt], R = 4.5, o = R + dep;
+    [-w / 2, w / 2].forEach(tt => { L(g, ...Q(R, y0, tt), ...Q(o, y0, tt)); L(g, ...Q(o, y0, tt), ...Q(o, y1, tt)); L(g, ...Q(o, y1, tt), ...Q(R, y1 + sl, tt)); });
+    L(g, ...Q(o, y0, -w / 2), ...Q(o, y0, w / 2)); L(g, ...Q(o, y1, -w / 2), ...Q(o, y1, w / 2)); L(g, ...Q(R, y1 + sl, -w / 2), ...Q(R, y1 + sl, w / 2)); L(g, ...Q(o, y0, 0), ...Q(o, y1, 0));
+  }
+  // Starship flap: trapezoid hinged on the hull, root edge follows the hull curve
+  const SP = [[72, 4.5], [107, 4.5], [111, 4.2], [115, 3.6], [117, 2.9], [119, 1.8], [120.4, 1], [121, 0]];
+  const hullR = y => { for (let i = 0; i < SP.length - 1; i++) { const a = SP[i], b = SP[i + 1]; if (y <= b[0]) return a[1] + (b[1] - a[1]) * (y - a[0]) / Math.max(1e-6, b[0] - a[0]); } return 0; };
+  function flap(g, ang, yb, ytr, yto, out) {
+    const c = Math.cos(ang), s = Math.sin(ang), P = (r, y) => [r * c, y, r * s], ro = hullR(yb) + out;
+    const A = [hullR(yb) - .05, yb], B = [ro, yb], C = [ro, yto], Dd = [hullR(ytr) - .05, ytr];
+    [[A, B], [B, C], [C, Dd], [Dd, A]].forEach(e => L(g, ...P(...e[0]), ...P(...e[1])));
+    [.3, .65].forEach(f => L(g, ...P(A[0] + (B[0] - A[0]) * f, yb), ...P(Dd[0] + (C[0] - Dd[0]) * f, ytr + (yto - ytr) * f)));
+    L(g, ...P(...B), ...P(...Dd));
+  }
+  function fin(g, ox, ang, r0, y0, y1, out, grid) {
+    const c = Math.cos(ang), s = Math.sin(ang), P = [[r0, y0], [r0 + out, y0 + (y1 - y0) * .25], [r0 + out * .9, y1 - (y1 - y0) * .1], [r0, y1]];
+    for (let i = 0; i < 4; i++) { const a = P[i], b = P[(i + 1) % 4]; L(g, ox + a[0] * c, a[1], a[0] * s, ox + b[0] * c, b[1], b[0] * s); }
+    if (grid) [.33, .66].forEach(t => { const ya = y0 + (y1 - y0) * t, yb = y0 + (y1 - y0) * (.25 + .65 * t); L(g, ox + r0 * c, ya, r0 * s, ox + (r0 + out * .95) * c, yb, (r0 + out * .95) * s); });
+  }
+  function leg(g, ox, r, ang) { // Falcon landing leg: A-frame struts to a foot pad + telescoping piston
+    const c = Math.cos(ang), s = Math.sin(ang), Q = (rad, y, tt) => [ox + rad * c - s * tt, y, rad * s + c * tt], fr = r + 7.4, fy = -1.4, hy = 6;
+    [-.7, .7].forEach(tt => L(g, ...Q(r, hy, tt), ...Q(fr, fy, tt * .3)));
+    [.4, .7].forEach(f => L(g, ...Q(r + 7.4 * f, hy + (fy - hy) * f, -.7 * (1 - .7 * f)), ...Q(r + 7.4 * f, hy + (fy - hy) * f, .7 * (1 - .7 * f))));
+    L(g, ...Q(r, 15, 0), ...Q(r + 7.4 * .55, hy + (fy - hy) * .55, 0));
+    ring(g, ox + fr * c, fy, fr * s, .9, 8);
+  }
+  const pack = g => { const n = g.length / 6, m = new Float32Array(n); for (let i = 0; i < n; i++) m[i] = Math.max(g[i * 6 + 1], g[i * 6 + 4]); return { n, a: new Float32Array(g), m, px: new Float32Array(n * 4), zb: new Uint8Array(n) }; };
+  function booster() { const g = []; rev(g, [[0, 4.5], [71, 4.5]], 0, 16, 24, 3.6); engines(g, 0, .5, [[3, 1], [10, 2.5], [20, 3.9]]); for (let k = 0; k < 4; k++) gfin(g, 0, .785 + k * 1.5708, 4.5, 67.2, 1.3, 4.6, 4); for (let k = 0; k < 6; k++) fair(g, k * 1.0472 + .2, 1.5, 22, 1.3, .8, 4); [.5, 3.64].forEach(a => fair(g, a, 24, 66, .6, .35, 3)); ring(g, 0, 24, 0, 4.55, 24); ring(g, 0, 71.2, 0, 4.65, 28); ring(g, 0, 72, 0, 4.65, 28); for (let k = 0; k < 28; k++) { const a = k / 28 * TAU; L(g, 4.65 * Math.cos(a), 71.2, 4.65 * Math.sin(a), 4.65 * Math.cos(a), 72, 4.65 * Math.sin(a)); } return pack(g); }
+  function ship() {
+    const g = []; rev(g, SP, 0, 14, 24, 2);
+    [0, 3.1416].forEach(a => { flap(g, a, 108.5, 115.8, 111.7, 2.6); flap(g, a, 72, 84.9, 79.5, 3); }); return pack(g);
+  }
+  function core(g, ox, tall, legs) {
+    rev(g, tall ? [[0, 1.83], [57, 1.83], [57, 2.6], [63, 2.6], [66, 2.1], [69, .9], [70, 0]] : [[0, 1.83], [41, 1.83], [43, 1.4], [46, .5], [47, 0]], ox, 10, 18, 2.4);
+    engines(g, ox, .32, [[1, 0], [8, 1.15]]);
+    for (let k = 0; k < 4; k++) { gfin(g, ox, .785 + k * 1.5708, 1.83, 38, .5, 1.9, 1.6); if (legs) leg(g, ox, 1.83, .785 + k * 1.5708); }
+  }
+  const GB = booster(), GS = ship(), GF = (() => { const g = []; core(g, 0, true, true); return pack(g); })(), GH = (() => { const g = []; core(g, 0, true, false); core(g, -3.7, false, true); core(g, 3.7, false, true); return pack(g); })();
+
+  /* ---------- planet: polar grid centred under the pad; curvature appears as you climb ---------- */
+  const R = 1000, ER = [5, 10, 16, 24, 34, 48, 68, 95, 130, 180, 250, 340, 470, 650, 900], eg = [];
+  const sp3 = (rho, a) => { const t = rho / R; return [R * Math.sin(t) * Math.cos(a), R * Math.cos(t) - R, R * Math.sin(t) * Math.sin(a)]; };
+  ER.forEach(rho => { for (let i = 0; i < 72; i++) eg.push(...sp3(rho, i / 72 * TAU), ...sp3(rho, (i + 1) / 72 * TAU)); });
+  for (let k = 0; k < 36; k++) { let p = sp3(0, 0); [0, ...ER].forEach(rho => { const q = sp3(rho, k / 36 * TAU); eg.push(...p, ...q); p = q; }); }
+  const GE = pack(eg), stars = Array.from({ length: 460 }, () => { const u = Math.random() * 2 - 1, a = Math.random() * TAU, r = Math.sqrt(1 - u * u); return [r * Math.cos(a), u, r * Math.sin(a)]; });
+
+  /* ---------- launch / catch tower with chopstick arms (145 m) ---------- */
+  const yt = xx => 133 - (-5 - xx) * 4 / 21, yb = xx => 121 + (-5 - xx) * 2 / 21;
+  const arm = d => {
+    const g = [], za = 4.9 * d, zb = 6.5 * d;
+    [za, zb].forEach(z => { L(g, -5, 133, z, -26, yt(-26), z); L(g, -5, 121, z, -26, yb(-26), z); L(g, -26, yb(-26), z, -26, yt(-26), z); });
+    [[-5, 133, 121], [-26, yt(-26), yb(-26)]].forEach(e => { L(g, e[0], e[1], za, e[0], e[1], zb); L(g, e[0], e[2], za, e[0], e[2], zb); });
+    for (let xx = -5; xx >= -26; xx -= 3.5) {
+      L(g, xx, yb(xx), za, xx, yt(xx), za); L(g, xx, yb(xx), zb, xx, yt(xx), zb);
+      if (xx - 3.5 >= -26) { L(g, xx, yb(xx), zb, xx - 3.5, yt(xx - 3.5), zb); L(g, xx, yb(xx), za, xx - 3.5, yt(xx - 3.5), za); }
+    }
+    L(g, -5, 106, zb, -17, yb(-17), zb); return pack(g);
+  };
+  const GA = [arm(1), arm(-1)], GT = (() => {
+    const g = [], w = 5;
+    for (let l = 0; l <= 15; l++) {
+      const y = l * 10, c = [[-w, -w], [w, -w], [w, w], [-w, w]];
+      for (let i = 0; i < 4; i++) {
+        const a = c[i], b = c[(i + 1) % 4]; L(g, a[0], y, a[1], b[0], y, b[1]);
+        if (l < 15) { L(g, a[0], y, a[1], a[0], y + 10, a[1]); L(g, a[0], y, a[1], b[0], y + 10, b[1]); L(g, b[0], y, b[1], a[0], y + 10, a[1]); }
+      }
+    }
+    [90, 94].forEach(y => [-1.5, 1.5].forEach(z => L(g, -5, y, z, -24, y, z)));
+    for (let xx = -5; xx >= -24; xx -= 3.2) { [-1.5, 1.5].forEach(z => L(g, xx, 90, z, xx, 94, z)); L(g, xx, 90, -1.5, xx, 90, 1.5); L(g, xx, 94, -1.5, xx, 94, 1.5); if (xx - 3.2 >= -24) L(g, xx, 90, 1.5, xx - 3.2, 94, 1.5); }
+    return pack(g);
+  })();
+
+  /* ---------- orbital launch mount: ring table on six legs, flame hole in the middle ---------- */
+  const GM = (() => {
+    const g = [];
+    for (let i = 0; i < 6; i++) {
+      const a = i / 6 * TAU, b = (i + 1) / 6 * TAU, ca = Math.cos(a), sa = Math.sin(a), cb = Math.cos(b), sb2 = Math.sin(b);
+      L(g, 10 * ca, 20, 10 * sa, 13 * ca, 0, 13 * sa); L(g, 9 * ca, 20, 9 * sa, 12 * ca, 0, 12 * sa);
+      L(g, 10 * ca, 20, 10 * sa, 13 * cb, 0, 13 * sb2); L(g, 10 * cb, 20, 10 * sb2, 13 * ca, 0, 13 * sa);
+    }
+    [[20, 10], [20, 6.5], [18.5, 10], [8, 11.6], [0, 13], [0, 17]].forEach(q => ring(g, 0, q[0], 0, q[1], 40));
+    for (let i = 0; i < 24; i++) { const a = i / 24 * TAU; L(g, 6.5 * Math.cos(a), 20, 6.5 * Math.sin(a), 10 * Math.cos(a), 20, 10 * Math.sin(a)); }
+    return pack(g);
+  })();
+
+  /* ---------- camera + renderer ---------- */
+  let Cx = 0, Cy = 0, Cz = 0, cs = 1, sn = 0, cp = 1, spn = 0, F = 1, ox = 0, PZ = 0;
+  const DIST = 22;
+  function pr(wx, wy, wz, o, k) {
+    const dx = wx - Cx, dy = wy - Cy, dz = wz - Cz, x1 = dx * cs + dz * sn, z1 = -dx * sn + dz * cs, y2 = dy * cp - z1 * spn, z2 = dy * spn + z1 * cp + DIST;
+    if (z2 < .8) return 0; o[k] = W / 2 + ox + x1 * F / z2; o[k + 1] = H / 2 - y2 * F / z2; PZ = z2 - DIST; return 1;
+  }
+  function draw(g, T, al, glow) {
+    const A = g.a, P = g.px, Zb = g.zb, s = T.s, cr = Math.cos(T.rz || 0), sr = Math.sin(T.rz || 0), py = T.py || 0, ys = T.ys == null ? 1e9 : T.ys, th = T.th || .12;
+    for (let i = 0; i < g.n; i++) {
+      if (g.m[i] > ys) { Zb[i] = 255; continue; }
+      let z = 0, ok = 1;
+      for (let e = 0; e < 2 && ok; e++) {
+        const j = i * 6 + e * 3, X = A[j], Y = A[j + 1] - py;
+        ok = pr((X * cr - Y * sr) * s + T.tx, (X * sr + Y * cr + py) * s + T.ty, A[j + 2] * s + T.tz, P, i * 4 + e * 2); z += PZ;
+      }
+      Zb[i] = !ok ? 255 : T.flat ? 1 : z < -th ? 2 : z < th ? 1 : 0;
+    }
+    x.lineCap = 'round'; x.strokeStyle = grad; x.globalCompositeOperation = 'lighter';
+    if (glow) { x.globalAlpha = .08 * al; x.lineWidth = 4.5 * D; x.beginPath(); for (let i = 0; i < g.n; i++) if (Zb[i] < 255) { x.moveTo(P[i * 4], P[i * 4 + 1]); x.lineTo(P[i * 4 + 2], P[i * 4 + 3]); } x.stroke(); }
+    x.lineWidth = D * (glow ? 1.15 : .8);
+    for (let z = 0; z < 3; z++) {
+      x.globalAlpha = (glow ? [.22, .5, .95] : [.1, .3, .5])[z] * al; x.beginPath();
+      for (let i = 0; i < g.n; i++) if (Zb[i] === z) { x.moveTo(P[i * 4], P[i * 4 + 1]); x.lineTo(P[i * 4 + 2], P[i * 4 + 3]); }
+      x.stroke();
+    }
+  }
+  const tmp = new Float32Array(8);
+  function flame(bx, by, bz, r, len, al, rz) {
+    if (len < .05) return;
+    rz = rz || 0; const cr = Math.cos(rz), sr = Math.sin(rz);
+    const N = 16, prof = f => r * (1 + .22 * Math.sin(f * 3.14)) * (1 - f * .9), tl = [], LV = [.12, .26, .42, .58, .74, .88, 1];
+    for (let k = 0; k < N; k++) tl.push(len * (.7 + Math.random() * .4));
+    const pt = (c, s, q, d) => { let X = bx + q * c * cr + d * sr, Y = by + q * c * sr - d * cr, Z = bz + q * s; if (Y < .02) { const k = 1 + (.02 - Y) * .3; X = bx + (X - bx) * k; Z = bz + (Z - bz) * k; Y = .02; } return [X, Y, Z]; };
+    [[.16, 5, '#1fe9ff'], [al, 1, '#d6fff6']].forEach(([a, w, col]) => {
+      path(a, w, col);
+      for (let k = 0; k < N; k++) { const an = k / N * TAU, c = Math.cos(an), s = Math.sin(an); let p0 = pt(c, s, r, 0); LV.forEach(f => { const p1 = pt(c, s, prof(f), tl[k] * f); sg(...p0, ...p1); p0 = p1; }); }
+      x.stroke();
+    });
+    path(al * 1.2, 1.2, '#fff');
+    [.22, .4, .58, .76].forEach(f => { const q = prof(f) * .75, d = len * f * .9; if (by - d * cr < .05) return; for (let k = 0; k < 16; k++) { const a = k / 16 * TAU, b = (k + 1) / 16 * TAU; sg(...pt(Math.cos(a), Math.sin(a), q, d), ...pt(Math.cos(b), Math.sin(b), q, d)); } });
+    for (let k = 0; k < 12; k++) { const d = len * Math.random() * 1.1; sg(...pt(0, 0, 0, d), ...pt(0, 0, 0, d + .25 * len * Math.random())); }
+    x.stroke();
+  }
+  function drawStars(al) {
+    x.globalCompositeOperation = 'lighter'; x.fillStyle = '#d7fff8';
+    for (let i = 0; i < stars.length; i++) {
+      const s = stars[i], x1 = s[0] * cs + s[2] * sn, z1 = -s[0] * sn + s[2] * cs, y2 = s[1] * cp - z1 * spn, z2 = s[1] * spn + z1 * cp;
+      if (z2 < .15) continue; x.globalAlpha = al * (i % 3 ? .35 : .8); const q = D * (i % 7 ? 1 : 1.8);
+      x.fillRect(W / 2 + ox * .2 + x1 / z2 * F * .8, H / 2 - y2 / z2 * F * .8, q, q);
+    }
+  }
+
+  const path = (al, w, col) => { x.globalCompositeOperation = 'lighter'; x.strokeStyle = col; x.lineWidth = w * D; x.globalAlpha = al; x.beginPath(); };
+  const sg = (a, b, c, d, e, f) => { if (pr(a, b, c, tmp, 0) && pr(d, e, f, tmp, 2)) { x.moveTo(tmp[0], tmp[1]); x.lineTo(tmp[2], tmp[3]); } };
+
+  /* ---------- state ---------- */
+  const sm = t => (t = Math.max(0, Math.min(1, t))) * t * (3 - 2 * t), clamp = t => Math.max(0, Math.min(1, t));
+  let S = 0, t0 = performance.now(), last = t0, mx = 0, yawB = .3, lau = 0, go = false, shown = {};
+  addEventListener('pointermove', e => mx += (e.clientX / innerWidth - .5 - mx) * .2);
+  const set = (id, v) => { if (shown[id] !== v) { shown[id] = v; $('#' + id).textContent = v; } };
+  let mEnd = 1; const mE = () => { mEnd = Math.max(1, $('#list').offsetTop - innerHeight * .9); };
+  addEventListener('resize', mE); addEventListener('load', mE); mE();
+  (function frame(now) {
+    const dt = Math.min(.05, (now - last) / 1000); last = now;
+    if (!document.hidden) {
+      const el = go ? now - t0 : 0;
+      S += (clamp(scrollY / mEnd) - S) * Math.min(1, dt * 5);
+      const wide = innerWidth > 900, p = clamp(scrollY / (innerHeight * .8)), fx = wide ? 9 : 4.6;
+      ox += ((wide ? p * W * .2 : 0) - ox) * .08;
+      if (!RM) yawB += dt * .09;
+      const sep = S >= .2, q = clamp((S - .2) / .8), cD = sm((S - .37) / .08);
+      const yaw = (yawB + mx * .6) * (1 - cD) + mx * .3 * cD, pitch = (.12 - .5 * sm((S - .26) / .1)) * (1 - cD) + .05 * cD;
+      cs = Math.cos(yaw); sn = Math.sin(yaw); cp = Math.cos(pitch); spn = Math.sin(pitch);
+      F = H * 1.2 * (wide ? 1 : .82) * (1 + .4 * (1 - sm(el / 3200))) * (1 - .3 * cD * sm((q - .55) / .3));
+      const bi = RM ? 1 : clamp((el - 300) / 2600), ign = RM ? 1 : clamp((el - 1900) / 1400), fb = RM ? 0 : clamp((el - 500) / 1500), ys = bi < 1 ? bi * 130 : null;
+      const boost = lau ? Math.pow(clamp((now - lau) / 750), 2) * 70 : 0;
+      const Ys = (S < .2 ? 2 + 160 * Math.pow(S / .2, 1.8) : 162 + (S - .2) * 760) + (sep ? 0 : boost);
+      const Xs = .28 * Math.max(0, Ys - 30), tilt = -.273 * sm((Ys - 30) / 60) - .5 * sm((S - .2) / .3), v = clamp((q - .25) / .75);
+      const sT = Math.sin(tilt), cT = Math.cos(tilt), X0 = .28 * 132 + 3.6 * .27;
+      const Yb = sep ? (q < .25 ? 162 + 45 * sm(q / .25) : 6 + 201 * (1 - sm(v))) + boost * .6 : Ys + 3.6 * (cT - 1);
+      const Bx = sep ? X0 * (1 - sm(q / .34)) : Xs - 3.6 * sT;
+      const rz = !sep ? tilt : lau ? 0 : (q < .34 ? -.273 + 2.473 * sm(q / .14) : 2.2 * (1 - sm((q - .34) / .16))) + .25 * sm((q - .5) / .2) * (1 - sm((q - .9) / .09));
+      const win = (a, b) => sm((q - a) / .02) * (1 - sm((q - b) / .02));
+      const bb = sep ? Math.max(win(.13, .34), .5 * win(.5, .6), (.7 + .3 * (1 - q) / .12) * win(.78, .96)) : 0;
+      const thr = ign * (.55 + Math.min(.45, S * 60)) * (lau ? 1.6 : 1);
+      const thrB = sep ? Math.max(bb, lau ? .8 : 0) : thr * (1 - sm((S - .19) / .02)), thrS = S < .46 ? thr : .6 * ign;
+      Cx = (Xs - 6 * sT) * (1 - cD) + Bx * cD; Cy = (Ys + 6 * cT) * (1 - cD) + Math.max(Yb + 4, 10) * cD; Cz = 0;
+      x.globalCompositeOperation = 'source-over'; x.globalAlpha = 1; x.clearRect(0, 0, W, H);
+      x.save(); const sh = Math.max(thrB, sep ? 0 : thr) * (lau ? 3 : .7) * D * (S < .2 || lau || bb > .5 ? 1 : 0); x.translate((Math.random() - .5) * sh, (Math.random() - .5) * sh);
+      x.fillStyle = atm; x.fillRect(0, H * .5, W, H * .5);
+      const dim = wide ? 1 : 1 - .5 * p;
+      drawStars(go ? dim * (.3 + .7 * clamp(Cy / 150)) : 0);
+      draw(GE, { s: 1, tx: 0, ty: 0, tz: 0, flat: 1 }, dim * .55 * bi, false);
+      draw(GT, { s: .1, tx: 3.2, ty: 0, tz: 0, ys }, dim * .9, true);
+      const spr = Math.max(sm(S / .03) * (1 - sm((q - .965) / .03)), lau ? sm((now - lau) / 250) : 0) * .55; // chopsticks: closed on the stack, open for flight, close on the booster
+      draw(GA[0], { s: .1, tx: 3.2, ty: 0, tz: spr, ys }, dim * .9, true); draw(GA[1], { s: .1, tx: 3.2, ty: 0, tz: -spr, ys }, dim * .9, true);
+      draw(GF, { s: .1, tx: -fx, ty: .14, tz: 0, ys }, dim, true); draw(GH, { s: .1, tx: fx, ty: .14, tz: 0, ys }, dim, true); draw(GM, { s: .1, tx: 0, ty: 0, tz: 0, ys }, dim, true);
+      draw(GS, { s: .1, tx: Xs, ty: Ys, tz: 0, rz: tilt, ys }, dim, true);
+      draw(GB, { s: .1, tx: Bx, ty: Yb, tz: 0, rz, py: 36, ys }, dim, true);
+      path(.5 * dim, 1, '#35f5c8');
+      for (let y = Math.max(0, Math.floor((Cy - 18) / 10) * 10); y < Cy + 18; y += 10) sg(Cx - 3.4, y, 0, Cx - 2.9, y, 0);
+      x.stroke();
+      if (!sep && Ys > 3) { path(.22 * dim, 2, '#1fe9ff'); sg(Xs, Ys, 0, .28 * Math.max(0, Ys - 120), Math.max(0, Ys - 90), 0); x.stroke(); }
+      const sw = (el - 1900) / 1600;
+      if (!RM && go && sw > 0 && sw < 1 && S < .02) { path((1 - sw) * .7, 1.5, '#c8fff4'); for (let i = 0; i < 64; i++) { const a = i / 64 * TAU, b = (i + 1) / 64 * TAU, r = 2 + sw * 60; sg(r * Math.cos(a), .02, r * Math.sin(a), r * Math.cos(b), .02, r * Math.sin(b)); } x.stroke(); }
+      if (ign > 0) {
+        const sr = Math.sin(rz), cr = Math.cos(rz);
+        flame(Bx + 3.7 * sr, Yb + 3.6 * (1 - cr) - .13 * cr, 0, .34, (sep ? 13 : 18) * thrB, .7 * dim, rz);
+        if (S >= .19) flame(Xs - 7.2 * sT, Ys + 7.2 * cT, 0, .26, 10 * thrS, .65 * dim, tilt);
+        if (S < .02 && !lau) { flame(-fx, .01, 0, .2, 4 * thr, .5 * dim); flame(fx, .01, 0, .2, 4 * thr, .5 * dim); }
+      }
+      if (fb > 0 && fb < 1) { const qq = Math.pow(fb, 1.7); draw(GF, { s: .16, tx: -40 + 80 * qq, ty: -10 + 44 * qq, tz: 4, rz: -.95 }, 1.4, true); }
+      x.restore();
+      const T = Math.round(S < .2 ? 810 * S : 162 + q * 322), alt = Math.max(0, ((S < .4 ? Ys : Yb) - 6) * .45);
+      set('ha', 'T+ ' + String(T / 60 | 0).padStart(2, '0') + ':' + String(T % 60).padStart(2, '0')); set('hv', 'ALT ' + alt.toFixed(alt < 10 ? 1 : 0) + ' km');
+      set('hs', S < .015 ? 'on the pad' : S < .12 ? 'liftoff' : S < .19 ? 'max-Q' : S < .24 ? 'MECO · staging' : S < .37 ? 'starship burn' : q < .34 ? 'boostback burn' : q < .52 ? 'booster coast' : q < .66 ? 'entry burn' : q < .97 ? 'landing burn' : 'caught');
+    }
+    requestAnimationFrame(frame);
+  })(last);
+
+  /* ---------- entry, links, launch-on-click ---------- */
+  const fr = typeof loadSzadFont === 'function' ? Promise.race([loadSzadFont().catch(() => false), new Promise(r => setTimeout(() => r(false), 1200))]) : Promise.resolve(false);
+  fr.then(ok => {
+    if (ok) document.documentElement.style.setProperty('--brand', `"${typeof SZAD_FONT_FAMILY !== 'undefined' ? SZAD_FONT_FAMILY : 'SZAD'}",Michroma,sans-serif`);
+    t0 = performance.now(); go = true; document.body.classList.add('go');
+  });
+  const rows = [...document.querySelectorAll('.row')];
+  const io = new IntersectionObserver(es => es.forEach(e => e.isIntersecting && rows.forEach(o => o.classList.toggle('on', o === e.target))), { rootMargin: '-42% 0px -42% 0px' });
+  rows.forEach(r => {
+    io.observe(r);
+    r.addEventListener('pointerenter', () => rows.forEach(o => o.classList.toggle('on', o === r)));
+    r.addEventListener('click', e => {
+      if (e.metaKey || e.ctrlKey || e.shiftKey || RM || lau) return;
+      e.preventDefault(); lau = performance.now(); r.classList.add('fire'); scr(r.querySelector('b')); navigator.vibrate && navigator.vibrate(25);
+      setTimeout(() => document.body.classList.add('fl'), 560); setTimeout(() => { location.href = r.href; }, 880);
+    });
+  });
+  const scr = el => { const t = el.textContent, ch = '01<>/#%$ZADS'; let n = 0; const iv = setInterval(() => { el.textContent = t.split('').map((c, i) => c === ' ' || i < n ? c : ch[Math.random() * ch.length | 0]).join(''); if ((n += 1.3) > t.length) { el.textContent = t; clearInterval(iv); } }, 30); };
+  addEventListener('pageshow', e => { if (e.persisted) { rows.forEach(o => o.classList.remove('fire')); lau = 0; document.body.classList.remove('fl'); } });
+})();
+</script>
+</body>
+</html>
