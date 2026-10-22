@@ -798,6 +798,17 @@ setState(s) {
       CIRC_ATT_KP: 0.5,
       CIRC_ATT_KD: 4.0,
       COAST_BURN_MULTIPLIER: 4.0,
+      // Target orbit is now defined by two apsides. The insertion block
+      // internally derives: apogee = max(apside1, apside2),
+      // perigee = min(apside1, apside2). Equal values → circular orbit
+      // (identical to the old single-altitude behaviour).
+      //   Circular target:    APSIDE1 = APSIDE2 = 320
+      //   Elliptical target:  APSIDE1 = 320, APSIDE2 = 250  (apo=320, peri=250)
+      TARGET_APSIDE1_ALT_KM: 320,
+      TARGET_APSIDE2_ALT_KM: 320,
+      // Deprecated legacy constant — still honoured as a fallback when
+      // only the old field is present (existing presets before the split).
+      // Once both apside constants are set, this field is ignored.
       TARGET_ORBIT_ALT_KM: 320,
       // Minimum distance from stage to a released payload body for it to
       // count as "cleared". Small enough to fire quickly after release,
@@ -820,6 +831,13 @@ setState(s) {
       let _missionCtx = null;
       let _done = false;
       let _result = null;
+
+      // Derived target apogee/perigee (km ASL). Computed once in start()
+      // from TARGET_APSIDE1_ALT_KM / TARGET_APSIDE2_ALT_KM (higher = apogee,
+      // lower = perigee). Legacy fallback: if only TARGET_ORBIT_ALT_KM is
+      // present (old presets), both collapse to that value (circular).
+      let _targetApoKm = 320;
+      let _targetPeriKm = 320;
 
       // Sub-machine state — mirrors V2's _leoStateV2 slice relevant to
       // STAGE_BURN..COAST_HOLD_2 + DONE payload-monitor.
@@ -1189,8 +1207,8 @@ const tau_target = tau_desired - dNext.torqueEnvironmental;
             }
 
             if (
-              apogeeKm >= cfg.TARGET_ORBIT_ALT_KM ||
-              apogeePredicted_margin >= cfg.TARGET_ORBIT_ALT_KM
+              apogeeKm >= _targetApoKm ||
+              apogeePredicted_margin >= _targetApoKm
             ) {
               _send(Guidance.cmdSetAllThrottle(0));
               _send(Guidance.cmdSetGimbalRate(0));
@@ -1242,7 +1260,7 @@ const tau_target = tau_desired - dNext.torqueEnvironmental;
               break;
             }
 
-            const errKm = apogeeKm_b - cfg.TARGET_ORBIT_ALT_KM;
+            const errKm = apogeeKm_b - _targetApoKm;
             const prevErr = _st._prevApogeeErr;
             _st._prevApogeeErr = errKm;
 
@@ -1265,7 +1283,14 @@ const tau_target = tau_desired - dNext.torqueEnvironmental;
               const e_c = e_b2;
               const r_apo = a_c > 0 ? a_c * (1 + e_c) : r_c;
               const v_apo = r_apo > 0 ? Math.abs(h_c) / r_apo : 0;
-              const v_orb = Math.sqrt(GM_c / r_apo);
+              // Target velocity at apogee for the ELLIPTICAL orbit whose
+              // apogee is at _targetApoKm and perigee at _targetPeriKm.
+              // vis-viva: v_a = sqrt(GM·(2/r_a − 1/a)), a = (r_a + r_p)/2.
+              // Reduces to sqrt(GM/r) when apo==peri (circular target).
+              const r_a_tgt = R_c + _targetApoKm * 1000;
+              const r_p_tgt = R_c + _targetPeriKm * 1000;
+              const a_tgt = (r_a_tgt + r_p_tgt) / 2;
+              const v_orb = Math.sqrt(GM_c * (2 / r_a_tgt - 1 / a_tgt));
               const dv_needed = Math.max(0, v_orb - v_apo);
 
               const v2_c = body.vx * body.vx + body.vy * body.vy;
@@ -1381,7 +1406,12 @@ const tau_target = tau_desired - dNext.torqueEnvironmental;
                   const e_cap = Math.sqrt(Math.max(0, eSq_cap));
                   const rApo_cap = a_cap * (1 + e_cap);
                   const vApo_cap = Math.abs(h_cap) / rApo_cap;
-                  const vOrb_cap = Math.sqrt(GM_cap / rApo_cap);
+                  // Elliptical target velocity at apogee (circular when
+                  // apo==peri). Same vis-viva form as RCS_BOOST above.
+                  const r_a_tgt_cap = env.EARTH_RADIUS + _targetApoKm * 1000;
+                  const r_p_tgt_cap = env.EARTH_RADIUS + _targetPeriKm * 1000;
+                  const a_tgt_cap = (r_a_tgt_cap + r_p_tgt_cap) / 2;
+                  const vOrb_cap = Math.sqrt(GM_cap * (2 / r_a_tgt_cap - 1 / a_tgt_cap));
                   _st.coastRotateEndDeltaV = Math.max(0, vOrb_cap - vApo_cap);
                 } else {
                   _st.coastRotateEndDeltaV = null;
@@ -1722,8 +1752,12 @@ const tau_target = tau_desired - dNext.torqueEnvironmental;
             const r_apo_live = a_c * (1 + e_mag);
             const h_live = r_c * vt_c;
             const v_apo_live = r_apo_live > 0 ? Math.abs(h_live) / r_apo_live : 0;
-            const v_circ_at_apo = r_apo_live > 0 ? Math.sqrt(GM_c / r_apo_live) : 0;
-            const gap = v_circ_at_apo - v_apo_live;
+            // Elliptical target velocity at apogee (circular when apo==peri).
+            const r_a_tgt_live = env.EARTH_RADIUS + _targetApoKm * 1000;
+            const r_p_tgt_live = env.EARTH_RADIUS + _targetPeriKm * 1000;
+            const a_tgt_live = (r_a_tgt_live + r_p_tgt_live) / 2;
+            const v_target_at_apo = Math.sqrt(GM_c * (2 / r_a_tgt_live - 1 / a_tgt_live));
+            const gap = v_target_at_apo - v_apo_live;
             const targetGap = Number.isFinite(env.PAYLOAD_EJECT_KICK_MPS)
               ? env.PAYLOAD_EJECT_KICK_MPS : 0;
             const dvError = gap - targetGap;
@@ -1897,6 +1931,19 @@ const tau_target = tau_desired - dNext.torqueEnvironmental;
           _missionCtx = missionCtx || {};
           _done = false;
           _result = null;
+
+          // Derive apogee/perigee from the two apside constants. Legacy
+          // fallback to TARGET_ORBIT_ALT_KM (existing presets keep working
+          // as a circular target at that altitude).
+          const _ap1Raw = Number.isFinite(constants.TARGET_APSIDE1_ALT_KM)
+            ? constants.TARGET_APSIDE1_ALT_KM
+            : (Number.isFinite(constants.TARGET_ORBIT_ALT_KM)
+                ? constants.TARGET_ORBIT_ALT_KM : 320);
+          const _ap2Raw = Number.isFinite(constants.TARGET_APSIDE2_ALT_KM)
+            ? constants.TARGET_APSIDE2_ALT_KM
+            : _ap1Raw;
+          _targetApoKm = Math.max(_ap1Raw, _ap2Raw);
+          _targetPeriKm = Math.min(_ap1Raw, _ap2Raw);
 
           _st.init = false;
           _st.ticks = 0;
