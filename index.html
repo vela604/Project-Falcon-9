@@ -144,9 +144,17 @@ a,.row{-webkit-tap-highlight-color:transparent;-webkit-touch-callout:none;user-s
     ring(g, ox + fr * c, fy, fr * s, .9, 8);
   }
   const pack = g => { const n = g.length / 6, m = new Float32Array(n); for (let i = 0; i < n; i++) m[i] = Math.max(g[i * 6 + 1], g[i * 6 + 4]); return { n, a: new Float32Array(g), m, px: new Float32Array(n * 4), zb: new Uint8Array(n) }; };
+  // engine layouts (metres, vehicle frame). o = shutdown priority: centre 3 stay longest, then 2 opposite middle (=5), then rest of the inner 13, then the outer 20
+  const BE = [], SE = [], MORD = [0, 5, 2, 7, 4, 9, 1, 6, 3, 8];
+  for (let i = 0; i < 3; i++) { const a = i / 3 * TAU; BE.push({ x: Math.cos(a), z: Math.sin(a), y: -1.3, r: .05, o: i }); }
+  for (let i = 0; i < 10; i++) { const a = i / 10 * TAU; BE.push({ x: 2.5 * Math.cos(a), z: 2.5 * Math.sin(a), y: -1.3, r: .05, o: 3 + MORD.indexOf(i) }); }
+  for (let i = 0; i < 20; i++) { const a = i / 20 * TAU; BE.push({ x: 3.9 * Math.cos(a), z: 3.9 * Math.sin(a), y: -1.3, r: .05, o: 13 + (i * 7) % 20 }); }
+  for (let i = 0; i < 3; i++) { const a = 1.5708 + i * 2.0944; SE.push({ x: 1.4 * Math.cos(a), z: 1.4 * Math.sin(a), y: 70.7, len: 1.3, r0: .4, r1: .65, r: .065, o: i }); }
+  for (let i = 0; i < 3; i++) { const a = 1.5708 + 1.0472 + i * 2.0944; SE.push({ x: 2.9 * Math.cos(a), z: 2.9 * Math.sin(a), y: 69.6, len: 2.4, r0: .6, r1: 1.2, r: .12, o: 3 + i }); }
   function booster() { const g = []; rev(g, [[0, 4.5], [71, 4.5]], 0, 16, 24, 3.6); engines(g, 0, .5, [[3, 1], [10, 2.5], [20, 3.9]]); for (let k = 0; k < 4; k++) gfin(g, 0, .785 + k * 1.5708, 4.5, 67.2, 1.3, 4.6, 4); for (let k = 0; k < 6; k++) fair(g, k * 1.0472 + .2, 1.5, 22, 1.3, .8, 4); [.5, 3.64].forEach(a => fair(g, a, 24, 66, .6, .35, 3)); ring(g, 0, 24, 0, 4.55, 24); ring(g, 0, 71.2, 0, 4.65, 28); ring(g, 0, 72, 0, 4.65, 28); for (let k = 0; k < 28; k++) { const a = k / 28 * TAU; L(g, 4.65 * Math.cos(a), 71.2, 4.65 * Math.sin(a), 4.65 * Math.cos(a), 72, 4.65 * Math.sin(a)); } return pack(g); }
   function ship() {
     const g = []; rev(g, SP, 0, 14, 24, 2);
+    SE.forEach(e => { ring(g, e.x, e.y + e.len, e.z, e.r0, 10); ring(g, e.x, e.y, e.z, e.r1, 10); for (let k = 0; k < 4; k++) { const b = k * 1.5708; L(g, e.x + e.r0 * Math.cos(b), e.y + e.len, e.z + e.r0 * Math.sin(b), e.x + e.r1 * Math.cos(b), e.y, e.z + e.r1 * Math.sin(b)); } });
     [0, 3.1416].forEach(a => { flap(g, a, 108.5, 115.8, 111.7, 2.6); flap(g, a, 72, 84.9, 79.5, 3); }); return pack(g);
   }
   function core(g, ox, tall, legs) {
@@ -210,13 +218,14 @@ a,.row{-webkit-tap-highlight-color:transparent;-webkit-touch-callout:none;user-s
     if (z2 < .8) return 0; o[k] = W / 2 + ox + x1 * F / z2; o[k + 1] = H / 2 - y2 * F / z2; PZ = z2 - DIST; return 1;
   }
   function draw(g, T, al, glow) {
-    const A = g.a, P = g.px, Zb = g.zb, s = T.s, cr = Math.cos(T.rz || 0), sr = Math.sin(T.rz || 0), py = T.py || 0, ys = T.ys == null ? 1e9 : T.ys, th = T.th || .12;
+    const A = g.a, P = g.px, Zb = g.zb, s = T.s, cr = Math.cos(T.rz || 0), sr = Math.sin(T.rz || 0), py = T.py || 0, cy = Math.cos(T.ry || 0), sy = Math.sin(T.ry || 0), ys = T.ys == null ? 1e9 : T.ys, th = T.th || .12;
     for (let i = 0; i < g.n; i++) {
       if (g.m[i] > ys) { Zb[i] = 255; continue; }
       let z = 0, ok = 1;
       for (let e = 0; e < 2 && ok; e++) {
-        const j = i * 6 + e * 3, X = A[j], Y = A[j + 1] - py;
-        ok = pr((X * cr - Y * sr) * s + T.tx, (X * sr + Y * cr + py) * s + T.ty, A[j + 2] * s + T.tz, P, i * 4 + e * 2); z += PZ;
+        const j = i * 6 + e * 3, Y = A[j + 1] - py; let X = A[j], Zl = A[j + 2];
+        if (T.ry) { const dx = X - T.px, dz = Zl - T.pz; X = T.px + dx * cy + dz * sy; Zl = T.pz - dx * sy + dz * cy; } // hinge rotation about a vertical axis
+        ok = pr((X * cr - Y * sr) * s + T.tx, (X * sr + Y * cr + py) * s + T.ty, Zl * s + T.tz, P, i * 4 + e * 2); z += PZ;
       }
       Zb[i] = !ok ? 255 : T.flat ? 1 : z < -th ? 2 : z < th ? 1 : 0;
     }
@@ -257,6 +266,65 @@ a,.row{-webkit-tap-highlight-color:transparent;-webkit-touch-callout:none;user-s
 
   const path = (al, w, col) => { x.globalCompositeOperation = 'lighter'; x.strokeStyle = col; x.lineWidth = w * D; x.globalAlpha = al; x.beginPath(); };
   const sg = (a, b, c, d, e, f) => { if (pr(a, b, c, tmp, 0) && pr(d, e, f, tmp, 2)) { x.moveTo(tmp[0], tmp[1]); x.lineTo(tmp[2], tmp[3]); } };
+  // per-engine plumes: segments are buffered, then stroked twice (glow + bright core)
+  const SEG = new Float32Array(32768); let ns = 0;
+  const sb = (a, b, c, d, e, f) => { if (ns < 32760 && pr(a, b, c, tmp, 0) && pr(d, e, f, tmp, 2)) { SEG[ns++] = tmp[0]; SEG[ns++] = tmp[1]; SEG[ns++] = tmp[2]; SEG[ns++] = tmp[3]; } };
+  const flush = al => { [[.16 * al / .7, 4.5, '#1fe9ff'], [al, 1, '#d6fff6']].forEach(([a, w, col]) => { path(Math.min(1, a), w, col); for (let i = 0; i < ns; i += 4) { x.moveTo(SEG[i], SEG[i + 1]); x.lineTo(SEG[i + 2], SEG[i + 3]); } x.stroke(); }); ns = 0; };
+  const loc = (T, X, Y, Z) => { const cr = Math.cos(T.rz || 0), sr = Math.sin(T.rz || 0), py = T.py || 0, y = Y - py; return [(X * cr - y * sr) * T.s + T.tx, (X * sr + y * cr + py) * T.s + T.ty, Z * T.s + (T.tz || 0)]; };
+  // n = how many engines are lit (by priority), L = plume length, clip(P,len) = max free length (hot-stage blockage)
+  function engFlames(E, T, n, L, clip) {
+    const cr = Math.cos(T.rz), sr = Math.sin(T.rz), F = [.33, .66, 1]; let blk = 0, cnt = 0;
+    for (const e of E) {
+      const a = Math.max(0, Math.min(1, n - e.o)); if (a <= 0) continue;
+      const P = loc(T, e.x, e.y, e.z); let len = L * a * (.8 + Math.random() * .4);
+      if (clip) { cnt++; const d = clip(P, len); if (d < len) { blk += 1 - d / len; len = d; } }
+      if (len < .03) continue;
+      const sx = e.x * .1, sz = e.z * .1; let prev = [], ring = [];
+      for (let k = 0; k < 5; k++) {
+        const an = k / 5 * TAU + e.o, c = Math.cos(an), s = Math.sin(an); let p0 = [P[0] + e.r * c * cr, P[1] + e.r * c * sr, P[2] + e.r * s];
+        F.forEach((f, j) => {
+          const rr = e.r * (1 + 3 * f), sp = .55 * f, ax = P[0] + sr * len * f + sx * cr * sp, ay = P[1] - cr * len * f + sx * sr * sp, az = P[2] + sz * sp;
+          const p1 = [ax + rr * c * cr, ay + rr * c * sr, az + rr * s]; sb(...p0, ...p1); p0 = p1; if (j === 1) ring.push(p1);
+        });
+      }
+      for (let k = 0; k < 5; k++) sb(...ring[k], ...ring[(k + 1) % 5]);
+      sb(...P, P[0] + sr * len * 1.1, P[1] - cr * len * 1.1, P[2]);
+    }
+    return cnt ? blk / cnt : 0;
+  }
+  // hot-staging ring vents: ship exhaust hits the booster top and is thrown out sideways
+  function vents(T, b) {
+    if (b < .03) return;
+    for (let k = 0; k < 24; k++) {
+      const an = k / 24 * TAU + Math.random() * .12, c = Math.cos(an), s = Math.sin(an), u = .6 + Math.random() * .4, R = 4.5, o1 = R + 7 * b * u, o2 = R + 16 * b * u;
+      const p0 = loc(T, R * c, 71.6, R * s), p1 = loc(T, o1 * c, 71.6 - 3 * b * u, o1 * s), p2 = loc(T, o2 * c, 71.6 - 20 * b * u, o2 * s);
+      sb(...p0, ...p1); sb(...p1, ...p2);
+    }
+  }
+
+  /* ---------- booster flight path (q = 0 at hot staging .. 1 at catch) ----------
+     x: keeps drifting downrange through the flip, boostback (.13-.34) reverses it, then it arrives from the open side of the arms
+     y: still CLIMBING during the whole boostback, apogee at q=.40, only then the tail-first descent
+     z: cross-range offset that closes in on the arms -> real 3D sideways approach                                          */
+  const hm = (p0, m0, p1, m1, u) => { const u2 = u * u, u3 = u2 * u; return (2 * u3 - 3 * u2 + 1) * p0 + (u3 - 2 * u2 + u) * m0 + (-2 * u3 + 3 * u2) * p1 + (u3 - u2) * m1; };
+  const XB0 = 37.93, XF = 1.45, YF = 6.7, QL = .97, QB0 = .13, QB1 = .34, V0 = 70, AB = -1071, XM = -9, Q2 = .66, QA = .4, YA = 222;
+  const X1 = XB0 + V0 * QB1 + AB * (QB1 - QB0) ** 2 / 2, V1 = V0 + AB * (QB1 - QB0);
+  const sm0 = t => (t = Math.max(0, Math.min(1, t))) * t * (3 - 2 * t);
+  function bX(q) {
+    if (q <= QB1) { const c = Math.min(Math.max(q - QB0, 0), QB1 - QB0); return XB0 + V0 * q + AB * c * c / 2; }
+    if (q <= Q2) { const d = Q2 - QB1; return hm(X1, V1 * d, XM, 0, (q - QB1) / d); }
+    if (q <= QL) { const d = QL - Q2; return hm(XM, 0, XF, 0, (q - Q2) / d); }
+    return XF;
+  }
+  const bY = q => q < QA ? 162 + 300 * q - 375 * q * q : YF + (YA - YF) * (1 - sm0((q - QA) / (QL - QA)));
+  const bZ = q => 6 * sm0((q - .04) / .2) * (1 - sm0((q - .45) / .52));
+  function bRz(q) {
+    const flip = q < .14 ? -.273 + 2.173 * sm0(q / .14) : q < QB1 ? 1.9 : 1.9 * (1 - sm0((q - QB1) / .16));
+    const e = .004, vx = (bX(q + e) - bX(q - e)) / (2 * e), vy = (bY(q + e) - bY(q - e)) / (2 * e);
+    const lean = Math.max(-.55, Math.min(.55, 2 * Math.atan2(vx, -vy + 1e-3))); // engines point along the velocity (tail-first), exaggerated x2
+    const w = sm0((q - .45) / .12), fade = 1 - sm0((q - .93) / .05);
+    return flip * (1 - w) + lean * fade * w;
+  }
 
   /* ---------- state ---------- */
   const sm = t => (t = Math.max(0, Math.min(1, t))) * t * (3 - 2 * t), clamp = t => Math.max(0, Math.min(1, t));
@@ -273,22 +341,27 @@ a,.row{-webkit-tap-highlight-color:transparent;-webkit-touch-callout:none;user-s
       const wide = innerWidth > 900, p = clamp(scrollY / (innerHeight * .8)), fx = wide ? 9 : 4.6;
       ox += ((wide ? p * W * .2 : 0) - ox) * .08;
       if (!RM) yawB += dt * .09;
-      const sep = S >= .2, q = clamp((S - .2) / .8), cD = sm((S - .37) / .08);
+      const sep = S >= .2, q = clamp((S - .2) / .8), cD = sm((S - .30) / .08);
       const yaw = (yawB + mx * .6) * (1 - cD) + mx * .3 * cD, pitch = (.12 - .5 * sm((S - .26) / .1)) * (1 - cD) + .05 * cD;
       cs = Math.cos(yaw); sn = Math.sin(yaw); cp = Math.cos(pitch); spn = Math.sin(pitch);
       F = H * 1.2 * (wide ? 1 : .82) * (1 + .4 * (1 - sm(el / 3200))) * (1 - .3 * cD * sm((q - .55) / .3));
       const bi = RM ? 1 : clamp((el - 300) / 2600), ign = RM ? 1 : clamp((el - 1900) / 1400), fb = RM ? 0 : clamp((el - 500) / 1500), ys = bi < 1 ? bi * 130 : null;
       const boost = lau ? Math.pow(clamp((now - lau) / 750), 2) * 70 : 0;
       const Ys = (S < .2 ? 2 + 160 * Math.pow(S / .2, 1.8) : 162 + (S - .2) * 760) + (sep ? 0 : boost);
-      const Xs = .28 * Math.max(0, Ys - 30), tilt = -.273 * sm((Ys - 30) / 60) - .5 * sm((S - .2) / .3), v = clamp((q - .25) / .75);
+      const Xs = .28 * Math.max(0, Ys - 30), tilt = -.273 * sm((Ys - 30) / 60) - .5 * sm((S - .2) / .3);
       const sT = Math.sin(tilt), cT = Math.cos(tilt), X0 = .28 * 132 + 3.6 * .27;
-      const Yb = sep ? (q < .25 ? 162 + 45 * sm(q / .25) : 6 + 201 * (1 - sm(v))) + boost * .6 : Ys + 3.6 * (cT - 1);
-      const Bx = sep ? X0 * (1 - sm(q / .34)) : Xs - 3.6 * sT;
-      const rz = !sep ? tilt : lau ? 0 : (q < .34 ? -.273 + 2.473 * sm(q / .14) : 2.2 * (1 - sm((q - .34) / .16))) + .25 * sm((q - .5) / .2) * (1 - sm((q - .9) / .09));
+      const Yb = sep ? bY(q) + boost * .6 : Ys + 3.6 * (cT - 1);
+      const Bx = sep ? bX(q) : Xs - 3.6 * sT, Bz = sep ? bZ(q) : 0;
+      const rz = !sep ? tilt : lau ? 0 : bRz(q);
       const win = (a, b) => sm((q - a) / .02) * (1 - sm((q - b) / .02));
-      const bb = sep ? Math.max(win(.13, .34), .5 * win(.5, .6), (.7 + .3 * (1 - q) / .12) * win(.78, .96)) : 0;
+      const bb = sep ? Math.max(win(.13, .34), .5 * win(.5, .6), Math.min(1, .7 + .3 * (1 - q) / .12) * win(.78, .985)) : 0;
       const thr = ign * (.55 + Math.min(.45, S * 60)) * (lau ? 1.6 : 1);
-      const thrB = sep ? Math.max(bb, lau ? .8 : 0) : thr * (1 - sm((S - .19) / .02)), thrS = S < .46 ? thr : .6 * ign;
+      // how many booster engines burn: 33 ascent -> 5 at hot staging -> 13 boostback -> 3 entry -> 13/5/3 landing & hover
+      let nB, thrB;
+      if (!sep) { const meco = sm((S - .178) / .014); nB = lau ? 33 : Math.min(33 * ign, 33 - 28 * meco); thrB = lau ? thr : thr * (1 - .4 * meco) * (1 - sm((S - .195) / .007)); }
+      else if (lau) { nB = 33; thrB = .8; }
+      else { nB = q < .4 ? 13 : q < .7 ? 3 : 13 - 8 * sm((q - .83) / .012) - 2 * sm((q - .88) / .012); thrB = bb; }
+      const nS = S < .189 ? 0 : 6 * clamp((S - .189) / .008), thrS = S < .46 ? thr : .6 * ign;
       Cx = (Xs - 6 * sT) * (1 - cD) + Bx * cD; Cy = (Ys + 6 * cT) * (1 - cD) + Math.max(Yb + 4, 10) * cD; Cz = 0;
       x.globalCompositeOperation = 'source-over'; x.globalAlpha = 1; x.clearRect(0, 0, W, H);
       x.save(); const sh = Math.max(thrB, sep ? 0 : thr) * (lau ? 3 : .7) * D * (S < .2 || lau || bb > .5 ? 1 : 0); x.translate((Math.random() - .5) * sh, (Math.random() - .5) * sh);
@@ -298,10 +371,11 @@ a,.row{-webkit-tap-highlight-color:transparent;-webkit-touch-callout:none;user-s
       draw(GE, { s: 1, tx: 0, ty: 0, tz: 0, flat: 1 }, dim * .55 * bi, false);
       draw(GT, { s: .1, tx: 3.2, ty: 0, tz: 0, ys }, dim * .9, true);
       const spr = Math.max(sm(S / .03) * (1 - sm((q - .965) / .03)), lau ? sm((now - lau) / 250) : 0) * .55; // chopsticks: closed on the stack, open for flight, close on the booster
-      draw(GA[0], { s: .1, tx: 3.2, ty: 0, tz: spr, ys }, dim * .9, true); draw(GA[1], { s: .1, tx: 3.2, ty: 0, tz: -spr, ys }, dim * .9, true);
+      const ang = spr / .55 * .35; // chopsticks swing open about hinges at the tower face (outer edge of each arm root)
+      draw(GA[0], { s: .1, tx: 3.2, ty: 0, tz: 0, ry: ang, px: -5, pz: 6.5, ys }, dim * .9, true); draw(GA[1], { s: .1, tx: 3.2, ty: 0, tz: 0, ry: -ang, px: -5, pz: -6.5, ys }, dim * .9, true);
       draw(GF, { s: .1, tx: -fx, ty: .14, tz: 0, ys }, dim, true); draw(GH, { s: .1, tx: fx, ty: .14, tz: 0, ys }, dim, true); draw(GM, { s: .1, tx: 0, ty: 0, tz: 0, ys }, dim, true);
       draw(GS, { s: .1, tx: Xs, ty: Ys, tz: 0, rz: tilt, ys }, dim, true);
-      draw(GB, { s: .1, tx: Bx, ty: Yb, tz: 0, rz, py: 36, ys }, dim, true);
+      draw(GB, { s: .1, tx: Bx, ty: Yb, tz: Bz, rz, py: 36, ys }, dim, true);
       path(.5 * dim, 1, '#35f5c8');
       for (let y = Math.max(0, Math.floor((Cy - 18) / 10) * 10); y < Cy + 18; y += 10) sg(Cx - 3.4, y, 0, Cx - 2.9, y, 0);
       x.stroke();
@@ -309,16 +383,42 @@ a,.row{-webkit-tap-highlight-color:transparent;-webkit-touch-callout:none;user-s
       const sw = (el - 1900) / 1600;
       if (!RM && go && sw > 0 && sw < 1 && S < .02) { path((1 - sw) * .7, 1.5, '#c8fff4'); for (let i = 0; i < 64; i++) { const a = i / 64 * TAU, b = (i + 1) / 64 * TAU, r = 2 + sw * 60; sg(r * Math.cos(a), .02, r * Math.sin(a), r * Math.cos(b), .02, r * Math.sin(b)); } x.stroke(); }
       if (ign > 0) {
-        const sr = Math.sin(rz), cr = Math.cos(rz);
-        flame(Bx + 3.7 * sr, Yb + 3.6 * (1 - cr) - .13 * cr, 0, .34, (sep ? 13 : 18) * thrB, .7 * dim, rz);
-        if (S >= .19) flame(Xs - 7.2 * sT, Ys + 7.2 * cT, 0, .26, 10 * thrS, .65 * dim, tilt);
+        const TB = { s: .1, tx: Bx, ty: Yb, tz: Bz, rz, py: 36 }, TS = { s: .1, tx: Xs, ty: Ys, tz: 0, rz: tilt, py: 0 };
+        if (thrB > .02) {
+          // plume stops at the ground and at the tower (no passing through); ground hit throws a blast ring
+          const crB = Math.cos(rz), srB = Math.sin(rz); let gx = 0, gz = 0, gn = 0, gl = 0;
+          const clipB = (P, len) => {
+            let d = Infinity, gnd = false;
+            if (crB > .02) { d = Math.max(0, P[1] - .02) / crB; gnd = true; }
+            const dir = [srB, -crB, 0], lo = [2.7, 0, -.5], hi = [3.7, 15, .5]; let t0 = 0, t1 = 1e9;
+            for (let k = 0; k < 3; k++) { if (Math.abs(dir[k]) < 1e-6) { if (P[k] < lo[k] || P[k] > hi[k]) { t1 = -1; break; } } else { let a = (lo[k] - P[k]) / dir[k], b = (hi[k] - P[k]) / dir[k]; if (a > b) { const u = a; a = b; b = u; } t0 = Math.max(t0, a); t1 = Math.min(t1, b); } }
+            if (t1 > t0 && t0 > 0 && t0 < d) { d = t0; gnd = false; }
+            if (gnd && d < len) { gx += P[0] + srB * d; gz += P[2]; gn++; gl += 1 - d / len; }
+            return d;
+          };
+          engFlames(BE, TB, nB, (sep ? 13 : 18) * thrB, clipB);
+          if (gn) { gx /= gn; gz /= gn; const k = Math.min(1, gl / gn + .25), rr = (.8 + 2.2 * k) * Math.min(1, .4 + nB / 20);
+            for (let w = 0; w < 3; w++) { const r = rr * (.45 + .35 * w) * (.9 + Math.random() * .2); for (let i = 0; i < 28; i++) { const a = i / 28 * TAU, b = (i + 1) / 28 * TAU; sb(gx + r * Math.cos(a), .03, gz + r * Math.sin(a), gx + r * Math.cos(b), .03, gz + r * Math.sin(b)); } }
+            for (let i = 0; i < 20; i++) { const a = i / 20 * TAU + Math.random() * .2, r0 = rr * .2, r1 = rr * (.6 + Math.random() * .5); sb(gx + r0 * Math.cos(a), .03, gz + r0 * Math.sin(a), gx + r1 * Math.cos(a), .03, gz + r1 * Math.sin(a)); } }
+          flush(.7 * dim);
+        }
+        if (S >= .189) {
+          // ship plume cannot pass through the booster: truncated at its top deck, remainder vents sideways through the hot-stage ring
+          const Pt = loc(TB, 0, 68, 0), sRb = Math.sin(rz), cRb = Math.cos(rz), cosD = cT * cRb + sT * sRb;
+          const clip = (P, L) => {
+            const rel = (P[0] - Pt[0]) * -sRb + (P[1] - Pt[1]) * cRb, d = rel < 0 ? 0 : rel / Math.max(cosD, .05);
+            const hx = P[0] + d * sT - Pt[0], hy = P[1] - d * cT - Pt[1], lat = Math.hypot(hx * cRb + hy * sRb, P[2] - Pt[2]);
+            return d + 3 * L * (1 - clamp((.6 - lat) / .12) * clamp((cosD - .1) / .4));
+          };
+          const blk = engFlames(SE, TS, nS, 10 * thrS, clip); vents(TB, blk * Math.min(1, nS / 6)); flush(.65 * dim);
+        }
         if (S < .02 && !lau) { flame(-fx, .01, 0, .2, 4 * thr, .5 * dim); flame(fx, .01, 0, .2, 4 * thr, .5 * dim); }
       }
       if (fb > 0 && fb < 1) { const qq = Math.pow(fb, 1.7); draw(GF, { s: .16, tx: -40 + 80 * qq, ty: -10 + 44 * qq, tz: 4, rz: -.95 }, 1.4, true); }
       x.restore();
-      const T = Math.round(S < .2 ? 810 * S : 162 + q * 322), alt = Math.max(0, ((S < .4 ? Ys : Yb) - 6) * .45);
+      const T = Math.round(S < .2 ? 810 * S : 162 + q * 322), alt = Math.max(0, (Ys * (1 - cD) + Yb * cD - 6.7) * .45);
       set('ha', 'T+ ' + String(T / 60 | 0).padStart(2, '0') + ':' + String(T % 60).padStart(2, '0')); set('hv', 'ALT ' + alt.toFixed(alt < 10 ? 1 : 0) + ' km');
-      set('hs', S < .015 ? 'on the pad' : S < .12 ? 'liftoff' : S < .19 ? 'max-Q' : S < .24 ? 'MECO · staging' : S < .37 ? 'starship burn' : q < .34 ? 'boostback burn' : q < .52 ? 'booster coast' : q < .66 ? 'entry burn' : q < .97 ? 'landing burn' : 'caught');
+      set('hs', S < .015 ? 'on the pad' : S < .12 ? 'liftoff' : S < .19 ? 'max-Q' : S < .24 ? 'MECO · staging' : q < .13 ? 'starship burn' : q < .34 ? 'boostback burn · 13 engines' : q < .5 ? 'apogee · flip' : q < .62 ? 'entry burn · 3 engines' : q < .78 ? 'booster coast' : q < .84 ? 'landing burn · 13' : q < .89 ? 'landing burn · 5' : q < .97 ? 'hover · 3 engines' : 'caught');
     }
     requestAnimationFrame(frame);
   })(last);
@@ -346,3 +446,4 @@ a,.row{-webkit-tap-highlight-color:transparent;-webkit-touch-callout:none;user-s
 </script>
 </body>
 </html>
+  
