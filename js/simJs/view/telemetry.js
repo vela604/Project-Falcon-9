@@ -52,8 +52,44 @@ const NOTATION_GLOSSARY = {
   'T+': 'Mission elapsed time, mm:ss.s.',
 
   'ε': 'Specific orbital energy (MJ/kg) — ε = v²/2 − GM/r. Negative for bound orbits, becomes less negative as the vehicle gains energy. Zero = parabolic escape, positive = hyperbolic escape. Frame-independent (radial direction and total speed are the same in both inertial and Earth-fixed frames).',
+  'T': 'Skin temperature (K) — derived radiative-convective equilibrium from Sutton-Graves-class recovery heating + boundary-layer convection + radiative balance to space (250 K LEO). Live value lags with a ~25 s thermal time constant (aluminum tank). Tmax is the peak reached this flight.',
   'Δv': 'Remaining propulsive capability (m/s) — Tsiolkovsky rocket equation Δv = Ve · ln(m0 / mf). Uses the active body\'s current total mass, the bottom member\'s remaining propellant (the only fuel its engines can reach), and the mass-flow-weighted exhaust velocity Ve of its current engine cluster. Zero for engine-less bodies (released payloads, split fairings).',
 };
+
+// ---------------------------------------------------------------------------
+// Thermal state — derived quantity, no physics coupling.
+// Per body.id: { T (K), peakK (K), lastT (s) }. Accumulated on the main
+// thread from skinEquilibriumK() with a first-order thermal lag
+// (tau = 25 s — aluminum tank). Reset naturally if a body is destroyed
+// (new id) or the sim restarts (bodies rebuilt).
+// ---------------------------------------------------------------------------
+const _tempState = new Map();
+const _THERMAL_TAU_S = 25;
+
+function _thermalTickOne(b, simTime) {
+  if (!b || !b.id) return;
+  if (typeof skinEquilibriumK !== 'function') return;
+  let st = _tempState.get(b.id);
+  if (!st) {
+    st = { T: 288.15, peakK: 288.15, lastT: simTime };
+    _tempState.set(b.id, st);
+  }
+  const dt = simTime - st.lastT;
+  st.lastT = simTime;
+  if (!(dt > 0) || dt > 30) return;
+  const r = Math.hypot(b.rx, b.ry);
+  if (!(r > 1)) return;
+  const alt_m = r - CONFIG.EARTH_RADIUS;
+  const sv = earthSurfaceVelocity(b.rx, b.ry);
+  const wv = (typeof windInertialVector === 'function') ? windInertialVector(b.rx, b.ry) : { wx: 0, wy: 0 };
+  const relVx = b.vx - (sv.vx + wv.wx);
+  const relVy = b.vy - (sv.vy + wv.wy);
+  const speedRel = Math.hypot(relVx, relVy);
+  const Teq = skinEquilibriumK(alt_m, speedRel);
+  const alpha = 1 - Math.exp(-dt / _THERMAL_TAU_S);
+  st.T += (Teq - st.T) * alpha;
+  if (st.T > st.peakK) st.peakK = st.T;
+}
 
 // Time from current 2-body state to the next apogee (seconds). Exact
 // via Kepler's equation. Used by the direction HUD's burn countdown —
@@ -104,6 +140,12 @@ function getEl(id) {
 
 
 function updateTelemetry() {
+  // Thermal update — pure-read derived quantity, ticked for every body
+  // before any display reads (per-body list + active cell both rely on
+  // _tempState being current).
+  const _tNow = state.simTime;
+  for (let _ti = 0; _ti < state.bodies.length; _ti++) _thermalTickOne(state.bodies[_ti], _tNow);
+
   const r = Math.hypot(state.rx, state.ry);
   const altitude = altitudeFromR(r); // frame-independent
   
@@ -249,6 +291,12 @@ set('t-vr', fmt(vRadial, 2)); // frame-independent
   set('t-aoa', fmt(lastForces.aoaDeg || 0, 4));
   set('t-g', fmt(grav.g, 3));
   set('t-rho', fmt(rho, 4));
+  {
+    const _ab = state.bodies[state.activeBodyIndex];
+    const _tst = _ab ? _tempState.get(_ab.id) : null;
+    set('t-temp', _tst ? fmt(_tst.T, 0) + ' K' : '—');
+    set('t-maxT', _tst ? fmt(_tst.peakK, 0) + ' K' : '—');
+  }
   set('t-duty', Math.round((lastForces.dutyTop || 0) * 100) + '%');
   
   const total = state.bodies.length;
@@ -349,9 +397,12 @@ else tag = 'D' + i;
   }
   const relTag = isAct ? '' : ' vs A';
   
+  const _tst = _tempState.get(b.id);
+  const _tStr = _tst ? `${_tst.T.toFixed(0)}K (pk ${_tst.peakK.toFixed(0)})` : '—';
   return `<div class="${cls}">
   <div class="tb-line"><span class="tb-label">${tag} pos</span><span class="tb-val">${alt.toFixed(0)}m</span></div>
   <div class="tb-line"><span class="tb-label">vx,vy</span><span class="tb-val">${b.vx.toFixed(1)}, ${b.vy.toFixed(1)}</span></div>
+  <div class="tb-line"><span class="tb-label">T</span><span class="tb-val">${_tStr}</span></div>
   <div class="tb-line"><span class="tb-label">Δpos${relTag}</span><span class="tb-val">${dpStr}</span></div>
   <div class="tb-line"><span class="tb-label">Δv${relTag}</span><span class="tb-val">${dvStr}</span></div>
 </div>`;

@@ -257,3 +257,67 @@ function earthSurfaceVelocity(rx, ry) {
   const w = CONFIG.EARTH_OMEGA;
   return { vx: w * ry, vy: -w * rx };
 }
+
+// ============================================================================
+// Skin equilibrium temperature (K) — derived quantity, no state.
+//
+// Two heating channels + one cooling channel, solved for radiative-
+// convective equilibrium each call:
+//
+//   Recovery temperature (convective driving temp):
+//     T_rec = T_air · (1 + 0.9·(γ-1)/2 · M²)
+//
+//   Convective coefficient (Re-analogy, calibrated):
+//     h = 0.03 · ρ · V · Cp_air     (+ natural-convection floor below 60 km)
+//
+//   Environmental background (radiative bath):
+//     T_env = T_air below 80 km · blend 80-120 km · 250 K (LEO) above
+//
+//   Solve:  h·T + εσ·T⁴ = h·T_rec + εσ·T_env⁴
+//
+// Called by telemetry.js (main sim) and guidance-tester-ui.js (tester) as
+// a pure function — the caller accumulates the thermal lag separately.
+// Cheap: single scalar solve, ~8 Newton iterations.
+// ============================================================================
+function skinEquilibriumK(altM, speedRelMps) {
+  const alt = Math.max(0, altM);
+  const T_air = airTemperature(alt);
+  const rho = airDensity(alt);
+  const hasAir = (typeof atmosphereEnabled === 'undefined' || atmosphereEnabled) && rho > 1e-9;
+
+  const a_sound = speedOfSound(alt);
+  const M = (hasAir && a_sound > 0 && speedRelMps > 0) ? speedRelMps / a_sound : 0;
+  const T_rec = hasAir ? Math.min(3000, T_air * (1 + 0.9 * 0.2 * M * M)) : 0;
+
+  const T_space = 250;
+  let T_env;
+  if (!hasAir) T_env = T_space;
+  else if (alt < 80000) T_env = T_air;
+  else if (alt > 120000) T_env = T_space;
+  else T_env = T_air + (T_space - T_air) * (alt - 80000) / 40000;
+
+  let h_conv;
+  if (!hasAir) h_conv = 0;
+  else {
+    const forced = 0.03 * rho * Math.max(0, speedRelMps) * 1000;
+    const natural = (rho > 1e-4) ? 5 : 0;
+    h_conv = Math.max(forced, natural);
+  }
+
+  const sigma = 5.670374e-8;
+  const eps = 0.85;
+  const T_env_4 = T_env * T_env * T_env * T_env;
+  const rhs = h_conv * T_rec + eps * sigma * T_env_4;
+
+  let T = Math.max(T_env, Math.min(T_rec > 0 ? T_rec : T_env, 500));
+  for (let i = 0; i < 8; i++) {
+    const T2 = T * T;
+    const f = h_conv * T + eps * sigma * T2 * T2 - rhs;
+    const df = h_conv + 4 * eps * sigma * T * T * T;
+    if (df <= 1e-12) break;
+    T -= f / df;
+    if (T < 4) T = 4;
+    if (T > 3000) T = 3000;
+  }
+  return T;
+}

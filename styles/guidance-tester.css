@@ -378,3 +378,32 @@ body.nav-open #app::after {
 @media (max-width: 1320px) { .mon .chip:nth-child(n+6) { display: none; } }
 @media (max-width: 1200px) { .mon .chip:nth-child(n+5) { display: none; } }
 @media (max-width: 1080px) { .mon .chip:nth-child(n+4) { display: none; } }
+
+
+/* ── Body temperatures block (tester HUD) ──────────────────────────── */
+.temp-block {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+.temp-title {
+  font-size: 10.5px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--dim);
+  margin-bottom: 6px;
+  font-stretch: 85%;
+}
+.temp-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-family: var(--font);
+  font-size: 12px;
+  padding: 3px 0;
+  font-stretch: 90%;
+}
+.temp-row .tr-lbl { color: var(--ink-2); }
+.temp-row .tr-val { color: var(--ink); font-variant-numeric: tabular-nums; }
+.temp-row .tr-val b { font-weight: 700; }
+.temp-row .tr-val i { font-style: normal; color: var(--dim); font-size: 10.5px; margin-left: 4px; }

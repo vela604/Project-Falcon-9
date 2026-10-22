@@ -93,6 +93,37 @@
     requestAnimationFrame(frame);
   })();
 
+  /* ---------- Thermal state — derived, main-thread only ---------- */
+  const _tempState = new Map();
+  const _THERMAL_TAU_S = 25;
+  window.__tempState = _tempState;
+  window.__THERMAL_TAU_S = _THERMAL_TAU_S;
+  window.__thermalTickOne = function (b, simTime, dt) {
+    if (!b || !b.id) return;
+    if (typeof skinEquilibriumK !== 'function') return;
+    let st = _tempState.get(b.id);
+    if (!st) {
+      st = { T: 288.15, peakK: 288.15 };
+      _tempState.set(b.id, st);
+    }
+    const r = Math.hypot(b.rx, b.ry);
+    if (!(r > 1)) return;
+    const alt_m = r - CONFIG.EARTH_RADIUS;
+    const sv = earthSurfaceVelocity(b.rx, b.ry);
+    const wv = (typeof windInertialVector === 'function') ? windInertialVector(b.rx, b.ry) : { wx: 0, wy: 0 };
+    const relVx = b.vx - (sv.vx + wv.wx);
+    const relVy = b.vy - (sv.vy + wv.wy);
+    const speedRel = Math.hypot(relVx, relVy);
+    const Teq = skinEquilibriumK(alt_m, speedRel);
+    const alpha = 1 - Math.exp(-dt / _THERMAL_TAU_S);
+    st.T += (Teq - st.T) * alpha;
+    if (st.T > st.peakK) st.peakK = st.T;
+  };
+  window.__thermalTickAll = function (dt) {
+    if (typeof state === 'undefined' || !state || !state.bodies) return;
+    for (const b of state.bodies) window.__thermalTickOne(b, state.simTime, dt);
+  };
+
   /* ---------- Build the flight deck (hero) ---------- */
   (function buildDeck() {
     const pane = $('paneTele'); if (!pane) return;
@@ -131,6 +162,8 @@
       cellQ('Dynamic pressure', 'hudQ', 'kPa', 'barQ') +
       cellT('Orbital energy', 'hudEnergy', 'MJ/kg', 'barEnergy', 'tmarkEnergy') +
       '</div>';
+    read.insertAdjacentHTML('beforeend',
+      '<div class="temp-block"><div class="temp-title">Body temperatures</div><div id="hudTemps"></div></div>');
     deck.append(view, read);
     pane.insertBefore(deck, pane.firstChild);
     const rib = document.createElement('div'); rib.id = 'phaseRibbon';
@@ -191,6 +224,32 @@
   const set = (id, v) => { const n = $(id); if (n && n.textContent !== v) n.textContent = v; };
   const bar = (id, f) => { const n = $(id); if (n) n.style.width = (clamp(f, 0, 1) * 100).toFixed(1) + '%'; };
   const fx = (v, d) => Number.isFinite(v) ? v.toFixed(d) : '–';
+
+  function _updateTempRows() {
+    const host = $('hudTemps');
+    if (!host) return;
+    const bodies = (typeof state !== 'undefined' && state && state.bodies) ? state.bodies : [];
+    const roles = { booster: null, stage: null, payload: null };
+    for (const b of bodies) {
+      const role = (b.members && b.members[0] && b.members[0].stageRole) || null;
+      if (b.payloadBody && !roles.payload) roles.payload = b;
+      else if (b.fairingHalf) continue;
+      else if (role === 'booster' && !roles.booster) roles.booster = b;
+      else if (role === 'stage' && !roles.stage) roles.stage = b;
+    }
+    const rowFor = (label, b) => {
+      if (!b) return '<div class="temp-row"><span class="tr-lbl">' + label + '</span><span class="tr-val">—</span></div>';
+      const st = _tempState.get(b.id);
+      const T = st ? st.T : 288.15;
+      const pk = st ? st.peakK : 288.15;
+      return '<div class="temp-row"><span class="tr-lbl">' + label +
+        '</span><span class="tr-val"><b>' + T.toFixed(0) + '</b> K <i>pk ' + pk.toFixed(0) + '</i></span></div>';
+    };
+    host.innerHTML =
+      rowFor('Booster (I/S)', roles.booster) +
+      rowFor('Stage', roles.stage) +
+      rowFor('Payload', roles.payload);
+  }
 
   function resetFlight() {
     phases = []; phaseColors = {}; curPhase = ''; qMax = 0; maxQDone = false; massMax = 0; lastSim = Infinity; ribDirty = true;
@@ -344,6 +403,7 @@
       }
     } catch (e) { /* guidance not ready */ }
 
+    _updateTempRows();
     const now = performance.now();
     if (ribDirty || (body.classList.contains('is-running') && now - ribAt > 500)) { renderRibbon(t); ribAt = now; ribDirty = false; }
   }
