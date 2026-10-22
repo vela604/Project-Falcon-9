@@ -398,57 +398,36 @@ a.back:hover{box-shadow:0 6px 24px rgba(111,176,255,.35)}
 .preset-badge.default{background:var(--acc);color:var(--ink)}
 
 
-/* ===== sky labels (constellation callouts) ===== */
+/* ===== sky marks: bounding box + leader + typed label + constellation figures ===== */
 #skyLabels{position:fixed;inset:0;z-index:8;pointer-events:none;overflow:hidden}
-.sky-label{position:absolute;transform:translate(-50%,-50%) scale(.85);opacity:0;
-  transition:opacity .95s ease,transform .95s cubic-bezier(.2,.8,.2,1);pointer-events:none}
-.sky-label.on{opacity:1;transform:translate(-50%,-50%) scale(1)}
-.sky-label .sky-dot{position:absolute;left:0;top:0;width:6px;height:6px;border-radius:50%;background:#ffb347;
-  box-shadow:0 0 10px rgba(255,179,71,.85),0 0 22px rgba(255,179,71,.45);transform:translate(-50%,-50%)}
-.sky-label .sky-ring{position:absolute;left:0;top:0;width:26px;height:26px;border-radius:50%;
-  border:1px solid rgba(255,179,71,.45);transform:translate(-50%,-50%);animation:skyRing 2.8s ease-out infinite}
-@keyframes skyRing{
-  0%{transform:translate(-50%,-50%) scale(.5);opacity:.9}
-  80%{transform:translate(-50%,-50%) scale(1.4);opacity:.1}
-  100%{transform:translate(-50%,-50%) scale(1.4);opacity:0}
-}
-.sky-label .sky-txt{position:absolute;left:22px;top:-14px;
-  font-family:'JetBrains Mono','Consolas',monospace;font-size:10.5px;font-weight:500;letter-spacing:2.2px;
-  text-transform:uppercase;color:#ffd3a3;white-space:nowrap;padding:5px 9px 5px 11px;
-  background:rgba(5,11,28,.72);border:1px solid rgba(255,179,71,.35);border-radius:6px;
-  backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);
-  box-shadow:0 4px 20px rgba(0,0,0,.45),inset 0 1px 0 rgba(255,200,140,.12)}
-.sky-label .sky-txt::before{content:'';position:absolute;left:-18px;top:50%;width:14px;height:1px;
-  background:linear-gradient(to right,transparent,rgba(255,179,71,.7));transform:translateY(-50%)}
-.sky-label.flip .sky-txt{left:auto;right:22px}
-.sky-label.flip .sky-txt::before{left:auto;right:-18px;background:linear-gradient(to left,transparent,rgba(255,179,71,.7))}
+#skyLabels svg.mk{position:absolute;left:0;top:0;width:100%;height:100%;overflow:visible}
+.mk-draw{fill:none;stroke-dasharray:1 1;stroke-dashoffset:1;
+  transition:stroke-dashoffset var(--d,.7s) cubic-bezier(.45,0,.2,1) var(--dl,0s)}
+.mk.on .mk-draw{stroke-dashoffset:0}
+.mk-box{stroke:rgba(255,179,71,.95);stroke-width:1.2;filter:drop-shadow(0 0 4px rgba(255,179,71,.6))}
+.mk-corner{stroke:#ffd9a8;stroke-width:2.4;stroke-linecap:square}
+.mk-leader{stroke:rgba(255,179,71,.85);stroke-width:1}
+.mk-lab{stroke:rgba(255,179,71,.6);stroke-width:1}
+.mk-labbg{fill:rgba(5,11,28,.8);opacity:0;transition:opacity .4s ease var(--dl,0s)}
+.mk.on .mk-labbg{opacity:1}
+.mk-fline{stroke:rgba(255,200,130,.9);stroke-width:1.15;stroke-linecap:round;filter:drop-shadow(0 0 3px rgba(255,179,71,.55))}
+.mk-fstar,.mk-dot{fill:#ffe6c4;opacity:0;transform-box:fill-box;transform-origin:center;transform:scale(.2);
+  filter:drop-shadow(0 0 5px rgba(255,179,71,.95));
+  transition:opacity .3s ease var(--dl,0s),transform .45s cubic-bezier(.2,.9,.3,1.4) var(--dl,0s)}
+.mk.on .mk-fstar,.mk.on .mk-dot{opacity:1;transform:scale(1)}
+.mk-txt{transition:opacity .35s ease}
+.mk-t1{fill:#ffd3a3;font:500 10.5px 'JetBrains Mono','Consolas',monospace;letter-spacing:2.2px}
+.mk-t2{fill:rgba(255,211,163,.62);font:400 9px 'JetBrains Mono','Consolas',monospace;letter-spacing:1.2px}
+.mk-caret{fill:#ffd3a3;animation:mkBlink .6s steps(1) infinite}
+@keyframes mkBlink{50%{opacity:0}}
+/* erase: lines retract fast, text fades */
+.mk.out .mk-draw{transition-duration:.45s !important;transition-delay:0s !important;transition-timing-function:ease-in}
+.mk.out .mk-fstar,.mk.out .mk-dot,.mk.out .mk-labbg{opacity:0;transition-delay:0s !important}
+.mk.out .mk-txt{opacity:0}
 @media(prefers-reduced-motion:reduce){
-  .sky-label .sky-ring{animation:none;opacity:.5}
+  .mk-draw,.mk-fstar,.mk-dot,.mk-labbg,.mk-txt{transition:none !important}
+  .mk-caret{animation:none}
 }
-
-
-
-/* ===== Label Target Marker ===== */
-.sky-target {
-position: absolute;
-width: 40px; height: 40px;
-border: 1px solid rgba(255, 179, 71, 0.9);
-border-radius: 50%;
-transform: translate(-50%, -50%) scale(0.6);
-opacity: 0;
-transition: all 0.5s cubic-bezier(0.2, 0.8, 0.2, 1);
-pointer-events: none;
-}
-.sky-target.on {
-opacity: 1;
-transform: translate(-50%, -50%) scale(1);
-box-shadow: 0 0 18px rgba(255, 179, 71, 0.6), inset 0 0 12px rgba(255, 179, 71, 0.6);
-}
-.sky-target::before, .sky-target::after {
-content: ''; position: absolute; background: rgba(255, 179, 71, 0.9);
-}
-.sky-target::before { top: 19px; left: -15px; width: 70px; height: 1px; }
-.sky-target::after { left: 19px; top: -15px; width: 1px; height: 70px; }
 
 </style>
 </head>
@@ -903,7 +882,7 @@ var GAIN = 1.8;
 
   function build() {
     if (labelTimer) { clearTimeout(labelTimer); labelTimer = null; }
-    labelHost.innerHTML = '';
+    clearMarks();
 
     var W = Math.round(innerWidth * 1.15);
     var H = Math.round(innerHeight * 1.15);
@@ -1177,54 +1156,304 @@ var GAIN = 1.8;
     return list[Math.floor(Math.random()*list.length)];
   }
 
-  function placeMark() {
-    if (!activeMark) return;
-    var p = project(activeMark.o); if (!p) return;
-    activeMark.target.style.left = p.x + 'px'; activeMark.target.style.top = p.y + 'px';
-    activeMark.el.style.left = p.x + 'px';     activeMark.el.style.top = p.y + 'px';
+  /* ---- constellation stick figures: points by star name, or extra [RA h, Dec deg] ---- */
+  var NS_IDX = {};
+  NAMED_STARS.forEach(function(n){ NS_IDX[n[0]] = [n[1], n[2]]; });
+  var EXTRA = {
+    'Yildun':[17.537,86.586],'Eps UMi':[16.766,82.037],'Zeta UMi':[15.734,77.795],'Eta UMi':[16.292,75.755],
+    'Iota Cep':[22.828,66.200],'Zeta Cep':[22.181,58.201],
+    'Zeta Lyr':[18.746,37.605],'Delta2 Lyr':[18.908,36.899],
+    'Delta And':[0.655,30.861],'Mu And':[0.946,38.499],'Nu And':[0.830,41.079],
+    'Gamma Per':[3.080,53.506],'Delta Per':[3.715,47.788],'Eps Per':[3.964,40.010],'Zeta Per':[3.902,31.884],
+    'Theta Aur':[5.995,37.213],'Iota Aur':[4.950,33.166],
+    'Gamma Tau':[4.330,15.628],'Tianguan':[5.627,21.143],
+    'Alhena':[6.628,16.399],'Tejat':[6.383,22.514],'Mebsuta':[6.732,25.131],'Wasat':[7.335,21.982],
+    'Eta Leo':[10.122,16.763],'Adhafera':[10.278,23.417],'Rasalas':[9.879,26.007],'Eps Leo':[9.764,23.774],'Chertan':[11.237,15.430],
+    'Izar':[14.750,27.074],'Seginus':[14.535,38.308],'Nekkar':[15.032,40.391],'Delta Boo':[15.258,33.315],'Rho Boo':[14.531,30.371],
+    'Theta CrB':[15.549,31.359],'Nusakan':[15.464,29.106],'Gamma CrB':[15.713,26.296],'Delta CrB':[15.826,26.068],'Eps CrB':[15.960,26.878],'Iota CrB':[16.024,29.851],
+    'Grumium':[17.892,56.873],'Nu Dra':[17.536,55.173],
+    'Zeta Her':[16.688,31.603],'Eps Her':[17.005,30.926],'Pi Her':[17.251,36.809],'Eta Her':[16.715,38.922],'Delta Her':[17.250,24.839],
+    'Chara':[12.562,41.357],'Porrima':[12.694,-1.449],'Zavijava':[11.845,1.765],
+    'Cebalrai':[17.724,4.567],'Sabik':[17.173,-15.725],'Zeta Oph':[16.619,-10.567],
+    'Gomeisa':[7.452,8.289],
+    'Alpha Tri':[1.884,29.579],'Beta Tri':[2.159,34.987],'Gamma Tri':[2.288,33.847],
+    'Sualocin':[20.660,15.912],'Rotanev':[20.626,14.595],'Gamma Del':[20.777,16.124],'Delta Del':[20.724,15.075],
+    'Gamma Sge':[19.979,19.492],'Delta Sge':[19.789,18.534],'Alpha Sge':[19.668,18.014],'Beta Sge':[19.684,17.476]
+  };
+  var FIG = {
+    'Ursa Major':[['Dubhe','Merak','Phecda','Megrez','Dubhe'],['Megrez','Alioth','Mizar','Alkaid']],
+    'Ursa Minor':[['Polaris','Yildun','Eps UMi','Zeta UMi','Eta UMi','Pherkad','Kochab','Zeta UMi']],
+    'Cassiopeia':[['Caph','Schedar','Navi','Ruchbah','Segin']],
+    'Cepheus':[['Alderamin','Zeta Cep','Iota Cep','Errai','Alfirk','Alderamin']],
+    'Cygnus':[['Deneb','Sadr','Albireo'],['Delta Cygni','Sadr','Gienah']],
+    'Lyra':[['Vega','Zeta Lyr','Sheliak','Sulafat','Delta2 Lyr','Zeta Lyr']],
+    'Aquila':[['Tarazed','Altair','Alshain']],
+    'Pegasus':[['Alpheratz','Scheat','Markab','Algenib','Alpheratz'],['Markab','Enif']],
+    'Andromeda':[['Alpheratz','Delta And','Mirach','Almach'],['Mirach','Mu And','Nu And']],
+    'Aries':[['Hamal','Sheratan']],
+    'Triangulum':[['Alpha Tri','Beta Tri','Gamma Tri','Alpha Tri']],
+    'Perseus':[['Algol','Mirfak','Gamma Per'],['Mirfak','Delta Per','Eps Per','Zeta Per']],
+    'Auriga':[['Capella','Menkalinan','Theta Aur','Elnath','Iota Aur','Capella']],
+    'Taurus':[['Elnath','Aldebaran','Gamma Tau'],['Aldebaran','Tianguan']],
+    'Gemini':[['Tejat','Mebsuta','Castor','Pollux','Wasat','Alhena']],
+    'Orion':[['Betelgeuse','Bellatrix','Mintaka','Alnilam','Alnitak','Betelgeuse'],['Alnitak','Saiph','Rigel','Mintaka']],
+    'Canis Minor':[['Procyon','Gomeisa']],
+    'Leo':[['Regulus','Eta Leo','Algieba','Adhafera','Rasalas','Eps Leo'],['Algieba','Zosma','Denebola','Chertan','Zosma']],
+    'Bootes':[['Arcturus','Rho Boo','Seginus','Nekkar','Delta Boo','Izar','Arcturus'],['Arcturus','Muphrid']],
+    'Corona Borealis':[['Theta CrB','Nusakan','Alphecca','Gamma CrB','Delta CrB','Eps CrB','Iota CrB']],
+    'Canes Venatici':[['Cor Caroli','Chara']],
+    'Virgo':[['Zavijava','Porrima','Vindemiatrix'],['Porrima','Spica']],
+    'Draco':[['Eltanin','Rastaban','Nu Dra','Grumium','Eltanin']],
+    'Hercules':[['Kornephoros','Zeta Her','Eps Her','Pi Her','Eta Her','Zeta Her'],['Eps Her','Delta Her','Rasalgethi']],
+    'Ophiuchus':[['Rasalhague','Cebalrai','Sabik','Zeta Oph']],
+    'Delphinus':[['Sualocin','Gamma Del','Delta Del','Rotanev','Sualocin']],
+    'Sagitta':[['Gamma Sge','Delta Sge','Alpha Sge'],['Delta Sge','Beta Sge']]
+  };
+  function buildFig(name) {
+    var ch = FIG[name]; if (!ch) return null;
+    var pts = [], idx = {}, edges = [];
+    function id(n) {
+      if (idx[n] !== undefined) return idx[n];
+      var c = EXTRA[n] || NS_IDX[n]; if (!c) return -1;
+      idx[n] = pts.length; pts.push([c[0], c[1]]); return idx[n];
+    }
+    ch.forEach(function(c){
+      for (var i = 0; i < c.length - 1; i++) {
+        var a = id(c[i]), b = id(c[i+1]);
+        if (a >= 0 && b >= 0) edges.push([a, b]);
+      }
+    });
+    return edges.length ? { pts:pts, edges:edges, sp:[] } : null;
+  }
+
+  function kindOf(o) {
+    if (o.type === 'star') return 'star';
+    if (o.type === 'constellation') return 'constellation';
+    if (/Galaxy/.test(o.name)) return 'galaxy';
+    if (/Nebula/.test(o.name)) return 'nebula';
+    if (/Cluster|Pleiades/.test(o.name)) return 'star cluster';
+    return 'deep-sky object';
+  }
+
+  // box size (px) for each kind of target
+  function boxFor(o) {
+    var s = kProj * 0.012, w, h, a = 0;
+    if (o.type === 'star') { w = h = 40; }
+    else if (o.type === 'constellation') { w = 96; h = 72; }
+    else {
+      if (/\(M31\)/.test(o.name)) { w = 4.4*s; h = 1.6*s; a = 35*DEG; }
+      else if (/Double Cluster/.test(o.name)) { w = 2.6*s; h = 1.2*s; }
+      else if (/Pleiades/.test(o.name)) { w = h = 3.4*s; }
+      else if (/\(M13\)/.test(o.name)) { w = h = 1.0*s; }
+      else if (o.g) { w = h = 2*o.g.r*s + 10; }
+      else { w = h = 1.4*s; }
+      w = Math.max(40, w); h = Math.max(40, h);
+    }
+    return { w:w, h:h, ang:a };
+  }
+
+  /* ---- SVG helpers ---- */
+  var NS = 'http://www.w3.org/2000/svg';
+  function S(tag, cls, parent, attrs) {
+    var e = document.createElementNS(NS, tag);
+    if (cls) e.setAttribute('class', cls);
+    if (attrs) for (var k in attrs) e.setAttribute(k, attrs[k]);
+    if (parent) parent.appendChild(e);
+    return e;
+  }
+  function draw(el, dur, delay) {
+    el.setAttribute('pathLength', '1');
+    el.style.setProperty('--d', dur + 'ms');
+    el.style.setProperty('--dl', delay + 'ms');
+  }
+  function delay(el, ms) { el.style.setProperty('--dl', ms + 'ms'); }
+
+  var markTimers = [], trackRaf = 0;
+  function later(fn, ms) { var id = setTimeout(fn, ms); markTimers.push(id); return id; }
+  function clearMarks() {
+    markTimers.forEach(clearTimeout); markTimers = [];
+    labelHost.innerHTML = '';
+    activeMark = null;
+  }
+
+  function geom(m) {
+    if (m.fig) {
+      var xs = [], ys = [];
+      m.fig.pts.forEach(function(p, i){
+        var q = project({ra:p[0], dec:p[1]});
+        m.fig.sp[i] = q;
+        if (q) { xs.push(q.x); ys.push(q.y); }
+      });
+      if (!xs.length) return null;
+      var pad = 22,
+          x0 = Math.min.apply(null, xs) - pad, x1 = Math.max.apply(null, xs) + pad,
+          y0 = Math.min.apply(null, ys) - pad, y1 = Math.max.apply(null, ys) + pad;
+      return { cx:(x0+x1)/2, cy:(y0+y1)/2, hw:Math.max(26,(x1-x0)/2), hh:Math.max(26,(y1-y0)/2), rot:0 };
+    }
+    var p = project(m.o); if (!p) return null;
+    var mt = cssMatrix(mwRotEl);
+    return { cx:p.x, cy:p.y, hw:m.w/2, hh:m.h/2, rot:Math.atan2(mt.b, mt.a) + m.ang };
+  }
+
+  function updateMark(m) {
+    if (!m) return;
+    var g = geom(m); if (!g) return;
+    var hw = g.hw, hh = g.hh, t = Math.min(10, hw*.5, hh*.5);
+    m.boxG.setAttribute('transform', 'translate(' + g.cx.toFixed(1) + ' ' + g.cy.toFixed(1) + ') rotate(' + (g.rot/DEG).toFixed(2) + ')');
+    m.boxP.setAttribute('d', 'M' + (-hw) + ' ' + (-hh) + 'H' + hw + 'V' + hh + 'H' + (-hw) + 'Z');
+    m.corP.setAttribute('d',
+      'M' + (-hw) + ' ' + (-hh+t) + 'V' + (-hh) + 'H' + (-hw+t) +
+      'M' + (hw-t) + ' ' + (-hh) + 'H' + hw + 'V' + (-hh+t) +
+      'M' + hw + ' ' + (hh-t) + 'V' + hh + 'H' + (hw-t) +
+      'M' + (-hw+t) + ' ' + hh + 'H' + (-hw) + 'V' + (hh-t));
+
+    if (m.fig) {
+      m.fig.edges.forEach(function(e, i){
+        var a = m.fig.sp[e[0]], b = m.fig.sp[e[1]];
+        m.flines[i].setAttribute('d', (a && b) ? 'M' + a.x.toFixed(1) + ' ' + a.y.toFixed(1) + 'L' + b.x.toFixed(1) + ' ' + b.y.toFixed(1) : '');
+      });
+      m.fstars.forEach(function(c, i){
+        var q = m.fig.sp[i];
+        if (q) { c.setAttribute('cx', q.x.toFixed(1)); c.setAttribute('cy', q.y.toFixed(1)); }
+      });
+    }
+
+    // anchor = the box corner that sits furthest to the label side / top
+    if (m.flip === undefined) m.flip = (g.cx + hw + 40 + m.LW > innerWidth - 8);
+    var dir = m.flip ? -1 : 1, cs = Math.cos(g.rot), sn = Math.sin(g.rot), best = null, bs = -1e9;
+    [[-1,-1],[1,-1],[1,1],[-1,1]].forEach(function(s){
+      var x = g.cx + s[0]*hw*cs - s[1]*hh*sn, y = g.cy + s[0]*hw*sn + s[1]*hh*cs, sc = dir*x - y;
+      if (sc > bs) { bs = sc; best = { x:x, y:y }; }
+    });
+    var ey = clamp(best.y - 18, m.LH/2 + 8, innerHeight - m.LH/2 - 8);
+    var kx = best.x + dir*16, lx0 = kx + dir*14, lx = dir > 0 ? lx0 : lx0 - m.LW, ly = ey - m.LH/2;
+    m.leader.setAttribute('d', 'M' + best.x.toFixed(1) + ' ' + best.y.toFixed(1) + 'L' + kx.toFixed(1) + ' ' + ey.toFixed(1) + 'L' + lx0.toFixed(1) + ' ' + ey.toFixed(1));
+    var rd = 'M' + lx.toFixed(1) + ' ' + ly.toFixed(1) + 'h' + m.LW + 'v' + m.LH + 'h' + (-m.LW) + 'Z';
+    m.labP.setAttribute('d', rd);
+    m.labBg.setAttribute('x', lx.toFixed(1)); m.labBg.setAttribute('y', ly.toFixed(1));
+    m.labBg.setAttribute('width', m.LW); m.labBg.setAttribute('height', m.LH);
+    m.t1.setAttribute('x', (lx + 10).toFixed(1)); m.t1.setAttribute('y', (ly + 15).toFixed(1));
+    m.t2.setAttribute('x', (lx + 10).toFixed(1)); m.t2.setAttribute('y', (ly + 28).toFixed(1));
+    if (m.car) {
+      var L = m.car.line === 1 ? m.l1 : m.l2;
+      m.caret.setAttribute('x', (lx + 10 + L*m.car.frac + 1).toFixed(1));
+      m.caret.setAttribute('y', (ly + (m.car.line === 1 ? 6 : 20)).toFixed(1));
+      m.caret.style.display = '';
+    } else m.caret.style.display = 'none';
+  }
+
+  function placeMark() { updateMark(activeMark); }
+  function track() {
+    if (!activeMark || !activeMark.svg.isConnected) { trackRaf = 0; return; }
+    updateMark(activeMark);
+    trackRaf = requestAnimationFrame(track);
+  }
+
+  function typeInto(m, el, str, speed, line, done) {
+    var i = 0;
+    (function step() {
+      i++;
+      el.textContent = str.slice(0, i);
+      m.car = { line:line, frac:i/str.length };
+      if (i < str.length) later(step, speed); else if (done) done();
+    })();
   }
 
   function showLabel() {
     computeVisible();
-    labelHost.innerHTML = '';
-    activeMark = null;
+    clearMarks();
     if (visObjs.length === 0) { labelTimer = setTimeout(showLabel, 2500); return; }
 
-    var pick = pickTarget();
-    seen[pick.o.name] = 1; lastName = pick.o.name;
+    var pick = pickTarget(), o = pick.o;
+    seen[o.name] = 1; lastName = o.name;
 
-    var target = document.createElement('div');
-    target.className = 'sky-target';
-    target.style.left = pick.sx + 'px';
-    target.style.top = pick.sy + 'px';
-    labelHost.appendChild(target);
-    requestAnimationFrame(function(){ target.classList.add('on'); });
+    var parts = o.name.split(' \u00B7 ');
+    var s1 = (o.tag + ' ' + parts[0]).toUpperCase();
+    var s2 = kindOf(o) + (parts[1] ? ' \u00B7 ' + parts[1] : '');
 
-    var el = document.createElement('div');
-    el.className = 'sky-label' + ((pick.sx + 60 + pick.o.name.length*9.5 > innerWidth - 8) ? ' flip' : '');
-    el.style.left = pick.sx + 'px';
-    el.style.top = pick.sy + 'px';
-    el.innerHTML = '<div class="sky-txt">' + pick.o.tag + ' ' + pick.o.name + '</div>';
-    labelHost.appendChild(el);
-    requestAnimationFrame(function(){ el.classList.add('on'); });
+    var svg = S('svg', 'mk', labelHost);
+    var bx = boxFor(o);
+    var fig = (o.type === 'constellation') ? buildFig(o.name) : null;
+    var m = { o:o, svg:svg, w:bx.w, h:bx.h, ang:bx.ang, fig:fig, LH:36, car:null };
 
-    var mark = { o:pick.o, target:target, el:el };
-    activeMark = mark;
+    // figure layer (below the box)
+    if (fig) {
+      var fg = S('g', null, svg);
+      m.flines = fig.edges.map(function(){ return S('path', 'mk-draw mk-fline', fg); });
+      m.fstars = fig.pts.map(function(){ return S('circle', 'mk-fstar', fg, { r:2.6 }); });
+    }
+    // box
+    m.boxG = S('g', null, svg);
+    m.boxP = S('path', 'mk-draw mk-box', m.boxG);
+    m.corP = S('path', 'mk-draw mk-corner', m.boxG);
+    if (!fig) m.dot = S('circle', 'mk-dot', m.boxG, { r:2.8, cx:0, cy:0 });
+    // leader + label
+    m.leader = S('path', 'mk-draw mk-leader', svg);
+    m.labBg = S('rect', 'mk-labbg', svg, { rx:3 });
+    m.labP = S('path', 'mk-draw mk-lab', svg);
+    var tg = S('g', 'mk-txt', svg);
+    m.t1 = S('text', 'mk-t1', tg);
+    m.t2 = S('text', 'mk-t2', tg);
+    m.caret = S('rect', 'mk-caret', tg, { width:5, height:11 });
+    m.caret.style.display = 'none';
 
-    var holdMs = 3800, fadeMs = 950, gapMs = 800 + Math.random()*1200;
+    // measure the finished text so the label box is the right size from the first frame
+    m.t1.textContent = s1; m.t2.textContent = s2;
+    m.l1 = m.t1.getComputedTextLength(); m.l2 = m.t2.getComputedTextLength();
+    m.LW = Math.ceil(Math.max(m.l1, m.l2) + 22);
+    m.t1.textContent = ''; m.t2.textContent = '';
 
-    setTimeout(function(){
-      el.classList.remove('on');
-      target.classList.remove('on');
-    }, holdMs);
+    activeMark = m;
+    updateMark(m);
+    if (!trackRaf) trackRaf = requestAnimationFrame(track);
 
-    setTimeout(function(){
-      if (el.parentNode) el.remove();
-      if (target.parentNode) target.remove();
-      if (activeMark === mark) activeMark = null;
-    }, holdMs + fadeMs);
+    // ---- timeline ----
+    var T_BOX = 700, T_FIG = 650, EDGE_STEP = 260, EDGE_DUR = 420, T_LEAD = 650;
+    draw(m.boxP, T_BOX, 0);
+    draw(m.corP, 400, 550);
+    if (m.dot) delay(m.dot, 350);
+    var figEnd = 0;
+    if (fig) {
+      var seenNode = {};
+      fig.edges.forEach(function(e, i){
+        var d0 = T_FIG + i*EDGE_STEP;
+        draw(m.flines[i], EDGE_DUR, d0);
+        if (seenNode[e[0]] === undefined) { seenNode[e[0]] = d0; }
+        if (seenNode[e[1]] === undefined || seenNode[e[1]] > d0 + EDGE_DUR) { if (seenNode[e[1]] === undefined) seenNode[e[1]] = d0 + EDGE_DUR; }
+      });
+      fig.pts.forEach(function(p, i){ delay(m.fstars[i], seenNode[i] !== undefined ? seenNode[i] : 0); });
+      figEnd = T_FIG + fig.edges.length*EDGE_STEP + EDGE_DUR;
+    }
+    draw(m.leader, 350, T_LEAD);
+    draw(m.labP, 450, T_LEAD + 300);
+    delay(m.labBg, T_LEAD + 300);
+    var typeStart = T_LEAD + 300 + 450;
+    var SP1 = 42, SP2 = 22;
+    var typeEnd = typeStart + s1.length*SP1 + 120 + s2.length*SP2;
 
-    labelTimer = setTimeout(showLabel, holdMs + fadeMs + gapMs);
+    if (still) {
+      m.t1.textContent = s1; m.t2.textContent = s2;
+    } else {
+      later(function(){
+        typeInto(m, m.t1, s1, SP1, 1, function(){
+          later(function(){
+            typeInto(m, m.t2, s2, SP2, 2, function(){
+              later(function(){ m.car = null; }, 500);
+            });
+          }, 120);
+        });
+      }, typeStart);
+    }
+
+    void svg.getBoundingClientRect();
+    svg.classList.add('on');
+
+    var total = still ? 400 : Math.max(typeEnd, figEnd);
+    var holdMs = 3000, fadeMs = 700, gapMs = 700 + Math.random()*1200;
+    later(function(){ m.car = null; svg.classList.remove('on'); svg.classList.add('out'); }, total + holdMs);
+    later(function(){ if (activeMark === m) { clearMarks(); } }, total + holdMs + fadeMs);
+
+    labelTimer = setTimeout(showLabel, total + holdMs + fadeMs + gapMs);
   }
 
   // keep the marker glued to its star while the page scrolls (background parallax)
