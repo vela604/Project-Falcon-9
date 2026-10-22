@@ -1763,7 +1763,7 @@ const tau_target = tau_desired - dNext.torqueEnvironmental;
             const dvError = gap - targetGap;
             _st.coastHold2GapMps = gap;
             _st.coastHold2DvErrorMps = dvError;
-            _st.coastHold2VcircAtApo = v_circ_at_apo;
+            _st.coastHold2VcircAtApo = v_target_at_apo;
             _st.coastHold2VapoLive = v_apo_live;
 
             let thetaApoLive;
@@ -2096,6 +2096,20 @@ setState(s) {
   if (s.st) Object.assign(_st, s.st);
   _payloadBodyCountAtDeploy = s.payloadBodyCountAtDeploy || 0;
   _deployCmdTick = Number.isInteger(s.deployCmdTick) ? s.deployCmdTick : -1;
+  // Recompute derived target apsides from restored constants (start() is
+  // not called during state restore — without this, _targetApoKm/PeriKm
+  // would stay at their 320/320 defaults even if the config was different).
+  if (_constants) {
+    const _ap1 = Number.isFinite(_constants.TARGET_APSIDE1_ALT_KM)
+      ? _constants.TARGET_APSIDE1_ALT_KM
+      : (Number.isFinite(_constants.TARGET_ORBIT_ALT_KM)
+          ? _constants.TARGET_ORBIT_ALT_KM : 320);
+    const _ap2 = Number.isFinite(_constants.TARGET_APSIDE2_ALT_KM)
+      ? _constants.TARGET_APSIDE2_ALT_KM
+      : _ap1;
+    _targetApoKm = Math.max(_ap1, _ap2);
+    _targetPeriKm = Math.min(_ap1, _ap2);
+  }
 },
         
         getConstants() {

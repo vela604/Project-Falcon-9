@@ -260,7 +260,11 @@
     }
 
     // Mission clock — HH:MM:SS, no decimals.
-    const totalSec = Math.floor(t);
+    // 1μs epsilon absorbs float accumulation drift from the tick loop
+    // (48000 × dt can land at 599.9999999 instead of exactly 600, which
+    // would display as "09:59" instead of "10:00"). Small enough not to
+    // affect any normal boundary.
+    const totalSec = Math.floor(t + 1e-6);
     const hh = Math.floor(totalSec / 3600);
     const mm = Math.floor((totalSec - hh * 3600) / 60);
     const ss = totalSec - hh * 3600 - mm * 60;
