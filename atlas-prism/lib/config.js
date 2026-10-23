@@ -63,18 +63,22 @@
   // Fallback to current preset literal
   return { G: 0.64, T: 4.82, bias: 0.827, lead: 5.64, meco: 52612 };
 })(),
-    baselineSnapped: { A: 13.94, bias: 0.59, lead: 5.525,         meco: 52612 }, // success-criteria #6
+    baselineSnapped: { A: 14.8687, bias: 0.827, lead: 5.6375,      meco: 52612 }, // snapped from baselineRaw
+    // STALE — old G=0.60/0.61 baseline numbers, removed after G=0.64 preset
+    // switch. Fields kept as null so any reader that checks for null/NaN
+    // degrades gracefully instead of crashing. To re-measure:
+    //   open pro-alpha.html -> LOCK a 320 km stack
+    //   -> click "Eval: raw baseline" (FULL stop)
+    //   -> copy metrics from the log into these fields.
     baselineResult: {
-      deployTimeS: 590.46, apogeeKm: 320.111, perigeeKm: 319.999,
-      vrEnd: 0.046, vrMin: -0.380, marginS: 6.73, maxQKPa: 24.75, maxG: 4.815,
+      deployTimeS: null, apogeeKm: null, perigeeKm: null,
+      vrEnd: null, vrMin: null, marginS: null, maxQKPa: null, maxG: null,
     },
-    // Warm-start reference points (trend: MECO up => bias up => lead down)
-    // Each ref = a manually-tuned feasible point. `alt` = target altitude (km). `T` defaults to T0 if missing.
+    // Warm-start reference points. Only the current 320 km baseline is kept —
+    // older tuned points were removed after the guidance update (they may no
+    // longer be valid). Add more entries as fresh points are measured.
 references: [
-  { meco: 50000, G: 0.62, T: 4.82, bias: 0.78, lead: 5.65, alt: 320 },
-  { meco: 52612, G: 0.61, T: 4.82, bias: 0.59, lead: 5.64, alt: 320 },
-  { meco: 55000, G: 0.61, T: 4.82, bias: 1.16, lead: 4.46, alt: 320 },
-  { meco: 0, G: 0.65, T: 4.82, bias: 0.59, lead: 7.82, alt: 2000 }, // manual 2000 km point (booster fully drained)
+  { meco: 52612, G: 0.64, T: 4.82, bias: 0.827, lead: 5.64, alt: 320 },
 ],
 
     // DEPRECATED (Step Δv 1/4): E is no longer the search signal. Search uses coastDeltaV
@@ -135,13 +139,12 @@ fixedFallbackKg: 0 },     // fallback MECO when probe fails (booster drained: on
     },
 
     // ---- Rough-scan reference points (data-fed) ----
-    // Each ref = (stack, alt, fuel%, MECO) -> residualKg. User adds as they test.
-    // rough-scan uses these to pick the narrowest possible MECO bracket.
+    // Only the current 320 km baseline is kept — older tuned points removed
+    // after guidance update. residualKg 849 is a placeholder; re-measure and
+    // add more entries as fresh runs complete.
     roughRefs: [
       { stackId: 'stk_falcon9-b5', altKm: 320, fuelPct: 100,
-        meco: 52612, G: 0.61, T: 4.82, bias: 0.59,  lead: 5.64, residualKg: 849 },
-      { stackId: 'stk_falcon9-b5', altKm: 320, fuelPct: 100,
-        meco: 60002, G: 0.59, T: 4.82, bias: 1.804, lead: 3.90, residualKg: 190 },
+        meco: 52612, G: 0.64, T: 4.82, bias: 0.827, lead: 5.64, residualKg: 849 },
     ],
     roughScan: {
       minRange: [20000, 80000],

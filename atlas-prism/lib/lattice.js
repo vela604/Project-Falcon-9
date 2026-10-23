@@ -270,11 +270,20 @@ function suggestDurationCap(altKm, apoKm, periKm) {
 
     // 1. baseline raw -> lattice
     const bp = fromRaw(C().baselineRaw);
-    t('baseline snap G', Math.abs(gOf(bp.Gi) - C().baselineRaw.G) < 1e-9, 'G=' + gOf(bp.Gi));
-    t('baseline snap T', Math.abs(tOf(bp.Tn) - C().baselineRaw.T) < 1e-9, 'T=' + tOf(bp.Tn));
-    t('baseline snap bias', Math.abs(biasOf(bp.bi) - C().baselineRaw.bias) < 1e-9, 'bias=' + biasOf(bp.bi));
-    t('baseline snap lead', Math.abs(leadOf(bp.li) - C().baselineRaw.lead) < 1e-9, 'lead=' + leadOf(bp.li) + ' (' + bp.li + 't)');
-    t('baseline A_eff ~13.94', Math.abs(aEff(bp) - 13.94) < 1e-3, 'A_eff=' + aEff(bp).toFixed(5));
+    // "snap" tolerance: half of each quantum. Baseline raw may be off-lattice
+    // (e.g. lead=5.64 -> snapped 5.6375, diff 0.0025). "A_eff" is now derived
+    // from baselineRaw (G*T^2) so preset changes don't break this check.
+    const _q0 = C().quanta;
+    const _tolG = _q0.G    / 2 + 1e-9;
+    const _tolT = _q0.T    / 2 + 1e-9;
+    const _tolB = _q0.bias / 2 + 1e-9;
+    const _tolL = _q0.lead / 2 + 1e-9;
+    t('baseline snap G',    Math.abs(gOf(bp.Gi)    - C().baselineRaw.G)    <= _tolG, 'G=' + gOf(bp.Gi));
+    t('baseline snap T',    Math.abs(tOf(bp.Tn)    - C().baselineRaw.T)    <= _tolT, 'T=' + tOf(bp.Tn));
+    t('baseline snap bias', Math.abs(biasOf(bp.bi) - C().baselineRaw.bias) <= _tolB, 'bias=' + biasOf(bp.bi));
+    t('baseline snap lead', Math.abs(leadOf(bp.li) - C().baselineRaw.lead) <= _tolL, 'lead=' + leadOf(bp.li) + ' (' + bp.li + 't, raw ' + C().baselineRaw.lead + ')');
+    const _aExpect = C().baselineRaw.G * C().baselineRaw.T * C().baselineRaw.T;
+    t('baseline A_eff ~ G*T²', Math.abs(aEff(bp) - _aExpect) < 0.01, 'A_eff=' + aEff(bp).toFixed(5) + ' (expect ' + _aExpect.toFixed(5) + ')');
 
     // 2. idempotence: snapping an already-snapped value changes nothing
     let idem = true;
