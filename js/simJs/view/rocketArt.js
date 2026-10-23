@@ -473,7 +473,9 @@ function _axialShade(ctx, pathFn, H, W) {
   // Body-local frame: nose at y=-H (up), base at y=0.
   // Sun toward nose (ly>0) -> base in shadow (darken toward y=0).
   // Sun toward base (ly<0) -> nose in shadow (darken toward y=-H).
-  const g = ctx.createLinearGradient(0, -H, 0, 0);
+  const yTop = (stackTotalH_px !== undefined) ? -stackTotalH_px + memberOffsetY_px : -H;
+  const yBot = (stackTotalH_px !== undefined) ? memberOffsetY_px : 0;
+  const g = ctx.createLinearGradient(0, yTop, 0, yBot);
   if (RL.ly >= 0) {
     g.addColorStop(0, 'rgba(0,0,0,0)');
     g.addColorStop(1, 'rgba(0,0,0,' + str.toFixed(3) + ')');
@@ -485,7 +487,9 @@ function _axialShade(ctx, pathFn, H, W) {
   pathFn();
   ctx.clip();
   ctx.fillStyle = g;
-  ctx.fillRect(-W * 2, -H * 2, W * 4, H * 4);
+  const _y0 = (stackTotalH_px !== undefined) ? yTop : -H;
+  const _y1 = (stackTotalH_px !== undefined) ? yBot : 0;
+  ctx.fillRect(-stackMaxW_px * 2, _y0 - H, stackMaxW_px * 4, (_y1 - _y0) + H * 2);
   ctx.restore();
 }
 
@@ -963,9 +967,9 @@ function drawPayloadSpaceShape(ctx, W, H, mpp, opts) {
   }
 
   if (typeof applyCylindricalOverlay === 'function') {
-    const gradW = Math.max(capR, bulgeR) * 2;
     bodyPath();
-    applyCylindricalOverlay(ctx, gradW);
+    applyCylindricalOverlay(ctx, stackMaxW_px);
+    _axialShade(ctx, bodyPath, H, stackMaxW_px, opts.stackTotalH_px, opts.memberOffsetY_px);
   }
   {
     const gW = Math.max(capR, bulgeR) * 2;
@@ -975,7 +979,7 @@ function drawPayloadSpaceShape(ctx, W, H, mpp, opts) {
       ctx.lineTo(sg * bulgeR * k, straightTopY);
       ctx.bezierCurveTo(sg * bulgeR * 0.98 * k, straightTopY - curveH * 0.30, sg * bulgeR * 0.45 * k, tipY + curveH * 0.15, 0, tipY);
     };
-    _ogiveShade(ctx, gW, bodyPath, trace);
+    _ogiveShade(ctx, stackMaxW_px, bodyPath, trace);
     ctx.save(); bodyPath(); ctx.clip();
     if (ROCKET_FX.seams) {
       if (straightH > 1) _seamLine(ctx, Math.round(straightTopY), bulgeR * 2, 1.2);
@@ -1551,6 +1555,9 @@ function _resetGasPoolsIfBodyChanged(gen) {
 
 function drawRocketArt(ctx, W, H, mpp, opts) {
   opts = opts || {};
+  const stackMaxW_px = opts.stackMaxW_px || W;
+  const stackTotalH_px = opts.stackTotalH_px || H;
+  const memberOffsetY_px = opts.memberOffsetY_px || 0;
   
  const legsProgress = opts.legsProgress || 0;
   const legsState = opts.legsState || null;
@@ -1658,7 +1665,7 @@ if (isNose) {
     
     if (typeof applyCylindricalOverlay === 'function') {
       conePath();
-      applyCylindricalOverlay(ctx, W);
+      applyCylindricalOverlay(ctx, stackMaxW_px);
     }
     
     // DSL for nose (if allowed — currently nose role is solid only, but
@@ -1672,11 +1679,11 @@ if (isNose) {
         ctx.clip();
         drawCustomDesignOps(ctx, W, H, parsed.ops);
         conePath();
-        if (typeof applyCylindricalOverlay === 'function') applyCylindricalOverlay(ctx, W);
+        if (typeof applyCylindricalOverlay === 'function') applyCylindricalOverlay(ctx, stackMaxW_px);
         ctx.restore();
       }
     }
-    _ogiveShade(ctx, W, conePath, (sg, k) => {
+    _ogiveShade(ctx, stackMaxW_px, conePath, (sg, k) => {
       ctx.moveTo(sg * W / 2 * k, 0);
       ctx.quadraticCurveTo(sg * ctrlx * -1 * k, ctrly, 0, -H);
     });
@@ -1941,11 +1948,11 @@ const bodyPath = () => {
     ctx.stroke();
     
     if (designMode !== 'dsl') {
-      const shade = _cylShadeGradient(ctx, W);
+      const shade = _cylShadeGradient(ctx, stackMaxW_px);
       ctx.fillStyle = shade;
       bodyPath();
       ctx.fill();
-      _axialShade(ctx, bodyPath, H, W);
+      _axialShade(ctx, bodyPath, H, stackMaxW_px, stackTotalH_px, memberOffsetY_px);
     }
     
     if (designMode === 'dsl' && typeof parseAndValidateDesign === 'function' &&
@@ -1958,7 +1965,7 @@ const bodyPath = () => {
         ctx.clip();
         drawCustomDesignOps(ctx, W, H, parsed.ops);
         bodyPath();
-        applyCylindricalOverlay(ctx, W);
+        applyCylindricalOverlay(ctx, stackMaxW_px);
         ctx.restore();
       } else {
         const shade = _cylShadeGradient(ctx, W);
@@ -2006,11 +2013,11 @@ const bodyPath = () => {
     ctx.stroke();
     
     if (designMode !== 'dsl') {
-      const g = _cylShadeGradient(ctx, W);
+      const g = _cylShadeGradient(ctx, stackMaxW_px);
       ctx.fillStyle = g;
       tankPath();
       ctx.fill();
-      _axialShade(ctx, tankPath, tankH_px, W);
+      _axialShade(ctx, tankPath, tankH_px, stackMaxW_px, stackTotalH_px, memberOffsetY_px);
     } else if (typeof parseAndValidateDesign === 'function' &&
       typeof drawCustomDesignOps === 'function' &&
       typeof applyCylindricalOverlay === 'function') {
@@ -2022,7 +2029,7 @@ const bodyPath = () => {
         // DSL is relative to the tank section only (Y 0..1 = tank base..tank top).
         drawCustomDesignOps(ctx, W, tankH_px, parsed.ops);
         tankPath();
-        applyCylindricalOverlay(ctx, W);
+        applyCylindricalOverlay(ctx, stackMaxW_px);
         ctx.restore();
       }
     }
@@ -2105,7 +2112,7 @@ const bodyPath = () => {
     
     // Cylindrical gradient over the payload (widest width = bulge or cap).
     const gradW = Math.max(capW_px, bulgeW_px) || W;
-    const pGrad = _cylShadeGradient(ctx, gradW);
+    const pGrad = _cylShadeGradient(ctx, stackMaxW_px);
     ctx.fillStyle = pGrad;
     payloadPath();
     ctx.fill();
@@ -2121,7 +2128,7 @@ const bodyPath = () => {
           ctx.lineTo(sg * _hB * k, cTop);
           ctx.bezierCurveTo(sg * _hB * 0.98 * k, cTop - oH * 0.30, sg * _hB * 0.45 * k, _tY + oH * 0.15, 0, _tY);
         };
-        _ogiveShade(ctx, gradW, payloadPath, _trace);
+        _ogiveShade(ctx, stackMaxW_px, payloadPath, _trace);
         ctx.save(); payloadPath(); ctx.clip();
         if (ROCKET_FX.seams) { _seamLine(ctx, Math.round(cTop), _hB * 2, 1.2); _seamLine(ctx, Math.round(fTop), _hB * 2, 1); _rivetRow(ctx, Math.round(cTop) - 2, _hB * 2, 0.8); }
         ctx.restore();
@@ -2130,7 +2137,7 @@ const bodyPath = () => {
           ctx.moveTo(sg * _hC * k, _bY);
           ctx.bezierCurveTo(sg * _hC * 0.70 * k, _bY + capH_px * 0.30, sg * _hC * 0.30 * k, _tY + capH_px * 0.20, 0, _tY);
         };
-        _ogiveShade(ctx, gradW, payloadPath, _trace);
+        _ogiveShade(ctx, stackMaxW_px, payloadPath, _trace);
       }
     }
   }

@@ -2399,6 +2399,17 @@ if (isSingleNozzle) {
     const stackMembers = (body && body.members && body.members.length) ?
       body.members :
       ((typeof SIM_STACK_MEMBERS !== 'undefined' && SIM_STACK_MEMBERS.length) ? SIM_STACK_MEMBERS : []);
+
+  // Continuous lighting: one global light field for the whole connected body.
+  let stackMaxW_px = 0;
+  let stackTotalH_px = 0;
+  stackMembers.forEach(m => {
+    const mW = (m.width || 1) / mpp;
+    if (mW > stackMaxW_px) stackMaxW_px = mW;
+    const mH = (m.height || 0) / mpp;
+    const ov = (m.stageRole === 'payloadSpace' && Number.isFinite(m.stageOverlapM)) ? m.stageOverlapM / mpp : 0;
+    stackTotalH_px += mH - ov;
+  });
       
   // ↓↓↓ ye pura block add karo ↓↓↓
   // Payload drawn BEFORE members (background) — so fairing, drawn after,
@@ -2547,6 +2558,9 @@ const puffForThisMember = (isTopMember && puffProgress >= 0) ?
   puffProgress : -1;
 drawRocketArt(ctx, mW, mH, mpp, {
       legsProgress: (isActive && idx === 0) ? legs.progress : 0,
+      stackMaxW_px: stackMaxW_px,
+      stackTotalH_px: stackTotalH_px,
+      memberOffsetY_px: placeY,
       legsState: isActive ? legs : null,
       // A5 — tell the drawer which member of the body this is, so its
       // pod-id lookups match the `b<memberIdx>.<side><idx>` keys that
