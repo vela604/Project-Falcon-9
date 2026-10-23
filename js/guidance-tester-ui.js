@@ -262,9 +262,9 @@
         const _memFuel = (Array.isArray(b.memberFuel) && Number.isFinite(b.memberFuel[idx]))
           ? b.memberFuel[idx] : 0;
         const _fuelFrac = Math.max(0, Math.min(1, _memFuel / _maxFuel));
-        if (_fuelFrac > 0.01) {
+        if (_fuelFrac > 0.15) {
           const _CRYO_K = 200;
-          const _w = 0.85 * _fuelFrac;
+          const _w = _fuelFrac - 0.15;  // deadband: residual <15% = no cooling (dry upper tank)
           Teq = Teq * (1 - _w) + _CRYO_K * _w;
         }
       }
