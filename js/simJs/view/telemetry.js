@@ -89,6 +89,7 @@ const _THERMAL_TAU_BULK = 30;  // s — thick metal tank (fuel-carrying member)
 const _THERMAL_TAU_SKIN = 6;   // s — thin shell (fairing, interstage, nose)
 const _FAIRING_SHIELD_FLOOR = 0.02;   // residual free-stream flux fraction behind a FULLY-shielding (bulged) fairing
 const _FAIRING_FULL_SHIELD_OVERHANG = 0.25;  // (ΔD/D) at which shielding saturates
+const _FAIRING_SHOCK_EXTENT_D = 2.5;         // shock-wake extent behind fairing base, × fairing diameter
 
 // Geometry-dependent fairing shield factor. Replaces the old flat 0.02
 // magic number, which was wrong when the fairing wasn't bulged: a fairing
@@ -108,9 +109,11 @@ const _FAIRING_FULL_SHIELD_OVERHANG = 0.25;  // (ΔD/D) at which shielding satur
 function _fairingShieldFactor(m, allMembers) {
   const idx = allMembers.indexOf(m);
   if (idx < 0) return 1.0;
+  let fairingIdx = -1;
   let fairing = null;
   for (let i = idx + 1; i < allMembers.length; i++) {
     if (allMembers[i] && allMembers[i].stageRole === 'payloadSpace') {
+      fairingIdx = i;
       fairing = allMembers[i];
       break;
     }
@@ -137,8 +140,21 @@ function _fairingShieldFactor(m, allMembers) {
   if (fairingW <= memberW) return 1.0;                 // fairing not wider → no shield
 
   const overhang = (fairingW - memberW) / fairingW;
-  const ratio = Math.min(1, overhang / _FAIRING_FULL_SHIELD_OVERHANG);
-  const scale = 1 - (1 - _FAIRING_SHIELD_FLOOR) * ratio;
+  const overhangFactor = Math.min(1, overhang / _FAIRING_FULL_SHIELD_OVERHANG);
+
+  // Axial distance from fairing base DOWN to this member's top. Members form
+  // a contiguous stack, so sum the heights of members BETWEEN the two.
+  let distance = 0;
+  for (let i = idx + 1; i < fairingIdx; i++) {
+    if (allMembers[i] && Number.isFinite(allMembers[i].height)) {
+      distance += allMembers[i].height;
+    }
+  }
+  const shockExtent = fairingW * _FAIRING_SHOCK_EXTENT_D;
+  const distanceFactor = shockExtent > 0 ? Math.max(0, 1 - distance / shockExtent) : 0;
+
+  const shieldStrength = overhangFactor * distanceFactor;
+  const scale = 1 - (1 - _FAIRING_SHIELD_FLOOR) * shieldStrength;
   return Math.max(_FAIRING_SHIELD_FLOOR, Math.min(1, scale));
 }
 

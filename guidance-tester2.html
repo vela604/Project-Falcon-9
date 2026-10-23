@@ -1826,19 +1826,39 @@ if (!faded) {
 
   function _captureTemperatures() {
     const out = { booster: null, stage: null, payload: null };
-    const M = (typeof window !== 'undefined' && window.__tempState) ? window.__tempState : null;
-    if (!M || typeof M.get !== 'function') return out;
     if (!state || !Array.isArray(state.bodies)) return out;
+    // Find the current booster / stage / payload bodies (same role logic
+    // as _updateTempRows in the HUD).
+    const roles = { booster: null, stage: null, payload: null };
     for (const b of state.bodies) {
-      if (!b || !b.id) continue;
-      const role = (b.members && b.members[0] && b.members[0].stageRole) || null;
-      const st = M.get(b.id);
-      if (!st) continue;
-      if (b.payloadBody && !out.payload) out.payload = { T: st.T, pk: st.peakK };
+      if (!b) continue;
+      const r0 = (b.members && b.members[0] && b.members[0].stageRole) || null;
+      if (b.payloadBody && !roles.payload) roles.payload = b;
       else if (b.fairingHalf) continue;
-      else if (role === 'booster' && !out.booster) out.booster = { T: st.T, pk: st.peakK };
-      else if (role === 'stage' && !out.stage) out.stage = { T: st.T, pk: st.peakK };
+      else if (r0 === 'booster' && !roles.booster) roles.booster = b;
+      else if (r0 === 'stage' && !roles.stage) roles.stage = b;
     }
+    // Pull from the per-member thermal model. Returned shape uses pk
+    // (matches the display field name); source shape uses peakK — the
+    // rollup normalises. Falls back to body mass-weighted, then null.
+    const rollup = (body, role) => {
+      if (!body) return null;
+      const st = (role && typeof window.__roleTempWeighted === 'function')
+        ? window.__roleTempWeighted(body, role) : null;
+      if (st && Number.isFinite(st.T) && Number.isFinite(st.peakK)) {
+        return { T: st.T, pk: st.peakK };
+      }
+      if (typeof window.__bodyTempWeighted === 'function') {
+        const stFb = window.__bodyTempWeighted(body);
+        if (stFb && Number.isFinite(stFb.T) && Number.isFinite(stFb.peakK)) {
+          return { T: stFb.T, pk: stFb.peakK };
+        }
+      }
+      return null;
+    };
+    out.booster = rollup(roles.booster, 'booster');
+    out.stage = rollup(roles.stage, 'stage');
+    out.payload = rollup(roles.payload, null);
     return out;
   }
 
