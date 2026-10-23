@@ -159,16 +159,18 @@ const SimLighting = (function () {
   function drawSun(ctx, cv, dens, se) {
     const dir = sunScreenDir();
     const cx = cv.width / 2, cy = cv.height / 2, m = 34;
-    let d = Math.min((cx - m) / (Math.abs(dir[0]) || 1e-6), (cy - m) / (Math.abs(dir[1]) || 1e-6));
-    if (isPlanet()) {
-      const w = worldToScreen(0, 0);
-      const earthR = CONFIG.EARTH_RADIUS / metersPerPixel();
-      d = Math.max(d, earthR + 30);
-    }
-    const x = cx + dir[0] * d, y = cy + dir[1] * d;
+    const _w = worldToScreen(0, 0);
+    const _earthR = CONFIG.EARTH_RADIUS / metersPerPixel();
+    const _dist = _earthR + 34;
+    let x = _w[0] + dir[0] * _dist;
+    let y = _w[1] + dir[1] * _dist;
+    // Clamp inside screen with margin so the icon never clips
+    const _pad = 44;
+    x = Math.max(_pad, Math.min(cv.width - _pad, x));
+    y = Math.max(_pad, Math.min(cv.height - _pad, y));
     const warm = clamp01(1 - smooth(0.02, 0.35, se)) * clamp01(dens * 1.5);
-    const core = mixRGB([255, 250, 230], [255, 165, 90], warm);
-    const R = isPlanet() ? 13 : 17, glowR = R * (isPlanet() ? 5 : 7 + 3 * dens);
+    const core = mixRGB([255, 248, 224], [255, 175, 105], warm);
+    const R = 9, glowR = R * 3.8;
     ctx.save();
     const g = ctx.createRadialGradient(x, y, R * 0.3, x, y, glowR);
     g.addColorStop(0, `rgba(${core[0] | 0},${core[1] | 0},${core[2] | 0},0.55)`);
@@ -179,15 +181,17 @@ const SimLighting = (function () {
     ctx.beginPath(); ctx.arc(x, y, R, 0, TAU); ctx.fill();
     // Planet view: a few parallel rays so the lighting angle is obvious.
     if (isPlanet()) {
-      const c0 = worldToScreen(0, 0), earthR = CONFIG.EARTH_RADIUS / metersPerPixel();
+      const earthR2 = CONFIG.EARTH_RADIUS / metersPerPixel();
       const nx = -dir[1], ny = dir[0];
-      ctx.strokeStyle = 'rgba(255,225,150,0.22)'; ctx.lineWidth = 1.2; ctx.setLineDash([5, 7]);
-      for (let k = -2; k <= 2; k++) {
-        const off = k * earthR * 0.34;
-        const ex = c0[0] + nx * off + dir[0] * (earthR * 1.05) * Math.sqrt(Math.max(0, 1 - (k * 0.34) ** 2));
-        const ey = c0[1] + ny * off + dir[1] * (earthR * 1.05) * Math.sqrt(Math.max(0, 1 - (k * 0.34) ** 2));
-        const sx = x + nx * off * 0.55, sy = y + ny * off * 0.55;
-        ctx.beginPath(); ctx.moveTo(sx - dir[0] * R * 1.6, sy - dir[1] * R * 1.6); ctx.lineTo(ex, ey); ctx.stroke();
+      ctx.strokeStyle = 'rgba(255,225,150,0.18)'; ctx.lineWidth = 1.2; ctx.setLineDash([4, 6]);
+      const rayStartR = earthR2 * 0.55;
+      for (let k = -1; k <= 1; k++) {
+        const off = k * earthR2 * 0.32;
+        const sxE = _w[0] + nx * off + dir[0] * rayStartR;
+        const syE = _w[1] + ny * off + dir[1] * rayStartR;
+        const ex = x - dir[0] * (R + 8);
+        const ey = y - dir[1] * (R + 8);
+        ctx.beginPath(); ctx.moveTo(sxE, syE); ctx.lineTo(ex, ey); ctx.stroke();
       }
     }
     ctx.restore();
@@ -201,7 +205,13 @@ const SimLighting = (function () {
     const day = isPlanet() ? 0 : groundDay(se);
     const starA = clamp01(1 - dens * day * 1.2);
     if (starA > 0.02) drawStars(ctx, cv, starA);
-    drawSun(ctx, cv, dens, se);
+    // Sun icon: planet view only. In local view, the sun is either
+    // overhead, behind the vehicle, or at a sky angle the camera cannot
+    // point at (locked to local vertical). Drawing a sun icon there
+    // reads as a UI element, gets clipped at screen edges, and appears
+    // to orbit as the user drags the time slider. Sky color + body
+    // shading already convey sun direction correctly in local view.
+    if (isPlanet()) drawSun(ctx, cv, dens, se);
   }
 
   // ---- Earth: day / night -------------------------------------------------
