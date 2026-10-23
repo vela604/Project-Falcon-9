@@ -1172,6 +1172,317 @@ function drawBodyAsTriangle(body, isActive) {
 let _puffLastId = -1;
 let _puffLocalStart = 0;
 
+// ============================================================================
+// GROUND INTERACTION — plume impingement + launch blast cloud
+//
+//  1. The exhaust plume is clipped against the surface plane (pad apron when
+//     over the pad, Earth surface elsewhere) so it never renders "inside" the
+//     ground. See the clip + sheet blocks in drawBodyRocket.
+//  2. When the plume touches the surface it fans out sideways as a flame
+//     sheet (flame-deflector / ground-impingement look).
+//  3. Steam / smoke / soot / dust is simulated as Earth-fixed particles
+//     (arc-length s along the surface from the pad, height y, both in metres)
+//     so the cloud stays behind on the pad as the rocket climbs away.
+// ============================================================================
+const GROUND_FX = {
+  PAD_HALF_W_M: 50,       // matches apronHalfW in drawLaunchPad
+  PAD_DEPTH_M: 2.4,       // apron top below the rocket-base datum (= mountH)
+  MAX_PARTICLES: 1600,
+  TRAIL_MAX_ALT_M: 2500,  // exhaust vapour trail fades out above this
+};
+
+function _gfxWrap(a) {
+  while (a > Math.PI) a -= 2 * Math.PI;
+  while (a < -Math.PI) a += 2 * Math.PI;
+  return a;
+}
+
+// Where is the surface beneath this body, and is it the launch pad?
+function _groundSurfaceInfo(body) {
+  const R = CONFIG.EARTH_RADIUS;
+  const altBase = Math.hypot(body.rx, body.ry) - R;
+  const phiB = Math.atan2(body.rx, body.ry);
+  let sE = 0, onPad = false;
+  if (typeof launchSiteWorldPosition === 'function') {
+    const site = launchSiteWorldPosition(state.simTime);
+    sE = R * _gfxWrap(phiB - site.phi);
+    onPad = Math.abs(sE) < GROUND_FX.PAD_HALF_W_M;
+  }
+  return { altBase, sE, onPad };
+}
+
+function _isSingleNozzleBody(body) {
+  if (!(body.members && body.members[0] && body.members[0].engineTypeId &&
+      typeof getComponentType === 'function')) return false;
+  const lay = getComponentType(body.members[0].engineTypeId);
+  return !!(lay && lay.frame && Array.isArray(lay.frame.slots) && lay.frame.slots.length === 1);
+}
+
+// ---- Soft, lumpy puff sprites (pre-rendered, tinted per material) ----------
+const _gfx = { parts: [], lastSim: null, last: new WeakMap(), acc: new WeakMap(), sprites: null };
+
+function _gfxMakeCanvas(S) {
+  let c = null;
+  if (typeof OffscreenCanvas !== 'undefined') {
+    try { c = new OffscreenCanvas(S, S); } catch (e) { c = null; }
+  }
+  if (!c && typeof document !== 'undefined' && document.createElement) {
+    c = document.createElement('canvas');
+    c.width = S; c.height = S;
+  }
+  return c;
+}
+
+function _gfxBuildSprite(light, shade, seed, additive) {
+  const S = 128;
+  const c = _gfxMakeCanvas(S);
+  if (!c) return null;
+  const g = c.getContext('2d');
+  let rs = seed >>> 0;
+  const rnd = () => { rs = (rs * 1664525 + 1013904223) >>> 0; return rs / 4294967296; };
+  const rgb = (a, al) => `rgba(${a[0]},${a[1]},${a[2]},${al})`;
+  g.clearRect(0, 0, S, S);
+  const lumps = additive ? 3 : 11;
+  for (let i = 0; i < lumps; i++) {
+    const ang = rnd() * Math.PI * 2;
+    const d = (additive ? 0.08 : 0.25) * S * Math.sqrt(rnd());
+    const x = S / 2 + Math.cos(ang) * d;
+    const y = S / 2 + Math.sin(ang) * d * 0.8;
+    const r = S * (additive ? 0.36 : (0.17 + rnd() * 0.15));
+    const gr = g.createRadialGradient(x - r * 0.25, y - r * 0.3, r * 0.05, x, y, r);
+    gr.addColorStop(0, rgb(light, additive ? 0.9 : 0.72));
+    gr.addColorStop(0.6, rgb(additive ? light : shade, additive ? 0.35 : 0.40));
+    gr.addColorStop(1, rgb(shade, 0));
+    g.fillStyle = gr;
+    g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill();
+  }
+  // soft round mask so no lump ever touches the sprite edge
+  g.globalCompositeOperation = 'destination-in';
+  const m = g.createRadialGradient(S / 2, S / 2, 0, S / 2, S / 2, S / 2);
+  m.addColorStop(0, 'rgba(0,0,0,1)');
+  m.addColorStop(0.55, 'rgba(0,0,0,0.9)');
+  m.addColorStop(1, 'rgba(0,0,0,0)');
+  g.fillStyle = m;
+  g.fillRect(0, 0, S, S);
+  g.globalCompositeOperation = 'source-over';
+  return c;
+}
+
+function _gfxSprites() {
+  if (_gfx.sprites) return _gfx.sprites;
+  _gfx.sprites = {
+    steam: _gfxBuildSprite([250, 250, 252], [176, 184, 198], 11, false),
+    smoke: _gfxBuildSprite([172, 172, 174], [88, 88, 94], 23, false),
+    soot:  _gfxBuildSprite([96, 90, 88], [30, 28, 28], 37, false),
+    dust:  _gfxBuildSprite([216, 192, 150], [128, 104, 76], 51, false),
+    glow:  _gfxBuildSprite([255, 190, 100], [255, 100, 30], 77, true),
+  };
+  return _gfx.sprites;
+}
+
+// ---- Particle system -------------------------------------------------------
+function _gfxSpawn(p) {
+  const arr = _gfx.parts;
+  if (arr.length >= GROUND_FX.MAX_PARTICLES) arr.splice(0, arr.length - GROUND_FX.MAX_PARTICLES + 1);
+  arr.push(p);
+}
+
+function _gfxTake(body, key, amount) {
+  let o = _gfx.acc.get(body);
+  if (!o) { o = {}; _gfx.acc.set(body, o); }
+  o[key] = (o[key] || 0) + amount;
+  const n = Math.min(40, Math.floor(o[key]));
+  o[key] = Math.min(1, o[key] - n);
+  return n;
+}
+
+function _gfxPickKind(onPad, r) {
+  if (onPad) return r < 0.58 ? 'steam' : (r < 0.86 ? 'smoke' : 'soot');
+  return r < 0.78 ? 'dust' : (r < 0.93 ? 'smoke' : 'steam');
+}
+
+function _gfxStep(dt) {
+  const arr = _gfx.parts;
+  let w = 0;
+  for (let i = 0; i < arr.length; i++) {
+    const p = arr[i];
+    p.age += dt;
+    if (p.age >= p.life) continue;
+    p.vs *= Math.exp(-p.drag * dt);
+    p.vy = p.vy * Math.exp(-p.vdrag * dt) + p.buoy * dt;
+    p.s += p.vs * dt;
+    p.y += p.vy * dt;
+    p.r += p.gr * dt;
+    p.gr *= Math.exp(-0.22 * dt);
+    const floor = p.ground ? p.r * 0.4 : 0;
+    if (p.y < floor) { p.y = floor; if (p.vy < 0) p.vy = 0; }
+    p.glow *= Math.exp(-dt / 0.9);
+    arr[w++] = p;
+  }
+  arr.length = w;
+}
+
+function _gfxEmitBody(body, dt) {
+  if (!body || !Number.isFinite(body.rx) || !Number.isFinite(body.ry)) return;
+  const eng = body.engines || [];
+  let fSum = 0, fMax = 0, active = 0, gs = 0, gc = 0;
+  for (const e of eng) {
+    fSum += e.currentF; fMax += e.Fmax;
+    if (e.currentF > 1) active++;
+    if (e.gimbal && e.currentF > 0.01) { gs += e.gimbalDeg || 0; gc++; }
+  }
+  const thr = fMax > 0 ? fSum / fMax : 0;
+  if (thr < 0.05) { _gfx.last.delete(body); return; }
+
+  const gi = _groundSurfaceInfo(body);
+  const single = _isSingleNozzleBody(body);
+  const Wm0 = CONFIG.ROCKET_WIDTH, Hm = CONFIG.ROCKET_HEIGHT;
+  const F = single ? 0.55 : Math.min(1, 0.30 + 0.70 * Math.max(0, active - 1) / 8);
+  const lenMul = single ? 0.30 : 1.0, widMul = single ? 1.3 : 1.0;
+  const flameLenM = Hm * (0.6 + 1.6 * thr) * lenMul;
+  const Wm = Wm0 * F * widMul;
+  const bellM = (body.members && body.members.length && typeof getEngineBellExitY_m === 'function')
+    ? getEngineBellExitY_m(body.members[0]) : 0;
+  const th = body.theta - Math.atan2(-body.rx, body.ry);
+  const g = (gc ? gs / gc : 0) * Math.PI / 180;
+  const psi = th - g, cosPsi = Math.cos(psi);
+  const surfAlt = gi.onPad ? -Math.max(GROUND_FX.PAD_DEPTH_M, bellM + 1) : 0;
+  const hN = gi.altBase - bellM * cosPsi - surfAlt;           // nozzle-exit height over surface (m)
+  const Lhit = cosPsi > 0.05 ? Math.max(0, hN) / cosPsi : Infinity;
+  const contact = Math.max(0, Math.min(1, 1 - Lhit / flameLenM));
+  const dustReach = Math.max(120, flameLenM * 3);
+  const kd = cosPsi > 0.05 ? Math.max(0, Math.min(1, 1 - Math.max(0, hN) / dustReach)) : 0;
+  const sI = gi.sE + (bellM + Math.min(Lhit, flameLenM)) * Math.sin(psi);   // impact point along surface
+  const sc = thr * F;
+  const rnd = Math.random;
+
+  if (kd > 0.02) {
+    // Fast, low, spreading blast cloud (the "ground surge").
+    let n = _gfxTake(body, 'lat', 60 * sc * Math.pow(kd, 1.2) * dt);
+    for (let i = 0; i < n; i++) {
+      const side = rnd() < 0.5 ? -1 : 1;
+      const r0 = Wm0 * (0.8 + rnd()) * (0.7 + 0.5 * F);
+      const sp = (28 + rnd() * 52) * (0.45 + 0.75 * kd) * (0.6 + 0.4 * thr);
+      _gfxSpawn({
+        k: _gfxPickKind(gi.onPad, rnd()),
+        s: sI + side * rnd() * Wm * 0.5, y: r0 * 0.45,
+        vs: side * sp + Math.sin(psi) * 8, vy: 1 + rnd() * 5,
+        r: r0, gr: 5 + rnd() * 5, drag: 0.28 + rnd() * 0.14, vdrag: 0.6, buoy: 0.6 + rnd() * 0.8,
+        age: 0, life: 12 + rnd() * 12, a0: 0.28 + rnd() * 0.24,
+        glow: 0.6 + 0.4 * contact, front: rnd() < 0.3, ground: true,
+      });
+    }
+    // Hot buoyant column that rises off the pad and is left behind by the climb.
+    n = _gfxTake(body, 'up', 28 * sc * Math.pow(kd, 1.1) * dt);
+    for (let i = 0; i < n; i++) {
+      const r0 = Wm0 * (1.1 + rnd());
+      const q = rnd();
+      _gfxSpawn({
+        k: gi.onPad ? (q < 0.45 ? 'steam' : (q < 0.75 ? 'smoke' : 'soot')) : (q < 0.6 ? 'dust' : 'smoke'),
+        s: sI + (rnd() - 0.5) * Wm * 0.8, y: r0 * 0.6,
+        vs: (rnd() - 0.5) * 14, vy: (9 + rnd() * 24) * (0.5 + 0.7 * kd),
+        r: r0, gr: 2.5 + rnd() * 3, drag: 0.4, vdrag: 0.2, buoy: 1.1,
+        age: 0, life: 18 + rnd() * 14, a0: 0.26 + rnd() * 0.12,
+        glow: 0.5 * contact, front: rnd() < 0.3, ground: true,
+      });
+    }
+  }
+
+  // Exhaust vapour trail along the climb (spacing-based so a fast rocket leaves no gaps).
+  const nozAlt = gi.altBase - bellM * cosPsi;
+  if (nozAlt > 3 && nozAlt < GROUND_FX.TRAIL_MAX_ALT_M) {
+    const cur = { s: gi.sE, y: nozAlt };
+    const prev = _gfx.last.get(body);
+    if (!prev) { _gfx.last.set(body, cur); }
+    else {
+      const ds = cur.s - prev.s, dy = cur.y - prev.y;
+      const spacing = Math.max(Wm0 * 1.5, 2);
+      const n = Math.min(8, Math.floor(Math.hypot(ds, dy) / spacing));
+      const fade = Math.pow(1 - nozAlt / GROUND_FX.TRAIL_MAX_ALT_M, 0.6);
+      for (let i = 0; i < n; i++) {
+        const f = (i + 1) / n;
+        _gfxSpawn({
+          k: rnd() < 0.8 ? 'steam' : 'smoke',
+          s: prev.s + ds * f + (rnd() - 0.5) * Wm * 0.4, y: prev.y + dy * f,
+          vs: (rnd() - 0.5) * 1.5, vy: (rnd() - 0.5) * 1.5,
+          r: Wm0 * (0.5 + rnd() * 0.4), gr: 0.9 + rnd() * 0.8, drag: 0.5, vdrag: 0.4, buoy: 0,
+          age: 0, life: 8 + rnd() * 6, a0: (0.14 + rnd() * 0.10) * fade,
+          glow: 0.3, front: rnd() < 0.2, ground: false,
+        });
+      }
+      if (n > 0) _gfx.last.set(body, cur);
+    }
+  } else {
+    _gfx.last.delete(body);
+  }
+}
+
+function _gfxUpdate() {
+  if (!state || !state.bodies) return;
+  const t = state.simTime;
+  if (_gfx.lastSim === null) { _gfx.lastSim = t; return; }
+  if (!(t >= _gfx.lastSim)) {            // sim restarted / rewound
+    _gfx.parts.length = 0;
+    _gfx.lastSim = t;
+    return;
+  }
+  let dt = t - _gfx.lastSim;
+  _gfx.lastSim = t;
+  if (dt <= 0 || dt > 5) return;         // paused, or a big time jump
+  dt = Math.min(dt, 0.25);
+  _gfxStep(dt);
+  state.bodies.forEach(b => _gfxEmitBody(b, dt));
+}
+
+// Draw the Earth-fixed cloud. 'back' pass runs before the rocket (and steps the
+// simulation), 'front' pass draws the ~30% of particles that billow in front.
+function drawGroundFx(pass) {
+  if (camera.mode === 'planet') return;
+  if (pass === 'back') _gfxUpdate();
+  const parts = _gfx.parts;
+  if (!parts.length) return;
+  const sp = _gfxSprites();
+  const R = CONFIG.EARTH_RADIUS;
+  const site = launchSiteWorldPosition(state.simTime);
+  const mpp = metersPerPixel();
+  const camAng = cameraAngle();
+  const cw = canvas.width, ch = canvas.height;
+  const wantFront = pass === 'front';
+
+  ctx.save();
+  ctx.filter = 'none';
+  for (let i = 0; i < parts.length; i++) {
+    const p = parts[i];
+    if (!!p.front !== wantFront) continue;
+    const img = sp[p.k];
+    if (!img) continue;
+    const rp = p.r / mpp;
+    if (rp < 0.6 || rp > 2500) continue;
+    const phi = site.phi + p.s / R;
+    const rr = R + p.y;
+    const [sx, sy] = worldToScreen(rr * Math.sin(phi), rr * Math.cos(phi));
+    if (sx < -rp * 2 || sx > cw + rp * 2 || sy < -rp * 2 || sy > ch + rp * 2) continue;
+    const life = p.age / p.life;
+    const fade = Math.min(1, p.age / 0.35) * Math.pow(1 - life, 1.35);
+    const alpha = p.a0 * fade * (wantFront ? 0.8 : 1);
+    if (alpha < 0.004) continue;
+
+    ctx.save();
+    ctx.translate(sx, sy);
+    ctx.rotate(-(phi - camAng));                 // keep flattening aligned with the ground
+    if (p.ground) ctx.scale(1, 0.8);
+    ctx.globalAlpha = alpha;
+    ctx.drawImage(img, -rp, -rp, rp * 2, rp * 2);
+    if (p.glow > 0.05 && sp.glow) {              // young cloud is lit orange by the flame
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.globalAlpha = Math.min(0.6, p.glow * 0.55 * fade * 2);
+      ctx.drawImage(sp.glow, -rp * 0.85, -rp * 0.85, rp * 1.7, rp * 1.7);
+    }
+    ctx.restore();
+  }
+  ctx.restore();
+}
+
 function drawBodyRocket(body, isActive, bodyIdx) {
   if (camera.mode === 'planet') {
     drawBodyAsTriangle(body, isActive);
@@ -1249,6 +1560,30 @@ if (body.members && body.members.length && typeof getEngineBellExitY_m === 'func
   // origin no longer coincided with the bell's true swing path.
   ctx.save();
   
+  // ---- Ground clip: the exhaust must never be drawn below the surface ----
+  // Surface = pad apron (deflector level) when over the pad, Earth otherwise.
+  // Built in the body frame, so it survives the gimbal rotate/translate below.
+  let _gHBasePx = null;   // hull-base height above the surface (px); null = no ground nearby
+  if (camera.mode !== 'planet') {
+    const _gi = _groundSurfaceInfo(body);
+    if (_gi.altBase < 400) {
+      const _bellM = bellExitY_px * mpp;
+      const _surfAlt = _gi.onPad ? -Math.max(GROUND_FX.PAD_DEPTH_M, _bellM + 1.0) : 0;
+      _gHBasePx = (_gi.altBase - _surfAlt) / mpp;
+      const gux = Math.sin(visualTheta), guy = -Math.cos(visualTheta);   // ground normal (up)
+      const gtx = Math.cos(visualTheta), gty = Math.sin(visualTheta);    // ground tangent
+      const gcx = -_gHBasePx * gux, gcy = -_gHBasePx * guy;              // point on the ground line
+      const GB = 40000;
+      ctx.beginPath();
+      ctx.moveTo(gcx - gtx * GB, gcy - gty * GB);
+      ctx.lineTo(gcx + gtx * GB, gcy + gty * GB);
+      ctx.lineTo(gcx + gtx * GB + gux * GB, gcy + gty * GB + guy * GB);
+      ctx.lineTo(gcx - gtx * GB + gux * GB, gcy - gty * GB + guy * GB);
+      ctx.closePath();
+      ctx.clip();
+    }
+  }
+
   // Rotate the whole flame with the gimbal angle. The bell already
   // rotates (drawOneBell applies the same ctx.rotate(gimbalRad)), so
   // the flame now pivots about the same nozzle-exit anchor and tilts
@@ -1331,7 +1666,27 @@ const widthMul = isSingleNozzle ? 1.30 : 1.0;
 const trailMul = isSingleNozzle ? 0.40 : 1.0;
   
   const tNow = performance.now() * 0.01;
-  const flameLen = H * (0.6 + 1.6 * totalThrottle) * lenMul;
+  // ---- Counter-flow (rocket moving engine-first, e.g. a landing burn) ----
+  // When the vehicle travels in the direction its exhaust points, the air
+  // rushes up the plume from the tip towards the nozzle. That shortens the
+  // plume, makes it billow wider, and shakes it with turbulence; the effect
+  // grows with dynamic pressure and is partly resisted by high throttle.
+  let ram = 0;
+  if (typeof airDensity === 'function' && Number.isFinite(body.vx) && Number.isFinite(body.vy)) {
+    const _rr = Math.hypot(body.rx, body.ry) || 1;
+    const _vUp = (body.vx * body.rx + body.vy * body.ry) / _rr;
+    const _vT = (body.vx * body.ry - body.vy * body.rx) / _rr -
+                (CONFIG.EARTH_OMEGA || 0) * _rr;              // relative to the rotating air
+    const _psiA = visualTheta - gimbalRad;
+    const _vAx = _vT * Math.sin(_psiA) - _vUp * Math.cos(_psiA); // speed along the exhaust direction
+    if (_vAx > 0) {
+      const _rho = airDensity(_rr - CONFIG.EARTH_RADIUS);
+      const _q = 0.5 * _rho * _vAx * _vAx;
+      ram = Math.max(0, Math.min(0.9, (_q / (_q + 8000)) * (1.2 - 0.6 * totalThrottle)));
+    }
+  }
+  const tTurb = tNow * (1 + 1.2 * ram);
+  const flameLen = H * (0.6 + 1.6 * totalThrottle) * lenMul * (1 - 0.5 * ram);
   
   // fullShift used to horizontally offset the flame tip to fake a
 // gimbal lean — no longer needed now that the outer ctx.rotate
@@ -1352,10 +1707,11 @@ const fullShift = 0;
     for (let i = 1; i <= segments; i++) {
       const f = i / segments;
       const y = l * f;
-      const w = startW + (endW - startW) * f;
+      const w = startW + (endW * (1 + 1.0 * ram) - startW) * f;
       const grow = 0.15 + 1.1 * f * f;
-      const wob = Math.sin(f * 4.5 + tNow * 2.3 + seed) * w * 0.16 * grow +
-        Math.sin(f * 9.5 + tNow * 3.8 + seed * 1.4) * w * 0.08 * grow;
+      const wob = Math.sin(f * 4.5 + tTurb * 2.3 + seed) * w * 0.16 * grow +
+        Math.sin(f * 9.5 + tTurb * 3.8 + seed * 1.4) * w * 0.08 * grow +
+        Math.sin(f * 15 + tTurb * 2.9 + seed * 2.3) * w * 0.12 * ram * grow;
       ctx.lineTo(-w / 2 - wob + layerShift * f, y);
     }
     const capW = endW,
@@ -1371,10 +1727,11 @@ if (isSingleNozzle) {
     for (let i = segments; i >= 0; i--) {
       const f = i / segments;
       const y = l * f;
-      const w = startW + (endW - startW) * f;
+      const w = startW + (endW * (1 + 1.0 * ram) - startW) * f;
       const grow = 0.15 + 1.1 * f * f;
-      const wob = Math.sin(f * 4.5 + tNow * 2.3 + seed + 1.9) * w * 0.16 * grow +
-        Math.sin(f * 9.5 + tNow * 3.8 + seed * 1.4 + 0.8) * w * 0.08 * grow;
+      const wob = Math.sin(f * 4.5 + tTurb * 2.3 + seed + 1.9) * w * 0.16 * grow +
+        Math.sin(f * 9.5 + tTurb * 3.8 + seed * 1.4 + 0.8) * w * 0.08 * grow +
+        Math.sin(f * 15 + tTurb * 2.9 + seed * 2.3) * w * 0.12 * ram * grow;
       ctx.lineTo(w / 2 + wob + layerShift * f, y);
     }
     ctx.closePath();
@@ -1397,10 +1754,10 @@ if (isSingleNozzle) {
     const y = flameLen * f;
     const w = (W * 1.0 * plumeScale * widthMul + (W * 2.7 * plumeScale * widthMul * trailMul - W * 1.0 * plumeScale * widthMul) * f);
     const side = i % 2 === 0 ? 1 : -1;
-    const drift = Math.sin(tNow * 1.6 + i * 2.1) * w * 0.18;
+    const drift = Math.sin(tNow * 1.6 + i * 2.1) * w * 0.18 * (1 + 2.5 * ram);
     const bx = side * (w * 0.42 + drift) + fullShift * f;
-    const by = y + Math.cos(tNow * 1.3 + i) * w * 0.08;
-    const r = w * (0.2 + 0.08 * Math.sin(i * 1.9 + tNow));
+    const by = y + Math.cos(tNow * 1.3 + i) * w * 0.08 - ram * w * 0.45 * f;
+    const r = w * (0.2 + 0.08 * Math.sin(i * 1.9 + tNow)) * (1 + 0.8 * ram);
     const bg = ctx.createRadialGradient(bx, by, 0, bx, by, r);
     bg.addColorStop(0, PAL.puff_hi);
     bg.addColorStop(1, PAL.puff_lo);
@@ -1453,6 +1810,89 @@ if (isSingleNozzle) {
   ctx.ellipse(0, W * 0.05, W * 0.42 * plumeScale * widthMul, W * 0.2 * plumeScale * widthMul, 0, 0, Math.PI * 2);
   ctx.fill();
   ctx.globalCompositeOperation = 'source-over';
+  // ---- Ground impingement: plume hits the surface and fans out sideways ----
+  // Drawn in the flame frame (origin = nozzle exit, +y along the plume axis).
+  // In that frame the ground is a line tilted by psi, so after
+  // translate(impact) + rotate(psi) the ground is local y=0 and "up" is -y.
+  if (_gHBasePx !== null) {
+    const psi = visualTheta - gimbalRad;
+    const cosPsi = Math.cos(psi);
+    const hO = _gHBasePx - bellExitY_px * cosPsi;          // nozzle-exit height over surface (px)
+    const Lhit = cosPsi > 0.05 ? Math.max(0, hO) / cosPsi : Infinity;
+    const contact = Math.max(0, Math.min(1, 1 - Lhit / flameLen));
+    if (contact > 0.01) {
+      const ix = hO >= 0 ? 0 : -hO * Math.sin(psi);
+      const iy = hO >= 0 ? Lhit : hO * Math.cos(psi);
+      const baseW = W * plumeScale * widthMul;
+      const widthHere = baseW * (1.0 + 1.7 * trailMul * Math.min(1, Lhit / flameLen));
+      const Ls = baseW * (2.4 + 7.0 * contact) * (0.7 + 0.5 * totalThrottle);
+      const th = Ls * (0.10 + 0.10 * contact);
+
+      const sheet = (side, len, thick, seed) => {
+        const segs = 12;
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.lineTo(0, -thick);
+        for (let i = 1; i <= segs; i++) {
+          const f = i / segs;
+          const env = Math.pow(1 - f, 0.55);
+          const wob = 1 + 0.22 * Math.sin(f * 9 + tNow * 3.1 + seed) +
+                          0.12 * Math.sin(f * 17 + tNow * 5.3 + seed * 1.7);
+          ctx.lineTo(side * len * f, -thick * env * wob);
+        }
+        ctx.lineTo(side * len, 0);
+        ctx.closePath();
+      };
+      const fillSheet = (side, len, thick, seed, hi, mid, lo, blur) => {
+        const g = ctx.createLinearGradient(0, 0, side * len, 0);
+        g.addColorStop(0, hi); g.addColorStop(0.45, mid); g.addColorStop(1, lo);
+        ctx.filter = 'blur(' + blur + 'px)';
+        sheet(side, len, thick, seed);
+        ctx.fillStyle = g;
+        ctx.fill();
+        ctx.filter = 'none';
+      };
+
+      ctx.save();
+      ctx.translate(ix, iy);
+      ctx.rotate(psi);
+      ctx.globalAlpha = Math.min(1, contact * 2.2);
+
+      // warm light pooled on the surface around the impact
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.save();
+      ctx.scale(1, 0.16);
+      const pool = ctx.createRadialGradient(0, 0, 0, 0, 0, Ls * 1.3);
+      pool.addColorStop(0, PAL.g1_hi);
+      pool.addColorStop(1, PAL.g1_lo);
+      ctx.fillStyle = pool;
+      ctx.beginPath(); ctx.arc(0, 0, Ls * 1.3, 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
+
+      for (const side of [-1, 1]) {
+        const seed = side > 0 ? 1.3 : 4.1;
+        ctx.globalCompositeOperation = 'source-over';
+        fillSheet(side, Ls * 1.25, th * 1.6, seed + 9, PAL.g1_hi, PAL.g1_mid, PAL.g1_lo, 14);   // hazy outer
+        ctx.globalCompositeOperation = 'lighter';
+        fillSheet(side, Ls, th, seed, PAL.g2_hi, PAL.g2_mid, PAL.g2_lo, 8);                    // body
+        fillSheet(side, Ls * 0.62, th * 0.5, seed + 3, PAL.g3_hi, PAL.g3_mid, PAL.g3_lo, 4);   // hot core
+      }
+
+      // bright stagnation spot where the plume lands
+      ctx.save();
+      ctx.scale(1, 0.45);
+      const hot = ctx.createRadialGradient(0, 0, 0, 0, 0, widthHere * 0.9);
+      hot.addColorStop(0, PAL.flare_hi);
+      hot.addColorStop(0.5, PAL.flare_mid);
+      hot.addColorStop(1, PAL.flare_lo);
+      ctx.fillStyle = hot;
+      ctx.beginPath(); ctx.arc(0, 0, widthHere * 0.9, 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
+
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.restore();
+    }
+  }
   // Balanced restore for the outer ctx.save()+translate(0, bellExitY_px)
   // at the top of this block. Without it, every flame frame leaked one
   // save entry and one translate onto the canvas state stack.
@@ -1698,47 +2138,6 @@ drawRocketArt(ctx, mW, mH, mpp, {
       ctx.restore();
       }
       
-      function drawGroundSteam(altitude) {
-  const totalThrust = ENGINES.reduce((s, e) => s + e.currentF, 0);
-  const maxThrust = ENGINES.reduce((s, e) => s + e.Fmax, 0);
-  const throttle = maxThrust > 0 ? totalThrust / maxThrust : 0;
-  if (throttle < 0.05 || altitude > 180) return;
-  
-  
-  
-  // Point on Earth's surface directly beneath the camera.
-  const cam = cameraWorldPosition();
-  const camR = Math.hypot(cam.x, cam.y) || 1;
-  const groundX = cam.x * (CONFIG.EARTH_RADIUS / camR);
-  const groundY = cam.y * (CONFIG.EARTH_RADIUS / camR);
-  const [cx, groundPy] = worldToScreen(groundX, groundY);
-  
-  if (groundPy < -200 || groundPy > canvas.height + 400) return;
-  
-  const fade = 1 - Math.min(1, altitude / 180); // full strength at the pad, gone by ~180m
-  const mpp = metersPerPixel();
-  const spread = (140 / mpp) * (0.6 + 0.4 * throttle) * fade;
-  const t = performance.now() * 0.0012;
-  
-  ctx.save();
-  ctx.filter = 'blur(16px)';
-  const blobs = 8;
-  for (let i = 0; i < blobs; i++) {
-    const f = i / (blobs - 1);
-    const bx = cx + (f - 0.5) * spread * 1.9 + Math.sin(t + i * 1.3) * spread * 0.05;
-    const by = groundPy - Math.abs(Math.sin(f * Math.PI)) * spread * 0.22 + Math.cos(t * 0.8 + i) * spread * 0.03;
-    const r = spread * (0.22 + 0.09 * Math.sin(i * 1.7 + t));
-    const g = ctx.createRadialGradient(bx, by, 0, bx, by, r);
-    g.addColorStop(0, `rgba(255,255,255,${0.85 * fade})`);
-    g.addColorStop(1, 'rgba(255,255,255,0)');
-    ctx.fillStyle = g;
-    ctx.beginPath();
-    ctx.arc(bx, by, r, 0, Math.PI * 2);
-    ctx.fill();
-  }
-  ctx.filter = 'none';
-  ctx.restore();
-}
 
 function renderFrame() {
   if (!state.bodies || !state.bodies.length) return;
@@ -1767,8 +2166,9 @@ drawOceanArea();
 drawRemoteArea();
 drawPredictedTrajectory();
 drawLaunchPad();
-drawGroundSteam(altitude);
+drawGroundFx('back');
     drawRocket();
+    drawGroundFx('front');
   drawActiveBodyIndicator();
   drawSeparationFlash();
   drawPayloadReleaseCue();
