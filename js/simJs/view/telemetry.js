@@ -64,7 +64,7 @@ const NOTATION_GLOSSARY = {
 // (new id) or the sim restarts (bodies rebuilt).
 // ---------------------------------------------------------------------------
 const _tempState = new Map();
-const _THERMAL_TAU_S = 25;
+const _THERMAL_TAU_S = 12;
 
 function _thermalTickOne(b, simTime) {
   if (!b || !b.id) return;
@@ -88,7 +88,12 @@ function _thermalTickOne(b, simTime) {
   const Teq = skinEquilibriumK(alt_m, speedRel);
   const alpha = 1 - Math.exp(-dt / _THERMAL_TAU_S);
   st.T += (Teq - st.T) * alpha;
-  if (st.T > st.peakK) st.peakK = st.T;
+  // Peak tracks the EQUILIBRIUM temperature (thermal environment
+  // intensity), not the lagged skin T. Reentry T_eq hits ~1400-1800 K
+  // on a falling booster but the 12 s thermal lag only carries skin
+  // to ~1100 K in the ~20 s peak-heating window -- so tracking T
+  // alone would under-report how hot things actually GOT.
+  if (Teq > st.peakK) st.peakK = Teq;
 }
 
 // Time from current 2-body state to the next apogee (seconds). Exact

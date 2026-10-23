@@ -95,7 +95,7 @@
 
   /* ---------- Thermal state — derived, main-thread only ---------- */
   const _tempState = new Map();
-  const _THERMAL_TAU_S = 25;
+  const _THERMAL_TAU_S = 12;
   window.__tempState = _tempState;
   window.__THERMAL_TAU_S = _THERMAL_TAU_S;
   window.__thermalTickOne = function (b, simTime, dt) {
@@ -117,7 +117,9 @@
     const Teq = skinEquilibriumK(alt_m, speedRel);
     const alpha = 1 - Math.exp(-dt / _THERMAL_TAU_S);
     st.T += (Teq - st.T) * alpha;
-    if (st.T > st.peakK) st.peakK = st.T;
+    // Peak = max instantaneous thermal environment (not lagged T) — see
+    // telemetry.js for the full reasoning. Reentry T_eq peaks 1400+ K.
+    if (Teq > st.peakK) st.peakK = Teq;
   };
   window.__thermalTickAll = function (dt) {
     if (typeof state === 'undefined' || !state || !state.bodies) return;
