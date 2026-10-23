@@ -138,6 +138,11 @@ footer{margin-top:50px;font:300 12.5px/1.65 var(--sans);letter-spacing:.01em;col
 "use strict";
 const $=id=>document.getElementById(id),rnd=Math.random,RM=matchMedia('(prefers-reduced-motion:reduce)').matches;
 let LIM=0;
+
+/* ===== BACKGROUND FORMULAE DRIFT SWITCH =====
+   true  -> background mein formulae drift karte rahenge (default)
+   false -> formulae band, background saaf rahega */
+const DRIFT_ENABLED = false;
 function vars(){
   const n=document.querySelector('nav'),c=document.querySelector('.cta');
   if(n)document.documentElement.style.setProperty('--nh',(n.offsetHeight+10)+'px');
@@ -296,7 +301,8 @@ function size(){
   cx.setTransform(d,0,0,d,0,0);fc.setTransform(d,0,0,d,0,0);
   document.documentElement.style.setProperty('--pr',H*1.4+'px');document.documentElement.style.setProperty('--ps',H*.84+'px');document.documentElement.style.setProperty('--hr',SH*.75+'px');vars();
   R=Math.max(W*.8,SH*.45);cxE=W/2;cyE=SH*.82+R;A0a=-Math.PI/2-.4*W/R;mono=getComputedStyle(document.body).fontFamily;
-  buildFl();for(const r of hist)remap(r);
+if(DRIFT_ENABLED)buildFl();else buildStars();   // <- yahan switch
+for(const r of hist)remap(r);
 }
 /* scroll parallax: CSS scroll-timeline (compositor, no lag); JS fallback where unsupported */
 if(!(window.CSS&&CSS.supports&&CSS.supports('animation-timeline','scroll()'))){let q=0;
@@ -350,6 +356,83 @@ function drift(now){
     fc.restore()}
   fc.globalAlpha=1;
 }
+/* ---- starfield + shooting stars (jab DRIFT_ENABLED false ho) ---- */
+let starList=[],shootList=[],starT=0,nextShoot=0;
+function buildStars(){
+  starList=[];shootList=[];starT=0;
+  if(!W||!H)return;
+  /* stratified grid = evenly spaced, phir thoda jitter */
+  const N=Math.max(70,Math.min(240,Math.round(W*H/11000)));
+  const cols=Math.max(4,Math.round(Math.sqrt(N*W/H))),rows=Math.ceil(N/cols);
+  const cells=shuf([...Array(cols*rows).keys()]).slice(0,N);
+  for(let i=0;i<N;i++){
+    const c=cells[i],gx=(c%cols+.5)/cols,gy=(Math.floor(c/cols)+.5)/rows;
+    starList.push({
+      x:Math.max(2,Math.min(W-2,gx*W+(rnd()-.5)*(W/cols)*.75)),
+      y:Math.max(2,Math.min(H-2,gy*H+(rnd()-.5)*(H/rows)*.75)),
+      r:.35+rnd()*1.15,
+      base:.22+rnd()*.5,
+      amp:.12+rnd()*.32,
+      sp:.35+rnd()*1.4,
+      ph:rnd()*6.2832,
+      hue:rnd()<.1?'#a5d8ff':rnd()<.07?'#ffe6b0':'#ffffff'
+    });
+  }
+  starList.sort((a,b)=>a.r-b.r);
+  nextShoot=(typeof performance!=='undefined'?performance.now():Date.now())+1800+rnd()*3500;
+}
+function spawnShoot(){
+  const fromLeft=rnd()<.5,dir=fromLeft?(.32+rnd()*.45):(Math.PI-(.32+rnd()*.45));
+  const spd=850+rnd()*650;
+  shootList.push({
+    x:fromLeft?rnd()*W*.55:W-rnd()*W*.55,
+    y:rnd()*H*.4,
+    vx:Math.cos(dir)*spd,vy:Math.sin(dir)*spd,spd,
+    len:110+rnd()*170,w:.9+rnd()*1.2,life:0,ttl:.55+rnd()*.6
+  });
+  if(shootList.length>3)shootList.shift();
+}
+function stars(now){
+  const dt=RM?0:(starT?Math.min(.05,(now-starT)/1000):0);
+  starT=now;
+  fc.clearRect(0,0,W,H);
+  fc.save();
+  /* planet disc ke andar stars na aayein */
+  fc.beginPath();fc.rect(0,0,W,H);fc.arc(cxE,cyE,R,0,6.2832,true);fc.clip();
+  const tw=(RM?0:now)*.001;
+  for(const s of starList){
+    const a=Math.max(.04,Math.min(1,s.base+s.amp*Math.sin(tw*s.sp+s.ph)));
+    if(s.r>1.05){
+      fc.globalAlpha=a*.16;fc.fillStyle='#cfe9ff';
+      fc.beginPath();fc.arc(s.x,s.y,s.r*3.2,0,6.2832);fc.fill();
+    }
+    fc.globalAlpha=a;fc.fillStyle=s.hue;
+    fc.beginPath();fc.arc(s.x,s.y,s.r,0,6.2832);fc.fill();
+  }
+  fc.globalAlpha=1;
+  if(!RM&&now>nextShoot){spawnShoot();nextShoot=now+2600+rnd()*7000;}
+  fc.lineCap='round';
+  for(let i=shootList.length-1;i>=0;i--){
+    const sh=shootList[i];
+    sh.life+=dt;sh.x+=sh.vx*dt;sh.y+=sh.vy*dt;
+    const p=sh.life/sh.ttl;
+    if(p>=1||sh.x<-350||sh.x>W+350||sh.y>H+350){shootList.splice(i,1);continue}
+    const f=Math.sin(Math.PI*Math.min(1,p));
+    const tx=sh.x-sh.vx/sh.spd*sh.len,ty=sh.y-sh.vy/sh.spd*sh.len;
+    const g=fc.createLinearGradient(tx,ty,sh.x,sh.y);
+    g.addColorStop(0,'rgba(255,255,255,0)');
+    g.addColorStop(.55,'rgba(150,215,255,'+(.45*f).toFixed(3)+')');
+    g.addColorStop(1,'rgba(255,255,255,'+(.95*f).toFixed(3)+')');
+    fc.strokeStyle=g;fc.lineWidth=sh.w;
+    fc.beginPath();fc.moveTo(tx,ty);fc.lineTo(sh.x,sh.y);fc.stroke();
+    fc.globalAlpha=f*.35;fc.fillStyle='#9fd8ff';
+    fc.beginPath();fc.arc(sh.x,sh.y,sh.w*4,0,6.2832);fc.fill();
+    fc.globalAlpha=f;fc.fillStyle='#fff';
+    fc.beginPath();fc.arc(sh.x,sh.y,sh.w,0,6.2832);fc.fill();
+  }
+  fc.globalAlpha=1;
+  fc.restore();
+}
 function trace(r,p){const n=r.xy.length/2,m=Math.max(2,Math.floor(n*p));cx.moveTo(cxE+r.xy[0],cyE+sy+r.xy[1]);for(let i=1;i<m;i++)cx.lineTo(cxE+r.xy[2*i],cyE+sy+r.xy[2*i+1])}
 function note(r,i,dx,dy,L,col){
   const x=cxE+r.xy[2*i],y=cyE+sy+r.xy[2*i+1];if(y<-20||y>H)return;
@@ -395,8 +478,8 @@ function frame(now){
   cx.strokeStyle='rgba(53,214,255,.75)';cx.beginPath();cx.arc(cxE,cy,R*(1+TGT*XA),0,6.2832);cx.stroke();cx.setLineDash([]);
   cx.font='10px '+mono;cx.fillStyle='rgba(255,176,32,.9)';cx.fillText('100 km (Kármán)',12,cy-R*(1+.0157*XA)+14);
   cx.fillStyle='rgba(53,214,255,.95)';cx.fillText('target 400 km',12,cy-R*(1+TGT*XA)-6);
-  drift(now);
-  const sty=[['#ff4d5e',.4,1],['#ff4d5e',.09,1],['#35d6ff',.85,1.3],['#35d6ff',.33,1]];
+if(DRIFT_ENABLED)drift(now);else stars(now);    // <- yahan switch
+const sty=[['#ff4d5e',.4,1],['#ff4d5e',.09,1],['#35d6ff',.85,1.3],['#35d6ff',.33,1]];
   for(let gi=0;gi<4;gi++){
     cx.globalAlpha=sty[gi][1]*fade;cx.strokeStyle=sty[gi][0];cx.lineWidth=sty[gi][2];cx.beginPath();
     for(const r of hist){if(!r.xy)continue;const p=RM?(now>=r.cs?1:0):ease((now-r.st)/DUR);if(p<=0)continue;
