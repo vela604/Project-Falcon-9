@@ -36,7 +36,33 @@
     },
 
     // ---- Baseline (raw defaults; reproduces manual 590.46 s run) ----
-    baselineRaw:     { G: 0.61, T: 4.82, bias: 0.59, lead: 5.64,  meco: 52612 },
+    baselineRaw: (function () {
+  // Auto-sync from guideConfigDefaults.js so the tuner's "baseline" always
+  // matches whatever the preset file currently ships. Never stale.
+  try {
+    if (typeof getGuideDefaultPreset === 'function') {
+      const p = getGuideDefaultPreset('leoInsertionV3');
+      if (p && p.constants && p.constants.ascent && p.constants.insertion) {
+        const a = p.constants.ascent, i = p.constants.insertion;
+        if (Number.isFinite(a.PUSH_MAX_GIMBAL_DEG) &&
+            Number.isFinite(a.PUSH_T_S) &&
+            Number.isFinite(a.MECO_TARGET_BOOSTER_FUEL_KG) &&
+            Number.isFinite(i.STAGE_BURN_AOA_BIAS_DEG) &&
+            Number.isFinite(i.CIRC_TRIGGER_LEAD_S)) {
+          return {
+            G: a.PUSH_MAX_GIMBAL_DEG,
+            T: a.PUSH_T_S,
+            bias: i.STAGE_BURN_AOA_BIAS_DEG,
+            lead: i.CIRC_TRIGGER_LEAD_S,
+            meco: a.MECO_TARGET_BOOSTER_FUEL_KG,
+          };
+        }
+      }
+    }
+  } catch (e) {}
+  // Fallback to current preset literal
+  return { G: 0.64, T: 4.82, bias: 0.827, lead: 5.64, meco: 52612 };
+})(),
     baselineSnapped: { A: 13.94, bias: 0.59, lead: 5.525,         meco: 52612 }, // success-criteria #6
     baselineResult: {
       deployTimeS: 590.46, apogeeKm: 320.111, perigeeKm: 319.999,

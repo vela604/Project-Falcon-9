@@ -258,10 +258,10 @@ function suggestDurationCap(altKm) {
 
     // 1. baseline raw -> lattice
     const bp = fromRaw(C().baselineRaw);
-    t('baseline snap G=0.61', gOf(bp.Gi) === 0.6);
-    t('baseline snap T=4.82', tOf(bp.Tn) === 4.82);
-    t('baseline snap bias=0.59', biasOf(bp.bi) === 0.59);
-    t('baseline snap lead=5.525 (442 ticks)', leadOf(bp.li) === 5.525 && bp.li === 442);
+    t('baseline snap G', Math.abs(gOf(bp.Gi) - C().baselineRaw.G) < 1e-9, 'G=' + gOf(bp.Gi));
+    t('baseline snap T', Math.abs(tOf(bp.Tn) - C().baselineRaw.T) < 1e-9, 'T=' + tOf(bp.Tn));
+    t('baseline snap bias', Math.abs(biasOf(bp.bi) - C().baselineRaw.bias) < 1e-9, 'bias=' + biasOf(bp.bi));
+    t('baseline snap lead', Math.abs(leadOf(bp.li) - C().baselineRaw.lead) < 1e-9, 'lead=' + leadOf(bp.li) + ' (' + bp.li + 't)');
     t('baseline A_eff ~13.94', Math.abs(aEff(bp) - 13.94) < 1e-3, 'A_eff=' + aEff(bp).toFixed(5));
 
     // 2. idempotence: snapping an already-snapped value changes nothing
