@@ -20,6 +20,22 @@ const SimLighting = (function () {
   const TAU = Math.PI * 2;
   const S = { enabled: true, assist: true, hour0: 10 };
 
+  // __TEMP_SMOOTH__ — wall-clock exponential smoother. Any lighting change
+  // (slider drag, START, day/night crossing) fades in over ~0.5 s instead of
+  // snapping. Per-key so slow consumers don't drag fast ones down; first
+  // call seeds directly (no startup fade). Rate 0.12 ≈ 95% convergence in
+  // ~25 frames (0.42 s at 60 fps).
+  const _tsmooth = Object.create(null);
+  function _tsm(key, target, rate) {
+    if (!Number.isFinite(target)) return target;
+    const prev = _tsmooth[key];
+    if (prev === undefined) { _tsmooth[key] = target; return target; }
+    const r = (rate != null) ? rate : 0.12;
+    const next = prev + (target - prev) * r;
+    _tsmooth[key] = next;
+    return next;
+  }
+
   const clamp01 = x => (x < 0 ? 0 : x > 1 ? 1 : x);
   const smooth = (a, b, x) => { const t = clamp01((x - a) / (b - a)); return t * t * (3 - 2 * t); };
   const mix = (a, b, t) => a + (b - a) * t;
@@ -92,7 +108,7 @@ const SimLighting = (function () {
   // ---- sky ---------------------------------------------------------------
   // c = legacy altitude-based sky colour. Returns gradient end colours.
   function skyColors(c, dens) {
-    const se = camSE();
+    const se = _tsm('skySE', camSE());
     const day = isPlanet() ? 0 : groundDay(se);
     const night = [3, 4, 10];
     let bot = mixRGB(night, c, day);
@@ -181,7 +197,7 @@ const SimLighting = (function () {
   function drawBackdrop(ctx, cv, altitude) {
     if (!S.enabled) return;
     const dens = clamp01(airDensity(Math.max(0, altitude)) / CONFIG.SEA_LEVEL_DENSITY);
-    const se = camSE();
+    const se = _tsm('backdropSE', camSE());
     const day = isPlanet() ? 0 : groundDay(se);
     const starA = clamp01(1 - dens * day * 1.2);
     if (starA > 0.02) drawStars(ctx, cv, starA);
@@ -210,7 +226,7 @@ const SimLighting = (function () {
     ctx.beginPath(); ctx.arc(cx, cy, R, 0, TAU); ctx.clip();
     if (R > 2e4) {
       // Zoomed in: the terminator is far outside the view, colour is uniform.
-      const se = camSE(), day = groundDay(se), tw = twilight(se);
+      const se = _tsm('earthSE', camSE()), day = groundDay(se), tw = twilight(se);
       ctx.fillStyle = `rgba(2,5,14,${(0.62 * (1 - day)).toFixed(3)})`;
       ctx.fillRect(0, 0, cv.width, cv.height);
       if (tw > 0.01) { ctx.fillStyle = `rgba(255,120,50,${(0.10 * tw).toFixed(3)})`; ctx.fillRect(0, 0, cv.width, cv.height); }
@@ -275,7 +291,8 @@ const SimLighting = (function () {
     const s = sunDir(), th = body.theta || 0, R = CONFIG.EARTH_RADIUS;
     const r = Math.hypot(body.rx, body.ry) || 1;
     const se = (body.rx * s.x + body.ry * s.y) / r;
-    const lit = litFactor(body);
+    const _rk = 'rl:' + (body.id || '');
+    const lit = _tsm(_rk + ':lit', litFactor(body));
     const dens = clamp01(airDensity(Math.max(0, r - R)) / CONFIG.SEA_LEVEL_DENSITY);
     const day = groundDay(se);
     let amb = 0.10 + 0.38 * dens * day;
@@ -283,8 +300,8 @@ const SimLighting = (function () {
     _L.lx = s.x * Math.cos(th) + s.y * Math.sin(th);
     _L.ly = -s.x * Math.sin(th) + s.y * Math.cos(th);
     _L.lit = lit;
-    _L.amb = Math.min(0.75, amb);
-    _L.tint = (1 - smooth(0.02, 0.40, se)) * smooth(0.01, 0.25, dens);
+    _L.amb = _tsm(_rk + ':amb', Math.min(0.75, amb));
+    _L.tint = _tsm(_rk + ':tint', (1 - smooth(0.02, 0.40, se)) * smooth(0.01, 0.25, dens));
     return _L;
   }
 

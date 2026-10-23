@@ -580,7 +580,18 @@ window.addEventListener('resize', () => {
 
       if (typeof SimLighting !== 'undefined') {
         const _ls = SimLighting.getState(), _lk = JSON.stringify(_ls);
-        if (_lk !== globalThis.__lastLightKey) { globalThis.__lastLightKey = _lk; renderWorker.postMessage({ type: 'lighting', state: _ls }); }
+        if (_lk !== globalThis.__lastLightKey) {
+          globalThis.__lastLightKey = _lk;
+          renderWorker.postMessage({ type: 'lighting', state: _ls });
+          // __lighting_force_repaint: render worker normally only repaints on
+          // fresh snapshots. During pause, slider drags update lighting state
+          // but never trigger a repaint until START — causing a frozen noon→
+          // fresh dawn 'pop'. Nudge the camera message with a fresh tick stamp
+          // so the render worker re-processes it (idempotent for camera state).
+          if (typeof camera !== 'undefined') {
+            renderWorker.postMessage({ type: 'camera', camera: Object.assign({}, camera, { _tick: (globalThis.__repaintTick = (globalThis.__repaintTick || 0) + 1) }) });
+          }
+        }
       }
       requestAnimationFrame(pushRenderContext);
     };
