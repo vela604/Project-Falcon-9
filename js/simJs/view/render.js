@@ -1096,7 +1096,7 @@ function drawSeparationFlash() {
   const [px, py] = worldToScreen(f.rx, f.ry);
   
   const frac = age / 0.35; // 0 → 1 over the flash lifetime
-  const radius = 2 + frac * 30; // screen pixels
+  const radius = 2 + frac * 40; // screen pixels
   const alpha = (1 - frac) * 0.85;
   
   ctx.save();
@@ -1698,14 +1698,25 @@ function _drawPlumeFx(c, o) {
   strip(0, envHW(HALO), 1.0, S2(topRamp(P.halo)), Math.min(1, haloBoost), 0.0, 'source-over', 1, true);
   if (P.smoke) strip(0, envHW(1.12), 1.0, S2(topRamp(P.smoke)), 1, 5.0, 'source-over', 1.3, true);
   strip(0, envHW(1.0), 0.92, S2(ramped(P.body, vm / 0.92)), 1, 2.1, 'source-over', 1, true);
-  const innerLen = Math.min(0.85, 0.60 * (1 + 0.25 * (sq - 1)));
-  strip(0, envHW(0.55), innerLen, S2(ramped(P.inner, vm / innerLen)), 1, 4.4, 'source-over', 1, true);
+  // Altitude physics: in thin air the plume is large, diffuse and less luminous, and the
+  // hot inner structure is short. altShrink shortens inner/core, lumAlt dims overall brightness.
+  const altShrink = 1 - 0.35 * Math.min(1, Math.max(0, k) / 3);
+  const lumAlt = 0.45 + 0.55 * Math.pow(Math.min(1, pa / 101325), 0.35);
+  // Feathered layer: several nested, low-alpha strips so there is no hard edge/band.
+  const soft = (sc, len, arr, alpha, seed) => {
+    const scs = [1, 0.8, 0.6, 0.42];
+    scs.forEach((m, i) => {
+      strip(0, envHW(sc * m), len * (1 - 0.06 * i), S2(ramped(arr, vm / len)), alpha * 0.34, seed + i * 0.9, 'source-over', 1, true);
+    });
+  };
+  const innerLen = Math.min(0.6, 0.45 * (1 + 0.25 * (sq - 1))) * altShrink;
+  soft(0.72, innerLen, P.inner, 1, 4.4);
 
   // merged hot core (more engines = denser, so it reaches further); drawn before
   // the mask so it carries the same flowing texture as the rest of the plume
   if (hasJets && sq > 1.4) {
-    const coreLen = Math.min(0.5, 0.22 * (1 + 0.25 * (sq - 1)));
-    strip(0, envHW(0.26), coreLen, S2(ramped(P.core, vm / coreLen)), Math.min(0.95, 0.55 + 0.2 * sq), 6.7, 'source-over', 1, true);
+    const coreLen = Math.min(0.5, 0.22 * (1 + 0.25 * (sq - 1))) * altShrink;
+    soft(0.34, coreLen, P.core, Math.min(0.95, 0.55 + 0.2 * sq), 6.7);
   }
 
   // ---- flowing turbulence mask ----
@@ -1725,7 +1736,7 @@ function _drawPlumeFx(c, o) {
   drawNoise(1.1, 1.9, 26, 0.36, 0);
   drawNoise(0.60, 1.1, 46, 0.28, 97);
   drawNoise(0.30, 0.8, 80, 0.18, 41);    // fine flicker
-  const S = 0.84 + 0.12 * Math.min(1, ram);   // stronger ragged/streaky tail
+  const S = 0.78 + 0.12 * Math.min(1, ram);   // stronger ragged/streaky tail
   const stopsV = [0, 0.08, 0.18, 0.3, 0.5, 1];
   T.globalAlpha = 1;
   T.globalCompositeOperation = 'destination-in';
@@ -1762,7 +1773,10 @@ function _drawPlumeFx(c, o) {
     const jetGain = 1 / Math.sqrt(Math.max(1, jets.length * 0.55));
     jets.forEach((j, idx) => {
       const flick = (0.88 + 0.12 * Math.sin(t * 9 + idx * 2.1)) * jetGain;
-      const lenJ = Math.max(0.06, Math.min(0.7, 22 * j.r / L));
+      // jets merge sooner at altitude (plumes expand and collide) and the centre jet,
+      // shielded by the ring, merges soonest
+      const centreK = (Math.abs(j.x) < j.r * 0.5) ? 0.7 : 1;
+      const lenJ = Math.max(0.05, Math.min(0.5, 22 * j.r / L * centreK / (1 + 0.3 * Math.max(0, k))));
       const hwJ = (v) => j.r * (1 + (0.9 + 0.4 * Math.max(0, k)) * (1 - Math.exp(-v * L / (5 * j.r))));
       const cx0 = j.x * kx;
       strip(cx0, hwJ, lenJ, S2(P.jet), 0.9 * j.lvl * flick, idx * 1.7 + 3, 'lighter', 0.6, false);
@@ -1780,7 +1794,7 @@ function _drawPlumeFx(c, o) {
       b.globalCompositeOperation = 'source-over';
     });
   } else {
-    strip(0, envHW(0.18 / 0.55 * 0.55), 0.30, S2(P.core), 1, 6.7, 'source-over', 1, true);
+    soft(0.26, 0.30 * altShrink, P.core, 1, 6.7);
     b.globalCompositeOperation = 'lighter';
     if (diaVis > 0.03) {
       for (let i = 0; i < 6; i++) {
@@ -1794,7 +1808,7 @@ function _drawPlumeFx(c, o) {
   }
 
   // ---- composite to the main canvas ----
-  const a = Math.min(1, 0.55 + 0.45 * thrEff) * (1 + 0.04 * Math.sin(t * 13) * Math.sin(t * 4.1) + (Math.random() - 0.5) * 0.06);
+  const a = Math.min(1, 0.55 + 0.45 * thrEff) * lumAlt * (1 + 0.04 * Math.sin(t * 13) * Math.sin(t * 4.1) + (Math.random() - 0.5) * 0.06);
   c.save();
   c.imageSmoothingEnabled = true;
   if ('imageSmoothingQuality' in c) c.imageSmoothingQuality = 'high';
@@ -1832,7 +1846,7 @@ function _plumeLengthM(body, totalThrust, maxSingleF, single, thr) {
       dm = getEngineBellDims_m(body.members[0]).d;
   } catch (e) { dm = 0; }
   if (!(dm > 0) || !(maxSingleF > 0)) return Hm * (0.6 + 1.6 * thr);
-  return Math.max(3 * dm, 30 * dm * Math.sqrt(Math.max(0, totalThrust / maxSingleF)));
+  return Math.max(3 * dm, 40 * dm * Math.sqrt(Math.max(0, totalThrust / maxSingleF)));
 }
 
 function drawBodyRocket(body, isActive, bodyIdx) {
