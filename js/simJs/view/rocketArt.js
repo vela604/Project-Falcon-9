@@ -538,7 +538,19 @@ function _interstageDetail(ctx, W, H) {
 function _ogiveShade(ctx, W, silhouette, trace) {
   if (!ROCKET_FX.ogive || W < 4) return;
   const _RL = globalThis._ROCKET_LIGHT;
-  const sl = _RL ? (_RL.lx >= 0 ? 1 : -1) : -1;                       // lit side
+  // Sun-side sign for the ogive / fairing highlight. Deadbanded on |lx|
+// to prevent a sign flip when lx is numerically tiny. On the pad at
+// local noon, lx starts at exactly 0 (sun aligned with body axis) and
+// becomes -sin(ω·dt) ≈ -9e-7 one tick after START — the highlight was
+// visibly snapping from one side to the other. Below 0.02 the sun is
+// essentially aligned with the body axis; the sided highlight has no
+// visible reason to flip, so pin the last stable sign.
+const _lxDeadband = 0.02;
+const sl = !_RL ? -1
+  : (_RL.lx >=  _lxDeadband ?  1
+  : (_RL.lx <= -_lxDeadband ? -1
+  : (globalThis.__slKeep || 1)));
+if (_RL) globalThis.__slKeep = sl;
   const s = ROCKET_FX.spec * (_RL ? _RL.lit * Math.min(1, 0.35 + Math.abs(_RL.lx)) : 1);
   ctx.save();
   silhouette();
