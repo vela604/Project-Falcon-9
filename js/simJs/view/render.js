@@ -1713,7 +1713,7 @@ const s0 = (hasJets && re > 0) ? Math.min(1, (reEng / re) * 0.97) : 1;   // star
   // Altitude physics: in thin air the plume is large, diffuse and less luminous, and the
   // hot inner structure is short. altShrink shortens inner/core, lumAlt dims overall brightness.
   const altShrink = 1 - 0.35 * Math.min(1, Math.max(0, k) / 3);
-  const lumAlt = 0.45 + 0.55 * Math.pow(Math.min(1, pa / 101325), 0.35);
+  const lumAlt = 0.80 + 0.20 * Math.pow(Math.min(1, pa / 101325), 0.35);
   // Feathered layer: several nested, low-alpha strips so there is no hard edge/band.
   const soft = (sc, len, arr, alpha, seed) => {
     const scs = [1, 0.8, 0.6, 0.42];
