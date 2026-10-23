@@ -213,6 +213,22 @@ function _thermalTickOneMember(b, m, idx, dt) {
   const Teq = (typeof skinEquilibriumK === 'function')
     ? skinEquilibriumK(alt_m, speedRel, heatingScale) : 288.15;
 
+  // ── Thermal debug (once per member) ────────────────────────────────
+  if (typeof window !== 'undefined') {
+    if (!window.__thermalDebugOnce) window.__thermalDebugOnce = {};
+    const _k = _memberKey(b, m, idx);
+    if (!window.__thermalDebugOnce[_k]) {
+      window.__thermalDebugOnce[_k] = 1;
+      const _bRole = (b.members && b.members[0] && b.members[0].stageRole) || 'solo';
+      const _mRole = (m && m.stageRole) || 'solo';
+      const _mW = (m && Number.isFinite(m.width)) ? m.width : '?';
+      const _mH = (m && Number.isFinite(m.height)) ? m.height : '?';
+      console.log('[thermal] body=' + _bRole + ' member=' + _mRole +
+        ' idx=' + idx + ' H=' + _mH + ' W=' + _mW +
+        ' shield=' + heatingScale.toFixed(3) + ' Teq=' + Teq.toFixed(0) + 'K');
+    }
+  }
+
   const key = _memberKey(b, m, idx);
   let st = _tempState.get(key);
   if (!st) { st = { T: 288.15, peakK: 288.15 }; _tempState.set(key, st); }
