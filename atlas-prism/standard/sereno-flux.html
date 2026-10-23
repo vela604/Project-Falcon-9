@@ -534,7 +534,7 @@
       '<label>coarse n <input type="number" id="oMn" step="1" min="3" value="7"></label>' +
       '</div>' +
       '<div class="row mode-row" data-modes="fm fg" style="display:none;">' +
-      '<label>MECO kg <input type="number" id="oMeco" step="1" value="62000"></label>' +
+      '<label>MECO kg <input type="number" id="oMeco" step="1" value="52612"></label>' +
       '</div>' +
       // Mode-specific G
       '<div class="row mode-row" data-modes="rr fm">' +
@@ -551,7 +551,7 @@
       '<label>G step <input type="number" id="oGstep" step="0.005" value="0.02"></label>' +
       '</div>' +
       '<div class="row mode-row" data-modes="fg" style="display:none;">' +
-      '<label>G <input type="number" id="oG" step="0.01" min="0" max="1.2" value="0.61"></label>' +
+      '<label>G <input type="number" id="oG" step="0.01" min="0" max="1.2" value="0.64"></label>' +
       '</div>' +
       // Common
       '<div class="row">' +
@@ -648,8 +648,8 @@
   }
 
   function panelZetaHtml() {
-    const sugMeco = S.last.meco != null ? S.last.meco : 62000;
-    const sugG = S.last.G != null ? S.last.G : 0.61;
+    const sugMeco = S.last.meco != null ? S.last.meco : 52612;
+    const sugG = S.last.G != null ? S.last.G : 0.64;
     const sugT = S.last.T != null ? S.last.T : 4.82;
     // (Suicide checkbox rendered by commonRowHtml below — shared via S.suicide)
     return '<h2>ZETA-HELIX 1R — bias landscape scan</h2>' +
@@ -662,8 +662,8 @@
       '<label>T <input type="number" id="zT" step="0.001" value="' + sugT + '"></label>' +
       '</div>' +
       '<div class="row">' +
-      '<label>bias lo <input type="number" id="zBlo" step="0.001" value="2.3"></label>' +
-      '<label>bias hi <input type="number" id="zBhi" step="0.001" value="2.9"></label>' +
+      '<label>bias lo <input type="number" id="zBlo" step="0.001" value="0.5"></label>' +
+      '<label>bias hi <input type="number" id="zBhi" step="0.001" value="1.1"></label>' +
       '<label>N results <input type="number" id="zN" step="1" min="2" value="' + ((S.pool && S.pool.n) || 9) + '"></label>' +
       '<span class="dim" id="zStepInfo"></span>' +
       '</div>' +
@@ -674,10 +674,10 @@
   }
 
   function panelConvoHtml() {
-    const sugMeco = S.last.meco != null ? S.last.meco : 62000;
-    const sugG = S.last.G != null ? S.last.G : 0.61;
+    const sugMeco = S.last.meco != null ? S.last.meco : 52612;
+    const sugG = S.last.G != null ? S.last.G : 0.64;
     const sugT = S.last.T != null ? S.last.T : 4.82;
-    const sugBias = S.last.bias != null ? S.last.bias : 2.6428;
+    const sugBias = S.last.bias != null ? S.last.bias : 0.827;
     const MB = (TunerConfig.limits.marginTargetS || [3.5, 5.5]);
     return '<h2>CONVO-LEAD E2 — circularization lead refinement</h2>' +
       commonRowHtml() +
