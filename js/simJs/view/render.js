@@ -1396,8 +1396,8 @@ function _gfxEmitBody(body, dt) {
     if (!prev) { _gfx.last.set(body, cur); }
     else {
       const ds = cur.s - prev.s, dy = cur.y - prev.y;
-      const spacing = Math.max(Wm0 * 1.5, 2);
-      const n = Math.min(8, Math.floor(Math.hypot(ds, dy) / spacing));
+      const spacing = Math.max(Wm * 0.45, 0.8);   // dense, so no visible round blobs
+      const n = Math.min(20, Math.floor(Math.hypot(ds, dy) / spacing));
       const fade = Math.pow(1 - nozAlt / GROUND_FX.TRAIL_MAX_ALT_M, 0.6);
       for (let i = 0; i < n; i++) {
         const f = (i + 1) / n;
@@ -1405,9 +1405,9 @@ function _gfxEmitBody(body, dt) {
           k: rnd() < 0.8 ? 'steam' : 'smoke',
           s: prev.s + ds * f + (rnd() - 0.5) * Wm * 0.4, y: prev.y + dy * f,
           vs: (rnd() - 0.5) * 1.5, vy: (rnd() - 0.5) * 1.5,
-          r: Wm0 * (0.5 + rnd() * 0.4), gr: 0.9 + rnd() * 0.8, drag: 0.5, vdrag: 0.4, buoy: 0,
-          age: 0, life: 8 + rnd() * 6, a0: (0.14 + rnd() * 0.10) * fade,
-          glow: 0.3, front: rnd() < 0.2, ground: false,
+          r: Math.max(Wm, Wm0 * 0.35) * (0.45 + rnd() * 0.35), gr: 0.5 + rnd() * 0.5, drag: 0.5, vdrag: 0.4, buoy: 0,
+          age: 0, life: 8 + rnd() * 6, a0: (0.08 + rnd() * 0.07) * fade,
+          glow: 0.10, front: rnd() < 0.2, ground: false,
         });
       }
       if (n > 0) _gfx.last.set(body, cur);
@@ -1601,6 +1601,8 @@ function _drawPlumeFx(c, o) {
     let h = hasJets ? 1 + (gAbs / re) * (1 - Math.exp(-3.2 * v)) : 1 + gb * (1 - Math.exp(-3.2 * v));
     if (o.single) h *= 1 - 0.55 * smooth(0.45, 1, v);
     else if (k > 1) h *= 1 - 0.35 * smooth(0.5, 1, v) * Math.min(1, (k - 1) / 2);
+    // merged cluster plume: tail narrows as it dissipates (no wide uniform blob)
+    if (hasJets) h *= 1 - 0.30 * smooth(0.45, 1, v);
     if (!hasJets) h *= 1 - 0.07 * diaVis * Math.cos(6.2832 * v / cell) * Math.exp(-v * 2.2);
     h *= 1 + ram * v;
     return re * h;
@@ -1622,13 +1624,13 @@ function _drawPlumeFx(c, o) {
     jet: [[0, 235, 245, 255, 0.8], [0.4, 150, 195, 255, 0.45], [1, 100, 150, 255, 0]],
     smoke: null, spot: '235,245,255',
   } : {
-    halo: [[0, 255, 150, 70, 0.32], [0.5, 255, 100, 40, 0.15], [1, 210, 60, 25, 0]],
-    body: [[0, 255, 215, 130, 0.80], [0.25, 255, 168, 66, 0.64], [0.6, 242, 108, 38, 0.34], [1, 195, 64, 26, 0]],
+    halo: [[0, 255, 150, 70, 0.20], [0.5, 255, 100, 40, 0.09], [1, 210, 60, 25, 0]],
+    body: [[0, 255, 238, 180, 0.88], [0.10, 255, 205, 108, 0.74], [0.30, 248, 136, 52, 0.46], [0.65, 205, 84, 32, 0.20], [1, 150, 60, 30, 0]],
     inner: [[0, 255, 236, 170, 0.85], [0.45, 255, 205, 115, 0.55], [1, 255, 165, 75, 0]],
     core: [[0, 255, 246, 214, 0.95], [0.6, 255, 228, 170, 0.65], [1, 255, 205, 130, 0]],
     jcore: [[0, 255, 252, 240, 0.95], [0.6, 255, 240, 200, 0.5], [1, 255, 220, 160, 0]],
     jet: [[0, 255, 228, 160, 0.80], [0.4, 255, 178, 84, 0.45], [1, 255, 130, 50, 0]],
-    smoke: [[0, 90, 60, 45, 0], [0.35, 90, 60, 45, 0.04], [1, 90, 60, 45, 0]],
+    smoke: [[0, 70, 52, 42, 0], [0.5, 70, 52, 42, 0.05], [0.8, 84, 68, 60, 0.13], [1, 96, 82, 74, 0]],
     spot: '255,246,222',
   };
   const S2 = (arr, m) => arr.map(s => [s[0], 'rgba(' + s[1] + ',' + s[2] + ',' + s[3] + ',' + (s[4] * (m == null ? 1 : m)).toFixed(3) + ')']);
@@ -1723,7 +1725,7 @@ function _drawPlumeFx(c, o) {
   drawNoise(1.1, 1.9, 26, 0.36, 0);
   drawNoise(0.60, 1.1, 46, 0.28, 97);
   drawNoise(0.30, 0.8, 80, 0.18, 41);    // fine flicker
-  const S = 0.68 + 0.22 * Math.min(1, ram);
+  const S = 0.84 + 0.12 * Math.min(1, ram);   // stronger ragged/streaky tail
   const stopsV = [0, 0.08, 0.18, 0.3, 0.5, 1];
   T.globalAlpha = 1;
   T.globalCompositeOperation = 'destination-in';
@@ -1792,7 +1794,7 @@ function _drawPlumeFx(c, o) {
   }
 
   // ---- composite to the main canvas ----
-  const a = Math.min(1, 0.55 + 0.45 * thrEff) * (1 + 0.04 * Math.sin(t * 13) * Math.sin(t * 4.1));
+  const a = Math.min(1, 0.55 + 0.45 * thrEff) * (1 + 0.04 * Math.sin(t * 13) * Math.sin(t * 4.1) + (Math.random() - 0.5) * 0.06);
   c.save();
   c.imageSmoothingEnabled = true;
   if ('imageSmoothingQuality' in c) c.imageSmoothingQuality = 'high';
