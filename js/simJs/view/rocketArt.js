@@ -672,21 +672,8 @@ function _decalShade(w, outW, outH, sW, W) {
   }
   w.fillStyle = g;
   w.fillRect(0, 0, outW, outH);
-  // ---- Axial (y-axis) shading: matches _axialShade ----
-  const lyAbs = Math.abs(RL.ly);
-  const axStr = Math.min(0.45, lyAbs * 0.55 * (0.5 + 0.5 * RL.lit));
-  if (axStr > 0.02) {
-    const ag = w.createLinearGradient(0, 0, 0, outH);
-    if (RL.ly >= 0) {
-      ag.addColorStop(0, 'rgba(0,0,0,0)');
-      ag.addColorStop(1, `rgba(0,0,0,${axStr.toFixed(3)})`);
-    } else {
-      ag.addColorStop(0, `rgba(0,0,0,${axStr.toFixed(3)})`);
-      ag.addColorStop(1, 'rgba(0,0,0,0)');
-    }
-    w.fillStyle = ag;
-    w.fillRect(0, 0, outW, outH);
-  }
+  // NO-AXIAL-CYLINDER: decals sit on straight cylindrical surface —
+  // no top-bottom gradient from sun's ly component.
   w.restore();
 }
 
@@ -2005,7 +1992,13 @@ const bodyPath = () => {
       ctx.fillStyle = shade;
       bodyPath();
       ctx.fill();
-      _axialShade(ctx, bodyPath, H, stackMaxW_px, stackTotalH_px, memberOffsetY_px);
+      // NO-AXIAL-CYLINDER: straight cylinder side-view has no top-bottom
+      // brightness gradient from sun's ly component (visible face normals
+      // are perpendicular to body axis). _axialShade was creating a fake
+      // base-shadow regardless of true sun angle, which read as "fairing
+      // shielding sun at all angles". Real physics: only the lx component
+      // (left-right) affects visible brightness on a side-viewed cylinder.
+      // Cones (fairing, nose) keep _axialShade — curved surface, real gradient.
     }
     
     if (designMode === 'dsl' && typeof parseAndValidateDesign === 'function' &&
@@ -2070,7 +2063,7 @@ const bodyPath = () => {
       ctx.fillStyle = g;
       tankPath();
       ctx.fill();
-      _axialShade(ctx, tankPath, tankH_px, stackMaxW_px, stackTotalH_px, memberOffsetY_px);
+      // NO-AXIAL-CYLINDER: same reasoning as main body.
     } else if (typeof parseAndValidateDesign === 'function' &&
       typeof drawCustomDesignOps === 'function' &&
       typeof applyCylindricalOverlay === 'function') {
