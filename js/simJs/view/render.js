@@ -1826,8 +1826,8 @@ const s0 = (hasJets && re > 0) ? Math.min(1, (reEng / re) * 0.97) : 1;   // star
     b.setTransform(1, 0, 0, 1, 0, 0);
     b.globalCompositeOperation = 'destination-in';
     const tg = b.createLinearGradient(0, 0, 0, BH * 0.001);
-    tg.addColorStop(0, 'rgba(0,0,0,0.60)');
-    tg.addColorStop(0.5, 'rgba(0,0,0,0.88)');
+    tg.addColorStop(0, 'rgba(0,0,0,0.85)');
+    tg.addColorStop(0.5, 'rgba(0,0,0,0.95)');
     tg.addColorStop(1, 'rgba(0,0,0,1)');   // gradient is clamped: opaque for everything below 3%
     b.fillStyle = tg;
     b.fillRect(0, 0, BW, BH);              // destination-in clears outside the fill, so cover the whole buffer
@@ -1855,7 +1855,7 @@ const s0 = (hasJets && re > 0) ? Math.min(1, (reEng / re) * 0.97) : 1;   // star
     T.fillRect(0, 0, BW, HB);              // T only holds the top strip, so clearing the rest is fine
     const bg2 = b.createLinearGradient(0, 0, 0, HB);
     bg2.addColorStop(0, 'rgba(0,0,0,1)');
-    bg2.addColorStop(0.5, 'rgba(0,0,0,0.6)');
+    bg2.addColorStop(0.5, 'rgb0a(0,0,0,0.6)');
     bg2.addColorStop(1, 'rgba(0,0,0,0)');
     b.save();
     b.setTransform(1, 0, 0, 1, 0, 0);
@@ -1866,7 +1866,8 @@ const s0 = (hasJets && re > 0) ? Math.min(1, (reEng / re) * 0.97) : 1;   // star
     b.globalAlpha = 1;
     b.drawImage(_PLX.tcv, 0, 0, BW, HB, 0, 0, BW, HB);
     b.restore();
-  } catch (e) { /* blur filter unsupported: leave the edges as they are */ }
+  } catch (e) { // blur filter unsupported: leave the edges as they are 
+  } 
 
   // ---- composite to the main canvas ----
   const a = Math.min(1, 0.55 + 0.45 * thrEff) * lumAlt * (1 + 0.04 * Math.sin(t * 13) * Math.sin(t * 4.1) + (Math.random() - 0.5) * 0.06);
@@ -1880,7 +1881,7 @@ const s0 = (hasJets && re > 0) ? Math.min(1, (reEng / re) * 0.97) : 1;   // star
   c.drawImage(_PLX.buf, 0, 0, BW, BH, -wmax * 1.05, -L * 0.01, 2 * wmax * 1.05, L * 1.03);
   // wide soft glow: a bright exhaust lights the air around it
   const glowRGB = o.single ? '120,160,255' : '255,160,80';
-  c.translate(0, L * 0.22);
+  c.translate(0, L * 0.42);
   c.scale(Math.max(wmax * 1.35, re * 3.2), L * 0.30);
   const gg = c.createRadialGradient(0, 0, 0, 0, 0, 1);
   const ga = (0.05 * (0.6 + 0.4 * Math.min(1, sq / 2)) * a).toFixed(3);
