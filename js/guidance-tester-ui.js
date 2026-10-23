@@ -80,9 +80,21 @@
       const R = W * lerp(7, 1.7, e), topY = H * lerp(.935, .80, e), cx = W / 2, cy = topY + R;
       const f = clamp(alt / 30, 0, 1), rr = Math.round(lerp(255, 110, f)), gg = Math.round(lerp(170, 185, f)), bb = Math.round(lerp(100, 255, f));
       const rimA = lerp(.55, .9, e);
-      const hz = g.createLinearGradient(0, topY - H * .18, 0, topY + 4);
-      hz.addColorStop(0, 'rgba(' + rr + ',' + gg + ',' + bb + ',0)'); hz.addColorStop(1, 'rgba(' + rr + ',' + gg + ',' + bb + ',' + (.28 * rimA).toFixed(3) + ')');
-      g.fillStyle = hz; g.fillRect(0, topY - H * .18, W, H * .18 + 4);
+      // Horizon glow — RADIAL around the earth's centre, so it follows the
+      // curvature at every x. The previous flat horizontal rect produced a
+      // visible straight-line seam at the left/right edges of the disc: the
+      // rect's bottom edge stopped at topY+4, but the earth's top edge at
+      // R=7W dips to topY+~0.018·W (~34px at 1920 wide) at the sides — so
+      // ~30px of pure sky showed between the glow's flat bottom and the
+      // earth's curved edge, reading as "the sky lands flat at the disc's
+      // edge". A radial gradient shares the earth's centre and therefore
+      // its curvature, eliminating the seam at any zoom / altitude.
+      const glowSpan = Math.min(H * 0.18, R * 0.20);
+      const rg = g.createRadialGradient(cx, cy, R, cx, cy, R + glowSpan);
+      rg.addColorStop(0, 'rgba(' + rr + ',' + gg + ',' + bb + ',' + (.30 * rimA).toFixed(3) + ')');
+      rg.addColorStop(0.40, 'rgba(' + rr + ',' + gg + ',' + bb + ',' + (.12 * rimA).toFixed(3) + ')');
+      rg.addColorStop(1, 'rgba(' + rr + ',' + gg + ',' + bb + ',0)');
+      g.fillStyle = rg; g.fillRect(0, 0, W, H);
       const eg = g.createLinearGradient(0, topY, 0, H); eg.addColorStop(0, 'rgb(6,14,26)'); eg.addColorStop(1, 'rgb(2,5,10)');
       g.fillStyle = eg; g.beginPath(); g.arc(cx, cy, R, 0, 6.2832); g.fill();
       [[26, .10], [12, .18], [4, .5], [1.5, .95]].forEach((w) => {
