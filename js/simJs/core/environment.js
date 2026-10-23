@@ -279,7 +279,8 @@ function earthSurfaceVelocity(rx, ry) {
 // a pure function — the caller accumulates the thermal lag separately.
 // Cheap: single scalar solve, ~8 Newton iterations.
 // ============================================================================
-function skinEquilibriumK(altM, speedRelMps) {
+function skinEquilibriumK(altM, speedRelMps, heatingScale) {
+  heatingScale = Number.isFinite(heatingScale) ? heatingScale : 1;
   const alt = Math.max(0, altM);
   const T_air = airTemperature(alt);
   const rho = airDensity(alt);
@@ -299,8 +300,8 @@ function skinEquilibriumK(altM, speedRelMps) {
   let h_conv;
   if (!hasAir) h_conv = 0;
   else {
-    const forced = 0.03 * rho * Math.max(0, speedRelMps) * 1000;
-    const natural = (rho > 1e-4) ? 5 : 0;
+    const forced = 0.03 * rho * Math.max(0, speedRelMps) * 1000 * heatingScale;
+    const natural = (rho > 1e-4) ? 5 * heatingScale : 0;
     h_conv = Math.max(forced, natural);
   }
 
