@@ -648,16 +648,45 @@ function _bodyShade(u) {
 // Darkens only (multiply-like), so the decal colour stays true at the
 // brightest column and dims exactly as much as the body underneath.
 function _decalShade(w, outW, outH, sW, W) {
+  const RL = globalThis._ROCKET_LIGHT;
+  if (!RL) return;
   w.save();
   w.globalCompositeOperation = 'source-atop';
+  // ---- Side (x-axis) shading: matches _cylShadeGradient ----
   const g = w.createLinearGradient(0, 0, outW, 0);
+  const ll = Math.hypot(RL.lx, 0.5) || 1, lx = RL.lx / ll, lz = 0.5 / ll;
+  const _flatFill = Math.min(1, RL.amb * 1.6 * Math.max(0.2, RL.lit));
+  const _cylShadeMul = 0.20 * (1 - _flatFill * 0.85);
   for (let s = 0; s <= 12; s++) {
-    const t = s / 12;                              // across the decal
-    const u = 0.5 + (t - 0.5) * (sW / W);          // across the BODY
-    g.addColorStop(t, `rgba(0,0,0,${(1 - _bodyShade(u)).toFixed(3)})`);
+    const t = s / 12;
+    const u = 0.5 + (t - 0.5) * (sW / W);
+    const x = u * 2 - 1;
+    const nz = Math.sqrt(Math.max(0, 1 - x * x));
+    const d = Math.max(0, x * lx + nz * lz);
+    const sunLit = RL.lit * d;
+    const t_light = RL.amb + sunLit * (1 - RL.amb);
+    const sunShadow = (1 - Math.min(1, t_light)) * 0.35;
+    const cylShade = _cylShadeMul * Math.pow(Math.abs(x), 4);
+    const dark = Math.min(0.80, sunShadow + cylShade);
+    g.addColorStop(t, `rgba(0,0,0,${dark.toFixed(3)})`);
   }
   w.fillStyle = g;
   w.fillRect(0, 0, outW, outH);
+  // ---- Axial (y-axis) shading: matches _axialShade ----
+  const lyAbs = Math.abs(RL.ly);
+  const axStr = Math.min(0.45, lyAbs * 0.55 * (0.5 + 0.5 * RL.lit));
+  if (axStr > 0.02) {
+    const ag = w.createLinearGradient(0, 0, 0, outH);
+    if (RL.ly >= 0) {
+      ag.addColorStop(0, 'rgba(0,0,0,0)');
+      ag.addColorStop(1, `rgba(0,0,0,${axStr.toFixed(3)})`);
+    } else {
+      ag.addColorStop(0, `rgba(0,0,0,${axStr.toFixed(3)})`);
+      ag.addColorStop(1, 'rgba(0,0,0,0)');
+    }
+    w.fillStyle = ag;
+    w.fillRect(0, 0, outW, outH);
+  }
   w.restore();
 }
 
@@ -684,7 +713,11 @@ function _drawIndiaFlag(ctx, W, H) {
   }
   const sW = 2 * R * Math.sin(fW / 2 / R);   // on-screen width after wrap
 
-  const key = [fW.toFixed(1), fH.toFixed(1), R.toFixed(1)].join('|');
+  const RL = globalThis._ROCKET_LIGHT;
+  const _lxKey = RL ? Math.round(RL.lx * 10) : 0;
+  const _lyKey = RL ? Math.round(RL.ly * 10) : 0;
+  const _litKey = RL ? Math.round(RL.lit * 10) : 10;
+  const key = [fW.toFixed(1), fH.toFixed(1), R.toFixed(1), _lxKey, _lyKey, _litKey].join('|');
   let wrapped = _flagCache.get(key);
   if (!wrapped) {
     // 1) flat flag
@@ -769,7 +802,11 @@ function _drawSzadText(ctx, maxL, maxD, isLightBody) {
   }
   const sW = 2 * R * Math.sin(fW / 2 / R);   // on-screen width after wrap
 
-  const key = [fW.toFixed(1), lockH.toFixed(1), R.toFixed(1), isLightBody].join('|');
+  const RL = globalThis._ROCKET_LIGHT;
+  const _lxKey = RL ? Math.round(RL.lx * 10) : 0;
+  const _lyKey = RL ? Math.round(RL.ly * 10) : 0;
+  const _litKey = RL ? Math.round(RL.lit * 10) : 10;
+  const key = [fW.toFixed(1), lockH.toFixed(1), R.toFixed(1), isLightBody, _lxKey, _lyKey, _litKey].join('|');
   let wrapped = _szadCache.get(key);
   if (!wrapped) {
     // 1) flat lockup: har letter same box me fit

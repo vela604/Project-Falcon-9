@@ -157,43 +157,42 @@ const SimLighting = (function () {
   }
 
   function drawSun(ctx, cv, dens, se) {
+    // Replaced floating sun disc with a directional arrow so the planet
+    // view reads as a compass, not a UI icon. Arrow points from off-screen
+    // edge toward Earth, ending just above the planet's surface.
     const dir = sunScreenDir();
-    const cx = cv.width / 2, cy = cv.height / 2, m = 34;
-    const _w = worldToScreen(0, 0);
-    const _earthR = CONFIG.EARTH_RADIUS / metersPerPixel();
-    const _dist = _earthR + 34;
-    let x = _w[0] + dir[0] * _dist;
-    let y = _w[1] + dir[1] * _dist;
-    // Clamp inside screen with margin so the icon never clips
-    const _pad = 44;
-    x = Math.max(_pad, Math.min(cv.width - _pad, x));
-    y = Math.max(_pad, Math.min(cv.height - _pad, y));
-    const warm = clamp01(1 - smooth(0.02, 0.35, se)) * clamp01(dens * 1.5);
-    const core = mixRGB([255, 248, 224], [255, 175, 105], warm);
-    const R = 9, glowR = R * 3.8;
+    const earthPx = CONFIG.EARTH_RADIUS / metersPerPixel();
+    const earthCenter = worldToScreen(0, 0);
+    const ang = Math.atan2(dir[1], dir[0]);
+    const edgeDist = Math.hypot(cv.width, cv.height) * 1.5;
+    const sx = earthCenter[0] + dir[0] * edgeDist;
+    const sy = earthCenter[1] + dir[1] * edgeDist;
+    const ex = earthCenter[0] + dir[0] * (earthPx + 20);
+    const ey = earthCenter[1] + dir[1] * (earthPx + 20);
     ctx.save();
-    const g = ctx.createRadialGradient(x, y, R * 0.3, x, y, glowR);
-    g.addColorStop(0, `rgba(${core[0] | 0},${core[1] | 0},${core[2] | 0},0.55)`);
-    g.addColorStop(0.35, `rgba(${core[0] | 0},${core[1] | 0},${core[2] | 0},0.16)`);
-    g.addColorStop(1, `rgba(${core[0] | 0},${core[1] | 0},${core[2] | 0},0)`);
-    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, glowR, 0, TAU); ctx.fill();
-    ctx.fillStyle = `rgb(${core[0] | 0},${core[1] | 0},${core[2] | 0})`;
-    ctx.beginPath(); ctx.arc(x, y, R, 0, TAU); ctx.fill();
-    // Planet view: a few parallel rays so the lighting angle is obvious.
-    if (isPlanet()) {
-      const earthR2 = CONFIG.EARTH_RADIUS / metersPerPixel();
-      const nx = -dir[1], ny = dir[0];
-      ctx.strokeStyle = 'rgba(255,225,150,0.18)'; ctx.lineWidth = 1.2; ctx.setLineDash([4, 6]);
-      const rayStartR = earthR2 * 0.55;
-      for (let k = -1; k <= 1; k++) {
-        const off = k * earthR2 * 0.32;
-        const sxE = _w[0] + nx * off + dir[0] * rayStartR;
-        const syE = _w[1] + ny * off + dir[1] * rayStartR;
-        const ex = x - dir[0] * (R + 8);
-        const ey = y - dir[1] * (R + 8);
-        ctx.beginPath(); ctx.moveTo(sxE, syE); ctx.lineTo(ex, ey); ctx.stroke();
-      }
-    }
+    ctx.strokeStyle = 'rgba(255, 210, 100, 0.45)';
+    ctx.lineWidth = 2.5;
+    ctx.setLineDash([12, 8]);
+    ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(ex, ey); ctx.stroke();
+    ctx.setLineDash([]);
+    const headLen = 14;
+    ctx.beginPath();
+    ctx.moveTo(ex, ey);
+    ctx.lineTo(ex - headLen * Math.cos(ang - 0.35), ey - headLen * Math.sin(ang - 0.35));
+    ctx.lineTo(ex - headLen * Math.cos(ang + 0.35), ey - headLen * Math.sin(ang + 0.35));
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(255, 210, 100, 0.65)';
+    ctx.fill();
+    const labelDist = earthPx + 105;
+    const tx = earthCenter[0] + dir[0] * labelDist;
+    const ty = earthCenter[1] + dir[1] * labelDist;
+    ctx.fillStyle = 'rgba(255, 220, 140, 0.85)';
+    ctx.font = 'bold 11px "JetBrains Mono", monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.shadowColor = 'rgba(0,0,0,0.85)';
+    ctx.shadowBlur = 4;
+    ctx.fillText('SUNLIGHT', tx, ty);
     ctx.restore();
   }
 
