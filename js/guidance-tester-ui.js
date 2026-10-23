@@ -93,19 +93,133 @@
     requestAnimationFrame(frame);
   })();
 
-  /* ---------- Thermal state — derived, main-thread only ---------- */
-  const _tempState = new Map();
-  const _THERMAL_TAU_S = 12;
-  window.__tempState = _tempState;
-  window.__THERMAL_TAU_S = _THERMAL_TAU_S;
-  window.__thermalTickOne = function (b, simTime, dt) {
-    if (!b || !b.id) return;
-    if (typeof skinEquilibriumK !== 'function') return;
-    let st = _tempState.get(b.id);
-    if (!st) {
-      st = { T: 288.15, peakK: 288.15 };
-      _tempState.set(b.id, st);
+  /* ---------- Thermal state — per-member, derived, main-thread only ---------- */
+  // ---------------------------------------------------------------------------
+  // Thermal — PER-MEMBER derived quantity. No physics state, main-thread only.
+  //
+  // Why per-member (and not per-body):
+  //   A "body" may carry multiple members with very different exposure. The
+  //   stage body has [stage_tank, fairing]. The fairing sits OUTSIDE the
+  //   airstream, sees full heat flux (~500 K at max-Q); the stage tank is
+  //   INSIDE the fairing, shielded by the bow shock, sees ~2% of that flux
+  //   and stays near ambient (~290 K). Averaging those into ONE per-body
+  //   temperature would be physically meaningless.
+  //
+  // What each member gets:
+  //   - own T, peakK (mass-weighted body display picks up the weighted avg)
+  //   - own thermal time constant (thick tank 30 s, thin fairing 6 s)
+  //   - own exposure factor (fairing-shielded = 0.02, exposed = 1.0)
+  //   - own thermal mass (fuel tank: fuel + 6% dry; shell: H·W·30 kg/m²)
+  //
+  // Two simplifications, both flagged here so they're not buried:
+  //  1. 0.02 = "residual fraction of free-stream heat flux that reaches a
+  //     downstream member behind a blunt fairing". Hypersonic literature
+  //     gives 2-5%; 2% is the conservative low end. NOT a whole-body fudge —
+  //     applied PER MEMBER, only when a fairing actually sits above it in
+  //     the stack.
+  //  2. Thermal mass uses an area/height heuristic instead of the full mass
+  //     model — pulling stackMassProps() every tick per body is expensive on
+  //     the main thread; the heuristic is close enough that the thermal
+  //     waveform shape and peak are right.
+  // ---------------------------------------------------------------------------
+  const _tempState = new Map();  // key = 'm:' + member.id (or 'b:'+body.id+':idx' for solo bodies)
+  const _THERMAL_TAU_BULK = 30;  // s — thick metal tank (fuel-carrying member)
+  const _THERMAL_TAU_SKIN = 6;   // s — thin shell (fairing, interstage, nose)
+  const _FAIRING_SHIELD_FLOOR = 0.02;   // residual free-stream flux fraction behind a FULLY-shielding (bulged) fairing
+  const _FAIRING_FULL_SHIELD_OVERHANG = 0.25;  // (ΔD/D) at which shielding saturates
+  
+  // Geometry-dependent fairing shield factor. Replaces the old flat 0.02
+  // magic number, which was wrong when the fairing wasn't bulged: a fairing
+  // flush with the stage (same diameter) has its wall essentially in the
+  // free stream and provides no aero heating reduction at all.
+  //
+  //   overhang = (fairingBulgeWidth − memberTankWidth) / fairingBulgeWidth
+  //
+  //   overhang ≈ 0    → flush, no shield, factor = 1.0
+  //   overhang ≈ 0.29 → F9 (5.2 m bulge over 3.7 m tank) → factor = 0.02 (fully inside shock)
+  //
+  // Linear interpolation between those, clamped at [_FAIRING_SHIELD_FLOOR, 1].
+  //
+  // The 0.25 saturation threshold is calibrated against hypersonic blunt-body
+  // shock standoff (~0.14 × D): a surface more than ~0.28·D inside the shock
+  // envelope is fully shadowed. F9's 0.29 sits right at the saturation point.
+  function _fairingShieldFactor(m, allMembers) {
+    const idx = allMembers.indexOf(m);
+    if (idx < 0) return 1.0;
+    let fairing = null;
+    for (let i = idx + 1; i < allMembers.length; i++) {
+      if (allMembers[i] && allMembers[i].stageRole === 'payloadSpace') {
+        fairing = allMembers[i];
+        break;
+      }
     }
+    if (!fairing) return 1.0;
+  
+    // Fairing reference width — prefer bulge (widest section, sets shock size),
+    // then cap, then plain body width.
+    const fairingW =
+      (fairing.params && Number.isFinite(fairing.params.bulgeWidth) && fairing.params.bulgeWidth > 0)
+        ? fairing.params.bulgeWidth
+      : (fairing.params && Number.isFinite(fairing.params.capWidth) && fairing.params.capWidth > 0)
+        ? fairing.params.capWidth
+      : (Number.isFinite(fairing.width) ? fairing.width : 0);
+  
+    // Member reference width — tank diameter for fuel-carrying members,
+    // outer body width otherwise.
+    const memberW =
+      (m.fuel && Number.isFinite(m.fuel.tankWidth) && m.fuel.tankWidth > 0)
+        ? m.fuel.tankWidth
+      : (Number.isFinite(m.width) ? m.width : 0);
+  
+    if (!(fairingW > 0) || !(memberW > 0)) return 0.5;   // missing geometry → partial
+    if (fairingW <= memberW) return 1.0;                 // fairing not wider → no shield
+  
+    const overhang = (fairingW - memberW) / fairingW;
+    const ratio = Math.min(1, overhang / _FAIRING_FULL_SHIELD_OVERHANG);
+    const scale = 1 - (1 - _FAIRING_SHIELD_FLOOR) * ratio;
+    return Math.max(_FAIRING_SHIELD_FLOOR, Math.min(1, scale));
+  }
+  
+  function _memberKey(b, m, idx) {
+    if (m && m.id) return 'm:' + m.id;
+    return 'b:' + (b && b.id ? b.id : '?') + ':' + idx;
+  }
+  
+  function _memberShieldedByFairing(m, allMembers) {
+    // A member is shielded if a payloadSpace sits ABOVE it in the stack
+    // (members are ordered bottom→top).
+    const idx = allMembers.indexOf(m);
+    if (idx < 0) return false;
+    for (let i = idx + 1; i < allMembers.length; i++) {
+      if (allMembers[i] && allMembers[i].stageRole === 'payloadSpace') return true;
+    }
+    return false;
+  }
+  
+  function _memberThermalMassKg(b, m, idx) {
+    if (!m) return 1;
+    const maxFuel = (typeof memberMaxFuel === 'function') ? memberMaxFuel(m, null) : 0;
+    if (maxFuel > 0) {
+      const memberFuel = (Array.isArray(b.memberFuel) && Number.isFinite(b.memberFuel[idx]))
+        ? b.memberFuel[idx] : 0;
+      return memberFuel + maxFuel * 0.06;
+    }
+    // Shell-ish member (fairing, interstage, nose)
+    const H = Number.isFinite(m.height) ? m.height : 1;
+    const W = Number.isFinite(m.width) ? m.width : 1;
+    return Math.max(1, H * W * 30);
+  }
+  
+  function _memberTau(m) {
+    if (!m) return _THERMAL_TAU_BULK;
+    const role = m.stageRole;
+    if (role === 'payloadSpace' || role === 'nose' || role === 'interstage') return _THERMAL_TAU_SKIN;
+    return _THERMAL_TAU_BULK;
+  }
+  
+  function _thermalTickOneMember(b, m, idx, dt) {
+    if (!b || !m) return;
+    if (!(dt > 0) || dt > 30) return;
     const r = Math.hypot(b.rx, b.ry);
     if (!(r > 1)) return;
     const alt_m = r - CONFIG.EARTH_RADIUS;
@@ -114,19 +228,108 @@
     const relVx = b.vx - (sv.vx + wv.wx);
     const relVy = b.vy - (sv.vy + wv.wy);
     const speedRel = Math.hypot(relVx, relVy);
-    const Teq = skinEquilibriumK(alt_m, speedRel);
-    const alpha = 1 - Math.exp(-dt / _THERMAL_TAU_S);
+  
+    const members = Array.isArray(b.members) ? b.members : [];
+    const heatingScale = members.length ? _fairingShieldFactor(m, members) : 1.0;
+  
+    const Teq = (typeof skinEquilibriumK === 'function')
+      ? skinEquilibriumK(alt_m, speedRel, heatingScale) : 288.15;
+  
+    const key = _memberKey(b, m, idx);
+    let st = _tempState.get(key);
+    if (!st) { st = { T: 288.15, peakK: 288.15 }; _tempState.set(key, st); }
+    const tau = _memberTau(m);
+    const alpha = 1 - Math.exp(-dt / tau);
     st.T += (Teq - st.T) * alpha;
-    // Peak = max instantaneous thermal environment (not lagged T) — see
-    // telemetry.js for the full reasoning. Reentry T_eq peaks 1400+ K.
     if (Teq > st.peakK) st.peakK = Teq;
-  };
+  }
+  
+  function _thermalTickBody(b, dt) {
+    if (!b) return;
+    if (!Array.isArray(b.members) || !b.members.length) {
+      // Solo body (released payload, fairing half, emergency-eject package).
+      const fakeM = {
+        height: Number.isFinite(b.height) ? b.height : 1,
+        width: Number.isFinite(b.width) ? b.width : 1,
+        stageRole: null,
+      };
+      _thermalTickOneMember(b, fakeM, 0, dt);
+      return;
+    }
+    for (let i = 0; i < b.members.length; i++) {
+      _thermalTickOneMember(b, b.members[i], i, dt);
+    }
+  }
+  
+  // Mass-weighted average of every member's thermal state — this is what
+  // the body's displayed temperature should be. Heavy tank dominates,
+  // so a lightweight hot fairing won't wrongly drag the stage-tank reading
+  // upward.
+  function _bodyTempWeighted(b) {
+    const DEFAULT = { T: 288.15, peakK: 288.15 };
+    if (!b) return DEFAULT;
+    const members = Array.isArray(b.members) ? b.members : null;
+    if (!members || !members.length) {
+      const fakeM = {
+        height: Number.isFinite(b.height) ? b.height : 1,
+        width: Number.isFinite(b.width) ? b.width : 1,
+        stageRole: null,
+      };
+      return _tempState.get(_memberKey(b, fakeM, 0)) || DEFAULT;
+    }
+    let totalM = 0, sumT = 0, sumPk = 0;
+    for (let i = 0; i < members.length; i++) {
+      const m = members[i];
+      const st = _tempState.get(_memberKey(b, m, i));
+      if (!st) continue;
+      const mass = _memberThermalMassKg(b, m, i);
+      totalM += mass;
+      sumT += st.T * mass;
+      sumPk += st.peakK * mass;
+    }
+    if (totalM <= 0) return DEFAULT;
+    return { T: sumT / totalM, peakK: sumPk / totalM };
+  }
+  
+  // Per-member read for a specific role (booster / stage / payload display).
+  // member matches by stageRole, OR by body kind for solo bodies.
+  function _roleTempWeighted(body, role) {
+    if (!body) return null;
+    const members = Array.isArray(body.members) ? body.members : [];
+    if (!members.length) return _bodyTempWeighted(body);
+    let totalM = 0, sumT = 0, sumPk = 0;
+    for (let i = 0; i < members.length; i++) {
+      const m = members[i];
+      if (!m) continue;
+      const mRole = m.stageRole || 'rocket';
+      // For 'booster' role, include interstage members too (they fly together).
+      const include = (role === 'booster')
+        ? (mRole === 'booster' || mRole === 'interstage')
+        : (mRole === role);
+      if (!include) continue;
+      const st = _tempState.get(_memberKey(body, m, i));
+      if (!st) continue;
+      const mass = _memberThermalMassKg(body, m, i);
+      totalM += mass;
+      sumT += st.T * mass;
+      sumPk += st.peakK * mass;
+    }
+    if (totalM <= 0) return null;
+    return { T: sumT / totalM, peakK: sumPk / totalM };
+  }
+  
+  
   window.__thermalTickAll = function (dt) {
-    if (typeof state === 'undefined' || !state || !state.bodies) return;
-    for (const b of state.bodies) window.__thermalTickOne(b, state.simTime, dt);
+    if (typeof state === "undefined" || !state || !state.bodies) return;
+    for (const b of state.bodies) _thermalTickBody(b, dt);
   };
+  window.__bodyTempWeighted = _bodyTempWeighted;
+  window.__roleTempWeighted = _roleTempWeighted;
+  window.__tempState = _tempState;  // legacy alias — tester2.html uses .clear()
+  window.__tempStateClear = function () { _tempState.clear(); };
+  window.__tempStateGet = function (b, m, i) { return _tempState.get(_memberKey(b, m, i)); };
 
-  /* ---------- Build the flight deck (hero) ---------- */
+    /* ---------- Build the flight deck (hero) ---------- */
   (function buildDeck() {
     const pane = $('paneTele'); if (!pane) return;
     const card = pane.querySelector('.plot-card.main');
@@ -239,18 +442,20 @@
       else if (role === 'booster' && !roles.booster) roles.booster = b;
       else if (role === 'stage' && !roles.stage) roles.stage = b;
     }
-    const rowFor = (label, b) => {
+    const rowFor = (label, b, role) => {
       if (!b) return '<div class="temp-row"><span class="tr-lbl">' + label + '</span><span class="tr-val">—</span></div>';
-      const st = _tempState.get(b.id);
-      const T = st ? st.T : 288.15;
-      const pk = st ? st.peakK : 288.15;
+      const st = (role && typeof window.__roleTempWeighted === 'function')
+        ? window.__roleTempWeighted(b, role) : null;
+      const stFb = st || (typeof window.__bodyTempWeighted === 'function' ? window.__bodyTempWeighted(b) : null);
+      const T = stFb ? stFb.T : 288.15;
+      const pk = stFb ? stFb.peakK : 288.15;
       return '<div class="temp-row"><span class="tr-lbl">' + label +
         '</span><span class="tr-val"><b>' + T.toFixed(0) + '</b> K <i>pk ' + pk.toFixed(0) + '</i></span></div>';
     };
     host.innerHTML =
-      rowFor('Booster (I/S)', roles.booster) +
-      rowFor('Stage', roles.stage) +
-      rowFor('Payload', roles.payload);
+      rowFor('Booster (I/S)', roles.booster, 'booster') +
+      rowFor('Stage', roles.stage, 'stage') +
+      rowFor('Payload', roles.payload, null);
   }
 
   function resetFlight() {
