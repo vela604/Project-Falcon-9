@@ -619,14 +619,19 @@ if (_RL) globalThis.__slKeep = sl;
     ctx.beginPath(); trace(sgn, k);
     ctx.lineWidth = w; ctx.strokeStyle = style; ctx.stroke();
   };
-  stroke(-sl, 0.80, W * 0.34, 'rgba(0,0,0,0.045)');            // terminator feather
-  stroke(-sl, 0.80, W * 0.22, 'rgba(0,0,0,0.055)');
-  stroke(-sl, 0.86, W * 0.11, 'rgba(0,0,0,0.080)');
+  // _TERM_SCALED_BY_LIT: terminator darkening scales by RL.lit. At night
+  // (lit=0) the fairing used to show a hard shadow edge — making it look
+  // ~3x darker than the straight body below (which depends only on
+  // _cylShadeGradient, that scales correctly by lit).
+  const _termMul = _RL ? _RL.lit : 1;
+  stroke(-sl, 0.80, W * 0.34, 'rgba(0,0,0,' + (0.045 * _termMul).toFixed(3) + ')');   // terminator feather
+  stroke(-sl, 0.80, W * 0.22, 'rgba(0,0,0,' + (0.055 * _termMul).toFixed(3) + ')');
+  stroke(-sl, 0.86, W * 0.11, 'rgba(0,0,0,' + (0.080 * _termMul).toFixed(3) + ')');
   stroke(sl, 0.46, W * 0.18, 'rgba(255,255,255,' + (0.040 * s).toFixed(3) + ')');   // specular
   stroke(sl, 0.46, W * 0.10, 'rgba(255,255,255,' + (0.070 * s).toFixed(3) + ')');
   stroke(sl, 0.46, Math.max(1, W * 0.035), 'rgba(255,255,255,' + (0.20 * s).toFixed(3) + ')');
-  stroke(-sl, 0.97, Math.max(1, W * 0.025), 'rgba(255,255,255,0.10)');                // bounce light
-  stroke(-1, 1.0, W * 0.10, 'rgba(0,0,0,0.12)');                                      // limb darkening
+  stroke(-sl, 0.97, Math.max(1, W * 0.025), 'rgba(255,255,255,' + (0.10 * Math.max(0.3, (_RL ? _RL.lit : 1))).toFixed(3) + ')');  // bounce light (ambient floor)
+  stroke(-sl, 1.0, W * 0.10, 'rgba(0,0,0,' + (0.12 * Math.max(0.25, (_RL ? _RL.lit : 1))).toFixed(3) + ')');  // limb darkening (small ambient floor, follows shadow side)
   ctx.restore();
 }
 
