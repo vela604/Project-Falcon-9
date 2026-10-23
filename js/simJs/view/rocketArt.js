@@ -505,7 +505,7 @@ function _axialShade(ctx, pathFn, H, W) {
   ctx.fillStyle = g;
   const _y0 = (stackTotalH_px !== undefined) ? yTop : -H;
   const _y1 = (stackTotalH_px !== undefined) ? yBot : 0;
-  ctx.fillRect(-stackMaxW_px * 2, _y0 - H, stackMaxW_px * 4, (_y1 - _y0) + H * 2);
+  ctx.fillRect(-W * 2, _y0 - H, W * 4, (_y1 - _y0) + H * 2);
   ctx.restore();
 }
 
@@ -1007,9 +1007,13 @@ function drawPayloadSpaceShape(ctx, W, H, mpp, opts) {
   }
 
   if (typeof applyCylindricalOverlay === 'function') {
+    // PER-MEMBER-WIDTH: fairing uses its own bulge/cap width. Using
+    // stackMaxW_px made the fairing darker than narrower bodies below,
+    // because the gradient was always full-width even for wide parts.
+    const _fw = Math.max(capR, bulgeR) * 2;
     bodyPath();
-    applyCylindricalOverlay(ctx, stackMaxW_px);
-    _axialShade(ctx, bodyPath, H, stackMaxW_px, opts.stackTotalH_px, opts.memberOffsetY_px);
+    applyCylindricalOverlay(ctx, _fw);
+    _axialShade(ctx, bodyPath, H, _fw, opts.stackTotalH_px, opts.memberOffsetY_px);
   }
   {
     const gW = Math.max(capR, bulgeR) * 2;
@@ -1019,7 +1023,7 @@ function drawPayloadSpaceShape(ctx, W, H, mpp, opts) {
       ctx.lineTo(sg * bulgeR * k, straightTopY);
       ctx.bezierCurveTo(sg * bulgeR * 0.98 * k, straightTopY - curveH * 0.30, sg * bulgeR * 0.45 * k, tipY + curveH * 0.15, 0, tipY);
     };
-    _ogiveShade(ctx, stackMaxW_px, bodyPath, trace);
+    _ogiveShade(ctx, gW, bodyPath, trace);
     ctx.save(); bodyPath(); ctx.clip();
     if (ROCKET_FX.seams) {
       if (straightH > 1) _seamLine(ctx, Math.round(straightTopY), bulgeR * 2, 1.2);
@@ -1704,8 +1708,9 @@ if (isNose) {
     ctx.stroke();
     
     if (typeof applyCylindricalOverlay === 'function') {
+      // PER-MEMBER-WIDTH: nose uses its own width.
       conePath();
-      applyCylindricalOverlay(ctx, stackMaxW_px);
+      applyCylindricalOverlay(ctx, W);
     }
     
     // DSL for nose (if allowed — currently nose role is solid only, but
@@ -1719,11 +1724,11 @@ if (isNose) {
         ctx.clip();
         drawCustomDesignOps(ctx, W, H, parsed.ops);
         conePath();
-        if (typeof applyCylindricalOverlay === 'function') applyCylindricalOverlay(ctx, stackMaxW_px);
+        if (typeof applyCylindricalOverlay === 'function') applyCylindricalOverlay(ctx, W);
         ctx.restore();
       }
     }
-    _ogiveShade(ctx, stackMaxW_px, conePath, (sg, k) => {
+    _ogiveShade(ctx, W, conePath, (sg, k) => {
       ctx.moveTo(sg * W / 2 * k, 0);
       ctx.quadraticCurveTo(sg * ctrlx * -1 * k, ctrly, 0, -H);
     });
@@ -1988,7 +1993,7 @@ const bodyPath = () => {
     ctx.stroke();
     
     if (designMode !== 'dsl') {
-      const shade = _cylShadeGradient(ctx, stackMaxW_px);
+      const shade = _cylShadeGradient(ctx, W);  // PER-MEMBER-WIDTH: own width for correct curvature
       ctx.fillStyle = shade;
       bodyPath();
       ctx.fill();
@@ -2059,7 +2064,7 @@ const bodyPath = () => {
     ctx.stroke();
     
     if (designMode !== 'dsl') {
-      const g = _cylShadeGradient(ctx, stackMaxW_px);
+      const g = _cylShadeGradient(ctx, W);  // PER-MEMBER-WIDTH: own width
       ctx.fillStyle = g;
       tankPath();
       ctx.fill();
@@ -2158,7 +2163,7 @@ const bodyPath = () => {
     
     // Cylindrical gradient over the payload (widest width = bulge or cap).
     const gradW = Math.max(capW_px, bulgeW_px) || W;
-    const pGrad = _cylShadeGradient(ctx, stackMaxW_px);
+    const pGrad = _cylShadeGradient(ctx, gradW);  // PER-MEMBER-WIDTH: fairing own width
     ctx.fillStyle = pGrad;
     payloadPath();
     ctx.fill();
@@ -2174,7 +2179,7 @@ const bodyPath = () => {
           ctx.lineTo(sg * _hB * k, cTop);
           ctx.bezierCurveTo(sg * _hB * 0.98 * k, cTop - oH * 0.30, sg * _hB * 0.45 * k, _tY + oH * 0.15, 0, _tY);
         };
-        _ogiveShade(ctx, stackMaxW_px, payloadPath, _trace);
+        _ogiveShade(ctx, gradW, payloadPath, _trace);
         ctx.save(); payloadPath(); ctx.clip();
         if (ROCKET_FX.seams) { _seamLine(ctx, Math.round(cTop), _hB * 2, 1.2); _seamLine(ctx, Math.round(fTop), _hB * 2, 1); _rivetRow(ctx, Math.round(cTop) - 2, _hB * 2, 0.8); }
         ctx.restore();
@@ -2183,7 +2188,7 @@ const bodyPath = () => {
           ctx.moveTo(sg * _hC * k, _bY);
           ctx.bezierCurveTo(sg * _hC * 0.70 * k, _bY + capH_px * 0.30, sg * _hC * 0.30 * k, _tY + capH_px * 0.20, 0, _tY);
         };
-        _ogiveShade(ctx, stackMaxW_px, payloadPath, _trace);
+        _ogiveShade(ctx, gradW, payloadPath, _trace);
       }
     }
   }
