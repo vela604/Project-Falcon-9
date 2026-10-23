@@ -172,6 +172,17 @@ if (typeof Guidance !== 'undefined') {
             // ---- Persistent snapshot wrapper (zero alloc per tick) ----
 const dt = CONFIG.DT;
 const maxTicks = Math.ceil(msg.durationS / dt);
+window.__ffwDiag = {
+  dt: dt,
+  durationS: msg.durationS,
+  maxTicks: maxTicks,
+  startSimTime: state.simTime,
+  expectedEnd: state.simTime + maxTicks * dt,
+  startWallMs: performance.now(),
+};
+console.log('[ffw] boot: dt=' + dt + ' durationS=' + msg.durationS +
+  ' maxTicks=' + maxTicks + ' startSim=' + state.simTime.toFixed(3) +
+  ' expectedEnd=' + (state.simTime + maxTicks * dt).toFixed(3));
 const progressEvery = Math.max(1, msg.progressEveryTicks || 80);
 const bodiesEvery = Math.max(progressEvery, msg.bodiesEveryTicks || 80);
 const startSimT = state.simTime;
@@ -277,6 +288,16 @@ catch (ge) {
   if (state.halted) break;
 }
     
+    window.__ffwDiag.actualEnd = state.simTime;
+    window.__ffwDiag.actualTicks = typeof i !== 'undefined' ? i : -1;
+    window.__ffwDiag.loopOvershoot = state.simTime - window.__ffwDiag.expectedEnd;
+    window.__ffwDiag.wallMs = performance.now() - window.__ffwDiag.startWallMs;
+    console.log('[ffw] done: actualEnd=' + state.simTime.toFixed(3) +
+      ' overshootVsExpected=' + (state.simTime - window.__ffwDiag.expectedEnd).toFixed(3) + 's' +
+      ' actualTicks=' + window.__ffwDiag.actualTicks +
+      ' expectedTicks=' + window.__ffwDiag.maxTicks +
+      ' wall=' + (window.__ffwDiag.wallMs / 1000).toFixed(2) + 's');
+
     // ---- Final export ----
 self.postMessage({
   type: 'done',

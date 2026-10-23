@@ -197,6 +197,20 @@ const envState = {
 const w = new Worker('js/simJs/threads/fastforward.worker.js');
     _state.ffWorker = w;
     const _baseSimTime = physData.simTime;
+    // ── FF diag: exact base + duration + final ──
+    if (!window.__ffDiag) window.__ffDiag = [];
+    window.__ffDiag.push({
+      ev: 'start',
+      base: _baseSimTime,
+      baseBodies: (physData.bodies || []).length,
+      dur: durationS,
+      activeGuide: activeGuide,
+      expectedEnd: _baseSimTime + durationS,
+      wallStart: performance.now(),
+    });
+    console.log('[ff-diag] start: base=' + _baseSimTime.toFixed(3) +
+      's dur=' + durationS + 's expectedEnd=' + (_baseSimTime + durationS).toFixed(3) + 's ' +
+      'activeGuide=' + activeGuide);
 
             w.onmessage = (ev) => {
       const m = ev.data;
@@ -247,6 +261,21 @@ const w = new Worker('js/simJs/threads/fastforward.worker.js');
     }
   }
 } else if (m.type === 'done') {
+  const _wallMs = window.__ffDiag && window.__ffDiag[window.__ffDiag.length - 1]
+    ? performance.now() - window.__ffDiag[window.__ffDiag.length - 1].wallStart : NaN;
+  window.__ffDiag && window.__ffDiag.push({
+    ev: 'done',
+    finalSimTime: m.fullState.simTime,
+    elapsedFromBase: m.fullState.simTime - _baseSimTime,
+    requestedDur: durationS,
+    overshoot: (m.fullState.simTime - _baseSimTime) - durationS,
+    wallMs: _wallMs,
+  });
+  console.log('[ff-diag] done: finalSimTime=' + m.fullState.simTime.toFixed(3) +
+    's  elapsed=' + (m.fullState.simTime - _baseSimTime).toFixed(3) + 's' +
+    '  requested=' + durationS + 's  overshoot=' +
+    ((m.fullState.simTime - _baseSimTime) - durationS).toFixed(3) + 's  wall=' +
+    (_wallMs / 1000).toFixed(2) + 's');
   _state.pendingResult = m;
   _state.running = false;
   try { w.terminate(); } catch (e) {}
