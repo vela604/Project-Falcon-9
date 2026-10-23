@@ -1676,3 +1676,18 @@ canvas.mini-graph { width: 100%; height: 60px; background: var(--bg); border-rad
   canvas#figureCanvas { height: clamp(120px, 22vh, 170px); }
   canvas#basalCanvas  { height: clamp(80px, 13vh, 110px); }
 }
+/* ===== Pad local-time panel (SimLighting) ===== */
+#timeBar{position:absolute;top:8px;left:50%;transform:translate(-50%,-150%);opacity:0;pointer-events:none;z-index:50;
+  width:min(340px,calc(100vw - 24px));background:rgba(13,20,36,.94);backdrop-filter:blur(10px);
+  border:1px solid var(--panel-border);border-radius:10px;padding:10px 12px;box-shadow:0 10px 30px rgba(0,0,0,.5);
+  font-family:var(--font-mono);transition:transform .28s ease-out,opacity .28s;}
+#timeBar.open{transform:translate(-50%,0);opacity:1;pointer-events:auto;}
+#timeBar .tbar-head{display:flex;align-items:center;gap:10px;margin-bottom:8px;}
+#timeBar .tbar-title{color:var(--cyan);font-weight:700;font-size:11px;letter-spacing:.6px;flex:1;}
+#timeBar #timeBarValue{color:var(--orange);font-weight:700;font-size:15px;}
+#timeBar .tbar-close{background:var(--panel-2);border:1px solid var(--panel-border);color:var(--dim);width:22px;height:22px;border-radius:6px;cursor:pointer;font-size:11px;}
+#timeBar .tbar-close:hover{color:var(--danger);border-color:var(--danger);}
+#timeBar input[type=range]{width:100%;margin:4px 0 8px;}
+#timeBar .tbar-presets{display:flex;gap:6px;}
+#timeBar .tbar-presets .btn{flex:1;justify-content:center;padding:5px 4px;font-size:11px;}
+#timeBar .tbar-info{display:flex;justify-content:space-between;margin-top:8px;font-size:10px;color:var(--dim);}

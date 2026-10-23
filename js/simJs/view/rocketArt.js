@@ -357,7 +357,35 @@ const _szadMakeCanvas = (function() {
 // dark limb on the left, soft diffuse, a narrow specular streak left of centre,
 // a long falloff to a dark terminator on the right, then a faint bounce/rim light
 // at the far right edge so the silhouette doesn't die into the background.
+// Sun-aware body shading. globalThis._ROCKET_LIGHT = {lx,ly,lit,amb,tint} is set by
+// render.js per body; absent (previews, figure panel) -> the original neutral gradient.
+// The cache key carries every light input (quantised), so bodies never share a stale one.
 function _cylShadeGradient(ctx, W) {
+  const RL = globalThis._ROCKET_LIGHT;
+  if (!RL) return _cylShadeGradientBase(ctx, W);
+  const sig = [Math.round(W), Math.round(RL.lx * 12), Math.round(RL.lit * 12), Math.round(RL.amb * 24), Math.round(RL.tint * 12)].join('|');
+  return cachedGradient(ctx, 'cylLit', sig, () => {
+    const g = ctx.createLinearGradient(-W / 2, 0, W / 2, 0);
+    const ll = Math.hypot(RL.lx, 0.5) || 1, lx = RL.lx / ll, lz = 0.5 / ll;
+    const N = 16;
+    for (let i = 0; i <= N; i++) {
+      const u = i / N, x = u * 2 - 1, nz = Math.sqrt(Math.max(0, 1 - x * x));
+      const d = Math.max(0, x * lx + nz * lz);
+      const t = RL.amb + RL.lit * d * (1 - RL.amb);
+      const dark = Math.min(0.85, (1 - Math.min(1, t)) * 0.62 + 0.20 * Math.pow(Math.abs(x), 4));
+      const hl = RL.lit * Math.pow(d, 10) * 0.18 * ROCKET_FX.spec;
+      const warm = RL.tint * RL.lit * d * 0.16;
+      let col;
+      if (hl > dark) col = 'rgba(255,' + Math.round(255 - 60 * RL.tint) + ',' + Math.round(255 - 150 * RL.tint) + ',' + hl.toFixed(3) + ')';
+      else if (warm > dark && warm > 0.03) col = 'rgba(255,150,70,' + warm.toFixed(3) + ')';
+      else col = 'rgba(0,0,0,' + dark.toFixed(3) + ')';
+      g.addColorStop(u, col);
+    }
+    return g;
+  });
+}
+
+function _cylShadeGradientBase(ctx, W) {
   return cachedGradient(ctx, 'cylShade2', Math.round(W), () => {
     const g = ctx.createLinearGradient(-W / 2, 0, W / 2, 0);
     g.addColorStop(0.00, 'rgba(0,0,0,0.30)');
@@ -509,7 +537,9 @@ function _interstageDetail(ctx, W, H) {
 //   with x scaled by k — so k=0.46 is an offset curve at 46% of local radius.
 function _ogiveShade(ctx, W, silhouette, trace) {
   if (!ROCKET_FX.ogive || W < 4) return;
-  const s = ROCKET_FX.spec;
+  const _RL = globalThis._ROCKET_LIGHT;
+  const sl = _RL ? (_RL.lx >= 0 ? 1 : -1) : -1;                       // lit side
+  const s = ROCKET_FX.spec * (_RL ? _RL.lit * Math.min(1, 0.35 + Math.abs(_RL.lx)) : 1);
   ctx.save();
   silhouette();
   ctx.clip();
@@ -518,13 +548,13 @@ function _ogiveShade(ctx, W, silhouette, trace) {
     ctx.beginPath(); trace(sgn, k);
     ctx.lineWidth = w; ctx.strokeStyle = style; ctx.stroke();
   };
-  stroke(1, 0.80, W * 0.34, 'rgba(0,0,0,0.045)');            // terminator feather
-  stroke(1, 0.80, W * 0.22, 'rgba(0,0,0,0.055)');
-  stroke(1, 0.86, W * 0.11, 'rgba(0,0,0,0.080)');
-  stroke(-1, 0.46, W * 0.18, 'rgba(255,255,255,' + (0.040 * s).toFixed(3) + ')');   // specular
-  stroke(-1, 0.46, W * 0.10, 'rgba(255,255,255,' + (0.070 * s).toFixed(3) + ')');
-  stroke(-1, 0.46, Math.max(1, W * 0.035), 'rgba(255,255,255,' + (0.20 * s).toFixed(3) + ')');
-  stroke(1, 0.97, Math.max(1, W * 0.025), 'rgba(255,255,255,0.10)');                // bounce light
+  stroke(-sl, 0.80, W * 0.34, 'rgba(0,0,0,0.045)');            // terminator feather
+  stroke(-sl, 0.80, W * 0.22, 'rgba(0,0,0,0.055)');
+  stroke(-sl, 0.86, W * 0.11, 'rgba(0,0,0,0.080)');
+  stroke(sl, 0.46, W * 0.18, 'rgba(255,255,255,' + (0.040 * s).toFixed(3) + ')');   // specular
+  stroke(sl, 0.46, W * 0.10, 'rgba(255,255,255,' + (0.070 * s).toFixed(3) + ')');
+  stroke(sl, 0.46, Math.max(1, W * 0.035), 'rgba(255,255,255,' + (0.20 * s).toFixed(3) + ')');
+  stroke(-sl, 0.97, Math.max(1, W * 0.025), 'rgba(255,255,255,0.10)');                // bounce light
   stroke(-1, 1.0, W * 0.10, 'rgba(0,0,0,0.12)');                                      // limb darkening
   ctx.restore();
 }

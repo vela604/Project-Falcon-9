@@ -64,6 +64,7 @@ self.onmessage = (e) => {
   '../core/stateBuffer.js',
   '../view/rocketArt.js',
   '../view/predictedTrajectory.js',
+  '../view/lighting.js',
   '../view/render.js'
 );
     
@@ -196,6 +197,10 @@ if (msg.data.rcsSync) {
       // else: hotBuffer arrived but we have no bodies yet to decode into
       // (shouldn't happen — the first-ever 'state' message always carries
       // `bodies`) — safely ignored rather than throwing.
+      break;
+    }
+    case 'lighting': {
+      if (typeof SimLighting !== 'undefined') SimLighting.setState(msg.state);
       break;
     }
     case 'camera': {

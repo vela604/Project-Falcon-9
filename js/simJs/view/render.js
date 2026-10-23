@@ -245,10 +245,15 @@ function drawSky(altitude) {
     c = lerpColor(spaceBlack, midViolet, t);
   }
   const grad = ctx.createLinearGradient(0, 0, 0, canvas.height);
-  grad.addColorStop(0, `rgb(${c[0]*0.6},${c[1]*0.6},${c[2]*0.6})`);
-  grad.addColorStop(1, `rgb(${c[0]},${c[1]},${c[2]})`);
+  let top = [c[0] * 0.6, c[1] * 0.6, c[2] * 0.6], bot = [c[0], c[1], c[2]];
+  if (typeof SimLighting !== 'undefined' && SimLighting.enabled()) {
+    const sc = SimLighting.skyColors(c, densityFrac); top = sc.top; bot = sc.bot;
+  }
+  grad.addColorStop(0, `rgb(${top[0]},${top[1]},${top[2]})`);
+  grad.addColorStop(1, `rgb(${bot[0]},${bot[1]},${bot[2]})`);
   ctx.fillStyle = grad;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
+  if (typeof SimLighting !== 'undefined') SimLighting.drawBackdrop(ctx, canvas, altitude);
 }
 
 function lerpColor(a, b, t) {
@@ -1136,6 +1141,7 @@ function drawRocket() {
 function drawBodyAsTriangle(body, isActive) {
   const [px, py] = worldToScreen(body.rx, body.ry);
   const speed = Math.hypot(body.vx, body.vy);
+  if (typeof SimLighting !== 'undefined') SimLighting.drawLocator(ctx, px, py, isActive, body);
   
   // Vertex points along the body's own nose axis (attitude θ), NOT its
   // velocity. In the inertial world frame the nose direction is
@@ -1912,6 +1918,12 @@ function _plumeLengthM(body, totalThrust, maxSingleF, single, thr) {
 }
 
 function drawBodyRocket(body, isActive, bodyIdx) {
+  globalThis._ROCKET_LIGHT = (typeof SimLighting !== 'undefined' && camera.mode !== 'planet') ? SimLighting.rocketLight(body) : null;
+  try { _drawBodyRocketInner(body, isActive, bodyIdx); }
+  finally { globalThis._ROCKET_LIGHT = null; }
+}
+
+function _drawBodyRocketInner(body, isActive, bodyIdx) {
   if (camera.mode === 'planet') {
     drawBodyAsTriangle(body, isActive);
     return;
@@ -2617,6 +2629,7 @@ function renderFrame() {
   
   if (camera.mode === 'planet') {
   drawEarth();
+  if (typeof SimLighting !== 'undefined') SimLighting.shadeEarth(ctx, canvas);
   drawGrid();
   drawOceanArea();
   drawRemoteArea();
@@ -2626,7 +2639,8 @@ function renderFrame() {
 }
 
 drawEarth();
-drawGrid();
+  if (typeof SimLighting !== 'undefined') SimLighting.shadeEarth(ctx, canvas);
+  drawGrid();
 drawOceanArea();
 drawRemoteArea();
 drawPredictedTrajectory();

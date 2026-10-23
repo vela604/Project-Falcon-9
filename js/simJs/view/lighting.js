@@ -355,11 +355,15 @@ const SimLighting = (function () {
     if (en) { en.checked = S.enabled; en.addEventListener('change', e => { S.enabled = e.target.checked; save(); }); }
     refreshUI(true);
   }
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initUI);
-  else initUI();
+  if (typeof document !== 'undefined') {
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initUI);
+    else initUI();
+  }
 
   return {
     enabled: () => S.enabled, assist: () => S.assist,
+    getState: () => ({ enabled: S.enabled, assist: S.assist, hour0: S.hour0 }),
+    setState: o => { if (!o) return; if (Number.isFinite(o.hour0)) S.hour0 = o.hour0; S.enabled = !!o.enabled; S.assist = !!o.assist; },
     padHour, setPadHour, sunDir, sinElev, litFactor, rocketLight,
     skyColors, drawBackdrop, shadeEarth, drawLocator, tickUI: refreshUI,
   };

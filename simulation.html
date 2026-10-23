@@ -28,6 +28,7 @@
             <span class="status-dot" id="statusDot"></span>
             <span id="statusText">STOPPED</span>
             <span class="tb-clock" id="missionClock">T+00:00.0</span>
+            <button class="btn" id="btnTimeEdit" title="Pad local time — click to change"><span id="padTimeIcon">☀</span><span id="padTimeLabel">--:--</span></button>
           </div>
         </div>
         <div class="tb-right">
@@ -39,6 +40,8 @@
             <label class="chip-toggle"><input type="checkbox" id="toggleAtmosphere" checked><span>Atmosphere</span></label>
             <label class="chip-toggle"><input type="checkbox" id="toggleSlosh" checked><span>Fuel slosh</span></label>
             <label class="chip-toggle"><input type="checkbox" id="toggleImu"><span>IMU noise</span></label>
+            <label class="chip-toggle"><input type="checkbox" id="toggleSunLight" checked><span>Sun light</span></label>
+            <label class="chip-toggle"><input type="checkbox" id="toggleNightAssist" checked><span>Night assist</span></label>
           </div>
         </div>
       </div>
@@ -81,6 +84,17 @@
     <!-- ===================== Viewport ===================== -->
     <div id="viewport">
       <canvas id="simCanvas"></canvas>
+
+      <!-- Pad local-time panel (SimLighting) -->
+      <div id="timeBar">
+        <div class="tbar-head"><span class="tbar-title">☀ PAD LOCAL TIME</span><span id="timeBarValue">10:00</span><button class="tbar-close" id="timeBarClose">✕</button></div>
+        <input type="range" id="timeSlider" min="0" max="1439" step="1" value="600">
+        <div class="tbar-presets">
+          <button class="btn" data-hour="6">🌅 06:00</button><button class="btn" data-hour="12">☀ 12:00</button>
+          <button class="btn" data-hour="18">🌇 18:00</button><button class="btn" data-hour="21">🌙 21:00</button>
+        </div>
+        <div class="tbar-info"><span id="timeBarPhase">—</span><span id="timeBarLaunch">—</span></div>
+      </div>
       
       <!-- Telemetry (compact notation) -->
       <div id="telemetryPanel">
@@ -696,6 +710,7 @@
   <script src="js/simJs/view/predictedTrajectory.js"></script>
   <script src="js/simJs/view/render.js"></script>
  <script src="js/simJs/view/telemetry.js"></script>
+<script src="js/simJs/view/lighting.js"></script>
 <script src="js/simJs/view/fastForward.js"></script>
 <script src="js/simJs/main.js"></script>
   

@@ -301,6 +301,7 @@ drawDirectionHUD();
   
   updateTelemetry();
   updateStatusBar();
+  if (typeof SimLighting !== 'undefined') SimLighting.tickUI();
   updateFuelAvailability();
   
   // ---- Legs button — driven by the CURRENTLY-FOLLOWED body ----
@@ -577,6 +578,10 @@ window.addEventListener('resize', () => {
         _lastSentToggles.sloshEnabled = sloshEnabled;
       }
 
+      if (typeof SimLighting !== 'undefined') {
+        const _ls = SimLighting.getState(), _lk = JSON.stringify(_ls);
+        if (_lk !== globalThis.__lastLightKey) { globalThis.__lastLightKey = _lk; renderWorker.postMessage({ type: 'lighting', state: _ls }); }
+      }
       requestAnimationFrame(pushRenderContext);
     };
     pushRenderContext();
