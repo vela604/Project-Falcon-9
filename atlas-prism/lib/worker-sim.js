@@ -829,6 +829,16 @@ self.onmessage = async (e) => {
             _P.full += performance.now() - _pf0; _P.fullT += _tk - _pfk0;
             const gsEnd = Guidance.getGuideStatus();
             const stb = findStageBody();
+            // Extract real booster fuel from live bodies (booster has already
+            // separated at SA, so its fuel is frozen; CH snapshot carries it).
+            let boosterFuelLeftKg = NaN;
+            for (const _b of state.bodies) {
+              if (_b && !_b.payloadBody && !_b.fairingHalf && _b.members && _b.members[0] && _b.members[0].stageRole === 'booster') {
+                if (Array.isArray(_b.memberFuel) && Number.isFinite(_b.memberFuel[0])) boosterFuelLeftKg = _b.memberFuel[0];
+                else if (Number.isFinite(_b.fuelMass)) boosterFuelLeftKg = _b.fuelMass;
+                break;
+              }
+            }
             const m = {
               endReason: gsEnd.payloadCleared ? 'CLEARED' : 'CAP',
               crashed: !!state.crashed,
@@ -836,7 +846,7 @@ self.onmessage = async (e) => {
               payloadCleared: !!gsEnd.payloadCleared,
               deployTimeS: gsEnd.deployCommandSimTime,
               apogeeKm: NaN, perigeeKm: NaN, ecc: NaN,
-              boosterFuelLeftKg: NaN, stageResidualKg: stb ? stb.fuelMass : NaN,
+              boosterFuelLeftKg, stageResidualKg: stb ? stb.fuelMass : NaN,
               maxQKPa: NaN, maxG: NaN,
             };
             const pb = state.bodies.find(x => x && x.payloadBody);
