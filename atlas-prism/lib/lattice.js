@@ -81,6 +81,8 @@
       },
       insertion: {
         TARGET_ORBIT_ALT_KM: opts.targetAltKm != null ? opts.targetAltKm : f.targetAltKm,
+        TARGET_APSIDE1_ALT_KM: opts.targetAltKm != null ? opts.targetAltKm : f.targetAltKm,
+        TARGET_APSIDE2_ALT_KM: opts.targetAltKm != null ? opts.targetAltKm : f.targetAltKm,
         STAGE_BURN_AOA_BIAS_DEG: biasOf(p.bi),
         CIRC_TRIGGER_LEAD_S: leadOf(p.li),
         COAST_WAIT_BEFORE_APOGEE_S: f.coastWaitBeforeApogeeS,
