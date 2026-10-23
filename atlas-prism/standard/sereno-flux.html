@@ -9,6 +9,25 @@
 <link rel="stylesheet" href="styles/engine-theme.css">
 <link rel="stylesheet" href="styles/sereno-flux.css">
 <script src="../js/szadFont.js" onerror="void 0"></script>
+<style>
+.so-result{margin-top:14px;padding:14px;background:rgba(8,15,22,.7);border:1px solid var(--line);border-radius:6px}
+.so-score-line{display:flex;gap:28px;margin-bottom:14px;flex-wrap:wrap;align-items:baseline}
+.so-score-line>div{display:flex;flex-direction:column;gap:2px}
+.so-label{color:var(--dim);font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;font-weight:500}
+.so-value{font-family:'JetBrains Mono',monospace;font-weight:600;font-size:16px;color:#fff}
+.so-value .ok{color:var(--green)}
+.so-value .bad{color:var(--red)}
+.so-parts{width:100%;border-collapse:collapse;font-size:12px;margin-top:6px}
+.so-parts th{text-align:left;color:var(--dim);font-weight:400;padding:6px 10px;border-bottom:1px solid var(--line);font-size:10.5px;text-transform:uppercase;letter-spacing:.06em}
+.so-parts th:nth-child(3){text-align:right}
+.so-parts td{padding:6px 10px;border-bottom:1px solid rgba(255,255,255,.06)}
+.so-parts td:nth-child(3){text-align:right;font-family:'JetBrains Mono',monospace;font-weight:600}
+.so-parts td.pos{color:var(--red)}
+.so-parts td.neg{color:var(--green)}
+.so-parts tr.total td{font-weight:700;border-top:2px solid var(--line);border-bottom:none;padding-top:10px;font-size:13px;color:#fff}
+.so-meta{display:flex;gap:18px;margin-top:12px;font-size:11.5px;color:var(--dim);flex-wrap:wrap;padding-top:10px;border-top:1px dashed rgba(255,255,255,.1)}
+.so-meta b{color:#fff;font-weight:600;font-family:'JetBrains Mono',monospace}
+</style>
 </head>
 <body data-state="idle">
 <div id="app">
@@ -29,7 +48,8 @@
 <section class="panel row" id="lockBar">
   <div class="lbl"><span class="tag">0x00</span>Session</div>
   <label>stack <select id="stackSel"></select></label>
-  <label>target orbit km <input type="number" id="orbitKm" value="320" min="150" step="10"></label>
+  <label>target apo km <input type="number" id="apoKm" value="320" min="150" step="10"></label>
+  <label>target peri km <input type="number" id="periKm" value="320" min="150" step="10"></label>
   <div class="btns">
     <button class="lock" id="lockBtn">Lock</button>
     <button class="reset" id="resetBtn" disabled>Reset</button>
@@ -100,6 +120,26 @@
     <div id="chartHost" class="charts"></div>
   </section>
 
+  <!-- ==================== SCORE YOUR OWN (new) ==================== -->
+  <section class="panel" id="scoreOwn" style="margin-top:14px">
+    <h2><span class="tag">0x04</span>Score your own</h2>
+    <div class="dim" style="font-size:11.5px;margin-bottom:10px;">
+      Enter MECO / G / T / bias. Leave <b>lead</b> blank to let the engine search (same as ZETA-HELIX); provide a value to score that exact lead.
+    </div>
+    <div class="row">
+      <label>MECO kg <input type="number" id="soMeco" step="1" value="62000"></label>
+      <label>G <input type="number" id="soG" step="0.01" value="0.61"></label>
+      <label>T <input type="number" id="soT" step="0.001" value="4.82"></label>
+      <label>bias <input type="number" id="soBias" step="0.001" value="2.6428"></label>
+      <label>lead <span class="dim">(optional)</span> <input type="number" id="soLead" step="0.0125" placeholder="auto"></label>
+    </div>
+    <div class="row">
+      <button class="primary" id="soRun">Run &amp; Score</button>
+      <span class="dim" id="soStatus"></span>
+    </div>
+    <div id="soResult"></div>
+  </section>
+
 </main>
 
 <!-- ==================== STANDBY (CSS hides it once #main is shown) ==================== -->
@@ -155,6 +195,8 @@
     locked: false,
     stackId: null,
     orbitKm: 320,
+    orbitApoKm: 320,
+    orbitPeriKm: 320,
     pool: null,
     poolReady: false,
     tab: null,
@@ -255,8 +297,11 @@
   async function doLock() {
     const stkId = $('stackSel').value;
     if (!stkId) { $('lockStatus').innerHTML = '<span class="bad">no eligible stack</span>'; return; }
-    const km = parseInt($('orbitKm').value, 10);
-    if (!Number.isFinite(km) || km < 150) { $('lockStatus').innerHTML = '<span class="bad">invalid orbit km</span>'; return; }
+    const apoKm = parseInt($('apoKm').value, 10);
+    const periKm = parseInt($('periKm').value, 10);
+    if (!Number.isFinite(apoKm) || apoKm < 150) { $('lockStatus').innerHTML = '<span class="bad">invalid apo km</span>'; return; }
+    if (!Number.isFinite(periKm) || periKm < 150) { $('lockStatus').innerHTML = '<span class="bad">invalid peri km</span>'; return; }
+    const km = apoKm;
 
     try { setSelectedStackId(stkId); } catch (e) {}
 
@@ -264,14 +309,15 @@
     if (!info) { $('lockStatus').innerHTML = '<span class="bad">stack has no feasible stage (mc/Ve)</span>'; return; }
     S.mc = info.mc; S.Ve = info.Ve;
 
-    S.stackId = stkId; S.orbitKm = km; S.locked = true;
+    S.stackId = stkId; S.orbitKm = km; S.orbitApoKm = apoKm; S.orbitPeriKm = periKm; S.locked = true;
 
     $('lockBtn').disabled = true;
     $('stackSel').disabled = true;
-    $('orbitKm').disabled = true;
+    $('apoKm').disabled = true;
+    $('periKm').disabled = true;
     $('resetBtn').disabled = false;
     $('lockStatus').innerHTML = '<span class="ok">LOCKED</span> · ' +
-      esc(stkId) + ' · ' + km + ' km · mc=' + fmt(info.mc, 1) + ' kg · Ve=' + fmt(info.Ve, 1) + ' m/s';
+      esc(stkId) + ' · apo/peri ' + apoKm + '/' + periKm + ' km · mc=' + fmt(info.mc, 1) + ' kg · Ve=' + fmt(info.Ve, 1) + ' m/s';
 
     $('main').style.display = 'block';
 
@@ -287,7 +333,7 @@
     log('pool ready (' + n + ' workers)');
 
     log('setupSA on ' + n + ' workers…');
-    const baseValues = baselineValuesForStack(stkId, km);
+    const baseValues = baselineValuesForStack(stkId, apoKm, periKm);
     const jobs = [];
     for (let i = 0; i < n; i++) jobs.push(S.pool.runJob('setupSA', { values: baseValues }));
     const results = await Promise.all(jobs);
@@ -318,7 +364,8 @@
     S.zetaRange = {};
     $('lockBtn').disabled = false;
     $('stackSel').disabled = false;
-    $('orbitKm').disabled = false;
+    $('apoKm').disabled = false;
+    $('periKm').disabled = false;
     $('resetBtn').disabled = true;
     $('lockStatus').textContent = 'Select stack + orbit, then LOCK to start.';
     $('main').style.display = 'none';
@@ -349,10 +396,12 @@
     return { mc, Ve: d.effectiveVe };
   }
 
-  function baselineValuesForStack(stackId, km) {
+  function baselineValuesForStack(stackId, apoKm, periKm) {
     // Known-good F9 Block 5 standard stack @ 320 km setupSA baseline
     // (identical to bias-score-scan.html).
     const C = TunerConfig;
+    const tApo = apoKm != null ? apoKm : 320;
+    const tPeri = periKm != null ? periKm : tApo;
     return {
       ascent: {
         PUSH_MAX_GIMBAL_DEG: 0.61,
@@ -360,9 +409,9 @@
         MECO_TARGET_BOOSTER_FUEL_KG: 60494,
       },
       insertion: {
-        TARGET_ORBIT_ALT_KM: km,
-        TARGET_APSIDE1_ALT_KM: km,
-        TARGET_APSIDE2_ALT_KM: km,
+        TARGET_ORBIT_ALT_KM: tApo,
+        TARGET_APSIDE1_ALT_KM: tApo,
+        TARGET_APSIDE2_ALT_KM: tPeri,
         STAGE_BURN_AOA_BIAS_DEG: 1.8,
         CIRC_TRIGGER_LEAD_S: 5.64,
       },
@@ -398,9 +447,9 @@
         MECO_TARGET_BOOSTER_FUEL_KG: meco,
       },
       insertion: {
-        TARGET_ORBIT_ALT_KM: S.orbitKm,
-        TARGET_APSIDE1_ALT_KM: S.orbitKm,
-        TARGET_APSIDE2_ALT_KM: S.orbitKm,
+        TARGET_ORBIT_ALT_KM: (S.orbitApoKm != null ? S.orbitApoKm : S.orbitKm),
+        TARGET_APSIDE1_ALT_KM: (S.orbitApoKm != null ? S.orbitApoKm : S.orbitKm),
+        TARGET_APSIDE2_ALT_KM: (S.orbitPeriKm != null ? S.orbitPeriKm : (S.orbitApoKm != null ? S.orbitApoKm : S.orbitKm)),
         STAGE_BURN_AOA_BIAS_DEG: (biasFallback != null ? biasFallback : 1.8),
         CIRC_TRIGGER_LEAD_S: (leadFallback != null ? leadFallback : 5.525),
       },
@@ -851,6 +900,8 @@
     const num = (id) => parseFloat($(id).value);
     return {
       alt: S.orbitKm,
+      altApo: (S.orbitApoKm != null ? S.orbitApoKm : S.orbitKm),
+      altPeri: (S.orbitPeriKm != null ? S.orbitPeriKm : (S.orbitApoKm != null ? S.orbitApoKm : S.orbitKm)),
       K: Math.max(1, parseInt($('oK').value, 10) || 3),
       bmax: num('oBmax') || 3,
       mLo: Math.round(num('oMecoLo')),
@@ -1100,7 +1151,10 @@
       await ensureSA(saVals);
 
       const tasks = biases.map((bias) => {
-        return S.pool.runJob('probeBiasCheckpoint', { bias, altKm: S.orbitKm })
+        return S.pool.runJob('probeBiasCheckpoint', {
+          bias, altKm: S.orbitKm,
+          altApoKm: S.orbitApoKm, altPeriKm: S.orbitPeriKm,
+        })
           .then((r) => ({ bias, ...r, stackId: S.stackId, meco, G, T, batchId }))
           .catch((e) => ({ bias, ok: false, reason: 'error: ' + e.message, stackId: S.stackId, meco, G, T, batchId }));
       });
@@ -1378,7 +1432,9 @@
       await ensureSA(saVals);
 
       const r = await S.pool.runJob('probeBiasCheckpoint', {
-        bias, altKm: S.orbitKm, marginBand: [mLo, mHi],
+        bias, altKm: S.orbitKm,
+        altApoKm: S.orbitApoKm, altPeriKm: S.orbitPeriKm,
+        marginBand: [mLo, mHi],
       }).catch((e) => ({ ok: false, reason: 'error: ' + e.message }));
 
       if (r.ok) {
@@ -1631,6 +1687,119 @@
     S.zetaRuns = [];
     renderZetaTable();
   });
+
+  // ========================================================================
+  // SCORE-YOUR-OWN — single eval against ZETA rules, with rank + breakdown
+  // ========================================================================
+  async function runScoreOwn() {
+    if (S.running) return;
+    if (!S.pool || !S.poolReady) { alert('pool not ready'); return; }
+
+    const meco = parseInt($('soMeco').value, 10);
+    const G    = parseFloat($('soG').value);
+    const T    = parseFloat($('soT').value);
+    const bias = parseFloat($('soBias').value);
+    const leadRaw = ($('soLead').value || '').trim();
+    const fixedLead = leadRaw === '' ? null : parseFloat(leadRaw);
+
+    if (![meco, G, T, bias].every(Number.isFinite)) {
+      $('soStatus').innerHTML = '<span class="bad">invalid MECO / G / T / bias</span>';
+      return;
+    }
+    if (fixedLead !== null && !Number.isFinite(fixedLead)) {
+      $('soStatus').innerHTML = '<span class="bad">invalid lead</span>';
+      return;
+    }
+
+    S.running = true;
+    $('soRun').disabled = true;
+    $('soResult').innerHTML = '';
+    $('soStatus').textContent = fixedLead != null
+      ? 'running FULL eval (fixed lead)…'
+      : 'running (lead search + FULL eval)…';
+
+    try {
+      const saVals = saValuesFor(meco, G, T, bias, fixedLead != null ? fixedLead : 5.525);
+      await ensureSA(saVals);
+      const r = await S.pool.runJob('probeBiasCheckpoint', {
+        bias, altKm: S.orbitKm,
+        altApoKm: S.orbitApoKm, altPeriKm: S.orbitPeriKm,
+        fixedLead,
+      });
+      renderScoreOwn(r, { meco, G, T, bias, fixedLead });
+      $('soStatus').innerHTML = r && r.ok
+        ? '<span class="ok">OK — scored</span>'
+        : '<span class="bad">' + esc((r && (r.reason || (r.reasons && r.reasons.join(',')))) || 'failed') + '</span>';
+    } catch (e) {
+      $('soStatus').innerHTML = '<span class="bad">ERROR: ' + esc(e.message) + '</span>';
+    } finally {
+      S.running = false;
+      $('soRun').disabled = false;
+    }
+  }
+
+  function _soRow(label, value, contrib) {
+    const v = Number.isFinite(contrib) ? contrib.toFixed(3) : '–';
+    const cls = !Number.isFinite(contrib) ? '' : (contrib > 0 ? 'pos' : contrib < 0 ? 'neg' : '');
+    return '<tr><td>' + label + '</td><td style="color:var(--dim)">' + value + '</td><td class="' + cls + '">' + v + '</td></tr>';
+  }
+
+  function renderScoreOwn(r, inputs) {
+    const host = $('soResult');
+    if (!host) return;
+    if (!r) { host.innerHTML = '<div class="bad">no result</div>'; return; }
+
+    const score = r.score;
+    const m = r.metrics || {};
+    const parts = r.parts;
+
+    let rankTxt = '—';
+    const okRows = S.zetaRuns.filter((x) => x.ok && Number.isFinite(x.score));
+    if (r.ok && Number.isFinite(score)) {
+      if (okRows.length === 0) rankTxt = 'no table data';
+      else {
+        const rank = 1 + okRows.filter((x) => x.score < score).length;
+        rankTxt = '#' + rank + ' / ' + (okRows.length + 1);
+      }
+    } else {
+      rankTxt = 'N/A (failed run)';
+    }
+
+    let html = '<div class="so-result">';
+    html += '<div class="so-score-line">';
+    html += '<div><span class="so-label">Score</span><span class="so-value">' + (Number.isFinite(score) ? score.toFixed(3) : '–') + '</span></div>';
+    html += '<div><span class="so-label">Rank (vs table)</span><span class="so-value">' + esc(rankTxt) + '</span></div>';
+    html += '<div><span class="so-label">Status</span><span class="so-value">' + (r.ok ? '<span class="ok">OK</span>' : '<span class="bad">FAIL</span>') + '</span></div>';
+    html += '</div>';
+
+    if (r.ok && parts) {
+      html += '<table class="so-parts"><thead><tr><th>Component</th><th>Value</th><th>Contribution</th></tr></thead><tbody>';
+      html += _soRow('Apogee', m.apogeeKm != null ? m.apogeeKm.toFixed(3) + ' km' : '–', parts.apogee);
+      html += _soRow('Perigee', m.perigeeKm != null ? m.perigeeKm.toFixed(3) + ' km' : '–', parts.perigee);
+      html += _soRow('Eccentricity', m.ecc != null ? m.ecc.toExponential(2) : '–', parts.ecc);
+      html += _soRow('Booster fuel left', m.boosterFuelLeftKg != null ? m.boosterFuelLeftKg.toFixed(0) + ' kg' : '–', parts.fuel);
+      html += _soRow('Deploy time', m.deployTimeS != null ? m.deployTimeS.toFixed(2) + ' s' : '–', parts.time);
+      html += _soRow('vrSoft (tie-breaker)', m.vrMin != null ? m.vrMin.toFixed(4) : '–', parts.vrSoft);
+      html += '<tr class="total"><td>Total</td><td></td><td>' + score.toFixed(3) + '</td></tr>';
+      html += '</tbody></table>';
+    } else {
+      html += '<div class="dim" style="font-size:11.5px;margin:6px 0;">No component breakdown — run failed hard constraints (crash / no payload clear / orbit / residual / maxQ).</div>';
+      if (r.reasons && r.reasons.length) html += '<div class="bad" style="font-size:11.5px;">' + esc(r.reasons.join(', ')) + '</div>';
+    }
+
+    html += '<div class="so-meta">';
+    if (Number.isFinite(r.lead)) html += '<span>lead <b>' + r.lead.toFixed(4) + ' s</b></span>';
+    if (Number.isFinite(r.margin)) html += '<span>margin <b>' + r.margin.toFixed(2) + ' s</b></span>';
+    if (Number.isFinite(r.vrEnd)) html += '<span>vrEnd <b>' + r.vrEnd.toFixed(4) + '</b></span>';
+    if (Number.isFinite(m.stageResidualKg)) html += '<span>residual <b>' + m.stageResidualKg.toFixed(1) + ' kg</b></span>';
+    if (Number.isFinite(m.maxG)) html += '<span>maxG <b>' + m.maxG.toFixed(3) + '</b></span>';
+    if (Number.isFinite(m.maxQKPa)) html += '<span>maxQ <b>' + m.maxQKPa.toFixed(2) + ' kPa</b></span>';
+    html += '</div>';
+    html += '</div>';
+    host.innerHTML = html;
+  }
+
+  $('soRun').addEventListener('click', runScoreOwn);
 
   // ========================================================================
   // BOOT

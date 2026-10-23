@@ -701,8 +701,12 @@ self.onmessage = async (e) => {
       else {
         const newBias = payload.bias;
         const altKm = payload.altKm != null ? payload.altKm : 320;
+        const altApoKm = payload.altApoKm != null ? payload.altApoKm : altKm;
+        const altPeriKm = payload.altPeriKm != null ? payload.altPeriKm : altKm;
         const Q = TunerConfig.quanta;
         const tag = 'b=' + newBias.toFixed(3);
+        // Score-your-own: optional fixed lead from the caller (null = run tuneLead search).
+        const fixedLead = (payload.fixedLead != null && Number.isFinite(payload.fixedLead)) ? payload.fixedLead : null;
 
         // ---- 1. Restore SA + bias, run to COAST_HOLD ----
         // (inline loop so we can snag eCoast when COAST_WAIT is entered — needed by SERENO FLUX table)
@@ -739,10 +743,15 @@ self.onmessage = async (e) => {
         } else {
           // ---- 2. Capture local CH snapshot ----
           const chSnap = captureSnap();
-          emit('probe', tag + ' CH captured t=' + chSnap.simTime.toFixed(2) + ', tuneLead');
+          emit('probe', tag + ' CH captured t=' + chSnap.simTime.toFixed(2) + (fixedLead != null ? ', fixed lead=' + fixedLead.toFixed(4) : ', tuneLead'));
 
 
-          // ---- 3. tuneLead with CH-based hook ----
+          // ---- 3. tuneLead with CH-based hook (skipped when fixedLead is provided) ----
+          let lr;
+          if (fixedLead != null) {
+            lr = { ok: true, inBand: true, reason: 'fixed lead (user provided)', lead: fixedLead, leadTicks: Math.round(fixedLead / Q.lead), marginS: NaN, vrEnd: NaN, vrMin: NaN, point: null, evals: 0, log: [] };
+            emit('probe', tag + ' fixed lead=' + fixedLead.toFixed(4) + ' (skip tuneLead)');
+          } else {
           const cache = new TunerUtils.EvalCache();
           let evalN = 0;
           const CPHook = {
@@ -794,8 +803,9 @@ self.onmessage = async (e) => {
             li: Math.round(cfg.insertion.CIRC_TRIGGER_LEAD_S / Q.lead),
             meco: cfg.ascent.MECO_TARGET_BOOSTER_FUEL_KG,
           };
-          const lr = await TunerCore.tuneLead(point, { hook: CPHook, cache, targetAltKm: altKm, marginBand: payload.marginBand });
+          lr = await TunerCore.tuneLead(point, { hook: CPHook, cache, targetAltKm: altKm, marginBand: payload.marginBand });
           emit('probe', tag + ' tuneLead ok=' + lr.ok + ' lead=' + (Number.isFinite(lr.lead) ? lr.lead.toFixed(4) : 'n/a') + ' evals=' + lr.evals);
+          }
 
           if (!lr.ok) {
             result = { ok: false, tuneOk: false, reason: 'lead_failed: ' + lr.reason, lead: lr.lead, margin: lr.marginS, evals: lr.evals, log: (lr.log || []).slice(-40) };
@@ -838,7 +848,7 @@ self.onmessage = async (e) => {
             emit('probe', tag + ' FULL score=' + (sc.score != null ? sc.score.toFixed(2) : '?') + ' cleared=' + m.payloadCleared);
             result = {
               ok: sc.ok, tuneOk: true, inBand: lr.inBand, leadTicks: lr.leadTicks, lead: lr.lead, margin: lr.marginS, vrEnd: lr.vrEnd,
-              score: sc.score, reasons: sc.reasons, metrics: m,
+              score: sc.score, parts: sc.parts, reasons: sc.reasons, metrics: m,
               evals: lr.evals + 1,
               capHit: !okFull,
               capReason: okFull ? null : 'cap',

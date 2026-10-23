@@ -26,6 +26,10 @@
 
 <!-- status line (script writes into #status) -->
 <div id="status">Booting&hellip;</div>
+<div class="row">
+  <label>target apo km <input type="number" id="apoKm" value="320" min="150" step="10"></label>
+  <label>target peri km <input type="number" id="periKm" value="320" min="150" step="10"></label>
+</div>
 
 <!-- ==================== 0x01 · ENGINE / UTILS ==================== -->
 <section class="panel">
@@ -128,12 +132,15 @@
   // Baseline values for the smoke test: raw defaults (reproduces manual run).
   function baselineValues() {
     const b = C.baselineRaw;
+    const apoEl = $('apoKm'), periEl = $('periKm');
+    const tApo = apoEl ? (parseFloat(apoEl.value) || C.fixed.targetAltKm) : C.fixed.targetAltKm;
+    const tPeri = periEl ? (parseFloat(periEl.value) || tApo) : tApo;
     return {
       ascent: { PUSH_MAX_GIMBAL_DEG: b.G, PUSH_T_S: b.T, MECO_TARGET_BOOSTER_FUEL_KG: b.meco },
       insertion: {
-        TARGET_ORBIT_ALT_KM: C.fixed.targetAltKm,
-        TARGET_APSIDE1_ALT_KM: C.fixed.targetAltKm,
-        TARGET_APSIDE2_ALT_KM: C.fixed.targetAltKm,
+        TARGET_ORBIT_ALT_KM: tApo,
+        TARGET_APSIDE1_ALT_KM: tApo,
+        TARGET_APSIDE2_ALT_KM: tPeri,
         STAGE_BURN_AOA_BIAS_DEG: b.bias,
         CIRC_TRIGGER_LEAD_S: b.lead,
       },
@@ -231,7 +238,10 @@ $('smokeBtn').disabled = false; $('dumpCfgBtn').disabled = false; $('applyChkBtn
     ].join('\n');
   }
   function evalOpts(stopAt) {
-    return { stopAt, abortRef, onProgress: (p) => { statusEl.textContent = 'Running… t=' + p.simTime.toFixed(1) + ' s  ' + (p.phase || ''); } };
+    const apoEl = $('apoKm'), periEl = $('periKm');
+    const tApo = apoEl ? (parseFloat(apoEl.value) || C.fixed.targetAltKm) : C.fixed.targetAltKm;
+    const tPeri = periEl ? (parseFloat(periEl.value) || tApo) : tApo;
+    return { stopAt, abortRef, targetAltKm: tApo, targetApoKm: tApo, targetPeriKm: tPeri, onProgress: (p) => { statusEl.textContent = 'Running… t=' + p.simTime.toFixed(1) + ' s  ' + (p.phase || ''); } };
   }
   async function doEval(kind, stopAtArg) {
     const stopAt = stopAtArg || $('stopAt').value;   // captured at start; select may change mid-run

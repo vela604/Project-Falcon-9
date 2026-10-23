@@ -227,7 +227,9 @@
       root.TunerEngine.prepareRun(Cfg.guideName, values, env);
       if (opts.verifyPoint) {
         const v = root.TunerUtils.verifyApplied(opts.verifyPoint,
-          Guidance.getGuideConfig(Cfg.guideName), { targetAltKm: opts.targetAltKm });
+          Guidance.getGuideConfig(Cfg.guideName), {
+            targetAltKm: opts.targetAltKm, targetApoKm: opts.targetApoKm, targetPeriKm: opts.targetPeriKm,
+          });
         if (!v.ok) throw new Error('snap verify failed: ' + JSON.stringify(v.mismatches));
       }
 
@@ -451,7 +453,9 @@
     const alt = opts.targetAltKm != null ? opts.targetAltKm : root.TunerConfig.fixed.targetAltKm;
     opts.targetAltKm = alt;
     opts.verifyPoint = point;
-    return runEvalValues(root.TunerUtils.toValues(point, { targetAltKm: alt }), opts);
+    return runEvalValues(root.TunerUtils.toValues(point, {
+      targetAltKm: alt, targetApoKm: opts.targetApoKm, targetPeriKm: opts.targetPeriKm,
+    }), opts);
   }
 
   root.TunerHook = { runEval, runEvalValues, orbitOf, timeToApogee, stats };

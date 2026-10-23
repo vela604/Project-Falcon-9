@@ -346,7 +346,7 @@ async function startOk(p) {
     let fm = cache.get(lr.point, 'FULL');
     if (!fm) { fm = await H.runEval(lr.point, { stopAt: 'FULL', targetAltKm, env: opts.env, abortRef: opts.abortRef,
                                                 onProgress: opts.onProgress }); cache.set(lr.point, 'FULL', fm); fullEvals++; }
-    const sc = U.score(fm, { targetAltKm });
+    const sc = U.score(fm, { targetAltKm, targetApoKm: opts.targetApoKm, targetPeriKm: opts.targetPeriKm });
     if (sc.ok && opts.residualBand) {
       const rb = opts.residualBand, rk = fm.stageResidualKg;
       if (!(rk >= rb[0] && rk <= rb[1])) { sc.ok = false; sc.reasons = (sc.reasons || []).concat(['residual_out_of_band ' + fmt(rk, 1) + ' not in [' + rb[0] + ',' + rb[1] + ']']); rec.resFail = true; }

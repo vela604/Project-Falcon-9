@@ -80,9 +80,9 @@
         MECO_TARGET_BOOSTER_FUEL_KG: p.meco,
       },
       insertion: {
-        TARGET_ORBIT_ALT_KM: opts.targetAltKm != null ? opts.targetAltKm : f.targetAltKm,
-        TARGET_APSIDE1_ALT_KM: opts.targetAltKm != null ? opts.targetAltKm : f.targetAltKm,
-        TARGET_APSIDE2_ALT_KM: opts.targetAltKm != null ? opts.targetAltKm : f.targetAltKm,
+        TARGET_ORBIT_ALT_KM: curAlts(opts).apo,
+        TARGET_APSIDE1_ALT_KM: curAlts(opts).apo,
+        TARGET_APSIDE2_ALT_KM: curAlts(opts).peri,
         STAGE_BURN_AOA_BIAS_DEG: biasOf(p.bi),
         CIRC_TRIGGER_LEAD_S: leadOf(p.li),
         COAST_WAIT_BEFORE_APOGEE_S: f.coastWaitBeforeApogeeS,
@@ -174,6 +174,15 @@ if (!m.payloadReleased || !m.payloadCleared) add('payload_not_cleared', 50);
 
   // ---- orbit error: relative tolerance + pseudo-Huber penalty ----------------
   const curAlt = (alt) => (alt != null ? alt : C().fixed.targetAltKm);
+  // Two-apside support: accepts number, {targetAltKm}, or {targetAltKm,targetApoKm,targetPeriKm}
+  function curAlts(opts){
+    if(opts==null){const a=C().fixed.targetAltKm;return{alt:a,apo:a,peri:a};}
+    if(typeof opts==='number')return{alt:opts,apo:opts,peri:opts};
+    const a = opts.targetAltKm != null ? opts.targetAltKm : (opts.alt != null ? opts.alt : C().fixed.targetAltKm);
+    const apo = opts.targetApoKm != null ? opts.targetApoKm : (opts.apo != null ? opts.apo : a);
+    const peri = opts.targetPeriKm != null ? opts.targetPeriKm : (opts.peri != null ? opts.peri : a);
+    return { alt:a, apo, peri };
+  }
   const orbitTolKm = () => C().scoring.orbit.tolKm;   // absolute km, no alt scaling
   function orbitPenalty(errKm) {
   const O = C().scoring.orbit, tol = O.tolKm;
@@ -181,12 +190,15 @@ if (!m.payloadReleased || !m.payloadCleared) add('payload_not_cleared', 50);
   return O.weight * O.k * (Math.sqrt(1 + (e / O.k) * (e / O.k)) - 1);
 }
   // raw accuracy (sorting): |apo - alt| + |peri - alt|
-const orbitErrKm = (m, alt) => Math.abs(m.apogeeKm - curAlt(alt)) + Math.abs(m.perigeeKm - curAlt(alt));
+const orbitErrKm = (m, altOrOpts) => { const _a = curAlts(altOrOpts); return Math.abs(m.apogeeKm - _a.apo) + Math.abs(m.perigeeKm - _a.peri); };
 
 // Suggested durationCapS for a target altitude: 770 s at 320 km (baseline + 30%), +50% per 320 km above.
 // Rough headroom only — real deploy time scales sublinearly. UI auto-fills, user can override.
-function suggestDurationCap(altKm) {
-  const a = curAlt(altKm);
+function suggestDurationCap(altKm, apoKm, periKm) {
+  const base = curAlt(altKm);
+  const apo = apoKm != null ? apoKm : base;
+  const peri = periKm != null ? periKm : base;
+  const a = Math.max(base, apo, peri);
   const v = 770 * (1 + 0.5 * (a - 320) / 320);
   return Math.ceil(v / 10) * 10;
 }
@@ -194,14 +206,14 @@ function suggestDurationCap(altKm) {
   // opts: { targetAltKm }. Returns { score, ok, reasons, parts }.
   function score(m, opts) {
     const S = C().scoring, L = C().limits;
-    const alt = opts && opts.targetAltKm != null ? opts.targetAltKm : C().fixed.targetAltKm;
+    const _a = curAlts(opts);
     const hard = checkHard(m);
     if (!hard.ok) {
       return { score: S.failPenalty + hard.depth * 1000, ok: false, reasons: hard.reasons, parts: null };
     }
     const parts = {
-      apogee:  orbitPenalty(m.apogeeKm - alt),
-      perigee: orbitPenalty(m.perigeeKm - alt),
+      apogee:  orbitPenalty(m.apogeeKm - _a.apo),
+      perigee: orbitPenalty(m.perigeeKm - _a.peri),
       ecc:     deadzone(m.ecc, S.eccentricity.target, S.eccentricity.tol, S.eccentricity.scale, S.eccentricity.weight),
       fuel:    -S.boosterFuelLeftKgWeight * (m.boosterFuelLeftKg || 0),
       time:    S.timeToDeploySWeight * (m.deployTimeS || 0),
@@ -218,7 +230,7 @@ function suggestDurationCap(altKm) {
     extra = extra || {};
     const m = metrics || {};
     const alt = curAlt(extra.targetAltKm);
-    const sc = score(m);
+    const sc = score(m, extra);
     const fin = (x) => (Number.isFinite(x) ? x : NaN);
     const reasons = (sc.reasons || []).concat(extra.reasons || []);
     return {

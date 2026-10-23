@@ -138,8 +138,9 @@
     if (m.crashed || m.endReason === 'CRASHED') return 'CRASH';
     if (m.endReason !== 'COAST_WAIT_ENTRY') return 'OTHER:' + m.endReason;
     if (!Number.isFinite(m.apoCoastKm)) return 'OTHER:noApo';
-    if (m.apoCoastKm < P.alt - P.tol) return 'APO_SHORT';
-    if (m.apoCoastKm > P.alt + P.tolHi) return 'APO_LONG';
+    const apoRef = P.altApo != null ? P.altApo : P.alt;
+    if (m.apoCoastKm < apoRef - P.tol) return 'APO_SHORT';
+    if (m.apoCoastKm > apoRef + P.tolHi) return 'APO_LONG';
     if (!Number.isFinite(m.circDvMaxMps) || !Number.isFinite(m.circTBurnS) || !Number.isFinite(m.tToApoCoastS)) return 'OTHER:noPhys';
     if (m.coastDeltaV < P.dvMin * (1 - P.ideal) || m.circTBurnS < P.tbMin * (1 - P.ideal)) return 'NEAR_ORBIT';
     if (P.tApoMax > 0 && m.tToApoCoastS > P.tApoMax) return 'LONG_COAST';
