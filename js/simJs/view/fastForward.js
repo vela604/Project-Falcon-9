@@ -220,13 +220,13 @@ const w = new Worker('js/simJs/threads/fastforward.worker.js');
   return;
 }
             if (m.type === 'progress') {
-        setProgress(m.simTime - _baseSimTime, durationS, m.simTime);
+        setProgress(Math.min(m.simTime, _baseSimTime + durationS) - _baseSimTime, durationS, Math.min(m.simTime, _baseSimTime + durationS));
         // Update main-thread state so the recorder (and any other reader)
         // sees the fresh simTime + bodies every 1 sim-second, not every 10.
         if (m.bodies && Array.isArray(m.bodies)) {
           const _prevLen = state.bodies ? state.bodies.length : 0;
           state.bodies = m.bodies;
-          state.simTime = m.simTime;
+          state.simTime = Math.min(m.simTime, _baseSimTime + durationS);
           state.activeBodyIndex = m.activeBodyIndex || 0;
           state.halted = !!m.halted;
           if (m.bodies.length !== _prevLen &&
@@ -234,7 +234,7 @@ const w = new Worker('js/simJs/threads/fastforward.worker.js');
             refreshFollowBodySelect();
           }
         } else {
-          state.simTime = m.simTime;
+          state.simTime = Math.min(m.simTime, _baseSimTime + durationS);
         }
       } else if (m.type === 'guideStatus') {
   // Live phase-log update from the FF worker. Forward straight to
@@ -248,7 +248,7 @@ const w = new Worker('js/simJs/threads/fastforward.worker.js');
   if (m.bodies && Array.isArray(m.bodies)) {
     const _prevLen = state.bodies ? state.bodies.length : 0;
     state.bodies = m.bodies;
-    state.simTime = m.simTime;
+    state.simTime = Math.min(m.simTime, _baseSimTime + durationS);
     state.activeBodyIndex = m.activeBodyIndex || 0;
     state.halted = !!m.halted;
     // Refresh the follow-body dropdown when body count changed
@@ -271,6 +271,7 @@ const w = new Worker('js/simJs/threads/fastforward.worker.js');
     overshoot: (m.fullState.simTime - _baseSimTime) - durationS,
     wallMs: _wallMs,
   });
+  if (_wallMs > 0 && _wallMs < 5000) { console.warn('[FF] very fast completion (' + (_wallMs / 1000).toFixed(2) + 's wall) — potential resume race zone.'); }
   console.log('[ff-diag] done: finalSimTime=' + m.fullState.simTime.toFixed(3) +
     's  elapsed=' + (m.fullState.simTime - _baseSimTime).toFixed(3) + 's' +
     '  requested=' + durationS + 's  overshoot=' +
