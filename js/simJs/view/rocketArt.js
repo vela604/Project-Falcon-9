@@ -353,11 +353,187 @@ const _szadMakeCanvas = (function() {
 })();
 
 
+// Shared cylinder shading for every body section. Light comes from the upper-left:
+// dark limb on the left, soft diffuse, a narrow specular streak left of centre,
+// a long falloff to a dark terminator on the right, then a faint bounce/rim light
+// at the far right edge so the silhouette doesn't die into the background.
+function _cylShadeGradient(ctx, W) {
+  return cachedGradient(ctx, 'cylShade2', Math.round(W), () => {
+    const g = ctx.createLinearGradient(-W / 2, 0, W / 2, 0);
+    g.addColorStop(0.00, 'rgba(0,0,0,0.30)');
+    g.addColorStop(0.07, 'rgba(0,0,0,0.15)');
+    g.addColorStop(0.20, 'rgba(255,255,255,0.04)');
+    g.addColorStop(0.30, 'rgba(255,255,255,0.16)');   // specular streak
+    g.addColorStop(0.38, 'rgba(255,255,255,0.07)');
+    g.addColorStop(0.55, 'rgba(0,0,0,0.04)');
+    g.addColorStop(0.75, 'rgba(0,0,0,0.20)');
+    g.addColorStop(0.92, 'rgba(0,0,0,0.34)');         // terminator
+    g.addColorStop(0.97, 'rgba(255,255,255,0.05)');   // bounce light
+    g.addColorStop(1.00, 'rgba(0,0,0,0.30)');
+    return g;
+  });
+}
+
+// ============================================================================
+// REALISM PASS — shared "volume" helpers. Everything is toggled from ROCKET_FX
+// so a slow device (or a purist) can switch layers off without touching the
+// drawing code. All helpers draw INSIDE the current member's local frame
+// (origin = base centre, +Y down) and never change geometry / hitboxes.
+// ============================================================================
+const ROCKET_FX = {
+  seams: true,    // horizontal panel / weld seams on tanks
+  rivets: true,   // rivet rows on seams + interstage (only when zoomed in enough)
+  soot: true,     // engine soot / heat stain on the lower hull
+  ogive: true,    // curved specular + terminator on nose / fairing
+  bells: true,    // detailed engine bells (cooling bands, heat tint, lip)
+  spec: 1.0,      // specular strength multiplier (0 = matte, 1.5 = glossy)
+};
+const _EDGE = 'rgba(58,66,80,0.78)';   // soft outline instead of a flat grey cartoon stroke
+
+// Points across a cylinder of half-width R at equal ANGLE steps — foreshortens
+// toward the limbs exactly like real stringers / rivets on a round tank.
+function _cylXs(R, stepDeg, maxDeg) {
+  const xs = [];
+  for (let a = -maxDeg; a <= maxDeg + 0.01; a += stepDeg) {
+    const th = a * Math.PI / 180;
+    xs.push({ x: R * Math.sin(th), c: Math.cos(th) });
+  }
+  return xs;
+}
+
+function _seamLine(ctx, y, W, strength) {
+  ctx.fillStyle = 'rgba(0,0,0,' + (0.17 * strength).toFixed(3) + ')';
+  ctx.fillRect(-W / 2, y, W, 1);
+  ctx.fillStyle = 'rgba(255,255,255,' + (0.16 * strength).toFixed(3) + ')';
+  ctx.fillRect(-W / 2, y + 1, W, 1);
+}
+
+function _rivetRow(ctx, y, W, strength) {
+  if (!ROCKET_FX.rivets || W < 26) return;
+  const xs = _cylXs(W / 2, 11, 77);
+  for (const p of xs) {
+    ctx.fillStyle = 'rgba(0,0,0,' + (0.30 * p.c * strength).toFixed(3) + ')';
+    ctx.fillRect(p.x, y, 1.2, 1.2);
+    ctx.fillStyle = 'rgba(255,255,255,' + (0.22 * p.c * strength).toFixed(3) + ')';
+    ctx.fillRect(p.x, y + 1.2, 1.2, 0.8);
+  }
+}
+
+// Straight cylindrical section between topY and botY (topY < botY, y down).
+// Adds: ambient occlusion at both joins, weld seams (+rivets), optional soot.
+// Call with the section's own path already clipped (save/clip/restore outside).
+function _cylDetail(ctx, W, topY, botY, o) {
+  o = o || {};
+  const h = botY - topY;
+  if (h <= 2 || W <= 4) return;
+  ctx.save();
+  ctx.beginPath(); ctx.rect(-W / 2, topY, W, h); ctx.clip();
+
+  const ao = Math.min(h * 0.45, Math.max(3, W * 0.30));
+  let g = ctx.createLinearGradient(0, topY, 0, topY + ao);
+  g.addColorStop(0, 'rgba(0,0,0,0.22)'); g.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = g; ctx.fillRect(-W / 2, topY, W, ao);
+  g = ctx.createLinearGradient(0, botY - ao, 0, botY);
+  g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, 'rgba(0,0,0,0.20)');
+  ctx.fillStyle = g; ctx.fillRect(-W / 2, botY - ao, W, ao);
+
+  if (ROCKET_FX.seams) {
+    let spacing = Math.max(W * 1.55, 14);
+    const maxN = 70;
+    if (h / spacing > maxN) spacing = h / maxN;
+    // seams are anchored to the section base so they don't "swim" when H changes slightly
+    for (let y = botY - spacing; y > topY + 2; y -= spacing) {
+      const yy = Math.round(y);
+      _seamLine(ctx, yy, W, 1);
+      _rivetRow(ctx, yy - 2, W, 0.8);
+    }
+  }
+
+  if (o.soot && ROCKET_FX.soot) {
+    const sh = Math.min(h * 0.22, W * 2.6);
+    g = ctx.createLinearGradient(0, botY - sh, 0, botY);
+    g.addColorStop(0, 'rgba(46,34,24,0)');
+    g.addColorStop(0.55, 'rgba(46,34,24,0.16)');
+    g.addColorStop(1, 'rgba(30,22,16,0.38)');
+    ctx.fillStyle = g; ctx.fillRect(-W / 2, botY - sh, W, sh);
+    // a few streaks running up from the engine bay
+    const xs = _cylXs(W / 2, 17, 68);
+    xs.forEach((p, i) => {
+      const len = sh * (0.55 + 0.45 * ((i * 37) % 7) / 7);
+      const sg = ctx.createLinearGradient(0, botY - len, 0, botY);
+      sg.addColorStop(0, 'rgba(30,22,16,0)'); sg.addColorStop(1, 'rgba(30,22,16,' + (0.20 * p.c).toFixed(3) + ')');
+      ctx.fillStyle = sg; ctx.fillRect(p.x - W * 0.012, botY - len, Math.max(1, W * 0.024), len);
+    });
+  }
+  ctx.restore();
+}
+
+// Dark structural band: stringers, stiffener rings, rivets, faint blue sheen.
+function _interstageDetail(ctx, W, H) {
+  if (W < 8) return;
+  ctx.save();
+  ctx.beginPath(); ctx.rect(-W / 2, -H, W, H); ctx.clip();
+  if (W >= 22) {
+    const xs = _cylXs(W / 2, 13, 78);
+    for (const p of xs) {
+      ctx.fillStyle = 'rgba(255,255,255,' + (0.075 * p.c).toFixed(3) + ')';
+      ctx.fillRect(p.x, -H, 1, H);
+      ctx.fillStyle = 'rgba(0,0,0,' + (0.30 * p.c).toFixed(3) + ')';
+      ctx.fillRect(p.x + 1, -H, 1, H);
+    }
+  }
+  for (const f of [1 / 3, 2 / 3]) {
+    const y = Math.round(-H * f);
+    ctx.fillStyle = 'rgba(0,0,0,0.38)'; ctx.fillRect(-W / 2, y, W, 1.2);
+    ctx.fillStyle = 'rgba(255,255,255,0.10)'; ctx.fillRect(-W / 2, y + 1.2, W, 1);
+  }
+  _rivetRow(ctx, -H + 3, W, 1.2);
+  _rivetRow(ctx, -5, W, 1.2);
+  // cool sheen on the lit side, so "black" reads as coated composite, not a flat hole
+  const sg = ctx.createLinearGradient(-W / 2, 0, W / 2, 0);
+  sg.addColorStop(0.12, 'rgba(90,120,170,0)');
+  sg.addColorStop(0.30, 'rgba(110,140,190,' + (0.16 * ROCKET_FX.spec).toFixed(3) + ')');
+  sg.addColorStop(0.46, 'rgba(90,120,170,0)');
+  ctx.fillStyle = sg; ctx.fillRect(-W / 2, -H, W, H);
+  // joins
+  const ao = Math.min(H * 0.3, 5);
+  let g = ctx.createLinearGradient(0, -H, 0, -H + ao);
+  g.addColorStop(0, 'rgba(0,0,0,0.30)'); g.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = g; ctx.fillRect(-W / 2, -H, W, ao);
+  ctx.restore();
+}
+
+// Curved specular streak + terminator + bounce light that FOLLOW a silhouette.
+// silhouette(): builds the full closed path (for clipping).
+// trace(sgn, k): strokes-only path of ONE side (sgn -1 left, +1 right), base->tip,
+//   with x scaled by k — so k=0.46 is an offset curve at 46% of local radius.
+function _ogiveShade(ctx, W, silhouette, trace) {
+  if (!ROCKET_FX.ogive || W < 4) return;
+  const s = ROCKET_FX.spec;
+  ctx.save();
+  silhouette();
+  ctx.clip();
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  const stroke = (sgn, k, w, style) => {
+    ctx.beginPath(); trace(sgn, k);
+    ctx.lineWidth = w; ctx.strokeStyle = style; ctx.stroke();
+  };
+  stroke(1, 0.80, W * 0.34, 'rgba(0,0,0,0.045)');            // terminator feather
+  stroke(1, 0.80, W * 0.22, 'rgba(0,0,0,0.055)');
+  stroke(1, 0.86, W * 0.11, 'rgba(0,0,0,0.080)');
+  stroke(-1, 0.46, W * 0.18, 'rgba(255,255,255,' + (0.040 * s).toFixed(3) + ')');   // specular
+  stroke(-1, 0.46, W * 0.10, 'rgba(255,255,255,' + (0.070 * s).toFixed(3) + ')');
+  stroke(-1, 0.46, Math.max(1, W * 0.035), 'rgba(255,255,255,' + (0.20 * s).toFixed(3) + ')');
+  stroke(1, 0.97, Math.max(1, W * 0.025), 'rgba(255,255,255,0.10)');                // bounce light
+  stroke(-1, 1.0, W * 0.10, 'rgba(0,0,0,0.12)');                                      // limb darkening
+  ctx.restore();
+}
+
 // Decal shading that matches the ACTUAL booster body gradient.
 // Profile measured from the rendered body (u = 0 left edge … 1 right edge,
 // value = brightness relative to the brightest column). Peak sits at the
 // centre, right side falls off a bit faster than the left.
-const _BODY_SHADE = [0.866, 0.892, 0.922, 0.951, 0.978, 1.0, 0.976, 0.934, 0.900, 0.848, 0.80];
+const _BODY_SHADE = [0.673, 0.876, 0.971, 1.0, 0.968, 0.932, 0.885, 0.808, 0.73, 0.65, 0.673];
 
 function _bodyShade(u) {
   const x = Math.max(0, Math.min(1, u)) * (_BODY_SHADE.length - 1);
@@ -684,7 +860,7 @@ function drawPayloadSpaceShape(ctx, W, H, mpp, opts) {
   };
 
   ctx.fillStyle = color;
-  ctx.strokeStyle = '#8b93a0';
+  ctx.strokeStyle = _EDGE;
   ctx.lineWidth = 1.2;
   bodyPath();
   ctx.fill();
@@ -709,6 +885,23 @@ function drawPayloadSpaceShape(ctx, W, H, mpp, opts) {
     const gradW = Math.max(capR, bulgeR) * 2;
     bodyPath();
     applyCylindricalOverlay(ctx, gradW);
+  }
+  {
+    const gW = Math.max(capR, bulgeR) * 2;
+    const trace = (sg, k) => {
+      ctx.moveTo(sg * capR * k, baseY);
+      ctx.lineTo(sg * bulgeR * k, frustumTopY);
+      ctx.lineTo(sg * bulgeR * k, straightTopY);
+      ctx.bezierCurveTo(sg * bulgeR * 0.98 * k, straightTopY - curveH * 0.30, sg * bulgeR * 0.45 * k, tipY + curveH * 0.15, 0, tipY);
+    };
+    _ogiveShade(ctx, gW, bodyPath, trace);
+    ctx.save(); bodyPath(); ctx.clip();
+    if (ROCKET_FX.seams) {
+      if (straightH > 1) _seamLine(ctx, Math.round(straightTopY), bulgeR * 2, 1.2);
+      if (frustumH > 1) _seamLine(ctx, Math.round(frustumTopY), bulgeR * 2, 1);
+      _rivetRow(ctx, Math.round(straightTopY) - 2, bulgeR * 2, 0.8);
+    }
+    ctx.restore();
   }
 }
 
@@ -1325,6 +1518,7 @@ if (opts.stageRole === 'interstage') {
   ctx.fillRect(-W / 2, -H, W, H);
   ctx.fillStyle = grad;
   ctx.fillRect(-W / 2, -H, W, H);
+  _interstageDetail(ctx, W, H);
   // Top rim — thin light band at the very top edge, reads as the
   // structural interface where the stage's thrust structure clamps.
   ctx.strokeStyle = 'rgba(255,255,255,0.22)';
@@ -1375,7 +1569,7 @@ if (isNose) {
     };
     
     ctx.fillStyle = solidFill;
-    ctx.strokeStyle = '#8b93a0';
+    ctx.strokeStyle = _EDGE;
     ctx.lineWidth = 1.2;
     conePath();
     ctx.fill();
@@ -1401,6 +1595,10 @@ if (isNose) {
         ctx.restore();
       }
     }
+    _ogiveShade(ctx, W, conePath, (sg, k) => {
+      ctx.moveTo(sg * W / 2 * k, 0);
+      ctx.quadraticCurveTo(sg * ctrlx * -1 * k, ctrly, 0, -H);
+    });
     return;
   }
   
@@ -1655,20 +1853,14 @@ const bodyPath = () => {
     };
     
     ctx.fillStyle = solidFill;
-    ctx.strokeStyle = '#8b93a0';
+    ctx.strokeStyle = _EDGE;
     ctx.lineWidth = 1.2;
     bodyPath();
     ctx.fill();
     ctx.stroke();
     
     if (designMode !== 'dsl') {
-      const shade = cachedGradient(ctx, 'cylShade', Math.round(W), () => {
-        const g = ctx.createLinearGradient(-W / 2, 0, W / 2, 0);
-        g.addColorStop(0, 'rgba(0,0,0,0.14)');
-        g.addColorStop(0.5, 'rgba(255,255,255,0.10)');
-        g.addColorStop(1, 'rgba(0,0,0,0.20)');
-        return g;
-      });
+      const shade = _cylShadeGradient(ctx, W);
       ctx.fillStyle = shade;
       bodyPath();
       ctx.fill();
@@ -1687,17 +1879,19 @@ const bodyPath = () => {
         applyCylindricalOverlay(ctx, W);
         ctx.restore();
       } else {
-        const shade = cachedGradient(ctx, 'cylShade', Math.round(W), () => {
-          const g = ctx.createLinearGradient(-W / 2, 0, W / 2, 0);
-          g.addColorStop(0, 'rgba(0,0,0,0.14)');
-          g.addColorStop(0.5, 'rgba(255,255,255,0.10)');
-          g.addColorStop(1, 'rgba(0,0,0,0.20)');
-          return g;
-        });
+        const shade = _cylShadeGradient(ctx, W);
         ctx.fillStyle = shade;
         bodyPath();
         ctx.fill();
       }
+    }
+    if (!isNose) {
+      ctx.save();
+      bodyPath();
+      ctx.clip();
+      _cylDetail(ctx, W, isOpenTop ? -H : -H * 0.85, 0,
+        { soot: isBooster || opts.stageRole === 'rocket' });
+      ctx.restore();
     }
   }
   
@@ -1725,18 +1919,12 @@ const bodyPath = () => {
     tankPath();
     ctx.fillStyle = solidFill;
     ctx.fill();
-    ctx.strokeStyle = '#8b93a0';
+    ctx.strokeStyle = _EDGE;
     ctx.lineWidth = 1.2;
     ctx.stroke();
     
     if (designMode !== 'dsl') {
-      const g = cachedGradient(ctx, 'cylShade', Math.round(W), () => {
-        const grad = ctx.createLinearGradient(-W / 2, 0, W / 2, 0);
-        grad.addColorStop(0, 'rgba(0,0,0,0.14)');
-        grad.addColorStop(0.5, 'rgba(255,255,255,0.10)');
-        grad.addColorStop(1, 'rgba(0,0,0,0.20)');
-        return grad;
-      });
+      const g = _cylShadeGradient(ctx, W);
       ctx.fillStyle = g;
       tankPath();
       ctx.fill();
@@ -1756,6 +1944,12 @@ const bodyPath = () => {
       }
     }
     
+    ctx.save();
+    tankPath();
+    ctx.clip();
+    _cylDetail(ctx, W, -tankH_px, 0, { soot: false });
+    ctx.restore();
+
     // ---- Payload space (the stage's nose) ----
     const payloadPath = () => {
       ctx.beginPath();
@@ -1822,22 +2016,40 @@ const bodyPath = () => {
     payloadPath();
     ctx.fillStyle = payloadColor;
     ctx.fill();
-    ctx.strokeStyle = '#8b93a0';
+    ctx.strokeStyle = _EDGE;
     ctx.lineWidth = 1.2;
     ctx.stroke();
     
     // Cylindrical gradient over the payload (widest width = bulge or cap).
     const gradW = Math.max(capW_px, bulgeW_px) || W;
-    const pGrad = cachedGradient(ctx, 'cylShade', Math.round(gradW), () => {
-      const g = ctx.createLinearGradient(-gradW / 2, 0, gradW / 2, 0);
-      g.addColorStop(0, 'rgba(0,0,0,0.14)');
-      g.addColorStop(0.5, 'rgba(255,255,255,0.10)');
-      g.addColorStop(1, 'rgba(0,0,0,0.20)');
-      return g;
-    });
+    const pGrad = _cylShadeGradient(ctx, gradW);
     ctx.fillStyle = pGrad;
     payloadPath();
     ctx.fill();
+    {
+      const _bY = -tankH_px, _tY = -H, _hC = capW_px / 2, _hB = bulgeW_px / 2;
+      let _trace;
+      if (payload.kind === 'bulgedCapShape') {
+        const fH = capH_px * 0.22, cH = capH_px * 0.28, oH = capH_px - fH - cH;
+        const fTop = _bY - fH, cTop = fTop - cH;
+        _trace = (sg, k) => {
+          ctx.moveTo(sg * _hC * k, _bY);
+          ctx.lineTo(sg * _hB * k, fTop);
+          ctx.lineTo(sg * _hB * k, cTop);
+          ctx.bezierCurveTo(sg * _hB * 0.98 * k, cTop - oH * 0.30, sg * _hB * 0.45 * k, _tY + oH * 0.15, 0, _tY);
+        };
+        _ogiveShade(ctx, gradW, payloadPath, _trace);
+        ctx.save(); payloadPath(); ctx.clip();
+        if (ROCKET_FX.seams) { _seamLine(ctx, Math.round(cTop), _hB * 2, 1.2); _seamLine(ctx, Math.round(fTop), _hB * 2, 1); _rivetRow(ctx, Math.round(cTop) - 2, _hB * 2, 0.8); }
+        ctx.restore();
+      } else {
+        _trace = (sg, k) => {
+          ctx.moveTo(sg * _hC * k, _bY);
+          ctx.bezierCurveTo(sg * _hC * 0.70 * k, _bY + capH_px * 0.30, sg * _hC * 0.30 * k, _tY + capH_px * 0.20, 0, _tY);
+        };
+        _ogiveShade(ctx, gradW, payloadPath, _trace);
+      }
+    }
   }
   
   // (Old hardcoded "drawGridFins" helper — a fixed-size decoration with no
@@ -1981,22 +2193,62 @@ if (drawsEngineBells && engineBell && !opts.hasMemberBelow) {
     ctx.save();
     ctx.translate(cx, 0);
     if (Number.isFinite(gimbalRad) && gimbalRad !== 0) ctx.rotate(gimbalRad);
+    const fancy = ROCKET_FX.bells && sR > 2;
+    const lip = fancy ? Math.min(sR * 0.14, sH * 0.10) : 0;
+    const wallH = sH - lip;
     const g = ctx.createLinearGradient(-sR, 0, sR, 0);
-    g.addColorStop(0, '#1c1e22');
-    g.addColorStop(0.5, '#4a4e54');
-    g.addColorStop(1, '#1c1e22');
+    if (fancy) {
+      g.addColorStop(0.00, '#101216');
+      g.addColorStop(0.16, '#33373e');
+      g.addColorStop(0.32, '#8c929b');   // specular
+      g.addColorStop(0.48, '#52575f');
+      g.addColorStop(0.78, '#25282e');
+      g.addColorStop(1.00, '#0d0f12');
+    } else {
+      g.addColorStop(0, '#1c1e22'); g.addColorStop(0.5, '#4a4e54'); g.addColorStop(1, '#1c1e22');
+    }
     ctx.fillStyle = g;
-    bellPath(ctx, sR, sH);
+    bellPath(ctx, sR, wallH);
     ctx.fill();
-    ctx.strokeStyle = '#0f1114';
-    ctx.lineWidth = 0.9;
-    ctx.stroke();
-    ctx.strokeStyle = 'rgba(255,255,255,0.22)';
-    ctx.lineWidth = 1.3;
-    ctx.beginPath();
-    ctx.moveTo(-sR, sH);
-    ctx.lineTo(sR, sH);
-    ctx.stroke();
+    if (fancy) {
+      // near rim of the exit plane (slight downward bulge = depth)
+      ctx.beginPath();
+      ctx.moveTo(-sR, wallH);
+      ctx.quadraticCurveTo(0, wallH + lip * 2, sR, wallH);
+      ctx.closePath();
+      ctx.fillStyle = g; ctx.fill();
+      ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.fill();
+      // everything below is clipped to the bell wall
+      ctx.save();
+      bellPath(ctx, sR, wallH); ctx.clip();
+      const hg = ctx.createLinearGradient(0, 0, 0, wallH);
+      hg.addColorStop(0.00, 'rgba(200,150,70,0.42)');   // chamber heat tint (gold/bronze)
+      hg.addColorStop(0.28, 'rgba(160,110,60,0.14)');
+      hg.addColorStop(0.60, 'rgba(0,0,0,0)');
+      hg.addColorStop(1.00, 'rgba(10,8,6,0.45)');       // exit soot
+      ctx.fillStyle = hg; ctx.fillRect(-sR, 0, sR * 2, wallH);
+      // regenerative-cooling / stiffener rings, curved a hair so the bell reads round
+      const tR = sR * 0.35;
+      const n = Math.max(3, Math.min(9, Math.floor(wallH / Math.max(3, sR * 0.55))));
+      ctx.lineWidth = 1;
+      for (let i = 1; i <= n; i++) {
+        const t = i / (n + 1), y = wallH * t;
+        const r = tR + (sR - tR) * Math.pow(t, 0.6);
+        ctx.strokeStyle = 'rgba(0,0,0,0.30)';
+        ctx.beginPath(); ctx.moveTo(-r, y); ctx.quadraticCurveTo(0, y + r * 0.10, r, y); ctx.stroke();
+        ctx.strokeStyle = 'rgba(255,255,255,0.10)';
+        ctx.beginPath(); ctx.moveTo(-r, y + 1); ctx.quadraticCurveTo(0, y + 1 + r * 0.10, r, y + 1); ctx.stroke();
+      }
+      ctx.restore();
+      ctx.strokeStyle = '#0f1114'; ctx.lineWidth = 0.9;
+      bellPath(ctx, sR, wallH); ctx.stroke();
+      ctx.strokeStyle = 'rgba(255,255,255,0.30)'; ctx.lineWidth = 1.2;
+      ctx.beginPath(); ctx.moveTo(-sR, wallH); ctx.quadraticCurveTo(0, wallH + lip * 2, sR, wallH); ctx.stroke();
+    } else {
+      ctx.strokeStyle = '#0f1114'; ctx.lineWidth = 0.9; ctx.stroke();
+      ctx.strokeStyle = 'rgba(255,255,255,0.22)'; ctx.lineWidth = 1.3;
+      ctx.beginPath(); ctx.moveTo(-sR, sH); ctx.lineTo(sR, sH); ctx.stroke();
+    }
     ctx.restore();
   };
   

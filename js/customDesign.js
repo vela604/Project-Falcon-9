@@ -135,6 +135,14 @@ function drawCustomDesignOps(ctx, W, H, ops) {
 // Caller must have built the body path and set it as the current path;
 // this fills over it.
 function applyCylindricalOverlay(ctx, W) {
+  // Use the same shared lighting as the solid-colour bodies (defined in
+  // rocketArt.js) so DSL-designed bodies match; fall back to the old
+  // 3-stop gradient if rocketArt.js isn't loaded yet.
+  if (typeof _cylShadeGradient === 'function') {
+    ctx.fillStyle = _cylShadeGradient(ctx, W);
+    ctx.fill();
+    return;
+  }
   const g = ctx.createLinearGradient(-W / 2, 0, W / 2, 0);
   g.addColorStop(0, 'rgba(0,0,0,0.14)');
   g.addColorStop(0.5, 'rgba(255,255,255,0.10)');
