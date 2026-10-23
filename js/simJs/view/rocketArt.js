@@ -450,6 +450,45 @@ function _rivetRow(ctx, y, W, strength) {
 // Straight cylindrical section between topY and botY (topY < botY, y down).
 // Adds: ambient occlusion at both joins, weld seams (+rivets), optional soot.
 // Call with the section's own path already clipped (save/clip/restore outside).
+// Axial (top-vs-bottom) shading overlay. _cylShadeGradient gives the
+// left-right component from RL.lx, but ignores RL.ly — the sun's component
+// ALONG the body axis. Consequence: when the rocket tumbles end-over-end,
+// or when the sun is mostly overhead, the body shows uniform side shading
+// instead of the physically-expected "nose bright / base dark" (or vice
+// versa) gradient. This adds a subtle vertical darkening so the shadow
+// reflects the full 3D sun angle in body frame.
+//
+// It is a VISUAL approximation, not strict cylinder math — a strict side-
+// view of a pure cylinder lit along its axis has uniform side-wall
+// brightness. But rocket tanks have domed ends, plus fins, nozzles, and a
+// visible silhouette, so viewers intuitively expect "lit from above" to
+// darken toward the bottom. A mild axial overlay sells that.
+function _axialShade(ctx, pathFn, H, W) {
+  const RL = globalThis._ROCKET_LIGHT;
+  if (!RL) return;
+  const lyAbs = Math.abs(RL.ly);
+  if (lyAbs < 0.15) return;
+  const str = Math.min(0.45, lyAbs * 0.55 * (0.5 + 0.5 * RL.lit));
+  if (str < 0.02) return;
+  // Body-local frame: nose at y=-H (up), base at y=0.
+  // Sun toward nose (ly>0) -> base in shadow (darken toward y=0).
+  // Sun toward base (ly<0) -> nose in shadow (darken toward y=-H).
+  const g = ctx.createLinearGradient(0, -H, 0, 0);
+  if (RL.ly >= 0) {
+    g.addColorStop(0, 'rgba(0,0,0,0)');
+    g.addColorStop(1, 'rgba(0,0,0,' + str.toFixed(3) + ')');
+  } else {
+    g.addColorStop(0, 'rgba(0,0,0,' + str.toFixed(3) + ')');
+    g.addColorStop(1, 'rgba(0,0,0,0)');
+  }
+  ctx.save();
+  pathFn();
+  ctx.clip();
+  ctx.fillStyle = g;
+  ctx.fillRect(-W * 2, -H * 2, W * 4, H * 4);
+  ctx.restore();
+}
+
 function _cylDetail(ctx, W, topY, botY, o) {
   o = o || {};
   const h = botY - topY;
@@ -1906,6 +1945,7 @@ const bodyPath = () => {
       ctx.fillStyle = shade;
       bodyPath();
       ctx.fill();
+      _axialShade(ctx, bodyPath, H, W);
     }
     
     if (designMode === 'dsl' && typeof parseAndValidateDesign === 'function' &&
@@ -1970,6 +2010,7 @@ const bodyPath = () => {
       ctx.fillStyle = g;
       tankPath();
       ctx.fill();
+      _axialShade(ctx, tankPath, tankH_px, W);
     } else if (typeof parseAndValidateDesign === 'function' &&
       typeof drawCustomDesignOps === 'function' &&
       typeof applyCylindricalOverlay === 'function') {
