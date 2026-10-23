@@ -549,12 +549,14 @@ function drawRemoteArea() {
   }
   if (!segs.length) return;
   
-  // ---- Palette — soft violet, dignified, no hazard colours ----
-  const CORE  = '#9a8ae8';
-  const GLOW  = 'rgba(124, 111, 214, 0.20)';
-  const CAP   = '#b8aaf0';
-  const LABEL = '#d4c9ff';
-  const QUOTE = '#a898e8';
+  // ---- Palette — planet view: soft violet/pink (unchanged).
+  //                 local view: blue, to match ocean / match user preference.
+  const _isPlanetView = camera.mode === 'planet';
+  const CORE  = _isPlanetView ? '#9a8ae8' : '#55b0ff';
+  const GLOW  = _isPlanetView ? 'rgba(124, 111, 214, 0.20)' : 'rgba(50, 120, 255, 0.25)';
+  const CAP   = _isPlanetView ? '#b8aaf0' : '#80c0ff';
+  const LABEL = _isPlanetView ? '#d4c9ff' : '#c0e0ff';
+  const QUOTE = _isPlanetView ? '#a898e8' : '#a0d0ff';
   
   ctx.save();
   
@@ -625,7 +627,7 @@ function drawRemoteArea() {
     
     if (CONFIG.REMOTE_AREA_QUOTE_AUTHOR) {
       ctx.font = '9px "JetBrains Mono", monospace';
-      ctx.fillStyle = 'rgba(168, 152, 232, 0.75)';
+      ctx.fillStyle = _isPlanetView ? 'rgba(168, 152, 232, 0.75)' : 'rgba(160, 208, 255, 0.75)';
       ctx.fillText('— ' + CONFIG.REMOTE_AREA_QUOTE_AUTHOR, labelX, labelY + 30);
     }
   }
@@ -688,10 +690,10 @@ function drawOceanArea() {
   }
   if (!segs.length) return;
   
-  const FILL_TOP    = 'rgba(90, 166, 220, 0.28)';
-  const FILL_BOTTOM = 'rgba(40,  90, 160, 0.10)';
-  const EDGE        = 'rgba(120, 190, 235, 0.85)';
-  const CAP         = 'rgba(120, 190, 235, 0.55)';
+  const FILL_TOP    = 'rgba(60, 140, 255, 0.35)';
+  const FILL_BOTTOM = 'rgba(20, 70, 180, 0.15)';
+  const EDGE        = 'rgba(80, 160, 255, 0.90)';
+  const CAP         = 'rgba(80, 160, 255, 0.60)';
   
   ctx.save();
   
@@ -765,7 +767,7 @@ function drawOceanArea() {
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.font = '600 12px "JetBrains Mono", monospace';
-    ctx.fillStyle = 'rgba(150, 210, 245, 0.9)';
+    ctx.fillStyle = 'rgba(120, 190, 255, 0.95)';
     ctx.fillText('Ocean', labelX, labelY);
   }
   

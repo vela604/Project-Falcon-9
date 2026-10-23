@@ -242,19 +242,7 @@ const SimLighting = (function () {
       g.addColorStop(0.78, 'rgba(120,205,135,0.20)');
       g.addColorStop(1.00, 'rgba(140,220,150,0.30)');
       ctx.fillStyle = g; ctx.fillRect(cx - R, cy - R, 2 * R, 2 * R);
-      // City lights on the night side (Earth-fixed, so they spin with the planet).
-      if (!_cities) _initCities();
-      const w = CONFIG.EARTH_OMEGA * simT();
-      ctx.globalCompositeOperation = 'lighter';
-      for (const c of _cities) {
-        const a = c.a + w;
-        const se = Math.cos(a - sunPhi());
-        const night = 1 - smooth(-0.10, 0.06, se);
-        if (night < 0.05) continue;
-        const [px, py] = worldToScreen(CONFIG.EARTH_RADIUS * 0.992 * Math.sin(a), CONFIG.EARTH_RADIUS * 0.992 * Math.cos(a));
-        ctx.fillStyle = `rgba(255,205,110,${(0.85 * night * c.k).toFixed(3)})`;
-        ctx.fillRect(px - 1, py - 1, 2.2, 2.2);
-      }
+      // City lights removed per user request.
     }
     ctx.restore();
     // Atmosphere rim on the sunlit limb (planet view only).
