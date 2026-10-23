@@ -324,7 +324,7 @@
       };
       return _tempState.get(_memberKey(b, fakeM, 0)) || DEFAULT;
     }
-    let totalM = 0, sumT = 0, sumPk = 0;
+    let totalM = 0, sumT = 0, sumPk = 0, maxPk = 0;
     for (let i = 0; i < members.length; i++) {
       const m = members[i];
       const st = _tempState.get(_memberKey(b, m, i));
@@ -333,9 +333,10 @@
       totalM += mass;
       sumT += st.T * mass;
       sumPk += st.peakK * mass;
+    if (Number.isFinite(st.peakK) && st.peakK > maxPk) maxPk = st.peakK;
     }
     if (totalM <= 0) return DEFAULT;
-    return { T: sumT / totalM, peakK: sumPk / totalM };
+    return { T: sumT / totalM, peakK: maxPk > 0 ? maxPk : sumPk / totalM };
   }
   
   // Per-member read for a specific role (booster / stage / payload display).
@@ -344,7 +345,7 @@
     if (!body) return null;
     const members = Array.isArray(body.members) ? body.members : [];
     if (!members.length) return _bodyTempWeighted(body);
-    let totalM = 0, sumT = 0, sumPk = 0;
+    let totalM = 0, sumT = 0, sumPk = 0, maxPk = 0;
     for (let i = 0; i < members.length; i++) {
       const m = members[i];
       if (!m) continue;
@@ -360,9 +361,10 @@
       totalM += mass;
       sumT += st.T * mass;
       sumPk += st.peakK * mass;
+    if (Number.isFinite(st.peakK) && st.peakK > maxPk) maxPk = st.peakK;
     }
     if (totalM <= 0) return null;
-    return { T: sumT / totalM, peakK: sumPk / totalM };
+    return { T: sumT / totalM, peakK: maxPk > 0 ? maxPk : sumPk / totalM };
   }
   
   

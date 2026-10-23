@@ -290,7 +290,7 @@ function _bodyTempWeighted(b) {
     };
     return _tempState.get(_memberKey(b, fakeM, 0)) || DEFAULT;
   }
-  let totalM = 0, sumT = 0, sumPk = 0;
+  let totalM = 0, sumT = 0, sumPk = 0, maxPk = 0;
   for (let i = 0; i < members.length; i++) {
     const m = members[i];
     const st = _tempState.get(_memberKey(b, m, i));
@@ -299,9 +299,17 @@ function _bodyTempWeighted(b) {
     totalM += mass;
     sumT += st.T * mass;
     sumPk += st.peakK * mass;
+    if (Number.isFinite(st.peakK) && st.peakK > maxPk) maxPk = st.peakK;
   }
   if (totalM <= 0) return DEFAULT;
-  return { T: sumT / totalM, peakK: sumPk / totalM };
+  // T = mass-weighted average (current body temperature).
+  // peakK = MAX of member peaks, NOT weighted average. Weighted-avg peak
+  // was non-monotonic: as the hot booster tank burned fuel, its thermal
+  // mass dropped, shifting the weighted average toward the colder stage
+  // under fairing — making displayed Tmax DECREASE mid-ascent even though
+  // every individual member's peak was monotonic. Peak = "highest temp
+  // any part of this body has ever reached", which is max-of-peaks.
+  return { T: sumT / totalM, peakK: maxPk > 0 ? maxPk : sumPk / totalM };
 }
 
 // Per-member read for a specific role (booster / stage / payload display).
@@ -310,7 +318,7 @@ function _roleTempWeighted(body, role) {
   if (!body) return null;
   const members = Array.isArray(body.members) ? body.members : [];
   if (!members.length) return _bodyTempWeighted(body);
-  let totalM = 0, sumT = 0, sumPk = 0;
+  let totalM = 0, sumT = 0, sumPk = 0, maxPk = 0;
   for (let i = 0; i < members.length; i++) {
     const m = members[i];
     if (!m) continue;
@@ -326,9 +334,10 @@ function _roleTempWeighted(body, role) {
     totalM += mass;
     sumT += st.T * mass;
     sumPk += st.peakK * mass;
+    if (Number.isFinite(st.peakK) && st.peakK > maxPk) maxPk = st.peakK;
   }
   if (totalM <= 0) return null;
-  return { T: sumT / totalM, peakK: sumPk / totalM };
+  return { T: sumT / totalM, peakK: maxPk > 0 ? maxPk : sumPk / totalM };
 }
 
 // Time from current 2-body state to the next apogee (seconds). Exact

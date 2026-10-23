@@ -374,12 +374,22 @@ function _cylShadeGradient(ctx, W) {
     const g = ctx.createLinearGradient(-W / 2, 0, W / 2, 0);
     const ll = Math.hypot(RL.lx, 0.5) || 1, lx = RL.lx / ll, lz = 0.5 / ll;
     const N = 16;
+    // Daylight fill: sky ambient + direct sun makes real daylight soft on a
+    // white tank — far edges aren't 50% dark. Fade the curvature fudge and
+    // soften the base shadow multiplier as (amb * lit) rises. Night/dawn
+    // keep strong shading so cylinder form still reads.
+    const _flatFill = Math.min(1, RL.amb * 1.6 * Math.max(0.2, RL.lit));
+    const _cylShadeMul = 0.20 * (1 - _flatFill * 0.85);
     for (let i = 0; i <= N; i++) {
       const u = i / N, x = u * 2 - 1, nz = Math.sqrt(Math.max(0, 1 - x * x));
       const d = Math.max(0, x * lx + nz * lz);
-      const t = RL.amb + RL.lit * d * (1 - RL.amb);
-      const dark = Math.min(0.85, (1 - Math.min(1, t)) * 0.62 + 0.20 * Math.pow(Math.abs(x), 4));
-      const hl = RL.lit * Math.pow(d, 10) * 0.18 * ROCKET_FX.spec;
+      const sunLit = RL.lit * d;
+      const t = RL.amb + sunLit * (1 - RL.amb);
+      const sunShadow = (1 - Math.min(1, t)) * 0.35;
+      const cylShade = _cylShadeMul * Math.pow(Math.abs(x), 4);
+      const dark = Math.min(0.80, sunShadow + cylShade);
+      // Sharper + brighter specular so the sun-facing side SHINES in daylight
+      const hl = RL.lit * Math.pow(d, 8) * 0.24 * ROCKET_FX.spec;
       const warm = RL.tint * RL.lit * d * 0.16;
       let col;
       if (hl > dark) col = 'rgba(255,' + Math.round(255 - 60 * RL.tint) + ',' + Math.round(255 - 150 * RL.tint) + ',' + hl.toFixed(3) + ')';
