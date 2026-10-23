@@ -44,6 +44,12 @@
 // change frame-to-frame (flame/plume, throttle-driven effects) is left
 // alone since caching those wouldn't help and risks staleness.
 // ============================================================================
+// module-level continuous-stack vars (set by drawRocketArt, read by
+// _axialShade / drawPayloadSpaceShape so all members share one light field)
+let stackMaxW_px = 0;
+let stackTotalH_px = 0;
+let memberOffsetY_px = 0;
+
 const _gradCache = new WeakMap(); // ctx -> Map("key:sig" -> CanvasGradient)
 function cachedGradient(ctx, key, sig, build) {
   let bucket = _gradCache.get(ctx);
@@ -1555,9 +1561,9 @@ function _resetGasPoolsIfBodyChanged(gen) {
 
 function drawRocketArt(ctx, W, H, mpp, opts) {
   opts = opts || {};
-  const stackMaxW_px = opts.stackMaxW_px || W;
-  const stackTotalH_px = opts.stackTotalH_px || H;
-  const memberOffsetY_px = opts.memberOffsetY_px || 0;
+  stackMaxW_px = opts.stackMaxW_px || W;
+  stackTotalH_px = opts.stackTotalH_px || H;
+  memberOffsetY_px = opts.memberOffsetY_px || 0;
   
  const legsProgress = opts.legsProgress || 0;
   const legsState = opts.legsState || null;
