@@ -81,13 +81,13 @@
     const tApo = apoKm != null ? apoKm : km;
     const tPeri = periKm != null ? periKm : tApo;
     return {
-      ascent: { PUSH_MAX_GIMBAL_DEG: 0.61, PUSH_T_S: 4.82, MECO_TARGET_BOOSTER_FUEL_KG: 60494 },
+      ascent: { PUSH_MAX_GIMBAL_DEG: 0.64, PUSH_T_S: 4.82, MECO_TARGET_BOOSTER_FUEL_KG: 52612 },
       insertion: {
         TARGET_ORBIT_ALT_KM: tApo,
         TARGET_APSIDE1_ALT_KM: tApo,
         TARGET_APSIDE2_ALT_KM: tPeri,
-        STAGE_BURN_AOA_BIAS_DEG: 1.8,
-        CIRC_TRIGGER_LEAD_S: 6.5,
+        STAGE_BURN_AOA_BIAS_DEG: 0.827,
+        CIRC_TRIGGER_LEAD_S: 5.65,
       },
       done: { DEORBIT_ENABLED: !!C.fixed.deorbitEnabled },
     };

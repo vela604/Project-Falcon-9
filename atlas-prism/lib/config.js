@@ -61,7 +61,7 @@
     }
   } catch (e) {}
   // Fallback to current preset literal
-  return { G: 0.64, T: 4.82, bias: 0.827, lead: 5.64, meco: 52612 };
+  return { G: 0.64, T: 4.82, bias: 0.827, lead: 5.65, meco: 52612 };
 })(),
     baselineSnapped: { A: 14.8687, bias: 0.827, lead: 5.6375,      meco: 52612 }, // snapped from baselineRaw
     // STALE — old G=0.60/0.61 baseline numbers, removed after G=0.64 preset
@@ -78,7 +78,7 @@
     // older tuned points were removed after the guidance update (they may no
     // longer be valid). Add more entries as fresh points are measured.
 references: [
-  { meco: 52612, G: 0.64, T: 4.82, bias: 0.827, lead: 5.64, alt: 320 },
+  { meco: 52612, G: 0.64, T: 4.82, bias: 0.827, lead: 5.65, alt: 320 },
 ],
 
     // DEPRECATED (Step Δv 1/4): E is no longer the search signal. Search uses coastDeltaV
@@ -144,7 +144,7 @@ fixedFallbackKg: 0 },     // fallback MECO when probe fails (booster drained: on
     // add more entries as fresh runs complete.
     roughRefs: [
       { stackId: 'stk_falcon9-b5', altKm: 320, fuelPct: 100,
-        meco: 52612, G: 0.64, T: 4.82, bias: 0.827, lead: 5.64, residualKg: 849 },
+        meco: 52612, G: 0.64, T: 4.82, bias: 0.827, lead: 5.65, residualKg: 849 },
     ],
     roughScan: {
       minRange: [20000, 80000],

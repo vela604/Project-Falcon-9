@@ -271,7 +271,7 @@ function suggestDurationCap(altKm, apoKm, periKm) {
     // 1. baseline raw -> lattice
     const bp = fromRaw(C().baselineRaw);
     // "snap" tolerance: half of each quantum. Baseline raw may be off-lattice
-    // (e.g. lead=5.64 -> snapped 5.6375, diff 0.0025). "A_eff" is now derived
+    // (e.g. lead=5.641 -> snapped 5.6375, diff 0.0035). "A_eff" is now derived
     // from baselineRaw (G*T^2) so preset changes don't break this check.
     const _q0 = C().quanta;
     const _tolG = _q0.G    / 2 + 1e-9;
@@ -324,7 +324,7 @@ function suggestDurationCap(altKm, apoKm, periKm) {
     t('1 gimbal step ~ 0.232 in A', Math.abs(stepA - 0.2323) < 0.01, 'dA=' + stepA.toFixed(4));
 
     // 5. redundant (G,T) pairs exist (same A_eff band, different physics)
-    const a = fromRaw({ G: 0.61, T: 4.82, bias: 0.59, lead: 5.5, meco: 52612 });
+    const a = fromRaw({ G: 0.64, T: 4.82, bias: 0.827, lead: 5.65, meco: 52612 });
     const b = step(a, { dGi: -1, dTn: Math.round((Math.sqrt(aEff(a) / gOf(a.Gi - 1)) - tOf(a.Tn)) / C().quanta.T) });
     t('redundant pair: different key, A_eff within 1 Tn quantum', key(a) !== key(b) &&
       Math.abs(aEff(a) - aEff(b)) < 2 * 2 * tOf(a.Tn) * C().quanta.T + 1e-9, 'dA=' + (aEff(b) - aEff(a)).toExponential(2));
@@ -332,7 +332,7 @@ function suggestDurationCap(altKm, apoKm, periKm) {
     // 6. verifyApplied
     const cfgOk = JSON.parse(JSON.stringify(toValues(bp)));
     t('verifyApplied ok', verifyApplied(bp, cfgOk).ok);
-    const cfgBad = JSON.parse(JSON.stringify(cfgOk)); cfgBad.insertion.CIRC_TRIGGER_LEAD_S = 5.64;
+    const cfgBad = JSON.parse(JSON.stringify(cfgOk)); cfgBad.insertion.CIRC_TRIGGER_LEAD_S = 5.6333;
     const vb = verifyApplied(bp, cfgBad);
     t('verifyApplied catches off-lattice lead', !vb.ok && vb.mismatches[0].path === 'insertion.CIRC_TRIGGER_LEAD_S');
 
