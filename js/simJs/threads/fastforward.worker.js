@@ -172,7 +172,7 @@ if (typeof Guidance !== 'undefined') {
             // ---- Persistent snapshot wrapper (zero alloc per tick) ----
 const dt = CONFIG.DT;
 const maxTicks = Math.ceil(msg.durationS / dt);
-window.__ffwDiag = {
+self.__ffwDiag = {
   dt: dt,
   durationS: msg.durationS,
   maxTicks: maxTicks,
@@ -288,15 +288,15 @@ catch (ge) {
   if (state.halted) break;
 }
     
-    window.__ffwDiag.actualEnd = state.simTime;
-    window.__ffwDiag.actualTicks = typeof i !== 'undefined' ? i : -1;
-    window.__ffwDiag.loopOvershoot = state.simTime - window.__ffwDiag.expectedEnd;
-    window.__ffwDiag.wallMs = performance.now() - window.__ffwDiag.startWallMs;
+    self.__ffwDiag.actualEnd = state.simTime;
+    self.__ffwDiag.actualTicks = typeof i !== 'undefined' ? i : -1;
+    self.__ffwDiag.loopOvershoot = state.simTime - self.__ffwDiag.expectedEnd;
+    self.__ffwDiag.wallMs = performance.now() - self.__ffwDiag.startWallMs;
     console.log('[ffw] done: actualEnd=' + state.simTime.toFixed(3) +
-      ' overshootVsExpected=' + (state.simTime - window.__ffwDiag.expectedEnd).toFixed(3) + 's' +
-      ' actualTicks=' + window.__ffwDiag.actualTicks +
-      ' expectedTicks=' + window.__ffwDiag.maxTicks +
-      ' wall=' + (window.__ffwDiag.wallMs / 1000).toFixed(2) + 's');
+      ' overshootVsExpected=' + (state.simTime - self.__ffwDiag.expectedEnd).toFixed(3) + 's' +
+      ' actualTicks=' + self.__ffwDiag.actualTicks +
+      ' expectedTicks=' + self.__ffwDiag.maxTicks +
+      ' wall=' + (self.__ffwDiag.wallMs / 1000).toFixed(2) + 's');
 
     // ---- Final export ----
 self.postMessage({
