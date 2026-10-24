@@ -221,7 +221,7 @@
         } else {
           p = Object.assign({}, basePoint, { meco });
         }
-        return pool.runEval(p, { stopAt: 'COAST_WAIT_ENTRY', quiet: true, targetAltKm: altKm })
+        return pool.runEval(p, { stopAt: 'COAST_WAIT_ENTRY', quiet: true, targetAltKm: altKm, targetApoKm: opts && opts.targetApoKm, targetPeriKm: opts && opts.targetPeriKm })
           .then(m => ({ meco, m, point: p }))
           .catch(e => ({ meco, error: e.message }));
       }));

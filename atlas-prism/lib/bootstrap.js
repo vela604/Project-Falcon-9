@@ -158,7 +158,11 @@
       if (inflight.has(k)) return inflight.get(k);
       if (abort(ctx)) return Promise.reject(new Error('stopped'));
       const point = { Gi, Tn: P.Tn, bi, li: P.li, meco: M };
-      const p = pool.runEvalSA(point, { stopAt: 'COAST_WAIT_ENTRY', abortOnStageVrNeg: true, targetAltKm: P.alt, quiet: true }).then((m) => {
+      const p = pool.runEvalSA(point, {
+        stopAt: 'COAST_WAIT_ENTRY', abortOnStageVrNeg: true,
+        targetAltKm: P.alt, targetApoKm: P.altApo, targetPeriKm: P.altPeri,
+        quiet: true,
+      }).then((m) => {
         const cls = classify(m, P);
         const pred = (Number.isFinite(m.circM0Kg) && Number.isFinite(m.circVe) && Number.isFinite(m.coastDeltaV))
           ? m.circM0Kg * Math.exp(-m.coastDeltaV / m.circVe) - m.circDryKg + P.kc * m.coastDeltaV : NaN;
@@ -316,7 +320,9 @@
     const out = { tlog: ch.log || null, idealReg, Gi, bi, M, lead: lr.lead, evals: lr.evals || 0, tuneOk: !!lr.ok, reason: lr.reason, full: false, inBand: !!lr.inBand, margin: lr.marginS, pred: rec0.pred };
     if (!lr.ok || !Number.isFinite(lr.leadTicks)) {
       try {
-        const dm = await pool.runEval(Object.assign({}, point, { li: Math.round(5.5 / 0.0125) }), { stopAt: 'CIRC_END', targetAltKm: P.alt, quiet: true });
+        const dm = await pool.runEval(Object.assign({}, point, { li: Math.round(5.5 / 0.0125) }), {
+          stopAt: 'CIRC_END', targetAltKm: P.alt, targetApoKm: P.altApo, targetPeriKm: P.altPeri, quiet: true,
+        });
         out.evals++;
         out.diag = 'end=' + dm.endReason + ' vrMin=' + f1(dm.vrMin, 2) + ' vrEnd=' + f1(dm.vrEnd, 2) + ' margin=' + f1(dm.marginS, 1) + ' fuelOff=' + f1(dm.stageFuelEngOffKg, 0) + ' pred=' + f1(rec0.pred, 0) + ' Δ=' + f1(dm.stageFuelEngOffKg - rec0.pred, 0);
       } catch (e) { out.diag = 'diag error'; }

@@ -20,7 +20,7 @@
 // wrap the hook so every fresh sim call prints "▶ eval #N ..." / "◀ eval #N end=... wall=...". Disable with opts.evalLog === false.
 const hookBase = opts.hook || root.TunerHook;
 const wrappedHook = (opts.evalLog === false) ? hookBase : T.makeEvalLogger((s) => say(s), hookBase)();
-const common = { hook: wrappedHook, env: opts.env, targetAltKm: opts.targetAltKm, abortRef: opts.abortRef, onProgress: opts.onProgress, cache };
+const common = { hook: wrappedHook, env: opts.env, targetAltKm: opts.targetAltKm, targetApoKm: opts.targetApoKm, targetPeriKm: opts.targetPeriKm, abortRef: opts.abortRef, onProgress: opts.onProgress, cache };
 say('runTuner: residual band [' + band[0] + ',' + band[1] + '] kg (' + ((opts.deorbit != null ? opts.deorbit : Cfg.fixed.deorbitEnabled) ? 'deorbit ON' : 'deorbit OFF') + ')  Phase A band [' + fmt(bandA[0], 0) + ',' + fmt(bandA[1], 0) + ']  Phase B mode=' + (opts.mode || 'fine'));
 say('runTuner: evalLog=' + (opts.evalLog === false ? 'off' : 'on'));
 
@@ -104,10 +104,10 @@ const res = { ok: false, status: '', phaseA: A, phaseB: B, band, bestPoint: null
     seen.set(k, row); rows.push(row);
   };
   A.history.filter((e) => e.real && e.ok && e.metrics && e.point && e.meco === A.meco && e.gi === A.point.Gi)
-  .forEach((e) => addRow(U.makeRow('A', 'A:' + e.kind, e.point, e.metrics, { deltaV: e.deltaV, targetAltKm: alt })));
+  .forEach((e) => addRow(U.makeRow('A', 'A:' + e.kind, e.point, e.metrics, { deltaV: e.deltaV, targetAltKm: alt, targetApoKm: opts.targetApoKm, targetPeriKm: opts.targetPeriKm })));
 B.candidates.forEach((c) => { if (!c.metrics || !(c.fullPoint || c.point)) return;
   addRow(U.makeRow('B', c.tag, c.fullPoint || c.point, c.metrics,
-    { deltaV: c.deltaV, targetAltKm: alt, reject: !!c.resFail, reasons: c.resFail ? c.reasons : [] })); });
+    { deltaV: c.deltaV, targetAltKm: alt, targetApoKm: opts.targetApoKm, targetPeriKm: opts.targetPeriKm, reject: !!c.resFail, reasons: c.resFail ? c.reasons : [] })); });
     res.leaderboard = U.sortRows(rows, 'score');
   res.meco = A.meco;
   res.wallMs = performance.now() - t0;
