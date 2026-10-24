@@ -1469,12 +1469,16 @@ let _renderToken = 0; // async guard for rapid guide switches
   presetSel.disabled = false;
   presetSel.innerHTML = '<option value="">— select a preset —</option>' +
     list.map(p => {
-      const tag = p.isDefault ? 'DEFAULT' : 'USER';
-      const stack = p.stackName || '(no stack)';
-      const stype = p.stackType ? ' · ' + p.stackType : '';
-      const aps = _apsideLabelForPreset(p);
-      const apsSuffix = aps ? ' · ' + aps : '';
-      return `<option value="${p.id}">${p.name} · [${tag}] · ${stack}${stype}${apsSuffix}</option>`;
+      const c = p.constants || {};
+      const ins = c.insertion || {}, asc = c.ascent || {};
+      const meco = Number.isFinite(asc.MECO_TARGET_BOOSTER_FUEL_KG) ? asc.MECO_TARGET_BOOSTER_FUEL_KG : null;
+      const legacy = Number.isFinite(ins.TARGET_ORBIT_ALT_KM) ? ins.TARGET_ORBIT_ALT_KM : null;
+      const a1 = Number.isFinite(ins.TARGET_APSIDE1_ALT_KM) ? ins.TARGET_APSIDE1_ALT_KM : legacy;
+      const a2 = Number.isFinite(ins.TARGET_APSIDE2_ALT_KM) ? ins.TARGET_APSIDE2_ALT_KM : legacy;
+      const parts = [p.name];
+      if (meco != null) parts.push(meco + ' kg');
+      if (a1 != null && a2 != null) parts.push(a1 + '-' + a2 + ' km');
+      return `<option value="${p.id}">${p.isDefault ? '◆ ' : '★ '}${parts.join(' • ')}</option>`;
     }).join('');
   presetSel.value = '';
 }

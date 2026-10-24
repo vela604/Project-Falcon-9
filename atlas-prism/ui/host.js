@@ -273,11 +273,16 @@
       return 'apside1=' + a1 + ' apside2=' + a2 + ' km';
     }
     const REFS = collectRefs();
-    const refs = REFS.map((r, i) =>
-      '<option value="' + i + '">' +
-      (r.src === 'preset' ? '★ ' : (r.src === 'default' ? '◆ ' : '')) +
-      (r.name ? esc(r.name) + ' · ' : '') +
-      'MECO ' + r.meco + ' · ' + apsideLabel(r) + '</option>').join('');
+    const refs = REFS.map((r, i) => {
+      const a1 = Number.isFinite(r.apside1) ? r.apside1 : r.alt;
+      const a2 = Number.isFinite(r.apside2) ? r.apside2 : r.alt;
+      const parts = [r.name || 'preset'];
+      if (Number.isFinite(r.meco)) parts.push(r.meco + ' kg');
+      if (a1 != null && a2 != null) parts.push(a1 + '-' + a2 + ' km');
+      return '<option value="' + i + '">' +
+        (r.src === 'preset' ? '★ ' : (r.src === 'default' ? '◆ ' : '')) +
+        parts.join(' • ') + '</option>';
+    }).join('');
 
     const stratList = (typeof root.TunerCore.listStrategies === 'function') ? root.TunerCore.listStrategies() : ['guided'];
     const stratOpts = stratList.map((n) => {
