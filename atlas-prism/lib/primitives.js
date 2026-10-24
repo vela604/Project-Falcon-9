@@ -12,8 +12,15 @@
     const q = Cfg.quanta.lead;
     const cache = opts.cache || new U.EvalCache();
     const targetAltKm  = opts.targetAltKm  != null ? opts.targetAltKm  : Cfg.fixed.targetAltKm;
-    const targetApoKm  = opts.targetApoKm  != null ? opts.targetApoKm  : targetAltKm;
-    const targetPeriKm = opts.targetPeriKm != null ? opts.targetPeriKm : targetAltKm;
+    // Match lattice.curAlts() / guidance-blocks: apo = max(apside1, apside2),
+    // peri = min. Without this, apside1=320 apside2=350 gives targetApoKm=320
+    // targetPeriKm=350 (reversed), so runFull computes apoErr=|350-320| + periErr=|320-350|
+    // ≈ 60 km for BOTH good and bad leads. Error surface is flat & meaningless
+    // → wrong lead picked (5.40 instead of 5.375 which was 0.002 km).
+    const _tApoRaw  = opts.targetApoKm  != null ? opts.targetApoKm  : targetAltKm;
+    const _tPeriRaw = opts.targetPeriKm != null ? opts.targetPeriKm : targetAltKm;
+    const targetApoKm  = Math.max(_tApoRaw, _tPeriRaw);
+    const targetPeriKm = Math.min(_tApoRaw, _tPeriRaw);
     const leadOf = (li) => Number((li * q).toFixed(4));
     const LEAD_MAX_TICKS = Math.round(20 / q);
     const SPEED_GATE_S = opts.speedGateS != null ? opts.speedGateS : 100;
