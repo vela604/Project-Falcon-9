@@ -75,19 +75,19 @@
     async function runFull(r) {
       if (r.full) return r.full;
       if (!r.valid) { r.full = { ok: false, error: Infinity, apoErr: Infinity, periErr: Infinity, fm: null, sc: null }; return r.full; }
-      const p = Object.assign({}, point, { li: r.li });
-      let fm = cache.get(p, 'FULL');
-      if (!fm) {
-        fm = await H.runEval(p, { stopAt: 'FULL', targetAltKm, targetApoKm, targetPeriKm,
-          env: opts.env, abortRef: opts.abortRef, onProgress: opts.onProgress });
-        cache.set(p, 'FULL', fm); evals++;
-      }
-      const sc = U.score(fm, { targetAltKm, targetApoKm, targetPeriKm });
-      const apoErr  = Number.isFinite(fm.apogeeKm)  ? Math.abs(fm.apogeeKm  - targetApoKm)  : 9999;
-      const periErr = Number.isFinite(fm.perigeeKm) ? Math.abs(fm.perigeeKm - targetPeriKm) : 9999;
-      r.full = { ok: sc.ok, error: apoErr + periErr, apoErr, periErr, fm, sc };
-      say('  FULL lead=' + r.lead + ' err=' + fmt(r.full.error, 2) +
-          ' (apo ' + fmt(apoErr, 2) + ' peri ' + fmt(periErr, 2) + ')' + (sc.ok ? '' : ' HARD-FAIL'));
+      // Use CIRC_END osculating apsides directly for search metric.
+      // FULL eval from CPHook would return CIRC_END anyway (CPHook ignores
+      // stopAt='FULL' and always stops at CIRC_END), so fm.apogeeKm was
+      // undefined -> apoErr=9999 for every candidate. Ties everywhere,
+      // search stuck at base. CIRC_END's apoEndKm/periEndKm is the stage's
+      // orbit right after CIRC burn — closely tracks post-deploy orbit
+      // (payload gets ~3 m/s kick, tiny vs ~7700 m/s orbital speed).
+      // The authoritative FULL score is done by worker-sim after lead pick.
+      const apoErr  = Number.isFinite(r.m.apoEndKm)  ? Math.abs(r.m.apoEndKm  - targetApoKm)  : 9999;
+      const periErr = Number.isFinite(r.m.periEndKm) ? Math.abs(r.m.periEndKm - targetPeriKm) : 9999;
+      r.full = { ok: true, error: apoErr + periErr, apoErr, periErr, fm: null, sc: null };
+      say('  circ lead=' + r.lead + ' err=' + fmt(r.full.error, 4) +
+          ' (apo ' + fmt(apoErr, 4) + ' peri ' + fmt(periErr, 4) + ')');
       return r.full;
     }
 
