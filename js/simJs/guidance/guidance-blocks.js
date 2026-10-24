@@ -875,6 +875,7 @@ setState(s) {
         coast2RotateStartTilt: null,
         coast2RotateMid: null,
         _prevVr2: null,
+        coast2TargetApside: 'apo',
           // DONE
   deployCommandSimTime: null,
     payloadCleared: false,
@@ -919,6 +920,26 @@ setState(s) {
         const n = Math.sqrt(GM / (a * a * a));
         if (M < Math.PI) return (Math.PI - M) / n;
         return (3 * Math.PI - M) / n;
+      }
+
+      // Time to NEXT perigee (parallel to _timeToApogee). Perigee at M=0
+      // (and M=2π), so t_peri = (2π - M)/n.
+      function _timeToPerigee(r, vr, vt, GM) {
+        if (!(r > 0)) return Infinity;
+        const E = 0.5 * (vr * vr + vt * vt) - GM / r;
+        if (E >= 0) return Infinity;
+        const a = -GM / (2 * E);
+        const h = r * vt;
+        const eSq = 1 + (2 * E * h * h) / (GM * GM);
+        const e = Math.sqrt(Math.max(0, eSq));
+        if (e < 1e-9) return Math.PI * Math.sqrt((a * a * a) / GM);
+        const cosE = (1 - r / a) / e;
+        const sinE = (r * vr) / (e * Math.sqrt(GM * a));
+        let E_an = Math.atan2(sinE, cosE);
+        if (E_an < 0) E_an += 2 * Math.PI;
+        const M = E_an - e * Math.sin(E_an);
+        const n = Math.sqrt(GM / (a * a * a));
+        return (2 * Math.PI - M) / n;
       }
 
       // ---- Payload monitor ----
@@ -1668,24 +1689,44 @@ const tau_target = tau_desired - dNext.torqueEnvironmental;
               const ey_ecc =
                 ((v2_c - GM_c / r_c) * body.ry - rv_c * body.vy) / GM_c;
               const e_mag = Math.hypot(ex_ecc, ey_ecc);
-              let thetaApo;
+              // PICK NEARER APSIDE: compute t to apo + t to peri from current
+              // post-burn state, pick the smaller. Attitude target, trim, and
+              // deploy trigger all follow the chosen apside.
+              const ux_c0 = body.rx / r_c, uy_c0 = body.ry / r_c;
+              const vr_c0 = body.vx * ux_c0 + body.vy * uy_c0;
+              const vt_c0 =
+                body.vx * (body.ry / r_c) + body.vy * (-body.rx / r_c);
+              const t_apo = _timeToApogee(r_c, vr_c0, vt_c0, GM_c);
+              const t_peri = _timeToPerigee(r_c, vr_c0, vt_c0, GM_c);
+              const pickPeri = (t_peri < t_apo);
+              _st.coast2TargetApside = pickPeri ? 'peri' : 'apo';
+              console.log('[insertion] COAST_ROTATE_2: t_apo=' +
+                t_apo.toFixed(1) + 's, t_peri=' + t_peri.toFixed(1) +
+                's -> picking ' + _st.coast2TargetApside);
+              let thetaTarget;
               if (e_mag > 1e-6) {
-                const phiApo = Math.atan2(-ex_ecc, -ey_ecc);
                 const E_c = 0.5 * v2_c - GM_c / r_c;
                 const a_c = E_c < 0 ? -GM_c / (2 * E_c) : r_c;
-                const r_apo = a_c * (1 + e_mag);
-                const rx_apo = r_apo * Math.sin(phiApo);
-                const ry_apo = r_apo * Math.cos(phiApo);
-                const vt_c =
-                  body.vx * (body.ry / r_c) + body.vy * (-body.rx / r_c);
-                const sDir = vt_c >= 0 ? 1 : -1;
-                thetaApo = Math.atan2(-sDir * ry_apo, -sDir * rx_apo);
+                const sDir = vt_c0 >= 0 ? 1 : -1;
+                let rx_aps, ry_aps;
+                if (pickPeri) {
+                  const phiPeri = Math.atan2(ex_ecc, ey_ecc);
+                  const r_peri = a_c * (1 - e_mag);
+                  rx_aps = r_peri * Math.sin(phiPeri);
+                  ry_aps = r_peri * Math.cos(phiPeri);
+                } else {
+                  const phiApo = Math.atan2(-ex_ecc, -ey_ecc);
+                  const r_apo = a_c * (1 + e_mag);
+                  rx_aps = r_apo * Math.sin(phiApo);
+                  ry_aps = r_apo * Math.cos(phiApo);
+                }
+                thetaTarget = Math.atan2(-sDir * ry_aps, -sDir * rx_aps);
               } else {
                 const speed_c = Math.hypot(body.vx, body.vy);
-                thetaApo =
+                thetaTarget =
                   speed_c > 1 ? Math.atan2(-body.vx, body.vy) : body.theta;
               }
-              _st.coast2TargetThetaInertial = thetaApo;
+              _st.coast2TargetThetaInertial = thetaTarget;
             }
 
             const targetThetaRad = _st.coast2TargetThetaInertial;
@@ -1753,35 +1794,52 @@ const tau_target = tau_desired - dNext.torqueEnvironmental;
             const e_mag = Math.hypot(ex_ecc, ey_ecc);
             const E_c = 0.5 * v2_c - GM_c / r_c;
             const a_c = E_c < 0 ? -GM_c / (2 * E_c) : r_c;
-            const r_apo_live = a_c * (1 + e_mag);
             const h_live = r_c * vt_c;
-            const v_apo_live = r_apo_live > 0 ? Math.abs(h_live) / r_apo_live : 0;
-            // Elliptical target velocity at apogee (circular when apo==peri).
+            // Elliptical target velocity at the CHOSEN apside (circular when
+            // apo==peri). COAST_ROTATE_2 already picked nearer apside and
+            // stored it in _st.coast2TargetApside; trim + attitude + deploy
+            // trigger all key off it.
             const r_a_tgt_live = env.EARTH_RADIUS + _targetApoKm * 1000;
             const r_p_tgt_live = env.EARTH_RADIUS + _targetPeriKm * 1000;
             const a_tgt_live = (r_a_tgt_live + r_p_tgt_live) / 2;
-            const v_target_at_apo = Math.sqrt(GM_c * (2 / r_a_tgt_live - 1 / a_tgt_live));
-            const gap = v_target_at_apo - v_apo_live;
+            let r_live_at_apside, v_live_at_apside, v_target_at_apside;
+            if (_st.coast2TargetApside === 'peri') {
+              r_live_at_apside = a_c * (1 - e_mag);
+              v_live_at_apside = r_live_at_apside > 0 ? Math.abs(h_live) / r_live_at_apside : 0;
+              v_target_at_apside = Math.sqrt(GM_c * (2 / r_p_tgt_live - 1 / a_tgt_live));
+            } else {
+              r_live_at_apside = a_c * (1 + e_mag);
+              v_live_at_apside = r_live_at_apside > 0 ? Math.abs(h_live) / r_live_at_apside : 0;
+              v_target_at_apside = Math.sqrt(GM_c * (2 / r_a_tgt_live - 1 / a_tgt_live));
+            }
+            const gap = v_target_at_apside - v_live_at_apside;
             const targetGap = Number.isFinite(env.PAYLOAD_EJECT_KICK_MPS)
               ? env.PAYLOAD_EJECT_KICK_MPS : 0;
             const dvError = gap - targetGap;
             _st.coastHold2GapMps = gap;
             _st.coastHold2DvErrorMps = dvError;
-            _st.coastHold2VcircAtApo = v_target_at_apo;
-            _st.coastHold2VapoLive = v_apo_live;
+            _st.coastHold2VcircAtApo = v_target_at_apside;
+            _st.coastHold2VapoLive = v_live_at_apside;
 
-            let thetaApoLive;
+            let thetaLive;
             if (e_mag > 1e-6) {
-              const phiApo = Math.atan2(-ex_ecc, -ey_ecc);
-              const rx_apo = r_apo_live * Math.sin(phiApo);
-              const ry_apo = r_apo_live * Math.cos(phiApo);
               const sDir = vt_c >= 0 ? 1 : -1;
-              thetaApoLive = Math.atan2(-sDir * ry_apo, -sDir * rx_apo);
+              let rx_aps, ry_aps;
+              if (_st.coast2TargetApside === 'peri') {
+                const phiPeri = Math.atan2(ex_ecc, ey_ecc);
+                rx_aps = r_live_at_apside * Math.sin(phiPeri);
+                ry_aps = r_live_at_apside * Math.cos(phiPeri);
+              } else {
+                const phiApo = Math.atan2(-ex_ecc, -ey_ecc);
+                rx_aps = r_live_at_apside * Math.sin(phiApo);
+                ry_aps = r_live_at_apside * Math.cos(phiApo);
+              }
+              thetaLive = Math.atan2(-sDir * ry_aps, -sDir * rx_aps);
             } else {
               const speed_c = Math.hypot(body.vx, body.vy);
-              thetaApoLive = speed_c > 1 ? Math.atan2(-body.vx, body.vy) : body.theta;
+              thetaLive = speed_c > 1 ? Math.atan2(-body.vx, body.vy) : body.theta;
             }
-            _st.coast2TargetThetaLive = thetaApoLive;
+            _st.coast2TargetThetaLive = thetaLive;
 
             // Apogee-peak FIRST — unconditional eject (trim state irrelevant).
             const prevVr = _st._prevVr2;
@@ -1791,8 +1849,14 @@ const tau_target = tau_desired - dNext.torqueEnvironmental;
               prevVr !== undefined &&
               prevVr > 0 &&
               vr_c <= 0;
+            const perigeePeak =
+              prevVr !== null &&
+              prevVr !== undefined &&
+              prevVr < 0 &&
+              vr_c >= 0;
+            const deployPeak = (_st.coast2TargetApside === 'peri') ? perigeePeak : apogeePeak;
 
-            if (apogeePeak) {
+            if (deployPeak) {
               _send(Guidance.cmdRcsDuty(null, idx));
               _send(Guidance.cmdReleasePayload());
               _st.deployCommandSimTime = simT;
@@ -1977,6 +2041,7 @@ _st.lastApogeeKm = 0;
           _st.coast2RotateStartTilt = null;
           _st.coast2RotateMid = null;
           _st._prevVr2 = null;
+          _st.coast2TargetApside = 'apo';
           _st.deployCommandSimTime = null;
           _st.payloadCleared = false;
           _st.coast2TargetThetaLive = null;
