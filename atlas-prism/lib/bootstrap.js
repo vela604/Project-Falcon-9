@@ -309,7 +309,7 @@
   async function verifyPoint(ctx, ev, P, M, Gi, bi) {
     const pool = ctx.pool;
     const point = { Gi, Tn: P.Tn, bi, li: P.li, meco: M };
-    const ch = await pool.runJob('verifyChain', { point, altKm: P.alt });
+    const ch = await pool.runJob('verifyChain', { point, altKm: P.alt, altApoKm: P.altApo, altPeriKm: P.altPeri });
     const lr = { ok: !!ch.tuneOk, inBand: ch.inBand, reason: ch.reason, lead: ch.lead, leadTicks: ch.leadTicks, marginS: ch.margin, evals: ch.evals };
     const rec0 = await ev(M, Gi, bi);
     const idealReg = Number.isFinite(rec0.dv) && rec0.dv < P.dvMin;

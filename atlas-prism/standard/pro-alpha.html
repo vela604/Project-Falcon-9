@@ -135,6 +135,13 @@
     return { alt: apo, apoKm: apo, periKm: peri };
   }
 
+  // score() opts from current tuner targets — always carries both apsides so
+  // score breakdown shows apogee/perigee errors against each target.
+  function _scoreOpts(){
+    const t = readTunerTargets();
+    return { targetAltKm: t.apoKm, targetApoKm: t.apoKm, targetPeriKm: t.periKm };
+  }
+
   // Baseline values for the smoke test: raw defaults (reproduces manual run).
   function baselineValues() {
     // Tests use fixed 320/320 baseline. Tuner runs read apo/peri from the
@@ -315,7 +322,8 @@ $('smokeBtn').disabled = false; $('dumpCfgBtn').disabled = false; $('applyChkBtn
         // end-to-end check: FULL eval of the baseline vs the tuned lead, scored
         const base = await TunerHook.runEval(p, { stopAt: 'FULL', abortRef });
         const tun = await TunerHook.runEval(r.point, { stopAt: 'FULL', abortRef });
-        const sb = TunerUtils.score(base), st = TunerUtils.score(tun);
+        const _so = _scoreOpts();
+      const sb = TunerUtils.score(base, _so), st = TunerUtils.score(tun, _so);
         log('FULL baseline lead ' + TunerUtils.describe(p).lead + ': score=' + sb.score.toFixed(3) + ' ok=' + sb.ok + ' deploy=' + fmt(base.deployTimeS, 2) +
             ' apo/peri=' + fmt(base.apogeeKm, 3) + '/' + fmt(base.perigeeKm, 3) + ' resid=' + fmt(base.stageResidualKg, 1) + ' boosterFuel=' + fmt(base.boosterFuelLeftKg, 0));
         log('FULL tuned    lead ' + r.lead + ': score=' + st.score.toFixed(3) + ' ok=' + st.ok + ' deploy=' + fmt(tun.deployTimeS, 2) +
@@ -357,7 +365,7 @@ $('smokeBtn').disabled = false; $('dumpCfgBtn').disabled = false; $('applyChkBtn
       });
       if (r.best) {
         const base = await TunerHook.runEval(p, { stopAt: 'FULL', abortRef });
-        const sb = TunerUtils.score(base);
+        const sb = TunerUtils.score(base, _scoreOpts());
         log('baseline (lead 5.525): score=' + sb.score.toFixed(3) + ' ok=' + sb.ok + ' deploy=' + fmt(base.deployTimeS, 2) + ' fuel=' + fmt(base.boosterFuelLeftKg, 0) +
             '  ->  best ' + r.best.score.toFixed(3) + (r.best.score <= sb.score ? '  (better/equal)' : '  (WORSE than baseline)'), r.best.score <= sb.score ? 'ok' : 'bad');
         log('best JSON: ' + JSON.stringify({ ascent: { PUSH_MAX_GIMBAL_DEG: r.best.desc.G, PUSH_T_S: r.best.desc.T, MECO_TARGET_BOOSTER_FUEL_KG: r.best.desc.meco },

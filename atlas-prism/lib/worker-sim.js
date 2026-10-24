@@ -856,7 +856,7 @@ self.onmessage = async (e) => {
               const o = TunerHook.orbitOf(pb, CONFIG.GM_EARTH, CONFIG.EARTH_RADIUS);
               m.apogeeKm = o.apoKm; m.perigeeKm = o.periKm; m.ecc = o.ecc;
             }
-            const sc = TunerUtils.score(m, { targetAltKm: altKm });
+            const sc = TunerUtils.score(m, { targetAltKm: altKm, targetApoKm: altApoKm, targetPeriKm: altPeriKm });
             emit('probe', tag + ' FULL score=' + (sc.score != null ? sc.score.toFixed(2) : '?') + ' cleared=' + m.payloadCleared);
             result = {
               ok: sc.ok, tuneOk: true, inBand: lr.inBand, leadTicks: lr.leadTicks, lead: lr.lead, margin: lr.marginS, vrEnd: lr.vrEnd,
@@ -934,11 +934,19 @@ self.onmessage = async (e) => {
       // payload: { point (lattice), altKm, marginBand? }.  Same result shape as probeBiasCheckpoint + wallMs/saSimTime.
       const t0 = Date.now();
       const altKm = payload.altKm != null ? payload.altKm : 320;
-      const values = TunerUtils.toValues(payload.point, { targetAltKm: altKm });
+      const altApoKm = payload.altApoKm != null ? payload.altApoKm : altKm;
+      const altPeriKm = payload.altPeriKm != null ? payload.altPeriKm : altKm;
+      const values = TunerUtils.toValues(payload.point, {
+        targetAltKm: altKm, targetApoKm: altApoKm, targetPeriKm: altPeriKm,
+      });
       const r1 = await _job('setupSA', { values });
       if (!r1.ok) { result = { ok: false, reason: 'setupSA: ' + r1.reason, wallMs: Date.now() - t0 }; }
       else {
-        result = await _job('probeBiasCheckpoint', { bias: values.insertion.STAGE_BURN_AOA_BIAS_DEG, altKm, marginBand: payload.marginBand });
+        result = await _job('probeBiasCheckpoint', {
+        bias: values.insertion.STAGE_BURN_AOA_BIAS_DEG,
+        altKm, altApoKm, altPeriKm,
+        marginBand: payload.marginBand,
+      });
         result.saSimTime = r1.simTime; result.wallMs = Date.now() - t0;
       }
     } else {

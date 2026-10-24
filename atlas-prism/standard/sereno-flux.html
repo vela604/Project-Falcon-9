@@ -429,9 +429,14 @@
   async function ensureSA(values) {
     if (!S.pool || !S.poolReady) throw new Error('pool not ready');
     const n = S.pool.n;
+    const _saA1 = values.insertion.TARGET_APSIDE1_ALT_KM;
+    const _saA2 = values.insertion.TARGET_APSIDE2_ALT_KM;
+    const _saApsStr = (_saA1 === _saA2)
+      ? 'apside1=' + _saA1 + ' apside2=' + _saA1 + ' km (circular)'
+      : 'apside1=' + _saA1 + ' apside2=' + _saA2 + ' km';
     log('setupSA (refresh): MECO=' + values.ascent.MECO_TARGET_BOOSTER_FUEL_KG +
         ' G=' + values.ascent.PUSH_MAX_GIMBAL_DEG +
-        ' T=' + values.ascent.PUSH_T_S + ' alt=' + values.insertion.TARGET_ORBIT_ALT_KM + ' km…');
+        ' T=' + values.ascent.PUSH_T_S + ' ' + _saApsStr + '…');
     const jobs = [];
     for (let i = 0; i < n; i++) jobs.push(S.pool.runJob('setupSA', { values }));
     const results = await Promise.all(jobs);
