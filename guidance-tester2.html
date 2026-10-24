@@ -1997,13 +1997,13 @@ if (!faded) {
         <div class="body">
           <span><span class="k">phase</span> ${s.phase}</span>
           <span><span class="k">alt</span> ${fmt(s.alt_km, 3)} km</span>
-          <span><span class="k">vr</span> ${fmt(s.vr, 0)}</span>
-          <span><span class="k">vt</span> ${fmt(s.vt, 0)}</span>
+          <span><span class="k">vr</span> ${fmt(s.vr, 2)}</span>
+          <span><span class="k">vt</span> ${fmt(s.vt, 2)}</span>
           <span><span class="k">|v|</span> ${fmt(s.speed, 0)}</span>
           <span><span class="k">apogee</span> ${apoStr}</span>
           <span><span class="k">perigee</span> ${periStr}</span>
-          <span><span class="k">mass</span> ${fmt(s.mass_t, 2)} t</span>
-          <span><span class="k">fuel</span> ${fmt(s.fuel_t, 2)} t</span>
+          <span><span class="k">mass</span> ${fmt(s.mass_t, 3)} t</span>
+          <span><span class="k">fuel</span> ${fmt(s.fuel_t, 3)} t</span>
           <span><span class="k">thrust</span> ${fmt(s.thrust_MN, 3)} MN</span>
           <span><span class="k">mdot</span> ${fmt(s.mdot, 1)} kg/s</span>
           <span><span class="k">bodies</span> ${s.bodies} [${s.bodyTags}]</span>
