@@ -1207,8 +1207,8 @@ const tau_target = tau_desired - dNext.torqueEnvironmental;
             }
 
             if (
-              apogeeKm >= _targetApoKm ||
-              apogeePredicted_margin >= _targetApoKm
+              apogeeKm >= _targetPeriKm ||
+              apogeePredicted_margin >= _targetPeriKm
             ) {
               _send(Guidance.cmdSetAllThrottle(0));
               _send(Guidance.cmdSetGimbalRate(0));
@@ -1260,7 +1260,7 @@ const tau_target = tau_desired - dNext.torqueEnvironmental;
               break;
             }
 
-            const errKm = apogeeKm_b - _targetApoKm;
+            const errKm = apogeeKm_b - _targetPeriKm;
             const prevErr = _st._prevApogeeErr;
             _st._prevApogeeErr = errKm;
 
@@ -1290,7 +1290,10 @@ const tau_target = tau_desired - dNext.torqueEnvironmental;
               const r_a_tgt = R_c + _targetApoKm * 1000;
               const r_p_tgt = R_c + _targetPeriKm * 1000;
               const a_tgt = (r_a_tgt + r_p_tgt) / 2;
-              const v_orb = Math.sqrt(GM_c * (2 / r_a_tgt - 1 / a_tgt));
+              // PERI-TARGET STRATEGY: burn at near-side (r ≈ target_peri),
+              // prograde, raises far side to target_apo. Velocity target
+              // = v at PERI position of target orbit (vis-viva 2/r_p - 1/a).
+              const v_orb = Math.sqrt(GM_c * (2 / r_p_tgt - 1 / a_tgt));
               const dv_needed = Math.max(0, v_orb - v_apo);
 
               const v2_c = body.vx * body.vx + body.vy * body.vy;
@@ -1411,7 +1414,8 @@ const tau_target = tau_desired - dNext.torqueEnvironmental;
                   const r_a_tgt_cap = env.EARTH_RADIUS + _targetApoKm * 1000;
                   const r_p_tgt_cap = env.EARTH_RADIUS + _targetPeriKm * 1000;
                   const a_tgt_cap = (r_a_tgt_cap + r_p_tgt_cap) / 2;
-                  const vOrb_cap = Math.sqrt(GM_cap * (2 / r_a_tgt_cap - 1 / a_tgt_cap));
+                  // PERI-TARGET STRATEGY: v at PERI position of target orbit.
+                  const vOrb_cap = Math.sqrt(GM_cap * (2 / r_p_tgt_cap - 1 / a_tgt_cap));
                   _st.coastRotateEndDeltaV = Math.max(0, vOrb_cap - vApo_cap);
                 } else {
                   _st.coastRotateEndDeltaV = null;
