@@ -803,7 +803,9 @@ self.onmessage = async (e) => {
             li: Math.round(cfg.insertion.CIRC_TRIGGER_LEAD_S / Q.lead),
             meco: cfg.ascent.MECO_TARGET_BOOSTER_FUEL_KG,
           };
-          lr = await TunerCore.tuneLead(point, { hook: CPHook, cache, targetAltKm: altKm, marginBand: payload.marginBand });
+          lr = await TunerCore.tuneLead(point, { hook: CPHook, cache, targetAltKm: altKm,
+            targetApoKm: altApoKm, targetPeriKm: altPeriKm,
+            marginBand: payload.marginBand });
           emit('probe', tag + ' tuneLead ok=' + lr.ok + ' lead=' + (Number.isFinite(lr.lead) ? lr.lead.toFixed(4) : 'n/a') + ' evals=' + lr.evals);
           }
 

@@ -41,8 +41,9 @@
       let fresh = false;
       if (!m) {
         if (evals >= maxEvals) throw new Stop('maxEvals');
-        m = await H.runEval(p, { stopAt: 'CIRC_END', targetAltKm, env: opts.env,
-                                 abortRef: opts.abortRef, onProgress: opts.onProgress });
+        m = await H.runEval(p, { stopAt: 'CIRC_END', targetAltKm,
+                                 targetApoKm: opts.targetApoKm, targetPeriKm: opts.targetPeriKm,
+                                 env: opts.env, abortRef: opts.abortRef, onProgress: opts.onProgress });
         cache.set(p, 'CIRC_END', m);
         evals++; fresh = true;
       }
@@ -244,8 +245,9 @@
     let m = cache.get(p, 'COAST_WAIT_ENTRY'), fresh = false;
     if (!m) {
       if (abEvals >= maxAB) throw new Stop('maxEvalsAB');
-      m = await H.runEval(p, { stopAt: 'COAST_WAIT_ENTRY', targetAltKm, env: opts.env,
-                               abortRef: opts.abortRef, onProgress: opts.onProgress });
+      m = await H.runEval(p, { stopAt: 'COAST_WAIT_ENTRY', targetAltKm,
+                               targetApoKm: opts.targetApoKm, targetPeriKm: opts.targetPeriKm,
+                               env: opts.env, abortRef: opts.abortRef, onProgress: opts.onProgress });
       cache.set(p, 'COAST_WAIT_ENTRY', m); abEvals++; fresh = true;
     }
     const r = { p, cls: classify(m), dv: m.coastDeltaV, m };
@@ -344,7 +346,9 @@ async function startOk(p) {
     if (!lr.ok) { rec.reasons = ['lead_failed: ' + lr.reason]; say('  -> lead FAILED: ' + lr.reason); return rec; }
     leadHint = lr.leadTicks;
     let fm = cache.get(lr.point, 'FULL');
-    if (!fm) { fm = await H.runEval(lr.point, { stopAt: 'FULL', targetAltKm, env: opts.env, abortRef: opts.abortRef,
+    if (!fm) { fm = await H.runEval(lr.point, { stopAt: 'FULL', targetAltKm,
+                                                targetApoKm: opts.targetApoKm, targetPeriKm: opts.targetPeriKm,
+                                                env: opts.env, abortRef: opts.abortRef,
                                                 onProgress: opts.onProgress }); cache.set(lr.point, 'FULL', fm); fullEvals++; }
     const sc = U.score(fm, { targetAltKm, targetApoKm: opts.targetApoKm, targetPeriKm: opts.targetPeriKm });
     if (sc.ok && opts.residualBand) {
@@ -614,7 +618,8 @@ function coastCls(m) {
     async function runCached(p, stopAt) {
       let m = cache.get(p, stopAt);
       if (!m) {
-        m = await H.runEval(p, { stopAt, targetAltKm, env: opts.env, abortRef: opts.abortRef, onProgress: opts.onProgress });
+        m = await H.runEval(p, { stopAt, targetAltKm, targetApoKm: opts.targetApoKm, targetPeriKm: opts.targetPeriKm,
+        env: opts.env, abortRef: opts.abortRef, onProgress: opts.onProgress });
         cache.set(p, stopAt, m);
         if (stopAt === 'COAST_WAIT_ENTRY') { ev.probeCoast++; evals++; } else { ev.probeCirc++; evals++; }
       }
@@ -638,8 +643,9 @@ p = Object.assign({}, p, { bi: clamp(p.bi + ((c === 'F1' || c === 'FE') ? +1 : -
       return { ok: true, reason: 'ok', point: p, raw: fuel, deltaV: m.coastDeltaV, vrEnd: mc.vrEnd, evals: evals - n0 };
       }
     async function full(p0) {                        // real tuneRough (FULL) — confirm / first probe on a level
-      const r = await tuneRough(p0, { mode: opts.mode || 'fast', hook: opts.hook, env: opts.env, targetAltKm, abortRef: opts.abortRef,
-        onProgress: opts.onProgress, cache, roughRelax: opts.roughRelax != null ? opts.roughRelax : 0,
+      const r = await tuneRough(p0, { mode: opts.mode || 'fast', hook: opts.hook, env: opts.env, targetAltKm,
+        targetApoKm: opts.targetApoKm, targetPeriKm: opts.targetPeriKm,
+        abortRef: opts.abortRef, onProgress: opts.onProgress, cache, roughRelax: opts.roughRelax != null ? opts.roughRelax : 0,
         onLog: opts.verbose ? (l) => say('      ' + l) : undefined });
       evals += r.evals; ev.ab += r.evalBreakdown.ab; ev.lead += r.evalBreakdown.lead; ev.full += r.evalBreakdown.full;
       return r;

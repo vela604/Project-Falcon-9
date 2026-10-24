@@ -30,11 +30,11 @@
   const fmtClock = (s) => { s = Math.max(0, Math.floor(s)); return pad2(Math.floor(s / 3600)) + ':' + pad2(Math.floor(s % 3600 / 60)) + ':' + pad2(s % 60); };
   const TAB_LABEL = { score: 'Score', accuracy: 'Accuracy', fuel: 'Fuel', time: 'Time' };
 
-  function rowJson(row, altKm) { return U().toValues(row.point, { targetAltKm: altKm != null ? altKm : C().fixed.targetAltKm }); }
-  function rowsJson(res, rows, altKm) {
-    return { meco: res.meco, band: res.band, targetAltKm: altKm,
+  function rowJson(row, altKm, altApoKm, altPeriKm) { return U().toValues(row.point, { targetAltKm: altKm != null ? altKm : C().fixed.targetAltKm, targetApoKm: altApoKm, targetPeriKm: altPeriKm }); }
+  function rowsJson(res, rows, altKm, altApoKm, altPeriKm) {
+    return { meco: res.meco, band: res.band, targetAltKm: altKm, targetApoKm: altApoKm, targetPeriKm: altPeriKm,
       rows: rows.map((r, i) => ({ rank: i + 1, src: r.src, tag: r.tag, ok: r.ok, score: r.score, orbitErrKm: r.orbitErrKm, ecc: r.ecc,
-        fuelKg: r.fuelKg, deployS: r.deployS, residualKg: r.residualKg, config: rowJson(r, altKm) })) };
+        fuelKg: r.fuelKg, deployS: r.deployS, residualKg: r.residualKg, config: rowJson(r, altKm, altApoKm, altPeriKm) })) };
   }
   function keyValue(r, key) {
     if (key === 'accuracy') return fmt(r.orbitErrKm, 3) + ' km';
@@ -284,7 +284,8 @@
       (f.min != null ? ' min="' + f.min + '"' : '') + (f.max != null ? ' max="' + f.max + '"' : '') + '></label>').join('');
 
     const rowsTop =
-      '<div class="row"><label>alt km <input type="number" id="tuiAlt" value="' + cfg.fixed.targetAltKm + '" step="1" min="150"></label>' +
+      '<div class="row"><label>target apo km <input type="number" id="tuiApoKm" value="' + cfg.fixed.targetAltKm + '" step="1" min="150"></label>' +
+      '<label>target peri km <input type="number" id="tuiPeriKm" value="' + cfg.fixed.targetAltKm + '" step="1" min="150"></label>' +
       '<label>strategy <select id="tuiStrategy">' + stratOpts + '</select></label>' +
       '<label>start <select id="tuiStart">' + refs + '</select></label>' +
       '<label>B mode <select id="tuiMode"><option value="fast">fast</option><option value="fine" selected>fine</option><option value="accurate">accurate</option></select></label>' +
@@ -325,12 +326,18 @@
       '<div class="panel tui" id="tuiResPanel" hidden><h2><span class="tag">0x06</span>Result &middot; leaderboard</h2><div id="tuiRes"></div></div>';
 
     const $ = (id) => el.querySelector('#' + id);
-    const S = { res: null, sort: 'score', alt: cfg.fixed.targetAltKm, rows: [], running: false, abortRef: { aborted: false }, refs: REFS };
+    const S = { res: null, sort: 'score', alt: cfg.fixed.targetAltKm, apoKm: cfg.fixed.targetAltKm, periKm: cfg.fixed.targetAltKm, rows: [], running: false, abortRef: { aborted: false }, refs: REFS };
     const logBuf = [];
+
+    function readTargets() {
+      const apo = +$('tuiApoKm').value || cfg.fixed.targetAltKm;
+      const peri = +$('tuiPeriKm').value || apo;
+      return { alt: apo, apoKm: apo, periKm: peri };
+    }
 
     let durCapDirty = false;
     function refreshDurCap(fromAlt) {
-      const alt = +$('tuiAlt').value || cfg.fixed.targetAltKm;
+      const alt = readTargets().apoKm;
       const sug = U().suggestDurationCap(alt);
       $('tuiDurCapHint').textContent = 'auto ' + sug + ' s';
       if (!durCapDirty || fromAlt) { $('tuiDurCap').value = sug; }
@@ -339,7 +346,7 @@
     $('tuiDurCapAuto').addEventListener('click', () => { durCapDirty = false; refreshDurCap(true); });
 
     function updateNote() {
-      const alt = +$('tuiAlt').value;
+      const alt = readTargets().apoKm;
       const ref = S.refs[+$('tuiStart').value];
       const parts = [];
       if (ref) {
@@ -358,7 +365,7 @@
     let startAuto = true;
     function autoPickRef() {
       if (!startAuto) return;
-      const alt = +$('tuiAlt').value || cfg.fixed.targetAltKm;
+      const alt = readTargets().apoKm;
       let bestI = 0, bestD = Infinity, bestIsDef = false;
       S.refs.forEach((r, i) => {
         const d = Math.abs((r.alt != null ? r.alt : 320) - alt);
@@ -370,7 +377,9 @@
     }
     $('tuiStart').addEventListener('change', () => { startAuto = false; updateNote(); });
     $('tuiStrategy').addEventListener('change', updateStratDesc);
-    $('tuiAlt').addEventListener('input', () => { autoPickRef(); refreshDurCap(); });
+    const _onTgtChange = () => { autoPickRef(); refreshDurCap(); };
+    $('tuiApoKm').addEventListener('input', _onTgtChange);
+    $('tuiPeriKm').addEventListener('input', _onTgtChange);
 
     // ---- config panel ----
     function fillConfigInputs() {
@@ -386,7 +395,7 @@
     function rescoreAndRender() {
       if (!S.res) return;
       S.res.leaderboard = (S.res.leaderboard || []).map((r) =>
-        U().makeRow(r.src, r.tag, r.point, r.metrics, r.extra || { E: r.E, targetAltKm: S.alt, reject: !r.ok, reasons: r.reasons }));
+        U().makeRow(r.src, r.tag, r.point, r.metrics, r.extra || { E: r.E, targetAltKm: S.alt, targetApoKm: S.apoKm, targetPeriKm: S.periKm, reject: !r.ok, reasons: r.reasons }));
       renderResult();
     }
     function setSearchDisabled(dis) {
@@ -460,10 +469,10 @@
       const b = ev.target.closest('button[data-act]'); if (!b || !S.res) return;
       const act = b.dataset.act, row = S.rows[+b.dataset.idx];
       if (act === 'sort') { S.sort = b.dataset.key; renderResult(); return; }
-      if (act === 'copy' && row) copyText(JSON.stringify(rowJson(row, S.alt), null, 1)).then(() => flash(b, 'Copied'), () => flash(b, 'Copy failed'));
-      else if (act === 'dl' && row) download('leoV3-' + row.tag.replace(/[^\w.=+-]+/g, '_') + '.json', JSON.stringify(rowJson(row, S.alt), null, 1));
-      else if (act === 'copyall') copyText(JSON.stringify(rowsJson(S.res, S.rows, S.alt), null, 1)).then(() => flash(b, 'Copied'), () => flash(b, 'Copy failed'));
-      else if (act === 'dlall') download('leoV3-leaderboard-' + S.sort + '.json', JSON.stringify(rowsJson(S.res, S.rows, S.alt), null, 1));
+      if (act === 'copy' && row) copyText(JSON.stringify(rowJson(row, S.alt, S.apoKm, S.periKm), null, 1)).then(() => flash(b, 'Copied'), () => flash(b, 'Copy failed'));
+      else if (act === 'dl' && row) download('leoV3-' + row.tag.replace(/[^\w.=+-]+/g, '_') + '.json', JSON.stringify(rowJson(row, S.alt, S.apoKm, S.periKm), null, 1));
+      else if (act === 'copyall') copyText(JSON.stringify(rowsJson(S.res, S.rows, S.alt, S.apoKm, S.periKm), null, 1)).then(() => flash(b, 'Copied'), () => flash(b, 'Copy failed'));
+      else if (act === 'dlall') download('leoV3-leaderboard-' + S.sort + '.json', JSON.stringify(rowsJson(S.res, S.rows, S.alt, S.apoKm, S.periKm), null, 1));
     });
 
     $('tuiStop').addEventListener('click', () => { S.abortRef.aborted = true; $('tuiStat').textContent = 'stopping after the current eval…'; });
@@ -473,7 +482,7 @@
       S.running = true; S.abortRef = { aborted: false }; logBuf.length = 0; $('tuiLog').textContent = '';
       $('tuiRun').disabled = true; $('tuiStop').disabled = false; $('tuiResPanel').hidden = true;
       setSearchDisabled(true);
-      const alt = +$('tuiAlt').value || cfg.fixed.targetAltKm, mode = $('tuiMode').value, deorbit = $('tuiDeorbit').checked;
+      const _tgt = readTargets(), alt = _tgt.apoKm, mode = $('tuiMode').value, deorbit = $('tuiDeorbit').checked;
       const ref = S.refs[+$('tuiStart').value];
       const env = { atmosphere: $('tuiAtm').checked, slosh: $('tuiSlosh').checked, imu: $('tuiImu').checked,
         wind: { enabled: $('tuiWind').checked, speed: +$('tuiWindSpd').value || 0, directionDeg: +$('tuiWindDir').value || 0 },
@@ -482,7 +491,7 @@
       const capIn = parseInt($('tuiDurCap').value, 10);
       const prevCap = cfg.durationCapS;
       cfg.durationCapS = (Number.isFinite(capIn) && capIn >= 100) ? capIn : U().suggestDurationCap(alt);
-      S.alt = alt;
+      S.alt = alt; S.apoKm = _tgt.apoKm; S.periKm = _tgt.periKm;
       const st = { phase: 'starting' }, t0 = performance.now(), hs0 = Object.assign({}, root.TunerHook ? root.TunerHook.stats : {});
       let simInfo = '';
       // "operations" = TunerEngine.tick calls actually executed (same definition as the Sereno worker counter).
@@ -527,10 +536,10 @@
         const strat = root.TunerCore.getStrategy(stratName);
         if (!strat) throw new Error('unknown strategy: ' + stratName);
         st.phase = '[' + stratName + '] starting';
-        const res = await strat.runTuner(p, { mode, deorbit, env, targetAltKm: alt, abortRef: S.abortRef,
+        const res = await strat.runTuner(p, { mode, deorbit, env, targetAltKm: alt, targetApoKm: _tgt.apoKm, targetPeriKm: _tgt.periKm, abortRef: S.abortRef,
           onLog: (l) => { logBuf.push(l); parseLogLine(l, st); if (opts.log) opts.log(l); },
           onProgress: (q) => { simInfo = ' · t=' + fmt(q.simTime, 0) + 's ' + (q.phase || '') } });
-        S.res = res; S.res.altKm = alt; S.sort = 'score'; renderResult();
+        S.res = res; S.res.altKm = alt; S.res.apoKm = _tgt.apoKm; S.res.periKm = _tgt.periKm; S.sort = 'score'; renderResult();
         st.phase = res.ok ? 'done' : 'finished: ' + res.status;
       } catch (e) {
         st.phase = 'ERROR: ' + e.message; logBuf.push('ERROR: ' + e.message); console.error(e);

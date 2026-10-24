@@ -129,8 +129,9 @@
     await pool.waitReady();
     return pool;
   }
-  async function simPhase(n, stkId, km) {
-    const st = newStats(n), vals = baselineValues(km);
+  async function simPhase(n, stkId, apoKm, periKm) {
+    const km = apoKm;
+    const st = newStats(n), vals = baselineValues(km, apoKm, periKm);
     status('sim n=' + n + ': boot');
     const pool = await makePool(n, stkId, st);
     status('sim n=' + n + ': setupSA');
@@ -160,8 +161,9 @@
   }
 
   // ---------- C. deep: real probes ----------
-  async function deepPhase(n, stkId, km, njobs) {
-    const st = newStats(n), vals = baselineValues(km);
+  async function deepPhase(n, stkId, apoKm, periKm, njobs) {
+    const km = apoKm;
+    const st = newStats(n), vals = baselineValues(km, apoKm, periKm);
     status('deep n=' + n + ': boot');
     const pool = await makePool(n, stkId, st);
     status('deep n=' + n + ': setupSA');
@@ -187,8 +189,9 @@
   }
 
   // ---------- D. experiment: coast tick breakdown + extra-bodies test ----------
-  async function expPhase(stkId, km) {
-    const st = newStats(1), vals = baselineValues(km);
+  async function expPhase(stkId, apoKm, periKm) {
+    const km = apoKm;
+    const st = newStats(1), vals = baselineValues(km, apoKm, periKm);
     status('exp: boot');
     const pool = await makePool(1, stkId, st);
     status('exp: setupSA');
@@ -225,8 +228,9 @@
 
 
   // ---------- E. verify: is the stage independent of booster/fairings after COAST_WAIT? ----------
-  async function verPhase(stkId, km) {
-    const st = newStats(1), vals = baselineValues(km);
+  async function verPhase(stkId, apoKm, periKm) {
+    const km = apoKm;
+    const st = newStats(1), vals = baselineValues(km, apoKm, periKm);
     status('verify: boot');
     const pool = await makePool(1, stkId, st);
     status('verify: setupSA');
@@ -256,8 +260,9 @@
 
 
   // ---------- F. dormant verify: SA -> DONE, dormancy off vs on ----------
-  async function dormPhase(stkId, km) {
-    const st = newStats(1), vals = baselineValues(km);
+  async function dormPhase(stkId, apoKm, periKm) {
+    const km = apoKm;
+    const st = newStats(1), vals = baselineValues(km, apoKm, periKm);
     status('dormant: boot');
     const pool = await makePool(1, stkId, st);
     status('dormant: setupSA');
@@ -325,11 +330,11 @@
       P(''); P('--- A. pure JS CPU scaling (no sim) ---');
       for (const n of NS) { status('cpu n=' + n); await cpuPhase(n); }
       P(''); P('--- B. sim loops (fixed work, concurrent workers) ---');
-      for (const n of NS) await simPhase(n, stkId, km);
+      for (const n of NS) await simPhase(n, stkId, apoKm, periKm);
       if (deep) {
         P(''); P('--- C. real probes ---');
-        await deepPhase(1, stkId, km, 2);
-        if (maxW > 1) await deepPhase(maxW, stkId, km, maxW);
+        await deepPhase(1, stkId, apoKm, periKm, 2);
+        if (maxW > 1) await deepPhase(maxW, stkId, apoKm, periKm, maxW);
       }
       verdict();
       status('done');
@@ -350,7 +355,7 @@
       if (!stkId) throw new Error('no eligible stack');
       P('SERENO BENCH EXP ' + new Date().toISOString().slice(0, 19));
       P('cores ' + hc + ' · stack ' + stkId + ' · ' + km + 'km');
-      await expPhase(stkId, km);
+      await expPhase(stkId, apoKm, periKm);
       status('done');
     } catch (e) { P('ERROR: ' + (e && e.message || e)); status('error'); }
     finally { try { if (wl) wl.release(); } catch (e) {} running = false; $('bQuick').disabled = $('bDeep').disabled = $('bExp').disabled = false; $('bDorm').disabled = false; }
@@ -366,7 +371,7 @@
       if (!stkId) throw new Error('no eligible stack');
       P('SERENO BENCH VERIFY ' + new Date().toISOString().slice(0, 19));
       P('cores ' + hc + ' · stack ' + stkId + ' · ' + km + 'km');
-      await verPhase(stkId, km);
+      await verPhase(stkId, apoKm, periKm);
       status('done');
     } catch (e) { P('ERROR: ' + (e && e.message || e)); status('error'); }
     finally { try { if (wl) wl.release(); } catch (e) {} running = false; bs.forEach((i) => { $(i).disabled = false; }); }
@@ -382,7 +387,7 @@
       if (!stkId) throw new Error('no eligible stack');
       P('SERENO BENCH DORMANT ' + new Date().toISOString().slice(0, 19));
       P('cores ' + hc + ' · stack ' + stkId + ' · ' + km + 'km');
-      await dormPhase(stkId, km);
+      await dormPhase(stkId, apoKm, periKm);
       status('done');
     } catch (e) { P('ERROR: ' + (e && e.message || e)); status('error'); }
     finally { try { if (wl) wl.release(); } catch (e) {} running = false; bs.forEach((i) => { $(i).disabled = false; }); }

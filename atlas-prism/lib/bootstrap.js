@@ -356,7 +356,7 @@
   function report(ctx, P, M, anchor, rows) {
     const onLog = ctx.onLog;
     const chosen = UB.pickRows(rows, P.K, anchor.Gi);
-    onLog(''); onLog('=============== BOOTSTRAP RESULT  alt=' + P.alt + ' km ===============', 'hi');
+    onLog(''); onLog('=============== BOOTSTRAP RESULT  ' + (P.altApo != null && P.altPeri != null && (P.altApo !== P.alt || P.altPeri !== P.alt) ? 'apo=' + P.altApo + ' km  peri=' + P.altPeri + ' km' : 'alt=' + P.alt + ' km') + ' ===============', 'hi');
     onLog('MECO = ' + M + '   (pred ' + f1(anchor.pred, 0) + ' kg, tEst ' + f1(anchor.tEst, 0) + ' s at G=' + gfmt(anchor.Gi) + ' bias=' + bfmt(anchor.bi) + ')', 'ok');
     onLog('candidates below are COAST-FEASIBLE ONLY (ideal-Tsiolkovsky filter). Phase D verifies them with tuneLead+FULL.', 'dim');
     for (const r of chosen) {
@@ -365,7 +365,7 @@
       const rawW = (r.width * UB.BQ).toFixed(3);
       const step = Math.max(0.01, Math.round(((hi - lo) * UB.BQ / 10) * 100) / 100);
       onLog('G=' + gfmt(r.Gi) + '  window [' + bfmt(r.lo) + ', ' + bfmt(r.hi) + '] w=' + rawW + (r.clipLo ? ' CLIP-' : '') + (r.clipHi ? ' CLIP+' : ''));
-      onLog('   score-scan inputs ->  G ' + (r.Gi / 100).toFixed(2) + '   MECO ' + M + '   alt ' + P.alt + '   bias lo ' + (lo * UB.BQ).toFixed(3) + '   hi ' + (hi * UB.BQ).toFixed(3) + '   step ' + step.toFixed(2), 'dim');
+      onLog('   score-scan inputs ->  G ' + (r.Gi / 100).toFixed(2) + '   MECO ' + M + '   ' + (P.altApo != null && P.altPeri != null && (P.altApo !== P.alt || P.altPeri !== P.alt) ? 'apo=' + P.altApo + ' peri=' + P.altPeri : 'alt ' + P.alt) + '   bias lo ' + (lo * UB.BQ).toFixed(3) + '   hi ' + (hi * UB.BQ).toFixed(3) + '   step ' + step.toFixed(2), 'dim');
     }
     return chosen;
   }
@@ -386,7 +386,7 @@
     const ev = makeEv(ctx);
     const out = { ok: false, status: '', champs: [], good: [], table: null, rows: {}, chosen: [], evals: 0, wallMs: 0, error: null };
     try {
-      ctx.onLog('--- universal bootstrap  alt=' + P.alt + '  T=' + (P.Tn * 0.000125) + '  K=' + P.K + '  pred [' + P.predMin + ',' + P.predMax + ']  ideal=' + P.ideal + '  bias rows=' + P.nbr +
+      ctx.onLog('--- universal bootstrap  ' + (P.altApo != null && P.altPeri != null && (P.altApo !== P.alt || P.altPeri !== P.alt) ? 'apo=' + P.altApo + ' peri=' + P.altPeri : 'alt=' + P.alt) + '  T=' + (P.Tn * 0.000125) + '  K=' + P.K + '  pred [' + P.predMin + ',' + P.predMax + ']  ideal=' + P.ideal + '  bias rows=' + P.nbr +
         (opts.forceMeco != null ? '  FORCE MECO=' + opts.forceMeco : '') +
         (opts.forceGi != null ? '  FORCE G=' + gfmt(opts.forceGi) : '') + ' ---', 'dim');
       let bk = null;

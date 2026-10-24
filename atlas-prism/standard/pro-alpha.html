@@ -26,10 +26,6 @@
 
 <!-- status line (script writes into #status) -->
 <div id="status">Booting&hellip;</div>
-<div class="row">
-  <label>target apo km <input type="number" id="apoKm" value="320" min="150" step="10"></label>
-  <label>target peri km <input type="number" id="periKm" value="320" min="150" step="10"></label>
-</div>
 
 <!-- ==================== 0x01 · ENGINE / UTILS ==================== -->
 <section class="panel">
@@ -67,6 +63,15 @@
     <button id="evalRefBtn" disabled>Ref points &Delta;v (3x COAST_WAIT)</button>
     <button class="reset" id="evalAbortBtn">Abort</button>
   </div>
+</section>
+
+<section class="panel" id="tunerTargetPanel">
+  <h2><span class="tag">0x02b</span>Tuner target orbit</h2>
+  <div class="row">
+    <label>target apo km <input type="number" id="apoKm" value="320" min="150" step="10"></label>
+    <label>target peri km <input type="number" id="periKm" value="320" min="150" step="10"></label>
+  </div>
+  <div class="dim" style="font-size:11px;">Applies to tuner runs below. Baseline eval buttons above use fixed 320/320.</div>
 </section>
 
 <!-- tuner UI (host.js) mounts here -->
@@ -131,16 +136,16 @@
 
   // Baseline values for the smoke test: raw defaults (reproduces manual run).
   function baselineValues() {
+    // Tests use fixed 320/320 baseline. Tuner runs read apo/peri from the
+    // "Tuner target orbit" panel (above the tuner mount).
     const b = C.baselineRaw;
-    const apoEl = $('apoKm'), periEl = $('periKm');
-    const tApo = apoEl ? (parseFloat(apoEl.value) || C.fixed.targetAltKm) : C.fixed.targetAltKm;
-    const tPeri = periEl ? (parseFloat(periEl.value) || tApo) : tApo;
+    const altKm = C.fixed.targetAltKm;
     return {
       ascent: { PUSH_MAX_GIMBAL_DEG: b.G, PUSH_T_S: b.T, MECO_TARGET_BOOSTER_FUEL_KG: b.meco },
       insertion: {
-        TARGET_ORBIT_ALT_KM: tApo,
-        TARGET_APSIDE1_ALT_KM: tApo,
-        TARGET_APSIDE2_ALT_KM: tPeri,
+        TARGET_ORBIT_ALT_KM: altKm,
+        TARGET_APSIDE1_ALT_KM: altKm,
+        TARGET_APSIDE2_ALT_KM: altKm,
         STAGE_BURN_AOA_BIAS_DEG: b.bias,
         CIRC_TRIGGER_LEAD_S: b.lead,
       },
@@ -238,10 +243,8 @@ $('smokeBtn').disabled = false; $('dumpCfgBtn').disabled = false; $('applyChkBtn
     ].join('\n');
   }
   function evalOpts(stopAt) {
-    const apoEl = $('apoKm'), periEl = $('periKm');
-    const tApo = apoEl ? (parseFloat(apoEl.value) || C.fixed.targetAltKm) : C.fixed.targetAltKm;
-    const tPeri = periEl ? (parseFloat(periEl.value) || tApo) : tApo;
-    return { stopAt, abortRef, targetAltKm: tApo, targetApoKm: tApo, targetPeriKm: tPeri, onProgress: (p) => { statusEl.textContent = 'Running… t=' + p.simTime.toFixed(1) + ' s  ' + (p.phase || ''); } };
+    const altKm = C.fixed.targetAltKm;
+    return { stopAt, abortRef, targetAltKm: altKm, targetApoKm: altKm, targetPeriKm: altKm, onProgress: (p) => { statusEl.textContent = 'Running… t=' + p.simTime.toFixed(1) + ' s  ' + (p.phase || ''); } };
   }
   async function doEval(kind, stopAtArg) {
     const stopAt = stopAtArg || $('stopAt').value;   // captured at start; select may change mid-run
@@ -299,8 +302,11 @@ $('smokeBtn').disabled = false; $('dumpCfgBtn').disabled = false; $('applyChkBtn
     try {
       const p = TunerUtils.fromRaw(C.baselineRaw);
       log('--- tuneLead (baseline G/T/bias/MECO, CIRC_END evals) ---');
+      const _apo = parseFloat(($('apoKm') || {}).value) || 320;
+      const _peri = parseFloat(($('periKm') || {}).value) || _apo;
       const r = await TunerCore.tuneLead(p, {
         abortRef, onLog: (l) => log(l),
+        targetAltKm: _apo, targetApoKm: _apo, targetPeriKm: _peri,
         onProgress: (q) => { statusEl.textContent = 'tuneLead… t=' + q.simTime.toFixed(1) + ' s ' + (q.phase || ''); },
       });
       if (r.ok) {
@@ -332,8 +338,11 @@ $('smokeBtn').disabled = false; $('dumpCfgBtn').disabled = false; $('applyChkBtn
       const eMax = parseFloat($('abEmax').value);
       const p = TunerUtils.fromRaw(C.baselineRaw);
       log('--- tuneAB [' + mode + '] eMax=' + eMax + ' from baseline (COAST_WAIT evals + tuneLead + FULL per candidate) ---');
+      const _apo = parseFloat(($('apoKm') || {}).value) || 320;
+      const _peri = parseFloat(($('periKm') || {}).value) || _apo;
       const r = await TunerCore.tuneAB(p, {
         mode, eMax: Number.isFinite(eMax) ? eMax : undefined, abortRef, onLog: (l) => log(l),
+        targetAltKm: _apo, targetApoKm: _apo, targetPeriKm: _peri,
         onProgress: (q) => { statusEl.textContent = 'tuneAB… t=' + q.simTime.toFixed(1) + ' s ' + (q.phase || ''); },
       });
       log('=== tuneAB RESULT ok=' + r.ok + ' status=' + r.status + ' evals=' + r.evals + ' (ab ' + r.evalBreakdown.ab + ', lead ' +
@@ -368,8 +377,11 @@ $('smokeBtn').disabled = false; $('dumpCfgBtn').disabled = false; $('applyChkBtn
     try {
       const p = TunerUtils.fromRaw(C.baselineRaw);
       log('--- tuneRough (Phase A: any feasible point at this MECO) ---');
+      const _apo = parseFloat(($('apoKm') || {}).value) || 320;
+      const _peri = parseFloat(($('periKm') || {}).value) || _apo;
       const r = await TunerCore.tuneRough(p, {
         abortRef, onLog: (l) => log(l),
+        targetAltKm: _apo, targetApoKm: _apo, targetPeriKm: _peri,
         onProgress: (q) => { statusEl.textContent = 'tuneRough… t=' + q.simTime.toFixed(1) + ' s ' + (q.phase || ''); },
       });
       log('=== tuneRough RESULT ok=' + r.ok + ' reason=' + r.reason + ' evals=' + r.evals +
@@ -394,8 +406,11 @@ $('smokeBtn').disabled = false; $('dumpCfgBtn').disabled = false; $('applyChkBtn
       const ref = C.references[parseInt($('mecoStartSel').value, 10)];
       const p = TunerUtils.fromRaw({ G: ref.G, T: C.T0, bias: ref.bias, lead: ref.lead, meco: ref.meco });
       log('--- findOptimalMeco (Phase A) from MECO ' + ref.meco + ' ' + JSON.stringify(TunerUtils.describe(p)) + ' ---');
+      const _apo = parseFloat(($('apoKm') || {}).value) || 320;
+      const _peri = parseFloat(($('periKm') || {}).value) || _apo;
       const r = await TunerCore.findOptimalMeco(p, {
         abortRef, onLog: (l) => log(l),
+        targetAltKm: _apo, targetApoKm: _apo, targetPeriKm: _peri,
         onProgress: (q) => { statusEl.textContent = 'findOptimalMeco… t=' + q.simTime.toFixed(1) + ' s ' + (q.phase || ''); },
       });
       log('=== findOptimalMeco RESULT ok=' + r.ok + ' status=' + r.status + ' MECO=' + r.meco + ' residualKg=' + fmt(r.residualKg, 1) + ' G=' + r.G + ' gDrops=' + r.gDrops + ' failProbes=' + r.failingProbes + ' resOffset=' + fmt(r.resOffset, 1) + ' iters=' + r.iters +
@@ -428,7 +443,10 @@ $('smokeBtn').disabled = false; $('dumpCfgBtn').disabled = false; $('applyChkBtn
       const p = TunerUtils.fromRaw({ G: ref.G, T: C.T0, bias: ref.bias, lead: ref.lead, meco: ref.meco });
       const mode = $('fullModeSel').value;
       log('--- Full tune (A+B, B mode=' + mode + ') from MECO ' + ref.meco + ' ' + JSON.stringify(TunerUtils.describe(p)) + ' ---');
+      const _apo = parseFloat(($('apoKm') || {}).value) || 320;
+      const _peri = parseFloat(($('periKm') || {}).value) || _apo;
       const r = await TunerCore.runTuner(p, { mode, abortRef, onLog: (l) => log(l),
+        targetAltKm: _apo, targetApoKm: _apo, targetPeriKm: _peri,
         onProgress: (q) => { statusEl.textContent = 'Full tune… t=' + q.simTime.toFixed(1) + ' s ' + (q.phase || ''); } });
       log('=== Full tune RESULT ok=' + r.ok + ' status=' + r.status + ' band=[' + r.band + '] evals=' + r.evals + ' wall=' + (r.wallMs / 1000).toFixed(1) + 's', r.ok ? 'ok' : 'bad');
       if (r.phaseA) {

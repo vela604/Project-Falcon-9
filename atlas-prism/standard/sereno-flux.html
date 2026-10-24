@@ -1148,7 +1148,7 @@
       S.last.meco = meco; S.last.G = G; S.last.T = T;
 
       // Refresh SA snapshot to match this panel's MECO/G/T.
-      const saVals = saValuesFor(meco, G, T, 1.8, 5.525);
+      const saVals = saValuesFor(meco, G, T, 0.827, 5.65);
       await ensureSA(saVals);
 
       const tasks = biases.map((bias) => {
@@ -1352,7 +1352,7 @@
           '  bidirectional 0→±4 step 0.5 → ' + biases.length + ' probes');
 
       // Refresh SA snapshot to match this panel's MECO/G/T.
-      const saVals = saValuesFor(meco, G, T, 1.8, 5.525);
+      const saVals = saValuesFor(meco, G, T, 0.827, 5.65);
       await ensureSA(saVals);
 
       const results = await _runProbeBatch(biases, meco, G, T);
@@ -1429,7 +1429,7 @@
       S.last.meco = meco; S.last.G = G; S.last.T = T; S.last.bias = bias;
 
       // Refresh SA snapshot to match this panel's MECO/G/T.
-      const saVals = saValuesFor(meco, G, T, bias, 5.525);
+      const saVals = saValuesFor(meco, G, T, bias, 5.65);
       await ensureSA(saVals);
 
       const r = await S.pool.runJob('probeBiasCheckpoint', {
@@ -1720,7 +1720,7 @@
       : 'running (lead search + FULL eval)…';
 
     try {
-      const saVals = saValuesFor(meco, G, T, bias, fixedLead != null ? fixedLead : 5.525);
+      const saVals = saValuesFor(meco, G, T, bias, fixedLead != null ? fixedLead : 5.65);
       await ensureSA(saVals);
       const r = await S.pool.runJob('probeBiasCheckpoint', {
         bias, altKm: S.orbitKm,
