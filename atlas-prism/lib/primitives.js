@@ -19,7 +19,7 @@
     const SPEED_GATE_S = opts.speedGateS != null ? opts.speedGateS : 100;
     const APO_PROX = 0.5;
     const AWAY_VR  = 0.5;
-    const MAX_FULLS = opts.maxFulls != null ? opts.maxFulls : 12;
+    const MAX_FULLS = opts.maxFulls != null ? opts.maxFulls : 30;
     const maxEvals  = opts.maxEvals || 40;
     const t0 = performance.now();
     const pts = new Map();
@@ -117,10 +117,7 @@
       let best = base, cur = base;
       let fulls = 1;
 
-      // ───── Phase 1: COARSE descent (step=4 ticks) ─────
-      // Bigger step to cover ground fast; smaller-lead-first per user's
-      // heuristic (matches guidance behavior where smaller lead usually
-      // reduces orbit error for near-circular targets).
+      // ───── Phase 1: coarse descent (step=4, up to 6 FULLs) ─────
       let step = 4;
       let dir = -1;
       say('  -- phase 1: coarse (step=4) --');
@@ -130,49 +127,30 @@
         if (nextLi < 0 || nextLi > LEAD_MAX_TICKS) break;
         let r = pts.get(nextLi);
         if (!r) r = await ev(nextLi);
-        if (!r.feas) {
-          step = Math.min(step * 2, 12);
-          continue;
-        }
+        if (!r || !r.feas) { step = Math.min(step * 2, 12); continue; }
         await runFull(r); fulls++;
-        const slope = (r.full.error - cur.full.error) / (r.li - cur.li);
         say('  c' + cur.lead + '->' + r.lead + ' err ' +
-            fmt(cur.full.error, 3) + '->' + fmt(r.full.error, 3) +
-            ' slope=' + fmt(slope, 3));
+            fmt(cur.full.error, 3) + '->' + fmt(r.full.error, 3));
         if (r.full.error < best.full.error) { best = r; cur = r; }
         else break;
       }
 
-      // ───── Phase 2: FINE descent (step=1 tick) around best ─────
-      // Precision pass to land exactly on the minimum. Scans downward
-      // first (dir=-1), then reverses once if needed. Both directions
-      // tried before stopping so we don't miss a nearby trough.
-      step = 1;
-      dir = -1;
-      let reversed = false;
-      cur = best;
-      say('  -- phase 2: fine (step=1 around ' + best.lead + ') --');
-      while (fulls < MAX_FULLS) {
+      // ───── Phase 2: exhaustive window scan around best ─────
+      const WINDOW = 8;
+      say('  -- phase 2: exhaustive window scan +/-' + WINDOW + ' around ' + best.lead + ' --');
+      for (let dli = -WINDOW; dli <= WINDOW && fulls < MAX_FULLS; dli++) {
+        if (dli === 0) continue;
         if (opts.abortRef && opts.abortRef.aborted) throw new Stop('aborted');
-        const nextLi = cur.li + dir * step;
-        if (nextLi < 0 || nextLi > LEAD_MAX_TICKS) {
-          if (reversed) break;
-          reversed = true; dir = 1; cur = best; continue;
-        }
-        let r = pts.get(nextLi);
-        if (!r) r = await ev(nextLi);
-        if (!r.feas) {
-          if (reversed) break;
-          reversed = true; dir = 1; cur = best; continue;
-        }
+        const li = best.li + dli;
+        if (li < 0 || li > LEAD_MAX_TICKS) continue;
+        let r = pts.get(li);
+        if (!r) r = await ev(li);
+        if (!r || !r.feas) continue;
+        if (r.full) continue;
         await runFull(r); fulls++;
         if (r.full.error < best.full.error) {
-          best = r; cur = r; reversed = false;
-          say('  f' + cur.lead + ' err=' + fmt(r.full.error, 4) + ' (new best)');
-        } else {
-          if (reversed) break;
-          reversed = true; dir = 1; cur = best;
-          say('  f' + r.lead + ' err=' + fmt(r.full.error, 4) + ' (worse, reverse)');
+          best = r;
+          say('  w' + r.lead + ' err=' + fmt(r.full.error, 4) + ' (new best)');
         }
       }
 
