@@ -1430,6 +1430,22 @@ let _renderToken = 0; // async guard for rapid guide switches
     '<option value="">(no guides registered)</option>';
 }
 
+  // Safe apside label — never asserts apo/peri ordering. A preset with
+  // apside1 < apside2 or vice versa is fine: guidance derives apo=max,
+  // peri=min internally. We just display both verbatim.
+  function _apsideLabelForPreset(p) {
+    const c = p && p.constants;
+    if (!c || !c.insertion) return '';
+    const a1 = Number.isFinite(c.insertion.TARGET_APSIDE1_ALT_KM) ? c.insertion.TARGET_APSIDE1_ALT_KM : null;
+    const a2 = Number.isFinite(c.insertion.TARGET_APSIDE2_ALT_KM) ? c.insertion.TARGET_APSIDE2_ALT_KM : null;
+    const legacy = Number.isFinite(c.insertion.TARGET_ORBIT_ALT_KM) ? c.insertion.TARGET_ORBIT_ALT_KM : null;
+    const v1 = a1 != null ? a1 : legacy;
+    const v2 = a2 != null ? a2 : legacy;
+    if (v1 == null && v2 == null) return '';
+    if (v1 === v2) return 'apside1=' + v1 + ' apside2=' + v1 + ' km (circular)';
+    return 'apside1=' + v1 + ' apside2=' + v2 + ' km';
+  }
+
   function populatePresetDropdown(guideName) {
   if (typeof getAllPresetsForGuide !== 'function') {
     presetSel.innerHTML = '<option value="">— presets module unavailable —</option>';
@@ -1456,7 +1472,9 @@ let _renderToken = 0; // async guard for rapid guide switches
       const tag = p.isDefault ? 'DEFAULT' : 'USER';
       const stack = p.stackName || '(no stack)';
       const stype = p.stackType ? ' · ' + p.stackType : '';
-      return `<option value="${p.id}">${p.name} · [${tag}] · ${stack}${stype}</option>`;
+      const aps = _apsideLabelForPreset(p);
+      const apsSuffix = aps ? ' · ' + aps : '';
+      return `<option value="${p.id}">${p.name} · [${tag}] · ${stack}${stype}${apsSuffix}</option>`;
     }).join('');
   presetSel.value = '';
 }

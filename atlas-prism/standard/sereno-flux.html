@@ -49,13 +49,13 @@
 <section class="panel row" id="lockBar">
   <div class="lbl"><span class="tag">0x00</span>Session</div>
   <label>stack <select id="stackSel"></select></label>
-  <label>target apo km <input type="number" id="apoKm" value="320" min="150" step="10"></label>
-  <label>target peri km <input type="number" id="periKm" value="320" min="150" step="10"></label>
+  <label>apside 1 (km) <input type="number" id="apoKm" value="320" min="150" step="10"></label>
+  <label>apside 2 (km) <input type="number" id="periKm" value="320" min="150" step="10"></label>
   <div class="btns">
     <button class="lock" id="lockBtn">Lock</button>
     <button class="reset" id="resetBtn" disabled>Reset</button>
   </div>
-  <span class="dim" id="lockStatus">Select stack + orbit, then LOCK to start.</span>
+  <span class="dim" id="lockStatus">Select stack + apside1/apside2, then LOCK to start.</span>
   <div class="hint">locked standard-sequence stacks only &middot; guidance leoInsertionV3 only</div>
 </section>
 
@@ -368,7 +368,7 @@
     $('apoKm').disabled = false;
     $('periKm').disabled = false;
     $('resetBtn').disabled = true;
-    $('lockStatus').textContent = 'Select stack + orbit, then LOCK to start.';
+    $('lockStatus').textContent = 'Select stack + apside1/apside2, then LOCK to start.';
     $('main').style.display = 'none';
     $('logFeed').innerHTML = '';
     $('progressBar').innerHTML = '<span class="dim">idle</span>';

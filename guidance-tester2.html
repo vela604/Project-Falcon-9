@@ -840,6 +840,20 @@ default: break;
   // ============================================================================
   // Preset management — identical to numerical.
   // ============================================================================
+  // Safe apside label — never asserts apo/peri ordering.
+  function _apsideLabelForPreset(p) {
+    const c = p && p.constants;
+    if (!c || !c.insertion) return '';
+    const a1 = Number.isFinite(c.insertion.TARGET_APSIDE1_ALT_KM) ? c.insertion.TARGET_APSIDE1_ALT_KM : null;
+    const a2 = Number.isFinite(c.insertion.TARGET_APSIDE2_ALT_KM) ? c.insertion.TARGET_APSIDE2_ALT_KM : null;
+    const legacy = Number.isFinite(c.insertion.TARGET_ORBIT_ALT_KM) ? c.insertion.TARGET_ORBIT_ALT_KM : null;
+    const v1 = a1 != null ? a1 : legacy;
+    const v2 = a2 != null ? a2 : legacy;
+    if (v1 == null && v2 == null) return '';
+    if (v1 === v2) return 'apside1=' + v1 + ' apside2=' + v1 + ' km (circular)';
+    return 'apside1=' + v1 + ' apside2=' + v2 + ' km';
+  }
+
   function refreshPresets(guideName) {
     if (typeof getAllPresetsForGuide !== 'function') {
       presetSel.innerHTML = '<option value="">— presets unavailable —</option>';
@@ -853,7 +867,11 @@ default: break;
       return;
     }
     presetSel.innerHTML = '<option value="">— select a preset —</option>' +
-      list.map(p => `<option value="${p.id}">${p.name}${p.isDefault ? ' · DEFAULT' : ''}</option>`).join('');
+      list.map(p => {
+        const aps = _apsideLabelForPreset(p);
+        const apsSuffix = aps ? ' · ' + aps : '';
+        return `<option value="${p.id}">${p.name}${p.isDefault ? ' · DEFAULT' : ''}${apsSuffix}</option>`;
+      }).join('');
   }
 
   $('presetLoadBtn').addEventListener('click', () => {

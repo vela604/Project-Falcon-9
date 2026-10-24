@@ -250,6 +250,8 @@
               lead: c.insertion && c.insertion.CIRC_TRIGGER_LEAD_S,
               meco: c.ascent && c.ascent.MECO_TARGET_BOOSTER_FUEL_KG,
               alt: c.insertion && c.insertion.TARGET_ORBIT_ALT_KM,
+              apside1: c.insertion && c.insertion.TARGET_APSIDE1_ALT_KM,
+              apside2: c.insertion && c.insertion.TARGET_APSIDE2_ALT_KM,
               name: p.name || (p.isDefault ? 'default' : ('preset ' + (meta.id || '?')))
             }, p.isDefault ? 'default' : 'preset');
           });
@@ -260,12 +262,22 @@
       }
       return out;
     }
+    // Safe apside label. Never asserts apo/peri ordering — just shows both
+    // targets verbatim. User might set apside1 < apside2 or vice versa; the
+    // insertion block internally derives apo = max, peri = min, so no
+    // ordering assumption is needed at the label level either.
+    function apsideLabel(r) {
+      const a1 = Number.isFinite(r.apside1) ? r.apside1 : r.alt;
+      const a2 = Number.isFinite(r.apside2) ? r.apside2 : r.alt;
+      if (a1 === a2) return 'apside1=' + a1 + ' apside2=' + a2 + ' km (circular)';
+      return 'apside1=' + a1 + ' apside2=' + a2 + ' km';
+    }
     const REFS = collectRefs();
     const refs = REFS.map((r, i) =>
       '<option value="' + i + '">' +
       (r.src === 'preset' ? '★ ' : (r.src === 'default' ? '◆ ' : '')) +
       (r.name ? esc(r.name) + ' · ' : '') +
-      'MECO ' + r.meco + ' · ' + r.alt + ' km</option>').join('');
+      'MECO ' + r.meco + ' · ' + apsideLabel(r) + '</option>').join('');
 
     const stratList = (typeof root.TunerCore.listStrategies === 'function') ? root.TunerCore.listStrategies() : ['guided'];
     const stratOpts = stratList.map((n) => {
@@ -284,8 +296,8 @@
       (f.min != null ? ' min="' + f.min + '"' : '') + (f.max != null ? ' max="' + f.max + '"' : '') + '></label>').join('');
 
     const rowsTop =
-      '<div class="row"><label>target apo km <input type="number" id="tuiApoKm" value="' + cfg.fixed.targetAltKm + '" step="1" min="150"></label>' +
-      '<label>target peri km <input type="number" id="tuiPeriKm" value="' + cfg.fixed.targetAltKm + '" step="1" min="150"></label>' +
+      '<div class="row"><label>apside 1 (km) <input type="number" id="tuiApoKm" value="' + cfg.fixed.targetAltKm + '" step="1" min="150"></label>' +
+      '<label>apside 2 (km) <input type="number" id="tuiPeriKm" value="' + cfg.fixed.targetAltKm + '" step="1" min="150"></label>' +
       '<label>strategy <select id="tuiStrategy">' + stratOpts + '</select></label>' +
       '<label>start <select id="tuiStart">' + refs + '</select></label>' +
       '<label>B mode <select id="tuiMode"><option value="fast">fast</option><option value="fine" selected>fine</option><option value="accurate">accurate</option></select></label>' +
@@ -337,8 +349,10 @@
 
     let durCapDirty = false;
     function refreshDurCap(fromAlt) {
-      const alt = readTargets().apoKm;
-      const sug = U().suggestDurationCap(alt);
+      const t = readTargets();
+      // suggestDurationCap takes Math.max(alt, apo, peri) internally; passing
+      // both apsides makes elliptical targets get the correct (higher) cap.
+      const sug = U().suggestDurationCap(t.apoKm, t.apoKm, t.periKm);
       $('tuiDurCapHint').textContent = 'auto ' + sug + ' s';
       if (!durCapDirty || fromAlt) { $('tuiDurCap').value = sug; }
     }
@@ -346,12 +360,22 @@
     $('tuiDurCapAuto').addEventListener('click', () => { durCapDirty = false; refreshDurCap(true); });
 
     function updateNote() {
-      const alt = readTargets().apoKm;
+      const _t = readTargets();
       const ref = S.refs[+$('tuiStart').value];
       const parts = [];
       if (ref) {
-        const refAlt = ref.alt != null ? ref.alt : 320;
-        if (Math.abs(refAlt - alt) > 100) parts.push('start ref tuned for ' + refAlt + ' km; target ' + alt + ' km — expect more evals');
+        // Compare apside midpoints — order-agnostic, matches elliptical targets.
+        const r1 = Number.isFinite(ref.apside1) ? ref.apside1 : (ref.alt != null ? ref.alt : 320);
+        const r2 = Number.isFinite(ref.apside2) ? ref.apside2 : r1;
+        const refMid = (r1 + r2) / 2;
+        const tgtMid = (_t.apoKm + _t.periKm) / 2;
+        if (Math.abs(refMid - tgtMid) > 100) {
+          const refStr = (r1 === r2) ? 'apside1=' + r1 + ' apside2=' + r1 + ' km (circular)'
+                                     : 'apside1=' + r1 + ' apside2=' + r2 + ' km';
+          const tgtStr = (_t.apoKm === _t.periKm) ? 'apside1=' + _t.apoKm + ' apside2=' + _t.apoKm + ' km'
+                                                   : 'apside1=' + _t.apoKm + ' apside2=' + _t.periKm + ' km';
+          parts.push('start ref tuned for ' + refStr + '; target ' + tgtStr + ' — expect more evals');
+        }
       }
       const MC2 = cfg.meco || {};
       const probeStart = MC2.probeStartKg != null ? MC2.probeStartKg : 20000;
@@ -365,10 +389,15 @@
     let startAuto = true;
     function autoPickRef() {
       if (!startAuto) return;
-      const alt = readTargets().apoKm;
+      const _t = readTargets();
+      const tgtMid = (_t.apoKm + _t.periKm) / 2;
       let bestI = 0, bestD = Infinity, bestIsDef = false;
       S.refs.forEach((r, i) => {
-        const d = Math.abs((r.alt != null ? r.alt : 320) - alt);
+        // apside midpoint — order-agnostic distance.
+        const r1 = Number.isFinite(r.apside1) ? r.apside1 : (r.alt != null ? r.alt : 320);
+        const r2 = Number.isFinite(r.apside2) ? r.apside2 : r1;
+        const refMid = (r1 + r2) / 2;
+        const d = Math.abs(refMid - tgtMid);
         const isDef = r.src === 'default' || r.src === 'fallback';
         if (d < bestD - 1e-9 || (Math.abs(d - bestD) < 1e-9 && isDef && !bestIsDef)) { bestD = d; bestI = i; bestIsDef = isDef; }
       });
