@@ -1821,7 +1821,7 @@ const tau_target = tau_desired - dNext.torqueEnvironmental;
             _st.coastHold2VcircAtApo = v_target_at_apside;
             _st.coastHold2VapoLive = v_live_at_apside;
 
-            let thetaLive;
+            let thetaApoLive;
             if (e_mag > 1e-6) {
               const sDir = vt_c >= 0 ? 1 : -1;
               let rx_aps, ry_aps;
@@ -1834,12 +1834,12 @@ const tau_target = tau_desired - dNext.torqueEnvironmental;
                 rx_aps = r_live_at_apside * Math.sin(phiApo);
                 ry_aps = r_live_at_apside * Math.cos(phiApo);
               }
-              thetaLive = Math.atan2(-sDir * ry_aps, -sDir * rx_aps);
+              thetaApoLive = Math.atan2(-sDir * ry_aps, -sDir * rx_aps);
             } else {
               const speed_c = Math.hypot(body.vx, body.vy);
-              thetaLive = speed_c > 1 ? Math.atan2(-body.vx, body.vy) : body.theta;
+              thetaApoLive = speed_c > 1 ? Math.atan2(-body.vx, body.vy) : body.theta;
             }
-            _st.coast2TargetThetaLive = thetaLive;
+            _st.coast2TargetThetaLive = thetaApoLive;
 
             // Apogee-peak FIRST — unconditional eject (trim state irrelevant).
             const prevVr = _st._prevVr2;
