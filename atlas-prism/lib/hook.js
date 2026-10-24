@@ -45,6 +45,26 @@
     return (3 * Math.PI - M) / n;
   }
 
+  // Time to NEXT perigee (parallel to timeToApogee). Perigee is at M=0
+  // (and M=2π), so t_peri = (2π - M) / n.
+  function timeToPerigee(r, vr, vt, GM) {
+    if (!(r > 0)) return Infinity;
+    const E = 0.5 * (vr * vr + vt * vt) - GM / r;
+    if (E >= 0) return Infinity;
+    const a = -GM / (2 * E);
+    const h = r * vt;
+    const eSq = 1 + (2 * E * h * h) / (GM * GM);
+    const e = Math.sqrt(Math.max(0, eSq));
+    if (e < 1e-9) return Math.PI * Math.sqrt((a * a * a) / GM);
+    const cosE = (1 - r / a) / e;
+    const sinE = (r * vr) / (e * Math.sqrt(GM * a));
+    let Ean = Math.atan2(sinE, cosE);
+    if (Ean < 0) Ean += 2 * Math.PI;
+    const M = Ean - e * Math.sin(Ean);
+    const n = Math.sqrt(GM / (a * a * a));
+    return (2 * Math.PI - M) / n;
+  }
+
   // Osculating two-body elements of a body (same formulas as the page's
   // captureState / final-orbit block). ecc = e from E and h.
   function orbitOf(b, GM, Re) {
@@ -65,7 +85,8 @@
       periKm = (p / (1 + e) - Re) / 1000;
     }
     return { r, vr, vt, ecc: e, apoKm, periKm, periodS, altKm: (r - Re) / 1000,
-             tToApo: timeToApogee(r, vr, vt, GM) };
+             tToApo: timeToApogee(r, vr, vt, GM),
+             tToPeri: timeToPerigee(r, vr, vt, GM) };
   }
 
   // Time to apogee as a SIGNED margin. timeToApogee() always returns the time to
@@ -244,6 +265,7 @@
       let coastWaitSeen = false, mecoSeen = false, splitSeen = false;
       let circWindow = false, circAchSeen = false, engOffSeen = false;
       let deploySeen = false, vrMinCirc = Infinity;
+      let _postEngOffTime = -1, _vrAtEngOff = 0, _vrRateDone = false;
       let lastYield = performance.now();
       let ended = false;
       const end = (reason) => { m.endReason = reason; ended = true; };
@@ -388,12 +410,39 @@
             const en = b.engines;
             if (en) for (let k = 0; k < en.length; k++) mdot += en[k].massFlowRate || 0;
             if (mdot <= 1e-9) {
-              engOffSeen = true; circWindow = false;
+              engOffSeen = true;
               const o = orbitOf(b, GM, Re);
-              m.vrEnd = o.vr; m.marginS = signedMargin(o); m.marginRawS = o.tToApo; m.periodEndS = o.periodS; m.circEngOffT = state.simTime;
+              m.vrEnd = o.vr;
+              m.marginS = signedMargin(o);
+              m.marginRawS = o.tToApo;
+              m.periodEndS = o.periodS;
+              m.circEngOffT = state.simTime;
+              m.tToApoEndS = o.tToApo;
+              m.tToPeriEndS = o.tToPeri;
+              m.rEndM = o.r;
+              m.vtEnd = o.vt;
+              m.apoEndKm = o.apoKm;
+              m.periEndKm = o.periKm;
+              m.eccEnd = o.ecc;
               { const st = findStage(state.bodies); m.stageFuelEngOffKg = st ? st.fuelMass : NaN; }
-              if (stopAt === 'CIRC_END') { end('CIRC_END'); i++; break; }
+              if (stopAt === 'CIRC_END') {
+                _postEngOffTime = state.simTime;
+                _vrAtEngOff = o.vr;
+              } else {
+                circWindow = false;
+              }
             }
+          }
+        }
+
+        // Post-eng-off rate sampling (1s coast, pure gravity)
+        if (engOffSeen && _postEngOffTime >= 0 && !_vrRateDone) {
+          const dtPost = state.simTime - _postEngOffTime;
+          if (dtPost >= 1.0) {
+            const o2 = orbitOf(b, GM, Re);
+            m.vrEndRate = (o2.vr - _vrAtEngOff) / dtPost;
+            _vrRateDone = true;
+            if (stopAt === 'CIRC_END') { end('CIRC_END'); i++; break; }
           }
         }
 

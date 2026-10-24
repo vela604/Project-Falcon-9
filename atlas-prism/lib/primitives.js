@@ -9,26 +9,25 @@
     async function tuneLead(point, opts) {
     opts = opts || {};
     const Cfg = root.TunerConfig, U = root.TunerUtils, H = opts.hook || root.TunerHook;
-    const L = Cfg.limits, q = Cfg.quanta.lead;
-    const band = opts.marginBand || L.marginTargetS;          // [4, 5]
-    const mLo = band[0], mHi = band[1], mTgt = (mLo + mHi) / 2;
-    const bufLo = (opts.vrEndBuffer || L.vrEndBufferMps)[0];   // 0.02
-    const vrFloor = opts.vrMinFloor != null ? opts.vrMinFloor : L.vrMinHardFloorMps;
-    const slope = opts.slopeSPerS || 28;                       // s of margin per s of lead (empirical)
-    const maxEvals = opts.maxEvals || 30;
-    const firstCap = opts.firstStepCapTicks || 3;              // only 1 sample known: do not leap over the transition
+    const q = Cfg.quanta.lead;
     const cache = opts.cache || new U.EvalCache();
-    const targetAltKm = opts.targetAltKm != null ? opts.targetAltKm : Cfg.fixed.targetAltKm;
+    const targetAltKm  = opts.targetAltKm  != null ? opts.targetAltKm  : Cfg.fixed.targetAltKm;
+    const targetApoKm  = opts.targetApoKm  != null ? opts.targetApoKm  : targetAltKm;
+    const targetPeriKm = opts.targetPeriKm != null ? opts.targetPeriKm : targetAltKm;
     const leadOf = (li) => Number((li * q).toFixed(4));
-    const LEAD_MAX_TICKS = Math.round(20 / q);   // hard cap: 20 s max lead
+    const LEAD_MAX_TICKS = Math.round(20 / q);
+    const SPEED_GATE_S = opts.speedGateS != null ? opts.speedGateS : 100;
+    const APO_PROX = 0.5;
+    const AWAY_VR  = 0.5;
+    const MAX_FULLS = opts.maxFulls != null ? opts.maxFulls : 6;
+    const maxEvals  = opts.maxEvals || 40;
     const t0 = performance.now();
-
-    const pts = new Map();           // li -> record
+    const pts = new Map();
     const lines = [];
-    let evals = 0, hitsBefore = cache.hits;
+    let evals = 0;
+    const hitsBefore = cache.hits;
     const say = (s) => { lines.push(s); if (opts.onLog) opts.onLog(s); };
-    const fmt = (x, d) => (Number.isFinite(x) ? x.toFixed(d) : String(x));
-
+    const fmt = (x, d) => Number.isFinite(x) ? x.toFixed(d) : '-';
     class Stop extends Error {}
 
     async function ev(li) {
@@ -36,164 +35,147 @@
       if (li > LEAD_MAX_TICKS) li = LEAD_MAX_TICKS;
       if (pts.has(li)) return pts.get(li);
       if (opts.abortRef && opts.abortRef.aborted) throw new Stop('aborted');
+      if (evals >= maxEvals) throw new Stop('maxEvals');
       const p = Object.assign({}, point, { li });
       let m = cache.get(p, 'CIRC_END');
       let fresh = false;
       if (!m) {
-        if (evals >= maxEvals) throw new Stop('maxEvals');
-        m = await H.runEval(p, { stopAt: 'CIRC_END', targetAltKm,
-                                 targetApoKm: opts.targetApoKm, targetPeriKm: opts.targetPeriKm,
-                                 env: opts.env, abortRef: opts.abortRef, onProgress: opts.onProgress });
-        cache.set(p, 'CIRC_END', m);
-        evals++; fresh = true;
+        m = await H.runEval(p, { stopAt: 'CIRC_END', targetAltKm, targetApoKm, targetPeriKm,
+          env: opts.env, abortRef: opts.abortRef, onProgress: opts.onProgress });
+        cache.set(p, 'CIRC_END', m); evals++; fresh = true;
       }
-      const valid = m.endReason === 'CIRC_END' && !m.crashed && Number.isFinite(m.vrEnd) && Number.isFinite(m.marginS);
-      const r = {
-        li, lead: leadOf(li), m, valid,
-        margin: valid ? m.marginS : -Infinity,    // no clean circ end => treat as "too low"
-        vrEnd: m.vrEnd, vrMin: m.vrMin,
-        feas: valid && m.vrMin >= vrFloor && m.vrEnd >= bufLo,
-        inBand: valid && m.marginS >= mLo && m.marginS <= mHi,
-      };
+      const valid = m.endReason === 'CIRC_END' && !m.crashed && Number.isFinite(m.vrEnd);
+      const vrEnd = valid ? m.vrEnd : NaN;
+      const rate  = valid && Number.isFinite(m.vrEndRate) ? m.vrEndRate : NaN;
+      const tApo  = valid && Number.isFinite(m.tToApoEndS)  ? m.tToApoEndS  : Infinity;
+      const tPeri = valid && Number.isFinite(m.tToPeriEndS) ? m.tToPeriEndS : Infinity;
+      const tApsideMin = Math.min(tApo, tPeri);
+      const approaching = valid && (Math.abs(vrEnd) < APO_PROX ||
+        (Number.isFinite(rate) && ((vrEnd > 0 && rate < 0) || (vrEnd < 0 && rate > 0))));
+      const movingAway = valid && Math.abs(vrEnd) > AWAY_VR && Number.isFinite(rate) && vrEnd * rate > 0;
+      const fastEnough = valid && tApsideMin < SPEED_GATE_S;
+      const feas = valid && approaching && !movingAway && fastEnough;
+      const r = { li, lead: leadOf(li), m, valid, vrEnd, rate, tApo, tPeri, tApsideMin,
+        approaching, movingAway, fastEnough, feas,
+        margin: valid ? m.marginS : -Infinity, full: null };
       pts.set(li, r);
-      say((fresh ? '  eval ' : '  (cached) ') + 'lead=' + r.lead + ' (' + li + ' ticks)  end=' + m.endReason +
-          '  margin=' + fmt(m.marginS, 2) + 's  vrEnd=' + fmt(m.vrEnd, 4) + '  vrMin=' + fmt(m.vrMin, 3) +
-          (r.feas ? '  feasible' : '  INFEASIBLE') + (r.inBand ? '  [in band]' : ''));
+      const tag = !valid ? 'INVALID' : movingAway ? 'AWAY' : !approaching ? 'STILL' : !fastEnough ? 'SLOW(' + fmt(tApsideMin, 0) + 's)' : 'FEAS';
+      say('  ' + (fresh ? 'eval ' : 'cache') + 'lead=' + r.lead + ' (' + li + 't) ' + tag +
+          '  vr=' + fmt(vrEnd, 4) + ' rate=' + fmt(rate, 5) + ' tAps=' + fmt(tApsideMin, 0) + 's');
       return r;
     }
 
-    // Local slope (s of signed margin per tick) from the two valid points nearest to
-    // the target; falls back to the slope guess. Near the apogee transition the real
-    // slope is much steeper than the guess, so measured data takes over from point 2.
-    function slopeTick() {
-      const v = [...pts.values()].filter((r) => Number.isFinite(r.margin))
-        .sort((a, b) => Math.abs(a.margin - mTgt) - Math.abs(b.margin - mTgt));
-      if (v.length >= 2 && v[0].li !== v[1].li) {
-        const s = (v[0].margin - v[1].margin) / (v[0].li - v[1].li);
-        if (s > 0.01) return s;
+    async function runFull(r) {
+      if (r.full) return r.full;
+      if (!r.valid) { r.full = { ok: false, error: Infinity, apoErr: Infinity, periErr: Infinity, fm: null, sc: null }; return r.full; }
+      const p = Object.assign({}, point, { li: r.li });
+      let fm = cache.get(p, 'FULL');
+      if (!fm) {
+        fm = await H.runEval(p, { stopAt: 'FULL', targetAltKm, targetApoKm, targetPeriKm,
+          env: opts.env, abortRef: opts.abortRef, onProgress: opts.onProgress });
+        cache.set(p, 'FULL', fm); evals++;
       }
-      return slope * q;
-    }
-
-    const dist = (r) => (r.margin < mLo ? mLo - r.margin : (r.margin > mHi ? r.margin - mHi : 0));
-    function bestFeasible() {
-      let best = null;
-      for (const r of pts.values()) {
-        if (!r.feas) continue;
-        if (!best || dist(r) < dist(best) - 1e-12 ||
-            (Math.abs(dist(r) - dist(best)) <= 1e-12 && r.margin < best.margin)) best = r;
-      }
-      return best;
+      const sc = U.score(fm, { targetAltKm, targetApoKm, targetPeriKm });
+      const apoErr  = Number.isFinite(fm.apogeeKm)  ? Math.abs(fm.apogeeKm  - targetApoKm)  : 9999;
+      const periErr = Number.isFinite(fm.perigeeKm) ? Math.abs(fm.perigeeKm - targetPeriKm) : 9999;
+      r.full = { ok: sc.ok, error: apoErr + periErr, apoErr, periErr, fm, sc };
+      say('  FULL lead=' + r.lead + ' err=' + fmt(r.full.error, 2) +
+          ' (apo ' + fmt(apoErr, 2) + ' peri ' + fmt(periErr, 2) + ')' + (sc.ok ? '' : ' HARD-FAIL'));
+      return r.full;
     }
 
     let reason = 'ok';
     try {
-      say('tuneLead: start lead=' + leadOf(point.li) + ' (' + point.li + ' ticks)  band=[' + mLo + ',' + mHi +
-          ']s  vrEnd>=' + bufLo + '  vrMin>=' + vrFloor + '  slope guess ' + slope + ' s/s');
+      say('tuneLead: start lead=' + leadOf(point.li) + ' (' + point.li + 't)  apo=' + targetApoKm +
+          ' peri=' + targetPeriKm + '  speedGate=' + SPEED_GATE_S + 's');
 
-      // ---- 1) root-find margin(li) = mTgt, bracketed on the tick lattice ----
-      let lo = null, hi = null;                       // lo: margin < target, hi: margin >= target
-      const note = (r) => {
-        if (r.margin < mTgt) { if (!lo || r.li > lo.li) lo = r; }
-        else { if (!hi || r.li < hi.li) hi = r; }
-      };
-      let r0 = await ev(point.li);
-      note(r0);
-      for (let it = 0; it < 14; it++) {
-        if (r0.inBand && r0.feas) break;
-        const hit = [...pts.values()].find((r) => r.inBand);
-        if (hit) break;                               // band reached (feasibility handled below)
-        if (lo && hi && hi.li - lo.li <= 1) break;    // bracket closed, no tick inside band
-        let next;
-        if (lo && hi) {
-          if (Number.isFinite(lo.margin) && Number.isFinite(hi.margin) && hi.margin > lo.margin) {
-            const f = (mTgt - lo.margin) / (hi.margin - lo.margin);
-            next = lo.li + Math.round(f * (hi.li - lo.li));
-          } else next = Math.floor((lo.li + hi.li) / 2);
-          next = Math.min(hi.li - 1, Math.max(lo.li + 1, next));
-        } else if (hi) {                              // margin too high -> lead down
-          const d = Math.ceil((hi.margin - mTgt) / slopeTick());
-          next = hi.li - Math.min(pts.size < 2 ? firstCap : 60, Math.max(1, d));
-        } else {                                      // margin too low (or past apogee) -> lead up
-          const d = Number.isFinite(lo.margin) ? Math.ceil((mTgt - lo.margin) / slopeTick()) : 8;
-          next = lo.li + Math.min(pts.size < 2 ? firstCap : 60, Math.max(1, d));
+      let base = await ev(point.li);
+      if (!base.feas) {
+        const steps = [1, 2, 3, 5, 8, 12, 20, 30];
+        let found = null;
+        for (const s of steps) {
+          if (found) break;
+          if (point.li - s >= 0) { const r = await ev(point.li - s); if (r.feas) { found = r; break; } }
+          if (point.li + s <= LEAD_MAX_TICKS) { const r = await ev(point.li + s); if (r.feas) { found = r; break; } }
         }
-        if (next < 0) next = 0;
-        if (next > LEAD_MAX_TICKS) next = LEAD_MAX_TICKS;
-        if (pts.has(next)) break;                     // no new information
-        note(await ev(next));
-      }
-
-      // ---- 2) feasibility: find the smallest feasible lead (vr constraints) ----
-      // Used when no feasible point sits inside the band yet. Assumes feasibility is
-      // monotone in lead (higher lead = gentler = more vrEnd).
-      const bisect = async (a, b) => {                // a infeasible, b feasible
-        while (b - a > 1) {
-          const mid = Math.floor((a + b) / 2);
-          const r = await ev(mid);
-          if (r.feas) b = mid; else a = mid;
-        }
-      };
-      let best = bestFeasible();
-      if (!best || !best.inBand) {
-        let F = null;                                 // feasible point with the smallest lead
-        for (const r of pts.values()) if (r.feas && (!F || r.li < F.li)) F = r;
-        if (!F) {
-          const bad = [...pts.values()].sort((x, y) => Math.abs(x.margin - mTgt) - Math.abs(y.margin - mTgt))[0];
-          say('no feasible point yet -> walking lead up from ' + bad.li);
-          let step = 1, badLi = bad.li;
-          while (step <= 32 && !F) {
-            const r = await ev(badLi + step);
-            if (r.feas) F = r; else { badLi = r.li; step *= 2; }
+        if (!found) {
+          let bestV = null;
+          for (const r of pts.values()) {
+            if (!r.valid || r.movingAway) continue;
+            if (!bestV || (r.approaching && !bestV.approaching) ||
+                (r.approaching === bestV.approaching && r.tApsideMin < bestV.tApsideMin)) bestV = r;
           }
-          if (F) await bisect(badLi, F.li);
-          else reason = 'no feasible lead found (vr constraints)';
-        } else {
-          let I = null;                               // infeasible point just below F
-          for (const r of pts.values()) if (!r.feas && r.li < F.li && (!I || r.li > I.li)) I = r;
-          if (I) { say('vr constraint binds -> bisect ' + I.li + '..' + F.li); await bisect(I.li, F.li); }
+          if (!bestV) { reason = 'no valid lead (all fail vr/rate)'; throw new Stop('no-valid'); }
+          reason = 'fallback: ' + (bestV.approaching ? 'slow' : 'vr-not-approaching');
+          found = bestV;
         }
-        best = bestFeasible();
+        base = found;
+      }
+      say('  base: lead=' + base.lead + ' (' + base.li + 't)');
+
+      await runFull(base);
+      let best = base, cur = base;
+      let dir = -1, step = 2;
+      let fulls = 1;
+
+      while (fulls < MAX_FULLS) {
+        if (opts.abortRef && opts.abortRef.aborted) throw new Stop('aborted');
+        const nextLi = cur.li + dir * step;
+        if (nextLi < 0 || nextLi > LEAD_MAX_TICKS) {
+          if (dir === -1) { dir = 1; step = 2; cur = base; continue; }
+          break;
+        }
+        let r = pts.get(nextLi);
+        if (!r) r = await ev(nextLi);
+        if (!r.valid) { if (dir === -1) { dir = 1; step = 2; cur = base; } else break; continue; }
+        if (!r.feas) { step = Math.min(step * 2, 20); if (dir === -1 && step >= 16) { dir = 1; step = 2; cur = base; } continue; }
+
+        await runFull(r); fulls++;
+        const slope = (r.full.error - cur.full.error) / (r.li - cur.li);
+        say('  step ' + cur.lead + '->' + r.lead + '  err ' +
+            fmt(cur.full.error, 2) + '->' + fmt(r.full.error, 2) + '  slope=' + fmt(slope, 3));
+
+        if (r.full.error < best.full.error) { best = r; cur = r; step = Math.max(1, Math.round(step * 0.7)); }
+        else { if (dir === -1) { dir = 1; step = 2; cur = base; } else break; }
       }
 
-      // ---- 3) descend to the lowest margin that is still inside the band ----
-      if (best && best.inBand) {
-        for (let k = 0; k < 6; k++) {
-          const r = await ev(best.li - 1);
-          if (r.feas && r.margin >= mLo && r.margin < best.margin) best = r; else break;
-        }
-      }
-      best = bestFeasible();
-      if (best && !best.inBand && reason === 'ok') reason = 'feasible but margin outside band';
-      if (!best && reason === 'ok') reason = 'no feasible lead found';
-
-      const out = finish(best, reason);
-      return out;
+      return finish(best, reason);
     } catch (e) {
       if (!(e instanceof Stop)) throw e;
-      const best = bestFeasible();
+      let best = null;
+      for (const r of pts.values()) if (r.full && r.full.ok && (!best || r.full.error < best.full.error)) best = r;
+      if (!best) for (const r of pts.values()) if (r.valid && (!best || r.tApsideMin < best.tApsideMin)) best = r;
       return finish(best, 'stopped: ' + e.message);
     }
 
     function finish(best, why) {
+      const fm = best && best.full ? best.full.fm : null;
+      const m  = fm || (best ? best.m : null);
       const res = {
-        ok: !!best, inBand: !!(best && best.inBand), reason: why,
-        lead: best ? best.lead : NaN, leadTicks: best ? best.li : NaN,
-        marginS: best ? best.margin : NaN, vrEnd: best ? best.vrEnd : NaN, vrMin: best ? best.vrMin : NaN,
-        phase: best ? (best.vrMin >= 0 ? 1 : 2) : null,
+        ok: !!(best && best.valid && best.feas),
+        inBand: !!(best && best.full && best.full.ok),
+        reason: why,
+        lead: best ? best.lead : NaN,
+        leadTicks: best ? best.li : NaN,
+        marginS: best ? best.margin : NaN,
+        vrEnd: best ? best.vrEnd : NaN,
+        vrMin: best && best.m && Number.isFinite(best.m.vrMin) ? best.m.vrMin : NaN,
+        phase: best ? (best.vrEnd >= 0 ? 1 : 2) : null,
         point: best ? Object.assign({}, point, { li: best.li }) : null,
-        metrics: best ? best.m : null,
-        evals, cacheHits: cache.hits - hitsBefore, wallMs: performance.now() - t0,
-        log: lines,
+        metrics: m,
+        evals, cacheHits: cache.hits - hitsBefore, wallMs: performance.now() - t0, log: lines,
+        fullError:   best && best.full ? best.full.error   : Infinity,
+        fullApoErr:  best && best.full ? best.full.apoErr  : Infinity,
+        fullPeriErr: best && best.full ? best.full.periErr : Infinity,
       };
-      say('tuneLead: ' + (res.ok ? 'lead=' + res.lead + ' (' + res.leadTicks + ' ticks) margin=' + fmt(res.marginS, 2) +
-          's vrEnd=' + fmt(res.vrEnd, 4) + ' vrMin=' + fmt(res.vrMin, 3) + ' phase ' + res.phase + (res.inBand ? '' : ' [OUT OF BAND]')
-          : 'FAILED') + '  | ' + why + ' | evals=' + evals + ' wall=' + (res.wallMs / 1000).toFixed(1) + 's');
+      say('tuneLead: ' + (res.ok ? 'lead=' + res.lead + ' (' + res.leadTicks + 't) err=' +
+          fmt(res.fullError, 2) + (res.inBand ? ' OK' : ' FAIL') : 'FAILED') +
+          '  | ' + why + '  evals=' + evals + '  wall=' + (res.wallMs / 1000).toFixed(1) + 's');
       return res;
     }
   }
 
- async function tuneAB(point, opts) {
+  async function tuneAB(point, opts) {
   opts = opts || {};
   const Cfg = root.TunerConfig, U = root.TunerUtils, H = opts.hook || root.TunerHook;
   const Q = Cfg.quanta, L = Cfg.limits;

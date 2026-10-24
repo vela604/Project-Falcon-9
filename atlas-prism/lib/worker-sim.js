@@ -764,6 +764,11 @@ self.onmessage = async (e) => {
               // Measure EXACTLY like hook.js CIRC_END: window opens at phase CIRCULARIZE, vrMin tracked inside it,
               // vrEnd / signed margin read at the engines-off tick (not after COAST_ROTATE_2).
               let circWindow = false, circAchSeen = false, vrMinC = Infinity, res = null;
+              // Rate sampling: after eng-off we tick 1s more under pure gravity,
+              // then compute vrEndRate = dvr/dt. Valid lead ⟺ vr & rate opposite
+              // signs (approaching apside). Also captures full orbital state
+              // (t_apo, t_peri, r, vt, apo/peri, ecc) for validity/error math.
+              let _postEngOffTime = -1, _vrAtEngOff = 0, _vrRateDone = false;
               const capT = Math.ceil(300 / CONFIG.DT);
               for (let _k = 0; _k < capT; _k++) {
                 if (state.halted) break;
@@ -775,7 +780,7 @@ self.onmessage = async (e) => {
                 const vr = (stb.vx * stb.rx + stb.vy * stb.ry) / r;
                 if (gs.phase === 'CIRCULARIZE' && !circWindow && !circAchSeen) circWindow = true;
                 if (gs.circAchieved && !circAchSeen) circAchSeen = true;
-                if (circWindow) {
+                if (circWindow && !res) {
                   if (vr < vrMinC) vrMinC = vr;
                   if (circAchSeen) {
                     let mdot = 0; const en = stb.engines;
@@ -783,15 +788,42 @@ self.onmessage = async (e) => {
                     if (mdot <= 1e-9) {
                       const o = TunerHook.orbitOf(stb, CONFIG.GM_EARTH, CONFIG.EARTH_RADIUS);
                       const marginS = !(o.vr < 0) ? o.tToApo : (Number.isFinite(o.periodS) ? (o.tToApo - o.periodS) : -Infinity);
-                      res = { vrEnd: o.vr, marginS, vrMin: vrMinC };
-                      break;
+                      // Full orbital state at eng-off (for validity + error prediction)
+                      res = {
+                        vrEnd: o.vr, marginS, vrMin: vrMinC,
+                        tToApoEndS: o.tToApo, tToPeriEndS: o.tToPeri,
+                        rEndM: o.r, vtEnd: o.vt,
+                        apoEndKm: o.apoKm, periEndKm: o.periKm, eccEnd: o.ecc,
+                      };
+                      _postEngOffTime = state.simTime;
+                      _vrAtEngOff = o.vr;
+                      circWindow = false;   // vrMin sampling ends
+                      // Do NOT break — continue 1s more for rate
                     }
+                  }
+                }
+
+                // Post-eng-off rate sampling (1s coast, pure gravity)
+                if (res && _postEngOffTime >= 0 && !_vrRateDone) {
+                  const dtPost = state.simTime - _postEngOffTime;
+                  if (dtPost >= 1.0) {
+                    const o2 = TunerHook.orbitOf(stb, CONFIG.GM_EARTH, CONFIG.EARTH_RADIUS);
+                    res.vrEndRate = (o2.vr - _vrAtEngOff) / dtPost;
+                    _vrRateDone = true;
+                    break;
                   }
                 }
               }
               _P.circ += performance.now() - _pe0; _P.circT += _tk - _pek0;
               if (!res) return { endReason: state.halted ? 'HALTED' : 'CAP', crashed: !!state.crashed, vrEnd: NaN, marginS: NaN, vrMin: NaN };
-              return { endReason: 'CIRC_END', crashed: !!state.crashed, vrEnd: res.vrEnd, marginS: res.marginS, vrMin: res.vrMin };
+              return {
+                endReason: 'CIRC_END', crashed: !!state.crashed,
+                vrEnd: res.vrEnd, marginS: res.marginS, vrMin: res.vrMin,
+                tToApoEndS: res.tToApoEndS, tToPeriEndS: res.tToPeriEndS,
+                rEndM: res.rEndM, vtEnd: res.vtEnd,
+                apoEndKm: res.apoEndKm, periEndKm: res.periEndKm, eccEnd: res.eccEnd,
+                vrEndRate: res.vrEndRate,
+              };
             }
           };
           // Lattice point (needed for cache key only)
