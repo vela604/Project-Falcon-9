@@ -278,7 +278,13 @@
       const a2 = Number.isFinite(r.apside2) ? r.apside2 : r.alt;
       const parts = [r.name || 'preset'];
       if (Number.isFinite(r.meco)) parts.push(r.meco + ' kg');
-      if (a1 != null && a2 != null) parts.push(a1 + '-' + a2 + ' km');
+      if (a1 != null && a2 != null) {
+        // Output: derive apo/peri from max/min — apside1/apside2 input order
+        // is uncommitted, but we can safely infer apo=larger, peri=smaller.
+        const apo = Math.max(a1, a2), peri = Math.min(a1, a2);
+        parts.push(apo === peri ? 'apo/peri ' + apo + ' km (circular)'
+                                : 'apo ' + apo + ' / peri ' + peri + ' km');
+      }
       return '<option value="' + i + '">' +
         (r.src === 'preset' ? '★ ' : (r.src === 'default' ? '◆ ' : '')) +
         parts.join(' • ') + '</option>';
@@ -375,10 +381,12 @@
         const refMid = (r1 + r2) / 2;
         const tgtMid = (_t.apoKm + _t.periKm) / 2;
         if (Math.abs(refMid - tgtMid) > 100) {
-          const refStr = (r1 === r2) ? 'apside1=' + r1 + ' apside2=' + r1 + ' km (circular)'
-                                     : 'apside1=' + r1 + ' apside2=' + r2 + ' km';
-          const tgtStr = (_t.apoKm === _t.periKm) ? 'apside1=' + _t.apoKm + ' apside2=' + _t.apoKm + ' km'
-                                                   : 'apside1=' + _t.apoKm + ' apside2=' + _t.periKm + ' km';
+          const rApo = Math.max(r1, r2), rPeri = Math.min(r1, r2);
+          const tApo = Math.max(_t.apoKm, _t.periKm), tPeri = Math.min(_t.apoKm, _t.periKm);
+          const refStr = (rApo === rPeri) ? 'apo/peri ' + rApo + ' km (circular)'
+                                          : 'apo ' + rApo + ' / peri ' + rPeri + ' km';
+          const tgtStr = (tApo === tPeri) ? 'apo/peri ' + tApo + ' km'
+                                          : 'apo ' + tApo + ' / peri ' + tPeri + ' km';
           parts.push('start ref tuned for ' + refStr + '; target ' + tgtStr + ' — expect more evals');
         }
       }

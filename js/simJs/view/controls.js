@@ -1477,7 +1477,13 @@ let _renderToken = 0; // async guard for rapid guide switches
       const a2 = Number.isFinite(ins.TARGET_APSIDE2_ALT_KM) ? ins.TARGET_APSIDE2_ALT_KM : legacy;
       const parts = [p.name];
       if (meco != null) parts.push(meco + ' kg');
-      if (a1 != null && a2 != null) parts.push(a1 + '-' + a2 + ' km');
+      if (a1 != null && a2 != null) {
+        // Output labels: derive apo/peri from max/min (safe — no assumption
+        // about apside1 vs apside2 ordering).
+        const apo = Math.max(a1, a2), peri = Math.min(a1, a2);
+        parts.push(apo === peri ? 'apo/peri ' + apo + ' km (circular)'
+                                : 'apo ' + apo + ' / peri ' + peri + ' km');
+      }
       return `<option value="${p.id}">${p.isDefault ? '◆ ' : '★ '}${parts.join(' • ')}</option>`;
     }).join('');
   presetSel.value = '';

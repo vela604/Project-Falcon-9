@@ -431,9 +431,10 @@
     const n = S.pool.n;
     const _saA1 = values.insertion.TARGET_APSIDE1_ALT_KM;
     const _saA2 = values.insertion.TARGET_APSIDE2_ALT_KM;
-    const _saApsStr = (_saA1 === _saA2)
-      ? 'apside1=' + _saA1 + ' apside2=' + _saA1 + ' km (circular)'
-      : 'apside1=' + _saA1 + ' apside2=' + _saA2 + ' km';
+    const _saApo = Math.max(_saA1, _saA2), _saPeri = Math.min(_saA1, _saA2);
+    const _saApsStr = (_saApo === _saPeri)
+      ? 'apo/peri=' + _saApo + ' km (circular)'
+      : 'apo=' + _saApo + ' peri=' + _saPeri + ' km';
     log('setupSA (refresh): MECO=' + values.ascent.MECO_TARGET_BOOSTER_FUEL_KG +
         ' G=' + values.ascent.PUSH_MAX_GIMBAL_DEG +
         ' T=' + values.ascent.PUSH_T_S + ' ' + _saApsStr + '…');
