@@ -179,8 +179,14 @@ if (!m.payloadReleased || !m.payloadCleared) add('payload_not_cleared', 50);
     if(opts==null){const a=C().fixed.targetAltKm;return{alt:a,apo:a,peri:a};}
     if(typeof opts==='number')return{alt:opts,apo:opts,peri:opts};
     const a = opts.targetAltKm != null ? opts.targetAltKm : (opts.alt != null ? opts.alt : C().fixed.targetAltKm);
-    const apo = opts.targetApoKm != null ? opts.targetApoKm : (opts.apo != null ? opts.apo : a);
-    const peri = opts.targetPeriKm != null ? opts.targetPeriKm : (opts.peri != null ? opts.peri : a);
+    const apoRaw = opts.targetApoKm != null ? opts.targetApoKm : (opts.apo != null ? opts.apo : a);
+    const periRaw = opts.targetPeriKm != null ? opts.targetPeriKm : (opts.peri != null ? opts.peri : a);
+    // Match guidance-blocks.js insertion.start(): apo = max(apside1, apside2),
+    // peri = min(apside1, apside2). Without this, entering apside1=320 apside2=350
+    // would score actual 350 against target 320 AND actual 320 against target 350
+    // — double ~30km penalty — even though the sim reached the right orbit.
+    const apo = Math.max(apoRaw, periRaw);
+    const peri = Math.min(apoRaw, periRaw);
     return { alt:a, apo, peri };
   }
   const orbitTolKm = () => C().scoring.orbit.tolKm;   // absolute km, no alt scaling
