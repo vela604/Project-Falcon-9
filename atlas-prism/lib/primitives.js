@@ -114,12 +114,14 @@
       say('  base: lead=' + base.lead + ' (' + base.li + 't)');
 
       await runFull(base);
-      let best = base, cur = base;
+      let best = base;
       let fulls = 1;
 
-      // ───── Phase 1: coarse descent (step=4, up to 6 FULLs) ─────
+      // ───── Phase 1: coarse descent (step=4, max 5 FULLs) ─────
+      // Fast approach to approximate minimum region. Same as before.
       let step = 4;
       let dir = -1;
+      let cur = base;
       say('  -- phase 1: coarse (step=4) --');
       while (fulls < 6) {
         if (opts.abortRef && opts.abortRef.aborted) throw new Stop('aborted');
@@ -135,24 +137,34 @@
         else break;
       }
 
-      // ───── Phase 2: exhaustive window scan around best ─────
+      // ───── Phase 2: ANCHORED window scan ─────
+      // CRITICAL: anchor center to coarse-phase best's lead. Do NOT use
+      // "best.li + dli" — that slides the window when best.li changes
+      // mid-loop, skipping ticks like 5.375 (which is 2 away from 5.40).
+      // Fixed anchor + collect-then-compare guarantees every tick in
+      // [anchor-8, anchor+8] is tested exactly once.
+      const anchorLi = best.li;
+      const anchorErr = best.full.error;
       const WINDOW = 8;
-      say('  -- phase 2: exhaustive window scan +/-' + WINDOW + ' around ' + best.lead + ' --');
-      for (let dli = -WINDOW; dli <= WINDOW && fulls < MAX_FULLS; dli++) {
+      say('  -- phase 2: anchored window +/-' + WINDOW + ' around ' + best.lead + ' (' + anchorLi + 't) --');
+      for (let dli = -WINDOW; dli <= WINDOW; dli++) {
         if (dli === 0) continue;
         if (opts.abortRef && opts.abortRef.aborted) throw new Stop('aborted');
-        const li = best.li + dli;
+        if (fulls >= MAX_FULLS) break;
+        const li = anchorLi + dli;    // ← FIXED anchor, no slide
         if (li < 0 || li > LEAD_MAX_TICKS) continue;
         let r = pts.get(li);
         if (!r) r = await ev(li);
         if (!r || !r.feas) continue;
-        if (r.full) continue;
+        if (r.full) continue;   // already have FULL
         await runFull(r); fulls++;
         if (r.full.error < best.full.error) {
-          best = r;
-          say('  w' + r.lead + ' err=' + fmt(r.full.error, 4) + ' (new best)');
+          best = r;   // update min, but anchor stays 430/432/etc.
+          say('  w' + r.lead + ' err=' + fmt(r.full.error, 4) +
+              '  (was ' + fmt(anchorErr, 4) + ', new best)');
         }
       }
+      say('  best err=' + fmt(best.full.error, 4) + ' at lead=' + best.lead);
 
             return finish(best, reason);
     } catch (e) {
