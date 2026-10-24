@@ -217,10 +217,20 @@ function suggestDurationCap(altKm, apoKm, periKm) {
     if (!hard.ok) {
       return { score: S.failPenalty + hard.depth * 1000, ok: false, reasons: hard.reasons, parts: null };
     }
+    // Target eccentricity derived from target apo/peri (order-independent,
+    // matches guidance-blocks' apo=max, peri=min internally).
+    // Formula: e = (r_a - r_p) / (r_a + r_p)  where r_a = Re + apo, r_p = Re + peri.
+    // Circular target (apo==peri) → e = 0 (matches legacy config.target=0).
+    // Elliptical (350/320) → e ≈ 0.002237; scoring against 0 was penalizing
+    // the actual ~0.00224 by ~2609 points even when orbit was correct.
+    const _RE_KM = 6371;   // Earth mean radius (km), matches sim's EARTH_RADIUS/1000
+    const _r_a = _a.apo + _RE_KM;
+    const _r_p = _a.peri + _RE_KM;
+    const _eccTarget = (_r_a + _r_p) > 0 ? (_r_a - _r_p) / (_r_a + _r_p) : 0;
     const parts = {
       apogee:  orbitPenalty(m.apogeeKm - _a.apo),
       perigee: orbitPenalty(m.perigeeKm - _a.peri),
-      ecc:     deadzone(m.ecc, S.eccentricity.target, S.eccentricity.tol, S.eccentricity.scale, S.eccentricity.weight),
+      ecc:     deadzone(m.ecc, _eccTarget, S.eccentricity.tol, S.eccentricity.scale, S.eccentricity.weight),
       fuel:    -S.boosterFuelLeftKgWeight * (m.boosterFuelLeftKg || 0),
       time:    S.timeToDeploySWeight * (m.deployTimeS || 0),
       vrSoft:  0.01 * Math.max(0, (0 - (Number.isFinite(m.vrMin) ? m.vrMin : 0))), // tie-breaker only
