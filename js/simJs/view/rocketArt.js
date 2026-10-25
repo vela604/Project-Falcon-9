@@ -1233,11 +1233,37 @@ function _mixHex(h1, h2, t) {
 // shadow side and a lit edge so the lattice reads as depth, not a flat grid.
 // Edge-on (solid): a metal strip with a lit top face and a shaded underside, with the
 // lattice edges hinted as faint ticks. Lighting follows the body's sun/moon.
+// Front/back fin, continuous through the whole deploy. The fin is a lattice panel hinged
+// on its top edge; swinging out by phi (0 stowed .. PI/2 deployed) foreshortens the face
+// to span*cos(phi) while the panel's lower edge (thickness) grows into view as
+// thickness*sin(phi). Lattice and edge strip are both drawn at every angle, so the fin
+// never pops between "mesh" and "solid" — it just tips over, exactly like the real part.
+function drawGridFinFB(ctx, hingeY, w, spanPx, thickPx, cellPx, style, fbP, controlRad) {
+  if (!(w > 0) || !(spanPx > 0)) return;
+  const phi = Math.min(1, Math.max(0, fbP)) * Math.PI / 2;
+  const c = Math.cos(phi), s = Math.sin(phi);
+  const topY = -fbP * thickPx / 2;
+  const faceH = spanPx * c;
+  const kF = _hwK(0, -s * 0.9, c + 0.15);                 // face normal tips from the viewer toward the tail
+  const st = { fill: style.fill, stroke: style.stroke, kFace: kF };
+  if (faceH > 0.9) {
+    ctx.save();
+    ctx.translate(0, hingeY); if (controlRad) ctx.rotate(controlRad);
+    ctx.translate(0, topY); ctx.scale(1, c);               // foreshorten the lattice about the hinge edge
+    drawGridFinFace(ctx, 0, 0, -w / 2, 0, w, spanPx, cellPx, st, true, 0);
+    ctx.restore();
+  }
+  const stripH = thickPx * s + (faceH <= 0.9 ? thickPx * c : 0);
+  if (stripH > 0.4) {                                       // lower edge of the panel (its thickness)
+    drawGridFinFace(ctx, 0, hingeY, -w / 2, topY + Math.max(0, faceH), w, stripH, cellPx, st, false, controlRad);
+  }
+}
+
 function drawGridFinFace(ctx, pivotX, pivotY, topX, topY, wPx, hPx, cellPx, style, showMesh, rotateRad) {
   if (!(wPx > 0) || !(hPx > 0)) return;
   const fill = (style && style.fill) || '#8a9198';
   const stroke = (style && style.stroke) || '#48515e';
-  const kFace = _hwK(0, 0.12, 1);     // face-on panel: normal toward viewer
+  const kFace = (style && Number.isFinite(style.kFace)) ? style.kFace : _hwK(0, 0.12, 1);     // face-on panel: normal toward viewer
 
   ctx.save();
   ctx.translate(pivotX, pivotY);
@@ -1709,8 +1735,12 @@ const engineBell = (() => {
     const tipX = pivotX + legLength * Math.sin(currentSweep);
     const tipY = pivotY - legLength * Math.cos(currentSweep);
     
-    const cutoutApexX = pivotX + (tipX - pivotX) * 0.07;
-    const cutoutApexY = pivotY + (tipY - pivotY) * 0.07;
+    // A-frame opening: tall when stowed (skin only covers the upper leg, as on the real
+    // vehicle) and stays open once deployed. Visual only — foot/pivot geometry is untouched.
+    const _dpf = Math.min(1, p / 0.35);
+    const gapF = 0.30 + 0.30 * _dpf * _dpf * (3 - 2 * _dpf);
+    const cutoutApexX = pivotX + (tipX - pivotX) * gapF;
+    const cutoutApexY = pivotY + (tipY - pivotY) * gapF;
     
     const d1 = Math.hypot(tipX - j1x, tipY - jY) || 1;
     const u1x = (j1x - tipX) / d1,
@@ -1746,7 +1776,7 @@ const engineBell = (() => {
     // outward in-plane normal of the leg panel (rotates with the leg), plus a viewer tilt
     const kOut = _hwK(side * cs * 0.55, -side * sn * 0.55, 0.83);
     const kIn  = _hwK(-side * cs * 0.55, side * sn * 0.55, 0.83);
-    const panelHex = _mixHex('#d6dade', '#262a31', dps);
+    const panelHex = _mixHex('#c3c9d0', '#262a31', dps);
 
     if (p > 0.02) {
       const pmX = pivotX;
@@ -1775,51 +1805,50 @@ const engineBell = (() => {
       ctx.beginPath(); ctx.arc(pmX, pmY, W * 0.024, 0, Math.PI * 2); ctx.fill();
     }
 
-    // panel body — shaded across its width (outer edge catches the light)
+    // panel skin — shaded across its width (outer edge catches the light)
     const legGrad = ctx.createLinearGradient(j1x, jY, j2x + (tipApexX - j2x) * 0.35, jY + (tipApexY - jY) * 0.35);
     legGrad.addColorStop(0, _tint(panelHex, Math.min(1.25, kOut * 1.08)));
     legGrad.addColorStop(0.55, _tint(panelHex, kOut * 0.92));
     legGrad.addColorStop(1, _tint(panelHex, Math.max(0.12, kIn * 0.62)));
     ctx.fillStyle = legGrad;
-    ctx.strokeStyle = _tint(_mixHex('#59616c', '#000000', dps), Math.max(0.35, kOut), 0.95);
-    ctx.lineWidth = 1.1;
     ctx.beginPath();
     ctx.moveTo(j1x, jY);
-    ctx.lineTo(p1x, p1y);
-    ctx.quadraticCurveTo(tipX, tipY, p2x, p2y);
+    ctx.lineTo(tipApexX, tipApexY);
     ctx.lineTo(j2x, jY);
     ctx.lineTo(cutoutApexX, cutoutApexY);
     ctx.closePath();
     ctx.fill();
-    ctx.stroke();
 
-    // A-frame gap: the open triangle between the two struts (dark interior, depth)
-    ctx.fillStyle = 'rgba(8,10,13,0.55)';
+    // composite-skin joints: rungs between the two struts (they become the cross-braces
+    // of the open A-frame once the leg swings out)
+    ctx.strokeStyle = _tint(panelHex, kOut * 0.40, 0.6);
+    ctx.lineWidth = Math.max(0.6, W * 0.008);
     ctx.beginPath();
-    ctx.moveTo(j1x, jY);
-    ctx.lineTo(tipApexX, tipApexY);
-    ctx.lineTo(cutoutApexX, cutoutApexY);
-    ctx.closePath();
-    ctx.fill();
-
-    // panel seams (composite skin joints) running up the leg
-    ctx.strokeStyle = _tint(panelHex, kOut * 0.45, 0.55);
-    ctx.lineWidth = 0.6;
-    ctx.beginPath();
-    for (const f of [0.28, 0.5]) {
-      ctx.moveTo(j1x + (p1x - j1x) * 0.0 + (j2x - j1x) * f * 0.0, jY);
-      ctx.moveTo(j1x + (j2x - j1x) * f, jY);
-      ctx.lineTo(tipApexX + (p1x - tipApexX) * (0.5 - f * 0.5), tipApexY + (p1y - tipApexY) * (0.5 - f * 0.5));
+    for (let f = gapF + 0.07; f < 0.93; f += 0.13) {
+      ctx.moveTo(j1x + (tipApexX - j1x) * f, jY + (tipApexY - jY) * f);
+      ctx.lineTo(j2x + (tipApexX - j2x) * f, jY + (tipApexY - jY) * f);
     }
     ctx.stroke();
 
-    // rim: dark inner cut + lit outer edge
-    ctx.strokeStyle = _tint('#000000', 1, 0.9);
-    ctx.lineWidth = Math.max(1.1, W * 0.016);
-    ctx.beginPath(); ctx.moveTo(j1x, jY); ctx.lineTo(cutoutApexX, cutoutApexY); ctx.lineTo(j2x, jY); ctx.stroke();
-    ctx.strokeStyle = _tint('#ffffff', kOut, 0.12 + 0.30 * kOut);
-    ctx.lineWidth = 0.8;
-    ctx.beginPath(); ctx.moveTo(j1x, jY); ctx.lineTo(p1x, p1y); ctx.stroke();
+    // opening of the A-frame: dark recess (hull behind, ambient-occluded by the legs)
+    ctx.fillStyle = 'rgba(6,8,11,' + (0.36 - 0.12 * dps).toFixed(3) + ')';
+    ctx.beginPath(); ctx.moveTo(j1x, jY); ctx.lineTo(cutoutApexX, cutoutApexY); ctx.lineTo(j2x, jY); ctx.closePath(); ctx.fill();
+
+    // the two struts + foot cap as proud tubes: dark body, lit crown, dark seam
+    const strutW = Math.max(1.6, W * 0.046);
+    const strut = () => {
+      ctx.beginPath();
+      ctx.moveTo(j1x, jY); ctx.lineTo(tipApexX, tipApexY);
+      ctx.lineTo(j2x, jY);
+    };
+    ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    strut(); ctx.strokeStyle = _tint('#06080b', 1, 0.85); ctx.lineWidth = strutW + 1.4; ctx.stroke();
+    strut(); ctx.strokeStyle = _tint(_mixHex('#9aa1aa', '#1b1e24', dps), Math.max(0.28, kOut * 0.9)); ctx.lineWidth = strutW; ctx.stroke();
+    strut(); ctx.strokeStyle = _tint(_mixHex('#eef1f4', '#58606b', dps), Math.min(1.3, kOut * 1.12), 0.9); ctx.lineWidth = strutW * 0.38; ctx.stroke();
+    // base hinge blocks where the struts meet the hull
+    for (const hx of [j1x, j2x]) {
+      ctx.fillStyle = _tint('#15181d', Math.max(0.35, kOut)); ctx.beginPath(); ctx.arc(hx, jY, strutW * 0.62, 0, Math.PI * 2); ctx.fill();
+    }
 
     // upper ball-joint bolt visible on the stowed cap
     if (dps < 0.7) {
@@ -2403,7 +2432,7 @@ if (opts.gridFinType && opts.gridFinParams) {
   // B (ghost) first — same visual direction as F (see earlier note).
   ctx.save();
   ctx.globalAlpha = 0.15;
-  drawGridFinFace(ctx, 0, hingeY, -fbW / 2, fbTopY, fbW, fbH, cellPx, fbStyle, fbShowMesh, +fbControlRad);
+  drawGridFinFB(ctx, hingeY, fbW, spanPx, thicknessPx, cellPx, fbStyle, fbP, +fbControlRad);
   ctx.restore();
   
   // ---- L/R pair ----
@@ -2482,7 +2511,7 @@ drawGridFinFace(ctx, rightHingeX, hingeY, 0, -thicknessPx / 2, spanPx, thickness
 
   // F drawn last (front, opaque).
   drawFrontHingePod();
-  drawGridFinFace(ctx, 0, hingeY, -fbW / 2, fbTopY, fbW, fbH, cellPx, fbStyle, fbShowMesh, +fbControlRad);
+  drawGridFinFB(ctx, hingeY, fbW, spanPx, thicknessPx, cellPx, fbStyle, fbP, +fbControlRad);
 }
   
   
