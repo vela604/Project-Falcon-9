@@ -1902,8 +1902,12 @@ const engineBell = (() => {
     const dp = Math.min(1, Math.max(0, p / 0.35)); const dps = dp * dp * (3 - 2 * dp);
     const cs = Math.cos(currentSweep), sn = Math.sin(currentSweep);
     // outward in-plane normal of the leg panel (rotates with the leg), plus a viewer tilt
-    const kOut = _hwK(side * cs * 0.55, -side * sn * 0.55, 0.83);
-    const kIn  = _hwK(-side * cs * 0.55, side * sn * 0.55, 0.83);
+    // The OUTER face of the leg always faces away from the hull, so the leg on the sun's side
+    // stays lit (the old normal rotated with the sweep and flipped past 90 deg, lighting the
+    // wrong leg once deployed). Deploying tips that face slightly skyward.
+    const lift = 0.40 * Math.min(1, Math.abs(currentSweep) / (Math.PI / 2));
+    const kOut = _hwK(side * 0.55, lift, 0.83);
+    const kIn  = _hwK(-side * 0.55, -lift * 0.5, 0.83);
     const panelHex = _mixHex('#d6dade', '#262a31', dps);
 
     if (p > 0.02) {
