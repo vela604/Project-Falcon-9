@@ -210,27 +210,9 @@ function _thermalTickOneMember(b, m, idx, dt) {
   const members = Array.isArray(b.members) ? b.members : [];
   const heatingScale = members.length ? _fairingShieldFactor(m, members) : 1.0;
 
-  let Teq = (typeof skinEquilibriumK === 'function')
+  const Teq = (typeof skinEquilibriumK === 'function')
     ? skinEquilibriumK(alt_m, speedRel, heatingScale) : 288.15;
-  // Cryo propellant boil-off cooling. A fueled tank CANNOT reach the raw
-  // aeroheated equilibrium while LOX / RP-1 remain on board: the fuel
-  // actively pulls the tank temp toward its own reservoir value (~200 K
-  // lumped). Cooling weight scales linearly with fuel fraction: full tank
-  // = 85% pull, empty = 0%. This is why a discarded booster (empty) reaches
-  // full reentry temps (~1400 K) while a fueled stage stays cold.
-  {
-    const _maxFuel = (typeof memberMaxFuel === 'function') ? memberMaxFuel(m, null) : 0;
-    if (_maxFuel > 0) {
-      const _memFuel = (Array.isArray(b.memberFuel) && Number.isFinite(b.memberFuel[idx]))
-        ? b.memberFuel[idx] : 0;
-      const _fuelFrac = Math.max(0, Math.min(1, _memFuel / _maxFuel));
-      if (_fuelFrac > 0.15) {
-        const _CRYO_K = 200;
-        const _w = _fuelFrac - 0.15;  // deadband: residual <15% = no cooling (dry upper tank)
-        Teq = Teq * (1 - _w) + _CRYO_K * _w;
-      }
-    }
-  }
+
 
   // ── Thermal debug (once per member) ────────────────────────────────
   if (typeof window !== 'undefined') {
