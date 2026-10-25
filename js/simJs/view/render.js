@@ -791,7 +791,7 @@ function drawOceanArea() {
 // and replayed with one transform, so per-frame cost is a few dozen strokes.
 // Lit by SimLighting (pseudo-body at the pad) -> follows sun/moon/ambient.
 // ============================================================================
-const _PAD = { geo: null, key: '', body: null, glow: null, glowRed: null };
+const _PAD = { geo: null, key: '', body: null, glow: null, glowRed: null, fireK: 0, fireT: 0, fireStamp: -1e9 };
 
 class _PadPath {            // Path2D stand-in for engines without Path2D in workers
   constructor() { this.o = []; }
@@ -1069,6 +1069,9 @@ function drawLaunchPad() {
   if (tiltTarget > towerTilt) towerTilt = Math.min(tiltTarget, towerTilt + tiltRate * dtReal);
   else towerTilt = Math.max(tiltTarget, towerTilt - tiltRate * dtReal);
   const e = towerTilt * towerTilt * (3 - 2 * towerTilt);        // eased
+  // trench glow follows the jet landing on the deflector (smoothed; holds while paused)
+  const fTgt = Math.abs(state.simTime - _PAD.fireStamp) < 0.35 ? _PAD.fireT : 0;
+  _PAD.fireK += (fTgt - _PAD.fireK) * Math.min(1, dtReal * (fTgt > _PAD.fireK ? 8 : 2.5));
   const tiltA = e * 14 * Math.PI / 180;
 
   // Lighting at the pad (pseudo-body: body frame x = east, y = up).
@@ -1088,6 +1091,32 @@ function drawLaunchPad() {
 
   _padDraw(ctx, g.back, palFar, mpp);
   _padDraw(ctx, g.mid, pal, mpp);
+
+  // Trench heat: the deflector and chamber glow while the jet is on them (emitter sets fireT).
+  if (_PAD.fireK > 0.01) {
+    const k = Math.min(1, _PAD.fireK) * (0.93 + 0.07 * Math.sin(nowT * 0.031));
+    ctx.save();
+    ctx.beginPath();                                                      // clip to the flame hole + chamber
+    ctx.moveTo(-3.2, 0); ctx.lineTo(3.2, 0); ctx.lineTo(3.2, 2.4); ctx.lineTo(9, 2.4); ctx.lineTo(9, 13);
+    ctx.lineTo(-9, 13); ctx.lineTo(-9, 2.4); ctx.lineTo(-3.2, 2.4); ctx.closePath(); ctx.clip();
+    ctx.globalCompositeOperation = 'lighter';
+    const rg = ctx.createRadialGradient(0, 3.2, 0, 0, 3.2, 17);
+    rg.addColorStop(0, 'rgba(255,200,110,' + (0.80 * k).toFixed(3) + ')');
+    rg.addColorStop(0.45, 'rgba(255,120,40,' + (0.38 * k).toFixed(3) + ')');
+    rg.addColorStop(1, 'rgba(255,70,10,0)');
+    ctx.fillStyle = rg; ctx.fillRect(-10, -1, 20, 15);
+    ctx.strokeStyle = 'rgba(255,215,140,' + (0.85 * k).toFixed(3) + ')';   // white-hot wedge faces
+    ctx.lineWidth = Math.max(0.35, mpp * 1.2); ctx.lineJoin = 'round';
+    ctx.beginPath(); ctx.moveTo(-8.6, 12.2); ctx.lineTo(0, 3); ctx.lineTo(8.6, 12.2); ctx.stroke();
+    ctx.restore();
+    ctx.save();                                                           // light pooled on the table / hardstand
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.translate(0, -0.4); ctx.scale(1, 0.12);
+    const pg = ctx.createRadialGradient(0, 0, 0, 0, 0, 24);
+    pg.addColorStop(0, 'rgba(255,170,80,' + (0.55 * k).toFixed(3) + ')'); pg.addColorStop(1, 'rgba(255,110,30,0)');
+    ctx.fillStyle = pg; ctx.beginPath(); ctx.arc(0, 0, 24, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  }
 
   // soot / scorch on the hardstand around the mount (centre-weighted)
   {
@@ -1386,6 +1415,39 @@ const GROUND_FX = {
   TRAIL_MAX_ALT_M: 2500,  // exhaust vapour trail fades out above this
 };
 
+// Flame trench under the launch table (keep in sync with _padBuild): flame hole
+// in the table, chamber below it, V deflector with its apex under the nozzles.
+// The plume is clipped to  open air  U  trench void  -  deflector wedge, so it
+// really goes down the hole, splits on the wedge and flows down both slopes.
+const PAD_TRENCH = {
+  HOLE_HALF_W: 3.2, TABLE_H: 2.4, CH_HALF_W: 9, CH_DEPTH: 13,
+  APEX_Y: -3.0, WEDGE_HALF_W: 8.6, WEDGE_FOOT_Y: -12.2,
+  ACTIVE_HALF_W: 4.5,                      // |sE| below which the jet lands on the deflector
+  SLOPE_RAD: Math.atan2(9.2, 8.6), SLOPE_LEN: Math.hypot(8.6, 9.2),
+};
+
+// Builds the clip path in the BODY frame (origin = hull base; ground tangent gt,
+// ground normal gu, both in canvas px). sE = body offset east of the pad centre,
+// altBase = hull-base height over the pad surface (both metres).
+function _padTrenchClipPath(c, gtx, gty, gux, guy, sE, altBase, mpp) {
+  const T = (X, Y) => { const a = (X - sE) / mpp, b = (Y - altBase) / mpp; return [a * gtx + b * gux, a * gty + b * guy]; };
+  const poly = (pts, sign) => {
+    const P = pts.map(q => T(q[0], q[1]));
+    let A = 0;
+    for (let i = 0; i < P.length; i++) { const a = P[i], b = P[(i + 1) % P.length]; A += a[0] * b[1] - b[0] * a[1]; }
+    if (A * sign < 0) P.reverse();
+    c.moveTo(P[0][0], P[0][1]);
+    for (let i = 1; i < P.length; i++) c.lineTo(P[i][0], P[i][1]);
+    c.closePath();
+  };
+  const t = PAD_TRENCH, G = 4e4 * mpp, h = t.HOLE_HALF_W, w = t.CH_HALF_W;
+  c.beginPath();
+  poly([[-G, 0], [G, 0], [G, G], [-G, G]], 1);                                       // open air above the pad top
+  poly([[-h, 0], [h, 0], [h, -t.TABLE_H], [w, -t.TABLE_H], [w, -t.CH_DEPTH],        // flame hole + chamber
+        [-w, -t.CH_DEPTH], [-w, -t.TABLE_H], [-h, -t.TABLE_H]], 1);
+  poly([[0, t.APEX_Y], [t.WEDGE_HALF_W, t.WEDGE_FOOT_Y], [-t.WEDGE_HALF_W, t.WEDGE_FOOT_Y]], -1);   // deflector (solid)
+}
+
 function _gfxWrap(a) {
   while (a > Math.PI) a -= 2 * Math.PI;
   while (a < -Math.PI) a += 2 * Math.PI;
@@ -1541,7 +1603,8 @@ function _gfxEmitBody(body, dt) {
   const th = body.theta - Math.atan2(-body.rx, body.ry);
   const g = (gc ? gs / gc : 0) * Math.PI / 180;
   const psi = th - g, cosPsi = Math.cos(psi);
-  const surfAlt = gi.onPad ? -Math.max(GROUND_FX.PAD_DEPTH_M, bellM + 1) : 0;
+  const tr = gi.onPad && Math.abs(gi.sE) < PAD_TRENCH.ACTIVE_HALF_W;          // jet lands on the deflector
+  const surfAlt = tr ? -Math.max(-PAD_TRENCH.APEX_Y, bellM + 0.4) : 0;
   const hN = gi.altBase - bellM * cosPsi - surfAlt;           // nozzle-exit height over surface (m)
   const Lhit = cosPsi > 0.05 ? Math.max(0, hN) / cosPsi : Infinity;
   const contact = Math.max(0, Math.min(1, 1 - Lhit / flameLenM));
@@ -1550,6 +1613,7 @@ function _gfxEmitBody(body, dt) {
   const sI = gi.sE + (bellM + Math.min(Lhit, flameLenM)) * Math.sin(psi);   // impact point along surface
   const sc = thr * F;
   const rnd = Math.random;
+  if (tr) { _PAD.fireT = contact * Math.min(1, thr * 1.1); _PAD.fireStamp = state.simTime; }   // drives trench glow
 
   if (kd > 0.02) {
     // Fast, low, spreading blast cloud (the "ground surge").
@@ -1560,8 +1624,8 @@ function _gfxEmitBody(body, dt) {
       const sp = (28 + rnd() * 52) * (0.45 + 0.75 * kd) * (0.6 + 0.4 * thr);
       _gfxSpawn({
         k: _gfxPickKind(gi.onPad, rnd()),
-        s: sI + side * rnd() * Wm * 0.5, y: r0 * 0.45,
-        vs: side * sp + Math.sin(psi) * 8, vy: 1 + rnd() * 5,
+        s: tr ? sI + side * (Wm * 0.5 + 2.2 + rnd() * 2.5) : sI + side * rnd() * Wm * 0.5, y: r0 * 0.45,
+        vs: side * sp * (tr ? 0.62 : 1) + Math.sin(psi) * 8, vy: 1 + rnd() * 5 + (tr ? 5 + rnd() * 9 : 0),
         r: r0, gr: 5 + rnd() * 5, drag: 0.28 + rnd() * 0.14, vdrag: 0.6, buoy: 0.6 + rnd() * 0.8,
         age: 0, life: 12 + rnd() * 12, a0: 0.28 + rnd() * 0.24,
         glow: 0.6 + 0.4 * contact, front: rnd() < 0.3, ground: true,
@@ -2193,22 +2257,29 @@ if (body.members && body.members.length && typeof getEngineBellExitY_m === 'func
   // Surface = pad apron (deflector level) when over the pad, Earth otherwise.
   // Built in the body frame, so it survives the gimbal rotate/translate below.
   let _gHBasePx = null;   // hull-base height above the surface (px); null = no ground nearby
+  let _trMode = false;    // jet is landing on the flame deflector (pad trench)
   if (camera.mode !== 'planet') {
     const _gi = _groundSurfaceInfo(body);
     if (_gi.altBase < 400) {
       const _bellM = bellExitY_px * mpp;
-      const _surfAlt = _gi.onPad ? -Math.max(GROUND_FX.PAD_DEPTH_M, _bellM + 1.0) : 0;
+      _trMode = _gi.onPad && Math.abs(_gi.sE) < PAD_TRENCH.ACTIVE_HALF_W;
+      const _surfAlt = _trMode ? -Math.max(-PAD_TRENCH.APEX_Y, _bellM + 0.4) : 0;
       _gHBasePx = (_gi.altBase - _surfAlt) / mpp;
       const gux = Math.sin(visualTheta), guy = -Math.cos(visualTheta);   // ground normal (up)
       const gtx = Math.cos(visualTheta), gty = Math.sin(visualTheta);    // ground tangent
-      const gcx = -_gHBasePx * gux, gcy = -_gHBasePx * guy;              // point on the ground line
-      const GB = 40000;
-      ctx.beginPath();
-      ctx.moveTo(gcx - gtx * GB, gcy - gty * GB);
-      ctx.lineTo(gcx + gtx * GB, gcy + gty * GB);
-      ctx.lineTo(gcx + gtx * GB + gux * GB, gcy + gty * GB + guy * GB);
-      ctx.lineTo(gcx - gtx * GB + gux * GB, gcy - gty * GB + guy * GB);
-      ctx.closePath();
+      if (_gi.onPad) {
+        // pad: open air + flame hole/trench - deflector wedge (real geometry)
+        _padTrenchClipPath(ctx, gtx, gty, gux, guy, _gi.sE, _gi.altBase, mpp);
+      } else {
+        const gcx = -_gHBasePx * gux, gcy = -_gHBasePx * guy;            // point on the ground line
+        const GB = 40000;
+        ctx.beginPath();
+        ctx.moveTo(gcx - gtx * GB, gcy - gty * GB);
+        ctx.lineTo(gcx + gtx * GB, gcy + gty * GB);
+        ctx.lineTo(gcx + gtx * GB + gux * GB, gcy + gty * GB + guy * GB);
+        ctx.lineTo(gcx - gtx * GB + gux * GB, gcy - gty * GB + guy * GB);
+        ctx.closePath();
+      }
       ctx.clip();
     }
   }
@@ -2492,13 +2563,14 @@ if (isSingleNozzle) {
       const baseW = W * plumeScale * widthMul;
       const widthHere = baseW * (1.0 + 1.7 * trailMul * Math.min(1, Lhit / flameLen));
       const Ls = baseW * (2.4 + 7.0 * contact) * (0.7 + 0.5 * totalThrottle);
-      const th = Ls * (0.10 + 0.10 * contact);
+      const LsE = _trMode ? Math.min(Ls, PAD_TRENCH.SLOPE_LEN / mpp) : Ls;   // sheet runs down the wedge slope
+      const th = LsE * (0.10 + 0.10 * contact);
 
       const sheet = (side, len, thick, seed) => {
         const segs = 12;
         ctx.beginPath();
         ctx.moveTo(0, 0);
-        ctx.lineTo(0, -thick);
+        ctx.lineTo(0, -thick * (_trMode ? 0.3 : 1));          // thin at the apex so it never pokes above the table
         for (let i = 1; i <= segs; i++) {
           const f = i / segs;
           const env = Math.pow(1 - f, 0.55);
@@ -2526,6 +2598,7 @@ if (isSingleNozzle) {
 
       // warm light pooled on the surface around the impact
       ctx.globalCompositeOperation = 'lighter';
+      if (!_trMode) {
       ctx.save();
       ctx.scale(1, 0.16);
       const pool = ctx.createRadialGradient(0, 0, 0, 0, 0, Ls * 1.3);
@@ -2534,14 +2607,18 @@ if (isSingleNozzle) {
       ctx.fillStyle = pool;
       ctx.beginPath(); ctx.arc(0, 0, Ls * 1.3, 0, Math.PI * 2); ctx.fill();
       ctx.restore();
+      }
 
       for (const side of [-1, 1]) {
         const seed = side > 0 ? 1.3 : 4.1;
+        ctx.save();
+        if (_trMode) ctx.rotate(side * PAD_TRENCH.SLOPE_RAD);          // follow the V deflector downwards
         ctx.globalCompositeOperation = 'source-over';
-        fillSheet(side, Ls * 1.25, th * 1.6, seed + 9, PAL.g1_hi, PAL.g1_mid, PAL.g1_lo, 14);   // hazy outer
+        fillSheet(side, LsE * 1.25, th * 1.6, seed + 9, PAL.g1_hi, PAL.g1_mid, PAL.g1_lo, 14);   // hazy outer
         ctx.globalCompositeOperation = 'lighter';
-        fillSheet(side, Ls, th, seed, PAL.g2_hi, PAL.g2_mid, PAL.g2_lo, 8);                    // body
-        fillSheet(side, Ls * 0.62, th * 0.5, seed + 3, PAL.g3_hi, PAL.g3_mid, PAL.g3_lo, 4);   // hot core
+        fillSheet(side, LsE, th, seed, PAL.g2_hi, PAL.g2_mid, PAL.g2_lo, 8);                    // body
+        fillSheet(side, LsE * 0.62, th * 0.5, seed + 3, PAL.g3_hi, PAL.g3_mid, PAL.g3_lo, 4);   // hot core
+        ctx.restore();
       }
 
       // bright stagnation spot where the plume lands
