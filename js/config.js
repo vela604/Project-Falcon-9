@@ -102,6 +102,9 @@ const CONFIG = {
   // Earth rotation — sidereal day, rad/s. Real value: 2π / 86164.0905 s.
   EARTH_OMEGA: 7.2921159e-5, // rad/s
   SUN_DECLINATION_DEG: 23.44,   // sun elevation out of the orbital plane (3-D light for 2-D shading)
+  MOON_SYNODIC_DAYS: 29.530589,   // new moon -> new moon (lighting model only)
+  MOON_PHASE0_DEG: 135,           // Sun-Moon elongation at T+0 (0 new, 180 full)
+  MOON_DECLINATION_DEG: 18,       // moon's elevation out of the orbital plane (3-D light)
   
   // Where on the Earth circle the launch site sits, measured CCW from
   // the +y axis (i.e. "up" at t=0). Change this to move the site around

@@ -65,6 +65,39 @@ const SimLighting = (function () {
   function sunPhi() { return phi0() - (S.hour0 - 12) * Math.PI / 12; }
   function sunDir() { const p = sunPhi(); return { x: Math.sin(p), y: Math.cos(p) }; }
 
+  // ---- Moon (lighting model only — NOT a gravity body) ---------------------
+  // The Moon is a second parallel light source in the same inertial 2-D frame.
+  // Its elongation from the Sun (psi: 0 = new, PI = full) advances with the
+  // synodic month, starting from CONFIG.MOON_PHASE0_DEG at T+0:
+  //        psi(t) = psi0 + 2*PI * t / (MOON_SYNODIC_DAYS * 86400)
+  // Illuminated fraction k = (1 - cos psi) / 2. Moonlight strength follows an
+  // opposition-surge-like k^2 law (a half moon is far dimmer than a full one).
+  // Like the Sun it sits out of the orbital plane by MOON_DECLINATION_DEG.
+  const _cfg = (k, d) => (typeof CONFIG !== 'undefined' && CONFIG[k] != null) ? CONFIG[k] : d;
+  function moonElong() {
+    const T = _cfg('MOON_SYNODIC_DAYS', 29.530589) * 86400;
+    return _cfg('MOON_PHASE0_DEG', 135) * Math.PI / 180 + TAU * simT() / T;
+  }
+  function moonPhi() { return sunPhi() + moonElong(); }
+  function moonDir() { const p = moonPhi(); return { x: Math.sin(p), y: Math.cos(p) }; }
+  function moonIllum() { return (1 - Math.cos(moonElong())) / 2; }
+  function moonSinElev(x, y) {
+    const r = Math.hypot(x, y) || 1, m = moonDir();
+    return (x * m.x + y * m.y) / r;
+  }
+  function moonPhaseName() {
+    const k = moonIllum(), e = ((moonElong() % TAU) + TAU) % TAU, waxing = e < Math.PI;
+    if (k < 0.04) return 'New';
+    if (k > 0.96) return 'Full';
+    if (Math.abs(k - 0.5) < 0.06) return waxing ? 'First quarter' : 'Last quarter';
+    return (k < 0.5 ? (waxing ? 'Waxing crescent' : 'Waning crescent') : (waxing ? 'Waxing gibbous' : 'Waning gibbous'));
+  }
+  function setMoonPhase(deg) {    // set the CURRENT elongation (deg); T+0 value is adjusted to match
+    if (!Number.isFinite(deg) || typeof CONFIG === 'undefined') return;
+    const T = _cfg('MOON_SYNODIC_DAYS', 29.530589) * 86400;
+    CONFIG.MOON_PHASE0_DEG = deg - (TAU * simT() / T) * 180 / Math.PI;
+  }
+
   // sin(elevation) of the Sun at an inertial position (x,y), local horizontal.
   function sinElev(x, y) {
     const r = Math.hypot(x, y) || 1, s = sunDir();
@@ -196,6 +229,36 @@ const SimLighting = (function () {
     ctx.restore();
   }
 
+  // Planet view: moon disc with its true phase, at the screen edge in the moon's direction.
+  function drawMoon(ctx, cv) {
+    const cam = cameraWorldPosition(), m = moonDir(), K = 1000;
+    const a = worldToScreen(cam.x, cam.y), b = worldToScreen(cam.x + m.x * K, cam.y + m.y * K);
+    let dx = b[0] - a[0], dy = b[1] - a[1]; const l = Math.hypot(dx, dy) || 1; dx /= l; dy /= l;
+    const ec = worldToScreen(0, 0), earthPx = CONFIG.EARTH_RADIUS / metersPerPixel();
+    const x = ec[0] + dx * (earthPx + 70), y = ec[1] + dy * (earthPx + 70), r = 11;
+    if (x < -r || y < -r || x > cv.width + r || y > cv.height + r) return;
+    // Phase: lit side faces the Sun. Terminator is an ellipse of half-width r*|cos psi|.
+    const sd = sunScreenDir(), sx = sd[0], sy = sd[1];   // parallel rays: Sun direction as seen on screen
+    const psi = moonElong(), c = Math.cos(psi);
+    ctx.save();
+    ctx.translate(x, y); ctx.rotate(Math.atan2(sy, sx));
+    ctx.beginPath(); ctx.arc(0, 0, r, 0, TAU); ctx.clip();
+    ctx.fillStyle = 'rgba(30,34,48,0.9)'; ctx.fillRect(-r, -r, 2 * r, 2 * r);       // dark limb
+    ctx.fillStyle = '#e4e6ec';
+    ctx.beginPath();
+    ctx.arc(0, 0, r, -Math.PI / 2, Math.PI / 2, false);                            // lit half (toward +x = Sun)
+    ctx.ellipse(0, 0, Math.abs(c) * r, r, 0, Math.PI / 2, -Math.PI / 2, c > 0);    // terminator
+    ctx.fill();
+    ctx.restore();
+    ctx.save();
+    ctx.strokeStyle = 'rgba(190,200,225,0.35)'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.arc(x, y, r, 0, TAU); ctx.stroke();
+    ctx.fillStyle = 'rgba(200,210,235,0.8)'; ctx.font = 'bold 10px "JetBrains Mono", monospace';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+    ctx.fillText('MOON ' + Math.round(moonIllum() * 100) + '%', x, y + r + 4);
+    ctx.restore();
+  }
+
   // Called right after drawSky().
   function drawBackdrop(ctx, cv, altitude) {
     if (!S.enabled) return;
@@ -210,7 +273,7 @@ const SimLighting = (function () {
     // reads as a UI element, gets clipped at screen edges, and appears
     // to orbit as the user drags the time slider. Sky color + body
     // shading already convey sun direction correctly in local view.
-    if (isPlanet()) drawSun(ctx, cv, dens, se);
+    if (isPlanet()) { drawSun(ctx, cv, dens, se); drawMoon(ctx, cv); }
   }
 
   // ---- Earth: day / night -------------------------------------------------
@@ -236,7 +299,9 @@ const SimLighting = (function () {
     if (R > 2e4) {
       // Zoomed in: the terminator is far outside the view, colour is uniform.
       const se = _tsm('earthSE', camSE()), day = groundDay(se), tw = twilight(se);
-      ctx.fillStyle = `rgba(2,5,14,${(0.62 * (1 - day)).toFixed(3)})`;
+      const cw = cameraWorldPosition(), cp = Math.hypot(cw.x, cw.y) < 1000 ? launchSiteWorldPosition(simT()) : cw;
+      const mlit = moonIllum() * moonIllum() * clamp01(moonSinElev(cp.x, cp.y) * 4 + 0.3);   // moonlit night ground
+      ctx.fillStyle = `rgba(2,5,14,${(0.62 * (1 - day) * (1 - 0.40 * mlit)).toFixed(3)})`;
       ctx.fillRect(0, 0, cv.width, cv.height);
       if (tw > 0.01) { ctx.fillStyle = `rgba(255,120,50,${(0.10 * tw).toFixed(3)})`; ctx.fillRect(0, 0, cv.width, cv.height); }
     } else {
@@ -275,8 +340,8 @@ const SimLighting = (function () {
   // Light direction in the ROCKET frame (lx: across, +right; ly: along nose),
   // sun intensity on the body, and ambient fill. Consumed by rocketArt.js
   // through the global ROCKET_LIGHT.
-  function litFactor(body) {
-    const s = sunDir(), R = CONFIG.EARTH_RADIUS;
+  function litFactor(body, dirOverride) {
+    const s = dirOverride || sunDir(), R = CONFIG.EARTH_RADIUS;
     const along = body.rx * s.x + body.ry * s.y;
     if (along > 0) return 1;
     const perp = Math.abs(body.rx * s.y - body.ry * s.x);        // distance from Earth-centre to sun ray
@@ -300,7 +365,7 @@ const SimLighting = (function () {
     if (!S.enabled || !body) return null;
     let o = _bodyL.get(body);
     if (!o) {
-      o = { lx: 0, ly: 1, lz: 0.4, lit: 1, amb: 0.3, tint: 0, sm: Object.create(null), reg: new Map(), regPrev: new Map() };
+      o = { lx: 0, ly: 1, lz: 0.4, mx: 0, my: 1, mz: 0.3, moon: 0, lit: 1, amb: 0.3, tint: 0, sm: Object.create(null), reg: new Map(), regPrev: new Map() };
       _bodyL.set(body, o);
     }
     o.regPrev = o.reg; o.reg = new Map();      // profile registry rolls over once per body per frame
@@ -318,6 +383,17 @@ const SimLighting = (function () {
     o.lx = (s.x * Math.cos(th) + s.y * Math.sin(th)) * cd;
     o.ly = (-s.x * Math.sin(th) + s.y * Math.cos(th)) * cd;
     o.lz = Math.sin(decl);
+    // Moon: same frame transform, own declination; blocked by Earth like the Sun
+    // (litFactor with the moon direction) and washed out by daylight in-atmosphere.
+    const md = moonDir();
+    let mdecl = _cfg('MOON_DECLINATION_DEG', 18) * Math.PI / 180;
+    mdecl = Math.max(0, Math.min(1.2, mdecl));
+    const mcd = Math.cos(mdecl), k = moonIllum();
+    o.mx = (md.x * Math.cos(th) + md.y * Math.sin(th)) * mcd;
+    o.my = (-md.x * Math.sin(th) + md.y * Math.cos(th)) * mcd;
+    o.mz = Math.sin(mdecl);
+    const mvis = _smBody(o, 'mvis', litFactor(body, md));
+    o.moon = _smBody(o, 'moon', 0.24 * k * k * mvis * (1 - dens * day));
     o.lit = lit;
     o.amb = _smBody(o, 'amb', Math.min(0.75, amb));
     o.tint = _smBody(o, 'tint', (1 - smooth(0.02, 0.40, se)) * smooth(0.01, 0.25, dens));
@@ -455,6 +531,7 @@ const SimLighting = (function () {
     const lx = q.lx, ly = q.ly, lz = q.lz, lit = q.lit, amb = q.amb, tint = q.tint, spec = _fx();
     // half vector (V = +z)
     const hl = Math.hypot(lx, ly, lz + 1) || 1, hx = lx / hl, hy = ly / hl, hz = (lz + 1) / hl;
+    const mx = q.mx, my = q.my, mz = q.mz, moon = q.moon > 0.01 ? q.moon : 0;
     const wr = 255, wg = Math.round(255 - 60 * tint), wb = Math.round(255 - 150 * tint);
     for (let j = 0; j < R; j++) {
       const a = prof.aHi - (j + 0.5) / R * span;
@@ -472,13 +549,20 @@ const SimLighting = (function () {
         let sh = 1;
         if (D > 0 && lit > 0.02 && occ.list.length && _shadowed(occ, cx + u * r, A0 + a, cz + v * r, lx, ly, lz)) sh = 0;
         D *= sh;
-        const B = amb + lit * (1 - amb) * D;
+        let Dm = 0;
+        if (moon > 0) {
+          Dm = nx * mx + ny * my + nz * mz; if (Dm < 0) Dm = 0;
+          if (Dm > 0 && occ.list.length && _shadowed(occ, cx + u * r, A0 + a, cz + v * r, mx, my, mz)) Dm = 0;
+        }
+        const B = Math.min(1, amb + lit * (1 - amb) * D + moon * Dm * (1 - amb));
         let ab = 1 - B; ab = ab < 0 ? 0 : ab > 0.82 ? 0.82 : ab;
         let NH = nx * hx + ny * hy + nz * hz; if (NH < 0) NH = 0;
         let ah = D > 0 ? lit * sh * 0.30 * spec * Math.pow(NH, 28) : 0; if (ah > 0.6) ah = 0.6;
         const aw = tint * lit * D * 0.16;
-        // straight-alpha "over": black, then warm, then white
+        const ac = moon * Dm * 0.45 * (1 - Math.min(1, lit * D * 2));      // cool moonlight sheen, only where the Sun isn't
+        // straight-alpha "over": black, then cool (moon), warm, then white
         let ca = ab, cr = 0, cg = 0, cb = 0;
+        if (ac > 0.004) { const oa = ac + ca * (1 - ac); cr = (150 * ac) / oa; cg = (185 * ac) / oa; cb = (255 * ac) / oa; ca = oa; }
         if (aw > 0.004) { const oa = aw + ca * (1 - aw); cr = (255 * aw + cr * ca * (1 - aw)) / oa; cg = (150 * aw + cg * ca * (1 - aw)) / oa; cb = (70 * aw + cb * ca * (1 - aw)) / oa; ca = oa; }
         if (ah > 0.004) { const oa = ah + ca * (1 - ah); cr = (wr * ah + cr * ca * (1 - ah)) / oa; cg = (wg * ah + cg * ca * (1 - ah)) / oa; cb = (wb * ah + cb * ca * (1 - ah)) / oa; ca = oa; }
         const o = (j * C + i) * 4;
@@ -492,7 +576,10 @@ const SimLighting = (function () {
   function _quant(RL) {
     const lx = Math.round(RL.lx * 24) / 24, ly = Math.round(RL.ly * 24) / 24, lz = RL.lz;
     const n = Math.hypot(lx, ly, lz) || 1;
-    return { lx: lx / n, ly: ly / n, lz: lz / n, lit: Math.round(RL.lit * 12) / 12,
+    const mx = Math.round(RL.mx * 24) / 24, my = Math.round(RL.my * 24) / 24, mz = RL.mz;
+    const mn = Math.hypot(mx, my, mz) || 1;
+    return { mx: mx / mn, my: my / mn, mz: mz / mn, moon: Math.round(RL.moon * 48) / 48,
+             lx: lx / n, ly: ly / n, lz: lz / n, lit: Math.round(RL.lit * 12) / 12,
              amb: Math.round(RL.amb * 24) / 24, tint: Math.round(RL.tint * 12) / 12 };
   }
 
@@ -503,7 +590,8 @@ const SimLighting = (function () {
     const R = Math.max(6, Math.min(96, Math.round(C * span / (2 * prof.ext))));
     const q = _quant(RL), occ = _occluders(RL);
     const key = [prof.key, C, R, Math.round(cx * 2), Math.round(cz * 2), Math.round(A0 * 2),
-      Math.round(q.lx * 24), Math.round(q.ly * 24), Math.round(q.lit * 12), Math.round(q.amb * 24), Math.round(q.tint * 12), occ.hash].join('~');
+      Math.round(q.lx * 24), Math.round(q.ly * 24), Math.round(q.lit * 12), Math.round(q.amb * 24), Math.round(q.tint * 12),
+      q.moon > 0.01 ? Math.round(q.mx * 24) + ',' + Math.round(q.my * 24) + ',' + Math.round(q.moon * 48) : 'nm', occ.hash].join('~');
     let e = _mapCache.get(key);
     if (e) { _mapCache.delete(key); _mapCache.set(key, e); return e; }
     const cv = _renderMap({ prof, C, R, RL, occ, cx, cz, A0, q });
@@ -588,7 +676,7 @@ const SimLighting = (function () {
     if (_ui.chipTime) _ui.chipTime.textContent = txt;
     if (_ui.chipIcon) _ui.chipIcon.textContent = ICON[ph] || '☀';
     if (_ui.value) _ui.value.textContent = txt;
-    if (_ui.phase) _ui.phase.textContent = `${ICON[ph]} ${ph} · sun ${(Math.asin(Math.max(-1, Math.min(1, se))) * 180 / Math.PI).toFixed(0)}°`;
+    if (_ui.phase) _ui.phase.textContent = `${ICON[ph]} ${ph} · sun ${(Math.asin(Math.max(-1, Math.min(1, se))) * 180 / Math.PI).toFixed(0)}° · ☾ ${Math.round(moonIllum() * 100)}% ${moonPhaseName()}`;
     if (_ui.launch) _ui.launch.textContent = 'T+0 = ' + fmt(S.hour0);
     if (_ui.slider && !_dragging) _ui.slider.value = Math.round(h * 60) % 1440;
   }
@@ -630,6 +718,7 @@ const SimLighting = (function () {
     getState: () => ({ enabled: S.enabled, assist: S.assist, hour0: S.hour0 }),
     setState: o => { if (!o) return; if (Number.isFinite(o.hour0)) S.hour0 = o.hour0; S.enabled = !!o.enabled; S.assist = !!o.assist; },
     padHour, setPadHour, sunDir, sinElev, litFactor, rocketLight,
+    moonDir, moonIllum, moonSinElev, moonPhaseName, setMoonPhase,
     drawShadeSlice, drawBellShade,
     skyColors, drawBackdrop, shadeEarth, drawLocator, tickUI: refreshUI,
   };
