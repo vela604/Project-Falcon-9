@@ -519,6 +519,8 @@ const SimLighting = (function () {
     return false;
   }
 
+  const EXPOSURE = 1.22;   // camera exposure: a white hull face-on to a ~23deg-declination sun reads white, not grey
+
   function _renderMap(sp) {
     const { prof, C, R, RL, occ, cx, cz, A0 } = sp;
     const cv = _cvPool.pop() || _mkCv(C, R);
@@ -554,7 +556,7 @@ const SimLighting = (function () {
           Dm = nx * mx + ny * my + nz * mz; if (Dm < 0) Dm = 0;
           if (Dm > 0 && occ.list.length && _shadowed(occ, cx + u * r, A0 + a, cz + v * r, mx, my, mz)) Dm = 0;
         }
-        const B = Math.min(1, amb + lit * (1 - amb) * D + moon * Dm * (1 - amb));
+        const B = Math.min(1, (amb + lit * (1 - amb) * D) * EXPOSURE + moon * Dm * (1 - amb));
         let ab = 1 - B; ab = ab < 0 ? 0 : ab > 0.82 ? 0.82 : ab;
         let NH = nx * hx + ny * hy + nz * hz; if (NH < 0) NH = 0;
         let ah = D > 0 ? lit * sh * 0.30 * spec * Math.pow(NH, 28) : 0; if (ah > 0.6) ah = 0.6;
@@ -641,6 +643,20 @@ const SimLighting = (function () {
     return true;
   }
 
+  // Brightness (0.10..1) of a flat part (leg panel, grid-fin face, hinge pod) whose
+  // outward normal is (nx right, ny toward nose, nz toward viewer) in the body frame.
+  // Same lighting maths as the hull shade map (sun + ambient + exposure + moon), so
+  // hardware and hull always agree. Returns 1 when there is no light object (previews).
+  function partLight(nx, ny, nz) {
+    const RL = globalThis._ROCKET_LIGHT;
+    if (!RL) return 1;
+    const n = Math.hypot(nx, ny, nz) || 1; nx /= n; ny /= n; nz /= n;
+    let D = nx * RL.lx + ny * RL.ly + nz * RL.lz; if (D < 0) D = 0;
+    let B = (RL.amb + RL.lit * (1 - RL.amb) * D) * EXPOSURE;
+    if (RL.moon > 0.01) { const Dm = nx * RL.mx + ny * RL.my + nz * RL.mz; if (Dm > 0) B += RL.moon * Dm * (1 - RL.amb); }
+    return B > 1 ? 1 : B < 0.10 ? 0.10 : B;
+  }
+
   // Planet-view marker aid: glow + pulsing ring, stronger on the night side.
   function drawLocator(ctx, px, py, isActive, body) {
     if (!S.enabled || !S.assist) return;
@@ -719,7 +735,7 @@ const SimLighting = (function () {
     setState: o => { if (!o) return; if (Number.isFinite(o.hour0)) S.hour0 = o.hour0; S.enabled = !!o.enabled; S.assist = !!o.assist; },
     padHour, setPadHour, sunDir, sinElev, litFactor, rocketLight,
     moonDir, moonIllum, moonSinElev, moonPhaseName, setMoonPhase,
-    drawShadeSlice, drawBellShade,
+    drawShadeSlice, drawBellShade, partLight,
     skyColors, drawBackdrop, shadeEarth, drawLocator, tickUI: refreshUI,
   };
 })();

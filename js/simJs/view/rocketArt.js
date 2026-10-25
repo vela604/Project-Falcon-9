@@ -1197,68 +1197,117 @@ function drawChuteArt(ctx, bodyTopY, mpp, chuteType, progress) {
 // state the caller passes topY = -thicknessPx/2, so the rect's geometric
 // center sits exactly on the pivot — the strip spins in place rather
 // than seesawing around its top edge.
+// Hardware lighting helpers (single source of truth lives in SimLighting.partLight).
+function _hwK(nx, ny, nz) {
+  return (globalThis._ROCKET_LIGHT && typeof SimLighting !== 'undefined' && SimLighting.partLight)
+    ? SimLighting.partLight(nx, ny, nz) : 1;
+}
+const _hexCache = new Map();
+function _rgb(hex) {
+  let v = _hexCache.get(hex);
+  if (!v) {
+    const h = String(hex).replace('#', '');
+    const f = h.length === 3 ? h.split('').map(c => c + c).join('') : h.padEnd(6, '0');
+    v = [parseInt(f.slice(0, 2), 16) || 0, parseInt(f.slice(2, 4), 16) || 0, parseInt(f.slice(4, 6), 16) || 0];
+    _hexCache.set(hex, v);
+  }
+  return v;
+}
+// colour scaled by brightness k (k>1 brightens toward white)
+function _tint(hex, k, a) {
+  const c = _rgb(hex);
+  let r, g, b;
+  if (k <= 1) { r = c[0] * k; g = c[1] * k; b = c[2] * k; }
+  else { const t = Math.min(1, k - 1); r = c[0] + (255 - c[0]) * t; g = c[1] + (255 - c[1]) * t; b = c[2] + (255 - c[2]) * t; }
+  return a === undefined ? 'rgb(' + (r | 0) + ',' + (g | 0) + ',' + (b | 0) + ')'
+    : 'rgba(' + (r | 0) + ',' + (g | 0) + ',' + (b | 0) + ',' + a + ')';
+}
+function _mixHex(h1, h2, t) {
+  const a = _rgb(h1), b = _rgb(h2);
+  const m = a.map((v, i) => Math.round(v + (b[i] - v) * t));
+  return '#' + m.map(v => v.toString(16).padStart(2, '0')).join('');
+}
+
+// Falcon-style cast grid fin. Face-on (showMesh): chamfered hinge-side corners, heavy
+// outer frame, diamond (diagonal) lattice with real see-through cells; walls get a
+// shadow side and a lit edge so the lattice reads as depth, not a flat grid.
+// Edge-on (solid): a metal strip with a lit top face and a shaded underside, with the
+// lattice edges hinted as faint ticks. Lighting follows the body's sun/moon.
 function drawGridFinFace(ctx, pivotX, pivotY, topX, topY, wPx, hPx, cellPx, style, showMesh, rotateRad) {
   if (!(wPx > 0) || !(hPx > 0)) return;
   const fill = (style && style.fill) || '#8a9198';
   const stroke = (style && style.stroke) || '#48515e';
-  
+  const kFace = _hwK(0, 0.12, 1);     // face-on panel: normal toward viewer
+
   ctx.save();
   ctx.translate(pivotX, pivotY);
   if (rotateRad) ctx.rotate(rotateRad);
-  
+
   if (showMesh) {
-    // Perforated face — ONLY the cell walls and frame are drawn. Cells
-    // stay transparent so whatever's behind (hull, sky, another fin)
-    // shows through the openings. Previously the rect was filled solid
-    // first and the mesh was overlaid as thin lines, so the "cells"
-    // still read as grey metal instead of holes.
-    //
-    // Wall thickness: ~18% of the cell pitch, floored at 0.8 px so walls
-    // don't disappear at fine zoom. Frame gets a bit more weight than
-    // the interior walls so the fin reads as a bordered panel.
-    const wallPx = Math.max(0.8, cellPx * 0.18);
-    const framePx = Math.max(1.4, cellPx * 0.30);
-    
-    const cols = Math.max(1, Math.round(wPx / cellPx));
-    const rows = Math.max(1, Math.round(hPx / cellPx));
-    const colStep = wPx / cols;
-    const rowStep = hPx / rows;
-    
-    // Interior walls (thin lattice).
-    ctx.strokeStyle = fill;
-    ctx.lineWidth = wallPx;
-    ctx.beginPath();
-    for (let i = 1; i < cols; i++) {
-      const x = topX + i * colStep;
-      ctx.moveTo(x, topY);
-      ctx.lineTo(x, topY + hPx);
-    }
-    for (let j = 1; j < rows; j++) {
-      const y = topY + j * rowStep;
-      ctx.moveTo(topX, y);
-      ctx.lineTo(topX + wPx, y);
-    }
-    ctx.stroke();
-    
-    // Frame — same colour, slightly heavier, drawn on the perimeter.
-    // Inset by wallPx/2 so the stroke straddles the rect edge, matching
-    // how the interior walls straddle their grid lines.
-    ctx.lineWidth = framePx;
-    ctx.strokeRect(
-      topX + framePx / 2,
-      topY + framePx / 2,
-      wPx - framePx,
-      hPx - framePx
-    );
+    const cell = Math.max(2.2, cellPx);
+    const wall = Math.max(0.9, cell * 0.21);
+    const frame = Math.max(1.5, Math.min(wPx, hPx) * 0.075, cell * 0.28);
+    const ch = Math.min(wPx * 0.20, hPx * 0.13);
+    const outline = (inset) => {
+      const i = inset, c = Math.max(0, ch - i * 0.4);
+      ctx.beginPath();
+      ctx.moveTo(topX + i + c, topY + i);
+      ctx.lineTo(topX + wPx - i - c, topY + i);
+      ctx.lineTo(topX + wPx - i, topY + i + c);
+      ctx.lineTo(topX + wPx - i, topY + hPx - i);
+      ctx.lineTo(topX + i, topY + hPx - i);
+      ctx.lineTo(topX + i, topY + i + c);
+      ctx.closePath();
+    };
+    // diamond lattice, clipped inside the frame
+    ctx.save();
+    outline(frame * 0.5);
+    ctx.clip();
+    const tanA = 0.62;                                   // wall angle: taller-than-wide diamonds
+    const nLines = Math.min(90, Math.ceil((wPx + hPx * tanA) / cell) + 1);
+    const lattice = (dx, dy, style, lw) => {
+      ctx.strokeStyle = style; ctx.lineWidth = lw;
+      ctx.beginPath();
+      for (let i = 0; i <= nLines; i++) {
+        const x0 = topX - hPx * tanA + i * cell + dx;
+        ctx.moveTo(x0, topY + dy); ctx.lineTo(x0 + hPx * tanA, topY + hPx + dy);          // "\"
+        const x1 = topX + i * cell - 0 + dx;
+        ctx.moveTo(x1, topY + dy); ctx.lineTo(x1 - hPx * tanA, topY + hPx + dy);          // "/"
+      }
+      ctx.stroke();
+    };
+    ctx.lineCap = 'butt';
+    lattice(wall * 0.55, wall * 0.75, _tint(fill, kFace * 0.30, 0.65), wall * 1.5);      // wall shadow side
+    lattice(0, 0, _tint(fill, kFace * 0.92), wall);                                       // wall body
+    lattice(-wall * 0.22, -wall * 0.28, _tint(fill, kFace * 1.28, 0.75), Math.max(0.5, wall * 0.30)); // lit edge
+    ctx.restore();
+    // heavy outer frame: dark outside edge, body, lit inner lip
+    outline(0); ctx.strokeStyle = _tint(fill, kFace * 0.28); ctx.lineWidth = frame + 1.2; ctx.lineJoin = 'miter'; ctx.stroke();
+    outline(frame * 0.5); ctx.strokeStyle = _tint(fill, kFace * 0.95); ctx.lineWidth = frame; ctx.stroke();
+    outline(frame * 0.18); ctx.strokeStyle = _tint(fill, kFace * 1.3, 0.55); ctx.lineWidth = Math.max(0.5, frame * 0.18); ctx.stroke();
   } else {
-    // Solid edge-on face — filled rect + border, unchanged.
-    ctx.beginPath();
-    ctx.rect(topX, topY, wPx, hPx);
-    ctx.fillStyle = fill;
-    ctx.fill();
-    ctx.strokeStyle = stroke;
-    ctx.lineWidth = 1.2;
-    ctx.stroke();
+    // edge-on strip. Local +y points toward the fin's lower (tail-side) face.
+    const kTop = _hwK(0, 1, 0.35), kBot = _hwK(0, -1, 0.35);
+    const g = ctx.createLinearGradient(0, topY, 0, topY + hPx);
+    g.addColorStop(0, _tint(fill, Math.min(1.25, kTop * 1.05)));
+    g.addColorStop(0.5, _tint(fill, kFace * 0.85));
+    g.addColorStop(1, _tint(fill, Math.max(0.12, kBot * 0.7)));
+    ctx.beginPath(); ctx.rect(topX, topY, wPx, hPx);
+    ctx.fillStyle = g; ctx.fill();
+    // lattice edges seen end-on: faint ticks along the long axis
+    const long = wPx >= hPx;
+    const span = long ? wPx : hPx, step = Math.max(2.4, cellPx);
+    if (span / step > 2 && Math.min(wPx, hPx) > 1.4) {
+      ctx.strokeStyle = _tint(fill, kFace * 0.35, 0.45); ctx.lineWidth = 0.7; ctx.beginPath();
+      for (let t = step; t < span - 0.5; t += step) {
+        if (long) { ctx.moveTo(topX + t, topY + 0.4); ctx.lineTo(topX + t, topY + hPx - 0.4); }
+        else { ctx.moveTo(topX + 0.4, topY + t); ctx.lineTo(topX + wPx - 0.4, topY + t); }
+      }
+      ctx.stroke();
+    }
+    ctx.strokeStyle = _tint(fill, kFace * 0.30); ctx.lineWidth = 1.1; ctx.strokeRect(topX, topY, wPx, hPx);
+    ctx.strokeStyle = _tint(fill, Math.min(1.6, kTop * 1.4), 0.7); ctx.lineWidth = 0.7;
+    ctx.beginPath(); ctx.moveTo(topX + 0.5, topY + 0.6); ctx.lineTo(topX + wPx - 0.5, topY + 0.6); ctx.stroke();
   }
   ctx.restore();
 }
@@ -1690,59 +1739,50 @@ const engineBell = (() => {
       legsState.footY[side] = tipApexY;
     }
     
+    // ---- look: stowed = light A-frame panel hugging the hull (hull-coloured cap),
+    // deployed = dark carbon legs with a chrome telescoping piston and a bright foot. ----
+    const dp = Math.min(1, Math.max(0, p / 0.35)); const dps = dp * dp * (3 - 2 * dp);
+    const cs = Math.cos(currentSweep), sn = Math.sin(currentSweep);
+    // outward in-plane normal of the leg panel (rotates with the leg), plus a viewer tilt
+    const kOut = _hwK(side * cs * 0.55, -side * sn * 0.55, 0.83);
+    const kIn  = _hwK(-side * cs * 0.55, side * sn * 0.55, 0.83);
+    const panelHex = _mixHex('#d6dade', '#262a31', dps);
+
     if (p > 0.02) {
       const pmX = pivotX;
       const pmY = pistonMountY + depthY;
-      
-      ctx.strokeStyle = isBack ? '#050608' : '#0a0c0f';
-      ctx.lineWidth = Math.max(1.5, W * 0.040);
       ctx.lineCap = 'round';
-      ctx.beginPath();
-      ctx.moveTo(pmX, pmY);
-      ctx.lineTo(tipApexX, tipApexY);
-      ctx.stroke();
-      
-      ctx.strokeStyle = isBack ? '#171b22' : '#2c313a';
-      ctx.lineWidth = Math.max(0.8, W * 0.018);
-      ctx.beginPath();
-      ctx.moveTo(pmX, pmY);
-      ctx.lineTo(tipApexX, tipApexY);
-      ctx.stroke();
-      
+      // outer tube
+      ctx.strokeStyle = _tint('#0c0e12', Math.max(0.5, kOut));
+      ctx.lineWidth = Math.max(1.6, W * 0.042);
+      ctx.beginPath(); ctx.moveTo(pmX, pmY); ctx.lineTo(tipApexX, tipApexY); ctx.stroke();
+      ctx.strokeStyle = _tint('#3a4049', kOut);
+      ctx.lineWidth = Math.max(0.9, W * 0.020);
+      ctx.beginPath(); ctx.moveTo(pmX, pmY); ctx.lineTo(tipApexX, tipApexY); ctx.stroke();
+      // chrome inner rod (extends from 32% of the tube)
       const rodStartFrac = 0.32;
       const rx1 = pmX + (tipApexX - pmX) * rodStartFrac;
       const ry1 = pmY + (tipApexY - pmY) * rodStartFrac;
-      
-      ctx.strokeStyle = isBack ? '#8a9099' : '#e6ecf2';
-      ctx.lineWidth = Math.max(1, W * 0.022);
-      ctx.beginPath();
-      ctx.moveTo(rx1, ry1);
-      ctx.lineTo(tipApexX, tipApexY);
-      ctx.stroke();
-      
-      ctx.fillStyle = isBack ? '#0d1015' : '#1a1e24';
-      ctx.beginPath();
-      ctx.arc(rx1, ry1, W * 0.025, 0, Math.PI * 2);
-      ctx.fill();
+      ctx.strokeStyle = _tint('#b9c1ca', Math.max(0.35, kOut));
+      ctx.lineWidth = Math.max(1, W * 0.024);
+      ctx.beginPath(); ctx.moveTo(rx1, ry1); ctx.lineTo(tipApexX, tipApexY); ctx.stroke();
+      ctx.strokeStyle = _tint('#ffffff', Math.max(0.5, kOut), 0.85);
+      ctx.lineWidth = Math.max(0.5, W * 0.007);
+      ctx.beginPath(); ctx.moveTo(rx1 - side * W * 0.004, ry1); ctx.lineTo(tipApexX - side * W * 0.004, tipApexY); ctx.stroke();
+      // piston collar + upper ball joint
+      ctx.fillStyle = _tint('#15181d', kOut);
+      ctx.beginPath(); ctx.arc(rx1, ry1, W * 0.026, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(pmX, pmY, W * 0.024, 0, Math.PI * 2); ctx.fill();
     }
-    
-    const legGrad = ctx.createLinearGradient(pivotX, jY, tipX, tipY);
-    if (isBack) {
-      legGrad.addColorStop(0, '#0f1114');
-      legGrad.addColorStop(0.35, '#1a1d22');
-      legGrad.addColorStop(0.7, '#08090b');
-      legGrad.addColorStop(1, '#000000');
-    } else {
-      legGrad.addColorStop(0, '#1c1f24');
-      legGrad.addColorStop(0.35, '#3a3f47');
-      legGrad.addColorStop(0.7, '#14171b');
-      legGrad.addColorStop(1, '#000000');
-    }
-    
+
+    // panel body — shaded across its width (outer edge catches the light)
+    const legGrad = ctx.createLinearGradient(j1x, jY, j2x + (tipApexX - j2x) * 0.35, jY + (tipApexY - jY) * 0.35);
+    legGrad.addColorStop(0, _tint(panelHex, Math.min(1.25, kOut * 1.08)));
+    legGrad.addColorStop(0.55, _tint(panelHex, kOut * 0.92));
+    legGrad.addColorStop(1, _tint(panelHex, Math.max(0.12, kIn * 0.62)));
     ctx.fillStyle = legGrad;
-    ctx.strokeStyle = '#000000';
-    ctx.lineWidth = 1.2;
-    
+    ctx.strokeStyle = _tint(_mixHex('#59616c', '#000000', dps), Math.max(0.35, kOut), 0.95);
+    ctx.lineWidth = 1.1;
     ctx.beginPath();
     ctx.moveTo(j1x, jY);
     ctx.lineTo(p1x, p1y);
@@ -1752,29 +1792,55 @@ const engineBell = (() => {
     ctx.closePath();
     ctx.fill();
     ctx.stroke();
-    
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
+
+    // A-frame gap: the open triangle between the two struts (dark interior, depth)
+    ctx.fillStyle = 'rgba(8,10,13,0.55)';
     ctx.beginPath();
     ctx.moveTo(j1x, jY);
     ctx.lineTo(tipApexX, tipApexY);
     ctx.lineTo(cutoutApexX, cutoutApexY);
     ctx.closePath();
     ctx.fill();
-    
-    ctx.strokeStyle = '#000000';
-    ctx.lineWidth = Math.max(1.2, W * 0.018);
+
+    // panel seams (composite skin joints) running up the leg
+    ctx.strokeStyle = _tint(panelHex, kOut * 0.45, 0.55);
+    ctx.lineWidth = 0.6;
     ctx.beginPath();
-    ctx.moveTo(j1x, jY);
-    ctx.lineTo(cutoutApexX, cutoutApexY);
-    ctx.lineTo(j2x, jY);
+    for (const f of [0.28, 0.5]) {
+      ctx.moveTo(j1x + (p1x - j1x) * 0.0 + (j2x - j1x) * f * 0.0, jY);
+      ctx.moveTo(j1x + (j2x - j1x) * f, jY);
+      ctx.lineTo(tipApexX + (p1x - tipApexX) * (0.5 - f * 0.5), tipApexY + (p1y - tipApexY) * (0.5 - f * 0.5));
+    }
     ctx.stroke();
-    
-    ctx.strokeStyle = isBack ? 'rgba(255,255,255,0.14)' : 'rgba(255,255,255,0.30)';
+
+    // rim: dark inner cut + lit outer edge
+    ctx.strokeStyle = _tint('#000000', 1, 0.9);
+    ctx.lineWidth = Math.max(1.1, W * 0.016);
+    ctx.beginPath(); ctx.moveTo(j1x, jY); ctx.lineTo(cutoutApexX, cutoutApexY); ctx.lineTo(j2x, jY); ctx.stroke();
+    ctx.strokeStyle = _tint('#ffffff', kOut, 0.12 + 0.30 * kOut);
     ctx.lineWidth = 0.8;
-    ctx.beginPath();
-    ctx.moveTo(j1x, jY);
-    ctx.lineTo(p1x, p1y);
-    ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(j1x, jY); ctx.lineTo(p1x, p1y); ctx.stroke();
+
+    // upper ball-joint bolt visible on the stowed cap
+    if (dps < 0.7) {
+      const bx = pivotX + (tipX - pivotX) * 0.14 + side * W * 0.02, by = pivotY + (tipY - pivotY) * 0.14;
+      ctx.fillStyle = _tint('#14171b', Math.max(0.4, kOut), 0.95 * (1 - dps));
+      ctx.beginPath(); ctx.arc(bx, by, Math.max(1, W * 0.024), 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = _tint('#ffffff', kOut, 0.35 * (1 - dps));
+      ctx.beginPath(); ctx.arc(bx - W * 0.006, by - W * 0.006, Math.max(0.4, W * 0.007), 0, Math.PI * 2); ctx.fill();
+    }
+    // foot pad (deployed): bright landing plate across the tip
+    if (dps > 0.25) {
+      ctx.save();
+      ctx.translate(tipApexX, tipApexY); ctx.rotate(currentSweep);
+      const fw = Math.max(2, W * 0.085), fh = Math.max(1.2, W * 0.026);
+      ctx.beginPath();
+      if (ctx.roundRect) ctx.roundRect(-fw / 2, -fh / 2, fw, fh, fh * 0.5); else ctx.rect(-fw / 2, -fh / 2, fw, fh);
+      ctx.fillStyle = _tint('#e4e8ed', Math.max(0.3, kOut), dps);
+      ctx.fill();
+      ctx.strokeStyle = _tint('#000000', 1, 0.7 * dps); ctx.lineWidth = 0.7; ctx.stroke();
+      ctx.restore();
+    }
   }
   
 // ---- SZAD overlay — DEFAULT (locked) boosters only ----
@@ -2370,23 +2436,40 @@ const bracketColor = '#242830';
 const bracketEdge = '#0c0e12';
 const bracketHighlight = 'rgba(255,255,255,0.28)';
 function drawHingeBracket(sideSign) {
-  const hullEdgeX = sideSign * hullHalfPx;
+  // Actuator pod: a hull-coloured, rounded housing bridging the hull-to-hinge gap
+  // (real fins sit behind a fairing, they do not float next to the hull).
+  const hullEdgeX = sideSign * (hullHalfPx - 0.5);
   const hingeX = sideSign * hingeOffsetX;
-  const x0 = Math.min(hullEdgeX, hingeX);
-  const x1 = Math.max(hullEdgeX, hingeX);
-  const y0 = hingeY - bracketH / 2;
+  const x0 = Math.min(hullEdgeX, hingeX), x1 = Math.max(hullEdgeX, hingeX) + sideSign * thicknessPx * 0.15;
+  const xa = Math.min(x0, x1), xb = Math.max(x0, x1);
+  const h = Math.max(4, thicknessPx * 1.5);
+  const y0 = hingeY - h / 2;
+  const podCol = (opts.bodyDesign && opts.bodyDesign.solidColor) || '#e9edf2';
+  const k = _hwK(sideSign * 0.6, 0.1, 0.8);
+  const g = ctx.createLinearGradient(0, y0, 0, y0 + h);
+  g.addColorStop(0, _tint(podCol, Math.min(1.2, k * 1.1)));
+  g.addColorStop(1, _tint(podCol, k * 0.62));
   ctx.save();
-  ctx.fillStyle = bracketColor;
-  ctx.fillRect(x0, y0, x1 - x0, bracketH);
-  ctx.strokeStyle = bracketEdge;
-  ctx.lineWidth = 0.8;
-  ctx.strokeRect(x0, y0, x1 - x0, bracketH);
-  ctx.strokeStyle = bracketHighlight;
-  ctx.lineWidth = 0.6;
   ctx.beginPath();
-  ctx.moveTo(x0, y0 + 0.4);
-  ctx.lineTo(x1, y0 + 0.4);
-  ctx.stroke();
+  if (ctx.roundRect) ctx.roundRect(xa, y0, Math.max(1, xb - xa), h, Math.min(h * 0.45, 3)); else ctx.rect(xa, y0, Math.max(1, xb - xa), h);
+  ctx.fillStyle = g; ctx.fill();
+  ctx.strokeStyle = _tint('#2a2f38', k, 0.8); ctx.lineWidth = 0.8; ctx.stroke();
+  ctx.restore();
+}
+function drawFrontHingePod() {
+  // hinge fairing above the front fin (seen face-on in the stowed pose)
+  if (fbP > 0.6) return;
+  const podCol = (opts.bodyDesign && opts.bodyDesign.solidColor) || '#e9edf2';
+  const k = _hwK(0, 0.2, 1);
+  const pw = Math.max(5, Math.min(fbW * 0.5, thicknessPx * 3.2)), ph = Math.max(4, thicknessPx * 1.8);
+  const x = -pw / 2, y = hingeY - ph * 0.72;
+  const g = ctx.createLinearGradient(x, 0, x + pw, 0);
+  g.addColorStop(0, _tint(podCol, k * 0.7)); g.addColorStop(0.4, _tint(podCol, Math.min(1.2, k * 1.1))); g.addColorStop(1, _tint(podCol, k * 0.65));
+  ctx.save();
+  ctx.beginPath();
+  if (ctx.roundRect) ctx.roundRect(x, y, pw, ph, Math.min(pw, ph) * 0.5); else ctx.rect(x, y, pw, ph);
+  ctx.fillStyle = g; ctx.fill();
+  ctx.strokeStyle = _tint('#2a2f38', k, 0.8); ctx.lineWidth = 0.8; ctx.stroke();
   ctx.restore();
 }
 drawHingeBracket(-1);
@@ -2398,6 +2481,7 @@ drawGridFinFace(ctx, leftHingeX, hingeY, -spanPx, -thicknessPx / 2, spanPx, thic
 drawGridFinFace(ctx, rightHingeX, hingeY, 0, -thicknessPx / 2, spanPx, thicknessPx, cellPx, sideStyle, false, rRot);
 
   // F drawn last (front, opaque).
+  drawFrontHingePod();
   drawGridFinFace(ctx, 0, hingeY, -fbW / 2, fbTopY, fbW, fbH, cellPx, fbStyle, fbShowMesh, +fbControlRad);
 }
   
