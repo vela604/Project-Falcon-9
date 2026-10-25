@@ -519,10 +519,31 @@ const SimLighting = (function () {
     return false;
   }
 
+  // Bell-to-bell shadow: siblings = [{x,z}] axis positions (px, hull-axis frame) of the OTHER bells.
+  // Each is treated as a vertical solid of revolution with the same radius profile as the bell being shaded.
+  function _sibShadowed(sibs, prof, A0, px, A, pz, lx, ly, lz) {
+    const hz = Math.hypot(lx, lz);
+    let tEnd = 4 * prof.ext / (hz + 1e-3);
+    if (ly > 1e-4) { const t = (A0 + prof.aHi - A) / ly; if (t < tEnd) tEnd = t; }
+    else if (ly < -1e-4) { const t = (A - (A0 + prof.aLo)) / -ly; if (t < tEnd) tEnd = t; }
+    if (!(tEnd > 0.6)) return false;
+    for (let k = 1; k <= 9; k++) {
+      const t = 0.4 + (tEnd - 0.4) * (k / 9);
+      const x = px + lx * t, z = pz + lz * t, aa = A + ly * t - A0;
+      const r = _rAt(prof, aa) - 0.3;
+      if (!(r > 0)) continue;
+      for (let i = 0; i < sibs.length; i++) {
+        const dx = x - sibs[i].x, dz = z - sibs[i].z;
+        if (dx * dx + dz * dz < r * r) return true;
+      }
+    }
+    return false;
+  }
+
   const EXPOSURE = 1.22;   // camera exposure: a white hull face-on to a ~23deg-declination sun reads white, not grey
 
   function _renderMap(sp) {
-    const { prof, C, R, RL, occ, cx, cz, A0 } = sp;
+    const { prof, C, R, RL, occ, cx, cz, A0, sibs } = sp;
     const cv = _cvPool.pop() || _mkCv(C, R);
     if (!cv) return null;
     if (cv.width !== C) cv.width = C;
@@ -549,12 +570,14 @@ const SimLighting = (function () {
         const nx = u * inv, ny = nyRaw * inv, nz = v * inv;
         let D = nx * lx + ny * ly + nz * lz; if (D < 0) D = 0;
         let sh = 1;
-        if (D > 0 && lit > 0.02 && occ.list.length && _shadowed(occ, cx + u * r, A0 + a, cz + v * r, lx, ly, lz)) sh = 0;
+        if (D > 0 && lit > 0.02 && ((occ.list.length && _shadowed(occ, cx + u * r, A0 + a, cz + v * r, lx, ly, lz)) ||
+          (sibs && _sibShadowed(sibs, prof, A0, cx + u * r, A0 + a, cz + v * r, lx, ly, lz)))) sh = 0;
         D *= sh;
         let Dm = 0;
         if (moon > 0) {
           Dm = nx * mx + ny * my + nz * mz; if (Dm < 0) Dm = 0;
-          if (Dm > 0 && occ.list.length && _shadowed(occ, cx + u * r, A0 + a, cz + v * r, mx, my, mz)) Dm = 0;
+          if (Dm > 0 && ((occ.list.length && _shadowed(occ, cx + u * r, A0 + a, cz + v * r, mx, my, mz)) ||
+            (sibs && _sibShadowed(sibs, prof, A0, cx + u * r, A0 + a, cz + v * r, mx, my, mz)))) Dm = 0;
         }
         const B = Math.min(1, (amb + lit * (1 - amb) * D) * EXPOSURE + moon * Dm * (1 - amb));
         let ab = 1 - B; ab = ab < 0 ? 0 : ab > 0.82 ? 0.82 : ab;
@@ -585,7 +608,7 @@ const SimLighting = (function () {
              amb: Math.round(RL.amb * 24) / 24, tint: Math.round(RL.tint * 12) / 12 };
   }
 
-  function _getMap(ctx, prof, RL, cx, cz, A0) {
+  function _getMap(ctx, prof, RL, cx, cz, A0, sibs, sibKey) {
     const m = ctx.getTransform(), sw = 2 * prof.ext * Math.hypot(m.a, m.b);
     const C = sw < 28 ? 12 : sw < 80 ? 24 : 44;
     const span = prof.aHi - prof.aLo;
@@ -593,10 +616,10 @@ const SimLighting = (function () {
     const q = _quant(RL), occ = _occluders(RL);
     const key = [prof.key, C, R, Math.round(cx * 2), Math.round(cz * 2), Math.round(A0 * 2),
       Math.round(q.lx * 24), Math.round(q.ly * 24), Math.round(q.lit * 12), Math.round(q.amb * 24), Math.round(q.tint * 12),
-      q.moon > 0.01 ? Math.round(q.mx * 24) + ',' + Math.round(q.my * 24) + ',' + Math.round(q.moon * 48) : 'nm', occ.hash].join('~');
+      q.moon > 0.01 ? Math.round(q.mx * 24) + ',' + Math.round(q.my * 24) + ',' + Math.round(q.moon * 48) : 'nm', occ.hash, sibKey || ''].join('~');
     let e = _mapCache.get(key);
     if (e) { _mapCache.delete(key); _mapCache.set(key, e); return e; }
-    const cv = _renderMap({ prof, C, R, RL, occ, cx, cz, A0, q });
+    const cv = _renderMap({ prof, C, R, RL, occ, cx, cz, A0, q, sibs: sibs || null });
     if (!cv) return null;
     e = { cv };
     _mapCache.set(key, e);
@@ -628,12 +651,23 @@ const SimLighting = (function () {
 
   // Engine bell: CURRENT path is the bell wall (origin = attach point on the hull
   // base, y down). cx/cz = bell axis offset from the hull axis; A0 = hull-base height.
-  function drawBellShade(ctx, sR, wallH, cx, cz, A0) {
-    const RL = globalThis._ROCKET_LIGHT;
+  function drawBellShade(ctx, sR, wallH, cx, cz, A0, gimbalRad, sibs) {
+    let RL = globalThis._ROCKET_LIGHT;
     if (!RL || !RL.reg || !(sR > 0.5) || !(wallH > 0.5)) return false;
     const prof = sampleProfile(ctx, sR, -wallH, 0, 'bell');
     if (!prof) return false;
-    const e = _getMap(ctx, prof, RL, cx, cz, A0);
+    // The bell is drawn in a gimbal-rotated frame, so rotate the light into that frame
+    // (0.5 deg steps keep the map cache small). Shadows still march in the hull frame.
+    if (gimbalRad && Math.abs(gimbalRad) > 0.004) {
+      const q = Math.round(gimbalRad * 114.5916) / 114.5916, c = Math.cos(q), s = Math.sin(q);
+      RL = Object.assign({}, RL, {
+        lx: RL.lx * c - RL.ly * s, ly: RL.lx * s + RL.ly * c,
+        mx: RL.mx * c - RL.my * s, my: RL.mx * s + RL.my * c,
+      });
+    }
+    let sk = '';
+    if (sibs && sibs.length) { let h = 0; for (const o of sibs) h += o.x * 3.1 + o.z * 7.3; sk = sibs.length + ':' + Math.round(h * 2); }
+    const e = _getMap(ctx, prof, RL, cx, cz, A0, sibs && sibs.length ? sibs : null, sk);
     if (!e) return false;
     ctx.save();
     ctx.clip();

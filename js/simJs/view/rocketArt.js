@@ -1688,10 +1688,10 @@ const engineBell = (() => {
   
   
   const p = legsProgress;
-  const legHingeY = legGeo ? legGeo.hingeY : -H * 0.004;
+  const legHingeY = legGeo ? legGeo.hingeY : -H * 0.008;
   const legLength = legGeo ? legGeo.legLength : H * 0.27;
   const maxSweepRad = legGeo ? legGeo.maxSweepRad : (125 * Math.PI) / 180;
-  const pistonMountY = legGeo ? legGeo.pistonMountY : -H * 0.08;
+  const pistonMountY = legGeo ? legGeo.pistonMountY : -H * 0.084;
   const LEG_TIP_CURVENESS = 0.90;
   
   function drawLandingLeg(side, isBack) {
@@ -2104,38 +2104,46 @@ const bodyPath = () => {
 // drawGridFinEdgeOn further down, driven by opts.gridFinType / Params.)
   
 if (isBooster) {
-  // ---- Bottom black band — just above the engine bay ----
-  // Same gradient treatment the interstage band uses, so both read as
-  // hardware trim, not a painted stripe. Drawn AFTER the body so it
-  // sits cleanly on top of the cylinder gradient.
-  const BOOSTER_BOTTOM_BAND_FRAC = 0.06;
-  const bandH_px = Math.max(3, H * BOOSTER_BOTTOM_BAND_FRAC);
-  const bottomBandGrad = cachedGradient(ctx, 'boosterBottomBand', Math.round(W), () => {
-    const g = ctx.createLinearGradient(-W / 2, 0, W / 2, 0);
-    g.addColorStop(0, '#0a0c10');
-    g.addColorStop(0.5, '#2a2d33');
-    g.addColorStop(1, '#0a0c10');
-    return g;
-  });
-  ctx.fillStyle = bottomBandGrad;
-  ctx.fillRect(-W / 2, -bandH_px, W, bandH_px);
-  
-  // Top seam — where the black band meets the white tank.
-  ctx.strokeStyle = 'rgba(0, 0, 0, 0.60)';
-  ctx.lineWidth = 1;
+  // ---- Heat shield / engine-bay skirt (black thermal blanket ring) ----
+  // Real F9: ~1 m tall black skirt around the octaweb base with a rolled bottom
+  // lip. Height is in METERS so it keeps its true size at every zoom.
+  const HEATSHIELD_H_M = 0.95;
+  const bandH_px = Math.max(3, Math.min(H * 0.12, HEATSHIELD_H_M / mpp));
+  const _hsLit = !!(globalThis._ROCKET_LIGHT && typeof SimLighting !== 'undefined' && SimLighting.partLight);
+  const hsGrad = ctx.createLinearGradient(-W / 2, 0, W / 2, 0);
+  for (let i = 0; i <= 6; i++) {
+    const t = i / 6, nx = t * 2 - 1, nz = Math.sqrt(Math.max(0, 1 - nx * nx));
+    const B = _hsLit ? SimLighting.partLight(nx, 0, nz) : (0.30 + 0.70 * nz * (1 - 0.35 * Math.max(0, nx + 0.2)));
+    const v = Math.round(6 + 42 * B), sheen = Math.round(Math.max(0, 1 - Math.abs(t - 0.30) * 5) * 22 * B);
+    hsGrad.addColorStop(t, `rgb(${v + sheen},${v + sheen + 1},${v + sheen + 4})`);
+  }
+  const lipH = Math.max(1.5, Math.min(bandH_px * 0.30, W * 0.035));
+  // body of the shield
+  ctx.fillStyle = hsGrad;
+  ctx.fillRect(-W / 2, -bandH_px, W, bandH_px - lipH * 0.4);
+  // rolled bottom lip (slightly proud of the skirt, rounded)
   ctx.beginPath();
-  ctx.moveTo(-W / 2, -bandH_px);
-  ctx.lineTo(W / 2, -bandH_px);
-  ctx.stroke();
-  
-  // Bottom rim — reads as the top edge of the engine bay itself.
-  ctx.strokeStyle = 'rgba(255, 255, 255, 0.28)';
-  ctx.lineWidth = 0.9;
-  ctx.beginPath();
-  ctx.moveTo(-W / 2, -0.5);
-  ctx.lineTo(W / 2, -0.5);
-  ctx.stroke();
-  
+  ctx.moveTo(-W / 2, -lipH * 1.4);
+  ctx.lineTo(-W / 2 - lipH * 0.25, -lipH * 0.5);
+  ctx.quadraticCurveTo(-W / 2, 0, -W / 2 + lipH, 0);
+  ctx.lineTo(W / 2 - lipH, 0);
+  ctx.quadraticCurveTo(W / 2, 0, W / 2 + lipH * 0.25, -lipH * 0.5);
+  ctx.lineTo(W / 2, -lipH * 1.4);
+  ctx.closePath();
+  ctx.fillStyle = hsGrad; ctx.fill();
+  ctx.fillStyle = 'rgba(255,255,255,0.10)';
+  ctx.fillRect(-W / 2 + 1, -lipH * 1.1, W - 2, Math.max(0.8, lipH * 0.28));   // lip highlight
+  // top seam where the shield meets the white tank
+  ctx.strokeStyle = 'rgba(0, 0, 0, 0.60)'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(-W / 2, -bandH_px); ctx.lineTo(W / 2, -bandH_px); ctx.stroke();
+  if (ROCKET_FX.seams && bandH_px > 8) {
+    // blanket stitch line + lip seam
+    ctx.strokeStyle = 'rgba(255,255,255,0.08)'; ctx.lineWidth = 0.8;
+    ctx.beginPath(); ctx.moveTo(-W / 2, -bandH_px * 0.62); ctx.lineTo(W / 2, -bandH_px * 0.62); ctx.stroke();
+    ctx.strokeStyle = 'rgba(0,0,0,0.55)';
+    ctx.beginPath(); ctx.moveTo(-W / 2, -lipH * 1.4); ctx.lineTo(W / 2, -lipH * 1.4); ctx.stroke();
+  }
+
   // Interstage is now its own stack member; the booster no longer
   // renders a band at its top. Legacy Block 3 records — which don't
   // have an interstage member — will visually look different (no top
@@ -2183,12 +2191,6 @@ if (isBooster) {
       // (Old hardcoded grid-fin decoration removed — see comment above.)
   }
   
-  // FRONT legs
-  if (showLegs) {
-    drawLandingLeg(-1, false);
-    drawLandingLeg(1, false);
-  }
-  
 // ---- Engine bells (bottom-of-stack bodies only) ----
 // Drawn when this member has nothing below it in the stack (boosters,
 // standalone rocket role, standalone stage). A stage sitting above a
@@ -2207,120 +2209,181 @@ if (drawsEngineBells && engineBell && !opts.hasMemberBelow) {
   const sH_m = engineBell.h;
   const hullHalf_m = (W * mpp) / 2;
   
-  // de Laval bell curve — rounded throat, cylindrical wall, flat exit.
+  // Bell outline. SL Merlin: narrow chamber, steep shoulder, near-straight wall.
+  // MVac (vac=true): slim regen-cooled fixed nozzle (top ~28%), then the big
+  // niobium extension flaring out to the exit. The shade engine samples whatever
+  // path is current, so changing the outline here keeps lighting correct.
+  const _isVac = sR_m > 1.0;
   function bellPath(g, sR, sH) {
-  // Narrow throat + steep initial shoulder + near-straight lower wall.
-  //   tR     = throat half-width / exit half-width.  0.35–0.45 = nozzle
-  //            bell; higher (0.6+) collapses to a cone shape.
-  //   CP1 y  = where the shoulder curve bottoms out. Lower = shoulder
-  //            sharper; higher = rounder.
-  //   CP1 x  = how far the shoulder bulges outward. Higher = more
-  //            dramatic flare.
-  //   CP2    = controls the lower-wall straightness. x closer to sR
-  //            gives a straighter wall near the exit.
-  const tR = sR * 0.35;
-  g.beginPath();
-  g.moveTo(-tR, 0);
-  g.bezierCurveTo(
-    -tR * 2.6, sH * 0.18, // steep initial shoulder
-    -sR * 0.98, sH * 0.68, // nearly straight mid-wall
-    -sR, sH // exit corner
-  );
-  g.lineTo(sR, sH);
-  g.bezierCurveTo(
-    sR * 0.98, sH * 0.68,
-    tR * 2.6, sH * 0.18,
-    tR, 0
-  );
-  g.closePath();
-}
-  
-  const drawOneBell = (cx, sR, sH, gimbalRad, cz) => {
+    g.beginPath();
+    if (_isVac) {
+      const tR = sR * 0.15, jR = sR * 0.31, jY = sH * 0.28;
+      g.moveTo(-tR, 0);
+      g.bezierCurveTo(-tR * 1.5, sH * 0.10, -jR * 0.96, sH * 0.19, -jR, jY);
+      g.bezierCurveTo(-sR * 0.52, sH * 0.44, -sR * 0.93, sH * 0.74, -sR, sH);
+      g.lineTo(sR, sH);
+      g.bezierCurveTo(sR * 0.93, sH * 0.74, sR * 0.52, sH * 0.44, jR, jY);
+      g.bezierCurveTo(jR * 0.96, sH * 0.19, tR * 1.5, sH * 0.10, tR, 0);
+    } else {
+      const tR = sR * 0.35;
+      g.moveTo(-tR, 0);
+      g.bezierCurveTo(-tR * 2.6, sH * 0.18, -sR * 0.98, sH * 0.68, -sR, sH);
+      g.lineTo(sR, sH);
+      g.bezierCurveTo(sR * 0.98, sH * 0.68, tR * 2.6, sH * 0.18, tR, 0);
+    }
+    g.closePath();
+  }
+  // wall half-width at fraction t (0..1 of wall height), for rings / pipes
+  const _wallR = (sR, t) => {
+    if (_isVac) {
+      const tR = sR * 0.15, jR = sR * 0.31;
+      return t < 0.28 ? tR + (jR - tR) * Math.pow(t / 0.28, 0.8) : jR + (sR - jR) * Math.pow((t - 0.28) / 0.72, 0.62);
+    }
+    const tR = sR * 0.35;
+    return tR + (sR - tR) * Math.pow(t, 0.6);
+  };
+
+  const drawOneBell = (cx, sR, sH, gimbalRad, cz, sibs) => {
     cz = cz || 0;
     const litBell = !!(globalThis._ROCKET_LIGHT && globalThis._ROCKET_LIGHT.reg && typeof SimLighting !== 'undefined' && SimLighting.drawBellShade);
     ctx.save();
     ctx.translate(cx, 0);
-    if (Number.isFinite(gimbalRad) && gimbalRad !== 0) ctx.rotate(gimbalRad);
+    const gr = Number.isFinite(gimbalRad) ? gimbalRad : 0;
+    if (gr !== 0) ctx.rotate(gr);
     const fancy = ROCKET_FX.bells && sR > 2;
     const lip = fancy ? Math.min(sR * 0.14, sH * 0.10) : 0;
     const wallH = sH - lip;
-    const g = ctx.createLinearGradient(-sR, 0, sR, 0);
-    if (fancy) {
-      g.addColorStop(0.00, '#101216');
-      g.addColorStop(0.16, '#33373e');
-      g.addColorStop(0.32, '#8c929b');   // specular
-      g.addColorStop(0.48, '#52575f');
-      g.addColorStop(0.78, '#25282e');
-      g.addColorStop(1.00, '#0d0f12');
-    } else {
-      g.addColorStop(0, '#1c1e22'); g.addColorStop(0.5, '#4a4e54'); g.addColorStop(1, '#1c1e22');
-    }
-    if (litBell) {
-      // flat dark-metal albedo; form, specular and the hull's shadow come from the shade map
+    const jf = _isVac ? 0.28 : 0.19;            // chamber/regen section ends here (fraction of wall)
+
+    // ---- albedo: dark regen-cooled section on top, polished silver nozzle below ----
+    if (litBell && fancy) {
       const fg = ctx.createLinearGradient(0, 0, 0, wallH);
-      fg.addColorStop(0, '#4a4e56'); fg.addColorStop(1, '#2f3238');
+      fg.addColorStop(0, '#2a2c31'); fg.addColorStop(jf - 0.02, '#3b3e44');
+      fg.addColorStop(jf, _isVac ? '#8e959d' : '#a7adb4');
+      fg.addColorStop(0.62, _isVac ? '#a3aab1' : '#c4c9cf');
+      fg.addColorStop(1, _isVac ? '#7d848c' : '#dde1e5');
       ctx.fillStyle = fg;
-    } else ctx.fillStyle = g;
-    bellPath(ctx, sR, wallH);
-    ctx.fill();
-    if (litBell) { bellPath(ctx, sR, wallH); SimLighting.drawBellShade(ctx, sR, wallH, cx, cz, _shadeCtx.A0); }
+    } else if (litBell) {
+      const fg = ctx.createLinearGradient(0, 0, 0, wallH);
+      fg.addColorStop(0, '#4a4e56'); fg.addColorStop(1, '#8a9098');
+      ctx.fillStyle = fg;
+    } else {
+      const g = ctx.createLinearGradient(-sR, 0, sR, 0);
+      if (fancy) {
+        g.addColorStop(0.00, '#15171b'); g.addColorStop(0.14, '#4a4f57');
+        g.addColorStop(0.30, '#eef1f4');   // chrome highlight
+        g.addColorStop(0.46, '#a3aab2'); g.addColorStop(0.74, '#4d525a'); g.addColorStop(1.00, '#121418');
+      } else { g.addColorStop(0, '#1c1e22'); g.addColorStop(0.5, '#6a6e74'); g.addColorStop(1, '#1c1e22'); }
+      ctx.fillStyle = g;
+    }
+    bellPath(ctx, sR, wallH); ctx.fill();
+
     if (fancy) {
-      // near rim of the exit plane (slight downward bulge = depth)
+      ctx.save();
+      bellPath(ctx, sR, wallH); ctx.clip();
+      // chamber / regen section: dark graphite with warm heat tint (also in previews)
+      const cg = ctx.createLinearGradient(0, 0, 0, wallH * jf);
+      cg.addColorStop(0, litBell ? 'rgba(18,19,22,0.35)' : 'rgba(14,15,18,0.88)');
+      cg.addColorStop(1, litBell ? 'rgba(60,44,28,0.30)' : 'rgba(40,30,22,0.80)');
+      ctx.fillStyle = cg; ctx.fillRect(-sR, 0, sR * 2, wallH * jf + 0.5);
+      if (_isVac) {
+        // niobium extension: exhaust-film streaks + heat discolouration towards the exit
+        const eg = ctx.createLinearGradient(0, wallH * jf, 0, wallH);
+        eg.addColorStop(0, 'rgba(70,60,50,0.00)'); eg.addColorStop(0.55, 'rgba(60,54,52,0.10)'); eg.addColorStop(1, 'rgba(24,22,24,0.34)');
+        ctx.fillStyle = eg; ctx.fillRect(-sR, wallH * jf, sR * 2, wallH);
+      } else {
+        const eg = ctx.createLinearGradient(0, wallH * 0.6, 0, wallH);
+        eg.addColorStop(0, 'rgba(0,0,0,0)'); eg.addColorStop(1, 'rgba(18,14,10,0.30)');   // exit soot
+        ctx.fillStyle = eg; ctx.fillRect(-sR, wallH * 0.6, sR * 2, wallH * 0.4);
+      }
+      ctx.restore();
+    }
+
+    // ---- lit: form + specular + hull shadow + shadows from neighbouring bells ----
+    if (litBell) { bellPath(ctx, sR, wallH); SimLighting.drawBellShade(ctx, sR, wallH, cx, cz, _shadeCtx.A0, gr, sibs); }
+
+    if (fancy) {
+      // exit plane: dark inside of the nozzle seen through the lip, bright rim
       ctx.beginPath();
       ctx.moveTo(-sR, wallH);
       ctx.quadraticCurveTo(0, wallH + lip * 2, sR, wallH);
       ctx.closePath();
-      ctx.fillStyle = g; ctx.fill();
-      ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.fill();
-      // everything below is clipped to the bell wall
+      const ig = ctx.createLinearGradient(0, wallH, 0, wallH + lip);
+      ig.addColorStop(0, '#2b2e33'); ig.addColorStop(1, '#0d0e10');
+      ctx.fillStyle = ig; ctx.fill();
+
       ctx.save();
       bellPath(ctx, sR, wallH); ctx.clip();
-      const hg = ctx.createLinearGradient(0, 0, 0, wallH);
-      hg.addColorStop(0.00, 'rgba(200,150,70,0.42)');   // chamber heat tint (gold/bronze)
-      hg.addColorStop(0.28, 'rgba(160,110,60,0.14)');
-      hg.addColorStop(0.60, 'rgba(0,0,0,0)');
-      hg.addColorStop(1.00, 'rgba(10,8,6,0.45)');       // exit soot
-      ctx.fillStyle = hg; ctx.fillRect(-sR, 0, sR * 2, wallH);
-      // regenerative-cooling / stiffener rings, curved a hair so the bell reads round
-      const tR = sR * 0.35;
-      const n = Math.max(3, Math.min(9, Math.floor(wallH / Math.max(3, sR * 0.55))));
+      // corrugation / stiffener rings on the nozzle extension
+      const n = Math.max(2, Math.min(_isVac ? 10 : 6, Math.floor(wallH / Math.max(3, sR * 0.5))));
       ctx.lineWidth = 1;
       for (let i = 1; i <= n; i++) {
-        const t = i / (n + 1), y = wallH * t;
-        const r = tR + (sR - tR) * Math.pow(t, 0.6);
-        ctx.strokeStyle = 'rgba(0,0,0,0.30)';
+        const t = jf + (1 - jf) * (i / (n + 1)), y = wallH * t, r = _wallR(sR, t);
+        ctx.strokeStyle = 'rgba(0,0,0,0.26)';
         ctx.beginPath(); ctx.moveTo(-r, y); ctx.quadraticCurveTo(0, y + r * 0.10, r, y); ctx.stroke();
-        ctx.strokeStyle = 'rgba(255,255,255,0.10)';
+        ctx.strokeStyle = 'rgba(255,255,255,0.12)';
         ctx.beginPath(); ctx.moveTo(-r, y + 1); ctx.quadraticCurveTo(0, y + 1 + r * 0.10, r, y + 1); ctx.stroke();
       }
+      // regen-cooling tube seams in the chamber section
+      if (sR > 5) {
+        ctx.strokeStyle = 'rgba(0,0,0,0.30)'; ctx.lineWidth = 0.8;
+        for (let k = -2; k <= 2; k++) {
+          if (!k) continue;
+          ctx.beginPath(); ctx.moveTo(k * _wallR(sR, 0) * 0.38, 0); ctx.lineTo(k * _wallR(sR, jf) * 0.40, wallH * jf); ctx.stroke();
+        }
+      }
+      // throat -> nozzle joint flange (bronze exhaust-manifold ring on MVac, dark clamp on SL)
+      const jy = wallH * jf, jr = _wallR(sR, jf);
+      ctx.strokeStyle = _isVac ? 'rgba(176,140,84,0.85)' : 'rgba(10,11,13,0.75)';
+      ctx.lineWidth = Math.max(1, sR * (_isVac ? 0.07 : 0.10));
+      ctx.beginPath(); ctx.moveTo(-jr, jy); ctx.quadraticCurveTo(0, jy + jr * 0.10, jr, jy); ctx.stroke();
+      ctx.strokeStyle = 'rgba(255,255,255,0.20)'; ctx.lineWidth = 0.8;
+      ctx.beginPath(); ctx.moveTo(-jr, jy - 1); ctx.quadraticCurveTo(0, jy - 1 + jr * 0.10, jr, jy - 1); ctx.stroke();
       ctx.restore();
+
       ctx.strokeStyle = '#0f1114'; ctx.lineWidth = 0.9;
       bellPath(ctx, sR, wallH); ctx.stroke();
-      ctx.strokeStyle = 'rgba(255,255,255,0.30)'; ctx.lineWidth = 1.2;
+      ctx.strokeStyle = 'rgba(235,240,245,0.55)'; ctx.lineWidth = 1.2;
       ctx.beginPath(); ctx.moveTo(-sR, wallH); ctx.quadraticCurveTo(0, wallH + lip * 2, sR, wallH); ctx.stroke();
+
+      // turbopump pod + turbine exhaust duct riding on the chamber (outside the silhouette)
+      if (sR > 3.5) {
+        const c0 = _wallR(sR, 0), px0 = c0 * 0.9, pw = sR * (_isVac ? 0.16 : 0.30), ph = Math.min(wallH * 0.20, sR * (_isVac ? 0.45 : 0.62));
+        const pg = ctx.createLinearGradient(px0, 0, px0 + pw, 0);
+        pg.addColorStop(0, '#34373d'); pg.addColorStop(0.35, '#6e747c'); pg.addColorStop(1, '#1b1d21');
+        ctx.fillStyle = pg;
+        ctx.beginPath();
+        if (ctx.roundRect) ctx.roundRect(px0, wallH * 0.015, pw, ph, Math.min(pw * 0.4, 3)); else ctx.rect(px0, wallH * 0.015, pw, ph);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(0,0,0,0.6)'; ctx.lineWidth = 0.7; ctx.stroke();
+        // exhaust duct: pod -> wall at ~45% (SL) / joint manifold (MVac)
+        const tEnd = _isVac ? jf : 0.45;
+        const ex = _wallR(sR, tEnd) + sR * 0.03, ey = wallH * tEnd;
+        ctx.strokeStyle = '#25282c'; ctx.lineWidth = Math.max(1, sR * 0.10); ctx.lineCap = 'round';
+        ctx.beginPath(); ctx.moveTo(px0 + pw * 0.5, wallH * 0.015 + ph);
+        ctx.quadraticCurveTo(px0 + pw * 0.7 + sR * 0.12, wallH * 0.015 + ph + (ey - ph) * 0.5, ex, ey); ctx.stroke();
+        ctx.strokeStyle = 'rgba(255,255,255,0.18)'; ctx.lineWidth = Math.max(0.6, sR * 0.03);
+        ctx.beginPath(); ctx.moveTo(px0 + pw * 0.5 - 0.5, wallH * 0.015 + ph);
+        ctx.quadraticCurveTo(px0 + pw * 0.7 + sR * 0.12 - 0.5, wallH * 0.015 + ph + (ey - ph) * 0.5, ex - 0.5, ey); ctx.stroke();
+        ctx.lineCap = 'butt';
+      }
     } else {
-      ctx.strokeStyle = '#0f1114'; ctx.lineWidth = 0.9; ctx.stroke();
+      ctx.strokeStyle = '#0f1114'; ctx.lineWidth = 0.9; bellPath(ctx, sR, wallH); ctx.stroke();
       ctx.strokeStyle = 'rgba(255,255,255,0.22)'; ctx.lineWidth = 1.3;
       ctx.beginPath(); ctx.moveTo(-sR, sH); ctx.lineTo(sR, sH); ctx.stroke();
     }
     ctx.restore();
   };
-  
+
   if (engineBell.count === 1) {
-  const gEng = (opts.engineThrusters && opts.engineThrusters.gimbal) ? opts.engineThrusters.gimbal : null;
-  // Live gimbal angle passed by caller (physics snapshot for sim,
-  // 0 for static previews). Read from the caller's engine list if
-  // available, else default 0.
-  let gRad = 0;
-  if (opts.liveEngines && opts.liveEngines.length) {
-    const gE = opts.liveEngines.find(e => e.gimbal);
-    if (gE && Number.isFinite(gE.gimbalDeg)) gRad = gE.gimbalDeg * Math.PI / 180;
-  }
-  drawOneBell(0, sR_m / mpp, sH_m / mpp, gRad);
-} else {
-    // Cluster — same z-sorted painter's order.
-    // Cluster ring radius: min of stored octaRadius and what fits
-    // inside the hull, accounting for the bell's own exit radius.
+    let gRad = 0;
+    if (opts.liveEngines && opts.liveEngines.length) {
+      const gE = opts.liveEngines.find(e => e.gimbal);
+      if (gE && Number.isFinite(gE.gimbalDeg)) gRad = gE.gimbalDeg * Math.PI / 180;
+    }
+    drawOneBell(0, sR_m / mpp, sH_m / mpp, gRad);
+  } else {
+    // Cluster — z-sorted painter's order (far bells first).
     const gap_m = 0.03;
     const R_m = (opts.params && Number.isFinite(opts.params.octaRadius)) ? opts.params.octaRadius : 1.7;
     const R_fit_m = Math.max(sR_m + 0.01, hullHalf_m - sR_m - gap_m);
@@ -2328,24 +2391,31 @@ if (drawsEngineBells && engineBell && !opts.hasMemberBelow) {
     const items = [];
     engineBell.slots.forEach(slot => {
       if (slot.angleDeg == null) items.push({ slot, z: 0, isCenter: true });
-      else items.push({ slot,
-        z: Math.sin(slot.angleDeg * Math.PI / 180) * R_vis_m,
-        isCenter: false });
+      else items.push({ slot, z: Math.sin(slot.angleDeg * Math.PI / 180) * R_vis_m, isCenter: false });
     });
     items.sort((a, b) => b.z - a.z);
-items.forEach(({ slot, z }) => {
-  const pos = (typeof slot.position === 'function') ? slot.position(R_vis_m) : { x: 0 };
-  // Live gimbal angle — same value for all gimbal-capable engines.
-  let gRad = 0;
-  if (opts.liveEngines && opts.liveEngines.length) {
-    const eng = opts.liveEngines.find(e => e.gimbal && e.angleDeg === slot.angleDeg);
-    if (eng && Number.isFinite(eng.gimbalDeg)) gRad = eng.gimbalDeg * Math.PI / 180;
-  }
-  drawOneBell((pos.x || 0) / mpp, sR_m / mpp, sH_m / mpp, gRad, -(z || 0) / mpp);
-});
+    const placed = items.map(({ slot, z }) => {
+      const pos = (typeof slot.position === 'function') ? slot.position(R_vis_m) : { x: 0 };
+      let gRad = 0;
+      if (opts.liveEngines && opts.liveEngines.length) {
+        const eng = opts.liveEngines.find(e => e.gimbal && e.angleDeg === slot.angleDeg);
+        if (eng && Number.isFinite(eng.gimbalDeg)) gRad = eng.gimbalDeg * Math.PI / 180;
+      }
+      return { x: (pos.x || 0) / mpp, z: -(z || 0) / mpp, gRad };
+    });
+    placed.forEach((p, i) => {
+      const sibs = placed.length > 1 ? placed.filter((_, j) => j !== i).map(o => ({ x: o.x, z: o.z })) : null;
+      drawOneBell(p.x, sR_m / mpp, sH_m / mpp, p.gRad, p.z, sibs);
+    });
   }
 }
   
+// FRONT legs — drawn AFTER the bells so the near struts sit in front of the engines.
+if (showLegs) {
+  drawLandingLeg(-1, false);
+  drawLandingLeg(1, false);
+}
+
 // ---- Grid fins ----
 // Per-fin state. `deploy` and `control` are both in DEGREES.
 //   deploy:  0 = deployed (fin perpendicular to hull), ±90 = stowed

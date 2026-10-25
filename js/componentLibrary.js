@@ -178,10 +178,10 @@ function buildLegsSwingout4() {
     frame: {
       legCount: 4,
       hingeGeometry: (H) => ({
-        hingeY: -H * 0.004,
+        hingeY: -H * 0.008,
         legLength: H * 0.27,
         maxSweepRad: 125 * Math.PI / 180,
-        pistonMountY: -H * 0.08,
+        pistonMountY: -H * 0.084,
       }),
 // STEP B / §2.6: one leg's approximate metal volume — placeholder-
 // precision silhouette (thin tapered strut with lightening cutouts
