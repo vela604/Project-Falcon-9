@@ -875,172 +875,319 @@ function drawPayloadSpaceShape(ctx, W, H, mpp, opts) {
 
 // ============================================================================
 
-// Payload art — satellite bus + folding solar wings + dish. Renders in
-// one of two states, or any state in between:
-//   openProgress = 0  → stowed (panels folded against the bus)
-//   openProgress = 1  → deployed (wings extended, dish + antenna up)
-// The caller interpolates over PAYLOAD_OPEN_DURATION_S seconds.
+// ============================================================================
+// Payload art — generic GEO comms satellite. Same signature as before; the bus
+// keeps exactly the W x H footprint the caller passes in (base at y=0, top at
+// y=-H, centred on x=0), so nothing in the stack/physics layout changes.
+//
+//   openProgress 0 -> stowed   (3-panel Z-fold arrays folded against the bus sides,
+//                               dish + omni antenna folded down on the top deck)
+//   openProgress 1 -> deployed (arrays unfolded + latched, boom raised, dish bloomed)
+// The caller interpolates openProgress over CONFIG.PAYLOAD_OPEN_DURATION_S.
+//
+// Timeline (fractions of openProgress):
+//   0.00-0.14  array booms push out of the hold-downs
+//   0.12-0.75  Z-fold panels unfold (outer panels lag), settle wobble after latch
+//   0.20-0.60  omni whip antenna extends
+//   0.35-0.80  dish boom swings up, 0.45-0.95 reflector blooms, 0.60-0.90 feed rises
+// Lighting: every flat face asks partLight (via _hwK) with its own normal, gold
+// MLI texture is cached per size (small LRU) and only the light overlay is per-frame.
+// ============================================================================
+const _mliTexCache = new Map();
+function _mkPlCanvas(w, h) {
+  try { if (typeof OffscreenCanvas === 'function') return new OffscreenCanvas(w, h); } catch (e) {}
+  if (typeof document !== 'undefined' && document.createElement) {
+    const c = document.createElement('canvas'); c.width = w; c.height = h; return c;
+  }
+  return null;
+}
+function _plHash(x, y) {
+  let h = (Math.imul(x, 374761393) + Math.imul(y, 668265263)) | 0;
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967295;
+}
+// Crinkled gold multi-layer insulation: albedo only (light is applied per frame).
+function _getMliTex(W, H) {
+  const tw = Math.max(8, Math.min(128, Math.round(W)));
+  const th = Math.max(8, Math.min(176, Math.round(tw * H / Math.max(1, W))));
+  const key = tw + 'x' + th;
+  let c = _mliTexCache.get(key);
+  if (c) { _mliTexCache.delete(key); _mliTexCache.set(key, c); return c; }
+  c = _mkPlCanvas(tw, th);
+  if (!c) return null;
+  const g = c.getContext('2d');
+  const bg = g.createLinearGradient(0, 0, tw, th);
+  bg.addColorStop(0, '#e2bd5c'); bg.addColorStop(0.5, '#cfa43f'); bg.addColorStop(1, '#b98d2c');
+  g.fillStyle = bg; g.fillRect(0, 0, tw, th);
+  const cs = Math.max(3, Math.round(tw / 13));
+  for (let gy = 0; gy * cs < th + cs; gy++) {
+    for (let gx = 0; gx * cs < tw + cs; gx++) {
+      const x0 = gx * cs, y0 = gy * cs;
+      // two facets per cell, randomly flipped diagonal
+      const flip = _plHash(gx + 91, gy + 17) > 0.5;
+      for (let t = 0; t < 2; t++) {
+        const h = _plHash(gx * 2 + t, gy + 5) - 0.5;
+        g.fillStyle = h > 0 ? `rgba(255,238,170,${(h * 0.55).toFixed(3)})` : `rgba(70,38,0,${(-h * 0.55).toFixed(3)})`;
+        g.beginPath();
+        if (flip ? t === 0 : t === 1) { g.moveTo(x0, y0); g.lineTo(x0 + cs, y0); g.lineTo(x0, y0 + cs); }
+        else { g.moveTo(x0 + cs, y0 + cs); g.lineTo(x0 + cs, y0); g.lineTo(x0, y0 + cs); }
+        g.closePath(); g.fill();
+      }
+    }
+  }
+  _mliTexCache.set(key, c);
+  if (_mliTexCache.size > 10) _mliTexCache.delete(_mliTexCache.keys().next().value);
+  return c;
+}
+
 function drawPayloadArt(ctx, W, H, openProgress) {
   const p = Math.max(0, Math.min(1, openProgress || 0));
-  
-  // ---- Solar wings ----
-  // Folded: thin strips hugging the bus at ±W/2, width W*0.15 each.
-  // Deployed: long wings sweeping outward, width W*1.3 each.
-  // Hinge rotates the wing outward by 12° so it reads as an unfolding
-  // mechanism, not just a sliding strip.
-  const wingH = H * 0.72;
-  const wingY = -H * 0.86;
-  const foldedW = W * 0.15;
-  const extendedW = W * 1.30;
-  const wingW = foldedW + (extendedW - foldedW) * p;
-  const wingTilt = p * 12 * Math.PI / 180;
-  
+  const ease = t => (t <= 0 ? 0 : t >= 1 ? 1 : t * t * (3 - 2 * t));
+  const mid = W > 12, fine = W > 26;
+  const kF = _hwK(0, 0.08, 1), kL = _hwK(-1, 0.1, 0.3), kR = _hwK(1, 0.1, 0.3), kT = _hwK(0, 1, 0.4);
+  const lw = Math.max(0.6, W * 0.012);
+  const dark = (a) => 'rgba(0,0,0,' + a + ')';
+
+  // ------------------------------------------------------------------ geometry
+  const sw = W * 0.07;                         // visible depth strips either side of the front face
+  const fx0 = -W / 2 + sw, fx1 = W / 2 - sw, fw = fx1 - fx0;
+  const yRad = -H * 0.74;                      // radiator / MLI boundary
+  const yAdp = -H * 0.07;                      // payload-adapter ring top
+  const wingH = H * 0.72, wingMidY = -H * 0.86 + wingH / 2;
+
+  // ------------------------------------------------------------------ SOLAR ARRAYS (behind the bus)
+  const Lp = W * 0.40, boomMax = W * 0.10;
+  const boomLen = boomMax * ease(p / 0.14);
+  const wob = p > 0.74 ? 0.045 * Math.exp(-(p - 0.74) * 16) * Math.cos((p - 0.74) * 46) : 0;
+  const DEG = Math.PI / 180;
   [-1, 1].forEach(side => {
     ctx.save();
-    // Hinge at the bus edge, mid-height of the wing.
-    ctx.translate(side * (W / 2), wingY + wingH / 2);
-    ctx.rotate(side * wingTilt);
-    // Wing rect extends outward from the hinge.
-    const wx = side > 0 ? 0 : -wingW;
-    // Solar cell gradient — darker at the edges, bluish mid.
-    const wg = ctx.createLinearGradient(wx, 0, wx + wingW, 0);
-    wg.addColorStop(0, '#1a3050');
-    wg.addColorStop(0.35, '#2c5a8a');
-    wg.addColorStop(0.7, '#2a5280');
-    wg.addColorStop(1, '#0a1520');
-    ctx.fillStyle = wg;
-    ctx.fillRect(wx, -wingH / 2, wingW, wingH);
-    // Frame
-    ctx.strokeStyle = '#0a1520';
-    ctx.lineWidth = 0.7;
-    ctx.strokeRect(wx, -wingH / 2, wingW, wingH);
-    // Cell grid — vertical strips (many small cells across the wing)
-    ctx.strokeStyle = 'rgba(140,190,255,0.35)';
-    ctx.lineWidth = 0.4;
-    const cols = Math.max(4, Math.round((wingW / W) * 6));
-    for (let i = 1; i < cols; i++) {
-      const cx = wx + (wingW * i / cols);
-      ctx.beginPath();
-      ctx.moveTo(cx, -wingH / 2 + 1);
-      ctx.lineTo(cx, wingH / 2 - 1);
-      ctx.stroke();
+    ctx.translate(side * W / 2, wingMidY);
+    ctx.rotate(side * wob);
+    // yoke boom
+    ctx.fillStyle = _tint('#9aa1a9', Math.max(0.3, kF));
+    ctx.fillRect(Math.min(0, side * boomLen), -Math.max(lw, W * 0.014), Math.abs(boomLen) + 0.01, Math.max(lw, W * 0.014) * 2);
+    let x = boomLen;
+    for (let k = 0; k < 3; k++) {
+      const st = ease((p - 0.12 - 0.05 * k) / 0.52);
+      const beta = (1 - st) * 85 * DEG;
+      const cb = Math.cos(beta), sb = Math.sin(beta);
+      const w = Lp * cb;
+      const s = (k % 2 === 0) ? 1 : -1;
+      const hl = wingH / 2 * (1 + 0.05 * s * sb), hr = wingH / 2 * (1 - 0.05 * s * sb);
+      const xa = side * x, xb = side * (x + w);
+      const kp = Math.max(0.14, _hwK(s * sb, 0.05, cb));
+      // cell-blue face
+      const pg = ctx.createLinearGradient(xa, 0, xb, 0);
+      pg.addColorStop(0, _tint('#16346a', kp)); pg.addColorStop(0.5, _tint('#2a5aa0', kp)); pg.addColorStop(1, _tint('#1a3e78', kp));
+      ctx.fillStyle = pg;
+      ctx.beginPath(); ctx.moveTo(xa, -hl); ctx.lineTo(xb, -hr); ctx.lineTo(xb, hr); ctx.lineTo(xa, hl); ctx.closePath(); ctx.fill();
+      if (mid && w > 2) {
+        // cells: 4 columns x 9 rows foreshortened with the panel
+        ctx.strokeStyle = _tint('#9cc2f0', kp, 0.30); ctx.lineWidth = 0.5;
+        ctx.beginPath();
+        const cols = 4, rows = 9;
+        for (let c = 1; c < cols; c++) {
+          const f = c / cols, cx = xa + (xb - xa) * f, h = hl + (hr - hl) * f;
+          ctx.moveTo(cx, -h + 1); ctx.lineTo(cx, h - 1);
+        }
+        for (let r = 1; r < rows; r++) {
+          const v = r / rows;
+          ctx.moveTo(xa, -hl + 2 * hl * v); ctx.lineTo(xb, -hr + 2 * hr * v);
+        }
+        ctx.stroke();
+        // sun glint sweeping across the cell glass
+        const gl = Math.max(0, kp - 0.55) * 0.34;
+        if (gl > 0.01) {
+          const gg = ctx.createLinearGradient(xa, -hl, xb, hr);
+          gg.addColorStop(0.15, 'rgba(255,255,255,0)'); gg.addColorStop(0.40, 'rgba(210,235,255,' + gl.toFixed(3) + ')'); gg.addColorStop(0.65, 'rgba(255,255,255,0)');
+          ctx.fillStyle = gg;
+          ctx.beginPath(); ctx.moveTo(xa, -hl); ctx.lineTo(xb, -hr); ctx.lineTo(xb, hr); ctx.lineTo(xa, hl); ctx.closePath(); ctx.fill();
+        }
+      }
+      // aluminium frame
+      ctx.strokeStyle = _tint('#aeb6bf', Math.max(0.3, kp)); ctx.lineWidth = Math.max(0.6, lw * 0.8);
+      ctx.beginPath(); ctx.moveTo(xa, -hl); ctx.lineTo(xb, -hr); ctx.lineTo(xb, hr); ctx.lineTo(xa, hl); ctx.closePath(); ctx.stroke();
+      // hinge barrel between panels
+      if (k < 2 && mid) { ctx.fillStyle = _tint('#5d636b', Math.max(0.3, kF)); ctx.fillRect(Math.min(xb, xb + side * lw * 1.2), -hr, Math.abs(lw * 1.2), hr * 2); }
+      x += w + W * 0.006;
     }
-    // Horizontal mid-seam
-    ctx.beginPath();
-    ctx.moveTo(wx, 0);
-    ctx.lineTo(wx + wingW, 0);
-    ctx.stroke();
-    // Hinge bracket (small dark block bridging bus edge to hinge)
-    ctx.fillStyle = '#3a3e44';
-    ctx.fillRect(-side * (W * 0.03), -wingH * 0.08, side * (W * 0.03), wingH * 0.16);
-    ctx.strokeStyle = '#0d1015';
-    ctx.lineWidth = 0.5;
-    ctx.strokeRect(-side * (W * 0.03), -wingH * 0.08, side * (W * 0.03), wingH * 0.16);
+    // latch tab at the tip once fully unfolded
+    if (p > 0.72 && mid) { ctx.fillStyle = '#d6dbe0'; const tx = side * (x - W * 0.006); ctx.fillRect(Math.min(tx, tx + side * lw * 1.5), -wingH * 0.07, lw * 1.5, wingH * 0.14); }
     ctx.restore();
   });
-  
-  // ---- Main bus ----
-  const bg = cachedGradient(ctx, 'mainBody', Math.round(W), () => {
-    const g = ctx.createLinearGradient(-W / 2, 0, W / 2, 0);
-    g.addColorStop(0, '#4a4e54');
-    g.addColorStop(0.5, '#c8d0d8');
-    g.addColorStop(1, '#3a3d43');
-    return g;
-  });
-  ctx.fillStyle = bg;
-  ctx.fillRect(-W / 2, -H, W, H);
-  ctx.strokeStyle = '#1c1e22';
-  ctx.lineWidth = 1;
-  ctx.strokeRect(-W / 2, -H, W, H);
-  
-  // Horizontal equipment seams across the bus (3 bands)
-  ctx.strokeStyle = 'rgba(20,24,30,0.45)';
-  ctx.lineWidth = 0.5;
-  [-0.30, 0.05, 0.40].forEach(f => {
-    const y = -H * (0.5 + f);
+
+  // ------------------------------------------------------------------ BUS
+  // depth strips
+  const gradStrip = (x0, k, top, bot) => {
+    ctx.fillStyle = _tint(top, k); ctx.fillRect(x0, -H, sw, H + yRad);
+    ctx.fillStyle = _tint(bot, k); ctx.fillRect(x0, yRad, sw, -yRad);
+  };
+  gradStrip(-W / 2, kL, '#b9bec6', '#a47d2c');
+  gradStrip(fx1, kR, '#b9bec6', '#a47d2c');
+  // gold MLI front face (cached crinkle texture, lit by overlay)
+  const tex = mid ? _getMliTex(fw, -yRad + yAdp) : null;
+  if (tex) { ctx.drawImage(tex, fx0, yRad, fw, -yRad + yAdp); }
+  else { ctx.fillStyle = _tint('#cfa43f', kF); ctx.fillRect(fx0, yRad, fw, -yRad + yAdp); }
+  if (tex && kF < 1) { ctx.fillStyle = dark(Math.min(0.82, (1 - kF) * 0.9)); ctx.fillRect(fx0, yRad, fw, -yRad + yAdp); }
+  if (fine) {
+    // tape seams + kapton patch
+    ctx.strokeStyle = dark(0.40); ctx.lineWidth = 0.6;
     ctx.beginPath();
-    ctx.moveTo(-W / 2, y);
-    ctx.lineTo(W / 2, y);
+    ctx.moveTo(fx0 + fw * 0.5, yRad); ctx.lineTo(fx0 + fw * 0.5, yAdp);
+    ctx.moveTo(fx0, -H * 0.42); ctx.lineTo(fx1, -H * 0.42);
     ctx.stroke();
-  });
-  
-  // Small instrument panel details — 2 tiny dark rectangles
-  ctx.fillStyle = 'rgba(15,18,24,0.65)';
-  ctx.fillRect(-W * 0.30, -H * 0.62, W * 0.16, H * 0.06);
-  ctx.fillRect(W * 0.10, -H * 0.44, W * 0.20, H * 0.05);
-  
-  // RCS thruster nubs at the four bus corners (base-side), always visible
-  ctx.fillStyle = '#1c1e22';
-  [-1, 1].forEach(sgn => {
-    ctx.fillRect(sgn * (W / 2) - sgn * W * 0.05 - (sgn > 0 ? 0 : W * 0.05),
-      -H * 0.05,
-      W * 0.05, H * 0.03);
-  });
-  
-  // ---- Dish / antenna assembly on top ----
-  // Stowed: flat, hugging the top of the bus.
-  // Deployed: rotated up ~55° and slightly wider.
-  const dishR_base = W * 0.20;
-  const dishR = dishR_base * (0.85 + 0.30 * p);
-  const mastH = H * (0.03 + 0.10 * p); // small mast grows
-  const dishAngle = p * 55 * Math.PI / 180; // rotates back
-  
-  ctx.save();
-  ctx.translate(0, -H); // top center of bus
-  // Mast
-  ctx.strokeStyle = '#2a2e34';
-  ctx.lineWidth = Math.max(1, W * 0.02);
+    ctx.fillStyle = _tint('#15161a', Math.max(0.4, kF));
+    ctx.fillRect(fx0 + fw * 0.14, -H * 0.60, fw * 0.24, H * 0.13);
+    ctx.fillRect(fx0 + fw * 0.60, -H * 0.30, fw * 0.26, H * 0.10);
+    // soft specular band on the foil
+    const sp = Math.max(0, kF - 0.5) * 0.30;
+    if (sp > 0.01) {
+      const sg = ctx.createLinearGradient(fx0, yRad, fx1, yAdp);
+      sg.addColorStop(0.22, 'rgba(255,246,205,0)'); sg.addColorStop(0.38, 'rgba(255,246,205,' + sp.toFixed(3) + ')'); sg.addColorStop(0.55, 'rgba(255,246,205,0)');
+      ctx.fillStyle = sg; ctx.fillRect(fx0, yRad, fw, -yRad + yAdp);
+    }
+  }
+  // radiator deck: white-silver panel with louvres
+  ctx.fillStyle = _tint('#e4e8ed', kF); ctx.fillRect(fx0, -H, fw, H + yRad);
+  if (mid) {
+    ctx.strokeStyle = dark(0.22); ctx.lineWidth = 0.6;
+    ctx.beginPath();
+    const n = Math.max(3, Math.round(H * 0.74 * 0.26 / Math.max(2, W * 0.03)));
+    for (let i = 1; i < n; i++) { const y = -H + (H + yRad) * i / n; ctx.moveTo(fx0 + 1, y); ctx.lineTo(fx1 - 1, y); }
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,255,255,' + (0.35 * kF).toFixed(3) + ')';
+    ctx.beginPath();
+    for (let i = 1; i < n; i++) { const y = -H + (H + yRad) * i / n + 0.8; ctx.moveTo(fx0 + 1, y); ctx.lineTo(fx1 - 1, y); }
+    ctx.stroke();
+  }
+  // top deck lip (lit by the top-facing normal)
+  ctx.fillStyle = _tint('#8f969e', kT); ctx.fillRect(-W / 2, -H, W, Math.max(1, H * 0.015));
+  // radiator / MLI joint trim
+  ctx.fillStyle = _tint('#5a5f66', kF); ctx.fillRect(fx0, yRad - 0.5, fw, Math.max(1, H * 0.012));
+  // bus outline
+  ctx.strokeStyle = '#1c1e22'; ctx.lineWidth = 1; ctx.strokeRect(-W / 2, -H, W, H);
+
+  // star trackers + sun sensor on the radiator deck
+  if (fine) {
+    const stW = W * 0.15, stH = H * 0.07;
+    [-0.26, 0.10].forEach(fxp => {
+      const sx = fxp * W, sy = -H * 0.97;
+      ctx.fillStyle = _tint('#202226', Math.max(0.35, kF)); ctx.fillRect(sx, sy, stW, stH);
+      ctx.fillStyle = _tint('#0a0b0d', 1); ctx.beginPath(); ctx.arc(sx + stW / 2, sy + stH / 2, Math.min(stW, stH) * 0.32, 0, Math.PI * 2); ctx.fill();
+    });
+  }
+
+  // ------------------------------------------------------------------ SADA drive housings
+  if (mid) {
+    [-1, 1].forEach(side => {
+      const kk = side < 0 ? kL : kR;
+      ctx.fillStyle = _tint('#3d4147', Math.max(0.3, kk));
+      const hw = W * 0.05, hh = H * 0.12;
+      ctx.fillRect(side * W / 2 - (side > 0 ? 0 : hw), wingMidY - hh / 2, hw, hh);
+      ctx.strokeStyle = '#0d1015'; ctx.lineWidth = 0.5;
+      ctx.strokeRect(side * W / 2 - (side > 0 ? 0 : hw), wingMidY - hh / 2, hw, hh);
+    });
+  }
+
+  // ------------------------------------------------------------------ RCS thruster quads on the depth strips
+  if (mid) {
+    [-1, 1].forEach(side => {
+      const kk = side < 0 ? kL : kR;
+      [-0.12, -0.66].forEach(fy => {
+        const bx = side * (W / 2) - (side > 0 ? 0 : sw * 0.9), by = H * fy;
+        ctx.fillStyle = _tint('#1a1b1f', Math.max(0.4, kk));
+        ctx.fillRect(bx, by - H * 0.03, sw * 0.9, H * 0.06);
+        // two tiny nozzles poking out sideways
+        ctx.fillStyle = '#0b0c0e';
+        const nx = side > 0 ? bx + sw * 0.9 : bx;
+        [-0.012, 0.012].forEach(dy => {
+          ctx.beginPath();
+          ctx.moveTo(nx, by + H * dy - H * 0.008); ctx.lineTo(nx + side * Math.max(1.2, sw * 0.35), by + H * dy - H * 0.014);
+          ctx.lineTo(nx + side * Math.max(1.2, sw * 0.35), by + H * dy + H * 0.014); ctx.lineTo(nx, by + H * dy + H * 0.008);
+          ctx.closePath(); ctx.fill();
+        });
+      });
+    });
+  }
+
+  // ------------------------------------------------------------------ payload adapter ring + apogee motor
+  const adW = W * 0.84;
+  ctx.fillStyle = _tint('#34383e', Math.max(0.3, kF)); ctx.fillRect(-adW / 2, yAdp, adW, -yAdp);
+  ctx.fillStyle = 'rgba(255,255,255,' + (0.20 * kF).toFixed(3) + ')'; ctx.fillRect(-adW / 2, yAdp, adW, Math.max(0.6, H * 0.008));
+  ctx.strokeStyle = '#0d0e11'; ctx.lineWidth = 0.6; ctx.strokeRect(-adW / 2, yAdp, adW, -yAdp);
+  const nzW = W * 0.30, nzH = H * 0.10;
+  const ng = ctx.createLinearGradient(-nzW / 2, 0, nzW / 2, 0);
+  ng.addColorStop(0, _tint('#17181b', 1)); ng.addColorStop(0.35, _tint('#7a6436', Math.max(0.4, kF))); ng.addColorStop(1, _tint('#121315', 1));
+  ctx.fillStyle = ng;
   ctx.beginPath();
-  ctx.moveTo(0, 0);
-  ctx.lineTo(0, -mastH);
-  ctx.stroke();
-  // Dish — rotate about the mast top
-  ctx.translate(0, -mastH);
-  ctx.rotate(dishAngle);
-  // Dish dish
-  const dg = cachedGradient(ctx, 'topDish', Math.round(dishR), () => {
-    const g = ctx.createRadialGradient(0, 0, dishR * 0.05, 0, 0, dishR);
-    g.addColorStop(0, '#eef3fa');
-    g.addColorStop(0.55, '#b9c2cd');
-    g.addColorStop(1, '#545c66');
-    return g;
-  });
-  ctx.fillStyle = dg;
-  ctx.beginPath();
-  ctx.arc(0, 0, dishR, Math.PI, 0, false); // upper semicircle
-  ctx.closePath();
-  ctx.fill();
-  ctx.strokeStyle = '#1c1e22';
-  ctx.lineWidth = 0.7;
-  ctx.stroke();
-  // Feed horn (small dot at focus)
-  ctx.fillStyle = '#e8eef5';
-  ctx.beginPath();
-  ctx.arc(0, -dishR * 0.35, Math.max(0.8, W * 0.02), 0, Math.PI * 2);
-  ctx.fill();
-  ctx.restore();
-  
-  // ---- Base nozzle (existing) ----
-  const nzW = W * 0.35;
-  const nzH = H * 0.08;
-  ctx.fillStyle = '#1c1e22';
-  ctx.beginPath();
-  ctx.moveTo(-nzW / 2, 0);
-  ctx.lineTo(-nzW / 2 * 0.6, nzH);
-  ctx.lineTo(nzW / 2 * 0.6, nzH);
-  ctx.lineTo(nzW / 2, 0);
-  ctx.closePath();
-  ctx.fill();
-  
-  // ---- Blinking beacon (becomes green when deployed) ----
-  const blink = 0.5 + 0.5 * Math.sin(performance.now() * 0.004);
-  const beaconColor = (p > 0.5) ?
-    `rgba(74,222,128,${blink})` :
-    `rgba(255,60,50,${blink})`;
-  ctx.fillStyle = beaconColor;
-  ctx.beginPath();
-  ctx.arc(0, -H * 0.55, W * 0.05, 0, Math.PI * 2);
-  ctx.fill();
+  ctx.moveTo(-nzW * 0.28, 0); ctx.quadraticCurveTo(-nzW * 0.38, nzH * 0.6, -nzW / 2, nzH);
+  ctx.lineTo(nzW / 2, nzH); ctx.quadraticCurveTo(nzW * 0.38, nzH * 0.6, nzW * 0.28, 0);
+  ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = '#0a0b0d'; ctx.lineWidth = 0.6; ctx.stroke();
+
+  // ------------------------------------------------------------------ omni whip antenna
+  {
+    const e = ease((p - 0.20) / 0.40);
+    const L = W * (0.05 + 0.22 * e), ax = -W * 0.32;
+    ctx.strokeStyle = _tint('#d3d8de', Math.max(0.35, kT)); ctx.lineWidth = Math.max(0.7, W * 0.011);
+    ctx.beginPath(); ctx.moveTo(ax, -H); ctx.lineTo(ax - (1 - e) * W * 0.04, -H - L); ctx.stroke();
+    ctx.fillStyle = _tint('#e8ebef', Math.max(0.35, kT));
+    ctx.beginPath(); ctx.arc(ax - (1 - e) * W * 0.04, -H - L, Math.max(0.9, W * 0.02), 0, Math.PI * 2); ctx.fill();
+  }
+
+  // ------------------------------------------------------------------ deployable reflector
+  {
+    const eB = ease((p - 0.35) / 0.45), eD = ease((p - 0.45) / 0.50), eF = ease((p - 0.60) / 0.30);
+    const px0 = W * 0.20, py0 = -H;
+    const Lb = W * (0.10 + 0.24 * eB);
+    const phi = (-(1 - eB) * 90 + eB * 14) * DEG;               // boom angle from vertical (neg = folded toward -x)
+    const ex = px0 + Lb * Math.sin(phi), ey = py0 - Lb * Math.cos(phi);
+    // boom
+    ctx.strokeStyle = _tint('#8c929a', Math.max(0.35, kT)); ctx.lineWidth = Math.max(0.9, W * 0.018); ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(px0, py0); ctx.lineTo(ex, ey); ctx.stroke(); ctx.lineCap = 'butt';
+    ctx.fillStyle = _tint('#3d4147', Math.max(0.35, kT)); ctx.beginPath(); ctx.arc(px0, py0, Math.max(1.2, W * 0.03), 0, Math.PI * 2); ctx.fill();
+    // reflector
+    const r = W * 0.30 * (0.55 + 0.45 * eD);
+    const theta = (-80 * (1 - eD) + 34 * eD) * DEG;
+    ctx.save();
+    ctx.translate(ex, ey); ctx.rotate(theta);
+    const kd = Math.max(0.2, _hwK(Math.sin(theta), Math.cos(theta), 0.5));
+    // back shell
+    const bsg = ctx.createLinearGradient(-r, 0, r, 0);
+    bsg.addColorStop(0, _tint('#8c929a', kd)); bsg.addColorStop(0.5, _tint('#d6dbe0', kd)); bsg.addColorStop(1, _tint('#555b63', kd));
+    ctx.fillStyle = bsg;
+    ctx.beginPath(); ctx.moveTo(-r, 0); ctx.quadraticCurveTo(0, r * 0.62, r, 0); ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = '#1c1e22'; ctx.lineWidth = 0.6; ctx.stroke();
+    // mesh interior (rim ellipse)
+    const ry = Math.max(0.6, r * (0.10 + 0.28 * eD));
+    const ig = ctx.createRadialGradient(0, 0, r * 0.1, 0, 0, r);
+    ig.addColorStop(0, _tint('#d8c690', kd)); ig.addColorStop(1, _tint('#8f7c4a', kd));
+    ctx.fillStyle = ig;
+    ctx.beginPath(); ctx.ellipse(0, 0, r, ry, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = _tint('#2a2c30', 1); ctx.lineWidth = 0.7; ctx.stroke();
+    if (fine && r > 4) {
+      ctx.save(); ctx.beginPath(); ctx.ellipse(0, 0, r, ry, 0, 0, Math.PI * 2); ctx.clip();
+      ctx.strokeStyle = 'rgba(40,30,10,0.35)'; ctx.lineWidth = 0.4; ctx.beginPath();
+      for (let i = -4; i <= 4; i++) { ctx.moveTo(i * r * 0.25 - r * 0.3, -ry); ctx.lineTo(i * r * 0.25 + r * 0.3, ry); }
+      ctx.stroke(); ctx.restore();
+    }
+    // feed arm + horn at the focus
+    if (eF > 0.02) {
+      const fh = r * 0.85 * eF;
+      ctx.strokeStyle = _tint('#c4cad1', kd); ctx.lineWidth = Math.max(0.6, W * 0.008);
+      ctx.beginPath(); ctx.moveTo(-r * 0.78, 0); ctx.lineTo(0, -fh); ctx.moveTo(r * 0.78, 0); ctx.lineTo(0, -fh); ctx.stroke();
+      ctx.fillStyle = _tint('#e8ebef', kd); ctx.fillRect(-W * 0.018, -fh - W * 0.03, W * 0.036, W * 0.03);
+    }
+    ctx.restore();
+  }
+
+  // ------------------------------------------------------------------ status beacon (red stowed -> green deployed)
+  {
+    const blink = 0.5 + 0.5 * Math.sin((typeof performance !== 'undefined' ? performance.now() : 0) * 0.004);
+    ctx.fillStyle = (p > 0.5) ? `rgba(74,222,128,${blink})` : `rgba(255,60,50,${blink})`;
+    ctx.beginPath(); ctx.arc(-W * 0.34, -H * 0.80, Math.max(0.9, W * 0.032), 0, Math.PI * 2); ctx.fill();
+  }
 }
 
 
