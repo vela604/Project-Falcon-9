@@ -101,6 +101,7 @@ const CONFIG = {
   
   // Earth rotation — sidereal day, rad/s. Real value: 2π / 86164.0905 s.
   EARTH_OMEGA: 7.2921159e-5, // rad/s
+  SUN_DECLINATION_DEG: 23.44,   // sun elevation out of the orbital plane (3-D light for 2-D shading)
   
   // Where on the Earth circle the launch site sits, measured CCW from
   // the +y axis (i.e. "up" at t=0). Change this to move the site around

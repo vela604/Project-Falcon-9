@@ -275,7 +275,6 @@ const SimLighting = (function () {
   // Light direction in the ROCKET frame (lx: across, +right; ly: along nose),
   // sun intensity on the body, and ambient fill. Consumed by rocketArt.js
   // through the global ROCKET_LIGHT.
-  const _L = { lx: -1, ly: 0, lit: 1, amb: 0.3, tint: 0 };
   function litFactor(body) {
     const s = sunDir(), R = CONFIG.EARTH_RADIUS;
     const along = body.rx * s.x + body.ry * s.y;
@@ -283,23 +282,275 @@ const SimLighting = (function () {
     const perp = Math.abs(body.rx * s.y - body.ry * s.x);        // distance from Earth-centre to sun ray
     return smooth(R - 15000, R + 25000, perp);                   // soft edge = atmospheric refraction
   }
+  const _bodyL = new WeakMap();
+  function _smBody(o, key, target, rate) {
+    if (!Number.isFinite(target)) return target;
+    const prev = o.sm[key];
+    if (prev === undefined) { o.sm[key] = target; return target; }
+    const next = prev + (target - prev) * (rate != null ? rate : 0.12);
+    o.sm[key] = next;
+    return next;
+  }
+  // Per-BODY light object (never shared between bodies). lx/ly/lz = unit sun
+  // vector in the body frame (x across +right, y along nose, z toward the viewer).
+  // The Sun sits out of the 2-D orbital plane by the physical declination
+  // CONFIG.SUN_DECLINATION_DEG, so lz = sin(decl) and the in-plane part is
+  // scaled by cos(decl) — a real 3-D sun instead of a fudge constant.
   function rocketLight(body) {
     if (!S.enabled || !body) return null;
+    let o = _bodyL.get(body);
+    if (!o) {
+      o = { lx: 0, ly: 1, lz: 0.4, lit: 1, amb: 0.3, tint: 0, sm: Object.create(null), reg: new Map(), regPrev: new Map() };
+      _bodyL.set(body, o);
+    }
+    o.regPrev = o.reg; o.reg = new Map();      // profile registry rolls over once per body per frame
     const s = sunDir(), th = body.theta || 0, R = CONFIG.EARTH_RADIUS;
     const r = Math.hypot(body.rx, body.ry) || 1;
     const se = (body.rx * s.x + body.ry * s.y) / r;
-    const _rk = 'rl:' + (body.id || '');
-    const lit = _tsm(_rk + ':lit', litFactor(body));
+    const lit = _smBody(o, 'lit', litFactor(body));
     const dens = clamp01(airDensity(Math.max(0, r - R)) / CONFIG.SEA_LEVEL_DENSITY);
     const day = groundDay(se);
     let amb = 0.10 + 0.38 * dens * day;
     if (S.assist) amb += 0.26 * (1 - lit) * (1 - dens * day);
-    _L.lx = s.x * Math.cos(th) + s.y * Math.sin(th);
-    _L.ly = -s.x * Math.sin(th) + s.y * Math.cos(th);
-    _L.lit = lit;
-    _L.amb = _tsm(_rk + ':amb', Math.min(0.75, amb));
-    _L.tint = _tsm(_rk + ':tint', (1 - smooth(0.02, 0.40, se)) * smooth(0.01, 0.25, dens));
-    return _L;
+    let decl = (CONFIG.SUN_DECLINATION_DEG != null ? CONFIG.SUN_DECLINATION_DEG : 23.44) * Math.PI / 180;
+    decl = Math.max(0, Math.min(1.2, decl));
+    const cd = Math.cos(decl);
+    o.lx = (s.x * Math.cos(th) + s.y * Math.sin(th)) * cd;
+    o.ly = (-s.x * Math.sin(th) + s.y * Math.cos(th)) * cd;
+    o.lz = Math.sin(decl);
+    o.lit = lit;
+    o.amb = _smBody(o, 'amb', Math.min(0.75, amb));
+    o.tint = _smBody(o, 'tint', (1 - smooth(0.02, 0.40, se)) * smooth(0.01, 0.25, dens));
+    return o;
+  }
+
+  // ==========================================================================
+  // SHADE ENGINE — real per-pixel lighting for axisymmetric hull parts.
+  //
+  // Every hull section (cylinder, fairing ogive, cone, engine bell) is a
+  // surface of revolution about the rocket axis. The silhouette radius r(a)
+  // (a = height along the axis) is sampled once from the member's own canvas
+  // path (isPointInPath bisection, cached by a cheap path fingerprint), so the
+  // shading follows whatever the drawer actually draws — no duplicated
+  // geometry. For each pixel of a small map we compute the true surface
+  // normal  N = (u, -dr/da, v)  (u = x/r, v = sqrt(1-u^2)), then
+  //    diffuse  = N . L          (L = body-frame sun, incl. sun declination)
+  //    specular = Blinn(N, L, V=+z)
+  //    shadow   = 14-step ray march toward the sun through the radius
+  //               profiles of every member of the body (fairing -> tank,
+  //               hull -> engine bells).
+  // The result is a straight-alpha black/warm/white overlay, clipped to the
+  // member's path and drawn once. Maps are cached (LRU) by profile + light.
+  // ==========================================================================
+  const _mkCv = (w, h) => {
+    if (typeof OffscreenCanvas !== 'undefined') return new OffscreenCanvas(w, h);
+    if (typeof document !== 'undefined') { const c = document.createElement('canvas'); c.width = w; c.height = h; return c; }
+    return null;
+  };
+  const _profCache = new Map();      // path fingerprint -> radius profile
+  const _mapCache = new Map();       // light/profile key -> { cv, w, h }
+  const _cvPool = [];
+  const MAP_LRU = 48, PROF_LRU = 96, PROF_ROWS = 40;
+  const _fx = () => (typeof ROCKET_FX !== 'undefined' && Number.isFinite(ROCKET_FX.spec)) ? ROCKET_FX.spec : 1;
+
+  function _probe(ctx, m, x, y) { return ctx.isPointInPath(m.a * x + m.c * y + m.e, m.b * x + m.d * y + m.f); }
+
+  // Radius profile of the CURRENT path between local heights aLo..aHi (a = -y).
+  function sampleProfile(ctx, ext, aLo, aHi, tag) {
+    if (!(ext > 0.5) || !(aHi - aLo > 0.5) || typeof ctx.isPointInPath !== 'function' || typeof ctx.getTransform !== 'function') return null;
+    const m = ctx.getTransform(), span = aHi - aLo;
+    let bits = '';
+    for (let j = 0; j < 8; j++) {
+      const y = -(aLo + (j + 0.5) / 8 * span);
+      let b = 0;
+      for (let k = 0; k < 4; k++) b |= (_probe(ctx, m, ext * (0.3 + 0.2 * k + (k === 3 ? 0.07 : 0)), y) ? 1 : 0) << k;
+      bits += b.toString(16);
+    }
+    const key = tag + '|' + ext.toFixed(1) + '|' + aLo.toFixed(1) + '|' + aHi.toFixed(1) + '|' + bits;
+    let p = _profCache.get(key);
+    if (p) { _profCache.delete(key); _profCache.set(key, p); return p; }
+    const r = new Float32Array(PROF_ROWS);
+    let rmax = 0;
+    for (let j = 0; j < PROF_ROWS; j++) {
+      const y = -(aLo + (j + 0.5) / PROF_ROWS * span);
+      if (!_probe(ctx, m, 0, y)) { r[j] = 0; continue; }
+      let lo = 0, hi = ext;
+      if (_probe(ctx, m, ext * 0.999, y)) lo = ext;
+      else for (let it = 0; it < 7; it++) { const mid = (lo + hi) / 2; if (_probe(ctx, m, mid, y)) lo = mid; else hi = mid; }
+      r[j] = lo; if (lo > rmax) rmax = lo;
+    }
+    p = { key, r, aLo, aHi, ext, rmax };
+    _profCache.set(key, p);
+    if (_profCache.size > PROF_LRU) _profCache.delete(_profCache.keys().next().value);
+    return p;
+  }
+
+  function _rAt(p, a) {
+    const t = (a - p.aLo) / (p.aHi - p.aLo) * PROF_ROWS - 0.5;
+    if (t < -0.5 || t > PROF_ROWS - 0.5) return 0;
+    const i0 = Math.floor(t), f = t - i0;
+    const r0 = p.r[i0 < 0 ? 0 : i0], r1 = p.r[i0 + 1 > PROF_ROWS - 1 ? PROF_ROWS - 1 : i0 + 1];
+    return r0 + (r1 - r0) * f;
+  }
+  function _slope(p, a) {                       // dr/da, one-sided at the ends
+    const h = (p.aHi - p.aLo) / PROF_ROWS * 1.5;
+    const rp = _rAt(p, a + h), rm = _rAt(p, a - h), r0 = _rAt(p, a);
+    let s = 0;
+    if (rp > 0.01 && rm > 0.01) s = (rp - rm) / (2 * h);
+    else if (rp > 0.01) s = (rp - r0) / h;
+    else if (rm > 0.01) s = (r0 - rm) / h;
+    return s > 6 ? 6 : s < -6 ? -6 : s;
+  }
+
+  function _occluders(RL) {
+    const list = [], seen = new Set();
+    const add = mp => { if (!mp) return; mp.forEach((v, k) => { if (!seen.has(k)) { seen.add(k); list.push(v); } }); };
+    add(RL.reg); add(RL.regPrev);
+    let sig = '', aTop = -Infinity, aBase = Infinity, rmax = 0;
+    const ks = Array.from(seen).sort();
+    for (let i = 0; i < ks.length; i++) sig += ks[i] + ';';
+    for (const o of list) {
+      const t = o.A0 + o.prof.aHi, b = o.A0 + o.prof.aLo;
+      if (t > aTop) aTop = t; if (b < aBase) aBase = b; if (o.prof.rmax > rmax) rmax = o.prof.rmax;
+    }
+    let h = 2166136261;
+    for (let i = 0; i < sig.length; i++) { h ^= sig.charCodeAt(i); h = Math.imul(h, 16777619); }
+    return { list, hash: (h >>> 0).toString(36), aTop, aBase, rmax };
+  }
+
+  // 14-step march from surface point (px,A,pz) toward light (lx,ly,lz). true = occluded.
+  function _shadowed(occ, px, A, pz, lx, ly, lz) {
+    if (!occ.list.length) return false;
+    let tEnd = Infinity;
+    if (ly > 1e-4) tEnd = (occ.aTop - A) / ly; else if (ly < -1e-4) tEnd = (A - occ.aBase) / -ly;
+    const qa = lx * lx + lz * lz, qb = 2 * (px * lx + pz * lz), qc = px * px + pz * pz - occ.rmax * occ.rmax;
+    if (qa > 1e-9) {
+      const disc = qb * qb - 4 * qa * qc;
+      if (qc > 0 && (qb >= 0 || disc < 0)) return false;     // already outside the stack envelope, moving away
+      const tl = (-qb + Math.sqrt(disc < 0 ? 0 : disc)) / (2 * qa);
+      if (tl < tEnd) tEnd = tl;
+    }
+    if (!(tEnd > 0.6)) return false;
+    const S = 14, t0 = 0.4, L = occ.list;
+    for (let k = 1; k <= S; k++) {
+      const f = k / S, t = t0 + (tEnd - t0) * f * f;
+      const x = px + lx * t, z = pz + lz * t, aa = A + ly * t, rr = x * x + z * z;
+      for (let i = 0; i < L.length; i++) {
+        const o = L[i], r = _rAt(o.prof, aa - o.A0) - 0.3;
+        if (r > 0 && rr < r * r) return true;
+      }
+    }
+    return false;
+  }
+
+  function _renderMap(sp) {
+    const { prof, C, R, RL, occ, cx, cz, A0 } = sp;
+    const cv = _cvPool.pop() || _mkCv(C, R);
+    if (!cv) return null;
+    if (cv.width !== C) cv.width = C;
+    if (cv.height !== R) cv.height = R;
+    const g = cv.getContext('2d');
+    const img = g.createImageData(C, R), d = img.data;
+    const q = sp.q, ext = prof.ext, span = prof.aHi - prof.aLo;
+    const lx = q.lx, ly = q.ly, lz = q.lz, lit = q.lit, amb = q.amb, tint = q.tint, spec = _fx();
+    // half vector (V = +z)
+    const hl = Math.hypot(lx, ly, lz + 1) || 1, hx = lx / hl, hy = ly / hl, hz = (lz + 1) / hl;
+    const wr = 255, wg = Math.round(255 - 60 * tint), wb = Math.round(255 - 150 * tint);
+    for (let j = 0; j < R; j++) {
+      const a = prof.aHi - (j + 0.5) / R * span;
+      let r = _rAt(prof, a);
+      if (r < 0.5) r = Math.max(0.5, _rAt(prof, a + span / R) || _rAt(prof, a - span / R) || 0.5);
+      const sl = _slope(prof, a);
+      const nyRaw = -sl;
+      for (let i = 0; i < C; i++) {
+        const x = ((i + 0.5) / C * 2 - 1) * ext;
+        let u = x / r; u = u > 1 ? 1 : u < -1 ? -1 : u;
+        const v = Math.sqrt(1 - u * u);
+        const inv = 1 / Math.hypot(u, nyRaw, v);
+        const nx = u * inv, ny = nyRaw * inv, nz = v * inv;
+        let D = nx * lx + ny * ly + nz * lz; if (D < 0) D = 0;
+        let sh = 1;
+        if (D > 0 && lit > 0.02 && occ.list.length && _shadowed(occ, cx + u * r, A0 + a, cz + v * r, lx, ly, lz)) sh = 0;
+        D *= sh;
+        const B = amb + lit * (1 - amb) * D;
+        let ab = 1 - B; ab = ab < 0 ? 0 : ab > 0.82 ? 0.82 : ab;
+        let NH = nx * hx + ny * hy + nz * hz; if (NH < 0) NH = 0;
+        let ah = D > 0 ? lit * sh * 0.30 * spec * Math.pow(NH, 28) : 0; if (ah > 0.6) ah = 0.6;
+        const aw = tint * lit * D * 0.16;
+        // straight-alpha "over": black, then warm, then white
+        let ca = ab, cr = 0, cg = 0, cb = 0;
+        if (aw > 0.004) { const oa = aw + ca * (1 - aw); cr = (255 * aw + cr * ca * (1 - aw)) / oa; cg = (150 * aw + cg * ca * (1 - aw)) / oa; cb = (70 * aw + cb * ca * (1 - aw)) / oa; ca = oa; }
+        if (ah > 0.004) { const oa = ah + ca * (1 - ah); cr = (wr * ah + cr * ca * (1 - ah)) / oa; cg = (wg * ah + cg * ca * (1 - ah)) / oa; cb = (wb * ah + cb * ca * (1 - ah)) / oa; ca = oa; }
+        const o = (j * C + i) * 4;
+        d[o] = cr; d[o + 1] = cg; d[o + 2] = cb; d[o + 3] = ca * 255;
+      }
+    }
+    g.putImageData(img, 0, 0);
+    return cv;
+  }
+
+  function _quant(RL) {
+    const lx = Math.round(RL.lx * 24) / 24, ly = Math.round(RL.ly * 24) / 24, lz = RL.lz;
+    const n = Math.hypot(lx, ly, lz) || 1;
+    return { lx: lx / n, ly: ly / n, lz: lz / n, lit: Math.round(RL.lit * 12) / 12,
+             amb: Math.round(RL.amb * 24) / 24, tint: Math.round(RL.tint * 12) / 12 };
+  }
+
+  function _getMap(ctx, prof, RL, cx, cz, A0) {
+    const m = ctx.getTransform(), sw = 2 * prof.ext * Math.hypot(m.a, m.b);
+    const C = sw < 28 ? 12 : sw < 80 ? 24 : 44;
+    const span = prof.aHi - prof.aLo;
+    const R = Math.max(6, Math.min(96, Math.round(C * span / (2 * prof.ext))));
+    const q = _quant(RL), occ = _occluders(RL);
+    const key = [prof.key, C, R, Math.round(cx * 2), Math.round(cz * 2), Math.round(A0 * 2),
+      Math.round(q.lx * 24), Math.round(q.ly * 24), Math.round(q.lit * 12), Math.round(q.amb * 24), Math.round(q.tint * 12), occ.hash].join('~');
+    let e = _mapCache.get(key);
+    if (e) { _mapCache.delete(key); _mapCache.set(key, e); return e; }
+    const cv = _renderMap({ prof, C, R, RL, occ, cx, cz, A0, q });
+    if (!cv) return null;
+    e = { cv };
+    _mapCache.set(key, e);
+    if (_mapCache.size > MAP_LRU) {
+      const k0 = _mapCache.keys().next().value, old = _mapCache.get(k0);
+      _mapCache.delete(k0);
+      if (old && old.cv && _cvPool.length < 16) _cvPool.push(old.cv);
+    }
+    return e;
+  }
+
+  // Shade the CURRENT path of a hull member. W,H in member px; A0 = height of the
+  // member base above the stack base (px, up). Returns false if the caller should fall back.
+  function drawShadeSlice(ctx, W, H, A0, tag) {
+    const RL = globalThis._ROCKET_LIGHT;
+    if (!RL || !RL.reg || !(W > 0) || !(H > 0)) return false;
+    const prof = sampleProfile(ctx, W / 2, 0, H, tag || 'm');
+    if (!prof) return false;
+    RL.reg.set(prof.key + '@' + Math.round(A0 * 2), { prof, A0 });
+    const e = _getMap(ctx, prof, RL, 0, 0, A0);
+    if (!e) return false;
+    ctx.save();
+    ctx.clip();
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(e.cv, -W / 2, -H, W, H);
+    ctx.restore();
+    return true;
+  }
+
+  // Engine bell: CURRENT path is the bell wall (origin = attach point on the hull
+  // base, y down). cx/cz = bell axis offset from the hull axis; A0 = hull-base height.
+  function drawBellShade(ctx, sR, wallH, cx, cz, A0) {
+    const RL = globalThis._ROCKET_LIGHT;
+    if (!RL || !RL.reg || !(sR > 0.5) || !(wallH > 0.5)) return false;
+    const prof = sampleProfile(ctx, sR, -wallH, 0, 'bell');
+    if (!prof) return false;
+    const e = _getMap(ctx, prof, RL, cx, cz, A0);
+    if (!e) return false;
+    ctx.save();
+    ctx.clip();
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(e.cv, -sR, 0, sR * 2, wallH);
+    ctx.restore();
+    return true;
   }
 
   // Planet-view marker aid: glow + pulsing ring, stronger on the night side.
@@ -379,6 +630,7 @@ const SimLighting = (function () {
     getState: () => ({ enabled: S.enabled, assist: S.assist, hour0: S.hour0 }),
     setState: o => { if (!o) return; if (Number.isFinite(o.hour0)) S.hour0 = o.hour0; S.enabled = !!o.enabled; S.assist = !!o.assist; },
     padHour, setPadHour, sunDir, sinElev, litFactor, rocketLight,
+    drawShadeSlice, drawBellShade,
     skyColors, drawBackdrop, shadeEarth, drawLocator, tickUI: refreshUI,
   };
 })();

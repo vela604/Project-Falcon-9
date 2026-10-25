@@ -2611,19 +2611,6 @@ drawRocketArt(ctx, mW, mH, mpp, {
   });
   ctx.restore();
            
-           // SZAD — for locked boosters, drawn after the member's drawRocketArt
-           // returns. We're still inside the body's translate+rotate frame, so
-           // re-enter the member's base translate for the anchor.
-           if (m.locked === true && m.stageRole === 'booster') {
-             const solidColor = (m.bodyDesign && m.bodyDesign.solidColor) || '#e9edf2';
-             ctx.save();
-             ctx.translate(0, -yOffsetPx);
-             if (typeof _drawSzadAtAnchor === 'function') {
-               _drawSzadAtAnchor(ctx, 0, 0, mW, mH, solidColor);
-             }
-             ctx.restore();
-           }
-           
                 yOffsetPx = placeY + mH;
      });
      }

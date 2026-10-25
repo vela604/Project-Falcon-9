@@ -49,6 +49,9 @@
 let stackMaxW_px = 0;
 let stackTotalH_px = 0;
 let memberOffsetY_px = 0;
+// Per-member context for the real-time shade engine (lighting.js): member height (px)
+// and the height of its base above the stack base (px, up).
+const _shadeCtx = { H: 0, A0: 0 };
 
 const _gradCache = new WeakMap(); // ctx -> Map("key:sig" -> CanvasGradient)
 function cachedGradient(ctx, key, sig, build) {
@@ -363,43 +366,18 @@ const _szadMakeCanvas = (function() {
 // dark limb on the left, soft diffuse, a narrow specular streak left of centre,
 // a long falloff to a dark terminator on the right, then a faint bounce/rim light
 // at the far right edge so the silhouette doesn't die into the background.
-// Sun-aware body shading. globalThis._ROCKET_LIGHT = {lx,ly,lit,amb,tint} is set by
-// render.js per body; absent (previews, figure panel) -> the original neutral gradient.
-// The cache key carries every light input (quantised), so bodies never share a stale one.
-function _cylShadeGradient(ctx, W) {
-  const RL = globalThis._ROCKET_LIGHT;
-  if (!RL) return _cylShadeGradientBase(ctx, W);
-  const sig = [Math.round(W), Math.round(RL.lx * 12), Math.round(RL.lit * 12), Math.round(RL.amb * 24), Math.round(RL.tint * 12)].join('|');
-  return cachedGradient(ctx, 'cylLit', sig, () => {
-    const g = ctx.createLinearGradient(-W / 2, 0, W / 2, 0);
-    const ll = Math.hypot(RL.lx, 0.5) || 1, lx = RL.lx / ll, lz = 0.5 / ll;
-    const N = 16;
-    // Daylight fill: sky ambient + direct sun makes real daylight soft on a
-    // white tank — far edges aren't 50% dark. Fade the curvature fudge and
-    // soften the base shadow multiplier as (amb * lit) rises. Night/dawn
-    // keep strong shading so cylinder form still reads.
-    const _flatFill = Math.min(1, RL.amb * 1.6 * Math.max(0.2, RL.lit));
-    const _cylShadeMul = 0.20 * (1 - _flatFill * 0.85);
-    for (let i = 0; i <= N; i++) {
-      const u = i / N, x = u * 2 - 1, nz = Math.sqrt(Math.max(0, 1 - x * x));
-      const d = Math.max(0, x * lx + nz * lz);
-      const sunLit = RL.lit * d;
-      const t = RL.amb + sunLit * (1 - RL.amb);
-      const sunShadow = (1 - Math.min(1, t)) * 0.35;
-      const cylShade = _cylShadeMul * Math.pow(Math.abs(x), 4);
-      const dark = Math.min(0.80, sunShadow + cylShade);
-      // Sharper + brighter specular so the sun-facing side SHINES in daylight
-      const hl = RL.lit * Math.pow(d, 8) * 0.24 * ROCKET_FX.spec;
-      const warm = RL.tint * RL.lit * d * 0.16;
-      let col;
-      if (hl > dark) col = 'rgba(255,' + Math.round(255 - 60 * RL.tint) + ',' + Math.round(255 - 150 * RL.tint) + ',' + hl.toFixed(3) + ')';
-      else if (warm > dark && warm > 0.03) col = 'rgba(255,150,70,' + warm.toFixed(3) + ')';
-      else col = 'rgba(0,0,0,' + dark.toFixed(3) + ')';
-      g.addColorStop(u, col);
-    }
-    return g;
-  });
+// Sun-aware body shading. globalThis._ROCKET_LIGHT is a per-body light object set by
+// render.js (null in previews / figure panel -> the neutral gradient below).
+// _shadeCurrentPath fills the CURRENT path with the real per-pixel shade map from
+// SimLighting (surface normal x sun, specular, self-shadow); callers keep passing the
+// section width so every member uses its own curvature.
+function _shadeCurrentPath(ctx, W) {
+  if (globalThis._ROCKET_LIGHT && _shadeCtx.H > 0 && typeof SimLighting !== 'undefined' &&
+      SimLighting.drawShadeSlice && SimLighting.drawShadeSlice(ctx, W, _shadeCtx.H, _shadeCtx.A0, 'm')) return;
+  ctx.fillStyle = _cylShadeGradientBase(ctx, W);
+  ctx.fill();
 }
+function _cylShadeGradient(ctx, W) { return _cylShadeGradientBase(ctx, W); }
 
 function _cylShadeGradientBase(ctx, W) {
   return cachedGradient(ctx, 'cylShade2', Math.round(W), () => {
@@ -466,49 +444,6 @@ function _rivetRow(ctx, y, W, strength) {
 // Straight cylindrical section between topY and botY (topY < botY, y down).
 // Adds: ambient occlusion at both joins, weld seams (+rivets), optional soot.
 // Call with the section's own path already clipped (save/clip/restore outside).
-// Axial (top-vs-bottom) shading overlay. _cylShadeGradient gives the
-// left-right component from RL.lx, but ignores RL.ly — the sun's component
-// ALONG the body axis. Consequence: when the rocket tumbles end-over-end,
-// or when the sun is mostly overhead, the body shows uniform side shading
-// instead of the physically-expected "nose bright / base dark" (or vice
-// versa) gradient. This adds a subtle vertical darkening so the shadow
-// reflects the full 3D sun angle in body frame.
-//
-// It is a VISUAL approximation, not strict cylinder math — a strict side-
-// view of a pure cylinder lit along its axis has uniform side-wall
-// brightness. But rocket tanks have domed ends, plus fins, nozzles, and a
-// visible silhouette, so viewers intuitively expect "lit from above" to
-// darken toward the bottom. A mild axial overlay sells that.
-function _axialShade(ctx, pathFn, H, W) {
-  const RL = globalThis._ROCKET_LIGHT;
-  if (!RL) return;
-  const lyAbs = Math.abs(RL.ly);
-  if (lyAbs < 0.15) return;
-  const str = Math.min(0.45, lyAbs * 0.55 * (0.5 + 0.5 * RL.lit));
-  if (str < 0.02) return;
-  // Body-local frame: nose at y=-H (up), base at y=0.
-  // Sun toward nose (ly>0) -> base in shadow (darken toward y=0).
-  // Sun toward base (ly<0) -> nose in shadow (darken toward y=-H).
-  const yTop = (stackTotalH_px !== undefined) ? -stackTotalH_px + memberOffsetY_px : -H;
-  const yBot = (stackTotalH_px !== undefined) ? memberOffsetY_px : 0;
-  const g = ctx.createLinearGradient(0, yTop, 0, yBot);
-  if (RL.ly >= 0) {
-    g.addColorStop(0, 'rgba(0,0,0,0)');
-    g.addColorStop(1, 'rgba(0,0,0,' + str.toFixed(3) + ')');
-  } else {
-    g.addColorStop(0, 'rgba(0,0,0,' + str.toFixed(3) + ')');
-    g.addColorStop(1, 'rgba(0,0,0,0)');
-  }
-  ctx.save();
-  pathFn();
-  ctx.clip();
-  ctx.fillStyle = g;
-  const _y0 = (stackTotalH_px !== undefined) ? yTop : -H;
-  const _y1 = (stackTotalH_px !== undefined) ? yBot : 0;
-  ctx.fillRect(-W * 2, _y0 - H, W * 4, (_y1 - _y0) + H * 2);
-  ctx.restore();
-}
-
 function _cylDetail(ctx, W, topY, botY, o) {
   o = o || {};
   const h = botY - topY;
@@ -576,12 +511,6 @@ function _interstageDetail(ctx, W, H) {
   }
   _rivetRow(ctx, -H + 3, W, 1.2);
   _rivetRow(ctx, -5, W, 1.2);
-  // cool sheen on the lit side, so "black" reads as coated composite, not a flat hole
-  const sg = ctx.createLinearGradient(-W / 2, 0, W / 2, 0);
-  sg.addColorStop(0.12, 'rgba(90,120,170,0)');
-  sg.addColorStop(0.30, 'rgba(110,140,190,' + (0.16 * ROCKET_FX.spec).toFixed(3) + ')');
-  sg.addColorStop(0.46, 'rgba(90,120,170,0)');
-  ctx.fillStyle = sg; ctx.fillRect(-W / 2, -H, W, H);
   // joins
   const ao = Math.min(H * 0.3, 5);
   let g = ctx.createLinearGradient(0, -H, 0, -H + ao);
@@ -590,97 +519,9 @@ function _interstageDetail(ctx, W, H) {
   ctx.restore();
 }
 
-// Curved specular streak + terminator + bounce light that FOLLOW a silhouette.
-// silhouette(): builds the full closed path (for clipping).
-// trace(sgn, k): strokes-only path of ONE side (sgn -1 left, +1 right), base->tip,
-//   with x scaled by k — so k=0.46 is an offset curve at 46% of local radius.
-function _ogiveShade(ctx, W, silhouette, trace) {
-  if (!ROCKET_FX.ogive || W < 4) return;
-  const _RL = globalThis._ROCKET_LIGHT;
-  // Sun-side sign for the ogive / fairing highlight. Deadbanded on |lx|
-// to prevent a sign flip when lx is numerically tiny. On the pad at
-// local noon, lx starts at exactly 0 (sun aligned with body axis) and
-// becomes -sin(ω·dt) ≈ -9e-7 one tick after START — the highlight was
-// visibly snapping from one side to the other. Below 0.02 the sun is
-// essentially aligned with the body axis; the sided highlight has no
-// visible reason to flip, so pin the last stable sign.
-const _lxDeadband = 0.02;
-const sl = !_RL ? -1
-  : (_RL.lx >=  _lxDeadband ?  1
-  : (_RL.lx <= -_lxDeadband ? -1
-  : (globalThis.__slKeep || 1)));
-if (_RL) globalThis.__slKeep = sl;
-  const s = ROCKET_FX.spec * (_RL ? _RL.lit * Math.min(1, 0.35 + Math.abs(_RL.lx)) : 1);
-  ctx.save();
-  silhouette();
-  ctx.clip();
-  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-  const stroke = (sgn, k, w, style) => {
-    ctx.beginPath(); trace(sgn, k);
-    ctx.lineWidth = w; ctx.strokeStyle = style; ctx.stroke();
-  };
-  // _TERM_SCALED_BY_LIT: terminator darkening scales by RL.lit. At night
-  // (lit=0) the fairing used to show a hard shadow edge — making it look
-  // ~3x darker than the straight body below (which depends only on
-  // _cylShadeGradient, that scales correctly by lit).
-  const _termMul = _RL ? _RL.lit : 1;
-  stroke(-sl, 0.80, W * 0.34, 'rgba(0,0,0,' + (0.045 * _termMul).toFixed(3) + ')');   // terminator feather
-  stroke(-sl, 0.80, W * 0.22, 'rgba(0,0,0,' + (0.055 * _termMul).toFixed(3) + ')');
-  stroke(-sl, 0.86, W * 0.11, 'rgba(0,0,0,' + (0.080 * _termMul).toFixed(3) + ')');
-  stroke(sl, 0.46, W * 0.18, 'rgba(255,255,255,' + (0.040 * s).toFixed(3) + ')');   // specular
-  stroke(sl, 0.46, W * 0.10, 'rgba(255,255,255,' + (0.070 * s).toFixed(3) + ')');
-  stroke(sl, 0.46, Math.max(1, W * 0.035), 'rgba(255,255,255,' + (0.20 * s).toFixed(3) + ')');
-  stroke(-sl, 0.97, Math.max(1, W * 0.025), 'rgba(255,255,255,' + (0.10 * Math.max(0.3, (_RL ? _RL.lit : 1))).toFixed(3) + ')');  // bounce light (ambient floor)
-  stroke(-sl, 1.0, W * 0.10, 'rgba(0,0,0,' + (0.12 * Math.max(0.25, (_RL ? _RL.lit : 1))).toFixed(3) + ')');  // limb darkening (small ambient floor, follows shadow side)
-  ctx.restore();
-}
-
-// Decal shading that matches the ACTUAL booster body gradient.
-// Profile measured from the rendered body (u = 0 left edge … 1 right edge,
-// value = brightness relative to the brightest column). Peak sits at the
-// centre, right side falls off a bit faster than the left.
-const _BODY_SHADE = [0.673, 0.876, 0.971, 1.0, 0.968, 0.932, 0.885, 0.808, 0.73, 0.65, 0.673];
-
-function _bodyShade(u) {
-  const x = Math.max(0, Math.min(1, u)) * (_BODY_SHADE.length - 1);
-  const i = Math.min(_BODY_SHADE.length - 2, Math.floor(x));
-  return _BODY_SHADE[i] + (_BODY_SHADE[i + 1] - _BODY_SHADE[i]) * (x - i);
-}
-
-// w      : 2D ctx of the already-wrapped decal canvas
-// outW/H : its pixel size
-// sW     : decal on-screen width (CSS px)   W : full BODY width (CSS px)
-// Darkens only (multiply-like), so the decal colour stays true at the
-// brightest column and dims exactly as much as the body underneath.
-function _decalShade(w, outW, outH, sW, W) {
-  const RL = globalThis._ROCKET_LIGHT;
-  if (!RL) return;
-  w.save();
-  w.globalCompositeOperation = 'source-atop';
-  // ---- Side (x-axis) shading: matches _cylShadeGradient ----
-  const g = w.createLinearGradient(0, 0, outW, 0);
-  const ll = Math.hypot(RL.lx, 0.5) || 1, lx = RL.lx / ll, lz = 0.5 / ll;
-  const _flatFill = Math.min(1, RL.amb * 1.6 * Math.max(0.2, RL.lit));
-  const _cylShadeMul = 0.20 * (1 - _flatFill * 0.85);
-  for (let s = 0; s <= 12; s++) {
-    const t = s / 12;
-    const u = 0.5 + (t - 0.5) * (sW / W);
-    const x = u * 2 - 1;
-    const nz = Math.sqrt(Math.max(0, 1 - x * x));
-    const d = Math.max(0, x * lx + nz * lz);
-    const sunLit = RL.lit * d;
-    const t_light = RL.amb + sunLit * (1 - RL.amb);
-    const sunShadow = (1 - Math.min(1, t_light)) * 0.35;
-    const cylShade = _cylShadeMul * Math.pow(Math.abs(x), 4);
-    const dark = Math.min(0.80, sunShadow + cylShade);
-    g.addColorStop(t, `rgba(0,0,0,${dark.toFixed(3)})`);
-  }
-  w.fillStyle = g;
-  w.fillRect(0, 0, outW, outH);
-  // NO-AXIAL-CYLINDER: decals sit on straight cylindrical surface —
-  // no top-bottom gradient from sun's ly component.
-  w.restore();
-}
+// (Old stroke-based ogive highlight + baked decal shading removed: all hull lighting now
+// comes from the per-pixel shade map. Kept as a no-op so existing call sites stay valid.)
+function _ogiveShade() {}
 
 
 // India flag on the booster body — same cylinder wrap + shading as SZAD.
@@ -706,9 +547,7 @@ function _drawIndiaFlag(ctx, W, H) {
   const sW = 2 * R * Math.sin(fW / 2 / R);   // on-screen width after wrap
 
   const RL = globalThis._ROCKET_LIGHT;
-  const _lxKey = RL ? Math.round(RL.lx * 10) : 0;
-  const _lyKey = RL ? Math.round(RL.ly * 10) : 0;
-  const _litKey = RL ? Math.round(RL.lit * 10) : 10;
+  const _lxKey = 0, _lyKey = 0, _litKey = 0;   // decals are albedo only: lighting is applied by the shade map
   const key = [fW.toFixed(1), fH.toFixed(1), R.toFixed(1), _lxKey, _lyKey, _litKey].join('|');
   let wrapped = _flagCache.get(key);
   if (!wrapped) {
@@ -748,7 +587,6 @@ function _drawIndiaFlag(ctx, W, H) {
     }
 
     // 3) shading — same profile as the real body
-    _decalShade(w, outW, outH, sW, W);
     // matte / faded-paint look: slight desaturation toward body colour
     w.globalCompositeOperation = 'source-atop';
     w.fillStyle = 'rgba(232,235,242,0.14)';
@@ -795,9 +633,7 @@ function _drawSzadText(ctx, maxL, maxD, isLightBody) {
   const sW = 2 * R * Math.sin(fW / 2 / R);   // on-screen width after wrap
 
   const RL = globalThis._ROCKET_LIGHT;
-  const _lxKey = RL ? Math.round(RL.lx * 10) : 0;
-  const _lyKey = RL ? Math.round(RL.ly * 10) : 0;
-  const _litKey = RL ? Math.round(RL.lit * 10) : 10;
+  const _lxKey = 0, _lyKey = 0, _litKey = 0;   // decals are albedo only: lighting is applied by the shade map
   const key = [fW.toFixed(1), lockH.toFixed(1), R.toFixed(1), isLightBody, _lxKey, _lyKey, _litKey].join('|');
   let wrapped = _szadCache.get(key);
   if (!wrapped) {
@@ -840,7 +676,6 @@ const w = wrapped.getContext('2d');
     }
 
     // 3) cylinder shading
-    _decalShade(w, outW, outH, sW, BODY_W);
     _szadCache.set(key, wrapped);
   }
 
@@ -1018,7 +853,6 @@ function drawPayloadSpaceShape(ctx, W, H, mpp, opts) {
     const _fw = Math.max(capR, bulgeR) * 2;
     bodyPath();
     applyCylindricalOverlay(ctx, _fw);
-    _axialShade(ctx, bodyPath, H, _fw, opts.stackTotalH_px, opts.memberOffsetY_px);
   }
   {
     const gW = Math.max(capR, bulgeR) * 2;
@@ -1607,6 +1441,7 @@ function drawRocketArt(ctx, W, H, mpp, opts) {
   stackMaxW_px = opts.stackMaxW_px || W;
   stackTotalH_px = opts.stackTotalH_px || H;
   memberOffsetY_px = opts.memberOffsetY_px || 0;
+  _shadeCtx.H = H; _shadeCtx.A0 = memberOffsetY_px;
   
  const legsProgress = opts.legsProgress || 0;
   const legsState = opts.legsState || null;
@@ -1653,8 +1488,13 @@ if (opts.stageRole === 'interstage') {
   });
   ctx.fillStyle = bandColor;
   ctx.fillRect(-W / 2, -H, W, H);
-  ctx.fillStyle = grad;
-  ctx.fillRect(-W / 2, -H, W, H);
+  if (globalThis._ROCKET_LIGHT) {
+    ctx.beginPath(); ctx.rect(-W / 2, -H, W, H);
+    _shadeCurrentPath(ctx, W);
+  } else {
+    ctx.fillStyle = grad;
+    ctx.fillRect(-W / 2, -H, W, H);
+  }
   _interstageDetail(ctx, W, H);
   // Top rim — thin light band at the very top edge, reads as the
   // structural interface where the stage's thrust structure clamps.
@@ -1997,20 +1837,18 @@ const bodyPath = () => {
     ctx.fill();
     ctx.stroke();
     
+    // Locked-booster decals (SZAD + flag) are albedo: painted under the shade overlay.
+    const decals = () => {
+      if (opts.locked === true && isBooster && typeof _drawSzadAtAnchor === 'function') {
+        _drawSzadAtAnchor(ctx, 0, 0, W, H, solidFill);
+      }
+    };
     if (designMode !== 'dsl') {
-      const shade = _cylShadeGradient(ctx, W);  // PER-MEMBER-WIDTH: own width for correct curvature
-      ctx.fillStyle = shade;
+      decals();
       bodyPath();
-      ctx.fill();
-      // NO-AXIAL-CYLINDER: straight cylinder side-view has no top-bottom
-      // brightness gradient from sun's ly component (visible face normals
-      // are perpendicular to body axis). _axialShade was creating a fake
-      // base-shadow regardless of true sun angle, which read as "fairing
-      // shielding sun at all angles". Real physics: only the lx component
-      // (left-right) affects visible brightness on a side-viewed cylinder.
-      // Cones (fairing, nose) keep _axialShade — curved surface, real gradient.
+      _shadeCurrentPath(ctx, W);
     }
-    
+
     if (designMode === 'dsl' && typeof parseAndValidateDesign === 'function' &&
       typeof drawCustomDesignOps === 'function' &&
       typeof applyCylindricalOverlay === 'function') {
@@ -2020,14 +1858,14 @@ const bodyPath = () => {
         bodyPath();
         ctx.clip();
         drawCustomDesignOps(ctx, W, H, parsed.ops);
+        decals();
         bodyPath();
-        applyCylindricalOverlay(ctx, stackMaxW_px);
+        applyCylindricalOverlay(ctx, W);
         ctx.restore();
       } else {
-        const shade = _cylShadeGradient(ctx, W);
-        ctx.fillStyle = shade;
+        decals();
         bodyPath();
-        ctx.fill();
+        _shadeCurrentPath(ctx, W);
       }
     }
     if (!isNose) {
@@ -2069,10 +1907,8 @@ const bodyPath = () => {
     ctx.stroke();
     
     if (designMode !== 'dsl') {
-      const g = _cylShadeGradient(ctx, W);  // PER-MEMBER-WIDTH: own width
-      ctx.fillStyle = g;
       tankPath();
-      ctx.fill();
+      _shadeCurrentPath(ctx, W);
       // NO-AXIAL-CYLINDER: same reasoning as main body.
     } else if (typeof parseAndValidateDesign === 'function' &&
       typeof drawCustomDesignOps === 'function' &&
@@ -2085,7 +1921,7 @@ const bodyPath = () => {
         // DSL is relative to the tank section only (Y 0..1 = tank base..tank top).
         drawCustomDesignOps(ctx, W, tankH_px, parsed.ops);
         tankPath();
-        applyCylindricalOverlay(ctx, stackMaxW_px);
+        applyCylindricalOverlay(ctx, W);
         ctx.restore();
       }
     }
@@ -2168,10 +2004,8 @@ const bodyPath = () => {
     
     // Cylindrical gradient over the payload (widest width = bulge or cap).
     const gradW = Math.max(capW_px, bulgeW_px) || W;
-    const pGrad = _cylShadeGradient(ctx, gradW);  // PER-MEMBER-WIDTH: fairing own width
-    ctx.fillStyle = pGrad;
     payloadPath();
-    ctx.fill();
+    _shadeCurrentPath(ctx, gradW);
     {
       const _bY = -tankH_px, _tY = -H, _hC = capW_px / 2, _hB = bulgeW_px / 2;
       let _trace;
@@ -2335,7 +2169,9 @@ if (drawsEngineBells && engineBell && !opts.hasMemberBelow) {
   g.closePath();
 }
   
-  const drawOneBell = (cx, sR, sH, gimbalRad) => {
+  const drawOneBell = (cx, sR, sH, gimbalRad, cz) => {
+    cz = cz || 0;
+    const litBell = !!(globalThis._ROCKET_LIGHT && globalThis._ROCKET_LIGHT.reg && typeof SimLighting !== 'undefined' && SimLighting.drawBellShade);
     ctx.save();
     ctx.translate(cx, 0);
     if (Number.isFinite(gimbalRad) && gimbalRad !== 0) ctx.rotate(gimbalRad);
@@ -2353,9 +2189,15 @@ if (drawsEngineBells && engineBell && !opts.hasMemberBelow) {
     } else {
       g.addColorStop(0, '#1c1e22'); g.addColorStop(0.5, '#4a4e54'); g.addColorStop(1, '#1c1e22');
     }
-    ctx.fillStyle = g;
+    if (litBell) {
+      // flat dark-metal albedo; form, specular and the hull's shadow come from the shade map
+      const fg = ctx.createLinearGradient(0, 0, 0, wallH);
+      fg.addColorStop(0, '#4a4e56'); fg.addColorStop(1, '#2f3238');
+      ctx.fillStyle = fg;
+    } else ctx.fillStyle = g;
     bellPath(ctx, sR, wallH);
     ctx.fill();
+    if (litBell) { bellPath(ctx, sR, wallH); SimLighting.drawBellShade(ctx, sR, wallH, cx, cz, _shadeCtx.A0); }
     if (fancy) {
       // near rim of the exit plane (slight downward bulge = depth)
       ctx.beginPath();
@@ -2425,7 +2267,7 @@ if (drawsEngineBells && engineBell && !opts.hasMemberBelow) {
         isCenter: false });
     });
     items.sort((a, b) => b.z - a.z);
-items.forEach(({ slot }) => {
+items.forEach(({ slot, z }) => {
   const pos = (typeof slot.position === 'function') ? slot.position(R_vis_m) : { x: 0 };
   // Live gimbal angle — same value for all gimbal-capable engines.
   let gRad = 0;
@@ -2433,7 +2275,7 @@ items.forEach(({ slot }) => {
     const eng = opts.liveEngines.find(e => e.gimbal && e.angleDeg === slot.angleDeg);
     if (eng && Number.isFinite(eng.gimbalDeg)) gRad = eng.gimbalDeg * Math.PI / 180;
   }
-  drawOneBell((pos.x || 0) / mpp, sR_m / mpp, sH_m / mpp, gRad);
+  drawOneBell((pos.x || 0) / mpp, sR_m / mpp, sH_m / mpp, gRad, -(z || 0) / mpp);
 });
   }
 }
@@ -2981,13 +2823,6 @@ if (interstageHeight_m === null && v.stageRole === 'booster' && typeof computeIn
     });
     pctx.restore();
     
-    // SZAD overlay — drawn AFTER drawRocketArt, so the ctx is back in clean
-    // CSS-pixel space (setTransform(dpr,0,0,dpr,0,0)), no off-canvas base
-    // translate active. Only for locked (default) boosters.
-    if (v.locked === true && v.stageRole === 'booster') {
-      const solidColor = (v.bodyDesign && v.bodyDesign.solidColor) || '#e9edf2';
-      _drawSzadAtAnchor(pctx, baseX, baseY, W, H, solidColor);
-    }
     }
 
 // ---------------------------------------------------------------------------
@@ -3124,10 +2959,6 @@ function renderStackPreview(canvas, memberIds, fleet) {
     });
     pctx.restore();
     
-    if (m.locked === true && m.stageRole === 'booster') {
-      const solidColor = (m.bodyDesign && m.bodyDesign.solidColor) || '#e9edf2';
-      _drawSzadAtAnchor(pctx, baseX, baseY, W, Hpx, solidColor);
-    }
   });
   }
   
