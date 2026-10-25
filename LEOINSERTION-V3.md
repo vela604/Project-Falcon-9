@@ -36,7 +36,8 @@ not part of V3 and is not covered here.
 - During long coasts, attitude is held with **net-zero-force RCS**, so the
   orbit is not disturbed.
 - Engine, mass and gimbal limits are read from the vehicle at runtime.
-  Only the **target orbit altitude** has to be set.
+  Only the **target orbit** (two apside altitudes — equal for circular,
+  unequal for elliptical) has to be set.
 
 ---
 
@@ -59,7 +60,7 @@ not part of V3 and is not covered here.
 | Block | Does | Ends when |
 |---|---|---|
 | `ascent` | Fires engines, runs the ascent attitude sub-machine, monitors the booster tank, commands separation | Booster residual fuel reaches the MECO target, separation commanded |
-| `insertion` | Upper-stage burn, trim, coast, circularize, release payload | Every expected payload body has spawned and cleared the stage |
+| `insertion` | Upper-stage burn, trim, coast, insert into target orbit (circular or elliptical), release payload | Every expected payload body has spawned and cleared the stage |
 | `suicide` | Aligns to retrograde, suicide burn to a resting area, RCS-trims impact | Landed or impacted (optional, not covered in depth here) |
 
 Why blocks: the same `ascent` can fly a different rocket, and the same
@@ -560,19 +561,36 @@ dir  = ( −sin(θ − g) , cos(θ − g) )                          thrust dire
 v⃗'   = v⃗ + dir · dv                                         predicted velocity
 apogee' = apogee computed from (r⃗, v⃗')                      (§3.2)
 
-cut off when   apogee ≥ TARGET_ORBIT_ALT_KM
-          or   apogee' ≥ TARGET_ORBIT_ALT_KM
+cut off when   apogee ≥ target_peri
+          or   apogee' ≥ target_peri
 ```
 
 The margin is extra predicted Δv (default 0): a positive value cuts earlier
 and leaves a gap for the RCS trim.
+
+**Why target_peri, not target_apo.** The stage burns while ascending, so
+the current position is close to the near-side apside of the transfer
+orbit. Cutting off at `apogee = target_peri` puts the near-side apside
+exactly on the lower target; the far side (the higher apside, `target_apo`)
+is reached by the later circularization burn. Two consequences:
+
+- **Short coast.** The near-side apside is right there — the coast to it is
+  only a few minutes, not up to half a period as it would be if we waited
+  for `target_apo` on the far side.
+- **No overshoot on the far side.** No Δv is applied above `target_peri`,
+  so the far apside cannot exceed what the circularization burn puts there.
+  The far side rises from below `target_peri` to `target_apo` — never past
+  it — which is monotone and stable.
+
+For a circular target (`target_apo == target_peri`) the two rules are the
+same, so circular behaviour is unchanged.
 
 ### 5.2 RCS_BOOST — exact apogee by RCS
 
 Wait until every engine flow is below 1 kg/s. Then:
 
 ```
-err = apogee − TARGET_ORBIT_ALT_KM
+err = apogee − target_peri
 fire axial RCS  "dn" if err > 0, else "up"
 done when err changes sign
 ```
@@ -581,7 +599,11 @@ At the crossing, the burn plan for circularization is computed once:
 
 ```
 r_apo = a(1 + e)               v_apo = |h| / r_apo
-v_orb = √( GM / r_apo )        dv_needed = max(0, v_orb − v_apo)
+r_a_tgt = R + target_apo · 1000
+r_p_tgt = R + target_peri · 1000
+a_tgt   = (r_a_tgt + r_p_tgt) / 2
+v_orb = √( GM · (2/r_p_tgt − 1/a_tgt) )      vis-viva at target PERI
+dv_needed = max(0, v_orb − v_apo)
 
 eccentricity vector  e⃗ = ( (v² − GM/r)·r⃗ − (r⃗·v⃗)·v⃗ ) / GM
 apogee direction     = −ê         → inertial target angle θ_apo
@@ -590,6 +612,13 @@ m_final = m / exp( dv_needed / Ve )          (Tsiolkovsky)
 t_burn_ideal = (m − m_final) / ṁ_max
 t_burn_practical = t_burn_ideal · COAST_BURN_MULTIPLIER
 ```
+
+`v_orb` is the velocity the body must have **at `target_peri` radius** to
+reach `target_apo` on the opposite side — the vis-viva value at the
+periapsis of an orbit with apsides (`target_apo`, `target_peri`). It
+reduces to `√(GM/r)` when `target_apo == target_peri` (circular). Because
+the stage burns on the near side at roughly `r ≈ r_p_tgt`, `v_orb − v_apo`
+is exactly the Δv needed at the burn point.
 
 `θ_apo` (the attitude that points the thrust along the apogee velocity
 direction) and `v_orb` are stored for the later phases.
@@ -654,16 +683,113 @@ cutoffThreshold = dv_spool + PAYLOAD_EJECT_KICK_MPS
 cut off when  v_err ≤ cutoffThreshold
 ```
 
-### 5.5 Release and finish
+`v_orb` is the burn-point velocity target (§5.2). For a circular target
+it is `√(GM/r)`; for an elliptical target it is the vis-viva value at
+`target_peri` — the speed needed at the near-side apside to raise the far
+side to `target_apo`. The cutoff test and the throttle taper work
+identically for both, because both are expressed as `v_orb − |v|`.
+
+### 5.5 COAST_ROTATE_2 — pick the nearer apside
+
+When every engine has fully spun down, the post-burn orbit is known. From
+its osculating elements, compute **both** times to the next apside:
 
 ```
-COAST_ROTATE_2 : wait until engines are off, compute θ_apo again, slew to it
-COAST_HOLD_2   : hold θ_apo
-at apogee peak : cmdReleasePayload()
-DONE           : once every expected payload body has spawned and is
-                 PAYLOAD_CLEAR_DIST_M (20 m) clear of the stage
-                 (give up after PAYLOAD_CONFIRM_TIMEOUT_S)
+t_apo  = _timeToApogee  (r, vr, vt, GM)              §3.3
+t_peri = _timeToPerigee (r, vr, vt, GM)              §3.3, M=0 form
+
+pickPeri     = (t_peri < t_apo)
+targetApside = pickPeri ? 'peri' : 'apo'
 ```
+
+The attitude target is the chosen apside's direction, from the eccentricity
+vector of the current orbit (§5.2 formula):
+
+```
+apogee direction  = −ê
+perigee direction = +ê
+```
+
+The body slews to it with the same PD law as §5.3 (net-zero-force RCS), then
+enters COAST_HOLD_2.
+
+**Why the nearer apside.** For a circular target (`apo ≈ peri`) the two
+times are almost equal, and either choice deploys at nearly the right
+altitude — no functional difference. For an elliptical target they can
+differ by a large factor; the farther apside is up to half a period away.
+Deploying at the nearer apside keeps the coast short. Cost: only time, since
+the orbit itself is already correct after CIRCULARIZE.
+
+### 5.6 COAST_HOLD_2 — attitude hold, axial trim, deploy
+
+Every tick, re-derive the live osculating orbit from the snapshot
+(gravity-gradient drift over the coast means these drift slowly; recomputing
+per tick keeps the trim and attitude accurate):
+
+```
+a_c    = −GM / (2E)      h_live = r · vt      e_mag = |e⃗|
+r_live = a_c · (1 ∓ e_mag)                    (− peri, + apo)
+v_live = |h_live| / r_live
+```
+
+Target apside velocity (vis-viva on the target orbit, same formula as
+§5.2):
+
+```
+v_tgt = √( GM · (2 / r_target_apside − 1 / a_tgt) )     (+ peri, − apo)
+```
+
+Two errors drive the two actions:
+
+```
+gap     = v_tgt − v_live
+dvError = gap − PAYLOAD_EJECT_KICK_MPS
+```
+
+**Attitude hold.** PD on `θ − θ_live` toward the chosen apside's direction
+(the apside direction is re-derived every tick, not snapped), torque via
+net-zero-force RCS.
+
+**Axial trim.** Net-force RCS (axial pods only) drives `dvError → 0`:
+
+```
+dvError > 0 (too slow):   prograde  ("up")
+dvError < 0 (too fast):   retrograde ("dn")
+
+|dvError| < COAST_HOLD_2_TRIM_TOL_MPS (0.001 m/s):  no fire
+|dvError| ≥ COAST_HOLD_2_TRIM_FAR_MPS (0.05 m/s):   full duty
+between:                                            linear duty
+deadband 0.02 to avoid chatter
+```
+
+The attitude duty and axial duty are merged pod-by-pod before sending.
+
+**Deploy trigger.** Fires on the chosen apside's crossing:
+
+```
+targetApside = 'apo' :  vr crosses  +  →  ≤ 0   (apogee peak)
+targetApside = 'peri':  vr crosses  −  →  ≥ 0   (perigee peak)
+```
+
+On trigger, `cmdReleasePayload()` is sent, the deploy command time is
+recorded, and the block enters DONE.
+
+### 5.7 DONE — payload monitor
+
+Attitude is held at the last slew target (`coast2TargetThetaInertial`)
+with the same net-zero-force PD.
+
+Payload monitor counts released payload bodies that are at least
+`PAYLOAD_CLEAR_DIST_M` (20 m) from the stage. The block finishes when
+
+```
+cleared ≥ expectedPayloadCount        (default 1)
+```
+
+Fail-safe: if no payload confirms within `PAYLOAD_CONFIRM_TIMEOUT_S` (120 s),
+DONE exits with `timedOut = true` so the mission layer can proceed. Result
+fields: `deployCommandSimTime`, `clearedPayloadCount`, `finalApogeeKm`,
+`finalPerigeeKm`.
 
 ---
 
@@ -678,7 +804,7 @@ baseline values are marked.
 |---|---|---|
 | `INITIAL_COAST_S` | 4.9 | zero-torque coast before PUSH |
 | `PUSH_T_S` | 4.82 | length of the push pulse |
-| `PUSH_MAX_GIMBAL_DEG` | **0.61** (tuned) | gimbal angle that sizes the pulse |
+| `PUSH_MAX_GIMBAL_DEG` | **0.64** (tuned) | gimbal angle that sizes the pulse |
 | `PUSH_EAST_SIGN` | −1 | push direction |
 | `HOLD_PD_KP / KD` | 1.0 / 2.0 | HOLD gains |
 | `HOLD_PD_KI` | 0.3 (fixed) | HOLD integral gain |
@@ -693,10 +819,12 @@ baseline values are marked.
 
 | Constant | Value | Meaning |
 |---|---|---|
-| `TARGET_ORBIT_ALT_KM` | 320 | the mission's orbit altitude |
+| `TARGET_APSIDE1_ALT_KM` | 320 | first apside target (km ASL) |
+| `TARGET_APSIDE2_ALT_KM` | 320 | second apside target (km ASL) |
+| `TARGET_ORBIT_ALT_KM` | (deprecated) | legacy fallback, used only when both apside constants are absent |
 | `STAGE_BURN_AOA_KP / KD` | 4.0 / 4.0 | STAGE_BURN gains |
 | `STAGE_BURN_AOA_KI` | 1.0 (fixed) | integral gain |
-| `STAGE_BURN_AOA_BIAS_DEG` | **0.59** (tuned) | target AoA offset |
+| `STAGE_BURN_AOA_BIAS_DEG` | **0.827** (tuned) | target AoA offset |
 | `STAGE_BURN_AOA_BIAS_RATE_DEG_S` | 0.5 (fixed) | bias ramp rate |
 | `STAGE_BURN_CUTOFF_MARGIN_MPS` | 0.0 | extra predicted Δv at cutoff |
 | `COAST_ROTATE_TOL_DEG` | 0.5 | rotate done: angle |
@@ -704,11 +832,13 @@ baseline values are marked.
 | `COAST_ROTATE_TIMEOUT_S` | 240 | rotate give-up time |
 | `COAST_WAIT_BEFORE_APOGEE_S` | 90 | when the second rotate starts |
 | `COAST_BURN_MULTIPLIER` | 4.0 | burn-time safety factor (stored) |
-| `CIRC_TRIGGER_LEAD_S` | **5.64** (tuned) | burn-start lead, added to engine startup |
+| `CIRC_TRIGGER_LEAD_S` | **5.375** (tuned) | burn-start lead, added to engine startup |
 | `CIRC_DECAY_FRAC` | 0.05 | throttle taper window, fraction of `v_orb` |
 | `CIRC_ATT_KP / KD` | 0.5 / 4.0 | coast and circularize attitude gains |
 | `PAYLOAD_CLEAR_DIST_M` | 20 | payload clear distance |
 | `PAYLOAD_CONFIRM_TIMEOUT_S` | 120 | payload confirm timeout |
+| `COAST_HOLD_2_TRIM_TOL_MPS` | 0.001 | axial-trim deadband (no fire below) |
+| `COAST_HOLD_2_TRIM_FAR_MPS` | 0.05 | axial-trim full-duty threshold |
 | `GIMBAL_TARGET` | all | which engines gimbal |
 
 Also decided by the mission layer **(unverified here)**: `SEPARATION_DURATION_S`,
@@ -771,8 +901,9 @@ are not part of retuning.
 > when the engine really stops is the speed we wanted. In the coast it only
 > uses balanced pairs of RCS thrusters so it never nudges the orbit. The
 > whole thing is built from three reusable blocks, and everything about the
-> engine and the stack is read from the vehicle, so the only number you
-> have to give it is the orbit altitude.
+> engine and the stack is read from the vehicle, so the only numbers you
+> have to give it are the two apside altitudes (equal for circular,
+> unequal for elliptical).
 
 ---
 
