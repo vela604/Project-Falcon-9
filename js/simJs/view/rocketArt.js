@@ -1939,9 +1939,17 @@ const engineBell = (() => {
 
     // panel body — shaded across its width (outer edge catches the light)
     const legGrad = ctx.createLinearGradient(j1x, jY, j2x + (tipApexX - j2x) * 0.35, jY + (tipApexY - jY) * 0.35);
-    legGrad.addColorStop(0, _tint(panelHex, Math.min(1.25, kOut * 1.08)));
-    legGrad.addColorStop(0.55, _tint(panelHex, kOut * 0.92));
-    legGrad.addColorStop(1, _tint(panelHex, Math.max(0.12, kIn * 0.62)));
+    // Brightness across the panel (outer hull edge -> inner end). Stowed, the panel hugs the
+    // cylindrical hull, so it must follow the HULL's normal at that x (continuous across the
+    // centre line: sun on the right lights the right leg's outer edge, not the left's inner one).
+    // Deployed, both ends keep facing outward so the sun-side leg stays the bright one.
+    const uO = Math.min(0.98, Math.abs(j1x) / (W / 2 || 1)), uI = Math.min(0.98, Math.abs(j2x) / (W / 2 || 1));
+    const gO = _hwK(side * uO, 0, Math.sqrt(1 - uO * uO)), gI = _hwK(side * uI, 0, Math.sqrt(1 - uI * uI));
+    const gOd = kOut, gId = _hwK(side * 0.2, lift * 0.5, 0.97);
+    const kEdgeO = gO + (gOd - gO) * dps, kEdgeI = gI + (gId - gI) * dps;
+    legGrad.addColorStop(0, _tint(panelHex, Math.min(1.25, kEdgeO * 1.08)));
+    legGrad.addColorStop(0.55, _tint(panelHex, (kEdgeO + (kEdgeI - kEdgeO) * 0.55) * 0.92));
+    legGrad.addColorStop(1, _tint(panelHex, Math.max(0.12, kEdgeI * 0.62)));
     ctx.fillStyle = legGrad;
     ctx.strokeStyle = _tint(_mixHex('#59616c', '#000000', dps), Math.max(0.35, kOut), 0.95);
     ctx.lineWidth = 1.1;
