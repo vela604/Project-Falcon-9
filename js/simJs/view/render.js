@@ -773,201 +773,388 @@ function drawOceanArea() {
   
   ctx.restore();
 }
-// ---------------------------------------------------------------------------
-// Launch/landing site — a proper pad: ground apron, a raised launch mount
-// with hold-down clamps and a flame duct, and an umbilical/strongback
-// tower with lattice bracing and swing arms. Everything is built from flat
-// rectangles/lines/arcs in true 2D side elevation — no ellipse-foreshortening
-// or perspective tricks anywhere. Sized in real meters (scaled off the
-// rocket's own height/width) via metersPerPixel() so it scales correctly
-// at any zoom level. The rocket rests with its base exactly on the mount's
-// top surface (local y = 0).
-// ---------------------------------------------------------------------------
+// ===== LAUNCHPAD BEGIN ======================================================
+// Launch site (LC-39A / SLC-40 style), true 2D side CUTAWAY, all in metres.
+//
+// ORIENTATION: in the local camera view SCREEN-RIGHT = EAST (worldToScreen's
+// right = (upY,-upX) = direction of increasing phi = Earth's rotation). Flights
+// go east, so everything tall and heavy (strongback/TEL, FSS tower, water
+// tower, LOX tanks) stands WEST (left, behind the vehicle) and only low
+// ground-support equipment sits EAST. The strongback retracts WEST, away from
+// the pitch-over direction.
+//
+// Datum: rocket base = local (0,0) = surface level (unchanged: physics/ground
+// FX depend on it). The pad is drawn as a cutaway through the flame trench:
+// concrete hardstand, launch table with flame hole, trench with a V-shaped
+// flame deflector (apex ~3 m under the base, close to GROUND_FX plume clip).
+// Static geometry is built once into Path2D layers (cached by vehicle size)
+// and replayed with one transform, so per-frame cost is a few dozen strokes.
+// Lit by SimLighting (pseudo-body at the pad) -> follows sun/moon/ambient.
+// ============================================================================
+const _PAD = { geo: null, key: '', body: null, glow: null, glowRed: null };
+
+class _PadPath {            // Path2D stand-in for engines without Path2D in workers
+  constructor() { this.o = []; }
+  moveTo(x, y) { this.o.push(0, x, y); }
+  lineTo(x, y) { this.o.push(1, x, y); }
+  rect(x, y, w, h) { this.o.push(2, x, y, w, h); }
+  arc(x, y, r, a0, a1) { this.o.push(3, x, y, r, a0, a1); }
+  quadraticCurveTo(a, b, x, y) { this.o.push(4, a, b, x, y); }
+  closePath() { this.o.push(5); }
+}
+function _padNewPath() { return (typeof Path2D !== 'undefined') ? new Path2D() : new _PadPath(); }
+function _padReplay(c, p) {
+  const o = p.o; c.beginPath();
+  for (let i = 0; i < o.length;) {
+    switch (o[i]) {
+      case 0: c.moveTo(o[i + 1], o[i + 2]); i += 3; break;
+      case 1: c.lineTo(o[i + 1], o[i + 2]); i += 3; break;
+      case 2: c.rect(o[i + 1], o[i + 2], o[i + 3], o[i + 4]); i += 5; break;
+      case 3: c.arc(o[i + 1], o[i + 2], o[i + 3], o[i + 4], o[i + 5]); i += 6; break;
+      case 4: c.quadraticCurveTo(o[i + 1], o[i + 2], o[i + 3], o[i + 4]); i += 5; break;
+      default: c.closePath(); i += 1;
+    }
+  }
+}
+function _padStroke(c, p) { if (p instanceof _PadPath) { _padReplay(c, p); c.stroke(); } else c.stroke(p); }
+function _padFill(c, p) { if (p instanceof _PadPath) { _padReplay(c, p); c.fill(); } else c.fill(p); }
+
+// Base (full daylight) material colours.
+const _PAD_MATS = {
+  conc: [160, 156, 149], concDk: [112, 109, 105], concLn: [74, 72, 70],
+  steel: [112, 119, 128], steelDk: [58, 63, 70], steelLt: [172, 180, 189],
+  white: [232, 234, 236], whiteDk: [182, 188, 194], red: [196, 44, 38],
+  void: [9, 10, 12], refr: [132, 92, 68], scorch: [34, 32, 32], glass: [40, 56, 70],
+};
+
+// One colour set per frame (cheap: ~16 strings). far = hazier back layer.
+function _padPalette(Lt, far) {
+  let B = 1, warm = 0, night = 0;
+  if (Lt) {
+    const sunFace = Lt.lit * (0.55 + 0.45 * Math.min(1, Math.max(0, Lt.ly * 1.4 + 0.1)));
+    B = Math.min(1.12, Math.max(0.16, 0.12 + Lt.amb * 0.75 + 0.68 * sunFace + 0.5 * Lt.moon));
+    warm = Lt.tint || 0;
+    night = Math.min(1, Math.max(0, (0.6 - Lt.lit) / 0.5));
+  }
+  const haze = far ? 0.14 : 0;
+  const pal = { B, night, warm };
+  for (const k in _PAD_MATS) {
+    const c = _PAD_MATS[k];
+    let r = c[0] * B * (1 + 0.14 * warm), g = c[1] * B * (1 + 0.02 * warm), b = c[2] * B * (1 - 0.26 * warm);
+    if (haze) { r += (150 * B - r) * haze; g += (165 * B - g) * haze; b += (185 * B - b) * haze; }
+    pal[k] = 'rgb(' + (r > 255 ? 255 : r | 0) + ',' + (g > 255 ? 255 : g | 0) + ',' + (b > 255 ? 255 : b | 0) + ')';
+  }
+  return pal;
+}
+
+function _padBuild(H, W, slabHalf) {
+  const w2 = W / 2, TAU = Math.PI * 2;
+  const back = [], mid = [], front = [], sb = [];
+  const lights = [];                       // {x,y,r,k:'f'|'r'} (strongback ones are added at draw time)
+  const add = (arr, p, mat, kind, w, lod) => arr.push({ p, mat, k: kind, w: w || 0, lod: lod || 0 });
+  const P = () => _padNewPath();
+  const L = (p, x1, y1, x2, y2) => { p.moveTo(x1, -y1); p.lineTo(x2, -y2); };
+  const R = (p, x, y, w, h) => p.rect(x, -(y + h), w, h);            // y = bottom edge
+  const poly = (p, ...q) => { p.moveTo(q[0], -q[1]); for (let i = 2; i < q.length; i += 2) p.lineTo(q[i], -q[i + 1]); p.closePath(); };
+  const disc = (p, x, y, r) => { p.moveTo(x + r, -y); p.arc(x, -y, r, 0, TAU); p.closePath(); };
+
+  // rectangular lattice between chords x0..x1 (cross = X bracing, else zig-zag)
+  function lattice(pDiag, pRung, x0, x1, y0, y1, bay, cross) {
+    const n = Math.max(1, Math.round((y1 - y0) / bay)), dy = (y1 - y0) / n;
+    for (let i = 0; i < n; i++) {
+      const a = y0 + i * dy, b = a + dy;
+      if (cross || i % 2 === 0) L(pDiag, x0, a, x1, b);
+      if (cross || i % 2 === 1) L(pDiag, x1, a, x0, b);
+    }
+    for (let i = 0; i <= n; i++) L(pRung, x0, y0 + i * dy, x1, y0 + i * dy);
+  }
+  // tapered mast (triangular-lattice look in side view)
+  function mast(arr, xc, y0, y1, wB, wT, bay, matChord, matLat, wc, wl) {
+    const n = Math.max(2, Math.round((y1 - y0) / bay)), pc = P(), pl = P();
+    L(pc, xc - wB / 2, y0, xc - wT / 2, y1); L(pc, xc + wB / 2, y0, xc + wT / 2, y1);
+    for (let i = 0; i < n; i++) {
+      const ya = y0 + (y1 - y0) * i / n, yb = y0 + (y1 - y0) * (i + 1) / n;
+      const ha = (wB + (wT - wB) * i / n) / 2, hb = (wB + (wT - wB) * (i + 1) / n) / 2;
+      if (i % 2 === 0) L(pl, xc - ha, ya, xc + hb, yb); else L(pl, xc + ha, ya, xc - hb, yb);
+      L(pl, xc - ha, ya, xc + ha, ya);
+    }
+    add(arr, pl, matLat, 's', wl, 3); add(arr, pc, matChord, 's', wc, 0);
+  }
+
+  // ---------------------------------------------------------------- BACK (far)
+  // West: vertical LOX + RP-1 storage, water-suppression tower. East: sphere + tank.
+  {
+    const fill = P(), ln = P(), legs = P();
+    // vertical LOX tank (x=-58)
+    let xc = -58; R(fill, xc - 3.8, 4, 7.6, 22); fill.moveTo(xc - 3.8, -26); fill.arc(xc, -26, 3.8, Math.PI, TAU); fill.closePath();
+    for (const dx of [-3, -1, 1, 3]) L(legs, xc + dx, 4, xc + dx * 1.15, 0);
+    for (const y of [9, 15, 21]) L(ln, xc - 3.8, y, xc + 3.8, y);
+    // RP-1 tank (x=-67)
+    xc = -67; R(fill, xc - 3, 3, 6, 12); fill.moveTo(xc - 3, -15); fill.arc(xc, -15, 3, Math.PI, TAU); fill.closePath();
+    for (const dx of [-2.2, 2.2]) L(legs, xc + dx, 3, xc + dx * 1.2, 0);
+    L(ln, xc - 3, 9, xc + 3, 9);
+    // East: LOX sphere on legs (x=+62) and vertical tank (x=+73)
+    disc(fill, 62, 9.2, 5.6); for (const dx of [-4.2, -1.4, 1.4, 4.2]) L(legs, 62 + dx, 5, 62 + dx * 1.1, 0);
+    L(ln, 56.4, 9.2, 67.6, 9.2);
+    xc = 73; R(fill, xc - 2.8, 3, 5.6, 17); fill.moveTo(xc - 2.8, -20); fill.arc(xc, -20, 2.8, Math.PI, TAU); fill.closePath();
+    for (const dx of [-2, 2]) L(legs, xc + dx, 3, xc + dx * 1.2, 0);
+    add(back, fill, 'white', 'f'); add(back, ln, 'whiteDk', 's', 0.18, 3); add(back, legs, 'steelDk', 's', 0.3, 0);
+    // water suppression tower (x=-84): tank on a braced lattice, big feed pipe to the pad
+    const wt = -84, tank = P(), lat = P(), rung = P(), pipe = P(), stripe = P();
+    R(tank, wt - 5.2, 40, 10.4, 11); tank.moveTo(wt - 5.2, -51); tank.arc(wt, -51, 5.2, Math.PI, TAU); tank.closePath();
+    R(stripe, wt - 5.2, 44, 10.4, 1.6);
+    L(lat, wt - 4.4, 0, wt - 3.4, 40); L(lat, wt + 4.4, 0, wt + 3.4, 40); L(lat, wt - 5.2, 0, wt - 4.0, 40); L(lat, wt + 5.2, 0, wt + 4.0, 40);
+    for (let i = 0; i < 6; i++) { const a = i * 6.67, b = a + 6.67; L(rung, wt - 4.4 + 0.15 * i, a, wt + 4.4 - 0.15 * i, a); L(rung, wt - 4.4 + 0.15 * i, a, wt + 4.4 - 0.15 * (i + 1), b); L(rung, wt + 4.4 - 0.15 * i, a, wt - 4.4 + 0.15 * (i + 1), b); }
+    L(pipe, wt, 40, wt, 1.1); L(pipe, wt, 1.1, -10, 1.1);
+    add(back, lat, 'steel', 's', 0.45, 0); add(back, rung, 'steel', 's', 0.18, 3);
+    add(back, pipe, 'whiteDk', 's', 0.9, 0); add(back, tank, 'white', 'f'); add(back, stripe, 'red', 'f');
+  }
+  // East bunker / equipment building (x 27..43)
+  {
+    const bd = P(), roof = P(), win = P(), ant = P();
+    R(bd, 27, 0, 16, 5); R(roof, 26.5, 5, 17, 0.55);
+    for (let i = 0; i < 5; i++) R(win, 29 + i * 2.7, 2.6, 1.6, 1.1);
+    R(win, 40.2, 0, 1.5, 2.5);
+    L(ant, 31, 5.5, 31, 12); L(ant, 28.8, 9.5, 33.2, 9.5); ant.moveTo(38, -5.5); ant.lineTo(38, -7.2);
+    add(mid, bd, 'whiteDk', 'f'); add(mid, roof, 'steelDk', 'f'); add(mid, win, 'glass', 'f', 0, 3); add(mid, ant, 'steelDk', 's', 0.14, 3);
+  }
+
+  // ------------------------------------------------------- MID: hardstand + trench
+  {
+    const slab = P(), pave = P(), joints = P(), lifts = P();
+    R(slab, -slabHalf, -14, slabHalf * 2, 14);
+    R(pave, -slabHalf, -1.2, slabHalf * 2, 1.2);
+    for (const x of [-37.5, -25, -12.5, 12.5, 25, 37.5]) L(joints, x, 0, x, -14);
+    for (const y of [-4.5, -8.5, -11.5]) L(lifts, -slabHalf, y, slabHalf, y);
+    add(mid, slab, 'concDk', 'f'); add(mid, pave, 'conc', 'f');
+    add(mid, joints, 'concLn', 's', 0.1, 3); add(mid, lifts, 'concLn', 's', 0.08, 3);
+    // trench void (flame hole + chamber)
+    const v = P(); poly(v, -3.2, 0, 3.2, 0, 3.2, -2.4, 9, -2.4, 9, -13, -9, -13, -9, -2.4, -3.2, -2.4);
+    add(mid, v, 'void', 'f');
+    const wall = P(), brick = P(); R(wall, -9, -13, 1.4, 10.6); R(wall, 7.6, -13, 1.4, 10.6);
+    for (let y = -3.3; y > -13; y -= 0.9) { L(brick, -9, y, -7.6, y); L(brick, 7.6, y, 9, y); }
+    add(mid, wall, 'refr', 'f'); add(mid, brick, 'scorch', 's', 0.06, 1.5);
+    // V deflector (steel, scorched apex, water-cooled ribs)
+    const dfl = P(), tip = P(), rib = P(), edge = P(), fl = P();
+    poly(dfl, 0, -3, 8.6, -12.2, -8.6, -12.2); poly(tip, 0, -3, 2.7, -5.7, -2.7, -5.7);
+    for (const x of [-6, -3, 3, 6]) L(rib, x, -3 + (-12.2 + 3) * Math.abs(x) / 8.6, x, -13);
+    L(edge, 0, -3, -8.6, -12.2); R(fl, -9, -13.8, 18, 0.8);
+    add(mid, dfl, 'steelDk', 'f'); add(mid, tip, 'scorch', 'f'); add(mid, rib, 'steel', 's', 0.2, 3);
+    add(mid, edge, 'steelLt', 's', 0.16, 3); add(mid, fl, 'concDk', 'f');
+    // launch table (two blocks around the flame hole) with X bracing + clamps
+    const tb = P(), top = P(), br = P(), lin = P(), clamp = P(), bolt = P();
+    R(tb, -8, -2.4, 4.8, 2.4); R(tb, 3.2, -2.4, 4.8, 2.4);
+    R(top, -8, -0.45, 4.8, 0.45); R(top, 3.2, -0.45, 4.8, 0.45);
+    for (const x0 of [-8, 3.2]) { L(br, x0, -2.4, x0 + 2.4, -0.45); L(br, x0 + 2.4, -2.4, x0, -0.45); L(br, x0 + 2.4, -2.4, x0 + 4.8, -0.45); L(br, x0 + 4.8, -2.4, x0 + 2.4, -0.45); }
+    L(lin, -3.2, 0, -3.2, -2.4); L(lin, 3.2, 0, 3.2, -2.4);
+    R(clamp, -(w2 + 0.95), 0, 0.95, 1.05); R(clamp, w2, 0, 0.95, 1.05);
+    L(bolt, -(w2 + 0.5), 0.2, -(w2 + 0.5), 0.85); L(bolt, w2 + 0.5, 0.2, w2 + 0.5, 0.85);
+    add(mid, tb, 'steel', 'f'); add(mid, top, 'steelLt', 'f'); add(mid, br, 'steelDk', 's', 0.14, 3);
+    add(mid, lin, 'refr', 's', 0.35, 0); add(mid, clamp, 'steelDk', 'f'); add(mid, bolt, 'steelLt', 's', 0.12, 3);
+    // TEL carriage (west) + pipe rack & cable tray (east) + floodlight poles
+    const car = P(), wh = P(), rail = P();
+    R(car, -27, 0, 19, 1.1); R(car, -27, 1.1, 3.2, 0.8);
+    for (const x of [-25.5, -22, -18.5, -15, -11.5]) disc(wh, x, 0.45, 0.5);
+    L(rail, -27, 0.02, -8, 0.02);
+    add(mid, car, 'steel', 'f'); add(mid, wh, 'steelDk', 'f', 0, 3);
+    const post = P(), beam = P(), pipes = P();
+    for (let x = 11; x <= 49; x += 6) R(post, x - 0.14, 0, 0.28, 1.7);
+    R(beam, 8.5, 1.65, 41, 0.28);
+    L(pipes, 8.5, 2.35, 49.5, 2.35); L(pipes, 8.5, 2.9, 49.5, 2.9);
+    add(mid, post, 'steelDk', 'f', 0, 3); add(mid, beam, 'steelDk', 'f'); add(mid, pipes, 'white', 's', 0.4, 3);
+    for (const [x, h] of [[-19, 24], [19, 24], [40, 17]]) {
+      const pole = P(), head = P(); L(pole, x, 0, x, h); R(head, x - 1.1, h, 2.2, 0.7);
+      add(mid, pole, 'steelDk', 's', 0.38, 0); add(mid, head, 'steelLt', 'f');
+      lights.push({ x, y: h + 0.35, r: 11, k: 'f', beam: Math.min(24, h * 1.3) });
+    }
+  }
+
+  // ---------------------------------------------------- STRONGBACK (tilts about its base)
+  const sx = -(w2 + 3.0), hS = H * 0.74, swd = 1.3;
+  {
+    const chord = P(), diag = P(), rung = P(), arm = P(), clamp = P(), plat = P(), tray = P();
+    L(chord, sx - swd, 0, sx - swd, hS); L(chord, sx + swd, 0, sx + swd, hS);
+    lattice(diag, rung, sx - swd, sx + swd, 0, hS, 3.2, false);
+    for (const f of [0.2, 0.46, 0.7]) { const y = hS * f; L(arm, sx + swd, y, -w2 + 0.05, y); R(clamp, -w2 - 0.45, y - 0.45, 0.6, 0.9); }
+    R(plat, sx - swd - 0.9, hS, swd * 2 + 1.8, 0.45); L(plat, sx - swd - 0.9, hS + 0.45, sx - swd - 0.9, hS + 1.6);
+    L(tray, sx - swd - 0.3, 0, sx - swd - 0.3, hS);
+    add(sb, rung, 'steel', 's', 0.14, 3); add(sb, diag, 'steel', 's', 0.18, 2);
+    add(sb, chord, 'whiteDk', 's', 0.5, 0); add(sb, tray, 'steelDk', 's', 0.22, 2);
+    add(sb, arm, 'steelDk', 's', 0.36, 0); add(sb, clamp, 'steelDk', 'f'); add(sb, plat, 'steelDk', 'f');
+  }
+
+  // --------------------------------------------------------------- FRONT: FSS tower + masts
+  const fx = -34, fh = H * 1.12, fw = 4.2, mastTop = fh + 22;
+  {
+    const ch = P(), dg = P(), rg = P(), plat = P(), elev = P(), crane = P(), ladder = P();
+    L(ch, fx - fw, 0, fx - fw, fh); L(ch, fx + fw, 0, fx + fw, fh);
+    lattice(dg, rg, fx - fw, fx + fw, 0, fh, 6, true);
+    for (let y = 12; y < fh; y += 12) { R(plat, fx - fw - 1.2, y, fw * 2 + 2.4, 0.4); }
+    R(elev, fx + fw - 1.6, 0, 1.2, fh - 3);
+    for (let y = 1; y < fh - 3; y += 1.3) L(ladder, fx - fw + 0.6, y, fx - fw + 1.6, y);
+    R(crane, fx - 12, fh + 1.2, 18, 0.7); L(crane, fx - 12, fh + 1.2, fx - 6, fh - 1.0); L(crane, fx - 6, fh - 1.0, fx + 3, fh + 1.2);
+    add(front, dg, 'steel', 's', 0.2, 2); add(front, rg, 'steel', 's', 0.16, 3);
+    add(front, ch, 'steelLt', 's', 0.6, 0); add(front, ladder, 'steelDk', 's', 0.1, 3);
+    add(front, elev, 'steel', 'f', 0, 3); add(front, plat, 'steelDk', 'f', 0, 1.5); add(front, crane, 'steelDk', 'f');
+    // red/white obstruction banding on the top 24 m + roof + whip mast
+    const bandR = P(), bandW = P(), mastP = P();
+    const y0 = fh - 24;
+    for (let i = 0; i < 4; i++) { const arr = (i % 2 === 0) ? bandR : bandW; R(arr, fx - fw - 0.3, y0 + i * 6, 0.6, 6); R(arr, fx + fw - 0.3, y0 + i * 6, 0.6, 6); }
+    L(mastP, fx, fh, fx, mastTop);
+    add(front, bandR, 'red', 'f'); add(front, bandW, 'white', 'f'); add(front, mastP, 'steelLt', 's', 0.3, 0);
+    lights.push({ x: fx, y: mastTop, r: 7, k: 'r' }, { x: fx - fw, y: fh * 0.5, r: 4.5, k: 'r' }, { x: fx - fw, y: fh, r: 5, k: 'r' });
+  }
+  const mastsX = [-47, 47], mh = Math.max(H * 1.45, 55);
+  {
+    for (const mx of mastsX) {
+      mast(front, mx, 0, mh, 2.4, 0.5, 4.5, 'steelLt', 'steel', 0.34, 0.14);
+      const sp = P(); L(sp, mx, mh, mx, mh + 7); add(front, sp, 'steelLt', 's', 0.2, 0);
+      lights.push({ x: mx, y: mh + 7, r: 5, k: 'r' });
+    }
+    // catenary wires: each outer mast tip -> FSS whip tip (sagging), plus mast-to-mast
+    const wire = P(), tipE = mh + 7;
+    const cat = (x1, y1, x2, y2) => { const sag = Math.abs(x2 - x1) * 0.035; wire.moveTo(x1, -y1); wire.quadraticCurveTo((x1 + x2) / 2, -((y1 + y2) / 2 - 2 * sag), x2, -y2); };
+    cat(mastsX[0], tipE, fx, mastTop); cat(fx, mastTop, mastsX[1], tipE);
+    add(front, wire, 'steelDk', 's', 0.1, 2);
+  }
+  return { back, mid, front, sb, lights, sx, hS, swd, fx, fh, mastTop, mastsX, mh, w2, slabHalf };
+}
+
+function _padDraw(c, layers, pal, mpp) {
+  for (let i = 0; i < layers.length; i++) {
+    const l = layers[i];
+    if (l.lod && mpp > l.lod) continue;
+    if (l.k === 'f') { c.fillStyle = pal[l.mat]; _padFill(c, l.p); }
+    else { c.strokeStyle = pal[l.mat]; c.lineWidth = Math.max(l.w, mpp * 0.9); _padStroke(c, l.p); }
+  }
+}
+
+function _padSprite(rgb) {
+  const S = 64;
+  const cv = (typeof OffscreenCanvas !== 'undefined') ? new OffscreenCanvas(S, S)
+    : (typeof document !== 'undefined' ? Object.assign(document.createElement('canvas'), { width: S, height: S }) : null);
+  if (!cv) return null;
+  const g = cv.getContext('2d'), gr = g.createRadialGradient(S / 2, S / 2, 0, S / 2, S / 2, S / 2);
+  gr.addColorStop(0, 'rgba(' + rgb + ',1)'); gr.addColorStop(0.25, 'rgba(' + rgb + ',0.55)');
+  gr.addColorStop(1, 'rgba(' + rgb + ',0)');
+  g.fillStyle = gr; g.fillRect(0, 0, S, S);
+  return cv;
+}
 
 function drawLaunchPad() {
   if (camera.mode === 'planet') return;
-  
-  // Pad is pinned to the rotating Earth — its inertial position moves with
-  // Earth's rotation. Compute current site position, screen position, and
-  // the surface-tangent orientation, then draw everything inside that frame.
+
+  // Pad is pinned to the rotating Earth: current inertial position -> screen,
+  // then everything is drawn in the pad's own frame (x = EAST, y = up).
   const site = launchSiteWorldPosition(state.simTime);
   const [sitePx, sitePy] = worldToScreen(site.x, site.y);
-  if (sitePx < -800 || sitePx > canvas.width + 800 ||
-    sitePy < -800 || sitePy > canvas.height + 800) return;
-  
-  ctx.save();
-  ctx.translate(sitePx, sitePy);
-  ctx.rotate(-(site.phi - cameraAngle()));
-  
-  const px0 = 0,
-    py0 = 0; // pad ground-contact point is now local (0,0)
   const mpp = metersPerPixel();
-  const m = (meters) => meters / mpp;
-  
-  // The rocket's base rests exactly at local y=0 (py0). The launch mount's
-  // TOP surface is flush with that; everything else (apron, tower, tanks)
-  // is referenced down from the mount's base so nothing floats or embeds.
-  const mountHalfW = m(9),
-    mountH = m(2.4);
-  const aprY = py0 + mountH; // apron top surface, flush with the mount's base
-  
-  // ---- Ground apron ----
-  const apronHalfW = m(50);
-  ctx.fillStyle = '#585d64';
-  ctx.fillRect(px0 - apronHalfW, aprY, apronHalfW * 2, m(2));
-  ctx.strokeStyle = '#3f4349';
-  ctx.lineWidth = 1.2;
-  ctx.strokeRect(px0 - apronHalfW, aprY, apronHalfW * 2, m(2));
-  // A few flat expansion-joint seams for a bit of surface detail
-  ctx.strokeStyle = 'rgba(0,0,0,0.18)';
-  ctx.lineWidth = 1;
-  [-0.7, -0.35, 0.35, 0.7].forEach(f => {
-    if (Math.abs(f * apronHalfW) > m(6)) {
-      ctx.beginPath();
-      ctx.moveTo(px0 + f * apronHalfW, aprY);
-      ctx.lineTo(px0 + f * apronHalfW, aprY + m(2));
-      ctx.stroke();
-    }
-  });
-  
-  // ---- Launch mount / pedestal with hold-down clamps ----
-  // Top surface flush with py0 (where the rocket's base actually sits),
-  // extending down to meet the apron.
-  ctx.fillStyle = '#4a4e54';
-  ctx.fillRect(px0 - mountHalfW, py0, mountHalfW * 2, mountH);
-  ctx.strokeStyle = '#2e3136';
-  ctx.lineWidth = 1;
-  ctx.strokeRect(px0 - mountHalfW, py0, mountHalfW * 2, mountH);
-  // Diagonal support ribs on the mount face
-  ctx.strokeStyle = 'rgba(0,0,0,0.22)';
-  for (let i = -1; i <= 1; i += 2) {
-    ctx.beginPath();
-    ctx.moveTo(px0 + i * mountHalfW * 0.15, py0);
-    ctx.lineTo(px0 + i * mountHalfW * 0.85, aprY);
-    ctx.stroke();
-  }
-  // Hold-down clamp blocks right at the top edge, clasping the rocket's base
-  ctx.fillStyle = '#26282c';
-  [-0.62, -0.22, 0.22, 0.62].forEach(f => {
-    ctx.fillRect(px0 + f * mountHalfW * 2 - m(0.5), py0 - m(0.9), m(1), m(1.1));
-  });
-  
-  // Flame duct — a dark slot venting exhaust down through the mount + apron.
-  ctx.fillStyle = '#141518';
-  ctx.fillRect(px0 - m(3.2), py0, m(6.4), mountH + m(9));
-  ctx.strokeStyle = '#0a0b0d';
-  ctx.lineWidth = 1;
-  ctx.strokeRect(px0 - m(3.2), py0, m(6.4), mountH + m(9));
-  
-  // ---- Umbilical / strongback tower (base on the apron surface) ----
-  // Stands close to the vehicle, like a real strongback/FSS. At liftoff it
-  // swings back and away from the rocket on a hinge at its base — see the
-  // rotation applied below — rather than just standing there.
-  const rocketH = CONFIG.ROCKET_HEIGHT;
-  const towerOffsetFrac = 0.25;
-  const towerX = px0 + apronHalfW * towerOffsetFrac;
-  const towerW = m(4.4),
-    towerH = m(rocketH * 0.9);
-  
-  // Update the retract animation off real elapsed time. "Liftoff" is simply
-  // "clear of the mount" — a couple meters of altitude — so the swing-back
-  // starts right as the vehicle leaves the pad.
+  const reach = 200 / mpp;                                  // bounding circle (rotation-safe)
+  if (sitePx + reach < 0 || sitePx - reach > canvas.width ||
+    sitePy + reach < 0 || sitePy - reach > canvas.height) return;
+
+  const H = Math.max(30, CONFIG.ROCKET_HEIGHT || 45), W = Math.max(2, CONFIG.ROCKET_WIDTH || 3.7);
+  const slabHalf = (typeof GROUND_FX !== 'undefined' && GROUND_FX.PAD_HALF_W_M) || 50;
+  const key = H.toFixed(1) + '|' + W.toFixed(2) + '|' + slabHalf;
+  if (_PAD.key !== key) { _PAD.geo = _padBuild(H, W, slabHalf); _PAD.key = key; }
+  const g = _PAD.geo;
+
+  // Strongback retracts WEST (away from the downrange / pitch-over side) at liftoff.
   const nowT = performance.now();
   const dtReal = towerTiltLastT === null ? 0 : Math.min(0.25, (nowT - towerTiltLastT) / 1000);
   towerTiltLastT = nowT;
   const r_ = Math.hypot(state.rx, state.ry);
-  const liftedOff = altitudeFromR(r_) > 2;
-  const tiltTarget = liftedOff ? 1 : 0;
-  const tiltRate = 0.7; // ~1.4s to fully swing back
+  const tiltTarget = altitudeFromR(r_) > 2 ? 1 : 0;
+  const tiltRate = 0.45;
   if (tiltTarget > towerTilt) towerTilt = Math.min(tiltTarget, towerTilt + tiltRate * dtReal);
   else towerTilt = Math.max(tiltTarget, towerTilt - tiltRate * dtReal);
-  
-  // Hinge at the tower's base; rotate the whole structure about it. The
-  // tower sits to the +x side of the vehicle, so a positive rotation here
-  // swings its top further away (outward), same sense as a strongback
-  // retracting clear of the stack.
-  const maxTiltRad = 12 * Math.PI / 180; // "a little", not a full topple
-  const tiltAngle = towerTilt * maxTiltRad;
-  ctx.save();
-  ctx.translate(towerX, aprY);
-  ctx.rotate(tiltAngle);
-  ctx.translate(-towerX, -aprY);
-  
-  ctx.fillStyle = '#3a3e44';
-  ctx.fillRect(towerX - towerW / 2, aprY - towerH, towerW, towerH);
-  ctx.strokeStyle = '#5a5f66';
-  ctx.lineWidth = 1;
-  ctx.strokeRect(towerX - towerW / 2, aprY - towerH, towerW, towerH);
-  // Lattice cross-bracing up the tower
-  const braceSteps = 9;
-  for (let i = 0; i < braceSteps; i++) {
-    const y1 = aprY - towerH * (i / braceSteps),
-      y2 = aprY - towerH * ((i + 1) / braceSteps);
-    ctx.beginPath();
-    ctx.moveTo(towerX - towerW / 2, y1);
-    ctx.lineTo(towerX + towerW / 2, y2);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(towerX + towerW / 2, y1);
-    ctx.lineTo(towerX - towerW / 2, y2);
-    ctx.stroke();
+  const e = towerTilt * towerTilt * (3 - 2 * towerTilt);        // eased
+  const tiltA = e * 14 * Math.PI / 180;
+
+  // Lighting at the pad (pseudo-body: body frame x = east, y = up).
+  let Lt = null;
+  if (typeof SimLighting !== 'undefined' && SimLighting.rocketLight) {
+    const pb = _PAD.body || (_PAD.body = { rx: 0, ry: 0, theta: 0 });
+    pb.rx = site.x; pb.ry = site.y; pb.theta = -site.phi;
+    Lt = SimLighting.rocketLight(pb);
   }
-  // Two swing arms reaching toward the vehicle: a lower fueling umbilical
-  // and a higher strongback/clamp arm, each with a hinge block at both ends.
-  // Length reaches to just short of the rocket's own radius so the tip sits
-  // right at the vehicle skin (not floating in space) when upright.
-  const rocketHalfW = m(CONFIG.ROCKET_WIDTH / 2);
-  const armLen = (towerX - towerW / 2) - (px0 + rocketHalfW + m(1.5));
-  [{ frac: 0.12, len: armLen }, { frac: 0.46, len: armLen }].forEach(arm => {
-    const ay = aprY - towerH * arm.frac;
-    const ax0 = towerX - towerW / 2;
-    const ax1 = ax0 - arm.len;
-    ctx.strokeStyle = '#4a4e54';
-    ctx.lineWidth = Math.max(1.5, m(0.6));
-    ctx.beginPath();
-    ctx.moveTo(ax0, ay);
-    ctx.lineTo(ax1, ay);
-    ctx.stroke();
-    ctx.fillStyle = '#2e3136';
-    ctx.beginPath();
-    ctx.arc(ax0, ay, m(0.9), 0, Math.PI * 2);
-    ctx.fill();
-    ctx.beginPath();
-    ctx.arc(ax1, ay, m(0.7), 0, Math.PI * 2);
-    ctx.fill();
-  });
-  // Blinking hazard light at the tower top
-  const blink = 0.5 + 0.5 * Math.sin(performance.now() * 0.004);
-  ctx.fillStyle = `rgba(255,60,50,${0.5 + 0.5 * blink})`;
-  ctx.beginPath();
-  ctx.arc(towerX, aprY - towerH, Math.max(2, m(1.1)), 0, Math.PI * 2);
-  ctx.fill();
-  
+  const pal = _padPalette(Lt, false), palFar = _padPalette(Lt, true);
+
+  ctx.save();
+  ctx.translate(sitePx, sitePy);
+  ctx.rotate(-(site.phi - cameraAngle()));
+  ctx.scale(1 / mpp, 1 / mpp);                                  // 1 unit = 1 metre from here on
+  ctx.lineCap = 'butt'; ctx.lineJoin = 'miter';
+
+  _padDraw(ctx, g.back, palFar, mpp);
+  _padDraw(ctx, g.mid, pal, mpp);
+
+  // soot / scorch on the hardstand around the mount (centre-weighted)
+  {
+    const sg = ctx.createLinearGradient(-26, 0, 26, 0);
+    sg.addColorStop(0, 'rgba(20,18,16,0)'); sg.addColorStop(0.36, 'rgba(20,18,16,0.30)');
+    sg.addColorStop(0.5, 'rgba(14,12,12,0.55)'); sg.addColorStop(0.64, 'rgba(20,18,16,0.30)');
+    sg.addColorStop(1, 'rgba(20,18,16,0)');
+    ctx.fillStyle = sg; ctx.fillRect(-26, -1.2, 52, 1.2);
+  }
+
+  // TEL hydraulic erector cylinder: fixed foot on the carriage, head follows the strongback
+  {
+    const a = tiltA, y = g.hS * 0.3, dx = -0.9;
+    const hx = g.sx + (dx * Math.cos(a) - y * Math.sin(a)), hy = dx * Math.sin(a) + y * Math.cos(a);
+    const fx0 = -15, fy0 = 1.9, mxp = fx0 + (hx - fx0) * 0.58, myp = fy0 + (hy - fy0) * 0.58;
+    ctx.lineCap = 'butt';
+    ctx.strokeStyle = pal.steelLt; ctx.lineWidth = Math.max(0.55, mpp * 1.2);
+    ctx.beginPath(); ctx.moveTo(fx0, -fy0); ctx.lineTo(mxp, -myp); ctx.stroke();
+    ctx.strokeStyle = pal.white; ctx.lineWidth = Math.max(0.28, mpp * 0.9);
+    ctx.beginPath(); ctx.moveTo(mxp, -myp); ctx.lineTo(hx, -hy); ctx.stroke();
+  }
+
+  // strongback / TEL arm: hinge at its base, leans WEST (counter-clockwise on screen)
+  ctx.save();
+  ctx.translate(g.sx, 0); ctx.rotate(-tiltA); ctx.translate(-g.sx, 0);
+  _padDraw(ctx, g.sb, pal, mpp);
   ctx.restore();
-  
-  // ---- Background ground-support tanks (flat side-elevation, not 3D) ----
-  const tankX = px0 - apronHalfW * 0.72;
-  [0, 1].forEach(i => {
-    const tx = tankX - i * m(9);
-    const tw = m(4.5),
-      th = m(10);
-    ctx.fillStyle = '#4a4e54';
-    ctx.fillRect(tx - tw / 2, aprY - th, tw, th);
-    ctx.strokeStyle = '#2e3136';
-    ctx.lineWidth = 1;
-    ctx.strokeRect(tx - tw / 2, aprY - th, tw, th);
-    // Flat domed cap — a legitimate side-elevation feature of a cylindrical
-    // tank, not a perspective effect
-    ctx.beginPath();
-    ctx.arc(tx, aprY - th, tw / 2, Math.PI, 0);
-    ctx.fill();
-    ctx.stroke();
-  });
-  // ... (sab existing pad drawing unchanged) ...
-  
-  ctx.restore(); // close the pad transform
-  
+
+  _padDraw(ctx, g.front, pal, mpp);
+
+  // ---- night lights: floodlight beams + glows + blinking beacons ----
+  if (pal.night > 0.02) {
+    const n = pal.night;
+    if (!_PAD.glow) { _PAD.glow = _padSprite('255,226,170'); _PAD.glowRed = _padSprite('255,60,45'); }
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    for (const Lg of g.lights) {
+      if (Lg.k !== 'f' || !Lg.beam) continue;
+      const bg = ctx.createLinearGradient(0, -Lg.y, 0, 0);
+      bg.addColorStop(0, 'rgba(255,230,170,' + (0.16 * n).toFixed(3) + ')'); bg.addColorStop(1, 'rgba(255,230,170,0)');
+      ctx.fillStyle = bg; ctx.beginPath();
+      ctx.moveTo(Lg.x - 0.5, -Lg.y); ctx.lineTo(Lg.x + 0.5, -Lg.y); ctx.lineTo(Lg.x + Lg.beam, 0); ctx.lineTo(Lg.x - Lg.beam, 0); ctx.closePath(); ctx.fill();
+    }
+    const blink = 0.55 + 0.45 * Math.sin(nowT * 0.004);
+    for (const Lg of g.lights) {
+      const sp = Lg.k === 'f' ? _PAD.glow : _PAD.glowRed; if (!sp) continue;
+      const rr = Math.max(Lg.r, mpp * 5);
+      ctx.globalAlpha = Math.min(1, n * (Lg.k === 'f' ? 0.9 : 0.5 + 0.5 * blink));
+      ctx.drawImage(sp, Lg.x - rr, -Lg.y - rr, rr * 2, rr * 2);
+    }
+    // strongback top lamp rides the tilt
+    const ty = g.hS + 1.2, tx = g.sx + (-Math.sin(tiltA) * ty), tyy = Math.cos(tiltA) * ty;
+    if (_PAD.glow) { ctx.globalAlpha = Math.min(1, n * 0.9); const rr = Math.max(7, mpp * 5); ctx.drawImage(_PAD.glow, tx - rr, -tyy - rr, rr * 2, rr * 2); }
+    ctx.restore();
+  } else {
+    // daytime: beacons still pulse as small red dots
+    const blink = 0.5 + 0.5 * Math.sin(nowT * 0.004);
+    ctx.fillStyle = 'rgba(255,60,50,' + (0.45 + 0.5 * blink).toFixed(2) + ')';
+    for (const Lg of g.lights) {
+      if (Lg.k !== 'r') continue;
+      ctx.beginPath(); ctx.arc(Lg.x, -Lg.y, Math.max(0.6, mpp * 1.6), 0, Math.PI * 2); ctx.fill();
+    }
+  }
+
+  ctx.restore();
 }
+// ===== LAUNCHPAD END ========================================================
 
 // H3b: when following a discarded body, draw a small arrow pointing
 // toward the active body if it's off-screen — so the user doesn't lose
