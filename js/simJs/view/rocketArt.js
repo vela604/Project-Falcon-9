@@ -1459,6 +1459,17 @@ function drawGridFinFace(ctx, pivotX, pivotY, topX, topY, wPx, hPx, cellPx, styl
   ctx.restore();
 }
 
+// Monotone-chain convex hull for a small point set ([[x,y],...]) -> hull points.
+function _finHull(pts) {
+  const P = pts.slice().sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  const cr = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+  const lo = [], up = [];
+  for (const q of P) { while (lo.length >= 2 && cr(lo[lo.length - 2], lo[lo.length - 1], q) <= 0) lo.pop(); lo.push(q); }
+  for (let i = P.length - 1; i >= 0; i--) { const q = P[i]; while (up.length >= 2 && cr(up[up.length - 2], up[up.length - 1], q) <= 0) up.pop(); up.push(q); }
+  lo.pop(); up.pop();
+  return lo.concat(up);
+}
+
 // Pusher-puff render — 4 small bursts at the TOP RIM of the stack.
 // Called from drawRocketArt for the top member when the physics worker
 // reports an active pusher event on this body. Draws in the member's own
@@ -2607,21 +2618,36 @@ if (opts.gridFinType && opts.gridFinParams) {
   const pFromDeg = (d) => 1 - Math.min(1, Math.abs(d) / 90);
   
   // ---- F/B pair ----
+  // True rotation about the horizontal hinge axis, theta = 0 (stowed, face-on) -> 90 deg
+  // (deployed, end-on). Orthographic projection of the rotating slab:
+  //   lattice face   : span * cos(theta) tall (foreshortened - the mesh squashes with it)
+  //   far end (cap)  : chord x thickness * sin(theta) strip right below it
+  //   whole fin      : height span*cos + thick*sin, top = -thick/2 * sin(theta)
+  // so the outline changes continuously (no linear squash, no mesh popping off).
   const fbP = pFromDeg(st.FB.deploy);
   const fbControlDeg = (st.FB.deploy === 0) ? (st.FB.control || 0) : 0;
   const fbControlRad = fbControlDeg * Math.PI / 180;
   const fbW = chordPx;
-  const fbH = spanPx + (thicknessPx - spanPx) * fbP;
-  // Rect top migrates from 0 (stowed → hangs from pivot) to
-  // -thicknessPx/2 (deployed → centered on pivot).
-  const fbTopY = -fbP * thicknessPx / 2;
-  const fbShowMesh = (fbP < 0.2);
+  const fbTh = fbP * Math.PI / 2, fbC = Math.cos(fbTh), fbS = Math.sin(fbTh);
+  const fbTopY = -fbS * thicknessPx / 2;
+  const fbFaceH = spanPx * fbC, fbCapH = thicknessPx * fbS;
+  function drawFB(alpha) {
+    ctx.save();
+    if (alpha < 1) ctx.globalAlpha = alpha;
+    ctx.translate(0, hingeY);
+    if (fbControlRad) ctx.rotate(fbControlRad);
+    if (fbCapH > 0.35) drawGridFinFace(ctx, 0, 0, -fbW / 2, fbTopY + fbFaceH, fbW, fbCapH, cellPx, fbStyle, false, 0);
+    if (fbC > 0.03 && spanPx > 0) {
+      ctx.save();
+      ctx.translate(0, fbTopY); ctx.scale(1, fbC);                 // foreshorten the lattice face
+      drawGridFinFace(ctx, 0, 0, -fbW / 2, 0, fbW, spanPx, cellPx, fbStyle, true, 0);
+      ctx.restore();
+    }
+    ctx.restore();
+  }
   
   // B (ghost) first — same visual direction as F (see earlier note).
-  ctx.save();
-  ctx.globalAlpha = 0.15;
-  drawGridFinFace(ctx, 0, hingeY, -fbW / 2, fbTopY, fbW, fbH, cellPx, fbStyle, fbShowMesh, +fbControlRad);
-  ctx.restore();
+  drawFB(0.15);
   
   // ---- L/R pair ----
   // Local rect extends outward from the pivot (R: +X, L: −X), with
@@ -2689,6 +2715,80 @@ function drawFrontHingePod() {
   ctx.strokeStyle = _tint('#2a2f38', k, 0.8); ctx.lineWidth = 0.8; ctx.stroke();
   ctx.restore();
 }
+// ---- Cast shadows of the fins onto the hull (sun, body frame: x right, y nose, z viewer) ----
+// F/B: the deployed slab points at the viewer, so its shadow is the slab swept along the
+// light ray down to the hull surface (lattice shows through as a dappled pattern).
+// L/R: a soft streak on the hull's lit-side edge, below the fin when the sun is high.
+{
+  const RL = globalThis._ROCKET_LIGHT;
+  if (RL && RL.lit > 0.05 && hullHalfPx > 2) {
+    const a0 = Math.min(0.5, 0.40 * RL.lit);
+    ctx.save();
+    ctx.beginPath(); ctx.rect(-hullHalfPx, hingeY - spanPx * 2, hullHalfPx * 2, spanPx * 5); ctx.clip();   // hull strip
+    // ---- F/B ----
+    if (fbP > 0.04 && RL.lz > 0.1 && fbW > 1) {
+      const lzc = Math.max(RL.lz, 0.22);
+      const kx = Math.max(-3, Math.min(3, RL.lx / lzc)), ky = Math.max(-3, Math.min(3, RL.ly / lzc));
+      const z0 = gapPx + thicknessPx / 2;                       // hinge height above the hull surface
+      const pts = [];
+      for (const [u, vs] of [[0, -1], [spanPx, -1], [spanPx, 1], [0, 1]]) {
+        const v = vs * thicknessPx / 2;
+        const z = z0 + u * fbS + v * fbC;                       // height above hull
+        const yc = hingeY + u * fbC - v * fbS;                  // projected y (canvas, down)
+        const sx = -kx * z, sy = yc + ky * z;                   // slide along the light ray to z = 0
+        pts.push([sx - fbW / 2, sy], [sx + fbW / 2, sy]);
+      }
+      const hp = _finHull(pts);
+      if (hp.length >= 3) {
+        ctx.save();
+        ctx.beginPath(); ctx.moveTo(hp[0][0], hp[0][1]);
+        for (let i = 1; i < hp.length; i++) ctx.lineTo(hp[i][0], hp[i][1]);
+        ctx.closePath();
+        ctx.fillStyle = 'rgba(8,12,22,' + (a0 * 0.42).toFixed(3) + ')'; ctx.fill();
+        ctx.clip();
+        // see-through cells: diagonal lattice of denser shadow
+        const cell = Math.max(2.4, cellPx), tanA = 0.62;
+        let minX = 1e9, maxX = -1e9, minY = 1e9, maxY = -1e9;
+        for (const q of hp) { if (q[0] < minX) minX = q[0]; if (q[0] > maxX) maxX = q[0]; if (q[1] < minY) minY = q[1]; if (q[1] > maxY) maxY = q[1]; }
+        const hh = maxY - minY, n = Math.min(80, Math.ceil((maxX - minX + hh * tanA) / cell) + 1);
+        ctx.strokeStyle = 'rgba(8,12,22,' + (a0 * 0.75).toFixed(3) + ')';
+        ctx.lineWidth = Math.max(0.8, cell * 0.24); ctx.beginPath();
+        for (let i = 0; i <= n; i++) {
+          const x0 = minX - hh * tanA + i * cell;
+          ctx.moveTo(x0, minY); ctx.lineTo(x0 + hh * tanA, maxY);
+          const x1 = minX + i * cell;
+          ctx.moveTo(x1, minY); ctx.lineTo(x1 - hh * tanA, maxY);
+        }
+        ctx.stroke();
+        ctx.restore();
+      }
+    }
+    // ---- L/R ----
+    for (const sgn of [-1, 1]) {
+      const pp = sgn < 0 ? lp : rp, rot = sgn < 0 ? lRot : rRot;
+      const sunSide = RL.lx * sgn;
+      if (pp < 0.05 || sunSide < 0.12) continue;
+      const m = Math.max(-2.5, Math.min(2.5, RL.ly / sunSide));          // vertical slide per px of horizontal distance
+      const hx = sgn * (hullHalfPx + gapPx + thicknessPx / 2), cs = Math.cos(rot), sn = Math.sin(rot);
+      let yMin = 1e9, yMax = -1e9;
+      for (const [cx, cy] of [[0, -thicknessPx / 2], [sgn * spanPx, -thicknessPx / 2], [sgn * spanPx, thicknessPx / 2], [0, thicknessPx / 2]]) {
+        const X = hx + cx * cs - cy * sn, Y = hingeY + cx * sn + cy * cs;
+        const d = Math.max(0, Math.abs(X) - hullHalfPx);
+        const Ys = Y + m * d;
+        if (Ys < yMin) yMin = Ys; if (Ys > yMax) yMax = Ys;
+      }
+      yMax = Math.min(yMax, hingeY + spanPx * 1.25); yMin = Math.max(yMin, hingeY - spanPx * 0.5);
+      if (yMax - yMin < 0.5) continue;
+      const wB = Math.min(hullHalfPx * 0.5, Math.max(3, chordPx * 0.45));
+      const xE = sgn * hullHalfPx, xI = sgn * (hullHalfPx - wB);
+      const g = ctx.createLinearGradient(xI, 0, xE, 0);
+      g.addColorStop(0, 'rgba(8,12,22,0)'); g.addColorStop(1, 'rgba(8,12,22,' + (a0 * 0.85 * Math.min(1, pp * 1.6)).toFixed(3) + ')');
+      ctx.fillStyle = g; ctx.fillRect(Math.min(xI, xE), yMin, wB, yMax - yMin);
+    }
+    ctx.restore();
+  }
+}
+
 drawHingeBracket(-1);
 drawHingeBracket(+1);
 
@@ -2699,7 +2799,7 @@ drawGridFinFace(ctx, rightHingeX, hingeY, 0, -thicknessPx / 2, spanPx, thickness
 
   // F drawn last (front, opaque).
   drawFrontHingePod();
-  drawGridFinFace(ctx, 0, hingeY, -fbW / 2, fbTopY, fbW, fbH, cellPx, fbStyle, fbShowMesh, +fbControlRad);
+  drawFB(1);
 }
   
   

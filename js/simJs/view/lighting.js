@@ -18,7 +18,7 @@
 const SimLighting = (function () {
   'use strict';
   const TAU = Math.PI * 2;
-  const S = { enabled: true, assist: true, hour0: 10 };
+  const S = { enabled: true, assist: true, hour0: 6 + 3/60 };
 
   // __TEMP_SMOOTH__ — wall-clock exponential smoother. Any lighting change
   // (slider drag, START, day/night crossing) fades in over ~0.5 s instead of

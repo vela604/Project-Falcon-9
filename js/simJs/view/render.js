@@ -791,7 +791,7 @@ function drawOceanArea() {
 // and replayed with one transform, so per-frame cost is a few dozen strokes.
 // Lit by SimLighting (pseudo-body at the pad) -> follows sun/moon/ambient.
 // ============================================================================
-const _PAD = { geo: null, key: '', body: null, glow: null, glowRed: null, fireK: 0, fireT: 0, fireStamp: -1e9 };
+const _PAD = { geo: null, key: '', body: null, glow: null, glowRed: null, fireK: 0, fireT: 0, fireStamp: -1e9, lt: null, ltT: -1e9, lz: new Map(), glowAmb: null };
 
 class _PadPath {            // Path2D stand-in for engines without Path2D in workers
   constructor() { this.o = []; }
@@ -1055,8 +1055,9 @@ function drawLaunchPad() {
 
   const H = Math.max(30, CONFIG.ROCKET_HEIGHT || 45), W = Math.max(2, CONFIG.ROCKET_WIDTH || 3.7);
   const slabHalf = (typeof GROUND_FX !== 'undefined' && GROUND_FX.PAD_HALF_W_M) || 50;
-  const key = H.toFixed(1) + '|' + W.toFixed(2) + '|' + slabHalf;
-  if (_PAD.key !== key) { _PAD.geo = _padBuild(H, W, slabHalf); _PAD.key = key; }
+  const ptName = PAD_TYPES[CONFIG.LAUNCH_PAD_TYPE] ? CONFIG.LAUNCH_PAD_TYPE : 'standard';
+  const key = ptName + '|' + H.toFixed(1) + '|' + W.toFixed(2) + '|' + slabHalf;
+  if (_PAD.key !== key) { _PAD.geo = PAD_TYPES[ptName].build(H, W, slabHalf); _PAD.key = key; }
   const g = _PAD.geo;
 
   // Strongback retracts WEST (away from the downrange / pitch-over side) at liftoff.
@@ -1074,14 +1075,8 @@ function drawLaunchPad() {
   _PAD.fireK += (fTgt - _PAD.fireK) * Math.min(1, dtReal * (fTgt > _PAD.fireK ? 8 : 2.5));
   const tiltA = e * 14 * Math.PI / 180;
 
-  // Lighting at the pad (pseudo-body: body frame x = east, y = up).
-  let Lt = null;
-  if (typeof SimLighting !== 'undefined' && SimLighting.rocketLight) {
-    const pb = _PAD.body || (_PAD.body = { rx: 0, ry: 0, theta: 0 });
-    pb.rx = site.x; pb.ry = site.y; pb.theta = -site.phi;
-    Lt = SimLighting.rocketLight(pb);
-  }
-  const pal = _padPalette(Lt, false), palFar = _padPalette(Lt, true);
+  // Lighting at the pad (shared with the landing pads; computed once per frame).
+  const PL = _padLight(), pal = PL.pal, palFar = PL.palFar;
 
   ctx.save();
   ctx.translate(sitePx, sitePy);
@@ -1093,21 +1088,24 @@ function drawLaunchPad() {
   _padDraw(ctx, g.mid, pal, mpp);
 
   // Trench heat: the deflector and chamber glow while the jet is on them (emitter sets fireT).
-  if (_PAD.fireK > 0.01) {
+  const _Tg = _padTr();
+  if (_Tg && _PAD.fireK > 0.01) {
     const k = Math.min(1, _PAD.fireK) * (0.93 + 0.07 * Math.sin(nowT * 0.031));
     ctx.save();
     ctx.beginPath();                                                      // clip to the flame hole + chamber
-    ctx.moveTo(-3.2, 0); ctx.lineTo(3.2, 0); ctx.lineTo(3.2, 2.4); ctx.lineTo(9, 2.4); ctx.lineTo(9, 13);
-    ctx.lineTo(-9, 13); ctx.lineTo(-9, 2.4); ctx.lineTo(-3.2, 2.4); ctx.closePath(); ctx.clip();
+    ctx.moveTo(-_Tg.HOLE_HALF_W, 0); ctx.lineTo(_Tg.HOLE_HALF_W, 0); ctx.lineTo(_Tg.HOLE_HALF_W, _Tg.TABLE_H);
+    ctx.lineTo(_Tg.CH_HALF_W, _Tg.TABLE_H); ctx.lineTo(_Tg.CH_HALF_W, _Tg.CH_DEPTH);
+    ctx.lineTo(-_Tg.CH_HALF_W, _Tg.CH_DEPTH); ctx.lineTo(-_Tg.CH_HALF_W, _Tg.TABLE_H); ctx.lineTo(-_Tg.HOLE_HALF_W, _Tg.TABLE_H);
+    ctx.closePath(); ctx.clip();
     ctx.globalCompositeOperation = 'lighter';
-    const rg = ctx.createRadialGradient(0, 3.2, 0, 0, 3.2, 17);
+    const rg = ctx.createRadialGradient(0, -_Tg.APEX_Y + 0.2, 0, 0, -_Tg.APEX_Y + 0.2, 17);
     rg.addColorStop(0, 'rgba(255,200,110,' + (0.80 * k).toFixed(3) + ')');
     rg.addColorStop(0.45, 'rgba(255,120,40,' + (0.38 * k).toFixed(3) + ')');
     rg.addColorStop(1, 'rgba(255,70,10,0)');
     ctx.fillStyle = rg; ctx.fillRect(-10, -1, 20, 15);
     ctx.strokeStyle = 'rgba(255,215,140,' + (0.85 * k).toFixed(3) + ')';   // white-hot wedge faces
     ctx.lineWidth = Math.max(0.35, mpp * 1.2); ctx.lineJoin = 'round';
-    ctx.beginPath(); ctx.moveTo(-8.6, 12.2); ctx.lineTo(0, 3); ctx.lineTo(8.6, 12.2); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(-_Tg.WEDGE_HALF_W, -_Tg.WEDGE_FOOT_Y); ctx.lineTo(0, -_Tg.APEX_Y); ctx.lineTo(_Tg.WEDGE_HALF_W, -_Tg.WEDGE_FOOT_Y); ctx.stroke();
     ctx.restore();
     ctx.save();                                                           // light pooled on the table / hardstand
     ctx.globalCompositeOperation = 'lighter';
@@ -1181,6 +1179,169 @@ function drawLaunchPad() {
     }
   }
 
+  ctx.restore();
+}
+// ---------------------------------------------------------------------------
+// Shared pad lighting: one SimLighting.rocketLight() per frame for every pad.
+// ---------------------------------------------------------------------------
+function _padLight(reuse) {                 // launch pad forces a fresh value; landing pads reuse it (same frame)
+  const now = performance.now();
+  if (reuse && _PAD.lt && now - _PAD.ltT < 12) return _PAD.lt;
+  let Lt = null;
+  if (typeof SimLighting !== 'undefined' && SimLighting.rocketLight && typeof launchSiteWorldPosition === 'function') {
+    const site = launchSiteWorldPosition(state.simTime);
+    const pb = _PAD.body || (_PAD.body = { rx: 0, ry: 0, theta: 0 });
+    pb.rx = site.x; pb.ry = site.y; pb.theta = -site.phi;          // body frame: x = east, y = up
+    Lt = SimLighting.rocketLight(pb);
+  }
+  _PAD.lt = { Lt, pal: _padPalette(Lt, false), palFar: _padPalette(Lt, true) };
+  _PAD.ltT = now;
+  return _PAD.lt;
+}
+
+// ---------------------------------------------------------------------------
+// LANDING PADS: a plain flat platform sunk flush into the ground (true 2D, no
+// fake ellipses). The top surface is a gradient that brightens toward the
+// centre (the touchdown point) with stripes that get denser toward it, and
+// ground-mounted vapour (sodium) lights sit on BOTH sides. Geometry cached per
+// pad; lit by the same palette as the launch pad.
+// ---------------------------------------------------------------------------
+function _lzBuild(pad) {
+  const R = pad.radiusM, mid = [], lights = [];
+  const add = (p, mat, kind, w, lod) => mid.push({ p, mat, k: kind, w: w || 0, lod: lod || 0 });
+  const P = () => _padNewPath();
+  const L = (p, x1, y1, x2, y2) => { p.moveTo(x1, -y1); p.lineTo(x2, -y2); };
+  const Rc = (p, x, y, w, h) => p.rect(x, -(y + h), w, h);
+  const drop = 1.9 + Math.max(0, pad.heightM);
+  const bulk = P(), curb = P(), seam = P();
+  bulk.moveTo(-R, 0); bulk.lineTo(R, 0); bulk.lineTo(R + 1.3, drop); bulk.lineTo(-R - 1.3, drop); bulk.closePath();   // sunk slab (y-down here)
+  curb.rect(-R - 0.45, 0, 0.45, 0.75); curb.rect(R, 0, 0.45, 0.75);                                  // flush edge frame (y down)
+  for (let k = 1; k <= 10; k++) { const x = R * (k / 10) * (k / 10); L(seam, x, 0, x, -0.75); L(seam, -x, 0, -x, -0.75); }   // dense toward the centre
+  add(bulk, 'concDk', 'f'); add(curb, 'concLn', 'f'); add(seam, 'white', 's', 0.07, 2.5);
+  if (pad.lights) {
+    const fix = P(), lens = P();
+    for (const sg of [-1, 1]) for (const d of [1.9, 8.5]) {
+      const x = sg * (R + d);
+      Rc(fix, x - 0.55, 0, 1.1, 0.32); Rc(lens, x - 0.34, 0.32, 0.68, 0.09);
+      lights.push({ x, y: 0.42 });
+    }
+    add(fix, 'steelDk', 'f'); add(lens, 'steelLt', 'f');
+  }
+  return { mid, lights, R };
+}
+
+function _lzGeo(pad) {
+  const key = pad.id + '|' + pad.radiusM + '|' + pad.heightM + '|' + pad.lights;
+  let g = _PAD.lz.get(key);
+  if (!g) {
+    g = _lzBuild(pad);
+    if (_PAD.lz.size >= 8) _PAD.lz.delete(_PAD.lz.keys().next().value);    // small LRU
+    _PAD.lz.set(key, g);
+  } else { _PAD.lz.delete(key); _PAD.lz.set(key, g); }
+  return g;
+}
+
+function drawLandingPads() {
+  if (camera.mode === 'planet' || typeof landingPads !== 'function') return;
+  const pads = landingPads();
+  if (!pads.length) return;
+  const mpp = metersPerPixel();
+  if (mpp > 60) return;
+  const camAng = cameraAngle(), nowT = performance.now();
+  let PL = null;
+  for (let i = 0; i < pads.length; i++) {
+    const pad = pads[i];
+    const w = landingPadWorldPosition(pad, state.simTime);
+    const [px, py] = worldToScreen(w.x, w.y);
+    const reach = (pad.radiusM + 40) / mpp;
+    if (px + reach < 0 || px - reach > canvas.width || py + reach < 0 || py - reach > canvas.height) continue;
+    if (!PL) PL = _padLight(true);
+    const pal = PL.pal, g = _lzGeo(pad), R = pad.radiusM, n = pal.night;
+
+    ctx.save();
+    ctx.translate(px, py);
+    ctx.rotate(-(w.phi - camAng));
+    ctx.scale(1 / mpp, 1 / mpp);                                   // 1 unit = 1 metre, x = east, y down
+    ctx.lineCap = 'butt'; ctx.lineJoin = 'miter';
+    _padDraw(ctx, g.mid, pal, mpp);
+
+    // top surface: concrete at the rim -> bright toward the touchdown point
+    const sg = ctx.createLinearGradient(-R, 0, R, 0);
+    sg.addColorStop(0, pal.conc); sg.addColorStop(0.2, pal.conc); sg.addColorStop(0.38, pal.whiteDk);
+    sg.addColorStop(0.5, pal.white); sg.addColorStop(0.62, pal.whiteDk); sg.addColorStop(0.8, pal.conc); sg.addColorStop(1, pal.conc);
+    ctx.fillStyle = sg; ctx.fillRect(-R, 0, R * 2, 0.75);                  // surface layer is flush with the ground
+
+    // soft target glow hugging the surface (stronger at night)
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.translate(0, 0.1); ctx.scale(1, 0.06);
+    const cg = ctx.createRadialGradient(0, 0, 0, 0, 0, R * 0.6);
+    cg.addColorStop(0, 'rgba(200,255,225,' + (0.07 + 0.6 * n).toFixed(3) + ')'); cg.addColorStop(1, 'rgba(120,230,180,0)');
+    ctx.fillStyle = cg; ctx.beginPath(); ctx.arc(0, 0, R * 0.6, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+
+    // ground vapour lights, both sides
+    if (g.lights.length) {
+      if (n > 0.02) {
+        if (!_PAD.glowAmb) _PAD.glowAmb = _padSprite('255,190,90');
+        ctx.save();
+        ctx.globalCompositeOperation = 'lighter';
+        for (const Lg of g.lights) {
+          const bh = 26, bw = 4.6;
+          const bg = ctx.createLinearGradient(0, -Lg.y, 0, -Lg.y - bh);
+          bg.addColorStop(0, 'rgba(255,196,100,' + (0.20 * n).toFixed(3) + ')'); bg.addColorStop(1, 'rgba(255,196,100,0)');
+          ctx.fillStyle = bg; ctx.beginPath();
+          ctx.moveTo(Lg.x - 0.35, -Lg.y); ctx.lineTo(Lg.x + 0.35, -Lg.y); ctx.lineTo(Lg.x + bw, -Lg.y - bh); ctx.lineTo(Lg.x - bw, -Lg.y - bh);
+          ctx.closePath(); ctx.fill();
+          if (_PAD.glowAmb) { const rr = Math.max(3.4, mpp * 5); ctx.globalAlpha = Math.min(1, n * 0.9); ctx.drawImage(_PAD.glowAmb, Lg.x - rr, -Lg.y - rr, rr * 2, rr * 2); ctx.globalAlpha = 1; }
+        }
+        ctx.restore();
+      } else {
+        ctx.fillStyle = 'rgba(255,205,120,0.75)';
+        for (const Lg of g.lights) { ctx.beginPath(); ctx.arc(Lg.x, -Lg.y - 0.05, Math.max(0.28, mpp * 1.1), 0, Math.PI * 2); ctx.fill(); }
+      }
+    }
+    ctx.restore();
+
+    // floating label when zoomed out (screen-aligned)
+    if (mpp > 1.2 && mpp < 14) {
+      const txt = mpp > 5 ? pad.id : pad.id + ' \u00b7 ' + Math.round(pad.arcOffsetM) + ' m';
+      ctx.save();
+      ctx.font = '11px monospace'; ctx.textAlign = 'center'; ctx.lineJoin = 'round';
+      ctx.strokeStyle = 'rgba(120,235,160,0.8)'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(px, py - 4); ctx.lineTo(px, py - 17); ctx.stroke();
+      ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(0,0,0,0.55)'; ctx.strokeText(txt, px, py - 21);
+      ctx.fillStyle = 'rgba(140,255,180,0.95)'; ctx.fillText(txt, px, py - 21);
+      ctx.restore();
+    }
+  }
+}
+
+// Planet view: the whole complex is < 1 px across, so draw readable markers.
+function drawPadMarkers() {
+  if (typeof launchSiteWorldPosition !== 'function') return;
+  const site = launchSiteWorldPosition(state.simTime);
+  const [sx, sy] = worldToScreen(site.x, site.y);
+  const outX = Math.sin(site.phi), outY = -Math.cos(site.phi);       // outward radial on screen
+  const tgX = Math.cos(site.phi), tgY = Math.sin(site.phi);          // east tangent on screen
+  ctx.save();
+  ctx.font = '10px monospace'; ctx.lineJoin = 'round';
+  const put = (txt, x, y, align, col) => {
+    ctx.textAlign = align; ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(0,0,0,0.6)'; ctx.strokeText(txt, x, y);
+    ctx.fillStyle = col; ctx.fillText(txt, x, y);
+  };
+  ctx.strokeStyle = 'rgba(53,214,255,0.95)'; ctx.lineWidth = 1.5;
+  ctx.strokeRect(sx - 3, sy - 3, 6, 6);
+  put('LC', sx - tgX * 9 + outX * 10, sy - tgY * 9 + outY * 10 + 3, 'right', 'rgba(120,225,255,0.95)');
+  const pads = (typeof landingPads === 'function') ? landingPads() : [];
+  if (pads.length) {
+    const w = landingPadWorldPosition(pads[pads.length - 1], state.simTime);
+    const [zx, zy] = worldToScreen(w.x, w.y);
+    ctx.strokeStyle = 'rgba(120,255,170,0.95)';
+    ctx.beginPath(); ctx.arc(zx, zy, 3.5, 0, Math.PI * 2); ctx.stroke();
+    const far = Math.round(Math.max.apply(null, pads.map(q => q.arcOffsetM)));
+    put('LZ\u00d7' + pads.length + ' \u2192 ' + far + ' m', zx + tgX * 9 + outX * 10, zy + tgY * 9 + outY * 10 + 3, 'left', 'rgba(140,255,180,0.95)');
+  }
   ctx.restore();
 }
 // ===== LAUNCHPAD END ========================================================
@@ -1426,10 +1587,21 @@ const PAD_TRENCH = {
   SLOPE_RAD: Math.atan2(9.2, 8.6), SLOPE_LEN: Math.hypot(8.6, 9.2),
 };
 
+// Launch-pad TYPE registry. CONFIG.LAUNCH_PAD_TYPE picks one. Each type supplies
+//   build(H, W, slabHalf) -> cached static geometry layers (see _padBuild)
+//   trench                -> flame-trench numbers like PAD_TRENCH, or null for a
+//                            pad without a trench (plume then just hits flat ground)
+// Add 'heavy' / 'starship' here later; nothing else needs to change.
+const PAD_TYPES = {
+  standard: { label: 'Standard / legacy single-core', trench: PAD_TRENCH, build: (H, W, slab) => _padBuild(H, W, slab) },
+};
+function _padType() { return PAD_TYPES[CONFIG.LAUNCH_PAD_TYPE] || PAD_TYPES.standard; }
+function _padTr() { return _padType().trench || null; }
+
 // Builds the clip path in the BODY frame (origin = hull base; ground tangent gt,
 // ground normal gu, both in canvas px). sE = body offset east of the pad centre,
 // altBase = hull-base height over the pad surface (both metres).
-function _padTrenchClipPath(c, gtx, gty, gux, guy, sE, altBase, mpp) {
+function _padTrenchClipPath(c, gtx, gty, gux, guy, sE, altBase, mpp, t) {
   const T = (X, Y) => { const a = (X - sE) / mpp, b = (Y - altBase) / mpp; return [a * gtx + b * gux, a * gty + b * guy]; };
   const poly = (pts, sign) => {
     const P = pts.map(q => T(q[0], q[1]));
@@ -1440,7 +1612,7 @@ function _padTrenchClipPath(c, gtx, gty, gux, guy, sE, altBase, mpp) {
     for (let i = 1; i < P.length; i++) c.lineTo(P[i][0], P[i][1]);
     c.closePath();
   };
-  const t = PAD_TRENCH, G = 4e4 * mpp, h = t.HOLE_HALF_W, w = t.CH_HALF_W;
+  const G = 4e4 * mpp, h = t.HOLE_HALF_W, w = t.CH_HALF_W;
   c.beginPath();
   poly([[-G, 0], [G, 0], [G, G], [-G, G]], 1);                                       // open air above the pad top
   poly([[-h, 0], [h, 0], [h, -t.TABLE_H], [w, -t.TABLE_H], [w, -t.CH_DEPTH],        // flame hole + chamber
@@ -1457,15 +1629,19 @@ function _gfxWrap(a) {
 // Where is the surface beneath this body, and is it the launch pad?
 function _groundSurfaceInfo(body) {
   const R = CONFIG.EARTH_RADIUS;
-  const altBase = Math.hypot(body.rx, body.ry) - R;
+  let altBase = Math.hypot(body.rx, body.ry) - R;
   const phiB = Math.atan2(body.rx, body.ry);
-  let sE = 0, onPad = false;
+  let sE = 0, onPad = false, lz = null;
   if (typeof launchSiteWorldPosition === 'function') {
     const site = launchSiteWorldPosition(state.simTime);
     sE = R * _gfxWrap(phiB - site.phi);
     onPad = Math.abs(sE) < GROUND_FX.PAD_HALF_W_M;
+    if (!onPad && typeof landingPadAt === 'function') {                 // landing platform (flat concrete, no trench)
+      const h = landingPadAt(body.rx, body.ry, state.simTime);
+      if (h && h.inside) { lz = h; altBase -= h.pad.heightM; }
+    }
   }
-  return { altBase, sE, onPad };
+  return { altBase, sE, onPad, lz };
 }
 
 function _isSingleNozzleBody(body) {
@@ -1553,8 +1729,9 @@ function _gfxTake(body, key, amount) {
   return n;
 }
 
-function _gfxPickKind(onPad, r) {
+function _gfxPickKind(onPad, r, lz) {
   if (onPad) return r < 0.58 ? 'steam' : (r < 0.86 ? 'smoke' : 'soot');
+  if (lz) return r < 0.2 ? 'steam' : (r < 0.55 ? 'dust' : (r < 0.85 ? 'smoke' : 'soot'));   // hot plume on bare concrete
   return r < 0.78 ? 'dust' : (r < 0.93 ? 'smoke' : 'steam');
 }
 
@@ -1603,8 +1780,9 @@ function _gfxEmitBody(body, dt) {
   const th = body.theta - Math.atan2(-body.rx, body.ry);
   const g = (gc ? gs / gc : 0) * Math.PI / 180;
   const psi = th - g, cosPsi = Math.cos(psi);
-  const tr = gi.onPad && Math.abs(gi.sE) < PAD_TRENCH.ACTIVE_HALF_W;          // jet lands on the deflector
-  const surfAlt = tr ? -Math.max(-PAD_TRENCH.APEX_Y, bellM + 0.4) : 0;
+  const _T = _padTr();
+  const tr = !!_T && gi.onPad && Math.abs(gi.sE) < _T.ACTIVE_HALF_W;          // jet lands on the deflector
+  const surfAlt = tr ? -Math.max(-_T.APEX_Y, bellM + 0.4) : 0;
   const hN = gi.altBase - bellM * cosPsi - surfAlt;           // nozzle-exit height over surface (m)
   const Lhit = cosPsi > 0.05 ? Math.max(0, hN) / cosPsi : Infinity;
   const contact = Math.max(0, Math.min(1, 1 - Lhit / flameLenM));
@@ -1623,7 +1801,7 @@ function _gfxEmitBody(body, dt) {
       const r0 = Wm0 * (0.8 + rnd()) * (0.7 + 0.5 * F);
       const sp = (28 + rnd() * 52) * (0.45 + 0.75 * kd) * (0.6 + 0.4 * thr);
       _gfxSpawn({
-        k: _gfxPickKind(gi.onPad, rnd()),
+        k: _gfxPickKind(gi.onPad, rnd(), gi.lz),
         s: tr ? sI + side * (Wm * 0.5 + 2.2 + rnd() * 2.5) : sI + side * rnd() * Wm * 0.5, y: r0 * 0.45,
         vs: side * sp * (tr ? 0.62 : 1) + Math.sin(psi) * 8, vy: 1 + rnd() * 5 + (tr ? 5 + rnd() * 9 : 0),
         r: r0, gr: 5 + rnd() * 5, drag: 0.28 + rnd() * 0.14, vdrag: 0.6, buoy: 0.6 + rnd() * 0.8,
@@ -1637,7 +1815,7 @@ function _gfxEmitBody(body, dt) {
       const r0 = Wm0 * (1.1 + rnd());
       const q = rnd();
       _gfxSpawn({
-        k: gi.onPad ? (q < 0.45 ? 'steam' : (q < 0.75 ? 'smoke' : 'soot')) : (q < 0.6 ? 'dust' : 'smoke'),
+        k: gi.onPad ? (q < 0.45 ? 'steam' : (q < 0.75 ? 'smoke' : 'soot')) : gi.lz ? (q < 0.25 ? 'steam' : (q < 0.65 ? 'smoke' : 'dust')) : (q < 0.6 ? 'dust' : 'smoke'),
         s: sI + (rnd() - 0.5) * Wm * 0.8, y: r0 * 0.6,
         vs: (rnd() - 0.5) * 14, vy: (9 + rnd() * 24) * (0.5 + 0.7 * kd),
         r: r0, gr: 2.5 + rnd() * 3, drag: 0.4, vdrag: 0.2, buoy: 1.1,
@@ -2262,14 +2440,15 @@ if (body.members && body.members.length && typeof getEngineBellExitY_m === 'func
     const _gi = _groundSurfaceInfo(body);
     if (_gi.altBase < 400) {
       const _bellM = bellExitY_px * mpp;
-      _trMode = _gi.onPad && Math.abs(_gi.sE) < PAD_TRENCH.ACTIVE_HALF_W;
-      const _surfAlt = _trMode ? -Math.max(-PAD_TRENCH.APEX_Y, _bellM + 0.4) : 0;
+      const _T = _padTr();
+      _trMode = !!_T && _gi.onPad && Math.abs(_gi.sE) < _T.ACTIVE_HALF_W;
+      const _surfAlt = _trMode ? -Math.max(-_T.APEX_Y, _bellM + 0.4) : 0;
       _gHBasePx = (_gi.altBase - _surfAlt) / mpp;
       const gux = Math.sin(visualTheta), guy = -Math.cos(visualTheta);   // ground normal (up)
       const gtx = Math.cos(visualTheta), gty = Math.sin(visualTheta);    // ground tangent
-      if (_gi.onPad) {
+      if (_gi.onPad && _T) {
         // pad: open air + flame hole/trench - deflector wedge (real geometry)
-        _padTrenchClipPath(ctx, gtx, gty, gux, guy, _gi.sE, _gi.altBase, mpp);
+        _padTrenchClipPath(ctx, gtx, gty, gux, guy, _gi.sE, _gi.altBase, mpp, _T);
       } else {
         const gcx = -_gHBasePx * gux, gcy = -_gHBasePx * guy;            // point on the ground line
         const GB = 40000;
@@ -2563,7 +2742,7 @@ if (isSingleNozzle) {
       const baseW = W * plumeScale * widthMul;
       const widthHere = baseW * (1.0 + 1.7 * trailMul * Math.min(1, Lhit / flameLen));
       const Ls = baseW * (2.4 + 7.0 * contact) * (0.7 + 0.5 * totalThrottle);
-      const LsE = _trMode ? Math.min(Ls, PAD_TRENCH.SLOPE_LEN / mpp) : Ls;   // sheet runs down the wedge slope
+      const LsE = _trMode ? Math.min(Ls, _padTr().SLOPE_LEN / mpp) : Ls;   // sheet runs down the wedge slope
       const th = LsE * (0.10 + 0.10 * contact);
 
       const sheet = (side, len, thick, seed) => {
@@ -2612,7 +2791,7 @@ if (isSingleNozzle) {
       for (const side of [-1, 1]) {
         const seed = side > 0 ? 1.3 : 4.1;
         ctx.save();
-        if (_trMode) ctx.rotate(side * PAD_TRENCH.SLOPE_RAD);          // follow the V deflector downwards
+        if (_trMode) ctx.rotate(side * _padTr().SLOPE_RAD);          // follow the V deflector downwards
         ctx.globalCompositeOperation = 'source-over';
         fillSheet(side, LsE * 1.25, th * 1.6, seed + 9, PAL.g1_hi, PAL.g1_mid, PAL.g1_lo, 14);   // hazy outer
         ctx.globalCompositeOperation = 'lighter';
@@ -2900,6 +3079,7 @@ function renderFrame() {
   drawGrid();
   drawOceanArea();
   drawRemoteArea();
+  drawPadMarkers();
   drawPredictedTrajectory();
   drawRocket();
   return;
@@ -2912,6 +3092,7 @@ drawOceanArea();
 drawRemoteArea();
 drawPredictedTrajectory();
 drawLaunchPad();
+drawLandingPads();
 drawGroundFx('back');
     drawRocket();
     drawGroundFx('front');

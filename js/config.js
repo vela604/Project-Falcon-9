@@ -158,6 +158,32 @@ const CONFIG = {
   // shifts its local origin so the pad still reads as y_local = 0.
   LAUNCH_SITE_ALTITUDE: 0,
   
+  // ---------------- Launch-pad layout type ----------------
+  // Which launch complex is drawn / which flame-trench geometry the plume
+  // interacts with. 'standard' = single-core pad (Falcon-9 class, also the
+  // legacy vehicles). Future types ('heavy', 'starship', ...) are registered
+  // in render.js PAD_TYPES and selected here.
+  LAUNCH_PAD_TYPE: 'standard',
+
+  // ---------------- Landing pads (booster land-back targets) ----------------
+  // Flat platforms sunk flush into the ground, EAST (downrange, screen-right)
+  // of the launch pad. They are Earth-fixed: positions follow the launch site
+  // and Earth's rotation automatically (see landingPadWorldPosition() in
+  // environment.js). Only TARGETS are defined here; touchdown / success
+  // criteria / guidance live elsewhere.
+  //   arcOffsetM : signed surface distance from the launch pad (m); + = east
+  //   radiusM    : half-width of the platform (m)  (real LZ-1 is ~86 m wide)
+  //   heightM    : platform surface above local ground (m), default 0
+  //   lights     : ground vapour lights on both sides, default true
+  //   enabled    : false hides a pad without deleting it
+  // Keep pads >= ~80 m from the launch pad (its tanks reach ~+75 m east) and
+  // at least radius+radius+10 m apart; environment.js warns otherwise.
+  LANDING_PADS: [
+    { id: 'LZ-1', name: 'Landing Zone 1', arcOffsetM:  400, radiusM: 42.5, heightM: 0 },
+    { id: 'LZ-2', name: 'Landing Zone 2', arcOffsetM:  700, radiusM: 42.5, heightM: 0 },
+    { id: 'LZ-3', name: 'Landing Zone 3', arcOffsetM: 1000, radiusM: 42.5, heightM: 0 },
+  ],
+  
   // ---------------- Orbit regimes (altitude ASL, km) ----------------
 // Standard Earth-orbit classification boundaries. Bands are half-open:
 // [MIN, MAX) — low edge inclusive, high edge exclusive. GEO is a

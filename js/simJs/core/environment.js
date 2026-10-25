@@ -253,6 +253,93 @@ function launchSiteWorldPosition(t) {
 // Velocity of a point rigidly fixed to the rotating Earth surface, at the
 // given inertial position (rx, ry). With our (sin, cos) angle convention,
 // the tangential velocity is (ω·ry, -ω·rx).
+// ---------------------------------------------------------------------------
+// Landing pads (targets only). Earth-fixed platforms east of the launch pad,
+// defined in CONFIG.LANDING_PADS by signed surface arc distance (arcOffsetM).
+// Convention is the same as launchSiteWorldPosition(): phi grows EASTWARD, so a
+// pad at +400 m sits phi0 + 400/R further east and rotates with the Earth.
+//
+//   landingPads()                       -> normalised pad list (defaults filled)
+//   landingPadWorldPosition(pad, t)     -> {x, y, phi, r, upX, upY, eastX, eastY,
+//                                           surfaceAltM, radiusM}  (inertial frame)
+//   landingPadAt(rx, ry, t)             -> nearest pad relative to a point:
+//                                           {pad, sRelM (+east of centre), heightM
+//                                            (above pad surface), inside, edgeM}
+//   landingPadSurfaceVelocity(pad, t)   -> pad's inertial velocity (Earth rotation)
+// ---------------------------------------------------------------------------
+const LANDING_PAD_DEFAULT_RADIUS_M = 42.5;
+const LAUNCH_COMPLEX_EAST_CLEARANCE_M = 80;   // launch pad's east-side equipment reaches ~75 m
+const _lzState = { src: null, len: -1, list: [] };
+
+function landingPads() {
+  const src = CONFIG.LANDING_PADS;
+  const len = Array.isArray(src) ? src.length : 0;
+  if (_lzState.src === src && _lzState.len === len) return _lzState.list;
+  const out = [];
+  for (let i = 0; i < len; i++) {
+    const p = src[i];
+    if (!p || p.enabled === false || !Number.isFinite(p.arcOffsetM)) continue;
+    out.push({
+      id: p.id || ('LZ-' + (out.length + 1)),
+      name: p.name || p.id || ('Landing Pad ' + (out.length + 1)),
+      arcOffsetM: p.arcOffsetM,
+      radiusM: p.radiusM > 0 ? p.radiusM : LANDING_PAD_DEFAULT_RADIUS_M,
+      heightM: Number.isFinite(p.heightM) ? p.heightM : 0,
+      lights: p.lights !== false,
+    });
+  }
+  // sanity checks (once per config change): overlaps with each other / launch complex
+  for (let i = 0; i < out.length; i++) {
+    const a = out[i];
+    if (a.arcOffsetM > -LAUNCH_COMPLEX_EAST_CLEARANCE_M && a.arcOffsetM - a.radiusM < LAUNCH_COMPLEX_EAST_CLEARANCE_M &&
+        a.arcOffsetM + a.radiusM > -LAUNCH_COMPLEX_EAST_CLEARANCE_M && typeof console !== 'undefined')
+      console.warn('[landing pads] ' + a.id + ' overlaps the launch complex');
+    for (let j = i + 1; j < out.length; j++) {
+      const b = out[j];
+      if (Math.abs(a.arcOffsetM - b.arcOffsetM) < a.radiusM + b.radiusM + 10 && typeof console !== 'undefined')
+        console.warn('[landing pads] ' + a.id + ' and ' + b.id + ' overlap');
+    }
+  }
+  _lzState.src = src; _lzState.len = len; _lzState.list = out;
+  return out;
+}
+
+function landingPadWorldPosition(pad, t) {
+  const Rs = CONFIG.EARTH_RADIUS + (CONFIG.LAUNCH_SITE_ALTITUDE || 0);       // arc is measured on the launch-site surface
+  const phi = (CONFIG.LAUNCH_SITE_ANGLE_0 || 0) + CONFIG.EARTH_OMEGA * (t || 0) + pad.arcOffsetM / Rs;
+  const r = Rs + pad.heightM, sp = Math.sin(phi), cp = Math.cos(phi);
+  return {
+    x: r * sp, y: r * cp, phi, r,
+    upX: sp, upY: cp, eastX: cp, eastY: -sp,                                   // local up / east unit vectors
+    surfaceAltM: (CONFIG.LAUNCH_SITE_ALTITUDE || 0) + pad.heightM,             // above sea level
+    radiusM: pad.radiusM,
+  };
+}
+
+function landingPadSurfaceVelocity(pad, t) {
+  const w = landingPadWorldPosition(pad, t);
+  return earthSurfaceVelocity(w.x, w.y);
+}
+
+function landingPadAt(rx, ry, t) {
+  const pads = landingPads();
+  if (!pads.length) return null;
+  const Rs = CONFIG.EARTH_RADIUS + (CONFIG.LAUNCH_SITE_ALTITUDE || 0);
+  const r = Math.hypot(rx, ry), phiB = Math.atan2(rx, ry);
+  const phi0 = (CONFIG.LAUNCH_SITE_ANGLE_0 || 0) + CONFIG.EARTH_OMEGA * (t || 0);
+  let best = null;
+  for (let i = 0; i < pads.length; i++) {
+    const pad = pads[i];
+    let d = phiB - (phi0 + pad.arcOffsetM / Rs);
+    d = Math.atan2(Math.sin(d), Math.cos(d));                                  // wrap to (-pi, pi]
+    const sRel = d * Rs;
+    if (!best || Math.abs(sRel) < Math.abs(best.sRelM)) {
+      best = { pad, sRelM: sRel, heightM: r - (Rs + pad.heightM), inside: Math.abs(sRel) <= pad.radiusM, edgeM: Math.abs(sRel) - pad.radiusM };
+    }
+  }
+  return best;
+}
+
 function earthSurfaceVelocity(rx, ry) {
   const w = CONFIG.EARTH_OMEGA;
   return { vx: w * ry, vy: -w * rx };
