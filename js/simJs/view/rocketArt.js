@@ -1769,105 +1769,262 @@ const engineBell = (() => {
       legsState.footY[side] = tipApexY;
     }
     
-    // ---- look: stowed = light A-frame panel hugging the hull (hull-coloured cap),
-    // deployed = dark carbon legs with a chrome telescoping piston and a bright foot. ----
-    const dp = Math.min(1, Math.max(0, p / 0.35)); const dps = dp * dp * (3 - 2 * dp);
+    // ---- look: Falcon 9 legs modelled on reference photos --------------------------------
+    // The leg is ONE rigid blade that rotates about its hinge line: base edge (j1x..j2x at jY)
+    // never moves, the tip edge sits on the physics foot point (tipApexX/Y), edges are straight
+    // (no morphing/bending anywhere). Parts:
+    //   * bay + hood (permanent on the hull): pointed hood above the stowed foot with the arm's
+    //     ball-joint pylon; once the blade has left, the bay shows as a dark recess with a rim.
+    //   * blade: raised edge ribs (the A-frame struts), skin between, composite panels,
+    //     white outer face when stowed -> dark carbon inner face once it swings out.
+    //   * arm: separate thick two-section telescoping tube from the hood pylon to the foot.
+    //   * foot: self-levelling wedge, sole exactly on tipApexX/Y.
+    // Back legs (isBack) are the two behind the hull: darker, drawn before the hull.
+    const sstep = (x) => { x = x < 0 ? 0 : x > 1 ? 1 : x; return x * x * (3 - 2 * x); };
+    const mOpen = sstep(p / 0.45);                 // cylinder-wrapped (stowed) -> flat (deployed) lighting
+    const mFlip = sstep((p - 0.40) / 0.45);        // visible face: white outer skin -> dark inner face
+    const mBay  = sstep((p - 0.04) / 0.30);        // how much of the empty bay shows
     const cs = Math.cos(currentSweep), sn = Math.sin(currentSweep);
-    // outward in-plane normal of the leg panel (rotates with the leg), plus a viewer tilt
-    const kOut = _hwK(side * cs * 0.55, -side * sn * 0.55, 0.83);
-    const kIn  = _hwK(-side * cs * 0.55, side * sn * 0.55, 0.83);
-    const panelHex = _mixHex('#c3c9d0', '#262a31', dps);
-
-    if (p > 0.02) {
-      const pmX = pivotX;
-      const pmY = pistonMountY + depthY;
-      ctx.lineCap = 'round';
-      // outer tube
-      ctx.strokeStyle = _tint('#0c0e12', Math.max(0.5, kOut));
-      ctx.lineWidth = Math.max(1.6, W * 0.042);
-      ctx.beginPath(); ctx.moveTo(pmX, pmY); ctx.lineTo(tipApexX, tipApexY); ctx.stroke();
-      ctx.strokeStyle = _tint('#3a4049', kOut);
-      ctx.lineWidth = Math.max(0.9, W * 0.020);
-      ctx.beginPath(); ctx.moveTo(pmX, pmY); ctx.lineTo(tipApexX, tipApexY); ctx.stroke();
-      // chrome inner rod (extends from 32% of the tube)
-      const rodStartFrac = 0.32;
-      const rx1 = pmX + (tipApexX - pmX) * rodStartFrac;
-      const ry1 = pmY + (tipApexY - pmY) * rodStartFrac;
-      ctx.strokeStyle = _tint('#b9c1ca', Math.max(0.35, kOut));
-      ctx.lineWidth = Math.max(1, W * 0.024);
-      ctx.beginPath(); ctx.moveTo(rx1, ry1); ctx.lineTo(tipApexX, tipApexY); ctx.stroke();
-      ctx.strokeStyle = _tint('#ffffff', Math.max(0.5, kOut), 0.85);
-      ctx.lineWidth = Math.max(0.5, W * 0.007);
-      ctx.beginPath(); ctx.moveTo(rx1 - side * W * 0.004, ry1); ctx.lineTo(tipApexX - side * W * 0.004, tipApexY); ctx.stroke();
-      // piston collar + upper ball joint
-      ctx.fillStyle = _tint('#15181d', kOut);
-      ctx.beginPath(); ctx.arc(rx1, ry1, W * 0.026, 0, Math.PI * 2); ctx.fill();
-      ctx.beginPath(); ctx.arc(pmX, pmY, W * 0.024, 0, Math.PI * 2); ctx.fill();
-    }
-
-    // panel skin — shaded across its width (outer edge catches the light)
-    const legGrad = ctx.createLinearGradient(j1x, jY, j2x + (tipApexX - j2x) * 0.35, jY + (tipApexY - jY) * 0.35);
-    legGrad.addColorStop(0, _tint(panelHex, Math.min(1.25, kOut * 1.08)));
-    legGrad.addColorStop(0.55, _tint(panelHex, kOut * 0.92));
-    legGrad.addColorStop(1, _tint(panelHex, Math.max(0.12, kIn * 0.62)));
-    ctx.fillStyle = legGrad;
-    ctx.beginPath();
-    ctx.moveTo(j1x, jY);
-    ctx.lineTo(tipApexX, tipApexY);
-    ctx.lineTo(j2x, jY);
-    ctx.lineTo(cutoutApexX, cutoutApexY);
-    ctx.closePath();
-    ctx.fill();
-
-    // composite-skin joints: rungs between the two struts (they become the cross-braces
-    // of the open A-frame once the leg swings out)
-    ctx.strokeStyle = _tint(panelHex, kOut * 0.40, 0.6);
-    ctx.lineWidth = Math.max(0.6, W * 0.008);
-    ctx.beginPath();
-    for (let f = gapF + 0.07; f < 0.93; f += 0.13) {
-      ctx.moveTo(j1x + (tipApexX - j1x) * f, jY + (tipApexY - jY) * f);
-      ctx.lineTo(j2x + (tipApexX - j2x) * f, jY + (tipApexY - jY) * f);
-    }
-    ctx.stroke();
-
-    // opening of the A-frame: dark recess (hull behind, ambient-occluded by the legs)
-    ctx.fillStyle = 'rgba(6,8,11,' + (0.36 - 0.12 * dps).toFixed(3) + ')';
-    ctx.beginPath(); ctx.moveTo(j1x, jY); ctx.lineTo(cutoutApexX, cutoutApexY); ctx.lineTo(j2x, jY); ctx.closePath(); ctx.fill();
-
-    // the two struts + foot cap as proud tubes: dark body, lit crown, dark seam
-    const strutW = Math.max(1.6, W * 0.046);
-    const strut = () => {
-      ctx.beginPath();
-      ctx.moveTo(j1x, jY); ctx.lineTo(tipApexX, tipApexY);
-      ctx.lineTo(j2x, jY);
+    const kBack = isBack ? 0.62 : 1;
+    const RLt = globalThis._ROCKET_LIGHT;
+    const hiSide = (RLt && RLt.lx > 0.05) ? 1 : -1;
+    const kCyl = (xr) => {
+      let u = xr / (W * 0.5); u = u > 0.98 ? 0.98 : u < -0.98 ? -0.98 : u;
+      return _hwK(u, 0, Math.sqrt(1 - u * u)) * kBack;
     };
-    ctx.lineJoin = 'round'; ctx.lineCap = 'round';
-    strut(); ctx.strokeStyle = _tint('#06080b', 1, 0.85); ctx.lineWidth = strutW + 1.4; ctx.stroke();
-    strut(); ctx.strokeStyle = _tint(_mixHex('#9aa1aa', '#1b1e24', dps), Math.max(0.28, kOut * 0.9)); ctx.lineWidth = strutW; ctx.stroke();
-    strut(); ctx.strokeStyle = _tint(_mixHex('#eef1f4', '#58606b', dps), Math.min(1.3, kOut * 1.12), 0.9); ctx.lineWidth = strutW * 0.38; ctx.stroke();
-    // base hinge blocks where the struts meet the hull
-    for (const hx of [j1x, j2x]) {
-      ctx.fillStyle = _tint('#15181d', Math.max(0.35, kOut)); ctx.beginPath(); ctx.arc(hx, jY, strutW * 0.62, 0, Math.PI * 2); ctx.fill();
+    const kAt = (xr) => {
+      let u = xr / (W * 0.5); u = u > 0.98 ? 0.98 : u < -0.98 ? -0.98 : u;
+      const fl = 1 - 2 * mFlip;
+      return _hwK(u * (1 - mOpen) + side * cs * 0.6 * fl * mOpen,
+                  -side * sn * 0.6 * fl * mOpen,
+                  Math.sqrt(1 - u * u) * (1 - mOpen) + 0.8 * mOpen) * kBack;
+    };
+    const kFace = Math.max(0.3, kAt(side * W * 0.3));
+
+    // foot point for any sweep (same formula as tipApex above) — gives the stowed foot F0
+    const footAt = (sw) => {
+      const tX = pivotX + legLength * Math.sin(sw), tY = pivotY - legLength * Math.cos(sw);
+      const dd1 = Math.hypot(tX - j1x, tY - jY) || 1, dd2 = Math.hypot(tX - j2x, tY - jY) || 1;
+      const rr = Math.min(legLength * LEG_TIP_CURVENESS, dd1 * 0.85, dd2 * 0.85);
+      return [0.25 * (tX + (j1x - tX) / dd1 * rr) + 0.5 * tX + 0.25 * (tX + (j2x - tX) / dd2 * rr),
+              0.25 * (tY + (jY - tY) / dd1 * rr) + 0.5 * tY + 0.25 * (tY + (jY - tY) / dd2 * rr)];
+    };
+    const F0 = footAt(0);
+    const F = [tipApexX, tipApexY];
+    const hwT = Math.max(1.0, W * 0.085);                       // blade half-width at the foot end
+    const fo = [F[0] + side * hwT, F[1]], fi = [F[0] - side * hwT, F[1]];
+    const fo0 = [F0[0] + side * hwT, F0[1]], fi0 = [F0[0] - side * hwT, F0[1]];
+    const alx = F[0] - pivotX, aly = F[1] - jY, all = Math.hypot(alx, aly) || 1;
+    const aux = alx / all, auy = aly / all;                      // unit axis hinge -> foot
+    const rib = Math.max(1.0, W * 0.052);
+    const skinHex = _mixHex('#d3d8dd', '#14171b', mFlip);
+    const ribHex = _mixHex('#e8ecef', '#d3d9df', mFlip);
+    const hoodH = W * 0.52;
+    const M = [F0[0] + side * hwT * 0.05, F0[1] - hoodH * 0.60];  // arm pivot on the hood
+
+    // tapered tube with a lit crown on the sun side
+    const tube = (x0, y0, x1, y1, w0, w1, hex, k, hiHex, hiK, alpha) => {
+      const dx = x1 - x0, dy = y1 - y0, dl = Math.hypot(dx, dy) || 1;
+      const nx = -dy / dl, ny = dx / dl;
+      ctx.globalAlpha = alpha === undefined ? 1 : alpha;
+      ctx.fillStyle = _tint(hex, Math.max(0.15, k * 0.8));
+      ctx.beginPath();
+      ctx.moveTo(x0 + nx * w0 / 2, y0 + ny * w0 / 2); ctx.lineTo(x1 + nx * w1 / 2, y1 + ny * w1 / 2);
+      ctx.lineTo(x1 - nx * w1 / 2, y1 - ny * w1 / 2); ctx.lineTo(x0 - nx * w0 / 2, y0 - ny * w0 / 2);
+      ctx.closePath(); ctx.fill();
+      if (hiHex) {
+        const sg = (nx * hiSide >= 0 ? 1 : -1) * 0.22;
+        ctx.strokeStyle = _tint(hiHex, Math.min(1.25, hiK), 0.9);
+        ctx.lineWidth = Math.max(0.5, Math.min(w0, w1) * 0.24);
+        ctx.beginPath();
+        ctx.moveTo(x0 + nx * w0 * sg, y0 + ny * w0 * sg); ctx.lineTo(x1 + nx * w1 * sg, y1 + ny * w1 * sg);
+        ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+    };
+
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+
+    // ---- 1. bay (hull recess where the blade was) + permanent hood ----
+    if (!isBack) {
+      if (mBay > 0.01) {
+        ctx.fillStyle = 'rgba(5,7,10,' + (0.60 * mBay).toFixed(3) + ')';
+        ctx.beginPath(); ctx.moveTo(j1x, jY); ctx.lineTo(fo0[0], fo0[1]); ctx.lineTo(fi0[0], fi0[1]); ctx.lineTo(j2x, jY); ctx.closePath(); ctx.fill();
+        ctx.strokeStyle = _tint('#eef1f4', Math.max(0.3, kCyl(side * W * 0.3)), 0.55 * mBay);
+        ctx.lineWidth = Math.max(0.5, W * 0.008);
+        ctx.beginPath(); ctx.moveTo(j1x, jY); ctx.lineTo(fo0[0], fo0[1]); ctx.lineTo(fi0[0], fi0[1]); ctx.lineTo(j2x, jY); ctx.stroke();
+      }
+      // hood: pointed fairing above the stowed foot, same white as the hull
+      const hg = ctx.createLinearGradient(F0[0] - hwT * 1.1, 0, F0[0] + hwT * 1.1, 0);
+      for (let i = 0; i <= 3; i++) {
+        const t = i / 3, xr = F0[0] - hwT * 1.1 + hwT * 2.2 * t;
+        hg.addColorStop(t, _tint('#d9dde1', Math.min(1.25, Math.max(0.14, kCyl(xr)))));
+      }
+      ctx.fillStyle = hg;
+      ctx.beginPath();
+      ctx.moveTo(F0[0] + side * hwT * 1.08, F0[1] + 1);
+      ctx.quadraticCurveTo(F0[0] + side * hwT * 1.05, F0[1] - hoodH * 0.55, F0[0] + side * hwT * 0.15, F0[1] - hoodH);
+      ctx.quadraticCurveTo(F0[0] - side * hwT * 0.20, F0[1] - hoodH * 1.02, F0[0] - side * hwT * 0.35, F0[1] - hoodH * 0.90);
+      ctx.quadraticCurveTo(F0[0] - side * hwT * 1.05, F0[1] - hoodH * 0.50, F0[0] - side * hwT * 1.08, F0[1] + 1);
+      ctx.fill();
+      ctx.strokeStyle = _tint('#05070a', 1, 0.45); ctx.lineWidth = Math.max(0.4, W * 0.006); ctx.stroke();
+      // small round access panel on the hood
+      ctx.strokeStyle = _tint('#05070a', 1, 0.28); ctx.lineWidth = Math.max(0.4, W * 0.005);
+      ctx.beginPath(); ctx.arc(F0[0] - side * hwT * 0.15, F0[1] - hoodH * 0.28, Math.max(0.8, W * 0.022), 0, Math.PI * 2); ctx.stroke();
     }
 
-    // upper ball-joint bolt visible on the stowed cap
-    if (dps < 0.7) {
-      const bx = pivotX + (tipX - pivotX) * 0.14 + side * W * 0.02, by = pivotY + (tipY - pivotY) * 0.14;
-      ctx.fillStyle = _tint('#14171b', Math.max(0.4, kOut), 0.95 * (1 - dps));
-      ctx.beginPath(); ctx.arc(bx, by, Math.max(1, W * 0.024), 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = _tint('#ffffff', kOut, 0.35 * (1 - dps));
-      ctx.beginPath(); ctx.arc(bx - W * 0.006, by - W * 0.006, Math.max(0.4, W * 0.007), 0, Math.PI * 2); ctx.fill();
+    if (!isBack) {
+      const lt = Math.max(1.2, W * 0.05);
+      ctx.fillStyle = _tint('#eef1f4', Math.max(0.35, kCyl(side * W * 0.3)));
+      ctx.strokeStyle = _tint('#05070a', 1, 0.45); ctx.lineWidth = 0.4;
+      for (const f of [0.30, 0.55, 0.80]) {
+        for (const e of [0, 1]) {
+          const bx0 = e ? j1x + (fo0[0] - j1x) * f : j2x + (fi0[0] - j2x) * f;
+          const by0 = jY + (F0[1] - jY) * f;
+          const dir = e ? side : -side;                           // points away from the blade
+          ctx.beginPath(); ctx.moveTo(bx0, by0 - lt * 0.5); ctx.lineTo(bx0 + dir * lt, by0); ctx.lineTo(bx0, by0 + lt * 0.5); ctx.closePath();
+          ctx.fill(); ctx.stroke();
+        }
+      }
     }
-    // foot pad (deployed): bright landing plate across the tip
-    if (dps > 0.25) {
-      ctx.save();
-      ctx.translate(tipApexX, tipApexY); ctx.rotate(currentSweep);
-      const fw = Math.max(2, W * 0.085), fh = Math.max(1.2, W * 0.026);
+
+    // ---- 2. telescoping arm (behind the blade): thick outer tube, slimmer inner tube, collar ----
+    if (p > 0.03) {
+      const aAl = sstep((p - 0.03) / 0.15);
+      const ex = F[0], ey = F[1] - Math.max(1.2, W * 0.05);
+      const sx = M[0] + (ex - M[0]) * 0.47, sy = M[1] + (ey - M[1]) * 0.47;
+      const w1 = Math.max(1.6, W * 0.095), w2 = Math.max(1.3, W * 0.070);
+      const ak = Math.max(0.3, kAt(side * W * 0.3));
+      tube(M[0], M[1], sx, sy, w1, w1 * 0.96, '#101216', ak, '#5a636e', ak, aAl);
+      tube(sx, sy, ex, ey, w2, w2 * 0.96, '#13161a', ak, '#68727d', ak, aAl);
+      ctx.globalAlpha = aAl;
+      ctx.fillStyle = _tint('#1b1f25', ak); ctx.strokeStyle = _tint('#8c96a1', ak, 0.7); ctx.lineWidth = Math.max(0.4, W * 0.006);
+      ctx.beginPath(); ctx.arc(sx, sy, w1 * 0.62, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+
+    // ---- 3. blade ----
+    const bladePath = () => {
+      const bulge = 0;                                           // straight tip edge (hood continues the outline)
       ctx.beginPath();
-      if (ctx.roundRect) ctx.roundRect(-fw / 2, -fh / 2, fw, fh, fh * 0.5); else ctx.rect(-fw / 2, -fh / 2, fw, fh);
-      ctx.fillStyle = _tint('#e4e8ed', Math.max(0.3, kOut), dps);
-      ctx.fill();
-      ctx.strokeStyle = _tint('#000000', 1, 0.7 * dps); ctx.lineWidth = 0.7; ctx.stroke();
+      ctx.moveTo(j1x, jY);
+      ctx.lineTo(fo[0], fo[1]);
+      ctx.quadraticCurveTo(F[0] + aux * bulge * 2, F[1] + auy * bulge * 2, fi[0], fi[1]);
+      ctx.lineTo(j2x, jY);
+      ctx.closePath();
+    };
+    const xa = Math.min(j1x, j2x, fo[0], fi[0]), xb = Math.max(j1x, j2x, fo[0], fi[0]);
+    const g = ctx.createLinearGradient(xa, 0, xb, 0);
+    for (let i = 0; i <= 5; i++) {
+      const t = i / 5;
+      g.addColorStop(t, _tint(skinHex, Math.min(1.25, Math.max(0.13, kAt(xa + (xb - xa) * t)))));
+    }
+    bladePath(); ctx.fillStyle = g; ctx.fill();
+
+    ctx.save(); bladePath(); ctx.clip();
+    // recessed skin channel between the ribs (a touch darker, gives the ribs relief)
+    ctx.fillStyle = 'rgba(0,0,0,' + (0.10 * kBack).toFixed(3) + ')';
+    ctx.beginPath();
+    ctx.moveTo(j1x + (j2x - j1x) * 0.14, jY); ctx.lineTo(fo[0] + (fi[0] - fo[0]) * 0.22, fo[1]);
+    ctx.lineTo(fo[0] + (fi[0] - fo[0]) * 0.78, fo[1]); ctx.lineTo(j1x + (j2x - j1x) * 0.86, jY); ctx.closePath(); ctx.fill();
+    // composite panel lines + access panels (white skin only)
+    if (mFlip < 0.9) {
+      const pa = 1 - mFlip;
+      ctx.strokeStyle = _tint(skinHex, kFace * 0.5, 0.55 * pa); ctx.lineWidth = Math.max(0.4, W * 0.0055);
+      ctx.beginPath();
+      for (const f of [0.28, 0.52, 0.76]) {
+        ctx.moveTo(j1x + (fo[0] - j1x) * f, jY + (fo[1] - jY) * f);
+        ctx.lineTo(j2x + (fi[0] - j2x) * f, jY + (fi[1] - jY) * f);
+      }
+      ctx.stroke();
+      const cxm = (j1x + j2x + fo[0] + fi[0]) / 4, cym = (jY * 2 + fo[1] + fi[1]) / 4;
+      ctx.strokeStyle = _tint(skinHex, kFace * 0.45, 0.6 * pa);
+      const pw = Math.max(1.2, W * 0.07), ph = Math.max(1, W * 0.045);
+      for (const f of [0.40, 0.66]) {
+        const px = pivotX + (F[0] - pivotX) * f - pw / 2, py = jY + (F[1] - jY) * f - ph / 2;
+        if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(px, py, pw, ph, ph * 0.3); ctx.stroke(); }
+        else ctx.strokeRect(px, py, pw, ph);
+      }
+    }
+    // open A-frame window (deployed)
+    if (mFlip > 0.05) {
+      const bx = (j1x + j2x) / 2, hx = (fo[0] + fi[0]) / 2;
+      const q = (ax0, ay0, bx0, by0, t) => [ax0 + (bx0 - ax0) * t, ay0 + (by0 - ay0) * t];
+      const w1p = q(j1x, jY, fo[0], fo[1], 0.10), w2p = q(j2x, jY, fi[0], fi[1], 0.10);
+      const wc = [bx + (hx - bx) * 0.64, jY + (F[1] - jY) * 0.64];
+      ctx.fillStyle = 'rgba(2,3,5,' + (0.50 * mFlip).toFixed(3) + ')';
+      ctx.beginPath(); ctx.moveTo(w1p[0], w1p[1]); ctx.lineTo(wc[0], wc[1]); ctx.lineTo(w2p[0], w2p[1]); ctx.closePath(); ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,' + (0.10 * mFlip).toFixed(3) + ')'; ctx.lineWidth = 0.6; ctx.stroke();
+    }
+    ctx.restore();
+
+    // raised edge ribs (the A-frame struts): lit crown + shadow seam
+    const rk = (xr) => Math.max(0.28, kAt(xr));
+    const ribLine = (x0, y0, x1, y1, xr) => {
+      ctx.strokeStyle = _tint('#05070a', 1, 0.5); ctx.lineWidth = rib + 1.2;
+      ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
+      ctx.strokeStyle = _tint(ribHex, rk(xr)); ctx.lineWidth = rib;
+      ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
+      ctx.strokeStyle = _tint('#ffffff', rk(xr), 0.5); ctx.lineWidth = rib * 0.28;
+      ctx.beginPath(); ctx.moveTo(x0 - hiSide * rib * 0.18, y0); ctx.lineTo(x1 - hiSide * rib * 0.18, y1); ctx.stroke();
+    };
+    ribLine(j2x, jY, fi[0], fi[1], side * W * 0.1);
+    ribLine(j1x, jY, fo[0], fo[1], side * W * 0.45);
+    // end cap rib across the tip (stowed: round top of the shell)
+    ctx.strokeStyle = _tint(ribHex, rk(F[0]), 0.9 * sstep(p / 0.25)); ctx.lineWidth = rib * 0.8;
+    ctx.beginPath(); ctx.moveTo(fo[0], fo[1]); ctx.lineTo(fi[0], fi[1]); ctx.stroke();
+
+    // hinge brackets at the base (clevis ears + dark pins)
+    for (const hx of [j1x, j2x]) {
+      ctx.fillStyle = _tint('#dfe3e7', Math.max(0.3, kCyl(hx)));
+      ctx.beginPath(); ctx.arc(hx, jY, rib * 0.78, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = _tint('#0e1014', 1);
+      ctx.beginPath(); ctx.arc(hx, jY, rib * 0.40, 0, Math.PI * 2); ctx.fill();
+    }
+
+    // ---- 4. hull-side hardware: latches along the bay, arm pylon ball joint + pusher ----
+    if (!isBack) {
+      // pusher: short thick housing on the arm's first section, appears as the arm swings out
+      if (p > 0.06) {
+        const pa2 = sstep((p - 0.06) / 0.15);
+        const ex = F[0], ey = F[1] - Math.max(1.2, W * 0.05);
+        const dl = Math.hypot(ex - M[0], ey - M[1]) || 1;
+        const px2 = M[0] + (ex - M[0]) / dl * W * 0.20, py2 = M[1] + (ey - M[1]) / dl * W * 0.20;
+        tube(M[0], M[1], px2, py2, Math.max(1.8, W * 0.115), Math.max(1.8, W * 0.105), '#14171b', Math.max(0.3, kAt(side * W * 0.3)), '#6c7681', 1, pa2);
+      }
+      // ball joint pylon (the dark disc seen on the stowed hood)
+      const br = Math.max(1.2, W * 0.048);
+      ctx.fillStyle = _tint('#16191e', Math.max(0.4, kCyl(M[0])));
+      ctx.beginPath(); ctx.arc(M[0], M[1], br, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = _tint('#ffffff', Math.max(0.4, kCyl(M[0])), 0.5);
+      ctx.beginPath(); ctx.arc(M[0] - hiSide * br * 0.3, M[1] - br * 0.3, Math.max(0.4, br * 0.28), 0, Math.PI * 2); ctx.fill();
+    }
+
+    // ---- 5. foot: self-levelling wedge pad, sole exactly on the physics foot point ----
+    if (p > 0.22) {
+      const fAl = sstep((p - 0.22) / 0.2);
+      const lv = sstep((p - 0.35) / 0.55);
+      const rot = currentSweep * (1 - lv);
+      const fw = Math.max(3, W * 0.17), fh = Math.max(2, W * 0.085);
+      const ox = side * fw * 0.5, ix = -side * fw * 0.5;
+      const fk = Math.max(0.3, kAt(side * W * 0.5));
+      ctx.save();
+      ctx.translate(tipApexX, tipApexY); ctx.rotate(rot);
+      ctx.globalAlpha = fAl;
+      const wedge = () => {
+        ctx.beginPath();
+        ctx.moveTo(ix, 0); ctx.lineTo(ox, 0); ctx.lineTo(ox * 0.80, -fh * 0.55);
+        ctx.lineTo(side * fw * 0.10, -fh * 1.15); ctx.lineTo(ix * 0.35, -fh * 0.95); ctx.closePath();
+      };
+      wedge(); ctx.fillStyle = _tint('#8a949f', fk); ctx.fill();
+      ctx.strokeStyle = _tint('#05070a', 1, 0.8); ctx.lineWidth = 0.7; wedge(); ctx.stroke();
+      ctx.fillStyle = _tint('#dde2e7', fk, 0.65);
+      ctx.beginPath(); ctx.moveTo(ox, 0); ctx.lineTo(ox * 0.80, -fh * 0.55); ctx.lineTo(side * fw * 0.10, -fh * 1.15);
+      ctx.lineTo(side * fw * 0.10, -fh * 0.45); ctx.lineTo(ix * 0.1, 0); ctx.closePath(); ctx.fill();
+      ctx.strokeStyle = _tint('#c9d0d8', fk, 0.9); ctx.lineWidth = Math.max(0.6, W * 0.008);
+      ctx.beginPath(); ctx.moveTo(ix, 0); ctx.lineTo(ox, 0); ctx.stroke();
+      ctx.fillStyle = _tint('#8e98a3', fk);
+      ctx.beginPath(); ctx.arc(0, -fh * 0.72, Math.max(1, W * 0.026), 0, Math.PI * 2); ctx.fill();
       ctx.restore();
     }
   }
@@ -1878,10 +2035,10 @@ const engineBell = (() => {
 // transform at this point has an off-canvas origin, so any local
 // translate lands the image outside the visible buffer.)
 
-// FRONT legs
+// BACK legs (the two behind the hull) — drawn before the body so the hull covers them
 if (showLegs) {
-  drawLandingLeg(-1, false);
-  drawLandingLeg(1, false);
+  drawLandingLeg(-1, true);
+  drawLandingLeg(1, true);
 }
   
   // ---- Body ----
