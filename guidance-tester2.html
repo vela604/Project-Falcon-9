@@ -1774,6 +1774,7 @@ if (!faded) {
     deltaV: null,
     tRem: null,
     snappedHold2: false,
+    hold2Ticks: 0,
   };
 
   function _resetCoastSnap() {
@@ -1784,12 +1785,14 @@ if (!faded) {
     _coastSnap.deltaV = null;
     _coastSnap.tRem = null;
     _coastSnap.snappedHold2 = false;
+    _coastSnap.hold2Ticks = 0;
   }
 
   function _isCoastWait(p) { return p === 'COAST_WAIT' || p === 'COAST_WAIT_ENTRY'; }
   function _isHold2(p) { return p === 'COAST_HOLD_2' || p === 'COAST_HOLD2'; }
 
-  // v_apo and time-to-next-apogee. t_apo is 1:1 with hook.js timeToApogee().
+  // Orbital snapshot: both apsides (circular: apo==peri). tApo 1:1 with
+  // hook.js timeToApogee(). tPeri = (2π - M)/n (parallel derivation).
   function _orbitSnapshot(b) {
     if (!b) return null;
     const GM = CONFIG.GM_EARTH;
@@ -1801,12 +1804,17 @@ if (!faded) {
     const eps = 0.5 * (vr * vr + vt * vt) - GM / r;
     const h = r * vt;
     let vApo = NaN, tApo = Infinity;
+    let vPeri = NaN, tPeri = Infinity;
     if (eps < 0) {
       const a = -GM / (2 * eps);
       const e = Math.sqrt(Math.max(0, 1 + 2 * eps * h * h / (GM * GM)));
-      if (e > 1e-12) vApo = h / (a * (1 + e));
+      if (e > 1e-12) {
+        vApo = h / (a * (1 + e));
+        vPeri = h / (a * (1 - e));
+      }
       if (e < 1e-9) {
         tApo = Math.PI * Math.sqrt((a * a * a) / GM);
+        tPeri = tApo;
       } else {
         const cosE = (1 - r / a) / e;
         const sinE = (r * vr) / (e * Math.sqrt(GM * a));
@@ -1815,13 +1823,19 @@ if (!faded) {
         const M = Ean - e * Math.sin(Ean);
         const n = Math.sqrt(GM / (a * a * a));
         tApo = (M < Math.PI) ? (Math.PI - M) / n : (3 * Math.PI - M) / n;
+        tPeri = (2 * Math.PI - M) / n;
       }
     }
-    return { r, vr, vt, vApo, tApo };
+    return { r, vr, vt, vApo, vPeri, tApo, tPeri };
   }
 
   // Called each tick BEFORE phase-change detection so COAST_HOLD_2 transition
   // capture already shows refreshed values.
+  //
+  // apside-aware: for elliptical orbits we show the delta-v to the NEARER
+  // apside of the target (whichever has smaller time), not just the apogee
+  // delta-v. Guidance's coastHold2GapMps is the pre-kick delta-v at the
+  // chosen (nearer) apside. tRem uses min(t_apo, t_peri).
   function _coastSnapUpdate(gs, b) {
     if (!gs || !b) return;
     if (_isCoastWait(gs.phase) && _coastSnap.targetVcirc == null &&
@@ -1835,18 +1849,50 @@ if (!faded) {
       }
     }
     if (_isHold2(gs.phase) && !_coastSnap.snappedHold2) {
-      if (Number.isFinite(gs.coastDeltaV) && _coastSnap.waitDeltaV != null &&
-          gs.coastDeltaV !== _coastSnap.waitDeltaV) {
-        _coastSnap.deltaV = gs.coastDeltaV;
-        _coastSnap.tRem = gs.coastTRem;
-        _coastSnap.snappedHold2 = true;
-        return;
-      }
-      if (Number.isFinite(_coastSnap.targetVcirc)) {
-        const o = _orbitSnapshot(b);
-        if (o && Number.isFinite(o.vApo)) {
-          _coastSnap.deltaV = _coastSnap.targetVcirc - o.vApo;
-          _coastSnap.tRem = o.tApo;
+      const o = _orbitSnapshot(b);
+      if (o) {
+        // Time to closer apside (circular: t_apo == t_peri).
+        _coastSnap.tRem = Math.min(o.tApo, o.tPeri);
+
+        // Guidance publishes coastHold2GapMps on the FIRST COAST_HOLD_2
+        // tick (post-burn osculating orbit, at whichever apside is chosen
+        // by _st.coast2TargetApside — same nearer-apside logic). Phase
+        // transitions from COAST_ROTATE_2 land in the case one tick later,
+        // so wait up to 3 ticks before falling back to legacy circular
+        // approximation.
+        _coastSnap.hold2Ticks = (_coastSnap.hold2Ticks || 0) + 1;
+
+        if (Number.isFinite(gs.coastHold2GapMps)) {
+          _coastSnap.deltaV = gs.coastHold2GapMps;
+          _coastSnap.snappedHold2 = true;
+        } else if (Number.isFinite(gs.coastDeltaV) && _coastSnap.waitDeltaV != null &&
+                   gs.coastDeltaV !== _coastSnap.waitDeltaV) {
+          _coastSnap.deltaV = gs.coastDeltaV;
+          _coastSnap.snappedHold2 = true;
+        } else if (_coastSnap.hold2Ticks >= 3) {
+          // Fallback: compute directly from closer apside of target orbit.
+          // Reads target apsides from current tunable values.
+          try {
+            const ins = (currentValues && currentValues.insertion) || {};
+            const tA1 = Number.isFinite(ins.TARGET_APSIDE1_ALT_KM) ? ins.TARGET_APSIDE1_ALT_KM
+              : (Number.isFinite(ins.TARGET_ORBIT_ALT_KM) ? ins.TARGET_ORBIT_ALT_KM : 320);
+            const tA2 = Number.isFinite(ins.TARGET_APSIDE2_ALT_KM) ? ins.TARGET_APSIDE2_ALT_KM : tA1;
+            const tApo = Math.max(tA1, tA2);
+            const tPeri = Math.min(tA1, tA2);
+            const r_a_tgt = CONFIG.EARTH_RADIUS + tApo * 1000;
+            const r_p_tgt = CONFIG.EARTH_RADIUS + tPeri * 1000;
+            const a_tgt = (r_a_tgt + r_p_tgt) / 2;
+            const closer = (o.tPeri < o.tApo) ? 'peri' : 'apo';
+            const v_live = (closer === 'peri') ? o.vPeri : o.vApo;
+            const v_tgt = (closer === 'peri')
+              ? Math.sqrt(CONFIG.GM_EARTH * (2 / r_p_tgt - 1 / a_tgt))
+              : Math.sqrt(CONFIG.GM_EARTH * (2 / r_a_tgt - 1 / a_tgt));
+            _coastSnap.deltaV = v_tgt - v_live;
+          } catch (e) {
+            if (Number.isFinite(_coastSnap.targetVcirc) && Number.isFinite(o.vApo)) {
+              _coastSnap.deltaV = _coastSnap.targetVcirc - o.vApo;
+            }
+          }
           _coastSnap.snappedHold2 = true;
         }
       }
