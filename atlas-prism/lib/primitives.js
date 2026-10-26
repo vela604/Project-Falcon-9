@@ -822,8 +822,99 @@ p = Object.assign({}, p, { bi: clamp(p.bi + ((c === 'F1' || c === 'FE') ? +1 : -
     return res;
   }
 
+  // ---- tuneLeadV2: edge by apside-crossing count, window by release-apside time, FULL-score search in window ----
+  // o: { li0, cross(li)->{cross,tToApo,tToPeri,marginS}, full(li)->{score,done,ok,cross}, marginMaxS=20, maxLi=4000, maxWin=40 }
+  async function tuneLeadV2(o) {
+    const M = o.marginMaxS || 20, maxLi = o.maxLi || 4000, maxWin = o.maxWin || 40, log = [], say = (s) => { log.push(s); if (o.onLog) o.onLog(s); };
+    const cc = new Map(), fc = new Map(); let nC = 0, nF = 0;
+    const cross = async (li) => { if (!cc.has(li)) { nC++; cc.set(li, await o.cross(li)); } return cc.get(li); };
+    const full = async (li) => { if (!fc.has(li)) { nF++; fc.set(li, await o.full(li)); } return fc.get(li); };
+    const cnt = (r) => (r && Number.isFinite(r.cross) && r.cross >= 1) ? r.cross : 0;
+    const clamp = (x) => Math.max(0, Math.min(maxLi, x));
+    const fin = (x) => Object.assign({ evals: nC + nF, crossEvals: nC, fullEvals: nF, log }, x);
+    // 1+2. edges: crossings count is monotone in lead; flip k|k+1 is an edge. Try nearest edges first until one has a tick that completes (done).
+    const c0 = cnt(await cross(o.li0));
+    if (!c0) return fin({ ok: false, reason: 'no crossing count at li0=' + o.li0 });
+    const findEdge = async (k) => {
+      const side = async (li) => { const c = cnt(await cross(li)); return c ? c >= k + 1 : null; };
+      const sa = await side(o.li0); let A = o.li0, B = null, step = 1;
+      while (B === null) {
+        const p = clamp(o.li0 + (sa ? -1 : 1) * step);
+        if (p === A) return null;
+        const sp = await side(p);
+        if (sp === null) return null;
+        if (sp === sa) { A = p; step *= 2; } else B = p;
+      }
+      while (Math.abs(A - B) > 1) {
+        const m = Math.floor((A + B) / 2), sm = await side(m);
+        if (sm === null) return null;
+        if (sm === sa) A = m; else B = m;
+      }
+      return sa ? [B, A] : [A, B];   // [lo (count<=k), hi (count>=k+1)]
+    };
+    const ks = [1, 2].sort((x, y) => Math.abs(x - (c0 - 0.5)) - Math.abs(y - (c0 - 0.5)));
+    let v = null, other = null, edgeK = null, edgePair = null, dSel = 0;
+    for (const k of ks) {
+      const ed = await findEdge(k);
+      if (!ed) { say('edge ' + k + '|' + (k + 1) + ': not found'); continue; }
+      // Edge ticks can be noisy (vr jitter right at the apside gives odd counts like 3). Use the nearest ticks with count exactly k (below) and k+1 (above).
+      const nearest = async (from, want, d) => { for (let j = 0; j < 5; j++) { const li = from + d * j; if (li < 0 || li > maxLi) return null; if (cnt(await cross(li)) === want) return li; } return null; };
+      const tA = await nearest(ed[0], k, -1), tB = await nearest(ed[1], k + 1, +1);
+      // Pick the side by CHEAP data: right side has an apside imminent after engine-off (seconds); wrong side ~ a half orbit away. FULL runs nearest-first, other side only as fallback.
+      const okT = (c) => c === 1 || c === 2;   // FULL only for 1 or 2 crossings
+      const nearT = async (li) => { const r = await cross(li), t = Math.min(r.tToApo, r.tToPeri); return Number.isFinite(t) ? t : Infinity; };
+      const cand = [];
+      if (tA !== null && okT(k)) cand.push({ li: tA, c: k, t: await nearT(tA) });
+      if (tB !== null && okT(k + 1)) cand.push({ li: tB, c: k + 1, t: await nearT(tB) });
+      cand.sort((x, y) => x.t - y.t);
+      let hit = null;
+      for (const c of cand) {
+        const f = await full(c.li);
+        say('edge ' + k + '|' + (k + 1) + ' raw ' + ed[0] + '|' + ed[1] + ': li ' + c.li + ' (cross ' + c.c + ', nearest apside ' + c.t.toFixed(1) + ' s) FULL done ' + !!(f && f.done) + ' score ' + (f && Number.isFinite(f.score) ? f.score.toFixed(1) : '-'));
+        if (f && f.done) { hit = c; break; }
+      }
+      if (!hit) continue;
+      v = hit.li; dSel = hit.c === k ? -1 : +1;
+      const oc = cand.find((c) => c !== hit); other = oc ? oc.li : (dSel < 0 ? ed[1] : ed[0]);
+      edgeK = k; edgePair = ed; break;
+    }
+    if (v === null) return fin({ ok: false, reason: 'no edge (k=' + ks.join(',') + ') has a done tick' });
+    const lo = edgePair[0], hi = edgePair[1];
+    const cv = cnt(await cross(v)), mode = cv >= 2 ? 'APO' : 'PERI';
+    const tRel = (r) => mode === 'PERI' ? r.tToPeri : r.tToApo;
+    // 3. window: from v away from the edge while release-apside time <= M
+    const dW = dSel;
+    let good = v, bad = null, step = 1;
+    if (!(tRel(await cross(v)) <= M)) bad = v;
+    while (bad === null && Math.abs(good - v) < maxWin - 1) {
+      const p = clamp(good + dW * step), r = await cross(p);
+      if (p !== good && cnt(r) === cv && tRel(r) <= M) { good = p; step *= 2; } else { bad = p; if (p === good) break; }
+    }
+    while (bad !== null && bad !== good && Math.abs(bad - good) > 1) {
+      const m = Math.floor((bad + good) / 2), r = await cross(m);
+      if (cnt(r) === cv && tRel(r) <= M) good = m; else bad = m;
+    }
+    const N = Math.min(maxWin, Math.abs(good - v) + 1), W = [];
+    for (let k = 0; k < N; k++) W.push(v + dW * k);
+    say('mode=' + mode + ' window ' + W[0] + '..' + W[N - 1] + ' (' + N + ' ticks, dir ' + dW + ')');
+    if (o.windowOnly) return fin({ ok: true, mode, edgeK, edge: [lo, hi], W, rows: Array.from(fc.values()) });
+    // 4. FULL-score search in window (golden section on index, then brute force the rest)
+    const f = async (k) => { const r = await full(W[k]); return Number.isFinite(r && r.score) ? r.score : Infinity; };
+    let L = 0, R = N - 1; const PHI = 0.618;
+    while (R - L > 3) {
+      let x1 = Math.round(L + (1 - PHI) * (R - L)), x2 = Math.round(L + PHI * (R - L));
+      if (x2 <= x1) x2 = x1 + 1;
+      if ((await f(x1)) <= (await f(x2))) R = x2; else L = x1;
+    }
+    for (let k = L; k <= R; k++) await f(k);
+    let best = null;
+    for (const li of W) { const r = fc.get(li); if (r && Number.isFinite(r.score) && (!best || r.score < best.score)) best = { li, score: r.score, r }; }
+    if (!best) return fin({ ok: false, reason: 'no scored lead in window', edge: [lo, hi], mode, window: W });
+    return fin({ ok: !!best.r.ok, mode, edgeK, edge: [lo, hi], window: [W[0], W[N - 1]], W, rows: Array.from(fc.values()), leadTicks: best.li, bestScore: best.score, full: best.r });
+  }
+
   Object.assign(T, {
-    tuneLead, tuneAB, tuneRough, findOptimalMeco,
+    tuneLeadV2, tuneLead, tuneAB, tuneRough, findOptimalMeco,
     pickReference, residualBand,
   });
 })();

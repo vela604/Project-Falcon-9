@@ -123,21 +123,31 @@
     }
     
     _dispatch() {
-      while (this.queue.length && this.available.length) {
-        const job = this.queue.shift();
-        const wIdx = this.available.shift();
-        const w = this.workers[wIdx];
-        if (!w) { this.available.push(wIdx); continue; }
-        this._stats.dispatched++;
-        this.pending.set(job.id, job);
-        w.postMessage({ id: job.id, type: job.type, payload: job.payload });
+      // Jobs may be pinned to a worker index (runJob(type, payload, pin)); unpinned jobs take the first free worker.
+      let moved = true;
+      while (moved && this.queue.length && this.available.length) {
+        moved = false;
+        for (let qi = 0; qi < this.queue.length; qi++) {
+          const job = this.queue[qi];
+          const ai = (job.pin == null) ? 0 : this.available.indexOf(job.pin);
+          if (ai < 0) continue;
+          this.queue.splice(qi, 1);
+          const wIdx = this.available.splice(ai, 1)[0];
+          const w = this.workers[wIdx];
+          if (!w) { this.available.push(wIdx); this.queue.unshift(job); moved = true; break; }
+          this._stats.dispatched++;
+          this.pending.set(job.id, job);
+          w.postMessage({ id: job.id, type: job.type, payload: job.payload });
+          moved = true;
+          break;
+        }
       }
     }
     
-    runJob(type, payload) {
+    runJob(type, payload, pin) {
       return new Promise((resolve, reject) => {
         const id = this.nextId++;
-        this.queue.push({ id, type, payload, resolve, reject });
+        this.queue.push({ id, type, payload, resolve, reject, pin });
         this._dispatch();
       });
     }

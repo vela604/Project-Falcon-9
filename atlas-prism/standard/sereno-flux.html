@@ -10,24 +10,48 @@
 <link rel="stylesheet" href="styles/sereno-flux.css">
 <script src="../js/szadFont.js" onerror="void 0"></script>
 <style>
-.so-result{margin-top:14px;padding:14px;background:rgba(8,15,22,.7);border:1px solid var(--line);border-radius:6px}
-.so-score-line{display:flex;gap:28px;margin-bottom:14px;flex-wrap:wrap;align-items:baseline}
-.so-score-line>div{display:flex;flex-direction:column;gap:2px}
-.so-label{color:var(--dim);font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;font-weight:500}
-.so-value{font-family:'JetBrains Mono',monospace;font-weight:600;font-size:16px;color:#fff}
-.so-value .ok{color:var(--green)}
-.so-value .bad{color:var(--red)}
-.so-parts{width:100%;border-collapse:collapse;font-size:12px;margin-top:6px}
-.so-parts th{text-align:left;color:var(--dim);font-weight:400;padding:6px 10px;border-bottom:1px solid var(--line);font-size:10.5px;text-transform:uppercase;letter-spacing:.06em}
-.so-parts th:nth-child(3){text-align:right}
-.so-parts td{padding:6px 10px;border-bottom:1px solid rgba(255,255,255,.06)}
-.so-parts td:nth-child(3){text-align:right;font-family:'JetBrains Mono',monospace;font-weight:600}
-.so-parts td.pos{color:var(--red)}
-.so-parts td.miss{color:var(--faint);font-style:italic}
-.so-parts td.neg{color:var(--green)}
-.so-parts tr.total td{font-weight:700;border-top:2px solid var(--line);border-bottom:none;padding-top:10px;font-size:13px;color:#fff}
-.so-meta{display:flex;gap:18px;margin-top:12px;font-size:11.5px;color:var(--dim);flex-wrap:wrap;padding-top:10px;border-top:1px dashed rgba(255,255,255,.1)}
-.so-meta b{color:#fff;font-weight:600;font-family:'JetBrains Mono',monospace}
+/* ---- result card (CONVO-LEAD / SCORE YOUR OWN): square instrument look, accent follows the active phase (--ph) ---- */
+.rv{margin-top:14px;border:1px solid var(--line);border-left:2px solid var(--ph);background:#000;}
+.rv-h{display:flex;align-items:center;gap:6px 14px;flex-wrap:wrap;padding:9px 14px;border-bottom:1px solid var(--line);font-size:9.5px;letter-spacing:.18em;text-transform:uppercase;color:var(--dim);}
+.rv-h b{color:var(--ph);font-weight:700;letter-spacing:.2em;} .rv-h .sp{flex:1;}
+.rv-h .in{letter-spacing:.06em;text-transform:none;color:var(--faint);font-size:10.5px;}
+.rv-st{display:inline-block;padding:1px 8px;border:1px solid currentColor;font-size:9px;letter-spacing:.16em;}
+.rv-st.ok{color:var(--green);} .rv-st.bad{color:var(--red);}
+.rv-kpi{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));border-bottom:1px solid var(--line);}
+.rv-kpi>div{padding:10px 14px;border-right:1px solid var(--line);min-width:0;}
+.rv-kpi>div:last-child{border-right:0;}
+.rv-kpi span{display:block;font-size:9px;letter-spacing:.18em;text-transform:uppercase;color:var(--dim);}
+.rv-kpi b{display:block;margin-top:2px;font:700 18px/1.25 var(--mono);color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.rv-kpi b small{font:400 10px var(--mono);color:var(--dim);margin-left:4px;}
+.rv-kpi b.c{color:var(--cyan);} .rv-kpi b.a{color:var(--amber);} .rv-kpi b.v{color:var(--violet);} .rv-kpi b.g{color:var(--green);} .rv-kpi b.r{color:var(--red);}
+.rv-sec{padding:11px 14px 5px;font-size:9.5px;letter-spacing:.18em;text-transform:uppercase;color:var(--faint);}
+.rv-sec em{font-style:normal;letter-spacing:.06em;text-transform:none;color:var(--dim);margin-left:10px;}
+.rv-vd{margin:12px 14px 4px;padding:8px 12px;border:1px solid var(--line);border-left:2px solid var(--dim);font-size:12px;line-height:1.65;color:var(--dim);}
+.rv-vd b{color:#fff;font-family:var(--mono);font-weight:600;}
+.rv-vd .k{display:inline-block;margin-right:10px;font-size:9px;letter-spacing:.18em;text-transform:uppercase;font-weight:700;}
+.rv-vd.ok{border-left-color:var(--green);background:rgba(74,222,128,.05);} .rv-vd.ok .k{color:var(--green);}
+.rv-vd.warn{border-left-color:var(--amber);background:rgba(255,176,32,.05);} .rv-vd.warn .k{color:var(--amber);}
+.rv-vd.bad{border-left-color:var(--red);background:rgba(255,80,80,.05);} .rv-vd.bad .k{color:var(--red);}
+.rv-tw{overflow-x:auto;padding:0 14px 12px;}
+table.rv-t{width:100%;border-collapse:collapse;font-size:11.5px;font-variant-numeric:tabular-nums;white-space:nowrap;}
+.rv-t th{text-align:left;padding:6px 10px;font-weight:400;font-size:9px;letter-spacing:.16em;text-transform:uppercase;color:var(--faint);border-bottom:1px solid var(--line2);}
+.rv-t td{padding:5px 10px;border-bottom:1px solid var(--line);color:var(--dim);}
+.rv-t th.n,.rv-t td.n,.rv-t.parts th:nth-child(n+2),.rv-t.parts td:nth-child(n+2){text-align:right;font-family:var(--mono);}
+.rv-t td:first-child{color:#fff;}
+.rv-t td.pos{color:var(--red);} .rv-t td.neg{color:var(--green);} .rv-t td.miss{color:var(--faint);font-style:italic;}
+.rv-t tbody tr:hover td{background:rgba(255,255,255,.03);}
+.rv-t tr.best td{color:#fff;background:rgba(74,222,128,.07);} .rv-t tr.best td:first-child{box-shadow:inset 2px 0 0 var(--green);}
+.rv-t tr.mine td:first-child{box-shadow:inset 2px 0 0 var(--violet);} .rv-t tr.mine:not(.best) td{background:rgba(180,120,255,.06);}
+.rv-t tr.total td{border-top:1px solid var(--line2);border-bottom:0;color:#fff;font-weight:700;padding-top:8px;}
+.rv-chip{display:inline-block;margin-left:8px;padding:0 5px;border:1px solid currentColor;font-size:8px;letter-spacing:.14em;vertical-align:1px;}
+.rv-chip.best{color:var(--green);} .rv-chip.mine{color:var(--violet);}
+.rv-meta{display:flex;gap:4px 18px;flex-wrap:wrap;padding:10px 14px;border-top:1px solid var(--line);font-size:10.5px;color:var(--dim);}
+.rv-meta b{color:#fff;font-family:var(--mono);font-weight:600;}
+.rv-wait{margin-top:14px;padding:16px 14px;border:1px dashed var(--line2);border-left:2px solid var(--ph);font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--dim);}
+.rv-wait::before{content:"";display:inline-block;width:9px;height:9px;margin-right:10px;vertical-align:-1px;border:1.5px solid var(--line2);border-top-color:var(--ph);border-radius:50%;animation:rvspin .8s linear infinite;}
+@keyframes rvspin{to{transform:rotate(360deg);}}
+#scoreOwn .so-note{font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--faint);margin:2px 0 10px;}
+#scoreOwn .so-note b{color:var(--amber);font-weight:700;}
 </style>
 </head>
 <body data-state="idle">
@@ -76,8 +100,8 @@
     </div>
     <div class="big-tab" data-tab="convo">
       <span class="hex">optional &middot; custom lead tune</span>
-      <div class="ttl">CONVO-LEAD E2</div>
-      <div class="desc">Lead refinement. Locks MECO + G + T + bias, sweeps the circularization lead to hit the target margin window.</div>
+      <div class="ttl">CONVO-LEAD E3</div>
+      <div class="desc">Lead search. Locks MECO + G + T + bias, finds the apside-crossing edge, builds the release-time window and picks the lead with the best FULL score.</div>
     </div>
   </div>
 
@@ -124,9 +148,7 @@
   <!-- ==================== SCORE YOUR OWN (new) ==================== -->
   <section class="panel" id="scoreOwn" style="margin-top:14px">
     <h2><span class="tag">0x04</span>Score your own</h2>
-    <div class="dim" style="font-size:11.5px;margin-bottom:10px;">
-      Enter MECO / G / T / bias. Leave <b>lead</b> blank to let the engine search (same as ZETA-HELIX); provide a value to score that exact lead.
-    </div>
+    <div class="so-note">Runs inside <b>CONVO-LEAD</b> · set <b>lead</b> to score it against the best lead · blank = plain lead search</div>
     <div class="row">
       <label>MECO kg <input type="number" id="soMeco" step="1" value="52612"></label>
       <label>G <input type="number" id="soG" step="0.01" value="0.64"></label>
@@ -138,7 +160,6 @@
       <button class="primary" id="soRun">Run &amp; Score</button>
       <span class="dim" id="soStatus"></span>
     </div>
-    <div id="soResult"></div>
   </section>
 
 </main>
@@ -146,7 +167,7 @@
 <!-- ==================== STANDBY (CSS hides it once #main is shown) ==================== -->
 <section class="panel" id="standby">
   <h2><span class="tag">0x01</span>Standby &middot; awaiting session lock</h2>
-<pre><span class="a">OPT-MECO X5</span> <span class="d">&mdash;&mdash;&mdash;&mdash;&rsaquo;</span> <span class="m">FIND RANGE</span> <span class="d">&mdash;&mdash;&mdash;&mdash;&rsaquo;</span> <span class="v">ZETA-HELIX 1R</span> <span class="d">- - &rsaquo;</span> <span class="m">CONVO-LEAD E2</span>
+<pre><span class="a">OPT-MECO X5</span> <span class="d">&mdash;&mdash;&mdash;&mdash;&rsaquo;</span> <span class="m">FIND RANGE</span> <span class="d">&mdash;&mdash;&mdash;&mdash;&rsaquo;</span> <span class="v">ZETA-HELIX 1R</span> <span class="d">- - &rsaquo;</span> <span class="m">CONVO-LEAD E3</span>
 <span class="d">phases A B C D</span>      <span class="d">bias window / G</span>      <span class="d">N-point bias scan</span>    <span class="d">optional</span>
 
 <span class="m">A</span> coarse map    <span class="d">7 MECO &times; 5 bias(-3..+3) &times; 13 G = 455 evals</span>
@@ -328,6 +349,7 @@
     S.pool.onProgress = (msg) => {
       S.workerProgress[msg.tag] = { phase: msg.phase, detail: msg.detail, ts: msg.ts };
       markProgress();   // throttled: the 500 ms ticker below does the actual DOM rebuild
+      if (S.leadVerbose && msg.phase === 'leadlog') log('[' + msg.tag + '] ' + msg.detail);
     };
     await S.pool.waitReady();
     S.poolReady = true;
@@ -362,6 +384,7 @@
     S.last = { meco: null, G: null, T: null, bias: null, lead: null };
     S.workerProgress = {};
     S.logs = { optmeco: [], zeta: [], convo: [] };
+    S.convoView = '';
     S.zetaRange = {};
     $('lockBtn').disabled = false;
     $('stackSel').disabled = false;
@@ -426,9 +449,9 @@
   // SA and fail every bias probe — stage fuel insufficient at the wrong
   // MECO. Calling this before each batch guarantees the SA snapshot matches
   // the panel's current MECO/G/T.
-  async function ensureSA(values) {
+  async function ensureSA(values, pins) {   // pins: worker indices to set up (default: all workers)
     if (!S.pool || !S.poolReady) throw new Error('pool not ready');
-    const n = S.pool.n;
+    const n = pins ? pins.length : S.pool.n;
     const _saA1 = values.insertion.TARGET_APSIDE1_ALT_KM;
     const _saA2 = values.insertion.TARGET_APSIDE2_ALT_KM;
     const _saApo = Math.max(_saA1, _saA2), _saPeri = Math.min(_saA1, _saA2);
@@ -439,7 +462,8 @@
         ' G=' + values.ascent.PUSH_MAX_GIMBAL_DEG +
         ' T=' + values.ascent.PUSH_T_S + ' ' + _saApsStr + '…');
     const jobs = [];
-    for (let i = 0; i < n; i++) jobs.push(S.pool.runJob('setupSA', { values }));
+    if (pins) pins.forEach((pw) => jobs.push(S.pool.runJob('setupSA', { values }, pw)));
+    else for (let i = 0; i < n; i++) jobs.push(S.pool.runJob('setupSA', { values }));
     const results = await Promise.all(jobs);
     const okN = results.filter((r) => r.ok).length;
     log('setupSA (refresh): ' + okN + '/' + n + ' ready');
@@ -685,7 +709,7 @@
     const sugT = S.last.T != null ? S.last.T : 4.82;
     const sugBias = S.last.bias != null ? S.last.bias : 0.827;
     const MB = (TunerConfig.limits.marginTargetS || [3.5, 5.5]);
-    return '<h2>CONVO-LEAD E2 — circularization lead refinement</h2>' +
+    return '<h2>CONVO-LEAD E3 — edge + window + score search</h2>' +
       commonRowHtml() +
       '<div class="row">' +
       '<label>MECO kg <input type="number" id="cMeco" step="1" value="' + sugMeco + '"></label>' +
@@ -695,14 +719,14 @@
       '<button class="suggest" id="cSuggest">Suggest</button>' +
       '</div>' +
       '<div class="row">' +
-      '<label>margin lo s <input type="number" id="cMLo" step="0.1" value="' + MB[0] + '"></label>' +
-      '<label>margin hi s <input type="number" id="cMHi" step="0.1" value="' + MB[1] + '"></label>' +
-      '<span class="dim">(margin band not suggested)</span>' +
+      '<label>max release time s <input type="number" id="cMax" step="1" value="20"></label>' +
+      '<span class="dim">(window: leads whose release apside comes within this time after engine-off)</span>' +
       '</div>' +
       '<div class="row">' +
-      '<button class="primary" id="cRun">Run CONVO-LEAD E2</button>' +
+      '<button class="primary" id="cRun">Run CONVO-LEAD E3</button>' +
       '<span class="dim" id="cStatus"></span>' +
-      '</div>';
+      '</div>' +
+      '<div id="cResult">' + (S.convoView || '') + '</div>';
   }
 
   function wireTabPanel() {
@@ -1410,54 +1434,80 @@
   }
 
   // ========================================================================
-  // RUN: CONVO-LEAD E2 (no table, no json)
+  // PARALLEL LEAD SEARCH (shared by CONVO-LEAD and SCORE-YOUR-OWN)
+  // edge + mode + window on one worker (others warm their CH cache meanwhile), then every window lead is FULL-scored across all workers.
+  // ========================================================================
+  function resetTelemetry() { S.workerProgress = {}; S.t0 = performance.now(); renderProgress(); }
+
+  async function leadSearchPar(p, tag) {   // name kept; runs on ONE pinned worker (p.pin), other workers stay idle
+    const base = { bias: p.bias, altKm: S.orbitKm, altApoKm: S.orbitApoKm, altPeriKm: S.orbitPeriKm };
+    const Ql = TunerConfig.quanta.lead, t0 = performance.now(), pin = p.pin || 0;
+    log(tag + ': lead search on worker ' + pin + ' · MECO=' + p.meco + ' G=' + p.G + ' T=' + p.T + ' bias=' + p.bias + ' · release window ≤ ' + p.maxRel + ' s');
+    const e = await S.pool.runJob('leadEdge', Object.assign({ marginMaxS: p.maxRel, full: true }, base), pin);
+    if (!e || !e.ok) { log(tag + ': lead search FAILED — ' + ((e && e.reason) || 'unknown')); return { ok: false, reason: (e && e.reason) || 'lead search failed' }; }
+    const inW = new Set(e.W), seen = new Set();
+    const scan = (e.rows || []).filter((r) => inW.has(r.li) && Number.isFinite(r.score) && !seen.has(r.li) && seen.add(r.li)).sort((a, b) => a.li - b.li);
+    const best = scan.reduce((a, b) => (!a || b.score < a.score) ? b : a, null);
+    if (!best) return { ok: false, reason: 'no scored lead in window' };
+    log(tag + ': mode=' + e.mode + ' · edge ' + e.edgeK + '|' + (e.edgeK + 1) + ' · window li ' + e.W[0] + '…' + e.W[e.W.length - 1] + ' (' + e.W.length + ' leads) · ' + scan.length + ' FULL runs · ' + fmt((performance.now() - t0) / 1000, 1) + ' s');
+    log(tag + ': BEST li=' + best.li + ' lead=' + fmt(best.li * Ql, 4) + ' s · score ' + fmt(best.score, 3));
+    return { ok: true, mode: e.mode, W: e.W, scan, best, lead: best.li * Ql };
+  }
+
+  function scanHtml(res, userLi) {
+    const Ql = TunerConfig.quanta.lead, f = (x, d) => Number.isFinite(x) ? x.toFixed(d) : '—';
+    let t = '<div class="rv-sec">Lead scan<em>mode ' + esc(res.mode) + ' · window li ' + res.W[0] + '…' + res.W[res.W.length - 1] + ' · ' + res.scan.length + ' FULL runs</em></div>';
+    t += '<div class="rv-tw"><table class="rv-t"><thead><tr><th>li</th><th class="n">lead s</th><th class="n">score</th><th class="n">deploy s</th><th class="n">apo km</th><th class="n">peri km</th></tr></thead><tbody>';
+    res.scan.forEach((r) => {
+      const best = r.li === res.best.li, mine = userLi != null && r.li === userLi;
+      t += '<tr class="' + (best ? 'best ' : '') + (mine ? 'mine' : '') + '"><td>' + r.li + (best ? '<i class="rv-chip best">BEST</i>' : '') + (mine ? '<i class="rv-chip mine">YOURS</i>' : '') + '</td>' +
+        '<td class="n">' + f(r.li * Ql, 4) + '</td><td class="n">' + f(r.score, 2) + '</td><td class="n">' + f(r.deployS, 1) + '</td><td class="n">' + f(r.apoKm, 2) + '</td><td class="n">' + f(r.periKm, 2) + '</td></tr>';
+    });
+    return t + '</tbody></table></div>';
+  }
+
+  // ========================================================================
+  // RUN: CONVO-LEAD E3 (parallel lead search + final result table)
   // ========================================================================
   async function runConvo() {
     if (S.running) return;
     if (!S.pool || !S.poolReady) { alert('pool not ready'); return; }
-    S.running = true; S.t0 = performance.now();
+    S.running = true; S.leadVerbose = true; resetTelemetry();
     $('cRun').disabled = true;
     $('cStatus').textContent = 'running…';
-
+    convoWait('CONVO-LEAD · setup + lead search on worker 0');
     try {
       const meco = parseInt($('cMeco').value, 10);
       const G = parseFloat($('cG').value);
       const T = parseFloat($('cT').value);
       const bias = parseFloat($('cBias').value);
-      const mLo = parseFloat($('cMLo').value);
-      const mHi = parseFloat($('cMHi').value);
-      if (![meco, G, T, bias, mLo, mHi].every(Number.isFinite) || mHi <= mLo)
-        throw new Error('invalid fields');
-
-      log('CONVO: MECO=' + meco + ' G=' + G + ' T=' + T + ' bias=' + bias +
-          ' margin=[' + mLo + ',' + mHi + ']');
-
+      const mMax = parseFloat($('cMax').value);
+      if (![meco, G, T, bias, mMax].every(Number.isFinite) || mMax <= 0) throw new Error('invalid fields');
       S.last.meco = meco; S.last.G = G; S.last.T = T; S.last.bias = bias;
-
-      // Refresh SA snapshot to match this panel's MECO/G/T.
-      const saVals = saValuesFor(meco, G, T, bias, 5.525);
-      await ensureSA(saVals);
-
-      const r = await S.pool.runJob('probeBiasCheckpoint', {
-        bias, altKm: S.orbitKm,
-        altApoKm: S.orbitApoKm, altPeriKm: S.orbitPeriKm,
-        marginBand: [mLo, mHi],
-      }).catch((e) => ({ ok: false, reason: 'error: ' + e.message }));
-
-      if (r.ok) {
-        if (r.lead != null) S.last.lead = r.lead;
-        log('CONVO OK: lead=' + fmt(r.lead, 4) + ' margin=' + fmt(r.margin, 2) + ' score=' + fmt(r.score, 3));
-        $('cStatus').innerHTML = '<span class="ok">lead=' + fmt(r.lead, 4) + '  margin=' + fmt(r.margin, 2) + 's  score=' + fmt(r.score, 3) + '</span>';
-      } else {
-        log('CONVO FAILED: ' + (r.reason || 'unknown'));
-        $('cStatus').innerHTML = '<span class="bad">FAILED: ' + esc(r.reason || '') + '</span>';
+      const _ts = performance.now(); await ensureSA(saValuesFor(meco, G, T, bias, 5.525), [0]); log('CONVO: ascent (setupSA) ' + fmt((performance.now() - _ts) / 1000, 1) + ' s on worker 0');
+      const res = await leadSearchPar({ meco, G, T, bias, maxRel: mMax, pin: 0 }, 'CONVO');
+      if (!res.ok) {
+        log('CONVO FAILED: ' + res.reason);
+        setConvoView('<div class="rv"><div class="rv-h"><b>CONVO-LEAD</b><span class="sp"></span><span class="rv-st bad">FAIL</span></div><div class="rv-vd bad"><span class="k">Lead search</span>' + esc(res.reason || '') + '</div></div>');
+        $('cStatus').innerHTML = '<span class="bad">FAILED: ' + esc(res.reason || '') + '</span>';
+        return;
       }
+      S.last.lead = res.lead;
+      convoWait('CONVO-LEAD · best lead found, building result');
+      log('CONVO: final run at best lead');
+      const r = await S.pool.runJob('probeBiasCheckpoint', { bias, altKm: S.orbitKm, altApoKm: S.orbitApoKm, altPeriKm: S.orbitPeriKm, fixedLead: res.lead }, 0)
+        .catch((e) => ({ ok: false, reason: 'error: ' + e.message }));
+      const vd = '<div class="rv-vd ok"><span class="k">Best lead</span><b>' + fmt(res.lead, 4) + ' s</b> · li <b>' + res.best.li + '</b> · release at <b>' + esc(res.mode) + '</b> · scan score <b>' + fmt(res.best.score, 3) + '</b></div>';
+      setConvoView(resultCard(r, { meco, G, T, bias }, 'CONVO-LEAD · best lead', vd, res, null));
+      log('CONVO OK: lead=' + fmt(res.lead, 4) + ' s mode=' + res.mode + ' score=' + fmt(r && r.score, 3));
+      $('cStatus').innerHTML = '<span class="ok">lead=' + fmt(res.lead, 4) + ' s · ' + esc(res.mode) + ' · score=' + fmt(r && r.score, 3) + '</span>';
     } catch (e) {
       log('CONVO ERROR: ' + e.message);
+      setConvoView('<div class="rv"><div class="rv-h"><b>CONVO-LEAD</b><span class="sp"></span><span class="rv-st bad">ERROR</span></div><div class="rv-vd bad"><span class="k">Error</span>' + esc(e.message) + '</div></div>');
       $('cStatus').innerHTML = '<span class="bad">ERROR: ' + esc(e.message) + '</span>';
     } finally {
-      S.running = false;
-      $('cRun').disabled = false;
+      S.running = false; S.leadVerbose = false;
+      if ($('cRun')) $('cRun').disabled = false;
     }
   }
 
@@ -1709,39 +1759,59 @@
     const leadRaw = ($('soLead').value || '').trim();
     const fixedLead = leadRaw === '' ? null : parseFloat(leadRaw);
 
-    if (![meco, G, T, bias].every(Number.isFinite)) {
-      $('soStatus').innerHTML = '<span class="bad">invalid MECO / G / T / bias</span>';
-      return;
-    }
-    if (fixedLead !== null && !Number.isFinite(fixedLead)) {
-      $('soStatus').innerHTML = '<span class="bad">invalid lead</span>';
+    if (![meco, G, T, bias].every(Number.isFinite)) { $('soStatus').innerHTML = '<span class="bad">invalid MECO / G / T / bias</span>'; return; }
+    if (fixedLead !== null && !Number.isFinite(fixedLead)) { $('soStatus').innerHTML = '<span class="bad">invalid lead</span>'; return; }
+
+    // Score-your-own is part of CONVO-LEAD: hand the values over and show everything in that section.
+    S.last.meco = meco; S.last.G = G; S.last.T = T; S.last.bias = bias;
+    if (S.tab !== 'convo') setTab('convo');
+    [meco, G, T, bias].forEach((v, i) => { const el = $(['cMeco', 'cG', 'cT', 'cBias'][i]); if (el) el.value = v; });
+    if (fixedLead === null) {
+      log('SCORE-OWN: no lead given → CONVO-LEAD with these values');
+      $('soStatus').textContent = 'no lead → CONVO-LEAD';
+      runConvo();
       return;
     }
 
-    S.running = true;
-    $('soRun').disabled = true;
-    $('soResult').innerHTML = '';
-    $('soStatus').textContent = fixedLead != null
-      ? 'running FULL eval (fixed lead)…'
-      : 'running (lead search + FULL eval)…';
+    S.running = true; S.leadVerbose = true; resetTelemetry();
+    $('soRun').disabled = true; if ($('cRun')) $('cRun').disabled = true;
+    $('soStatus').textContent = 'running in CONVO-LEAD…';
+    convoWait('SCORE YOUR OWN · your lead on worker 0 + best-lead search on another worker');
+    const Ql = TunerConfig.quanta.lead, userLi = Math.round(fixedLead / Ql), inputs = { meco, G, T, bias };
 
     try {
-      const saVals = saValuesFor(meco, G, T, bias, fixedLead != null ? fixedLead : 5.525);
-      await ensureSA(saVals);
-      const r = await S.pool.runJob('probeBiasCheckpoint', {
-        bias, altKm: S.orbitKm,
-        altApoKm: S.orbitApoKm, altPeriKm: S.orbitPeriKm,
-        fixedLead,
-      });
-      renderScoreOwn(r, { meco, G, T, bias, fixedLead });
-      $('soStatus').innerHTML = r && r.ok
-        ? '<span class="ok">OK — scored</span>'
-        : '<span class="bad">' + esc((r && (r.reason || (r.reasons && r.reasons.join(',')))) || 'failed') + '</span>';
+      const sPin = S.pool.n > 1 ? 1 : 0;
+      await ensureSA(saValuesFor(meco, G, T, bias, fixedLead), sPin === 0 ? [0] : [0, sPin]);
+      log('SCORE-OWN: lead=' + fixedLead + ' s · direct run on worker 0, lead search on worker ' + sPin);
+      const direct = S.pool.runJob('probeBiasCheckpoint', { bias, altKm: S.orbitKm, altApoKm: S.orbitApoKm, altPeriKm: S.orbitPeriKm, fixedLead }, 0)
+        .catch((e) => ({ ok: false, reason: 'error: ' + e.message }));
+      const search = leadSearchPar({ meco, G, T, bias, maxRel: 20, pin: sPin }, 'SCORE-OWN').catch((e) => ({ ok: false, reason: e.message }));
+      const r = await direct;
+      setConvoView(resultCard(r, inputs, 'SCORE YOUR OWN · your lead', '<div class="rv-vd warn"><span class="k">Searching</span>best lead for these values is still being searched…</div>', null, null));
+      $('soStatus').textContent = (r && r.ok ? 'your lead scored; ' : 'your lead failed; ') + 'searching best lead…';
+      const res = await search;
+      let vd;
+      if (!res.ok) {
+        vd = '<div class="rv-vd bad"><span class="k">Lead search</span>failed: ' + esc(res.reason || '') + '</div>';
+      } else {
+        const mine = (r && r.ok && Number.isFinite(r.score)) ? r.score : NaN, inWin = res.scan.some((x) => x.li === userLi);
+        if (userLi === res.best.li || (Number.isFinite(mine) && mine <= res.best.score + 0.01)) {
+          vd = '<div class="rv-vd ok"><span class="k">Your lead is best</span>score <b>' + fmt(mine, 3) + '</b> · best scanned <b>' + fmt(res.best.score, 3) + '</b> @ li <b>' + res.best.li + '</b> (' + esc(res.mode) + ')</div>';
+        } else if (Number.isFinite(mine)) {
+          vd = '<div class="rv-vd warn"><span class="k">Better lead exists</span>your score <b>' + fmt(mine, 3) + '</b> · with <b>' + fmt(res.lead, 4) + ' s</b> (li ' + res.best.li + ', ' + esc(res.mode) + ') → <b>' + fmt(res.best.score, 3) + '</b> · better by <b>' + fmt(mine - res.best.score, 3) + '</b>' + (inWin ? '' : ' · your lead is outside the searched window') + '</div>';
+        } else {
+          vd = '<div class="rv-vd warn"><span class="k">Your lead failed</span>best lead for these values <b>' + fmt(res.lead, 4) + ' s</b> (li ' + res.best.li + ', ' + esc(res.mode) + ') → score <b>' + fmt(res.best.score, 3) + '</b></div>';
+        }
+      }
+      setConvoView(resultCard(r, inputs, 'SCORE YOUR OWN · your lead', vd, res.ok ? res : null, userLi));
+      $('soStatus').innerHTML = r && r.ok ? '<span class="ok">OK — see CONVO-LEAD</span>' : '<span class="bad">' + esc((r && (r.reason || (r.reasons && r.reasons.join(',')))) || 'failed') + '</span>';
     } catch (e) {
+      log('SCORE-OWN ERROR: ' + e.message);
+      setConvoView('<div class="rv"><div class="rv-h"><b>SCORE YOUR OWN</b><span class="sp"></span><span class="rv-st bad">ERROR</span></div><div class="rv-vd bad"><span class="k">Error</span>' + esc(e.message) + '</div></div>');
       $('soStatus').innerHTML = '<span class="bad">ERROR: ' + esc(e.message) + '</span>';
     } finally {
-      S.running = false;
-      $('soRun').disabled = false;
+      S.running = false; S.leadVerbose = false;
+      $('soRun').disabled = false; if ($('cRun')) $('cRun').disabled = false;
     }
   }
 
@@ -1752,60 +1822,52 @@
     return '<tr><td>' + label + '</td><td style="color:var(--dim)">' + value + '</td><td class="' + cls + '">' + v + '</td></tr>';
   }
 
-  function renderScoreOwn(r, inputs) {
-    const host = $('soResult');
-    if (!host) return;
-    if (!r) { host.innerHTML = '<div class="bad">no result</div>'; return; }
-
-    const score = r.score;
-    const m = r.metrics || {};
-    const parts = r.parts;
-
-    let rankTxt = '—';
+  // ---- result card: returns HTML (kicker = CONVO-LEAD / SCORE YOUR OWN) ----
+  function resultCard(r, inputs, kicker, verdict, scanRes, userLi) {
+    if (!r) return '<div class="rv"><div class="rv-h"><b>' + esc(kicker) + '</b><span class="sp"></span><span class="rv-st bad">NO RESULT</span></div></div>';
+    const score = r.score, m = r.metrics || {}, parts = r.parts;
     const okRows = S.zetaRuns.filter((x) => x.ok && Number.isFinite(x.score));
-    if (r.ok && Number.isFinite(score)) {
-      if (okRows.length === 0) rankTxt = 'no table data';
-      else {
-        const rank = 1 + okRows.filter((x) => x.score < score).length;
-        rankTxt = '#' + rank + ' / ' + (okRows.length + 1);
-      }
-    } else {
-      rankTxt = 'N/A (failed run)';
-    }
-
-    let html = '<div class="so-result">';
-    html += '<div class="so-score-line">';
-    html += '<div><span class="so-label">Score</span><span class="so-value">' + (Number.isFinite(score) ? score.toFixed(3) : '–') + '</span></div>';
-    html += '<div><span class="so-label">Rank (vs table)</span><span class="so-value">' + esc(rankTxt) + '</span></div>';
-    html += '<div><span class="so-label">Status</span><span class="so-value">' + (r.ok ? '<span class="ok">OK</span>' : '<span class="bad">FAIL</span>') + '</span></div>';
-    html += '</div>';
-
+    let rankTxt = '—';
+    if (r.ok && Number.isFinite(score)) rankTxt = okRows.length ? '#' + (1 + okRows.filter((x) => x.score < score).length) + ' / ' + (okRows.length + 1) : 'no table';
+    else rankTxt = 'n/a';
+    const f = (x, d) => Number.isFinite(x) ? x.toFixed(d) : '—';
+    let t = '<div class="rv"><div class="rv-h"><b>' + esc(kicker) + '</b>' +
+      '<span class="in">MECO ' + inputs.meco + ' · G ' + inputs.G + ' · T ' + inputs.T + ' · bias ' + inputs.bias + '</span><span class="sp"></span>' +
+      '<span class="rv-st ' + (r.ok ? 'ok' : 'bad') + '">' + (r.ok ? 'OK' : 'FAIL') + '</span></div>';
+    t += '<div class="rv-kpi">' +
+      '<div><span>Score</span><b class="c">' + f(score, 3) + '</b></div>' +
+      '<div><span>Rank vs table</span><b>' + esc(rankTxt) + '</b></div>' +
+      '<div><span>Lead</span><b class="a">' + f(r.lead, 4) + '<small>s</small></b></div>' +
+      '<div><span>Apogee</span><b>' + f(m.apogeeKm, 2) + '<small>km</small></b></div>' +
+      '<div><span>Perigee</span><b>' + f(m.perigeeKm, 2) + '<small>km</small></b></div>' +
+      '<div><span>Deploy</span><b>' + f(m.deployTimeS, 1) + '<small>s</small></b></div>' +
+      '<div><span>Booster fuel</span><b>' + f(m.boosterFuelLeftKg, 0) + '<small>kg</small></b></div></div>';
+    if (verdict) t += verdict;
     if (r.ok && parts) {
-      html += '<table class="so-parts"><thead><tr><th>Component</th><th>Value</th><th>Contribution</th></tr></thead><tbody>';
-      html += _soRow('Apogee', m.apogeeKm != null ? m.apogeeKm.toFixed(3) + ' km' : '–', parts.apogee);
-      html += _soRow('Perigee', m.perigeeKm != null ? m.perigeeKm.toFixed(3) + ' km' : '–', parts.perigee);
-      html += _soRow('Eccentricity', m.ecc != null ? m.ecc.toExponential(2) : '–', parts.ecc);
-      html += _soRow('Booster fuel left', Number.isFinite(m.boosterFuelLeftKg) ? m.boosterFuelLeftKg.toFixed(0) + ' kg' : '—', Number.isFinite(m.boosterFuelLeftKg) ? parts.fuel : null);
-      html += _soRow('Deploy time', m.deployTimeS != null ? m.deployTimeS.toFixed(2) + ' s' : '–', parts.time);
-      html += _soRow('vrSoft (tie-breaker)', Number.isFinite(m.vrMin) ? m.vrMin.toFixed(4) : '—', Number.isFinite(m.vrMin) ? parts.vrSoft : null);
-      html += '<tr class="total"><td>Total</td><td></td><td>' + score.toFixed(3) + '</td></tr>';
-      html += '</tbody></table>';
+      t += '<div class="rv-sec">Score components</div><div class="rv-tw"><table class="rv-t parts"><thead><tr><th>Component</th><th>Value</th><th>Contribution</th></tr></thead><tbody>';
+      t += _soRow('Apogee', m.apogeeKm != null ? m.apogeeKm.toFixed(3) + ' km' : '–', parts.apogee);
+      t += _soRow('Perigee', m.perigeeKm != null ? m.perigeeKm.toFixed(3) + ' km' : '–', parts.perigee);
+      t += _soRow('Eccentricity', m.ecc != null ? m.ecc.toExponential(2) : '–', parts.ecc);
+      t += _soRow('Booster fuel left', Number.isFinite(m.boosterFuelLeftKg) ? m.boosterFuelLeftKg.toFixed(0) + ' kg' : '—', Number.isFinite(m.boosterFuelLeftKg) ? parts.fuel : null);
+      t += _soRow('Deploy time', m.deployTimeS != null ? m.deployTimeS.toFixed(2) + ' s' : '–', parts.time);
+      t += _soRow('vrSoft (tie-breaker)', Number.isFinite(m.vrMin) ? m.vrMin.toFixed(4) : '—', Number.isFinite(m.vrMin) ? parts.vrSoft : null);
+      t += '<tr class="total"><td>Total</td><td></td><td>' + score.toFixed(3) + '</td></tr></tbody></table></div>';
     } else {
-      html += '<div class="dim" style="font-size:11.5px;margin:6px 0;">No component breakdown — run failed hard constraints (crash / no payload clear / orbit / residual / maxQ).</div>';
-      if (r.reasons && r.reasons.length) html += '<div class="bad" style="font-size:11.5px;">' + esc(r.reasons.join(', ')) + '</div>';
+      t += '<div class="rv-vd bad"><span class="k">Hard fail</span>' + (r.reasons && r.reasons.length ? esc(r.reasons.join(', ')) : 'no component breakdown (crash / no payload clear / orbit / residual / maxQ)') + '</div>';
     }
-
-    html += '<div class="so-meta">';
-    if (Number.isFinite(r.lead)) html += '<span>lead <b>' + r.lead.toFixed(4) + ' s</b></span>';
-    if (Number.isFinite(r.margin)) html += '<span>margin <b>' + r.margin.toFixed(2) + ' s</b></span>';
-    if (Number.isFinite(r.vrEnd)) html += '<span>vrEnd <b>' + r.vrEnd.toFixed(4) + '</b></span>';
-    if (Number.isFinite(m.stageResidualKg)) html += '<span>residual <b>' + m.stageResidualKg.toFixed(1) + ' kg</b></span>';
-    if (Number.isFinite(m.maxG)) html += '<span>maxG <b>' + m.maxG.toFixed(3) + '</b></span>';
-    if (Number.isFinite(m.maxQKPa)) html += '<span>maxQ <b>' + m.maxQKPa.toFixed(2) + ' kPa</b></span>';
-    html += '</div>';
-    html += '</div>';
-    host.innerHTML = html;
+    if (scanRes) t += scanHtml(scanRes, userLi);
+    let meta = '';
+    if (Number.isFinite(r.margin)) meta += '<span>margin <b>' + r.margin.toFixed(2) + ' s</b></span>';
+    if (Number.isFinite(r.vrEnd)) meta += '<span>vrEnd <b>' + r.vrEnd.toFixed(4) + '</b></span>';
+    if (Number.isFinite(m.stageResidualKg)) meta += '<span>residual <b>' + m.stageResidualKg.toFixed(1) + ' kg</b></span>';
+    if (Number.isFinite(m.maxG)) meta += '<span>maxG <b>' + m.maxG.toFixed(3) + '</b></span>';
+    if (Number.isFinite(m.maxQKPa)) meta += '<span>maxQ <b>' + m.maxQKPa.toFixed(2) + ' kPa</b></span>';
+    if (meta) t += '<div class="rv-meta">' + meta + '</div>';
+    return t + '</div>';
   }
+  // Result lives in the CONVO-LEAD section: kept in S.convoView so it comes back when the tab is re-opened, replaced by a wait card while a run is active.
+  function setConvoView(html) { S.convoView = html; const el = $('cResult'); if (el) el.innerHTML = html; }
+  function convoWait(txt) { setConvoView('<div class="rv-wait">' + esc(txt) + '</div>'); }
 
   $('soRun').addEventListener('click', runScoreOwn);
 
@@ -1822,6 +1884,36 @@
     console.error(e);
     $('lockStatus').innerHTML = '<span class="bad">boot: ' + esc(e.message) + '</span>';
   }
+})();
+</script>
+<script>
+/* SERENO FLUX page hooks for engine-fx.js (shared file): lead-search telemetry + labels live here, not in the common script */
+window.FXHooks = (function () {
+  var S = { cross: 0, full: 0, best: NaN, bestLi: null, mode: '—', edge: null, win: '—' };
+  function reset() { S.cross = 0; S.full = 0; S.best = NaN; S.bestLi = null; S.mode = '—'; S.edge = null; S.win = '—'; }
+  function onProgress(msg) {
+    var d = String(msg.detail == null ? '' : msg.detail), m;
+    if (msg.phase === 'lead') { if (/^cross li=\d+ ->/.test(d)) S.cross++; return; }
+    if (msg.phase !== 'leadlog') return;
+    if ((m = /^FULL li=(\d+) -> .*?score=(-?[\d.]+(?:e[+-]?\d+)?)/i.exec(d))) { S.full++; var sc = +m[2]; if (isFinite(sc) && !(sc >= S.best)) { S.best = sc; S.bestLi = m[1]; } }
+    else if ((m = /mode=(\w+) window (\d+)\.\.(\d+) \((\d+) ticks/.exec(d))) { S.mode = m[1]; S.win = 'li ' + m[2] + '…' + m[3] + ' (' + m[4] + ')'; }
+    else if ((m = /raw \d+\|\d+: li (\d+) .*FULL done true/.exec(d))) S.edge = m[1];
+  }
+  return {
+    logTags: ['SCORE-OWN'],
+    onProgress: onProgress,
+    onReset: reset,
+    tm: { convo: {
+      labels: ['evals · cheap / FULL', 'mode · edge', 'window', 'best score'],
+      values: function () { return [S.cross + ' / ' + S.full, S.mode + (S.edge != null ? ' · li ' + S.edge : ''), S.win, isFinite(S.best) ? (+S.best.toFixed(2)) + ' @ li ' + S.bestLi : '—']; }
+    } },
+    describe: function (job, a) {
+      var p = job.payload || {};
+      if (job.type === 'leadEdge') a.unshift(p.full ? 'lead search' : 'edge search');
+      if (job.type === 'leadFull') a.unshift('lead FULL ×' + ((p.lis && p.lis.length) || 0));
+      if (p.fixedLead != null) a.push('lead ' + (+p.fixedLead).toFixed(4));
+    }
+  };
 })();
 </script>
 <script src="visJs/engine-fx.js"></script>

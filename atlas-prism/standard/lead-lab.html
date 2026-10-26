@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Lead Lab</title>
+<style>
+body{font:13px/1.5 monospace;background:#0b0e14;color:#cfd6e4;margin:0;padding:12px}
+label{display:inline-block;margin:0 10px 8px 0}input,select{background:#141a26;color:#cfd6e4;border:1px solid #2a3550;padding:4px;width:90px}
+select{width:auto}button{background:#1d2a44;color:#cfd6e4;border:1px solid #3a4c78;padding:6px 12px;cursor:pointer}button:disabled{opacity:.5}
+h2{font-size:14px;margin:14px 0 8px}pre{white-space:pre-wrap;font-size:11.5px;background:#0f1420;padding:8px;border:1px solid #1f2940}
+.dim{color:#7d889f}.bad{color:#ff6b6b}
+</style></head><body>
+<h2>Lead Lab &middot; tuneLeadV2 test</h2>
+<div><label>stack <select id="stackSel"></select></label>
+<label>apside 1 km <input type="number" id="apoKm" value="320"></label>
+<label>apside 2 km <input type="number" id="periKm" value="320"></label>
+<button id="lockBtn">LOCK</button> <span class="dim" id="lockStatus"></span></div>
+<div id="lab" style="display:none">
+<div><label>MECO kg <input type="number" id="llMeco" value="52612"></label>
+<label>G <input type="number" id="llG" step="0.01" value="0.64"></label>
+<label>T <input type="number" id="llT" step="0.001" value="4.82"></label>
+<label>bias <input type="number" id="llBias" step="0.001" value="0.827"></label>
+<label>start li <input type="number" id="llLi0" placeholder="auto"></label>
+<label>max release t (s) <input type="number" id="llM" value="20"></label></div>
+<div><label>sweep from li <input type="number" id="llFrom"></label>
+<label>to li <input type="number" id="llTo"></label>
+<button id="llSearch">Search</button> <button id="llSweep">Sweep</button> <span class="dim" id="llStatus"></span></div>
+<pre id="llLive" style="max-height:220px;overflow:auto"></pre>
+<pre id="llOut"></pre></div>
+<script src="../../js/componentLibrary.js"></script>
+<script src="../../js/customDesign.js"></script>
+<script src="../../js/fleet.js"></script>
+<script src="../../js/config.js"></script>
+<script src="../../js/simJs/core/massProps.js"></script>
+<script src="../../js/guideConfigDefaults.js"></script>
+<script src="../lib/config.js"></script>
+<script src="../lib/worker-pool.js"></script>
+<script>
+(function () {
+  'use strict';
+  const $ = (id) => document.getElementById(id);
+  const S = { pool: null, poolReady: false, running: false, orbitKm: 320, orbitApoKm: 320, orbitPeriKm: 320 };
+  const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const stacks = (typeof loadStacks === 'function' ? loadStacks() : []).filter((s) => s && s.sequence === 'standard' && s.locked);
+  $('stackSel').innerHTML = stacks.length ? stacks.map((s) => '<option value="' + esc(s.id) + '">' + esc(s.name) + '</option>').join('') : '<option value="">(no eligible stacks)</option>';
+  function saValuesFor(meco, G, T, bias, lead) {
+    const a1 = S.orbitApoKm, a2 = S.orbitPeriKm;
+    return { ascent: { PUSH_MAX_GIMBAL_DEG: G, PUSH_T_S: T, MECO_TARGET_BOOSTER_FUEL_KG: meco },
+      insertion: { TARGET_ORBIT_ALT_KM: a1, TARGET_APSIDE1_ALT_KM: a1, TARGET_APSIDE2_ALT_KM: a2, STAGE_BURN_AOA_BIAS_DEG: bias, CIRC_TRIGGER_LEAD_S: lead },
+      done: { DEORBIT_ENABLED: !!TunerConfig.fixed.deorbitEnabled } };
+  }
+  async function ensureSA(values) {
+    const rs = await Promise.all(Array.from({ length: S.pool.n }, () => S.pool.runJob('setupSA', { values })));
+    if (!rs.some((r) => r.ok)) throw new Error('setupSA failed on all workers');
+  }
+  $('lockBtn').addEventListener('click', async () => {
+    const id = $('stackSel').value, apo = parseInt($('apoKm').value, 10), peri = parseInt($('periKm').value, 10);
+    if (!id || !(apo >= 150) || !(peri >= 150)) { $('lockStatus').innerHTML = '<span class="bad">pick stack, apsides >= 150</span>'; return; }
+    try { setSelectedStackId(id); } catch (e) {}
+    S.orbitKm = apo; S.orbitApoKm = apo; S.orbitPeriKm = peri;
+    $('lockBtn').disabled = true; $('lockStatus').textContent = 'starting workers…';
+    const n = 1;
+    S.pool = new TunerCore.WorkerPool(n, { workerPath: '../lib/worker-sim.js' });
+    S.pool.onProgress = (m) => { const e = $('llLive'); e.textContent += (m.phase || '') + ' ' + (m.detail || '') + '\n'; e.scrollTop = e.scrollHeight; };
+    await S.pool.waitReady(); S.poolReady = true;
+    $('lockStatus').textContent = 'LOCKED · 1 worker'; $('lab').style.display = 'block';
+  });
+  // ---- Lead Lab (tuneLeadV2 test) ----
+  async function llRun(op) {
+    if (S.running) return;
+    if (!S.pool || !S.poolReady) { alert('pool not ready'); return; }
+    const num = (id) => { const v = $(id).value.trim(); return v === '' ? null : parseFloat(v); };
+    const meco = parseInt($('llMeco').value, 10), G = num('llG'), T = num('llT'), bias = num('llBias');
+    if (![meco, G, T, bias].every(Number.isFinite)) { $('llStatus').textContent = 'invalid MECO/G/T/bias'; return; }
+    const li0 = num('llLi0'), from = num('llFrom'), to = num('llTo');
+    if (op === 'sweep' && (from == null || to == null)) { $('llStatus').textContent = 'set sweep from/to'; return; }
+    S.running = true; $('llSearch').disabled = $('llSweep').disabled = true; $('llOut').textContent = ''; $('llLive').textContent = ''; $('llStatus').textContent = 'running ' + op + '…';
+    try {
+      await ensureSA(saValuesFor(meco, G, T, bias, 5.525));
+      const r = await S.pool.runJob('leadLab', { op, bias, altKm: S.orbitKm, altApoKm: S.orbitApoKm, altPeriKm: S.orbitPeriKm, li0, from, to, marginMaxS: num('llM') || 20 });
+      const f = (x, d) => Number.isFinite(x) ? x.toFixed(d) : '—';
+      let t = '';
+      if (!r || r.ok === false && !r.rows && r.reason) t = 'FAIL: ' + (r && r.reason);
+      else if (r.op === 'sweep') {
+        const sc = r.rows.filter((x) => Number.isFinite(x.score)), best = sc.reduce((a, b) => (!a || b.score < a.score) ? b : a, null);
+        t = 'li   lead     cross tApo   tPeri  done  score' + '\n' + r.rows.map((x) => String(x.li).padEnd(5) + f(x.lead, 4).padEnd(9) + String(x.cross).padEnd(6) + f(x.tToApo, 1).padEnd(7) + f(x.tToPeri, 1).padEnd(7) + (x.done ? 'Y' : 'n').padEnd(6) + f(x.score, 2) + (best && x === best ? '  <= BEST' : '')).join('\n');
+      } else {
+        t = (r.ok ? 'OK' : 'NOT OK: ' + r.reason) + '\nmode=' + r.mode + '  edge pair=' + (r.edge || []).join(' | ') + '  window=' + (r.window || []).join('..') +
+          '\nbest li=' + r.leadTicks + '  score=' + f(r.bestScore, 2) + '\nevals=' + r.evals + ' (cross ' + r.crossEvals + ', full ' + r.fullEvals + ')  wall=' + f(r.wallMs / 1000, 1) + 's\n' + (r.log || []).join('\n');
+        if (r.window) { $('llFrom').value = Math.max(0, Math.min(...r.window) - 2); $('llTo').value = Math.max(...r.window) + 2; }
+      }
+      $('llOut').textContent = t; $('llStatus').textContent = 'done';
+    } catch (e) { $('llStatus').textContent = 'ERROR: ' + e.message; }
+    finally { S.running = false; $('llSearch').disabled = $('llSweep').disabled = false; }
+  }
+  $('llSearch').addEventListener('click', () => llRun('search'));
+  $('llSweep').addEventListener('click', () => llRun('sweep'));
+
+})();
+</script></body></html>

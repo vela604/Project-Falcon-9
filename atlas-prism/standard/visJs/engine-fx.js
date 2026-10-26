@@ -10,6 +10,9 @@
   var $ = function (id) { return document.getElementById(id); };
   var body = document.body;
   body.classList.add('fx');
+  // optional page hooks: window.FXHooks = { logTags:[], onProgress(msg), onReset(), tm:{ phaseKey:{ labels:[4], values(ctx)->[4] } }, describe(job, parts) }
+  var HK = window.FXHooks || {};
+  var EXTRA_TAGS = (HK.logTags && HK.logTags.length) ? HK.logTags.join('|') + '|' : '';
   var T = { evals: 0, evalTs: [], lead: '—', margin: '—' };          // per-phase counters (reset on tab change)
   var W = { pool: null, n: 0, slots: [], rate: 0, evalRate: 0, last: 0, lastT: 0, timer: 0, ran: false, raf: 0, active: false, t0: 0, t1: 0 };
 
@@ -26,7 +29,7 @@
   var TOK = new RegExp([
     '(&#?\\w+;)',                                                                   // 1 entity: skip
     '(^\\[\\d\\d:\\d\\d:\\d\\d\\])',                                                // 2 timestamp
-    '(ZETA\\[batch \\d+\\]|OPT-MECO|FIND RANGE|CONVO-LEAD|CONVO|ZETA|setupSA|PHASE [A-D]|bootstrap)', // 3 phase tag
+    '(' + EXTRA_TAGS + 'ZETA\\[batch \\d+\\]|OPT-MECO|FIND RANGE|CONVO-LEAD|CONVO|ZETA|setupSA|PHASE [A-D]|bootstrap)', // 3 phase tag
     '([A-Za-z_][A-Za-z_0-9]*)(?==)',                                                // 4 key=
     '(-?\\d+(?:\\.\\d+)?(?:e[+-]?\\d+)?)',                                          // 5 number
     '(✓|\\bok\\b|\\bready\\b|\\bdone\\b|\\bcomplete\\b|\\bverified\\b)',            // 6 good
@@ -101,7 +104,7 @@
     var k = a ? a.getAttribute('data-tab') : '';
     setText('stPhaseN', a ? (PHASE[k] || '—') : '—');
     setText('tmPhaseLbl', ({ optmeco: 'meco', zeta: 'zeta', convo: 'convo' }[k] || 'run') + ' elapsed');
-    if (k !== phaseKey) { phaseKey = k; T.evals = 0; T.evalTs = []; T.lead = '—'; T.margin = '—'; }
+    if (k !== phaseKey) { phaseKey = k; T.evals = 0; T.evalTs = []; T.lead = '—'; T.margin = '—'; if (HK.onReset) { try { HK.onReset(); } catch (x) {} } }
     requestPaint();
   }
   var phaseKey = '';
@@ -154,6 +157,7 @@
     if (k === 'optmeco') v = [T.evals, q, W.evalRate.toFixed(2), busy];
     else if (k === 'zeta') v = [mr ? mr[1] : '0', bt ? bt.textContent : '—', mb ? mb[1] : '0', busy];
     else v = [T.evals, T.lead, T.margin, busy];
+    if (HK.tm && HK.tm[k]) { try { var hv = HK.tm[k].values({ busy: busy, evals: T.evals }); L = HK.tm[k].labels; v = hv; } catch (x) {} }
     for (var i = 0; i < 4; i++) { setText('tmL' + (i + 1), L[i]); setText('tmV' + (i + 1), String(v[i])); }
   }
 
@@ -171,6 +175,7 @@
     if (pt.Gi != null) a.push('G ' + num(pt.Gi));
     if (pt.Tn != null) a.push('T ' + num(pt.Tn));
     if (p.bias != null) a.push('bias ' + (+p.bias).toFixed(4));
+    if (HK.describe) { try { HK.describe(job, a); } catch (x) {} }
     return a.join(' · ') || job.type;
   }
   function newSlot() { return { state: 'boot', job: '', desc: '', detail: '', dts: 0, t0: 0, done: 0, ticks: 0, sim: 0, busyMs: 0, share: 0, res: false, el: null, c: {}, p: {}, bench: null }; }
@@ -196,7 +201,7 @@
   function obsMsg(pool, i, msg) {
     if (pool !== W.pool) return;
     var s = W.slots[i]; if (!s) return;
-    if (msg.type === 'progress') { s.detail = String(msg.detail == null ? '' : msg.detail); s.dts = Date.now(); }
+    if (msg.type === 'progress') { s.detail = String(msg.detail == null ? '' : msg.detail); s.dts = Date.now(); if (HK.onProgress) { try { HK.onProgress(msg); } catch (x) {} } }
     else if (msg.type === 'ops') { s.ticks += +msg.n || 0; s.sim += +msg.s || 0; }
     else if (msg.type === 'prof') {   // telemetry from worker-sim.js (timers + bench); read-only
       if (msg.d) for (var pk in msg.d) s.p[pk] = (s.p[pk] || 0) + (+msg.d[pk] || 0);
@@ -218,7 +223,7 @@
   /* a run starts when work is dispatched while an engine's Run button is disabled (lock warm-up is not a run) */
   function startRun() {
     W.active = true; W.t0 = Date.now(); W.t1 = 0; W.rate = 0; W.evalRate = 0; W.last = 0; W.lastT = W.t0;
-    T.evals = 0; T.evalTs = [];
+    T.evals = 0; T.evalTs = []; if (HK.onReset) { try { HK.onReset(); } catch (x) {} }
     for (var i = 0; i < W.slots.length; i++) { var s = W.slots[i]; s.ticks = 0; s.sim = 0; s.done = 0; s.busyMs = 0; s.share = 0; s.res = false; s.p = {}; }
     var sm = $('wkSum'); if (sm) sm.textContent = '';
   }

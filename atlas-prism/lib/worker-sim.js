@@ -20,6 +20,46 @@ self.window = self;
 // ---- progress emit ----
 const _workerTag = 'w' + Math.random().toString(36).slice(2, 6);
 let _jobSeq = 0;
+// Lead runner from a CH snapshot: CIRC start -> COAST_HOLD_2 start counting vr sign changes (apside crossings); full=true continues to payloadCleared and scores.
+function makeLeadRunner(chSnap, bias, tg) {
+  const Q = TunerConfig.quanta;
+  return (li, full) => {
+            emit('lead', (full ? 'FULL' : 'cross') + ' li=' + li + ' running…');
+            restoreSnap(chSnap, bias, li * Q.lead);
+            let cr = 0, prev = 0, seen = false, hold = false, off = false, done = false, tApo = NaN, tPeri = NaN, marg = NaN;
+            for (let k = 0, n = Math.ceil(600 / CONFIG.DT); k < n; k++) {
+              if (state.halted) break;
+              TunerEngine.tick(CONFIG.DT);
+              const gs = Guidance.getGuideStatus(), stb = findStageBody();
+              if (!gs || !stb) continue;
+              if (gs.phase === 'CIRCULARIZE') seen = true;
+              if (gs.phase === 'COAST_HOLD_2') { hold = true; if (!full) break; }
+              if (seen && !hold) {
+                const r = Math.hypot(stb.rx, stb.ry), vr = (stb.vx * stb.rx + stb.vy * stb.ry) / r, s = vr > 0 ? 1 : (vr < 0 ? -1 : 0);
+                if (s && prev && s !== prev) cr++;
+                if (s) prev = s;
+                if (!off && gs.circAchieved) {
+                  let md = 0; const en = stb.engines; if (en) for (let q = 0; q < en.length; q++) md += en[q].massFlowRate || 0;
+                  if (md <= 1e-9) { off = true; const o = TunerHook.orbitOf(stb, CONFIG.GM_EARTH, CONFIG.EARTH_RADIUS); tApo = o.tToApo; tPeri = o.tToPeri; marg = !(o.vr < 0) ? o.tToApo : (Number.isFinite(o.periodS) ? o.tToApo - o.periodS : NaN); }
+                }
+              }
+              if (full && gs.payloadCleared) { done = true; break; }
+            }
+            const out = { li, lead: li * Q.lead, cross: hold ? cr : NaN, tToApo: tApo, tToPeri: tPeri, marginS: marg, done };
+            if (!full) { emit('lead', 'cross li=' + li + ' -> cross=' + out.cross + ' tApo=' + tApo.toFixed(1) + ' tPeri=' + tPeri.toFixed(1)); return out; }
+            const gsE = Guidance.getGuideStatus(), stb = findStageBody();
+            let bf = NaN;
+            for (const b of state.bodies) { if (b && !b.payloadBody && !b.fairingHalf && b.members && b.members[0] && b.members[0].stageRole === 'booster') { bf = (Array.isArray(b.memberFuel) && Number.isFinite(b.memberFuel[0])) ? b.memberFuel[0] : b.fuelMass; break; } }
+            const m = { endReason: done ? 'CLEARED' : 'CAP', crashed: !!state.crashed, payloadReleased: done, payloadCleared: done, deployTimeS: gsE.deployCommandSimTime, apogeeKm: NaN, perigeeKm: NaN, ecc: NaN, boosterFuelLeftKg: bf, stageResidualKg: stb ? stb.fuelMass : NaN, maxQKPa: NaN, maxG: NaN };
+            const pb = state.bodies.find((x) => x && x.payloadBody);
+            if (pb) { const o = TunerHook.orbitOf(pb, CONFIG.GM_EARTH, CONFIG.EARTH_RADIUS); m.apogeeKm = o.apoKm; m.perigeeKm = o.periKm; m.ecc = o.ecc; }
+            const sc = TunerUtils.score(m, tg);
+            out.score = sc.score; out.ok = sc.ok; out.reasons = sc.reasons; out.apoKm = m.apogeeKm; out.periKm = m.perigeeKm; out.deployS = m.deployTimeS;
+            emit('leadlog', 'FULL li=' + li + ' -> cross=' + out.cross + ' done=' + done + ' score=' + (Number.isFinite(sc.score) ? sc.score.toFixed(1) : sc.score) + ' deployS=' + (Number.isFinite(m.deployTimeS) ? m.deployTimeS.toFixed(1) : '-') + ' apo=' + (Number.isFinite(m.apogeeKm) ? m.apogeeKm.toFixed(1) : '-') + ' peri=' + (Number.isFinite(m.perigeeKm) ? m.perigeeKm.toFixed(1) : '-'));
+            return out;
+          };
+}
+
 function emit(phase, detail) {
   try { self.postMessage({ type: 'progress', tag: _workerTag, phase, detail, ts: Date.now() }); } catch (e) {}
 }
@@ -78,6 +118,32 @@ function deepClone(x, memo) {
 }
 
 let _saSnapshot = null;
+
+// COAST_HOLD snapshot cache (per worker): leadEdge / leadFull / probeBiasCheckpoint reuse it for the same SA snapshot + bias.
+let _chCache = { sa: null, bias: null, snap: null, eCoast: NaN };
+function getCH(bias, chCapS) {
+  if (_chCache.snap && _chCache.sa === _saSnapshot && _chCache.bias === bias) return { ok: true, snap: _chCache.snap, eCoast: _chCache.eCoast, cached: true };
+  restoreSnap(_saSnapshot, bias, null);
+  let eCoast = NaN, ok = false;
+  for (let i = 0, n = Math.ceil((chCapS || 4000) / CONFIG.DT); i < n; i++) {
+    if (state.halted) break;
+    TunerEngine.tick(CONFIG.DT);
+    const gs = Guidance.getGuideStatus();
+    if (!Number.isFinite(eCoast) && gs && gs.phase === 'COAST_WAIT') {
+      const b = findStageBody();
+      if (b) {
+        const r = Math.hypot(b.rx, b.ry), vr = (b.vx * b.rx + b.vy * b.ry) / r, vt = (b.vx * b.ry - b.vy * b.rx) / r;
+        const E = 0.5 * (vr * vr + vt * vt) - CONFIG.GM_EARTH / r, h = r * vt;
+        eCoast = Math.sqrt(Math.max(0, 1 + 2 * E * h * h / (CONFIG.GM_EARTH * CONFIG.GM_EARTH)));
+      }
+    }
+    if (gs && gs.phase === 'COAST_HOLD') { ok = true; break; }
+  }
+  if (!ok) return { ok: false, reason: 'CH not reached: ' + phaseNow() + (state.halted ? ' (halted)' : '') };
+  const snap = captureSnap();
+  _chCache = { sa: _saSnapshot, bias, snap, eCoast };
+  return { ok: true, snap, eCoast, cached: false };
+}
 
 function captureSnap() {
   const st = {};
@@ -621,6 +687,61 @@ self.onmessage = async (e) => {
         maxG: mm.maxG, maxQKPa: mm.maxQKPa, maxOmega: mm.maxOmega,
         log: (lr.log || []).slice(-40),
       };
+    } else if (type === 'leadEdge' || type === 'leadFull') {
+      // Parallel lead search. leadEdge: edge + mode + window (tuneLeadV2 windowOnly) on this worker. leadFull: FULL-score a list of lead ticks (payload.lis; [] = just warm the CH cache).
+      if (!_saSnapshot) { result = { ok: false, reason: 'no SA snapshot' }; }
+      else {
+        const t0 = performance.now(), Q = TunerConfig.quanta, bias = payload.bias, altKm = payload.altKm != null ? payload.altKm : 320;
+        const tg = { targetAltKm: altKm, targetApoKm: payload.altApoKm != null ? payload.altApoKm : altKm, targetPeriKm: payload.altPeriKm != null ? payload.altPeriKm : altKm };
+        emit('lead', 'run to COAST_HOLD…');
+        const chr = getCH(bias, payload.chCapS || 4000);
+        if (!chr.ok) { result = { ok: false, reason: chr.reason }; }
+        else {
+          emit('lead', chr.cached ? 'CH cached, ready' : 'CH ready t=' + chr.snap.simTime.toFixed(1));
+          const run = makeLeadRunner(chr.snap, bias, tg);
+          if (type === 'leadFull') {
+            const rows = [], lis = payload.lis || [];
+            for (let i = 0; i < lis.length; i++) { emit('lead', 'FULL ' + (i + 1) + '/' + lis.length + ' li=' + lis[i] + ' running…'); rows.push(run(lis[i], true)); }
+            result = { ok: true, rows, wallMs: performance.now() - t0 };
+          } else {
+            const li0 = payload.li0 != null ? payload.li0 : Math.round(Guidance.getGuideConfig('leoInsertionV3').insertion.CIRC_TRIGGER_LEAD_S / Q.lead);
+            const r = await TunerCore.tuneLeadV2({ li0, marginMaxS: payload.marginMaxS || 20, windowOnly: !payload.full,
+              onLog: (s) => emit('leadlog', 'edge search: ' + s), cross: async (li) => run(li, false), full: async (li) => run(li, true) });
+            result = Object.assign({ li0, wallMs: performance.now() - t0 }, r);
+          }
+        }
+      }
+    } else if (type === 'leadLab') {
+      // Lead Lab (test): restore SA -> CH once, then op 'search' (TunerCore.tuneLeadV2) or 'sweep' (ground truth, FULL score for li in [from,to]).
+      if (!_saSnapshot) { result = { ok: false, reason: 'no SA snapshot' }; }
+      else {
+        const t0 = performance.now(), Q = TunerConfig.quanta, bias = payload.bias, altKm = payload.altKm != null ? payload.altKm : 320;
+        const tg = { targetAltKm: altKm, targetApoKm: payload.altApoKm != null ? payload.altApoKm : altKm, targetPeriKm: payload.altPeriKm != null ? payload.altPeriKm : altKm };
+        emit('lab', 'restore SA + run to COAST_HOLD…');
+        restoreSnap(_saSnapshot, bias, null);
+        let okCH = false;
+        for (let i = 0, n = Math.ceil((payload.chCapS || 4000) / CONFIG.DT); i < n; i++) {
+          if (state.halted) break;
+          TunerEngine.tick(CONFIG.DT);
+          const g = Guidance.getGuideStatus();
+          if (g && g.phase === 'COAST_HOLD') { okCH = true; break; }
+        }
+        if (!okCH) { result = { ok: false, reason: 'CH not reached: ' + phaseNow() }; }
+        else {
+          const chSnap = captureSnap();
+          emit('lab', 'CH reached t=' + chSnap.simTime.toFixed(1));
+          const runLead = makeLeadRunner(chSnap, bias, tg);
+          if (payload.op === 'sweep') {
+            const rows = [], a = payload.from, b = Math.min(payload.to, a + 59);
+            for (let li = a; li <= b; li++) rows.push(runLead(li, true));
+            result = { ok: true, op: 'sweep', rows, wallMs: performance.now() - t0 };
+          } else {
+            const li0 = payload.li0 != null ? payload.li0 : Math.round(Guidance.getGuideConfig('leoInsertionV3').insertion.CIRC_TRIGGER_LEAD_S / Q.lead);
+            const r = await TunerCore.tuneLeadV2({ li0, marginMaxS: payload.marginMaxS || 20, onLog: (s) => emit('lab', '>> ' + s), cross: (li) => runLead(li, false), full: (li) => runLead(li, true) });
+            result = Object.assign({ op: 'search', li0, wallMs: performance.now() - t0 }, r);
+          }
+        }
+      }
     } else if (type === 'traceRun') {
       // Full-mission trace for gimbal-accel comparison (a sweep via the test-only CONFIG.GIMBAL_ACCEL_OVERRIDE;
       // Infinity = unlimited accel baseline, undefined/omitted = thruster-type value).
@@ -711,38 +832,17 @@ self.onmessage = async (e) => {
         // ---- 1. Restore SA + bias, run to COAST_HOLD ----
         // (inline loop so we can snag eCoast when COAST_WAIT is entered — needed by SERENO FLUX table)
         emit('probe', tag + ' restore+runToCH');
-        restoreSnap(_saSnapshot, newBias, null);
         const _pc0 = performance.now(), _pk0 = _tk;
-        let okCH = false;
-        let eCoastAtCW = NaN;
-        // CH is reached ~tToApo after COAST_WAIT -> 800 s is wrong above ~500 km (2000 km: CH at ~1890 s).
-        // Was max(800, suggestDurationCap(alt)) = 800 s at 320 km -> long-coast points (tToApo 1300-1700 s) never reached CH. Hook grows its cap dynamically; here use a hard ceiling (loop breaks at CH anyway).
         const _chCapS = payload.chCapS || 4000;
-        const _chTicks = Math.ceil(_chCapS / CONFIG.DT);
-        for (let _i = 0; _i < _chTicks; _i++) {
-          if (state.halted) break;
-          TunerEngine.tick(CONFIG.DT);
-          const _gs = Guidance.getGuideStatus();
-          if (!Number.isFinite(eCoastAtCW) && _gs && _gs.phase === 'COAST_WAIT') {
-            const _stb = findStageBody();
-            if (_stb) {
-              const _r = Math.hypot(_stb.rx, _stb.ry);
-              const _vr = (_stb.vx * _stb.rx + _stb.vy * _stb.ry) / _r;
-              const _vt = (_stb.vx * _stb.ry - _stb.vy * _stb.rx) / _r;
-              const _E = 0.5 * (_vr*_vr + _vt*_vt) - CONFIG.GM_EARTH / _r;
-              const _h = _r * _vt;
-              eCoastAtCW = Math.sqrt(Math.max(0, 1 + 2 * _E * _h * _h / (CONFIG.GM_EARTH * CONFIG.GM_EARTH)));
-            }
-          }
-          if (_gs && _gs.phase === 'COAST_HOLD') { okCH = true; break; }
-        }
+        const _chr = getCH(newBias, _chCapS);   // cached per worker for same SA + bias
+        const okCH = _chr.ok, eCoastAtCW = _chr.eCoast;
         _P.ch += performance.now() - _pc0; _P.chT += _tk - _pk0;
         if (!okCH) {
           emit('probe', tag + ' CH_FAIL ' + phaseNow() + (state.halted ? ' HALTED' : ' CAP@' + _chCapS + 's'));
           result = { ok: false, reason: 'CH not reached: ' + phaseNow() + (state.halted ? ' (halted)' : ' (cap ' + _chCapS + 's)') };
         } else {
           // ---- 2. Capture local CH snapshot ----
-          const chSnap = captureSnap();
+          const chSnap = _chr.snap;
           emit('probe', tag + ' CH captured t=' + chSnap.simTime.toFixed(2) + (fixedLead != null ? ', fixed lead=' + fixedLead.toFixed(4) : ', tuneLead'));
 
 
@@ -752,93 +852,17 @@ self.onmessage = async (e) => {
             lr = { ok: true, inBand: true, reason: 'fixed lead (user provided)', lead: fixedLead, leadTicks: Math.round(fixedLead / Q.lead), marginS: NaN, vrEnd: NaN, vrMin: NaN, point: null, evals: 0, log: [] };
             emit('probe', tag + ' fixed lead=' + fixedLead.toFixed(4) + ' (skip tuneLead)');
           } else {
-          const cache = new TunerUtils.EvalCache();
-          let evalN = 0;
-          const CPHook = {
-            runEval: async (p2, o) => {
-              evalN++;
-              const lead = p2.li * Q.lead;
-              emit('probe', tag + ' eval#' + evalN + ' lead=' + lead.toFixed(4));
-              restoreSnap(chSnap, newBias, lead);
-              const _pe0 = performance.now(), _pek0 = _tk;
-              // Measure EXACTLY like hook.js CIRC_END: window opens at phase CIRCULARIZE, vrMin tracked inside it,
-              // vrEnd / signed margin read at the engines-off tick (not after COAST_ROTATE_2).
-              let circWindow = false, circAchSeen = false, vrMinC = Infinity, res = null;
-              // Rate sampling: after eng-off we tick 1s more under pure gravity,
-              // then compute vrEndRate = dvr/dt. Valid lead ⟺ vr & rate opposite
-              // signs (approaching apside). Also captures full orbital state
-              // (t_apo, t_peri, r, vt, apo/peri, ecc) for validity/error math.
-              let _postEngOffTime = -1, _vrAtEngOff = 0, _vrRateDone = false;
-              const capT = Math.ceil(300 / CONFIG.DT);
-              for (let _k = 0; _k < capT; _k++) {
-                if (state.halted) break;
-                TunerEngine.tick(CONFIG.DT);
-                const gs = Guidance.getGuideStatus();
-                const stb = findStageBody();
-                if (!stb || !gs) continue;
-                const r = Math.hypot(stb.rx, stb.ry);
-                const vr = (stb.vx * stb.rx + stb.vy * stb.ry) / r;
-                if (gs.phase === 'CIRCULARIZE' && !circWindow && !circAchSeen) circWindow = true;
-                if (gs.circAchieved && !circAchSeen) circAchSeen = true;
-                if (circWindow && !res) {
-                  if (vr < vrMinC) vrMinC = vr;
-                  if (circAchSeen) {
-                    let mdot = 0; const en = stb.engines;
-                    if (en) for (let q = 0; q < en.length; q++) mdot += en[q].massFlowRate || 0;
-                    if (mdot <= 1e-9) {
-                      const o = TunerHook.orbitOf(stb, CONFIG.GM_EARTH, CONFIG.EARTH_RADIUS);
-                      const marginS = !(o.vr < 0) ? o.tToApo : (Number.isFinite(o.periodS) ? (o.tToApo - o.periodS) : -Infinity);
-                      // Full orbital state at eng-off (for validity + error prediction)
-                      res = {
-                        vrEnd: o.vr, marginS, vrMin: vrMinC,
-                        tToApoEndS: o.tToApo, tToPeriEndS: o.tToPeri,
-                        rEndM: o.r, vtEnd: o.vt,
-                        apoEndKm: o.apoKm, periEndKm: o.periKm, eccEnd: o.ecc,
-                      };
-                      _postEngOffTime = state.simTime;
-                      _vrAtEngOff = o.vr;
-                      circWindow = false;   // vrMin sampling ends
-                      // Do NOT break — continue 1s more for rate
-                    }
-                  }
-                }
-
-                // Post-eng-off rate sampling (1s coast, pure gravity)
-                if (res && _postEngOffTime >= 0 && !_vrRateDone) {
-                  const dtPost = state.simTime - _postEngOffTime;
-                  if (dtPost >= 1.0) {
-                    const o2 = TunerHook.orbitOf(stb, CONFIG.GM_EARTH, CONFIG.EARTH_RADIUS);
-                    res.vrEndRate = (o2.vr - _vrAtEngOff) / dtPost;
-                    _vrRateDone = true;
-                    break;
-                  }
-                }
-              }
-              _P.circ += performance.now() - _pe0; _P.circT += _tk - _pek0;
-              if (!res) return { endReason: state.halted ? 'HALTED' : 'CAP', crashed: !!state.crashed, vrEnd: NaN, marginS: NaN, vrMin: NaN };
-              return {
-                endReason: 'CIRC_END', crashed: !!state.crashed,
-                vrEnd: res.vrEnd, marginS: res.marginS, vrMin: res.vrMin,
-                tToApoEndS: res.tToApoEndS, tToPeriEndS: res.tToPeriEndS,
-                rEndM: res.rEndM, vtEnd: res.vtEnd,
-                apoEndKm: res.apoEndKm, periEndKm: res.periEndKm, eccEnd: res.eccEnd,
-                vrEndRate: res.vrEndRate,
-              };
-            }
-          };
-          // Lattice point (needed for cache key only)
-          const cfg = Guidance.getGuideConfig('leoInsertionV3');
-          const point = {
-            Gi: Math.round(cfg.ascent.PUSH_MAX_GIMBAL_DEG / Q.G),
-            Tn: Math.round(cfg.ascent.PUSH_T_S / Q.T),
-            bi: Math.round(cfg.insertion.STAGE_BURN_AOA_BIAS_DEG / Q.bias),
-            li: Math.round(cfg.insertion.CIRC_TRIGGER_LEAD_S / Q.lead),
-            meco: cfg.ascent.MECO_TARGET_BOOSTER_FUEL_KG,
-          };
-          lr = await TunerCore.tuneLead(point, { hook: CPHook, cache, targetAltKm: altKm,
-            targetApoKm: altApoKm, targetPeriKm: altPeriKm,
-            marginBand: payload.marginBand });
-          emit('probe', tag + ' tuneLead ok=' + lr.ok + ' lead=' + (Number.isFinite(lr.lead) ? lr.lead.toFixed(4) : 'n/a') + ' evals=' + lr.evals);
+          // tuneLeadV2: edge by apside-crossing count, window by release-apside time, FULL-score search (see primitives.js)
+          const run = makeLeadRunner(chSnap, newBias, { targetAltKm: altKm, targetApoKm: altApoKm, targetPeriKm: altPeriKm });
+          const li0 = Math.round(Guidance.getGuideConfig('leoInsertionV3').insertion.CIRC_TRIGGER_LEAD_S / Q.lead);
+          const v2 = await TunerCore.tuneLeadV2({ li0, marginMaxS: payload.marginMaxS || 20,
+            onLog: (s) => emit('leadlog', 'edge search: ' + s),
+            cross: async (li) => run(li, false), full: async (li) => run(li, true) });
+          const bf = v2.full || {};
+          lr = { ok: !!v2.ok, inBand: !!v2.ok, reason: v2.ok ? ('mode ' + v2.mode) : (v2.reason || 'tuneLeadV2 failed'),
+            lead: Number.isFinite(v2.leadTicks) ? v2.leadTicks * Q.lead : NaN, leadTicks: v2.leadTicks,
+            marginS: v2.mode === 'PERI' ? bf.tToPeri : bf.tToApo, vrEnd: NaN, vrMin: NaN, point: null, evals: v2.evals, log: v2.log || [] };
+          emit('probe', tag + ' tuneLeadV2 ok=' + lr.ok + ' mode=' + v2.mode + ' lead=' + (Number.isFinite(lr.lead) ? lr.lead.toFixed(4) : 'n/a') + ' evals=' + lr.evals);
           }
 
           if (!lr.ok) {
