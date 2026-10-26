@@ -2131,7 +2131,6 @@ if (!faded) {
     // immediately the deltaV/t_rem are stale (from the transfer orbit).
     // Deferring 1 tick lets _coastSnapUpdate snapshot the apside-aware
     // values before the entry is rendered.
-    let pendingHold2Capture = false;
     let prevAscentPhase = null;
     let prevBodyCount = state.bodies.length;
     let prevCrashed = false, prevLanded = false, prevHalted = false;
