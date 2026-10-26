@@ -3374,4 +3374,4 @@ function renderStackPreview(canvas, memberIds, fleet) {
     
   });
   }
-  
+     
