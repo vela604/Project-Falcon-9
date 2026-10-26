@@ -74,7 +74,7 @@ h2{font-size:14px;margin:14px 0 8px}pre{white-space:pre-wrap;font-size:11.5px;ba
     if (op === 'sweep' && (from == null || to == null)) { $('llStatus').textContent = 'set sweep from/to'; return; }
     S.running = true; $('llSearch').disabled = $('llSweep').disabled = true; $('llOut').textContent = ''; $('llLive').textContent = ''; $('llStatus').textContent = 'running ' + op + '…';
     try {
-      await ensureSA(saValuesFor(meco, G, T, bias, 5.525));
+      await ensureSA(saValuesFor(meco, G, T, bias, 5.5125));
       const r = await S.pool.runJob('leadLab', { op, bias, altKm: S.orbitKm, altApoKm: S.orbitApoKm, altPeriKm: S.orbitPeriKm, li0, from, to, marginMaxS: num('llM') || 20 });
       const f = (x, d) => Number.isFinite(x) ? x.toFixed(d) : '—';
       let t = '';

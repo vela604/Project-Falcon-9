@@ -437,7 +437,7 @@ table.rv-t{width:100%;border-collapse:collapse;font-size:11.5px;font-variant-num
         TARGET_APSIDE1_ALT_KM: tApo,
         TARGET_APSIDE2_ALT_KM: tPeri,
         STAGE_BURN_AOA_BIAS_DEG: 0.827,
-        CIRC_TRIGGER_LEAD_S: 5.525,
+        CIRC_TRIGGER_LEAD_S: 5.5125,
       },
       done: { DEORBIT_ENABLED: !!C.fixed.deorbitEnabled },
     };
@@ -482,7 +482,7 @@ table.rv-t{width:100%;border-collapse:collapse;font-size:11.5px;font-variant-num
         TARGET_APSIDE1_ALT_KM: (S.orbitApoKm != null ? S.orbitApoKm : S.orbitKm),
         TARGET_APSIDE2_ALT_KM: (S.orbitPeriKm != null ? S.orbitPeriKm : (S.orbitApoKm != null ? S.orbitApoKm : S.orbitKm)),
         STAGE_BURN_AOA_BIAS_DEG: (biasFallback != null ? biasFallback : 1.8),
-        CIRC_TRIGGER_LEAD_S: (leadFallback != null ? leadFallback : 5.525),
+        CIRC_TRIGGER_LEAD_S: (leadFallback != null ? leadFallback : 5.5125),
       },
       done: { DEORBIT_ENABLED: !!TunerConfig.fixed.deorbitEnabled },
     };
@@ -1178,7 +1178,7 @@ table.rv-t{width:100%;border-collapse:collapse;font-size:11.5px;font-variant-num
       S.last.meco = meco; S.last.G = G; S.last.T = T;
 
       // Refresh SA snapshot to match this panel's MECO/G/T.
-      const saVals = saValuesFor(meco, G, T, 0.827, 5.525);
+      const saVals = saValuesFor(meco, G, T, 0.827, 5.5125);
       await ensureSA(saVals);
 
       const tasks = biases.map((bias) => {
@@ -1382,7 +1382,7 @@ table.rv-t{width:100%;border-collapse:collapse;font-size:11.5px;font-variant-num
           '  bidirectional 0→±4 step 0.5 → ' + biases.length + ' probes');
 
       // Refresh SA snapshot to match this panel's MECO/G/T.
-      const saVals = saValuesFor(meco, G, T, 0.827, 5.525);
+      const saVals = saValuesFor(meco, G, T, 0.827, 5.5125);
       await ensureSA(saVals);
 
       const results = await _runProbeBatch(biases, meco, G, T);
@@ -1484,7 +1484,7 @@ table.rv-t{width:100%;border-collapse:collapse;font-size:11.5px;font-variant-num
       const mMax = parseFloat($('cMax').value);
       if (![meco, G, T, bias, mMax].every(Number.isFinite) || mMax <= 0) throw new Error('invalid fields');
       S.last.meco = meco; S.last.G = G; S.last.T = T; S.last.bias = bias;
-      const _ts = performance.now(); await ensureSA(saValuesFor(meco, G, T, bias, 5.525), [0]); log('CONVO: ascent (setupSA) ' + fmt((performance.now() - _ts) / 1000, 1) + ' s on worker 0');
+      const _ts = performance.now(); await ensureSA(saValuesFor(meco, G, T, bias, 5.5125), [0]); log('CONVO: ascent (setupSA) ' + fmt((performance.now() - _ts) / 1000, 1) + ' s on worker 0');
       const res = await leadSearchPar({ meco, G, T, bias, maxRel: mMax, pin: 0 }, 'CONVO');
       if (!res.ok) {
         log('CONVO FAILED: ' + res.reason);
