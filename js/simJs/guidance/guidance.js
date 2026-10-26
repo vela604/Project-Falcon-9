@@ -93,6 +93,12 @@ const GUIDE_PHASE_SEQUENCES = {
     'COAST_ROTATE_2', 'COAST_HOLD_2', 'DONE',
     'SUICIDE_ROTATE', 'SUICIDE_BURN', 'SUICIDE_COAST',
   ],
+  landbackV1: [
+    'ASCENT', 'MECO_SPOOL', 'SEPARATED_AXIAL', 'STAGE_BURN', 'RCS_BOOST',
+    'COAST_ROTATE', 'COAST_WAIT', 'COAST_HOLD', 'CIRCULARIZE',
+    'COAST_ROTATE_2', 'COAST_HOLD_2', 'DONE',
+    'SUICIDE_ROTATE', 'SUICIDE_BURN', 'SUICIDE_COAST',
+  ],
 };
 
   // ---- Phase timeline tracking ----------------------------------------------
@@ -101,6 +107,22 @@ const GUIDE_PHASE_SEQUENCES = {
   // checkpoint panel labels things. See original file for the full rule set.
   const GUIDE_PHASE_DISPLAY = {
   leoInsertionV3: {
+    COAST_ROTATE: 'COAST',
+    COAST_WAIT: 'COAST',
+    COAST_HOLD: 'COAST',
+    COAST_ROTATE_2: 'PAYLOAD DEPLOY',
+    COAST_HOLD_2: 'PAYLOAD DEPLOY',
+    MECO_SPOOL: 'MECO',
+    SEPARATED_AXIAL: 'SEPARATION',
+    STAGE_BURN: 'ORBIT BURN',
+    RCS_BOOST: 'APOGEE TRIM',
+    CIRCULARIZE: 'CIRCULARIZE',
+    DONE: 'MISSION COMPLETE',
+    SUICIDE_ROTATE: 'DEORBIT',
+    SUICIDE_BURN: 'DEORBIT',
+    SUICIDE_COAST: 'IMPACT',
+  },
+  landbackV1: {
     COAST_ROTATE: 'COAST',
     COAST_WAIT: 'COAST',
     COAST_HOLD: 'COAST',
@@ -292,6 +314,23 @@ out.v3State = {
 if (_v3State.ascentBlock) out.v3AscentBlock = _v3State.ascentBlock.getState();
 if (_v3State.insertionBlock) out.v3InsertionBlock = _v3State.insertionBlock.getState();
 if (_v3State.suicideBlock) out.v3SuicideBlock = _v3State.suicideBlock.getState();
+
+// landbackV1 mission state + block states for FF mid-flight support.
+out.lbState = {
+  init: _lbState.init, ticks: _lbState.ticks,
+  missionPhase: _lbState.missionPhase, missionPhaseStart: _lbState.missionPhaseStart,
+  stageIdx: _lbState.stageIdx, boosterIdx: _lbState.boosterIdx,
+  preSplitBodyCount: _lbState.preSplitBodyCount,
+  mecoTriggered: _lbState.mecoTriggered, splitDetected: _lbState.splitDetected,
+  fairingOpened: _lbState.fairingOpened, deployCmdSimTime: _lbState.deployCmdSimTime,
+  insertionResult: _lbState.insertionResult, suicideResult: _lbState.suicideResult,
+  lastAltKm: _lbState.lastAltKm, lastAxialGap: _lbState.lastAxialGap,
+  lateralArmed: _lbState.lateralArmed,
+  pusherTorqueFired: _lbState.pusherTorqueFired, payloadOpenFired: _lbState.payloadOpenFired,
+};
+if (_lbState.ascentBlock) out.lbAscentBlock = _lbState.ascentBlock.getState();
+if (_lbState.insertionBlock) out.lbInsertionBlock = _lbState.insertionBlock.getState();
+if (_lbState.suicideBlock) out.lbSuicideBlock = _lbState.suicideBlock.getState();
     } catch (e) {
       console.warn("[guidance] exportGuideState failed", e);
     }
@@ -349,6 +388,23 @@ if (data.v3SuicideBlock) {
     _v3State.suicideBlock = FUNDAMENTAL_BLOCKS.suicide.createInstance();
   }
   _v3State.suicideBlock.setState(data.v3SuicideBlock);
+}
+
+// landbackV1 restore
+if (data.lbState) {
+  Object.keys(data.lbState).forEach(k => { _lbState[k] = data.lbState[k]; });
+}
+if (data.lbAscentBlock) {
+  if (!_lbState.ascentBlock) _lbState.ascentBlock = FUNDAMENTAL_BLOCKS.ascent.createInstance();
+  _lbState.ascentBlock.setState(data.lbAscentBlock);
+}
+if (data.lbInsertionBlock) {
+  if (!_lbState.insertionBlock) _lbState.insertionBlock = FUNDAMENTAL_BLOCKS.insertion.createInstance();
+  _lbState.insertionBlock.setState(data.lbInsertionBlock);
+}
+if (data.lbSuicideBlock) {
+  if (!_lbState.suicideBlock) _lbState.suicideBlock = FUNDAMENTAL_BLOCKS.suicide.createInstance();
+  _lbState.suicideBlock.setState(data.lbSuicideBlock);
 }
     } catch (e) {
       console.warn("[guidance] importGuideState failed", e);
@@ -906,6 +962,511 @@ if (_v3State.insertionBlock) {
 
 GUIDES.leoInsertionV3 = _leoTickV3;
 
+// ============================================================================
+// landbackV1 — EXACT CLONE of leoInsertionV3 (renamed). Starting point for the
+// Landback logic. Same phases, same blocks, same config shape. Only the
+// identifiers differ (_lb* / _landbackTick / setLandbackV1 / getLandbackV1Config).
+// Edit THIS copy freely — leoInsertionV3 stays untouched.
+// ============================================================================
+
+const _lbState = {
+  init: false,
+  ticks: 0,
+  missionPhase: 'ASCENT',   // ASCENT | WAIT_SPLIT | SEPARATED_AXIAL | INSERTION | DONE_DWELL | SUICIDE | END
+  missionPhaseStart: 0,
+
+  stageIdx: -1,
+  boosterIdx: -1,
+  preSplitBodyCount: 0,
+
+  ascentBlock: null,
+  insertionBlock: null,
+  suicideBlock: null,
+
+  mecoTriggered: false,
+  splitDetected: false,
+  fairingOpened: false,
+  deployCmdSimTime: null,
+
+  insertionResult: null,
+  suicideResult: null,
+  // One-shot flag — payload-open command fires exactly once per mission,
+  // at deployCmdSimTime + PAYLOAD_DEPLOY_OPEN_DELAY_S.
+  payloadOpenFired: false,
+  
+  lastAltKm: 0,
+    lastAxialGap: 0,
+    lateralArmed: false,
+    // One-shot flag — pusher torque fires at most once per mission, only
+    // after the axial gap exceeds the stage bell height + margin.
+    pusherTorqueFired: false,
+  };
+
+const _lbConfig = {
+  ascent: null,
+  separation: {
+  // SEPARATED_AXIAL duration (s). Counted from the phase's entry (split
+  // detected), not from the axial gap. Replaces the old AXIAL_SEP_TARGET_M
+  // meter-based condition — the phase now always runs for exactly this
+  // many seconds, then hands off to INSERTION.
+  SEPARATION_DURATION_S: 3,
+  SPLIT_TIMEOUT_S: 15,
+  LATERAL_TRIGGER_MARGIN_M: 0.3,
+  BOOSTER_SEP_ANG_ACCEL_DEG_S2: -1,
+  BOOSTER_SEP_TARGET_OMEGA_DEG_S: 10,
+},
+  insertion: null,
+  fairing: { HAS_FAIRING: true, FAIRING_OPEN_ALT_KM: 80, FAIRING_OPEN_ENABLED: true },
+  done: {
+  SUICIDE_DELAY_AFTER_DEPLOY_S: 1800,
+  CIRC_ATT_KP: 0.5,
+  CIRC_ATT_KD: 4.0,
+  DEORBIT_ENABLED: true,
+  // Delay (s) between the payload deploy command and firing the
+  // payload-open command (satellite unfolds its panels / dish).
+  PAYLOAD_DEPLOY_OPEN_DELAY_S: 5,
+},
+suicide: null,
+};
+
+(function _lbInitDefaults() {
+  const F = (typeof FUNDAMENTAL_BLOCKS !== 'undefined') ? FUNDAMENTAL_BLOCKS : null;
+  if (F && F.ascent) _lbConfig.ascent = JSON.parse(JSON.stringify(F.ascent.defaultConstants));
+  if (F && F.insertion) _lbConfig.insertion = JSON.parse(JSON.stringify(F.insertion.defaultConstants));
+  if (F && F.suicide) _lbConfig.suicide = JSON.parse(JSON.stringify(F.suicide.defaultConstants));
+})();
+
+function _lbCurrentPhase() {
+  const mp = _lbState.missionPhase;
+  if (mp === 'ASCENT') return 'ASCENT';
+  if (mp === 'WAIT_SPLIT') return 'MECO_SPOOL';
+  if (mp === 'SEPARATED_AXIAL') return 'SEPARATED_AXIAL';
+  if (mp === 'INSERTION') {
+    if (_lbState.insertionBlock) return _lbState.insertionBlock.getStatus().phase;
+    return '?';
+  }
+  if (mp === 'DONE_DWELL') return 'DONE';
+  if (mp === 'SUICIDE') {
+    if (_lbState.suicideBlock) return _lbState.suicideBlock.getStatus().phase;
+    return '?';
+  }
+  return '?';
+}
+
+// (shared helpers _stageBellHeightForBody / _discardedStackTop_m are reused from above)
+
+function _landbackTick(snapshot) {
+  _lbState.ticks++;
+  if (!snapshot || !Array.isArray(snapshot.bodies) || !snapshot.bodies.length) return;
+  const simT = snapshot.simTime;
+
+  if (!_lbState.init) {
+    _lbState.init = true;
+    _lbState.missionPhase = 'ASCENT';
+    _lbState.missionPhaseStart = simT;
+    _lbState.preSplitBodyCount = snapshot.bodies.length;
+    _lbState.stageIdx = 0;
+    _lbState.boosterIdx = -1;
+
+    _lbState.ascentBlock = FUNDAMENTAL_BLOCKS.ascent.createInstance();
+    _lbState.ascentBlock.start(_lbConfig.ascent, 0, {});
+  }
+
+  // ---- Mission-level fairing auto-open (phase-independent) ----
+  if (!_lbState.fairingOpened &&
+      _lbState.splitDetected &&
+      _lbConfig.fairing.HAS_FAIRING &&
+      _lbConfig.fairing.FAIRING_OPEN_ENABLED &&
+      _lbState.stageIdx >= 0) {
+    const stageBody = snapshot.bodies[_lbState.stageIdx];
+    if (stageBody) {
+      const env = Derivation.getEnv();
+      const altKm = (Math.hypot(stageBody.rx, stageBody.ry) - env.EARTH_RADIUS) / 1000;
+      _lbState.lastAltKm = altKm;
+      if (altKm >= _lbConfig.fairing.FAIRING_OPEN_ALT_KM) {
+        const hasFairing = stageBody.members &&
+          stageBody.members.some(m => m && m.stageRole === 'payloadSpace');
+        if (hasFairing) {
+          const cmd = cmdSplitFairing();
+          cmd.targetBodyIdx = _lbState.stageIdx;
+          send(cmd);
+          _lbState.fairingOpened = true;
+          console.log('[landbackV1] fairing open at t=' + simT.toFixed(2) +
+            ' alt=' + altKm.toFixed(2) + ' km');
+        }
+      }
+    }
+  }
+
+  switch (_lbState.missionPhase) {
+
+    case 'ASCENT': {
+      _lbState.ascentBlock.tick(snapshot);
+      if (_lbState.ascentBlock.isDone()) {
+        _lbState.mecoTriggered = true;
+        _lbState.missionPhase = 'WAIT_SPLIT';
+        _lbState.missionPhaseStart = simT;
+        _lbState.preSplitBodyCount = snapshot.bodies.length;
+      }
+      break;
+    }
+
+    case 'WAIT_SPLIT': {
+  if (snapshot.bodies.length > _lbState.preSplitBodyCount) {
+  _lbState.splitDetected = true;
+  _lbState.stageIdx = 0;
+  const boosterIdx = snapshot.bodies.findIndex((b, i) =>
+    i !== _lbState.stageIdx && b && !b.isActive);
+  _lbState.boosterIdx = boosterIdx >= 0 ? boosterIdx : 1;
+  _lbState.pusherTorqueFired = false;
+  // Pusher torque is NOT fired here — it waits in SEPARATED_AXIAL
+  // until the axial gap clears the stage's engine bell (see the
+  // arming check in that case). Firing at split-time would rotate
+  // the booster while its interstage still overlaps the MVac bell.
+  _lbState.missionPhase = 'SEPARATED_AXIAL';
+  _lbState.missionPhaseStart = simT;
+  break;
+}
+  if (simT - _lbState.missionPhaseStart > _lbConfig.separation.SPLIT_TIMEOUT_S) {
+    console.warn('[landbackV1] split timeout');
+    _lbState.missionPhase = 'END';
+  }
+  break;
+}
+
+    case 'SEPARATED_AXIAL': {
+  const bIdx = _lbState.boosterIdx;
+  const sIdx = _lbState.stageIdx;
+  if (bIdx < 0 || sIdx < 0) { _lbState.missionPhase = 'END'; break; }
+  const boosterBody = snapshot.bodies[bIdx];
+  const stageBody = snapshot.bodies[sIdx];
+  if (!boosterBody || !stageBody) { _lbState.missionPhase = 'END'; break; }
+
+  // ---- True axial gap: stage hull base to top of discarded stack.
+  const discardedTop_m = _discardedStackTop_m(boosterBody);
+  const upX = -Math.sin(stageBody.theta);
+  const upY = Math.cos(stageBody.theta);
+  const dx = stageBody.rx - boosterBody.rx;
+  const dy = stageBody.ry - boosterBody.ry;
+  const axialGap = Math.max(0, (dx * upX + dy * upY) - discardedTop_m);
+  _lbState.lastAxialGap = axialGap;
+
+  // ---- Bell-clearance arming check.
+// Booster's pusher torque fires once the stage's engine bell has
+// cleared the booster's top/interstage (bell height + margin), and
+// the lateral RCS kick arms at the same moment. Bell height is
+// derived per tick from the stage record's engine config, so a
+// different stage engine produces a different trigger point
+// automatically.
+const stageBellH = _stageBellHeightForBody(stageBody);
+const lateralMargin = Number.isFinite(_lbConfig.separation.LATERAL_TRIGGER_MARGIN_M) ?
+  _lbConfig.separation.LATERAL_TRIGGER_MARGIN_M : 0;
+const bellCleared = (stageBellH > 0) && (axialGap >= stageBellH + lateralMargin);
+const lateralArmed = bellCleared;
+_lbState.lateralArmed = lateralArmed;
+
+// ---- Pusher torque — one-shot, gated on bell clearance.
+// Physically: pneumatic pushers can't rotate the booster while
+// its interstage still overlaps the MVac bell; a rotation at that
+// moment would drive the interstage into the nozzle.
+if (bellCleared && !_lbState.pusherTorqueFired) {
+  const alphaDeg = _lbConfig.separation.BOOSTER_SEP_ANG_ACCEL_DEG_S2;
+  const omegaDeg = _lbConfig.separation.BOOSTER_SEP_TARGET_OMEGA_DEG_S;
+  if (Number.isFinite(alphaDeg) && alphaDeg !== 0 &&
+    Number.isFinite(omegaDeg) && omegaDeg > 0) {
+    send(cmdPusherTorque(
+      alphaDeg * Math.PI / 180,
+      omegaDeg * Math.PI / 180,
+      bIdx
+    ));
+    _lbState.pusherTorqueFired = true;
+  }
+}
+
+  // ---- Booster duty assembly ----
+  // Baseline: axial 'dn' on every pod (pushes booster tailward).
+  //
+  // Once lateral is armed, the left pods get a NEGATIVE-torque kick:
+  //   • Left pods: flip vertical to 'up' (Fy = +F) + keep lateral 'lat'
+  //   • Right pods: leave axial 'dn' as-is (Fy = −F)
+  //
+  // τ = rx · Fy. Left pods have rx < 0, so Fy > 0 → τ_L < 0.
+  // Right pods have rx > 0, so Fy < 0 → τ_R < 0.
+  // Both sides push the same way → net τ = −2·F·xOffset.
+  //
+  // Net vertical force = (+F on L) + (−F on R) = 0, so no vertical
+  // drift is introduced. Net lateral = +F on L only (booster drifts
+  // left of the stack, matching the intended lateral-kick behaviour).
+  //
+  // 'up' REPLACES the L pods' axial 'dn' rather than adding to it —
+  // firing both up and dn on the same pod would cancel to zero and
+  // waste propellant.
+  const boosterAxial = GuideRCS.postSeparationAxialDuty(snapshot, bIdx, 'dn');
+  let boosterMerged = boosterAxial ? Object.assign({}, boosterAxial) : {};
+
+  if (lateralArmed) {
+    const boosterPods = boosterBody.pods || [];
+    const latDuties = GuideRCS.postSeparationLateralDuty(snapshot, bIdx, 'L');
+    boosterPods.forEach(p => {
+      const pid = p.podId;
+      if (p.side === 'L') {
+        boosterMerged[pid] = {
+          up: 1,
+          dn: 0,
+          lat: (latDuties && latDuties[pid]) ? latDuties[pid].lat : 1,
+        };
+      }
+      // Right pods: keep axial 'dn' from boosterMerged, no change.
+    });
+  }
+  if (boosterMerged) { const c = cmdRcsDuty(boosterMerged, bIdx); send(c); }
+
+  // ---- Stage: axial 'up' duty only. No lateral on the stage.
+  // ---- Stage: axial 'up' duty only. No lateral on the stage.
+const stageDuties = GuideRCS.postSeparationAxialDuty(snapshot, sIdx, 'up');
+if (stageDuties) { const c = cmdRcsDuty(stageDuties, sIdx); send(c); }
+
+// Timeout-based handoff to INSERTION — fixed duration from the
+// phase's entry, independent of how far the axial gap has opened.
+const elapsedSep = simT - _lbState.missionPhaseStart;
+if (elapsedSep >= _lbConfig.separation.SEPARATION_DURATION_S) {
+  send(cmdRcsDuty(null, sIdx));
+  send(cmdRcsDuty(null, bIdx));
+  _lbState.lateralArmed = false;
+  _lbState.insertionBlock = FUNDAMENTAL_BLOCKS.insertion.createInstance();
+  _lbState.insertionBlock.start(_lbConfig.insertion, sIdx, {});
+  _lbState.missionPhase = 'INSERTION';
+  _lbState.missionPhaseStart = simT;
+}
+break;
+}
+
+    case 'INSERTION': {
+      _lbState.insertionBlock.tick(snapshot);
+      if (_lbState.insertionBlock.isDone()) {
+        _lbState.insertionResult = _lbState.insertionBlock.getResult();
+        _lbState.deployCmdSimTime = _lbState.insertionResult
+          ? _lbState.insertionResult.deployCommandSimTime : simT;
+        _lbState.missionPhase = 'DONE_DWELL';
+        _lbState.missionPhaseStart = simT;
+      }
+      break;
+    }
+
+    case 'DONE_DWELL': {
+      const stageBody = snapshot.bodies[_lbState.stageIdx];
+      if (stageBody && _lbState.insertionResult &&
+          _lbState.insertionResult.coast2TargetThetaInertial != null) {
+        const dNext = Derivation.derive(snapshot, _lbState.stageIdx);
+        const I_next = (dNext && dNext.massProps) ? dNext.massProps.I : 0;
+        if (I_next > 0) {
+          let thetaErr = stageBody.theta - _lbState.insertionResult.coast2TargetThetaInertial;
+          while (thetaErr > Math.PI) thetaErr -= 2 * Math.PI;
+          while (thetaErr < -Math.PI) thetaErr += 2 * Math.PI;
+          const tau_desired = -I_next *
+            (_lbConfig.done.CIRC_ATT_KP * thetaErr +
+             _lbConfig.done.CIRC_ATT_KD * stageBody.omega);
+          const result = GuideRCS.targetTorqueRcsNoNetForce(snapshot, tau_desired, _lbState.stageIdx);
+          if (result && result.fires.length) send(cmdRcsDuty(result.duties, _lbState.stageIdx));
+          else send(cmdRcsDuty(null, _lbState.stageIdx));
+        }
+      }
+
+      send(cmdSetAllThrottle(0));
+send(cmdSetGimbalRate(0));
+
+// ---- Payload-open command ----
+// After deploy, wait PAYLOAD_DEPLOY_OPEN_DELAY_S seconds, then send
+// a one-shot open command to the deployed payload body. Finding the
+// body by scanning for the payloadBody marker — its index can shift
+// as other bodies spawn.
+if (!_lbState.payloadOpenFired &&
+  Number.isFinite(_lbState.deployCmdSimTime) &&
+  simT >= _lbState.deployCmdSimTime + _lbConfig.done.PAYLOAD_DEPLOY_OPEN_DELAY_S) {
+  let _payIdx = -1;
+  for (let _i = 0; _i < snapshot.bodies.length; _i++) {
+    const _b = snapshot.bodies[_i];
+    if (_b && _b.payloadBody && !_b.payloadOpened) { _payIdx = _i; break; }
+  }
+  if (_payIdx >= 0) {
+    send(cmdOpenPayload(_payIdx));
+    _lbState.payloadOpenFired = true;
+  }
+}
+
+// Dwell measured from the DEPLOY COMMAND tick — the correct
+
+      // Dwell measured from the DEPLOY COMMAND tick — the correct
+      // behaviour. V2 measured from COAST_HOLD_2 entry due to a missing
+      // phaseStart update, giving ~59.29s of actual dwell instead of 60s.
+      const deployT = _lbState.deployCmdSimTime != null
+        ? _lbState.deployCmdSimTime : _lbState.missionPhaseStart;
+      const dwellS = simT - deployT;
+
+      if (dwellS >= _lbConfig.done.SUICIDE_DELAY_AFTER_DEPLOY_S) {
+        send(cmdRcsDuty(null, _lbState.stageIdx));
+
+        if (_lbConfig.done.DEORBIT_ENABLED) {
+          send(cmdMarkIntentionalImpact(_lbState.stageIdx));
+          const env = Derivation.getEnv();
+          _lbState.suicideBlock = FUNDAMENTAL_BLOCKS.suicide.createInstance();
+          _lbState.suicideBlock.start(_lbConfig.suicide, _lbState.stageIdx, {
+            restingArea: {
+              midWestDeg: env.REMOTE_AREA_MID_WEST_DEG,
+              westStartDeg: env.REMOTE_AREA_WEST_START_DEG,
+              westEndDeg: env.REMOTE_AREA_WEST_END_DEG,
+            },
+          });
+          _lbState.missionPhase = 'SUICIDE';
+          _lbState.missionPhaseStart = simT;
+          console.log('[landbackV1] DONE_DWELL → SUICIDE at t=' + simT.toFixed(2));
+        } else {
+          _lbState.missionPhase = 'END';
+          _lbState.missionPhaseStart = simT;
+        }
+      }
+      break;
+    }
+
+    case 'SUICIDE': {
+      _lbState.suicideBlock.tick(snapshot);
+      if (_lbState.suicideBlock.isDone()) {
+        _lbState.suicideResult = _lbState.suicideBlock.getResult();
+        _lbState.missionPhase = 'END';
+        _lbState.missionPhaseStart = simT;
+        console.log('[landbackV1] SUICIDE done at t=' + simT.toFixed(2));
+      }
+      break;
+    }
+
+    case 'END': {
+      send(cmdSetAllThrottle(0));
+      send(cmdSetGimbalRate(0));
+      break;
+    }
+
+    default: break;
+  }
+}
+
+_landbackTick.start = function () {
+  _lbState.init = false;
+  _lbState.ticks = 0;
+  _lbState.missionPhase = 'ASCENT';
+  _lbState.missionPhaseStart = 0;
+  _lbState.stageIdx = -1;
+  _lbState.boosterIdx = -1;
+  _lbState.preSplitBodyCount = 0;
+  _lbState.ascentBlock = null;
+  _lbState.insertionBlock = null;
+  _lbState.suicideBlock = null;
+  _lbState.mecoTriggered = false;
+  _lbState.splitDetected = false;
+  _lbState.fairingOpened = false;
+  _lbState.deployCmdSimTime = null;
+  _lbState.insertionResult = null;
+_lbState.suicideResult = null;
+_lbState.payloadOpenFired = false;
+_lbState.lastAltKm = 0;
+_lbState.lastAxialGap = 0;
+_lbState.lateralArmed = false;
+_lbState.pusherTorqueFired = false;
+console.log('[landbackV1] started');
+};
+
+_landbackTick.stop = function () {
+  if (_lbState.ascentBlock) { try { _lbState.ascentBlock.stop(); } catch (e) {} }
+  if (_lbState.insertionBlock) { try { _lbState.insertionBlock.stop(); } catch (e) {} }
+  if (_lbState.suicideBlock) { try { _lbState.suicideBlock.stop(); } catch (e) {} }
+  _lbState.ascentBlock = null;
+  _lbState.insertionBlock = null;
+  _lbState.suicideBlock = null;
+  console.log('[landbackV1] stopped');
+};
+
+_landbackTick.getStatus = function () {
+  const out = {
+    ticks: _lbState.ticks,
+    phase: _lbCurrentPhase(),
+    mecoTriggered: _lbState.mecoTriggered,
+    splitDetected: _lbState.splitDetected,
+    fairingOpened: _lbState.fairingOpened,
+    axialGap: _lbState.lastAxialGap,
+    altKm: _lbState.lastAltKm,
+  };
+
+  if ((_lbState.missionPhase === 'ASCENT') && _lbState.ascentBlock) {
+    const as = _lbState.ascentBlock.getStatus();
+    Object.assign(out, {
+      ascentPhase: as.ascentPhase,
+      ascentTicks: as.ticks,
+      elapsed: as.elapsed,
+      lockedDeltaDeg: as.lockedDeltaDeg,
+      aoaDeg: as.aoaDeg,
+      aoaNextDeg: as.aoaNextDeg,
+      omegaAoANow: as.omegaAoANow,
+      omegaAoANext: as.omegaAoANext,
+      alphaAoANow: as.alphaAoANow,
+      alphaAoANext: as.alphaAoANext,
+      dQ: as.dQ,
+      tauDQ: as.tauDQ,
+      tauDesired: as.tauDesired,
+      tauDrag: as.tauDrag,
+      tauTarget: as.tauTarget,
+      gRate: as.gRate,
+      gRadN: as.gRadN,
+      gReqDeg: as.gReqDeg,
+    });
+  }
+
+  // Deorbit schedule — exposed always (null until deploy happens), so the
+// phase-checkpoint UI can render a pending countdown on the DEORBIT
+// row during the SUICIDE_DELAY_AFTER_DEPLOY_S dwell window.
+out.suicideDelayS = _lbConfig.done.SUICIDE_DELAY_AFTER_DEPLOY_S;
+out.suicidePendingStartS =
+  (Number.isFinite(_lbState.deployCmdSimTime) &&
+    Number.isFinite(_lbConfig.done.SUICIDE_DELAY_AFTER_DEPLOY_S)) ?
+  (_lbState.deployCmdSimTime + _lbConfig.done.SUICIDE_DELAY_AFTER_DEPLOY_S) :
+  null;
+
+if (_lbState.insertionBlock) {
+  const ins = _lbState.insertionBlock.getStatus();
+  Object.assign(out, {
+        circTriggerLeadS: ins.circTriggerLeadS,
+        apogeeKm: ins.apogeeKm,
+        perigeeKm: ins.perigeeKm,
+      coastTBurnPractical: ins.coastTBurnPractical,
+      coastVOrbital: ins.coastVOrbital,
+      coastTargetThetaDeg: ins.coastTargetThetaDeg,
+      coast2TargetThetaDeg: ins.coast2TargetThetaDeg,
+      circCurrentV: ins.circCurrentV,
+      circTargetV: ins.circTargetV,
+      circErr: ins.circErr,
+      circAchieved: ins.circAchieved,
+      coastDeltaV: ins.coastDeltaV,
+      coastTRem: ins.coastTRem,
+      deployCommandSimTime: ins.deployCommandSimTime,
+      payloadCleared: ins.payloadCleared,
+    });
+  }
+
+  if (_lbState.suicideBlock) {
+    const su = _lbState.suicideBlock.getStatus();
+    Object.assign(out, {
+      suicidePhase: su.phase,
+      suicideImpactEfDeg: su.suicideImpactEfDeg,
+      suicideDlambdaDeg: su.suicideDlambdaDeg,
+      suicideTrimDone: su.suicideTrimDone,
+    });
+  }
+
+  return out;
+};
+
+
+GUIDES.landbackV1 = _landbackTick;
+
+
 
  
 
@@ -925,6 +1486,23 @@ GUIDES.leoInsertionV3 = _leoTickV3;
   console.log('[leoInsertionV3] constants updated');
 }
 function getLeoInsertionV3Config() { return JSON.parse(JSON.stringify(_v3Config)); }
+
+  function setLandbackV1(patch) {
+  if (!patch) return;
+  Object.keys(patch).forEach(k => {
+    if (!(k in _lbConfig)) return;
+    const cur = _lbConfig[k];
+    const nxt = patch[k];
+    if (cur && typeof cur === 'object' && !Array.isArray(cur) &&
+        nxt && typeof nxt === 'object' && !Array.isArray(nxt)) {
+      Object.assign(cur, nxt);
+    } else {
+      _lbConfig[k] = nxt;
+    }
+  });
+  console.log('[landbackV1] constants updated');
+}
+function getLandbackV1Config() { return JSON.parse(JSON.stringify(_lbConfig)); }
   // ============================================================================
   // Guide config API — table + accessors.
   //
@@ -936,6 +1514,10 @@ function getLeoInsertionV3Config() { return JSON.parse(JSON.stringify(_v3Config)
   leoInsertionV3: {
     get: () => getLeoInsertionV3Config(),
     set: (vals) => setLeoInsertionV3(vals),
+  },
+  landbackV1: {
+    get: () => getLandbackV1Config(),
+    set: (vals) => setLandbackV1(vals),
   },
 };
 
@@ -1099,6 +1681,8 @@ function cmdOpenPayload(targetBodyIdx) {
     getGuideStatus,
     getGuideStatusLabel,
     setLeoInsertionV3,
+    setLandbackV1,
+getLandbackV1Config,
 setMissionBody,
 getLeoInsertionV3Config,
 // Stage 2 test hook — see _registerTestGuide below.

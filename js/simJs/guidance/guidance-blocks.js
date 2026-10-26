@@ -2764,4 +2764,313 @@ setState(s) {
       };
     },
   },
+
+  // ==========================================================================
+  // STANDARD_RTLS — booster return-to-launch-site ("Landback")
+  //
+  // Runs on the BOOSTER body only (same control authority as `ascent`:
+  // booster engines / gimbal / grid fins / RCS). Starts right after stage
+  // separation and ends when the booster is on the pad.
+  //
+  // Internal phases, in order:
+  //   FLIP             — flip manoeuvre (turn engines-first → retrograde/boostback attitude)
+  //   BOOSTBACK_BURN   — boostback burn, cancels downrange velocity, targets the pad
+  //   PRE_ENTRY_STEER  — attitude / grid-fin steering into the entry-burn window
+  //   ENTRY_BURN       — entry burn (slows the booster before dense atmosphere)
+  //   POST_ENTRY_STEER — aerodynamic steering (grid fins) down to the landing-burn window
+  //   LANDING_BURN     — suicide-style landing burn, legs deploy
+  //   TOUCHDOWN        — engines off, confirm contact, block ends
+  //
+  // SKELETON: lifecycle, state machine, timeouts, status and save/restore are
+  // real. Each _phaseXxx handler is a TODO stub that returns false ("not done
+  // yet"), so right now every phase just runs out its *_TIMEOUT_S.
+  // Fill in a handler and have it return true when its exit condition is met.
+  // ==========================================================================
+  standardRTLS: {
+    name: "standardRTLS",
+    displayName: "Standard RTLS (Landback)",
+    description:
+      "Booster return-to-launch-site. Flip → boostback → pre-entry steer → entry burn → post-entry steer → landing burn → touchdown. Controls the booster body only.",
+    phases: [
+      "FLIP",
+      "BOOSTBACK_BURN",
+      "PRE_ENTRY_STEER",
+      "ENTRY_BURN",
+      "POST_ENTRY_STEER",
+      "LANDING_BURN",
+      "TOUCHDOWN",
+    ],
+    defaultConstants: {
+      // PLACEHOLDER VALUES — every number below is a stand-in to be tuned.
+      GIMBAL_TARGET: "center",
+
+      // Shared attitude PD (used by the handlers that hold/rotate attitude).
+      ATT_KP: 0.5,
+      ATT_KD: 4.0,
+
+      // ---- FLIP ----
+      FLIP_TARGET_TILT_DEG: 0,      // TODO: target attitude after the flip
+      FLIP_ROTATE_TOL_DEG: 1.0,
+      FLIP_OMEGA_TOL: 0.02,
+      FLIP_TIMEOUT_S: 60,
+
+      // ---- BOOSTBACK_BURN ----
+      BOOSTBACK_THROTTLE_FRAC: 1.0,
+      BOOSTBACK_TARGET_MISS_KM: 1.0, // TODO: cutoff when predicted pad miss < this
+      BOOSTBACK_TIMEOUT_S: 120,
+
+      // ---- PRE_ENTRY_STEER ----
+      ENTRY_BURN_START_ALT_KM: 70,   // TODO: altitude that ends this phase
+      PRE_ENTRY_TIMEOUT_S: 300,
+
+      // ---- ENTRY_BURN ----
+      ENTRY_BURN_THROTTLE_FRAC: 1.0,
+      ENTRY_BURN_CUTOFF_SPEED_MPS: 800, // TODO: cutoff target
+      ENTRY_BURN_TIMEOUT_S: 60,
+
+      // ---- POST_ENTRY_STEER ----
+      LANDING_BURN_START_ALT_KM: 3,  // TODO: ignition altitude (or predictive trigger)
+      POST_ENTRY_TIMEOUT_S: 300,
+
+      // ---- LANDING_BURN ----
+      LANDING_THROTTLE_MIN_FRAC: 0.4,
+      LEGS_DEPLOY_ALT_M: 500,
+      LANDING_TIMEOUT_S: 90,
+
+      // ---- TOUCHDOWN ----
+      TOUCHDOWN_ALT_M: 1.0,          // TODO: contact detection threshold
+      TOUCHDOWN_TIMEOUT_S: 20,
+    },
+    importantFields: [],
+    createInstance: function () {
+      let _constants = null;
+      let _bodyIdx = null;
+      let _missionCtx = null;
+      let _done = false;
+      let _result = null;
+
+      const PHASES = [
+        "FLIP", "BOOSTBACK_BURN", "PRE_ENTRY_STEER", "ENTRY_BURN",
+        "POST_ENTRY_STEER", "LANDING_BURN", "TOUCHDOWN",
+      ];
+      const TIMEOUT_KEY = {
+        FLIP: "FLIP_TIMEOUT_S",
+        BOOSTBACK_BURN: "BOOSTBACK_TIMEOUT_S",
+        PRE_ENTRY_STEER: "PRE_ENTRY_TIMEOUT_S",
+        ENTRY_BURN: "ENTRY_BURN_TIMEOUT_S",
+        POST_ENTRY_STEER: "POST_ENTRY_TIMEOUT_S",
+        LANDING_BURN: "LANDING_TIMEOUT_S",
+        TOUCHDOWN: "TOUCHDOWN_TIMEOUT_S",
+      };
+
+      const _st = {
+        init: false,
+        ticks: 0,
+        phase: "FLIP",
+        phaseStart: 0,
+        startSimTime: null,
+        phaseLog: {},          // { [phase]: { startT, endT, reason } }
+        lastAltKm: 0,
+        // Add per-phase scratch state here (integrators, cached targets, ...)
+      };
+
+      function _send(cmd) {
+        if (!cmd) return;
+        if (cmd.targetBodyIdx === undefined) cmd.targetBodyIdx = _bodyIdx;
+        Guidance.send(cmd);
+      }
+
+      function _wrapPi(x) {
+        while (x > Math.PI) x -= 2 * Math.PI;
+        while (x < -Math.PI) x += 2 * Math.PI;
+        return x;
+      }
+
+      // Move to `next` (or finish the block if `next` is null).
+      function _goto(next, simT, reason) {
+        const cur = _st.phase;
+        if (_st.phaseLog[cur]) {
+          _st.phaseLog[cur].endT = simT;
+          _st.phaseLog[cur].reason = reason || "done";
+        }
+        if (!next) {
+          _done = true;
+          _result = {
+            doneSimTime: simT,
+            elapsed: simT - (_st.startSimTime || 0),
+            phaseLog: JSON.parse(JSON.stringify(_st.phaseLog)),
+          };
+          console.log("[standardRTLS] DONE at t=" + simT.toFixed(2));
+          return;
+        }
+        _st.phase = next;
+        _st.phaseStart = simT;
+        _st.phaseLog[next] = { startT: simT, endT: null, reason: null };
+        console.log("[standardRTLS] " + cur + " → " + next + " at t=" + simT.toFixed(2) + " (" + (reason || "done") + ")");
+      }
+
+      // ---------------------------------------------------------------------
+      // Phase handlers — each gets (snapshot, d, simT, cfg) where d is
+      // Derivation.derive(snapshot, bodyIdx). Return true when the phase's
+      // exit condition is met. TODO: implement.
+      // ---------------------------------------------------------------------
+      function _phaseFlip(snapshot, d, simT, cfg) {
+        // TODO: spool RCS/gimbal, rotate to FLIP_TARGET_TILT_DEG, exit when
+        // within FLIP_ROTATE_TOL_DEG and |omega| < FLIP_OMEGA_TOL.
+        return false;
+      }
+      function _phaseBoostback(snapshot, d, simT, cfg) {
+        // TODO: light engines at BOOSTBACK_THROTTLE_FRAC, steer to pad,
+        // cutoff when predicted miss < BOOSTBACK_TARGET_MISS_KM.
+        return false;
+      }
+      function _phasePreEntrySteer(snapshot, d, simT, cfg) {
+        // TODO: engines off, hold entry attitude, grid fins as needed;
+        // exit at ENTRY_BURN_START_ALT_KM (or predictive trigger).
+        return false;
+      }
+      function _phaseEntryBurn(snapshot, d, simT, cfg) {
+        // TODO: relight, burn until ENTRY_BURN_CUTOFF_SPEED_MPS, then cutoff.
+        return false;
+      }
+      function _phasePostEntrySteer(snapshot, d, simT, cfg) {
+        // TODO: grid-fin aero steering toward the pad; exit at the
+        // landing-burn ignition condition.
+        return false;
+      }
+      function _phaseLandingBurn(snapshot, d, simT, cfg) {
+        // TODO: landing burn guidance (>= LANDING_THROTTLE_MIN_FRAC), deploy
+        // legs at LEGS_DEPLOY_ALT_M; exit when altitude <= TOUCHDOWN_ALT_M.
+        return false;
+      }
+      function _phaseTouchdown(snapshot, d, simT, cfg) {
+        // TODO: engines off, confirm contact/stability.
+        return false;
+      }
+
+      const HANDLERS = {
+        FLIP: _phaseFlip,
+        BOOSTBACK_BURN: _phaseBoostback,
+        PRE_ENTRY_STEER: _phasePreEntrySteer,
+        ENTRY_BURN: _phaseEntryBurn,
+        POST_ENTRY_STEER: _phasePostEntrySteer,
+        LANDING_BURN: _phaseLandingBurn,
+        TOUCHDOWN: _phaseTouchdown,
+      };
+
+      function _tick(snapshot) {
+        _st.ticks++;
+        const body = snapshot.bodies[_bodyIdx];
+        if (!body) return;
+        const simT = snapshot.simTime;
+        const cfg = _constants;
+
+        if (!_st.init) {
+          _st.init = true;
+          _st.startSimTime = simT;
+          _st.phaseStart = simT;
+          _st.phaseLog[_st.phase] = { startT: simT, endT: null, reason: null };
+        }
+
+        const d = Derivation.derive(snapshot, _bodyIdx);
+        if (!d || !d.massProps) return;
+        _st.lastAltKm = d.altitudeAGL / 1000;
+
+        const handler = HANDLERS[_st.phase];
+        const finished = handler ? handler(snapshot, d, simT, cfg) : false;
+
+        const i = PHASES.indexOf(_st.phase);
+        const next = i >= 0 && i < PHASES.length - 1 ? PHASES[i + 1] : null;
+
+        if (finished) {
+          _goto(next, simT, "done");
+          return;
+        }
+        const tmo = cfg[TIMEOUT_KEY[_st.phase]];
+        if (Number.isFinite(tmo) && simT - _st.phaseStart > tmo) {
+          console.warn("[standardRTLS] " + _st.phase + " timeout");
+          _goto(next, simT, "timeout");
+        }
+      }
+
+      return {
+        start(constants, bodyIdx, missionCtx) {
+          if (!constants) throw new Error("standardRTLS.start: constants required");
+          if (!Number.isInteger(bodyIdx))
+            throw new Error("standardRTLS.start: bodyIdx required");
+          _constants = JSON.parse(JSON.stringify(constants));
+          _bodyIdx = bodyIdx;
+          _missionCtx = missionCtx || {};
+          _done = false;
+          _result = null;
+
+          _st.init = false;
+          _st.ticks = 0;
+          _st.phase = "FLIP";
+          _st.phaseStart = 0;
+          _st.startSimTime = null;
+          _st.phaseLog = {};
+          _st.lastAltKm = 0;
+        },
+
+        tick(snapshot) {
+          if (_done) return;
+          if (!snapshot || !snapshot.bodies || !snapshot.bodies[_bodyIdx]) return;
+          _tick(snapshot);
+        },
+
+        stop() {
+          _send(Guidance.cmdSetAllThrottle(0));
+          _send(Guidance.cmdSetGimbalRate(0));
+          _send(Guidance.cmdRcsDuty(null));
+          _st.init = false;
+          _done = false;
+        },
+
+        isDone() {
+          return _done;
+        },
+        getResult() {
+          return _result ? Object.assign({}, _result) : null;
+        },
+        getStatus() {
+          return {
+            phase: _done ? "DONE" : _st.phase,
+            ticks: _st.ticks,
+            altKm: _st.lastAltKm,
+            phaseStart: _st.phaseStart,
+            phaseLog: JSON.parse(JSON.stringify(_st.phaseLog)),
+          };
+        },
+        getBodyIdx() {
+          return _bodyIdx;
+        },
+        getState() {
+          return {
+            bodyIdx: _bodyIdx,
+            constants: _constants ? JSON.parse(JSON.stringify(_constants)) : null,
+            missionCtx: _missionCtx ? JSON.parse(JSON.stringify(_missionCtx)) : null,
+            done: _done,
+            result: _result ? JSON.parse(JSON.stringify(_result)) : null,
+            st: JSON.parse(JSON.stringify(_st)),
+          };
+        },
+        setState(s) {
+          if (!s) return;
+          _bodyIdx = Number.isInteger(s.bodyIdx) ? s.bodyIdx : null;
+          _constants = s.constants ? JSON.parse(JSON.stringify(s.constants)) : null;
+          _missionCtx = s.missionCtx ? JSON.parse(JSON.stringify(s.missionCtx)) : {};
+          _done = !!s.done;
+          _result = s.result ? JSON.parse(JSON.stringify(s.result)) : null;
+          if (s.st) Object.assign(_st, s.st);
+        },
+        getConstants() {
+          return _constants ? JSON.parse(JSON.stringify(_constants)) : null;
+        },
+        setConstants(patch) {
+          if (_constants && patch) Object.assign(_constants, patch);
+        },
+      };
+    },
+  },
 };
