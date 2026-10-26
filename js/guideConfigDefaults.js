@@ -326,6 +326,11 @@ leoInsertionV3: _mkDefault(
   SUICIDE_TRIM_MIN_DUTY: 0.03,
       SUICIDE_TRIM_MAX_S: 120,
     },
+    rtls: {
+      FLIP_ROTATE_TOL_DEG: 0.5,
+      FLIP_OMEGA_TOL: 0.005,
+      FLIP_TIMEOUT_S: 120,
+    },
   },
     ['full-mission', 'expendable'],
   135,

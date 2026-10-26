@@ -331,6 +331,7 @@ out.lbState = {
 if (_lbState.ascentBlock) out.lbAscentBlock = _lbState.ascentBlock.getState();
 if (_lbState.insertionBlock) out.lbInsertionBlock = _lbState.insertionBlock.getState();
 if (_lbState.suicideBlock) out.lbSuicideBlock = _lbState.suicideBlock.getState();
+if (_lbState.rtlsBlock) out.lbRtlsBlock = _lbState.rtlsBlock.getState();
     } catch (e) {
       console.warn("[guidance] exportGuideState failed", e);
     }
@@ -405,6 +406,10 @@ if (data.lbInsertionBlock) {
 if (data.lbSuicideBlock) {
   if (!_lbState.suicideBlock) _lbState.suicideBlock = FUNDAMENTAL_BLOCKS.suicide.createInstance();
   _lbState.suicideBlock.setState(data.lbSuicideBlock);
+}
+if (data.lbRtlsBlock) {
+  if (!_lbState.rtlsBlock) _lbState.rtlsBlock = FUNDAMENTAL_BLOCKS.standardRTLS.createInstance();
+  _lbState.rtlsBlock.setState(data.lbRtlsBlock);
 }
     } catch (e) {
       console.warn("[guidance] importGuideState failed", e);
@@ -982,6 +987,7 @@ const _lbState = {
   ascentBlock: null,
   insertionBlock: null,
   suicideBlock: null,
+  rtlsBlock: null,        // standardRTLS (booster) — handed over after SEPARATED_AXIAL
 
   mecoTriggered: false,
   splitDetected: false,
@@ -1027,6 +1033,7 @@ const _lbConfig = {
   PAYLOAD_DEPLOY_OPEN_DELAY_S: 5,
 },
 suicide: null,
+rtls: null,
 };
 
 (function _lbInitDefaults() {
@@ -1034,6 +1041,7 @@ suicide: null,
   if (F && F.ascent) _lbConfig.ascent = JSON.parse(JSON.stringify(F.ascent.defaultConstants));
   if (F && F.insertion) _lbConfig.insertion = JSON.parse(JSON.stringify(F.insertion.defaultConstants));
   if (F && F.suicide) _lbConfig.suicide = JSON.parse(JSON.stringify(F.suicide.defaultConstants));
+  if (F && F.standardRTLS) _lbConfig.rtls = JSON.parse(JSON.stringify(F.standardRTLS.defaultConstants));
 })();
 
 function _lbCurrentPhase() {
@@ -1096,6 +1104,12 @@ function _landbackTick(snapshot) {
         }
       }
     }
+  }
+
+  // ---- Booster block (standardRTLS) — runs in parallel with the stage's mission phases ----
+  if (_lbState.rtlsBlock && !_lbState.rtlsBlock.isDone()) {
+    try { _lbState.rtlsBlock.tick(snapshot); }
+    catch (e) { console.error('[landbackV1] rtls tick failed', e); }
   }
 
   switch (_lbState.missionPhase) {
@@ -1233,6 +1247,15 @@ if (elapsedSep >= _lbConfig.separation.SEPARATION_DURATION_S) {
   send(cmdRcsDuty(null, sIdx));
   send(cmdRcsDuty(null, bIdx));
   _lbState.lateralArmed = false;
+
+  // ---- Booster handover → standardRTLS ----
+  // Stop the pneumatic pusher torque (ang accel + target omega = 0) and any
+  // RCS (done just above), then the RTLS block owns the booster from here.
+  send(cmdPusherTorque(0, 0, bIdx));
+  _lbState.rtlsBlock = FUNDAMENTAL_BLOCKS.standardRTLS.createInstance();
+  _lbState.rtlsBlock.start(_lbConfig.rtls, bIdx, {});
+  console.log('[landbackV1] booster → standardRTLS at t=' + simT.toFixed(2));
+
   _lbState.insertionBlock = FUNDAMENTAL_BLOCKS.insertion.createInstance();
   _lbState.insertionBlock.start(_lbConfig.insertion, sIdx, {});
   _lbState.missionPhase = 'INSERTION';
@@ -1360,6 +1383,7 @@ _landbackTick.start = function () {
   _lbState.ascentBlock = null;
   _lbState.insertionBlock = null;
   _lbState.suicideBlock = null;
+  _lbState.rtlsBlock = null;
   _lbState.mecoTriggered = false;
   _lbState.splitDetected = false;
   _lbState.fairingOpened = false;
@@ -1378,9 +1402,11 @@ _landbackTick.stop = function () {
   if (_lbState.ascentBlock) { try { _lbState.ascentBlock.stop(); } catch (e) {} }
   if (_lbState.insertionBlock) { try { _lbState.insertionBlock.stop(); } catch (e) {} }
   if (_lbState.suicideBlock) { try { _lbState.suicideBlock.stop(); } catch (e) {} }
+  if (_lbState.rtlsBlock) { try { _lbState.rtlsBlock.stop(); } catch (e) {} }
   _lbState.ascentBlock = null;
   _lbState.insertionBlock = null;
   _lbState.suicideBlock = null;
+  _lbState.rtlsBlock = null;
   console.log('[landbackV1] stopped');
 };
 
@@ -1457,6 +1483,19 @@ if (_lbState.insertionBlock) {
       suicideImpactEfDeg: su.suicideImpactEfDeg,
       suicideDlambdaDeg: su.suicideDlambdaDeg,
       suicideTrimDone: su.suicideTrimDone,
+    });
+  }
+
+  if (_lbState.rtlsBlock) {
+    const rs = _lbState.rtlsBlock.getStatus();
+    Object.assign(out, {
+      rtlsPhase: rs.phase,
+      rtlsAltKm: rs.altKm,
+      rtlsFlipMode: rs.flipMode,
+      rtlsFlipErrDeg: rs.flipErrDeg,
+      rtlsFlipOmegaDegS: rs.flipOmegaDegS,
+      rtlsFlipTgtDeg: rs.flipTgtDeg,
+      rtlsRcsTorque: rs.rcsTorque,
     });
   }
 

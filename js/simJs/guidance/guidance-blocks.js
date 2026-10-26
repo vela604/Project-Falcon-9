@@ -2781,10 +2781,11 @@ setState(s) {
   //   LANDING_BURN     — suicide-style landing burn, legs deploy
   //   TOUCHDOWN        — engines off, confirm contact, block ends
   //
-  // SKELETON: lifecycle, state machine, timeouts, status and save/restore are
-  // real. Each _phaseXxx handler is a TODO stub that returns false ("not done
-  // yet"), so right now every phase just runs out its *_TIMEOUT_S.
-  // Fill in a handler and have it return true when its exit condition is met.
+  // Lifecycle, phase machine, status and save/restore are real. FLIP is
+  // implemented; the other phase handlers are TODO stubs that return false
+  // ("not done yet") and simply hold the phase until they are written. A
+  // handler returns true when its exit condition is met. A phase gets a
+  // timeout only if its <PHASE>_TIMEOUT_S constant exists (see TIMEOUT_KEY).
   // ==========================================================================
   standardRTLS: {
     name: "standardRTLS",
@@ -2801,45 +2802,11 @@ setState(s) {
       "TOUCHDOWN",
     ],
     defaultConstants: {
-      // PLACEHOLDER VALUES — every number below is a stand-in to be tuned.
-      GIMBAL_TARGET: "center",
-
-      // Shared attitude PD (used by the handlers that hold/rotate attitude).
-      ATT_KP: 0.5,
-      ATT_KD: 4.0,
-
-      // ---- FLIP ----
-      FLIP_TARGET_TILT_DEG: 0,      // TODO: target attitude after the flip
-      FLIP_ROTATE_TOL_DEG: 1.0,
-      FLIP_OMEGA_TOL: 0.02,
-      FLIP_TIMEOUT_S: 60,
-
-      // ---- BOOSTBACK_BURN ----
-      BOOSTBACK_THROTTLE_FRAC: 1.0,
-      BOOSTBACK_TARGET_MISS_KM: 1.0, // TODO: cutoff when predicted pad miss < this
-      BOOSTBACK_TIMEOUT_S: 120,
-
-      // ---- PRE_ENTRY_STEER ----
-      ENTRY_BURN_START_ALT_KM: 70,   // TODO: altitude that ends this phase
-      PRE_ENTRY_TIMEOUT_S: 300,
-
-      // ---- ENTRY_BURN ----
-      ENTRY_BURN_THROTTLE_FRAC: 1.0,
-      ENTRY_BURN_CUTOFF_SPEED_MPS: 800, // TODO: cutoff target
-      ENTRY_BURN_TIMEOUT_S: 60,
-
-      // ---- POST_ENTRY_STEER ----
-      LANDING_BURN_START_ALT_KM: 3,  // TODO: ignition altitude (or predictive trigger)
-      POST_ENTRY_TIMEOUT_S: 300,
-
-      // ---- LANDING_BURN ----
-      LANDING_THROTTLE_MIN_FRAC: 0.4,
-      LEGS_DEPLOY_ALT_M: 500,
-      LANDING_TIMEOUT_S: 90,
-
-      // ---- TOUCHDOWN ----
-      TOUCHDOWN_ALT_M: 1.0,          // TODO: contact detection threshold
-      TOUCHDOWN_TIMEOUT_S: 20,
+      // FLIP — exit window + safety timeout. (Constants for later phases get
+      // added as each phase is defined.)
+      FLIP_ROTATE_TOL_DEG: 0.5,   // done when |angle error| < this ...
+      FLIP_OMEGA_TOL: 0.005,      // ... and |relative omega| < this (rad/s)
+      FLIP_TIMEOUT_S: 120,
     },
     importantFields: [],
     createInstance: function () {
@@ -2871,7 +2838,19 @@ setState(s) {
         startSimTime: null,
         phaseLog: {},          // { [phase]: { startT, endT, reason } }
         lastAltKm: 0,
-        // Add per-phase scratch state here (integrators, cached targets, ...)
+        // ---- FLIP scratch ----
+        lastRcsTorque: 0,      // torque (N·m) of the RCS command sent LAST tick (= what is applied now)
+        flipInit: false,
+        flipDir: 0,            // committed rotation direction (+1 / -1), chosen on the first FLIP tick
+        flipEu: 0,             // unwrapped angle error along the committed direction (target - theta)
+        flipPrevRaw: 0,
+        flipPrevTgt: null,
+        flipPrevT: null,
+        flipMode: null,        // ACCEL | BRAKE | TRIM
+        flipErrDeg: null,
+        flipOmegaDegS: null,
+        flipTgtDeg: null,
+        // Add other per-phase scratch state here
       };
 
       function _send(cmd) {
@@ -2889,6 +2868,10 @@ setState(s) {
       // Move to `next` (or finish the block if `next` is null).
       function _goto(next, simT, reason) {
         const cur = _st.phase;
+        if (cur === "FLIP") {
+          _send(Guidance.cmdRcsDuty(null, _bodyIdx));
+          _st.lastRcsTorque = 0;
+        }
         if (_st.phaseLog[cur]) {
           _st.phaseLog[cur].endT = simT;
           _st.phaseLog[cur].reason = reason || "done";
@@ -2914,37 +2897,200 @@ setState(s) {
       // Derivation.derive(snapshot, bodyIdx). Return true when the phase's
       // exit condition is met. TODO: implement.
       // ---------------------------------------------------------------------
+      // ---- FLIP helpers ---------------------------------------------------
+      // Body angle that puts the NOSE exactly opposite to the local-horizontal
+      // (tangential) component of the inertial velocity. Nose = (-sinθ, cosθ).
+      function _flipTargetTheta(rx, ry, vx, vy) {
+        const r = Math.hypot(rx, ry);
+        if (!(r > 1)) return null;
+        const hx = rx / r, hy = ry / r;               // local vertical
+        const vr = vx * hx + vy * hy;
+        const tx = vx - vr * hx, ty = vy - vr * hy;   // tangential velocity
+        const tm = Math.hypot(tx, ty);
+        if (!(tm > 1e-3)) return null;
+        return Math.atan2(tx / tm, -ty / tm);         // nose = -t̂
+      }
+
+      // Max RCS torque available each way (N·m, both >= 0). Asking
+      // targetTorqueRcs for an absurd torque fires every helping nozzle at
+      // duty 1, so the result is both the max torque and the full-duty table.
+      function _rcsMaxTorques(snapshot) {
+        const BIG = 1e12;
+        const sum = (r) => (r && r.fires ? r.fires.reduce((a, f) => a + f.torque, 0) : 0);
+        const rp = GuideRCS.targetTorqueRcs(snapshot, +BIG, _bodyIdx);
+        const rn = GuideRCS.targetTorqueRcs(snapshot, -BIG, _bodyIdx);
+        return { pos: Math.max(0, sum(rp)), neg: Math.max(0, -sum(rn)), rp: rp, rn: rn };
+      }
+
+      function _rcsOff() {
+        _send(Guidance.cmdRcsDuty(null, _bodyIdx));
+        _st.lastRcsTorque = 0;
+      }
+
+      // Min time to cover distance D from rest to rest: accelerate at a, brake at b.
+      function _flipRestToRest(D, a, b) {
+        const v = Math.sqrt(2 * D / (1 / a + 1 / b));
+        return v / a + v / b;
+      }
+
+      // Min time (full torque, bang-bang) to bring signed error e to 0 at rest,
+      // starting with relative omega w. aPos / aNeg = angular accel available
+      // with +/- torque (rad/s²).
+      function _flipTime(e, w, aPos, aNeg) {
+        const sgn = e >= 0 ? 1 : -1;
+        const a = sgn > 0 ? aPos : aNeg;     // accelerates toward the target
+        const b = sgn > 0 ? aNeg : aPos;     // brakes
+        const D = Math.abs(e);
+        const wt = w * sgn;                  // omega component toward the target
+        if (wt >= 0) {
+          const stop = wt * wt / (2 * b);
+          if (stop <= D) {                   // can accelerate a bit more, then brake
+            const vp = Math.sqrt((D + wt * wt / (2 * a)) / (1 / (2 * a) + 1 / (2 * b)));
+            return (vp - wt) / a + vp / b;
+          }
+          return wt / b + _flipRestToRest(stop - D, b, a);   // unavoidable overshoot, come back
+        }
+        const dAway = wt * wt / (2 * a);     // first cancel the spin that carries us away
+        return Math.abs(wt) / a + _flipRestToRest(D + dAway, a, b);
+      }
+
+      // FLIP — fastest rotation (RCS only), nose → opposite the local-horizontal
+      // velocity. Pure bang-bang:
+      //   * FIRST TICK: look at the state (angle error + omega + torque available
+      //     each way) and pick the way round that is fastest — the direction the
+      //     booster is already spinning wins unless the other way is genuinely
+      //     quicker. That direction is then committed (error is tracked unwrapped
+      //     along it, so it never flips to the long/short route mid-flip).
+      //   * every tick: target + error + omega are live; the state is predicted ONE
+      //     tick ahead using the RCS torque currently applied (the command computed
+      //     now only takes effect next tick).
+      //   * full torque toward the target; as soon as the stopping angle
+      //     (w²/2a_brake) reaches the remaining error → full torque the other way.
+      //   * only the last braking tick is trimmed (just enough to zero omega).
       function _phaseFlip(snapshot, d, simT, cfg) {
-        // TODO: spool RCS/gimbal, rotate to FLIP_TARGET_TILT_DEG, exit when
-        // within FLIP_ROTATE_TOL_DEG and |omega| < FLIP_OMEGA_TOL.
+        const idx = _bodyIdx;
+        if (!snapshot.bodies[idx]) return false;
+        const env = Derivation.getEnv();
+        const dt = env && Number.isFinite(env.DT) ? env.DT : 1 / 80;
+        const I = d.massProps.I;
+        if (!(I > 0)) return false;
+        const R2D = 180 / Math.PI;
+
+        const tgtNow = _flipTargetTheta(d.rx, d.ry, d.vx, d.vy);
+        if (tgtNow === null) { _rcsOff(); return false; }
+        const mx = _rcsMaxTorques(snapshot);
+        if (!(mx.pos > 0) || !(mx.neg > 0)) { _rcsOff(); return false; }
+
+        // rate at which the target itself rotates (orbital motion)
+        let wTgt = 0;
+        if (_st.flipPrevTgt !== null && _st.flipPrevT !== null && simT > _st.flipPrevT) {
+          wTgt = _wrapPi(tgtNow - _st.flipPrevTgt) / (simT - _st.flipPrevT);
+          if (Math.abs(wTgt) > 0.05) wTgt = 0; // glitch guard
+        }
+        _st.flipPrevTgt = tgtNow;
+        _st.flipPrevT = simT;
+        const wRelNow = d.omega - wTgt;
+        const rawErr = tgtNow - d.theta;
+
+        if (!_st.flipInit) {
+          // ---- first tick: read the state, choose the direction ----
+          _st.flipInit = true;
+          _send(Guidance.cmdSetAllThrottle(0));
+          _send(Guidance.cmdSetGimbalRate(0));
+          const e0 = _wrapPi(rawErr);
+          const ePos = e0 >= 0 ? e0 : e0 + 2 * Math.PI;   // way round in +direction
+          const eNeg = ePos - 2 * Math.PI;                // way round in -direction
+          const tPos = _flipTime(ePos, wRelNow, mx.pos / I, mx.neg / I);
+          const tNeg = _flipTime(eNeg, wRelNow, mx.pos / I, mx.neg / I);
+          _st.flipEu = tPos <= tNeg ? ePos : eNeg;
+          _st.flipDir = _st.flipEu >= 0 ? 1 : -1;
+          console.log("[standardRTLS] FLIP dir=" + (_st.flipDir > 0 ? "+" : "-") +
+            " err=" + (_st.flipEu * R2D).toFixed(1) + "deg omega=" + (wRelNow * R2D).toFixed(2) +
+            "deg/s  t(+)=" + tPos.toFixed(1) + "s t(-)=" + tNeg.toFixed(1) + "s");
+        } else {
+          _st.flipEu += _wrapPi(rawErr - _st.flipPrevRaw);   // unwrapped along the committed way
+        }
+        _st.flipPrevRaw = rawErr;
+
+        _st.flipTgtDeg = tgtNow * R2D;
+        _st.flipErrDeg = _st.flipEu * R2D;
+        _st.flipOmegaDegS = wRelNow * R2D;
+
+        if (Math.abs(_st.flipEu) < cfg.FLIP_ROTATE_TOL_DEG / R2D &&
+            Math.abs(wRelNow) < cfg.FLIP_OMEGA_TOL) {
+          _rcsOff();
+          return true;
+        }
+
+        // ---- one-tick-ahead prediction (current RCS torque keeps acting) ----
+        const M = d.massProps.M;
+        let aIx = d.gVecX, aIy = d.gVecY;
+        if (M > 0) {
+          const cosT = Math.cos(d.theta), sinT = Math.sin(d.theta);
+          const thrIx = d.thrustBodyX * cosT - d.thrustBodyY * sinT;
+          const thrIy = d.thrustBodyX * sinT + d.thrustBodyY * cosT;
+          aIx += (thrIx + d.dragVecX) / M;
+          aIy += (thrIy + d.dragVecY) / M;
+        }
+        const aTot = d.alphaAng + _st.lastRcsTorque / I;  // d.alphaAng has NO rcs term
+        const dTheta = d.omega * dt + 0.5 * aTot * dt * dt;
+        const wP = d.omega + aTot * dt;
+        const tgtP = _flipTargetTheta(d.rx + d.vx * dt, d.ry + d.vy * dt,
+                                      d.vx + aIx * dt, d.vy + aIy * dt);
+        const dTgt = tgtP !== null ? _wrapPi(tgtP - tgtNow) : 0;
+        const eP = _st.flipEu + dTgt - dTheta;
+        const wRelP = wP - wTgt;
+
+        // ---- bang-bang on the predicted state ----
+        const sgn = eP >= 0 ? 1 : -1;
+        const brakeMax = sgn > 0 ? mx.neg : mx.pos;          // torque available AGAINST the motion
+        const towards = wRelP * sgn > 0;
+        const stopAng = wRelP * wRelP * I / (2 * brakeMax) + Math.abs(wRelP) * dt;
+        let tauCmd, fullRes = null;
+        if (towards && Math.abs(eP) <= stopAng) {
+          const need = I * Math.abs(wRelP) / dt;             // torque that zeroes omega in one tick
+          if (need >= brakeMax) {
+            _st.flipMode = "BRAKE"; fullRes = sgn > 0 ? mx.rn : mx.rp; tauCmd = -sgn * brakeMax;
+          } else {
+            _st.flipMode = "TRIM"; tauCmd = -sgn * need;     // last tick only: just enough
+          }
+        } else {
+          _st.flipMode = "ACCEL"; fullRes = sgn > 0 ? mx.rp : mx.rn; tauCmd = sgn * (sgn > 0 ? mx.pos : mx.neg);
+        }
+
+        const res = fullRes || GuideRCS.targetTorqueRcs(snapshot, tauCmd, idx);
+        if (res && res.fires && res.fires.length) {
+          _send(Guidance.cmdRcsDuty(res.duties, idx));
+          _st.lastRcsTorque = res.fires.reduce((a, f) => a + f.torque, 0);
+        } else {
+          _rcsOff();
+        }
         return false;
       }
+
+      // ---- later phases: TODO ----
       function _phaseBoostback(snapshot, d, simT, cfg) {
-        // TODO: light engines at BOOSTBACK_THROTTLE_FRAC, steer to pad,
-        // cutoff when predicted miss < BOOSTBACK_TARGET_MISS_KM.
+        // TODO: boostback burn
         return false;
       }
       function _phasePreEntrySteer(snapshot, d, simT, cfg) {
-        // TODO: engines off, hold entry attitude, grid fins as needed;
-        // exit at ENTRY_BURN_START_ALT_KM (or predictive trigger).
+        // TODO: pre-entry-burn steer
         return false;
       }
       function _phaseEntryBurn(snapshot, d, simT, cfg) {
-        // TODO: relight, burn until ENTRY_BURN_CUTOFF_SPEED_MPS, then cutoff.
+        // TODO: entry burn
         return false;
       }
       function _phasePostEntrySteer(snapshot, d, simT, cfg) {
-        // TODO: grid-fin aero steering toward the pad; exit at the
-        // landing-burn ignition condition.
+        // TODO: post-entry-burn steer
         return false;
       }
       function _phaseLandingBurn(snapshot, d, simT, cfg) {
-        // TODO: landing burn guidance (>= LANDING_THROTTLE_MIN_FRAC), deploy
-        // legs at LEGS_DEPLOY_ALT_M; exit when altitude <= TOUCHDOWN_ALT_M.
+        // TODO: landing burn
         return false;
       }
       function _phaseTouchdown(snapshot, d, simT, cfg) {
-        // TODO: engines off, confirm contact/stability.
+        // TODO: touchdown
         return false;
       }
 
@@ -3011,6 +3157,17 @@ setState(s) {
           _st.startSimTime = null;
           _st.phaseLog = {};
           _st.lastAltKm = 0;
+          _st.lastRcsTorque = 0;
+          _st.flipInit = false;
+          _st.flipDir = 0;
+          _st.flipEu = 0;
+          _st.flipPrevRaw = 0;
+          _st.flipPrevTgt = null;
+          _st.flipPrevT = null;
+          _st.flipMode = null;
+          _st.flipErrDeg = null;
+          _st.flipOmegaDegS = null;
+          _st.flipTgtDeg = null;
         },
 
         tick(snapshot) {
@@ -3040,6 +3197,12 @@ setState(s) {
             altKm: _st.lastAltKm,
             phaseStart: _st.phaseStart,
             phaseLog: JSON.parse(JSON.stringify(_st.phaseLog)),
+            flipMode: _st.flipMode,
+            flipErrDeg: _st.flipErrDeg,
+            flipOmegaDegS: _st.flipOmegaDegS,
+            flipTgtDeg: _st.flipTgtDeg,
+            flipDir: _st.flipDir,
+            rcsTorque: _st.lastRcsTorque,
           };
         },
         getBodyIdx() {
