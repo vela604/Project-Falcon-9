@@ -138,7 +138,13 @@
     if (m.crashed || m.endReason === 'CRASHED') return 'CRASH';
     if (m.endReason !== 'COAST_WAIT_ENTRY') return 'OTHER:' + m.endReason;
     if (!Number.isFinite(m.apoCoastKm)) return 'OTHER:noApo';
-    const apoRef = P.altApo != null ? P.altApo : P.alt;
+    // Peri-target strategy: STAGE_BURN ends at apogee = target_peri (near-side
+    // apside). At COAST_WAIT, m.apoCoastKm ≈ target_peri = min(altApo, altPeri).
+    // Using raw P.altApo (may be either apside from user input) → wrong for
+    // reversed input (apside1=400, apside2=250 → altApo=400, coast apo≈250 → APO_SHORT).
+    const _aApoCls = P.altApo != null ? P.altApo : P.alt;
+    const _aPeriCls = P.altPeri != null ? P.altPeri : P.alt;
+    const apoRef = Math.min(_aApoCls, _aPeriCls);
     if (m.apoCoastKm < apoRef - P.tol) return 'APO_SHORT';
     if (m.apoCoastKm > apoRef + P.tolHi) return 'APO_LONG';
     if (!Number.isFinite(m.circDvMaxMps) || !Number.isFinite(m.circTBurnS) || !Number.isFinite(m.tToApoCoastS)) return 'OTHER:noPhys';
@@ -330,8 +336,17 @@
     }
     const m = ch.metrics || {};
     out.tEnd = ch.simEnd; out.payloadCleared = !!m.payloadCleared; out.apo = m.apogeeKm; out.peri = m.perigeeKm; out.vrEnd = ch.vrEnd; out.resid = m.stageResidualKg;
-    const tolKm = ORBIT_TOL_FRAC * P.alt;
-    out.full = (idealReg || (out.inBand && lr.lead >= 1)) && out.payloadCleared && Math.abs(m.apogeeKm - P.alt) <= tolKm && Math.abs(m.perigeeKm - P.alt) <= tolKm && ch.vrEnd >= 0;
+    // Apside-aware verification: apo = max(apside1, apside2), peri = min.
+    // For circular (apo==peri==alt), reduces to |actual - alt| <= tolKm each.
+    // For elliptical (e.g. 400/250), each compared against its own target —
+    // without this, |250 - 400| = 150 km always fails.
+    const _aApoVp = P.altApo != null ? P.altApo : P.alt;
+    const _aPeriVp = P.altPeri != null ? P.altPeri : P.alt;
+    const altApoVp = Math.max(_aApoVp, _aPeriVp);
+    const altPeriVp = Math.min(_aApoVp, _aPeriVp);
+    const tolApoVp = ORBIT_TOL_FRAC * altApoVp;
+    const tolPeriVp = ORBIT_TOL_FRAC * altPeriVp;
+    out.full = (idealReg || (out.inBand && lr.lead >= 1)) && out.payloadCleared && Math.abs(m.apogeeKm - altApoVp) <= tolApoVp && Math.abs(m.perigeeKm - altPeriVp) <= tolPeriVp && ch.vrEnd >= 0;
     return out;
   }
 
@@ -362,7 +377,10 @@
   function report(ctx, P, M, anchor, rows) {
     const onLog = ctx.onLog;
     const chosen = UB.pickRows(rows, P.K, anchor.Gi);
-    onLog(''); onLog('=============== BOOTSTRAP RESULT  ' + (P.altApo != null && P.altPeri != null && (P.altApo !== P.alt || P.altPeri !== P.alt) ? 'apo=' + P.altApo + ' km  peri=' + P.altPeri + ' km' : 'alt=' + P.alt + ' km') + ' ===============', 'hi');
+    const _repApo = (P.altApo != null && P.altPeri != null && (P.altApo !== P.alt || P.altPeri !== P.alt))
+      ? 'apo=' + Math.max(P.altApo, P.altPeri) + ' km  peri=' + Math.min(P.altApo, P.altPeri) + ' km'
+      : 'alt=' + P.alt + ' km';
+    onLog(''); onLog('=============== BOOTSTRAP RESULT  ' + _repApo + ' ===============', 'hi');
     onLog('MECO = ' + M + '   (pred ' + f1(anchor.pred, 0) + ' kg, tEst ' + f1(anchor.tEst, 0) + ' s at G=' + gfmt(anchor.Gi) + ' bias=' + bfmt(anchor.bi) + ')', 'ok');
     onLog('candidates below are COAST-FEASIBLE ONLY (ideal-Tsiolkovsky filter). Phase D verifies them with tuneLead+FULL.', 'dim');
     for (const r of chosen) {
@@ -371,7 +389,10 @@
       const rawW = (r.width * UB.BQ).toFixed(3);
       const step = Math.max(0.01, Math.round(((hi - lo) * UB.BQ / 10) * 100) / 100);
       onLog('G=' + gfmt(r.Gi) + '  window [' + bfmt(r.lo) + ', ' + bfmt(r.hi) + '] w=' + rawW + (r.clipLo ? ' CLIP-' : '') + (r.clipHi ? ' CLIP+' : ''));
-      onLog('   score-scan inputs ->  G ' + (r.Gi / 100).toFixed(2) + '   MECO ' + M + '   ' + (P.altApo != null && P.altPeri != null && (P.altApo !== P.alt || P.altPeri !== P.alt) ? 'apo=' + P.altApo + ' peri=' + P.altPeri : 'alt ' + P.alt) + '   bias lo ' + (lo * UB.BQ).toFixed(3) + '   hi ' + (hi * UB.BQ).toFixed(3) + '   step ' + step.toFixed(2), 'dim');
+      const _rowAps = (P.altApo != null && P.altPeri != null && (P.altApo !== P.alt || P.altPeri !== P.alt))
+        ? 'apo=' + Math.max(P.altApo, P.altPeri) + ' peri=' + Math.min(P.altApo, P.altPeri)
+        : 'alt ' + P.alt;
+      onLog('   score-scan inputs ->  G ' + (r.Gi / 100).toFixed(2) + '   MECO ' + M + '   ' + _rowAps + '   bias lo ' + (lo * UB.BQ).toFixed(3) + '   hi ' + (hi * UB.BQ).toFixed(3) + '   step ' + step.toFixed(2), 'dim');
     }
     return chosen;
   }
@@ -392,7 +413,10 @@
     const ev = makeEv(ctx);
     const out = { ok: false, status: '', champs: [], good: [], table: null, rows: {}, chosen: [], evals: 0, wallMs: 0, error: null };
     try {
-      ctx.onLog('--- universal bootstrap  ' + (P.altApo != null && P.altPeri != null && (P.altApo !== P.alt || P.altPeri !== P.alt) ? 'apo=' + P.altApo + ' peri=' + P.altPeri : 'alt=' + P.alt) + '  T=' + (P.Tn * 0.000125) + '  K=' + P.K + '  pred [' + P.predMin + ',' + P.predMax + ']  ideal=' + P.ideal + '  bias rows=' + P.nbr +
+      const _logApo = (P.altApo != null && P.altPeri != null && (P.altApo !== P.alt || P.altPeri !== P.alt))
+        ? 'apo=' + Math.max(P.altApo, P.altPeri) + ' peri=' + Math.min(P.altApo, P.altPeri)
+        : 'alt=' + P.alt;
+      ctx.onLog('--- universal bootstrap  ' + _logApo + '  T=' + (P.Tn * 0.000125) + '  K=' + P.K + '  pred [' + P.predMin + ',' + P.predMax + ']  ideal=' + P.ideal + '  bias rows=' + P.nbr +
         (opts.forceMeco != null ? '  FORCE MECO=' + opts.forceMeco : '') +
         (opts.forceGi != null ? '  FORCE G=' + gfmt(opts.forceGi) : '') + ' ---', 'dim');
       let bk = null;

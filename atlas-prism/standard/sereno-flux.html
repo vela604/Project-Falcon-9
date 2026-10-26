@@ -433,7 +433,6 @@ table.rv-t{width:100%;border-collapse:collapse;font-size:11.5px;font-variant-num
         MECO_TARGET_BOOSTER_FUEL_KG: 52612,
       },
       insertion: {
-        TARGET_ORBIT_ALT_KM: tApo,
         TARGET_APSIDE1_ALT_KM: tApo,
         TARGET_APSIDE2_ALT_KM: tPeri,
         STAGE_BURN_AOA_BIAS_DEG: 0.827,
@@ -478,7 +477,6 @@ table.rv-t{width:100%;border-collapse:collapse;font-size:11.5px;font-variant-num
         MECO_TARGET_BOOSTER_FUEL_KG: meco,
       },
       insertion: {
-        TARGET_ORBIT_ALT_KM: (S.orbitApoKm != null ? S.orbitApoKm : S.orbitKm),
         TARGET_APSIDE1_ALT_KM: (S.orbitApoKm != null ? S.orbitApoKm : S.orbitKm),
         TARGET_APSIDE2_ALT_KM: (S.orbitPeriKm != null ? S.orbitPeriKm : (S.orbitApoKm != null ? S.orbitApoKm : S.orbitKm)),
         STAGE_BURN_AOA_BIAS_DEG: (biasFallback != null ? biasFallback : 1.8),

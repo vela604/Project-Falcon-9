@@ -806,10 +806,6 @@ setState(s) {
       //   Elliptical target:  APSIDE1 = 320, APSIDE2 = 250  (apo=320, peri=250)
       TARGET_APSIDE1_ALT_KM: 320,
       TARGET_APSIDE2_ALT_KM: 320,
-      // Deprecated legacy constant — still honoured as a fallback when
-      // only the old field is present (existing presets before the split).
-      // Once both apside constants are set, this field is ignored.
-      TARGET_ORBIT_ALT_KM: 320,
       // Minimum distance from stage to a released payload body for it to
       // count as "cleared". Small enough to fire quickly after release,
       // large enough to skip transient spawn-overlap frames.
@@ -834,8 +830,8 @@ setState(s) {
 
       // Derived target apogee/perigee (km ASL). Computed once in start()
       // from TARGET_APSIDE1_ALT_KM / TARGET_APSIDE2_ALT_KM (higher = apogee,
-      // lower = perigee). Legacy fallback: if only TARGET_ORBIT_ALT_KM is
-      // present (old presets), both collapse to that value (circular).
+      // lower = perigee). Self-healing: if only one apside is set, it is
+      // mirrored to the other (auto circular).
       let _targetApoKm = 320;
       let _targetPeriKm = 320;
 
@@ -2000,13 +1996,17 @@ const tau_target = tau_desired - dNext.torqueEnvironmental;
           _done = false;
           _result = null;
 
-          // Derive apogee/perigee from the two apside constants. Legacy
-          // fallback to TARGET_ORBIT_ALT_KM (existing presets keep working
-          // as a circular target at that altitude).
+          // Self-healing apside derivation (no legacy fallback):
+          //   - Both set      → use as-is
+          //   - Only apside1  → mirror to apside2 (auto circular)
+          //   - Only apside2  → mirror to apside1 (auto circular)
+          //   - Neither set   → 320/320 (sane default)
+          // apo = max(apside1, apside2), peri = min(apside1, apside2) — so
+          // user order never matters.
           const _ap1Raw = Number.isFinite(constants.TARGET_APSIDE1_ALT_KM)
             ? constants.TARGET_APSIDE1_ALT_KM
-            : (Number.isFinite(constants.TARGET_ORBIT_ALT_KM)
-                ? constants.TARGET_ORBIT_ALT_KM : 320);
+            : (Number.isFinite(constants.TARGET_APSIDE2_ALT_KM)
+                ? constants.TARGET_APSIDE2_ALT_KM : 320);
           const _ap2Raw = Number.isFinite(constants.TARGET_APSIDE2_ALT_KM)
             ? constants.TARGET_APSIDE2_ALT_KM
             : _ap1Raw;
@@ -2168,11 +2168,12 @@ setState(s) {
   // Recompute derived target apsides from restored constants (start() is
   // not called during state restore — without this, _targetApoKm/PeriKm
   // would stay at their 320/320 defaults even if the config was different).
+  // Self-healing: mirror single apside to the other (auto circular).
   if (_constants) {
     const _ap1 = Number.isFinite(_constants.TARGET_APSIDE1_ALT_KM)
       ? _constants.TARGET_APSIDE1_ALT_KM
-      : (Number.isFinite(_constants.TARGET_ORBIT_ALT_KM)
-          ? _constants.TARGET_ORBIT_ALT_KM : 320);
+      : (Number.isFinite(_constants.TARGET_APSIDE2_ALT_KM)
+          ? _constants.TARGET_APSIDE2_ALT_KM : 320);
     const _ap2 = Number.isFinite(_constants.TARGET_APSIDE2_ALT_KM)
       ? _constants.TARGET_APSIDE2_ALT_KM
       : _ap1;

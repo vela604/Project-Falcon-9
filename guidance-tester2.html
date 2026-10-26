@@ -755,13 +755,17 @@ default: break;
   if (!opts.preserveValues) currentValues = JSON.parse(JSON.stringify(cfg));
   // Expose current target-orbit altitude to the read-only presentation layer
   // (guidance-tester-ui.js) without forcing it to guess the guide name.
+  // Plot target altitude reader (for the dashed target circle).
+  // Returns apo (larger apside) — single circle can't show both for elliptical.
   window.__getGuideTargetAltKm = function () {
     try {
-      if (currentValues && currentValues.insertion &&
-          Number.isFinite(currentValues.insertion.TARGET_ORBIT_ALT_KM))
-        return currentValues.insertion.TARGET_ORBIT_ALT_KM;
-      if (currentValues && Number.isFinite(currentValues.TARGET_ORBIT_ALT_KM))
-        return currentValues.TARGET_ORBIT_ALT_KM;
+      if (currentValues && currentValues.insertion) {
+        const a1 = currentValues.insertion.TARGET_APSIDE1_ALT_KM;
+        const a2 = currentValues.insertion.TARGET_APSIDE2_ALT_KM;
+        if (Number.isFinite(a1) && Number.isFinite(a2)) return Math.max(a1, a2);
+        if (Number.isFinite(a1)) return a1;
+        if (Number.isFinite(a2)) return a2;
+      }
       return 320;
     } catch (e) { return 320; }
   };

@@ -44,7 +44,7 @@ h2{font-size:14px;margin:14px 0 8px}pre{white-space:pre-wrap;font-size:11.5px;ba
   function saValuesFor(meco, G, T, bias, lead) {
     const a1 = S.orbitApoKm, a2 = S.orbitPeriKm;
     return { ascent: { PUSH_MAX_GIMBAL_DEG: G, PUSH_T_S: T, MECO_TARGET_BOOSTER_FUEL_KG: meco },
-      insertion: { TARGET_ORBIT_ALT_KM: a1, TARGET_APSIDE1_ALT_KM: a1, TARGET_APSIDE2_ALT_KM: a2, STAGE_BURN_AOA_BIAS_DEG: bias, CIRC_TRIGGER_LEAD_S: lead },
+      insertion: { TARGET_APSIDE1_ALT_KM: a1, TARGET_APSIDE2_ALT_KM: a2, STAGE_BURN_AOA_BIAS_DEG: bias, CIRC_TRIGGER_LEAD_S: lead },
       done: { DEORBIT_ENABLED: !!TunerConfig.fixed.deorbitEnabled } };
   }
   async function ensureSA(values) {

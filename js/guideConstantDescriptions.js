@@ -56,7 +56,6 @@ const GUIDE_CONSTANT_DESCRIPTIONS = {
   'insertion.COAST_BURN_MULTIPLIER': 'Safety multiplier applied to the computed ideal coast burn time. Larger = start aligning / planning earlier.',
   'insertion.TARGET_APSIDE1_ALT_KM': 'First of two target apsides (km ASL). The insertion block internally sorts them: apogee = max(apside1, apside2), perigee = min(apside1, apside2). Equal values → circular target. Different values → elliptical target (higher = apo, lower = peri).',
   'insertion.TARGET_APSIDE2_ALT_KM': 'Second of two target apsides (km ASL). See TARGET_APSIDE1_ALT_KM. Drives STAGE_BURN apogee cutoff, RCS_BOOST apogee trim, and the CIRCULARIZE / COAST_HOLD_2 target velocity (vis-viva at apogee of the resulting ellipse).',
-  'insertion.TARGET_ORBIT_ALT_KM': 'DEPRECATED (legacy single-altitude target). Only consulted as a fallback when TARGET_APSIDE1_ALT_KM is missing — old presets keep working as circular targets at this altitude. Ignored once TARGET_APSIDE1_ALT_KM is set.',
   'insertion.PAYLOAD_CLEAR_DIST_M': 'Minimum separation distance (m) between stage and payload body for the payload to count as "cleared" and end the insertion block.',
   'insertion.PAYLOAD_CONFIRM_TIMEOUT_S': 'Fail-safe: if the payload never confirms as cleared, the insertion block ends after this many seconds regardless.',
   'insertion.COAST_HOLD_2_TRIM_TOL_MPS': 'Convergence tolerance (m/s) for the COAST_HOLD_2 axial deltaV trim. Once |gap - eject_kick| falls below this, axial RCS firing stops. Smaller = tighter final orbit, but more RCS chatter at the boundary.',

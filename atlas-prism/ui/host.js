@@ -249,7 +249,18 @@
               bias: c.insertion && c.insertion.STAGE_BURN_AOA_BIAS_DEG,
               lead: c.insertion && c.insertion.CIRC_TRIGGER_LEAD_S,
               meco: c.ascent && c.ascent.MECO_TARGET_BOOSTER_FUEL_KG,
-              alt: c.insertion && c.insertion.TARGET_ORBIT_ALT_KM,
+              // v3-only tuner: preset alt = apo (larger apside).
+              // v2 presets have no .insertion section -> alt = null (labels show
+              // apsides as '?' instead, which is correct since v2 has no apsides).
+              alt: (() => {
+                const ins = c.insertion || {};
+                const a1 = Number.isFinite(ins.TARGET_APSIDE1_ALT_KM) ? ins.TARGET_APSIDE1_ALT_KM : null;
+                const a2 = Number.isFinite(ins.TARGET_APSIDE2_ALT_KM) ? ins.TARGET_APSIDE2_ALT_KM : null;
+                if (a1 != null && a2 != null) return Math.max(a1, a2);
+                if (a1 != null) return a1;
+                if (a2 != null) return a2;
+                return null;
+              })(),
               apside1: c.insertion && c.insertion.TARGET_APSIDE1_ALT_KM,
               apside2: c.insertion && c.insertion.TARGET_APSIDE2_ALT_KM,
               name: p.name || (p.isDefault ? 'default' : ('preset ' + (meta.id || '?')))

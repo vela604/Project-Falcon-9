@@ -215,6 +215,12 @@
   const Q = Cfg.quanta, L = Cfg.limits;
   const mode = Object.assign({}, Cfg.modes[opts.mode || 'fine'] || Cfg.modes.fine, opts.modeOverride || {});
   const targetAltKm = opts.targetAltKm != null ? opts.targetAltKm : Cfg.fixed.targetAltKm;
+  // Apside-aware for tuneAB
+  const _tApoKmAB = opts.targetApoKm != null ? opts.targetApoKm : targetAltKm;
+  const _tPeriKmAB = opts.targetPeriKm != null ? opts.targetPeriKm : targetAltKm;
+  // Peri-strategy: stage burn cutoff at apogee = target_peri. So COAST_WAIT_ENTRY
+  // apo ≈ min(apo, peri). Compare against target_peri, not target_apo.
+  const _coastApoTargetKm = Math.min(_tApoKmAB, _tPeriKmAB);
   const cache = opts.cache || new U.EvalCache();
   const maxAB = opts.maxEvalsAB || 160;
   const apoTol = L.coastApoTolKm != null ? L.coastApoTolKm : 1;
@@ -246,7 +252,7 @@
   function classify(m) {
     if (m.endReason === 'STAGE_VR_NEG' || m.stageVrNeg || m.endReason === 'CRASHED') return 'F1';
     if (m.endReason !== 'COAST_WAIT_ENTRY' || !Number.isFinite(m.eCoast)) return 'F2a';
-    if (!(m.apoCoastKm >= targetAltKm - apoTol)) return 'F2a';
+    if (!(m.apoCoastKm >= _coastApoTargetKm - apoTol)) return 'F2a';
     if (!Number.isFinite(m.coastDeltaV)) return 'F2a';
     if (m.coastDeltaV < bandLo) return 'F2b';
     if (m.coastDeltaV > bandHi) return 'FE';
@@ -353,6 +359,7 @@ async function startOk(p) {
     const p = Object.assign({}, rc.p, { li: leadHint });
     say('verify [' + tag + '] ' + dsc(p) + ' Δv=' + fmt(rc.dv, 1));
     const lr = await tuneLead(p, { hook: H, cache, abortRef: opts.abortRef, env: opts.env, targetAltKm,
+      targetApoKm: opts.targetApoKm, targetPeriKm: opts.targetPeriKm,
       onProgress: opts.onProgress, onLog: opts.verbose ? (s) => say('    ' + s) : null });
     leadEvals += lr.evals;
     const rec = { tag, round: 0, point: rc.p, desc: U.describe(rc.p), deltaV: rc.dv, apoCoastKm: rc.m.apoCoastKm,
@@ -539,6 +546,10 @@ function residualBand(opts) {
     const rescueBi = opts.probeRescueBi || 100;            // 0.01 deg, one rescue step for a failing fast probe
     const mB = Cfg.bounds.meco, biB = [Math.round(Cfg.bounds.bias.lower / Q.bias), Math.round(Cfg.bounds.bias.upper / Q.bias)];
     const targetAltKm = opts.targetAltKm != null ? opts.targetAltKm : Cfg.fixed.targetAltKm;
+const _tApoKmFO = opts.targetApoKm != null ? opts.targetApoKm : targetAltKm;
+const _tPeriKmFO = opts.targetPeriKm != null ? opts.targetPeriKm : targetAltKm;
+// Peri-strategy: coast apo ≈ target_peri = min(apo, peri)
+const _coastApoTargetKmFO = Math.min(_tApoKmFO, _tPeriKmFO);
 const apoTol = L.coastApoTolKm != null ? L.coastApoTolKm : 1;
 // Step Δv 3/4: coast OK is now Δv-based (band), E/ceil gone.
 const dVband = (opts.deltaVband && opts.deltaVband.length === 2) ? opts.deltaVband : (L.coastDeltaVbandMps || [750, 850]);
@@ -625,7 +636,7 @@ const cache = opts.cache || new U.EvalCache();
 function coastCls(m) {
   if (m.endReason === 'STAGE_VR_NEG' || m.stageVrNeg || m.endReason === 'CRASHED') return 'F1';
   if (m.endReason !== 'COAST_WAIT_ENTRY' || !Number.isFinite(m.eCoast)) return 'F2a';
-  if (!(m.apoCoastKm >= targetAltKm - apoTol)) return 'F2a';
+  if (!(m.apoCoastKm >= _coastApoTargetKmFO - apoTol)) return 'F2a';
   if (!Number.isFinite(m.coastDeltaV)) return 'F2a';
   if (m.coastDeltaV < bandLo) return 'F2b';
   if (m.coastDeltaV > bandHi) return 'FE';

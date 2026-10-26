@@ -151,7 +151,6 @@
     return {
       ascent: { PUSH_MAX_GIMBAL_DEG: b.G, PUSH_T_S: b.T, MECO_TARGET_BOOSTER_FUEL_KG: b.meco },
       insertion: {
-        TARGET_ORBIT_ALT_KM: altKm,
         TARGET_APSIDE1_ALT_KM: altKm,
         TARGET_APSIDE2_ALT_KM: altKm,
         STAGE_BURN_AOA_BIAS_DEG: b.bias,
@@ -177,7 +176,7 @@
       log('DT = ' + CONFIG.DT + ' s');
       log('defaults: G=' + a.PUSH_MAX_GIMBAL_DEG + ' T=' + a.PUSH_T_S + ' MECO=' + a.MECO_TARGET_BOOSTER_FUEL_KG +
           ' bias=' + ins.STAGE_BURN_AOA_BIAS_DEG +
-          ' lead=' + ins.CIRC_TRIGGER_LEAD_S + ' alt=' + ins.TARGET_ORBIT_ALT_KM);
+          ' lead=' + ins.CIRC_TRIGGER_LEAD_S + ' alt=' + (ins.TARGET_APSIDE1_ALT_KM != null ? ins.TARGET_APSIDE1_ALT_KM + '/' + (ins.TARGET_APSIDE2_ALT_KM != null ? ins.TARGET_APSIDE2_ALT_KM : ins.TARGET_APSIDE1_ALT_KM) : '?'));
       // mount the tuner UI (Step 9) — inputs, run/stop, progress, leaderboard with sort tabs
 if (window.TunerUI) window.TunerUI.mount($('tunerUIHost'), {
   log: (l) => log(l),

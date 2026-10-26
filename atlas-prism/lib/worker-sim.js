@@ -659,7 +659,14 @@ self.onmessage = async (e) => {
       const o = Object.assign({}, payload.opts || {});
       const altKm = o.targetAltKm != null ? o.targetAltKm : TunerConfig.fixed.targetAltKm;
       o.targetAltKm = altKm; o.verifyPoint = payload.point;
-      const values = TunerUtils.toValues(payload.point, { targetAltKm: altKm });
+      // Apsides MUST propagate to toValues: without them, guidance's insertion
+      // block runs circular (apo = peri = altKm). OPT-MECO / every runEvalSA
+      // call gets wrong target and reports failures for valid elliptical runs.
+      const values = TunerUtils.toValues(payload.point, {
+        targetAltKm: altKm,
+        targetApoKm: o.targetApoKm,
+        targetPeriKm: o.targetPeriKm,
+      });
       if (payload.snap) {
         const bias = values.insertion.STAGE_BURN_AOA_BIAS_DEG, lead = values.insertion.CIRC_TRIGGER_LEAD_S;
         o.resume = { cp: payload.snap, restore: (s) => restoreSnap(s, bias, lead, null) };
@@ -677,7 +684,9 @@ self.onmessage = async (e) => {
       const o = payload.opts || {};
       const cache = new TunerUtils.EvalCache();
       const lr = await TunerCore.tuneLead(payload.point, {
-        hook: TunerHook, cache, targetAltKm: o.targetAltKm, maxEvals: o.maxEvals || 30,
+        hook: TunerHook, cache, targetAltKm: o.targetAltKm,
+        targetApoKm: o.targetApoKm, targetPeriKm: o.targetPeriKm,
+        maxEvals: o.maxEvals || 30,
       });
       const mm = lr.metrics || {};
       result = {

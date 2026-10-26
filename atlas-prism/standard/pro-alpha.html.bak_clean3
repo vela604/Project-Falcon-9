@@ -1,0 +1,499 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PRO ALPHA ENGINE</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="styles/engine-theme.css">
+<link rel="stylesheet" href="styles/pro-alpha.css">
+<script src="../js/szadFont.js" onerror="void 0"></script>
+</head>
+<body data-state="idle">
+<div id="app">
+
+<!-- ==================== COMMAND BAR ==================== -->
+<header>
+  <a class="back" href="../index.html">&lsaquo; Atlas Prism</a>
+  <h1>PRO <em>ALPHA</em></h1>
+  <span class="crumb">engine <b>/</b> leoInsertionV3 <b>/</b> param tuner <b>/</b> single-thread</span>
+  <div class="chips">
+    <span class="st" id="stState">state <b id="stStateN">idle</b></span>
+    <span class="st" id="stStack"><b id="stackLabel">Stack: &hellip;</b></span>
+  </div>
+</header>
+
+<!-- status line (script writes into #status) -->
+<div id="status">Booting&hellip;</div>
+
+<!-- ==================== 0x01 · ENGINE / UTILS ==================== -->
+<section class="panel">
+  <h2><span class="tag">0x01</span>Engine &middot; Utils &middot; Eval</h2>
+  <div class="row">
+    <label>ticks <input type="number" id="smokeTicks" value="4000" min="100" step="100"></label>
+    <button class="primary" id="smokeBtn" disabled>Smoke test</button>
+    <button id="dumpCfgBtn" disabled>Dump V3 config</button>
+    <button id="testBtn">Run self-tests</button>
+    <button id="applyChkBtn" disabled>Apply + verify baseline</button>
+  </div>
+</section>
+
+<div style="display:none">
+  <select id="abMode"><option value="fine" selected>fine</option></select>
+  <select id="mecoStartSel"><option value="1" selected>baseline</option></select>
+  <select id="fullModeSel"><option value="fine" selected>fine</option></select>
+</div>
+
+<!-- ==================== 0x02 · EVAL ==================== -->
+<section class="panel">
+  <h2><span class="tag">0x02</span>Evaluate baseline</h2>
+  <div class="row">
+    <label>stop at
+      <select id="stopAt">
+        <option value="FULL">FULL</option>
+        <option value="DEPLOY">DEPLOY</option>
+        <option value="CIRC_END">CIRC_END</option>
+        <option value="COAST_WAIT_ENTRY">COAST_WAIT_ENTRY</option>
+      </select>
+    </label>
+    <button id="evalSnapBtn" disabled>Eval: snapped baseline</button>
+    <button id="evalRawBtn" disabled>Eval: raw baseline</button>
+    <button id="evalTwiceBtn" disabled>Determinism (x2)</button>
+    <button id="evalRefBtn" disabled>Ref points &Delta;v (3x COAST_WAIT)</button>
+    <button class="reset" id="evalAbortBtn">Abort</button>
+  </div>
+</section>
+
+<!-- tuner UI (host.js) mounts here -->
+<div id="tunerUIHost"></div>
+
+<!-- ==================== 0x03 · LOG ==================== -->
+<section class="panel">
+  <h2><span class="tag">0x07</span>Log</h2>
+  <div id="log"></div>
+</section>
+</div>
+
+<!-- ============================================================================
+     Sim engine scripts — reused from ../js/ (NOT copied). Order MUST match
+     guidance-numerical.html SIM_FILES exactly. No render.js / rocketArt.js /
+     telemetry.js (no canvas here).
+     ============================================================================ -->
+<script src="../../js/componentLibrary.js"></script>
+<script src="../../js/customDesign.js"></script>
+<script src="../../js/fleet.js"></script>
+<script src="../../js/config.js"></script>
+<script src="../../js/simJs/core/massProps.js"></script>
+<script src="../../js/simJs/core/environment.js"></script>
+<script src="../../js/simJs/core/vehicle.js"></script>
+<script src="../../js/simJs/core/rcs.js"></script>
+<script src="../../js/simJs/core/physics.js"></script>
+<script src="../../js/simJs/core/collision.js"></script>
+<script src="../../js/simJs/guidance/imu.js"></script>
+<script src="../../js/simJs/guidance/derivation.js"></script>
+<script src="../../js/simJs/guidance/guidercs.js"></script>
+<script src="../../js/simJs/guidance/guidance-blocks.js"></script>
+<script src="../../js/simJs/guidance/guidance.js"></script>
+<script src="../../js/guideConfigDefaults.js"></script>
+<script src="../../js/guidancePresets.js"></script>
+
+<!-- Tuner modules (Step 1: engine + config only; later steps add the rest) -->
+<script src="../lib/config.js"></script>
+<script src="../lib/sim.js"></script>
+<script src="../lib/lattice.js"></script>
+<script src="../lib/hook.js"></script>
+<script src="../lib/registry.js"></script>
+<script src="../lib/primitives.js"></script>
+<script src="../engines/pro-alpha.js"></script>
+<script src="../engines/_template.js"></script>
+<script src="../ui/host.js"></script>
+
+<script>
+(function () {
+  'use strict';
+  const $ = (id) => document.getElementById(id);
+  const logEl = $('log'), statusEl = $('status');
+  function log(msg, cls) {
+    const line = document.createElement('div');
+    if (cls) line.className = cls;
+    line.textContent = msg;
+    logEl.appendChild(line);
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+  window.addEventListener('error', (e) => log('ERROR: ' + e.message, 'bad'));
+
+  const C = window.TunerConfig;
+
+  // Tuner target reader — reads from the tuner UI's dual apo/peri inputs
+  // (#tuiApoKm / #tuiPeriKm, mounted by host.js). Falls back to fixed 320/320
+  // before the tuner UI mounts (baseline eval buttons above still use fixed).
+  function readTunerTargets(){
+    const apoEl = $('tuiApoKm'), periEl = $('tuiPeriKm');
+    const apo = apoEl ? (parseFloat(apoEl.value) || C.fixed.targetAltKm) : C.fixed.targetAltKm;
+    const peri = periEl ? (parseFloat(periEl.value) || apo) : apo;
+    return { alt: apo, apoKm: apo, periKm: peri };
+  }
+
+  // score() opts from current tuner targets — always carries both apsides so
+  // score breakdown shows apogee/perigee errors against each target.
+  function _scoreOpts(){
+    const t = readTunerTargets();
+    return { targetAltKm: t.apoKm, targetApoKm: t.apoKm, targetPeriKm: t.periKm };
+  }
+
+  // Baseline values for the smoke test: raw defaults (reproduces manual run).
+  function baselineValues() {
+    // Tests use fixed 320/320 baseline. Tuner runs read apo/peri from the
+    // "Tuner target orbit" panel (above the tuner mount).
+    const b = C.baselineRaw;
+    const altKm = C.fixed.targetAltKm;
+    return {
+      ascent: { PUSH_MAX_GIMBAL_DEG: b.G, PUSH_T_S: b.T, MECO_TARGET_BOOSTER_FUEL_KG: b.meco },
+      insertion: {
+        TARGET_ORBIT_ALT_KM: altKm,
+        TARGET_APSIDE1_ALT_KM: altKm,
+        TARGET_APSIDE2_ALT_KM: altKm,
+        STAGE_BURN_AOA_BIAS_DEG: b.bias,
+        CIRC_TRIGGER_LEAD_S: b.lead,
+      },
+      done: { DEORBIT_ENABLED: C.fixed.deorbitEnabled },
+    };
+  }
+
+  function boot() {
+    try {
+      if (typeof Guidance === 'undefined') throw new Error('Guidance not loaded (check ../js paths)');
+      TunerEngine.init();
+      const guides = Guidance.listGuides();
+      if (!guides.includes(C.guideName)) throw new Error(C.guideName + ' not registered: ' + guides.join(','));
+
+      const stk = (typeof getActiveStack === 'function') ? getActiveStack() : null;
+      $('stackLabel').textContent = stk ? 'Stack: ' + stk.name : 'Stack: (none)';
+
+      const cfg = Guidance.getGuideConfig(C.guideName);
+      const a = cfg.ascent || {}, ins = cfg.insertion || {};
+      log('guides: ' + guides.join(', '), 'ok');
+      log('DT = ' + CONFIG.DT + ' s');
+      log('defaults: G=' + a.PUSH_MAX_GIMBAL_DEG + ' T=' + a.PUSH_T_S + ' MECO=' + a.MECO_TARGET_BOOSTER_FUEL_KG +
+          ' bias=' + ins.STAGE_BURN_AOA_BIAS_DEG +
+          ' lead=' + ins.CIRC_TRIGGER_LEAD_S + ' alt=' + ins.TARGET_ORBIT_ALT_KM);
+      // mount the tuner UI (Step 9) — inputs, run/stop, progress, leaderboard with sort tabs
+if (window.TunerUI) window.TunerUI.mount($('tunerUIHost'), {
+  log: (l) => log(l),
+  // tuner runs drive the header state chip + status line (the status mirror below stands down while a run is active)
+  onState: (state, text) => { document.body.toggleAttribute('data-tui', state === 'running'); document.body.setAttribute('data-state', state); document.getElementById('stStateN').textContent = state; statusEl.textContent = text; }
+});
+
+statusEl.textContent = 'Ready.';
+$('smokeBtn').disabled = false; $('dumpCfgBtn').disabled = false; $('applyChkBtn').disabled = false;
+      ['evalSnapBtn','evalRawBtn','evalTwiceBtn','evalRefBtn','smokeBtn','dumpCfgBtn','applyChkBtn'].forEach((id) => { const e = $(id); if (e) e.disabled = false; });
+      } catch (e) {
+      statusEl.textContent = 'Boot failed: ' + e.message;
+      log('BOOT FAILED: ' + e.message, 'bad');
+      console.error(e);
+    }
+  }
+
+  $('smokeBtn').addEventListener('click', () => {
+    const n = Math.max(100, parseInt($('smokeTicks').value, 10) || 4000);
+    $('smokeBtn').disabled = true;
+    statusEl.textContent = 'Smoke test…';
+    setTimeout(() => {   // let the status paint first
+      try {
+        const r = TunerEngine.smokeTest(C.guideName, baselineValues(), C.env, n);
+        log('smoke: ' + r.ticks + ' ticks, t=' + r.simTime.toFixed(2) + ' s, phase=' + r.phase +
+            ', alt=' + (Number.isFinite(r.altKm) ? r.altKm.toFixed(2) : '?') + ' km, ' +
+            r.ticksPerSecond.toFixed(0) + ' ticks/s', 'ok');
+        statusEl.textContent = 'Smoke OK.';
+      } catch (e) {
+        log('SMOKE FAILED: ' + e.message, 'bad'); statusEl.textContent = 'Smoke failed.';
+        console.error(e);
+      }
+      $('smokeBtn').disabled = false;
+    }, 20);
+  });
+
+  $('dumpCfgBtn').addEventListener('click', () => {
+    log(JSON.stringify(Guidance.getGuideConfig(C.guideName), null, 1));
+  });
+
+  $('testBtn').addEventListener('click', () => {
+    const r = TunerUtils.runSelfTests();
+    r.lines.forEach((l) => log(l, l.startsWith('PASS') ? 'ok' : 'bad'));
+    log(r.ok ? 'SELF-TESTS: ALL PASS (' + r.lines.length + ')' : 'SELF-TESTS FAILED: ' + r.fails.join(', '), r.ok ? 'ok' : 'bad');
+  });
+
+  // Snap baseline -> applyGuideConfig -> getGuideConfig -> verify (prompt-web 3.4)
+  $('applyChkBtn').addEventListener('click', () => {
+    try {
+      const p = TunerUtils.fromRaw(C.baselineRaw);
+      const vals = TunerUtils.toValues(p, { targetAltKm: C.fixed.targetAltKm });
+      if (!Guidance.applyGuideConfig(C.guideName, vals)) throw new Error('applyGuideConfig returned false');
+      const v = TunerUtils.verifyApplied(p, Guidance.getGuideConfig(C.guideName), { targetAltKm: C.fixed.targetAltKm });
+      log('snapped baseline: ' + JSON.stringify(TunerUtils.describe(p)));
+      log(v.ok ? 'verifyApplied: OK (sim holds exact snapped values)' : 'verifyApplied MISMATCH: ' + JSON.stringify(v.mismatches), v.ok ? 'ok' : 'bad');
+    } catch (e) { log('APPLY CHECK FAILED: ' + e.message, 'bad'); console.error(e); }
+  });
+
+  // ---- Step 3: eval buttons ------------------------------------------------
+  const abortRef = { aborted: false };
+  const fmt = (x, d) => (Number.isFinite(x) ? x.toFixed(d) : String(x));
+  function summarize(m) {
+    return [
+      'end=' + m.endReason + '  ticks=' + m.ticks + '  t=' + fmt(m.simTimeEnd, 2) + 's  wall=' + (m.wallMs / 1000).toFixed(2) + 's  ' + m.ticksPerSecond.toFixed(0) + ' t/s',
+      'Δv@COAST_WAIT=' + fmt(m.coastDeltaV, 1) + ' m/s  apo/peri@coast=' + fmt(m.apoCoastKm, 2) + '/' + fmt(m.periCoastKm, 2) + '  tToApo=' + fmt(m.tToApoCoastS, 1) + 's  alt=' + fmt(m.altCoastKm, 2),
+      'stage vrMin=' + fmt(m.vrMinStageBurn, 3) + (m.stageVrNeg ? '  NEGATIVE @alt ' + fmt(m.stageVrNegAltKm, 1) + ' km' : '  (ok)'),
+      'circ vrMin=' + fmt(m.vrMin, 3) + '  vrEnd(engOff)=' + fmt(m.vrEnd, 4) + ' margin=' + fmt(m.marginS, 2) + 's | at circAchieved: vrEnd=' + fmt(m.vrEndAch, 4) + ' margin=' + fmt(m.marginAch, 2) + 's',
+      'deploy=' + fmt(m.deployTimeS, 2) + 's  meco@' + fmt(m.mecoTimeS, 2) + 's  boosterFuel=' + fmt(m.boosterFuelLeftKg, 0) + ' kg  stageResidual=' + fmt(m.stageResidualKg, 1) + ' kg (@deploy ' + fmt(m.stageFuelAtDeployKg, 1) + ')',
+      'orbit apo/peri=' + fmt(m.apogeeKm, 3) + '/' + fmt(m.perigeeKm, 3) + '  ecc=' + (Number.isFinite(m.ecc) ? m.ecc.toExponential(2) : m.ecc),
+      'maxQ=' + fmt(m.maxQKPa, 2) + ' kPa  maxG=' + fmt(m.maxG, 3) + ' @' + m.maxGPhase + ' t=' + fmt(m.maxGT, 1) + 's  preCoast=' + fmt(m.maxGPre, 3) + '  (activeBody accel ' + fmt(m.maxGAccel, 3) + ')  crashed=' + m.crashed + ' released=' + m.payloadReleased + ' cleared=' + m.payloadCleared,
+    ].join('\n');
+  }
+  function evalOpts(stopAt) {
+    const altKm = C.fixed.targetAltKm;
+    return { stopAt, abortRef, targetAltKm: altKm, targetApoKm: altKm, targetPeriKm: altKm, onProgress: (p) => { statusEl.textContent = 'Running… t=' + p.simTime.toFixed(1) + ' s  ' + (p.phase || ''); } };
+  }
+  async function doEval(kind, stopAtArg) {
+    const stopAt = stopAtArg || $('stopAt').value;   // captured at start; select may change mid-run
+    abortRef.aborted = false;
+    ['evalSnapBtn','evalRawBtn','evalTwiceBtn'].forEach((id) => $(id).disabled = true);
+    try {
+      let m;
+      if (kind === 'raw') m = await TunerHook.runEvalValues(baselineValues(), evalOpts(stopAt));
+      else m = await TunerHook.runEval(TunerUtils.fromRaw(C.baselineRaw), evalOpts(stopAt));
+      log('--- eval ' + kind + ' (' + stopAt + ') ---'); log(summarize(m));
+      statusEl.textContent = 'Eval done.';
+      return m;
+    } catch (e) { log('EVAL FAILED: ' + e.message, 'bad'); statusEl.textContent = 'Eval failed.'; console.error(e); }
+    finally { ['evalSnapBtn','evalRawBtn','evalTwiceBtn'].forEach((id) => $(id).disabled = false); }
+  }
+  $('evalSnapBtn').addEventListener('click', () => doEval('snapped'));
+  $('evalRawBtn').addEventListener('click', () => doEval('raw'));
+  $('evalAbortBtn').addEventListener('click', () => { abortRef.aborted = true; });
+  $('evalTwiceBtn').addEventListener('click', async () => {
+    const sa = $('stopAt').value;
+    const a = await doEval('snapped', sa), b = await doEval('snapped', sa);
+    if (!a || !b) return;
+    const skip = { wallMs: 1, ticksPerSecond: 1 };
+    const diffs = Object.keys(a).filter((k) => !skip[k] && !Object.is(a[k], b[k]));
+    log(diffs.length ? 'DETERMINISM FAIL: ' + diffs.join(', ') : 'DETERMINISM OK: all metrics bit-identical across 2 runs', diffs.length ? 'bad' : 'ok');
+  });
+
+  // ---- Step 4 calibration: E at COAST_WAIT entry for the 3 manual reference points ----
+  function refValues(r) {
+    const v = baselineValues();
+    v.ascent.PUSH_MAX_GIMBAL_DEG = r.G; v.ascent.PUSH_T_S = C.baselineRaw.T;
+    v.ascent.MECO_TARGET_BOOSTER_FUEL_KG = r.meco;
+    v.insertion.STAGE_BURN_AOA_BIAS_DEG = r.bias; v.insertion.CIRC_TRIGGER_LEAD_S = r.lead;
+    return v;
+  }
+  $('evalRefBtn').addEventListener('click', async () => {
+    abortRef.aborted = false;
+    ['evalSnapBtn','evalRawBtn','evalTwiceBtn','evalRefBtn'].forEach((id) => $(id).disabled = true);
+    try {
+      for (const r of C.references) {
+        const m = await TunerHook.runEvalValues(refValues(r), { stopAt: 'COAST_WAIT_ENTRY', abortOnStageVrNeg: false, abortRef });
+        log('REF MECO ' + r.meco + ' (G ' + r.G + ' bias ' + r.bias + '): Δv=' + fmt(m.coastDeltaV, 1) + ' m/s  apo/peri=' + fmt(m.apoCoastKm, 2) + '/' + fmt(m.periCoastKm, 2) +
+  '  tToApo=' + fmt(m.tToApoCoastS, 1) + 's  stageVrMin=' + fmt(m.vrMinStageBurn, 3) + '  end=' + m.endReason + '  ' + (m.wallMs / 1000).toFixed(1) + 's', 'ok');
+  }
+      statusEl.textContent = 'Ref points done.';
+    } catch (e) { log('REF FAILED: ' + e.message, 'bad'); console.error(e); }
+    finally { ['evalSnapBtn','evalRawBtn','evalTwiceBtn','evalRefBtn'].forEach((id) => $(id).disabled = false); }
+  });
+
+  // ---- Step 5: INNER-2 lead search on the baseline (G, T, bias, MECO fixed) ----
+  if ($('tuneLeadBtn')) $('tuneLeadBtn').addEventListener('click', async () => {
+    abortRef.aborted = false;
+    const ids = ['evalSnapBtn','evalRawBtn','evalTwiceBtn','evalRefBtn','tuneLeadBtn'];
+    ids.forEach((id) => $(id).disabled = true);
+    try {
+      const p = TunerUtils.fromRaw(C.baselineRaw);
+      log('--- tuneLead (baseline G/T/bias/MECO, CIRC_END evals) ---');
+      const _tgt = readTunerTargets();
+      const r = await TunerCore.tuneLead(p, {
+        abortRef, onLog: (l) => log(l),
+        targetAltKm: _tgt.apoKm, targetApoKm: _tgt.apoKm, targetPeriKm: _tgt.periKm,
+        onProgress: (q) => { statusEl.textContent = 'tuneLead… t=' + q.simTime.toFixed(1) + ' s ' + (q.phase || ''); },
+      });
+      if (r.ok) {
+        log('RESULT lead=' + r.lead + ' leadTicks=' + r.leadTicks + ' margin=' + fmt(r.marginS, 2) + ' vrEnd=' + fmt(r.vrEnd, 4) +
+            ' vrMin=' + fmt(r.vrMin, 3) + ' ok=' + r.ok + ' inBand=' + r.inBand + ' phase=' + r.phase + ' evals=' + r.evals, r.inBand ? 'ok' : 'bad');
+        // end-to-end check: FULL eval of the baseline vs the tuned lead, scored
+        const base = await TunerHook.runEval(p, { stopAt: 'FULL', abortRef });
+        const tun = await TunerHook.runEval(r.point, { stopAt: 'FULL', abortRef });
+        const _so = _scoreOpts();
+      const sb = TunerUtils.score(base, _so), st = TunerUtils.score(tun, _so);
+        log('FULL baseline lead ' + TunerUtils.describe(p).lead + ': score=' + sb.score.toFixed(3) + ' ok=' + sb.ok + ' deploy=' + fmt(base.deployTimeS, 2) +
+            ' apo/peri=' + fmt(base.apogeeKm, 3) + '/' + fmt(base.perigeeKm, 3) + ' resid=' + fmt(base.stageResidualKg, 1) + ' boosterFuel=' + fmt(base.boosterFuelLeftKg, 0));
+        log('FULL tuned    lead ' + r.lead + ': score=' + st.score.toFixed(3) + ' ok=' + st.ok + ' deploy=' + fmt(tun.deployTimeS, 2) +
+            ' apo/peri=' + fmt(tun.apogeeKm, 3) + '/' + fmt(tun.perigeeKm, 3) + ' resid=' + fmt(tun.stageResidualKg, 1) + ' boosterFuel=' + fmt(tun.boosterFuelLeftKg, 0) +
+            ' vrEnd=' + fmt(tun.vrEnd, 4) + ' margin=' + fmt(tun.marginS, 2) + ' maxG=' + fmt(tun.maxG, 3) + ' maxQ=' + fmt(tun.maxQKPa, 2) +
+            (st.score <= sb.score ? '  (better/equal)' : '  (WORSE than baseline)'), st.score <= sb.score ? 'ok' : 'bad');
+      } else log('tuneLead FAILED: ' + r.reason, 'bad');
+      statusEl.textContent = 'tuneLead done.';
+    } catch (e) { log('TUNELEAD ERROR: ' + e.message, 'bad'); statusEl.textContent = 'tuneLead error.'; console.error(e); }
+    finally { ids.forEach((id) => $(id).disabled = false); }
+  });
+
+  // ---- Step 6: INNER-1 (A, bias) joint search + lead per candidate, from the baseline ----
+  if ($('tuneABBtn')) $('tuneABBtn').addEventListener('click', async () => {
+    abortRef.aborted = false;
+    const ids = ['evalSnapBtn','evalRawBtn','evalTwiceBtn','evalRefBtn','tuneLeadBtn','tuneABBtn'];
+    ids.forEach((id) => $(id).disabled = true);
+    try {
+      const mode = $('abMode').value;
+      const eMax = parseFloat($('abEmax').value);
+      const p = TunerUtils.fromRaw(C.baselineRaw);
+      log('--- tuneAB [' + mode + '] eMax=' + eMax + ' from baseline (COAST_WAIT evals + tuneLead + FULL per candidate) ---');
+      const _tgt = readTunerTargets();
+      const r = await TunerCore.tuneAB(p, {
+        mode, eMax: Number.isFinite(eMax) ? eMax : undefined, abortRef, onLog: (l) => log(l),
+        targetAltKm: _tgt.apoKm, targetApoKm: _tgt.apoKm, targetPeriKm: _tgt.periKm,
+        onProgress: (q) => { statusEl.textContent = 'tuneAB… t=' + q.simTime.toFixed(1) + ' s ' + (q.phase || ''); },
+      });
+      log('=== tuneAB RESULT ok=' + r.ok + ' status=' + r.status + ' evals=' + r.evals + ' (ab ' + r.evalBreakdown.ab + ', lead ' +
+          r.evalBreakdown.lead + ', full ' + r.evalBreakdown.full + ') cacheHits=' + r.cacheHits + ' wall=' + (r.wallMs / 1000).toFixed(1) + 's', r.ok ? 'ok' : 'bad');
+      log('eMax learning: ' + JSON.stringify(r.eMax));
+      r.candidates.forEach((c, i) => {
+        const m = c.metrics;
+        log('#' + (i + 1) + ' [' + c.tag + ' r' + c.round + '] score=' + c.score.toFixed(3) + ' ok=' + c.ok + (c.reasons.length ? ' (' + c.reasons.join(',') + ')' : '') +
+            '  E=' + fmt(c.E, 5) + '  ' + JSON.stringify(c.desc) +
+            (m ? '  deploy=' + fmt(m.deployTimeS, 2) + ' apo/peri=' + fmt(m.apogeeKm, 3) + '/' + fmt(m.perigeeKm, 3) + ' vrEnd=' + fmt(m.vrEnd, 4) + ' vrMin=' + fmt(m.vrMin, 3) +
+                ' margin=' + fmt(m.marginS, 2) + ' maxQ=' + fmt(m.maxQKPa, 2) + ' maxG=' + fmt(m.maxG, 3) + ' fuel=' + fmt(m.boosterFuelLeftKg, 0) + ' resid=' + fmt(m.stageResidualKg, 1) : ''),
+            c.ok ? 'ok' : 'bad');
+      });
+      if (r.best) {
+        const base = await TunerHook.runEval(p, { stopAt: 'FULL', abortRef });
+        const sb = TunerUtils.score(base, _scoreOpts());
+        log('baseline (lead 5.5125): score=' + sb.score.toFixed(3) + ' ok=' + sb.ok + ' deploy=' + fmt(base.deployTimeS, 2) + ' fuel=' + fmt(base.boosterFuelLeftKg, 0) +
+            '  ->  best ' + r.best.score.toFixed(3) + (r.best.score <= sb.score ? '  (better/equal)' : '  (WORSE than baseline)'), r.best.score <= sb.score ? 'ok' : 'bad');
+        log('best JSON: ' + JSON.stringify({ ascent: { PUSH_MAX_GIMBAL_DEG: r.best.desc.G, PUSH_T_S: r.best.desc.T, MECO_TARGET_BOOSTER_FUEL_KG: r.best.desc.meco },
+            insertion: { STAGE_BURN_AOA_BIAS_DEG: r.best.desc.bias, CIRC_TRIGGER_LEAD_S: r.best.desc.lead } }));
+      }
+      statusEl.textContent = 'tuneAB done.';
+    } catch (e) { log('TUNEAB ERROR: ' + e.message, 'bad'); statusEl.textContent = 'tuneAB error.'; console.error(e); }
+    finally { ids.forEach((id) => $(id).disabled = false); }
+  });
+
+    // ---- Phase A: tuneRough (any feasible point at this MECO, cheap) ----
+  if ($('tuneRoughBtn')) $('tuneRoughBtn').addEventListener('click', async () => {
+    abortRef.aborted = false;
+    const ids = ['evalSnapBtn','evalRawBtn','evalTwiceBtn','evalRefBtn','tuneLeadBtn','tuneABBtn','tuneRoughBtn'];
+    ids.forEach((id) => $(id).disabled = true);
+    try {
+      const p = TunerUtils.fromRaw(C.baselineRaw);
+      log('--- tuneRough (Phase A: any feasible point at this MECO) ---');
+      const _tgt = readTunerTargets();
+      const r = await TunerCore.tuneRough(p, {
+        abortRef, onLog: (l) => log(l),
+        targetAltKm: _tgt.apoKm, targetApoKm: _tgt.apoKm, targetPeriKm: _tgt.periKm,
+        onProgress: (q) => { statusEl.textContent = 'tuneRough… t=' + q.simTime.toFixed(1) + ' s ' + (q.phase || ''); },
+      });
+      log('=== tuneRough RESULT ok=' + r.ok + ' reason=' + r.reason + ' evals=' + r.evals +
+          ' (ab ' + r.evalBreakdown.ab + ', lead ' + r.evalBreakdown.lead + ', full ' + r.evalBreakdown.full + ') wall=' +
+          (r.wallMs / 1000).toFixed(1) + 's', r.ok ? 'ok' : 'bad');
+      if (r.ok) {
+        log('point: ' + JSON.stringify(TunerUtils.describe(r.point)));
+        log('E=' + fmt(r.E, 5) + '  lead=' + (r.lead && r.lead.lead) + '  residualKg=' + fmt(r.residualKg, 1) +
+            '  score=' + fmt(r.score, 3));
+      }
+      statusEl.textContent = 'tuneRough done.';
+    } catch (e) { log('TUNEROUGH ERROR: ' + e.message, 'bad'); console.error(e); }
+    finally { ids.forEach((id) => $(id).disabled = false); }
+  });
+
+  // ---- Step 7: Phase A outer loop — findOptimalMeco (tuneRough per MECO, residual target [0,50] kg) ----
+  if ($('findMecoBtn')) $('findMecoBtn').addEventListener('click', async () => {
+    abortRef.aborted = false;
+    const ids = ['evalSnapBtn','evalRawBtn','evalTwiceBtn','evalRefBtn','tuneLeadBtn','tuneABBtn','tuneRoughBtn','findMecoBtn','fullTuneBtn'];
+    ids.forEach((id) => $(id).disabled = true);
+    try {
+      const ref = C.references[parseInt($('mecoStartSel').value, 10)];
+      const p = TunerUtils.fromRaw({ G: ref.G, T: C.T0, bias: ref.bias, lead: ref.lead, meco: ref.meco });
+      log('--- findOptimalMeco (Phase A) from MECO ' + ref.meco + ' ' + JSON.stringify(TunerUtils.describe(p)) + ' ---');
+      const _tgt = readTunerTargets();
+      const r = await TunerCore.findOptimalMeco(p, {
+        abortRef, onLog: (l) => log(l),
+        targetAltKm: _tgt.apoKm, targetApoKm: _tgt.apoKm, targetPeriKm: _tgt.periKm,
+        onProgress: (q) => { statusEl.textContent = 'findOptimalMeco… t=' + q.simTime.toFixed(1) + ' s ' + (q.phase || ''); },
+      });
+      log('=== findOptimalMeco RESULT ok=' + r.ok + ' status=' + r.status + ' MECO=' + r.meco + ' residualKg=' + fmt(r.residualKg, 1) + ' G=' + r.G + ' gDrops=' + r.gDrops + ' failProbes=' + r.failingProbes + ' resOffset=' + fmt(r.resOffset, 1) + ' iters=' + r.iters +
+          ' evals=' + r.evals + ' (ab ' + r.evalBreakdown.ab + ', lead ' + r.evalBreakdown.lead + ', full ' + r.evalBreakdown.full + ', probeCoast ' + r.evalBreakdown.probeCoast + ', probeCirc ' + r.evalBreakdown.probeCirc + ') cacheHits=' + r.cacheHits +
+          ' wall=' + (r.wallMs / 1000).toFixed(1) + 's', r.ok ? 'ok' : 'bad');
+      log('history (MECO -> residual):', 'ok');
+      r.history.forEach((e) => log('  #' + e.iter + ' MECO=' + e.meco + ' G=' + TunerUtils.gOf(e.gi) + ' [' + e.kind + ' ' + e.how + '] ' + e.cls.toUpperCase() + ' residual=' + fmt(e.residualKg, 1) +
+          (e.point ? ' G=' + TunerUtils.gOf(e.point.Gi) + ' bias=' + TunerUtils.biasOf(e.point.bi) + ' lead=' + e.point.li + 't E=' + fmt(e.E, 4) + ' score=' + fmt(e.score, 2) : ' (' + e.reason + ')') +
+          ' evals=' + e.evals));
+      if (r.point) {
+        const d = TunerUtils.describe(r.point);
+        log('final point: ' + JSON.stringify(d));
+        log('E=' + fmt(r.E, 5) + '  lead=' + (r.lead && r.lead.lead) + '  residualKg=' + fmt(r.residualKg, 1) + '  score=' + fmt(r.score, 3) +
+            '  deploy=' + fmt(r.metrics.deployTimeS, 2) + ' fuel=' + fmt(r.metrics.boosterFuelLeftKg, 0));
+        log('final JSON: ' + JSON.stringify({ ascent: { PUSH_MAX_GIMBAL_DEG: d.G, PUSH_T_S: d.T, MECO_TARGET_BOOSTER_FUEL_KG: d.meco },
+            insertion: { STAGE_BURN_AOA_BIAS_DEG: d.bias, CIRC_TRIGGER_LEAD_S: d.lead } }));
+      }
+      statusEl.textContent = 'findOptimalMeco done.';
+    } catch (e) { log('FINDMECO ERROR: ' + e.message, 'bad'); statusEl.textContent = 'findOptimalMeco error.'; console.error(e); }
+    finally { ids.forEach((id) => $(id).disabled = false); }
+  });
+
+  // ---- Full tune: Phase A (findOptimalMeco, upper part of residual band) + Phase B (tuneAB at that MECO, residual-guarded) ----
+  if ($('fullTuneBtn')) $('fullTuneBtn').addEventListener('click', async () => {
+    abortRef.aborted = false;
+    const ids = ['evalSnapBtn','evalRawBtn','evalTwiceBtn','evalRefBtn','tuneLeadBtn','tuneABBtn','tuneRoughBtn','findMecoBtn','fullTuneBtn'];
+    ids.forEach((id) => $(id).disabled = true);
+    try {
+      const ref = C.references[parseInt($('mecoStartSel').value, 10)];
+      const p = TunerUtils.fromRaw({ G: ref.G, T: C.T0, bias: ref.bias, lead: ref.lead, meco: ref.meco });
+      const mode = $('fullModeSel').value;
+      log('--- Full tune (A+B, B mode=' + mode + ') from MECO ' + ref.meco + ' ' + JSON.stringify(TunerUtils.describe(p)) + ' ---');
+      const _tgt = readTunerTargets();
+      const r = await TunerCore.runTuner(p, { mode, abortRef, onLog: (l) => log(l),
+        targetAltKm: _tgt.apoKm, targetApoKm: _tgt.apoKm, targetPeriKm: _tgt.periKm,
+        onProgress: (q) => { statusEl.textContent = 'Full tune… t=' + q.simTime.toFixed(1) + ' s ' + (q.phase || ''); } });
+      log('=== Full tune RESULT ok=' + r.ok + ' status=' + r.status + ' band=[' + r.band + '] evals=' + r.evals + ' wall=' + (r.wallMs / 1000).toFixed(1) + 's', r.ok ? 'ok' : 'bad');
+      if (r.phaseA) {
+        log('Phase A: ' + r.phaseA.status + ' MECO=' + r.phaseA.meco + ' G=' + r.phaseA.G + ' residual=' + fmt(r.phaseA.residualKg, 1) + ' deploy=' + fmt(r.phaseA.deployTimeS, 1) + ' evals=' + r.phaseA.evals);
+        r.phaseA.history.forEach((e) => log('  A#' + e.iter + ' MECO=' + e.meco + ' G=' + TunerUtils.gOf(e.gi) + ' [' + e.kind + ' ' + e.how + '] ' + e.cls.toUpperCase() + ' residual=' + fmt(e.residualKg, 1) + ' deploy=' + fmt(e.deployTimeS, 1) + ' evals=' + e.evals));
+      }
+      if (r.phaseB) {
+        log('Phase B candidates (ranked by score):');
+        r.phaseB.candidates.forEach((c) => log('  ' + (c.ok ? 'ok ' : 'x  ') + c.tag + ' score=' + fmt(c.score, 3) + ' E=' + fmt(c.E, 4) + ' ' + JSON.stringify(c.desc) +
+          (c.metrics ? ' residual=' + fmt(c.metrics.stageResidualKg, 1) + ' deploy=' + fmt(c.metrics.deployTimeS, 1) : '') + (c.ok ? '' : ' [' + c.reasons.join(',') + ']')));
+      }
+      if (r.bestPoint) {
+        const d = TunerUtils.describe(r.bestPoint);
+        log('BEST (' + r.bestSource + '): score=' + fmt(r.bestScore, 3) + ' residual=' + fmt(r.bestResidualKg, 1) + ' kg deploy=' + fmt(r.bestDeployS, 2) + ' s fuel=' + fmt(r.bestMetrics.boosterFuelLeftKg, 0) + ' apo/peri=' + fmt(r.bestMetrics.apogeeKm, 3) + '/' + fmt(r.bestMetrics.perigeeKm, 3));
+        log('final JSON: ' + JSON.stringify({ ascent: { PUSH_MAX_GIMBAL_DEG: d.G, PUSH_T_S: d.T, MECO_TARGET_BOOSTER_FUEL_KG: d.meco },
+            insertion: { STAGE_BURN_AOA_BIAS_DEG: d.bias, CIRC_TRIGGER_LEAD_S: d.lead } }));
+      }
+      statusEl.textContent = 'Full tune done.';
+    } catch (e) { log('FULLTUNE ERROR: ' + e.message, 'bad'); statusEl.textContent = 'Full tune error.'; console.error(e); }
+    finally { ids.forEach((id) => $(id).disabled = false); }
+  });
+
+  boot();
+})();
+</script>
+
+<script>
+// header state chip follows the status line (idle / running / ready / error); no changes to the tuner script itself
+(function () {
+  var st = document.getElementById('status'), sn = document.getElementById('stStateN');
+  function sync() {
+    if (document.body.hasAttribute('data-tui')) return;
+    var t = st.textContent || '', v;
+    if (/fail|error/i.test(t)) v = 'error';
+    else if (/^boot/i.test(t)) v = 'idle';
+    else if (/\u2026|\.\.\./.test(t)) v = 'running';
+    else if (/^(ready|.*\b(done|ok)\.?)$/i.test(t)) v = 'ready';
+    else v = 'idle';
+    document.body.setAttribute('data-state', v); sn.textContent = v;
+  }
+  new MutationObserver(sync).observe(st, { childList: true, characterData: true, subtree: true });
+  sync();
+})();
+</script>
+</body>
+</html>

@@ -80,7 +80,6 @@
         MECO_TARGET_BOOSTER_FUEL_KG: p.meco,
       },
       insertion: {
-        TARGET_ORBIT_ALT_KM: curAlts(opts).apo,
         TARGET_APSIDE1_ALT_KM: curAlts(opts).apo,
         TARGET_APSIDE2_ALT_KM: curAlts(opts).peri,
         STAGE_BURN_AOA_BIAS_DEG: biasOf(p.bi),
@@ -355,7 +354,7 @@ function suggestDurationCap(altKm, apoKm, periKm) {
     // 7. toValues carries the whole fixed set
     const v = toValues(bp, { targetAltKm: 320 });
     t('toValues has no AoA margin key + deorbit false', !('STAGE_BURN_AOA_MARGIN_DEG' in v.insertion) &&
-      v.done.DEORBIT_ENABLED === false && v.insertion.TARGET_ORBIT_ALT_KM === 320);
+      v.done.DEORBIT_ENABLED === false && v.insertion.TARGET_APSIDE1_ALT_KM === 320 && v.insertion.TARGET_APSIDE2_ALT_KM === 320);
 
     // 8. bounds
     t('baseline in bounds', inBounds(bp));
