@@ -2125,6 +2125,13 @@ if (!faded) {
     const maxTicks = Math.ceil(durationS / dt);
 
     let prevPhase = null;
+    let pendingHold2Capture = false;    // reset per run
+    // COAST_HOLD_2 phase-change capture is deferred by 1 tick: guidance
+    // publishes coastHold2GapMps on the FIRST HOLD_2 tick, so if we capture
+    // immediately the deltaV/t_rem are stale (from the transfer orbit).
+    // Deferring 1 tick lets _coastSnapUpdate snapshot the apside-aware
+    // values before the entry is rendered.
+    let pendingHold2Capture = false;
     let prevAscentPhase = null;
     let prevBodyCount = state.bodies.length;
     let prevCrashed = false, prevLanded = false, prevHalted = false;
@@ -2190,9 +2197,32 @@ if (!faded) {
       const body = state.bodies[state.activeBodyIndex];
 
       if (body) {
+        // ─── Flush deferred HOLD_2 capture (if ready) ───
+        // Runs BEFORE the phase-change detector so the HOLD_2 entry is
+        // pushed with the correct order in the timeline, even if the next
+        // phase (DONE) arrives on the same tick.
+        if (pendingHold2Capture && _coastSnap.snappedHold2) {
+          const st2 = captureState();
+          if (st2) {
+            // captureState() reads gs.phase fresh, which may already be DONE
+            // if the same-tick transition happened. Force HOLD_2 so the
+            // stored state matches the entry label.
+            st2.phase = 'COAST_HOLD_2';
+            pushCapture('phase', 'PHASE → COAST_HOLD_2', st2);
+          }
+          pendingHold2Capture = false;
+        }
+
+        // ─── Phase-change detector ───
         if (gs.phase && gs.phase !== prevPhase) {
-          const st = captureState();
-          if (st) pushCapture('phase', `PHASE → ${gs.phase}`, st);
+          if (gs.phase === 'COAST_HOLD_2' && !_coastSnap.snappedHold2) {
+            // Defer 1 tick: guidance's HOLD_2 case hasn't run yet, so
+            // coastHold2GapMps and the apside-aware t_rem aren't ready.
+            pendingHold2Capture = true;
+          } else {
+            const st = captureState();
+            if (st) pushCapture('phase', `PHASE → ${gs.phase}`, st);
+          }
           prevPhase = gs.phase;
         }
         if (gs.ascentPhase && gs.ascentPhase !== prevAscentPhase) {
@@ -2296,6 +2326,18 @@ if (!faded) {
     if (visualsEnabled) Plots.renderAll();
     progressBarEl.classList.remove('show');
     progressFillEl.style.width = '0%';
+
+    // Edge case: loop ended while HOLD_2 capture was still deferred
+    // (snap didn't arrive before maxTicks/abort). Flush it now so the
+    // entry isn't silently dropped.
+    if (pendingHold2Capture) {
+      const stFlush = captureState();
+      if (stFlush) {
+        stFlush.phase = 'COAST_HOLD_2';
+        pushCapture('phase', 'PHASE → COAST_HOLD_2', stFlush);
+      }
+      pendingHold2Capture = false;
+    }
 
     const finalEndState = captureState();
 
