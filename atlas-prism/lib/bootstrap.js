@@ -46,7 +46,9 @@
     async function edgeBias(ev, P, Gi, b0, sign, bound, res, k, onRound) {
       const at = (t) => ev(Gi, sign * t);
       let lo = sign * b0, hi = bound, nonContig = false;
-      if (lo >= hi) return { t: lo, clipped: true, nonContig };
+      // Anchor beyond bound → clipped at bound (hi) for consistency with the
+      // new "hi = first-fail" semantics below.
+      if (lo >= hi) return { t: hi, clipped: true, nonContig };
       if (pass(await at(hi), P)) return { t: hi, clipped: true, nonContig };
       while (hi - lo > res) {
         const pts = [];
@@ -59,7 +61,22 @@
         if (onRound) onRound(sign, pts, rs, nlo, nhi);
         lo = nlo; hi = nhi;
       }
-      return { t: lo, clipped: false, nonContig };
+      // Return the FIRST-FAIL edge (hi), not the last-pass edge (lo).
+      //
+      // The true physics edge lies somewhere in [lo, hi), with hi - lo <= res
+      // (default res = bres = 0.01 deg). Returning lo (last-pass) means the
+      // window's boundary is safe but the last few quanta below hi are never
+      // scanned by ZETA — a potential best-scoring bias sitting just past
+      // lo (but still passing at FULL) is MISSED.
+      //
+      // Returning hi (first-fail) expands the window outward by up to res on
+      // each side. ZETA will sample the edge ticks; if they genuinely fail
+      // they rank last in the leaderboard (harmless). If they pass, we
+      // caught a better bias that the tight window would have missed.
+      //
+      // Clipping cases (±bmax bounds) are unaffected: the early return
+      // { t: hi, clipped: true } already gives the bound.
+      return { t: hi, clipped: false, nonContig };
     }
 
     async function rangeAtG(ev, P, Gi, b0, k, onRound) {
@@ -424,7 +441,8 @@
       const _logApo = (P.altApo != null && P.altPeri != null && (P.altApo !== P.alt || P.altPeri !== P.alt))
         ? 'apo=' + Math.max(P.altApo, P.altPeri) + ' peri=' + Math.min(P.altApo, P.altPeri)
         : 'alt=' + P.alt;
-      ctx.onLog('--- universal bootstrap  ' + _logApo + '  T=' + (P.Tn * 0.000125) + '  K=' + P.K + '  pred [' + P.predMin + ',' + P.predMax + ']  ideal=' + P.ideal + '  bias rows=' + P.nbr +
+      ctx.onLog('--- universal bootstrap  ' + _logApo + '  (window edges = FIRST-FAIL bias; ±' + P.bres.toFixed(3) + ' deg beyond last-pass; fail rows rank last)' +
+        '  T=' + (P.Tn * 0.000125) + '  K=' + P.K + '  pred [' + P.predMin + ',' + P.predMax + ']  ideal=' + P.ideal + '  bias rows=' + P.nbr +
         (opts.forceMeco != null ? '  FORCE MECO=' + opts.forceMeco : '') +
         (opts.forceGi != null ? '  FORCE G=' + gfmt(opts.forceGi) : '') + ' ---', 'dim');
       let bk = null;
