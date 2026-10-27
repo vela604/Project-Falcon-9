@@ -94,9 +94,9 @@ const GUIDE_CONSTANT_DESCRIPTIONS = {
   'mission.TARGET_LANDING_PAD': 'Id of the landing pad the booster returns to (an id from CONFIG.LANDING_PADS, e.g. LZ-1). Its Earth-fixed angle (launch-site angle + arcOffsetM / R) is handed to the RTLS block as the boostback / landing target.',
   // ---- rtls (booster return) ----
   'rtls.BOOSTBACK_ENGINES': 'Engines fired during BOOSTBACK_BURN, comma-separated. "C" = centre engine, numbers = outer-ring engine angleDeg (0 and 180 are the two extreme left/right engines of the octaweb). Default "C,0,180". The centre engine is the one that finishes the burn; the rest are shut off first.',
-  'rtls.BOOSTBACK_APPARENT_OFFSET_DEG': 'Apparent target: boostback aims the (vacuum) impact point at target pad + this many Earth-fixed degrees. Positive = east of the pad (short of it), negative = west. The remaining gap is meant to be covered later by drag / grid-fin steering to save boostback fuel. 1 deg ≈ 111 km.',
-  'rtls.BOOSTBACK_SIDE_CUT_DEG': 'The outer boostback engines are shut off when the predicted impact is within this many degrees of the apparent target; the centre engine then finishes the burn.',
-  'rtls.BOOSTBACK_TAPER_DEG': 'Centre-only stage: throttle is 100% while the impact error is above this many degrees, then tapers linearly down to the engine throttle floor as the error goes to 0. 0 = no taper.',
+  'rtls.BOOSTBACK_APPARENT_OFFSET_M': 'Apparent target: boostback aims the (vacuum) impact point at target pad + this many metres along the ground (converted to an Earth angle internally). Positive = east of the pad (short of it), negative = west. The remaining gap is meant to be covered later by drag / grid-fin steering to save boostback fuel.',
+  'rtls.BOOSTBACK_SIDE_CUT_M': 'The outer boostback engines are shut off when the predicted impact is within this many metres (ground distance) of the apparent target; the centre engine then finishes the burn.',
+  'rtls.BOOSTBACK_TAPER_M': 'Centre-only stage: throttle is 100% while the impact error is above this many metres, then tapers linearly down to the engine throttle floor as the error goes to 0. 0 = no taper.',
 
   'ascent.INITIAL_COAST_S': 'Pre-launch hold before PUSH begins. Engines spool up to full thrust during this window; attitude controller stays in PRE_COAST and applies zero torque.',
   'ascent.PUSH_T_S': 'Duration of the PUSH phase — the initial eastward rotation. A half-sine torque profile of this length produces the target tilt delta.',

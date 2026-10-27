@@ -2809,9 +2809,9 @@ setState(s) {
       FLIP_TIMEOUT_S: 120,
       // BOOSTBACK_BURN
       BOOSTBACK_ENGINES: "C,0,180",       // engines fired for the burn: "C" = centre, numbers = outer-ring angleDeg (0 / 180 = the two extreme left/right engines)
-      BOOSTBACK_APPARENT_OFFSET_DEG: 0,   // aim at (target pad + this) Earth-fixed deg; + = east of the pad (short), - = west
-      BOOSTBACK_SIDE_CUT_DEG: 2.0,        // outer engines off when impact error <= this (deg)
-      BOOSTBACK_TAPER_DEG: 0.5,           // centre throttle tapers 100% -> floor over the last this-many deg of error
+      BOOSTBACK_APPARENT_OFFSET_M: 0,      // aim at (target pad + this) ground distance, metres; + = east of the pad (short), - = west
+      BOOSTBACK_SIDE_CUT_M: 220000,        // outer engines off when impact is within this ground distance of the apparent target (m)
+      BOOSTBACK_TAPER_M: 55000,            // centre throttle tapers 100% -> floor over the last this-many metres of error
     },
     importantFields: [],
     createInstance: function () {
@@ -3060,12 +3060,12 @@ setState(s) {
       }
 
       // BOOSTBACK_BURN — retro burn that moves the ballistic impact point to the APPARENT target
-      // (= target pad + BOOSTBACK_APPARENT_OFFSET_DEG, Earth-fixed).
+      // (= target pad + BOOSTBACK_APPARENT_OFFSET_M, Earth-fixed).
       //   THREE  : engines in BOOSTBACK_ENGINES (default centre + the two extreme outer engines,
       //            0 deg and 180 deg) at full throttle.
-      //   CENTER : when impact error <= BOOSTBACK_SIDE_CUT_DEG the outer engines are shut off and
+      //   CENTER : when impact error <= BOOSTBACK_SIDE_CUT_M the outer engines are shut off and
       //            the centre engine finishes the job; its throttle tapers linearly from 100 %
-      //            (error >= BOOSTBACK_TAPER_DEG) to its throttle floor (error -> 0).
+      //            (error >= BOOSTBACK_TAPER_M) to its throttle floor (error -> 0).
       //   SPOOL  : cutoff (spool-down dv included in the prediction); attitude hold continues until
       //            thrust is gone, then the phase ends.
       // Impact error = predicted Earth-fixed impact angle - apparent target angle (+ = east of it,
@@ -3219,8 +3219,10 @@ setState(s) {
             // ---- apparent target (Earth-fixed) ----
             const pad = (_missionCtx && _missionCtx.targetPad) || null;
             const padEf = (pad && Number.isFinite(pad.angleEf)) ? pad.angleEf : (env.LAUNCH_SITE_ANGLE_0 || 0);
-            const offDeg = Number.isFinite(cfg.BOOSTBACK_APPARENT_OFFSET_DEG) ? cfg.BOOSTBACK_APPARENT_OFFSET_DEG : 0;
-            const tgtEf = padEf + offDeg / R2D;
+            // metre constants -> angle (arc on the Earth surface)
+            const mPerRad = env.EARTH_RADIUS;
+            const offM = Number.isFinite(cfg.BOOSTBACK_APPARENT_OFFSET_M) ? cfg.BOOSTBACK_APPARENT_OFFSET_M : 0;
+            const tgtEf = padEf + offM / mPerRad;
             _st.bbTargetEfDeg = tgtEf * R2D;
 
             // ---- impact error now, and with the spool-down dv of everything that is firing ----
@@ -3245,15 +3247,15 @@ setState(s) {
               _send(Guidance.cmdSetAllThrottle(0));   // everything not in the burn set stays off
               console.log("[standardRTLS] BOOSTBACK start: engines=" + toks.join(",") +
                 " tgtEf=" + (tgtEf * R2D).toFixed(4) + "deg (pad " + (pad ? pad.id : "launch-site") +
-                " + offset " + offDeg + "deg) err0=" + (e0 ? (e0.err * R2D).toFixed(3) : "n/a") + "deg");
+                " + offset " + offM + "m) err0=" + (e0 ? (e0.err * R2D).toFixed(3) : "n/a") + "deg");
             }
-            const sideCut = Number.isFinite(cfg.BOOSTBACK_SIDE_CUT_DEG) ? cfg.BOOSTBACK_SIDE_CUT_DEG : 0;
-            const taper = Number.isFinite(cfg.BOOSTBACK_TAPER_DEG) ? cfg.BOOSTBACK_TAPER_DEG : 0;
+            const sideCutM = Number.isFinite(cfg.BOOSTBACK_SIDE_CUT_M) ? cfg.BOOSTBACK_SIDE_CUT_M : 0;
+            const taperM = Number.isFinite(cfg.BOOSTBACK_TAPER_M) ? cfg.BOOSTBACK_TAPER_M : 0;
             if (_st.bbStage === "THREE") {
               if (eAll && eAll.err <= 0) {
                 _st.bbStage = "SPOOL";
                 console.log("[standardRTLS] BOOSTBACK THREE → SPOOL (cutoff, err=" + (e0 ? (e0.err * R2D).toFixed(4) : "n/a") + "deg) t=" + simT.toFixed(2));
-              } else if (e0 && e0.err * R2D <= sideCut) {
+              } else if (e0 && e0.err * mPerRad <= sideCutM) {
                 _st.bbStage = "CENTER";
                 console.log("[standardRTLS] BOOSTBACK THREE → CENTER (outer engines off, err=" + (e0.err * R2D).toFixed(4) + "deg) t=" + simT.toFixed(2));
               }
@@ -3279,7 +3281,7 @@ setState(s) {
               const maxMF = ref.maxMassFlowRate || 0;
               const minFrac = maxMF > 0 ? Math.min(1, (ref.minMassFlowRate || 0) / maxMF) : 0;
               let x = 1;
-              if (taper > 0 && e0) x = Math.max(0, Math.min(1, (e0.err * R2D) / taper));
+              if (taperM > 0 && e0) x = Math.max(0, Math.min(1, (e0.err * mPerRad) / taperM));
               thrFrac = minFrac + (1 - minFrac) * x;
               _bbThrottle(finishSet, thrFrac >= 0.999 ? Infinity : maxMF * thrFrac);
             } else {
