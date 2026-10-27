@@ -95,8 +95,8 @@ const GUIDE_CONSTANT_DESCRIPTIONS = {
   // ---- rtls (booster return) ----
   'rtls.BOOSTBACK_ENGINES': 'Engines fired during BOOSTBACK_BURN, comma-separated. "C" = centre engine, numbers = outer-ring engine angleDeg (0 and 180 are the two extreme left/right engines of the octaweb). Default "C,0,180". The centre engine is the one that finishes the burn; the rest are shut off first.',
   'rtls.BOOSTBACK_APPARENT_OFFSET_M': 'Apparent target: boostback aims the (vacuum) impact point at target pad + this many metres along the ground (converted to an Earth angle internally). Positive = east of the pad (short of it), negative = west. The remaining gap is meant to be covered later by drag / grid-fin steering to save boostback fuel.',
-  'rtls.BOOSTBACK_SIDE_CUT_M': 'The outer boostback engines are shut off when the predicted impact is within this many metres (ground distance) of the apparent target; the centre engine then finishes the burn.',
-  'rtls.BOOSTBACK_TAPER_M': 'Centre-only stage: throttle is 100% while the impact error is above this many metres, then tapers linearly down to the engine throttle floor as the error goes to 0. 0 = no taper.',
+  'rtls.BOOSTBACK_SIDE_CUT_M': 'The two outer boostback engines are shut off when the predicted impact is within this many metres (ground distance) of the apparent target; the centre engine then finishes the burn (default 20 km).',
+  'rtls.BOOSTBACK_TAPER_M': 'Throttle fade of all burning engines: 100% while the impact error is above this many metres, then linearly down to the engine throttle floor as the error goes to 0 (default 150 km). 0 = no fade.',
 
   'ascent.INITIAL_COAST_S': 'Pre-launch hold before PUSH begins. Engines spool up to full thrust during this window; attitude controller stays in PRE_COAST and applies zero torque.',
   'ascent.PUSH_T_S': 'Duration of the PUSH phase — the initial eastward rotation. A half-sine torque profile of this length produces the target tilt delta.',

@@ -2810,8 +2810,8 @@ setState(s) {
       // BOOSTBACK_BURN
       BOOSTBACK_ENGINES: "C,0,180",       // engines fired for the burn: "C" = centre, numbers = outer-ring angleDeg (0 / 180 = the two extreme left/right engines)
       BOOSTBACK_APPARENT_OFFSET_M: 0,      // aim at (target pad + this) ground distance, metres; + = east of the pad (short), - = west
-      BOOSTBACK_SIDE_CUT_M: 220000,        // outer engines off when impact is within this ground distance of the apparent target (m)
-      BOOSTBACK_TAPER_M: 55000,            // centre throttle tapers 100% -> floor over the last this-many metres of error
+      BOOSTBACK_SIDE_CUT_M: 20000,         // outer engines off when impact is within this ground distance of the apparent target (m)
+      BOOSTBACK_TAPER_M: 150000,           // throttle (all burn engines) fades 100% -> floor over the last this-many metres of error
     },
     importantFields: [],
     createInstance: function () {
@@ -2852,6 +2852,7 @@ setState(s) {
         flipPrevTgt: null,
         flipPrevT: null,
         flipMode: null,        // ACCEL | BRAKE | TRIM
+        flipPusherOn: false,   // pneumatic pusher assist currently armed
         flipErrDeg: null,
         flipOmegaDegS: null,
         flipTgtDeg: null,
@@ -2887,6 +2888,7 @@ setState(s) {
         if (cur === "FLIP") {
           _send(Guidance.cmdRcsDuty(null, _bodyIdx));
           _st.lastRcsTorque = 0;
+          if (_st.flipPusherOn) { _send(Guidance.cmdPusherTorque(0, 0, _bodyIdx)); _st.flipPusherOn = false; }
         }
         if (_st.phaseLog[cur]) {
           _st.phaseLog[cur].endT = simT;
@@ -2951,6 +2953,9 @@ setState(s) {
       // Min time (full torque, bang-bang) to bring signed error e to 0 at rest,
       // starting with relative omega w. aPos / aNeg = angular accel available
       // with +/- torque (rad/s²).
+      // Pneumatic pusher = extra, fixed-size torque authority for the FLIP in BOTH directions (simplification for
+      // the 8 RCS thrusters / stage plume push the sim does not model). Deliberately NOT a config constant.
+      const FLIP_PUSHER_ALPHA_DEG_S2 = 0.7; // max angular accel the pusher adds (deg/s^2), torque = I * this; treated exactly like one more RCS
       function _flipTime(e, w, aPos, aNeg) {
         const sgn = e >= 0 ? 1 : -1;
         const a = sgn > 0 ? aPos : aNeg;     // accelerates toward the target
@@ -3062,10 +3067,10 @@ setState(s) {
       // BOOSTBACK_BURN — retro burn that moves the ballistic impact point to the APPARENT target
       // (= target pad + BOOSTBACK_APPARENT_OFFSET_M, Earth-fixed).
       //   THREE  : engines in BOOSTBACK_ENGINES (default centre + the two extreme outer engines,
-      //            0 deg and 180 deg) at full throttle.
+      //            0 deg and 180 deg), throttle 100 % until error < BOOSTBACK_TAPER_M, then fading
+      //            linearly to the throttle floor as error -> 0.
       //   CENTER : when impact error <= BOOSTBACK_SIDE_CUT_M the outer engines are shut off and
-      //            the centre engine finishes the job; its throttle tapers linearly from 100 %
-      //            (error >= BOOSTBACK_TAPER_M) to its throttle floor (error -> 0).
+      //            the centre engine finishes the job on the same fade curve.
       //   SPOOL  : cutoff (spool-down dv included in the prediction); attitude hold continues until
       //            thrust is gone, then the phase ends.
       // Impact error = predicted Earth-fixed impact angle - apparent target angle (+ = east of it,
@@ -3106,6 +3111,8 @@ setState(s) {
             if (tgtNow === null) { _rcsOff(); break; }
             const mx = _rcsMaxTorques(snapshot);
             if (!(mx.pos > 0) || !(mx.neg > 0)) { _rcsOff(); break; }
+            const Tp = I * FLIP_PUSHER_ALPHA_DEG_S2 / R2D;            // pusher torque (N*m), either direction
+            const mT = { pos: mx.pos + Tp, neg: mx.neg + Tp };        // RCS + pusher authority
 
             // rate at which the target itself rotates (orbital motion)
             let wTgt = 0;
@@ -3126,10 +3133,11 @@ setState(s) {
               const e0 = _wrapPi(rawErr);
               const ePos = e0 >= 0 ? e0 : e0 + 2 * Math.PI;   // way round in +direction
               const eNeg = ePos - 2 * Math.PI;                // way round in -direction
-              const tPos = _flipTime(ePos, wRelNow, mx.pos / I, mx.neg / I);
-              const tNeg = _flipTime(eNeg, wRelNow, mx.pos / I, mx.neg / I);
-              _st.flipEu = tPos <= tNeg ? ePos : eNeg;
-              _st.flipDir = _st.flipEu >= 0 ? 1 : -1;
+              const tPos = _flipTime(ePos, wRelNow, mT.pos / I, mT.neg / I);
+              const tNeg = _flipTime(eNeg, wRelNow, mT.pos / I, mT.neg / I);
+              // Direction FIXED to negative (clockwise): the SEPARATED_AXIAL push already tips the booster that way.
+              _st.flipEu = eNeg;
+              _st.flipDir = -1;
               console.log("[standardRTLS] FLIP dir=" + (_st.flipDir > 0 ? "+" : "-") +
                 " err=" + (_st.flipEu * R2D).toFixed(1) + "deg omega=" + (wRelNow * R2D).toFixed(2) +
                 "deg/s  t(+)=" + tPos.toFixed(1) + "s t(-)=" + tNeg.toFixed(1) + "s");
@@ -3169,28 +3177,40 @@ setState(s) {
 
             // ---- bang-bang on the predicted state ----
             const sgn = eP >= 0 ? 1 : -1;
-            const brakeMax = sgn > 0 ? mx.neg : mx.pos;          // torque available AGAINST the motion
+            const brakeMax = sgn > 0 ? mT.neg : mT.pos;          // RCS + pusher torque AGAINST the motion
             const towards = wRelP * sgn > 0;
             const stopAng = wRelP * wRelP * I / (2 * brakeMax) + Math.abs(wRelP) * dt;
-            let tauCmd, fullRes = null;
+            let tauP = 0;                 // pusher torque this tick
+            let rcsRes = null;            // RCS result this tick (null = RCS off)
             if (towards && Math.abs(eP) <= stopAng) {
               const need = I * Math.abs(wRelP) / dt;             // torque that zeroes omega in one tick
               if (need >= brakeMax) {
-                _st.flipMode = "BRAKE"; fullRes = sgn > 0 ? mx.rn : mx.rp; tauCmd = -sgn * brakeMax;
+                _st.flipMode = "BRAKE";
+                rcsRes = sgn > 0 ? mx.rn : mx.rp;
+                tauP = -sgn * Tp;               // pusher acts like one more RCS: full against the motion
               } else {
-                _st.flipMode = "TRIM"; tauCmd = -sgn * need;     // last tick only: just enough
+                _st.flipMode = "TRIM";                           // last tick only: just enough, pusher first
+                const useP = Math.min(need, Tp);
+                tauP = -sgn * useP;
+                if (need - useP > 0) rcsRes = GuideRCS.targetTorqueRcs(snapshot, -sgn * (need - useP), idx);
               }
             } else {
-              _st.flipMode = "ACCEL"; fullRes = sgn > 0 ? mx.rp : mx.rn; tauCmd = sgn * (sgn > 0 ? mx.pos : mx.neg);
+              _st.flipMode = "ACCEL";
+              tauP = sgn * Tp;
+              rcsRes = sgn > 0 ? mx.rp : mx.rn;
             }
 
-            const res = fullRes || GuideRCS.targetTorqueRcs(snapshot, tauCmd, idx);
-            if (res && res.fires && res.fires.length) {
-              _send(Guidance.cmdRcsDuty(res.duties, idx));
-              _st.lastRcsTorque = res.fires.reduce((a, f) => a + f.torque, 0);
+            let tauRcs = 0;
+            if (rcsRes && rcsRes.fires && rcsRes.fires.length) {
+              _send(Guidance.cmdRcsDuty(rcsRes.duties, idx));
+              tauRcs = rcsRes.fires.reduce((a, f) => a + f.torque, 0);
             } else {
-              _rcsOff();
+              _send(Guidance.cmdRcsDuty(null, idx));
             }
+            // pusher: persistent angular accel (no target omega => never self-cancels), re-sent every tick
+            _send(Guidance.cmdPusherTorque(tauP / I, null, idx));
+            _st.flipPusherOn = tauP !== 0;
+            _st.lastRcsTorque = tauRcs + tauP;   // everything the guidance applies this tick (used by the one-tick prediction)
             break;
           }
 
@@ -3270,20 +3290,21 @@ setState(s) {
             }
 
             // ---- throttle ----
+            // Fade: all burn engines run 100 % while error >= TAPER_M, then fall linearly to the throttle
+            // floor as the error -> 0. At SIDE_CUT_M the outer engines go off; centre keeps following the fade.
             let thrFrac = 0;
-            if (_st.bbStage === "THREE") {
-              thrFrac = 1;
-              _bbThrottle(finishSet, Infinity);
-              _bbThrottle(offSet, Infinity);
-            } else if (_st.bbStage === "CENTER") {
-              _bbThrottle(offSet, 0);
-              const ref = finishSet[0];
-              const maxMF = ref.maxMassFlowRate || 0;
-              const minFrac = maxMF > 0 ? Math.min(1, (ref.minMassFlowRate || 0) / maxMF) : 0;
-              let x = 1;
-              if (taperM > 0 && e0) x = Math.max(0, Math.min(1, (e0.err * mPerRad) / taperM));
-              thrFrac = minFrac + (1 - minFrac) * x;
-              _bbThrottle(finishSet, thrFrac >= 0.999 ? Infinity : maxMF * thrFrac);
+            const refE = finishSet[0];
+            const maxMF = refE.maxMassFlowRate || 0;
+            const minFrac = maxMF > 0 ? Math.min(1, (refE.minMassFlowRate || 0) / maxMF) : 0;
+            let fadeX = 1;
+            if (taperM > 0 && e0) fadeX = Math.max(0, Math.min(1, (e0.err * mPerRad) / taperM));
+            const fadeFrac = minFrac + (1 - minFrac) * fadeX;
+            if (_st.bbStage === "THREE" || _st.bbStage === "CENTER") {
+              thrFrac = fadeFrac;
+              const val = thrFrac >= 0.999 ? Infinity : maxMF * thrFrac;
+              _bbThrottle(finishSet, val);
+              if (_st.bbStage === "THREE") _bbThrottle(offSet, val);
+              else _bbThrottle(offSet, 0);
             } else {
               _send(Guidance.cmdSetAllThrottle(0));
             }
@@ -3321,7 +3342,7 @@ setState(s) {
               let full = true;
               burnSet.forEach(function (e) {
                 const mx = Number.isFinite(e.maxMassFlowRate) ? e.maxMassFlowRate : 0;
-                if (mx > 0 && (e.massFlowRate || 0) < mx * 0.99) full = false;
+                if (mx > 0 && (e.massFlowRate || 0) < mx * thrFrac * 0.97) full = false;
               });
               if (full) _st.bbSpooled = true;
             } else if (_st.bbStage !== "THREE") {
@@ -3441,6 +3462,7 @@ setState(s) {
           _st.flipPrevTgt = null;
           _st.flipPrevT = null;
           _st.flipMode = null;
+          _st.flipPusherOn = false;
           _st.flipErrDeg = null;
           _st.flipOmegaDegS = null;
           _st.flipTgtDeg = null;

@@ -182,10 +182,10 @@ the next chat can ask the right things quickly.** Do not implement beyond what t
 → `rtlsBlock.start(cfg, bIdx, {targetPad:{id,arcOffsetM,angleEf}})`. Pad angle = launch-site angle +
 arcOffsetM/EARTH_RADIUS (formula assumed; `env.LANDING_PADS` else fallback table LZ-1 400 / LZ-2 700 / LZ-3 1000 m).
 **Constants (`rtls.*`):** `BOOSTBACK_ENGINES` "C,0,180" (centre + the two extreme octaweb engines; string, not array),
-`BOOSTBACK_APPARENT_OFFSET_DEG` 0 (+ = east of pad; aim short so drag/steer covers the rest),
-`BOOSTBACK_SIDE_CUT_DEG` 2.0, `BOOSTBACK_TAPER_DEG` 0.5 (values are guesses — tune in sim).
+`BOOSTBACK_APPARENT_OFFSET_M` 0 (metres, converted to angle via EARTH_RADIUS) (+ = east of pad; aim short so drag/steer covers the rest),
+`BOOSTBACK_SIDE_CUT_M` 220000, `BOOSTBACK_TAPER_M` 55000 (values are guesses — tune in sim).
 **Logic:** THREE (all selected engines full) → when predicted-impact error ≤ SIDE_CUT the outer ones go off →
-CENTER (throttle tapers 100 % → 39 % floor as error 0.5° → 0) → SPOOL cutoff when error ≤ 0 *including spool-down dv*;
+CENTER (throttle tapers 100 % → 39 % floor as error 55 km → 0) → SPOOL cutoff when error ≤ 0 *including spool-down dv*;
 phase ends when mass flow < 1 kg/s. Impact = vacuum leapfrog predictor (Earth-fixed). Attitude: CENTRE-engine gimbal only (target "center"), predictive law copied from circularize/suicide (dNext via deriveForState, tau − env torque),
 nose opposite horizontal velocity **latched at burn start** (live velocity would flip 180° when vE reverses — found offline).
 **Status fields:** `rtlsBbStage/ErrDeg/ImpactEfDeg/TargetEfDeg/ThrFrac`. Logs `[standardRTLS] BOOSTBACK …`.
@@ -255,6 +255,10 @@ until PRE_ENTRY_STEER exists; side-engine spool dv must be ≤ SIDE_CUT.
 
 ## 9. Changelog (newest first — add a line for every change)
 
+- **Chat 4d:** FLIP now fires a one-shot pneumatic-pusher assist (`FLIP_PUSHER_ANG_ACCEL_DEG_S2`=10, `FLIP_PUSHER_TARGET_OMEGA_DEG_S`=25; physics.js: const angAccel until |omega|>=target then off) in the flip direction at the first tick, cut when mode leaves ACCEL / on FLIP exit; defaults are guesses (goal flip 8-12 s). BOOSTBACK: all burn engines fade 100%→floor over last `TAPER_M`=150 km of error, outer two off at `SIDE_CUT_M`=20 km, centre continues on the same fade; spool wait compares to commanded fraction.
+- **Chat 4e:** FLIP pusher reworked: NOT a config constant any more. Internal `FLIP_PUSHER_ALPHA_DEG_S2`=5 (deg/s², torque = I·this) is extra torque authority in BOTH directions added to RCS max (planner uses RCS+pusher); ACCEL/BRAKE: RCS full + pusher full, TRIM: pusher first then RCS. Sent every tick as `cmdPusherTorque(tau/I, null)` (null target omega → physics never self-cancels it); zeroed on FLIP exit. Removed `rtls.FLIP_PUSHER_*` from defaults/descriptions.
+- **Chat 4f:** FLIP direction FIXED negative/clockwise (flipEu = eNeg; SEPARATED_AXIAL already pushes that way). Pusher max cut to `FLIP_PUSHER_ALPHA_DEG_S2`=1.5 (30 % of 5), now modulated: ACCEL full, BRAKE = just what is needed to stop at target (Treq − RCS, clamped 0..max), TRIM pusher-first.
+- **Chat 4g:** pusher max → 0.7 deg/s²; BRAKE modulation removed (it caused overshoot): pusher is now exactly one more RCS in the same bang-bang (ACCEL/BRAKE full, TRIM pusher-first), included in the one-tick prediction.
 - **Chat 4c:** `standardRTLS` converted to the house style: phases are `case`s of a `switch (_st.phase)` in `_tick()` (no HANDLERS table / `_phaseXxx` fns); helpers stay as functions. Exit = `finished = true; break;`. BOOSTBACK also got a spool wait (attitude control only after burn engines hit 99 %).
 - **Chat 4b:** user: gimbal wobbled → attitude hold rewritten as exact copy of circularize/suicide gimbal law, centre gimbal only. User verifies in sim; do NOT build verification harnesses (token waste).
 - **Chat 4:** BOOSTBACK_BURN implemented (3-engine burn → centre-only taper → spool-compensated cutoff), mission-level `TARGET_LANDING_PAD`, 4 `BOOSTBACK_*` constants, rtlsBb* status. Offline check `rtls-bb-check.js` (stale: user verifies in sim now, no more harnesses); attitude later changed to circularize-style centre-only gimbal; fixed attitude-target flip at vE=0.
