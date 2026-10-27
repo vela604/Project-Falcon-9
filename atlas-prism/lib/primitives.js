@@ -844,13 +844,29 @@ p = Object.assign({}, p, { bi: clamp(p.bi + ((c === 'F1' || c === 'FE') ? +1 : -
     const clamp = (x) => Math.max(0, Math.min(maxLi, x));
     const fin = (x) => Object.assign({ evals: nC + nF, crossEvals: nC, fullEvals: nF, log }, x);
     // 1+2. edges: crossings count is monotone in lead; flip k|k+1 is an edge. Try nearest edges first until one has a tick that completes (done).
-    const c0 = cnt(await cross(o.li0));
+    // 0-crossing handling: burn ended too early (lead too high) → search LOWER li
+    // (lower lead) for the first tick with >=1 apside crossing; that tick
+    // becomes the effective entry for edge discovery and window building.
+    let _li0 = o.li0;
+    const _c0raw = cnt(await cross(o.li0));
+    if (_c0raw === 0) {
+      let _step = 1, _found = null;
+      while (_step <= 100 && _li0 - _step >= 0) {
+        const _probe = _li0 - _step;
+        if (cnt(await cross(_probe)) >= 1) { _found = _probe; break; }
+        _step *= 2;
+      }
+      if (_found === null) return fin({ ok: false, reason: '0 crossings at li0=' + o.li0 + '; no >=1-crossing tick below within 100' });
+      _li0 = _found;
+      say('0 crossings at li0=' + o.li0 + ' -> searching from lower li=' + _li0);
+    }
+    const c0 = cnt(await cross(_li0));
     if (!c0) return fin({ ok: false, reason: 'no crossing count at li0=' + o.li0 });
     const findEdge = async (k) => {
       const side = async (li) => { const c = cnt(await cross(li)); return c ? c >= k + 1 : null; };
-      const sa = await side(o.li0); let A = o.li0, B = null, step = 1;
+      const sa = await side(_li0); let A = _li0, B = null, step = 1;
       while (B === null) {
-        const p = clamp(o.li0 + (sa ? -1 : 1) * step);
+        const p = clamp(_li0 + (sa ? -1 : 1) * step);
         if (p === A) return null;
         const sp = await side(p);
         if (sp === null) return null;
@@ -888,6 +904,22 @@ p = Object.assign({}, p, { bi: clamp(p.bi + ((c === 'F1' || c === 'FE') ? +1 : -
       v = hit.li; dSel = hit.c === k ? -1 : +1;
       const oc = cand.find((c) => c !== hit); other = oc ? oc.li : (dSel < 0 ? ed[1] : ed[0]);
       edgeK = k; edgePair = ed; break;
+    }
+    // Fallback for 0-crossing starts: findEdge's k=1..2 search can't bracket a
+    // 0|1 edge. If preprocessing found a valid lower _li0 with >=1 crossing and
+    // its FULL completes, use that tick directly.
+    if (v === null && _li0 !== o.li0) {
+      const _cvAt = cnt(await cross(_li0));
+      if (_cvAt >= 1) {
+        const _fTest = await full(_li0);
+        if (_fTest && _fTest.done) {
+          v = _li0;
+          dSel = -1;
+          edgePair = [_li0, _li0];
+          edgeK = 0;
+          say('fallback (0-crossing start): using lower li=' + v + ' (count=' + _cvAt + ', FULL done)');
+        }
+      }
     }
     if (v === null) return fin({ ok: false, reason: 'no edge (k=' + ks.join(',') + ') has a done tick' });
     const lo = edgePair[0], hi = edgePair[1];
