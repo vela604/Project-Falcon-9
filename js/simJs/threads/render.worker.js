@@ -34,6 +34,38 @@ if (typeof window === 'undefined') {
 let bootstrapped = false;
 let renderLoopStarted = false;
 let camera = null;
+// Landing-pad follow: when camera.followPadId is set, we append a virtual
+// "pad body" to state.bodies so render.js's existing followBodyIndex-based
+// camera math picks it up. Position is Earth-fixed (rotates with planet),
+// recomputed each tick.
+let _virtualPadBody = null;
+function _syncVirtualPad() {
+  // Strip any previous virtual pad first.
+  if (_virtualPadBody && state.bodies) {
+    const vi = state.bodies.indexOf(_virtualPadBody);
+    if (vi >= 0) state.bodies.splice(vi, 1);
+  }
+  if (!camera || !camera.followPadId || !state.bodies || !state.bodies.length) return;
+  if (typeof landingPads !== 'function' || typeof landingPadWorldPosition !== 'function') return;
+  const pad = landingPads().find(p => p.id === camera.followPadId);
+  if (!pad) return;
+  const pos = landingPadWorldPosition(pad, state.simTime);
+  if (!_virtualPadBody) {
+    _virtualPadBody = {
+      id: '__pad__', members: [], engines: [], pods: [],
+      gridFins: null, legs: null, chute: null,
+      dryMass: 0, fuelMass: 0, height: 0, width: 0,
+      isActive: false, isDiscarded: false,
+      __isVirtualPad: true,
+      rx: pos.x, ry: pos.y, vx: 0, vy: 0, theta: 0, omega: 0,
+    };
+  } else {
+    _virtualPadBody.rx = pos.x;
+    _virtualPadBody.ry = pos.y;
+  }
+  state.bodies.push(_virtualPadBody);
+  camera.followBodyIndex = state.bodies.length - 1;
+}
 
 self.onmessage = (e) => {
   const msg = e.data;
@@ -167,6 +199,11 @@ self.onmessage = (e) => {
       if (msg.data.trajectory) state.trajectory = msg.data.trajectory;
       else if (!showTrajectory) state.trajectory = null; // ← ye add karo
       state.separationFlash = msg.data.separationFlash;
+      // Strip virtual pad before hot-buffer decode (length-sensitive).
+      if (_virtualPadBody && state.bodies) {
+        const _vi = state.bodies.indexOf(_virtualPadBody);
+        if (_vi >= 0) state.bodies.splice(_vi, 1);
+      }
 state.lastPayloadRelease = msg.data.lastPayloadRelease;
 state.pusherPuff = msg.data.pusherPuff;
       
@@ -197,6 +234,10 @@ if (msg.data.rcsSync) {
       // else: hotBuffer arrived but we have no bodies yet to decode into
       // (shouldn't happen — the first-ever 'state' message always carries
       // `bodies`) — safely ignored rather than throwing.
+      
+      // Landing-pad follow: re-append virtual pad at end and point
+      // camera.followBodyIndex at it (render.js uses its rx/ry as origin).
+      _syncVirtualPad();
       break;
     }
     case 'lighting': {
@@ -205,6 +246,8 @@ if (msg.data.rcsSync) {
     }
     case 'camera': {
       camera = msg.camera;
+      // Strip old virtual pad and re-add if followPadId is set.
+      _syncVirtualPad();
       break;
     }
     case 'toggles': {

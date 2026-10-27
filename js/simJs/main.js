@@ -543,6 +543,7 @@ window.addEventListener('resize', () => {
     let _lastSentCamera = {
       follow: camera.follow, zoom: camera.zoom,
       followBodyIndex: camera.followBodyIndex, mode: camera.mode,
+      followPadId: camera.followPadId,
     };
     let _lastSentToggles = { showGrid, showVectors, showTrajectory, trajectoryMode, sloshEnabled };
 
@@ -550,12 +551,14 @@ window.addEventListener('resize', () => {
       if (camera.follow !== _lastSentCamera.follow ||
         camera.zoom !== _lastSentCamera.zoom ||
         camera.followBodyIndex !== _lastSentCamera.followBodyIndex ||
-        camera.mode !== _lastSentCamera.mode) {
+        camera.mode !== _lastSentCamera.mode ||
+        camera.followPadId !== _lastSentCamera.followPadId) {
         renderWorker.postMessage({ type: 'camera', camera: { ...camera } });
         _lastSentCamera.follow = camera.follow;
         _lastSentCamera.zoom = camera.zoom;
         _lastSentCamera.followBodyIndex = camera.followBodyIndex;
         _lastSentCamera.mode = camera.mode;
+        _lastSentCamera.followPadId = camera.followPadId;
       }
 
       if (showGrid !== _lastSentToggles.showGrid ||

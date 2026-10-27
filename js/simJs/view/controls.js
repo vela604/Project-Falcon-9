@@ -196,7 +196,7 @@ function bindWindPanel() {
 // ---------------------------------------------------------------------------
 // Camera controls
 // ---------------------------------------------------------------------------
-const camera = { follow: true, zoom: 25, followBodyIndex: 0, mode: 'local' };
+const camera = { follow: true, zoom: 25, followBodyIndex: 0, mode: 'local', followPadId: null };
 
 function bindCameraControls() {
   document.getElementById('btnFollow').addEventListener('click', () => {
@@ -215,9 +215,19 @@ function bindCameraControls() {
   const sel = document.getElementById('followBodySelect');
   if (sel) {
     sel.addEventListener('change', (e) => {
-      camera.followBodyIndex = parseInt(e.target.value, 10) || 0;
-      camera.follow = true;
-      camera.mode = 'local'; // picking a specific body implies local-follow
+      const raw = e.target.value || '';
+      if (raw.startsWith('pad:')) {
+        // Landing pad — camera follows pad, control stays on active body.
+        camera.followPadId = raw.slice(4);
+        camera.followBodyIndex = state.activeBodyIndex; // safe fallback; render worker overrides
+        camera.follow = true;
+        camera.mode = 'local';
+      } else {
+        camera.followPadId = null;
+        camera.followBodyIndex = parseInt(raw, 10) || 0;
+        camera.follow = true;
+        camera.mode = 'local';
+      }
       document.getElementById('btnFollow').classList.add('active');
       document.getElementById('btnFree').classList.remove('active');
     });
@@ -239,7 +249,7 @@ function refreshFollowBodySelect() {
   const sel = document.getElementById('followBodySelect');
   if (!sel) return;
   const current = sel.value;
-  sel.innerHTML = state.bodies.map((b, i) => {
+  const bodyOpts = state.bodies.map((b, i) => {
     let label;
     if (b.isActive) label = 'Active';
     else if (b.payloadBody && b.payloadBody.record) label = 'Payload: ' + b.payloadBody.record.name;
@@ -248,8 +258,24 @@ function refreshFollowBodySelect() {
     else label = 'Body ' + i;
     return `<option value="${i}">${label}</option>`;
   }).join('');
-  if (sel.querySelector(`option[value="${current}"]`)) sel.value = current;
-  else sel.value = state.activeBodyIndex;
+  // Landing pads — view-only camera targets (control stays on active body).
+  let padOpts = '';
+  if (typeof CONFIG !== 'undefined' && Array.isArray(CONFIG.LANDING_PADS)) {
+    padOpts = CONFIG.LANDING_PADS
+      .filter(p => p && p.enabled !== false)
+      .map(p => `<option value="pad:${p.id}">\u{1F6EC} ${p.name || p.id}</option>`)
+      .join('');
+  }
+  sel.innerHTML = bodyOpts + padOpts;
+  if (typeof camera !== 'undefined' && camera.followPadId) {
+    const padVal = 'pad:' + camera.followPadId;
+    if (sel.querySelector(`option[value="${padVal}"]`)) sel.value = padVal;
+    else if (sel.querySelector(`option[value="${current}"]`)) sel.value = current;
+    else sel.value = String(state.activeBodyIndex);
+  } else {
+    if (sel.querySelector(`option[value="${current}"]`)) sel.value = current;
+    else sel.value = String(state.activeBodyIndex);
+  }
 }
 
 function bindLegsControl() {
@@ -519,6 +545,9 @@ function canReleasePayloadNow() {
 }
 
 function canTakeControlNow() {
+  // Pad-view mode: camera is following a landing pad; control stays on the
+  // active body. Take Control is disabled while a pad is being viewed.
+  if (typeof camera !== 'undefined' && camera.followPadId) return false;
   const idx = (typeof camera !== 'undefined' && Number.isFinite(camera.followBodyIndex)) ?
     camera.followBodyIndex : state.activeBodyIndex;
   if (idx === state.activeBodyIndex) return false;
