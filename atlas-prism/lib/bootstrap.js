@@ -346,7 +346,15 @@
     const altPeriVp = Math.min(_aApoVp, _aPeriVp);
     const tolApoVp = ORBIT_TOL_FRAC * altApoVp;
     const tolPeriVp = ORBIT_TOL_FRAC * altPeriVp;
-    out.full = (idealReg || (out.inBand && lr.lead >= 1)) && out.payloadCleared && Math.abs(m.apogeeKm - altApoVp) <= tolApoVp && Math.abs(m.perigeeKm - altPeriVp) <= tolPeriVp && ch.vrEnd >= 0;
+    // vrEnd >= 0 was originally a safety belt for the OLD apogee-only deploy.
+    // It is now WRONG twice:
+    //   (a) tuneLeadV2 (probeBiasCheckpoint's lead runner) returns vrEnd=NaN
+    //       → ch.vrEnd >= 0 evaluates to false → FULL-FAIL even when cleared=true
+    //   (b) mode-aware deploy: PERI-mode deploy happens near perigee where vrEnd
+    //       is ~0 or slightly negative — this check would always reject it.
+    // Verification already covers what matters: payload cleared + both apsides
+    // within tolerance. tuneLead already validated deploy-timing feasibility.
+    out.full = (idealReg || (out.inBand && lr.lead >= 1)) && out.payloadCleared && Math.abs(m.apogeeKm - altApoVp) <= tolApoVp && Math.abs(m.perigeeKm - altPeriVp) <= tolPeriVp;
     return out;
   }
 

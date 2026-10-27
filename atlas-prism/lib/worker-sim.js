@@ -886,12 +886,36 @@ self.onmessage = async (e) => {
             restoreSnap(chSnap, newBias, lr.lead);
             const _pf0 = performance.now(), _pfk0 = _tk;
             let okFull = false;
+            // Measure vrEnd and vrMin during FULL for accurate reporting.
+            // tuneLeadV2 path returns lr.vrEnd = NaN (its FULL result doesn't
+            // carry vr), so without this the displayed/logged vrEnd is '--'.
+            //   vrMin = minimum stage vr during CIRCULARIZE
+            //   vrEnd = stage vr at payloadCleared tick
+            let _vrEndFull = NaN, _vrMinFull = Infinity, _circSeen = false;
             const _capTicksFull = Math.ceil(300 / CONFIG.DT);
             for (let _i = 0; _i < _capTicksFull; _i++) {
               if (state.halted) break;
               TunerEngine.tick(CONFIG.DT);
               const _gs = Guidance.getGuideStatus();
-              if (_gs && _gs.payloadCleared) { okFull = true; break; }
+              const _stb = findStageBody();
+              if (_stb && _gs) {
+                if (_gs.phase === 'CIRCULARIZE') _circSeen = true;
+                if (_circSeen) {
+                  const _r = Math.hypot(_stb.rx, _stb.ry);
+                  if (_r > 0) {
+                    const _vr = (_stb.vx * _stb.rx + _stb.vy * _stb.ry) / _r;
+                    if (Number.isFinite(_vr) && _vr < _vrMinFull) _vrMinFull = _vr;
+                  }
+                }
+              }
+              if (_gs && _gs.payloadCleared) {
+                okFull = true;
+                if (_stb) {
+                  const _rE = Math.hypot(_stb.rx, _stb.ry);
+                  if (_rE > 0) _vrEndFull = (_stb.vx * _stb.rx + _stb.vy * _stb.ry) / _rE;
+                }
+                break;
+              }
             }
             _P.full += performance.now() - _pf0; _P.fullT += _tk - _pfk0;
             const gsEnd = Guidance.getGuideStatus();
@@ -924,7 +948,10 @@ self.onmessage = async (e) => {
             const sc = TunerUtils.score(m, { targetAltKm: altKm, targetApoKm: altApoKm, targetPeriKm: altPeriKm });
             emit('probe', tag + ' FULL score=' + (sc.score != null ? sc.score.toFixed(2) : '?') + ' cleared=' + m.payloadCleared);
             result = {
-              ok: sc.ok, tuneOk: true, inBand: lr.inBand, leadTicks: lr.leadTicks, lead: lr.lead, margin: lr.marginS, vrEnd: lr.vrEnd,
+              ok: sc.ok, tuneOk: true, inBand: lr.inBand, leadTicks: lr.leadTicks, lead: lr.lead, margin: lr.marginS,
+              // Prefer measured vrEnd/vrMin (FULL-tracked) over lr.vrEnd (NaN for tuneLeadV2)
+              vrEnd: Number.isFinite(_vrEndFull) ? _vrEndFull : lr.vrEnd,
+              vrMin: Number.isFinite(_vrMinFull) ? _vrMinFull : lr.vrMin,
               score: sc.score, parts: sc.parts, reasons: sc.reasons, metrics: m,
               evals: lr.evals + 1,
               capHit: !okFull,
