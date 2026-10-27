@@ -2852,6 +2852,10 @@ setState(s) {
         flipPrevTgt: null,
         flipPrevT: null,
         flipMode: null,        // ACCEL | BRAKE | TRIM
+        flipGain: 1,           // measured/predicted angular-accel ratio (scales the RCS+pusher authority used by the planner)
+        flipPrevW: null,
+        flipSteady: 0,         // consecutive ACCEL ticks (gain is only measured in steady ACCEL)
+        flipBrakeLogged: false,
         flipPusherOn: false,   // pneumatic pusher assist currently armed
         flipErrDeg: null,
         flipOmegaDegS: null,
@@ -3112,7 +3116,21 @@ setState(s) {
             const mx = _rcsMaxTorques(snapshot);
             if (!(mx.pos > 0) || !(mx.neg > 0)) { _rcsOff(); break; }
             const Tp = I * FLIP_PUSHER_ALPHA_DEG_S2 / R2D;            // pusher torque (N*m), either direction
-            const mT = { pos: mx.pos + Tp, neg: mx.neg + Tp };        // RCS + pusher authority
+            // Measured authority gain G: in steady ACCEL compare the real omega change with what the commanded
+            // torque should have given. Any model error (inertia, RCS efficiency / duty, ...) then scales the
+            // authority used for the brake planning instead of showing up as an overshoot.
+            if (_st.flipPrevW !== null && _st.flipMode === "ACCEL" && _st.flipSteady >= 3) {
+              const aPred = _st.lastRcsTorque / I;
+              const aMeas = (d.omega - _st.flipPrevW) / dt - d.alphaAng;
+              if (Math.abs(aPred) > 1e-9) {
+                const gm = aMeas / aPred;
+                if (gm > 0.2 && gm < 5) _st.flipGain += 0.1 * (gm - _st.flipGain);
+              }
+            }
+            _st.flipPrevW = d.omega;
+            _st.flipSteady = _st.flipMode === "ACCEL" ? _st.flipSteady + 1 : 0;
+            const G = _st.flipGain;
+            const mT = { pos: (mx.pos + Tp) * G, neg: (mx.neg + Tp) * G };   // real RCS + pusher authority
 
             // rate at which the target itself rotates (orbital motion)
             let wTgt = 0;
@@ -3185,14 +3203,22 @@ setState(s) {
             if (towards && Math.abs(eP) <= stopAng) {
               const need = I * Math.abs(wRelP) / dt;             // torque that zeroes omega in one tick
               if (need >= brakeMax) {
+                if (!_st.flipBrakeLogged) {
+                  _st.flipBrakeLogged = true;
+                  console.log("[standardRTLS] FLIP BRAKE start t=" + simT.toFixed(2) + " err=" + (_st.flipEu * R2D).toFixed(2) +
+                    "deg w=" + (wRelNow * R2D).toFixed(2) + "deg/s I=" + I.toExponential(3) +
+                    " rcs+=" + mx.pos.toFixed(0) + " rcs-=" + mx.neg.toFixed(0) + " pusher=" + Tp.toFixed(0) +
+                    " gain=" + G.toFixed(3) + " aPlan=" + (brakeMax / I * R2D).toFixed(3) + "deg/s2");
+                }
                 _st.flipMode = "BRAKE";
                 rcsRes = sgn > 0 ? mx.rn : mx.rp;
                 tauP = -sgn * Tp;               // pusher acts like one more RCS: full against the motion
               } else {
                 _st.flipMode = "TRIM";                           // last tick only: just enough, pusher first
-                const useP = Math.min(need, Tp);
+                const needNom = need / G;                        // commanded (nominal) torque that gives `need` for real
+                const useP = Math.min(needNom, Tp);
                 tauP = -sgn * useP;
-                if (need - useP > 0) rcsRes = GuideRCS.targetTorqueRcs(snapshot, -sgn * (need - useP), idx);
+                if (needNom - useP > 0) rcsRes = GuideRCS.targetTorqueRcs(snapshot, -sgn * (needNom - useP), idx);
               }
             } else {
               _st.flipMode = "ACCEL";
@@ -3463,6 +3489,10 @@ setState(s) {
           _st.flipPrevT = null;
           _st.flipMode = null;
           _st.flipPusherOn = false;
+          _st.flipGain = 1;
+          _st.flipPrevW = null;
+          _st.flipSteady = 0;
+          _st.flipBrakeLogged = false;
           _st.flipErrDeg = null;
           _st.flipOmegaDegS = null;
           _st.flipTgtDeg = null;
