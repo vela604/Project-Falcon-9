@@ -853,43 +853,50 @@ p = Object.assign({}, p, { bi: clamp(p.bi + ((c === 'F1' || c === 'FE') ? +1 : -
     //   (a) FULL reaches done=true: deploy happens — accept tick directly
     //   (b) FULL done=false: burn ended too early → hunt for 0|k edge (k>=1)
     //       by searching DOWN first, then UP as fallback.
+    // 0-crossing handling: burn ended before ANY apogee peak. Orbit is still
+    // ASCENDING to apo — same deploy situation as 2-crossing. Parity rule:
+    // even=APO, odd=PERI.
+    //
+    // 0-crossing FULL done=true IS possible (payload deploys), but we do NOT
+    // accept it immediately. Lower lead → burn ends later → eventually crosses
+    // an apside (count >= 1), where the edge + window + golden-section search
+    // has real landscape structure. Search DOWN until count >= 1; only fall
+    // back to best-done-0 if no count>=1 tick exists within ±200.
     let _li0 = o.li0;
-    let _zeroCrossingDone = false;
     const _c0raw = cnt(await cross(o.li0));
     if (_c0raw === 0) {
-      // (a) Try done at the 0-crossing tick itself
-      const _f0 = await full(o.li0);
-      if (_f0 && _f0.done) {
-        _li0 = o.li0;
-        _zeroCrossingDone = true;
-        say('0 crossings at li0=' + o.li0 + ' but FULL done — accepting 0-crossing tick directly (APO mode)');
-      } else {
-        // (b) Search for a tick with count >= 1 (either 1 or 2). DOWN first.
-        let _step = 1, _found = null, _foundDir = 0;
-        while (_step <= 200 && _li0 - _step >= 0) {
-          const _probe = _li0 - _step;
-          if (cnt(await cross(_probe)) >= 1) { _found = _probe; _foundDir = -1; break; }
+      let _step = 1, _found = false;
+      const _visited0 = [o.li0];
+      // DOWN first: lower li → burn ends later → eventually count >= 1
+      while (_step <= 200 && _li0 - _step >= 0) {
+        const _probe = _li0 - _step;
+        _visited0.push(_probe);
+        if (cnt(await cross(_probe)) >= 1) { _li0 = _probe; _found = true; break; }
+        _step *= 2;
+      }
+      // UP fallback (rare)
+      if (!_found) {
+        _step = 1;
+        while (_step <= 200 && _li0 + _step <= maxLi) {
+          const _probe = _li0 + _step;
+          if (cnt(await cross(_probe)) >= 1) { _li0 = _probe; _found = true; break; }
           _step *= 2;
         }
-        if (_found === null) {
-          _step = 1;
-          while (_step <= 200 && _li0 + _step <= maxLi) {
-            const _probe = _li0 + _step;
-            if (cnt(await cross(_probe)) >= 1) { _found = _probe; _foundDir = +1; break; }
-            _step *= 2;
-          }
-        }
-        if (_found === null) return fin({ ok: false, reason: '0 crossings at li0=' + o.li0 + '; no >=1-crossing tick within ±200' });
-        _li0 = _found;
-        say('0 crossings at li0=' + o.li0 + ' -> searching from ' + (_foundDir < 0 ? 'lower' : 'higher') + ' li=' + _li0 + ' (count=' + cnt(await cross(_li0)) + ')');
       }
-    }
-    
-    // Short-circuit if the 0-crossing tick itself deploys (case a)
-    if (_zeroCrossingDone) {
-      const _fBest = await full(_li0);
-      return fin({ ok: true, mode: 'APO', edgeK: -1, edge: [_li0, _li0], window: [_li0, _li0],
-        W: [_li0], rows: [_fBest], leadTicks: _li0, bestScore: _fBest.score, full: _fBest });
+      if (!_found) {
+        // No count>=1 in ±200. Fall back to best DONE among visited 0-ticks.
+        let _best0Li = null, _best0Full = null;
+        for (const _t of _visited0) {
+          const _f = await full(_t);
+          if (_f && _f.done && (!_best0Full || _f.score < _best0Full.score)) { _best0Li = _t; _best0Full = _f; }
+        }
+        if (!_best0Li) return fin({ ok: false, reason: '0 crossings at li0=' + o.li0 + '; no count>=1 tick and no done 0-tick within ±200' });
+        say('0 crossings everywhere ±200 — using best done 0-tick li=' + _best0Li + ' (APO mode)');
+        return fin({ ok: true, mode: 'APO', edgeK: -1, edge: [_best0Li, _best0Li],
+          window: [_best0Li, _best0Li], W: [_best0Li], rows: [_best0Full],
+          leadTicks: _best0Li, bestScore: _best0Full.score, full: _best0Full });
+      }
+      say('0 crossings at li0=' + o.li0 + ' -> searching from lower li=' + _li0 + ' (count=' + cnt(await cross(_li0)) + ')');
     }
     
     const c0 = cnt(await cross(_li0));
