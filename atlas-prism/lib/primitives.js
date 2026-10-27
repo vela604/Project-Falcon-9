@@ -844,26 +844,61 @@ p = Object.assign({}, p, { bi: clamp(p.bi + ((c === 'F1' || c === 'FE') ? +1 : -
     const clamp = (x) => Math.max(0, Math.min(maxLi, x));
     const fin = (x) => Object.assign({ evals: nC + nF, crossEvals: nC, fullEvals: nF, log }, x);
     // 1+2. edges: crossings count is monotone in lead; flip k|k+1 is an edge. Try nearest edges first until one has a tick that completes (done).
-    // 0-crossing handling: burn ended too early (lead too high) → search LOWER li
-    // (lower lead) for the first tick with >=1 apside crossing; that tick
-    // becomes the effective entry for edge discovery and window building.
+    // 0-crossing handling: burn ended before ANY apogee peak. Post-burn
+    // orbit is still ASCENDING to apo — physically the same deploy situation
+    // as 2-crossing (past apogee+perigee, ascending to next apo): both wait
+    // for an apogee peak. So mode = APO, not PERI.
+    //
+    // Two cases at 0-crossing:
+    //   (a) FULL reaches done=true: deploy happens — accept tick directly
+    //   (b) FULL done=false: burn ended too early → hunt for 0|k edge (k>=1)
+    //       by searching DOWN first, then UP as fallback.
     let _li0 = o.li0;
+    let _zeroCrossingDone = false;
     const _c0raw = cnt(await cross(o.li0));
     if (_c0raw === 0) {
-      let _step = 1, _found = null;
-      while (_step <= 100 && _li0 - _step >= 0) {
-        const _probe = _li0 - _step;
-        if (cnt(await cross(_probe)) >= 1) { _found = _probe; break; }
-        _step *= 2;
+      // (a) Try done at the 0-crossing tick itself
+      const _f0 = await full(o.li0);
+      if (_f0 && _f0.done) {
+        _li0 = o.li0;
+        _zeroCrossingDone = true;
+        say('0 crossings at li0=' + o.li0 + ' but FULL done — accepting 0-crossing tick directly (APO mode)');
+      } else {
+        // (b) Search for a tick with count >= 1 (either 1 or 2). DOWN first.
+        let _step = 1, _found = null, _foundDir = 0;
+        while (_step <= 200 && _li0 - _step >= 0) {
+          const _probe = _li0 - _step;
+          if (cnt(await cross(_probe)) >= 1) { _found = _probe; _foundDir = -1; break; }
+          _step *= 2;
+        }
+        if (_found === null) {
+          _step = 1;
+          while (_step <= 200 && _li0 + _step <= maxLi) {
+            const _probe = _li0 + _step;
+            if (cnt(await cross(_probe)) >= 1) { _found = _probe; _foundDir = +1; break; }
+            _step *= 2;
+          }
+        }
+        if (_found === null) return fin({ ok: false, reason: '0 crossings at li0=' + o.li0 + '; no >=1-crossing tick within ±200' });
+        _li0 = _found;
+        say('0 crossings at li0=' + o.li0 + ' -> searching from ' + (_foundDir < 0 ? 'lower' : 'higher') + ' li=' + _li0 + ' (count=' + cnt(await cross(_li0)) + ')');
       }
-      if (_found === null) return fin({ ok: false, reason: '0 crossings at li0=' + o.li0 + '; no >=1-crossing tick below within 100' });
-      _li0 = _found;
-      say('0 crossings at li0=' + o.li0 + ' -> searching from lower li=' + _li0);
     }
+    
+    // Short-circuit if the 0-crossing tick itself deploys (case a)
+    if (_zeroCrossingDone) {
+      const _fBest = await full(_li0);
+      return fin({ ok: true, mode: 'APO', edgeK: -1, edge: [_li0, _li0], window: [_li0, _li0],
+        W: [_li0], rows: [_fBest], leadTicks: _li0, bestScore: _fBest.score, full: _fBest });
+    }
+    
     const c0 = cnt(await cross(_li0));
-    if (!c0) return fin({ ok: false, reason: 'no crossing count at li0=' + o.li0 });
+    if (!c0) return fin({ ok: false, reason: 'no crossing count at adjusted li0=' + _li0 });
     const findEdge = async (k) => {
-      const side = async (li) => { const c = cnt(await cross(li)); return c ? c >= k + 1 : null; };
+      // Treat count 0 as "low side" (c >= k+1 is false for k >= 0). No null.
+      // This lets findEdge bracket the 0|k boundary (k>=1) directly — needed
+      // when a 0-to-2 crossing jump (skipping 1) exists in the lattice.
+      const side = async (li) => { const c = cnt(await cross(li)); return c >= k + 1; };
       const sa = await side(_li0); let A = _li0, B = null, step = 1;
       while (B === null) {
         const p = clamp(_li0 + (sa ? -1 : 1) * step);
@@ -914,16 +949,24 @@ p = Object.assign({}, p, { bi: clamp(p.bi + ((c === 'F1' || c === 'FE') ? +1 : -
         const _fTest = await full(_li0);
         if (_fTest && _fTest.done) {
           v = _li0;
-          dSel = -1;
+          // dSel from found count parity: 1 (odd) → PERI → window down (-1);
+          // 2 (even) → APO → window up (+1). Matches the mode() parity rule.
+          dSel = (_cvAt % 2 === 1) ? -1 : +1;
           edgePair = [_li0, _li0];
           edgeK = 0;
-          say('fallback (0-crossing start): using lower li=' + v + ' (count=' + _cvAt + ', FULL done)');
+          say('fallback (0-crossing start): using ' + (_cvAt % 2 === 1 ? 'lower' : 'higher') +
+              ' li=' + v + ' (count=' + _cvAt + ', FULL done, mode=' + ((_cvAt % 2 === 0) ? 'APO' : 'PERI') + ')');
         }
       }
     }
     if (v === null) return fin({ ok: false, reason: 'no edge (k=' + ks.join(',') + ') has a done tick' });
     const lo = edgePair[0], hi = edgePair[1];
-    const cv = cnt(await cross(v)), mode = cv >= 2 ? 'APO' : 'PERI';
+    // Mode: crossings count parity determines deploy apside.
+    //   0 crossings = ascending to apo (before first peak) → APO (like 2)
+    //   1 crossing  = past apo, descending to peri      → PERI
+    //   2 crossings = past apo+peri, ascending to apo   → APO
+    //   even = APO, odd = PERI
+    const cv = cnt(await cross(v)), mode = (cv % 2 === 0) ? 'APO' : 'PERI';
     const tRel = (r) => mode === 'PERI' ? r.tToPeri : r.tToApo;
     // 3. window: from v away from the edge while release-apside time <= M
     const dW = dSel;
