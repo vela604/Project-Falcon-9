@@ -213,6 +213,17 @@ table.rv-t{width:100%;border-collapse:collapse;font-size:11.5px;font-variant-num
   const fmt = (x, d) => Number.isFinite(x) ? x.toFixed(d) : '–';
   const Q = () => TunerConfig.quanta;
 
+  // OPT-MECO Phase C reports the CLASSIFIER's first-fail bias edge. The TRUE
+  // physics edge (FULL mission residual crossing the scoring floor) typically
+  // sits a few hundredths of a degree further out — a classify() false-negative
+  // band of ~0.05-0.15 deg. Extending the OPT-MECO range by this margin on
+  // each side when handing it to ZETA-HELIX lets the scan catch a potentially
+  // better-scoring bias just past the classifier edge. Fail rows (residual
+  // below floor, orbit out of tolerance) rank last in the leaderboard, so
+  // extending is safe — worst case a few extra rows fail, we never miss a
+  // better point.
+  const ZETA_BIAS_EXTEND_DEG = 0.15;
+
   const S = {
     locked: false,
     stackId: null,
@@ -1057,8 +1068,14 @@ table.rv-t{width:100%;border-collapse:collapse;font-size:11.5px;font-variant-num
     const qG = (v) => Math.round(parseFloat(v) * 100) / 100;
     const M = parseInt(ds.meco, 10);
     const G = qG(ds.g);
-    const bLo = q4(ds.blo);
-    const bHi = q4(ds.bhi);
+    const bLoRaw = q4(ds.blo);
+    const bHiRaw = q4(ds.bhi);
+    // Extend the verified range by ZETA_BIAS_EXTEND_DEG on each side for the
+    // ZETA scan. Rationale: OPT-MECO's Phase C window ends at the CLASSIFIER
+    // (cheap COAST_WAIT_ENTRY) first-fail edge; FULL-verified physics can
+    // still pass a few hundredths further out. See ZETA_BIAS_EXTEND_DEG.
+    const bLo = q4(bLoRaw - ZETA_BIAS_EXTEND_DEG);
+    const bHi = q4(bHiRaw + ZETA_BIAS_EXTEND_DEG);
     S.last.meco = M; S.last.G = G;
     if (S.optResult && S.optResult.good) {
       const hit = S.optResult.good.find((v) => v.M === M && Math.abs(v.Gi / 100 - G) < 0.005);
@@ -1069,7 +1086,9 @@ table.rv-t{width:100%;border-collapse:collapse;font-size:11.5px;font-variant-num
     if ($('zG')) $('zG').value = G;
     if ($('zBlo')) $('zBlo').value = bLo;
     if ($('zBhi')) $('zBhi').value = bHi;
-    log('ZETA auto-filled: MECO=' + M + ' G=' + G + ' bias [' + bLo.toFixed(3) + ', ' + bHi.toFixed(3) + ']');
+    log('ZETA auto-filled: MECO=' + M + ' G=' + G +
+        ' bias [' + bLo.toFixed(3) + ', ' + bHi.toFixed(3) + ']' +
+        '  (verified [' + bLoRaw.toFixed(3) + ', ' + bHiRaw.toFixed(3) + '] + ±' + ZETA_BIAS_EXTEND_DEG + '° edge margin — fail rows rank last)');
   }
 
   async function runOptMeco() {
