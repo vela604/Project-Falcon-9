@@ -905,7 +905,19 @@ p = Object.assign({}, p, { bi: clamp(p.bi + ((c === 'F1' || c === 'FE') ? +1 : -
       // Treat count 0 as "low side" (c >= k+1 is false for k >= 0). No null.
       // This lets findEdge bracket the 0|k boundary (k>=1) directly — needed
       // when a 0-to-2 crossing jump (skipping 1) exists in the lattice.
-      const side = async (li) => { const c = cnt(await cross(li)); return c >= k + 1; };
+      const side = async (li) => {
+        const r = await cross(li);
+        if (!r) return null;
+        const c = cnt(r);
+        // For 1|2 edge search (k=1): count 0 with finite tToApo is on the HIGH
+        // side (ascending family, same as 2+). A 1→0 sampling jump means the
+        // real lattice had 1→2→0 — the 2 was skipped by a big doubling step
+        // (e.g. 569 step=128 jumps to 697 skipping the 620|621 edge).
+        // Without this, side(569)=false and side(697)=false → no flip detected
+        // → 'no edge found' even though 620|621 exists with done=true at 621.
+        if (k === 1 && c === 0 && Number.isFinite(r.tToApo)) return true;
+        return c >= k + 1;
+      };
       const sa = await side(_li0); let A = _li0, B = null, step = 1;
       while (B === null) {
         const p = clamp(_li0 + (sa ? -1 : 1) * step);
