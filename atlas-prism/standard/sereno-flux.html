@@ -898,11 +898,13 @@ table.rv-t{width:100%;border-collapse:collapse;font-size:11.5px;font-variant-num
         return;
       }
       const quantum = Q().bias;
-      const rangeQ = (hi - lo) / quantum;
-      let stepQ = Math.floor(rangeQ / N);
-      if (stepQ < 1) stepQ = 1;
-      const stepDeg = stepQ * quantum;
-      info.textContent = 'step = ' + stepQ + 'q = ' + stepDeg.toFixed(4) + ' deg';
+      const rangeQ = Math.round((hi - lo) / quantum);
+      const _maxDistinct = rangeQ + 1;
+      const _Nuse = Math.min(N, _maxDistinct);
+      const _stepDegNominal = _Nuse > 1 ? (hi - lo) / (_Nuse - 1) : 0;
+      let txt = 'spread ' + lo + '..' + hi + ' · N=' + _Nuse + ' · step≈' + _stepDegNominal.toFixed(4) + ' deg';
+      if (_Nuse < N) txt += ' ⚠ N capped to ' + _maxDistinct + ' (range holds only ' + _maxDistinct + ' quanta)';
+      info.textContent = txt;
     };
     ['zBlo', 'zBhi', 'zN'].forEach((id) => $(id) && $(id).addEventListener('input', upd));
     upd();
@@ -1156,21 +1158,26 @@ table.rv-t{width:100%;border-collapse:collapse;font-size:11.5px;font-variant-num
       if (![meco, G, T, bLo, bHi, N].every(Number.isFinite) || N < 2 || bHi <= bLo)
         throw new Error('invalid fields');
 
+      // N points evenly spread over [bLo, bHi] INCLUSIVE (N-1 gaps). Both
+      // endpoints are searched; the last sample lands exactly on bHi.
+      // Prior formula used step=rangeQ/N which placed N points from lo but
+      // never reached hi (hi would be point N+1) — user's reported issue.
       const quantum = Q().bias;
-      const rangeQ = (bHi - bLo) / quantum;
-      let stepQ = Math.floor(rangeQ / N);
-      if (stepQ < 1) stepQ = 1;
-      const stepDeg = stepQ * quantum;
+      const rangeQ = Math.round((bHi - bLo) / quantum);
+      const _maxDistinct = rangeQ + 1;
+      const _Nuse = Math.min(N, _maxDistinct);
+      if (_Nuse < N) log('ZETA: N reduced from ' + N + ' to ' + _Nuse + ' (range holds only ' + _maxDistinct + ' quanta)');
+      const _stepDegNominal = _Nuse > 1 ? (bHi - bLo) / (_Nuse - 1) : 0;
 
       const biases = [];
-      for (let i = 0; i < N; i++) {
-        const b = bLo + i * stepDeg;
-        if (b > bHi + 1e-9) break;
+      for (let i = 0; i < _Nuse; i++) {
+        const qi = _Nuse > 1 ? Math.round(i * rangeQ / (_Nuse - 1)) : 0;
+        const b = bLo + qi * quantum;
         biases.push(Math.round(b * 10000) / 10000);
       }
       const batchId = ++S.zetaBatch;
       log('ZETA[batch ' + batchId + ']: MECO=' + meco + ' G=' + G + ' T=' + T +
-          ' N=' + biases.length + ' step=' + stepDeg.toFixed(4) + ' deg');
+          ' N=' + biases.length + ' spread=' + bLo + '..' + bHi + ' (inclusive) step≈' + _stepDegNominal.toFixed(4) + ' deg');
       log('  biases: ' + biases.join(', '));
 
       S.last.meco = meco; S.last.G = G; S.last.T = T;
