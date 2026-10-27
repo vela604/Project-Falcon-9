@@ -54,8 +54,9 @@ function makeLeadRunner(chSnap, bias, tg) {
             const pb = state.bodies.find((x) => x && x.payloadBody);
             if (pb) { const o = TunerHook.orbitOf(pb, CONFIG.GM_EARTH, CONFIG.EARTH_RADIUS); m.apogeeKm = o.apoKm; m.perigeeKm = o.periKm; m.ecc = o.ecc; }
             const sc = TunerUtils.score(m, tg);
-            out.score = sc.score; out.ok = sc.ok; out.reasons = sc.reasons; out.apoKm = m.apogeeKm; out.periKm = m.perigeeKm; out.deployS = m.deployTimeS;
-            emit('leadlog', 'FULL li=' + li + ' -> cross=' + out.cross + ' done=' + done + ' score=' + (Number.isFinite(sc.score) ? sc.score.toFixed(1) : sc.score) + ' deployS=' + (Number.isFinite(m.deployTimeS) ? m.deployTimeS.toFixed(1) : '-') + ' apo=' + (Number.isFinite(m.apogeeKm) ? m.apogeeKm.toFixed(1) : '-') + ' peri=' + (Number.isFinite(m.perigeeKm) ? m.perigeeKm.toFixed(1) : '-'));
+            out.score = sc.score; out.ok = sc.ok; out.reasons = sc.reasons; out.apoKm = m.apogeeKm; out.periKm = m.perigeeKm; out.deployS = m.deployTimeS; out.resid = m.stageResidualKg;
+            const _reasonsStr = (sc.reasons && sc.reasons.length) ? ' reasons=[' + sc.reasons.join(',') + ']' : '';
+            emit('leadlog', 'FULL li=' + li + ' -> cross=' + out.cross + ' done=' + done + ' score=' + (Number.isFinite(sc.score) ? sc.score.toFixed(1) : sc.score) + ' resid=' + (Number.isFinite(m.stageResidualKg) ? m.stageResidualKg.toFixed(1) : '-') + 'kg' + _reasonsStr + ' deployS=' + (Number.isFinite(m.deployTimeS) ? m.deployTimeS.toFixed(1) : '-') + ' apo=' + (Number.isFinite(m.apogeeKm) ? m.apogeeKm.toFixed(1) : '-') + ' peri=' + (Number.isFinite(m.perigeeKm) ? m.perigeeKm.toFixed(1) : '-'));
             return out;
           };
 }

@@ -1003,7 +1003,15 @@ p = Object.assign({}, p, { bi: clamp(p.bi + ((c === 'F1' || c === 'FE') ? +1 : -
     let best = null;
     for (const li of W) { const r = fc.get(li); if (r && Number.isFinite(r.score) && (!best || r.score < best.score)) best = { li, score: r.score, r }; }
     if (!best) return fin({ ok: false, reason: 'no scored lead in window', edge: [lo, hi], mode, window: W });
-    return fin({ ok: !!best.r.ok, mode, edgeK, edge: [lo, hi], window: [W[0], W[N - 1]], W, rows: Array.from(fc.values()), leadTicks: best.li, bestScore: best.score, full: best.r });
+    // ok = mission COMPLETED (done=true) — NOT scoring validity (sc.ok).
+    // A lead whose FULL mission deploys the payload but hard-fails on residual
+    // (stage residual below target band floor) is still a valid LEAD for the
+    // search. The caller (CONVO / probeBiasCheckpoint) decides what to do with
+    // a hard-fail score. Using sc.ok here would collapse "search found a lead
+    // but the resulting mission violates scoring" into "search failed" —
+    // hiding the real reason (residual_below_floor) behind a generic
+    // 'lead search failed' message.
+    return fin({ ok: !!best.r.done, mode, edgeK, edge: [lo, hi], window: [W[0], W[N - 1]], W, rows: Array.from(fc.values()), leadTicks: best.li, bestScore: best.score, full: best.r });
   }
 
   Object.assign(T, {

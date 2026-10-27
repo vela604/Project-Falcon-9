@@ -1495,7 +1495,19 @@ table.rv-t{width:100%;border-collapse:collapse;font-size:11.5px;font-variant-num
       log('CONVO: final run at best lead');
       const r = await S.pool.runJob('probeBiasCheckpoint', { bias, altKm: S.orbitKm, altApoKm: S.orbitApoKm, altPeriKm: S.orbitPeriKm, fixedLead: res.lead }, 0)
         .catch((e) => ({ ok: false, reason: 'error: ' + e.message }));
-      const vd = '<div class="rv-vd ok"><span class="k">Best lead</span><b>' + fmt(res.lead, 4) + ' s</b> · li <b>' + res.best.li + '</b> · release at <b>' + esc(res.mode) + '</b> · scan score <b>' + fmt(res.best.score, 3) + '</b></div>';
+      // Verdict: check if the chosen best-lead's FULL mission hard-failed on
+      // stage residual (the most common reason the scan-score looks like a
+      // fail-penalty ~1e6). This is a physics result, not a search failure —
+      // the search found the score-minimising lead as requested.
+      let _residualFail = false, _residualReason = '';
+      if (r && r.reasons && r.reasons.length) {
+        const _rr = r.reasons.find(x => /residual_below_floor/i.test(x));
+        if (_rr) { _residualFail = true; _residualReason = _rr; }
+      }
+      const vdClass = _residualFail ? 'bad' : 'ok';
+      const vdLabel = _residualFail ? 'Best lead (residual below floor)' : 'Best lead';
+      const vd = '<div class="rv-vd ' + vdClass + '"><span class="k">' + vdLabel + '</span><b>' + fmt(res.lead, 4) + ' s</b> · li <b>' + res.best.li + '</b> · release at <b>' + esc(res.mode) + '</b> · scan score <b>' + fmt(res.best.score, 3) + '</b>' +
+        (_residualFail ? ' · <b style="color:var(--red)">' + esc(_residualReason) + '</b>' : '') + '</div>';
       setConvoView(resultCard(r, { meco, G, T, bias }, 'CONVO-LEAD · best lead', vd, res, null));
       log('CONVO OK: lead=' + fmt(res.lead, 4) + ' s mode=' + res.mode + ' score=' + fmt(r && r.score, 3));
       $('cStatus').innerHTML = '<span class="ok">lead=' + fmt(res.lead, 4) + ' s · ' + esc(res.mode) + ' · score=' + fmt(r && r.score, 3) + '</span>';
