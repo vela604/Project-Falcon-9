@@ -123,7 +123,7 @@ fast-forward workers rebuild guidance from `exportGuideState()` mid-flight.
 | 1 | `standardRTLS` block skeleton (7 phases, lifecycle, status, state) | ✅ done | at end of `FUNDAMENTAL_BLOCKS` |
 | 2 | Handover at end of `SEPARATED_AXIAL` → pusher off, RCS null, rtlsBlock.start(booster) | ✅ done | block ticks every tick in parallel with stage phases |
 | 3 | **FLIP** phase | ✅ done, user-verified "perfect, fast turn & settle" | see §5 |
-| 4 | BOOSTBACK_BURN | ⬜ waiting for user's description | |
+| 4 | BOOSTBACK_BURN | ✅ implemented + offline-checked (`rtls-bb-check.js`); ⏳ sim verification by user | see §6.1 |
 | 5 | PRE_ENTRY_STEER | ⬜ | |
 | 6 | ENTRY_BURN | ⬜ | |
 | 7 | POST_ENTRY_STEER | ⬜ | |
@@ -177,7 +177,23 @@ Verified offline (9 cases, predicted time vs actual within ~1 s) and by the user
 **The user defines each phase; below are only my starting suggestions/questions so
 the next chat can ask the right things quickly.** Do not implement beyond what the user says.
 
-### 6.1 BOOSTBACK_BURN
+### 6.1 BOOSTBACK_BURN — IMPLEMENTED (Chat 4)
+**Mission ctx:** `landbackV1._lbConfig.mission.TARGET_LANDING_PAD` (default `'LZ-1'`) → `_lbResolveTargetPad()`
+→ `rtlsBlock.start(cfg, bIdx, {targetPad:{id,arcOffsetM,angleEf}})`. Pad angle = launch-site angle +
+arcOffsetM/EARTH_RADIUS (formula assumed; `env.LANDING_PADS` else fallback table LZ-1 400 / LZ-2 700 / LZ-3 1000 m).
+**Constants (`rtls.*`):** `BOOSTBACK_ENGINES` "C,0,180" (centre + the two extreme octaweb engines; string, not array),
+`BOOSTBACK_APPARENT_OFFSET_DEG` 0 (+ = east of pad; aim short so drag/steer covers the rest),
+`BOOSTBACK_SIDE_CUT_DEG` 2.0, `BOOSTBACK_TAPER_DEG` 0.5 (values are guesses — tune in sim).
+**Logic:** THREE (all selected engines full) → when predicted-impact error ≤ SIDE_CUT the outer ones go off →
+CENTER (throttle tapers 100 % → 39 % floor as error 0.5° → 0) → SPOOL cutoff when error ≤ 0 *including spool-down dv*;
+phase ends when mass flow < 1 kg/s. Impact = vacuum leapfrog predictor (Earth-fixed). Attitude: CENTRE-engine gimbal only (target "center"), predictive law copied from circularize/suicide (dNext via deriveForState, tau − env torque),
+nose opposite horizontal velocity **latched at burn start** (live velocity would flip 180° when vE reverses — found offline).
+**Status fields:** `rtlsBbStage/ErrDeg/ImpactEfDeg/TargetEfDeg/ThrFrac`. Logs `[standardRTLS] BOOSTBACK …`.
+**Offline result:** impact error ≤ ~56 m (nominal −13 m, offset, center-only start, no-taper, 20° initial att error all OK).
+**Limits:** vacuum predictor (no drag); 3 s engine startup has no RCS attitude help; no attitude control after cutoff
+until PRE_ENTRY_STEER exists; side-engine spool dv must be ≤ SIDE_CUT.
+
+(Original design notes below are superseded.)
 - Starts with nose already opposite horizontal velocity (thrust decelerates the downrange speed).
 - Need from user: which engines/how many, throttle, **cutoff condition**.
   Likely: predict the ballistic impact point each tick (leapfrog predictor already exists
@@ -223,14 +239,14 @@ the next chat can ask the right things quickly.** Do not implement beyond what t
    For boostback targeting a pad, ground-relative velocity may be what is wanted.
 4. `targetTorqueRcs` full-fire produces some net force (not the no-net-force variant); small
    translational Δv from the flip is ignored. Revisit if boostback accuracy needs it.
-5. Booster body has `isActive = false` after separation; throttle/gimbal commands with
-   `targetBodyIdx` for it are **unverified** until BOOSTBACK writes to them.
+5. ~~Booster `isActive=false` commands~~ RESOLVED: `physics.worker.js resolveTargetBody` routes `targetBodyIdx` to discarded bodies. (Still confirm in sim.)
+8. Pad arcOffset→angle formula and `env.LANDING_PADS` in boot handoff are UNVERIFIED (environment.js / workerBridge.js not seen); fallback table is used otherwise.
 6. Torque sign (+τ → +θ) taken from `DONE_DWELL` and confirmed by the working FLIP.
 7. Fast-forward: any new per-phase state must live in `_st` and be JSON-serialisable.
 
 ## 8. Open questions for the user (answer when starting each phase)
 
-- BOOSTBACK: engine count / throttle / cutoff rule? Pad = launch site? Ground-relative or inertial?
+- BOOSTBACK tuning (OFFSET / SIDE_CUT / TAPER) after sim run; attitude hold between BOOSTBACK end and PRE_ENTRY_STEER?
 - Entry burn trigger (altitude, Q, speed, predicted) and cutoff?
 - Grid-fin control law / limits? Aero steering goal (hit pad coordinates?)
 - Landing burn: ignition rule, min throttle, leg deploy altitude, success criteria?
@@ -239,6 +255,9 @@ the next chat can ask the right things quickly.** Do not implement beyond what t
 
 ## 9. Changelog (newest first — add a line for every change)
 
+- **Chat 4c:** `standardRTLS` converted to the house style: phases are `case`s of a `switch (_st.phase)` in `_tick()` (no HANDLERS table / `_phaseXxx` fns); helpers stay as functions. Exit = `finished = true; break;`. BOOSTBACK also got a spool wait (attitude control only after burn engines hit 99 %).
+- **Chat 4b:** user: gimbal wobbled → attitude hold rewritten as exact copy of circularize/suicide gimbal law, centre gimbal only. User verifies in sim; do NOT build verification harnesses (token waste).
+- **Chat 4:** BOOSTBACK_BURN implemented (3-engine burn → centre-only taper → spool-compensated cutoff), mission-level `TARGET_LANDING_PAD`, 4 `BOOSTBACK_*` constants, rtlsBb* status. Offline check `rtls-bb-check.js` (stale: user verifies in sim now, no more harnesses); attitude later changed to circularize-style centre-only gimbal; fixed attitude-target flip at vE=0.
 - **Chat 3:** FLIP rewritten as pure bang-bang with first-tick direction choice; removed all
   placeholder constants (only 3 remain). Verified offline + user-verified in sim ("perfect").
 - **Chat 2:** Added `standardRTLS` skeleton to `guidance-blocks.js`; handover at end of

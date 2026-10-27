@@ -1034,6 +1034,8 @@ const _lbConfig = {
 },
 suicide: null,
 rtls: null,
+// Mission-level: which landing pad the booster returns to (id from CONFIG.LANDING_PADS).
+mission: { TARGET_LANDING_PAD: 'LZ-1' },
 };
 
 (function _lbInitDefaults() {
@@ -1043,6 +1045,37 @@ rtls: null,
   if (F && F.suicide) _lbConfig.suicide = JSON.parse(JSON.stringify(F.suicide.defaultConstants));
   if (F && F.standardRTLS) _lbConfig.rtls = JSON.parse(JSON.stringify(F.standardRTLS.defaultConstants));
 })();
+
+// ---- Mission-level target landing pad (landbackV1) ----
+// Pad id comes from _lbConfig.mission.TARGET_LANDING_PAD. Position = Earth-fixed angle
+// (launch-site angle + arcOffsetM / R, + = east). Uses env.LANDING_PADS if the boot handoff
+// carries it; otherwise falls back to a table mirroring config.js CONFIG.LANDING_PADS.
+const _LB_FALLBACK_PADS = [
+  { id: 'LZ-1', arcOffsetM: 400 },
+  { id: 'LZ-2', arcOffsetM: 700 },
+  { id: 'LZ-3', arcOffsetM: 1000 },
+];
+let _lbPadWarned = false;
+function _lbResolveTargetPad() {
+  const env = Derivation.getEnv() || {};
+  const id = (_lbConfig.mission && _lbConfig.mission.TARGET_LANDING_PAD) || 'LZ-1';
+  let pads = Array.isArray(env.LANDING_PADS) ? env.LANDING_PADS : null;
+  if (!pads) {
+    if (!_lbPadWarned) {
+      _lbPadWarned = true;
+      console.warn('[landbackV1] env.LANDING_PADS not in boot handoff — using built-in pad table (mirror of config.js)');
+    }
+    pads = _LB_FALLBACK_PADS;
+  }
+  const p = pads.find(x => x && x.id === id && x.enabled !== false);
+  if (!p) {
+    console.warn('[landbackV1] target pad "' + id + '" not found / disabled — RTLS falls back to the launch site');
+    return null;
+  }
+  const Rg = env.EARTH_RADIUS + (env.LAUNCH_SITE_ALTITUDE || 0);
+  const angleEf = (env.LAUNCH_SITE_ANGLE_0 || 0) + p.arcOffsetM / Rg;
+  return { id: p.id, arcOffsetM: p.arcOffsetM, angleEf: angleEf };
+}
 
 function _lbCurrentPhase() {
   const mp = _lbState.missionPhase;
@@ -1253,7 +1286,7 @@ if (elapsedSep >= _lbConfig.separation.SEPARATION_DURATION_S) {
   // RCS (done just above), then the RTLS block owns the booster from here.
   send(cmdPusherTorque(0, 0, bIdx));
   _lbState.rtlsBlock = FUNDAMENTAL_BLOCKS.standardRTLS.createInstance();
-  _lbState.rtlsBlock.start(_lbConfig.rtls, bIdx, {});
+  _lbState.rtlsBlock.start(_lbConfig.rtls, bIdx, { targetPad: _lbResolveTargetPad() });
   console.log('[landbackV1] booster → standardRTLS at t=' + simT.toFixed(2));
 
   _lbState.insertionBlock = FUNDAMENTAL_BLOCKS.insertion.createInstance();
@@ -1496,6 +1529,11 @@ if (_lbState.insertionBlock) {
       rtlsFlipOmegaDegS: rs.flipOmegaDegS,
       rtlsFlipTgtDeg: rs.flipTgtDeg,
       rtlsRcsTorque: rs.rcsTorque,
+      rtlsBbStage: rs.bbStage,
+      rtlsBbErrDeg: rs.bbErrDeg,
+      rtlsBbImpactEfDeg: rs.bbImpactEfDeg,
+      rtlsBbTargetEfDeg: rs.bbTargetEfDeg,
+      rtlsBbThrFrac: rs.bbThrFrac,
     });
   }
 

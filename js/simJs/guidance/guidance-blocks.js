@@ -2807,6 +2807,11 @@ setState(s) {
       FLIP_ROTATE_TOL_DEG: 0.5,   // done when |angle error| < this ...
       FLIP_OMEGA_TOL: 0.005,      // ... and |relative omega| < this (rad/s)
       FLIP_TIMEOUT_S: 120,
+      // BOOSTBACK_BURN
+      BOOSTBACK_ENGINES: "C,0,180",       // engines fired for the burn: "C" = centre, numbers = outer-ring angleDeg (0 / 180 = the two extreme left/right engines)
+      BOOSTBACK_APPARENT_OFFSET_DEG: 0,   // aim at (target pad + this) Earth-fixed deg; + = east of the pad (short), - = west
+      BOOSTBACK_SIDE_CUT_DEG: 2.0,        // outer engines off when impact error <= this (deg)
+      BOOSTBACK_TAPER_DEG: 0.5,           // centre throttle tapers 100% -> floor over the last this-many deg of error
     },
     importantFields: [],
     createInstance: function () {
@@ -2850,6 +2855,17 @@ setState(s) {
         flipErrDeg: null,
         flipOmegaDegS: null,
         flipTgtDeg: null,
+        // ---- BOOSTBACK scratch ----
+        bbInit: false,
+        bbStage: null,         // THREE | CENTER | SPOOL
+        bbSpooled: false,      // burn-set engines reached >=99% max flow once (attitude control starts only then)
+        bbSign: 0,             // +1/-1: direction of the horizontal velocity at burn start (attitude is held opposite to it, even after the velocity reverses)
+        bbPrevTgt: null,
+        bbPrevT: null,
+        bbErrDeg: null,        // predicted impact - apparent target (Earth-fixed deg, + = east)
+        bbImpactEfDeg: null,
+        bbTargetEfDeg: null,
+        bbThrFrac: null,
         // Add other per-phase scratch state here
       };
 
@@ -2893,9 +2909,8 @@ setState(s) {
       }
 
       // ---------------------------------------------------------------------
-      // Phase handlers — each gets (snapshot, d, simT, cfg) where d is
-      // Derivation.derive(snapshot, bodyIdx). Return true when the phase's
-      // exit condition is met. TODO: implement.
+      // Phase helpers. The phases themselves are `case`s of the switch in _tick()
+      // (same style as the other blocks): set `finished = true; break;` to leave a phase.
       // ---------------------------------------------------------------------
       // ---- FLIP helpers ---------------------------------------------------
       // Body angle that puts the NOSE exactly opposite to the local-horizontal
@@ -2967,142 +2982,95 @@ setState(s) {
       //   * full torque toward the target; as soon as the stopping angle
       //     (w²/2a_brake) reaches the remaining error → full torque the other way.
       //   * only the last braking tick is trimmed (just enough to zero omega).
-      function _phaseFlip(snapshot, d, simT, cfg) {
-        const idx = _bodyIdx;
-        if (!snapshot.bodies[idx]) return false;
-        const env = Derivation.getEnv();
-        const dt = env && Number.isFinite(env.DT) ? env.DT : 1 / 80;
-        const I = d.massProps.I;
-        if (!(I > 0)) return false;
-        const R2D = 180 / Math.PI;
-
-        const tgtNow = _flipTargetTheta(d.rx, d.ry, d.vx, d.vy);
-        if (tgtNow === null) { _rcsOff(); return false; }
-        const mx = _rcsMaxTorques(snapshot);
-        if (!(mx.pos > 0) || !(mx.neg > 0)) { _rcsOff(); return false; }
-
-        // rate at which the target itself rotates (orbital motion)
-        let wTgt = 0;
-        if (_st.flipPrevTgt !== null && _st.flipPrevT !== null && simT > _st.flipPrevT) {
-          wTgt = _wrapPi(tgtNow - _st.flipPrevTgt) / (simT - _st.flipPrevT);
-          if (Math.abs(wTgt) > 0.05) wTgt = 0; // glitch guard
-        }
-        _st.flipPrevTgt = tgtNow;
-        _st.flipPrevT = simT;
-        const wRelNow = d.omega - wTgt;
-        const rawErr = tgtNow - d.theta;
-
-        if (!_st.flipInit) {
-          // ---- first tick: read the state, choose the direction ----
-          _st.flipInit = true;
-          _send(Guidance.cmdSetAllThrottle(0));
-          _send(Guidance.cmdSetGimbalRate(0));
-          const e0 = _wrapPi(rawErr);
-          const ePos = e0 >= 0 ? e0 : e0 + 2 * Math.PI;   // way round in +direction
-          const eNeg = ePos - 2 * Math.PI;                // way round in -direction
-          const tPos = _flipTime(ePos, wRelNow, mx.pos / I, mx.neg / I);
-          const tNeg = _flipTime(eNeg, wRelNow, mx.pos / I, mx.neg / I);
-          _st.flipEu = tPos <= tNeg ? ePos : eNeg;
-          _st.flipDir = _st.flipEu >= 0 ? 1 : -1;
-          console.log("[standardRTLS] FLIP dir=" + (_st.flipDir > 0 ? "+" : "-") +
-            " err=" + (_st.flipEu * R2D).toFixed(1) + "deg omega=" + (wRelNow * R2D).toFixed(2) +
-            "deg/s  t(+)=" + tPos.toFixed(1) + "s t(-)=" + tNeg.toFixed(1) + "s");
-        } else {
-          _st.flipEu += _wrapPi(rawErr - _st.flipPrevRaw);   // unwrapped along the committed way
-        }
-        _st.flipPrevRaw = rawErr;
-
-        _st.flipTgtDeg = tgtNow * R2D;
-        _st.flipErrDeg = _st.flipEu * R2D;
-        _st.flipOmegaDegS = wRelNow * R2D;
-
-        if (Math.abs(_st.flipEu) < cfg.FLIP_ROTATE_TOL_DEG / R2D &&
-            Math.abs(wRelNow) < cfg.FLIP_OMEGA_TOL) {
-          _rcsOff();
-          return true;
-        }
-
-        // ---- one-tick-ahead prediction (current RCS torque keeps acting) ----
-        const M = d.massProps.M;
-        let aIx = d.gVecX, aIy = d.gVecY;
-        if (M > 0) {
-          const cosT = Math.cos(d.theta), sinT = Math.sin(d.theta);
-          const thrIx = d.thrustBodyX * cosT - d.thrustBodyY * sinT;
-          const thrIy = d.thrustBodyX * sinT + d.thrustBodyY * cosT;
-          aIx += (thrIx + d.dragVecX) / M;
-          aIy += (thrIy + d.dragVecY) / M;
-        }
-        const aTot = d.alphaAng + _st.lastRcsTorque / I;  // d.alphaAng has NO rcs term
-        const dTheta = d.omega * dt + 0.5 * aTot * dt * dt;
-        const wP = d.omega + aTot * dt;
-        const tgtP = _flipTargetTheta(d.rx + d.vx * dt, d.ry + d.vy * dt,
-                                      d.vx + aIx * dt, d.vy + aIy * dt);
-        const dTgt = tgtP !== null ? _wrapPi(tgtP - tgtNow) : 0;
-        const eP = _st.flipEu + dTgt - dTheta;
-        const wRelP = wP - wTgt;
-
-        // ---- bang-bang on the predicted state ----
-        const sgn = eP >= 0 ? 1 : -1;
-        const brakeMax = sgn > 0 ? mx.neg : mx.pos;          // torque available AGAINST the motion
-        const towards = wRelP * sgn > 0;
-        const stopAng = wRelP * wRelP * I / (2 * brakeMax) + Math.abs(wRelP) * dt;
-        let tauCmd, fullRes = null;
-        if (towards && Math.abs(eP) <= stopAng) {
-          const need = I * Math.abs(wRelP) / dt;             // torque that zeroes omega in one tick
-          if (need >= brakeMax) {
-            _st.flipMode = "BRAKE"; fullRes = sgn > 0 ? mx.rn : mx.rp; tauCmd = -sgn * brakeMax;
-          } else {
-            _st.flipMode = "TRIM"; tauCmd = -sgn * need;     // last tick only: just enough
-          }
-        } else {
-          _st.flipMode = "ACCEL"; fullRes = sgn > 0 ? mx.rp : mx.rn; tauCmd = sgn * (sgn > 0 ? mx.pos : mx.neg);
-        }
-
-        const res = fullRes || GuideRCS.targetTorqueRcs(snapshot, tauCmd, idx);
-        if (res && res.fires && res.fires.length) {
-          _send(Guidance.cmdRcsDuty(res.duties, idx));
-          _st.lastRcsTorque = res.fires.reduce((a, f) => a + f.torque, 0);
-        } else {
-          _rcsOff();
-        }
-        return false;
-      }
 
       // ---- later phases: TODO ----
-      function _phaseBoostback(snapshot, d, simT, cfg) {
-        // TODO: boostback burn
+      // ---- BOOSTBACK helpers ----------------------------------------------
+      const BB_PRED_DT = 1.0;       // s, leapfrog step of the ballistic impact predictor
+      const BB_PRED_MAX_S = 2500;   // s, prediction horizon
+      const BB_ATT_KP = 0.5;        // attitude hold (same law + gains as the suicide block)
+      const BB_ATT_KD = 4.0;
+      const BB_FUEL_EMPTY_KG = 1;
+
+      // "C,0,180" -> ["C", 0, 180]. "C" = centre engine, numbers = outer-ring engine angleDeg.
+      function _bbTokens(cfg) {
+        const raw = String(cfg.BOOSTBACK_ENGINES == null ? "C,0,180" : cfg.BOOSTBACK_ENGINES);
+        const toks = [];
+        raw.split(",").forEach(function (s) {
+          const t = s.trim();
+          if (!t) return;
+          if (t.toUpperCase() === "C") toks.push("C");
+          else if (Number.isFinite(Number(t))) toks.push(Number(t));
+        });
+        return toks;
+      }
+      function _bbInSet(e, toks) {
+        for (let i = 0; i < toks.length; i++) {
+          const t = toks[i];
+          if (t === "C") { if (e.isCenter) return true; }
+          else if (!e.isCenter && Number.isFinite(e.angleDeg) &&
+                   Math.abs(_wrapPi((e.angleDeg - t) * Math.PI / 180)) < 1e-6) return true;
+        }
         return false;
       }
-      function _phasePreEntrySteer(snapshot, d, simT, cfg) {
-        // TODO: pre-entry-burn steer
-        return false;
+      // Throttle command (kg/s per engine; Infinity = that engine's max) for a set of engines.
+      function _bbThrottle(set, value) {
+        const angles = [];
+        let center = false;
+        set.forEach(function (e) { if (e.isCenter) center = true; else angles.push(e.angleDeg); });
+        if (center) _send(Guidance.cmdSetCenterThrottle(value));
+        if (angles.length) _send(Guidance.cmdSetGroupThrottle(angles, value));
       }
-      function _phaseEntryBurn(snapshot, d, simT, cfg) {
-        // TODO: entry burn
-        return false;
+      // dv (m/s) still delivered while the given engines spool down from their CURRENT flow
+      // (linear ramp to zero over shutdownDurationS, scaled by flow/maxFlow — same model as ascent MECO).
+      function _bbSpoolDv(engs, M) {
+        let imp = 0;
+        engs.forEach(function (e) {
+          const mf = e.massFlowRate || 0, mM = e.maxMassFlowRate || 0;
+          if (!(mf > 0 && mM > 0)) return;
+          const sd = (Number.isFinite(e.shutdownDurationS) && e.shutdownDurationS > 0) ? e.shutdownDurationS : 1.2;
+          imp += mf * (e.Ve || 0) * (mf * sd / mM) / 2;
+        });
+        return imp / Math.max(1, M);
       }
-      function _phasePostEntrySteer(snapshot, d, simT, cfg) {
-        // TODO: post-entry-burn steer
-        return false;
-      }
-      function _phaseLandingBurn(snapshot, d, simT, cfg) {
-        // TODO: landing burn
-        return false;
-      }
-      function _phaseTouchdown(snapshot, d, simT, cfg) {
-        // TODO: touchdown
-        return false;
+      // Ballistic (vacuum, point-mass) impact predictor — leapfrog, same scheme as the suicide
+      // block, plus linear interpolation of the surface crossing. Returns Earth-fixed angle.
+      function _bbImpact(rx, ry, vx, vy, simTimeNow, GM, R, omegaE) {
+        const dtp = BB_PRED_DT;
+        let px = rx, py = ry, pvx = vx, pvy = vy, t = 0;
+        let r = Math.hypot(px, py);
+        if (r <= R) return null;
+        while (t < BB_PRED_MAX_S) {
+          const r3 = r * r * r;
+          const vxh = pvx + 0.5 * (-GM * px / r3) * dtp;
+          const vyh = pvy + 0.5 * (-GM * py / r3) * dtp;
+          const nx = px + vxh * dtp, ny = py + vyh * dtp;
+          const nr = Math.hypot(nx, ny);
+          if (nr <= R) {
+            const f = (r - R) / Math.max(1e-9, r - nr);
+            const ix = px + (nx - px) * f, iy = py + (ny - py) * f;
+            const ti = t + f * dtp;
+            return { phiEf: Math.atan2(ix, iy) - omegaE * (simTimeNow + ti), tImpact: ti };
+          }
+          const nr3 = nr * nr * nr;
+          pvx = vxh + 0.5 * (-GM * nx / nr3) * dtp;
+          pvy = vyh + 0.5 * (-GM * ny / nr3) * dtp;
+          px = nx; py = ny; r = nr; t += dtp;
+        }
+        return null;
       }
 
-      const HANDLERS = {
-        FLIP: _phaseFlip,
-        BOOSTBACK_BURN: _phaseBoostback,
-        PRE_ENTRY_STEER: _phasePreEntrySteer,
-        ENTRY_BURN: _phaseEntryBurn,
-        POST_ENTRY_STEER: _phasePostEntrySteer,
-        LANDING_BURN: _phaseLandingBurn,
-        TOUCHDOWN: _phaseTouchdown,
-      };
+      // BOOSTBACK_BURN — retro burn that moves the ballistic impact point to the APPARENT target
+      // (= target pad + BOOSTBACK_APPARENT_OFFSET_DEG, Earth-fixed).
+      //   THREE  : engines in BOOSTBACK_ENGINES (default centre + the two extreme outer engines,
+      //            0 deg and 180 deg) at full throttle.
+      //   CENTER : when impact error <= BOOSTBACK_SIDE_CUT_DEG the outer engines are shut off and
+      //            the centre engine finishes the job; its throttle tapers linearly from 100 %
+      //            (error >= BOOSTBACK_TAPER_DEG) to its throttle floor (error -> 0).
+      //   SPOOL  : cutoff (spool-down dv included in the prediction); attitude hold continues until
+      //            thrust is gone, then the phase ends.
+      // Impact error = predicted Earth-fixed impact angle - apparent target angle (+ = east of it,
+      // i.e. still short; the burn drives it down to 0). Attitude: nose opposite the local-horizontal
+      // velocity (same target as FLIP), held with the CENTRE engine gimbal only (predictive law copied from circularize).
 
       function _tick(snapshot) {
         _st.ticks++;
@@ -3122,8 +3090,314 @@ setState(s) {
         if (!d || !d.massProps) return;
         _st.lastAltKm = d.altitudeAGL / 1000;
 
-        const handler = HANDLERS[_st.phase];
-        const finished = handler ? handler(snapshot, d, simT, cfg) : false;
+        let finished = false;
+        switch (_st.phase) {
+          // ==========================================================
+          case "FLIP": {
+            const idx = _bodyIdx;
+            if (!snapshot.bodies[idx]) break;
+            const env = Derivation.getEnv();
+            const dt = env && Number.isFinite(env.DT) ? env.DT : 1 / 80;
+            const I = d.massProps.I;
+            if (!(I > 0)) break;
+            const R2D = 180 / Math.PI;
+
+            const tgtNow = _flipTargetTheta(d.rx, d.ry, d.vx, d.vy);
+            if (tgtNow === null) { _rcsOff(); break; }
+            const mx = _rcsMaxTorques(snapshot);
+            if (!(mx.pos > 0) || !(mx.neg > 0)) { _rcsOff(); break; }
+
+            // rate at which the target itself rotates (orbital motion)
+            let wTgt = 0;
+            if (_st.flipPrevTgt !== null && _st.flipPrevT !== null && simT > _st.flipPrevT) {
+              wTgt = _wrapPi(tgtNow - _st.flipPrevTgt) / (simT - _st.flipPrevT);
+              if (Math.abs(wTgt) > 0.05) wTgt = 0; // glitch guard
+            }
+            _st.flipPrevTgt = tgtNow;
+            _st.flipPrevT = simT;
+            const wRelNow = d.omega - wTgt;
+            const rawErr = tgtNow - d.theta;
+
+            if (!_st.flipInit) {
+              // ---- first tick: read the state, choose the direction ----
+              _st.flipInit = true;
+              _send(Guidance.cmdSetAllThrottle(0));
+              _send(Guidance.cmdSetGimbalRate(0));
+              const e0 = _wrapPi(rawErr);
+              const ePos = e0 >= 0 ? e0 : e0 + 2 * Math.PI;   // way round in +direction
+              const eNeg = ePos - 2 * Math.PI;                // way round in -direction
+              const tPos = _flipTime(ePos, wRelNow, mx.pos / I, mx.neg / I);
+              const tNeg = _flipTime(eNeg, wRelNow, mx.pos / I, mx.neg / I);
+              _st.flipEu = tPos <= tNeg ? ePos : eNeg;
+              _st.flipDir = _st.flipEu >= 0 ? 1 : -1;
+              console.log("[standardRTLS] FLIP dir=" + (_st.flipDir > 0 ? "+" : "-") +
+                " err=" + (_st.flipEu * R2D).toFixed(1) + "deg omega=" + (wRelNow * R2D).toFixed(2) +
+                "deg/s  t(+)=" + tPos.toFixed(1) + "s t(-)=" + tNeg.toFixed(1) + "s");
+            } else {
+              _st.flipEu += _wrapPi(rawErr - _st.flipPrevRaw);   // unwrapped along the committed way
+            }
+            _st.flipPrevRaw = rawErr;
+
+            _st.flipTgtDeg = tgtNow * R2D;
+            _st.flipErrDeg = _st.flipEu * R2D;
+            _st.flipOmegaDegS = wRelNow * R2D;
+
+            if (Math.abs(_st.flipEu) < cfg.FLIP_ROTATE_TOL_DEG / R2D &&
+                Math.abs(wRelNow) < cfg.FLIP_OMEGA_TOL) {
+              _rcsOff();
+              finished = true; break;
+            }
+
+            // ---- one-tick-ahead prediction (current RCS torque keeps acting) ----
+            const M = d.massProps.M;
+            let aIx = d.gVecX, aIy = d.gVecY;
+            if (M > 0) {
+              const cosT = Math.cos(d.theta), sinT = Math.sin(d.theta);
+              const thrIx = d.thrustBodyX * cosT - d.thrustBodyY * sinT;
+              const thrIy = d.thrustBodyX * sinT + d.thrustBodyY * cosT;
+              aIx += (thrIx + d.dragVecX) / M;
+              aIy += (thrIy + d.dragVecY) / M;
+            }
+            const aTot = d.alphaAng + _st.lastRcsTorque / I;  // d.alphaAng has NO rcs term
+            const dTheta = d.omega * dt + 0.5 * aTot * dt * dt;
+            const wP = d.omega + aTot * dt;
+            const tgtP = _flipTargetTheta(d.rx + d.vx * dt, d.ry + d.vy * dt,
+                                          d.vx + aIx * dt, d.vy + aIy * dt);
+            const dTgt = tgtP !== null ? _wrapPi(tgtP - tgtNow) : 0;
+            const eP = _st.flipEu + dTgt - dTheta;
+            const wRelP = wP - wTgt;
+
+            // ---- bang-bang on the predicted state ----
+            const sgn = eP >= 0 ? 1 : -1;
+            const brakeMax = sgn > 0 ? mx.neg : mx.pos;          // torque available AGAINST the motion
+            const towards = wRelP * sgn > 0;
+            const stopAng = wRelP * wRelP * I / (2 * brakeMax) + Math.abs(wRelP) * dt;
+            let tauCmd, fullRes = null;
+            if (towards && Math.abs(eP) <= stopAng) {
+              const need = I * Math.abs(wRelP) / dt;             // torque that zeroes omega in one tick
+              if (need >= brakeMax) {
+                _st.flipMode = "BRAKE"; fullRes = sgn > 0 ? mx.rn : mx.rp; tauCmd = -sgn * brakeMax;
+              } else {
+                _st.flipMode = "TRIM"; tauCmd = -sgn * need;     // last tick only: just enough
+              }
+            } else {
+              _st.flipMode = "ACCEL"; fullRes = sgn > 0 ? mx.rp : mx.rn; tauCmd = sgn * (sgn > 0 ? mx.pos : mx.neg);
+            }
+
+            const res = fullRes || GuideRCS.targetTorqueRcs(snapshot, tauCmd, idx);
+            if (res && res.fires && res.fires.length) {
+              _send(Guidance.cmdRcsDuty(res.duties, idx));
+              _st.lastRcsTorque = res.fires.reduce((a, f) => a + f.torque, 0);
+            } else {
+              _rcsOff();
+            }
+            break;
+          }
+
+          // ==========================================================
+          case "BOOSTBACK_BURN": {
+            const idx = _bodyIdx;
+            const body = snapshot.bodies[idx];
+            if (!body) break;
+            const env = Derivation.getEnv();
+            const dt = env && Number.isFinite(env.DT) ? env.DT : 1 / 80;
+            const M = d.massProps.M, I = d.massProps.I;
+            if (!(I > 0) || !(M > 0)) break;
+            const R2D = 180 / Math.PI;
+            const engines = body.engines || [];
+
+            const toks = _bbTokens(cfg);
+            const burnSet = engines.filter(function (e) { return _bbInSet(e, toks); });
+            if (!burnSet.length) {
+              console.warn("[standardRTLS] BOOSTBACK: no engine matches BOOSTBACK_ENGINES='" + cfg.BOOSTBACK_ENGINES + "' — skipping phase");
+              finished = true; break;
+            }
+            const centerSet = burnSet.filter(function (e) { return e.isCenter; });
+            const finishSet = centerSet.length ? centerSet : burnSet;      // keeps burning to the end
+            const offSet = burnSet.filter(function (e) { return finishSet.indexOf(e) < 0; });  // shut off first
+
+            // ---- apparent target (Earth-fixed) ----
+            const pad = (_missionCtx && _missionCtx.targetPad) || null;
+            const padEf = (pad && Number.isFinite(pad.angleEf)) ? pad.angleEf : (env.LAUNCH_SITE_ANGLE_0 || 0);
+            const offDeg = Number.isFinite(cfg.BOOSTBACK_APPARENT_OFFSET_DEG) ? cfg.BOOSTBACK_APPARENT_OFFSET_DEG : 0;
+            const tgtEf = padEf + offDeg / R2D;
+            _st.bbTargetEfDeg = tgtEf * R2D;
+
+            // ---- impact error now, and with the spool-down dv of everything that is firing ----
+            const nx = -Math.sin(d.theta), ny = Math.cos(d.theta);
+            const omegaE = env.EARTH_OMEGA || 0;
+            function errWith(dv) {
+              const imp = _bbImpact(d.rx, d.ry, d.vx + nx * dv, d.vy + ny * dv, simT, env.GM_EARTH, env.EARTH_RADIUS, omegaE);
+              return imp ? { err: _wrapPi(imp.phiEf - tgtEf), phiEf: imp.phiEf } : null;
+            }
+            const e0 = errWith(0);
+            const eAll = errWith(_bbSpoolDv(engines, M));
+            if (e0) { _st.bbErrDeg = e0.err * R2D; _st.bbImpactEfDeg = e0.phiEf * R2D; }
+
+            let mdotNow = 0;
+            engines.forEach(function (e) { mdotNow += e.massFlowRate || 0; });
+            const fuel0 = (Array.isArray(body.memberFuel) && Number.isFinite(body.memberFuel[0])) ? body.memberFuel[0] : body.fuelMass;
+
+            // ---- stage transitions ----
+            if (!_st.bbInit) {
+              _st.bbInit = true;
+              _st.bbStage = "THREE";
+              _send(Guidance.cmdSetAllThrottle(0));   // everything not in the burn set stays off
+              console.log("[standardRTLS] BOOSTBACK start: engines=" + toks.join(",") +
+                " tgtEf=" + (tgtEf * R2D).toFixed(4) + "deg (pad " + (pad ? pad.id : "launch-site") +
+                " + offset " + offDeg + "deg) err0=" + (e0 ? (e0.err * R2D).toFixed(3) : "n/a") + "deg");
+            }
+            const sideCut = Number.isFinite(cfg.BOOSTBACK_SIDE_CUT_DEG) ? cfg.BOOSTBACK_SIDE_CUT_DEG : 0;
+            const taper = Number.isFinite(cfg.BOOSTBACK_TAPER_DEG) ? cfg.BOOSTBACK_TAPER_DEG : 0;
+            if (_st.bbStage === "THREE") {
+              if (eAll && eAll.err <= 0) {
+                _st.bbStage = "SPOOL";
+                console.log("[standardRTLS] BOOSTBACK THREE → SPOOL (cutoff, err=" + (e0 ? (e0.err * R2D).toFixed(4) : "n/a") + "deg) t=" + simT.toFixed(2));
+              } else if (e0 && e0.err * R2D <= sideCut) {
+                _st.bbStage = "CENTER";
+                console.log("[standardRTLS] BOOSTBACK THREE → CENTER (outer engines off, err=" + (e0.err * R2D).toFixed(4) + "deg) t=" + simT.toFixed(2));
+              }
+            }
+            if (_st.bbStage === "CENTER" && eAll && eAll.err <= 0) {
+              _st.bbStage = "SPOOL";
+              console.log("[standardRTLS] BOOSTBACK CENTER → SPOOL (cutoff, err=" + (e0 ? (e0.err * R2D).toFixed(4) : "n/a") + "deg) t=" + simT.toFixed(2));
+            }
+            if (_st.bbStage !== "SPOOL" && !(fuel0 > BB_FUEL_EMPTY_KG)) {
+              _st.bbStage = "SPOOL";
+              console.warn("[standardRTLS] BOOSTBACK out of fuel → SPOOL");
+            }
+
+            // ---- throttle ----
+            let thrFrac = 0;
+            if (_st.bbStage === "THREE") {
+              thrFrac = 1;
+              _bbThrottle(finishSet, Infinity);
+              _bbThrottle(offSet, Infinity);
+            } else if (_st.bbStage === "CENTER") {
+              _bbThrottle(offSet, 0);
+              const ref = finishSet[0];
+              const maxMF = ref.maxMassFlowRate || 0;
+              const minFrac = maxMF > 0 ? Math.min(1, (ref.minMassFlowRate || 0) / maxMF) : 0;
+              let x = 1;
+              if (taper > 0 && e0) x = Math.max(0, Math.min(1, (e0.err * R2D) / taper));
+              thrFrac = minFrac + (1 - minFrac) * x;
+              _bbThrottle(finishSet, thrFrac >= 0.999 ? Infinity : maxMF * thrFrac);
+            } else {
+              _send(Guidance.cmdSetAllThrottle(0));
+            }
+            _st.bbThrFrac = thrFrac;
+
+            // ---- attitude hold: CENTRE-engine gimbal only; same predictive law as circularize /
+            //      suicide (state advanced one tick via deriveForState, tau minus env torque) ----
+            const gimbals = engines.filter(function (e) { return e.gimbal && e.isCenter; });
+            const M_d = d.massProps.M;
+            let dNext = null;
+            {
+              const cT = Math.cos(d.theta), sT = Math.sin(d.theta);
+              const tIx = d.thrustBodyX * cT - d.thrustBodyY * sT;
+              const tIy = d.thrustBodyX * sT + d.thrustBodyY * cT;
+              const aIx = d.gVecX + (tIx + d.dragVecX) / M_d;
+              const aIy = d.gVecY + (tIy + d.dragVecY) / M_d;
+              const sl = body.slosh || { offset: 0, velocity: 0 };
+              dNext = Derivation.deriveForState(snapshot, idx, {
+                rx: d.rx + d.vx * dt, ry: d.ry + d.vy * dt,
+                vx: d.vx + aIx * dt, vy: d.vy + aIy * dt,
+                theta: d.theta + d.omega * dt + 0.5 * d.alphaAng * dt * dt,
+                omega: d.omega + d.alphaAng * dt,
+                slosh: { offset: (sl.offset || 0) + (sl.velocity || 0) * dt, velocity: sl.velocity || 0 },
+              });
+            }
+            const rr = Math.hypot(d.rx, d.ry);
+            if (!_st.bbSign) {   // direction of horizontal velocity at burn start (kept even after it reverses)
+              const vE0 = rr > 1 ? (d.vx * d.ry - d.vy * d.rx) / rr : 0;
+              _st.bbSign = vE0 >= 0 ? 1 : -1;
+            }
+            const tgtNow = rr > 1 ? Math.atan2(_st.bbSign * d.ry / rr, _st.bbSign * d.rx / rr) : null;
+            // Spool wait (same as circularize STAGE_BURN): no attitude control while the burn-set engines are still
+            // starting up (thrust tiny -> huge gimbal demand -> limit cycle). Also frozen once SPOOL (cutoff) starts.
+            if (!_st.bbSpooled && _st.bbStage === "THREE") {
+              let full = true;
+              burnSet.forEach(function (e) {
+                const mx = Number.isFinite(e.maxMassFlowRate) ? e.maxMassFlowRate : 0;
+                if (mx > 0 && (e.massFlowRate || 0) < mx * 0.99) full = false;
+              });
+              if (full) _st.bbSpooled = true;
+            } else if (_st.bbStage !== "THREE") {
+              _st.bbSpooled = true;
+            }
+            if (!_st.bbSpooled || _st.bbStage === "SPOOL") {
+              _send(Guidance.cmdSetGimbalRate(0));
+            } else if (gimbals.length && tgtNow !== null && dNext && dNext.massProps) {
+              const thetaErr = _wrapPi(dNext.theta - tgtNow);
+              const tauDesired = -dNext.massProps.I * (BB_ATT_KP * thetaErr + BB_ATT_KD * dNext.omega);
+              const tauTarget = tauDesired - (Number.isFinite(dNext.torqueEnvironmental) ? dNext.torqueEnvironmental : 0);
+              const comX = dNext.massProps.comX, comY = dNext.massProps.comY;
+              let A = 0, B = 0;
+              gimbals.forEach(function (e) {
+                const F = (e.massFlowRate || 0) * (e.Ve || 0);
+                A += ((e.x || 0) - comX) * F;
+                B += F;
+              });
+              B *= comY;
+              const Ramp = Math.hypot(A, B);
+              let gReqRad = 0;
+              if (Ramp > 1) {
+                const ratio = Math.max(-1, Math.min(1, tauTarget / Ramp));
+                const phi = Math.atan2(A, B);
+                const w1 = _wrapPi(Math.asin(ratio) - phi);
+                const w2 = _wrapPi(Math.PI - Math.asin(ratio) - phi);
+                gReqRad = Math.abs(w1) <= Math.abs(w2) ? w1 : w2;
+              }
+              let gReqDeg = gReqRad * R2D;
+              const gMax = gimbals[0].gimbalMaxDeg;
+              if (Math.abs(gReqDeg) > gMax) gReqDeg = Math.sign(gReqDeg) * gMax;
+              _send(_gimbalCmdMsg(gReqDeg, gimbals[0], dt, "center"));
+            }
+
+            // ---- end: thrust gone ----
+            if (_st.bbStage === "SPOOL" && mdotNow < 1) {
+              _send(Guidance.cmdSetAllThrottle(0));
+              _send(Guidance.cmdSetGimbalRate(0));
+              console.log("[standardRTLS] BOOSTBACK done t=" + simT.toFixed(2) + " finalErr=" +
+                (_st.bbErrDeg != null ? _st.bbErrDeg.toFixed(4) : "n/a") + "deg fuel=" + Math.round(fuel0) + "kg");
+              finished = true; break;
+            }
+            break;
+          }
+
+          // ==========================================================
+          case "PRE_ENTRY_STEER": {
+            // TODO: pre-entry-burn steer
+            break;
+          }
+
+          // ==========================================================
+          case "ENTRY_BURN": {
+            // TODO: entry burn
+            break;
+          }
+
+          // ==========================================================
+          case "POST_ENTRY_STEER": {
+            // TODO: post-entry-burn steer
+            break;
+          }
+
+          // ==========================================================
+          case "LANDING_BURN": {
+            // TODO: landing burn
+            break;
+          }
+
+          // ==========================================================
+          case "TOUCHDOWN": {
+            // TODO: touchdown
+            break;
+          }
+
+          default:
+            break;
+        }
 
         const i = PHASES.indexOf(_st.phase);
         const next = i >= 0 && i < PHASES.length - 1 ? PHASES[i + 1] : null;
@@ -3168,6 +3442,16 @@ setState(s) {
           _st.flipErrDeg = null;
           _st.flipOmegaDegS = null;
           _st.flipTgtDeg = null;
+          _st.bbInit = false;
+          _st.bbSign = 0;
+          _st.bbSpooled = false;
+          _st.bbStage = null;
+          _st.bbPrevTgt = null;
+          _st.bbPrevT = null;
+          _st.bbErrDeg = null;
+          _st.bbImpactEfDeg = null;
+          _st.bbTargetEfDeg = null;
+          _st.bbThrFrac = null;
         },
 
         tick(snapshot) {
@@ -3202,6 +3486,11 @@ setState(s) {
             flipOmegaDegS: _st.flipOmegaDegS,
             flipTgtDeg: _st.flipTgtDeg,
             flipDir: _st.flipDir,
+            bbStage: _st.bbStage,
+            bbErrDeg: _st.bbErrDeg,
+            bbImpactEfDeg: _st.bbImpactEfDeg,
+            bbTargetEfDeg: _st.bbTargetEfDeg,
+            bbThrFrac: _st.bbThrFrac,
             rcsTorque: _st.lastRcsTorque,
           };
         },
