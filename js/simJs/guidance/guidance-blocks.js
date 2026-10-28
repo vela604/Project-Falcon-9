@@ -1878,7 +1878,36 @@ const tau_target = tau_desired - dNext.torqueEnvironmental;
               prevVr !== undefined &&
               prevVr < 0 &&
               vr_c >= 0;
-            const deployPeak = (_st.coast2TargetApside === 'peri') ? perigeePeak : apogeePeak;
+
+            // 1-TICK-AHEAD APEX PREDICTION — fixes systematic ~25m apo-peri error.
+            //
+            // ROOT CAUSE: the old detection below fires AFTER vr has already crossed
+            // zero (post-apex). But every guidance command applies on the NEXT tick
+            // — so the payload physically spawns 1 tick PAST the apside, where
+            // vr = -g*dt ≈ -0.111 m/s (at 320km, g≈8.9, dt=1/80). The payload
+            // inherits this radial velocity, which becomes a small eccentricity
+            // (~1.9e-6, ~25.8m apo-peri split) — SYSTEMATIC, so always ~24-26m,
+            // never better. Confirmed by DEPLOY-DIAG: dvPerp=-0.11129 exactly.
+            //
+            // FIX: predict whether the NEXT tick will be the apside. If yes, fire
+            // deploy NOW (at N-1); payload spawns at N (the actual apside, vr=0),
+            // so no radial inheritance, dvPerp→0, error drops to sub-meter.
+            //
+            // dvr/dt from the last 2 ticks. Coasting at 320km: no thrust/drag,
+            // so dvr/dt ≈ -g (radial gravity). Per tick: -g*dt ≈ -0.111 m/s.
+            const dvrdt = (prevVr !== null && prevVr !== undefined && dt > 0)
+              ? (vr_c - prevVr) / dt : 0;
+            const vrNext = vr_c + dvrdt * dt;
+            const apogeePeakNextTick = (vr_c > 0) && (vrNext <= 0);
+            const perigeePeakNextTick = (vr_c < 0) && (vrNext >= 0);
+
+            // Prefer the predicted (fire at N-1, spawn AT apside) path over the
+            // confirmed (fire at apex, spawn 1 tick late) fallback. Old detection
+            // is kept so a noisy dvr/dt or unusual tick ordering can't strand
+            // us without a deploy trigger.
+            const deployPeak = (_st.coast2TargetApside === 'peri')
+              ? (perigeePeakNextTick || perigeePeak)
+              : (apogeePeakNextTick || apogeePeak);
 
             if (deployPeak) {
               // DEPLOY DIAGNOSTIC: log stage state at deploy tick
