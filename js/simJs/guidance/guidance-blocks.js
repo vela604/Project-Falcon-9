@@ -795,8 +795,18 @@ setState(s) {
       COAST_WAIT_BEFORE_APOGEE_S: 90,
       CIRC_TRIGGER_LEAD_S: 5.5125,
       CIRC_DECAY_FRAC: 0.05,
+      // Rotate phases (ROTATE / ROTATE_2 / CIRCULARIZE / DONE) keep the same
+      // gains — tuning there is fine and shouldn't be touched.
       CIRC_ATT_KP: 0.5,
       CIRC_ATT_KD: 4.0,
+      // Hold phases (COAST_HOLD, COAST_HOLD_2) use tighter PID:
+      //   - Higher KP/KD: faster transient (τ = KD/KP ≈ 1 s, ~3τ settle in 5 s peak budget)
+      //   - KI: eliminates the steady-state error a PD leaves behind when the target
+      //     apside direction drifts at ~0.066°/s. Kick direction = attitude at deploy,
+      //     so any residual here becomes apo/peri ecc in the payload orbit.
+      COAST_HOLD_ATT_KP: 5.0,
+      COAST_HOLD_ATT_KD: 5.0,
+      COAST_HOLD_ATT_KI: 2.0,
       COAST_BURN_MULTIPLIER: 4.0,
       // Target orbit is now defined by two apsides. The insertion block
       // internally derives: apogee = max(apside1, apside2),
@@ -872,6 +882,13 @@ setState(s) {
         coast2RotateMid: null,
         _prevVr2: null,
         coast2TargetApside: 'apo',
+        // Hold-phase attitude PID integrators + arming flags.
+        // Integrators reset once per HOLD entry (armed=false → armed=true on
+        // first PID tick); no windup during ROTATE transit.
+        hold1ThetaInt: 0,
+        hold1IntArmed: false,
+        hold2ThetaInt: 0,
+        hold2IntArmed: false,
           // DONE
   deployCommandSimTime: null,
     payloadCleared: false,
@@ -1535,9 +1552,20 @@ const tau_target = tau_desired - dNext.torqueEnvironmental;
               const thetaErr = _wrapPi(
                 body.theta - _st.coastTargetThetaInertial,
               );
+              // PID on inertial theta. Integrator eliminates the steady-state
+              // lag that PD leaves when the target drifts (apside direction
+              // rotates ~0.066 deg/s). Arming flag ensures a fresh integral
+              // each HOLD entry — no windup from ROTATE transit.
+              if (!_st.hold1IntArmed) { _st.hold1ThetaInt = 0; _st.hold1IntArmed = true; }
+              const kiH1 = Number.isFinite(cfg.COAST_HOLD_ATT_KI) ? cfg.COAST_HOLD_ATT_KI : 2.0;
+              const kpH1 = Number.isFinite(cfg.COAST_HOLD_ATT_KP) ? cfg.COAST_HOLD_ATT_KP : 5.0;
+              const kdH1 = Number.isFinite(cfg.COAST_HOLD_ATT_KD) ? cfg.COAST_HOLD_ATT_KD : 5.0;
+              if (Math.abs(thetaErr) < 0.5 * Math.PI / 180) {
+                _st.hold1ThetaInt = Math.max(-0.005, Math.min(0.005, _st.hold1ThetaInt + thetaErr * dt));
+              }
               const tau_desired =
                 -I_next *
-                (cfg.CIRC_ATT_KP * thetaErr + cfg.CIRC_ATT_KD * body.omega);
+                (kpH1 * thetaErr + kdH1 * body.omega + kiH1 * _st.hold1ThetaInt);
               const result = GuideRCS.targetTorqueRcsNoNetForce(
                 snapshot,
                 tau_desired,
@@ -1864,12 +1892,22 @@ const tau_target = tau_desired - dNext.torqueEnvironmental;
             }
 
             // Attitude hold — torque-only RCS toward LIVE apogee direction.
+            // PID (not PD): integrator eliminates steady-state lag; the apside
+            // direction drifts ~0.066 deg/s, and PD would leave a persistent
+            // ~0.05-0.1 deg offset = kick misalignment = payload ecc.
             let attDuties = null;
             if (dNext && dNext.massProps) {
               const I_next = dNext.massProps.I;
               const thetaErr = _wrapPi(body.theta - thetaApoLive);
+              if (!_st.hold2IntArmed) { _st.hold2ThetaInt = 0; _st.hold2IntArmed = true; }
+              const kiH2 = Number.isFinite(cfg.COAST_HOLD_ATT_KI) ? cfg.COAST_HOLD_ATT_KI : 2.0;
+              const kpH2 = Number.isFinite(cfg.COAST_HOLD_ATT_KP) ? cfg.COAST_HOLD_ATT_KP : 5.0;
+              const kdH2 = Number.isFinite(cfg.COAST_HOLD_ATT_KD) ? cfg.COAST_HOLD_ATT_KD : 5.0;
+              if (Math.abs(thetaErr) < 0.5 * Math.PI / 180) {
+                _st.hold2ThetaInt = Math.max(-0.005, Math.min(0.005, _st.hold2ThetaInt + thetaErr * dt));
+              }
               const tau_desired =
-                -I_next * (cfg.CIRC_ATT_KP * thetaErr + cfg.CIRC_ATT_KD * body.omega);
+                -I_next * (kpH2 * thetaErr + kdH2 * body.omega + kiH2 * _st.hold2ThetaInt);
               const result = GuideRCS.targetTorqueRcsNoNetForce(snapshot, tau_desired, idx);
               if (result && result.fires.length) attDuties = result.duties;
             }
@@ -2042,6 +2080,10 @@ _st.lastApogeeKm = 0;
           _st.coast2RotateMid = null;
           _st._prevVr2 = null;
           _st.coast2TargetApside = 'apo';
+          _st.hold1ThetaInt = 0;
+          _st.hold1IntArmed = false;
+          _st.hold2ThetaInt = 0;
+          _st.hold2IntArmed = false;
           _st.deployCommandSimTime = null;
           _st.payloadCleared = false;
           _st.coast2TargetThetaLive = null;
