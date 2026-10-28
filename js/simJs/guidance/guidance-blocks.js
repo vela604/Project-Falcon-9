@@ -1865,22 +1865,52 @@ const tau_target = tau_desired - dNext.torqueEnvironmental;
             }
             _st.coast2TargetThetaLive = thetaApoLive;
 
-            // Apogee-peak FIRST — unconditional eject (trim state irrelevant).
+            // Peak detection: issue the deploy command ONE tick early so it
+            // applies at the ACTUAL peak (physics applies commands at N+1).
+            //
+            // Current (old) logic: at N, detect vr crossed (prevVr > 0, vr_c <= 0).
+            //   → command applies at N+1 → deploy at N+1 → already 1-2 ticks
+            //     past peak → payload has residual vr ≈ g·dt = 0.12 m/s
+            //     → ecc ≈ 1.5e-5 → apo-peri diff ~200m.
+            //
+            // New (predictive) logic: at N, predict vr at N+1 (using dNext,
+            // which is Derivation.deriveForState — captures gravity + thrust
+            // + drag; RCS is cleared by our command before N+1). If the
+            // prediction says vr crosses (vr_c > 0, vrNext <= 0), issue at N
+            // → applies at N+1 → payload spawns with vr ≈ 0 → near-perfect
+            // circular orbit.
+            //
+            // Fallback: keep the old detection for edge cases where
+            // prediction misses (unexpected accel, dNext not available).
             const prevVr = _st._prevVr2;
             _st._prevVr2 = vr_c;
+            // Predicted next-tick vr from the already-computed dNext state.
+            let vrNext = vr_c;
+            if (dNext && Number.isFinite(dNext.rx) && Number.isFinite(dNext.ry)) {
+              const rx_n = dNext.rx, ry_n = dNext.ry;
+              const r_n = Math.hypot(rx_n, ry_n);
+              if (r_n > 0) vrNext = (dNext.vx * rx_n + dNext.vy * ry_n) / r_n;
+            }
+            const apogeePeakPredicted = (vr_c > 0 && vrNext <= 0);
+            const perigeePeakPredicted = (vr_c < 0 && vrNext >= 0);
             const apogeePeak =
-              prevVr !== null &&
-              prevVr !== undefined &&
-              prevVr > 0 &&
-              vr_c <= 0;
+              apogeePeakPredicted ||
+              (prevVr !== null && prevVr !== undefined && prevVr > 0 && vr_c <= 0);
             const perigeePeak =
-              prevVr !== null &&
-              prevVr !== undefined &&
-              prevVr < 0 &&
-              vr_c >= 0;
+              perigeePeakPredicted ||
+              (prevVr !== null && prevVr !== undefined && prevVr < 0 && vr_c >= 0);
             const deployPeak = (_st.coast2TargetApside === 'peri') ? perigeePeak : apogeePeak;
 
             if (deployPeak) {
+              try {
+                console.log('[DEPLOY-TRIGGER] mode=' + _st.coast2TargetApside +
+                  ' vr_c=' + vr_c.toFixed(5) +
+                  ' vrNext=' + vrNext.toFixed(5) +
+                  ' predicted=' + (apogeePeakPredicted || perigeePeakPredicted) +
+                  ' fallback=' + ((apogeePeakPredicted || perigeePeakPredicted) ? 'n/a' :
+                    (prevVr !== null && prevVr !== undefined && ((prevVr > 0 && vr_c <= 0) || (prevVr < 0 && vr_c >= 0))) ? 'yes' : 'no'));
+              } catch (e) {}
+
               // DEPLOY DIAGNOSTIC: log stage state at deploy tick
               try {
                 var _spd = Math.hypot(body.vx, body.vy);
