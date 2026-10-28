@@ -1881,6 +1881,21 @@ const tau_target = tau_desired - dNext.torqueEnvironmental;
             const deployPeak = (_st.coast2TargetApside === 'peri') ? perigeePeak : apogeePeak;
 
             if (deployPeak) {
+              // DEPLOY DIAGNOSTIC: log stage state at deploy tick
+              try {
+                var _spd = Math.hypot(body.vx, body.vy);
+                var _vd = Math.atan2(body.vx, body.vy);
+                var _ae = _wrapPi(body.theta - _vd) * 180 / Math.PI;
+                var _kick = env.PAYLOAD_EJECT_KICK_MPS || 0;
+                var _radKick = _kick * Math.sin(_ae * Math.PI / 180);
+                var _proKick = _kick * Math.cos(_ae * Math.PI / 180);
+                var _eccFromAtt = Math.abs(_radKick) / _spd;
+                var _apexM = (6371000 + _targetPeriKm * 1000) * _eccFromAtt;
+                console.log("[DEPLOY-DIAG] attErr_deg=" + _ae.toFixed(4) + " speed=" + _spd.toFixed(4) + " kick=" + _kick.toFixed(3) + " prograde=" + _proKick.toFixed(4) + " radial=" + _radKick.toFixed(5) + " apexDevM=" + _apexM.toFixed(2));
+                _st._stageVx = body.vx;
+                _st._stageVy = body.vy;
+                _st._stageSpeed = _spd;
+              } catch (e) { console.log("[DEPLOY-DIAG] err", e); }
               _send(Guidance.cmdRcsDuty(null, idx));
               _send(Guidance.cmdReleasePayload());
               _st.deployCommandSimTime = simT;
@@ -1953,6 +1968,34 @@ const tau_target = tau_desired - dNext.torqueEnvironmental;
           case "DONE": {
             _send(Guidance.cmdSetAllThrottle(0));
             _send(Guidance.cmdSetGimbalRate(0));
+            // DEPLOY RESULT: log payload post-eject state once
+            if (!_st._payloadLogged) {
+              var _pb = state.bodies.find(function(x){ return x && x.payloadBody; });
+              if (_pb) {
+                _st._payloadLogged = true;
+                try {
+                  var GM = env.GM_EARTH, Re = env.EARTH_RADIUS;
+                  var _r = Math.hypot(_pb.rx, _pb.ry);
+                  var _vt = (_pb.vx * _pb.ry - _pb.vy * _pb.rx) / _r;
+                  var _spdP = Math.hypot(_pb.vx, _pb.vy);
+                  var _E = 0.5 * _spdP * _spdP - GM / _r;
+                  var _h = _r * _vt;
+                  var _e = Math.sqrt(Math.max(0, 1 + 2 * _E * _h * _h / (GM * GM)));
+                  var _apoK = -1, _periK = -1;
+                  if (_E < 0) { var _a = -GM / (2 * _E); _apoK = (_a * (1 + _e) - Re) / 1000; _periK = (_a * (1 - _e) - Re) / 1000; }
+                  var _dvx = _pb.vx - (_st._stageVx || 0);
+                  var _dvy = _pb.vy - (_st._stageVy || 0);
+                  var _dv = Math.hypot(_dvx, _dvy);
+                  var _spd0 = _st._stageSpeed || 1;
+                  var _uVx = (_st._stageVx || 0) / _spd0;
+                  var _uVy = (_st._stageVy || 0) / _spd0;
+                  var _dvA = _dvx * _uVx + _dvy * _uVy;
+                  var _dvP = _dvx * (-_uVy) + _dvy * _uVx;
+                  console.log("[DEPLOY-RESULT] payloadSpeed=" + _spdP.toFixed(4) + " dvActual=" + _dv.toFixed(4) + " dvAlong=" + _dvA.toFixed(4) + " dvPerp=" + _dvP.toFixed(5) + " apo=" + _apoK.toFixed(4) + " peri=" + _periK.toFixed(4) + " ecc=" + _e.toExponential(3));
+                  console.log("[DEPLOY-RESULT] err: apoKm=" + (_apoK - _targetApoKm).toFixed(3) + " periKm=" + (_periK - _targetPeriKm).toFixed(3) + " targetApo=" + _targetApoKm + " targetPeri=" + _targetPeriKm);
+                } catch (e2) { console.log("[DEPLOY-RESULT] err", e2); }
+              }
+            }
 
             // Attitude hold — same as V2's DONE phase
             if (
