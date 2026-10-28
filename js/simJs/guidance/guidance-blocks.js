@@ -793,7 +793,7 @@ setState(s) {
       COAST_ROTATE_OMEGA_TOL: 0.02,
       COAST_ROTATE_TIMEOUT_S: 240,
       COAST_WAIT_BEFORE_APOGEE_S: 90,
-      CIRC_TRIGGER_LEAD_S: 5.5125,
+      CIRC_TRIGGER_LEAD_S: 5.525,
       CIRC_DECAY_FRAC: 0.05,
       // Rotate phases (ROTATE / ROTATE_2 / CIRCULARIZE / DONE) keep the same
       // gains — tuning there is fine and shouldn't be touched.

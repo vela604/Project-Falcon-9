@@ -339,7 +339,7 @@ function suggestDurationCap(altKm, apoKm, periKm) {
     t('1 gimbal step ~ 0.232 in A', Math.abs(stepA - 0.2323) < 0.01, 'dA=' + stepA.toFixed(4));
 
     // 5. redundant (G,T) pairs exist (same A_eff band, different physics)
-    const a = fromRaw({ G: 0.64, T: 4.82, bias: 0.827, lead: 5.5125, meco: 52612 });
+    const a = fromRaw({ G: 0.64, T: 4.82, bias: 0.827, lead: 5.525, meco: 52612 });
     const b = step(a, { dGi: -1, dTn: Math.round((Math.sqrt(aEff(a) / gOf(a.Gi - 1)) - tOf(a.Tn)) / C().quanta.T) });
     t('redundant pair: different key, A_eff within 1 Tn quantum', key(a) !== key(b) &&
       Math.abs(aEff(a) - aEff(b)) < 2 * 2 * tOf(a.Tn) * C().quanta.T + 1e-9, 'dA=' + (aEff(b) - aEff(a)).toExponential(2));

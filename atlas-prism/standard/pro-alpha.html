@@ -365,7 +365,7 @@ $('smokeBtn').disabled = false; $('dumpCfgBtn').disabled = false; $('applyChkBtn
       if (r.best) {
         const base = await TunerHook.runEval(p, { stopAt: 'FULL', abortRef });
         const sb = TunerUtils.score(base, _scoreOpts());
-        log('baseline (lead 5.5125): score=' + sb.score.toFixed(3) + ' ok=' + sb.ok + ' deploy=' + fmt(base.deployTimeS, 2) + ' fuel=' + fmt(base.boosterFuelLeftKg, 0) +
+        log('baseline (lead 5.525): score=' + sb.score.toFixed(3) + ' ok=' + sb.ok + ' deploy=' + fmt(base.deployTimeS, 2) + ' fuel=' + fmt(base.boosterFuelLeftKg, 0) +
             '  ->  best ' + r.best.score.toFixed(3) + (r.best.score <= sb.score ? '  (better/equal)' : '  (WORSE than baseline)'), r.best.score <= sb.score ? 'ok' : 'bad');
         log('best JSON: ' + JSON.stringify({ ascent: { PUSH_MAX_GIMBAL_DEG: r.best.desc.G, PUSH_T_S: r.best.desc.T, MECO_TARGET_BOOSTER_FUEL_KG: r.best.desc.meco },
             insertion: { STAGE_BURN_AOA_BIAS_DEG: r.best.desc.bias, CIRC_TRIGGER_LEAD_S: r.best.desc.lead } }));
