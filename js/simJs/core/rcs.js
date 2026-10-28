@@ -448,8 +448,17 @@ function fireVerticalDuty(k, sign, commandedDuty) {
     // has shifted the lateral CoM away from the centerline.
     const rx = pos.x - (comW || 0), ry = pos.y - comH;
     torque += rx * pp.Fy - ry * pp.Fx;
-    const mag = Math.hypot(pp.Fx, pp.Fy);
-    if (mag > 0.01) { mdot += mag / ve; firing[k] = true; }
+    // mdot = actual per-nozzle mass flow, NOT net-force / ve.
+    // Each pod has up/dn/lat nozzles firing independently at f x duty.
+    // Actual fuel = (up + dn + lat) x f / ve. Net force (Fx,Fy) drives
+    // dynamics; it does NOT drive fuel. Two nozzles at 90 deg (e.g. up +
+    // lat) give net |F| = 1.41 x f but burn 2 x f of fuel — net-force-based
+    // mdot undercounts by ~30% for any pod with 2+ nozzles active.
+    const nozzleDutySum = (pp.up || 0) + (pp.dn || 0) + (pp.lat || 0);
+    if (nozzleDutySum > 0) {
+      mdot += nozzleDutySum * f / ve;
+      firing[k] = true;
+    }
   });
   
   // Source-agnostic: the human boolean path's gate shows up here as a
