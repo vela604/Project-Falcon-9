@@ -163,7 +163,7 @@ STAGE_BURN_LOCK_TILT_DEG: 90,
 leoInsertionV3: _mkDefault(
   'leoInsertionV3',
   'F9 LEO — 320 km',
-  'Autonomous Falcon 9 ascent to a 320 km LEO, payload deploy at apogee, and retrograde deorbit for a controlled resting-site impact. Tuned for the Block 5 stack with axial stage separation.',
+  'Autonomous Falcon 9 ascent to a two-apside target orbit — circular (apside1 == apside2) or elliptical (apo = max(a1,a2), peri = min(a1,a2)) — with payload deploy at the nearer post-burn apside, and retrograde deorbit for a controlled resting-site impact. Tuned for the Block 5 stack with axial stage separation. Includes apside-aware scoring, COAST_HOLD_2 axial Δv trim (TOL/FAR) to place the stage exactly at target_peri − eject_kick before deploy, and self-healing apside derivation (single apside auto-mirrors to both — circular).',
   {
     ascent: {
     INITIAL_COAST_S: 4.9,
@@ -506,6 +506,8 @@ const GUIDE_IMPORTANT_FIELDS = {
   'ascent.THROTTLE_FRAC_LOW',
   'ascent.THROTTLE_FRAC',
   'insertion.STAGE_BURN_CUTOFF_MARGIN_MPS',
+  'insertion.COAST_HOLD_2_TRIM_TOL_MPS',
+  'insertion.COAST_HOLD_2_TRIM_FAR_MPS',
 ],
   landbackV1: [
   'mission.TARGET_LANDING_PAD',
