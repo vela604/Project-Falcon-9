@@ -1909,7 +1909,26 @@ const tau_target = tau_desired - dNext.torqueEnvironmental;
               ? (perigeePeakNextTick || perigeePeak)
               : (apogeePeakNextTick || apogeePeak);
 
+            // [DEBUG] APEX tick log — only when near apex.
+            if (Math.abs(vr_c) < 0.3) {
+              console.log('[APEX-t' + simT.toFixed(4) + ']' +
+                ' vr=' + vr_c.toFixed(5) +
+                ' prevVr=' + (prevVr !== null && prevVr !== undefined ? prevVr.toFixed(5) : 'null') +
+                ' dvrdt=' + (Number.isFinite(dvrdt) ? dvrdt.toFixed(3) : 'NaN') +
+                ' vrNext=' + (Number.isFinite(vrNext) ? vrNext.toFixed(5) : 'NaN') +
+                ' predNext=' + apogeePeakNextTick +
+                ' oldPeak=' + apogeePeak +
+                ' deployPeak=' + deployPeak +
+                ' apside=' + _st.coast2TargetApside);
+            }
+
             if (deployPeak) {
+              console.log('[DEPLOY-FIRE-t' + simT.toFixed(4) + ']' +
+                ' vr=' + vr_c.toFixed(5) +
+                ' prevVr=' + (prevVr !== null && prevVr !== undefined ? prevVr.toFixed(5) : 'null') +
+                ' predNext=' + apogeePeakNextTick +
+                ' oldPeak=' + apogeePeak +
+                ' fireReason=' + (apogeePeakNextTick ? 'PREDICTED' : 'OLD'));
               // DEPLOY DIAGNOSTIC: log stage state at deploy tick
               try {
                 var _spd = Math.hypot(body.vx, body.vy);
@@ -1997,6 +2016,27 @@ const tau_target = tau_desired - dNext.torqueEnvironmental;
           case "DONE": {
             _send(Guidance.cmdSetAllThrottle(0));
             _send(Guidance.cmdSetGimbalRate(0));
+
+            // [DEBUG] SPAWN — first tick payload exists in snapshot.
+            if (!_st._spawnLogged) {
+              for (let _si = 0; _si < snapshot.bodies.length; _si++) {
+                const _sb = snapshot.bodies[_si];
+                if (_sb && _sb.payloadBody) {
+                  _st._spawnLogged = true;
+                  const _sr = Math.hypot(_sb.rx, _sb.ry);
+                  const _svr = (_sb.vx * _sb.rx + _sb.vy * _sb.ry) / _sr;
+                  console.log('[SPAWN-t' + simT.toFixed(4) + ']' +
+                    ' idx=' + _si +
+                    ' vr=' + _svr.toFixed(5) +
+                    ' speed=' + Math.hypot(_sb.vx, _sb.vy).toFixed(4) +
+                    ' deployCmdT=' + (Number.isFinite(_st.deployCommandSimTime) ? _st.deployCommandSimTime.toFixed(4) : 'null') +
+                    ' dtSinceCmd=' + (Number.isFinite(_st.deployCommandSimTime) ? (simT - _st.deployCommandSimTime).toFixed(4) : 'null') +
+                    ' ticksSinceCmd=' + (Number.isFinite(_st.deployCommandSimTime) ? Math.round((simT - _st.deployCommandSimTime) / dt) : 'null'));
+                  break;
+                }
+              }
+            }
+
             // DEPLOY RESULT: log payload post-eject state once
             if (!_st._payloadLogged) {
               var _pb = state.bodies.find(function(x){ return x && x.payloadBody; });
@@ -2158,6 +2198,7 @@ _st.lastApogeeKm = 0;
           _st.hold2IntArmed = false;
           _st.deployCommandSimTime = null;
           _st.payloadCleared = false;
+          _st._spawnLogged = false;
           _st.coast2TargetThetaLive = null;
           _st.coastHold2GapMps = null;
           _st.coastHold2DvErrorMps = null;
