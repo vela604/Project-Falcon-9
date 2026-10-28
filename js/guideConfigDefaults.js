@@ -506,9 +506,7 @@ const GUIDE_IMPORTANT_FIELDS = {
   'ascent.THROTTLE_FRAC_LOW',
   'ascent.THROTTLE_FRAC',
   'insertion.STAGE_BURN_CUTOFF_MARGIN_MPS',
-  'insertion.COAST_HOLD_2_TRIM_TOL_MPS',
-  'insertion.COAST_HOLD_2_TRIM_FAR_MPS',
-],
+  ],
   landbackV1: [
   'mission.TARGET_LANDING_PAD',
   'rtls.BOOSTBACK_ENGINES',
