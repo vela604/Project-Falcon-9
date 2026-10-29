@@ -804,9 +804,9 @@ setState(s) {
       //   - KI: eliminates the steady-state error a PD leaves behind when the target
       //     apside direction drifts at ~0.066°/s. Kick direction = attitude at deploy,
       //     so any residual here becomes apo/peri ecc in the payload orbit.
-      COAST_HOLD_ATT_KP: 5.0,
-      COAST_HOLD_ATT_KD: 5.0,
-      COAST_HOLD_ATT_KI: 2.0,
+      COAST_HOLD_ATT_KP: 8.0,
+      COAST_HOLD_ATT_KD: 7.0,
+      COAST_HOLD_ATT_KI: 3.0,
       COAST_BURN_MULTIPLIER: 4.0,
       // Target orbit is now defined by two apsides. The insertion block
       // internally derives: apogee = max(apside1, apside2),
@@ -889,6 +889,7 @@ setState(s) {
         hold1IntArmed: false,
         hold2ThetaInt: 0,
         hold2IntArmed: false,
+        hold2LastRcsTorque: 0,
           // DONE
   deployCommandSimTime: null,
     payloadCleared: false,
@@ -1932,7 +1933,7 @@ const tau_target = tau_desired - dNext.torqueEnvironmental;
               // DEPLOY DIAGNOSTIC: log stage state at deploy tick
               try {
                 var _spd = Math.hypot(body.vx, body.vy);
-                var _vd = Math.atan2(body.vx, body.vy);
+                var _vd = Math.atan2(-body.vx, body.vy);
                 var _ae = _wrapPi(body.theta - _vd) * 180 / Math.PI;
                 var _kick = env.PAYLOAD_EJECT_KICK_MPS || 0;
                 var _radKick = _kick * Math.sin(_ae * Math.PI / 180);
@@ -1959,20 +1960,35 @@ const tau_target = tau_desired - dNext.torqueEnvironmental;
             // direction drifts ~0.066 deg/s, and PD would leave a persistent
             // ~0.05-0.1 deg offset = kick misalignment = payload ecc.
             let attDuties = null;
+            let attTorqueAchieved = 0;
             if (dNext && dNext.massProps) {
               const I_next = dNext.massProps.I;
-              const thetaErr = _wrapPi(body.theta - thetaApoLive);
-              if (!_st.hold2IntArmed) { _st.hold2ThetaInt = 0; _st.hold2IntArmed = true; }
-              const kiH2 = Number.isFinite(cfg.COAST_HOLD_ATT_KI) ? cfg.COAST_HOLD_ATT_KI : 2.0;
-              const kpH2 = Number.isFinite(cfg.COAST_HOLD_ATT_KP) ? cfg.COAST_HOLD_ATT_KP : 5.0;
-              const kdH2 = Number.isFinite(cfg.COAST_HOLD_ATT_KD) ? cfg.COAST_HOLD_ATT_KD : 5.0;
+              if (!_st.hold2IntArmed) {
+                _st.hold2ThetaInt = 0;
+                _st.hold2IntArmed = true;
+                _st.hold2LastRcsTorque = 0;
+              }
+              // 1-tick predictive: predict theta/omega at N+1 using the ACTUAL
+              // RCS torque applied last tick (which is still acting now).
+              const tauRcsNow = Number.isFinite(_st.hold2LastRcsTorque) ? _st.hold2LastRcsTorque : 0;
+              const alphaPred = d.alphaAng + tauRcsNow / I_next;
+              const thetaPred = body.theta + body.omega * dt + 0.5 * alphaPred * dt * dt;
+              const omegaPred = body.omega + alphaPred * dt;
+
+              const thetaErr = _wrapPi(thetaPred - thetaApoLive);
+              const kiH2 = Number.isFinite(cfg.COAST_HOLD_ATT_KI) ? cfg.COAST_HOLD_ATT_KI : 3.0;
+              const kpH2 = Number.isFinite(cfg.COAST_HOLD_ATT_KP) ? cfg.COAST_HOLD_ATT_KP : 8.0;
+              const kdH2 = Number.isFinite(cfg.COAST_HOLD_ATT_KD) ? cfg.COAST_HOLD_ATT_KD : 7.0;
               if (Math.abs(thetaErr) < 0.5 * Math.PI / 180) {
                 _st.hold2ThetaInt = Math.max(-0.005, Math.min(0.005, _st.hold2ThetaInt + thetaErr * dt));
               }
               const tau_desired =
-                -I_next * (kpH2 * thetaErr + kdH2 * body.omega + kiH2 * _st.hold2ThetaInt);
+                -I_next * (kpH2 * thetaErr + kdH2 * omegaPred + kiH2 * _st.hold2ThetaInt);
               const result = GuideRCS.targetTorqueRcsNoNetForce(snapshot, tau_desired, idx);
-              if (result && result.fires.length) attDuties = result.duties;
+              if (result && result.fires.length) {
+                attDuties = result.duties;
+                attTorqueAchieved = Number.isFinite(result.torqueAchieved) ? result.torqueAchieved : 0;
+              }
             }
 
             // Axial trim — net-force RCS only. Drive gap to eject kick.
@@ -2007,6 +2023,7 @@ const tau_target = tau_desired - dNext.torqueEnvironmental;
             const merged = _mergeRcsDuties(attDuties, axialDuties);
             if (merged) _send(Guidance.cmdRcsDuty(merged, idx));
             else _send(Guidance.cmdRcsDuty(null, idx));
+            _st.hold2LastRcsTorque = attTorqueAchieved;
             break;
           }
 
@@ -2028,6 +2045,7 @@ const tau_target = tau_desired - dNext.torqueEnvironmental;
                   console.log('[SPAWN-t' + simT.toFixed(4) + ']' +
                     ' idx=' + _si +
                     ' vr=' + _svr.toFixed(5) +
+                    ' omega=' + (Number.isFinite(_sb.omega) ? _sb.omega.toFixed(6) : 'NaN') +
                     ' speed=' + Math.hypot(_sb.vx, _sb.vy).toFixed(4) +
                     ' deployCmdT=' + (Number.isFinite(_st.deployCommandSimTime) ? _st.deployCommandSimTime.toFixed(4) : 'null') +
                     ' dtSinceCmd=' + (Number.isFinite(_st.deployCommandSimTime) ? (simT - _st.deployCommandSimTime).toFixed(4) : 'null') +
@@ -2196,6 +2214,7 @@ _st.lastApogeeKm = 0;
           _st.hold1IntArmed = false;
           _st.hold2ThetaInt = 0;
           _st.hold2IntArmed = false;
+          _st.hold2LastRcsTorque = 0;
           _st.deployCommandSimTime = null;
           _st.payloadCleared = false;
           _st._spawnLogged = false;
