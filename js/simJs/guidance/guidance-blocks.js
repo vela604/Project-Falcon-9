@@ -826,8 +826,8 @@ setState(s) {
       PAYLOAD_CONFIRM_TIMEOUT_S: 120,
       // COAST_HOLD_2 axial trim: drive apogee dv gap (= v_circ(rapo) - v_apo)
       // to the eject kick. Net-force RCS only, no floor duty.
-      COAST_HOLD_2_TRIM_TOL_MPS: 0.001,
-      COAST_HOLD_2_TRIM_FAR_MPS: 0.05,
+      COAST_HOLD_2_TRIM_TOL_MPS: 0.0001,
+      COAST_HOLD_2_TRIM_FAR_MPS: 0.01,
     },
     importantFields: [],
     createInstance: function () {
@@ -2041,12 +2041,25 @@ const tau_target = tau_desired - dNext.torqueEnvironmental;
             // Axial trim — net-force RCS only. Drive gap to eject kick.
             // dvError > 0 -> too slow -> prograde ("up").
             // dvError < 0 -> too fast -> retrograde ("dn").
+            // [TRIM-DIAG] — log axial trim state near fire tick
+            if (Math.abs(vr_pay) < 0.3) {
+              const _dutyPrev = Math.min(1, Math.abs(dvError) / Math.max(Number.isFinite(cfg.COAST_HOLD_2_TRIM_FAR_MPS) ? cfg.COAST_HOLD_2_TRIM_FAR_MPS : 0.01, 1e-6));
+              const _tolPrev = Number.isFinite(cfg.COAST_HOLD_2_TRIM_TOL_MPS) ? cfg.COAST_HOLD_2_TRIM_TOL_MPS : 0.0001;
+              console.log('[TRIM-DIAG-t' + simT.toFixed(4) + ']' +
+                ' dvErr=' + dvError.toFixed(6) +
+                ' duty=' + _dutyPrev.toFixed(5) +
+                ' fires=' + (Math.abs(dvError) > _tolPrev && _dutyPrev >= 0.005));
+            }
             let axialDuties = null;
             const TRIM_TOL = Number.isFinite(cfg.COAST_HOLD_2_TRIM_TOL_MPS)
               ? cfg.COAST_HOLD_2_TRIM_TOL_MPS : 0.00001;
             const TRIM_FAR = Number.isFinite(cfg.COAST_HOLD_2_TRIM_FAR_MPS)
               ? cfg.COAST_HOLD_2_TRIM_FAR_MPS : 0.0;
-            const DEADBAND_DUTY = 0.02;
+            // Lowered from 0.02 to 0.005 (0.5% min duty) — allows trim to
+            // fire near convergence, where dvError is small and duty is tiny.
+            // At 0.02, trim stopped firing once duty dropped below 2%, leaving
+            // a residual of ~0.0014 m/s (the 4.7m apo-peri split).
+            const DEADBAND_DUTY = 0.005;
             if (Math.abs(dvError) > TRIM_TOL) {
               const direction = dvError > 0 ? "up" : "dn";
               const duty = Math.min(1, Math.abs(dvError) / Math.max(TRIM_FAR, 1e-6));
