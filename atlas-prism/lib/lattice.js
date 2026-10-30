@@ -189,11 +189,25 @@ if (!m.payloadReleased || !m.payloadCleared) add('payload_not_cleared', 50);
     return { alt:a, apo, peri };
   }
   const orbitTolKm = () => C().scoring.orbit.tolKm;   // absolute km, no alt scaling
+  // Charbonnier-shaped penalty. Behaviour:
+  //   err << eps  : quadratic (smooth, ~ e^2/2eps)
+  //   err >> eps  : linear (weight*e/tol) — no cliff, bounded growth
+  //   monotone, sign-symmetric, zero at 0
+  //
+  // Why: the old pseudo-Huber (weight*k*(sqrt(1+(e/k)^2)-1), e=|err|/tol) is
+  // ~QUADRATIC at small errors. At tol=0.3, 8m error gave ~0.09 — that is
+  // "8 metres == 0.9s of coast". 1m-vs-8m was invisible, so 1.4s coast cost
+  // outranked 8m accuracy. Charbonnier linearises above eps (2m default), so
+  // any error > eps differentiates clearly, sub-eps noise stays smooth.
+  //
+  // eps = O.epsKm (fallback 0.002 km = 2m). Small enough to sit below typical
+  // real errors, big enough to smooth sim quantisation (~1e-4 km).
   function orbitPenalty(errKm) {
-  const O = C().scoring.orbit, tol = O.tolKm;
-  const e = Math.abs(errKm) / tol;                                     // NO deadzone, absolute tol (same for all alt)
-  return O.weight * O.k * (Math.sqrt(1 + (e / O.k) * (e / O.k)) - 1);
-}
+    const O = C().scoring.orbit;
+    const e = Math.abs(errKm);
+    const eps = Number.isFinite(O.epsKm) ? O.epsKm : 0.002;
+    return O.weight * (Math.sqrt(e * e + eps * eps) - eps) / O.tolKm;
+  }
   // raw accuracy (sorting): |apo - alt| + |peri - alt|
 const orbitErrKm = (m, altOrOpts) => { const _a = curAlts(altOrOpts); return Math.abs(m.apogeeKm - _a.apo) + Math.abs(m.perigeeKm - _a.peri); };
 
@@ -370,10 +384,10 @@ function suggestDurationCap(altKm, apoKm, periKm) {
 t('orbit tol absolute (alt-independent): 0.3 km everywhere', orbitTolKm(320) === 0.3 && orbitTolKm(2000) === 0.3 && orbitTolKm(100) === 0.3);
 t('same absolute error => same penalty at any alt (0.5 km @320 == @2000)', orbitPenalty(0.5) === orbitPenalty(0.5));
 t('no deadzone: 0 error -> 0, every err > 0 -> > 0', orbitPenalty(0) === 0 && orbitPenalty(0.001) > 0 && orbitPenalty(-0.001) > 0);
-t('0.15 km @320 ~ 27 pt (was 0 with the deadzone)', Math.abs(orbitPenalty(0.15) - 27) < 2, orbitPenalty(0.15).toFixed(2));
-t('0.32 km @320 (tol) ~ 104 pt', Math.abs(orbitPenalty(0.32) - 104) < 3, orbitPenalty(0.32).toFixed(1));
-t('1 km @320 ~ 570 pt', Math.abs(orbitPenalty(1) - 570) < 15, orbitPenalty(1).toFixed(1));
-t('5 km @320 ~ 3650 pt', Math.abs(orbitPenalty(5) - 3650) < 100, orbitPenalty(5).toFixed(0));
+t('0.15 km ~ 123 pt (was ~27 pseudo-Huber)', Math.abs(orbitPenalty(0.15) - 123) < 5, orbitPenalty(0.15).toFixed(2));
+t('0.32 km ~ 265 pt (was ~104 pseudo-Huber)', Math.abs(orbitPenalty(0.32) - 265) < 10, orbitPenalty(0.32).toFixed(1));
+t('1 km ~ 832 pt (was ~570)', Math.abs(orbitPenalty(1) - 832) < 20, orbitPenalty(1).toFixed(1));
+t('5 km ~ 4166 pt (was ~3650)', Math.abs(orbitPenalty(5) - 4166) < 100, orbitPenalty(5).toFixed(0));
 t('monotone in |err|, sign-symmetric, no cliff', orbitPenalty(0.5) > orbitPenalty(0.4) && orbitPenalty(-0.5) === orbitPenalty(0.5));
     const orbitWorse = score(Object.assign({}, good, { apogeeKm: 321 })).score - s0;                 // 1 km apo error
     const fuelRange  = score(Object.assign({}, good, { boosterFuelLeftKg: 2000 - 15000 })).score - s0; // 15000 kg range
