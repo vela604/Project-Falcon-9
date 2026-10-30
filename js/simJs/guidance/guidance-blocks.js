@@ -2089,6 +2089,20 @@ const tau_target = tau_desired - dNext.torqueEnvironmental;
                 attDuties = result.duties;
                 attTorqueAchieved = Number.isFinite(result.torqueAchieved) ? result.torqueAchieved : 0;
               }
+              // [TORQUE-DIAG] — is RCS saturated? Is KI working?
+              if (Math.abs(vr_pay) < 0.3) {
+                const _tauAch = Number.isFinite(attTorqueAchieved) ? attTorqueAchieved : 0;
+                const _sat = (result && result.saturated) ? 1 : 0;
+                console.log('[TORQUE-DIAG-t' + simT.toFixed(4) + ']' +
+                  ' attErr=' + (thetaErr*180/Math.PI).toFixed(4) + 'deg' +
+                  ' tauDes=' + tau_desired.toFixed(0) +
+                  ' tauAch=' + _tauAch.toFixed(0) +
+                  ' sat=' + _sat +
+                  ' omega=' + body.omega.toFixed(6) +
+                  ' omegaRel=' + omegaRel.toFixed(6) +
+                  ' intg=' + _st.hold2ThetaInt.toFixed(6) +
+                  ' KIterm=' + (kiH2 * _st.hold2ThetaInt).toFixed(6));
+              }
             }
 
             // Axial trim — net-force RCS only. Drive gap to eject kick.
