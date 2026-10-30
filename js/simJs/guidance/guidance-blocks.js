@@ -804,9 +804,16 @@ setState(s) {
       //   - KI: eliminates the steady-state error a PD leaves behind when the target
       //     apside direction drifts at ~0.066°/s. Kick direction = attitude at deploy,
       //     so any residual here becomes apo/peri ecc in the payload orbit.
-      COAST_HOLD_ATT_KP: 5.0,
+      // Data-driven: TORQUE-DIAG showed tau_desired ~ -16 N·m at
+      // attErr=0.055 deg — because KP+KD+KI sum ≈ 0. KP wanted +0.0051,
+      // KD gave -0.0020 (over-rotation), KI gave -0.0031 (integral wound
+      // wrong from earlier transient). Net nearly zero -> slow convergence.
+      // Fix: KP 5->15 dominates; KI 2->0 (redundant with omegaTgt FF,
+      // which already handles moving-target steady-state; integral was
+      // actively fighting due to windup).
+      COAST_HOLD_ATT_KP: 15.0,
       COAST_HOLD_ATT_KD: 5.0,
-      COAST_HOLD_ATT_KI: 2.0,
+      COAST_HOLD_ATT_KI: 0.0,
       COAST_BURN_MULTIPLIER: 4.0,
       // Target orbit is now defined by two apsides. The insertion block
       // internally derives: apogee = max(apside1, apside2),
@@ -2074,8 +2081,8 @@ const tau_target = tau_desired - dNext.torqueEnvironmental;
               // feedforward (_omegaTgt) is KEPT — it's a TARGET rotation rate
               // (physics-correct, ellipse-safe), not a predicted body state.
               const thetaErr = _wrapPi(body.theta - thetaApoLive);
-              const kiH2 = Number.isFinite(cfg.COAST_HOLD_ATT_KI) ? cfg.COAST_HOLD_ATT_KI : 2.0;
-              const kpH2 = Number.isFinite(cfg.COAST_HOLD_ATT_KP) ? cfg.COAST_HOLD_ATT_KP : 5.0;
+              const kiH2 = Number.isFinite(cfg.COAST_HOLD_ATT_KI) ? cfg.COAST_HOLD_ATT_KI : 0.0;
+              const kpH2 = Number.isFinite(cfg.COAST_HOLD_ATT_KP) ? cfg.COAST_HOLD_ATT_KP : 15.0;
               const kdH2 = Number.isFinite(cfg.COAST_HOLD_ATT_KD) ? cfg.COAST_HOLD_ATT_KD : 5.0;
               if (Math.abs(thetaErr) < 0.5 * Math.PI / 180) {
                 _st.hold2ThetaInt = Math.max(-0.005, Math.min(0.005, _st.hold2ThetaInt + thetaErr * dt));
@@ -2098,9 +2105,8 @@ const tau_target = tau_desired - dNext.torqueEnvironmental;
                   ' tauDes=' + tau_desired.toFixed(0) +
                   ' tauAch=' + _tauAch.toFixed(0) +
                   ' sat=' + _sat +
-                  ' omega=' + body.omega.toFixed(6) +
-                  ' omegaRel=' + omegaRel.toFixed(6) +
-                  ' intg=' + _st.hold2ThetaInt.toFixed(6) +
+                  ' KPterm=' + (kpH2 * thetaErr).toFixed(6) +
+                  ' KDterm=' + (kdH2 * omegaRel).toFixed(6) +
                   ' KIterm=' + (kiH2 * _st.hold2ThetaInt).toFixed(6));
               }
             }
