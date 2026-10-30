@@ -1,5 +1,6 @@
 // ===== PHYSICS VERSION STAMP — proves fresh code loaded =====
 console.log('[physics.js] LOADED version=1793330892325 clearGap-REMOVED');
+const DEBUG_PHYS_SPAWN = false;  // gate [PHYS-SPAWN] verbose log
 
 globalThis.DEBUG_PHYSICS = false;
 
@@ -2903,7 +2904,7 @@ body.rx = baseRx;
     const _vrA = (active.vx * active.rx + active.vy * active.ry) / _srA;
     const _srP = Math.hypot(body.rx, body.ry);
     const _vrP = (body.vx * body.rx + body.vy * body.ry) / _srP;
-    console.log('[PHYS-SPAWN] totalH=' + totalH.toFixed(4) +
+    if (DEBUG_PHYS_SPAWN) console.log('[PHYS-SPAWN] totalH=' + totalH.toFixed(4) +
       ' L_actual=' + _Lact.toFixed(4) +
       ' vr_stage=' + _vrA.toFixed(6) +
       ' vr_payload=' + _vrP.toFixed(6));

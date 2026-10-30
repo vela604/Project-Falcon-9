@@ -32,6 +32,14 @@
 // Shared by every block that commands the gimbal; the same law is meant to be
 // reused later for grid fins.
 // ============================================================================
+// ===== Verbose deploy-phase diagnostic gate =====
+// false = silent except [DEPLOY-RESULT] (one line pair per deploy).
+// true  = fires APEX / TORQUE-DIAG / TRIM-DIAG / STAGE-ORBIT / DEPLOY-FIRE
+//         / DEPLOY-DIAG / SPAWN / PAY-ORBIT — reproduces the 26m->0.9m
+//         investigation (LEOINSERTION-V3.md §5.8). Physics-side [PHYS-SPAWN]
+//         log has its own flag in physics.js (DEBUG_PHYS_SPAWN).
+const DEBUG_DEPLOY = false;
+
 function _gClamp(x, lo, hi) { return x < lo ? lo : (x > hi ? hi : x); }
 
 // 2-tick Newtonian law (final rate vf = 0): alpha so that the gimbal reaches
@@ -1984,7 +1992,7 @@ const tau_target = tau_desired - dNext.torqueEnvironmental;
             // [DEBUG] APEX tick log — only when near apex.
             if (Math.abs(vr_pay) < 0.3) {
               const _attErrDeg = _wrapPi(body.theta - thetaApoLive) * (180 / Math.PI);
-              console.log('[APEX-t' + simT.toFixed(4) + ']' +
+              if (DEBUG_DEPLOY) console.log('[APEX-t' + simT.toFixed(4) + ']' +
                 ' attErr=' + _attErrDeg.toFixed(4) + 'deg' +
                 ' vr=' + vr_c.toFixed(5) +
                 ' vr_pay=' + vr_pay.toFixed(5) +
@@ -2000,7 +2008,7 @@ const tau_target = tau_desired - dNext.torqueEnvironmental;
             }
 
             if (deployPeak) {
-              console.log('[DEPLOY-FIRE-t' + simT.toFixed(4) + ']' +
+              if (DEBUG_DEPLOY) console.log('[DEPLOY-FIRE-t' + simT.toFixed(4) + ']' +
                 ' vr=' + vr_c.toFixed(5) +
                 ' prevVr=' + (prevVr !== null && prevVr !== undefined ? prevVr.toFixed(5) : 'null') +
                 ' predNext=' + apogeePeakNextTick +
@@ -2019,7 +2027,7 @@ const tau_target = tau_desired - dNext.torqueEnvironmental;
                 const _exS = ((_v2S - env.GM_EARTH / _rS) * body.rx - _rvS * body.vx) / env.GM_EARTH;
                 const _eyS = ((_v2S - env.GM_EARTH / _rS) * body.ry - _rvS * body.vy) / env.GM_EARTH;
                 const _eS = Math.sqrt(_exS * _exS + _eyS * _eyS);
-                console.log('[STAGE-ORBIT] r=' + _rS.toFixed(2) +
+                if (DEBUG_DEPLOY) console.log('[STAGE-ORBIT] r=' + _rS.toFixed(2) +
                   ' vr=' + _vrS.toFixed(6) +
                   ' vt=' + _vtS.toFixed(4) +
                   ' speed=' + _vS.toFixed(4) +
@@ -2036,7 +2044,7 @@ const tau_target = tau_desired - dNext.torqueEnvironmental;
                 var _proKick = _kick * Math.cos(_ae * Math.PI / 180);
                 var _eccFromAtt = Math.abs(_radKick) / _spd;
                 var _apexM = (6371000 + _targetPeriKm * 1000) * _eccFromAtt;
-                console.log("[DEPLOY-DIAG] attErr_deg=" + _ae.toFixed(4) + " speed=" + _spd.toFixed(4) + " kick=" + _kick.toFixed(3) + " prograde=" + _proKick.toFixed(4) + " radial=" + _radKick.toFixed(5) + " apexDevM=" + _apexM.toFixed(2));
+                if (DEBUG_DEPLOY) console.log("[DEPLOY-DIAG] attErr_deg=" + _ae.toFixed(4) + " speed=" + _spd.toFixed(4) + " kick=" + _kick.toFixed(3) + " prograde=" + _proKick.toFixed(4) + " radial=" + _radKick.toFixed(5) + " apexDevM=" + _apexM.toFixed(2));
                 _st._stageVx = body.vx;
                 _st._stageVy = body.vy;
                 _st._stageSpeed = _spd;
@@ -2100,7 +2108,7 @@ const tau_target = tau_desired - dNext.torqueEnvironmental;
               if (Math.abs(vr_pay) < 0.3) {
                 const _tauAch = Number.isFinite(attTorqueAchieved) ? attTorqueAchieved : 0;
                 const _sat = (result && result.saturated) ? 1 : 0;
-                console.log('[TORQUE-DIAG-t' + simT.toFixed(4) + ']' +
+                if (DEBUG_DEPLOY) console.log('[TORQUE-DIAG-t' + simT.toFixed(4) + ']' +
                   ' attErr=' + (thetaErr*180/Math.PI).toFixed(4) + 'deg' +
                   ' tauDes=' + tau_desired.toFixed(0) +
                   ' tauAch=' + _tauAch.toFixed(0) +
@@ -2118,7 +2126,7 @@ const tau_target = tau_desired - dNext.torqueEnvironmental;
             if (Math.abs(vr_pay) < 0.3) {
               const _dutyPrev = Math.min(1, Math.abs(dvError) / Math.max(Number.isFinite(cfg.COAST_HOLD_2_TRIM_FAR_MPS) ? cfg.COAST_HOLD_2_TRIM_FAR_MPS : 0.01, 1e-6));
               const _tolPrev = Number.isFinite(cfg.COAST_HOLD_2_TRIM_TOL_MPS) ? cfg.COAST_HOLD_2_TRIM_TOL_MPS : 0.0001;
-              console.log('[TRIM-DIAG-t' + simT.toFixed(4) + ']' +
+              if (DEBUG_DEPLOY) console.log('[TRIM-DIAG-t' + simT.toFixed(4) + ']' +
                 ' dvErr=' + dvError.toFixed(6) +
                 ' duty=' + _dutyPrev.toFixed(5) +
                 ' fires=' + (Math.abs(dvError) > _tolPrev && _dutyPrev >= 0.005));
@@ -2175,7 +2183,7 @@ const tau_target = tau_desired - dNext.torqueEnvironmental;
                   _st._spawnLogged = true;
                   const _sr = Math.hypot(_sb.rx, _sb.ry);
                   const _svr = (_sb.vx * _sb.rx + _sb.vy * _sb.ry) / _sr;
-                  console.log('[SPAWN-t' + simT.toFixed(4) + ']' +
+                  if (DEBUG_DEPLOY) console.log('[SPAWN-t' + simT.toFixed(4) + ']' +
                     ' idx=' + _si +
                     ' vr=' + _svr.toFixed(5) +
                     ' omega=' + (Number.isFinite(_sb.omega) ? _sb.omega.toFixed(6) : 'NaN') +
@@ -2211,7 +2219,7 @@ const tau_target = tau_desired - dNext.torqueEnvironmental;
                     var _exP = ((_v2P - GM / _r) * _pb.rx - _rvP * _pb.vx) / GM;
                     var _eyP = ((_v2P - GM / _r) * _pb.ry - _rvP * _pb.vy) / GM;
                     var _eV = Math.sqrt(_exP * _exP + _eyP * _eyP);
-                    console.log('[PAY-ORBIT] r=' + _r.toFixed(2) +
+                    if (DEBUG_DEPLOY) console.log('[PAY-ORBIT] r=' + _r.toFixed(2) +
                       ' vr=' + _vrP.toFixed(6) +
                       ' vt=' + _vt.toFixed(4) +
                       ' speed=' + _spdP.toFixed(4) +
