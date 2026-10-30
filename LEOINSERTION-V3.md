@@ -793,6 +793,119 @@ fields: `deployCommandSimTime`, `clearedPayloadCount`, `finalApogeeKm`,
 
 ---
 
+### 5.8 Payload deploy precision — how 26 m became 0.9 m
+
+Payload insertion accuracy is measured as the apo-peri split of the
+released payload orbit. It started at **~26 m** and finished at **~0.9 m**
+— a 29× improvement — after eliminating four distinct error sources, each
+hiding behind the previous one.
+
+**Why care about a few metres.** Real Falcon 9 missions routinely see
+kilometre-scale injection errors, so 26 m in an ideal sim may look "good
+enough". But the ideal sim is a *floor*: whatever error it leaves is a
+limit real hardware cannot beat. Reducing the ideal-sim floor from 500 m
+to 1 m won't make real hardware hit 1 m — but it removes the artificial
+floor and lets real hardware's actual accuracy (3–4 km) improve toward
+whatever its true limit is. So the goal was never "metres in the sim";
+it was "no artificial floor in the sim".
+
+#### 5.8.1 — Deadband-limited trim (26 m)
+
+Initial state. Axial RCS trim in COAST_HOLD_2 drives the stage's
+tangential velocity toward `v_circ − eject_kick`. The trim converged to
+±0.001 m/s (its deadband), leaving a tangential overshoot of
++0.0014 m/s. That becomes `ecc = 2·v_t_err/v_circ = 3.6e-7` — a 26 m
+apo-peri split. **Source: RCS trim deadband.**
+
+#### 5.8.2 — Payload-frame apex detection (26 m → 4.8 m)
+
+Deploy peak was detected on the STAGE radial velocity (`vr_stage = 0`).
+But stage and payload are one rigid body pre-release, and the payload
+CM sits `L ≈ stage height` forward of the stage CM. The payload radial
+direction differs by `θ ≈ L/r`, so the prograde kick picks up a radial
+component in the payload frame:
+
+```
+vr_pay = vr_stage + (L/r) · (V_stage + kick)
+```
+
+At stage apex (`vr_stage = 0`): `vr_pay ≈ +0.0146 m/s` — the payload is
+still CLIMBING, not at its own apex. Its own apex is ≈ 2 s after the
+stage's. Firing at the payload's apex (predicted one tick ahead) dropped
+the split from 26 m to 4.8 m.
+
+#### 5.8.3 — Physics honest: nose-kick, not velocity-kick (5.3 m)
+
+The physics kick had been aimed along the velocity vector — a shortcut
+that hid attitude error entirely (a 90°-rotated stage would still kick
+prograde, which is impossible). Replacing it with a nose-direction kick
+is what real adapters do, but it exposes attitude error: a 0.055° residual
+at apex becomes a kick radial of `3·sin(0.055°) = 0.0029 m/s` → 5.3 m
+split. Velocity-kick was 1.6 m, but a cheat. Physics honesty costs
+accuracy only if attitude is loose.
+
+#### 5.8.4 — Analytic omega feedforward + KP boost (0.9 m)
+
+The 0.055° attitude error was PD steady-state lag on a rotating
+reference: the target rotates at `|dθ/dt| ≈ v/r ≈ 0.066°/s`; plain PD
+settles at `err_ss ≈ KD·ω_tgt/KP ≈ 0.055°`. Feedforward the target
+rotation:
+
+```
+ω_tgt = +GM · h / (r³ · v²)         h = rx·vy − ry·vx
+ω_rel = ω_body − ω_tgt               (used in the KD term)
+```
+
+The formula is exact for ANY Kepler orbit — circular, elliptical,
+everything — with no eccentricity assumption. (Sanity check: circular
+gives `|ω| = v/r`.)
+
+With feedforward working, the residual at fire tick dropped to zero.
+But the torque budget revealed a second problem: with `KP=5` the torque
+terms cancelled to nearly zero. KI was wound from earlier transients
+and fighting. Fix: **KP 5 → 15** (dominant), **KI 2 → 0** (redundant
+with analytic feedforward). Attitude error → 0.0000° at fire; split
+dropped to 0.9 m.
+
+#### 5.8.5 — Where the current 0.9 m comes from
+
+Not attitude (0.0000° at fire). Not kick direction (nose, honest). The
+residual is entirely tangential: RCS trim leaves `dvErr ≈ ±1e-4 m/s` at
+its deadband, and the fixed 3 m/s kick never perfectly matches
+`v_circ − stage.vt`. Source: deadband floor + fixed kick. Below ~0.5 m
+needs either (a) a dynamic kick (physics.js honours `opts.kick` supplied
+by guidance) or (b) sub-tick deploy triggering. Neither is required for
+the sim.
+
+#### 5.8.6 — A sign bug that took three iterations
+
+The analytic `ω_tgt` formula has a POSITIVE sign —
+`dθ/dt = +μ·h/(r³·v²)` from `θ = atan2(-vx, vy)` and `ax,ay = -μ·r/r³`.
+An early version had `-μ·h/...` — sign reversed, so feedforward pushed
+the wrong way and made attitude worse (0.055° → 0.102°). Once corrected,
+it worked exactly as derived.
+
+#### 5.8.7 — Constants added during the journey
+
+| Constant | Old | New | Reason |
+|---|---|---|---|
+| `COAST_HOLD_2_TRIM_TOL_MPS` | 0.001 | 0.0001 | tighter deadband (10×) |
+| `COAST_HOLD_2_TRIM_FAR_MPS` | 0.05 | 0.01 | finer duty resolution |
+| `COAST_HOLD_ATT_KP` | 5.0 | 15.0 | dominate torque sum |
+| `COAST_HOLD_ATT_KD` | 5.0 | 5.0 | unchanged |
+| `COAST_HOLD_ATT_KI` | 2.0 | 0.0 | disabled (feedforward replaces it) |
+
+#### 5.8.8 — Verbose diagnostics
+
+The verbose deploy logs (APEX per tick, torque internals, trim state,
+stage-orbital state at fire, payload-orbital state at result) are gated
+behind `const DEBUG_DEPLOY = false;` in `guidance-blocks.js` and
+`const DEBUG_PHYS_SPAWN = false;` in `physics.js`. Flip both `true` to
+reproduce the investigation; leave both `false` for normal flight.
+Only `[DEPLOY-RESULT]` (final apo/peri/ecc pair) fires unconditionally.
+
+---
+
 ## 6. Constants
 
 Values as in the repo snapshot read for this document. The three tuned
@@ -837,8 +950,9 @@ baseline values are marked.
 | `CIRC_ATT_KP / KD` | 0.5 / 4.0 | coast and circularize attitude gains |
 | `PAYLOAD_CLEAR_DIST_M` | 20 | payload clear distance |
 | `PAYLOAD_CONFIRM_TIMEOUT_S` | 120 | payload confirm timeout |
-| `COAST_HOLD_2_TRIM_TOL_MPS` | 0.001 | axial-trim deadband (no fire below) |
-| `COAST_HOLD_2_TRIM_FAR_MPS` | 0.05 | axial-trim full-duty threshold |
+| `COAST_HOLD_2_TRIM_TOL_MPS` | **0.0001** (tuned) | axial-trim deadband (no fire below) |
+| `COAST_HOLD_2_TRIM_FAR_MPS` | **0.01** (tuned) | axial-trim full-duty threshold |
+| `COAST_HOLD_ATT_KP / KD / KI` | **15.0 / 5.0 / 0.0** (tuned) | COAST_HOLD_2 attitude PID gains. KI=0 — omega_tgt feedforward replaces it (§5.8). |
 | `GIMBAL_TARGET` | all | which engines gimbal |
 
 Also decided by the mission layer **(unverified here)**: `SEPARATION_DURATION_S`,
@@ -886,6 +1000,10 @@ are not part of retuning.
   adjusted, as with any real autopilot.
 - **Circularization accuracy** depends on control authority at the target
   altitude: a shorter burn gives tighter results.
+- **Payload deploy floor ~0.9 m.** On circular targets the released
+  payload orbit lands within ~1 m apo-peri of target. Below that needs
+  a dynamic kick (physics honours a guidance-supplied kick) or a
+  sub-tick deploy trigger — see §5.8.
 
 ---
 
