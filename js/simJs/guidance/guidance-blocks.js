@@ -1900,8 +1900,16 @@ const tau_target = tau_desired - dNext.torqueEnvironmental;
             // Fallback: if env.PAYLOAD_DEPLOY_OFFSET_M is missing (=0), vr_pay
             // degenerates to vr_stage -> payload apex == stage apex -> old
             // behavior. Acceptable degradation.
-            const _L = (env && Number.isFinite(env.PAYLOAD_DEPLOY_OFFSET_M))
-              ? env.PAYLOAD_DEPLOY_OFFSET_M : 0;
+            // L = sum of current body.members' heights. This EXACTLY matches
+            // physics.js releasePayloadOnActiveBody's spawn offset:
+            //   payloadRx = active.rx + totalH * upX
+            //   totalH = active.members.reduce((s,m) => s + m.height, 0)
+            // Same source, same tick, no env dependency, no stageRole lookup.
+            // Robust across stage-role detection failures, worker scope issues,
+            // and future physics.js spawn-formula changes (as long as it stays
+            // "base + sum of member heights", which is the current design).
+            const _L = (body.members && body.members.length) ?
+              body.members.reduce((s, m) => s + (Number.isFinite(m.height) ? m.height : 0), 0) : 0;
             const _KICK = (env && Number.isFinite(env.PAYLOAD_EJECT_KICK_MPS))
               ? env.PAYLOAD_EJECT_KICK_MPS : 0;
             const _V_s = Math.hypot(body.vx, body.vy);
@@ -1935,6 +1943,7 @@ const tau_target = tau_desired - dNext.torqueEnvironmental;
                 ' vr_pay=' + vr_pay.toFixed(5) +
                 ' geom=' + _geom.toFixed(5) +
                 ' L=' + _L.toFixed(2) +
+                ' nMembers=' + (body.members ? body.members.length : 0) +
                 ' dvrdt=' + (Number.isFinite(dvrdt) ? dvrdt.toFixed(3) : 'NaN') +
                 ' vrNext=' + (Number.isFinite(vrNext) ? vrNext.toFixed(5) : 'NaN') +
                 ' predNext=' + apogeePeakNextTick +
