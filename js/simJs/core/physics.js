@@ -3364,13 +3364,18 @@ function releasePayloadOnActiveBody(opts, targetBody) {
   const payloadRx = active.rx + totalH * upX;
   const payloadRy = active.ry + totalH * upY;
   
-  // Prograde kick. 0.5 m/s was far too weak: a thrusting rocket accelerates
-  // at 10–20 m/s², which closes that gap in ~0.03 s. Bump to a spring-
-  // separation-class value (real systems give 1–2 m/s; visually 3 m/s reads
-  // cleanly even for a fast-launching stack).
-  const speed = Math.hypot(active.vx, active.vy);
-  const ux = speed > 0.01 ? active.vx / speed : upX;
-  const uy = speed > 0.01 ? active.vy / speed : upY;
+  // NOSE-KICK (physically accurate): real payload adapters push along
+  // the rocket's nose axis, not velocity. Attitude control aims nose ->
+  // velocity, so at good attitude they coincide; attitude error leaks
+  // into kick radial component (physically real). Earlier velocity-kick
+  // hid this entirely (a 90-deg-rotated stage would still kick prograde,
+  // which is impossible). Removed per user decision.
+  //
+  // Mitigation: guidance COAST_HOLD_2 upgraded with omega-feedforward
+  // PD that drops attErr from ~0.078 deg (PD steady-state lag on
+  // rotating reference) toward the RCS bang-bang floor (~0.005-0.02 deg).
+  const ux = upX;
+  const uy = upY;
     // Eject kick from CONFIG — physical hardware spec, not a tunable.
 // Normal release vs. emergency flag on this same function.
 const KICK = emergency ?

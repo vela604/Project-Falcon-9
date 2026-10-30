@@ -890,6 +890,9 @@ setState(s) {
         hold2ThetaInt: 0,
         hold2IntArmed: false,
         hold2LastRcsTorque: 0,
+        hold2PrevThetaApoLive: null,
+        hold2PrevT: null,
+        hold2OmegaTgt: 0,
           // DONE
   deployCommandSimTime: null,
     payloadCleared: false,
@@ -1862,6 +1865,27 @@ const tau_target = tau_desired - dNext.torqueEnvironmental;
             const thetaApoLive = speed_c > 1 ? Math.atan2(-body.vx, body.vy) : body.theta;
             _st.coast2TargetThetaLive = thetaApoLive;
 
+            // OMEGA FEEDFORWARD — target rotation rate, tick-to-tick.
+            // The target (velocity direction) rotates at ~v/r = 0.066 deg/s
+            // at LEO. Plain PD settles at steady-state lag = KD*omega_tgt/KP
+            // (here ~0.066-0.078 deg). NOT an RCS limit — RCS bang-bang
+            // floor is much lower (~6e-4 deg/burst).
+            // Fix: use omega_rel = omega - omega_target in KD term. At
+            // steady state (omega = omega_target), tau_PD -> 0, err -> 0.
+            let _omegaTgt = 0;
+            if (Number.isFinite(_st.hold2PrevThetaApoLive) &&
+                Number.isFinite(_st.hold2PrevT) &&
+                simT > _st.hold2PrevT) {
+              const _dtGT = simT - _st.hold2PrevT;
+              if (_dtGT > 0 && _dtGT < 0.1) {
+                _omegaTgt = _wrapPi(thetaApoLive - _st.hold2PrevThetaApoLive) / _dtGT;
+                if (Math.abs(_omegaTgt) > 0.1) _omegaTgt = 0;
+              }
+            }
+            _st.hold2PrevThetaApoLive = thetaApoLive;
+            _st.hold2PrevT = simT;
+            _st.hold2OmegaTgt = _omegaTgt;
+
             // Apogee-peak FIRST — unconditional eject (trim state irrelevant).
             const prevVr = _st._prevVr2;
             _st._prevVr2 = vr_c;
@@ -2022,15 +2046,19 @@ const tau_target = tau_desired - dNext.torqueEnvironmental;
               const thetaPred = body.theta + body.omega * dt + 0.5 * alphaPred * dt * dt;
               const omegaPred = body.omega + alphaPred * dt;
 
-              const thetaErr = _wrapPi(thetaPred - thetaApoLive);
+              // Target predicted at N+1 (matches thetaPred/omegaPred).
+              const _thetaApoLivePred = thetaApoLive + _omegaTgt * dt;
+              const thetaErr = _wrapPi(thetaPred - _thetaApoLivePred);
               const kiH2 = Number.isFinite(cfg.COAST_HOLD_ATT_KI) ? cfg.COAST_HOLD_ATT_KI : 2.0;
               const kpH2 = Number.isFinite(cfg.COAST_HOLD_ATT_KP) ? cfg.COAST_HOLD_ATT_KP : 5.0;
               const kdH2 = Number.isFinite(cfg.COAST_HOLD_ATT_KD) ? cfg.COAST_HOLD_ATT_KD : 5.0;
               if (Math.abs(thetaErr) < 0.5 * Math.PI / 180) {
                 _st.hold2ThetaInt = Math.max(-0.005, Math.min(0.005, _st.hold2ThetaInt + thetaErr * dt));
               }
+              // Rate RELATIVE to rotating target — kills PD steady-state lag.
+              const omegaRel = omegaPred - _omegaTgt;
               const tau_desired =
-                -I_next * (kpH2 * thetaErr + kdH2 * omegaPred + kiH2 * _st.hold2ThetaInt);
+                -I_next * (kpH2 * thetaErr + kdH2 * omegaRel + kiH2 * _st.hold2ThetaInt);
               const result = GuideRCS.targetTorqueRcsNoNetForce(snapshot, tau_desired, idx);
               if (result && result.fires.length) {
                 attDuties = result.duties;
@@ -2277,6 +2305,9 @@ _st.lastApogeeKm = 0;
           _st.hold2ThetaInt = 0;
           _st.hold2IntArmed = false;
           _st.hold2LastRcsTorque = 0;
+          _st.hold2PrevThetaApoLive = null;
+          _st.hold2PrevT = null;
+          _st.hold2OmegaTgt = 0;
           _st.deployCommandSimTime = null;
           _st.payloadCleared = false;
           _st._spawnLogged = false;
