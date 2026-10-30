@@ -756,24 +756,9 @@ break;
     }
 
     case 'DONE_DWELL': {
-      const stageBody = snapshot.bodies[_v3State.stageIdx];
-      if (stageBody && _v3State.insertionResult &&
-          _v3State.insertionResult.coast2TargetThetaInertial != null) {
-        const dNext = Derivation.derive(snapshot, _v3State.stageIdx);
-        const I_next = (dNext && dNext.massProps) ? dNext.massProps.I : 0;
-        if (I_next > 0) {
-          let thetaErr = stageBody.theta - _v3State.insertionResult.coast2TargetThetaInertial;
-          while (thetaErr > Math.PI) thetaErr -= 2 * Math.PI;
-          while (thetaErr < -Math.PI) thetaErr += 2 * Math.PI;
-          const tau_desired = -I_next *
-            (_v3Config.done.CIRC_ATT_KP * thetaErr +
-             _v3Config.done.CIRC_ATT_KD * stageBody.omega);
-          const result = GuideRCS.targetTorqueRcsNoNetForce(snapshot, tau_desired, _v3State.stageIdx);
-          if (result && result.fires.length) send(cmdRcsDuty(result.duties, _v3State.stageIdx));
-          else send(cmdRcsDuty(null, _v3State.stageIdx));
-        }
-      }
-
+      // Stage fully OFF in dwell — engines + gimbal + RCS all zero'd. The
+      // suicide block at dwell end rotates to retrograde on its own.
+      send(cmdRcsDuty(null, _v3State.stageIdx));
       send(cmdSetAllThrottle(0));
 send(cmdSetGimbalRate(0));
 
@@ -1310,24 +1295,9 @@ break;
     }
 
     case 'DONE_DWELL': {
-      const stageBody = snapshot.bodies[_lbState.stageIdx];
-      if (stageBody && _lbState.insertionResult &&
-          _lbState.insertionResult.coast2TargetThetaInertial != null) {
-        const dNext = Derivation.derive(snapshot, _lbState.stageIdx);
-        const I_next = (dNext && dNext.massProps) ? dNext.massProps.I : 0;
-        if (I_next > 0) {
-          let thetaErr = stageBody.theta - _lbState.insertionResult.coast2TargetThetaInertial;
-          while (thetaErr > Math.PI) thetaErr -= 2 * Math.PI;
-          while (thetaErr < -Math.PI) thetaErr += 2 * Math.PI;
-          const tau_desired = -I_next *
-            (_lbConfig.done.CIRC_ATT_KP * thetaErr +
-             _lbConfig.done.CIRC_ATT_KD * stageBody.omega);
-          const result = GuideRCS.targetTorqueRcsNoNetForce(snapshot, tau_desired, _lbState.stageIdx);
-          if (result && result.fires.length) send(cmdRcsDuty(result.duties, _lbState.stageIdx));
-          else send(cmdRcsDuty(null, _lbState.stageIdx));
-        }
-      }
-
+      // Stage fully OFF in dwell — engines + gimbal + RCS all zero'd. The
+      // suicide block at dwell end rotates to retrograde on its own.
+      send(cmdRcsDuty(null, _lbState.stageIdx));
       send(cmdSetAllThrottle(0));
 send(cmdSetGimbalRate(0));
 
