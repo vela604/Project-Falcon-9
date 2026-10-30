@@ -1888,8 +1888,14 @@ const tau_target = tau_desired - dNext.torqueEnvironmental;
               const _rO = Math.hypot(body.rx, body.ry);
               const _vO = Math.hypot(body.vx, body.vy);
               if (_rO > 1 && _vO > 0.01 && env && Number.isFinite(env.GM_EARTH)) {
+                // h = rx*vy - ry*vx  (specific angular momentum, sim convention)
                 const _hO = body.rx * body.vy - body.ry * body.vx;
-                _omegaTgt = -env.GM_EARTH * _hO / (_rO * _rO * _rO * _vO * _vO);
+                // d(atan2(-vx,vy))/dt = +mu*h/(r^3*v^2). Note the POSITIVE sign:
+                // derived from d(theta)/dt = (vx*ay - vy*ax)/v^2 with ballistic
+                // ax,ay = -mu*r/r^3. Sanity (circular): h=r*v, v^2=mu/r -> |omega|=v/r.
+                // An earlier version had -mu*h/... — sign reversed, so feedforward
+                // pushed the wrong way (0.078 -> 0.1018 deg, worse than no feedforward).
+                _omegaTgt = env.GM_EARTH * _hO / (_rO * _rO * _rO * _vO * _vO);
                 // Glitch guard — reasonable LEO range
                 if (Math.abs(_omegaTgt) > 0.05) _omegaTgt = 0;
               }
