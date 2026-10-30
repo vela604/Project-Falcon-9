@@ -1,3 +1,6 @@
+// ===== PHYSICS VERSION STAMP — proves fresh code loaded =====
+console.log('[physics.js] LOADED version=1793330892325 clearGap-REMOVED');
+
 globalThis.DEBUG_PHYSICS = false;
 
 // ============================================================================
@@ -2892,7 +2895,19 @@ if (!fairingMember) {
 }
 body.rx = baseRx;
   body.ry = baseRy;
-  body.vx = active.vx + KICK * ux; // ADDITIVE — inherits active velocity
+  body.vx = active.vx + KICK * ux;
+  // [PHYS-SPAWN] definitive diagnostic — shows ACTUAL L used
+  try {
+    const _Lact = Math.hypot(body.rx - active.rx, body.ry - active.ry);
+    const _srA = Math.hypot(active.rx, active.ry);
+    const _vrA = (active.vx * active.rx + active.vy * active.ry) / _srA;
+    const _srP = Math.hypot(body.rx, body.ry);
+    const _vrP = (body.vx * body.rx + body.vy * body.ry) / _srP;
+    console.log('[PHYS-SPAWN] totalH=' + totalH.toFixed(4) +
+      ' L_actual=' + _Lact.toFixed(4) +
+      ' vr_stage=' + _vrA.toFixed(6) +
+      ' vr_payload=' + _vrP.toFixed(6));
+  } catch (e) {} // ADDITIVE — inherits active velocity
   body.vy = active.vy + KICK * uy;
   body.theta = active.theta;
   body.omega = SPIN;
@@ -3337,20 +3352,17 @@ function releasePayloadOnActiveBody(opts, targetBody) {
   const pl = (typeof getPayload === 'function') ? getPayload(active.payloadId) : null;
   if (!pl) return false;
   
-  // Spawn the payload ABOVE the rocket's tip with a small clear gap, so its
-  // collision capsule begins at least one rocket-radius clear of the rocket's
-  // capsule nose. Without this gap, the payload is born overlapping the
-  // rocket's capsule; once the grace period expires, every tick's collision
-  // resolution pushes it out a few cm, gravity + rocket acceleration pull it
-  // back in, and the payload visibly "crawls" along the rocket surface
-  // instead of separating cleanly. Real spring-based separation systems
-  // physically push the payload clear before release for the same reason.
+  // Spawn the payload exactly at the rocket's nose tip (base = totalH from
+  // stage base). Historical note: an earlier version added clearGap =
+  // ROCKET_WIDTH/2 to avoid a collision-capsule overlap issue, but that was
+  // a workaround for a collision-solver bug, not a physical requirement.
+  // Removed per user decision; grace period (1.5 s) + kick 3 m/s handle
+  // separation safety in the normal coasting deploy.
   const upX = -Math.sin(active.theta);
   const upY = Math.cos(active.theta);
   const totalH = active.members.reduce((s, m) => s + (Number.isFinite(m.height) ? m.height : 0), 0);
-  const clearGap = (CONFIG.ROCKET_WIDTH || 3.9) / 2;
-  const payloadRx = active.rx + (totalH + clearGap) * upX;
-  const payloadRy = active.ry + (totalH + clearGap) * upY;
+  const payloadRx = active.rx + totalH * upX;
+  const payloadRy = active.ry + totalH * upY;
   
   // Prograde kick. 0.5 m/s was far too weak: a thrusting rocket accelerates
   // at 10–20 m/s², which closes that gap in ~0.03 s. Bump to a spring-
