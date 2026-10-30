@@ -804,9 +804,9 @@ setState(s) {
       //   - KI: eliminates the steady-state error a PD leaves behind when the target
       //     apside direction drifts at ~0.066°/s. Kick direction = attitude at deploy,
       //     so any residual here becomes apo/peri ecc in the payload orbit.
-      COAST_HOLD_ATT_KP: 8.0,
-      COAST_HOLD_ATT_KD: 7.0,
-      COAST_HOLD_ATT_KI: 3.0,
+      COAST_HOLD_ATT_KP: 5.0,
+      COAST_HOLD_ATT_KD: 5.0,
+      COAST_HOLD_ATT_KI: 2.0,
       COAST_BURN_MULTIPLIER: 4.0,
       // Target orbit is now defined by two apsides. The insertion block
       // internally derives: apogee = max(apside1, apside2),
@@ -1846,24 +1846,20 @@ const tau_target = tau_desired - dNext.torqueEnvironmental;
             _st.coastHold2VcircAtApo = v_target_at_apside;
             _st.coastHold2VapoLive = v_live_at_apside;
 
-            let thetaApoLive;
-            if (e_mag > 1e-6) {
-              const sDir = vt_c >= 0 ? 1 : -1;
-              let rx_aps, ry_aps;
-              if (_st.coast2TargetApside === 'peri') {
-                const phiPeri = Math.atan2(ex_ecc, ey_ecc);
-                rx_aps = r_live_at_apside * Math.sin(phiPeri);
-                ry_aps = r_live_at_apside * Math.cos(phiPeri);
-              } else {
-                const phiApo = Math.atan2(-ex_ecc, -ey_ecc);
-                rx_aps = r_live_at_apside * Math.sin(phiApo);
-                ry_aps = r_live_at_apside * Math.cos(phiApo);
-              }
-              thetaApoLive = Math.atan2(-sDir * ry_aps, -sDir * rx_aps);
-            } else {
-              const speed_c = Math.hypot(body.vx, body.vy);
-              thetaApoLive = speed_c > 1 ? Math.atan2(-body.vx, body.vy) : body.theta;
-            }
+            // Attitude target = velocity direction (prograde).
+            //
+            // Previously used the eccentricity-vector direction when
+            // e_mag > 1e-6. Problem: at e_mag just above 1e-6 (typical
+            // near-apex, near-circular), the ecc vector is numerically
+            // ill-conditioned — direction is essentially noise (can be
+            // 0.1-1 deg off from the true apside direction). Targeting
+            // that noisy direction produced a misleading APEX attErr of
+            // 0.006 deg while the TRUE tracking error against prograde
+            // was 0.11 deg (visible in DEPLOY-DIAG). Velocity direction
+            // is always well-defined and matches the physics spawn kick
+            // direction exactly (physics.js: ux = vx/|v|, uy = vy/|v|).
+            const speed_c = Math.hypot(body.vx, body.vy);
+            const thetaApoLive = speed_c > 1 ? Math.atan2(-body.vx, body.vy) : body.theta;
             _st.coast2TargetThetaLive = thetaApoLive;
 
             // Apogee-peak FIRST — unconditional eject (trim state irrelevant).
@@ -1938,7 +1934,9 @@ const tau_target = tau_desired - dNext.torqueEnvironmental;
 
             // [DEBUG] APEX tick log — only when near apex.
             if (Math.abs(vr_pay) < 0.3) {
+              const _attErrDeg = _wrapPi(body.theta - thetaApoLive) * (180 / Math.PI);
               console.log('[APEX-t' + simT.toFixed(4) + ']' +
+                ' attErr=' + _attErrDeg.toFixed(4) + 'deg' +
                 ' vr=' + vr_c.toFixed(5) +
                 ' vr_pay=' + vr_pay.toFixed(5) +
                 ' geom=' + _geom.toFixed(5) +
@@ -1959,6 +1957,26 @@ const tau_target = tau_desired - dNext.torqueEnvironmental;
                 ' predNext=' + apogeePeakNextTick +
                 ' oldPeak=' + apogeePeak +
                 ' fireReason=' + (apogeePeakNextTick ? 'PREDICTED' : 'OLD'));
+              // [STAGE-ORBIT] complete stage orbital state at fire tick
+              try {
+                const _rS = Math.hypot(body.rx, body.ry);
+                const _rSx = body.rx / _rS, _rSy = body.ry / _rS;
+                const _vrS = body.vx * _rSx + body.vy * _rSy;
+                const _vtS = -body.vx * _rSy + body.vy * _rSx;
+                const _vS = Math.hypot(body.vx, body.vy);
+                const _vcS = Math.sqrt(env.GM_EARTH / _rS);
+                const _v2S = body.vx * body.vx + body.vy * body.vy;
+                const _rvS = body.rx * body.vx + body.ry * body.vy;
+                const _exS = ((_v2S - env.GM_EARTH / _rS) * body.rx - _rvS * body.vx) / env.GM_EARTH;
+                const _eyS = ((_v2S - env.GM_EARTH / _rS) * body.ry - _rvS * body.vy) / env.GM_EARTH;
+                const _eS = Math.sqrt(_exS * _exS + _eyS * _eyS);
+                console.log('[STAGE-ORBIT] r=' + _rS.toFixed(2) +
+                  ' vr=' + _vrS.toFixed(6) +
+                  ' vt=' + _vtS.toFixed(4) +
+                  ' speed=' + _vS.toFixed(4) +
+                  ' v_circ=' + _vcS.toFixed(4) +
+                  ' ecc_vec=' + _eS.toExponential(3));
+              } catch (e) {}
               // DEPLOY DIAGNOSTIC: log stage state at deploy tick
               try {
                 var _spd = Math.hypot(body.vx, body.vy);
@@ -2005,9 +2023,9 @@ const tau_target = tau_desired - dNext.torqueEnvironmental;
               const omegaPred = body.omega + alphaPred * dt;
 
               const thetaErr = _wrapPi(thetaPred - thetaApoLive);
-              const kiH2 = Number.isFinite(cfg.COAST_HOLD_ATT_KI) ? cfg.COAST_HOLD_ATT_KI : 3.0;
-              const kpH2 = Number.isFinite(cfg.COAST_HOLD_ATT_KP) ? cfg.COAST_HOLD_ATT_KP : 8.0;
-              const kdH2 = Number.isFinite(cfg.COAST_HOLD_ATT_KD) ? cfg.COAST_HOLD_ATT_KD : 7.0;
+              const kiH2 = Number.isFinite(cfg.COAST_HOLD_ATT_KI) ? cfg.COAST_HOLD_ATT_KI : 2.0;
+              const kpH2 = Number.isFinite(cfg.COAST_HOLD_ATT_KP) ? cfg.COAST_HOLD_ATT_KP : 5.0;
+              const kdH2 = Number.isFinite(cfg.COAST_HOLD_ATT_KD) ? cfg.COAST_HOLD_ATT_KD : 5.0;
               if (Math.abs(thetaErr) < 0.5 * Math.PI / 180) {
                 _st.hold2ThetaInt = Math.max(-0.005, Math.min(0.005, _st.hold2ThetaInt + thetaErr * dt));
               }
@@ -2097,6 +2115,24 @@ const tau_target = tau_desired - dNext.torqueEnvironmental;
                   var _E = 0.5 * _spdP * _spdP - GM / _r;
                   var _h = _r * _vt;
                   var _e = Math.sqrt(Math.max(0, 1 + 2 * _E * _h * _h / (GM * GM)));
+                  // [PAY-ORBIT] — full payload orbital diagnostic
+                  try {
+                    var _uxP = _pb.rx / _r, _uyP = _pb.ry / _r;
+                    var _vrP = _pb.vx * _uxP + _pb.vy * _uyP;
+                    var _vcP = Math.sqrt(GM / _r);
+                    var _v2P = _pb.vx * _pb.vx + _pb.vy * _pb.vy;
+                    var _rvP = _pb.rx * _pb.vx + _pb.ry * _pb.vy;
+                    var _exP = ((_v2P - GM / _r) * _pb.rx - _rvP * _pb.vx) / GM;
+                    var _eyP = ((_v2P - GM / _r) * _pb.ry - _rvP * _pb.vy) / GM;
+                    var _eV = Math.sqrt(_exP * _exP + _eyP * _eyP);
+                    console.log('[PAY-ORBIT] r=' + _r.toFixed(2) +
+                      ' vr=' + _vrP.toFixed(6) +
+                      ' vt=' + _vt.toFixed(4) +
+                      ' speed=' + _spdP.toFixed(4) +
+                      ' v_circ=' + _vcP.toFixed(4) +
+                      ' ecc_formula=' + _e.toExponential(3) +
+                      ' ecc_vector=' + _eV.toExponential(3));
+                  } catch (e) {}
                   var _apoK = -1, _periK = -1;
                   if (_E < 0) { var _a = -GM / (2 * _E); _apoK = (_a * (1 + _e) - Re) / 1000; _periK = (_a * (1 - _e) - Re) / 1000; }
                   var _dvx = _pb.vx - (_st._stageVx || 0);
