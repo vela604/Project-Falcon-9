@@ -1865,21 +1865,33 @@ const tau_target = tau_desired - dNext.torqueEnvironmental;
             const thetaApoLive = speed_c > 1 ? Math.atan2(-body.vx, body.vy) : body.theta;
             _st.coast2TargetThetaLive = thetaApoLive;
 
-            // OMEGA FEEDFORWARD — target rotation rate, tick-to-tick.
-            // The target (velocity direction) rotates at ~v/r = 0.066 deg/s
-            // at LEO. Plain PD settles at steady-state lag = KD*omega_tgt/KP
-            // (here ~0.066-0.078 deg). NOT an RCS limit — RCS bang-bang
-            // floor is much lower (~6e-4 deg/burst).
-            // Fix: use omega_rel = omega - omega_target in KD term. At
-            // steady state (omega = omega_target), tau_PD -> 0, err -> 0.
+            // OMEGA FEEDFORWARD — target rotation rate, ANALYTIC formula
+            // valid for ANY Kepler orbit (circle, ellipse, everything).
+            //
+            // thetaApoLive = atan2(-vx, vy) (velocity direction). Its rate:
+            //   dtheta/dt = (vx*ay - vy*ax) / v^2       (chain rule)
+            // For ballistic: ax = -GM*rx/r^3, ay = -GM*ry/r^3
+            //   = -GM*(rx*vy - ry*vx) / (r^3 * v^2)
+            //   = -GM*h / (r^3 * v^2)                   (h = specific ang. mom.)
+            //
+            // Sanity (circular): h = r*v, v^2 = GM/r -> |omega| = v/r. Correct.
+            // Ellipse: same formula, h from actual r x v. No eccentricity
+            // assumption. Works everywhere.
+            //
+            // WHY NOT finite-diff: prev-tick thetaApoLive - current, divided
+            // by dt, gives lagged rate + numerical noise. That residual was
+            // the 0.0555 deg attErr (matches 0.078-0.0555 = 22.5 deg-per-
+            // cent of original PD lag; slow drift not oscillation confirms
+            // systematic lag, not noise).
             let _omegaTgt = 0;
-            if (Number.isFinite(_st.hold2PrevThetaApoLive) &&
-                Number.isFinite(_st.hold2PrevT) &&
-                simT > _st.hold2PrevT) {
-              const _dtGT = simT - _st.hold2PrevT;
-              if (_dtGT > 0 && _dtGT < 0.1) {
-                _omegaTgt = _wrapPi(thetaApoLive - _st.hold2PrevThetaApoLive) / _dtGT;
-                if (Math.abs(_omegaTgt) > 0.1) _omegaTgt = 0;
+            {
+              const _rO = Math.hypot(body.rx, body.ry);
+              const _vO = Math.hypot(body.vx, body.vy);
+              if (_rO > 1 && _vO > 0.01 && env && Number.isFinite(env.GM_EARTH)) {
+                const _hO = body.rx * body.vy - body.ry * body.vx;
+                _omegaTgt = -env.GM_EARTH * _hO / (_rO * _rO * _rO * _vO * _vO);
+                // Glitch guard — reasonable LEO range
+                if (Math.abs(_omegaTgt) > 0.05) _omegaTgt = 0;
               }
             }
             _st.hold2PrevThetaApoLive = thetaApoLive;
