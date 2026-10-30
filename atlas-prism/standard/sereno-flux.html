@@ -1416,7 +1416,7 @@ table.rv-t{width:100%;border-collapse:collapse;font-size:11.5px;font-variant-num
       results.slice().sort((a, b) => a.bias - b.bias).forEach((r) => {
         const valid = !!(r.metrics && r.metrics.payloadCleared && !r.metrics.crashed);
         const info = r.metrics
-          ? 'apo=' + fmt(r.metrics.apogeeKm, 2) + ' peri=' + fmt(r.metrics.perigeeKm, 2) +
+          ? 'apo=' + fmt(r.metrics.apogeeKm, 3) + ' peri=' + fmt(r.metrics.perigeeKm, 3) +
             ' cleared=' + r.metrics.payloadCleared + ' crashed=' + r.metrics.crashed
           : (r.reason || 'no metrics');
         log('  bias=' + r.bias.toFixed(4).padStart(8) + '  ' +
@@ -1874,8 +1874,8 @@ table.rv-t{width:100%;border-collapse:collapse;font-size:11.5px;font-variant-num
       '<div><span>Score</span><b class="c">' + f(score, 3) + '</b></div>' +
       '<div><span>Rank vs table</span><b>' + esc(rankTxt) + '</b></div>' +
       '<div><span>Lead</span><b class="a">' + f(r.lead, 4) + '<small>s</small></b></div>' +
-      '<div><span>Apogee</span><b>' + f(m.apogeeKm, 2) + '<small>km</small></b></div>' +
-      '<div><span>Perigee</span><b>' + f(m.perigeeKm, 2) + '<small>km</small></b></div>' +
+      '<div><span>Apogee</span><b>' + f(m.apogeeKm, 3) + '<small>km</small></b></div>' +
+      '<div><span>Perigee</span><b>' + f(m.perigeeKm, 3) + '<small>km</small></b></div>' +
       '<div><span>Deploy</span><b>' + f(m.deployTimeS, 1) + '<small>s</small></b></div>' +
       '<div><span>Booster fuel</span><b>' + f(m.boosterFuelLeftKg, 0) + '<small>kg</small></b></div></div>';
     if (verdict) t += verdict;
