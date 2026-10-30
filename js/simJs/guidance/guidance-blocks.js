@@ -2057,24 +2057,31 @@ const tau_target = tau_desired - dNext.torqueEnvironmental;
                 _st.hold2IntArmed = true;
                 _st.hold2LastRcsTorque = 0;
               }
-              // 1-tick predictive: predict theta/omega at N+1 using the ACTUAL
-              // RCS torque applied last tick (which is still acting now).
-              const tauRcsNow = Number.isFinite(_st.hold2LastRcsTorque) ? _st.hold2LastRcsTorque : 0;
-              const alphaPred = d.alphaAng + tauRcsNow / I_next;
-              const thetaPred = body.theta + body.omega * dt + 0.5 * alphaPred * dt * dt;
-              const omegaPred = body.omega + alphaPred * dt;
-
-              // Target predicted at N+1 (matches thetaPred/omegaPred).
-              const _thetaApoLivePred = thetaApoLive + _omegaTgt * dt;
-              const thetaErr = _wrapPi(thetaPred - _thetaApoLivePred);
+              // PLAIN PD on CURRENT actual state (no 1-tick prediction of body).
+              //
+              // Earlier version predicted body's N+1 state via:
+              //   alphaPred = alphaEnv + tauRcsLastTick/I
+              //   thetaPred = theta + omega*dt + 0.5*alphaPred*dt^2
+              //   omegaPred = omega + alphaPred*dt
+              // User observed this destabilizes: the "imagined" next-tick state
+              // (built from the last-commanded RCS torque) fights the actual
+              // controller output. When RCS quantization causes the actual
+              // applied torque to differ from the last-commanded one (likely at
+              // bang-bang boundaries), the predicted state becomes wrong, KD
+              // amplifies the error, RCS fires harder, system chases a ghost.
+              //
+              // Reverting to plain PD on actual state. Analytic omega_target
+              // feedforward (_omegaTgt) is KEPT — it's a TARGET rotation rate
+              // (physics-correct, ellipse-safe), not a predicted body state.
+              const thetaErr = _wrapPi(body.theta - thetaApoLive);
               const kiH2 = Number.isFinite(cfg.COAST_HOLD_ATT_KI) ? cfg.COAST_HOLD_ATT_KI : 2.0;
               const kpH2 = Number.isFinite(cfg.COAST_HOLD_ATT_KP) ? cfg.COAST_HOLD_ATT_KP : 5.0;
               const kdH2 = Number.isFinite(cfg.COAST_HOLD_ATT_KD) ? cfg.COAST_HOLD_ATT_KD : 5.0;
               if (Math.abs(thetaErr) < 0.5 * Math.PI / 180) {
                 _st.hold2ThetaInt = Math.max(-0.005, Math.min(0.005, _st.hold2ThetaInt + thetaErr * dt));
               }
-              // Rate RELATIVE to rotating target — kills PD steady-state lag.
-              const omegaRel = omegaPred - _omegaTgt;
+              // Rate RELATIVE to rotating target (feedforward on target only).
+              const omegaRel = body.omega - _omegaTgt;
               const tau_desired =
                 -I_next * (kpH2 * thetaErr + kdH2 * omegaRel + kiH2 * _st.hold2ThetaInt);
               const result = GuideRCS.targetTorqueRcsNoNetForce(snapshot, tau_desired, idx);
