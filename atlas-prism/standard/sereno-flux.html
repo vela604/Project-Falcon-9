@@ -1485,7 +1485,7 @@ table.rv-t{width:100%;border-collapse:collapse;font-size:11.5px;font-variant-num
     res.scan.forEach((r) => {
       const best = r.li === res.best.li, mine = userLi != null && r.li === userLi;
       t += '<tr class="' + (best ? 'best ' : '') + (mine ? 'mine' : '') + '"><td>' + r.li + (best ? '<i class="rv-chip best">BEST</i>' : '') + (mine ? '<i class="rv-chip mine">YOURS</i>' : '') + '</td>' +
-        '<td class="n">' + f(r.li * Ql, 4) + '</td><td class="n">' + f(r.score, 2) + '</td><td class="n">' + f(r.deployS, 1) + '</td><td class="n">' + f(r.apoKm, 2) + '</td><td class="n">' + f(r.periKm, 2) + '</td></tr>';
+        '<td class="n">' + f(r.li * Ql, 4) + '</td><td class="n">' + f(r.score, 2) + '</td><td class="n">' + f(r.deployS, 1) + '</td><td class="n">' + f(r.apoKm, 3) + '</td><td class="n">' + f(r.periKm, 3) + '</td></tr>';
     });
     return t + '</tbody></table></div>';
   }
