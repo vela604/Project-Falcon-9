@@ -758,6 +758,20 @@ return {
     // Payload eject kick — physical hardware spec, read by CIRCULARIZE
     // for cutoff pre-compensation. Same number physics.js applies.
     PAYLOAD_EJECT_KICK_MPS: CONFIG.PAYLOAD_EJECT_KICK_MPS,
+    // Prograde offset from stage base to payload spawn. At deploy time (post-
+    // separation, post-fairing-split) the active body is the STAGE alone, so
+    // physics.js's active.members = [stage] and totalH = stage.height.
+    // Return the STAGE member's height only (not the full stack — that's
+    // ~58m and would predict payload vr_pay ~5x too large). Used by
+    // COAST_HOLD_2 to detect payload-frame apex vs stage-frame apex.
+    PAYLOAD_DEPLOY_OFFSET_M: (function () {
+      const members = (typeof ACTIVE_STACK_MEMBERS !== 'undefined' && ACTIVE_STACK_MEMBERS) || [];
+      for (let i = 0; i < members.length; i++) {
+        const m = members[i];
+        if (m && m.stageRole === 'stage' && Number.isFinite(m.height)) return m.height;
+      }
+      return 0;
+    })(),
     SEA_LEVEL_DENSITY: CONFIG.SEA_LEVEL_DENSITY,
     SCALE_HEIGHT: CONFIG.SCALE_HEIGHT,
     DRAG_CD: CONFIG.DRAG_CD,

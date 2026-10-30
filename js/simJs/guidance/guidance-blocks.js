@@ -1880,41 +1880,61 @@ const tau_target = tau_desired - dNext.torqueEnvironmental;
               prevVr < 0 &&
               vr_c >= 0;
 
-            // 1-TICK-AHEAD APEX PREDICTION — fixes systematic ~25m apo-peri error.
+            // PAYLOAD-APEX DETECTION — fire at the PAYLOAD's own apside, not stage's.
             //
-            // ROOT CAUSE: the old detection below fires AFTER vr has already crossed
-            // zero (post-apex). But every guidance command applies on the NEXT tick
-            // — so the payload physically spawns 1 tick PAST the apside, where
-            // vr = -g*dt ≈ -0.111 m/s (at 320km, g≈8.9, dt=1/80). The payload
-            // inherits this radial velocity, which becomes a small eccentricity
-            // (~1.9e-6, ~25.8m apo-peri split) — SYSTEMATIC, so always ~24-26m,
-            // never better. Confirmed by DEPLOY-DIAG: dvPerp=-0.11129 exactly.
+            // Physics spawns the payload at stage base + totalH (nose tip). The
+            // payload's radial direction differs from the stage's by theta ~ L/r,
+            // where L = payload spawn offset from stage CoM ~ stage.height. So
+            // the stage-frame prograde kick (3 m/s) gains a radial component
+            // in the payload frame:
+            //   vr_pay = vr_stage + (L/r)*(V_stage + KICK)
+            // At stage apex (vr_stage=0): vr_pay = +(L/r)*(V+KICK) — the payload
+            // is still CLIMBING. Its own apex is (L/r)*(V+KICK)/g seconds
+            // after the stage apex (~2s for a 320 km target). Firing at the
+            // stage apex spawns the payload while it's still climbing → ecc
+            // ~1.9e-6, split ~26m — SYSTEMATIC (matches DEPLOY-DIAG exactly).
             //
-            // FIX: predict whether the NEXT tick will be the apside. If yes, fire
-            // deploy NOW (at N-1); payload spawns at N (the actual apside, vr=0),
-            // so no radial inheritance, dvPerp→0, error drops to sub-meter.
+            // Fire 1 tick before payload-apex prediction crosses zero -> spawn
+            // lands at payload apex (vr_pay ~ 0) -> true circular payload orbit.
             //
+            // Fallback: if env.PAYLOAD_DEPLOY_OFFSET_M is missing (=0), vr_pay
+            // degenerates to vr_stage -> payload apex == stage apex -> old
+            // behavior. Acceptable degradation.
+            const _L = (env && Number.isFinite(env.PAYLOAD_DEPLOY_OFFSET_M))
+              ? env.PAYLOAD_DEPLOY_OFFSET_M : 0;
+            const _KICK = (env && Number.isFinite(env.PAYLOAD_EJECT_KICK_MPS))
+              ? env.PAYLOAD_EJECT_KICK_MPS : 0;
+            const _V_s = Math.hypot(body.vx, body.vy);
+            const _geom = (_L > 0 && r_c > 1) ? (_L / r_c) * (_V_s + _KICK) : 0;
+            const vr_pay = vr_c + _geom;
+
             // dvr/dt from the last 2 ticks. Coasting at 320km: no thrust/drag,
-            // so dvr/dt ≈ -g (radial gravity). Per tick: -g*dt ≈ -0.111 m/s.
+            // so dvr/dt ~ -g (radial gravity). Per tick: -g*dt ~ -0.111 m/s.
+            // (Payload vr drifts by the same dvrdt — L, V_s, r_c are essentially
+            // constant over one tick.)
             const dvrdt = (prevVr !== null && prevVr !== undefined && dt > 0)
               ? (vr_c - prevVr) / dt : 0;
-            const vrNext = vr_c + dvrdt * dt;
-            const apogeePeakNextTick = (vr_c > 0) && (vrNext <= 0);
-            const perigeePeakNextTick = (vr_c < 0) && (vrNext >= 0);
+            const vrNext = vr_pay + dvrdt * dt;
+            const apogeePeakNextTick = (vr_pay > 0) && (vrNext <= 0);
+            const perigeePeakNextTick = (vr_pay < 0) && (vrNext >= 0);
 
             // Prefer the predicted (fire at N-1, spawn AT apside) path over the
             // confirmed (fire at apex, spawn 1 tick late) fallback. Old detection
             // is kept so a noisy dvr/dt or unusual tick ordering can't strand
             // us without a deploy trigger.
+            // Payload apex only — stage apex is ~2s earlier and would fire too
+            // early, defeating the whole point of the payload-frame prediction.
             const deployPeak = (_st.coast2TargetApside === 'peri')
-              ? (perigeePeakNextTick || perigeePeak)
-              : (apogeePeakNextTick || apogeePeak);
+              ? perigeePeakNextTick
+              : apogeePeakNextTick;
 
             // [DEBUG] APEX tick log — only when near apex.
-            if (Math.abs(vr_c) < 0.3) {
+            if (Math.abs(vr_pay) < 0.3) {
               console.log('[APEX-t' + simT.toFixed(4) + ']' +
                 ' vr=' + vr_c.toFixed(5) +
-                ' prevVr=' + (prevVr !== null && prevVr !== undefined ? prevVr.toFixed(5) : 'null') +
+                ' vr_pay=' + vr_pay.toFixed(5) +
+                ' geom=' + _geom.toFixed(5) +
+                ' L=' + _L.toFixed(2) +
                 ' dvrdt=' + (Number.isFinite(dvrdt) ? dvrdt.toFixed(3) : 'NaN') +
                 ' vrNext=' + (Number.isFinite(vrNext) ? vrNext.toFixed(5) : 'NaN') +
                 ' predNext=' + apogeePeakNextTick +
@@ -2084,28 +2104,12 @@ const tau_target = tau_desired - dNext.torqueEnvironmental;
               }
             }
 
-            // Attitude hold — same as V2's DONE phase
-            if (
-              dNext &&
-              dNext.massProps &&
-              _st.coast2TargetThetaInertial !== null
-            ) {
-              const I_next = dNext.massProps.I;
-              const thetaErr = _wrapPi(
-                body.theta - _st.coast2TargetThetaInertial,
-              );
-              const tau_desired =
-                -I_next *
-                (cfg.CIRC_ATT_KP * thetaErr + cfg.CIRC_ATT_KD * body.omega);
-              const result = GuideRCS.targetTorqueRcsNoNetForce(
-                snapshot,
-                tau_desired,
-                idx,
-              );
-              if (result && result.fires.length)
-                _send(Guidance.cmdRcsDuty(result.duties, idx));
-              else _send(Guidance.cmdRcsDuty(null, idx));
-            }
+            // Stage fully OFF in DONE — engines + gimbal zero'd above, RCS
+            // explicitly relinquished too. Mission-level DONE_DWELL used to
+            // keep firing RCS to hold attitude, which burned propellant for
+            // no reason: the suicide block at dwell end rotates to retrograde
+            // on its own anyway.
+            _send(Guidance.cmdRcsDuty(null, idx));
 
             // Payload monitor: wait for at least expectedPayloadCount
             // payload bodies to spawn and clear the stage.
