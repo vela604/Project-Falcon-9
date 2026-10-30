@@ -2086,7 +2086,7 @@ const tau_target = tau_desired - dNext.torqueEnvironmental;
 
             // DEPLOY RESULT: log payload post-eject state once
             if (!_st._payloadLogged) {
-              var _pb = state.bodies.find(function(x){ return x && x.payloadBody; });
+              var _pb = snapshot.bodies.find(function(x){ return x && x.payloadBody; });
               if (_pb) {
                 _st._payloadLogged = true;
                 try {
