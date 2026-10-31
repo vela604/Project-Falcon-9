@@ -3134,7 +3134,7 @@ setState(s) {
       BOOSTBACK_TAPER_M: 150000,           // throttle (all burn engines) fades 100% -> floor over the last this-many metres of error
       // PRE_ENTRY_STEER — altitude-triggered alignment + entry-burn handoff.
       // Both are guesses — tune in sim.
-      PRE_ENTRY_ALIGN_ALT_KM: 80,          // start RCS alignment at this altitude AGL on descent
+      PRE_ENTRY_ALIGN_ALT_KM: 100,         // start RCS alignment at this altitude AGL on descent
       ENTRY_BURN_ALT_KM: 60,               // transition to ENTRY_BURN at this altitude AGL
     },
     importantFields: [],
@@ -3200,6 +3200,8 @@ setState(s) {
         preEntryOmegaDegS: null,
         preEntryTgtDeg: null,
         preEntryMode: null,            // ACCEL | BRAKE | TRIM (during ALIGN)
+        preEntryPrevTgt: null,         // last-tick target theta (for wTgt/dTgt)
+        preEntryPrevT: null,           // last-tick simTime
         // Add other per-phase scratch state here
       };
 
@@ -3771,12 +3773,39 @@ setState(s) {
             }
 
             // Target: nose OPPOSITE to NET velocity (retrograde).
-            // Nose = (-sinθ, cosθ); want nose = -v̂ = -(vx,vy)/|v|.
-            // → θ = atan2(vx/|v|, -vy/|v|) = atan2(vx, -vy).
+            // Verified against nose = (-sinθ, cosθ) convention, ALL 4 quadrants:
+            //   vx>0, vy=0  → tgt=+π/2, nose=(-1,0)=-x̂ ✓ (vel=+x̂, retro)
+            //   vx=0, vy<0  → tgt=0,    nose=(0,+1)=+ŷ ✓ (vel=-ŷ, retro)
+            //   vx=0, vy>0  → tgt=π,    nose=(0,-1)=-ŷ ✓ (vel=+ŷ, retro)
+            //   vx<0, vy=0  → tgt=-π/2, nose=(+1,0)=+x̂ ✓ (vel=-x̂, retro)
+            // Equivalent forms: atan2(vx,-vy) == atan2(-vx,vy)+π (mod 2π).
+            //
+            // "target -AoA" note: in sim's formula alphaDeg = asin(velBodyX/|v|)
+            // where velBodyX = velocity along body-x (perpendicular to nose).
+            // At retrograde, velBodyX=0 → alphaDeg=0 (ambiguous with prograde
+            // in ±90° range). Using theta+alphaDeg as target works ONLY near-
+            // retrograde (small offset); atan2 form is unambiguous for all
+            // cases — that's why we keep it. The "problem" wasn't the formula
+            // but the missing TARGET-ROTATION compensation below (velocity
+            // direction rotates during descent; without dTgt/wTgt the controller
+            // continuously lags a moving target).
             const speed = Math.hypot(d.vx, d.vy);
             if (!(speed > 1)) { _rcsOff(); break; }
             const tgtNow = Math.atan2(d.vx, -d.vy);
             _st.preEntryTgtDeg = tgtNow * R2D;
+
+            // Target rotates as velocity direction changes each tick (up to
+            // ~0.5-1 deg/s during steep descent). Compute wTgt = d(tgt)/dt,
+            // like FLIP does. dTgt = wTgt*dt corrects the one-tick prediction;
+            // wRel = omega - wTgt kills the steady-state lag in braking calc.
+            let wTgt = 0;
+            if (_st.preEntryPrevTgt !== null && _st.preEntryPrevT !== null &&
+                simT > _st.preEntryPrevT) {
+              wTgt = _wrapPi(tgtNow - _st.preEntryPrevTgt) / (simT - _st.preEntryPrevT);
+              if (Math.abs(wTgt) > 0.05) wTgt = 0;  // glitch guard
+            }
+            _st.preEntryPrevTgt = tgtNow;
+            _st.preEntryPrevT = simT;
 
             // HOLD — PD attitude hold, watch for entry-burn trigger
             if (_st.preEntrySub === 'HOLD') {
@@ -3790,8 +3819,10 @@ setState(s) {
               _st.preEntryErrDeg = thetaErr * R2D;
               _st.preEntryOmegaDegS = d.omega * R2D;
               const kp = 0.5, kd = 4.0;  // same as insertion's CIRC_ATT_KP/KD
+              // Feedforward: (d.omega - wTgt) instead of raw d.omega — kills
+              // steady-state lag on the rotating target without extra gain.
               const result = GuideRCS.targetTorqueRcsNoNetForce(
-                snapshot, -I * (kp * thetaErr + kd * d.omega), idx
+                snapshot, -I * (kp * thetaErr + kd * (d.omega - wTgt)), idx
               );
               if (result && result.fires.length) {
                 _send(Guidance.cmdRcsDuty(result.duties, idx));
@@ -3815,7 +3846,8 @@ setState(s) {
               _st.preEntryPrevRaw = rawErr;
               _st.lastRcsTorque = 0;
               console.log("[standardRTLS] PRE_ENTRY_ALIGN start t=" + simT.toFixed(2) +
-                " err=" + (_st.preEntryEu * R2D).toFixed(1) + "deg omega=" + (d.omega * R2D).toFixed(2) + "deg/s");
+                " err=" + (_st.preEntryEu * R2D).toFixed(1) + "deg omega=" + (d.omega * R2D).toFixed(2) + "deg/s" +
+                " tgt=" + (tgtNow * R2D).toFixed(1) + " theta=" + (d.theta * R2D).toFixed(1) + "deg");
             } else {
               _st.preEntryEu += _wrapPi(rawErr - _st.preEntryPrevRaw);
               _st.preEntryPrevRaw = rawErr;
@@ -3834,13 +3866,17 @@ setState(s) {
               break;
             }
 
-            // One-tick-ahead prediction (current RCS torque keeps acting)
+            // One-tick-ahead prediction (current RCS torque keeps acting).
+            // dTgt = wTgt*dt — target's own rotation this tick. Without it,
+            // the prediction assumes a stationary target and the controller
+            // fires against stale error on descent (dt*wTgt can be 0.01-0.02°
+            // per tick, compounding across the alignment window).
             const aTot = d.alphaAng + _st.lastRcsTorque / I;
             const dTheta = d.omega * dt + 0.5 * aTot * dt * dt;
             const wP = d.omega + aTot * dt;
-            // Target rotates negligibly over one tick at high altitude
-            const eP = _st.preEntryEu - dTheta;
-            const wRelP = wP;
+            const dTgt = wTgt * dt;
+            const eP = _st.preEntryEu + dTgt - dTheta;
+            const wRelP = wP - wTgt;
 
             // Bang-bang decision (same structure as FLIP)
             const sgn = eP >= 0 ? 1 : -1;
@@ -3959,6 +3995,8 @@ setState(s) {
           _st.preEntryOmegaDegS = null;
           _st.preEntryTgtDeg = null;
           _st.preEntryMode = null;
+          _st.preEntryPrevTgt = null;
+          _st.preEntryPrevT = null;
         },
 
         tick(snapshot) {
