@@ -3435,10 +3435,58 @@ setState(s) {
         if (Number.isFinite(res.torqueAchieved)) return res.torqueAchieved;
         return res.fires ? res.fires.reduce(function (a, f) { return a + f.torque * (Number.isFinite(f.duty) ? f.duty : 1); }, 0) : 0;
       }
+      // Lateral-only RCS: balanced lateral pairs (TR+BL for +τ, TL+BR for -τ). No up/dn.
+      function _pesRcsLateralOnly(snapshot, idx, targetTorque) {
+        if (!snapshot || !snapshot.bodies) return null;
+        const body = snapshot.bodies[idx];
+        if (!body || !Array.isArray(body.pods)) return null;
+        if (!Number.isFinite(targetTorque)) return null;
+        const d = Derivation.derive(snapshot, idx);
+        if (!d || !d.massProps) return null;
+        const bySide = { L: [], R: [] };
+        body.pods.forEach(function(p){ if (p.side === 'L' || p.side === 'R') bySide[p.side].push(p); });
+        bySide.L.sort(function(a,b){ return (b.offsetFromStackBase||0)-(a.offsetFromStackBase||0); });
+        bySide.R.sort(function(a,b){ return (b.offsetFromStackBase||0)-(a.offsetFromStackBase||0); });
+        if (!bySide.L.length || !bySide.R.length) return null;
+        const topL = bySide.L[0], botL = bySide.L[bySide.L.length-1];
+        const topR = bySide.R[0], botR = bySide.R[bySide.R.length-1];
+        const refM = body.members[topL.memberIdx];
+        if (!refM || !refM.rcsThruster) return null;
+        const refT = Derivation.getTypeById(refM.rcsThruster.thrusterTypeId);
+        if (!refT) return null;
+        const ve = Derivation.typeParam(refT, 've');
+        const mdot = refM.rcsThruster.massFlowRate;
+        if (!Number.isFinite(ve) || !Number.isFinite(mdot)) return null;
+        const F = mdot * ve;
+        if (!(F > 0)) return null;
+        const yTop = topL.offsetFromStackBase || 0;
+        const yBot = botL.offsetFromStackBase || 0;
+        const tauL_max = Math.max(0, (yTop - yBot) * F);
+        const absTau = Math.abs(targetTorque);
+        const sign = targetTorque >= 0 ? 1 : -1;
+        const duty = tauL_max > 0 ? Math.min(1, absTau / tauL_max) : 0;
+        const duties = {};
+        if (sign > 0 && duty > 1e-9) {
+          duties[topR.podId] = { up: 0, dn: 0, lat: duty };
+          duties[botL.podId] = { up: 0, dn: 0, lat: duty };
+        } else if (sign < 0 && duty > 1e-9) {
+          duties[topL.podId] = { up: 0, dn: 0, lat: duty };
+          duties[botR.podId] = { up: 0, dn: 0, lat: duty };
+        }
+        return {
+          fires: [],
+          duties: duties,
+          torqueAchieved: sign * duty * tauL_max,
+          saturated: absTau > tauL_max,
+          tauL_max: tauL_max,
+          F: F,
+        };
+      }
+
       function _pesRcsMax(snapshot, idx) {
         const BIG = 1e12;
-        const rp = GuideRCS.targetTorqueRcsNoNetForce(snapshot, +BIG, idx);
-        const rn = GuideRCS.targetTorqueRcsNoNetForce(snapshot, -BIG, idx);
+        const rp = _pesRcsLateralOnly(snapshot, idx, +BIG);
+        const rn = _pesRcsLateralOnly(snapshot, idx, -BIG);
         return { pos: Math.max(0, _pesRcsAch(rp)), neg: Math.max(0, -_pesRcsAch(rn)) };
       }
 
@@ -4420,9 +4468,9 @@ setState(s) {
               if (t < loFin) loFin = t;
               if (t > hiFin) hiFin = t;
             }
-            // Feasibility: fins + FIXED CW RCS. No ACW authority from RCS (only fires CW).
-            const Ltot = loFin + rcsCwTorque;
-            const Utot = hiFin;
+            const rcsMax = _pesRcsMax(snapshot, idx);
+            const Ltot = loFin - PES_RCS_MARGIN * rcsMax.neg;
+            const Utot = hiFin + PES_RCS_MARGIN * rcsMax.pos;
 
             const ds1 = Derivation.deriveForState(snapshot, idx, { theta: d.theta + D2R });
             let J = 0, dAdTh = 0, Jh = 0;
@@ -4470,21 +4518,16 @@ setState(s) {
             const cNext = cAct + Math.max(-maxStep, Math.min(maxStep, cStar - cAct));
             const tauFinNext = finT(cNext);
 
-            // ---- 5. RCS: FIXED CW lateral (BR.lat + TL.lat), full duty, continuously ----
-            // User design: continuous CW bias-assist (RCS authority too small for real-time control).
+            // ---- 5. RCS: lateral-only dynamic (no up/dn fires) ----
+            const tauR = tauNeed - tauFinNext;
             let rcsAch = 0;
-            if (topLpod && botRpod) {
-              const rcsDuties = {};
-              rcsDuties[topLpod.podId] = { up: 0, dn: 0, lat: 1 };
-              rcsDuties[botRpod.podId] = { up: 0, dn: 0, lat: 1 };
-              _send(Guidance.cmdRcsDuty(rcsDuties, idx));
-              rcsAch = rcsCwTorque;
-              if (!_st.pesRcsLogged) {
-                _st.pesRcsLogged = true;
-                console.log("[PES-RCS] fixed CW lateral BR+TL: " + botRpod.podId +
-                  "(y=" + botRpod.offsetFromStackBase.toFixed(1) + ") + " + topLpod.podId +
-                  "(y=" + topLpod.offsetFromStackBase.toFixed(1) + ") tau=" + Math.round(rcsCwTorque) +
-                  "Nm CW, F=" + Math.round(rcsPodThrust) + "N/nozzle");
+            if (Math.abs(tauR) > PES_RCS_DEADBAND_NM) {
+              const res = _pesRcsLateralOnly(snapshot, idx, tauR);
+              if (res && res.duties && Object.keys(res.duties).length) {
+                _send(Guidance.cmdRcsDuty(res.duties, idx));
+                rcsAch = _pesRcsAch(res);
+              } else {
+                _send(Guidance.cmdRcsDuty(null, idx));
               }
             } else {
               _send(Guidance.cmdRcsDuty(null, idx));
