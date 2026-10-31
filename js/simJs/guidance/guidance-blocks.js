@@ -3140,7 +3140,7 @@ setState(s) {
       ENTRY_BURN_ENGINES: "C,0,180",       // engines lit at FULL throttle: "C" = centre, numbers = outer-ring angleDeg
       ENTRY_BURN_GIMBAL_ENGINES: "C",      // engines that gimbal to cancel env torque (subset of above; expand if SATURATED)
       ENTRY_BURN_CUTOFF_VELOCITY_MS: 600,  // cutoff when Earth-relative speed falls to this value
-      ENTRY_BURN_IMPACT_TARGET_M: -1480,   // m: bias burn target west so post-cutoff drag/fin drift lands near pad
+      ENTRY_BURN_IMPACT_TARGET_M: 0,   // m: bias burn target west so post-cutoff drag/fin drift lands near pad
       // POST_ENTRY_STEER
       POST_ENTRY_GRIDFIN_RAMP_DEG_S: 3,    // grid-fin control target ramps 0 -> max at this rate (deg/s); slower = less oscillation (guess, tune in sim)
     },
