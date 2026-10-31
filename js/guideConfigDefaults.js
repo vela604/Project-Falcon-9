@@ -343,6 +343,8 @@ leoInsertionV3: _mkDefault(
       BOOSTBACK_APPARENT_OFFSET_M: 0,
       BOOSTBACK_SIDE_CUT_M: 20000,
       BOOSTBACK_TAPER_M: 150000,
+      PRE_ENTRY_ALIGN_ALT_KM: 80,
+      ENTRY_BURN_ALT_KM: 60,
     },
   },
     ['full-mission', 'expendable'],
