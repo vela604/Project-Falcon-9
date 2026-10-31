@@ -3134,7 +3134,7 @@ setState(s) {
       BOOSTBACK_TAPER_M: 150000,           // throttle (all burn engines) fades 100% -> floor over the last this-many metres of error
       // PRE_ENTRY_STEER — altitude-triggered alignment + entry-burn handoff.
       // Both are guesses — tune in sim.
-      PRE_ENTRY_ALIGN_ALT_KM: 100,         // start RCS alignment at this altitude AGL on descent
+      PRE_ENTRY_ALIGN_ALT_KM: 100,         // start RCS alignment at this altitude AGL on descent (user, Chat 5)
       ENTRY_BURN_ALT_KM: 60,               // transition to ENTRY_BURN at this altitude AGL
     },
     importantFields: [],
@@ -3772,26 +3772,37 @@ setState(s) {
               }
             }
 
-            // Target: nose OPPOSITE to NET velocity (retrograde).
-            // Verified against nose = (-sinθ, cosθ) convention, ALL 4 quadrants:
-            //   vx>0, vy=0  → tgt=+π/2, nose=(-1,0)=-x̂ ✓ (vel=+x̂, retro)
-            //   vx=0, vy<0  → tgt=0,    nose=(0,+1)=+ŷ ✓ (vel=-ŷ, retro)
-            //   vx=0, vy>0  → tgt=π,    nose=(0,-1)=-ŷ ✓ (vel=+ŷ, retro)
-            //   vx<0, vy=0  → tgt=-π/2, nose=(+1,0)=+x̂ ✓ (vel=-x̂, retro)
-            // Equivalent forms: atan2(vx,-vy) == atan2(-vx,vy)+π (mod 2π).
+            // Target: nose OPPOSITE to AIR-RELATIVE net velocity (retrograde
+            // in the air frame, not the inertial frame).
             //
-            // "target -AoA" note: in sim's formula alphaDeg = asin(velBodyX/|v|)
-            // where velBodyX = velocity along body-x (perpendicular to nose).
-            // At retrograde, velBodyX=0 → alphaDeg=0 (ambiguous with prograde
-            // in ±90° range). Using theta+alphaDeg as target works ONLY near-
-            // retrograde (small offset); atan2 form is unambiguous for all
-            // cases — that's why we keep it. The "problem" wasn't the formula
-            // but the missing TARGET-ROTATION compensation below (velocity
-            // direction rotates during descent; without dTgt/wTgt the controller
-            // continuously lags a moving target).
-            const speed = Math.hypot(d.vx, d.vy);
-            if (!(speed > 1)) { _rcsOff(); break; }
-            const tgtNow = Math.atan2(d.vx, -d.vy);
+            // WHY AIR-RELATIVE (was inertial before — root cause of the ~20°
+            // displayed-AoA complaint):
+            //   derivation.js computes d.alphaDeg against relV:
+            //     relVx = vx - (wind + ω·ry)     [ω·r ≈ 465 m/s at 100 km]
+            //     relVy = vy - (wind - ω·rx)
+            //     velBodyX = relV · body-X(θ)     [body-X = (cosθ, sinθ)]
+            //     alphaDeg = asin(velBodyX / |relV|)
+            //   At 100 km the Earth-rotation term (~465 m/s) is 20-40% of the
+            //   descent speed (~1000-2000 m/s). Aligning to INERTIAL retrograde
+            //   (atan2(vx, -vy)) leaves 15-20° of air-relative alpha, shown as
+            //   AoA ≈ -20°. The formula was correct — it targeted the wrong
+            //   frame.
+            //
+            // FIX: use d.relVx, d.relVy (already computed by derivation,
+            // includes wind + surface rotation). Now HOLD settles with
+            // alphaDeg ≈ 0, matching user expectation.
+            //
+            //   Example check: v=(353,-2000), θ=10° (inertial target).
+            //     relV=(-112,-2000), velBodyX=-458, α=-13°. Matches user.
+            //     air-relative target atan2(-112, 2000) = -3.2°, settles
+            //     there → velBodyX=0 → α=0. ✓
+            //
+            // NOTE: ENTRY_BURN (later phase) should still use INERTIAL
+            // retrograde (burning along nose at air-relative-retro would leave
+            // a small residual inertial velocity). Different frame per phase.
+            const speedRelV = Math.hypot(d.relVx, d.relVy);
+            if (!(speedRelV > 1)) { _rcsOff(); break; }
+            const tgtNow = Math.atan2(d.relVx, -d.relVy);
             _st.preEntryTgtDeg = tgtNow * R2D;
 
             // Target rotates as velocity direction changes each tick (up to
@@ -3819,6 +3830,18 @@ setState(s) {
               _st.preEntryErrDeg = thetaErr * R2D;
               _st.preEntryOmegaDegS = d.omega * R2D;
               const kp = 0.5, kd = 4.0;  // same as insertion's CIRC_ATT_KP/KD
+              // Periodic HOLD telemetry — every 5 sim-sec. Confirms alphaDeg ≈ 0
+              // (air-relative retrograde target on track) and err → 0.
+              if (Math.round(simT * 16) % 400 === 0) {
+                const alphaNow = Number.isFinite(d.alphaDeg) ? d.alphaDeg : NaN;
+                console.log("[PRE_ENTRY_HOLD-DBG] t=" + simT.toFixed(2) +
+                  " alt=" + altKm.toFixed(1) + "km" +
+                  " theta=" + (d.theta * R2D).toFixed(2) + "deg" +
+                  " tgt=" + (tgtNow * R2D).toFixed(2) + "deg" +
+                  " err=" + (thetaErr * R2D).toFixed(3) + "deg" +
+                  " alphaDeg=" + (Number.isFinite(alphaNow) ? alphaNow.toFixed(3) : '?') +
+                  " omega=" + (d.omega * R2D).toFixed(3) + "deg/s");
+              }
               // Feedforward: (d.omega - wTgt) instead of raw d.omega — kills
               // steady-state lag on the rotating target without extra gain.
               const result = GuideRCS.targetTorqueRcsNoNetForce(
@@ -3847,7 +3870,8 @@ setState(s) {
               _st.lastRcsTorque = 0;
               console.log("[standardRTLS] PRE_ENTRY_ALIGN start t=" + simT.toFixed(2) +
                 " err=" + (_st.preEntryEu * R2D).toFixed(1) + "deg omega=" + (d.omega * R2D).toFixed(2) + "deg/s" +
-                " tgt=" + (tgtNow * R2D).toFixed(1) + " theta=" + (d.theta * R2D).toFixed(1) + "deg");
+                " tgt=" + (tgtNow * R2D).toFixed(1) + " theta=" + (d.theta * R2D).toFixed(1) + "deg" +
+                " alphaDeg=" + (Number.isFinite(d.alphaDeg) ? d.alphaDeg.toFixed(1) : '?'));
             } else {
               _st.preEntryEu += _wrapPi(rawErr - _st.preEntryPrevRaw);
               _st.preEntryPrevRaw = rawErr;
