@@ -4153,6 +4153,16 @@ setState(s) {
             const R2D = 180 / Math.PI;
             const altKm = d.altitudeAGL / 1000;
             const omegaE = env.EARTH_OMEGA || 0;
+            // Grid-fin tilt that gives CW body torque (tail-first descent, fins
+            // above CoM; physics.js: a = GRIDFIN_CONTROL_SIGN(-1)*controlDeg).
+            // Flip to +1 if sim shows ACW (wrong-way) rotation.
+            const PES_CTRL_SIGN = -1;
+            const PES_CTRL_CAP_DEG = 90;   // upper request; worker clamps to typeConstants.maxControlDeg (default 30)
+            // Grid-fin tilt that gives CW body torque (tail-first descent, fins
+            // above CoM; physics.js: a = GRIDFIN_CONTROL_SIGN(-1)*controlDeg).
+            // Flip to +1 if sim shows ACW (wrong-way) rotation.
+            const PES_CTRL_SIGN = -1;
+            const PES_CTRL_CAP_DEG = 90;   // upper request; worker clamps to typeConstants.maxControlDeg (default 30)
 
             if (!_st.pesInit) {
               _st.pesInit = true;
