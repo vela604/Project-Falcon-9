@@ -82,7 +82,7 @@ torqueEnvironmental, sinAlpha, alphaDeg (AoA), earthSurfaceV, relVx/relVy/speedR
 - `Derivation.deriveForState(snapshot, idx, overrideBody, …)` = derive at a predicted state.
 - `Derivation.getEnv()` → `DT` (tick, ~1/80 s), `GM_EARTH`, `EARTH_RADIUS`,
   `REMOTE_AREA_*` (resting-area values used by the suicide block), Earth rotation rate
-  (name used inside suicide block as `omegaE` — **check exact env key before use**).
+  (env key confirmed: **`EARTH_OMEGA`** = 7.2921159e-5 rad/s).
 
 **`GuideRCS.targetTorqueRcs(snapshot, torque, idx)`** → `{fires[], duties{podId:{up,dn,lat}},
 torqueAchieved, saturated}`. Greedy fill: **passing ±1e12 fires every helping nozzle at
@@ -123,7 +123,7 @@ fast-forward workers rebuild guidance from `exportGuideState()` mid-flight.
 | 1 | `standardRTLS` block skeleton (7 phases, lifecycle, status, state) | ✅ done | at end of `FUNDAMENTAL_BLOCKS` |
 | 2 | Handover at end of `SEPARATED_AXIAL` → pusher off, RCS null, rtlsBlock.start(booster) | ✅ done | block ticks every tick in parallel with stage phases |
 | 3 | **FLIP** phase | ✅ done, user-verified "perfect, fast turn & settle" | see §5 |
-| 4 | BOOSTBACK_BURN | ✅ implemented + offline-checked (`rtls-bb-check.js`); ⏳ sim verification by user | see §6.1 |
+| 4 | BOOSTBACK_BURN | ✅ done, sim-verified | see §6.1 |
 | 5 | PRE_ENTRY_STEER | ⬜ | |
 | 6 | ENTRY_BURN | ⬜ | |
 | 7 | POST_ENTRY_STEER | ⬜ | |
@@ -131,6 +131,7 @@ fast-forward workers rebuild guidance from `exportGuideState()` mid-flight.
 | 9 | TOUCHDOWN | ⬜ | |
 | 10 | Phase timeline / telemetry display for booster phases | ⬜ | see §6.4 |
 | 11 | Docs: add a `LANDBACK.md` (or section) describing the finished guide | ⬜ | at the end |
+| 12 | RCS 5 kg/s + SEP_ANG_ACCEL -3 + SEP_OMEGA 30 (fleet + config) | ✅ done by user | affected FLIP timing estimates; SEPARATED_AXIAL pre-spin now ~-9°/s at handover (3s × 3°/s²) |
 
 ## 5. What is implemented
 
@@ -159,9 +160,9 @@ lbInsertionBlock, lbSuicideBlock, lbRtlsBlock`. Config bag: `_lbConfig.rtls`.
   (rad/s), `FLIP_TIMEOUT_S 120`. Mirrored in `guideConfigDefaults.js` → `landbackV1` → `rtls`.
 
 ### 5.3 FLIP algorithm (done)
-1. **First tick:** read state. Compute angle error both ways round (+ and −), time for
-   each with bang-bang using the real RCS torque available each way and the current
-   ω; pick the faster (the way the booster is already spinning usually wins). Commit.
+1. **First tick:** direction is FIXED negative (clockwise) — SEPARATED_AXIAL
+   already imparts this spin via `BOOSTER_SEP_ANG_ACCEL_DEG_S2`, so counter-rotating
+   would waste torque. Commit immediately (Chat 4f).
 2. Target = nose opposite the local-horizontal (tangential) velocity; target, error and
    ω (relative to the target's own slow rotation) are live every tick. Error is tracked
    **unwrapped** along the committed direction.
@@ -170,7 +171,8 @@ lbInsertionBlock, lbSuicideBlock, lbRtlsBlock`. Config bag: `_lbConfig.rtls`.
    full opposite torque. Only the last braking tick is trimmed (`TRIM`: just enough to
    zero ω).
 4. Exit when |err| < tol and |ω_rel| < tol → RCS off → next phase.
-Verified offline (9 cases, predicted time vs actual within ~1 s) and by the user in-sim.
+User-verified in sim (Chat 3, "perfect, fast turn & settle"). Pusher removed
+Chat 5, now pure RCS with 5 kg/s nozzles (10× authority).
 
 ## 6. Roadmap — remaining phases (design notes, NOT decisions)
 
@@ -183,15 +185,15 @@ the next chat can ask the right things quickly.** Do not implement beyond what t
 arcOffsetM/EARTH_RADIUS (formula assumed; `env.LANDING_PADS` else fallback table LZ-1 400 / LZ-2 700 / LZ-3 1000 m).
 **Constants (`rtls.*`):** `BOOSTBACK_ENGINES` "C,0,180" (centre + the two extreme octaweb engines; string, not array),
 `BOOSTBACK_APPARENT_OFFSET_M` 0 (metres, converted to angle via EARTH_RADIUS) (+ = east of pad; aim short so drag/steer covers the rest),
-`BOOSTBACK_SIDE_CUT_M` 220000, `BOOSTBACK_TAPER_M` 55000 (values are guesses — tune in sim).
+`BOOSTBACK_SIDE_CUT_M` 20000, `BOOSTBACK_TAPER_M` 150000 (current code defaults; 220000/55000 were earlier guesses — updated in Chat 4d).
 **Logic:** THREE (all selected engines full) → when predicted-impact error ≤ SIDE_CUT the outer ones go off →
 CENTER (throttle tapers 100 % → 39 % floor as error 55 km → 0) → SPOOL cutoff when error ≤ 0 *including spool-down dv*;
 phase ends when mass flow < 1 kg/s. Impact = vacuum leapfrog predictor (Earth-fixed). Attitude: CENTRE-engine gimbal only (target "center"), predictive law copied from circularize/suicide (dNext via deriveForState, tau − env torque),
 nose opposite horizontal velocity **latched at burn start** (live velocity would flip 180° when vE reverses — found offline).
 **Status fields:** `rtlsBbStage/ErrDeg/ImpactEfDeg/TargetEfDeg/ThrFrac`. Logs `[standardRTLS] BOOSTBACK …`.
-**Offline result:** impact error ≤ ~56 m (nominal −13 m, offset, center-only start, no-taper, 20° initial att error all OK).
-**Limits:** vacuum predictor (no drag); 3 s engine startup has no RCS attitude help; no attitude control after cutoff
-until PRE_ENTRY_STEER exists; side-engine spool dv must be ≤ SIDE_CUT.
+**Status:** sim-verified working (Chat 5). Vacuum predictor (no drag); cutoff at SIDE_CUT with spool compensation;
+attitude hold via centre-engine gimbal only. Limits: no attitude control after cutoff until PRE_ENTRY_STEER;
+side-engine spool dv must remain ≤ SIDE_CUT.
 
 (Original design notes below are superseded.)
 - Starts with nose already opposite horizontal velocity (thrust decelerates the downrange speed).
@@ -231,8 +233,9 @@ until PRE_ENTRY_STEER exists; side-engine spool dv must be ≤ SIDE_CUT.
 
 ## 7. Known risks / unverified assumptions (update as they get resolved)
 
-1. `cmdPusherTorque(0,0)` is assumed to switch the pneumatic pusher off. `physics.js` was
-   never seen. (In-sim the flip worked, but confirm no residual pusher torque.)
+1. `cmdPusherTorque(0,0)` assumed to switch pusher off. Still used in SEPARATED_AXIAL
+   (fires once, 3s window). FLIP pusher removed (Chat 5), so this only matters for the
+   pre-FLIP pre-spin — handover ω expected ≈ -9°/s with new -3°/s² setting.
 2. Booster index `boosterIdx` is fixed at split. If any body is ever removed/reordered
    (fairing halves, payload) the index could shift — watch for it.
 3. Velocity used by FLIP/targets is **inertial** tangential velocity, not Earth-relative.
@@ -255,6 +258,7 @@ until PRE_ENTRY_STEER exists; side-engine spool dv must be ≤ SIDE_CUT.
 
 ## 9. Changelog (newest first — add a line for every change)
 
+- **Chat 5:** FLIP pusher REMOVED (pure RCS-only, user-verified "powerful torque visibly firing" bug = pusher + bang-bang interaction). Restored from working Chat-3 RCS-only version (whole `standardRTLS` block replaced surgically). Also: **RCS nozzles now 5 kg/s per nozzle** (was 0.5, 10× authority — fleet/hardware change, not guidance). **SEPARATED_AXIAL constants updated**: `BOOSTER_SEP_ANG_ACCEL_DEG_S2` **-1 → -3**, `BOOSTER_SEP_TARGET_OMEGA_DEG_S` **10 → 30** (values in `guideConfigDefaults.js` **and** `guidance.js` `_lbConfig`). offline check harness retired — no more offline testing.
 - **Chat 4d:** FLIP now fires a one-shot pneumatic-pusher assist (`FLIP_PUSHER_ANG_ACCEL_DEG_S2`=10, `FLIP_PUSHER_TARGET_OMEGA_DEG_S`=25; physics.js: const angAccel until |omega|>=target then off) in the flip direction at the first tick, cut when mode leaves ACCEL / on FLIP exit; defaults are guesses (goal flip 8-12 s). BOOSTBACK: all burn engines fade 100%→floor over last `TAPER_M`=150 km of error, outer two off at `SIDE_CUT_M`=20 km, centre continues on the same fade; spool wait compares to commanded fraction.
 - **Chat 4e:** FLIP pusher reworked: NOT a config constant any more. Internal `FLIP_PUSHER_ALPHA_DEG_S2`=5 (deg/s², torque = I·this) is extra torque authority in BOTH directions added to RCS max (planner uses RCS+pusher); ACCEL/BRAKE: RCS full + pusher full, TRIM: pusher first then RCS. Sent every tick as `cmdPusherTorque(tau/I, null)` (null target omega → physics never self-cancels it); zeroed on FLIP exit. Removed `rtls.FLIP_PUSHER_*` from defaults/descriptions.
 - **Chat 4f:** FLIP direction FIXED negative/clockwise (flipEu = eNeg; SEPARATED_AXIAL already pushes that way). Pusher max cut to `FLIP_PUSHER_ALPHA_DEG_S2`=1.5 (30 % of 5), now modulated: ACCEL full, BRAKE = just what is needed to stop at target (Treq − RCS, clamped 0..max), TRIM pusher-first.
@@ -282,11 +286,11 @@ until PRE_ENTRY_STEER exists; side-engine spool dv must be ≤ SIDE_CUT.
    ```
    Study an analogous existing phase before writing (e.g. `insertion` STAGE_BURN for gimbal
    control, `suicide` for ballistic prediction and burn-cutoff logic).
-3. **Edit with a small Python script** using exact-string `assert old in text` replacement
-   (so a missed pattern fails loudly instead of silently), then `node --check <file>`.
-4. **Verify offline** with `rtls-check.js` (stubs `Guidance`, `GuideRCS`, `Derivation`; models the
-   one-tick command latency; extend it with the dynamics the new phase needs — translation,
-   mass flow, gimbal, atmosphere as required). Report predicted-vs-actual numbers briefly.
+3. **Edit with a small Node.js patch script** (bash heredoc, `patchFile(file, [{name, old, new}])`,
+   exact-string `includes()` check so a missed pattern fails loudly). Commit + push in same bash
+   block after verify (user preference, Chat 5).
+4. **Verify in sim** (user runs it and reports back). No offline harness — user
+   retired the check harness (Chat 5). Trust the code + user feedback loop.
 5. **Wire constants** only for what the user specified (see §6.4 checklist).
 6. **Deliver** changed files to `/mnt/user-data/outputs/`, call `present_files`, and include the
    **updated `plan.md`** (status, changelog, risks, questions).
@@ -300,7 +304,7 @@ Sim-side check list for the user: pick **Landback V1** in `simulation.html`, wat
 ## 11. Starting a new chat — what the user attaches
 
 Always: **`plan.md`**, **`guidance-blocks.js`**, **`guidance.js`**, **`guideConfigDefaults.js`**
-(the latest versions delivered by the previous chat), and **`rtls-check.js`**.
+(the latest versions delivered by the previous chat).
 Per phase, add as needed:
 
 | Phase / task | Extra files helpful |
