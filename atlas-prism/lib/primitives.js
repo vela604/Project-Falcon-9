@@ -944,19 +944,52 @@ p = Object.assign({}, p, { bi: clamp(p.bi + ((c === 'F1' || c === 'FE') ? +1 : -
       // Pick the side by CHEAP data: right side has an apside imminent after engine-off (seconds); wrong side ~ a half orbit away. FULL runs nearest-first, other side only as fallback.
       const okT = (c) => c === 1 || c === 2;   // FULL only for 1 or 2 crossings
       const nearT = async (li) => { const r = await cross(li), t = Math.min(r.tToApo, r.tToPeri); return Number.isFinite(t) ? t : Infinity; };
-      const cand = [];
-      if (tA !== null && okT(k)) cand.push({ li: tA, c: k, t: await nearT(tA) });
-      if (tB !== null && okT(k + 1)) cand.push({ li: tB, c: k + 1, t: await nearT(tB) });
-      cand.sort((x, y) => x.t - y.t);
+      // Edge neighbors first (baseA with count=k below, baseB with count=k+1 above).
+      // If both fail, WALK OUTWARD — user-verified case at 320/350 elliptical:
+      // edge 424|425 had both FULL=done=false (duration_cap_hit), but
+      // 423 (done, -372.2), 422 (-457.6), 421 (-464.0 BEST), 420, 419...
+      // all worked. Without walk-out the edge fails immediately and search
+      // skips to edge k=2 or gives up, missing the entire working region.
+      //
+      // Walk pattern (per user's instruction):
+      //   d=0: baseA,     baseB       (original edge neighbors)
+      //   d=1: baseA-1,   baseB+1     (424→423, 425→426)
+      //   d=2: baseA-2,   baseB+2     (→422, →427)
+      //   ...
+      // Within each d, sort by nearest-apside time (smaller t first) —
+      // "jiska apside time kam ho pehle uska FULL run".
+      //
+      // maxWalk bounded by min(10, maxWin/2) since each walked tick = 1 FULL
+      // eval. Typically found within 3-4 steps when nearby done-ticks exist
+      // (user case: 423 found at d=1, 421 in window search afterwards).
+      const baseA = (tA !== null) ? tA : ed[0];
+      const baseB = (tB !== null) ? tB : ed[1];
+      const maxWalk = Math.min(10, Math.floor(maxWin / 2));
       let hit = null;
-      for (const c of cand) {
-        const f = await full(c.li);
-        say('edge ' + k + '|' + (k + 1) + ' raw ' + ed[0] + '|' + ed[1] + ': li ' + c.li + ' (cross ' + c.c + ', nearest apside ' + c.t.toFixed(1) + ' s) FULL done ' + !!(f && f.done) + ' score ' + (f && Number.isFinite(f.score) ? f.score.toFixed(1) : '-'));
-        if (f && f.done) { hit = c; break; }
+      const triedLi = new Set();
+      for (let d = 0; d <= maxWalk && !hit; d++) {
+        const pair = [];
+        const la = baseA - d, lb = baseB + d;
+        if (la >= 0 && la <= maxLi && !triedLi.has(la) && okT(k)) {
+          triedLi.add(la);
+          const r = await cross(la);
+          if (cnt(r) === k) pair.push({ li: la, c: k, t: await nearT(la) });
+        }
+        if (lb >= 0 && lb <= maxLi && !triedLi.has(lb) && okT(k + 1)) {
+          triedLi.add(lb);
+          const r = await cross(lb);
+          if (cnt(r) === k + 1) pair.push({ li: lb, c: k + 1, t: await nearT(lb) });
+        }
+        pair.sort((x, y) => x.t - y.t);
+        for (const c of pair) {
+          const ff = await full(c.li);
+          say('edge ' + k + '|' + (k + 1) + ' raw ' + ed[0] + '|' + ed[1] + ' walk d=' + d + ': li ' + c.li + ' (cross ' + c.c + ', nearest apside ' + c.t.toFixed(1) + ' s) FULL done ' + !!(ff && ff.done) + ' score ' + (ff && Number.isFinite(ff.score) ? ff.score.toFixed(1) : '-'));
+          if (ff && ff.done) { hit = c; break; }
+        }
       }
       if (!hit) continue;
       v = hit.li; dSel = hit.c === k ? -1 : +1;
-      const oc = cand.find((c) => c !== hit); other = oc ? oc.li : (dSel < 0 ? ed[1] : ed[0]);
+      other = (dSel < 0) ? baseB : baseA;
       edgeK = k; edgePair = ed; break;
     }
     // Fallback for 0-crossing starts: findEdge's k=1..2 search can't bracket a
