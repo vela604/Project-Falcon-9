@@ -3409,7 +3409,7 @@ setState(s) {
       const PES_KD = 0.6;
       const PES_ALPHA_MAX_DEG = 12;
       const PES_DTH_MAX_DEG = 1.5;
-      const PES_J_MIN = 0.02;
+      const PES_J_MIN = 0.3;
       const PES_JH_MIN = 1e3;
       const PES_CTRL_CAP_DEG = 30;
       const PES_FIN_STEP_DEG = 5;
@@ -3423,9 +3423,10 @@ setState(s) {
         (ds.memberBreakdown || []).forEach(function (m) {
           fxb += (m.Fnormal_linear || 0) + (m.Fnormal_crossflow || 0);
         });
-        const cT = Math.cos(ds.theta), sT = Math.sin(ds.theta);
-        const fx = ds.dragVecX + fxb * cT + (ds.gridFinFx || 0);
-        const fy = ds.dragVecY + fxb * sT + (ds.gridFinFy || 0);
+        // Physics consistency: sim's derivatives() has ax = grav + (thrust + dragVec + gridFin)/M.
+        // Fnormal (hull lift) enters ONLY dragTorque (attitude), NOT linear force.
+        const fx = ds.dragVecX + (ds.gridFinFx || 0);
+        const fy = ds.dragVecY + (ds.gridFinFy || 0);
         return { ax: fx / M, ay: fy / M, fxb: fxb };
       }
 
@@ -3447,9 +3448,10 @@ setState(s) {
         (ds.memberBreakdown || []).forEach(function (m) {
           fxb += (m.Fnormal_linear || 0) + (m.Fnormal_crossflow || 0);
         });
-        const cT = Math.cos(ds.theta), sT = Math.sin(ds.theta);
-        const fx = ds.dragVecX + fxb * cT + (ds.gridFinFx || 0);
-        const fy = ds.dragVecY + fxb * sT + (ds.gridFinFy || 0);
+        // Physics consistency: sim's derivatives() has ax = grav + (thrust + dragVec + gridFin)/M.
+        // Fnormal (hull lift) enters ONLY dragTorque (attitude), NOT linear force.
+        const fx = ds.dragVecX + (ds.gridFinFx || 0);
+        const fy = ds.dragVecY + (ds.gridFinFy || 0);
         return { ax: fx / M, ay: fy / M, fxb: fxb };
       }
       // dv (m/s) still delivered while the given engines spool down from their CURRENT flow
