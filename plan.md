@@ -147,7 +147,7 @@ fast-forward workers rebuild guidance from `exportGuideState()` mid-flight.
 | 3 | **FLIP** phase | ✅ done, user-verified "perfect, fast turn & settle" | see §5 |
 | 4 | BOOSTBACK_BURN | ✅ done, sim-verified | see §6.1 |
 | 5 | PRE_ENTRY_STEER | ✅ done, sim-verified (grid fins deploy → quiet coast → ALIGN at 100km → HOLD → handoff at 60km) | see §5.4 |
-| 6 | ENTRY_BURN | ⬜ | |
+| 6 | ENTRY_BURN | 🟡 partial — ignition + gimbal env-torque cancel written (patch `entry_burn_patch.js`, not yet sim-verified); **no cutoff yet** | see §5.5 |
 | 7 | POST_ENTRY_STEER | ⬜ | |
 | 8 | LANDING_BURN | ⬜ | |
 | 9 | TOUCHDOWN | ⬜ | |
@@ -241,6 +241,14 @@ rtlsPreEntryTgtDeg` (via `_landbackTick.getStatus` → `standardRTLS.getStatus`)
 **Console traces:** `PRE_ENTRY_STEER start`, `COAST → ALIGN`, `ALIGN start`,
 `ALIGN → HOLD`, `HOLD-DBG` (every 5s), `HOLD → ENTRY_BURN trigger`.
 
+### 5.5 ENTRY_BURN (partial, Chat 7 — awaiting sim check)
+**Constants (`rtls.*`):** `ENTRY_BURN_ENGINES` `"C,0,180"`, `ENTRY_BURN_GIMBAL_ENGINES` `"C"` (strings, same token format as BOOSTBACK_ENGINES; add more gimbal engines only if the gimbal saturates).
+**Logic:** phase entry → `cmdSetAllThrottle(0)` once → every tick burn-set engines commanded to their own **lowest** flow (`minMassFlowRate`; centre + outer groups separately). Spool wait until flow ≥ 97 % of min, then gimbal active.
+Gimbal = copy of boostback/circularize law: state advanced one tick (`deriveForState`), `tauTarget = tauDesired − dNext.torqueEnvironmental` (aero + gravity gradient; ascent uses `torqueDrag`), gimbal angle from `asin(tauTarget/Ramp)`, clamped to `gimbalMaxDeg`. `tauDesired` = PD (KP 0.5 / KD 4.0, internal) on **air-relative retrograde** attitude with `wTgt` feedforward (same as PRE_ENTRY HOLD → no jump at handoff).
+**Saturation watch:** console `ENTRY_BURN gimbal SATURATED` (once per onset) + `[ENTRY_BURN-DBG]` every 5 s (alpha, err, ω, gimbal, tauEnv, tauAvail, sat, Q). Status: `rtlsEbErrDeg/AlphaDeg/GimbalDeg/GimbalReqDeg/GimbalSat/ThrFrac`.
+**Not done:** cutoff / exit (phase holds), throttle profile beyond lowest thrust, `_goto` cleanup (throttle/gimbal off when leaving ENTRY_BURN — add with the cutoff).
+Patch file `entry_burn_patch.js` lists exact insertion points (block, start(), getStatus, lb_glue.js, guideConfigDefaults.js, guideConstantDescriptions.js).
+
 ## 6. Roadmap — remaining phases (design notes, NOT decisions)
 
 **The user defines each phase; below are only my starting suggestions/questions so
@@ -318,12 +326,11 @@ side-engine spool dv must remain ≤ SIDE_CUT.
 
 ## 8. Open questions for the user (answer when starting each phase)
 
-**ENTRY_BURN (next):**
-- Ignition trigger: altitude? air-relative speed threshold? Q threshold? Predicted (burn-time needed to hit landing-burn start speed)?
-- Engines fired: which ones (same as boostback "C,0,180"? fewer? centre only)?
-- Throttle profile: full burn then cut? taper?
-- Attitude during burn: hold air-relative retrograde with gimbal (centre)? Roll with grid fins during burn?
-- Cutoff: air-relative speed < V? Q < threshold? altitude drop? spool-compensated?
+**ENTRY_BURN (partly answered Chat 7):**
+- ✅ Ignition: at PRE_ENTRY handoff (60 km). ✅ Engines `C,0,180`, gimbal `C` only. ✅ Lowest thrust + gimbal cancels env torque.
+- ⬜ Cutoff: air-relative speed < V? Q < threshold? altitude drop? spool-compensated? (phase currently holds forever)
+- ⬜ Throttle: stays at lowest thrust, or ramps later?
+- ⬜ Attitude frame during burn: currently air-relative retrograde (continuity); older note says inertial retrograde may be better for the burn — user to decide after sim.
 
 **PRE_ENTRY (answered, no action):** air-relative retrograde confirmed. Align at 100km, handoff at 60km.
 
@@ -346,6 +353,7 @@ side-engine spool dv must remain ≤ SIDE_CUT.
 
 ## 9. Changelog (newest first — add a line for every change)
 
+- **Chat 7:** **ENTRY_BURN partial** (§5.5): constants `ENTRY_BURN_ENGINES`, `ENTRY_BURN_GIMBAL_ENGINES`; lowest-thrust ignition + gimbal environment-torque cancel + saturation logging; no cutoff yet. Delivered as `entry_burn_patch.js` (user passes it to DeepSeek to apply; `guidance-blocks.js` now provided in full for reading).
 - **Chat 6:** **PRE_ENTRY_STEER implemented** (§5.4). Sub-phases COAST → ALIGN → HOLD. Grid fins deployed once on entry (`cmdGridFinsDeploy(true)`), then quiet. ALIGN/TRIM/HOLD use **air-relative retrograde** target `atan2(d.relVx, -d.relVy)` — this was the root cause of the "AoA never zeros" bug (user saw ~-20° at HOLD). Formula was correct but targeted inertial frame; sim's `alphaDeg` is air-relative. New constants `PRE_ENTRY_ALIGN_ALT_KM=100`, `ENTRY_BURN_ALT_KM=60` (block default + guideConfigDefaults + descriptions). New status fields `rtlsPreEntrySub/ErrDeg/OmegaDegS/TgtDeg`. Added §3 frame-of-reference rules table (permanent guidance). `_goto` cleanup now also releases RCS for BOOSTBACK_BURN and PRE_ENTRY_STEER. Diagnostic logs: `PRE_ENTRY_HOLD-DBG` every 5 sim-sec (theta/tgt/err/alphaDeg/omega).
 - **Chat 5:** FLIP pusher REMOVED (pure RCS-only, user-verified "powerful torque visibly firing" bug = pusher + bang-bang interaction). Restored from working Chat-3 RCS-only version (whole `standardRTLS` block replaced surgically). Also: **RCS nozzles now 5 kg/s per nozzle** (was 0.5, 10× authority — fleet/hardware change, not guidance). **SEPARATED_AXIAL constants updated**: `BOOSTER_SEP_ANG_ACCEL_DEG_S2` **-1 → -3**, `BOOSTER_SEP_TARGET_OMEGA_DEG_S` **10 → 30** (values in `guideConfigDefaults.js` **and** `guidance.js` `_lbConfig`). offline check harness retired — no more offline testing.
 - **Chat 4d:** FLIP now fires a one-shot pneumatic-pusher assist (`FLIP_PUSHER_ANG_ACCEL_DEG_S2`=10, `FLIP_PUSHER_TARGET_OMEGA_DEG_S`=25; physics.js: const angAccel until |omega|>=target then off) in the flip direction at the first tick, cut when mode leaves ACCEL / on FLIP exit; defaults are guesses (goal flip 8-12 s). BOOSTBACK: all burn engines fade 100%→floor over last `TAPER_M`=150 km of error, outer two off at `SIDE_CUT_M`=20 km, centre continues on the same fade; spool wait compares to commanded fraction.
