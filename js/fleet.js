@@ -567,7 +567,7 @@ bodyShellFactor: 0.0152,
 // (0.5 → 1.0 kg/s). Booster RCS has to control ~22 t of empty
 // booster during descent; the higher flow roughly doubles the
 // attitude authority that thin cold-gas thrust would give.
-rcsThruster: { thrusterTypeId: 'cold-gas-small', massFlowRate: 1.0 },
+rcsThruster: { thrusterTypeId: 'cold-gas-small', massFlowRate: 5.0 },
 pusherTypeId: 'pneumatic-pusher-n2',
 fuel: {
   typeId: 'rp1-lox-chilled',
