@@ -4388,6 +4388,26 @@ setState(s) {
             if (!dNext) { _rcsOff(); break; }
             const H0 = (dNext.torqueDrag || 0) + (dNext.torqueGravityGradient || 0);
 
+            // Fixed RCS CW setup (BR.lat + TL.lat, full duty) — used by feasibility AND command
+            const bodyPods = body.pods || [];
+            const topLpod = bodyPods.filter(function (p) { return p.side === 'L'; })
+              .sort(function (a, b) { return (b.offsetFromStackBase || 0) - (a.offsetFromStackBase || 0); })[0];
+            const botRpod = bodyPods.filter(function (p) { return p.side === 'R'; })
+              .sort(function (a, b) { return (a.offsetFromStackBase || 0) - (b.offsetFromStackBase || 0); })[0];
+            let rcsCwTorque = 0;
+            let rcsPodThrust = 0;
+            if (topLpod && botRpod) {
+              const refM = body.members[topLpod.memberIdx];
+              if (refM && refM.rcsThruster) {
+                const refT = Derivation.getTypeById(refM.rcsThruster.thrusterTypeId);
+                const veF = Derivation.typeParam(refT, 've');
+                const mdotF = refM.rcsThruster.massFlowRate;
+                if (Number.isFinite(veF) && Number.isFinite(mdotF)) {
+                  rcsPodThrust = mdotF * veF;
+                  rcsCwTorque = -(topLpod.offsetFromStackBase - botRpod.offsetFromStackBase) * rcsPodThrust;
+                }
+              }
+            }
             const finT = function (c) {
               const g = Derivation.gridFinAero(snapshot, idx, stateNext, c);
               return g ? g.torque : 0;
@@ -4400,9 +4420,9 @@ setState(s) {
               if (t < loFin) loFin = t;
               if (t > hiFin) hiFin = t;
             }
-            const rcsMax = _pesRcsMax(snapshot, idx);
-            const Ltot = loFin - PES_RCS_MARGIN * rcsMax.neg;
-            const Utot = hiFin + PES_RCS_MARGIN * rcsMax.pos;
+            // Feasibility: fins + FIXED CW RCS. No ACW authority from RCS (only fires CW).
+            const Ltot = loFin + rcsCwTorque;
+            const Utot = hiFin;
 
             const ds1 = Derivation.deriveForState(snapshot, idx, { theta: d.theta + D2R });
             let J = 0, dAdTh = 0, Jh = 0;
@@ -4450,15 +4470,21 @@ setState(s) {
             const cNext = cAct + Math.max(-maxStep, Math.min(maxStep, cStar - cAct));
             const tauFinNext = finT(cNext);
 
-            const tauR = tauNeed - tauFinNext;
+            // ---- 5. RCS: FIXED CW lateral (BR.lat + TL.lat), full duty, continuously ----
+            // User design: continuous CW bias-assist (RCS authority too small for real-time control).
             let rcsAch = 0;
-            if (Math.abs(tauR) > PES_RCS_DEADBAND_NM) {
-              const res = GuideRCS.targetTorqueRcsNoNetForce(snapshot, tauR, idx);
-              if (res && res.fires && res.fires.length && res.duties) {
-                _send(Guidance.cmdRcsDuty(res.duties, idx));
-                rcsAch = _pesRcsAch(res);
-              } else {
-                _send(Guidance.cmdRcsDuty(null, idx));
+            if (topLpod && botRpod) {
+              const rcsDuties = {};
+              rcsDuties[topLpod.podId] = { up: 0, dn: 0, lat: 1 };
+              rcsDuties[botRpod.podId] = { up: 0, dn: 0, lat: 1 };
+              _send(Guidance.cmdRcsDuty(rcsDuties, idx));
+              rcsAch = rcsCwTorque;
+              if (!_st.pesRcsLogged) {
+                _st.pesRcsLogged = true;
+                console.log("[PES-RCS] fixed CW lateral BR+TL: " + botRpod.podId +
+                  "(y=" + botRpod.offsetFromStackBase.toFixed(1) + ") + " + topLpod.podId +
+                  "(y=" + topLpod.offsetFromStackBase.toFixed(1) + ") tau=" + Math.round(rcsCwTorque) +
+                  "Nm CW, F=" + Math.round(rcsPodThrust) + "N/nozzle");
               }
             } else {
               _send(Guidance.cmdRcsDuty(null, idx));
@@ -4596,6 +4622,7 @@ setState(s) {
           _st.ebRcsCmd = 0;
           _st.pesInit = false;
           _st.pesT0 = 0;
+          _st.pesRcsLogged = false;
           _st.pesCtrlCmd = 0;
           _st.pesGroundErrM = null;
           _st.pesVacErrM = null;
