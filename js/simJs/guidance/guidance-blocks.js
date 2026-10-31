@@ -3429,12 +3429,16 @@ setState(s) {
         return { ax: fx / M, ay: fy / M, fxb: fxb };
       }
 
+      function _pesRcsAch(res) {
+        if (!res) return 0;
+        if (Number.isFinite(res.torqueAchieved)) return res.torqueAchieved;
+        return res.fires ? res.fires.reduce(function (a, f) { return a + f.torque * (Number.isFinite(f.duty) ? f.duty : 1); }, 0) : 0;
+      }
       function _pesRcsMax(snapshot, idx) {
         const BIG = 1e12;
-        const sum = function (r) { return r && r.fires ? r.fires.reduce(function (a, f) { return a + f.torque; }, 0) : 0; };
         const rp = GuideRCS.targetTorqueRcsNoNetForce(snapshot, +BIG, idx);
         const rn = GuideRCS.targetTorqueRcsNoNetForce(snapshot, -BIG, idx);
-        return { pos: Math.max(0, sum(rp)), neg: Math.max(0, -sum(rn)) };
+        return { pos: Math.max(0, _pesRcsAch(rp)), neg: Math.max(0, -_pesRcsAch(rn)) };
       }
 
 
@@ -4331,6 +4335,19 @@ setState(s) {
             const edotPred = Sx * a0.ax + Sy * a0.ay;
             const edotDes = -errM / PES_TAU_E_S;
 
+            let edotFD = null, edotBal = null;
+            {
+              const T = 1.0;
+              const fd = function (ax, ay) {
+                const gx = d.gVecX + ax, gy = d.gVecY + ay;
+                const im = _bbImpact(d.rx + d.vx * T + 0.5 * gx * T * T, d.ry + d.vy * T + 0.5 * gy * T * T,
+                  d.vx + gx * T, d.vy + gy * T, simT + T, env.GM_EARTH, Rm, omegaE);
+                return im ? (_wrapPi(im.phiEf - padEf) * Rm - errM) / T : null;
+              };
+              edotFD = fd(a0.ax, a0.ay);
+              edotBal = fd(0, 0);
+            }
+
             _st.pesAlphaDeg = Number.isFinite(d.alphaDeg) ? d.alphaDeg : null;
             _st.pesOmegaDegS = d.omega * R2D;
             _st.pesQ = Number.isFinite(d.Q) ? d.Q : null;
@@ -4346,6 +4363,7 @@ setState(s) {
                 console.log("[POST_ENTRY-VALIDATE] t=" + simT.toFixed(2) + " alt=" + altKm.toFixed(1) + "km" +
                   " Q=" + (Number.isFinite(d.Q) ? Math.round(d.Q) : "n/a") + " alpha=" + d.alphaDeg.toFixed(2) + "deg" +
                   " edot meas/pred=" + (_st.pesErateF != null ? _st.pesErateF.toFixed(2) : "n/a") + "/" + edotPred.toFixed(2) + "m/s" +
+                  " FD=" + (edotFD != null ? edotFD.toFixed(2) : "n/a") + " bal=" + (edotBal != null ? edotBal.toFixed(2) : "n/a") +
                   " S=(" + Sx.toFixed(1) + "," + Sy.toFixed(1) + ") a=(" + a0.ax.toFixed(3) + "," + a0.ay.toFixed(3) + ")m/s2" +
                   " hullLatF=" + Math.round(a0.fxb) + " finFxb=" +
                   Math.round((d.gridFinFx || 0) * Math.cos(d.theta) + (d.gridFinFy || 0) * Math.sin(d.theta)) +
@@ -4436,7 +4454,7 @@ setState(s) {
               const res = GuideRCS.targetTorqueRcsNoNetForce(snapshot, tauR, idx);
               if (res && res.fires && res.fires.length && res.duties) {
                 _send(Guidance.cmdRcsDuty(res.duties, idx));
-                rcsAch = res.fires.reduce(function (a, f) { return a + f.torque; }, 0);
+                rcsAch = _pesRcsAch(res);
               } else {
                 _send(Guidance.cmdRcsDuty(null, idx));
               }
@@ -4452,7 +4470,9 @@ setState(s) {
                 " v=" + Math.hypot(d.relVx, d.relVy).toFixed(0) + " Q=" + (Number.isFinite(d.Q) ? Math.round(d.Q) : "n/a") +
                 " vacErr=" + (errM / 1000).toFixed(3) + "km groundErr=" + (_st.pesGroundErrM / 1000).toFixed(3) + "km" +
                 " edot meas/pred/des=" + (_st.pesErateF != null ? _st.pesErateF.toFixed(1) : "n/a") + "/" +
-                edotPred.toFixed(1) + "/" + edotDes.toFixed(1) + "m/s J=" + J.toFixed(2) +
+                edotPred.toFixed(1) + "/" + edotDes.toFixed(1) + "m/s" +
+                " FD=" + (edotFD != null ? edotFD.toFixed(2) : "n/a") + " bal=" + (edotBal != null ? edotBal.toFixed(2) : "n/a") +
+                " J=" + J.toFixed(2) +
                 " dth want/feas[" + feasLo.toFixed(2) + "," + feasHi.toFixed(2) + "]/used=" + dthWanted.toFixed(2) + "/" + dthDeg.toFixed(2) + "deg" +
                 " alpha=" + d.alphaDeg.toFixed(2) + "→" + aStar.toFixed(2) + "deg w=" + (d.omega * R2D).toFixed(3) + "deg/s" +
                 " fin act/cmd=" + cAct.toFixed(1) + "/" + cStar.toFixed(1) +

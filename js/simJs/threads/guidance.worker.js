@@ -61,12 +61,12 @@ self.onmessage = (e) => {
       // for parity with physics/render workers and in case Phase 4 needs
       // it); imu.js and guidance.js are the only real content.
       importScripts(
-  'workerShims.js?v=1793469470876',
-  '../guidance/imu.js?v=1793469470876',
-  '../guidance/derivation.js?v=1793469470876',
-  '../guidance/guidercs.js?v=1793469470876',
-  '../guidance/guidance-blocks.js?v=1793469470876',
-  '../guidance/guidance.js?v=1793469470876'
+  'workerShims.js?v=1793470137503',
+  '../guidance/imu.js?v=1793470137503',
+  '../guidance/derivation.js?v=1793470137503',
+  '../guidance/guidercs.js?v=1793470137503',
+  '../guidance/guidance-blocks.js?v=1793470137503',
+  '../guidance/guidance.js?v=1793470137503'
 );
       bootstrapped = true;
       self.postMessage({ type: 'ready' });
