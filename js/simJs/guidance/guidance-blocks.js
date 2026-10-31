@@ -4223,6 +4223,23 @@ setState(s) {
               console.log("[standardRTLS] POST_ENTRY_STEER start t=" + simT.toFixed(2) +
                 " alt=" + altKm.toFixed(1) + "km v=" + Math.hypot(d.relVx, d.relVy).toFixed(0) + "m/s" +
                 " ramp=" + (Number.isFinite(cfg.POST_ENTRY_GRIDFIN_RAMP_DEG_S) ? cfg.POST_ENTRY_GRIDFIN_RAMP_DEG_S : 3) + "deg/s");
+
+              // [PES-FIN-AERO] one-shot port verification sweep (L2)
+              try {
+                const cT0 = Math.cos(d.theta), sT0 = Math.sin(d.theta);
+                const rows = [-30, -10, 0, 10, 30].map(function (c) {
+                  const g = Derivation.gridFinAero(snapshot, idx, null, c);
+                  if (!g) return "c=" + c + ": n/a";
+                  const fxb = g.Fx * cT0 + g.Fy * sT0;
+                  const fyb = -g.Fx * sT0 + g.Fy * cT0;
+                  return "c=" + c + ": Fxb=" + fxb.toFixed(0) + " Fyb=" + fyb.toFixed(0) + " tau=" + g.torque.toFixed(0);
+                });
+                console.log("[PES-FIN-AERO] alpha=" + (Number.isFinite(d.alphaDeg) ? d.alphaDeg.toFixed(2) : "n/a") + "deg" +
+                  " Q=" + (Number.isFinite(d.Q) ? Math.round(d.Q) : "n/a") +
+                  " finCtrlNow=" + (d.gridFinControlUsed != null ? d.gridFinControlUsed.toFixed(1) : "n/a") + " | " + rows.join(" | "));
+              } catch (e) {
+                console.warn("[PES-FIN-AERO] failed: " + e);
+              }
             }
 
             const rampRate = Number.isFinite(cfg.POST_ENTRY_GRIDFIN_RAMP_DEG_S) ? cfg.POST_ENTRY_GRIDFIN_RAMP_DEG_S : 3;

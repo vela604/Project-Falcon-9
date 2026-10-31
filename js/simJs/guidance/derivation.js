@@ -759,6 +759,204 @@ function derive(snapshot, bodyIdx, payloadMass, noCache) {
     return total || Math.PI * (refWidth / 2) ** 2;
   }
 
+  // ---- grid-fin aero (VERBATIM PORT of physics.js; see derivation_fin_aero_port_spec.js) ----
+  // A5 allowed diffs ONLY: speed-of-sound source, getTypeById vs getComponentType,
+  // _bellMember vs engineBellHeightForRecord, fin-control override clone.
+  const GRIDFIN_CONTROL_SIGN = -1;
+  const GF_CD_FACE = 1.25;
+  const GF_CD_EDGE = 1.15;
+  const GF_CNA_GRID = 3.0;
+  const GF_SHIELD_MIN = 0.12;
+  const GF_SHIELD_LAT_ON = 0.15;
+  const GF_SHIELD_LAT_FULL = 0.55;
+
+  function _gfSmooth(x, a, b) {
+    if (x <= a) return 0;
+    if (x >= b) return 1;
+    const t = (x - a) / (b - a);
+    return t * t * (3 - 2 * t);
+  }
+
+  function _gfSpeedOfSound(alt) {
+    return Math.sqrt(1.4 * 287.05287 * _ATM.state(Math.max(0, alt)).T);
+  }
+
+  function _gfMachFactors(M) {
+    const pg = Math.min(1.6, 1 / Math.sqrt(Math.max(0.05, 1 - Math.min(M, 0.85) ** 2)));
+    return {
+      drag: 1 + 1.4 * Math.exp(-(((M - 1.0) / 0.3) ** 2)) + 0.25 * _gfSmooth(M, 1.3, 3.0),
+      cna: pg * (1 - 0.5 * _gfSmooth(M, 0.9, 1.5)),
+      edge: 1 + 0.6 * Math.exp(-(((M - 1.0) / 0.35) ** 2)),
+    };
+  }
+
+  function _gfAxes(kind, deployDeg, controlDeg) {
+    const d = deployDeg * Math.PI / 180;
+    const cd = Math.cos(d), sd = Math.sin(d);
+    if (kind === 'L' || kind === 'R') {
+      const s0 = (kind === 'L') ? -1 : 1;
+      return { s: [s0 * cd, s0 * sd, 0], t: [-sd, cd, 0], c: [0, 0, 1] };
+    }
+    let s = [0, -sd, cd], t = [0, cd, sd], c = [1, 0, 0];
+    if (controlDeg) {
+      const a = GRIDFIN_CONTROL_SIGN * controlDeg * Math.PI / 180;
+      const ca = Math.cos(a), sa = Math.sin(a);
+      const rz = v => [v[0] * ca - v[1] * sa, v[0] * sa + v[1] * ca, v[2]];
+      s = rz(s); t = rz(t); c = rz(c);
+    }
+    return { s, t, c };
+  }
+
+  function computeGridFinAero(gfp, bx, by, omega, rho, comH, comW, altitude) {
+    let Fx = 0, Fy = 0, torque = 0;
+    const V0 = Math.hypot(bx, by);
+    if (!gfp || !(rho > 0) || V0 < 1e-3) return { Fx, Fy, torque };
+    const q = 0.5 * rho;
+    const w = Math.min(1, Math.abs(bx) / V0);
+    const shieldT = _gfSmooth(w, GF_SHIELD_LAT_ON, GF_SHIELD_LAT_FULL);
+    const kinds = ['L', 'R', 'FB'];
+    gfp.fins.forEach(f => {
+      const Aface = f.span * f.chord;
+      const Aes = f.chord * f.thk;
+      const Aec = f.span * f.thk;
+      kinds.forEach(kind => {
+        const st = gfp.st[kind];
+        const ax = _gfAxes(kind, st.deploy, kind === 'FB' ? st.control : 0);
+        const hx = (kind === 'L') ? -f.hullHalf : (kind === 'R') ? f.hullHalf : 0;
+        const xc = hx + 0.5 * f.span * ax.s[0];
+        const yc = f.hingeY + 0.5 * f.span * ax.s[1];
+        const rx = xc - comW, ry = yc - comH;
+        const vx = bx - omega * ry, vy = by + omega * rx;
+        const V = Math.hypot(vx, vy);
+        if (V < 1e-3) return;
+        const mf = _gfMachFactors(V / _gfSpeedOfSound(altitude));
+        const us = vx * ax.s[0] + vy * ax.s[1];
+        const uc = vx * ax.c[0] + vy * ax.c[1];
+        const ut = vx * ax.t[0] + vy * ax.t[1];
+        const absUt = Math.abs(ut);
+        const inPlane = Math.hypot(us, uc);
+        const tanPhi = absUt > 1e-9 ? inPlane / absUt : Infinity;
+        const B = f.sigma + (1 - f.sigma) * Math.min(1, tanPhi / f.tanBlock);
+        const Ft = -q * GF_CD_FACE * mf.drag * Aface * B * absUt * ut;
+        const lim = f.tanStall * absUt;
+        const sat = (inPlane > lim && inPlane > 1e-12) ? lim / inPlane : 1;
+        const kc = -q * GF_CNA_GRID * mf.cna * Aface * absUt * sat;
+        const Fs = kc * us - q * GF_CD_EDGE * mf.edge * Aes * Math.abs(us) * us;
+        const Fc = kc * uc - q * GF_CD_EDGE * mf.edge * Aec * Math.abs(uc) * uc;
+        let fx = Ft * ax.t[0] + Fs * ax.s[0] + Fc * ax.c[0];
+        let fy = Ft * ax.t[1] + Fs * ax.s[1] + Fc * ax.c[1];
+        if (kind !== 'FB' && bx !== 0 && (hx > 0) !== (bx > 0)) {
+          const S = 1 - (1 - GF_SHIELD_MIN) * shieldT;
+          fx *= S; fy *= S;
+        }
+        const n = (kind === 'FB') ? 2 : 1;
+        fx *= n; fy *= n;
+        Fx += fx; Fy += fy;
+        torque += rx * fy - ry * fx;
+      });
+    });
+    return { Fx, Fy, torque };
+  }
+
+  // PORT of physics.js bodyAeroProfile (A1). Uses _bellMember instead of
+  // engineBellHeightForRecord/engineBellDiameterForRecord. Caches on a
+  // derivation-only field name so it never collides with physics.js's own
+  // _aeroProfileCache (both contexts have independent caches anyway).
+  function _bodyAeroProfileForFins(body) {
+    if (body && body._aeroProfileForFinsCache) return body._aeroProfileForFinsCache;
+    const mem = (body && body.members) ? body.members : [];
+    if (!mem.length) {
+      const w = (body && Number.isFinite(body.width)) ? body.width : 3.9;
+      const h = (body && Number.isFinite(body.height)) ? body.height : 45;
+      const isShell = !!(body && body.fairingHalf);
+      const result = {
+        refWidth: w,
+        members: [{ width: w, height: h, area: Math.PI * (w / 2) ** 2, baseY: 0, isTapered: !isShell }],
+      };
+      if (body) body._aeroProfileForFinsCache = result;
+      return result;
+    }
+    let refWidth = 0;
+    const members = [];
+    const bottom = mem[0];
+    const bell = _bellMember(bottom);
+    // A2: bug-compatible with physics.js bodyGridFinProfile indexing -- fix BOTH together, later
+    if (bell && bell.height > 0 && bell.width > 0) {
+      members.push({
+        width: bell.width,
+        height: bell.height,
+        area: Math.PI * (bell.width / 2) ** 2,
+        baseY: -bell.height,
+        isTapered: false,
+      });
+    }
+    let yOffset = 0;
+    mem.forEach(m => {
+      const H = Number.isFinite(m.height) ? m.height : 0;
+      const W = Number.isFinite(m.width) ? m.width : 0;
+      refWidth = Math.max(refWidth, W);
+      const isTapered = (m.stageRole === 'nose') || (m.stageRole === 'payloadSpace');
+      members.push({
+        width: W,
+        height: H,
+        area: Math.PI * (W / 2) ** 2,
+        baseY: yOffset,
+        isTapered,
+      });
+      yOffset += H;
+    });
+    const result = { refWidth: refWidth || 3.9, members };
+    if (body) body._aeroProfileForFinsCache = result;
+    return result;
+  }
+
+  // PORT of physics.js bodyGridFinProfile (A5: only getTypeById vs getComponentType).
+  function bodyGridFinProfile(body, profile) {
+    if (!body || !body.gridFins || !body.members || !profile || !profile.members) return null;
+    const _gf = body.gridFins;
+    const _c = body._gfpCache;
+    if (_c &&
+        _c.L === _gf.L.deploy && _c.R === _gf.R.deploy &&
+        _c.FB === _gf.FB.deploy && _c.FBc === _gf.FB.control) {
+      return _c.profile;
+    }
+    const fins = [];
+    body.members.forEach((m, i) => {
+      if (!m || !m.hasGridFins || !m.gridFinParams) return;
+      const pm = profile.members[i];
+      if (!pm) return;
+      const gp = m.gridFinParams;
+      const type = (m.gridFinTypeId && typeof getTypeById === 'function') ?
+        getTypeById(m.gridFinTypeId) : null;
+      const TC = (type && type.typeConstants) ? type.typeConstants : {};
+      const gap = (type && type.frame && Number.isFinite(type.frame.gapM)) ? type.frame.gapM : 0.05;
+      const span = gp.span, chord = gp.chord, thk = gp.thickness, cw = gp.cellWidth;
+      if (!(span > 0 && chord > 0 && thk > 0 && cw > 0)) return;
+      const wallF = Number.isFinite(TC.WALL_THICKNESS_FACTOR) ? TC.WALL_THICKNESS_FACTOR : 0.025;
+      const open = Math.max(0, 1 - (thk * wallF) / cw);
+      fins.push({
+        span, chord, thk,
+        sigma: Math.max(0.02, Math.min(1, 1 - open * open)),
+        tanBlock: cw / thk,
+        tanStall: Math.min(0.45, cw / thk),
+        hingeY: pm.baseY + (Number.isFinite(gp.finPositionY) ? gp.finPositionY : 0),
+        hullHalf: pm.width / 2 + gap,
+      });
+    });
+    if (!fins.length) return null;
+    const g = body.gridFins;
+    const snap = k => ({
+      deploy: (g[k] && Number.isFinite(g[k].deploy)) ? g[k].deploy : 90,
+      control: (g[k] && Number.isFinite(g[k].control)) ? g[k].control : 0,
+    });
+    const result = { fins, st: { L: snap('L'), R: snap('R'), FB: snap('FB') } };
+    body._gfpCache = {
+      L: g.L.deploy, R: g.R.deploy, FB: g.FB.deploy, FBc: g.FB.control,
+      profile: result,
+    };
+    return result;
+  }
+
 function _deriveImpl(snapshot, bodyIdx, payloadMass) {
   const idx = Number.isInteger(bodyIdx) ? bodyIdx : (snapshot.activeBodyIndex || 0);
   const body = snapshot.bodies[idx];
@@ -952,6 +1150,37 @@ const alphaDrag = _I > 0 ? torqueDrag / _I : 0;
 const alphaRcs = _I > 0 ? torqueRcs / _I : 0;
 const alphaGG = _I > 0 ? torqueGravityGradient / _I : 0;
 const alphaAng = _I > 0 ? torqueTotal / _I : 0;
+
+    // ---- grid-fin aero (hull-independent; A1-A6; existing outputs untouched) ----
+    let gridFinFx = 0, gridFinFy = 0, gridFinTorque = 0;
+    let gridFinControlUsed = null;
+    if (hasMembers && speedRel > 1e-3) {
+      try {
+        const profileForFins = _bodyAeroProfileForFins(body);
+        let gfp = bodyGridFinProfile(body, profileForFins);
+        if (gfp && gfp.st && gfp.st.FB && Number.isFinite(body._fbControlOverride)) {
+          // A4: override only when FB.deploy === 0 (mirror of physics updateGridFins lock rule)
+          const fbDeploy = Number.isFinite(gfp.st.FB.deploy) ? gfp.st.FB.deploy : 90;
+          const appliedControl = (fbDeploy === 0) ? body._fbControlOverride : 0;
+          gfp = Object.assign({}, gfp, {
+            st: Object.assign({}, gfp.st, {
+              FB: Object.assign({}, gfp.st.FB, { control: appliedControl }),
+            }),
+          });
+        }
+        if (gfp) {
+          const bx = relVx * cosT + relVy * sinT;
+          const by = -relVx * sinT + relVy * cosT;
+          const gf = computeGridFinAero(gfp, bx, by, Number.isFinite(omega) ? omega : 0,
+            rho, comY_t, comX_t, altitudeASL);
+          gridFinFx = gf.Fx * cosT - gf.Fy * sinT;
+          gridFinFy = gf.Fx * sinT + gf.Fy * cosT;
+          gridFinTorque = gf.torque;
+          gridFinControlUsed = (gfp.st && gfp.st.FB && Number.isFinite(gfp.st.FB.control)) ?
+            gfp.st.FB.control : null;
+        }
+      } catch (e) { /* fall through with zeros */ }
+    }
     
     return {
       rx, ry, vx, vy, theta, omega,
@@ -975,6 +1204,7 @@ torqueEngine, torqueDrag, torqueGravityGradient, torqueEnvironmental: torqueDrag
   alphaEngine, alphaDrag, alphaRcs, alphaGG, alphaAng,
       memberBreakdown,
       hasMembers,
+      gridFinFx, gridFinFy, gridFinTorque, gridFinControlUsed,
     };
   }
   
@@ -1001,6 +1231,17 @@ torqueEngine, torqueDrag, torqueGravityGradient, torqueEnvironmental: torqueDrag
 // kinematics and slosh, exactly as physics would compute them if the
 // body were in that state.
 // ------------------------------------------------------------------
+// Public helper: predict fin force/torque at candidate control angle.
+// stateOverride null = current state; controlDeg null = use snapshot control.
+function gridFinAero(snapshot, bodyIdx, stateOverride, controlDeg) {
+  const ov = Object.assign({}, stateOverride || {});
+  if (Number.isFinite(controlDeg)) ov._fbControlOverride = controlDeg;
+  const d = (stateOverride || Number.isFinite(controlDeg))
+    ? deriveForState(snapshot, bodyIdx, ov)
+    : derive(snapshot, bodyIdx);
+  return d ? { Fx: d.gridFinFx, Fy: d.gridFinFy, torque: d.gridFinTorque } : null;
+}
+
 function deriveForState(snapshot, idx, overrideBody, gimbalOverrideDeg, gimbalOverrideScope) {
   if (!snapshot || !snapshot.bodies || !snapshot.bodies[idx]) return null;
   const origBody = snapshot.bodies[idx];
@@ -1031,7 +1272,7 @@ function deriveForState(snapshot, idx, overrideBody, gimbalOverrideDeg, gimbalOv
     setStackData, getStackData, getMemberRecord, getTypeById, getEnv, getStackPayloadMass,
     // Derivation
     // Derivation
-derive, deriveAllBodies, deriveForState,
+derive, deriveAllBodies, deriveForState, gridFinAero,
     // Lower-level helpers (exposed for debugging and per-fragment use)
     typeParam, combineComponents: _combine, memberMaxFuel: _memberMaxFuel,
     sloshMassFraction: _sloshMassFraction,
