@@ -1532,6 +1532,10 @@ if (_lbState.insertionBlock) {
       rtlsPesAlphaDeg: rs.pesAlphaDeg,
       rtlsPesOmegaDegS: rs.pesOmegaDegS,
       rtlsPesQ: rs.pesQ,
+      rtlsPesEdotPredMps: rs.pesEdotPredMps,
+      rtlsPesEdotMeasMps: rs.pesEdotMeasMps,
+      rtlsPesRcsTorque: rs.pesRcsTorque,
+      rtlsPesFinCtrlActDeg: rs.pesFinCtrlActDeg,
     });
   }
 

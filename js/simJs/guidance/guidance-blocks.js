@@ -3403,6 +3403,28 @@ setState(s) {
       const EB_TOL_M = 100;
       const EB_TGO_MIN_S = 0.5;
       const EB_W_TOL = 0.002;
+      // ---- POST_ENTRY_STEER closed-loop helpers (all internal, tune from logs) ----
+      const PES_TAU_E_S = 20;
+      const PES_KP = 0.5;
+      const PES_KD = 4.0;
+      const PES_ALPHA_MAX_DEG = 12;
+      const PES_DTH_MAX_DEG = 3;
+      const PES_J_MIN = 0.02;
+      const PES_CTRL_CAP_DEG = 30;
+      const PES_FIN_STEP_DEG = 5;
+      const PES_FIN_RATE_DEGS = 40;
+      const PES_RCS_DEADBAND_NM = 500;
+
+      function _pesAeroAccel(ds, M) {
+        let fxb = 0;
+        (ds.memberBreakdown || []).forEach(function (m) {
+          fxb += (m.Fnormal_linear || 0) + (m.Fnormal_crossflow || 0);
+        });
+        const cT = Math.cos(ds.theta), sT = Math.sin(ds.theta);
+        const fx = ds.dragVecX + fxb * cT + (ds.gridFinFx || 0);
+        const fy = ds.dragVecY + fxb * sT + (ds.gridFinFy || 0);
+        return { ax: fx / M, ay: fy / M, fxb: fxb };
+      }
       // dv (m/s) still delivered while the given engines spool down from their CURRENT flow
       // (linear ramp to zero over shutdownDurationS, scaled by flow/maxFlow — same model as ascent MECO).
       function _bbSpoolDv(engs, M) {
@@ -4201,30 +4223,32 @@ setState(s) {
           // POST_ENTRY_STEER — FIRST EXPERIMENT: grid fins only, ramped max
           // ACW tilt to induce CW body rotation (nose east, lift west).
           // NO exit; phase holds so impact shift can be judged at landing.
-          case "POST_ENTRY_STEER": {
-            // CW body torque (physics.js: a = GRIDFIN_CONTROL_SIGN(-1)*controlDeg).
-            // Flip to +1 if sim shows ACW (wrong-way) rotation.
-            const PES_CTRL_SIGN = -1;
-            const PES_CTRL_CAP_DEG = 90;   // upper request; worker clamps to typeConstants.maxControlDeg (default 30)
+                    case "POST_ENTRY_STEER": {
             const idx = _bodyIdx;
+            const body = snapshot.bodies[idx];
+            if (!body) break;
             const env = Derivation.getEnv();
-            const R2D = 180 / Math.PI;
+            const dt = env && Number.isFinite(env.DT) ? env.DT : 1 / 80;
+            const R2D = 180 / Math.PI, D2R = Math.PI / 180;
             const altKm = d.altitudeAGL / 1000;
             const omegaE = env.EARTH_OMEGA || 0;
+            const Rm = env.EARTH_RADIUS;
+            const M = d.massProps.M, I = d.massProps.I;
+            if (!(M > 0) || !(I > 0)) break;
 
             if (!_st.pesInit) {
               _st.pesInit = true;
-              _st.pesT0 = simT;
-              _st.pesCtrlCmd = 0;
+              _st.pesDone = false;
+              _st.pesCmdC = 0;
+              _st.pesPrevT = null;
+              _st.pesPrevErr = null;
+              _st.pesErateF = null;
               _send(Guidance.cmdSetAllThrottle(0));
               _send(Guidance.cmdSetGimbalRate(0));
-              _send(Guidance.cmdRcsDuty(null, idx));
+              _rcsOff();
               _send(Guidance.cmdGridFinsDeploy(true));
-              console.log("[standardRTLS] POST_ENTRY_STEER start t=" + simT.toFixed(2) +
-                " alt=" + altKm.toFixed(1) + "km v=" + Math.hypot(d.relVx, d.relVy).toFixed(0) + "m/s" +
-                " ramp=" + (Number.isFinite(cfg.POST_ENTRY_GRIDFIN_RAMP_DEG_S) ? cfg.POST_ENTRY_GRIDFIN_RAMP_DEG_S : 3) + "deg/s");
-
-              // [PES-FIN-AERO] one-shot port verification sweep (L2)
+              console.log("[standardRTLS] POST_ENTRY_STEER (closed loop v3) start t=" + simT.toFixed(2) +
+                " alt=" + altKm.toFixed(1) + "km v=" + Math.hypot(d.relVx, d.relVy).toFixed(0) + "m/s");
               try {
                 const cT0 = Math.cos(d.theta), sT0 = Math.sin(d.theta);
                 const rows = [-30, -10, 0, 10, 30].map(function (c) {
@@ -4237,35 +4261,138 @@ setState(s) {
                 console.log("[PES-FIN-AERO] alpha=" + (Number.isFinite(d.alphaDeg) ? d.alphaDeg.toFixed(2) : "n/a") + "deg" +
                   " Q=" + (Number.isFinite(d.Q) ? Math.round(d.Q) : "n/a") +
                   " finCtrlNow=" + (d.gridFinControlUsed != null ? d.gridFinControlUsed.toFixed(1) : "n/a") + " | " + rows.join(" | "));
-              } catch (e) {
-                console.warn("[PES-FIN-AERO] failed: " + e);
-              }
+              } catch (e) { console.warn("[PES-FIN-AERO] failed: " + e); }
             }
 
-            const rampRate = Number.isFinite(cfg.POST_ENTRY_GRIDFIN_RAMP_DEG_S) ? cfg.POST_ENTRY_GRIDFIN_RAMP_DEG_S : 3;
-            const mag = Math.min(PES_CTRL_CAP_DEG, Math.max(0, rampRate) * (simT - _st.pesT0));
-            _st.pesCtrlCmd = PES_CTRL_SIGN * mag;
-            _send(Guidance.cmdGridFinsControl(_st.pesCtrlCmd));
+            if (d.altitudeAGL < 10) {
+              if (!_st.pesDone) {
+                _st.pesDone = true;
+                _rcsOff();
+                console.log("[standardRTLS] POST_ENTRY_STEER touchdown t=" + simT.toFixed(2) +
+                  " vacImpactErr=" + (_st.pesVacErrM != null ? (_st.pesVacErrM / 1000).toFixed(3) + "km" : "n/a") +
+                  " groundErr=" + (_st.pesGroundErrM != null ? (_st.pesGroundErrM / 1000).toFixed(3) + "km" : "n/a"));
+              }
+              break;
+            }
+
+            const cAct = Number.isFinite(d.gridFinControlUsed) ? d.gridFinControlUsed : null;
+            if (cAct === null) {
+              if (Math.round(simT * 16) % 400 === 0) console.warn("[POST_ENTRY] no grid-fin data");
+              break;
+            }
 
             const pad = (_missionCtx && _missionCtx.targetPad) || null;
             const padEf = (pad && Number.isFinite(pad.angleEf)) ? pad.angleEf : (env.LAUNCH_SITE_ANGLE_0 || 0);
+            const imp0 = _bbImpact(d.rx, d.ry, d.vx, d.vy, simT, env.GM_EARTH, Rm, omegaE);
+            if (!imp0) { _rcsOff(); break; }
+            const errM = _wrapPi(imp0.phiEf - padEf) * Rm;
+            const impX = _bbImpact(d.rx, d.ry, d.vx + 1, d.vy, simT, env.GM_EARTH, Rm, omegaE);
+            const impY = _bbImpact(d.rx, d.ry, d.vx, d.vy + 1, simT, env.GM_EARTH, Rm, omegaE);
+            const Sx = impX ? (_wrapPi(impX.phiEf - padEf) * Rm - errM) : 0;
+            const Sy = impY ? (_wrapPi(impY.phiEf - padEf) * Rm - errM) : 0;
+            _st.pesVacErrM = errM;
             const phiNow = Math.atan2(d.rx, d.ry) - omegaE * simT;
-            _st.pesGroundErrM = _wrapPi(phiNow - padEf) * env.EARTH_RADIUS;
-            const imp = _bbImpact(d.rx, d.ry, d.vx, d.vy, simT, env.GM_EARTH, env.EARTH_RADIUS, omegaE);
-            _st.pesVacErrM = imp ? _wrapPi(imp.phiEf - padEf) * env.EARTH_RADIUS : null;
+            _st.pesGroundErrM = _wrapPi(phiNow - padEf) * Rm;
+
+            const dtS = (_st.pesPrevT !== null && simT > _st.pesPrevT) ? (simT - _st.pesPrevT) : dt;
+            if (_st.pesPrevT !== null && _st.pesPrevErr !== null) {
+              const eRaw = (errM - _st.pesPrevErr) / dtS;
+              const ke = Math.min(1, dtS / 0.5);
+              _st.pesErateF = (_st.pesErateF === null) ? eRaw : _st.pesErateF + ke * (eRaw - _st.pesErateF);
+            }
+            _st.pesPrevT = simT; _st.pesPrevErr = errM;
+
+            const a0 = _pesAeroAccel(d, M);
+            const edotPred = Sx * a0.ax + Sy * a0.ay;
+
+            const edotDes = -errM / PES_TAU_E_S;
+            const ds1 = Derivation.deriveForState(snapshot, idx, { theta: d.theta + D2R });
+            let J = 0, dAdTh = 0;
+            if (ds1) {
+              const a1 = _pesAeroAccel(ds1, M);
+              J = (Sx * a1.ax + Sy * a1.ay) - edotPred;
+              dAdTh = (Number.isFinite(ds1.alphaDeg) ? ds1.alphaDeg : d.alphaDeg) - d.alphaDeg;
+            }
+            let dthDeg = (Math.abs(J) > PES_J_MIN) ? (edotDes - edotPred) / J : 0;
+            dthDeg = Math.max(-PES_DTH_MAX_DEG, Math.min(PES_DTH_MAX_DEG, dthDeg));
+            let aStar = d.alphaDeg + dAdTh * dthDeg;
+            if (Math.abs(aStar) > PES_ALPHA_MAX_DEG && Math.abs(dAdTh) > 0.05) {
+              aStar = Math.sign(aStar) * PES_ALPHA_MAX_DEG;
+              dthDeg = (aStar - d.alphaDeg) / dAdTh;
+              dthDeg = Math.max(-PES_DTH_MAX_DEG, Math.min(PES_DTH_MAX_DEG, dthDeg));
+            }
+            const thetaStar = d.theta + dthDeg * D2R;
+
+            const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
+            const alphaTot = d.alphaAng + ((d.gridFinTorque || 0) + rcsNow) / I;
+            const sl = body.slosh || { offset: 0, velocity: 0 };
+            const stateNext = {
+              rx: d.rx + d.vx * dt, ry: d.ry + d.vy * dt,
+              vx: d.vx + (d.gVecX + a0.ax) * dt, vy: d.vy + (d.gVecY + a0.ay) * dt,
+              theta: d.theta + d.omega * dt + 0.5 * alphaTot * dt * dt,
+              omega: d.omega + alphaTot * dt,
+              slosh: { offset: (sl.offset || 0) + (sl.velocity || 0) * dt, velocity: sl.velocity || 0 },
+            };
+            const dNext = Derivation.deriveForState(snapshot, idx, stateNext);
+            if (!dNext) { _rcsOff(); break; }
+            const tauCmd = I * (-PES_KP * (dNext.theta - thetaStar) - PES_KD * dNext.omega);
+            const tauNeed = tauCmd - (dNext.torqueDrag || 0) - (dNext.torqueGravityGradient || 0);
+
+            const finT = function (c) {
+              const g = Derivation.gridFinAero(snapshot, idx, stateNext, c);
+              return g ? g.torque : 0;
+            };
+            let bestC = cAct, bestErr = Infinity;
+            const consider = function (c) {
+              if (c < -PES_CTRL_CAP_DEG - 1e-9 || c > PES_CTRL_CAP_DEG + 1e-9) return;
+              const er = Math.abs(finT(c) - tauNeed);
+              if (er < bestErr - 1e-6 || (Math.abs(er - bestErr) <= 1e-6 && Math.abs(c - cAct) < Math.abs(bestC - cAct))) {
+                bestErr = er; bestC = c;
+              }
+            };
+            for (let c = -PES_CTRL_CAP_DEG; c <= PES_CTRL_CAP_DEG + 1e-9; c += PES_FIN_STEP_DEG) consider(c);
+            { const c0 = bestC; consider(c0 - PES_FIN_STEP_DEG / 2); consider(c0 + PES_FIN_STEP_DEG / 2); }
+            const cStar = Math.max(-PES_CTRL_CAP_DEG, Math.min(PES_CTRL_CAP_DEG, bestC));
+            _st.pesCmdC = cStar;
+            _send(Guidance.cmdGridFinsControl(cStar));
+            const maxStep = PES_FIN_RATE_DEGS * dt;
+            const cNext = cAct + Math.max(-maxStep, Math.min(maxStep, cStar - cAct));
+            const tauFinNext = finT(cNext);
+
+            const tauR = tauNeed - tauFinNext;
+            let rcsAch = 0;
+            if (Math.abs(tauR) > PES_RCS_DEADBAND_NM) {
+              const res = GuideRCS.targetTorqueRcs(snapshot, tauR, idx);
+              if (res && res.duties) {
+                _send(Guidance.cmdRcsDuty(res.duties, idx));
+                rcsAch = res.fires ? res.fires.reduce(function (a, f) { return a + f.torque; }, 0) : tauR;
+              } else {
+                _send(Guidance.cmdRcsDuty(null, idx));
+              }
+            } else {
+              _send(Guidance.cmdRcsDuty(null, idx));
+            }
+            _st.lastRcsTorque = rcsAch;
+
+            _st.pesCtrlCmd = cStar;
             _st.pesAlphaDeg = Number.isFinite(d.alphaDeg) ? d.alphaDeg : null;
             _st.pesOmegaDegS = d.omega * R2D;
             _st.pesQ = Number.isFinite(d.Q) ? d.Q : null;
-
-            if (Math.round(simT * 16) % 400 === 0) {
+            _st.pesEdotPredMps = edotPred;
+            _st.pesEdotMeasMps = _st.pesErateF;
+            _st.pesRcsTorque = rcsAch;
+            _st.pesFinCtrlActDeg = cAct;
+            if (Math.round(simT * 80) % 160 === 0) {
               console.log("[POST_ENTRY-DBG] t=" + simT.toFixed(2) + " alt=" + altKm.toFixed(1) + "km" +
-                " v=" + Math.hypot(d.relVx, d.relVy).toFixed(0) + "m/s" +
-                " ctrlCmd=" + _st.pesCtrlCmd.toFixed(1) + "deg" +
-                " alpha=" + (_st.pesAlphaDeg != null ? _st.pesAlphaDeg.toFixed(2) : "n/a") + "deg" +
-                " w=" + _st.pesOmegaDegS.toFixed(3) + "deg/s theta=" + (d.theta * R2D).toFixed(2) + "deg" +
-                " Q=" + (_st.pesQ != null ? Math.round(_st.pesQ) : "n/a") +
-                " groundErr=" + (_st.pesGroundErrM / 1000).toFixed(2) + "km" +
-                " vacImpactErr=" + (_st.pesVacErrM != null ? (_st.pesVacErrM / 1000).toFixed(2) + "km" : "n/a"));
+                " v=" + Math.hypot(d.relVx, d.relVy).toFixed(0) + " Q=" + (Number.isFinite(d.Q) ? Math.round(d.Q) : "n/a") +
+                " vacErr=" + (errM / 1000).toFixed(3) + "km groundErr=" + (_st.pesGroundErrM / 1000).toFixed(3) + "km" +
+                " edot meas/pred/des=" + (_st.pesErateF != null ? _st.pesErateF.toFixed(1) : "n/a") + "/" +
+                edotPred.toFixed(1) + "/" + edotDes.toFixed(1) + "m/s J=" + J.toFixed(2) +
+                " alpha=" + d.alphaDeg.toFixed(2) + "→" + aStar.toFixed(2) + "deg theta=" + (d.theta * R2D).toFixed(2) +
+                " w=" + (d.omega * R2D).toFixed(3) + "deg/s" +
+                " fin act/cmd=" + cAct.toFixed(1) + "/" + cStar.toFixed(1) +
+                " tauNeed=" + Math.round(tauNeed) + " tauFin=" + Math.round(tauFinNext) + " tauRcs=" + Math.round(rcsAch) +
+                " hullLatF=" + Math.round(a0.fxb) + " finFxb=" + Math.round((d.gridFinFx || 0) * Math.cos(d.theta) + (d.gridFinFy || 0) * Math.sin(d.theta)));
             }
             break;
           }
@@ -4387,6 +4514,15 @@ setState(s) {
           _st.pesAlphaDeg = null;
           _st.pesOmegaDegS = null;
           _st.pesQ = null;
+          _st.pesDone = false;
+          _st.pesCmdC = 0;
+          _st.pesPrevT = null;
+          _st.pesPrevErr = null;
+          _st.pesErateF = null;
+          _st.pesEdotPredMps = null;
+          _st.pesEdotMeasMps = null;
+          _st.pesRcsTorque = 0;
+          _st.pesFinCtrlActDeg = null;
         },
 
         tick(snapshot) {
@@ -4455,6 +4591,10 @@ setState(s) {
             pesAlphaDeg: _st.pesAlphaDeg,
             pesOmegaDegS: _st.pesOmegaDegS,
             pesQ: _st.pesQ,
+            pesEdotPredMps: _st.pesEdotPredMps,
+            pesEdotMeasMps: _st.pesEdotMeasMps,
+            pesRcsTorque: _st.pesRcsTorque,
+            pesFinCtrlActDeg: _st.pesFinCtrlActDeg,
             rcsTorque: _st.lastRcsTorque,
           };
         },
