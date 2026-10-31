@@ -944,48 +944,61 @@ p = Object.assign({}, p, { bi: clamp(p.bi + ((c === 'F1' || c === 'FE') ? +1 : -
       // Pick the side by CHEAP data: right side has an apside imminent after engine-off (seconds); wrong side ~ a half orbit away. FULL runs nearest-first, other side only as fallback.
       const okT = (c) => c === 1 || c === 2;   // FULL only for 1 or 2 crossings
       const nearT = async (li) => { const r = await cross(li), t = Math.min(r.tToApo, r.tToPeri); return Number.isFinite(t) ? t : Infinity; };
-      // Edge neighbors first (baseA with count=k below, baseB with count=k+1 above).
-      // If both fail, WALK OUTWARD — user-verified case at 320/350 elliptical:
-      // edge 424|425 had both FULL=done=false (duration_cap_hit), but
-      // 423 (done, -372.2), 422 (-457.6), 421 (-464.0 BEST), 420, 419...
-      // all worked. Without walk-out the edge fails immediately and search
-      // skips to edge k=2 or gives up, missing the entire working region.
+      // Rolling-pair walk with DOWN priority (user-verified better than
+      // parallel walk). User case: edge 424|425, both fail (duration_cap_hit),
+      // 423 works, 422/421 also work. Parallel walk tested {424,425} then
+      // {423,426} — 3 FULL evals to find 423. Rolling-pair tests 424 first,
+      // then rolls to 423 (pair becomes [423, 425], but since 423 < 425 the
+      // DOWN-first sort keeps 423 ahead). 2 FULL evals to find 423 — saves 1.
       //
-      // Walk pattern (per user's instruction):
-      //   d=0: baseA,     baseB       (original edge neighbors)
-      //   d=1: baseA-1,   baseB+1     (424→423, 425→426)
-      //   d=2: baseA-2,   baseB+2     (→422, →427)
-      //   ...
-      // Within each d, sort by nearest-apside time (smaller t first) —
-      // "jiska apside time kam ho pehle uska FULL run".
+      // Mechanics: maintain rolling pair [below, above] starting at
+      // [baseA, baseB]. Each iteration picks the side with SMALLER li
+      // (DOWN priority — user observed working region lies below the edge
+      // in the failing case; also matches "if cross=0 encountered, always
+      // decrease li" rule).
       //
-      // maxWalk bounded by min(10, maxWin/2) since each walked tick = 1 FULL
-      // eval. Typically found within 3-4 steps when nearby done-ticks exist
-      // (user case: 423 found at d=1, 421 in window search afterwards).
+      // Cross-mismatch safety: if the current testLi no longer has the
+      // expected cross count (e.g. cross=0 encountered), skip FULL and
+      // roll further down. This preserves the user's earlier observation
+      // that cross=0 should push search direction DOWN, never UP.
+      //
+      // maxWalk=min(10, maxWin/2): bounds worst case to 20 FULL evals if
+      // both directions exhaust.
       const baseA = (tA !== null) ? tA : ed[0];
       const baseB = (tB !== null) ? tB : ed[1];
       const maxWalk = Math.min(10, Math.floor(maxWin / 2));
       let hit = null;
       const triedLi = new Set();
-      for (let d = 0; d <= maxWalk && !hit; d++) {
-        const pair = [];
-        const la = baseA - d, lb = baseB + d;
-        if (la >= 0 && la <= maxLi && !triedLi.has(la) && okT(k)) {
-          triedLi.add(la);
-          const r = await cross(la);
-          if (cnt(r) === k) pair.push({ li: la, c: k, t: await nearT(la) });
+      let below = baseA, above = baseB;
+      const maxIter = maxWalk * 2;
+      let iter = 0;
+      while (iter++ < maxIter && !hit) {
+        const canBelow = (below >= 0 && below <= maxLi && !triedLi.has(below) && okT(k));
+        const canAbove = (above >= 0 && above <= maxLi && !triedLi.has(above) && okT(k + 1));
+        if (!canBelow && !canAbove) break;
+        let testLi, testC;
+        if (canBelow && canAbove) {
+          if (below <= above) { testLi = below; testC = k; }
+          else { testLi = above; testC = k + 1; }
+        } else if (canBelow) { testLi = below; testC = k; }
+        else { testLi = above; testC = k + 1; }
+        triedLi.add(testLi);
+        const r = await cross(testLi);
+        if (cnt(r) !== testC) {
+          say('edge ' + k + '|' + (k + 1) + ' pair ' + below + '/' + above +
+              ' li ' + testLi + ' cross mismatch (' + cnt(r) + ' != ' + testC + '), skip');
+          if (testC === k) below--; else above++;
+          continue;
         }
-        if (lb >= 0 && lb <= maxLi && !triedLi.has(lb) && okT(k + 1)) {
-          triedLi.add(lb);
-          const r = await cross(lb);
-          if (cnt(r) === k + 1) pair.push({ li: lb, c: k + 1, t: await nearT(lb) });
-        }
-        pair.sort((x, y) => x.t - y.t);
-        for (const c of pair) {
-          const ff = await full(c.li);
-          say('edge ' + k + '|' + (k + 1) + ' raw ' + ed[0] + '|' + ed[1] + ' walk d=' + d + ': li ' + c.li + ' (cross ' + c.c + ', nearest apside ' + c.t.toFixed(1) + ' s) FULL done ' + !!(ff && ff.done) + ' score ' + (ff && Number.isFinite(ff.score) ? ff.score.toFixed(1) : '-'));
-          if (ff && ff.done) { hit = c; break; }
-        }
+        const tVal = await nearT(testLi);
+        const ff = await full(testLi);
+        say('edge ' + k + '|' + (k + 1) + ' raw ' + ed[0] + '|' + ed[1] +
+            ' pair ' + below + '/' + above +
+            ' test li ' + testLi + ' (cross ' + testC + ', apside ' + tVal.toFixed(1) + 's)' +
+            ' FULL done ' + !!(ff && ff.done) +
+            ' score ' + (ff && Number.isFinite(ff.score) ? ff.score.toFixed(1) : '-'));
+        if (ff && ff.done) { hit = { li: testLi, c: testC, t: tVal }; break; }
+        if (testC === k) below--; else above++;
       }
       if (!hit) continue;
       v = hit.li; dSel = hit.c === k ? -1 : +1;
