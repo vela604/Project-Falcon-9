@@ -1582,8 +1582,18 @@ extra._lastAero = aero;
 // RK4 sub-step (its contribution varies within the tick as θ evolves).
 const ggTau = gravityGradientTorque(s, extra);
 
-const ax = grav.ax + (Fx_i + aero.Fdx) / M;
-const ay = grav.ay + (Fy_i + aero.Fdy) / M;
+// HULL NORMAL FORCE (lift) — previously MISSING from linear acceleration.
+// computeDragAero() computes Fnormal (Barrowman linear + Allen-Perkins crossflow)
+// and uses it in dragTorque, but derivatives() only applied dragVec + grid fin
+// force. Without this, hull AoA does NOT curve the trajectory — a critical gap:
+// real F9's primary cross-range authority comes from hull lift at high AoA.
+// Fnormal is in body +x direction (perpendicular to nose); body +x unit vector
+// in inertial = (cosθ, sinθ). Signed Fnormal (positive → +x body force).
+const fnIx = aero.Fnormal * cosT;
+const fnIy = aero.Fnormal * sinT;
+
+const ax = grav.ax + (Fx_i + aero.Fdx + fnIx) / M;
+const ay = grav.ay + (Fy_i + aero.Fdy + fnIy) / M;
 const alpha = (extra.torque + aero.dragTorque + ggTau) / extra.I;
 
   return { vx: s.vx, vy: s.vy, ax, ay, omega: s.omega, alpha };

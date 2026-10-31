@@ -3424,10 +3424,11 @@ setState(s) {
         (ds.memberBreakdown || []).forEach(function (m) {
           fxb += (m.Fnormal_linear || 0) + (m.Fnormal_crossflow || 0);
         });
-        // Physics consistency: sim's derivatives() has ax = grav + (thrust + dragVec + gridFin)/M.
-        // Fnormal (hull lift) enters ONLY dragTorque (attitude), NOT linear force.
-        const fx = ds.dragVecX + (ds.gridFinFx || 0);
-        const fy = ds.dragVecY + (ds.gridFinFy || 0);
+        // Physics now applies Fnormal to linear accel (derivatives() fnIx/fnIy).
+        // Guidance must match: dragVec + grid fin force + hull Fnormal (inertial).
+        const cT = Math.cos(ds.theta), sT = Math.sin(ds.theta);
+        const fx = ds.dragVecX + (ds.gridFinFx || 0) + fxb * cT;
+        const fy = ds.dragVecY + (ds.gridFinFy || 0) + fxb * sT;
         return { ax: fx / M, ay: fy / M, fxb: fxb };
       }
 
@@ -3497,10 +3498,11 @@ setState(s) {
         (ds.memberBreakdown || []).forEach(function (m) {
           fxb += (m.Fnormal_linear || 0) + (m.Fnormal_crossflow || 0);
         });
-        // Physics consistency: sim's derivatives() has ax = grav + (thrust + dragVec + gridFin)/M.
-        // Fnormal (hull lift) enters ONLY dragTorque (attitude), NOT linear force.
-        const fx = ds.dragVecX + (ds.gridFinFx || 0);
-        const fy = ds.dragVecY + (ds.gridFinFy || 0);
+        // Physics now applies Fnormal to linear accel (derivatives() fnIx/fnIy).
+        // Guidance must match: dragVec + grid fin force + hull Fnormal (inertial).
+        const cT = Math.cos(ds.theta), sT = Math.sin(ds.theta);
+        const fx = ds.dragVecX + (ds.gridFinFx || 0) + fxb * cT;
+        const fy = ds.dragVecY + (ds.gridFinFy || 0) + fxb * sT;
         return { ax: fx / M, ay: fy / M, fxb: fxb };
       }
       // dv (m/s) still delivered while the given engines spool down from their CURRENT flow
