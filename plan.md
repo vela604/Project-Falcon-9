@@ -102,6 +102,28 @@ targetOmega, idx)`, `cmdMarkIntentionalImpact(idx)`, `cmdSetFuelMass`, `cmdWarp`
 `cmdTakeControl(idx)`. (Exact semantics of grid-fin / legs / group-throttle commands:
 **read `physics.worker.js`/`physics.js` when first needed.**)
 
+**Frame of reference rules (verified Chat 6 — critical for every phase):**
+| Frame | What | Consumers |
+|---|---|---|
+| **Inertial** | `vx, vy` (Earth-centred, non-rotating) | Gravity, Kepler prediction, trajectory, Earth-fixed conversion |
+| **Air-relative** | `d.relVx, d.relVy` = `vx - (wind + ω×r)` | Drag, `d.alphaDeg` display, grid fins, attitude holds in coast |
+| **Ground-relative** | air-relative minus wind (≈ air-relative when wind off) | Pad targeting, touchdown velocity |
+
+**Rules:**
+- **Coast attitude holds** → air-relative retrograde (matches `alphaDeg=0` display, zero aero torque).
+- **Burn attitude targets** → retrograde to the velocity being KILLED:
+  - Boostback kills ground-relative horizontal
+  - Entry / pre-entry coast uses air-relative (heating frame)
+  - Landing burn kills ground-relative velocity
+- **Trajectory prediction** → inertial leapfrog, endpoint converted to Earth-fixed:
+  `phiEf = atan2(rx, ry) - ωE·(simT + tImpact)`.
+- **Pad comparison** → Earth-fixed angle (pad at `LAUNCH_SITE_ANGLE_0 + arcOffsetM/R`).
+
+Mistake to avoid: using `atan2(d.vx, -d.vy)` (inertial) for a coast attitude
+hold when the sim's `alphaDeg` is air-relative. At 100km the ~465 m/s Earth
+rotation term is 20-40% of descent speed, leaving 15-25° of displayed AoA even
+when "aligned" in inertial frame. This was the Chat 6 bug.
+
 **Gimbal:** accel-limited actuator. Shared helpers at the top of `guidance-blocks.js`:
 `_gimbalAlphaCmd`, `_gimbalNextAngle`, `_gimbalCmdMsg` (commands gimbal *angular
 acceleration*). Study how `insertion`'s STAGE_BURN and `ascent`'s HOLD use them
@@ -124,7 +146,7 @@ fast-forward workers rebuild guidance from `exportGuideState()` mid-flight.
 | 2 | Handover at end of `SEPARATED_AXIAL` → pusher off, RCS null, rtlsBlock.start(booster) | ✅ done | block ticks every tick in parallel with stage phases |
 | 3 | **FLIP** phase | ✅ done, user-verified "perfect, fast turn & settle" | see §5 |
 | 4 | BOOSTBACK_BURN | ✅ done, sim-verified | see §6.1 |
-| 5 | PRE_ENTRY_STEER | ⬜ | |
+| 5 | PRE_ENTRY_STEER | ✅ done, sim-verified (grid fins deploy → quiet coast → ALIGN at 100km → HOLD → handoff at 60km) | see §5.4 |
 | 6 | ENTRY_BURN | ⬜ | |
 | 7 | POST_ENTRY_STEER | ⬜ | |
 | 8 | LANDING_BURN | ⬜ | |
@@ -174,6 +196,51 @@ lbInsertionBlock, lbSuicideBlock, lbRtlsBlock`. Config bag: `_lbConfig.rtls`.
 User-verified in sim (Chat 3, "perfect, fast turn & settle"). Pusher removed
 Chat 5, now pure RCS with 5 kg/s nozzles (10× authority).
 
+### 5.4 PRE_ENTRY_STEER algorithm (done)
+**Sub-phases** (in `_st.preEntrySub`): **COAST** → **ALIGN** → **HOLD** → handoff.
+
+1. **First tick (phase entry):**
+   - `cmdGridFinsDeploy(true)` — one-shot, no control deflection.
+   - `cmdSetAllThrottle(0)`, `cmdSetGimbalRate(0)`, `cmdRcsDuty(null)` — everything off.
+   - Sub = COAST.
+
+2. **COAST — quiet descent:**
+   - Only idempotent zero commands each tick (keeps state clean).
+   - Transition to ALIGN when `altKm ≤ PRE_ENTRY_ALIGN_ALT_KM (100)` AND `vr < 0`.
+   - The `vr < 0` check handles boostback that ends below the threshold — wait
+     for descending pass, not ascending.
+
+3. **ALIGN — bang-bang RCS to air-relative retrograde:**
+   - **Target frame = AIR-RELATIVE retrograde** (critical, verified Chat 6):
+     `tgtNow = atan2(d.relVx, -d.relVy)` using `d.relVx/relVy` from derivation.js
+     (which include wind + surface rotation).
+   - Why air-relative: `d.alphaDeg` is defined against relV; at 100km Earth
+     rotation (~465 m/s) is 20-40% of descent speed, so inertial-retrograde
+     target left 15-25° of AoA (user saw -20°). Air-relative target settles
+     with `alphaDeg ≈ 0`.
+   - Same bang-bang law as FLIP: first-tick direction, unwrapped error, one-tick
+     prediction (with `dTgt = wTgt*dt` target rotation feedforward), ACCEL/
+     BRAKE/TRIM modes.
+   - Exit tolerances **reuse FLIP_* constants** (user: "like flip phase"):
+     `FLIP_ROTATE_TOL_DEG=0.5`, `FLIP_OMEGA_TOL=0.005`.
+   - Sub → HOLD on exit.
+
+4. **HOLD — PD attitude hold:**
+   - PD on live target: `τ = -I*(KP*err + KD*(ω - wTgt))`, KP=0.5, KD=4.0.
+   - `wTgt` feedforward (target rotates each tick as velocity direction changes).
+   - Torque via `GuideRCS.targetTorqueRcsNoNetForce` (coast — no orbit disturbance).
+   - Every 5 sim-sec, logs `[PRE_ENTRY_HOLD-DBG]` with theta / tgt / err / alphaDeg / omega.
+   - Transition to ENTRY_BURN when `altKm ≤ ENTRY_BURN_ALT_KM (60)`, set `finished=true`.
+
+**Constants:** `PRE_ENTRY_ALIGN_ALT_KM=100`, `ENTRY_BURN_ALT_KM=60` (both guesses, tune in sim).
+Mirrored in `guideConfigDefaults.js` → `landbackV1.rtls`, described in `guideConstantDescriptions.js`.
+
+**Status fields:** `rtlsPreEntrySub, rtlsPreEntryErrDeg, rtlsPreEntryOmegaDegS,
+rtlsPreEntryTgtDeg` (via `_landbackTick.getStatus` → `standardRTLS.getStatus`).
+
+**Console traces:** `PRE_ENTRY_STEER start`, `COAST → ALIGN`, `ALIGN start`,
+`ALIGN → HOLD`, `HOLD-DBG` (every 5s), `HOLD → ENTRY_BURN trigger`.
+
 ## 6. Roadmap — remaining phases (design notes, NOT decisions)
 
 **The user defines each phase; below are only my starting suggestions/questions so
@@ -208,11 +275,13 @@ side-engine spool dv must remain ≤ SIDE_CUT.
 - Fuel budget: booster residual at MECO is `ascent.MECO_TARGET_BOOSTER_FUEL_KG` (52612 kg
   in the preset — **verify real value from `body.fuelMass` at separation**).
 
-### 6.2 PRE_ENTRY_STEER / POST_ENTRY_STEER
-- Coast attitude hold (RCS; retrograde / engines-first), grid fins (`cmdGridFinsDeploy`,
-  `cmdGridFinsControl`) for aerodynamic steering in-plane toward the pad.
-- Need from user: attitude target, grid-fin law, triggers (altitude / Q / speed / predictive).
-- Will need aero knowledge: `derivation.js` per-member aero, `physics.js` grid-fin model.
+### 6.2 PRE_ENTRY_STEER (✅ done) / POST_ENTRY_STEER (⬜)
+- **PRE_ENTRY_STEER done** — see §5.4. Air-relative retrograde target, 3 sub-phases
+  (COAST → ALIGN → HOLD), grid fins deployed on entry (control=0), handoff at 60km.
+- **POST_ENTRY_STEER still pending** — grid fins become primary actuator here (Q high
+  below ~40km; grid fin authority scales with Q). Need from user: pad-steer law
+  (grid fin control from pad-impact error?), grid-fin control limits used, exit trigger
+  (altitude / speed / predicted for LANDING_BURN).
 
 ### 6.3 ENTRY_BURN, LANDING_BURN, TOUCHDOWN
 - ENTRY_BURN: relight, hold retrograde with gimbal, cut on speed/Q/altitude.
@@ -249,6 +318,25 @@ side-engine spool dv must remain ≤ SIDE_CUT.
 
 ## 8. Open questions for the user (answer when starting each phase)
 
+**ENTRY_BURN (next):**
+- Ignition trigger: altitude? air-relative speed threshold? Q threshold? Predicted (burn-time needed to hit landing-burn start speed)?
+- Engines fired: which ones (same as boostback "C,0,180"? fewer? centre only)?
+- Throttle profile: full burn then cut? taper?
+- Attitude during burn: hold air-relative retrograde with gimbal (centre)? Roll with grid fins during burn?
+- Cutoff: air-relative speed < V? Q < threshold? altitude drop? spool-compensated?
+
+**PRE_ENTRY (answered, no action):** air-relative retrograde confirmed. Align at 100km, handoff at 60km.
+
+**POST_ENTRY_STEER (later):**
+- Grid-fin control law: bang-bang? PD on predicted-pad-error? Q-scaled authority?
+- Attitude target: air-relative (aero) vs specific steering angle for pad?
+- Exit to LANDING_BURN: altitude / speed / predicted ignition?
+
+**LANDING_BURN (later):**
+- Ignition rule (suicide-style? predicted stopping distance = altitude?), min throttle, leg deploy altitude, cutoff.
+- Success criteria for TOUCHDOWN.
+
+**Older:**
 - BOOSTBACK tuning (OFFSET / SIDE_CUT / TAPER) after sim run; attitude hold between BOOSTBACK end and PRE_ENTRY_STEER?
 - Entry burn trigger (altitude, Q, speed, predicted) and cutoff?
 - Grid-fin control law / limits? Aero steering goal (hit pad coordinates?)
@@ -258,6 +346,7 @@ side-engine spool dv must remain ≤ SIDE_CUT.
 
 ## 9. Changelog (newest first — add a line for every change)
 
+- **Chat 6:** **PRE_ENTRY_STEER implemented** (§5.4). Sub-phases COAST → ALIGN → HOLD. Grid fins deployed once on entry (`cmdGridFinsDeploy(true)`), then quiet. ALIGN/TRIM/HOLD use **air-relative retrograde** target `atan2(d.relVx, -d.relVy)` — this was the root cause of the "AoA never zeros" bug (user saw ~-20° at HOLD). Formula was correct but targeted inertial frame; sim's `alphaDeg` is air-relative. New constants `PRE_ENTRY_ALIGN_ALT_KM=100`, `ENTRY_BURN_ALT_KM=60` (block default + guideConfigDefaults + descriptions). New status fields `rtlsPreEntrySub/ErrDeg/OmegaDegS/TgtDeg`. Added §3 frame-of-reference rules table (permanent guidance). `_goto` cleanup now also releases RCS for BOOSTBACK_BURN and PRE_ENTRY_STEER. Diagnostic logs: `PRE_ENTRY_HOLD-DBG` every 5 sim-sec (theta/tgt/err/alphaDeg/omega).
 - **Chat 5:** FLIP pusher REMOVED (pure RCS-only, user-verified "powerful torque visibly firing" bug = pusher + bang-bang interaction). Restored from working Chat-3 RCS-only version (whole `standardRTLS` block replaced surgically). Also: **RCS nozzles now 5 kg/s per nozzle** (was 0.5, 10× authority — fleet/hardware change, not guidance). **SEPARATED_AXIAL constants updated**: `BOOSTER_SEP_ANG_ACCEL_DEG_S2` **-1 → -3**, `BOOSTER_SEP_TARGET_OMEGA_DEG_S` **10 → 30** (values in `guideConfigDefaults.js` **and** `guidance.js` `_lbConfig`). offline check harness retired — no more offline testing.
 - **Chat 4d:** FLIP now fires a one-shot pneumatic-pusher assist (`FLIP_PUSHER_ANG_ACCEL_DEG_S2`=10, `FLIP_PUSHER_TARGET_OMEGA_DEG_S`=25; physics.js: const angAccel until |omega|>=target then off) in the flip direction at the first tick, cut when mode leaves ACCEL / on FLIP exit; defaults are guesses (goal flip 8-12 s). BOOSTBACK: all burn engines fade 100%→floor over last `TAPER_M`=150 km of error, outer two off at `SIDE_CUT_M`=20 km, centre continues on the same fade; spool wait compares to commanded fraction.
 - **Chat 4e:** FLIP pusher reworked: NOT a config constant any more. Internal `FLIP_PUSHER_ALPHA_DEG_S2`=5 (deg/s², torque = I·this) is extra torque authority in BOTH directions added to RCS max (planner uses RCS+pusher); ACCEL/BRAKE: RCS full + pusher full, TRIM: pusher first then RCS. Sent every tick as `cmdPusherTorque(tau/I, null)` (null target omega → physics never self-cancels it); zeroed on FLIP exit. Removed `rtls.FLIP_PUSHER_*` from defaults/descriptions.
