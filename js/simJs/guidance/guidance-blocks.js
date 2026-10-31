@@ -3140,6 +3140,7 @@ setState(s) {
       ENTRY_BURN_ENGINES: "C,0,180",       // engines lit at FULL throttle: "C" = centre, numbers = outer-ring angleDeg
       ENTRY_BURN_GIMBAL_ENGINES: "C",      // engines that gimbal to cancel env torque (subset of above; expand if SATURATED)
       ENTRY_BURN_CUTOFF_VELOCITY_MS: 600,  // cutoff when Earth-relative speed falls to this value
+      ENTRY_BURN_IMPACT_TARGET_M: -1480,   // m: bias burn target west so post-cutoff drag/fin drift lands near pad
       // POST_ENTRY_STEER
       POST_ENTRY_GRIDFIN_RAMP_DEG_S: 3,    // grid-fin control target ramps 0 -> max at this rate (deg/s); slower = less oscillation (guess, tune in sim)
     },
@@ -4154,7 +4155,8 @@ setState(s) {
             const omegaE = env.EARTH_OMEGA || 0;
             const Rm = env.EARTH_RADIUS;
             const imp = _bbImpact(d.rx, d.ry, d.vx, d.vy, simT, env.GM_EARTH, Rm, omegaE);
-            const errM = imp ? _wrapPi(imp.phiEf - padEf) * Rm : null;
+            const biasM = Number.isFinite(cfg.ENTRY_BURN_IMPACT_TARGET_M) ? cfg.ENTRY_BURN_IMPACT_TARGET_M : 0;
+            const errM = imp ? _wrapPi(imp.phiEf - padEf) * Rm - biasM : null;
             _st.ebImpactErrM = errM;
             const dtS = (_st.ebPrevT !== null && simT > _st.ebPrevT) ? (simT - _st.ebPrevT) : dt;
             if (_st.ebPrevT !== null && _st.ebPrevV !== null) {
@@ -4206,7 +4208,7 @@ setState(s) {
                 const aT = Math.hypot(d.thrustBodyX, d.thrustBodyY) / M;
                 const px = -Math.cos(d.theta), py = -Math.sin(d.theta);
                 const imp2 = _bbImpact(d.rx, d.ry, d.vx + px, d.vy + py, simT, env.GM_EARTH, Rm, omegaE);
-                const S = imp2 ? (_wrapPi(imp2.phiEf - padEf) * Rm - errM) : 0;
+                const S = imp2 ? (_wrapPi(imp2.phiEf - padEf) * Rm - biasM - errM) : 0;
                 const kappa = aT * S;
                 _st.ebKappa = kappa;
                 const T = Math.max(0, tGo);
