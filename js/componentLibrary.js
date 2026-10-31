@@ -569,7 +569,7 @@ function buildRcsThrusterColdGasSmall() {
 // into the RCS thruster spec.
 ve: 700,
   efficiency: 0.85, // cold-gas loses more to valve/nozzle losses than chemical
-  maxMassFlowRate: 0.5, // → per-nozzle thrust ≈ 0.5 × 700 ≈ 350 N
+  maxMassFlowRate: 5, // → per-nozzle thrust ≈ 0.5 × 700 ≈ 350 N
     }
   );
 }
