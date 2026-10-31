@@ -3140,6 +3140,8 @@ setState(s) {
       ENTRY_BURN_ENGINES: "C,0,180",       // engines lit at FULL throttle: "C" = centre, numbers = outer-ring angleDeg
       ENTRY_BURN_GIMBAL_ENGINES: "C",      // engines that gimbal to cancel env torque (subset of above; expand if SATURATED)
       ENTRY_BURN_CUTOFF_VELOCITY_MS: 600,  // cutoff when Earth-relative speed falls to this value
+      // POST_ENTRY_STEER
+      POST_ENTRY_GRIDFIN_RAMP_DEG_S: 3,    // grid-fin control target ramps 0 -> max at this rate (deg/s); slower = less oscillation (guess, tune in sim)
     },
     importantFields: [],
     createInstance: function () {
@@ -4141,8 +4143,55 @@ setState(s) {
           }
 
           // ==========================================================
+          // ==========================================================
+          // POST_ENTRY_STEER — FIRST EXPERIMENT: grid fins only, ramped max
+          // ACW tilt to induce CW body rotation (nose east, lift west).
+          // NO exit; phase holds so impact shift can be judged at landing.
           case "POST_ENTRY_STEER": {
-            // TODO: post-entry-burn steer
+            const idx = _bodyIdx;
+            const env = Derivation.getEnv();
+            const R2D = 180 / Math.PI;
+            const altKm = d.altitudeAGL / 1000;
+            const omegaE = env.EARTH_OMEGA || 0;
+
+            if (!_st.pesInit) {
+              _st.pesInit = true;
+              _st.pesT0 = simT;
+              _st.pesCtrlCmd = 0;
+              _send(Guidance.cmdSetAllThrottle(0));
+              _send(Guidance.cmdSetGimbalRate(0));
+              _send(Guidance.cmdRcsDuty(null, idx));
+              _send(Guidance.cmdGridFinsDeploy(true));
+              console.log("[standardRTLS] POST_ENTRY_STEER start t=" + simT.toFixed(2) +
+                " alt=" + altKm.toFixed(1) + "km v=" + Math.hypot(d.relVx, d.relVy).toFixed(0) + "m/s" +
+                " ramp=" + (Number.isFinite(cfg.POST_ENTRY_GRIDFIN_RAMP_DEG_S) ? cfg.POST_ENTRY_GRIDFIN_RAMP_DEG_S : 3) + "deg/s");
+            }
+
+            const rampRate = Number.isFinite(cfg.POST_ENTRY_GRIDFIN_RAMP_DEG_S) ? cfg.POST_ENTRY_GRIDFIN_RAMP_DEG_S : 3;
+            const mag = Math.min(PES_CTRL_CAP_DEG, Math.max(0, rampRate) * (simT - _st.pesT0));
+            _st.pesCtrlCmd = PES_CTRL_SIGN * mag;
+            _send(Guidance.cmdGridFinsControl(_st.pesCtrlCmd));
+
+            const pad = (_missionCtx && _missionCtx.targetPad) || null;
+            const padEf = (pad && Number.isFinite(pad.angleEf)) ? pad.angleEf : (env.LAUNCH_SITE_ANGLE_0 || 0);
+            const phiNow = Math.atan2(d.rx, d.ry) - omegaE * simT;
+            _st.pesGroundErrM = _wrapPi(phiNow - padEf) * env.EARTH_RADIUS;
+            const imp = _bbImpact(d.rx, d.ry, d.vx, d.vy, simT, env.GM_EARTH, env.EARTH_RADIUS, omegaE);
+            _st.pesVacErrM = imp ? _wrapPi(imp.phiEf - padEf) * env.EARTH_RADIUS : null;
+            _st.pesAlphaDeg = Number.isFinite(d.alphaDeg) ? d.alphaDeg : null;
+            _st.pesOmegaDegS = d.omega * R2D;
+            _st.pesQ = Number.isFinite(d.Q) ? d.Q : null;
+
+            if (Math.round(simT * 16) % 400 === 0) {
+              console.log("[POST_ENTRY-DBG] t=" + simT.toFixed(2) + " alt=" + altKm.toFixed(1) + "km" +
+                " v=" + Math.hypot(d.relVx, d.relVy).toFixed(0) + "m/s" +
+                " ctrlCmd=" + _st.pesCtrlCmd.toFixed(1) + "deg" +
+                " alpha=" + (_st.pesAlphaDeg != null ? _st.pesAlphaDeg.toFixed(2) : "n/a") + "deg" +
+                " w=" + _st.pesOmegaDegS.toFixed(3) + "deg/s theta=" + (d.theta * R2D).toFixed(2) + "deg" +
+                " Q=" + (_st.pesQ != null ? Math.round(_st.pesQ) : "n/a") +
+                " groundErr=" + (_st.pesGroundErrM / 1000).toFixed(2) + "km" +
+                " vacImpactErr=" + (_st.pesVacErrM != null ? (_st.pesVacErrM / 1000).toFixed(2) + "km" : "n/a"));
+            }
             break;
           }
 
@@ -4240,6 +4289,14 @@ setState(s) {
           _st.ebThrFrac = null;
           _st.ebTauEnv = null;
           _st.ebTauAvail = null;
+          _st.pesInit = false;
+          _st.pesT0 = 0;
+          _st.pesCtrlCmd = 0;
+          _st.pesGroundErrM = null;
+          _st.pesVacErrM = null;
+          _st.pesAlphaDeg = null;
+          _st.pesOmegaDegS = null;
+          _st.pesQ = null;
         },
 
         tick(snapshot) {
@@ -4292,6 +4349,12 @@ setState(s) {
             ebGimbalReqDeg: _st.ebGimbalReqDeg,
             ebGimbalSat: _st.ebGimbalSat,
             ebThrFrac: _st.ebThrFrac,
+            pesCtrlCmd: _st.pesCtrlCmd,
+            pesGroundErrM: _st.pesGroundErrM,
+            pesVacErrM: _st.pesVacErrM,
+            pesAlphaDeg: _st.pesAlphaDeg,
+            pesOmegaDegS: _st.pesOmegaDegS,
+            pesQ: _st.pesQ,
             rcsTorque: _st.lastRcsTorque,
           };
         },

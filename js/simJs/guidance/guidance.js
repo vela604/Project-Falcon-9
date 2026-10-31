@@ -1516,6 +1516,12 @@ if (_lbState.insertionBlock) {
       rtlsEbGimbalReqDeg: rs.ebGimbalReqDeg,
       rtlsEbGimbalSat: rs.ebGimbalSat,
       rtlsEbThrFrac: rs.ebThrFrac,
+      rtlsPesCtrlCmd: rs.pesCtrlCmd,
+      rtlsPesGroundErrM: rs.pesGroundErrM,
+      rtlsPesVacErrM: rs.pesVacErrM,
+      rtlsPesAlphaDeg: rs.pesAlphaDeg,
+      rtlsPesOmegaDegS: rs.pesOmegaDegS,
+      rtlsPesQ: rs.pesQ,
     });
   }
 
