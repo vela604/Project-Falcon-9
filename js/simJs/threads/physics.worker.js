@@ -118,17 +118,17 @@ self.onmessage = (e) => {
 
 
       importScripts(
-        '../../componentLibrary.js?v=1793434554541',
-        '../../customDesign.js?v=1793434554541',
-        '../../fleet.js?v=1793434554541',
-        '../../config.js?v=1793434554541',
-        '../core/massProps.js?v=1793434554541',
-        '../core/environment.js?v=1793434554541',
-        '../core/vehicle.js?v=1793434554541',
-        '../core/rcs.js?v=1793434554541',
-        '../core/physics.js?v=1793434554541',
-        '../core/collision.js?v=1793434554541',
-        '../core/stateBuffer.js?v=1793434554541'
+        '../../componentLibrary.js?v=1793437035031',
+        '../../customDesign.js?v=1793437035031',
+        '../../fleet.js?v=1793437035031',
+        '../../config.js?v=1793437035031',
+        '../core/massProps.js?v=1793437035031',
+        '../core/environment.js?v=1793437035031',
+        '../core/vehicle.js?v=1793437035031',
+        '../core/rcs.js?v=1793437035031',
+        '../core/physics.js?v=1793437035031',
+        '../core/collision.js?v=1793437035031',
+        '../core/stateBuffer.js?v=1793437035031'
       );
 
       bootstrapped = true;

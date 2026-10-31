@@ -3397,6 +3397,12 @@ setState(s) {
       }
       const EB_ATT_KP = 0.5;
       const EB_ATT_KD = 4.0;
+      const EB_VDOT_TAU_S = 0.5;
+      const EB_ERATE_TAU_S = 0.25;
+      const EB_WARMUP_S = 0.5;
+      const EB_TOL_M = 100;
+      const EB_TGO_MIN_S = 0.5;
+      const EB_W_TOL = 0.002;
       // dv (m/s) still delivered while the given engines spool down from their CURRENT flow
       // (linear ramp to zero over shutdownDurationS, scaled by flow/maxFlow — same model as ascent MECO).
       function _bbSpoolDv(engs, M) {
@@ -3985,17 +3991,14 @@ setState(s) {
             const M = d.massProps.M, I = d.massProps.I;
             if (!(I > 0) || !(M > 0)) break;
             const engines = body.engines || [];
-
             const burnToks = _ebTokens(cfg.ENTRY_BURN_ENGINES, "C,0,180");
             const burnSet = engines.filter(function (e) { return _bbInSet(e, burnToks); });
             if (!burnSet.length) {
-              console.warn("[standardRTLS] ENTRY_BURN: no engine matches ENTRY_BURN_ENGINES='" + cfg.ENTRY_BURN_ENGINES + "' - skipping phase");
+              console.warn("[standardRTLS] ENTRY_BURN: no engine matches ENTRY_BURN_ENGINES='" + cfg.ENTRY_BURN_ENGINES + "' - skip");
               finished = true; break;
             }
             const gimToks = _ebTokens(cfg.ENTRY_BURN_GIMBAL_ENGINES, "C");
             const gimbals = engines.filter(function (e) { return e.gimbal && _bbInSet(e, gimToks); });
-
-            // phase entry
             if (!_st.ebInit) {
               _st.ebInit = true;
               _st.ebSpooled = false;
@@ -4003,28 +4006,28 @@ setState(s) {
               _st.ebGimbalSat = false;
               _st.ebRcsDir = 0;
               _st.ebFlips = 0;
+              _st.ebSpoolT = null;
+              _st.ebPrevT = null;
+              _st.ebPrevV = null;
+              _st.ebPrevErr = null;
+              _st.ebVdotF = null;
+              _st.ebErateF = null;
               _send(Guidance.cmdSetAllThrottle(0));
               console.log("[standardRTLS] ENTRY_BURN start t=" + simT.toFixed(2) +
                 " alt=" + altKm.toFixed(1) + "km engines=" + burnToks.join(",") +
-                " gimbal=" + gimToks.join(",") + " (full throttle, cutoff at " +
+                " gimbal=" + gimToks.join(",") + " (full throttle, cutoff " +
                 (Number.isFinite(cfg.ENTRY_BURN_CUTOFF_VELOCITY_MS) ? cfg.ENTRY_BURN_CUTOFF_VELOCITY_MS : 600) +
-                " m/s) STEER: RCS by sign(vacuum impact err), gimbal cancels env torque");
-              if (!gimbals.length)
-                console.warn("[standardRTLS] ENTRY_BURN: no gimbal engine matches ENTRY_BURN_GIMBAL_ENGINES='" + cfg.ENTRY_BURN_GIMBAL_ENGINES + "' - no torque cancel");
+                " m/s) STEER v2: predictive Tgo + braking");
             }
-
-            // cutoff
             const speedRelV = Math.hypot(d.relVx, d.relVy);
             const vCut = Number.isFinite(cfg.ENTRY_BURN_CUTOFF_VELOCITY_MS) ? cfg.ENTRY_BURN_CUTOFF_VELOCITY_MS : 600;
             _st.ebSpeedMs = speedRelV;
             if (_st.ebStage !== "SPOOL" && speedRelV <= vCut) {
               _st.ebStage = "SPOOL";
-              console.log("[standardRTLS] ENTRY_BURN -> SPOOL (cutoff) t=" + simT.toFixed(2) +
-                " v=" + speedRelV.toFixed(1) + "m/s <= " + vCut + " alt=" + altKm.toFixed(1) + "km" +
-                " impactErr=" + (_st.ebImpactErrM != null ? (_st.ebImpactErrM / 1000).toFixed(2) + "km" : "n/a"));
+              console.log("[standardRTLS] ENTRY_BURN -> SPOOL cutoff t=" + simT.toFixed(2) +
+                " v=" + speedRelV.toFixed(1) + " alt=" + altKm.toFixed(1) + "km impactErr=" +
+                (_st.ebImpactErrM != null ? (_st.ebImpactErrM / 1000).toFixed(2) + "km" : "n/a"));
             }
-
-            // throttle
             let mdotNow = 0;
             engines.forEach(function (e) { mdotNow += e.massFlowRate || 0; });
             if (_st.ebStage === "BURN") {
@@ -4034,8 +4037,6 @@ setState(s) {
               _send(Guidance.cmdSetAllThrottle(0));
               _st.ebThrFrac = 0;
             }
-
-            // spool wait
             if (!_st.ebSpooled && _st.ebStage === "BURN") {
               let ready = true;
               burnSet.forEach(function (e) {
@@ -4044,23 +4045,36 @@ setState(s) {
               });
               if (ready) {
                 _st.ebSpooled = true;
+                _st.ebSpoolT = simT;
                 console.log("[standardRTLS] ENTRY_BURN engines at full thrust t=" + simT.toFixed(2));
               }
             }
             const active = _st.ebSpooled && _st.ebStage === "BURN";
-
-            // vacuum impact error vs pad
             const pad = (_missionCtx && _missionCtx.targetPad) || null;
             const padEf = (pad && Number.isFinite(pad.angleEf)) ? pad.angleEf : (env.LAUNCH_SITE_ANGLE_0 || 0);
             const omegaE = env.EARTH_OMEGA || 0;
-            const imp = _bbImpact(d.rx, d.ry, d.vx, d.vy, simT, env.GM_EARTH, env.EARTH_RADIUS, omegaE);
-            const errM = imp ? _wrapPi(imp.phiEf - padEf) * env.EARTH_RADIUS : null;
+            const Rm = env.EARTH_RADIUS;
+            const imp = _bbImpact(d.rx, d.ry, d.vx, d.vy, simT, env.GM_EARTH, Rm, omegaE);
+            const errM = imp ? _wrapPi(imp.phiEf - padEf) * Rm : null;
             _st.ebImpactErrM = errM;
-
-            // RCS torque currently acting
+            const dtS = (_st.ebPrevT !== null && simT > _st.ebPrevT) ? (simT - _st.ebPrevT) : dt;
+            if (_st.ebPrevT !== null && _st.ebPrevV !== null) {
+              const vdR = (speedRelV - _st.ebPrevV) / dtS;
+              const kv = Math.min(1, dtS / EB_VDOT_TAU_S);
+              _st.ebVdotF = (_st.ebVdotF === null) ? vdR : _st.ebVdotF + kv * (vdR - _st.ebVdotF);
+              if (errM !== null && _st.ebPrevErr !== null) {
+                const eR = (errM - _st.ebPrevErr) / dtS;
+                const ke = Math.min(1, dtS / EB_ERATE_TAU_S);
+                _st.ebErateF = (_st.ebErateF === null) ? eR : _st.ebErateF + ke * (eR - _st.ebErateF);
+              }
+            }
+            _st.ebPrevT = simT;
+            _st.ebPrevV = speedRelV;
+            _st.ebPrevErr = errM;
+            const tGo = (_st.ebVdotF !== null && _st.ebVdotF < -0.5) ? Math.max(0, (speedRelV - vCut) / (-_st.ebVdotF)) : null;
+            _st.ebTgoS = tGo;
+            _st.ebErateMps = _st.ebErateF;
             const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
-
-            // state 1 tick ahead including RCS torque
             let dNext = null;
             {
               const cT = Math.cos(d.theta), sT = Math.sin(d.theta);
@@ -4080,32 +4094,47 @@ setState(s) {
             }
             _st.ebAlphaDeg = Number.isFinite(d.alphaDeg) ? d.alphaDeg : null;
             _st.ebAlphaNextDeg = (dNext && Number.isFinite(dNext.alphaDeg)) ? dNext.alphaDeg : null;
-
-            // RCS: full torque, direction = sign(impact err)
+            let rcsDir = 0;
+            _st.ebPredErrM = null;
             if (active && errM !== null) {
+              const warm = (simT - _st.ebSpoolT) >= EB_WARMUP_S && _st.ebErateF !== null && tGo !== null;
               const mxT = _rcsMaxTorques(snapshot);
-              const dir = errM > 0 ? 1 : -1;
-              const res = dir > 0 ? mxT.rp : mxT.rn;
-              if (res && res.duties) {
-                _send(Guidance.cmdRcsDuty(res.duties, idx));
-                _st.lastRcsTorque = dir > 0 ? mxT.pos : -mxT.neg;
-              } else {
-                _rcsOff();
+              const aPos = mxT.pos / I, aNeg = mxT.neg / I;
+              const w1 = d.omega + (rcsNow / I) * dt;
+              const wSgn = w1 >= 0 ? 1 : -1;
+              const aB = wSgn > 0 ? aNeg : aPos;
+              if (warm && aB > 1e-9) {
+                const aT = Math.hypot(d.thrustBodyX, d.thrustBodyY) / M;
+                const px = -Math.cos(d.theta), py = -Math.sin(d.theta);
+                const imp2 = _bbImpact(d.rx, d.ry, d.vx + px, d.vy + py, simT, env.GM_EARTH, Rm, omegaE);
+                const S = imp2 ? (_wrapPi(imp2.phiEf - padEf) * Rm - errM) : 0;
+                const kappa = aT * S;
+                _st.ebKappa = kappa;
+                const T = Math.max(0, tGo);
+                const aw = Math.abs(w1);
+                const ts = aw / aB;
+                let intT;
+                if (ts >= T) intT = wSgn * (aw * T * T / 2 - aB * T * T * T / 6);
+                else intT = wSgn * (aw * aw * aw / (3 * aB * aB) + (aw * aw / (2 * aB)) * (T - ts));
+                const s = errM + _st.ebErateF * T + kappa * intT;
+                _st.ebPredErrM = s;
+                if (T < EB_TGO_MIN_S) rcsDir = aw > EB_W_TOL ? -wSgn : 0;
+                else if (s > EB_TOL_M) rcsDir = 1;
+                else if (s < -EB_TOL_M) rcsDir = -1;
+                else rcsDir = aw > EB_W_TOL ? -wSgn : 0;
               }
-              if (_st.ebRcsDir !== 0 && dir !== _st.ebRcsDir) {
-                _st.ebFlips++;
-                console.log("[ENTRY_BURN-STEER] RCS flip #" + _st.ebFlips + " -> " + (dir > 0 ? "ACW" : "CW") +
-                  " t=" + simT.toFixed(2) + " err=" + (errM / 1000).toFixed(3) + "km alpha=" +
-                  (_st.ebAlphaDeg != null ? _st.ebAlphaDeg.toFixed(2) : "n/a") + "deg w=" + (d.omega * R2D).toFixed(3) + "deg/s");
-              }
-              _st.ebRcsDir = dir;
-            } else {
-              _rcsOff();
-              _st.ebRcsDir = 0;
-            }
+              if (rcsDir !== 0) {
+                const res = rcsDir > 0 ? mxT.rp : mxT.rn;
+                if (res && res.duties) {
+                  _send(Guidance.cmdRcsDuty(res.duties, idx));
+                  _st.lastRcsTorque = rcsDir > 0 ? mxT.pos : -mxT.neg;
+                } else { rcsDir = 0; _rcsOff(); }
+              } else _rcsOff();
+              if (rcsDir !== 0 && _st.ebRcsDir !== 0 && rcsDir !== _st.ebRcsDir) _st.ebFlips++;
+              if (rcsDir !== 0) _st.ebRcsDir = rcsDir;
+            } else _rcsOff();
             _st.ebRcsTorque = _st.lastRcsTorque;
-
-            // gimbal: cancel ONLY env torque of next-tick predicted state
+            _st.ebRcsCmd = rcsDir;
             if (!active || !gimbals.length || !dNext || !dNext.massProps) {
               _send(Guidance.cmdSetGimbalRate(0));
             } else {
@@ -4124,9 +4153,9 @@ setState(s) {
               if (Ramp > 1) {
                 const ratio = Math.max(-1, Math.min(1, tauTarget / Ramp));
                 const phi = Math.atan2(A, B);
-                const w1 = _wrapPi(Math.asin(ratio) - phi);
-                const w2 = _wrapPi(Math.PI - Math.asin(ratio) - phi);
-                gReqRad = Math.abs(w1) <= Math.abs(w2) ? w1 : w2;
+                const w1g = _wrapPi(Math.asin(ratio) - phi);
+                const w2g = _wrapPi(Math.PI - Math.asin(ratio) - phi);
+                gReqRad = Math.abs(w1g) <= Math.abs(w2g) ? w1g : w2g;
               }
               let gReqDeg = gReqRad * R2D;
               const gMax = gimbals[0].gimbalMaxDeg;
@@ -4136,37 +4165,31 @@ setState(s) {
               _st.ebGimbalDeg = gimbals[0].gimbalDeg || 0;
               _st.ebTauEnv = tauEnv;
               _st.ebTauAvail = Ramp;
-              if (sat && !_st.ebGimbalSat) {
-                console.warn("[standardRTLS] ENTRY_BURN gimbal SATURATED t=" + simT.toFixed(2) +
-                  " tauNeeded=" + tauTarget.toExponential(2) + " tauAvail=" + Ramp.toExponential(2) +
-                  " g=" + gReqDeg.toFixed(2) + "/" + gMax + "deg");
-              }
+              if (sat && !_st.ebGimbalSat)
+                console.warn("[standardRTLS] ENTRY_BURN gimbal SATURATED t=" + simT.toFixed(2));
               _st.ebGimbalSat = sat;
               const gimTarget = gimbals.every(function (e) { return e.isCenter; }) ? "center" : "all";
               _send(_gimbalCmdMsg(gReqDeg, gimbals[0], dt, gimTarget));
             }
-
-            // DBG
-            if (Math.round(simT * 16) % 400 === 0) {
+            if (active && Math.round(simT * 80) % 80 === 0) {
               console.log("[ENTRY_BURN-DBG] t=" + simT.toFixed(2) + " alt=" + altKm.toFixed(1) + "km" +
-                " v=" + speedRelV.toFixed(1) + "m/s stage=" + _st.ebStage +
-                " impactErr=" + (errM != null ? (errM / 1000).toFixed(3) + "km" : "n/a") +
-                " rcsDir=" + (_st.ebRcsDir > 0 ? "ACW" : _st.ebRcsDir < 0 ? "CW" : "off") + " flips=" + _st.ebFlips +
+                " v=" + speedRelV.toFixed(1) + " Tgo=" + (tGo != null ? tGo.toFixed(1) : "n/a") + "s" +
+                " err=" + (errM != null ? (errM / 1000).toFixed(3) : "n/a") + "km" +
+                " edot=" + (_st.ebErateF != null ? Math.round(_st.ebErateF) : "n/a") + "m/s" +
+                " kappa=" + (_st.ebKappa != null ? Math.round(_st.ebKappa) : "n/a") +
+                " s=" + (_st.ebPredErrM != null ? Math.round(_st.ebPredErrM) : "n/a") + "m" +
+                " rcs=" + (rcsDir > 0 ? "ACW" : rcsDir < 0 ? "CW" : "off") + " flips=" + _st.ebFlips +
                 " alpha=" + (_st.ebAlphaDeg != null ? _st.ebAlphaDeg.toFixed(2) : "n/a") + "deg" +
-                " theta=" + (d.theta * R2D).toFixed(2) + "deg w=" + (d.omega * R2D).toFixed(3) + "deg/s" +
+                " w=" + (d.omega * R2D).toFixed(3) + "deg/s" +
                 " g=" + (_st.ebGimbalDeg != null ? _st.ebGimbalDeg.toFixed(2) : "n/a") + "deg" +
-                " tauEnv=" + (_st.ebTauEnv != null ? _st.ebTauEnv.toExponential(2) : "n/a") +
-                " tauAvail=" + (_st.ebTauAvail != null ? _st.ebTauAvail.toExponential(2) : "n/a") +
                 " sat=" + (_st.ebGimbalSat ? "YES" : "no") + " Q=" + (Number.isFinite(d.Q) ? Math.round(d.Q) : "n/a"));
             }
-
-            // end
             if (_st.ebStage === "SPOOL" && mdotNow < 1) {
               _send(Guidance.cmdSetAllThrottle(0));
               _send(Guidance.cmdSetGimbalRate(0));
               _rcsOff();
               console.log("[standardRTLS] ENTRY_BURN done t=" + simT.toFixed(2) + " v=" + speedRelV.toFixed(1) +
-                "m/s alt=" + altKm.toFixed(1) + "km impactErr=" + (errM != null ? (errM / 1000).toFixed(3) + "km" : "n/a") +
+                " alt=" + altKm.toFixed(1) + "km impactErr=" + (errM != null ? (errM / 1000).toFixed(3) + "km" : "n/a") +
                 " flips=" + _st.ebFlips);
               finished = true; break;
             }
@@ -4329,6 +4352,16 @@ setState(s) {
           _st.ebRcsDir = 0;
           _st.ebFlips = 0;
           _st.ebAlphaNextDeg = null;
+          _st.ebSpoolT = null;
+          _st.ebPrevV = null;
+          _st.ebPrevErr = null;
+          _st.ebVdotF = null;
+          _st.ebErateF = null;
+          _st.ebTgoS = null;
+          _st.ebErateMps = null;
+          _st.ebKappa = null;
+          _st.ebPredErrM = null;
+          _st.ebRcsCmd = 0;
           _st.pesInit = false;
           _st.pesT0 = 0;
           _st.pesCtrlCmd = 0;
@@ -4394,6 +4427,11 @@ setState(s) {
             ebRcsDir: _st.ebRcsDir,
             ebFlips: _st.ebFlips,
             ebAlphaNextDeg: _st.ebAlphaNextDeg,
+            ebTgoS: _st.ebTgoS,
+            ebErateMps: _st.ebErateMps,
+            ebKappa: _st.ebKappa,
+            ebPredErrM: _st.ebPredErrM,
+            ebRcsCmd: _st.ebRcsCmd,
             pesCtrlCmd: _st.pesCtrlCmd,
             pesGroundErrM: _st.pesGroundErrM,
             pesVacErrM: _st.pesVacErrM,
