@@ -3212,7 +3212,7 @@ setState(s) {
         if (cur === "FLIP") {
           _send(Guidance.cmdRcsDuty(null, _bodyIdx));
           _st.lastRcsTorque = 0;
-          if (_st.flipPusherOn) { _send(Guidance.cmdPusherTorque(0, 0, _bodyIdx)); _st.flipPusherOn = false; }
+          // (pusher-off removed — RCS-only; flipPusherOn stays false)
         }
         if (_st.phaseLog[cur]) {
           _st.phaseLog[cur].endT = simT;
@@ -3435,7 +3435,15 @@ setState(s) {
             if (tgtNow === null) { _rcsOff(); break; }
             const mx = _rcsMaxTorques(snapshot);
             if (!(mx.pos > 0) || !(mx.neg > 0)) { _rcsOff(); break; }
-            const Tp = I * FLIP_PUSHER_ALPHA_DEG_S2 / R2D;            // pusher torque (N*m), either direction
+            // PUSHER REMOVED — reverted to pure RCS. The pneumatic pusher
+            // produced unreliable behaviour: the sim's pusher-torque model
+            // (physics.js cmdPusherTorque: persistent angular accel, no
+            // self-cancel) interacted poorly with the bang-bang brake
+            // decision, causing overshoot / re-swing on some missions.
+            // Pure-RCS FLIP worked reliably (user-verified in earlier
+            // version). FLIP_PUSHER_ALPHA_DEG_S2 constant and cmdPusherTorque
+            // path kept in file (unused) so this can be re-enabled later if
+            // the model is fixed; current behaviour is RCS-only.
             // Measured authority gain G: in steady ACCEL compare the real omega change with what the commanded
             // torque should have given. Any model error (inertia, RCS efficiency / duty, ...) then scales the
             // authority used for the brake planning instead of showing up as an overshoot.
@@ -3450,7 +3458,7 @@ setState(s) {
             _st.flipPrevW = d.omega;
             _st.flipSteady = _st.flipMode === "ACCEL" ? _st.flipSteady + 1 : 0;
             const G = _st.flipGain;
-            const mT = { pos: (mx.pos + Tp) * G, neg: (mx.neg + Tp) * G };   // real RCS + pusher authority
+            const mT = { pos: mx.pos * G, neg: mx.neg * G };   // RCS-only authority
 
             // rate at which the target itself rotates (orbital motion)
             let wTgt = 0;
@@ -3468,6 +3476,9 @@ setState(s) {
               _st.flipInit = true;
               _send(Guidance.cmdSetAllThrottle(0));
               _send(Guidance.cmdSetGimbalRate(0));
+              // Safety: zero any residual pusher accel from SEPARATED_AXIAL
+              // handoff so FLIP starts from pure-RCS control.
+              _send(Guidance.cmdPusherTorque(0, 0, idx));
               const e0 = _wrapPi(rawErr);
               const ePos = e0 >= 0 ? e0 : e0 + 2 * Math.PI;   // way round in +direction
               const eNeg = ePos - 2 * Math.PI;                // way round in -direction
@@ -3518,31 +3529,19 @@ setState(s) {
             const brakeMax = sgn > 0 ? mT.neg : mT.pos;          // RCS + pusher torque AGAINST the motion
             const towards = wRelP * sgn > 0;
             const stopAng = wRelP * wRelP * I / (2 * brakeMax) + Math.abs(wRelP) * dt;
-            let tauP = 0;                 // pusher torque this tick
             let rcsRes = null;            // RCS result this tick (null = RCS off)
             if (towards && Math.abs(eP) <= stopAng) {
               const need = I * Math.abs(wRelP) / dt;             // torque that zeroes omega in one tick
               if (need >= brakeMax) {
-                if (!_st.flipBrakeLogged) {
-                  _st.flipBrakeLogged = true;
-                  console.log("[standardRTLS] FLIP BRAKE start t=" + simT.toFixed(2) + " err=" + (_st.flipEu * R2D).toFixed(2) +
-                    "deg w=" + (wRelNow * R2D).toFixed(2) + "deg/s I=" + I.toExponential(3) +
-                    " rcs+=" + mx.pos.toFixed(0) + " rcs-=" + mx.neg.toFixed(0) + " pusher=" + Tp.toFixed(0) +
-                    " gain=" + G.toFixed(3) + " aPlan=" + (brakeMax / I * R2D).toFixed(3) + "deg/s2");
-                }
                 _st.flipMode = "BRAKE";
                 rcsRes = sgn > 0 ? mx.rn : mx.rp;
-                tauP = -sgn * Tp;               // pusher acts like one more RCS: full against the motion
               } else {
-                _st.flipMode = "TRIM";                           // last tick only: just enough, pusher first
+                _st.flipMode = "TRIM";                           // last tick only: just enough, no overshoot
                 const needNom = need / G;                        // commanded (nominal) torque that gives `need` for real
-                const useP = Math.min(needNom, Tp);
-                tauP = -sgn * useP;
-                if (needNom - useP > 0) rcsRes = GuideRCS.targetTorqueRcs(snapshot, -sgn * (needNom - useP), idx);
+                rcsRes = GuideRCS.targetTorqueRcs(snapshot, -sgn * needNom, idx);
               }
             } else {
               _st.flipMode = "ACCEL";
-              tauP = sgn * Tp;
               rcsRes = sgn > 0 ? mx.rp : mx.rn;
             }
 
@@ -3553,10 +3552,7 @@ setState(s) {
             } else {
               _send(Guidance.cmdRcsDuty(null, idx));
             }
-            // pusher: persistent angular accel (no target omega => never self-cancels), re-sent every tick
-            _send(Guidance.cmdPusherTorque(tauP / I, null, idx));
-            _st.flipPusherOn = tauP !== 0;
-            _st.lastRcsTorque = tauRcs + tauP;   // everything the guidance applies this tick (used by the one-tick prediction)
+            _st.lastRcsTorque = tauRcs;   // only RCS is applied now (used by one-tick prediction)
             break;
           }
 
