@@ -944,23 +944,23 @@ p = Object.assign({}, p, { bi: clamp(p.bi + ((c === 'F1' || c === 'FE') ? +1 : -
       // Pick the side by CHEAP data: right side has an apside imminent after engine-off (seconds); wrong side ~ a half orbit away. FULL runs nearest-first, other side only as fallback.
       const okT = (c) => c === 1 || c === 2;   // FULL only for 1 or 2 crossings
       const nearT = async (li) => { const r = await cross(li), t = Math.min(r.tToApo, r.tToPeri); return Number.isFinite(t) ? t : Infinity; };
-      // Rolling-pair walk with DOWN priority (user-verified better than
-      // parallel walk). User case: edge 424|425, both fail (duration_cap_hit),
-      // 423 works, 422/421 also work. Parallel walk tested {424,425} then
-      // {423,426} — 3 FULL evals to find 423. Rolling-pair tests 424 first,
-      // then rolls to 423 (pair becomes [423, 425], but since 423 < 425 the
-      // DOWN-first sort keeps 423 ahead). 2 FULL evals to find 423 — saves 1.
+      // Rolling-pair walk, SKIP raw edge FULLs (user-verified optimisation).
       //
-      // Mechanics: maintain rolling pair [below, above] starting at
-      // [baseA, baseB]. Each iteration picks the side with SMALLER li
-      // (DOWN priority — user observed working region lies below the edge
-      // in the failing case; also matches "if cross=0 encountered, always
-      // decrease li" rule).
+      // Raw edge ticks (baseA, baseB from bisection) sit EXACTLY at the
+      // cross-count boundary — behaviour is marginal/flappy there. User's
+      // 320/350 elliptical case: edge 424|425 both failed FULL (each ~5s
+      // sim time wasted, duration_cap_hit), while 423 (baseA-1) worked
+      // cleanly. Testing raw edge is 1-2 wasted FULL evals per edge.
       //
-      // Cross-mismatch safety: if the current testLi no longer has the
-      // expected cross count (e.g. cross=0 encountered), skip FULL and
-      // roll further down. This preserves the user's earlier observation
-      // that cross=0 should push search direction DOWN, never UP.
+      // Rule: start rolling pair at [baseA-1, baseB+1] (adjacent outward),
+      // determine direction from adjacent-tick result, then roll normally
+      // (DOWN priority, cross-mismatch safe). Raw edges NEVER FULL-tested.
+      // If adjacent rolling exhausts without hit, this edge fails — user
+      // confirms flappy edges are the failure mode, so a valid working
+      // region ALWAYS has a working tick adjacent-outward.
+      //
+      // Savings: user's 424 case drops from 2 FULL (424 fail + 423 pass)
+      // to 1 FULL (423 pass only) — ~5-6s wall saved.
       //
       // maxWalk=min(10, maxWin/2): bounds worst case to 20 FULL evals if
       // both directions exhaust.
@@ -969,7 +969,9 @@ p = Object.assign({}, p, { bi: clamp(p.bi + ((c === 'F1' || c === 'FE') ? +1 : -
       const maxWalk = Math.min(10, Math.floor(maxWin / 2));
       let hit = null;
       const triedLi = new Set();
-      let below = baseA, above = baseB;
+      let below = baseA - 1, above = baseB + 1;
+      say('edge ' + k + '|' + (k + 1) + ' raw ' + ed[0] + '|' + ed[1] +
+          ': SKIP raw edge FULLs (flappy), start pair ' + below + '/' + above);
       const maxIter = maxWalk * 2;
       let iter = 0;
       while (iter++ < maxIter && !hit) {
