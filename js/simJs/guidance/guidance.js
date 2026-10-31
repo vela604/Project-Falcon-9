@@ -1508,6 +1508,14 @@ if (_lbState.insertionBlock) {
       rtlsPreEntryErrDeg: rs.preEntryErrDeg,
       rtlsPreEntryOmegaDegS: rs.preEntryOmegaDegS,
       rtlsPreEntryTgtDeg: rs.preEntryTgtDeg,
+      rtlsEbStage: rs.ebStage,
+      rtlsEbSpeedMs: rs.ebSpeedMs,
+      rtlsEbErrDeg: rs.ebErrDeg,
+      rtlsEbAlphaDeg: rs.ebAlphaDeg,
+      rtlsEbGimbalDeg: rs.ebGimbalDeg,
+      rtlsEbGimbalReqDeg: rs.ebGimbalReqDeg,
+      rtlsEbGimbalSat: rs.ebGimbalSat,
+      rtlsEbThrFrac: rs.ebThrFrac,
     });
   }
 

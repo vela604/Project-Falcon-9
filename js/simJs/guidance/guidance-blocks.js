@@ -3136,6 +3136,10 @@ setState(s) {
       // Both are guesses — tune in sim.
       PRE_ENTRY_ALIGN_ALT_KM: 100,         // start RCS alignment at this altitude AGL on descent (user, Chat 5)
       ENTRY_BURN_ALT_KM: 60,               // transition to ENTRY_BURN at this altitude AGL
+      // ENTRY_BURN
+      ENTRY_BURN_ENGINES: "C,0,180",       // engines lit at FULL throttle: "C" = centre, numbers = outer-ring angleDeg
+      ENTRY_BURN_GIMBAL_ENGINES: "C",      // engines that gimbal to cancel env torque (subset of above; expand if SATURATED)
+      ENTRY_BURN_CUTOFF_VELOCITY_MS: 600,  // cutoff when Earth-relative speed falls to this value
     },
     importantFields: [],
     createInstance: function () {
@@ -3202,6 +3206,21 @@ setState(s) {
         preEntryMode: null,            // ACCEL | BRAKE | TRIM (during ALIGN)
         preEntryPrevTgt: null,         // last-tick target theta (for wTgt/dTgt)
         preEntryPrevT: null,           // last-tick simTime
+        // ---- ENTRY_BURN scratch ----
+        ebInit: false,
+        ebSpooled: false,
+        ebStage: null,
+        ebSpeedMs: null,
+        ebPrevTgt: null,
+        ebPrevT: null,
+        ebErrDeg: null,
+        ebAlphaDeg: null,
+        ebGimbalDeg: null,
+        ebGimbalReqDeg: null,
+        ebGimbalSat: false,
+        ebThrFrac: null,
+        ebTauEnv: null,
+        ebTauAvail: null,
         // Add other per-phase scratch state here
       };
 
@@ -3223,6 +3242,10 @@ setState(s) {
         if (cur === "FLIP" || cur === "BOOSTBACK_BURN" || cur === "PRE_ENTRY_STEER") {
           _send(Guidance.cmdRcsDuty(null, _bodyIdx));
           _st.lastRcsTorque = 0;
+        }
+        if (cur === "ENTRY_BURN") {
+          _send(Guidance.cmdSetAllThrottle(0));
+          _send(Guidance.cmdSetGimbalRate(0));
         }
         if (_st.phaseLog[cur]) {
           _st.phaseLog[cur].endT = simT;
@@ -3356,6 +3379,20 @@ setState(s) {
         if (center) _send(Guidance.cmdSetCenterThrottle(value));
         if (angles.length) _send(Guidance.cmdSetGroupThrottle(angles, value));
       }
+      // ENTRY_BURN tokenizer — same semantics as _bbTokens but generic string,
+      // so the config string can be edited without touching the block.
+      function _ebTokens(raw, fallback) {
+        const toks = [];
+        String(raw == null ? fallback : raw).split(",").forEach(function (s) {
+          const t = s.trim();
+          if (!t) return;
+          if (t.toUpperCase() === "C") toks.push("C");
+          else if (Number.isFinite(Number(t))) toks.push(Number(t));
+        });
+        return toks;
+      }
+      const EB_ATT_KP = 0.5;
+      const EB_ATT_KD = 4.0;
       // dv (m/s) still delivered while the given engines spool down from their CURRENT flow
       // (linear ramp to zero over shutdownDurationS, scaled by flow/maxFlow — same model as ascent MECO).
       function _bbSpoolDv(engs, M) {
@@ -3930,8 +3967,176 @@ setState(s) {
           }
 
           // ==========================================================
+          // ENTRY_BURN — light ENTRY_BURN_ENGINES at lowest thrust, hold
+          // air-relative retrograde via gimbal + env-torque cancel.
+          // NO cutoff yet — phase holds until user defines the exit.
           case "ENTRY_BURN": {
-            // TODO: entry burn
+            const idx = _bodyIdx;
+            const body = snapshot.bodies[idx];
+            if (!body) break;
+            const env = Derivation.getEnv();
+            const dt = env && Number.isFinite(env.DT) ? env.DT : 1 / 80;
+            const R2D = 180 / Math.PI;
+            const altKm = d.altitudeAGL / 1000;
+            if (!(d.massProps.I > 0) || !(d.massProps.M > 0)) break;
+            const engines = body.engines || [];
+
+            const burnToks = _ebTokens(cfg.ENTRY_BURN_ENGINES, "C,0,180");
+            const burnSet = engines.filter(function (e) { return _bbInSet(e, burnToks); });
+            if (!burnSet.length) {
+              console.warn("[standardRTLS] ENTRY_BURN: no engine matches ENTRY_BURN_ENGINES='" + cfg.ENTRY_BURN_ENGINES + "' - skipping phase");
+              finished = true; break;
+            }
+            const gimToks = _ebTokens(cfg.ENTRY_BURN_GIMBAL_ENGINES, "C");
+            const gimbals = engines.filter(function (e) { return e.gimbal && _bbInSet(e, gimToks); });
+
+            if (!_st.ebInit) {
+              _st.ebInit = true;
+              _st.ebSpooled = false;
+              _st.ebStage = "BURN";
+              _st.ebPrevTgt = null;
+              _st.ebPrevT = null;
+              _st.ebGimbalSat = false;
+              _send(Guidance.cmdSetAllThrottle(0));
+              console.log("[standardRTLS] ENTRY_BURN start t=" + simT.toFixed(2) +
+                " alt=" + altKm.toFixed(1) + "km engines=" + burnToks.join(",") +
+                " gimbal=" + gimToks.join(",") + " (full throttle, cutoff at " +
+                (Number.isFinite(cfg.ENTRY_BURN_CUTOFF_VELOCITY_MS) ? cfg.ENTRY_BURN_CUTOFF_VELOCITY_MS : 600) + " m/s)");
+              if (!gimbals.length)
+                console.warn("[standardRTLS] ENTRY_BURN: no gimbal engine matches ENTRY_BURN_GIMBAL_ENGINES='" + cfg.ENTRY_BURN_GIMBAL_ENGINES + "' - no torque cancel");
+            }
+
+            // Cutoff trigger — Earth-relative speed (air-relative incl. Earth rotation)
+            const speedRelV = Math.hypot(d.relVx, d.relVy);
+            const vCut = Number.isFinite(cfg.ENTRY_BURN_CUTOFF_VELOCITY_MS) ? cfg.ENTRY_BURN_CUTOFF_VELOCITY_MS : 600;
+            _st.ebSpeedMs = speedRelV;
+            if (_st.ebStage !== "SPOOL" && speedRelV <= vCut) {
+              _st.ebStage = "SPOOL";
+              console.log("[standardRTLS] ENTRY_BURN → SPOOL (cutoff) t=" + simT.toFixed(2) +
+                " v=" + speedRelV.toFixed(1) + "m/s <= " + vCut + " alt=" + altKm.toFixed(1) + "km");
+            }
+
+            // Throttle: FULL until cutoff, then everything off
+            if (_st.ebStage === "BURN") {
+              _bbThrottle(burnSet, Infinity);
+              _st.ebThrFrac = 1;
+            } else {
+              _send(Guidance.cmdSetAllThrottle(0));
+              _st.ebThrFrac = 0;
+            }
+
+            // Spool wait: no gimbal action until burn-set engines reach ~97% of max
+            if (!_st.ebSpooled && _st.ebStage === "BURN") {
+              let ready = true;
+              burnSet.forEach(function (e) {
+                const mx = Number.isFinite(e.maxMassFlowRate) ? e.maxMassFlowRate : 0;
+                if (mx > 0 && (e.massFlowRate || 0) < mx * 0.97) ready = false;
+              });
+              if (ready) {
+                _st.ebSpooled = true;
+                console.log("[standardRTLS] ENTRY_BURN engines at full thrust t=" + simT.toFixed(2));
+              }
+            }
+
+            const tgtNow = speedRelV > 1 ? Math.atan2(d.relVx, -d.relVy) : null;
+            let wTgt = 0;
+            if (tgtNow !== null) {
+              if (_st.ebPrevTgt !== null && _st.ebPrevT !== null && simT > _st.ebPrevT) {
+                wTgt = _wrapPi(tgtNow - _st.ebPrevTgt) / (simT - _st.ebPrevT);
+                if (Math.abs(wTgt) > 0.05) wTgt = 0;
+              }
+              _st.ebPrevTgt = tgtNow;
+              _st.ebPrevT = simT;
+            }
+
+            let dNext = null;
+            {
+              const cT = Math.cos(d.theta), sT = Math.sin(d.theta);
+              const tIx = d.thrustBodyX * cT - d.thrustBodyY * sT;
+              const tIy = d.thrustBodyX * sT + d.thrustBodyY * cT;
+              const aIx = d.gVecX + (tIx + d.dragVecX) / d.massProps.M;
+              const aIy = d.gVecY + (tIy + d.dragVecY) / d.massProps.M;
+              const sl = body.slosh || { offset: 0, velocity: 0 };
+              dNext = Derivation.deriveForState(snapshot, idx, {
+                rx: d.rx + d.vx * dt, ry: d.ry + d.vy * dt,
+                vx: d.vx + aIx * dt, vy: d.vy + aIy * dt,
+                theta: d.theta + d.omega * dt + 0.5 * d.alphaAng * dt * dt,
+                omega: d.omega + d.alphaAng * dt,
+                slosh: { offset: (sl.offset || 0) + (sl.velocity || 0) * dt, velocity: sl.velocity || 0 },
+              });
+            }
+
+            if (tgtNow !== null) {
+              _st.ebErrDeg = _wrapPi(d.theta - tgtNow) * R2D;
+              _st.ebAlphaDeg = Number.isFinite(d.alphaDeg) ? d.alphaDeg : null;
+            }
+            if (!_st.ebSpooled || _st.ebStage === "SPOOL" || !gimbals.length || tgtNow === null || !dNext || !dNext.massProps) {
+              _send(Guidance.cmdSetGimbalRate(0));
+            } else {
+              const thetaErr = _wrapPi(dNext.theta - tgtNow);
+              const tauDesired = -dNext.massProps.I * (EB_ATT_KP * thetaErr + EB_ATT_KD * (dNext.omega - wTgt));
+              const tauEnv = Number.isFinite(dNext.torqueEnvironmental) ? dNext.torqueEnvironmental : 0;
+              const tauTarget = tauDesired - tauEnv;
+              const comX = dNext.massProps.comX, comY = dNext.massProps.comY;
+              let A = 0, B = 0;
+              gimbals.forEach(function (e) {
+                const F = (e.massFlowRate || 0) * (e.Ve || 0);
+                A += ((e.x || 0) - comX) * F;
+                B += F;
+              });
+              B *= comY;
+              const Ramp = Math.hypot(A, B);
+              let gReqRad = 0;
+              if (Ramp > 1) {
+                const ratio = Math.max(-1, Math.min(1, tauTarget / Ramp));
+                const phi = Math.atan2(A, B);
+                const w1 = _wrapPi(Math.asin(ratio) - phi);
+                const w2 = _wrapPi(Math.PI - Math.asin(ratio) - phi);
+                gReqRad = Math.abs(w1) <= Math.abs(w2) ? w1 : w2;
+              }
+              let gReqDeg = gReqRad * R2D;
+              const gMax = gimbals[0].gimbalMaxDeg;
+              const sat = Ramp <= 1 || Math.abs(tauTarget) > Ramp || Math.abs(gReqDeg) > gMax;
+              if (Math.abs(gReqDeg) > gMax) gReqDeg = Math.sign(gReqDeg) * gMax;
+              _st.ebGimbalReqDeg = gReqDeg;
+              _st.ebGimbalDeg = gimbals[0].gimbalDeg || 0;
+              _st.ebTauEnv = tauEnv;
+              _st.ebTauAvail = Ramp;
+              if (sat && !_st.ebGimbalSat) {
+                console.warn("[standardRTLS] ENTRY_BURN gimbal SATURATED t=" + simT.toFixed(2) +
+                  " tauNeeded=" + tauTarget.toExponential(2) + " tauAvail=" + Ramp.toExponential(2) +
+                  " g=" + gReqDeg.toFixed(2) + "/" + gMax + "deg - add more engines to ENTRY_BURN_GIMBAL_ENGINES");
+              }
+              _st.ebGimbalSat = sat;
+              const gimTarget = gimbals.every(function (e) { return e.isCenter; }) ? "center" : "all";
+              _send(_gimbalCmdMsg(gReqDeg, gimbals[0], dt, gimTarget));
+            }
+
+            if (Math.round(simT * 16) % 400 === 0) {
+              console.log("[ENTRY_BURN-DBG] t=" + simT.toFixed(2) + " alt=" + altKm.toFixed(1) + "km" +
+                " alpha=" + (_st.ebAlphaDeg != null ? _st.ebAlphaDeg.toFixed(2) : "n/a") + "deg" +
+                " err=" + (_st.ebErrDeg != null ? _st.ebErrDeg.toFixed(2) : "n/a") + "deg" +
+                " v=" + speedRelV.toFixed(1) + "m/s" + " stage=" + _st.ebStage +
+                " w=" + (d.omega * R2D).toFixed(3) + "deg/s" +
+                " g=" + (_st.ebGimbalDeg != null ? _st.ebGimbalDeg.toFixed(2) : "n/a") + "deg" +
+                " tauEnv=" + (_st.ebTauEnv != null ? _st.ebTauEnv.toExponential(2) : "n/a") +
+                " tauAvail=" + (_st.ebTauAvail != null ? _st.ebTauAvail.toExponential(2) : "n/a") +
+                " sat=" + (_st.ebGimbalSat ? "YES" : "no") +
+                " Q=" + (Number.isFinite(d.Q) ? Math.round(d.Q) : "n/a"));
+            }
+
+            // End: cutoff done + thrust fully spooled down
+            {
+              let mdotNow = 0;
+              engines.forEach(function (e) { mdotNow += e.massFlowRate || 0; });
+              if (_st.ebStage === "SPOOL" && mdotNow < 1) {
+                _send(Guidance.cmdSetAllThrottle(0));
+                _send(Guidance.cmdSetGimbalRate(0));
+                console.log("[standardRTLS] ENTRY_BURN done t=" + simT.toFixed(2) +
+                  " v=" + speedRelV.toFixed(1) + "m/s alt=" + altKm.toFixed(1) + "km");
+                finished = true; break;
+              }
+            }
             break;
           }
 
@@ -4021,6 +4226,20 @@ setState(s) {
           _st.preEntryMode = null;
           _st.preEntryPrevTgt = null;
           _st.preEntryPrevT = null;
+          _st.ebInit = false;
+          _st.ebSpooled = false;
+          _st.ebStage = null;
+          _st.ebSpeedMs = null;
+          _st.ebPrevTgt = null;
+          _st.ebPrevT = null;
+          _st.ebErrDeg = null;
+          _st.ebAlphaDeg = null;
+          _st.ebGimbalDeg = null;
+          _st.ebGimbalReqDeg = null;
+          _st.ebGimbalSat = false;
+          _st.ebThrFrac = null;
+          _st.ebTauEnv = null;
+          _st.ebTauAvail = null;
         },
 
         tick(snapshot) {
@@ -4065,6 +4284,14 @@ setState(s) {
             preEntryOmegaDegS: _st.preEntryOmegaDegS,
             preEntryTgtDeg: _st.preEntryTgtDeg,
             preEntryMode: _st.preEntryMode,
+            ebStage: _st.ebStage,
+            ebSpeedMs: _st.ebSpeedMs,
+            ebErrDeg: _st.ebErrDeg,
+            ebAlphaDeg: _st.ebAlphaDeg,
+            ebGimbalDeg: _st.ebGimbalDeg,
+            ebGimbalReqDeg: _st.ebGimbalReqDeg,
+            ebGimbalSat: _st.ebGimbalSat,
+            ebThrFrac: _st.ebThrFrac,
             rcsTorque: _st.lastRcsTorque,
           };
         },
