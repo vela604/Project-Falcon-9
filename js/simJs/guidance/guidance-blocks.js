@@ -3819,7 +3819,7 @@ setState(s) {
             } else if (gimbals.length && tgtNow !== null && dNext && dNext.massProps) {
               const thetaErr = _wrapPi(dNext.theta - tgtNow);
               const tauDesired = -dNext.massProps.I * (BB_ATT_KP * thetaErr + BB_ATT_KD * dNext.omega);
-              const tauTarget = tauDesired;  // Exp 7: circularize-style — no env cancel
+              const tauTarget = tauDesired - (Number.isFinite(dNext.torqueEnvironmental) ? dNext.torqueEnvironmental : 0);
               const comX = dNext.massProps.comX, comY = dNext.massProps.comY;
               let A = 0, B = 0;
               gimbals.forEach(function (e) {
