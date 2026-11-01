@@ -43,7 +43,7 @@
       <label for="guideSelect">Guide</label>
       <select id="guideSelect"></select>
       <label for="durationInput">Duration (s)</label>
-      <input id="durationInput" type="number" value="600" min="10" max="7200" step="10">
+      <input id="durationInput" type="number" value="650" min="10" max="7200" step="10">
       <button class="btn btn-run" id="startBtn">▶ Run</button>
       <button class="btn btn-stop" id="stopBtn" disabled>■ Stop</button>
       <button class="btn" id="resetDefaultsBtn" title="Restore all constants to code defaults">↺ Defaults</button>
@@ -2113,7 +2113,7 @@ if (!faded) {
     resetState(0);
     applyEnvironment();
     applyFueling();
-    Plots.reset(Math.max(1, parseFloat(durInput.value) || 600));
+    Plots.reset(Math.max(1, parseFloat(durInput.value) || 650));
 
     try { Guidance.stopGuide(); } catch (e) {}
     try { Guidance.startGuide(currentGuide); } catch (e) {
@@ -2124,7 +2124,7 @@ if (!faded) {
       return;
     }
 
-    const durationS = Math.max(1, parseFloat(durInput.value) || 600);
+    const durationS = Math.max(1, parseFloat(durInput.value) || 650);
     const dt = CONFIG.DT;
     const maxTicks = Math.ceil(durationS / dt);
 
