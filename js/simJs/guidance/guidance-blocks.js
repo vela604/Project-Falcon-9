@@ -4453,6 +4453,10 @@ setState(s) {
             const dNext = Derivation.deriveForState(snapshot, idx, stateNext);
             if (!dNext) { _rcsOff(); break; }
             const H0 = (dNext.torqueDrag || 0) + (dNext.torqueGravityGradient || 0);
+            // Disturbance observer: dHat = filtered (meas - model) from ledger
+            const dHat = (_st.pfMeasF != null && _st.pfModF != null)
+              ? Math.max(-150000, Math.min(150000, _st.pfMeasF - _st.pfModF)) : 0;
+            const H0e = H0 + dHat;
 
             // Fixed RCS CW setup (BR.lat + TL.lat, full duty) — used by feasibility AND command
             const bodyPods = body.pods || [];
@@ -4502,7 +4506,7 @@ setState(s) {
             const dthWanted = dthDeg;
             let feasLo = -Infinity, feasHi = Infinity;
             if (Math.abs(Jh) > PES_JH_MIN) {
-              const a = -Utot - H0, b = -Ltot - H0;
+              const a = -Utot - H0e, b = -Ltot - H0e;
               if (Jh > 0) { feasLo = a / Jh; feasHi = b / Jh; } else { feasLo = b / Jh; feasHi = a / Jh; }
             }
             dthDeg = Math.max(feasLo, Math.min(feasHi, dthDeg));
@@ -4515,7 +4519,7 @@ setState(s) {
             const thetaStar = d.theta + dthDeg * D2R;
 
             const tauCmd = I * (-PES_KP * (dNext.theta - thetaStar) - PES_KD * dNext.omega);
-            const tauNeed = tauCmd - H0;
+            const tauNeed = tauCmd - H0e;
 
             let i0 = 0;
             for (let i = 0; i < cList.length; i++) if (Math.abs(cList[i]) < 1e-9) i0 = i;
@@ -4567,7 +4571,7 @@ setState(s) {
                 console.log("[PES-LEDGER] t=" + simT.toFixed(2) + " alpha=" + d.alphaDeg.toFixed(2) +
                   " I=" + Math.round(I) + " H0=" + Math.round(H0) + " tauFin=" + Math.round(tauFinNext) +
                   " tauRcs=" + Math.round(rcsAch) + " model=" + Math.round(_st.pfModF) +
-                  " meas=" + Math.round(_st.pfMeasF) + " err=" + Math.round(_st.pfMeasF - _st.pfModF) +
+                  " meas=" + Math.round(_st.pfMeasF) + " err=" + Math.round(_st.pfMeasF - _st.pfModF) + " dHat=" + Math.round(dHat) +
                   " c act/cmd=" + cAct.toFixed(1) + "/" + cStar.toFixed(1));
             }
 
