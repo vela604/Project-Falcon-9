@@ -4368,6 +4368,7 @@ setState(s) {
               _send(Guidance.cmdSetGimbalRate(0));
               _rcsOff();
               _send(Guidance.cmdGridFinsDeploy(true));
+              console.log("[RTLS-VERMARK] passive-v1 phase=POST_ENTRY t="+simT.toFixed(2)+" PASSIVE-TEST-PRESENT");
               console.log("[standardRTLS] POST_ENTRY_STEER (closed loop v4) start t=" + simT.toFixed(2) +
                 " alt=" + altKm.toFixed(1) + "km v=" + Math.hypot(d.relVx, d.relVy).toFixed(0) + "m/s" +
                 " — first " + PES_VALIDATE_S + "s: NO commands (model validation)");
