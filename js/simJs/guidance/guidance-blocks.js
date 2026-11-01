@@ -3352,7 +3352,7 @@ setState(s) {
       const BB_PRED_DT = 1.0;       // s, leapfrog step of the ballistic impact predictor
       const BB_PRED_MAX_S = 2500;   // s, prediction horizon
       const BB_ATT_KP = 0.5;        // attitude hold (same law + gains as the suicide block)
-      const BB_ATT_KD = 0.5;  // reduced from 4.0 — booster I ≈ 22e6 makes 4.0 saturate gimbal
+      const BB_ATT_KD = 1.2;  // ζ≈0.85 at I=22e6; gimbal peak ~3.6°, no saturation
       const BB_FUEL_EMPTY_KG = 1;
 
       // "C,0,180" -> ["C", 0, 180]. "C" = centre engine, numbers = outer-ring engine angleDeg.
