@@ -3814,24 +3814,11 @@ setState(s) {
             } else if (_st.bbStage !== "THREE") {
               _st.bbSpooled = true;
             }
-            // Gimbal active ONLY at full throttle AND after spool AND before cutoff.
-            // During taper (thrFrac < 0.95) freeze the gimbal: as thrust drops, the fixed-torque
-            // gimbal angle must grow (Ramp shrinks), saturating the actuator and causing wobble.
-            // Also add PI + command lowpass to match Ascent HOLD / STAGE_BURN structure.
-            const BB_KI = 0.05;              // internal — conditional integration, clamped
-            const gimbalActive = _st.bbSpooled && _st.bbStage !== "SPOOL" && thrFrac >= 0.99;
-            if (!gimbalActive) {
+            if (!_st.bbSpooled || _st.bbStage === "SPOOL") {
               _send(Guidance.cmdSetGimbalRate(0));
-              _st.bbThetaInt = 0;
             } else if (gimbals.length && tgtNow !== null && dNext && dNext.massProps) {
               const thetaErr = _wrapPi(dNext.theta - tgtNow);
-              // PI on theta (conditional integration + clamp) — matches Ascent HOLD / STAGE_BURN
-              if (!Number.isFinite(_st.bbThetaInt)) _st.bbThetaInt = 0;
-              if (Math.abs(thetaErr) < 0.5 * Math.PI / 180) {
-                _st.bbThetaInt = Math.max(-0.005, Math.min(0.005, _st.bbThetaInt + thetaErr * dt));
-              }
-              const tauDesired = -dNext.massProps.I *
-                (BB_ATT_KP * thetaErr + BB_ATT_KD * dNext.omega + BB_KI * _st.bbThetaInt);
+              const tauDesired = -dNext.massProps.I * (BB_ATT_KP * thetaErr + BB_ATT_KD * dNext.omega);
               const tauTarget = tauDesired - (Number.isFinite(dNext.torqueEnvironmental) ? dNext.torqueEnvironmental : 0);
               const comX = dNext.massProps.comX, comY = dNext.massProps.comY;
               let A = 0, B = 0;
@@ -3853,7 +3840,6 @@ setState(s) {
               let gReqDeg = gReqRad * R2D;
               const gMax = gimbals[0].gimbalMaxDeg;
               if (Math.abs(gReqDeg) > gMax) gReqDeg = Math.sign(gReqDeg) * gMax;
-              // Command lowpass — seeds from current gimbal angle on first active tick
               _send(_gimbalCmdMsg(gReqDeg, gimbals[0], dt, "center"));
             }
 
@@ -4641,7 +4627,6 @@ setState(s) {
           _st.bbImpactEfDeg = null;
           _st.bbTargetEfDeg = null;
           _st.bbThrFrac = null;
-          _st.bbThetaInt = 0;
           _st.preEntryInit = false;
           _st.preEntrySub = null;
           _st.preEntryAlignInit = false;
