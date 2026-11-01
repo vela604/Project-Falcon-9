@@ -4191,6 +4191,7 @@ setState(s) {
             const tGo = (_st.ebVdotF !== null && _st.ebVdotF < -0.5) ? Math.max(0, (speedRelV - vCut) / (-_st.ebVdotF)) : null;
             _st.ebTgoS = tGo;
             _st.ebErateMps = _st.ebErateF;
+            if (simT >= 479 && simT <= 487 && Math.round(simT*80)%20===0) console.log("[PASSIVE-CHECK] t="+simT.toFixed(2)+" seg="+((simT>=480&&simT<483)?'A':(simT>=483&&simT<486)?'B':'none'));
             // [PES-PASSIVE] controlled step-response test t=480-486 (A: c=0, B: c=-20), RCS off
             { const seg = (simT>=480&&simT<483) ? {k:'A',c:0,m0:481,m1:483}
                         : (simT>=483&&simT<486) ? {k:'B',c:-20,m0:484,m1:486} : null;
