@@ -3409,8 +3409,8 @@ setState(s) {
       const PES_KP = 0.05;
       const PES_KD = 0.6;
       const PES_ALPHA_MAX_DEG = 12;
-      const PES_DTH_MAX_DEG = 1.5;
-      const PES_J_MIN = 0.3;
+      const PES_DTH_MAX_DEG = 6;
+      const PES_J_MIN = 2;
       const PES_JH_MIN = 1e3;
       const PES_CTRL_CAP_DEG = 30;
       const PES_FIN_STEP_DEG = 5;
