@@ -3352,7 +3352,7 @@ setState(s) {
       const BB_PRED_DT = 1.0;       // s, leapfrog step of the ballistic impact predictor
       const BB_PRED_MAX_S = 2500;   // s, prediction horizon
       const BB_ATT_KP = 0.5;        // attitude hold (same law + gains as the suicide block)
-      const BB_ATT_KD = 4.0;
+      const BB_ATT_KD = 0.5;  // reduced from 4.0 — booster I ≈ 22e6 makes 4.0 saturate gimbal
       const BB_FUEL_EMPTY_KG = 1;
 
       // "C,0,180" -> ["C", 0, 180]. "C" = centre engine, numbers = outer-ring engine angleDeg.
@@ -3817,8 +3817,8 @@ setState(s) {
             if (!_st.bbSpooled || _st.bbStage === "SPOOL") {
               _send(Guidance.cmdSetGimbalRate(0));
             } else if (gimbals.length && tgtNow !== null && dNext && dNext.massProps) {
-              const thetaErr = _wrapPi(d.theta - tgtNow);
-              const tauDesired = -dNext.massProps.I * (BB_ATT_KP * thetaErr + BB_ATT_KD * d.omega);
+              const thetaErr = _wrapPi(dNext.theta - tgtNow);
+              const tauDesired = -dNext.massProps.I * (BB_ATT_KP * thetaErr + BB_ATT_KD * dNext.omega);
               const tauTarget = tauDesired;  // Exp 7: circularize-style — no env cancel
               const comX = dNext.massProps.comX, comY = dNext.massProps.comY;
               let A = 0, B = 0;
