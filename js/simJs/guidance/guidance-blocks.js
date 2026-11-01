@@ -4517,19 +4517,20 @@ setState(s) {
             const tauCmd = I * (-PES_KP * (dNext.theta - thetaStar) - PES_KD * dNext.omega);
             const tauNeed = tauCmd - H0;
 
-            let bestC = cAct, bestErr = Infinity;
-            const consider = function (c, t) {
-              const er = Math.abs(t - tauNeed);
-              if (er < bestErr - 1e-6 || (Math.abs(er - bestErr) <= 1e-6 && Math.abs(c - cAct) < Math.abs(bestC - cAct))) {
-                bestErr = er; bestC = c;
+            let i0 = 0;
+            for (let i = 0; i < cList.length; i++) if (Math.abs(cList[i]) < 1e-9) i0 = i;
+            const dirF = (tauNeed >= tList[i0]) ? 1 : -1;
+            let cStar = cList[i0];
+            for (let i = i0; ; i += dirF) {
+              const j = i + dirF;
+              if (j < 0 || j >= cList.length ||
+                  (dirF > 0 ? tList[j] <= tList[i] : tList[j] >= tList[i])) { cStar = cList[i]; break; }
+              if ((tauNeed - tList[i]) * (tauNeed - tList[j]) <= 0) {
+                cStar = cList[i] + (tauNeed - tList[i]) / (tList[j] - tList[i]) * (cList[j] - cList[i]);
+                break;
               }
-            };
-            for (let i = 0; i < cList.length; i++) consider(cList[i], tList[i]);
-            { const c0 = bestC;
-              [c0 - PES_FIN_STEP_DEG / 2, c0 + PES_FIN_STEP_DEG / 2].forEach(function (c) {
-                if (c >= -PES_CTRL_CAP_DEG - 1e-9 && c <= PES_CTRL_CAP_DEG + 1e-9) consider(c, finT(c));
-              }); }
-            const cStar = Math.max(-PES_CTRL_CAP_DEG, Math.min(PES_CTRL_CAP_DEG, bestC));
+            }
+            cStar = Math.max(-PES_CTRL_CAP_DEG, Math.min(PES_CTRL_CAP_DEG, cStar));
             _st.pesCmdC = cStar;
             _send(Guidance.cmdGridFinsControl(cStar));
             const maxStep = PES_FIN_RATE_DEGS * dt;
@@ -4551,6 +4552,24 @@ setState(s) {
               _send(Guidance.cmdRcsDuty(null, idx));
             }
             _st.lastRcsTorque = rcsAch;
+
+            // [PES-LEDGER] torque ledger (Claude diagnostic)
+            {
+              const tauModel = tauFinNext + H0 + rcsAch;
+              if (_st.pfPrevTau != null) {
+                const meas = I * (d.omega - _st.pfPrevOmega) / dt;
+                const k = Math.min(1, dt / 1.5);
+                _st.pfMeasF = (_st.pfMeasF == null) ? meas : _st.pfMeasF + k * (meas - _st.pfMeasF);
+                _st.pfModF = (_st.pfModF == null) ? _st.pfPrevTau : _st.pfModF + k * (_st.pfPrevTau - _st.pfModF);
+              }
+              _st.pfPrevTau = tauModel; _st.pfPrevOmega = d.omega;
+              if (simT >= 440 && simT <= 530 && Math.round(simT * 80) % 160 === 0 && _st.pfMeasF != null)
+                console.log("[PES-LEDGER] t=" + simT.toFixed(2) + " alpha=" + d.alphaDeg.toFixed(2) +
+                  " I=" + Math.round(I) + " H0=" + Math.round(H0) + " tauFin=" + Math.round(tauFinNext) +
+                  " tauRcs=" + Math.round(rcsAch) + " model=" + Math.round(_st.pfModF) +
+                  " meas=" + Math.round(_st.pfMeasF) + " err=" + Math.round(_st.pfMeasF - _st.pfModF) +
+                  " c act/cmd=" + cAct.toFixed(1) + "/" + cStar.toFixed(1));
+            }
 
             // [PES-FIN] curve dump t=488..512 (Claude diagnostic)
             if (simT >= 488 && simT <= 512 && Math.round(simT * 80) % 160 === 0) {
@@ -4695,6 +4714,10 @@ setState(s) {
           _st.ebRcsCmd = 0;
           _st.pesInit = false;
           _st.pesT0 = 0;
+          _st.pfPrevTau = null;
+          _st.pfPrevOmega = null;
+          _st.pfMeasF = null;
+          _st.pfModF = null;
           _st.pesRcsLogged = false;
           _st.pesCtrlCmd = 0;
           _st.pesGroundErrM = null;
