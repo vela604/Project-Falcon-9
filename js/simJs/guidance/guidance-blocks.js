@@ -3819,7 +3819,6 @@ setState(s) {
             // gimbal angle must grow (Ramp shrinks), saturating the actuator and causing wobble.
             // Also add PI + command lowpass to match Ascent HOLD / STAGE_BURN structure.
             const BB_KI = 0.05;              // internal — conditional integration, clamped
-            const BB_GIMBAL_TAU_S = 0.15;    // internal — command lowpass, matches Ascent style
             const gimbalActive = _st.bbSpooled && thrFrac > 0.05;
             if (!gimbalActive) {
               _send(Guidance.cmdSetGimbalRate(0));
@@ -3857,9 +3856,7 @@ setState(s) {
               const gMax = gimbals[0].gimbalMaxDeg;
               if (Math.abs(gReqDeg) > gMax) gReqDeg = Math.sign(gReqDeg) * gMax;
               // Command lowpass — seeds from current gimbal angle on first active tick
-              if (!Number.isFinite(_st.bbGimbalFilt)) _st.bbGimbalFilt = gimbals[0].gimbalDeg || 0;
-              _st.bbGimbalFilt += (1 - Math.exp(-dt / BB_GIMBAL_TAU_S)) * (gReqDeg - _st.bbGimbalFilt);
-              _send(_gimbalCmdMsg(_st.bbGimbalFilt, gimbals[0], dt, "center"));
+              _send(_gimbalCmdMsg(gReqDeg, gimbals[0], dt, "center"));
             }
 
             // ---- end: thrust gone ----
