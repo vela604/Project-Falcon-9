@@ -4552,6 +4552,17 @@ setState(s) {
             }
             _st.lastRcsTorque = rcsAch;
 
+            // [PES-FIN] curve dump t=488..512 (Claude diagnostic)
+            if (simT >= 488 && simT <= 512 && Math.round(simT * 80) % 160 === 0) {
+              console.log("[PES-FIN] t=" + simT.toFixed(2) + " alpha=" + d.alphaDeg.toFixed(2) +
+                " w=" + (d.omega * R2D).toFixed(3) + " aAng=" + (d.alphaAng * R2D).toFixed(4) +
+                " tauCmd=" + Math.round(tauCmd) + " H0=" + Math.round(H0) +
+                " tauNeed=" + Math.round(tauNeed) + " tauFin=" + Math.round(tauFinNext) +
+                " tauRcs=" + Math.round(rcsAch) + " c act/cmd=" + cAct.toFixed(1) + "/" + cStar.toFixed(1) +
+                " feas[" + feasLo.toFixed(2) + "," + feasHi.toFixed(2) + "]" +
+                " curve=" + cList.map(function (c, i) { return c + ":" + Math.round(tList[i] / 1000); }).join(" "));
+            }
+
             _st.pesCtrlCmd = cStar;
             _st.pesRcsTorque = rcsAch;
             if (Math.round(simT * 80) % 160 === 0) {
