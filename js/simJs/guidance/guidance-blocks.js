@@ -3817,9 +3817,9 @@ setState(s) {
             if (!_st.bbSpooled || _st.bbStage === "SPOOL") {
               _send(Guidance.cmdSetGimbalRate(0));
             } else if (gimbals.length && tgtNow !== null && dNext && dNext.massProps) {
-              const thetaErr = _wrapPi(dNext.theta - tgtNow);
-              const tauDesired = -dNext.massProps.I * (BB_ATT_KP * thetaErr + BB_ATT_KD * dNext.omega);
-              const tauTarget = tauDesired - (Number.isFinite(dNext.torqueEnvironmental) ? dNext.torqueEnvironmental : 0);
+              const thetaErr = _wrapPi(d.theta - tgtNow);
+              const tauDesired = -dNext.massProps.I * (BB_ATT_KP * thetaErr + BB_ATT_KD * d.omega);
+              const tauTarget = tauDesired;  // Exp 7: circularize-style — no env cancel
               const comX = dNext.massProps.comX, comY = dNext.massProps.comY;
               let A = 0, B = 0;
               gimbals.forEach(function (e) {
@@ -3840,6 +3840,20 @@ setState(s) {
               let gReqDeg = gReqRad * R2D;
               const gMax = gimbals[0].gimbalMaxDeg;
               if (Math.abs(gReqDeg) > gMax) gReqDeg = Math.sign(gReqDeg) * gMax;
+              // [BB-DBG] first 20s, every 20 ticks (0.25s)
+              if (_st.bbT0 == null) _st.bbT0 = simT;
+              if (simT - _st.bbT0 < 20 && Math.round(simT * 80) % 20 === 0)
+                console.log("[BB-DBG] t=" + (simT - _st.bbT0).toFixed(2) +
+                  " stg=" + _st.bbStage +
+                  " thr=" + thrFrac.toFixed(2) +
+                  " th=" + (thetaErr * R2D).toFixed(3) +
+                  " w=" + (d.omega * R2D).toFixed(3) +
+                  " Ramp=" + Math.round(Ramp) +
+                  " tau=" + Math.round(tauTarget) +
+                  " gReq=" + gReqDeg.toFixed(3) +
+                  " g=" + (gimbals[0].gimbalDeg || 0).toFixed(3) +
+                  " gv=" + (gimbals[0].gimbalRateActDegS || 0).toFixed(2) +
+                  " comX=" + comX.toFixed(4));
               _send(_gimbalCmdMsg(gReqDeg, gimbals[0], dt, "center"));
             }
 
@@ -4627,6 +4641,7 @@ setState(s) {
           _st.bbImpactEfDeg = null;
           _st.bbTargetEfDeg = null;
           _st.bbThrFrac = null;
+          _st.bbT0 = null;
           _st.preEntryInit = false;
           _st.preEntrySub = null;
           _st.preEntryAlignInit = false;
