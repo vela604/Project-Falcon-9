@@ -4543,31 +4543,32 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
             }
             const rcsMax = _pesRcsMax(snapshot, idx);
 
-            // [PES-AUTH] authority envelope sweep at t=470,495,520
+            // [PES-BOUND] 1Hz min-reachable-edot integral (instant-attitude optimistic bound)
             {
               const k80 = Math.round(simT * 80);
-              if (k80 === 37600 || k80 === 39600 || k80 === 41600) {
-                const sgAuth = errM >= 0 ? -1 : 1;
-                const rowsAuth = [];
-                for (let k = -10; k <= 10; k += 2) {
-                  const stAuth = Object.assign({}, stateNext, { theta: d.theta + k * D2R });
-                  const dkAuth = Derivation.deriveForState(snapshot, idx, stAuth);
-                  if (!dkAuth) continue;
-                  const hkAuth = (dkAuth.torqueDrag || 0) + (dkAuth.torqueGravityGradient || 0);
-                  const hAuth = _pesAeroAccel(Object.assign({}, dkAuth, { gridFinFx: 0, gridFinFy: 0 }), M);
-                  let bestAuth = null;
-                  for (let cAuth = -PES_CTRL_CAP_DEG; cAuth <= PES_CTRL_CAP_DEG; cAuth += 2.5) {
-                    const gAuth = Derivation.gridFinAero(snapshot, idx, stAuth, cAuth);
-                    if (!gAuth) continue;
-                    const rAuth = hkAuth + gAuth.torque;
-                    if (rAuth < -PES_RCS_MARGIN * rcsMax.pos || rAuth > PES_RCS_MARGIN * rcsMax.neg) continue;
-                    const eAuth = Sx * (hAuth.ax + gAuth.Fx / M) + Sy * (hAuth.ay + gAuth.Fy / M);
-                    if (bestAuth === null || sgAuth * eAuth > sgAuth * bestAuth.e) bestAuth = { e: eAuth, c: cAuth };
+              if (simT >= 440 && simT <= 545 && k80 % 80 === 0) {
+                let bestE = null;
+                for (let k = -6; k <= 10; k += 2) {
+                  const stBound = Object.assign({}, stateNext, { theta: d.theta + k * D2R });
+                  const dkBound = Derivation.deriveForState(snapshot, idx, stBound);
+                  if (!dkBound) continue;
+                  const hkBound = (dkBound.torqueDrag || 0) + (dkBound.torqueGravityGradient || 0);
+                  const hBound = _pesAeroAccel(Object.assign({}, dkBound, { gridFinFx: 0, gridFinFy: 0 }), M);
+                  for (let cB = -PES_CTRL_CAP_DEG; cB <= PES_CTRL_CAP_DEG; cB += 2.5) {
+                    const gB = Derivation.gridFinAero(snapshot, idx, stBound, cB);
+                    if (!gB) continue;
+                    const rB = hkBound + gB.torque;
+                    if (rB < -PES_RCS_MARGIN * rcsMax.pos || rB > PES_RCS_MARGIN * rcsMax.neg) continue;
+                    const eB = Sx * (hBound.ax + gB.Fx / M) + Sy * (hBound.ay + gB.Fy / M);
+                    if (bestE === null || (errM >= 0 ? eB < bestE : eB > bestE)) bestE = eB;
                   }
-                  rowsAuth.push("dth" + k + " a=" + dkAuth.alphaDeg.toFixed(1) + " H0=" + Math.round(hkAuth / 1000) + "k " +
-                    (bestAuth ? "c=" + bestAuth.c + " edot=" + bestAuth.e.toFixed(1) : "unbal"));
                 }
-                console.log("[PES-AUTH] t=" + simT.toFixed(0) + " edotDes=" + edotDes.toFixed(1) + " | " + rowsAuth.join(" | "));
+                if (!_st.bnd) _st.bnd = { e0: errM, cum: 0 };
+                if (bestE !== null) _st.bnd.cum += bestE;
+                console.log("[PES-BOUND] t=" + simT.toFixed(0) + " err=" + errM.toFixed(0) +
+                  " edotNow=" + edotPred.toFixed(1) +
+                  " edotBest=" + (bestE === null ? "n/a" : bestE.toFixed(1)) +
+                  " bound=" + Math.round(_st.bnd.e0 + _st.bnd.cum));
               }
             }
             const Ltot = loFin - PES_RCS_MARGIN * rcsMax.neg;
