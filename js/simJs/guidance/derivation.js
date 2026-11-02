@@ -1036,9 +1036,13 @@ function _deriveImpl(snapshot, bodyIdx, payloadMass) {
 // A hardcoded 12000 here would silently drift the guidance mass model
 // away from physics's whenever a user tuned the payload or switched to
 // a mission without cargo.
-const payloadMassInput = Number.isFinite(payloadMass) ?
-  payloadMass :
-  ((_stackData && _stackData.stackPayloadMass) || 0);
+// Gate: only bodies that actually carry cargo (payloadId set, not released)
+// receive stackPayloadMass. Booster (payloadId=null after split) was being given
+// the full stack payload (12t) as phantom mass at the top of the body,
+// inflating M (35t -> 47t), I (10-12e6 -> 17.3e6) and CoM lever arms.
+const hasCargo = body.payloadId != null && !body.payloadReleased;
+const payloadMassInput = Number.isFinite(payloadMass) ? payloadMass :
+  (hasCargo ? ((_stackData && _stackData.stackPayloadMass) || 0) : 0);
 const massProps = hasMembers ?
   _stackMassProps(body, payloadMassInput) :
   _soloBodyMassProps(body);

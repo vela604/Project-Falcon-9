@@ -4320,11 +4320,11 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
           // NO exit; phase holds so impact shift can be judged at landing.
                               case "POST_ENTRY_STEER": {
             const idx = _bodyIdx;
-            if (Math.round(simT*80) === 471*80) {
+            if (Math.round(simT*80) === 471*80 || Math.round(simT*80) === 60*80) {
               snapshot.bodies.forEach(function(b, i) {
                 const x = Derivation.derive(snapshot, i);
                 if (!x) return;
-                console.log("[MASSCHK] body"+i+" M="+Math.round(x.massProps.M)+
+                console.log("[MASSCHK t="+simT.toFixed(1)+"] body"+i+" M="+Math.round(x.massProps.M)+
                   " payload="+Math.round(x.massProps.payloadMass||0)+
                   " comY="+x.massProps.comY.toFixed(1)+
                   " I="+Math.round(x.massProps.I)+
