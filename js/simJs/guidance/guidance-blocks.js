@@ -4424,6 +4424,28 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
             _st.pesEdotMeasMps = _st.pesErateF;
             _st.pesFinCtrlActDeg = cAct;
 
+            // [PES-LOG] no-pause 0.5s logger t=470-500 (Claude diagnostic v2)
+            { const L=_st.lg||(_st.lg={t:null,n:0,sAx:0,sAy:0});
+              if (simT>=470 && simT<=500) {
+                const a0l=_pesAeroAccel(d,M);
+                L.sAx+=d.gVecX+a0l.ax; L.sAy+=d.gVecY+a0l.ay; L.n++;
+                if (Math.round(simT*80)%40===0) {
+                  if (L.t!==null && L.n>0) {
+                    const D=simT-L.t, rx=(d.vx-L.vx)/D-L.sAx/L.n, ry=(d.vy-L.vy)/D-L.sAy/L.n;
+                    const ct=Math.cos(d.theta), st=Math.sin(d.theta);
+                    const sc=Derivation.gridFinAero(snapshot, idx, null, cAct);
+                    console.log("[PES-LOG] t="+simT.toFixed(1)+" Q="+Math.round(d.Q)+" a="+d.alphaDeg.toFixed(2)+
+                      " c="+cAct.toFixed(1)+" w="+(d.omega*57.2958).toFixed(3)+"deg/s"+
+                      " measT="+Math.round(I*(d.omega-L.w)/D)+
+                      " finAct="+Math.round(d.gridFinTorque||0)+" finScan="+(sc?Math.round(sc.torque):"n/a")+
+                      " H0="+Math.round((d.torqueDrag||0)+(d.torqueGravityGradient||0))+
+                      " thr="+Math.round(d.thrustTotal||0)+" M="+Math.round(M)+" g="+d.gMag.toFixed(2)+
+                      " accRes lat="+(rx*ct+ry*st).toFixed(2)+" ax="+(-rx*st+ry*ct).toFixed(2));
+                  }
+                  L.t=simT; L.vx=d.vx; L.vy=d.vy; L.w=d.omega; L.sAx=0; L.sAy=0; L.n=0;
+                }
+              } }
+
             if ((simT - _st.pesT0) < PES_VALIDATE_S) {
               _send(Guidance.cmdGridFinsControl(0));
               _rcsOff();
@@ -4454,32 +4476,6 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
               break;
             }
 
-            if (simT >= 479 && simT <= 487 && Math.round(simT*80)%20===0) console.log("[PASSIVE-CHECK] t="+simT.toFixed(2)+" seg="+((simT>=480&&simT<483)?'A':(simT>=483&&simT<486)?'B':'none'));
-            // [PES-PASSIVE] controlled step-response test t=480-486 (A: c=0, B: c=-20), RCS off
-            { const seg = (simT>=480&&simT<483) ? {k:'A',c:0,m0:481,m1:483}
-                        : (simT>=483&&simT<486) ? {k:'B',c:-20,m0:484,m1:486} : null;
-              if (seg) {
-                _send(Guidance.cmdGridFinsControl(seg.c)); _rcsOff();
-                _st.pfPrevTau=null; _st.pfMeasF=null; _st.pfModF=null;
-                const T=_st.tp||(_st.tp={}); const s=T[seg.k]||(T[seg.k]={n:0,sH:0,sF:0,sAx:0,sAy:0,done:false});
-                const Hh=(d.torqueDrag||0)+(d.torqueGravityGradient||0);
-                if (simT>=seg.m0 && !s.done) {
-                  if (s.n===0){s.w0=d.omega;s.vx0=d.vx;s.vy0=d.vy;s.t0=simT;}
-                  s.w1=d.omega;s.vx1=d.vx;s.vy1=d.vy;s.t1=simT;s.n++;
-                  s.sH+=Hh; s.sF+=(d.gridFinTorque||0); s.sAx+=d.gVecX+a0.ax; s.sAy+=d.gVecY+a0.ay;
-                  if (simT>=seg.m1-1.5/80) { s.done=true; const D=s.t1-s.t0, n=s.n;
-                    const meas=I*(s.w1-s.w0)/D, mod=(s.sH+s.sF)/n;
-                    const rax=(s.vx1-s.vx0)/D-s.sAx/n, ray=(s.vy1-s.vy0)/D-s.sAy/n;
-                    console.log("[PES-PASSIVE] seg="+seg.k+" c="+seg.c+" t="+simT.toFixed(1)+" Q="+Math.round(d.Q)+
-                      " alpha="+d.alphaDeg.toFixed(2)+" cAct="+cAct.toFixed(1)+" H0="+Math.round(s.sH/n)+
-                      " fin="+Math.round(s.sF/n)+" model="+Math.round(mod)+" meas="+Math.round(meas)+
-                      " torqErr="+Math.round(meas-mod)+" | accResid(x,y)="+rax.toFixed(3)+","+ray.toFixed(3)+
-                      " bodyX="+(rax*Math.cos(d.theta)+ray*Math.sin(d.theta)).toFixed(3)+"m/s2"); }
-                }
-                break;
-              } }
-
-            
             const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
             const alphaTot = d.alphaAng + ((d.gridFinTorque || 0) + rcsNow) / I;
             const sl = body.slosh || { offset: 0, velocity: 0 };
@@ -4787,6 +4783,7 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
           _st.pesInit = false;
           _st.pesT0 = 0;
           _st.pfPrevTau = null;
+          _st.lg = null;
           _st.vfPO = null;
           _st.vfM = null;
           _st.pfPrevOmega = null;
