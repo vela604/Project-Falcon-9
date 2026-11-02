@@ -4191,32 +4191,7 @@ setState(s) {
             const tGo = (_st.ebVdotF !== null && _st.ebVdotF < -0.5) ? Math.max(0, (speedRelV - vCut) / (-_st.ebVdotF)) : null;
             _st.ebTgoS = tGo;
             _st.ebErateMps = _st.ebErateF;
-            if (simT >= 479 && simT <= 487 && Math.round(simT*80)%20===0) console.log("[PASSIVE-CHECK] t="+simT.toFixed(2)+" seg="+((simT>=480&&simT<483)?'A':(simT>=483&&simT<486)?'B':'none'));
-            // [PES-PASSIVE] controlled step-response test t=480-486 (A: c=0, B: c=-20), RCS off
-            { const seg = (simT>=480&&simT<483) ? {k:'A',c:0,m0:481,m1:483}
-                        : (simT>=483&&simT<486) ? {k:'B',c:-20,m0:484,m1:486} : null;
-              if (seg) {
-                _send(Guidance.cmdGridFinsControl(seg.c)); _rcsOff();
-                _st.pfPrevTau=null; _st.pfMeasF=null; _st.pfModF=null;
-                const T=_st.tp||(_st.tp={}); const s=T[seg.k]||(T[seg.k]={n:0,sH:0,sF:0,sAx:0,sAy:0,done:false});
-                const Hh=(d.torqueDrag||0)+(d.torqueGravityGradient||0);
-                if (simT>=seg.m0 && !s.done) {
-                  if (s.n===0){s.w0=d.omega;s.vx0=d.vx;s.vy0=d.vy;s.t0=simT;}
-                  s.w1=d.omega;s.vx1=d.vx;s.vy1=d.vy;s.t1=simT;s.n++;
-                  s.sH+=Hh; s.sF+=(d.gridFinTorque||0); s.sAx+=d.gVecX+a0.ax; s.sAy+=d.gVecY+a0.ay;
-                  if (simT>=seg.m1-1.5/80) { s.done=true; const D=s.t1-s.t0, n=s.n;
-                    const meas=I*(s.w1-s.w0)/D, mod=(s.sH+s.sF)/n;
-                    const rax=(s.vx1-s.vx0)/D-s.sAx/n, ray=(s.vy1-s.vy0)/D-s.sAy/n;
-                    console.log("[PES-PASSIVE] seg="+seg.k+" c="+seg.c+" t="+simT.toFixed(1)+" Q="+Math.round(d.Q)+
-                      " alpha="+d.alphaDeg.toFixed(2)+" cAct="+cAct.toFixed(1)+" H0="+Math.round(s.sH/n)+
-                      " fin="+Math.round(s.sF/n)+" model="+Math.round(mod)+" meas="+Math.round(meas)+
-                      " torqErr="+Math.round(meas-mod)+" | accResid(x,y)="+rax.toFixed(3)+","+ray.toFixed(3)+
-                      " bodyX="+(rax*Math.cos(d.theta)+ray*Math.sin(d.theta)).toFixed(3)+"m/s2"); }
-                }
-                break;
-              } }
-
-            const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
+const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
             let dNext = null;
             {
               const cT = Math.cos(d.theta), sT = Math.sin(d.theta);
@@ -4479,6 +4454,32 @@ setState(s) {
               break;
             }
 
+            if (simT >= 479 && simT <= 487 && Math.round(simT*80)%20===0) console.log("[PASSIVE-CHECK] t="+simT.toFixed(2)+" seg="+((simT>=480&&simT<483)?'A':(simT>=483&&simT<486)?'B':'none'));
+            // [PES-PASSIVE] controlled step-response test t=480-486 (A: c=0, B: c=-20), RCS off
+            { const seg = (simT>=480&&simT<483) ? {k:'A',c:0,m0:481,m1:483}
+                        : (simT>=483&&simT<486) ? {k:'B',c:-20,m0:484,m1:486} : null;
+              if (seg) {
+                _send(Guidance.cmdGridFinsControl(seg.c)); _rcsOff();
+                _st.pfPrevTau=null; _st.pfMeasF=null; _st.pfModF=null;
+                const T=_st.tp||(_st.tp={}); const s=T[seg.k]||(T[seg.k]={n:0,sH:0,sF:0,sAx:0,sAy:0,done:false});
+                const Hh=(d.torqueDrag||0)+(d.torqueGravityGradient||0);
+                if (simT>=seg.m0 && !s.done) {
+                  if (s.n===0){s.w0=d.omega;s.vx0=d.vx;s.vy0=d.vy;s.t0=simT;}
+                  s.w1=d.omega;s.vx1=d.vx;s.vy1=d.vy;s.t1=simT;s.n++;
+                  s.sH+=Hh; s.sF+=(d.gridFinTorque||0); s.sAx+=d.gVecX+a0.ax; s.sAy+=d.gVecY+a0.ay;
+                  if (simT>=seg.m1-1.5/80) { s.done=true; const D=s.t1-s.t0, n=s.n;
+                    const meas=I*(s.w1-s.w0)/D, mod=(s.sH+s.sF)/n;
+                    const rax=(s.vx1-s.vx0)/D-s.sAx/n, ray=(s.vy1-s.vy0)/D-s.sAy/n;
+                    console.log("[PES-PASSIVE] seg="+seg.k+" c="+seg.c+" t="+simT.toFixed(1)+" Q="+Math.round(d.Q)+
+                      " alpha="+d.alphaDeg.toFixed(2)+" cAct="+cAct.toFixed(1)+" H0="+Math.round(s.sH/n)+
+                      " fin="+Math.round(s.sF/n)+" model="+Math.round(mod)+" meas="+Math.round(meas)+
+                      " torqErr="+Math.round(meas-mod)+" | accResid(x,y)="+rax.toFixed(3)+","+ray.toFixed(3)+
+                      " bodyX="+(rax*Math.cos(d.theta)+ray*Math.sin(d.theta)).toFixed(3)+"m/s2"); }
+                }
+                break;
+              } }
+
+            
             const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
             const alphaTot = d.alphaAng + ((d.gridFinTorque || 0) + rcsNow) / I;
             const sl = body.slosh || { offset: 0, velocity: 0 };
