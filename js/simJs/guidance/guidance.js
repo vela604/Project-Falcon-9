@@ -1269,9 +1269,16 @@ if (elapsedSep >= _lbConfig.separation.SEPARATION_DURATION_S) {
   // ---- Booster handover → standardRTLS ----
   // Stop the pneumatic pusher torque (ang accel + target omega = 0) and any
   // RCS (done just above), then the RTLS block owns the booster from here.
-  send(cmdPusherTorque(0, 0, bIdx));
+  // pusher is NOT cancelled here: standardRTLS FLIP owns it (re-caps it, cancels it at the brake point)
   _lbState.rtlsBlock = FUNDAMENTAL_BLOCKS.standardRTLS.createInstance();
-  _lbState.rtlsBlock.start(_lbConfig.rtls, bIdx, { targetPad: _lbResolveTargetPad() });
+  _lbState.rtlsBlock.start(_lbConfig.rtls, bIdx, {
+    targetPad: _lbResolveTargetPad(),
+    pusher: {
+      alphaRad: _lbConfig.separation.BOOSTER_SEP_ANG_ACCEL_DEG_S2 * Math.PI / 180,
+      isOn: function () { return _lbState.pusherTorqueFired; },
+      set: function (a, w) { send(cmdPusherTorque(a, w, bIdx)); },
+    },
+  });
   console.log('[landbackV1] booster → standardRTLS at t=' + simT.toFixed(2));
 
   _lbState.insertionBlock = FUNDAMENTAL_BLOCKS.insertion.createInstance();

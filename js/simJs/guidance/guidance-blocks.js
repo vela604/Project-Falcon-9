@@ -3186,6 +3186,12 @@ setState(s) {
         flipErrDeg: null,
         flipOmegaDegS: null,
         flipTgtDeg: null,
+        flipN: 0, flipK: 1, flipSxy: 0, flipSxx: 0,          // measured RCS effectiveness (least squares)
+        flipTau: 0.0125, flipYHist: [], flipLagOk: true,      // actuator lag estimate
+        flipPrevOmega: null, flipARcsMeas: null, flipAMeas: null,
+        flipTau2: 0,                                          // RCS torque sent 2 ticks ago
+        flipPushCmd1: false, flipPushCmd2: false, flipPushCap: 0,  // pusher command history (1-tick latency)
+        flipDbgT: -1e9,
         // ---- BOOSTBACK scratch ----
         bbInit: false,
         bbStage: null,         // THREE | CENTER | SPOOL
@@ -3246,6 +3252,7 @@ setState(s) {
           _send(Guidance.cmdRcsDuty(null, _bodyIdx));
           _st.lastRcsTorque = 0;
         }
+        if (cur === "FLIP" && _missionCtx && _missionCtx.pusher) _missionCtx.pusher.set(0, 0);   // safety: pusher never outlives FLIP
         if (cur === "ENTRY_BURN") {
           _send(Guidance.cmdSetAllThrottle(0));
           _send(Guidance.cmdSetGimbalRate(0));
@@ -3586,41 +3593,80 @@ setState(s) {
             const I = d.massProps.I;
             if (!(I > 0)) break;
             const R2D = 180 / Math.PI;
+            const pusher = (_missionCtx && _missionCtx.pusher) || null;
 
             const tgtNow = _flipTargetTheta(d.rx, d.ry, d.vx, d.vy);
             if (tgtNow === null) { _rcsOff(); break; }
             const mx = _rcsMaxTorques(snapshot);
             if (!(mx.pos > 0) || !(mx.neg > 0)) { _rcsOff(); break; }
 
-            // rate at which the target itself rotates (orbital motion)
             let wTgt = 0;
             if (_st.flipPrevTgt !== null && _st.flipPrevT !== null && simT > _st.flipPrevT) {
               wTgt = _wrapPi(tgtNow - _st.flipPrevTgt) / (simT - _st.flipPrevT);
-              if (Math.abs(wTgt) > 0.05) wTgt = 0; // glitch guard
+              if (Math.abs(wTgt) > 0.05) wTgt = 0;
             }
             _st.flipPrevTgt = tgtNow;
             _st.flipPrevT = simT;
             const wRelNow = d.omega - wTgt;
             const rawErr = tgtNow - d.theta;
 
+            _st.flipN++;
+            if (_st.flipPrevOmega !== null) {
+              const aMeas = (d.omega - _st.flipPrevOmega) / dt;
+              const pushThen = (pusher && _st.flipPushCmd2 && Math.abs(_st.flipPrevOmega) < _st.flipPushCap) ? pusher.alphaRad : 0;
+              const aRcs = aMeas - d.alphaAng - pushThen;
+              _st.flipARcsMeas = aRcs;
+              _st.flipAMeas = aMeas;
+              const x = _st.flipTau2 / I;
+              if (_st.flipN >= 32 && x !== 0) {
+                _st.flipSxy += x * aRcs;
+                _st.flipSxx += x * x;
+                if (_st.flipSxx > 1e-18) _st.flipK = Math.min(1.2, Math.max(0.3, _st.flipSxy / _st.flipSxx));
+              }
+              const nLag = Math.round(3.0 / dt);
+              if (_st.flipN <= nLag) {
+                if (_st.flipMode !== null && _st.flipMode !== "ACCEL") _st.flipLagOk = false;
+                _st.flipYHist.push(Math.abs(aRcs));
+                if (_st.flipN === nLag && _st.flipLagOk) {
+                  const tailN = Math.max(1, Math.round(0.5 / dt));
+                  const tail = _st.flipYHist.slice(-tailN);
+                  const ys = tail.reduce(function (a, b) { return a + b; }, 0) / tail.length;
+                  const i63 = _st.flipYHist.findIndex(function (v) { return v >= 0.632 * ys; });
+                  if (ys > 0 && i63 >= 0) _st.flipTau = Math.max(dt, i63 * dt);
+                }
+              }
+            }
+            _st.flipPrevOmega = d.omega;
+
+            let pushCmdNew = _st.flipPushCmd1;
+
             if (!_st.flipInit) {
-              // ---- first tick: read the state, choose the direction ----
               _st.flipInit = true;
+              _st.flipTau = dt;
               _send(Guidance.cmdSetAllThrottle(0));
               _send(Guidance.cmdSetGimbalRate(0));
               const e0 = _wrapPi(rawErr);
-              const ePos = e0 >= 0 ? e0 : e0 + 2 * Math.PI;   // way round in +direction
-              const eNeg = ePos - 2 * Math.PI;                // way round in -direction
+              const ePos = e0 >= 0 ? e0 : e0 + 2 * Math.PI;
+              const eNeg = ePos - 2 * Math.PI;
               const tPos = _flipTime(ePos, wRelNow, mx.pos / I, mx.neg / I);
               const tNeg = _flipTime(eNeg, wRelNow, mx.pos / I, mx.neg / I);
-              // Direction FIXED to negative (clockwise): the SEPARATED_AXIAL push already tips the booster that way.
               _st.flipEu = eNeg;
               _st.flipDir = -1;
+              if (pusher && pusher.isOn() && pusher.alphaRad * _st.flipDir > 0) {
+                const aP = Math.abs(pusher.alphaRad);
+                const A = mx.neg / I + aP, B = mx.pos / I;
+                const wt = Math.max(0, -wRelNow);
+                const vp = Math.sqrt((Math.abs(eNeg) + wt * wt / (2 * A)) / (1 / (2 * A) + 1 / (2 * B)));
+                _st.flipPushCap = vp;
+                _st.flipPushCmd1 = true; _st.flipPushCmd2 = true; pushCmdNew = true;
+                pusher.set(pusher.alphaRad, vp);
+              }
               console.log("[standardRTLS] FLIP dir=" + (_st.flipDir > 0 ? "+" : "-") +
                 " err=" + (_st.flipEu * R2D).toFixed(1) + "deg omega=" + (wRelNow * R2D).toFixed(2) +
-                "deg/s  t(+)=" + tPos.toFixed(1) + "s t(-)=" + tNeg.toFixed(1) + "s");
+                "deg/s  t(+)=" + tPos.toFixed(1) + "s t(-)=" + tNeg.toFixed(1) + "s" +
+                " pusher=" + (_st.flipPushCmd1 ? ("on cap=" + (_st.flipPushCap * R2D).toFixed(1) + "deg/s") : "off"));
             } else {
-              _st.flipEu += _wrapPi(rawErr - _st.flipPrevRaw);   // unwrapped along the committed way
+              _st.flipEu += _wrapPi(rawErr - _st.flipPrevRaw);
             }
             _st.flipPrevRaw = rawErr;
 
@@ -3631,10 +3677,13 @@ setState(s) {
             if (Math.abs(_st.flipEu) < cfg.FLIP_ROTATE_TOL_DEG / R2D &&
                 Math.abs(wRelNow) < cfg.FLIP_OMEGA_TOL) {
               _rcsOff();
+              if (pusher && (_st.flipPushCmd1 || pushCmdNew)) pusher.set(0, 0);
+              _st.flipPushCmd1 = false; _st.flipPushCmd2 = false;
               finished = true; break;
             }
 
-            // ---- one-tick-ahead prediction (current RCS torque keeps acting) ----
+            const k = _st.flipK;
+            const pushOn1 = !!(pusher && _st.flipPushCmd1 && Math.abs(d.omega) < _st.flipPushCap);
             const M = d.massProps.M;
             let aIx = d.gVecX, aIy = d.gVecY;
             if (M > 0) {
@@ -3644,7 +3693,7 @@ setState(s) {
               aIx += (thrIx + d.dragVecX) / M;
               aIy += (thrIy + d.dragVecY) / M;
             }
-            const aTot = d.alphaAng + _st.lastRcsTorque / I;  // d.alphaAng has NO rcs term
+            const aTot = d.alphaAng + k * _st.lastRcsTorque / I + (pushOn1 ? pusher.alphaRad : 0);
             const dTheta = d.omega * dt + 0.5 * aTot * dt * dt;
             const wP = d.omega + aTot * dt;
             const tgtP = _flipTargetTheta(d.rx + d.vx * dt, d.ry + d.vy * dt,
@@ -3653,29 +3702,51 @@ setState(s) {
             const eP = _st.flipEu + dTgt - dTheta;
             const wRelP = wP - wTgt;
 
-            // ---- bang-bang on the predicted state ----
             const sgn = eP >= 0 ? 1 : -1;
-            const brakeMax = sgn > 0 ? mx.neg : mx.pos;          // torque available AGAINST the motion
+            const nomBrake = (sgn > 0 ? mx.neg : mx.pos) / I;
+            const brakeAcc = nomBrake * k;
             const towards = wRelP * sgn > 0;
-            const stopAng = wRelP * wRelP * I / (2 * brakeMax) + Math.abs(wRelP) * dt;
+            const aRcsNow = (_st.flipARcsMeas !== null) ? _st.flipARcsMeas : k * _st.lastRcsTorque / I;
+            let stopAng = 0;
+            if (towards) {
+              const al = 1 - Math.exp(-dt / Math.max(_st.flipTau, dt));
+              let a = Math.max(aRcsNow * sgn, -brakeAcc), x = 0, w = Math.abs(wRelP), n = 0;
+              while (w > 0 && n < 8000) { a += (-brakeAcc - a) * al; w += a * dt; x += w * dt; n++; }
+              stopAng = x + Math.abs(wRelP) * dt;
+            }
             let tauCmd, fullRes = null;
             if (towards && Math.abs(eP) <= stopAng) {
-              const need = I * Math.abs(wRelP) / dt;             // torque that zeroes omega in one tick
-              if (need >= brakeMax) {
-                _st.flipMode = "BRAKE"; fullRes = sgn > 0 ? mx.rn : mx.rp; tauCmd = -sgn * brakeMax;
+              const needAcc = Math.abs(wRelP) / dt / k;
+              if (needAcc >= nomBrake) {
+                _st.flipMode = "BRAKE"; fullRes = sgn > 0 ? mx.rn : mx.rp; tauCmd = -sgn * (sgn > 0 ? mx.neg : mx.pos);
               } else {
-                _st.flipMode = "TRIM"; tauCmd = -sgn * need;     // last tick only: just enough
+                _st.flipMode = "TRIM"; tauCmd = -sgn * needAcc * I;
               }
+              if (pusher && pushCmdNew) { pusher.set(0, 0); pushCmdNew = false; }
             } else {
               _st.flipMode = "ACCEL"; fullRes = sgn > 0 ? mx.rp : mx.rn; tauCmd = sgn * (sgn > 0 ? mx.pos : mx.neg);
+              if (pusher && pushCmdNew && sgn * pusher.alphaRad < 0) { pusher.set(0, 0); pushCmdNew = false; }
             }
 
+            const tauPrev1 = _st.lastRcsTorque;
             const res = fullRes || GuideRCS.targetTorqueRcs(snapshot, tauCmd, idx);
             if (res && res.fires && res.fires.length) {
               _send(Guidance.cmdRcsDuty(res.duties, idx));
               _st.lastRcsTorque = res.fires.reduce((a, f) => a + f.torque, 0);
             } else {
               _rcsOff();
+            }
+            _st.flipTau2 = tauPrev1;
+            _st.flipPushCmd2 = _st.flipPushCmd1;
+            _st.flipPushCmd1 = pushCmdNew;
+
+            if (simT - _st.flipDbgT >= 0.5) {
+              _st.flipDbgT = simT;
+              console.log("[FLIP-DBG] t=" + (simT - _st.phaseStart).toFixed(1) + " err=" + (_st.flipEu * R2D).toFixed(1) +
+                " w=" + (wRelNow * R2D).toFixed(2) + " " + _st.flipMode + " k=" + k.toFixed(2) +
+                " tau=" + _st.flipTau.toFixed(2) + " push=" + (pushOn1 ? 1 : 0) + " cap=" + (_st.flipPushCap * R2D).toFixed(1) +
+                " aMeas=" + (((_st.flipAMeas == null) ? 0 : _st.flipAMeas) * R2D).toFixed(2) +
+                " aRcs=" + (aRcsNow * R2D).toFixed(2) + " stop=" + (stopAng * R2D).toFixed(1));
             }
             break;
           }
