@@ -708,7 +708,7 @@ function blankRocketData() {
     familyId: null,
     height: seed.height,
     noseHeightM: noseH,
-    noseCurveness: 1,
+    noseCurveness: 0.9,
     fuel: { ...seed.fuel },
     params: { ...seed.params, rcsTopY: Math.min(seed.params.rcsTopY, seed.height) },
   };
@@ -904,7 +904,7 @@ if (stageRole === 'booster' || stageRole === 'stage') {
   // Legacy rocket — booster-style fuel tank + integrated nose.
 if (stageRole === 'rocket') {
   if (Number.isFinite(r.noseHeightM)) out.noseHeightM = r.noseHeightM;
-  out.noseCurveness = Number.isFinite(r.noseCurveness) ? r.noseCurveness : 1;
+  out.noseCurveness = Number.isFinite(r.noseCurveness) ? r.noseCurveness : 0.9;
   out.bodyMetalTypeId = r.bodyMetalTypeId || 'al-li-alloy';
   out.legsMetalTypeId = r.legsMetalTypeId || r.bodyMetalTypeId || 'carbon-composite';
   if (r.fuel) {

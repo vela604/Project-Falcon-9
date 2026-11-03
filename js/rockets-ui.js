@@ -1708,7 +1708,7 @@ function fillForm(r) {
 }
 if (role === 'rocket') {
   setVal('f-noseHeightM', Number.isFinite(r.noseHeightM) ? r.noseHeightM : 3.4);
-  setVal('f-noseCurveness', Number.isFinite(r.noseCurveness) ? r.noseCurveness : 1);
+  setVal('f-noseCurveness', Number.isFinite(r.noseCurveness) ? r.noseCurveness : 0.9);
   setVal('f-bodyMetalType', r.bodyMetalTypeId || 'al-li-alloy');
   setVal('f-legsMetalType', r.legsMetalTypeId || r.bodyMetalTypeId || 'carbon-composite');
   setVal('f-bodyShellFactor', Number.isFinite(r.bodyShellFactor) ? r.bodyShellFactor : (DEFAULT_SHELL_FACTOR_BY_ROLE.rocket || 0.015));
@@ -1883,6 +1883,7 @@ function readFormData() {
   const data = {
     name: document.getElementById('f-name').value.trim() || 'Unnamed Vehicle',
     stageRole: role,
+    familyId: editingRecordFamilyId(),
   };
   
   FIELD_MAP.forEach(f => {
@@ -2049,7 +2050,7 @@ data.hasRecovery = hasRecEl ? hasRecEl.checked : true;
 // Legacy rocket — booster-style inputs + integrated nose.
 if (role === 'rocket') {
   data.noseHeightM = Math.max(0, parseFloat(document.getElementById('f-noseHeightM').value) || 0);
-  data.noseCurveness = parseFloat(document.getElementById('f-noseCurveness').value) || 1;
+  data.noseCurveness = parseFloat(document.getElementById('f-noseCurveness').value) || 0.9;
   data.bodyMetalTypeId = document.getElementById('f-bodyMetalType').value || 'al-li-alloy';
   data.legsMetalTypeId = document.getElementById('f-legsMetalType').value || 'carbon-composite';
   data.bodyShellFactor = clampShellFactor(document.getElementById('f-bodyShellFactor'));
@@ -2094,16 +2095,43 @@ function applyRcsOffsetCaps() {
   if (!heightEl) return;
   const H = parseFloat(heightEl.value) || 0;
   if (H <= 0) return;
+  
+  let cap = H;
+  if (editingRole === 'booster') {
+    let famId = null;
+    if (editingId) {
+      const rec = loadFleet().find(r => r.id === editingId);
+      famId = rec ? rec.familyId : null;
+    } else if (creatingInFamilyId) {
+      famId = creatingInFamilyId;
+    }
+    if (famId) {
+      const members = loadFleet().filter(r => r && r.familyId === famId);
+      const interstage = members.find(m => m && m.stageRole === 'interstage');
+      if (interstage && Number.isFinite(interstage.height)) {
+        cap = H + interstage.height;
+      }
+    }
+  }
+  
   ['rcsTopY', 'rcsBottomY'].forEach(key => {
     const inp = document.querySelector(
       `[data-param-key="${key}"][data-param-scope="param"]`
     );
     if (!inp) return;
-    inp.max = H;
+    inp.max = cap;
     const v = parseFloat(inp.value);
-    if (Number.isFinite(v) && v > H) inp.value = H;
+    if (Number.isFinite(v) && v > cap) inp.value = cap;
     if (Number.isFinite(v) && v < 0) inp.value = 0;
   });
+  
+  const gfInp = document.querySelector('[data-param-key="finPositionY"][data-param-scope="gridFin"]');
+  if (gfInp) {
+    gfInp.max = cap;
+    const v = parseFloat(gfInp.value);
+    if (Number.isFinite(v) && v > cap) gfInp.value = cap;
+    if (Number.isFinite(v) && v < 0) gfInp.value = 0;
+  }
 }
 
 function updateCapsPreview() {

@@ -2621,6 +2621,9 @@ if (opts.gridFinType && opts.gridFinParams) {
 if (opts.stageRole === 'rocket' && Number.isFinite(opts.noseHeightM)) {
   const _hullCap = Math.max(0, (H * mpp) - opts.noseHeightM);
   _finY = Math.min(_finY, _hullCap);
+} else if (opts.stageRole === 'booster' && Number.isFinite(opts.boosterInterstageHeightM)) {
+  const _boosterCap = (H * mpp) + opts.boosterInterstageHeightM;
+  _finY = Math.min(_finY, _boosterCap);
 }
 const hingeY = -_finY / mpp;
   const hullHalfPx = W / 2;
@@ -2852,6 +2855,8 @@ const rawBottomY = opts.rcsBottomY !== undefined ? opts.rcsBottomY :
 let _rcsCap = memberH_m;
 if (opts.stageRole === 'rocket' && Number.isFinite(opts.noseHeightM)) {
   _rcsCap = Math.max(0, memberH_m - opts.noseHeightM);
+} else if (opts.stageRole === 'booster' && Number.isFinite(opts.boosterInterstageHeightM)) {
+  _rcsCap = memberH_m + opts.boosterInterstageHeightM;
 }
 const rcsTopY = Math.max(0, Math.min(rawTopY, _rcsCap));
 const rcsBottomY = Math.max(0, Math.min(rawBottomY, _rcsCap));
@@ -3218,6 +3223,7 @@ if (interstageHeight_m === null && v.stageRole === 'booster' && typeof computeIn
         hasMemberBelow: false,
         interstageHeight_m: interstageHeight_m,
         noseHeightM: v.noseHeightM,
+        boosterInterstageHeightM: v.boosterInterstageHeightM,
         rcsTopY: v.params ? v.params.rcsTopY : undefined,
   rcsBottomY: v.rcsBottomY,
   recoveryType,
@@ -3363,8 +3369,12 @@ function renderStackPreview(canvas, memberIds, fleet) {
     
     pctx.save();
     pctx.translate(baseX, baseY);
+    const _aboveMember = members[idx + 1] || null;
+    const _bIntH = (m.stageRole === 'booster' && _aboveMember && _aboveMember.stageRole === 'interstage')
+      ? _aboveMember.height : null;
     drawRocketArt(pctx, W, Hpx, mpp, {
       noseHeightM: m.noseHeightM,
+      boosterInterstageHeightM: _bIntH,
       rcsTopY: m.params ? m.params.rcsTopY : undefined,
       rcsBottomY: m.params ? m.params.rcsBottomY : undefined,
       recoveryType,

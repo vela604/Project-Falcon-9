@@ -127,6 +127,14 @@ if (record.stageRole === 'booster' && typeof computeInterstageForBooster === 'fu
   const inter = computeInterstageForBooster(record, stageAbove);
   if (inter && Number.isFinite(inter.height)) interstageHeight_m = inter.height;
 }
+let _pvBoosterInterstage = null;
+if (record.stageRole === 'booster' && record.familyId && typeof loadFleet === 'function') {
+  try {
+    const _m = loadFleet().filter(r => r && r.familyId === record.familyId);
+    const _i = _m.find(m => m && m.stageRole === 'interstage');
+    if (_i && Number.isFinite(_i.height)) _pvBoosterInterstage = _i.height;
+  } catch (e) {}
+}
 const _totalH = (record.stageRole === 'rocket' && Number.isFinite(record.noseHeightM))
     ? (record.height || 0) + record.noseHeightM
     : record.height;
@@ -134,6 +142,7 @@ return {
   height: _totalH,
   noseHeightM: record.noseHeightM,
   interstageHeight_m: interstageHeight_m,
+  boosterInterstageHeightM: _pvBoosterInterstage,
   width: record.width,
     rcsTopY: record.params ? record.params.rcsTopY : undefined,
     rcsBottomY: record.params ? record.params.rcsBottomY : undefined,

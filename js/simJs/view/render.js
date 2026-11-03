@@ -3006,6 +3006,8 @@ const puffForThisMember = (isTopMember && puffProgress >= 0) ?
 drawRocketArt(ctx, mW, mH, mpp, {
       legsProgress: (isActive && idx === 0) ? legs.progress : 0,
       noseHeightM: m.noseHeightM,
+      boosterInterstageHeightM: (m.stageRole === 'booster' && memberAbove && memberAbove.stageRole === 'interstage')
+        ? memberAbove.height : null,
       stackMaxW_px: stackMaxW_px,
       stackTotalH_px: stackTotalH_px,
       memberOffsetY_px: placeY,
