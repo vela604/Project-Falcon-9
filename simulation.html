@@ -28,6 +28,29 @@
             <span class="status-dot" id="statusDot"></span>
             <span id="statusText">STOPPED</span>
             <span class="tb-clock" id="missionClock">T+00:00.0</span>
+
+            <div style="display:flex;align-items:center;gap:6px;margin-right:6px;">
+
+              <span style="color:var(--dim);font-size:10.5px;font-family:'JetBrains Mono',monospace;">RES</span>
+
+              <select id="renderRes" style="background:#0a1220;color:#dbe6f5;border:1px solid #1c2b45;border-radius:4px;font-size:10.5px;padding:2px 4px;outline:none;font-family:'JetBrains Mono',monospace;cursor:pointer;">
+
+                <option value="0.5">LOW</option>
+
+                <option value="1">DEFAULT</option>
+
+                <option value="1.5">STANDARD</option>
+
+                <option value="2">HIGH</option>
+
+                <option value="2.5">ULTRA</option>
+
+                <option value="3">MAX</option>
+
+              </select>
+
+            </div>
+
             <button class="btn" id="btnTimeEdit" title="Pad local time — click to change"><span id="padTimeIcon">☀</span><span id="padTimeLabel">--:--</span></button>
           </div>
         </div>
@@ -42,7 +65,7 @@
             <label class="chip-toggle"><input type="checkbox" id="toggleImu"><span>IMU noise</span></label>
             <label class="chip-toggle"><input type="checkbox" id="toggleSunLight" checked><span>Sun light</span></label>
             <label class="chip-toggle"><input type="checkbox" id="toggleNightAssist" checked><span>Night assist</span></label>
-          </div>
+            </div>
         </div>
       </div>
       

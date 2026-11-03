@@ -434,8 +434,10 @@ function bootstrap() {
     // ---- Spawn render worker ----
     const mainCanvas = document.getElementById('simCanvas');
     const offscreen = mainCanvas.transferControlToOffscreen();
-    const initW = Math.max(1, mainCanvas.clientWidth || window.innerWidth);
-    const initH = Math.max(1, mainCanvas.clientHeight || window.innerHeight);
+    let renderScale = parseFloat(localStorage.getItem('rocketSim.renderScale')) || 1;
+    if (renderScale <= 0) renderScale = 1;
+    const initW = Math.max(1, mainCanvas.clientWidth || window.innerWidth) * renderScale;
+    const initH = Math.max(1, mainCanvas.clientHeight || window.innerHeight) * renderScale;
     const renderWorker = new Worker('js/simJs/threads/render.worker.js');
     window._renderWorker = renderWorker;
     
@@ -488,7 +490,7 @@ GuidanceBridge.onReady(() => {
     renderWorker.postMessage({ type: 'hydrate', keys: hydrateKeys });
     
     // Send camera FIRST so it's already set when the init tick fires.
-    renderWorker.postMessage({ type: 'camera', camera: { ...camera } });
+    renderWorker.postMessage({ type: 'camera', camera: { ...camera, zoom: camera.zoom * renderScale } });
     renderWorker.postMessage({
       type: 'toggles',
       showGrid,
@@ -508,6 +510,18 @@ GuidanceBridge.onReady(() => {
       [offscreen]
     );
     
+    const resSelect = document.getElementById('renderRes');
+    if (resSelect) {
+      resSelect.value = renderScale;
+      resSelect.addEventListener('change', (e) => {
+        renderScale = parseFloat(e.target.value);
+        localStorage.setItem('rocketSim.renderScale', renderScale);
+        const w = mainCanvas.clientWidth * renderScale;
+        const h = mainCanvas.clientHeight * renderScale;
+        if (w > 0 && h > 0) renderWorker.postMessage({ type: 'resize', width: w, height: h });
+      });
+    }
+
     // Resize relay
     let _resizeDebounce = null;
 window.addEventListener('resize', () => {
@@ -545,6 +559,7 @@ window.addEventListener('resize', () => {
       followBodyIndex: camera.followBodyIndex, mode: camera.mode,
       followPadId: camera.followPadId,
     };
+    let _lastSentRenderScale = renderScale;
     let _lastSentToggles = { showGrid, showVectors, showTrajectory, trajectoryMode, sloshEnabled };
 
     const pushRenderContext = () => {
@@ -552,13 +567,16 @@ window.addEventListener('resize', () => {
         camera.zoom !== _lastSentCamera.zoom ||
         camera.followBodyIndex !== _lastSentCamera.followBodyIndex ||
         camera.mode !== _lastSentCamera.mode ||
-        camera.followPadId !== _lastSentCamera.followPadId) {
-        renderWorker.postMessage({ type: 'camera', camera: { ...camera } });
+        camera.followPadId !== _lastSentCamera.followPadId ||
+        renderScale !== _lastSentRenderScale) {
+        // Multiply zoom by renderScale so local view preserves exact visual size
+        renderWorker.postMessage({ type: 'camera', camera: { ...camera, zoom: camera.zoom * renderScale } });
         _lastSentCamera.follow = camera.follow;
         _lastSentCamera.zoom = camera.zoom;
         _lastSentCamera.followBodyIndex = camera.followBodyIndex;
         _lastSentCamera.mode = camera.mode;
         _lastSentCamera.followPadId = camera.followPadId;
+        _lastSentRenderScale = renderScale;
       }
 
       if (showGrid !== _lastSentToggles.showGrid ||
@@ -592,7 +610,7 @@ window.addEventListener('resize', () => {
           // fresh dawn 'pop'. Nudge the camera message with a fresh tick stamp
           // so the render worker re-processes it (idempotent for camera state).
           if (typeof camera !== 'undefined') {
-            renderWorker.postMessage({ type: 'camera', camera: Object.assign({}, camera, { _tick: (globalThis.__repaintTick = (globalThis.__repaintTick || 0) + 1) }) });
+            renderWorker.postMessage({ type: 'camera', camera: Object.assign({}, camera, { zoom: camera.zoom * renderScale, _tick: (globalThis.__repaintTick = (globalThis.__repaintTick || 0) + 1) }) });
           }
         }
       }
