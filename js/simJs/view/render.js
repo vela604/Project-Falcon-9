@@ -3061,6 +3061,32 @@ drawRocketArt(ctx, mW, mH, mpp, {
            
                 yOffsetPx = placeY + mH;
      });
+     
+     // Fin overlay — redraw booster's fins on top of interstage if present.
+     if (stackMembers.length >= 2) {
+       const _bRec = stackMembers[0];
+       const _iRec = stackMembers[1];
+       if (_bRec && _bRec.stageRole === 'booster' &&
+           _iRec && _iRec.stageRole === 'interstage' &&
+           _bRec.hasGridFins && _bRec.gridFinParams &&
+           typeof _renderGridFins === 'function' &&
+           typeof getComponentType === 'function') {
+         const _bW = (_bRec.width || 1) / mpp;
+         const _bH = (_bRec.height || 0) / mpp;
+         const _gfType = getComponentType(_bRec.gridFinTypeId);
+         if (_gfType) {
+           ctx.save();
+           _renderGridFins(ctx, _bW, _bH, mpp, {
+             gridFinType: _gfType,
+             gridFinParams: _bRec.gridFinParams,
+             gridFinState: body.gridFins || null,
+             gridFinColor: _bRec.gridFinColor || '#8a9198',
+             stageRole: 'booster',
+           });
+           ctx.restore();
+         }
+       }
+     }
      }
       
       ctx.restore();

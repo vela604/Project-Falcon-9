@@ -579,10 +579,10 @@ fuel: {
     gridFinTypeId: 'gridfins-serrated-f9',
     gridFinMetalTypeId: 'titanium-alloy',
     gridFinParams: {
-  span: 1.5, chord: 1.2, thickness: 0.4, cellWidth: 0.17,
+  span: 1.59, chord: 1.23, thickness: 0.394, cellWidth: 0.17,
   // Hull top at 39.7 m. Fins sit 0.5 m below the interstage member's
   // bottom edge (fin thickness + small clearance).
-  finPositionY: 39.2,
+  finPositionY: 40.4,
 },
     gridFinColor: '#8a9198',
     params: {
@@ -590,7 +590,7 @@ fuel: {
   // RCS pod heights measured from the hull's base (hull = 39.7 m).
   // Top pods near the hull top (0.2 m below the interstage), bottom
   // pods near the hull base (0.7 m up, clear of the engine bay).
-  rcsTopY: 39.5, rcsBottomY: 0.7, rcsXOffset: 1.85, rcsPwmPeriod: 0.3,
+  rcsTopY: 45.4, rcsBottomY: 0.7, rcsXOffset: 1.85, rcsPwmPeriod: 0.3,
   legDeployRate: 0.5,
 },
     bodyDesign: { mode: 'solid', solidColor: '#e9edf2', dslText: '' },
@@ -699,7 +699,7 @@ function seedFalcon9B5Stack() {
 function blankRocketData() {
   const seed = seedFalcon9B5Booster();
   const noseH = 3.4;
-  return {
+  const rec = {
     ...seed,
     id: null,
     name: 'New Legacy Rocket',
@@ -710,8 +710,12 @@ function blankRocketData() {
     noseHeightM: noseH,
     noseCurveness: 0.9,
     fuel: { ...seed.fuel },
-    params: { ...seed.params, rcsTopY: Math.min(seed.params.rcsTopY, seed.height) },
+    params: { ...seed.params, rcsTopY: 39.6, rcsBottomY: 0.7 },
   };
+  if (seed.gridFinParams) {
+    rec.gridFinParams = { ...seed.gridFinParams, finPositionY: 38.2 };
+  }
+  return rec;
 }
 
 // ---------------------------------------------------------------------------

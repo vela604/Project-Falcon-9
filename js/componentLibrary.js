@@ -309,7 +309,7 @@ function buildGridFinSerratedF9() {
       // Calibrated so a real F9 Block 5 grid fin (1.5 × 1.2 × 0.4 m, 0.17 m
       // cells, cast titanium) lands at ~70 kg — matching the published
       // ~70 kg/fin figure for the flight hardware.
-      SHELL_FACTOR: 0.14,
+      SHELL_FACTOR: 0.244961,
       // Physical deflection envelope — real Falcon 9 grid fins swing 90°
   // from stowed (folded against hull) to deployed (perpendicular),
   // and can then deflect up to ±30° from the perpendicular axis for
