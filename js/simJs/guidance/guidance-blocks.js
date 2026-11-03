@@ -39,6 +39,7 @@
 //         investigation (LEOINSERTION-V3.md §5.8). Physics-side [PHYS-SPAWN]
 //         log has its own flag in physics.js (DEBUG_PHYS_SPAWN).
 const DEBUG_DEPLOY = false;
+const DEBUG_RTLS = false;   // false = silence per-tick spam (FLIP/BB/DRIFT/ENTRY_BURN/PES diagnostic logs); true = verbose
 
 function _gClamp(x, lo, hi) { return x < lo ? lo : (x > hi ? hi : x); }
 
@@ -3681,7 +3682,7 @@ setState(s) {
                 _st.flipAeroFutT = simT;
                 if (_st.flipQLogN < 12) {
                   _st.flipQLogN++;
-                  console.log("[FLIP-AERO] t=" + (simT - _st.phaseStart).toFixed(1) + " Q_now=" + cur.Q.toFixed(0) +
+                  if (DEBUG_RTLS) console.log("[FLIP-AERO] t=" + (simT - _st.phaseStart).toFixed(1) + " Q_now=" + cur.Q.toFixed(0) +
                     " Q_pred " + qTxt.join(" ") + " (Pa)");
                 }
               }
@@ -3695,7 +3696,7 @@ setState(s) {
                 dueQ.forEach(function (q) {
                   if (simT - q.T < 0.3 && _st.flipQCmpN < 30 && Number.isFinite(d.Q)) {
                     _st.flipQCmpN++;
-                    console.log("[FLIP-AERO-CHK] t=" + (simT - _st.phaseStart).toFixed(1) + " Q_pred=" + q.Q.toFixed(0) +
+                    if (DEBUG_RTLS) console.log("[FLIP-AERO-CHK] t=" + (simT - _st.phaseStart).toFixed(1) + " Q_pred=" + q.Q.toFixed(0) +
                       " Q_act=" + d.Q.toFixed(0) + " ratio=" + (q.Q > 0 ? (d.Q / q.Q).toFixed(2) : "n/a"));
                   }
                 });
@@ -3731,7 +3732,7 @@ setState(s) {
               if (!outlier) _st.flipARcsMeas = aRcs;
               else if (_st.flipSpikeN < 12) {
                 _st.flipSpikeN++;
-                console.log("[FLIP-SPIKE] t=" + (simT - _st.phaseStart).toFixed(2) + " aMeas=" + (aMeas * R2D).toFixed(1) +
+                if (DEBUG_RTLS) console.log("[FLIP-SPIKE] t=" + (simT - _st.phaseStart).toFixed(2) + " aMeas=" + (aMeas * R2D).toFixed(1) +
                   " expected=" + (((d.alphaAng + _st.flipK * x + pushThen)) * R2D).toFixed(1) + " w=" + (d.omega * R2D).toFixed(2) +
                   " mode=" + _st.flipMode);
               }
@@ -3901,7 +3902,7 @@ setState(s) {
                 if (best) cmpTxt = " | pred th=" + (best.th * R2D).toFixed(1) + " aero=" + (best.aero * R2D).toFixed(2) +
                   " act th=" + (-_st.flipEu * R2D).toFixed(1) + " aero=" + (d.alphaAng * R2D).toFixed(2);
               }
-              console.log("[FLIP-DBG] t=" + (simT - _st.phaseStart).toFixed(1) + " err=" + (_st.flipEu * R2D).toFixed(1) +
+              if (DEBUG_RTLS) console.log("[FLIP-DBG] t=" + (simT - _st.phaseStart).toFixed(1) + " err=" + (_st.flipEu * R2D).toFixed(1) +
                 " w=" + (wRelNow * R2D).toFixed(2) + " " + _st.flipMode + " k=" + k.toFixed(2) +
                 " push=" + (pushOn1 ? 1 : 0) + " aero=" + (d.alphaAng * R2D).toFixed(2) +
                 " aMeas=" + (((_st.flipAMeas == null) ? 0 : _st.flipAMeas) * R2D).toFixed(2) +
@@ -4073,7 +4074,7 @@ setState(s) {
               // [BB-DBG] first 20s, every 20 ticks (0.25s)
               if (_st.bbT0 == null) _st.bbT0 = simT;
               if (simT - _st.bbT0 < 20 && Math.round(simT * 80) % 20 === 0)
-                console.log("[BB-DBG] t=" + (simT - _st.bbT0).toFixed(2) +
+                if (DEBUG_RTLS) console.log("[BB-DBG] t=" + (simT - _st.bbT0).toFixed(2) +
                   " stg=" + _st.bbStage +
                   " thr=" + thrFrac.toFixed(2) +
                   " th=" + (thetaErr * R2D).toFixed(3) +
@@ -4171,7 +4172,7 @@ setState(s) {
               _st.preEntryOmegaDegS = d.omega * R2D;
               if (Math.round(simT * 80) % 400 === 0) {
                 const alphaNow = Number.isFinite(d.alphaDeg) ? d.alphaDeg : NaN;
-                console.log("[PRE_ENTRY_HOLD-DBG] t=" + simT.toFixed(2) +
+                if (DEBUG_RTLS) console.log("[PRE_ENTRY_HOLD-DBG] t=" + simT.toFixed(2) +
                   " alt=" + altKm.toFixed(1) + "km" +
                   " theta=" + (d.theta * R2D).toFixed(2) + "deg" +
                   " tgt=" + (tgtNow * R2D).toFixed(2) + "deg" +
@@ -4281,7 +4282,7 @@ setState(s) {
 
             if (Math.round(simT * 80) % 400 === 0) {
               const tToTgt = (thetaErr * d.omega > 0) ? Math.abs(thetaErr / d.omega) : Infinity;
-              console.log("[PRE_ENTRY_DRIFT] t=" + simT.toFixed(2) +
+              if (DEBUG_RTLS) console.log("[PRE_ENTRY_DRIFT] t=" + simT.toFixed(2) +
                 " alt=" + altKm.toFixed(1) + "km" +
                 " thetaErr=" + (thetaErr * R2D).toFixed(2) + "deg" +
                 " w=" + (d.omega * R2D).toFixed(3) +
@@ -4489,7 +4490,7 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
               _send(_gimbalCmdMsg(gReqDeg, gimbals[0], dt, gimTarget));
             }
             if (active && Math.round(simT * 80) % 80 === 0) {
-              console.log("[ENTRY_BURN-DBG] t=" + simT.toFixed(2) + " alt=" + altKm.toFixed(1) + "km" +
+              if (DEBUG_RTLS) console.log("[ENTRY_BURN-DBG] t=" + simT.toFixed(2) + " alt=" + altKm.toFixed(1) + "km" +
                 " v=" + speedRelV.toFixed(1) + " Tgo=" + (tGo != null ? tGo.toFixed(1) : "n/a") + "s" +
                 " err=" + (errM != null ? (errM / 1000).toFixed(3) : "n/a") + "km" +
                 " edot=" + (_st.ebErateF != null ? Math.round(_st.ebErateF) : "n/a") + "m/s" +
@@ -4524,7 +4525,7 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
               snapshot.bodies.forEach(function(b, i) {
                 const x = Derivation.derive(snapshot, i);
                 if (!x) return;
-                console.log("[MASSCHK t="+simT.toFixed(1)+"] body"+i+" M="+Math.round(x.massProps.M)+
+                if (DEBUG_RTLS) console.log("[MASSCHK t="+simT.toFixed(1)+"] body"+i+" M="+Math.round(x.massProps.M)+
                   " payload="+Math.round(x.massProps.payloadMass||0)+
                   " comY="+x.massProps.comY.toFixed(1)+
                   " I="+Math.round(x.massProps.I)+
@@ -4558,7 +4559,7 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
               _send(Guidance.cmdSetGimbalRate(0));
               _rcsOff();
               _send(Guidance.cmdGridFinsDeploy(true));
-              console.log("[RTLS-VERMARK] passive-v1 phase=POST_ENTRY t="+simT.toFixed(2)+" PASSIVE-TEST-PRESENT");
+              if (DEBUG_RTLS) console.log("[RTLS-VERMARK] passive-v1 phase=POST_ENTRY t="+simT.toFixed(2)+" PASSIVE-TEST-PRESENT");
               console.log("[standardRTLS] POST_ENTRY_STEER (closed loop v4) start t=" + simT.toFixed(2) +
                 " alt=" + altKm.toFixed(1) + "km v=" + Math.hypot(d.relVx, d.relVy).toFixed(0) + "m/s" +
                 " — first " + PES_VALIDATE_S + "s: NO commands (model validation)");
@@ -4571,7 +4572,7 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
                   const fyb = -g.Fx * sT0 + g.Fy * cT0;
                   return "c=" + c + ": Fxb=" + fxb.toFixed(0) + " Fyb=" + fyb.toFixed(0) + " tau=" + g.torque.toFixed(0);
                 });
-                console.log("[PES-FIN-AERO] alpha=" + (Number.isFinite(d.alphaDeg) ? d.alphaDeg.toFixed(2) : "n/a") + "deg" +
+                if (DEBUG_RTLS) console.log("[PES-FIN-AERO] alpha=" + (Number.isFinite(d.alphaDeg) ? d.alphaDeg.toFixed(2) : "n/a") + "deg" +
                   " Q=" + (Number.isFinite(d.Q) ? Math.round(d.Q) : "n/a") +
                   " finCtrlNow=" + (d.gridFinControlUsed != null ? d.gridFinControlUsed.toFixed(1) : "n/a") + " | " + rows.join(" | "));
               } catch (e) { console.warn("[PES-FIN-AERO] failed: " + e); }
@@ -4649,7 +4650,7 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
                     const D=simT-L.t, rx=(d.vx-L.vx)/D-L.sAx/L.n, ry=(d.vy-L.vy)/D-L.sAy/L.n;
                     const ct=Math.cos(d.theta), st=Math.sin(d.theta);
                     const sc=Derivation.gridFinAero(snapshot, idx, null, cAct);
-                    console.log("[PES-LOG] t="+simT.toFixed(1)+" Q="+Math.round(d.Q)+" a="+d.alphaDeg.toFixed(2)+
+                    if (DEBUG_RTLS) console.log("[PES-LOG] t="+simT.toFixed(1)+" Q="+Math.round(d.Q)+" a="+d.alphaDeg.toFixed(2)+
                       " c="+cAct.toFixed(1)+" w="+(d.omega*57.2958).toFixed(3)+"deg/s"+
                       " measT="+Math.round(I*(d.omega-L.w)/D)+
                       " finAct="+Math.round(d.gridFinTorque||0)+" finScan="+(sc?Math.round(sc.torque):"n/a")+
@@ -4673,13 +4674,13 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
                 _st.vfM = (_st.vfM == null) ? mVal : _st.vfM + (dt / 0.5) * (mVal - _st.vfM);
                 if (Math.round(simT * 80) % 80 === 0) {
                   const mdl = (d.gridFinTorque || 0) + (d.torqueDrag || 0) + (d.torqueGravityGradient || 0);
-                  console.log("[PES-VLEDGER] t=" + simT.toFixed(2) + " meas=" + Math.round(_st.vfM) +
+                  if (DEBUG_RTLS) console.log("[PES-VLEDGER] t=" + simT.toFixed(2) + " meas=" + Math.round(_st.vfM) +
                     " model=" + Math.round(mdl) + " err=" + Math.round(_st.vfM - mdl));
                 }
               }
 
               if (Math.round(simT * 80) % 80 === 0) {
-                console.log("[POST_ENTRY-VALIDATE] t=" + simT.toFixed(2) + " alt=" + altKm.toFixed(1) + "km" +
+                if (DEBUG_RTLS) console.log("[POST_ENTRY-VALIDATE] t=" + simT.toFixed(2) + " alt=" + altKm.toFixed(1) + "km" +
                   " Q=" + (Number.isFinite(d.Q) ? Math.round(d.Q) : "n/a") + " alpha=" + d.alphaDeg.toFixed(2) + "deg" +
                   " edot meas/pred=" + (_st.pesErateF != null ? _st.pesErateF.toFixed(2) : "n/a") + "/" + edotPred.toFixed(2) + "m/s" +
                   " FD=" + (edotFD != null ? edotFD.toFixed(2) : "n/a") + " bal=" + (edotBal != null ? edotBal.toFixed(2) : "n/a") +
@@ -4765,7 +4766,7 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
                 }
                 if (!_st.bnd) _st.bnd = { e0: errM, cum: 0 };
                 if (bestE !== null) _st.bnd.cum += bestE;
-                console.log("[PES-BOUND] t=" + simT.toFixed(0) + " err=" + errM.toFixed(0) +
+                if (DEBUG_RTLS) console.log("[PES-BOUND] t=" + simT.toFixed(0) + " err=" + errM.toFixed(0) +
                   " edotNow=" + edotPred.toFixed(1) +
                   " edotBest=" + (bestE === null ? "n/a" : bestE.toFixed(1)) +
                   " bound=" + Math.round(_st.bnd.e0 + _st.bnd.cum));
@@ -4848,7 +4849,7 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
               }
               _st.pfPrevTau = tauModel; _st.pfPrevOmega = d.omega;
               if (simT >= 440 && simT <= 530 && Math.round(simT * 80) % 160 === 0 && _st.pfMeasF != null)
-                console.log("[PES-LEDGER] t=" + simT.toFixed(2) + " alpha=" + d.alphaDeg.toFixed(2) +
+                if (DEBUG_RTLS) console.log("[PES-LEDGER] t=" + simT.toFixed(2) + " alpha=" + d.alphaDeg.toFixed(2) +
                   " I=" + Math.round(I) + " H0=" + Math.round(H0) + " tauFin=" + Math.round(tauFinNext) +
                   " tauRcs=" + Math.round(rcsAch) + " model=" + Math.round(_st.pfModF) +
                   " meas=" + Math.round(_st.pfMeasF) + " err=" + Math.round(_st.pfMeasF - _st.pfModF) + " dHat=" + Math.round(dHat) +
@@ -4857,7 +4858,7 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
 
             // [PES-FIN] curve dump t=488..512 (Claude diagnostic)
             if (simT >= 488 && simT <= 512 && Math.round(simT * 80) % 160 === 0) {
-              console.log("[PES-FIN] t=" + simT.toFixed(2) + " alpha=" + d.alphaDeg.toFixed(2) +
+              if (DEBUG_RTLS) console.log("[PES-FIN] t=" + simT.toFixed(2) + " alpha=" + d.alphaDeg.toFixed(2) +
                 " w=" + (d.omega * R2D).toFixed(3) + " aAng=" + (d.alphaAng * R2D).toFixed(4) +
                 " tauCmd=" + Math.round(tauCmd) + " H0=" + Math.round(H0) +
                 " tauNeed=" + Math.round(tauNeed) + " tauFin=" + Math.round(tauFinNext) +
@@ -4869,7 +4870,7 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
             _st.pesCtrlCmd = cStar;
             _st.pesRcsTorque = rcsAch;
             if (Math.round(simT * 80) % 160 === 0) {
-              console.log("[POST_ENTRY-DBG] t=" + simT.toFixed(2) + " alt=" + altKm.toFixed(1) + "km" +
+              if (DEBUG_RTLS) console.log("[POST_ENTRY-DBG] t=" + simT.toFixed(2) + " alt=" + altKm.toFixed(1) + "km" +
                 " v=" + Math.hypot(d.relVx, d.relVy).toFixed(0) + " Q=" + (Number.isFinite(d.Q) ? Math.round(d.Q) : "n/a") +
                 " vacErr=" + (errM / 1000).toFixed(3) + "km groundErr=" + (_st.pesGroundErrM / 1000).toFixed(3) + "km" +
                 " edot meas/pred/des=" + (_st.pesErateF != null ? _st.pesErateF.toFixed(1) : "n/a") + "/" +
