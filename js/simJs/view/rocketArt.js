@@ -2947,14 +2947,18 @@ function drawGasPuff(cx, cy, dir, seed, duty, modeOpts) {
     // expands and drifts, without overwhelming the frame.
     spawnN = 6;
   } else {
-    // Continuous mode — proportional spawning. Expected puffs/frame ≈ 2.05·d,
-    // giving ~1.2 puffs/sec at 1% duty (visible) up to ~123/sec at 100% (full
-    // throttle visual). No minimum gate: even a 1% duty pod fires off the
-    // occasional visible puff instead of vanishing entirely.
-    if (d > 0) {
-      if (Math.random() < d) spawnN++;
-      if (Math.random() < d * 0.7) spawnN++;
-      if (Math.random() < d * 0.35) spawnN++;
+    // Continuous mode — proportional spawning with a minimum-rate floor.
+    // - d === 0 → 0 puffs (engine truly off)
+    // - 0 < d < 0.01 (below 1%) → treated as 1% effective → ~1.2 puffs/sec,
+    //   so any nonzero duty still produces visible puffs
+    // - d >= 0.01 → proportional as-is (1% → 1.2/sec, 25% → 31/sec,
+    //   100% → 123/sec)
+    // Expected puffs/frame ≈ 2.05 · spawnD.
+    const spawnD = d > 0 ? Math.max(d, 0.01) : 0;
+    if (spawnD > 0) {
+      if (Math.random() < spawnD) spawnN++;
+      if (Math.random() < spawnD * 0.7) spawnN++;
+      if (Math.random() < spawnD * 0.35) spawnN++;
     }
   }
 
