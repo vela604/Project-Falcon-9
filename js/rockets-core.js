@@ -345,7 +345,7 @@ document.getElementById('btnNew').addEventListener('click', () => {
   const fam = addFamily({ name: trimmed });
   creatingInFamilyId = fam.id;
   renderFleetList();
-  showRolePicker(['booster', 'rocket']);
+  showRolePicker(['booster']);
 });
 document.getElementById('rolePickerCancel').addEventListener('click', () => rolePicker.classList.remove('show'));
 rolePicker.addEventListener('click', (e) => { if (e.target === rolePicker) rolePicker.classList.remove('show'); });

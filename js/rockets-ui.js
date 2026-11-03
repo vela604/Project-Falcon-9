@@ -387,7 +387,7 @@ if (_bottom && _bottom.stageRole === 'rocket') {
   return;
 }
 const hasBooster = !!_bottom;
-const allowed = hasBooster ? ['interstage', 'stage', 'payloadSpace'] : ['booster', 'rocket'];
+const allowed = hasBooster ? ['interstage', 'stage', 'payloadSpace', 'rocket'] : ['booster'];
 creatingInFamilyId = familyId;
   document.querySelectorAll('#rolePicker .role-option').forEach(btn => {
     btn.style.display = allowed.includes(btn.dataset.role) ? '' : 'none';
@@ -911,7 +911,7 @@ function openStackEditorNew() {
   const seqPrompt = prompt(
     'Sequence preset:\n' +
     '1 = Standard (booster > interstage > stage > payload space)\n' +
-    '2 = Legacy Rocket (single member)\n' +
+    '2 = Single Fly (Legacy Rocket)\n' +
     '3 = Custom',
     '1'
   );
@@ -1001,7 +1001,7 @@ function renderStackSequenceHint() {
   if (!el) return;
   const hints = {
     'standard': 'Preset: Booster → Interstage → Stage → Payload Space',
-    'legacy': 'Preset: Legacy Rocket (single member, no additions)',
+    'legacy': 'Preset: Single Fly — Legacy Rocket (no members above or below)',
   };
   const text = hints[workingStackSequence];
   if (!text) { el.style.display = 'none'; return; }
@@ -1707,8 +1707,8 @@ function fillForm(r) {
   setVal('f-noseCurveness', r.noseCurveness || 0);
 }
 if (role === 'rocket') {
-  setVal('f-noseHeightM', Number.isFinite(r.noseHeightM) ? r.noseHeightM : 6.5);
-  setVal('f-noseCurveness', Number.isFinite(r.noseCurveness) ? r.noseCurveness : 0.5);
+  setVal('f-noseHeightM', Number.isFinite(r.noseHeightM) ? r.noseHeightM : 3.4);
+  setVal('f-noseCurveness', Number.isFinite(r.noseCurveness) ? r.noseCurveness : 1);
   setVal('f-bodyMetalType', r.bodyMetalTypeId || 'al-li-alloy');
   setVal('f-legsMetalType', r.legsMetalTypeId || r.bodyMetalTypeId || 'carbon-composite');
   setVal('f-bodyShellFactor', Number.isFinite(r.bodyShellFactor) ? r.bodyShellFactor : (DEFAULT_SHELL_FACTOR_BY_ROLE.rocket || 0.015));
@@ -2049,7 +2049,7 @@ data.hasRecovery = hasRecEl ? hasRecEl.checked : true;
 // Legacy rocket — booster-style inputs + integrated nose.
 if (role === 'rocket') {
   data.noseHeightM = Math.max(0, parseFloat(document.getElementById('f-noseHeightM').value) || 0);
-  data.noseCurveness = parseFloat(document.getElementById('f-noseCurveness').value) || 0.5;
+  data.noseCurveness = parseFloat(document.getElementById('f-noseCurveness').value) || 1;
   data.bodyMetalTypeId = document.getElementById('f-bodyMetalType').value || 'al-li-alloy';
   data.legsMetalTypeId = document.getElementById('f-legsMetalType').value || 'carbon-composite';
   data.bodyShellFactor = clampShellFactor(document.getElementById('f-bodyShellFactor'));
