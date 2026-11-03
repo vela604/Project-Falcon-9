@@ -3112,6 +3112,91 @@ drawRocketArt(ctx, mW, mH, mpp, {
 // (render.js) reference the same name.
 // ============================================================================
 var showTrail = false;
+const _trailByBody = new WeakMap();
+const _lastTrailSampleT = new WeakMap();
+
+function _trailOf(b) {
+  let t = _trailByBody.get(b);
+  if (!t) { t = []; _trailByBody.set(b, t); }
+  return t;
+}
+
+function _updateTrailOne(b) {
+  if (!b || !Number.isFinite(b.rx) || !Number.isFinite(b.ry)) return;
+  const trail = _trailOf(b);
+  const lastT = _lastTrailSampleT.get(b);
+  const lastTVal = (lastT == null) ? -1 : lastT;
+  if (lastTVal > 0 && state.simTime < lastTVal - 0.5) {
+    trail.length = 0;
+    _lastTrailSampleT.set(b, -1);
+    return;
+  }
+  const dt = state.simTime - lastTVal;
+  if (lastTVal < 0 || dt > 0.15) {
+    if (lastTVal > 0 && dt > 0.5 && trail.length > 0) {
+      const prev = trail[trail.length - 1];
+      const span = state.simTime - prev.t;
+      const N = Math.min(300, Math.max(4, Math.round(span / 0.2)));
+      const v0x = prev.vx || 0, v0y = prev.vy || 0;
+      const v1x = b.vx || 0, v1y = b.vy || 0;
+      const p0x = prev.rx, p0y = prev.ry;
+      const p1x = b.rx, p1y = b.ry;
+      for (let k = 1; k < N; k++) {
+        const u = k / N;
+        const u2 = u * u, u3 = u2 * u;
+        const h00 = 2*u3 - 3*u2 + 1;
+        const h10 = u3 - 2*u2 + u;
+        const h01 = -2*u3 + 3*u2;
+        const h11 = u3 - u2;
+        trail.push({
+          rx: h00*p0x + h10*span*v0x + h01*p1x + h11*span*v1x,
+          ry: h00*p0y + h10*span*v0y + h01*p1y + h11*span*v1y,
+          t: prev.t + u * span,
+          vx: 0, vy: 0,
+        });
+      }
+    }
+    trail.push({ rx: b.rx, ry: b.ry, t: state.simTime, vx: b.vx || 0, vy: b.vy || 0 });
+    _lastTrailSampleT.set(b, state.simTime);
+    if (trail.length > 4000) trail.splice(0, trail.length - 4000);
+  }
+}
+
+function _projectTrailPoint(p, earthFixed, omega, tNow) {
+  let rx = p.rx, ry = p.ry;
+  if (earthFixed && omega !== 0 && Number.isFinite(p.t)) {
+    const a = omega * (tNow - p.t);
+    const cos = Math.cos(a), sin = Math.sin(a);
+    rx = p.rx * cos + p.ry * sin;
+    ry = p.ry * cos - p.rx * sin;
+  }
+  return worldToScreen(rx, ry);
+}
+
+function _strokeTrailPath(trail, earthFixed, omega, tNow, colorRGB, alpha, width) {
+  if (trail.length < 2) return;
+  ctx.beginPath();
+  let started = false;
+  for (let i = 0; i < trail.length; i++) {
+    const [px, py] = _projectTrailPoint(trail[i], earthFixed, omega, tNow);
+    if (!Number.isFinite(px) || !Number.isFinite(py)) continue;
+    if (!started) { ctx.moveTo(px, py); started = true; }
+    else ctx.lineTo(px, py);
+  }
+  if (!started) return;
+  ctx.lineJoin = "round";
+  ctx.lineCap = "round";
+  const r = colorRGB[0], g = colorRGB[1], b = colorRGB[2];
+  ctx.strokeStyle = "rgba(" + r + "," + g + "," + b + "," + (alpha * 0.15).toFixed(3) + ")";
+  ctx.lineWidth = width * 3.5;
+  ctx.stroke();
+  ctx.strokeStyle = "rgba(" + r + "," + g + "," + b + "," + (alpha * 0.38).toFixed(3) + ")";
+  ctx.lineWidth = width * 1.8;
+  ctx.stroke();
+  ctx.strokeStyle = "rgba(" + r + "," + g + "," + b + "," + alpha.toFixed(3) + ")";
+  ctx.lineWidth = width;
+  ctx.stroke();
+}
 let _trailPts = [];
 let _lastTrailSimT = -1;
 let _lastTrailBodyIdx = -1;
@@ -3127,85 +3212,47 @@ if (typeof importScripts === "function" && typeof self !== "undefined" && typeof
 }
 
 function _updateTrail() {
-  if (!showTrail || !state || !state.bodies || !state.bodies.length) return;
-  const idx = _cameraTargetIndex();
-  const b = state.bodies[idx];
-  if (!b) return;
-  if (idx !== _lastTrailBodyIdx) { _trailPts.length = 0; _lastTrailBodyIdx = idx; _lastTrailSimT = -1; }
-  if (_lastTrailSimT > 0 && state.simTime < _lastTrailSimT - 0.5) { _trailPts.length = 0; _lastTrailSimT = -1; }
-  if (_lastTrailSimT < 0 || state.simTime - _lastTrailSimT > 0.15) {
-    _trailPts.push({ rx: b.rx, ry: b.ry, t: state.simTime });
-    _lastTrailSimT = state.simTime;
-    if (_trailPts.length > 4000) _trailPts.shift();
+  if (!showTrail || !state || !state.bodies) return;
+  for (let i = 0; i < state.bodies.length; i++) {
+    _updateTrailOne(state.bodies[i]);
   }
 }
 
 function drawTrail() {
   if (camera.mode !== "planet") return;
-  if (!showTrail || _trailPts.length < 1) return;
-  
-  // Earth-fixed frame support — matches trajectory mode. When earth-fixed
-  // is active, rotate each past trail point forward by ω·(t_now − t_capture),
-  // which is the inertial position TODAY of the Earth-fixed location where
-  // the rocket was at t_capture. Matches drawPredictedTrajectory()'s frame
-  // handling so trail and prediction always agree.
+  if (!showTrail || !state || !state.bodies) return;
   const earthFixed = (typeof trajectoryMode !== 'undefined' && trajectoryMode === 'earthFixed');
   const omega = (typeof CONFIG !== 'undefined' && Number.isFinite(CONFIG.EARTH_OMEGA)) ? CONFIG.EARTH_OMEGA : 0;
   const tNow = state.simTime || 0;
-  
-  const project = (p) => {
-    let rx = p.rx, ry = p.ry;
-    if (earthFixed && omega !== 0 && Number.isFinite(p.t)) {
-      const a = omega * (tNow - p.t);
-      const cos = Math.cos(a), sin = Math.sin(a);
-      const nx = rx * cos + ry * sin;
-      const ny = ry * cos - rx * sin;
-      rx = nx; ry = ny;
-    }
-    return worldToScreen(rx, ry);
-  };
-  
+  const followedIdx = _cameraTargetIndex();
   ctx.save();
-  ctx.lineJoin = "round";
-  ctx.lineCap = "round";
-  
-  if (_trailPts.length === 1) {
-    const [px, py] = project(_trailPts[0]);
-    if (Number.isFinite(px) && Number.isFinite(py)) {
-      ctx.beginPath();
-      ctx.arc(px, py, 3, 0, Math.PI * 2);
-      ctx.fillStyle = "rgba(150, 220, 255, 0.95)";
-      ctx.fill();
-    }
-    ctx.restore();
-    return;
+  // Non-followed bodies: dim trails
+  for (let i = 0; i < state.bodies.length; i++) {
+    if (i === followedIdx) continue;
+    const b = state.bodies[i];
+    if (!b) continue;
+    const trail = _trailByBody.get(b);
+    if (!trail || trail.length < 2) continue;
+    _strokeTrailPath(trail, earthFixed, omega, tNow, [150, 180, 220], 0.32, 1.4);
   }
-  
-  const path = () => {
-    ctx.beginPath();
-    let started = false;
-    for (let k = 0; k < _trailPts.length; k++) {
-      const [px, py] = project(_trailPts[k]);
-      if (!Number.isFinite(px) || !Number.isFinite(py)) continue;
-      if (!started) { ctx.moveTo(px, py); started = true; }
-      else ctx.lineTo(px, py);
+  // Followed body: bright trail
+  const fb = state.bodies[followedIdx];
+  if (fb) {
+    const trail = _trailByBody.get(fb);
+    if (trail && trail.length >= 1) {
+      if (trail.length === 1) {
+        const [px, py] = _projectTrailPoint(trail[0], earthFixed, omega, tNow);
+        if (Number.isFinite(px) && Number.isFinite(py)) {
+          ctx.beginPath();
+          ctx.arc(px, py, 3, 0, Math.PI * 2);
+          ctx.fillStyle = "rgba(150, 220, 255, 0.95)";
+          ctx.fill();
+        }
+      } else {
+        _strokeTrailPath(trail, earthFixed, omega, tNow, [160, 225, 255], 0.95, 2.2);
+      }
     }
-    return started;
-  };
-  
-  // Outer glow
-  ctx.shadowColor = "rgba(120, 210, 255, 0.7)";
-  ctx.shadowBlur = 10;
-  ctx.strokeStyle = "rgba(120, 210, 255, 0.4)";
-  ctx.lineWidth = 6;
-  if (path()) ctx.stroke();
-  
-  // Core line
-  ctx.shadowBlur = 0;
-  ctx.strokeStyle = "rgba(160, 225, 255, 0.95)";
-  ctx.lineWidth = 2.5;
-  if (path()) ctx.stroke();
-  
+  }
   ctx.restore();
 }
 
