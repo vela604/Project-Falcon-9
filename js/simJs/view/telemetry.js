@@ -398,18 +398,26 @@ function getEl(id) {
 
 function initTelemetryPanel() {
   const handle = document.getElementById('teleHandle');
-  const panel = document.getElementById('telemetryPanel');
+  const wrapper = document.getElementById('teleWrapper');
   const btnC = document.getElementById('teleToggleCompact');
-  if (handle && panel) {
+  const panel = document.getElementById('telemetryPanel');
+  
+  if (handle && wrapper) {
     handle.addEventListener('click', () => {
-      const hidden = panel.classList.toggle('hidden-wall');
-      handle.textContent = hidden ? '▶' : '◀';
+      const closed = wrapper.classList.toggle('closed');
+      handle.textContent = closed ? '▶' : '◀';
     });
   }
+  
   if (btnC && panel) {
+    // Default to compact mode on first load
+    if (!panel.classList.contains('tele-compact')) {
+      panel.classList.add('tele-compact');
+      btnC.textContent = 'EXPAND';
+    }
     btnC.addEventListener('click', () => {
       const compact = panel.classList.toggle('tele-compact');
-      btnC.textContent = compact ? '▲' : '▼';
+      btnC.textContent = compact ? 'EXPAND' : 'COLLAPSE';
     });
   }
 }
@@ -628,7 +636,8 @@ const _sloshOffsetCm = fmt((_sloshBody && _sloshBody.slosh ? _sloshBody.slosh.of
   setC('tc-g', grav.g.toFixed(4) + ' m/s²');
   setC('tc-rho', rho.toFixed(4) + ' kg/m³');
   const _tstC = _abC ? _bodyTempWeighted(_abC) : null;
-  setC('tc-temp', _tstC ? _tstC.T.toFixed(0) + ' K' : '—');
+  setC('tc-temp', _tstC ? (_tstC.T - 273.15).toFixed(0) + ' °C' : '—');
+  setC('tc-maxT', _tstC ? (_tstC.peakK - 273.15).toFixed(0) + ' °C' : '—');
 
   
   const maxThrustAll = ENGINES.reduce((s, e) => s + e.Fmax, 0);
