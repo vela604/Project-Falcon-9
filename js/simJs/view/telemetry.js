@@ -605,7 +605,7 @@ const _sloshOffsetCm = fmt((_sloshBody && _sloshBody.slosh ? _sloshBody.slosh.of
   setC('tc-x', (arcDistance / 1000).toFixed(3) + ' km');
   setC('tc-apo', Number.isFinite(_altA_out) ? _altA_out.toFixed(3) + ' km' : '∞ km');
   setC('tc-peri', _altP_out.toFixed(3) + ' km');
-  setC('tc-v', (speedInertial / 1000).toFixed(3) + ' km/s');
+  setC('tc-v', (speedRelative / 1000).toFixed(3) + ' km/s');
   const thrustKN = ENGINES.reduce((s, e) => s + e.currentF, 0) / 1000;
   setC('tc-thr', thrustKN.toFixed(1) + ' kN');
   const gForce = (geom.M > 0) ? Math.hypot(lastForces.mainFx || 0, lastForces.mainFy || 0) / (geom.M * 9.80665) : 0;
