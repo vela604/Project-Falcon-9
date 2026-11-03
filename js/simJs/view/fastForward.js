@@ -52,7 +52,6 @@ const FastForward = (function () {
 
   function _forwardTrailSamples(bodies, simTime) {
     if (!bodies || !Array.isArray(bodies)) return;
-    if (typeof showTrail === 'undefined' || !showTrail) return;
     if (!window._renderWorker) return;
     if (!Number.isFinite(simTime)) return;
     for (let bi = 0; bi < bodies.length; bi++) {

@@ -3111,7 +3111,7 @@ drawRocketArt(ctx, mW, mH, mpp, {
 // showTrail is a `var` so both main thread (controls.js) and worker
 // (render.js) reference the same name.
 // ============================================================================
-var showTrail = false;
+var showTrail = true;
 const _trailById = new Map();
 const _lastSampleById = new Map();
 
@@ -3170,7 +3170,16 @@ function _updateTrailOne(b) {
   const thrustNow = (b.engines || []).reduce((s, e) => s + (e.currentF || 0), 0);
   
   // Huge gap — path unknown. Mark gap so draw breaks stroke cleanly.
+  // BUT: if trail already has samples close to current simTime (e.g. FF
+  // populated them via _pushTrailSample while _lastSampleById was stale),
+  // just realign — don't push a fake gap marker.
   if (lastT >= 0 && dt > 2.0) {
+    const trailLast = trail.length > 0 ? trail[trail.length - 1] : null;
+    const trailLastT = trailLast && Number.isFinite(trailLast.t) ? trailLast.t : -Infinity;
+    if (Math.abs(state.simTime - trailLastT) < 5.0) {
+      _lastSampleSet(b, state.simTime);
+      return;
+    }
     trail.push({ rx: b.rx, ry: b.ry, t: state.simTime, vx: b.vx || 0, vy: b.vy || 0, thrust: thrustNow, gap: true });
     _lastSampleSet(b, state.simTime);
     if (trail.length > 4000) trail.splice(0, trail.length - 4000);
@@ -3271,7 +3280,7 @@ if (typeof importScripts === "function" && typeof self !== "undefined" && typeof
 }
 
 function _updateTrail() {
-  if (!showTrail || !state || !state.bodies) return;
+  if (!state || !state.bodies) return;
   for (let i = 0; i < state.bodies.length; i++) {
     _updateTrailOne(state.bodies[i]);
   }
@@ -3309,7 +3318,7 @@ function _colorForBodyKey(key) {
 // _updateTrailOne's time-reversal guard while state.simTime is still
 // frozen pre-FF. Post-FF the normal sampler catches up cleanly.
 function _pushTrailSample(key, rx, ry, t, vx, vy) {
-  if (!showTrail || !key) return;
+  if (!key) return;
   if (!Number.isFinite(rx) || !Number.isFinite(ry) || !Number.isFinite(t)) return;
   let trail = _trailById.get(key);
   if (!trail) { trail = []; _trailById.set(key, trail); }

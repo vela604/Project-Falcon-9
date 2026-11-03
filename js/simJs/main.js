@@ -218,6 +218,14 @@ function bindRCSControls() {
 }
 
 function bindMiscToggles() {
+  // Trail checkbox — boot-time sync + change binding.
+  // showTrail controls VISIBILITY only; accumulation is always-on in
+  // the render worker (see render.js's _updateTrail).
+  (function _initTrailCheckbox() {
+    const el = document.getElementById('toggleTrail');
+    if (el && typeof showTrail !== 'undefined') showTrail = el.checked;
+  })();
+  
   const bind = (id, event, handler) => {
     const el = document.getElementById(id);
     if (!el) { console.warn('bindMiscToggles: no #' + id); return; }
@@ -233,6 +241,9 @@ function bindMiscToggles() {
   bind('toggleSlosh', 'change', (e) => {
     sloshEnabled = e.target.checked;
     WorkerBridge.send({ type: 'setSloshEnabled', enabled: sloshEnabled });
+  });
+  bind('toggleTrail', 'change', (e) => {
+    showTrail = e.target.checked;
   });
   bind('toggleImu', 'change', (e) => {
     imuEnabled = e.target.checked;
@@ -562,7 +573,7 @@ window.addEventListener('resize', () => {
       followPadId: camera.followPadId,
     };
     let _lastSentRenderScale = renderScale;
-    let _lastSentToggles = { showGrid, showVectors, showTrajectory, trajectoryMode, sloshEnabled, showTrail: false };
+    let _lastSentToggles = { showGrid, showVectors, showTrajectory, trajectoryMode, sloshEnabled, showTrail: true };
 
     const pushRenderContext = () => {
       // Poll trail checkbox directly — no binding needed. Robust against
