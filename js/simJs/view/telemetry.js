@@ -750,7 +750,9 @@ function figMemberMechanics(members, body, aero) {
   const bCross = (typeof AERO_CP_BODY_FRAC !== 'undefined') ? AERO_CP_BODY_FRAC : 0.5;
   let baseY = 0;
   const out = members.map((m, i) => {
-    const H = Number.isFinite(m.height) ? m.height : 0;
+    const H = (m.stageRole === 'rocket' && Number.isFinite(m.noseHeightM))
+      ? (Number.isFinite(m.height) ? m.height : 0) + m.noseHeightM
+      : (Number.isFinite(m.height) ? m.height : 0);
     const W = Number.isFinite(m.width) ? m.width : 0;
     const isTapered = (m.stageRole === 'nose') || (m.stageRole === 'payloadSpace');
     const legsProgress = (i === 0 && body && body.isActive) ? legs.progress : 0;
@@ -838,7 +840,11 @@ function drawFigurePanel() {
   
   // ---- Scale: fit the WHOLE stack (every member) into the panel ----
   const widest = Math.max(...members.map(m => Number.isFinite(m.width) ? m.width : 0), 0.1);
-  const totalH_m = members.reduce((s, m) => s + (Number.isFinite(m.height) ? m.height : 0), 0) || 1;
+  const totalH_m = members.reduce((s, m) => {
+    const _h = Number.isFinite(m.height) ? m.height : 0;
+    const _n = (m.stageRole === 'rocket' && Number.isFinite(m.noseHeightM)) ? m.noseHeightM : 0;
+    return s + _h + _n;
+  }, 0) || 1;
   const mppW = widest / (w * 0.30);
   const mppH = totalH_m / (h * 0.80);
   const mpp = Math.max(mppW, mppH); // meters per pixel — larger of the two keeps both dimensions on-canvas
@@ -923,7 +929,8 @@ if (typeof drawPayloadArt === 'function') {
 // the stack builds up from the bottom.
 let yOffsetPx = 0;
 members.forEach((m, idx) => {
-      const mH = (m.height || 0) / mpp;
+      const _noseHpxFig = (m.stageRole === 'rocket' && Number.isFinite(m.noseHeightM)) ? m.noseHeightM / mpp : 0;
+      const mH = (m.height || 0) / mpp + _noseHpxFig;
       const mW = (m.width || 1) / mpp;
   
   const recType = (m.hasRecovery === false) ? null :
@@ -952,6 +959,7 @@ members.forEach((m, idx) => {
   figCtx.save();
   figCtx.translate(baseX, baseY - placeYFig);
   drawRocketArt(figCtx, mW, mH, mpp, {
+      noseHeightM: m.noseHeightM,
       legsProgress: (idx === 0 && body.isActive) ? legs.progress : 0,
       legsState: null,
       // A5 — same as render.js: pod-id lookups need the member's own idx.

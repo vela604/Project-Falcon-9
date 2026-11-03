@@ -48,7 +48,7 @@ function memberMaxFuel(rec, aboveMember) {
   if (!rec) return 0;
   const role = rec.stageRole || 'rocket';
   if (role === 'nose' || role === 'payloadSpace' || role === 'interstage') return 0;
-  if (role === 'booster') {
+  if (role === 'booster' || role === 'rocket') {
     const d = (typeof boosterDerivedMasses === 'function') ? boosterDerivedMasses(rec, aboveMember) : null;
     return (d && Number.isFinite(d.fuelMass)) ? d.fuelMass : 0;
   }
@@ -272,9 +272,11 @@ if (role === 'nose') {
   // ---- Body (cylindrical shell/tank) ----
   let bodyMass = 0,
     bodyH = H;
-  if (role === 'booster') {
+  let _derivedRocket = null;
+  if (role === 'booster' || role === 'rocket') {
   const d = boosterDerivedMasses(rec, aboveMember, frozenInterstage);
   bodyMass = d ? d.bodyMass : 0;
+  if (role === 'rocket') _derivedRocket = d;
   if (rec.fuel && Number.isFinite(rec.fuel.tankHeight)) bodyH = rec.fuel.tankHeight;
   // BUG #4 FIX: the interstage (black cylinder at the booster's top,
     // sized off whatever's actually stacked above it) was computed by
@@ -282,7 +284,7 @@ if (role === 'nose') {
     // turned into an actual physics component here — so the simulator's
     // real flying mass/MOI silently omitted it, while the Fleet page's
     // number included it. Push it as its own component so both agree.
-    if (d && Number.isFinite(d.interstageMass) && d.interstageMass > 0) {
+    if (role === 'booster' && d && Number.isFinite(d.interstageMass) && d.interstageMass > 0) {
       const interH = Number.isFinite(d.interstageHeight) ? d.interstageHeight : 0;
       out.push({
         label: 'interstage',
@@ -479,6 +481,19 @@ if (!veEntry || !Number.isFinite(g.massFlowRate)) return;
 }
     
     // ---- Payload space (stage only) ----
+  
+  // ---- Nose (rocket only) — integrated nose at hull top ----
+  if (role === 'rocket' && _derivedRocket && Number.isFinite(_derivedRocket.noseMass) && _derivedRocket.noseMass > 0) {
+    const noseH_r = Number.isFinite(_derivedRocket.noseHeight) ? _derivedRocket.noseHeight : 0;
+    const hullTop_r = Number.isFinite(rec.height) ? rec.height : 0;
+    out.push({
+      label: 'nose',
+      mass: _derivedRocket.noseMass,
+      comX: 0,
+      comY: hullTop_r + noseH_r / 2,
+      iOwn: _coneTransverseI(_derivedRocket.noseMass, r, noseH_r),
+    });
+  }
   
   // ---- Payload space (stage only) ----
   if (role === 'stage' && typeof stageDerivedMasses === 'function') {
