@@ -451,6 +451,8 @@ function bootstrap() {
         console.error('=== RENDER WORKER CRASH ===');
         console.error('  message:', msg.message);
         console.error('  stack:', msg.stack);
+      } else if (msg.type === 'trailAck') {
+        console.log('[main] worker trailAck: showTrail=' + msg.enabled);
       } else if (msg.type === 'returnRenderHotBuffer') {
         // Optimization #1, Step 4: render worker handing back the hot-state
         // buffer we sent it, so workerBridge.js can reuse it next tick.

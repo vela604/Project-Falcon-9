@@ -3141,23 +3141,46 @@ function _updateTrail() {
 }
 
 function drawTrail() {
-  if (!showTrail || _trailPts.length < 2) return;
+  if (!showTrail || _trailPts.length < 1) return;
   if (camera.mode !== "planet") return;
   ctx.save();
-  ctx.strokeStyle = "rgba(120, 200, 255, 0.85)";
-  ctx.lineWidth = 2;
   ctx.lineJoin = "round";
   ctx.lineCap = "round";
-  ctx.beginPath();
-  let started = false;
-  for (let i = 0; i < _trailPts.length; i++) {
-    const p = _trailPts[i];
-    const [px, py] = worldToScreen(p.rx, p.ry);
-    if (!Number.isFinite(px) || !Number.isFinite(py)) continue;
-    if (!started) { ctx.moveTo(px, py); started = true; }
-    else ctx.lineTo(px, py);
+  if (_trailPts.length === 1) {
+    const [px, py] = worldToScreen(_trailPts[0].rx, _trailPts[0].ry);
+    if (Number.isFinite(px) && Number.isFinite(py)) {
+      ctx.beginPath();
+      ctx.arc(px, py, 3, 0, Math.PI * 2);
+      ctx.fillStyle = "rgba(150, 220, 255, 0.95)";
+      ctx.fill();
+    }
+    ctx.restore();
+    return;
   }
-  if (started) ctx.stroke();
+  // Path once
+  const path = () => {
+    ctx.beginPath();
+    let started = false;
+    for (let i = 0; i < _trailPts.length; i++) {
+      const p = _trailPts[i];
+      const [px, py] = worldToScreen(p.rx, p.ry);
+      if (!Number.isFinite(px) || !Number.isFinite(py)) continue;
+      if (!started) { ctx.moveTo(px, py); started = true; }
+      else ctx.lineTo(px, py);
+    }
+    return started;
+  };
+  // Outer glow
+  ctx.shadowColor = "rgba(120, 210, 255, 0.7)";
+  ctx.shadowBlur = 10;
+  ctx.strokeStyle = "rgba(120, 210, 255, 0.4)";
+  ctx.lineWidth = 6;
+  if (path()) ctx.stroke();
+  // Core line
+  ctx.shadowBlur = 0;
+  ctx.strokeStyle = "rgba(160, 225, 255, 0.95)";
+  ctx.lineWidth = 2.5;
+  if (path()) ctx.stroke();
   ctx.restore();
 }
 

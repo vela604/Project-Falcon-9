@@ -261,6 +261,7 @@ if (msg.data.rcsSync) {
     }
     case 'trailToggle': {
       showTrail = !!msg.enabled;
+      self.postMessage({ type: 'trailAck', enabled: showTrail });
       break;
     }
   }
