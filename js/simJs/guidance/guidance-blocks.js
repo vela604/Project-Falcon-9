@@ -3509,6 +3509,15 @@ setState(s) {
         return { pos: Math.max(0, _pesRcsAch(rp)), neg: Math.max(0, -_pesRcsAch(rn)) };
       }
 
+      // Balanced (no-net-force) max torque via GuideRCS: uses verticals + laterals when needed.
+      // Same zero-net-force guarantee as targetTorqueRcsNoNetForce; more headroom than lateral-only.
+      function _pesRcsMaxNoNet(snapshot, idx) {
+        const BIG = 1e12;
+        const rp = GuideRCS.targetTorqueRcsNoNetForce(snapshot, +BIG, idx);
+        const rn = GuideRCS.targetTorqueRcsNoNetForce(snapshot, -BIG, idx);
+        return { pos: Math.max(0, _pesRcsAch(rp)), neg: Math.max(0, -_pesRcsAch(rn)) };
+      }
+
 
       function _pesAeroAccel(ds, M) {
         let fxb = 0;
@@ -4172,7 +4181,7 @@ setState(s) {
               }
               const kp = 0.5, kd = 4.0;
               const tauDes = -I * (kp * thetaErr + kd * (d.omega - wTgt));
-              const res = _pesRcsLateralOnly(snapshot, idx, tauDes);
+              const res = GuideRCS.targetTorqueRcsNoNetForce(snapshot, tauDes, idx);
               if (res && res.duties && Object.keys(res.duties).length) {
                 _send(Guidance.cmdRcsDuty(res.duties, idx));
                 _st.lastRcsTorque = Number.isFinite(res.torqueAchieved) ? res.torqueAchieved : 0;
@@ -4253,13 +4262,13 @@ setState(s) {
               _send(Guidance.cmdRcsDuty(null, idx));
               _st.lastRcsTorque = 0;
             } else {
-              const maxLat = _pesRcsMax(snapshot, idx);
+              const maxLat = _pesRcsMaxNoNet(snapshot, idx);
               const tauMaxMag = omegaErr > 0 ? maxLat.pos : maxLat.neg;
               if (tauMaxMag > 0) {
                 const duty = Math.min(1, Math.abs(omegaErr) / 0.02);
                 dutyUsed = duty;
                 const tauCmd = Math.sign(omegaErr) * tauMaxMag * duty;
-                const res = _pesRcsLateralOnly(snapshot, idx, tauCmd);
+                const res = GuideRCS.targetTorqueRcsNoNetForce(snapshot, tauCmd, idx);
                 if (res && res.duties && Object.keys(res.duties).length) {
                   _send(Guidance.cmdRcsDuty(res.duties, idx));
                   _st.lastRcsTorque = Number.isFinite(res.torqueAchieved) ? res.torqueAchieved : 0;
