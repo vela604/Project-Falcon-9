@@ -565,6 +565,14 @@ window.addEventListener('resize', () => {
     let _lastSentToggles = { showGrid, showVectors, showTrajectory, trajectoryMode, sloshEnabled, showTrail: false };
 
     const pushRenderContext = () => {
+      // Poll trail checkbox directly — no binding needed. Robust against
+      // event listener patches that miss their anchor.
+      const trailEl = document.getElementById('toggleTrail');
+      if (trailEl && trailEl.checked !== !!showTrail) {
+        showTrail = trailEl.checked;
+        console.log('[trail] showTrail =', showTrail);
+      }
+      
       if (camera.follow !== _lastSentCamera.follow ||
         camera.zoom !== _lastSentCamera.zoom ||
         camera.planetZoom !== _lastSentCamera.planetZoom ||
@@ -606,6 +614,7 @@ window.addEventListener('resize', () => {
       if (!!showTrail !== !!_lastSentToggles.showTrail) {
         renderWorker.postMessage({ type: 'trailToggle', enabled: !!showTrail });
         _lastSentToggles.showTrail = !!showTrail;
+        console.log('[trail] posted to worker: enabled=' + !!showTrail);
       }
 
       if (typeof SimLighting !== 'undefined') {

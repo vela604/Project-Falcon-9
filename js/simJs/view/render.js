@@ -3141,8 +3141,18 @@ function _updateTrail() {
 }
 
 function drawTrail() {
-  if (!showTrail || _trailPts.length < 1) return;
   if (camera.mode !== "planet") return;
+  // DEBUG overlay — always visible in planet view
+  ctx.save();
+  ctx.fillStyle = "rgba(0,255,0,0.9)";
+  ctx.font = "bold 16px monospace";
+  ctx.fillText(
+    "TRAIL: " + _trailPts.length + " pts | showTrail=" + showTrail +
+    " | simT=" + (state.simTime || 0).toFixed(1),
+    20, 40
+  );
+  ctx.restore();
+  if (!showTrail || _trailPts.length < 1) return;
   ctx.save();
   ctx.lineJoin = "round";
   ctx.lineCap = "round";
