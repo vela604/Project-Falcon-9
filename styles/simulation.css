@@ -1690,22 +1690,9 @@ canvas.mini-graph { width: 100%; height: 60px; background: var(--bg); border-rad
 /* ============================================================
    Telemetry Panel Collapse & Wall-Hide
    ============================================================ */
-#teleHandle {
-  position: absolute; top: 12px; left: 0; z-index: 21;
-  width: 20px; height: 50px;
-  background: rgba(13,20,36,0.94); border: 1px solid var(--panel-border); border-left: none;
-  border-radius: 0 8px 8px 0; color: var(--cyan);
-  display: flex; align-items: center; justify-content: center;
-  cursor: pointer; backdrop-filter: blur(10px);
-  transform: translateX(12px); transition: transform 0.28s ease-out;
-  font-size: 12px;
-}
-#teleHandle:hover { color: #fff; }
-#telemetryPanel.hidden-wall {
-  transform: translateX(-300px);
-  opacity: 0;
-  pointer-events: none;
-}
+
+
+
 .tele-icon-btn {
   background: transparent; border: none; color: var(--dim); cursor: pointer; font-size: 12px;
   padding: 0; display: flex; align-items: center; justify-content: center;
@@ -1718,7 +1705,7 @@ canvas.mini-graph { width: 100%; height: 60px; background: var(--bg); border-rad
 #telemetryPanel.tele-compact #t-bodyList { display: none; }
 
 @media (max-width: 760px) {
-  #teleHandle { transform: translateX(8px); top: 8px; height: 40px; }
+  
   #telemetryPanel { left: 32px !important; }
 }
 
@@ -1769,24 +1756,8 @@ canvas.mini-graph { width: 100%; height: 60px; background: var(--bg); border-rad
   #telemetryPanel { width: 118px; padding: 7px 9px 9px; }
 }
 
-#teleHandle {
-  width: 24px;
-  flex-shrink: 0;
-  background: rgba(13,20,36,0.94);
-  border: 1px solid var(--panel-border);
-  border-left: none;
-  border-radius: 0 10px 10px 0;
-  color: var(--cyan);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  backdrop-filter: blur(8px);
-  pointer-events: auto;
-  font-size: 13px;
-  font-weight: 500;
-}
-#teleHandle:hover { color: #fff; }
+
+
 
 .tele-toggle-btn {
   background: var(--panel-2);
@@ -1820,4 +1791,59 @@ canvas.mini-graph { width: 100%; height: 60px; background: var(--bg); border-rad
   margin-left: auto;
   white-space: nowrap;
   font-size: 11px;
+}
+
+/* --- Clean Telemetry Panel Overrides --- */
+#telemetryPanel {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  width: 185px; /* Thoda wide taaki Peak Temp. fit ho */
+}
+
+.tele-toggle-btn {
+  background: transparent;
+  border: none;
+  color: var(--cyan);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  opacity: 0.8;
+  padding: 0;
+}
+.tele-toggle-btn:hover { opacity: 1; }
+
+/* Show/Hide Modes */
+#telemetryPanel.tele-compact #tele-collapsed { display: flex !important; flex-direction: column; }
+#telemetryPanel.tele-compact #tele-extended { display: none !important; }
+#telemetryPanel:not(.tele-compact) #tele-collapsed { display: none !important; }
+#telemetryPanel:not(.tele-compact) #tele-extended { display: block !important; }
+
+/* Compact Row Alignment */
+#telemetryPanel.tele-compact .tele-row {
+  padding: 3px 0;
+  gap: 8px;
+}
+#telemetryPanel.tele-compact .tele-sym {
+  flex-shrink: 0;
+  font-size: 11.5px;
+}
+#telemetryPanel.tele-compact .tele-val {
+  flex: 1;
+  text-align: right;
+  margin-left: auto;
+  white-space: nowrap;
+  font-size: 11.5px;
+}
+
+@media (min-width: 1024px) {
+  #telemetryPanel { left: 30px; width: 175px; }
+}
+@media (max-width: 760px) {
+  #telemetryPanel { top: 8px; left: 8px; width: 165px; }
+  #telemetryPanel.tele-compact .tele-sym,
+  #telemetryPanel.tele-compact .tele-val { font-size: 10px; }
 }

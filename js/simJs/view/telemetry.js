@@ -397,24 +397,18 @@ function getEl(id) {
 
 
 function initTelemetryPanel() {
-  const handle = document.getElementById('teleHandle');
   const panel = document.getElementById('telemetryPanel');
   const btnC = document.getElementById('teleToggleCompact');
-  if (!handle || !panel) return;
-  
-  // Hide-to-wall toggle
-  handle.addEventListener('click', () => {
-    const hidden = panel.classList.toggle('hidden-wall');
-    handle.textContent = hidden ? '▶' : '◀';
+  if (!panel || !btnC) return;
+
+  // Start in compact mode by default
+  panel.classList.add('tele-compact');
+  btnC.textContent = 'More';
+
+  btnC.addEventListener('click', () => {
+    const compact = panel.classList.toggle('tele-compact');
+    btnC.textContent = compact ? 'More' : 'Less';
   });
-  
-  // Compact/expand toggle (starts in compact, button labeled EXPAND)
-  if (btnC) {
-    btnC.addEventListener('click', () => {
-      const compact = panel.classList.toggle('tele-compact');
-      btnC.textContent = compact ? 'EXPAND' : 'COLLAPSE';
-    });
-  }
 }
 
 function updateTelemetry() {

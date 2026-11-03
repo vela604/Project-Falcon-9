@@ -122,10 +122,10 @@
       
       <!-- Telemetry (compact notation) -->
       <div id="teleHandle" title="Toggle Telemetry">◀</div>
-<div id="telemetryPanel">
+  <div id="telemetryPanel">
     <div class="tele-head">
       <span>TELEMETRY</span>
-      <button type="button" id="teleToggleCompact" class="tele-toggle-btn" title="Toggle Compact/Extended">COLLAPSE</button>
+      <button type="button" id="teleToggleCompact" class="tele-toggle-btn" title="Toggle Details">More</button>
     </div>
     <div id="tele-collapsed">
       <div class="tele-row"><span class="tele-sym">Altitude</span><span class="tele-val" id="tc-alt">0 km</span></div>
@@ -142,7 +142,7 @@
       <div class="tele-row"><span class="tele-sym">Fuel</span><span class="tele-val" id="tc-fuel">0%</span></div>
       <div class="tele-row"><span class="tele-sym">Gravity</span><span class="tele-val" id="tc-g">0 m/s²</span></div>
       <div class="tele-row"><span class="tele-sym">Density</span><span class="tele-val" id="tc-rho">0 kg/m³</span></div>
-      <div class="tele-row"><span class="tele-sym">Temperature</span><span class="tele-val" id="tc-temp">0 °C</span></div>
+      <div class="tele-row"><span class="tele-sym">Temp.</span><span class="tele-val" id="tc-temp">0 °C</span></div>
       <div class="tele-row"><span class="tele-sym">Peak Temp.</span><span class="tele-val" id="tc-maxT">0 °C</span></div>
     </div>
     <div id="tele-extended">
@@ -180,10 +180,8 @@
       <div id="t-bodyList" class="tele-body-list"></div>
     </div>
   </div>
-</div>
-  
-  <!-- Direction / wind HUD — top-center. Local view only -->
-  <div id="directionHUD">
+
+<div id="directionHUD">
     <canvas id="directionCanvas"></canvas>
   </div>
   
