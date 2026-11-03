@@ -602,31 +602,33 @@ const _sloshOffsetCm = fmt((_sloshBody && _sloshBody.slosh ? _sloshBody.slosh.of
     : '—';
   set('t-slosh', `${_sloshOffsetCm} cm (ω=${_sloshOmega}, ζ=${_sloshZeta})`);
   set('t-moi', geom.I >= 1e6 ? (geom.I / 1e6).toFixed(2) + 'M' : fmt(geom.I, 0));
-  // ─── Collapsed telemetry ───
+  // ─── Collapsed telemetry — full labels, units, right-aligned values ───
   const setC = (id, val) => { const e = getEl(id); if (e) e.textContent = val; };
-  setC('tc-alt', (altitude / 1000).toFixed(3));
-  setC('tc-x', (arcDistance / 1000).toFixed(3));
-  setC('tc-ap', (Number.isFinite(_altA_out) ? _altA_out.toFixed(3) : '∞') + ' | ' + _altP_out.toFixed(3));
-  setC('tc-v', (speedInertial / 1000).toFixed(3));
+  setC('tc-alt', (altitude / 1000).toFixed(3) + ' km');
+  setC('tc-x', (arcDistance / 1000).toFixed(3) + ' km');
+  setC('tc-apo', Number.isFinite(_altA_out) ? _altA_out.toFixed(3) + ' km' : '∞ km');
+  setC('tc-peri', _altP_out.toFixed(3) + ' km');
+  setC('tc-v', (speedInertial / 1000).toFixed(3) + ' km/s');
   const thrustKN = ENGINES.reduce((s, e) => s + e.currentF, 0) / 1000;
-  setC('tc-thr', thrustKN.toFixed(1));
+  setC('tc-thr', thrustKN.toFixed(1) + ' kN');
   const gForce = (geom.M > 0) ? Math.hypot(lastForces.mainFx || 0, lastForces.mainFy || 0) / (geom.M * 9.80665) : 0;
   setC('tc-gf', gForce.toFixed(2));
-  setC('tc-theta', thetaRelative.toFixed(2));
-  setC('tc-omega', omegaRelative.toFixed(2));
-  setC('tc-aoa', (lastForces.aoaDeg || 0).toFixed(4));
-  setC('tc-gimbal', centerEngine ? centerEngine.gimbalDeg.toFixed(2) : '0.00');
+  setC('tc-theta', thetaRelative.toFixed(2) + '°');
+  setC('tc-omega', omegaRelative.toFixed(2) + '°/s');
+  setC('tc-aoa', (lastForces.aoaDeg || 0).toFixed(4) + '°');
+  setC('tc-gimbal', (centerEngine ? centerEngine.gimbalDeg : 0).toFixed(2) + '°');
   const _abC = state.bodies[state.activeBodyIndex];
   const membersC = (_abC && _abC.members) ? _abC.members : [];
   const bottomMC = membersC[0];
   const bottomMaxC = (typeof memberMaxFuel === 'function' && bottomMC) ? memberMaxFuel(bottomMC, membersC[1] || null) : 0;
   const bottomFuelC = (_abC && Array.isArray(_abC.memberFuel) && Number.isFinite(_abC.memberFuel[0])) ? _abC.memberFuel[0] : state.fuelMass;
-  const fuelPct = bottomMaxC > 0 ? (bottomFuelC / bottomMaxC * 100).toFixed(1) + '%' : '0%';
-  setC('tc-fuel', fuelPct + ' | ' + Math.round(bottomFuelC) + 'kg');
-  setC('tc-g', grav.g.toFixed(4));
-  setC('tc-rho', rho.toFixed(4));
+  const fuelPct = bottomMaxC > 0 ? (bottomFuelC / bottomMaxC * 100).toFixed(1) : '0.0';
+  const fuelMassStr = bottomFuelC >= 1000 ? (bottomFuelC / 1000).toFixed(1) + 't' : Math.round(bottomFuelC) + 'kg';
+  setC('tc-fuel', fuelPct + '% | ' + fuelMassStr);
+  setC('tc-g', grav.g.toFixed(4) + ' m/s²');
+  setC('tc-rho', rho.toFixed(4) + ' kg/m³');
   const _tstC = _abC ? _bodyTempWeighted(_abC) : null;
-  setC('tc-temp', _tstC ? _tstC.T.toFixed(0) + 'K' : '—');
+  setC('tc-temp', _tstC ? _tstC.T.toFixed(0) + ' K' : '—');
 
   
   const maxThrustAll = ENGINES.reduce((s, e) => s + e.Fmax, 0);

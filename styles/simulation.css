@@ -1728,3 +1728,21 @@ canvas.mini-graph { width: 100%; height: 60px; background: var(--bg); border-rad
   #teleHandle { transform: translateX(8px); top: 8px; height: 40px; }
   #telemetryPanel { left: 32px !important; }
 }
+
+
+/* Collapsed telemetry: full words + units, right-aligned values. */
+#telemetryPanel.tele-compact #tele-collapsed .tele-row {
+  padding: 2.5px 0;
+  gap: 8px;
+}
+#telemetryPanel.tele-compact #tele-collapsed .tele-sym {
+  flex-shrink: 0;
+  font-size: 11px;
+}
+#telemetryPanel.tele-compact #tele-collapsed .tele-val {
+  flex: 1;
+  text-align: right;
+  margin-left: auto;
+  white-space: nowrap;
+  font-size: 11px;
+}
