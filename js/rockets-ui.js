@@ -110,8 +110,8 @@ function renderDetailSection(prefix, type, params, extraNote) {
     '<div class="cap-row"><dt>—</dt><dd>No parameters declared.</dd></div>';
 }
 
-function renderBoosterPreview(data) {
-  const canvas = document.getElementById('vehiclePreviewCanvas');
+function renderBoosterPreview(data, canvasId) {
+  const canvas = document.getElementById(canvasId || 'vehiclePreviewCanvas');
   if (!canvas) return;
   if (!data.familyId) { safeRenderPreview(canvas, previewVehicleFor(data)); return; }
   const fleet = loadFleet();
@@ -1488,7 +1488,11 @@ function showVehicleDetail(id) {
     set('d-psColor', r.color || '#e9edf2');
   }
   
-  safeRenderPreview(document.getElementById('detailPreviewCanvas'), previewVehicleFor(r));
+  if (r.stageRole === 'booster' && typeof renderBoosterPreview === 'function') {
+    renderBoosterPreview(r, 'detailPreviewCanvas');
+  } else {
+    safeRenderPreview(document.getElementById('detailPreviewCanvas'), previewVehicleFor(r));
+  }
   
   document.getElementById('editorEmpty').classList.add('hide');
   document.getElementById('editorForm').classList.remove('show');

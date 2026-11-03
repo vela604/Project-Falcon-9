@@ -479,7 +479,7 @@ function inferParamStep(p) {
   return 0.1;
 }
 
-function renderParamFieldsHTML(schema, values, prefix) {
+function renderParamFieldsHTML(schema, values, prefix, stepOverride) {
   prefix = prefix || 'param';
   if (!schema || !schema.length) return '<div class="legend-note">No parameters declared for this type.</div>';
   return schema.map(p => {
@@ -489,7 +489,7 @@ function renderParamFieldsHTML(schema, values, prefix) {
     return `<div class="field">
       <label for="${prefix}-${p.key}">${escapeHtml(p.label)}</label>
       <div class="input-unit">
-        <input type="number" id="${prefix}-${p.key}" data-param-key="${p.key}" data-param-scope="${prefix}"${minAttr}${maxAttr} step="${inferParamStep(p)}" value="${val}" required>
+        <input type="number" id="${prefix}-${p.key}" data-param-key="${p.key}" data-param-scope="${prefix}"${minAttr}${maxAttr} step="${stepOverride != null ? stepOverride : inferParamStep(p)}" value="${val}" required>
         <span>${escapeHtml(p.unit || '')}</span>
       </div>
     </div>`;
@@ -731,7 +731,7 @@ function renderGridFinParams(typeId, currentParams) {
     const tankH = parseFloat((document.getElementById('f-fuelTankHeight') || {}).value);
     if (Number.isFinite(tankH) && tankH > 0) merged.finPositionY = tankH * 0.5;
   }
-  grid.innerHTML = renderParamFieldsHTML(type.parameterSchema, merged, 'gridFin');
+  grid.innerHTML = renderParamFieldsHTML(type.parameterSchema, merged, 'gridFin', 0.001);
   updateGridFinDerived();
   grid.querySelectorAll('input').forEach(inp => {
     inp.addEventListener('input', updateGridFinDerived);

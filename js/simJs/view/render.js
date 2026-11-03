@@ -3082,6 +3082,7 @@ drawRocketArt(ctx, mW, mH, mpp, {
              gridFinState: body.gridFins || null,
              gridFinColor: _bRec.gridFinColor || '#8a9198',
              stageRole: 'booster',
+             boosterInterstageHeightM: _iRec.height,
            });
            ctx.restore();
          }

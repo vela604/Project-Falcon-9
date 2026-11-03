@@ -1882,7 +1882,7 @@ function drawRocketArt(ctx, W, H, mpp, opts) {
 
   // Fins-only draw mode (used as post-interstage overlay).
   if (opts.drawFinsOnly) {
-    _renderGridFins(ctx, W, H, mpp, opts);
+    if (!(opts.stageRole === 'booster' && opts.boosterInterstageHeightM != null)) _renderGridFins(ctx, W, H, mpp, opts);
     return;
   }
   
@@ -3431,6 +3431,7 @@ function renderStackPreview(canvas, memberIds, fleet) {
           gridFinParams: _bRec.gridFinParams,
           gridFinColor: _bRec.gridFinColor || '#8a9198',
           stageRole: 'booster',
+          boosterInterstageHeightM: _iRec.height,
         });
         pctx.restore();
       }
