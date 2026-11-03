@@ -1401,8 +1401,40 @@ function showVehicleDetail(id) {
   if (!isNose && !isPayloadSpace) {
     const engineType = getComponentType(r.engineTypeId);
     renderDetailSection('engine', engineType, r.params, engineType ? `(${engineType.frame.slots.length} engines)` : '');
+    
+    // Append live mass flow & thrust info to Engines
+    const engList = document.getElementById('d-engineList');
+    if (engList && r.engineThrusters && engineType) {
+      const groups = engineThrusterGroups(engineType);
+      let massHtml = '';
+      Object.keys(groups).forEach(gk => {
+        const g = r.engineThrusters[gk];
+        if (!g) return;
+        const t = getComponentType(g.thrusterTypeId);
+        if (!t) return;
+        const veEnt = t.parameterSchema.find(p => p.key === 'veVacuum');
+        const ve = veEnt ? veEnt.value : 0;
+        const thrustPer = g.massFlowRate * ve;
+        const count = groups[gk].length;
+        massHtml += `<div class="cap-row"><dt>${escapeHtml(gk)} group (×${count})</dt><dd>${g.massFlowRate} kg/s · ${fmtForce(thrustPer * count)}</dd></div>`;
+      });
+      engList.innerHTML += massHtml;
+    }
+
     renderDetailSection('recovery', getComponentType(r.recoveryTypeId), r.params);
     renderDetailSection('rcs', getComponentType(r.rcsTypeId), r.params);
+    
+    // Append live mass flow & thrust info to RCS
+    const rcsList = document.getElementById('d-rcsList');
+    if (rcsList && r.rcsThruster) {
+      const t = getComponentType(r.rcsThruster.thrusterTypeId);
+      if (t) {
+        const veEnt = t.parameterSchema.find(p => p.key === 've');
+        const ve = veEnt ? veEnt.value : 0;
+        const thrustPer = r.rcsThruster.massFlowRate * ve;
+        rcsList.innerHTML += `<div class="cap-row"><dt>Configured flow &amp; thrust</dt><dd>${r.rcsThruster.massFlowRate} kg/s · ${Math.round(thrustPer)} N</dd></div>`;
+      }
+    }
   } else {
     set('d-engineNote', '—');
     document.getElementById('d-engineList').innerHTML = '';
@@ -1468,6 +1500,82 @@ function showVehicleDetail(id) {
   // Stack capacity row (booster + stage).
   show('d-extraWeightFieldset', hasStackCap);
   if (hasStackCap) set('d-maxExtraWeight', fmtMass(r.maxExtraWeightKg || 0));
+  
+  // --- Custom fieldsets added per user request ---
+  show('d-structuralFieldset', false);
+  show('d-gridFinFieldset', false);
+  show('d-interstageFieldset', false);
+  show('d-psExtraFieldset', false);
+
+  // Structural details
+  if (role !== 'nose') {
+    let hasStruct = false;
+    if (r.bodyMetalTypeId) {
+      hasStruct = true;
+      show('d-row-body-metal', true);
+      set('d-body-metal', getComponentType(r.bodyMetalTypeId)?.displayName || '—');
+    } else {
+      show('d-row-body-metal', false);
+    }
+
+    if (r.legsMetalTypeId && role !== 'interstage' && role !== 'payloadSpace') {
+      hasStruct = true;
+      show('d-row-legs-metal', true);
+      set('d-legs-metal', getComponentType(r.legsMetalTypeId)?.displayName || '—');
+    } else {
+      show('d-row-legs-metal', false);
+    }
+
+    if (r.fuel && role !== 'interstage' && role !== 'payloadSpace') {
+      hasStruct = true;
+      show('d-row-fuel-type', true);
+      set('d-fuel-type', getComponentType(r.fuel.typeId)?.displayName || '—');
+      show('d-row-baffles', true);
+      set('d-baffle-count', r.fuel.baffleCount || 0);
+    } else {
+      show('d-row-fuel-type', false);
+      show('d-row-baffles', false);
+    }
+
+    if (role === 'rocket') {
+      hasStruct = true;
+      show('d-row-nose-height', true);
+      set('d-nose-height', (r.noseHeightM || 0) + ' m');
+    } else {
+      show('d-row-nose-height', false);
+    }
+
+    show('d-structuralFieldset', hasStruct);
+  }
+
+  // Grid fins
+  if (r.hasGridFins && (role === 'rocket' || role === 'booster' || role === 'stage')) {
+    show('d-gridFinFieldset', true);
+    const gfType = getComponentType(r.gridFinTypeId);
+    set('d-gf-type', gfType ? gfType.displayName : '—');
+    const gp = r.gridFinParams || {};
+    set('d-gf-dims', `${gp.span || 0} × ${gp.chord || 0} × ${gp.thickness || 0} m`);
+    const gfMass = computeGridFinMass(r);
+    set('d-gf-mass', gfMass ? fmtMass(gfMass.totalMass) : '—');
+  }
+
+  // Interstage
+  if (role === 'interstage') {
+    show('d-interstageFieldset', true);
+    set('d-int-mass', fmtMass(computeInterstageDryMass(r)));
+    set('d-int-overlap', (r.overlapLimitM || 4.0) + ' m');
+    set('d-int-pusher', (r.pneumaticPusherThrustKN || 30) + ' kN');
+    set('d-int-metal', getComponentType(r.bodyMetalTypeId)?.displayName || '—');
+  }
+
+  // Payload Space
+  if (role === 'payloadSpace') {
+    show('d-psExtraFieldset', true);
+    set('d-ps-mass', fmtMass(computePayloadSpaceDryMass(r)));
+    set('d-ps-overlap', (r.stageOverlapM || 0) + ' m');
+    const chute = r.chuteTypeId ? getComponentType(r.chuteTypeId) : null;
+    set('d-ps-chute', chute ? chute.displayName : 'None');
+  }
   
   // Compatible boosters (stage only).
   if (isStage) {
