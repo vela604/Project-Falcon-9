@@ -263,6 +263,7 @@ const DEFAULT_RECORDS = [
   { seed: seedFalcon9B5Interstage },
   { seed: seedFalcon9B5Stage },
   { seed: seedFalcon9B5Fairing },
+  { seed: seedFalcon9B5Rocket },
   // ↑ Add new default records here. Each seed function must declare its
   // own id and familyId — reconcile matches by id.
 ];
@@ -270,6 +271,7 @@ const DEFAULT_RECORDS = [
 const DEFAULT_STACKS = [
 
   { seed: seedFalcon9B5Stack },
+  { seed: seedFalcon9B5SingleStack },
   // ↑ Add new default stacks here.
 ];
 
@@ -685,6 +687,17 @@ function seedFalcon9B5Interstage() {
   };
 }
 
+function seedFalcon9B5SingleStack() {
+  return {
+    id: 'stk_falcon9-b5-single',
+    name: 'Falcon 9 Block 5 — Legacy Rocket Single',
+    members: ['falcon9-b5-rocket'],
+    sequence: 'legacy',
+    payloadId: null,
+    locked: true,
+  };
+}
+
 function seedFalcon9B5Stack() {
   return {
     id: 'stk_falcon9-b5',
@@ -693,6 +706,17 @@ function seedFalcon9B5Stack() {
     sequence: 'standard',
     payloadId: 'pl_falcon9-default',
     locked: true,
+  };
+}
+
+function seedFalcon9B5Rocket() {
+  const b = blankRocketData();
+  return {
+    ...b,
+    id: 'falcon9-b5-rocket',
+    name: 'Falcon 9 Block 5 — Legacy Rocket',
+    locked: true,
+    familyId: FALCON9_B5_FAMILY_ID,
   };
 }
 
