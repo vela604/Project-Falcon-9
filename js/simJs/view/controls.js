@@ -425,6 +425,9 @@ function bindSimControls() {
   }
   
   WorkerBridge.send({ type: 'reset', alt: 0 });
+  if (typeof window !== 'undefined' && window._renderWorker) {
+    window._renderWorker.postMessage({ type: 'trailReset' });
+  }
   renderMergeDiagram();
   // Defer slider rebuild until the next physics snapshot has landed —
   // calling it synchronously here reads stale (or empty) engines off
@@ -457,7 +460,7 @@ if (tcBtn) tcBtn.addEventListener('click', () => {
   if (typeof camera !== 'undefined') {
     camera.followBodyIndex = idx;
     camera.follow = true;
-    camera.mode = 'local';
+    // DON'T change camera.mode — preserve planet/local view.
   }
   updateLegsButton();
   updateStatusBar();

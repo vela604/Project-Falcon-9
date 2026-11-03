@@ -264,5 +264,9 @@ if (msg.data.rcsSync) {
       self.postMessage({ type: 'trailAck', enabled: showTrail });
       break;
     }
+    case 'trailReset': {
+      if (typeof _clearAllTrails === 'function') _clearAllTrails();
+      break;
+    }
   }
 };

@@ -3112,35 +3112,79 @@ drawRocketArt(ctx, mW, mH, mpp, {
 // (render.js) reference the same name.
 // ============================================================================
 var showTrail = false;
-const _trailByBody = new WeakMap();
-const _lastTrailSampleT = new WeakMap();
+const _trailById = new Map();
+const _lastSampleById = new Map();
+
+function _bodyTrailKey(b) {
+  if (!b) return null;
+  if (b.id) return 'id:' + b.id;
+  if (b.members && b.members[0] && b.members[0].id) return 'stk:' + b.members[0].id;
+  if (b.payloadBody && b.payloadBody.record && b.payloadBody.record.id) return 'pl:' + b.payloadBody.record.id;
+  if (b.fairingHalf && b.fairingHalf.record && b.fairingHalf.record.id) return 'fh:' + b.fairingHalf.record.id + ':' + (b.fairingHalf.side || 0);
+  if (!b.__trailKey) b.__trailKey = 'anon:' + (Math.random() * 1e9 | 0).toString(36);
+  return b.__trailKey;
+}
 
 function _trailOf(b) {
-  let t = _trailByBody.get(b);
-  if (!t) { t = []; _trailByBody.set(b, t); }
+  const k = _bodyTrailKey(b);
+  if (!k) return null;
+  let t = _trailById.get(k);
+  if (!t) { t = []; _trailById.set(k, t); }
   return t;
+}
+
+function _lastSampleGet(b) {
+  const k = _bodyTrailKey(b);
+  if (!k) return -1;
+  const v = _lastSampleById.get(k);
+  return (v == null) ? -1 : v;
+}
+
+function _lastSampleSet(b, t) {
+  const k = _bodyTrailKey(b);
+  if (!k) return;
+  _lastSampleById.set(k, t);
+}
+
+function _clearAllTrails() {
+  _trailById.clear();
+  _lastSampleById.clear();
 }
 
 function _updateTrailOne(b) {
   if (!b || !Number.isFinite(b.rx) || !Number.isFinite(b.ry)) return;
   const trail = _trailOf(b);
-  const lastT = _lastTrailSampleT.get(b);
-  const lastTVal = (lastT == null) ? -1 : lastT;
-  if (lastTVal > 0 && state.simTime < lastTVal - 0.5) {
-    trail.length = 0;
-    _lastTrailSampleT.set(b, -1);
+  if (!trail) return;
+  const lastT = _lastSampleGet(b);
+  
+  // Time went backward (FF replay, rewind) — realign sampler, DON'T clear
+  // trail. Real reset goes through explicit trailReset message.
+  if (lastT >= 0 && state.simTime < lastT - 0.5) {
+    _lastSampleSet(b, state.simTime);
     return;
   }
-  const dt = state.simTime - lastTVal;
-  if (lastTVal < 0 || dt > 0.15) {
-    if (lastTVal > 0 && dt > 0.5 && trail.length > 0) {
-      const prev = trail[trail.length - 1];
-      const span = state.simTime - prev.t;
-      const N = Math.min(300, Math.max(4, Math.round(span / 0.2)));
+  
+  const dt = state.simTime - lastT;
+  if (lastT >= 0 && dt < 0.15) return;
+  
+  const thrustNow = (b.engines || []).reduce((s, e) => s + (e.currentF || 0), 0);
+  
+  // Huge gap — path unknown. Mark gap so draw breaks stroke cleanly.
+  if (lastT >= 0 && dt > 2.0) {
+    trail.push({ rx: b.rx, ry: b.ry, t: state.simTime, vx: b.vx || 0, vy: b.vy || 0, thrust: thrustNow, gap: true });
+    _lastSampleSet(b, state.simTime);
+    if (trail.length > 4000) trail.splice(0, trail.length - 4000);
+    return;
+  }
+  
+  // Medium gap — Hermite from previous velocity to current.
+  if (lastT >= 0 && dt > 0.5 && trail.length > 0) {
+    const prev = trail[trail.length - 1];
+    const span = state.simTime - prev.t;
+    if (span > 0) {
+      const N = Math.min(200, Math.max(3, Math.round(span / 0.15)));
       const v0x = prev.vx || 0, v0y = prev.vy || 0;
       const v1x = b.vx || 0, v1y = b.vy || 0;
-      const p0x = prev.rx, p0y = prev.ry;
-      const p1x = b.rx, p1y = b.ry;
       for (let k = 1; k < N; k++) {
         const u = k / N;
         const u2 = u * u, u3 = u2 * u;
@@ -3149,17 +3193,18 @@ function _updateTrailOne(b) {
         const h01 = -2*u3 + 3*u2;
         const h11 = u3 - u2;
         trail.push({
-          rx: h00*p0x + h10*span*v0x + h01*p1x + h11*span*v1x,
-          ry: h00*p0y + h10*span*v0y + h01*p1y + h11*span*v1y,
+          rx: h00*prev.rx + h10*span*v0x + h01*b.rx + h11*span*v1x,
+          ry: h00*prev.ry + h10*span*v0y + h01*b.ry + h11*span*v1y,
           t: prev.t + u * span,
           vx: 0, vy: 0,
         });
       }
     }
-    trail.push({ rx: b.rx, ry: b.ry, t: state.simTime, vx: b.vx || 0, vy: b.vy || 0 });
-    _lastTrailSampleT.set(b, state.simTime);
-    if (trail.length > 4000) trail.splice(0, trail.length - 4000);
   }
+  
+  trail.push({ rx: b.rx, ry: b.ry, t: state.simTime, vx: b.vx || 0, vy: b.vy || 0, thrust: thrustNow });
+  _lastSampleSet(b, state.simTime);
+  if (trail.length > 4000) trail.splice(0, trail.length - 4000);
 }
 
 function _projectTrailPoint(p, earthFixed, omega, tNow) {
@@ -3175,27 +3220,41 @@ function _projectTrailPoint(p, earthFixed, omega, tNow) {
 
 function _strokeTrailPath(trail, earthFixed, omega, tNow, colorRGB, alpha, width) {
   if (trail.length < 2) return;
-  ctx.beginPath();
-  let started = false;
+  const r = colorRGB[0], g = colorRGB[1], b = colorRGB[2];
+  const segments = [];
+  let cur = [];
   for (let i = 0; i < trail.length; i++) {
-    const [px, py] = _projectTrailPoint(trail[i], earthFixed, omega, tNow);
+    const p = trail[i];
+    const [px, py] = _projectTrailPoint(p, earthFixed, omega, tNow);
     if (!Number.isFinite(px) || !Number.isFinite(py)) continue;
-    if (!started) { ctx.moveTo(px, py); started = true; }
-    else ctx.lineTo(px, py);
+    if (p.gap && cur.length > 0) {
+      segments.push(cur);
+      cur = [];
+    }
+    cur.push([px, py]);
   }
-  if (!started) return;
+  if (cur.length > 0) segments.push(cur);
+  
+  const path = () => {
+    ctx.beginPath();
+    segments.forEach(seg => {
+      if (seg.length < 2) return;
+      ctx.moveTo(seg[0][0], seg[0][1]);
+      for (let k = 1; k < seg.length; k++) ctx.lineTo(seg[k][0], seg[k][1]);
+    });
+  };
+  
   ctx.lineJoin = "round";
   ctx.lineCap = "round";
-  const r = colorRGB[0], g = colorRGB[1], b = colorRGB[2];
   ctx.strokeStyle = "rgba(" + r + "," + g + "," + b + "," + (alpha * 0.15).toFixed(3) + ")";
   ctx.lineWidth = width * 3.5;
-  ctx.stroke();
+  path(); ctx.stroke();
   ctx.strokeStyle = "rgba(" + r + "," + g + "," + b + "," + (alpha * 0.38).toFixed(3) + ")";
   ctx.lineWidth = width * 1.8;
-  ctx.stroke();
+  path(); ctx.stroke();
   ctx.strokeStyle = "rgba(" + r + "," + g + "," + b + "," + alpha.toFixed(3) + ")";
   ctx.lineWidth = width;
-  ctx.stroke();
+  path(); ctx.stroke();
 }
 let _trailPts = [];
 let _lastTrailSimT = -1;
@@ -3226,19 +3285,17 @@ function drawTrail() {
   const tNow = state.simTime || 0;
   const followedIdx = _cameraTargetIndex();
   ctx.save();
-  // Non-followed bodies: dim trails
   for (let i = 0; i < state.bodies.length; i++) {
     if (i === followedIdx) continue;
     const b = state.bodies[i];
     if (!b) continue;
-    const trail = _trailByBody.get(b);
+    const trail = _trailOf(b);
     if (!trail || trail.length < 2) continue;
     _strokeTrailPath(trail, earthFixed, omega, tNow, [150, 180, 220], 0.32, 1.4);
   }
-  // Followed body: bright trail
   const fb = state.bodies[followedIdx];
   if (fb) {
-    const trail = _trailByBody.get(fb);
+    const trail = _trailOf(fb);
     if (trail && trail.length >= 1) {
       if (trail.length === 1) {
         const [px, py] = _projectTrailPoint(trail[0], earthFixed, omega, tNow);
