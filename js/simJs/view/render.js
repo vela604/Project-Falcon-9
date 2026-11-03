@@ -104,7 +104,17 @@ function _cameraTargetIndex() {
 }
 function cameraWorldPosition() {
   if (camera.mode === 'planet') {
-    return { x: 0, y: 0 }; // Earth's center is the planet-view camera anchor
+    
+    const pz = (typeof camera !== 'undefined' && Number.isFinite(camera.planetZoom)) ? camera.planetZoom : 1;
+    if (pz > 1.01) {
+      const b = state.bodies[_cameraTargetIndex()];
+      if (b) {
+        const t = Math.min(1, (pz - 1) / 4);
+        const st = t * t * (3 - 2 * t);
+        return { x: b.rx * st, y: b.ry * st };
+      }
+    }
+    return { x: 0, y: 0 };
   }
   
   if (!camera.follow) return { x: cameraCenter.x, y: cameraCenter.y };
@@ -219,14 +229,15 @@ function worldToScreen(wx, wy) {
 }
 
 function metersPerPixel() {
-  if (camera.mode === 'planet') {
-    // Auto-fit Earth to ~40% of the smaller viewport dimension, so the
-    // whole planet is always visible regardless of canvas size.
-    const fitR = Math.min(canvas.width, canvas.height) * 0.40;
-    return CONFIG.EARTH_RADIUS / fitR;
-  }
-  return 1 / (0.4 * camera.zoom);
-}
+      if (camera.mode === 'planet') {
+        // Auto-fit Earth to ~40% of the smaller viewport dimension, so the
+        // whole planet is always visible regardless of canvas size.
+        const fitR = Math.min(canvas.width, canvas.height) * 0.40;
+        const pz = (typeof camera !== 'undefined' && Number.isFinite(camera.planetZoom)) ? camera.planetZoom : 1;
+        return (CONFIG.EARTH_RADIUS / fitR) / pz;
+      }
+      return 1 / (0.4 * camera.zoom);
+    }
 
 
 function drawSky(altitude) {

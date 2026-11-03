@@ -196,7 +196,7 @@ function bindWindPanel() {
 // ---------------------------------------------------------------------------
 // Camera controls
 // ---------------------------------------------------------------------------
-const camera = { follow: true, zoom: 25, followBodyIndex: 0, mode: 'local', followPadId: null };
+const camera = { follow: true, zoom: 25, planetZoom: 1, followBodyIndex: 0, mode: 'local', followPadId: null };
 
 function bindCameraControls() {
   document.getElementById('btnFollow').addEventListener('click', () => {
@@ -233,14 +233,61 @@ function bindCameraControls() {
     });
   }
   
-  document.getElementById('btnZoomIn').addEventListener('click', () => {
-    if (camera.mode === 'planet') return;
-    camera.zoom = Math.min(25, camera.zoom * 1.25);
-  });
-  document.getElementById('btnZoomOut').addEventListener('click', () => {
-    if (camera.mode === 'planet') return;
-    camera.zoom = Math.max(0.08, camera.zoom / 1.25);
-  });
+  // --- HOLD TO ZOOM ---
+    function bindZoomButton(el, dir) {
+      let holding = false;
+      let rafId = null;
+      let lastTs = null;
+
+      function loop(ts) {
+        if (!holding) return;
+        const dt = lastTs ? (ts - lastTs) / 1000 : 0;
+        lastTs = ts;
+
+        if (camera.mode === 'planet') {
+          if (!Number.isFinite(camera.planetZoom)) camera.planetZoom = 1;
+          if (dir > 0) camera.planetZoom *= Math.pow(2, dt * 2);
+          else camera.planetZoom /= Math.pow(2, dt * 2);
+          camera.planetZoom = Math.max(1, Math.min(5000, camera.planetZoom));
+        } else {
+          if (dir > 0) camera.zoom *= Math.pow(2, dt * 2);
+          else camera.zoom /= Math.pow(2, dt * 2);
+          camera.zoom = Math.max(0.01, Math.min(25, camera.zoom));
+        }
+
+        rafId = requestAnimationFrame(loop);
+      }
+
+      function start(e) {
+        e.preventDefault();
+        holding = true;
+        lastTs = null;
+        rafId = requestAnimationFrame(loop);
+      }
+
+      function end() {
+        holding = false;
+        if (rafId) cancelAnimationFrame(rafId);
+      }
+
+      el.addEventListener('touchstart', start, { passive: false });
+      el.addEventListener('mousedown', start);
+      ['touchend', 'touchcancel', 'mouseup', 'mouseleave'].forEach(ev => el.addEventListener(ev, end));
+    }
+
+    const btnIn = document.getElementById('btnZoomIn');
+    if (btnIn) {
+      const newIn = btnIn.cloneNode(true);
+      btnIn.parentNode.replaceChild(newIn, btnIn);
+      bindZoomButton(newIn, 1);
+    }
+
+    const btnOut = document.getElementById('btnZoomOut');
+    if (btnOut) {
+      const newOut = btnOut.cloneNode(true);
+      btnOut.parentNode.replaceChild(newOut, btnOut);
+      bindZoomButton(newOut, -1);
+    }
 }
 
 // H3a: repopulate the follow-body dropdown when the body list changes

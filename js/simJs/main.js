@@ -490,7 +490,7 @@ GuidanceBridge.onReady(() => {
     renderWorker.postMessage({ type: 'hydrate', keys: hydrateKeys });
     
     // Send camera FIRST so it's already set when the init tick fires.
-    renderWorker.postMessage({ type: 'camera', camera: { ...camera, zoom: camera.zoom * renderScale } });
+    renderWorker.postMessage({ type: 'camera', camera: { ...camera, zoom: camera.zoom * renderScale, planetZoom: camera.planetZoom } });
     renderWorker.postMessage({
       type: 'toggles',
       showGrid,
@@ -555,7 +555,7 @@ window.addEventListener('resize', () => {
     // state.trajectory's null-means-unchanged contract), so skipping a send
     // when nothing moved is exactly correct, not just an approximation.
     let _lastSentCamera = {
-      follow: camera.follow, zoom: camera.zoom,
+      follow: camera.follow, zoom: camera.zoom, planetZoom: camera.planetZoom,
       followBodyIndex: camera.followBodyIndex, mode: camera.mode,
       followPadId: camera.followPadId,
     };
@@ -565,14 +565,16 @@ window.addEventListener('resize', () => {
     const pushRenderContext = () => {
       if (camera.follow !== _lastSentCamera.follow ||
         camera.zoom !== _lastSentCamera.zoom ||
+        camera.planetZoom !== _lastSentCamera.planetZoom ||
         camera.followBodyIndex !== _lastSentCamera.followBodyIndex ||
         camera.mode !== _lastSentCamera.mode ||
         camera.followPadId !== _lastSentCamera.followPadId ||
         renderScale !== _lastSentRenderScale) {
         // Multiply zoom by renderScale so local view preserves exact visual size
-        renderWorker.postMessage({ type: 'camera', camera: { ...camera, zoom: camera.zoom * renderScale } });
+        renderWorker.postMessage({ type: 'camera', camera: { ...camera, zoom: camera.zoom * renderScale, planetZoom: camera.planetZoom } });
         _lastSentCamera.follow = camera.follow;
         _lastSentCamera.zoom = camera.zoom;
+        _lastSentCamera.planetZoom = camera.planetZoom;
         _lastSentCamera.followBodyIndex = camera.followBodyIndex;
         _lastSentCamera.mode = camera.mode;
         _lastSentCamera.followPadId = camera.followPadId;
@@ -610,7 +612,7 @@ window.addEventListener('resize', () => {
           // fresh dawn 'pop'. Nudge the camera message with a fresh tick stamp
           // so the render worker re-processes it (idempotent for camera state).
           if (typeof camera !== 'undefined') {
-            renderWorker.postMessage({ type: 'camera', camera: Object.assign({}, camera, { zoom: camera.zoom * renderScale, _tick: (globalThis.__repaintTick = (globalThis.__repaintTick || 0) + 1) }) });
+            renderWorker.postMessage({ type: 'camera', camera: Object.assign({}, camera, { zoom: camera.zoom * renderScale, planetZoom: camera.planetZoom, _tick: (globalThis.__repaintTick = (globalThis.__repaintTick || 0) + 1) }) });
           }
         }
       }
