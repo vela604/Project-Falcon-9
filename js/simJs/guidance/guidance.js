@@ -1276,6 +1276,7 @@ if (elapsedSep >= _lbConfig.separation.SEPARATION_DURATION_S) {
     pusher: {
       alphaRad: _lbConfig.separation.BOOSTER_SEP_ANG_ACCEL_DEG_S2 * Math.PI / 180,
       isOn: function () { return _lbState.pusherTorqueFired; },
+      capRad: _lbConfig.separation.BOOSTER_SEP_TARGET_OMEGA_DEG_S * Math.PI / 180,
       set: function (a, w) { send(cmdPusherTorque(a, w, bIdx)); },
     },
   });
