@@ -960,6 +960,9 @@ members.forEach((m, idx) => {
   figCtx.translate(baseX, baseY - placeYFig);
   drawRocketArt(figCtx, mW, mH, mpp, {
       noseHeightM: m.noseHeightM,
+      noseHeightM: m.noseHeightM,
+
+      boosterInterstageHeightM: (m.stageRole === 'booster' && members[idx + 1] && members[idx + 1].stageRole === 'interstage') ? members[idx + 1].height : null,
       legsProgress: (idx === 0 && body.isActive) ? legs.progress : 0,
       legsState: null,
       // A5 — same as render.js: pod-id lookups need the member's own idx.

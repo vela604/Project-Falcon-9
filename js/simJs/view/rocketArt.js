@@ -2934,7 +2934,10 @@ function drawGasPuff(cx, cy, dir, seed, duty, modeOpts) {
   const pool = _gasPoolFor(poolKey);
   
   const d = Math.max(0, Math.min(1, Number.isFinite(duty) ? duty : 1.0));
-  if (d < 0.05 && !modeOpts.burst) return;
+  // Any nonzero duty spawns proportionally (was 0.05 floor — killed puffs at
+  // low duty). Random spawning below handles rarity; at d=0.01 we still get
+  // ~1 puff/sec at 60 FPS — visible without flooding.
+  if (d <= 0 && !modeOpts.burst) return;
   
   let spawnN = 0;
   if (modeOpts.burst) {
@@ -2944,10 +2947,15 @@ function drawGasPuff(cx, cy, dir, seed, duty, modeOpts) {
     // expands and drifts, without overwhelming the frame.
     spawnN = 6;
   } else {
-    // Continuous mode — probabilistic per-frame spawn scaled by duty.
-    if (Math.random() < d) spawnN++;
-    if (Math.random() < d * 0.7) spawnN++;
-    if (Math.random() < d * 0.35) spawnN++;
+    // Continuous mode — proportional spawning. Expected puffs/frame ≈ 2.05·d,
+    // giving ~1.2 puffs/sec at 1% duty (visible) up to ~123/sec at 100% (full
+    // throttle visual). No minimum gate: even a 1% duty pod fires off the
+    // occasional visible puff instead of vanishing entirely.
+    if (d > 0) {
+      if (Math.random() < d) spawnN++;
+      if (Math.random() < d * 0.7) spawnN++;
+      if (Math.random() < d * 0.35) spawnN++;
+    }
   }
 
   for (let s = 0; s < spawnN; s++) {

@@ -246,7 +246,7 @@ leoInsertionV3: _mkDefault(
   },
     ['full-mission', 'expendable'],
   135,
-  600
+  616
   ),
   
   landbackV1: _mkDefault(
@@ -339,6 +339,10 @@ leoInsertionV3: _mkDefault(
       FLIP_ROTATE_TOL_DEG: 0.5,
       FLIP_OMEGA_TOL: 0.005,
       FLIP_TIMEOUT_S: 120,
+      FLIP_PUSHER_ANG_ACCEL_DEG_S2: -3,
+      FLIP_PUSHER_MAX_OMEGA_DEG_S: 30,
+      FLIP_BRAKE_HYST_DEG: 1.0,
+      FLIP_AERO_PROJECT: 1,
       BOOSTBACK_ENGINES: 'C,0,180',
       BOOSTBACK_APPARENT_OFFSET_M: 0,
       BOOSTBACK_SIDE_CUT_M: 20000,
@@ -348,12 +352,13 @@ leoInsertionV3: _mkDefault(
       ENTRY_BURN_ENGINES: 'C,0,180',
       ENTRY_BURN_GIMBAL_ENGINES: 'C',
       ENTRY_BURN_CUTOFF_VELOCITY_MS: 600,
+      ENTRY_BURN_IMPACT_TARGET_M: 0,
       POST_ENTRY_GRIDFIN_RAMP_DEG_S: 3,
     },
   },
     ['full-mission', 'expendable'],
   135,
-  600
+  616
   ),
 
   leoInsertion: _mkDefault(
@@ -528,7 +533,12 @@ const GUIDE_IMPORTANT_FIELDS = {
   'rtls.ENTRY_BURN_ENGINES',
   'rtls.ENTRY_BURN_GIMBAL_ENGINES',
   'rtls.ENTRY_BURN_CUTOFF_VELOCITY_MS',
+  'rtls.ENTRY_BURN_IMPACT_TARGET_M',
   'rtls.POST_ENTRY_GRIDFIN_RAMP_DEG_S',
+  'rtls.FLIP_PUSHER_ANG_ACCEL_DEG_S2',
+  'rtls.FLIP_PUSHER_MAX_OMEGA_DEG_S',
+  'rtls.FLIP_BRAKE_HYST_DEG',
+  'rtls.FLIP_AERO_PROJECT',
   'insertion.TARGET_APSIDE1_ALT_KM',
   'insertion.TARGET_APSIDE2_ALT_KM',
   'ascent.MECO_TARGET_BOOSTER_FUEL_KG',

@@ -3127,6 +3127,10 @@ setState(s) {
       FLIP_ROTATE_TOL_DEG: 0.5,   // done when |angle error| < this ...
       FLIP_OMEGA_TOL: 0.005,      // ... and |relative omega| < this (rad/s)
       FLIP_TIMEOUT_S: 120,
+      FLIP_PUSHER_ANG_ACCEL_DEG_S2: -3,   // pusher angular accel during FLIP ACCEL (sign = flip direction, CW = negative)
+      FLIP_PUSHER_MAX_OMEGA_DEG_S: 30,    // pusher stops by itself above this |omega| (hard cap)
+      FLIP_BRAKE_HYST_DEG: 1.0,           // brake hysteresis band (deg)
+      FLIP_AERO_PROJECT: 1,               // 1 = aero table projected in time in the stopping rollout, 0 = v2 frozen table
       // BOOSTBACK_BURN
       BOOSTBACK_ENGINES: "C,0,180",       // engines fired for the burn: "C" = centre, numbers = outer-ring angleDeg (0 / 180 = the two extreme left/right engines)
       BOOSTBACK_APPARENT_OFFSET_M: 0,      // aim at (target pad + this) ground distance, metres; + = east of the pad (short), - = west
@@ -3140,6 +3144,7 @@ setState(s) {
       ENTRY_BURN_ENGINES: "C,0,180",       // engines lit at FULL throttle: "C" = centre, numbers = outer-ring angleDeg
       ENTRY_BURN_GIMBAL_ENGINES: "C",      // engines that gimbal to cancel env torque (subset of above; expand if SATURATED)
       ENTRY_BURN_CUTOFF_VELOCITY_MS: 600,  // cutoff when Earth-relative speed falls to this value
+      ENTRY_BURN_IMPACT_TARGET_M: 0,   // m: bias burn target west so post-cutoff drag/fin drift lands near pad
       // POST_ENTRY_STEER
       POST_ENTRY_GRIDFIN_RAMP_DEG_S: 3,    // grid-fin control target ramps 0 -> max at this rate (deg/s); slower = less oscillation (guess, tune in sim)
     },
@@ -3185,6 +3190,15 @@ setState(s) {
         flipErrDeg: null,
         flipOmegaDegS: null,
         flipTgtDeg: null,
+        flipN: 0, flipK: 1, flipSxy: 0, flipSxx: 0,          // measured RCS effectiveness (least squares)
+        flipTau: 0.0125, flipYHist: [], flipLagOk: true,      // actuator lag estimate
+        flipPrevOmega: null, flipARcsMeas: null, flipAMeas: null,
+        flipTau2: 0,                                          // RCS torque sent 2 ticks ago
+        flipPushCmd1: false, flipPushCmd2: false, flipPushCap: 0,  // pusher command history (1-tick latency)
+        flipDbgT: -1e9,
+        flipAero: null, flipAeroT: 0, flipSpikeN: 0,
+        flipAeroSl: null, flipAeroFutT: -1e9, flipQ0: null, flipQPend: [], flipQLogN: 0, flipQCmpN: 0,
+        flipPeakOver: 0, flipMaxW: 0, flipBrakeSeen: false, flipBrakeT: null, flipPred: null, flipPredT: -1e9,
         // ---- BOOSTBACK scratch ----
         bbInit: false,
         bbStage: null,         // THREE | CENTER | SPOOL
@@ -3245,6 +3259,7 @@ setState(s) {
           _send(Guidance.cmdRcsDuty(null, _bodyIdx));
           _st.lastRcsTorque = 0;
         }
+        if (cur === "FLIP" && _missionCtx && _missionCtx.pusher) _missionCtx.pusher.set(0, 0);   // safety: pusher never outlives FLIP
         if (cur === "ENTRY_BURN") {
           _send(Guidance.cmdSetAllThrottle(0));
           _send(Guidance.cmdSetGimbalRate(0));
@@ -3351,7 +3366,7 @@ setState(s) {
       const BB_PRED_DT = 1.0;       // s, leapfrog step of the ballistic impact predictor
       const BB_PRED_MAX_S = 2500;   // s, prediction horizon
       const BB_ATT_KP = 0.5;        // attitude hold (same law + gains as the suicide block)
-      const BB_ATT_KD = 4.0;
+      const BB_ATT_KD = 1.2;  // ζ≈0.85 at I=22e6; gimbal peak ~3.6°, no saturation
       const BB_FUEL_EMPTY_KG = 1;
 
       // "C,0,180" -> ["C", 0, 180]. "C" = centre engine, numbers = outer-ring engine angleDeg.
@@ -3408,8 +3423,8 @@ setState(s) {
       const PES_KP = 0.05;
       const PES_KD = 0.6;
       const PES_ALPHA_MAX_DEG = 12;
-      const PES_DTH_MAX_DEG = 1.5;
-      const PES_J_MIN = 0.3;
+      const PES_DTH_MAX_DEG = 6;
+      const PES_J_MIN = 2;
       const PES_JH_MIN = 1e3;
       const PES_CTRL_CAP_DEG = 30;
       const PES_FIN_STEP_DEG = 5;
@@ -3423,10 +3438,11 @@ setState(s) {
         (ds.memberBreakdown || []).forEach(function (m) {
           fxb += (m.Fnormal_linear || 0) + (m.Fnormal_crossflow || 0);
         });
-        // Physics consistency: sim's derivatives() has ax = grav + (thrust + dragVec + gridFin)/M.
-        // Fnormal (hull lift) enters ONLY dragTorque (attitude), NOT linear force.
-        const fx = ds.dragVecX + (ds.gridFinFx || 0);
-        const fy = ds.dragVecY + (ds.gridFinFy || 0);
+        // Physics now applies Fnormal to linear accel (derivatives() fnIx/fnIy).
+        // Guidance must match: dragVec + grid fin force + hull Fnormal (inertial).
+        const cT = Math.cos(ds.theta), sT = Math.sin(ds.theta);
+        const fx = ds.dragVecX + (ds.gridFinFx || 0) + fxb * cT;
+        const fy = ds.dragVecY + (ds.gridFinFy || 0) + fxb * sT;
         return { ax: fx / M, ay: fy / M, fxb: fxb };
       }
 
@@ -3496,10 +3512,11 @@ setState(s) {
         (ds.memberBreakdown || []).forEach(function (m) {
           fxb += (m.Fnormal_linear || 0) + (m.Fnormal_crossflow || 0);
         });
-        // Physics consistency: sim's derivatives() has ax = grav + (thrust + dragVec + gridFin)/M.
-        // Fnormal (hull lift) enters ONLY dragTorque (attitude), NOT linear force.
-        const fx = ds.dragVecX + (ds.gridFinFx || 0);
-        const fy = ds.dragVecY + (ds.gridFinFy || 0);
+        // Physics now applies Fnormal to linear accel (derivatives() fnIx/fnIy).
+        // Guidance must match: dragVec + grid fin force + hull Fnormal (inertial).
+        const cT = Math.cos(ds.theta), sT = Math.sin(ds.theta);
+        const fx = ds.dragVecX + (ds.gridFinFx || 0) + fxb * cT;
+        const fy = ds.dragVecY + (ds.gridFinFy || 0) + fxb * sT;
         return { ax: fx / M, ay: fy / M, fxb: fxb };
       }
       // dv (m/s) still delivered while the given engines spool down from their CURRENT flow
@@ -3583,41 +3600,181 @@ setState(s) {
             const I = d.massProps.I;
             if (!(I > 0)) break;
             const R2D = 180 / Math.PI;
+            // Pusher handle from the mission glue: { alphaRad, capRad, isOn(), set(alphaRad, capRad) }.
+            // v3: FLIP OWNS the pusher. SEPARATED_AXIAL no longer fires it; FLIP starts it on its first tick
+            // (booster is ~spin-free then), runs it together with full RCS during ACCEL, cancels it at the brake point.
+            const pusher = (_missionCtx && _missionCtx.pusher) || null;
+            const pAlpha = Number.isFinite(cfg.FLIP_PUSHER_ANG_ACCEL_DEG_S2) ? cfg.FLIP_PUSHER_ANG_ACCEL_DEG_S2 / R2D
+                         : (pusher && Number.isFinite(pusher.alphaRad) ? pusher.alphaRad : 0);
+            const pCap = Number.isFinite(cfg.FLIP_PUSHER_MAX_OMEGA_DEG_S) ? cfg.FLIP_PUSHER_MAX_OMEGA_DEG_S / R2D
+                         : (pusher && Number.isFinite(pusher.capRad) ? pusher.capRad : 30 / R2D);
+            const hystRad = (Number.isFinite(cfg.FLIP_BRAKE_HYST_DEG) ? cfg.FLIP_BRAKE_HYST_DEG : 1.0) / R2D;
+            const projectAero = !(cfg.FLIP_AERO_PROJECT === 0 || cfg.FLIP_AERO_PROJECT === false);
 
             const tgtNow = _flipTargetTheta(d.rx, d.ry, d.vx, d.vy);
             if (tgtNow === null) { _rcsOff(); break; }
             const mx = _rcsMaxTorques(snapshot);
             if (!(mx.pos > 0) || !(mx.neg > 0)) { _rcsOff(); break; }
+            const nomMax = Math.max(mx.pos, mx.neg) / I;
 
-            // rate at which the target itself rotates (orbital motion)
             let wTgt = 0;
             if (_st.flipPrevTgt !== null && _st.flipPrevT !== null && simT > _st.flipPrevT) {
               wTgt = _wrapPi(tgtNow - _st.flipPrevTgt) / (simT - _st.flipPrevT);
-              if (Math.abs(wTgt) > 0.05) wTgt = 0; // glitch guard
+              if (Math.abs(wTgt) > 0.05) wTgt = 0;
             }
             _st.flipPrevTgt = tgtNow;
             _st.flipPrevT = simT;
             const wRelNow = d.omega - wTgt;
             const rawErr = tgtNow - d.theta;
 
+            const NA = 72, NF = 36;
+            const FUT_TAU = [8, 16, 24];
+            const _buildTab = function (n, st) {
+              const tab = new Array(n);
+              let q = 0;
+              for (let i = 0; i < n; i++) {
+                const rel = -Math.PI + 2 * Math.PI * i / n;
+                const ov = { theta: tgtNow + rel };
+                if (st) { ov.rx = st.rx; ov.ry = st.ry; ov.vx = st.vx; ov.vy = st.vy; }
+                const dk = Derivation.deriveForState(snapshot, idx, ov);
+                tab[i] = dk && Number.isFinite(dk.alphaAng) ? dk.alphaAng : 0;
+                if (i === 0 && dk && Number.isFinite(dk.Q)) q = dk.Q;
+              }
+              return { tab: tab, Q: q };
+            };
+            if (_st.flipAeroSl === null || simT - _st.flipAeroT >= 0.5) {
+              const cur = _buildTab(NA, null);
+              if (_st.flipQ0 === null) _st.flipQ0 = cur.Q;
+              let futs = (_st.flipAeroSl || []).filter(function (s) { return s.fut && s.T > simT + 1.5; });
+              if (projectAero && (futs.length === 0 || simT - _st.flipAeroFutT >= 2.0)) {
+                futs = [];
+                let px = d.rx, py = d.ry, pvx = d.vx, pvy = d.vy, tt = 0;
+                const GM = env.GM_EARTH;
+                const qTxt = [];
+                for (let fi = 0; fi < FUT_TAU.length; fi++) {
+                  while (tt < FUT_TAU[fi] - 1e-9) {
+                    const h2 = Math.min(0.5, FUT_TAU[fi] - tt);
+                    const r2 = Math.hypot(px, py), g2 = GM / (r2 * r2 * r2);
+                    const ax0 = -g2 * px, ay0 = -g2 * py;
+                    px += pvx * h2 + 0.5 * ax0 * h2 * h2; py += pvy * h2 + 0.5 * ay0 * h2 * h2;
+                    const r3 = Math.hypot(px, py), g3 = GM / (r3 * r3 * r3);
+                    pvx += 0.5 * (ax0 - g3 * px) * h2; pvy += 0.5 * (ay0 - g3 * py) * h2;
+                    tt += h2;
+                  }
+                  const fb = _buildTab(NF, { rx: px, ry: py, vx: pvx, vy: pvy });
+                  futs.push({ T: simT + FUT_TAU[fi], tab: fb.tab, fut: true, Q: fb.Q });
+                  _st.flipQPend.push({ T: simT + FUT_TAU[fi], Q: fb.Q });
+                  qTxt.push("+" + FUT_TAU[fi] + "s:" + fb.Q.toFixed(0));
+                }
+                _st.flipAeroFutT = simT;
+                if (_st.flipQLogN < 12) {
+                  _st.flipQLogN++;
+                  console.log("[FLIP-AERO] t=" + (simT - _st.phaseStart).toFixed(1) + " Q_now=" + cur.Q.toFixed(0) +
+                    " Q_pred " + qTxt.join(" ") + " (Pa)");
+                }
+              }
+              _st.flipAeroSl = [{ T: simT, tab: cur.tab, fut: false, Q: cur.Q }].concat(futs);
+              _st.flipAeroT = simT;
+            }
+            if (_st.flipQPend.length) {
+              const dueQ = _st.flipQPend.filter(function (q) { return simT >= q.T; });
+              if (dueQ.length) {
+                _st.flipQPend = _st.flipQPend.filter(function (q) { return simT < q.T; });
+                dueQ.forEach(function (q) {
+                  if (simT - q.T < 0.3 && _st.flipQCmpN < 30 && Number.isFinite(d.Q)) {
+                    _st.flipQCmpN++;
+                    console.log("[FLIP-AERO-CHK] t=" + (simT - _st.phaseStart).toFixed(1) + " Q_pred=" + q.Q.toFixed(0) +
+                      " Q_act=" + d.Q.toFixed(0) + " ratio=" + (q.Q > 0 ? (d.Q / q.Q).toFixed(2) : "n/a"));
+                  }
+                });
+              }
+            }
+            const tabAt = function (tab, rel) {
+              const n = tab.length;
+              let r = rel % (2 * Math.PI); if (r >= Math.PI) r -= 2 * Math.PI; if (r < -Math.PI) r += 2 * Math.PI;
+              const f = (r + Math.PI) / (2 * Math.PI) * n;
+              const i0 = Math.floor(f) % n, i1 = (i0 + 1) % n, u = f - Math.floor(f);
+              return tab[i0] * (1 - u) + tab[i1] * u;
+            };
+            const aeroAt = function (rel, tau) {
+              const S = _st.flipAeroSl;
+              if (!(tau > 0) || S.length < 2) return tabAt(S[0].tab, rel);
+              const Tq = simT + tau;
+              if (Tq <= S[0].T) return tabAt(S[0].tab, rel);
+              let i = 1;
+              while (i < S.length && S[i].T < Tq) i++;
+              if (i >= S.length) return tabAt(S[S.length - 1].tab, rel);
+              const u = (Tq - S[i - 1].T) / (S[i].T - S[i - 1].T);
+              return tabAt(S[i - 1].tab, rel) * (1 - u) + tabAt(S[i].tab, rel) * u;
+            };
+
+            _st.flipN++;
+            if (_st.flipPrevOmega !== null) {
+              const aMeas = (d.omega - _st.flipPrevOmega) / dt;
+              const pushThen = (pusher && _st.flipPushCmd2 && Math.abs(_st.flipPrevOmega) < _st.flipPushCap) ? pAlpha : 0;
+              const aRcs = aMeas - d.alphaAng - pushThen;
+              _st.flipAMeas = aMeas;
+              const x = _st.flipTau2 / I;
+              const outlier = Math.abs(aRcs - _st.flipK * x) > nomMax;
+              if (!outlier) _st.flipARcsMeas = aRcs;
+              else if (_st.flipSpikeN < 12) {
+                _st.flipSpikeN++;
+                console.log("[FLIP-SPIKE] t=" + (simT - _st.phaseStart).toFixed(2) + " aMeas=" + (aMeas * R2D).toFixed(1) +
+                  " expected=" + (((d.alphaAng + _st.flipK * x + pushThen)) * R2D).toFixed(1) + " w=" + (d.omega * R2D).toFixed(2) +
+                  " mode=" + _st.flipMode);
+              }
+              if (!outlier && _st.flipN >= 32 && x !== 0) {
+                _st.flipSxy += x * aRcs;
+                _st.flipSxx += x * x;
+                if (_st.flipSxx > 1e-18) _st.flipK = Math.min(1.2, Math.max(0.3, _st.flipSxy / _st.flipSxx));
+              }
+              const nLag = Math.round(3.0 / dt);
+              if (_st.flipN <= nLag) {
+                if (_st.flipMode !== null && _st.flipMode !== "ACCEL") _st.flipLagOk = false;
+                _st.flipYHist.push(Math.abs(aRcs));
+                if (_st.flipN === nLag && _st.flipLagOk) {
+                  const tailN = Math.max(1, Math.round(0.5 / dt));
+                  const tail = _st.flipYHist.slice(-tailN);
+                  const ys = tail.reduce(function (a, b) { return a + b; }, 0) / tail.length;
+                  const i63 = _st.flipYHist.findIndex(function (v) { return v >= 0.632 * ys; });
+                  if (ys > 0 && i63 >= 0) _st.flipTau = Math.max(dt, i63 * dt);
+                }
+              }
+            }
+            _st.flipPrevOmega = d.omega;
+
+            let pushCmdNew = _st.flipPushCmd1;
+
             if (!_st.flipInit) {
-              // ---- first tick: read the state, choose the direction ----
               _st.flipInit = true;
+              _st.flipTau = dt;
               _send(Guidance.cmdSetAllThrottle(0));
               _send(Guidance.cmdSetGimbalRate(0));
               const e0 = _wrapPi(rawErr);
-              const ePos = e0 >= 0 ? e0 : e0 + 2 * Math.PI;   // way round in +direction
-              const eNeg = ePos - 2 * Math.PI;                // way round in -direction
+              const ePos = e0 >= 0 ? e0 : e0 + 2 * Math.PI;
+              const eNeg = ePos - 2 * Math.PI;
               const tPos = _flipTime(ePos, wRelNow, mx.pos / I, mx.neg / I);
               const tNeg = _flipTime(eNeg, wRelNow, mx.pos / I, mx.neg / I);
-              // Direction FIXED to negative (clockwise): the SEPARATED_AXIAL push already tips the booster that way.
               _st.flipEu = eNeg;
               _st.flipDir = -1;
+              if (pusher && pAlpha * _st.flipDir > 0 && pCap > 0) {
+                _st.flipPushCap = pCap;
+                pusher.set(pAlpha, pCap);
+                pushCmdNew = true;
+              }
+              const aPush = (pushCmdNew ? Math.abs(pAlpha) : 0);
+              const tPush = _flipTime(eNeg, wRelNow, mx.pos / I + (eNeg < 0 ? 0 : aPush), mx.neg / I + (eNeg < 0 ? aPush : 0));
+              const tabTxt = [];
+              for (let a = -180; a < 180; a += 45) tabTxt.push(a + ":" + (aeroAt(a / R2D, 0) * R2D).toFixed(2));
               console.log("[standardRTLS] FLIP dir=" + (_st.flipDir > 0 ? "+" : "-") +
                 " err=" + (_st.flipEu * R2D).toFixed(1) + "deg omega=" + (wRelNow * R2D).toFixed(2) +
-                "deg/s  t(+)=" + tPos.toFixed(1) + "s t(-)=" + tNeg.toFixed(1) + "s");
+                "deg/s  t(+)=" + tPos.toFixed(1) + "s t(-)=" + tNeg.toFixed(1) + "s t(-,+pusher)=" + tPush.toFixed(1) + "s (no-aero est)" +
+                " rcsAccel+=" + (mx.pos / I * R2D).toFixed(2) + " rcsAccel-=" + (mx.neg / I * R2D).toFixed(2) + "deg/s2" +
+                " pusher=" + (pushCmdNew ? ("start alpha=" + (pAlpha * R2D).toFixed(2) + "deg/s2 cap=" + (pCap * R2D).toFixed(1) + "deg/s") : "off") +
+                " aeroProject=" + (projectAero ? 1 : 0) + " hyst=" + (hystRad * R2D).toFixed(2) + "deg" +
+                " aero[rel:deg/s2]=" + tabTxt.join(" "));
             } else {
-              _st.flipEu += _wrapPi(rawErr - _st.flipPrevRaw);   // unwrapped along the committed way
+              _st.flipEu += _wrapPi(rawErr - _st.flipPrevRaw);
             }
             _st.flipPrevRaw = rawErr;
 
@@ -3625,13 +3782,23 @@ setState(s) {
             _st.flipErrDeg = _st.flipEu * R2D;
             _st.flipOmegaDegS = wRelNow * R2D;
 
+            const overNowDeg = -_st.flipEu * _st.flipDir * R2D;
+            if (overNowDeg > _st.flipPeakOver) _st.flipPeakOver = overNowDeg;
+            if (Math.abs(wRelNow) * R2D > _st.flipMaxW) _st.flipMaxW = Math.abs(wRelNow) * R2D;
+
             if (Math.abs(_st.flipEu) < cfg.FLIP_ROTATE_TOL_DEG / R2D &&
                 Math.abs(wRelNow) < cfg.FLIP_OMEGA_TOL) {
               _rcsOff();
+              if (pusher && (_st.flipPushCmd1 || pushCmdNew)) pusher.set(0, 0);
+              _st.flipPushCmd1 = false; _st.flipPushCmd2 = false;
+              console.log("[FLIP-DONE] t=" + (simT - _st.phaseStart).toFixed(1) + "s peakOvershoot=" + _st.flipPeakOver.toFixed(2) +
+                "deg maxW=" + _st.flipMaxW.toFixed(1) + "deg/s k=" + _st.flipK.toFixed(2) +
+                " brakeStart t=" + (_st.flipBrakeT === null ? "n/a" : _st.flipBrakeT.toFixed(1)));
               finished = true; break;
             }
 
-            // ---- one-tick-ahead prediction (current RCS torque keeps acting) ----
+            const k = _st.flipK;
+            const pushOn1 = !!(pusher && _st.flipPushCmd1 && Math.abs(d.omega) < _st.flipPushCap);
             const M = d.massProps.M;
             let aIx = d.gVecX, aIy = d.gVecY;
             if (M > 0) {
@@ -3641,7 +3808,7 @@ setState(s) {
               aIx += (thrIx + d.dragVecX) / M;
               aIy += (thrIy + d.dragVecY) / M;
             }
-            const aTot = d.alphaAng + _st.lastRcsTorque / I;  // d.alphaAng has NO rcs term
+            const aTot = d.alphaAng + k * _st.lastRcsTorque / I + (pushOn1 ? pAlpha : 0);
             const dTheta = d.omega * dt + 0.5 * aTot * dt * dt;
             const wP = d.omega + aTot * dt;
             const tgtP = _flipTargetTheta(d.rx + d.vx * dt, d.ry + d.vy * dt,
@@ -3650,29 +3817,83 @@ setState(s) {
             const eP = _st.flipEu + dTgt - dTheta;
             const wRelP = wP - wTgt;
 
-            // ---- bang-bang on the predicted state ----
             const sgn = eP >= 0 ? 1 : -1;
-            const brakeMax = sgn > 0 ? mx.neg : mx.pos;          // torque available AGAINST the motion
+            const nomBrake = (sgn > 0 ? mx.neg : mx.pos) / I;
+            const brakeAcc = nomBrake * k;
             const towards = wRelP * sgn > 0;
-            const stopAng = wRelP * wRelP * I / (2 * brakeMax) + Math.abs(wRelP) * dt;
-            let tauCmd, fullRes = null;
-            if (towards && Math.abs(eP) <= stopAng) {
-              const need = I * Math.abs(wRelP) / dt;             // torque that zeroes omega in one tick
-              if (need >= brakeMax) {
-                _st.flipMode = "BRAKE"; fullRes = sgn > 0 ? mx.rn : mx.rp; tauCmd = -sgn * brakeMax;
-              } else {
-                _st.flipMode = "TRIM"; tauCmd = -sgn * need;     // last tick only: just enough
+            const aRcsNow = (_st.flipARcsMeas !== null) ? _st.flipARcsMeas : k * _st.lastRcsTorque / I;
+            let stopAng = 0;
+            if (towards) {
+              const h = Math.max(dt, 0.025);
+              const al = 1 - Math.exp(-h / Math.max(_st.flipTau, h));
+              let ar = aRcsNow;
+              const th0 = -eP;
+              let th = th0, w = wRelP, n = 0;
+              const aBr = -sgn * brakeAcc;
+              const rec = (simT - _st.flipPredT >= 2.0);
+              const path = rec ? [] : null;
+              const recEvery = Math.max(1, Math.round(0.5 / h));
+              while (w * sgn > 0 && n < 1200) {
+                ar += (aBr - ar) * al;
+                const av = aeroAt(th, projectAero ? n * h : 0);
+                if (path && (n % recEvery) === 0) path.push({ T: simT + n * h, th: th, aero: av });
+                w += (ar + av) * h;
+                th += w * h; n++;
               }
+              stopAng = (w * sgn > 0) ? Infinity : sgn * (th - th0) + Math.abs(wRelP) * dt + 0.5 * Math.abs(wRelP) * h;
+              if (path) { _st.flipPred = path; _st.flipPredT = simT; }
+            }
+            let tauCmd, fullRes = null;
+            const inBrake = (_st.flipMode === "BRAKE" || _st.flipMode === "TRIM");
+            if (towards && Math.abs(eP) <= stopAng + (inBrake ? hystRad : 0)) {
+              const aeroP = aeroAt(-eP, 0);
+              const needRcs = (-wRelP / dt - aeroP) / k;
+              if (Math.abs(needRcs) >= (needRcs > 0 ? mx.pos : mx.neg) / I) {
+                const pos = needRcs > 0;
+                _st.flipMode = "BRAKE"; fullRes = pos ? mx.rp : mx.rn; tauCmd = pos ? mx.pos : -mx.neg;
+              } else {
+                _st.flipMode = "TRIM"; tauCmd = needRcs * I;
+              }
+              if (!_st.flipBrakeSeen) {
+                _st.flipBrakeSeen = true; _st.flipBrakeT = simT - _st.phaseStart;
+                console.log("[FLIP-BRAKE-START] t=" + _st.flipBrakeT.toFixed(1) + " err=" + (_st.flipEu * R2D).toFixed(1) +
+                  " w=" + (wRelNow * R2D).toFixed(2) + " stop=" + (stopAng === Infinity ? "inf" : (stopAng * R2D).toFixed(1)) +
+                  " aero=" + (d.alphaAng * R2D).toFixed(2) + " pusherOn=" + (pushOn1 ? 1 : 0));
+              }
+              if (pusher && pushCmdNew) { pusher.set(0, 0); pushCmdNew = false; }
             } else {
               _st.flipMode = "ACCEL"; fullRes = sgn > 0 ? mx.rp : mx.rn; tauCmd = sgn * (sgn > 0 ? mx.pos : mx.neg);
+              if (pusher && pushCmdNew && sgn * pAlpha < 0) { pusher.set(0, 0); pushCmdNew = false; }
             }
 
+            const tauPrev1 = _st.lastRcsTorque;
             const res = fullRes || GuideRCS.targetTorqueRcs(snapshot, tauCmd, idx);
             if (res && res.fires && res.fires.length) {
               _send(Guidance.cmdRcsDuty(res.duties, idx));
               _st.lastRcsTorque = res.fires.reduce((a, f) => a + f.torque, 0);
             } else {
               _rcsOff();
+            }
+            _st.flipTau2 = tauPrev1;
+            _st.flipPushCmd2 = _st.flipPushCmd1;
+            _st.flipPushCmd1 = pushCmdNew;
+
+            if (simT - _st.flipDbgT >= 0.5) {
+              _st.flipDbgT = simT;
+              let cmpTxt = "";
+              if (_st.flipPred) {
+                let best = null;
+                for (let pi = 0; pi < _st.flipPred.length; pi++) {
+                  if (Math.abs(_st.flipPred[pi].T - simT) < 0.26) { best = _st.flipPred[pi]; break; }
+                }
+                if (best) cmpTxt = " | pred th=" + (best.th * R2D).toFixed(1) + " aero=" + (best.aero * R2D).toFixed(2) +
+                  " act th=" + (-_st.flipEu * R2D).toFixed(1) + " aero=" + (d.alphaAng * R2D).toFixed(2);
+              }
+              console.log("[FLIP-DBG] t=" + (simT - _st.phaseStart).toFixed(1) + " err=" + (_st.flipEu * R2D).toFixed(1) +
+                " w=" + (wRelNow * R2D).toFixed(2) + " " + _st.flipMode + " k=" + k.toFixed(2) +
+                " push=" + (pushOn1 ? 1 : 0) + " aero=" + (d.alphaAng * R2D).toFixed(2) +
+                " aMeas=" + (((_st.flipAMeas == null) ? 0 : _st.flipAMeas) * R2D).toFixed(2) +
+                " aRcs=" + (aRcsNow * R2D).toFixed(2) + " stop=" + (stopAng === Infinity ? "inf" : (stopAng * R2D).toFixed(1)) + cmpTxt);
             }
             break;
           }
@@ -3837,6 +4058,20 @@ setState(s) {
               let gReqDeg = gReqRad * R2D;
               const gMax = gimbals[0].gimbalMaxDeg;
               if (Math.abs(gReqDeg) > gMax) gReqDeg = Math.sign(gReqDeg) * gMax;
+              // [BB-DBG] first 20s, every 20 ticks (0.25s)
+              if (_st.bbT0 == null) _st.bbT0 = simT;
+              if (simT - _st.bbT0 < 20 && Math.round(simT * 80) % 20 === 0)
+                console.log("[BB-DBG] t=" + (simT - _st.bbT0).toFixed(2) +
+                  " stg=" + _st.bbStage +
+                  " thr=" + thrFrac.toFixed(2) +
+                  " th=" + (thetaErr * R2D).toFixed(3) +
+                  " w=" + (d.omega * R2D).toFixed(3) +
+                  " Ramp=" + Math.round(Ramp) +
+                  " tau=" + Math.round(tauTarget) +
+                  " gReq=" + gReqDeg.toFixed(3) +
+                  " g=" + (gimbals[0].gimbalDeg || 0).toFixed(3) +
+                  " gv=" + (gimbals[0].gimbalRateActDegS || 0).toFixed(2) +
+                  " comX=" + comX.toFixed(4));
               _send(_gimbalCmdMsg(gReqDeg, gimbals[0], dt, "center"));
             }
 
@@ -4154,7 +4389,8 @@ setState(s) {
             const omegaE = env.EARTH_OMEGA || 0;
             const Rm = env.EARTH_RADIUS;
             const imp = _bbImpact(d.rx, d.ry, d.vx, d.vy, simT, env.GM_EARTH, Rm, omegaE);
-            const errM = imp ? _wrapPi(imp.phiEf - padEf) * Rm : null;
+            const biasM = Number.isFinite(cfg.ENTRY_BURN_IMPACT_TARGET_M) ? cfg.ENTRY_BURN_IMPACT_TARGET_M : 0;
+            const errM = imp ? _wrapPi(imp.phiEf - padEf) * Rm - biasM : null;
             _st.ebImpactErrM = errM;
             const dtS = (_st.ebPrevT !== null && simT > _st.ebPrevT) ? (simT - _st.ebPrevT) : dt;
             if (_st.ebPrevT !== null && _st.ebPrevV !== null) {
@@ -4173,7 +4409,7 @@ setState(s) {
             const tGo = (_st.ebVdotF !== null && _st.ebVdotF < -0.5) ? Math.max(0, (speedRelV - vCut) / (-_st.ebVdotF)) : null;
             _st.ebTgoS = tGo;
             _st.ebErateMps = _st.ebErateF;
-            const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
+const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
             let dNext = null;
             {
               const cT = Math.cos(d.theta), sT = Math.sin(d.theta);
@@ -4206,7 +4442,7 @@ setState(s) {
                 const aT = Math.hypot(d.thrustBodyX, d.thrustBodyY) / M;
                 const px = -Math.cos(d.theta), py = -Math.sin(d.theta);
                 const imp2 = _bbImpact(d.rx, d.ry, d.vx + px, d.vy + py, simT, env.GM_EARTH, Rm, omegaE);
-                const S = imp2 ? (_wrapPi(imp2.phiEf - padEf) * Rm - errM) : 0;
+                const S = imp2 ? (_wrapPi(imp2.phiEf - padEf) * Rm - biasM - errM) : 0;
                 const kappa = aT * S;
                 _st.ebKappa = kappa;
                 const T = Math.max(0, tGo);
@@ -4302,6 +4538,21 @@ setState(s) {
           // NO exit; phase holds so impact shift can be judged at landing.
                               case "POST_ENTRY_STEER": {
             const idx = _bodyIdx;
+            if (Math.round(simT*80) === 471*80 || Math.round(simT*80) === 60*80) {
+              snapshot.bodies.forEach(function(b, i) {
+                const x = Derivation.derive(snapshot, i);
+                if (!x) return;
+                console.log("[MASSCHK t="+simT.toFixed(1)+"] body"+i+" M="+Math.round(x.massProps.M)+
+                  " payload="+Math.round(x.massProps.payloadMass||0)+
+                  " comY="+x.massProps.comY.toFixed(1)+
+                  " I="+Math.round(x.massProps.I)+
+                  " fuel="+Math.round(b.fuelMass||0)+
+                  " roles="+(b.members||[]).map(m=>m.stageRole||'-').join(',')+
+                  " payloadId="+(b.payloadId||'null')+
+                  " payloadReleased="+!!b.payloadReleased+
+                  " payloadBody="+!!b.payloadBody);
+              });
+            }
             const body = snapshot.bodies[idx];
             if (!body) break;
             const env = Derivation.getEnv();
@@ -4325,6 +4576,7 @@ setState(s) {
               _send(Guidance.cmdSetGimbalRate(0));
               _rcsOff();
               _send(Guidance.cmdGridFinsDeploy(true));
+              console.log("[RTLS-VERMARK] passive-v1 phase=POST_ENTRY t="+simT.toFixed(2)+" PASSIVE-TEST-PRESENT");
               console.log("[standardRTLS] POST_ENTRY_STEER (closed loop v4) start t=" + simT.toFixed(2) +
                 " alt=" + altKm.toFixed(1) + "km v=" + Math.hypot(d.relVx, d.relVy).toFixed(0) + "m/s" +
                 " — first " + PES_VALIDATE_S + "s: NO commands (model validation)");
@@ -4405,10 +4657,45 @@ setState(s) {
             _st.pesEdotMeasMps = _st.pesErateF;
             _st.pesFinCtrlActDeg = cAct;
 
+            // [PES-LOG] no-pause 0.5s logger t=470-500 (Claude diagnostic v2)
+            { const L=_st.lg||(_st.lg={t:null,n:0,sAx:0,sAy:0});
+              if (simT>=470 && simT<=500) {
+                const a0l=_pesAeroAccel(d,M);
+                L.sAx+=d.gVecX+a0l.ax; L.sAy+=d.gVecY+a0l.ay; L.n++;
+                if (Math.round(simT*80)%40===0) {
+                  if (L.t!==null && L.n>0) {
+                    const D=simT-L.t, rx=(d.vx-L.vx)/D-L.sAx/L.n, ry=(d.vy-L.vy)/D-L.sAy/L.n;
+                    const ct=Math.cos(d.theta), st=Math.sin(d.theta);
+                    const sc=Derivation.gridFinAero(snapshot, idx, null, cAct);
+                    console.log("[PES-LOG] t="+simT.toFixed(1)+" Q="+Math.round(d.Q)+" a="+d.alphaDeg.toFixed(2)+
+                      " c="+cAct.toFixed(1)+" w="+(d.omega*57.2958).toFixed(3)+"deg/s"+
+                      " measT="+Math.round(I*(d.omega-L.w)/D)+
+                      " finAct="+Math.round(d.gridFinTorque||0)+" finScan="+(sc?Math.round(sc.torque):"n/a")+
+                      " H0="+Math.round((d.torqueDrag||0)+(d.torqueGravityGradient||0))+
+                      " thr="+Math.round(d.thrustTotal||0)+" M="+Math.round(M)+" g="+d.gMag.toFixed(2)+
+                      " accRes lat="+(rx*ct+ry*st).toFixed(2)+" ax="+(-rx*st+ry*ct).toFixed(2));
+                  }
+                  L.t=simT; L.vx=d.vx; L.vy=d.vy; L.w=d.omega; L.sAx=0; L.sAy=0; L.n=0;
+                }
+              } }
+
             if ((simT - _st.pesT0) < PES_VALIDATE_S) {
               _send(Guidance.cmdGridFinsControl(0));
               _rcsOff();
               _st.pesCtrlCmd = 0; _st.pesRcsTorque = 0;
+
+              // [PES-VLEDGER] validate-window ledger (fin=0, RCS=off, clean comparison)
+              {
+                const mVal = I * (d.omega - (_st.vfPO != null ? _st.vfPO : d.omega)) / dt;
+                _st.vfPO = d.omega;
+                _st.vfM = (_st.vfM == null) ? mVal : _st.vfM + (dt / 0.5) * (mVal - _st.vfM);
+                if (Math.round(simT * 80) % 80 === 0) {
+                  const mdl = (d.gridFinTorque || 0) + (d.torqueDrag || 0) + (d.torqueGravityGradient || 0);
+                  console.log("[PES-VLEDGER] t=" + simT.toFixed(2) + " meas=" + Math.round(_st.vfM) +
+                    " model=" + Math.round(mdl) + " err=" + Math.round(_st.vfM - mdl));
+                }
+              }
+
               if (Math.round(simT * 80) % 80 === 0) {
                 console.log("[POST_ENTRY-VALIDATE] t=" + simT.toFixed(2) + " alt=" + altKm.toFixed(1) + "km" +
                   " Q=" + (Number.isFinite(d.Q) ? Math.round(d.Q) : "n/a") + " alpha=" + d.alphaDeg.toFixed(2) + "deg" +
@@ -4435,6 +4722,10 @@ setState(s) {
             const dNext = Derivation.deriveForState(snapshot, idx, stateNext);
             if (!dNext) { _rcsOff(); break; }
             const H0 = (dNext.torqueDrag || 0) + (dNext.torqueGravityGradient || 0);
+            // Disturbance observer: dHat = filtered (meas - model) from ledger
+            const dHat = (_st.pfMeasF != null && _st.pfModF != null)
+              ? Math.max(-150000, Math.min(150000, _st.pfMeasF - _st.pfModF)) : 0;
+            const H0e = H0 + dHat;
 
             // Fixed RCS CW setup (BR.lat + TL.lat, full duty) — used by feasibility AND command
             const bodyPods = body.pods || [];
@@ -4469,6 +4760,35 @@ setState(s) {
               if (t > hiFin) hiFin = t;
             }
             const rcsMax = _pesRcsMax(snapshot, idx);
+
+            // [PES-BOUND] 1Hz min-reachable-edot integral (instant-attitude optimistic bound)
+            {
+              const k80 = Math.round(simT * 80);
+              if (simT >= 440 && simT <= 545 && k80 % 80 === 0) {
+                let bestE = null;
+                for (let k = -6; k <= 10; k += 2) {
+                  const stBound = Object.assign({}, stateNext, { theta: d.theta + k * D2R });
+                  const dkBound = Derivation.deriveForState(snapshot, idx, stBound);
+                  if (!dkBound) continue;
+                  const hkBound = (dkBound.torqueDrag || 0) + (dkBound.torqueGravityGradient || 0);
+                  const hBound = _pesAeroAccel(Object.assign({}, dkBound, { gridFinFx: 0, gridFinFy: 0 }), M);
+                  for (let cB = -PES_CTRL_CAP_DEG; cB <= PES_CTRL_CAP_DEG; cB += 2.5) {
+                    const gB = Derivation.gridFinAero(snapshot, idx, stBound, cB);
+                    if (!gB) continue;
+                    const rB = hkBound + gB.torque;
+                    if (rB < -PES_RCS_MARGIN * rcsMax.pos || rB > PES_RCS_MARGIN * rcsMax.neg) continue;
+                    const eB = Sx * (hBound.ax + gB.Fx / M) + Sy * (hBound.ay + gB.Fy / M);
+                    if (bestE === null || (errM >= 0 ? eB < bestE : eB > bestE)) bestE = eB;
+                  }
+                }
+                if (!_st.bnd) _st.bnd = { e0: errM, cum: 0 };
+                if (bestE !== null) _st.bnd.cum += bestE;
+                console.log("[PES-BOUND] t=" + simT.toFixed(0) + " err=" + errM.toFixed(0) +
+                  " edotNow=" + edotPred.toFixed(1) +
+                  " edotBest=" + (bestE === null ? "n/a" : bestE.toFixed(1)) +
+                  " bound=" + Math.round(_st.bnd.e0 + _st.bnd.cum));
+              }
+            }
             const Ltot = loFin - PES_RCS_MARGIN * rcsMax.neg;
             const Utot = hiFin + PES_RCS_MARGIN * rcsMax.pos;
 
@@ -4484,7 +4804,7 @@ setState(s) {
             const dthWanted = dthDeg;
             let feasLo = -Infinity, feasHi = Infinity;
             if (Math.abs(Jh) > PES_JH_MIN) {
-              const a = -Utot - H0, b = -Ltot - H0;
+              const a = -Utot - H0e, b = -Ltot - H0e;
               if (Jh > 0) { feasLo = a / Jh; feasHi = b / Jh; } else { feasLo = b / Jh; feasHi = a / Jh; }
             }
             dthDeg = Math.max(feasLo, Math.min(feasHi, dthDeg));
@@ -4497,21 +4817,22 @@ setState(s) {
             const thetaStar = d.theta + dthDeg * D2R;
 
             const tauCmd = I * (-PES_KP * (dNext.theta - thetaStar) - PES_KD * dNext.omega);
-            const tauNeed = tauCmd - H0;
+            const tauNeed = tauCmd - H0e;
 
-            let bestC = cAct, bestErr = Infinity;
-            const consider = function (c, t) {
-              const er = Math.abs(t - tauNeed);
-              if (er < bestErr - 1e-6 || (Math.abs(er - bestErr) <= 1e-6 && Math.abs(c - cAct) < Math.abs(bestC - cAct))) {
-                bestErr = er; bestC = c;
+            let i0 = 0;
+            for (let i = 0; i < cList.length; i++) if (Math.abs(cList[i]) < 1e-9) i0 = i;
+            const dirF = (tauNeed >= tList[i0]) ? 1 : -1;
+            let cStar = cList[i0];
+            for (let i = i0; ; i += dirF) {
+              const j = i + dirF;
+              if (j < 0 || j >= cList.length ||
+                  (dirF > 0 ? tList[j] <= tList[i] : tList[j] >= tList[i])) { cStar = cList[i]; break; }
+              if ((tauNeed - tList[i]) * (tauNeed - tList[j]) <= 0) {
+                cStar = cList[i] + (tauNeed - tList[i]) / (tList[j] - tList[i]) * (cList[j] - cList[i]);
+                break;
               }
-            };
-            for (let i = 0; i < cList.length; i++) consider(cList[i], tList[i]);
-            { const c0 = bestC;
-              [c0 - PES_FIN_STEP_DEG / 2, c0 + PES_FIN_STEP_DEG / 2].forEach(function (c) {
-                if (c >= -PES_CTRL_CAP_DEG - 1e-9 && c <= PES_CTRL_CAP_DEG + 1e-9) consider(c, finT(c));
-              }); }
-            const cStar = Math.max(-PES_CTRL_CAP_DEG, Math.min(PES_CTRL_CAP_DEG, bestC));
+            }
+            cStar = Math.max(-PES_CTRL_CAP_DEG, Math.min(PES_CTRL_CAP_DEG, cStar));
             _st.pesCmdC = cStar;
             _send(Guidance.cmdGridFinsControl(cStar));
             const maxStep = PES_FIN_RATE_DEGS * dt;
@@ -4533,6 +4854,35 @@ setState(s) {
               _send(Guidance.cmdRcsDuty(null, idx));
             }
             _st.lastRcsTorque = rcsAch;
+
+            // [PES-LEDGER] torque ledger (Claude diagnostic)
+            {
+              const tauModel = tauFinNext + H0 + rcsAch;
+              if (_st.pfPrevTau != null) {
+                const meas = I * (d.omega - _st.pfPrevOmega) / dt;
+                const k = Math.min(1, dt / 1.5);
+                _st.pfMeasF = (_st.pfMeasF == null) ? meas : _st.pfMeasF + k * (meas - _st.pfMeasF);
+                _st.pfModF = (_st.pfModF == null) ? _st.pfPrevTau : _st.pfModF + k * (_st.pfPrevTau - _st.pfModF);
+              }
+              _st.pfPrevTau = tauModel; _st.pfPrevOmega = d.omega;
+              if (simT >= 440 && simT <= 530 && Math.round(simT * 80) % 160 === 0 && _st.pfMeasF != null)
+                console.log("[PES-LEDGER] t=" + simT.toFixed(2) + " alpha=" + d.alphaDeg.toFixed(2) +
+                  " I=" + Math.round(I) + " H0=" + Math.round(H0) + " tauFin=" + Math.round(tauFinNext) +
+                  " tauRcs=" + Math.round(rcsAch) + " model=" + Math.round(_st.pfModF) +
+                  " meas=" + Math.round(_st.pfMeasF) + " err=" + Math.round(_st.pfMeasF - _st.pfModF) + " dHat=" + Math.round(dHat) +
+                  " c act/cmd=" + cAct.toFixed(1) + "/" + cStar.toFixed(1));
+            }
+
+            // [PES-FIN] curve dump t=488..512 (Claude diagnostic)
+            if (simT >= 488 && simT <= 512 && Math.round(simT * 80) % 160 === 0) {
+              console.log("[PES-FIN] t=" + simT.toFixed(2) + " alpha=" + d.alphaDeg.toFixed(2) +
+                " w=" + (d.omega * R2D).toFixed(3) + " aAng=" + (d.alphaAng * R2D).toFixed(4) +
+                " tauCmd=" + Math.round(tauCmd) + " H0=" + Math.round(H0) +
+                " tauNeed=" + Math.round(tauNeed) + " tauFin=" + Math.round(tauFinNext) +
+                " tauRcs=" + Math.round(rcsAch) + " c act/cmd=" + cAct.toFixed(1) + "/" + cStar.toFixed(1) +
+                " feas[" + feasLo.toFixed(2) + "," + feasHi.toFixed(2) + "]" +
+                " curve=" + cList.map(function (c, i) { return c + ":" + Math.round(tList[i] / 1000); }).join(" "));
+            }
 
             _st.pesCtrlCmd = cStar;
             _st.pesRcsTorque = rcsAch;
@@ -4623,6 +4973,7 @@ setState(s) {
           _st.bbImpactEfDeg = null;
           _st.bbTargetEfDeg = null;
           _st.bbThrFrac = null;
+          _st.bbT0 = null;
           _st.preEntryInit = false;
           _st.preEntrySub = null;
           _st.preEntryAlignInit = false;
@@ -4665,6 +5016,13 @@ setState(s) {
           _st.ebRcsCmd = 0;
           _st.pesInit = false;
           _st.pesT0 = 0;
+          _st.pfPrevTau = null;
+          _st.lg = null;
+          _st.vfPO = null;
+          _st.vfM = null;
+          _st.pfPrevOmega = null;
+          _st.pfMeasF = null;
+          _st.pfModF = null;
           _st.pesRcsLogged = false;
           _st.pesCtrlCmd = 0;
           _st.pesGroundErrM = null;
