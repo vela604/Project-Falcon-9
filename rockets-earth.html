@@ -395,7 +395,7 @@
           </fieldset>
           
           
-         <fieldset id="stageFuelFieldset" data-role="booster,stage" class="stage-and-booster">
+         <fieldset id="stageFuelFieldset" data-role="booster,stage,rocket" class="stage-and-booster">
   <legend>Fuel tank <span class="legend-note">— booster &amp; stage</span></legend>
   <div class="field-grid">
     <div class="field"><label for="f-fuelType">Fuel type</label><select id="f-fuelType" required></select></div>
@@ -414,7 +414,7 @@
   </div>
 </fieldset>
           
-          <fieldset id="stageMetalFieldset" data-role="booster,stage,nose" class="stage-and-booster">
+          <fieldset id="stageMetalFieldset" data-role="booster,stage,nose,rocket" class="stage-and-booster">
             <legend>Body metal <span class="legend-note">— booster, stage &amp; nose; landing legs use this same metal</span></legend>
             <div class="field-grid">
               <div class="field"><label for="f-bodyMetalType">Metal type</label><select id="f-bodyMetalType" required></select></div>
@@ -466,9 +466,16 @@
             </div>
           </fieldset>
           
-          <fieldset id="noseShapeFieldset" data-role="nose">
+          <fieldset id="noseShapeFieldset" data-role="nose,rocket">
             <legend>Integrated nose <span class="legend-note">— 0 = sharp cone, 1 = fully rounded</span></legend>
             <div class="field-grid">
+              <div class="field" id="noseHeightField">
+                <label for="f-noseHeightM">Nose height</label>
+                <div class="input-unit">
+                  <input type="number" id="f-noseHeightM" min="0" step="0.1" value="6.5">
+                  <span>m</span>
+                </div>
+              </div>
               <div class="field">
                 <label for="f-noseCurveness">Curveness</label>
                 <div class="input-unit">
@@ -491,7 +498,7 @@
   </div>
 </fieldset>
 
-<fieldset id="gridFinFieldset" data-role="booster,stage" style="display:none">
+<fieldset id="gridFinFieldset" data-role="booster,stage,rocket" style="display:none">
   <legend>Grid fins <span class="legend-note">— hinged aerodynamic control surfaces</span></legend>
   <label class="chip-toggle chip-toggle-block" style="margin-bottom:6px;">
     <input type="checkbox" id="f-hasGridFins">
@@ -548,7 +555,7 @@
   <div class="field-grid" id="psParamsGrid"></div>
 </fieldset>
           
-          <fieldset id="shellFactorFieldset" data-role="booster,stage,payloadSpace">
+          <fieldset id="shellFactorFieldset" data-role="booster,stage,payloadSpace,rocket">
   <legend>Body shell <span class="legend-note">— fraction of tank/shell volume that becomes metal</span></legend>
   <div class="field-grid">
     <div class="field">
