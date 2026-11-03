@@ -127,8 +127,12 @@ if (record.stageRole === 'booster' && typeof computeInterstageForBooster === 'fu
   const inter = computeInterstageForBooster(record, stageAbove);
   if (inter && Number.isFinite(inter.height)) interstageHeight_m = inter.height;
 }
+const _totalH = (record.stageRole === 'rocket' && Number.isFinite(record.noseHeightM))
+    ? (record.height || 0) + record.noseHeightM
+    : record.height;
 return {
-  height: record.height,
+  height: _totalH,
+  noseHeightM: record.noseHeightM,
   interstageHeight_m: interstageHeight_m,
   width: record.width,
     rcsTopY: record.params ? record.params.rcsTopY : undefined,
@@ -341,7 +345,7 @@ document.getElementById('btnNew').addEventListener('click', () => {
   const fam = addFamily({ name: trimmed });
   creatingInFamilyId = fam.id;
   renderFleetList();
-  showRolePicker(['booster']);
+  showRolePicker(['booster', 'rocket']);
 });
 document.getElementById('rolePickerCancel').addEventListener('click', () => rolePicker.classList.remove('show'));
 rolePicker.addEventListener('click', (e) => { if (e.target === rolePicker) rolePicker.classList.remove('show'); });
@@ -770,20 +774,20 @@ function applyRoleVisibility(role) {
     engineParamsFieldset: ['rocket', 'booster', 'stage'],
     recoveryParamsFieldset: ['rocket', 'booster', 'stage'],
     rcsParamsFieldset: ['rocket', 'booster', 'stage'],
-    stageFuelFieldset: ['booster', 'stage'],
-    stageMetalFieldset: ['booster', 'interstage', 'stage', 'nose'],
+    stageFuelFieldset: ['booster', 'stage', 'rocket'],
+    stageMetalFieldset: ['booster', 'interstage', 'stage', 'nose', 'rocket'],
     stagePayloadFieldset: [],
     payloadSpaceFieldset: ['payloadSpace'],
     fairingRecoveryFieldset: ['payloadSpace'],
     noseShapeFieldset: ['rocket', 'nose'],
-    gridFinFieldset: ['booster', 'stage'],
+    gridFinFieldset: ['booster', 'stage', 'rocket'],
     aeroFieldset: ['rocket', 'booster', 'interstage', 'stage', 'nose', 'payloadSpace'],
-    shellFactorFieldset: ['booster', 'interstage', 'stage', 'payloadSpace'],
+    shellFactorFieldset: ['booster', 'interstage', 'stage', 'payloadSpace', 'rocket'],
     extraWeightFieldset: ['booster', 'stage'],
     capsBox: ['rocket', 'booster'],
     stageCapsBox: ['stage'],
-    massDryField: ['rocket'],
-    massFuelField: ['rocket'],
+    massDryField: [],
+    massFuelField: [],
     // Interstage excluded — its colour comes from the dedicated
 // f-interstageColor picker inside interstageFieldset, which writes
 // through to bodyDesign.solidColor on save. Showing both would be

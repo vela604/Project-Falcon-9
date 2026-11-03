@@ -66,6 +66,14 @@ function fleetRowSpecsHTML(r) {
       <span>W ${r.width} m</span>
       <span class="accent">${shapeType ? shapeType.displayName : '—'}</span>`;
   }
+  if (r.stageRole === 'rocket') {
+    const caps = rocketCapabilities(r);
+    const _totalH = (r.height || 0) + (Number.isFinite(r.noseHeightM) ? r.noseHeightM : 0);
+    return '<span>' + _totalH.toFixed(1) + ' m</span>' +
+      '<span class="accent">' + fmtForce(caps.totalMaxThrust) + '</span>' +
+      '<span>TWR ' + caps.twrMax.toFixed(2) + '</span>' +
+      '<span>Δv ' + caps.deltaV.toFixed(0) + ' m/s</span>';
+  }
   const caps = rocketCapabilities(r);
   const extraRow = (r.stageRole === 'booster') ?
     `<span>cap ${fmtMass(r.maxExtraWeightKg || 0)}</span>` :
@@ -100,6 +108,19 @@ function renderDetailSection(prefix, type, params, extraNote) {
   listEl.innerHTML = schema.length ?
     schema.map(p => `<div class="cap-row"><dt>${escapeHtml(p.label)}</dt><dd>${fmtParamValue(p, params ? params[p.key] : undefined)}</dd></div>`).join('') :
     '<div class="cap-row"><dt>—</dt><dd>No parameters declared.</dd></div>';
+}
+
+function renderBoosterPreview(data) {
+  const canvas = document.getElementById('vehiclePreviewCanvas');
+  if (!canvas) return;
+  if (!data.familyId) { safeRenderPreview(canvas, previewVehicleFor(data)); return; }
+  const fleet = loadFleet();
+  const interstage = fleet.find(r => r.familyId === data.familyId && r.stageRole === 'interstage');
+  if (!interstage) { safeRenderPreview(canvas, previewVehicleFor(data)); return; }
+  const tempId = '__booster_preview__';
+  const tempFleet = fleet.filter(r => r.id !== tempId).concat([{ ...data, id: tempId }]);
+  try { renderStackPreview(canvas, [tempId, interstage.id], tempFleet); }
+  catch (e) { console.error('Booster+interstage preview failed:', e); safeRenderPreview(canvas, previewVehicleFor(data)); }
 }
 
 function renderFleetList() {
@@ -303,7 +324,8 @@ function showFamilyDetail(familyId) {
   
   // "+ Add Member" enable/disable depends on role availability — stages and
   // noses are always addable; a booster only if this family doesn't have one.
-  document.getElementById('btnFamilyAddMember').disabled = false;
+  const _bottomDetail = getFamilyBottom(familyId);
+document.getElementById('btnFamilyAddMember').disabled = !!(_bottomDetail && _bottomDetail.stageRole === 'rocket');
   
   // Delete Family — only when empty (deleteFamily() enforces this too).
   const deletable = !fam.locked && !bottom && members.length === 0;
@@ -359,8 +381,13 @@ if (fam.locked) {
 // stack addition: interstage (band), stage (upper stage), or payloadSpace
 // (fairing). Legacy standalone 'rocket' and deprecated 'nose' roles are
 // not offered here — those are only created at family birth.
-const hasBooster = !!getFamilyBottom(familyId);
-const allowed = hasBooster ? ['interstage', 'stage', 'payloadSpace'] : ['booster'];
+const _bottom = getFamilyBottom(familyId);
+if (_bottom && _bottom.stageRole === 'rocket') {
+  showFleetToast('Single-vehicle family', 'A legacy rocket cannot have members above it.');
+  return;
+}
+const hasBooster = !!_bottom;
+const allowed = hasBooster ? ['interstage', 'stage', 'payloadSpace'] : ['booster', 'rocket'];
 creatingInFamilyId = familyId;
   document.querySelectorAll('#rolePicker .role-option').forEach(btn => {
     btn.style.display = allowed.includes(btn.dataset.role) ? '' : 'none';
@@ -872,9 +899,7 @@ function renderStackValidationInto(targetId, v) {
 function presetSlotRoles(sequence) {
   const PRESETS = {
     'standard': ['booster', 'interstage', 'stage', 'payloadSpace'],
-    'legacy': ['booster', 'stage', 'payloadSpace'],
-    'heavy': ['booster', 'interstage', 'stage', 'interstage', 'stage', 'payloadSpace'],
-    'sso': ['booster', 'payloadSpace'],
+    'legacy': ['rocket'],
   };
   return PRESETS[sequence] || null;
 }
@@ -885,14 +910,13 @@ function openStackEditorNew() {
   if (name === null) return;
   const seqPrompt = prompt(
     'Sequence preset:\n' +
-    '1 = Booster + Stage + Payload\n' +
-    '2 = Booster + Stage + Stage + Payload\n' +
-    '3 = Booster + Payload\n' +
-    '4 = Custom',
+    '1 = Standard (booster > interstage > stage > payload space)\n' +
+    '2 = Legacy Rocket (single member)\n' +
+    '3 = Custom',
     '1'
   );
   if (seqPrompt === null) return;
-  const seqMap = { '1': 'standard', '2': 'heavy', '3': 'sso', '4': 'custom' };
+  const seqMap = { '1': 'standard', '2': 'legacy', '3': 'custom' };
   const sequence = seqMap[seqPrompt.trim()] || 'custom';
   
   editingStackId = null;
@@ -977,9 +1001,7 @@ function renderStackSequenceHint() {
   if (!el) return;
   const hints = {
     'standard': 'Preset: Booster → Interstage → Stage → Payload Space',
-    'legacy': 'Preset (legacy): Booster → Stage → Payload Space',
-    'heavy': 'Preset: Booster → Interstage → Stage → Interstage → Stage → Payload Space',
-    'sso': 'Preset: Booster → Payload Space',
+    'legacy': 'Preset: Legacy Rocket (single member, no additions)',
   };
   const text = hints[workingStackSequence];
   if (!text) { el.style.display = 'none'; return; }
@@ -1179,6 +1201,16 @@ function refreshAddMemberDropdown() {
   const fleet = loadFleet();
   const n = workingStackMembers.length;
   const topRec = n > 0 ? fleet.find(r => r.id === workingStackMembers[n - 1]) : null;
+  const hasRocket = workingStackMembers.some(id => {
+    const r = fleet.find(x => x.id === id);
+    return r && r.stageRole === 'rocket';
+  });
+  if (hasRocket) {
+    sel.innerHTML = '<option value="">— rocket must be the only member —</option>';
+    sel.disabled = true;
+    if (addBtn) addBtn.disabled = true;
+    return;
+  }
   // 'nose' was missing from this list originally — the role picker hides
   // the nose role from top-level creation (nose records only exist as
   // additions to a family), but the fleet can still contain nose records,
@@ -1187,8 +1219,16 @@ function refreshAddMemberDropdown() {
   // member, nothing else can go above it.
   const topIsTopOnly = !!(topRec &&
     (topRec.stageRole === 'payloadSpace' || topRec.stageRole === 'nose'));
-  const allowedRoles = n === 0 ? ['booster'] :
-    (topIsTopOnly ? [] : ['booster', 'stage', 'payloadSpace', 'nose']);
+  let allowedRoles;
+  if (n === 0) {
+    allowedRoles = ['booster', 'rocket'];
+  } else if (topIsTopOnly) {
+    allowedRoles = [];
+  } else if (topRec && topRec.stageRole === 'booster') {
+    allowedRoles = ['interstage'];
+  } else {
+    allowedRoles = ['booster', 'stage', 'payloadSpace', 'nose'];
+  }
   
   const options = fleet.filter(r => {
     if (!allowedRoles.includes(r.stageRole)) return false;
@@ -1344,7 +1384,8 @@ function showVehicleDetail(id) {
   document.getElementById('detailFlying').style.display = (r.id === getSelectedId()) ? '' : 'none';
   
   // Geometry rows
-  set('d-height', r.height + ' m');
+  const _dTotalH = (role === 'rocket' && Number.isFinite(r.noseHeightM)) ? (r.height || 0) + r.noseHeightM : r.height;
+  set('d-height', _dTotalH + ' m');
   set('d-width', r.width + ' m');
   show('d-row-dryMass', role === 'rocket' || role === 'booster' || isNose);
   show('d-row-fuelMassMax', role === 'rocket' || role === 'booster');
@@ -1375,8 +1416,11 @@ function showVehicleDetail(id) {
   show('detailCapsBox', role === 'rocket' || role === 'booster');
   show('d-stageFieldset', isStage);
   if (role === 'rocket') {
-    set('d-dryMass', fmtMass(r.dryMass));
-    set('d-fuelMassMax', fmtMass(r.fuelMassMax));
+    const d_r = boosterDerivedMasses(r, null);
+    if (d_r) {
+      set('d-dryMass', fmtMass(d_r.dryMass));
+      set('d-fuelMassMax', fmtMass(d_r.fuelMass));
+    }
     const caps = rocketCapabilities(r);
     set('d-c-thrust', fmtForce(caps.totalMaxThrust));
     set('d-c-wet', fmtMass(caps.wetMass));
@@ -1663,14 +1707,18 @@ function fillForm(r) {
   setVal('f-noseCurveness', r.noseCurveness || 0);
 }
 if (role === 'rocket') {
-  // Legacy rocket has an integrated nose — populate its curveness so
-  // the preview and any re-save round-trip the value.
-  const curvEl = document.getElementById('f-noseCurveness');
-  if (curvEl) curvEl.value = Number.isFinite(r.noseCurveness) ? r.noseCurveness : 0;
-  // Metal type also lives on a rocket record; the fieldset is shared
-  // with nose. Populate it if present.
-  const metalEl = document.getElementById('f-bodyMetalType');
-  if (metalEl && r.bodyMetalTypeId) metalEl.value = r.bodyMetalTypeId;
+  setVal('f-noseHeightM', Number.isFinite(r.noseHeightM) ? r.noseHeightM : 6.5);
+  setVal('f-noseCurveness', Number.isFinite(r.noseCurveness) ? r.noseCurveness : 0.5);
+  setVal('f-bodyMetalType', r.bodyMetalTypeId || 'al-li-alloy');
+  setVal('f-legsMetalType', r.legsMetalTypeId || r.bodyMetalTypeId || 'carbon-composite');
+  setVal('f-bodyShellFactor', Number.isFinite(r.bodyShellFactor) ? r.bodyShellFactor : (DEFAULT_SHELL_FACTOR_BY_ROLE.rocket || 0.015));
+  if (r.fuel) {
+    setVal('f-fuelType', r.fuel.typeId);
+    setVal('f-fuelTankHeight', r.fuel.tankHeight);
+    setVal('f-fuelTankWidth', r.fuel.tankWidth);
+    setVal('f-baffleCount', Number.isFinite(r.fuel.baffleCount) ? r.fuel.baffleCount : 0);
+    setVal('f-baffleInnerRadiusFrac', Number.isFinite(r.fuel.baffleInnerRadiusFrac) ? r.fuel.baffleInnerRadiusFrac : 0.8);
+  }
 }
 if (role === 'interstage') {
   setVal('f-bodyMetalType', r.bodyMetalTypeId || 'carbon-composite');
@@ -1704,7 +1752,7 @@ if (role === 'payloadSpace') {
   // Grid fins (booster / stage). Populate before body design so the
 // checkbox state is settled before applyRoleVisibility's tail call
 // reads it.
-if (role === 'booster' || role === 'stage') {
+if (role === 'booster' || role === 'stage' || role === 'rocket') {
   const hasGF = !!r.hasGridFins;
   const cbEl = document.getElementById('f-hasGridFins');
   if (cbEl) cbEl.checked = hasGF;
@@ -1968,8 +2016,8 @@ if (role === 'stage' || role === 'booster') {
       params: currentParamValues('payload'),
     } : null;
   }
-  if (role === 'booster' || role === 'stage') {
-  data.maxExtraWeightKg = parseFloat(document.getElementById('f-maxExtraWeight').value) || 0;
+  if (role === 'booster' || role === 'stage' || role === 'rocket') {
+  if (role !== 'rocket') data.maxExtraWeightKg = parseFloat(document.getElementById('f-maxExtraWeight').value) || 0;
   // Grid fins — independent hardware. Params bag is separate from the
   // engine/RCS `params` (different scope, different schema).
   const gfCb = document.getElementById('f-hasGridFins');
@@ -1998,12 +2046,24 @@ if (role === 'stage' || role === 'booster') {
 const hasRecEl = document.getElementById('f-hasRecovery');
 data.hasRecovery = hasRecEl ? hasRecEl.checked : true;
 
-// Legacy rocket carries an integrated nose — capture its curveness
-// alongside the booster fields it already wrote above. Nose is a legacy
-// role with its own early-return, so this is rocket-only.
+// Legacy rocket — booster-style inputs + integrated nose.
 if (role === 'rocket') {
-  const curvEl = document.getElementById('f-noseCurveness');
-  if (curvEl) data.noseCurveness = parseFloat(curvEl.value) || 0;
+  data.noseHeightM = Math.max(0, parseFloat(document.getElementById('f-noseHeightM').value) || 0);
+  data.noseCurveness = parseFloat(document.getElementById('f-noseCurveness').value) || 0.5;
+  data.bodyMetalTypeId = document.getElementById('f-bodyMetalType').value || 'al-li-alloy';
+  data.legsMetalTypeId = document.getElementById('f-legsMetalType').value || 'carbon-composite';
+  data.bodyShellFactor = clampShellFactor(document.getElementById('f-bodyShellFactor'));
+  const rawBaf = parseFloat(document.getElementById('f-baffleCount').value);
+  const rawFrac = parseFloat(document.getElementById('f-baffleInnerRadiusFrac').value);
+  data.fuel = {
+    typeId: document.getElementById('f-fuelType').value,
+    tankHeight: parseFloat(document.getElementById('f-fuelTankHeight').value),
+    tankWidth: parseFloat(document.getElementById('f-fuelTankWidth').value),
+    baffleCount: Number.isFinite(rawBaf) ? Math.max(0, Math.round(rawBaf)) : 0,
+    baffleInnerRadiusFrac: Number.isFinite(rawFrac) ? Math.max(0, Math.min(1, rawFrac)) : 0.8,
+  };
+  delete data.dryMass;
+  delete data.fuelMassMax;
 }
 
 bridgePerfParams(data);
@@ -2066,6 +2126,26 @@ function updateCapsPreview() {
     safeRenderPreview(document.getElementById('vehiclePreviewCanvas'), previewVehicleFor(data));
     return;
   }
+  if (data.stageRole === 'rocket') {
+    const d = boosterDerivedMasses(data);
+    const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+    if (!d || d.infeasible) {
+      ['c-thrust', 'c-wet', 'c-twr', 'c-dv', 'c-burn'].forEach(k => set(k, '—'));
+      safeRenderPreview(document.getElementById('vehiclePreviewCanvas'), previewVehicleFor(data));
+      return;
+    }
+    const mdotMax = d.effectiveVe > 0 ? d.totalEngineThrust / d.effectiveVe : 0;
+    const twrMax = d.wetMass > 0 ? d.totalEngineThrust / (d.wetMass * 9.8) : 0;
+    const deltaV = (d.wetMass > 0 && d.dryMass > 0) ? d.effectiveVe * Math.log(d.wetMass / d.dryMass) : 0;
+    const burnTimeS = mdotMax > 0 ? d.fuelMass / mdotMax : 0;
+    set('c-thrust', fmtForce(d.totalEngineThrust));
+    set('c-wet', fmtMass(d.wetMass));
+    set('c-twr', twrMax.toFixed(2));
+    set('c-dv', deltaV.toFixed(0) + ' m/s');
+    set('c-burn', burnTimeS.toFixed(0) + ' s');
+    safeRenderPreview(document.getElementById('vehiclePreviewCanvas'), previewVehicleFor(data));
+    return;
+  }
   if (data.stageRole === 'booster') {
     const d = boosterDerivedMasses(data);
     const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
@@ -2080,7 +2160,11 @@ function updateCapsPreview() {
     set('c-twr', twrMax.toFixed(2));
     set('c-dv', deltaV.toFixed(0) + ' m/s');
     set('c-burn', burnTimeS.toFixed(0) + ' s');
-    safeRenderPreview(document.getElementById('vehiclePreviewCanvas'), previewVehicleFor(data));
+    if (typeof renderBoosterPreview === 'function') {
+      renderBoosterPreview(data);
+    } else {
+      safeRenderPreview(document.getElementById('vehiclePreviewCanvas'), previewVehicleFor(data));
+    }
     return;
   }
   
@@ -2353,6 +2437,18 @@ function deleteRocketFlow(id) {
 // Bootstrap
 // ---------------------------------------------------------------------------
 window.addEventListener('DOMContentLoaded', () => {
+  (function injectRocketNoseHeight() {
+    const fst = document.getElementById('noseShapeFieldset');
+    if (!fst || document.getElementById('f-noseHeightM')) return;
+    const wrap = document.createElement('div');
+    wrap.className = 'field';
+    wrap.id = 'noseHeightField';
+    wrap.innerHTML = '<label for="f-noseHeightM">Nose height</label>' +
+      '<div class="input-unit">' +
+      '<input type="number" id="f-noseHeightM" min="0" step="0.1" value="6.5">' +
+      '<span>m</span></div>';
+    fst.insertBefore(wrap, fst.firstChild);
+  })();
   populateTypeSelects();
   // View tabs (Phase 3 Step G2a).
   document.querySelectorAll('#viewTabs .view-tab').forEach(btn => {

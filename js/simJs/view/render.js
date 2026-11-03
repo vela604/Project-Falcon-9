@@ -2851,7 +2851,8 @@ if (isSingleNozzle) {
   stackMembers.forEach(m => {
     const mW = (m.width || 1) / mpp;
     if (mW > stackMaxW_px) stackMaxW_px = mW;
-    const mH = (m.height || 0) / mpp;
+    const _mNoseH = (m.stageRole === 'rocket' && Number.isFinite(m.noseHeightM)) ? m.noseHeightM / mpp : 0;
+    const mH = (m.height || 0) / mpp + _mNoseH;
     const ov = (m.stageRole === 'payloadSpace' && Number.isFinite(m.stageOverlapM)) ? m.stageOverlapM / mpp : 0;
     stackTotalH_px += mH - ov;
   });
@@ -2951,7 +2952,8 @@ if (body.payloadBody) {
       // any future caller still reads it.
       let stageAboveBellHeight = 0;
       
-      const mH = (m.height || 0) / mpp;
+      const _mNosePx = (m.stageRole === 'rocket' && Number.isFinite(m.noseHeightM)) ? m.noseHeightM / mpp : 0;
+      const mH = (m.height || 0) / mpp + _mNosePx;
       const mW = (m.width || 1) / mpp;
       const recType = (m.hasRecovery === false) ? null :
         ((m.recoveryTypeId && typeof getComponentType === 'function') ?
@@ -3003,6 +3005,7 @@ const puffForThisMember = (isTopMember && puffProgress >= 0) ?
   puffProgress : -1;
 drawRocketArt(ctx, mW, mH, mpp, {
       legsProgress: (isActive && idx === 0) ? legs.progress : 0,
+      noseHeightM: m.noseHeightM,
       stackMaxW_px: stackMaxW_px,
       stackTotalH_px: stackTotalH_px,
       memberOffsetY_px: placeY,

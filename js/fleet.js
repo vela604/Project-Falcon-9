@@ -207,6 +207,7 @@ const DEFAULT_SHELL_FACTOR_BY_ROLE = {
     // formula so the new standalone interstage member produces the same
     // number (~530 kg for the F9 Block 3-class 2.57 m band).
     interstage: 0.0026,
+  rocket: 0.01797,  // legacy rocket: same shell factor as booster hull
   };
 
 const FLEET_KEY = 'rocketSim.fleet.v1';
@@ -696,8 +697,21 @@ function seedFalcon9B5Stack() {
 }
 
 function blankRocketData() {
-  const base = defaultVehicleData();
-  return { ...base, id: null, name: 'New Rocket', locked: false, stageRole: 'rocket' };
+  const seed = seedFalcon9B5Booster();
+  const noseH = 6.5;
+  return {
+    ...seed,
+    id: null,
+    name: 'New Legacy Rocket',
+    locked: false,
+    stageRole: 'rocket',
+    familyId: null,
+    height: seed.height,
+    noseHeightM: noseH,
+    noseCurveness: 0.5,
+    fuel: { ...seed.fuel },
+    params: { ...seed.params, rcsTopY: Math.min(seed.params.rcsTopY, seed.height) },
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -887,7 +901,26 @@ if (stageRole === 'booster' || stageRole === 'stage') {
   delete out.fuelMassMax;
 }
   
-  // PS-B2 FIX: this whole block used to live NESTED inside
+  // Legacy rocket — booster-style fuel tank + integrated nose.
+if (stageRole === 'rocket') {
+  if (Number.isFinite(r.noseHeightM)) out.noseHeightM = r.noseHeightM;
+  out.noseCurveness = Number.isFinite(r.noseCurveness) ? r.noseCurveness : 0.5;
+  out.bodyMetalTypeId = r.bodyMetalTypeId || 'al-li-alloy';
+  out.legsMetalTypeId = r.legsMetalTypeId || r.bodyMetalTypeId || 'carbon-composite';
+  if (r.fuel) {
+    out.fuel = {
+      typeId: r.fuel.typeId || 'rp1-lox-chilled',
+      tankHeight: Number.isFinite(r.fuel.tankHeight) ? r.fuel.tankHeight : (out.height || 39.7),
+      tankWidth: Number.isFinite(r.fuel.tankWidth) ? r.fuel.tankWidth : (out.width || 3.7),
+      baffleCount: Number.isFinite(r.fuel.baffleCount) ? Math.max(0, Math.round(r.fuel.baffleCount)) : 4,
+      baffleInnerRadiusFrac: Number.isFinite(r.fuel.baffleInnerRadiusFrac) ? Math.max(0, Math.min(1, r.fuel.baffleInnerRadiusFrac)) : 0.8,
+    };
+    delete out.dryMass;
+    delete out.fuelMassMax;
+  }
+}
+
+// PS-B2 FIX: this whole block used to live NESTED inside
   // `if (stageRole === 'stage')` above, which meant it could never
   // actually run for a real nose record (a record can't be both 'stage'
   // and 'nose' at once) — bodyMetalTypeId/noseCurveness silently vanished
@@ -1025,7 +1058,7 @@ if (stageRole === 'booster' || stageRole === 'stage') {
 
 // Grid fins — independent hardware, applies to booster + stage only.
 // Roles that can't carry fins (nose, payloadSpace) get null/false.
-if (stageRole === 'booster' || stageRole === 'stage') {
+if (stageRole === 'booster' || stageRole === 'stage' || stageRole === 'rocket') {
   out.hasGridFins = !!r.hasGridFins;
   out.gridFinTypeId = out.hasGridFins ? (r.gridFinTypeId || 'gridfins-serrated-f9') : null;
   out.gridFinMetalTypeId = out.hasGridFins ? (r.gridFinMetalTypeId || 'titanium-alloy') : null;
@@ -1055,7 +1088,19 @@ if (stageRole === 'booster' || stageRole === 'stage') {
 }
 
 
-  backfillThrusterRecords(out, defaults);
+  // Legacy rocket caps — RCS offsets and grid fin hinge cap at hull height.
+if (stageRole === 'rocket') {
+  const hullH = Number.isFinite(out.height) ? out.height : 39.7;
+  if (out.params) {
+    if (Number.isFinite(out.params.rcsTopY))    out.params.rcsTopY    = Math.min(out.params.rcsTopY, hullH);
+    if (Number.isFinite(out.params.rcsBottomY)) out.params.rcsBottomY = Math.min(out.params.rcsBottomY, hullH);
+  }
+  if (out.gridFinParams && Number.isFinite(out.gridFinParams.finPositionY)) {
+    out.gridFinParams.finPositionY = Math.min(out.gridFinParams.finPositionY, hullH);
+  }
+}
+
+backfillThrusterRecords(out, defaults);
   bridgePerfParams(out);
   return out;
 }
@@ -1197,6 +1242,7 @@ function loadFleet() {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed) && parsed.length) {
         let migrated = parsed.map(migrateRocketRecord);
+        migrated = migrated.filter(r => !(r.stageRole === 'rocket' && !Number.isFinite(r.noseHeightM)));
         migrated = runPayloadSpaceSplitOnce(migrated);
         const reconciled = reconcileDefaultRecords(migrated);
         if (reconciled ||
@@ -1285,7 +1331,7 @@ function loadStacks() {
         });
         // [migration-29] Strip f9- prefix from sequence values (idempotent).
         parsed.forEach(s => {
-          const m = { 'f9-standard': 'standard', 'f9-legacy': 'legacy', 'f9-heavy': 'heavy' };
+          const m = { 'f9-standard': 'standard', 'f9-legacy': 'legacy', 'f9-heavy': 'custom' };
           if (s && m[s.sequence]) { s.sequence = m[s.sequence]; changed = true; }
         });
         if (reconcileDefaultStacks(parsed)) changed = true;
@@ -1347,7 +1393,7 @@ function computeStackDerived(memberIds) {
 
 function addStack(data) {
   const stacks = loadStacks();
-  const VALID_SEQ = ['standard', 'legacy', 'heavy', 'sso', 'custom'];
+  const VALID_SEQ = ['standard', 'legacy', 'custom'];
   const memberIds = Array.isArray(data && data.members) ? [...data.members] : [];
   const rec = {
     id: genStackId(),
@@ -1371,7 +1417,7 @@ function updateStack(id, data) {
   const merged = { ...stacks[idx], ...data, id };
   if (merged.payloadId === undefined) merged.payloadId = null;
   if (!Array.isArray(merged.members)) merged.members = [];
-  const VALID_SEQ = ['standard', 'legacy', 'heavy', 'sso', 'custom'];
+  const VALID_SEQ = ['standard', 'legacy', 'custom'];
   if (!VALID_SEQ.includes(merged.sequence)) merged.sequence = 'custom';
   // Recompute derived (members may have changed, or an underlying member
   // record was edited). Always overwrite; never trust a stale cached copy.
@@ -1446,7 +1492,7 @@ function getActiveStackMembers() {
 }
 
 // Stack type — the stack's own `sequence` field IS its type:
-// 'standard' | 'legacy' | 'heavy' | 'sso' | 'custom'.
+// 'standard' | 'legacy' | 'custom'.
 // Used by the guidance/preset compatibility layer: a guidance declares
 // which stack types it can fly, a preset is bound to one stack type.
 function stackTypeOf(stk) {
@@ -1484,6 +1530,9 @@ function stackCombinedAggregates(stk) {
       const frozen = (stk && stk.derived && stk.derived.interstage)
         ? stk.derived.interstage[m.id] : null;
       const d = boosterDerivedMasses(m, above, frozen);
+      if (d) { dry = d.dryMass; fuel = d.fuelMass; }
+    } else if (m.stageRole === 'rocket') {
+      const d = boosterDerivedMasses(m, null);
       if (d) { dry = d.dryMass; fuel = d.fuelMass; }
     } else if (m.stageRole === 'stage') {
       const d = stageDerivedMasses(m);
@@ -1619,6 +1668,19 @@ function rocketCapabilities(v) {
     };
   }
   
+  // Legacy rocket — derived masses (booster-like + nose)
+  if (v.stageRole === 'rocket') {
+    const d = boosterDerivedMasses(v, null);
+    const engineType = getComponentType(v.engineTypeId);
+    const engineCount = engineType ? engineType.frame.slots.length : 9;
+    if (!d || d.infeasible) return { ...ZERO, engineCount };
+    const mdotMax = d.effectiveVe > 0 ? d.totalEngineThrust / d.effectiveVe : 0;
+    const twrMax = d.wetMass > 0 ? d.totalEngineThrust / (d.wetMass * 9.8) : 0;
+    const deltaV = (d.wetMass > 0 && d.dryMass > 0) ? d.effectiveVe * Math.log(d.wetMass / d.dryMass) : 0;
+    const burnTimeS = mdotMax > 0 ? d.fuelMass / mdotMax : 0;
+    return { engineCount, totalMaxThrust: d.totalEngineThrust, wetMass: d.wetMass, mdotMax, twrMax, deltaV, burnTimeS };
+  }
+
   // Rocket path — requires engineFMax/engineVe on params.
   const engineType = (typeof getComponentType === 'function') ? getComponentType(v.engineTypeId) : null;
   const engineCount = engineType ? engineType.frame.slots.length : 9;
@@ -1941,7 +2003,8 @@ const mass = 2 * Math.PI * r_booster * shellThk * height * INTERSTAGE_DENSITY;
 }
 
 function boosterDerivedMasses(rec, aboveMember, frozenInterstage) {
-  if (!rec || rec.stageRole !== 'booster') return null;
+  if (!rec || (rec.stageRole !== 'booster' && rec.stageRole !== 'rocket')) return null;
+  const _isRocket = rec.stageRole === 'rocket';
   
   // Cache — every output of this function is static given (rec,
   // aboveMember, frozenInterstage). fuelMass, bodyMass, engineMass,
@@ -1956,7 +2019,7 @@ function boosterDerivedMasses(rec, aboveMember, frozenInterstage) {
   const aboveId = aboveMember ? aboveMember.id : '-';
   const fiKey = (frozenInterstage && Number.isFinite(frozenInterstage.height))
     ? frozenInterstage.height.toFixed(6) : '-';
-  const cacheKey = aboveId + '|' + fiKey;
+  const cacheKey = (_isRocket ? 'R|' : 'B|') + aboveId + '|' + fiKey;
   if (rec._bdmCache && rec._bdmCache.key === cacheKey) return rec._bdmCache.value;
   
   const warnings = [];
@@ -2047,7 +2110,7 @@ if (above === undefined) {
 const hasSeparateInterstage = !!(above && above.stageRole === 'interstage');
 
 let interstageH_m = 0, interstageMass = 0;
-if (!hasSeparateInterstage) {
+if (!_isRocket && !hasSeparateInterstage) {
   if (frozenInterstage && Number.isFinite(frozenInterstage.height) && Number.isFinite(frozenInterstage.mass)) {
     interstageH_m = frozenInterstage.height;
     interstageMass = frozenInterstage.mass;
@@ -2065,7 +2128,18 @@ if (!hasSeparateInterstage) {
     computeGridFinMass(rec) : null;
   const gridFinMass = gridFinData ? gridFinData.totalMass : 0;
   
-  const dryMass = bodyMass + totalEngineMass + legMass + interstageMass + gridFinMass;
+  // Nose mass for legacy rocket
+  let noseMass = 0, noseH_m = 0;
+  if (_isRocket) {
+    noseH_m = Number.isFinite(rec.noseHeightM) ? rec.noseHeightM : 0;
+    const W_r = rec.width;
+    if (noseH_m > 0 && W_r > 0) {
+      const noseVol = (1/3) * Math.PI * Math.pow(W_r/2, 2) * noseH_m;
+      noseMass = noseVol * shellF * bodyDensity;
+    }
+  }
+
+  const dryMass = bodyMass + totalEngineMass + legMass + interstageMass + gridFinMass + noseMass;
   const wetMass = dryMass + fuelMass;
   
   const result = {
@@ -2075,6 +2149,8 @@ if (!hasSeparateInterstage) {
   legMass,
   interstageMass,
   interstageHeight: interstageH_m,
+  noseMass,
+  noseHeight: noseH_m,
   gridFinMass,
   dryMass,
   wetMass,
@@ -2149,6 +2225,11 @@ function compatibleBoostersForStage(stage, fleet) {
 // ---------------------------------------------------------------------------
 function stackMemberOwnMass(member, aboveMember) {
   if (!member) return NaN;
+  if (member.stageRole === 'rocket') {
+    const d = boosterDerivedMasses(member, null);
+    if (!d) return NaN;
+    return d.wetMass;
+  }
   if (member.stageRole === 'stage') {
     const d = stageDerivedMasses(member);
     if (!d || d.infeasible) return NaN;
@@ -2221,7 +2302,7 @@ function validateStack(members, fleet, stack) {
     }
   }
   
-  if (resolved[0] && resolved[0].stageRole !== 'booster') {
+  if (resolved[0] && resolved[0].stageRole !== 'booster' && resolved[0].stageRole !== 'rocket') {
     errors.push(`Bottom member must be a booster (got "${resolved[0].stageRole || 'unknown'}").`);
   }
   
@@ -2233,11 +2314,7 @@ function validateStack(members, fleet, stack) {
   'standard': ['booster', 'interstage', 'stage', 'payloadSpace'],
   // Legacy 3-member chain (pre-interstage-member architecture). Kept
   // alive for the frozen F9 Block 3 stack.
-  'legacy': ['booster', 'stage', 'payloadSpace'],
-  // Heavy variant: two stages, each with its own interstage.
-  'heavy': ['booster', 'interstage', 'stage', 'interstage', 'stage', 'payloadSpace'],
-  // Sounding rocket — payload fairing directly above booster.
-  'sso': ['booster', 'payloadSpace'],
+  'legacy': ['rocket'],
 };
   const seq = stack && stack.sequence;
   if (PRESET_ROLES[seq]) {
@@ -2259,8 +2336,14 @@ function validateStack(members, fleet, stack) {
   resolved.forEach((r, i) => {
     if (!r) return;
     if (r.stageRole === 'rocket') {
-      errors.push(`Member ${i + 1}: 'rocket' role can't be part of a stack.`);
+      if (resolved.length > 1) {
+        errors.push(`Member ${i + 1}: a legacy rocket must be the only member of its stack.`);
+      }
       return;
+    }
+    // A booster must be followed directly by an interstage.
+    if (i > 0 && resolved[i - 1] && resolved[i - 1].stageRole === 'booster' && r.stageRole !== 'interstage') {
+      errors.push(`Member ${i + 1}: a booster can only be followed by an interstage (got "${r.stageRole}").`);
     }
     if (r.stageRole === 'payloadSpace') {
       // PS-D1: payload space is allowed ONLY as the top-most member.
@@ -2449,7 +2532,7 @@ function computePayloadSpaceDryMass(rec) {
 // (Single-nozzle above is the common case — stage sits on booster.)
 // ---------------------------------------------------------------------------
 function _defaultFinPositionY(rec) {
-  if (!rec || (rec.stageRole !== 'booster' && rec.stageRole !== 'stage')) return 0;
+  if (!rec || (rec.stageRole !== 'booster' && rec.stageRole !== 'stage' && rec.stageRole !== 'rocket')) return 0;
   const boosterH = Number.isFinite(rec.height) ? rec.height : 0;
   const boosterW = Number.isFinite(rec.width) ? rec.width : 0;
   const gp = rec.gridFinParams || {};
@@ -2617,7 +2700,7 @@ function memberStackContribution(m, below, above) {
   if (!m) return 0;
   const h = Number.isFinite(m.height) ? m.height : 0;
   const role = m.stageRole || 'rocket';
-  if (role === 'rocket') return h + engineBellHeightForRecord(m);
+  if (role === 'rocket') return h + (Number.isFinite(m.noseHeightM) ? m.noseHeightM : 0) + engineBellHeightForRecord(m);
   if (role === 'booster') return h + engineBellHeightForRecord(m);
   if (role === 'interstage') return h;
   if (role === 'stage') {

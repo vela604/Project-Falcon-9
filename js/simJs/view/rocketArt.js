@@ -2042,6 +2042,10 @@ if (showLegs) {
 // nose cone. Same for boosters, whose top is capped by the interstage.
 // Only rocket / nose / payloadSpace roles get their own nose curve.
 const isOpenTop = isBooster || opts.stageRole === 'stage';
+const _noseHeightPx = (Number.isFinite(opts.noseHeightM) && mpp > 0)
+  ? Math.min(H * 0.9, opts.noseHeightM / mpp)
+  : (H * 0.15);
+const _shoulderY = isOpenTop ? -H : (-H + _noseHeightPx);
 const bodyPath = () => {
       ctx.beginPath();
       ctx.moveTo(-W / 2, 0);
@@ -2051,7 +2055,7 @@ const bodyPath = () => {
         ctx.lineTo(W / 2, 0);
       } else {
         const c = Math.max(0, Math.min(1, noseCurveness));
-        const shoulderY = -H * 0.85;
+        const shoulderY = _shoulderY;
         const ctrlA0x = -W * 0.25,
           ctrlA0y = shoulderY * 0.5 + (-H) * 0.5;
         const ctrlA1x = -W * 0.5,
@@ -2108,8 +2112,7 @@ const bodyPath = () => {
       ctx.save();
       bodyPath();
       ctx.clip();
-      _cylDetail(ctx, W, isOpenTop ? -H : -H * 0.85, 0,
-        { soot: isBooster || opts.stageRole === 'rocket' });
+      _cylDetail(ctx, W, _shoulderY, 0, { soot: isBooster || opts.stageRole === 'rocket' });
       ctx.restore();
     }
   }
@@ -2273,7 +2276,7 @@ const bodyPath = () => {
 // Real grid fins are now a proper hardware type drawn via drawGridFin /
 // drawGridFinEdgeOn further down, driven by opts.gridFinType / Params.)
   
-if (isBooster) {
+if (isBooster || opts.stageRole === 'rocket') {
   // ---- Heat shield / engine-bay skirt (black thermal blanket ring) ----
   // Real F9: ~1 m tall black skirt around the octaweb base with a rolled bottom
   // lip. Height is in METERS so it keeps its true size at every zoom.
@@ -2614,7 +2617,12 @@ if (opts.gridFinType && opts.gridFinParams) {
   const cellPx = (gp.cellWidth || 0.17) / mpp;
   const gapPx = (opts.gridFinType.frame && Number.isFinite(opts.gridFinType.frame.gapM)) ?
     opts.gridFinType.frame.gapM / mpp : 0;
-  const hingeY = -(gp.finPositionY || 0) / mpp;
+  let _finY = gp.finPositionY || 0;
+if (opts.stageRole === 'rocket' && Number.isFinite(opts.noseHeightM)) {
+  const _hullCap = Math.max(0, (H * mpp) - opts.noseHeightM);
+  _finY = Math.min(_finY, _hullCap);
+}
+const hingeY = -_finY / mpp;
   const hullHalfPx = W / 2;
   
   const st = opts.gridFinState || {
@@ -2841,8 +2849,12 @@ const rawBottomY = opts.rcsBottomY !== undefined ? opts.rcsBottomY :
 // Clamp both offsets to the member's own height so an over-large value
 // can't place pods outside the member's silhouette (e.g. stage pods
 // climbing into the payload space above).
-const rcsTopY = Math.max(0, Math.min(rawTopY, memberH_m));
-const rcsBottomY = Math.max(0, Math.min(rawBottomY, memberH_m));
+let _rcsCap = memberH_m;
+if (opts.stageRole === 'rocket' && Number.isFinite(opts.noseHeightM)) {
+  _rcsCap = Math.max(0, memberH_m - opts.noseHeightM);
+}
+const rcsTopY = Math.max(0, Math.min(rawTopY, _rcsCap));
+const rcsBottomY = Math.max(0, Math.min(rawBottomY, _rcsCap));
 
 // A5 — build the same body-wide pod id each pod has in
 // body.lastRcs.firing / body.lastRcs.pod (see rcs.js's buildPodEntries
@@ -3205,6 +3217,7 @@ if (interstageHeight_m === null && v.stageRole === 'booster' && typeof computeIn
   drawRocketArt(pctx, W, H, mpp, {
         hasMemberBelow: false,
         interstageHeight_m: interstageHeight_m,
+        noseHeightM: v.noseHeightM,
         rcsTopY: v.params ? v.params.rcsTopY : undefined,
   rcsBottomY: v.rcsBottomY,
   recoveryType,
@@ -3306,7 +3319,8 @@ function renderStackPreview(canvas, memberIds, fleet) {
   let cumPx = 0;
   members.forEach((m, idx) => {
     const role = m.stageRole;
-    const Hpx = (m.height || 0) / mpp;
+    const _noseHpx = (m.stageRole === 'rocket' && Number.isFinite(m.noseHeightM)) ? m.noseHeightM / mpp : 0;
+    const Hpx = (m.height || 0) / mpp + _noseHpx;
     const W = (m.width || 1) / mpp;
     
     // Base y-position of this member's hull, in px above ground.
@@ -3350,6 +3364,7 @@ function renderStackPreview(canvas, memberIds, fleet) {
     pctx.save();
     pctx.translate(baseX, baseY);
     drawRocketArt(pctx, W, Hpx, mpp, {
+      noseHeightM: m.noseHeightM,
       rcsTopY: m.params ? m.params.rcsTopY : undefined,
       rcsBottomY: m.params ? m.params.rcsBottomY : undefined,
       recoveryType,

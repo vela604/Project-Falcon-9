@@ -1,0 +1,1281 @@
+// ============================================================================
+// derivation.js — Self-contained mass-property + aero + kinematics
+// derivation module for the guidance worker.
+//
+// Runs inside guidance.worker.js (importScripts). Does NOT import
+// componentLibrary.js, fleet.js, config.js, massProps.js, physics.js —
+// none of those exist in this scope. Everything it derives comes from:
+//   1. The one-time stack data main thread sends via setStackData()
+//   2. The live snapshot the physics worker ships every tick
+//   3. Its own reimplementation of the physics formulas
+//
+// Nothing here talks to `Guidance` or `GuideRCS`. It exposes a plain
+// `Derivation` object that other modules call into.
+// ============================================================================
+
+const Derivation = (function () {
+  
+  // --- Stack data (boot handoff from main thread) ---
+  let _stackData = null;
+  
+  function setStackData(data) { _stackData = data; }
+  function getStackData() { return _stackData; }
+  function getMemberRecord(idx) {
+    return (_stackData && _stackData.members) ? _stackData.members[idx] : null;
+  }
+  function getTypeById(id) {
+    return (_stackData && _stackData.types && _stackData.types[id]) ? _stackData.types[id] : null;
+  }
+  function getEnv() {
+    return _stackData ? _stackData.env : null;
+  }
+  function getStackPayloadMass() {
+    return _stackData ? (_stackData.stackPayloadMass || 0) : 0;
+  }
+  
+  // ============================================================
+  // Constants — same values physics uses internally.
+  // ============================================================
+  const _SLOSH_LAMBDA1 = 1.841;
+  const _INTERSTAGE_DENSITY = 1600;
+  const _BODY_SHELL_FACTOR_NOSE = 0.0165;
+  
+  // Barrowman + Allen-Perkins (computeDragAero in physics.js).
+  const _AERO_CP_NOSE_FRAC = 0.90;
+  const _AERO_CP_BODY_FRAC = 0.50;
+  const _AERO_CP_NOSE_LINEAR_FRAC = 0.466;
+  const _AERO_CNALPHA_NOSE = 2.0;
+  const _AERO_CD_CROSSFLOW = 1.2;
+  
+
+  // ============================================================
+  // Atmosphere + hull drag coefficient.
+  // COPY of environment.js (US Standard Atmosphere 1976, hullDragCoefficient)
+  // — this worker cannot load environment.js, so it carries its own copy.
+  // KEEP THE TWO IN SYNC: if the table or the Cd curve changes there,
+  // change it here too, or guidance and physics will disagree on the drag.
+  // ============================================================
+  const _ATM = (function () {
+    const R = 287.05287, g0 = 9.80665, r0 = 6356766;
+    const Hb = [0, 11000, 20000, 32000, 47000, 51000, 71000];
+    const Tb = [288.15, 216.65, 216.65, 228.65, 270.65, 270.65, 214.65];
+    const Lb = [-0.0065, 0, 0.001, 0.0028, 0, -0.0028, -0.002];
+    const Pb = [101325];
+    for (let i = 1; i < Hb.length; i++) {
+      const dH = Hb[i] - Hb[i - 1];
+      Pb[i] = (Lb[i - 1] === 0) ?
+        Pb[i - 1] * Math.exp(-g0 * dH / (R * Tb[i - 1])) :
+        Pb[i - 1] * Math.pow((Tb[i - 1] + Lb[i - 1] * dH) / Tb[i - 1], -g0 / (R * Lb[i - 1]));
+    }
+    const UP = [
+      [86, 6.958e-6, 186.87], [90, 3.416e-6, 186.87], [100, 5.604e-7, 195.08],
+      [110, 9.708e-8, 240.0], [120, 2.222e-8, 360.0], [130, 8.152e-9, 469.27],
+      [140, 3.831e-9, 559.63], [150, 2.076e-9, 634.39], [160, 1.233e-9, 696.29],
+      [180, 5.194e-10, 790.07], [200, 2.541e-10, 854.56], [250, 6.073e-11, 941.33],
+      [300, 1.916e-11, 976.01], [350, 7.014e-12, 990.06], [400, 2.803e-12, 995.83],
+      [450, 1.184e-12, 998.22], [500, 5.215e-13, 999.24], [600, 1.137e-13, 999.85],
+      [700, 3.070e-14, 999.97], [800, 1.136e-14, 999.99], [900, 5.759e-15, 1000.0],
+      [1000, 3.561e-15, 1000.0],
+    ];
+    const upZ = UP.map(r => r[0] * 1000), upLnRho = UP.map(r => Math.log(r[1])), upT = UP.map(r => r[2]);
+    const out = { T: 288.15, P: 101325, rho: 1.225 };
+    function state(altM) {
+      const h = altM < 0 ? 0 : altM;
+      if (h < 86000) {
+        const H = r0 * h / (r0 + h);
+        let i = Hb.length - 1;
+        while (i > 0 && H < Hb[i]) i--;
+        const dH = H - Hb[i], T = Tb[i] + Lb[i] * dH;
+        const P = (Lb[i] === 0) ? Pb[i] * Math.exp(-g0 * dH / (R * Tb[i])) : Pb[i] * Math.pow(T / Tb[i], -g0 / (R * Lb[i]));
+        out.T = T; out.P = P; out.rho = P / (R * T);
+        return out;
+      }
+      const n = upZ.length;
+      let i = 0;
+      while (i < n - 2 && h > upZ[i + 1]) i++;
+      const t = (h - upZ[i]) / (upZ[i + 1] - upZ[i]);
+      const rho = Math.exp(upLnRho[i] + t * (upLnRho[i + 1] - upLnRho[i]));
+      const T = h >= upZ[n - 1] ? upT[n - 1] : upT[i] + t * (upT[i + 1] - upT[i]);
+      out.T = T; out.rho = rho; out.P = rho * R * T;
+      return out;
+    }
+    return { state };
+  })();
+
+  const _HULL_CD = (function () {
+    const xs = [0, 0.6, 0.8, 0.9, 1.0, 1.1, 1.2, 1.5, 2.0, 3.0, 4.0, 6.0, 10.0];
+    const ys = [0.60, 0.62, 0.75, 0.95, 1.35, 1.55, 1.50, 1.25, 1.00, 0.78, 0.68, 0.60, 0.55];
+    const n = xs.length, h = [], d = [], m = new Array(n);
+    for (let i = 0; i < n - 1; i++) { h[i] = xs[i + 1] - xs[i]; d[i] = (ys[i + 1] - ys[i]) / h[i]; }
+    m[0] = d[0]; m[n - 1] = d[n - 2];
+    for (let i = 1; i < n - 1; i++) {
+      if (d[i - 1] * d[i] <= 0) m[i] = 0;
+      else { const w1 = 2 * h[i] + h[i - 1], w2 = h[i] + 2 * h[i - 1]; m[i] = (w1 + w2) / (w1 / d[i - 1] + w2 / d[i]); }
+    }
+    function f(M) {
+      if (!(M > xs[0])) return ys[0];
+      if (M >= xs[n - 1]) return ys[n - 1];
+      let i = 0;
+      while (M > xs[i + 1]) i++;
+      const t = (M - xs[i]) / h[i], t2 = t * t, t3 = t2 * t;
+      return (2 * t3 - 3 * t2 + 1) * ys[i] + (t3 - 2 * t2 + t) * h[i] * m[i] + (-2 * t3 + 3 * t2) * ys[i + 1] + (t3 - t2) * h[i] * m[i + 1];
+    }
+    return { f };
+  })();
+
+  // Same as hullDragCoefficient() in environment.js.
+  function _hullCd(speedRel, altitude) {
+    const a = Math.sqrt(1.4 * 287.05287 * _ATM.state(altitude).T);
+    const cdContinuum = _envNum('DRAG_CD', 0.6) * _HULL_CD.f(a > 0 ? speedRel / a : 0);
+    const cdFM = _envNum('DRAG_CD_FREE_MOLECULAR', 2.2);
+    const alt0 = _envNum('DRAG_FM_ALT_START_M', 90000);
+    const alt1 = _envNum('DRAG_FM_ALT_FULL_M', 160000);
+    if (altitude <= alt0) return cdContinuum;
+    const x = Math.min(1, (altitude - alt0) / (alt1 - alt0));
+    const w = x * x * (3 - 2 * x);
+    return cdContinuum * (1 - w) + cdFM * w;
+  }
+
+  // ============================================================
+  // Small helpers
+  // ============================================================
+  function _envNum(key, fallback) {
+    const e = getEnv();
+    return (e && Number.isFinite(e[key])) ? e[key] : fallback;
+  }
+  function _cylI(m, r, h) { return 0.5 * m * r * r + (1 / 12) * m * h * h; }
+  function _coneI(m, r, h) { return (3 / 20) * m * r * r + (3 / 80) * m * h * h; }
+  function _rodI(m, L) { return (1 / 12) * m * L * L; }
+  
+  function typeParam(type, key) {
+    if (!type || !Array.isArray(type.parameterSchema)) return undefined;
+    const e = type.parameterSchema.find(p => p.key === key);
+    return e ? e.value : undefined;
+  }
+  
+  function _sloshMassFraction(hOverR) {
+    if (!Number.isFinite(hOverR) || hOverR <= 0) return 0.27;
+    const x = _SLOSH_LAMBDA1 * hOverR;
+    const f = (x < 1e-6) ? 1 : Math.tanh(x) / x;
+    return Number.isFinite(f) ? Math.min(1, Math.max(0, f)) : 0.27;
+  }
+  function _sloshCentroidFrac(hOverR) {
+    if (!Number.isFinite(hOverR) || hOverR <= 0) return 0.5;
+    const x = _SLOSH_LAMBDA1 * hOverR;
+    if (x < 1e-3) return 0.5;
+    if (x > 30) return 1;
+    const f = 1 - (Math.cosh(x) - 1) / (x * Math.sinh(x));
+    return Number.isFinite(f) ? Math.min(1, Math.max(0.5, f)) : 0.5;
+  }
+  
+  function _combine(components) {
+    let M = 0, sumX = 0, sumY = 0;
+    (components || []).forEach(c => {
+      M += c.mass || 0;
+      sumX += (c.mass || 0) * (c.comX || 0);
+      sumY += (c.mass || 0) * (c.comY || 0);
+    });
+    const comX = M > 0 ? sumX / M : 0;
+    const comY = M > 0 ? sumY / M : 0;
+    let I = 0;
+    (components || []).forEach(c => {
+      const dx = (c.comX || 0) - comX;
+      const dy = (c.comY || 0) - comY;
+      I += (c.iOwn || 0) + (c.mass || 0) * (dx * dx + dy * dy);
+    });
+    return { M, comX, comY, I };
+  }
+  
+  // ============================================================
+  // Per-member sub-component builders
+  // ============================================================
+  function _memberMaxFuel(rec, aboveRec) {
+    if (!rec) return 0;
+    const role = rec.stageRole || 'rocket';
+    if (role === 'nose' || role === 'payloadSpace') return 0;
+    if (role === 'booster' || role === 'stage') {
+      const t = rec.fuel;
+      if (!t) return 0;
+      const fuelType = getTypeById(t.typeId);
+      if (!fuelType) return 0;
+      const density = typeParam(fuelType, 'propellantDensity');
+      if (!Number.isFinite(density)) return 0;
+      const tankH = Number.isFinite(t.tankHeight) ? t.tankHeight : 0;
+      const tankW = Number.isFinite(t.tankWidth) ? t.tankWidth : 0;
+      return Math.PI * (tankW / 2) ** 2 * tankH * density;
+    }
+    return Number.isFinite(rec.fuelMassMax) ? rec.fuelMassMax : 0;
+  }
+  
+  function _stageAboveBellHeight(aboveRec) {
+    if (!aboveRec || !aboveRec.engineTypeId) return 0;
+    const layout = getTypeById(aboveRec.engineTypeId);
+    if (!layout || !layout.frame || !Array.isArray(layout.frame.slots)) return 0;
+    const slotCount = layout.frame.slots.length;
+    if (!slotCount) return 0;
+    let totalFlow = 0;
+    if (aboveRec.engineThrusters) {
+      Object.keys(aboveRec.engineThrusters).forEach(gk => {
+        const g = aboveRec.engineThrusters[gk];
+        if (!g || !Number.isFinite(g.massFlowRate)) return;
+        const isG = (gk === 'gimbal');
+        const count = layout.frame.slots.filter(s => !!s.gimbalCapable === isG).length;
+        totalFlow += g.massFlowRate * count;
+      });
+    }
+    return 0.007 * (totalFlow / slotCount);
+  }
+  
+  function _engineComponents(rec) {
+    const out = [];
+    if (!rec.engineTypeId || !rec.engineThrusters) return out;
+    const layout = getTypeById(rec.engineTypeId);
+    if (!layout || !layout.frame || !Array.isArray(layout.frame.slots)) return out;
+    const G0 = _envNum('G0', 9.80665);
+    const R = (rec.params && Number.isFinite(rec.params.octaRadius)) ? rec.params.octaRadius : 1.7;
+    let totalMass = 0, sumXmass = 0;
+    layout.frame.slots.forEach(slot => {
+      const gk = slot.gimbalCapable ? 'gimbal' : 'fixed';
+      const g = rec.engineThrusters[gk];
+      if (!g) return;
+      const t = getTypeById(g.thrusterTypeId);
+if (!t) return;
+// Hardware spec — vacuum Ve. Live Ve(Pa) reaches guidance via the
+// engine snapshot's e.Ve (physics.js computes it per tick); this
+// constant is only used here for engine-MASS derivation, a fixed
+// hardware property.
+const ve = typeParam(t, 'veVacuum');
+const twr = typeParam(t, 'twr');
+      if (!Number.isFinite(ve) || !Number.isFinite(g.massFlowRate)) return;
+      const thrustPer = g.massFlowRate * ve;
+      const massPer = (Number.isFinite(twr) && twr > 0) ? thrustPer / (twr * G0) : 0;
+      const posX = (slot.angleDeg === null || slot.angleDeg === undefined)
+        ? 0 : R * Math.cos(slot.angleDeg * Math.PI / 180);
+      totalMass += massPer;
+      sumXmass += massPer * posX;
+    });
+    if (totalMass > 0) {
+      out.push({ label: 'engines', mass: totalMass, comX: sumXmass / totalMass, comY: 0, iOwn: 0 });
+    }
+    return out;
+  }
+  
+function _legComponents(rec, legsProgress) {
+  const out = [];
+  if (rec.hasRecovery === false) return out;
+  const recoveryType = getTypeById(rec.recoveryTypeId);
+  if (!recoveryType || recoveryType.kind !== 'legsOnVehicle') return out;
+  if (!recoveryType.capabilities || !recoveryType.capabilities.deploysOnVehicle) return out;
+
+  // Geometry comes from the boot handoff (see workerBridge.js's
+  // _collectStackDataForGuidance) — the type's hingeGeometry() and
+  // structuralVolume() are FUNCTIONS and don't survive structured-clone
+  // into this worker. The main thread resolves them once against THIS
+  // record's own tank dimensions and ships the numbers. Previously this
+  // block hardcoded the F9 leg's fractions (0.004, 0.27, 125°) which
+  // matched the shipped seed but would silently diverge from
+  // massProps.js the instant the seed was edited.
+  const md = (_stackData && _stackData.memberDerived && rec.id)
+    ? _stackData.memberDerived[rec.id] : null;
+  const ld = (md && md.legs) ? md.legs : null;
+  if (!ld) return out;
+
+  const W = Number.isFinite(rec.width) ? rec.width : 0;
+  const bodyW_forLegs = (rec.fuel && Number.isFinite(rec.fuel.tankWidth))
+    ? rec.fuel.tankWidth : W;
+
+  const hingeY = ld.hingeY;
+  const legLength = ld.legLength;
+  const maxSweepRad = ld.maxSweepRad;
+  const hingeLocalY = -hingeY;
+  const sweep = (legsProgress || 0) * maxSweepRad;
+  const tipLocalY = hingeLocalY + legLength * Math.cos(sweep);
+  const midLocalY = (hingeLocalY + tipLocalY) / 2;
+
+  const legsMetal = getTypeById(rec.legsMetalTypeId) ||
+    getTypeById(rec.bodyMetalTypeId);
+  const density = legsMetal ? (typeParam(legsMetal, 'density') || 0) : 0;
+  const legMass = ld.oneLegVolume * density;
+
+  // 4 legs, exactly mirroring massProps.js's _memberComponentsFull —
+  // at ±W/2 (front) and ±0.375W (back). The type's legCount is respected
+  // by physics only as a coincidence of the artwork; if the artwork is
+  // ever extended past 4, both sides change together.
+  const legXs = [-bodyW_forLegs / 2, bodyW_forLegs / 2,
+                 -bodyW_forLegs * 0.375, bodyW_forLegs * 0.375];
+  for (let i = 0; i < legXs.length; i++) {
+    out.push({
+      label: 'leg' + i, mass: legMass, comX: legXs[i], comY: midLocalY,
+      iOwn: _rodI(legMass, legLength),
+    });
+  }
+  return out;
+}
+  
+  function _fuelComponents(rec, memberFuelMass, sloshOffset) {
+    const out = [];
+    if (!(memberFuelMass > 0)) return out;
+    const t = rec.fuel;
+    if (!t) return out;
+    const tankH = Number.isFinite(t.tankHeight) ? t.tankHeight : 0;
+    const tankW = Number.isFinite(t.tankWidth) ? t.tankWidth : 0;
+    if (!(tankH > 0) || !(tankW > 0)) return out;
+    const maxFuel = _memberMaxFuel(rec, null);
+    const fillFrac = maxFuel > 0 ? Math.min(1, memberFuelMass / maxFuel) : 0;
+    const fuelH = fillFrac * tankH;
+    const r = tankW / 2;
+    const hOverR = r > 0 ? fuelH / r : 0;
+    const sloshFrac = _sloshMassFraction(hOverR);
+    const sloshActive = Number.isFinite(sloshOffset) && sloshFrac > 1e-6 && sloshFrac < 1;
+    if (sloshActive) {
+      const sloshMass = memberFuelMass * sloshFrac;
+      const bulkMass = memberFuelMass - sloshMass;
+      const sloshComY = _sloshCentroidFrac(hOverR) * fuelH;
+      out.push({ label: 'fuel-bulk', mass: bulkMass, comX: 0, comY: fuelH / 2, iOwn: _cylI(bulkMass, r, fuelH) });
+      out.push({ label: 'fuel-slosh', mass: sloshMass, comX: sloshOffset, comY: sloshComY, iOwn: _cylI(sloshMass, r, fuelH) });
+    } else {
+      out.push({ label: 'fuel', mass: memberFuelMass, comX: 0, comY: fuelH / 2, iOwn: _cylI(memberFuelMass, r, fuelH) });
+    }
+    return out;
+  }
+  
+  // Grid-fin total mass — same formula as fleet.js's computeGridFinMass,
+// inlined here because derivation.js cannot reach fleet.js (guidance
+// worker doesn't load it). Uses typeParam() and getTypeById() — same
+// data the boot handoff already carries for every other type.
+function _gridFinMassFor(rec) {
+  if (!rec || !rec.hasGridFins) return 0;
+  // Prefer the boot-handoff value — same source as fleet.js's
+  // computeGridFinMass, no second inlined formula to drift out of sync.
+  const md = (_stackData && _stackData.memberDerived && rec.id) ?
+    _stackData.memberDerived[rec.id] : null;
+  if (md && md.gridFins && Number.isFinite(md.gridFins.totalMass)) {
+    return md.gridFins.totalMass;
+  }
+  // Fallback for an old handoff that predates memberDerived (keeps a
+  // stale page-load flying rather than silently massing the fins at 0).
+  const type = getTypeById(rec.gridFinTypeId);
+  const metal = getTypeById(rec.gridFinMetalTypeId);
+  if (!type || !metal) return 0;
+  const TC = type.typeConstants;
+  if (!TC) return 0;
+  const density = typeParam(metal, 'density');
+  if (!Number.isFinite(density)) return 0;
+  const p = rec.gridFinParams || {};
+  const span = Number.isFinite(p.span) ? p.span : 0;
+  const chord = Number.isFinite(p.chord) ? p.chord : 0;
+  const thickness = Number.isFinite(p.thickness) ? p.thickness : 0;
+  const cellWidth = Number.isFinite(p.cellWidth) ? p.cellWidth : 0;
+  if (!(span > 0) || !(chord > 0) || !(thickness > 0) || !(cellWidth > 0)) return 0;
+  const wallThickness = thickness * TC.WALL_THICKNESS_FACTOR;
+  const cellPitch = cellWidth + wallThickness;
+  const cellFill = 1 - Math.pow(cellWidth / cellPitch, 3);
+  const vMat = span * chord * thickness * cellFill * TC.SHELL_FACTOR;
+  const perFinMass = vMat * density;
+  const finCount = (type.frame && Number.isFinite(type.frame.finCount)) ?
+    type.frame.finCount : 4;
+  return perFinMass * finCount;
+}
+
+function _gridFinComponents(rec, bodyH, gridFinsLive) {
+  const out = [];
+  const mass = _gridFinMassFor(rec);
+  if (!(mass > 0)) return out;
+  const p = rec.gridFinParams || {};
+  const span = Number.isFinite(p.span) ? p.span : 1.5;
+  const finPosY = Number.isFinite(p.finPositionY) ? p.finPositionY : 0;
+  const maxY = (bodyH > 0) ? bodyH : (Number.isFinite(rec.height) ? rec.height : 0);
+  const hingeY = Math.max(0, Math.min(finPosY, maxY));
+  // Mirror of massProps.js's grid-fin CoM derivation — same formulas so
+  // guidance's mass model stays in lockstep with physics. See that file
+  // for the full reasoning (asymmetric L/R deploy → lateral CoM shift).
+  let dL = 0, dR = 0, dFB = 0;
+  if (gridFinsLive) {
+    dL = (gridFinsLive.L && Number.isFinite(gridFinsLive.L.deploy)) ? gridFinsLive.L.deploy * Math.PI / 180 : 0;
+    dR = (gridFinsLive.R && Number.isFinite(gridFinsLive.R.deploy)) ? gridFinsLive.R.deploy * Math.PI / 180 : 0;
+    dFB = (gridFinsLive.FB && Number.isFinite(gridFinsLive.FB.deploy)) ? gridFinsLive.FB.deploy * Math.PI / 180 : 0;
+  }
+  const comX_fin = (span / 8) * (Math.cos(dR) - Math.cos(dL));
+  const comY_fin = hingeY - (span / 8) * (Math.sin(dL) - Math.sin(dR) + 2 * Math.sin(dFB));
+  out.push({
+    label: 'gridFins',
+    mass,
+    comX: comX_fin,
+    comY: comY_fin,
+    iOwn: 4 * _rodI(mass / 4, span),
+  });
+  return out;
+}
+
+
+function _memberComponentsFull(rec, aboveRec, memberFuelMass, legsProgress, sloshOffset, gridFinsLive) {
+  const role = rec.stageRole || 'rocket';
+    const H = Number.isFinite(rec.height) ? rec.height : 0;
+    const W = Number.isFinite(rec.width) ? rec.width : 0;
+    const r = W / 2;
+    const out = [];
+    
+    if (role === 'interstage') {
+  // Thin cylindrical shell — same formula computeInterstageDryMass
+  // uses in fleet.js / massProps.js, mirrored here since guidance
+  // worker can't import either.
+  const metal = getTypeById(rec.bodyMetalTypeId);
+  const density = metal ? (typeParam(metal, 'density') || 0) : 0;
+  const shellF = Number.isFinite(rec.bodyShellFactor) ? rec.bodyShellFactor : 0.0026;
+  const shellThk = shellF * r;
+  const lateralArea = 2 * Math.PI * r * H;
+  const mass = lateralArea * shellThk * density;
+  out.push({ label: 'interstage', mass, comX: 0, comY: H / 2, iOwn: _cylI(mass, r, H) });
+  return out;
+}
+
+if (role === 'nose') {
+  const metal = getTypeById(rec.bodyMetalTypeId);
+  const density = metal ? (typeParam(metal, 'density') || 0) : 0;
+  const coneVol = (1 / 3) * Math.PI * r * r * H;
+  const mass = coneVol * _BODY_SHELL_FACTOR_NOSE * density;
+  out.push({ label: 'nose', mass, comX: 0, comY: H / 4, iOwn: _coneI(mass, r, H) });
+  return out;
+}
+    if (role === 'payloadSpace') {
+      const metal = getTypeById(rec.payloadSpaceMetalTypeId);
+      const density = metal ? (typeParam(metal, 'density') || 0) : 0;
+      const p = rec.params || {};
+      const capH = p.capHeight || 0;
+      const capW = p.capWidth || 0;
+      const bulgeW = p.bulgeWidth || capW;
+      const rBulge = bulgeW / 2;
+      const coneH = capH * 0.4, cylH = capH * 0.6;
+      const coneSlant = Math.sqrt(rBulge * rBulge + coneH * coneH);
+      const lateralArea = Math.PI * rBulge * coneSlant + 2 * Math.PI * rBulge * cylH;
+      const shellFrac = Number.isFinite(rec.bodyShellFactor) ? rec.bodyShellFactor : 0.0026;
+      const vol = lateralArea * rBulge * shellFrac;
+      const mass = vol * density;
+      out.push({ label: 'payloadSpace', mass, comX: 0, comY: H / 2, iOwn: _cylI(mass, capW / 2, H) });
+      return out;
+    }
+    
+    let bodyMass = 0, bodyH = H, interstageMass = 0, interstageH = 0;
+    if (role === 'booster' || role === 'stage') {
+      const t = rec.fuel || {};
+      const tankH = Number.isFinite(t.tankHeight) ? t.tankHeight : H;
+      const tankW = Number.isFinite(t.tankWidth) ? t.tankWidth : W;
+      const metalType = getTypeById(rec.bodyMetalTypeId);
+      const metalDensity = metalType ? (typeParam(metalType, 'density') || 0) : 0;
+      const shellF = Number.isFinite(rec.bodyShellFactor)
+        ? rec.bodyShellFactor : (role === 'booster' ? 0.01797 : 0.0147);
+      const tankVol = Math.PI * (tankW / 2) ** 2 * tankH;
+      bodyMass = tankVol * shellF * metalDensity;
+      bodyH = tankH;
+      if (role === 'booster') {
+  // Prefer the frozen value from stack-level derived (sent at boot
+  // in stackData). Falls back to the live compute for stacks that
+  // predate freezing — keeps guidance's numbers bit-identical to
+  // physics in the common case, and correct-but-legacy otherwise.
+  const sd = getStackData();
+  const frozen = (sd && sd.derived && sd.derived.interstage) ?
+    sd.derived.interstage[rec.id] : null;
+  if (frozen && Number.isFinite(frozen.height) && Number.isFinite(frozen.mass)) {
+    interstageH = frozen.height;
+    interstageMass = frozen.mass;
+  } else {
+    const bellH = _stageAboveBellHeight(aboveRec);
+    const ish = Math.max(bellH * 1.20, 0.06 * tankH);
+    const r_b = tankW / 2;
+    const shellThk = shellF * r_b;
+    interstageMass = 2 * Math.PI * r_b * shellThk * ish * _INTERSTAGE_DENSITY;
+    interstageH = ish;
+  }
+}
+    } else {
+      bodyMass = Number.isFinite(rec.dryMass) ? rec.dryMass : 0;
+    }
+    
+    out.push({ label: 'body', mass: bodyMass, comX: 0, comY: bodyH / 2, iOwn: _cylI(bodyMass, r, bodyH) });
+    if (interstageMass > 0) {
+      out.push({
+        label: 'interstage', mass: interstageMass, comX: 0,
+        comY: bodyH - interstageH / 2,
+        iOwn: _cylI(interstageMass, r, interstageH),
+      });
+    }
+    _engineComponents(rec).forEach(c => out.push(c));
+_legComponents(rec, legsProgress).forEach(c => out.push(c));
+_gridFinComponents(rec, bodyH, gridFinsLive).forEach(c => out.push(c));
+_fuelComponents(rec, memberFuelMass, sloshOffset).forEach(c => out.push(c));
+return out;
+  }
+  
+  
+const _mcCache = new Map();
+function _memberComponents(rec, aboveRec, memberFuelMass, legsProgress, sloshOffset, gridFinsLive) {
+  if (!rec) return [];
+  const role = rec.stageRole || 'rocket';
+  if (role === 'interstage' || role === 'nose' || role === 'payloadSpace') {
+    return _memberComponentsFull(rec, aboveRec, memberFuelMass, legsProgress, sloshOffset, gridFinsLive);
+  }
+  const recId = rec.id || '(no-id)';
+  const aboveId = aboveRec ? aboveRec.id : '-';
+  const _gf = gridFinsLive;
+  const gfLd = (_gf && _gf.L && Number.isFinite(_gf.L.deploy)) ? _gf.L.deploy : 0;
+  const gfRd = (_gf && _gf.R && Number.isFinite(_gf.R.deploy)) ? _gf.R.deploy : 0;
+  const gfFd = (_gf && _gf.FB && Number.isFinite(_gf.FB.deploy)) ? _gf.FB.deploy : 0;
+  const gfFc = (_gf && _gf.FB && Number.isFinite(_gf.FB.control)) ? _gf.FB.control : 0;
+  const key = aboveId + '|' + legsProgress.toFixed(6) + '|' +
+    gfLd.toFixed(3) + '|' + gfRd.toFixed(3) + '|' +
+    gfFd.toFixed(3) + '|' + gfFc.toFixed(3);
+  let entry = _mcCache.get(recId);
+  if (!entry || entry.key !== key) {
+    entry = { key, comps: _memberComponentsFull(rec, aboveRec, 0, legsProgress, 0, gridFinsLive) };
+    _mcCache.set(recId, entry);
+  }
+  const out = entry.comps.map(c => ({ ...c }));
+  _fuelComponents(rec, memberFuelMass, sloshOffset).forEach(c => out.push(c));
+  return out;
+}
+
+function _stackMassPropsFull(bodySnapshot, payloadMass) {
+  const members = (bodySnapshot && bodySnapshot.members) || [];
+  if (!members.length) return null;
+  const fuelTotal = bodySnapshot.fuelMass || 0;
+  const memberFuelArr = Array.isArray(bodySnapshot.memberFuel) ? bodySnapshot.memberFuel : null;
+  const usePerMember = memberFuelArr && memberFuelArr.length === members.length;
+  const legsProgress = bodySnapshot.legs ? (bodySnapshot.legs.progress || 0) : 0;
+  const sloshOffset = bodySnapshot.slosh ? (bodySnapshot.slosh.offset || 0) : 0;
+    
+    const maxFuels = members.map((m, i) => _memberMaxFuel(m, members[i + 1] || null));
+    const sumMax = maxFuels.reduce((s, x) => s + x, 0);
+    
+    const all = [];
+    let yOffset = 0;
+    let payloadSpaceComY = null;
+    let payloadSpaceIdx = -1;
+    members.forEach((m, i) => {
+      const memberFuel = usePerMember ?
+        Math.max(0, memberFuelArr[i] || 0) :
+        (sumMax > 0 ? fuelTotal * (maxFuels[i] / sumMax) : 0);
+        const memberLegs = (i === 0) ? legsProgress : 0;
+      const memberSlosh = (i === 0) ? sloshOffset : 0;
+      const comps = _memberComponents(m, members[i + 1] || null, memberFuel, memberLegs, memberSlosh, bodySnapshot.gridFins);
+      comps.forEach(c => all.push({ ...c, comY: c.comY + yOffset, _memberIdx: i }));
+      if (m.stageRole === 'payloadSpace') {
+        payloadSpaceComY = yOffset + (m.height || 0) / 2;
+        payloadSpaceIdx = i;
+      }
+      yOffset += (m.height || 0);
+    });
+    
+    const cargo = Number.isFinite(payloadMass) ? payloadMass : 0;
+    if (cargo > 0) {
+      const comY = payloadSpaceComY !== null ? payloadSpaceComY : yOffset;
+      all.push({
+        label: 'payloadCargo', mass: cargo, comX: 0, comY, iOwn: 0,
+        _memberIdx: payloadSpaceIdx >= 0 ? payloadSpaceIdx : (members.length - 1),
+      });
+    }
+    const combined = _combine(all);
+    return {
+      M: combined.M, comX: combined.comX, comY: combined.comY, I: combined.I,
+      stackHeight: yOffset,
+      dryMass: Math.max(0, combined.M - fuelTotal),
+      fuelMass: fuelTotal,
+      payloadMass: cargo,
+      components: all,
+    };
+  }
+  
+  
+let _smpKey=null, _smpVal=null;
+function _stackMassProps(bodySnapshot, payloadMass) {
+  const members=(bodySnapshot&&bodySnapshot.members)||[];
+  if(!members.length) return null;
+  const fuelTotal=bodySnapshot.fuelMass||0;
+  const fa=Array.isArray(bodySnapshot.memberFuel)?bodySnapshot.memberFuel:null;
+  const pm=Number.isFinite(payloadMass)?payloadMass:0;
+  // Cache key MUST cover every dynamic input _stackMassPropsFull reads —
+  // otherwise a change in one of them yields a stale mass model. Notably:
+  //   * slosh.offset — shifts the fuel-slosh component's comX. During a
+  //     coast, fuelTotal is stable, so the old key held forever and the
+  //     CoM would freeze at whatever value it had at the start of the
+  //     coast even while slosh swung the true CoM side to side.
+  //   * legs.progress — moves leg components' comY during deploy/stow.
+  //   * gridFins deploy state — asymmetric L/R deploy shifts the fin
+  //     group's comX (see massProps.js's grid-fin branch).
+  const legsP=(bodySnapshot.legs && Number.isFinite(bodySnapshot.legs.progress))
+    ? bodySnapshot.legs.progress : 0;
+  const sloshO=(bodySnapshot.slosh && Number.isFinite(bodySnapshot.slosh.offset))
+    ? bodySnapshot.slosh.offset : 0;
+  const gf=bodySnapshot.gridFins;
+  const gfLd=(gf && gf.L && Number.isFinite(gf.L.deploy)) ? gf.L.deploy : 0;
+  const gfRd=(gf && gf.R && Number.isFinite(gf.R.deploy)) ? gf.R.deploy : 0;
+  const gfFd=(gf && gf.FB && Number.isFinite(gf.FB.deploy)) ? gf.FB.deploy : 0;
+  const key=fuelTotal.toFixed(3)+'|'+(fa?fa.join(','):'')+'|'+pm.toFixed(3)
+           +'|'+legsP.toFixed(6)+'|'+sloshO.toFixed(6)
+           +'|'+gfLd.toFixed(3)+'|'+gfRd.toFixed(3)+'|'+gfFd.toFixed(3);
+  if(key===_smpKey && _smpVal) return _smpVal;
+  const result=_stackMassPropsFull(bodySnapshot, payloadMass);
+  _smpKey=key; _smpVal=result;
+  return result;
+}
+
+function _soloBodyMassProps(body) {
+    const M = (Number.isFinite(body.dryMass) ? body.dryMass : 0)
+            + (Number.isFinite(body.fuelMass) ? body.fuelMass : 0);
+    const H = _bodyHeightOf(body);
+    const W = _bodyWidthOf(body);
+    const I = M * (H * H + W * W) / 12;
+    const comH = H * 0.5;
+    return {
+      M, comX: 0, comY: comH, I,
+      stackHeight: H,
+      dryMass: Number.isFinite(body.dryMass) ? body.dryMass : 0,
+      fuelMass: Number.isFinite(body.fuelMass) ? body.fuelMass : 0,
+      payloadMass: 0,
+      components: [{ label: 'solo', mass: M, comX: 0, comY: comH, iOwn: I }],
+    };
+  }
+  
+  function _bodyHeightOf(body) {
+    if (body && body.members && body.members.length) {
+      return body.members.reduce((s, m) => s + (Number.isFinite(m.height) ? m.height : 0), 0);
+    }
+    return (body && Number.isFinite(body.height) && body.height > 0) ? body.height : 0;
+  }
+  function _bodyWidthOf(body) {
+    if (body && body.members && body.members.length) {
+      const bottom = body.members[0];
+      if (bottom && Number.isFinite(bottom.width)) return bottom.width;
+    }
+    return (body && Number.isFinite(body.width) && body.width > 0) ? body.width : 0;
+  }
+  
+  function _windInertial(rx, ry, wind) {
+    if (!wind || !wind.enabled || !wind.speed) return { wx: 0, wy: 0 };
+    const r = Math.hypot(rx, ry) || 1;
+    const upX = rx / r, upY = ry / r;
+    const eastX = upY, eastY = -upX;
+    const rad = (wind.directionDeg || 0) * Math.PI / 180;
+    const dirX = eastX * Math.cos(rad) + upX * Math.sin(rad);
+    const dirY = eastY * Math.cos(rad) + upY * Math.sin(rad);
+    return { wx: dirX * wind.speed, wy: dirY * wind.speed };
+  }
+  
+  function _memberAero(member, refWidth, rho, speedRel, sinAlpha, altitude) {
+    const H = Number.isFinite(member.height) ? member.height : 0;
+    const W = Number.isFinite(member.width) ? member.width : 0;
+    const isTapered = (member.stageRole === 'nose') || (member.stageRole === 'payloadSpace');
+    const wCross = Math.min(1, Math.abs(sinAlpha));
+    const aAxial = Math.PI * (W / 2) ** 2;
+    const aSide = W * H;
+    const aEff = aAxial * (1 - wCross) + aSide * wCross;
+    const cd = _hullCd(speedRel, altitude);
+    const drag = (rho > 0 && speedRel > 1e-3)
+      ? 0.5 * rho * cd * aEff * speedRel * speedRel : 0;
+    const cpBodyFrac = isTapered
+      ? (_AERO_CP_NOSE_FRAC * (1 - wCross) + _AERO_CP_BODY_FRAC * wCross)
+      : _AERO_CP_BODY_FRAC;
+    const copY_body = H * cpBodyFrac;
+    const copY_linear = isTapered ? H * _AERO_CP_NOSE_LINEAR_FRAC : null;
+    const q = 0.5 * rho * speedRel * speedRel;
+    const S_ref = Math.PI * (refWidth / 2) ** 2;
+    const sinAbs = Math.abs(sinAlpha);
+    const F_lin = isTapered ? (-q * _AERO_CNALPHA_NOSE * S_ref * sinAlpha) : 0;
+    const F_cross = -q * _AERO_CD_CROSSFLOW * aSide * sinAbs * sinAlpha;
+    return {
+      isTapered, wCross,
+      presentedArea: aEff, aAxial, aSide, drag,
+      copY_body, copY_linear,
+      Fnormal_linear: F_lin,
+      Fnormal_crossflow: F_cross,
+    };
+  }
+  
+  // ============================================================
+// derive() — the master function. One body per call.
+// ============================================================
+//
+// Cache: guidance delegates to a sub-guide per tick, and both the
+// top-level guide (leoInsertionV2) and the delegated one (_hTick /
+// ascentAoaHold) call derive(snapshot, idx) on the SAME outer
+// snapshot. The 2nd call was pure recomputation — same body, same
+// snapshot, same derived result. WeakMap keyed on the snapshot
+// object → entries drop as soon as the snapshot is GC'd, so no
+// stale values can leak across ticks.
+const _deriveCache = new WeakMap();
+
+function derive(snapshot, bodyIdx, payloadMass, noCache) {
+  if (!snapshot || !Array.isArray(snapshot.bodies)) return null;
+  const idx = Number.isInteger(bodyIdx) ? bodyIdx : (snapshot.activeBodyIndex || 0);
+  // Bypass cache when caller supplies a payload override, or
+  // explicitly opts out (deriveForState's one-shot virtual snaps).
+  if (payloadMass !== undefined || noCache) {
+    return _deriveImpl(snapshot, idx, payloadMass);
+  }
+  let bucket = _deriveCache.get(snapshot);
+  if (bucket && bucket[idx] !== undefined) return bucket[idx];
+  const result = _deriveImpl(snapshot, idx);
+  if (!bucket) { bucket = Object.create(null); _deriveCache.set(snapshot, bucket); }
+  bucket[idx] = result;
+  return result;
+}
+
+  // Virtual engine-bell member below the bottom hull. COPY of the one in
+  // physics.js's bodyAeroProfile() (width = min(cluster span, hull width),
+  // height = single-bell height). Returns null if the record has no bell.
+  function _bellMember(rec) {
+    if (!rec) return null;
+    const role = rec.stageRole || 'rocket';
+    if (role !== 'booster' && role !== 'stage' && role !== 'rocket') return null;
+    const layout = rec.engineTypeId ? getTypeById(rec.engineTypeId) : null;
+    if (!layout) return null;
+    const g = rec.engineThrusters && (rec.engineThrusters.gimbal || rec.engineThrusters.fixed);
+    if (!g || !Number.isFinite(g.massFlowRate)) return null;
+    const t = getTypeById(g.thrusterTypeId);
+    const kH = typeParam(t, 'massFlowToBellHeight');
+    const kD = typeParam(t, 'massFlowToBellDiameter');
+    if (!Number.isFinite(kH) || !Number.isFinite(kD)) return null;
+    const height = kH * g.massFlowRate;
+    const bellDia = kD * g.massFlowRate;
+    const nSlots = (layout.frame && Array.isArray(layout.frame.slots)) ? layout.frame.slots.length : 1;
+    const hullW = Number.isFinite(rec.width) ? rec.width : 3.9;
+    const octaR = (rec.params && Number.isFinite(rec.params.octaRadius)) ? rec.params.octaRadius : 1.7;
+    const width = (nSlots === 1) ? bellDia : Math.min(hullW, octaR * 2 + bellDia);
+    return (height > 0 && width > 0) ? { width, height } : null;
+  }
+
+  // Presented drag area — same rule as computeDragAero() in physics.js:
+  // sum over every member, plus the virtual engine-bell member, of
+  //   aAxial·(1 − wCross) + aSide·wCross ,   wCross = |sin α|.
+  function _effectiveDragArea(members, sinAlpha, refWidth) {
+    const wCross = Math.min(1, Math.abs(sinAlpha));
+    let total = 0;
+    members.forEach(m => {
+      const W = Number.isFinite(m.width) ? m.width : 0;
+      const H = Number.isFinite(m.height) ? m.height : 0;
+      total += Math.PI * (W / 2) ** 2 * (1 - wCross) + W * H * wCross;
+    });
+    const bell = _bellMember(members[0]);
+    if (bell) total += Math.PI * (bell.width / 2) ** 2 * (1 - wCross) + bell.width * bell.height * wCross;
+    return total || Math.PI * (refWidth / 2) ** 2;
+  }
+
+  // ---- grid-fin aero (VERBATIM PORT of physics.js; see derivation_fin_aero_port_spec.js) ----
+  // A5 allowed diffs ONLY: speed-of-sound source, getTypeById vs getComponentType,
+  // _bellMember vs engineBellHeightForRecord, fin-control override clone.
+  const GRIDFIN_CONTROL_SIGN = -1;
+  const GF_CD_FACE = 1.25;
+  const GF_CD_EDGE = 1.15;
+  const GF_CNA_GRID = 3.0;
+  const GF_SHIELD_MIN = 0.12;
+  const GF_SHIELD_LAT_ON = 0.15;
+  const GF_SHIELD_LAT_FULL = 0.55;
+
+  function _gfSmooth(x, a, b) {
+    if (x <= a) return 0;
+    if (x >= b) return 1;
+    const t = (x - a) / (b - a);
+    return t * t * (3 - 2 * t);
+  }
+
+  function _gfSpeedOfSound(alt) {
+    return Math.sqrt(1.4 * 287.05287 * _ATM.state(Math.max(0, alt)).T);
+  }
+
+  function _gfMachFactors(M) {
+    const pg = Math.min(1.6, 1 / Math.sqrt(Math.max(0.05, 1 - Math.min(M, 0.85) ** 2)));
+    return {
+      drag: 1 + 1.4 * Math.exp(-(((M - 1.0) / 0.3) ** 2)) + 0.25 * _gfSmooth(M, 1.3, 3.0),
+      cna: pg * (1 - 0.5 * _gfSmooth(M, 0.9, 1.5)),
+      edge: 1 + 0.6 * Math.exp(-(((M - 1.0) / 0.35) ** 2)),
+    };
+  }
+
+  function _gfAxes(kind, deployDeg, controlDeg) {
+    const d = deployDeg * Math.PI / 180;
+    const cd = Math.cos(d), sd = Math.sin(d);
+    if (kind === 'L' || kind === 'R') {
+      const s0 = (kind === 'L') ? -1 : 1;
+      return { s: [s0 * cd, s0 * sd, 0], t: [-sd, cd, 0], c: [0, 0, 1] };
+    }
+    let s = [0, -sd, cd], t = [0, cd, sd], c = [1, 0, 0];
+    if (controlDeg) {
+      const a = GRIDFIN_CONTROL_SIGN * controlDeg * Math.PI / 180;
+      const ca = Math.cos(a), sa = Math.sin(a);
+      const rz = v => [v[0] * ca - v[1] * sa, v[0] * sa + v[1] * ca, v[2]];
+      s = rz(s); t = rz(t); c = rz(c);
+    }
+    return { s, t, c };
+  }
+
+  function computeGridFinAero(gfp, bx, by, omega, rho, comH, comW, altitude) {
+    let Fx = 0, Fy = 0, torque = 0;
+    const V0 = Math.hypot(bx, by);
+    if (!gfp || !(rho > 0) || V0 < 1e-3) return { Fx, Fy, torque };
+    const q = 0.5 * rho;
+    const w = Math.min(1, Math.abs(bx) / V0);
+    const shieldT = _gfSmooth(w, GF_SHIELD_LAT_ON, GF_SHIELD_LAT_FULL);
+    const kinds = ['L', 'R', 'FB'];
+    gfp.fins.forEach(f => {
+      const Aface = f.span * f.chord;
+      const Aes = f.chord * f.thk;
+      const Aec = f.span * f.thk;
+      kinds.forEach(kind => {
+        const st = gfp.st[kind];
+        const ax = _gfAxes(kind, st.deploy, kind === 'FB' ? st.control : 0);
+        const hx = (kind === 'L') ? -f.hullHalf : (kind === 'R') ? f.hullHalf : 0;
+        const xc = hx + 0.5 * f.span * ax.s[0];
+        const yc = f.hingeY + 0.5 * f.span * ax.s[1];
+        const rx = xc - comW, ry = yc - comH;
+        const vx = bx - omega * ry, vy = by + omega * rx;
+        const V = Math.hypot(vx, vy);
+        if (V < 1e-3) return;
+        const mf = _gfMachFactors(V / _gfSpeedOfSound(altitude));
+        const us = vx * ax.s[0] + vy * ax.s[1];
+        const uc = vx * ax.c[0] + vy * ax.c[1];
+        const ut = vx * ax.t[0] + vy * ax.t[1];
+        const absUt = Math.abs(ut);
+        const inPlane = Math.hypot(us, uc);
+        const tanPhi = absUt > 1e-9 ? inPlane / absUt : Infinity;
+        const B = f.sigma + (1 - f.sigma) * Math.min(1, tanPhi / f.tanBlock);
+        const Ft = -q * GF_CD_FACE * mf.drag * Aface * B * absUt * ut;
+        const lim = f.tanStall * absUt;
+        const sat = (inPlane > lim && inPlane > 1e-12) ? lim / inPlane : 1;
+        const kc = -q * GF_CNA_GRID * mf.cna * Aface * absUt * sat;
+        const Fs = kc * us - q * GF_CD_EDGE * mf.edge * Aes * Math.abs(us) * us;
+        const Fc = kc * uc - q * GF_CD_EDGE * mf.edge * Aec * Math.abs(uc) * uc;
+        let fx = Ft * ax.t[0] + Fs * ax.s[0] + Fc * ax.c[0];
+        let fy = Ft * ax.t[1] + Fs * ax.s[1] + Fc * ax.c[1];
+        if (kind !== 'FB' && bx !== 0 && (hx > 0) !== (bx > 0)) {
+          const S = 1 - (1 - GF_SHIELD_MIN) * shieldT;
+          fx *= S; fy *= S;
+        }
+        const n = (kind === 'FB') ? 2 : 1;
+        fx *= n; fy *= n;
+        Fx += fx; Fy += fy;
+        torque += rx * fy - ry * fx;
+      });
+    });
+    return { Fx, Fy, torque };
+  }
+
+  // PORT of physics.js bodyAeroProfile (A1). Uses _bellMember instead of
+  // engineBellHeightForRecord/engineBellDiameterForRecord. Caches on a
+  // derivation-only field name so it never collides with physics.js's own
+  // _aeroProfileCache (both contexts have independent caches anyway).
+  function _bodyAeroProfileForFins(body) {
+    if (body && body._aeroProfileForFinsCache) return body._aeroProfileForFinsCache;
+    const mem = (body && body.members) ? body.members : [];
+    if (!mem.length) {
+      const w = (body && Number.isFinite(body.width)) ? body.width : 3.9;
+      const h = (body && Number.isFinite(body.height)) ? body.height : 45;
+      const isShell = !!(body && body.fairingHalf);
+      const result = {
+        refWidth: w,
+        members: [{ width: w, height: h, area: Math.PI * (w / 2) ** 2, baseY: 0, isTapered: !isShell }],
+      };
+      if (body) body._aeroProfileForFinsCache = result;
+      return result;
+    }
+    let refWidth = 0;
+    const members = [];
+    const bottom = mem[0];
+    const bell = _bellMember(bottom);
+    // A2: bug-compatible with physics.js bodyGridFinProfile indexing -- fix BOTH together, later
+    if (bell && bell.height > 0 && bell.width > 0) {
+      members.push({
+        width: bell.width,
+        height: bell.height,
+        area: Math.PI * (bell.width / 2) ** 2,
+        baseY: -bell.height,
+        isTapered: false,
+      });
+    }
+    let yOffset = 0;
+    mem.forEach(m => {
+      const H = Number.isFinite(m.height) ? m.height : 0;
+      const W = Number.isFinite(m.width) ? m.width : 0;
+      refWidth = Math.max(refWidth, W);
+      const isTapered = (m.stageRole === 'nose') || (m.stageRole === 'payloadSpace');
+      members.push({
+        width: W,
+        height: H,
+        area: Math.PI * (W / 2) ** 2,
+        baseY: yOffset,
+        isTapered,
+      });
+      yOffset += H;
+    });
+    const result = { refWidth: refWidth || 3.9, members };
+    if (body) body._aeroProfileForFinsCache = result;
+    return result;
+  }
+
+  // PORT of physics.js bodyGridFinProfile (A5: only getTypeById vs getComponentType).
+  function bodyGridFinProfile(body, profile) {
+    if (!body || !body.gridFins || !body.members || !profile || !profile.members) return null;
+    const _gf = body.gridFins;
+    const _c = body._gfpCache;
+    if (_c &&
+        _c.L === _gf.L.deploy && _c.R === _gf.R.deploy &&
+        _c.FB === _gf.FB.deploy && _c.FBc === _gf.FB.control) {
+      return _c.profile;
+    }
+    const fins = [];
+    body.members.forEach((m, i) => {
+      if (!m || !m.hasGridFins || !m.gridFinParams) return;
+      const pm = profile.members[i];
+      if (!pm) return;
+      const gp = m.gridFinParams;
+      const type = (m.gridFinTypeId && typeof getTypeById === 'function') ?
+        getTypeById(m.gridFinTypeId) : null;
+      const TC = (type && type.typeConstants) ? type.typeConstants : {};
+      const gap = (type && type.frame && Number.isFinite(type.frame.gapM)) ? type.frame.gapM : 0.05;
+      const span = gp.span, chord = gp.chord, thk = gp.thickness, cw = gp.cellWidth;
+      if (!(span > 0 && chord > 0 && thk > 0 && cw > 0)) return;
+      const wallF = Number.isFinite(TC.WALL_THICKNESS_FACTOR) ? TC.WALL_THICKNESS_FACTOR : 0.025;
+      const open = Math.max(0, 1 - (thk * wallF) / cw);
+      fins.push({
+        span, chord, thk,
+        sigma: Math.max(0.02, Math.min(1, 1 - open * open)),
+        tanBlock: cw / thk,
+        tanStall: Math.min(0.45, cw / thk),
+        hingeY: pm.baseY + (Number.isFinite(gp.finPositionY) ? gp.finPositionY : 0),
+        hullHalf: pm.width / 2 + gap,
+      });
+    });
+    if (!fins.length) return null;
+    const g = body.gridFins;
+    const snap = k => ({
+      deploy: (g[k] && Number.isFinite(g[k].deploy)) ? g[k].deploy : 90,
+      control: (g[k] && Number.isFinite(g[k].control)) ? g[k].control : 0,
+    });
+    const result = { fins, st: { L: snap('L'), R: snap('R'), FB: snap('FB') } };
+    body._gfpCache = {
+      L: g.L.deploy, R: g.R.deploy, FB: g.FB.deploy, FBc: g.FB.control,
+      profile: result,
+    };
+    return result;
+  }
+
+function _deriveImpl(snapshot, bodyIdx, payloadMass) {
+  const idx = Number.isInteger(bodyIdx) ? bodyIdx : (snapshot.activeBodyIndex || 0);
+  const body = snapshot.bodies[idx];
+  if (!body) return null;
+  const env = getEnv();
+  if (!env) return null;
+    
+    const hasMembers = Array.isArray(body.members) && body.members.length > 0;
+    const members = body.members || [];
+    
+    const rx = body.rx, ry = body.ry, vx = body.vx, vy = body.vy;
+    const theta = body.theta, omega = body.omega;
+    
+    const r = Math.hypot(rx, ry);
+    const altitudeASL = r - env.EARTH_RADIUS;
+    const altitudeAGL = altitudeASL - (env.LAUNCH_SITE_ALTITUDE || 0);
+    
+    const gMag = env.GM_EARTH / (r * r);
+    const gVecX = r > 0 ? -gMag * rx / r : 0;
+    const gVecY = r > 0 ? -gMag * ry / r : 0;
+    
+    // US76 atmosphere — same model as physics (environment.js).
+    const rho = _ATM.state(altitudeASL).rho;
+    
+    const w = _windInertial(rx, ry, snapshot.wind);
+    const omegaE = env.EARTH_OMEGA || 0;
+    const svx = omegaE * ry, svy = -omegaE * rx;
+    const relVx = vx - (w.wx + svx);
+    const relVy = vy - (w.wy + svy);
+    const speedRel = Math.hypot(relVx, relVy);
+    const Q = 0.5 * rho * speedRel * speedRel;
+    
+    const cosT = Math.cos(theta), sinT = Math.sin(theta);
+    const velBodyX = speedRel > 1e-6 ? (relVx * cosT + relVy * sinT) : 0;
+    const sinAlpha = speedRel > 1e-6 ? Math.max(-1, Math.min(1, velBodyX / speedRel)) : 0;
+    const alphaDeg = Math.asin(sinAlpha) * 180 / Math.PI;
+    
+    // Drag area follows physics (attitude-dependent, includes the engine bell).
+    let maxW = 0;
+    members.forEach(m => { if (Number.isFinite(m.width) && m.width > maxW) maxW = m.width; });
+    if (maxW <= 0 && body.width) maxW = body.width;
+    let dragArea;
+    if (hasMembers) {
+      dragArea = _effectiveDragArea(members, sinAlpha, maxW);
+    } else {
+      const wC = Math.min(1, Math.abs(sinAlpha));
+      const sW = _bodyWidthOf(body), sH = _bodyHeightOf(body);
+      dragArea = Math.PI * (sW / 2) ** 2 * (1 - wC) + sW * sH * wC;
+    }
+    const dragCd = _hullCd(speedRel, altitudeASL);
+    const dragMag = (rho > 0 && speedRel > 1e-3)
+      ? 0.5 * rho * dragCd * dragArea * speedRel * speedRel : 0;
+    const dragVecX = speedRel > 1e-6 ? -dragMag * relVx / speedRel : 0;
+    const dragVecY = speedRel > 1e-6 ? -dragMag * relVy / speedRel : 0;
+    
+    let thrustTotal = 0, mdotTotal = 0, thrustBodyX = 0, thrustBodyY = 0;
+    (body.engines || []).forEach(e => {
+      if (!(e.massFlowRate > 0)) return;
+      const F = e.massFlowRate * e.Ve;
+      thrustTotal += F;
+      mdotTotal += e.massFlowRate;
+      const gRad = (e.gimbal ? (e.gimbalDeg || 0) : 0) * Math.PI / 180;
+      thrustBodyX += F * Math.sin(gRad);
+      thrustBodyY += F * Math.cos(gRad);
+    });
+    
+// Payload cargo is physically present whenever the body still carries
+// an attached payload — the fairing's presence is irrelevant. Once the
+// fairing splits and the satellite is exposed but still bolted on, the
+// satellite is still part of the stage's mass. Only a released payload
+// is gone. (Previously this required the fairing to still be a member,
+// so fairing split made the payload silently vanish from guidance's
+// mass model while physics kept including it — a 2× I mismatch that
+// halved every attitude response during ANG_FOR_APOGEE and
+// TARGET_APOGEE.)
+// Payload mass comes through the env boot data or the per-call argument.
+// A hardcoded 12000 here would silently drift the guidance mass model
+// away from physics's whenever a user tuned the payload or switched to
+// a mission without cargo.
+const payloadMassInput = Number.isFinite(payloadMass) ?
+  payloadMass :
+  ((_stackData && _stackData.stackPayloadMass) || 0);
+const massProps = hasMembers ?
+  _stackMassProps(body, payloadMassInput) :
+  _soloBodyMassProps(body);
+    
+    let refWidth = 0;
+    members.forEach(m => {
+      const W = Number.isFinite(m.width) ? m.width : 0;
+      if (W > refWidth) refWidth = W;
+    });
+    if (refWidth <= 0 && body.width) refWidth = body.width;
+    
+    let memberBreakdown;
+    if (hasMembers) {
+      let cumY = 0;
+      memberBreakdown = members.map((m, i) => {
+        const H = Number.isFinite(m.height) ? m.height : 0;
+        const W = Number.isFinite(m.width) ? m.width : 0;
+        const memberComponents = massProps.components.filter(c => c._memberIdx === i);
+        let comLocalX = 0, comLocalY = H / 2, memberMass = 0;
+        if (memberComponents.length) {
+          const combined = _combine(memberComponents.map(c => ({ ...c, comY: c.comY - cumY })));
+          comLocalX = combined.comX;
+          comLocalY = combined.comY;
+          memberMass = combined.M;
+        }
+        const aero = _memberAero(m, refWidth, rho, speedRel, sinAlpha, altitudeASL);
+        const entry = {
+          index: i, id: m.id, role: m.stageRole || 'rocket',
+          H, W, baseY: cumY,
+          mass: memberMass,
+          comX: comLocalX, comY: comLocalY, comY_stack: cumY + comLocalY,
+          copY: aero.copY_body, copY_stack: cumY + aero.copY_body,
+          copY_linear: aero.copY_linear,
+          copY_linear_stack: aero.copY_linear !== null ? cumY + aero.copY_linear : null,
+          presentedArea: aero.presentedArea,
+          aAxial: aero.aAxial, aSide: aero.aSide, drag: aero.drag,
+          Fnormal_linear: aero.Fnormal_linear,
+          Fnormal_crossflow: aero.Fnormal_crossflow,
+          isTapered: aero.isTapered,
+        };
+        cumY += H;
+        return entry;
+      });
+    } else {
+      const soloW = _bodyWidthOf(body);
+      const soloH = _bodyHeightOf(body);
+      const soloAero = _memberAero(
+        { stageRole: null, width: soloW, height: soloH },
+        refWidth || soloW, rho, speedRel, sinAlpha, altitudeASL
+      );
+      const soloComY = soloH * 0.5;
+      memberBreakdown = [{
+        index: 0, id: body.id || '(solo)', role: '(solo)',
+        H: soloH, W: soloW, baseY: 0,
+        mass: massProps.M,
+        comX: 0, comY: soloComY, comY_stack: soloComY,
+        copY: soloAero.copY_body, copY_stack: soloAero.copY_body,
+        copY_linear: soloAero.copY_linear, copY_linear_stack: soloAero.copY_linear,
+        presentedArea: soloAero.presentedArea,
+        aAxial: soloAero.aAxial, aSide: soloAero.aSide, drag: soloAero.drag,
+        Fnormal_linear: soloAero.Fnormal_linear,
+        Fnormal_crossflow: soloAero.Fnormal_crossflow,
+        isTapered: soloAero.isTapered,
+      }];
+    }
+    
+    const comY_t = massProps.comY;
+    const comX_t = massProps.comX;
+    
+    let torqueEngine = 0;
+(body.engines || []).forEach(e => {
+  if (!(e.massFlowRate > 0)) return;
+  const F = e.massFlowRate * e.Ve;
+  const gRad = (e.gimbal ? (e.gimbalDeg || 0) : 0) * Math.PI / 180;
+  const fx = F * Math.sin(gRad);
+  const fy = F * Math.cos(gRad);
+ // Thrust transmits through the gimbal bearing (see vehicle.js's
+// e.y comment). e.y is the bearing's local y — 0 for F9 and
+// nearly every real engine.
+const ey = Number.isFinite(e.y) ? e.y : 0;
+torqueEngine += (e.x - comX_t) * fy - (ey - comY_t) * fx;
+});
+    
+    let torqueDrag = 0;
+    memberBreakdown.forEach(m => {
+      if (m.Fnormal_linear !== 0 && m.copY_linear_stack !== null) {
+        torqueDrag += (comY_t - m.copY_linear_stack) * m.Fnormal_linear;
+      }
+      if (m.Fnormal_crossflow !== 0) {
+        torqueDrag += (comY_t - m.copY_stack) * m.Fnormal_crossflow;
+      }
+    });
+    
+    const torqueRcs = 0;
+// Gravity-gradient torque — mirror of physics.js's
+// gravityGradientTorque(), same formula, same slender-body
+// simplification (I_axial ≈ 0). Guidance's own controller
+// predictions must account for it or its attitude-hold loops will
+// see a phantom imbalance during long coasts.
+const _localVertGG = Math.atan2(-rx, ry);
+const _betaGG = theta - _localVertGG;
+const torqueGravityGradient = (massProps.I > 0 && r > 1) ?
+  -1.5 * env.GM_EARTH / (r * r * r) * massProps.I * Math.sin(2 * _betaGG) :
+  0;
+const torqueTotal = torqueEngine + torqueDrag + torqueRcs + torqueGravityGradient;
+const _I = massProps.I > 0 ? massProps.I : 0;
+const alphaEngine = _I > 0 ? torqueEngine / _I : 0;
+const alphaDrag = _I > 0 ? torqueDrag / _I : 0;
+const alphaRcs = _I > 0 ? torqueRcs / _I : 0;
+const alphaGG = _I > 0 ? torqueGravityGradient / _I : 0;
+const alphaAng = _I > 0 ? torqueTotal / _I : 0;
+
+    // ---- grid-fin aero (hull-independent; A1-A6; existing outputs untouched) ----
+    let gridFinFx = 0, gridFinFy = 0, gridFinTorque = 0;
+    let gridFinControlUsed = null;
+    if (hasMembers && speedRel > 1e-3) {
+      try {
+        const profileForFins = _bodyAeroProfileForFins(body);
+        let gfp = bodyGridFinProfile(body, profileForFins);
+        if (gfp && gfp.st && gfp.st.FB && Number.isFinite(body._fbControlOverride)) {
+          // A4: override only when FB.deploy === 0 (mirror of physics updateGridFins lock rule)
+          const fbDeploy = Number.isFinite(gfp.st.FB.deploy) ? gfp.st.FB.deploy : 90;
+          const appliedControl = (fbDeploy === 0) ? body._fbControlOverride : 0;
+          gfp = Object.assign({}, gfp, {
+            st: Object.assign({}, gfp.st, {
+              FB: Object.assign({}, gfp.st.FB, { control: appliedControl }),
+            }),
+          });
+        }
+        if (gfp) {
+          const bx = relVx * cosT + relVy * sinT;
+          const by = -relVx * sinT + relVy * cosT;
+          const gf = computeGridFinAero(gfp, bx, by, Number.isFinite(omega) ? omega : 0,
+            rho, comY_t, comX_t, altitudeASL);
+          gridFinFx = gf.Fx * cosT - gf.Fy * sinT;
+          gridFinFy = gf.Fx * sinT + gf.Fy * cosT;
+          gridFinTorque = gf.torque;
+          gridFinControlUsed = (gfp.st && gfp.st.FB && Number.isFinite(gfp.st.FB.control)) ?
+            gfp.st.FB.control : null;
+        }
+      } catch (e) { /* fall through with zeros */ }
+    }
+    
+    return {
+      rx, ry, vx, vy, theta, omega,
+      r, altitudeASL, altitudeAGL,
+      gMag, gVecX, gVecY, rho,
+      windInertial: w,
+      earthSurfaceV: { svx, svy },
+      relVx, relVy, speedRel,
+      Q, velBodyX, sinAlpha, alphaDeg,
+      dragMag, dragVecX, dragVecY,
+      thrustTotal, mdotTotal, thrustBodyX, thrustBodyY,
+      massProps,
+// torqueDrag = aero only; torqueGravityGradient = GG only;
+// torqueEnvironmental = their sum. Guides that want to cancel
+// EVERY external attitude disturbance with gimbal/RCS should
+// reference the combined field, not torqueDrag — otherwise the
+// GG contribution goes uncancelled and slowly drifts attitude
+// during long coasts.
+torqueEngine, torqueDrag, torqueGravityGradient, torqueEnvironmental: torqueDrag + torqueGravityGradient,
+  torqueRcs, torqueTotal,
+  alphaEngine, alphaDrag, alphaRcs, alphaGG, alphaAng,
+      memberBreakdown,
+      hasMembers,
+      gridFinFx, gridFinFy, gridFinTorque, gridFinControlUsed,
+    };
+  }
+  
+  function deriveAllBodies(snapshot, perBodyPayloadMass) {
+  if (!snapshot || !Array.isArray(snapshot.bodies)) return [];
+  return snapshot.bodies.map((_, i) => {
+    const pm = Array.isArray(perBodyPayloadMass) ? perBodyPayloadMass[i] : undefined;
+    try { return derive(snapshot, i, pm); }
+    catch (e) { return null; }
+  });
+}
+
+// ------------------------------------------------------------------
+// deriveForState(snapshot, idx, overrideBody)
+//
+// Runs derive() against a VIRTUAL body — same as snapshot.bodies[idx]
+// but with the given fields overridden. Used by predictive guidance to
+// ask "what would the state look like one tick from now?" without
+// touching the real snapshot or the physics worker.
+//
+// Only the overridden fields change. members / pods / engines / env /
+// wind all come from the original snapshot — so the derived COM, CoP,
+// A_eff, drag torque, and every other output reflect the OVERRIDDEN
+// kinematics and slosh, exactly as physics would compute them if the
+// body were in that state.
+// ------------------------------------------------------------------
+// Public helper: predict fin force/torque at candidate control angle.
+// stateOverride null = current state; controlDeg null = use snapshot control.
+function gridFinAero(snapshot, bodyIdx, stateOverride, controlDeg) {
+  const ov = Object.assign({}, stateOverride || {});
+  if (Number.isFinite(controlDeg)) ov._fbControlOverride = controlDeg;
+  const d = (stateOverride || Number.isFinite(controlDeg))
+    ? deriveForState(snapshot, bodyIdx, ov)
+    : derive(snapshot, bodyIdx);
+  return d ? { Fx: d.gridFinFx, Fy: d.gridFinFy, torque: d.gridFinTorque } : null;
+}
+
+function deriveForState(snapshot, idx, overrideBody, gimbalOverrideDeg, gimbalOverrideScope) {
+  if (!snapshot || !snapshot.bodies || !snapshot.bodies[idx]) return null;
+  const origBody = snapshot.bodies[idx];
+  const virtualBody = Object.assign({}, origBody, overrideBody);
+  // Optional gimbal override: apply the given angle to every gimbal-
+  // capable engine on the body. Used by gimbal-based predictive
+  // guidance to answer "what does S_{N+k} look like if gimbal is X?"
+  // without mutating the real snapshot.
+  if (Number.isFinite(gimbalOverrideDeg) && Array.isArray(origBody.engines)) {
+  const scope = (gimbalOverrideScope === 'center') ? 'center' : 'all';
+  virtualBody.engines = origBody.engines.map(e => {
+    if (!e.gimbal) return e;
+    if (scope === 'center' && !e.isCenter) return e;
+    return Object.assign({}, e, { gimbalDeg: gimbalOverrideDeg });
+  });
+}
+    const virtualSnap = Object.assign({}, snapshot, {
+    bodies: snapshot.bodies.slice(),
+  });
+  virtualSnap.bodies[idx] = virtualBody;
+  // noCache=true — virtual snapshots are one-shot; caching them would
+  // leak map entries without any benefit.
+  return derive(virtualSnap, idx, undefined, true);
+}
+  
+  return {
+    // Stack data
+    setStackData, getStackData, getMemberRecord, getTypeById, getEnv, getStackPayloadMass,
+    // Derivation
+    // Derivation
+derive, deriveAllBodies, deriveForState, gridFinAero,
+    // Lower-level helpers (exposed for debugging and per-fragment use)
+    typeParam, combineComponents: _combine, memberMaxFuel: _memberMaxFuel,
+    sloshMassFraction: _sloshMassFraction,
+    sloshCentroidFrac: _sloshCentroidFrac,
+  };
+})();
