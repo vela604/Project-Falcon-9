@@ -3116,7 +3116,7 @@ let _trailPts = [];
 let _lastTrailSimT = -1;
 let _lastTrailBodyIdx = -1;
 
-if (typeof window === "undefined" && typeof self !== "undefined" && typeof self.addEventListener === "function") {
+if (typeof importScripts === "function" && typeof self !== "undefined" && typeof self.addEventListener === "function") {
   self.addEventListener("message", (e) => {
     const m = e.data;
     if (m && m.type === "trailToggle") {
@@ -3142,10 +3142,10 @@ function _updateTrail() {
 
 function drawTrail() {
   if (!showTrail || _trailPts.length < 2) return;
-  const isPlanet = camera.mode === "planet";
+  if (camera.mode !== "planet") return;
   ctx.save();
-  ctx.strokeStyle = isPlanet ? "rgba(120, 200, 255, 0.85)" : "rgba(120, 200, 255, 0.65)";
-  ctx.lineWidth = isPlanet ? 2 : 1.5;
+  ctx.strokeStyle = "rgba(120, 200, 255, 0.85)";
+  ctx.lineWidth = 2;
   ctx.lineJoin = "round";
   ctx.lineCap = "round";
   ctx.beginPath();

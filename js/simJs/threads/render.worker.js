@@ -256,6 +256,12 @@ if (msg.data.rcsSync) {
       showTrajectory = msg.showTrajectory;
       trajectoryMode = msg.trajectoryMode;
       sloshEnabled = msg.sloshEnabled;
+      if (msg.showTrail !== undefined) showTrail = !!msg.showTrail;
+      break;
+    }
+    case 'trailToggle': {
+      showTrail = !!msg.enabled;
+      break;
     }
   }
 };
