@@ -652,6 +652,7 @@ window.addEventListener('resize', () => {
     // ... baaki bootstrap content waisa hi
     initFigureCanvas();
     initBasalCanvas();
+    initTelemetryPanel();
     initWindCompass();
     
     // Hide legs button if the active stack has no leg-deploy recovery.

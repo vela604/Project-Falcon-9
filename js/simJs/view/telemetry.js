@@ -396,6 +396,24 @@ function getEl(id) {
 }
 
 
+function initTelemetryPanel() {
+  const handle = document.getElementById('teleHandle');
+  const panel = document.getElementById('telemetryPanel');
+  const btnC = document.getElementById('teleToggleCompact');
+  if (handle && panel) {
+    handle.addEventListener('click', () => {
+      const hidden = panel.classList.toggle('hidden-wall');
+      handle.textContent = hidden ? '▶' : '◀';
+    });
+  }
+  if (btnC && panel) {
+    btnC.addEventListener('click', () => {
+      const compact = panel.classList.toggle('tele-compact');
+      btnC.textContent = compact ? '▲' : '▼';
+    });
+  }
+}
+
 function updateTelemetry() {
   // Thermal update — pure-read derived quantity, ticked for every body
   // before any display reads (per-body list + active cell both rely on
@@ -474,6 +492,7 @@ set('t-h', fmt(altitude, 3)); // frame-independent
 //   v_apo = |h| / r_a                       velocity at apogee (vr = 0 there)
 // Thrust is NOT subtracted — same convention as guidance's plan block,
 // so the numbers here match what the mission guide reads.
+let _altP_out = 0, _altA_out = Infinity;
 {
   const GM = CONFIG.GM_EARTH;
   const R_e = CONFIG.EARTH_RADIUS;
@@ -490,6 +509,8 @@ set('t-h', fmt(altitude, 3)); // frame-independent
   
   set('t-apogee', Number.isFinite(altA) ? fmt(altA, 3) + ' km' : '∞ (escape)');
   set('t-perigee', fmt(altP, 3) + ' km');
+  _altP_out = altP;
+  _altA_out = altA;
   set('t-vapo', fmt(vApo, 0) + ' m/s');
   // Specific orbital energy — same formula the tester HUD and plots use.
   set('t-energy', fmt(E_orb / 1e6, 2) + ' MJ/kg');
@@ -581,6 +602,32 @@ const _sloshOffsetCm = fmt((_sloshBody && _sloshBody.slosh ? _sloshBody.slosh.of
     : '—';
   set('t-slosh', `${_sloshOffsetCm} cm (ω=${_sloshOmega}, ζ=${_sloshZeta})`);
   set('t-moi', geom.I >= 1e6 ? (geom.I / 1e6).toFixed(2) + 'M' : fmt(geom.I, 0));
+  // ─── Collapsed telemetry ───
+  const setC = (id, val) => { const e = getEl(id); if (e) e.textContent = val; };
+  setC('tc-alt', (altitude / 1000).toFixed(3));
+  setC('tc-x', (arcDistance / 1000).toFixed(3));
+  setC('tc-ap', (Number.isFinite(_altA_out) ? _altA_out.toFixed(3) : '∞') + ' | ' + _altP_out.toFixed(3));
+  setC('tc-v', (speedInertial / 1000).toFixed(3));
+  const thrustKN = ENGINES.reduce((s, e) => s + e.currentF, 0) / 1000;
+  setC('tc-thr', thrustKN.toFixed(1));
+  const gForce = (geom.M > 0) ? Math.hypot(lastForces.mainFx || 0, lastForces.mainFy || 0) / (geom.M * 9.80665) : 0;
+  setC('tc-gf', gForce.toFixed(2));
+  setC('tc-theta', thetaRelative.toFixed(2));
+  setC('tc-omega', omegaRelative.toFixed(2));
+  setC('tc-aoa', (lastForces.aoaDeg || 0).toFixed(4));
+  setC('tc-gimbal', centerEngine ? centerEngine.gimbalDeg.toFixed(2) : '0.00');
+  const _abC = state.bodies[state.activeBodyIndex];
+  const membersC = (_abC && _abC.members) ? _abC.members : [];
+  const bottomMC = membersC[0];
+  const bottomMaxC = (typeof memberMaxFuel === 'function' && bottomMC) ? memberMaxFuel(bottomMC, membersC[1] || null) : 0;
+  const bottomFuelC = (_abC && Array.isArray(_abC.memberFuel) && Number.isFinite(_abC.memberFuel[0])) ? _abC.memberFuel[0] : state.fuelMass;
+  const fuelPct = bottomMaxC > 0 ? (bottomFuelC / bottomMaxC * 100).toFixed(1) + '%' : '0%';
+  setC('tc-fuel', fuelPct + ' | ' + Math.round(bottomFuelC) + 'kg');
+  setC('tc-g', grav.g.toFixed(4));
+  setC('tc-rho', rho.toFixed(4));
+  const _tstC = _abC ? _bodyTempWeighted(_abC) : null;
+  setC('tc-temp', _tstC ? _tstC.T.toFixed(0) + 'K' : '—');
+
   
   const maxThrustAll = ENGINES.reduce((s, e) => s + e.Fmax, 0);
   const g0v = (typeof G0 !== 'undefined') ? G0 : 9.80665;

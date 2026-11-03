@@ -121,41 +121,63 @@
       </div>
       
       <!-- Telemetry (compact notation) -->
-      <div id="telemetryPanel">
-        <div class="tele-head">TELEMETRY</div>
-        <div class="tele-grid">
-          <div class="tele-row"><span class="tele-sym">x</span><span class="tele-val" id="t-x">0</span></div>
-          <div class="tele-row"><span class="tele-sym">h</span><span class="tele-val" id="t-h">0</span></div>
-<div class="tele-row"><span class="tele-sym">ha</span><span class="tele-val" id="t-apogee">0</span></div>
-<div class="tele-row"><span class="tele-sym">hp</span><span class="tele-val" id="t-perigee">0</span></div>
-<div class="tele-row"><span class="tele-sym">ε</span><span class="tele-val" id="t-energy">—</span></div>
-<div class="tele-row"><span class="tele-sym">va</span><span class="tele-val" id="t-vapo">0</span></div>
-<div class="tele-row"><span class="tele-sym">v</span><span class="tele-val" id="t-v">0</span></div>
-<div class="tele-row"><span class="tele-sym">vr</span><span class="tele-val" id="t-vr">0</span></div>
-          <div class="tele-row"><span class="tele-sym">vt</span><span class="tele-val" id="t-vt">0</span></div>
-          <div class="tele-row"><span class="tele-sym">θ</span><span class="tele-val" id="t-theta">0</span></div>
-          <div class="tele-row"><span class="tele-sym">ω</span><span class="tele-val" id="t-omega">0</span></div>
-          <div class="tele-row"><span class="tele-sym">m</span><span class="tele-val" id="t-m">0</span></div>
-          <div class="tele-row"><span class="tele-sym">mf</span><span class="tele-val" id="t-mf">0</span></div>
-          <div class="tele-row"><span class="tele-sym">Ft</span><span class="tele-val" id="t-Ft">0</span></div>
-          <div class="tele-row"><span class="tele-sym">Δv</span><span class="tele-val" id="t-dv">—</span></div>
-          <div class="tele-row"><span class="tele-sym">γ</span><span class="tele-val" id="t-gimbal">0</span></div>
-          <div class="tele-row"><span class="tele-sym">τ</span><span class="tele-val" id="t-torque">0</span></div>
-          <div class="tele-row"><span class="tele-sym">α</span><span class="tele-val" id="t-aoa">0</span></div>
-          <div class="tele-row"><span class="tele-sym">g</span><span class="tele-val" id="t-g">0</span></div>
-          <div class="tele-row"><span class="tele-sym">ρ</span><span class="tele-val" id="t-rho">0</span></div>
-          <div class="tele-row"><span class="tele-sym">T</span><span class="tele-val" id="t-temp">—</span></div>
-          <div class="tele-row"><span class="tele-sym">Tmax</span><span class="tele-val" id="t-maxT">—</span></div>
-          <div class="tele-row"><span class="tele-sym">D↑</span><span class="tele-val" id="t-duty">0%</span></div>
-          <div class="tele-row"><span class="tele-sym">TWR</span><span class="tele-val" id="t-twr">0</span></div>
-          <div class="tele-row"><span class="tele-sym">B</span><span class="tele-val" id="t-bodies">1</span></div>
-          <div class="tele-row"><span class="tele-sym">hc</span><span class="tele-val" id="t-com">0</span></div>
-          <div class="tele-row"><span class="tele-sym">slosh</span><span class="tele-val" id="t-slosh">0</span></div>
-          <div class="tele-row"><span class="tele-sym">I</span><span class="tele-val" id="t-moi">0</span></div>
-        </div>
-          <div class="tele-head" style="margin-top:10px;">BODIES</div>
-  <div id="t-bodyList" class="tele-body-list"></div>
+      <div id="teleHandle" title="Hide Telemetry">◀</div>
+<div id="telemetryPanel">
+  <div class="tele-head">
+    <span>TELEMETRY</span>
+    <button type="button" id="teleToggleCompact" class="tele-icon-btn" title="Toggle Compact/Full">▼</button>
   </div>
+  <div id="tele-collapsed">
+    <div class="tele-row"><span class="tele-sym">Alt.</span><span class="tele-val" id="tc-alt">0</span></div>
+    <div class="tele-row"><span class="tele-sym">X</span><span class="tele-val" id="tc-x">0</span></div>
+    <div class="tele-row"><span class="tele-sym">A/P</span><span class="tele-val" id="tc-ap">0</span></div>
+    <div class="tele-row"><span class="tele-sym">V</span><span class="tele-val" id="tc-v">0</span></div>
+    <div class="tele-row"><span class="tele-sym">Ft.</span><span class="tele-val" id="tc-thr">0</span></div>
+    <div class="tele-row"><span class="tele-sym">G-F</span><span class="tele-val" id="tc-gf">0</span></div>
+    <div class="tele-row"><span class="tele-sym">θ</span><span class="tele-val" id="tc-theta">0</span></div>
+    <div class="tele-row"><span class="tele-sym">ω</span><span class="tele-val" id="tc-omega">0</span></div>
+    <div class="tele-row"><span class="tele-sym">α</span><span class="tele-val" id="tc-aoa">0</span></div>
+    <div class="tele-row"><span class="tele-sym">γ</span><span class="tele-val" id="tc-gimbal">0</span></div>
+    <div class="tele-row"><span class="tele-sym">Fuel</span><span class="tele-val" id="tc-fuel">0</span></div>
+    <div class="tele-row"><span class="tele-sym">g</span><span class="tele-val" id="tc-g">0</span></div>
+    <div class="tele-row"><span class="tele-sym">ρ</span><span class="tele-val" id="tc-rho">0</span></div>
+    <div class="tele-row"><span class="tele-sym">T</span><span class="tele-val" id="tc-temp">0</span></div>
+  </div>
+  <div id="tele-extended">
+    <div class="tele-grid">
+      <div class="tele-row"><span class="tele-sym">x</span><span class="tele-val" id="t-x">0</span></div>
+      <div class="tele-row"><span class="tele-sym">h</span><span class="tele-val" id="t-h">0</span></div>
+      <div class="tele-row"><span class="tele-sym">ha</span><span class="tele-val" id="t-apogee">0</span></div>
+      <div class="tele-row"><span class="tele-sym">hp</span><span class="tele-val" id="t-perigee">0</span></div>
+      <div class="tele-row"><span class="tele-sym">ε</span><span class="tele-val" id="t-energy">—</span></div>
+      <div class="tele-row"><span class="tele-sym">va</span><span class="tele-val" id="t-vapo">0</span></div>
+      <div class="tele-row"><span class="tele-sym">v</span><span class="tele-val" id="t-v">0</span></div>
+      <div class="tele-row"><span class="tele-sym">vr</span><span class="tele-val" id="t-vr">0</span></div>
+      <div class="tele-row"><span class="tele-sym">vt</span><span class="tele-val" id="t-vt">0</span></div>
+      <div class="tele-row"><span class="tele-sym">θ</span><span class="tele-val" id="t-theta">0</span></div>
+      <div class="tele-row"><span class="tele-sym">ω</span><span class="tele-val" id="t-omega">0</span></div>
+      <div class="tele-row"><span class="tele-sym">m</span><span class="tele-val" id="t-m">0</span></div>
+      <div class="tele-row"><span class="tele-sym">mf</span><span class="tele-val" id="t-mf">0</span></div>
+      <div class="tele-row"><span class="tele-sym">Ft</span><span class="tele-val" id="t-Ft">0</span></div>
+      <div class="tele-row"><span class="tele-sym">Δv</span><span class="tele-val" id="t-dv">—</span></div>
+      <div class="tele-row"><span class="tele-sym">γ</span><span class="tele-val" id="t-gimbal">0</span></div>
+      <div class="tele-row"><span class="tele-sym">τ</span><span class="tele-val" id="t-torque">0</span></div>
+      <div class="tele-row"><span class="tele-sym">α</span><span class="tele-val" id="t-aoa">0</span></div>
+      <div class="tele-row"><span class="tele-sym">g</span><span class="tele-val" id="t-g">0</span></div>
+      <div class="tele-row"><span class="tele-sym">ρ</span><span class="tele-val" id="t-rho">0</span></div>
+      <div class="tele-row"><span class="tele-sym">T</span><span class="tele-val" id="t-temp">—</span></div>
+      <div class="tele-row"><span class="tele-sym">Tmax</span><span class="tele-val" id="t-maxT">—</span></div>
+      <div class="tele-row"><span class="tele-sym">D↑</span><span class="tele-val" id="t-duty">0%</span></div>
+      <div class="tele-row"><span class="tele-sym">TWR</span><span class="tele-val" id="t-twr">0</span></div>
+      <div class="tele-row"><span class="tele-sym">B</span><span class="tele-val" id="t-bodies">1</span></div>
+      <div class="tele-row"><span class="tele-sym">hc</span><span class="tele-val" id="t-com">0</span></div>
+      <div class="tele-row"><span class="tele-sym">slosh</span><span class="tele-val" id="t-slosh">0</span></div>
+      <div class="tele-row"><span class="tele-sym">I</span><span class="tele-val" id="t-moi">0</span></div>
+    </div>
+    <div class="tele-head tele-head-bodies" style="margin-top:10px;">BODIES</div>
+    <div id="t-bodyList" class="tele-body-list"></div>
+  </div>
+</div>
   
   <!-- Direction / wind HUD — top-center. Local view only -->
   <div id="directionHUD">
