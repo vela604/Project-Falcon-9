@@ -398,23 +398,18 @@ function getEl(id) {
 
 function initTelemetryPanel() {
   const handle = document.getElementById('teleHandle');
-  const wrapper = document.getElementById('teleWrapper');
-  const btnC = document.getElementById('teleToggleCompact');
   const panel = document.getElementById('telemetryPanel');
+  const btnC = document.getElementById('teleToggleCompact');
+  if (!handle || !panel) return;
   
-  if (handle && wrapper) {
-    handle.addEventListener('click', () => {
-      const closed = wrapper.classList.toggle('closed');
-      handle.textContent = closed ? '▶' : '◀';
-    });
-  }
+  // Hide-to-wall toggle
+  handle.addEventListener('click', () => {
+    const hidden = panel.classList.toggle('hidden-wall');
+    handle.textContent = hidden ? '▶' : '◀';
+  });
   
-  if (btnC && panel) {
-    // Default to compact mode on first load
-    if (!panel.classList.contains('tele-compact')) {
-      panel.classList.add('tele-compact');
-      btnC.textContent = 'EXPAND';
-    }
+  // Compact/expand toggle (starts in compact, button labeled EXPAND)
+  if (btnC) {
     btnC.addEventListener('click', () => {
       const compact = panel.classList.toggle('tele-compact');
       btnC.textContent = compact ? 'EXPAND' : 'COLLAPSE';
