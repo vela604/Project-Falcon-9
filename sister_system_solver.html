@@ -1,0 +1,624 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sister Systems Solver — α(t) = A sin(ft + k₁) + k₂</title>
+<style>
+  :root{
+    --bg:#f4f6fb; --card:#ffffff; --ink:#1e293b; --muted:#64748b;
+    --line:#e2e8f0; --accent:#2563eb; --accent2:#0f766e;
+    --err:#b91c1c; --errbg:#fef2f2; --errline:#fecaca;
+    --okbg:#f0fdf4; --okline:#bbf7d0;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--bg); color:var(--ink); line-height:1.55;
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  .wrap{max-width:1120px;margin:0 auto;padding:26px 18px 90px}
+  h1{font-size:1.55rem;margin:0 0 6px;letter-spacing:-.02em}
+  .sub{color:var(--muted);margin:0 0 26px;font-size:.94rem}
+  section{
+    background:var(--card);border:1px solid var(--line);border-radius:14px;
+    padding:20px 22px;margin-bottom:22px;box-shadow:0 1px 2px rgba(15,23,42,.04)
+  }
+  h2{font-size:1.12rem;margin:0 0 6px;color:#0f172a;letter-spacing:-.01em}
+  h3{font-size:.98rem;margin:18px 0 6px;color:#0f172a}
+  p{margin:8px 0}
+  .muted{color:var(--muted);font-size:.9rem}
+  .eq{
+    font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    font-size:.86rem; background:#f8fafc; border-left:3px solid var(--accent);
+    padding:10px 14px;border-radius:8px;margin:10px 0;overflow-x:auto;white-space:pre;
+  }
+  .eq.teal{border-left-color:var(--accent2)}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+  @media(max-width:780px){.grid2{grid-template-columns:1fr}}
+  .card{border:1px solid var(--line);border-radius:12px;padding:16px;background:#fcfdff}
+  .card h3{margin-top:0}
+  .field{display:flex;flex-direction:column;gap:4px;margin-bottom:10px}
+  label{font-size:.82rem;color:#475569;font-weight:600;letter-spacing:.01em}
+  input,select{
+    font:inherit;padding:8px 10px;border:1px solid #cbd5e1;border-radius:8px;
+    background:#fff;color:var(--ink);width:100%
+  }
+  input:focus,select:focus{outline:2px solid #bfdbfe;border-color:var(--accent)}
+  .btn{
+    font:inherit;font-weight:600;cursor:pointer;border:0;border-radius:9px;
+    padding:10px 18px;background:var(--accent);color:#fff;transition:.15s
+  }
+  .btn:hover{background:#1d4ed8}
+  .btn.ghost{background:#eef2ff;color:#1e40af}
+  .btn.ghost:hover{background:#e0e7ff}
+  .btn:disabled{background:#cbd5e1;cursor:not-allowed}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end}
+  .row .field{flex:1 1 150px;margin-bottom:0}
+  table{width:100%;border-collapse:collapse;font-size:.88rem;margin-top:6px}
+  th,td{padding:6px 8px;border-bottom:1px solid #eef2f7;text-align:left;vertical-align:top}
+  th{color:#475569;font-weight:600;font-size:.8rem;text-transform:uppercase;letter-spacing:.04em}
+  td.num{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;text-align:right;white-space:nowrap}
+  .pill{display:inline-block;padding:2px 9px;border-radius:999px;font-size:.75rem;font-weight:600}
+  .pill.ok{background:var(--okbg);color:#166534;border:1px solid var(--okline)}
+  .pill.bad{background:var(--errbg);color:var(--err);border:1px solid var(--errline)}
+  .err{color:var(--err);background:var(--errbg);border:1px solid var(--errline);
+       padding:10px 14px;border-radius:9px;font-size:.88rem;margin:10px 0}
+  .note{background:#fffbeb;border:1px solid #fde68a;border-radius:10px;padding:12px 15px;font-size:.88rem;margin:12px 0}
+  .kv{display:grid;grid-template-columns:auto 1fr;gap:4px 16px;font-size:.88rem;margin:8px 0}
+  .kv .k{color:var(--muted)}
+  .kv .v{font-family:ui-monospace,monospace;text-align:right}
+  .big{font-family:ui-monospace,monospace;font-size:1.02rem;font-weight:700;color:var(--accent2)}
+  code{background:#f1f5f9;padding:1px 5px;border-radius:4px;font-size:.86em}
+  ol,ul{margin:8px 0 8px 20px;padding:0}
+  li{margin:5px 0}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>Sister Systems Solver</h1>
+  <p class="sub">
+    α(t) = A·sin(f·t + k₁) + k₂ &nbsp;with&nbsp; f = 2π/P &nbsp;—&nbsp;
+    rotational (j = 1) and linear (j = 2), sharing one final time T₀ = L.
+  </p>
+
+  <!-- ================= THEORY ================= -->
+  <section id="theory">
+    <h2>1 · Model and boundary conditions</h2>
+    <p>
+      For each system <em>j</em> the acceleration follows the same shape, only the symbols differ:
+    </p>
+    <div class="eq">αⱼ(t) = Aⱼ · sin(fⱼ t + k₁ⱼ) + k₂ⱼ ,      fⱼ = 2π / Pⱼ
+
+ j = 1  (rotational) :  a₀ = α₀ ,  v₀ = ω₀ ,  Δs = θ_f − θ_i
+ j = 2  (linear)     :  a₀ = a₀ ,  v₀ = v₀ ,  Δs = s_f − s_i</div>
+
+    <p><strong>Known:</strong> a₀ⱼ, v₀ⱼ, Δsⱼ and the <em>common</em> final time L = T₀.<br>
+       <strong>Unknown:</strong> Aⱼ, k₁ⱼ, k₂ⱼ, Pⱼ.</p>
+
+    <p>Boundary conditions (identical for both systems):</p>
+    <div class="eq">t = 0 :   α(0) = a₀ ,   ω(0) = v₀ ,   s(0) = s_i
+t = L :   α(L) = 0  ,   ω(L) = 0  ,   s(L) = s_f      ⇒  s(L) − s(0) = Δs</div>
+
+    <h2>2 · First and second integrals</h2>
+    <div class="eq">ω(t) = v₀ + (A/f)·[ cos k₁ − cos(ft + k₁) ] + k₂·t
+
+s(t) − s(0) = v₀t + (A/f)·[ t·cos k₁ − ( sin(ft + k₁) − sin k₁ ) / f ] + ½ k₂ t²</div>
+
+    <h2>3 · The key reduction</h2>
+    <p>Put <code>m = f·L/2 = πL/P</code>. Combining the four conditions
+       α(0)=a₀, α(L)=0, ω(L)=0, s(L)−s(0)=Δs collapses everything into
+       <strong>one transcendental equation</strong> in m:</p>
+
+    <div class="eq teal">g(m) ≡ 1/m² − cot(m)/m  =  Λ ,     Λ = 2·(2Δs − v₀·L) / (a₀·L²)</div>
+
+    <p>Once m is known, every constant is explicit:</p>
+    <div class="eq teal">B = 1 + 2v₀/(a₀L) ,        D = cot m − 1/m
+R = tan(k₁ + m) = − B / D
+φ ≡ k₁ + m = atan2(−B , D)
+A  = − a₀ / ( 2·sin m · cos φ )
+k₂ = ½·a₀·( 1 + R·cot m )
+P  = π·L / m          (the period)
+f  = 2m / L = 2π/P</div>
+
+    <h2>4 · Branch structure of g(m)</h2>
+    <p>
+      <code>g</code> is strictly increasing on every interval <code>(nπ, (n+1)π)</code>:
+    </p>
+    <ul>
+      <li><strong>Branch n = 0</strong> — the physical first branch, <code>m ∈ (0, π)</code>:
+          g rises from <code>1/3</code> to <code>+∞</code>. A solution exists <strong>iff Λ &gt; 1/3</strong>, and it is unique.</li>
+      <li><strong>Branches n ≥ 1</strong> — higher harmonics: g runs from <code>−∞</code> to <code>+∞</code>,
+          so a solution exists for <em>every</em> L &gt; 0 (but the period P = πL/m becomes short).</li>
+    </ul>
+
+    <h2>5 · The valid range of T₀ (first branch)</h2>
+    <p>For branch n = 0 the condition Λ &gt; 1/3 is equivalent to</p>
+    <div class="eq">Q(L) = a₀·L² + 6·v₀·L − 12·Δs   having the opposite sign to a₀
+
+⟺  L lies strictly between the two roots of Q
+⟺  discriminant  9v₀² + 12·a₀·Δs  &gt; 0</div>
+    <p>
+      Both roots exist only if the discriminant is positive; then
+      <code>L ∈ (max(0, r_lo), r_hi)</code>. The <strong>shared</strong> range is the
+      <strong>intersection</strong> of the two systems' intervals.
+    </p>
+
+    <div class="note">
+      <strong>Mirror solution.</strong> Because only <code>tan(k₁+m)</code> is fixed, the pair
+      <code>(A, k₁) → (−A, k₁ + π)</code> also satisfies every condition (k₂ is unchanged).
+      Both are reported below.
+    </div>
+
+    <div class="note">
+      <strong>Excluded case.</strong> <code>a₀ = 0</code> makes the formulas degenerate
+      (division by a₀). That special branch was handled separately and is not solved here.
+    </div>
+  </section>
+
+  <!-- ================= INPUTS ================= -->
+  <section id="inputs">
+    <h2>6 · Inputs</h2>
+    <p class="muted">Known quantities for the two sister systems. They share the same final time T₀ = L.</p>
+
+    <div class="grid2">
+      <div class="card">
+        <h3>j = 1 — Rotational</h3>
+        <div class="field">
+          <label for="a0_1">a₀ = α₀ &nbsp;(initial angular acceleration, rad/s²)</label>
+          <input id="a0_1" type="number" step="any" value="2">
+        </div>
+        <div class="field">
+          <label for="v0_1">v₀ = ω₀ &nbsp;(initial angular velocity, rad/s)</label>
+          <input id="v0_1" type="number" step="any" value="1">
+        </div>
+        <div class="field">
+          <label for="ds_1">Δs = θ_f − θ_i &nbsp;(angular displacement, rad)</label>
+          <input id="ds_1" type="number" step="any" value="5">
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>j = 2 — Linear</h3>
+        <div class="field">
+          <label for="a0_2">a₀ &nbsp;(initial acceleration, m/s²)</label>
+          <input id="a0_2" type="number" step="any" value="1.5">
+        </div>
+        <div class="field">
+          <label for="v0_2">v₀ &nbsp;(initial velocity, m/s)</label>
+          <input id="v0_2" type="number" step="any" value="0.8">
+        </div>
+        <div class="field">
+          <label for="ds_2">Δs = s_f − s_i &nbsp;(displacement, m)</label>
+          <input id="ds_2" type="number" step="any" value="3">
+        </div>
+      </div>
+    </div>
+
+    <div class="row" style="margin-top:16px">
+      <div class="field" style="flex:0 0 190px">
+        <label for="branch">Branch n &nbsp;(m ∈ (nπ, (n+1)π))</label>
+        <input id="branch" type="number" step="1" min="0" value="0">
+      </div>
+      <button class="btn" id="btnRange">① Find valid T₀ range</button>
+    </div>
+  </section>
+
+  <!-- ================= RANGE ================= -->
+  <section id="rangeSec">
+    <h2>7 · Valid range of the common final time T₀</h2>
+    <div id="rangeOut"><p class="muted">Press “Find valid T₀ range”.</p></div>
+  </section>
+
+  <!-- ================= SOLVE ================= -->
+  <section id="solveSec">
+    <h2>8 · Choose T₀ and solve</h2>
+    <div class="row">
+      <div class="field" style="flex:1 1 220px">
+        <label for="L">T₀ = L &nbsp;(must lie inside the shared range)</label>
+        <input id="L" type="number" step="any" value="2.5">
+      </div>
+      <button class="btn" id="btnSolve">② Solve for m and all constants</button>
+      <button class="btn ghost" id="btnMid" disabled>Use midpoint of range</button>
+    </div>
+    <div id="solveOut"></div>
+  </section>
+
+  <!-- ================= INSTRUCTIONS ================= -->
+  <section id="instructions">
+    <h2>9 · What this tool does (and what you said)</h2>
+
+    <h3>The setup</h3>
+    <p>
+      You have a rotational angular-acceleration law
+      <code>α(t) = A sin(f t + k₁) + k₂</code> with <code>f = 2π/T</code>, and a
+      <strong>sister</strong> equation of exactly the same shape for linear motion.
+      None of <code>A, k₁, k₂, T</code> is known. What <em>is</em> known is the state at
+      the start — <code>α(0) = α₀, ω(0) = ω₀, θ(0) = θ_i</code> — and the state at the end
+      <code>T₀</code>: the acceleration and velocity have both died to zero and the
+      displacement has reached <code>θ_f</code>.
+    </p>
+
+    <h3>The procedure carried out above</h3>
+    <ol>
+      <li><strong>Integrate α(t) once</strong> → an expression for ω(t) containing
+          <code>ω₀</code> and the constants.</li>
+      <li><strong>Integrate again</strong> → an expression for θ(t) containing
+          <code>θ_i</code> and <code>ω₀</code>.</li>
+      <li><strong>Impose the end conditions</strong> α(T₀)=0, ω(T₀)=0, θ(T₀)=θ_f together with
+          α(0)=α₀. This yields a set of relations linking every unknown to the knowns.</li>
+      <li><strong>Eliminate k₁</strong> by introducing <code>m = πT₀/T</code> and
+          <code>R = tan(k₁+m)</code>. Everything collapses to a single equation for m:
+          <code>1/m² − cot(m)/m = Λ</code>, with <code>Λ = 2(2Δs − v₀T₀)/(a₀T₀²)</code>.</li>
+      <li><strong>Solve for m</strong> with safeguarded Newton–Raphson on the chosen branch.</li>
+      <li><strong>Back-substitute</strong> to get the period <code>P = πT₀/m</code>, then
+          <code>k₁, A, k₂</code> explicitly.</li>
+    </ol>
+
+    <h3>The twist you raised: T₀ is not free</h3>
+    <p>
+      Because <code>T₀</code> is shared by both sister systems, it cannot be picked arbitrarily —
+      it must sit inside the admissible window of <em>both</em> of them simultaneously.
+      On the first physical branch the window for each system is the interval between the roots of
+      <code>a₀L² + 6v₀L − 12Δs</code>, and the shared window is the intersection.
+      Section 7 computes it; section 8 refuses to solve outside it.
+    </p>
+
+    <h3>The results</h3>
+    <div class="eq teal">m  = π·T₀ / P                         (solved from g(m) = Λ)
+B  = 1 + 2v₀/(a₀T₀)
+D  = cot m − 1/m
+R  = −B/D = tan(k₁ + m)
+φ  = k₁ + m = atan2(−B, D)
+A  = −a₀ / (2 sin m cos φ)
+k₂ = ½ a₀ (1 + R cot m)
+P  = π·T₀ / m ,     f = 2π/P = 2m/T₀</div>
+
+    <p>Each result block also shows residuals for
+      <code>α(0)−a₀</code>, <code>α(L)</code>, <code>ω(L)</code> and <code>s(L)−s(0)−Δs</code>,
+      which should all be numerically zero — a direct check that the solution is genuine.</p>
+
+    <h3>Notes</h3>
+    <ul>
+      <li>Branch <code>n = 0</code> is the physical one and gives a finite T₀ window.
+          Branches <code>n ≥ 1</code> are higher harmonics: always solvable, arbitrarily short period.</li>
+      <li>Every solution has a mirror <code>(A, k₁) → (−A, k₁+π)</code> with the same k₂ — both are printed.</li>
+      <li><code>a₀ = 0</code> is a degenerate case (the shape of the equation changes) and is excluded here.</li>
+      <li>If <code>|cot m − 1/m| → 0</code> the amplitude blows up; the solver flags this.</li>
+    </ul>
+  </section>
+
+</div>
+
+<script>
+"use strict";
+
+/* ---------------- math helpers ---------------- */
+const PI = Math.PI;
+const cot = m => Math.cos(m) / Math.sin(m);
+const gfun = m => 1 / (m * m) - cot(m) / m;
+const gder = m => -2 / (m * m * m) + (1 / (Math.sin(m) ** 2)) / m + cot(m) / (m * m);
+
+function fmt(x, d = 8) {
+  if (!isFinite(x)) return x > 0 ? "∞" : "−∞";
+  if (x === 0) return "0";
+  const ax = Math.abs(x);
+  if (ax >= 1e-4 && ax < 1e6) {
+    let s = x.toFixed(d);
+    if (s.includes(".")) s = s.replace(/0+$/, "").replace(/\.$/, "");
+    return s === "-0" ? "0" : s;
+  }
+  return x.toExponential(4);
+}
+function sci(x) {
+  if (x === 0) return "0";
+  const ax = Math.abs(x);
+  if (ax >= 1e-6 && ax < 1e6) return fmt(x, 10);
+  return x.toExponential(3);
+}
+
+/* ---------------- Newton–Raphson with bisection safeguard ----------------
+   Solves  g(m) = Lambda  on the branch m ∈ (nπ, (n+1)π).
+   g is strictly increasing there, so the bracket is guaranteed.          */
+function solveM(Lambda, n) {
+  let lo, hi;
+  if (n === 0) {
+    if (!(Lambda > 1 / 3)) return null;          // no solution on the first branch
+    lo = 1e-10; hi = PI - 1e-10;
+  } else {
+    lo = n * PI + 1e-10; hi = (n + 1) * PI - 1e-10;
+  }
+
+  let m = 0.5 * (lo + hi);
+  for (let i = 0; i < 300; i++) {
+    const G = gfun(m) - Lambda;
+    if (G > 0) hi = m; else lo = m;
+
+    const d = gder(m);
+    let mn = m - G / d;
+    if (!isFinite(mn) || mn <= lo || mn >= hi) mn = 0.5 * (lo + hi);  // safeguard
+
+    if (Math.abs(mn - m) <= 1e-15 * Math.max(1, Math.abs(m))) { m = mn; break; }
+    m = mn;
+    if (hi - lo <= 1e-15) break;
+  }
+  return m;
+}
+
+/* ---------------- full solution for one system ---------------- */
+function solveSystem(inp, L, n) {
+  const { a0, v0, ds } = inp;
+
+  if (a0 === 0) return { error: "a₀ = 0 → degenerate special case (excluded)." };
+  if (!(L > 0)) return { error: "T₀ must be positive." };
+
+  const Lambda = 2 * (2 * ds - v0 * L) / (a0 * L * L);
+  const m = solveM(Lambda, n);
+  if (m === null) {
+    return { error: `No solution for m on branch n = ${n}. Branch 0 requires Λ > 1/3, but Λ = ${fmt(Lambda)}.` };
+  }
+
+  const P = PI * L / m;
+  const f = 2 * m / L;
+  const B = 1 + 2 * v0 / (a0 * L);
+  const D = cot(m) - 1 / m;
+
+  if (Math.abs(D) < 1e-12) {
+    return { error: "Degenerate: cot m − 1/m = 0 ⇒ |A| → ∞. Pick another T₀." };
+  }
+
+  const R = -B / D;
+  const phi = Math.atan2(-B, D);
+  const k1 = phi - m;
+  const A = -a0 / (2 * Math.sin(m) * Math.cos(phi));
+  const k2 = a0 * (1 + R * cot(m)) / 2;
+
+  return {
+    Lambda, m, P, f, B, D, R, phi, k1, A, k2,
+    chk: verify(A, k1, k2, f, L, inp)
+  };
+}
+
+/* mirror solution: (A, k1) → (−A, k1 + π), k2 unchanged */
+function mirror(sol) {
+  return { A: -sol.A, k1: sol.k1 + PI, k2: sol.k2 };
+}
+
+/* residual check against the original boundary conditions */
+function verify(A, k1, k2, f, L, { a0, v0, ds }) {
+  const aL  = A * Math.sin(f * L + k1) + k2;
+  const a0c = A * Math.sin(k1) + k2;
+  const wL  = v0 + (A / f) * (Math.cos(k1) - Math.cos(f * L + k1)) + k2 * L;
+  const thL = v0 * L
+            + (A / f) * (L * Math.cos(k1) - (Math.sin(f * L + k1) - Math.sin(k1)) / f)
+            + k2 * L * L / 2;
+  return { aL, a0c, wL, thL, dsErr: thL - ds };
+}
+
+/* ---------------- valid T₀ intervals ----------------
+   Branch 0:  Λ(L) > 1/3  ⟺  a₀L² + 6v₀L − 12Δs has opposite sign to a₀
+              ⟺  L strictly between the roots (needs disc > 0)
+   Branch n≥1: every L > 0 works.                                    */
+function allowedIntervals(inp, n) {
+  const { a0, v0, ds } = inp;
+  if (a0 === 0) return null;                      // unsupported
+  if (n >= 1) return [[0, Infinity]];             // higher harmonics: always solvable
+
+  const disc = 9 * v0 * v0 + 12 * a0 * ds;
+  if (disc <= 0) return [];
+
+  const s  = Math.sqrt(disc);
+  const r1 = (-3 * v0 - s) / a0;
+  const r2 = (-3 * v0 + s) / a0;
+  const lo = Math.max(0, Math.min(r1, r2));
+  const hi = Math.max(r1, r2);
+  return hi > lo ? [[lo, hi]] : [];
+}
+
+function intersect(A, B) {
+  const out = [];
+  for (const [a1, b1] of A)
+    for (const [a2, b2] of B) {
+      const lo = Math.max(a1, a2);
+      const hi = Math.min(b1, b2);
+      if (hi > lo) out.push([lo, hi]);
+    }
+  out.sort((x, y) => x[0] - y[0]);
+  return out;
+}
+
+function fmtInterval([a, b]) {
+  return `( ${a === Infinity ? "∞" : fmt(a, 8)} , ${b === Infinity ? "∞" : fmt(b, 8)} )`;
+}
+
+/* ---------------- DOM ---------------- */
+const $ = id => document.getElementById(id);
+let sharedRange = null;   // cached intersection
+
+function readSystem(j) {
+  return {
+    a0: parseFloat($(`a0_${j}`).value),
+    v0: parseFloat($(`v0_${j}`).value),
+    ds: parseFloat($(`ds_${j}`).value)
+  };
+}
+function readBranch() {
+  const n = parseInt($("branch").value, 10);
+  return isFinite(n) && n >= 0 ? n : 0;
+}
+
+/* ---------- ① range ---------- */
+$("btnRange").addEventListener("click", () => {
+  const n = readBranch();
+  const sys = [readSystem(1), readSystem(2)];
+  const out = $("rangeOut");
+  sharedRange = null;
+  $("btnMid").disabled = true;
+
+  const names = ["j = 1 (rotational)", "j = 2 (linear)"];
+
+  for (let k = 0; k < 2; k++) {
+    const s = sys[k];
+    if (!isFinite(s.a0) || !isFinite(s.v0) || !isFinite(s.ds)) {
+      out.innerHTML = `<div class="err">Please fill in all six input fields with numbers.</div>`;
+      return;
+    }
+    if (s.a0 === 0) {
+      out.innerHTML = `<div class="err">a₀ = 0 in ${names[k]} — the degenerate special case is excluded from this tool.</div>`;
+      return;
+    }
+  }
+
+  const I1 = allowedIntervals(sys[0], n);
+  const I2 = allowedIntervals(sys[1], n);
+  const I  = intersect(I1, I2);
+
+  let html = `<table>
+    <tr><th>System</th><th>Λ(T₀) expression</th><th>Admissible T₀</th></tr>`;
+
+  const rows = [
+    [names[0], "2(2Δs₁ − v₀₁T₀)/(a₀₁T₀²)", I1],
+    [names[1], "2(2Δs₂ − v₀₂T₀)/(a₀₂T₀²)", I2]
+  ];
+  for (const [nm, expr, Iv] of rows) {
+    const txt = Iv.length === 0
+      ? `<span class="pill bad">empty</span>`
+      : Iv.map(fmtInterval).join("  ∪  ");
+    html += `<tr><td>${nm}</td><td class="num" style="text-align:left;font-size:.8rem">${expr}</td><td class="num" style="text-align:left">${txt}</td></tr>`;
+  }
+
+  const shared = I.length === 0
+    ? `<span class="pill bad">no common T₀ exists on this branch</span>`
+    : I.map(fmtInterval).join("  ∪  ");
+
+  html += `<tr><td><strong>Shared (intersection)</strong></td><td></td>
+           <td class="num" style="text-align:left"><span class="big">${shared}</span></td></tr></table>`;
+
+  if (I.length === 0) {
+    html += `<div class="err">The two sister systems have no common admissible T₀ on branch n = ${n}.
+             Change the inputs or try a higher branch.</div>`;
+  } else {
+    sharedRange = I;
+    $("btnMid").disabled = false;
+    html += `<p class="muted">Intervals are open: the endpoints correspond to Λ = 1/3, where m → 0
+             and the period P → ∞. Choose T₀ strictly inside.</p>`;
+  }
+
+  if (n >= 1) {
+    html += `<div class="note">Branch n = ${n} ≥ 1: g(m) covers all real values on
+             (${n}π, ${(n + 1)}π), so <em>every</em> T₀ &gt; 0 is admissible. The resulting
+             periods are short (higher harmonics).</div>`;
+  }
+
+  out.innerHTML = html;
+});
+
+/* ---------- midpoint helper ---------- */
+$("btnMid").addEventListener("click", () => {
+  if (!sharedRange || sharedRange.length === 0) return;
+  const [lo, hi] = sharedRange[0];
+  const mid = hi === Infinity ? Math.max(lo + 1, lo * 2 || 1) : 0.5 * (lo + hi);
+  $("L").value = Number(mid.toFixed(6));
+});
+
+/* ---------- ② solve ---------- */
+$("btnSolve").addEventListener("click", () => {
+  const L = parseFloat($("L").value);
+  const n = readBranch();
+  const out = $("solveOut");
+
+  if (!isFinite(L) || L <= 0) {
+    out.innerHTML = `<div class="err">Enter a positive numeric T₀.</div>`;
+    return;
+  }
+
+  // validate against the shared range (if it was computed)
+  if (sharedRange) {
+    const inside = sharedRange.some(([a, b]) => L > a && L < b);
+    if (!inside) {
+      out.innerHTML = `<div class="err">
+        T₀ = ${fmt(L)} lies outside the shared admissible range
+        ${sharedRange.map(fmtInterval).join(" ∪ ")} on branch n = ${n}.
+        Press “Find valid T₀ range” and choose a value strictly inside.
+      </div>`;
+      return;
+    }
+  }
+
+  const systems = [readSystem(1), readSystem(2)];
+  const meta = [
+    { name: "j = 1 · Rotational",  aSym: "α₀", vSym: "ω₀", sSym: "θ_f − θ_i", ua: "rad/s²", uv: "rad/s", us: "rad" },
+    { name: "j = 2 · Linear",      aSym: "a₀", vSym: "v₀", sSym: "s_f − s_i", ua: "m/s²",   uv: "m/s",   us: "m"   }
+  ];
+
+  let html = `<p class="muted">Solved at T₀ = L = <strong>${fmt(L)}</strong> on branch n = ${n}.</p>`;
+  html += `<div class="grid2">`;
+
+  for (let k = 0; k < 2; k++) {
+    const inp = systems[k];
+    const M = meta[k];
+
+    if (!isFinite(inp.a0) || !isFinite(inp.v0) || !isFinite(inp.ds)) {
+      html += `<div class="card"><h3>${M.name}</h3><div class="err">Missing input values.</div></div>`;
+      continue;
+    }
+
+    const sol = solveSystem(inp, L, n);
+
+    if (sol.error) {
+      html += `<div class="card"><h3>${M.name}</h3><div class="err">${sol.error}</div></div>`;
+      continue;
+    }
+
+    const mir = mirror(sol);
+    const c = sol.chk;
+    const okAll = [c.a0c - inp.a0, c.aL, c.wL, c.dsErr]
+      .every(v => Math.abs(v) < 1e-7 * Math.max(1, Math.abs(inp.ds), Math.abs(inp.v0)));
+
+    html += `<div class="card">
+      <h3>${M.name}</h3>
+      <table>
+        <tr><th>Constant</th><th style="text-align:right">Value</th></tr>
+        <tr><td>Λ &nbsp;<span class="muted">(target)</span></td><td class="num">${fmt(sol.Lambda)}</td></tr>
+        <tr><td>m &nbsp;<span class="muted">(half phase, πL/P)</span></td><td class="num">${fmt(sol.m, 10)}</td></tr>
+        <tr><td><strong>P &nbsp;(period T)</strong></td><td class="num"><strong>${fmt(sol.P, 10)}</strong></td></tr>
+        <tr><td>f = 2π/P</td><td class="num">${fmt(sol.f, 10)}</td></tr>
+        <tr><td>B = 1 + 2v₀/(a₀L)</td><td class="num">${fmt(sol.B)}</td></tr>
+        <tr><td>D = cot m − 1/m</td><td class="num">${fmt(sol.D)}</td></tr>
+        <tr><td>R = tan(k₁ + m)</td><td class="num">${fmt(sol.R)}</td></tr>
+        <tr><td>φ = k₁ + m &nbsp;<span class="muted">(rad)</span></td><td class="num">${fmt(sol.phi)}</td></tr>
+        <tr><td><strong>k₁ &nbsp;(rad)</strong></td><td class="num"><strong>${fmt(sol.k1)}</strong></td></tr>
+        <tr><td>k₁ &nbsp;<span class="muted">(deg)</span></td><td class="num">${fmt(sol.k1 * 180 / PI, 6)}</td></tr>
+        <tr><td><strong>A</strong></td><td class="num"><strong>${fmt(sol.A)}</strong> ${M.ua}</td></tr>
+        <tr><td><strong>k₂</strong></td><td class="num"><strong>${fmt(sol.k2)}</strong> ${M.ua}</td></tr>
+      </table>
+
+      <h3>Mirror solution &nbsp;<span class="muted" style="font-weight:400">(A, k₁) → (−A, k₁ + π)</span></h3>
+      <div class="kv">
+        <span class="k">A′</span><span class="v">${fmt(mir.A)} ${M.ua}</span>
+        <span class="k">k₁′ (rad)</span><span class="v">${fmt(mir.k1)}</span>
+        <span class="k">k₂′</span><span class="v">${fmt(mir.k2)} ${M.ua}</span>
+      </div>
+
+      <h3>Residual check</h3>
+      <div class="kv">
+        <span class="k">α(0) − ${M.aSym}</span><span class="v">${sci(c.a0c - inp.a0)}</span>
+        <span class="k">α(L) − 0</span><span class="v">${sci(c.aL)}</span>
+        <span class="k">ω(L) − 0</span><span class="v">${sci(c.wL)}</span>
+        <span class="k">Δs computed − Δs given</span><span class="v">${sci(c.dsErr)}</span>
+      </div>
+      <p>${okAll
+            ? `<span class="pill ok">all boundary conditions satisfied</span>`
+            : `<span class="pill bad">residuals larger than expected — check inputs</span>`}</p>
+    </div>`;
+  }
+
+  html += `</div>`;
+  out.innerHTML = html;
+});
+
+/* pre-compute the range once on load so the T₀ box is meaningful immediately */
+window.addEventListener("load", () => $("btnRange").click());
+</script>
+</body>
+</html>
