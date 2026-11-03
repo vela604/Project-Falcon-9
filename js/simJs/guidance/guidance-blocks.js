@@ -3138,7 +3138,7 @@ setState(s) {
       BOOSTBACK_TAPER_M: 150000,           // throttle (all burn engines) fades 100% -> floor over the last this-many metres of error
       // PRE_ENTRY_STEER — altitude-triggered alignment + entry-burn handoff.
       // Both are guesses — tune in sim.
-      PRE_ENTRY_ALIGN_ALT_KM: 100,         // start RCS alignment at this altitude AGL on descent (user, Chat 5)
+      PRE_ENTRY_ALIGN_ALT_KM: 90,         // start RCS alignment at this altitude AGL on descent (user, Chat 5)
       ENTRY_BURN_ALT_KM: 60,               // transition to ENTRY_BURN at this altitude AGL
       // ENTRY_BURN
       ENTRY_BURN_ENGINES: "C,0,180",       // engines lit at FULL throttle: "C" = centre, numbers = outer-ring angleDeg
@@ -3222,6 +3222,9 @@ setState(s) {
         preEntryMode: null,            // ACCEL | BRAKE | TRIM (during ALIGN)
         preEntryPrevTgt: null,         // last-tick target theta (for wTgt/dTgt)
         preEntryPrevT: null,           // last-tick simTime
+        preEntryTargetTheta: null,
+        preEntryTargetTimeToAlign: null,
+        preEntryTargetValidAt: -1e9,
         // ---- ENTRY_BURN scratch ----
         ebInit: false,
         ebSpooled: false,
@@ -4111,17 +4114,17 @@ setState(s) {
             const rMag = d.r || Math.hypot(d.rx, d.ry);
             const vrSign = (d.vx * d.rx + d.vy * d.ry) / Math.max(1, rMag);
 
-            // First tick of phase — deploy grid fins, all control off
             if (!_st.preEntryInit) {
               _st.preEntryInit = true;
-              _st.preEntrySub = 'COAST';
+              _st.preEntrySub = 'DRIFT';
               _st.preEntryAlignInit = false;
               _st.preEntryEu = 0;
               _st.preEntryPrevRaw = 0;
-              _st.preEntryErrDeg = null;
-              _st.preEntryOmegaDegS = null;
-              _st.preEntryTgtDeg = null;
-              _st.preEntryMode = null;
+              _st.preEntryTargetTheta = null;
+              _st.preEntryTargetTimeToAlign = null;
+              _st.preEntryTargetValidAt = -1e9;
+              _st.preEntryPrevTgt = null;
+              _st.preEntryPrevT = null;
               _send(Guidance.cmdGridFinsDeploy(true));
               _send(Guidance.cmdSetAllThrottle(0));
               _send(Guidance.cmdSetGimbalRate(0));
@@ -4129,77 +4132,13 @@ setState(s) {
               _st.lastRcsTorque = 0;
               console.log("[standardRTLS] PRE_ENTRY_STEER start t=" + simT.toFixed(2) +
                 " alt=" + altKm.toFixed(1) + "km vr=" + vrSign.toFixed(1) +
-                "m/s — grid fins deployed, coasting");
+                "m/s — grid fins deployed, DRIFT mode (align at " + (cfg.PRE_ENTRY_ALIGN_ALT_KM || 90) + "km, lateral-only RCS)");
             }
 
-            const alignAltKm = Number.isFinite(cfg.PRE_ENTRY_ALIGN_ALT_KM) ? cfg.PRE_ENTRY_ALIGN_ALT_KM : 80;
+            const alignAltKm = Number.isFinite(cfg.PRE_ENTRY_ALIGN_ALT_KM) ? cfg.PRE_ENTRY_ALIGN_ALT_KM : 90;
             const burnAltKm = Number.isFinite(cfg.ENTRY_BURN_ALT_KM) ? cfg.ENTRY_BURN_ALT_KM : 60;
 
-            // COAST — quiet until descending below alignment altitude
-            if (_st.preEntrySub === 'COAST') {
-              if (altKm <= alignAltKm && vrSign < 0) {
-                _st.preEntrySub = 'ALIGN';
-                _st.preEntryAlignInit = false;
-                console.log("[standardRTLS] PRE_ENTRY_COAST → ALIGN t=" + simT.toFixed(2) +
-                  " alt=" + altKm.toFixed(1) + "km vr=" + vrSign.toFixed(1) + "m/s");
-                // fall through to ALIGN on same tick
-              } else {
-                // Quiet — idempotent safety commands, no control
-                _send(Guidance.cmdSetAllThrottle(0));
-                _send(Guidance.cmdSetGimbalRate(0));
-                _send(Guidance.cmdRcsDuty(null, idx));
-                _st.lastRcsTorque = 0;
-                break;
-              }
-            }
-
-            // Target: nose OPPOSITE to AIR-RELATIVE net velocity (retrograde
-            // in the air frame, not the inertial frame).
-            //
-            // WHY AIR-RELATIVE (was inertial before — root cause of the ~20°
-            // displayed-AoA complaint):
-            //   derivation.js computes d.alphaDeg against relV:
-            //     relVx = vx - (wind + ω·ry)     [ω·r ≈ 465 m/s at 100 km]
-            //     relVy = vy - (wind - ω·rx)
-            //     velBodyX = relV · body-X(θ)     [body-X = (cosθ, sinθ)]
-            //     alphaDeg = asin(velBodyX / |relV|)
-            //   At 100 km the Earth-rotation term (~465 m/s) is 20-40% of the
-            //   descent speed (~1000-2000 m/s). Aligning to INERTIAL retrograde
-            //   (atan2(vx, -vy)) leaves 15-20° of air-relative alpha, shown as
-            //   AoA ≈ -20°. The formula was correct — it targeted the wrong
-            //   frame.
-            //
-            // FIX: use d.relVx, d.relVy (already computed by derivation,
-            // includes wind + surface rotation). Now HOLD settles with
-            // alphaDeg ≈ 0, matching user expectation.
-            //
-            //   Example check: v=(353,-2000), θ=10° (inertial target).
-            //     relV=(-112,-2000), velBodyX=-458, α=-13°. Matches user.
-            //     air-relative target atan2(-112, 2000) = -3.2°, settles
-            //     there → velBodyX=0 → α=0. ✓
-            //
-            // NOTE: ENTRY_BURN (later phase) should still use INERTIAL
-            // retrograde (burning along nose at air-relative-retro would leave
-            // a small residual inertial velocity). Different frame per phase.
-            const speedRelV = Math.hypot(d.relVx, d.relVy);
-            if (!(speedRelV > 1)) { _rcsOff(); break; }
-            const tgtNow = Math.atan2(d.relVx, -d.relVy);
-            _st.preEntryTgtDeg = tgtNow * R2D;
-
-            // Target rotates as velocity direction changes each tick (up to
-            // ~0.5-1 deg/s during steep descent). Compute wTgt = d(tgt)/dt,
-            // like FLIP does. dTgt = wTgt*dt corrects the one-tick prediction;
-            // wRel = omega - wTgt kills the steady-state lag in braking calc.
-            let wTgt = 0;
-            if (_st.preEntryPrevTgt !== null && _st.preEntryPrevT !== null &&
-                simT > _st.preEntryPrevT) {
-              wTgt = _wrapPi(tgtNow - _st.preEntryPrevTgt) / (simT - _st.preEntryPrevT);
-              if (Math.abs(wTgt) > 0.05) wTgt = 0;  // glitch guard
-            }
-            _st.preEntryPrevTgt = tgtNow;
-            _st.preEntryPrevT = simT;
-
-            // HOLD — PD attitude hold, watch for entry-burn trigger
+            // ---- HOLD: PD trim on current air-relative retrograde, handoff at burnAltKm ----
             if (_st.preEntrySub === 'HOLD') {
               if (altKm <= burnAltKm) {
                 console.log("[standardRTLS] PRE_ENTRY_HOLD → ENTRY_BURN trigger t=" + simT.toFixed(2) +
@@ -4207,13 +4146,21 @@ setState(s) {
                 finished = true;
                 break;
               }
+              const speedRelV = Math.hypot(d.relVx, d.relVy);
+              if (!(speedRelV > 1)) { _rcsOff(); break; }
+              const tgtNow = Math.atan2(d.relVx, -d.relVy);
+              _st.preEntryTgtDeg = tgtNow * R2D;
+              let wTgt = 0;
+              if (_st.preEntryPrevTgt !== null && _st.preEntryPrevT !== null && simT > _st.preEntryPrevT) {
+                wTgt = _wrapPi(tgtNow - _st.preEntryPrevTgt) / (simT - _st.preEntryPrevT);
+                if (Math.abs(wTgt) > 0.05) wTgt = 0;
+              }
+              _st.preEntryPrevTgt = tgtNow;
+              _st.preEntryPrevT = simT;
               const thetaErr = _wrapPi(d.theta - tgtNow);
               _st.preEntryErrDeg = thetaErr * R2D;
               _st.preEntryOmegaDegS = d.omega * R2D;
-              const kp = 0.5, kd = 4.0;  // same as insertion's CIRC_ATT_KP/KD
-              // Periodic HOLD telemetry — every 5 sim-sec. Confirms alphaDeg ≈ 0
-              // (air-relative retrograde target on track) and err → 0.
-              if (Math.round(simT * 16) % 400 === 0) {
+              if (Math.round(simT * 80) % 400 === 0) {
                 const alphaNow = Number.isFinite(d.alphaDeg) ? d.alphaDeg : NaN;
                 console.log("[PRE_ENTRY_HOLD-DBG] t=" + simT.toFixed(2) +
                   " alt=" + altKm.toFixed(1) + "km" +
@@ -4223,95 +4170,121 @@ setState(s) {
                   " alphaDeg=" + (Number.isFinite(alphaNow) ? alphaNow.toFixed(3) : '?') +
                   " omega=" + (d.omega * R2D).toFixed(3) + "deg/s");
               }
-              // Feedforward: (d.omega - wTgt) instead of raw d.omega — kills
-              // steady-state lag on the rotating target without extra gain.
-              const result = GuideRCS.targetTorqueRcsNoNetForce(
-                snapshot, -I * (kp * thetaErr + kd * (d.omega - wTgt)), idx
-              );
-              if (result && result.fires.length) {
-                _send(Guidance.cmdRcsDuty(result.duties, idx));
-                _st.lastRcsTorque = result.fires.reduce((a, f) => a + f.torque, 0);
+              const kp = 0.5, kd = 4.0;
+              const tauDes = -I * (kp * thetaErr + kd * (d.omega - wTgt));
+              const res = _pesRcsLateralOnly(snapshot, idx, tauDes);
+              if (res && res.duties && Object.keys(res.duties).length) {
+                _send(Guidance.cmdRcsDuty(res.duties, idx));
+                _st.lastRcsTorque = Number.isFinite(res.torqueAchieved) ? res.torqueAchieved : 0;
               } else {
                 _rcsOff();
               }
               break;
             }
 
-            // ALIGN — bang-bang RCS rotate to retrograde (same law as FLIP)
-            const mx = _rcsMaxTorques(snapshot);
-            if (!(mx.pos > 0) || !(mx.neg > 0)) { _rcsOff(); break; }
-
-            const rawErr = _wrapPi(tgtNow - d.theta);
-            if (!_st.preEntryAlignInit) {
-              _st.preEntryAlignInit = true;
-              const ePos = rawErr >= 0 ? rawErr : rawErr + 2 * Math.PI;
-              const eNeg = ePos - 2 * Math.PI;
-              _st.preEntryEu = Math.abs(ePos) <= Math.abs(eNeg) ? ePos : eNeg;
-              _st.preEntryPrevRaw = rawErr;
-              _st.lastRcsTorque = 0;
-              console.log("[standardRTLS] PRE_ENTRY_ALIGN start t=" + simT.toFixed(2) +
-                " err=" + (_st.preEntryEu * R2D).toFixed(1) + "deg omega=" + (d.omega * R2D).toFixed(2) + "deg/s" +
-                " tgt=" + (tgtNow * R2D).toFixed(1) + " theta=" + (d.theta * R2D).toFixed(1) + "deg" +
-                " alphaDeg=" + (Number.isFinite(d.alphaDeg) ? d.alphaDeg.toFixed(1) : '?'));
-            } else {
-              _st.preEntryEu += _wrapPi(rawErr - _st.preEntryPrevRaw);
-              _st.preEntryPrevRaw = rawErr;
+            // ---- DRIFT: predictive small-omega coast toward target at alignAltKm ----
+            // Predict target theta at alignAltKm via ballistic propagation (cached 0.5s).
+            // Target = air-relative retrograde at that future state.
+            if (_st.preEntryTargetTheta === null || simT - _st.preEntryTargetValidAt >= 0.5) {
+              const GM = env.GM_EARTH;
+              const R = env.EARTH_RADIUS;
+              const omegaE = env.EARTH_OMEGA || 0;
+              const targetR = R + alignAltKm * 1000 + (env.LAUNCH_SITE_ALTITUDE || 0);
+              let px = d.rx, py = d.ry, pvx = d.vx, pvy = d.vy, tt = 0;
+              const dtp = 0.5;
+              let prevR = Math.hypot(px, py);
+              let found = false;
+              while (tt < 400) {
+                const r3 = prevR * prevR * prevR;
+                const ax = -GM * px / r3;
+                const ay = -GM * py / r3;
+                const vxh = pvx + 0.5 * ax * dtp;
+                const vyh = pvy + 0.5 * ay * dtp;
+                const nx = px + vxh * dtp;
+                const ny = py + vyh * dtp;
+                const nr = Math.hypot(nx, ny);
+                const nr3 = nr * nr * nr;
+                pvx = vxh + 0.5 * (-GM * nx / nr3) * dtp;
+                pvy = vyh + 0.5 * (-GM * ny / nr3) * dtp;
+                px = nx; py = ny;
+                tt += dtp;
+                if (nr <= targetR && prevR > targetR) {
+                  const relVxP = pvx - omegaE * py;
+                  const relVyP = pvy + omegaE * px;
+                  _st.preEntryTargetTheta = Math.atan2(relVxP, -relVyP);
+                  _st.preEntryTargetTimeToAlign = tt;
+                  _st.preEntryTargetValidAt = simT;
+                  found = true;
+                  break;
+                }
+                prevR = nr;
+              }
+              if (!found) {
+                _st.preEntryTargetTheta = Math.atan2(d.relVx, -d.relVy);
+                _st.preEntryTargetTimeToAlign = 30;
+                _st.preEntryTargetValidAt = simT;
+              }
             }
-            _st.preEntryErrDeg = _st.preEntryEu * R2D;
-            _st.preEntryOmegaDegS = d.omega * R2D;
 
-            // Exit alignment — reuse FLIP tolerances (per user "like flip phase")
-            const alignTolDeg = Number.isFinite(cfg.FLIP_ROTATE_TOL_DEG) ? cfg.FLIP_ROTATE_TOL_DEG : 0.5;
-            const alignOmegaTol = Number.isFinite(cfg.FLIP_OMEGA_TOL) ? cfg.FLIP_OMEGA_TOL : 0.005;
-            if (Math.abs(_st.preEntryEu) < alignTolDeg / R2D && Math.abs(d.omega) < alignOmegaTol) {
-              _rcsOff();
+            if (altKm <= alignAltKm && vrSign < 0) {
+              _send(Guidance.cmdRcsDuty(null, idx));
+              _st.lastRcsTorque = 0;
               _st.preEntrySub = 'HOLD';
-              console.log("[standardRTLS] PRE_ENTRY_ALIGN → HOLD t=" + simT.toFixed(2) +
-                " err=" + (_st.preEntryEu * R2D).toFixed(2) + "deg omega=" + (d.omega * R2D).toFixed(3) + "deg/s");
+              _st.preEntryPrevTgt = null;
+              _st.preEntryPrevT = null;
+              const thetaErrExit = _wrapPi(_st.preEntryTargetTheta - d.theta);
+              console.log("[standardRTLS] PRE_ENTRY_DRIFT → HOLD t=" + simT.toFixed(2) +
+                " alt=" + altKm.toFixed(1) + "km thetaErr=" + (thetaErrExit * R2D).toFixed(2) +
+                "deg w=" + (d.omega * R2D).toFixed(3) + "deg/s");
               break;
             }
 
-            // One-tick-ahead prediction (current RCS torque keeps acting).
-            // dTgt = wTgt*dt — target's own rotation this tick. Without it,
-            // the prediction assumes a stationary target and the controller
-            // fires against stale error on descent (dt*wTgt can be 0.01-0.02°
-            // per tick, compounding across the alignment window).
-            const aTot = d.alphaAng + _st.lastRcsTorque / I;
-            const dTheta = d.omega * dt + 0.5 * aTot * dt * dt;
-            const wP = d.omega + aTot * dt;
-            const dTgt = wTgt * dt;
-            const eP = _st.preEntryEu + dTgt - dTheta;
-            const wRelP = wP - wTgt;
+            const timeToAlign = Math.max(1, _st.preEntryTargetTimeToAlign - (simT - _st.preEntryTargetValidAt));
+            const thetaErr = _wrapPi(_st.preEntryTargetTheta - d.theta);
+            const desiredOmega = thetaErr / timeToAlign;
+            const omegaErr = desiredOmega - d.omega;
+            _st.preEntryTgtDeg = _st.preEntryTargetTheta * R2D;
+            _st.preEntryErrDeg = thetaErr * R2D;
+            _st.preEntryOmegaDegS = d.omega * R2D;
 
-            // Bang-bang decision (same structure as FLIP)
-            const sgn = eP >= 0 ? 1 : -1;
-            const brakeMax = sgn > 0 ? mx.neg : mx.pos;
-            const towards = wRelP * sgn > 0;
-            const stopAng = wRelP * wRelP * I / (2 * brakeMax) + Math.abs(wRelP) * dt;
-            let tauCmd, fullRes = null;
-            if (towards && Math.abs(eP) <= stopAng) {
-              const need = I * Math.abs(wRelP) / dt;
-              if (need >= brakeMax) {
-                _st.preEntryMode = "BRAKE"; fullRes = sgn > 0 ? mx.rn : mx.rp; tauCmd = -sgn * brakeMax;
-              } else {
-                _st.preEntryMode = "TRIM"; tauCmd = -sgn * need;
-              }
+            const OMEGA_DEADBAND = 0.001;
+            let dutyUsed = 0;
+            if (Math.abs(omegaErr) < OMEGA_DEADBAND) {
+              _send(Guidance.cmdRcsDuty(null, idx));
+              _st.lastRcsTorque = 0;
             } else {
-              _st.preEntryMode = "ACCEL"; fullRes = sgn > 0 ? mx.rp : mx.rn; tauCmd = sgn * (sgn > 0 ? mx.pos : mx.neg);
+              const maxLat = _pesRcsMax(snapshot, idx);
+              const tauMaxMag = omegaErr > 0 ? maxLat.pos : maxLat.neg;
+              if (tauMaxMag > 0) {
+                const duty = Math.min(1, Math.abs(omegaErr) / 0.02);
+                dutyUsed = duty;
+                const tauCmd = Math.sign(omegaErr) * tauMaxMag * duty;
+                const res = _pesRcsLateralOnly(snapshot, idx, tauCmd);
+                if (res && res.duties && Object.keys(res.duties).length) {
+                  _send(Guidance.cmdRcsDuty(res.duties, idx));
+                  _st.lastRcsTorque = Number.isFinite(res.torqueAchieved) ? res.torqueAchieved : 0;
+                } else {
+                  _send(Guidance.cmdRcsDuty(null, idx));
+                  _st.lastRcsTorque = 0;
+                }
+              }
             }
 
-            const res = fullRes || GuideRCS.targetTorqueRcs(snapshot, tauCmd, idx);
-            if (res && res.fires && res.fires.length) {
-              _send(Guidance.cmdRcsDuty(res.duties, idx));
-              _st.lastRcsTorque = res.fires.reduce((a, f) => a + f.torque, 0);
-            } else {
-              _rcsOff();
+            if (Math.round(simT * 80) % 400 === 0) {
+              const tToTgt = (thetaErr * d.omega > 0) ? Math.abs(thetaErr / d.omega) : Infinity;
+              console.log("[PRE_ENTRY_DRIFT] t=" + simT.toFixed(2) +
+                " alt=" + altKm.toFixed(1) + "km" +
+                " thetaErr=" + (thetaErr * R2D).toFixed(2) + "deg" +
+                " w=" + (d.omega * R2D).toFixed(3) +
+                " wDes=" + (desiredOmega * R2D).toFixed(3) +
+                " tRemain=" + timeToAlign.toFixed(1) + "s" +
+                " tToTgt=" + (Number.isFinite(tToTgt) ? tToTgt.toFixed(1) : "inf") + "s" +
+                " duty=" + dutyUsed.toFixed(2));
             }
             break;
           }
 
-          // ==========================================================
-          // ENTRY_BURN — light ENTRY_BURN_ENGINES at lowest thrust, hold
+           // ENTRY_BURN — light ENTRY_BURN_ENGINES at lowest thrust, hold
           // air-relative retrograde via gimbal + env-torque cancel.
           // NO cutoff yet — phase holds until user defines the exit.
           case "ENTRY_BURN": {
@@ -4985,6 +4958,9 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
           _st.preEntryMode = null;
           _st.preEntryPrevTgt = null;
           _st.preEntryPrevT = null;
+          _st.preEntryTargetTheta = null;
+          _st.preEntryTargetTimeToAlign = null;
+          _st.preEntryTargetValidAt = -1e9;
           _st.ebInit = false;
           _st.ebSpooled = false;
           _st.ebStage = null;
