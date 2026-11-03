@@ -3134,7 +3134,7 @@ function _updateTrail() {
   if (idx !== _lastTrailBodyIdx) { _trailPts.length = 0; _lastTrailBodyIdx = idx; _lastTrailSimT = -1; }
   if (_lastTrailSimT > 0 && state.simTime < _lastTrailSimT - 0.5) { _trailPts.length = 0; _lastTrailSimT = -1; }
   if (_lastTrailSimT < 0 || state.simTime - _lastTrailSimT > 0.15) {
-    _trailPts.push({ rx: b.rx, ry: b.ry });
+    _trailPts.push({ rx: b.rx, ry: b.ry, t: state.simTime });
     _lastTrailSimT = state.simTime;
     if (_trailPts.length > 4000) _trailPts.shift();
   }
@@ -3142,22 +3142,35 @@ function _updateTrail() {
 
 function drawTrail() {
   if (camera.mode !== "planet") return;
-  // DEBUG overlay — always visible in planet view
-  ctx.save();
-  ctx.fillStyle = "rgba(0,255,0,0.9)";
-  ctx.font = "bold 16px monospace";
-  ctx.fillText(
-    "TRAIL: " + _trailPts.length + " pts | showTrail=" + showTrail +
-    " | simT=" + (state.simTime || 0).toFixed(1),
-    20, 40
-  );
-  ctx.restore();
   if (!showTrail || _trailPts.length < 1) return;
+  
+  // Earth-fixed frame support — matches trajectory mode. When earth-fixed
+  // is active, rotate each past trail point forward by ω·(t_now − t_capture),
+  // which is the inertial position TODAY of the Earth-fixed location where
+  // the rocket was at t_capture. Matches drawPredictedTrajectory()'s frame
+  // handling so trail and prediction always agree.
+  const earthFixed = (typeof trajectoryMode !== 'undefined' && trajectoryMode === 'earthFixed');
+  const omega = (typeof CONFIG !== 'undefined' && Number.isFinite(CONFIG.EARTH_OMEGA)) ? CONFIG.EARTH_OMEGA : 0;
+  const tNow = state.simTime || 0;
+  
+  const project = (p) => {
+    let rx = p.rx, ry = p.ry;
+    if (earthFixed && omega !== 0 && Number.isFinite(p.t)) {
+      const a = omega * (tNow - p.t);
+      const cos = Math.cos(a), sin = Math.sin(a);
+      const nx = rx * cos + ry * sin;
+      const ny = ry * cos - rx * sin;
+      rx = nx; ry = ny;
+    }
+    return worldToScreen(rx, ry);
+  };
+  
   ctx.save();
   ctx.lineJoin = "round";
   ctx.lineCap = "round";
+  
   if (_trailPts.length === 1) {
-    const [px, py] = worldToScreen(_trailPts[0].rx, _trailPts[0].ry);
+    const [px, py] = project(_trailPts[0]);
     if (Number.isFinite(px) && Number.isFinite(py)) {
       ctx.beginPath();
       ctx.arc(px, py, 3, 0, Math.PI * 2);
@@ -3167,30 +3180,32 @@ function drawTrail() {
     ctx.restore();
     return;
   }
-  // Path once
+  
   const path = () => {
     ctx.beginPath();
     let started = false;
-    for (let i = 0; i < _trailPts.length; i++) {
-      const p = _trailPts[i];
-      const [px, py] = worldToScreen(p.rx, p.ry);
+    for (let k = 0; k < _trailPts.length; k++) {
+      const [px, py] = project(_trailPts[k]);
       if (!Number.isFinite(px) || !Number.isFinite(py)) continue;
       if (!started) { ctx.moveTo(px, py); started = true; }
       else ctx.lineTo(px, py);
     }
     return started;
   };
+  
   // Outer glow
   ctx.shadowColor = "rgba(120, 210, 255, 0.7)";
   ctx.shadowBlur = 10;
   ctx.strokeStyle = "rgba(120, 210, 255, 0.4)";
   ctx.lineWidth = 6;
   if (path()) ctx.stroke();
+  
   // Core line
   ctx.shadowBlur = 0;
   ctx.strokeStyle = "rgba(160, 225, 255, 0.95)";
   ctx.lineWidth = 2.5;
   if (path()) ctx.stroke();
+  
   ctx.restore();
 }
 
