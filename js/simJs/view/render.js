@@ -1347,12 +1347,21 @@ function drawPadMarkers() {
   put('LC', sx - tgX * 9 + outX * 10, sy - tgY * 9 + outY * 10 + 3, 'right', 'rgba(120,225,255,0.95)');
   const pads = (typeof landingPads === 'function') ? landingPads() : [];
   if (pads.length) {
-    const w = landingPadWorldPosition(pads[pads.length - 1], state.simTime);
-    const [zx, zy] = worldToScreen(w.x, w.y);
-    ctx.strokeStyle = 'rgba(120,255,170,0.95)';
-    ctx.beginPath(); ctx.arc(zx, zy, 3.5, 0, Math.PI * 2); ctx.stroke();
-    const far = Math.round(Math.max.apply(null, pads.map(q => q.arcOffsetM)));
-    put('LZ\u00d7' + pads.length + ' \u2192 ' + far + ' m', zx + tgX * 9 + outX * 10, zy + tgY * 9 + outY * 10 + 3, 'left', 'rgba(140,255,180,0.95)');
+    // Draw EVERY pad marker (LZ-1, LZ-2, LZ-3) instead of only the last one.
+    // Stagger vertical offsets so labels stay readable even when pads cluster
+    // within a pixel or two in planet view.
+    pads.forEach((pad, idx) => {
+      const w = landingPadWorldPosition(pad, state.simTime);
+      const [zx, zy] = worldToScreen(w.x, w.y);
+      ctx.strokeStyle = 'rgba(120,255,170,0.95)';
+      ctx.beginPath(); ctx.arc(zx, zy, 3.5, 0, Math.PI * 2); ctx.stroke();
+      const dist = Math.round(pad.arcOffsetM || 0);
+      const labelOffsetY = idx * 12;
+      put(pad.id + ' \u2192 ' + dist + ' m',
+          zx + tgX * 9 + outX * 10,
+          zy + tgY * 9 + outY * 10 + 3 + labelOffsetY,
+          'left', 'rgba(140,255,180,0.95)');
+    });
   }
   ctx.restore();
 }

@@ -30,6 +30,8 @@ const FastForward = (function () {
     _pendingGuidanceState: null,
     _pendingAck: null,
     _pendingPauseCapture: null,
+    preFFMode: null,
+    preFFPlanetZoom: 1,
   };
 
   // ─── Trail forwarding during FF ──────────────────────────────
@@ -79,6 +81,22 @@ const FastForward = (function () {
     $('ffDurationInput').value = '60';
     $('ffModal').style.display = 'block';
     document.body.classList.add('ff-active');
+    
+    // ─── FF view: force planet view so trail/paths are visible during FF ───
+    if (typeof camera !== 'undefined') {
+      _state.preFFMode = camera.mode;
+      _state.preFFPlanetZoom = camera.planetZoom;
+      if (camera.mode !== 'planet') {
+        camera.mode = 'planet';
+        camera.planetZoom = 1;   // reset zoom so full Earth is visible
+      }
+      const btnFree = document.getElementById('btnFree');
+      const btnFollow = document.getElementById('btnFollow');
+      if (camera.mode === 'planet') {
+        if (btnFree) btnFree.classList.add('active');
+        if (btnFollow) btnFollow.classList.remove('active');
+      }
+    }
     if (typeof simPaused !== 'undefined' && !simPaused) {
       _state.pausedByDialog = true;
       WorkerBridge.send({ type: 'pauseSim' });
@@ -96,6 +114,22 @@ const FastForward = (function () {
     }
     $('ffModal').style.display = 'none';
     document.body.classList.remove('ff-active');
+    
+    // ─── FF view: restore camera mode (local ↔ planet) ───
+    if (typeof camera !== 'undefined' && _state.preFFMode) {
+      camera.mode = _state.preFFMode;
+      if (Number.isFinite(_state.preFFPlanetZoom)) camera.planetZoom = _state.preFFPlanetZoom;
+      const btnFree = document.getElementById('btnFree');
+      const btnFollow = document.getElementById('btnFollow');
+      if (camera.mode === 'planet') {
+        if (btnFree) btnFree.classList.add('active');
+        if (btnFollow) btnFollow.classList.remove('active');
+      } else {
+        if (btnFollow) btnFollow.classList.add('active');
+        if (btnFree) btnFree.classList.remove('active');
+      }
+      _state.preFFMode = null;
+    }
     if (_state.graphAutoOpened) {
       _state.graphAutoOpened = false;
       const gp = document.getElementById('graphPanel');
