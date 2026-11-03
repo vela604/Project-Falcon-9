@@ -3127,6 +3127,10 @@ setState(s) {
       FLIP_ROTATE_TOL_DEG: 0.5,   // done when |angle error| < this ...
       FLIP_OMEGA_TOL: 0.005,      // ... and |relative omega| < this (rad/s)
       FLIP_TIMEOUT_S: 120,
+      FLIP_PUSHER_ANG_ACCEL_DEG_S2: -3,   // pusher angular accel during FLIP ACCEL (sign = flip direction, CW = negative)
+      FLIP_PUSHER_MAX_OMEGA_DEG_S: 30,    // pusher stops by itself above this |omega| (hard cap)
+      FLIP_BRAKE_HYST_DEG: 1.0,           // brake hysteresis band (deg)
+      FLIP_AERO_PROJECT: 1,               // 1 = aero table projected in time in the stopping rollout, 0 = v2 frozen table
       // BOOSTBACK_BURN
       BOOSTBACK_ENGINES: "C,0,180",       // engines fired for the burn: "C" = centre, numbers = outer-ring angleDeg (0 / 180 = the two extreme left/right engines)
       BOOSTBACK_APPARENT_OFFSET_M: 0,      // aim at (target pad + this) ground distance, metres; + = east of the pad (short), - = west
@@ -3193,6 +3197,8 @@ setState(s) {
         flipPushCmd1: false, flipPushCmd2: false, flipPushCap: 0,  // pusher command history (1-tick latency)
         flipDbgT: -1e9,
         flipAero: null, flipAeroT: 0, flipSpikeN: 0,
+        flipAeroSl: null, flipAeroFutT: -1e9, flipQ0: null, flipQPend: [], flipQLogN: 0, flipQCmpN: 0,
+        flipPeakOver: 0, flipMaxW: 0, flipBrakeSeen: false, flipBrakeT: null, flipPred: null, flipPredT: -1e9,
         // ---- BOOSTBACK scratch ----
         bbInit: false,
         bbStage: null,         // THREE | CENTER | SPOOL
@@ -3594,66 +3600,128 @@ setState(s) {
             const I = d.massProps.I;
             if (!(I > 0)) break;
             const R2D = 180 / Math.PI;
-            // Pusher handle from the mission glue: { alphaRad (signed), capRad, isOn(), set(alphaRad, capRad) }.
+            // Pusher handle from the mission glue: { alphaRad, capRad, isOn(), set(alphaRad, capRad) }.
+            // v3: FLIP OWNS the pusher. SEPARATED_AXIAL no longer fires it; FLIP starts it on its first tick
+            // (booster is ~spin-free then), runs it together with full RCS during ACCEL, cancels it at the brake point.
             const pusher = (_missionCtx && _missionCtx.pusher) || null;
+            const pAlpha = Number.isFinite(cfg.FLIP_PUSHER_ANG_ACCEL_DEG_S2) ? cfg.FLIP_PUSHER_ANG_ACCEL_DEG_S2 / R2D
+                         : (pusher && Number.isFinite(pusher.alphaRad) ? pusher.alphaRad : 0);
+            const pCap = Number.isFinite(cfg.FLIP_PUSHER_MAX_OMEGA_DEG_S) ? cfg.FLIP_PUSHER_MAX_OMEGA_DEG_S / R2D
+                         : (pusher && Number.isFinite(pusher.capRad) ? pusher.capRad : 30 / R2D);
+            const hystRad = (Number.isFinite(cfg.FLIP_BRAKE_HYST_DEG) ? cfg.FLIP_BRAKE_HYST_DEG : 1.0) / R2D;
+            const projectAero = !(cfg.FLIP_AERO_PROJECT === 0 || cfg.FLIP_AERO_PROJECT === false);
 
             const tgtNow = _flipTargetTheta(d.rx, d.ry, d.vx, d.vy);
             if (tgtNow === null) { _rcsOff(); break; }
             const mx = _rcsMaxTorques(snapshot);
             if (!(mx.pos > 0) || !(mx.neg > 0)) { _rcsOff(); break; }
-            const nomMax = Math.max(mx.pos, mx.neg) / I;       // largest RCS accel (rad/s^2)
+            const nomMax = Math.max(mx.pos, mx.neg) / I;
 
-            // rate at which the target itself rotates (orbital motion)
             let wTgt = 0;
             if (_st.flipPrevTgt !== null && _st.flipPrevT !== null && simT > _st.flipPrevT) {
               wTgt = _wrapPi(tgtNow - _st.flipPrevTgt) / (simT - _st.flipPrevT);
-              if (Math.abs(wTgt) > 0.05) wTgt = 0; // glitch guard
+              if (Math.abs(wTgt) > 0.05) wTgt = 0;
             }
             _st.flipPrevTgt = tgtNow;
             _st.flipPrevT = simT;
             const wRelNow = d.omega - wTgt;
             const rawErr = tgtNow - d.theta;
 
-            // ---- aero (non-RCS) angular accel vs attitude -------------------------------------
-            // At flip altitude the aerodynamic torque is as large as the RCS authority and it depends strongly on
-            // attitude (the body weathervanes toward the relative wind, not toward the flip target). The derivation
-            // is the same model physics uses, so tabulate it over a full circle relative to the target (every 0.5 s).
-            const NA = 72;
-            if (_st.flipAero === null || simT - _st.flipAeroT >= 0.5) {
-              const tab = new Array(NA);
-              for (let i = 0; i < NA; i++) {
-                const rel = -Math.PI + 2 * Math.PI * i / NA;
-                const dk = Derivation.deriveForState(snapshot, idx, { theta: tgtNow + rel });
+            const NA = 72, NF = 36;
+            const FUT_TAU = [8, 16, 24];
+            const _buildTab = function (n, st) {
+              const tab = new Array(n);
+              let q = 0;
+              for (let i = 0; i < n; i++) {
+                const rel = -Math.PI + 2 * Math.PI * i / n;
+                const ov = { theta: tgtNow + rel };
+                if (st) { ov.rx = st.rx; ov.ry = st.ry; ov.vx = st.vx; ov.vy = st.vy; }
+                const dk = Derivation.deriveForState(snapshot, idx, ov);
                 tab[i] = dk && Number.isFinite(dk.alphaAng) ? dk.alphaAng : 0;
+                if (i === 0 && dk && Number.isFinite(dk.Q)) q = dk.Q;
               }
-              _st.flipAero = tab; _st.flipAeroT = simT;
+              return { tab: tab, Q: q };
+            };
+            if (_st.flipAeroSl === null || simT - _st.flipAeroT >= 0.5) {
+              const cur = _buildTab(NA, null);
+              if (_st.flipQ0 === null) _st.flipQ0 = cur.Q;
+              let futs = (_st.flipAeroSl || []).filter(function (s) { return s.fut && s.T > simT + 1.5; });
+              if (projectAero && (futs.length === 0 || simT - _st.flipAeroFutT >= 2.0)) {
+                futs = [];
+                let px = d.rx, py = d.ry, pvx = d.vx, pvy = d.vy, tt = 0;
+                const GM = env.GM_EARTH;
+                const qTxt = [];
+                for (let fi = 0; fi < FUT_TAU.length; fi++) {
+                  while (tt < FUT_TAU[fi] - 1e-9) {
+                    const h2 = Math.min(0.5, FUT_TAU[fi] - tt);
+                    const r2 = Math.hypot(px, py), g2 = GM / (r2 * r2 * r2);
+                    const ax0 = -g2 * px, ay0 = -g2 * py;
+                    px += pvx * h2 + 0.5 * ax0 * h2 * h2; py += pvy * h2 + 0.5 * ay0 * h2 * h2;
+                    const r3 = Math.hypot(px, py), g3 = GM / (r3 * r3 * r3);
+                    pvx += 0.5 * (ax0 - g3 * px) * h2; pvy += 0.5 * (ay0 - g3 * py) * h2;
+                    tt += h2;
+                  }
+                  const fb = _buildTab(NF, { rx: px, ry: py, vx: pvx, vy: pvy });
+                  futs.push({ T: simT + FUT_TAU[fi], tab: fb.tab, fut: true, Q: fb.Q });
+                  _st.flipQPend.push({ T: simT + FUT_TAU[fi], Q: fb.Q });
+                  qTxt.push("+" + FUT_TAU[fi] + "s:" + fb.Q.toFixed(0));
+                }
+                _st.flipAeroFutT = simT;
+                if (_st.flipQLogN < 12) {
+                  _st.flipQLogN++;
+                  console.log("[FLIP-AERO] t=" + (simT - _st.phaseStart).toFixed(1) + " Q_now=" + cur.Q.toFixed(0) +
+                    " Q_pred " + qTxt.join(" ") + " (Pa)");
+                }
+              }
+              _st.flipAeroSl = [{ T: simT, tab: cur.tab, fut: false, Q: cur.Q }].concat(futs);
+              _st.flipAeroT = simT;
             }
-            const aeroAt = function (rel) {            // rel = theta - target, any real angle
+            if (_st.flipQPend.length) {
+              const dueQ = _st.flipQPend.filter(function (q) { return simT >= q.T; });
+              if (dueQ.length) {
+                _st.flipQPend = _st.flipQPend.filter(function (q) { return simT < q.T; });
+                dueQ.forEach(function (q) {
+                  if (simT - q.T < 0.3 && _st.flipQCmpN < 30 && Number.isFinite(d.Q)) {
+                    _st.flipQCmpN++;
+                    console.log("[FLIP-AERO-CHK] t=" + (simT - _st.phaseStart).toFixed(1) + " Q_pred=" + q.Q.toFixed(0) +
+                      " Q_act=" + d.Q.toFixed(0) + " ratio=" + (q.Q > 0 ? (d.Q / q.Q).toFixed(2) : "n/a"));
+                  }
+                });
+              }
+            }
+            const tabAt = function (tab, rel) {
+              const n = tab.length;
               let r = rel % (2 * Math.PI); if (r >= Math.PI) r -= 2 * Math.PI; if (r < -Math.PI) r += 2 * Math.PI;
-              const f = (r + Math.PI) / (2 * Math.PI) * NA;
-              const i0 = Math.floor(f) % NA, i1 = (i0 + 1) % NA, u = f - Math.floor(f);
-              return _st.flipAero[i0] * (1 - u) + _st.flipAero[i1] * u;
+              const f = (r + Math.PI) / (2 * Math.PI) * n;
+              const i0 = Math.floor(f) % n, i1 = (i0 + 1) % n, u = f - Math.floor(f);
+              return tab[i0] * (1 - u) + tab[i1] * u;
+            };
+            const aeroAt = function (rel, tau) {
+              const S = _st.flipAeroSl;
+              if (!(tau > 0) || S.length < 2) return tabAt(S[0].tab, rel);
+              const Tq = simT + tau;
+              if (Tq <= S[0].T) return tabAt(S[0].tab, rel);
+              let i = 1;
+              while (i < S.length && S[i].T < Tq) i++;
+              if (i >= S.length) return tabAt(S[S.length - 1].tab, rel);
+              const u = (Tq - S[i - 1].T) / (S[i].T - S[i - 1].T);
+              return tabAt(S[i - 1].tab, rel) * (1 - u) + tabAt(S[i].tab, rel) * u;
             };
 
-            // ---- plant identification from the MEASURED omega ------------------------------
-            // k = fraction of nominal RCS torque really delivered (robust least squares, outliers skipped)
-            // tau = actuator lag. The torque sent 2 ticks ago produced the omega change just measured.
             _st.flipN++;
             if (_st.flipPrevOmega !== null) {
               const aMeas = (d.omega - _st.flipPrevOmega) / dt;
-              const pushThen = (pusher && _st.flipPushCmd2 && Math.abs(_st.flipPrevOmega) < _st.flipPushCap) ? pusher.alphaRad : 0;
+              const pushThen = (pusher && _st.flipPushCmd2 && Math.abs(_st.flipPrevOmega) < _st.flipPushCap) ? pAlpha : 0;
               const aRcs = aMeas - d.alphaAng - pushThen;
               _st.flipAMeas = aMeas;
               const x = _st.flipTau2 / I;
-              const outlier = Math.abs(aRcs - _st.flipK * x) > nomMax;   // impulsive disturbance (not RCS): do not learn from it
+              const outlier = Math.abs(aRcs - _st.flipK * x) > nomMax;
               if (!outlier) _st.flipARcsMeas = aRcs;
               else if (_st.flipSpikeN < 12) {
                 _st.flipSpikeN++;
-                const sl = {};
-                Object.keys(snapshot.bodies[idx]).forEach(function (kk) { if (/slosh/i.test(kk)) sl[kk] = snapshot.bodies[idx][kk]; });
                 console.log("[FLIP-SPIKE] t=" + (simT - _st.phaseStart).toFixed(2) + " aMeas=" + (aMeas * R2D).toFixed(1) +
                   " expected=" + (((d.alphaAng + _st.flipK * x + pushThen)) * R2D).toFixed(1) + " w=" + (d.omega * R2D).toFixed(2) +
-                  " mode=" + _st.flipMode + " slosh=" + JSON.stringify(sl));
+                  " mode=" + _st.flipMode);
               }
               if (!outlier && _st.flipN >= 32 && x !== 0) {
                 _st.flipSxy += x * aRcs;
@@ -3675,36 +3743,38 @@ setState(s) {
             }
             _st.flipPrevOmega = d.omega;
 
-            let pushCmdNew = _st.flipPushCmd1;   // pusher command to hold from next tick on
+            let pushCmdNew = _st.flipPushCmd1;
 
             if (!_st.flipInit) {
-              // ---- first tick: read the state, choose the direction ----
               _st.flipInit = true;
               _st.flipTau = dt;
               _send(Guidance.cmdSetAllThrottle(0));
               _send(Guidance.cmdSetGimbalRate(0));
               const e0 = _wrapPi(rawErr);
-              const ePos = e0 >= 0 ? e0 : e0 + 2 * Math.PI;   // way round in +direction
-              const eNeg = ePos - 2 * Math.PI;                // way round in -direction
+              const ePos = e0 >= 0 ? e0 : e0 + 2 * Math.PI;
+              const eNeg = ePos - 2 * Math.PI;
               const tPos = _flipTime(ePos, wRelNow, mx.pos / I, mx.neg / I);
               const tNeg = _flipTime(eNeg, wRelNow, mx.pos / I, mx.neg / I);
-              // Direction FIXED to negative (clockwise): the SEPARATED_AXIAL push already tips the booster that way.
               _st.flipEu = eNeg;
               _st.flipDir = -1;
-              // Pusher: the glue leaves it running (its own cap stays as the hard limit); FLIP cancels it at the brake point.
-              if (pusher && pusher.isOn() && pusher.alphaRad * _st.flipDir > 0) {
-                _st.flipPushCap = Number.isFinite(pusher.capRad) ? pusher.capRad : 30 / R2D;
-                _st.flipPushCmd1 = true; _st.flipPushCmd2 = true; pushCmdNew = true;
+              if (pusher && pAlpha * _st.flipDir > 0 && pCap > 0) {
+                _st.flipPushCap = pCap;
+                pusher.set(pAlpha, pCap);
+                pushCmdNew = true;
               }
+              const aPush = (pushCmdNew ? Math.abs(pAlpha) : 0);
+              const tPush = _flipTime(eNeg, wRelNow, mx.pos / I + (eNeg < 0 ? 0 : aPush), mx.neg / I + (eNeg < 0 ? aPush : 0));
               const tabTxt = [];
-              for (let a = -180; a < 180; a += 45) tabTxt.push(a + ":" + (aeroAt(a / R2D) * R2D).toFixed(2));
+              for (let a = -180; a < 180; a += 45) tabTxt.push(a + ":" + (aeroAt(a / R2D, 0) * R2D).toFixed(2));
               console.log("[standardRTLS] FLIP dir=" + (_st.flipDir > 0 ? "+" : "-") +
                 " err=" + (_st.flipEu * R2D).toFixed(1) + "deg omega=" + (wRelNow * R2D).toFixed(2) +
-                "deg/s  t(+)=" + tPos.toFixed(1) + "s t(-)=" + tNeg.toFixed(1) + "s (no-aero est)" +
-                " pusher=" + (_st.flipPushCmd1 ? ("on cap=" + (_st.flipPushCap * R2D).toFixed(1) + "deg/s") : "off") +
+                "deg/s  t(+)=" + tPos.toFixed(1) + "s t(-)=" + tNeg.toFixed(1) + "s t(-,+pusher)=" + tPush.toFixed(1) + "s (no-aero est)" +
+                " rcsAccel+=" + (mx.pos / I * R2D).toFixed(2) + " rcsAccel-=" + (mx.neg / I * R2D).toFixed(2) + "deg/s2" +
+                " pusher=" + (pushCmdNew ? ("start alpha=" + (pAlpha * R2D).toFixed(2) + "deg/s2 cap=" + (pCap * R2D).toFixed(1) + "deg/s") : "off") +
+                " aeroProject=" + (projectAero ? 1 : 0) + " hyst=" + (hystRad * R2D).toFixed(2) + "deg" +
                 " aero[rel:deg/s2]=" + tabTxt.join(" "));
             } else {
-              _st.flipEu += _wrapPi(rawErr - _st.flipPrevRaw);   // unwrapped along the committed way
+              _st.flipEu += _wrapPi(rawErr - _st.flipPrevRaw);
             }
             _st.flipPrevRaw = rawErr;
 
@@ -3712,15 +3782,21 @@ setState(s) {
             _st.flipErrDeg = _st.flipEu * R2D;
             _st.flipOmegaDegS = wRelNow * R2D;
 
+            const overNowDeg = -_st.flipEu * _st.flipDir * R2D;
+            if (overNowDeg > _st.flipPeakOver) _st.flipPeakOver = overNowDeg;
+            if (Math.abs(wRelNow) * R2D > _st.flipMaxW) _st.flipMaxW = Math.abs(wRelNow) * R2D;
+
             if (Math.abs(_st.flipEu) < cfg.FLIP_ROTATE_TOL_DEG / R2D &&
                 Math.abs(wRelNow) < cfg.FLIP_OMEGA_TOL) {
               _rcsOff();
               if (pusher && (_st.flipPushCmd1 || pushCmdNew)) pusher.set(0, 0);
               _st.flipPushCmd1 = false; _st.flipPushCmd2 = false;
+              console.log("[FLIP-DONE] t=" + (simT - _st.phaseStart).toFixed(1) + "s peakOvershoot=" + _st.flipPeakOver.toFixed(2) +
+                "deg maxW=" + _st.flipMaxW.toFixed(1) + "deg/s k=" + _st.flipK.toFixed(2) +
+                " brakeStart t=" + (_st.flipBrakeT === null ? "n/a" : _st.flipBrakeT.toFixed(1)));
               finished = true; break;
             }
 
-            // ---- one-tick-ahead prediction (RCS torque sent last tick + pusher keep acting) ----
             const k = _st.flipK;
             const pushOn1 = !!(pusher && _st.flipPushCmd1 && Math.abs(d.omega) < _st.flipPushCap);
             const M = d.massProps.M;
@@ -3732,7 +3808,7 @@ setState(s) {
               aIx += (thrIx + d.dragVecX) / M;
               aIy += (thrIy + d.dragVecY) / M;
             }
-            const aTot = d.alphaAng + k * _st.lastRcsTorque / I + (pushOn1 ? pusher.alphaRad : 0);
+            const aTot = d.alphaAng + k * _st.lastRcsTorque / I + (pushOn1 ? pAlpha : 0);
             const dTheta = d.omega * dt + 0.5 * aTot * dt * dt;
             const wP = d.omega + aTot * dt;
             const tgtP = _flipTargetTheta(d.rx + d.vx * dt, d.ry + d.vy * dt,
@@ -3741,42 +3817,53 @@ setState(s) {
             const eP = _st.flipEu + dTgt - dTheta;
             const wRelP = wP - wTgt;
 
-            // ---- bang-bang on the predicted state; stopping angle = rollout of brake + actuator lag + AERO(attitude) ----
             const sgn = eP >= 0 ? 1 : -1;
-            const nomBrake = (sgn > 0 ? mx.neg : mx.pos) / I;     // nominal accel AGAINST the motion (rad/s^2)
-            const brakeAcc = nomBrake * k;                         // what the vehicle really delivers
+            const nomBrake = (sgn > 0 ? mx.neg : mx.pos) / I;
+            const brakeAcc = nomBrake * k;
             const towards = wRelP * sgn > 0;
             const aRcsNow = (_st.flipARcsMeas !== null) ? _st.flipARcsMeas : k * _st.lastRcsTorque / I;
             let stopAng = 0;
             if (towards) {
               const h = Math.max(dt, 0.025);
               const al = 1 - Math.exp(-h / Math.max(_st.flipTau, h));
-              let ar = aRcsNow;                                    // RCS accel (signed, real axis) at rollout start
-              const th0 = -eP;                                     // attitude relative to the target
+              let ar = aRcsNow;
+              const th0 = -eP;
               let th = th0, w = wRelP, n = 0;
-              const aBr = -sgn * brakeAcc;                         // full brake, real axis
+              const aBr = -sgn * brakeAcc;
+              const rec = (simT - _st.flipPredT >= 2.0);
+              const path = rec ? [] : null;
+              const recEvery = Math.max(1, Math.round(0.5 / h));
               while (w * sgn > 0 && n < 1200) {
                 ar += (aBr - ar) * al;
-                w += (ar + aeroAt(th)) * h;
+                const av = aeroAt(th, projectAero ? n * h : 0);
+                if (path && (n % recEvery) === 0) path.push({ T: simT + n * h, th: th, aero: av });
+                w += (ar + av) * h;
                 th += w * h; n++;
               }
-              stopAng = (w * sgn > 0) ? Infinity : sgn * (th - th0) + Math.abs(wRelP) * dt;
+              stopAng = (w * sgn > 0) ? Infinity : sgn * (th - th0) + Math.abs(wRelP) * dt + 0.5 * Math.abs(wRelP) * h;
+              if (path) { _st.flipPred = path; _st.flipPredT = simT; }
             }
             let tauCmd, fullRes = null;
-            if (towards && Math.abs(eP) <= stopAng) {
-              // RCS accel that zeroes omega over the next tick, aero included
-              const aeroP = aeroAt(-eP);
-              const needRcs = (-wRelP / dt - aeroP) / k;           // nominal-accel units, real axis
+            const inBrake = (_st.flipMode === "BRAKE" || _st.flipMode === "TRIM");
+            if (towards && Math.abs(eP) <= stopAng + (inBrake ? hystRad : 0)) {
+              const aeroP = aeroAt(-eP, 0);
+              const needRcs = (-wRelP / dt - aeroP) / k;
               if (Math.abs(needRcs) >= (needRcs > 0 ? mx.pos : mx.neg) / I) {
                 const pos = needRcs > 0;
                 _st.flipMode = "BRAKE"; fullRes = pos ? mx.rp : mx.rn; tauCmd = pos ? mx.pos : -mx.neg;
               } else {
-                _st.flipMode = "TRIM"; tauCmd = needRcs * I;       // last tick(s): just enough
+                _st.flipMode = "TRIM"; tauCmd = needRcs * I;
               }
-              if (pusher && pushCmdNew) { pusher.set(0, 0); pushCmdNew = false; }   // braking starts: pusher off
+              if (!_st.flipBrakeSeen) {
+                _st.flipBrakeSeen = true; _st.flipBrakeT = simT - _st.phaseStart;
+                console.log("[FLIP-BRAKE-START] t=" + _st.flipBrakeT.toFixed(1) + " err=" + (_st.flipEu * R2D).toFixed(1) +
+                  " w=" + (wRelNow * R2D).toFixed(2) + " stop=" + (stopAng === Infinity ? "inf" : (stopAng * R2D).toFixed(1)) +
+                  " aero=" + (d.alphaAng * R2D).toFixed(2) + " pusherOn=" + (pushOn1 ? 1 : 0));
+              }
+              if (pusher && pushCmdNew) { pusher.set(0, 0); pushCmdNew = false; }
             } else {
               _st.flipMode = "ACCEL"; fullRes = sgn > 0 ? mx.rp : mx.rn; tauCmd = sgn * (sgn > 0 ? mx.pos : mx.neg);
-              if (pusher && pushCmdNew && sgn * pusher.alphaRad < 0) { pusher.set(0, 0); pushCmdNew = false; }  // overshoot: never push further
+              if (pusher && pushCmdNew && sgn * pAlpha < 0) { pusher.set(0, 0); pushCmdNew = false; }
             }
 
             const tauPrev1 = _st.lastRcsTorque;
@@ -3793,11 +3880,20 @@ setState(s) {
 
             if (simT - _st.flipDbgT >= 0.5) {
               _st.flipDbgT = simT;
+              let cmpTxt = "";
+              if (_st.flipPred) {
+                let best = null;
+                for (let pi = 0; pi < _st.flipPred.length; pi++) {
+                  if (Math.abs(_st.flipPred[pi].T - simT) < 0.26) { best = _st.flipPred[pi]; break; }
+                }
+                if (best) cmpTxt = " | pred th=" + (best.th * R2D).toFixed(1) + " aero=" + (best.aero * R2D).toFixed(2) +
+                  " act th=" + (-_st.flipEu * R2D).toFixed(1) + " aero=" + (d.alphaAng * R2D).toFixed(2);
+              }
               console.log("[FLIP-DBG] t=" + (simT - _st.phaseStart).toFixed(1) + " err=" + (_st.flipEu * R2D).toFixed(1) +
                 " w=" + (wRelNow * R2D).toFixed(2) + " " + _st.flipMode + " k=" + k.toFixed(2) +
                 " push=" + (pushOn1 ? 1 : 0) + " aero=" + (d.alphaAng * R2D).toFixed(2) +
                 " aMeas=" + (((_st.flipAMeas == null) ? 0 : _st.flipAMeas) * R2D).toFixed(2) +
-                " aRcs=" + (aRcsNow * R2D).toFixed(2) + " stop=" + (stopAng === Infinity ? "inf" : (stopAng * R2D).toFixed(1)));
+                " aRcs=" + (aRcsNow * R2D).toFixed(2) + " stop=" + (stopAng === Infinity ? "inf" : (stopAng * R2D).toFixed(1)) + cmpTxt);
             }
             break;
           }

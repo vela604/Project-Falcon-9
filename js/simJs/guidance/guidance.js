@@ -1174,7 +1174,6 @@ function _landbackTick(snapshot) {
   const stageBody = snapshot.bodies[sIdx];
   if (!boosterBody || !stageBody) { _lbState.missionPhase = 'END'; break; }
 
-  // ---- True axial gap: stage hull base to top of discarded stack.
   const discardedTop_m = _discardedStackTop_m(boosterBody);
   const upX = -Math.sin(stageBody.theta);
   const upY = Math.cos(stageBody.theta);
@@ -1183,111 +1182,53 @@ function _landbackTick(snapshot) {
   const axialGap = Math.max(0, (dx * upX + dy * upY) - discardedTop_m);
   _lbState.lastAxialGap = axialGap;
 
-  // ---- Bell-clearance arming check.
-// Booster's pusher torque fires once the stage's engine bell has
-// cleared the booster's top/interstage (bell height + margin), and
-// the lateral RCS kick arms at the same moment. Bell height is
-// derived per tick from the stage record's engine config, so a
-// different stage engine produces a different trigger point
-// automatically.
-const stageBellH = _stageBellHeightForBody(stageBody);
-const lateralMargin = Number.isFinite(_lbConfig.separation.LATERAL_TRIGGER_MARGIN_M) ?
-  _lbConfig.separation.LATERAL_TRIGGER_MARGIN_M : 0;
-const bellCleared = (stageBellH > 0) && (axialGap >= stageBellH + lateralMargin);
-const lateralArmed = bellCleared;
-_lbState.lateralArmed = lateralArmed;
-
-// ---- Pusher torque — one-shot, gated on bell clearance.
-// Physically: pneumatic pushers can't rotate the booster while
-// its interstage still overlaps the MVac bell; a rotation at that
-// moment would drive the interstage into the nozzle.
-if (bellCleared && !_lbState.pusherTorqueFired) {
-  const alphaDeg = _lbConfig.separation.BOOSTER_SEP_ANG_ACCEL_DEG_S2;
-  const omegaDeg = _lbConfig.separation.BOOSTER_SEP_TARGET_OMEGA_DEG_S;
-  if (Number.isFinite(alphaDeg) && alphaDeg !== 0 &&
-    Number.isFinite(omegaDeg) && omegaDeg > 0) {
-    send(cmdPusherTorque(
-      alphaDeg * Math.PI / 180,
-      omegaDeg * Math.PI / 180,
-      bIdx
-    ));
-    _lbState.pusherTorqueFired = true;
-  }
-}
-
-  // ---- Booster duty assembly ----
-  // Baseline: axial 'dn' on every pod (pushes booster tailward).
-  //
-  // Once lateral is armed, the left pods get a NEGATIVE-torque kick:
-  //   • Left pods: flip vertical to 'up' (Fy = +F) + keep lateral 'lat'
-  //   • Right pods: leave axial 'dn' as-is (Fy = −F)
-  //
-  // τ = rx · Fy. Left pods have rx < 0, so Fy > 0 → τ_L < 0.
-  // Right pods have rx > 0, so Fy < 0 → τ_R < 0.
-  // Both sides push the same way → net τ = −2·F·xOffset.
-  //
-  // Net vertical force = (+F on L) + (−F on R) = 0, so no vertical
-  // drift is introduced. Net lateral = +F on L only (booster drifts
-  // left of the stack, matching the intended lateral-kick behaviour).
-  //
-  // 'up' REPLACES the L pods' axial 'dn' rather than adding to it —
-  // firing both up and dn on the same pod would cancel to zero and
-  // waste propellant.
-  const boosterAxial = GuideRCS.postSeparationAxialDuty(snapshot, bIdx, 'dn');
-  let boosterMerged = boosterAxial ? Object.assign({}, boosterAxial) : {};
-
-  if (lateralArmed) {
-    const boosterPods = boosterBody.pods || [];
-    const latDuties = GuideRCS.postSeparationLateralDuty(snapshot, bIdx, 'L');
-    boosterPods.forEach(p => {
-      const pid = p.podId;
-      if (p.side === 'L') {
-        boosterMerged[pid] = {
-          up: 1,
-          dn: 0,
-          lat: (latDuties && latDuties[pid]) ? latDuties[pid].lat : 1,
-        };
-      }
-      // Right pods: keep axial 'dn' from boosterMerged, no change.
-    });
-  }
-  if (boosterMerged) { const c = cmdRcsDuty(boosterMerged, bIdx); send(c); }
-
-  // ---- Stage: axial 'up' duty only. No lateral on the stage.
-  // ---- Stage: axial 'up' duty only. No lateral on the stage.
-const stageDuties = GuideRCS.postSeparationAxialDuty(snapshot, sIdx, 'up');
-if (stageDuties) { const c = cmdRcsDuty(stageDuties, sIdx); send(c); }
-
-// Timeout-based handoff to INSERTION — fixed duration from the
-// phase's entry, independent of how far the axial gap has opened.
-const elapsedSep = simT - _lbState.missionPhaseStart;
-if (elapsedSep >= _lbConfig.separation.SEPARATION_DURATION_S) {
-  send(cmdRcsDuty(null, sIdx));
-  send(cmdRcsDuty(null, bIdx));
+  const stageBellH = _stageBellHeightForBody(stageBody);
+  const lateralMargin = Number.isFinite(_lbConfig.separation.LATERAL_TRIGGER_MARGIN_M) ?
+    _lbConfig.separation.LATERAL_TRIGGER_MARGIN_M : 0;
+  const bellCleared = (stageBellH > 0) && (axialGap >= stageBellH + lateralMargin);
   _lbState.lateralArmed = false;
 
-  // ---- Booster handover → standardRTLS ----
-  // Stop the pneumatic pusher torque (ang accel + target omega = 0) and any
-  // RCS (done just above), then the RTLS block owns the booster from here.
-  // pusher is NOT cancelled here: standardRTLS FLIP owns it (re-caps it, cancels it at the brake point)
-  _lbState.rtlsBlock = FUNDAMENTAL_BLOCKS.standardRTLS.createInstance();
-  _lbState.rtlsBlock.start(_lbConfig.rtls, bIdx, {
-    targetPad: _lbResolveTargetPad(),
-    pusher: {
-      alphaRad: _lbConfig.separation.BOOSTER_SEP_ANG_ACCEL_DEG_S2 * Math.PI / 180,
-      isOn: function () { return _lbState.pusherTorqueFired; },
-      capRad: _lbConfig.separation.BOOSTER_SEP_TARGET_OMEGA_DEG_S * Math.PI / 180,
-      set: function (a, w) { send(cmdPusherTorque(a, w, bIdx)); },
-    },
-  });
-  console.log('[landbackV1] booster → standardRTLS at t=' + simT.toFixed(2));
+  const boosterAxial = GuideRCS.postSeparationAxialDuty(snapshot, bIdx, 'dn');
+  const boosterMerged = boosterAxial ? Object.assign({}, boosterAxial) : {};
+  send(cmdRcsDuty(boosterMerged, bIdx));
 
-  _lbState.insertionBlock = FUNDAMENTAL_BLOCKS.insertion.createInstance();
-  _lbState.insertionBlock.start(_lbConfig.insertion, sIdx, {});
-  _lbState.missionPhase = 'INSERTION';
-  _lbState.missionPhaseStart = simT;
-}
-break;
+  const stageDuties = GuideRCS.postSeparationAxialDuty(snapshot, sIdx, 'up');
+  if (stageDuties) { const c = cmdRcsDuty(stageDuties, sIdx); send(c); }
+
+  const elapsedSep = simT - _lbState.missionPhaseStart;
+  const sepDur = _lbConfig.separation.SEPARATION_DURATION_S;
+  const clearOk = !(stageBellH > 0) || bellCleared;
+  if (elapsedSep >= sepDur && (clearOk || elapsedSep >= sepDur + 3)) {
+    send(cmdRcsDuty(null, sIdx));
+    send(cmdRcsDuty(null, bIdx));
+    _lbState.lateralArmed = false;
+
+    const relAx = (stageBody.vx - boosterBody.vx) * upX + (stageBody.vy - boosterBody.vy) * upY;
+    console.log('[landbackV1] SEP handoff t=' + simT.toFixed(2) + ' elapsed=' + elapsedSep.toFixed(2) +
+      ' axialGap=' + axialGap.toFixed(2) + 'm bellH=' + stageBellH.toFixed(2) + 'm relAxialV=' + relAx.toFixed(3) +
+      'm/s boosterOmega=' + ((boosterBody.omega || 0) * 180 / Math.PI).toFixed(3) + 'deg/s');
+
+    const _rt = _lbConfig.rtls || {};
+    const _sp = _lbConfig.separation;
+    _lbState.pusherTorqueFired = false;
+    _lbState.rtlsBlock = FUNDAMENTAL_BLOCKS.standardRTLS.createInstance();
+    _lbState.rtlsBlock.start(_lbConfig.rtls, bIdx, {
+      targetPad: _lbResolveTargetPad(),
+      pusher: {
+        alphaRad: (Number.isFinite(_rt.FLIP_PUSHER_ANG_ACCEL_DEG_S2) ? _rt.FLIP_PUSHER_ANG_ACCEL_DEG_S2 : _sp.BOOSTER_SEP_ANG_ACCEL_DEG_S2) * Math.PI / 180,
+        capRad: (Number.isFinite(_rt.FLIP_PUSHER_MAX_OMEGA_DEG_S) ? _rt.FLIP_PUSHER_MAX_OMEGA_DEG_S : _sp.BOOSTER_SEP_TARGET_OMEGA_DEG_S) * Math.PI / 180,
+        isOn: function () { return _lbState.pusherTorqueFired; },
+        set: function (a, w) { _lbState.pusherTorqueFired = (a !== 0 && w > 0); send(cmdPusherTorque(a, w, bIdx)); },
+      },
+    });
+    console.log('[landbackV1] booster -> standardRTLS at t=' + simT.toFixed(2));
+
+    _lbState.insertionBlock = FUNDAMENTAL_BLOCKS.insertion.createInstance();
+    _lbState.insertionBlock.start(_lbConfig.insertion, sIdx, {});
+    _lbState.missionPhase = 'INSERTION';
+    _lbState.missionPhaseStart = simT;
+  }
+  break;
 }
 
     case 'INSERTION': {

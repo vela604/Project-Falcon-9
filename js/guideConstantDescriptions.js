@@ -110,6 +110,10 @@ const GUIDE_CONSTANT_DESCRIPTIONS = {
   'rtls.FLIP_ROTATE_TOL_DEG': 'Attitude tolerance (deg) for ending the FLIP phase. Within this band (and with |relative omega| < FLIP_OMEGA_TOL) the booster is considered settled and BOOSTBACK_BURN starts.',
   'rtls.FLIP_OMEGA_TOL': 'Angular-rate tolerance (rad/s) paired with FLIP_ROTATE_TOL_DEG. BOTH |angle error| and |relative omega| must satisfy their tolerances to end FLIP — ensures the body is actually at rest, not just passing through the target mid-swing.',
   'rtls.FLIP_TIMEOUT_S': 'Maximum time (s) for the FLIP phase. On timeout the controller advances to BOOSTBACK_BURN regardless (protection against a stuck / degenerate attitude state, e.g. target-null at near-zero tangential velocity).',
+  'rtls.FLIP_PUSHER_ANG_ACCEL_DEG_S2': 'Pusher angular acceleration during FLIP ACCEL (deg/s2, signed; negative = clockwise, matching the fixed flip direction). Pusher + RCS both fire full in ACCEL; pusher cancels exactly at the brake switch.',
+  'rtls.FLIP_PUSHER_MAX_OMEGA_DEG_S': 'Pusher hard cap (deg/s). The pusher stops by itself above this |omega|. Only a safety limit — normal brake switch cancels it before the cap.',
+  'rtls.FLIP_BRAKE_HYST_DEG': 'Brake hysteresis band (deg). Once braking starts, mode stays BRAKE until the state is this far UNDER the switching curve. Undershoot is cheap, overshoot is not.',
+  'rtls.FLIP_AERO_PROJECT': '1 = project aero table in time during the stopping rollout (slices at +8/+16/+24s to account for dynamic-pressure fall as the booster climbs). 0 = v2 frozen table (A/B test).',
 
   'ascent.INITIAL_COAST_S': 'Pre-launch hold before PUSH begins. Engines spool up to full thrust during this window; attitude controller stays in PRE_COAST and applies zero torque.',
   'ascent.PUSH_T_S': 'Duration of the PUSH phase — the initial eastward rotation. A half-sine torque profile of this length produces the target tilt delta.',
