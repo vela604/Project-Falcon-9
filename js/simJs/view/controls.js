@@ -243,8 +243,8 @@ function bindCameraControls() {
 
         if (camera.mode === 'planet') {
           if (!Number.isFinite(camera.planetZoom)) camera.planetZoom = 1;
-          if (dir > 0) camera.planetZoom *= Math.pow(2, dt * 0.7);
-          else camera.planetZoom /= Math.pow(2, dt * 0.7);
+          if (dir > 0) camera.planetZoom *= Math.pow(2, dt * 1.5);
+          else camera.planetZoom /= Math.pow(2, dt * 1.5);
           camera.planetZoom = Math.max(1, Math.min(5000, camera.planetZoom));
         } else {
           if (dir > 0) camera.zoom *= Math.pow(2, dt * 0.7);

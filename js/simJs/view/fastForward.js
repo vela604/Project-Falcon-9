@@ -32,6 +32,44 @@ const FastForward = (function () {
     _pendingPauseCapture: null,
   };
 
+  // ─── Trail forwarding during FF ──────────────────────────────
+  // Fast-forward runs physics entirely inside the FF worker and returns
+  // results via progress messages. Without forwarding intermediate body
+  // positions to the render worker, the trail jumps directly from pre-FF
+  // position to post-FF position — a fake straight line.
+  //
+  // Mirror of render.js's _bodyTrailKey (must stay in sync). Anonymous
+  // fallback omitted — main thread can't share render worker's random
+  // key, so bodies without stable ids simply skip trail samples.
+  function _trailKeyForBody(b) {
+    if (!b) return null;
+    if (b.id) return 'id:' + b.id;
+    if (b.members && b.members[0] && b.members[0].id) return 'stk:' + b.members[0].id;
+    if (b.payloadBody && b.payloadBody.record && b.payloadBody.record.id) return 'pl:' + b.payloadBody.record.id;
+    if (b.fairingHalf && b.fairingHalf.record && b.fairingHalf.record.id) return 'fh:' + b.fairingHalf.record.id + ':' + (b.fairingHalf.side || 0);
+    return null;
+  }
+
+  function _forwardTrailSamples(bodies, simTime) {
+    if (!bodies || !Array.isArray(bodies)) return;
+    if (typeof showTrail === 'undefined' || !showTrail) return;
+    if (!window._renderWorker) return;
+    if (!Number.isFinite(simTime)) return;
+    for (let bi = 0; bi < bodies.length; bi++) {
+      const b = bodies[bi];
+      if (!b) continue;
+      const key = _trailKeyForBody(b);
+      if (!key) continue;
+      window._renderWorker.postMessage({
+        type: 'trailSample',
+        key: key,
+        rx: b.rx, ry: b.ry,
+        t: simTime,
+        vx: b.vx || 0, vy: b.vy || 0,
+      });
+    }
+  }
+
   const $ = (id) => document.getElementById(id);
 
   function openDialog() {
@@ -229,6 +267,7 @@ const w = new Worker('js/simJs/threads/fastforward.worker.js');
           state.simTime = Math.min(m.simTime, _baseSimTime + durationS);
           state.activeBodyIndex = m.activeBodyIndex || 0;
           state.halted = !!m.halted;
+          _forwardTrailSamples(m.bodies, m.simTime);
           if (m.bodies.length !== _prevLen &&
             typeof refreshFollowBodySelect === 'function') {
             refreshFollowBodySelect();
@@ -251,6 +290,7 @@ const w = new Worker('js/simJs/threads/fastforward.worker.js');
     state.simTime = Math.min(m.simTime, _baseSimTime + durationS);
     state.activeBodyIndex = m.activeBodyIndex || 0;
     state.halted = !!m.halted;
+          _forwardTrailSamples(m.bodies, m.simTime);
     // Refresh the follow-body dropdown when body count changed
     // mid-FF (separation, fairing split, payload release). FF
     // bypasses workerBridge's snapshot path, so its own

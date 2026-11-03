@@ -268,5 +268,11 @@ if (msg.data.rcsSync) {
       if (typeof _clearAllTrails === 'function') _clearAllTrails();
       break;
     }
+    case 'trailSample': {
+      if (typeof _pushTrailSample === 'function') {
+        _pushTrailSample(msg.key, msg.rx, msg.ry, msg.t, msg.vx, msg.vy);
+      }
+      break;
+    }
   }
 };

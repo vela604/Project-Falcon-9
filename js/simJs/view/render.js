@@ -3277,6 +3277,75 @@ function _updateTrail() {
   }
 }
 
+// Per-body trail color palette — deterministic hash of body key.
+const _TRAIL_PALETTE = [
+  [160, 225, 255],
+  [255, 180, 120],
+  [180, 255, 160],
+  [255, 160, 220],
+  [220, 180, 255],
+  [255, 220, 120],
+  [150, 220, 220],
+  [255, 160, 160],
+];
+const _colorByKey = new Map();
+
+function _colorForBodyKey(key) {
+  if (!key) return [150, 180, 220];
+  let col = _colorByKey.get(key);
+  if (!col) {
+    let h = 0;
+    for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) | 0;
+    col = _TRAIL_PALETTE[Math.abs(h) % _TRAIL_PALETTE.length];
+    _colorByKey.set(key, col);
+  }
+  return col;
+}
+
+// FF trail integration — main thread forwards intermediate positions
+// during fast-forward via 'trailSample' messages. Render worker receives
+// them here and pushes into the right body's trail (by stable key).
+// NOTE: does NOT update _lastSampleById — that would trip
+// _updateTrailOne's time-reversal guard while state.simTime is still
+// frozen pre-FF. Post-FF the normal sampler catches up cleanly.
+function _pushTrailSample(key, rx, ry, t, vx, vy) {
+  if (!showTrail || !key) return;
+  if (!Number.isFinite(rx) || !Number.isFinite(ry) || !Number.isFinite(t)) return;
+  let trail = _trailById.get(key);
+  if (!trail) { trail = []; _trailById.set(key, trail); }
+  const last = trail[trail.length - 1];
+  if (last && Number.isFinite(last.t) && Math.abs(t - last.t) < 0.05) return;
+  if (last && Number.isFinite(last.t)) {
+    const span = t - last.t;
+    if (span > 2.0) {
+      trail.push({ rx, ry, t, vx: vx || 0, vy: vy || 0, gap: true });
+      if (trail.length > 4000) trail.splice(0, trail.length - 4000);
+      return;
+    }
+    if (span > 0.5) {
+      const N = Math.min(200, Math.max(3, Math.round(span / 0.15)));
+      const v0x = last.vx || 0, v0y = last.vy || 0;
+      const v1x = vx || 0, v1y = vy || 0;
+      for (let k = 1; k < N; k++) {
+        const u = k / N;
+        const u2 = u * u, u3 = u2 * u;
+        const h00 = 2*u3 - 3*u2 + 1;
+        const h10 = u3 - 2*u2 + u;
+        const h01 = -2*u3 + 3*u2;
+        const h11 = u3 - u2;
+        trail.push({
+          rx: h00*last.rx + h10*span*v0x + h01*rx + h11*span*v1x,
+          ry: h00*last.ry + h10*span*v0y + h01*ry + h11*span*v1y,
+          t: last.t + u * span,
+          vx: 0, vy: 0,
+        });
+      }
+    }
+  }
+  trail.push({ rx, ry, t, vx: vx || 0, vy: vy || 0 });
+  if (trail.length > 4000) trail.splice(0, trail.length - 4000);
+}
+
 function drawTrail() {
   if (camera.mode !== "planet") return;
   if (!showTrail || !state || !state.bodies) return;
@@ -3291,22 +3360,24 @@ function drawTrail() {
     if (!b) continue;
     const trail = _trailOf(b);
     if (!trail || trail.length < 2) continue;
-    _strokeTrailPath(trail, earthFixed, omega, tNow, [150, 180, 220], 0.32, 1.4);
+    const col = _colorForBodyKey(_bodyTrailKey(b));
+    _strokeTrailPath(trail, earthFixed, omega, tNow, col, 0.55, 1.5);
   }
   const fb = state.bodies[followedIdx];
   if (fb) {
     const trail = _trailOf(fb);
     if (trail && trail.length >= 1) {
+      const col = _colorForBodyKey(_bodyTrailKey(fb));
       if (trail.length === 1) {
         const [px, py] = _projectTrailPoint(trail[0], earthFixed, omega, tNow);
         if (Number.isFinite(px) && Number.isFinite(py)) {
           ctx.beginPath();
-          ctx.arc(px, py, 3, 0, Math.PI * 2);
-          ctx.fillStyle = "rgba(150, 220, 255, 0.95)";
+          ctx.arc(px, py, 3.5, 0, Math.PI * 2);
+          ctx.fillStyle = "rgba(" + col[0] + "," + col[1] + "," + col[2] + ",0.98)";
           ctx.fill();
         }
       } else {
-        _strokeTrailPath(trail, earthFixed, omega, tNow, [160, 225, 255], 0.95, 2.2);
+        _strokeTrailPath(trail, earthFixed, omega, tNow, col, 0.98, 2.4);
       }
     }
   }
