@@ -345,6 +345,32 @@ function _timeToApogeeKepler(r, vr, vt, GM) {
   return (3 * Math.PI - M) / n;
 }
 
+// Time from current 2-body state to the next perigee (seconds). Same
+// Kepler machinery as _timeToApogeeKepler, but perigee is at mean anomaly
+// M = 0 instead of M = π. Circular orbit (e≈0) returns half-orbit for
+// both — the label then just picks whichever (equal) is shown first,
+// which is fine because both events are physically identical.
+function _timeToPerigeeKepler(r, vr, vt, GM) {
+  if (!(r > 0)) return Infinity;
+  const E = 0.5 * (vr * vr + vt * vt) - GM / r;
+  if (E >= 0) return Infinity;
+  const a = -GM / (2 * E);
+  const h = r * vt;
+  const eSq = 1 + 2 * E * h * h / (GM * GM);
+  const e = Math.sqrt(Math.max(0, eSq));
+  if (e < 1e-9) return Math.PI * Math.sqrt(a * a * a / GM);
+  const cosE = (1 - r / a) / e;
+  const sinE = (r * vr) / (e * Math.sqrt(GM * a));
+  let E_an = Math.atan2(sinE, cosE);
+  if (E_an < 0) E_an += 2 * Math.PI;
+  const M = E_an - e * Math.sin(E_an);
+  const n = Math.sqrt(GM / (a * a * a));
+  // Perigee is at M = 0 (equivalently M = 2π). If M ≈ 0 we're AT perigee;
+  // next perigee is one full orbit away.
+  if (M < 1e-6) return 2 * Math.PI / n;
+  return (2 * Math.PI - M) / n;
+}
+
 function buildGlossaryPanel() {
   const el = document.getElementById('glossaryList');
   el.innerHTML = Object.entries(NOTATION_GLOSSARY)
@@ -1768,7 +1794,17 @@ if (b && (_COUNTDOWN_PHASES[_phase] || _followingPayload)) {
   const _ex = b.ry / _r, _ey = -b.rx / _r;
   const _vr = b.vx * _ux + b.vy * _uy;
   const _vt = b.vx * _ex + b.vy * _ey;
-  const _tRem = _timeToApogeeKepler(_r, _vr, _vt, CONFIG.GM_EARTH);
+  const _tApo  = _timeToApogeeKepler(_r, _vr, _vt, CONFIG.GM_EARTH);
+  const _tPeri = _timeToPerigeeKepler(_r, _vr, _vt, CONFIG.GM_EARTH);
+  // "Next apsis" — whichever event (apogee or perigee) comes first.
+  // Below the finite check: if one is finite and the other isn't (escape
+  // trajectory, no bound apogee), use the finite one.
+  const _apoFinite  = Number.isFinite(_tApo) && _tApo > 0;
+  const _periFinite = Number.isFinite(_tPeri) && _tPeri > 0;
+  const _isApoNext = _apoFinite && (!_periFinite || _tApo <= _tPeri);
+  const _isPeriNext = _periFinite && (!_apoFinite || _tPeri < _tApo);
+  const _tRem = _isApoNext ? _tApo : (_isPeriNext ? _tPeri : Infinity);
+  const _nextApsisLabel = _isApoNext ? 'TO APOGEE' : 'TO PERIGEE';
 
   if (Number.isFinite(_tRem) && _tRem > 0) {
   // Format: mm:ss.hh (minutes can exceed 60 for a long coast).
@@ -1858,7 +1894,7 @@ const _deployT = Number.isFinite(_gs.deployCommandSimTime) ?
   
   ctx.fillStyle = 'rgba(255,210,63,0.95)';
   ctx.font = 'bold 9px "JetBrains Mono", monospace';
-  ctx.fillText('TO APOGEE', cx, cy - 10);
+  ctx.fillText(_nextApsisLabel, cx, cy - 10);
   
   // Line 2 — circ lead pre-circ, static zero post-circ.
   const _isPostCirc = (_phase === 'COAST_ROTATE_2' ||
