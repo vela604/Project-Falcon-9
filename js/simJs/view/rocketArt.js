@@ -452,9 +452,19 @@ function _cylDetail(ctx, W, topY, botY, o) {
   ctx.beginPath(); ctx.rect(-W / 2, topY, W, h); ctx.clip();
 
   const ao = Math.min(h * 0.45, Math.max(3, W * 0.30));
-  let g = ctx.createLinearGradient(0, topY, 0, topY + ao);
-  g.addColorStop(0, 'rgba(0,0,0,0.22)'); g.addColorStop(1, 'rgba(0,0,0,0)');
-  ctx.fillStyle = g; ctx.fillRect(-W / 2, topY, W, ao);
+  if (!o.noTopAO) {
+    let g = ctx.createLinearGradient(0, topY, 0, topY + ao);
+    g.addColorStop(0, 'rgba(0,0,0,0.22)'); g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = g; ctx.fillRect(-W / 2, topY, W, ao);
+  } else {
+    // Smooth tangent transition (rocket hull→nose) — no shadow, but a
+    // thin material-joint seam so the two sections still read as
+    // separate panels, not one continuous shell.
+    ctx.fillStyle = 'rgba(0,0,0,0.28)';
+    ctx.fillRect(-W / 2, topY, W, 1);
+    ctx.fillStyle = 'rgba(255,255,255,0.14)';
+    ctx.fillRect(-W / 2, topY + 1, W, 1);
+  }
   g = ctx.createLinearGradient(0, botY - ao, 0, botY);
   g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, 'rgba(0,0,0,0.20)');
   ctx.fillStyle = g; ctx.fillRect(-W / 2, botY - ao, W, ao);
@@ -2339,7 +2349,7 @@ const bodyPath = () => {
       ctx.save();
       bodyPath();
       ctx.clip();
-      _cylDetail(ctx, W, _shoulderY, 0, { soot: isBooster || opts.stageRole === 'rocket' });
+      _cylDetail(ctx, W, _shoulderY, 0, { soot: isBooster || opts.stageRole === 'rocket', noTopAO: !isOpenTop });
       ctx.restore();
     }
   }

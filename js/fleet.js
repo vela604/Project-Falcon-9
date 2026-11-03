@@ -734,10 +734,10 @@ function blankRocketData() {
     noseHeightM: noseH,
     noseCurveness: 0.9,
     fuel: { ...seed.fuel },
-    params: { ...seed.params, rcsTopY: 39.6, rcsBottomY: 0.7 },
+    params: { ...seed.params, rcsTopY: 39.7, rcsBottomY: 0.7 },
   };
   if (seed.gridFinParams) {
-    rec.gridFinParams = { ...seed.gridFinParams, finPositionY: 38.2 };
+    rec.gridFinParams = { ...seed.gridFinParams, finPositionY: 39 };
   }
   return rec;
 }
