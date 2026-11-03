@@ -210,6 +210,19 @@ function bindCameraControls() {
     camera.mode = 'planet';
     document.getElementById('btnFree').classList.add('active');
     document.getElementById('btnFollow').classList.remove('active');
+    // Auto-enable trajectory on planet view — unless the user has explicitly
+    // toggled the trajectory checkbox at any point this session. Once they
+    // manually turn it off, we respect that and never auto-enable again.
+    if (!window._trajectoryUserOverride) {
+      const trajCb = document.getElementById('toggleTrajectory');
+      if (trajCb && !trajCb.checked) {
+        trajCb.checked = true;
+        if (typeof showTrajectory !== 'undefined') showTrajectory = true;
+        if (typeof WorkerBridge !== 'undefined') {
+          WorkerBridge.send({ type: 'setTrajectoryEnabled', enabled: true });
+        }
+      }
+    }
   });
   
   const sel = document.getElementById('followBodySelect');

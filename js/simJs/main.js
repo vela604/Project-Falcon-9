@@ -237,6 +237,9 @@ function bindMiscToggles() {
   bind('toggleTrajectory', 'change', (e) => {
     showTrajectory = e.target.checked;
     WorkerBridge.send({ type: 'setTrajectoryEnabled', enabled: showTrajectory });
+    // User has explicitly touched the trajectory toggle — mark override so
+    // we never auto-enable on planet view again this session.
+    window._trajectoryUserOverride = true;
   });
   bind('toggleSlosh', 'change', (e) => {
     sloshEnabled = e.target.checked;

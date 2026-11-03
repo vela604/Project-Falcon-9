@@ -3149,6 +3149,7 @@ function _lastSampleSet(b, t) {
 function _clearAllTrails() {
   _trailById.clear();
   _lastSampleById.clear();
+  _colorByKey.clear();
 }
 
 function _updateTrailOne(b) {
@@ -3288,27 +3289,52 @@ function _updateTrail() {
 
 // Per-body trail color palette — deterministic hash of body key.
 const _TRAIL_PALETTE = [
-  [160, 225, 255],
-  [255, 180, 120],
-  [180, 255, 160],
-  [255, 160, 220],
-  [220, 180, 255],
-  [255, 220, 120],
-  [150, 220, 220],
-  [255, 160, 160],
+  [255, 100, 100],  // red
+  [255, 150, 80],   // orange
+  [255, 220, 80],   // yellow
+  [200, 230, 80],   // yellow-green
+  [120, 230, 100],  // green
+  [80, 230, 160],   // mint
+  [80, 210, 220],   // cyan
+  [80, 180, 255],   // sky blue
+  [100, 130, 255],  // blue
+  [180, 110, 255],  // violet
+  [255, 100, 220],  // magenta
+  [255, 100, 160],  // pink
 ];
 const _colorByKey = new Map();
 
-function _colorForBodyKey(key) {
-  if (!key) return [150, 180, 220];
-  let col = _colorByKey.get(key);
-  if (!col) {
+function _paletteIndexForBodyKey(key) {
+  // Fairing halves (fh:recordId:side) share their base record — give them
+  // the same color so L/R visually read as one fairing (as user requested).
+  if (key && key.startsWith('fh:')) {
+    const base = key.substring(0, key.lastIndexOf(':'));
+    const existing = _colorByKey.get(base);
+    if (existing !== undefined) return existing;
+    key = base;
+  }
+  const existing = _colorByKey.get(key);
+  if (existing !== undefined) return existing;
+  // Find first unused palette index — guarantees distinct colors across
+  // simultaneously-active bodies until palette runs out (12 is plenty for
+  // any realistic stack; typical max is 5-8 bodies).
+  const used = new Set(_colorByKey.values());
+  let picked = -1;
+  for (let i = 0; i < _TRAIL_PALETTE.length; i++) {
+    if (!used.has(i)) { picked = i; break; }
+  }
+  if (picked < 0) {
     let h = 0;
     for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) | 0;
-    col = _TRAIL_PALETTE[Math.abs(h) % _TRAIL_PALETTE.length];
-    _colorByKey.set(key, col);
+    picked = Math.abs(h) % _TRAIL_PALETTE.length;
   }
-  return col;
+  _colorByKey.set(key, picked);
+  return picked;
+}
+
+function _colorForBodyKey(key) {
+  if (!key) return [150, 180, 220];
+  return _TRAIL_PALETTE[_paletteIndexForBodyKey(key)];
 }
 
 // FF trail integration — main thread forwards intermediate positions
