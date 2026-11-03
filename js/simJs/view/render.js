@@ -3291,8 +3291,8 @@ function _updateTrail() {
 const _TRAIL_PALETTE = [
   [255, 100, 100],  // red
   [255, 150, 80],   // orange
-  [255, 220, 80],   // yellow
-  [200, 230, 80],   // yellow-green
+  [0, 180, 200],    // teal-cyan (was yellow)
+  [230, 130, 180],  // rose (was yellow-green)
   [120, 230, 100],  // green
   [80, 230, 160],   // mint
   [80, 210, 220],   // cyan
