@@ -401,9 +401,9 @@ function initTelemetryPanel() {
   const btnC = document.getElementById('teleToggleCompact');
   if (!panel || !btnC) return;
 
-  // Start in compact mode by default
-  panel.classList.add('tele-compact');
-  btnC.textContent = 'More';
+  // Start in expanded mode by default
+  panel.classList.remove('tele-compact');
+  btnC.textContent = 'Less';
 
   btnC.addEventListener('click', () => {
     const compact = panel.classList.toggle('tele-compact');
