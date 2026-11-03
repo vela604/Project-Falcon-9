@@ -1401,9 +1401,9 @@ function drawGridFinFace(ctx, pivotX, pivotY, topX, topY, wPx, hPx, cellPx, styl
   if (rotateRad) ctx.rotate(rotateRad);
 
   if (showMesh) {
-    const cell = Math.max(2.2, cellPx);
-    const wall = Math.max(0.9, cell * 0.21);
-    const frame = Math.max(1.5, Math.min(wPx, hPx) * 0.075, cell * 0.28);
+    const cell = Math.max(1.4, cellPx);
+    const wall = Math.max(0.4, cell * 0.12);
+    const frame = Math.max(1.0, Math.min(wPx, hPx) * 0.06, cell * 0.22);
     const ch = Math.min(wPx * 0.20, hPx * 0.13);
     const outline = (inset) => {
       const i = inset, c = Math.max(0, ch - i * 0.4);
@@ -1434,14 +1434,14 @@ function drawGridFinFace(ctx, pivotX, pivotY, topX, topY, wPx, hPx, cellPx, styl
       ctx.stroke();
     };
     ctx.lineCap = 'butt';
-    lattice(wall * 0.55, wall * 0.75, _tint(fill, kFace * 0.30, 0.65), wall * 1.5);      // wall shadow side
+    lattice(wall * 0.55, wall * 0.75, _tint(fill, kFace * 0.30, 0.65), wall * 1.1);      // wall shadow side
     lattice(0, 0, _tint(fill, kFace * 0.92), wall);                                       // wall body
-    lattice(-wall * 0.22, -wall * 0.28, _tint(fill, kFace * 1.28, 0.75), Math.max(0.5, wall * 0.30)); // lit edge
+    lattice(-wall * 0.22, -wall * 0.28, _tint(fill, kFace * 1.28, 0.75), Math.max(0.3, wall * 0.30)); // lit edge
     ctx.restore();
     // heavy outer frame: dark outside edge, body, lit inner lip
-    outline(0); ctx.strokeStyle = _tint(fill, kFace * 0.28); ctx.lineWidth = frame + 1.2; ctx.lineJoin = 'miter'; ctx.stroke();
+    outline(0); ctx.strokeStyle = _tint(fill, kFace * 0.28); ctx.lineWidth = frame + 1.0; ctx.lineJoin = 'miter'; ctx.stroke();
     outline(frame * 0.5); ctx.strokeStyle = _tint(fill, kFace * 0.95); ctx.lineWidth = frame; ctx.stroke();
-    outline(frame * 0.18); ctx.strokeStyle = _tint(fill, kFace * 1.3, 0.55); ctx.lineWidth = Math.max(0.5, frame * 0.18); ctx.stroke();
+    outline(frame * 0.18); ctx.strokeStyle = _tint(fill, kFace * 1.3, 0.55); ctx.lineWidth = Math.max(0.3, frame * 0.18); ctx.stroke();
   } else {
     // edge-on strip. Local +y points toward the fin's lower (tail-side) face.
     const kTop = _hwK(0, 1, 0.35), kBot = _hwK(0, -1, 0.35);
