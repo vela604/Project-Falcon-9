@@ -573,7 +573,7 @@ function drawRemoteArea() {
   
   // ---- Soft glow band under the core stroke ----
   ctx.strokeStyle = GLOW;
-  ctx.lineWidth = 16;
+  ctx.lineWidth = 8;
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
   segs.forEach(seg => {
@@ -584,7 +584,7 @@ function drawRemoteArea() {
   
   // ---- Core stroke ----
   ctx.strokeStyle = CORE;
-  ctx.lineWidth = 3.5;
+  ctx.lineWidth = 2.5;
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
   segs.forEach(seg => {
@@ -664,7 +664,8 @@ function drawOceanArea() {
   const phiStart = phi0 + eastStartRad + omegaE * t;
   const phiEnd   = phi0 + eastEndRad   + omegaE * t;
   
-  const BAND_DEPTH_M = 80000;
+  const mppOcean = metersPerPixel();
+  const BAND_DEPTH_M = Math.min(80000, 50 * mppOcean);
   const rOuter = R + BAND_DEPTH_M;
   
   const N = 64;
@@ -3105,11 +3106,67 @@ drawRocketArt(ctx, mW, mH, mpp, {
       }
       
 
+// ============================================================================
+// Trail — past path of the followed body. Worker-only accumulator.
+// showTrail is a `var` so both main thread (controls.js) and worker
+// (render.js) reference the same name.
+// ============================================================================
+var showTrail = false;
+let _trailPts = [];
+let _lastTrailSimT = -1;
+let _lastTrailBodyIdx = -1;
+
+if (typeof window === "undefined" && typeof self !== "undefined" && typeof self.addEventListener === "function") {
+  self.addEventListener("message", (e) => {
+    const m = e.data;
+    if (m && m.type === "trailToggle") {
+      showTrail = !!m.enabled;
+      if (!showTrail) { _trailPts.length = 0; _lastTrailSimT = -1; _lastTrailBodyIdx = -1; }
+    }
+  });
+}
+
+function _updateTrail() {
+  if (!showTrail || !state || !state.bodies || !state.bodies.length) return;
+  const idx = _cameraTargetIndex();
+  const b = state.bodies[idx];
+  if (!b) return;
+  if (idx !== _lastTrailBodyIdx) { _trailPts.length = 0; _lastTrailBodyIdx = idx; _lastTrailSimT = -1; }
+  if (_lastTrailSimT > 0 && state.simTime < _lastTrailSimT - 0.5) { _trailPts.length = 0; _lastTrailSimT = -1; }
+  if (_lastTrailSimT < 0 || state.simTime - _lastTrailSimT > 0.15) {
+    _trailPts.push({ rx: b.rx, ry: b.ry });
+    _lastTrailSimT = state.simTime;
+    if (_trailPts.length > 4000) _trailPts.shift();
+  }
+}
+
+function drawTrail() {
+  if (!showTrail || _trailPts.length < 2) return;
+  const isPlanet = camera.mode === "planet";
+  ctx.save();
+  ctx.strokeStyle = isPlanet ? "rgba(120, 200, 255, 0.85)" : "rgba(120, 200, 255, 0.65)";
+  ctx.lineWidth = isPlanet ? 2 : 1.5;
+  ctx.lineJoin = "round";
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  let started = false;
+  for (let i = 0; i < _trailPts.length; i++) {
+    const p = _trailPts[i];
+    const [px, py] = worldToScreen(p.rx, p.ry);
+    if (!Number.isFinite(px) || !Number.isFinite(py)) continue;
+    if (!started) { ctx.moveTo(px, py); started = true; }
+    else ctx.lineTo(px, py);
+  }
+  if (started) ctx.stroke();
+  ctx.restore();
+}
+
 function renderFrame() {
   if (!state.bodies || !state.bodies.length) return;
   const b = state.bodies[state.activeBodyIndex];
   if (!b || !Number.isFinite(b.rx) || !Number.isFinite(b.ry)) return;
   if (!camera) return;
+  _updateTrail();
   
   const r = Math.hypot(state.rx, state.ry);
   const altitude = altitudeFromR(r);
@@ -3124,6 +3181,7 @@ function renderFrame() {
   drawRemoteArea();
   drawPadMarkers();
   drawPredictedTrajectory();
+  drawTrail();
   drawRocket();
   return;
 }
@@ -3134,6 +3192,7 @@ drawEarth();
 drawOceanArea();
 drawRemoteArea();
 drawPredictedTrajectory();
+drawTrail();
 drawLaunchPad();
 drawLandingPads();
 drawGroundFx('back');

@@ -560,7 +560,7 @@ window.addEventListener('resize', () => {
       followPadId: camera.followPadId,
     };
     let _lastSentRenderScale = renderScale;
-    let _lastSentToggles = { showGrid, showVectors, showTrajectory, trajectoryMode, sloshEnabled };
+    let _lastSentToggles = { showGrid, showVectors, showTrajectory, trajectoryMode, sloshEnabled, showTrail: false };
 
     const pushRenderContext = () => {
       if (camera.follow !== _lastSentCamera.follow ||
@@ -599,6 +599,11 @@ window.addEventListener('resize', () => {
         _lastSentToggles.showTrajectory = showTrajectory;
         _lastSentToggles.trajectoryMode = trajectoryMode;
         _lastSentToggles.sloshEnabled = sloshEnabled;
+      }
+      
+      if (!!showTrail !== !!_lastSentToggles.showTrail) {
+        renderWorker.postMessage({ type: 'trailToggle', enabled: !!showTrail });
+        _lastSentToggles.showTrail = !!showTrail;
       }
 
       if (typeof SimLighting !== 'undefined') {

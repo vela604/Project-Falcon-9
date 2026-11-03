@@ -219,17 +219,14 @@ function bindCameraControls() {
       if (raw.startsWith('pad:')) {
         // Landing pad — camera follows pad, control stays on active body.
         camera.followPadId = raw.slice(4);
-        camera.followBodyIndex = state.activeBodyIndex; // safe fallback; render worker overrides
+        camera.followBodyIndex = state.activeBodyIndex;
         camera.follow = true;
-        camera.mode = 'local';
       } else {
         camera.followPadId = null;
         camera.followBodyIndex = parseInt(raw, 10) || 0;
         camera.follow = true;
-        camera.mode = 'local';
       }
-      document.getElementById('btnFollow').classList.add('active');
-      document.getElementById('btnFree').classList.remove('active');
+      // Don't touch btn active classes — mode didn't change.
     });
   }
   
@@ -246,12 +243,12 @@ function bindCameraControls() {
 
         if (camera.mode === 'planet') {
           if (!Number.isFinite(camera.planetZoom)) camera.planetZoom = 1;
-          if (dir > 0) camera.planetZoom *= Math.pow(2, dt * 2);
-          else camera.planetZoom /= Math.pow(2, dt * 2);
+          if (dir > 0) camera.planetZoom *= Math.pow(2, dt * 0.7);
+          else camera.planetZoom /= Math.pow(2, dt * 0.7);
           camera.planetZoom = Math.max(1, Math.min(5000, camera.planetZoom));
         } else {
-          if (dir > 0) camera.zoom *= Math.pow(2, dt * 2);
-          else camera.zoom /= Math.pow(2, dt * 2);
+          if (dir > 0) camera.zoom *= Math.pow(2, dt * 0.7);
+          else camera.zoom /= Math.pow(2, dt * 0.7);
           camera.zoom = Math.max(0.01, Math.min(25, camera.zoom));
         }
 
