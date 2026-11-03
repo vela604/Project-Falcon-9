@@ -3388,6 +3388,7 @@ function drawTrail() {
   const omega = (typeof CONFIG !== 'undefined' && Number.isFinite(CONFIG.EARTH_OMEGA)) ? CONFIG.EARTH_OMEGA : 0;
   const tNow = state.simTime || 0;
   const followedIdx = _cameraTargetIndex();
+  const _ff = !!globalThis._ffActive;
   ctx.save();
   for (let i = 0; i < state.bodies.length; i++) {
     if (i === followedIdx) continue;
@@ -3396,7 +3397,7 @@ function drawTrail() {
     const trail = _trailOf(b);
     if (!trail || trail.length < 2) continue;
     const col = _colorForBodyKey(_bodyTrailKey(b));
-    _strokeTrailPath(trail, earthFixed, omega, tNow, col, 0.55, 1.5);
+    _strokeTrailPath(trail, earthFixed, omega, tNow, col, _ff ? 0.72 : 0.55, _ff ? 2.5 : 1.5);
   }
   const fb = state.bodies[followedIdx];
   if (fb) {
@@ -3412,7 +3413,7 @@ function drawTrail() {
           ctx.fill();
         }
       } else {
-        _strokeTrailPath(trail, earthFixed, omega, tNow, col, 0.98, 2.4);
+        _strokeTrailPath(trail, earthFixed, omega, tNow, col, 0.98, _ff ? 4.5 : 2.4);
       }
     }
   }

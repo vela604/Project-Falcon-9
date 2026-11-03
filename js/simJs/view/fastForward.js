@@ -91,6 +91,9 @@ const FastForward = (function () {
 
   function closeDialog() {
     _state.open = false;
+    if (window._renderWorker) {
+      window._renderWorker.postMessage({ type: 'ffActive', enabled: false });
+    }
     $('ffModal').style.display = 'none';
     document.body.classList.remove('ff-active');
     if (_state.graphAutoOpened) {
@@ -171,6 +174,10 @@ const FastForward = (function () {
     _state.pendingResult = null;
     showSection('progress');
     setProgress(0, durationS, NaN);
+    // Boost trail visibility in render worker — thicker + brighter during FF.
+    if (window._renderWorker) {
+      window._renderWorker.postMessage({ type: 'ffActive', enabled: true });
+    }
 
     document.body.classList.add('ff-active');
     const graphPanel = document.getElementById('graphPanel');
