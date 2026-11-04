@@ -4997,8 +4997,9 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
             const uyN = rNow > 0 ? d.ry / rNow : 0;
             const localVert = Math.atan2(-d.rx, d.ry);
             const thetaLocalDeg = _wrapPi(d.theta - localVert) * R2D;
-            const vRadial = d.vx * uxN + d.vy * uyN;
-            const vTang = d.vx * uyN - d.vy * uxN;
+            const vRadial = d.vx * uxN + d.vy * uyN;              // radial: same in inertial & Earth-fixed
+            const vTangInertial = d.vx * uyN - d.vy * uxN;
+            const vTangGround = vTangInertial - omegaE * rNow;    // Earth-fixed tangential (ground-relative)
             const hAGL = d.altitudeAGL;
             const phiNow = Math.atan2(d.rx, d.ry) - omegaE * simT;
             const xFromPadM = _wrapPi(phiNow - padEf) * Rm;
@@ -5010,8 +5011,13 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
             const Fy_in = thrIy + d.dragVecY + (d.gridFinFy || 0);
             const axIn = d.gVecX + Fx_in / M;
             const ayIn = d.gVecY + Fy_in / M;
-            const axTang = axIn * uyN - ayIn * uxN;
-            const ayRad = axIn * uxN + ayIn * uyN;
+            const axTangInertial = axIn * uyN - ayIn * uxN;
+            const ayRadInertial = axIn * uxN + ayIn * uyN;
+            // Earth-fixed (rotating-frame) corrections — small but consistent:
+            //   tangential: Coriolis -2·omegaE·vRadial
+            //   radial:    centrifugal +omegaE^2·r  +  Coriolis +2·omegaE·vTangGround
+            const axGround = axTangInertial - 2 * omegaE * vRadial;
+            const ayGround = ayRadInertial + omegaE * omegaE * rNow + 2 * omegaE * vTangGround;
 
             const thrustCur = d.thrustTotal || 0;
             const gimbals = (body.engines || []).filter(e => e.gimbal);
@@ -5026,9 +5032,9 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
             if (!_st.lbDone && simT - _st.lbLastLog >= 0.5) {
               _st.lbLastLog = simT;
               console.log("[LANDING_BURN] t=" + simT.toFixed(2) +
-                " | theta=" + thetaLocalDeg.toFixed(2) + "deg w=" + (d.omega * R2D).toFixed(3) + "deg/s aAng=" + alphaAngDegS2.toFixed(3) + "deg/s2" +
-                " | x=" + (xFromPadM / 1000).toFixed(3) + "km vx=" + vTang.toFixed(2) + "m/s ax=" + axTang.toFixed(3) + "m/s2" +
-                " | h=" + (hAGL / 1000).toFixed(3) + "km vy=" + vRadial.toFixed(2) + "m/s ay=" + ayRad.toFixed(3) + "m/s2" +
+                " | theta=" + thetaLocalDeg.toFixed(2) + "deg w=" + ((d.omega - omegaE) * R2D).toFixed(3) + "deg/s aAng=" + alphaAngDegS2.toFixed(3) + "deg/s2" +
+                " | x=" + (xFromPadM / 1000).toFixed(3) + "km vx=" + vTangGround.toFixed(2) + "m/s ax=" + axGround.toFixed(3) + "m/s2" +
+                " | h=" + (hAGL / 1000).toFixed(3) + "km vy=" + vRadial.toFixed(2) + "m/s ay=" + ayGround.toFixed(3) + "m/s2" +
                 " | thr=" + Math.round(thrustCur) + "N cmd=" + (Number.isFinite(_st.lbThrCmd) ? Math.round(_st.lbThrCmd) : "n/a") +
                 " gim=" + gimbalCur.toFixed(2) + " cmd=" + _st.lbGimbalCmd.toFixed(2) +
                 " fin=" + finCur.toFixed(1) + " cmd=" + _st.lbFinCmd.toFixed(1) +
@@ -5040,8 +5046,8 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
               _st.lbDone = true;
               console.log("[LANDING_BURN-DONE] t=" + simT.toFixed(2) +
                 " groundErr=" + (xFromPadM / 1000).toFixed(3) + "km" +
-                " vRad=" + vRadial.toFixed(2) + "m/s vTang=" + vTang.toFixed(2) + "m/s" +
-                " theta=" + thetaLocalDeg.toFixed(2) + "deg w=" + (d.omega * R2D).toFixed(3) + "deg/s" +
+                " vRad=" + vRadial.toFixed(2) + "m/s vTangGround=" + vTangGround.toFixed(2) + "m/s" +
+                " theta=" + thetaLocalDeg.toFixed(2) + "deg w=" + ((d.omega - omegaE) * R2D).toFixed(3) + "deg/s" +
                 " landed=" + (!!body.landed) + " crashed=" + (!!body.crashed) +
                 " vacErr=" + (vacErrKm != null ? vacErrKm.toFixed(3) + "km" : "n/a"));
             }
