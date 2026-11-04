@@ -1,34 +1,62 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8">
-<title>Landback Align Lab</title>
+<title>Landback Align Lab · Sec 1 Sweep + Sec 2 Override</title>
 <style>
 body{font:11px/1.35 monospace;background:#0b0e14;color:#cfd6e4;margin:0;padding:8px}
 label{display:inline-block;margin:0 6px 4px 0}
-input,select{background:#141a26;color:#cfd6e4;border:1px solid #2a3550;padding:3px;width:75px}
+input,select{background:#141a26;color:#cfd6e4;border:1px solid #2a3550;padding:3px;width:80px}
 select{width:auto}
 button{background:#1d2a44;color:#cfd6e4;border:1px solid #3a4c78;padding:5px 10px;cursor:pointer;font:inherit}
 button:disabled{opacity:.5}
-h2{font-size:13px;margin:8px 0 6px}
-pre{white-space:pre-wrap;font-size:10.5px;background:#0f1420;padding:6px;border:1px solid #1f2940;max-height:600px;overflow:auto}
-.dim{color:#7d889f}.bad{color:#ff6b6b}.ok{color:#6bff88}.warn{color:#ffcc44}
+h2{font-size:13px;margin:8px 0 6px}h3{font-size:12px;margin:10px 0 6px}
+pre{white-space:pre-wrap;font-size:10.5px;background:#0f1420;padding:6px;border:1px solid #1f2940;max-height:400px;overflow:auto}
+.dim{color:#7d889f}.bad{color:#ff6b6b}.ok{color:#6bff88}
+.sec2{margin-top:14px;border-top:1px solid #2a3550;padding-top:10px}
 </style></head><body>
-<h2>Landback Align Lab · T0 sweep (thrust cmd vs act)</h2>
+<h2>Landback Align Lab</h2>
 <div>
   <label>stack <select id="stackSel"></select></label>
   <button id="initBtn">① Init + capture LB checkpoint</button>
   <span class="dim" id="initStatus"></span>
 </div>
+
 <div id="lab" style="display:none;margin-top:6px">
+<h3>Section 1 — T0 sweep (per-tick re-solve)</h3>
+<div>
   <label>T0 from <input type="number" id="t0From" value="7" step="0.5"></label>
   <label>to <input type="number" id="t0To" value="15" step="0.5"></label>
   <label>step <input type="number" id="t0Step" value="1" step="0.5"></label>
   <label>capS <input type="number" id="capS" value="60"></label>
-  <button id="sweepBtn" disabled>② Sweep T0</button>
+  <button id="sweepBtn" disabled>Sweep T0</button>
   <label>T0 single <input type="number" id="t0Single" value="10" step="0.5"></label>
   <button id="singleBtn" disabled>Run single</button>
   <span class="dim" id="runStatus"></span>
 </div>
-<pre id="out" style="margin-top:8px"></pre>
+<pre id="out"></pre>
+
+<div class="sec2">
+<h3>Section 2 — 6-param override + error compensation</h3>
+<div>
+  <label>a0_rot <input type="number" id="s2a0r" step="0.000001"></label>
+  <label>v0_rot <input type="number" id="s2v0r" step="0.000001"></label>
+  <label>ds_rot <input type="number" id="s2dsr" step="0.000001"></label>
+</div>
+<div>
+  <label>a0_lin <input type="number" id="s2a0l" step="0.0001"></label>
+  <label>v0_lin <input type="number" id="s2v0l" step="0.0001"></label>
+  <label>ds_lin <input type="number" id="s2dsl" step="0.001"></label>
+  <label>T0 <input type="number" id="s2t0" step="0.1"></label>
+</div>
+<div>
+  <button id="s2capBtn" disabled>② Capture + baseline run</button>
+  <button id="s2runBtn" disabled>③ Run with these values</button>
+  <button id="s2compBtn" disabled>④ Compensate ds by error</button>
+  <span class="dim" id="s2status"></span>
+</div>
+<pre id="s2out"></pre>
+</div>
+
+</div>
 
 <script src="../../js/componentLibrary.js"></script>
 <script src="../../js/customDesign.js"></script>
@@ -58,7 +86,7 @@ pre{white-space:pre-wrap;font-size:10.5px;background:#0f1420;padding:6px;border:
 (function() {
   'use strict';
   const $ = (id) => document.getElementById(id);
-  const S = { inited: false, lbSnap: null, running: false };
+  const S = { inited: false, lbSnap: null, running: false, s2LastResult: null };
   const guideName = 'landbackV1';
 
   function deepClone(x, memo) {
@@ -71,8 +99,7 @@ pre{white-space:pre-wrap;font-size:10.5px;background:#0f1420;padding:6px;border:
   function captureSnap() {
     const st = {};
     Object.keys(state).forEach(k => { if (k === 'bodies') return; try { st[k] = deepClone(state[k]); } catch(e) { st[k] = null; } });
-    return { bodies: deepClone(state.bodies), stateKeysSnapshot: st, simTime: state.simTime,
-             activeBodyIndex: state.activeBodyIndex, guidanceState: Guidance.exportGuideState() };
+    return { bodies: deepClone(state.bodies), stateKeysSnapshot: st, simTime: state.simTime, activeBodyIndex: state.activeBodyIndex, guidanceState: Guidance.exportGuideState() };
   }
   function restoreSnap(snap, gOverride) {
     Object.keys(snap.stateKeysSnapshot).forEach(k => { try { state[k] = deepClone(snap.stateKeysSnapshot[k]); } catch(e) {} });
@@ -86,199 +113,134 @@ pre{white-space:pre-wrap;font-size:10.5px;background:#0f1420;padding:6px;border:
     if (snap.stateKeysSnapshot.halted === undefined) state.halted = false;
     Guidance.importGuideState(deepClone(gOverride || snap.guidanceState));
   }
-  function findBooster() {
-    for (const b of state.bodies) if (b && b.members && b.members[0] && b.members[0].stageRole === 'booster') return b;
-    return null;
-  }
-  function buildValues() {
-    const preset = cloneDefaultPreset(guideName);
-    if (!preset) throw new Error('preset landbackV1 missing');
-    return preset.constants;
-  }
+  function findBooster() { for (const b of state.bodies) if (b && b.members && b.members[0] && b.members[0].stageRole === 'booster') return b; return null; }
+  function buildValues() { const p = cloneDefaultPreset(guideName); if (!p) throw new Error('preset landbackV1 missing'); return p.constants; }
   const stacks = (typeof loadStacks === 'function' ? loadStacks() : []).filter(s => s && s.sequence === 'standard' && s.locked);
   $('stackSel').innerHTML = stacks.length ? stacks.map(s => '<option value="' + s.id.replace(/[&<>"']/g,'') + '">' + s.name.replace(/[&<>"']/g,'') + '</option>').join('') : '<option value="">(no eligible stacks)</option>';
 
-  $('initBtn').addEventListener('click', function() {
-    if (S.running) return;
-    S.running = true; $('initBtn').disabled = true;
-    $('initStatus').textContent = 'initializing…'; $('out').textContent = '';
-    setTimeout(function() {
-      const _ol = console.log; console.log = function(){};
-      try {
-        const id = $('stackSel').value;
-        if (!id) throw new Error('pick stack');
-        if (typeof TunerEngine === 'undefined') throw new Error('TunerEngine missing');
-        if (typeof state === 'undefined') throw new Error('state global missing');
-        setSelectedStackId(id);
-        TunerEngine.init();
-        TunerEngine.prepareRun(guideName, buildValues(), (typeof TunerConfig !== 'undefined' ? TunerConfig.env : undefined));
-
-        $('initStatus').textContent = 'running SA…';
-        let saSnap = null;
-        for (let i = 0; i < 300 * 80; i++) {
-          if (state.halted) break;
-          TunerEngine.tick(CONFIG.DT);
-          const gs = Guidance.getGuideStatus();
-          if (gs && gs.phase === 'SEPARATED_AXIAL') { saSnap = captureSnap(); break; }
-        }
-        if (!saSnap) throw new Error('SA not reached');
-
-        $('initStatus').textContent = 'running to LBA…';
-        restoreSnap(saSnap);
-        let lbSnap = null;
-        for (let i = 0; i < 900 * 80; i++) {
-          if (state.halted) break;
-          TunerEngine.tick(CONFIG.DT);
-          const gs = Guidance.getGuideStatus();
-          if (gs && gs.rtlsPhase === 'LANDING_BURN_ALIGN') { lbSnap = captureSnap(); break; }
-        }
-        if (!lbSnap) {
-          const gs = Guidance.getGuideStatus();
-          throw new Error('LBA not reached (rtlsPhase=' + (gs && gs.rtlsPhase) + ')');
-        }
-        S.lbSnap = lbSnap; S.inited = true;
-        $('initStatus').innerHTML = '<span class="ok">ready</span> · LB cp t=' + lbSnap.simTime.toFixed(2) + 's';
-        $('lab').style.display = 'block';
-        $('sweepBtn').disabled = $('singleBtn').disabled = false;
-      } catch (e) {
-        $('initStatus').innerHTML = '<span class="bad">ERROR: ' + e.message + '</span>';
-        console.error(e);
-      } finally {
-        console.log = _ol; $('initBtn').disabled = false; S.running = false;
-      }
-    }, 10);
-  });
-
-  function runT0(T0, capS) {
+  function runT0(T0, capS, override) {
     const _ol = console.log; console.log = function(){};
     try {
       const g = deepClone(S.lbSnap.guidanceState);
-      if (g.guideConfigs && g.guideConfigs.landbackV1 && g.guideConfigs.landbackV1.rtls) g.guideConfigs.landbackV1.rtls.LANDING_BURN_T0_S = T0;
-      if (g.lbRtlsBlock && g.lbRtlsBlock.constants) g.lbRtlsBlock.constants.LANDING_BURN_T0_S = T0;
+      if (g.guideConfigs && g.guideConfigs.landbackV1 && g.guideConfigs.landbackV1.rtls) {
+        g.guideConfigs.landbackV1.rtls.LANDING_BURN_T0_S = T0;
+        g.guideConfigs.landbackV1.rtls.LANDING_BURN_TEST_OVERRIDE = override || null;
+      }
+      if (g.lbRtlsBlock && g.lbRtlsBlock.constants) {
+        g.lbRtlsBlock.constants.LANDING_BURN_T0_S = T0;
+        g.lbRtlsBlock.constants.LANDING_BURN_TEST_OVERRIDE = override || null;
+      }
       restoreSnap(S.lbSnap, g);
 
       const startT = state.simTime;
-      const samples = [], phases = [];
-      let lastPhase = null;
+      const samples = [];
       let aligned = false, crashed = false, timeout = false, enteredTD = false;
       let gimbalPeak = 0;
       let finalH = null, finalTheta = null, finalOmega = null, finalX = null, finalVx = null;
-      let spoolCompleteT = null, alignStartT = null;
+      let captured6 = null, spoolCompleteT = null;
+      let phases = [], lastPhase = null;
 
       for (let i = 0; i < capS * 80; i++) {
         if (state.crashed || state.halted) { crashed = true; break; }
         TunerEngine.tick(CONFIG.DT);
         const gs = Guidance.getGuideStatus() || {};
         const bB = findBooster();
-        if (bB) {
-          const r = Math.hypot(bB.rx, bB.ry);
-          const hAGL = r - CONFIG.EARTH_RADIUS - (CONFIG.LAUNCH_SITE_ALTITUDE || 0);
-          const vr = (bB.vx * bB.rx + bB.vy * bB.ry) / r;
-          const vt = (bB.vx * bB.ry - bB.vy * bB.rx) / r;
-          const vtGround = vt - CONFIG.EARTH_OMEGA * r;
-          const lv = Math.atan2(-bB.rx, bB.ry);
-          let thetaLocalRad = bB.theta - lv;
-          while (thetaLocalRad > Math.PI) thetaLocalRad -= 2*Math.PI;
-          while (thetaLocalRad < -Math.PI) thetaLocalRad += 2*Math.PI;
-          const gimb = (bB.engines || []).find(e => e.gimbal) || {};
-          const gimbalAbs = Math.abs(gimb.gimbalDeg || 0);
-          if (gimbalAbs > gimbalPeak) gimbalPeak = gimbalAbs;
+        if (!bB) break;
+        const r = Math.hypot(bB.rx, bB.ry);
+        const hAGL = r - CONFIG.EARTH_RADIUS - (CONFIG.LAUNCH_SITE_ALTITUDE || 0);
+        const vr = (bB.vx * bB.rx + bB.vy * bB.ry) / r;
+        const vt = (bB.vx * bB.ry - bB.vy * bB.rx) / r;
+        const vtGround = vt - CONFIG.EARTH_OMEGA * r;
+        const lv = Math.atan2(-bB.rx, bB.ry);
+        let thetaLocalRad = bB.theta - lv;
+        while (thetaLocalRad > Math.PI) thetaLocalRad -= 2*Math.PI;
+        while (thetaLocalRad < -Math.PI) thetaLocalRad += 2*Math.PI;
+        const gimb = (bB.engines || []).find(e => e.gimbal) || {};
+        const gAbs = Math.abs(gimb.gimbalDeg || 0);
+        if (gAbs > gimbalPeak) gimbalPeak = gAbs;
 
-          // X position (from pad)
-          const phiNow = Math.atan2(bB.rx, bB.ry) - CONFIG.EARTH_OMEGA * state.simTime;
-          const padArr = (CONFIG.LANDING_PADS || []).filter(p => p.id === 'LZ-1');
-          const pad = padArr.length ? padArr[0] : { arcOffsetM: 400 };
-          const Rg = CONFIG.EARTH_RADIUS + (CONFIG.LAUNCH_SITE_ALTITUDE || 0);
-          const padEf = (CONFIG.LAUNCH_SITE_ANGLE_0 || 0) + (pad.arcOffsetM || 0) / Rg;
-          let xRad = phiNow - padEf;
-          while (xRad > Math.PI) xRad -= 2*Math.PI;
-          while (xRad < -Math.PI) xRad += 2*Math.PI;
-          const xFromPad = xRad * Rg;
+        const phiNow = Math.atan2(bB.rx, bB.ry) - CONFIG.EARTH_OMEGA * state.simTime;
+        const padArr = (CONFIG.LANDING_PADS || []).filter(p => p.id === 'LZ-1');
+        const pad = padArr.length ? padArr[0] : { arcOffsetM: 400 };
+        const Rg = CONFIG.EARTH_RADIUS + (CONFIG.LAUNCH_SITE_ALTITUDE || 0);
+        const padEf = (CONFIG.LAUNCH_SITE_ANGLE_0 || 0) + (pad.arcOffsetM || 0) / Rg;
+        let xRad = phiNow - padEf;
+        while (xRad > Math.PI) xRad -= 2*Math.PI;
+        while (xRad < -Math.PI) xRad += 2*Math.PI;
+        const xFromPad = xRad * Rg;
 
-          if (gs.lbSpooled && spoolCompleteT == null) spoolCompleteT = state.simTime;
-          if (gs.lbAlignT0 != null && alignStartT == null) alignStartT = gs.lbAlignStartT;
+        if (gs.lbSpooled && spoolCompleteT == null) spoolCompleteT = state.simTime;
+        if (gs.rtlsLbCapture6 && !captured6) captured6 = gs.rtlsLbCapture6;
+        if (gs.rtlsPhase !== lastPhase) { phases.push(gs.rtlsPhase); lastPhase = gs.rtlsPhase; }
 
-          if (gs.rtlsPhase !== lastPhase) { phases.push({ t: +state.simTime.toFixed(2), phase: gs.rtlsPhase }); lastPhase = gs.rtlsPhase; }
-
-          // Sample every 20 ticks = 0.25s in LB, every 40 = 0.5s in LBA
-          const sampleEvery = (gs.rtlsPhase === 'LANDING_BURN') ? 20 : 40;
-          if (i % sampleEvery === 0) {
-            let thrustAct = 0, thrustCmd = 0;
-            for (const e of (bB.engines || [])) {
-              thrustAct += (e.massFlowRate || 0) * (e.Ve || 0);
-              thrustCmd += (e.targetMassFlowRate || 0) * (e.Ve || 0);
-            }
-            const alignEl = (spoolCompleteT != null) ? (state.simTime - spoolCompleteT) : null;
-            const T0rem = (spoolCompleteT != null && gs.lbAlignT0 != null) ? Math.max(0, gs.lbAlignT0 - alignEl) : null;
-            samples.push({ t: +state.simTime.toFixed(2), phase: gs.rtlsPhase || '', h: +(hAGL / 1000).toFixed(3),
-              vy: +vr.toFixed(1), vx: +vtGround.toFixed(2),
-              theta: +(thetaLocalRad * 180 / Math.PI).toFixed(2),
-              omega: +(bB.omega * 180 / Math.PI).toFixed(2),
-              x: +xFromPad.toFixed(2),
-              gimbal: +(gimb.gimbalDeg || 0).toFixed(2),
-              thrustAct: Math.round(thrustAct), thrustCmd: Math.round(thrustCmd),
-              spooled: !!gs.lbSpooled, alignEl: alignEl != null ? +alignEl.toFixed(2) : null,
-              T0rem: T0rem != null ? +T0rem.toFixed(2) : null,
-              T0: gs.lbAlignT0 });
-          }
-
-          if (!enteredTD && gs.rtlsPhase === 'TOUCHDOWN') {
-            enteredTD = true;
-            finalTheta = thetaLocalRad * 180 / Math.PI;
-            finalOmega = bB.omega * 180 / Math.PI;
-            finalX = xFromPad;
-            finalVx = vtGround;
-            finalH = hAGL / 1000;
-            aligned = Math.abs(finalTheta) < 1.0 && Math.abs(finalOmega) < 0.5 && Math.abs(finalX) < 5 && Math.abs(finalVx) < 1.0;
-            break;
-          }
+        if (i % 20 === 0) {
+          let tA = 0, tC = 0;
+          for (const e of (bB.engines || [])) { tA += (e.massFlowRate || 0) * (e.Ve || 0); tC += (e.targetMassFlowRate || 0) * (e.Ve || 0); }
+          samples.push({ t: +state.simTime.toFixed(2), phase: gs.rtlsPhase, h: +(hAGL/1000).toFixed(3), vy: +vr.toFixed(1), vx: +vtGround.toFixed(2), theta: +(thetaLocalRad*180/Math.PI).toFixed(2), omega: +(bB.omega*180/Math.PI).toFixed(2), x: +xFromPad.toFixed(2), gimbal: +(gimb.gimbalDeg||0).toFixed(2), thrustAct: Math.round(tA), thrustCmd: Math.round(tC) });
+        }
+        if (!enteredTD && gs.rtlsPhase === 'TOUCHDOWN') {
+          enteredTD = true;
+          finalTheta = thetaLocalRad * 180 / Math.PI;
+          finalOmega = bB.omega * 180 / Math.PI;
+          finalX = xFromPad;
+          finalVx = vtGround;
+          finalH = hAGL / 1000;
+          aligned = Math.abs(finalTheta) < 1 && Math.abs(finalOmega) < 0.5 && Math.abs(finalX) < 5 && Math.abs(finalVx) < 1;
+          break;
         }
         if (state.simTime - startT > capS) { timeout = true; break; }
       }
-      if (!enteredTD && !crashed && !timeout) timeout = true;
-
-      const alignElapsed = (spoolCompleteT != null) ? (state.simTime - spoolCompleteT) : null;
-      return { T0, aligned, crashed, timeout, enteredTD,
-               totalElapsed: +(state.simTime - startT).toFixed(2),
-               alignElapsed: alignElapsed != null ? +alignElapsed.toFixed(2) : null,
-               finalH, finalTheta, finalOmega, finalX, finalVx, gimbalPeak,
-               samples, phases, spoolCompleteT, alignStartT };
+      return { T0, aligned, crashed, timeout, enteredTD, finalH, finalTheta, finalOmega, finalX, finalVx, gimbalPeak, samples, captured6, phases };
     } finally { console.log = _ol; }
   }
 
+  $('initBtn').addEventListener('click', function() {
+    if (S.running) return;
+    S.running = true; $('initBtn').disabled = true;
+    $('initStatus').textContent = 'initializing…'; $('out').textContent = ''; $('s2out').textContent = '';
+    setTimeout(function() {
+      const _ol = console.log; console.log = function(){};
+      try {
+        const id = $('stackSel').value;
+        if (!id) throw new Error('pick stack');
+        setSelectedStackId(id);
+        TunerEngine.init();
+        TunerEngine.prepareRun(guideName, buildValues(), (typeof TunerConfig !== 'undefined' ? TunerConfig.env : undefined));
+        $('initStatus').textContent = 'running SA…';
+        let saSnap = null;
+        for (let i = 0; i < 300 * 80; i++) { if (state.halted) break; TunerEngine.tick(CONFIG.DT); const gs = Guidance.getGuideStatus(); if (gs && gs.phase === 'SEPARATED_AXIAL') { saSnap = captureSnap(); break; } }
+        if (!saSnap) throw new Error('SA not reached');
+        $('initStatus').textContent = 'running to LBA…';
+        restoreSnap(saSnap);
+        let lbSnap = null;
+        for (let i = 0; i < 900 * 80; i++) { if (state.halted) break; TunerEngine.tick(CONFIG.DT); const gs = Guidance.getGuideStatus(); if (gs && gs.rtlsPhase === 'LANDING_BURN_ALIGN') { lbSnap = captureSnap(); break; } }
+        if (!lbSnap) throw new Error('LBA not reached');
+        S.lbSnap = lbSnap; S.inited = true;
+        $('initStatus').innerHTML = '<span class="ok">ready</span> · LB t=' + lbSnap.simTime.toFixed(2) + 's';
+        $('lab').style.display = 'block';
+        $('sweepBtn').disabled = $('singleBtn').disabled = $('s2capBtn').disabled = false;
+      } catch (e) {
+        $('initStatus').innerHTML = '<span class="bad">ERROR: ' + e.message + '</span>'; console.error(e);
+      } finally { console.log = _ol; $('initBtn').disabled = false; S.running = false; }
+    }, 10);
+  });
+
+  // Section 1 buttons (compact)
   $('singleBtn').addEventListener('click', function() {
     if (!S.inited || S.running) return;
-    S.running = true; $('sweepBtn').disabled = $('singleBtn').disabled = true;
+    S.running = true; $('singleBtn').disabled = $('sweepBtn').disabled = true;
     $('runStatus').textContent = 'running…'; $('out').textContent = '';
     setTimeout(function() {
       try {
-        const t0 = parseFloat($('t0Single').value), capS = parseFloat($('capS').value);
-        const r = runT0(t0, capS);
-        const status = r.aligned ? 'ALIGNED' : (r.crashed ? 'CRASH' : (r.timeout ? 'TIMEOUT' : 'FAILED'));
-        let txt = 'T0=' + t0 + '  ' + status + '  peak_δ=' + r.gimbalPeak.toFixed(2) + '°  alignEl=' + r.alignElapsed + 's\n';
-        txt += 'final: θ=' + r.finalTheta?.toFixed(3) + '°  ω=' + r.finalOmega?.toFixed(3) + '°/s  x=' + r.finalX?.toFixed(2) + 'm  vx=' + r.finalVx?.toFixed(3) + 'm/s  h=' + r.finalH?.toFixed(3) + 'km\n';
-        txt += 'spool_complete=' + (r.spoolCompleteT != null ? r.spoolCompleteT.toFixed(2) : 'n/a') + 's\n\n';
-        txt += 't      phase                sp  alignEl T0rem  h      vy      vx      θ       ω       x       gim   thrAct  thrCmd  Δcmd-act\n';
-        for (const s of r.samples) {
-          const d = s.thrustCmd - s.thrustAct;
-          txt += String(s.t).padEnd(6) + ' ' + (s.phase||'').padEnd(20) + ' ' +
-                 (s.spooled?'Y':'n').padEnd(3) + ' ' +
-                 (s.alignEl!=null?String(s.alignEl).padEnd(7):'--     ') + ' ' +
-                 (s.T0rem!=null?String(s.T0rem).padEnd(6):'--    ') + ' ' +
-                 s.h.toFixed(3).padEnd(6) + ' ' + s.vy.toFixed(1).padEnd(7) + ' ' +
-                 s.vx.toFixed(2).padEnd(7) + ' ' + s.theta.toFixed(2).padEnd(7) + ' ' +
-                 s.omega.toFixed(2).padEnd(7) + ' ' + s.x.toFixed(1).padEnd(7) + ' ' +
-                 s.gimbal.toFixed(2).padEnd(5) + ' ' + String(s.thrustAct).padEnd(7) + ' ' +
-                 String(s.thrustCmd).padEnd(7) + ' ' + (d>=0?'+':'')+d + '\n';
-        }
+        const r = runT0(parseFloat($('t0Single').value), parseFloat($('capS').value), null);
+        const st = r.aligned ? 'ALIGNED' : (r.crashed ? 'CRASH' : (r.timeout ? 'TIMEOUT' : 'FAILED'));
+        let txt = 'T0=' + r.T0 + '  ' + st + '  peak_δ=' + r.gimbalPeak.toFixed(2) + '°\n';
+        txt += 'final θ=' + r.finalTheta?.toFixed(3) + '°  ω=' + r.finalOmega?.toFixed(3) + '°/s  x=' + r.finalX?.toFixed(2) + 'm  vx=' + r.finalVx?.toFixed(3) + 'm/s\n\n';
+        txt += 't      phase                h      vy      vx      θ       ω       x       gim   thrAct  thrCmd\n';
+        for (const s of r.samples) txt += String(s.t).padEnd(6) + ' ' + (s.phase||'').padEnd(20) + ' ' + s.h.toFixed(3).padEnd(6) + ' ' + s.vy.toFixed(1).padEnd(7) + ' ' + s.vx.toFixed(2).padEnd(7) + ' ' + s.theta.toFixed(2).padEnd(7) + ' ' + s.omega.toFixed(2).padEnd(7) + ' ' + s.x.toFixed(1).padEnd(7) + ' ' + s.gimbal.toFixed(2).padEnd(5) + ' ' + String(s.thrustAct).padEnd(7) + ' ' + s.thrustCmd + '\n';
         $('out').textContent = txt;
-      } catch (e) {
-        $('out').innerHTML = '<span class="bad">ERROR: ' + e.message + '</span>';
-        console.error(e);
-      } finally {
-        $('sweepBtn').disabled = $('singleBtn').disabled = false;
-        S.running = false; $('runStatus').textContent = 'done';
-      }
+      } catch (e) { $('out').innerHTML = '<span class="bad">ERROR: ' + e.message + '</span>'; console.error(e); }
+      finally { $('singleBtn').disabled = $('sweepBtn').disabled = false; S.running = false; $('runStatus').textContent = 'done'; }
     }, 10);
   });
 
@@ -287,64 +249,92 @@ pre{white-space:pre-wrap;font-size:10.5px;background:#0f1420;padding:6px;border:
     S.running = true; $('sweepBtn').disabled = $('singleBtn').disabled = true;
     $('out').textContent = '';
     const from = parseFloat($('t0From').value), to = parseFloat($('t0To').value), step = parseFloat($('t0Step').value), capS = parseFloat($('capS').value);
-    if (!(step > 0) || to < from) { $('out').textContent = 'bad range'; S.running = false; $('sweepBtn').disabled = $('singleBtn').disabled = false; return; }
     const T0s = []; for (let t = from; t <= to + 1e-9; t += step) T0s.push(+t.toFixed(3));
     const rows = []; let idx = 0;
-
     function step_() {
       try {
         if (idx >= T0s.length) { finish(); return; }
-        $('runStatus').textContent = 'T0=' + T0s[idx] + ' (' + (idx + 1) + '/' + T0s.length + ')';
-        const r = runT0(T0s[idx], capS);
-        rows.push(r); idx++;
+        $('runStatus').textContent = 'T0=' + T0s[idx] + ' (' + (idx+1) + '/' + T0s.length + ')';
+        const r = runT0(T0s[idx], capS, null); rows.push(r); idx++;
         setTimeout(step_, 0);
-      } catch (e) {
-        $('out').innerHTML = '<span class="bad">ERROR at T0=' + T0s[idx] + ': ' + e.message + '</span>';
-        console.error(e);
-        S.running = false; $('sweepBtn').disabled = $('singleBtn').disabled = false;
-      }
+      } catch (e) { $('out').innerHTML = '<span class="bad">ERR T0=' + T0s[idx] + ': ' + e.message + '</span>'; S.running = false; $('sweepBtn').disabled = $('singleBtn').disabled = false; }
     }
     function finish() {
-      let txt = 'T0      result          h_end    peak_δ   alignEl   θ_end    ω_end    x_end    vx_end\n';
-      let best = null;
+      let txt = 'T0      result          h_end    peak_δ   θ_end    ω_end    x_end    vx_end\n';
       for (const r of rows) {
         const st = r.aligned ? 'ALIGNED ✓' : (r.crashed ? 'CRASH' : (r.timeout ? 'TIMEOUT' : 'FAILED'));
-        const res = Math.abs(r.finalTheta||99) + Math.abs(r.finalOmega||99) + Math.abs(r.finalX||99)/10 + Math.abs(r.finalVx||99);
-        if (r.aligned && (!best || res < best._res)) { best = r; best._res = res; }
-        txt += String(r.T0.toFixed(2)).padEnd(7) + ' ' + st.padEnd(15) + ' ' +
-               (r.finalH!=null?r.finalH.toFixed(3):'?').padEnd(8) + ' ' +
-               r.gimbalPeak.toFixed(2).padEnd(8) + ' ' +
-               (r.alignElapsed!=null?String(r.alignElapsed).padEnd(9):'--       ') + ' ' +
-               (r.finalTheta!=null?r.finalTheta.toFixed(2):'?').padEnd(8) + ' ' +
-               (r.finalOmega!=null?r.finalOmega.toFixed(2):'?').padEnd(8) + ' ' +
-               (r.finalX!=null?r.finalX.toFixed(1):'?').padEnd(8) + ' ' +
-               (r.finalVx!=null?r.finalVx.toFixed(2):'?') + '\n';
+        txt += String(r.T0.toFixed(2)).padEnd(7) + ' ' + st.padEnd(15) + ' ' + (r.finalH!=null?r.finalH.toFixed(3):'?').padEnd(8) + ' ' + r.gimbalPeak.toFixed(2).padEnd(8) + ' ' + (r.finalTheta!=null?r.finalTheta.toFixed(2):'?').padEnd(8) + ' ' + (r.finalOmega!=null?r.finalOmega.toFixed(2):'?').padEnd(8) + ' ' + (r.finalX!=null?r.finalX.toFixed(1):'?').padEnd(8) + ' ' + (r.finalVx!=null?r.finalVx.toFixed(2):'?') + '\n';
       }
-      if (best) {
-        txt += '\nBEST T0=' + best.T0.toFixed(2) + 's  peak_δ=' + best.gimbalPeak.toFixed(2) + '°  alignEl=' + best.alignElapsed + 's\n';
-        txt += 'final: θ=' + best.finalTheta.toFixed(3) + '° ω=' + best.finalOmega.toFixed(3) + '°/s x=' + best.finalX.toFixed(2) + 'm vx=' + best.finalVx.toFixed(3) + 'm/s\n\n';
-        txt += 'Best-run samples (thrAct=applied, thrCmd=asked, Δ=lag):\n';
-        txt += 't      phase                sp  alignEl T0rem  h      vy      vx      θ       ω       x       gim   thrAct  thrCmd  Δ\n';
-        for (const s of best.samples) {
-          const d = s.thrustCmd - s.thrustAct;
-          txt += String(s.t).padEnd(6) + ' ' + (s.phase||'').padEnd(20) + ' ' +
-                 (s.spooled?'Y':'n').padEnd(3) + ' ' +
-                 (s.alignEl!=null?String(s.alignEl).padEnd(7):'--     ') + ' ' +
-                 (s.T0rem!=null?String(s.T0rem).padEnd(6):'--    ') + ' ' +
-                 s.h.toFixed(3).padEnd(6) + ' ' + s.vy.toFixed(1).padEnd(7) + ' ' +
-                 s.vx.toFixed(2).padEnd(7) + ' ' + s.theta.toFixed(2).padEnd(7) + ' ' +
-                 s.omega.toFixed(2).padEnd(7) + ' ' + s.x.toFixed(1).padEnd(7) + ' ' +
-                 s.gimbal.toFixed(2).padEnd(5) + ' ' + String(s.thrustAct).padEnd(7) + ' ' +
-                 String(s.thrustCmd).padEnd(7) + ' ' + (d>=0?'+':'')+d + '\n';
-        }
-      } else {
-        txt += '\nNo ALIGNED. Check peak_δ near 8° = saturation.\n';
-      }
-      $('out').textContent = txt;
-      S.running = false; $('sweepBtn').disabled = $('singleBtn').disabled = false;
-      $('runStatus').textContent = 'done';
+      $('out').textContent = txt; S.running = false; $('sweepBtn').disabled = $('singleBtn').disabled = false; $('runStatus').textContent = 'done';
     }
     step_();
+  });
+
+  // Section 2
+  $('s2capBtn').addEventListener('click', function() {
+    if (!S.inited || S.running) return;
+    S.running = true; $('s2capBtn').disabled = $('s2runBtn').disabled = $('s2compBtn').disabled = true;
+    $('s2status').textContent = 'capture + baseline…'; $('s2out').textContent = '';
+    setTimeout(function() {
+      try {
+        const t0 = parseFloat($('t0Single').value) || 10;
+        const r = runT0(t0, parseFloat($('capS').value), null);
+        if (!r.captured6) { $('s2status').innerHTML = '<span class="bad">capture failed</span>'; return; }
+        $('s2a0r').value = r.captured6.a0rot.toFixed(6);
+        $('s2v0r').value = r.captured6.v0rot.toFixed(6);
+        $('s2dsr').value = r.captured6.dsrot.toFixed(6);
+        $('s2a0l').value = r.captured6.a0lin.toFixed(4);
+        $('s2v0l').value = r.captured6.v0lin.toFixed(4);
+        $('s2dsl').value = r.captured6.dslin.toFixed(3);
+        $('s2t0').value = r.T0.toFixed(2);
+        S.s2LastResult = r;
+        $('s2runBtn').disabled = $('s2compBtn').disabled = false;
+        const st = r.aligned ? 'ALIGNED' : (r.crashed ? 'CRASH' : (r.timeout ? 'TIMEOUT' : 'FAILED'));
+        let txt = 'BASELINE (no override)  T0=' + r.T0 + '  ' + st + '  peak_δ=' + r.gimbalPeak.toFixed(2) + '°\n';
+        txt += 'captured 6: a0rot=' + r.captured6.a0rot.toFixed(6) + ' v0rot=' + r.captured6.v0rot.toFixed(6) + ' dsrot=' + r.captured6.dsrot.toFixed(6) + '\n';
+        txt += '            a0lin=' + r.captured6.a0lin.toFixed(4) + ' v0lin=' + r.captured6.v0lin.toFixed(4) + ' dslin=' + r.captured6.dslin.toFixed(3) + '\n';
+        txt += 'final θ=' + r.finalTheta?.toFixed(3) + '°  ω=' + r.finalOmega?.toFixed(3) + '°/s  x=' + r.finalX?.toFixed(2) + 'm  vx=' + r.finalVx?.toFixed(3) + 'm/s\n';
+        $('s2out').textContent = txt;
+      } catch (e) { $('s2out').innerHTML = '<span class="bad">ERROR: ' + e.message + '</span>'; console.error(e); }
+      finally { $('s2capBtn').disabled = false; S.running = false; $('s2status').textContent = 'done'; }
+    }, 10);
+  });
+
+  $('s2runBtn').addEventListener('click', function() {
+    if (!S.inited || S.running) return;
+    S.running = true; $('s2capBtn').disabled = $('s2runBtn').disabled = $('s2compBtn').disabled = true;
+    $('s2status').textContent = 'running with override…';
+    setTimeout(function() {
+      try {
+        const ov = {
+          a0rot: parseFloat($('s2a0r').value), v0rot: parseFloat($('s2v0r').value), dsrot: parseFloat($('s2dsr').value),
+          a0lin: parseFloat($('s2a0l').value), v0lin: parseFloat($('s2v0l').value), dslin: parseFloat($('s2dsl').value),
+          T0: parseFloat($('s2t0').value),
+        };
+        const r = runT0(ov.T0, parseFloat($('capS').value), ov);
+        S.s2LastResult = r;
+        const st = r.aligned ? 'ALIGNED' : (r.crashed ? 'CRASH' : (r.timeout ? 'TIMEOUT' : 'FAILED'));
+        let txt = 'OVERRIDE  T0=' + r.T0.toFixed(2) + '  ' + st + '  peak_δ=' + r.gimbalPeak.toFixed(2) + '°\n';
+        txt += 'final θ=' + r.finalTheta?.toFixed(3) + '°  ω=' + r.finalOmega?.toFixed(3) + '°/s  x=' + r.finalX?.toFixed(2) + 'm  vx=' + r.finalVx?.toFixed(3) + 'm/s\n\n';
+        txt += 't      phase                h      vy      vx      θ       ω       x       gim   thrAct  thrCmd\n';
+        for (const s of r.samples) txt += String(s.t).padEnd(6) + ' ' + (s.phase||'').padEnd(20) + ' ' + s.h.toFixed(3).padEnd(6) + ' ' + s.vy.toFixed(1).padEnd(7) + ' ' + s.vx.toFixed(2).padEnd(7) + ' ' + s.theta.toFixed(2).padEnd(7) + ' ' + s.omega.toFixed(2).padEnd(7) + ' ' + s.x.toFixed(1).padEnd(7) + ' ' + s.gimbal.toFixed(2).padEnd(5) + ' ' + String(s.thrustAct).padEnd(7) + ' ' + s.thrustCmd + '\n';
+        $('s2out').textContent = txt;
+      } catch (e) { $('s2out').innerHTML = '<span class="bad">ERROR: ' + e.message + '</span>'; console.error(e); }
+      finally { $('s2capBtn').disabled = $('s2runBtn').disabled = $('s2compBtn').disabled = false; S.running = false; $('s2status').textContent = 'done'; }
+    }, 10);
+  });
+
+  $('s2compBtn').addEventListener('click', function() {
+    if (!S.s2LastResult) return;
+    const r = S.s2LastResult;
+    if (r.finalTheta == null || r.finalX == null) { $('s2status').innerHTML = '<span class="bad">no error to compensate</span>'; return; }
+    const thetaErrRad = r.finalTheta * Math.PI / 180;
+    const xErrM = r.finalX;
+    const dsr = parseFloat($('s2dsr').value);
+    const dsl = parseFloat($('s2dsl').value);
+    $('s2dsr').value = (dsr - thetaErrRad).toFixed(6);
+    $('s2dsl').value = (dsl - xErrM).toFixed(3);
+    $('s2status').innerHTML = '<span class="ok">ds_rot ' + dsr.toFixed(6) + '→' + (dsr-thetaErrRad).toFixed(6) + '  ds_lin ' + dsl.toFixed(3) + '→' + (dsl-xErrM).toFixed(3) + '</span>';
   });
 })();
 </script>
