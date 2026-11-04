@@ -4975,6 +4975,18 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
             const pad = (_missionCtx && _missionCtx.targetPad) || null;
             const padEf = (pad && Number.isFinite(pad.angleEf)) ? pad.angleEf : (env.LAUNCH_SITE_ANGLE_0 || 0);
 
+            // Local frame (up = radial, x = tangential/east) — computed BEFORE the start log so the
+            // start log can report Earth-fixed velocity (inertial Math.hypot over-reports by the
+            // ~465 m/s Earth-rotation term: 507 m/s inertial vs ~217 m/s ground at the same state).
+            const rNow = Math.hypot(d.rx, d.ry);
+            const uxN = rNow > 0 ? d.rx / rNow : 1;
+            const uyN = rNow > 0 ? d.ry / rNow : 0;
+            const localVert = Math.atan2(-d.rx, d.ry);
+            const thetaLocalDeg = _wrapPi(d.theta - localVert) * R2D;
+            const vRadial = d.vx * uxN + d.vy * uyN;              // radial: same in inertial & Earth-fixed
+            const vTangInertial = d.vx * uyN - d.vy * uxN;
+            const vTangGround = vTangInertial - omegaE * rNow;    // Earth-fixed tangential (ground-relative)
+
             if (!_st.lbInit) {
               _st.lbInit = true;
               _st.lbT0 = simT;
@@ -4986,20 +4998,13 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
               _send(Guidance.cmdSetAllThrottle(0));
               _send(Guidance.cmdSetGimbalRate(0));
               _send(Guidance.cmdRcsDuty(null, idx));
+              const vGroundMag = Math.hypot(vRadial, vTangGround);
               console.log("[standardRTLS] LANDING_BURN start t=" + simT.toFixed(2) +
-                " alt=" + (d.altitudeAGL / 1000).toFixed(2) + "km v=" +
-                Math.hypot(d.vx, d.vy).toFixed(0) + "m/s — LOG ONLY (burn logic TODO)");
+                " alt=" + (d.altitudeAGL / 1000).toFixed(2) + "km" +
+                " vGround=" + vGroundMag.toFixed(0) + "m/s" +
+                " (vRad=" + vRadial.toFixed(1) + " vTangGround=" + vTangGround.toFixed(1) + ")" +
+                " — LOG ONLY (burn logic TODO)");
             }
-
-            // Local frame (up = radial, x = tangential/east)
-            const rNow = Math.hypot(d.rx, d.ry);
-            const uxN = rNow > 0 ? d.rx / rNow : 1;
-            const uyN = rNow > 0 ? d.ry / rNow : 0;
-            const localVert = Math.atan2(-d.rx, d.ry);
-            const thetaLocalDeg = _wrapPi(d.theta - localVert) * R2D;
-            const vRadial = d.vx * uxN + d.vy * uyN;              // radial: same in inertial & Earth-fixed
-            const vTangInertial = d.vx * uyN - d.vy * uxN;
-            const vTangGround = vTangInertial - omegaE * rNow;    // Earth-fixed tangential (ground-relative)
             const hAGL = d.altitudeAGL;
             const phiNow = Math.atan2(d.rx, d.ry) - omegaE * simT;
             const xFromPadM = _wrapPi(phiNow - padEf) * Rm;
@@ -5023,7 +5028,7 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
             const gimbals = (body.engines || []).filter(e => e.gimbal);
             const gimbalCur = gimbals.length ? (gimbals[0].gimbalDeg || 0) : 0;
             const finCur = (d.gridFinControlUsed != null) ? d.gridFinControlUsed : 0;
-            const alphaAngDegS2 = (d.alphaAng || 0) * R2D;
+            const alphaAngDegS2 = ((d.alphaAng || 0) + ((d.gridFinTorque || 0) + (_st.lastRcsTorque || 0)) / I) * R2D;
 
             const imp = _bbImpact(d.rx, d.ry, d.vx, d.vy, simT, env.GM_EARTH, Rm, omegaE);
             const vacErrKm = imp ? (_wrapPi(imp.phiEf - padEf) * Rm / 1000) : null;
