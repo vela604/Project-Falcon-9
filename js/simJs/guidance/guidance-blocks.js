@@ -4559,8 +4559,7 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
               _st.pesCmdC = 0;
               _st.pesSub = 'STEER';
               _st.pesAlignCmd = null;
-              _st.pesGimbalZeroDone = false;
-              _st.pesGimbalZeroT = undefined;
+
               _st.pesPrevT = null;
               _st.pesPrevErr = null;
               _st.pesErateF = null;
@@ -4599,22 +4598,15 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
             }
 
             // Gimbal zeroing — drive any residual gimbal to 0 (unpowered coast)
-            if (!_st.pesGimbalZeroDone) {
+            // Drive gimbal to ABSOLUTE ZERO (no threshold, no stop condition).
+            // _gimbalCmdMsg(0, ...) = 2-tick Newton with brake guard → converges to exactly 0
+            // in ~6 ticks from any starting angle, then idle (target=current → alpha=0).
+            // Any residual is unfrozen — we keep commanding until PES ends, so it settles at 0.
+            {
               const gimbals = (body.engines || []).filter(e => e.gimbal);
               if (gimbals.length) {
-                const gd = gimbals[0].gimbalDeg || 0;
-                if (_st.pesGimbalZeroT === undefined) _st.pesGimbalZeroT = simT;
-                const timedOut = (simT - _st.pesGimbalZeroT) > 3.0;
-                if (Math.abs(gd) < 0.02 || timedOut) {
-                  _send(Guidance.cmdSetGimbalRate(0));
-                  _st.pesGimbalZeroDone = true;
-                  if (timedOut && DEBUG_RTLS) console.warn("[standardRTLS] gimbal zero timeout at " + gd.toFixed(3) + "deg");
-                } else {
-                  const gTarget = gimbals.every(e => e.isCenter) ? "center" : "all";
-                  _send(_gimbalCmdMsg(0, gimbals[0], dt, gTarget));
-                }
-              } else {
-                _st.pesGimbalZeroDone = true;
+                const gTarget = gimbals.every(e => e.isCenter) ? "center" : "all";
+                _send(_gimbalCmdMsg(0, gimbals[0], dt, gTarget));
               }
             }
 
@@ -4640,12 +4632,18 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
             // ALIGN sub-phase: ramp fin toward 0, no attitude control, coast to aero equilibrium
             if (_st.pesSub === 'ALIGN') {
               if (altKm <= lbBurnAltKm) {
+                const gimbalsLB = (body.engines || []).filter(e => e.gimbal);
+                const gdLB = gimbalsLB.length ? (gimbalsLB[0].gimbalDeg || 0) : 0;
+                if (Math.abs(gdLB) > 1e-6) {
+                  console.warn("[standardRTLS] LANDING_BURN gimbal NOT zero at trigger: " + gdLB.toFixed(6) + "deg");
+                }
                 _send(Guidance.cmdGridFinsControl(0));
                 _send(Guidance.cmdRcsDuty(null, idx));
                 _send(Guidance.cmdSetGimbalRate(0));
                 console.log("[standardRTLS] POST_ENTRY_ALIGN → LANDING_BURN trigger t=" + simT.toFixed(2) +
                   " alt=" + altKm.toFixed(2) + "km alpha=" + (Number.isFinite(d.alphaDeg) ? d.alphaDeg.toFixed(2) : "n/a") +
                   "deg w=" + (d.omega * R2D).toFixed(3) + "deg/s" +
+                  " gimbal=" + gdLB.toFixed(6) + "deg" +
                   " vacErr=" + (vacErrDbgKm != null ? vacErrDbgKm.toFixed(3) + "km" : "n/a") +
                   " groundErr=" + gErrDbgKm.toFixed(3) + "km");
                 finished = true;
@@ -5175,8 +5173,7 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
           _st.pesInit = false;
           _st.pesSub = 'STEER';
           _st.pesAlignCmd = null;
-          _st.pesGimbalZeroDone = false;
-          _st.pesGimbalZeroT = undefined;
+
           _st.pesT0 = 0;
           _st.lbInit = false;
           _st.lbT0 = null;
