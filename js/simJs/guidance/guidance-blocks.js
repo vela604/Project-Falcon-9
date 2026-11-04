@@ -5169,11 +5169,15 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
               }
               return typical * sgn;
             };
-            const _lbSolve = function (a0, v0, ds, T0) {
+            const _lbSolve = function (a0, v0, ds, T0, n) {
               if (a0 === 0 || !(T0 > 0)) return null;
               const Lambda = 2 * (2 * ds - v0 * T0) / (a0 * T0 * T0);
-              if (!(Lambda > 1 / 3)) return null;
-              let lo = 1e-10, hi = Math.PI - 1e-10, m = 0.5 * (lo + hi);
+              const branchN = (Number.isInteger(n) && n >= 0) ? n : 0;
+              if (branchN === 0 && !(Lambda > 1 / 3)) return null;
+              let lo, hi;
+              if (branchN === 0) { lo = 1e-10; hi = Math.PI - 1e-10; }
+              else { lo = branchN * Math.PI + 1e-10; hi = (branchN + 1) * Math.PI - 1e-10; }
+              let m = 0.5 * (lo + hi);
               for (let it = 0; it < 200; it++) {
                 const sm = Math.sin(m), cm = Math.cos(m);
                 const cotm = cm / sm;
@@ -5224,22 +5228,14 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
                 _send(Guidance.cmdSetAllThrottle(0));
                 break;
               }
-              const rngLo_ = Math.max(rngRot_[0], rngLin_[0]);
-              const rngHi_ = Math.min(rngRot_[1], rngLin_[1]);
-              if (rngLo_ >= rngHi_) {
-                console.warn("[standardRTLS] LB ALIGN: ranges don't intersect. rot=[" +
-                  rngRot_[0].toFixed(2) + "," + rngRot_[1].toFixed(2) + "] lin=[" +
-                  rngLin_[0].toFixed(2) + "," + rngLin_[1].toFixed(2) + "]");
-                _send(Guidance.cmdSetAllThrottle(0));
-                break;
-              }
-              _st.lbAlignT0 = 0.9 * rngHi_;
+              // EXPERIMENT: branch=1 + hardcoded T0=6s
+              _st.lbAlignT0 = 6.0;
               console.log("[standardRTLS] LB ALIGN armed t=" + simT.toFixed(2) +
-                " rotRange=[" + rngRot_[0].toFixed(2) + "," + rngRot_[1].toFixed(2) + "]s" +
-                " linRange=[" + rngLin_[0].toFixed(2) + "," + rngLin_[1].toFixed(2) + "]s" +
-                " T0=" + _st.lbAlignT0.toFixed(2) + "s (0.9×rngHi)" +
-                " | a0rot=" + a0RotUse_.toFixed(4) + (Math.abs(a0RotUse_ - rotA0_) > 1e-3 ? "(forced,obs " + rotA0_.toFixed(4) + ")" : "") +
-                " a0lin=" + a0LinUse_.toFixed(3) + (Math.abs(a0LinUse_ - axEarthObs_) > 1e-2 ? "(forced,obs " + axEarthObs_.toFixed(3) + ")" : ""));
+                " T0=6.00s (HARDCODE) branch=1" +
+                " rotRange(b0)=[" + (rngRot_ ? rngRot_[0].toFixed(2) + "," + rngRot_[1].toFixed(2) : "null") + "]s" +
+                " linRange(b0)=[" + (rngLin_ ? rngLin_[0].toFixed(2) + "," + rngLin_[1].toFixed(2) : "null") + "]s" +
+                " | a0rot(obs)=" + rotA0_.toFixed(4) + " a0lin(obs)=" + axEarthObs_.toFixed(3) +
+                " dsRot=" + dsRot_.toFixed(5) + " dsLin=" + dsLin_.toFixed(2));
             }
 
             // Timeout: T0 window exhausted without meeting tolerance
@@ -5273,10 +5269,8 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
             const linV0 = vTangGround;
             const linDs = -xFromPadM;
 
-            const a0RotT = _lbChooseA0(rotA0, rotDs, 0.005);
-            const a0LinT = _lbChooseA0(axEarthObs, linDs, 0.3);
-            const solRot = _lbSolve(a0RotT, rotV0, rotDs, Math.max(0.1, T0_remaining));
-            const solLin = _lbSolve(a0LinT, linV0, linDs, Math.max(0.1, T0_remaining));
+            const solRot = _lbSolve(rotA0, rotV0, rotDs, Math.max(0.1, T0_remaining), 1);
+            const solLin = _lbSolve(axEarthObs, linV0, linDs, Math.max(0.1, T0_remaining), 1);
             if (!solRot || !solLin) {
               if (DEBUG_RTLS) console.warn("[standardRTLS] LB ALIGN solve null T0rem=" +
                 T0_remaining.toFixed(2) + " rot=" + !!solRot + " lin=" + !!solLin);
@@ -5347,6 +5341,7 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
                 " x=" + xFromPadM.toFixed(1) + " vx=" + vTangGround.toFixed(2) +
                 " | h=" + (hAGL / 1000).toFixed(3) + " vy=" + vRadial.toFixed(1) +
                 " | aTar=" + (alphaTarget * R2D).toFixed(3) + " axTar=" + axEarthTarget.toFixed(3) +
+                " P=" + solRot.P.toFixed(3) + "s Pb=" + solLin.P.toFixed(3) + "s" +
                 " FxBody=" + FxBody.toFixed(0) + " FxW=" + FxWorldNeeded.toFixed(0) +
                 " FyB=" + FyBody.toFixed(0) + " F=" + Math.round(Fmag) + "N" +
                 " aX=" + aeroAcc.ax.toFixed(3) + " gX=" + d.gVecX.toFixed(3) +
