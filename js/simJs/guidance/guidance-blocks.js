@@ -5323,21 +5323,56 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
             const alphaTarget = solRot.A * Math.sin(solRot.f * tEval + solRot.k1) + solRot.k2;
             const axEarthTarget = solLin.A * Math.sin(solLin.f * tEval + solLin.k1) + solLin.k2;
 
-            // Torque → Fx_body (body-frame X component)
-            const envTorque = (d.torqueDrag || 0) + (d.gridFinTorque || 0) + (d.torqueGravityGradient || 0);
-            const comY = d.massProps.comY;
-            if (!(comY > 0)) break;
-            const FxBody = (I * alphaTarget - envTorque) / comY;
+            // === 1-TICK LOOK-AHEAD ===
+            // Predict S(k+1) using CURRENT command (physics will produce this naturally next tick).
+            // Then solve [torque, Fx_world] 2x2 system AT the predicted state — bounded at any theta.
+            const _ctd = Math.cos(d.theta), _std = Math.sin(d.theta);
+            const thrustIx_curr = d.thrustBodyX * _ctd - d.thrustBodyY * _std;
+            const thrustIy_curr = d.thrustBodyX * _std + d.thrustBodyY * _ctd;
+            const aIxNow = d.gVecX + thrustIx_curr / M + aeroAcc.ax;
+            const aIyNow = d.gVecY + thrustIy_curr / M + aeroAcc.ay;
+            const alphaNow = (d.alphaAng || 0) + (d.gridFinTorque || 0) / I + (_st.lastRcsTorque || 0) / I;
+            const thetaPred = d.theta + d.omega * dt + 0.5 * alphaNow * dt * dt;
+            const omegaPred = d.omega + alphaNow * dt;
+            const vxPred = d.vx + aIxNow * dt;
+            const vyPred = d.vy + aIyNow * dt;
+            const rxPred = d.rx + d.vx * dt + 0.5 * aIxNow * dt * dt;
+            const ryPred = d.ry + d.vy * dt + 0.5 * aIyNow * dt * dt;
+            const dPred = Derivation.deriveForState(snapshot, idx, {
+              rx: rxPred, ry: ryPred, vx: vxPred, vy: vyPred,
+              theta: thetaPred, omega: omegaPred,
+            });
+            if (!dPred || !dPred.massProps) { _bbThrottle(lbEng, 0); break; }
+            const M_pred = dPred.massProps.M;
+            const I_pred = dPred.massProps.I;
+            const comY_pred = dPred.massProps.comY;
+            const comX_pred = dPred.massProps.comX || 0;
+            const aeroAccPred = _pesAeroAccel(dPred, M_pred);
+            const envTorquePred = (dPred.torqueDrag || 0) + (dPred.gridFinTorque || 0) + (dPred.torqueGravityGradient || 0);
+            const rPred = Math.hypot(rxPred, ryPred);
+            const uxPred = rPred > 0 ? rxPred / rPred : 1;
+            const uyPred = rPred > 0 ? ryPred / rPred : 0;
+            const vRadPred = vxPred * uxPred + vyPred * uyPred;
+            const axInertialTarget = axEarthTarget + 2 * omegaE * vRadPred;
 
-            // Linear X → Fx_world (inertial x-force target thrust must supply)
-            const axInertialTarget = axEarthTarget + 2 * omegaE * vRadial;
-            const FxWorldNeeded = M * (axInertialTarget - aeroAcc.ax - d.gVecX);
-
-            // Fx_world = Fx_body·cosθ − Fy_body·sinθ  → solve Fy_body (free)
-            const sinTh = Math.sin(d.theta);
-            const cosTh = Math.cos(d.theta);
-            const sinTh_safe = Math.abs(sinTh) < 0.02 ? 0.02 * (sinTh < 0 ? -1 : 1) : sinTh;
-            const FyBody = (FxBody * cosTh - FxWorldNeeded) / sinTh_safe;
+            // 2x2 solve AT PREDICTED STATE:
+            //   comY·FxBody − comX·FyBody = I·α_target − envTorque_pred
+            //   cosθ·FxBody − sinθ·FyBody = M·(axInertialTarget − gVecX − aeroAcc.ax)
+            const reqTorque = I_pred * alphaTarget - envTorquePred;
+            const thrustIx_req = M_pred * (axInertialTarget - dPred.gVecX - aeroAccPred.ax);
+            const _s_pred = Math.sin(thetaPred);
+            const _c_pred = Math.cos(thetaPred);
+            const _det = -comY_pred * _s_pred + comX_pred * _c_pred;
+            let FxBody, FyBody;
+            if (Math.abs(_det) < 1e-2) {
+              // Near-singular (theta≈0 and comX≈0): prioritize attitude, vertical hold only.
+              FxBody = reqTorque / Math.max(Math.abs(comY_pred), 1e-3);
+              FyBody = M_pred * dPred.gMag * 0.95;
+            } else {
+              FxBody = (-reqTorque * _s_pred + comX_pred * thrustIx_req) / _det;
+              FyBody = (comY_pred * thrustIx_req - _c_pred * reqTorque) / _det;
+            }
+            if (!Number.isFinite(FxBody) || !Number.isFinite(FyBody)) { FxBody = 0; FyBody = 0; }
 
             const Fmag = Math.hypot(FxBody, FyBody);
             let gimbalCmdDeg = Math.atan2(FxBody, FyBody) * R2D;
