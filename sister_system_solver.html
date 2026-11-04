@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Sister Systems Solver — α(t) = A sin(ft + k₁) + k₂</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <style>
   :root{
     --bg:#f4f6fb; --card:#ffffff; --ink:#1e293b; --muted:#64748b;
@@ -34,6 +35,8 @@
   }
   .eq.teal{border-left-color:var(--accent2)}
   .grid2{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+  .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:10px}
+  @media(max-width:900px){.grid3{grid-template-columns:1fr}}
   @media(max-width:780px){.grid2{grid-template-columns:1fr}}
   .card{border:1px solid var(--line);border-radius:12px;padding:16px;background:#fcfdff}
   .card h3{margin-top:0}
@@ -71,6 +74,12 @@
   code{background:#f1f5f9;padding:1px 5px;border-radius:4px;font-size:.86em}
   ol,ul{margin:8px 0 8px 20px;padding:0}
   li{margin:5px 0}
+  .chart-wrap{
+    position:relative;height:260px;background:#fff;
+    border:1px solid var(--line);border-radius:10px;padding:10px;
+  }
+  .chart-wrap.tall{height:340px}
+  .chart-caption{font-size:.78rem;color:var(--muted);margin:6px 2px 0}
 </style>
 </head>
 <body>
@@ -145,9 +154,10 @@ f  = 2m / L = 2π/P</div>
     </p>
 
     <div class="note">
-      <strong>Mirror solution.</strong> Because only <code>tan(k₁+m)</code> is fixed, the pair
-      <code>(A, k₁) → (−A, k₁ + π)</code> also satisfies every condition (k₂ is unchanged).
-      Both are reported below.
+      <strong>Equivalent parametrization.</strong> Since only <code>tan(k₁+m)</code> is fixed, the pair
+      <code>(A, k₁) → (−A, k₁ + π)</code> satisfies the same four equations (k₂ unchanged) — but
+      <code>A·sin(ft + k₁)</code> is invariant under it, so both representations give the <em>same</em>
+      acceleration waveform. It is a reparametrization, not a new physical solution.
     </div>
 
     <div class="note">
@@ -278,13 +288,31 @@ P  = π·T₀ / m ,     f = 2π/P = 2m/T₀</div>
       <code>α(0)−a₀</code>, <code>α(L)</code>, <code>ω(L)</code> and <code>s(L)−s(0)−Δs</code>,
       which should all be numerically zero — a direct check that the solution is genuine.</p>
 
+    <h3>Charts added below the solve output</h3>
+    <ul>
+      <li><strong>g(m) vs m</strong> on the active branch — one curve for the shared kernel
+          <code>1/m² − cot(m)/m</code>, two dashed horizontal lines at <code>Λ₁</code>, <code>Λ₂</code>,
+          and two crosses at the actual solutions <code>m₁, m₂</code>. Reads directly as:
+          "where the (unique) solution of each system lives on the chosen branch."</li>
+      <li><strong>Kinematics per system</strong> — 3 small charts each:
+          acceleration <code>α(t)</code>, velocity <code>ω(t)</code>, displacement
+          <code>s(t) − s(0)</code>, sampled on <code>[0, L]</code>.
+          Flat endpoints at 0 (acceleration, velocity) and the Δs you typed at
+          <code>t = L</code> are the graphical fingerprints of the boundary conditions.</li>
+      <li><strong>Normalized displacement overlay</strong> —
+          <code>(s(t) − s(0)) / Δs</code> vs <code>t/L</code> for both systems.
+          Both curves start at 0 and end at 1; if the shapes are different it is
+          because the two sisters had different <code>(a₀, v₀, Δs)</code> triples and hence
+          different <code>(mⱼ, Pⱼ)</code>.</li>
+    </ul>
+
     <h3>Notes</h3>
     <ul>
       <li>Branch <code>n = 0</code> is the physical one and gives a finite T₀ window.
           Branches <code>n ≥ 1</code> are higher harmonics: always solvable, arbitrarily short period.</li>
-      <li>Every solution has a mirror <code>(A, k₁) → (−A, k₁+π)</code> with the same k₂ — both are printed.</li>
       <li><code>a₀ = 0</code> is a degenerate case (the shape of the equation changes) and is excluded here.</li>
       <li>If <code>|cot m − 1/m| → 0</code> the amplitude blows up; the solver flags this.</li>
+      <li>Charts are redrawn on every solve; changing the T₀ range clears them (old results are stale).</li>
     </ul>
   </section>
 
@@ -297,7 +325,7 @@ P  = π·T₀ / m ,     f = 2π/P = 2m/T₀</div>
 const PI = Math.PI;
 const cot = m => Math.cos(m) / Math.sin(m);
 const gfun = m => 1 / (m * m) - cot(m) / m;
-const gder = m => -2 / (m * m * m) + (1 / (Math.sin(m) ** 2)) / m + cot(m) / (m * m);
+const gder = m => -2 / (m * m * m) + 1 / (Math.sin(m) ** 2) / m + cot(m) / (m * m);
 
 function fmt(x, d = 8) {
   if (!isFinite(x)) return x > 0 ? "∞" : "−∞";
@@ -317,13 +345,11 @@ function sci(x) {
   return x.toExponential(3);
 }
 
-/* ---------------- Newton–Raphson with bisection safeguard ----------------
-   Solves  g(m) = Lambda  on the branch m ∈ (nπ, (n+1)π).
-   g is strictly increasing there, so the bracket is guaranteed.          */
+/* ---------------- Newton–Raphson with bisection safeguard ---------------- */
 function solveM(Lambda, n) {
   let lo, hi;
   if (n === 0) {
-    if (!(Lambda > 1 / 3)) return null;          // no solution on the first branch
+    if (!(Lambda > 1 / 3)) return null;
     lo = 1e-10; hi = PI - 1e-10;
   } else {
     lo = n * PI + 1e-10; hi = (n + 1) * PI - 1e-10;
@@ -336,7 +362,7 @@ function solveM(Lambda, n) {
 
     const d = gder(m);
     let mn = m - G / d;
-    if (!isFinite(mn) || mn <= lo || mn >= hi) mn = 0.5 * (lo + hi);  // safeguard
+    if (!isFinite(mn) || mn <= lo || mn >= hi) mn = 0.5 * (lo + hi);
 
     if (Math.abs(mn - m) <= 1e-15 * Math.max(1, Math.abs(m))) { m = mn; break; }
     m = mn;
@@ -379,12 +405,10 @@ function solveSystem(inp, L, n) {
   };
 }
 
-/* mirror solution: (A, k1) → (−A, k1 + π), k2 unchanged */
 function mirror(sol) {
   return { A: -sol.A, k1: sol.k1 + PI, k2: sol.k2 };
 }
 
-/* residual check against the original boundary conditions */
 function verify(A, k1, k2, f, L, { a0, v0, ds }) {
   const aL  = A * Math.sin(f * L + k1) + k2;
   const a0c = A * Math.sin(k1) + k2;
@@ -395,14 +419,11 @@ function verify(A, k1, k2, f, L, { a0, v0, ds }) {
   return { aL, a0c, wL, thL, dsErr: thL - ds };
 }
 
-/* ---------------- valid T₀ intervals ----------------
-   Branch 0:  Λ(L) > 1/3  ⟺  a₀L² + 6v₀L − 12Δs has opposite sign to a₀
-              ⟺  L strictly between the roots (needs disc > 0)
-   Branch n≥1: every L > 0 works.                                    */
+/* ---------------- admissible T₀ intervals ---------------- */
 function allowedIntervals(inp, n) {
   const { a0, v0, ds } = inp;
-  if (a0 === 0) return null;                      // unsupported
-  if (n >= 1) return [[0, Infinity]];             // higher harmonics: always solvable
+  if (a0 === 0) return null;
+  if (n >= 1) return [[0, Infinity]];
 
   const disc = 9 * v0 * v0 + 12 * a0 * ds;
   if (disc <= 0) return [];
@@ -433,7 +454,7 @@ function fmtInterval([a, b]) {
 
 /* ---------------- DOM ---------------- */
 const $ = id => document.getElementById(id);
-let sharedRange = null;   // cached intersection
+let sharedRange = null;
 
 function readSystem(j) {
   return {
@@ -449,6 +470,10 @@ function readBranch() {
 
 /* ---------- ① range ---------- */
 $("btnRange").addEventListener("click", () => {
+  // changing the admissible T₀ window invalidates any past solve + charts
+  destroyCharts();
+  $("solveOut").innerHTML = "";
+
   const n = readBranch();
   const sys = [readSystem(1), readSystem(2)];
   const out = $("rangeOut");
@@ -526,13 +551,13 @@ $("btnSolve").addEventListener("click", () => {
   const L = parseFloat($("L").value);
   const n = readBranch();
   const out = $("solveOut");
+  destroyCharts();
 
   if (!isFinite(L) || L <= 0) {
     out.innerHTML = `<div class="err">Enter a positive numeric T₀.</div>`;
     return;
   }
 
-  // validate against the shared range (if it was computed)
   if (sharedRange) {
     const inside = sharedRange.some(([a, b]) => L > a && L < b);
     if (!inside) {
@@ -553,6 +578,7 @@ $("btnSolve").addEventListener("click", () => {
 
   let html = `<p class="muted">Solved at T₀ = L = <strong>${fmt(L)}</strong> on branch n = ${n}.</p>`;
   html += `<div class="grid2">`;
+  const sysSolutions = [];
 
   for (let k = 0; k < 2; k++) {
     const inp = systems[k];
@@ -560,6 +586,7 @@ $("btnSolve").addEventListener("click", () => {
 
     if (!isFinite(inp.a0) || !isFinite(inp.v0) || !isFinite(inp.ds)) {
       html += `<div class="card"><h3>${M.name}</h3><div class="err">Missing input values.</div></div>`;
+      sysSolutions.push(null);
       continue;
     }
 
@@ -567,9 +594,11 @@ $("btnSolve").addEventListener("click", () => {
 
     if (sol.error) {
       html += `<div class="card"><h3>${M.name}</h3><div class="err">${sol.error}</div></div>`;
+      sysSolutions.push(null);
       continue;
     }
 
+    sysSolutions.push({ inp, sol });
     const mir = mirror(sol);
     const c = sol.chk;
     const okAll = [c.a0c - inp.a0, c.aL, c.wL, c.dsErr]
@@ -593,7 +622,7 @@ $("btnSolve").addEventListener("click", () => {
         <tr><td><strong>k₂</strong></td><td class="num"><strong>${fmt(sol.k2)}</strong> ${M.ua}</td></tr>
       </table>
 
-      <h3>Mirror solution &nbsp;<span class="muted" style="font-weight:400">(A, k₁) → (−A, k₁ + π)</span></h3>
+      <h3>Equivalent parametrization &nbsp;<span class="muted" style="font-weight:400">(A, k₁) → (−A, k₁ + π), same α(t)</span></h3>
       <div class="kv">
         <span class="k">A′</span><span class="v">${fmt(mir.A)} ${M.ua}</span>
         <span class="k">k₁′ (rad)</span><span class="v">${fmt(mir.k1)}</span>
@@ -614,8 +643,345 @@ $("btnSolve").addEventListener("click", () => {
   }
 
   html += `</div>`;
+
+  /* ---------- charts area ---------- */
+  html += `<h2 style="margin-top:26px">Charts</h2>`;
+
+  /* g(m) chart — only meaningful if at least one system solved */
+  if (sysSolutions.some(s => s)) {
+    html += `<h3>g(m) = 1/m² − cot(m)/m on branch n = ${n}</h3>
+             <div class="chart-wrap tall"><canvas id="gmChart"></canvas></div>
+             <p class="chart-caption">The shared kernel is the black curve. Dashed horizontal
+             lines are Λ₁ and Λ₂ for the two sister systems; crosses are the mⱼ solutions
+             returned by Newton–Raphson.</p>`;
+  }
+
+  /* per-system kinematics */
+  for (let k = 0; k < 2; k++) {
+    if (!sysSolutions[k]) continue;
+    const tag = k === 0 ? "j = 1 · Rotational" : "j = 2 · Linear";
+    html += `<h3>${tag} — kinematic profiles on [0, L]</h3>
+             <div class="grid3">
+               <div class="chart-wrap"><canvas id="a_${k}"></canvas></div>
+               <div class="chart-wrap"><canvas id="w_${k}"></canvas></div>
+               <div class="chart-wrap"><canvas id="s_${k}"></canvas></div>
+             </div>
+             <p class="chart-caption">Left → right: acceleration, velocity, displacement offset.
+             The flat start / flat end of the first two curves, and the final value Δs of the
+             third, are the visual footprint of the boundary conditions.</p>`;
+  }
+
+  /* normalized overlay */
+  if (sysSolutions[0] && sysSolutions[1]
+      && Math.abs(sysSolutions[0].inp.ds) > 1e-12
+      && Math.abs(sysSolutions[1].inp.ds) > 1e-12) {
+    html += `<h3>Normalized displacement overlay</h3>
+             <div class="chart-wrap tall"><canvas id="cmpChart"></canvas></div>
+             <p class="chart-caption">(s(t) − s(0)) / Δs vs t/L for both sister systems.
+             Both start at 0 and end at 1 by construction — the difference in shape
+             reflects the different (a₀, v₀, Δs) triples and hence different mⱼ, Pⱼ.</p>`;
+  }
+
   out.innerHTML = html;
+
+  /* now actually draw */
+  if (typeof Chart === "undefined") {
+    out.insertAdjacentHTML("beforeend",
+      `<div class="err">Chart.js failed to load (offline?). Values above are still valid.</div>`);
+    return;
+  }
+  renderCharts(sysSolutions, L, n);
 });
+
+/* ================= charting ================= */
+
+let charts = [];
+function destroyCharts() {
+  charts.forEach(c => { try { c.destroy(); } catch (e) {} });
+  charts = [];
+}
+
+/* tiny wrapper so we don't repeat the Chart.js boilerplate */
+function pushChart(canvasId, cfg) {
+  const cv = document.getElementById(canvasId);
+  if (!cv) return null;
+  const ch = new Chart(cv, cfg);
+  charts.push(ch);
+  return ch;
+}
+
+function renderCharts(sysSolutions, L, n) {
+  renderGmChart(sysSolutions, n);
+
+  for (let k = 0; k < 2; k++) {
+    if (!sysSolutions[k]) continue;
+    renderKinematics(k, sysSolutions[k].inp, sysSolutions[k].sol, L);
+  }
+
+  renderComparison(sysSolutions, L);
+}
+
+/* ----- g(m) vs m with Λ lines and solution markers ----- */
+function renderGmChart(sysSolutions, n) {
+  const cv = document.getElementById("gmChart");
+  if (!cv) return;
+
+  const mStart = n === 0 ? 1e-3 : n * PI + 1e-4;
+  const mEnd   = (n + 1) * PI - 1e-4;
+  const N = 800;
+
+  const gmPoints = [];
+  for (let i = 0; i <= N; i++) {
+    const m = mStart + (mEnd - mStart) * i / N;
+    const g = gfun(m);
+    gmPoints.push({ x: m, y: isFinite(g) ? g : null });
+  }
+
+  const datasets = [{
+    label: "g(m)",
+    data: gmPoints,
+    borderColor: "#0f172a",
+    backgroundColor: "transparent",
+    borderWidth: 2,
+    pointRadius: 0,
+    tension: 0,
+    parsing: false
+  }];
+
+  const colors = ["#2563eb", "#0f766e"];
+  const lambdas = [];
+
+  for (let k = 0; k < 2; k++) {
+    const s = sysSolutions[k];
+    if (!s) continue;
+    const lam = s.sol.Lambda;
+    lambdas.push(lam);
+
+    /* horizontal Λ line */
+    datasets.push({
+      label: `Λ${k + 1} = ${fmt(lam, 4)}`,
+      data: [{ x: mStart, y: lam }, { x: mEnd, y: lam }],
+      borderColor: colors[k],
+      borderDash: [6, 4],
+      borderWidth: 1.5,
+      pointRadius: 0,
+      fill: false,
+      parsing: false
+    });
+
+    /* solution marker */
+    datasets.push({
+      label: `m${k + 1} = ${fmt(s.sol.m, 4)}`,
+      data: [{ x: s.sol.m, y: lam }],
+      borderColor: colors[k],
+      backgroundColor: colors[k],
+      pointRadius: 7,
+      pointStyle: "crossRot",
+      borderWidth: 2,
+      showLine: false,
+      parsing: false
+    });
+  }
+
+  /* clamp y-range so the cot-pole doesn't blow up the visual scale */
+  const yHi = Math.max(...lambdas, 1) * 2 + 2;
+  const yLo = -yHi * 0.35;
+
+  pushChart("gmChart", {
+    type: "line",
+    data: { datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: false,
+      interaction: { mode: "nearest", intersect: false },
+      plugins: {
+        legend: { position: "top", labels: { boxWidth: 12, font: { size: 11 } } },
+        tooltip: {
+          callbacks: {
+            label: ctx => `${ctx.dataset.label}: (${fmt(ctx.parsed.x, 5)}, ${fmt(ctx.parsed.y, 5)})`
+          }
+        }
+      },
+      scales: {
+        x: {
+          type: "linear",
+          min: mStart, max: mEnd,
+          title: { display: true, text: "m = π·T₀ / P" },
+          grid: { color: "#eef2f7" }
+        },
+        y: {
+          min: yLo, max: yHi,
+          title: { display: true, text: "g(m)" },
+          grid: { color: "#eef2f7" }
+        }
+      }
+    }
+  });
+}
+
+/* ----- α(t), ω(t), s(t)−s(0) for one system ----- */
+function renderKinematics(k, inp, sol, L) {
+  const { A, k1, k2, f } = sol;
+  const { v0 } = inp;
+
+  const N = 300;
+  const tArr = [], aArr = [], wArr = [], sArr = [];
+
+  for (let i = 0; i <= N; i++) {
+    const t = L * i / N;
+    tArr.push(t);
+    aArr.push(A * Math.sin(f * t + k1) + k2);
+    wArr.push(v0 + (A / f) * (Math.cos(k1) - Math.cos(f * t + k1)) + k2 * t);
+    sArr.push(
+      v0 * t
+      + (A / f) * (t * Math.cos(k1) - (Math.sin(f * t + k1) - Math.sin(k1)) / f)
+      + 0.5 * k2 * t * t
+    );
+  }
+
+  const color   = k === 0 ? "#2563eb" : "#0f766e";
+  const tint    = k === 0 ? "rgba(37,99,235,0.12)" : "rgba(15,118,110,0.12)";
+  const unitA   = k === 0 ? "rad/s²" : "m/s²";
+  const unitV   = k === 0 ? "rad/s"  : "m/s";
+  const unitS   = k === 0 ? "rad"    : "m";
+  const symS    = k === 0 ? "θ(t) − θᵢ" : "s(t) − sᵢ";
+  const symA    = k === 0 ? "α(t)" : "a(t)";
+  const symV    = k === 0 ? "ω(t)" : "v(t)";
+
+  makeCurve(`a_${k}`, tArr, aArr, `${symA} [${unitA}]`, color, tint, `${symA} vs t`);
+  makeCurve(`w_${k}`, tArr, wArr, `${symV} [${unitV}]`, color, tint, `${symV} vs t`);
+  makeCurve(`s_${k}`, tArr, sArr, `${symS} [${unitS}]`, color, tint, `${symS} vs t`);
+}
+
+function makeCurve(canvasId, xArr, yArr, yLabel, color, tint, title) {
+  const points = xArr.map((x, i) => ({ x, y: yArr[i] }));
+
+  pushChart(canvasId, {
+    type: "line",
+    data: {
+      datasets: [{
+        label: yLabel,
+        data: points,
+        borderColor: color,
+        backgroundColor: tint,
+        borderWidth: 2,
+        pointRadius: 0,
+        tension: 0.05,
+        fill: true,
+        parsing: false
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: false,
+      interaction: { mode: "nearest", intersect: false },
+      plugins: {
+        legend: { display: false },
+        title: { display: true, text: title, font: { size: 12 }, color: "#334155" },
+        tooltip: {
+          callbacks: {
+            label: ctx => `(${fmt(ctx.parsed.x, 4)}, ${fmt(ctx.parsed.y, 5)})`
+          }
+        }
+      },
+      scales: {
+        x: {
+          type: "linear",
+          title: { display: true, text: "t" },
+          grid: { color: "#eef2f7" },
+          ticks: { maxTicksLimit: 6 }
+        },
+        y: {
+          title: { display: true, text: yLabel },
+          grid: { color: "#eef2f7" }
+        }
+      }
+    }
+  });
+}
+
+/* ----- normalized displacement overlay ----- */
+function renderComparison(sysSolutions, L) {
+  const cv = document.getElementById("cmpChart");
+  if (!cv) return;
+
+  const [S1, S2] = sysSolutions;
+  if (!S1 || !S2) return;
+  if (Math.abs(S1.inp.ds) < 1e-12 || Math.abs(S2.inp.ds) < 1e-12) return;
+
+  const N = 300;
+  const p1 = [], p2 = [];
+
+  for (let i = 0; i <= N; i++) {
+    const t = L * i / N;
+    p1.push({ x: t / L, y: disp(t, S1.sol, S1.inp) / S1.inp.ds });
+    p2.push({ x: t / L, y: disp(t, S2.sol, S2.inp) / S2.inp.ds });
+  }
+
+  pushChart("cmpChart", {
+    type: "line",
+    data: {
+      datasets: [
+        {
+          label: "j = 1 (rotational)",
+          data: p1,
+          borderColor: "#2563eb",
+          backgroundColor: "transparent",
+          borderWidth: 2,
+          pointRadius: 0,
+          tension: 0.05,
+          parsing: false
+        },
+        {
+          label: "j = 2 (linear)",
+          data: p2,
+          borderColor: "#0f766e",
+          backgroundColor: "transparent",
+          borderWidth: 2,
+          pointRadius: 0,
+          tension: 0.05,
+          parsing: false
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: false,
+      interaction: { mode: "nearest", intersect: false },
+      plugins: {
+        legend: { position: "top", labels: { boxWidth: 12, font: { size: 11 } } },
+        tooltip: {
+          callbacks: {
+            label: ctx => `${ctx.dataset.label}: (${fmt(ctx.parsed.x, 3)}, ${fmt(ctx.parsed.y, 5)})`
+          }
+        }
+      },
+      scales: {
+        x: {
+          type: "linear",
+          min: 0, max: 1,
+          title: { display: true, text: "t / L" },
+          grid: { color: "#eef2f7" }
+        },
+        y: {
+          title: { display: true, text: "(s(t) − s(0)) / Δs" },
+          grid: { color: "#eef2f7" }
+        }
+      }
+    }
+  });
+}
+
+function disp(t, sol, inp) {
+  const { A, k1, k2, f } = sol;
+  const { v0 } = inp;
+  return v0 * t
+       + (A / f) * (t * Math.cos(k1) - (Math.sin(f * t + k1) - Math.sin(k1)) / f)
+       + 0.5 * k2 * t * t;
+}
 
 /* pre-compute the range once on load so the T₀ box is meaningful immediately */
 window.addEventListener("load", () => $("btnRange").click());
