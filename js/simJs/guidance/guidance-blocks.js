@@ -3147,6 +3147,8 @@ setState(s) {
       ENTRY_BURN_CUTOFF_VELOCITY_MS: 600,  // cutoff when Earth-relative speed falls to this value
       ENTRY_BURN_IMPACT_TARGET_M: -652,   // m: bias burn target west so post-cutoff drag/fin drift lands near pad
       // POST_ENTRY_STEER
+      LANDING_BURN_ALIGN_ALT_KM: 5,        // AGL km: PES stops steering, fin ramps 0, coast to aero equilibrium
+      LANDING_BURN_ALT_KM: 2,              // AGL km: PES->LANDING_BURN phase transition (landing-burn ignition)
       POST_ENTRY_GRIDFIN_RAMP_DEG_S: 3,    // grid-fin control target ramps 0 -> max at this rate (deg/s); slower = less oscillation (guess, tune in sim)
     },
     importantFields: [],
@@ -4552,6 +4554,9 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
               _st.pesDone = false;
               _st.pesT0 = simT;
               _st.pesCmdC = 0;
+              _st.pesSub = 'STEER';
+              _st.pesAlignCmd = null;
+              _st.pesGimbalZeroDone = false;
               _st.pesPrevT = null;
               _st.pesPrevErr = null;
               _st.pesErateF = null;
@@ -4585,6 +4590,61 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
                 console.log("[standardRTLS] POST_ENTRY_STEER touchdown t=" + simT.toFixed(2) +
                   " vacImpactErr=" + (_st.pesVacErrM != null ? (_st.pesVacErrM / 1000).toFixed(3) + "km" : "n/a") +
                   " groundErr=" + (_st.pesGroundErrM != null ? (_st.pesGroundErrM / 1000).toFixed(3) + "km" : "n/a"));
+              }
+              break;
+            }
+
+            // Gimbal zeroing — drive any residual gimbal to 0 (unpowered coast)
+            if (!_st.pesGimbalZeroDone) {
+              const gimbals = (body.engines || []).filter(e => e.gimbal);
+              if (gimbals.length) {
+                const gd = gimbals[0].gimbalDeg || 0;
+                if (Math.abs(gd) < 0.1) {
+                  _send(Guidance.cmdSetGimbalRate(0));
+                  _st.pesGimbalZeroDone = true;
+                } else {
+                  const gTarget = gimbals.every(e => e.isCenter) ? "center" : "all";
+                  _send(_gimbalCmdMsg(0, gimbals[0], dt, gTarget));
+                }
+              } else {
+                _st.pesGimbalZeroDone = true;
+              }
+            }
+
+            // Sub-phase transition: STEER → ALIGN at LANDING_BURN_ALIGN_ALT_KM
+            const lbAlignAltKm = Number.isFinite(cfg.LANDING_BURN_ALIGN_ALT_KM) ? cfg.LANDING_BURN_ALIGN_ALT_KM : 5;
+            const lbBurnAltKm = Number.isFinite(cfg.LANDING_BURN_ALT_KM) ? cfg.LANDING_BURN_ALT_KM : 2;
+            if (_st.pesSub === 'STEER' && altKm <= lbAlignAltKm) {
+              _st.pesSub = 'ALIGN';
+              _st.pesAlignCmd = (d.gridFinControlUsed != null) ? d.gridFinControlUsed : (_st.pesCmdC || 0);
+              console.log("[standardRTLS] POST_ENTRY_STEER → ALIGN t=" + simT.toFixed(2) +
+                " alt=" + altKm.toFixed(2) + "km finCmd=" + _st.pesAlignCmd.toFixed(1) +
+                " alpha=" + (Number.isFinite(d.alphaDeg) ? d.alphaDeg.toFixed(2) : "n/a") + "deg");
+            }
+
+            // ALIGN sub-phase: ramp fin toward 0, no attitude control, coast to aero equilibrium
+            if (_st.pesSub === 'ALIGN') {
+              if (altKm <= lbBurnAltKm) {
+                _send(Guidance.cmdGridFinsControl(0));
+                _send(Guidance.cmdRcsDuty(null, idx));
+                _send(Guidance.cmdSetGimbalRate(0));
+                console.log("[standardRTLS] POST_ENTRY_ALIGN → LANDING_BURN trigger t=" + simT.toFixed(2) +
+                  " alt=" + altKm.toFixed(2) + "km alpha=" + (Number.isFinite(d.alphaDeg) ? d.alphaDeg.toFixed(2) : "n/a") +
+                  "deg w=" + (d.omega * R2D).toFixed(3) + "deg/s");
+                finished = true;
+                break;
+              }
+              const rampStep = (Number.isFinite(cfg.POST_ENTRY_GRIDFIN_RAMP_DEG_S) ? cfg.POST_ENTRY_GRIDFIN_RAMP_DEG_S : 3) * dt;
+              if (_st.pesAlignCmd > 0) _st.pesAlignCmd = Math.max(0, _st.pesAlignCmd - rampStep);
+              else if (_st.pesAlignCmd < 0) _st.pesAlignCmd = Math.min(0, _st.pesAlignCmd + rampStep);
+              _send(Guidance.cmdGridFinsControl(_st.pesAlignCmd));
+              _rcsOff();
+              if (DEBUG_RTLS && Math.round(simT * 80) % 160 === 0) {
+                console.log("[PES-ALIGN] t=" + simT.toFixed(2) + " alt=" + altKm.toFixed(2) + "km" +
+                  " finCmd=" + _st.pesAlignCmd.toFixed(2) +
+                  " finAct=" + (d.gridFinControlUsed != null ? d.gridFinControlUsed.toFixed(2) : "n/a") +
+                  " alpha=" + (Number.isFinite(d.alphaDeg) ? d.alphaDeg.toFixed(2) : "n/a") + "deg" +
+                  " w=" + (d.omega * R2D).toFixed(3) + "deg/s");
               }
               break;
             }
@@ -5001,6 +5061,9 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
           _st.ebPredErrM = null;
           _st.ebRcsCmd = 0;
           _st.pesInit = false;
+          _st.pesSub = 'STEER';
+          _st.pesAlignCmd = null;
+          _st.pesGimbalZeroDone = false;
           _st.pesT0 = 0;
           _st.pfPrevTau = null;
           _st.lg = null;
