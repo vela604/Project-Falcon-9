@@ -3149,6 +3149,7 @@ setState(s) {
       // POST_ENTRY_STEER
       LANDING_BURN_ALIGN_ALT_KM: 5,        // AGL km: PES stops steering, fin ramps 0, coast to aero equilibrium
       LANDING_BURN_ALT_KM: 2,              // AGL km: PES->LANDING_BURN phase transition (landing-burn ignition)
+      LANDING_BURN_ENGINES: "C",           // engines fired at 100% during LB spool (C = centre; add numbers for outer-ring) 
       POST_ENTRY_GRIDFIN_RAMP_DEG_S: 3,    // grid-fin control target ramps 0 -> max at this rate (deg/s); slower = less oscillation (guess, tune in sim)
     },
     importantFields: [],
@@ -3205,6 +3206,7 @@ setState(s) {
         // ---- LANDING_BURN scratch (log-only for now) ----
         lbInit: false, lbT0: null, lbDone: false, lbLastLog: 0,
         lbThrCmd: null, lbGimbalCmd: 0, lbFinCmd: 0,
+        lbSpooled: false, lbSpoolT: null, lbBurnCut: false,
         // ---- BOOSTBACK scratch ----
         bbInit: false,
         bbStage: null,         // THREE | CENTER | SPOOL
@@ -4997,6 +4999,9 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
               _st.lbThrCmd = null;
               _st.lbGimbalCmd = 0;
               _st.lbFinCmd = 0;
+              _st.lbSpooled = false;
+              _st.lbSpoolT = null;
+              _st.lbBurnCut = false;
               _send(Guidance.cmdSetAllThrottle(0));
               _send(Guidance.cmdSetGimbalRate(0));
               _send(Guidance.cmdRcsDuty(null, idx));
@@ -5030,6 +5035,64 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
             const gimbals = (body.engines || []).filter(e => e.gimbal);
             const gimbalCur = gimbals.length ? (gimbals[0].gimbalDeg || 0) : 0;
             const finCur = (d.gridFinControlUsed != null) ? d.gridFinControlUsed : 0;
+            // === LANDING_BURN burn logic v1 ===
+            // Fire LANDING_BURN_ENGINES at 100%, gimbal tracked to 0. Wait for full spool.
+            // After spool: when vRadial (vy) reaches 0, cut throttle to 0.
+            // Diagnostic only — no closed-loop altitude/velocity target yet.
+            if (!_st.lbBurnCut) {
+              const lbToks = _ebTokens(cfg.LANDING_BURN_ENGINES, "C");
+              const lbEng = (body.engines || []).filter(e => _bbInSet(e, lbToks));
+              if (!lbEng.length) {
+                if (DEBUG_RTLS) console.warn("[standardRTLS] LANDING_BURN: no engine matches LANDING_BURN_ENGINES='" + cfg.LANDING_BURN_ENGINES + "'");
+              } else {
+                const gimbalsLB = (body.engines || []).filter(e => e.gimbal);
+                if (gimbalsLB.length) {
+                  const gT = gimbalsLB.every(e => e.isCenter) ? "center" : "all";
+                  _send(_gimbalCmdMsg(0, gimbalsLB[0], dt, gT));
+                }
+                const totalMaxFlow = lbEng.reduce((a, e) => a + (Number.isFinite(e.maxMassFlowRate) ? e.maxMassFlowRate : 0), 0);
+                if (!_st.lbSpooled) {
+                  let allFull = true;
+                  for (const e of lbEng) {
+                    const mx = Number.isFinite(e.maxMassFlowRate) ? e.maxMassFlowRate : 0;
+                    const cu = Number.isFinite(e.massFlowRate) ? e.massFlowRate : 0;
+                    if (mx > 0 && cu < mx * 0.99) { allFull = false; break; }
+                  }
+                  _bbThrottle(lbEng, Infinity);
+                  _st.lbThrCmd = totalMaxFlow;
+                  if (allFull) {
+                    _st.lbSpooled = true;
+                    _st.lbSpoolT = simT - _st.lbT0;
+                    console.log("[LANDING_BURN-SPOOLED] t=" + simT.toFixed(2) +
+                      " h=" + (d.altitudeAGL / 1000).toFixed(3) + "km" +
+                      " vy=" + vRadial.toFixed(2) + "m/s" +
+                      " vx=" + vTangGround.toFixed(2) + "m/s" +
+                      " theta=" + thetaLocalDeg.toFixed(2) + "deg" +
+                      " w=" + (d.omega * R2D).toFixed(3) + "deg/s" +
+                      " thrust=" + Math.round(d.thrustTotal || 0) + "N" +
+                      " engines=" + lbEng.length +
+                      " spoolT=" + _st.lbSpoolT.toFixed(2) + "s");
+                  }
+                } else {
+                  if (vRadial < 0) {
+                    _bbThrottle(lbEng, Infinity);
+                    _st.lbThrCmd = totalMaxFlow;
+                  } else {
+                    _bbThrottle(lbEng, 0);
+                    _st.lbThrCmd = 0;
+                    if (!_st.lbBurnCut) {
+                      _st.lbBurnCut = true;
+                      console.log("[LANDING_BURN-CUT] t=" + simT.toFixed(2) +
+                        " h=" + (d.altitudeAGL / 1000).toFixed(3) + "km" +
+                        " vy=" + vRadial.toFixed(2) + "m/s" +
+                        " vx=" + vTangGround.toFixed(2) + "m/s" +
+                        " spoolT=" + (_st.lbSpoolT != null ? _st.lbSpoolT.toFixed(2) : "n/a") + "s");
+                    }
+                  }
+                }
+              }
+            }
+
             const alphaAngDegS2 = ((d.alphaAng || 0) + ((d.gridFinTorque || 0) + (_st.lastRcsTorque || 0)) / I) * R2D;
 
             const imp = _bbImpact(d.rx, d.ry, d.vx, d.vy, simT, env.GM_EARTH, Rm, omegaE);
@@ -5049,9 +5112,12 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
                 " tImp=" + (tImpact != null ? tImpact.toFixed(1) + "s" : "n/a"));
             }
 
-            if (!_st.lbDone && (d.altitudeAGL < 5 || body.landed || body.crashed)) {
+            if (!_st.lbDone && (d.altitudeAGL < 5 || body.landed || body.crashed || (simT - _st.lbT0) > 30)) {
               _st.lbDone = true;
+              const lbElapsed = simT - _st.lbT0;
+              const lbReason = lbElapsed > 30 ? "timeout" : (body.crashed ? "crashed" : (body.landed ? "landed" : "impact"));
               console.log("[LANDING_BURN-DONE] t=" + simT.toFixed(2) +
+                " elapsed=" + lbElapsed.toFixed(2) + "s reason=" + lbReason +
                 " groundErr=" + (xFromPadM / 1000).toFixed(3) + "km" +
                 " vRad=" + vRadial.toFixed(2) + "m/s vTangGround=" + vTangGround.toFixed(2) + "m/s" +
                 " theta=" + thetaLocalDeg.toFixed(2) + "deg w=" + ((d.omega - omegaE) * R2D).toFixed(3) + "deg/s" +
@@ -5182,6 +5248,9 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
           _st.lbThrCmd = null;
           _st.lbGimbalCmd = 0;
           _st.lbFinCmd = 0;
+          _st.lbSpooled = false;
+          _st.lbSpoolT = null;
+          _st.lbBurnCut = false;
           _st.pfPrevTau = null;
           _st.lg = null;
           _st.vfPO = null;
