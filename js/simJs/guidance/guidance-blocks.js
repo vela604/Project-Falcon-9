@@ -3163,7 +3163,7 @@ setState(s) {
 
       const PHASES = [
         "FLIP", "BOOSTBACK_BURN", "PRE_ENTRY_STEER", "ENTRY_BURN",
-        "POST_ENTRY_STEER", "LANDING_BURN", "TOUCHDOWN",
+        "POST_ENTRY_STEER", "LANDING_BURN_ALIGN", "LANDING_BURN", "TOUCHDOWN",
       ];
       const TIMEOUT_KEY = {
         FLIP: "FLIP_TIMEOUT_S",
@@ -3209,6 +3209,8 @@ setState(s) {
         lbThrCmd: null, lbGimbalCmd: 0, lbFinCmd: 0,
         lbSpooled: false, lbSpoolT: null, lbBurnCut: false,
         lbAlignStartT: null, lbAlignT0: null,
+        lbaInit: false, lbaAlignStartT: null, lbaFinCmd: null, lbaGimbalZeroDone: false,
+        lbAlignDeltaMax: 0,
         // ---- BOOSTBACK scratch ----
         bbInit: false,
         bbStage: null,         // THREE | CENTER | SPOOL
@@ -3268,7 +3270,13 @@ setState(s) {
       // Move to `next` (or finish the block if `next` is null).
       function _goto(next, simT, reason) {
         const cur = _st.phase;
-        if (cur === "FLIP" || cur === "BOOSTBACK_BURN" || cur === "PRE_ENTRY_STEER") {
+        if (cur === "FLIP" || cur === "BOOSTBACK_BURN" || cur === "PRE_ENTRY_STEER" || cur === "POST_ENTRY_STEER") {
+          _send(Guidance.cmdRcsDuty(null, _bodyIdx));
+          _st.lastRcsTorque = 0;
+        }
+        if (cur === "LANDING_BURN_ALIGN") {
+          _send(Guidance.cmdGridFinsControl(0));
+          _send(Guidance.cmdSetGimbalRate(0));
           _send(Guidance.cmdRcsDuty(null, _bodyIdx));
           _st.lastRcsTorque = 0;
         }
@@ -4614,7 +4622,7 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
               }
             }
 
-            // Sub-phase transition: STEER → ALIGN at LANDING_BURN_ALIGN_ALT_KM
+            // Phase transition: POST_ENTRY_STEER → LANDING_BURN_ALIGN at LANDING_BURN_ALIGN_ALT_KM
             const padDbg = (_missionCtx && _missionCtx.targetPad) || null;
             const padEfDbg = (padDbg && Number.isFinite(padDbg.angleEf)) ? padDbg.angleEf : (env.LAUNCH_SITE_ANGLE_0 || 0);
             const phiNowDbg = Math.atan2(d.rx, d.ry) - (env.EARTH_OMEGA || 0) * simT;
@@ -4622,49 +4630,15 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
             const impDbg = _bbImpact(d.rx, d.ry, d.vx, d.vy, simT, env.GM_EARTH, env.EARTH_RADIUS, env.EARTH_OMEGA);
             const vacErrDbgKm = impDbg ? (_wrapPi(impDbg.phiEf - padEfDbg) * env.EARTH_RADIUS / 1000) : null;
             const lbAlignAltKm = Number.isFinite(cfg.LANDING_BURN_ALIGN_ALT_KM) ? cfg.LANDING_BURN_ALIGN_ALT_KM : 5;
-            const lbBurnAltKm = Number.isFinite(cfg.LANDING_BURN_ALT_KM) ? cfg.LANDING_BURN_ALT_KM : 2;
-            if (_st.pesSub === 'STEER' && altKm <= lbAlignAltKm) {
-              _st.pesSub = 'ALIGN';
-              _st.pesAlignCmd = (d.gridFinControlUsed != null) ? d.gridFinControlUsed : (_st.pesCmdC || 0);
-              console.log("[standardRTLS] POST_ENTRY_STEER → ALIGN t=" + simT.toFixed(2) +
-                " alt=" + altKm.toFixed(2) + "km finCmd=" + _st.pesAlignCmd.toFixed(1) +
+            if (altKm <= lbAlignAltKm) {
+              console.log("[standardRTLS] POST_ENTRY_STEER → LANDING_BURN_ALIGN t=" + simT.toFixed(2) +
+                " alt=" + altKm.toFixed(2) + "km" +
                 " alpha=" + (Number.isFinite(d.alphaDeg) ? d.alphaDeg.toFixed(2) : "n/a") + "deg" +
+                " w=" + (d.omega * R2D).toFixed(3) + "deg/s" +
+                " finCmd=" + (d.gridFinControlUsed != null ? d.gridFinControlUsed.toFixed(1) : "n/a") +
                 " vacErr=" + (vacErrDbgKm != null ? vacErrDbgKm.toFixed(3) + "km" : "n/a") +
                 " groundErr=" + gErrDbgKm.toFixed(3) + "km");
-            }
-
-            // ALIGN sub-phase: ramp fin toward 0, no attitude control, coast to aero equilibrium
-            if (_st.pesSub === 'ALIGN') {
-              if (altKm <= lbBurnAltKm) {
-                const gimbalsLB = (body.engines || []).filter(e => e.gimbal);
-                const gdLB = gimbalsLB.length ? (gimbalsLB[0].gimbalDeg || 0) : 0;
-                if (Math.abs(gdLB) > 1e-6) {
-                  console.warn("[standardRTLS] LANDING_BURN gimbal NOT zero at trigger: " + gdLB.toFixed(6) + "deg");
-                }
-                _send(Guidance.cmdGridFinsControl(0));
-                _send(Guidance.cmdRcsDuty(null, idx));
-                _send(Guidance.cmdSetGimbalRate(0));
-                console.log("[standardRTLS] POST_ENTRY_ALIGN → LANDING_BURN trigger t=" + simT.toFixed(2) +
-                  " alt=" + altKm.toFixed(2) + "km alpha=" + (Number.isFinite(d.alphaDeg) ? d.alphaDeg.toFixed(2) : "n/a") +
-                  "deg w=" + (d.omega * R2D).toFixed(3) + "deg/s" +
-                  " gimbal=" + gdLB.toFixed(6) + "deg" +
-                  " vacErr=" + (vacErrDbgKm != null ? vacErrDbgKm.toFixed(3) + "km" : "n/a") +
-                  " groundErr=" + gErrDbgKm.toFixed(3) + "km");
-                finished = true;
-                break;
-              }
-              const rampStep = (Number.isFinite(cfg.POST_ENTRY_GRIDFIN_RAMP_DEG_S) ? cfg.POST_ENTRY_GRIDFIN_RAMP_DEG_S : 3) * dt;
-              if (_st.pesAlignCmd > 0) _st.pesAlignCmd = Math.max(0, _st.pesAlignCmd - rampStep);
-              else if (_st.pesAlignCmd < 0) _st.pesAlignCmd = Math.min(0, _st.pesAlignCmd + rampStep);
-              _send(Guidance.cmdGridFinsControl(_st.pesAlignCmd));
-              _rcsOff();
-              if (DEBUG_RTLS && Math.round(simT * 80) % 160 === 0) {
-                console.log("[PES-ALIGN] t=" + simT.toFixed(2) + " alt=" + altKm.toFixed(2) + "km" +
-                  " finCmd=" + _st.pesAlignCmd.toFixed(2) +
-                  " finAct=" + (d.gridFinControlUsed != null ? d.gridFinControlUsed.toFixed(2) : "n/a") +
-                  " alpha=" + (Number.isFinite(d.alphaDeg) ? d.alphaDeg.toFixed(2) : "n/a") + "deg" +
-                  " w=" + (d.omega * R2D).toFixed(3) + "deg/s");
-              }
+              finished = true;
               break;
             }
 
@@ -4967,6 +4941,72 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
           }
 
           // ==========================================================
+          case "LANDING_BURN_ALIGN": {
+            const idx = _bodyIdx;
+            const body = snapshot.bodies[idx];
+            if (!body) break;
+            const env = Derivation.getEnv();
+            const dt = env && Number.isFinite(env.DT) ? env.DT : 1 / 80;
+            const R2D = 180 / Math.PI;
+            const altKm = d.altitudeAGL / 1000;
+            _st.lastAltKm = altKm;
+            const lbBurnAltKm = Number.isFinite(cfg.LANDING_BURN_ALT_KM) ? cfg.LANDING_BURN_ALT_KM : 2;
+
+            if (!_st.lbaInit) {
+              _st.lbaInit = true;
+              _st.lbaAlignStartT = simT;
+              _st.lbaFinCmd = (d.gridFinControlUsed != null) ? d.gridFinControlUsed : 0;
+              _st.lbaGimbalZeroDone = false;
+              _send(Guidance.cmdSetAllThrottle(0));
+              _send(Guidance.cmdRcsDuty(null, idx));
+              _st.lastRcsTorque = 0;
+              console.log("[standardRTLS] LANDING_BURN_ALIGN start t=" + simT.toFixed(2) +
+                " alt=" + altKm.toFixed(2) + "km finCmd=" + _st.lbaFinCmd.toFixed(1) +
+                " alpha=" + (Number.isFinite(d.alphaDeg) ? d.alphaDeg.toFixed(2) : "n/a") + "deg" +
+                " w=" + (d.omega * R2D).toFixed(3) + "deg/s — fin ramp to 0, coast to equilibrium");
+            }
+
+            if (!_st.lbaGimbalZeroDone) {
+              const gimbalsLBA = (body.engines || []).filter(e => e.gimbal);
+              if (gimbalsLBA.length) {
+                const gTarget = gimbalsLBA.every(e => e.isCenter) ? "center" : "all";
+                _send(_gimbalCmdMsg(0, gimbalsLBA[0], dt, gTarget));
+              } else {
+                _st.lbaGimbalZeroDone = true;
+              }
+            }
+
+            if (altKm <= lbBurnAltKm) {
+              _send(Guidance.cmdGridFinsControl(0));
+              _send(Guidance.cmdRcsDuty(null, idx));
+              _send(Guidance.cmdSetGimbalRate(0));
+              console.log("[standardRTLS] LANDING_BURN_ALIGN → LANDING_BURN trigger t=" + simT.toFixed(2) +
+                " alt=" + altKm.toFixed(2) + "km" +
+                " alpha=" + (Number.isFinite(d.alphaDeg) ? d.alphaDeg.toFixed(2) : "n/a") + "deg" +
+                " w=" + (d.omega * R2D).toFixed(3) + "deg/s" +
+                " finCmd=" + (d.gridFinControlUsed != null ? d.gridFinControlUsed.toFixed(2) : "n/a"));
+              finished = true;
+              break;
+            }
+
+            const rampStep = (Number.isFinite(cfg.POST_ENTRY_GRIDFIN_RAMP_DEG_S) ? cfg.POST_ENTRY_GRIDFIN_RAMP_DEG_S : 3) * dt;
+            if (_st.lbaFinCmd > 0) _st.lbaFinCmd = Math.max(0, _st.lbaFinCmd - rampStep);
+            else if (_st.lbaFinCmd < 0) _st.lbaFinCmd = Math.min(0, _st.lbaFinCmd + rampStep);
+            _send(Guidance.cmdGridFinsControl(_st.lbaFinCmd));
+            _rcsOff();
+            _st.lastRcsTorque = 0;
+
+            if (DEBUG_RTLS && Math.round(simT * 80) % 160 === 0) {
+              console.log("[LANDING_BURN_ALIGN] t=" + simT.toFixed(2) +
+                " alt=" + altKm.toFixed(2) + "km" +
+                " finCmd=" + _st.lbaFinCmd.toFixed(2) +
+                " finAct=" + (d.gridFinControlUsed != null ? d.gridFinControlUsed.toFixed(2) : "n/a") +
+                " alpha=" + (Number.isFinite(d.alphaDeg) ? d.alphaDeg.toFixed(2) : "n/a") + "deg" +
+                " w=" + (d.omega * R2D).toFixed(3) + "deg/s");
+            }
+            break;
+          }
+
           case "LANDING_BURN": {
             const idx = _bodyIdx;
             const body = snapshot.bodies[idx];
@@ -5319,6 +5359,8 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
             if (mdotCmd < minMF) { mdotCmd = minMF; thrSat = true; }
             _bbThrottle(lbEng, mdotCmd);
             _st.lbThrCmd = mdotCmd;
+            if (!Number.isFinite(_st.lbAlignDeltaMax)) _st.lbAlignDeltaMax = 0;
+            _st.lbAlignDeltaMax = Math.max(_st.lbAlignDeltaMax, Math.abs(gimbalCmdDeg));
 
             // Gimbal via rate (1-tick precise tracking)
             if (gimbalsLB.length) {
@@ -5509,6 +5551,11 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
           _st.lbBurnCut = false;
           _st.lbAlignStartT = null;
           _st.lbAlignT0 = null;
+          _st.lbaInit = false;
+          _st.lbaAlignStartT = null;
+          _st.lbaFinCmd = null;
+          _st.lbaGimbalZeroDone = false;
+          _st.lbAlignDeltaMax = 0;
           _st.pfPrevTau = null;
           _st.lg = null;
           _st.vfPO = null;
