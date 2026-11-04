@@ -5114,6 +5114,16 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
               const hi = Math.max(r1, r2);
               return hi > lo ? [lo, hi] : null;
             };
+            // Choose a0 for solver — sign(Δs), small magnitude. Solver uses this as the
+            // "design" initial accel; physics catches up via gimbal in 1-2 ticks.
+            const _lbChooseA0 = function (obsA0, ds, typical) {
+              if (Math.abs(ds) < 1e-6) return 0;
+              const sgn = Math.sign(ds);
+              if (Math.sign(obsA0) === sgn && Math.abs(obsA0) > 1e-3) {
+                return Math.min(Math.abs(obsA0), typical * 2) * sgn;
+              }
+              return typical * sgn;
+            };
             const _lbSolve = function (a0, v0, ds, T0) {
               if (a0 === 0 || !(T0 > 0)) return null;
               const Lambda = 2 * (2 * ds - v0 * T0) / (a0 * T0 * T0);
@@ -5153,13 +5163,18 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
               const axInertialObs_ = d.gVecX + aeroAccArm.ax +
                                     ((d.thrustBodyX * Math.cos(d.theta) - d.thrustBodyY * Math.sin(d.theta)) / M);
               const axEarthObs_ = axInertialObs_ - 2 * omegaE * vRadial;
-              const rngRot_ = _lbRange(rotA0_, d.omega, -thetaLocalDeg / R2D);
-              const rngLin_ = _lbRange(axEarthObs_, vTangGround, -xFromPadM);
+              const dsRot_ = -thetaLocalDeg / R2D;
+              const dsLin_ = -xFromPadM;
+              const a0RotUse_ = _lbChooseA0(rotA0_, dsRot_, 0.005);
+              const a0LinUse_ = _lbChooseA0(axEarthObs_, dsLin_, 0.3);
+              const rngRot_ = _lbRange(a0RotUse_, d.omega, dsRot_);
+              const rngLin_ = _lbRange(a0LinUse_, vTangGround, dsLin_);
               if (!rngRot_ || !rngLin_) {
                 console.warn("[standardRTLS] LB ALIGN: no valid T0 range. rot=" +
                   (rngRot_ ? JSON.stringify(rngRot_) : "null") + " lin=" +
                   (rngLin_ ? JSON.stringify(rngLin_) : "null") +
-                  " (rotA0=" + rotA0_.toFixed(4) + " axEarth=" + axEarthObs_.toFixed(3) +
+                  " (rotA0obs=" + rotA0_.toFixed(4) + " rotA0use=" + a0RotUse_.toFixed(4) +
+                  " axEarthObs=" + axEarthObs_.toFixed(3) + " axEarthUse=" + a0LinUse_.toFixed(3) +
                   " vx=" + vTangGround.toFixed(2) + " x=" + xFromPadM.toFixed(1) + ")");
                 _send(Guidance.cmdSetAllThrottle(0));
                 break;
@@ -5177,7 +5192,9 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
               console.log("[standardRTLS] LB ALIGN armed t=" + simT.toFixed(2) +
                 " rotRange=[" + rngRot_[0].toFixed(2) + "," + rngRot_[1].toFixed(2) + "]s" +
                 " linRange=[" + rngLin_[0].toFixed(2) + "," + rngLin_[1].toFixed(2) + "]s" +
-                " T0=" + _st.lbAlignT0.toFixed(2) + "s (0.9×rngHi)");
+                " T0=" + _st.lbAlignT0.toFixed(2) + "s (0.9×rngHi)" +
+                " | a0rot=" + a0RotUse_.toFixed(4) + (Math.abs(a0RotUse_ - rotA0_) > 1e-3 ? "(forced,obs " + rotA0_.toFixed(4) + ")" : "") +
+                " a0lin=" + a0LinUse_.toFixed(3) + (Math.abs(a0LinUse_ - axEarthObs_) > 1e-2 ? "(forced,obs " + axEarthObs_.toFixed(3) + ")" : ""));
             }
 
             // Timeout: T0 window exhausted without meeting tolerance
@@ -5185,6 +5202,15 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
             if (T0_remaining < -0.1) {
               console.warn("[standardRTLS] LB ALIGN FAILED: T0 exhausted, not aligned. th=" +
                 thetaLocalDeg.toFixed(2) + "deg x=" + xFromPadM.toFixed(1) + "m. Forcing exit.");
+              _send(Guidance.cmdSetAllThrottle(0));
+              _send(Guidance.cmdSetGimbalRate(0));
+              finished = true;
+              break;
+            }
+
+            // ---- Wall-clock arming bail (solver never got a valid T0) ----
+            if (_st.lbAlignT0 == null && simT - _st.lbAlignStartT > 20) {
+              console.warn("[standardRTLS] LB ALIGN: solver never armed after 20s. Force exit.");
               _send(Guidance.cmdSetAllThrottle(0));
               _send(Guidance.cmdSetGimbalRate(0));
               finished = true;
@@ -5202,8 +5228,10 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
             const linV0 = vTangGround;
             const linDs = -xFromPadM;
 
-            const solRot = _lbSolve(rotA0, rotV0, rotDs, Math.max(0.1, T0_remaining));
-            const solLin = _lbSolve(axEarthObs, linV0, linDs, Math.max(0.1, T0_remaining));
+            const a0RotT = _lbChooseA0(rotA0, rotDs, 0.005);
+            const a0LinT = _lbChooseA0(axEarthObs, linDs, 0.3);
+            const solRot = _lbSolve(a0RotT, rotV0, rotDs, Math.max(0.1, T0_remaining));
+            const solLin = _lbSolve(a0LinT, linV0, linDs, Math.max(0.1, T0_remaining));
             if (!solRot || !solLin) {
               if (DEBUG_RTLS) console.warn("[standardRTLS] LB ALIGN solve null T0rem=" +
                 T0_remaining.toFixed(2) + " rot=" + !!solRot + " lin=" + !!solLin);
