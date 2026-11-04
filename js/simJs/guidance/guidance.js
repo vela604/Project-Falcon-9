@@ -1485,6 +1485,12 @@ if (_lbState.insertionBlock) {
       rtlsPesEdotMeasMps: rs.pesEdotMeasMps,
       rtlsPesRcsTorque: rs.pesRcsTorque,
       rtlsPesFinCtrlActDeg: rs.pesFinCtrlActDeg,
+      rtlsLbSpooled: rs.lbSpooled,
+      rtlsLbAlignStartT: rs.lbAlignStartT,
+      rtlsLbAlignT0: rs.lbAlignT0,
+      rtlsLbAlignDeltaMax: rs.lbAlignDeltaMax,
+      rtlsLbCapture6: rs.lbCapture6,
+      rtlsLbTestOverride: rs.lbTestOverride,
     });
   }
 

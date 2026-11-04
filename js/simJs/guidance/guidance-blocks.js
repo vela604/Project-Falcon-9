@@ -3150,7 +3150,8 @@ setState(s) {
       LANDING_BURN_ALIGN_ALT_KM: 5,        // AGL km: PES stops steering, fin ramps 0, coast to aero equilibrium
       LANDING_BURN_ALT_KM: 2,              // AGL km: PES->LANDING_BURN phase transition (landing-burn ignition)
       LANDING_BURN_ENGINES: "C",
-      LANDING_BURN_T0_S: 6.0,              // solver burn time (branch 1). Tune to avoid gimbal saturation.           // engines fired at 100% during LB spool (C = centre; add numbers for outer-ring) 
+      LANDING_BURN_T0_S: 6.0,              // solver burn time (branch 1). Tune to avoid gimbal saturation.
+      LANDING_BURN_TEST_OVERRIDE: null,    // TEST: {a0rot,v0rot,dsrot,a0lin,v0lin,dslin,T0} | null.           // engines fired at 100% during LB spool (C = centre; add numbers for outer-ring) 
       POST_ENTRY_GRIDFIN_RAMP_DEG_S: 3,    // grid-fin control target ramps 0 -> max at this rate (deg/s); slower = less oscillation (guess, tune in sim)
     },
     importantFields: [],
@@ -3209,6 +3210,7 @@ setState(s) {
         lbThrCmd: null, lbGimbalCmd: 0, lbFinCmd: 0,
         lbSpooled: false, lbSpoolT: null, lbBurnCut: false,
         lbAlignStartT: null, lbAlignT0: null,
+        lbTestOverride: null, lbCapture6: null,
         lbaInit: false, lbaAlignStartT: null, lbaFinCmd: null, lbaGimbalZeroDone: false,
         lbAlignDeltaMax: 0,
         // ---- BOOSTBACK scratch ----
@@ -5046,6 +5048,8 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
               _st.lbBurnCut = false;
               _st.lbAlignStartT = null;
               _st.lbAlignT0 = null;
+              _st.lbTestOverride = null;
+              _st.lbCapture6 = null;
               _send(Guidance.cmdSetAllThrottle(0));
               _send(Guidance.cmdSetGimbalRate(0));
               _send(Guidance.cmdRcsDuty(null, idx));
@@ -5270,7 +5274,20 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
                 break;
               }
               // EXPERIMENT: branch=1 + hardcoded T0=6s
-              _st.lbAlignT0 = (Number.isFinite(cfg.LANDING_BURN_T0_S) ? cfg.LANDING_BURN_T0_S : 6.0);
+              _st.lbCapture6 = {
+                a0rot: rotA0_, v0rot: d.omega, dsrot: dsRot_,
+                a0lin: axEarthObs_, v0lin: vTangGround, dslin: dsLin_,
+              };
+              if (cfg.LANDING_BURN_TEST_OVERRIDE && typeof cfg.LANDING_BURN_TEST_OVERRIDE === 'object') {
+                _st.lbTestOverride = JSON.parse(JSON.stringify(cfg.LANDING_BURN_TEST_OVERRIDE));
+                _st.lbAlignT0 = _st.lbTestOverride.T0;
+                console.log("[standardRTLS] LB ALIGN TEST-OVERRIDE T0=" + _st.lbTestOverride.T0.toFixed(2) +
+                  " | obs a0rot=" + _st.lbCapture6.a0rot.toFixed(6) + " v0rot=" + _st.lbCapture6.v0rot.toFixed(6) + " dsrot=" + _st.lbCapture6.dsrot.toFixed(6) +
+                  " a0lin=" + _st.lbCapture6.a0lin.toFixed(4) + " v0lin=" + _st.lbCapture6.v0lin.toFixed(4) + " dslin=" + _st.lbCapture6.dslin.toFixed(3));
+              } else {
+                _st.lbTestOverride = null;
+                _st.lbAlignT0 = (Number.isFinite(cfg.LANDING_BURN_T0_S) ? cfg.LANDING_BURN_T0_S : 6.0);
+              }
               console.log("[standardRTLS] LB ALIGN armed t=" + simT.toFixed(2) +
                 " T0=" + _st.lbAlignT0.toFixed(2) + "s (cfg) branch=1" +
                 " rotRange(b0)=[" + (rngRot_ ? rngRot_[0].toFixed(2) + "," + rngRot_[1].toFixed(2) : "null") + "]s" +
@@ -5310,8 +5327,8 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
             const linV0 = vTangGround;
             const linDs = -xFromPadM;
 
-const solRot = _lbSolve(rotA0, rotV0, rotDs, Math.max(0.1, T0_remaining), 1);
-            const solLin = _lbSolve(axEarthObs, linV0, linDs, Math.max(0.1, T0_remaining), 1);
+const solRot = _lbSolve(_st.lbTestOverride ? _st.lbTestOverride.a0rot : rotA0, _st.lbTestOverride ? _st.lbTestOverride.v0rot : rotV0, _st.lbTestOverride ? _st.lbTestOverride.dsrot : rotDs, Math.max(0.1, T0_remaining), 1);
+            const solLin = _lbSolve(_st.lbTestOverride ? _st.lbTestOverride.a0lin : axEarthObs, _st.lbTestOverride ? _st.lbTestOverride.v0lin : linV0, _st.lbTestOverride ? _st.lbTestOverride.dslin : linDs, Math.max(0.1, T0_remaining), 1);
             if (!solRot || !solLin) {
               if (DEBUG_RTLS) console.warn("[standardRTLS] LB ALIGN solve null T0rem=" +
                 T0_remaining.toFixed(2) + " rot=" + !!solRot + " lin=" + !!solLin);
@@ -5373,13 +5390,14 @@ const solRot = _lbSolve(rotA0, rotV0, rotDs, Math.max(0.1, T0_remaining), 1);
               FyBody = (comY_pred * thrustIx_req - _c_pred * reqTorque) / _det;
             }
             if (!Number.isFinite(FxBody) || !Number.isFinite(FyBody)) { FxBody = 0; FyBody = 0; }
-            // SAFETY (A): backward thrust demand is physical (thrust cannot push tail-first).
-            // Fy_body < 0 → zero thrust this tick; trajectory loses one tick, retries next.
+            // SAFETY (A-soft): backward thrust demand is physical. Clamp Fy_body to small positive
+            // instead of zeroing throttle (avoids trajectory stall).
             if (FyBody < 0) {
-              if (DEBUG_RTLS && Math.round(simT * 80) % 40 === 0) {
-                console.warn("[standardRTLS] LB ALIGN Fy_body<0 (=" + FyBody.toFixed(0) + "N) — throttle OFF this tick");
+              if (DEBUG_RTLS && Math.round(simT * 80) % 80 === 0) {
+                console.warn("[standardRTLS] LB ALIGN Fy_body<0 (=" + FyBody.toFixed(0) + "N) — clamped 1% Fmax forward");
               }
-              FxBody = 0; FyBody = 0;
+              FyBody = Math.max(1, M_pred * 0.01);
+              if (Math.abs(FxBody) < 1) FxBody = 0;
             }
 
             const Fmag = Math.hypot(FxBody, FyBody);
@@ -5594,6 +5612,8 @@ const solRot = _lbSolve(rotA0, rotV0, rotDs, Math.max(0.1, T0_remaining), 1);
           _st.lbBurnCut = false;
           _st.lbAlignStartT = null;
           _st.lbAlignT0 = null;
+          _st.lbTestOverride = null;
+          _st.lbCapture6 = null;
           _st.lbaInit = false;
           _st.lbaAlignStartT = null;
           _st.lbaFinCmd = null;
@@ -5694,6 +5714,12 @@ const solRot = _lbSolve(rotA0, rotV0, rotDs, Math.max(0.1, T0_remaining), 1);
             pesEdotMeasMps: _st.pesEdotMeasMps,
             pesRcsTorque: _st.pesRcsTorque,
             pesFinCtrlActDeg: _st.pesFinCtrlActDeg,
+            lbSpooled: !!_st.lbSpooled,
+            lbAlignStartT: _st.lbAlignStartT,
+            lbAlignT0: _st.lbAlignT0,
+            lbAlignDeltaMax: _st.lbAlignDeltaMax,
+            lbCapture6: _st.lbCapture6 ? JSON.parse(JSON.stringify(_st.lbCapture6)) : null,
+            lbTestOverride: _st.lbTestOverride ? JSON.parse(JSON.stringify(_st.lbTestOverride)) : null,
             rcsTorque: _st.lastRcsTorque,
           };
         },
