@@ -3149,7 +3149,8 @@ setState(s) {
       // POST_ENTRY_STEER
       LANDING_BURN_ALIGN_ALT_KM: 5,        // AGL km: PES stops steering, fin ramps 0, coast to aero equilibrium
       LANDING_BURN_ALT_KM: 2,              // AGL km: PES->LANDING_BURN phase transition (landing-burn ignition)
-      LANDING_BURN_ENGINES: "C",           // engines fired at 100% during LB spool (C = centre; add numbers for outer-ring) 
+      LANDING_BURN_ENGINES: "C",
+      LANDING_BURN_T0_S: 6.0,              // solver burn time (branch 1). Tune to avoid gimbal saturation.           // engines fired at 100% during LB spool (C = centre; add numbers for outer-ring) 
       POST_ENTRY_GRIDFIN_RAMP_DEG_S: 3,    // grid-fin control target ramps 0 -> max at this rate (deg/s); slower = less oscillation (guess, tune in sim)
     },
     importantFields: [],
@@ -5229,9 +5230,9 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
                 break;
               }
               // EXPERIMENT: branch=1 + hardcoded T0=6s
-              _st.lbAlignT0 = 6.0;
+              _st.lbAlignT0 = (Number.isFinite(cfg.LANDING_BURN_T0_S) ? cfg.LANDING_BURN_T0_S : 6.0);
               console.log("[standardRTLS] LB ALIGN armed t=" + simT.toFixed(2) +
-                " T0=6.00s (HARDCODE) branch=1" +
+                " T0=" + _st.lbAlignT0.toFixed(2) + "s (cfg) branch=1" +
                 " rotRange(b0)=[" + (rngRot_ ? rngRot_[0].toFixed(2) + "," + rngRot_[1].toFixed(2) : "null") + "]s" +
                 " linRange(b0)=[" + (rngLin_ ? rngLin_[0].toFixed(2) + "," + rngLin_[1].toFixed(2) : "null") + "]s" +
                 " | a0rot(obs)=" + rotA0_.toFixed(4) + " a0lin(obs)=" + axEarthObs_.toFixed(3) +
