@@ -3202,6 +3202,9 @@ setState(s) {
         flipAero: null, flipAeroT: 0, flipSpikeN: 0,
         flipAeroSl: null, flipAeroFutT: -1e9, flipQ0: null, flipQPend: [], flipQLogN: 0, flipQCmpN: 0,
         flipPeakOver: 0, flipMaxW: 0, flipBrakeSeen: false, flipBrakeT: null, flipPred: null, flipPredT: -1e9,
+        // ---- LANDING_BURN scratch (log-only for now) ----
+        lbInit: false, lbT0: null, lbDone: false, lbLastLog: 0,
+        lbThrCmd: null, lbGimbalCmd: 0, lbFinCmd: 0,
         // ---- BOOSTBACK scratch ----
         bbInit: false,
         bbStage: null,         // THREE | CENTER | SPOOL
@@ -4959,7 +4962,91 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
 
           // ==========================================================
           case "LANDING_BURN": {
-            // TODO: landing burn
+            const idx = _bodyIdx;
+            const body = snapshot.bodies[idx];
+            if (!body) break;
+            const env = Derivation.getEnv();
+            const dt = env && Number.isFinite(env.DT) ? env.DT : 1 / 80;
+            const R2D = 180 / Math.PI;
+            const M = d.massProps.M, I = d.massProps.I;
+            if (!(M > 0) || !(I > 0)) break;
+            const Rm = env.EARTH_RADIUS;
+            const omegaE = env.EARTH_OMEGA || 0;
+            const pad = (_missionCtx && _missionCtx.targetPad) || null;
+            const padEf = (pad && Number.isFinite(pad.angleEf)) ? pad.angleEf : (env.LAUNCH_SITE_ANGLE_0 || 0);
+
+            if (!_st.lbInit) {
+              _st.lbInit = true;
+              _st.lbT0 = simT;
+              _st.lbDone = false;
+              _st.lbLastLog = 0;
+              _st.lbThrCmd = null;
+              _st.lbGimbalCmd = 0;
+              _st.lbFinCmd = 0;
+              _send(Guidance.cmdSetAllThrottle(0));
+              _send(Guidance.cmdSetGimbalRate(0));
+              _send(Guidance.cmdRcsDuty(null, idx));
+              console.log("[standardRTLS] LANDING_BURN start t=" + simT.toFixed(2) +
+                " alt=" + (d.altitudeAGL / 1000).toFixed(2) + "km v=" +
+                Math.hypot(d.vx, d.vy).toFixed(0) + "m/s — LOG ONLY (burn logic TODO)");
+            }
+
+            // Local frame (up = radial, x = tangential/east)
+            const rNow = Math.hypot(d.rx, d.ry);
+            const uxN = rNow > 0 ? d.rx / rNow : 1;
+            const uyN = rNow > 0 ? d.ry / rNow : 0;
+            const localVert = Math.atan2(-d.rx, d.ry);
+            const thetaLocalDeg = _wrapPi(d.theta - localVert) * R2D;
+            const vRadial = d.vx * uxN + d.vy * uyN;
+            const vTang = d.vx * uyN - d.vy * uxN;
+            const hAGL = d.altitudeAGL;
+            const phiNow = Math.atan2(d.rx, d.ry) - omegaE * simT;
+            const xFromPadM = _wrapPi(phiNow - padEf) * Rm;
+
+            const cosT = Math.cos(d.theta), sinT = Math.sin(d.theta);
+            const thrIx = d.thrustBodyX * cosT - d.thrustBodyY * sinT;
+            const thrIy = d.thrustBodyX * sinT + d.thrustBodyY * cosT;
+            const Fx_in = thrIx + d.dragVecX + (d.gridFinFx || 0);
+            const Fy_in = thrIy + d.dragVecY + (d.gridFinFy || 0);
+            const axIn = d.gVecX + Fx_in / M;
+            const ayIn = d.gVecY + Fy_in / M;
+            const axTang = axIn * uyN - ayIn * uxN;
+            const ayRad = axIn * uxN + ayIn * uyN;
+
+            const thrustCur = d.thrustTotal || 0;
+            const gimbals = (body.engines || []).filter(e => e.gimbal);
+            const gimbalCur = gimbals.length ? (gimbals[0].gimbalDeg || 0) : 0;
+            const finCur = (d.gridFinControlUsed != null) ? d.gridFinControlUsed : 0;
+            const alphaAngDegS2 = (d.alphaAng || 0) * R2D;
+
+            const imp = _bbImpact(d.rx, d.ry, d.vx, d.vy, simT, env.GM_EARTH, Rm, omegaE);
+            const vacErrKm = imp ? (_wrapPi(imp.phiEf - padEf) * Rm / 1000) : null;
+            const tImpact = imp ? imp.tImpact : null;
+
+            if (simT - _st.lbLastLog >= 0.5) {
+              _st.lbLastLog = simT;
+              console.log("[LANDING_BURN] t=" + simT.toFixed(2) +
+                " | theta=" + thetaLocalDeg.toFixed(2) + "deg w=" + (d.omega * R2D).toFixed(3) + "deg/s aAng=" + alphaAngDegS2.toFixed(3) + "deg/s2" +
+                " | x=" + (xFromPadM / 1000).toFixed(3) + "km vx=" + vTang.toFixed(2) + "m/s ax=" + axTang.toFixed(3) + "m/s2" +
+                " | h=" + (hAGL / 1000).toFixed(3) + "km vy=" + vRadial.toFixed(2) + "m/s ay=" + ayRad.toFixed(3) + "m/s2" +
+                " | thr=" + Math.round(thrustCur) + "N cmd=" + (Number.isFinite(_st.lbThrCmd) ? Math.round(_st.lbThrCmd) : "n/a") +
+                " gim=" + gimbalCur.toFixed(2) + " cmd=" + _st.lbGimbalCmd.toFixed(2) +
+                " fin=" + finCur.toFixed(1) + " cmd=" + _st.lbFinCmd.toFixed(1) +
+                " | vacErr=" + (vacErrKm != null ? vacErrKm.toFixed(3) + "km" : "n/a") +
+                " tImp=" + (tImpact != null ? tImpact.toFixed(1) + "s" : "n/a"));
+            }
+
+            if (!_st.lbDone && (d.altitudeAGL < 5 || body.landed || body.crashed)) {
+              _st.lbDone = true;
+              console.log("[LANDING_BURN-DONE] t=" + simT.toFixed(2) +
+                " groundErr=" + (xFromPadM / 1000).toFixed(3) + "km" +
+                " vRad=" + vRadial.toFixed(2) + "m/s vTang=" + vTang.toFixed(2) + "m/s" +
+                " theta=" + thetaLocalDeg.toFixed(2) + "deg w=" + (d.omega * R2D).toFixed(3) + "deg/s" +
+                " landed=" + (!!body.landed) + " crashed=" + (!!body.crashed) +
+                " vacErr=" + (vacErrKm != null ? vacErrKm.toFixed(3) + "km" : "n/a"));
+            }
+
+            // TODO: landing burn control logic (ignite, gimbal, legs, cutoff, touchdown)
             break;
           }
 
@@ -5075,6 +5162,13 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
           _st.pesAlignCmd = null;
           _st.pesGimbalZeroDone = false;
           _st.pesT0 = 0;
+          _st.lbInit = false;
+          _st.lbT0 = null;
+          _st.lbDone = false;
+          _st.lbLastLog = 0;
+          _st.lbThrCmd = null;
+          _st.lbGimbalCmd = 0;
+          _st.lbFinCmd = 0;
           _st.pfPrevTau = null;
           _st.lg = null;
           _st.vfPO = null;
