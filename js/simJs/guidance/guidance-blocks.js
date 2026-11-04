@@ -5035,7 +5035,7 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
               console.log("[LANDING_BURN] t=" + simT.toFixed(2) +
                 " | theta=" + thetaLocalDeg.toFixed(2) + "deg w=" + ((d.omega - omegaE) * R2D).toFixed(3) + "deg/s aAng=" + _alphaAngEL.toFixed(3) + "deg/s2" +
                 " | x=" + (_xEL / 1000).toFixed(3) + "km vx=" + vTangGround.toFixed(2) + "m/s ax=" + _axGndEL.toFixed(3) + "m/s2" +
-                " | h=" + (hAGL / 1000).toFixed(3) + "km vy=" + vRadial.toFixed(2) + "m/s ay=" + _ayGndEL.toFixed(3) + "m/s2" +
+                " | h=" + (d.altitudeAGL / 1000).toFixed(3) + "km vy=" + vRadial.toFixed(2) + "m/s ay=" + _ayGndEL.toFixed(3) + "m/s2" +
                 " | thr=" + Math.round(d.thrustTotal || 0) + "N cmd=" + (Number.isFinite(_st.lbThrCmd) ? Math.round(_st.lbThrCmd) : "n/a") +
                 " gim=" + _gimbalCurEL.toFixed(2) + " cmd=" + _st.lbGimbalCmd.toFixed(2) +
                 " fin=" + ((d.gridFinControlUsed != null) ? d.gridFinControlUsed : 0).toFixed(1) + " cmd=" + _st.lbFinCmd.toFixed(1) +
