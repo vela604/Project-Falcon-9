@@ -3208,7 +3208,7 @@ setState(s) {
         lbInit: false, lbT0: null, lbDone: false, lbLastLog: 0,
         lbThrCmd: null, lbGimbalCmd: 0, lbFinCmd: 0,
         lbSpooled: false, lbSpoolT: null, lbBurnCut: false,
-        lbAlignStartT: null, lbAlignT0: null,
+        lbAlignStartT: null, lbAlignT0: null, lbTraj: null,
         lbaInit: false, lbaAlignStartT: null, lbaFinCmd: null, lbaGimbalZeroDone: false,
         lbAlignDeltaMax: 0,
         // ---- BOOSTBACK scratch ----
@@ -5046,6 +5046,7 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
               _st.lbBurnCut = false;
               _st.lbAlignStartT = null;
               _st.lbAlignT0 = null;
+              _st.lbTraj = null;
               _send(Guidance.cmdSetAllThrottle(0));
               _send(Guidance.cmdSetGimbalRate(0));
               _send(Guidance.cmdRcsDuty(null, idx));
@@ -5310,16 +5311,26 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
             const linV0 = vTangGround;
             const linDs = -xFromPadM;
 
-            const solRot = _lbSolve(rotA0, rotV0, rotDs, Math.max(0.1, T0_remaining), 1);
-            const solLin = _lbSolve(axEarthObs, linV0, linDs, Math.max(0.1, T0_remaining), 1);
-            if (!solRot || !solLin) {
-              if (DEBUG_RTLS) console.warn("[standardRTLS] LB ALIGN solve null T0rem=" +
-                T0_remaining.toFixed(2) + " rot=" + !!solRot + " lin=" + !!solLin);
-              _bbThrottle(lbEng, 0);
-              break;
+// === TRAJECTORY DESIGN + TRACKING ===
+            // Old bug: re-solve every tick with tEval=dt → output α(dt) ≈ a0 (small);
+            // trajectory sine swing never executed; x settles short of 0.
+            // Fix: solve ONCE at spool complete, follow A·sin(f·τ+k1)+k2 with τ=elapsedAlign.
+            if (_st.lbTraj == null) {
+              const T0init = Math.max(0.5, _st.lbAlignT0);
+              const solRotInit = _lbSolve(rotA0, rotV0, rotDs, T0init, 1);
+              const solLinInit = _lbSolve(axEarthObs, linV0, linDs, T0init, 1);
+              if (!solRotInit || !solLinInit) {
+                if (DEBUG_RTLS) console.warn("[standardRTLS] LB TRAJ solve null T0init=" + T0init.toFixed(2) + " rot=" + !!solRotInit + " lin=" + !!solLinInit);
+                _bbThrottle(lbEng, 0); break;
+              }
+              _st.lbTraj = { rot: solRotInit, lin: solLinInit, T0: T0init };
+              console.log("[standardRTLS] LB TRAJ locked T0=" + T0init.toFixed(2) +
+                "s A_rot=" + solRotInit.A.toFixed(5) + "rad/s² P_rot=" + solRotInit.P.toFixed(2) +
+                "s A_lin=" + solLinInit.A.toFixed(4) + "m/s² P_lin=" + solLinInit.P.toFixed(2) + "s");
             }
-
-            const tEval = dt;
+            const solRot = _st.lbTraj.rot;
+            const solLin = _st.lbTraj.lin;
+            const tEval = elapsedAlign;
             const alphaTarget = solRot.A * Math.sin(solRot.f * tEval + solRot.k1) + solRot.k2;
             const axEarthTarget = solLin.A * Math.sin(solLin.f * tEval + solLin.k1) + solLin.k2;
 
@@ -5586,6 +5597,7 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
           _st.lbBurnCut = false;
           _st.lbAlignStartT = null;
           _st.lbAlignT0 = null;
+          _st.lbTraj = null;
           _st.lbaInit = false;
           _st.lbaAlignStartT = null;
           _st.lbaFinCmd = null;
