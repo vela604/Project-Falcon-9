@@ -3145,7 +3145,7 @@ setState(s) {
       ENTRY_BURN_ENGINES: "C,0,180",       // engines lit at FULL throttle: "C" = centre, numbers = outer-ring angleDeg
       ENTRY_BURN_GIMBAL_ENGINES: "C",      // engines that gimbal to cancel env torque (subset of above; expand if SATURATED)
       ENTRY_BURN_CUTOFF_VELOCITY_MS: 600,  // cutoff when Earth-relative speed falls to this value
-      ENTRY_BURN_IMPACT_TARGET_M: -652,   // m: bias burn target west so post-cutoff drag/fin drift lands near pad
+      ENTRY_BURN_IMPACT_TARGET_M: -750,   // m: bias burn target west so post-cutoff drag/fin drift lands near pad
       // POST_ENTRY_STEER
       LANDING_BURN_ALIGN_ALT_KM: 5,        // AGL km: PES stops steering, fin ramps 0, coast to aero equilibrium
       LANDING_BURN_ALT_KM: 2,              // AGL km: PES->LANDING_BURN phase transition (landing-burn ignition)
