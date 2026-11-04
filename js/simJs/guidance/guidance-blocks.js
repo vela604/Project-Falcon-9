@@ -5023,7 +5023,7 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
             const vacErrKm = imp ? (_wrapPi(imp.phiEf - padEf) * Rm / 1000) : null;
             const tImpact = imp ? imp.tImpact : null;
 
-            if (simT - _st.lbLastLog >= 0.5) {
+            if (!_st.lbDone && simT - _st.lbLastLog >= 0.5) {
               _st.lbLastLog = simT;
               console.log("[LANDING_BURN] t=" + simT.toFixed(2) +
                 " | theta=" + thetaLocalDeg.toFixed(2) + "deg w=" + (d.omega * R2D).toFixed(3) + "deg/s aAng=" + alphaAngDegS2.toFixed(3) + "deg/s2" +
