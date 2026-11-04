@@ -5015,6 +5015,51 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
                 " (vRad=" + vRadial.toFixed(1) + " vTangGround=" + vTangGround.toFixed(1) + ")" +
                 " — dual-solver ALIGN → TOUCHDOWN");
             }
+
+            // EARLY STATE LOG — fires every 0.5s regardless of SPOOL/ALIGN sub-phase.
+            if (!_st.lbDone && simT - _st.lbLastLog >= 0.5) {
+              _st.lbLastLog = simT;
+              const _alphaAngEL = ((d.alphaAng || 0) + ((d.gridFinTorque || 0) + (_st.lastRcsTorque || 0)) / I) * R2D;
+              const _impEL = _bbImpact(d.rx, d.ry, d.vx, d.vy, simT, env.GM_EARTH, Rm, omegaE);
+              const _vacErrEL = _impEL ? (_wrapPi(_impEL.phiEf - padEf) * Rm / 1000) : null;
+              const _tImpactEL = _impEL ? _impEL.tImpact : null;
+              const _gimbalsEL = (body.engines || []).filter(e => e.gimbal);
+              const _gimbalCurEL = _gimbalsEL.length ? (_gimbalsEL[0].gimbalDeg || 0) : 0;
+              const _aeroEL = _pesAeroAccel(d, M);
+              const _axInEL = d.gVecX + _aeroEL.ax;
+              const _ayInEL = d.gVecY + _aeroEL.ay;
+              const _axGndEL = (_axInEL * uyN - _ayInEL * uxN) - 2 * omegaE * vRadial;
+              const _ayGndEL = (_axInEL * uxN + _ayInEL * uyN) + omegaE * omegaE * rNow + 2 * omegaE * vTangGround;
+              const _phiEL = Math.atan2(d.rx, d.ry) - omegaE * simT;
+              const _xEL = _wrapPi(_phiEL - padEf) * Rm;
+              console.log("[LANDING_BURN] t=" + simT.toFixed(2) +
+                " | theta=" + thetaLocalDeg.toFixed(2) + "deg w=" + ((d.omega - omegaE) * R2D).toFixed(3) + "deg/s aAng=" + _alphaAngEL.toFixed(3) + "deg/s2" +
+                " | x=" + (_xEL / 1000).toFixed(3) + "km vx=" + vTangGround.toFixed(2) + "m/s ax=" + _axGndEL.toFixed(3) + "m/s2" +
+                " | h=" + (hAGL / 1000).toFixed(3) + "km vy=" + vRadial.toFixed(2) + "m/s ay=" + _ayGndEL.toFixed(3) + "m/s2" +
+                " | thr=" + Math.round(d.thrustTotal || 0) + "N cmd=" + (Number.isFinite(_st.lbThrCmd) ? Math.round(_st.lbThrCmd) : "n/a") +
+                " gim=" + _gimbalCurEL.toFixed(2) + " cmd=" + _st.lbGimbalCmd.toFixed(2) +
+                " fin=" + ((d.gridFinControlUsed != null) ? d.gridFinControlUsed : 0).toFixed(1) + " cmd=" + _st.lbFinCmd.toFixed(1) +
+                " | vacErr=" + (_vacErrEL != null ? _vacErrEL.toFixed(3) + "km" : "n/a") +
+                " tImp=" + (_tImpactEL != null ? _tImpactEL.toFixed(1) + "s" : "n/a"));
+            }
+
+            // EARLY DONE check — fires regardless of SPOOL/ALIGN sub-phase.
+            if (!_st.lbDone && (d.altitudeAGL < 5 || body.landed || body.crashed || (simT - _st.lbT0) > 60)) {
+              _st.lbDone = true;
+              const _impDONE = _bbImpact(d.rx, d.ry, d.vx, d.vy, simT, env.GM_EARTH, Rm, omegaE);
+              const _vacErrDONE = _impDONE ? (_wrapPi(_impDONE.phiEf - padEf) * Rm / 1000) : null;
+              const _phiDONE = Math.atan2(d.rx, d.ry) - omegaE * simT;
+              const _xErrDONE = _wrapPi(_phiDONE - padEf) * Rm;
+              const _lbElapsed = simT - _st.lbT0;
+              const _lbReason = _lbElapsed > 60 ? "timeout" : (body.crashed ? "crashed" : (body.landed ? "landed" : "impact"));
+              console.log("[LANDING_BURN-DONE] t=" + simT.toFixed(2) +
+                " elapsed=" + _lbElapsed.toFixed(2) + "s reason=" + _lbReason +
+                " groundErr=" + (_xErrDONE / 1000).toFixed(3) + "km" +
+                " vRad=" + vRadial.toFixed(2) + "m/s vTangGround=" + vTangGround.toFixed(2) + "m/s" +
+                " theta=" + thetaLocalDeg.toFixed(2) + "deg w=" + ((d.omega - omegaE) * R2D).toFixed(3) + "deg/s" +
+                " landed=" + (!!body.landed) + " crashed=" + (!!body.crashed) +
+                " vacErr=" + (_vacErrDONE != null ? _vacErrDONE.toFixed(3) + "km" : "n/a"));
+            }
             const hAGL = d.altitudeAGL;
             const phiNow = Math.atan2(d.rx, d.ry) - omegaE * simT;
             const xFromPadM = _wrapPi(phiNow - padEf) * Rm;
@@ -5061,7 +5106,7 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
                 _send(Guidance.cmdSetGimbalRate(Math.max(-maxR, Math.min(maxR, rateZero)), "center"));
               }
               _bbThrottle(lbEng, Infinity);
-              _st.lbThrCmd = lbEng.reduce((a, e) => a + (e.maxMassFlowRate || 0), 0);
+              _st.lbThrCmd = lbEng.length ? (lbEng[0].maxMassFlowRate || 0) : 0;
               let allFull = true;
               for (const e of lbEng) {
                 const mx = e.maxMassFlowRate || 0;
