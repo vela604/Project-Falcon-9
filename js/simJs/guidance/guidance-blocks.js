@@ -5152,7 +5152,7 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
               const axInertialObs_ = d.gVecX + (d.dragVecX + (d.gridFinFx || 0)) / M +
                                     ((d.thrustBodyX * Math.cos(d.theta) - d.thrustBodyY * Math.sin(d.theta)) / M);
               const axEarthObs_ = axInertialObs_ - 2 * omegaE * vRadial;
-              const rngRot_ = _lbRange(rotA0_, d.omega, -thetaLocalRad);
+              const rngRot_ = _lbRange(rotA0_, d.omega, -thetaLocalDeg / R2D);
               const rngLin_ = _lbRange(axEarthObs_, vTangGround, -xFromPadM);
               if (!rngRot_ || !rngLin_) {
                 console.warn("[standardRTLS] LB ALIGN: no valid T0 range. rot=" +
@@ -5193,7 +5193,7 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
             // ---- Solve at current state, evaluate at t = dt (1-tick look-ahead) ----
             const rotA0 = (d.alphaAng || 0) + (d.gridFinTorque || 0) / I;
             const rotV0 = d.omega;
-            const rotDs = -thetaLocalRad;
+            const rotDs = -thetaLocalDeg / R2D;
             const axInertialObs = d.gVecX + (d.dragVecX + (d.gridFinFx || 0)) / M +
                                   ((d.thrustBodyX * Math.cos(d.theta) - d.thrustBodyY * Math.sin(d.theta)) / M);
             const axEarthObs = axInertialObs - 2 * omegaE * vRadial;
