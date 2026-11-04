@@ -5148,8 +5148,9 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
 
             // ---- Lock T0 once at first ALIGN tick ----
             if (_st.lbAlignT0 == null) {
+              const aeroAccArm = _pesAeroAccel(d, M);
               const rotA0_ = (d.alphaAng || 0) + (d.gridFinTorque || 0) / I;
-              const axInertialObs_ = d.gVecX + (d.dragVecX + (d.gridFinFx || 0)) / M +
+              const axInertialObs_ = d.gVecX + aeroAccArm.ax +
                                     ((d.thrustBodyX * Math.cos(d.theta) - d.thrustBodyY * Math.sin(d.theta)) / M);
               const axEarthObs_ = axInertialObs_ - 2 * omegaE * vRadial;
               const rngRot_ = _lbRange(rotA0_, d.omega, -thetaLocalDeg / R2D);
@@ -5191,10 +5192,11 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
             }
 
             // ---- Solve at current state, evaluate at t = dt (1-tick look-ahead) ----
+            const aeroAcc = _pesAeroAccel(d, M);
             const rotA0 = (d.alphaAng || 0) + (d.gridFinTorque || 0) / I;
             const rotV0 = d.omega;
             const rotDs = -thetaLocalDeg / R2D;
-            const axInertialObs = d.gVecX + (d.dragVecX + (d.gridFinFx || 0)) / M +
+            const axInertialObs = d.gVecX + aeroAcc.ax +
                                   ((d.thrustBodyX * Math.cos(d.theta) - d.thrustBodyY * Math.sin(d.theta)) / M);
             const axEarthObs = axInertialObs - 2 * omegaE * vRadial;
             const linV0 = vTangGround;
@@ -5214,15 +5216,14 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
             const axEarthTarget = solLin.A * Math.sin(solLin.f * tEval + solLin.k1) + solLin.k2;
 
             // Torque → Fx_body (body-frame X component)
-            const envTorque = (d.torqueDrag || 0) + (d.torqueGravityGradient || 0);
+            const envTorque = (d.torqueDrag || 0) + (d.gridFinTorque || 0) + (d.torqueGravityGradient || 0);
             const comY = d.massProps.comY;
             if (!(comY > 0)) break;
             const FxBody = (I * alphaTarget - envTorque) / comY;
 
-            // Linear X → Fx_world (inertial x-force target)
-            const envFxInertial = (d.dragVecX || 0) + (d.gridFinFx || 0);
+            // Linear X → Fx_world (inertial x-force target thrust must supply)
             const axInertialTarget = axEarthTarget + 2 * omegaE * vRadial;
-            const FxWorldNeeded = M * axInertialTarget - envFxInertial;
+            const FxWorldNeeded = M * (axInertialTarget - aeroAcc.ax - d.gVecX);
 
             // Fx_world = Fx_body·cosθ − Fy_body·sinθ  → solve Fy_body (free)
             const sinTh = Math.sin(d.theta);
@@ -5275,6 +5276,7 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
                 " | aTar=" + (alphaTarget * R2D).toFixed(3) + " axTar=" + axEarthTarget.toFixed(3) +
                 " FxBody=" + FxBody.toFixed(0) + " FxW=" + FxWorldNeeded.toFixed(0) +
                 " FyB=" + FyBody.toFixed(0) + " F=" + Math.round(Fmag) + "N" +
+                " aX=" + aeroAcc.ax.toFixed(3) + " gX=" + d.gVecX.toFixed(3) +
                 " δ=" + gimbalCmdDeg.toFixed(2) + "deg" +
                 (gimbalSat ? " [SAT-GIM]" : "") + (thrSat ? " [SAT-THR]" : ""));
             }
