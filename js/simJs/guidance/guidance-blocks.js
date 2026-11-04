@@ -4612,6 +4612,12 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
             }
 
             // Sub-phase transition: STEER → ALIGN at LANDING_BURN_ALIGN_ALT_KM
+            const padDbg = (_missionCtx && _missionCtx.targetPad) || null;
+            const padEfDbg = (padDbg && Number.isFinite(padDbg.angleEf)) ? padDbg.angleEf : (env.LAUNCH_SITE_ANGLE_0 || 0);
+            const phiNowDbg = Math.atan2(d.rx, d.ry) - (env.EARTH_OMEGA || 0) * simT;
+            const gErrDbgKm = _wrapPi(phiNowDbg - padEfDbg) * env.EARTH_RADIUS / 1000;
+            const impDbg = _bbImpact(d.rx, d.ry, d.vx, d.vy, simT, env.GM_EARTH, env.EARTH_RADIUS, env.EARTH_OMEGA);
+            const vacErrDbgKm = impDbg ? (_wrapPi(impDbg.phiEf - padEfDbg) * env.EARTH_RADIUS / 1000) : null;
             const lbAlignAltKm = Number.isFinite(cfg.LANDING_BURN_ALIGN_ALT_KM) ? cfg.LANDING_BURN_ALIGN_ALT_KM : 5;
             const lbBurnAltKm = Number.isFinite(cfg.LANDING_BURN_ALT_KM) ? cfg.LANDING_BURN_ALT_KM : 2;
             if (_st.pesSub === 'STEER' && altKm <= lbAlignAltKm) {
@@ -4619,7 +4625,9 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
               _st.pesAlignCmd = (d.gridFinControlUsed != null) ? d.gridFinControlUsed : (_st.pesCmdC || 0);
               console.log("[standardRTLS] POST_ENTRY_STEER → ALIGN t=" + simT.toFixed(2) +
                 " alt=" + altKm.toFixed(2) + "km finCmd=" + _st.pesAlignCmd.toFixed(1) +
-                " alpha=" + (Number.isFinite(d.alphaDeg) ? d.alphaDeg.toFixed(2) : "n/a") + "deg");
+                " alpha=" + (Number.isFinite(d.alphaDeg) ? d.alphaDeg.toFixed(2) : "n/a") + "deg" +
+                " vacErr=" + (vacErrDbgKm != null ? vacErrDbgKm.toFixed(3) + "km" : "n/a") +
+                " groundErr=" + gErrDbgKm.toFixed(3) + "km");
             }
 
             // ALIGN sub-phase: ramp fin toward 0, no attitude control, coast to aero equilibrium
@@ -4630,7 +4638,9 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
                 _send(Guidance.cmdSetGimbalRate(0));
                 console.log("[standardRTLS] POST_ENTRY_ALIGN → LANDING_BURN trigger t=" + simT.toFixed(2) +
                   " alt=" + altKm.toFixed(2) + "km alpha=" + (Number.isFinite(d.alphaDeg) ? d.alphaDeg.toFixed(2) : "n/a") +
-                  "deg w=" + (d.omega * R2D).toFixed(3) + "deg/s");
+                  "deg w=" + (d.omega * R2D).toFixed(3) + "deg/s" +
+                  " vacErr=" + (vacErrDbgKm != null ? vacErrDbgKm.toFixed(3) + "km" : "n/a") +
+                  " groundErr=" + gErrDbgKm.toFixed(3) + "km");
                 finished = true;
                 break;
               }
