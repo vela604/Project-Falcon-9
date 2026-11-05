@@ -388,7 +388,7 @@ $('s3capBtn').addEventListener('click', function(){
         restoreSnap(S.ebSnap, g);
         // Run to spool complete
         let spoolSnap=null, c6=null;
-        for(let i=0;i<90*80;i++){
+        for(let i=0;i<200*80;i++){
           if(state.halted||state.crashed)break;
           TunerEngine.tick(CONFIG.DT);
           const gs=Guidance.getGuideStatus();
