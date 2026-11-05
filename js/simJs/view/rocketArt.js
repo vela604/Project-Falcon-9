@@ -1612,7 +1612,7 @@ function _getPuffSprite() {
 // ============================================================================
 const _gasPools = {};  // { memberIdx: { particles: [], stepBin: -1, drawBin: -1 } }
 let _gasActiveGen = -1;
-const _GAS_PARTICLE_CAP = 128;
+const _GAS_PARTICLE_CAP = 64;
 
 function _gasPoolFor(idx) {
   let p = _gasPools[idx];
@@ -2970,7 +2970,7 @@ function drawGasPuff(cx, cy, dir, seed, duty, modeOpts) {
     // visibly travel away from the nozzle. Slightly slower at low duty
     // (weaker puff reads as gentler venting).
     const dutySpeedScale = 0.75 + 0.25 * d;
-    const speed = plumeLen * (2.5 + 0.8 * Math.random()) * dutySpeedScale;
+    const speed = plumeLen * (4.0 + 0.8 * Math.random()) * dutySpeedScale;
     // Perpendicular spread — small cone, not a laser beam.
     const spread = (Math.random() - 0.5) * 0.10;
     pool.particles.push({
@@ -2981,9 +2981,9 @@ function drawGasPuff(cx, cy, dir, seed, duty, modeOpts) {
       age: 0,
       // Lifetime slightly shorter at low duty — the cloud dissipates
       // faster when the emission is weak.
-      life: (0.60 + 0.40 * Math.random()) * (0.75 + 0.25 * d),
-      r0: W * (0.030 + 0.015 * Math.random()),
-      growRate: W * (0.30 + 0.35 * Math.random()),
+      life: (0.30 + 0.25 * Math.random()) * (0.75 + 0.25 * d),
+      r0: W * (0.040 + 0.020 * Math.random()),
+      growRate: W * (0.40 + 0.40 * Math.random()),
     });
   }
 
@@ -3001,7 +3001,7 @@ function drawGasPuff(cx, cy, dir, seed, duty, modeOpts) {
     const f = p.age / p.life;
     const r = p.r0 + p.growRate * p.age;
     // Ease-out fade — bright at birth, gone at end of life.
-    const alpha = Math.pow(1 - f, 1.5) * 0.85;
+    const alpha = (1 - f) * (1 - f) * 0.85;
     ctx.globalAlpha = alpha;
     ctx.drawImage(sprite, p.x - r, p.y - r, r * 2, r * 2);
   }
