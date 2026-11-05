@@ -14,11 +14,8 @@ pre{white-space:pre-wrap;font-size:10.5px;background:#0f1420;padding:6px;border:
 .dim{color:#7d889f}.bad{color:#ff6b6b}.ok{color:#6bff88}.warn{color:#ffcc44}
 .section{margin-top:12px;border-top:1px solid #1f2940;padding-top:10px}
 .chart{background:#0f1420;border:1px solid #1f2940;border-radius:6px;padding:6px;height:180px;position:relative}
-.chart.tall{height:220px}
 .charts{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}
 @media(max-width:900px){.charts{grid-template-columns:1fr}}
-.charts3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:8px}
-@media(max-width:900px){.charts3{grid-template-columns:1fr}}
 table{border-collapse:collapse;width:100%;font-size:10px;margin-top:6px}
 th,td{padding:3px 5px;border-bottom:1px solid #1f2940;text-align:right;font-family:monospace}
 th{color:#94a3b8;font-weight:600;font-size:9px;text-transform:uppercase;position:sticky;top:0;background:#0b0e14}
@@ -31,43 +28,40 @@ td.l{text-align:left}
 .legend{font-size:10px;color:#94a3b8;margin:4px 0}
 .legend span{display:inline-block;margin-right:10px}
 .legend i{display:inline-block;width:12px;height:2px;margin-right:3px;vertical-align:middle}
+.tag{display:inline-block;background:#1e293b;padding:1px 4px;border-radius:2px;font-size:9px;color:#94a3b8}
 </style></head><body>
 <h2>Landback Align Lab · Full Analysis</h2>
 <div>
   <label>stack <select id="stackSel"></select></label>
-  <button id="initBtn">① Init + capture checkpoints</button>
+  <button id="initBtn">① Init + capture SA/EB/LBA</button>
   <span class="dim" id="initStatus"></span>
 </div>
 
 <div id="lab" style="display:none;margin-top:8px">
   <div class="section">
-    <h3>Run</h3>
+    <h3>Pre-run config</h3>
+    <label>bias ENTRY_BURN_IMPACT_TARGET_M <input type="number" id="bias" value="-760" step="10"></label>
+    <button id="rebuildBtn">↻ Rebuild LBA from EB with this bias</button>
+    <span class="dim" id="rebuildStatus"></span>
+    <div id="preCfgBox" style="margin-top:8px"></div>
+  </div>
+
+  <div class="section">
+    <h3>Run LB ALIGN</h3>
     <label>T0 mode <select id="t0mode"><option value="auto">auto (sister-pick)</option><option value="manual">manual</option></select></label>
     <label>T0 manual <input type="number" id="t0man" value="7.54" step="0.1"></label>
     <label>capS <input type="number" id="capS" value="60"></label>
-    <button id="runBtn">② Run</button>
+    <button id="runBtn">② Run LB</button>
     <span class="dim" id="runStatus"></span>
   </div>
 
   <div id="results" style="display:none">
+    <div class="section"><h3>Config summary</h3><div id="configBox"></div></div>
+    <div class="section"><h3>Summary stats</h3><div id="statsBox"></div></div>
+    <div class="section"><h3>Event log</h3><div id="eventsBox"></div></div>
     <div class="section">
-      <h3>Config summary</h3>
-      <div id="configBox"></div>
-    </div>
-
-    <div class="section">
-      <h3>Summary stats</h3>
-      <div id="statsBox"></div>
-    </div>
-
-    <div class="section">
-      <h3>Event log</h3>
-      <div id="eventsBox"></div>
-    </div>
-
-    <div class="section">
-      <h3>Attitude control (rotational)</h3>
-      <div class="legend"><span><i style="background:#6bff88"></i>θ_local</span><span><i style="background:#ffcc44"></i>tolerance ±1°</span><span><i style="background:#ff6b6b"></i>gimbal clamp ±8°</span></div>
+      <h3>Attitude (rotational)</h3>
+      <div class="legend"><span><i style="background:#6bff88"></i>θ_local</span><span><i style="background:#ffcc44"></i>tol ±1°</span><span><i style="background:#ff6b6b"></i>gimbal ±8°</span></div>
       <div class="charts">
         <div class="chart"><canvas id="chTheta"></canvas></div>
         <div class="chart"><canvas id="chOmega"></canvas></div>
@@ -75,9 +69,8 @@ td.l{text-align:left}
         <div class="chart"><canvas id="chGimbal"></canvas></div>
       </div>
     </div>
-
     <div class="section">
-      <h3>Lateral control (linear)</h3>
+      <h3>Lateral (linear)</h3>
       <div class="charts">
         <div class="chart"><canvas id="chX"></canvas></div>
         <div class="chart"><canvas id="chVx"></canvas></div>
@@ -85,17 +78,15 @@ td.l{text-align:left}
         <div class="chart"><canvas id="chFyBody"></canvas></div>
       </div>
     </div>
-
     <div class="section">
-      <h3>Thrust &amp; Vertical context</h3>
+      <h3>Thrust &amp; Vertical</h3>
       <div class="charts">
         <div class="chart"><canvas id="chThr"></canvas></div>
         <div class="chart"><canvas id="chH"></canvas></div>
       </div>
     </div>
-
     <div class="section">
-      <h3>Time-series table (0.1 s sample)</h3>
+      <h3>Time-series (0.1 s)</h3>
       <div id="tableBox" style="max-height:400px;overflow:auto;border:1px solid #1f2940;border-radius:6px"></div>
     </div>
   </div>
@@ -129,7 +120,7 @@ td.l{text-align:left}
 (function(){
 'use strict';
 const $ = (id) => document.getElementById(id);
-const S = { inited:false, saSnap:null, lbSnap:null, running:false, lastResult:null };
+const S = { inited:false, saSnap:null, ebSnap:null, lbSnap:null, running:false, lastResult:null };
 const guideName = 'landbackV1';
 let charts = [];
 
@@ -174,10 +165,10 @@ function alphaTargetAt(t, a0, q, k, L){
   return a0*(1-Math.pow(t/L,q)) - k*Math.sin(Math.PI*t/L);
 }
 
-// Stacks
 const stacks = (typeof loadStacks==='function'?loadStacks():[]).filter(s=>s&&s.sequence==='standard'&&s.locked);
 $('stackSel').innerHTML = stacks.length ? stacks.map(s=>'<option value="'+s.id.replace(/[&<>"']/g,'')+'">'+s.name.replace(/[&<>"']/g,'')+'</option>').join('') : '<option value="">(no stacks)</option>';
 
+// INIT: SA → EB → LBA, capture all three
 $('initBtn').addEventListener('click', function(){
   if(S.running)return;
   S.running=true; $('initBtn').disabled=true;
@@ -189,24 +180,57 @@ $('initBtn').addEventListener('click', function(){
       if(!id)throw new Error('pick stack');
       setSelectedStackId(id);
       TunerEngine.init();
-      TunerEngine.prepareRun(guideName, buildValues(), (typeof TunerConfig!=='undefined'?TunerConfig.env:undefined));
+      const vals = buildValues();
+      vals.rtls = vals.rtls || {};
+      vals.rtls.ENTRY_BURN_IMPACT_TARGET_M = parseFloat($('bias').value);
+      TunerEngine.prepareRun(guideName, vals, (typeof TunerConfig!=='undefined'?TunerConfig.env:undefined));
+
       $('initStatus').textContent='running SA…';
-      let saSnap=null;
+      let saSnap=null, ebSnap=null, lbSnap=null;
       for(let i=0;i<300*80;i++){if(state.halted)break;TunerEngine.tick(CONFIG.DT);const gs=Guidance.getGuideStatus();if(gs&&gs.phase==='SEPARATED_AXIAL'){saSnap=captureSnap();break;}}
       if(!saSnap)throw new Error('SA not reached');
-      $('initStatus').textContent='running to LBA…';
       restoreSnap(saSnap);
-      let lbSnap=null;
-      for(let i=0;i<900*80;i++){if(state.halted)break;TunerEngine.tick(CONFIG.DT);const gs=Guidance.getGuideStatus();if(gs&&gs.rtlsPhase==='LANDING_BURN_ALIGN'){lbSnap=captureSnap();break;}}
+      $('initStatus').textContent='running to EB…';
+      for(let i=0;i<800*80;i++){if(state.halted)break;TunerEngine.tick(CONFIG.DT);const gs=Guidance.getGuideStatus();if(gs&&gs.rtlsPhase==='ENTRY_BURN'){ebSnap=captureSnap();break;}}
+      if(!ebSnap)throw new Error('EB not reached');
+      $('initStatus').textContent='running to LBA…';
+      for(let i=0;i<400*80;i++){if(state.halted)break;TunerEngine.tick(CONFIG.DT);const gs=Guidance.getGuideStatus();if(gs&&gs.rtlsPhase==='LANDING_BURN_ALIGN'){lbSnap=captureSnap();break;}}
       if(!lbSnap)throw new Error('LBA not reached');
-      S.saSnap=saSnap; S.lbSnap=lbSnap; S.inited=true;
-      $('initStatus').innerHTML='<span class="ok">ready</span> · LBA at t='+lbSnap.simTime.toFixed(2)+'s';
+
+      S.saSnap=saSnap; S.ebSnap=ebSnap; S.lbSnap=lbSnap; S.inited=true;
+      $('initStatus').innerHTML='<span class="ok">ready</span> · SA t='+saSnap.simTime.toFixed(1)+' · EB t='+ebSnap.simTime.toFixed(1)+' · LBA t='+lbSnap.simTime.toFixed(1);
       $('lab').style.display='block';
+      $('rebuildBtn').disabled=false; $('runBtn').disabled=false;
     }catch(e){$('initStatus').innerHTML='<span class="bad">ERROR: '+e.message+'</span>';console.error(e);}
     finally{console.log=_ol;$('initBtn').disabled=false;S.running=false;}
   },10);
 });
 
+// REBUILD: restore EB with new bias, run to LBA
+$('rebuildBtn').addEventListener('click', function(){
+  if(!S.inited||S.running)return;
+  S.running=true; $('rebuildBtn').disabled=true; $('runBtn').disabled=true;
+  $('rebuildStatus').textContent='rebuilding LBA with bias…';
+  setTimeout(function(){
+    const _ol=console.log; console.log=function(){};
+    try{
+      const bias=parseFloat($('bias').value);
+      const g=deepClone(S.ebSnap.guidanceState);
+      if(g.guideConfigs&&g.guideConfigs.landbackV1&&g.guideConfigs.landbackV1.rtls) g.guideConfigs.landbackV1.rtls.ENTRY_BURN_IMPACT_TARGET_M=bias;
+      if(g.lbRtlsBlock&&g.lbRtlsBlock.constants) g.lbRtlsBlock.constants.ENTRY_BURN_IMPACT_TARGET_M=bias;
+      restoreSnap(S.ebSnap, g);
+      let lbSnap=null;
+      for(let i=0;i<400*80;i++){if(state.halted)break;TunerEngine.tick(CONFIG.DT);const gs=Guidance.getGuideStatus();if(gs&&gs.rtlsPhase==='LANDING_BURN_ALIGN'){lbSnap=captureSnap();break;}}
+      if(!lbSnap)throw new Error('LBA not reached (crashed?)');
+      S.lbSnap=lbSnap;
+      $('rebuildStatus').innerHTML='<span class="ok">LBA re-captured</span> bias='+bias+' · t='+lbSnap.simTime.toFixed(2);
+      $('runBtn').disabled=false;
+    }catch(e){$('rebuildStatus').innerHTML='<span class="bad">ERROR: '+e.message+'</span>';console.error(e);}
+    finally{console.log=_ol;$('rebuildBtn').disabled=false;S.running=false;}
+  },10);
+});
+
+// RUN LB
 $('runBtn').addEventListener('click', function(){
   if(!S.inited||S.running)return;
   S.running=true; $('runBtn').disabled=true;
@@ -214,9 +238,7 @@ $('runBtn').addEventListener('click', function(){
   setTimeout(function(){
     const _ol=console.log; console.log=function(){};
     try{
-      const mode=$('t0mode').value;
-      const t0man=parseFloat($('t0man').value);
-      const capS=parseFloat($('capS').value);
+      const mode=$('t0mode').value, t0man=parseFloat($('t0man').value), capS=parseFloat($('capS').value);
       const g=deepClone(S.lbSnap.guidanceState);
       if(mode==='manual'){
         if(g.guideConfigs&&g.guideConfigs.landbackV1&&g.guideConfigs.landbackV1.rtls){
@@ -234,15 +256,15 @@ $('runBtn').addEventListener('click', function(){
       restoreSnap(S.lbSnap, g);
 
       const startT=state.simTime;
-      const samples=[];
-      const events=[];
+      const samples=[], events=[];
       let alignStartT=null, trajPow=null, spooled=false;
+      let capture6=null, sisterRanges=null, sisterPick=null;
       let prevVx=null, prevOmega=null, prevT=null;
       let wasSatGim=false, wasFyNeg=false, wasSatThr=false;
       let peakGimbal=0, satGimCount=0, satThrCount=0, fyNegCount=0;
       let lastPhase=null, endedReason='cap';
 
-      const every=8; // 0.1s at 80Hz
+      const every=8;
       for(let i=0;i<capS*80;i++){
         if(state.crashed||state.halted){endedReason='crashed';break;}
         TunerEngine.tick(CONFIG.DT);
@@ -269,35 +291,35 @@ $('runBtn').addEventListener('click', function(){
 
         if(gs.rtlsLbAlignStartT!=null && alignStartT==null) alignStartT=gs.rtlsLbAlignStartT;
         if(gs.rtlsLbTrajPow && !trajPow) trajPow=gs.rtlsLbTrajPow;
+        if(gs.rtlsLbCapture6 && !capture6) capture6=gs.rtlsLbCapture6;
+        if(gs.rtlsLbSisterRanges && !sisterRanges) sisterRanges=gs.rtlsLbSisterRanges;
+        if(gs.rtlsLbSisterPick!=null && sisterPick==null) sisterPick=gs.rtlsLbSisterPick;
         if(gs.rtlsLbSpooled && !spooled) spooled=true;
 
         if(gs.rtlsPhase!==lastPhase){ events.push({t:simT, kind:'phase', msg:'→ '+gs.rtlsPhase}); lastPhase=gs.rtlsPhase; }
 
-        // saturation tracking
         const gimbAbs=Math.abs(gimbAct);
         const satGimNow=(gimbAbs>=7.95);
-        if(satGimNow&&!wasSatGim) events.push({t:simT, kind:'sat-gim', msg:'gimbal CLAMP onset ('+gimbAct.toFixed(2)+'°)'});
+        if(satGimNow&&!wasSatGim) events.push({t:simT, kind:'sat-gim', msg:'gimbal CLAMP ('+gimbAct.toFixed(2)+'°)'});
         if(satGimNow) satGimCount++; wasSatGim=satGimNow;
         if(gimbAbs>peakGimbal) peakGimbal=gimbAbs;
 
         const fyRaw=gs.rtlsLbLastFyBody;
         const fyNegNow=(Number.isFinite(fyRaw)&&fyRaw<0);
-        if(fyNegNow&&!wasFyNeg) events.push({t:simT, kind:'fy-neg', msg:'Fy_body<0 (raw '+Math.round(fyRaw)+'N)'});
+        if(fyNegNow&&!wasFyNeg) events.push({t:simT, kind:'fy-neg', msg:'Fy_body<0 raw '+Math.round(fyRaw)+'N'});
         if(fyNegNow) fyNegCount++; wasFyNeg=fyNegNow;
 
         const thrGap=Math.abs(thrCmd-thrAct);
         const satThrNow=(thrGap>100000);
-        if(satThrNow&&!wasSatThr) events.push({t:simT, kind:'sat-thr', msg:'thrust spool gap ('+Math.round(thrGap/1000)+'kN)'});
+        if(satThrNow&&!wasSatThr) events.push({t:simT, kind:'sat-thr', msg:'thrust spool gap '+Math.round(thrGap/1000)+'kN'});
         if(satThrNow) satThrCount++; wasSatThr=satThrNow;
 
         if(i%every===0){
-          // finite-diff alpha / ax
           let aAct=null, axAct=null;
           if(prevT!==null && simT-prevT>1e-9){
             aAct=(omegaRad-prevOmega)/(simT-prevT);
             axAct=(vtGround-prevVx)/(simT-prevT);
           }
-          // targets (only if traj locked and elapsed valid)
           let aTgt=null, axTgt=null, elapsed=null;
           if(trajPow && alignStartT!=null){
             elapsed=simT-alignStartT;
@@ -322,26 +344,15 @@ $('runBtn').addEventListener('click', function(){
           prevVx=vtGround; prevOmega=omegaRad; prevT=simT;
         }
 
-        if(gs.rtlsPhase==='TOUCHDOWN'){ events.push({t:simT, kind:'phase', msg:'→ TOUCHDOWN (aligned)'}); endedReason='aligned'; break; }
+        if(gs.rtlsPhase==='TOUCHDOWN'){ events.push({t:simT, kind:'phase', msg:'→ TOUCHDOWN'}); endedReason='aligned'; break; }
         if(simT-startT>capS){endedReason='cap';break;}
       }
 
-      // Final state
-      const bB=findBooster();
       const lastS=samples[samples.length-1]||{};
-      const result={
-        ok:true, mode, t0man,
-        endedReason,
-        alignStartT:alignStartT!=null?+alignStartT.toFixed(2):null,
-        trajPow,
-        peakGimbal:+peakGimbal.toFixed(2),
-        satGimCount, satThrCount, fyNegCount,
-        totalTicks: samples.length,
-        final: lastS,
-        samples, events,
-      };
-      S.lastResult=result;
-      renderResult(result);
+      S.lastResult={ok:true, mode, t0man, endedReason, alignStartT, trajPow, capture6, sisterRanges, sisterPick,
+        peakGimbal:+peakGimbal.toFixed(2), satGimCount, satThrCount, fyNegCount,
+        final:lastS, samples, events};
+      renderResult(S.lastResult);
       $('runStatus').innerHTML='<span class="ok">done</span> ('+endedReason+')';
     }catch(e){$('runStatus').innerHTML='<span class="bad">ERR: '+e.message+'</span>';console.error(e);}
     finally{console.log=_ol;$('runBtn').disabled=false;S.running=false;}
@@ -352,23 +363,36 @@ function renderResult(r){
   charts.forEach(c=>{try{c.destroy();}catch(e){}}); charts=[];
   $('results').style.display='block';
 
-  // Config
-  let cfgHtml='';
-  if(r.trajPow){
-    cfgHtml+='<div class="kv">';
-    cfgHtml+='<span class="k">T0 (locked)</span><span class="v">'+r.trajPow.T0.toFixed(3)+' s</span>';
-    cfgHtml+='<span class="k">Rot: q, k, cross, L</span><span class="v">'+r.trajPow.rot.q.toFixed(4)+', '+r.trajPow.rot.k.toFixed(6)+', '+r.trajPow.rot.crossings+', '+r.trajPow.rot.L.toFixed(2)+'</span>';
-    cfgHtml+='<span class="k">Lin: q, k, cross, L</span><span class="v">'+r.trajPow.lin.q.toFixed(4)+', '+r.trajPow.lin.k.toFixed(6)+', '+r.trajPow.lin.crossings+', '+r.trajPow.lin.L.toFixed(2)+'</span>';
-    cfgHtml+='<span class="k">a0_rot</span><span class="v">'+r.trajPow.a0rot.toFixed(6)+' rad/s²</span>';
-    cfgHtml+='<span class="k">a0_lin</span><span class="v">'+r.trajPow.a0lin.toFixed(4)+' m/s²</span>';
-    cfgHtml+='</div>';
-  } else {
-    cfgHtml='<span class="warn">TRAJ-POW never locked (see events)</span>';
+  // Config summary — capture6 + sister ranges + traj
+  let cfgHtml='<div class="kv">';
+  if(r.capture6){
+    cfgHtml+='<span class="k" style="grid-column:1/3;color:#94a3b8;font-weight:600;margin-top:4px">CAPTURE 6 (at spool-complete)</span>';
+    cfgHtml+='<span class="k">a0_rot</span><span class="v">'+r.capture6.a0rot.toFixed(6)+' rad/s²</span>';
+    cfgHtml+='<span class="k">v0_rot</span><span class="v">'+r.capture6.v0rot.toFixed(6)+' rad/s</span>';
+    cfgHtml+='<span class="k">ds_rot</span><span class="v">'+r.capture6.dsrot.toFixed(6)+' rad</span>';
+    cfgHtml+='<span class="k">a0_lin</span><span class="v">'+r.capture6.a0lin.toFixed(4)+' m/s²</span>';
+    cfgHtml+='<span class="k">v0_lin</span><span class="v">'+r.capture6.v0lin.toFixed(4)+' m/s</span>';
+    cfgHtml+='<span class="k">ds_lin</span><span class="v">'+r.capture6.dslin.toFixed(3)+' m</span>';
   }
+  if(r.sisterRanges){
+    cfgHtml+='<span class="k" style="grid-column:1/3;color:#94a3b8;font-weight:600;margin-top:8px">SISTER RANGES (common T0 where both rot &amp; lin feasible)</span>';
+    for(let i=0;i<r.sisterRanges.length;i++){
+      const iv=r.sisterRanges[i];
+      cfgHtml+='<span class="k">range '+(i+1)+'</span><span class="v">['+iv[0].toFixed(3)+', '+iv[1].toFixed(3)+'] s</span>';
+    }
+    if(r.sisterPick!=null) cfgHtml+='<span class="k">best pick</span><span class="v" style="color:#6bff88">'+r.sisterPick.toFixed(3)+' s</span>';
+  }
+  if(r.trajPow){
+    cfgHtml+='<span class="k" style="grid-column:1/3;color:#94a3b8;font-weight:600;margin-top:8px">TRAJECTORY (locked)</span>';
+    cfgHtml+='<span class="k">T0</span><span class="v">'+r.trajPow.T0.toFixed(3)+' s</span>';
+    cfgHtml+='<span class="k">rot: q, k, cross, L</span><span class="v">'+r.trajPow.rot.q.toFixed(4)+', '+r.trajPow.rot.k.toFixed(6)+', '+r.trajPow.rot.crossings+', '+r.trajPow.rot.L.toFixed(2)+'</span>';
+    cfgHtml+='<span class="k">lin: q, k, cross, L</span><span class="v">'+r.trajPow.lin.q.toFixed(4)+', '+r.trajPow.lin.k.toFixed(6)+', '+r.trajPow.lin.crossings+', '+r.trajPow.lin.L.toFixed(2)+'</span>';
+  }
+  if(!r.capture6 && !r.trajPow) cfgHtml+='<span class="k" style="grid-column:1/3;color:#ffcc44">capture6 not reached — see events</span>';
+  cfgHtml+='</div>';
   $('configBox').innerHTML=cfgHtml;
 
   // Stats
-  const f=r.final;
   const lastSamp=r.samples[r.samples.length-1]||{};
   let stHtml='<div class="kv">';
   stHtml+='<span class="k">Ended</span><span class="v">'+r.endedReason+'</span>';
@@ -381,7 +405,6 @@ function renderResult(r){
   stHtml+='<span class="k">Gimbal sat ticks</span><span class="v">'+r.satGimCount+'</span>';
   stHtml+='<span class="k">Thrust spool-gap ticks</span><span class="v">'+r.satThrCount+'</span>';
   stHtml+='<span class="k">Fy_body&lt;0 ticks</span><span class="v">'+r.fyNegCount+'</span>';
-  stHtml+='<span class="k">Total samples</span><span class="v">'+r.samples.length+'</span>';
   stHtml+='</div>';
   $('statsBox').innerHTML=stHtml;
 
@@ -396,80 +419,69 @@ function renderResult(r){
   $('eventsBox').innerHTML=evHtml;
 
   // Charts
-  const ts = r.samples.map(s=>s.t);
+  const ts=r.samples.map(s=>s.t);
+  drawChart('chTheta','θ_local [°]',ts,[
+    {label:'θ_local',data:r.samples.map(s=>s.theta),color:'#6bff88'},
+    {label:'tol +1°',data:r.samples.map(()=>1),color:'#ffcc44',dash:[3,3]},
+    {label:'tol -1°',data:r.samples.map(()=>-1),color:'#ffcc44',dash:[3,3]},
+    {label:'0',data:r.samples.map(()=>0),color:'#94a3b8',dash:[1,3]},
+  ]);
+  drawChart('chOmega','ω [°/s]',ts,[
+    {label:'ω',data:r.samples.map(s=>s.omega),color:'#93c5fd'},
+    {label:'+0.5',data:r.samples.map(()=>0.5),color:'#ffcc44',dash:[3,3]},
+    {label:'-0.5',data:r.samples.map(()=>-0.5),color:'#ffcc44',dash:[3,3]},
+  ]);
+  drawChart('chAlpha','α [°/s²]',ts,[
+    {label:'α_actual',data:r.samples.map(s=>s.aAct),color:'#6bff88'},
+    {label:'α_target',data:r.samples.map(s=>s.aTgt),color:'#ff6b6b',dash:[4,3]},
+  ]);
+  drawChart('chGimbal','gimbal [°]',ts,[
+    {label:'gimbal act',data:r.samples.map(s=>s.gimbal),color:'#fbbf24'},
+    {label:'gimbal cmd',data:r.samples.map(s=>s.gimbalCmd),color:'#94a3b8',dash:[2,2]},
+    {label:'+8°',data:r.samples.map(()=>8),color:'#ff6b6b',dash:[3,3]},
+    {label:'-8°',data:r.samples.map(()=>-8),color:'#ff6b6b',dash:[3,3]},
+  ]);
+  drawChart('chX','x [m] from pad',ts,[
+    {label:'x',data:r.samples.map(s=>s.x),color:'#6bff88'},
+    {label:'+5m',data:r.samples.map(()=>5),color:'#ffcc44',dash:[3,3]},
+    {label:'-5m',data:r.samples.map(()=>-5),color:'#ffcc44',dash:[3,3]},
+  ]);
+  drawChart('chVx','vx [m/s]',ts,[
+    {label:'vx',data:r.samples.map(s=>s.vx),color:'#93c5fd'},
+    {label:'+1',data:r.samples.map(()=>1),color:'#ffcc44',dash:[3,3]},
+    {label:'-1',data:r.samples.map(()=>-1),color:'#ffcc44',dash:[3,3]},
+  ]);
+  drawChart('chAx','ax [m/s²]',ts,[
+    {label:'ax_actual',data:r.samples.map(s=>s.axAct),color:'#6bff88'},
+    {label:'ax_target',data:r.samples.map(s=>s.axTgt),color:'#ff6b6b',dash:[4,3]},
+  ]);
+  drawChart('chFyBody','Fy_body raw [N]',ts,[
+    {label:'Fy_body',data:r.samples.map(s=>s.fyRaw),color:'#a78bfa'},
+    {label:'0 (neg=backward)',data:r.samples.map(()=>0),color:'#ff6b6b',dash:[3,3]},
+  ]);
+  drawChart('chThr','thrust [kN]',ts,[
+    {label:'act',data:r.samples.map(s=>s.thrAct),color:'#6bff88'},
+    {label:'cmd',data:r.samples.map(s=>s.thrCmd),color:'#ff6b6b',dash:[3,3]},
+  ]);
+  drawChart('chH','h [km]',ts,[{label:'h AGL',data:r.samples.map(s=>s.h),color:'#93c5fd'}]);
 
-  drawChart('chTheta', 'θ_local [°]', ts, [
-    { label:'θ_local', data:r.samples.map(s=>s.theta), color:'#6bff88' },
-    { label:'tol +1°', data:r.samples.map(()=>1), color:'#ffcc44', dash:[3,3] },
-    { label:'tol -1°', data:r.samples.map(()=>-1), color:'#ffcc44', dash:[3,3] },
-    { label:'0', data:r.samples.map(()=>0), color:'#94a3b8', dash:[1,3] },
-  ]);
-  drawChart('chOmega', 'ω [°/s]', ts, [
-    { label:'ω', data:r.samples.map(s=>s.omega), color:'#93c5fd' },
-    { label:'tol ±0.5', data:r.samples.map(()=>0.5), color:'#ffcc44', dash:[3,3] },
-    { label:'tol -0.5', data:r.samples.map(()=>-0.5), color:'#ffcc44', dash:[3,3] },
-  ]);
-  drawChart('chAlpha', 'α [°/s²]', ts, [
-    { label:'α_actual', data:r.samples.map(s=>s.aAct), color:'#6bff88' },
-    { label:'α_target', data:r.samples.map(s=>s.aTgt), color:'#ff6b6b', dash:[4,3] },
-  ]);
-  drawChart('chGimbal', 'gimbal [°]', ts, [
-    { label:'gimbal act', data:r.samples.map(s=>s.gimbal), color:'#fbbf24' },
-    { label:'gimbal cmd', data:r.samples.map(s=>s.gimbalCmd), color:'#94a3b8', dash:[2,2] },
-    { label:'+8°', data:r.samples.map(()=>8), color:'#ff6b6b', dash:[3,3] },
-    { label:'-8°', data:r.samples.map(()=>-8), color:'#ff6b6b', dash:[3,3] },
-  ]);
-  drawChart('chX', 'x [m] (from pad)', ts, [
-    { label:'x', data:r.samples.map(s=>s.x), color:'#6bff88' },
-    { label:'tol ±5m', data:r.samples.map(()=>5), color:'#ffcc44', dash:[3,3] },
-    { label:'tol -5m', data:r.samples.map(()=>-5), color:'#ffcc44', dash:[3,3] },
-  ]);
-  drawChart('chVx', 'vx [m/s]', ts, [
-    { label:'vx', data:r.samples.map(s=>s.vx), color:'#93c5fd' },
-    { label:'tol ±1', data:r.samples.map(()=>1), color:'#ffcc44', dash:[3,3] },
-    { label:'tol -1', data:r.samples.map(()=>-1), color:'#ffcc44', dash:[3,3] },
-  ]);
-  drawChart('chAx', 'ax [m/s²]', ts, [
-    { label:'ax_actual', data:r.samples.map(s=>s.axAct), color:'#6bff88' },
-    { label:'ax_target', data:r.samples.map(s=>s.axTgt), color:'#ff6b6b', dash:[4,3] },
-  ]);
-  drawChart('chFyBody', 'Fy_body raw [N]', ts, [
-    { label:'Fy_body', data:r.samples.map(s=>s.fyRaw), color:'#a78bfa' },
-    { label:'0 (neg=backward)', data:r.samples.map(()=>0), color:'#ff6b6b', dash:[3,3] },
-  ]);
-  drawChart('chThr', 'thrust [kN]', ts, [
-    { label:'act', data:r.samples.map(s=>s.thrAct), color:'#6bff88' },
-    { label:'cmd', data:r.samples.map(s=>s.thrCmd), color:'#ff6b6b', dash:[3,3] },
-  ]);
-  drawChart('chH', 'h [km]', ts, [
-    { label:'h AGL', data:r.samples.map(s=>s.h), color:'#93c5fd' },
-  ]);
-
-  // Sample table
+  // Table
   let tHtml='<table><thead><tr>'+
-    ['t','phase','e','θ','ω','x','vx','gim','gCmd','thrAct','thrCmd','α_act','α_tgt','ax_act','ax_tgt','Fy','h','vy','satGim']
+    ['t','phase','e','θ','ω','x','vx','gim','gCmd','thrA','thrC','α_act','α_tgt','ax_act','ax_tgt','Fy','h','vy','satG']
     .map(h=>'<th>'+h+'</th>').join('')+'</tr></thead><tbody>';
   for(const s of r.samples){
     const rowCls=s.satGim?'style="background:#3f1f1f"':'';
     tHtml+='<tr '+rowCls+'>'+
       '<td>'+s.t+'</td>'+
-      '<td class="l" style="font-size:9px">'+(s.phase||'').replace('LANDING_BURN','LB').replace('_','')+'</td>'+
+      '<td class="l" style="font-size:9px">'+(s.phase||'').replace('LANDING_BURN_ALIGN','LBA').replace('LANDING_BURN','LB')+'</td>'+
       '<td>'+(s.e!=null?s.e:'—')+'</td>'+
-      '<td>'+s.theta+'</td>'+
-      '<td>'+s.omega+'</td>'+
-      '<td>'+s.x+'</td>'+
-      '<td>'+s.vx+'</td>'+
-      '<td>'+s.gimbal+'</td>'+
-      '<td>'+s.gimbalCmd+'</td>'+
-      '<td>'+s.thrAct+'</td>'+
-      '<td>'+s.thrCmd+'</td>'+
-      '<td>'+(s.aAct!=null?s.aAct:'—')+'</td>'+
-      '<td>'+(s.aTgt!=null?s.aTgt:'—')+'</td>'+
-      '<td>'+(s.axAct!=null?s.axAct:'—')+'</td>'+
-      '<td>'+(s.axTgt!=null?s.axTgt:'—')+'</td>'+
+      '<td>'+s.theta+'</td><td>'+s.omega+'</td><td>'+s.x+'</td><td>'+s.vx+'</td>'+
+      '<td>'+s.gimbal+'</td><td>'+s.gimbalCmd+'</td>'+
+      '<td>'+s.thrAct+'</td><td>'+s.thrCmd+'</td>'+
+      '<td>'+(s.aAct!=null?s.aAct:'—')+'</td><td>'+(s.aTgt!=null?s.aTgt:'—')+'</td>'+
+      '<td>'+(s.axAct!=null?s.axAct:'—')+'</td><td>'+(s.axTgt!=null?s.axTgt:'—')+'</td>'+
       '<td>'+(s.fyRaw!=null?s.fyRaw:'—')+'</td>'+
-      '<td>'+s.h+'</td>'+
-      '<td>'+s.vy+'</td>'+
+      '<td>'+s.h+'</td><td>'+s.vy+'</td>'+
       '<td>'+(s.satGim?'Y':'')+'</td>'+
     '</tr>';
   }
@@ -481,30 +493,23 @@ function drawChart(canvasId, title, xs, series){
   const cv=document.getElementById(canvasId);
   if(!cv)return;
   const datasets=series.map(s=>({
-    label:s.label,
-    data:xs.map((x,i)=>({x, y:s.data[i]})),
-    borderColor:s.color,
-    backgroundColor:'transparent',
-    borderWidth:1.5,
-    borderDash:s.dash||[],
-    pointRadius:0,
-    tension:0,
-    parsing:false,
+    label:s.label, data:xs.map((x,i)=>({x,y:s.data[i]})),
+    borderColor:s.color, backgroundColor:'transparent',
+    borderWidth:1.5, borderDash:s.dash||[], pointRadius:0, tension:0, parsing:false,
   }));
-  const ch=new Chart(cv, {
-    type:'line',
-    data:{datasets},
+  const ch=new Chart(cv,{
+    type:'line', data:{datasets},
     options:{
       responsive:true, maintainAspectRatio:false, animation:false,
-      interaction:{mode:'nearest', intersect:false},
+      interaction:{mode:'nearest',intersect:false},
       plugins:{
-        legend:{display:true, labels:{boxWidth:8, font:{size:9}, color:'#94a3b8'}},
-        title:{display:true, text:title, font:{size:10}, color:'#cbd5e1'},
+        legend:{display:true,labels:{boxWidth:8,font:{size:9},color:'#94a3b8'}},
+        title:{display:true,text:title,font:{size:10},color:'#cbd5e1'},
         tooltip:{callbacks:{label:ctx=>ctx.dataset.label+': '+(Number.isFinite(ctx.parsed.y)?ctx.parsed.y.toFixed(3):'—')}},
       },
       scales:{
-        x:{type:'linear', title:{display:false}, grid:{color:'#1f2940'}, ticks:{font:{size:9}, color:'#64748b'}},
-        y:{title:{display:false}, grid:{color:'#1f2940'}, ticks:{font:{size:9}, color:'#64748b'}},
+        x:{type:'linear',grid:{color:'#1f2940'},ticks:{font:{size:9},color:'#64748b'}},
+        y:{grid:{color:'#1f2940'},ticks:{font:{size:9},color:'#64748b'}},
       },
     },
   });
