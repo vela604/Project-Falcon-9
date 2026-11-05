@@ -123,11 +123,11 @@ self.onmessage = (e) => {
         '../../fleet.js?v=1793479954682',
         '../../config.js?v=1793479954682',
         '../core/massProps.js?v=1793479954682',
-        '../core/environment.js?v=1793479954682',
-        '../core/vehicle.js?v=1793479954682',
-        '../core/rcs.js?v=1793479954682',
-        '../core/physics.js?v=1793479954682',
-        '../core/collision.js?v=1793479954682',
+        '../core/environment.js?v=1793904735440',
+        '../core/vehicle.js?v=1793904735440',
+        '../core/rcs.js?v=1793904735440',
+        '../core/physics.js?v=1793904735440',
+        '../core/collision.js?v=1793904735440',
         '../core/stateBuffer.js?v=1793479954682'
       );
 
