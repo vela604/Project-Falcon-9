@@ -1489,6 +1489,8 @@ if (_lbState.insertionBlock) {
       rtlsLbAlignStartT: rs.lbAlignStartT,
       rtlsLbAlignDeltaMax: rs.lbAlignDeltaMax,
       rtlsLbLastFyBody: rs.lbLastFyBody,
+      rtlsLbPlan: rs.lbPlan,
+      rtlsLbLegsDeployed: rs.lbLegsDeployed,
     });
   }
 
