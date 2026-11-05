@@ -1076,20 +1076,18 @@ try {
   const abortBtn = document.getElementById('btnGuideAbort');
   if (abortBtn) abortBtn.addEventListener('click', abortGuidance);
 
-  // Toggle Mission Phases panel visibility
+  // Toggle Mission Phases panel visibility (class + !important CSS)
   const phaseBtn = document.getElementById('btnTogglePhaseTrack');
   if (phaseBtn) {
     phaseBtn.addEventListener('click', () => {
       const tb = document.getElementById('guidePhaseTrack');
-      if (!tb) return;
-      const isHidden = tb.style.display === 'none';
-      if (isHidden) {
-        tb.style.display = '';
-        window._userHidPhaseTrack = false;
-      } else {
-        tb.style.display = 'none';
-        window._userHidPhaseTrack = true;
+      if (!tb) {
+        console.warn('[PhaseTrack] element not found');
+        return;
       }
+      const nowHidden = tb.classList.toggle('user-hidden');
+      window._userHidPhaseTrack = nowHidden;
+      console.log('[PhaseTrack] user-hidden =', nowHidden);
     });
   }
   }
@@ -1273,12 +1271,12 @@ function _renderPhaseTrack(status) {
   if (!host || !trackBox) return;
   
   if (!status || !status.active) {
-    if (!window._userHidPhaseTrack) trackBox.style.display = 'none';
+    if (!trackBox.classList.contains('user-hidden')) trackBox.style.display = 'none';
     _phaseTrackLastSeq = null;
     _phaseTrackRows = {};
     return;
   }
-  if (!window._userHidPhaseTrack) {
+  if (!trackBox.classList.contains('user-hidden')) {
     trackBox.style.display = '';
   }
   

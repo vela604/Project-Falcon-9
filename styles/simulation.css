@@ -1856,3 +1856,13 @@ canvas.mini-graph { width: 100%; height: 60px; background: var(--bg); border-rad
   #telemetryPanel.tele-compact .tele-sym,
   #telemetryPanel.tele-compact .tele-val { font-size: 10px; }
 }
+
+
+/* ============================================================
+   Mission Phases panel — bulletproof user-hide via class + !important.
+   Beats any inline display set by _renderPhaseTrack (which runs at
+   ~8 Hz on guidance status updates and can override inline styles).
+   ============================================================ */
+#guidePhaseTrack.user-hidden {
+  display: none !important;
+}
