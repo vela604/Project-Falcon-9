@@ -1,59 +1,71 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8">
-<title>Landback Align Lab · Sec 1 Sweep + Sec 2 Override</title>
+<title>Landback Align Lab</title>
 <style>
 body{font:11px/1.35 monospace;background:#0b0e14;color:#cfd6e4;margin:0;padding:8px}
 label{display:inline-block;margin:0 6px 4px 0}
-input,select{background:#141a26;color:#cfd6e4;border:1px solid #2a3550;padding:3px;width:80px}
+input,select{background:#141a26;color:#cfd6e4;border:1px solid #2a3550;padding:3px;width:82px}
 select{width:auto}
 button{background:#1d2a44;color:#cfd6e4;border:1px solid #3a4c78;padding:5px 10px;cursor:pointer;font:inherit}
 button:disabled{opacity:.5}
 h2{font-size:13px;margin:8px 0 6px}h3{font-size:12px;margin:10px 0 6px}
-pre{white-space:pre-wrap;font-size:10.5px;background:#0f1420;padding:6px;border:1px solid #1f2940;max-height:400px;overflow:auto}
+pre{white-space:pre-wrap;font-size:10px;background:#0f1420;padding:6px;border:1px solid #1f2940;max-height:420px;overflow:auto}
 .dim{color:#7d889f}.bad{color:#ff6b6b}.ok{color:#6bff88}
-.sec2{margin-top:14px;border-top:1px solid #2a3550;padding-top:10px}
+.sec{margin-top:12px;border-top:1px solid #2a3550;padding-top:8px}
 </style></head><body>
 <h2>Landback Align Lab</h2>
 <div>
   <label>stack <select id="stackSel"></select></label>
-  <button id="initBtn">① Init + capture LB checkpoint</button>
+  <button id="initBtn">① Init + capture SA/EB/LBA checkpoints</button>
   <span class="dim" id="initStatus"></span>
 </div>
 
 <div id="lab" style="display:none;margin-top:6px">
-<h3>Section 1 — T0 sweep (per-tick re-solve)</h3>
-<div>
-  <label>T0 from <input type="number" id="t0From" value="7" step="0.5"></label>
-  <label>to <input type="number" id="t0To" value="15" step="0.5"></label>
-  <label>step <input type="number" id="t0Step" value="1" step="0.5"></label>
-  <label>capS <input type="number" id="capS" value="60"></label>
-  <button id="sweepBtn" disabled>Sweep T0</button>
-  <label>T0 single <input type="number" id="t0Single" value="10" step="0.5"></label>
-  <button id="singleBtn" disabled>Run single</button>
-  <span class="dim" id="runStatus"></span>
-</div>
+<div class="sec">
+<h3>Section 1 — T0 sweep (predict-v2 + guard)</h3>
+<label>T0 from <input type="number" id="t0From" value="7" step="0.5"></label>
+<label>to <input type="number" id="t0To" value="15" step="0.5"></label>
+<label>step <input type="number" id="t0Step" value="1" step="0.5"></label>
+<label>capS <input type="number" id="capS" value="60"></label>
+<button id="sweepBtn" disabled>Sweep</button>
+<label>T0 single <input type="number" id="t0Single" value="10" step="0.5"></label>
+<button id="singleBtn" disabled>Run single</button>
+<span class="dim" id="runStatus"></span>
 <pre id="out"></pre>
+</div>
 
-<div class="sec2">
-<h3>Section 2 — 6-param override + error compensation</h3>
+<div class="sec">
+<h3>Section 2 — 6-param override + compensation</h3>
 <div>
   <label>a0_rot <input type="number" id="s2a0r" step="0.000001"></label>
   <label>v0_rot <input type="number" id="s2v0r" step="0.000001"></label>
   <label>ds_rot <input type="number" id="s2dsr" step="0.000001"></label>
-</div>
-<div>
   <label>a0_lin <input type="number" id="s2a0l" step="0.0001"></label>
   <label>v0_lin <input type="number" id="s2v0l" step="0.0001"></label>
   <label>ds_lin <input type="number" id="s2dsl" step="0.001"></label>
   <label>T0 <input type="number" id="s2t0" step="0.1"></label>
+  <label>branch <input type="number" id="s2br" step="1" value="1"></label>
 </div>
 <div>
-  <button id="s2capBtn" disabled>② Capture + baseline run</button>
-  <button id="s2runBtn" disabled>③ Run with these values</button>
-  <button id="s2compBtn" disabled>④ Compensate ds by error</button>
+  <button id="s2capBtn" disabled>② Capture + baseline</button>
+  <button id="s2runBtn" disabled>③ Run with values</button>
+  <button id="s2compBtn" disabled>④ Compensate ds</button>
   <span class="dim" id="s2status"></span>
 </div>
 <pre id="s2out"></pre>
+</div>
+
+<div class="sec">
+<h3>Section 3 — Bias sweep + branch test (from EB start)</h3>
+<label>bias list <input type="text" id="s3biases" value="-650,-750,-850,-950" style="width:240px"></label>
+<label>branch list <input type="text" id="s3branches" value="0,1" style="width:60px"></label>
+<label>T0 auto <input type="checkbox" id="s3autot0" checked></label>
+<label>T0 manual <input type="number" id="s3t0man" value="8" step="0.5"></label>
+<button id="s3capBtn" disabled>① Capture spool states (per bias)</button>
+<button id="s3testBtn" disabled>② Test branches (from captures)</button>
+<span class="dim" id="s3status"></span>
+<pre id="s3capOut"></pre>
+<pre id="s3testOut"></pre>
 </div>
 
 </div>
@@ -83,259 +95,409 @@ pre{white-space:pre-wrap;font-size:10.5px;background:#0f1420;padding:6px;border:
 <script src="../engines/pro-alpha.js"></script>
 
 <script>
-(function() {
-  'use strict';
-  const $ = (id) => document.getElementById(id);
-  const S = { inited: false, lbSnap: null, running: false, s2LastResult: null };
-  const guideName = 'landbackV1';
+(function(){
+'use strict';
+const $ = (id) => document.getElementById(id);
+const S = { inited:false, saSnap:null, ebSnap:null, lbSnap:null, running:false, s2LastResult:null, s3Captures:[] };
+const guideName = 'landbackV1';
 
-  function deepClone(x, memo) {
-    memo = memo || new WeakMap();
-    if (x === null || typeof x !== 'object') return x;
-    if (memo.has(x)) return memo.get(x);
-    if (Array.isArray(x)) { const a = []; memo.set(x, a); for (let i = 0; i < x.length; i++) a[i] = deepClone(x[i], memo); return a; }
-    const o = {}; memo.set(x, o); for (const k of Object.keys(x)) { try { o[k] = deepClone(x[k], memo); } catch(e) { o[k] = null; } } return o;
-  }
-  function captureSnap() {
-    const st = {};
-    Object.keys(state).forEach(k => { if (k === 'bodies') return; try { st[k] = deepClone(state[k]); } catch(e) { st[k] = null; } });
-    return { bodies: deepClone(state.bodies), stateKeysSnapshot: st, simTime: state.simTime, activeBodyIndex: state.activeBodyIndex, guidanceState: Guidance.exportGuideState() };
-  }
-  function restoreSnap(snap, gOverride) {
-    Object.keys(snap.stateKeysSnapshot).forEach(k => { try { state[k] = deepClone(snap.stateKeysSnapshot[k]); } catch(e) {} });
-    state.simTime = snap.simTime; state.activeBodyIndex = snap.activeBodyIndex;
-    const sb = snap.bodies;
-    while (state.bodies.length > sb.length) state.bodies.pop();
-    while (state.bodies.length < sb.length) state.bodies.push({});
-    for (let i = 0; i < sb.length; i++) { const src = sb[i], dst = state.bodies[i]; Object.keys(dst).forEach(k => { delete dst[k]; }); Object.keys(src).forEach(k => { dst[k] = deepClone(src[k]); }); }
-    const ab = state.bodies[state.activeBodyIndex];
-    if (ab) ['rx','ry','vx','vy','theta','omega','dryMass','fuelMass'].forEach(k => { try { state[k] = ab[k]; } catch(e) {} });
-    if (snap.stateKeysSnapshot.halted === undefined) state.halted = false;
-    Guidance.importGuideState(deepClone(gOverride || snap.guidanceState));
-  }
-  function findBooster() { for (const b of state.bodies) if (b && b.members && b.members[0] && b.members[0].stageRole === 'booster') return b; return null; }
-  function buildValues() { const p = cloneDefaultPreset(guideName); if (!p) throw new Error('preset landbackV1 missing'); return p.constants; }
-  const stacks = (typeof loadStacks === 'function' ? loadStacks() : []).filter(s => s && s.sequence === 'standard' && s.locked);
-  $('stackSel').innerHTML = stacks.length ? stacks.map(s => '<option value="' + s.id.replace(/[&<>"']/g,'') + '">' + s.name.replace(/[&<>"']/g,'') + '</option>').join('') : '<option value="">(no eligible stacks)</option>';
+function deepClone(x, memo) {
+  memo = memo || new WeakMap();
+  if (x === null || typeof x !== 'object') return x;
+  if (memo.has(x)) return memo.get(x);
+  if (Array.isArray(x)) { const a = []; memo.set(x, a); for (let i = 0; i < x.length; i++) a[i] = deepClone(x[i], memo); return a; }
+  const o = {}; memo.set(x, o); for (const k of Object.keys(x)) { try { o[k] = deepClone(x[k], memo); } catch(e) { o[k] = null; } } return o;
+}
+function captureSnap() {
+  const st = {};
+  Object.keys(state).forEach(k => { if (k === 'bodies') return; try { st[k] = deepClone(state[k]); } catch(e) { st[k] = null; } });
+  return { bodies: deepClone(state.bodies), stateKeysSnapshot: st, simTime: state.simTime, activeBodyIndex: state.activeBodyIndex, guidanceState: Guidance.exportGuideState() };
+}
+function restoreSnap(snap, gOverride) {
+  Object.keys(snap.stateKeysSnapshot).forEach(k => { try { state[k] = deepClone(snap.stateKeysSnapshot[k]); } catch(e) {} });
+  state.simTime = snap.simTime; state.activeBodyIndex = snap.activeBodyIndex;
+  const sb = snap.bodies;
+  while (state.bodies.length > sb.length) state.bodies.pop();
+  while (state.bodies.length < sb.length) state.bodies.push({});
+  for (let i = 0; i < sb.length; i++) { const src = sb[i], dst = state.bodies[i]; Object.keys(dst).forEach(k => { delete dst[k]; }); Object.keys(src).forEach(k => { dst[k] = deepClone(src[k]); }); }
+  const ab = state.bodies[state.activeBodyIndex];
+  if (ab) ['rx','ry','vx','vy','theta','omega','dryMass','fuelMass'].forEach(k => { try { state[k] = ab[k]; } catch(e) {} });
+  if (snap.stateKeysSnapshot.halted === undefined) state.halted = false;
+  Guidance.importGuideState(deepClone(gOverride || snap.guidanceState));
+}
+function findBooster() { for (const b of state.bodies) if (b && b.members && b.members[0] && b.members[0].stageRole === 'booster') return b; return null; }
+function buildValues() { const p = cloneDefaultPreset(guideName); if (!p) throw new Error('preset missing'); return p.constants; }
+function getXfromPad(bB, simT) {
+  const r = Math.hypot(bB.rx, bB.ry);
+  const phiNow = Math.atan2(bB.rx, bB.ry) - CONFIG.EARTH_OMEGA * simT;
+  const padArr = (CONFIG.LANDING_PADS || []).filter(p => p.id === 'LZ-1');
+  const pad = padArr.length ? padArr[0] : { arcOffsetM: 400 };
+  const Rg = CONFIG.EARTH_RADIUS + (CONFIG.LAUNCH_SITE_ALTITUDE || 0);
+  const padEf = (CONFIG.LAUNCH_SITE_ANGLE_0 || 0) + (pad.arcOffsetM || 0) / Rg;
+  let xRad = phiNow - padEf;
+  while (xRad > Math.PI) xRad -= 2*Math.PI;
+  while (xRad < -Math.PI) xRad += 2*Math.PI;
+  return xRad * Rg;
+}
+function lbRange(a0,v0,ds){
+  if (a0 === 0) return null;
+  const disc = 9*v0*v0 + 12*a0*ds;
+  if (disc <= 0) return null;
+  const s = Math.sqrt(disc);
+  const r1 = (-3*v0-s)/a0, r2 = (-3*v0+s)/a0;
+  const lo = Math.max(0, Math.min(r1,r2));
+  const hi = Math.max(r1,r2);
+  return hi>lo ? [lo,hi] : null;
+}
 
-  function runT0(T0, capS, override) {
+// Init: SA → EB start → LBA (one continuous run)
+$('initBtn').addEventListener('click', function(){
+  if (S.running) return;
+  S.running=true; $('initBtn').disabled=true;
+  $('initStatus').textContent='initializing…'; $('out').textContent=''; $('s2out').textContent=''; $('s3capOut').textContent=''; $('s3testOut').textContent='';
+  setTimeout(function(){
     const _ol = console.log; console.log = function(){};
     try {
-      const g = deepClone(S.lbSnap.guidanceState);
-      if (g.guideConfigs && g.guideConfigs.landbackV1 && g.guideConfigs.landbackV1.rtls) {
-        g.guideConfigs.landbackV1.rtls.LANDING_BURN_T0_S = T0;
-        g.guideConfigs.landbackV1.rtls.LANDING_BURN_TEST_OVERRIDE = override || null;
-      }
-      if (g.lbRtlsBlock && g.lbRtlsBlock.constants) {
-        g.lbRtlsBlock.constants.LANDING_BURN_T0_S = T0;
-        g.lbRtlsBlock.constants.LANDING_BURN_TEST_OVERRIDE = override || null;
-      }
-      restoreSnap(S.lbSnap, g);
+      const id = $('stackSel').value;
+      if (!id) throw new Error('pick stack');
+      setSelectedStackId(id);
+      TunerEngine.init();
+      TunerEngine.prepareRun(guideName, buildValues(), (typeof TunerConfig !== 'undefined' ? TunerConfig.env : undefined));
+      $('initStatus').textContent = 'running SA…';
+      let saSnap=null, ebSnap=null, lbSnap=null;
+      for (let i=0;i<300*80;i++){ if(state.halted)break; TunerEngine.tick(CONFIG.DT); const gs=Guidance.getGuideStatus(); if(gs&&gs.phase==='SEPARATED_AXIAL'){saSnap=captureSnap();break;} }
+      if(!saSnap) throw new Error('SA not reached');
+      $('initStatus').textContent = 'running to EB…';
+      restoreSnap(saSnap);
+      for (let i=0;i<800*80;i++){ if(state.halted)break; TunerEngine.tick(CONFIG.DT); const gs=Guidance.getGuideStatus(); if(gs&&gs.rtlsPhase==='ENTRY_BURN'){ebSnap=captureSnap();break;} }
+      if(!ebSnap) throw new Error('EB not reached');
+      $('initStatus').textContent = 'running to LBA…';
+      for (let i=0;i<400*80;i++){ if(state.halted)break; TunerEngine.tick(CONFIG.DT); const gs=Guidance.getGuideStatus(); if(gs&&gs.rtlsPhase==='LANDING_BURN_ALIGN'){lbSnap=captureSnap();break;} }
+      if(!lbSnap) throw new Error('LBA not reached');
+      S.saSnap=saSnap; S.ebSnap=ebSnap; S.lbSnap=lbSnap; S.inited=true;
+      $('initStatus').innerHTML = '<span class="ok">ready</span> · SA t='+saSnap.simTime.toFixed(1)+'s · EB t='+ebSnap.simTime.toFixed(1)+'s · LBA t='+lbSnap.simTime.toFixed(1)+'s';
+      $('lab').style.display='block';
+      $('sweepBtn').disabled=$('singleBtn').disabled=$('s2capBtn').disabled=$('s3capBtn').disabled=false;
+    } catch(e){ $('initStatus').innerHTML='<span class="bad">ERROR: '+e.message+'</span>'; console.error(e); }
+    finally { console.log=_ol; $('initBtn').disabled=false; S.running=false; }
+  },10);
+});
 
-      const startT = state.simTime;
-      const samples = [];
-      let aligned = false, crashed = false, timeout = false, enteredTD = false;
-      let gimbalPeak = 0;
-      let finalH = null, finalTheta = null, finalOmega = null, finalX = null, finalVx = null;
-      let captured6 = null, spoolCompleteT = null;
-      let phases = [], lastPhase = null;
+// Run T0 from LBA (Section 1/2 baseline)
+function runT0fromLBA(T0, capS, override){
+  const _ol=console.log; console.log=function(){};
+  try {
+    const g = deepClone(S.lbSnap.guidanceState);
+    if(g.guideConfigs&&g.guideConfigs.landbackV1&&g.guideConfigs.landbackV1.rtls){
+      g.guideConfigs.landbackV1.rtls.LANDING_BURN_T0_S = T0;
+      g.guideConfigs.landbackV1.rtls.LANDING_BURN_TEST_OVERRIDE = override||null;
+    }
+    if(g.lbRtlsBlock&&g.lbRtlsBlock.constants){
+      g.lbRtlsBlock.constants.LANDING_BURN_T0_S = T0;
+      g.lbRtlsBlock.constants.LANDING_BURN_TEST_OVERRIDE = override||null;
+    }
+    restoreSnap(S.lbSnap, g);
+    return _runToCompletion(capS);
+  } finally { console.log=_ol; }
+}
 
-      for (let i = 0; i < capS * 80; i++) {
-        if (state.crashed || state.halted) { crashed = true; break; }
-        TunerEngine.tick(CONFIG.DT);
-        const gs = Guidance.getGuideStatus() || {};
-        const bB = findBooster();
-        if (!bB) break;
-        const r = Math.hypot(bB.rx, bB.ry);
-        const hAGL = r - CONFIG.EARTH_RADIUS - (CONFIG.LAUNCH_SITE_ALTITUDE || 0);
-        const vr = (bB.vx * bB.rx + bB.vy * bB.ry) / r;
-        const vt = (bB.vx * bB.ry - bB.vy * bB.rx) / r;
-        const vtGround = vt - CONFIG.EARTH_OMEGA * r;
-        const lv = Math.atan2(-bB.rx, bB.ry);
-        let thetaLocalRad = bB.theta - lv;
-        while (thetaLocalRad > Math.PI) thetaLocalRad -= 2*Math.PI;
-        while (thetaLocalRad < -Math.PI) thetaLocalRad += 2*Math.PI;
-        const gimb = (bB.engines || []).find(e => e.gimbal) || {};
-        const gAbs = Math.abs(gimb.gimbalDeg || 0);
-        if (gAbs > gimbalPeak) gimbalPeak = gAbs;
+// Run from spool-complete state (Section 3 tests) — reset arming fields
+function runLBfromSpool(spoolSnap, override){
+  const _ol=console.log; console.log=function(){};
+  try {
+    const g = deepClone(spoolSnap.guidanceState);
+    if(g.guideConfigs&&g.guideConfigs.landbackV1&&g.guideConfigs.landbackV1.rtls){
+      g.guideConfigs.landbackV1.rtls.LANDING_BURN_T0_S = override.T0;
+      g.guideConfigs.landbackV1.rtls.LANDING_BURN_T0_BRANCH = override.branch;
+      g.guideConfigs.landbackV1.rtls.LANDING_BURN_TEST_OVERRIDE = override;
+    }
+    if(g.lbRtlsBlock&&g.lbRtlsBlock.constants){
+      g.lbRtlsBlock.constants.LANDING_BURN_T0_S = override.T0;
+      g.lbRtlsBlock.constants.LANDING_BURN_T0_BRANCH = override.branch;
+      g.lbRtlsBlock.constants.LANDING_BURN_TEST_OVERRIDE = override;
+    }
+    if(g.lbRtlsBlock&&g.lbRtlsBlock.st){
+      g.lbRtlsBlock.st.lbSpooled = true;  // skip re-spool
+      g.lbRtlsBlock.st.lbAlignStartT = spoolSnap.simTime;  // reset elapsed
+      g.lbRtlsBlock.st.lbAlignT0 = null;  // force re-arm
+      g.lbRtlsBlock.st.lbCapture6 = null;
+      g.lbRtlsBlock.st.lbTestOverride = null;
+    }
+    restoreSnap(spoolSnap, g);
+    return _runToCompletion(60);
+  } finally { console.log=_ol; }
+}
 
-        const phiNow = Math.atan2(bB.rx, bB.ry) - CONFIG.EARTH_OMEGA * state.simTime;
-        const padArr = (CONFIG.LANDING_PADS || []).filter(p => p.id === 'LZ-1');
-        const pad = padArr.length ? padArr[0] : { arcOffsetM: 400 };
-        const Rg = CONFIG.EARTH_RADIUS + (CONFIG.LAUNCH_SITE_ALTITUDE || 0);
-        const padEf = (CONFIG.LAUNCH_SITE_ANGLE_0 || 0) + (pad.arcOffsetM || 0) / Rg;
-        let xRad = phiNow - padEf;
-        while (xRad > Math.PI) xRad -= 2*Math.PI;
-        while (xRad < -Math.PI) xRad += 2*Math.PI;
-        const xFromPad = xRad * Rg;
-
-        if (gs.lbSpooled && spoolCompleteT == null) spoolCompleteT = state.simTime;
-        if (gs.rtlsLbCapture6 && !captured6) captured6 = gs.rtlsLbCapture6;
-        if (gs.rtlsPhase !== lastPhase) { phases.push(gs.rtlsPhase); lastPhase = gs.rtlsPhase; }
-
-        if (i % 20 === 0) {
-          let tA = 0, tC = 0;
-          for (const e of (bB.engines || [])) { tA += (e.massFlowRate || 0) * (e.Ve || 0); tC += (e.targetMassFlowRate || 0) * (e.Ve || 0); }
-          samples.push({ t: +state.simTime.toFixed(2), phase: gs.rtlsPhase, h: +(hAGL/1000).toFixed(3), vy: +vr.toFixed(1), vx: +vtGround.toFixed(2), theta: +(thetaLocalRad*180/Math.PI).toFixed(2), omega: +(bB.omega*180/Math.PI).toFixed(2), x: +xFromPad.toFixed(2), gimbal: +(gimb.gimbalDeg||0).toFixed(2), thrustAct: Math.round(tA), thrustCmd: Math.round(tC) });
-        }
-        if (!enteredTD && gs.rtlsPhase === 'TOUCHDOWN') {
-          enteredTD = true;
-          finalTheta = thetaLocalRad * 180 / Math.PI;
-          finalOmega = bB.omega * 180 / Math.PI;
-          finalX = xFromPad;
-          finalVx = vtGround;
-          finalH = hAGL / 1000;
-          aligned = Math.abs(finalTheta) < 1 && Math.abs(finalOmega) < 0.5 && Math.abs(finalX) < 5 && Math.abs(finalVx) < 1;
-          break;
-        }
-        if (state.simTime - startT > capS) { timeout = true; break; }
-      }
-      return { T0, aligned, crashed, timeout, enteredTD, finalH, finalTheta, finalOmega, finalX, finalVx, gimbalPeak, samples, captured6, phases };
-    } finally { console.log = _ol; }
+function _runToCompletion(capS){
+  const startT = state.simTime;
+  const samples = [];
+  let aligned=false, crashed=false, timeout=false, enteredTD=false, gimbalPeak=0;
+  let finalH=null,finalTheta=null,finalOmega=null,finalX=null,finalVx=null;
+  for(let i=0;i<capS*80;i++){
+    if(state.crashed||state.halted){crashed=true;break;}
+    TunerEngine.tick(CONFIG.DT);
+    const gs=Guidance.getGuideStatus()||{};
+    const bB=findBooster(); if(!bB) break;
+    const r=Math.hypot(bB.rx,bB.ry);
+    const hAGL=r-CONFIG.EARTH_RADIUS-(CONFIG.LAUNCH_SITE_ALTITUDE||0);
+    const vr=(bB.vx*bB.rx+bB.vy*bB.ry)/r;
+    const vt=(bB.vx*bB.ry-bB.vy*bB.rx)/r;
+    const vtG=vt-CONFIG.EARTH_OMEGA*r;
+    const lv=Math.atan2(-bB.rx,bB.ry);
+    let thL=bB.theta-lv; while(thL>Math.PI)thL-=2*Math.PI; while(thL<-Math.PI)thL+=2*Math.PI;
+    const gimb=(bB.engines||[]).find(e=>e.gimbal)||{};
+    const gA=Math.abs(gimb.gimbalDeg||0); if(gA>gimbalPeak) gimbalPeak=gA;
+    const xFromPad=getXfromPad(bB, state.simTime);
+    if(i%20===0){
+      let tA=0,tC=0; for(const e of (bB.engines||[])){tA+=(e.massFlowRate||0)*(e.Ve||0);tC+=(e.targetMassFlowRate||0)*(e.Ve||0);}
+      samples.push({t:+state.simTime.toFixed(2),phase:gs.rtlsPhase,h:+(hAGL/1000).toFixed(3),vy:+vr.toFixed(1),vx:+vtG.toFixed(2),theta:+(thL*180/Math.PI).toFixed(2),omega:+(bB.omega*180/Math.PI).toFixed(2),x:+xFromPad.toFixed(2),gimbal:+(gimb.gimbalDeg||0).toFixed(2),thrustAct:Math.round(tA),thrustCmd:Math.round(tC)});
+    }
+    if(!enteredTD && gs.rtlsPhase==='TOUCHDOWN'){
+      enteredTD=true;
+      finalTheta=thL*180/Math.PI; finalOmega=bB.omega*180/Math.PI;
+      finalX=xFromPad; finalVx=vtG; finalH=hAGL/1000;
+      aligned=Math.abs(finalTheta)<1 && Math.abs(finalOmega)<0.5 && Math.abs(finalX)<5 && Math.abs(finalVx)<1;
+      break;
+    }
+    if(state.simTime-startT>capS){timeout=true;break;}
   }
+  if(!enteredTD && !crashed && !timeout) timeout=true;
+  return {aligned,crashed,timeout,enteredTD,finalH,finalTheta,finalOmega,finalX,finalVx,gimbalPeak,samples};
+}
 
-  $('initBtn').addEventListener('click', function() {
-    if (S.running) return;
-    S.running = true; $('initBtn').disabled = true;
-    $('initStatus').textContent = 'initializing…'; $('out').textContent = ''; $('s2out').textContent = '';
-    setTimeout(function() {
-      const _ol = console.log; console.log = function(){};
-      try {
-        const id = $('stackSel').value;
-        if (!id) throw new Error('pick stack');
-        setSelectedStackId(id);
-        TunerEngine.init();
-        TunerEngine.prepareRun(guideName, buildValues(), (typeof TunerConfig !== 'undefined' ? TunerConfig.env : undefined));
-        $('initStatus').textContent = 'running SA…';
-        let saSnap = null;
-        for (let i = 0; i < 300 * 80; i++) { if (state.halted) break; TunerEngine.tick(CONFIG.DT); const gs = Guidance.getGuideStatus(); if (gs && gs.phase === 'SEPARATED_AXIAL') { saSnap = captureSnap(); break; } }
-        if (!saSnap) throw new Error('SA not reached');
-        $('initStatus').textContent = 'running to LBA…';
-        restoreSnap(saSnap);
-        let lbSnap = null;
-        for (let i = 0; i < 900 * 80; i++) { if (state.halted) break; TunerEngine.tick(CONFIG.DT); const gs = Guidance.getGuideStatus(); if (gs && gs.rtlsPhase === 'LANDING_BURN_ALIGN') { lbSnap = captureSnap(); break; } }
-        if (!lbSnap) throw new Error('LBA not reached');
-        S.lbSnap = lbSnap; S.inited = true;
-        $('initStatus').innerHTML = '<span class="ok">ready</span> · LB t=' + lbSnap.simTime.toFixed(2) + 's';
-        $('lab').style.display = 'block';
-        $('sweepBtn').disabled = $('singleBtn').disabled = $('s2capBtn').disabled = false;
-      } catch (e) {
-        $('initStatus').innerHTML = '<span class="bad">ERROR: ' + e.message + '</span>'; console.error(e);
-      } finally { console.log = _ol; $('initBtn').disabled = false; S.running = false; }
-    }, 10);
-  });
+// Section 1 buttons
+$('singleBtn').addEventListener('click', function(){
+  if(!S.inited||S.running)return;
+  S.running=true; $('singleBtn').disabled=$('sweepBtn').disabled=true;
+  $('runStatus').textContent='running…'; $('out').textContent='';
+  setTimeout(function(){
+    try {
+      const T0=parseFloat($('t0Single').value), capS=parseFloat($('capS').value);
+      const r=runT0fromLBA(T0,capS,null);
+      const st=r.aligned?'ALIGNED':(r.crashed?'CRASH':(r.timeout?'TIMEOUT':'FAILED'));
+      let txt='T0='+T0+'  '+st+'  peak_δ='+r.gimbalPeak.toFixed(2)+'°\n';
+      txt+='final θ='+r.finalTheta?.toFixed(3)+'°  ω='+r.finalOmega?.toFixed(3)+'°/s  x='+r.finalX?.toFixed(2)+'m  vx='+r.finalVx?.toFixed(3)+'m/s\n\n';
+      txt+='t      phase                h      vy      vx      θ       ω       x       gim   thrAct  thrCmd\n';
+      for(const s of r.samples) txt+=String(s.t).padEnd(6)+' '+(s.phase||'').padEnd(20)+' '+s.h.toFixed(3).padEnd(6)+' '+s.vy.toFixed(1).padEnd(7)+' '+s.vx.toFixed(2).padEnd(7)+' '+s.theta.toFixed(2).padEnd(7)+' '+s.omega.toFixed(2).padEnd(7)+' '+s.x.toFixed(1).padEnd(7)+' '+s.gimbal.toFixed(2).padEnd(5)+' '+String(s.thrustAct).padEnd(7)+' '+s.thrustCmd+'\n';
+      $('out').textContent=txt;
+    } catch(e){$('out').innerHTML='<span class="bad">ERR: '+e.message+'</span>';console.error(e);}
+    finally{$('singleBtn').disabled=$('sweepBtn').disabled=false;S.running=false;$('runStatus').textContent='done';}
+  },10);
+});
 
-  // Section 1 buttons (compact)
-  $('singleBtn').addEventListener('click', function() {
-    if (!S.inited || S.running) return;
-    S.running = true; $('singleBtn').disabled = $('sweepBtn').disabled = true;
-    $('runStatus').textContent = 'running…'; $('out').textContent = '';
-    setTimeout(function() {
-      try {
-        const r = runT0(parseFloat($('t0Single').value), parseFloat($('capS').value), null);
-        const st = r.aligned ? 'ALIGNED' : (r.crashed ? 'CRASH' : (r.timeout ? 'TIMEOUT' : 'FAILED'));
-        let txt = 'T0=' + r.T0 + '  ' + st + '  peak_δ=' + r.gimbalPeak.toFixed(2) + '°\n';
-        txt += 'final θ=' + r.finalTheta?.toFixed(3) + '°  ω=' + r.finalOmega?.toFixed(3) + '°/s  x=' + r.finalX?.toFixed(2) + 'm  vx=' + r.finalVx?.toFixed(3) + 'm/s\n\n';
-        txt += 't      phase                h      vy      vx      θ       ω       x       gim   thrAct  thrCmd\n';
-        for (const s of r.samples) txt += String(s.t).padEnd(6) + ' ' + (s.phase||'').padEnd(20) + ' ' + s.h.toFixed(3).padEnd(6) + ' ' + s.vy.toFixed(1).padEnd(7) + ' ' + s.vx.toFixed(2).padEnd(7) + ' ' + s.theta.toFixed(2).padEnd(7) + ' ' + s.omega.toFixed(2).padEnd(7) + ' ' + s.x.toFixed(1).padEnd(7) + ' ' + s.gimbal.toFixed(2).padEnd(5) + ' ' + String(s.thrustAct).padEnd(7) + ' ' + s.thrustCmd + '\n';
-        $('out').textContent = txt;
-      } catch (e) { $('out').innerHTML = '<span class="bad">ERROR: ' + e.message + '</span>'; console.error(e); }
-      finally { $('singleBtn').disabled = $('sweepBtn').disabled = false; S.running = false; $('runStatus').textContent = 'done'; }
-    }, 10);
-  });
-
-  $('sweepBtn').addEventListener('click', function() {
-    if (!S.inited || S.running) return;
-    S.running = true; $('sweepBtn').disabled = $('singleBtn').disabled = true;
-    $('out').textContent = '';
-    const from = parseFloat($('t0From').value), to = parseFloat($('t0To').value), step = parseFloat($('t0Step').value), capS = parseFloat($('capS').value);
-    const T0s = []; for (let t = from; t <= to + 1e-9; t += step) T0s.push(+t.toFixed(3));
-    const rows = []; let idx = 0;
-    function step_() {
-      try {
-        if (idx >= T0s.length) { finish(); return; }
-        $('runStatus').textContent = 'T0=' + T0s[idx] + ' (' + (idx+1) + '/' + T0s.length + ')';
-        const r = runT0(T0s[idx], capS, null); rows.push(r); idx++;
-        setTimeout(step_, 0);
-      } catch (e) { $('out').innerHTML = '<span class="bad">ERR T0=' + T0s[idx] + ': ' + e.message + '</span>'; S.running = false; $('sweepBtn').disabled = $('singleBtn').disabled = false; }
+$('sweepBtn').addEventListener('click', function(){
+  if(!S.inited||S.running)return;
+  S.running=true; $('sweepBtn').disabled=$('singleBtn').disabled=true;
+  $('out').textContent='';
+  const from=parseFloat($('t0From').value),to=parseFloat($('t0To').value),step=parseFloat($('t0Step').value),capS=parseFloat($('capS').value);
+  const T0s=[];for(let t=from;t<=to+1e-9;t+=step)T0s.push(+t.toFixed(3));
+  const rows=[];let idx=0;
+  function next(){
+    try{
+      if(idx>=T0s.length){finish();return;}
+      $('runStatus').textContent='T0='+T0s[idx]+' ('+(idx+1)+'/'+T0s.length+')';
+      const r=runT0fromLBA(T0s[idx],capS,null);r.T0=T0s[idx];rows.push(r);idx++;
+      setTimeout(next,0);
+    }catch(e){$('out').innerHTML='<span class="bad">ERR T0='+T0s[idx]+': '+e.message+'</span>';S.running=false;$('sweepBtn').disabled=$('singleBtn').disabled=false;}
+  }
+  function finish(){
+    let txt='T0      result          h_end    peak_δ   θ_end    ω_end    x_end    vx_end\n';
+    for(const r of rows){
+      const st=r.aligned?'ALIGNED ✓':(r.crashed?'CRASH':(r.timeout?'TIMEOUT':'FAILED'));
+      txt+=String(r.T0.toFixed(2)).padEnd(7)+' '+st.padEnd(15)+' '+(r.finalH!=null?r.finalH.toFixed(3):'?').padEnd(8)+' '+r.gimbalPeak.toFixed(2).padEnd(8)+' '+(r.finalTheta!=null?r.finalTheta.toFixed(2):'?').padEnd(8)+' '+(r.finalOmega!=null?r.finalOmega.toFixed(2):'?').padEnd(8)+' '+(r.finalX!=null?r.finalX.toFixed(1):'?').padEnd(8)+' '+(r.finalVx!=null?r.finalVx.toFixed(2):'?')+'\n';
     }
-    function finish() {
-      let txt = 'T0      result          h_end    peak_δ   θ_end    ω_end    x_end    vx_end\n';
-      for (const r of rows) {
-        const st = r.aligned ? 'ALIGNED ✓' : (r.crashed ? 'CRASH' : (r.timeout ? 'TIMEOUT' : 'FAILED'));
-        txt += String(r.T0.toFixed(2)).padEnd(7) + ' ' + st.padEnd(15) + ' ' + (r.finalH!=null?r.finalH.toFixed(3):'?').padEnd(8) + ' ' + r.gimbalPeak.toFixed(2).padEnd(8) + ' ' + (r.finalTheta!=null?r.finalTheta.toFixed(2):'?').padEnd(8) + ' ' + (r.finalOmega!=null?r.finalOmega.toFixed(2):'?').padEnd(8) + ' ' + (r.finalX!=null?r.finalX.toFixed(1):'?').padEnd(8) + ' ' + (r.finalVx!=null?r.finalVx.toFixed(2):'?') + '\n';
+    $('out').textContent=txt;S.running=false;$('sweepBtn').disabled=$('singleBtn').disabled=false;$('runStatus').textContent='done';
+  }
+  next();
+});
+
+// Section 2 buttons (same as before but add branch)
+$('s2capBtn').addEventListener('click', function(){
+  if(!S.inited||S.running)return;
+  S.running=true; $('s2capBtn').disabled=$('s2runBtn').disabled=$('s2compBtn').disabled=true;
+  $('s2status').textContent='capture + baseline…'; $('s2out').textContent='';
+  setTimeout(function(){
+    try{
+      const T0=parseFloat($('t0Single').value)||10;
+      const r=runT0fromLBA(T0,parseFloat($('capS').value),null);
+      const gs=Guidance.getGuideStatus();
+      const c6=gs.lbCapture6;
+      if(!c6){$('s2status').innerHTML='<span class="bad">capture6 missing — check status fields</span>';return;}
+      $('s2a0r').value=c6.a0rot.toFixed(6);$('s2v0r').value=c6.v0rot.toFixed(6);$('s2dsr').value=c6.dsrot.toFixed(6);
+      $('s2a0l').value=c6.a0lin.toFixed(4);$('s2v0l').value=c6.v0lin.toFixed(4);$('s2dsl').value=c6.dslin.toFixed(3);
+      $('s2t0').value=T0.toFixed(2);
+      S.s2LastResult=r;
+      $('s2runBtn').disabled=$('s2compBtn').disabled=false;
+      const st=r.aligned?'ALIGNED':(r.crashed?'CRASH':(r.timeout?'TIMEOUT':'FAILED'));
+      let txt='BASELINE T0='+T0+'  '+st+'  peak_δ='+r.gimbalPeak.toFixed(2)+'°\n';
+      txt+='captured: a0rot='+c6.a0rot.toFixed(6)+' v0rot='+c6.v0rot.toFixed(6)+' dsrot='+c6.dsrot.toFixed(6)+' a0lin='+c6.a0lin.toFixed(4)+' v0lin='+c6.v0lin.toFixed(4)+' dslin='+c6.dslin.toFixed(3)+'\n';
+      txt+='final θ='+r.finalTheta?.toFixed(3)+'°  ω='+r.finalOmega?.toFixed(3)+'°/s  x='+r.finalX?.toFixed(2)+'m  vx='+r.finalVx?.toFixed(3)+'m/s\n';
+      $('s2out').textContent=txt;
+    }catch(e){$('s2out').innerHTML='<span class="bad">ERR: '+e.message+'</span>';console.error(e);}
+    finally{$('s2capBtn').disabled=false;S.running=false;$('s2status').textContent='done';}
+  },10);
+});
+
+$('s2runBtn').addEventListener('click', function(){
+  if(!S.inited||S.running)return;
+  S.running=true; $('s2capBtn').disabled=$('s2runBtn').disabled=$('s2compBtn').disabled=true;
+  $('s2status').textContent='running override…';
+  setTimeout(function(){
+    try{
+      const ov={a0rot:parseFloat($('s2a0r').value),v0rot:parseFloat($('s2v0r').value),dsrot:parseFloat($('s2dsr').value),a0lin:parseFloat($('s2a0l').value),v0lin:parseFloat($('s2v0l').value),dslin:parseFloat($('s2dsl').value),T0:parseFloat($('s2t0').value),branch:parseInt($('s2br').value)||1};
+      const r=runT0fromLBA(ov.T0,parseFloat($('capS').value),ov);
+      S.s2LastResult=r;
+      const st=r.aligned?'ALIGNED':(r.crashed?'CRASH':(r.timeout?'TIMEOUT':'FAILED'));
+      let txt='OVERRIDE T0='+ov.T0+' branch='+ov.branch+'  '+st+'  peak_δ='+r.gimbalPeak.toFixed(2)+'°\n';
+      txt+='final θ='+r.finalTheta?.toFixed(3)+'°  ω='+r.finalOmega?.toFixed(3)+'°/s  x='+r.finalX?.toFixed(2)+'m  vx='+r.finalVx?.toFixed(3)+'m/s\n';
+      $('s2out').textContent=txt;
+    }catch(e){$('s2out').innerHTML='<span class="bad">ERR: '+e.message+'</span>';console.error(e);}
+    finally{$('s2capBtn').disabled=$('s2runBtn').disabled=$('s2compBtn').disabled=false;S.running=false;$('s2status').textContent='done';}
+  },10);
+});
+
+$('s2compBtn').addEventListener('click', function(){
+  if(!S.s2LastResult) return;
+  const r=S.s2LastResult;
+  if(r.finalTheta==null||r.finalX==null){$('s2status').innerHTML='<span class="bad">no error</span>';return;}
+  const tErrRad=r.finalTheta*Math.PI/180, xErrM=r.finalX;
+  const dsr=parseFloat($('s2dsr').value), dsl=parseFloat($('s2dsl').value);
+  $('s2dsr').value=(dsr-tErrRad).toFixed(6);
+  $('s2dsl').value=(dsl-xErrM).toFixed(3);
+  $('s2status').innerHTML='<span class="ok">ds_rot '+dsr.toFixed(6)+'→'+(dsr-tErrRad).toFixed(6)+'  ds_lin '+dsl.toFixed(3)+'→'+(dsl-xErrM).toFixed(3)+'</span>';
+});
+
+// Section 3 — bias capture (from EB start) + branch tests
+$('s3capBtn').addEventListener('click', function(){
+  if(!S.inited||S.running)return;
+  S.running=true; $('s3capBtn').disabled=$('s3testBtn').disabled=true;
+  $('s3status').textContent='capturing…'; $('s3capOut').textContent=''; $('s3testOut').textContent='';
+  S.s3Captures=[];
+  const biases = ($('s3biases').value||'').split(',').map(s=>parseFloat(s.trim())).filter(Number.isFinite);
+  let idx=0;
+  function next(){
+    if(idx>=biases.length){finishCap();return;}
+    $('s3status').textContent='bias '+biases[idx]+' ('+(idx+1)+'/'+biases.length+')';
+    setTimeout(function(){
+      const _ol=console.log; console.log=function(){};
+      try{
+        const bias=biases[idx];
+        const g=deepClone(S.ebSnap.guidanceState);
+        if(g.guideConfigs&&g.guideConfigs.landbackV1&&g.guideConfigs.landbackV1.rtls) g.guideConfigs.landbackV1.rtls.ENTRY_BURN_IMPACT_TARGET_M=bias;
+        if(g.lbRtlsBlock&&g.lbRtlsBlock.constants) g.lbRtlsBlock.constants.ENTRY_BURN_IMPACT_TARGET_M=bias;
+        restoreSnap(S.ebSnap, g);
+        // Run to spool complete
+        let spoolSnap=null, c6=null;
+        for(let i=0;i<90*80;i++){
+          if(state.halted||state.crashed)break;
+          TunerEngine.tick(CONFIG.DT);
+          const gs=Guidance.getGuideStatus();
+          if(gs&&gs.rtlsPhase==='LANDING_BURN'&&gs.lbSpooled){
+            spoolSnap=captureSnap();
+            const gs2=Guidance.getGuideStatus();
+            c6=gs2.lbCapture6;
+            break;
+          }
+        }
+        if(!spoolSnap||!c6){
+          S.s3Captures.push({bias,ok:false,reason:'spool not reached or capture6 missing'});
+        } else {
+          const rRot=lbRange(c6.a0rot,c6.v0rot,c6.dsrot);
+          const rLin=lbRange(c6.a0lin,c6.v0lin,c6.dslin);
+          S.s3Captures.push({bias,ok:true,spoolSnap,c6,rRot,rLin});
+        }
+        idx++; setTimeout(next,0);
+      }catch(e){console.error(e);idx++;setTimeout(next,0);}
+      finally{console.log=_ol;}
+    },10);
+  }
+  function finishCap(){
+    let txt='CAPTURE RESULTS (from EB start with each bias):\n';
+    txt+='bias     | a0rot      v0rot       dsrot       a0lin      v0lin      dslin    | rot_range        lin_range\n';
+    for(const c of S.s3Captures){
+      if(!c.ok){txt+=String(c.bias).padEnd(8)+' | FAIL: '+c.reason+'\n';continue;}
+      const c6=c.c6;
+      const rStr=c.rRot?'['+c.rRot[0].toFixed(2)+','+c.rRot[1].toFixed(2)+']':'null';
+      const lStr=c.rLin?'['+c.rLin[0].toFixed(2)+','+c.rLin[1].toFixed(2)+']':'null';
+      txt+=String(c.bias).padEnd(8)+' | '+
+           c6.a0rot.toFixed(6).padEnd(11)+' '+c6.v0rot.toFixed(6).padEnd(11)+' '+c6.dsrot.toFixed(6).padEnd(11)+' '+
+           c6.a0lin.toFixed(4).padEnd(10)+' '+c6.v0lin.toFixed(4).padEnd(10)+' '+c6.dslin.toFixed(3).padEnd(8)+' | '+
+           rStr.padEnd(16)+' '+lStr+'\n';
+    }
+    txt+='\nNOTE: branch 0 requires BOTH rot_range AND lin_range valid AND overlapping.\n';
+    txt+='Branch 1 works for any T0 (harmonics).\n';
+    $('s3capOut').textContent=txt;
+    $('s3testBtn').disabled=false; S.running=false; $('s3capBtn').disabled=false;
+    $('s3status').textContent='capture done';
+  }
+  next();
+});
+
+$('s3testBtn').addEventListener('click', function(){
+  if(!S.s3Captures.length||S.running)return;
+  S.running=true; $('s3capBtn').disabled=$('s3testBtn').disabled=true;
+  $('s3status').textContent='testing…'; $('s3testOut').textContent='';
+  const branches = ($('s3branches').value||'').split(',').map(s=>parseInt(s.trim())).filter(Number.isInteger);
+  const useAuto = $('s3autot0').checked;
+  const manualT0 = parseFloat($('s3t0man').value)||8;
+  const results=[];
+  let ci=0, bi=0;
+  function next(){
+    if(ci>=S.s3Captures.length){finish();return;}
+    const cap=S.s3Captures[ci];
+    if(!cap.ok||bi>=branches.length){ci++;bi=0;setTimeout(next,0);return;}
+    const branch=branches[bi];
+    $('s3status').textContent='bias '+cap.bias+' branch '+branch+' ('+(ci+1)+'/'+S.s3Captures.length+')';
+    setTimeout(function(){
+      try{
+        // T0 selection
+        let T0;
+        if(useAuto){
+          if(branch===0){
+            if(!cap.rRot||!cap.rLin){results.push({bias:cap.bias,branch,T0:null,result:'SKIP(no branch0 range)'});bi++;setTimeout(next,0);return;}
+            const lo=Math.max(cap.rRot[0],cap.rLin[0]);
+            const hi=Math.min(cap.rRot[1],cap.rLin[1]);
+            if(hi<=lo){results.push({bias:cap.bias,branch,T0:null,result:'SKIP(ranges no overlap)'});bi++;setTimeout(next,0);return;}
+            T0=0.9*hi;
+            if(T0<lo) T0=(lo+hi)/2;
+          } else {
+            T0=manualT0;
+          }
+        } else {
+          T0=manualT0;
+        }
+        const ov=Object.assign({},cap.c6,{T0,branch});
+        const r=runLBfromSpool(cap.spoolSnap,ov);
+        const st=r.aligned?'ALIGNED':(r.crashed?'CRASH':(r.timeout?'TIMEOUT':'FAILED'));
+        results.push({bias:cap.bias,branch,T0,result:st,r});
+        bi++;setTimeout(next,0);
+      }catch(e){console.error(e);results.push({bias:cap.bias,branch,T0:null,result:'ERR:'+e.message});bi++;setTimeout(next,0);}
+    },10);
+  }
+  function finish(){
+    let txt='TEST RESULTS:\n';
+    txt+='bias     branch  T0       result     h_end    peak_δ   θ_end    ω_end    x_end    vx_end\n';
+    for(const rr of results){
+      txt+=String(rr.bias).padEnd(8)+' '+String(rr.branch).padEnd(7)+' '+
+           (rr.T0!=null?rr.T0.toFixed(2):'--').padEnd(8)+' '+rr.result.padEnd(10)+' ';
+      if(rr.r){
+        txt+=(rr.r.finalH!=null?rr.r.finalH.toFixed(3):'?').padEnd(8)+' '+rr.r.gimbalPeak.toFixed(2).padEnd(8)+' '+
+             (rr.r.finalTheta!=null?rr.r.finalTheta.toFixed(2):'?').padEnd(8)+' '+(rr.r.finalOmega!=null?rr.r.finalOmega.toFixed(2):'?').padEnd(8)+' '+
+             (rr.r.finalX!=null?rr.r.finalX.toFixed(1):'?').padEnd(8)+' '+(rr.r.finalVx!=null?rr.r.finalVx.toFixed(2):'?');
       }
-      $('out').textContent = txt; S.running = false; $('sweepBtn').disabled = $('singleBtn').disabled = false; $('runStatus').textContent = 'done';
+      txt+='\n';
     }
-    step_();
-  });
+    txt+='\nBEST: pick lowest |θ|+|x|/10+|vx| among ALIGNED rows.\n';
+    $('s3testOut').textContent=txt;
+    $('s3capBtn').disabled=$('s3testBtn').disabled=false;S.running=false;$('s3status').textContent='done';
+  }
+  next();
+});
 
-  // Section 2
-  $('s2capBtn').addEventListener('click', function() {
-    if (!S.inited || S.running) return;
-    S.running = true; $('s2capBtn').disabled = $('s2runBtn').disabled = $('s2compBtn').disabled = true;
-    $('s2status').textContent = 'capture + baseline…'; $('s2out').textContent = '';
-    setTimeout(function() {
-      try {
-        const t0 = parseFloat($('t0Single').value) || 10;
-        const r = runT0(t0, parseFloat($('capS').value), null);
-        if (!r.captured6) { $('s2status').innerHTML = '<span class="bad">capture failed</span>'; return; }
-        $('s2a0r').value = r.captured6.a0rot.toFixed(6);
-        $('s2v0r').value = r.captured6.v0rot.toFixed(6);
-        $('s2dsr').value = r.captured6.dsrot.toFixed(6);
-        $('s2a0l').value = r.captured6.a0lin.toFixed(4);
-        $('s2v0l').value = r.captured6.v0lin.toFixed(4);
-        $('s2dsl').value = r.captured6.dslin.toFixed(3);
-        $('s2t0').value = r.T0.toFixed(2);
-        S.s2LastResult = r;
-        $('s2runBtn').disabled = $('s2compBtn').disabled = false;
-        const st = r.aligned ? 'ALIGNED' : (r.crashed ? 'CRASH' : (r.timeout ? 'TIMEOUT' : 'FAILED'));
-        let txt = 'BASELINE (no override)  T0=' + r.T0 + '  ' + st + '  peak_δ=' + r.gimbalPeak.toFixed(2) + '°\n';
-        txt += 'captured 6: a0rot=' + r.captured6.a0rot.toFixed(6) + ' v0rot=' + r.captured6.v0rot.toFixed(6) + ' dsrot=' + r.captured6.dsrot.toFixed(6) + '\n';
-        txt += '            a0lin=' + r.captured6.a0lin.toFixed(4) + ' v0lin=' + r.captured6.v0lin.toFixed(4) + ' dslin=' + r.captured6.dslin.toFixed(3) + '\n';
-        txt += 'final θ=' + r.finalTheta?.toFixed(3) + '°  ω=' + r.finalOmega?.toFixed(3) + '°/s  x=' + r.finalX?.toFixed(2) + 'm  vx=' + r.finalVx?.toFixed(3) + 'm/s\n';
-        $('s2out').textContent = txt;
-      } catch (e) { $('s2out').innerHTML = '<span class="bad">ERROR: ' + e.message + '</span>'; console.error(e); }
-      finally { $('s2capBtn').disabled = false; S.running = false; $('s2status').textContent = 'done'; }
-    }, 10);
-  });
+// Stacks
+const stacks = (typeof loadStacks === 'function' ? loadStacks() : []).filter(s => s && s.sequence === 'standard' && s.locked);
+$('stackSel').innerHTML = stacks.length ? stacks.map(s => '<option value="'+s.id.replace(/[&<>"']/g,'')+'">'+s.name.replace(/[&<>"']/g,'')+'</option>').join('') : '<option value="">(no eligible stacks)</option>';
 
-  $('s2runBtn').addEventListener('click', function() {
-    if (!S.inited || S.running) return;
-    S.running = true; $('s2capBtn').disabled = $('s2runBtn').disabled = $('s2compBtn').disabled = true;
-    $('s2status').textContent = 'running with override…';
-    setTimeout(function() {
-      try {
-        const ov = {
-          a0rot: parseFloat($('s2a0r').value), v0rot: parseFloat($('s2v0r').value), dsrot: parseFloat($('s2dsr').value),
-          a0lin: parseFloat($('s2a0l').value), v0lin: parseFloat($('s2v0l').value), dslin: parseFloat($('s2dsl').value),
-          T0: parseFloat($('s2t0').value),
-        };
-        const r = runT0(ov.T0, parseFloat($('capS').value), ov);
-        S.s2LastResult = r;
-        const st = r.aligned ? 'ALIGNED' : (r.crashed ? 'CRASH' : (r.timeout ? 'TIMEOUT' : 'FAILED'));
-        let txt = 'OVERRIDE  T0=' + r.T0.toFixed(2) + '  ' + st + '  peak_δ=' + r.gimbalPeak.toFixed(2) + '°\n';
-        txt += 'final θ=' + r.finalTheta?.toFixed(3) + '°  ω=' + r.finalOmega?.toFixed(3) + '°/s  x=' + r.finalX?.toFixed(2) + 'm  vx=' + r.finalVx?.toFixed(3) + 'm/s\n\n';
-        txt += 't      phase                h      vy      vx      θ       ω       x       gim   thrAct  thrCmd\n';
-        for (const s of r.samples) txt += String(s.t).padEnd(6) + ' ' + (s.phase||'').padEnd(20) + ' ' + s.h.toFixed(3).padEnd(6) + ' ' + s.vy.toFixed(1).padEnd(7) + ' ' + s.vx.toFixed(2).padEnd(7) + ' ' + s.theta.toFixed(2).padEnd(7) + ' ' + s.omega.toFixed(2).padEnd(7) + ' ' + s.x.toFixed(1).padEnd(7) + ' ' + s.gimbal.toFixed(2).padEnd(5) + ' ' + String(s.thrustAct).padEnd(7) + ' ' + s.thrustCmd + '\n';
-        $('s2out').textContent = txt;
-      } catch (e) { $('s2out').innerHTML = '<span class="bad">ERROR: ' + e.message + '</span>'; console.error(e); }
-      finally { $('s2capBtn').disabled = $('s2runBtn').disabled = $('s2compBtn').disabled = false; S.running = false; $('s2status').textContent = 'done'; }
-    }, 10);
-  });
-
-  $('s2compBtn').addEventListener('click', function() {
-    if (!S.s2LastResult) return;
-    const r = S.s2LastResult;
-    if (r.finalTheta == null || r.finalX == null) { $('s2status').innerHTML = '<span class="bad">no error to compensate</span>'; return; }
-    const thetaErrRad = r.finalTheta * Math.PI / 180;
-    const xErrM = r.finalX;
-    const dsr = parseFloat($('s2dsr').value);
-    const dsl = parseFloat($('s2dsl').value);
-    $('s2dsr').value = (dsr - thetaErrRad).toFixed(6);
-    $('s2dsl').value = (dsl - xErrM).toFixed(3);
-    $('s2status').innerHTML = '<span class="ok">ds_rot ' + dsr.toFixed(6) + '→' + (dsr-thetaErrRad).toFixed(6) + '  ds_lin ' + dsl.toFixed(3) + '→' + (dsl-xErrM).toFixed(3) + '</span>';
-  });
 })();
 </script>
 </body></html>
