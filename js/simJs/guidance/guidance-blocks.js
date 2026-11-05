@@ -3149,12 +3149,8 @@ setState(s) {
       // POST_ENTRY_STEER
       LANDING_BURN_ALIGN_ALT_KM: 5,        // AGL km: PES stops steering, fin ramps 0, coast to aero equilibrium
       LANDING_BURN_ALT_KM: 2,              // AGL km: PES->LANDING_BURN phase transition (landing-burn ignition)
-      LANDING_BURN_ENGINES: "C",
+      LANDING_BURN_ENGINES: "C",        // engines fired during LB spool (C = centre; add numbers for outer-ring)
       LANDING_BURN_LEGS_ALT_M: 100,   // AGL altitude to deploy legs during LB
-      LANDING_BURN_T0_S: 6.0,              // solver burn time (branch 1). Tune to avoid gimbal saturation.
-      LANDING_BURN_T0_BRANCH: 1,           // solver branch (obsolete under power-law, kept for compat).
-      LANDING_BURN_T0_AUTO: true,          // if true, compute valid T0 range from both systems and auto-pick best.
-      LANDING_BURN_TEST_OVERRIDE: null,    // TEST: {a0rot,v0rot,dsrot,a0lin,v0lin,dslin,T0,branch} | null.           // engines fired at 100% during LB spool (C = centre; add numbers for outer-ring) 
       POST_ENTRY_GRIDFIN_RAMP_DEG_S: 3,    // grid-fin control target ramps 0 -> max at this rate (deg/s); slower = less oscillation (guess, tune in sim)
     },
     importantFields: [],
@@ -3211,9 +3207,9 @@ setState(s) {
         // ---- LANDING_BURN scratch (log-only for now) ----
         lbInit: false, lbT0: null, lbDone: false, lbLastLog: 0,
         lbThrCmd: null, lbGimbalCmd: 0, lbFinCmd: 0,
-        lbSpooled: false, lbSpoolT: null, lbBurnCut: false,
-        lbAlignStartT: null, lbAlignT0: null, lbTrajPow: null, lbSisterRanges: null, lbSisterPick: null, lbPlan: null, lbLegsDeployed: false,
-        lbTestOverride: null, lbCapture6: null, lbTrajPow: null,
+        lbSpooled: false, lbSpoolT: null,
+        lbAlignStartT: null, lbPlan: null, lbLegsDeployed: false,
+       
         lbaInit: false, lbaAlignStartT: null, lbaFinCmd: null, lbaGimbalZeroDone: false,
         lbAlignDeltaMax: 0,
         // ---- BOOSTBACK scratch ----
@@ -5045,14 +5041,7 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
               _st.lbFinCmd = 0;
               _st.lbSpooled = false;
               _st.lbSpoolT = null;
-              _st.lbBurnCut = false;
               _st.lbAlignStartT = null;
-              _st.lbAlignT0 = null;
-              _st.lbTestOverride = null;
-              _st.lbCapture6 = null;
-              _st.lbTrajPow = null;
-              _st.lbSisterRanges = null;
-              _st.lbSisterPick = null;
               _st.lbPlan = null;
               _st.lbLegsDeployed = false;
               _send(Guidance.cmdSetAllThrottle(0));
@@ -5448,14 +5437,7 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
           _st.lbFinCmd = 0;
           _st.lbSpooled = false;
           _st.lbSpoolT = null;
-          _st.lbBurnCut = false;
           _st.lbAlignStartT = null;
-          _st.lbAlignT0 = null;
-          _st.lbTestOverride = null;
-          _st.lbCapture6 = null;
-          _st.lbTrajPow = null;
-          _st.lbSisterRanges = null;
-          _st.lbSisterPick = null;
           _st.lbPlan = null;
           _st.lbLegsDeployed = false;
           _st.lbaInit = false;
@@ -5560,13 +5542,7 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
             pesFinCtrlActDeg: _st.pesFinCtrlActDeg,
             lbSpooled: !!_st.lbSpooled,
             lbAlignStartT: _st.lbAlignStartT,
-            lbAlignT0: _st.lbAlignT0,
             lbAlignDeltaMax: _st.lbAlignDeltaMax,
-            lbCapture6: _st.lbCapture6 ? JSON.parse(JSON.stringify(_st.lbCapture6)) : null,
-            lbTestOverride: _st.lbTestOverride ? JSON.parse(JSON.stringify(_st.lbTestOverride)) : null,
-            lbSisterRanges: _st.lbSisterRanges ? JSON.parse(JSON.stringify(_st.lbSisterRanges)) : null,
-            lbSisterPick: Number.isFinite(_st.lbSisterPick) ? _st.lbSisterPick : null,
-            lbTrajPow: _st.lbTrajPow ? { T0: _st.lbTrajPow.T0, a0rot: _st.lbTrajPow.a0rot, a0lin: _st.lbTrajPow.a0lin, rot: { q: _st.lbTrajPow.rot.q, k: _st.lbTrajPow.rot.k, crossings: _st.lbTrajPow.rot.crossings, L: _st.lbTrajPow.rot.L }, lin: { q: _st.lbTrajPow.lin.q, k: _st.lbTrajPow.lin.k, crossings: _st.lbTrajPow.lin.crossings, L: _st.lbTrajPow.lin.L } } : null,
             lbLastFyBody: Number.isFinite(_st.lbLastFyBody) ? _st.lbLastFyBody : null,
             rcsTorque: _st.lastRcsTorque,
           };
