@@ -3151,7 +3151,8 @@ setState(s) {
       LANDING_BURN_ALT_KM: 2,              // AGL km: PES->LANDING_BURN phase transition (landing-burn ignition)
       LANDING_BURN_ENGINES: "C",
       LANDING_BURN_T0_S: 6.0,              // solver burn time (branch 1). Tune to avoid gimbal saturation.
-      LANDING_BURN_T0_BRANCH: 1,           // solver branch. 0=physical (needs Λ>1/3), 1+=harmonics.
+      LANDING_BURN_T0_BRANCH: 1,           // solver branch (obsolete under power-law, kept for compat).
+      LANDING_BURN_T0_AUTO: true,          // if true, compute valid T0 range from both systems and auto-pick best.
       LANDING_BURN_TEST_OVERRIDE: null,    // TEST: {a0rot,v0rot,dsrot,a0lin,v0lin,dslin,T0,branch} | null.           // engines fired at 100% during LB spool (C = centre; add numbers for outer-ring) 
       POST_ENTRY_GRIDFIN_RAMP_DEG_S: 3,    // grid-fin control target ramps 0 -> max at this rate (deg/s); slower = less oscillation (guess, tune in sim)
     },
@@ -5305,6 +5306,44 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
               if(t>=sol.L) return 0;
               return a0*(1-Math.pow(t/sol.L, sol.q)) - sol.k*Math.sin(Math.PI*t/sol.L);
             };
+            // ============ SISTER FINDER (T0 range where both rot & lin work) ============
+            const _lbFindValidT0Range = function(a0r, v0r, dsr, a0l, v0l, dsl) {
+              const Lmin = 0.5, Lmax = 30, N = 100;
+              const intervals = [];
+              let inValid = false, startL = null, prevL = Lmin;
+              for (let i = 0; i <= N; i++) {
+                const L = Lmin * Math.pow(Lmax/Lmin, i/N);
+                const r = _lbSolvePowAtT0(a0r, v0r, dsr, L);
+                const l = _lbSolvePowAtT0(a0l, v0l, dsl, L);
+                const valid = !!(r && l);
+                if (valid && !inValid) { startL = L; inValid = true; }
+                if (!valid && inValid) { intervals.push([startL, prevL]); inValid = false; }
+                prevL = L;
+              }
+              if (inValid) intervals.push([startL, Lmax]);
+              const merged = [];
+              for (let k = 0; k < intervals.length; k++) {
+                const iv = intervals[k];
+                if (merged.length && iv[0]/merged[merged.length-1][1] < 1.3) merged[merged.length-1][1] = iv[1];
+                else merged.push(iv.slice());
+              }
+              return merged;
+            };
+            const _lbPickBestT0 = function(a0r, v0r, dsr, a0l, v0l, dsl, intervals) {
+              let best = null;
+              for (let ii = 0; ii < intervals.length; ii++) {
+                const iv = intervals[ii];
+                for (let j = 1; j <= 15; j++) {
+                  const L = iv[0] + (iv[1]-iv[0]) * j / 16;
+                  const r = _lbSolvePowAtT0(a0r, v0r, dsr, L);
+                  const l = _lbSolvePowAtT0(a0l, v0l, dsl, L);
+                  if (!r || !l) continue;
+                  const score = r.crossings + l.crossings;
+                  if (!best || score < best.score || (score === best.score && L < best.L)) best = { L: L, score: score, rot: r, lin: l };
+                }
+              }
+              return best;
+            };
             if (_st.lbAlignT0 == null) {
               const aeroAccArm = _pesAeroAccel(d, M);
               const rotA0_ = (d.alphaAng || 0) + (d.gridFinTorque || 0) / I;
@@ -5351,6 +5390,30 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
             }
 
             // Timeout: T0 window exhausted without meeting tolerance
+            // SISTER-AUTO: if auto mode, compute valid T0 range from both systems, pick best (score=crossings sum, then shorter L)
+            {
+              const _rotA0_s = (d.alphaAng || 0) + (d.gridFinTorque || 0) / I;
+              const _aeroS = _pesAeroAccel(d, M);
+              const _axInert_s = d.gVecX + _aeroS.ax + ((d.thrustBodyX * Math.cos(d.theta) - d.thrustBodyY * Math.sin(d.theta)) / M);
+              const _axEarth_s = _axInert_s - 2 * omegaE * vRadial;
+              const _dsRot_s = -thetaLocalDeg / R2D;
+              const _dsLin_s = -xFromPadM;
+              const _ovT0Set = _st.lbTestOverride && Number.isFinite(_st.lbTestOverride.T0) && _st.lbTestOverride.T0 > 0;
+              if (cfg.LANDING_BURN_T0_AUTO !== false && !_ovT0Set) {
+                const _rng = _lbFindValidT0Range(_rotA0_s, d.omega, _dsRot_s, _axEarth_s, vTangGround, _dsLin_s);
+                if (_rng.length > 0) {
+                  const _best = _lbPickBestT0(_rotA0_s, d.omega, _dsRot_s, _axEarth_s, vTangGround, _dsLin_s, _rng);
+                  if (_best) {
+                    _st.lbAlignT0 = _best.L;
+                    if (_st.lbTestOverride) _st.lbTestOverride.T0 = _best.L;
+                    const _rs = _rng.map(function(iv){return "["+iv[0].toFixed(2)+"-"+iv[1].toFixed(2)+"]";}).join(" ");
+                    console.log("[standardRTLS] LB SISTER-AUTO T0=" + _best.L.toFixed(2) + "s score=" + _best.score + " commonRanges=" + _rs);
+                  }
+                } else {
+                  console.log("[standardRTLS] LB SISTER-AUTO: no common range; fallback T0=" + _st.lbAlignT0.toFixed(2) + "s");
+                }
+              }
+            }
             const T0_remaining = _st.lbAlignT0 - elapsedAlign;
             if (T0_remaining < -0.1) {
               console.warn("[standardRTLS] LB ALIGN FAILED: T0 exhausted, not aligned. th=" +

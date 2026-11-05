@@ -358,6 +358,7 @@ leoInsertionV3: _mkDefault(
       LANDING_BURN_ENGINES: "C",
       LANDING_BURN_T0_S: 6.0,
       LANDING_BURN_T0_BRANCH: 1,
+      LANDING_BURN_T0_AUTO: true,
       LANDING_BURN_TEST_OVERRIDE: null,
       POST_ENTRY_GRIDFIN_RAMP_DEG_S: 3,
     },
