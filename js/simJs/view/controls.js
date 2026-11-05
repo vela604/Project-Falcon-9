@@ -1075,6 +1075,23 @@ try {
   // a guide is running.
   const abortBtn = document.getElementById('btnGuideAbort');
   if (abortBtn) abortBtn.addEventListener('click', abortGuidance);
+
+  // Toggle Mission Phases panel visibility
+  const phaseBtn = document.getElementById('btnTogglePhaseTrack');
+  if (phaseBtn) {
+    phaseBtn.addEventListener('click', () => {
+      const tb = document.getElementById('guidePhaseTrack');
+      if (!tb) return;
+      const isHidden = tb.style.display === 'none';
+      if (isHidden) {
+        tb.style.display = '';
+        window._userHidPhaseTrack = false;
+      } else {
+        tb.style.display = 'none';
+        window._userHidPhaseTrack = true;
+      }
+    });
+  }
   }
 
 // ---------------------------------------------------------------------------
@@ -1256,12 +1273,14 @@ function _renderPhaseTrack(status) {
   if (!host || !trackBox) return;
   
   if (!status || !status.active) {
-    trackBox.style.display = 'none';
+    if (!window._userHidPhaseTrack) trackBox.style.display = 'none';
     _phaseTrackLastSeq = null;
     _phaseTrackRows = {};
     return;
   }
-  trackBox.style.display = '';
+  if (!window._userHidPhaseTrack) {
+    trackBox.style.display = '';
+  }
   
   // Active-row match uses the DISPLAY name (phaseDisplay) — the sequence
 // and log the worker sent are already in display-space, so comparing
