@@ -5390,30 +5390,6 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
             }
 
             // Timeout: T0 window exhausted without meeting tolerance
-            // SISTER-AUTO: if auto mode, compute valid T0 range from both systems, pick best (score=crossings sum, then shorter L)
-            {
-              const _rotA0_s = (d.alphaAng || 0) + (d.gridFinTorque || 0) / I;
-              const _aeroS = _pesAeroAccel(d, M);
-              const _axInert_s = d.gVecX + _aeroS.ax + ((d.thrustBodyX * Math.cos(d.theta) - d.thrustBodyY * Math.sin(d.theta)) / M);
-              const _axEarth_s = _axInert_s - 2 * omegaE * vRadial;
-              const _dsRot_s = -thetaLocalDeg / R2D;
-              const _dsLin_s = -xFromPadM;
-              const _ovT0Set = _st.lbTestOverride && Number.isFinite(_st.lbTestOverride.T0) && _st.lbTestOverride.T0 > 0;
-              if (cfg.LANDING_BURN_T0_AUTO !== false && !_ovT0Set) {
-                const _rng = _lbFindValidT0Range(_rotA0_s, d.omega, _dsRot_s, _axEarth_s, vTangGround, _dsLin_s);
-                if (_rng.length > 0) {
-                  const _best = _lbPickBestT0(_rotA0_s, d.omega, _dsRot_s, _axEarth_s, vTangGround, _dsLin_s, _rng);
-                  if (_best) {
-                    _st.lbAlignT0 = _best.L;
-                    if (_st.lbTestOverride) _st.lbTestOverride.T0 = _best.L;
-                    const _rs = _rng.map(function(iv){return "["+iv[0].toFixed(2)+"-"+iv[1].toFixed(2)+"]";}).join(" ");
-                    console.log("[standardRTLS] LB SISTER-AUTO T0=" + _best.L.toFixed(2) + "s score=" + _best.score + " commonRanges=" + _rs);
-                  }
-                } else {
-                  console.log("[standardRTLS] LB SISTER-AUTO: no common range; fallback T0=" + _st.lbAlignT0.toFixed(2) + "s");
-                }
-              }
-            }
             const T0_remaining = _st.lbAlignT0 - elapsedAlign;
             if (T0_remaining < -0.1) {
               console.warn("[standardRTLS] LB ALIGN FAILED: T0 exhausted, not aligned. th=" +
@@ -5446,30 +5422,42 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
 
 const _brCfg = (Number.isInteger(cfg.LANDING_BURN_T0_BRANCH) && cfg.LANDING_BURN_T0_BRANCH >= 0) ? cfg.LANDING_BURN_T0_BRANCH : 1;
             const _brUse = (_st.lbTestOverride && Number.isInteger(_st.lbTestOverride.branch) && _st.lbTestOverride.branch >= 0) ? _st.lbTestOverride.branch : _brCfg;
-            const _ovP = _st.lbTestOverride;
-            const _a0rot_t = _ovP ? _ovP.a0rot : rotA0;
-            const _v0rot_t = _ovP ? _ovP.v0rot : rotV0;
-            const _dsrot_t = _ovP ? _ovP.dsrot : rotDs;
-            const _a0lin_t = _ovP ? _ovP.a0lin : axEarthObs;
-            const _v0lin_t = _ovP ? _ovP.v0lin : linV0;
-            const _dslin_t = _ovP ? _ovP.dslin : linDs;
-            const _T0_t = _ovP ? _ovP.T0 : Math.max(0.5, _st.lbAlignT0);
-            if (_st.lbTrajPow && Math.abs(_st.lbTrajPow.T0 - _T0_t) > 1e-9) _st.lbTrajPow = null;
-            if (!_st.lbTrajPow) {
-              const _sr = _lbSolvePowAtT0(_a0rot_t, _v0rot_t, _dsrot_t, _T0_t);
-              const _sl = _lbSolvePowAtT0(_a0lin_t, _v0lin_t, _dslin_t, _T0_t);
-              if (!_sr || !_sl) {
-                if (DEBUG_RTLS) console.warn("[standardRTLS] LB TRAJ-POW null T0=" + _T0_t.toFixed(2) + " rot=" + !!_sr + " lin=" + !!_sl);
-                _bbThrottle(lbEng, 0);
-                break;
+            // LOCK-ONCE at spool-complete (capture6 frozen): sister-find T0 range, pick best, solve traj, never re-solve
+            if (!_st.lbTrajPow && _st.lbCapture6) {
+              const c6 = _st.lbCapture6;
+              let T0_locked = _st.lbAlignT0;
+              const _ovT0Set = _st.lbTestOverride && Number.isFinite(_st.lbTestOverride.T0) && _st.lbTestOverride.T0 > 0;
+              if (_ovT0Set) {
+                T0_locked = _st.lbTestOverride.T0;
+                console.log("[standardRTLS] LB T0-OVERRIDE T0=" + T0_locked.toFixed(2) + "s (manual)");
+              } else if (cfg.LANDING_BURN_T0_AUTO !== false) {
+                const _rng = _lbFindValidT0Range(c6.a0rot, c6.v0rot, c6.dsrot, c6.a0lin, c6.v0lin, c6.dslin);
+                if (_rng.length > 0) {
+                  const _best = _lbPickBestT0(c6.a0rot, c6.v0rot, c6.dsrot, c6.a0lin, c6.v0lin, c6.dslin, _rng);
+                  if (_best) {
+                    T0_locked = _best.L;
+                    const _rs = _rng.map(function(iv){return "["+iv[0].toFixed(2)+"-"+iv[1].toFixed(2)+"]";}).join(" ");
+                    console.log("[standardRTLS] LB SISTER-AUTO T0=" + T0_locked.toFixed(2) + "s score=" + _best.score + " commonRanges=" + _rs);
+                  }
+                } else {
+                  console.log("[standardRTLS] LB SISTER-AUTO: no common range; fallback T0=" + T0_locked.toFixed(2) + "s");
+                }
               }
-              _st.lbTrajPow = { rot: _sr, lin: _sl, a0rot: _a0rot_t, a0lin: _a0lin_t, T0: _T0_t };
-              console.log("[standardRTLS] LB TRAJ-POW locked T0=" + _T0_t.toFixed(2) +
-                " q_rot=" + _sr.q.toFixed(4) + " k_rot=" + _sr.k.toFixed(6) + " cross_rot=" + _sr.crossings +
-                " | q_lin=" + _sl.q.toFixed(4) + " k_lin=" + _sl.k.toFixed(6) + " cross_lin=" + _sl.crossings);
+              _st.lbAlignT0 = T0_locked;
+              const sr = _lbSolvePowAtT0(c6.a0rot, c6.v0rot, c6.dsrot, T0_locked);
+              const sl = _lbSolvePowAtT0(c6.a0lin, c6.v0lin, c6.dslin, T0_locked);
+              if (sr && sl) {
+                _st.lbTrajPow = { rot: sr, lin: sl, a0rot: c6.a0rot, a0lin: c6.a0lin, T0: T0_locked };
+                console.log("[standardRTLS] LB TRAJ-POW locked T0=" + T0_locked.toFixed(2) +
+                  " q_rot=" + sr.q.toFixed(4) + " k_rot=" + sr.k.toFixed(6) + " cross_rot=" + sr.crossings +
+                  " | q_lin=" + sl.q.toFixed(4) + " k_lin=" + sl.k.toFixed(6) + " cross_lin=" + sl.crossings);
+              } else {
+                console.warn("[standardRTLS] LB TRAJ-POW null at T0=" + T0_locked.toFixed(2) + " rot=" + !!sr + " lin=" + !!sl);
+              }
             }
-            const solRot = _st.lbTrajPow.rot;
-            const solLin = _st.lbTrajPow.lin;
+            const solRot = _st.lbTrajPow ? _st.lbTrajPow.rot : null;
+            const solLin = _st.lbTrajPow ? _st.lbTrajPow.lin : null;
+            if (!solRot || !solLin) { _bbThrottle(lbEng, 0); break; }
             if (!solRot || !solLin) {
               if (DEBUG_RTLS) console.warn("[standardRTLS] LB ALIGN solve null T0rem=" +
                 T0_remaining.toFixed(2) + " rot=" + !!solRot + " lin=" + !!solLin);
