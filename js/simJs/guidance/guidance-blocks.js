@@ -5282,13 +5282,20 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
             // d(aNeed)/dt = (v/h)*(aNeed - a)  => with KN>1 the error shrinks like h^(KN-1): stable down to the ground.
             const cosTilt = Math.max(0.9, Math.cos(thL) * Math.cos(gimbalCur / R2D));
             const Fmin = minMF * ve * lbEng.length;
+            // v7b: reference throttle height ke saath THR_LATE -> Fmin/Fmax tak girta hai
+            const LB_H_BLEND = 15.0;
+            const fMinFrac = Math.min(THR_LATE, minMF / maxMF);
+            const thrLateAt = function (h) {
+              const k = Math.max(0, Math.min(1, h / LB_H_BLEND));
+              return fMinFrac + (THR_LATE - fMinFrac) * k;
+            };
             const _lbRollout = function (h0, v0, m0, kA) {
               const PD = LB_PROF_DT;
               const P = { dt: PD, t: [], h: [], v: [], a: [], F: [], m: [] };
               let t = 0, h = h0, v = v0, m = m0;
               for (let n = 0; n < 2400; n++) {
                 const aero = kA * v * v;
-                const aRefP = THR_LATE * Fmax * cosTilt / m - gLoc + aero;
+                const aRefP = thrLateAt(h) * Fmax * cosTilt / m - gLoc + aero;
                 const aNeedP = (v * v - V_TD * V_TD) / (2 * Math.max(h, H_FLOOR));
                 const aReqP = aRefP + LB_KN * (aNeedP - aRefP);
                 let F = m * (aReqP + gLoc - aero) / cosTilt;
@@ -5328,7 +5335,7 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
             // ================================================================
             const hDen = Math.max(hEff, H_FLOOR);
             const aNeed = (vDown * vDown - V_TD * V_TD) / (2 * hDen);
-            const aRef = THR_LATE * Fmax * cosTilt / M - gLoc + aeroUp;
+            const aRef = thrLateAt(hEff) * Fmax * cosTilt / M - gLoc + aeroUp;
             const aReq = aRef + LB_KN * (aNeed - aRef);
             const vRefCurve = Math.sqrt(V_TD * V_TD + 2 * Math.max(aRef, 0) * hDen);
             const Fv = M * (aReq + gLoc - aeroUp) / cosTilt;
