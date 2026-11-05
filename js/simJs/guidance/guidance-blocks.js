@@ -5008,7 +5008,7 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
             break;
           }
 
-          case "LANDING_BURN": {
+                    case "LANDING_BURN": {
             const idx = _bodyIdx;
             const body = snapshot.bodies[idx];
             if (!body) break;
@@ -5057,7 +5057,7 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
                 " alt=" + (d.altitudeAGL / 1000).toFixed(2) + "km" +
                 " vGround=" + vGroundMag.toFixed(0) + "m/s" +
                 " (vRad=" + vRadial.toFixed(1) + " vTangGround=" + vTangGround.toFixed(1) + ")" +
-                " — SLAM v4 (aero-aware replan + 2-stage throttle + fin assist) → TOUCHDOWN");
+                " — SLAM v5 (zero-effort-to-go law on a THR_LATE reference + rollout-based lateral horizon + fin assist) → TOUCHDOWN");
             }
 
             const hAGL = d.altitudeAGL;
@@ -5120,9 +5120,8 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
             const DELTA_PLAN = _cfgN("LANDING_BURN_DELTA_PLAN_DEG", 5.0);
             const T_FRAC = _cfgN("LANDING_BURN_PLAN_TGO_FRAC", 0.75);
             const T_FIXED = Number.isFinite(cfg.LANDING_BURN_PLAN_T_S) ? cfg.LANDING_BURN_PLAN_T_S : null;
-            const THR_EARLY = _cfgN("LANDING_BURN_THR_EARLY", 0.9);
             const THR_LATE = _cfgN("LANDING_BURN_THR_LATE", 0.6);
-            const LB_KV = 0.8;            // 1/s, v-error -> decel feedback
+            const LB_KN = 2.0;            // dimensionless gain on (aNeed - aRef); >1 => stable, error ~ h^(KN-1)
             const LB_REPLAN_S = 1.0;      // profile + lateral plan refresh period
             const LB_PROF_DT = 0.05;      // profile table step
             const LB_FIN_SHARE = 0.4;     // gimbal keeps this fraction of its range, rest -> fins
@@ -5236,50 +5235,33 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
               return c;
             };
 
-            // ---- vertical profile: THR_EARLY -> THR_LATE, switch time solved so v=V_TD at h=0 ----
-            const _lbBuildProfile = function (h0, v0, Mnow, kAero) {
+            // ---- vertical law (v5) ----
+            // aRef  = net decel when flying at throttle THR_LATE (thrust-only part + aero already helping)
+            // aNeed = constant net decel that lands exactly at V_TD from here  ((v^2-V_TD^2)/(2h))
+            // aReq  = aRef + KN*(aNeed - aRef)  -> above the curve: brakes hard, below: coasts at Fmin.
+            // d(aNeed)/dt = (v/h)*(aNeed - a)  => with KN>1 the error shrinks like h^(KN-1): stable down to the ground.
+            const cosTilt = Math.max(0.9, Math.cos(thL) * Math.cos(gimbalCur / R2D));
+            const Fmin = minMF * ve * lbEng.length;
+            const _lbRollout = function (h0, v0, m0, kA) {
               const PD = LB_PROF_DT;
-              const uLate = Math.min(THR_EARLY, Math.max(THR_LATE, (1.0 + gLoc) * Mnow / Fmax));
-              const run = function (ts, store) {
-                const P = store ? { dt: PD, t: [], h: [], v: [], a: [], F: [], m: [] } : null;
-                let t = 0, h = h0, v = v0, m = Mnow;
-                for (let n = 0; n < 2400; n++) {
-                  const s = Math.max(0, Math.min(1, (t - ts) / 1.5));
-                  const u = THR_EARLY + (uLate - THR_EARLY) * s * s * (3 - 2 * s);
-                  const F = u * Fmax;
-                  const a = F / m - gLoc + kAero * v * v;
-                  if (P) { P.t.push(t); P.h.push(h); P.v.push(v); P.a.push(a); P.F.push(F); P.m.push(m); }
-                  if (v <= V_TD || h <= 0) break;
-                  const vN = v - a * PD;
-                  h -= 0.5 * (v + vN) * PD;
-                  v = vN; m -= F / ve * PD; t += PD;
-                }
-                return { h: h, P: P };
-              };
-              let ts = 0, lo = 0, hi = 40, feasible = true;
-              if (run(0, false).h >= 0) ts = 0;                          // late throttle alone already stops above ground
-              else if (run(hi, false).h < 0) { ts = hi; feasible = false; } // too late even at max effort
-              else {
-                for (let it = 0; it < 22; it++) {
-                  const mid = 0.5 * (lo + hi);
-                  if (run(mid, false).h >= 0) hi = mid; else lo = mid;
-                }
-                ts = hi;
+              const P = { dt: PD, t: [], h: [], v: [], a: [], F: [], m: [] };
+              let t = 0, h = h0, v = v0, m = m0;
+              for (let n = 0; n < 2400; n++) {
+                const aero = kA * v * v;
+                const aRefP = THR_LATE * Fmax * cosTilt / m - gLoc + aero;
+                const aNeedP = (v * v - V_TD * V_TD) / (2 * Math.max(h, H_FLOOR));
+                const aReqP = aRefP + LB_KN * (aNeedP - aRefP);
+                let F = m * (aReqP + gLoc - aero) / cosTilt;
+                F = Math.max(Fmin, Math.min(Fmax, F));
+                const a = F * cosTilt / m - gLoc + aero;
+                P.t.push(t); P.h.push(h); P.v.push(v); P.a.push(a); P.F.push(F); P.m.push(m);
+                if (v <= V_TD || h <= 0) break;
+                const vN = v - a * PD;
+                h -= 0.5 * (v + vN) * PD;
+                v = vN; m -= F / ve * PD; t += PD;
               }
-              const P = run(ts, true).P;
-              P.ts = ts; P.uLate = uLate; P.feasible = feasible; P.ip = 0;
+              P.ip = 0; P.hEnd = h; P.vEnd = v; P.tEnd = t;
               return P;
-            };
-            const _lbLookup = function (P, h) {
-              const H = P.h, N = H.length;
-              if (N < 2 || h >= H[0]) return { v: P.v[0], a: P.a[0], i: 0 };
-              if (h <= H[N - 1]) return { v: V_TD, a: 0, i: N - 1 };
-              let i = P.ip || 0;
-              if (H[i] < h) i = 0;
-              while (i < N - 2 && H[i + 1] >= h) i++;
-              P.ip = i;
-              const u = (H[i] - h) / Math.max(1e-9, H[i] - H[i + 1]);
-              return { v: P.v[i] + u * (P.v[i + 1] - P.v[i]), a: P.a[i] + u * (P.a[i + 1] - P.a[i]), i: i };
             };
 
             // ---- aero-aware peak gimbal prediction along a candidate lateral plan ----
@@ -5324,13 +5306,21 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
                 for (let T = Tmin; T <= Tmax + 1e-9; T += 0.5) cand.push(T);
               }
               let best = null;
-              for (let q = 0; q < cand.length; q++) {
-                const T = cand[q];
+              const _try = function (T) {
                 const c = _lbPlanPoly(T, zNow, zdNow, z2Now, z3Now);
-                if (!c) continue;
-                const pk = _lbPredPeak(c, T, P, i0);
-                if (!best || pk < best.peakDeg) best = { c: c, T: T, peakDeg: pk };
-                if (pk <= DELTA_PLAN) { best = { c: c, T: T, peakDeg: pk }; break; }
+                if (!c) return null;
+                return { c: c, T: T, peakDeg: _lbPredPeak(c, T, P, i0) };
+              };
+              // gentlest plan first: longest horizon. Only scan shorter ones if even that exceeds DELTA_PLAN.
+              if (cand.length) {
+                const top = _try(cand[cand.length - 1]);
+                if (top) best = top;
+                if (!best || best.peakDeg > DELTA_PLAN) {
+                  for (let q = 0; q < cand.length - 1; q++) {
+                    const r = _try(cand[q]);
+                    if (r && (!best || r.peakDeg < best.peakDeg)) best = r;
+                  }
+                }
               }
               if (!best) return { c: null, T: cand[0] || 1, peakDeg: 0, t0: simT, tRem: tRem };
               best.t0 = simT; best.tRem = tRem; best.z0 = zNow; best.zd0 = zdNow; best.z20 = z2Now; best.z30 = z3Now;
@@ -5342,23 +5332,22 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
             // ================================================================
             const vDown = -vRadial;
             let prof = _st.lbProf;
-            const due = !prof || (simT - _st.lbReplanT >= LB_REPLAN_S && hEff > 20 && vDown > 3);
+            const due = !prof || (simT - _st.lbReplanT >= LB_REPLAN_S && hEff > 20);
             if (due) {
               const vD0 = Math.max(vDown, V_TD + 0.1);
               const kA = Math.max(0, aeroUp) / Math.max(1, vD0 * vD0);
-              prof = _lbBuildProfile(Math.max(hEff, 1), vD0, M, kA);
+              prof = _lbRollout(Math.max(hEff, 1), vD0, M, kA);
               _st.lbProf = prof;
               _st.lbReplanT = simT;
-              const i0 = _lbLookup(prof, hEff).i;
-              const tRemP = (prof.h.length - 1 - i0) * prof.dt;
+              const i0 = 0;
+              const tRemP = prof.tEnd;
               if (!_st.lbPlan || tRemP > 2.0) {
                 _st.lbPlan = _lbBuildPlan(prof, i0);
               }
               const pl = _st.lbPlan;
               console.log("[LB-REPLAN] t=" + simT.toFixed(2) + " e=" + elapsedAlign.toFixed(2) +
                 " h=" + hEff.toFixed(1) + " vy=" + vRadial.toFixed(2) +
-                " | prof ts=" + prof.ts.toFixed(2) + "s uLate=" + prof.uLate.toFixed(2) +
-                " tEnd=" + tRemP.toFixed(1) + "s" + (prof.feasible ? "" : " [WARN: ignition too late — max effort]") +
+                " | rollout tgo=" + tRemP.toFixed(1) + "s predTD h=" + prof.hEnd.toFixed(2) + " v=" + prof.vEnd.toFixed(2) +
                 " | plan T=" + pl.T.toFixed(2) + "s peakDelta=" + (pl.peakDeg || 0).toFixed(2) + "deg" +
                 (pl.c ? "" : " [SINGULAR]") +
                 " | z=" + zNow.toFixed(2) + " zd=" + zdNow.toFixed(3) + " z2=" + z2Now.toFixed(4) + " z3=" + z3Now.toFixed(4) +
@@ -5367,11 +5356,13 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
             const plan = _st.lbPlan;
 
             // ================================================================
-            // Throttle: track v_ref(h) (feed-forward decel + v feedback)
+            // Throttle: zero-effort-to-go law around the THR_LATE reference
             // ================================================================
-            const look = _lbLookup(prof, Math.max(hEff, H_FLOOR));
-            const aReq = Math.max(0, look.a + LB_KV * (vDown - look.v));
-            const cosTilt = Math.max(0.9, Math.cos(thL) * Math.cos(gimbalCur / R2D));
+            const hDen = Math.max(hEff, H_FLOOR);
+            const aNeed = (vDown * vDown - V_TD * V_TD) / (2 * hDen);
+            const aRef = THR_LATE * Fmax * cosTilt / M - gLoc + aeroUp;
+            const aReq = aRef + LB_KN * (aNeed - aRef);
+            const vRefCurve = Math.sqrt(V_TD * V_TD + 2 * Math.max(aRef, 0) * hDen);
             const Fv = M * (aReq + gLoc - aeroUp) / cosTilt;
             let mdotCmd = Fv / ve / lbEng.length;
             let thrSat = false;
@@ -5457,8 +5448,8 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
                 " | th=" + thetaLocalDeg.toFixed(3) + " w=" + (wL * R2D).toFixed(3) +
                 " x=" + xFromPadM.toFixed(2) + " vx=" + vTangGround.toFixed(2) +
                 " | err z=" + e0.toFixed(3) + " zd=" + e1.toFixed(3) + " z2=" + e2.toFixed(4) + " z3=" + e3.toFixed(4) +
-                " | h=" + hEff.toFixed(2) + " vy=" + vRadial.toFixed(2) + " vRef=" + (-look.v).toFixed(2) +
-                " aReq=" + aReq.toFixed(2) + " F=" + Math.round(thrustCur) + " cmd=" + Math.round(Fcmd) +
+                " | h=" + hEff.toFixed(2) + " vy=" + vRadial.toFixed(2) + " vRef=" + (-vRefCurve).toFixed(2) +
+                " aNeed=" + aNeed.toFixed(2) + " aRef=" + aRef.toFixed(2) + " aReq=" + aReq.toFixed(2) + " F=" + Math.round(thrustCur) + " cmd=" + Math.round(Fcmd) +
                 " thr=" + (100 * Fcmd / Fmax).toFixed(0) + "%" +
                 " | dlt=" + gimbalCmdDeg.toFixed(2) + (gimbalSat ? " [SAT-GIM]" : "") + (thrSat ? " [SAT-THR]" : "") +
                 " fin=" + cAct.toFixed(1) + "->" + cStar.toFixed(1) + " tauFin=" + Math.round(tauFinNext) +
@@ -5473,6 +5464,8 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
             }
             break;
           }
+
+
 
                     // ==========================================================
                     case "TOUCHDOWN": {
