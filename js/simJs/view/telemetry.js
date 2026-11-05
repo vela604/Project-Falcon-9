@@ -879,6 +879,11 @@ function _figureVelocityVector(body) {
 
 function drawFigurePanel() {
   if (!figCanvas || !figCtx) return;
+  
+  // RCS puff animation: step all figure-panel pools so particles age and
+  // fade naturally. Without this, puffs spawned in earlier frames stay
+  // frozen at spawn position forever.
+  if (typeof _stepAllGasPools === 'function') _stepAllGasPools();
   // Re-derive the CSS↔buffer scale EVERY frame. The canvas backing buffer
   // is DPR-scaled (2×, 3× on retina); layout code below is written in CSS
   // pixels, so the ctx transform must map CSS → buffer. Reading clientWidth
@@ -1032,6 +1037,7 @@ members.forEach((m, idx) => {
   figCtx.save();
   figCtx.translate(baseX, baseY - placeYFig);
   drawRocketArt(figCtx, mW, mH, mpp, {
+      bodyIdx: 9000 + followIdx,
       noseHeightM: m.noseHeightM,
       noseHeightM: m.noseHeightM,
 
