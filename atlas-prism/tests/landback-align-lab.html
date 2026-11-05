@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8">
-<title>Landback Align Lab</title>
+<title>Landback LB Lab · SLAM</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <style>
 body{font:11px/1.4 monospace;background:#0b0e14;color:#cfd6e4;margin:0;padding:10px}
@@ -10,7 +10,6 @@ select{width:auto}
 button{background:#1d2a44;color:#cfd6e4;border:1px solid #3a4c78;padding:5px 10px;cursor:pointer;font:inherit}
 button:disabled{opacity:.5}
 h2{font-size:13px;margin:10px 0 6px;color:#e2e8f0}h3{font-size:12px;margin:12px 0 6px;color:#cbd5e1}
-pre{white-space:pre-wrap;font-size:10.5px;background:#0f1420;padding:6px;border:1px solid #1f2940;max-height:280px;overflow:auto;margin:6px 0}
 .dim{color:#7d889f}.bad{color:#ff6b6b}.ok{color:#6bff88}.warn{color:#ffcc44}
 .section{margin-top:12px;border-top:1px solid #1f2940;padding-top:10px}
 .chart{background:#0f1420;border:1px solid #1f2940;border-radius:6px;padding:6px;height:180px;position:relative}
@@ -28,66 +27,44 @@ td.l{text-align:left}
 .legend{font-size:10px;color:#94a3b8;margin:4px 0}
 .legend span{display:inline-block;margin-right:10px}
 .legend i{display:inline-block;width:12px;height:2px;margin-right:3px;vertical-align:middle}
-.tag{display:inline-block;background:#1e293b;padding:1px 4px;border-radius:2px;font-size:9px;color:#94a3b8}
 </style></head><body>
-<h2>Landback Align Lab · Full Analysis</h2>
+<h2>Landback LB Lab · SLAM</h2>
 <div>
   <label>stack <select id="stackSel"></select></label>
+  <label>bias <input type="number" id="bias" value="-760" step="10"></label>
   <button id="initBtn">① Init + capture SA/EB/LBA</button>
+  <button id="rebuildBtn" disabled>↻ Rebuild LBA</button>
   <span class="dim" id="initStatus"></span>
 </div>
 
 <div id="lab" style="display:none;margin-top:8px">
   <div class="section">
-    <h3>Pre-run config</h3>
-    <label>bias ENTRY_BURN_IMPACT_TARGET_M <input type="number" id="bias" value="-760" step="10"></label>
-    <button id="rebuildBtn">↻ Rebuild LBA from EB with this bias</button>
-    <span class="dim" id="rebuildStatus"></span>
-    <div id="preCfgBox" style="margin-top:8px"></div>
-  </div>
-
-  <div class="section">
-    <h3>Run LB ALIGN</h3>
-    <label>T0 mode <select id="t0mode"><option value="auto">auto (sister-pick)</option><option value="manual">manual</option></select></label>
-    <label>T0 manual <input type="number" id="t0man" value="7.54" step="0.1"></label>
+    <h3>Run SLAM</h3>
     <label>capS <input type="number" id="capS" value="60"></label>
-    <button id="runBtn">② Run LB</button>
+    <button id="runBtn" disabled>② Run LB</button>
     <span class="dim" id="runStatus"></span>
   </div>
 
   <div id="results" style="display:none">
-    <div class="section"><h3>Config summary</h3><div id="configBox"></div></div>
-    <div class="section">
-      <h3>Sister system target curves (locked trajectory vs actual)</h3>
-      <div class="legend"><span><i style="background:#6bff88"></i>target</span><span><i style="background:#ffcc44"></i>actual</span></div>
-      <div class="charts">
-        <div class="chart tall"><canvas id="chSisAlphaRot"></canvas></div>
-        <div class="chart tall"><canvas id="chSisAlphaLin"></canvas></div>
-        <div class="chart tall"><canvas id="chSisOmegaRot"></canvas></div>
-        <div class="chart tall"><canvas id="chSisVxLin"></canvas></div>
-        <div class="chart tall"><canvas id="chSisThetaRot"></canvas></div>
-        <div class="chart tall"><canvas id="chSisXLin"></canvas></div>
-      </div>
-    </div>
-    <div class="section"><h3>Summary stats</h3><div id="statsBox"></div></div>
+    <div class="section"><h3>LB PLAN (from spool)</h3><div id="planBox"></div></div>
+    <div class="section"><h3>Summary</h3><div id="statsBox"></div></div>
     <div class="section"><h3>Event log</h3><div id="eventsBox"></div></div>
     <div class="section">
-      <h3>Attitude (rotational)</h3>
-      <div class="legend"><span><i style="background:#6bff88"></i>θ_local</span><span><i style="background:#ffcc44"></i>tol ±1°</span><span><i style="background:#ff6b6b"></i>gimbal ±8°</span></div>
+      <h3>Attitude</h3>
       <div class="charts">
         <div class="chart"><canvas id="chTheta"></canvas></div>
         <div class="chart"><canvas id="chOmega"></canvas></div>
-        <div class="chart"><canvas id="chAlpha"></canvas></div>
         <div class="chart"><canvas id="chGimbal"></canvas></div>
+        <div class="chart"><canvas id="chAlpha"></canvas></div>
       </div>
     </div>
     <div class="section">
-      <h3>Lateral (linear)</h3>
+      <h3>Lateral</h3>
       <div class="charts">
         <div class="chart"><canvas id="chX"></canvas></div>
         <div class="chart"><canvas id="chVx"></canvas></div>
         <div class="chart"><canvas id="chAx"></canvas></div>
-        <div class="chart"><canvas id="chFyBody"></canvas></div>
+        <div class="chart"><canvas id="chFy"></canvas></div>
       </div>
     </div>
     <div class="section">
@@ -95,6 +72,8 @@ td.l{text-align:left}
       <div class="charts">
         <div class="chart"><canvas id="chThr"></canvas></div>
         <div class="chart"><canvas id="chH"></canvas></div>
+        <div class="chart"><canvas id="chVy"></canvas></div>
+        <div class="chart"><canvas id="chAy"></canvas></div>
       </div>
     </div>
     <div class="section">
@@ -132,7 +111,7 @@ td.l{text-align:left}
 (function(){
 'use strict';
 const $ = (id) => document.getElementById(id);
-const S = { inited:false, saSnap:null, ebSnap:null, lbSnap:null, running:false, lastResult:null };
+const S = { inited:false, saSnap:null, ebSnap:null, lbSnap:null, running:false };
 const guideName = 'landbackV1';
 let charts = [];
 
@@ -172,18 +151,13 @@ function getXfromPad(bB, simT){
   while(xRad>Math.PI)xRad-=2*Math.PI; while(xRad<-Math.PI)xRad+=2*Math.PI;
   return xRad*Rg;
 }
-function alphaTargetAt(t, a0, q, k, L){
-  if(t<=0)return a0; if(t>=L)return 0;
-  return a0*(1-Math.pow(t/L,q)) - k*Math.sin(Math.PI*t/L);
-}
 
 const stacks = (typeof loadStacks==='function'?loadStacks():[]).filter(s=>s&&s.sequence==='standard'&&s.locked);
 $('stackSel').innerHTML = stacks.length ? stacks.map(s=>'<option value="'+s.id.replace(/[&<>"']/g,'')+'">'+s.name.replace(/[&<>"']/g,'')+'</option>').join('') : '<option value="">(no stacks)</option>';
 
-// INIT: SA → EB → LBA, capture all three
 $('initBtn').addEventListener('click', function(){
   if(S.running)return;
-  S.running=true; $('initBtn').disabled=true;
+  S.running=true; $('initBtn').disabled=true; $('rebuildBtn').disabled=true;
   $('initStatus').textContent='initializing…';
   setTimeout(function(){
     const _ol=console.log; console.log=function(){};
@@ -192,11 +166,10 @@ $('initBtn').addEventListener('click', function(){
       if(!id)throw new Error('pick stack');
       setSelectedStackId(id);
       TunerEngine.init();
-      const vals = buildValues();
+      const vals=buildValues();
       vals.rtls = vals.rtls || {};
       vals.rtls.ENTRY_BURN_IMPACT_TARGET_M = parseFloat($('bias').value);
       TunerEngine.prepareRun(guideName, vals, (typeof TunerConfig!=='undefined'?TunerConfig.env:undefined));
-
       $('initStatus').textContent='running SA…';
       let saSnap=null, ebSnap=null, lbSnap=null;
       for(let i=0;i<300*80;i++){if(state.halted)break;TunerEngine.tick(CONFIG.DT);const gs=Guidance.getGuideStatus();if(gs&&gs.phase==='SEPARATED_AXIAL'){saSnap=captureSnap();break;}}
@@ -208,9 +181,8 @@ $('initBtn').addEventListener('click', function(){
       $('initStatus').textContent='running to LBA…';
       for(let i=0;i<400*80;i++){if(state.halted)break;TunerEngine.tick(CONFIG.DT);const gs=Guidance.getGuideStatus();if(gs&&gs.rtlsPhase==='LANDING_BURN_ALIGN'){lbSnap=captureSnap();break;}}
       if(!lbSnap)throw new Error('LBA not reached');
-
       S.saSnap=saSnap; S.ebSnap=ebSnap; S.lbSnap=lbSnap; S.inited=true;
-      $('initStatus').innerHTML='<span class="ok">ready</span> · SA t='+saSnap.simTime.toFixed(1)+' · EB t='+ebSnap.simTime.toFixed(1)+' · LBA t='+lbSnap.simTime.toFixed(1);
+      $('initStatus').innerHTML='<span class="ok">ready</span> · LBA t='+lbSnap.simTime.toFixed(1);
       $('lab').style.display='block';
       $('rebuildBtn').disabled=false; $('runBtn').disabled=false;
     }catch(e){$('initStatus').innerHTML='<span class="bad">ERROR: '+e.message+'</span>';console.error(e);}
@@ -218,11 +190,10 @@ $('initBtn').addEventListener('click', function(){
   },10);
 });
 
-// REBUILD: restore EB with new bias, run to LBA
 $('rebuildBtn').addEventListener('click', function(){
   if(!S.inited||S.running)return;
   S.running=true; $('rebuildBtn').disabled=true; $('runBtn').disabled=true;
-  $('rebuildStatus').textContent='rebuilding LBA with bias…';
+  $('initStatus').textContent='rebuilding LBA…';
   setTimeout(function(){
     const _ol=console.log; console.log=function(){};
     try{
@@ -233,16 +204,15 @@ $('rebuildBtn').addEventListener('click', function(){
       restoreSnap(S.ebSnap, g);
       let lbSnap=null;
       for(let i=0;i<400*80;i++){if(state.halted)break;TunerEngine.tick(CONFIG.DT);const gs=Guidance.getGuideStatus();if(gs&&gs.rtlsPhase==='LANDING_BURN_ALIGN'){lbSnap=captureSnap();break;}}
-      if(!lbSnap)throw new Error('LBA not reached (crashed?)');
+      if(!lbSnap)throw new Error('LBA not reached');
       S.lbSnap=lbSnap;
-      $('rebuildStatus').innerHTML='<span class="ok">LBA re-captured</span> bias='+bias+' · t='+lbSnap.simTime.toFixed(2);
+      $('initStatus').innerHTML='<span class="ok">LBA re-captured</span> bias='+bias;
       $('runBtn').disabled=false;
-    }catch(e){$('rebuildStatus').innerHTML='<span class="bad">ERROR: '+e.message+'</span>';console.error(e);}
+    }catch(e){$('initStatus').innerHTML='<span class="bad">ERROR: '+e.message+'</span>';console.error(e);}
     finally{console.log=_ol;$('rebuildBtn').disabled=false;S.running=false;}
   },10);
 });
 
-// RUN LB
 $('runBtn').addEventListener('click', function(){
   if(!S.inited||S.running)return;
   S.running=true; $('runBtn').disabled=true;
@@ -250,30 +220,14 @@ $('runBtn').addEventListener('click', function(){
   setTimeout(function(){
     const _ol=console.log; console.log=function(){};
     try{
-      const mode=$('t0mode').value, t0man=parseFloat($('t0man').value), capS=parseFloat($('capS').value);
-      const g=deepClone(S.lbSnap.guidanceState);
-      if(mode==='manual'){
-        if(g.guideConfigs&&g.guideConfigs.landbackV1&&g.guideConfigs.landbackV1.rtls){
-          g.guideConfigs.landbackV1.rtls.LANDING_BURN_T0_AUTO=false;
-          g.guideConfigs.landbackV1.rtls.LANDING_BURN_T0_S=t0man;
-        }
-        if(g.lbRtlsBlock&&g.lbRtlsBlock.constants){
-          g.lbRtlsBlock.constants.LANDING_BURN_T0_AUTO=false;
-          g.lbRtlsBlock.constants.LANDING_BURN_T0_S=t0man;
-        }
-      } else {
-        if(g.guideConfigs&&g.guideConfigs.landbackV1&&g.guideConfigs.landbackV1.rtls) g.guideConfigs.landbackV1.rtls.LANDING_BURN_T0_AUTO=true;
-        if(g.lbRtlsBlock&&g.lbRtlsBlock.constants) g.lbRtlsBlock.constants.LANDING_BURN_T0_AUTO=true;
-      }
-      restoreSnap(S.lbSnap, g);
-
+      const capS=parseFloat($('capS').value);
+      restoreSnap(S.lbSnap);
       const startT=state.simTime;
       const samples=[], events=[];
-      let alignStartT=null, trajPow=null, spooled=false;
-      let capture6=null, sisterRanges=null, sisterPick=null;
-      let prevVx=null, prevOmega=null, prevT=null;
-      let wasSatGim=false, wasFyNeg=false, wasSatThr=false;
-      let peakGimbal=0, satGimCount=0, satThrCount=0, fyNegCount=0;
+      let planData=null, legsDeployed=false, spooled=false, alignStartT=null;
+      let prevVx=null, prevOmega=null, prevVy=null, prevT=null;
+      let wasSatGim=false, wasSatThr=false;
+      let peakGimbal=0, satGimCount=0, satThrCount=0;
       let lastPhase=null, endedReason='cap';
 
       const every=8;
@@ -294,66 +248,50 @@ $('runBtn').addEventListener('click', function(){
         const thetaDeg=thL*180/Math.PI;
         const omegaRad=bB.omega;
         const xFromPad=getXfromPad(bB, simT);
-
         const gimbEng=(bB.engines||[]).find(e=>e.gimbal)||{};
         const gimbAct=gimbEng.gimbalDeg||0;
-        const gimbCmdTgt=Number.isFinite(gimbEng.targetGimbalDeg)?gimbEng.targetGimbalDeg:gimbAct;
         let thrAct=0, thrCmd=0;
         for(const e of (bB.engines||[])){thrAct+=(e.massFlowRate||0)*(e.Ve||0);thrCmd+=(e.targetMassFlowRate||0)*(e.Ve||0);}
 
-        if(gs.rtlsLbAlignStartT!=null && alignStartT==null) alignStartT=gs.rtlsLbAlignStartT;
-        if(gs.rtlsLbTrajPow && !trajPow) trajPow=gs.rtlsLbTrajPow;
-        if(gs.rtlsLbCapture6 && !capture6) capture6=gs.rtlsLbCapture6;
-        if(gs.rtlsLbSisterRanges && !sisterRanges) sisterRanges=gs.rtlsLbSisterRanges;
-        if(gs.rtlsLbSisterPick!=null && sisterPick==null) sisterPick=gs.rtlsLbSisterPick;
         if(gs.rtlsLbSpooled && !spooled) spooled=true;
-
+        if(gs.rtlsLbAlignStartT!=null && alignStartT==null) alignStartT=gs.rtlsLbAlignStartT;
+        if(gs.rtlsLbPlan && !planData) planData=gs.rtlsLbPlan;
+        if(gs.rtlsLbLegsDeployed && !legsDeployed) { legsDeployed=true; events.push({t:simT, kind:'legs', msg:'legs deploy start'}); }
         if(gs.rtlsPhase!==lastPhase){ events.push({t:simT, kind:'phase', msg:'→ '+gs.rtlsPhase}); lastPhase=gs.rtlsPhase; }
 
-        const gimbAbs=Math.abs(gimbAct);
-        const satGimNow=(gimbAbs>=7.95);
-        if(satGimNow&&!wasSatGim) events.push({t:simT, kind:'sat-gim', msg:'gimbal CLAMP ('+gimbAct.toFixed(2)+'°)'});
+        const gAbs=Math.abs(gimbAct);
+        const satGimNow=(gAbs>=7.9);
+        if(satGimNow&&!wasSatGim) events.push({t:simT, kind:'sat-gim', msg:'gimbal CLAMP '+gimbAct.toFixed(2)+'°'});
         if(satGimNow) satGimCount++; wasSatGim=satGimNow;
-        if(gimbAbs>peakGimbal) peakGimbal=gimbAbs;
-
-        const fyRaw=gs.rtlsLbLastFyBody;
-        const fyNegNow=(Number.isFinite(fyRaw)&&fyRaw<0);
-        if(fyNegNow&&!wasFyNeg) events.push({t:simT, kind:'fy-neg', msg:'Fy_body<0 raw '+Math.round(fyRaw)+'N'});
-        if(fyNegNow) fyNegCount++; wasFyNeg=fyNegNow;
+        if(gAbs>peakGimbal) peakGimbal=gAbs;
 
         const thrGap=Math.abs(thrCmd-thrAct);
         const satThrNow=(thrGap>100000);
-        if(satThrNow&&!wasSatThr) events.push({t:simT, kind:'sat-thr', msg:'thrust spool gap '+Math.round(thrGap/1000)+'kN'});
+        if(satThrNow&&!wasSatThr) events.push({t:simT, kind:'sat-thr', msg:'thrust gap '+Math.round(thrGap/1000)+'kN'});
         if(satThrNow) satThrCount++; wasSatThr=satThrNow;
 
         if(i%every===0){
-          let aAct=null, axAct=null;
+          let aAct=null, axAct=null, ayAct=null;
           if(prevT!==null && simT-prevT>1e-9){
             aAct=(omegaRad-prevOmega)/(simT-prevT);
             axAct=(vtGround-prevVx)/(simT-prevT);
+            ayAct=(vr-prevVy)/(simT-prevT);
           }
-          let aTgt=null, axTgt=null, elapsed=null;
-          if(trajPow && alignStartT!=null){
-            elapsed=simT-alignStartT;
-            aTgt=alphaTargetAt(elapsed, trajPow.a0rot, trajPow.rot.q, trajPow.rot.k, trajPow.rot.L);
-            axTgt=alphaTargetAt(elapsed, trajPow.a0lin, trajPow.lin.q, trajPow.lin.k, trajPow.lin.L);
-          }
+          const elapsed=(alignStartT!=null)?simT-alignStartT:null;
           samples.push({
             t:+simT.toFixed(2), phase:gs.rtlsPhase||'',
             e:elapsed!=null?+elapsed.toFixed(2):null,
             theta:+thetaDeg.toFixed(3), omega:+(omegaRad*180/Math.PI).toFixed(3),
             x:+xFromPad.toFixed(2), vx:+vtGround.toFixed(3),
             h:+(hAGL/1000).toFixed(3), vy:+vr.toFixed(2),
-            gimbal:+gimbAct.toFixed(3), gimbalCmd:+gimbCmdTgt.toFixed(3),
+            gimbal:+gimbAct.toFixed(3),
             thrAct:Math.round(thrAct/1000), thrCmd:Math.round(thrCmd/1000),
             aAct:aAct!=null?+(aAct*180/Math.PI).toFixed(4):null,
-            aTgt:aTgt!=null?+(aTgt*180/Math.PI).toFixed(4):null,
             axAct:axAct!=null?+axAct.toFixed(4):null,
-            axTgt:axTgt!=null?+axTgt.toFixed(4):null,
-            fyRaw:(Number.isFinite(fyRaw)?Math.round(fyRaw):null),
+            ayAct:ayAct!=null?+ayAct.toFixed(4):null,
             satGim:satGimNow,
           });
-          prevVx=vtGround; prevOmega=omegaRad; prevT=simT;
+          prevVx=vtGround; prevOmega=omegaRad; prevVy=vr; prevT=simT;
         }
 
         if(gs.rtlsPhase==='TOUCHDOWN'){ events.push({t:simT, kind:'phase', msg:'→ TOUCHDOWN'}); endedReason='aligned'; break; }
@@ -361,234 +299,110 @@ $('runBtn').addEventListener('click', function(){
       }
 
       const lastS=samples[samples.length-1]||{};
-      S.lastResult={ok:true, mode, t0man, endedReason, alignStartT, trajPow, capture6, sisterRanges, sisterPick,
-        peakGimbal:+peakGimbal.toFixed(2), satGimCount, satThrCount, fyNegCount,
-        final:lastS, samples, events};
-      renderResult(S.lastResult);
+      const r={endedReason, planData, legsDeployed, peakGimbal:+peakGimbal.toFixed(2),
+        satGimCount, satThrCount, final:lastS, samples, events};
+      renderResult(r);
       $('runStatus').innerHTML='<span class="ok">done</span> ('+endedReason+')';
     }catch(e){$('runStatus').innerHTML='<span class="bad">ERR: '+e.message+'</span>';console.error(e);}
     finally{console.log=_ol;$('runBtn').disabled=false;S.running=false;}
   },10);
 });
 
-function alphaOf3(t, a0, q, k, L) {
-  if (t <= 0) return a0;
-  if (t >= L) return 0;
-  return a0 * (1 - Math.pow(t / L, q)) - k * Math.sin(Math.PI * t / L);
-}
-function omegaOf3(t, a0, v0, q, k, L) {
-  if (t <= 0) return v0;
-  if (t >= L) return 0;
-  return v0 + a0 * t - (a0 * Math.pow(t, q + 1)) / ((q + 1) * Math.pow(L, q)) - (k * L / Math.PI) * (1 - Math.cos(Math.PI * t / L));
-}
-function dispOf3(t, a0, v0, q, k, L) {
-  if (t <= 0) return 0;
-  if (t >= L) return v0 * L / 2 + a0 * L * L * q / (2 * (q + 1) * (q + 2));
-  return v0 * t + a0 * t * t / 2 - (a0 * Math.pow(t, q + 2)) / ((q + 1) * (q + 2) * Math.pow(L, q)) - (k * L / Math.PI) * (t - (L / Math.PI) * Math.sin(Math.PI * t / L));
-}
-function plotSisterCurves(r) {
-  if (!r.trajPow || !r.capture6) return;
-  const c6 = r.capture6, tp = r.trajPow, L = tp.T0, N = 200;
-  const tsT=[], aRotT=[], aLinT=[], omegaRotT=[], vxLinT=[], thetaRotT=[], xLinT=[];
-  for (let i=0;i<=N;i++) {
-    const t = L * i / N;
-    tsT.push(t);
-    aRotT.push(alphaOf3(t, tp.a0rot, tp.rot.q, tp.rot.k, tp.rot.L) * 180 / Math.PI);
-    aLinT.push(alphaOf3(t, tp.a0lin, tp.lin.q, tp.lin.k, tp.lin.L));
-    omegaRotT.push(omegaOf3(t, tp.a0rot, c6.v0rot, tp.rot.q, tp.rot.k, tp.rot.L) * 180 / Math.PI);
-    vxLinT.push(omegaOf3(t, tp.a0lin, c6.v0lin, tp.lin.q, tp.lin.k, tp.lin.L));
-    thetaRotT.push((-c6.dsrot + dispOf3(t, tp.a0rot, c6.v0rot, tp.rot.q, tp.rot.k, tp.rot.L)) * 180 / Math.PI);
-    xLinT.push(-c6.dslin + dispOf3(t, tp.a0lin, c6.v0lin, tp.lin.q, tp.lin.k, tp.lin.L));
-  }
-  const aS = r.samples.filter(s => s.e != null);
-  const tsA = aS.map(s => s.e);
-  const mk = (xs, ys) => xs.map((x, i) => ({ x, y: ys[i] }));
-  drawChart2('chSisAlphaRot', 'alpha_rot target vs actual [deg/s^2]', [
-    { label: 'target', points: mk(tsT, aRotT), color: '#6bff88' },
-    { label: 'actual', points: mk(tsA, aS.map(s => s.aAct)), color: '#ffcc44', dash: [4, 3] },
-  ]);
-  drawChart2('chSisAlphaLin', 'alpha_lin target vs actual [m/s^2]', [
-    { label: 'target', points: mk(tsT, aLinT), color: '#6bff88' },
-    { label: 'actual', points: mk(tsA, aS.map(s => s.axAct)), color: '#ffcc44', dash: [4, 3] },
-  ]);
-  drawChart2('chSisOmegaRot', 'omega_rot target vs actual [deg/s]', [
-    { label: 'target', points: mk(tsT, omegaRotT), color: '#93c5fd' },
-    { label: 'actual', points: mk(tsA, aS.map(s => s.omega)), color: '#fbbf24', dash: [4, 3] },
-  ]);
-  drawChart2('chSisVxLin', 'vx_lin target vs actual [m/s]', [
-    { label: 'target', points: mk(tsT, vxLinT), color: '#93c5fd' },
-    { label: 'actual', points: mk(tsA, aS.map(s => s.vx)), color: '#fbbf24', dash: [4, 3] },
-  ]);
-  drawChart2('chSisThetaRot', 'theta_rot target vs actual [deg]', [
-    { label: 'target', points: mk(tsT, thetaRotT), color: '#6bff88' },
-    { label: 'actual', points: mk(tsA, aS.map(s => s.theta)), color: '#ffcc44', dash: [4, 3] },
-  ]);
-  drawChart2('chSisXLin', 'x_lin target vs actual [m]', [
-    { label: 'target', points: mk(tsT, xLinT), color: '#6bff88' },
-    { label: 'actual', points: mk(tsA, aS.map(s => s.x)), color: '#ffcc44', dash: [4, 3] },
-  ]);
-}
-function drawChart2(canvasId, title, series) {
-  const cv = document.getElementById(canvasId);
-  if (!cv) return;
-  const datasets = series.map(s => ({
-    label: s.label, data: s.points,
-    borderColor: s.color, backgroundColor: 'transparent',
-    borderWidth: 1.5, borderDash: s.dash || [], pointRadius: 0, tension: 0, parsing: false,
-  }));
-  const ch = new Chart(cv, {
-    type: 'line', data: { datasets },
-    options: {
-      responsive: true, maintainAspectRatio: false, animation: false,
-      interaction: { mode: 'nearest', intersect: false },
-      plugins: {
-        legend: { display: true, labels: { boxWidth: 8, font: { size: 9 }, color: '#94a3b8' } },
-        title: { display: true, text: title, font: { size: 10 }, color: '#cbd5e1' },
-        tooltip: { callbacks: { label: ctx => ctx.dataset.label + ': ' + (Number.isFinite(ctx.parsed.y) ? ctx.parsed.y.toFixed(3) : '-') } },
-      },
-      scales: {
-        x: { type: 'linear', grid: { color: '#1f2940' }, ticks: { font: { size: 9 }, color: '#64748b' } },
-        y: { grid: { color: '#1f2940' }, ticks: { font: { size: 9 }, color: '#64748b' } },
-      },
-    },
-  });
-  charts.push(ch);
-}
 function renderResult(r){
   charts.forEach(c=>{try{c.destroy();}catch(e){}}); charts=[];
   $('results').style.display='block';
 
-  // Config summary — capture6 + sister ranges + traj
-  let cfgHtml='<div class="kv">';
-  if(r.capture6){
-    cfgHtml+='<span class="k" style="grid-column:1/3;color:#94a3b8;font-weight:600;margin-top:4px">CAPTURE 6 (at spool-complete)</span>';
-    cfgHtml+='<span class="k">a0_rot</span><span class="v">'+r.capture6.a0rot.toFixed(6)+' rad/s²</span>';
-    cfgHtml+='<span class="k">v0_rot</span><span class="v">'+r.capture6.v0rot.toFixed(6)+' rad/s</span>';
-    cfgHtml+='<span class="k">ds_rot</span><span class="v">'+r.capture6.dsrot.toFixed(6)+' rad</span>';
-    cfgHtml+='<span class="k">a0_lin</span><span class="v">'+r.capture6.a0lin.toFixed(4)+' m/s²</span>';
-    cfgHtml+='<span class="k">v0_lin</span><span class="v">'+r.capture6.v0lin.toFixed(4)+' m/s</span>';
-    cfgHtml+='<span class="k">ds_lin</span><span class="v">'+r.capture6.dslin.toFixed(3)+' m</span>';
-  }
-  if(r.sisterRanges){
-    cfgHtml+='<span class="k" style="grid-column:1/3;color:#94a3b8;font-weight:600;margin-top:8px">SISTER RANGES (common T0 where both rot &amp; lin feasible)</span>';
-    for(let i=0;i<r.sisterRanges.length;i++){
-      const iv=r.sisterRanges[i];
-      cfgHtml+='<span class="k">range '+(i+1)+'</span><span class="v">['+iv[0].toFixed(3)+', '+iv[1].toFixed(3)+'] s</span>';
-    }
-    if(r.sisterPick!=null) cfgHtml+='<span class="k">best pick</span><span class="v" style="color:#6bff88">'+r.sisterPick.toFixed(3)+' s</span>';
-  }
-  if(r.trajPow){
-    cfgHtml+='<span class="k" style="grid-column:1/3;color:#94a3b8;font-weight:600;margin-top:8px">TRAJECTORY (locked)</span>';
-    cfgHtml+='<span class="k">T0</span><span class="v">'+r.trajPow.T0.toFixed(3)+' s</span>';
-    cfgHtml+='<span class="k">rot: q, k, cross, L</span><span class="v">'+r.trajPow.rot.q.toFixed(4)+', '+r.trajPow.rot.k.toFixed(6)+', '+r.trajPow.rot.crossings+', '+r.trajPow.rot.L.toFixed(2)+'</span>';
-    cfgHtml+='<span class="k">lin: q, k, cross, L</span><span class="v">'+r.trajPow.lin.q.toFixed(4)+', '+r.trajPow.lin.k.toFixed(6)+', '+r.trajPow.lin.crossings+', '+r.trajPow.lin.L.toFixed(2)+'</span>';
-  }
-  if(!r.capture6 && !r.trajPow) cfgHtml+='<span class="k" style="grid-column:1/3;color:#ffcc44">capture6 not reached — see events</span>';
-  cfgHtml+='</div>';
-  $('configBox').innerHTML=cfgHtml;
+  if(r.planData){
+    let h='<div class="kv">';
+    h+='<span class="k">T (plan)</span><span class="v">'+r.planData.T.toFixed(2)+' s</span>';
+    h+='<span class="k">peakDelta</span><span class="v">'+r.planData.peakDeg.toFixed(2)+' °</span>';
+    h+='</div>';
+    $('planBox').innerHTML=h;
+  } else $('planBox').innerHTML='<span class="warn">PLAN not captured</span>';
 
-  // Stats
-  const lastSamp=r.samples[r.samples.length-1]||{};
-  let stHtml='<div class="kv">';
-  stHtml+='<span class="k">Ended</span><span class="v">'+r.endedReason+'</span>';
-  stHtml+='<span class="k">Elapsed from spool</span><span class="v">'+(lastSamp.e!=null?lastSamp.e.toFixed(2):'—')+' s</span>';
-  stHtml+='<span class="k">Final θ_local</span><span class="v">'+(lastSamp.theta!=null?lastSamp.theta.toFixed(3):'—')+' ° '+(Math.abs(lastSamp.theta||0)<1?'<span class="badge b-ok">OK</span>':'<span class="badge b-bad">FAIL</span>')+'</span>';
-  stHtml+='<span class="k">Final ω</span><span class="v">'+(lastSamp.omega!=null?lastSamp.omega.toFixed(3):'—')+' °/s '+(Math.abs(lastSamp.omega||0)<0.5?'<span class="badge b-ok">OK</span>':'<span class="badge b-bad">FAIL</span>')+'</span>';
-  stHtml+='<span class="k">Final x</span><span class="v">'+(lastSamp.x!=null?lastSamp.x.toFixed(2):'—')+' m '+(Math.abs(lastSamp.x||0)<5?'<span class="badge b-ok">OK</span>':'<span class="badge b-bad">FAIL</span>')+'</span>';
-  stHtml+='<span class="k">Final vx</span><span class="v">'+(lastSamp.vx!=null?lastSamp.vx.toFixed(3):'—')+' m/s '+(Math.abs(lastSamp.vx||0)<1?'<span class="badge b-ok">OK</span>':'<span class="badge b-bad">FAIL</span>')+'</span>';
-  stHtml+='<span class="k">Peak gimbal</span><span class="v">'+r.peakGimbal.toFixed(2)+' ° '+(r.peakGimbal>=7.95?'<span class="badge b-bad">CLAMPED</span>':'<span class="badge b-ok">in-range</span>')+'</span>';
-  stHtml+='<span class="k">Gimbal sat ticks</span><span class="v">'+r.satGimCount+'</span>';
-  stHtml+='<span class="k">Thrust spool-gap ticks</span><span class="v">'+r.satThrCount+'</span>';
-  stHtml+='<span class="k">Fy_body&lt;0 ticks</span><span class="v">'+r.fyNegCount+'</span>';
-  stHtml+='</div>';
-  $('statsBox').innerHTML=stHtml;
+  const f=r.final;
+  let st='<div class="kv">';
+  st+='<span class="k">Ended</span><span class="v">'+r.endedReason+'</span>';
+  st+='<span class="k">Elapsed</span><span class="v">'+(f.e!=null?f.e.toFixed(2):'—')+' s</span>';
+  st+='<span class="k">θ_local</span><span class="v">'+(f.theta!=null?f.theta.toFixed(3):'—')+' ° '+(Math.abs(f.theta||0)<1?'<span class="badge b-ok">OK</span>':'<span class="badge b-bad">FAIL</span>')+'</span>';
+  st+='<span class="k">ω</span><span class="v">'+(f.omega!=null?f.omega.toFixed(3):'—')+' °/s '+(Math.abs(f.omega||0)<0.5?'<span class="badge b-ok">OK</span>':'<span class="badge b-bad">FAIL</span>')+'</span>';
+  st+='<span class="k">x</span><span class="v">'+(f.x!=null?f.x.toFixed(2):'—')+' m '+(Math.abs(f.x||0)<5?'<span class="badge b-ok">OK</span>':'<span class="badge b-bad">FAIL</span>')+'</span>';
+  st+='<span class="k">vx</span><span class="v">'+(f.vx!=null?f.vx.toFixed(3):'—')+' m/s '+(Math.abs(f.vx||0)<1?'<span class="badge b-ok">OK</span>':'<span class="badge b-bad">FAIL</span>')+'</span>';
+  st+='<span class="k">h</span><span class="v">'+(f.h!=null?f.h.toFixed(3):'—')+' km</span>';
+  st+='<span class="k">vy</span><span class="v">'+(f.vy!=null?f.vy.toFixed(3):'—')+' m/s</span>';
+  st+='<span class="k">Peak gimbal</span><span class="v">'+r.peakGimbal.toFixed(2)+' ° '+(r.peakGimbal<7?'<span class="badge b-ok">in-range</span>':'<span class="badge b-bad">CLAMPED</span>')+'</span>';
+  st+='<span class="k">Gimbal sat ticks</span><span class="v">'+r.satGimCount+'</span>';
+  st+='<span class="k">Thrust gap ticks</span><span class="v">'+r.satThrCount+'</span>';
+  st+='<span class="k">Legs deployed</span><span class="v">'+(r.legsDeployed?'<span class="badge b-ok">Y</span>':'<span class="badge b-bad">N</span>')+'</span>';
+  st+='</div>';
+  $('statsBox').innerHTML=st;
 
-  // Sister system target vs actual
-  plotSisterCurves(r);
-
-  // Events
-  let evHtml='<table><thead><tr><th style="width:60px">t (s)</th><th style="width:80px">kind</th><th class="l">msg</th></tr></thead><tbody>';
-  for(const ev of r.events){
-    const cls = ev.kind==='sat-gim'||ev.kind==='fy-neg'?'bad':ev.kind==='sat-thr'?'warn':'info';
-    evHtml+='<tr><td>'+ev.t.toFixed(2)+'</td><td><span class="badge b-'+cls+'">'+ev.kind+'</span></td><td class="l">'+ev.msg+'</td></tr>';
+  let ev='<table><thead><tr><th style="width:60px">t</th><th style="width:80px">kind</th><th class="l">msg</th></tr></thead><tbody>';
+  for(const e of r.events){
+    const cls=e.kind==='sat-gim'?'bad':e.kind==='sat-thr'?'warn':'info';
+    ev+='<tr><td>'+e.t.toFixed(2)+'</td><td><span class="badge b-'+cls+'">'+e.kind+'</span></td><td class="l">'+e.msg+'</td></tr>';
   }
-  if(!r.events.length) evHtml+='<tr><td colspan="3" class="l dim">no events</td></tr>';
-  evHtml+='</tbody></table>';
-  $('eventsBox').innerHTML=evHtml;
+  if(!r.events.length) ev+='<tr><td colspan="3" class="l dim">none</td></tr>';
+  ev+='</tbody></table>';
+  $('eventsBox').innerHTML=ev;
 
-  // Charts
   const ts=r.samples.map(s=>s.t);
   drawChart('chTheta','θ_local [°]',ts,[
-    {label:'θ_local',data:r.samples.map(s=>s.theta),color:'#6bff88'},
-    {label:'tol +1°',data:r.samples.map(()=>1),color:'#ffcc44',dash:[3,3]},
-    {label:'tol -1°',data:r.samples.map(()=>-1),color:'#ffcc44',dash:[3,3]},
-    {label:'0',data:r.samples.map(()=>0),color:'#94a3b8',dash:[1,3]},
+    {label:'θ',data:r.samples.map(s=>s.theta),color:'#6bff88'},
+    {label:'+1',data:r.samples.map(()=>1),color:'#ffcc44',dash:[3,3]},
+    {label:'-1',data:r.samples.map(()=>-1),color:'#ffcc44',dash:[3,3]},
   ]);
   drawChart('chOmega','ω [°/s]',ts,[
     {label:'ω',data:r.samples.map(s=>s.omega),color:'#93c5fd'},
     {label:'+0.5',data:r.samples.map(()=>0.5),color:'#ffcc44',dash:[3,3]},
     {label:'-0.5',data:r.samples.map(()=>-0.5),color:'#ffcc44',dash:[3,3]},
   ]);
-  drawChart('chAlpha','α [°/s²]',ts,[
-    {label:'α_actual',data:r.samples.map(s=>s.aAct),color:'#6bff88'},
-    {label:'α_target',data:r.samples.map(s=>s.aTgt),color:'#ff6b6b',dash:[4,3]},
-  ]);
   drawChart('chGimbal','gimbal [°]',ts,[
-    {label:'gimbal act',data:r.samples.map(s=>s.gimbal),color:'#fbbf24'},
-    {label:'gimbal cmd',data:r.samples.map(s=>s.gimbalCmd),color:'#94a3b8',dash:[2,2]},
-    {label:'+8°',data:r.samples.map(()=>8),color:'#ff6b6b',dash:[3,3]},
-    {label:'-8°',data:r.samples.map(()=>-8),color:'#ff6b6b',dash:[3,3]},
+    {label:'gimbal',data:r.samples.map(s=>s.gimbal),color:'#fbbf24'},
+    {label:'+8',data:r.samples.map(()=>8),color:'#ff6b6b',dash:[3,3]},
+    {label:'-8',data:r.samples.map(()=>-8),color:'#ff6b6b',dash:[3,3]},
   ]);
-  drawChart('chX','x [m] from pad',ts,[
+  drawChart('chAlpha','α [°/s²]',ts,[{label:'α',data:r.samples.map(s=>s.aAct),color:'#a78bfa'}]);
+  drawChart('chX','x [m]',ts,[
     {label:'x',data:r.samples.map(s=>s.x),color:'#6bff88'},
-    {label:'+5m',data:r.samples.map(()=>5),color:'#ffcc44',dash:[3,3]},
-    {label:'-5m',data:r.samples.map(()=>-5),color:'#ffcc44',dash:[3,3]},
+    {label:'+5',data:r.samples.map(()=>5),color:'#ffcc44',dash:[3,3]},
+    {label:'-5',data:r.samples.map(()=>-5),color:'#ffcc44',dash:[3,3]},
   ]);
   drawChart('chVx','vx [m/s]',ts,[
     {label:'vx',data:r.samples.map(s=>s.vx),color:'#93c5fd'},
     {label:'+1',data:r.samples.map(()=>1),color:'#ffcc44',dash:[3,3]},
     {label:'-1',data:r.samples.map(()=>-1),color:'#ffcc44',dash:[3,3]},
   ]);
-  drawChart('chAx','ax [m/s²]',ts,[
-    {label:'ax_actual',data:r.samples.map(s=>s.axAct),color:'#6bff88'},
-    {label:'ax_target',data:r.samples.map(s=>s.axTgt),color:'#ff6b6b',dash:[4,3]},
-  ]);
-  drawChart('chFyBody','Fy_body raw [N]',ts,[
-    {label:'Fy_body',data:r.samples.map(s=>s.fyRaw),color:'#a78bfa'},
-    {label:'0 (neg=backward)',data:r.samples.map(()=>0),color:'#ff6b6b',dash:[3,3]},
-  ]);
+  drawChart('chAx','ax [m/s²]',ts,[{label:'ax',data:r.samples.map(s=>s.axAct),color:'#a78bfa'}]);
+  drawChart('chFy','Fy_body [N]',ts,[{label:'Fy',data:r.samples.map(s=>s.thrAct),color:'#a78bfa'}]);
   drawChart('chThr','thrust [kN]',ts,[
     {label:'act',data:r.samples.map(s=>s.thrAct),color:'#6bff88'},
     {label:'cmd',data:r.samples.map(s=>s.thrCmd),color:'#ff6b6b',dash:[3,3]},
   ]);
   drawChart('chH','h [km]',ts,[{label:'h AGL',data:r.samples.map(s=>s.h),color:'#93c5fd'}]);
+  drawChart('chVy','vy [m/s]',ts,[{label:'vy',data:r.samples.map(s=>s.vy),color:'#93c5fd'}]);
+  drawChart('chAy','ay [m/s²]',ts,[{label:'ay',data:r.samples.map(s=>s.ayAct),color:'#a78bfa'}]);
 
-  // Table
-  let tHtml='<table><thead><tr>'+
-    ['t','phase','e','θ','ω','x','vx','gim','gCmd','thrA','thrC','α_act','α_tgt','ax_act','ax_tgt','Fy','h','vy','satG']
-    .map(h=>'<th>'+h+'</th>').join('')+'</tr></thead><tbody>';
+  let t='<table><thead><tr>'+['t','phase','e','θ','ω','x','vx','gim','thrA','thrC','α','ax','ay','h','vy','satG'].map(h=>'<th>'+h+'</th>').join('')+'</tr></thead><tbody>';
   for(const s of r.samples){
-    const rowCls=s.satGim?'style="background:#3f1f1f"':'';
-    tHtml+='<tr '+rowCls+'>'+
+    t+='<tr'+(s.satGim?' style="background:#3f1f1f"':'')+'>'+
       '<td>'+s.t+'</td>'+
-      '<td class="l" style="font-size:9px">'+(s.phase||'').replace('LANDING_BURN_ALIGN','LBA').replace('LANDING_BURN','LB')+'</td>'+
+      '<td class="l" style="font-size:9px">'+(s.phase||'').replace('LANDING_BURN','LB').replace('TOUCHDOWN','TD').replace('_ALIGN','A')+'</td>'+
       '<td>'+(s.e!=null?s.e:'—')+'</td>'+
       '<td>'+s.theta+'</td><td>'+s.omega+'</td><td>'+s.x+'</td><td>'+s.vx+'</td>'+
-      '<td>'+s.gimbal+'</td><td>'+s.gimbalCmd+'</td>'+
-      '<td>'+s.thrAct+'</td><td>'+s.thrCmd+'</td>'+
-      '<td>'+(s.aAct!=null?s.aAct:'—')+'</td><td>'+(s.aTgt!=null?s.aTgt:'—')+'</td>'+
-      '<td>'+(s.axAct!=null?s.axAct:'—')+'</td><td>'+(s.axTgt!=null?s.axTgt:'—')+'</td>'+
-      '<td>'+(s.fyRaw!=null?s.fyRaw:'—')+'</td>'+
+      '<td>'+s.gimbal+'</td><td>'+s.thrAct+'</td><td>'+s.thrCmd+'</td>'+
+      '<td>'+(s.aAct!=null?s.aAct:'—')+'</td>'+
+      '<td>'+(s.axAct!=null?s.axAct:'—')+'</td>'+
+      '<td>'+(s.ayAct!=null?s.ayAct:'—')+'</td>'+
       '<td>'+s.h+'</td><td>'+s.vy+'</td>'+
-      '<td>'+(s.satGim?'Y':'')+'</td>'+
-    '</tr>';
+      '<td>'+(s.satGim?'Y':'')+'</td></tr>';
   }
-  tHtml+='</tbody></table>';
-  $('tableBox').innerHTML=tHtml;
+  t+='</tbody></table>';
+  $('tableBox').innerHTML=t;
 }
 
-function drawChart(canvasId, title, xs, series){
-  const cv=document.getElementById(canvasId);
+function drawChart(id, title, xs, series){
+  const cv=document.getElementById(id);
   if(!cv)return;
   const datasets=series.map(s=>({
     label:s.label, data:xs.map((x,i)=>({x,y:s.data[i]})),
