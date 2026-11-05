@@ -1661,6 +1661,29 @@ function _rotatedPoint(body, localX, localY) {
   };
 }
 
+// Compute leg tip extension below hull base from the leg type frame hingeGeometry()
+// + live legs.progress. Replaces hardcoded CONFIG.LANDING_LEG_EXTENSION_M.
+function _legTipExtension(body) {
+  if (!body || !body.legs) return 0;
+  const progress = Number.isFinite(body.legs.progress) ? body.legs.progress : 0;
+  if (progress < 0.05) return 0;
+  const bottomMember = (body.members && body.members[0]) ? body.members[0] : null;
+  if (!bottomMember) return 0;
+  if (bottomMember.hasRecovery === false) return 0;
+  const recoveryType = (typeof getComponentType === "function") ?
+    getComponentType(bottomMember.recoveryTypeId) : null;
+  if (!recoveryType || !recoveryType.capabilities || !recoveryType.capabilities.deploysOnVehicle) return 0;
+  if (!recoveryType.frame || typeof recoveryType.frame.hingeGeometry !== "function") return 0;
+  const H_member = Number.isFinite(bottomMember.height) ? bottomMember.height : _bodyHeightOf(body);
+  if (!(H_member > 0)) return 0;
+  const geo = recoveryType.frame.hingeGeometry(H_member);
+  if (!geo || !Number.isFinite(geo.hingeY) || !Number.isFinite(geo.legLength) || !Number.isFinite(geo.maxSweepRad)) return 0;
+  const hingeLocalY = -geo.hingeY;
+  const sweep = progress * geo.maxSweepRad;
+  const tipY_local = hingeLocalY + geo.legLength * Math.cos(sweep);
+  return Math.max(0, -tipY_local);
+}
+
 function resolveGroundContact(body, groundR, geom) {
   const half = _bodyWidthOf(body) / 2;
   const H = _bodyHeightOf(body);
@@ -1685,8 +1708,7 @@ const cosTilt = Math.max(-1, Math.min(1, bodyUpX * upX + bodyUpY * upY));
 const tiltRad = Math.acos(cosTilt);
 
 if (tiltRad < 0.02) { // ~1.15° threshold
-  const legExtU = (body.legs && body.legs.progress > 0.85) ?
-    (Number.isFinite(CONFIG.LANDING_LEG_EXTENSION_M) ? CONFIG.LANDING_LEG_EXTENSION_M : 0) : 0;
+  const legExtU = _legTipExtension(body);
   const p = _rotatedPoint(body, 0, -legExtU);
   const alt = Math.hypot(p.x, p.y) - groundR;
   if (alt > 0) return null;
@@ -1732,8 +1754,7 @@ const candidates = [
 ];
 // Leg tips — when legs deployed, tips extend below base; real ground
 // contact points so hull base sits LANDING_LEG_EXTENSION_M above surface.
-const _legExt = (body.legs && body.legs.progress > 0.85) ?
-  (Number.isFinite(CONFIG.LANDING_LEG_EXTENSION_M) ? CONFIG.LANDING_LEG_EXTENSION_M : 0) : 0;
+const _legExt = _legTipExtension(body);
 if (_legExt > 0) {
   candidates.push({ label: "legTipC", p: _rotatedPoint(body, 0, -_legExt) });
   candidates.push({ label: "legTipL", p: _rotatedPoint(body, -half * 0.6, -_legExt) });
@@ -1823,8 +1844,7 @@ function _lowestPointAltitude(body, groundR) {
     _rotatedPoint(body, half, 0),
     _rotatedPoint(body, 0, H),
   ];
-  const _legExtLP = (body.legs && body.legs.progress > 0.85) ?
-    (Number.isFinite(CONFIG.LANDING_LEG_EXTENSION_M) ? CONFIG.LANDING_LEG_EXTENSION_M : 0) : 0;
+  const _legExtLP = _legTipExtension(body);
   if (_legExtLP > 0) {
     pts.push(_rotatedPoint(body, 0, -_legExtLP));
     pts.push(_rotatedPoint(body, -half * 0.6, -_legExtLP));

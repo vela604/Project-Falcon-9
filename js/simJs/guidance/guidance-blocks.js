@@ -3392,7 +3392,28 @@ setState(s) {
       const BB_FUEL_EMPTY_KG = 1;
 
       // "C,0,180" -> ["C", 0, 180]. "C" = centre engine, numbers = outer-ring engine angleDeg.
-      function _bbTokens(cfg) {
+      // Leg tip extension below hull base for the guidance worker.
+// Reads pre-computed geometry from Derivation.getStackData().memberDerived
+// (functions do not survive structured-clone into the guidance worker).
+function _slamLegTipExtension(body) {
+  if (!body || !body.legs) return 0;
+  const progress = Number.isFinite(body.legs.progress) ? body.legs.progress : 0;
+  if (progress < 0.05) return 0;
+  const bottomMember = (body.members && body.members[0]) ? body.members[0] : null;
+  if (!bottomMember || !bottomMember.id) return 0;
+  if (bottomMember.hasRecovery === false) return 0;
+  const sd = Derivation.getStackData();
+  const md = (sd && sd.memberDerived && sd.memberDerived[bottomMember.id]) ?
+    sd.memberDerived[bottomMember.id] : null;
+  const ld = (md && md.legs) ? md.legs : null;
+  if (!ld || !Number.isFinite(ld.hingeY) || !Number.isFinite(ld.legLength) || !Number.isFinite(ld.maxSweepRad)) return 0;
+  const hingeLocalY = -ld.hingeY;
+  const sweep = progress * ld.maxSweepRad;
+  const tipY_local = hingeLocalY + ld.legLength * Math.cos(sweep);
+  return Math.max(0, -tipY_local);
+}
+
+function _bbTokens(cfg) {
         const raw = String(cfg.BOOSTBACK_ENGINES == null ? "C,0,180" : cfg.BOOSTBACK_ENGINES);
         const toks = [];
         raw.split(",").forEach(function (s) {
@@ -5139,7 +5160,8 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
             const LB_GFLOOR = 0.25;       // gNet floor (fraction of gEff) used for inversion
             const LB_NOAUTH = 0.12;       // gNet below this fraction of gEff => no lateral authority, hold weathervane angle
 
-            const hEff = hAGL - H_OFF;
+            const legExt_m = _slamLegTipExtension(body);
+            const hEff = hAGL - legExt_m - H_OFF;
             const elapsedAlign = simT - _st.lbAlignStartT;
 
             // ---- Contact / cut ----
