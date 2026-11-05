@@ -5042,7 +5042,7 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
               _st.lbSpooled = false;
               _st.lbSpoolT = null;
               _st.lbAlignStartT = null;
-              _st.lbPlan = null;
+              _st.lbThDes = null;
               _st.lbProf = null;
               _st.lbReplanT = -1e9;
               _st.lbGPrev = null;
@@ -5057,7 +5057,7 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
                 " alt=" + (d.altitudeAGL / 1000).toFixed(2) + "km" +
                 " vGround=" + vGroundMag.toFixed(0) + "m/s" +
                 " (vRad=" + vRadial.toFixed(1) + " vTangGround=" + vTangGround.toFixed(1) + ")" +
-                " — SLAM v5 (zero-effort-to-go law on a THR_LATE reference + rollout-based lateral horizon + fin assist) → TOUCHDOWN");
+                " — SLAM v6 (zero-effort-to-go vertical law + authority-aware lateral cascade + fin assist) → TOUCHDOWN");
             }
 
             const hAGL = d.altitudeAGL;
@@ -5116,17 +5116,28 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
             const H_OFF = _cfgN("LANDING_BURN_H_OFFSET_M", 0);
             const H_CUT = _cfgN("LANDING_BURN_H_CUT_M", 0);
             const H_STALL = _cfgN("LANDING_BURN_H_STALL_M", 0.5);
-            const POLE = _cfgN("LANDING_BURN_POLE", 0.3);
-            const DELTA_PLAN = _cfgN("LANDING_BURN_DELTA_PLAN_DEG", 5.0);
-            const T_FRAC = _cfgN("LANDING_BURN_PLAN_TGO_FRAC", 0.75);
-            const T_FIXED = Number.isFinite(cfg.LANDING_BURN_PLAN_T_S) ? cfg.LANDING_BURN_PLAN_T_S : null;
             const THR_LATE = _cfgN("LANDING_BURN_THR_LATE", 0.6);
-            const LB_KN = 2.0;            // dimensionless gain on (aNeed - aRef); >1 => stable, error ~ h^(KN-1)
-            const LB_REPLAN_S = 1.0;      // profile + lateral plan refresh period
-            const LB_PROF_DT = 0.05;      // profile table step
+            const LB_KN = 2.0;            // vertical: gain on (aNeed - aRef); >1 => stable to ground
+            const LB_REPLAN_S = 1.0;      // rollout / log refresh period
+            const LB_PROF_DT = 0.05;      // rollout step
             const LB_FIN_SHARE = 0.4;     // gimbal keeps this fraction of its range, rest -> fins
             const LB_FIN_RATE = 40;       // deg/s
             const LB_FIN_CAP = 30;        // deg
+            // lateral (v6): authority-aware cascade  z-loop -> theta_des -> attitude PD -> gimbal/fins
+            const LB_KZ = 0.1;            // 1/s   position pull on z (reference speed = KZ*|z|, bounded below)
+            const LB_KV = 0.5;            // 1/s   velocity loop on zd
+            const LB_VLIM = 2.0;          // m/s   max lateral reference speed
+            const LB_VH = 0.03;           // 1/s   reference speed also <= VH*h + 0.1  (-> 0 at ground)
+            const LB_ABRK = 0.3;          // fraction of the available lateral accel used for the braking-curve
+            const LB_KTH = 1.0;           // 1/s^2 attitude P
+            const LB_KW = 1.6;            // 1/s   attitude D
+            const LB_SLEW = 4.0;          // deg/s slew limit on theta_des
+            const LB_CAP_MAX = 10.0;      // deg   |theta_des| cap far from ground
+            const LB_CAP_BASE = 1.5;      // deg   cap at h=0
+            const LB_CAP_H = 0.04;        // deg/m cap growth with height
+            const LB_MCAP = 0.8;          // fraction of soft-gimbal torque the hold-angle may need
+            const LB_GFLOOR = 0.25;       // gNet floor (fraction of gEff) used for inversion
+            const LB_NOAUTH = 0.12;       // gNet below this fraction of gEff => no lateral authority, hold weathervane angle
 
             const hEff = hAGL - H_OFF;
             const elapsedAlign = simT - _st.lbAlignStartT;
@@ -5187,54 +5198,6 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
             const Fmax = maxMF * ve * lbEng.length;
             if (!(Fmax > 0)) break;
 
-            // ---- poly helpers (unchanged from v3) ----
-            const _lbPolyD = function (c, k, t) {
-              let s = 0;
-              for (let n = k; n < c.length; n++) {
-                let f = 1; for (let i = 0; i < k; i++) f *= (n - i);
-                s += c[n] * f * Math.pow(t, n - k);
-              }
-              return s;
-            };
-            const _lbPlanPoly = function (T, q0, q1, q2, q3) {
-              const c = [q0, q1, q2 / 2, q3 / 6, 0, 0, 0, 0];
-              const A = [], b = [];
-              for (let k = 0; k < 4; k++) {
-                const row = [];
-                for (let n = 4; n < 8; n++) {
-                  let f = 1; for (let i = 0; i < k; i++) f *= (n - i);
-                  row.push(f * Math.pow(T, n - k));
-                }
-                let rhs = 0;
-                for (let n = k; n < 4; n++) {
-                  let f = 1; for (let i = 0; i < k; i++) f *= (n - i);
-                  rhs -= c[n] * f * Math.pow(T, n - k);
-                }
-                A.push(row); b.push(rhs);
-              }
-              for (let i = 0; i < 4; i++) {
-                let p = i;
-                for (let r = i + 1; r < 4; r++) if (Math.abs(A[r][i]) > Math.abs(A[p][i])) p = r;
-                const tA = A[i]; A[i] = A[p]; A[p] = tA;
-                const tb = b[i]; b[i] = b[p]; b[p] = tb;
-                const piv = A[i][i];
-                if (!(Math.abs(piv) > 1e-30)) return null;
-                for (let r = i + 1; r < 4; r++) {
-                  const f = A[r][i] / piv;
-                  for (let cc = i; cc < 4; cc++) A[r][cc] -= f * A[i][cc];
-                  b[r] -= f * b[i];
-                }
-              }
-              const xs = [0, 0, 0, 0];
-              for (let i = 3; i >= 0; i--) {
-                let s = b[i];
-                for (let cc = i + 1; cc < 4; cc++) s -= A[i][cc] * xs[cc];
-                xs[i] = s / A[i][i];
-              }
-              c[4] = xs[0]; c[5] = xs[1]; c[6] = xs[2]; c[7] = xs[3];
-              return c;
-            };
-
             // ---- vertical law (v5) ----
             // aRef  = net decel when flying at throttle THR_LATE (thrust-only part + aero already helping)
             // aNeed = constant net decel that lands exactly at V_TD from here  ((v^2-V_TD^2)/(2h))
@@ -5264,71 +5227,8 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
               return P;
             };
 
-            // ---- aero-aware peak gimbal prediction along a candidate lateral plan ----
-            const _lbPredPeak = function (c, T, P, i0) {
-              const N = P.h.length;
-              const NS = 16;
-              let pk = 0;
-              for (let k = 0; k <= NS; k++) {
-                const tau = T * k / NS;
-                const ii = Math.min(N - 1, i0 + Math.round(tau / P.dt));
-                const Fk = P.F[ii], mk = P.m[ii];
-                const gE = Math.max(Fk / mk, 1);
-                const r1 = _lbPolyD(c, 1, tau), r2 = _lbPolyD(c, 2, tau);
-                const r3 = _lbPolyD(c, 3, tau), r4 = _lbPolyD(c, 4, tau);
-                const thK = -r2 / gE, wK = -r3 / gE, alK = -r4 / gE;
-                const rK = rNow - (hEff - P.h[ii]);
-                const sc = rK / rNow;
-                const vRad = -P.v[ii];
-                const vT = r1 + omegaE * rK;
-                const dk = Derivation.deriveForState(snapshot, idx, {
-                  rx: d.rx * sc, ry: d.ry * sc,
-                  vx: vRad * uxN + vT * uyN, vy: vRad * uyN - vT * uxN,
-                  theta: localVert + thK, omega: omegaE + wK,
-                });
-                if (!dk) continue;
-                const envK = (dk.torqueDrag || 0) + (dk.torqueGravityGradient || 0) + (dk.gridFinTorque || 0);
-                const FxB = (I * alK - envK + comX * Fk) / comY;
-                const dl = Math.asin(Math.max(-1, Math.min(1, FxB / Fk))) * R2D;
-                if (Math.abs(dl) > pk) pk = Math.abs(dl);
-              }
-              return pk;
-            };
-            const _lbBuildPlan = function (P, i0) {
-              const N = P.h.length;
-              const tRem = Math.max(0, (N - 1 - i0) * P.dt);
-              let cand = [];
-              if (T_FIXED != null) cand = [T_FIXED];
-              else if (tRem < 1.0) cand = [Math.max(0.4, 0.8 * tRem)];
-              else {
-                const Tmax = Math.max(1.0, T_FRAC * tRem);
-                const Tmin = Math.min(3.0, Tmax);
-                for (let T = Tmin; T <= Tmax + 1e-9; T += 0.5) cand.push(T);
-              }
-              let best = null;
-              const _try = function (T) {
-                const c = _lbPlanPoly(T, zNow, zdNow, z2Now, z3Now);
-                if (!c) return null;
-                return { c: c, T: T, peakDeg: _lbPredPeak(c, T, P, i0) };
-              };
-              // gentlest plan first: longest horizon. Only scan shorter ones if even that exceeds DELTA_PLAN.
-              if (cand.length) {
-                const top = _try(cand[cand.length - 1]);
-                if (top) best = top;
-                if (!best || best.peakDeg > DELTA_PLAN) {
-                  for (let q = 0; q < cand.length - 1; q++) {
-                    const r = _try(cand[q]);
-                    if (r && (!best || r.peakDeg < best.peakDeg)) best = r;
-                  }
-                }
-              }
-              if (!best) return { c: null, T: cand[0] || 1, peakDeg: 0, t0: simT, tRem: tRem };
-              best.t0 = simT; best.tRem = tRem; best.z0 = zNow; best.zd0 = zdNow; best.z20 = z2Now; best.z30 = z3Now;
-              return best;
-            };
-
             // ================================================================
-            // Refresh profile + lateral plan (first tick, then every LB_REPLAN_S)
+            // Rollout (only for tgo / predTD logging; not used by the controller)
             // ================================================================
             const vDown = -vRadial;
             let prof = _st.lbProf;
@@ -5339,21 +5239,12 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
               prof = _lbRollout(Math.max(hEff, 1), vD0, M, kA);
               _st.lbProf = prof;
               _st.lbReplanT = simT;
-              const i0 = 0;
-              const tRemP = prof.tEnd;
-              if (!_st.lbPlan || tRemP > 2.0) {
-                _st.lbPlan = _lbBuildPlan(prof, i0);
-              }
-              const pl = _st.lbPlan;
               console.log("[LB-REPLAN] t=" + simT.toFixed(2) + " e=" + elapsedAlign.toFixed(2) +
                 " h=" + hEff.toFixed(1) + " vy=" + vRadial.toFixed(2) +
-                " | rollout tgo=" + tRemP.toFixed(1) + "s predTD h=" + prof.hEnd.toFixed(2) + " v=" + prof.vEnd.toFixed(2) +
-                " | plan T=" + pl.T.toFixed(2) + "s peakDelta=" + (pl.peakDeg || 0).toFixed(2) + "deg" +
-                (pl.c ? "" : " [SINGULAR]") +
-                " | z=" + zNow.toFixed(2) + " zd=" + zdNow.toFixed(3) + " z2=" + z2Now.toFixed(4) + " z3=" + z3Now.toFixed(4) +
-                " ell=" + ell.toFixed(2) + " gEff=" + gEff.toFixed(2) + " gDot=" + gDot.toFixed(2));
+                " | rollout tgo=" + prof.tEnd.toFixed(1) + "s predTD h=" + prof.hEnd.toFixed(2) + " v=" + prof.vEnd.toFixed(2) +
+                " | z=" + zNow.toFixed(2) + " zd=" + zdNow.toFixed(3) + " z2=" + z2Now.toFixed(4) +
+                " ell=" + ell.toFixed(2) + " gEff=" + gEff.toFixed(2));
             }
-            const plan = _st.lbPlan;
 
             // ================================================================
             // Throttle: zero-effort-to-go law around the THR_LATE reference
@@ -5374,23 +5265,61 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
             _st.lbLastFyBody = Fcmd;
 
             // ================================================================
-            // Lateral: flat-output tracking, gimbal first, fins take the excess
+            // Lateral (v6): authority-aware cascade.
+            //   z-loop (bounded reference speed) -> theta_des (within what gimbal can HOLD against hull torque)
+            //   -> attitude PD (+ hull-torque feed-forward) -> gimbal first, fins take the excess.
+            // Net lateral gain is probed from the real aero model each tick:
+            //   dz2/dtheta = -(gEff - kq - S/(comY*M))   kq = d(aero lateral accel)/dtheta,  S = -d(hull torque)/dtheta
+            // (the S term is the gimbal side-force needed to hold theta against the restoring hull torque).
             // ================================================================
-            let r0 = 0, r1 = 0, r2 = 0, r3 = 0, r4 = 0;
-            const tp = Math.max(0, simT - plan.t0);
-            if (plan && plan.c && tp < plan.T) {
-              r0 = _lbPolyD(plan.c, 0, tp); r1 = _lbPolyD(plan.c, 1, tp);
-              r2 = _lbPolyD(plan.c, 2, tp); r3 = _lbPolyD(plan.c, 3, tp); r4 = _lbPolyD(plan.c, 4, tp);
-            }
-            const k3 = 4 * POLE, k2 = 6 * POLE * POLE, k1 = 4 * POLE * POLE * POLE, k0 = POLE * POLE * POLE * POLE;
-            const e0 = zNow - r0, e1 = zdNow - r1, e2 = z2Now - r2, e3 = z3Now - r3;
-            const vCmd = r4 - (k3 * e3 + k2 * e2 + k1 * e1 + k0 * e0);
-            const thddCmd = (-vCmd - 2 * gDot * wL) / gEff;
-
             const envHull = (d.torqueDrag || 0) + (d.torqueGravityGradient || 0);
             const Fuse = 0.5 * (Fnow + Fcmd);
             const gimbalMax = gimbals.length ? (gimbals[0].gimbalMaxDeg || 8) : 8;
+            const gimbalSoft = 0.9 * gimbalMax;
             const armG = comY * Fuse;
+
+            // ---- probe: aero lateral gain + hull torque stiffness (one extra derive at theta+DTH) ----
+            const DTH = 0.5 / R2D;
+            let kq = 0, Sst = 0;
+            const dkP = Derivation.deriveForState(snapshot, idx, { theta: d.theta + DTH });
+            if (dkP) {
+              const aP = _pesAeroAccel(dkP, M);
+              const AtN = aeroAcc.ax * uyN - aeroAcc.ay * uxN;
+              const AtP = aP.ax * uyN - aP.ay * uxN;
+              const envP = (dkP.torqueDrag || 0) + (dkP.torqueGravityGradient || 0);
+              const kqR = (AtP - AtN) / DTH, SR = -(envP - envHull) / DTH;
+              if (Number.isFinite(kqR) && Number.isFinite(SR)) { kq = kqR; Sst = SR; }
+            }
+            const gRaw = gEff - kq - Sst / (comY * M);
+            const gNet = Math.max(gRaw, LB_GFLOOR * gEff);
+            const noAuth = gRaw < LB_NOAUTH * gEff;
+
+            // ---- theta_des limits: cap near ground + what the gimbal can hold against hull torque ----
+            const Mcap = armG * Math.sin(LB_MCAP * gimbalSoft / R2D);
+            const Seff = Math.max(Sst, 2e4);
+            const capRad = Math.min(LB_CAP_MAX, LB_CAP_BASE + LB_CAP_H * Math.max(hEff, 0)) / R2D;
+            let thLo = Math.max(thL + (envHull - Mcap) / Seff, -capRad);
+            let thHi = Math.min(thL + (envHull + Mcap) / Seff, capRad);
+            if (thLo > thHi) { const mid = 0.5 * (thLo + thHi); thLo = mid; thHi = mid; }
+            const thAuth = Math.min(capRad, Mcap / Seff);
+            const aB = Math.max(0.02, LB_ABRK * gNet * thAuth);       // braking accel the z-loop may assume
+
+            // ---- outer loop: bounded reference speed, velocity loop -> desired z'' ----
+            const vRefMax = Math.min(LB_VLIM, LB_VH * Math.max(hEff, 0) + 0.1);
+            const zdRef = -Math.sign(zNow) * Math.min(LB_KZ * Math.abs(zNow), vRefMax, Math.sqrt(2 * aB * Math.abs(zNow)));
+            const aDes = LB_KV * (zdRef - zdNow);
+            let thD;
+            if (noAuth) thD = thL + envHull / Seff;                   // weathervane angle: zero hold torque
+            else thD = thL + (z2Now - aDes) / gNet;                   // incremental inversion on measured z2
+            thD = Math.max(thLo, Math.min(thHi, thD));
+            if (!Number.isFinite(_st.lbThDes)) _st.lbThDes = thL;
+            const slewMax = LB_SLEW / R2D * dt;
+            _st.lbThDes += Math.max(-slewMax, Math.min(slewMax, thD - _st.lbThDes));
+            _st.lbThDes = Math.max(thLo, Math.min(thHi, _st.lbThDes));
+            const thDes = _st.lbThDes;
+
+            // ---- inner loop: attitude PD -> torque -> gimbal/fin split ----
+            const thddCmd = -LB_KTH * (thL - thDes) - LB_KW * wL;
             const Mact = I * thddCmd - envHull + comX * Fuse;     // = comY*Fx_body + tauFin
 
             // fin torque curve at current state (same inversion as PES)
@@ -5429,9 +5358,7 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
             const FxBody = (Mact - tauFinNext) / comY;
             let gimbalCmdDeg = Math.asin(Math.max(-1, Math.min(1, FxBody / Fuse))) * R2D;
             let gimbalSat = false;
-            const gimbalSoft = 0.9 * gimbalMax;
             if (Math.abs(gimbalCmdDeg) > gimbalSoft) { gimbalCmdDeg = Math.sign(gimbalCmdDeg) * gimbalSoft; gimbalSat = true; }
-            if (!plan || !plan.c) gimbalCmdDeg = 0;
             if (!Number.isFinite(_st.lbAlignDeltaMax)) _st.lbAlignDeltaMax = 0;
             _st.lbAlignDeltaMax = Math.max(_st.lbAlignDeltaMax, Math.abs(gimbalCmdDeg));
             _st.lbGimbalCmd = gimbalCmdDeg;
@@ -5444,10 +5371,13 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
             if (simT - _st.lbLastLog >= 0.5) {
               _st.lbLastLog = simT;
               console.log("[LANDING_BURN-SLAM] t=" + simT.toFixed(2) + " e=" + elapsedAlign.toFixed(2) +
-                " Tplan=" + (plan ? plan.T.toFixed(2) : "n/a") + " tp=" + tp.toFixed(2) +
                 " | th=" + thetaLocalDeg.toFixed(3) + " w=" + (wL * R2D).toFixed(3) +
                 " x=" + xFromPadM.toFixed(2) + " vx=" + vTangGround.toFixed(2) +
-                " | err z=" + e0.toFixed(3) + " zd=" + e1.toFixed(3) + " z2=" + e2.toFixed(4) + " z3=" + e3.toFixed(4) +
+                " | z=" + zNow.toFixed(2) + " zd=" + zdNow.toFixed(3) + " z2=" + z2Now.toFixed(4) +
+                " zdRef=" + zdRef.toFixed(2) + " aDes=" + aDes.toFixed(3) +
+                " | thDes=" + (thDes * R2D).toFixed(2) + " lim=[" + (thLo * R2D).toFixed(1) + "," + (thHi * R2D).toFixed(1) + "]" +
+                " gRaw=" + gRaw.toFixed(2) + " gEff=" + gEff.toFixed(2) + " kq=" + kq.toFixed(2) +
+                " S=" + Math.round(Sst) + (noAuth ? " [NO-AUTH]" : "") +
                 " | h=" + hEff.toFixed(2) + " vy=" + vRadial.toFixed(2) + " vRef=" + (-vRefCurve).toFixed(2) +
                 " aNeed=" + aNeed.toFixed(2) + " aRef=" + aRef.toFixed(2) + " aReq=" + aReq.toFixed(2) + " F=" + Math.round(thrustCur) + " cmd=" + Math.round(Fcmd) +
                 " thr=" + (100 * Fcmd / Fmax).toFixed(0) + "%" +
@@ -5464,6 +5394,7 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
             }
             break;
           }
+
 
 
 
