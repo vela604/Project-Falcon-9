@@ -1491,6 +1491,8 @@ if (_lbState.insertionBlock) {
       rtlsLbAlignDeltaMax: rs.lbAlignDeltaMax,
       rtlsLbCapture6: rs.lbCapture6,
       rtlsLbTestOverride: rs.lbTestOverride,
+      rtlsLbTrajPow: rs.lbTrajPow,
+      rtlsLbLastFyBody: rs.lbLastFyBody,
     });
   }
 

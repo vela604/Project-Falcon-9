@@ -5521,6 +5521,7 @@ const _brCfg = (Number.isInteger(cfg.LANDING_BURN_T0_BRANCH) && cfg.LANDING_BURN
             if (!Number.isFinite(FxBody) || !Number.isFinite(FyBody)) { FxBody = 0; FyBody = 0; }
             // SAFETY (A-soft): backward thrust demand is physical. Clamp Fy_body to small positive
             // instead of zeroing throttle (avoids trajectory stall).
+            const _fyRaw = FyBody;
             if (FyBody < 0) {
               if (DEBUG_RTLS && Math.round(simT * 80) % 80 === 0) {
                 console.warn("[standardRTLS] LB ALIGN Fy_body<0 (=" + FyBody.toFixed(0) + "N) — clamped 1% Fmax forward");
@@ -5528,6 +5529,7 @@ const _brCfg = (Number.isInteger(cfg.LANDING_BURN_T0_BRANCH) && cfg.LANDING_BURN
               FyBody = Math.max(1, M_pred * 0.01);
               if (Math.abs(FxBody) < 1) FxBody = 0;
             }
+            _st.lbLastFyBody = _fyRaw;
 
             const Fmag = Math.hypot(FxBody, FyBody);
             let gimbalCmdDeg = Math.atan2(FxBody, FyBody) * R2D;
@@ -5850,6 +5852,8 @@ const _brCfg = (Number.isInteger(cfg.LANDING_BURN_T0_BRANCH) && cfg.LANDING_BURN
             lbAlignDeltaMax: _st.lbAlignDeltaMax,
             lbCapture6: _st.lbCapture6 ? JSON.parse(JSON.stringify(_st.lbCapture6)) : null,
             lbTestOverride: _st.lbTestOverride ? JSON.parse(JSON.stringify(_st.lbTestOverride)) : null,
+            lbTrajPow: _st.lbTrajPow ? { T0: _st.lbTrajPow.T0, a0rot: _st.lbTrajPow.a0rot, a0lin: _st.lbTrajPow.a0lin, rot: { q: _st.lbTrajPow.rot.q, k: _st.lbTrajPow.rot.k, crossings: _st.lbTrajPow.rot.crossings, L: _st.lbTrajPow.rot.L }, lin: { q: _st.lbTrajPow.lin.q, k: _st.lbTrajPow.lin.k, crossings: _st.lbTrajPow.lin.crossings, L: _st.lbTrajPow.lin.L } } : null,
+            lbLastFyBody: Number.isFinite(_st.lbLastFyBody) ? _st.lbLastFyBody : null,
             rcsTorque: _st.lastRcsTorque,
           };
         },
