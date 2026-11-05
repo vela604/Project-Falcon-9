@@ -1,73 +1,104 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <title>Landback Align Lab</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <style>
-body{font:11px/1.35 monospace;background:#0b0e14;color:#cfd6e4;margin:0;padding:8px}
-label{display:inline-block;margin:0 6px 4px 0}
+body{font:11px/1.4 monospace;background:#0b0e14;color:#cfd6e4;margin:0;padding:10px}
+label{display:inline-block;margin:0 6px 6px 0}
 input,select{background:#141a26;color:#cfd6e4;border:1px solid #2a3550;padding:3px;width:82px}
 select{width:auto}
 button{background:#1d2a44;color:#cfd6e4;border:1px solid #3a4c78;padding:5px 10px;cursor:pointer;font:inherit}
 button:disabled{opacity:.5}
-h2{font-size:13px;margin:8px 0 6px}h3{font-size:12px;margin:10px 0 6px}
-pre{white-space:pre-wrap;font-size:10px;background:#0f1420;padding:6px;border:1px solid #1f2940;max-height:420px;overflow:auto}
-.dim{color:#7d889f}.bad{color:#ff6b6b}.ok{color:#6bff88}
-.sec{margin-top:12px;border-top:1px solid #2a3550;padding-top:8px}
+h2{font-size:13px;margin:10px 0 6px;color:#e2e8f0}h3{font-size:12px;margin:12px 0 6px;color:#cbd5e1}
+pre{white-space:pre-wrap;font-size:10.5px;background:#0f1420;padding:6px;border:1px solid #1f2940;max-height:280px;overflow:auto;margin:6px 0}
+.dim{color:#7d889f}.bad{color:#ff6b6b}.ok{color:#6bff88}.warn{color:#ffcc44}
+.section{margin-top:12px;border-top:1px solid #1f2940;padding-top:10px}
+.chart{background:#0f1420;border:1px solid #1f2940;border-radius:6px;padding:6px;height:180px;position:relative}
+.chart.tall{height:220px}
+.charts{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}
+@media(max-width:900px){.charts{grid-template-columns:1fr}}
+.charts3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:8px}
+@media(max-width:900px){.charts3{grid-template-columns:1fr}}
+table{border-collapse:collapse;width:100%;font-size:10px;margin-top:6px}
+th,td{padding:3px 5px;border-bottom:1px solid #1f2940;text-align:right;font-family:monospace}
+th{color:#94a3b8;font-weight:600;font-size:9px;text-transform:uppercase;position:sticky;top:0;background:#0b0e14}
+td.l{text-align:left}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:2px 12px;font-size:11px;margin:6px 0}
+.kv .k{color:#94a3b8}
+.kv .v{text-align:right;font-family:monospace}
+.badge{display:inline-block;padding:1px 6px;border-radius:3px;font-size:10px;font-weight:600}
+.b-ok{background:#14532d;color:#6bff88}.b-warn{background:#78350f;color:#ffcc44}.b-bad{background:#7f1d1d;color:#ff6b6b}.b-info{background:#1e3a5f;color:#93c5fd}
+.legend{font-size:10px;color:#94a3b8;margin:4px 0}
+.legend span{display:inline-block;margin-right:10px}
+.legend i{display:inline-block;width:12px;height:2px;margin-right:3px;vertical-align:middle}
 </style></head><body>
-<h2>Landback Align Lab</h2>
+<h2>Landback Align Lab · Full Analysis</h2>
 <div>
   <label>stack <select id="stackSel"></select></label>
-  <button id="initBtn">① Init + capture SA/EB/LBA checkpoints</button>
+  <button id="initBtn">① Init + capture checkpoints</button>
   <span class="dim" id="initStatus"></span>
 </div>
 
-<div id="lab" style="display:none;margin-top:6px">
-<div class="sec">
-<h3>Section 1 — T0 sweep (predict-v2 + guard)</h3>
-<label>T0 from <input type="number" id="t0From" value="7" step="0.5"></label>
-<label>to <input type="number" id="t0To" value="15" step="0.5"></label>
-<label>step <input type="number" id="t0Step" value="1" step="0.5"></label>
-<label>capS <input type="number" id="capS" value="60"></label>
-<button id="sweepBtn" disabled>Sweep</button>
-<label>T0 single <input type="number" id="t0Single" value="10" step="0.5"></label>
-<button id="singleBtn" disabled>Run single</button>
-<span class="dim" id="runStatus"></span>
-<pre id="out"></pre>
-</div>
+<div id="lab" style="display:none;margin-top:8px">
+  <div class="section">
+    <h3>Run</h3>
+    <label>T0 mode <select id="t0mode"><option value="auto">auto (sister-pick)</option><option value="manual">manual</option></select></label>
+    <label>T0 manual <input type="number" id="t0man" value="7.54" step="0.1"></label>
+    <label>capS <input type="number" id="capS" value="60"></label>
+    <button id="runBtn">② Run</button>
+    <span class="dim" id="runStatus"></span>
+  </div>
 
-<div class="sec">
-<h3>Section 2 — 6-param override + compensation</h3>
-<div>
-  <label>a0_rot <input type="number" id="s2a0r" step="0.000001"></label>
-  <label>v0_rot <input type="number" id="s2v0r" step="0.000001"></label>
-  <label>ds_rot <input type="number" id="s2dsr" step="0.000001"></label>
-  <label>a0_lin <input type="number" id="s2a0l" step="0.0001"></label>
-  <label>v0_lin <input type="number" id="s2v0l" step="0.0001"></label>
-  <label>ds_lin <input type="number" id="s2dsl" step="0.001"></label>
-  <label>T0 <input type="number" id="s2t0" step="0.1"></label>
-  <label>branch <input type="number" id="s2br" step="1" value="1"></label>
-</div>
-<div>
-  <button id="s2capBtn" disabled>② Capture + baseline</button>
-  <button id="s2runBtn" disabled>③ Run with values</button>
-  <button id="s2compBtn" disabled>④ Compensate ds</button>
-  <span class="dim" id="s2status"></span>
-</div>
-<pre id="s2out"></pre>
-</div>
+  <div id="results" style="display:none">
+    <div class="section">
+      <h3>Config summary</h3>
+      <div id="configBox"></div>
+    </div>
 
-<div class="sec">
-<h3>Section 3 — Bias sweep + branch test (from EB start)</h3>
-<label>bias list <input type="text" id="s3biases" value="-650,-750,-850,-950" style="width:240px"></label>
-<label>branch list <input type="text" id="s3branches" value="0,1" style="width:60px"></label>
-<label>T0 auto <input type="checkbox" id="s3autot0" checked></label>
-<label>T0 manual <input type="number" id="s3t0man" value="8" step="0.5"></label>
-<button id="s3capBtn" disabled>① Capture spool states (per bias)</button>
-<button id="s3testBtn" disabled>② Test branches (from captures)</button>
-<span class="dim" id="s3status"></span>
-<pre id="s3capOut"></pre>
-<pre id="s3testOut"></pre>
-</div>
+    <div class="section">
+      <h3>Summary stats</h3>
+      <div id="statsBox"></div>
+    </div>
 
+    <div class="section">
+      <h3>Event log</h3>
+      <div id="eventsBox"></div>
+    </div>
+
+    <div class="section">
+      <h3>Attitude control (rotational)</h3>
+      <div class="legend"><span><i style="background:#6bff88"></i>θ_local</span><span><i style="background:#ffcc44"></i>tolerance ±1°</span><span><i style="background:#ff6b6b"></i>gimbal clamp ±8°</span></div>
+      <div class="charts">
+        <div class="chart"><canvas id="chTheta"></canvas></div>
+        <div class="chart"><canvas id="chOmega"></canvas></div>
+        <div class="chart"><canvas id="chAlpha"></canvas></div>
+        <div class="chart"><canvas id="chGimbal"></canvas></div>
+      </div>
+    </div>
+
+    <div class="section">
+      <h3>Lateral control (linear)</h3>
+      <div class="charts">
+        <div class="chart"><canvas id="chX"></canvas></div>
+        <div class="chart"><canvas id="chVx"></canvas></div>
+        <div class="chart"><canvas id="chAx"></canvas></div>
+        <div class="chart"><canvas id="chFyBody"></canvas></div>
+      </div>
+    </div>
+
+    <div class="section">
+      <h3>Thrust &amp; Vertical context</h3>
+      <div class="charts">
+        <div class="chart"><canvas id="chThr"></canvas></div>
+        <div class="chart"><canvas id="chH"></canvas></div>
+      </div>
+    </div>
+
+    <div class="section">
+      <h3>Time-series table (0.1 s sample)</h3>
+      <div id="tableBox" style="max-height:400px;overflow:auto;border:1px solid #1f2940;border-radius:6px"></div>
+    </div>
+  </div>
 </div>
 
 <script src="../../js/componentLibrary.js"></script>
@@ -98,404 +129,387 @@ pre{white-space:pre-wrap;font-size:10px;background:#0f1420;padding:6px;border:1p
 (function(){
 'use strict';
 const $ = (id) => document.getElementById(id);
-const S = { inited:false, saSnap:null, ebSnap:null, lbSnap:null, running:false, s2LastResult:null, s3Captures:[] };
+const S = { inited:false, saSnap:null, lbSnap:null, running:false, lastResult:null };
 const guideName = 'landbackV1';
+let charts = [];
 
 function deepClone(x, memo) {
   memo = memo || new WeakMap();
   if (x === null || typeof x !== 'object') return x;
   if (memo.has(x)) return memo.get(x);
-  if (Array.isArray(x)) { const a = []; memo.set(x, a); for (let i = 0; i < x.length; i++) a[i] = deepClone(x[i], memo); return a; }
-  const o = {}; memo.set(x, o); for (const k of Object.keys(x)) { try { o[k] = deepClone(x[k], memo); } catch(e) { o[k] = null; } } return o;
+  if (Array.isArray(x)) { const a=[]; memo.set(x,a); for(let i=0;i<x.length;i++)a[i]=deepClone(x[i],memo); return a; }
+  const o={}; memo.set(x,o); for(const k of Object.keys(x)){ try{o[k]=deepClone(x[k],memo);}catch(e){o[k]=null;} } return o;
 }
 function captureSnap() {
-  const st = {};
-  Object.keys(state).forEach(k => { if (k === 'bodies') return; try { st[k] = deepClone(state[k]); } catch(e) { st[k] = null; } });
-  return { bodies: deepClone(state.bodies), stateKeysSnapshot: st, simTime: state.simTime, activeBodyIndex: state.activeBodyIndex, guidanceState: Guidance.exportGuideState() };
+  const st={}; Object.keys(state).forEach(k=>{ if(k==='bodies')return; try{st[k]=deepClone(state[k]);}catch(e){st[k]=null;} });
+  return { bodies:deepClone(state.bodies), stateKeysSnapshot:st, simTime:state.simTime, activeBodyIndex:state.activeBodyIndex, guidanceState:Guidance.exportGuideState() };
 }
 function restoreSnap(snap, gOverride) {
-  Object.keys(snap.stateKeysSnapshot).forEach(k => { try { state[k] = deepClone(snap.stateKeysSnapshot[k]); } catch(e) {} });
-  state.simTime = snap.simTime; state.activeBodyIndex = snap.activeBodyIndex;
-  const sb = snap.bodies;
-  while (state.bodies.length > sb.length) state.bodies.pop();
-  while (state.bodies.length < sb.length) state.bodies.push({});
-  for (let i = 0; i < sb.length; i++) { const src = sb[i], dst = state.bodies[i]; Object.keys(dst).forEach(k => { delete dst[k]; }); Object.keys(src).forEach(k => { dst[k] = deepClone(src[k]); }); }
-  const ab = state.bodies[state.activeBodyIndex];
-  if (ab) ['rx','ry','vx','vy','theta','omega','dryMass','fuelMass'].forEach(k => { try { state[k] = ab[k]; } catch(e) {} });
-  if (snap.stateKeysSnapshot.halted === undefined) state.halted = false;
-  Guidance.importGuideState(deepClone(gOverride || snap.guidanceState));
+  Object.keys(snap.stateKeysSnapshot).forEach(k=>{ try{state[k]=deepClone(snap.stateKeysSnapshot[k]);}catch(e){} });
+  state.simTime=snap.simTime; state.activeBodyIndex=snap.activeBodyIndex;
+  const sb=snap.bodies;
+  while(state.bodies.length>sb.length)state.bodies.pop();
+  while(state.bodies.length<sb.length)state.bodies.push({});
+  for(let i=0;i<sb.length;i++){ const s=sb[i],d=state.bodies[i]; Object.keys(d).forEach(k=>delete d[k]); Object.keys(s).forEach(k=>{d[k]=deepClone(s[k]);}); }
+  const ab=state.bodies[state.activeBodyIndex];
+  if(ab)['rx','ry','vx','vy','theta','omega','dryMass','fuelMass'].forEach(k=>{try{state[k]=ab[k];}catch(e){}});
+  if(snap.stateKeysSnapshot.halted===undefined)state.halted=false;
+  Guidance.importGuideState(deepClone(gOverride||snap.guidanceState));
 }
-function findBooster() { for (const b of state.bodies) if (b && b.members && b.members[0] && b.members[0].stageRole === 'booster') return b; return null; }
-function buildValues() { const p = cloneDefaultPreset(guideName); if (!p) throw new Error('preset missing'); return p.constants; }
-function getXfromPad(bB, simT) {
-  const r = Math.hypot(bB.rx, bB.ry);
-  const phiNow = Math.atan2(bB.rx, bB.ry) - CONFIG.EARTH_OMEGA * simT;
-  const padArr = (CONFIG.LANDING_PADS || []).filter(p => p.id === 'LZ-1');
-  const pad = padArr.length ? padArr[0] : { arcOffsetM: 400 };
-  const Rg = CONFIG.EARTH_RADIUS + (CONFIG.LAUNCH_SITE_ALTITUDE || 0);
-  const padEf = (CONFIG.LAUNCH_SITE_ANGLE_0 || 0) + (pad.arcOffsetM || 0) / Rg;
-  let xRad = phiNow - padEf;
-  while (xRad > Math.PI) xRad -= 2*Math.PI;
-  while (xRad < -Math.PI) xRad += 2*Math.PI;
-  return xRad * Rg;
+function findBooster(){ for(const b of state.bodies) if(b&&b.members&&b.members[0]&&b.members[0].stageRole==='booster')return b; return null; }
+function buildValues(){ const p=cloneDefaultPreset(guideName); if(!p)throw new Error('preset missing'); return p.constants; }
+function getXfromPad(bB, simT){
+  const r=Math.hypot(bB.rx,bB.ry);
+  const phiNow=Math.atan2(bB.rx,bB.ry)-CONFIG.EARTH_OMEGA*simT;
+  const padArr=(CONFIG.LANDING_PADS||[]).filter(p=>p.id==='LZ-1');
+  const pad=padArr.length?padArr[0]:{arcOffsetM:400};
+  const Rg=CONFIG.EARTH_RADIUS+(CONFIG.LAUNCH_SITE_ALTITUDE||0);
+  const padEf=(CONFIG.LAUNCH_SITE_ANGLE_0||0)+(pad.arcOffsetM||0)/Rg;
+  let xRad=phiNow-padEf;
+  while(xRad>Math.PI)xRad-=2*Math.PI; while(xRad<-Math.PI)xRad+=2*Math.PI;
+  return xRad*Rg;
 }
-function lbRange(a0,v0,ds){
-  if (a0 === 0) return null;
-  const disc = 9*v0*v0 + 12*a0*ds;
-  if (disc <= 0) return null;
-  const s = Math.sqrt(disc);
-  const r1 = (-3*v0-s)/a0, r2 = (-3*v0+s)/a0;
-  const lo = Math.max(0, Math.min(r1,r2));
-  const hi = Math.max(r1,r2);
-  return hi>lo ? [lo,hi] : null;
+function alphaTargetAt(t, a0, q, k, L){
+  if(t<=0)return a0; if(t>=L)return 0;
+  return a0*(1-Math.pow(t/L,q)) - k*Math.sin(Math.PI*t/L);
 }
-
-// Init: SA → EB start → LBA (one continuous run)
-$('initBtn').addEventListener('click', function(){
-  if (S.running) return;
-  S.running=true; $('initBtn').disabled=true;
-  $('initStatus').textContent='initializing…'; $('out').textContent=''; $('s2out').textContent=''; $('s3capOut').textContent=''; $('s3testOut').textContent='';
-  setTimeout(function(){
-    const _ol = console.log; console.log = function(){};
-    try {
-      const id = $('stackSel').value;
-      if (!id) throw new Error('pick stack');
-      setSelectedStackId(id);
-      TunerEngine.init();
-      TunerEngine.prepareRun(guideName, buildValues(), (typeof TunerConfig !== 'undefined' ? TunerConfig.env : undefined));
-      $('initStatus').textContent = 'running SA…';
-      let saSnap=null, ebSnap=null, lbSnap=null;
-      for (let i=0;i<300*80;i++){ if(state.halted)break; TunerEngine.tick(CONFIG.DT); const gs=Guidance.getGuideStatus(); if(gs&&gs.phase==='SEPARATED_AXIAL'){saSnap=captureSnap();break;} }
-      if(!saSnap) throw new Error('SA not reached');
-      $('initStatus').textContent = 'running to EB…';
-      restoreSnap(saSnap);
-      for (let i=0;i<800*80;i++){ if(state.halted)break; TunerEngine.tick(CONFIG.DT); const gs=Guidance.getGuideStatus(); if(gs&&gs.rtlsPhase==='ENTRY_BURN'){ebSnap=captureSnap();break;} }
-      if(!ebSnap) throw new Error('EB not reached');
-      $('initStatus').textContent = 'running to LBA…';
-      for (let i=0;i<400*80;i++){ if(state.halted)break; TunerEngine.tick(CONFIG.DT); const gs=Guidance.getGuideStatus(); if(gs&&gs.rtlsPhase==='LANDING_BURN_ALIGN'){lbSnap=captureSnap();break;} }
-      if(!lbSnap) throw new Error('LBA not reached');
-      S.saSnap=saSnap; S.ebSnap=ebSnap; S.lbSnap=lbSnap; S.inited=true;
-      $('initStatus').innerHTML = '<span class="ok">ready</span> · SA t='+saSnap.simTime.toFixed(1)+'s · EB t='+ebSnap.simTime.toFixed(1)+'s · LBA t='+lbSnap.simTime.toFixed(1)+'s';
-      $('lab').style.display='block';
-      $('sweepBtn').disabled=$('singleBtn').disabled=$('s2capBtn').disabled=$('s3capBtn').disabled=false;
-    } catch(e){ $('initStatus').innerHTML='<span class="bad">ERROR: '+e.message+'</span>'; console.error(e); }
-    finally { console.log=_ol; $('initBtn').disabled=false; S.running=false; }
-  },10);
-});
-
-// Run T0 from LBA (Section 1/2 baseline)
-function runT0fromLBA(T0, capS, override){
-  const _ol=console.log; console.log=function(){};
-  try {
-    const g = deepClone(S.lbSnap.guidanceState);
-    if(g.guideConfigs&&g.guideConfigs.landbackV1&&g.guideConfigs.landbackV1.rtls){
-      g.guideConfigs.landbackV1.rtls.LANDING_BURN_T0_S = T0;
-      g.guideConfigs.landbackV1.rtls.LANDING_BURN_TEST_OVERRIDE = override||null;
-    }
-    if(g.lbRtlsBlock&&g.lbRtlsBlock.constants){
-      g.lbRtlsBlock.constants.LANDING_BURN_T0_S = T0;
-      g.lbRtlsBlock.constants.LANDING_BURN_TEST_OVERRIDE = override||null;
-    }
-    restoreSnap(S.lbSnap, g);
-    return _runToCompletion(capS);
-  } finally { console.log=_ol; }
-}
-
-// Run from spool-complete state (Section 3 tests) — reset arming fields
-function runLBfromSpool(spoolSnap, override){
-  const _ol=console.log; console.log=function(){};
-  try {
-    const g = deepClone(spoolSnap.guidanceState);
-    if(g.guideConfigs&&g.guideConfigs.landbackV1&&g.guideConfigs.landbackV1.rtls){
-      g.guideConfigs.landbackV1.rtls.LANDING_BURN_T0_S = override.T0;
-      g.guideConfigs.landbackV1.rtls.LANDING_BURN_T0_BRANCH = override.branch;
-      g.guideConfigs.landbackV1.rtls.LANDING_BURN_TEST_OVERRIDE = override;
-    }
-    if(g.lbRtlsBlock&&g.lbRtlsBlock.constants){
-      g.lbRtlsBlock.constants.LANDING_BURN_T0_S = override.T0;
-      g.lbRtlsBlock.constants.LANDING_BURN_T0_BRANCH = override.branch;
-      g.lbRtlsBlock.constants.LANDING_BURN_TEST_OVERRIDE = override;
-    }
-    if(g.lbRtlsBlock&&g.lbRtlsBlock.st){
-      g.lbRtlsBlock.st.lbSpooled = true;  // skip re-spool
-      g.lbRtlsBlock.st.lbAlignStartT = spoolSnap.simTime;  // reset elapsed
-      g.lbRtlsBlock.st.lbAlignT0 = null;  // force re-arm
-      g.lbRtlsBlock.st.lbCapture6 = null;
-      g.lbRtlsBlock.st.lbTestOverride = null;
-    }
-    restoreSnap(spoolSnap, g);
-    return _runToCompletion(60);
-  } finally { console.log=_ol; }
-}
-
-function _runToCompletion(capS){
-  const startT = state.simTime;
-  const samples = [];
-  let aligned=false, crashed=false, timeout=false, enteredTD=false, gimbalPeak=0;
-  let finalH=null,finalTheta=null,finalOmega=null,finalX=null,finalVx=null;
-  for(let i=0;i<capS*80;i++){
-    if(state.crashed||state.halted){crashed=true;break;}
-    TunerEngine.tick(CONFIG.DT);
-    const gs=Guidance.getGuideStatus()||{};
-    const bB=findBooster(); if(!bB) break;
-    const r=Math.hypot(bB.rx,bB.ry);
-    const hAGL=r-CONFIG.EARTH_RADIUS-(CONFIG.LAUNCH_SITE_ALTITUDE||0);
-    const vr=(bB.vx*bB.rx+bB.vy*bB.ry)/r;
-    const vt=(bB.vx*bB.ry-bB.vy*bB.rx)/r;
-    const vtG=vt-CONFIG.EARTH_OMEGA*r;
-    const lv=Math.atan2(-bB.rx,bB.ry);
-    let thL=bB.theta-lv; while(thL>Math.PI)thL-=2*Math.PI; while(thL<-Math.PI)thL+=2*Math.PI;
-    const gimb=(bB.engines||[]).find(e=>e.gimbal)||{};
-    const gA=Math.abs(gimb.gimbalDeg||0); if(gA>gimbalPeak) gimbalPeak=gA;
-    const xFromPad=getXfromPad(bB, state.simTime);
-    if(i%20===0){
-      let tA=0,tC=0; for(const e of (bB.engines||[])){tA+=(e.massFlowRate||0)*(e.Ve||0);tC+=(e.targetMassFlowRate||0)*(e.Ve||0);}
-      samples.push({t:+state.simTime.toFixed(2),phase:gs.rtlsPhase,h:+(hAGL/1000).toFixed(3),vy:+vr.toFixed(1),vx:+vtG.toFixed(2),theta:+(thL*180/Math.PI).toFixed(2),omega:+(bB.omega*180/Math.PI).toFixed(2),x:+xFromPad.toFixed(2),gimbal:+(gimb.gimbalDeg||0).toFixed(2),thrustAct:Math.round(tA),thrustCmd:Math.round(tC)});
-    }
-    if(!enteredTD && gs.rtlsPhase==='TOUCHDOWN'){
-      enteredTD=true;
-      finalTheta=thL*180/Math.PI; finalOmega=bB.omega*180/Math.PI;
-      finalX=xFromPad; finalVx=vtG; finalH=hAGL/1000;
-      aligned=Math.abs(finalTheta)<1 && Math.abs(finalOmega)<0.5 && Math.abs(finalX)<5 && Math.abs(finalVx)<1;
-      break;
-    }
-    if(state.simTime-startT>capS){timeout=true;break;}
-  }
-  if(!enteredTD && !crashed && !timeout) timeout=true;
-  return {aligned,crashed,timeout,enteredTD,finalH,finalTheta,finalOmega,finalX,finalVx,gimbalPeak,samples};
-}
-
-// Section 1 buttons
-$('singleBtn').addEventListener('click', function(){
-  if(!S.inited||S.running)return;
-  S.running=true; $('singleBtn').disabled=$('sweepBtn').disabled=true;
-  $('runStatus').textContent='running…'; $('out').textContent='';
-  setTimeout(function(){
-    try {
-      const T0=parseFloat($('t0Single').value), capS=parseFloat($('capS').value);
-      const r=runT0fromLBA(T0,capS,null);
-      const st=r.aligned?'ALIGNED':(r.crashed?'CRASH':(r.timeout?'TIMEOUT':'FAILED'));
-      let txt='T0='+T0+'  '+st+'  peak_δ='+r.gimbalPeak.toFixed(2)+'°\n';
-      txt+='final θ='+r.finalTheta?.toFixed(3)+'°  ω='+r.finalOmega?.toFixed(3)+'°/s  x='+r.finalX?.toFixed(2)+'m  vx='+r.finalVx?.toFixed(3)+'m/s\n\n';
-      txt+='t      phase                h      vy      vx      θ       ω       x       gim   thrAct  thrCmd\n';
-      for(const s of r.samples) txt+=String(s.t).padEnd(6)+' '+(s.phase||'').padEnd(20)+' '+s.h.toFixed(3).padEnd(6)+' '+s.vy.toFixed(1).padEnd(7)+' '+s.vx.toFixed(2).padEnd(7)+' '+s.theta.toFixed(2).padEnd(7)+' '+s.omega.toFixed(2).padEnd(7)+' '+s.x.toFixed(1).padEnd(7)+' '+s.gimbal.toFixed(2).padEnd(5)+' '+String(s.thrustAct).padEnd(7)+' '+s.thrustCmd+'\n';
-      $('out').textContent=txt;
-    } catch(e){$('out').innerHTML='<span class="bad">ERR: '+e.message+'</span>';console.error(e);}
-    finally{$('singleBtn').disabled=$('sweepBtn').disabled=false;S.running=false;$('runStatus').textContent='done';}
-  },10);
-});
-
-$('sweepBtn').addEventListener('click', function(){
-  if(!S.inited||S.running)return;
-  S.running=true; $('sweepBtn').disabled=$('singleBtn').disabled=true;
-  $('out').textContent='';
-  const from=parseFloat($('t0From').value),to=parseFloat($('t0To').value),step=parseFloat($('t0Step').value),capS=parseFloat($('capS').value);
-  const T0s=[];for(let t=from;t<=to+1e-9;t+=step)T0s.push(+t.toFixed(3));
-  const rows=[];let idx=0;
-  function next(){
-    try{
-      if(idx>=T0s.length){finish();return;}
-      $('runStatus').textContent='T0='+T0s[idx]+' ('+(idx+1)+'/'+T0s.length+')';
-      const r=runT0fromLBA(T0s[idx],capS,null);r.T0=T0s[idx];rows.push(r);idx++;
-      setTimeout(next,0);
-    }catch(e){$('out').innerHTML='<span class="bad">ERR T0='+T0s[idx]+': '+e.message+'</span>';S.running=false;$('sweepBtn').disabled=$('singleBtn').disabled=false;}
-  }
-  function finish(){
-    let txt='T0      result          h_end    peak_δ   θ_end    ω_end    x_end    vx_end\n';
-    for(const r of rows){
-      const st=r.aligned?'ALIGNED ✓':(r.crashed?'CRASH':(r.timeout?'TIMEOUT':'FAILED'));
-      txt+=String(r.T0.toFixed(2)).padEnd(7)+' '+st.padEnd(15)+' '+(r.finalH!=null?r.finalH.toFixed(3):'?').padEnd(8)+' '+r.gimbalPeak.toFixed(2).padEnd(8)+' '+(r.finalTheta!=null?r.finalTheta.toFixed(2):'?').padEnd(8)+' '+(r.finalOmega!=null?r.finalOmega.toFixed(2):'?').padEnd(8)+' '+(r.finalX!=null?r.finalX.toFixed(1):'?').padEnd(8)+' '+(r.finalVx!=null?r.finalVx.toFixed(2):'?')+'\n';
-    }
-    $('out').textContent=txt;S.running=false;$('sweepBtn').disabled=$('singleBtn').disabled=false;$('runStatus').textContent='done';
-  }
-  next();
-});
-
-// Section 2 buttons (same as before but add branch)
-$('s2capBtn').addEventListener('click', function(){
-  if(!S.inited||S.running)return;
-  S.running=true; $('s2capBtn').disabled=$('s2runBtn').disabled=$('s2compBtn').disabled=true;
-  $('s2status').textContent='capture + baseline…'; $('s2out').textContent='';
-  setTimeout(function(){
-    try{
-      const T0=parseFloat($('t0Single').value)||10;
-      const r=runT0fromLBA(T0,parseFloat($('capS').value),null);
-      const gs=Guidance.getGuideStatus();
-      const c6=gs.rtlsLbCapture6;
-      if(!c6){$('s2status').innerHTML='<span class="bad">capture6 missing — check status fields</span>';return;}
-      $('s2a0r').value=c6.a0rot.toFixed(6);$('s2v0r').value=c6.v0rot.toFixed(6);$('s2dsr').value=c6.dsrot.toFixed(6);
-      $('s2a0l').value=c6.a0lin.toFixed(4);$('s2v0l').value=c6.v0lin.toFixed(4);$('s2dsl').value=c6.dslin.toFixed(3);
-      $('s2t0').value=T0.toFixed(2);
-      S.s2LastResult=r;
-      $('s2runBtn').disabled=$('s2compBtn').disabled=false;
-      const st=r.aligned?'ALIGNED':(r.crashed?'CRASH':(r.timeout?'TIMEOUT':'FAILED'));
-      let txt='BASELINE T0='+T0+'  '+st+'  peak_δ='+r.gimbalPeak.toFixed(2)+'°\n';
-      txt+='captured: a0rot='+c6.a0rot.toFixed(6)+' v0rot='+c6.v0rot.toFixed(6)+' dsrot='+c6.dsrot.toFixed(6)+' a0lin='+c6.a0lin.toFixed(4)+' v0lin='+c6.v0lin.toFixed(4)+' dslin='+c6.dslin.toFixed(3)+'\n';
-      txt+='final θ='+r.finalTheta?.toFixed(3)+'°  ω='+r.finalOmega?.toFixed(3)+'°/s  x='+r.finalX?.toFixed(2)+'m  vx='+r.finalVx?.toFixed(3)+'m/s\n';
-      $('s2out').textContent=txt;
-    }catch(e){$('s2out').innerHTML='<span class="bad">ERR: '+e.message+'</span>';console.error(e);}
-    finally{$('s2capBtn').disabled=false;S.running=false;$('s2status').textContent='done';}
-  },10);
-});
-
-$('s2runBtn').addEventListener('click', function(){
-  if(!S.inited||S.running)return;
-  S.running=true; $('s2capBtn').disabled=$('s2runBtn').disabled=$('s2compBtn').disabled=true;
-  $('s2status').textContent='running override…';
-  setTimeout(function(){
-    try{
-      const ov={a0rot:parseFloat($('s2a0r').value),v0rot:parseFloat($('s2v0r').value),dsrot:parseFloat($('s2dsr').value),a0lin:parseFloat($('s2a0l').value),v0lin:parseFloat($('s2v0l').value),dslin:parseFloat($('s2dsl').value),T0:parseFloat($('s2t0').value),branch:parseInt($('s2br').value)||1};
-      const r=runT0fromLBA(ov.T0,parseFloat($('capS').value),ov);
-      S.s2LastResult=r;
-      const st=r.aligned?'ALIGNED':(r.crashed?'CRASH':(r.timeout?'TIMEOUT':'FAILED'));
-      let txt='OVERRIDE T0='+ov.T0+' branch='+ov.branch+'  '+st+'  peak_δ='+r.gimbalPeak.toFixed(2)+'°\n';
-      txt+='final θ='+r.finalTheta?.toFixed(3)+'°  ω='+r.finalOmega?.toFixed(3)+'°/s  x='+r.finalX?.toFixed(2)+'m  vx='+r.finalVx?.toFixed(3)+'m/s\n';
-      $('s2out').textContent=txt;
-    }catch(e){$('s2out').innerHTML='<span class="bad">ERR: '+e.message+'</span>';console.error(e);}
-    finally{$('s2capBtn').disabled=$('s2runBtn').disabled=$('s2compBtn').disabled=false;S.running=false;$('s2status').textContent='done';}
-  },10);
-});
-
-$('s2compBtn').addEventListener('click', function(){
-  if(!S.s2LastResult) return;
-  const r=S.s2LastResult;
-  if(r.finalTheta==null||r.finalX==null){$('s2status').innerHTML='<span class="bad">no error</span>';return;}
-  const tErrRad=r.finalTheta*Math.PI/180, xErrM=r.finalX;
-  const dsr=parseFloat($('s2dsr').value), dsl=parseFloat($('s2dsl').value);
-  $('s2dsr').value=(dsr-tErrRad).toFixed(6);
-  $('s2dsl').value=(dsl-xErrM).toFixed(3);
-  $('s2status').innerHTML='<span class="ok">ds_rot '+dsr.toFixed(6)+'→'+(dsr-tErrRad).toFixed(6)+'  ds_lin '+dsl.toFixed(3)+'→'+(dsl-xErrM).toFixed(3)+'</span>';
-});
-
-// Section 3 — bias capture (from EB start) + branch tests
-$('s3capBtn').addEventListener('click', function(){
-  if(!S.inited||S.running)return;
-  S.running=true; $('s3capBtn').disabled=$('s3testBtn').disabled=true;
-  $('s3status').textContent='capturing…'; $('s3capOut').textContent=''; $('s3testOut').textContent='';
-  S.s3Captures=[];
-  const biases = ($('s3biases').value||'').split(',').map(s=>parseFloat(s.trim())).filter(Number.isFinite);
-  let idx=0;
-  function next(){
-    if(idx>=biases.length){finishCap();return;}
-    $('s3status').textContent='bias '+biases[idx]+' ('+(idx+1)+'/'+biases.length+')';
-    setTimeout(function(){
-      const _ol=console.log; console.log=function(){};
-      try{
-        const bias=biases[idx];
-        const g=deepClone(S.ebSnap.guidanceState);
-        if(g.guideConfigs&&g.guideConfigs.landbackV1&&g.guideConfigs.landbackV1.rtls) g.guideConfigs.landbackV1.rtls.ENTRY_BURN_IMPACT_TARGET_M=bias;
-        if(g.lbRtlsBlock&&g.lbRtlsBlock.constants) g.lbRtlsBlock.constants.ENTRY_BURN_IMPACT_TARGET_M=bias;
-        restoreSnap(S.ebSnap, g);
-        // Run to spool complete
-        let spoolSnap=null, c6=null;
-        for(let i=0;i<200*80;i++){
-          if(state.halted||state.crashed)break;
-          TunerEngine.tick(CONFIG.DT);
-          const gs=Guidance.getGuideStatus();
-          if(gs&&gs.rtlsPhase==='LANDING_BURN'&&gs.rtlsLbSpooled&&gs.rtlsLbCapture6){
-            spoolSnap=captureSnap();
-            c6=gs.rtlsLbCapture6;
-            break;
-          }
-        }
-        if(!spoolSnap||!c6){
-          S.s3Captures.push({bias,ok:false,reason:'spool not reached or capture6 missing'});
-        } else {
-          const rRot=lbRange(c6.a0rot,c6.v0rot,c6.dsrot);
-          const rLin=lbRange(c6.a0lin,c6.v0lin,c6.dslin);
-          S.s3Captures.push({bias,ok:true,spoolSnap,c6,rRot,rLin});
-        }
-        idx++; setTimeout(next,0);
-      }catch(e){console.error(e);idx++;setTimeout(next,0);}
-      finally{console.log=_ol;}
-    },10);
-  }
-  function finishCap(){
-    let txt='CAPTURE RESULTS (from EB start with each bias):\n';
-    txt+='bias     | a0rot      v0rot       dsrot       a0lin      v0lin      dslin    | rot_range        lin_range\n';
-    for(const c of S.s3Captures){
-      if(!c.ok){txt+=String(c.bias).padEnd(8)+' | FAIL: '+c.reason+'\n';continue;}
-      const c6=c.c6;
-      const rStr=c.rRot?'['+c.rRot[0].toFixed(2)+','+c.rRot[1].toFixed(2)+']':'null';
-      const lStr=c.rLin?'['+c.rLin[0].toFixed(2)+','+c.rLin[1].toFixed(2)+']':'null';
-      txt+=String(c.bias).padEnd(8)+' | '+
-           c6.a0rot.toFixed(6).padEnd(11)+' '+c6.v0rot.toFixed(6).padEnd(11)+' '+c6.dsrot.toFixed(6).padEnd(11)+' '+
-           c6.a0lin.toFixed(4).padEnd(10)+' '+c6.v0lin.toFixed(4).padEnd(10)+' '+c6.dslin.toFixed(3).padEnd(8)+' | '+
-           rStr.padEnd(16)+' '+lStr+'\n';
-    }
-    txt+='\nNOTE: branch 0 requires BOTH rot_range AND lin_range valid AND overlapping.\n';
-    txt+='Branch 1 works for any T0 (harmonics).\n';
-    $('s3capOut').textContent=txt;
-    $('s3testBtn').disabled=false; S.running=false; $('s3capBtn').disabled=false;
-    $('s3status').textContent='capture done';
-  }
-  next();
-});
-
-$('s3testBtn').addEventListener('click', function(){
-  if(!S.s3Captures.length||S.running)return;
-  S.running=true; $('s3capBtn').disabled=$('s3testBtn').disabled=true;
-  $('s3status').textContent='testing…'; $('s3testOut').textContent='';
-  const branches = ($('s3branches').value||'').split(',').map(s=>parseInt(s.trim())).filter(Number.isInteger);
-  const useAuto = $('s3autot0').checked;
-  const manualT0 = parseFloat($('s3t0man').value)||8;
-  const results=[];
-  let ci=0, bi=0;
-  function next(){
-    if(ci>=S.s3Captures.length){finish();return;}
-    const cap=S.s3Captures[ci];
-    if(!cap.ok||bi>=branches.length){ci++;bi=0;setTimeout(next,0);return;}
-    const branch=branches[bi];
-    $('s3status').textContent='bias '+cap.bias+' branch '+branch+' ('+(ci+1)+'/'+S.s3Captures.length+')';
-    setTimeout(function(){
-      try{
-        // T0 selection
-        let T0;
-        if(useAuto){
-          if(branch===0){
-            if(!cap.rRot||!cap.rLin){results.push({bias:cap.bias,branch,T0:null,result:'SKIP(no branch0 range)'});bi++;setTimeout(next,0);return;}
-            const lo=Math.max(cap.rRot[0],cap.rLin[0]);
-            const hi=Math.min(cap.rRot[1],cap.rLin[1]);
-            if(hi<=lo){results.push({bias:cap.bias,branch,T0:null,result:'SKIP(ranges no overlap)'});bi++;setTimeout(next,0);return;}
-            T0=0.9*hi;
-            if(T0<lo) T0=(lo+hi)/2;
-          } else {
-            T0=manualT0;
-          }
-        } else {
-          T0=manualT0;
-        }
-        const ov=Object.assign({},cap.c6,{T0,branch});
-        const r=runLBfromSpool(cap.spoolSnap,ov);
-        const st=r.aligned?'ALIGNED':(r.crashed?'CRASH':(r.timeout?'TIMEOUT':'FAILED'));
-        results.push({bias:cap.bias,branch,T0,result:st,r});
-        bi++;setTimeout(next,0);
-      }catch(e){console.error(e);results.push({bias:cap.bias,branch,T0:null,result:'ERR:'+e.message});bi++;setTimeout(next,0);}
-    },10);
-  }
-  function finish(){
-    let txt='TEST RESULTS:\n';
-    txt+='bias     branch  T0       result     h_end    peak_δ   θ_end    ω_end    x_end    vx_end\n';
-    for(const rr of results){
-      txt+=String(rr.bias).padEnd(8)+' '+String(rr.branch).padEnd(7)+' '+
-           (rr.T0!=null?rr.T0.toFixed(2):'--').padEnd(8)+' '+rr.result.padEnd(10)+' ';
-      if(rr.r){
-        txt+=(rr.r.finalH!=null?rr.r.finalH.toFixed(3):'?').padEnd(8)+' '+rr.r.gimbalPeak.toFixed(2).padEnd(8)+' '+
-             (rr.r.finalTheta!=null?rr.r.finalTheta.toFixed(2):'?').padEnd(8)+' '+(rr.r.finalOmega!=null?rr.r.finalOmega.toFixed(2):'?').padEnd(8)+' '+
-             (rr.r.finalX!=null?rr.r.finalX.toFixed(1):'?').padEnd(8)+' '+(rr.r.finalVx!=null?rr.r.finalVx.toFixed(2):'?');
-      }
-      txt+='\n';
-    }
-    txt+='\nBEST: pick lowest |θ|+|x|/10+|vx| among ALIGNED rows.\n';
-    $('s3testOut').textContent=txt;
-    $('s3capBtn').disabled=$('s3testBtn').disabled=false;S.running=false;$('s3status').textContent='done';
-  }
-  next();
-});
 
 // Stacks
-const stacks = (typeof loadStacks === 'function' ? loadStacks() : []).filter(s => s && s.sequence === 'standard' && s.locked);
-$('stackSel').innerHTML = stacks.length ? stacks.map(s => '<option value="'+s.id.replace(/[&<>"']/g,'')+'">'+s.name.replace(/[&<>"']/g,'')+'</option>').join('') : '<option value="">(no eligible stacks)</option>';
+const stacks = (typeof loadStacks==='function'?loadStacks():[]).filter(s=>s&&s.sequence==='standard'&&s.locked);
+$('stackSel').innerHTML = stacks.length ? stacks.map(s=>'<option value="'+s.id.replace(/[&<>"']/g,'')+'">'+s.name.replace(/[&<>"']/g,'')+'</option>').join('') : '<option value="">(no stacks)</option>';
+
+$('initBtn').addEventListener('click', function(){
+  if(S.running)return;
+  S.running=true; $('initBtn').disabled=true;
+  $('initStatus').textContent='initializing…';
+  setTimeout(function(){
+    const _ol=console.log; console.log=function(){};
+    try{
+      const id=$('stackSel').value;
+      if(!id)throw new Error('pick stack');
+      setSelectedStackId(id);
+      TunerEngine.init();
+      TunerEngine.prepareRun(guideName, buildValues(), (typeof TunerConfig!=='undefined'?TunerConfig.env:undefined));
+      $('initStatus').textContent='running SA…';
+      let saSnap=null;
+      for(let i=0;i<300*80;i++){if(state.halted)break;TunerEngine.tick(CONFIG.DT);const gs=Guidance.getGuideStatus();if(gs&&gs.phase==='SEPARATED_AXIAL'){saSnap=captureSnap();break;}}
+      if(!saSnap)throw new Error('SA not reached');
+      $('initStatus').textContent='running to LBA…';
+      restoreSnap(saSnap);
+      let lbSnap=null;
+      for(let i=0;i<900*80;i++){if(state.halted)break;TunerEngine.tick(CONFIG.DT);const gs=Guidance.getGuideStatus();if(gs&&gs.rtlsPhase==='LANDING_BURN_ALIGN'){lbSnap=captureSnap();break;}}
+      if(!lbSnap)throw new Error('LBA not reached');
+      S.saSnap=saSnap; S.lbSnap=lbSnap; S.inited=true;
+      $('initStatus').innerHTML='<span class="ok">ready</span> · LBA at t='+lbSnap.simTime.toFixed(2)+'s';
+      $('lab').style.display='block';
+    }catch(e){$('initStatus').innerHTML='<span class="bad">ERROR: '+e.message+'</span>';console.error(e);}
+    finally{console.log=_ol;$('initBtn').disabled=false;S.running=false;}
+  },10);
+});
+
+$('runBtn').addEventListener('click', function(){
+  if(!S.inited||S.running)return;
+  S.running=true; $('runBtn').disabled=true;
+  $('runStatus').textContent='running…'; $('results').style.display='none';
+  setTimeout(function(){
+    const _ol=console.log; console.log=function(){};
+    try{
+      const mode=$('t0mode').value;
+      const t0man=parseFloat($('t0man').value);
+      const capS=parseFloat($('capS').value);
+      const g=deepClone(S.lbSnap.guidanceState);
+      if(mode==='manual'){
+        if(g.guideConfigs&&g.guideConfigs.landbackV1&&g.guideConfigs.landbackV1.rtls){
+          g.guideConfigs.landbackV1.rtls.LANDING_BURN_T0_AUTO=false;
+          g.guideConfigs.landbackV1.rtls.LANDING_BURN_T0_S=t0man;
+        }
+        if(g.lbRtlsBlock&&g.lbRtlsBlock.constants){
+          g.lbRtlsBlock.constants.LANDING_BURN_T0_AUTO=false;
+          g.lbRtlsBlock.constants.LANDING_BURN_T0_S=t0man;
+        }
+      } else {
+        if(g.guideConfigs&&g.guideConfigs.landbackV1&&g.guideConfigs.landbackV1.rtls) g.guideConfigs.landbackV1.rtls.LANDING_BURN_T0_AUTO=true;
+        if(g.lbRtlsBlock&&g.lbRtlsBlock.constants) g.lbRtlsBlock.constants.LANDING_BURN_T0_AUTO=true;
+      }
+      restoreSnap(S.lbSnap, g);
+
+      const startT=state.simTime;
+      const samples=[];
+      const events=[];
+      let alignStartT=null, trajPow=null, spooled=false;
+      let prevVx=null, prevOmega=null, prevT=null;
+      let wasSatGim=false, wasFyNeg=false, wasSatThr=false;
+      let peakGimbal=0, satGimCount=0, satThrCount=0, fyNegCount=0;
+      let lastPhase=null, endedReason='cap';
+
+      const every=8; // 0.1s at 80Hz
+      for(let i=0;i<capS*80;i++){
+        if(state.crashed||state.halted){endedReason='crashed';break;}
+        TunerEngine.tick(CONFIG.DT);
+        const gs=Guidance.getGuideStatus()||{};
+        const bB=findBooster();
+        if(!bB){endedReason='no booster';break;}
+        const simT=state.simTime;
+        const r=Math.hypot(bB.rx,bB.ry);
+        const hAGL=r-CONFIG.EARTH_RADIUS-(CONFIG.LAUNCH_SITE_ALTITUDE||0);
+        const vr=(bB.vx*bB.rx+bB.vy*bB.ry)/r;
+        const vt=(bB.vx*bB.ry-bB.vy*bB.rx)/r;
+        const vtGround=vt-CONFIG.EARTH_OMEGA*r;
+        const lv=Math.atan2(-bB.rx,bB.ry);
+        let thL=bB.theta-lv; while(thL>Math.PI)thL-=2*Math.PI; while(thL<-Math.PI)thL+=2*Math.PI;
+        const thetaDeg=thL*180/Math.PI;
+        const omegaRad=bB.omega;
+        const xFromPad=getXfromPad(bB, simT);
+
+        const gimbEng=(bB.engines||[]).find(e=>e.gimbal)||{};
+        const gimbAct=gimbEng.gimbalDeg||0;
+        const gimbCmdTgt=Number.isFinite(gimbEng.targetGimbalDeg)?gimbEng.targetGimbalDeg:gimbAct;
+        let thrAct=0, thrCmd=0;
+        for(const e of (bB.engines||[])){thrAct+=(e.massFlowRate||0)*(e.Ve||0);thrCmd+=(e.targetMassFlowRate||0)*(e.Ve||0);}
+
+        if(gs.rtlsLbAlignStartT!=null && alignStartT==null) alignStartT=gs.rtlsLbAlignStartT;
+        if(gs.rtlsLbTrajPow && !trajPow) trajPow=gs.rtlsLbTrajPow;
+        if(gs.rtlsLbSpooled && !spooled) spooled=true;
+
+        if(gs.rtlsPhase!==lastPhase){ events.push({t:simT, kind:'phase', msg:'→ '+gs.rtlsPhase}); lastPhase=gs.rtlsPhase; }
+
+        // saturation tracking
+        const gimbAbs=Math.abs(gimbAct);
+        const satGimNow=(gimbAbs>=7.95);
+        if(satGimNow&&!wasSatGim) events.push({t:simT, kind:'sat-gim', msg:'gimbal CLAMP onset ('+gimbAct.toFixed(2)+'°)'});
+        if(satGimNow) satGimCount++; wasSatGim=satGimNow;
+        if(gimbAbs>peakGimbal) peakGimbal=gimbAbs;
+
+        const fyRaw=gs.rtlsLbLastFyBody;
+        const fyNegNow=(Number.isFinite(fyRaw)&&fyRaw<0);
+        if(fyNegNow&&!wasFyNeg) events.push({t:simT, kind:'fy-neg', msg:'Fy_body<0 (raw '+Math.round(fyRaw)+'N)'});
+        if(fyNegNow) fyNegCount++; wasFyNeg=fyNegNow;
+
+        const thrGap=Math.abs(thrCmd-thrAct);
+        const satThrNow=(thrGap>100000);
+        if(satThrNow&&!wasSatThr) events.push({t:simT, kind:'sat-thr', msg:'thrust spool gap ('+Math.round(thrGap/1000)+'kN)'});
+        if(satThrNow) satThrCount++; wasSatThr=satThrNow;
+
+        if(i%every===0){
+          // finite-diff alpha / ax
+          let aAct=null, axAct=null;
+          if(prevT!==null && simT-prevT>1e-9){
+            aAct=(omegaRad-prevOmega)/(simT-prevT);
+            axAct=(vtGround-prevVx)/(simT-prevT);
+          }
+          // targets (only if traj locked and elapsed valid)
+          let aTgt=null, axTgt=null, elapsed=null;
+          if(trajPow && alignStartT!=null){
+            elapsed=simT-alignStartT;
+            aTgt=alphaTargetAt(elapsed, trajPow.a0rot, trajPow.rot.q, trajPow.rot.k, trajPow.rot.L);
+            axTgt=alphaTargetAt(elapsed, trajPow.a0lin, trajPow.lin.q, trajPow.lin.k, trajPow.lin.L);
+          }
+          samples.push({
+            t:+simT.toFixed(2), phase:gs.rtlsPhase||'',
+            e:elapsed!=null?+elapsed.toFixed(2):null,
+            theta:+thetaDeg.toFixed(3), omega:+(omegaRad*180/Math.PI).toFixed(3),
+            x:+xFromPad.toFixed(2), vx:+vtGround.toFixed(3),
+            h:+(hAGL/1000).toFixed(3), vy:+vr.toFixed(2),
+            gimbal:+gimbAct.toFixed(3), gimbalCmd:+gimbCmdTgt.toFixed(3),
+            thrAct:Math.round(thrAct/1000), thrCmd:Math.round(thrCmd/1000),
+            aAct:aAct!=null?+(aAct*180/Math.PI).toFixed(4):null,
+            aTgt:aTgt!=null?+(aTgt*180/Math.PI).toFixed(4):null,
+            axAct:axAct!=null?+axAct.toFixed(4):null,
+            axTgt:axTgt!=null?+axTgt.toFixed(4):null,
+            fyRaw:(Number.isFinite(fyRaw)?Math.round(fyRaw):null),
+            satGim:satGimNow,
+          });
+          prevVx=vtGround; prevOmega=omegaRad; prevT=simT;
+        }
+
+        if(gs.rtlsPhase==='TOUCHDOWN'){ events.push({t:simT, kind:'phase', msg:'→ TOUCHDOWN (aligned)'}); endedReason='aligned'; break; }
+        if(simT-startT>capS){endedReason='cap';break;}
+      }
+
+      // Final state
+      const bB=findBooster();
+      const lastS=samples[samples.length-1]||{};
+      const result={
+        ok:true, mode, t0man,
+        endedReason,
+        alignStartT:alignStartT!=null?+alignStartT.toFixed(2):null,
+        trajPow,
+        peakGimbal:+peakGimbal.toFixed(2),
+        satGimCount, satThrCount, fyNegCount,
+        totalTicks: samples.length,
+        final: lastS,
+        samples, events,
+      };
+      S.lastResult=result;
+      renderResult(result);
+      $('runStatus').innerHTML='<span class="ok">done</span> ('+endedReason+')';
+    }catch(e){$('runStatus').innerHTML='<span class="bad">ERR: '+e.message+'</span>';console.error(e);}
+    finally{console.log=_ol;$('runBtn').disabled=false;S.running=false;}
+  },10);
+});
+
+function renderResult(r){
+  charts.forEach(c=>{try{c.destroy();}catch(e){}}); charts=[];
+  $('results').style.display='block';
+
+  // Config
+  let cfgHtml='';
+  if(r.trajPow){
+    cfgHtml+='<div class="kv">';
+    cfgHtml+='<span class="k">T0 (locked)</span><span class="v">'+r.trajPow.T0.toFixed(3)+' s</span>';
+    cfgHtml+='<span class="k">Rot: q, k, cross, L</span><span class="v">'+r.trajPow.rot.q.toFixed(4)+', '+r.trajPow.rot.k.toFixed(6)+', '+r.trajPow.rot.crossings+', '+r.trajPow.rot.L.toFixed(2)+'</span>';
+    cfgHtml+='<span class="k">Lin: q, k, cross, L</span><span class="v">'+r.trajPow.lin.q.toFixed(4)+', '+r.trajPow.lin.k.toFixed(6)+', '+r.trajPow.lin.crossings+', '+r.trajPow.lin.L.toFixed(2)+'</span>';
+    cfgHtml+='<span class="k">a0_rot</span><span class="v">'+r.trajPow.a0rot.toFixed(6)+' rad/s²</span>';
+    cfgHtml+='<span class="k">a0_lin</span><span class="v">'+r.trajPow.a0lin.toFixed(4)+' m/s²</span>';
+    cfgHtml+='</div>';
+  } else {
+    cfgHtml='<span class="warn">TRAJ-POW never locked (see events)</span>';
+  }
+  $('configBox').innerHTML=cfgHtml;
+
+  // Stats
+  const f=r.final;
+  const lastSamp=r.samples[r.samples.length-1]||{};
+  let stHtml='<div class="kv">';
+  stHtml+='<span class="k">Ended</span><span class="v">'+r.endedReason+'</span>';
+  stHtml+='<span class="k">Elapsed from spool</span><span class="v">'+(lastSamp.e!=null?lastSamp.e.toFixed(2):'—')+' s</span>';
+  stHtml+='<span class="k">Final θ_local</span><span class="v">'+(lastSamp.theta!=null?lastSamp.theta.toFixed(3):'—')+' ° '+(Math.abs(lastSamp.theta||0)<1?'<span class="badge b-ok">OK</span>':'<span class="badge b-bad">FAIL</span>')+'</span>';
+  stHtml+='<span class="k">Final ω</span><span class="v">'+(lastSamp.omega!=null?lastSamp.omega.toFixed(3):'—')+' °/s '+(Math.abs(lastSamp.omega||0)<0.5?'<span class="badge b-ok">OK</span>':'<span class="badge b-bad">FAIL</span>')+'</span>';
+  stHtml+='<span class="k">Final x</span><span class="v">'+(lastSamp.x!=null?lastSamp.x.toFixed(2):'—')+' m '+(Math.abs(lastSamp.x||0)<5?'<span class="badge b-ok">OK</span>':'<span class="badge b-bad">FAIL</span>')+'</span>';
+  stHtml+='<span class="k">Final vx</span><span class="v">'+(lastSamp.vx!=null?lastSamp.vx.toFixed(3):'—')+' m/s '+(Math.abs(lastSamp.vx||0)<1?'<span class="badge b-ok">OK</span>':'<span class="badge b-bad">FAIL</span>')+'</span>';
+  stHtml+='<span class="k">Peak gimbal</span><span class="v">'+r.peakGimbal.toFixed(2)+' ° '+(r.peakGimbal>=7.95?'<span class="badge b-bad">CLAMPED</span>':'<span class="badge b-ok">in-range</span>')+'</span>';
+  stHtml+='<span class="k">Gimbal sat ticks</span><span class="v">'+r.satGimCount+'</span>';
+  stHtml+='<span class="k">Thrust spool-gap ticks</span><span class="v">'+r.satThrCount+'</span>';
+  stHtml+='<span class="k">Fy_body&lt;0 ticks</span><span class="v">'+r.fyNegCount+'</span>';
+  stHtml+='<span class="k">Total samples</span><span class="v">'+r.samples.length+'</span>';
+  stHtml+='</div>';
+  $('statsBox').innerHTML=stHtml;
+
+  // Events
+  let evHtml='<table><thead><tr><th style="width:60px">t (s)</th><th style="width:80px">kind</th><th class="l">msg</th></tr></thead><tbody>';
+  for(const ev of r.events){
+    const cls = ev.kind==='sat-gim'||ev.kind==='fy-neg'?'bad':ev.kind==='sat-thr'?'warn':'info';
+    evHtml+='<tr><td>'+ev.t.toFixed(2)+'</td><td><span class="badge b-'+cls+'">'+ev.kind+'</span></td><td class="l">'+ev.msg+'</td></tr>';
+  }
+  if(!r.events.length) evHtml+='<tr><td colspan="3" class="l dim">no events</td></tr>';
+  evHtml+='</tbody></table>';
+  $('eventsBox').innerHTML=evHtml;
+
+  // Charts
+  const ts = r.samples.map(s=>s.t);
+
+  drawChart('chTheta', 'θ_local [°]', ts, [
+    { label:'θ_local', data:r.samples.map(s=>s.theta), color:'#6bff88' },
+    { label:'tol +1°', data:r.samples.map(()=>1), color:'#ffcc44', dash:[3,3] },
+    { label:'tol -1°', data:r.samples.map(()=>-1), color:'#ffcc44', dash:[3,3] },
+    { label:'0', data:r.samples.map(()=>0), color:'#94a3b8', dash:[1,3] },
+  ]);
+  drawChart('chOmega', 'ω [°/s]', ts, [
+    { label:'ω', data:r.samples.map(s=>s.omega), color:'#93c5fd' },
+    { label:'tol ±0.5', data:r.samples.map(()=>0.5), color:'#ffcc44', dash:[3,3] },
+    { label:'tol -0.5', data:r.samples.map(()=>-0.5), color:'#ffcc44', dash:[3,3] },
+  ]);
+  drawChart('chAlpha', 'α [°/s²]', ts, [
+    { label:'α_actual', data:r.samples.map(s=>s.aAct), color:'#6bff88' },
+    { label:'α_target', data:r.samples.map(s=>s.aTgt), color:'#ff6b6b', dash:[4,3] },
+  ]);
+  drawChart('chGimbal', 'gimbal [°]', ts, [
+    { label:'gimbal act', data:r.samples.map(s=>s.gimbal), color:'#fbbf24' },
+    { label:'gimbal cmd', data:r.samples.map(s=>s.gimbalCmd), color:'#94a3b8', dash:[2,2] },
+    { label:'+8°', data:r.samples.map(()=>8), color:'#ff6b6b', dash:[3,3] },
+    { label:'-8°', data:r.samples.map(()=>-8), color:'#ff6b6b', dash:[3,3] },
+  ]);
+  drawChart('chX', 'x [m] (from pad)', ts, [
+    { label:'x', data:r.samples.map(s=>s.x), color:'#6bff88' },
+    { label:'tol ±5m', data:r.samples.map(()=>5), color:'#ffcc44', dash:[3,3] },
+    { label:'tol -5m', data:r.samples.map(()=>-5), color:'#ffcc44', dash:[3,3] },
+  ]);
+  drawChart('chVx', 'vx [m/s]', ts, [
+    { label:'vx', data:r.samples.map(s=>s.vx), color:'#93c5fd' },
+    { label:'tol ±1', data:r.samples.map(()=>1), color:'#ffcc44', dash:[3,3] },
+    { label:'tol -1', data:r.samples.map(()=>-1), color:'#ffcc44', dash:[3,3] },
+  ]);
+  drawChart('chAx', 'ax [m/s²]', ts, [
+    { label:'ax_actual', data:r.samples.map(s=>s.axAct), color:'#6bff88' },
+    { label:'ax_target', data:r.samples.map(s=>s.axTgt), color:'#ff6b6b', dash:[4,3] },
+  ]);
+  drawChart('chFyBody', 'Fy_body raw [N]', ts, [
+    { label:'Fy_body', data:r.samples.map(s=>s.fyRaw), color:'#a78bfa' },
+    { label:'0 (neg=backward)', data:r.samples.map(()=>0), color:'#ff6b6b', dash:[3,3] },
+  ]);
+  drawChart('chThr', 'thrust [kN]', ts, [
+    { label:'act', data:r.samples.map(s=>s.thrAct), color:'#6bff88' },
+    { label:'cmd', data:r.samples.map(s=>s.thrCmd), color:'#ff6b6b', dash:[3,3] },
+  ]);
+  drawChart('chH', 'h [km]', ts, [
+    { label:'h AGL', data:r.samples.map(s=>s.h), color:'#93c5fd' },
+  ]);
+
+  // Sample table
+  let tHtml='<table><thead><tr>'+
+    ['t','phase','e','θ','ω','x','vx','gim','gCmd','thrAct','thrCmd','α_act','α_tgt','ax_act','ax_tgt','Fy','h','vy','satGim']
+    .map(h=>'<th>'+h+'</th>').join('')+'</tr></thead><tbody>';
+  for(const s of r.samples){
+    const rowCls=s.satGim?'style="background:#3f1f1f"':'';
+    tHtml+='<tr '+rowCls+'>'+
+      '<td>'+s.t+'</td>'+
+      '<td class="l" style="font-size:9px">'+(s.phase||'').replace('LANDING_BURN','LB').replace('_','')+'</td>'+
+      '<td>'+(s.e!=null?s.e:'—')+'</td>'+
+      '<td>'+s.theta+'</td>'+
+      '<td>'+s.omega+'</td>'+
+      '<td>'+s.x+'</td>'+
+      '<td>'+s.vx+'</td>'+
+      '<td>'+s.gimbal+'</td>'+
+      '<td>'+s.gimbalCmd+'</td>'+
+      '<td>'+s.thrAct+'</td>'+
+      '<td>'+s.thrCmd+'</td>'+
+      '<td>'+(s.aAct!=null?s.aAct:'—')+'</td>'+
+      '<td>'+(s.aTgt!=null?s.aTgt:'—')+'</td>'+
+      '<td>'+(s.axAct!=null?s.axAct:'—')+'</td>'+
+      '<td>'+(s.axTgt!=null?s.axTgt:'—')+'</td>'+
+      '<td>'+(s.fyRaw!=null?s.fyRaw:'—')+'</td>'+
+      '<td>'+s.h+'</td>'+
+      '<td>'+s.vy+'</td>'+
+      '<td>'+(s.satGim?'Y':'')+'</td>'+
+    '</tr>';
+  }
+  tHtml+='</tbody></table>';
+  $('tableBox').innerHTML=tHtml;
+}
+
+function drawChart(canvasId, title, xs, series){
+  const cv=document.getElementById(canvasId);
+  if(!cv)return;
+  const datasets=series.map(s=>({
+    label:s.label,
+    data:xs.map((x,i)=>({x, y:s.data[i]})),
+    borderColor:s.color,
+    backgroundColor:'transparent',
+    borderWidth:1.5,
+    borderDash:s.dash||[],
+    pointRadius:0,
+    tension:0,
+    parsing:false,
+  }));
+  const ch=new Chart(cv, {
+    type:'line',
+    data:{datasets},
+    options:{
+      responsive:true, maintainAspectRatio:false, animation:false,
+      interaction:{mode:'nearest', intersect:false},
+      plugins:{
+        legend:{display:true, labels:{boxWidth:8, font:{size:9}, color:'#94a3b8'}},
+        title:{display:true, text:title, font:{size:10}, color:'#cbd5e1'},
+        tooltip:{callbacks:{label:ctx=>ctx.dataset.label+': '+(Number.isFinite(ctx.parsed.y)?ctx.parsed.y.toFixed(3):'—')}},
+      },
+      scales:{
+        x:{type:'linear', title:{display:false}, grid:{color:'#1f2940'}, ticks:{font:{size:9}, color:'#64748b'}},
+        y:{title:{display:false}, grid:{color:'#1f2940'}, ticks:{font:{size:9}, color:'#64748b'}},
+      },
+    },
+  });
+  charts.push(ch);
+}
 
 })();
 </script>
