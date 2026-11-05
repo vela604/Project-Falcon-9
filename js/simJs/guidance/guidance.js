@@ -1493,6 +1493,8 @@ if (_lbState.insertionBlock) {
       rtlsLbTestOverride: rs.lbTestOverride,
       rtlsLbTrajPow: rs.lbTrajPow,
       rtlsLbLastFyBody: rs.lbLastFyBody,
+      rtlsLbSisterRanges: rs.lbSisterRanges,
+      rtlsLbSisterPick: rs.lbSisterPick,
     });
   }
 

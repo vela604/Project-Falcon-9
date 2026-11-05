@@ -3211,7 +3211,7 @@ setState(s) {
         lbInit: false, lbT0: null, lbDone: false, lbLastLog: 0,
         lbThrCmd: null, lbGimbalCmd: 0, lbFinCmd: 0,
         lbSpooled: false, lbSpoolT: null, lbBurnCut: false,
-        lbAlignStartT: null, lbAlignT0: null,
+        lbAlignStartT: null, lbAlignT0: null, lbTrajPow: null, lbSisterRanges: null, lbSisterPick: null,
         lbTestOverride: null, lbCapture6: null, lbTrajPow: null,
         lbaInit: false, lbaAlignStartT: null, lbaFinCmd: null, lbaGimbalZeroDone: false,
         lbAlignDeltaMax: 0,
@@ -5053,6 +5053,8 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
               _st.lbTestOverride = null;
               _st.lbCapture6 = null;
               _st.lbTrajPow = null;
+              _st.lbSisterRanges = null;
+              _st.lbSisterPick = null;
               _send(Guidance.cmdSetAllThrottle(0));
               _send(Guidance.cmdSetGimbalRate(0));
               _send(Guidance.cmdRcsDuty(null, idx));
@@ -5434,8 +5436,10 @@ const _brCfg = (Number.isInteger(cfg.LANDING_BURN_T0_BRANCH) && cfg.LANDING_BURN
                 const _rng = _lbFindValidT0Range(c6.a0rot, c6.v0rot, c6.dsrot, c6.a0lin, c6.v0lin, c6.dslin);
                 if (_rng.length > 0) {
                   const _best = _lbPickBestT0(c6.a0rot, c6.v0rot, c6.dsrot, c6.a0lin, c6.v0lin, c6.dslin, _rng);
+                  _st.lbSisterRanges = _rng.map(function(iv){return [iv[0],iv[1]];});
                   if (_best) {
                     T0_locked = _best.L;
+                    _st.lbSisterPick = _best.L;
                     const _rs = _rng.map(function(iv){return "["+iv[0].toFixed(2)+"-"+iv[1].toFixed(2)+"]";}).join(" ");
                     console.log("[standardRTLS] LB SISTER-AUTO T0=" + T0_locked.toFixed(2) + "s score=" + _best.score + " commonRanges=" + _rs);
                   }
@@ -5746,6 +5750,8 @@ const _brCfg = (Number.isInteger(cfg.LANDING_BURN_T0_BRANCH) && cfg.LANDING_BURN
           _st.lbTestOverride = null;
           _st.lbCapture6 = null;
           _st.lbTrajPow = null;
+          _st.lbSisterRanges = null;
+          _st.lbSisterPick = null;
           _st.lbaInit = false;
           _st.lbaAlignStartT = null;
           _st.lbaFinCmd = null;
@@ -5852,6 +5858,8 @@ const _brCfg = (Number.isInteger(cfg.LANDING_BURN_T0_BRANCH) && cfg.LANDING_BURN
             lbAlignDeltaMax: _st.lbAlignDeltaMax,
             lbCapture6: _st.lbCapture6 ? JSON.parse(JSON.stringify(_st.lbCapture6)) : null,
             lbTestOverride: _st.lbTestOverride ? JSON.parse(JSON.stringify(_st.lbTestOverride)) : null,
+            lbSisterRanges: _st.lbSisterRanges ? JSON.parse(JSON.stringify(_st.lbSisterRanges)) : null,
+            lbSisterPick: Number.isFinite(_st.lbSisterPick) ? _st.lbSisterPick : null,
             lbTrajPow: _st.lbTrajPow ? { T0: _st.lbTrajPow.T0, a0rot: _st.lbTrajPow.a0rot, a0lin: _st.lbTrajPow.a0lin, rot: { q: _st.lbTrajPow.rot.q, k: _st.lbTrajPow.rot.k, crossings: _st.lbTrajPow.rot.crossings, L: _st.lbTrajPow.rot.L }, lin: { q: _st.lbTrajPow.lin.q, k: _st.lbTrajPow.lin.k, crossings: _st.lbTrajPow.lin.crossings, L: _st.lbTrajPow.lin.L } } : null,
             lbLastFyBody: Number.isFinite(_st.lbLastFyBody) ? _st.lbLastFyBody : null,
             rcsTorque: _st.lastRcsTorque,
