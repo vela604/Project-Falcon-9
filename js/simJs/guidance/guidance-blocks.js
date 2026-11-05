@@ -3150,7 +3150,7 @@ setState(s) {
       LANDING_BURN_ALIGN_ALT_KM: 5,        // AGL km: PES stops steering, fin ramps 0, coast to aero equilibrium
       LANDING_BURN_ALT_KM: 2,              // AGL km: PES->LANDING_BURN phase transition (landing-burn ignition)
       LANDING_BURN_ENGINES: "C",        // engines fired during LB spool (C = centre; add numbers for outer-ring)
-      LANDING_BURN_LEGS_ALT_M: 100,   // AGL altitude to deploy legs during LB
+      LANDING_BURN_LEGS_ALT_M: 200,   // AGL altitude to deploy legs during LB
       POST_ENTRY_GRIDFIN_RAMP_DEG_S: 3,    // grid-fin control target ramps 0 -> max at this rate (deg/s); slower = less oscillation (guess, tune in sim)
     },
     importantFields: [],
@@ -5180,7 +5180,7 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
             }
 
             // ---- Legs deploy (once, below LANDING_BURN_LEGS_ALT_M AGL) ----
-            if (!_st.lbLegsDeployed && hAGL <= _cfgN("LANDING_BURN_LEGS_ALT_M", 100)) {
+            if (!_st.lbLegsDeployed && hAGL <= _cfgN("LANDING_BURN_LEGS_ALT_M", 200)) {
               _st.lbLegsDeployed = true;
               _send(Guidance.cmdLegs(true));
               console.log("[standardRTLS] LANDING_BURN legs deploy t=" + simT.toFixed(2) + " alt=" + hAGL.toFixed(1) + "m");
