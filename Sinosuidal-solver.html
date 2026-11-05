@@ -1,0 +1,1046 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Monotonic / Single-Crossing Sinusoidal Solver</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<style>
+  :root{
+    --bg:#f4f6fb; --card:#fff; --ink:#1e293b; --muted:#64748b;
+    --line:#e2e8f0; --accent:#2563eb; --accent2:#0f766e;
+    --err:#b91c1c; --errbg:#fef2f2; --errline:#fecaca;
+    --okbg:#f0fdf4; --okline:#bbf7d0; --warnbg:#fffbeb; --warnline:#fde68a;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--bg); color:var(--ink); line-height:1.55;
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  .wrap{max-width:1120px;margin:0 auto;padding:26px 18px 90px}
+  h1{font-size:1.5rem;margin:0 0 4px;letter-spacing:-.02em}
+  .sub{color:var(--muted);margin:0 0 22px;font-size:.92rem}
+  section{
+    background:var(--card);border:1px solid var(--line);border-radius:14px;
+    padding:20px 22px;margin-bottom:20px;box-shadow:0 1px 2px rgba(15,23,42,.04);
+  }
+  h2{font-size:1.1rem;margin:0 0 6px;letter-spacing:-.01em}
+  h3{font-size:.96rem;margin:16px 0 6px}
+  p{margin:8px 0}
+  .muted{color:var(--muted);font-size:.88rem}
+  .eq{
+    font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    font-size:.85rem; background:#f8fafc; border-left:3px solid var(--accent);
+    padding:10px 14px;border-radius:8px;margin:10px 0;overflow-x:auto;white-space:pre;
+  }
+  .eq.teal{border-left-color:var(--accent2)}
+  .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+  @media(max-width:780px){.grid3{grid-template-columns:1fr}}
+  .field{display:flex;flex-direction:column;gap:4px;margin-bottom:10px}
+  label{font-size:.82rem;color:#475569;font-weight:600}
+  input,select{
+    font:inherit;padding:8px 10px;border:1px solid #cbd5e1;border-radius:8px;
+    background:#fff;width:100%
+  }
+  input:focus,select:focus{outline:2px solid #bfdbfe;border-color:var(--accent)}
+  .btn{
+    font:inherit;font-weight:600;cursor:pointer;border:0;border-radius:9px;
+    padding:9px 16px;background:var(--accent);color:#fff;transition:.15s
+  }
+  .btn:hover{background:#1d4ed8}
+  .btn.ghost{background:#eef2ff;color:#1e40af}
+  .btn.ghost:hover{background:#e0e7ff}
+  .btn.small{padding:6px 10px;font-size:.82rem}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:8px}
+  .row .field{flex:1 1 150px;margin-bottom:0}
+  table{width:100%;border-collapse:collapse;font-size:.86rem;margin-top:6px}
+  th,td{padding:6px 8px;border-bottom:1px solid #eef2f7;text-align:left}
+  th{color:#475569;font-weight:600;font-size:.78rem;text-transform:uppercase;letter-spacing:.04em}
+  td.num{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;text-align:right;white-space:nowrap}
+  tbody tr{cursor:pointer;transition:.1s}
+  tbody tr:hover{background:#f8fafc}
+  tbody tr.selected{background:#eff6ff;border-left:3px solid var(--accent)}
+  .pill{display:inline-block;padding:2px 9px;border-radius:999px;font-size:.74rem;font-weight:600}
+  .pill.ok{background:var(--okbg);color:#166534;border:1px solid var(--okline)}
+  .pill.warn{background:var(--warnbg);color:#92400e;border:1px solid var(--warnline)}
+  .pill.bad{background:var(--errbg);color:var(--err);border:1px solid var(--errline)}
+  .err{color:var(--err);background:var(--errbg);border:1px solid var(--errline);
+       padding:10px 14px;border-radius:9px;font-size:.88rem;margin:10px 0}
+  .note{background:var(--warnbg);border:1px solid var(--warnline);border-radius:10px;
+        padding:12px 15px;font-size:.88rem;margin:12px 0}
+  .kv{display:grid;grid-template-columns:auto 1fr;gap:4px 16px;font-size:.88rem;margin:8px 0}
+  .kv .k{color:var(--muted)}
+  .kv .v{font-family:ui-monospace,monospace;text-align:right}
+  .big{font-family:ui-monospace,monospace;font-size:1rem;font-weight:700;color:var(--accent2)}
+  code{background:#f1f5f9;padding:1px 5px;border-radius:4px;font-size:.86em}
+  .chart-wrap{
+    position:relative;height:250px;background:#fff;
+    border:1px solid var(--line);border-radius:10px;padding:10px
+  }
+  .chart-wrap.tall{height:320px}
+  .chart-caption{font-size:.76rem;color:var(--muted);margin:6px 2px 0}
+  .scroll-table{max-height:360px;overflow-y:auto;border:1px solid var(--line);border-radius:8px}
+  .scroll-table thead{position:sticky;top:0;background:#f8fafc;z-index:2}
+  ol,ul{margin:8px 0 8px 20px;padding:0}
+  li{margin:5px 0}
+
+/* sister-finder extras */
+.sister-charts{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:14px}
+@media(max-width:780px){.sister-charts{grid-template-columns:1fr}}
+.sister-col h4{font-size:.86rem;color:#475569;margin:0 0 6px;letter-spacing:.02em}
+.sister-col .chart-wrap{margin-bottom:8px}
+
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>Monotonic / Single-Crossing Sinusoidal Solver</h1>
+  <p class="sub">
+    A more flexible acceleration model that guarantees
+    <strong>at most one zero-crossing</strong> before the final time.
+  </p>
+
+  <!-- ================= THEORY ================= -->
+  <section>
+    <h2>1 · Why the old model fails</h2>
+    <p>
+      The previous form <code>α(t) = A sin(ft + k₁) + k₂</code> is rigid: for
+      <code>a₀ = 1.7301, v₀ = −5.4537, Δs = −15.966</code> the discriminant
+      <code>9v₀² + 12a₀Δs &lt; 0</code>, so <em>no</em> valid <code>T₀</code> exists on the
+      physical branch — even though physically a smooth solution clearly exists.
+    </p>
+
+    <h2>2 · New form</h2>
+    <p>
+      We allow the acceleration profile to be a <strong>power-law baseline plus a
+      sinusoidal bump</strong>:
+    </p>
+    <div class="eq teal">α(t) = a₀ · [ 1 − (t/L)^q ]  −  k · sin(π · t / L)
+
+α(0) = a₀          ← by construction (baseline = a₀, sin = 0)
+α(L) = 0           ← by construction (baseline = 0, sin = 0)</div>
+
+    <p>Three free parameters: <code>q &gt; 0</code> (shape), <code>L &gt; 0</code> (final time), <code>k</code> (bump amplitude).</p>
+
+    <h2>3 · Integral conditions</h2>
+    <p>The velocity and displacement boundary conditions give two equations:</p>
+    <div class="eq">ω(L) = 0  ⟹  a₀L·q/(q+1) − 2kL/π = −v₀
+s(L)−s(0) = Δs ⟹  a₀L²·G(q) − kL²/π = Δs − v₀L</div>
+
+    <p>where</p>
+    <div class="eq teal">G(q) = ½ − 1/((q+1)(q+2)) − q/(2(q+1))</div>
+
+    <p>
+      Eliminating <code>k</code> leaves a <strong>quadratic in L</strong> for each choice of q:
+    </p>
+    <div class="eq teal">a₀ · G(q) · L²  +  (v₀/2) · L  −  Δs  =  0</div>
+
+    <p>Solve for L, then back out k:</p>
+    <div class="eq teal">k = (π/2) · ( a₀·q/(q+1)  +  v₀/L )</div>
+
+    <h2>4 · Zero-crossing behaviour</h2>
+    <p>Because the baseline <code>a₀[1−(t/L)^q] ≥ 0</code> for <code>t ∈ [0,L]</code> when <code>a₀ &gt; 0</code>:</p>
+    <ul>
+      <li><strong>k ≤ 0</strong> — the sine term adds positively; the whole α(t) stays ≥ 0. <strong>Zero crossings</strong> on (0, L).</li>
+      <li><strong>k &gt; 0</strong> — the sine term subtracts; if <code>a₀·q &lt; k·π</code>, α dips negative once and returns to 0 at L. <strong>One crossing</strong>.</li>
+      <li>Otherwise α never reaches 0 inside (0, L). <strong>Zero crossings</strong>.</li>
+    </ul>
+    <p>By scanning q, we find every (L, k) pair. Solutions with more than one crossing are discarded.</p>
+
+    <div class="note">
+      This form <em>automatically</em> satisfies <code>α(0) = a₀</code> and <code>α(L) = 0</code>.
+      The user's <strong>Example 1</strong> (currently unsolvable) becomes solvable on this branch,
+      with <code>q ∈ (0, ≈0.52)</code> and <strong>zero crossings</strong>.
+      <strong>Example 2</strong> (currently solvable with a negative dip) becomes solvable with
+      <code>q ∈ (0, 5)</code> and <strong>one crossing</strong>.
+    </div>
+  </section>
+
+  <!-- ================= INPUTS ================= -->
+  <section>
+    <h2>5 · Inputs</h2>
+    <div class="row">
+      <div class="field">
+        <label for="a0">a₀ (initial acceleration)</label>
+        <input id="a0" type="number" step="any" value="1.7301">
+      </div>
+      <div class="field">
+        <label for="v0">v₀ (initial velocity)</label>
+        <input id="v0" type="number" step="any" value="-5.4537">
+      </div>
+      <div class="field">
+        <label for="ds">Δs (displacement)</label>
+        <input id="ds" type="number" step="any" value="-15.966">
+      </div>
+    </div>
+    <div class="row">
+      <button class="btn" id="btnSolve">Solve all q</button>
+      <button class="btn ghost small" id="preset1">Load Example 1</button>
+      <button class="btn ghost small" id="preset2">Load Example 2</button>
+    </div>
+    <div id="errOut"></div>
+  </section>
+
+  <!-- ================= SOLUTIONS ================= -->
+  <section>
+    <h2>6 · Solutions found</h2>
+    <p class="muted">
+      Every valid (q, L, k) triple with at most one zero-crossing.
+      Click a row to see its plots. Rows are sorted by crossings (0 first) then by L (shortest first).
+    </p>
+    <div id="solutionsOut"><p class="muted">Press “Solve all q”.</p></div>
+  </section>
+
+  <!-- ================= PLOTS ================= -->
+  <section>
+    <h2>7 · Plots of the selected solution</h2>
+    <div id="selectedInfo"><p class="muted">Select a row above.</p></div>
+    <div class="grid3" id="kinCharts" style="margin-top:12px">
+      <div class="chart-wrap"><canvas id="alphaChart"></canvas></div>
+      <div class="chart-wrap"><canvas id="omegaChart"></canvas></div>
+      <div class="chart-wrap"><canvas id="dispChart"></canvas></div>
+    </div>
+    <p class="chart-caption">
+      Left → right: α(t), ω(t), s(t) − s(0) on [0, L].
+      Red dashed line marks t = L. Zero-crossings of α are marked with crosses.
+    </p>
+
+    <h3>Family of all valid α(t) curves</h3>
+    <div class="chart-wrap tall"><canvas id="familyChart"></canvas></div>
+    <p class="chart-caption">
+      Every valid solution overlaid. Brighter/blue curves are monotonic (0 crossings),
+      red curves are single-crossing. The selected one is highlighted.
+    </p>
+  </section>
+
+  <!-- ================= DOCS ================= -->
+  <section>
+    <h2>8 · What this does</h2>
+    <p>
+      You have an acceleration profile that must start at <code>a₀</code>, end at <code>0</code>
+      at the final time <code>L</code>, and simultaneously satisfy <code>ω(L) = 0</code> and
+      <code>s(L) − s(0) = Δs</code>. The old model (<code>A sin(ft+k₁) + k₂</code>) forced a
+      specific frequency relationship that sometimes had <em>no</em> solution — even when a
+      perfectly reasonable monotonic acceleration curve exists.
+    </p>
+    <p>
+      This solver allows the acceleration to follow
+      <code>a₀[1 − (t/L)^q] − k sin(πt/L)</code>. By scanning the shape parameter
+      <code>q</code> over its full range and solving the resulting quadratic for
+      <code>L</code>, it finds <em>every</em> solution with at most one zero-crossing,
+      including the monotonic ones that the old model could never produce.
+    </p>
+    <h3>Selection heuristic</h3>
+    <ul>
+      <li><strong>First</strong> — prefer solutions with <strong>zero</strong> zero-crossings (monotonic-ish).</li>
+      <li><strong>Second</strong> — among those, the smallest final time L wins.</li>
+      <li>If no zero-crossing solutions exist, prefer single-crossing with the smallest L.</li>
+    </ul>
+    <h3>When things still go wrong</h3>
+    <ul>
+      <li><code>a₀ = 0</code> — degenerate; excluded.</li>
+      <li><code>Δs = 0</code> — displacement must be zero, may have no solution for some signs.</li>
+      <li>Negative discriminant for all q — genuinely no solution in this family (unlikely).</li>
+    </ul>
+  </section>
+<!-- ================= SISTER FINDER ================= -->
+<section id="sisterSec">
+  <h2>10 · Sister System Finder — shared T₀</h2>
+  <p>
+    Two systems, same acceleration model, forced to share one common final time
+    <code>T₀ = L</code>. The valid <code>L</code> window is the intersection of the two
+    individual windows; inside it, every <code>(q₁, k₁, q₂, k₂)</code> combination is
+    reported.
+  </p>
+
+  <div class="grid2">
+    <div class="card">
+      <h3>System 1 (e.g. rotational)</h3>
+      <div class="field"><label for="s1_a0">a₀₁</label>
+        <input id="s1_a0" type="number" step="any" value="0.003134"></div>
+      <div class="field"><label for="s1_v0">v₀₁</label>
+        <input id="s1_v0" type="number" step="any" value="0.004295"></div>
+      <div class="field"><label for="s1_ds">Δs₁</label>
+        <input id="s1_ds" type="number" step="any" value="0.029013"></div>
+    </div>
+    <div class="card">
+      <h3>System 2 (e.g. linear)</h3>
+      <div class="field"><label for="s2_a0">a₀₂</label>
+        <input id="s2_a0" type="number" step="any" value="1.7301"></div>
+      <div class="field"><label for="s2_v0">v₀₂</label>
+        <input id="s2_v0" type="number" step="any" value="-5.4537"></div>
+      <div class="field"><label for="s2_ds">Δs₂</label>
+        <input id="s2_ds" type="number" step="any" value="-15.966"></div>
+    </div>
+  </div>
+
+  <div class="row" style="margin-top:14px">
+    <button class="btn" id="btnSisterRange">Find valid T₀ range</button>
+  </div>
+
+  <div id="sisterRangeOut"></div>
+
+  <div id="sisterT0Sel" style="display:none;margin-top:16px">
+    <div class="row">
+      <div class="field" style="flex:1 1 220px">
+        <label for="sisterL">T₀ = L &nbsp;(shared by both systems)</label>
+        <input id="sisterL" type="number" step="any" value="10">
+      </div>
+      <button class="btn" id="btnSisterSolve">Solve at this T₀</button>
+    </div>
+  </div>
+
+  <div id="sisterSolOut"></div>
+
+  <div id="sisterChartInfo"></div>
+
+  <div class="sister-charts" id="sisterCharts">
+    <div class="sister-col">
+      <h4>System 1 — rotational kinematics</h4>
+      <div class="chart-wrap"><canvas id="sis1_alpha"></canvas></div>
+      <div class="chart-wrap"><canvas id="sis1_omega"></canvas></div>
+      <div class="chart-wrap"><canvas id="sis1_disp"></canvas></div>
+    </div>
+    <div class="sister-col">
+      <h4>System 2 — linear kinematics</h4>
+      <div class="chart-wrap"><canvas id="sis2_alpha"></canvas></div>
+      <div class="chart-wrap"><canvas id="sis2_omega"></canvas></div>
+      <div class="chart-wrap"><canvas id="sis2_disp"></canvas></div>
+    </div>
+  </div>
+</section>
+</div>
+
+<script>
+"use strict";
+
+const $ = id => document.getElementById(id);
+const PI = Math.PI;
+
+let solutions = [];       // [{q, L, k, crossings, disc}]
+let selectedIdx = -1;
+let charts = [];
+
+function destroyCharts(){
+  charts.forEach(c => { try{c.destroy();}catch(e){} });
+  charts = [];
+}
+
+function fmt(x, d=6){
+  if(!isFinite(x)) return x>0?"∞":"−∞";
+  if(x===0) return "0";
+  const ax=Math.abs(x);
+  if(ax>=1e-3 && ax<1e6){
+    let s=x.toFixed(d);
+    if(s.includes(".")) s=s.replace(/0+$/,"").replace(/\.$/,"");
+    return s==="-0"?"0":s;
+  }
+  return x.toExponential(3);
+}
+
+/* ---------------- core math ---------------- */
+
+// G(q) = 1/2 - 1/((q+1)(q+2)) - q/(2(q+1))
+function Gfun(q){
+  return 0.5 - 1/((q+1)*(q+2)) - q/(2*(q+1));
+}
+
+// For a given q, return positive real L solutions
+function rootsForQ(a0, v0, ds, q){
+  const G = Gfun(q);
+  const A = a0 * G;
+  const B = v0 / 2;
+  const C = -ds;
+  const out = [];
+
+  if(Math.abs(A) < 1e-15){
+    // degenerate linear in L
+    if(Math.abs(B) > 1e-15){
+      const L = -C/B;
+      if(L > 0 && isFinite(L)) out.push(L);
+    }
+    return out;
+  }
+
+  const disc = B*B - 4*A*C;
+  if(disc < 0) return out;
+  if(Math.abs(disc) < 1e-15){
+    const L = -B/(2*A);
+    if(L > 0 && isFinite(L)) out.push(L);
+    return out;
+  }
+  const s = Math.sqrt(disc);
+  const L1 = (-B + s)/(2*A);
+  const L2 = (-B - s)/(2*A);
+  if(L1 > 0 && isFinite(L1)) out.push(L1);
+  if(L2 > 0 && isFinite(L2) && Math.abs(L1-L2) > 1e-9*Math.max(L1,L2)) out.push(L2);
+  return out;
+}
+
+// α(t) for a solution
+function alphaOf(t, sol, a0){
+  if(t <= 0) return a0;
+  return a0*(1 - Math.pow(t/sol.L, sol.q)) - sol.k*Math.sin(PI*t/sol.L);
+}
+
+// Count strict sign changes of α on (0,L)
+function countCrossings(sol, a0, N=2000){
+  const eps = 1e-6;
+  let prev = 0, n = 0;
+  for(let i=1; i<N; i++){
+    const t = sol.L * i / N;
+    const v = alphaOf(t, sol, a0);
+    const s = Math.sign(v);
+    if(s !== 0 && prev !== 0 && s !== prev) n++;
+    if(s !== 0) prev = s;
+  }
+  return n;
+}
+
+/* ---------------- solve loop ---------------- */
+function runSolve(a0, v0, ds){
+  const out = [];
+  // scan q over a broad range
+  const qMin = 0.05, qMax = 5.0, qSteps = 240;
+  for(let i=0; i<=qSteps; i++){
+    const q = qMin + (qMax-qMin)*i/qSteps;
+    const Ls = rootsForQ(a0, v0, ds, q);
+    for(const L of Ls){
+      const k = (PI/2) * (a0*q/(q+1) + v0/L);
+      const sol = {q, L, k};
+      sol.crossings = countCrossings(sol, a0);
+      if(sol.crossings <= 1) out.push(sol);
+    }
+  }
+  // sort: crossings asc, then L asc
+  out.sort((a,b)=> a.crossings - b.crossings || a.L - b.L);
+  return out;
+}
+
+/* ---------------- UI ---------------- */
+$("btnSolve").addEventListener("click", doSolve);
+$("preset1").addEventListener("click", ()=>{
+  $("a0").value = 1.7301;
+  $("v0").value = -5.4537;
+  $("ds").value = -15.966;
+  doSolve();
+});
+$("preset2").addEventListener("click", ()=>{
+  $("a0").value = 0.003134;
+  $("v0").value = 0.004295;
+  $("ds").value = 0.029013;
+  doSolve();
+});
+
+function doSolve(){
+  destroyCharts();
+  $("errOut").innerHTML = "";
+  $("selectedInfo").innerHTML = `<p class="muted">Select a row above.</p>`;
+
+  const a0 = parseFloat($("a0").value);
+  const v0 = parseFloat($("v0").value);
+  const ds = parseFloat($("ds").value);
+
+  if(!isFinite(a0) || !isFinite(v0) || !isFinite(ds)){
+    $("errOut").innerHTML = `<div class="err">Please enter numeric values for a₀, v₀ and Δs.</div>`;
+    return;
+  }
+  if(a0 === 0){
+    $("errOut").innerHTML = `<div class="err">a₀ = 0 is a degenerate case for this model.</div>`;
+    return;
+  }
+
+  solutions = runSolve(a0, v0, ds);
+
+  if(solutions.length === 0){
+    $("solutionsOut").innerHTML = `<div class="err">
+      No valid solution found for these inputs on the scanned q range (${0.05} to ${5}).
+      Try different a₀, v₀, Δs.
+    </div>`;
+    return;
+  }
+
+  renderTable(a0);
+
+  // auto-select first (0 crossings preferred, then shortest L)
+  selectRow(0);
+}
+
+function renderTable(a0){
+  const n0 = solutions.filter(s=>s.crossings===0).length;
+  const n1 = solutions.filter(s=>s.crossings===1).length;
+
+  let html = `<p class="muted">${solutions.length} valid solutions —
+              <span class="pill ok">${n0} monotonic</span>
+              <span class="pill warn">${n1} single-crossing</span>
+              </p>`;
+  html += `<div class="scroll-table"><table>
+    <thead><tr>
+      <th>#</th>
+      <th>Type</th>
+      <th class="num">q</th>
+      <th class="num">L (final time)</th>
+      <th class="num">k</th>
+      <th class="num">max|α|</th>
+      <th>Notes</th>
+    </tr></thead><tbody>`;
+
+  solutions.forEach((s,i)=>{
+    // approximate max|α| on interior (sample)
+    let maxA = 0;
+    const N = 300;
+    for(let j=1; j<N; j++){
+      const t = s.L*j/N;
+      const v = Math.abs(alphaOf(t, s, a0));
+      if(v > maxA) maxA = v;
+    }
+    s._maxA = maxA;
+
+    const type = s.crossings===0
+      ? `<span class="pill ok">monotonic</span>`
+      : `<span class="pill warn">1-crossing</span>`;
+    const note = s.crossings===0
+      ? (s.k <= 0 ? "bump up" : "gentle dip, stays +")
+      : "dips negative";
+
+    html += `<tr data-i="${i}" onclick="selectRow(${i})">
+      <td>${i+1}</td>
+      <td>${type}</td>
+      <td class="num">${fmt(s.q,4)}</td>
+      <td class="num">${fmt(s.L,5)}</td>
+      <td class="num">${fmt(s.k,5)}</td>
+      <td class="num">${fmt(maxA,5)}</td>
+      <td class="muted" style="font-size:.78rem">${note}</td>
+    </tr>`;
+  });
+
+  html += `</tbody></table></div>`;
+  $("solutionsOut").innerHTML = html;
+}
+
+/* ---------------- selection + plots ---------------- */
+window.selectRow = function(i){
+  if(i<0 || i>=solutions.length) return;
+  selectedIdx = i;
+  const sol = solutions[i];
+  const a0 = parseFloat($("a0").value);
+  const v0 = parseFloat($("v0").value);
+  const ds = parseFloat($("ds").value);
+
+  // highlight
+  document.querySelectorAll("#solutionsOut tbody tr").forEach((tr,idx)=>{
+    tr.classList.toggle("selected", idx===i);
+  });
+  const row = document.querySelector(`#solutionsOut tbody tr[data-i="${i}"]`);
+  if(row) row.scrollIntoView({block:"nearest", behavior:"smooth"});
+
+  // info
+  const type = sol.crossings===0 ? "monotonic (0 crossings)" : "single-crossing (1 dip)";
+  $("selectedInfo").innerHTML = `
+    <div class="kv">
+      <span class="k">Selected solution #${i+1}</span><span class="v">${type}</span>
+      <span class="k">q (shape)</span><span class="v">${fmt(sol.q, 6)}</span>
+      <span class="k">L (final time)</span><span class="v">${fmt(sol.L, 8)}</span>
+      <span class="k">k (sin coefficient)</span><span class="v">${fmt(sol.k, 8)}</span>
+      <span class="k">ω(L) residual</span><span class="v">${fmt(omegaOf(sol.L, sol, a0, v0), 3)}</span>
+      <span class="k">s(L)−s(0) residual</span><span class="v">${fmt(dispOf(sol.L, sol, a0, v0) - ds, 3)}</span>
+    </div>`;
+  $("selectedInfo").innerHTML = `<div class="kv">${`
+    <span class="k">Selected solution #${i+1}</span><span class="v">${type}</span>
+    <span class="k">q (shape)</span><span class="v">${fmt(sol.q, 6)}</span>
+    <span class="k">L (final time)</span><span class="v">${fmt(sol.L, 8)}</span>
+    <span class="k">k (sin coefficient)</span><span class="v">${fmt(sol.k, 8)}</span>
+    <span class="k">ω(L) residual</span><span class="v">${fmt(omegaOf(sol.L, sol, a0, v0), 3)}</span>
+    <span class="k">s(L)−s(0) residual</span><span class="v">${fmt(dispOf(sol.L, sol, a0, v0) - ds, 3)}</span>
+  `}</div>`;
+
+  drawAll(a0, v0, ds, sol);
+};
+
+function omegaOf(t, sol, a0, v0){
+  // ω(t) = v0 + a0*t - a0*L/(q+1)*((t/L)^(q+1)) - k*L/π*(1 - cos(πt/L))
+  // Wait — let me integrate carefully:
+  //   ∫ a0[1 - (u/L)^q] du from 0 to t
+  //     = a0*t - a0/L^q * t^(q+1)/(q+1)
+  //     = a0*t - a0*t^(q+1)/((q+1)*L^q)
+  //   ∫ -k sin(πu/L) du = -k*L/π * [1 - cos(πt/L)]
+  // So:
+  const term1 = v0 + a0*t;
+  const term2 = (a0 * Math.pow(t, sol.q+1)) / ((sol.q+1) * Math.pow(sol.L, sol.q));
+  const term3 = sol.k * sol.L / PI * (1 - Math.cos(PI*t/sol.L));
+  return term1 - term2 - term3;
+}
+
+function dispOf(t, sol, a0, v0){
+  // s(t)-s(0) = v0*t + a0*t^2/2 - a0*t^(q+2)/((q+1)(q+2) L^q)
+  //             - k*L/π * (t - L/π*sin(πt/L))
+  const t1 = v0*t + a0*t*t/2;
+  const t2 = (a0 * Math.pow(t, sol.q+2)) / ((sol.q+1)*(sol.q+2) * Math.pow(sol.L, sol.q));
+  const t3 = sol.k * sol.L / PI * (t - (sol.L/PI)*Math.sin(PI*t/sol.L));
+  return t1 - t2 - t3;
+}
+
+/* ---------------- chart drawing ---------------- */
+function drawAll(a0, v0, ds, sol){
+  destroyCharts();
+  if(typeof Chart === "undefined") return;
+
+  const N = 400;
+  const ts = [], alphas = [], omegas = [], disps = [];
+
+  for(let i=0; i<=N; i++){
+    const t = sol.L * i / N;
+    ts.push(t);
+    alphas.push(alphaOf(t, sol, a0));
+    omegas.push(omegaOf(t, sol, a0, v0));
+    disps.push(dispOf(t, sol, a0, v0));
+  }
+
+  // find crossing points for marker
+  const crossPts = [];
+  for(let i=1; i<alphas.length; i++){
+    if(alphas[i-1]*alphas[i] < 0){
+      const frac = -alphas[i-1]/(alphas[i]-alphas[i-1]);
+      crossPts.push({x: ts[i-1] + frac*(ts[i]-ts[i-1]), y: 0});
+    }
+  }
+
+  drawLine("alphaChart", ts, alphas, "α(t)", "#2563eb", crossPts, sol.L);
+  drawLine("omegaChart", ts, omegas, "ω(t)", "#0f766e", [], sol.L);
+  drawLine("dispChart", ts, disps, "s(t) − s(0)", "#7c3aed", [], sol.L);
+
+  // family overlay
+  drawFamily(a0, v0, ds, sol);
+}
+
+function drawLine(canvasId, xs, ys, label, color, markers, L){
+  const cv = document.getElementById(canvasId);
+  if(!cv) return;
+  const points = xs.map((x,i)=>({x, y: ys[i]}));
+
+  const datasets = [{
+    label, data: points,
+    borderColor: color,
+    backgroundColor: color + "15",
+    borderWidth: 2,
+    pointRadius: 0,
+    tension: 0.05,
+    fill: true,
+    parsing: false
+  }];
+
+  if(markers && markers.length){
+    datasets.push({
+      label: "α = 0",
+      data: markers,
+      borderColor: "#dc2626",
+      backgroundColor: "#dc2626",
+      pointRadius: 6,
+      pointStyle: "crossRot",
+      borderWidth: 2,
+      showLine: false,
+      parsing: false
+    });
+  }
+
+  // vertical line at L
+  const maxY = Math.max(...ys), minY = Math.min(...ys);
+  const pad = (maxY-minY)*0.1 || 1;
+  datasets.push({
+    label: "t = L",
+    data: [{x:L, y:minY-pad}, {x:L, y:maxY+pad}],
+    borderColor: "#dc2626",
+    borderDash: [4,4],
+    borderWidth: 1,
+    pointRadius: 0,
+    fill: false,
+    parsing: false
+  });
+
+  const ch = new Chart(cv, {
+    type: "line",
+    data: {datasets},
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: false,
+      interaction: {mode: "nearest", intersect: false},
+      plugins: {
+        legend: {display: false},
+        title: {
+          display: true, text: label,
+          font: {size: 12, weight: "600"}, color: "#334155"
+        },
+        tooltip: {
+          callbacks: {
+            label: ctx => `${ctx.dataset.label}: (${fmt(ctx.parsed.x,3)}, ${fmt(ctx.parsed.y,4)})`
+          }
+        }
+      },
+      scales: {
+        x: {
+          type: "linear",
+          title: {display: true, text: "t", font:{size:10}},
+          grid: {color: "#eef2f7"},
+          ticks: {maxTicksLimit: 6, font:{size:10}}
+        },
+        y: {
+          title: {display: true, text: label, font:{size:10}},
+          grid: {color: "#eef2f7"},
+          ticks: {maxTicksLimit: 6, font:{size:10}}
+        }
+      }
+    }
+  });
+  charts.push(ch);
+}
+
+function drawFamily(a0, v0, ds, selected){
+  const cv = document.getElementById("familyChart");
+  if(!cv) return;
+
+  // limit number of families drawn
+  const toShow = solutions.length <= 40
+    ? solutions
+    : solutions.filter((s,i)=> i % Math.ceil(solutions.length/40) === 0 || s === selected);
+
+  const datasets = [];
+  const N = 200;
+
+  toShow.forEach(s => {
+    const isSelected = s === selected;
+    const color = s.crossings === 0 ? "#2563eb" : "#dc2626";
+    const pts = [];
+    const Lmax = Math.max(...solutions.map(z=>z.L));
+    for(let i=0; i<=N; i++){
+      const t = s.L * i / N;  // normalized to t/L
+      pts.push({x: i/N, y: alphaOf(t, s, a0)});
+    }
+    datasets.push({
+      label: `q=${fmt(s.q,3)}`,
+      data: pts,
+      borderColor: isSelected ? "#0f766e" : color,
+      borderWidth: isSelected ? 3 : 1,
+      pointRadius: 0,
+      tension: 0.05,
+      fill: false,
+      parsing: false
+    });
+  });
+
+  const ch = new Chart(cv, {
+    type: "line",
+    data: {datasets},
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: false,
+      interaction: {mode: "nearest", intersect: false},
+      plugins: {
+        legend: {display: false},
+        title: {
+          display: true, text: "α(t) for every valid solution (x-axis = t/L, y-axis = α)",
+          font: {size: 12, weight: "600"}, color: "#334155"
+        },
+        tooltip: {enabled: false}
+      },
+      scales: {
+        x: {
+          type: "linear", min: 0, max: 1,
+          title: {display: true, text: "t / L", font:{size:10}},
+          grid: {color: "#eef2f7"},
+          ticks: {maxTicksLimit: 6, font:{size:10}}
+        },
+        y: {
+          title: {display: true, text: "α", font:{size:10}},
+          grid: {color: "#eef2f7"},
+          ticks: {maxTicksLimit: 6, font:{size:10}}
+        }
+      }
+    }
+  });
+  charts.push(ch);
+}
+
+
+/* ==================================================================
+   SISTER SYSTEM FINDER — shared T₀
+   ================================================================== */
+
+let sisterCharts   = [];
+let sisterSols     = [];
+let sisterInp1     = null;
+let sisterInp2     = null;
+let sisterSelected = -1;
+
+function destroySisterCharts() {
+  sisterCharts.forEach(c => { try { c.destroy(); } catch (e) {} });
+  sisterCharts = [];
+}
+
+/* Closed-form inversion of G(q) = q / (2(q+1)(q+2)).
+   Returns 0, 1 or 2 positive q values. */
+function solveQfromG(G) {
+  if (!(G > 0)) return [];
+  const disc = 4 * G * G - 12 * G + 1;
+  if (disc < 0) return [];
+  const sd = Math.sqrt(disc);
+  const q1 = (1 - 6 * G + sd) / (4 * G);
+  const q2 = (1 - 6 * G - sd) / (4 * G);
+  const out = [];
+  if (q1 > 1e-9) out.push(q1);
+  if (q2 > 1e-9 && Math.abs(q2 - q1) > 1e-10) out.push(q2);
+  return out;
+}
+
+/* All (q, k) candidates for one system at fixed L. */
+function solveSystemAtL(inp, L) {
+  const tG    = (inp.ds - inp.v0 * L / 2) / (inp.a0 * L * L);
+  const qList = solveQfromG(tG);
+  const out   = [];
+  for (const q of qList) {
+    if (q < 1e-6 || q > 1e4) continue;
+    const k   = (PI / 2) * (inp.v0 / L + inp.a0 * q / (q + 1));
+    const sol = { q, L, k };
+    sol.crossings = countCrossings(sol, inp.a0, 700);
+    out.push(sol);
+  }
+  return out;
+}
+
+function isValidAtL(inp, L) {
+  return solveSystemAtL(inp, L).some(s => s.crossings <= 1);
+}
+
+/* Scan L on a log grid; return union of intervals where BOTH systems work. */
+function findValidLIntervals(inp1, inp2) {
+  const Lmin = 0.05, Lmax = 100, N = 900;
+  const intervals = [];
+  let prevValid = false, start = null, prevL = Lmin;
+
+  for (let i = 0; i <= N; i++) {
+    const L = Lmin * Math.pow(Lmax / Lmin, i / N);
+    const valid = isValidAtL(inp1, L) && isValidAtL(inp2, L);
+
+    if (valid && !prevValid) start = L;
+    if (!valid && prevValid) intervals.push([start, prevL]);
+    prevValid = valid;
+    prevL = L;
+  }
+  if (prevValid) intervals.push([start, Lmax]);
+
+  /* merge intervals that are separated by tiny numerical gaps */
+  const merged = [];
+  for (const iv of intervals) {
+    if (merged.length && iv[0] / merged[merged.length - 1][1] < 1.4) {
+      merged[merged.length - 1][1] = iv[1];
+    } else {
+      merged.push(iv.slice());
+    }
+  }
+  return merged;
+}
+
+/* Prefer an L where both systems are monotonic; else midpoint of first interval. */
+function pickBestSisterL(inp1, inp2, intervals) {
+  if (!intervals.length) return null;
+  for (const [lo, hi] of intervals) {
+    for (let i = 1; i < 60; i++) {
+      const L  = lo + (hi - lo) * i / 60;
+      const s1 = solveSystemAtL(inp1, L);
+      const s2 = solveSystemAtL(inp2, L);
+      if (s1.some(s => s.crossings === 0) &&
+          s2.some(s => s.crossings === 0)) return L;
+    }
+  }
+  return (intervals[0][0] + intervals[0][1]) / 2;
+}
+
+/* ---------------- range handler ---------------- */
+document.getElementById("btnSisterRange").addEventListener("click", () => {
+  destroySisterCharts();
+  sisterSols = []; sisterSelected = -1;
+  document.getElementById("sisterSolOut").innerHTML    = "";
+  document.getElementById("sisterChartInfo").innerHTML = "";
+
+  const a1 = parseFloat(document.getElementById("s1_a0").value);
+  const v1 = parseFloat(document.getElementById("s1_v0").value);
+  const d1 = parseFloat(document.getElementById("s1_ds").value);
+  const a2 = parseFloat(document.getElementById("s2_a0").value);
+  const v2 = parseFloat(document.getElementById("s2_v0").value);
+  const d2 = parseFloat(document.getElementById("s2_ds").value);
+
+  const out = document.getElementById("sisterRangeOut");
+  if (![a1, v1, d1, a2, v2, d2].every(isFinite)) {
+    out.innerHTML = `<div class="err">Fill all six inputs with numbers.</div>`;
+    return;
+  }
+  if (a1 === 0 || a2 === 0) {
+    out.innerHTML = `<div class="err">a₀ = 0 is degenerate (excluded).</div>`;
+    return;
+  }
+
+  sisterInp1 = { a0: a1, v0: v1, ds: d1 };
+  sisterInp2 = { a0: a2, v0: v2, ds: d2 };
+
+  const intervals = findValidLIntervals(sisterInp1, sisterInp2);
+
+  if (!intervals.length) {
+    out.innerHTML = `<div class="err">
+      No common valid T₀ found. Change inputs and try again.
+    </div>`;
+    document.getElementById("sisterT0Sel").style.display = "none";
+    return;
+  }
+
+  let html = `<p class="muted">Common valid T₀ range(s) — both systems work here:</p>
+              <div class="eq teal">`;
+  for (const [lo, hi] of intervals) {
+    html += `L ∈ ( ${fmt(lo, 6)} , ${fmt(hi, 6)} )\n`;
+  }
+  html += `</div>`;
+  out.innerHTML = html;
+
+  document.getElementById("sisterT0Sel").style.display = "block";
+  document.getElementById("sisterL").value = pickBestSisterL(sisterInp1, sisterInp2, intervals).toFixed(8);
+  solveAtSisterL();
+});
+
+/* ---------------- solve-at-L handler ---------------- */
+document.getElementById("btnSisterSolve").addEventListener("click", solveAtSisterL);
+
+function solveAtSisterL() {
+  destroySisterCharts();
+  document.getElementById("sisterSolOut").innerHTML    = "";
+  document.getElementById("sisterChartInfo").innerHTML = "";
+
+  const L = parseFloat(document.getElementById("sisterL").value);
+  if (!isFinite(L) || L <= 0) return;
+
+  const s1 = solveSystemAtL(sisterInp1, L).filter(s => s.crossings <= 1);
+  const s2 = solveSystemAtL(sisterInp2, L).filter(s => s.crossings <= 1);
+
+  sisterSols = [];
+  for (const a of s1) for (const b of s2) sisterSols.push({ L, s1: a, s2: b });
+
+  if (!sisterSols.length) {
+    document.getElementById("sisterSolOut").innerHTML =
+      `<div class="err">No valid (q₁, q₂) at L = ${fmt(L)}. Move the slider or try another T₀.</div>`;
+    return;
+  }
+
+  let html = `<p class="muted">${sisterSols.length} valid combination(s) at
+              T₀ = <strong>${fmt(L, 8)}</strong>. Click a row to plot.</p>
+              <div class="scroll-table"><table>
+              <thead><tr>
+                <th>#</th>
+                <th class="num">q₁</th><th class="num">k₁</th><th>type₁</th>
+                <th class="num">q₂</th><th class="num">k₂</th><th>type₂</th>
+              </tr></thead><tbody>`;
+
+  sisterSols.forEach((s, i) => {
+    const t1 = s.s1.crossings === 0
+      ? `<span class="pill ok">monotonic</span>`
+      : `<span class="pill warn">1-cross</span>`;
+    const t2 = s.s2.crossings === 0
+      ? `<span class="pill ok">monotonic</span>`
+      : `<span class="pill warn">1-cross</span>`;
+    html += `<tr data-i="${i}" onclick="selectSisterRow(${i})">
+      <td>${i + 1}</td>
+      <td class="num">${fmt(s.s1.q, 5)}</td>
+      <td class="num">${fmt(s.s1.k, 5)}</td>
+      <td>${t1}</td>
+      <td class="num">${fmt(s.s2.q, 5)}</td>
+      <td class="num">${fmt(s.s2.k, 5)}</td>
+      <td>${t2}</td>
+    </tr>`;
+  });
+
+  html += `</tbody></table></div>`;
+  document.getElementById("sisterSolOut").innerHTML = html;
+  selectSisterRow(0);
+}
+
+/* ---------------- row selection + plots ---------------- */
+window.selectSisterRow = function (i) {
+  if (i < 0 || i >= sisterSols.length) return;
+  sisterSelected = i;
+
+  document.querySelectorAll("#sisterSolOut tbody tr").forEach((tr, idx) => {
+    tr.classList.toggle("selected", idx === i);
+  });
+
+  const S = sisterSols[i];
+  const L = S.L;
+
+  document.getElementById("sisterChartInfo").innerHTML = `
+    <p class="muted">Selected #${i + 1} — shared T₀ = <strong>${fmt(L, 8)}</strong></p>
+    <div class="kv">
+      <span class="k">System 1: q₁ , k₁ , crossings</span>
+      <span class="v">${fmt(S.s1.q, 6)} , ${fmt(S.s1.k, 6)} , ${S.s1.crossings}</span>
+      <span class="k">System 2: q₂ , k₂ , crossings</span>
+      <span class="v">${fmt(S.s2.q, 6)} , ${fmt(S.s2.k, 6)} , ${S.s2.crossings}</span>
+    </div>`;
+
+  drawSisterSystem(1, sisterInp1, S.s1, "#2563eb");
+  drawSisterSystem(2, sisterInp2, S.s2, "#0f766e");
+};
+
+function drawSisterSystem(idx, inp, sol, color) {
+  const { q, L, k } = sol;
+  const N = 400;
+  const ts = [], alphas = [], omegas = [], disps = [];
+
+  for (let i = 0; i <= N; i++) {
+    const t = L * i / N;
+    ts.push(t);
+    alphas.push(alphaOf(t, { q, L, k }, inp.a0));
+    omegas.push(omegaOf(t, { q, L, k }, inp.a0, inp.v0));
+    disps .push(dispOf (t, { q, L, k }, inp.a0, inp.v0));
+  }
+
+  drawSisterLine(`sis${idx}_alpha`, ts, alphas, "α(t)",      color);
+  drawSisterLine(`sis${idx}_omega`, ts, omegas, "ω(t)",      color);
+  drawSisterLine(`sis${idx}_disp`,  ts, disps,  "s(t) − s(0)", color);
+}
+
+function drawSisterLine(canvasId, xs, ys, label, color) {
+  const cv = document.getElementById(canvasId);
+  if (!cv) return;
+  const pts = xs.map((x, i) => ({ x, y: ys[i] }));
+
+  const ch = new Chart(cv, {
+    type: "line",
+    data: { datasets: [{
+      label, data: pts,
+      borderColor: color,
+      backgroundColor: color + "15",
+      borderWidth: 2,
+      pointRadius: 0,
+      tension: 0.05,
+      fill: true,
+      parsing: false
+    }]},
+    options: {
+      responsive: true, maintainAspectRatio: false, animation: false,
+      plugins: {
+        legend: { display: false },
+        title:  { display: true, text: label, font: { size: 11 }, color: "#334155" }
+      },
+      scales: {
+        x: { type: "linear", title: { display: true, text: "t", font: { size: 10 } },
+             grid: { color: "#eef2f7" }, ticks: { maxTicksLimit: 5, font: { size: 10 } } },
+        y: { title: { display: true, text: label, font: { size: 10 } },
+             grid: { color: "#eef2f7" }, ticks: { maxTicksLimit: 5, font: { size: 10 } } }
+      }
+    }
+  });
+  sisterCharts.push(ch);
+}
+
+/* auto-solve on page load with the default (Example 1) */
+window.addEventListener("load", ()=> doSolve());
+</script>
+</body>
+</html>
