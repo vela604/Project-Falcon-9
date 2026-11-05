@@ -3151,7 +3151,8 @@ setState(s) {
       LANDING_BURN_ALT_KM: 2,              // AGL km: PES->LANDING_BURN phase transition (landing-burn ignition)
       LANDING_BURN_ENGINES: "C",
       LANDING_BURN_T0_S: 6.0,              // solver burn time (branch 1). Tune to avoid gimbal saturation.
-      LANDING_BURN_TEST_OVERRIDE: null,    // TEST: {a0rot,v0rot,dsrot,a0lin,v0lin,dslin,T0} | null.           // engines fired at 100% during LB spool (C = centre; add numbers for outer-ring) 
+      LANDING_BURN_T0_BRANCH: 1,           // solver branch. 0=physical (needs Λ>1/3), 1+=harmonics.
+      LANDING_BURN_TEST_OVERRIDE: null,    // TEST: {a0rot,v0rot,dsrot,a0lin,v0lin,dslin,T0,branch} | null.           // engines fired at 100% during LB spool (C = centre; add numbers for outer-ring) 
       POST_ENTRY_GRIDFIN_RAMP_DEG_S: 3,    // grid-fin control target ramps 0 -> max at this rate (deg/s); slower = less oscillation (guess, tune in sim)
     },
     importantFields: [],
@@ -5327,8 +5328,10 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
             const linV0 = vTangGround;
             const linDs = -xFromPadM;
 
-const solRot = _lbSolve(_st.lbTestOverride ? _st.lbTestOverride.a0rot : rotA0, _st.lbTestOverride ? _st.lbTestOverride.v0rot : rotV0, _st.lbTestOverride ? _st.lbTestOverride.dsrot : rotDs, Math.max(0.1, T0_remaining), 1);
-            const solLin = _lbSolve(_st.lbTestOverride ? _st.lbTestOverride.a0lin : axEarthObs, _st.lbTestOverride ? _st.lbTestOverride.v0lin : linV0, _st.lbTestOverride ? _st.lbTestOverride.dslin : linDs, Math.max(0.1, T0_remaining), 1);
+const _brCfg = (Number.isInteger(cfg.LANDING_BURN_T0_BRANCH) && cfg.LANDING_BURN_T0_BRANCH >= 0) ? cfg.LANDING_BURN_T0_BRANCH : 1;
+            const _brUse = (_st.lbTestOverride && Number.isInteger(_st.lbTestOverride.branch) && _st.lbTestOverride.branch >= 0) ? _st.lbTestOverride.branch : _brCfg;
+            const solRot = _lbSolve(_st.lbTestOverride ? _st.lbTestOverride.a0rot : rotA0, _st.lbTestOverride ? _st.lbTestOverride.v0rot : rotV0, _st.lbTestOverride ? _st.lbTestOverride.dsrot : rotDs, Math.max(0.1, T0_remaining), _brUse);
+            const solLin = _lbSolve(_st.lbTestOverride ? _st.lbTestOverride.a0lin : axEarthObs, _st.lbTestOverride ? _st.lbTestOverride.v0lin : linV0, _st.lbTestOverride ? _st.lbTestOverride.dslin : linDs, Math.max(0.1, T0_remaining), _brUse);
             if (!solRot || !solLin) {
               if (DEBUG_RTLS) console.warn("[standardRTLS] LB ALIGN solve null T0rem=" +
                 T0_remaining.toFixed(2) + " rot=" + !!solRot + " lin=" + !!solLin);
