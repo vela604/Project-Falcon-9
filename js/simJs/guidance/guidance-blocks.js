@@ -3211,7 +3211,7 @@ setState(s) {
         lbThrCmd: null, lbGimbalCmd: 0, lbFinCmd: 0,
         lbSpooled: false, lbSpoolT: null, lbBurnCut: false,
         lbAlignStartT: null, lbAlignT0: null,
-        lbTestOverride: null, lbCapture6: null,
+        lbTestOverride: null, lbCapture6: null, lbTrajPow: null,
         lbaInit: false, lbaAlignStartT: null, lbaFinCmd: null, lbaGimbalZeroDone: false,
         lbAlignDeltaMax: 0,
         // ---- BOOSTBACK scratch ----
@@ -5051,6 +5051,7 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
               _st.lbAlignT0 = null;
               _st.lbTestOverride = null;
               _st.lbCapture6 = null;
+              _st.lbTrajPow = null;
               _send(Guidance.cmdSetAllThrottle(0));
               _send(Guidance.cmdSetGimbalRate(0));
               _send(Guidance.cmdRcsDuty(null, idx));
@@ -5194,6 +5195,7 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
             }
 
             // ---- Solver helpers (scoped, defined once per instance via function expression) ----
+            // ===== ABANDONED (Chat 6): paired with _lbSolve above. =====
             const _lbRange = function (a0, v0, ds) {
               if (a0 === 0) return null;
               const disc = 9 * v0 * v0 + 12 * a0 * ds;
@@ -5215,6 +5217,7 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
               }
               return typical * sgn;
             };
+            // ===== ABANDONED (Chat 6): sinusoidal branch solver — discriminant 9v₀²+12a₀Δs often <0. Replaced by power-law below. =====
             const _lbSolve = function (a0, v0, ds, T0, n) {
               if (a0 === 0 || !(T0 > 0)) return null;
               const Lambda = 2 * (2 * ds - v0 * T0) / (a0 * T0 * T0);
@@ -5252,6 +5255,56 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
             };
 
             // ---- Lock T0 once at first ALIGN tick ----
+            // ============ POWER-LAW SOLVER (Chat 6) ============
+            // α(t) = a₀(1-(t/L)^q) - k·sin(πt/L); α(0)=a₀, α(L)=0
+            const _lbGfun = function(q){ return q / (2*(q+1)*(q+2)); };
+            const _lbSolveQfromG = function(G){
+              if(!(G>0)) return [];
+              const disc = 4*G*G - 12*G + 1;
+              if(disc<0) return [];
+              const sd = Math.sqrt(disc);
+              const q1 = (1 - 6*G + sd)/(4*G);
+              const q2 = (1 - 6*G - sd)/(4*G);
+              const out = [];
+              if(q1>1e-6) out.push(q1);
+              if(q2>1e-6 && Math.abs(q2-q1)>1e-9) out.push(q2);
+              return out;
+            };
+            const _lbCrossingsOf = function(a0,q,k,L){
+              let cross=0, prev=0;
+              const NN=200;
+              for(let ii=1;ii<NN;ii++){
+                const tt=L*ii/NN;
+                const aa=a0*(1-Math.pow(tt/L,q))-k*Math.sin(Math.PI*tt/L);
+                const ss=Math.sign(aa);
+                if(ss!==0 && prev!==0 && ss!==prev) cross++;
+                if(ss!==0) prev=ss;
+              }
+              return cross;
+            };
+            const _lbSolvePowAtT0 = function(a0,v0,ds,T0){
+              if(a0===0 || !(T0>0)) return null;
+              const Greq = (ds - v0*T0/2)/(a0*T0*T0);
+              const qs = _lbSolveQfromG(Greq);
+              if(!qs.length) return null;
+              let best=null;
+              for(let qi=0;qi<qs.length;qi++){
+                const q=qs[qi];
+                if(q<1e-6 || q>1e4) continue;
+                const k = (Math.PI/2)*(v0/T0 + a0*q/(q+1));
+                const cross = _lbCrossingsOf(a0,q,k,T0);
+                if(cross>1) continue;
+                const sol = {q:q, k:k, L:T0, crossings:cross};
+                if(!best || cross<best.crossings || (cross===best.crossings && q<best.q)) best = sol;
+              }
+              return best;
+            };
+            const _lbAlphaPow = function(t,sol,a0){
+              if(!sol) return 0;
+              if(t<=0) return a0;
+              if(t>=sol.L) return 0;
+              return a0*(1-Math.pow(t/sol.L, sol.q)) - sol.k*Math.sin(Math.PI*t/sol.L);
+            };
             if (_st.lbAlignT0 == null) {
               const aeroAccArm = _pesAeroAccel(d, M);
               const rotA0_ = (d.alphaAng || 0) + (d.gridFinTorque || 0) / I;
@@ -5330,8 +5383,30 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
 
 const _brCfg = (Number.isInteger(cfg.LANDING_BURN_T0_BRANCH) && cfg.LANDING_BURN_T0_BRANCH >= 0) ? cfg.LANDING_BURN_T0_BRANCH : 1;
             const _brUse = (_st.lbTestOverride && Number.isInteger(_st.lbTestOverride.branch) && _st.lbTestOverride.branch >= 0) ? _st.lbTestOverride.branch : _brCfg;
-            const solRot = _lbSolve(_st.lbTestOverride ? _st.lbTestOverride.a0rot : rotA0, _st.lbTestOverride ? _st.lbTestOverride.v0rot : rotV0, _st.lbTestOverride ? _st.lbTestOverride.dsrot : rotDs, Math.max(0.1, T0_remaining), _brUse);
-            const solLin = _lbSolve(_st.lbTestOverride ? _st.lbTestOverride.a0lin : axEarthObs, _st.lbTestOverride ? _st.lbTestOverride.v0lin : linV0, _st.lbTestOverride ? _st.lbTestOverride.dslin : linDs, Math.max(0.1, T0_remaining), _brUse);
+            const _ovP = _st.lbTestOverride;
+            const _a0rot_t = _ovP ? _ovP.a0rot : rotA0;
+            const _v0rot_t = _ovP ? _ovP.v0rot : rotV0;
+            const _dsrot_t = _ovP ? _ovP.dsrot : rotDs;
+            const _a0lin_t = _ovP ? _ovP.a0lin : axEarthObs;
+            const _v0lin_t = _ovP ? _ovP.v0lin : linV0;
+            const _dslin_t = _ovP ? _ovP.dslin : linDs;
+            const _T0_t = _ovP ? _ovP.T0 : Math.max(0.5, _st.lbAlignT0);
+            if (_st.lbTrajPow && Math.abs(_st.lbTrajPow.T0 - _T0_t) > 1e-9) _st.lbTrajPow = null;
+            if (!_st.lbTrajPow) {
+              const _sr = _lbSolvePowAtT0(_a0rot_t, _v0rot_t, _dsrot_t, _T0_t);
+              const _sl = _lbSolvePowAtT0(_a0lin_t, _v0lin_t, _dslin_t, _T0_t);
+              if (!_sr || !_sl) {
+                if (DEBUG_RTLS) console.warn("[standardRTLS] LB TRAJ-POW null T0=" + _T0_t.toFixed(2) + " rot=" + !!_sr + " lin=" + !!_sl);
+                _bbThrottle(lbEng, 0);
+                break;
+              }
+              _st.lbTrajPow = { rot: _sr, lin: _sl, a0rot: _a0rot_t, a0lin: _a0lin_t, T0: _T0_t };
+              console.log("[standardRTLS] LB TRAJ-POW locked T0=" + _T0_t.toFixed(2) +
+                " q_rot=" + _sr.q.toFixed(4) + " k_rot=" + _sr.k.toFixed(6) + " cross_rot=" + _sr.crossings +
+                " | q_lin=" + _sl.q.toFixed(4) + " k_lin=" + _sl.k.toFixed(6) + " cross_lin=" + _sl.crossings);
+            }
+            const solRot = _st.lbTrajPow.rot;
+            const solLin = _st.lbTrajPow.lin;
             if (!solRot || !solLin) {
               if (DEBUG_RTLS) console.warn("[standardRTLS] LB ALIGN solve null T0rem=" +
                 T0_remaining.toFixed(2) + " rot=" + !!solRot + " lin=" + !!solLin);
@@ -5339,9 +5414,9 @@ const _brCfg = (Number.isInteger(cfg.LANDING_BURN_T0_BRANCH) && cfg.LANDING_BURN
               break;
             }
 
-            const tEval = dt;
-            const alphaTarget = solRot.A * Math.sin(solRot.f * tEval + solRot.k1) + solRot.k2;
-            const axEarthTarget = solLin.A * Math.sin(solLin.f * tEval + solLin.k1) + solLin.k2;
+            const tEval = elapsedAlign;
+            const alphaTarget = _lbAlphaPow(tEval, solRot, _st.lbTrajPow.a0rot);
+            const axEarthTarget = _lbAlphaPow(tEval, solLin, _st.lbTrajPow.a0lin);
 
             // === 1-TICK LOOK-AHEAD ===
             // Predict S(k+1) using CURRENT command (physics will produce this naturally next tick).
@@ -5617,6 +5692,7 @@ const _brCfg = (Number.isInteger(cfg.LANDING_BURN_T0_BRANCH) && cfg.LANDING_BURN
           _st.lbAlignT0 = null;
           _st.lbTestOverride = null;
           _st.lbCapture6 = null;
+          _st.lbTrajPow = null;
           _st.lbaInit = false;
           _st.lbaAlignStartT = null;
           _st.lbaFinCmd = null;
