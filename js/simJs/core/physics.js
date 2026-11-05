@@ -1685,7 +1685,9 @@ const cosTilt = Math.max(-1, Math.min(1, bodyUpX * upX + bodyUpY * upY));
 const tiltRad = Math.acos(cosTilt);
 
 if (tiltRad < 0.02) { // ~1.15° threshold
-  const p = _rotatedPoint(body, 0, 0);
+  const legExtU = (body.legs && body.legs.progress > 0.85) ?
+    (Number.isFinite(CONFIG.LANDING_LEG_EXTENSION_M) ? CONFIG.LANDING_LEG_EXTENSION_M : 0) : 0;
+  const p = _rotatedPoint(body, 0, -legExtU);
   const alt = Math.hypot(p.x, p.y) - groundR;
   if (alt > 0) return null;
   
@@ -1728,6 +1730,15 @@ const candidates = [
   { label: 'baseR', p: _rotatedPoint(body, half, 0) },
   { label: 'nose', p: _rotatedPoint(body, 0, H) },
 ];
+// Leg tips — when legs deployed, tips extend below base; real ground
+// contact points so hull base sits LANDING_LEG_EXTENSION_M above surface.
+const _legExt = (body.legs && body.legs.progress > 0.85) ?
+  (Number.isFinite(CONFIG.LANDING_LEG_EXTENSION_M) ? CONFIG.LANDING_LEG_EXTENSION_M : 0) : 0;
+if (_legExt > 0) {
+  candidates.push({ label: "legTipC", p: _rotatedPoint(body, 0, -_legExt) });
+  candidates.push({ label: "legTipL", p: _rotatedPoint(body, -half * 0.6, -_legExt) });
+  candidates.push({ label: "legTipR", p: _rotatedPoint(body, half * 0.6, -_legExt) });
+}
   
   let contact = null,
     contactAlt = Infinity;
@@ -1812,6 +1823,13 @@ function _lowestPointAltitude(body, groundR) {
     _rotatedPoint(body, half, 0),
     _rotatedPoint(body, 0, H),
   ];
+  const _legExtLP = (body.legs && body.legs.progress > 0.85) ?
+    (Number.isFinite(CONFIG.LANDING_LEG_EXTENSION_M) ? CONFIG.LANDING_LEG_EXTENSION_M : 0) : 0;
+  if (_legExtLP > 0) {
+    pts.push(_rotatedPoint(body, 0, -_legExtLP));
+    pts.push(_rotatedPoint(body, -half * 0.6, -_legExtLP));
+    pts.push(_rotatedPoint(body, half * 0.6, -_legExtLP));
+  }
   let minAlt = Infinity;
   pts.forEach(p => {
     const alt = Math.hypot(p.x, p.y) - groundR;
