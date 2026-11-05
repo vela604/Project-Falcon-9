@@ -3150,7 +3150,7 @@ setState(s) {
       LANDING_BURN_ALIGN_ALT_KM: 5,        // AGL km: PES stops steering, fin ramps 0, coast to aero equilibrium
       LANDING_BURN_ALT_KM: 2,              // AGL km: PES->LANDING_BURN phase transition (landing-burn ignition)
       LANDING_BURN_ENGINES: "C",
-      LANDING_BURN_LEGS_ALT_M: 1000,   // AGL altitude to deploy legs during LB
+      LANDING_BURN_LEGS_ALT_M: 100,   // AGL altitude to deploy legs during LB
       LANDING_BURN_T0_S: 6.0,              // solver burn time (branch 1). Tune to avoid gimbal saturation.
       LANDING_BURN_T0_BRANCH: 1,           // solver branch (obsolete under power-law, kept for compat).
       LANDING_BURN_T0_AUTO: true,          // if true, compute valid T0 range from both systems and auto-pick best.
@@ -5141,7 +5141,7 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
             }
 
             // Legs deploy — fire once when AGL crosses threshold
-            if (!_st.lbLegsDeployed && hAGL <= _cfgN("LANDING_BURN_LEGS_ALT_M", 1000)) {
+            if (!_st.lbLegsDeployed && hAGL <= _cfgN("LANDING_BURN_LEGS_ALT_M", 100)) {
               _st.lbLegsDeployed = true;
               _send(Guidance.cmdLegs(true));
               console.log("[standardRTLS] LANDING_BURN legs deploy t=" + simT.toFixed(2) + " alt=" + hAGL.toFixed(1) + "m");
