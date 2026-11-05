@@ -2158,6 +2158,7 @@ if (!faded) {
       if (abort) break;
       if (state.halted) break;
 
+      if (typeof updateLegs === 'function') updateLegs(dt);
       physicsStep(dt);
       if (typeof window.__thermalTickAll === 'function') window.__thermalTickAll(dt);
       ticksRun++;
