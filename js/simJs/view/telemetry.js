@@ -746,21 +746,29 @@ function unitOf(bx, by) {
 
 // Draws a fixed-length unit-direction arrow. (bx, by) is in BODY frame
 // (+y = toward the nose); canvas y is flipped to match.
-function drawUnitVector(ctx2, x0, y0, bx, by, len, color, label) {
-  const ex = x0 + bx * len,
-    ey = y0 - by * len;
+function drawUnitVector(ctx2, x0, y0, bx, by, len, color, label, thetaRel) {
+  const ex = x0 + bx * len;
+  const ey = y0 - by * len;
   ctx2.strokeStyle = color;
   ctx2.fillStyle = color;
-  ctx2.lineWidth = 2;
+  ctx2.lineWidth = 1.6;
   ctx2.beginPath();
   ctx2.moveTo(x0, y0);
   ctx2.lineTo(ex, ey);
   ctx2.stroke();
   ctx2.beginPath();
-  ctx2.arc(ex, ey, 3, 0, Math.PI * 2);
+  ctx2.arc(ex, ey, 2.5, 0, Math.PI * 2);
   ctx2.fill();
-  ctx2.font = '10px "JetBrains Mono", monospace';
-  ctx2.fillText(label, ex + 4, ey + 3);
+  ctx2.font = '9px "JetBrains Mono", monospace';
+  if (thetaRel && Math.abs(thetaRel) > 0.01) {
+    ctx2.save();
+    ctx2.translate(ex + 4, ey + 3);
+    ctx2.rotate(thetaRel);
+    ctx2.fillText(label, 0, 0);
+    ctx2.restore();
+  } else {
+    ctx2.fillText(label, ex + 4, ey + 3);
+  }
 }
 
 function initFigureCanvas() {
@@ -879,35 +887,22 @@ function _figureVelocityVector(body) {
 
 function drawFigurePanel() {
   if (!figCanvas || !figCtx) return;
-  
-  // RCS puff animation: step all figure-panel pools so particles age and
-  // fade naturally. Without this, puffs spawned in earlier frames stay
-  // frozen at spawn position forever.
+  // Step RCS puff pools so particles age & fade smoothly
   if (typeof _stepAllGasPools === 'function') _stepAllGasPools();
-  // Re-derive the CSS↔buffer scale EVERY frame. The canvas backing buffer
-  // is DPR-scaled (2×, 3× on retina); layout code below is written in CSS
-  // pixels, so the ctx transform must map CSS → buffer. Reading clientWidth
-  // vs width each frame also self-heals if the browser zoom, DPR, or layout
-  // changed since init — a fix that isn't needed on desktop but does bite
-  // on mobile emulators and window drags.
+  
   const cssW = figCanvas.clientWidth || 260;
   const cssH = figCanvas.clientHeight || 220;
   const bufW = figCanvas.width;
   const bufH = figCanvas.height;
   const scaleX = bufW / cssW;
   const scaleY = bufH / cssH;
-  
   figCtx.setTransform(scaleX, 0, 0, scaleY, 0, 0);
-  
-  // w, h now in CSS pixels — same units the layout math was originally
-  // written for.
   const w = cssW;
   const h = cssH;
   figCtx.clearRect(0, 0, w, h);
   
   const followIdx = (typeof _cameraTargetIndex === 'function') ?
-    _cameraTargetIndex() :
-    state.activeBodyIndex;
+    _cameraTargetIndex() : state.activeBodyIndex;
   const body = state.bodies[followIdx];
   const members = (body && body.members) ? body.members : [];
   
@@ -916,7 +911,6 @@ function drawFigurePanel() {
     return;
   }
   
-  // ---- Scale: fit the WHOLE stack (every member) into the panel ----
   const widest = Math.max(...members.map(m => Number.isFinite(m.width) ? m.width : 0), 0.1);
   const totalH_m = members.reduce((s, m) => {
     const _h = Number.isFinite(m.height) ? m.height : 0;
@@ -925,298 +919,258 @@ function drawFigurePanel() {
   }, 0) || 1;
   const mppW = widest / (w * 0.30);
   const mppH = totalH_m / (h * 0.80);
-  const mpp = Math.max(mppW, mppH); // meters per pixel — larger of the two keeps both dimensions on-canvas
+  const mpp = Math.max(mppW, mppH);
   
-  const baseX = w / 2,
-    baseY = h * 0.94;
+  const baseX = w / 2;
+  const baseY = h * 0.94;
   const stackHalfW_px = (widest / mpp) / 2;
   
-  // ---- Fuel gauge — bottom-member fraction, thin bar to the left of the
-//      stack. Engines only exist on the bottom member, so its tank is
-//      the only one being drained; showing the whole-stack sum stayed
-//      misleadingly high during ascent while the booster drained and
-//      the stage tank sat untouched. ----
-const bottomMember = members[0];
-const bottomMaxFuel = (typeof memberMaxFuel === 'function') ?
-  memberMaxFuel(bottomMember, members[1] || null) : 0;
-const bottomFuel = (body.memberFuel && Number.isFinite(body.memberFuel[0])) ?
-  body.memberFuel[0] : 0;
-const fuelFrac = bottomMaxFuel > 0 ?
-  Math.max(0, Math.min(1, bottomFuel / bottomMaxFuel)) : 0;
-  const gaugeX = baseX - stackHalfW_px - 16;
-  const gaugeH = totalH_m / mpp;
-  figCtx.strokeStyle = 'rgba(255,255,255,0.25)';
-  figCtx.lineWidth = 1;
-  figCtx.strokeRect(gaugeX, baseY - gaugeH, 6, gaugeH);
-  figCtx.fillStyle = 'rgba(255,140,40,0.55)';
-  figCtx.fillRect(gaugeX, baseY - gaugeH * fuelFrac, 6, gaugeH * fuelFrac);
-  figCtx.save();
-  figCtx.fillStyle = '#6b7d9c';
-  figCtx.font = '8px "JetBrains Mono", monospace';
-  figCtx.fillText('FUEL', gaugeX - 2, baseY - gaugeH - 4);
-  figCtx.restore();
+  // ==== FUEL BAR — left edge of canvas, screen space (not rotated) ====
+  const bottomMember = members[0];
+  const bottomMaxFuel = (typeof memberMaxFuel === 'function') ?
+    memberMaxFuel(bottomMember, members[1] || null) : 0;
+  const bottomFuel = (body.memberFuel && Number.isFinite(body.memberFuel[0])) ?
+    body.memberFuel[0] : 0;
+  const fuelFrac = bottomMaxFuel > 0 ?
+    Math.max(0, Math.min(1, bottomFuel / bottomMaxFuel)) : 0;
+  {
+    const gaugeX = 6;
+    const gaugeW = 6;
+    const gaugeTop = 44;
+    const gaugeBottom = h - 16;
+    const gaugeH = gaugeBottom - gaugeTop;
+    figCtx.save();
+    figCtx.strokeStyle = 'rgba(255,255,255,0.25)';
+    figCtx.lineWidth = 1;
+    figCtx.strokeRect(gaugeX, gaugeTop, gaugeW, gaugeH);
+    figCtx.fillStyle = 'rgba(255,140,40,0.55)';
+    const fillH = gaugeH * fuelFrac;
+    figCtx.fillRect(gaugeX, gaugeBottom - fillH, gaugeW, fillH);
+    figCtx.fillStyle = '#6b7d9c';
+    figCtx.font = '8px "JetBrains Mono", monospace';
+    figCtx.fillText('FUEL', gaugeX - 1, gaugeTop - 4);
+    figCtx.restore();
+  }
   
-  // ---- Payload, if still fitted inside its fairing — drawn BEFORE the
-  // members loop so a fairing that's still on covers it, exactly like the
-  // live sim canvas (see render.js's drawBodyRocket). IMPORTANT: a payload
-  // riding inside its fairing gets NO CoM/CoP/drag arrow of its own here —
-  // the fairing is the surface actually touching the airstream, not the
-  // cargo shielded underneath it. It only becomes its own aerodynamic body
-  // (with its own CoM/CoP/drag, drawn as any other body) once the fairing
-  // splits and it's released — see releasePayloadOnActiveBody().
+  // ==== TILT: rotate rocket + CoM/CoP + vectors by local tilt angle ====
+  // thetaRel = body axis angle vs local vertical. Positive → canvas
+  // rotated clockwise → visual tilt matches physics pitch program direction.
+  const _rv = Math.hypot(body.rx, body.ry) || 1;
+  const localVert = Math.atan2(-body.rx, body.ry);
+  const thetaRel = (body.theta || 0) - localVert;
+  
+  figCtx.save();
+  figCtx.translate(baseX, baseY);
+  figCtx.rotate(-thetaRel);
+  figCtx.translate(-baseX, -baseY);
+  
+  // Payload inside fairing (background)
   if (body.payloadId && !body.payloadReleased) {
     const pl = (typeof getPayload === 'function') ? getPayload(body.payloadId) : null;
     if (pl) {
-      let payloadBaseY_m = null,
-        yy = 0;
+      let payloadBaseY_m = null, yy = 0;
       members.forEach(m => {
         if (m.stageRole === 'payloadSpace' && payloadBaseY_m === null) payloadBaseY_m = yy;
         yy += (m.height || 0);
       });
       if (payloadBaseY_m === null) payloadBaseY_m = yy;
-      const plH = (pl.height || 1) / mpp,
-        plW = (pl.width || 1) / mpp;
+      const plH = (pl.height || 1) / mpp;
+      const plW = (pl.width || 1) / mpp;
       figCtx.save();
-figCtx.translate(baseX, baseY - payloadBaseY_m / mpp);
-if (typeof drawPayloadArt === 'function') {
-  let op = 0;
-  if (body && Number.isFinite(body.payloadOpenedAt) && state.simTime > body.payloadOpenedAt) {
-    const dur = (typeof CONFIG !== 'undefined' && Number.isFinite(CONFIG.PAYLOAD_OPEN_DURATION_S)) ?
-      CONFIG.PAYLOAD_OPEN_DURATION_S : 2.5;
-    op = Math.min(1, (state.simTime - body.payloadOpenedAt) / dur);
-  }
-  drawPayloadArt(figCtx, plW, plH, op);
-}
-      figCtx.fillStyle = 'rgba(150,220,255,0.85)';
-      figCtx.font = '8px "JetBrains Mono", monospace';
-      figCtx.textAlign = 'center';
-      figCtx.fillText('shielded — no drag', 0, -plH - 4);
-      figCtx.textAlign = 'left';
+      figCtx.translate(baseX, baseY - payloadBaseY_m / mpp);
+      if (typeof drawPayloadArt === 'function') {
+        let op = 0;
+        if (body && Number.isFinite(body.payloadOpenedAt) && state.simTime > body.payloadOpenedAt) {
+          const dur = (typeof CONFIG !== 'undefined' && Number.isFinite(CONFIG.PAYLOAD_OPEN_DURATION_S)) ?
+            CONFIG.PAYLOAD_OPEN_DURATION_S : 2.5;
+          op = Math.min(1, (state.simTime - body.payloadOpenedAt) / dur);
+        }
+        drawPayloadArt(figCtx, plW, plH, op);
+      }
       figCtx.restore();
     }
   }
   
- // Every member drawn with the SAME real artwork the main flight canvas
-// uses (drawRocketArt, loaded via rocketArt.js). This is why the panel
-// now reads as the literal same vehicle instead of a schematic — legs,
-// RCS pods, engine bells, checkerboard, everything.
-//
-// Each member is drawn in its own translate frame (base at local 0,
-// +Y up-stack in member's own coordinates — matches drawRocketArt's
-// convention), then the panel's cumulative height offset is applied so
-// the stack builds up from the bottom.
-let yOffsetPx = 0;
-members.forEach((m, idx) => {
-      const _noseHpxFig = (m.stageRole === 'rocket' && Number.isFinite(m.noseHeightM)) ? m.noseHeightM / mpp : 0;
-      const mH = (m.height || 0) / mpp + _noseHpxFig;
-      const mW = (m.width || 1) / mpp;
-  
-  const recType = (m.hasRecovery === false) ? null :
-    ((m.recoveryTypeId && typeof getComponentType === 'function') ?
-      getComponentType(m.recoveryTypeId) : null);
-  const rcsT = (m.rcsTypeId && typeof getComponentType === 'function') ?
-    getComponentType(m.rcsTypeId) : null;
-  const engineLayout = (m.engineTypeId && typeof getComponentType === 'function') ?
-    getComponentType(m.engineTypeId) : null;
-  
-  // PS-D2 fairing options, same as render.js.
-  const psType = (m.stageRole === 'payloadSpace' && m.payloadSpaceTypeId && typeof getComponentType === 'function') ?
-    getComponentType(m.payloadSpaceTypeId) : null;
-  const psParams = m.params || {};
-  const payloadOpts = (m.stageRole === 'payloadSpace') ? {
-    payloadCapWidth: Number.isFinite(psParams.capWidth) ? psParams.capWidth : undefined,
-    payloadBulgeWidth: Number.isFinite(psParams.bulgeWidth) ? psParams.bulgeWidth : undefined,
-    payloadFrustumAngleDeg: Number.isFinite(psParams.frustumSlantDeg) ? psParams.frustumSlantDeg : undefined,
-    payloadCurveRatio: Number.isFinite(psParams.curveHeightFactor) ? psParams.curveHeightFactor : undefined,
-    payloadColor: m.color || '#e9edf2',
-  } : {};
-  
+  // Members
+  let yOffsetPx = 0;
+  members.forEach((m, idx) => {
+    const _noseHpxFig = (m.stageRole === 'rocket' && Number.isFinite(m.noseHeightM)) ? m.noseHeightM / mpp : 0;
+    const mH = (m.height || 0) / mpp + _noseHpxFig;
+    const mW = (m.width || 1) / mpp;
+    const recType = (m.hasRecovery === false) ? null :
+      ((m.recoveryTypeId && typeof getComponentType === 'function') ?
+        getComponentType(m.recoveryTypeId) : null);
+    const rcsT = (m.rcsTypeId && typeof getComponentType === 'function') ?
+      getComponentType(m.rcsTypeId) : null;
+    const engineLayout = (m.engineTypeId && typeof getComponentType === 'function') ?
+      getComponentType(m.engineTypeId) : null;
+    const psType = (m.stageRole === 'payloadSpace' && m.payloadSpaceTypeId && typeof getComponentType === 'function') ?
+      getComponentType(m.payloadSpaceTypeId) : null;
+    const psParams = m.params || {};
+    const payloadOpts = (m.stageRole === 'payloadSpace') ? {
+      payloadCapWidth: Number.isFinite(psParams.capWidth) ? psParams.capWidth : undefined,
+      payloadBulgeWidth: Number.isFinite(psParams.bulgeWidth) ? psParams.bulgeWidth : undefined,
+      payloadFrustumAngleDeg: Number.isFinite(psParams.frustumSlantDeg) ? psParams.frustumSlantDeg : undefined,
+      payloadCurveRatio: Number.isFinite(psParams.curveHeightFactor) ? psParams.curveHeightFactor : undefined,
+      payloadColor: m.color || '#e9edf2',
+    } : {};
+    
     const overlapPxFig = (m.stageRole === 'payloadSpace' && Number.isFinite(m.stageOverlapM)) ?
-    m.stageOverlapM / mpp : 0;
-  const placeYFig = yOffsetPx - overlapPxFig;
-  figCtx.save();
-  figCtx.translate(baseX, baseY - placeYFig);
-  drawRocketArt(figCtx, mW, mH, mpp, {
-      bodyIdx: 9000 + followIdx,
+      m.stageOverlapM / mpp : 0;
+    const placeYFig = yOffsetPx - overlapPxFig;
+    figCtx.save();
+    figCtx.translate(baseX, baseY - placeYFig);
+    drawRocketArt(figCtx, mW, mH, mpp, {
       noseHeightM: m.noseHeightM,
-      noseHeightM: m.noseHeightM,
-
       boosterInterstageHeightM: (m.stageRole === 'booster' && members[idx + 1] && members[idx + 1].stageRole === 'interstage') ? members[idx + 1].height : null,
+      bodyIdx: 9000 + followIdx,
       legsProgress: (idx === 0 && body.isActive) ? legs.progress : 0,
       legsState: null,
-      // A5 — same as render.js: pod-id lookups need the member's own idx.
       memberIdx: idx,
       firing: (body.lastRcs && body.lastRcs.firing) || {},
       pod: (body.lastRcs && body.lastRcs.pod) || {},
-      
-    rcsTopY: m.params ? m.params.rcsTopY : undefined,
-    rcsBottomY: m.params ? m.params.rcsBottomY : undefined,
-    recoveryType: recType,
-    rcsType: rcsT,
-    stageRole: m.stageRole,
-    noseCurveness: m.noseCurveness,
-    bodyDesign: m.bodyDesign,
-    payloadSpaceColor: (m.payloadSpace && m.payloadSpace.color) ? m.payloadSpace.color : undefined,
-    stagePayload: (typeof buildStagePayload === 'function') ? buildStagePayload(m) : null,
+      rcsTopY: m.params ? m.params.rcsTopY : undefined,
+      rcsBottomY: m.params ? m.params.rcsBottomY : undefined,
+      recoveryType: recType,
+      rcsType: rcsT,
+      stageRole: m.stageRole,
+      noseCurveness: m.noseCurveness,
+      bodyDesign: m.bodyDesign,
+      payloadSpaceColor: (m.payloadSpace && m.payloadSpace.color) ? m.payloadSpace.color : undefined,
+      stagePayload: (typeof buildStagePayload === 'function') ? buildStagePayload(m) : null,
       engineLayout: engineLayout,
-    engineThrusters: m.engineThrusters,
-    params: m.params,
-        // (interstage is its own member now)
-        gridFinType: (m.hasGridFins && m.gridFinTypeId && typeof getComponentType === 'function') ?
-    getComponentType(m.gridFinTypeId) : null,
-    gridFinParams: m.gridFinParams || null,
+      engineThrusters: m.engineThrusters,
+      params: m.params,
+      gridFinType: (m.hasGridFins && m.gridFinTypeId && typeof getComponentType === 'function') ?
+        getComponentType(m.gridFinTypeId) : null,
+      gridFinParams: m.gridFinParams || null,
       gridFinColor: m.gridFinColor || '#8a9198',
-    gridFinState: body.gridFins || null,
-    locked: m.locked === true,
-    liveEngines: (idx === 0) ? body.engines : null,
-    ...payloadOpts,
-  });
-        figCtx.restore();
-    
+      gridFinState: body.gridFins || null,
+      locked: m.locked === true,
+      liveEngines: (idx === 0) ? body.engines : null,
+      ...payloadOpts,
+    });
+    figCtx.restore();
     yOffsetPx = placeYFig + mH;
-    });
-
-// ---- Per-fin overlay (L/R side fins only — F/B are edge-on in the
-// side view, so their markers would sit on the centerline and clutter).
-// Each visible fin gets its own CoM dot, CoP dot, and a force arrow at
-// the CoP. Positions come from the fin's own deploy angle, exactly as
-// physics.js's _gfAxes defines them; the arrow direction approximates
-// the fin's drag (opposite relative wind) and its length scales with
-// local q × presented area. Purely diagnostic — the sim itself uses the
-// full per-fin model (see computeGridFinAero in physics.js).
-if (body.gridFins && body.members) {
-  body.members.forEach((m, midx) => {
-    if (!m || !m.hasGridFins || !m.gridFinParams) return;
-    const type = (m.gridFinTypeId && typeof getComponentType === 'function')
-      ? getComponentType(m.gridFinTypeId) : null;
-    const gp = m.gridFinParams;
-    const span = Number.isFinite(gp.span) ? gp.span : 1.5;
-    const chord = Number.isFinite(gp.chord) ? gp.chord : 1.2;
-    const thk = Number.isFinite(gp.thickness) ? gp.thickness : 0.4;
-    const finPosY = Number.isFinite(gp.finPositionY) ? gp.finPositionY : 0;
-    const gap = (type && type.frame && Number.isFinite(type.frame.gapM)) ? type.frame.gapM : 0.05;
-    // member base in figure local frame (bottom-up cumulative):
-    let memberBaseY_m = 0;
-    for (let k = 0; k < midx; k++) {
-      memberBaseY_m += (body.members[k] && Number.isFinite(body.members[k].height)) ? body.members[k].height : 0;
-    }
-    const mW = Number.isFinite(m.width) ? m.width : 3.7;
-    const hingeY_m = memberBaseY_m + finPosY;
-    const hullHalf_m = mW / 2 + gap;
-    
-    // CoP marker helper — same baseX/baseY + mpp conversion the per-member
-    // overlay above uses, so the fin markers line up with the hull.
-    const toPx = (bodyX, bodyY) => ({
-      x: baseX + bodyX / mpp,
-      y: baseY - bodyY / mpp,
-    });
-    
-    // Relative wind in body frame (2D) — same convention physics uses.
-    const w = (typeof windInertialVector === 'function') ? windInertialVector(body.rx, body.ry) : { wx: 0, wy: 0 };
-    const sv = (typeof earthSurfaceVelocity === 'function') ? earthSurfaceVelocity(body.rx, body.ry) : { vx: 0, vy: 0 };
-    const relVx_w = body.vx - (w.wx + sv.vx);
-    const relVy_w = body.vy - (w.wy + sv.vy);
-    const cosT = Math.cos(body.theta), sinT = Math.sin(body.theta);
-    const bx = relVx_w * cosT + relVy_w * sinT;
-    const by = -relVx_w * sinT + relVy_w * cosT;
-    const speedBody = Math.hypot(bx, by) || 1;
-    const ux = -bx / speedBody, uy = -by / speedBody; // drag direction
-    const r_km = Math.hypot(body.rx, body.ry);
-    const alt_m = r_km - CONFIG.EARTH_RADIUS;
-    const rho_m = (typeof airDensity === 'function') ? airDensity(Math.max(0, alt_m)) : 0;
-    const q_m = 0.5 * rho_m * speedBody * speedBody;
-    
-    ['L', 'R'].forEach(kind => {
-      const st = body.gridFins[kind];
-      if (!st || !Number.isFinite(st.deploy)) return;
-      const d_rad = st.deploy * Math.PI / 180;
-      const cosd = Math.cos(d_rad), sind = Math.sin(d_rad);
-      const s0 = (kind === 'L') ? -1 : 1;
-      // Span unit vector in body frame.
-      const sx = s0 * cosd;
-      const sy = s0 * sind;
-      const hx = (kind === 'L') ? -hullHalf_m : hullHalf_m;
-      // CoM (and CoP for a symmetric lattice — same location for a uniform plate).
-      const finX = hx + (span / 2) * sx;
-      const finY = hingeY_m + (span / 2) * sy;
-      const pPx = toPx(finX, finY);
-      // Arrow direction: body-frame drag (opposite relative wind), flipped
-      // to screen y (up = +y body → screen up = -y screen).
-      const arrowLen_px = Math.min(40, Math.max(6, q_m * span * chord * 1.2e-4));
-      const aex = pPx.x + ux * arrowLen_px;
-      const aey = pPx.y - uy * arrowLen_px;
-      
-      // CoM dot — orange, same palette as the per-member overlay.
-      figCtx.beginPath();
-      figCtx.arc(pPx.x, pPx.y, 2.4, 0, Math.PI * 2);
-      figCtx.fillStyle = 'rgba(255,170,120,0.95)';
-      figCtx.fill();
-      figCtx.strokeStyle = 'rgba(0,0,0,0.55)';
-      figCtx.lineWidth = 0.7;
-      figCtx.stroke();
-      
-      // CoP dot — cyan, offset by a hair so both are visible when stacked.
-      figCtx.beginPath();
-      figCtx.arc(pPx.x + 0.6, pPx.y + 0.6, 2.4, 0, Math.PI * 2);
-      figCtx.fillStyle = 'rgba(120,220,255,0.95)';
-      figCtx.fill();
-      figCtx.strokeStyle = 'rgba(0,0,0,0.55)';
-      figCtx.lineWidth = 0.7;
-      figCtx.stroke();
-      
-      // Force arrow from the CoP.
-      figCtx.strokeStyle = 'rgba(255,120,90,0.9)';
-      figCtx.lineWidth = 1.4;
-      figCtx.beginPath();
-      figCtx.moveTo(pPx.x, pPx.y);
-      figCtx.lineTo(aex, aey);
-      figCtx.stroke();
-      figCtx.beginPath();
-      figCtx.arc(aex, aey, 2, 0, Math.PI * 2);
-      figCtx.fillStyle = 'rgba(255,120,90,0.9)';
-      figCtx.fill();
-      
-      // Tiny label so the reader knows which side this is.
-      figCtx.fillStyle = 'rgba(180,200,220,0.75)';
-      figCtx.font = '8px "JetBrains Mono", monospace';
-      figCtx.fillText(kind, pPx.x + 5, pPx.y - 4);
-    });
   });
-}
   
-  // ---- Shared aero snapshot: ONE relative wind, ONE angle of attack for
-  // the whole connected body — each member just gets its own share/point. ----
+  // Grid fin overlay — smaller markers
+  if (body.gridFins && body.members) {
+    body.members.forEach((m, midx) => {
+      if (!m || !m.hasGridFins || !m.gridFinParams) return;
+      const type = (m.gridFinTypeId && typeof getComponentType === 'function')
+        ? getComponentType(m.gridFinTypeId) : null;
+      const gp = m.gridFinParams;
+      const span = Number.isFinite(gp.span) ? gp.span : 1.5;
+      const chord = Number.isFinite(gp.chord) ? gp.chord : 1.2;
+      const finPosY = Number.isFinite(gp.finPositionY) ? gp.finPositionY : 0;
+      const gap = (type && type.frame && Number.isFinite(type.frame.gapM)) ? type.frame.gapM : 0.05;
+      let memberBaseY_m = 0;
+      for (let k = 0; k < midx; k++) {
+        memberBaseY_m += (body.members[k] && Number.isFinite(body.members[k].height)) ? body.members[k].height : 0;
+      }
+      const mW = Number.isFinite(m.width) ? m.width : 3.7;
+      const hingeY_m = memberBaseY_m + finPosY;
+      const hullHalf_m = mW / 2 + gap;
+      const toPx = (bodyX, bodyY) => ({ x: baseX + bodyX / mpp, y: baseY - bodyY / mpp });
+      
+      const wv = (typeof windInertialVector === 'function') ? windInertialVector(body.rx, body.ry) : { wx: 0, wy: 0 };
+      const sv = (typeof earthSurfaceVelocity === 'function') ? earthSurfaceVelocity(body.rx, body.ry) : { vx: 0, vy: 0 };
+      const relVx_w = body.vx - (wv.wx + sv.vx);
+      const relVy_w = body.vy - (wv.wy + sv.vy);
+      const cosT = Math.cos(body.theta), sinT = Math.sin(body.theta);
+      const bx = relVx_w * cosT + relVy_w * sinT;
+      const by = -relVx_w * sinT + relVy_w * cosT;
+      const speedBody = Math.hypot(bx, by) || 1;
+      const ux = -bx / speedBody, uy = -by / speedBody;
+      const r_km = Math.hypot(body.rx, body.ry);
+      const alt_m = r_km - CONFIG.EARTH_RADIUS;
+      const rho_m = (typeof airDensity === 'function') ? airDensity(Math.max(0, alt_m)) : 0;
+      const q_m = 0.5 * rho_m * speedBody * speedBody;
+      
+      ['L', 'R'].forEach(kind => {
+        const st = body.gridFins[kind];
+        if (!st || !Number.isFinite(st.deploy)) return;
+        const d_rad = st.deploy * Math.PI / 180;
+        const cosd = Math.cos(d_rad), sind = Math.sin(d_rad);
+        const s0 = (kind === 'L') ? -1 : 1;
+        const sx = s0 * cosd;
+        const sy = s0 * sind;
+        const hx = (kind === 'L') ? -hullHalf_m : hullHalf_m;
+        const finX = hx + (span / 2) * sx;
+        const finY = hingeY_m + (span / 2) * sy;
+        const pPx = toPx(finX, finY);
+        const arrowLen_px = Math.min(14, Math.max(4, q_m * span * chord * 0.6e-4));
+        const aex = pPx.x + ux * arrowLen_px;
+        const aey = pPx.y - uy * arrowLen_px;
+        
+        figCtx.beginPath();
+        figCtx.arc(pPx.x, pPx.y, 1.6, 0, Math.PI * 2);
+        figCtx.fillStyle = 'rgba(255,170,120,0.95)';
+        figCtx.fill();
+        figCtx.strokeStyle = 'rgba(0,0,0,0.55)';
+        figCtx.lineWidth = 0.5;
+        figCtx.stroke();
+        
+        figCtx.beginPath();
+        figCtx.arc(pPx.x + 0.5, pPx.y + 0.5, 1.6, 0, Math.PI * 2);
+        figCtx.fillStyle = 'rgba(120,220,255,0.95)';
+        figCtx.fill();
+        figCtx.strokeStyle = 'rgba(0,0,0,0.55)';
+        figCtx.lineWidth = 0.5;
+        figCtx.stroke();
+        
+        figCtx.strokeStyle = 'rgba(255,120,90,0.9)';
+        figCtx.lineWidth = 1;
+        figCtx.beginPath();
+        figCtx.moveTo(pPx.x, pPx.y);
+        figCtx.lineTo(aex, aey);
+        figCtx.stroke();
+        figCtx.beginPath();
+        figCtx.arc(aex, aey, 1.4, 0, Math.PI * 2);
+        figCtx.fillStyle = 'rgba(255,120,90,0.9)';
+        figCtx.fill();
+        
+        figCtx.save();
+        figCtx.translate(pPx.x + 4, pPx.y - 3);
+        figCtx.rotate(thetaRel);
+        figCtx.fillStyle = 'rgba(180,200,220,0.75)';
+        figCtx.font = '7px "JetBrains Mono", monospace';
+        figCtx.fillText(kind, 0, 0);
+        figCtx.restore();
+      });
+    });
+  }
+  
+  // Aero snapshot + per-member CoM/CoP
   const aero = figAeroSnapshot(body);
   const mech = figMemberMechanics(members, body, aero);
   
-  // Overall stack CoM — the existing bright reference line, kept as-is.
-  // The DOT's x position now reflects geom.comW too (Phase 2A: nonzero
-  // only when slosh has shifted the stack's true lateral CoM — previously
-  // always 0, so this is a no-op everywhere else).
   const geom = geometryOf(body);
   const comY_overall = baseY - (geom.comH || 0) / mpp;
   const comX_overall = baseX + (geom.comW || 0) / mpp;
+  
+  // CoM stack line + dot (smaller)
   figCtx.strokeStyle = '#ff4466';
-  figCtx.lineWidth = 2;
+  figCtx.lineWidth = 1.3;
   figCtx.beginPath();
   figCtx.moveTo(baseX - stackHalfW_px * 0.9, comY_overall);
   figCtx.lineTo(baseX + stackHalfW_px * 0.9, comY_overall);
   figCtx.stroke();
   figCtx.beginPath();
-  figCtx.arc(comX_overall, comY_overall, 4, 0, Math.PI * 2);
+  figCtx.arc(comX_overall, comY_overall, 2.8, 0, Math.PI * 2);
   figCtx.fillStyle = '#ff4466';
   figCtx.fill();
-  figCtx.fillStyle = '#ff8899';
-  figCtx.font = '10px monospace';
-  figCtx.fillText('CoM (stack)', baseX + stackHalfW_px + 4, comY_overall + 3);
   
-  // Windward side: the body-frame edge the relative wind is arriving FROM.
-  // sideSign = -1 → flow arrives moving in the body's +X direction, which
-  // means it originated on the -X (left) side — left is the windward
-  // (pressure) face, and the opposite face of any tapered member (a
-  // fairing, a nose) physically sees none of that flow. Each member's drag
-  // arrow is drawn from that ONE windward point only — never centered, and
-  // never doubled onto both sides of the same member.
+  // CoM (stack) label — un-rotated
+  figCtx.save();
+  figCtx.translate(baseX + stackHalfW_px + 3, comY_overall + 3);
+  figCtx.rotate(thetaRel);
+  figCtx.fillStyle = '#ff8899';
+  figCtx.font = '9px monospace';
+  figCtx.fillText('CoM (stack)', 0, 0);
+  figCtx.restore();
+  
   const sideSign = (aero.speedRel > 0.2 && Math.abs(aero.sinAlpha) > 0.02) ? -Math.sign(aero.velBodyX) : 0;
   const dragUnit = (aero.speedRel > 0.2) ?
     worldVectorToBodyUnit(-aero.relVx / aero.speedRel, -aero.relVy / aero.speedRel, body.theta) :
@@ -1226,83 +1180,61 @@ if (body.gridFins && body.members) {
     const globalComY_m = mm.baseY + mm.comY;
     const globalCpY_m = mm.baseY + mm.cpY;
     const comPx = { x: baseX + mm.comX / mpp, y: baseY - globalComY_m / mpp };
-    
-    // CoP slides from the centerline (nose-on, wCross≈0) out toward
-    // whichever edge actually faces the relative wind as the body presents
-    // more of its broadside (wCross→1) — identical blend to
-    // computeDragAero()'s per-member normal-force split in physics.js.
     const cpOffsetX_m = sideSign * (mm.W / 2) * aero.wCross;
     const cpPx = { x: baseX + (mm.comX + cpOffsetX_m) / mpp, y: baseY - globalCpY_m / mpp };
     
-    // Per-member CoM dot.
+    // Dots — shrunk (2.6 → 1.7)
     figCtx.beginPath();
-    figCtx.arc(comPx.x, comPx.y, 2.6, 0, Math.PI * 2);
+    figCtx.arc(comPx.x, comPx.y, 1.7, 0, Math.PI * 2);
     figCtx.fillStyle = 'rgba(255,170,120,0.9)';
     figCtx.fill();
     figCtx.strokeStyle = 'rgba(0,0,0,0.4)';
-    figCtx.lineWidth = 0.8;
+    figCtx.lineWidth = 0.5;
     figCtx.stroke();
     
-    // Per-member CoP dot.
     figCtx.beginPath();
-    figCtx.arc(cpPx.x, cpPx.y, 2.6, 0, Math.PI * 2);
+    figCtx.arc(cpPx.x, cpPx.y, 1.7, 0, Math.PI * 2);
     figCtx.fillStyle = 'rgba(120,220,255,0.95)';
     figCtx.fill();
     figCtx.strokeStyle = 'rgba(0,0,0,0.4)';
-    figCtx.lineWidth = 0.8;
+    figCtx.lineWidth = 0.5;
     figCtx.stroke();
     
-    // Drag vector, originating at THIS member's CoP — only when there's
-    // real relative airflow, and only from the single windward point above.
+    // Drag arrow — shrunk (14+16 → 8+4)
     if (dragUnit && showVectors) {
-      const len = 14 + 16 * mm.areaShare;
+      const len = 8 + 4 * mm.areaShare;
       const ex = cpPx.x + dragUnit.bx * len;
       const ey = cpPx.y - dragUnit.by * len;
       figCtx.strokeStyle = 'rgba(255,120,90,0.9)';
-      figCtx.lineWidth = 1.6;
+      figCtx.lineWidth = 1.1;
       figCtx.beginPath();
       figCtx.moveTo(cpPx.x, cpPx.y);
       figCtx.lineTo(ex, ey);
       figCtx.stroke();
       figCtx.beginPath();
-      figCtx.arc(ex, ey, 2.2, 0, Math.PI * 2);
+      figCtx.arc(ex, ey, 1.5, 0, Math.PI * 2);
       figCtx.fillStyle = 'rgba(255,120,90,0.9)';
       figCtx.fill();
     }
   });
   
-  // ---- Compact legend for the new per-member symbols ----
-  figCtx.font = '8px "JetBrains Mono", monospace';
-  [
-    ['rgba(255,170,120,0.9)', 'CoM (member)'],
-    ['rgba(120,220,255,0.95)', 'CoP (member)'],
-    ['rgba(255,120,90,0.9)', 'Drag'],
-  ].forEach(([color, label], i) => {
-    const ly = 10 + i * 10;
-    figCtx.fillStyle = color;
-    figCtx.fillRect(4, ly - 6, 7, 7);
-    figCtx.fillStyle = '#6b7d9c';
-    figCtx.fillText(label, 14, ly);
-  });
-  
-  // ---- Overall force/motion unit vectors (v / main thrust F / g) — kept
-  // exactly as before, anchored on the overall stack CoM / stack base. ----
+  // Vectors v/F/g — shrunk (0.32 → 0.18)
   if (showVectors) {
-  const vecLen = (totalH_m / mpp) * 0.32;
-  const vv = _figureVelocityVector(body);
-  const vUnit = worldVectorToBodyUnit(vv.vx, vv.vy, body.theta);
-  if (vUnit) drawUnitVector(figCtx, baseX, comY_overall, vUnit.bx, vUnit.by, vecLen, '#ffdd55', 'v');
+    const vecLen = (totalH_m / mpp) * 0.18;
+    const vv = _figureVelocityVector(body);
+    const vUnit = worldVectorToBodyUnit(vv.vx, vv.vy, body.theta);
+    if (vUnit) drawUnitVector(figCtx, baseX, comY_overall, vUnit.bx, vUnit.by, vecLen, '#ffdd55', 'v', thetaRel);
     
     const fUnit = unitOf(lastForces.mainFx, lastForces.mainFy);
-    if (fUnit) drawUnitVector(figCtx, baseX, baseY, fUnit.bx, fUnit.by, vecLen, '#ffaa33', 'F');
+    if (fUnit) drawUnitVector(figCtx, baseX, baseY, fUnit.bx, fUnit.by, vecLen, '#ffaa33', 'F', thetaRel);
     
     const rr = Math.hypot(body.rx, body.ry);
     const gWorld = rr > 0 ? { x: -body.rx / rr, y: -body.ry / rr } : { x: 0, y: -1 };
     const gUnit = worldVectorToBodyUnit(gWorld.x, gWorld.y, body.theta);
-    if (gUnit) drawUnitVector(figCtx, baseX, comY_overall, gUnit.bx, gUnit.by, vecLen * 0.85, '#aabbff', 'g');
+    if (gUnit) drawUnitVector(figCtx, baseX, comY_overall, gUnit.bx, gUnit.by, vecLen * 0.85, '#aabbff', 'g', thetaRel);
   }
   
-  // ---- Gimbal indicator on the base (bottom engine) — unchanged ----
+  // Gimbal indicator — shrunk
   const centerEngine = ENGINES.find(e => e.isCenter);
   if (centerEngine) {
     const centerFrac = centerEngine.Fmax > 0 ? centerEngine.currentF / centerEngine.Fmax : 0;
@@ -1312,14 +1244,30 @@ if (body.gridFins && body.members) {
       figCtx.rotate(centerEngine.gimbalDeg * Math.PI / 180);
       figCtx.fillStyle = 'rgba(255,180,80,0.8)';
       figCtx.beginPath();
-      figCtx.moveTo(-4, 0);
-      figCtx.lineTo(4, 0);
-      figCtx.lineTo(0, 18);
+      figCtx.moveTo(-2.5, 0);
+      figCtx.lineTo(2.5, 0);
+      figCtx.lineTo(0, 13);
       figCtx.closePath();
       figCtx.fill();
       figCtx.restore();
     }
   }
+  
+  figCtx.restore();   // end tilt
+  
+  // Legend — top-left, un-rotated
+  figCtx.font = '8px "JetBrains Mono", monospace';
+  [
+    ['rgba(255,170,120,0.9)', 'CoM (member)'],
+    ['rgba(120,220,255,0.95)', 'CoP (member)'],
+    ['rgba(255,120,90,0.9)', 'Drag'],
+  ].forEach(([color, label], i) => {
+    const ly = 10 + i * 9;
+    figCtx.fillStyle = color;
+    figCtx.fillRect(14, ly - 6, 6, 6);
+    figCtx.fillStyle = '#6b7d9c';
+    figCtx.fillText(label, 23, ly);
+  });
 }
 
 // ---------------------------------------------------------------------------
