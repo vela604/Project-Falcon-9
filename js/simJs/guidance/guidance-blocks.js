@@ -3150,6 +3150,7 @@ setState(s) {
       LANDING_BURN_ALIGN_ALT_KM: 5,        // AGL km: PES stops steering, fin ramps 0, coast to aero equilibrium
       LANDING_BURN_ALT_KM: 2,              // AGL km: PES->LANDING_BURN phase transition (landing-burn ignition)
       LANDING_BURN_ENGINES: "C",
+      LANDING_BURN_LEGS_ALT_M: 1000,   // AGL altitude to deploy legs during LB
       LANDING_BURN_T0_S: 6.0,              // solver burn time (branch 1). Tune to avoid gimbal saturation.
       LANDING_BURN_T0_BRANCH: 1,           // solver branch (obsolete under power-law, kept for compat).
       LANDING_BURN_T0_AUTO: true,          // if true, compute valid T0 range from both systems and auto-pick best.
@@ -3211,7 +3212,7 @@ setState(s) {
         lbInit: false, lbT0: null, lbDone: false, lbLastLog: 0,
         lbThrCmd: null, lbGimbalCmd: 0, lbFinCmd: 0,
         lbSpooled: false, lbSpoolT: null, lbBurnCut: false,
-        lbAlignStartT: null, lbAlignT0: null, lbTrajPow: null, lbSisterRanges: null, lbSisterPick: null, lbPlan: null,
+        lbAlignStartT: null, lbAlignT0: null, lbTrajPow: null, lbSisterRanges: null, lbSisterPick: null, lbPlan: null, lbLegsDeployed: false,
         lbTestOverride: null, lbCapture6: null, lbTrajPow: null,
         lbaInit: false, lbaAlignStartT: null, lbaFinCmd: null, lbaGimbalZeroDone: false,
         lbAlignDeltaMax: 0,
@@ -5053,6 +5054,7 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
               _st.lbSisterRanges = null;
               _st.lbSisterPick = null;
               _st.lbPlan = null;
+              _st.lbLegsDeployed = false;
               _send(Guidance.cmdSetAllThrottle(0));
               _send(Guidance.cmdSetGimbalRate(0));
               _send(Guidance.cmdRcsDuty(null, idx));
@@ -5136,6 +5138,13 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
                 " landed=" + (!!body.landed) + " crashed=" + (!!body.crashed));
               finished = true;
               break;
+            }
+
+            // Legs deploy — fire once when AGL crosses threshold
+            if (!_st.lbLegsDeployed && hAGL <= _cfgN("LANDING_BURN_LEGS_ALT_M", 1000)) {
+              _st.lbLegsDeployed = true;
+              _send(Guidance.cmdLegs(true));
+              console.log("[standardRTLS] LANDING_BURN legs deploy t=" + simT.toFixed(2) + " alt=" + hAGL.toFixed(1) + "m");
             }
 
             const aeroAcc = _pesAeroAccel(d, M);
@@ -5448,6 +5457,7 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
           _st.lbSisterRanges = null;
           _st.lbSisterPick = null;
           _st.lbPlan = null;
+          _st.lbLegsDeployed = false;
           _st.lbaInit = false;
           _st.lbaAlignStartT = null;
           _st.lbaFinCmd = null;
