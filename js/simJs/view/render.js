@@ -2378,7 +2378,7 @@ function _plumeLengthM(body, totalThrust, maxSingleF, single, thr) {
   
   // Booster cluster: if only 1 engine is firing (totalThrust ≈ maxSingleF),
   // multiplier was 30, now 45 — 50% longer for single-engine ascent on a cluster.
-  const baseMult = _isBooster ? 45 : 30;
+  const baseMult = _isBooster ? 50 : 30;
   return Math.max(3 * dm, baseMult * dm * Math.sqrt(Math.max(0, totalThrust / maxSingleF)));
 }
 
