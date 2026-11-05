@@ -1487,14 +1487,8 @@ if (_lbState.insertionBlock) {
       rtlsPesFinCtrlActDeg: rs.pesFinCtrlActDeg,
       rtlsLbSpooled: rs.lbSpooled,
       rtlsLbAlignStartT: rs.lbAlignStartT,
-      rtlsLbAlignT0: rs.lbAlignT0,
       rtlsLbAlignDeltaMax: rs.lbAlignDeltaMax,
-      rtlsLbCapture6: rs.lbCapture6,
-      rtlsLbTestOverride: rs.lbTestOverride,
-      rtlsLbTrajPow: rs.lbTrajPow,
       rtlsLbLastFyBody: rs.lbLastFyBody,
-      rtlsLbSisterRanges: rs.lbSisterRanges,
-      rtlsLbSisterPick: rs.lbSisterPick,
     });
   }
 
@@ -1527,13 +1521,26 @@ function getLeoInsertionV3Config() { return JSON.parse(JSON.stringify(_v3Config)
 
   function setLandbackV1(patch) {
   if (!patch) return;
+  // rtls schema check — filter unknown sub-keys against block defaultConstants
+  const _rtlsSchema = (typeof FUNDAMENTAL_BLOCKS !== 'undefined' &&
+                       FUNDAMENTAL_BLOCKS.standardRTLS &&
+                       FUNDAMENTAL_BLOCKS.standardRTLS.defaultConstants) || null;
   Object.keys(patch).forEach(k => {
     if (!(k in _lbConfig)) return;
     const cur = _lbConfig[k];
     const nxt = patch[k];
     if (cur && typeof cur === 'object' && !Array.isArray(cur) &&
         nxt && typeof nxt === 'object' && !Array.isArray(nxt)) {
-      Object.assign(cur, nxt);
+      if (k === 'rtls' && _rtlsSchema) {
+        const dropped = [];
+        Object.keys(nxt).forEach(sk => {
+          if (sk in _rtlsSchema) cur[sk] = nxt[sk];
+          else dropped.push(sk);
+        });
+        if (dropped.length) console.log('[landbackV1] rtls stale keys dropped: ' + dropped.join(', '));
+      } else {
+        Object.assign(cur, nxt);
+      }
     } else {
       _lbConfig[k] = nxt;
     }
