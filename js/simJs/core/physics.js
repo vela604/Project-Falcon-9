@@ -1663,60 +1663,63 @@ function _rotatedPoint(body, localX, localY) {
 
 // Compute leg tip extension below hull base from the leg type frame hingeGeometry()
 // + live legs.progress. Replaces hardcoded CONFIG.LANDING_LEG_EXTENSION_M.
+function _legDumpPhys(body, reason) {
+  if (!body._legDump) body._legDump = {};
+  if (body._legDump[reason]) return;
+  body._legDump[reason] = true;
+  const bm = (body.members && body.members[0]) ? body.members[0] : null;
+  console.log("[LEG-PHYS-BAIL] " + reason + " | body.id=" + body.id +
+    " members=" + (body.members ? body.members.length : 0) +
+    " bm.height=" + (bm ? bm.height : "n/a") +
+    " bm.width=" + (bm ? bm.width : "n/a") +
+    " bm.hasRecovery=" + (bm ? bm.hasRecovery : "n/a") +
+    " bm.recoveryTypeId=" + (bm ? bm.recoveryTypeId : "n/a") +
+    " progress=" + (body.legs ? body.legs.progress : "n/a"));
+}
 function _legTipExtension(body) {
-  if (!body || !body.legs) return 0;
+  if (!body) return 0;
+  if (!body.legs) { _legDumpPhys(body, "no legs"); return 0; }
   const progress = Number.isFinite(body.legs.progress) ? body.legs.progress : 0;
   if (progress < 0.02) return 0;
-
-  const bottomMember = (body.members && body.members[0]) ? body.members[0] : null;
-  if (!bottomMember) return 0;
-  if (bottomMember.hasRecovery === false) return 0;
-
-  const recoveryType = (typeof getComponentType === "function") ?
-    getComponentType(bottomMember.recoveryTypeId) : null;
-  if (!recoveryType || !recoveryType.capabilities || !recoveryType.capabilities.deploysOnVehicle) return 0;
-  if (!recoveryType.frame || typeof recoveryType.frame.hingeGeometry !== "function") return 0;
-
-  // Booster HULL height and width ONLY — no interstage
-  const H = Number.isFinite(bottomMember.height) ? bottomMember.height : 0;
-  const W = Number.isFinite(bottomMember.width) ? bottomMember.width : 0;
-  if (!(H > 0) || !(W > 0)) return 0;
-
-  const geo = recoveryType.frame.hingeGeometry(H);
-  if (!geo || !Number.isFinite(geo.hingeY) || !Number.isFinite(geo.legLength) || !Number.isFinite(geo.maxSweepRad)) return 0;
-
-  // Front legs (depthX=1.0, depthY=0) — deeper of the two depths, touch first
+  const bm = (body.members && body.members[0]) ? body.members[0] : null;
+  if (!bm) { _legDumpPhys(body, "no bm"); return 0; }
+  if (bm.hasRecovery === false) { _legDumpPhys(body, "hasRecovery=false"); return 0; }
+  const rt = (typeof getComponentType === "function") ? getComponentType(bm.recoveryTypeId) : null;
+  if (!rt) { _legDumpPhys(body, "recoveryType NULL id=" + bm.recoveryTypeId); return 0; }
+  if (!rt.capabilities || !rt.capabilities.deploysOnVehicle) { _legDumpPhys(body, "deploysOnVehicle falsy"); return 0; }
+  if (!rt.frame || typeof rt.frame.hingeGeometry !== "function") { _legDumpPhys(body, "no hingeGeometry fn"); return 0; }
+  let H = 0;
+  if (Number.isFinite(bm.height)) H = bm.height;
+  else if (Number.isFinite(bm.tankHeight)) H = bm.tankHeight;
+  else if (Number.isFinite(body.height)) H = body.height;
+  else H = 41;
+  const W = Number.isFinite(bm.width) ? bm.width : (Number.isFinite(body.width) ? body.width : 3.9);
+  if (!(H > 0) || !(W > 0)) { _legDumpPhys(body, "H=" + H + " W=" + W); return 0; }
+  const geo = rt.frame.hingeGeometry(H);
+  if (!geo || !Number.isFinite(geo.hingeY) || !Number.isFinite(geo.legLength) || !Number.isFinite(geo.maxSweepRad)) { _legDumpPhys(body, "bad geo"); return 0; }
   const depthX = 1.0;
   const j1x = W * 0.49 * depthX;
   const j2x = W * 0.05 * depthX;
   const jY = geo.hingeY;
-
   const pivotX = Math.sin(Math.PI / 4) * (j1x + j2x);
   const pivotY = jY;
-
   const sweep = progress * geo.maxSweepRad;
   const tipX = pivotX + geo.legLength * Math.sin(sweep);
   const tipY = pivotY - geo.legLength * Math.cos(sweep);
-
   const d1 = Math.hypot(tipX - j1x, tipY - jY) || 1;
   const d2 = Math.hypot(tipX - j2x, tipY - jY) || 1;
   const u1y = (jY - tipY) / d1;
   const u2y = (jY - tipY) / d2;
   const roundR = Math.min(geo.legLength * 0.90, d1 * 0.85, d2 * 0.85);
-
   const p1y = tipY + u1y * roundR;
   const p2y = tipY + u2y * roundR;
   const tipApexY = 0.25 * p1y + 0.5 * tipY + 0.25 * p2y;
-
-  // Debug: log on progress change
-  const prevProg = Number.isFinite(body._dbgLegProg) ? body._dbgLegProg : -1;
-  if (Math.abs(progress - prevProg) > 0.05) {
-    body._dbgLegProg = progress;
-    console.log("[LEG-EXT-PHYS] p=" + progress.toFixed(2) + " H=" + H.toFixed(1) + " W=" + W.toFixed(2) +
+  if (!body._legPhysOkLogged) {
+    body._legPhysOkLogged = true;
+    console.log("[LEG-PHYS-OK] p=" + progress.toFixed(2) + " H=" + H.toFixed(1) + " W=" + W.toFixed(2) +
       " hingeY=" + geo.hingeY.toFixed(3) + " legLen=" + geo.legLength.toFixed(2) +
-      " tipY_geo=" + tipY.toFixed(3) + " tipApex=" + tipApexY.toFixed(3));
+      " tipApex=" + tipApexY.toFixed(2));
   }
-
   return Math.max(0, tipApexY);
 }
 

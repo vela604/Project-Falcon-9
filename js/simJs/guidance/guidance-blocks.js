@@ -3395,56 +3395,71 @@ setState(s) {
       // Leg tip extension below hull base for the guidance worker.
 // Reads pre-computed geometry from Derivation.getStackData().memberDerived
 // (functions do not survive structured-clone into the guidance worker).
+function _legDumpSlam(body, reason) {
+  if (!body._legDumpSlam) body._legDumpSlam = {};
+  if (body._legDumpSlam[reason]) return;
+  body._legDumpSlam[reason] = true;
+  const bm = (body.members && body.members[0]) ? body.members[0] : null;
+  const sd = Derivation.getStackData();
+  const hasMD = !!(sd && sd.memberDerived);
+  const hasLegs = !!(hasMD && bm && sd.memberDerived[bm.id] && sd.memberDerived[bm.id].legs);
+  console.log("[LEG-SLAM-BAIL] " + reason + " | body.id=" + body.id +
+    " bm.id=" + (bm ? bm.id : "n/a") +
+    " bm.height=" + (bm ? bm.height : "n/a") +
+    " bm.width=" + (bm ? bm.width : "n/a") +
+    " hasStackData=" + !!sd +
+    " hasMemberDerived=" + hasMD +
+    " hasLegs=" + hasLegs +
+    " progress=" + (body.legs ? body.legs.progress : "n/a"));
+}
 function _slamLegTipExtension(body) {
-  if (!body || !body.legs) return 0;
+  if (!body) return 0;
+  if (!body.legs) { _legDumpSlam(body, "no legs"); return 0; }
   const progress = Number.isFinite(body.legs.progress) ? body.legs.progress : 0;
   if (progress < 0.02) return 0;
-
-  const bottomMember = (body.members && body.members[0]) ? body.members[0] : null;
-  if (!bottomMember || !bottomMember.id) return 0;
-  if (bottomMember.hasRecovery === false) return 0;
-
-  // Booster HULL height and width ONLY — no interstage
-  const H = Number.isFinite(bottomMember.height) ? bottomMember.height : 0;
-  const W = Number.isFinite(bottomMember.width) ? bottomMember.width : 0;
-  if (!(H > 0) || !(W > 0)) return 0;
-
+  const bm = (body.members && body.members[0]) ? body.members[0] : null;
+  if (!bm || !bm.id) { _legDumpSlam(body, "no bm.id"); return 0; }
+  if (bm.hasRecovery === false) { _legDumpSlam(body, "hasRecovery=false"); return 0; }
+  let H = 0;
+  if (Number.isFinite(bm.height)) H = bm.height;
+  else if (Number.isFinite(bm.tankHeight)) H = bm.tankHeight;
+  else if (Number.isFinite(body.height)) H = body.height;
+  else H = 41;
+  const W = Number.isFinite(bm.width) ? bm.width : (Number.isFinite(body.width) ? body.width : 3.9);
+  if (!(H > 0) || !(W > 0)) { _legDumpSlam(body, "H=" + H + " W=" + W); return 0; }
   const sd = Derivation.getStackData();
-  const md = (sd && sd.memberDerived && sd.memberDerived[bottomMember.id]) ? sd.memberDerived[bottomMember.id] : null;
+  const md = (sd && sd.memberDerived && sd.memberDerived[bm.id]) ? sd.memberDerived[bm.id] : null;
   const ld = (md && md.legs) ? md.legs : null;
-  if (!ld || !Number.isFinite(ld.hingeY) || !Number.isFinite(ld.legLength) || !Number.isFinite(ld.maxSweepRad)) return 0;
-
-  // Front legs (depthX=1.0, depthY=0) — deeper of the two depths, touch first
+  let _hingeY, _legLen, _maxSweep, _src;
+  if (ld && Number.isFinite(ld.hingeY) && Number.isFinite(ld.legLength) && Number.isFinite(ld.maxSweepRad)) {
+    _hingeY = ld.hingeY; _legLen = ld.legLength; _maxSweep = ld.maxSweepRad; _src = "memberDerived";
+  } else {
+    _hingeY = -H * 0.008; _legLen = H * 0.27; _maxSweep = 125 * Math.PI / 180; _src = "hardcoded";
+    _legDumpSlam(body, "no memberDerived.legs -> hardcoded");
+  }
   const depthX = 1.0;
   const j1x = W * 0.49 * depthX;
   const j2x = W * 0.05 * depthX;
-  const jY = ld.hingeY;
-
+  const jY = _hingeY;
   const pivotX = Math.sin(Math.PI / 4) * (j1x + j2x);
   const pivotY = jY;
-
-  const sweep = progress * ld.maxSweepRad;
-  const tipX = pivotX + ld.legLength * Math.sin(sweep);
-  const tipY = pivotY - ld.legLength * Math.cos(sweep);
-
+  const sweep = progress * _maxSweep;
+  const tipX = pivotX + _legLen * Math.sin(sweep);
+  const tipY = pivotY - _legLen * Math.cos(sweep);
   const d1 = Math.hypot(tipX - j1x, tipY - jY) || 1;
   const d2 = Math.hypot(tipX - j2x, tipY - jY) || 1;
   const u1y = (jY - tipY) / d1;
   const u2y = (jY - tipY) / d2;
-  const roundR = Math.min(ld.legLength * 0.90, d1 * 0.85, d2 * 0.85);
-
+  const roundR = Math.min(_legLen * 0.90, d1 * 0.85, d2 * 0.85);
   const p1y = tipY + u1y * roundR;
   const p2y = tipY + u2y * roundR;
   const tipApexY = 0.25 * p1y + 0.5 * tipY + 0.25 * p2y;
-
-  const prevProg = Number.isFinite(body._dbgSlamLegProg) ? body._dbgSlamLegProg : -1;
-  if (Math.abs(progress - prevProg) > 0.05) {
-    body._dbgSlamLegProg = progress;
-    console.log("[LEG-EXT-SLAM] p=" + progress.toFixed(2) + " H=" + H.toFixed(1) + " W=" + W.toFixed(2) +
-      " hingeY=" + ld.hingeY.toFixed(3) + " legLen=" + ld.legLength.toFixed(2) +
-      " tipY_geo=" + tipY.toFixed(3) + " tipApex=" + tipApexY.toFixed(3));
+  if (!body._legSlamOkLogged) {
+    body._legSlamOkLogged = true;
+    console.log("[LEG-SLAM-OK] p=" + progress.toFixed(2) + " H=" + H.toFixed(1) + " W=" + W.toFixed(2) +
+      " hingeY=" + _hingeY.toFixed(3) + " legLen=" + _legLen.toFixed(2) +
+      " tipApex=" + tipApexY.toFixed(2) + " src=" + _src);
   }
-
   return Math.max(0, tipApexY);
 }
 
