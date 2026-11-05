@@ -922,7 +922,10 @@ function drawFigurePanel() {
   const mpp = Math.max(mppW, mppH);
   
   const baseX = w / 2;
-  const baseY = h * 0.94;
+  const stackHeight_px = totalH_m / mpp;
+  // Place rocket so its vertical MIDPOINT sits at panel center. Rotation
+  // below then pivots around that mid — natural tumble look, no base-hinge.
+  const baseY = Math.min(h * 0.94, h / 2 + stackHeight_px / 2);
   const stackHalfW_px = (widest / mpp) / 2;
   
   // ==== FUEL BAR — left edge of canvas, screen space (not rotated) ====
@@ -960,9 +963,12 @@ function drawFigurePanel() {
   const thetaRel = (body.theta || 0) - localVert;
   
   figCtx.save();
-  figCtx.translate(baseX, baseY);
+  // Pivot at (baseX, h/2) — panel center. After the baseY shift above,
+  // rocket mid lands here, so tilting rotates around the rocket's OWN
+  // center (natural tumble) instead of hinging at its base.
+  figCtx.translate(baseX, h / 2);
   figCtx.rotate(-thetaRel);
-  figCtx.translate(-baseX, -baseY);
+  figCtx.translate(-baseX, -h / 2);
   
   // Payload inside fairing (background)
   if (body.payloadId && !body.payloadReleased) {
