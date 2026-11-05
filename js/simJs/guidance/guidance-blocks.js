@@ -3211,7 +3211,7 @@ setState(s) {
         lbInit: false, lbT0: null, lbDone: false, lbLastLog: 0,
         lbThrCmd: null, lbGimbalCmd: 0, lbFinCmd: 0,
         lbSpooled: false, lbSpoolT: null, lbBurnCut: false,
-        lbAlignStartT: null, lbAlignT0: null, lbTrajPow: null, lbSisterRanges: null, lbSisterPick: null,
+        lbAlignStartT: null, lbAlignT0: null, lbTrajPow: null, lbSisterRanges: null, lbSisterPick: null, lbPlan: null,
         lbTestOverride: null, lbCapture6: null, lbTrajPow: null,
         lbaInit: false, lbaAlignStartT: null, lbaFinCmd: null, lbaGimbalZeroDone: false,
         lbAlignDeltaMax: 0,
@@ -5025,17 +5025,14 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
             const pad = (_missionCtx && _missionCtx.targetPad) || null;
             const padEf = (pad && Number.isFinite(pad.angleEf)) ? pad.angleEf : (env.LAUNCH_SITE_ANGLE_0 || 0);
 
-            // Local frame (up = radial, x = tangential/east) — computed BEFORE the start log so the
-            // start log can report Earth-fixed velocity (inertial Math.hypot over-reports by the
-            // ~465 m/s Earth-rotation term: 507 m/s inertial vs ~217 m/s ground at the same state).
             const rNow = Math.hypot(d.rx, d.ry);
             const uxN = rNow > 0 ? d.rx / rNow : 1;
             const uyN = rNow > 0 ? d.ry / rNow : 0;
             const localVert = Math.atan2(-d.rx, d.ry);
             const thetaLocalDeg = _wrapPi(d.theta - localVert) * R2D;
-            const vRadial = d.vx * uxN + d.vy * uyN;              // radial: same in inertial & Earth-fixed
+            const vRadial = d.vx * uxN + d.vy * uyN;
             const vTangInertial = d.vx * uyN - d.vy * uxN;
-            const vTangGround = vTangInertial - omegaE * rNow;    // Earth-fixed tangential (ground-relative)
+            const vTangGround = vTangInertial - omegaE * rNow;
 
             if (!_st.lbInit) {
               _st.lbInit = true;
@@ -5055,6 +5052,7 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
               _st.lbTrajPow = null;
               _st.lbSisterRanges = null;
               _st.lbSisterPick = null;
+              _st.lbPlan = null;
               _send(Guidance.cmdSetAllThrottle(0));
               _send(Guidance.cmdSetGimbalRate(0));
               _send(Guidance.cmdRcsDuty(null, idx));
@@ -5063,53 +5061,9 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
                 " alt=" + (d.altitudeAGL / 1000).toFixed(2) + "km" +
                 " vGround=" + vGroundMag.toFixed(0) + "m/s" +
                 " (vRad=" + vRadial.toFixed(1) + " vTangGround=" + vTangGround.toFixed(1) + ")" +
-                " — dual-solver ALIGN → TOUCHDOWN");
+                " — flat-output SLAM → TOUCHDOWN");
             }
 
-            // EARLY STATE LOG — fires every 0.5s regardless of SPOOL/ALIGN sub-phase.
-            if (!_st.lbDone && simT - _st.lbLastLog >= 0.5) {
-              _st.lbLastLog = simT;
-              const _alphaAngEL = ((d.alphaAng || 0) + ((d.gridFinTorque || 0) + (_st.lastRcsTorque || 0)) / I) * R2D;
-              const _impEL = _bbImpact(d.rx, d.ry, d.vx, d.vy, simT, env.GM_EARTH, Rm, omegaE);
-              const _vacErrEL = _impEL ? (_wrapPi(_impEL.phiEf - padEf) * Rm / 1000) : null;
-              const _tImpactEL = _impEL ? _impEL.tImpact : null;
-              const _gimbalsEL = (body.engines || []).filter(e => e.gimbal);
-              const _gimbalCurEL = _gimbalsEL.length ? (_gimbalsEL[0].gimbalDeg || 0) : 0;
-              const _aeroEL = _pesAeroAccel(d, M);
-              const _axInEL = d.gVecX + _aeroEL.ax;
-              const _ayInEL = d.gVecY + _aeroEL.ay;
-              const _axGndEL = (_axInEL * uyN - _ayInEL * uxN) - 2 * omegaE * vRadial;
-              const _ayGndEL = (_axInEL * uxN + _ayInEL * uyN) + omegaE * omegaE * rNow + 2 * omegaE * vTangGround;
-              const _phiEL = Math.atan2(d.rx, d.ry) - omegaE * simT;
-              const _xEL = _wrapPi(_phiEL - padEf) * Rm;
-              console.log("[LANDING_BURN] t=" + simT.toFixed(2) +
-                " | theta=" + thetaLocalDeg.toFixed(2) + "deg w=" + ((d.omega - omegaE) * R2D).toFixed(3) + "deg/s aAng=" + _alphaAngEL.toFixed(3) + "deg/s2" +
-                " | x=" + (_xEL / 1000).toFixed(3) + "km vx=" + vTangGround.toFixed(2) + "m/s ax=" + _axGndEL.toFixed(3) + "m/s2" +
-                " | h=" + (d.altitudeAGL / 1000).toFixed(3) + "km vy=" + vRadial.toFixed(2) + "m/s ay=" + _ayGndEL.toFixed(3) + "m/s2" +
-                " | thr=" + Math.round(d.thrustTotal || 0) + "N cmd=" + (Number.isFinite(_st.lbThrCmd) ? Math.round(_st.lbThrCmd) : "n/a") +
-                " gim=" + _gimbalCurEL.toFixed(2) + " cmd=" + _st.lbGimbalCmd.toFixed(2) +
-                " fin=" + ((d.gridFinControlUsed != null) ? d.gridFinControlUsed : 0).toFixed(1) + " cmd=" + _st.lbFinCmd.toFixed(1) +
-                " | vacErr=" + (_vacErrEL != null ? _vacErrEL.toFixed(3) + "km" : "n/a") +
-                " tImp=" + (_tImpactEL != null ? _tImpactEL.toFixed(1) + "s" : "n/a"));
-            }
-
-            // EARLY DONE check — fires regardless of SPOOL/ALIGN sub-phase.
-            if (!_st.lbDone && (d.altitudeAGL < 5 || body.landed || body.crashed || (simT - _st.lbT0) > 60)) {
-              _st.lbDone = true;
-              const _impDONE = _bbImpact(d.rx, d.ry, d.vx, d.vy, simT, env.GM_EARTH, Rm, omegaE);
-              const _vacErrDONE = _impDONE ? (_wrapPi(_impDONE.phiEf - padEf) * Rm / 1000) : null;
-              const _phiDONE = Math.atan2(d.rx, d.ry) - omegaE * simT;
-              const _xErrDONE = _wrapPi(_phiDONE - padEf) * Rm;
-              const _lbElapsed = simT - _st.lbT0;
-              const _lbReason = _lbElapsed > 60 ? "timeout" : (body.crashed ? "crashed" : (body.landed ? "landed" : "impact"));
-              console.log("[LANDING_BURN-DONE] t=" + simT.toFixed(2) +
-                " elapsed=" + _lbElapsed.toFixed(2) + "s reason=" + _lbReason +
-                " groundErr=" + (_xErrDONE / 1000).toFixed(3) + "km" +
-                " vRad=" + vRadial.toFixed(2) + "m/s vTangGround=" + vTangGround.toFixed(2) + "m/s" +
-                " theta=" + thetaLocalDeg.toFixed(2) + "deg w=" + ((d.omega - omegaE) * R2D).toFixed(3) + "deg/s" +
-                " landed=" + (!!body.landed) + " crashed=" + (!!body.crashed) +
-                " vacErr=" + (_vacErrDONE != null ? _vacErrDONE.toFixed(3) + "km" : "n/a"));
-            }
             const hAGL = d.altitudeAGL;
             const phiNow = Math.atan2(d.rx, d.ry) - omegaE * simT;
             const xFromPadM = _wrapPi(phiNow - padEf) * Rm;
@@ -5117,28 +5071,11 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
             const cosT = Math.cos(d.theta), sinT = Math.sin(d.theta);
             const thrIx = d.thrustBodyX * cosT - d.thrustBodyY * sinT;
             const thrIy = d.thrustBodyX * sinT + d.thrustBodyY * cosT;
-            const Fx_in = thrIx + d.dragVecX + (d.gridFinFx || 0);
-            const Fy_in = thrIy + d.dragVecY + (d.gridFinFy || 0);
-            const axIn = d.gVecX + Fx_in / M;
-            const ayIn = d.gVecY + Fy_in / M;
-            const axTangInertial = axIn * uyN - ayIn * uxN;
-            const ayRadInertial = axIn * uxN + ayIn * uyN;
-            // Earth-fixed (rotating-frame) corrections — small but consistent:
-            //   tangential: Coriolis -2·omegaE·vRadial
-            //   radial:    centrifugal +omegaE^2·r  +  Coriolis +2·omegaE·vTangGround
-            const axGround = axTangInertial - 2 * omegaE * vRadial;
-            const ayGround = ayRadInertial + omegaE * omegaE * rNow + 2 * omegaE * vTangGround;
-
             const thrustCur = d.thrustTotal || 0;
             const gimbals = (body.engines || []).filter(e => e.gimbal);
             const gimbalCur = gimbals.length ? (gimbals[0].gimbalDeg || 0) : 0;
             const finCur = (d.gridFinControlUsed != null) ? d.gridFinControlUsed : 0;
-            // === LANDING_BURN: SPOOL → ALIGN (dual-solver) → TOUCHDOWN ===
-            // Alignment targets: theta→0, omega→0, alpha→0 (rotational);
-            //                    x_offset→0, vx→0, ax→0 (linear East).
-            // Vertical (h, vy, ay) is FREE — solver only constrains Fx_world and attitude.
-            // Solver re-evaluated every tick from current state (receding horizon).
-            // 1-tick look-ahead: evaluate at t=dt.
+
             const lbToks = _ebTokens(cfg.LANDING_BURN_ENGINES, "C");
             const lbEng = (body.engines || []).filter(e => _bbInSet(e, lbToks));
             const gimbalsLB = (body.engines || []).filter(e => e.gimbal);
@@ -5147,12 +5084,11 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
               break;
             }
 
-            // ---- Sub-phase: SPOOL (fire 100%, gimbal track 0, wait) ----
             if (!_st.lbSpooled) {
               if (gimbalsLB.length) {
                 const curG = gimbalsLB[0].gimbalDeg || 0;
                 const rateZero = -curG / dt;
-                const maxR = gimbals[0].gimbalRateDegS || 40;
+                const maxR = gimbalsLB[0].gimbalRateDegS || 40;
                 _send(Guidance.cmdSetGimbalRate(Math.max(-maxR, Math.min(maxR, rateZero)), "center"));
               }
               _bbThrottle(lbEng, Infinity);
@@ -5176,437 +5112,198 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
               break;
             }
 
-            // ---- Aligned check → TOUCHDOWN ----
+            const _cfgN = function (k, def) { return Number.isFinite(cfg[k]) ? cfg[k] : def; };
+            const V_TD = _cfgN("LANDING_BURN_V_TD", 0.2);
+            const H_FLOOR = _cfgN("LANDING_BURN_H_FLOOR_M", 0.1);
+            const H_OFF = _cfgN("LANDING_BURN_H_OFFSET_M", 0);
+            const H_CUT = _cfgN("LANDING_BURN_H_CUT_M", 0);
+            const H_STALL = _cfgN("LANDING_BURN_H_STALL_M", 0.5);
+            const POLE = _cfgN("LANDING_BURN_POLE", 1.0);
+            const DELTA_PLAN = _cfgN("LANDING_BURN_DELTA_PLAN_DEG", 3.0);
+            const T_FIXED = Number.isFinite(cfg.LANDING_BURN_PLAN_T_S) ? cfg.LANDING_BURN_PLAN_T_S : null;
+
+            const hEff = hAGL - H_OFF;
             const elapsedAlign = simT - _st.lbAlignStartT;
-            const ALIGN_TOL_THETA = 1.0, ALIGN_TOL_OMEGA = 0.5 * Math.PI / 180;
-            const ALIGN_TOL_X = 5.0, ALIGN_TOL_VX = 1.0;
-            if (elapsedAlign > 0.5 &&
-                Math.abs(thetaLocalDeg) < ALIGN_TOL_THETA &&
-                Math.abs(d.omega) < ALIGN_TOL_OMEGA &&
-                Math.abs(xFromPadM) < ALIGN_TOL_X &&
-                Math.abs(vTangGround) < ALIGN_TOL_VX) {
+
+            if (body.landed || body.crashed || hEff <= H_CUT || (-vRadial < 0.15 && hEff < H_STALL)) {
               _send(Guidance.cmdSetAllThrottle(0));
               _send(Guidance.cmdSetGimbalRate(0));
-              _send(Guidance.cmdRcsDuty(null, idx));
-              console.log("[standardRTLS] LANDING_BURN aligned → TOUCHDOWN t=" + simT.toFixed(2) +
-                " th=" + thetaLocalDeg.toFixed(2) + "deg w=" + (d.omega * R2D).toFixed(3) +
-                " x=" + xFromPadM.toFixed(1) + "m vx=" + vTangGround.toFixed(2) + "m/s" +
-                " h=" + (hAGL / 1000).toFixed(2) + "km vy=" + vRadial.toFixed(1) + "m/s" +
-                " elapsed=" + elapsedAlign.toFixed(2) + "s");
+              _rcsOff();
+              console.log("[standardRTLS] LANDING_BURN touchdown-cut t=" + simT.toFixed(2) +
+                " altitudeAGL=" + hAGL.toFixed(3) + "m vy=" + vRadial.toFixed(3) + "m/s" +
+                " x=" + xFromPadM.toFixed(3) + "m vx=" + vTangGround.toFixed(3) + "m/s" +
+                " th=" + thetaLocalDeg.toFixed(3) + "deg w=" + ((d.omega - omegaE) * R2D).toFixed(4) + "deg/s" +
+                " landed=" + (!!body.landed) + " crashed=" + (!!body.crashed));
               finished = true;
               break;
             }
 
-            // ---- Solver helpers (scoped, defined once per instance via function expression) ----
-            // ===== ABANDONED (Chat 6): paired with _lbSolve above. =====
-            const _lbRange = function (a0, v0, ds) {
-              if (a0 === 0) return null;
-              const disc = 9 * v0 * v0 + 12 * a0 * ds;
-              if (disc <= 0) return null;
-              const s = Math.sqrt(disc);
-              const r1 = (-3 * v0 - s) / a0;
-              const r2 = (-3 * v0 + s) / a0;
-              const lo = Math.max(0, Math.min(r1, r2));
-              const hi = Math.max(r1, r2);
-              return hi > lo ? [lo, hi] : null;
-            };
-            // Choose a0 for solver — sign(Δs), small magnitude. Solver uses this as the
-            // "design" initial accel; physics catches up via gimbal in 1-2 ticks.
-            const _lbChooseA0 = function (obsA0, ds, typical) {
-              if (Math.abs(ds) < 1e-6) return 0;
-              const sgn = Math.sign(ds);
-              if (Math.sign(obsA0) === sgn && Math.abs(obsA0) > 1e-3) {
-                return Math.min(Math.abs(obsA0), typical * 2) * sgn;
-              }
-              return typical * sgn;
-            };
-            // ===== ABANDONED (Chat 6): sinusoidal branch solver — discriminant 9v₀²+12a₀Δs often <0. Replaced by power-law below. =====
-            const _lbSolve = function (a0, v0, ds, T0, n) {
-              if (a0 === 0 || !(T0 > 0)) return null;
-              const Lambda = 2 * (2 * ds - v0 * T0) / (a0 * T0 * T0);
-              const branchN = (Number.isInteger(n) && n >= 0) ? n : 0;
-              if (branchN === 0 && !(Lambda > 1 / 3)) return null;
-              let lo, hi;
-              if (branchN === 0) { lo = 1e-10; hi = Math.PI - 1e-10; }
-              else { lo = branchN * Math.PI + 1e-10; hi = (branchN + 1) * Math.PI - 1e-10; }
-              let m = 0.5 * (lo + hi);
-              for (let it = 0; it < 200; it++) {
-                const sm = Math.sin(m), cm = Math.cos(m);
-                const cotm = cm / sm;
-                const g = 1 / (m * m) - cotm / m;
-                const G = g - Lambda;
-                if (G > 0) hi = m; else lo = m;
-                const dg = -2 / (m * m * m) + 1 / (sm * sm) / m + cotm / (m * m);
-                let mn = m - G / dg;
-                if (!isFinite(mn) || mn <= lo || mn >= hi) mn = 0.5 * (lo + hi);
-                if (Math.abs(mn - m) < 1e-14 * Math.max(1, Math.abs(m))) { m = mn; break; }
-                m = mn;
-                if (hi - lo < 1e-14) break;
-              }
-              const P = Math.PI * T0 / m;
-              const f = 2 * m / T0;
-              const B = 1 + 2 * v0 / (a0 * T0);
-              const cotm = Math.cos(m) / Math.sin(m);
-              const D = cotm - 1 / m;
-              if (Math.abs(D) < 1e-12) return null;
-              const R = -B / D;
-              const phi = Math.atan2(-B, D);
-              const k1 = phi - m;
-              const A = -a0 / (2 * Math.sin(m) * Math.cos(phi));
-              const k2 = a0 * (1 + R * cotm) / 2;
-              return { A, k1, k2, f, m, P, Lambda };
-            };
-
-            // ---- Lock T0 once at first ALIGN tick ----
-            // ============ POWER-LAW SOLVER (Chat 6) ============
-            // α(t) = a₀(1-(t/L)^q) - k·sin(πt/L); α(0)=a₀, α(L)=0
-            const _lbGfun = function(q){ return q / (2*(q+1)*(q+2)); };
-            const _lbSolveQfromG = function(G){
-              if(!(G>0)) return [];
-              const disc = 4*G*G - 12*G + 1;
-              if(disc<0) return [];
-              const sd = Math.sqrt(disc);
-              const q1 = (1 - 6*G + sd)/(4*G);
-              const q2 = (1 - 6*G - sd)/(4*G);
-              const out = [];
-              if(q1>1e-6) out.push(q1);
-              if(q2>1e-6 && Math.abs(q2-q1)>1e-9) out.push(q2);
-              return out;
-            };
-            const _lbCrossingsOf = function(a0,q,k,L){
-              let cross=0, prev=0;
-              const NN=200;
-              for(let ii=1;ii<NN;ii++){
-                const tt=L*ii/NN;
-                const aa=a0*(1-Math.pow(tt/L,q))-k*Math.sin(Math.PI*tt/L);
-                const ss=Math.sign(aa);
-                if(ss!==0 && prev!==0 && ss!==prev) cross++;
-                if(ss!==0) prev=ss;
-              }
-              return cross;
-            };
-            const _lbSolvePowAtT0 = function(a0,v0,ds,T0){
-              if(a0===0 || !(T0>0)) return null;
-              const Greq = (ds - v0*T0/2)/(a0*T0*T0);
-              const qs = _lbSolveQfromG(Greq);
-              if(!qs.length) return null;
-              let best=null;
-              for(let qi=0;qi<qs.length;qi++){
-                const q=qs[qi];
-                if(q<1e-6 || q>1e4) continue;
-                const k = (Math.PI/2)*(v0/T0 + a0*q/(q+1));
-                const cross = _lbCrossingsOf(a0,q,k,T0);
-                if(cross>1) continue;
-                const sol = {q:q, k:k, L:T0, crossings:cross};
-                if(!best || cross<best.crossings || (cross===best.crossings && q<best.q)) best = sol;
-              }
-              return best;
-            };
-            const _lbAlphaPow = function(t,sol,a0){
-              if(!sol) return 0;
-              if(t<=0) return a0;
-              if(t>=sol.L) return 0;
-              return a0*(1-Math.pow(t/sol.L, sol.q)) - sol.k*Math.sin(Math.PI*t/sol.L);
-            };
-            // ============ SISTER FINDER (T0 range where both rot & lin work) ============
-            const _lbFindValidT0Range = function(a0r, v0r, dsr, a0l, v0l, dsl) {
-              const Lmin = 0.5, Lmax = 30, N = 100;
-              const intervals = [];
-              let inValid = false, startL = null, prevL = Lmin;
-              for (let i = 0; i <= N; i++) {
-                const L = Lmin * Math.pow(Lmax/Lmin, i/N);
-                const r = _lbSolvePowAtT0(a0r, v0r, dsr, L);
-                const l = _lbSolvePowAtT0(a0l, v0l, dsl, L);
-                const valid = !!(r && l);
-                if (valid && !inValid) { startL = L; inValid = true; }
-                if (!valid && inValid) { intervals.push([startL, prevL]); inValid = false; }
-                prevL = L;
-              }
-              if (inValid) intervals.push([startL, Lmax]);
-              const merged = [];
-              for (let k = 0; k < intervals.length; k++) {
-                const iv = intervals[k];
-                if (merged.length && iv[0]/merged[merged.length-1][1] < 1.3) merged[merged.length-1][1] = iv[1];
-                else merged.push(iv.slice());
-              }
-              return merged;
-            };
-            const _lbPickBestT0 = function(a0r, v0r, dsr, a0l, v0l, dsl, intervals) {
-              let best = null;
-              for (let ii = 0; ii < intervals.length; ii++) {
-                const iv = intervals[ii];
-                for (let j = 1; j <= 15; j++) {
-                  const L = iv[0] + (iv[1]-iv[0]) * j / 16;
-                  const r = _lbSolvePowAtT0(a0r, v0r, dsr, L);
-                  const l = _lbSolvePowAtT0(a0l, v0l, dsl, L);
-                  if (!r || !l) continue;
-                  const score = r.crossings + l.crossings;
-                  if (!best || score < best.score || (score === best.score && L < best.L)) best = { L: L, score: score, rot: r, lin: l };
-                }
-              }
-              return best;
-            };
-            if (_st.lbAlignT0 == null) {
-              const aeroAccArm = _pesAeroAccel(d, M);
-              const rotA0_ = (d.alphaAng || 0) + (d.gridFinTorque || 0) / I;
-              const axInertialObs_ = d.gVecX + aeroAccArm.ax +
-                                    ((d.thrustBodyX * Math.cos(d.theta) - d.thrustBodyY * Math.sin(d.theta)) / M);
-              const axEarthObs_ = axInertialObs_ - 2 * omegaE * vRadial;
-              const dsRot_ = -thetaLocalDeg / R2D;
-              const dsLin_ = -xFromPadM;
-              const a0RotUse_ = _lbChooseA0(rotA0_, dsRot_, 0.005);
-              const a0LinUse_ = _lbChooseA0(axEarthObs_, dsLin_, 0.3);
-              const rngRot_ = _lbRange(a0RotUse_, d.omega, dsRot_);
-              const rngLin_ = _lbRange(a0LinUse_, vTangGround, dsLin_);
-              if (!rngRot_ || !rngLin_) {
-                console.warn("[standardRTLS] LB ALIGN: no valid T0 range. rot=" +
-                  (rngRot_ ? JSON.stringify(rngRot_) : "null") + " lin=" +
-                  (rngLin_ ? JSON.stringify(rngLin_) : "null") +
-                  " (rotA0obs=" + rotA0_.toFixed(4) + " rotA0use=" + a0RotUse_.toFixed(4) +
-                  " axEarthObs=" + axEarthObs_.toFixed(3) + " axEarthUse=" + a0LinUse_.toFixed(3) +
-                  " vx=" + vTangGround.toFixed(2) + " x=" + xFromPadM.toFixed(1) + ")");
-                _send(Guidance.cmdSetAllThrottle(0));
-                break;
-              }
-              // EXPERIMENT: branch=1 + hardcoded T0=6s
-              _st.lbCapture6 = {
-                a0rot: rotA0_, v0rot: d.omega, dsrot: dsRot_,
-                a0lin: axEarthObs_, v0lin: vTangGround, dslin: dsLin_,
-              };
-              if (cfg.LANDING_BURN_TEST_OVERRIDE && typeof cfg.LANDING_BURN_TEST_OVERRIDE === 'object') {
-                _st.lbTestOverride = JSON.parse(JSON.stringify(cfg.LANDING_BURN_TEST_OVERRIDE));
-                _st.lbAlignT0 = _st.lbTestOverride.T0;
-                console.log("[standardRTLS] LB ALIGN TEST-OVERRIDE T0=" + _st.lbTestOverride.T0.toFixed(2) +
-                  " | obs a0rot=" + _st.lbCapture6.a0rot.toFixed(6) + " v0rot=" + _st.lbCapture6.v0rot.toFixed(6) + " dsrot=" + _st.lbCapture6.dsrot.toFixed(6) +
-                  " a0lin=" + _st.lbCapture6.a0lin.toFixed(4) + " v0lin=" + _st.lbCapture6.v0lin.toFixed(4) + " dslin=" + _st.lbCapture6.dslin.toFixed(3));
-              } else {
-                _st.lbTestOverride = null;
-                _st.lbAlignT0 = (Number.isFinite(cfg.LANDING_BURN_T0_S) ? cfg.LANDING_BURN_T0_S : 6.0);
-              }
-              console.log("[standardRTLS] LB ALIGN armed t=" + simT.toFixed(2) +
-                " T0=" + _st.lbAlignT0.toFixed(2) + "s (cfg) branch=1" +
-                " rotRange(b0)=[" + (rngRot_ ? rngRot_[0].toFixed(2) + "," + rngRot_[1].toFixed(2) : "null") + "]s" +
-                " linRange(b0)=[" + (rngLin_ ? rngLin_[0].toFixed(2) + "," + rngLin_[1].toFixed(2) : "null") + "]s" +
-                " | a0rot(obs)=" + rotA0_.toFixed(4) + " a0lin(obs)=" + axEarthObs_.toFixed(3) +
-                " dsRot=" + dsRot_.toFixed(5) + " dsLin=" + dsLin_.toFixed(2));
-            }
-
-            // Timeout: T0 window exhausted without meeting tolerance
-            const T0_remaining = _st.lbAlignT0 - elapsedAlign;
-            if (T0_remaining < -0.1) {
-              console.warn("[standardRTLS] LB ALIGN FAILED: T0 exhausted, not aligned. th=" +
-                thetaLocalDeg.toFixed(2) + "deg x=" + xFromPadM.toFixed(1) + "m. Forcing exit.");
-              _send(Guidance.cmdSetAllThrottle(0));
-              _send(Guidance.cmdSetGimbalRate(0));
-              finished = true;
-              break;
-            }
-
-            // ---- Wall-clock arming bail (solver never got a valid T0) ----
-            if (_st.lbAlignT0 == null && simT - _st.lbAlignStartT > 20) {
-              console.warn("[standardRTLS] LB ALIGN: solver never armed after 20s. Force exit.");
-              _send(Guidance.cmdSetAllThrottle(0));
-              _send(Guidance.cmdSetGimbalRate(0));
-              finished = true;
-              break;
-            }
-
-            // ---- Solve at current state, evaluate at t = dt (1-tick look-ahead) ----
             const aeroAcc = _pesAeroAccel(d, M);
-            const rotA0 = (d.alphaAng || 0) + (d.gridFinTorque || 0) / I;
-            const rotV0 = d.omega;
-            const rotDs = -thetaLocalDeg / R2D;
-            const axInertialObs = d.gVecX + aeroAcc.ax +
-                                  ((d.thrustBodyX * Math.cos(d.theta) - d.thrustBodyY * Math.sin(d.theta)) / M);
-            const axEarthObs = axInertialObs - 2 * omegaE * vRadial;
-            const linV0 = vTangGround;
-            const linDs = -xFromPadM;
+            const comY = Math.max(d.massProps.comY || 0, 1);
+            const comX = d.massProps.comX || 0;
+            const gLoc = Number.isFinite(d.gMag) ? d.gMag : Math.hypot(d.gVecX, d.gVecY);
+            const aeroUp = aeroAcc.ax * uxN + aeroAcc.ay * uyN;
+            const thL = thetaLocalDeg / R2D;
+            const wL = d.omega - omegaE;
+            const Fnow = Math.max(thrustCur, 0.5 * M * gLoc);
+            const gEff = Fnow / M;
+            const ell = I / (comY * M);
 
-const _brCfg = (Number.isInteger(cfg.LANDING_BURN_T0_BRANCH) && cfg.LANDING_BURN_T0_BRANCH >= 0) ? cfg.LANDING_BURN_T0_BRANCH : 1;
-            const _brUse = (_st.lbTestOverride && Number.isInteger(_st.lbTestOverride.branch) && _st.lbTestOverride.branch >= 0) ? _st.lbTestOverride.branch : _brCfg;
-            // LOCK-ONCE at spool-complete (capture6 frozen): sister-find T0 range, pick best, solve traj, never re-solve
-            if (!_st.lbTrajPow && _st.lbCapture6) {
-              const c6 = _st.lbCapture6;
-              let T0_locked = _st.lbAlignT0;
-              const _ovT0Set = _st.lbTestOverride && Number.isFinite(_st.lbTestOverride.T0) && _st.lbTestOverride.T0 > 0;
-              if (_ovT0Set) {
-                T0_locked = _st.lbTestOverride.T0;
-                console.log("[standardRTLS] LB T0-OVERRIDE T0=" + T0_locked.toFixed(2) + "s (manual)");
-              } else if (cfg.LANDING_BURN_T0_AUTO !== false) {
-                const _rng = _lbFindValidT0Range(c6.a0rot, c6.v0rot, c6.dsrot, c6.a0lin, c6.v0lin, c6.dslin);
-                if (_rng.length > 0) {
-                  const _best = _lbPickBestT0(c6.a0rot, c6.v0rot, c6.dsrot, c6.a0lin, c6.v0lin, c6.dslin, _rng);
-                  _st.lbSisterRanges = _rng.map(function(iv){return [iv[0],iv[1]];});
-                  if (_best) {
-                    T0_locked = _best.L;
-                    _st.lbSisterPick = _best.L;
-                    const _rs = _rng.map(function(iv){return "["+iv[0].toFixed(2)+"-"+iv[1].toFixed(2)+"]";}).join(" ");
-                    console.log("[standardRTLS] LB SISTER-AUTO T0=" + T0_locked.toFixed(2) + "s score=" + _best.score + " commonRanges=" + _rs);
-                  }
-                } else {
-                  console.log("[standardRTLS] LB SISTER-AUTO: no common range; fallback T0=" + T0_locked.toFixed(2) + "s");
+            const axInF = d.gVecX + aeroAcc.ax + thrIx / M;
+            const ayInF = d.gVecY + aeroAcc.ay + thrIy / M;
+            const axTang = axInF * uyN - ayInF * uxN - 2 * omegaE * vRadial;
+            const alphaTot = (d.alphaAng || 0) + (d.gridFinTorque || 0) / I;
+            const zNow = xFromPadM - ell * thL;
+            const zdNow = vTangGround - ell * wL;
+            const z2Now = axTang - ell * alphaTot;
+            const z3Now = -gEff * wL;
+
+            const _lbPolyD = function (c, k, t) {
+              let s = 0;
+              for (let n = k; n < c.length; n++) {
+                let f = 1; for (let i = 0; i < k; i++) f *= (n - i);
+                s += c[n] * f * Math.pow(t, n - k);
+              }
+              return s;
+            };
+            const _lbPlanPoly = function (T, q0, q1, q2, q3) {
+              const c = [q0, q1, q2 / 2, q3 / 6, 0, 0, 0, 0];
+              const A = [], b = [];
+              for (let k = 0; k < 4; k++) {
+                const row = [];
+                for (let n = 4; n < 8; n++) {
+                  let f = 1; for (let i = 0; i < k; i++) f *= (n - i);
+                  row.push(f * Math.pow(T, n - k));
+                }
+                let rhs = 0;
+                for (let n = k; n < 4; n++) {
+                  let f = 1; for (let i = 0; i < k; i++) f *= (n - i);
+                  rhs -= c[n] * f * Math.pow(T, n - k);
+                }
+                A.push(row); b.push(rhs);
+              }
+              for (let i = 0; i < 4; i++) {
+                let p = i;
+                for (let r = i + 1; r < 4; r++) if (Math.abs(A[r][i]) > Math.abs(A[p][i])) p = r;
+                const tA = A[i]; A[i] = A[p]; A[p] = tA;
+                const tb = b[i]; b[i] = b[p]; b[p] = tb;
+                const piv = A[i][i];
+                if (!(Math.abs(piv) > 1e-30)) return null;
+                for (let r = i + 1; r < 4; r++) {
+                  const f = A[r][i] / piv;
+                  for (let cc = i; cc < 4; cc++) A[r][cc] -= f * A[i][cc];
+                  b[r] -= f * b[i];
                 }
               }
-              _st.lbAlignT0 = T0_locked;
-              const sr = _lbSolvePowAtT0(c6.a0rot, c6.v0rot, c6.dsrot, T0_locked);
-              const sl = _lbSolvePowAtT0(c6.a0lin, c6.v0lin, c6.dslin, T0_locked);
-              if (sr && sl) {
-                _st.lbTrajPow = { rot: sr, lin: sl, a0rot: c6.a0rot, a0lin: c6.a0lin, T0: T0_locked };
-                console.log("[standardRTLS] LB TRAJ-POW locked T0=" + T0_locked.toFixed(2) +
-                  " q_rot=" + sr.q.toFixed(4) + " k_rot=" + sr.k.toFixed(6) + " cross_rot=" + sr.crossings +
-                  " | q_lin=" + sl.q.toFixed(4) + " k_lin=" + sl.k.toFixed(6) + " cross_lin=" + sl.crossings);
-              } else {
-                console.warn("[standardRTLS] LB TRAJ-POW null at T0=" + T0_locked.toFixed(2) + " rot=" + !!sr + " lin=" + !!sl);
+              const xs = [0, 0, 0, 0];
+              for (let i = 3; i >= 0; i--) {
+                let s = b[i];
+                for (let cc = i + 1; cc < 4; cc++) s -= A[i][cc] * xs[cc];
+                xs[i] = s / A[i][i];
               }
-            }
-            const solRot = _st.lbTrajPow ? _st.lbTrajPow.rot : null;
-            const solLin = _st.lbTrajPow ? _st.lbTrajPow.lin : null;
-            if (!solRot || !solLin) { _bbThrottle(lbEng, 0); break; }
-            if (!solRot || !solLin) {
-              if (DEBUG_RTLS) console.warn("[standardRTLS] LB ALIGN solve null T0rem=" +
-                T0_remaining.toFixed(2) + " rot=" + !!solRot + " lin=" + !!solLin);
-              _bbThrottle(lbEng, 0);
-              break;
-            }
-
-            const tEval = elapsedAlign;
-            const alphaTarget = _lbAlphaPow(tEval, solRot, _st.lbTrajPow.a0rot);
-            const axEarthTarget = _lbAlphaPow(tEval, solLin, _st.lbTrajPow.a0lin);
-
-            // === 1-TICK LOOK-AHEAD ===
-            // Predict S(k+1) using CURRENT command (physics will produce this naturally next tick).
-            // Then solve [torque, Fx_world] 2x2 system AT the predicted state — bounded at any theta.
-            const _ctd = Math.cos(d.theta), _std = Math.sin(d.theta);
-            const thrustIx_curr = d.thrustBodyX * _ctd - d.thrustBodyY * _std;
-            const thrustIy_curr = d.thrustBodyX * _std + d.thrustBodyY * _ctd;
-            const aIxNow = d.gVecX + thrustIx_curr / M + aeroAcc.ax;
-            const aIyNow = d.gVecY + thrustIy_curr / M + aeroAcc.ay;
-            const alphaNow = (d.alphaAng || 0) + (d.gridFinTorque || 0) / I + (_st.lastRcsTorque || 0) / I;
-            const thetaPred = d.theta + d.omega * dt + 0.5 * alphaNow * dt * dt;
-            const omegaPred = d.omega + alphaNow * dt;
-            const vxPred = d.vx + aIxNow * dt;
-            const vyPred = d.vy + aIyNow * dt;
-            const rxPred = d.rx + d.vx * dt + 0.5 * aIxNow * dt * dt;
-            const ryPred = d.ry + d.vy * dt + 0.5 * aIyNow * dt * dt;
-            const dPred = Derivation.deriveForState(snapshot, idx, {
-              rx: rxPred, ry: ryPred, vx: vxPred, vy: vyPred,
-              theta: thetaPred, omega: omegaPred,
-            });
-            if (!dPred || !dPred.massProps) { _bbThrottle(lbEng, 0); break; }
-            const M_pred = dPred.massProps.M;
-            const I_pred = dPred.massProps.I;
-            const comY_pred = dPred.massProps.comY;
-            const comX_pred = dPred.massProps.comX || 0;
-            const aeroAccPred = _pesAeroAccel(dPred, M_pred);
-            const envTorquePred = (dPred.torqueDrag || 0) + (dPred.gridFinTorque || 0) + (dPred.torqueGravityGradient || 0);
-            const rPred = Math.hypot(rxPred, ryPred);
-            const uxPred = rPred > 0 ? rxPred / rPred : 1;
-            const uyPred = rPred > 0 ? ryPred / rPred : 0;
-            const vRadPred = vxPred * uxPred + vyPred * uyPred;
-            const axInertialTarget = axEarthTarget + 2 * omegaE * vRadPred;
-
-            // 2x2 solve AT PREDICTED STATE:
-            //   comY·FxBody − comX·FyBody = I·α_target − envTorque_pred
-            //   cosθ·FxBody − sinθ·FyBody = M·(axInertialTarget − gVecX − aeroAcc.ax)
-            const reqTorque = I_pred * alphaTarget - envTorquePred;
-            const thrustIx_req = M_pred * (axInertialTarget - dPred.gVecX - aeroAccPred.ax);
-            const _s_pred = Math.sin(thetaPred);
-            const _c_pred = Math.cos(thetaPred);
-            const _det = -comY_pred * _s_pred + comX_pred * _c_pred;
-            let FxBody, FyBody;
-            if (Math.abs(_det) < 1e-2) {
-              // Near-singular (theta≈0 and comX≈0): prioritize attitude, vertical hold only.
-              FxBody = reqTorque / Math.max(Math.abs(comY_pred), 1e-3);
-              FyBody = M_pred * dPred.gMag * 0.95;
-            } else {
-              FxBody = (-reqTorque * _s_pred + comX_pred * thrustIx_req) / _det;
-              FyBody = (comY_pred * thrustIx_req - _c_pred * reqTorque) / _det;
-            }
-            if (!Number.isFinite(FxBody) || !Number.isFinite(FyBody)) { FxBody = 0; FyBody = 0; }
-            // SAFETY (A-soft): backward thrust demand is physical. Clamp Fy_body to small positive
-            // instead of zeroing throttle (avoids trajectory stall).
-            const _fyRaw = FyBody;
-            if (FyBody < 0) {
-              if (DEBUG_RTLS && Math.round(simT * 80) % 80 === 0) {
-                console.warn("[standardRTLS] LB ALIGN Fy_body<0 (=" + FyBody.toFixed(0) + "N) — clamped 1% Fmax forward");
+              c[4] = xs[0]; c[5] = xs[1]; c[6] = xs[2]; c[7] = xs[3];
+              return c;
+            };
+            const _lbPeakDelta = function (c, T) {
+              let pk = 0;
+              for (let i = 0; i <= 200; i++) {
+                const t = T * i / 200;
+                const u = Math.abs(I * _lbPolyD(c, 4, t) / (comY * gEff));
+                pk = Math.max(pk, Math.asin(Math.min(1, u / Fnow)) * R2D);
               }
-              FyBody = Math.max(1, M_pred * 0.01);
-              if (Math.abs(FxBody) < 1) FxBody = 0;
-            }
-            _st.lbLastFyBody = _fyRaw;
+              return pk;
+            };
 
-            const Fmag = Math.hypot(FxBody, FyBody);
-            let gimbalCmdDeg = Math.atan2(FxBody, FyBody) * R2D;
-            const gimbalMax = gimbals.length ? (gimbals[0].gimbalMaxDeg || 8) : 8;
-            let gimbalSat = false;
-            if (Math.abs(gimbalCmdDeg) > gimbalMax) {
-              gimbalCmdDeg = Math.sign(gimbalCmdDeg) * gimbalMax;
-              gimbalSat = true;
-            }
-
-            // Throttle
             const refEng = lbEng[0];
             const ve = refEng.Ve || 3000;
             const maxMF = refEng.maxMassFlowRate || 300;
             const minMF = refEng.minMassFlowRate || 100;
-            let mdotCmd = Fmag / ve / lbEng.length;
+
+            if (!_st.lbPlan) {
+              const vDown0 = Math.max(-vRadial, V_TD + 0.1);
+              const tGo = 2 * Math.max(hEff, 1) / (vDown0 + V_TD);
+              const Tmax = Math.max(5.5, 0.5 * tGo);
+              let T = T_FIXED != null ? T_FIXED : 5.0;
+              let c = _lbPlanPoly(T, zNow, zdNow, z2Now, z3Now);
+              if (T_FIXED == null) {
+                while (c && T < Tmax && _lbPeakDelta(c, T) > DELTA_PLAN) {
+                  T += 0.25;
+                  c = _lbPlanPoly(T, zNow, zdNow, z2Now, z3Now);
+                }
+              }
+              if (!c) {
+                console.warn("[standardRTLS] LB PLAN singular T=" + T.toFixed(2) + " — gimbal held 0");
+                _st.lbPlan = { c: null, T: T };
+              } else {
+                const pk = _lbPeakDelta(c, T);
+                _st.lbPlan = { c: c, T: T, peakDeg: pk, z0: zNow, zd0: zdNow, z20: z2Now, z30: z3Now };
+                const aReq0 = (vDown0 * vDown0 - V_TD * V_TD) / (2 * Math.max(hEff, H_FLOOR));
+                const aAvail0 = (maxMF * ve * lbEng.length) / M - gLoc + aeroUp;
+                console.log("[standardRTLS] LB PLAN T=" + T.toFixed(2) + "s peakDelta=" + pk.toFixed(2) + "deg" +
+                  " z0=" + zNow.toFixed(2) + " zd0=" + zdNow.toFixed(3) + " z20=" + z2Now.toFixed(4) + " z30=" + z3Now.toFixed(4) +
+                  " ell=" + ell.toFixed(2) + " gEff=" + gEff.toFixed(2) +
+                  " | slam aReq0=" + aReq0.toFixed(2) + " aAvail=" + aAvail0.toFixed(2) +
+                  " use=" + (aAvail0 > 0 ? (100 * aReq0 / aAvail0).toFixed(0) + "%" : "n/a") +
+                  (aReq0 > 0.95 * aAvail0 ? " [WARN: ignition too late, <5% margin]" : ""));
+              }
+            }
+            const plan = _st.lbPlan;
+
+            const vDown = -vRadial;
+            const hUse = Math.max(hEff, H_FLOOR);
+            const aReq = (vDown > V_TD) ? (vDown * vDown - V_TD * V_TD) / (2 * hUse) : 0;
+            const cosTilt = Math.max(0.9, Math.cos(thL) * Math.cos(gimbalCur / R2D));
+            const Fv = M * (aReq + gLoc - aeroUp) / cosTilt;
+            let mdotCmd = Fv / ve / lbEng.length;
             let thrSat = false;
             if (mdotCmd > maxMF) { mdotCmd = maxMF; thrSat = true; }
             if (mdotCmd < minMF) { mdotCmd = minMF; thrSat = true; }
             _bbThrottle(lbEng, mdotCmd);
             _st.lbThrCmd = mdotCmd;
+            const Fcmd = mdotCmd * ve * lbEng.length;
+            _st.lbLastFyBody = Fcmd;
+
+            let r0 = 0, r1 = 0, r2 = 0, r3 = 0, r4 = 0;
+            if (plan && plan.c && elapsedAlign < plan.T) {
+              const tp = Math.max(0, elapsedAlign);
+              r0 = _lbPolyD(plan.c, 0, tp); r1 = _lbPolyD(plan.c, 1, tp);
+              r2 = _lbPolyD(plan.c, 2, tp); r3 = _lbPolyD(plan.c, 3, tp); r4 = _lbPolyD(plan.c, 4, tp);
+            }
+            const k3 = 4 * POLE, k2 = 6 * POLE * POLE, k1 = 4 * POLE * POLE * POLE, k0 = POLE * POLE * POLE * POLE;
+            const e0 = zNow - r0, e1 = zdNow - r1, e2 = z2Now - r2, e3 = z3Now - r3;
+            const vCmd = r4 - (k3 * e3 + k2 * e2 + k1 * e1 + k0 * e0);
+            const thddCmd = -vCmd / gEff;
+            const envTau = (d.torqueDrag || 0) + (d.gridFinTorque || 0) + (d.torqueGravityGradient || 0);
+            const Fuse = 0.5 * (Fnow + Fcmd);
+            const FxBody = (I * thddCmd - envTau + comX * Fuse) / comY;
+            const gimbalMax = gimbals.length ? (gimbals[0].gimbalMaxDeg || 8) : 8;
+            let gimbalCmdDeg = Math.asin(Math.max(-1, Math.min(1, FxBody / Fuse))) * R2D;
+            let gimbalSat = false;
+            const gimbalSoft = 0.9 * gimbalMax;
+            if (Math.abs(gimbalCmdDeg) > gimbalSoft) { gimbalCmdDeg = Math.sign(gimbalCmdDeg) * gimbalSoft; gimbalSat = true; }
+            if (!plan || !plan.c) gimbalCmdDeg = 0;
             if (!Number.isFinite(_st.lbAlignDeltaMax)) _st.lbAlignDeltaMax = 0;
             _st.lbAlignDeltaMax = Math.max(_st.lbAlignDeltaMax, Math.abs(gimbalCmdDeg));
-
-            // Gimbal via rate (1-tick precise tracking)
+            _st.lbGimbalCmd = gimbalCmdDeg;
             if (gimbalsLB.length) {
-              const curG = gimbalsLB[0].gimbalDeg || 0;
-              const rateNeeded = (gimbalCmdDeg - curG) / dt;
-              const maxRate = gimbals[0].gimbalRateDegS || 40;
-              _send(Guidance.cmdSetGimbalRate(Math.max(-maxRate, Math.min(maxRate, rateNeeded)), "center"));
-              _st.lbGimbalCmd = gimbalCmdDeg;
+              _send(_gimbalCmdMsg(gimbalCmdDeg, gimbalsLB[0], dt, "center"));
             }
-
-            // Grid fins off, RCS off
             _send(Guidance.cmdGridFinsControl(0));
             _rcsOff();
 
-            // Periodic ALIGN log
             if (simT - _st.lbLastLog >= 0.5) {
               _st.lbLastLog = simT;
-              console.log("[LANDING_BURN-ALIGN] t=" + simT.toFixed(2) +
-                " e=" + elapsedAlign.toFixed(2) + " T0rem=" + T0_remaining.toFixed(2) +
-                " | th=" + thetaLocalDeg.toFixed(2) + " w=" + (d.omega * R2D).toFixed(3) +
-                " x=" + xFromPadM.toFixed(1) + " vx=" + vTangGround.toFixed(2) +
-                " | h=" + (hAGL / 1000).toFixed(3) + " vy=" + vRadial.toFixed(1) +
-                " | aTar=" + (alphaTarget * R2D).toFixed(3) + " axTar=" + axEarthTarget.toFixed(3) +
-                " P=" + solRot.P.toFixed(3) + "s Pb=" + solLin.P.toFixed(3) + "s" +
-                " FxBody=" + FxBody.toFixed(0) + " FxW=" + FxWorldNeeded.toFixed(0) +
-                " FyB=" + FyBody.toFixed(0) + " F=" + Math.round(Fmag) + "N" +
-                " aX=" + aeroAcc.ax.toFixed(3) + " gX=" + d.gVecX.toFixed(3) +
-                " δ=" + gimbalCmdDeg.toFixed(2) + "deg" +
-                (gimbalSat ? " [SAT-GIM]" : "") + (thrSat ? " [SAT-THR]" : ""));
-            }
-            const alphaAngDegS2 = ((d.alphaAng || 0) + ((d.gridFinTorque || 0) + (_st.lastRcsTorque || 0)) / I) * R2D;
-
-            const imp = _bbImpact(d.rx, d.ry, d.vx, d.vy, simT, env.GM_EARTH, Rm, omegaE);
-            const vacErrKm = imp ? (_wrapPi(imp.phiEf - padEf) * Rm / 1000) : null;
-            const tImpact = imp ? imp.tImpact : null;
-
-            if (!_st.lbDone && simT - _st.lbLastLog >= 0.5) {
-              _st.lbLastLog = simT;
-              console.log("[LANDING_BURN] t=" + simT.toFixed(2) +
-                " | theta=" + thetaLocalDeg.toFixed(2) + "deg w=" + ((d.omega - omegaE) * R2D).toFixed(3) + "deg/s aAng=" + alphaAngDegS2.toFixed(3) + "deg/s2" +
-                " | x=" + (xFromPadM / 1000).toFixed(3) + "km vx=" + vTangGround.toFixed(2) + "m/s ax=" + axGround.toFixed(3) + "m/s2" +
-                " | h=" + (hAGL / 1000).toFixed(3) + "km vy=" + vRadial.toFixed(2) + "m/s ay=" + ayGround.toFixed(3) + "m/s2" +
-                " | thr=" + Math.round(thrustCur) + "N cmd=" + (Number.isFinite(_st.lbThrCmd) ? Math.round(_st.lbThrCmd) : "n/a") +
-                " gim=" + gimbalCur.toFixed(2) + " cmd=" + _st.lbGimbalCmd.toFixed(2) +
-                " fin=" + finCur.toFixed(1) + " cmd=" + _st.lbFinCmd.toFixed(1) +
-                " | vacErr=" + (vacErrKm != null ? vacErrKm.toFixed(3) + "km" : "n/a") +
-                " tImp=" + (tImpact != null ? tImpact.toFixed(1) + "s" : "n/a"));
+              console.log("[LANDING_BURN-SLAM] t=" + simT.toFixed(2) + " e=" + elapsedAlign.toFixed(2) +
+                " Tplan=" + (plan ? plan.T.toFixed(2) : "n/a") +
+                " | th=" + thetaLocalDeg.toFixed(3) + " w=" + (wL * R2D).toFixed(3) +
+                " x=" + xFromPadM.toFixed(2) + " vx=" + vTangGround.toFixed(2) +
+                " | err z=" + e0.toFixed(3) + " zd=" + e1.toFixed(3) + " z2=" + e2.toFixed(4) + " z3=" + e3.toFixed(4) +
+                " | h=" + hEff.toFixed(2) + " vy=" + vRadial.toFixed(2) + " aReq=" + aReq.toFixed(2) +
+                " F=" + Math.round(thrustCur) + " cmd=" + Math.round(Fcmd) +
+                " | dlt=" + gimbalCmdDeg.toFixed(2) + (gimbalSat ? " [SAT-GIM]" : "") + (thrSat ? " [SAT-THR]" : ""));
             }
 
-            if (!_st.lbDone && (d.altitudeAGL < 5 || body.landed || body.crashed || (simT - _st.lbT0) > 60)) {
+            if (!_st.lbDone && (hEff < -0.5 || body.landed || body.crashed || (simT - _st.lbT0) > 60)) {
               _st.lbDone = true;
               const lbElapsed = simT - _st.lbT0;
               const lbReason = lbElapsed > 60 ? "timeout" : (body.crashed ? "crashed" : (body.landed ? "landed" : "impact"));
@@ -5615,16 +5312,14 @@ const _brCfg = (Number.isInteger(cfg.LANDING_BURN_T0_BRANCH) && cfg.LANDING_BURN
                 " groundErr=" + (xFromPadM / 1000).toFixed(3) + "km" +
                 " vRad=" + vRadial.toFixed(2) + "m/s vTangGround=" + vTangGround.toFixed(2) + "m/s" +
                 " theta=" + thetaLocalDeg.toFixed(2) + "deg w=" + ((d.omega - omegaE) * R2D).toFixed(3) + "deg/s" +
-                " landed=" + (!!body.landed) + " crashed=" + (!!body.crashed) +
-                " vacErr=" + (vacErrKm != null ? vacErrKm.toFixed(3) + "km" : "n/a"));
+                " landed=" + (!!body.landed) + " crashed=" + (!!body.crashed));
             }
 
-            // TODO: landing burn control logic (ignite, gimbal, legs, cutoff, touchdown)
             break;
           }
 
           // ==========================================================
-          case "TOUCHDOWN": {
+                    case "TOUCHDOWN": {
             // TODO: touchdown
             break;
           }
@@ -5752,6 +5447,7 @@ const _brCfg = (Number.isInteger(cfg.LANDING_BURN_T0_BRANCH) && cfg.LANDING_BURN
           _st.lbTrajPow = null;
           _st.lbSisterRanges = null;
           _st.lbSisterPick = null;
+          _st.lbPlan = null;
           _st.lbaInit = false;
           _st.lbaAlignStartT = null;
           _st.lbaFinCmd = null;
