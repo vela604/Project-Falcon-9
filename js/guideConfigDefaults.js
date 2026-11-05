@@ -356,6 +356,7 @@ leoInsertionV3: _mkDefault(
       LANDING_BURN_ALIGN_ALT_KM: 5,
       LANDING_BURN_ALT_KM: 2,
       LANDING_BURN_ENGINES: "C",
+      LANDING_BURN_LEGS_ALT_M: 200,
       POST_ENTRY_GRIDFIN_RAMP_DEG_S: 3,
     },
   },
