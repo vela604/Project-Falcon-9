@@ -3106,6 +3106,42 @@ if (Math.abs(pp.Fy) > fEps) {
         ctx.restore();
     });
     
+    // ============================================================
+    // Force-draw the member's gas pool ONCE per 5ms bin, regardless of
+    // whether any pod is CURRENTLY firing. Bug fix: previously the pool
+    // was only drawn inside drawGasPuff (called per firing pod), so if
+    // no pod was firing this frame — duty hit 0, or sign flip moment
+    // between L off and R on — the pool became INVISIBLE for 1+ frames
+    // even though particles were still alive in memory. Result: puff
+    // "instantly released and disappeared" on rapid duty/sign changes.
+    // This force-draw ensures continuous visibility until each particle
+    // naturally ages out (age >= life).
+    {
+      const _fMemIdx = (Number.isInteger(opts.memberIdx) && opts.memberIdx >= 0) ? opts.memberIdx : 0;
+      const _fBodyIdx = (Number.isInteger(opts.bodyIdx) && opts.bodyIdx >= 0) ? opts.bodyIdx : 0;
+      const _pool = _gasPoolFor(_fBodyIdx + '_' + _fMemIdx);
+      if (_pool.particles.length > 0) {
+        const _bin = Math.floor(performance.now() / 5);
+        if (_bin !== _pool.drawBin) {
+          _pool.drawBin = _bin;
+          const _sprite = _getPuffSprite();
+          if (_sprite) {
+            ctx.save();
+            for (let _i = 0; _i < _pool.particles.length; _i++) {
+              const _p = _pool.particles[_i];
+              const _f = _p.age / _p.life;
+              const _r = _p.r0 + _p.growRate * _p.age;
+              const _alpha = (1 - _f) * (1 - _f) * 0.85;
+              ctx.globalAlpha = _alpha;
+              ctx.drawImage(_sprite, _p.x - _r, _p.y - _r, _r * 2, _r * 2);
+            }
+            ctx.globalAlpha = 1;
+            ctx.restore();
+          }
+        }
+      }
+    }
+    
     // Pusher rim puff — drawn LAST so it sits on top of every other layer.
     // Only fires when the caller (render.js) determined this is the top
     // member of a body with an active pusher event.
