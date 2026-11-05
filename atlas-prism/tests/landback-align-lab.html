@@ -321,7 +321,7 @@ $('s2capBtn').addEventListener('click', function(){
       const T0=parseFloat($('t0Single').value)||10;
       const r=runT0fromLBA(T0,parseFloat($('capS').value),null);
       const gs=Guidance.getGuideStatus();
-      const c6=gs.lbCapture6;
+      const c6=gs.rtlsLbCapture6;
       if(!c6){$('s2status').innerHTML='<span class="bad">capture6 missing — check status fields</span>';return;}
       $('s2a0r').value=c6.a0rot.toFixed(6);$('s2v0r').value=c6.v0rot.toFixed(6);$('s2dsr').value=c6.dsrot.toFixed(6);
       $('s2a0l').value=c6.a0lin.toFixed(4);$('s2v0l').value=c6.v0lin.toFixed(4);$('s2dsl').value=c6.dslin.toFixed(3);
@@ -392,10 +392,9 @@ $('s3capBtn').addEventListener('click', function(){
           if(state.halted||state.crashed)break;
           TunerEngine.tick(CONFIG.DT);
           const gs=Guidance.getGuideStatus();
-          if(gs&&gs.rtlsPhase==='LANDING_BURN'&&gs.lbSpooled){
+          if(gs&&gs.rtlsPhase==='LANDING_BURN'&&gs.rtlsLbSpooled&&gs.rtlsLbCapture6){
             spoolSnap=captureSnap();
-            const gs2=Guidance.getGuideStatus();
-            c6=gs2.lbCapture6;
+            c6=gs.rtlsLbCapture6;
             break;
           }
         }
