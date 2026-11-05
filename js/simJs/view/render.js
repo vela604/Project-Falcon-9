@@ -2359,14 +2359,27 @@ const s0 = (hasJets && re > 0) ? Math.min(1, (reEng / re) * 0.97) : 1;   // star
 // keep the old height-based look.
 function _plumeLengthM(body, totalThrust, maxSingleF, single, thr) {
   const Hm = CONFIG.ROCKET_HEIGHT;
-  if (single) return Hm * (0.6 + 1.6 * thr) * 0.30;
+  const _m0 = body.members && body.members[0];
+  const _isBooster = _m0 && _m0.stageRole === 'booster';
+  
+  if (single) {
+    // Single-nozzle engine. Upper stage (vacuum MVac) stays short & wide (0.30).
+    // Booster single-nozzle gets much longer (0.85) to match sea-level plume.
+    return Hm * (0.6 + 1.6 * thr) * (_isBooster ? 0.85 : 0.30);
+  }
+  
   let dm = 0;
   try {
     if (body.members && body.members[0] && typeof getEngineBellDims_m === 'function')
       dm = getEngineBellDims_m(body.members[0]).d;
   } catch (e) { dm = 0; }
+  
   if (!(dm > 0) || !(maxSingleF > 0)) return Hm * (0.6 + 1.6 * thr);
-  return Math.max(3 * dm, 30 * dm * Math.sqrt(Math.max(0, totalThrust / maxSingleF)));
+  
+  // Booster cluster: if only 1 engine is firing (totalThrust ≈ maxSingleF),
+  // multiplier was 30, now 45 — 50% longer for single-engine ascent on a cluster.
+  const baseMult = _isBooster ? 45 : 30;
+  return Math.max(3 * dm, baseMult * dm * Math.sqrt(Math.max(0, totalThrust / maxSingleF)));
 }
 
 function drawBodyRocket(body, isActive, bodyIdx) {

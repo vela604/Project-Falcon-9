@@ -1,0 +1,521 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<title>Landback Align Lab</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<style>
+body{font:11px/1.4 monospace;background:#0b0e14;color:#cfd6e4;margin:0;padding:10px}
+label{display:inline-block;margin:0 6px 6px 0}
+input,select{background:#141a26;color:#cfd6e4;border:1px solid #2a3550;padding:3px;width:82px}
+select{width:auto}
+button{background:#1d2a44;color:#cfd6e4;border:1px solid #3a4c78;padding:5px 10px;cursor:pointer;font:inherit}
+button:disabled{opacity:.5}
+h2{font-size:13px;margin:10px 0 6px;color:#e2e8f0}h3{font-size:12px;margin:12px 0 6px;color:#cbd5e1}
+pre{white-space:pre-wrap;font-size:10.5px;background:#0f1420;padding:6px;border:1px solid #1f2940;max-height:280px;overflow:auto;margin:6px 0}
+.dim{color:#7d889f}.bad{color:#ff6b6b}.ok{color:#6bff88}.warn{color:#ffcc44}
+.section{margin-top:12px;border-top:1px solid #1f2940;padding-top:10px}
+.chart{background:#0f1420;border:1px solid #1f2940;border-radius:6px;padding:6px;height:180px;position:relative}
+.charts{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}
+@media(max-width:900px){.charts{grid-template-columns:1fr}}
+table{border-collapse:collapse;width:100%;font-size:10px;margin-top:6px}
+th,td{padding:3px 5px;border-bottom:1px solid #1f2940;text-align:right;font-family:monospace}
+th{color:#94a3b8;font-weight:600;font-size:9px;text-transform:uppercase;position:sticky;top:0;background:#0b0e14}
+td.l{text-align:left}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:2px 12px;font-size:11px;margin:6px 0}
+.kv .k{color:#94a3b8}
+.kv .v{text-align:right;font-family:monospace}
+.badge{display:inline-block;padding:1px 6px;border-radius:3px;font-size:10px;font-weight:600}
+.b-ok{background:#14532d;color:#6bff88}.b-warn{background:#78350f;color:#ffcc44}.b-bad{background:#7f1d1d;color:#ff6b6b}.b-info{background:#1e3a5f;color:#93c5fd}
+.legend{font-size:10px;color:#94a3b8;margin:4px 0}
+.legend span{display:inline-block;margin-right:10px}
+.legend i{display:inline-block;width:12px;height:2px;margin-right:3px;vertical-align:middle}
+.tag{display:inline-block;background:#1e293b;padding:1px 4px;border-radius:2px;font-size:9px;color:#94a3b8}
+</style></head><body>
+<h2>Landback Align Lab · Full Analysis</h2>
+<div>
+  <label>stack <select id="stackSel"></select></label>
+  <button id="initBtn">① Init + capture SA/EB/LBA</button>
+  <span class="dim" id="initStatus"></span>
+</div>
+
+<div id="lab" style="display:none;margin-top:8px">
+  <div class="section">
+    <h3>Pre-run config</h3>
+    <label>bias ENTRY_BURN_IMPACT_TARGET_M <input type="number" id="bias" value="-760" step="10"></label>
+    <button id="rebuildBtn">↻ Rebuild LBA from EB with this bias</button>
+    <span class="dim" id="rebuildStatus"></span>
+    <div id="preCfgBox" style="margin-top:8px"></div>
+  </div>
+
+  <div class="section">
+    <h3>Run LB ALIGN</h3>
+    <label>T0 mode <select id="t0mode"><option value="auto">auto (sister-pick)</option><option value="manual">manual</option></select></label>
+    <label>T0 manual <input type="number" id="t0man" value="7.54" step="0.1"></label>
+    <label>capS <input type="number" id="capS" value="60"></label>
+    <button id="runBtn">② Run LB</button>
+    <span class="dim" id="runStatus"></span>
+  </div>
+
+  <div id="results" style="display:none">
+    <div class="section"><h3>Config summary</h3><div id="configBox"></div></div>
+    <div class="section"><h3>Summary stats</h3><div id="statsBox"></div></div>
+    <div class="section"><h3>Event log</h3><div id="eventsBox"></div></div>
+    <div class="section">
+      <h3>Attitude (rotational)</h3>
+      <div class="legend"><span><i style="background:#6bff88"></i>θ_local</span><span><i style="background:#ffcc44"></i>tol ±1°</span><span><i style="background:#ff6b6b"></i>gimbal ±8°</span></div>
+      <div class="charts">
+        <div class="chart"><canvas id="chTheta"></canvas></div>
+        <div class="chart"><canvas id="chOmega"></canvas></div>
+        <div class="chart"><canvas id="chAlpha"></canvas></div>
+        <div class="chart"><canvas id="chGimbal"></canvas></div>
+      </div>
+    </div>
+    <div class="section">
+      <h3>Lateral (linear)</h3>
+      <div class="charts">
+        <div class="chart"><canvas id="chX"></canvas></div>
+        <div class="chart"><canvas id="chVx"></canvas></div>
+        <div class="chart"><canvas id="chAx"></canvas></div>
+        <div class="chart"><canvas id="chFyBody"></canvas></div>
+      </div>
+    </div>
+    <div class="section">
+      <h3>Thrust &amp; Vertical</h3>
+      <div class="charts">
+        <div class="chart"><canvas id="chThr"></canvas></div>
+        <div class="chart"><canvas id="chH"></canvas></div>
+      </div>
+    </div>
+    <div class="section">
+      <h3>Time-series (0.1 s)</h3>
+      <div id="tableBox" style="max-height:400px;overflow:auto;border:1px solid #1f2940;border-radius:6px"></div>
+    </div>
+  </div>
+</div>
+
+<script src="../../js/componentLibrary.js"></script>
+<script src="../../js/customDesign.js"></script>
+<script src="../../js/fleet.js"></script>
+<script src="../../js/config.js"></script>
+<script src="../../js/simJs/core/massProps.js"></script>
+<script src="../../js/simJs/core/environment.js"></script>
+<script src="../../js/simJs/core/vehicle.js"></script>
+<script src="../../js/simJs/core/rcs.js"></script>
+<script src="../../js/simJs/core/physics.js"></script>
+<script src="../../js/simJs/core/collision.js"></script>
+<script src="../../js/simJs/guidance/imu.js"></script>
+<script src="../../js/simJs/guidance/derivation.js"></script>
+<script src="../../js/simJs/guidance/guidercs.js"></script>
+<script src="../../js/simJs/guidance/guidance-blocks.js"></script>
+<script src="../../js/simJs/guidance/guidance.js"></script>
+<script src="../../js/guideConfigDefaults.js"></script>
+<script src="../lib/config.js"></script>
+<script src="../lib/sim.js"></script>
+<script src="../lib/lattice.js"></script>
+<script src="../lib/hook.js"></script>
+<script src="../lib/registry.js"></script>
+<script src="../lib/primitives.js"></script>
+<script src="../engines/pro-alpha.js"></script>
+
+<script>
+(function(){
+'use strict';
+const $ = (id) => document.getElementById(id);
+const S = { inited:false, saSnap:null, ebSnap:null, lbSnap:null, running:false, lastResult:null };
+const guideName = 'landbackV1';
+let charts = [];
+
+function deepClone(x, memo) {
+  memo = memo || new WeakMap();
+  if (x === null || typeof x !== 'object') return x;
+  if (memo.has(x)) return memo.get(x);
+  if (Array.isArray(x)) { const a=[]; memo.set(x,a); for(let i=0;i<x.length;i++)a[i]=deepClone(x[i],memo); return a; }
+  const o={}; memo.set(x,o); for(const k of Object.keys(x)){ try{o[k]=deepClone(x[k],memo);}catch(e){o[k]=null;} } return o;
+}
+function captureSnap() {
+  const st={}; Object.keys(state).forEach(k=>{ if(k==='bodies')return; try{st[k]=deepClone(state[k]);}catch(e){st[k]=null;} });
+  return { bodies:deepClone(state.bodies), stateKeysSnapshot:st, simTime:state.simTime, activeBodyIndex:state.activeBodyIndex, guidanceState:Guidance.exportGuideState() };
+}
+function restoreSnap(snap, gOverride) {
+  Object.keys(snap.stateKeysSnapshot).forEach(k=>{ try{state[k]=deepClone(snap.stateKeysSnapshot[k]);}catch(e){} });
+  state.simTime=snap.simTime; state.activeBodyIndex=snap.activeBodyIndex;
+  const sb=snap.bodies;
+  while(state.bodies.length>sb.length)state.bodies.pop();
+  while(state.bodies.length<sb.length)state.bodies.push({});
+  for(let i=0;i<sb.length;i++){ const s=sb[i],d=state.bodies[i]; Object.keys(d).forEach(k=>delete d[k]); Object.keys(s).forEach(k=>{d[k]=deepClone(s[k]);}); }
+  const ab=state.bodies[state.activeBodyIndex];
+  if(ab)['rx','ry','vx','vy','theta','omega','dryMass','fuelMass'].forEach(k=>{try{state[k]=ab[k];}catch(e){}});
+  if(snap.stateKeysSnapshot.halted===undefined)state.halted=false;
+  Guidance.importGuideState(deepClone(gOverride||snap.guidanceState));
+}
+function findBooster(){ for(const b of state.bodies) if(b&&b.members&&b.members[0]&&b.members[0].stageRole==='booster')return b; return null; }
+function buildValues(){ const p=cloneDefaultPreset(guideName); if(!p)throw new Error('preset missing'); return p.constants; }
+function getXfromPad(bB, simT){
+  const r=Math.hypot(bB.rx,bB.ry);
+  const phiNow=Math.atan2(bB.rx,bB.ry)-CONFIG.EARTH_OMEGA*simT;
+  const padArr=(CONFIG.LANDING_PADS||[]).filter(p=>p.id==='LZ-1');
+  const pad=padArr.length?padArr[0]:{arcOffsetM:400};
+  const Rg=CONFIG.EARTH_RADIUS+(CONFIG.LAUNCH_SITE_ALTITUDE||0);
+  const padEf=(CONFIG.LAUNCH_SITE_ANGLE_0||0)+(pad.arcOffsetM||0)/Rg;
+  let xRad=phiNow-padEf;
+  while(xRad>Math.PI)xRad-=2*Math.PI; while(xRad<-Math.PI)xRad+=2*Math.PI;
+  return xRad*Rg;
+}
+function alphaTargetAt(t, a0, q, k, L){
+  if(t<=0)return a0; if(t>=L)return 0;
+  return a0*(1-Math.pow(t/L,q)) - k*Math.sin(Math.PI*t/L);
+}
+
+const stacks = (typeof loadStacks==='function'?loadStacks():[]).filter(s=>s&&s.sequence==='standard'&&s.locked);
+$('stackSel').innerHTML = stacks.length ? stacks.map(s=>'<option value="'+s.id.replace(/[&<>"']/g,'')+'">'+s.name.replace(/[&<>"']/g,'')+'</option>').join('') : '<option value="">(no stacks)</option>';
+
+// INIT: SA → EB → LBA, capture all three
+$('initBtn').addEventListener('click', function(){
+  if(S.running)return;
+  S.running=true; $('initBtn').disabled=true;
+  $('initStatus').textContent='initializing…';
+  setTimeout(function(){
+    const _ol=console.log; console.log=function(){};
+    try{
+      const id=$('stackSel').value;
+      if(!id)throw new Error('pick stack');
+      setSelectedStackId(id);
+      TunerEngine.init();
+      const vals = buildValues();
+      vals.rtls = vals.rtls || {};
+      vals.rtls.ENTRY_BURN_IMPACT_TARGET_M = parseFloat($('bias').value);
+      TunerEngine.prepareRun(guideName, vals, (typeof TunerConfig!=='undefined'?TunerConfig.env:undefined));
+
+      $('initStatus').textContent='running SA…';
+      let saSnap=null, ebSnap=null, lbSnap=null;
+      for(let i=0;i<300*80;i++){if(state.halted)break;TunerEngine.tick(CONFIG.DT);const gs=Guidance.getGuideStatus();if(gs&&gs.phase==='SEPARATED_AXIAL'){saSnap=captureSnap();break;}}
+      if(!saSnap)throw new Error('SA not reached');
+      restoreSnap(saSnap);
+      $('initStatus').textContent='running to EB…';
+      for(let i=0;i<800*80;i++){if(state.halted)break;TunerEngine.tick(CONFIG.DT);const gs=Guidance.getGuideStatus();if(gs&&gs.rtlsPhase==='ENTRY_BURN'){ebSnap=captureSnap();break;}}
+      if(!ebSnap)throw new Error('EB not reached');
+      $('initStatus').textContent='running to LBA…';
+      for(let i=0;i<400*80;i++){if(state.halted)break;TunerEngine.tick(CONFIG.DT);const gs=Guidance.getGuideStatus();if(gs&&gs.rtlsPhase==='LANDING_BURN_ALIGN'){lbSnap=captureSnap();break;}}
+      if(!lbSnap)throw new Error('LBA not reached');
+
+      S.saSnap=saSnap; S.ebSnap=ebSnap; S.lbSnap=lbSnap; S.inited=true;
+      $('initStatus').innerHTML='<span class="ok">ready</span> · SA t='+saSnap.simTime.toFixed(1)+' · EB t='+ebSnap.simTime.toFixed(1)+' · LBA t='+lbSnap.simTime.toFixed(1);
+      $('lab').style.display='block';
+      $('rebuildBtn').disabled=false; $('runBtn').disabled=false;
+    }catch(e){$('initStatus').innerHTML='<span class="bad">ERROR: '+e.message+'</span>';console.error(e);}
+    finally{console.log=_ol;$('initBtn').disabled=false;S.running=false;}
+  },10);
+});
+
+// REBUILD: restore EB with new bias, run to LBA
+$('rebuildBtn').addEventListener('click', function(){
+  if(!S.inited||S.running)return;
+  S.running=true; $('rebuildBtn').disabled=true; $('runBtn').disabled=true;
+  $('rebuildStatus').textContent='rebuilding LBA with bias…';
+  setTimeout(function(){
+    const _ol=console.log; console.log=function(){};
+    try{
+      const bias=parseFloat($('bias').value);
+      const g=deepClone(S.ebSnap.guidanceState);
+      if(g.guideConfigs&&g.guideConfigs.landbackV1&&g.guideConfigs.landbackV1.rtls) g.guideConfigs.landbackV1.rtls.ENTRY_BURN_IMPACT_TARGET_M=bias;
+      if(g.lbRtlsBlock&&g.lbRtlsBlock.constants) g.lbRtlsBlock.constants.ENTRY_BURN_IMPACT_TARGET_M=bias;
+      restoreSnap(S.ebSnap, g);
+      let lbSnap=null;
+      for(let i=0;i<400*80;i++){if(state.halted)break;TunerEngine.tick(CONFIG.DT);const gs=Guidance.getGuideStatus();if(gs&&gs.rtlsPhase==='LANDING_BURN_ALIGN'){lbSnap=captureSnap();break;}}
+      if(!lbSnap)throw new Error('LBA not reached (crashed?)');
+      S.lbSnap=lbSnap;
+      $('rebuildStatus').innerHTML='<span class="ok">LBA re-captured</span> bias='+bias+' · t='+lbSnap.simTime.toFixed(2);
+      $('runBtn').disabled=false;
+    }catch(e){$('rebuildStatus').innerHTML='<span class="bad">ERROR: '+e.message+'</span>';console.error(e);}
+    finally{console.log=_ol;$('rebuildBtn').disabled=false;S.running=false;}
+  },10);
+});
+
+// RUN LB
+$('runBtn').addEventListener('click', function(){
+  if(!S.inited||S.running)return;
+  S.running=true; $('runBtn').disabled=true;
+  $('runStatus').textContent='running…'; $('results').style.display='none';
+  setTimeout(function(){
+    const _ol=console.log; console.log=function(){};
+    try{
+      const mode=$('t0mode').value, t0man=parseFloat($('t0man').value), capS=parseFloat($('capS').value);
+      const g=deepClone(S.lbSnap.guidanceState);
+      if(mode==='manual'){
+        if(g.guideConfigs&&g.guideConfigs.landbackV1&&g.guideConfigs.landbackV1.rtls){
+          g.guideConfigs.landbackV1.rtls.LANDING_BURN_T0_AUTO=false;
+          g.guideConfigs.landbackV1.rtls.LANDING_BURN_T0_S=t0man;
+        }
+        if(g.lbRtlsBlock&&g.lbRtlsBlock.constants){
+          g.lbRtlsBlock.constants.LANDING_BURN_T0_AUTO=false;
+          g.lbRtlsBlock.constants.LANDING_BURN_T0_S=t0man;
+        }
+      } else {
+        if(g.guideConfigs&&g.guideConfigs.landbackV1&&g.guideConfigs.landbackV1.rtls) g.guideConfigs.landbackV1.rtls.LANDING_BURN_T0_AUTO=true;
+        if(g.lbRtlsBlock&&g.lbRtlsBlock.constants) g.lbRtlsBlock.constants.LANDING_BURN_T0_AUTO=true;
+      }
+      restoreSnap(S.lbSnap, g);
+
+      const startT=state.simTime;
+      const samples=[], events=[];
+      let alignStartT=null, trajPow=null, spooled=false;
+      let capture6=null, sisterRanges=null, sisterPick=null;
+      let prevVx=null, prevOmega=null, prevT=null;
+      let wasSatGim=false, wasFyNeg=false, wasSatThr=false;
+      let peakGimbal=0, satGimCount=0, satThrCount=0, fyNegCount=0;
+      let lastPhase=null, endedReason='cap';
+
+      const every=8;
+      for(let i=0;i<capS*80;i++){
+        if(state.crashed||state.halted){endedReason='crashed';break;}
+        TunerEngine.tick(CONFIG.DT);
+        const gs=Guidance.getGuideStatus()||{};
+        const bB=findBooster();
+        if(!bB){endedReason='no booster';break;}
+        const simT=state.simTime;
+        const r=Math.hypot(bB.rx,bB.ry);
+        const hAGL=r-CONFIG.EARTH_RADIUS-(CONFIG.LAUNCH_SITE_ALTITUDE||0);
+        const vr=(bB.vx*bB.rx+bB.vy*bB.ry)/r;
+        const vt=(bB.vx*bB.ry-bB.vy*bB.rx)/r;
+        const vtGround=vt-CONFIG.EARTH_OMEGA*r;
+        const lv=Math.atan2(-bB.rx,bB.ry);
+        let thL=bB.theta-lv; while(thL>Math.PI)thL-=2*Math.PI; while(thL<-Math.PI)thL+=2*Math.PI;
+        const thetaDeg=thL*180/Math.PI;
+        const omegaRad=bB.omega;
+        const xFromPad=getXfromPad(bB, simT);
+
+        const gimbEng=(bB.engines||[]).find(e=>e.gimbal)||{};
+        const gimbAct=gimbEng.gimbalDeg||0;
+        const gimbCmdTgt=Number.isFinite(gimbEng.targetGimbalDeg)?gimbEng.targetGimbalDeg:gimbAct;
+        let thrAct=0, thrCmd=0;
+        for(const e of (bB.engines||[])){thrAct+=(e.massFlowRate||0)*(e.Ve||0);thrCmd+=(e.targetMassFlowRate||0)*(e.Ve||0);}
+
+        if(gs.rtlsLbAlignStartT!=null && alignStartT==null) alignStartT=gs.rtlsLbAlignStartT;
+        if(gs.rtlsLbTrajPow && !trajPow) trajPow=gs.rtlsLbTrajPow;
+        if(gs.rtlsLbCapture6 && !capture6) capture6=gs.rtlsLbCapture6;
+        if(gs.rtlsLbSisterRanges && !sisterRanges) sisterRanges=gs.rtlsLbSisterRanges;
+        if(gs.rtlsLbSisterPick!=null && sisterPick==null) sisterPick=gs.rtlsLbSisterPick;
+        if(gs.rtlsLbSpooled && !spooled) spooled=true;
+
+        if(gs.rtlsPhase!==lastPhase){ events.push({t:simT, kind:'phase', msg:'→ '+gs.rtlsPhase}); lastPhase=gs.rtlsPhase; }
+
+        const gimbAbs=Math.abs(gimbAct);
+        const satGimNow=(gimbAbs>=7.95);
+        if(satGimNow&&!wasSatGim) events.push({t:simT, kind:'sat-gim', msg:'gimbal CLAMP ('+gimbAct.toFixed(2)+'°)'});
+        if(satGimNow) satGimCount++; wasSatGim=satGimNow;
+        if(gimbAbs>peakGimbal) peakGimbal=gimbAbs;
+
+        const fyRaw=gs.rtlsLbLastFyBody;
+        const fyNegNow=(Number.isFinite(fyRaw)&&fyRaw<0);
+        if(fyNegNow&&!wasFyNeg) events.push({t:simT, kind:'fy-neg', msg:'Fy_body<0 raw '+Math.round(fyRaw)+'N'});
+        if(fyNegNow) fyNegCount++; wasFyNeg=fyNegNow;
+
+        const thrGap=Math.abs(thrCmd-thrAct);
+        const satThrNow=(thrGap>100000);
+        if(satThrNow&&!wasSatThr) events.push({t:simT, kind:'sat-thr', msg:'thrust spool gap '+Math.round(thrGap/1000)+'kN'});
+        if(satThrNow) satThrCount++; wasSatThr=satThrNow;
+
+        if(i%every===0){
+          let aAct=null, axAct=null;
+          if(prevT!==null && simT-prevT>1e-9){
+            aAct=(omegaRad-prevOmega)/(simT-prevT);
+            axAct=(vtGround-prevVx)/(simT-prevT);
+          }
+          let aTgt=null, axTgt=null, elapsed=null;
+          if(trajPow && alignStartT!=null){
+            elapsed=simT-alignStartT;
+            aTgt=alphaTargetAt(elapsed, trajPow.a0rot, trajPow.rot.q, trajPow.rot.k, trajPow.rot.L);
+            axTgt=alphaTargetAt(elapsed, trajPow.a0lin, trajPow.lin.q, trajPow.lin.k, trajPow.lin.L);
+          }
+          samples.push({
+            t:+simT.toFixed(2), phase:gs.rtlsPhase||'',
+            e:elapsed!=null?+elapsed.toFixed(2):null,
+            theta:+thetaDeg.toFixed(3), omega:+(omegaRad*180/Math.PI).toFixed(3),
+            x:+xFromPad.toFixed(2), vx:+vtGround.toFixed(3),
+            h:+(hAGL/1000).toFixed(3), vy:+vr.toFixed(2),
+            gimbal:+gimbAct.toFixed(3), gimbalCmd:+gimbCmdTgt.toFixed(3),
+            thrAct:Math.round(thrAct/1000), thrCmd:Math.round(thrCmd/1000),
+            aAct:aAct!=null?+(aAct*180/Math.PI).toFixed(4):null,
+            aTgt:aTgt!=null?+(aTgt*180/Math.PI).toFixed(4):null,
+            axAct:axAct!=null?+axAct.toFixed(4):null,
+            axTgt:axTgt!=null?+axTgt.toFixed(4):null,
+            fyRaw:(Number.isFinite(fyRaw)?Math.round(fyRaw):null),
+            satGim:satGimNow,
+          });
+          prevVx=vtGround; prevOmega=omegaRad; prevT=simT;
+        }
+
+        if(gs.rtlsPhase==='TOUCHDOWN'){ events.push({t:simT, kind:'phase', msg:'→ TOUCHDOWN'}); endedReason='aligned'; break; }
+        if(simT-startT>capS){endedReason='cap';break;}
+      }
+
+      const lastS=samples[samples.length-1]||{};
+      S.lastResult={ok:true, mode, t0man, endedReason, alignStartT, trajPow, capture6, sisterRanges, sisterPick,
+        peakGimbal:+peakGimbal.toFixed(2), satGimCount, satThrCount, fyNegCount,
+        final:lastS, samples, events};
+      renderResult(S.lastResult);
+      $('runStatus').innerHTML='<span class="ok">done</span> ('+endedReason+')';
+    }catch(e){$('runStatus').innerHTML='<span class="bad">ERR: '+e.message+'</span>';console.error(e);}
+    finally{console.log=_ol;$('runBtn').disabled=false;S.running=false;}
+  },10);
+});
+
+function renderResult(r){
+  charts.forEach(c=>{try{c.destroy();}catch(e){}}); charts=[];
+  $('results').style.display='block';
+
+  // Config summary — capture6 + sister ranges + traj
+  let cfgHtml='<div class="kv">';
+  if(r.capture6){
+    cfgHtml+='<span class="k" style="grid-column:1/3;color:#94a3b8;font-weight:600;margin-top:4px">CAPTURE 6 (at spool-complete)</span>';
+    cfgHtml+='<span class="k">a0_rot</span><span class="v">'+r.capture6.a0rot.toFixed(6)+' rad/s²</span>';
+    cfgHtml+='<span class="k">v0_rot</span><span class="v">'+r.capture6.v0rot.toFixed(6)+' rad/s</span>';
+    cfgHtml+='<span class="k">ds_rot</span><span class="v">'+r.capture6.dsrot.toFixed(6)+' rad</span>';
+    cfgHtml+='<span class="k">a0_lin</span><span class="v">'+r.capture6.a0lin.toFixed(4)+' m/s²</span>';
+    cfgHtml+='<span class="k">v0_lin</span><span class="v">'+r.capture6.v0lin.toFixed(4)+' m/s</span>';
+    cfgHtml+='<span class="k">ds_lin</span><span class="v">'+r.capture6.dslin.toFixed(3)+' m</span>';
+  }
+  if(r.sisterRanges){
+    cfgHtml+='<span class="k" style="grid-column:1/3;color:#94a3b8;font-weight:600;margin-top:8px">SISTER RANGES (common T0 where both rot &amp; lin feasible)</span>';
+    for(let i=0;i<r.sisterRanges.length;i++){
+      const iv=r.sisterRanges[i];
+      cfgHtml+='<span class="k">range '+(i+1)+'</span><span class="v">['+iv[0].toFixed(3)+', '+iv[1].toFixed(3)+'] s</span>';
+    }
+    if(r.sisterPick!=null) cfgHtml+='<span class="k">best pick</span><span class="v" style="color:#6bff88">'+r.sisterPick.toFixed(3)+' s</span>';
+  }
+  if(r.trajPow){
+    cfgHtml+='<span class="k" style="grid-column:1/3;color:#94a3b8;font-weight:600;margin-top:8px">TRAJECTORY (locked)</span>';
+    cfgHtml+='<span class="k">T0</span><span class="v">'+r.trajPow.T0.toFixed(3)+' s</span>';
+    cfgHtml+='<span class="k">rot: q, k, cross, L</span><span class="v">'+r.trajPow.rot.q.toFixed(4)+', '+r.trajPow.rot.k.toFixed(6)+', '+r.trajPow.rot.crossings+', '+r.trajPow.rot.L.toFixed(2)+'</span>';
+    cfgHtml+='<span class="k">lin: q, k, cross, L</span><span class="v">'+r.trajPow.lin.q.toFixed(4)+', '+r.trajPow.lin.k.toFixed(6)+', '+r.trajPow.lin.crossings+', '+r.trajPow.lin.L.toFixed(2)+'</span>';
+  }
+  if(!r.capture6 && !r.trajPow) cfgHtml+='<span class="k" style="grid-column:1/3;color:#ffcc44">capture6 not reached — see events</span>';
+  cfgHtml+='</div>';
+  $('configBox').innerHTML=cfgHtml;
+
+  // Stats
+  const lastSamp=r.samples[r.samples.length-1]||{};
+  let stHtml='<div class="kv">';
+  stHtml+='<span class="k">Ended</span><span class="v">'+r.endedReason+'</span>';
+  stHtml+='<span class="k">Elapsed from spool</span><span class="v">'+(lastSamp.e!=null?lastSamp.e.toFixed(2):'—')+' s</span>';
+  stHtml+='<span class="k">Final θ_local</span><span class="v">'+(lastSamp.theta!=null?lastSamp.theta.toFixed(3):'—')+' ° '+(Math.abs(lastSamp.theta||0)<1?'<span class="badge b-ok">OK</span>':'<span class="badge b-bad">FAIL</span>')+'</span>';
+  stHtml+='<span class="k">Final ω</span><span class="v">'+(lastSamp.omega!=null?lastSamp.omega.toFixed(3):'—')+' °/s '+(Math.abs(lastSamp.omega||0)<0.5?'<span class="badge b-ok">OK</span>':'<span class="badge b-bad">FAIL</span>')+'</span>';
+  stHtml+='<span class="k">Final x</span><span class="v">'+(lastSamp.x!=null?lastSamp.x.toFixed(2):'—')+' m '+(Math.abs(lastSamp.x||0)<5?'<span class="badge b-ok">OK</span>':'<span class="badge b-bad">FAIL</span>')+'</span>';
+  stHtml+='<span class="k">Final vx</span><span class="v">'+(lastSamp.vx!=null?lastSamp.vx.toFixed(3):'—')+' m/s '+(Math.abs(lastSamp.vx||0)<1?'<span class="badge b-ok">OK</span>':'<span class="badge b-bad">FAIL</span>')+'</span>';
+  stHtml+='<span class="k">Peak gimbal</span><span class="v">'+r.peakGimbal.toFixed(2)+' ° '+(r.peakGimbal>=7.95?'<span class="badge b-bad">CLAMPED</span>':'<span class="badge b-ok">in-range</span>')+'</span>';
+  stHtml+='<span class="k">Gimbal sat ticks</span><span class="v">'+r.satGimCount+'</span>';
+  stHtml+='<span class="k">Thrust spool-gap ticks</span><span class="v">'+r.satThrCount+'</span>';
+  stHtml+='<span class="k">Fy_body&lt;0 ticks</span><span class="v">'+r.fyNegCount+'</span>';
+  stHtml+='</div>';
+  $('statsBox').innerHTML=stHtml;
+
+  // Events
+  let evHtml='<table><thead><tr><th style="width:60px">t (s)</th><th style="width:80px">kind</th><th class="l">msg</th></tr></thead><tbody>';
+  for(const ev of r.events){
+    const cls = ev.kind==='sat-gim'||ev.kind==='fy-neg'?'bad':ev.kind==='sat-thr'?'warn':'info';
+    evHtml+='<tr><td>'+ev.t.toFixed(2)+'</td><td><span class="badge b-'+cls+'">'+ev.kind+'</span></td><td class="l">'+ev.msg+'</td></tr>';
+  }
+  if(!r.events.length) evHtml+='<tr><td colspan="3" class="l dim">no events</td></tr>';
+  evHtml+='</tbody></table>';
+  $('eventsBox').innerHTML=evHtml;
+
+  // Charts
+  const ts=r.samples.map(s=>s.t);
+  drawChart('chTheta','θ_local [°]',ts,[
+    {label:'θ_local',data:r.samples.map(s=>s.theta),color:'#6bff88'},
+    {label:'tol +1°',data:r.samples.map(()=>1),color:'#ffcc44',dash:[3,3]},
+    {label:'tol -1°',data:r.samples.map(()=>-1),color:'#ffcc44',dash:[3,3]},
+    {label:'0',data:r.samples.map(()=>0),color:'#94a3b8',dash:[1,3]},
+  ]);
+  drawChart('chOmega','ω [°/s]',ts,[
+    {label:'ω',data:r.samples.map(s=>s.omega),color:'#93c5fd'},
+    {label:'+0.5',data:r.samples.map(()=>0.5),color:'#ffcc44',dash:[3,3]},
+    {label:'-0.5',data:r.samples.map(()=>-0.5),color:'#ffcc44',dash:[3,3]},
+  ]);
+  drawChart('chAlpha','α [°/s²]',ts,[
+    {label:'α_actual',data:r.samples.map(s=>s.aAct),color:'#6bff88'},
+    {label:'α_target',data:r.samples.map(s=>s.aTgt),color:'#ff6b6b',dash:[4,3]},
+  ]);
+  drawChart('chGimbal','gimbal [°]',ts,[
+    {label:'gimbal act',data:r.samples.map(s=>s.gimbal),color:'#fbbf24'},
+    {label:'gimbal cmd',data:r.samples.map(s=>s.gimbalCmd),color:'#94a3b8',dash:[2,2]},
+    {label:'+8°',data:r.samples.map(()=>8),color:'#ff6b6b',dash:[3,3]},
+    {label:'-8°',data:r.samples.map(()=>-8),color:'#ff6b6b',dash:[3,3]},
+  ]);
+  drawChart('chX','x [m] from pad',ts,[
+    {label:'x',data:r.samples.map(s=>s.x),color:'#6bff88'},
+    {label:'+5m',data:r.samples.map(()=>5),color:'#ffcc44',dash:[3,3]},
+    {label:'-5m',data:r.samples.map(()=>-5),color:'#ffcc44',dash:[3,3]},
+  ]);
+  drawChart('chVx','vx [m/s]',ts,[
+    {label:'vx',data:r.samples.map(s=>s.vx),color:'#93c5fd'},
+    {label:'+1',data:r.samples.map(()=>1),color:'#ffcc44',dash:[3,3]},
+    {label:'-1',data:r.samples.map(()=>-1),color:'#ffcc44',dash:[3,3]},
+  ]);
+  drawChart('chAx','ax [m/s²]',ts,[
+    {label:'ax_actual',data:r.samples.map(s=>s.axAct),color:'#6bff88'},
+    {label:'ax_target',data:r.samples.map(s=>s.axTgt),color:'#ff6b6b',dash:[4,3]},
+  ]);
+  drawChart('chFyBody','Fy_body raw [N]',ts,[
+    {label:'Fy_body',data:r.samples.map(s=>s.fyRaw),color:'#a78bfa'},
+    {label:'0 (neg=backward)',data:r.samples.map(()=>0),color:'#ff6b6b',dash:[3,3]},
+  ]);
+  drawChart('chThr','thrust [kN]',ts,[
+    {label:'act',data:r.samples.map(s=>s.thrAct),color:'#6bff88'},
+    {label:'cmd',data:r.samples.map(s=>s.thrCmd),color:'#ff6b6b',dash:[3,3]},
+  ]);
+  drawChart('chH','h [km]',ts,[{label:'h AGL',data:r.samples.map(s=>s.h),color:'#93c5fd'}]);
+
+  // Table
+  let tHtml='<table><thead><tr>'+
+    ['t','phase','e','θ','ω','x','vx','gim','gCmd','thrA','thrC','α_act','α_tgt','ax_act','ax_tgt','Fy','h','vy','satG']
+    .map(h=>'<th>'+h+'</th>').join('')+'</tr></thead><tbody>';
+  for(const s of r.samples){
+    const rowCls=s.satGim?'style="background:#3f1f1f"':'';
+    tHtml+='<tr '+rowCls+'>'+
+      '<td>'+s.t+'</td>'+
+      '<td class="l" style="font-size:9px">'+(s.phase||'').replace('LANDING_BURN_ALIGN','LBA').replace('LANDING_BURN','LB')+'</td>'+
+      '<td>'+(s.e!=null?s.e:'—')+'</td>'+
+      '<td>'+s.theta+'</td><td>'+s.omega+'</td><td>'+s.x+'</td><td>'+s.vx+'</td>'+
+      '<td>'+s.gimbal+'</td><td>'+s.gimbalCmd+'</td>'+
+      '<td>'+s.thrAct+'</td><td>'+s.thrCmd+'</td>'+
+      '<td>'+(s.aAct!=null?s.aAct:'—')+'</td><td>'+(s.aTgt!=null?s.aTgt:'—')+'</td>'+
+      '<td>'+(s.axAct!=null?s.axAct:'—')+'</td><td>'+(s.axTgt!=null?s.axTgt:'—')+'</td>'+
+      '<td>'+(s.fyRaw!=null?s.fyRaw:'—')+'</td>'+
+      '<td>'+s.h+'</td><td>'+s.vy+'</td>'+
+      '<td>'+(s.satGim?'Y':'')+'</td>'+
+    '</tr>';
+  }
+  tHtml+='</tbody></table>';
+  $('tableBox').innerHTML=tHtml;
+}
+
+function drawChart(canvasId, title, xs, series){
+  const cv=document.getElementById(canvasId);
+  if(!cv)return;
+  const datasets=series.map(s=>({
+    label:s.label, data:xs.map((x,i)=>({x,y:s.data[i]})),
+    borderColor:s.color, backgroundColor:'transparent',
+    borderWidth:1.5, borderDash:s.dash||[], pointRadius:0, tension:0, parsing:false,
+  }));
+  const ch=new Chart(cv,{
+    type:'line', data:{datasets},
+    options:{
+      responsive:true, maintainAspectRatio:false, animation:false,
+      interaction:{mode:'nearest',intersect:false},
+      plugins:{
+        legend:{display:true,labels:{boxWidth:8,font:{size:9},color:'#94a3b8'}},
+        title:{display:true,text:title,font:{size:10},color:'#cbd5e1'},
+        tooltip:{callbacks:{label:ctx=>ctx.dataset.label+': '+(Number.isFinite(ctx.parsed.y)?ctx.parsed.y.toFixed(3):'—')}},
+      },
+      scales:{
+        x:{type:'linear',grid:{color:'#1f2940'},ticks:{font:{size:9},color:'#64748b'}},
+        y:{grid:{color:'#1f2940'},ticks:{font:{size:9},color:'#64748b'}},
+      },
+    },
+  });
+  charts.push(ch);
+}
+
+})();
+</script>
+</body></html>

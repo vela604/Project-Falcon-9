@@ -244,6 +244,10 @@ OCTA_RADIUS: ACTIVE_VEHICLE_FOR_HARDWARE.params.octaRadius, // m — radius of t
   
   // ---------------- Landing legs ----------------
   LEG_DEPLOY_RATE: ACTIVE_VEHICLE_FOR_HARDWARE.params.legDeployRate || 0.5, // fraction of full travel per second
+  // Height the booster body BASE sits above ground when legs are fully deployed
+  // (leg tip = contact point instead of hull base). Tune to match your leg
+  // geometry (hingeY - legLength*cos(sweep) below base). 0 = body base touches.
+  LANDING_LEG_EXTENSION_M: 2.0,
   
   // ---------------- Resolved hardware TYPES ----------------
   ENGINE_LAYOUT: RESOLVED_ENGINE_LAYOUT,
