@@ -3431,11 +3431,16 @@ function _slamLegTipExtension(body) {
   const md = (sd && sd.memberDerived && sd.memberDerived[bm.id]) ? sd.memberDerived[bm.id] : null;
   const ld = (md && md.legs) ? md.legs : null;
   let _hingeY, _legLen, _maxSweep, _src;
-  if (ld && Number.isFinite(ld.hingeY) && Number.isFinite(ld.legLength) && Number.isFinite(ld.maxSweepRad)) {
+  // v7: physics (_legTipExtension) bm.height se nikalta hai. memberDerived.legs
+  // tankHeight se bante hain (~0.5m kam) -> SLAM 0.5m pehle "touchdown" maan leta tha
+  // aur ~2.5 m/s pe contact hota tha. Isliye bm.height available ho to physics wali geometry.
+  const _usePhys = Number.isFinite(bm.height) && bm.height > 0;
+  if (!_usePhys && ld && Number.isFinite(ld.hingeY) && Number.isFinite(ld.legLength) && Number.isFinite(ld.maxSweepRad)) {
     _hingeY = ld.hingeY; _legLen = ld.legLength; _maxSweep = ld.maxSweepRad; _src = "memberDerived";
   } else {
-    _hingeY = -H * 0.008; _legLen = H * 0.27; _maxSweep = 125 * Math.PI / 180; _src = "hardcoded";
-    _legDumpSlam(body, "no memberDerived.legs -> hardcoded");
+    _hingeY = -H * 0.008; _legLen = H * 0.27; _maxSweep = 125 * Math.PI / 180;
+    _src = _usePhys ? "physicsMatch" : "hardcoded";
+    if (!_usePhys) _legDumpSlam(body, "no memberDerived.legs -> hardcoded");
   }
   const depthX = 1.0;
   const j1x = W * 0.49 * depthX;
