@@ -3398,19 +3398,54 @@ setState(s) {
 function _slamLegTipExtension(body) {
   if (!body || !body.legs) return 0;
   const progress = Number.isFinite(body.legs.progress) ? body.legs.progress : 0;
-  if (progress < 0.05) return 0;
+  if (progress < 0.02) return 0;
+
   const bottomMember = (body.members && body.members[0]) ? body.members[0] : null;
   if (!bottomMember || !bottomMember.id) return 0;
   if (bottomMember.hasRecovery === false) return 0;
+
+  // Booster HULL height and width ONLY — no interstage
+  const H = Number.isFinite(bottomMember.height) ? bottomMember.height : 0;
+  const W = Number.isFinite(bottomMember.width) ? bottomMember.width : 0;
+  if (!(H > 0) || !(W > 0)) return 0;
+
   const sd = Derivation.getStackData();
-  const md = (sd && sd.memberDerived && sd.memberDerived[bottomMember.id]) ?
-    sd.memberDerived[bottomMember.id] : null;
+  const md = (sd && sd.memberDerived && sd.memberDerived[bottomMember.id]) ? sd.memberDerived[bottomMember.id] : null;
   const ld = (md && md.legs) ? md.legs : null;
   if (!ld || !Number.isFinite(ld.hingeY) || !Number.isFinite(ld.legLength) || !Number.isFinite(ld.maxSweepRad)) return 0;
-  const hingeLocalY = -ld.hingeY;
+
+  // Front legs (depthX=1.0, depthY=0) — deeper of the two depths, touch first
+  const depthX = 1.0;
+  const j1x = W * 0.49 * depthX;
+  const j2x = W * 0.05 * depthX;
+  const jY = ld.hingeY;
+
+  const pivotX = Math.sin(Math.PI / 4) * (j1x + j2x);
+  const pivotY = jY;
+
   const sweep = progress * ld.maxSweepRad;
-  const tipY_local = hingeLocalY + ld.legLength * Math.cos(sweep);
-  return Math.max(0, -tipY_local);
+  const tipX = pivotX + ld.legLength * Math.sin(sweep);
+  const tipY = pivotY - ld.legLength * Math.cos(sweep);
+
+  const d1 = Math.hypot(tipX - j1x, tipY - jY) || 1;
+  const d2 = Math.hypot(tipX - j2x, tipY - jY) || 1;
+  const u1y = (jY - tipY) / d1;
+  const u2y = (jY - tipY) / d2;
+  const roundR = Math.min(ld.legLength * 0.90, d1 * 0.85, d2 * 0.85);
+
+  const p1y = tipY + u1y * roundR;
+  const p2y = tipY + u2y * roundR;
+  const tipApexY = 0.25 * p1y + 0.5 * tipY + 0.25 * p2y;
+
+  const prevProg = Number.isFinite(body._dbgSlamLegProg) ? body._dbgSlamLegProg : -1;
+  if (Math.abs(progress - prevProg) > 0.05) {
+    body._dbgSlamLegProg = progress;
+    console.log("[LEG-EXT-SLAM] p=" + progress.toFixed(2) + " H=" + H.toFixed(1) + " W=" + W.toFixed(2) +
+      " hingeY=" + ld.hingeY.toFixed(3) + " legLen=" + ld.legLength.toFixed(2) +
+      " tipY_geo=" + tipY.toFixed(3) + " tipApex=" + tipApexY.toFixed(3));
+  }
+
+  return Math.max(0, tipApexY);
 }
 
 function _bbTokens(cfg) {
