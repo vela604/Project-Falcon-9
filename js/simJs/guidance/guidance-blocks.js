@@ -5198,7 +5198,7 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
             // constants
             // ================================================================
             const _cfgN = function (k, def) { return Number.isFinite(cfg[k]) ? cfg[k] : def; };
-            const V_TD = _cfgN("LANDING_BURN_V_TD", 0.6);
+            const V_TD_MIN = _cfgN("LANDING_BURN_V_TD", 0.4);   // v8: floor; adaptive V_TD computed after Fmin
             const H_FLOOR = _cfgN("LANDING_BURN_H_FLOOR_M", 0.1);
             const H_OFF = _cfgN("LANDING_BURN_H_OFFSET_M", 0);
             const H_CUT = _cfgN("LANDING_BURN_H_CUT_M", 0);
@@ -5331,6 +5331,17 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
             // d(aNeed)/dt = (v/h)*(aNeed - a)  => with KN>1 the error shrinks like h^(KN-1): stable down to the ground.
             const cosTilt = Math.max(0.9, Math.cos(thL) * Math.cos(gimbalCur / R2D));
             const Fmin = minMF * ve * lbEng.length;
+
+            // v8: adaptive V_TD. aMin = (Fmin - weight)/M. Bahut kam V_TD -> stall (vehicle ground se pehle ruk ke upar uthta hai).
+            // Stopping distance at Fmin-coast >= MARGIN rakho: V_TD >= sqrt(2*aMin*MARGIN).
+            const V_TD_MARGIN = _cfgN("LANDING_BURN_V_TD_MARGIN_M", 0.2);
+            const V_TD_MAX = _cfgN("LANDING_BURN_V_TD_MAX", 1.5);
+            const aMinFmin = Math.max(0, Fmin / M - gLoc);
+            const V_TD = Math.min(V_TD_MAX, Math.max(V_TD_MIN, Math.sqrt(2 * aMinFmin * V_TD_MARGIN)));
+            if (!Number.isFinite(_st.lbVtdLog) || Math.abs(V_TD - _st.lbVtdLog) > 0.05) {
+              _st.lbVtdLog = V_TD;
+              console.log("[LB-VTD] t=" + simT.toFixed(2) + " V_TD=" + V_TD.toFixed(3) + " (aMin@Fmin=" + aMinFmin.toFixed(3) + " M=" + M.toFixed(0) + " Fmin=" + (Fmin / 1000).toFixed(0) + "kN margin=" + V_TD_MARGIN + "m floor=" + V_TD_MIN.toFixed(3) + ")");
+            }
             // v7b: reference throttle height ke saath THR_LATE -> Fmin/Fmax tak girta hai
             const LB_H_BLEND = _cfgN("LANDING_BURN_H_BLEND", 8.0);
             const fMinFrac = Math.min(THR_LATE, minMF / maxMF);
