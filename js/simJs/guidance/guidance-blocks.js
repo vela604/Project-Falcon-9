@@ -5208,27 +5208,27 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
             const H_CUT = _cfgN("LANDING_BURN_H_CUT_M", 0);
             const H_STALL = _cfgN("LANDING_BURN_H_STALL_M", 0.5);
             const THR_LATE = _cfgN("LANDING_BURN_THR_LATE", 0.6);
-            const LB_KN = 2.0;            // vertical: gain on (aNeed - aRef); >1 => stable to ground
-            const LB_REPLAN_S = 1.0;      // rollout / log refresh period
-            const LB_PROF_DT = 0.05;      // rollout step
-            const LB_FIN_SHARE = 0.4;     // gimbal keeps this fraction of its range, rest -> fins
-            const LB_FIN_RATE = 40;       // deg/s
-            const LB_FIN_CAP = 30;        // deg
+            const LB_KN = _cfgN("LANDING_BURN_KN", 2.0);            // vertical: gain on (aNeed - aRef); >1 => stable to ground
+            const LB_REPLAN_S = _cfgN("LANDING_BURN_REPLAN_S", 1.0);      // rollout / log refresh period
+            const LB_PROF_DT = _cfgN("LANDING_BURN_PROF_DT", 0.05);      // rollout step
+            const LB_FIN_SHARE = _cfgN("LANDING_BURN_FIN_SHARE", 0.4);     // gimbal keeps this fraction of its range, rest -> fins
+            const LB_FIN_RATE = _cfgN("LANDING_BURN_FIN_RATE", 40);       // deg/s
+            const LB_FIN_CAP = _cfgN("LANDING_BURN_FIN_CAP", 30);        // deg
             // lateral (v6): authority-aware cascade  z-loop -> theta_des -> attitude PD -> gimbal/fins
-            const LB_KZ = 0.1;            // 1/s   position pull on z (reference speed = KZ*|z|, bounded below)
-            const LB_KV = 0.5;            // 1/s   velocity loop on zd
-            const LB_VLIM = 2.0;          // m/s   max lateral reference speed
-            const LB_VH = 0.03;           // 1/s   reference speed also <= VH*h + 0.1  (-> 0 at ground)
-            const LB_ABRK = 0.3;          // fraction of the available lateral accel used for the braking-curve
-            const LB_KTH = 1.0;           // 1/s^2 attitude P
-            const LB_KW = 1.6;            // 1/s   attitude D
-            const LB_SLEW = 4.0;          // deg/s slew limit on theta_des
-            const LB_CAP_MAX = 10.0;      // deg   |theta_des| cap far from ground
-            const LB_CAP_BASE = 1.5;      // deg   cap at h=0
-            const LB_CAP_H = 0.04;        // deg/m cap growth with height
-            const LB_MCAP = 0.8;          // fraction of soft-gimbal torque the hold-angle may need
-            const LB_GFLOOR = 0.25;       // gNet floor (fraction of gEff) used for inversion
-            const LB_NOAUTH = 0.12;       // gNet below this fraction of gEff => no lateral authority, hold weathervane angle
+            const LB_KZ = _cfgN("LANDING_BURN_KZ", 0.1);            // 1/s   position pull on z (reference speed = KZ*|z|, bounded below)
+            const LB_KV = _cfgN("LANDING_BURN_KV", 0.5);            // 1/s   velocity loop on zd
+            const LB_VLIM = _cfgN("LANDING_BURN_VLIM", 2.0);          // m/s   max lateral reference speed
+            const LB_VH = _cfgN("LANDING_BURN_VH", 0.03);           // 1/s   reference speed also <= VH*h + 0.1  (-> 0 at ground)
+            const LB_ABRK = _cfgN("LANDING_BURN_ABRK", 0.3);          // fraction of the available lateral accel used for the braking-curve
+            const LB_KTH = _cfgN("LANDING_BURN_KTH", 1.0);           // 1/s^2 attitude P
+            const LB_KW = _cfgN("LANDING_BURN_KW", 1.6);            // 1/s   attitude D
+            const LB_SLEW = _cfgN("LANDING_BURN_SLEW", 4.0);          // deg/s slew limit on theta_des
+            const LB_CAP_MAX = _cfgN("LANDING_BURN_CAP_MAX", 10.0);      // deg   |theta_des| cap far from ground
+            const LB_CAP_BASE = _cfgN("LANDING_BURN_CAP_BASE", 1.5);      // deg   cap at h=0
+            const LB_CAP_H = _cfgN("LANDING_BURN_CAP_H", 0.04);        // deg/m cap growth with height
+            const LB_MCAP = _cfgN("LANDING_BURN_MCAP", 0.8);          // fraction of soft-gimbal torque the hold-angle may need
+            const LB_GFLOOR = _cfgN("LANDING_BURN_GFLOOR", 0.25);       // gNet floor (fraction of gEff) used for inversion
+            const LB_NOAUTH = _cfgN("LANDING_BURN_NOAUTH", 0.12);       // gNet below this fraction of gEff => no lateral authority, hold weathervane angle
 
             const legExt_m = _slamLegTipExtension(body);
             const hEff = hAGL - legExt_m - H_OFF;
@@ -5336,7 +5336,7 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
             const cosTilt = Math.max(0.9, Math.cos(thL) * Math.cos(gimbalCur / R2D));
             const Fmin = minMF * ve * lbEng.length;
             // v7b: reference throttle height ke saath THR_LATE -> Fmin/Fmax tak girta hai
-            const LB_H_BLEND = 8.0;
+            const LB_H_BLEND = _cfgN("LANDING_BURN_H_BLEND", 8.0);
             const fMinFrac = Math.min(THR_LATE, minMF / maxMF);
             const thrLateAt = function (h) {
               const k = Math.max(0, Math.min(1, h / LB_H_BLEND));
