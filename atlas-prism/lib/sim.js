@@ -439,6 +439,7 @@ members.forEach(m => {
   // One tick, exact pipeline order. Returns the snapshot used by guidance.
   function tick(dt) {
     if (_dormOn) _updateDormancy(dt);
+    if (typeof updateLegs === 'function') updateLegs(dt);
     physicsStep(dt);
     const snap = buildSnapshot();
     Guidance.onSnapshot(snap);
