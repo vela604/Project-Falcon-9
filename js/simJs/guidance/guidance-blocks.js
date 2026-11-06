@@ -5275,13 +5275,7 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
               }
               if (hAGL > _st.lbMaxAltSinceMin) _st.lbMaxAltSinceMin = hAGL;
               if (vRadial > _st.lbVyMax) _st.lbVyMax = vRadial;
-              if (!_st.lbLastCutLog || simT - _st.lbLastCutLog > 0.15) {
-                _st.lbLastCutLog = simT;
-                console.log("[LANDING_BURN-POSTCUT] t=" + simT.toFixed(2) +
-                  " altAGL=" + hAGL.toFixed(3) + "m vy=" + vRadial.toFixed(3) + "m/s" +
-                  " mdot=" + mdotPost.toFixed(1) + "kg/s F=" + Math.round(thrustPost) + "N" +
-                  " landed=" + (!!body.landed) + " crashed=" + (!!body.crashed) + " settled=" + (!!body.settled));
-              }
+              // verbose POSTCUT logging removed — hop metrics reported at TOUCHDOWN_COMPLETE
               if (mdotPost < 1.0 || elapsedContact > 4.0) {
                 console.log("[standardRTLS] LANDING_BURN engines spooled down t=" + simT.toFixed(2) +
                   " mdot=" + mdotPost.toFixed(2) + "kg/s F=" + Math.round(thrustPost) + "N" +
@@ -5559,10 +5553,9 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
               console.log("[standardRTLS] TOUCHDOWN_COMPLETE t=" + simT.toFixed(2) +
                 " altAGL=" + altT.toFixed(3) + "m" +
                 " landed=" + (!!body2.landed) + " crashed=" + (!!body2.crashed) + " settled=" + (!!body2.settled) +
-                " hop_mm=" + ((_st.lbMaxAltSinceMin - _st.lbMinAltAGL) * 1000).toFixed(2) +
+                " hop_mm=" + ((_st.lbMaxAltSinceMin - _st.lbMinAltAGL) * 1000).toFixed(4) +
                 " sink_mm=" + ((_st.lbContactAltAGL - _st.lbMinAltAGL) * 1000).toFixed(2) +
-                " vy_peak_mms=" + (_st.lbVyMax * 1000).toFixed(1) +
-                " (contact_alt=" + _st.lbContactAltAGL.toFixed(3) + "m min_alt=" + _st.lbMinAltAGL.toFixed(3) + "m peak_alt=" + _st.lbMaxAltSinceMin.toFixed(3) + "m)");
+                " vy_peak_mms=" + (_st.lbVyMax * 1000).toFixed(3));
             }
             finished = true;
             break;
