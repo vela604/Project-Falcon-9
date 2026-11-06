@@ -5187,7 +5187,7 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
             // constants
             // ================================================================
             const _cfgN = function (k, def) { return Number.isFinite(cfg[k]) ? cfg[k] : def; };
-            const V_TD = _cfgN("LANDING_BURN_V_TD", 0.2);
+            const V_TD = _cfgN("LANDING_BURN_V_TD", 0.6);
             const H_FLOOR = _cfgN("LANDING_BURN_H_FLOOR_M", 0.1);
             const H_OFF = _cfgN("LANDING_BURN_H_OFFSET_M", 0);
             const H_CUT = _cfgN("LANDING_BURN_H_CUT_M", 0);
@@ -5283,7 +5283,7 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
             const cosTilt = Math.max(0.9, Math.cos(thL) * Math.cos(gimbalCur / R2D));
             const Fmin = minMF * ve * lbEng.length;
             // v7b: reference throttle height ke saath THR_LATE -> Fmin/Fmax tak girta hai
-            const LB_H_BLEND = 15.0;
+            const LB_H_BLEND = 8.0;
             const fMinFrac = Math.min(THR_LATE, minMF / maxMF);
             const thrLateAt = function (h) {
               const k = Math.max(0, Math.min(1, h / LB_H_BLEND));
