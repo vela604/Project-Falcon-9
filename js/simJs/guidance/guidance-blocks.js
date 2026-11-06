@@ -3158,10 +3158,6 @@ setState(s) {
       LANDING_BURN_H_OFFSET_M: 0.0,
       LANDING_BURN_H_CUT_M: 0.0,
       LANDING_BURN_H_STALL_M: 0.5,
-      LANDING_BURN_POLE: 0.3,
-      LANDING_BURN_DELTA_PLAN_DEG: 5.0,
-      LANDING_BURN_PLAN_TGO_FRAC: 0.75,
-      LANDING_BURN_PLAN_T_S: null,
         // engines fired during LB spool (C = centre; add numbers for outer-ring)
       LANDING_BURN_LEGS_ALT_M: 200,   // AGL altitude to deploy legs during LB
       POST_ENTRY_GRIDFIN_RAMP_DEG_S: 3,    // grid-fin control target ramps 0 -> max at this rate (deg/s); slower = less oscillation (guess, tune in sim)
