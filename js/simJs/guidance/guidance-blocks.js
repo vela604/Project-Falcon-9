@@ -3152,7 +3152,7 @@ setState(s) {
       LANDING_BURN_ENGINES: "C",
       // LB cascade-controller constants (Claude v6, tunable via preset
       // landbackV1.rtls). Not in GUIDE_IMPORTANT_FIELDS.
-      LANDING_BURN_V_TD: 0.6,
+      LANDING_BURN_V_TD: 0.4,
       LANDING_BURN_THR_LATE: 0.6,
       LANDING_BURN_H_FLOOR_M: 0.1,
       LANDING_BURN_H_OFFSET_M: 0.0,
