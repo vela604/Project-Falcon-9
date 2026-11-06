@@ -1009,8 +1009,8 @@ function _deriveImpl(snapshot, bodyIdx, payloadMass) {
     const dragCd = _hullCd(speedRel, altitudeASL);
     const dragMag = (rho > 0 && speedRel > 1e-3)
       ? 0.5 * rho * dragCd * dragArea * speedRel * speedRel : 0;
-    const dragVecX = speedRel > 1e-6 ? -dragMag * relVx / speedRel : 0;
-    const dragVecY = speedRel > 1e-6 ? -dragMag * relVy / speedRel : 0;
+    let dragVecX = speedRel > 1e-6 ? -dragMag * relVx / speedRel : 0;
+    let dragVecY = speedRel > 1e-6 ? -dragMag * relVy / speedRel : 0;
     
     let thrustTotal = 0, mdotTotal = 0, thrustBodyX = 0, thrustBodyY = 0;
     (body.engines || []).forEach(e => {
@@ -1136,6 +1136,49 @@ torqueEngine += (e.x - comX_t) * fy - (ey - comY_t) * fx;
       }
     });
     
+    // v9: legs drag — per-leg windward/leeward aEff (1.0 vs 0.4).
+    // Matches physics.js computeDragAero exactly (same ratios, same
+    // windward rule, same mid-leg CoM arm). Applied to dragVec (inertial)
+    // and torqueDrag so guidance throttle/attitude prediction stays in
+    // lockstep with physics.
+    if (body.legs && body.legs.progress > 0.01 && speedRel > 1e-3 && hasMembers && members[0]) {
+      const bmL = members[0];
+      if (bmL.hasRecovery !== false && Number.isFinite(bmL.height) && bmL.height > 0 &&
+          Number.isFinite(bmL.width) && bmL.width > 0) {
+        const H = bmL.height, W = bmL.width;
+        const legLen = 0.27 * H;
+        const legThick = 0.065 * W;
+        const legDepth = 0.04 * W;
+        const aAxial = legThick * legDepth;
+        const aSide = legLen * legThick;
+        const wCross_d = Math.min(1, Math.abs(sinAlpha));
+        const perLegArea = aAxial * (1 - wCross_d) + aSide * wCross_d;
+        const vx_b = relVx * cosT + relVy * sinT;
+        const vy_b = -relVx * sinT + relVy * cosT;
+        const windwardSign = vx_b >= 0 ? 1 : -1;
+        const u_vx = vx_b / speedRel;
+        const u_vy = vy_b / speedRel;
+        const hingeLocalY = 0.008 * H;
+        const sweep = body.legs.progress * (125 * Math.PI / 180);
+        const legMidY_local = hingeLocalY + 0.5 * legLen * Math.cos(sweep);
+        const comH_val = massProps.comY;
+        const comW_val = massProps.comX || 0;
+        const legMidY_com = legMidY_local - comH_val;
+        const legXs = [W / 2, -W / 2, 0.375 * W, -0.375 * W];
+        for (let li = 0; li < 4; li++) {
+          const lx = legXs[li];
+          const isWindward = Math.sign(lx) === windwardSign;
+          const aEff = perLegArea * (isWindward ? 1.0 : 0.4);
+          const fMag = 0.5 * rho * dragCd * aEff * speedRel * speedRel;
+          const fbx = -fMag * u_vx;
+          const fby = -fMag * u_vy;
+          dragVecX += fbx * cosT - fby * sinT;
+          dragVecY += fbx * sinT + fby * cosT;
+          torqueDrag += (lx - comW_val) * fby - legMidY_com * fbx;
+        }
+      }
+    }
+
     const torqueRcs = 0;
 // Gravity-gradient torque — mirror of physics.js's
 // gravityGradientTorque(), same formula, same slender-body

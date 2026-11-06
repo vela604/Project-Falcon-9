@@ -1486,10 +1486,52 @@ const rho = airDensity(altitude);
     gridFinTorque = gf.torque;
   }
   
+  // v9: legs drag — per-leg windward/leeward aEff (1.0 vs 0.4).
+  // Force at each leg CoM, so per-leg self-torque = 0. Whole-body torque
+  // comes from the aEff asymmetry across X positions × moment arms.
+  // Ratios match componentLibrary legs-swingout-4 (legLength=0.27H,
+  // legThick=0.065W, legDepth=0.04W).
+  let legsFx_i = 0, legsFy_i = 0, legsTorque = 0;
+  if (s.legs && s.legs.progress > 0.01 && speedRel > 1e-3 && s.members && s.members[0]) {
+    const bm = s.members[0];
+    if (bm.hasRecovery !== false && Number.isFinite(bm.height) && bm.height > 0 &&
+        Number.isFinite(bm.width) && bm.width > 0) {
+      const H = bm.height, W = bm.width;
+      const legLen = 0.27 * H;
+      const legThick = 0.065 * W;
+      const legDepth = 0.04 * W;
+      const aAxial = legThick * legDepth;
+      const aSide = legLen * legThick;
+      const perLegArea = aAxial * (1 - wCross) + aSide * wCross;
+      const vx_b = relVx * cosT + relVy * sinT;
+      const vy_b = -relVx * sinT + relVy * cosT;
+      const windwardSign = vx_b >= 0 ? 1 : -1;
+      const u_vx = vx_b / speedRel;
+      const u_vy = vy_b / speedRel;
+      const hingeLocalY = 0.008 * H;
+      const sweep = s.legs.progress * (125 * Math.PI / 180);
+      const legMidY_local = hingeLocalY + 0.5 * legLen * Math.cos(sweep);
+      const comH_val = (extra && Number.isFinite(extra.comH)) ? extra.comH : 0;
+      const comW_val = (extra && Number.isFinite(extra.comW)) ? extra.comW : 0;
+      const legMidY_com = legMidY_local - comH_val;
+      const legXs = [W / 2, -W / 2, 0.375 * W, -0.375 * W];
+      for (let li = 0; li < 4; li++) {
+        const lx = legXs[li];
+        const isWindward = Math.sign(lx) === windwardSign;
+        const aEff = perLegArea * (isWindward ? 1.0 : 0.4);
+        const fMag = 0.5 * rho * cdHull * aEff * speedRel * speedRel;
+        const fbx = -fMag * u_vx;
+        const fby = -fMag * u_vy;
+        legsFx_i += fbx * cosT - fby * sinT;
+        legsFy_i += fbx * sinT + fby * cosT;
+        legsTorque += (lx - comW_val) * fby - legMidY_com * fbx;
+      }
+    }
+  }
   return {
-    Fdx: Fdx + gfFx,
-    Fdy: Fdy + gfFy,
-    dragTorque: dragTorque + gridFinTorque,
+    Fdx: Fdx + gfFx + legsFx_i,
+    Fdy: Fdy + gfFy + legsFy_i,
+    dragTorque: dragTorque + gridFinTorque + legsTorque,
     alphaDeg, Fnormal,
     gridFinTorque,
   };

@@ -126,7 +126,7 @@ self.onmessage = (e) => {
         '../core/environment.js?v=1793904735440',
         '../core/vehicle.js?v=1793904735440',
         '../core/rcs.js?v=1793904735440',
-        '../core/physics.js?v=1793904735440',
+        '../core/physics.js?v=1793955995510',
         '../core/collision.js?v=1793904735440',
         '../core/stateBuffer.js?v=1793479954682'
       );
