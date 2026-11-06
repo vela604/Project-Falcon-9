@@ -3222,6 +3222,7 @@ setState(s) {
         lbThrCmd: null, lbGimbalCmd: 0, lbFinCmd: 0,
         lbSpooled: false, lbSpoolT: null,
         lbAlignStartT: null, lbPlan: null, lbLegsDeployed: false, lbLimp: false, lbSatT0: null, lbContactFired: false, lbContactTime: 0, lbLastCutLog: 0, tcLogged: false,
+        lbContactAltAGL: 0, lbMinAltAGL: 0, lbMaxAltSinceMin: 0, lbVyMax: 0,
        
         lbaInit: false, lbaAlignStartT: null, lbaFinCmd: null, lbaGimbalZeroDone: false,
         lbAlignDeltaMax: 0,
@@ -5238,6 +5239,10 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
               _st.lbContactFired = true;
               _st.lbContactTime = simT;
               _st.lbLastCutLog = simT;
+              _st.lbContactAltAGL = hAGL;
+              _st.lbMinAltAGL = hAGL;
+              _st.lbMaxAltSinceMin = hAGL;
+              _st.lbVyMax = 0;
               _send(Guidance.cmdSetAllThrottle(0));
               _send(Guidance.cmdSetGimbalRate(0));
               _send(Guidance.cmdGridFinsControl(0));
@@ -5263,7 +5268,14 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
                 thrustPost += (e.currentF || 0);
               });
               const elapsedContact = simT - (_st.lbContactTime || simT);
-              if (!_st.lbLastCutLog || simT - _st.lbLastCutLog > 0.5) {
+              // Hop tracker — per-tick min/max altitude, max upward velocity
+              if (hAGL < _st.lbMinAltAGL) {
+                _st.lbMinAltAGL = hAGL;
+                _st.lbMaxAltSinceMin = hAGL;
+              }
+              if (hAGL > _st.lbMaxAltSinceMin) _st.lbMaxAltSinceMin = hAGL;
+              if (vRadial > _st.lbVyMax) _st.lbVyMax = vRadial;
+              if (!_st.lbLastCutLog || simT - _st.lbLastCutLog > 0.15) {
                 _st.lbLastCutLog = simT;
                 console.log("[LANDING_BURN-POSTCUT] t=" + simT.toFixed(2) +
                   " altAGL=" + hAGL.toFixed(3) + "m vy=" + vRadial.toFixed(3) + "m/s" +
@@ -5546,7 +5558,11 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
               const altT = rT - Rm2 - ((env2 && env2.LAUNCH_SITE_ALTITUDE) || 0);
               console.log("[standardRTLS] TOUCHDOWN_COMPLETE t=" + simT.toFixed(2) +
                 " altAGL=" + altT.toFixed(3) + "m" +
-                " landed=" + (!!body2.landed) + " crashed=" + (!!body2.crashed) + " settled=" + (!!body2.settled));
+                " landed=" + (!!body2.landed) + " crashed=" + (!!body2.crashed) + " settled=" + (!!body2.settled) +
+                " hop_mm=" + ((_st.lbMaxAltSinceMin - _st.lbMinAltAGL) * 1000).toFixed(2) +
+                " sink_mm=" + ((_st.lbContactAltAGL - _st.lbMinAltAGL) * 1000).toFixed(2) +
+                " vy_peak_mms=" + (_st.lbVyMax * 1000).toFixed(1) +
+                " (contact_alt=" + _st.lbContactAltAGL.toFixed(3) + "m min_alt=" + _st.lbMinAltAGL.toFixed(3) + "m peak_alt=" + _st.lbMaxAltSinceMin.toFixed(3) + "m)");
             }
             finished = true;
             break;
