@@ -3176,7 +3176,7 @@ setState(s) {
 
       const PHASES = [
         "FLIP", "BOOSTBACK_BURN", "PRE_ENTRY_STEER", "ENTRY_BURN",
-        "POST_ENTRY_STEER", "LANDING_BURN_ALIGN", "LANDING_BURN", "TOUCHDOWN",
+        "POST_ENTRY_STEER", "LANDING_BURN_ALIGN", "LANDING_BURN", "TOUCHDOWN_COMPLETE",
       ];
       const TIMEOUT_KEY = {
         FLIP: "FLIP_TIMEOUT_S",
@@ -3185,7 +3185,7 @@ setState(s) {
         ENTRY_BURN: "ENTRY_BURN_TIMEOUT_S",
         POST_ENTRY_STEER: "POST_ENTRY_TIMEOUT_S",
         LANDING_BURN: "LANDING_TIMEOUT_S",
-        TOUCHDOWN: "TOUCHDOWN_TIMEOUT_S",
+        TOUCHDOWN_COMPLETE: "TOUCHDOWN_TIMEOUT_S",
       };
 
       const _st = {
@@ -3221,7 +3221,7 @@ setState(s) {
         lbInit: false, lbT0: null, lbDone: false, lbLastLog: 0,
         lbThrCmd: null, lbGimbalCmd: 0, lbFinCmd: 0,
         lbSpooled: false, lbSpoolT: null,
-        lbAlignStartT: null, lbPlan: null, lbLegsDeployed: false, lbLimp: false, lbSatT0: null,
+        lbAlignStartT: null, lbPlan: null, lbLegsDeployed: false, lbLimp: false, lbSatT0: null, lbContactFired: false, lbContactTime: 0, lbLastCutLog: 0, tcLogged: false,
        
         lbaInit: false, lbaAlignStartT: null, lbaFinCmd: null, lbaGimbalZeroDone: false,
         lbAlignDeltaMax: 0,
@@ -5138,6 +5138,7 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
               _st.lbGDot = 0;
               _st.lbLegsDeployed = false;
               _st.lbLimp = false; _st.lbSatT0 = null;
+              _st.lbContactFired = false; _st.lbContactTime = 0; _st.lbLastCutLog = 0; _st.tcLogged = false;
               _send(Guidance.cmdSetAllThrottle(0));
               _send(Guidance.cmdSetGimbalRate(0));
               _send(Guidance.cmdRcsDuty(null, idx));
@@ -5232,18 +5233,51 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
             const hEff = hAGL - legExt_m - H_OFF;
             const elapsedAlign = simT - _st.lbAlignStartT;
 
-            // ---- Contact / cut ----
-            if (body.landed || body.crashed || hEff <= H_CUT || (-vRadial < 0.15 && hEff < H_STALL)) {
+            // ---- Contact detection (fires ONCE, then holds for spool-down) ----
+            if (!_st.lbContactFired && (body.landed || body.crashed || hEff <= H_CUT || (-vRadial < 0.15 && hEff < H_STALL))) {
+              _st.lbContactFired = true;
+              _st.lbContactTime = simT;
+              _st.lbLastCutLog = simT;
               _send(Guidance.cmdSetAllThrottle(0));
               _send(Guidance.cmdSetGimbalRate(0));
               _send(Guidance.cmdGridFinsControl(0));
               _rcsOff();
-              console.log("[standardRTLS] LANDING_BURN touchdown-cut t=" + simT.toFixed(2) +
-                " altitudeAGL=" + hAGL.toFixed(3) + "m vy=" + vRadial.toFixed(3) + "m/s" +
+              console.log("[standardRTLS] LANDING_BURN contact t=" + simT.toFixed(2) +
+                " altitudeAGL=" + hAGL.toFixed(3) + "m hEff=" + hEff.toFixed(3) + "m" +
+                " vy=" + vRadial.toFixed(3) + "m/s" +
                 " x=" + xFromPadM.toFixed(3) + "m vx=" + vTangGround.toFixed(3) + "m/s" +
                 " th=" + thetaLocalDeg.toFixed(3) + "deg w=" + ((d.omega - omegaE) * R2D).toFixed(4) + "deg/s" +
-                " landed=" + (!!body.landed) + " crashed=" + (!!body.crashed));
-              finished = true;
+                " landed=" + (!!body.landed) + " crashed=" + (!!body.crashed) +
+                " — HOLDING until engine spool-down");
+            }
+
+            // ---- Post-contact: hold zero, monitor engine spool-down ----
+            if (_st.lbContactFired) {
+              _send(Guidance.cmdSetAllThrottle(0));
+              _send(Guidance.cmdSetGimbalRate(0));
+              _send(Guidance.cmdGridFinsControl(0));
+              _rcsOff();
+              let mdotPost = 0, thrustPost = 0;
+              (body.engines || []).forEach(e => {
+                mdotPost += (e.massFlowRate || 0);
+                thrustPost += (e.currentF || 0);
+              });
+              const elapsedContact = simT - (_st.lbContactTime || simT);
+              if (!_st.lbLastCutLog || simT - _st.lbLastCutLog > 0.5) {
+                _st.lbLastCutLog = simT;
+                console.log("[LANDING_BURN-POSTCUT] t=" + simT.toFixed(2) +
+                  " altAGL=" + hAGL.toFixed(3) + "m vy=" + vRadial.toFixed(3) + "m/s" +
+                  " mdot=" + mdotPost.toFixed(1) + "kg/s F=" + Math.round(thrustPost) + "N" +
+                  " landed=" + (!!body.landed) + " crashed=" + (!!body.crashed) + " settled=" + (!!body.settled));
+              }
+              if (mdotPost < 1.0 || elapsedContact > 4.0) {
+                console.log("[standardRTLS] LANDING_BURN engines spooled down t=" + simT.toFixed(2) +
+                  " mdot=" + mdotPost.toFixed(2) + "kg/s F=" + Math.round(thrustPost) + "N" +
+                  " landed=" + (!!body.landed) + " crashed=" + (!!body.crashed) +
+                  " elapsed=" + elapsedContact.toFixed(2) + "s — advancing to TOUCHDOWN_COMPLETE");
+                finished = true;
+                break;
+              }
               break;
             }
 
@@ -5496,8 +5530,25 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
 
 
                     // ==========================================================
-                    case "TOUCHDOWN": {
-            // TODO: touchdown
+                    case "TOUCHDOWN_COMPLETE": {
+            const idx2 = _bodyIdx;
+            const body2 = snapshot.bodies[idx2];
+            if (!body2) break;
+            _send(Guidance.cmdSetAllThrottle(0));
+            _send(Guidance.cmdSetGimbalRate(0));
+            _send(Guidance.cmdGridFinsControl(0));
+            _rcsOff();
+            if (!_st.tcLogged) {
+              _st.tcLogged = true;
+              const env2 = Derivation.getEnv();
+              const Rm2 = env2 ? env2.EARTH_RADIUS : 6371000;
+              const rT = Math.hypot(body2.rx, body2.ry);
+              const altT = rT - Rm2 - ((env2 && env2.LAUNCH_SITE_ALTITUDE) || 0);
+              console.log("[standardRTLS] TOUCHDOWN_COMPLETE t=" + simT.toFixed(2) +
+                " altAGL=" + altT.toFixed(3) + "m" +
+                " landed=" + (!!body2.landed) + " crashed=" + (!!body2.crashed) + " settled=" + (!!body2.settled));
+            }
+            finished = true;
             break;
           }
 
@@ -5621,6 +5672,7 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
           _st.lbLegsDeployed = false;
 
           _st.lbLimp = false; _st.lbSatT0 = null;
+          _st.lbContactFired = false; _st.lbContactTime = 0; _st.lbLastCutLog = 0; _st.tcLogged = false;
           _st.lbaInit = false;
           _st.lbaAlignStartT = null;
           _st.lbaFinCmd = null;
