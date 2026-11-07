@@ -7,3 +7,4 @@ docs/
 
 # One-off patch scripts — kept locally for editing
 node-patch.js
+*.bak_szad
