@@ -1053,6 +1053,61 @@ function _padSprite(rgb) {
   return cv;
 }
 
+// ============================================================================
+// HUMAN SCALE REFERENCE — 1.75m silhouette for size comparison.
+// Drawn in pad-local coord system (1 unit = 1m, +y = down in canvas).
+// Feet at y=0 (ground/surface), head at y=-1.75.
+// Bright cyan so it stands out against grey concrete even at distance.
+// "1.75m HUMAN" label above head identifies it as a scale marker.
+// ============================================================================
+function _drawHumanScaleRef(ctx, xPad) {
+  ctx.save();
+  
+  // Ground contact shadow (ellipse on surface)
+  ctx.fillStyle = 'rgba(120, 200, 255, 0.35)';
+  ctx.beginPath();
+  ctx.ellipse(xPad, 0, 0.55, 0.08, 0, 0, Math.PI * 2);
+  ctx.fill();
+  
+  // Body — bright cyan silhouette with dark outline
+  ctx.fillStyle = 'rgba(140, 210, 255, 0.95)';
+  ctx.strokeStyle = 'rgba(20, 50, 90, 0.9)';
+  ctx.lineWidth = 0.02;
+  
+  // Legs (two vertical rects)
+  ctx.fillRect(xPad - 0.16, -0.90, 0.13, 0.90);
+  ctx.fillRect(xPad + 0.03, -0.90, 0.13, 0.90);
+  
+  // Torso
+  ctx.beginPath();
+  ctx.moveTo(xPad - 0.22, -0.88);
+  ctx.lineTo(xPad + 0.22, -0.88);
+  ctx.lineTo(xPad + 0.26, -1.45);
+  ctx.lineTo(xPad - 0.26, -1.45);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+  
+  // Arms (hanging down sides)
+  ctx.fillRect(xPad - 0.33, -1.42, 0.09, 0.55);
+  ctx.fillRect(xPad + 0.24, -1.42, 0.09, 0.55);
+  
+  // Head
+  ctx.beginPath();
+  ctx.arc(xPad, -1.60, 0.14, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  
+  // Label above head
+  ctx.font = '1.2px sans-serif';
+  ctx.fillStyle = 'rgba(140, 210, 255, 0.9)';
+  ctx.textAlign = 'center';
+  ctx.fillText('1.75m HUMAN', xPad, -2.15);
+  ctx.textAlign = 'left';
+  
+  ctx.restore();
+}
+
 function drawLaunchPad() {
   if (camera.mode === 'planet') return;
 
@@ -1156,6 +1211,12 @@ function drawLaunchPad() {
   ctx.restore();
 
   _padDraw(ctx, g.front, pal, mpp);
+
+  // ============ HUMAN SCALE REFERENCE ============
+  // Placed on the launch table east block (5.5m east of rocket center),
+  // standing at ground level. This gives a clear sense of the rocket's
+  // true scale — the human is ~1.75m, rocket is ~70m, so 40:1 ratio.
+  _drawHumanScaleRef(ctx, 5.5);
 
   // ---- night lights: floodlight beams + glows + blinking beacons ----
   if (pal.night > 0.02) {
@@ -1292,6 +1353,12 @@ function drawLandingPads() {
     ctx.fillStyle = cg; ctx.beginPath(); ctx.arc(0, 0, R * 0.6, 0, Math.PI * 2); ctx.fill();
     ctx.restore();
 
+    // ============ HUMAN SCALE REFERENCE ============
+    // One human silhouette 8m east of the pad edge, at ground level.
+    // Gives immediate sense of pad size vs human (pad is usually ~20m
+    // radius, human is 1.75m — pad dwarfs the human by ~12:1).
+    _drawHumanScaleRef(ctx, R + 8);
+    
     // ground vapour lights, both sides
     if (g.lights.length) {
       if (n > 0.02) {
