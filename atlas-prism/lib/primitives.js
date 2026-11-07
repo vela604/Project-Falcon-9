@@ -836,223 +836,82 @@ p = Object.assign({}, p, { bi: clamp(p.bi + ((c === 'F1' || c === 'FE') ? +1 : -
   // ---- tuneLeadV2: edge by apside-crossing count, window by release-apside time, FULL-score search in window ----
   // o: { li0, cross(li)->{cross,tToApo,tToPeri,marginS}, full(li)->{score,done,ok,cross}, marginMaxS=20, maxLi=4000, maxWin=40 }
   async function tuneLeadV2(o) {
-    const M = o.marginMaxS || 20, maxLi = o.maxLi || 4000, maxWin = o.maxWin || 40, log = [], say = (s) => { log.push(s); if (o.onLog) o.onLog(s); };
-    const cc = new Map(), fc = new Map(); let nC = 0, nF = 0;
-    const cross = async (li) => { if (!cc.has(li)) { nC++; cc.set(li, await o.cross(li)); } return cc.get(li); };
-    const full = async (li) => { if (!fc.has(li)) { nF++; fc.set(li, await o.full(li)); } return fc.get(li); };
-    const cnt = (r) => (r && Number.isFinite(r.cross) && r.cross >= 1) ? r.cross : 0;
-    const clamp = (x) => Math.max(0, Math.min(maxLi, x));
-    const fin = (x) => Object.assign({ evals: nC + nF, crossEvals: nC, fullEvals: nF, log }, x);
-    // 1+2. edges: crossings count is monotone in lead; flip k|k+1 is an edge. Try nearest edges first until one has a tick that completes (done).
-    // 0-crossing handling: burn ended before ANY apogee peak. Post-burn
-    // orbit is still ASCENDING to apo — physically the same deploy situation
-    // as 2-crossing (past apogee+perigee, ascending to next apo): both wait
-    // for an apogee peak. So mode = APO, not PERI.
-    //
-    // Two cases at 0-crossing:
-    //   (a) FULL reaches done=true: deploy happens — accept tick directly
-    //   (b) FULL done=false: burn ended too early → hunt for 0|k edge (k>=1)
-    //       by searching DOWN first, then UP as fallback.
-    // 0-crossing handling: burn ended before ANY apogee peak. Orbit is still
-    // ASCENDING to apo — same deploy situation as 2-crossing. Parity rule:
-    // even=APO, odd=PERI.
-    //
-    // 0-crossing FULL done=true IS possible (payload deploys), but we do NOT
-    // accept it immediately. Lower lead → burn ends later → eventually crosses
-    // an apside (count >= 1), where the edge + window + golden-section search
-    // has real landscape structure. Search DOWN until count >= 1; only fall
-    // back to best-done-0 if no count>=1 tick exists within ±200.
-    let _li0 = o.li0;
-    const _c0raw = cnt(await cross(o.li0));
-    if (_c0raw === 0) {
-      let _step = 1, _found = false;
-      const _visited0 = [o.li0];
-      // DOWN first: lower li → burn ends later → eventually count >= 1
-      while (_step <= 200 && _li0 - _step >= 0) {
-        const _probe = _li0 - _step;
-        _visited0.push(_probe);
-        if (cnt(await cross(_probe)) >= 1) { _li0 = _probe; _found = true; break; }
-        _step *= 2;
-      }
-      // UP fallback (rare)
-      if (!_found) {
-        _step = 1;
-        while (_step <= 200 && _li0 + _step <= maxLi) {
-          const _probe = _li0 + _step;
-          if (cnt(await cross(_probe)) >= 1) { _li0 = _probe; _found = true; break; }
-          _step *= 2;
-        }
-      }
-      if (!_found) {
-        // No count>=1 in ±200. Fall back to best DONE among visited 0-ticks.
-        let _best0Li = null, _best0Full = null;
-        for (const _t of _visited0) {
-          const _f = await full(_t);
-          if (_f && _f.done && (!_best0Full || _f.score < _best0Full.score)) { _best0Li = _t; _best0Full = _f; }
-        }
-        if (!_best0Li) return fin({ ok: false, reason: '0 crossings at li0=' + o.li0 + '; no count>=1 tick and no done 0-tick within ±200' });
-        say('0 crossings everywhere ±200 — using best done 0-tick li=' + _best0Li + ' (APO mode)');
-        return fin({ ok: true, mode: 'APO', edgeK: -1, edge: [_best0Li, _best0Li],
-          window: [_best0Li, _best0Li], W: [_best0Li], rows: [_best0Full],
-          leadTicks: _best0Li, bestScore: _best0Full.score, full: _best0Full });
-      }
-      say('0 crossings at li0=' + o.li0 + ' -> searching from lower li=' + _li0 + ' (count=' + cnt(await cross(_li0)) + ')');
+  const M = o.marginMaxS || 20, maxLi = o.maxLi || 4000, maxWin = o.maxWin || 40;
+  const ROLL = o.maxRoll || 3, FB = o.fallbackSpan || 10, FB_FULLS = o.fallbackFulls || 8;
+  const log = [], say = (s) => { log.push(s); if (o.onLog) o.onLog(s); };
+  const cc = new Map(), fc = new Map(), vc = new Map(); let nC = 0, nF = 0;
+  const cross = async (li) => { if (!cc.has(li)) { nC++; cc.set(li, await o.cross(li)); } return cc.get(li); };
+  const full  = async (li) => { if (!fc.has(li)) { nF++; fc.set(li, await o.full(li)); } return fc.get(li); };
+  const clamp = (x) => Math.max(0, Math.min(maxLi, x));
+  const fin = (x) => Object.assign({ evals: nC + nF, crossEvals: nC, fullEvals: nF, log }, x);
+  const isNum = (x) => typeof x === 'number' && !Number.isNaN(x);
+  const scoreOf = (r) => (r && r.done && Number.isFinite(r.score)) ? r.score : Infinity;
+  const f1 = (x) => Number.isFinite(x) ? x.toFixed(1) : '-';
+
+  const view = async (li) => {
+    if (vc.has(li)) return vc.get(li);
+    const r = await cross(li);
+    const valid = !!r && Number.isFinite(r.cross);
+    const nanA = !(r && isNum(r.tToApo)), nanP = !(r && isNum(r.tToPeri));
+    const ta = nanA ? 0 : r.tToApo, tp = nanP ? 0 : r.tToPeri;
+    const v = { li, valid, c: valid ? r.cross : NaN, ta, tp, tmin: Math.min(ta, tp), mode: tp < ta ? 'PERI' : 'APO', nan: nanA || nanP };
+    vc.set(li, v); return v;
+  };
+
+  const isOne = async (li) => { const v = await view(li); return v.valid ? v.c === 1 : null; };
+  let slope = o.slopeSPerTick || 1.4;
+  const stepFor = (v) => (v.valid && (v.c === 1 || v.c === 2) && Number.isFinite(v.tmin)) ? Math.max(1, Math.min(256, Math.round(v.tmin / slope))) : null;
+  const findB1 = async (seed) => {
+    seed = clamp(seed);
+    const s = await isOne(seed); if (s === null) return null;
+    let A = seed, B = null, vA = await view(seed), step = stepFor(vA) || 1;
+    while (B === null) {
+      const p = clamp(A + (s ? step : -step));
+      if (p === A) return null;
+      const vp = await view(p); if (!vp.valid) return null;
+      if ((vp.c === 1) === s) {
+        if (vA.c === vp.c && (vp.c === 1 || vp.c === 2)) { const sl = Math.abs(vp.tmin - vA.tmin) / Math.abs(p - A); if (sl >= 0.3 && sl <= 5) slope = sl; }
+        A = p; vA = vp; step = stepFor(vp) || step * 2;
+      } else B = p;
     }
-    
-    const c0 = cnt(await cross(_li0));
-    if (!c0) return fin({ ok: false, reason: 'no crossing count at adjusted li0=' + _li0 });
-    const findEdge = async (k) => {
-      // Treat count 0 as "low side" (c >= k+1 is false for k >= 0). No null.
-      // This lets findEdge bracket the 0|k boundary (k>=1) directly — needed
-      // when a 0-to-2 crossing jump (skipping 1) exists in the lattice.
-      const side = async (li) => {
-        const r = await cross(li);
-        if (!r) return null;
-        const c = cnt(r);
-        // For 1|2 edge search (k=1): count 0 with finite tToApo is on the HIGH
-        // side (ascending family, same as 2+). A 1→0 sampling jump means the
-        // real lattice had 1→2→0 — the 2 was skipped by a big doubling step
-        // (e.g. 569 step=128 jumps to 697 skipping the 620|621 edge).
-        // Without this, side(569)=false and side(697)=false → no flip detected
-        // → 'no edge found' even though 620|621 exists with done=true at 621.
-        if (k === 1 && c === 0 && Number.isFinite(r.tToApo)) return true;
-        return c >= k + 1;
-      };
-      const sa = await side(_li0); let A = _li0, B = null, step = 1;
-      while (B === null) {
-        const p = clamp(_li0 + (sa ? -1 : 1) * step);
-        if (p === A) return null;
-        const sp = await side(p);
-        if (sp === null) return null;
-        if (sp === sa) { A = p; step *= 2; } else B = p;
-      }
-      while (Math.abs(A - B) > 1) {
-        const m = Math.floor((A + B) / 2), sm = await side(m);
-        if (sm === null) return null;
-        if (sm === sa) A = m; else B = m;
-      }
-      return sa ? [B, A] : [A, B];   // [lo (count<=k), hi (count>=k+1)]
-    };
-    const ks = [1, 2].sort((x, y) => Math.abs(x - (c0 - 0.5)) - Math.abs(y - (c0 - 0.5)));
-    let v = null, other = null, edgeK = null, edgePair = null, dSel = 0;
-    for (const k of ks) {
-      const ed = await findEdge(k);
-      if (!ed) { say('edge ' + k + '|' + (k + 1) + ': not found'); continue; }
-      // Edge ticks can be noisy (vr jitter right at the apside gives odd counts like 3). Use the nearest ticks with count exactly k (below) and k+1 (above).
-      const nearest = async (from, want, d) => { for (let j = 0; j < 5; j++) { const li = from + d * j; if (li < 0 || li > maxLi) return null; if (cnt(await cross(li)) === want) return li; } return null; };
-      const tA = await nearest(ed[0], k, -1), tB = await nearest(ed[1], k + 1, +1);
-      // Pick the side by CHEAP data: right side has an apside imminent after engine-off (seconds); wrong side ~ a half orbit away. FULL runs nearest-first, other side only as fallback.
-      const okT = (c) => c === 1 || c === 2;   // FULL only for 1 or 2 crossings
-      const nearT = async (li) => { const r = await cross(li), t = Math.min(r.tToApo, r.tToPeri); return Number.isFinite(t) ? t : Infinity; };
-      // Rolling-pair walk, SKIP raw edge FULLs (user-verified optimisation).
-      //
-      // Raw edge ticks (baseA, baseB from bisection) sit EXACTLY at the
-      // cross-count boundary — behaviour is marginal/flappy there. User's
-      // 320/350 elliptical case: edge 424|425 both failed FULL (each ~5s
-      // sim time wasted, duration_cap_hit), while 423 (baseA-1) worked
-      // cleanly. Testing raw edge is 1-2 wasted FULL evals per edge.
-      //
-      // Rule: start rolling pair at [baseA-1, baseB+1] (adjacent outward),
-      // determine direction from adjacent-tick result, then roll normally
-      // (DOWN priority, cross-mismatch safe). Raw edges NEVER FULL-tested.
-      // If adjacent rolling exhausts without hit, this edge fails — user
-      // confirms flappy edges are the failure mode, so a valid working
-      // region ALWAYS has a working tick adjacent-outward.
-      //
-      // Savings: user's 424 case drops from 2 FULL (424 fail + 423 pass)
-      // to 1 FULL (423 pass only) — ~5-6s wall saved.
-      //
-      // maxWalk=min(10, maxWin/2): bounds worst case to 20 FULL evals if
-      // both directions exhaust.
-      const baseA = (tA !== null) ? tA : ed[0];
-      const baseB = (tB !== null) ? tB : ed[1];
-      const maxWalk = Math.min(10, Math.floor(maxWin / 2));
-      let hit = null;
-      const triedLi = new Set();
-      let below = baseA - 1, above = baseB + 1;
-      say('edge ' + k + '|' + (k + 1) + ' raw ' + ed[0] + '|' + ed[1] +
-          ': SKIP raw edge FULLs (flappy), start pair ' + below + '/' + above);
-      const maxIter = maxWalk * 2;
-      let iter = 0;
-      while (iter++ < maxIter && !hit) {
-        const canBelow = (below >= 0 && below <= maxLi && !triedLi.has(below) && okT(k));
-        const canAbove = (above >= 0 && above <= maxLi && !triedLi.has(above) && okT(k + 1));
-        if (!canBelow && !canAbove) break;
-        let testLi, testC;
-        if (canBelow && canAbove) {
-          if (below <= above) { testLi = below; testC = k; }
-          else { testLi = above; testC = k + 1; }
-        } else if (canBelow) { testLi = below; testC = k; }
-        else { testLi = above; testC = k + 1; }
-        triedLi.add(testLi);
-        const r = await cross(testLi);
-        if (cnt(r) !== testC) {
-          say('edge ' + k + '|' + (k + 1) + ' pair ' + below + '/' + above +
-              ' li ' + testLi + ' cross mismatch (' + cnt(r) + ' != ' + testC + '), skip');
-          if (testC === k) below--; else above++;
-          continue;
-        }
-        const tVal = await nearT(testLi);
-        const ff = await full(testLi);
-        say('edge ' + k + '|' + (k + 1) + ' raw ' + ed[0] + '|' + ed[1] +
-            ' pair ' + below + '/' + above +
-            ' test li ' + testLi + ' (cross ' + testC + ', apside ' + tVal.toFixed(1) + 's)' +
-            ' FULL done ' + !!(ff && ff.done) +
-            ' score ' + (ff && Number.isFinite(ff.score) ? ff.score.toFixed(1) : '-'));
-        if (ff && ff.done) { hit = { li: testLi, c: testC, t: tVal }; break; }
-        if (testC === k) below--; else above++;
-      }
-      if (!hit) continue;
-      v = hit.li; dSel = hit.c === k ? -1 : +1;
-      other = (dSel < 0) ? baseB : baseA;
-      edgeK = k; edgePair = ed; break;
+    while (Math.abs(A - B) > 1) {
+      const m = Math.floor((A + B) / 2), sm = await isOne(m); if (sm === null) return null;
+      if (sm === s) A = m; else B = m;
     }
-    // Fallback for 0-crossing starts: findEdge's k=1..2 search can't bracket a
-    // 0|1 edge. If preprocessing found a valid lower _li0 with >=1 crossing and
-    // its FULL completes, use that tick directly.
-    if (v === null && _li0 !== o.li0) {
-      const _cvAt = cnt(await cross(_li0));
-      if (_cvAt >= 1) {
-        const _fTest = await full(_li0);
-        if (_fTest && _fTest.done) {
-          v = _li0;
-          // dSel from found count parity: 1 (odd) → PERI → window down (-1);
-          // 2 (even) → APO → window up (+1). Matches the mode() parity rule.
-          dSel = (_cvAt % 2 === 1) ? -1 : +1;
-          edgePair = [_li0, _li0];
-          edgeK = 0;
-          say('fallback (0-crossing start): using ' + (_cvAt % 2 === 1 ? 'lower' : 'higher') +
-              ' li=' + v + ' (count=' + _cvAt + ', FULL done, mode=' + ((_cvAt % 2 === 0) ? 'APO' : 'PERI') + ')');
-        }
-      }
-    }
-    if (v === null) return fin({ ok: false, reason: 'no edge (k=' + ks.join(',') + ') has a done tick' });
-    const lo = edgePair[0], hi = edgePair[1];
-    // Mode: crossings count parity determines deploy apside.
-    //   0 crossings = ascending to apo (before first peak) → APO (like 2)
-    //   1 crossing  = past apo, descending to peri      → PERI
-    //   2 crossings = past apo+peri, ascending to apo   → APO
-    //   even = APO, odd = PERI
-    const cv = cnt(await cross(v)), mode = (cv % 2 === 0) ? 'APO' : 'PERI';
-    const tRel = (r) => mode === 'PERI' ? r.tToPeri : r.tToApo;
-    // 3. window: from v away from the edge while release-apside time <= M
-    const dW = dSel;
-    let good = v, bad = null, step = 1;
-    if (!(tRel(await cross(v)) <= M)) bad = v;
-    while (bad === null && Math.abs(good - v) < maxWin - 1) {
-      const p = clamp(good + dW * step), r = await cross(p);
-      if (p !== good && cnt(r) === cv && tRel(r) <= M) { good = p; step *= 2; } else { bad = p; if (p === good) break; }
+    return s ? A : B;
+  };
+  const b1 = await findB1(o.li0);
+  let result = null;
+
+  const buildWindow = async (seed, dir) => {
+    const cv = seed.v.c, v0 = seed.li, lim = maxWin - 1;
+    const okAt = async (li) => { if (li < 0 || li > maxLi) return false; const x = await view(li); return x.valid && x.c === cv && x.tmin <= M; };
+    let good = v0, bad = null, step = 1;
+    while (bad === null && Math.abs(good - v0) < lim) {
+      let p = clamp(good + dir * step);
+      if (Math.abs(p - v0) > lim) p = v0 + dir * lim;
+      if (p === good) { bad = p; break; }
+      if (await okAt(p)) { good = p; step *= 2; } else bad = p;
     }
     while (bad !== null && bad !== good && Math.abs(bad - good) > 1) {
-      const m = Math.floor((bad + good) / 2), r = await cross(m);
-      if (cnt(r) === cv && tRel(r) <= M) good = m; else bad = m;
+      const m = Math.floor((bad + good) / 2);
+      if (await okAt(m)) good = m; else bad = m;
     }
-    const N = Math.min(maxWin, Math.abs(good - v) + 1), W = [];
-    for (let k = 0; k < N; k++) W.push(v + dW * k);
-    say('mode=' + mode + ' window ' + W[0] + '..' + W[N - 1] + ' (' + N + ' ticks, dir ' + dW + ')');
-    if (o.windowOnly) return fin({ ok: true, mode, edgeK, edge: [lo, hi], W, rows: Array.from(fc.values()) });
-    // 4. FULL-score search in window (golden section on index, then brute force the rest)
-    const f = async (k) => { const r = await full(W[k]); return Number.isFinite(r && r.score) ? r.score : Infinity; };
+    const N = Math.min(maxWin, Math.abs(good - v0) + 1), W = [];
+    for (let k = 0; k < N; k++) W.push(v0 + dir * k);
+    return W;
+  };
+  const pickBest = (W) => {
+    let best = null, anyDone = null;
+    for (const li of W) {
+      const r = fc.get(li); if (!r || !r.done) continue;
+      if (!anyDone) anyDone = { li, score: scoreOf(r), r };
+      if (Number.isFinite(r.score) && (!best || r.score < best.score)) best = { li, score: r.score, r };
+    }
+    return best || anyDone;
+  };
+  const searchWindow = async (W) => {
+    const N = W.length, f = async (k) => scoreOf(await full(W[k]));
     let L = 0, R = N - 1; const PHI = 0.618;
     while (R - L > 3) {
       let x1 = Math.round(L + (1 - PHI) * (R - L)), x2 = Math.round(L + PHI * (R - L));
@@ -1060,19 +919,77 @@ p = Object.assign({}, p, { bi: clamp(p.bi + ((c === 'F1' || c === 'FE') ? +1 : -
       if ((await f(x1)) <= (await f(x2))) R = x2; else L = x1;
     }
     for (let k = L; k <= R; k++) await f(k);
-    let best = null;
-    for (const li of W) { const r = fc.get(li); if (r && Number.isFinite(r.score) && (!best || r.score < best.score)) best = { li, score: r.score, r }; }
-    if (!best) return fin({ ok: false, reason: 'no scored lead in window', edge: [lo, hi], mode, window: W });
-    // ok = mission COMPLETED (done=true) — NOT scoring validity (sc.ok).
-    // A lead whose FULL mission deploys the payload but hard-fails on residual
-    // (stage residual below target band floor) is still a valid LEAD for the
-    // search. The caller (CONVO / probeBiasCheckpoint) decides what to do with
-    // a hard-fail score. Using sc.ok here would collapse "search found a lead
-    // but the resulting mission violates scoring" into "search failed" —
-    // hiding the real reason (residual_below_floor) behind a generic
-    // 'lead search failed' message.
-    return fin({ ok: !!best.r.done, mode, edgeK, edge: [lo, hi], window: [W[0], W[N - 1]], W, rows: Array.from(fc.values()), leadTicks: best.li, bestScore: best.score, full: best.r });
+    return pickBest(W);
+  };
+
+  if (b1 != null) {
+    let e2 = null;
+    for (let j = b1 + 1; j <= b1 + 4 && j <= maxLi; j++) { const v = await view(j); if (v.valid && v.c === 2) { e2 = j; break; } }
+    const lowLi = b1 - 1, highLi = (e2 != null ? e2 : b1 + 2) + 1;
+    const sides = [];
+    if (lowLi >= 0)    sides.push({ name: 'below(c1)', start: lowLi,  dir: -1, want: 1, v: await view(lowLi) });
+    if (highLi <= maxLi) sides.push({ name: 'above(c2)', start: highLi, dir: +1, want: 2, v: await view(highLi) });
+    for (const s of sides) say('edge 1|2 at ' + b1 + '|' + (b1 + 1) + (e2 != null ? ' (c2 from ' + e2 + ')' : ' (no c2 seen)') + '  ' + s.name + ' li ' +
+      s.start + ' c' + s.v.c + ' tApo ' + f1(s.v.ta) + ' tPeri ' + f1(s.v.tp) + (s.v.nan ? ' [NaN->0]' : ''));
+
+    const cand = sides.filter((s) => s.v.valid && s.v.c === s.want).sort((x, y) => x.v.tmin - y.v.tmin);
+    for (const s of cand) {
+      let seed = null;
+      for (let i = 0; i < ROLL; i++) {
+        const li = s.start + s.dir * i; if (li < 0 || li > maxLi) break;
+        const v = await view(li);
+        if (!v.valid || v.c !== s.want || v.tmin > M) continue;
+        const ff = await full(li);
+        say(s.name + ' li ' + li + ' (c' + v.c + ' ' + v.mode + ' ' + f1(v.tmin) + 's) FULL done ' + !!(ff && ff.done) + ' score ' + f1(ff && ff.score));
+        if (ff && ff.done) { seed = { li, v }; break; }
+      }
+      if (!seed) continue;
+      const W = await buildWindow(seed, s.dir);
+      say(s.name + ' window ' + W[0] + '..' + W[W.length - 1] + ' (' + W.length + ' ticks)');
+      if (o.windowOnly) return fin({ ok: true, mode: seed.v.mode, edgeK: 1, edge: [b1, b1 + 1], W, rows: Array.from(fc.values()) });
+      const best = await searchWindow(W);
+      if (best) { result = { s, W, best, edge: [b1, b1 + 1] }; break; }
+    }
+  } else say('no 1|2 edge found from li0=' + o.li0);
+
+  if (!result) {
+    const gate = o.earlyGateS || 100;
+    const seen = Array.from(vc.values()).filter((v) => v.valid && (v.c === 1 || v.c === 2) && v.tmin <= gate).sort((x, y) => x.tmin - y.tmin);
+    for (const v of seen.slice(0, 2)) {
+      const ff = await full(v.li);
+      say('early seed li ' + v.li + ' (c' + v.c + ' ' + v.mode + ' ' + f1(v.tmin) + 's) FULL done ' + !!(ff && ff.done) + ' score ' + f1(ff && ff.score));
+      if (!(ff && ff.done)) continue;
+      const dir = v.c === 1 ? -1 : +1;
+      const W = await buildWindow({ li: v.li, v }, dir);
+      const best = await searchWindow(W);
+      if (best) { result = { s: { name: 'early-seed' }, W, best, edge: [v.li, v.li + 1] }; break; }
+    }
   }
+
+  if (!result) {
+    const ctr = b1 != null ? b1 : o.li0;
+    say('fallback: +-' + FB + ' around ' + ctr);
+    const cands = [];
+    for (let li = ctr - FB; li <= ctr + FB + 2; li++) {
+      if (li < 0 || li > maxLi) continue;
+      const v = await view(li);
+      if (v.valid && (v.c === 1 || v.c === 2) && v.tmin <= M) cands.push(v);
+    }
+    cands.sort((x, y) => x.tmin - y.tmin);
+    const W = [];
+    for (const v of cands.slice(0, FB_FULLS)) { await full(v.li); W.push(v.li); }
+    const best = pickBest(W);
+    if (!best) return fin({ ok: false, reason: 'no done tick: b1=' + b1 + ' li0=' + o.li0 + ' fallback cands ' + cands.length, edge: [b1, b1 == null ? null : b1 + 1], window: [] });
+    W.sort((a, b) => a - b);
+    result = { s: { name: 'fallback' }, W, best, edge: [ctr, ctr + 1] };
+  }
+
+  const { s, W, best, edge } = result;
+  const mode = (await view(best.li)).mode;
+  say('WINNER ' + s.name + ' li ' + best.li + ' mode ' + mode);
+  return fin({ ok: !!best.r.done, mode, edgeK: 1, edge, window: [W[0], W[W.length - 1]], W,
+    rows: Array.from(fc.values()), leadTicks: best.li, bestScore: best.score, full: best.r });
+}
 
   Object.assign(T, {
     tuneLeadV2, tuneLead, tuneAB, tuneRough, findOptimalMeco,
