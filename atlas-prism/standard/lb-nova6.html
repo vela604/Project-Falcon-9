@@ -69,6 +69,7 @@
           <div><span>best score</span><b id="tmScore">—</b></div>
           <div><span>phase</span><b id="tmPhase">—</b></div>
         </div>
+        <div id="logFeed" style="max-height:180px;overflow:auto;border:1px solid var(--line);padding:6px 8px;margin-bottom:8px;font-size:11px;background:#000;"></div>
         <div id="liveStatus" class="dim">idle</div>
         <div class="chart-container"><canvas id="liveChart"></canvas></div>
       </section>
@@ -161,7 +162,15 @@ const logBuf=[];
 function log(s){
   const line='['+new Date().toISOString().slice(11,19)+'] '+s;
   logBuf.push(line); if(logBuf.length>300)logBuf.shift();
-  const el=$('liveStatus'); if(el)el.textContent=s;
+  const el=document.getElementById('liveStatus'); if(el)el.textContent=s;
+  const lf=document.getElementById('logFeed');
+  if(lf){
+    const d=document.createElement('div');
+    d.textContent=line;
+    lf.appendChild(d);
+    while(lf.children.length>200)lf.removeChild(lf.firstChild);
+    lf.scrollTop=lf.scrollHeight;
+  }
   console.log(line);
 }
 
@@ -221,6 +230,7 @@ async function doLock(){
   $('lockStatus').innerHTML='<span class="ok">LOCKED</span> · '+esc(stkId)+' · apo/peri '+apo+'/'+peri;
   $('main').style.display='block';
   log('Locked: '+stkId+' @ '+apo+'/'+peri+' km');
+  setStateChip('ready');
 }
 
 function doReset(){
@@ -470,6 +480,7 @@ async function searchBracket(evalFn,o,onProgress){
 async function runScan(){
   if(S.running||!S.inited)return;
   S.running=true; S.abort=false; S.runs=[]; S.selectedIdx=-1; S.evals=0;
+  setStateChip('running'); setPhaseChip('SCAN');
   $('scanBtn').disabled=true; $('scanStopBtn').disabled=false;
   $('resultsTable').innerHTML=''; $('detailPanel').style.display='none';
 
@@ -508,6 +519,7 @@ async function runScan(){
     log('Scan error: '+e.message);
   }finally{
     S.running=false; $('scanBtn').disabled=false; $('scanStopBtn').disabled=true;
+    setStateChip('ready'); setPhaseChip('DONE');
   }
 }
 
@@ -660,6 +672,15 @@ function drawLive(m){
   }});
 }
 
+// ===== STATE / PHASE CHIP UPDATES =====
+function setStateChip(st){
+  const el=document.getElementById('stStateN'); if(el)el.textContent=st||'idle';
+  document.body.setAttribute('data-state',st||'idle');
+}
+function setPhaseChip(ph){
+  const el=document.getElementById('stPhaseN'); if(el)el.textContent=ph||'—';
+}
+
 // ===== BOOT =====
 function boot(){
   populateStackSel();
@@ -679,5 +700,6 @@ if (typeof loadSzadFont === 'function') {
   try { loadSzadFont(); } catch (e) {}
 }
 </script>
+<script src="visJs/engine-fx.js"></script>
 </body>
 </html>
