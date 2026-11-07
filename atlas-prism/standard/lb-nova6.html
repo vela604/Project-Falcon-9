@@ -18,20 +18,22 @@
     <h1>LB <em>NOVA-6</em></h1>
     <span class="crumb">engine <b>/</b> landbackV1 <b>/</b> booster bias search</span>
     <div class="chips">
-      <span class="st">state <b id="stStateN">idle</b></span>
-      <span class="st">phase <b id="stPhaseN">&mdash;</b></span>
+      <span class="st" id="stState">state <b id="stStateN">idle</b></span>
+      <span class="st" id="stPhase">phase <b id="stPhaseN">&mdash;</b></span>
     </div>
   </header>
 
   <section class="panel" id="lockBar">
-    <div class="row">
-      <label>stack <select id="stackSel"></select></label>
-      <label>apside 1 (km) <input type="number" id="apoKm" value="320" min="150" step="10"></label>
-      <label>apside 2 (km) <input type="number" id="periKm" value="320" min="150" step="10"></label>
+    <div class="lbl"><span class="tag">0x00</span>Session</div>
+    <label>stack <select id="stackSel"><option value="">(loading…)</option></select></label>
+    <label>apside 1 (km) <input type="number" id="apoKm" value="320" min="150" step="10"></label>
+    <label>apside 2 (km) <input type="number" id="periKm" value="320" min="150" step="10"></label>
+    <div class="btns">
       <button class="lock" id="lockBtn">Lock</button>
       <button class="reset" id="resetBtn" disabled>Reset</button>
-      <span class="dim" id="lockStatus">Select stack + apsides, then LOCK.</span>
     </div>
+    <span class="dim" id="lockStatus">Select stack + apsides, then LOCK.</span>
+    <div class="hint">locked standard-sequence stacks only</div>
   </section>
 
   <main id="main" style="display:none">
@@ -40,7 +42,7 @@
         <h2><span class="tag">0x01</span>Setup</h2>
         <div class="row">
           <label>preset <select id="presetSel"></select></label>
-          <button class="suggest" id="presetLoad">Load</button>
+          <button class="suggest" id="presetLoad">Load preset</button>
         </div>
         <div class="row">
           <label>MECO kg <input type="number" id="cfgMeco" step="1" value="52612"></label>
@@ -50,7 +52,7 @@
         <div class="row">
           <label>bias lo <input type="number" id="biasLo" step="1" value="-900"></label>
           <label>bias hi <input type="number" id="biasHi" step="1" value="-600"></label>
-          <label>start bias <input type="number" id="biasStart" step="1" value="-750"></label>
+          <label>start <input type="number" id="biasStart" step="1" value="-750"></label>
           <label>min step <input type="number" id="biasMinStep" step="0.5" value="2.5"></label>
         </div>
         <div class="row">
@@ -69,20 +71,20 @@
           <div><span>best score</span><b id="tmScore">—</b></div>
           <div><span>phase</span><b id="tmPhase">—</b></div>
         </div>
-        <div id="logFeed" style="max-height:180px;overflow:auto;border:1px solid var(--line);padding:6px 8px;margin-bottom:8px;font-size:11px;background:#000;"></div>
-        <div id="liveStatus" class="dim">idle</div>
+        <div id="logFeed" style="max-height:200px;overflow:auto;border:1px solid var(--line);padding:6px 0;margin-bottom:10px;font-size:11px;line-height:1.6;"></div>
         <div class="chart-container"><canvas id="liveChart"></canvas></div>
       </section>
     </div>
 
     <section class="panel" id="resultsPanel">
       <h2><span class="tag">0x03</span>Bias Search Results</h2>
-      <div id="resultsTable"></div>
+      <div id="resultsTable"><div class="dim" style="padding:10px;">No runs yet. Click "Run bias search" above.</div></div>
       <div id="detailPanel" style="display:none"></div>
     </section>
   </main>
 </div>
 
+<!-- ===== SIM MODULES ===== -->
 <script src="../../js/componentLibrary.js"></script>
 <script src="../../js/customDesign.js"></script>
 <script src="../../js/fleet.js"></script>
@@ -99,25 +101,63 @@
 <script src="../../js/simJs/guidance/guidance-blocks.js"></script>
 <script src="../../js/simJs/guidance/guidance.js"></script>
 <script src="../../js/guideConfigDefaults.js"></script>
+
+<!-- ===== TUNER INFRA ===== -->
 <script src="../lib/config.js"></script>
 <script src="../lib/sim.js"></script>
+<script src="../lib/lattice.js"></script>
 
 <script>
 (function(){
 'use strict';
+
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const fmt = (x,d) => Number.isFinite(x) ? x.toFixed(d) : '—';
 const DT = () => CONFIG.DT;
 
+// ===== LOG =====
+const logLines = [];
+function log(msg, lvl){
+  const t = new Date().toISOString().slice(11,19);
+  const line = '['+t+'] '+msg;
+  logLines.push({t, msg, lvl:lvl||''});
+  if(logLines.length > 500) logLines.shift();
+  const lf = $('logFeed');
+  if(lf){
+    const div = document.createElement('div');
+    div.textContent = line;
+    if(lvl) div.className = 'lv-'+lvl;
+    lf.appendChild(div);
+    while(lf.children.length > 250) lf.removeChild(lf.firstChild);
+    lf.scrollTop = lf.scrollHeight;
+  }
+  const orig = window._origConsoleLog || console.log;
+  orig.call(console, line);
+}
+
+// ===== STATE =====
 const S = {
   locked:false, stackId:null, apoKm:320, periKm:320,
   inited:false, saSnap:null, ebSnap:null,
-  fuelAtMeco:0, fuelAfterBoostback:0, baseConfig:null,
-  runs:[], searchResult:null, selectedIdx:-1, running:false, abort:false,
-  liveChart:null, detailFull:null, detailZoom:null, evals:0,
+  fuelAtMeco:0, fuelAfterBoostback:0,
+  runs:[], searchResult:null, selectedIdx:-1,
+  running:false, abort:false, evals:0,
+  liveChart:null, detailFull:null, detailZoom:null,
 };
 
+function setChip(state, phase){
+  if(state !== undefined){
+    $('stStateN').textContent = state;
+    document.body.setAttribute('data-state', state);
+  }
+  if(phase !== undefined) $('stPhaseN').textContent = phase;
+}
+
+// ===== YIELD HELPER =====
+function yieldToBrowser(){ return new Promise(r => setTimeout(r, 0)); }
+
+// ===== SNAPSHOT HELPERS =====
 function deepClone(x, memo) {
   memo = memo || new WeakMap();
   if (x === null || typeof x !== 'object') return x;
@@ -127,579 +167,721 @@ function deepClone(x, memo) {
 }
 
 function captureSnap() {
-  const st={}; Object.keys(state).forEach(k=>{ if(k==='bodies')return; try{st[k]=deepClone(state[k]);}catch(e){st[k]=null;} });
-  return { bodies:deepClone(state.bodies), stateKeysSnapshot:st, simTime:state.simTime, activeBodyIndex:state.activeBodyIndex, guidanceState:Guidance.exportGuideState() };
+  const st = {};
+  Object.keys(state).forEach(k => { if(k==='bodies')return; try{st[k]=deepClone(state[k]);}catch(e){st[k]=null;} });
+  return {
+    bodies: deepClone(state.bodies),
+    stateKeysSnapshot: st,
+    simTime: state.simTime,
+    activeBodyIndex: state.activeBodyIndex,
+    guidanceState: Guidance.exportGuideState(),
+  };
 }
 
 function restoreSnap(snap, gOverride) {
-  Object.keys(snap.stateKeysSnapshot).forEach(k=>{ try{state[k]=deepClone(snap.stateKeysSnapshot[k]);}catch(e){} });
-  state.simTime=snap.simTime; state.activeBodyIndex=snap.activeBodyIndex;
-  const sb=snap.bodies;
-  while(state.bodies.length>sb.length)state.bodies.pop();
-  while(state.bodies.length<sb.length)state.bodies.push({});
-  for(let i=0;i<sb.length;i++){ const s=sb[i],d=state.bodies[i]; Object.keys(d).forEach(k=>delete d[k]); Object.keys(s).forEach(k=>{d[k]=deepClone(s[k]);}); }
-  const ab=state.bodies[state.activeBodyIndex];
-  if(ab)['rx','ry','vx','vy','theta','omega','dryMass','fuelMass'].forEach(k=>{try{state[k]=ab[k];}catch(e){}});
-  if(snap.stateKeysSnapshot.halted===undefined)state.halted=false;
-  Guidance.importGuideState(deepClone(gOverride||snap.guidanceState));
-}
-
-function findBooster(){ for(const b of state.bodies) if(b&&b.members&&b.members[0]&&b.members[0].stageRole==='booster'&&!b.payloadBody)return b; return null; }
-function fuelOf(b){ return (Array.isArray(b.memberFuel)&&Number.isFinite(b.memberFuel[0]))?b.memberFuel[0]:(b.fuelMass||0); }
-function getXfromPad(bB, simT){
-  const r=Math.hypot(bB.rx,bB.ry);
-  const phiNow=Math.atan2(bB.rx,bB.ry)-CONFIG.EARTH_OMEGA*simT;
-  const padArr=(CONFIG.LANDING_PADS||[]).filter(p=>p.id==='LZ-1');
-  const pad=padArr.length?padArr[0]:{arcOffsetM:400};
-  const Rg=CONFIG.EARTH_RADIUS+(CONFIG.LAUNCH_SITE_ALTITUDE||0);
-  const padEf=(CONFIG.LAUNCH_SITE_ANGLE_0||0)+(pad.arcOffsetM||0)/Rg;
-  let xRad=phiNow-padEf;
-  while(xRad>Math.PI)xRad-=2*Math.PI; while(xRad<-Math.PI)xRad+=2*Math.PI;
-  return xRad*Rg;
-}
-
-const logBuf=[];
-function log(s){
-  const line='['+new Date().toISOString().slice(11,19)+'] '+s;
-  logBuf.push(line); if(logBuf.length>300)logBuf.shift();
-  const el=document.getElementById('liveStatus'); if(el)el.textContent=s;
-  const lf=document.getElementById('logFeed');
-  if(lf){
-    const d=document.createElement('div');
-    d.textContent=line;
-    lf.appendChild(d);
-    while(lf.children.length>200)lf.removeChild(lf.firstChild);
-    lf.scrollTop=lf.scrollHeight;
+  Object.keys(snap.stateKeysSnapshot).forEach(k => { try{state[k]=deepClone(snap.stateKeysSnapshot[k]);}catch(e){} });
+  state.simTime = snap.simTime;
+  state.activeBodyIndex = snap.activeBodyIndex;
+  const sb = snap.bodies;
+  while(state.bodies.length > sb.length) state.bodies.pop();
+  while(state.bodies.length < sb.length) state.bodies.push({});
+  for(let i=0;i<sb.length;i++){
+    const s = sb[i], d = state.bodies[i];
+    Object.keys(d).forEach(k => delete d[k]);
+    Object.keys(s).forEach(k => { d[k] = deepClone(s[k]); });
   }
-  console.log(line);
+  const ab = state.bodies[state.activeBodyIndex];
+  if(ab) ['rx','ry','vx','vy','theta','omega','dryMass','fuelMass'].forEach(k=>{try{state[k]=ab[k];}catch(e){}});
+  if(snap.stateKeysSnapshot.halted === undefined) state.halted = false;
+  Guidance.importGuideState(deepClone(gOverride || snap.guidanceState));
 }
 
-// ===== STACKS =====
+function findBooster(){
+  for(const b of state.bodies) if(b && b.members && b.members[0] && b.members[0].stageRole==='booster' && !b.payloadBody) return b;
+  return null;
+}
+function fuelOf(b){
+  return (Array.isArray(b.memberFuel) && Number.isFinite(b.memberFuel[0])) ? b.memberFuel[0] : (b.fuelMass || 0);
+}
+function getXfromPad(bB, simT){
+  const r = Math.hypot(bB.rx, bB.ry);
+  const phiNow = Math.atan2(bB.rx, bB.ry) - CONFIG.EARTH_OMEGA * simT;
+  const padArr = (CONFIG.LANDING_PADS || []).filter(p => p.id === 'LZ-1');
+  const pad = padArr.length ? padArr[0] : { arcOffsetM: 400 };
+  const Rg = CONFIG.EARTH_RADIUS + (CONFIG.LAUNCH_SITE_ALTITUDE || 0);
+  const padEf = (CONFIG.LAUNCH_SITE_ANGLE_0 || 0) + (pad.arcOffsetM || 0) / Rg;
+  let xRad = phiNow - padEf;
+  while(xRad > Math.PI) xRad -= 2*Math.PI;
+  while(xRad < -Math.PI) xRad += 2*Math.PI;
+  return xRad * Rg;
+}
+
+// ===== STACK / PRESET POPULATION =====
 function eligibleStacks(){
-  try{ return (loadStacks()||[]).filter(s=>s&&s.sequence==='standard'&&s.locked); }catch(e){ return []; }
+  try {
+    const stacks = loadStacks() || [];
+    return stacks.filter(s => s && s.sequence === 'standard' && s.locked);
+  } catch(e) { return []; }
 }
 function populateStackSel(){
-  const list=eligibleStacks();
-  $('stackSel').innerHTML=list.length
-    ? list.map(s=>'<option value="'+esc(s.id)+'">'+esc(s.name)+'</option>').join('')
-    : '<option value="">(no eligible stacks)</option>';
+  const list = eligibleStacks();
+  const el = $('stackSel');
+  if(!list.length){
+    el.innerHTML = '<option value="">(no locked standard stacks in fleet)</option>';
+    return;
+  }
+  el.innerHTML = list.map(s => '<option value="'+esc(s.id)+'">'+esc(s.name)+' · '+s.members.length+' members</option>').join('');
 }
 
-// ===== PRESETS =====
 function listPresets(){
-  const out=[];
-  const def=typeof getGuideDefaultPreset==='function'?getGuideDefaultPreset('landbackV1'):null;
-  if(def)out.push({id:'__default__',name:def.name+' (default)',constants:def.constants});
-  if(typeof getAllPresetsForGuide==='function'){
-    try{
-      const ps=getAllPresetsForGuide('landbackV1')||[];
-      ps.forEach(p=>{ if(p.id!=='default:landbackV1')out.push({id:p.id,name:p.name,constants:p.constants}); });
-    }catch(e){}
-  }
+  const out = [];
+  try {
+    if(typeof getGuideDefaultPreset === 'function'){
+      const p = getGuideDefaultPreset('landbackV1');
+      if(p) out.push({ id: 'default:landbackV1', name: p.name + ' (built-in)', constants: p.constants });
+    }
+  } catch(e) { log('listPresets default err: '+e.message, 'err'); }
+  try {
+    if(typeof getAllPresetsForGuide === 'function'){
+      const ps = getAllPresetsForGuide('landbackV1') || [];
+      ps.forEach(p => { if(p.id && p.id !== 'default:landbackV1') out.push({ id: p.id, name: p.name, constants: p.constants }); });
+    }
+  } catch(e) {}
   return out;
 }
 function populatePresetSel(){
-  const list=listPresets();
-  $('presetSel').innerHTML=list.length
-    ? list.map(p=>'<option value="'+esc(p.id)+'">'+esc(p.name)+'</option>').join('')
-    : '<option value="">(no presets)</option>';
+  const list = listPresets();
+  const el = $('presetSel');
+  if(!list.length){ el.innerHTML = '<option value="">(no presets)</option>'; return; }
+  el.innerHTML = list.map(p => '<option value="'+esc(p.id)+'">'+esc(p.name)+'</option>').join('');
 }
-function applyPreset(id){
-  const list=listPresets();
-  const p=list.find(x=>x.id===id);
-  if(!p||!p.constants)return;
-  const c=p.constants;
+function applyPresetFromSel(){
+  const id = $('presetSel').value;
+  const list = listPresets();
+  const p = list.find(x => x.id === id);
+  if(!p || !p.constants){ log('Preset not found: '+id, 'warn'); return; }
+  const c = p.constants;
   if(c.ascent){
-    if(Number.isFinite(c.ascent.MECO_TARGET_BOOSTER_FUEL_KG))$('cfgMeco').value=c.ascent.MECO_TARGET_BOOSTER_FUEL_KG;
-    if(Number.isFinite(c.ascent.PUSH_MAX_GIMBAL_DEG))$('cfgG').value=c.ascent.PUSH_MAX_GIMBAL_DEG;
-    if(Number.isFinite(c.ascent.PUSH_T_S))$('cfgT').value=c.ascent.PUSH_T_S;
+    if(Number.isFinite(c.ascent.MECO_TARGET_BOOSTER_FUEL_KG)) $('cfgMeco').value = c.ascent.MECO_TARGET_BOOSTER_FUEL_KG;
+    if(Number.isFinite(c.ascent.PUSH_MAX_GIMBAL_DEG)) $('cfgG').value = c.ascent.PUSH_MAX_GIMBAL_DEG;
+    if(Number.isFinite(c.ascent.PUSH_T_S)) $('cfgT').value = c.ascent.PUSH_T_S;
   }
-  if(c.rtls&&Number.isFinite(c.rtls.ENTRY_BURN_IMPACT_TARGET_M))$('biasStart').value=c.rtls.ENTRY_BURN_IMPACT_TARGET_M;
-  log('Preset loaded: '+p.name);
+  if(c.rtls && Number.isFinite(c.rtls.ENTRY_BURN_IMPACT_TARGET_M)) $('biasStart').value = c.rtls.ENTRY_BURN_IMPACT_TARGET_M;
+  log('Preset loaded: '+p.name, 'ok');
 }
 
 // ===== LOCK =====
-async function doLock(){
-  const stkId=$('stackSel').value;
-  if(!stkId){$('lockStatus').innerHTML='<span class="bad">no stack</span>';return;}
-  const apo=parseInt($('apoKm').value,10), peri=parseInt($('periKm').value,10);
-  if(!Number.isFinite(apo)||apo<150||!Number.isFinite(peri)||peri<150){$('lockStatus').innerHTML='<span class="bad">invalid apsides</span>';return;}
-  try{ setSelectedStackId(stkId); }catch(e){}
-  S.stackId=stkId; S.apoKm=apo; S.periKm=peri; S.locked=true;
-  $('lockBtn').disabled=true; $('stackSel').disabled=true; $('apoKm').disabled=true; $('periKm').disabled=true; $('resetBtn').disabled=false;
-  $('lockStatus').innerHTML='<span class="ok">LOCKED</span> · '+esc(stkId)+' · apo/peri '+apo+'/'+peri;
-  $('main').style.display='block';
-  log('Locked: '+stkId+' @ '+apo+'/'+peri+' km');
-  setStateChip('ready');
+function doLock(){
+  const stkId = $('stackSel').value;
+  if(!stkId){ $('lockStatus').innerHTML = '<span class="bad">no stack selected</span>'; return; }
+  const apo = parseInt($('apoKm').value,10), peri = parseInt($('periKm').value,10);
+  if(!Number.isFinite(apo)||apo<150||!Number.isFinite(peri)||peri<150){ $('lockStatus').innerHTML = '<span class="bad">invalid apsides</span>'; return; }
+  try { setSelectedStackId(stkId); } catch(e){ log('setSelectedStackId failed: '+e.message, 'warn'); }
+  S.stackId = stkId; S.apoKm = apo; S.periKm = peri; S.locked = true;
+  $('lockBtn').disabled = true; $('stackSel').disabled = true;
+  $('apoKm').disabled = true; $('periKm').disabled = true;
+  $('resetBtn').disabled = false;
+  $('lockStatus').innerHTML = '<span class="ok">LOCKED</span> · '+esc(stkId)+' · apo/peri '+apo+'/'+peri+' km';
+  $('main').style.display = 'block';
+  setChip('ready','—');
+  log('Locked: '+stkId+' @ '+apo+'/'+peri+' km', 'ok');
+  populatePresetSel();
+  applyPresetFromSel();
+}
+function doReset(){
+  if(!S.locked) return;
+  if(!confirm('Reset will clear all runs. Continue?')) return;
+  location.reload();
 }
 
-function doReset(){
-  if(!S.locked)return;
-  if(!confirm('Reset will clear all runs. Save first?'))return;
-  S.locked=false; S.inited=false; S.saSnap=null; S.ebSnap=null;
-  S.fuelAtMeco=0; S.fuelAfterBoostback=0; S.runs=[]; S.searchResult=null; S.selectedIdx=-1;
-  $('lockBtn').disabled=false; $('stackSel').disabled=false; $('apoKm').disabled=false; $('periKm').disabled=false; $('resetBtn').disabled=true;
-  $('main').style.display='none';
-  $('initBtn').disabled=false; $('scanBtn').disabled=true;
-  $('lockStatus').textContent='Select stack + apsides, then LOCK.';
-  $('initStatus').textContent='—'; $('liveStatus').textContent='idle';
-  $('resultsTable').innerHTML=''; $('detailPanel').style.display='none';
-  if(S.liveChart){try{S.liveChart.destroy();}catch(e){}}
+// ===== ASYNC TICK LOOP =====
+async function runUntil(predicate, maxS, label, onProgress){
+  const maxTicks = Math.ceil(maxS / DT());
+  for(let i=0; i<maxTicks; i++){
+    if(state.halted) return { ok:false, reason:'halted', i };
+    TunerEngine.tick(DT());
+    const r = predicate();
+    if(r) return { ok:true, result:r, i, simTime:state.simTime };
+    if(i % 200 === 0){
+      await yieldToBrowser();
+      if(onProgress) onProgress(i, maxTicks, state.simTime);
+    }
+  }
+  return { ok:false, reason:'timeout', i:maxTicks };
 }
 
 // ===== INIT CAPTURES =====
 async function doInit(){
-  if(S.running)return;
-  S.running=true; $('initBtn').disabled=true;
-  try{
-    const meco=+$('cfgMeco').value, G=+$('cfgG').value, T=+$('cfgT').value, bias=+$('biasStart').value;
-    if(![meco,G,T,bias].every(Number.isFinite))throw new Error('invalid config');
-    S.baseConfig={meco,G,T,bias};
+  if(S.running) return;
+  if(!S.locked){ log('Lock a stack first.', 'warn'); return; }
+  S.running = true; S.abort = false;
+  $('initBtn').disabled = true; $('scanBtn').disabled = true;
+  setChip('running','INIT');
 
-    // Build values: preset constants + overrides
-    const presetId=$('presetSel').value;
-    const preset=listPresets().find(p=>p.id===presetId);
-    const vals=preset&&preset.constants?deepClone(preset.constants):{};
-    vals.ascent=vals.ascent||{}; vals.ascent.MECO_TARGET_BOOSTER_FUEL_KG=meco;
-    vals.ascent.PUSH_MAX_GIMBAL_DEG=G; vals.ascent.PUSH_T_S=T;
-    vals.insertion=vals.insertion||{};
-    vals.insertion.TARGET_APSIDE1_ALT_KM=S.apoKm;
-    vals.insertion.TARGET_APSIDE2_ALT_KM=S.periKm;
-    if(!Number.isFinite(vals.insertion.STAGE_BURN_AOA_BIAS_DEG))vals.insertion.STAGE_BURN_AOA_BIAS_DEG=0.827;
-    if(!Number.isFinite(vals.insertion.CIRC_TRIGGER_LEAD_S))vals.insertion.CIRC_TRIGGER_LEAD_S=4.0125;
-    vals.done=vals.done||{}; vals.done.DEORBIT_ENABLED=false;
-    vals.mission=vals.mission||{}; vals.mission.TARGET_LANDING_PAD='LZ-1';
-    vals.rtls=vals.rtls||{}; vals.rtls.ENTRY_BURN_IMPACT_TARGET_M=bias;
+  try {
+    const meco = +$('cfgMeco').value, G = +$('cfgG').value, T = +$('cfgT').value, bias = +$('biasStart').value;
+    if(![meco,G,T,bias].every(Number.isFinite)) throw new Error('invalid config values');
+    log('Init: MECO='+meco+' G='+G+' T='+T+' bias='+bias);
 
-    const env={atmosphere:true,slosh:true,imu:false,wind:{enabled:false,speed:0,directionDeg:0},boosterPct:100,stagePct:100};
+    // Build values from preset
+    const preset = listPresets().find(p => p.id === $('presetSel').value);
+    const vals = preset && preset.constants ? deepClone(preset.constants) : {};
+    vals.ascent = vals.ascent || {};
+    vals.ascent.MECO_TARGET_BOOSTER_FUEL_KG = meco;
+    vals.ascent.PUSH_MAX_GIMBAL_DEG = G;
+    vals.ascent.PUSH_T_S = T;
+    vals.insertion = vals.insertion || {};
+    vals.insertion.TARGET_APSIDE1_ALT_KM = S.apoKm;
+    vals.insertion.TARGET_APSIDE2_ALT_KM = S.periKm;
+    if(!Number.isFinite(vals.insertion.STAGE_BURN_AOA_BIAS_DEG)) vals.insertion.STAGE_BURN_AOA_BIAS_DEG = 0.827;
+    if(!Number.isFinite(vals.insertion.CIRC_TRIGGER_LEAD_S)) vals.insertion.CIRC_TRIGGER_LEAD_S = 4.0125;
+    vals.done = vals.done || {}; vals.done.DEORBIT_ENABLED = false;
+    vals.mission = vals.mission || {}; vals.mission.TARGET_LANDING_PAD = 'LZ-1';
+    vals.rtls = vals.rtls || {}; vals.rtls.ENTRY_BURN_IMPACT_TARGET_M = bias;
 
+    const env = { atmosphere:true, slosh:true, imu:false, wind:{enabled:false,speed:0,directionDeg:0}, boosterPct:100, stagePct:100 };
+
+    // Init engine
+    log('Initializing TunerEngine…');
     TunerEngine.init();
-    TunerEngine.prepareRun('landbackV1',vals,env);
-    $('initStatus').textContent='Ascent → SA…';
-    log('Ascent → SA…');
+    log('TunerEngine ready. prepareRun(landbackV1)…');
+    TunerEngine.prepareRun('landbackV1', vals, env);
+    log('prepareRun OK. Starting ascent loop (this takes ~20-40s, browser stays responsive)…');
 
-    const _ol=console.log; console.log=function(){};
-    let saSnap=null;
-    try{
-      for(let i=0;i<300*80;i++){
-        if(state.halted)throw new Error('halted pre-SA');
-        TunerEngine.tick(DT());
-        const gs=Guidance.getGuideStatus();
-        if(gs&&gs.phase==='SEPARATED_AXIAL'){
-          saSnap=captureSnap();
-          const bB=findBooster(); S.fuelAtMeco=bB?fuelOf(bB):0;
-          log('SA at t='+state.simTime.toFixed(1)+' fuel='+fmt(S.fuelAtMeco,0)+'kg');
-          break;
-        }
-      }
-      if(!saSnap)throw new Error('SA not reached');
-      S.saSnap=saSnap;
+    const _origLog = console.log;
+    const _origErr = console.error;
+    console.log = function(){}; console.error = function(){};
+    try {
+      // Phase 1: ASCENT → SEPARATED_AXIAL (capture SA)
+      $('initStatus').textContent = 'Ascent → SA…';
+      setChip('running','ASCENT');
+      let saRes;
+      try {
+        saRes = await runUntil(
+          () => { const gs = Guidance.getGuideStatus(); return gs && gs.phase === 'SEPARATED_AXIAL' ? gs : null; },
+          400, 'SA',
+          (i,n,t) => { $('initStatus').textContent = 'Ascent → SA… t='+fmt(t,1)+'s ('+Math.round(100*i/n)+'%)'; }
+        );
+      } finally { console.log = _origLog; console.error = _origErr; }
+      if(!saRes.ok) throw new Error('SA not reached: '+saRes.reason);
+      S.saSnap = captureSnap();
+      const bB_sa = findBooster();
+      S.fuelAtMeco = bB_sa ? fuelOf(bB_sa) : 0;
+      log('SA captured at t='+fmt(saRes.simTime,1)+'s fuel='+fmt(S.fuelAtMeco,0)+'kg', 'ok');
 
-      $('initStatus').textContent='SA → EB…';
-      log('SA → EB…');
-      let ebSnap=null;
-      for(let i=0;i<800*80;i++){
-        if(state.halted)throw new Error('halted pre-EB');
-        TunerEngine.tick(DT());
-        const gs=Guidance.getGuideStatus();
-        if(gs&&gs.rtlsPhase==='ENTRY_BURN'){
-          ebSnap=captureSnap();
-          const bB=findBooster(); S.fuelAfterBoostback=bB?fuelOf(bB):0;
-          log('EB at t='+state.simTime.toFixed(1)+' fuel='+fmt(S.fuelAfterBoostback,0)+'kg');
-          break;
-        }
-      }
-      if(!ebSnap)throw new Error('EB not reached');
-      S.ebSnap=ebSnap;
+      // Phase 2: SA → ENTRY_BURN (capture EB)
+      $('initStatus').textContent = 'SA → ENTRY_BURN…';
+      setChip('running','RTLS');
+      console.log = function(){}; console.error = function(){};
+      let ebRes;
+      try {
+        ebRes = await runUntil(
+          () => { const gs = Guidance.getGuideStatus(); return gs && gs.rtlsPhase === 'ENTRY_BURN' ? gs : null; },
+          1200, 'EB',
+          (i,n,t) => { $('initStatus').textContent = 'SA → ENTRY_BURN… t='+fmt(t,1)+'s ('+Math.round(100*i/n)+'%)'; }
+        );
+      } finally { console.log = _origLog; console.error = _origErr; }
+      if(!ebRes.ok) throw new Error('EB not reached: '+ebRes.reason);
+      S.ebSnap = captureSnap();
+      const bB_eb = findBooster();
+      S.fuelAfterBoostback = bB_eb ? fuelOf(bB_eb) : 0;
+      log('EB captured at t='+fmt(ebRes.simTime,1)+'s fuel='+fmt(S.fuelAfterBoostback,0)+'kg', 'ok');
 
-      $('initStatus').textContent='EB → LBA (baseline)…';
-      log('EB → LBA baseline…');
-      for(let i=0;i<400*80;i++){
-        if(state.halted)throw new Error('halted pre-LBA');
-        TunerEngine.tick(DT());
-        const gs=Guidance.getGuideStatus();
-        if(gs&&gs.rtlsPhase==='LANDING_BURN_ALIGN'){
-          log('LBA at t='+state.simTime.toFixed(1));
-          break;
-        }
-      }
-    } finally { console.log=_ol; }
+    } finally {
+      console.log = _origLog; console.error = _origErr;
+    }
 
-    S.inited=true;
-    $('scanBtn').disabled=false;
-    $('initStatus').innerHTML='<span class="ok">Ready</span> · SA/EB captured';
-    log('Init complete. Ready for bias search.');
-  }catch(e){
-    log('INIT FAILED: '+e.message);
-    $('initStatus').innerHTML='<span class="bad">Error: '+esc(e.message)+'</span>';
-  }finally{
-    S.running=false; $('initBtn').disabled=false;
+    S.inited = true;
+    $('initStatus').innerHTML = '<span class="ok">Ready</span> · SA/EB captured · fuel MECO='+fmt(S.fuelAtMeco,0)+'kg, post-boostback='+fmt(S.fuelAfterBoostback,0)+'kg';
+    $('scanBtn').disabled = false;
+    setChip('ready','—');
+    log('Init complete. Ready for bias search.', 'ok');
+  } catch(e){
+    log('INIT FAILED: '+e.message, 'err');
+    $('initStatus').innerHTML = '<span class="bad">Error: '+esc(e.message)+'</span>';
+    setChip('ready','ERR');
+  } finally {
+    S.running = false;
+    $('initBtn').disabled = false;
+    $('scanStopBtn').disabled = true;
   }
 }
 
-// ===== BIAS EVAL =====
-function runBiasEval(bias){
-  const g=deepClone(S.ebSnap.guidanceState);
-  const cfg=g.guideConfigs&&g.guideConfigs.landbackV1;
-  if(cfg&&cfg.rtls)cfg.rtls.ENTRY_BURN_IMPACT_TARGET_M=bias;
-  if(g.lbRtlsBlock&&g.lbRtlsBlock.constants)g.lbRtlsBlock.constants.ENTRY_BURN_IMPACT_TARGET_M=bias;
-  restoreSnap(S.ebSnap,g);
+// ===== BIAS EVAL (async, yielding) =====
+async function runBiasEval(bias){
+  // Restore EB snapshot with bias override
+  const g = deepClone(S.ebSnap.guidanceState);
+  const cfg = g.guideConfigs && g.guideConfigs.landbackV1;
+  if(cfg && cfg.rtls) cfg.rtls.ENTRY_BURN_IMPACT_TARGET_M = bias;
+  if(g.lbRtlsBlock && g.lbRtlsBlock.constants) g.lbRtlsBlock.constants.ENTRY_BURN_IMPACT_TARGET_M = bias;
+  restoreSnap(S.ebSnap, g);
 
-  const m={bias,end:'cap',phases:[],samples:[],fuel:{start:S.fuelAtMeco,after_boostback:S.fuelAfterBoostback},lbStart:null,contact:null,totalTimeS:0};
-  let lastPhase=null,sampleAccum=0,postContactAccum=0,contact=null;
-  const capS=150,postS=2;
-  const tStart=state.simTime;
+  const m = {
+    bias, end:'cap', phases:[], samples:[],
+    fuel: { start: S.fuelAtMeco, after_boostback: S.fuelAfterBoostback },
+    lbStart: null, contact: null, totalTimeS: 0,
+  };
+  let lastPhase = null, sampleAccum = 0, postContactAccum = 0, done = false;
+  const capS = 150, postS = 3;
+  const tStart = state.simTime;
+  const maxTicks = Math.ceil(capS / DT());
 
-  for(let i=0;i<capS*80;i++){
-    if(state.halted){m.end='halted';break;}
-    if(state.crashed&&!m.contact){m.end='crashed';break;}
-    TunerEngine.tick(DT());
-    const gs=Guidance.getGuideStatus()||{};
-    const bB=findBooster(); if(!bB){m.end='no-booster';break;}
-    const simT=state.simTime, r=Math.hypot(bB.rx,bB.ry);
-    const hAGL=r-CONFIG.EARTH_RADIUS-(CONFIG.LAUNCH_SITE_ALTITUDE||0);
-    const vr=(bB.vx*bB.rx+bB.vy*bB.ry)/r;
-    const vt=(bB.vx*bB.ry-bB.vy*bB.rx)/r;
-    const vtG=vt-CONFIG.EARTH_OMEGA*r;
-    const xp=getXfromPad(bB,simT);
-    const fuel=fuelOf(bB);
-    const ph=gs.rtlsPhase||'';
+  const _origLog = console.log;
+  const _origErr = console.error;
+  console.log = function(){}; console.error = function(){};
 
-    if(ph!==lastPhase&&ph){
-      m.phases.push({phase:ph,t:+simT.toFixed(2),fuel:+fuel.toFixed(1),hAGL:+hAGL.toFixed(1)});
-      if(ph==='POST_ENTRY_STEER')m.fuel.after_entry=fuel;
-      if(ph==='LANDING_BURN_ALIGN')m.fuel.at_LBA=fuel;
-      if(ph==='LANDING_BURN'){
-        m.lbStart={t:+simT.toFixed(2),altAGL:+hAGL.toFixed(1),altKm:+(hAGL/1000).toFixed(3),
-          downrange:+xp.toFixed(2),vy:+vr.toFixed(2),vx:+vtG.toFixed(2),
-          thetaLocal:+((bB.theta-Math.atan2(-bB.rx,bB.ry))*180/Math.PI).toFixed(2),
-          omega:+(bB.omega*180/Math.PI).toFixed(3),fuel:+fuel.toFixed(1)};
+  try {
+    for(let i=0; i<maxTicks; i++){
+      if(state.halted){ m.end='halted'; break; }
+      TunerEngine.tick(DT());
+      const gs = Guidance.getGuideStatus() || {};
+      const bB = findBooster();
+      if(!bB){ m.end='no-booster'; break; }
+      const simT = state.simTime, r = Math.hypot(bB.rx, bB.ry);
+      const hAGL = r - CONFIG.EARTH_RADIUS - (CONFIG.LAUNCH_SITE_ALTITUDE || 0);
+      const vr = (bB.vx*bB.rx + bB.vy*bB.ry) / r;
+      const vt = (bB.vx*bB.ry - bB.vy*bB.rx) / r;
+      const vtG = vt - CONFIG.EARTH_OMEGA * r;
+      const xp = getXfromPad(bB, simT);
+      const fuel = fuelOf(bB);
+      const ph = gs.rtlsPhase || '';
+
+      if(ph !== lastPhase && ph){
+        m.phases.push({ phase: ph, t: +simT.toFixed(2), fuel: +fuel.toFixed(1), hAGL: +hAGL.toFixed(1) });
+        if(ph === 'POST_ENTRY_STEER') m.fuel.after_entry = fuel;
+        if(ph === 'LANDING_BURN_ALIGN') m.fuel.at_LBA = fuel;
+        if(ph === 'LANDING_BURN'){
+          m.lbStart = {
+            t: +simT.toFixed(2), altAGL: +hAGL.toFixed(1), altKm: +(hAGL/1000).toFixed(3),
+            downrange: +xp.toFixed(2), vy: +vr.toFixed(2), vx: +vtG.toFixed(2),
+            thetaLocal: +((bB.theta - Math.atan2(-bB.rx, bB.ry)) * 180 / Math.PI).toFixed(2),
+            omega: +(bB.omega * 180 / Math.PI).toFixed(3), fuel: +fuel.toFixed(1),
+          };
+        }
+        lastPhase = ph;
       }
-      lastPhase=ph;
-    }
 
-    if(!m.contact&&(ph==='TOUCHDOWN_COMPLETE'||bB.landed||bB.crashed)){
-      m.contact={t:+simT.toFixed(2),altAGL:+hAGL.toFixed(3),downrange:+xp.toFixed(2),
-        vx:+vtG.toFixed(3),vy:+vr.toFixed(3),
-        thetaLocal:+((bB.theta-Math.atan2(-bB.rx,bB.ry))*180/Math.PI).toFixed(3),
-        omega:+(bB.omega*180/Math.PI).toFixed(3),fuel:+fuel.toFixed(1),
-        crashed:!!(bB.crashed||state.crashed),landed:!!bB.landed};
-      m.fuel.after_LB=fuel;
-      if(m.lbStart)m.totalTimeS=+(simT-m.lbStart.t).toFixed(1);
-      m.end=m.contact.crashed?'crashed':'ok';
-    }
-
-    if(m.contact){
-      postContactAccum+=DT();
-      if(postContactAccum>=postS)break;
-      sampleAccum+=DT();
-      if(sampleAccum>=0.1){
-        sampleAccum=0;
-        m.samples.push({t:+simT.toFixed(2),phase:'POST-TD',h:+hAGL.toFixed(2),vy:+vr.toFixed(3),vx:+vtG.toFixed(3),x:+xp.toFixed(2),fuel:+fuel.toFixed(1)});
+      // Contact detection
+      if(!m.contact && (ph === 'TOUCHDOWN_COMPLETE' || bB.landed || bB.crashed)){
+        m.contact = {
+          t: +simT.toFixed(2), altAGL: +hAGL.toFixed(3), downrange: +xp.toFixed(2),
+          vx: +vtG.toFixed(3), vy: +vr.toFixed(3),
+          thetaLocal: +((bB.theta - Math.atan2(-bB.rx, bB.ry)) * 180 / Math.PI).toFixed(3),
+          omega: +(bB.omega * 180 / Math.PI).toFixed(3), fuel: +fuel.toFixed(1),
+          crashed: !!(bB.crashed || state.crashed),
+          landed: !!bB.landed,
+        };
+        m.fuel.after_LB = fuel;
+        if(m.lbStart) m.totalTimeS = +(simT - m.lbStart.t).toFixed(1);
+        m.end = m.contact.crashed ? 'crashed' : 'ok';
+        done = true;
       }
-      continue;
+
+      if(m.contact){
+        postContactAccum += DT();
+        if(postContactAccum >= postS) break;
+        sampleAccum += DT();
+        if(sampleAccum >= 0.1){
+          sampleAccum = 0;
+          m.samples.push({ t: +simT.toFixed(2), phase:'POST-TD', h:+hAGL.toFixed(2), vy:+vr.toFixed(3), vx:+vtG.toFixed(3), x:+xp.toFixed(2), fuel:+fuel.toFixed(1) });
+        }
+        continue;
+      }
+
+      const lbActive = ph === 'LANDING_BURN' || ph === 'TOUCHDOWN_COMPLETE';
+      sampleAccum += DT();
+      if(sampleAccum >= (lbActive ? 0.1 : 0.5)){
+        sampleAccum = 0;
+        m.samples.push({ t: +simT.toFixed(2), phase: ph || '?', h:+hAGL.toFixed(2), vy:+vr.toFixed(3), vx:+vtG.toFixed(3), x:+xp.toFixed(2), fuel:+fuel.toFixed(1) });
+      }
+
+      if(simT - tStart > capS){ m.end = 'cap'; break; }
+      if(i % 300 === 0) await yieldToBrowser();
     }
-
-    const lbActive=ph==='LANDING_BURN'||ph==='TOUCHDOWN_COMPLETE';
-    sampleAccum+=DT();
-    if(sampleAccum>=(lbActive?0.1:0.5)){
-      sampleAccum=0;
-      m.samples.push({t:+simT.toFixed(2),phase:ph||'?',h:+hAGL.toFixed(2),vy:+vr.toFixed(3),vx:+vtG.toFixed(3),x:+xp.toFixed(2),fuel:+fuel.toFixed(1)});
-    }
-
-    if(simT-tStart>capS){m.end='cap';break;}
+  } finally {
+    console.log = _origLog; console.error = _origErr;
   }
 
-  if(m.fuel.after_boostback!=null){
-    m.fuel.boostback_burn=+(S.fuelAtMeco-S.fuelAfterBoostback).toFixed(0);
-  }
-  if(m.fuel.after_boostback!=null&&m.fuel.after_entry!=null){
-    m.fuel.entry_burn=+(m.fuel.after_boostback-m.fuel.after_entry).toFixed(0);
-  }
-  if(m.fuel.after_entry!=null&&m.fuel.after_LB!=null){
-    m.fuel.landing_burn=+(m.fuel.after_entry-m.fuel.after_LB).toFixed(0);
-    m.fuel.remaining=+m.fuel.after_LB.toFixed(0);
+  // Fuel accounting
+  if(m.fuel.start != null && m.fuel.after_boostback != null) m.fuel.boostback_burn = +(m.fuel.start - m.fuel.after_boostback).toFixed(0);
+  if(m.fuel.after_boostback != null && m.fuel.after_entry != null) m.fuel.entry_burn = +(m.fuel.after_boostback - m.fuel.after_entry).toFixed(0);
+  if(m.fuel.after_entry != null && m.fuel.after_LB != null){
+    m.fuel.landing_burn = +(m.fuel.after_entry - m.fuel.after_LB).toFixed(0);
+    m.fuel.remaining = +m.fuel.after_LB.toFixed(0);
   }
   return m;
 }
 
-// ===== SCORE =====
+// ===== SCORING =====
 function scoreLB(m){
-  if(!m.contact)return{score:1e6,fail:'no-contact'};
-  if(m.contact.crashed)return{score:1e6,fail:'crashed'};
-  const c=m.contact;
-  if(Math.abs(c.thetaLocal)>12)return{score:1e6,fail:'tilt'};
-  if(Math.abs(c.vx)>2.5)return{score:1e6,fail:'vx'};
-  if(Math.abs(c.vy)>5)return{score:1e6,fail:'vy'};
-  if(Math.abs(c.omega)>8.6)return{score:1e6,fail:'omega'};
-  if(Math.abs(c.downrange)>42.5)return{score:1e6,fail:'downrange'};
-  const score=Math.abs(c.downrange)/2+Math.abs(c.vx)/0.3+Math.abs(c.thetaLocal)/1+Math.abs(c.omega)/0.3;
-  return{score,ok:true};
+  if(!m.contact) return { score: 1e6, fail: 'no-contact' };
+  if(m.contact.crashed) return { score: 1e6, fail: 'crashed' };
+  const c = m.contact;
+  if(Math.abs(c.thetaLocal) > 12) return { score: 1e6, fail: 'tilt' };
+  if(Math.abs(c.vx) > 2.5) return { score: 1e6, fail: 'vx' };
+  if(Math.abs(c.vy) > 5) return { score: 1e6, fail: 'vy' };
+  if(Math.abs(c.omega) > 8.6) return { score: 1e6, fail: 'omega' };
+  if(Math.abs(c.downrange) > 42.5) return { score: 1e6, fail: 'downrange' };
+  const score = Math.abs(c.downrange)/2 + Math.abs(c.vx)/0.3 + Math.abs(c.thetaLocal)/1 + Math.abs(c.omega)/0.3;
+  return { score, ok: true };
 }
 
-// ===== SEARCH: BRACKET + GOLDEN =====
-async function searchBracket(evalFn,o,onProgress){
-  const round=b=>Math.round(b*10)/10, cache=new Map(), stop=()=>!!(o.stop&&o.stop());
-  const clamp=b=>Math.min(o.hi,Math.max(o.lo,b));
-  const ev=async b=>{ b=round(clamp(b)); if(!cache.has(b)){ const r=await evalFn(b); cache.set(b,r); if(onProgress)onProgress(r,cache); } return cache.get(b); };
-  const start=round(clamp(o.start!=null?o.start:(o.lo+o.hi)/2));
-  const r0=await ev(start), rp=await ev(start+o.step), rm=await ev(start-o.step);
-  let a,c;
-  if(r0.score<=rp.score&&r0.score<=rm.score){ a=rm.bias; c=rp.bias; }
-  else{
-    const dir=(rp.score<rm.score)?1:-1;
-    let prev=r0,cur=(dir>0?rp:rm),s=o.step; a=(dir>0?rm.bias:rp.bias); c=null;
-    while(!stop()){
-      if(cur.bias<=o.lo+1e-9||cur.bias>=o.hi-1e-9){a=prev.bias;c=cur.bias;break;}
-      s*=2; const nxt=await ev(cur.bias+dir*s);
-      if(nxt.bias===cur.bias){a=prev.bias;c=cur.bias;break;}
-      if(nxt.score>cur.score){a=prev.bias;c=nxt.bias;break;}
-      prev=cur; cur=nxt;
+// ===== SEARCH: bracket + golden =====
+async function searchBracket(evalFn, o, onProgress){
+  const round = b => Math.round(b*10)/10;
+  const cache = new Map();
+  const stop = () => !!(o.stop && o.stop());
+  const clamp = b => Math.min(o.hi, Math.max(o.lo, b));
+  const ev = async b => {
+    b = round(clamp(b));
+    if(!cache.has(b)){
+      const r = await evalFn(b);
+      cache.set(b, r);
+      if(onProgress) onProgress(r, cache);
     }
-    if(a>c){const t=a;a=c;c=t;}
+    return cache.get(b);
+  };
+  const start = round(clamp(o.start != null ? o.start : (o.lo+o.hi)/2));
+  const r0 = await ev(start);
+  if(stop()) return finish();
+  const rp = await ev(start + o.step);
+  const rm = await ev(start - o.step);
+  let a, c;
+  if(r0.score <= rp.score && r0.score <= rm.score){ a = rm.bias; c = rp.bias; }
+  else {
+    const dir = (rp.score < rm.score) ? 1 : -1;
+    let prev = r0, cur = (dir > 0 ? rp : rm), s = o.step;
+    a = (dir > 0 ? rm.bias : rp.bias); c = null;
+    while(!stop()){
+      if(cur.bias <= o.lo + 1e-9 || cur.bias >= o.hi - 1e-9){ a = prev.bias; c = cur.bias; break; }
+      s *= 2;
+      const nxt = await ev(cur.bias + dir * s);
+      if(nxt.bias === cur.bias){ a = prev.bias; c = cur.bias; break; }
+      if(nxt.score > cur.score){ a = prev.bias; c = nxt.bias; break; }
+      prev = cur; cur = nxt;
+    }
+    if(a > c){ const t = a; a = c; c = t; }
   }
-  const PHI=0.6180339887;
-  let x1=c-PHI*(c-a), x2=a+PHI*(c-a), f1=null,f2=null;
-  while(!stop()&&(c-a)>o.minStep){
-    if(f1==null)f1=(await ev(x1)).score;
-    if(f2==null)f2=(await ev(x2)).score;
-    if(stop())break;
-    if(f1<=f2){c=x2;x2=x1;f2=f1;x1=c-PHI*(c-a);f1=null;}
-    else{a=x1;x1=x2;f1=f2;x2=a+PHI*(c-a);f2=null;}
+  const PHI = 0.6180339887;
+  let x1 = c - PHI*(c-a), x2 = a + PHI*(c-a), f1 = null, f2 = null;
+  while(!stop() && (c-a) > o.minStep){
+    if(f1 == null) f1 = (await ev(x1)).score;
+    if(f2 == null) f2 = (await ev(x2)).score;
+    if(stop()) break;
+    if(f1 <= f2){ c = x2; x2 = x1; f2 = f1; x1 = c - PHI*(c-a); f1 = null; }
+    else { a = x1; x1 = x2; f1 = f2; x2 = a + PHI*(c-a); f2 = null; }
   }
-  const all=[...cache.values()].sort((p,q)=>p.bias-q.bias);
-  const ranked=[...all].sort((p,q)=>p.score-q.score);
-  const best=ranked[0];
-  let lo=null,hi=null;
-  for(const r of all){if(r.bias<best.bias)lo=r;if(r.bias>best.bias&&!hi)hi=r;}
-  const bracketed=!!(lo&&hi&&lo.score>best.score&&hi.score>best.score);
-  return{best,ranked,all,lo,hi,bracketed};
+  return finish();
+
+  function finish(){
+    const all = [...cache.values()].sort((p,q)=>p.bias-q.bias);
+    const ranked = [...all].sort((p,q)=>p.score-q.score);
+    const best = ranked[0];
+    let lo = null, hi = null;
+    for(const r of all){ if(r.bias < best.bias) lo = r; if(r.bias > best.bias && !hi) hi = r; }
+    const bracketed = !!(lo && hi && lo.score > best.score && hi.score > best.score);
+    return { best, ranked, all, lo, hi, bracketed };
+  }
 }
 
 // ===== RUN SCAN =====
-async function runScan(){
-  if(S.running||!S.inited)return;
-  S.running=true; S.abort=false; S.runs=[]; S.selectedIdx=-1; S.evals=0;
-  setStateChip('running'); setPhaseChip('SCAN');
-  $('scanBtn').disabled=true; $('scanStopBtn').disabled=false;
-  $('resultsTable').innerHTML=''; $('detailPanel').style.display='none';
+async function doScan(){
+  if(S.running || !S.inited) return;
+  S.running = true; S.abort = false;
+  S.runs = []; S.selectedIdx = -1; S.evals = 0;
+  $('scanBtn').disabled = true; $('scanStopBtn').disabled = false;
+  $('initBtn').disabled = true;
+  $('resultsTable').innerHTML = '<div class="dim" style="padding:10px;">Scanning…</div>';
+  $('detailPanel').style.display = 'none';
+  $('tmEvals').textContent = '0'; $('tmBest').textContent = '—'; $('tmScore').textContent = '—'; $('tmPhase').textContent = 'SCAN';
+  setChip('running','SCAN');
 
-  const lo=+$('biasLo').value, hi=+$('biasHi').value, start=+$('biasStart').value, minStep=+$('biasMinStep').value;
-  log('Scan: ['+lo+','+hi+'] start='+start+' minStep='+minStep);
+  const lo = +$('biasLo').value, hi = +$('biasHi').value, start = +$('biasStart').value, minStep = +$('biasMinStep').value;
+  log('Scan: ['+lo+', '+hi+'] start='+start+' minStep='+minStep, 'ok');
 
-  const evalFn=async bias=>{
-    await new Promise(r=>setTimeout(r,5));
-    const _ol=console.log; console.log=function(){};
-    try{
-      log('Eval bias='+bias.toFixed(1));
-      $('tmPhase').textContent='EVAL '+bias.toFixed(0);
-      const m=runBiasEval(bias);
-      const sc=scoreLB(m);
+  const evalFn = async bias => {
+    if(S.abort) throw new Error('aborted');
+    log('Eval bias='+bias.toFixed(1));
+    $('tmPhase').textContent = 'EVAL '+bias.toFixed(0);
+    try {
+      const m = await runBiasEval(bias);
+      const sc = scoreLB(m);
       S.evals++;
-      const r={bias,score:sc.score,ok:!!sc.ok,fail:sc.fail,m};
+      $('tmEvals').textContent = S.evals;
+      const r = { bias, score: sc.score, ok: !!sc.ok, fail: sc.fail, m };
       S.runs.push(r);
-      $('tmEvals').textContent=S.evals;
       drawLive(m);
       return r;
-    }finally{console.log=_ol;}
+    } catch(e){
+      log('Eval error: '+e.message, 'err');
+      return { bias, score: 1e6, fail: 'err: '+e.message, m: { bias, end:'error', samples: [], fuel:{} } };
+    }
   };
 
-  try{
-    const R=await searchBracket(evalFn,{lo,hi,step:30,minStep,start,stop:()=>S.abort},
-      (r,cache)=>{
-        log('  → bias='+r.bias.toFixed(1)+' score='+r.score.toFixed(2)+(r.fail?' ['+r.fail+']':''));
+  try {
+    const R = await searchBracket(evalFn,
+      { lo, hi, step: 30, minStep, start, stop: () => S.abort },
+      (r, cache) => {
+        log('  → bias='+r.bias.toFixed(1)+' score='+r.score.toFixed(2)+(r.fail ? ' ['+r.fail+']' : ''), r.ok ? 'ok' : 'warn');
       });
-    S.searchResult=R;
-    log('Search done. Best bias='+R.best.bias.toFixed(2)+' score='+R.best.score.toFixed(2));
-    $('tmBest').textContent=R.best.bias.toFixed(2);
-    $('tmScore').textContent=R.best.score.toFixed(2);
-    $('tmPhase').textContent='DONE';
+    S.searchResult = R;
+    $('tmBest').textContent = R.best.bias.toFixed(2);
+    $('tmScore').textContent = R.best.score.toFixed(2);
+    $('tmPhase').textContent = 'DONE';
+    log('Search complete. Best bias='+R.best.bias.toFixed(2)+' score='+R.best.score.toFixed(2), 'ok');
     renderResults();
-  }catch(e){
-    log('Scan error: '+e.message);
-  }finally{
-    S.running=false; $('scanBtn').disabled=false; $('scanStopBtn').disabled=true;
-    setStateChip('ready'); setPhaseChip('DONE');
+  } catch(e){
+    log('Scan error: '+e.message, 'err');
+    $('resultsTable').innerHTML = '<div class="bad" style="padding:10px;">Scan failed: '+esc(e.message)+'</div>';
+  } finally {
+    S.running = false;
+    $('scanBtn').disabled = false; $('scanStopBtn').disabled = true; $('initBtn').disabled = false;
+    setChip('ready', 'DONE');
   }
 }
 
-// ===== RESULTS =====
+// ===== RESULTS TABLE =====
 function renderResults(){
-  if(!S.runs.length){$('resultsTable').innerHTML='<div class="dim" style="padding:10px;">No runs.</div>';return;}
-  const sorted=S.runs.slice().sort((a,b)=>{
-    if(a.ok!==b.ok)return a.ok?-1:1;
-    return a.score-b.score;
+  if(!S.runs.length){
+    $('resultsTable').innerHTML = '<div class="dim" style="padding:10px;">No runs.</div>';
+    return;
+  }
+  const sorted = S.runs.slice().sort((a,b) => {
+    if(a.ok !== b.ok) return a.ok ? -1 : 1;
+    return a.score - b.score;
   });
-  let html='<table><thead><tr>';
-  ['#','bias','score','landed','x','vx','θ','ω','flags'].forEach(h=>html+='<th>'+h+'</th>');
-  html+='</tr></thead><tbody>';
-  const bestBias=S.searchResult?S.searchResult.best.bias:null;
-  sorted.forEach((r,i)=>{
-    const isBest=r.bias===bestBias;
-    const cls=isBest?'best':(!r.ok?'fail':'');
-    const idx=S.runs.indexOf(r);
-    html+='<tr class="'+cls+'" data-idx="'+idx+'">';
-    html+='<td>'+(i+1)+'</td><td>'+r.bias.toFixed(2)+'</td>';
-    html+='<td>'+(r.ok?r.score.toFixed(2):'FAIL')+'</td>';
-    html+='<td>'+(r.m.contact?(r.m.contact.landed?'✓':'✗'):'—')+'</td>';
-    html+='<td>'+(r.m.contact?fmt(r.m.contact.downrange,2):'—')+'</td>';
-    html+='<td>'+(r.m.contact?fmt(r.m.contact.vx,3):'—')+'</td>';
-    html+='<td>'+(r.m.contact?fmt(r.m.contact.thetaLocal,2):'—')+'</td>';
-    html+='<td>'+(r.m.contact?fmt(r.m.contact.omega,2):'—')+'</td>';
-    html+='<td style="text-align:left;color:var(--dim)">'+(r.fail||(isBest?'★ best':''))+'</td>';
-    html+='</tr>';
+  const bestBias = S.searchResult ? S.searchResult.best.bias : null;
+  let html = '<table><thead><tr>';
+  ['#','bias','score','landed','x','vx','θ','ω','flags'].forEach(h => html += '<th>'+h+'</th>');
+  html += '</tr></thead><tbody>';
+  sorted.forEach((r,i) => {
+    const isBest = r.bias === bestBias;
+    const cls = isBest ? 'best' : (!r.ok ? 'fail' : '');
+    const idx = S.runs.indexOf(r);
+    html += '<tr class="'+cls+'" data-idx="'+idx+'">';
+    html += '<td>'+(i+1)+'</td>';
+    html += '<td>'+r.bias.toFixed(2)+'</td>';
+    html += '<td>'+(r.ok ? r.score.toFixed(2) : 'FAIL')+'</td>';
+    html += '<td>'+(r.m.contact ? (r.m.contact.landed ? '✓' : '✗') : '—')+'</td>';
+    html += '<td>'+(r.m.contact ? fmt(r.m.contact.downrange,2) : '—')+'</td>';
+    html += '<td>'+(r.m.contact ? fmt(r.m.contact.vx,3) : '—')+'</td>';
+    html += '<td>'+(r.m.contact ? fmt(r.m.contact.thetaLocal,2) : '—')+'</td>';
+    html += '<td>'+(r.m.contact ? fmt(r.m.contact.omega,2) : '—')+'</td>';
+    html += '<td style="text-align:left;color:var(--dim)">'+(r.fail || (isBest ? '★ best' : ''))+'</td>';
+    html += '</tr>';
   });
-  html+='</tbody></table>';
-  $('resultsTable').innerHTML=html;
-  $('resultsTable').querySelectorAll('tr[data-idx]').forEach(tr=>{
-    tr.addEventListener('click',()=>selectRow(+tr.dataset.idx));
+  html += '</tbody></table>';
+  $('resultsTable').innerHTML = html;
+  $('resultsTable').querySelectorAll('tr[data-idx]').forEach(tr => {
+    tr.addEventListener('click', () => selectRow(+tr.dataset.idx));
   });
 }
 
 function selectRow(idx){
-  S.selectedIdx=idx;
-  $('resultsTable').querySelectorAll('tr.selected').forEach(tr=>tr.classList.remove('selected'));
-  const tr=$('resultsTable').querySelector('tr[data-idx="'+idx+'"]');
-  if(tr)tr.classList.add('selected');
-  const r=S.runs[idx];
-  if(r)renderDetail(r);
+  S.selectedIdx = idx;
+  $('resultsTable').querySelectorAll('tr.selected').forEach(tr => tr.classList.remove('selected'));
+  const tr = $('resultsTable').querySelector('tr[data-idx="'+idx+'"]');
+  if(tr) tr.classList.add('selected');
+  const r = S.runs[idx];
+  if(r) renderDetail(r);
 }
 
 // ===== DETAIL =====
 function renderDetail(r){
-  const m=r.m, panel=$('detailPanel');
-  panel.style.display='block';
-
-  const kpis=[];
-  kpis.push({l:'Bias',v:r.bias.toFixed(2),cls:'c'});
-  kpis.push({l:'Score',v:r.ok?r.score.toFixed(2):'FAIL',cls:r.ok?'g':'r'});
+  const m = r.m, panel = $('detailPanel');
+  panel.style.display = 'block';
+  const kpis = [];
+  kpis.push({ l:'Bias', v:r.bias.toFixed(2), cls:'c' });
+  kpis.push({ l:'Score', v:r.ok ? r.score.toFixed(2) : 'FAIL', cls:r.ok ? 'g' : 'r' });
   if(m.contact){
-    kpis.push({l:'Landed',v:m.contact.landed?'YES':'NO',cls:m.contact.landed?'g':'r'});
-    kpis.push({l:'TD downrange',v:m.contact.downrange.toFixed(1),u:'m',cls:'a'});
-    kpis.push({l:'TD vx',v:m.contact.vx.toFixed(2),u:'m/s',cls:'a'});
-    kpis.push({l:'TD θ',v:m.contact.thetaLocal.toFixed(2),u:'°',cls:'a'});
-    kpis.push({l:'TD ω',v:m.contact.omega.toFixed(2),u:'°/s',cls:'a'});
+    kpis.push({ l:'Landed', v:m.contact.landed ? 'YES' : 'NO', cls:m.contact.landed ? 'g' : 'r' });
+    kpis.push({ l:'TD downrange', v:m.contact.downrange.toFixed(1), u:'m', cls:'a' });
+    kpis.push({ l:'TD vx', v:m.contact.vx.toFixed(2), u:'m/s', cls:'a' });
+    kpis.push({ l:'TD θ', v:m.contact.thetaLocal.toFixed(2), u:'°', cls:'a' });
+    kpis.push({ l:'TD ω', v:m.contact.omega.toFixed(2), u:'°/s', cls:'a' });
   }
   if(m.lbStart){
-    kpis.push({l:'LB start alt',v:m.lbStart.altKm.toFixed(2),u:'km',cls:'c'});
-    kpis.push({l:'LB start downrange',v:m.lbStart.downrange.toFixed(0),u:'m',cls:'c'});
-    kpis.push({l:'LB start vy',v:m.lbStart.vy.toFixed(0),u:'m/s',cls:'c'});
-    kpis.push({l:'LB time',v:m.totalTimeS.toFixed(1),u:'s',cls:'c'});
+    kpis.push({ l:'LB start alt', v:m.lbStart.altKm.toFixed(2), u:'km', cls:'c' });
+    kpis.push({ l:'LB start downrange', v:m.lbStart.downrange.toFixed(0), u:'m', cls:'c' });
+    kpis.push({ l:'LB start vy', v:m.lbStart.vy.toFixed(0), u:'m/s', cls:'c' });
+    kpis.push({ l:'LB duration', v:m.totalTimeS.toFixed(1), u:'s', cls:'c' });
   }
-  let html='<h3>Bias '+r.bias.toFixed(2)+'</h3><div class="kpi-grid">';
-  kpis.forEach(k=>{
-    html+='<div class="kpi"><span>'+k.l+'</span><b class="'+(k.cls||'')+'">'+k.v+(k.u?'<small>'+k.u+'</small>':'')+'</b></div>';
+  let html = '<h3>Bias '+r.bias.toFixed(2)+'</h3><div class="kpi-grid">';
+  kpis.forEach(k => {
+    html += '<div class="kpi"><span>'+k.l+'</span><b class="'+(k.cls||'')+'">'+k.v+(k.u ? '<small>'+k.u+'</small>' : '')+'</b></div>';
   });
-  html+='</div>';
+  html += '</div>';
 
   // Fuel breakdown
-  if(m.fuel.start&&m.fuel.remaining!=null){
-    const f=m.fuel;
-    let cum=0;
-    html+='<table class="fuel-table"><thead><tr><th>Phase</th><th>Burn</th><th>Cumulative</th><th>Remaining</th></tr></thead><tbody>';
-    if(Number.isFinite(f.boostback_burn)){cum+=f.boostback_burn;html+='<tr><td>Boostback</td><td>'+f.boostback_burn+' kg</td><td>'+cum+' kg</td><td>'+(f.start-cum)+' kg</td></tr>';}
-    if(Number.isFinite(f.entry_burn)){cum+=f.entry_burn;html+='<tr><td>Entry burn</td><td>'+f.entry_burn+' kg</td><td>'+cum+' kg</td><td>'+(f.start-cum)+' kg</td></tr>';}
-    if(Number.isFinite(f.landing_burn)){cum+=f.landing_burn;html+='<tr><td>Landing burn</td><td>'+f.landing_burn+' kg</td><td>'+cum+' kg</td><td>'+(f.start-cum)+' kg</td></tr>';}
-    html+='<tr class="total"><td>Total</td><td>'+cum+' kg</td><td>'+cum+' kg</td><td>'+(f.start-cum)+' kg</td></tr>';
-    html+='</tbody></table>';
-    html+='<div class="dim" style="margin-top:6px;font-size:11px;">MECO residual: <b style="color:#fff">'+f.start+' kg</b> · Boostback starts from EB snapshot fuel</div>';
+  if(m.fuel.start && m.fuel.remaining != null){
+    const f = m.fuel;
+    let cum = 0;
+    html += '<table class="fuel-table"><thead><tr><th>Phase</th><th>Burn</th><th>Cumulative</th><th>Remaining</th></tr></thead><tbody>';
+    if(Number.isFinite(f.boostback_burn)){ cum += f.boostback_burn; html += '<tr><td>Boostback</td><td>'+f.boostback_burn+' kg</td><td>'+cum+' kg</td><td>'+(f.start-cum)+' kg</td></tr>'; }
+    if(Number.isFinite(f.entry_burn)){ cum += f.entry_burn; html += '<tr><td>Entry burn</td><td>'+f.entry_burn+' kg</td><td>'+cum+' kg</td><td>'+(f.start-cum)+' kg</td></tr>'; }
+    if(Number.isFinite(f.landing_burn)){ cum += f.landing_burn; html += '<tr><td>Landing burn</td><td>'+f.landing_burn+' kg</td><td>'+cum+' kg</td><td>'+(f.start-cum)+' kg</td></tr>'; }
+    html += '<tr class="total"><td>Total</td><td>'+cum+' kg</td><td>'+cum+' kg</td><td>'+(f.start-cum)+' kg</td></tr>';
+    html += '</tbody></table>';
+    html += '<div class="dim" style="margin-top:6px;font-size:11px;">MECO residual: <b style="color:#fff">'+f.start+' kg</b> · Boostback starts from EB snapshot fuel</div>';
   }
 
-  html+='<div class="detail-charts"><div class="chart-box"><canvas id="detailFullChart"></canvas></div><div class="chart-box"><canvas id="detailZoomChart"></canvas></div></div>';
-  panel.innerHTML=html;
-
-  setTimeout(()=>drawDetailCharts(m),30);
+  html += '<div class="detail-charts"><div class="chart-box"><canvas id="detailFullChart"></canvas></div><div class="chart-box"><canvas id="detailZoomChart"></canvas></div></div>';
+  panel.innerHTML = html;
+  setTimeout(() => drawDetailCharts(m), 30);
 }
 
 function drawDetailCharts(m){
-  if(!m.samples.length)return;
-  const phaseColors={'PRE_ENTRY_STEER':'#a78bfa','ENTRY_BURN':'#ffb020','POST_ENTRY_STEER':'#35d6ff','LANDING_BURN_ALIGN':'#4ade80','LANDING_BURN':'#ff4d5e','TOUCHDOWN_COMPLETE':'#4ade80','POST-TD':'#6b7280'};
+  if(!m.samples.length) return;
+  const phaseColors = {
+    'PRE_ENTRY_STEER':'#a78bfa','ENTRY_BURN':'#ffb020','POST_ENTRY_STEER':'#35d6ff',
+    'LANDING_BURN_ALIGN':'#4ade80','LANDING_BURN':'#ff4d5e','TOUCHDOWN_COMPLETE':'#4ade80','POST-TD':'#6b7280'
+  };
 
-  const fullCtx=$('detailFullChart');
-  if(fullCtx){
-    if(S.detailFull){try{S.detailFull.destroy();}catch(e){}}
-    const phases=[...new Set(m.samples.map(s=>s.phase))];
-    const datasets=phases.map(ph=>({
-      label:ph,
-      data:m.samples.filter(s=>s.phase===ph).map(s=>({x:s.t,y:s.h})),
-      borderColor:phaseColors[ph]||'#6b7280',
-      backgroundColor:'transparent',borderWidth:1.5,pointRadius:0,tension:0,parsing:false
+  // Full mission
+  const fullCv = $('detailFullChart');
+  if(fullCv){
+    if(S.detailFull){ try { S.detailFull.destroy(); } catch(e){} }
+    const phases = [...new Set(m.samples.map(s => s.phase))];
+    const datasets = phases.map(ph => ({
+      label: ph,
+      data: m.samples.filter(s => s.phase === ph).map(s => ({ x: s.t, y: s.h })),
+      borderColor: phaseColors[ph] || '#6b7280',
+      backgroundColor: 'transparent',
+      borderWidth: 1.5, pointRadius: 0, tension: 0, parsing: false,
     }));
-    S.detailFull=new Chart(fullCtx,{type:'line',data:{datasets},options:{
-      responsive:true,maintainAspectRatio:false,animation:false,
-      plugins:{legend:{labels:{boxWidth:8,font:{size:9},color:'#94a3b8'}},title:{display:true,text:'Full mission — alt vs time',color:'#cbd5e1',font:{size:10}}},
-      scales:{x:{type:'linear',grid:{color:'#1f2940'},ticks:{color:'#64748b',font:{size:9}}},y:{grid:{color:'#1f2940'},ticks:{color:'#64748b',font:{size:9}}}}
-    }});
+    S.detailFull = new Chart(fullCv, {
+      type: 'line', data: { datasets }, options: {
+        responsive: true, maintainAspectRatio: false, animation: false,
+        plugins: {
+          legend: { labels: { boxWidth: 8, font: { size: 9 }, color: '#94a3b8' } },
+          title: { display: true, text: 'Full mission — alt vs time', color: '#cbd5e1', font: { size: 10 } }
+        },
+        scales: {
+          x: { type: 'linear', grid: { color: '#1f2940' }, ticks: { color: '#64748b', font: { size: 9 } } },
+          y: { grid: { color: '#1f2940' }, ticks: { color: '#64748b', font: { size: 9 } } }
+        }
+      }
+    });
   }
 
-  const zoomCtx=$('detailZoomChart');
-  if(zoomCtx&&m.lbStart){
-    if(S.detailZoom){try{S.detailZoom.destroy();}catch(e){}}
-    const tLB=m.lbStart.t;
-    const zoom=m.samples.filter(s=>s.t>=tLB-30);
-    const phases=[...new Set(zoom.map(s=>s.phase))];
-    const datasets=phases.map(ph=>({
-      label:ph,
-      data:zoom.filter(s=>s.phase===ph).map(s=>({x:s.t,y:s.h})),
-      borderColor:phaseColors[ph]||'#6b7280',
-      backgroundColor:'transparent',borderWidth:2,pointRadius:0,tension:0,parsing:false
+  // LB zoom
+  const zoomCv = $('detailZoomChart');
+  if(zoomCv && m.lbStart){
+    if(S.detailZoom){ try { S.detailZoom.destroy(); } catch(e){} }
+    const tLB = m.lbStart.t;
+    const zoom = m.samples.filter(s => s.t >= tLB - 30);
+    const phases = [...new Set(zoom.map(s => s.phase))];
+    const datasets = phases.map(ph => ({
+      label: ph,
+      data: zoom.filter(s => s.phase === ph).map(s => ({ x: s.t, y: s.h })),
+      borderColor: phaseColors[ph] || '#6b7280',
+      backgroundColor: 'transparent',
+      borderWidth: 2, pointRadius: 0, tension: 0, parsing: false,
     }));
-    S.detailZoom=new Chart(zoomCtx,{type:'line',data:{datasets},options:{
-      responsive:true,maintainAspectRatio:false,animation:false,
-      plugins:{legend:{labels:{boxWidth:8,font:{size:9},color:'#94a3b8'}},title:{display:true,text:'Landing burn — last 30s',color:'#cbd5e1',font:{size:10}}},
-      scales:{x:{type:'linear',grid:{color:'#1f2940'},ticks:{color:'#64748b',font:{size:9}}},y:{grid:{color:'#1f2940'},ticks:{color:'#64748b',font:{size:9}}}}
-    }});
+    S.detailZoom = new Chart(zoomCv, {
+      type: 'line', data: { datasets }, options: {
+        responsive: true, maintainAspectRatio: false, animation: false,
+        plugins: {
+          legend: { labels: { boxWidth: 8, font: { size: 9 }, color: '#94a3b8' } },
+          title: { display: true, text: 'Landing burn — last 30s', color: '#cbd5e1', font: { size: 10 } }
+        },
+        scales: {
+          x: { type: 'linear', grid: { color: '#1f2940' }, ticks: { color: '#64748b', font: { size: 9 } } },
+          y: { grid: { color: '#1f2940' }, ticks: { color: '#64748b', font: { size: 9 } } }
+        }
+      }
+    });
   }
 }
 
 // ===== LIVE CHART =====
 function drawLive(m){
-  if(!m.samples.length)return;
-  const ctx=$('liveChart'); if(!ctx)return;
-  if(S.liveChart){try{S.liveChart.destroy();}catch(e){}}
-  const phaseColors={'PRE_ENTRY_STEER':'#a78bfa','ENTRY_BURN':'#ffb020','POST_ENTRY_STEER':'#35d6ff','LANDING_BURN_ALIGN':'#4ade80','LANDING_BURN':'#ff4d5e','TOUCHDOWN_COMPLETE':'#4ade80','POST-TD':'#6b7280'};
-  const phases=[...new Set(m.samples.map(s=>s.phase))];
-  const datasets=phases.map(ph=>({
-    label:ph,
-    data:m.samples.filter(s=>s.phase===ph).map(s=>({x:s.t,y:s.h})),
-    borderColor:phaseColors[ph]||'#6b7280',
-    backgroundColor:'transparent',borderWidth:1.5,pointRadius:0,tension:0,parsing:false
+  if(!m.samples.length) return;
+  const cv = $('liveChart'); if(!cv) return;
+  if(S.liveChart){ try { S.liveChart.destroy(); } catch(e){} }
+  const phaseColors = {
+    'PRE_ENTRY_STEER':'#a78bfa','ENTRY_BURN':'#ffb020','POST_ENTRY_STEER':'#35d6ff',
+    'LANDING_BURN_ALIGN':'#4ade80','LANDING_BURN':'#ff4d5e','TOUCHDOWN_COMPLETE':'#4ade80','POST-TD':'#6b7280'
+  };
+  const phases = [...new Set(m.samples.map(s => s.phase))];
+  const datasets = phases.map(ph => ({
+    label: ph,
+    data: m.samples.filter(s => s.phase === ph).map(s => ({ x: s.t, y: s.h })),
+    borderColor: phaseColors[ph] || '#6b7280',
+    backgroundColor: 'transparent',
+    borderWidth: 1.5, pointRadius: 0, tension: 0, parsing: false,
   }));
-  S.liveChart=new Chart(ctx,{type:'line',data:{datasets},options:{
-    responsive:true,maintainAspectRatio:false,animation:false,
-    plugins:{legend:{labels:{boxWidth:8,font:{size:9},color:'#94a3b8'}},title:{display:true,text:'Bias '+m.bias+' — alt vs time',color:'#cbd5e1',font:{size:10}}},
-    scales:{x:{type:'linear',grid:{color:'#1f2940'},ticks:{color:'#64748b',font:{size:9}}},y:{grid:{color:'#1f2940'},ticks:{color:'#64748b',font:{size:9}}}}
-  }});
+  S.liveChart = new Chart(cv, {
+    type: 'line', data: { datasets }, options: {
+      responsive: true, maintainAspectRatio: false, animation: false,
+      plugins: {
+        legend: { labels: { boxWidth: 8, font: { size: 9 }, color: '#94a3b8' } },
+        title: { display: true, text: 'Bias '+m.bias+' — alt vs time', color: '#cbd5e1', font: { size: 10 } }
+      },
+      scales: {
+        x: { type: 'linear', grid: { color: '#1f2940' }, ticks: { color: '#64748b', font: { size: 9 } } },
+        y: { grid: { color: '#1f2940' }, ticks: { color: '#64748b', font: { size: 9 } } }
+      }
+    }
+  });
 }
 
-// ===== STATE / PHASE CHIP UPDATES =====
-function setStateChip(st){
-  const el=document.getElementById('stStateN'); if(el)el.textContent=st||'idle';
-  document.body.setAttribute('data-state',st||'idle');
-}
-function setPhaseChip(ph){
-  const el=document.getElementById('stPhaseN'); if(el)el.textContent=ph||'—';
+// ===== MODULE LOAD CHECK =====
+function checkModules(){
+  const checks = {
+    CONFIG: typeof CONFIG !== 'undefined',
+    TunerConfig: typeof TunerConfig !== 'undefined',
+    TunerEngine: typeof TunerEngine !== 'undefined',
+    Guidance: typeof Guidance !== 'undefined',
+    Derivation: typeof Derivation !== 'undefined',
+    loadStacks: typeof loadStacks === 'function',
+    getSelectedRocket: typeof getSelectedRocket !== 'undefined',
+    setSelectedStackId: typeof setSelectedStackId === 'function',
+    getActiveStack: typeof getActiveStack === 'function',
+    getGuideDefaultPreset: typeof getGuideDefaultPreset === 'function',
+    Chart: typeof Chart !== 'undefined',
+  };
+  const failed = Object.entries(checks).filter(([k,v]) => !v).map(([k]) => k);
+  if(failed.length === 0){ return true; }
+  console.error('[NOVA-6] MISSING MODULES:', failed);
+  const banner = document.createElement('div');
+  banner.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9999;background:#7f1d1d;color:#fff;padding:12px 18px;font-family:monospace;font-size:12px;border-bottom:2px solid #ff4d5e;';
+  banner.innerHTML = '❌ MODULE LOAD FAILED<br><span style="color:#ffb020">Missing: ' + failed.join(', ') + '</span><br>Check DevTools → Network for 404 errors on &lt;script src=&quot;...&quot;&gt; tags.';
+  document.body.insertBefore(banner, document.body.firstChild);
+  return false;
 }
 
 // ===== BOOT =====
 function boot(){
+  window._origConsoleLog = console.log;
+  log('LB NOVA-6 booting…');
+
+  if(!checkModules()){
+    log('Boot failed: modules missing (see banner)', 'err');
+    return;
+  }
+  log('All modules loaded OK', 'ok');
+
   populateStackSel();
   populatePresetSel();
-  $('lockBtn').addEventListener('click',doLock);
-  $('resetBtn').addEventListener('click',doReset);
-  $('initBtn').addEventListener('click',doInit);
-  $('scanBtn').addEventListener('click',runScan);
-  $('scanStopBtn').addEventListener('click',()=>{S.abort=true;});
-  $('presetLoad').addEventListener('click',()=>applyPreset($('presetSel').value));
+
+  $('lockBtn').addEventListener('click', doLock);
+  $('resetBtn').addEventListener('click', doReset);
+  $('initBtn').addEventListener('click', doInit);
+  $('scanBtn').addEventListener('click', doScan);
+  $('scanStopBtn').addEventListener('click', () => { S.abort = true; log('Stop requested', 'warn'); });
+  $('presetLoad').addEventListener('click', applyPresetFromSel);
+
+  setChip('idle', '—');
+  log('Ready. Lock a stack to begin.', 'ok');
 }
-boot();
+
+if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
+else boot();
+
 })();
 </script>
-<script>
-if (typeof loadSzadFont === 'function') {
-  try { loadSzadFont(); } catch (e) {}
-}
-</script>
+
 <script src="visJs/engine-fx.js"></script>
 </body>
 </html>
