@@ -8,6 +8,7 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap">
 <link rel="stylesheet" href="styles/engine-theme.css">
 <link rel="stylesheet" href="styles/lb-nova6.css">
+<script src="../../../js/szadFont.js" onerror="void 0"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 </head>
 <body>
@@ -81,24 +82,24 @@
   </main>
 </div>
 
-<script src="../../js/componentLibrary.js"></script>
-<script src="../../js/customDesign.js"></script>
-<script src="../../js/fleet.js"></script>
-<script src="../../js/config.js"></script>
-<script src="../../js/simJs/core/massProps.js"></script>
-<script src="../../js/simJs/core/environment.js"></script>
-<script src="../../js/simJs/core/vehicle.js"></script>
-<script src="../../js/simJs/core/rcs.js"></script>
-<script src="../../js/simJs/core/physics.js"></script>
-<script src="../../js/simJs/core/collision.js"></script>
-<script src="../../js/simJs/guidance/imu.js"></script>
-<script src="../../js/simJs/guidance/derivation.js"></script>
-<script src="../../js/simJs/guidance/guidercs.js"></script>
-<script src="../../js/simJs/guidance/guidance-blocks.js"></script>
-<script src="../../js/simJs/guidance/guidance.js"></script>
-<script src="../../js/guideConfigDefaults.js"></script>
-<script src="../lib/config.js"></script>
-<script src="../lib/sim.js"></script>
+<script src="../../../js/componentLibrary.js"></script>
+<script src="../../../js/customDesign.js"></script>
+<script src="../../../js/fleet.js"></script>
+<script src="../../../js/config.js"></script>
+<script src="../../../js/simJs/core/massProps.js"></script>
+<script src="../../../js/simJs/core/environment.js"></script>
+<script src="../../../js/simJs/core/vehicle.js"></script>
+<script src="../../../js/simJs/core/rcs.js"></script>
+<script src="../../../js/simJs/core/physics.js"></script>
+<script src="../../../js/simJs/core/collision.js"></script>
+<script src="../../../js/simJs/guidance/imu.js"></script>
+<script src="../../../js/simJs/guidance/derivation.js"></script>
+<script src="../../../js/simJs/guidance/guidercs.js"></script>
+<script src="../../../js/simJs/guidance/guidance-blocks.js"></script>
+<script src="../../../js/simJs/guidance/guidance.js"></script>
+<script src="../../../js/guideConfigDefaults.js"></script>
+<script src="../../lib/config.js"></script>
+<script src="../../lib/sim.js"></script>
 
 <script>
 (function(){
@@ -672,6 +673,11 @@ function boot(){
 }
 boot();
 })();
+</script>
+<script>
+if (typeof loadSzadFont === 'function') {
+  try { loadSzadFont(); } catch (e) {}
+}
 </script>
 </body>
 </html>
