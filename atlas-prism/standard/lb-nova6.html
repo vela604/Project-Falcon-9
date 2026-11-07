@@ -408,8 +408,8 @@ async function doInit(){
 }
 
 // ===== BIAS EVAL (async, yielding) =====
+// ===== BIAS EVAL (rich data capture) =====
 async function runBiasEval(bias){
-  // Restore EB snapshot with bias override
   const g = deepClone(S.ebSnap.guidanceState);
   const cfg = g.guideConfigs && g.guideConfigs.landbackV1;
   if(cfg && cfg.rtls) cfg.rtls.ENTRY_BURN_IMPACT_TARGET_M = bias;
@@ -417,33 +417,30 @@ async function runBiasEval(bias){
   restoreSnap(S.ebSnap, g);
 
   const m = {
-    bias, end:'cap', phases:[], samples:[],
+    bias, end:'cap',
+    phases: [], lbStart: null, contact: null,
     fuel: { start: S.fuelAtMeco, after_boostback: S.fuelAfterBoostback },
-    lbStart: null, contact: null, totalTimeS: 0,
+    totalTimeS: 0, missionTimeS: 0,
+    hop_mm: 0, tiltInt: 0, peakGimbal: 0, peakTilt: 0,
+    satGimCount: 0, thrustGapCount: 0, legsDeployed: false,
+    maxQLB: 0, maxGLB: 0,
+    samples: [],  // [{t, phase, h(km), vy, vx, theta, omega, gimbal, x, thr, fuel}]
+    events: [],
   };
-  let lastPhase = null, sampleAccum = 0, postContactAccum = 0;
+  let lastPhase = null, phaseEntryT = state.simTime;
+  let prevGimbalSat = false, prevThrustGap = false, prevLegs = false;
+  let prevOmega = null, prevVx = null, prevVy = null, prevT = null;
+  let sampleAccum = 0, postContactAccum = 0;
   const capS = 200, postS = 3;
   const tStart = state.simTime;
   const maxTicks = Math.ceil(capS / DT());
 
-  const _origLog = console.log;
-  const _origErr = console.error;
+  const _origLog = console.log, _origErr = console.error;
   console.log = function(){}; console.error = function(){};
 
   try {
     for(let i=0; i<maxTicks; i++){
       if(state.halted){ m.end='halted'; break; }
-
-      // Early-crash guard: if booster flagged landed/crashed at HIGH altitude, that's bogus
-      const _bB_pre = findBooster();
-      if(_bB_pre && (_bB_pre.crashed || _bB_pre.landed) && !m.contact){
-        const _rPre = Math.hypot(_bB_pre.rx, _bB_pre.ry);
-        const _hPre = _rPre - CONFIG.EARTH_RADIUS - (CONFIG.LAUNCH_SITE_ALTITUDE||0);
-        if(_hPre > 20){
-          log('EARLY-CONTACT-DETECTED at hAGL='+_hPre.toFixed(1)+'m crashed='+_bB_pre.crashed+' landed='+_bB_pre.landed+' t='+state.simTime.toFixed(1), 'err');
-        }
-      }
-
       TunerEngine.tick(DT());
       const gs = Guidance.getGuideStatus() || {};
       const bB = findBooster();
@@ -456,62 +453,131 @@ async function runBiasEval(bias){
       const xp = getXfromPad(bB, simT);
       const fuel = fuelOf(bB);
       const ph = gs.rtlsPhase || '';
+      const lv = Math.atan2(-bB.rx, bB.ry);
+      let thL = bB.theta - lv;
+      while(thL > Math.PI) thL -= 2*Math.PI;
+      while(thL < -Math.PI) thL += 2*Math.PI;
+      const thDeg = thL * 180 / Math.PI;
+      const omDeg = bB.omega * 180 / Math.PI;
 
+      const gimbEng = (bB.engines || []).find(e => e.gimbal) || {};
+      const gimbAct = gimbEng.gimbalDeg || 0;
+      let thrAct = 0, thrCmd = 0;
+      for(const e of (bB.engines || [])){
+        thrAct += (e.massFlowRate || 0) * (e.Ve || 0);
+        thrCmd += (e.targetMassFlowRate || 0) * (e.Ve || 0);
+      }
+
+      let axAct = null, ayAct = null;
+      if(prevT !== null && simT - prevT > 1e-9){
+        axAct = (vtG - prevVx) / (simT - prevT);
+        ayAct = (vr - prevVy) / (simT - prevT);
+      }
+
+      // Phase transitions
       if(ph !== lastPhase && ph){
-        m.phases.push({ phase: ph, t: +simT.toFixed(2), fuel: +fuel.toFixed(1), hAGL: +hAGL.toFixed(1) });
-        log('PHASE: '+ph+' t='+simT.toFixed(1)+' alt='+(hAGL/1000).toFixed(2)+'km vy='+vr.toFixed(1)+' fuel='+fuel.toFixed(0), 'ok');
+        m.phases.push({
+          phase: ph, t: +simT.toFixed(2), tRel: +(simT - phaseEntryT).toFixed(1),
+          altKm: +(hAGL/1000).toFixed(3), vy: +vr.toFixed(1), vx: +vtG.toFixed(1),
+          thetaLocal: +thDeg.toFixed(2), omega: +omDeg.toFixed(2), fuel: +fuel.toFixed(1),
+        });
+        m.events.push({ t: +simT.toFixed(2), kind: 'phase', msg: '→ ' + ph });
+        phaseEntryT = simT;
         if(ph === 'POST_ENTRY_STEER') m.fuel.after_entry = fuel;
         if(ph === 'LANDING_BURN_ALIGN') m.fuel.at_LBA = fuel;
         if(ph === 'LANDING_BURN'){
           m.lbStart = {
             t: +simT.toFixed(2), altAGL: +hAGL.toFixed(1), altKm: +(hAGL/1000).toFixed(3),
             downrange: +xp.toFixed(2), vy: +vr.toFixed(2), vx: +vtG.toFixed(2),
-            thetaLocal: +((()=>{let t=bB.theta-Math.atan2(-bB.rx,bB.ry);while(t>Math.PI)t-=2*Math.PI;while(t<-Math.PI)t+=2*Math.PI;return t*180/Math.PI;})()).toFixed(2),
-            omega: +(bB.omega * 180 / Math.PI).toFixed(3), fuel: +fuel.toFixed(1),
+            thetaLocal: +thDeg.toFixed(2), omega: +omDeg.toFixed(2), fuel: +fuel.toFixed(1),
           };
         }
         lastPhase = ph;
       }
 
-      // Contact detection: ONLY when near ground AND physics flagged landed/crashed
-      // (removed useless 'TOUCHDOWN_COMPLETE' check — RTLS phase is 'DONE' by then)
+      // LB peak metrics
+      if(ph === 'LANDING_BURN'){
+        const gAbs = Math.abs(gimbAct);
+        if(gAbs > m.peakGimbal) m.peakGimbal = gAbs;
+        if(Math.abs(thDeg) > m.peakTilt) m.peakTilt = Math.abs(thDeg);
+        m.tiltInt += Math.abs(thDeg) * DT();
+        if(typeof airDensity === 'function' && hAGL >= 0){
+          const rho = airDensity(hAGL);
+          const spd = Math.hypot(vr, vtG);
+          const Q = 0.5 * rho * spd * spd;
+          if(Q > m.maxQLB) m.maxQLB = Q;
+        }
+        const accMag = Math.hypot(bB._lastAccelX || 0, bB._lastAccelY || 0);
+        const gLoad = accMag / 9.80665;
+        if(gLoad > m.maxGLB) m.maxGLB = gLoad;
+      }
+
+      const gimbSatNow = ph === 'LANDING_BURN' && Math.abs(gimbAct) >= 7.9;
+      if(gimbSatNow && !prevGimbalSat){
+        m.satGimCount++;
+        m.events.push({ t: +simT.toFixed(2), kind: 'sat-gim', msg: 'gimbal CLAMP ' + gimbAct.toFixed(2) + '°' });
+      }
+      prevGimbalSat = gimbSatNow;
+
+      const thrGapNow = ph === 'LANDING_BURN' && Math.abs(thrCmd - thrAct) > 100000;
+      if(thrGapNow && !prevThrustGap){
+        m.thrustGapCount++;
+        m.events.push({ t: +simT.toFixed(2), kind: 'sat-thr', msg: 'thrust gap ' + Math.round((thrCmd-thrAct)/1000) + 'kN' });
+      }
+      prevThrustGap = thrGapNow;
+
+      const legsNow = !!(gs.rtlsLbLegsDeployed || (bB.legs && bB.legs.deployed));
+      if(legsNow && !prevLegs){
+        m.legsDeployed = true;
+        m.events.push({ t: +simT.toFixed(2), kind: 'legs', msg: 'legs deploy' });
+      }
+      prevLegs = legsNow;
+
+      // Contact
       if(!m.contact && hAGL < 20 && (bB.landed || bB.crashed)){
-        let tW = bB.theta - Math.atan2(-bB.rx, bB.ry);
-        while(tW > Math.PI) tW -= 2*Math.PI;
-        while(tW < -Math.PI) tW += 2*Math.PI;
-        const thDeg = tW * 180 / Math.PI;
-        const rawTheta = bB.theta * 180 / Math.PI;
-        log('CONTACT: ph='+ph+' landed='+bB.landed+' crashed='+bB.crashed+' theta_raw='+rawTheta.toFixed(2)+'° theta_local='+thDeg.toFixed(2)+'° hAGL='+hAGL.toFixed(3)+'m vy='+vr.toFixed(2)+' vx='+vtG.toFixed(2)+' omega='+((bB.omega*180/Math.PI).toFixed(2))+'°/s', 'warn');
         m.contact = {
-          t: +simT.toFixed(2), altAGL: +hAGL.toFixed(3), downrange: +xp.toFixed(2),
-          vx: +vtG.toFixed(3), vy: +vr.toFixed(3),
-          thetaLocal: +thDeg.toFixed(3),
-          omega: +(bB.omega * 180 / Math.PI).toFixed(3), fuel: +fuel.toFixed(1),
-          crashed: !!(bB.crashed || state.crashed),
-          landed: !!bB.landed,
+          t: +simT.toFixed(2), altAGL: +hAGL.toFixed(3), altKm: +(hAGL/1000).toFixed(3),
+          downrange: +xp.toFixed(3), vx: +vtG.toFixed(3), vy: +vr.toFixed(3),
+          thetaLocal: +thDeg.toFixed(3), omega: +omDeg.toFixed(3), fuel: +fuel.toFixed(1),
+          crashed: !!(bB.crashed || state.crashed), landed: !!bB.landed,
         };
         m.fuel.after_LB = fuel;
         if(m.lbStart) m.totalTimeS = +(simT - m.lbStart.t).toFixed(1);
+        m.missionTimeS = +(simT - S.saSnap.simTime).toFixed(1);
         m.end = m.contact.crashed ? 'crashed' : 'ok';
+        m.events.push({ t: +simT.toFixed(2), kind: m.contact.crashed ? 'crash' : 'touchdown', msg: (m.contact.crashed ? 'CRASHED' : 'LANDED') + ' at hAGL=' + hAGL.toFixed(2) + 'm' });
       }
 
       if(m.contact){
         postContactAccum += DT();
-        if(postContactAccum >= postS) break;
+        if(hAGL > m.contact.altAGL + 0.001){
+          const rise = hAGL - m.contact.altAGL;
+          if(rise > m.hop_mm) m.hop_mm = rise;
+        }
         sampleAccum += DT();
         if(sampleAccum >= 0.1){
           sampleAccum = 0;
-          m.samples.push({ t: +simT.toFixed(2), phase:'POST-TD', h:+hAGL.toFixed(2), vy:+vr.toFixed(3), vx:+vtG.toFixed(3), x:+xp.toFixed(2), fuel:+fuel.toFixed(1) });
+          m.samples.push({ t: +simT.toFixed(2), phase: 'POST-TD', h: +(hAGL/1000).toFixed(4), vy: +vr.toFixed(3), vx: +vtG.toFixed(3), theta: +thDeg.toFixed(3), omega: +omDeg.toFixed(3), gimbal: +gimbAct.toFixed(3), x: +xp.toFixed(2), thr: Math.round(thrAct/1000), fuel: +fuel.toFixed(1) });
         }
+        if(postContactAccum >= postS) break;
         continue;
       }
 
-      const lbActive = ph === 'LANDING_BURN' || ph === 'TOUCHDOWN_COMPLETE' || ph === 'DONE';
+      // Sample: 0.5s pre-LB, 0.1s LB
+      const dense = ph === 'LANDING_BURN';
       sampleAccum += DT();
-      if(sampleAccum >= (lbActive ? 0.1 : 0.5)){
+      if(sampleAccum >= (dense ? 0.1 : 0.5)){
         sampleAccum = 0;
-        m.samples.push({ t: +simT.toFixed(2), phase: ph || '?', h:+hAGL.toFixed(2), vy:+vr.toFixed(3), vx:+vtG.toFixed(3), x:+xp.toFixed(2), fuel:+fuel.toFixed(1) });
+        m.samples.push({
+          t: +simT.toFixed(2), phase: ph || '?',
+          h: +(hAGL/1000).toFixed(4), vy: +vr.toFixed(3), vx: +vtG.toFixed(3),
+          theta: +thDeg.toFixed(3), omega: +omDeg.toFixed(3),
+          gimbal: +gimbAct.toFixed(3), x: +xp.toFixed(2),
+          thr: Math.round(thrAct/1000), fuel: +fuel.toFixed(1),
+        });
       }
+
+      prevOmega = bB.omega; prevVx = vtG; prevVy = vr; prevT = simT;
 
       if(simT - tStart > capS){ m.end = 'cap'; break; }
       if(i % 300 === 0) await yieldToBrowser();
@@ -520,27 +586,38 @@ async function runBiasEval(bias){
     console.log = _origLog; console.error = _origErr;
   }
 
-  // Fuel accounting
   if(m.fuel.start != null && m.fuel.after_boostback != null) m.fuel.boostback_burn = +(m.fuel.start - m.fuel.after_boostback).toFixed(0);
   if(m.fuel.after_boostback != null && m.fuel.after_entry != null) m.fuel.entry_burn = +(m.fuel.after_boostback - m.fuel.after_entry).toFixed(0);
   if(m.fuel.after_entry != null && m.fuel.after_LB != null){
     m.fuel.landing_burn = +(m.fuel.after_entry - m.fuel.after_LB).toFixed(0);
     m.fuel.remaining = +m.fuel.after_LB.toFixed(0);
   }
+  m.hop_mm = +(m.hop_mm * 1000).toFixed(2);
+  m.maxQLB = +(m.maxQLB / 1000).toFixed(2);
+  m.maxGLB = +m.maxGLB.toFixed(2);
   return m;
 }
 
-// ===== SCORING =====
+// ===== SCORING (fixed weights, no UI) =====
 function scoreLB(m){
-  if(!m.contact) return { score: 1e6, fail: 'no-contact' };
-  if(m.contact.crashed) return { score: 1e6, fail: 'crashed' };
   const c = m.contact;
+  if(!c) return { score: 1e6, fail: 'no-contact' };
+  if(c.crashed) return { score: 1e6, fail: 'crashed' };
+  if(!c.landed) return { score: 1e6, fail: 'not-landed' };
   if(Math.abs(c.thetaLocal) > 12) return { score: 1e6, fail: 'tilt' };
   if(Math.abs(c.vx) > 2.5) return { score: 1e6, fail: 'vx' };
   if(Math.abs(c.vy) > 5) return { score: 1e6, fail: 'vy' };
   if(Math.abs(c.omega) > 8.6) return { score: 1e6, fail: 'omega' };
   if(Math.abs(c.downrange) > 42.5) return { score: 1e6, fail: 'downrange' };
-  const score = Math.abs(c.downrange)/2 + Math.abs(c.vx)/0.3 + Math.abs(c.thetaLocal)/1 + Math.abs(c.omega)/0.3;
+  if(m.hop_mm > 100) return { score: 1e6, fail: 'hop' };
+  const score =
+      Math.abs(c.downrange) / 2.0
+    + Math.abs(c.vx) / 0.3
+    + Math.abs(c.thetaLocal) / 1.0
+    + Math.abs(c.omega) / 0.3
+    + Math.abs(c.vy) / 0.5
+    + m.hop_mm / 5.0
+    + m.tiltInt / 100.0;
   return { score, ok: true };
 }
 
@@ -568,12 +645,12 @@ async function searchBracket(evalFn, o, onProgress){
   if(r0.score <= rp.score && r0.score <= rm.score){ a = rm.bias; c = rp.bias; }
   else {
     const dir = (rp.score < rm.score) ? 1 : -1;
-    let prev = r0, cur = (dir > 0 ? rp : rm), s = o.step;
+    let prev = r0, cur = (dir > 0 ? rp : rm), st = o.step;
     a = (dir > 0 ? rm.bias : rp.bias); c = null;
     while(!stop()){
       if(cur.bias <= o.lo + 1e-9 || cur.bias >= o.hi - 1e-9){ a = prev.bias; c = cur.bias; break; }
-      s *= 2;
-      const nxt = await ev(cur.bias + dir * s);
+      st *= 2;
+      const nxt = await ev(cur.bias + dir * st);
       if(nxt.bias === cur.bias){ a = prev.bias; c = cur.bias; break; }
       if(nxt.score > cur.score){ a = prev.bias; c = nxt.bias; break; }
       prev = cur; cur = nxt;
@@ -590,7 +667,6 @@ async function searchBracket(evalFn, o, onProgress){
     else { a = x1; x1 = x2; f1 = f2; x2 = a + PHI*(c-a); f2 = null; }
   }
   return finish();
-
   function finish(){
     const all = [...cache.values()].sort((p,q)=>p.bias-q.bias);
     const ranked = [...all].sort((p,q)=>p.score-q.score);
@@ -658,7 +734,7 @@ async function doScan(){
   }
 }
 
-// ===== RESULTS TABLE =====
+// ===== RESULTS TABLE (compact) =====
 function renderResults(){
   if(!S.runs.length){
     $('resultsTable').innerHTML = '<div class="dim" style="padding:10px;">No runs.</div>';
@@ -670,22 +746,22 @@ function renderResults(){
   });
   const bestBias = S.searchResult ? S.searchResult.best.bias : null;
   let html = '<table><thead><tr>';
-  ['#','bias','score','landed','x','vx','θ','ω','flags'].forEach(h => html += '<th>'+h+'</th>');
+  ['#','bias','score','status','TD x (m)','TD vx','TD θ','TD ω'].forEach(h => html += '<th>'+h+'</th>');
   html += '</tr></thead><tbody>';
   sorted.forEach((r,i) => {
     const isBest = r.bias === bestBias;
     const cls = isBest ? 'best' : (!r.ok ? 'fail' : '');
     const idx = S.runs.indexOf(r);
+    const c = r.m.contact;
     html += '<tr class="'+cls+'" data-idx="'+idx+'">';
     html += '<td>'+(i+1)+'</td>';
     html += '<td>'+r.bias.toFixed(2)+'</td>';
     html += '<td>'+(r.ok ? r.score.toFixed(2) : 'FAIL')+'</td>';
-    html += '<td>'+(r.m.contact ? (r.m.contact.landed ? '✓' : '✗') : '—')+'</td>';
-    html += '<td>'+(r.m.contact ? fmt(r.m.contact.downrange,2) : '—')+'</td>';
-    html += '<td>'+(r.m.contact ? fmt(r.m.contact.vx,3) : '—')+'</td>';
-    html += '<td>'+(r.m.contact ? fmt(r.m.contact.thetaLocal,2) : '—')+'</td>';
-    html += '<td>'+(r.m.contact ? fmt(r.m.contact.omega,2) : '—')+'</td>';
-    html += '<td style="text-align:left;color:var(--dim)">'+(r.fail || (isBest ? '★ best' : ''))+'</td>';
+    html += '<td style="text-align:left">'+(r.ok ? (isBest ? '★ best' : '✓ ok') : '<span style="color:var(--red)">'+esc(r.fail || '?')+'</span>')+'</td>';
+    html += '<td>'+(c ? fmt(c.downrange, 2) : '—')+'</td>';
+    html += '<td>'+(c ? fmt(c.vx, 3) : '—')+'</td>';
+    html += '<td>'+(c ? fmt(c.thetaLocal, 2) : '—')+'</td>';
+    html += '<td>'+(c ? fmt(c.omega, 2) : '—')+'</td>';
     html += '</tr>';
   });
   html += '</tbody></table>';
@@ -705,121 +781,184 @@ function selectRow(idx){
 }
 
 // ===== DETAIL =====
+const detailCharts = {};
+function destroyDetailCharts(){
+  for(const k of Object.keys(detailCharts)){
+    try { detailCharts[k].destroy(); } catch(e){}
+    delete detailCharts[k];
+  }
+}
+
 function renderDetail(r){
   const m = r.m, panel = $('detailPanel');
   panel.style.display = 'block';
-  const kpis = [];
-  kpis.push({ l:'Bias', v:r.bias.toFixed(2), cls:'c' });
-  kpis.push({ l:'Score', v:r.ok ? r.score.toFixed(2) : 'FAIL', cls:r.ok ? 'g' : 'r' });
+  destroyDetailCharts();
+
+  const h = [];
+  h.push('<h3>Bias ' + r.bias.toFixed(2) + ' · Score ' + (r.ok ? r.score.toFixed(2) : 'FAIL' + (r.fail ? ' (' + esc(r.fail) + ')' : '')) + '</h3>');
+
+  // Summary KPI row
   if(m.contact){
-    kpis.push({ l:'Landed', v:m.contact.landed ? 'YES' : 'NO', cls:m.contact.landed ? 'g' : 'r' });
-    kpis.push({ l:'TD downrange', v:m.contact.downrange.toFixed(1), u:'m', cls:'a' });
-    kpis.push({ l:'TD vx', v:m.contact.vx.toFixed(2), u:'m/s', cls:'a' });
-    kpis.push({ l:'TD θ', v:m.contact.thetaLocal.toFixed(2), u:'°', cls:'a' });
-    kpis.push({ l:'TD ω', v:m.contact.omega.toFixed(2), u:'°/s', cls:'a' });
+    const kpis = [
+      { l:'Status', v: m.contact.landed ? 'LANDED' : 'FAILED', cls: m.contact.landed ? 'g' : 'r' },
+      { l:'TD downrange', v: fmt(m.contact.downrange,2), u:'m', cls:'a' },
+      { l:'TD vx', v: fmt(m.contact.vx,3), u:'m/s', cls:'a' },
+      { l:'TD θ', v: fmt(m.contact.thetaLocal,2), u:'°', cls:'a' },
+      { l:'TD ω', v: fmt(m.contact.omega,3), u:'°/s', cls:'a' },
+      { l:'TD vy', v: fmt(m.contact.vy,3), u:'m/s', cls:'a' },
+      { l:'Hop', v: fmt(m.hop_mm,2), u:'mm', cls: m.hop_mm < 5 ? 'g' : 'a' },
+      { l:'Score', v: r.ok ? r.score.toFixed(2) : 'FAIL', cls: r.ok ? 'g' : 'r' },
+    ];
+    h.push('<div class="kpi-grid">');
+    kpis.forEach(k => h.push('<div class="kpi"><span>'+k.l+'</span><b class="'+(k.cls||'')+'">'+k.v+(k.u?'<small>'+k.u+'</small>':'')+'</b></div>'));
+    h.push('</div>');
   }
+
+  // LB start + TD in 2 cols
+  h.push('<div class="detail-cols">');
   if(m.lbStart){
-    kpis.push({ l:'LB start alt', v:m.lbStart.altKm.toFixed(2), u:'km', cls:'c' });
-    kpis.push({ l:'LB start downrange', v:m.lbStart.downrange.toFixed(0), u:'m', cls:'c' });
-    kpis.push({ l:'LB start vy', v:m.lbStart.vy.toFixed(0), u:'m/s', cls:'c' });
-    kpis.push({ l:'LB duration', v:m.totalTimeS.toFixed(1), u:'s', cls:'c' });
+    h.push('<div class="detail-col"><h4>LB Start</h4><div class="kv-list">');
+    h.push('<div><span class="k">Alt AGL</span><span class="v">'+fmt(m.lbStart.altAGL,1)+' m</span></div>');
+    h.push('<div><span class="k">Downrange</span><span class="v">'+fmt(m.lbStart.downrange,1)+' m</span></div>');
+    h.push('<div><span class="k">vy</span><span class="v">'+fmt(m.lbStart.vy,2)+' m/s</span></div>');
+    h.push('<div><span class="k">vx</span><span class="v">'+fmt(m.lbStart.vx,2)+' m/s</span></div>');
+    h.push('<div><span class="k">θ_local</span><span class="v">'+fmt(m.lbStart.thetaLocal,2)+'°</span></div>');
+    h.push('<div><span class="k">ω</span><span class="v">'+fmt(m.lbStart.omega,3)+'°/s</span></div>');
+    h.push('<div><span class="k">Fuel</span><span class="v">'+fmt(m.lbStart.fuel,0)+' kg</span></div>');
+    h.push('<div><span class="k">LB duration</span><span class="v">'+fmt(m.totalTimeS,1)+' s</span></div>');
+    h.push('</div></div>');
   }
-  let html = '<h3>Bias '+r.bias.toFixed(2)+'</h3><div class="kpi-grid">';
-  kpis.forEach(k => {
-    html += '<div class="kpi"><span>'+k.l+'</span><b class="'+(k.cls||'')+'">'+k.v+(k.u ? '<small>'+k.u+'</small>' : '')+'</b></div>';
-  });
-  html += '</div>';
+  if(m.contact){
+    h.push('<div class="detail-col"><h4>Touchdown</h4><div class="kv-list">');
+    h.push('<div><span class="k">Alt AGL</span><span class="v">'+fmt(m.contact.altAGL,2)+' m</span></div>');
+    h.push('<div><span class="k">Downrange</span><span class="v">'+fmt(m.contact.downrange,2)+' m</span></div>');
+    h.push('<div><span class="k">vy</span><span class="v">'+fmt(m.contact.vy,3)+' m/s</span></div>');
+    h.push('<div><span class="k">vx</span><span class="v">'+fmt(m.contact.vx,3)+' m/s</span></div>');
+    h.push('<div><span class="k">θ_local</span><span class="v">'+fmt(m.contact.thetaLocal,2)+'°</span></div>');
+    h.push('<div><span class="k">ω</span><span class="v">'+fmt(m.contact.omega,3)+'°/s</span></div>');
+    h.push('<div><span class="k">Fuel</span><span class="v">'+fmt(m.contact.fuel,0)+' kg</span></div>');
+    h.push('<div><span class="k">Mission time</span><span class="v">'+fmt(m.missionTimeS,1)+' s</span></div>');
+    h.push('</div></div>');
+  }
+  h.push('</div>');
+
+  // Peak metrics grid
+  h.push('<h4>LB Peak Metrics</h4><div class="kpi-grid small">');
+  h.push('<div class="kpi"><span>Peak gimbal</span><b>'+fmt(m.peakGimbal,2)+'°</b></div>');
+  h.push('<div class="kpi"><span>Gimbal sat</span><b>'+m.satGimCount+'</b></div>');
+  h.push('<div class="kpi"><span>Thrust gap</span><b>'+m.thrustGapCount+'</b></div>');
+  h.push('<div class="kpi"><span>Peak tilt</span><b>'+fmt(m.peakTilt,2)+'°</b></div>');
+  h.push('<div class="kpi"><span>Tilt ∫</span><b>'+fmt(m.tiltInt,1)+'°·s</b></div>');
+  h.push('<div class="kpi"><span>Max Q</span><b>'+fmt(m.maxQLB,2)+' kPa</b></div>');
+  h.push('<div class="kpi"><span>Max G</span><b>'+fmt(m.maxGLB,2)+' g</b></div>');
+  h.push('<div class="kpi"><span>Legs</span><b>'+(m.legsDeployed?'YES':'NO')+'</b></div>');
+  h.push('</div>');
 
   // Fuel breakdown
-  if(m.fuel.start && m.fuel.remaining != null){
-    const f = m.fuel;
+  if(m.fuel.start != null && m.fuel.remaining != null){
+    h.push('<h4>Fuel Breakdown</h4><table class="fuel-table"><thead><tr><th>Phase</th><th>Burn</th><th>Cumulative</th><th>Remaining</th></tr></thead><tbody>');
     let cum = 0;
-    html += '<table class="fuel-table"><thead><tr><th>Phase</th><th>Burn</th><th>Cumulative</th><th>Remaining</th></tr></thead><tbody>';
-    if(Number.isFinite(f.boostback_burn)){ cum += f.boostback_burn; html += '<tr><td>Boostback</td><td>'+f.boostback_burn+' kg</td><td>'+cum+' kg</td><td>'+(f.start-cum)+' kg</td></tr>'; }
-    if(Number.isFinite(f.entry_burn)){ cum += f.entry_burn; html += '<tr><td>Entry burn</td><td>'+f.entry_burn+' kg</td><td>'+cum+' kg</td><td>'+(f.start-cum)+' kg</td></tr>'; }
-    if(Number.isFinite(f.landing_burn)){ cum += f.landing_burn; html += '<tr><td>Landing burn</td><td>'+f.landing_burn+' kg</td><td>'+cum+' kg</td><td>'+(f.start-cum)+' kg</td></tr>'; }
-    html += '<tr class="total"><td>Total</td><td>'+cum+' kg</td><td>'+cum+' kg</td><td>'+(f.start-cum)+' kg</td></tr>';
-    html += '</tbody></table>';
-    html += '<div class="dim" style="margin-top:6px;font-size:11px;">MECO residual: <b style="color:#fff">'+f.start+' kg</b> · Boostback starts from EB snapshot fuel</div>';
+    if(Number.isFinite(m.fuel.boostback_burn)){ cum += m.fuel.boostback_burn; h.push('<tr><td>Boostback</td><td>'+fmt(m.fuel.boostback_burn,0)+' kg</td><td>'+fmt(cum,0)+' kg</td><td>'+fmt(m.fuel.start-cum,0)+' kg</td></tr>'); }
+    if(Number.isFinite(m.fuel.entry_burn)){ cum += m.fuel.entry_burn; h.push('<tr><td>Entry burn</td><td>'+fmt(m.fuel.entry_burn,0)+' kg</td><td>'+fmt(cum,0)+' kg</td><td>'+fmt(m.fuel.start-cum,0)+' kg</td></tr>'); }
+    if(Number.isFinite(m.fuel.landing_burn)){ cum += m.fuel.landing_burn; h.push('<tr><td>Landing burn</td><td>'+fmt(m.fuel.landing_burn,0)+' kg</td><td>'+fmt(cum,0)+' kg</td><td>'+fmt(m.fuel.start-cum,0)+' kg</td></tr>'); }
+    h.push('<tr class="total"><td>Total</td><td>'+fmt(cum,0)+' kg</td><td>'+fmt(cum,0)+' kg</td><td>'+fmt(m.fuel.start-cum,0)+' kg</td></tr>');
+    h.push('</tbody></table>');
+    h.push('<div class="dim" style="margin-top:6px;font-size:11px;">MECO residual: <b style="color:#fff">'+fmt(m.fuel.start,0)+' kg</b> · remaining at TD: <b style="color:#fff">'+fmt(m.fuel.start-cum,0)+' kg</b></div>');
   }
 
-  html += '<div class="detail-charts"><div class="chart-box"><canvas id="detailFullChart"></canvas></div><div class="chart-box"><canvas id="detailZoomChart"></canvas></div></div>';
-  panel.innerHTML = html;
+  // Mission timeline
+  if(m.phases.length){
+    h.push('<h4>Mission Timeline</h4><table class="timeline-table"><thead><tr><th>Phase</th><th>t (sim)</th><th>Δt</th><th>Alt</th><th>vy</th><th>Fuel</th></tr></thead><tbody>');
+    for(const p of m.phases){
+      h.push('<tr><td>'+esc(p.phase)+'</td><td>'+fmt(p.t,1)+'s</td><td>'+fmt(p.tRel,1)+'s</td><td>'+fmt(p.altKm,2)+'km</td><td>'+fmt(p.vy,0)+'m/s</td><td>'+fmt(p.fuel,0)+'kg</td></tr>');
+    }
+    h.push('</tbody></table>');
+  }
+
+  // Charts
+  h.push('<h4>Charts (LB phase)</h4><div class="chart-grid">');
+  h.push('<div class="chart-cell"><canvas id="chTheta"></canvas></div>');
+  h.push('<div class="chart-cell"><canvas id="chOmega"></canvas></div>');
+  h.push('<div class="chart-cell"><canvas id="chGimbal"></canvas></div>');
+  h.push('<div class="chart-cell"><canvas id="chH"></canvas></div>');
+  h.push('<div class="chart-cell"><canvas id="chX"></canvas></div>');
+  h.push('<div class="chart-cell"><canvas id="chVx"></canvas></div>');
+  h.push('<div class="chart-cell"><canvas id="chVy"></canvas></div>');
+  h.push('<div class="chart-cell"><canvas id="chThr"></canvas></div>');
+  h.push('</div>');
+
+  // Events
+  if(m.events.length){
+    h.push('<h4>Events</h4><div class="events-list">');
+    for(const e of m.events){
+      h.push('<div class="ev ev-'+(e.kind||'info')+'"><span class="t">'+fmt(e.t,2)+'s</span><span class="k">'+esc(e.kind)+'</span><span class="m">'+esc(e.msg)+'</span></div>');
+    }
+    h.push('</div>');
+  }
+
+  panel.innerHTML = h.join('');
   setTimeout(() => drawDetailCharts(m), 30);
 }
 
 function drawDetailCharts(m){
   if(!m.samples.length) return;
+  const t0 = m.lbStart ? m.lbStart.t : (m.samples[0] ? m.samples[0].t : 0);
+  const lb = m.samples.filter(s => s.phase === 'LANDING_BURN');
+  const post = m.samples.filter(s => s.phase === 'POST-TD');
   const phaseColors = {
     'PRE_ENTRY_STEER':'#a78bfa','ENTRY_BURN':'#ffb020','POST_ENTRY_STEER':'#35d6ff',
-    'LANDING_BURN_ALIGN':'#4ade80','LANDING_BURN':'#ff4d5e','TOUCHDOWN_COMPLETE':'#4ade80','POST-TD':'#6b7280'
+    'LANDING_BURN_ALIGN':'#4ade80','LANDING_BURN':'#ff4d5e','POST-TD':'#6b7280'
   };
 
-  // Full mission
-  const fullCv = $('detailFullChart');
-  if(fullCv){
-    if(S.detailFull){ try { S.detailFull.destroy(); } catch(e){} }
-    const phases = [...new Set(m.samples.map(s => s.phase))];
-    const datasets = phases.map(ph => ({
-      label: ph,
-      data: m.samples.filter(s => s.phase === ph).map(s => ({ x: s.t, y: s.h })),
-      borderColor: phaseColors[ph] || '#6b7280',
-      backgroundColor: 'transparent',
-      borderWidth: 1.5, pointRadius: 0, tension: 0, parsing: false,
-    }));
-    S.detailFull = new Chart(fullCv, {
-      type: 'line', data: { datasets }, options: {
+  function mkChart(id, title, unit, yAccessor, color){
+    const cv = $('ch' + id);
+    if(!cv) return;
+    const data = lb.concat(post).map(s => ({ x: s.t - t0, y: yAccessor(s) }));
+    try { detailCharts[id] = new Chart(cv, {
+      type: 'line',
+      data: { datasets: [{ label: title, data, borderColor: color, backgroundColor: 'transparent', borderWidth: 1.5, pointRadius: 0, tension: 0, parsing: false }] },
+      options: {
         responsive: true, maintainAspectRatio: false, animation: false,
         plugins: {
-          legend: { labels: { boxWidth: 8, font: { size: 9 }, color: '#94a3b8' } },
-          title: { display: true, text: 'Full mission — alt vs time', color: '#cbd5e1', font: { size: 10 } }
+          legend: { display: false },
+          title: { display: true, text: title + (unit ? ' [' + unit + ']' : ''), color: '#cbd5e1', font: { size: 10 } }
         },
         scales: {
-          x: { type: 'linear', grid: { color: '#1f2940' }, ticks: { color: '#64748b', font: { size: 9 } } },
+          x: { type: 'linear', grid: { color: '#1f2940' }, ticks: { color: '#64748b', font: { size: 9 } }, title: { display: false } },
           y: { grid: { color: '#1f2940' }, ticks: { color: '#64748b', font: { size: 9 } } }
         }
       }
-    });
+    }); } catch(e){ console.warn('Chart err', id, e); }
   }
 
-  // LB zoom
-  const zoomCv = $('detailZoomChart');
-  if(zoomCv && m.lbStart){
-    if(S.detailZoom){ try { S.detailZoom.destroy(); } catch(e){} }
-    const tLB = m.lbStart.t;
-    const zoom = m.samples.filter(s => s.t >= tLB - 30);
-    const phases = [...new Set(zoom.map(s => s.phase))];
-    const datasets = phases.map(ph => ({
-      label: ph,
-      data: zoom.filter(s => s.phase === ph).map(s => ({ x: s.t, y: s.h })),
-      borderColor: phaseColors[ph] || '#6b7280',
-      backgroundColor: 'transparent',
-      borderWidth: 2, pointRadius: 0, tension: 0, parsing: false,
-    }));
-    S.detailZoom = new Chart(zoomCv, {
-      type: 'line', data: { datasets }, options: {
-        responsive: true, maintainAspectRatio: false, animation: false,
-        plugins: {
-          legend: { labels: { boxWidth: 8, font: { size: 9 }, color: '#94a3b8' } },
-          title: { display: true, text: 'Landing burn — last 30s', color: '#cbd5e1', font: { size: 10 } }
-        },
-        scales: {
-          x: { type: 'linear', grid: { color: '#1f2940' }, ticks: { color: '#64748b', font: { size: 9 } } },
-          y: { grid: { color: '#1f2940' }, ticks: { color: '#64748b', font: { size: 9 } } }
-        }
-      }
-    });
-  }
+  mkChart('Theta', 'θ_local', '°', s => s.theta, '#6bff88');
+  mkChart('Omega', 'ω', '°/s', s => s.omega, '#93c5fd');
+  mkChart('Gimbal', 'gimbal', '°', s => s.gimbal, '#fbbf24');
+  mkChart('H', 'alt AGL', 'km', s => s.h, '#93c5fd');
+  mkChart('X', 'downrange', 'm', s => s.x, '#6bff88');
+  mkChart('Vx', 'vx', 'm/s', s => s.vx, '#93c5fd');
+  mkChart('Vy', 'vy', 'm/s', s => s.vy, '#93c5fd');
+  mkChart('Thr', 'thrust', 'kN', s => s.thr, '#a78bfa');
+
+  // Zero-ref dashed lines for theta/gimbal
+  ['Theta','Gimbal'].forEach(k => {
+    const c = detailCharts[k];
+    if(!c) return;
+    const zeroY = k === 'Theta' ? 0 : 0;
+    const zero = c.data.datasets[0].data.map(p => ({ x: p.x, y: zeroY }));
+    c.data.datasets.push({ label: 'ref', data: zero, borderColor: '#ffcc44', borderDash: [3,3], borderWidth: 1, pointRadius: 0, parsing: false });
+    c.update();
+  });
 }
 
 // ===== LIVE CHART =====
 function drawLive(m){
-  if(!m.samples.length) return;
+  if(!m.samples || !m.samples.length) return;
   const cv = $('liveChart'); if(!cv) return;
   if(S.liveChart){ try { S.liveChart.destroy(); } catch(e){} }
   const phaseColors = {
     'PRE_ENTRY_STEER':'#a78bfa','ENTRY_BURN':'#ffb020','POST_ENTRY_STEER':'#35d6ff',
-    'LANDING_BURN_ALIGN':'#4ade80','LANDING_BURN':'#ff4d5e','TOUCHDOWN_COMPLETE':'#4ade80','POST-TD':'#6b7280'
+    'LANDING_BURN_ALIGN':'#4ade80','LANDING_BURN':'#ff4d5e','POST-TD':'#6b7280'
   };
   const phases = [...new Set(m.samples.map(s => s.phase))];
   const datasets = phases.map(ph => ({
@@ -829,19 +968,19 @@ function drawLive(m){
     backgroundColor: 'transparent',
     borderWidth: 1.5, pointRadius: 0, tension: 0, parsing: false,
   }));
-  S.liveChart = new Chart(cv, {
+  try { S.liveChart = new Chart(cv, {
     type: 'line', data: { datasets }, options: {
       responsive: true, maintainAspectRatio: false, animation: false,
       plugins: {
         legend: { labels: { boxWidth: 8, font: { size: 9 }, color: '#94a3b8' } },
-        title: { display: true, text: 'Bias '+m.bias+' — alt vs time', color: '#cbd5e1', font: { size: 10 } }
+        title: { display: true, text: 'Bias ' + m.bias + ' — alt AGL [km] vs t', color: '#cbd5e1', font: { size: 10 } }
       },
       scales: {
         x: { type: 'linear', grid: { color: '#1f2940' }, ticks: { color: '#64748b', font: { size: 9 } } },
         y: { grid: { color: '#1f2940' }, ticks: { color: '#64748b', font: { size: 9 } } }
       }
     }
-  });
+  }); } catch(e){}
 }
 
 // ===== MODULE LOAD CHECK =====
