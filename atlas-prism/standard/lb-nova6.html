@@ -421,8 +421,8 @@ async function runBiasEval(bias){
     fuel: { start: S.fuelAtMeco, after_boostback: S.fuelAfterBoostback },
     lbStart: null, contact: null, totalTimeS: 0,
   };
-  let lastPhase = null, sampleAccum = 0, postContactAccum = 0, done = false;
-  const capS = 150, postS = 3;
+  let lastPhase = null, sampleAccum = 0, postContactAccum = 0;
+  const capS = 200, postS = 3;
   const tStart = state.simTime;
   const maxTicks = Math.ceil(capS / DT());
 
@@ -433,6 +433,17 @@ async function runBiasEval(bias){
   try {
     for(let i=0; i<maxTicks; i++){
       if(state.halted){ m.end='halted'; break; }
+
+      // Early-crash guard: if booster flagged landed/crashed at HIGH altitude, that's bogus
+      const _bB_pre = findBooster();
+      if(_bB_pre && (_bB_pre.crashed || _bB_pre.landed) && !m.contact){
+        const _rPre = Math.hypot(_bB_pre.rx, _bB_pre.ry);
+        const _hPre = _rPre - CONFIG.EARTH_RADIUS - (CONFIG.LAUNCH_SITE_ALTITUDE||0);
+        if(_hPre > 20){
+          log('EARLY-CONTACT-DETECTED at hAGL='+_hPre.toFixed(1)+'m crashed='+_bB_pre.crashed+' landed='+_bB_pre.landed+' t='+state.simTime.toFixed(1), 'err');
+        }
+      }
+
       TunerEngine.tick(DT());
       const gs = Guidance.getGuideStatus() || {};
       const bB = findBooster();
@@ -448,25 +459,33 @@ async function runBiasEval(bias){
 
       if(ph !== lastPhase && ph){
         m.phases.push({ phase: ph, t: +simT.toFixed(2), fuel: +fuel.toFixed(1), hAGL: +hAGL.toFixed(1) });
+        log('PHASE: '+ph+' t='+simT.toFixed(1)+' alt='+(hAGL/1000).toFixed(2)+'km vy='+vr.toFixed(1)+' fuel='+fuel.toFixed(0), 'ok');
         if(ph === 'POST_ENTRY_STEER') m.fuel.after_entry = fuel;
         if(ph === 'LANDING_BURN_ALIGN') m.fuel.at_LBA = fuel;
         if(ph === 'LANDING_BURN'){
           m.lbStart = {
             t: +simT.toFixed(2), altAGL: +hAGL.toFixed(1), altKm: +(hAGL/1000).toFixed(3),
             downrange: +xp.toFixed(2), vy: +vr.toFixed(2), vx: +vtG.toFixed(2),
-            thetaLocal: +((bB.theta - Math.atan2(-bB.rx, bB.ry)) * 180 / Math.PI).toFixed(2),
+            thetaLocal: +((()=>{let t=bB.theta-Math.atan2(-bB.rx,bB.ry);while(t>Math.PI)t-=2*Math.PI;while(t<-Math.PI)t+=2*Math.PI;return t*180/Math.PI;})()).toFixed(2),
             omega: +(bB.omega * 180 / Math.PI).toFixed(3), fuel: +fuel.toFixed(1),
           };
         }
         lastPhase = ph;
       }
 
-      // Contact detection
-      if(!m.contact && (ph === 'TOUCHDOWN_COMPLETE' || bB.landed || bB.crashed)){
+      // Contact detection: ONLY when near ground AND physics flagged landed/crashed
+      // (removed useless 'TOUCHDOWN_COMPLETE' check — RTLS phase is 'DONE' by then)
+      if(!m.contact && hAGL < 20 && (bB.landed || bB.crashed)){
+        let tW = bB.theta - Math.atan2(-bB.rx, bB.ry);
+        while(tW > Math.PI) tW -= 2*Math.PI;
+        while(tW < -Math.PI) tW += 2*Math.PI;
+        const thDeg = tW * 180 / Math.PI;
+        const rawTheta = bB.theta * 180 / Math.PI;
+        log('CONTACT: ph='+ph+' landed='+bB.landed+' crashed='+bB.crashed+' theta_raw='+rawTheta.toFixed(2)+'° theta_local='+thDeg.toFixed(2)+'° hAGL='+hAGL.toFixed(3)+'m vy='+vr.toFixed(2)+' vx='+vtG.toFixed(2)+' omega='+((bB.omega*180/Math.PI).toFixed(2))+'°/s', 'warn');
         m.contact = {
           t: +simT.toFixed(2), altAGL: +hAGL.toFixed(3), downrange: +xp.toFixed(2),
           vx: +vtG.toFixed(3), vy: +vr.toFixed(3),
-          thetaLocal: +((bB.theta - Math.atan2(-bB.rx, bB.ry)) * 180 / Math.PI).toFixed(3),
+          thetaLocal: +thDeg.toFixed(3),
           omega: +(bB.omega * 180 / Math.PI).toFixed(3), fuel: +fuel.toFixed(1),
           crashed: !!(bB.crashed || state.crashed),
           landed: !!bB.landed,
@@ -474,7 +493,6 @@ async function runBiasEval(bias){
         m.fuel.after_LB = fuel;
         if(m.lbStart) m.totalTimeS = +(simT - m.lbStart.t).toFixed(1);
         m.end = m.contact.crashed ? 'crashed' : 'ok';
-        done = true;
       }
 
       if(m.contact){
@@ -488,7 +506,7 @@ async function runBiasEval(bias){
         continue;
       }
 
-      const lbActive = ph === 'LANDING_BURN' || ph === 'TOUCHDOWN_COMPLETE';
+      const lbActive = ph === 'LANDING_BURN' || ph === 'TOUCHDOWN_COMPLETE' || ph === 'DONE';
       sampleAccum += DT();
       if(sampleAccum >= (lbActive ? 0.1 : 0.5)){
         sampleAccum = 0;
