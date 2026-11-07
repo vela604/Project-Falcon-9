@@ -147,7 +147,7 @@ table.rv-t{width:100%;border-collapse:collapse;font-size:11.5px;font-variant-num
 
   <!-- ==================== SCORE YOUR OWN (new) ==================== -->
   <section class="panel" id="scoreOwn" style="margin-top:14px">
-    <h2><span class="tag">0x04</span>Score your own</h2>
+    <h2><span class="tag">0x04</span>Score a Custom Lead</h2>
     <div class="so-note">Runs inside <b>CONVO-LEAD</b> · set <b>lead</b> to score it against the best lead · blank = plain lead search</div>
     <div class="row">
       <label>MECO kg <input type="number" id="soMeco" step="1" value="52612"></label>
@@ -460,7 +460,7 @@ table.rv-t{width:100%;border-collapse:collapse;font-size:11.5px;font-variant-num
   // MECO. Calling this before each batch guarantees the SA snapshot matches
   // the panel's current MECO/G/T.
   async function ensureSA(values, pins) {   // pins: worker indices to set up (default: all workers)
-    if (!S.pool || !S.poolReady) throw new Error('pool not ready');
+    if (!S.pool || !S.poolReady) throw new Error('Worker pool is not ready. Please wait for initialization to complete.');
     const n = pins ? pins.length : S.pool.n;
     const _saA1 = values.insertion.TARGET_APSIDE1_ALT_KM;
     const _saA2 = values.insertion.TARGET_APSIDE2_ALT_KM;
@@ -541,7 +541,7 @@ table.rv-t{width:100%;border-collapse:collapse;font-size:11.5px;font-variant-num
   }
 
   function commonRowHtml() {
-    return '<div class="row"><label><input type="checkbox" id="suicideChk"' + (S.suicide ? ' checked' : '') + '> suicide ON</label>' +
+    return '<div class="row"><label><input type="checkbox" id="suicideChk"' + (S.suicide ? ' checked' : '') + '> Suicide-burn mode</label>' +
       '<span class="dim" id="bandHint"></span></div>';
   }
 
@@ -596,7 +596,7 @@ table.rv-t{width:100%;border-collapse:collapse;font-size:11.5px;font-variant-num
       '<div class="row">' +
       '<label>K (G count) <input type="number" id="oK" step="1" min="1" max="10" value="3"></label>' +
       '<label>ideal <input type="range" id="oIdeal" min="0" max="1" step="0.05" value="0.5" style="width:120px;padding:0;"><span class="dim" id="oIdealVal" style="min-width:32px;">0.50</span></label>' +
-      '<label><input type="checkbox" id="suicideChk"> suicide ON</label>' +
+      '<label><input type="checkbox" id="suicideChk"> Suicide-burn mode</label>' +
       '<span class="dim" id="bandHint"></span>' +
       '</div>' +
       // Advanced
@@ -988,11 +988,8 @@ table.rv-t{width:100%;border-collapse:collapse;font-size:11.5px;font-variant-num
       '<div class="dim" style="font-size:11.5px;line-height:1.5;">' +
       'Mode: <b>' + modeLabel + '</b> · MECO <b>' + (r.champs && r.champs.length ? r.champs[0].M : '—') + '</b> · ' +
       'evals ' + r.evals + ' · wall ' + (r.wallMs/1000).toFixed(0) + 's<br>' +
-      'Neeche har <b>G</b> ke liye ek <b>bias range</b> hai. Is range ke andar ke saare values ' +
-      '<b>mission-feasible</b> hain (coast filter + verified sample). Edge values hard-fail ho sakti hain — ' +
-      'unhe ZETA khud reject karega.<br>' +
-      '<b>Best score dhundhne ke liye</b>: kisi bhi range pe click karo → ZETA-HELIX 1R me inputs auto-fill ho jaayenge. ' +
-      'Wahan N results (jaise 9-15) daal ke <b>Run ZETA-HELIX</b> dabao — parallel bias scan chalega aur score-wise leaderboard milega.' +
+      'Each <b>G</b> value has a corresponding <b>bias range</b>. Values in the range are mission-feasible based on the coast filter and verified samples. Edge values may fail and will be rejected by ZETA.<br>' +
+      'Select a range to populate ZETA-HELIX 1R, then run a parallel bias scan to compare scores.' +
       '</div></div>' +
       '<div class="dim" style="font-size:11px;margin-bottom:6px;letter-spacing:.5px;">Suggested ranges (click to send to ZETA-HELIX):</div>';
     // Replace the original header line below with the summary
@@ -1051,10 +1048,10 @@ table.rv-t{width:100%;border-collapse:collapse;font-size:11.5px;font-variant-num
       '<div style="padding:10px 12px;background:#0d1a2a;border:1px solid #2a5a70;border-radius:4px;margin-top:10px;">' +
       '<div style="color:var(--cyan);font-weight:600;font-size:11.5px;letter-spacing:.5px;margin-bottom:4px;">Next step — find the best score inside a range</div>' +
       '<div class="dim" style="font-size:11.5px;line-height:1.5;">' +
-      '1. Upar koi bhi range pe <b>click</b> karo → ZETA-HELIX 1R tab khulega aur MECO/G/bias lo-hi auto-fill ho jaayenge.<br>' +
-      '2. ZETA me <b>N results</b> set karo (jaise 9-15 — jitne zyada, utna finer score landscape).<br>' +
-      '3. <b>Run ZETA-HELIX 1R</b> dabao — parallel bias scan chalega, koi edge fail hua to leaderboard me last rank pe chala jaayega.<br>' +
-      '4. Best-score row automatically highlight hogi. Wahi tumhara final point hai (MECO / G / bias / lead sab us row me).' +
+      '1. Select a range above to open ZETA-HELIX 1R and populate the MECO, G, and bias limits.<br>' +
+      '2. Set the <b>number of results</b> (for example, 9–15). More results provide a finer-grained score comparison.<br>' +
+      '3. Select <b>Run ZETA-HELIX 1R</b> to start a parallel bias scan. Failed edge values appear at the bottom of the leaderboard.<br>' +
+      '4. The highest-scoring row is highlighted and shows the MECO, G, bias, and lead values.' +
       '</div></div>';
     host.style.display = 'block';
     host.innerHTML = summaryHtml + html + ctaHtml;
@@ -1093,11 +1090,11 @@ table.rv-t{width:100%;border-collapse:collapse;font-size:11.5px;font-variant-num
 
   async function runOptMeco() {
     if (S.running) return;
-    if (!S.pool || !S.poolReady) { alert('pool not ready'); return; }
+    if (!S.pool || !S.poolReady) { alert('Worker pool is not ready. Please wait for initialization to complete.'); return; }
 
     S.running = true; S.t0 = performance.now();
     $('oRun').disabled = true;
-    $('oStatus').textContent = 'running…';
+    $('oStatus').textContent = 'Running…';
     $('oResultHost').style.display = 'none';
 
     try {
@@ -1150,7 +1147,7 @@ table.rv-t{width:100%;border-collapse:collapse;font-size:11.5px;font-variant-num
       }
     } catch (e) {
       log('OPT-MECO ERROR: ' + e.message);
-      $('oStatus').innerHTML = '<span class="bad">ERROR: ' + esc(e.message) + '</span>';
+      $('oStatus').innerHTML = '<span class="bad">Error: ' + esc(e.message) + '</span>';
     } finally {
       S.running = false;
       $('oRun').disabled = false;
@@ -1162,10 +1159,10 @@ table.rv-t{width:100%;border-collapse:collapse;font-size:11.5px;font-variant-num
   // ========================================================================
   async function runZeta() {
     if (S.running) return;
-    if (!S.pool || !S.poolReady) { alert('pool not ready'); return; }
+    if (!S.pool || !S.poolReady) { alert('Worker pool is not ready. Please wait for initialization to complete.'); return; }
     S.running = true; S.t0 = performance.now();
     $('zRun').disabled = true;
-    $('zStatus').textContent = 'running…';
+    $('zStatus').textContent = 'Running…';
 
     try {
       const meco = parseInt($('zMeco').value, 10);
@@ -1216,7 +1213,7 @@ table.rv-t{width:100%;border-collapse:collapse;font-size:11.5px;font-variant-num
 
       let done = 0;
       const ticker = setInterval(() => {
-        $('zStatus').textContent = 'running… ' + done + '/' + tasks.length;
+        $('zStatus').textContent = 'Running… ' + done + '/' + tasks.length;
       }, 500);
 
       const results = await Promise.all(tasks.map((p) => p.then((r) => { done++; return r; })));
@@ -1257,7 +1254,7 @@ table.rv-t{width:100%;border-collapse:collapse;font-size:11.5px;font-variant-num
       renderZetaTable();
     } catch (e) {
       log('ZETA ERROR: ' + e.message);
-      $('zStatus').innerHTML = '<span class="bad">ERROR: ' + esc(e.message) + '</span>';
+      $('zStatus').innerHTML = '<span class="bad">Error: ' + esc(e.message) + '</span>';
     } finally {
       S.running = false;
       $('zRun').disabled = false;
@@ -1341,7 +1338,7 @@ table.rv-t{width:100%;border-collapse:collapse;font-size:11.5px;font-variant-num
     );
     let done = 0;
     const ticker = setInterval(() => {
-      $('zStatus').textContent = 'running… ' + done + '/' + biases.length;
+      $('zStatus').textContent = 'Running… ' + done + '/' + biases.length;
     }, 400);
     const out = await Promise.all(tasks.map((p) => p.then((r) => { done++; return r; })));
     clearInterval(ticker);
@@ -1381,17 +1378,17 @@ table.rv-t{width:100%;border-collapse:collapse;font-size:11.5px;font-variant-num
   // ========================================================================
   async function findBiasRange() {
     if (S.running) { alert('A run is in progress.'); return; }
-    if (!S.pool || !S.poolReady) { alert('pool not ready'); return; }
+    if (!S.pool || !S.poolReady) { alert('Worker pool is not ready. Please wait for initialization to complete.'); return; }
     S.running = true; S.t0 = performance.now();
     $('zFindRange').disabled = true;
     $('zRun').disabled = true;
-    $('zStatus').textContent = 'finding range…';
+    $('zStatus').textContent = 'Finding bias range…';
 
     try {
       const meco = parseInt($('zMeco').value, 10);
       const G = parseFloat($('zG').value);
       const T = parseFloat($('zT').value);
-      if (![meco, G, T].every(Number.isFinite)) throw new Error('invalid MECO/G/T');
+      if (![meco, G, T].every(Number.isFinite)) throw new Error('Invalid MECO, G, or T value.');
 
       // Bidirectional scan list: 0, +0.5, -0.5, +1.0, -1.0, ..., +4.0, -4.0
       const biases = [];
@@ -1449,7 +1446,7 @@ table.rv-t{width:100%;border-collapse:collapse;font-size:11.5px;font-variant-num
       }
     } catch (e) {
       log('FIND RANGE ERROR: ' + e.message);
-      $('zStatus').innerHTML = '<span class="bad">ERROR: ' + esc(e.message) + '</span>';
+      $('zStatus').innerHTML = '<span class="bad">Error: ' + esc(e.message) + '</span>';
     } finally {
       S.running = false;
       $('zFindRange').disabled = false;
@@ -1495,10 +1492,10 @@ table.rv-t{width:100%;border-collapse:collapse;font-size:11.5px;font-variant-num
   // ========================================================================
   async function runConvo() {
     if (S.running) return;
-    if (!S.pool || !S.poolReady) { alert('pool not ready'); return; }
+    if (!S.pool || !S.poolReady) { alert('Worker pool is not ready. Please wait for initialization to complete.'); return; }
     S.running = true; S.leadVerbose = true; resetTelemetry();
     $('cRun').disabled = true;
-    $('cStatus').textContent = 'running…';
+    $('cStatus').textContent = 'Running…';
     convoWait('CONVO-LEAD · setup + lead search on worker 0');
     try {
       const meco = parseInt($('cMeco').value, 10);
@@ -1540,7 +1537,7 @@ table.rv-t{width:100%;border-collapse:collapse;font-size:11.5px;font-variant-num
     } catch (e) {
       log('CONVO ERROR: ' + e.message);
       setConvoView('<div class="rv"><div class="rv-h"><b>CONVO-LEAD</b><span class="sp"></span><span class="rv-st bad">ERROR</span></div><div class="rv-vd bad"><span class="k">Error</span>' + esc(e.message) + '</div></div>');
-      $('cStatus').innerHTML = '<span class="bad">ERROR: ' + esc(e.message) + '</span>';
+      $('cStatus').innerHTML = '<span class="bad">Error: ' + esc(e.message) + '</span>';
     } finally {
       S.running = false; S.leadVerbose = false;
       if ($('cRun')) $('cRun').disabled = false;
@@ -1786,7 +1783,7 @@ table.rv-t{width:100%;border-collapse:collapse;font-size:11.5px;font-variant-num
   // ========================================================================
   async function runScoreOwn() {
     if (S.running) return;
-    if (!S.pool || !S.poolReady) { alert('pool not ready'); return; }
+    if (!S.pool || !S.poolReady) { alert('Worker pool is not ready. Please wait for initialization to complete.'); return; }
 
     const meco = parseInt($('soMeco').value, 10);
     const G    = parseFloat($('soG').value);
@@ -1804,7 +1801,7 @@ table.rv-t{width:100%;border-collapse:collapse;font-size:11.5px;font-variant-num
     [meco, G, T, bias].forEach((v, i) => { const el = $(['cMeco', 'cG', 'cT', 'cBias'][i]); if (el) el.value = v; });
     if (fixedLead === null) {
       log('SCORE-OWN: no lead given → CONVO-LEAD with these values');
-      $('soStatus').textContent = 'no lead → CONVO-LEAD';
+      $('soStatus').textContent = 'No lead entered; opening CONVO-LEAD…';
       runConvo();
       return;
     }
@@ -1812,7 +1809,7 @@ table.rv-t{width:100%;border-collapse:collapse;font-size:11.5px;font-variant-num
     S.running = true; S.leadVerbose = true; resetTelemetry();
     $('soRun').disabled = true; if ($('cRun')) $('cRun').disabled = true;
     $('soStatus').textContent = 'running in CONVO-LEAD…';
-    convoWait('SCORE YOUR OWN · your lead on worker 0 + best-lead search on another worker');
+    convoWait('SCORE A CUSTOM LEAD · entered lead on worker 0 + best-lead search on another worker');
     const Ql = TunerConfig.quanta.lead, userLi = Math.round(fixedLead / Ql), inputs = { meco, G, T, bias };
 
     try {
@@ -1823,8 +1820,8 @@ table.rv-t{width:100%;border-collapse:collapse;font-size:11.5px;font-variant-num
         .catch((e) => ({ ok: false, reason: 'error: ' + e.message }));
       const search = leadSearchPar({ meco, G, T, bias, maxRel: 20, pin: sPin }, 'SCORE-OWN').catch((e) => ({ ok: false, reason: e.message }));
       const r = await direct;
-      setConvoView(resultCard(r, inputs, 'SCORE YOUR OWN · your lead', '<div class="rv-vd warn"><span class="k">Searching</span>best lead for these values is still being searched…</div>', null, null));
-      $('soStatus').textContent = (r && r.ok ? 'your lead scored; ' : 'your lead failed; ') + 'searching best lead…';
+      setConvoView(resultCard(r, inputs, 'SCORE A CUSTOM LEAD · entered lead', '<div class="rv-vd warn"><span class="k">Searching</span>Searching for the best lead for these values…</div>', null, null));
+      $('soStatus').textContent = (r && r.ok ? 'Entered lead evaluated; ' : 'Entered lead failed; ') + 'searching for the best lead…';
       const res = await search;
       let vd;
       if (!res.ok) {
@@ -1832,19 +1829,19 @@ table.rv-t{width:100%;border-collapse:collapse;font-size:11.5px;font-variant-num
       } else {
         const mine = (r && r.ok && Number.isFinite(r.score)) ? r.score : NaN, inWin = res.scan.some((x) => x.li === userLi);
         if (userLi === res.best.li || (Number.isFinite(mine) && mine <= res.best.score + 0.01)) {
-          vd = '<div class="rv-vd ok"><span class="k">Your lead is best</span>score <b>' + fmt(mine, 3) + '</b> · best scanned <b>' + fmt(res.best.score, 3) + '</b> @ li <b>' + res.best.li + '</b> (' + esc(res.mode) + ')</div>';
+          vd = '<div class="rv-vd ok"><span class="k">The entered lead is the top-scoring option</span>score <b>' + fmt(mine, 3) + '</b> · best scanned <b>' + fmt(res.best.score, 3) + '</b> @ li <b>' + res.best.li + '</b> (' + esc(res.mode) + ')</div>';
         } else if (Number.isFinite(mine)) {
-          vd = '<div class="rv-vd warn"><span class="k">Better lead exists</span>your score <b>' + fmt(mine, 3) + '</b> · with <b>' + fmt(res.lead, 4) + ' s</b> (li ' + res.best.li + ', ' + esc(res.mode) + ') → <b>' + fmt(res.best.score, 3) + '</b> · better by <b>' + fmt(mine - res.best.score, 3) + '</b>' + (inWin ? '' : ' · your lead is outside the searched window') + '</div>';
+          vd = '<div class="rv-vd warn"><span class="k">A higher-scoring lead was found</span>entered lead score <b>' + fmt(mine, 3) + '</b> · best lead <b>' + fmt(res.lead, 4) + ' s</b> (li ' + res.best.li + ', ' + esc(res.mode) + ') → score <b>' + fmt(res.best.score, 3) + '</b> · improvement <b>' + fmt(mine - res.best.score, 3) + '</b>' + (inWin ? '' : ' · the entered lead is outside the search window') + '</div>';
         } else {
-          vd = '<div class="rv-vd warn"><span class="k">Your lead failed</span>best lead for these values <b>' + fmt(res.lead, 4) + ' s</b> (li ' + res.best.li + ', ' + esc(res.mode) + ') → score <b>' + fmt(res.best.score, 3) + '</b></div>';
+          vd = '<div class="rv-vd warn"><span class="k">The entered lead failed</span>Best lead for these values: <b>' + fmt(res.lead, 4) + ' s</b> (li ' + res.best.li + ', ' + esc(res.mode) + ') → score <b>' + fmt(res.best.score, 3) + '</b></div>';
         }
       }
-      setConvoView(resultCard(r, inputs, 'SCORE YOUR OWN · your lead', vd, res.ok ? res : null, userLi));
+      setConvoView(resultCard(r, inputs, 'SCORE A CUSTOM LEAD · entered lead', vd, res.ok ? res : null, userLi));
       $('soStatus').innerHTML = r && r.ok ? '<span class="ok">OK — see CONVO-LEAD</span>' : '<span class="bad">' + esc((r && (r.reason || (r.reasons && r.reasons.join(',')))) || 'failed') + '</span>';
     } catch (e) {
       log('SCORE-OWN ERROR: ' + e.message);
-      setConvoView('<div class="rv"><div class="rv-h"><b>SCORE YOUR OWN</b><span class="sp"></span><span class="rv-st bad">ERROR</span></div><div class="rv-vd bad"><span class="k">Error</span>' + esc(e.message) + '</div></div>');
-      $('soStatus').innerHTML = '<span class="bad">ERROR: ' + esc(e.message) + '</span>';
+      setConvoView('<div class="rv"><div class="rv-h"><b>SCORE A CUSTOM LEAD</b><span class="sp"></span><span class="rv-st bad">Error</span></div><div class="rv-vd bad"><span class="k">Error</span>' + esc(e.message) + '</div></div>');
+      $('soStatus').innerHTML = '<span class="bad">Error: ' + esc(e.message) + '</span>';
     } finally {
       S.running = false; S.leadVerbose = false;
       $('soRun').disabled = false; if ($('cRun')) $('cRun').disabled = false;
