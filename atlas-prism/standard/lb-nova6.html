@@ -931,12 +931,19 @@ async function searchBracket(evalFn, o, onProgress){
       log('[search] feasible @ bias='+p.bias.toFixed(1)+' dr='+p.dr.toFixed(1)+'m score='+p.score.toFixed(3), 'ok');
     }
 
-    // Natural convergence — |dr| already under golden resolution.
+    // Natural convergence — |dr| under golden resolution. Edge slope is NOISY
+    // (vx/vy/theta/hop all in score, dr=0 is not the score minimum), so don't
+    // bracket tightly around this exact point. Use a WIDE bracket: span at
+    // least 60 units, scaled up if the jump travelled far from start (a far
+    // jump means the score landscape shifts a lot per bias unit and we should
+    // search broadly). Golden inside will find the score minimum, not the dr=0 point.
     if(Math.abs(p.dr) <= minStep){
-      const span = Math.abs(p.dr) + minStep * 2;
+      const travelled = Math.abs(start - p.bias);
+      const span = Math.max(60, travelled * 0.7);
       bracketLo = clamp(p.bias - span);
       bracketHi = clamp(p.bias + span);
-      log('[search] |dr|='+Math.abs(p.dr).toFixed(2)+'m ≤ minStep '+minStep+' → refine ['+bracketLo.toFixed(1)+', '+bracketHi.toFixed(1)+']', 'ok');
+      log('[search] |dr|='+Math.abs(p.dr).toFixed(2)+'m ≤ minStep '+minStep+
+          ' → refine ['+bracketLo.toFixed(1)+', '+bracketHi.toFixed(1)+'] (±'+span.toFixed(0)+', travelled '+travelled.toFixed(0)+')', 'ok');
       break;
     }
 
