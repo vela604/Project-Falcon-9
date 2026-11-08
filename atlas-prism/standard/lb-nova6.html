@@ -155,7 +155,12 @@ function setChip(state, phase){
 }
 
 // ===== YIELD HELPER =====
-function yieldToBrowser(){ return new Promise(r => setTimeout(r, 0)); }
+const _yieldMC = new MessageChannel();
+const _yieldQueue = [];
+_yieldMC.port1.onmessage = () => { const fn = _yieldQueue.shift(); if(fn) fn(); };
+function yieldToBrowser(){
+  return new Promise(r => { _yieldQueue.push(r); _yieldMC.port2.postMessage(0); });
+}
 
 // ===== SNAPSHOT HELPERS =====
 function deepClone(x, memo) {
@@ -285,6 +290,7 @@ function doLock(){
   $('main').style.display = 'block';
   setChip('ready','—');
   log('Locked: '+stkId+' @ '+apo+'/'+peri+' km', 'ok');
+  const _rp = $('resultsPanel'); if(_rp) _rp.style.display = 'block';
   populatePresetSel();
   applyPresetFromSel();
 }
@@ -736,6 +742,8 @@ async function doScan(){
 
 // ===== RESULTS TABLE (compact) =====
 function renderResults(){
+  // renderResults: force visible
+  const _rp = $('resultsPanel'); if(_rp) _rp.style.display = 'block';
   if(!S.runs.length){
     $('resultsTable').innerHTML = '<div class="dim" style="padding:10px;">No runs.</div>';
     return;
@@ -765,6 +773,7 @@ function renderResults(){
     html += '</tr>';
   });
   html += '</tbody></table>';
+  console.log('DEBUG-rr: S.runs='+S.runs.length+' sorted='+sorted.length+' html_len='+html.length);
   $('resultsTable').innerHTML = html;
   $('resultsTable').querySelectorAll('tr[data-idx]').forEach(tr => {
     tr.addEventListener('click', () => selectRow(+tr.dataset.idx));

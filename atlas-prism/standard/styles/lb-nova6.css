@@ -123,3 +123,6 @@ header h1 em{font-style:normal;color:transparent;-webkit-text-stroke:1px #fff;}
 .ev-legs .k{color:var(--green);}
 .ev-touchdown .k{color:var(--green);font-weight:700;}
 .ev-crash .k{color:var(--red);font-weight:700;}
+
+/* ===== LB NOVA-6: engine-theme.css hides #resultsPanel by default ===== */
+#resultsPanel{display:block !important;}
