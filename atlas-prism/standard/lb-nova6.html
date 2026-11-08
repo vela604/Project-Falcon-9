@@ -895,39 +895,33 @@ async function searchBracket(evalFn, o, onProgress){
   const maxIter = o.maxIter || 32;
   const minStep = o.minStep;
 
-  // ---- Phase 1: coarse walk. Direction from dr sign. Bracket when sign flips. ----
+  // ---- Phase 1: proportional-jump walk. Measured slope is exactly +1
+  //      (+30 bias → +30 dr), so dr IS the correction: bias_needed = bias_current − dr
+  //      lands at dr≈0 in one jump. Bracket fires on sign flip; once |dr| shrinks
+  //      below the step gate, hand to a small local refine. ----
   let probeStep = step0;
   let bias = start;
   let prev = null;
   let bracketLo = null, bracketHi = null;
   const feasible = [];
+  const STEP_GATE = o.step;   // 30m — once |dr|<30, stop jumping, refine locally
 
   for(let iter=0; iter<maxIter; iter++){
     if(stop()) break;
     const p = await probe(bias);
 
-    if(p.ok){
-      feasible.push({ bias: p.bias, dr: p.dr });
-      log('[search] feasible @ bias='+p.bias.toFixed(1)+' dr='+(Number.isFinite(p.dr)?p.dr.toFixed(1):'?')+'m', 'ok');
-      probeStep = Math.max(minStep, probeStep * 0.5);
-      const nextB = round(clamp(p.bias + probeStep));
-      if(nextB === p.bias) break;
-      if(p.sign !== 0) prev = { bias: p.bias, dr: p.dr, sign: p.sign };
-      bias = nextB;
-      continue;
-    }
-
     if(p.sign === 0){
-      // No contact / no downrange — no sign signal. Keep walking in last direction, wider.
-      const dir = (prev && prev.sign) ? prev.sign : 1;
+      // No downrange signal — step walk in last known direction, widen.
+      const dir = (prev && prev.sign) ? prev.sign : -1;
       const nextB = round(clamp(p.bias + dir * probeStep * 2));
       if(nextB === p.bias) break;
+      log('[search] no-contact @ bias='+p.bias.toFixed(1)+' → step '+dir+'*'+probeStep*2, 'warn');
+      probeStep = Math.min(o.step * 8, probeStep * 2);
+      prev = { bias: p.bias, dr: NaN, sign: 0 };
       bias = nextB;
-      prev = prev ? { bias: p.bias, dr: prev.dr, sign: prev.sign } : { bias: p.bias, dr: NaN, sign: 0 };
       continue;
     }
 
-    // Bracket check — real sign flip between consecutive probes.
     if(prev && prev.sign !== 0 && p.sign !== prev.sign){
       bracketLo = Math.min(prev.bias, p.bias);
       bracketHi = Math.max(prev.bias, p.bias);
@@ -935,12 +929,26 @@ async function searchBracket(evalFn, o, onProgress){
       break;
     }
 
-    // Direction that reduces |dr|. Empirically +bias → +dr (measured -726.8→+84.6,
-    // -696.8→+115.3, -666.8→+144.9 — same slope ~1m/unit). So to walk dr toward 0:
-    // overshoot (dr>0) → bias more negative; undershoot (dr<0) → bias more positive.
-    const dir = p.dr < 0 ? 1 : -1;
-    const nextB = round(clamp(p.bias + dir * probeStep));
-    if(nextB === p.bias) break;   // hit range bound
+    if(p.ok){
+      feasible.push({ bias: p.bias, dr: p.dr });
+      log('[search] feasible @ bias='+p.bias.toFixed(1)+' dr='+p.dr.toFixed(1)+'m score='+p.score.toFixed(3), 'ok');
+    }
+
+    if(Math.abs(p.dr) < STEP_GATE){
+      bracketLo = clamp(p.bias - o.step);
+      bracketHi = clamp(p.bias + o.step);
+      log('[search] |dr|='+Math.abs(p.dr).toFixed(1)+'m < gate '+STEP_GATE+' → refine ['+bracketLo.toFixed(1)+', '+bracketHi.toFixed(1)+']', 'ok');
+      break;
+    }
+
+    // Proportional jump: bias_needed = bias − dr (overshoot dr>0 → bias less; undershoot dr<0 → bias more).
+    const jump = -p.dr;
+    const nextB = round(clamp(p.bias + jump));
+    if(nextB === p.bias){
+      log('[search] bias bound at '+p.bias.toFixed(1)+' (dr='+p.dr.toFixed(1)+'m) — widen bias range', 'warn');
+      break;
+    }
+    log('[search] jump bias '+p.bias.toFixed(1)+' → '+nextB.toFixed(1)+' (dr '+p.dr.toFixed(1)+'m)', '');
     prev = { bias: p.bias, dr: p.dr, sign: p.sign };
     bias = nextB;
   }
