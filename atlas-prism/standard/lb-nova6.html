@@ -87,7 +87,6 @@
         <label>bias lo <input type="number" id="biasLo" step="1" value="-900"></label>
         <label>bias hi <input type="number" id="biasHi" step="1" value="200"></label>
         <label>start <input type="number" id="biasStart" step="1" value="-750"></label>
-        <label>probe step <input type="number" id="biasStep" step="1" min="1" value="30"></label>
         <label>min step <input type="number" id="biasMinStep" step="0.5" min="0.1" value="2.5"></label>
       </div>
 
@@ -891,32 +890,30 @@ async function searchBracket(evalFn, o, onProgress){
   };
 
   const start = round(clamp(o.start != null ? o.start : (o.lo+o.hi)/2));
-  const step0 = o.step;
   const maxIter = o.maxIter || 32;
   const minStep = o.minStep;
 
-  // ---- Phase 1: proportional-jump walk. Measured slope is exactly +1
-  //      (+30 bias → +30 dr), so dr IS the correction: bias_needed = bias_current − dr
-  //      lands at dr≈0 in one jump. Bracket fires on sign flip; once |dr| shrinks
-  //      below the step gate, hand to a small local refine. ----
-  let probeStep = step0;
+  // ---- Phase 1: proportional-jump walk. Slope measured ~1 in the bulk range,
+  //      so bias_needed = bias_current − dr jumps near dr≈0 in one step.
+  //      Near zero the slope flattens (attitude correction / aero / PES drift
+  //      all compete), so we rely on NATURAL convergence: once |dr| ≤ minStep
+  //      we're already inside golden resolution — bracket tightly and hand off.
+  //      No fixed probe step anymore. ----
   let bias = start;
   let prev = null;
   let bracketLo = null, bracketHi = null;
   const feasible = [];
-  const STEP_GATE = o.step;   // 30m — once |dr|<30, stop jumping, refine locally
+  const NO_CONTACT_STEP = 100;   // fallback walk only (start normally has contact)
 
   for(let iter=0; iter<maxIter; iter++){
     if(stop()) break;
     const p = await probe(bias);
 
     if(p.sign === 0){
-      // No downrange signal — step walk in last known direction, widen.
       const dir = (prev && prev.sign) ? prev.sign : -1;
-      const nextB = round(clamp(p.bias + dir * probeStep * 2));
+      const nextB = round(clamp(p.bias + dir * NO_CONTACT_STEP));
       if(nextB === p.bias) break;
-      log('[search] no-contact @ bias='+p.bias.toFixed(1)+' → step '+dir+'*'+probeStep*2, 'warn');
-      probeStep = Math.min(o.step * 8, probeStep * 2);
+      log('[search] no-contact @ bias='+p.bias.toFixed(1)+' → step '+dir+'*'+NO_CONTACT_STEP, 'warn');
       prev = { bias: p.bias, dr: NaN, sign: 0 };
       bias = nextB;
       continue;
@@ -934,16 +931,17 @@ async function searchBracket(evalFn, o, onProgress){
       log('[search] feasible @ bias='+p.bias.toFixed(1)+' dr='+p.dr.toFixed(1)+'m score='+p.score.toFixed(3), 'ok');
     }
 
-    if(Math.abs(p.dr) < STEP_GATE){
-      bracketLo = clamp(p.bias - o.step);
-      bracketHi = clamp(p.bias + o.step);
-      log('[search] |dr|='+Math.abs(p.dr).toFixed(1)+'m < gate '+STEP_GATE+' → refine ['+bracketLo.toFixed(1)+', '+bracketHi.toFixed(1)+']', 'ok');
+    // Natural convergence — |dr| already under golden resolution.
+    if(Math.abs(p.dr) <= minStep){
+      const span = Math.abs(p.dr) + minStep * 2;
+      bracketLo = clamp(p.bias - span);
+      bracketHi = clamp(p.bias + span);
+      log('[search] |dr|='+Math.abs(p.dr).toFixed(2)+'m ≤ minStep '+minStep+' → refine ['+bracketLo.toFixed(1)+', '+bracketHi.toFixed(1)+']', 'ok');
       break;
     }
 
-    // Proportional jump: bias_needed = bias − dr (overshoot dr>0 → bias less; undershoot dr<0 → bias more).
-    const jump = -p.dr;
-    const nextB = round(clamp(p.bias + jump));
+    // Proportional jump: bias_needed = bias − dr
+    const nextB = round(clamp(p.bias - p.dr));
     if(nextB === p.bias){
       log('[search] bias bound at '+p.bias.toFixed(1)+' (dr='+p.dr.toFixed(1)+'m) — widen bias range', 'warn');
       break;
@@ -994,10 +992,10 @@ async function searchBracket(evalFn, o, onProgress){
 async function doScan(){
   if(S.running || !S.inited) return;
   const lo = +$('biasLo').value, hi = +$('biasHi').value, start = +$('biasStart').value;
-  const minStep = +$('biasMinStep').value, step = +$('biasStep').value;
-  if(![lo,hi,start,minStep,step].every(Number.isFinite) || !(lo < hi) || !(minStep > 0) || !(step > 0)){
-    log('Scan: invalid window (need lo < hi, steps > 0)', 'err');
-    $('initStatus').innerHTML = '<span class="bad">invalid bias window — need lo &lt; hi and steps &gt; 0</span>';
+  const minStep = +$('biasMinStep').value;
+  if(![lo,hi,start,minStep].every(Number.isFinite) || !(lo < hi) || !(minStep > 0)){
+    log('Scan: invalid window (need lo < hi, minStep > 0)', 'err');
+    $('initStatus').innerHTML = '<span class="bad">invalid bias window — need lo &lt; hi and minStep &gt; 0</span>';
     return;
   }
   S.running = true; S.abort = false;
@@ -1012,7 +1010,7 @@ async function doScan(){
   $('landCard').style.display = 'none';
   setEvalCount(0); setBestDisplay(null, null); clearLive();
   setChip('running'); setStage('scan');
-  log('Scan: ['+lo+', '+hi+'] start='+start+' probe step='+step+' min step='+minStep, 'ok');
+  log('Scan: ['+lo+', '+hi+'] start='+start+' min step='+minStep, 'ok');
 
   const evalFn = async bias => {
     if(S.abort) throw new Error('aborted');
@@ -1050,7 +1048,7 @@ async function doScan(){
 
   try {
     const R = await searchBracket(evalFn,
-      { lo, hi, step, minStep, start, stop: () => S.abort },
+      { lo, hi, minStep, start, stop: () => S.abort },
       (r) => {
         const _dr=(r.m&&r.m.contact)?r.m.contact.downrange:NaN; const _drS=Number.isFinite(_dr)?' dr='+_dr.toFixed(1)+'m':''; log('  → bias='+r.bias.toFixed(1)+' score='+r.score.toFixed(2)+_drS+(r.fail ? ' ['+r.fail+']' : ''), r.ok ? 'ok' : 'warn');
       });
