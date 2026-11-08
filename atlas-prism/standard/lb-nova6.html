@@ -66,10 +66,10 @@
       <section class="panel" id="telemetry">
         <h2><span class="tag">0x02</span>Telemetry</h2>
         <div class="tm">
-          <div><span>evals</span><b id="tmEvals">0</b></div>
-          <div><span>best bias</span><b id="tmBest">—</b></div>
-          <div><span>best score</span><b id="tmScore">—</b></div>
-          <div><span>phase</span><b id="tmPhase">—</b></div>
+          <div><span><i class="tm-prompt">$</i><i class="tm-spin"></i><em>elapsed</em></span><b id="tmElapsed">00:00</b></div>
+          <div><span><em>evals</em></span><b id="tmEvals">0</b></div>
+          <div><span><em>best · score</em></span><b id="tmBest"><span id="tmBestBias">—</span><small id="tmScore"></small></b></div>
+          <div><span><em>phase</em></span><b id="tmPhase">—</b></div>
         </div>
         <div id="logFeed" style="max-height:200px;overflow:auto;border:1px solid var(--line);padding:6px 0;margin-bottom:10px;font-size:11px;line-height:1.6;"></div>
         <div class="chart-container"><canvas id="liveChart"></canvas></div>
@@ -156,6 +156,31 @@ function setChip(state, phase){
 }
 
 // ===== YIELD HELPER =====
+// ===== ELAPSED TIMER + BEST DISPLAY =====
+let _elapsedTimer = null;
+function startElapsedTimer(){
+  if(_elapsedTimer) clearInterval(_elapsedTimer);
+  const t0 = performance.now();
+  const el = document.getElementById('tmElapsed');
+  if(el) el.textContent = '00:00';
+  _elapsedTimer = setInterval(() => {
+    const sec = Math.floor((performance.now() - t0) / 1000);
+    const mm = String(Math.floor(sec / 60)).padStart(2, '0');
+    const ss = String(sec % 60).padStart(2, '0');
+    const e = document.getElementById('tmElapsed');
+    if(e) e.textContent = mm + ':' + ss;
+  }, 500);
+}
+function stopElapsedTimer(){
+  if(_elapsedTimer) { clearInterval(_elapsedTimer); _elapsedTimer = null; }
+}
+function setBestDisplay(bias, score){
+  const bb = document.getElementById('tmBestBias');
+  const bs = document.getElementById('tmScore');
+  if(bb) bb.textContent = (bias != null && Number.isFinite(bias)) ? bias.toFixed(2) : '—';
+  if(bs) bs.textContent = (score != null && Number.isFinite(score)) ? ' · ' + score.toFixed(2) : '';
+}
+
 const _yieldMC = new MessageChannel();
 const _yieldQueue = [];
 _yieldMC.port1.onmessage = () => { const fn = _yieldQueue.shift(); if(fn) fn(); };
@@ -765,12 +790,13 @@ async function searchBracket(evalFn, o, onProgress){
 async function doScan(){
   if(S.running || !S.inited) return;
   S.running = true; S.abort = false;
+  startElapsedTimer();
   S.runs = []; S.selectedIdx = -1; S.evals = 0;
   $('scanBtn').disabled = true; $('scanStopBtn').disabled = false;
   $('initBtn').disabled = true;
   $('resultsTable').innerHTML = '<div id="scanTicker" class="scan-ticker">initializing…</div>';
   $('detailPanel').style.display = 'none';
-  $('tmEvals').textContent = '0'; $('tmBest').textContent = '—'; $('tmScore').textContent = '—'; $('tmPhase').textContent = 'SCAN';
+  $('tmEvals').textContent = '0'; setBestDisplay(null, null); $('tmPhase').textContent = 'SCAN';
   setChip('running','SCAN');
 
   const lo = +$('biasLo').value, hi = +$('biasHi').value, start = +$('biasStart').value, minStep = +$('biasMinStep').value;
@@ -802,8 +828,7 @@ async function doScan(){
         const curBest = S.searchResult && S.searchResult.best ? S.searchResult.best.score : Infinity;
         const runBest = S.runs.filter(x => x.ok).reduce((a,x) => x.score < a.score ? x : a, {score: Infinity});
         if(runBest && runBest.score < Infinity){
-          $('tmBest').textContent = runBest.bias.toFixed(2);
-          $('tmScore').textContent = runBest.score.toFixed(2);
+          setBestDisplay(runBest.bias, runBest.score);
         }
       }
       return r;
@@ -820,8 +845,7 @@ async function doScan(){
         log('  → bias='+r.bias.toFixed(1)+' score='+r.score.toFixed(2)+(r.fail ? ' ['+r.fail+']' : ''), r.ok ? 'ok' : 'warn');
       });
     S.searchResult = R;
-    $('tmBest').textContent = R.best.bias.toFixed(2);
-    $('tmScore').textContent = R.best.score.toFixed(2);
+    setBestDisplay(R.best.bias, R.best.score);
     $('tmPhase').textContent = 'DONE';
     log('Search complete. Best bias='+R.best.bias.toFixed(2)+' score='+R.best.score.toFixed(2), 'ok');
     renderResults();
@@ -830,6 +854,7 @@ async function doScan(){
     $('resultsTable').innerHTML = '<div class="bad" style="padding:10px;">Scan failed: '+esc(e.message)+'</div>';
   } finally {
     S.running = false;
+    stopElapsedTimer();
     $('scanBtn').disabled = false; $('scanStopBtn').disabled = true; $('initBtn').disabled = false;
     setChip('ready', 'DONE');
   }

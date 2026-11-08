@@ -252,3 +252,42 @@ body[data-state=running] .chart-container{border-color:var(--amber);box-shadow:0
 @media (prefers-reduced-motion: reduce){
   .scan-ticker::before{animation-duration:3s;}
 }
+
+/* ===== v2.5: header spinner + strip-style telemetry ===== */
+body[data-state=running] #stState::after{
+  content:"";
+  display:inline-block;
+  width:8px;height:8px;margin-left:8px;
+  border:1.5px solid rgba(255,255,255,.15);
+  border-top-color:var(--amber);
+  border-radius:50%;
+  animation:lbspin .8s linear infinite;
+  vertical-align:-1px;
+}
+@keyframes lbspin{to{transform:rotate(360deg);}}
+
+.tm .tm-prompt{
+  font-style:normal;color:var(--green);font-weight:700;margin-right:4px;
+  display:inline-block;
+}
+.tm .tm-spin{
+  display:none;flex:0 0 auto;
+  width:9px;height:9px;margin-right:4px;
+  border:1.5px solid rgba(255,255,255,.15);
+  border-top-color:var(--amber);
+  border-radius:50%;
+  animation:lbspin .8s linear infinite;
+}
+body[data-state=running] .tm .tm-spin{display:inline-block;}
+body[data-state=running] .tm .tm-prompt{display:none;}
+
+.tm span{display:flex;align-items:center;gap:4px;}
+.tm span em{font-style:normal;}
+.tm b small{color:var(--amber);font-size:12px;font-weight:600;letter-spacing:.02em;}
+#tmElapsed{color:var(--cyan);}
+#tmBest{color:var(--green);}
+
+@media (prefers-reduced-motion: reduce){
+  body[data-state=running] #stState::after,
+  .tm .tm-spin{animation-duration:3s;}
+}
