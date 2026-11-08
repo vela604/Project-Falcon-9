@@ -819,6 +819,33 @@ async function runBiasEval(bias, onTick){
   m.hop_mm = +(m.hop_mm * 1000).toFixed(2);
   m.maxQLB = +(m.maxQLB / 1000).toFixed(2);
   m.maxGLB = +m.maxGLB.toFixed(2);
+
+  // LB overshoot signal — during LB (user says the real crossing happens
+  // 5–20 s into the burn), does x cross past 0 to the wrong side and swing
+  // back (overshoot), or stay on one side and creep toward 0 (undershoot)?
+  // Final dr is the RESULT of LB, not a predictor. The mid-burn excursion IS
+  // the predictor.
+  //   lb_x_start: x at LB entry (normally positive — booster behind pad)
+  //   lb_x_min / lb_x_max: extremes reached during LB
+  //   lb_overshoot_m: wrong-side excursion magnitude (0 if no crossing)
+  //   lb_crossed_zero: lb_overshoot_m > 0.5 m
+  try {
+    const lbS = (m.samples || []).filter(s => s.phase === 'LANDING_BURN' && Number.isFinite(s.x));
+    if(lbS.length >= 3){
+      const xStart = lbS[0].x;
+      let xMin = xStart, xMax = xStart;
+      for(const sp of lbS){ if(sp.x < xMin) xMin = sp.x; if(sp.x > xMax) xMax = sp.x; }
+      m.lb_x_start = xStart;
+      m.lb_x_min = xMin;
+      m.lb_x_max = xMax;
+      let overshoot = 0;
+      if(xStart > 0) overshoot = Math.max(0, -xMin);
+      else if(xStart < 0) overshoot = Math.max(0, xMax);
+      m.lb_overshoot_m = overshoot;
+      m.lb_crossed_zero = overshoot > 0.5;
+    }
+  } catch(e) {}
+
   return m;
 }
 
@@ -959,18 +986,24 @@ async function searchBracket(evalFn, o, onProgress){
   }
 
   // ---- Phase 2: golden-section refine on SCORE inside bracket (or feasible region). ----
+  // EXPERIMENTAL — linear sweep replaces golden section. Golden converges
+  // to ONE basin minimum; sweep reveals the whole landscape. User wants to
+  // see whether the score-vs-bias curve near the converged bias is monotone
+  // or zigzag (multi-modal), and whether the LB-overshoot signal
+  // (m.lb_overshoot_m) correlates with score minima. That answer determines
+  // whether bracket/golden search is fundamentally insufficient here.
+  // Step = minStep (one knob controls both sweep resolution and jump-walk
+  // convergence threshold). At minStep=2.5 and ±60 bracket that's ~48 evals.
   const goldenRefine = async (lo, hi) => {
     if(hi - lo <= minStep) return;
-    log('[search] phase2 golden on ['+lo.toFixed(1)+', '+hi.toFixed(1)+']', 'ok');
-    const PHI = 0.6180339887;
-    let a = lo, c = hi;
-    let x1 = c - PHI*(c-a), x2 = a + PHI*(c-a);
-    let f1 = null, f2 = null;
-    while(!stop() && (c-a) > minStep){
-      if(f1 == null) f1 = (await ev(x1)).score;
-      if(f2 == null) f2 = (await ev(x2)).score;
-      if(f1 <= f2){ c = x2; x2 = x1; f2 = f1; x1 = c - PHI*(c-a); f1 = null; }
-      else { a = x1; x1 = x2; f1 = f2; x2 = a + PHI*(c-a); f2 = null; }
+    log('[search] linear sweep ['+lo.toFixed(1)+', '+hi.toFixed(1)+'] step '+minStep, 'ok');
+    let b = round(lo);
+    const bHi = round(hi);
+    while(b <= bHi + 0.01 && !stop()){
+      await ev(b);
+      const nextB = round(b + minStep);
+      if(nextB === b) break;
+      b = nextB;
     }
   };
 
@@ -981,7 +1014,7 @@ async function searchBracket(evalFn, o, onProgress){
     await goldenRefine(Math.min(...bs), Math.max(...bs));
   } else if(feasible.length === 1){
     const b = feasible[0].bias;
-    await goldenRefine(clamp(b - step0), clamp(b + step0));
+    await goldenRefine(clamp(b - 60), clamp(b + 60));
   } else {
     log('[search] no bracket, no feasible — widen bias range and retry', 'warn');
   }
@@ -1057,7 +1090,7 @@ async function doScan(){
     const R = await searchBracket(evalFn,
       { lo, hi, minStep, start, stop: () => S.abort },
       (r) => {
-        const _dr=(r.m&&r.m.contact)?r.m.contact.downrange:NaN; const _drS=Number.isFinite(_dr)?' dr='+_dr.toFixed(1)+'m':''; log('  → bias='+r.bias.toFixed(1)+' score='+r.score.toFixed(2)+_drS+(r.fail ? ' ['+r.fail+']' : ''), r.ok ? 'ok' : 'warn');
+        const _dr=(r.m&&r.m.contact)?r.m.contact.downrange:NaN; const _drS=Number.isFinite(_dr)?' dr='+_dr.toFixed(1)+'m':''; const _lbO=(r.m&&Number.isFinite(r.m.lb_overshoot_m))?r.m.lb_overshoot_m:NaN; const _lbOS=Number.isFinite(_lbO)?' lbOver='+_lbO.toFixed(2)+'m':''; log('  → bias='+r.bias.toFixed(1)+' score='+r.score.toFixed(2)+_drS+_lbOS+(r.fail ? ' ['+r.fail+']' : ''), r.ok ? 'ok' : 'warn');
       });
     S.searchResult = R;
     setBestDisplay(R.best.ok ? R.best.bias : null, R.best.ok ? R.best.score : null);
