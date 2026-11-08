@@ -477,7 +477,11 @@ async function runBiasEval(bias, onTick){
     samples: [],  // [{t, phase, h(km), vy, vx, theta, omega, gimbal, x, thr, fuel}]
     events: [],
   };
-  let lastPhase = null, phaseEntryT = state.simTime;
+  // start lastPhase from prefix tail so we do not re-capture ENTRY_BURN
+  let lastPhase = (S.prefixPhases && S.prefixPhases.length)
+    ? S.prefixPhases[S.prefixPhases.length - 1].phase
+    : null;
+  let phaseEntryT = state.simTime;
   let prevGimbalSat = false, prevThrustGap = false, prevLegs = false;
   let prevOmega = null, prevVx = null, prevVy = null, prevT = null;
   let sampleAccum = 0, postContactAccum = 0;
@@ -764,7 +768,7 @@ async function doScan(){
   S.runs = []; S.selectedIdx = -1; S.evals = 0;
   $('scanBtn').disabled = true; $('scanStopBtn').disabled = false;
   $('initBtn').disabled = true;
-  $('resultsTable').innerHTML = '<div class="dim" style="padding:10px;">Scanning…</div>';
+  $('resultsTable').innerHTML = '<div id="scanTicker" class="scan-ticker">initializing…</div>';
   $('detailPanel').style.display = 'none';
   $('tmEvals').textContent = '0'; $('tmBest').textContent = '—'; $('tmScore').textContent = '—'; $('tmPhase').textContent = 'SCAN';
   setChip('running','SCAN');
@@ -776,11 +780,14 @@ async function doScan(){
     if(S.abort) throw new Error('aborted');
     log('Eval bias='+bias.toFixed(1));
     const evalN = S.evals + 1;
-    $('tmPhase').textContent = 'EVAL ' + bias.toFixed(1) + ' · #' + evalN;
+    $('tmPhase').textContent = 'EVAL #' + evalN;
+    const ticker = document.getElementById('scanTicker');
     const onTick = (prog) => {
-      $('tmPhase').textContent = 'EVAL ' + bias.toFixed(1) + ' · #' + evalN
-        + ' · t=' + prog.t.toFixed(0) + 's · ' + (prog.phase || '?').replace(/_/g,' ')
-        + ' · alt=' + prog.altKm.toFixed(1) + 'km';
+      if(ticker) ticker.textContent =
+        'EVAL ' + bias.toFixed(1) + '  ·  #' + evalN +
+        '  ·  t=' + prog.t.toFixed(0) + 's' +
+        '  ·  ' + (prog.phase || '?').replace(/_/g,' ') +
+        '  ·  alt=' + prog.altKm.toFixed(1) + 'km';
     };
     try {
       const m = await runBiasEval(bias, onTick);

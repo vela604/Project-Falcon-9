@@ -190,3 +190,43 @@ body[data-state=running] #stState b{color:var(--amber);}
 /* live chart glow border */
 .chart-container{border-color:var(--line2);}
 body[data-state=running] .chart-container{border-color:var(--amber);box-shadow:0 0 8px rgba(255,176,32,.15);}
+
+/* ===== v2.3 UX polish ===== */
+:root{
+  --cyan-soft:rgba(53,214,255,.62);
+  --amber-soft:rgba(255,176,32,.62);
+  --white-soft:rgba(255,255,255,.88);
+}
+
+/* scan ticker — live eval feedback in resultsTable */
+.scan-ticker{
+  padding:16px 18px;font-family:var(--mono);font-size:13px;
+  color:var(--cyan);letter-spacing:.03em;
+  border-left:2px solid var(--amber);
+  background:rgba(255,176,32,.04);
+  animation:scanpulse 1.8s ease-in-out infinite;
+}
+@keyframes scanpulse{0%,100%{opacity:1;}50%{opacity:0.68;}}
+
+/* Timeline table: right-align numeric headers + distinct colours per column */
+.timeline-table th:nth-child(n+2){text-align:right;}
+.timeline-table td:nth-child(1){color:var(--violet) !important;font-weight:600;}
+.timeline-table td:nth-child(2){color:var(--cyan) !important;}
+.timeline-table td:nth-child(3){color:var(--cyan-soft) !important;}
+.timeline-table td:nth-child(4){color:var(--white-soft) !important;}
+.timeline-table td:nth-child(5){color:var(--white-soft) !important;}
+.timeline-table td:nth-child(6){color:var(--amber) !important;}
+.timeline-table tr:hover td{background:rgba(255,255,255,.035) !important;}
+
+/* Fuel table: right-align numeric headers + differentiated column colours */
+.fuel-table th:nth-child(n+2){text-align:right;}
+.fuel-table td:nth-child(2){color:var(--amber) !important;font-weight:600;}
+.fuel-table td:nth-child(3){color:var(--amber-soft) !important;}
+.fuel-table td:nth-child(4){color:var(--white-soft) !important;}
+
+/* KPI values in detail panel — brighter, more active */
+.kv-list .v{color:var(--white-soft) !important;}
+
+/* Compact telemetry cells */
+.tm b{font-size:15px;}
+#tmPhase{font-size:13px !important;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
