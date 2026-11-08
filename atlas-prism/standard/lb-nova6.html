@@ -11,118 +11,160 @@
 <script src="../../js/szadFont.js" onerror="void 0"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 </head>
-<body>
-<div id="app">
-  <header>
-    <a class="back" href="../index.html">&lsaquo; Atlas Prism</a>
-    <h1>LB <em>NOVA-6</em></h1>
-    <span class="crumb">engine <b>/</b> landbackV1 <b>/</b> booster bias search</span>
-    <div class="chips">
-      <span class="st" id="stState">state <b id="stStateN">idle</b></span>
-      <span class="st" id="stPhase">phase <b id="stPhaseN">&mdash;</b></span>
-    </div>
-  </header>
+<body class="fx" data-state="idle">
+<div id="app" data-stage="config">
 
-  <section class="panel row" id="lockBar">
-    <div class="lbl"><span class="tag">0x00</span>Session</div>
-    <label>stack <select id="stackSel"><option value="">(loading…)</option></select></label>
-    <label>apside 1 (km) <input type="number" id="apoKm" value="320" min="150" step="10"></label>
-    <label>apside 2 (km) <input type="number" id="periKm" value="320" min="150" step="10"></label>
-    <div class="btns">
-      <button class="lock" id="lockBtn">Lock</button>
-      <button class="reset" id="resetBtn" disabled>Reset</button>
-    </div>
-    <span class="dim" id="lockStatus">Select stack + apsides, then LOCK.</span>
-    <div class="hint">locked standard-sequence stacks only</div>
-  </section>
+<!-- ==================== COMMAND BAR ==================== -->
+<header>
+  <a class="back" href="../index.html">&lsaquo; Atlas Prism</a>
+  <h1>LB <em>NOVA-6</em></h1>
+  <span class="crumb">engine <b>/</b> landbackV1 <b>/</b> booster bias search</span>
+  <div class="chips">
+    <span class="st" id="stState">state <b id="stStateN">idle</b></span>
+    <span class="st" id="stPhase">stage <b id="stPhaseN">&mdash;</b></span>
+    <span class="st" id="stEvals">evals <b id="stEvalsN">0</b></span>
+  </div>
+</header>
 
-    <div class="stage-rail" id="stageRail">
-    <div class="stage-item" data-stage="config">
-      <span class="hex">CONFIG</span>
-      <div class="ttl">Lock stack</div>
-      <div class="desc">Stack + apsides + MECO / G / T + bias range</div>
-    </div>
-    <div class="stage-item" data-stage="scan">
-      <span class="hex">SCAN</span>
-      <div class="ttl">Bias search</div>
-      <div class="desc">Golden-section &mdash; each eval full LB sim from EB capture</div>
-    </div>
-    <div class="stage-item" data-stage="results">
-      <span class="hex">RESULTS</span>
-      <div class="ttl">Best bias + detail</div>
-      <div class="desc">Landing metrics + fuel breakdown + full-mission charts</div>
-    </div>
+<!-- ==================== SESSION STRIP ==================== -->
+<section class="panel row" id="lockBar">
+  <div class="lbl"><span class="tag">0x00</span>Session</div>
+  <label>stack <select id="stackSel"><option value="">(loading…)</option></select></label>
+  <label>apside 1 (km) <input type="number" id="apoKm" value="320" min="150" step="10"></label>
+  <label>apside 2 (km) <input type="number" id="periKm" value="320" min="150" step="10"></label>
+  <div class="btns">
+    <button class="lock" id="lockBtn">Lock</button>
+    <button class="reset" id="resetBtn" disabled>Reset</button>
+  </div>
+  <span class="dim" id="lockStatus">Select stack + apsides, then LOCK.</span>
+  <div class="hint">locked standard-sequence stacks only &middot; guidance landbackV1 only</div>
+</section>
+
+<!-- ==================== STAGE RAIL ==================== -->
+<div class="stage-rail" id="stageRail">
+  <div class="stage-item" data-stage="config">
+    <span class="hex">stack locked</span>
+    <div class="ttl">CONFIG</div>
+    <div class="desc">Preset, ascent MECO / G / T and the bias search window.</div>
+  </div>
+  <div class="stage-item" data-stage="init">
+    <span class="hex">one-time &middot; ~20&ndash;60 s</span>
+    <div class="ttl">INIT CAPTURES</div>
+    <div class="desc">Fly ascent to SEPARATED_AXIAL, then RTLS to ENTRY_BURN. Both states are snapshotted once.</div>
+  </div>
+  <div class="stage-item" data-stage="scan">
+    <span class="hex">golden-section</span>
+    <div class="ttl">BIAS SEARCH</div>
+    <div class="desc">Each eval restores the EB snapshot and flies the full landing. Lower score is better.</div>
+  </div>
+  <div class="stage-item" data-stage="results">
+    <span class="hex">click a row for detail</span>
+    <div class="ttl">RESULTS</div>
+    <div class="desc">Best bias, bias&ndash;score curve, margins to limits, fuel and timeline.</div>
+  </div>
+</div>
+
+<!-- ==================== MAIN (hidden until lock) ==================== -->
+<main id="main" style="display:none">
+  <div class="workgrid">
+
+    <section class="panel" id="configPanel">
+      <h2><span class="tag">0x01</span>Setup</h2>
+      <div class="row">
+        <label>preset <select id="presetSel"></select></label>
+        <button class="suggest" id="presetLoad">Load preset</button>
+      </div>
+
+      <div class="grp">ascent <em>frozen at INIT &mdash; changing these needs a new INIT</em></div>
+      <div class="row">
+        <label>MECO kg <input type="number" id="cfgMeco" step="1" value="52612"></label>
+        <label>G <input type="number" id="cfgG" step="0.01" value="0.64"></label>
+        <label>T <input type="number" id="cfgT" step="0.001" value="4.82"></label>
+      </div>
+
+      <div class="grp">bias search window <em>ENTRY_BURN_IMPACT_TARGET_M, metres</em></div>
+      <div class="row">
+        <label>bias lo <input type="number" id="biasLo" step="1" value="-900"></label>
+        <label>bias hi <input type="number" id="biasHi" step="1" value="-600"></label>
+        <label>start <input type="number" id="biasStart" step="1" value="-750"></label>
+        <label>probe step <input type="number" id="biasStep" step="1" min="1" value="30"></label>
+        <label>min step <input type="number" id="biasMinStep" step="0.5" min="0.1" value="2.5"></label>
+      </div>
+
+      <div class="row">
+        <button class="primary" id="initBtn">Init captures</button>
+        <button class="primary" id="scanBtn" disabled>Run bias search</button>
+        <button class="reset" id="scanStopBtn" disabled>Stop</button>
+      </div>
+      <div class="row"><span class="dim" id="initStatus">Not initialised &mdash; run INIT first.</span></div>
+    </section>
+
+    <section class="panel" id="telemetry">
+      <h2><span class="tag">0x02</span>Telemetry</h2>
+      <div class="strip">
+        <div><span><i class="prompt">$</i><i class="spin"></i><em>elapsed</em><small id="tmFlag">IDLE</small></span><b id="tmElapsed">00:00:00</b></div>
+        <div><span><em>evals</em></span><b id="tmEvals">0</b></div>
+        <div><span><em>best bias &middot; score</em></span><b id="tmBest"><span id="tmBestBias">&mdash;</span><small id="tmScore"></small></b></div>
+        <div><span><em>avg eval</em></span><b id="tmAvg">&mdash;</b></div>
+      </div>
+
+      <div class="frail" id="frail">
+        <div data-ph="ENTRY_BURN"><i>01</i><b>ENTRY BURN</b></div>
+        <div data-ph="POST_ENTRY_STEER"><i>02</i><b>POST-ENTRY</b></div>
+        <div data-ph="LANDING_BURN_ALIGN"><i>03</i><b>LB ALIGN</b></div>
+        <div data-ph="LANDING_BURN"><i>04</i><b>LANDING BURN</b></div>
+        <div data-ph="TOUCHDOWN"><i>05</i><b>TOUCHDOWN</b></div>
+      </div>
+      <div class="live">
+        <div><span>sim t</span><b id="lvT">&mdash;</b></div>
+        <div><span>altitude</span><b id="lvAlt">&mdash;</b></div>
+        <div><span>vy</span><b id="lvVy">&mdash;</b></div>
+        <div><span>vx</span><b id="lvVx">&mdash;</b></div>
+      </div>
+
+      <div id="logFeed"></div>
+      <div class="chart-container"><canvas id="liveChart"></canvas></div>
+    </section>
   </div>
 
-<main id="main" style="display:none">
-    <div class="workgrid">
-      <section class="panel" id="configPanel">
-        <h2><span class="tag">0x01</span>Setup</h2>
-        <div class="row">
-          <label>preset <select id="presetSel"></select></label>
-          <button class="suggest" id="presetLoad">Load preset</button>
-        </div>
-        <div class="row">
-          <label>MECO kg <input type="number" id="cfgMeco" step="1" value="52612"></label>
-          <label>G <input type="number" id="cfgG" step="0.01" value="0.64"></label>
-          <label>T <input type="number" id="cfgT" step="0.001" value="4.82"></label>
-        </div>
-        <div class="row">
-          <label>bias lo <input type="number" id="biasLo" step="1" value="-900"></label>
-          <label>bias hi <input type="number" id="biasHi" step="1" value="-600"></label>
-          <label>start <input type="number" id="biasStart" step="1" value="-750"></label>
-          <label>min step <input type="number" id="biasMinStep" step="0.5" value="2.5"></label>
-        </div>
-        <div class="row">
-          <button class="primary" id="initBtn">Init captures</button>
-          <button class="primary" id="scanBtn" disabled>Run bias search</button>
-          <button class="reset" id="scanStopBtn" disabled>Stop</button>
-        </div>
-        <div class="row"><span class="dim" id="initStatus">—</span></div>
-      </section>
-
-      <section class="panel" id="telemetry">
-        <h2><span class="tag">0x02</span>Telemetry</h2>
-        <div class="tm">
-          <div><span><i class="tm-prompt">$</i><i class="tm-spin"></i><em>elapsed</em></span><b id="tmElapsed">00:00</b></div>
-          <div><span><em>evals</em></span><b id="tmEvals">0</b></div>
-          <div><span><em>best · score</em></span><b id="tmBest"><span id="tmBestBias">—</span><small id="tmScore"></small></b></div>
-          <div><span><em>phase</em></span><b id="tmPhase">—</b></div>
-        </div>
-        <div id="logFeed" style="max-height:200px;overflow:auto;border:1px solid var(--line);padding:6px 0;margin-bottom:10px;font-size:11px;line-height:1.6;"></div>
-        <div class="chart-container"><canvas id="liveChart"></canvas></div>
-      </section>
+  <section class="panel" id="resultsPanel" style="margin-top:14px">
+    <h2><span class="tag">0x03</span>Bias search results</h2>
+    <div id="verdict"></div>
+    <div class="landcard" id="landCard" style="display:none">
+      <div class="ttl">Bias &rarr; score<em>one point per eval &middot; red = hard fail &middot; ring = best</em></div>
+      <canvas id="landChart"></canvas>
     </div>
+    <div id="resultsTable"><div class="dim" style="padding:10px;">No runs yet. Run INIT, then &ldquo;Run bias search&rdquo;.</div></div>
+    <div id="detailPanel" style="display:none"></div>
+  </section>
+</main>
 
-    <section class="panel" id="resultsPanel">
-      <h2><span class="tag">0x03</span>Bias Search Results</h2>
-      <div id="resultsTable"><div class="dim" style="padding:10px;">No runs yet. Click "Run bias search" above.</div></div>
-      <div id="detailPanel" style="display:none"></div>
-    </section>
-  </main>
+<!-- ==================== STANDBY ==================== -->
+<section class="panel" id="standby">
+  <h2><span class="tag">0x01</span>Standby &middot; awaiting session lock</h2>
+<pre><span class="a">LOCK</span> <span class="d">&mdash;&mdash;&mdash;&mdash;&rsaquo;</span> <span class="v">INIT</span> <span class="d">&mdash;&mdash;&mdash;&mdash;&rsaquo;</span> <span class="m">BIAS SEARCH</span> <span class="d">&mdash;&mdash;&mdash;&mdash;&rsaquo;</span> <span class="g">RESULTS</span>
+<span class="d">stack + apsides</span>    <span class="d">SA + EB snapshots</span>    <span class="d">golden-section</span>        <span class="d">best bias + charts</span>
 
-  <section class="panel" id="standby">
-    <h2><span class="tag">0x00</span>Standby &middot; awaiting session lock</h2>
-<pre><span class="a">LOCK</span> <span class="d">&mdash;&mdash;&mdash;&mdash;&rsaquo;</span> <span class="v">INIT</span> <span class="d">&mdash;&mdash;&mdash;&mdash;&rsaquo;</span> <span class="m">BIAS SCAN</span> <span class="d">- - &rsaquo;</span> <span class="g">RESULTS</span>
-<span class="d">stack + apsides</span>    <span class="d">SA + EB snapshots</span>    <span class="d">golden-section</span>    <span class="d">best bias + charts</span>
-
-<span class="m">INIT</span> run ascent to SEPARATED_AXIAL, then RTLS to ENTRY_BURN (EB capture)
-<span class="m">SCAN</span> N-bias golden-section sweep &mdash; each eval is full LB sim on EB snapshot
-<span class="m">DETAIL</span> click any row &mdash; LB start, touchdown, fuel breakdown, timeline, 8 charts
+<span class="v">INIT</span>   ascent to SEPARATED_AXIAL, then RTLS to ENTRY_BURN (EB capture)
+<span class="m">SCAN</span>   bracket + golden-section on bias &mdash; every eval is a full landing sim from the EB snapshot
+<span class="g">DETAIL</span> click a row &mdash; margins to limits, LB start, touchdown, fuel, timeline, 8 charts
 
 <span class="g">&#9658;</span> pick stack + apsides above, press <span class="g">LOCK</span> to begin.</pre>
-  </section>
+</section>
 
-  <footer class="refbar">
-    <div><span class="k">score</span><span class="f">S = |x|/3 + |vx|/2 + |&theta;|/3 + |&omega;|/3 + |vy|/3 + hop/50 + tilt&#8747;/400 + fuel/20k + time/2k</span> <span class="src">&middot; lower is better</span></div>
-    <div><span class="k">limits</span><span class="f">&theta; &le; 12&deg; &middot; vx &le; 2.5 &middot; vy &le; 5 &middot; &omega; &le; 8.6&deg;/s &middot; x &le; 42.5m &middot; hop &le; 100mm</span></div>
-    <div class="lg"><span class="k">colour</span>
-      <i style="background:var(--cyan)"></i>input
-      <i style="background:var(--amber)"></i>value / cost
-      <i style="background:var(--violet)"></i>phase / orbit
-      <i style="background:var(--green)"></i>ok / best
-      <i style="background:var(--red)"></i>fail</div>
-  </footer>
+<!-- ==================== REFERENCE ==================== -->
+<footer class="refbar">
+  <div><span class="k">score</span><span class="f">S = |x|/3 + |vx|/2 + |&theta;|/3 + |&omega;|/3 + |vy|/3 + hop/50 + tilt&#8747;/400 + fuel/20k + time/2k</span> <span class="src">&middot; lower is better</span></div>
+  <div><span class="k">limits</span><span class="f">&theta; &le; 12&deg; &middot; vx &le; 2.5 &middot; vy &le; 5 &middot; &omega; &le; 8.6&deg;/s &middot; x &le; 42.5 m &middot; hop &le; 100 mm</span> <span class="src">&middot; any breach = hard fail (1e6)</span></div>
+  <div><span class="k">keys</span><kbd>Ctrl</kbd>+<kbd>Enter</kbd> run bias search</div>
+  <div class="lg"><span class="k">colour</span>
+    <i style="background:var(--cyan)"></i>input / key
+    <i style="background:var(--amber)"></i>value / cost
+    <i style="background:var(--violet)"></i>phase
+    <i style="background:var(--green)"></i>ok / best
+    <i style="background:var(--red)"></i>fail</div>
+</footer>
+
 </div>
 
 <!-- ===== SIM MODULES ===== -->
@@ -156,8 +198,29 @@ const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const fmt = (x,d) => Number.isFinite(x) ? x.toFixed(d) : '—';
 const DT = () => CONFIG.DT;
+try { if (typeof loadSzadFont === 'function') loadSzadFont(); } catch(e){}
 
-// ===== LOG =====
+// ===== LOG (level gutter comes from engine-theme via body.fx) =====
+const TOK = new RegExp([
+  '(&#?\\w+;)',                                   // 1 entity: skip
+  '(^\\[\\d\\d:\\d\\d:\\d\\d\\])',                // 2 timestamp
+  '\\b(Locked|Init|Scan|Eval|Search|Preset)\\b',  // 3 stage tag
+  '([A-Za-z_][A-Za-z_0-9]*)(?==)',                // 4 key=
+  '(-?\\d+(?:\\.\\d+)?)',                         // 5 number
+  '(✓|\\bok\\b|\\bready\\b|\\bcomplete\\b|\\bcaptured\\b)', // 6 good
+  '(✗|\\bfail\\w*|\\berror\\w*)'                  // 7 bad
+].join('|'), 'gi');
+function hl(raw){
+  return esc(raw).replace(TOK, (m, ent, ts, tag, key, num, good, bad) => {
+    if(ent) return m;
+    if(ts) return '<i class="lg-t">'+m+'</i>';
+    if(tag) return '<i class="lg-tag">'+m+'</i>';
+    if(key) return '<i class="lg-k">'+m+'</i>';
+    if(good) return '<i class="lg-ok">'+m+'</i>';
+    if(bad) return '<i class="lg-bad">'+m+'</i>';
+    return '<i class="lg-n">'+m+'</i>';
+  });
+}
 const logLines = [];
 function log(msg, lvl){
   const t = new Date().toISOString().slice(11,19);
@@ -167,7 +230,7 @@ function log(msg, lvl){
   const lf = $('logFeed');
   if(lf){
     const div = document.createElement('div');
-    div.textContent = line;
+    div.innerHTML = hl(line);
     if(lvl) div.className = 'lv-'+lvl;
     lf.appendChild(div);
     while(lf.children.length > 250) lf.removeChild(lf.firstChild);
@@ -183,48 +246,79 @@ const S = {
   inited:false, saSnap:null, ebSnap:null,
   fuelAtMeco:0, fuelAfterBoostback:0,
   runs:[], searchResult:null, selectedIdx:-1,
-  running:false, abort:false, evals:0,
-  liveChart:null, detailFull:null, detailZoom:null,
-  prefixPhases:null, saSimTime:0,
+  running:false, abort:false, evals:0, evalMs:[],
+  liveChart:null, prefixPhases:null, saSimTime:0,
+  stage:'config', lastWindow:null,
 };
 
+// ===== STAGE / CHIPS =====
+const STAGES = ['config','init','scan','results'];
 function setStage(name){
+  S.stage = name;
+  $('app').setAttribute('data-stage', name);
+  const idx = STAGES.indexOf(name);
   document.querySelectorAll('.stage-item').forEach(el => {
-    el.classList.toggle('active', el.dataset.stage === name);
+    const i = STAGES.indexOf(el.dataset.stage);
+    el.classList.toggle('active', i === idx);
+    el.classList.toggle('done', i < idx);
   });
+  $('stPhaseN').textContent = name.toUpperCase();
 }
-function setChip(state, phase){
+function setChip(state){
   if(state !== undefined){
     $('stStateN').textContent = state;
     document.body.setAttribute('data-state', state);
+    $('tmFlag').textContent = state === 'running' ? 'RUN' : state === 'ready' ? 'READY' : 'IDLE';
   }
-  if(phase !== undefined) $('stPhaseN').textContent = phase;
 }
 
-// ===== YIELD HELPER =====
+// ===== FLIGHT-PHASE RAIL =====
+const FPH = ['ENTRY_BURN','POST_ENTRY_STEER','LANDING_BURN_ALIGN','LANDING_BURN','TOUCHDOWN'];
+function setFlightPhase(ph, final){   // final: 'ok' | 'bad' marks the last stage; null = live
+  const i = FPH.indexOf(ph);
+  document.querySelectorAll('#frail > div').forEach(el => {
+    const k = FPH.indexOf(el.dataset.ph);
+    el.className = '';
+    if(i < 0) return;
+    if(k < i) el.classList.add('done');
+    else if(k === i) el.classList.add(final || 'active');
+  });
+}
+function clearLive(){
+  setFlightPhase('', null);
+  ['lvT','lvAlt','lvVy','lvVx'].forEach(id => { $(id).innerHTML = '—'; });
+}
+function paintLive(p){
+  $('lvT').innerHTML = fmt(p.t,0)+'<small>s</small>';
+  $('lvAlt').innerHTML = fmt(p.altKm,2)+'<small>km</small>';
+  $('lvVy').innerHTML = fmt(p.vy,1)+'<small>m/s</small>';
+  $('lvVx').innerHTML = fmt(p.vx,1)+'<small>m/s</small>';
+  if(FPH.indexOf(p.phase) >= 0) setFlightPhase(p.phase, null);
+}
+
 // ===== ELAPSED TIMER + BEST DISPLAY =====
 let _elapsedTimer = null;
+const pad2 = n => (n < 10 ? '0' : '') + n;
 function startElapsedTimer(){
   if(_elapsedTimer) clearInterval(_elapsedTimer);
   const t0 = performance.now();
-  const el = document.getElementById('tmElapsed');
-  if(el) el.textContent = '00:00';
+  $('tmElapsed').textContent = '00:00:00';
   _elapsedTimer = setInterval(() => {
-    const sec = Math.floor((performance.now() - t0) / 1000);
-    const mm = String(Math.floor(sec / 60)).padStart(2, '0');
-    const ss = String(sec % 60).padStart(2, '0');
-    const e = document.getElementById('tmElapsed');
-    if(e) e.textContent = mm + ':' + ss;
+    const s = Math.floor((performance.now() - t0) / 1000);
+    $('tmElapsed').textContent = pad2(Math.floor(s/3600))+':'+pad2(Math.floor(s%3600/60))+':'+pad2(s%60);
   }, 500);
 }
-function stopElapsedTimer(){
-  if(_elapsedTimer) { clearInterval(_elapsedTimer); _elapsedTimer = null; }
-}
+function stopElapsedTimer(){ if(_elapsedTimer){ clearInterval(_elapsedTimer); _elapsedTimer = null; } }
 function setBestDisplay(bias, score){
-  const bb = document.getElementById('tmBestBias');
-  const bs = document.getElementById('tmScore');
-  if(bb) bb.textContent = (bias != null && Number.isFinite(bias)) ? bias.toFixed(2) : '—';
-  if(bs) bs.textContent = (score != null && Number.isFinite(score)) ? ' · ' + score.toFixed(2) : '';
+  $('tmBestBias').textContent = (bias != null && Number.isFinite(bias)) ? bias.toFixed(2) : '—';
+  $('tmScore').textContent = (score != null && Number.isFinite(score)) ? ' · ' + score.toFixed(2) : '';
+}
+function setEvalCount(n){
+  $('tmEvals').textContent = n; $('stEvalsN').textContent = n;
+  if(S.evalMs.length){
+    const avg = S.evalMs.reduce((a,b)=>a+b,0)/S.evalMs.length/1000;
+    $('tmAvg').innerHTML = avg.toFixed(1)+'<small>s</small>';
+  } else $('tmAvg').textContent = '—';
 }
 
 const _yieldMC = new MessageChannel();
@@ -347,6 +441,17 @@ function applyPresetFromSel(){
   log('Preset loaded: '+p.name, 'ok');
 }
 
+// Ascent/preset changes invalidate the SA/EB snapshots.
+function markStale(){
+  if(!S.inited || S.running) return;
+  S.inited = false;
+  $('scanBtn').disabled = true;
+  const st = $('initStatus'); st.classList.add('stale');
+  st.textContent = 'Config changed — snapshots are stale. Run INIT captures again.';
+  setStage('config');
+  log('Config changed after INIT — captures invalidated', 'warn');
+}
+
 // ===== LOCK =====
 function doLock(){
   const stkId = $('stackSel').value;
@@ -360,10 +465,9 @@ function doLock(){
   $('resetBtn').disabled = false;
   $('lockStatus').innerHTML = '<span class="ok">LOCKED</span> · '+esc(stkId)+' · apo/peri '+apo+'/'+peri+' km';
   $('main').style.display = 'block';
-  setChip('ready','—');
+  setChip('ready');
   log('Locked: '+stkId+' @ '+apo+'/'+peri+' km', 'ok');
   setStage('config');
-  const _rp = $('resultsPanel'); if(_rp) _rp.style.display = 'block';
   populatePresetSel();
   applyPresetFromSel();
 }
@@ -395,14 +499,15 @@ async function doInit(){
   if(!S.locked){ log('Lock a stack first.', 'warn'); return; }
   S.running = true; S.abort = false;
   $('initBtn').disabled = true; $('scanBtn').disabled = true;
-  setChip('running','INIT');
+  $('initStatus').classList.remove('stale');
+  setChip('running'); setStage('init');
+  startElapsedTimer(); clearLive();
 
   try {
     const meco = +$('cfgMeco').value, G = +$('cfgG').value, T = +$('cfgT').value, bias = +$('biasStart').value;
     if(![meco,G,T,bias].every(Number.isFinite)) throw new Error('invalid config values');
     log('Init: MECO='+meco+' G='+G+' T='+T+' bias='+bias);
 
-    // Build values from preset
     const preset = listPresets().find(p => p.id === $('presetSel').value);
     const vals = preset && preset.constants ? deepClone(preset.constants) : {};
     vals.ascent = vals.ascent || {};
@@ -420,7 +525,6 @@ async function doInit(){
 
     const env = { atmosphere:true, slosh:true, imu:false, wind:{enabled:false,speed:0,directionDeg:0}, boosterPct:100, stagePct:100 };
 
-    // Init engine
     log('Initializing TunerEngine…');
     TunerEngine.init();
     log('TunerEngine ready. prepareRun(landbackV1)…');
@@ -433,13 +537,12 @@ async function doInit(){
     try {
       // Phase 1: ASCENT → SEPARATED_AXIAL (capture SA)
       $('initStatus').textContent = 'Ascent → SA…';
-      setChip('running','ASCENT');
       let saRes;
       try {
         saRes = await runUntil(
           () => { const gs = Guidance.getGuideStatus(); return gs && gs.phase === 'SEPARATED_AXIAL' ? gs : null; },
           400, 'SA',
-          (i,n,t) => { $('initStatus').textContent = 'Ascent → SA… t='+fmt(t,1)+'s ('+Math.round(100*i/n)+'%)'; }
+          (i,n,t) => { $('initStatus').textContent = 'Ascent → SA… t='+fmt(t,1)+'s ('+Math.round(100*i/n)+'%)'; $('lvT').innerHTML = fmt(t,0)+'<small>s</small>'; }
         );
       } finally { console.log = _origLog; console.error = _origErr; }
       if(!saRes.ok) throw new Error('SA not reached: '+saRes.reason);
@@ -450,15 +553,11 @@ async function doInit(){
 
       // Phase 2: SA → ENTRY_BURN (capture EB)
       $('initStatus').textContent = 'SA → ENTRY_BURN…';
-      setChip('running','RTLS');
       console.log = function(){}; console.error = function(){};
       let ebRes;
 
-      // v2.2: capture ALL prefix phase transitions (FLIP, BOOSTBACK, PRE_ENTRY_*)
-      // during this SA->EB run. These are bias-independent (bias only affects
-      // ENTRY_BURN_IMPACT_TARGET_M consumed AT entry burn), so capturing once
-      // and prepending to each eval's mission timeline gives full mission view
-      // without re-running FLIP/BOOSTBACK per bias.
+      // Capture all prefix phase transitions (FLIP, BOOSTBACK, PRE_ENTRY_*) once.
+      // They are bias-independent (bias only matters from ENTRY_BURN onward).
       S.prefixPhases = [];
       let lastPrefix = null;
       S.saSimTime = saRes.simTime;
@@ -497,7 +596,7 @@ async function doInit(){
             return gs.rtlsPhase === 'ENTRY_BURN' ? gs : null;
           },
           1200, 'EB',
-          (i,n,t) => { $('initStatus').textContent = 'SA → ENTRY_BURN… t='+fmt(t,1)+'s ('+Math.round(100*i/n)+'%)'; }
+          (i,n,t) => { $('initStatus').textContent = 'SA → ENTRY_BURN… t='+fmt(t,1)+'s ('+Math.round(100*i/n)+'%)'; $('lvT').innerHTML = fmt(t,0)+'<small>s</small>'; }
         );
       } finally { console.log = _origLog; console.error = _origErr; }
       if(!ebRes.ok) throw new Error('EB not reached: '+ebRes.reason);
@@ -513,20 +612,20 @@ async function doInit(){
     S.inited = true;
     $('initStatus').innerHTML = '<span class="ok">Ready</span> · SA/EB captured · fuel MECO='+fmt(S.fuelAtMeco,0)+'kg, post-boostback='+fmt(S.fuelAfterBoostback,0)+'kg';
     $('scanBtn').disabled = false;
-    setChip('ready','—');
+    setChip('ready'); setStage('init');
     log('Init complete. Ready for bias search.', 'ok');
   } catch(e){
     log('INIT FAILED: '+e.message, 'err');
     $('initStatus').innerHTML = '<span class="bad">Error: '+esc(e.message)+'</span>';
-    setChip('ready','ERR');
+    setChip('ready'); setStage('config');
   } finally {
+    stopElapsedTimer();
     S.running = false;
     $('initBtn').disabled = false;
     $('scanStopBtn').disabled = true;
   }
 }
 
-// ===== BIAS EVAL (async, yielding) =====
 // ===== BIAS EVAL (rich data capture) =====
 async function runBiasEval(bias, onTick){
   const g = deepClone(S.ebSnap.guidanceState);
@@ -537,8 +636,6 @@ async function runBiasEval(bias, onTick){
 
   const m = {
     bias, end:'cap',
-    // v2.2: prefix (FLIP, BOOSTBACK, PRE_ENTRY_*) captured once during init,
-    // prepended here. Bias affects only ENTRY_BURN onward, so prefix is constant.
     phases: S.prefixPhases ? S.prefixPhases.map(p => Object.assign({}, p)) : [],
     lbStart: null, contact: null,
     fuel: { start: S.fuelAtMeco, after_boostback: S.fuelAfterBoostback },
@@ -546,10 +643,9 @@ async function runBiasEval(bias, onTick){
     hop_mm: 0, tiltInt: 0, peakGimbal: 0, peakTilt: 0,
     satGimCount: 0, thrustGapCount: 0, legsDeployed: false,
     maxQLB: 0, maxGLB: 0,
-    samples: [],  // [{t, phase, h(km), vy, vx, theta, omega, gimbal, x, thr, fuel}]
+    samples: [],
     events: [],
   };
-  // start lastPhase from prefix tail so we do not re-capture ENTRY_BURN
   let lastPhase = (S.prefixPhases && S.prefixPhases.length)
     ? S.prefixPhases[S.prefixPhases.length - 1].phase
     : null;
@@ -728,35 +824,21 @@ async function runBiasEval(bias, onTick){
 }
 
 // ===== SCORING (fixed weights, no UI) =====
+// x and vx dominate (landing accuracy); theta/omega are tiny on any landing so heavily damped;
+// fuel/time are true tie-breakers.
+const LIMITS = { x:42.5, vx:2.5, vy:5, theta:12, omega:8.6, hop:100 };
 function scoreLB(m){
   const c = m.contact;
   if(!c) return { score: 1e6, fail: 'no-contact' };
   if(c.crashed) return { score: 1e6, fail: 'crashed' };
   if(!c.landed) return { score: 1e6, fail: 'not-landed' };
-  if(Math.abs(c.thetaLocal) > 12) return { score: 1e6, fail: 'tilt' };
-  if(Math.abs(c.vx) > 2.5) return { score: 1e6, fail: 'vx' };
-  if(Math.abs(c.vy) > 5) return { score: 1e6, fail: 'vy' };
-  if(Math.abs(c.omega) > 8.6) return { score: 1e6, fail: 'omega' };
-  if(Math.abs(c.downrange) > 42.5) return { score: 1e6, fail: 'downrange' };
-  if(m.hop_mm > 100) return { score: 1e6, fail: 'hop' };
+  if(Math.abs(c.thetaLocal) > LIMITS.theta) return { score: 1e6, fail: 'tilt' };
+  if(Math.abs(c.vx) > LIMITS.vx) return { score: 1e6, fail: 'vx' };
+  if(Math.abs(c.vy) > LIMITS.vy) return { score: 1e6, fail: 'vy' };
+  if(Math.abs(c.omega) > LIMITS.omega) return { score: 1e6, fail: 'omega' };
+  if(Math.abs(c.downrange) > LIMITS.x) return { score: 1e6, fail: 'downrange' };
+  if(m.hop_mm > LIMITS.hop) return { score: 1e6, fail: 'hop' };
 
-  // Weights tuned so LANDING ACCURACY (x, vx) dominates; other metrics are
-  // secondary. Rationale: pad radius is 42.5 m and vx limit is 2.5 m/s, so
-  // x < 0.5 m and vx < 0.4 m/s are all essentially "inside the pad". But
-  // 0.3 m x = 30 cm miss vs 0.01 m = 1 cm miss IS a 30x precision win, so
-  // x is weighted high. vx contributes (impact slide risk) at medium weight.
-  // theta/omega are both ~1-2% of their limits, so their differences are
-  // noise — heavily damped.
-  // Fuel/time only true tie-breakers (small).
-  //   x:   /3      (3 m   = 1 pt; limit 42.5 = 14)   ← landing accuracy, primary
-  //   vx:  /2      (2 m/s = 1 pt; limit 2.5 = 1.25)  ← impact slide risk
-  //   θ:   /3      (3°    = 1 pt; limit 12  = 4)     ← tip-over, but both tiny
-  //   ω:   /3      (3°/s  = 1 pt; limit 8.6 = 2.9)   ← spin, but both tiny
-  //   vy:  /3      (3 m/s = 1 pt; limit 5   = 1.67)
-  //   hop: /50     (50mm  = 1 pt; limit 100 = 2)
-  //   tiltInt: /400
-  //   fuel: /20000 (was /5000 — 4x weaker, true tiebreaker)
-  //   time: /2000  (was /200  — 10x weaker, true tiebreaker)
   const fuelUsedKg = (Number.isFinite(m.fuel.start) && Number.isFinite(m.fuel.remaining))
     ? Math.max(0, m.fuel.start - m.fuel.remaining) : 0;
   const missionT = Number.isFinite(m.missionTimeS) ? m.missionTimeS : 0;
@@ -836,83 +918,171 @@ async function searchBracket(evalFn, o, onProgress){
 // ===== RUN SCAN =====
 async function doScan(){
   if(S.running || !S.inited) return;
+  const lo = +$('biasLo').value, hi = +$('biasHi').value, start = +$('biasStart').value;
+  const minStep = +$('biasMinStep').value, step = +$('biasStep').value;
+  if(![lo,hi,start,minStep,step].every(Number.isFinite) || !(lo < hi) || !(minStep > 0) || !(step > 0)){
+    log('Scan: invalid window (need lo < hi, steps > 0)', 'err');
+    $('initStatus').innerHTML = '<span class="bad">invalid bias window — need lo &lt; hi and steps &gt; 0</span>';
+    return;
+  }
   S.running = true; S.abort = false;
   startElapsedTimer();
-  S.runs = []; S.selectedIdx = -1; S.evals = 0;
+  S.runs = []; S.selectedIdx = -1; S.evals = 0; S.evalMs = []; S.searchResult = null;
+  S.lastWindow = { lo, hi };
   $('scanBtn').disabled = true; $('scanStopBtn').disabled = false;
   $('initBtn').disabled = true;
   $('resultsTable').innerHTML = '<div id="scanTicker" class="scan-ticker">initializing…</div>';
   $('detailPanel').style.display = 'none';
-  $('tmEvals').textContent = '0'; setBestDisplay(null, null); $('tmPhase').textContent = 'SCAN';
-  setChip('running','SCAN');
-  setStage('scan');
-
-  const lo = +$('biasLo').value, hi = +$('biasHi').value, start = +$('biasStart').value, minStep = +$('biasMinStep').value;
-  log('Scan: ['+lo+', '+hi+'] start='+start+' minStep='+minStep, 'ok');
+  $('verdict').innerHTML = '<div class="rv-wait">BIAS SEARCH running · window ['+lo+', '+hi+'] m</div>';
+  $('landCard').style.display = 'none';
+  setEvalCount(0); setBestDisplay(null, null); clearLive();
+  setChip('running'); setStage('scan');
+  log('Scan: ['+lo+', '+hi+'] start='+start+' probe step='+step+' min step='+minStep, 'ok');
 
   const evalFn = async bias => {
     if(S.abort) throw new Error('aborted');
     log('Eval bias='+bias.toFixed(1));
     const evalN = S.evals + 1;
-    $('tmPhase').textContent = 'EVAL #' + evalN;
     const ticker = document.getElementById('scanTicker');
     const onTick = (prog) => {
+      paintLive(prog);
       if(ticker) ticker.textContent =
         'EVAL ' + bias.toFixed(1) + '  ·  #' + evalN +
         '  ·  t=' + prog.t.toFixed(0) + 's' +
         '  ·  ' + (prog.phase || '?').replace(/_/g,' ') +
         '  ·  alt=' + prog.altKm.toFixed(1) + 'km';
     };
+    const t0 = performance.now();
     try {
+      setFlightPhase('', null);
       const m = await runBiasEval(bias, onTick);
       const sc = scoreLB(m);
-      S.evals++;
-      $('tmEvals').textContent = S.evals;
+      S.evals++; S.evalMs.push(performance.now() - t0);
+      setEvalCount(S.evals);
       const r = { bias, score: sc.score, ok: !!sc.ok, fail: sc.fail, m, parts: sc.parts };
       S.runs.push(r);
+      setFlightPhase('TOUCHDOWN', r.ok ? 'ok' : 'bad');
       drawLive(m);
-      // live best update as scan progresses
-      if(sc.ok){
-        const curBest = S.searchResult && S.searchResult.best ? S.searchResult.best.score : Infinity;
-        const runBest = S.runs.filter(x => x.ok).reduce((a,x) => x.score < a.score ? x : a, {score: Infinity});
-        if(runBest && runBest.score < Infinity){
-          setBestDisplay(runBest.bias, runBest.score);
-        }
-      }
+      drawLandscape();
+      const runBest = S.runs.filter(x => x.ok).reduce((a,x) => x.score < a.score ? x : a, {score: Infinity});
+      if(runBest.score < Infinity) setBestDisplay(runBest.bias, runBest.score);
       return r;
     } catch(e){
       log('Eval error: '+e.message, 'err');
-      return { bias, score: 1e6, fail: 'err: '+e.message, m: { bias, end:'error', samples: [], fuel:{} } };
+      return { bias, score: 1e6, fail: 'err: '+e.message, m: { bias, end:'error', samples: [], fuel:{}, phases:[], events:[] } };
     }
   };
 
   try {
     const R = await searchBracket(evalFn,
-      { lo, hi, step: 30, minStep, start, stop: () => S.abort },
-      (r, cache) => {
+      { lo, hi, step, minStep, start, stop: () => S.abort },
+      (r) => {
         log('  → bias='+r.bias.toFixed(1)+' score='+r.score.toFixed(2)+(r.fail ? ' ['+r.fail+']' : ''), r.ok ? 'ok' : 'warn');
       });
     S.searchResult = R;
-    setBestDisplay(R.best.bias, R.best.score);
-    $('tmPhase').textContent = 'DONE';
-    log('Search complete. Best bias='+R.best.bias.toFixed(2)+' score='+R.best.score.toFixed(2), 'ok');
+    setBestDisplay(R.best.ok ? R.best.bias : null, R.best.ok ? R.best.score : null);
+    log(R.best.ok ? 'Search complete. Best bias='+R.best.bias.toFixed(2)+' score='+R.best.score.toFixed(2) : 'Search complete. No landing passed the hard limits.', R.best.ok ? 'ok' : 'warn');
     renderResults();
   } catch(e){
     log('Scan error: '+e.message, 'err');
+    $('verdict').innerHTML = '';
     $('resultsTable').innerHTML = '<div class="bad" style="padding:10px;">Scan failed: '+esc(e.message)+'</div>';
   } finally {
     S.running = false;
     stopElapsedTimer();
-    $('scanBtn').disabled = false; $('scanStopBtn').disabled = true; $('initBtn').disabled = false;
-    setChip('ready', 'DONE');
-    setStage('results');
+    $('scanBtn').disabled = !S.inited; $('scanStopBtn').disabled = true; $('initBtn').disabled = false;
+    setChip('ready'); setStage('results');
   }
 }
 
-// ===== RESULTS TABLE (compact) =====
+// ===== VERDICT CARD =====
+function renderVerdict(){
+  const R = S.searchResult, host = $('verdict');
+  if(!R){ host.innerHTML = ''; return; }
+  const okN = S.runs.filter(r => r.ok).length, b = R.best;
+  const w = S.lastWindow || {};
+  let st, stc, vd;
+  if(!b.ok){
+    st = 'NO VALID LANDING'; stc = 'bad';
+    vd = '<div class="rv-vd bad"><span class="k">All fail</span>Every probed bias breached a hard limit (best reason: <b>'+esc(b.fail||'?')+'</b>). Widen the window or check the ascent config.</div>';
+  } else if(R.bracketed){
+    st = 'OK'; stc = 'ok';
+    vd = '<div class="rv-vd ok"><span class="k">Bracketed</span>Neighbours <b>'+R.lo.bias.toFixed(1)+'</b> ('+fmt(R.lo.score,2)+') and <b>'+R.hi.bias.toFixed(1)+'</b> ('+fmt(R.hi.score,2)+') both score worse than the best — the minimum is inside the explored range.</div>';
+  } else {
+    st = 'EDGE'; stc = 'warn';
+    vd = '<div class="rv-vd warn"><span class="k">Not bracketed</span>The best bias sits on the edge of what was explored (or a neighbour failed) — the true minimum may lie outside. Widen the bias window or lower the min step.'+(S.abort ? ' · stopped by user' : '')+'</div>';
+  }
+  const c = b.m && b.m.contact;
+  host.innerHTML = '<div class="rv"><div class="rv-h"><b>BIAS SEARCH</b>' +
+    '<span class="in">window ['+w.lo+', '+w.hi+'] m · '+S.runs.length+' evals</span><span class="sp"></span><span class="rv-st '+stc+'">'+st+'</span></div>' +
+    '<div class="rv-kpi">' +
+    '<div><span>Best bias</span><b class="c">'+(b.ok ? b.bias.toFixed(2) : '—')+'<small>m</small></b></div>' +
+    '<div><span>Score</span><b class="g">'+(b.ok ? b.score.toFixed(3) : '—')+'</b></div>' +
+    '<div><span>Landed ok</span><b>'+okN+' / '+S.runs.length+'</b></div>' +
+    '<div><span>TD x</span><b class="a">'+(c ? fmt(c.downrange,2) : '—')+'<small>m</small></b></div>' +
+    '<div><span>TD vx</span><b class="a">'+(c ? fmt(c.vx,3) : '—')+'<small>m/s</small></b></div>' +
+    '<div><span>Fuel left</span><b>'+(b.m && Number.isFinite(b.m.fuel.remaining) ? fmt(b.m.fuel.remaining,0) : '—')+'<small>kg</small></b></div>' +
+    '</div>' + vd + '</div>';
+}
+
+// ===== BIAS → SCORE LANDSCAPE (canvas) =====
+function drawLandscape(){
+  const cv = $('landChart'), card = $('landCard');
+  if(!cv || !S.runs.length){ if(card) card.style.display = 'none'; return; }
+  card.style.display = 'block';
+  const W = Math.max(320, Math.floor(card.clientWidth - 24)), H = 230, dpr = window.devicePixelRatio || 1;
+  cv.width = W*dpr; cv.height = H*dpr; cv.style.width = W+'px'; cv.style.height = H+'px';
+  const ctx = cv.getContext('2d'); ctx.setTransform(dpr,0,0,dpr,0,0);
+  const padL = 56, padR = 18, padT = 16, padB = 36, pw = W-padL-padR, ph = H-padT-padB;
+  ctx.fillStyle = '#000'; ctx.fillRect(0,0,W,H);
+  const rows = S.runs.slice().sort((a,b) => a.bias-b.bias);
+  const bs = rows.map(r => r.bias), bMin = Math.min.apply(null,bs), bMax = Math.max.apply(null,bs);
+  const oks = rows.filter(r => r.ok && Number.isFinite(r.score));
+  if(!oks.length){
+    ctx.fillStyle = '#ff4d5e'; ctx.font = '12px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('no successful landing yet ('+rows.length+' probes failed)', W/2, H/2);
+    return;
+  }
+  const sMin = Math.min.apply(null, oks.map(r=>r.score)), sMax = Math.max.apply(null, oks.map(r=>r.score));
+  const sPad = Math.max(0.5, (sMax-sMin)*0.12), sLo = sMin-sPad, sHi = sMax+sPad;
+  const bSpan = Math.max(1e-9, bMax-bMin);
+  const X = b => padL + (bMax===bMin ? 0.5 : (b-bMin)/bSpan)*pw;
+  const Y = s => padT + ph - (s-sLo)/Math.max(1e-9,sHi-sLo)*ph;
+  ctx.strokeStyle = 'rgba(255,255,255,0.07)'; ctx.lineWidth = 1;
+  for(let i=0;i<=4;i++){ const y = padT+i*ph/4; ctx.beginPath(); ctx.moveTo(padL,y); ctx.lineTo(padL+pw,y); ctx.stroke(); }
+  ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+  ctx.beginPath(); ctx.moveTo(padL,padT); ctx.lineTo(padL,padT+ph); ctx.lineTo(padL+pw,padT+ph); ctx.stroke();
+  ctx.fillStyle = 'rgba(255,255,255,0.55)'; ctx.font = '10px monospace';
+  ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+  for(let i=0;i<=4;i++) ctx.fillText((sLo+i*(sHi-sLo)/4).toFixed(2), padL-6, padT+ph-i*ph/4);
+  ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+  for(let i=0;i<=4;i++) ctx.fillText((bMin+i*bSpan/4).toFixed(0), padL+i*pw/4, padT+ph+6);
+  ctx.fillStyle = '#35d6ff'; ctx.fillText('bias (m)', padL+pw/2, H-14);
+  // curve through ok points
+  ctx.strokeStyle = '#ffb020'; ctx.lineWidth = 1.5; ctx.beginPath();
+  let started = false;
+  for(const r of oks){ const x = X(r.bias), y = Y(r.score); if(!started){ ctx.moveTo(x,y); started = true; } else ctx.lineTo(x,y); }
+  ctx.stroke();
+  for(const r of rows){
+    const x = X(r.bias);
+    if(r.ok && Number.isFinite(r.score)){ ctx.fillStyle = '#ffb020'; ctx.beginPath(); ctx.arc(x,Y(r.score),3.5,0,Math.PI*2); ctx.fill(); }
+    else { ctx.fillStyle = '#ff4d5e'; ctx.beginPath(); ctx.arc(x,padT+ph-6,3,0,Math.PI*2); ctx.fill(); }
+  }
+  const best = oks.reduce((a,r) => (!a || r.score < a.score) ? r : a, null);
+  const bx = X(best.bias), by = Y(best.score), right = bx > W*0.7;
+  ctx.strokeStyle = '#fff'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.arc(bx,by,7,0,Math.PI*2); ctx.stroke();
+  ctx.setLineDash([2,3]); ctx.beginPath(); ctx.moveTo(bx,by+7); ctx.lineTo(bx,padT+ph); ctx.stroke(); ctx.setLineDash([]);
+  ctx.fillStyle = '#fff'; ctx.font = '10px monospace';
+  ctx.textAlign = right ? 'right' : 'left'; ctx.textBaseline = 'bottom';
+  ctx.fillText('best '+best.score.toFixed(2)+' @ '+best.bias.toFixed(1), bx+(right?-10:10), by-8);
+}
+window.addEventListener('resize', () => { if(S.runs.length) drawLandscape(); });
+
+// ===== RESULTS TABLE =====
 function renderResults(){
-  // renderResults: force visible
-  const _rp = $('resultsPanel'); if(_rp) _rp.style.display = 'block';
+  renderVerdict();
+  drawLandscape();
   if(!S.runs.length){
     $('resultsTable').innerHTML = '<div class="dim" style="padding:10px;">No runs.</div>';
     return;
@@ -921,28 +1091,31 @@ function renderResults(){
     if(a.ok !== b.ok) return a.ok ? -1 : 1;
     return a.score - b.score;
   });
-  const bestBias = S.searchResult ? S.searchResult.best.bias : null;
+  const bestBias = (S.searchResult && S.searchResult.best.ok) ? S.searchResult.best.bias : null;
   let html = '<table><thead><tr>';
-  ['#','bias','score','status','TD x (m)','TD vx','TD θ','TD ω'].forEach(h => html += '<th>'+h+'</th>');
+  ['#','bias','score','status','TD x (m)','TD vx','TD vy','TD θ','TD ω','hop mm','fuel left','LB start km'].forEach(h => html += '<th>'+h+'</th>');
   html += '</tr></thead><tbody>';
   sorted.forEach((r,i) => {
     const isBest = r.bias === bestBias;
     const cls = isBest ? 'best' : (!r.ok ? 'fail' : '');
     const idx = S.runs.indexOf(r);
-    const c = r.m.contact;
+    const c = r.m.contact, lb = r.m.lbStart;
     html += '<tr class="'+cls+'" data-idx="'+idx+'">';
     html += '<td>'+(i+1)+'</td>';
     html += '<td>'+r.bias.toFixed(2)+'</td>';
     html += '<td>'+(r.ok ? r.score.toFixed(2) : 'FAIL')+'</td>';
-    html += '<td style="text-align:left">'+(r.ok ? (isBest ? '★ best' : '✓ ok') : '<span style="color:var(--red)">'+esc(r.fail || '?')+'</span>')+'</td>';
+    html += '<td>'+(r.ok ? (isBest ? '★ best' : '✓ ok') : esc(r.fail || '?'))+'</td>';
     html += '<td>'+(c ? fmt(c.downrange, 2) : '—')+'</td>';
     html += '<td>'+(c ? fmt(c.vx, 3) : '—')+'</td>';
+    html += '<td>'+(c ? fmt(c.vy, 3) : '—')+'</td>';
     html += '<td>'+(c ? fmt(c.thetaLocal, 2) : '—')+'</td>';
     html += '<td>'+(c ? fmt(c.omega, 2) : '—')+'</td>';
+    html += '<td>'+(c ? fmt(r.m.hop_mm, 1) : '—')+'</td>';
+    html += '<td>'+fmt(r.m.fuel && r.m.fuel.remaining, 0)+'</td>';
+    html += '<td>'+(lb ? fmt(lb.altKm, 2) : '—')+'</td>';
     html += '</tr>';
   });
   html += '</tbody></table>';
-  console.log('DEBUG-rr: S.runs='+S.runs.length+' sorted='+sorted.length+' html_len='+html.length);
   $('resultsTable').innerHTML = html;
   $('resultsTable').querySelectorAll('tr[data-idx]').forEach(tr => {
     tr.addEventListener('click', () => selectRow(+tr.dataset.idx));
@@ -967,6 +1140,25 @@ function destroyDetailCharts(){
   }
 }
 
+function gaugeHtml(c, hop){
+  const rows = [
+    ['x (downrange)', c.downrange, LIMITS.x, 'm'],
+    ['vx', c.vx, LIMITS.vx, 'm/s'],
+    ['vy', c.vy, LIMITS.vy, 'm/s'],
+    ['θ (tilt)', c.thetaLocal, LIMITS.theta, '°'],
+    ['ω (spin)', c.omega, LIMITS.omega, '°/s'],
+    ['hop', hop, LIMITS.hop, 'mm'],
+  ];
+  let h = '<div class="gauge">';
+  rows.forEach(([k,v,lim,u]) => {
+    const pct = Math.min(100, Math.abs(v)/lim*100);
+    const cls = pct >= 80 ? 'r' : pct >= 50 ? 'a' : '';
+    h += '<div><span class="k">'+k+'</span><span class="bar"><i class="'+cls+'" style="width:'+pct.toFixed(1)+'%"></i></span>' +
+         '<span class="v">'+fmt(v,2)+' '+u+'<small>/ '+lim+'</small></span></div>';
+  });
+  return h + '</div>';
+}
+
 function renderDetail(r){
   const m = r.m, panel = $('detailPanel');
   panel.style.display = 'block';
@@ -975,7 +1167,6 @@ function renderDetail(r){
   const h = [];
   h.push('<h3>Bias ' + r.bias.toFixed(2) + ' · Score ' + (r.ok ? r.score.toFixed(2) : 'FAIL' + (r.fail ? ' (' + esc(r.fail) + ')' : '')) + '</h3>');
 
-  // Summary KPI row
   if(m.contact){
     const kpis = [
       { l:'Status', v: m.contact.landed ? 'LANDED' : 'FAILED', cls: m.contact.landed ? 'g' : 'r' },
@@ -990,9 +1181,12 @@ function renderDetail(r){
     h.push('<div class="kpi-grid">');
     kpis.forEach(k => h.push('<div class="kpi"><span>'+k.l+'</span><b class="'+(k.cls||'')+'">'+k.v+(k.u?'<small>'+k.u+'</small>':'')+'</b></div>'));
     h.push('</div>');
+    h.push('<h4>Margin to hard limits</h4>');
+    h.push(gaugeHtml(m.contact, m.hop_mm));
+  } else {
+    h.push('<div class="rv-vd bad"><span class="k">No contact</span>Booster never touched down within the cap ('+esc(m.end || '?')+').</div>');
   }
 
-  // LB start + TD in 2 cols
   h.push('<div class="detail-cols">');
   if(m.lbStart){
     h.push('<div class="detail-col"><h4>LB Start</h4><div class="kv-list">');
@@ -1020,8 +1214,7 @@ function renderDetail(r){
   }
   h.push('</div>');
 
-  // Peak metrics grid
-  h.push('<h4>LB Peak Metrics</h4><div class="kpi-grid small">');
+  h.push('<h4>LB peak metrics</h4><div class="kpi-grid small">');
   h.push('<div class="kpi"><span>Peak gimbal</span><b>'+fmt(m.peakGimbal,2)+'°</b></div>');
   h.push('<div class="kpi"><span>Gimbal sat</span><b>'+m.satGimCount+'</b></div>');
   h.push('<div class="kpi"><span>Thrust gap</span><b>'+m.thrustGapCount+'</b></div>');
@@ -1032,10 +1225,9 @@ function renderDetail(r){
   h.push('<div class="kpi"><span>Legs</span><b>'+(m.legsDeployed?'YES':'NO')+'</b></div>');
   h.push('</div>');
 
-  // Score breakdown
   if(r.ok && r.parts){
     const p = r.parts;
-    h.push('<h4>Score Breakdown</h4><table class="fuel-table"><thead><tr><th>Component</th><th>Reference</th><th>Contribution</th></tr></thead><tbody>');
+    h.push('<h4>Score breakdown</h4><table class="fuel-table"><thead><tr><th>Component</th><th>Reference</th><th>Contribution</th></tr></thead><tbody>');
     h.push('<tr><td>x (downrange)</td><td>3 m</td><td>'+fmt(p.x,3)+'</td></tr>');
     h.push('<tr><td>vx</td><td>2 m/s</td><td>'+fmt(p.vx,3)+'</td></tr>');
     h.push('<tr><td>θ (tilt)</td><td>3°</td><td>'+fmt(p.theta,3)+'</td></tr>');
@@ -1047,44 +1239,32 @@ function renderDetail(r){
     h.push('<tr><td>mission time (MECO→TD)</td><td>2000 s</td><td>'+fmt(p.time,3)+'</td></tr>');
     h.push('<tr class="total"><td>Total</td><td></td><td>'+r.score.toFixed(3)+'</td></tr>');
     h.push('</tbody></table>');
-    h.push('<div class="dim" style="margin-top:4px;font-size:10.5px;">Hard-fail limits (auto-flagged red in table): θ≤12°, vx≤2.5, vy≤5, ω≤8.6, x≤42.5m, hop≤100mm.</div>');
   }
 
-  // Fuel breakdown
-  if(m.fuel.start != null && m.fuel.remaining != null){
-    h.push('<h4>Fuel Breakdown</h4><table class="fuel-table"><thead><tr><th>Phase</th><th>Burn</th><th>Cumulative</th><th>Remaining</th></tr></thead><tbody>');
+  if(m.fuel && m.fuel.start != null && m.fuel.remaining != null){
+    h.push('<h4>Fuel breakdown</h4><table class="fuel-table"><thead><tr><th>Phase</th><th>Burn</th><th>Cumulative</th><th>Remaining</th></tr></thead><tbody>');
     let cum = 0;
     if(Number.isFinite(m.fuel.boostback_burn)){ cum += m.fuel.boostback_burn; h.push('<tr><td>Boostback</td><td>'+fmt(m.fuel.boostback_burn,0)+' kg</td><td>'+fmt(cum,0)+' kg</td><td>'+fmt(m.fuel.start-cum,0)+' kg</td></tr>'); }
     if(Number.isFinite(m.fuel.entry_burn)){ cum += m.fuel.entry_burn; h.push('<tr><td>Entry burn</td><td>'+fmt(m.fuel.entry_burn,0)+' kg</td><td>'+fmt(cum,0)+' kg</td><td>'+fmt(m.fuel.start-cum,0)+' kg</td></tr>'); }
     if(Number.isFinite(m.fuel.landing_burn)){ cum += m.fuel.landing_burn; h.push('<tr><td>Landing burn</td><td>'+fmt(m.fuel.landing_burn,0)+' kg</td><td>'+fmt(cum,0)+' kg</td><td>'+fmt(m.fuel.start-cum,0)+' kg</td></tr>'); }
     h.push('<tr class="total"><td>Total</td><td>'+fmt(cum,0)+' kg</td><td>'+fmt(cum,0)+' kg</td><td>'+fmt(m.fuel.start-cum,0)+' kg</td></tr>');
     h.push('</tbody></table>');
-    h.push('<div class="dim" style="margin-top:6px;font-size:11px;">MECO residual: <b style="color:#fff">'+fmt(m.fuel.start,0)+' kg</b> · remaining at TD: <b style="color:#fff">'+fmt(m.fuel.start-cum,0)+' kg</b></div>');
+    h.push('<div class="dim" style="margin-top:6px;font-size:11px;">MECO residual: <b>'+fmt(m.fuel.start,0)+' kg</b> · remaining at TD: <b>'+fmt(m.fuel.start-cum,0)+' kg</b></div>');
   }
 
-  // Mission timeline
-  if(m.phases.length){
-    h.push('<h4>Mission Timeline</h4><table class="timeline-table"><thead><tr><th>Phase</th><th>t (sim)</th><th>Δt</th><th>Alt</th><th>vy</th><th>Fuel</th></tr></thead><tbody>');
+  if(m.phases && m.phases.length){
+    h.push('<h4>Mission timeline</h4><table class="timeline-table"><thead><tr><th>Phase</th><th>t (sim)</th><th>Δt</th><th>Alt</th><th>vy</th><th>Fuel</th></tr></thead><tbody>');
     for(const p of m.phases){
       h.push('<tr><td>'+esc(p.phase)+'</td><td>'+fmt(p.t,1)+'s</td><td>'+fmt(p.tRel,1)+'s</td><td>'+fmt(p.altKm,2)+'km</td><td>'+fmt(p.vy,0)+'m/s</td><td>'+fmt(p.fuel,0)+'kg</td></tr>');
     }
     h.push('</tbody></table>');
   }
 
-  // Charts
   h.push('<h4>Charts (LB phase)</h4><div class="chart-grid">');
-  h.push('<div class="chart-cell"><canvas id="chTheta"></canvas></div>');
-  h.push('<div class="chart-cell"><canvas id="chOmega"></canvas></div>');
-  h.push('<div class="chart-cell"><canvas id="chGimbal"></canvas></div>');
-  h.push('<div class="chart-cell"><canvas id="chH"></canvas></div>');
-  h.push('<div class="chart-cell"><canvas id="chX"></canvas></div>');
-  h.push('<div class="chart-cell"><canvas id="chVx"></canvas></div>');
-  h.push('<div class="chart-cell"><canvas id="chVy"></canvas></div>');
-  h.push('<div class="chart-cell"><canvas id="chThr"></canvas></div>');
+  ['Theta','Omega','Gimbal','H','X','Vx','Vy','Thr'].forEach(k => h.push('<div class="chart-cell"><canvas id="ch'+k+'"></canvas></div>'));
   h.push('</div>');
 
-  // Events
-  if(m.events.length){
+  if(m.events && m.events.length){
     h.push('<h4>Events</h4><div class="events-list">');
     for(const e of m.events){
       h.push('<div class="ev ev-'+(e.kind||'info')+'"><span class="t">'+fmt(e.t,2)+'s</span><span class="k">'+esc(e.kind)+'</span><span class="m">'+esc(e.msg)+'</span></div>');
@@ -1101,10 +1281,6 @@ function drawDetailCharts(m){
   const t0 = m.lbStart ? m.lbStart.t : (m.samples[0] ? m.samples[0].t : 0);
   const lb = m.samples.filter(s => s.phase === 'LANDING_BURN');
   const post = m.samples.filter(s => s.phase === 'POST-TD');
-  const phaseColors = {
-    'PRE_ENTRY_STEER':'#a78bfa','ENTRY_BURN':'#ffb020','POST_ENTRY_STEER':'#35d6ff',
-    'LANDING_BURN_ALIGN':'#4ade80','LANDING_BURN':'#ff4d5e','POST-TD':'#6b7280'
-  };
 
   function mkChart(id, title, unit, yAccessor, color){
     const cv = $('ch' + id);
@@ -1120,7 +1296,7 @@ function drawDetailCharts(m){
           title: { display: true, text: title + (unit ? ' [' + unit + ']' : ''), color: '#cbd5e1', font: { size: 10 } }
         },
         scales: {
-          x: { type: 'linear', grid: { color: '#1f2940' }, ticks: { color: '#64748b', font: { size: 9 } }, title: { display: false } },
+          x: { type: 'linear', grid: { color: '#1f2940' }, ticks: { color: '#64748b', font: { size: 9 } } },
           y: { grid: { color: '#1f2940' }, ticks: { color: '#64748b', font: { size: 9 } } }
         }
       }
@@ -1136,18 +1312,16 @@ function drawDetailCharts(m){
   mkChart('Vy', 'vy', 'm/s', s => s.vy, '#93c5fd');
   mkChart('Thr', 'thrust', 'kN', s => s.thr, '#a78bfa');
 
-  // Zero-ref dashed lines for theta/gimbal
   ['Theta','Gimbal'].forEach(k => {
     const c = detailCharts[k];
     if(!c) return;
-    const zeroY = k === 'Theta' ? 0 : 0;
-    const zero = c.data.datasets[0].data.map(p => ({ x: p.x, y: zeroY }));
+    const zero = c.data.datasets[0].data.map(p => ({ x: p.x, y: 0 }));
     c.data.datasets.push({ label: 'ref', data: zero, borderColor: '#ffcc44', borderDash: [3,3], borderWidth: 1, pointRadius: 0, parsing: false });
     c.update();
   });
 }
 
-// ===== LIVE CHART =====
+// ===== LIVE CHART (altitude of the eval that just finished) =====
 function drawLive(m){
   if(!m.samples || !m.samples.length) return;
   const cv = $('liveChart'); if(!cv) return;
@@ -1188,9 +1362,7 @@ function checkModules(){
     Guidance: typeof Guidance !== 'undefined',
     Derivation: typeof Derivation !== 'undefined',
     loadStacks: typeof loadStacks === 'function',
-    getSelectedRocket: typeof getSelectedRocket !== 'undefined',
     setSelectedStackId: typeof setSelectedStackId === 'function',
-    getActiveStack: typeof getActiveStack === 'function',
     getGuideDefaultPreset: typeof getGuideDefaultPreset === 'function',
     Chart: typeof Chart !== 'undefined',
   };
@@ -1199,7 +1371,7 @@ function checkModules(){
   console.error('[NOVA-6] MISSING MODULES:', failed);
   const banner = document.createElement('div');
   banner.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9999;background:#7f1d1d;color:#fff;padding:12px 18px;font-family:monospace;font-size:12px;border-bottom:2px solid #ff4d5e;';
-  banner.innerHTML = '❌ MODULE LOAD FAILED<br><span style="color:#ffb020">Missing: ' + failed.join(', ') + '</span><br>Check DevTools → Network for 404 errors on &lt;script src=&quot;...&quot;&gt; tags.';
+  banner.innerHTML = '❌ MODULE LOAD FAILED<br><span style="color:#ffb020">Missing: ' + failed.join(', ') + '</span><br>Check DevTools → Network for 404 errors on &lt;script src&gt; tags.';
   document.body.insertBefore(banner, document.body.firstChild);
   return false;
 }
@@ -1223,9 +1395,17 @@ function boot(){
   $('initBtn').addEventListener('click', doInit);
   $('scanBtn').addEventListener('click', doScan);
   $('scanStopBtn').addEventListener('click', () => { S.abort = true; log('Stop requested', 'warn'); });
-  $('presetLoad').addEventListener('click', applyPresetFromSel);
+  $('presetLoad').addEventListener('click', () => { applyPresetFromSel(); markStale(); });
+  ['cfgMeco','cfgG','cfgT'].forEach(id => $(id).addEventListener('input', markStale));
+  $('presetSel').addEventListener('change', markStale);
+  document.addEventListener('keydown', e => {
+    if((e.ctrlKey || e.metaKey) && e.key === 'Enter'){
+      const b = $('scanBtn');
+      if(b && !b.disabled){ e.preventDefault(); b.click(); }
+    }
+  });
 
-  setChip('idle', '—');
+  setChip('idle'); setStage('config');
   log('Ready. Lock a stack to begin.', 'ok');
 }
 
@@ -1234,7 +1414,5 @@ else boot();
 
 })();
 </script>
-
-<script src="visJs/engine-fx.js"></script>
 </body>
 </html>
