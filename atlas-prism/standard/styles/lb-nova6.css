@@ -230,3 +230,25 @@ body[data-state=running] .chart-container{border-color:var(--amber);box-shadow:0
 /* Compact telemetry cells */
 .tm b{font-size:15px;}
 #tmPhase{font-size:13px !important;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+
+/* ===== v2.4: replace ticker pulse with spinner ===== */
+.scan-ticker{
+  animation:none !important;
+  display:flex;
+  align-items:center;
+  gap:14px;
+}
+.scan-ticker::before{
+  content:"";
+  flex:0 0 auto;
+  width:13px;
+  height:13px;
+  border:1.5px solid rgba(255,255,255,.15);
+  border-top-color:var(--amber);
+  border-radius:50%;
+  animation:scanspin .9s linear infinite;
+}
+@keyframes scanspin{to{transform:rotate(360deg);}}
+@media (prefers-reduced-motion: reduce){
+  .scan-ticker::before{animation-duration:3s;}
+}
