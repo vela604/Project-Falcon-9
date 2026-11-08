@@ -3537,8 +3537,12 @@ function _bbTokens(cfg) {
       const PES_CTRL_CAP_DEG = 30;
       const PES_FIN_STEP_DEG = 5;
       const PES_FIN_RATE_DEGS = 40;
-      const PES_RCS_DEADBAND_NM = 500;
-      const PES_RCS_MARGIN = 0.8;
+      // v2.3 PES fin-only: user observed ~450 kg RCS use over 74s PES
+      // (44km->5km descend) with minimal steering contribution. Fins
+      // handle all attitude; bias will shift (accepted). Verify in next
+      // scan: tauRcs should read 0 in [PES-LEDGER] log lines.
+      const PES_RCS_DEADBAND_NM = 1e12;   // effectively infinite: RCS never fires
+      const PES_RCS_MARGIN = 0;   // v2.3 fin-only: feasibility based on fins alone
       const PES_VALIDATE_S = 6;
 
       function _pesAeroAccel(ds, M) {
@@ -4677,7 +4681,7 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
               if (DEBUG_RTLS) console.log("[RTLS-VERMARK] passive-v1 phase=POST_ENTRY t="+simT.toFixed(2)+" PASSIVE-TEST-PRESENT");
               console.log("[standardRTLS] POST_ENTRY_STEER (closed loop v4) start t=" + simT.toFixed(2) +
                 " alt=" + altKm.toFixed(1) + "km v=" + Math.hypot(d.relVx, d.relVy).toFixed(0) + "m/s" +
-                " — first " + PES_VALIDATE_S + "s: NO commands (model validation)");
+                " — FIN-ONLY (RCS disabled), first " + PES_VALIDATE_S + "s: NO commands (model validation)");
               try {
                 const cT0 = Math.cos(d.theta), sT0 = Math.sin(d.theta);
                 const rows = [-30, -10, 0, 10, 30].map(function (c) {
