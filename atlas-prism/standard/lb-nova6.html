@@ -617,34 +617,36 @@ function scoreLB(m){
   if(Math.abs(c.downrange) > 42.5) return { score: 1e6, fail: 'downrange' };
   if(m.hop_mm > 100) return { score: 1e6, fail: 'hop' };
 
-  // Rebalanced scoring — soft references (not harsh limit-normalised).
-  // Reference scale = "sane good" band, so tiny deltas near zero contribute
-  // tiny amounts; only meaningful deviations dominate. Hard limits already
-  // fail-flagged above, so these weights only shape relative ranking among
-  // runs that all land cleanly.
-  //   x:   /10   (10 m  = 1 pt; limit 42.5 m = 4.25)
-  //   vx:  /3    (3 m/s = 1 pt; limit 2.5 m/s = 0.83)
-  //   θ:   /2    (2°    = 1 pt; limit 12° = 6)
-  //   ω:   /2    (2°/s  = 1 pt; limit 8.6 = 4.3)
-  //   vy:  /3    (3 m/s = 1 pt; limit 5 = 1.67)
-  //   hop: /50   (50mm  = 1 pt; limit 100 = 2)
-  //   tiltInt: /400 (400°·s = 1 pt)
-  // Mission-level tiebreakers (whole post-MECO landing mission):
-  //   fuelUsed:  /5000   (5000 kg extra burn = 1 pt)
-  //   missionT:  /200    (200 s longer = 1 pt)
+  // Weights tuned so LANDING ACCURACY (x, vx) dominates; other metrics are
+  // secondary. Rationale: pad radius is 42.5 m and vx limit is 2.5 m/s, so
+  // x < 0.5 m and vx < 0.4 m/s are all essentially "inside the pad". But
+  // 0.3 m x = 30 cm miss vs 0.01 m = 1 cm miss IS a 30x precision win, so
+  // x is weighted high. vx contributes (impact slide risk) at medium weight.
+  // theta/omega are both ~1-2% of their limits, so their differences are
+  // noise — heavily damped.
+  // Fuel/time only true tie-breakers (small).
+  //   x:   /3      (3 m   = 1 pt; limit 42.5 = 14)   ← landing accuracy, primary
+  //   vx:  /2      (2 m/s = 1 pt; limit 2.5 = 1.25)  ← impact slide risk
+  //   θ:   /3      (3°    = 1 pt; limit 12  = 4)     ← tip-over, but both tiny
+  //   ω:   /3      (3°/s  = 1 pt; limit 8.6 = 2.9)   ← spin, but both tiny
+  //   vy:  /3      (3 m/s = 1 pt; limit 5   = 1.67)
+  //   hop: /50     (50mm  = 1 pt; limit 100 = 2)
+  //   tiltInt: /400
+  //   fuel: /20000 (was /5000 — 4x weaker, true tiebreaker)
+  //   time: /2000  (was /200  — 10x weaker, true tiebreaker)
   const fuelUsedKg = (Number.isFinite(m.fuel.start) && Number.isFinite(m.fuel.remaining))
     ? Math.max(0, m.fuel.start - m.fuel.remaining) : 0;
   const missionT = Number.isFinite(m.missionTimeS) ? m.missionTimeS : 0;
   const parts = {
-    x: Math.abs(c.downrange) / 10.0,
-    vx: Math.abs(c.vx) / 3.0,
-    theta: Math.abs(c.thetaLocal) / 2.0,
-    omega: Math.abs(c.omega) / 2.0,
+    x: Math.abs(c.downrange) / 3.0,
+    vx: Math.abs(c.vx) / 2.0,
+    theta: Math.abs(c.thetaLocal) / 3.0,
+    omega: Math.abs(c.omega) / 3.0,
     vy: Math.abs(c.vy) / 3.0,
     hop: m.hop_mm / 50.0,
     tiltInt: m.tiltInt / 400.0,
-    fuel: fuelUsedKg / 5000.0,
-    time: missionT / 200.0,
+    fuel: fuelUsedKg / 20000.0,
+    time: missionT / 2000.0,
   };
   const score = parts.x + parts.vx + parts.theta + parts.omega
               + parts.vy + parts.hop + parts.tiltInt + parts.fuel + parts.time;
@@ -891,15 +893,15 @@ function renderDetail(r){
   if(r.ok && r.parts){
     const p = r.parts;
     h.push('<h4>Score Breakdown</h4><table class="fuel-table"><thead><tr><th>Component</th><th>Reference</th><th>Contribution</th></tr></thead><tbody>');
-    h.push('<tr><td>x (downrange)</td><td>10 m</td><td>'+fmt(p.x,3)+'</td></tr>');
-    h.push('<tr><td>vx</td><td>3 m/s</td><td>'+fmt(p.vx,3)+'</td></tr>');
-    h.push('<tr><td>θ (tilt)</td><td>2°</td><td>'+fmt(p.theta,3)+'</td></tr>');
-    h.push('<tr><td>ω (omega)</td><td>2°/s</td><td>'+fmt(p.omega,3)+'</td></tr>');
+    h.push('<tr><td>x (downrange)</td><td>3 m</td><td>'+fmt(p.x,3)+'</td></tr>');
+    h.push('<tr><td>vx</td><td>2 m/s</td><td>'+fmt(p.vx,3)+'</td></tr>');
+    h.push('<tr><td>θ (tilt)</td><td>3°</td><td>'+fmt(p.theta,3)+'</td></tr>');
+    h.push('<tr><td>ω (omega)</td><td>3°/s</td><td>'+fmt(p.omega,3)+'</td></tr>');
     h.push('<tr><td>vy</td><td>3 m/s</td><td>'+fmt(p.vy,3)+'</td></tr>');
     h.push('<tr><td>hop</td><td>50 mm</td><td>'+fmt(p.hop,3)+'</td></tr>');
     h.push('<tr><td>tilt ∫ (LB)</td><td>400°·s</td><td>'+fmt(p.tiltInt,3)+'</td></tr>');
-    h.push('<tr><td>fuel used (MECO→TD)</td><td>5000 kg</td><td>'+fmt(p.fuel,3)+'</td></tr>');
-    h.push('<tr><td>mission time (MECO→TD)</td><td>200 s</td><td>'+fmt(p.time,3)+'</td></tr>');
+    h.push('<tr><td>fuel used (MECO→TD)</td><td>20000 kg</td><td>'+fmt(p.fuel,3)+'</td></tr>');
+    h.push('<tr><td>mission time (MECO→TD)</td><td>2000 s</td><td>'+fmt(p.time,3)+'</td></tr>');
     h.push('<tr class="total"><td>Total</td><td></td><td>'+r.score.toFixed(3)+'</td></tr>');
     h.push('</tbody></table>');
     h.push('<div class="dim" style="margin-top:4px;font-size:10.5px;">Hard-fail limits (auto-flagged red in table): θ≤12°, vx≤2.5, vy≤5, ω≤8.6, x≤42.5m, hop≤100mm.</div>');
