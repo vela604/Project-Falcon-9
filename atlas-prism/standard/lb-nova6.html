@@ -95,6 +95,11 @@
         <button class="primary" id="scanBtn" disabled>Run bias search</button>
         <button class="reset" id="scanStopBtn" disabled>Stop</button>
       </div>
+      <div class="row">
+        <label>manual bias <input type="number" id="biasManual" step="1" value="-850"></label>
+        <button class="primary" id="manualBtn" disabled>Eval &amp; add</button>
+        <span class="dim" style="font-size:11px;">single eval, appended to runs table</span>
+      </div>
       <div class="row"><span class="dim" id="initStatus">Not initialised &mdash; run INIT first.</span></div>
     </section>
 
@@ -611,6 +616,7 @@ async function doInit(){
     S.inited = true;
     $('initStatus').innerHTML = '<span class="ok">Ready</span> · SA/EB captured · fuel MECO='+fmt(S.fuelAtMeco,0)+'kg, post-boostback='+fmt(S.fuelAfterBoostback,0)+'kg';
     $('scanBtn').disabled = false;
+    $('manualBtn').disabled = false;
     setChip('ready'); setStage('init');
     log('Init complete. Ready for bias search.', 'ok');
   } catch(e){
@@ -958,19 +964,14 @@ async function searchBracket(evalFn, o, onProgress){
       log('[search] feasible @ bias='+p.bias.toFixed(1)+' dr='+p.dr.toFixed(1)+'m score='+p.score.toFixed(3), 'ok');
     }
 
-    // Natural convergence — |dr| under golden resolution. Edge slope is NOISY
-    // (vx/vy/theta/hop all in score, dr=0 is not the score minimum), so don't
-    // bracket tightly around this exact point. Use a WIDE bracket: span at
-    // least 60 units, scaled up if the jump travelled far from start (a far
-    // jump means the score landscape shifts a lot per bias unit and we should
-    // search broadly). Golden inside will find the score minimum, not the dr=0 point.
+    // Natural convergence — |dr| under golden resolution. Fixed ±30 bracket
+    // (width 60) matches the best historical geometry: contains the true score
+    // basin around the converged bias without wandering into distant basins.
     if(Math.abs(p.dr) <= minStep){
-      const travelled = Math.abs(start - p.bias);
-      const span = Math.max(60, travelled * 0.7);
-      bracketLo = clamp(p.bias - span);
-      bracketHi = clamp(p.bias + span);
+      bracketLo = clamp(p.bias - 30);
+      bracketHi = clamp(p.bias + 30);
       log('[search] |dr|='+Math.abs(p.dr).toFixed(2)+'m ≤ minStep '+minStep+
-          ' → refine ['+bracketLo.toFixed(1)+', '+bracketHi.toFixed(1)+'] (±'+span.toFixed(0)+', travelled '+travelled.toFixed(0)+')', 'ok');
+          ' → refine ['+bracketLo.toFixed(1)+', '+bracketHi.toFixed(1)+'] (±30)', 'ok');
       break;
     }
 
@@ -986,24 +987,18 @@ async function searchBracket(evalFn, o, onProgress){
   }
 
   // ---- Phase 2: golden-section refine on SCORE inside bracket (or feasible region). ----
-  // EXPERIMENTAL — linear sweep replaces golden section. Golden converges
-  // to ONE basin minimum; sweep reveals the whole landscape. User wants to
-  // see whether the score-vs-bias curve near the converged bias is monotone
-  // or zigzag (multi-modal), and whether the LB-overshoot signal
-  // (m.lb_overshoot_m) correlates with score minima. That answer determines
-  // whether bracket/golden search is fundamentally insufficient here.
-  // Step = minStep (one knob controls both sweep resolution and jump-walk
-  // convergence threshold). At minStep=2.5 and ±60 bracket that's ~48 evals.
   const goldenRefine = async (lo, hi) => {
     if(hi - lo <= minStep) return;
-    log('[search] linear sweep ['+lo.toFixed(1)+', '+hi.toFixed(1)+'] step '+minStep, 'ok');
-    let b = round(lo);
-    const bHi = round(hi);
-    while(b <= bHi + 0.01 && !stop()){
-      await ev(b);
-      const nextB = round(b + minStep);
-      if(nextB === b) break;
-      b = nextB;
+    log('[search] phase2 golden on ['+lo.toFixed(1)+', '+hi.toFixed(1)+']', 'ok');
+    const PHI = 0.6180339887;
+    let a = lo, c = hi;
+    let x1 = c - PHI*(c-a), x2 = a + PHI*(c-a);
+    let f1 = null, f2 = null;
+    while(!stop() && (c-a) > minStep){
+      if(f1 == null) f1 = (await ev(x1)).score;
+      if(f2 == null) f2 = (await ev(x2)).score;
+      if(f1 <= f2){ c = x2; x2 = x1; f2 = f1; x1 = c - PHI*(c-a); f1 = null; }
+      else { a = x1; x1 = x2; f1 = f2; x2 = a + PHI*(c-a); f2 = null; }
     }
   };
 
@@ -1014,7 +1009,7 @@ async function searchBracket(evalFn, o, onProgress){
     await goldenRefine(Math.min(...bs), Math.max(...bs));
   } else if(feasible.length === 1){
     const b = feasible[0].bias;
-    await goldenRefine(clamp(b - 60), clamp(b + 60));
+    await goldenRefine(clamp(b - 30), clamp(b + 30));
   } else {
     log('[search] no bracket, no feasible — widen bias range and retry', 'warn');
   }
@@ -1105,6 +1100,54 @@ async function doScan(){
     stopElapsedTimer();
     $('scanBtn').disabled = !S.inited; $('scanStopBtn').disabled = true; $('initBtn').disabled = false;
     setChip('ready'); setStage('results');
+  }
+}
+
+// ===== MANUAL EVAL =====
+async function doManualEval(){
+  if(S.running) return;
+  if(!S.inited){ log('Run INIT first.', 'warn'); return; }
+  const b = parseFloat($('biasManual').value);
+  if(!Number.isFinite(b)){ log('Manual: invalid bias', 'err'); return; }
+
+  S.running = true; S.abort = false;
+  $('manualBtn').disabled = true;
+  $('scanBtn').disabled = true;
+  $('initBtn').disabled = true;
+  setChip('running');
+  startElapsedTimer();
+  clearLive();
+
+  try {
+    log('Manual eval: bias=' + b.toFixed(2));
+    setFlightPhase('', null);
+    const t0 = performance.now();
+    const m = await runBiasEval(b, (prog) => { paintLive(prog); });
+    const sc = scoreLB(m);
+    S.evals++; S.evalMs.push(performance.now() - t0);
+    setEvalCount(S.evals);
+    const r = { bias: b, score: sc.score, ok: !!sc.ok, fail: sc.fail, m, parts: sc.parts };
+    S.runs.push(r);
+    setFlightPhase('TOUCHDOWN', r.ok ? 'ok' : 'bad');
+    drawLive(m);
+    drawLandscape();
+    const runBest = S.runs.filter(x => x.ok).reduce((a,x) => x.score < a.score ? x : a, {score: Infinity});
+    if(runBest.score < Infinity) setBestDisplay(runBest.bias, runBest.score);
+    const _dr = (r.m && r.m.contact) ? r.m.contact.downrange : NaN;
+    const _drS = Number.isFinite(_dr) ? ' dr='+_dr.toFixed(1)+'m' : '';
+    const _lbO = (r.m && Number.isFinite(r.m.lb_overshoot_m)) ? r.m.lb_overshoot_m : NaN;
+    const _lbOS = Number.isFinite(_lbO) ? ' lbOver='+_lbO.toFixed(2)+'m' : '';
+    log('  → bias=' + b.toFixed(2) + ' score=' + sc.score.toFixed(3) + _drS + _lbOS + (sc.fail ? ' ['+sc.fail+']' : ''), r.ok ? 'ok' : 'warn');
+    renderResults();
+  } catch(e){
+    log('Manual eval error: ' + e.message, 'err');
+  } finally {
+    S.running = false;
+    stopElapsedTimer();
+    $('manualBtn').disabled = !S.inited;
+    $('scanBtn').disabled = !S.inited;
+    $('initBtn').disabled = false;
+    setChip('ready');
   }
 }
 
@@ -1204,7 +1247,8 @@ function renderResults(){
     if(a.ok !== b.ok) return a.ok ? -1 : 1;
     return a.score - b.score;
   });
-  const bestBias = (S.searchResult && S.searchResult.best.ok) ? S.searchResult.best.bias : null;
+  const _bestRun = S.runs.filter(r => r.ok).reduce((a,r) => !a || r.score < a.score ? r : a, null);
+  const bestBias = _bestRun ? _bestRun.bias : null;
   let html = '<table><thead><tr>';
   ['#','bias','score','status','TD x (m)','TD vx','TD vy','TD θ','TD ω','hop mm','fuel left','LB start km'].forEach(h => html += '<th>'+h+'</th>');
   html += '</tr></thead><tbody>';
@@ -1508,6 +1552,7 @@ function boot(){
   $('initBtn').addEventListener('click', doInit);
   $('scanBtn').addEventListener('click', doScan);
   $('scanStopBtn').addEventListener('click', () => { S.abort = true; log('Stop requested', 'warn'); });
+  $('manualBtn').addEventListener('click', doManualEval);
   $('presetLoad').addEventListener('click', () => { applyPresetFromSel(); markStale(); });
   ['cfgMeco','cfgG','cfgT'].forEach(id => $(id).addEventListener('input', markStale));
   $('presetSel').addEventListener('change', markStale);
