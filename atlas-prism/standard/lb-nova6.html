@@ -137,6 +137,8 @@
     <div class="landcard" id="landCard" style="display:none">
       <div class="ttl">Bias &rarr; score<em>one point per eval &middot; red = hard fail &middot; ring = best</em></div>
       <canvas id="landChart"></canvas>
+      <div class="ttl" style="margin-top:14px;">Bias &rarr; downrange error<em>one point per eval &middot; cyan dashed = pad center (0) &middot; ring = best-by-score</em></div>
+      <canvas id="landChartDr"></canvas>
     </div>
     <div id="resultsTable"><div class="dim" style="padding:10px;">No runs yet. Run INIT, then &ldquo;Run bias search&rdquo;.</div></div>
     <div id="detailPanel" style="display:none"></div>
@@ -1182,10 +1184,19 @@ function renderVerdict(){
 }
 
 // ===== BIAS → SCORE LANDSCAPE (canvas) =====
+// Two charts share the landCard: bias->score (top), bias->dr (bottom).
+// drawLandscape is the single entry point all existing callers already use.
 function drawLandscape(){
+  const card = $('landCard');
+  if(!S.runs.length){ if(card) card.style.display = 'none'; return; }
+  if(card) card.style.display = 'block';
+  drawLandscapeScore();
+  drawLandscapeDr();
+}
+
+function drawLandscapeScore(){
   const cv = $('landChart'), card = $('landCard');
-  if(!cv || !S.runs.length){ if(card) card.style.display = 'none'; return; }
-  card.style.display = 'block';
+  if(!cv || !card) return;
   const W = Math.max(320, Math.floor(card.clientWidth - 24)), H = 230, dpr = window.devicePixelRatio || 1;
   cv.width = W*dpr; cv.height = H*dpr; cv.style.width = W+'px'; cv.style.height = H+'px';
   const ctx = cv.getContext('2d'); ctx.setTransform(dpr,0,0,dpr,0,0);
@@ -1214,7 +1225,6 @@ function drawLandscape(){
   ctx.textAlign = 'center'; ctx.textBaseline = 'top';
   for(let i=0;i<=4;i++) ctx.fillText((bMin+i*bSpan/4).toFixed(0), padL+i*pw/4, padT+ph+6);
   ctx.fillStyle = '#35d6ff'; ctx.fillText('bias (m)', padL+pw/2, H-14);
-  // curve through ok points
   ctx.strokeStyle = '#ffb020'; ctx.lineWidth = 1.5; ctx.beginPath();
   let started = false;
   for(const r of oks){ const x = X(r.bias), y = Y(r.score); if(!started){ ctx.moveTo(x,y); started = true; } else ctx.lineTo(x,y); }
@@ -1232,6 +1242,78 @@ function drawLandscape(){
   ctx.fillStyle = '#fff'; ctx.font = '10px monospace';
   ctx.textAlign = right ? 'right' : 'left'; ctx.textBaseline = 'bottom';
   ctx.fillText('best '+best.score.toFixed(2)+' @ '+best.bias.toFixed(1), bx+(right?-10:10), by-8);
+}
+
+function drawLandscapeDr(){
+  const cv = $('landChartDr'), card = $('landCard');
+  if(!cv || !card) return;
+  const W = Math.max(320, Math.floor(card.clientWidth - 24)), H = 230, dpr = window.devicePixelRatio || 1;
+  cv.width = W*dpr; cv.height = H*dpr; cv.style.width = W+'px'; cv.style.height = H+'px';
+  const ctx = cv.getContext('2d'); ctx.setTransform(dpr,0,0,dpr,0,0);
+  const padL = 56, padR = 18, padT = 16, padB = 36, pw = W-padL-padR, ph = H-padT-padB;
+  ctx.fillStyle = '#000'; ctx.fillRect(0,0,W,H);
+  const rows = S.runs.slice().sort((a,b) => a.bias-b.bias);
+  const bs = rows.map(r => r.bias), bMin = Math.min.apply(null,bs), bMax = Math.max.apply(null,bs);
+  const okRows = rows.filter(r => r.ok && r.m && r.m.contact && Number.isFinite(r.m.contact.downrange));
+  if(!okRows.length){
+    ctx.fillStyle = '#ff4d5e'; ctx.font = '12px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('no successful landing yet ('+rows.length+' probes failed)', W/2, H/2);
+    return;
+  }
+  const drs = okRows.map(r => r.m.contact.downrange);
+  let dMin = Math.min.apply(null, drs), dMax = Math.max.apply(null, drs);
+  // Ensure 0 is inside the view so the pad-center reference line is visible.
+  if(dMin > 0) dMin = 0;
+  if(dMax < 0) dMax = 0;
+  const dPad = Math.max(2, (dMax-dMin)*0.12);
+  const dLo = dMin - dPad, dHi = dMax + dPad;
+  const bSpan = Math.max(1e-9, bMax-bMin);
+  const X = b => padL + (bMax===bMin ? 0.5 : (b-bMin)/bSpan)*pw;
+  const Y = d => padT + ph - (d-dLo)/Math.max(1e-9, dHi-dLo)*ph;
+  // Grid
+  ctx.strokeStyle = 'rgba(255,255,255,0.07)'; ctx.lineWidth = 1;
+  for(let i=0;i<=4;i++){ const y = padT+i*ph/4; ctx.beginPath(); ctx.moveTo(padL,y); ctx.lineTo(padL+pw,y); ctx.stroke(); }
+  // Axes
+  ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+  ctx.beginPath(); ctx.moveTo(padL,padT); ctx.lineTo(padL,padT+ph); ctx.lineTo(padL+pw,padT+ph); ctx.stroke();
+  // Pad-center reference (dr = 0)
+  const yZero = Y(0);
+  ctx.strokeStyle = 'rgba(53,214,255,0.55)'; ctx.setLineDash([4,3]); ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(padL, yZero); ctx.lineTo(padL+pw, yZero); ctx.stroke();
+  ctx.setLineDash([]);
+  // Tick labels
+  ctx.fillStyle = 'rgba(255,255,255,0.55)'; ctx.font = '10px monospace';
+  ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+  for(let i=0;i<=4;i++) ctx.fillText((dLo+i*(dHi-dLo)/4).toFixed(1), padL-6, padT+ph-i*ph/4);
+  ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+  for(let i=0;i<=4;i++) ctx.fillText((bMin+i*bSpan/4).toFixed(0), padL+i*pw/4, padT+ph+6);
+  ctx.fillStyle = '#35d6ff'; ctx.fillText('bias (m)', padL+pw/2, H-14);
+  // Curve through ok points (bias-sorted, so monotone in x)
+  ctx.strokeStyle = '#35d6ff'; ctx.lineWidth = 1.5; ctx.beginPath();
+  let started = false;
+  for(const r of okRows){ const x = X(r.bias), y = Y(r.m.contact.downrange); if(!started){ ctx.moveTo(x,y); started = true; } else ctx.lineTo(x,y); }
+  ctx.stroke();
+  // Points — cyan for ok, red for fail (pinned to bottom, no dr to plot)
+  for(const r of rows){
+    const x = X(r.bias);
+    if(r.ok && r.m && r.m.contact && Number.isFinite(r.m.contact.downrange)){
+      ctx.fillStyle = '#35d6ff'; ctx.beginPath(); ctx.arc(x, Y(r.m.contact.downrange), 3.5, 0, Math.PI*2); ctx.fill();
+    } else {
+      ctx.fillStyle = '#ff4d5e'; ctx.beginPath(); ctx.arc(x, padT+ph-6, 3, 0, Math.PI*2); ctx.fill();
+    }
+  }
+  // Ring best-by-score (score is the ranking the user cares about, not |dr|)
+  const best = S.runs.filter(r => r.ok && r.m && r.m.contact && Number.isFinite(r.m.contact.downrange))
+    .reduce((a,r) => (!a || r.score < a.score) ? r : a, null);
+  if(best){
+    const bx = X(best.bias), by = Y(best.m.contact.downrange), right = bx > W*0.7;
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.arc(bx,by,7,0,Math.PI*2); ctx.stroke();
+    ctx.setLineDash([2,3]); ctx.beginPath(); ctx.moveTo(bx,by); ctx.lineTo(bx,yZero); ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle = '#fff'; ctx.font = '10px monospace';
+    ctx.textAlign = right ? 'right' : 'left'; ctx.textBaseline = 'bottom';
+    ctx.fillText('best '+best.score.toFixed(2)+' @ '+best.bias.toFixed(1)+' (dr='+best.m.contact.downrange.toFixed(1)+'m)', bx+(right?-10:10), by-8);
+  }
 }
 window.addEventListener('resize', () => { if(S.runs.length) drawLandscape(); });
 
