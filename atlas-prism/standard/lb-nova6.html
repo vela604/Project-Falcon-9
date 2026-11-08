@@ -36,7 +36,25 @@
     <div class="hint">locked standard-sequence stacks only</div>
   </section>
 
-  <main id="main" style="display:none">
+    <div class="stage-rail" id="stageRail">
+    <div class="stage-item" data-stage="config">
+      <span class="hex">CONFIG</span>
+      <div class="ttl">Lock stack</div>
+      <div class="desc">Stack + apsides + MECO / G / T + bias range</div>
+    </div>
+    <div class="stage-item" data-stage="scan">
+      <span class="hex">SCAN</span>
+      <div class="ttl">Bias search</div>
+      <div class="desc">Golden-section &mdash; each eval full LB sim from EB capture</div>
+    </div>
+    <div class="stage-item" data-stage="results">
+      <span class="hex">RESULTS</span>
+      <div class="ttl">Best bias + detail</div>
+      <div class="desc">Landing metrics + fuel breakdown + full-mission charts</div>
+    </div>
+  </div>
+
+<main id="main" style="display:none">
     <div class="workgrid">
       <section class="panel" id="configPanel">
         <h2><span class="tag">0x01</span>Setup</h2>
@@ -82,6 +100,29 @@
       <div id="detailPanel" style="display:none"></div>
     </section>
   </main>
+
+  <section class="panel" id="standby">
+    <h2><span class="tag">0x00</span>Standby &middot; awaiting session lock</h2>
+<pre><span class="a">LOCK</span> <span class="d">&mdash;&mdash;&mdash;&mdash;&rsaquo;</span> <span class="v">INIT</span> <span class="d">&mdash;&mdash;&mdash;&mdash;&rsaquo;</span> <span class="m">BIAS SCAN</span> <span class="d">- - &rsaquo;</span> <span class="g">RESULTS</span>
+<span class="d">stack + apsides</span>    <span class="d">SA + EB snapshots</span>    <span class="d">golden-section</span>    <span class="d">best bias + charts</span>
+
+<span class="m">INIT</span> run ascent to SEPARATED_AXIAL, then RTLS to ENTRY_BURN (EB capture)
+<span class="m">SCAN</span> N-bias golden-section sweep &mdash; each eval is full LB sim on EB snapshot
+<span class="m">DETAIL</span> click any row &mdash; LB start, touchdown, fuel breakdown, timeline, 8 charts
+
+<span class="g">&#9658;</span> pick stack + apsides above, press <span class="g">LOCK</span> to begin.</pre>
+  </section>
+
+  <footer class="refbar">
+    <div><span class="k">score</span><span class="f">S = |x|/3 + |vx|/2 + |&theta;|/3 + |&omega;|/3 + |vy|/3 + hop/50 + tilt&#8747;/400 + fuel/20k + time/2k</span> <span class="src">&middot; lower is better</span></div>
+    <div><span class="k">limits</span><span class="f">&theta; &le; 12&deg; &middot; vx &le; 2.5 &middot; vy &le; 5 &middot; &omega; &le; 8.6&deg;/s &middot; x &le; 42.5m &middot; hop &le; 100mm</span></div>
+    <div class="lg"><span class="k">colour</span>
+      <i style="background:var(--cyan)"></i>input
+      <i style="background:var(--amber)"></i>value / cost
+      <i style="background:var(--violet)"></i>phase / orbit
+      <i style="background:var(--green)"></i>ok / best
+      <i style="background:var(--red)"></i>fail</div>
+  </footer>
 </div>
 
 <!-- ===== SIM MODULES ===== -->
@@ -147,6 +188,11 @@ const S = {
   prefixPhases:null, saSimTime:0,
 };
 
+function setStage(name){
+  document.querySelectorAll('.stage-item').forEach(el => {
+    el.classList.toggle('active', el.dataset.stage === name);
+  });
+}
 function setChip(state, phase){
   if(state !== undefined){
     $('stStateN').textContent = state;
@@ -316,6 +362,7 @@ function doLock(){
   $('main').style.display = 'block';
   setChip('ready','—');
   log('Locked: '+stkId+' @ '+apo+'/'+peri+' km', 'ok');
+  setStage('config');
   const _rp = $('resultsPanel'); if(_rp) _rp.style.display = 'block';
   populatePresetSel();
   applyPresetFromSel();
@@ -798,6 +845,7 @@ async function doScan(){
   $('detailPanel').style.display = 'none';
   $('tmEvals').textContent = '0'; setBestDisplay(null, null); $('tmPhase').textContent = 'SCAN';
   setChip('running','SCAN');
+  setStage('scan');
 
   const lo = +$('biasLo').value, hi = +$('biasHi').value, start = +$('biasStart').value, minStep = +$('biasMinStep').value;
   log('Scan: ['+lo+', '+hi+'] start='+start+' minStep='+minStep, 'ok');
@@ -857,6 +905,7 @@ async function doScan(){
     stopElapsedTimer();
     $('scanBtn').disabled = false; $('scanStopBtn').disabled = true; $('initBtn').disabled = false;
     setChip('ready', 'DONE');
+    setStage('results');
   }
 }
 
