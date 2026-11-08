@@ -100,6 +100,13 @@
         <button class="primary" id="manualBtn" disabled>Eval &amp; add</button>
         <span class="dim" style="font-size:11px;">single eval, appended to runs table</span>
       </div>
+      <div class="row">
+        <label>sweep lo <input type="number" id="sweepLo" step="1" value="-850"></label>
+        <label>hi <input type="number" id="sweepHi" step="1" value="-800"></label>
+        <label>N <input type="number" id="sweepN" step="1" min="1" value="11"></label>
+        <button class="primary" id="manualSweepBtn" disabled>Sweep &amp; add</button>
+        <span class="dim" style="font-size:11px;" id="sweepStatus">N includes lo and hi</span>
+      </div>
       <div class="row"><span class="dim" id="initStatus">Not initialised &mdash; run INIT first.</span></div>
     </section>
 
@@ -619,6 +626,7 @@ async function doInit(){
     $('initStatus').innerHTML = '<span class="ok">Ready</span> · SA/EB captured · fuel MECO='+fmt(S.fuelAtMeco,0)+'kg, post-boostback='+fmt(S.fuelAfterBoostback,0)+'kg';
     $('scanBtn').disabled = false;
     $('manualBtn').disabled = false;
+    $('manualSweepBtn').disabled = false;
     setChip('ready'); setStage('init');
     log('Init complete. Ready for bias search.', 'ok');
   } catch(e){
@@ -1102,6 +1110,83 @@ async function doScan(){
     stopElapsedTimer();
     $('scanBtn').disabled = !S.inited; $('scanStopBtn').disabled = true; $('initBtn').disabled = false;
     setChip('ready'); setStage('results');
+  }
+}
+
+// ===== MANUAL SWEEP =====
+// Same logic as doManualEval but iterates a bias sweep: [lo..hi] with N
+// samples, N INCLUDES both endpoints. N=1 → just lo. N=2 → lo, hi. N≥3 →
+// evenly spaced. Each eval flows through the same runBiasEval / scoreLB
+// pipeline and appends to S.runs; charts and table update live per eval.
+async function doManualSweep(){
+  if(S.running) return;
+  if(!S.inited){ log('Run INIT first.', 'warn'); return; }
+  const lo = parseFloat($('sweepLo').value);
+  const hi = parseFloat($('sweepHi').value);
+  const N = parseInt($('sweepN').value, 10);
+  if(!Number.isFinite(lo) || !Number.isFinite(hi) || !Number.isFinite(N) || N < 1){
+    log('Sweep: invalid params (need numeric lo, hi, N\u22651)', 'err'); return;
+  }
+  if(lo > hi){ log('Sweep: need lo \u2264 hi', 'err'); return; }
+
+  const biases = [];
+  if(N === 1) biases.push(+lo.toFixed(4));
+  else { const step = (hi - lo) / (N - 1); for(let i=0;i<N;i++) biases.push(+(lo + i*step).toFixed(4)); }
+
+  S.running = true; S.abort = false;
+  $('manualBtn').disabled = true;
+  $('manualSweepBtn').disabled = true;
+  $('scanBtn').disabled = true;
+  $('initBtn').disabled = true;
+  $('scanStopBtn').disabled = false;   // reuse Stop to abort mid-sweep
+  setChip('running');
+  startElapsedTimer();
+  clearLive();
+
+  log('Sweep: [' + lo + ', ' + hi + '] N=' + N +
+      (N > 1 ? ' step=' + ((hi-lo)/(N-1)).toFixed(3) : ''), 'ok');
+
+  try {
+    for(let i=0;i<biases.length;i++){
+      if(S.abort){ log('Sweep: aborted at ' + i + '/' + biases.length, 'warn'); break; }
+      const b = biases[i];
+      $('sweepStatus').textContent = 'eval ' + (i+1) + '/' + N + ' \u00b7 bias=' + b.toFixed(2);
+      log('Sweep eval ' + (i+1) + '/' + N + ': bias=' + b.toFixed(2));
+      setFlightPhase('', null);
+      const t0 = performance.now();
+      try {
+        const m = await runBiasEval(b, (prog) => { paintLive(prog); });
+        const sc = scoreLB(m);
+        S.evals++; S.evalMs.push(performance.now() - t0);
+        setEvalCount(S.evals);
+        const r = { bias: b, score: sc.score, ok: !!sc.ok, fail: sc.fail, m, parts: sc.parts };
+        S.runs.push(r);
+        setFlightPhase('TOUCHDOWN', r.ok ? 'ok' : 'bad');
+        drawLive(m);
+        drawLandscape();
+        const runBest = S.runs.filter(x => x.ok).reduce((a,x) => x.score < a.score ? x : a, {score: Infinity});
+        if(runBest.score < Infinity) setBestDisplay(runBest.bias, runBest.score);
+        const _dr = (r.m && r.m.contact) ? r.m.contact.downrange : NaN;
+        const _drS = Number.isFinite(_dr) ? ' dr=' + _dr.toFixed(1) + 'm' : '';
+        const _lbO = (r.m && Number.isFinite(r.m.lb_overshoot_m)) ? r.m.lb_overshoot_m : NaN;
+        const _lbOS = Number.isFinite(_lbO) ? ' lbOver=' + _lbO.toFixed(2) + 'm' : '';
+        log('  \u2192 bias=' + b.toFixed(2) + ' score=' + sc.score.toFixed(3) + _drS + _lbOS + (sc.fail ? ' [' + sc.fail + ']' : ''), r.ok ? 'ok' : 'warn');
+      } catch(e){
+        log('Sweep eval error @ bias=' + b.toFixed(2) + ': ' + e.message, 'err');
+      }
+      if(i < biases.length - 1) await yieldToBrowser();
+    }
+    renderResults();
+  } finally {
+    S.running = false;
+    stopElapsedTimer();
+    $('manualBtn').disabled = !S.inited;
+    $('manualSweepBtn').disabled = !S.inited;
+    $('scanBtn').disabled = !S.inited;
+    $('initBtn').disabled = false;
+    $('scanStopBtn').disabled = true;
+    setChip('ready');
+    $('sweepStatus').textContent = 'N includes lo and hi';
   }
 }
 
@@ -1635,6 +1720,7 @@ function boot(){
   $('scanBtn').addEventListener('click', doScan);
   $('scanStopBtn').addEventListener('click', () => { S.abort = true; log('Stop requested', 'warn'); });
   $('manualBtn').addEventListener('click', doManualEval);
+  $('manualSweepBtn').addEventListener('click', doManualSweep);
   $('presetLoad').addEventListener('click', () => { applyPresetFromSel(); markStale(); });
   ['cfgMeco','cfgG','cfgT'].forEach(id => $(id).addEventListener('input', markStale));
   $('presetSel').addEventListener('change', markStale);
