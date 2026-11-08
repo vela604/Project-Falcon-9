@@ -144,6 +144,7 @@ const S = {
   runs:[], searchResult:null, selectedIdx:-1,
   running:false, abort:false, evals:0,
   liveChart:null, detailFull:null, detailZoom:null,
+  prefixPhases:null, saSimTime:0,
 };
 
 function setChip(state, phase){
@@ -380,9 +381,49 @@ async function doInit(){
       setChip('running','RTLS');
       console.log = function(){}; console.error = function(){};
       let ebRes;
+
+      // v2.2: capture ALL prefix phase transitions (FLIP, BOOSTBACK, PRE_ENTRY_*)
+      // during this SA->EB run. These are bias-independent (bias only affects
+      // ENTRY_BURN_IMPACT_TARGET_M consumed AT entry burn), so capturing once
+      // and prepending to each eval's mission timeline gives full mission view
+      // without re-running FLIP/BOOSTBACK per bias.
+      S.prefixPhases = [];
+      let lastPrefix = null;
+      S.saSimTime = saRes.simTime;
       try {
         ebRes = await runUntil(
-          () => { const gs = Guidance.getGuideStatus(); return gs && gs.rtlsPhase === 'ENTRY_BURN' ? gs : null; },
+          () => {
+            const gs = Guidance.getGuideStatus();
+            if(!gs) return null;
+            const ph = gs.rtlsPhase;
+            if(ph && ph !== lastPrefix){
+              const bB2 = findBooster();
+              if(bB2){
+                const r2 = Math.hypot(bB2.rx, bB2.ry);
+                const hAGL2 = r2 - CONFIG.EARTH_RADIUS - (CONFIG.LAUNCH_SITE_ALTITUDE||0);
+                const vr2 = r2 > 0 ? (bB2.vx*bB2.rx + bB2.vy*bB2.ry)/r2 : 0;
+                const vt2 = r2 > 0 ? (bB2.vx*bB2.ry - bB2.vy*bB2.rx)/r2 : 0;
+                const vtG2 = vt2 - CONFIG.EARTH_OMEGA*r2;
+                const lv2 = Math.atan2(-bB2.rx, bB2.ry);
+                let thL2 = bB2.theta - lv2;
+                while(thL2 > Math.PI) thL2 -= 2*Math.PI;
+                while(thL2 < -Math.PI) thL2 += 2*Math.PI;
+                S.prefixPhases.push({
+                  phase: ph,
+                  t: +state.simTime.toFixed(2),
+                  tRel: +(state.simTime - saRes.simTime).toFixed(1),
+                  altKm: +(hAGL2/1000).toFixed(3),
+                  vy: +vr2.toFixed(1),
+                  vx: +vtG2.toFixed(1),
+                  thetaLocal: +(thL2 * 180/Math.PI).toFixed(2),
+                  omega: +(bB2.omega * 180/Math.PI).toFixed(2),
+                  fuel: +fuelOf(bB2).toFixed(1),
+                });
+              }
+              lastPrefix = ph;
+            }
+            return gs.rtlsPhase === 'ENTRY_BURN' ? gs : null;
+          },
           1200, 'EB',
           (i,n,t) => { $('initStatus').textContent = 'SA → ENTRY_BURN… t='+fmt(t,1)+'s ('+Math.round(100*i/n)+'%)'; }
         );
@@ -391,7 +432,7 @@ async function doInit(){
       S.ebSnap = captureSnap();
       const bB_eb = findBooster();
       S.fuelAfterBoostback = bB_eb ? fuelOf(bB_eb) : 0;
-      log('EB captured at t='+fmt(ebRes.simTime,1)+'s fuel='+fmt(S.fuelAfterBoostback,0)+'kg', 'ok');
+      log('EB captured at t='+fmt(ebRes.simTime,1)+'s fuel='+fmt(S.fuelAfterBoostback,0)+'kg prefix_phases='+S.prefixPhases.length, 'ok');
 
     } finally {
       console.log = _origLog; console.error = _origErr;
@@ -415,7 +456,7 @@ async function doInit(){
 
 // ===== BIAS EVAL (async, yielding) =====
 // ===== BIAS EVAL (rich data capture) =====
-async function runBiasEval(bias){
+async function runBiasEval(bias, onTick){
   const g = deepClone(S.ebSnap.guidanceState);
   const cfg = g.guideConfigs && g.guideConfigs.landbackV1;
   if(cfg && cfg.rtls) cfg.rtls.ENTRY_BURN_IMPACT_TARGET_M = bias;
@@ -424,7 +465,10 @@ async function runBiasEval(bias){
 
   const m = {
     bias, end:'cap',
-    phases: [], lbStart: null, contact: null,
+    // v2.2: prefix (FLIP, BOOSTBACK, PRE_ENTRY_*) captured once during init,
+    // prepended here. Bias affects only ENTRY_BURN onward, so prefix is constant.
+    phases: S.prefixPhases ? S.prefixPhases.map(p => Object.assign({}, p)) : [],
+    lbStart: null, contact: null,
     fuel: { start: S.fuelAtMeco, after_boostback: S.fuelAfterBoostback },
     totalTimeS: 0, missionTimeS: 0,
     hop_mm: 0, tiltInt: 0, peakGimbal: 0, peakTilt: 0,
@@ -586,6 +630,9 @@ async function runBiasEval(bias){
       prevOmega = bB.omega; prevVx = vtG; prevVy = vr; prevT = simT;
 
       if(simT - tStart > capS){ m.end = 'cap'; break; }
+      if(onTick && i % 40 === 0){
+        try { onTick({ t: simT - tStart, phase: ph || '?', altKm: hAGL/1000, vy: vr, vx: vtG }); } catch(e){}
+      }
       if(i % 300 === 0) await yieldToBrowser();
     }
   } finally {
@@ -728,15 +775,30 @@ async function doScan(){
   const evalFn = async bias => {
     if(S.abort) throw new Error('aborted');
     log('Eval bias='+bias.toFixed(1));
-    $('tmPhase').textContent = 'EVAL '+bias.toFixed(0);
+    const evalN = S.evals + 1;
+    $('tmPhase').textContent = 'EVAL ' + bias.toFixed(1) + ' · #' + evalN;
+    const onTick = (prog) => {
+      $('tmPhase').textContent = 'EVAL ' + bias.toFixed(1) + ' · #' + evalN
+        + ' · t=' + prog.t.toFixed(0) + 's · ' + (prog.phase || '?').replace(/_/g,' ')
+        + ' · alt=' + prog.altKm.toFixed(1) + 'km';
+    };
     try {
-      const m = await runBiasEval(bias);
+      const m = await runBiasEval(bias, onTick);
       const sc = scoreLB(m);
       S.evals++;
       $('tmEvals').textContent = S.evals;
       const r = { bias, score: sc.score, ok: !!sc.ok, fail: sc.fail, m, parts: sc.parts };
       S.runs.push(r);
       drawLive(m);
+      // live best update as scan progresses
+      if(sc.ok){
+        const curBest = S.searchResult && S.searchResult.best ? S.searchResult.best.score : Infinity;
+        const runBest = S.runs.filter(x => x.ok).reduce((a,x) => x.score < a.score ? x : a, {score: Infinity});
+        if(runBest && runBest.score < Infinity){
+          $('tmBest').textContent = runBest.bias.toFixed(2);
+          $('tmScore').textContent = runBest.score.toFixed(2);
+        }
+      }
       return r;
     } catch(e){
       log('Eval error: '+e.message, 'err');

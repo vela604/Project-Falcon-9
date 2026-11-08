@@ -126,3 +126,67 @@ header h1 em{font-style:normal;color:transparent;-webkit-text-stroke:1px #fff;}
 
 /* ===== LB NOVA-6: engine-theme.css hides #resultsPanel by default ===== */
 #resultsPanel{display:block !important;}
+
+/* ===== LB NOVA-6 v2.2: energy colours ===== */
+
+/* header state chip: alive colours per state */
+body[data-state=idle] #stState::before{background:var(--faint);}
+body[data-state=idle] #stState b{color:var(--dim);}
+body[data-state=ready] #stState::before{background:var(--green);box-shadow:0 0 6px var(--green);}
+body[data-state=ready] #stState b{color:var(--green);}
+body[data-state=running] #stState::before{background:var(--amber);box-shadow:0 0 8px var(--amber);animation:stpulse 1.2s ease-in-out infinite;}
+body[data-state=running] #stState b{color:var(--amber);}
+@keyframes stpulse{0%,100%{opacity:1;}50%{opacity:0.35;}}
+
+#stPhase::before{background:var(--violet);}
+#stPhase b{color:var(--violet);}
+
+/* telemetry values coloured by semantic */
+#tmEvals{color:var(--cyan);}
+#tmBest{color:var(--green);}
+#tmScore{color:var(--amber);}
+#tmPhase{color:var(--violet);font-size:12px !important;}
+
+/* live log level colours already via engine-theme; add subtle life */
+#logFeed > div{border-left-width:2px;}
+#logFeed > div.lv-ok{border-left-color:var(--green);}
+#logFeed > div.lv-warn{border-left-color:var(--amber);}
+#logFeed > div.lv-err{border-left-color:var(--red);}
+
+/* results table: semantic column tinting */
+#resultsTable thead th:nth-child(2){color:var(--cyan);}
+#resultsTable thead th:nth-child(3){color:var(--amber);}
+#resultsTable thead th:nth-child(4){color:var(--dim);}
+#resultsTable thead th:nth-child(n+5){color:var(--violet);}
+#resultsTable td:nth-child(2){color:var(--cyan);font-weight:600;}
+#resultsTable td:nth-child(3){color:var(--amber);font-weight:600;}
+#resultsTable td:nth-child(n+5){color:rgba(255,255,255,.85);}
+#resultsTable tr.best td:nth-child(3){color:var(--green);}
+
+/* status cell: bold semantic */
+#resultsTable tr.best td:nth-child(4){color:var(--green);font-weight:700;}
+#resultsTable tr.fail td:nth-child(4){color:var(--red);font-weight:700;}
+#resultsTable tr td:nth-child(4){color:var(--dim);}
+
+/* detail section headers with more punch */
+#detailPanel h4{color:#fff;font-weight:700;letter-spacing:.22em;}
+#detailPanel h4::before{background:var(--violet);box-shadow:0 0 4px var(--violet);}
+
+/* KPI grid with distinct cell tints */
+#detailPanel .kpi-grid{border-color:var(--line2);}
+#detailPanel .kpi b.c{color:var(--cyan);}
+#detailPanel .kpi b.a{color:var(--amber);}
+#detailPanel .kpi b.g{color:var(--green);}
+#detailPanel .kpi b.r{color:var(--red);}
+
+/* chart cells */
+.chart-cell{background:#000;border:1px solid var(--line2);}
+.chart-cell:hover{border-color:var(--cyan);}
+
+/* timeline table: phase column coloured */
+.timeline-table td:first-child{color:var(--violet);font-weight:600;}
+.timeline-table tr:hover td{background:rgba(255,255,255,.04);}
+
+/* live chart glow border */
+.chart-container{border-color:var(--line2);}
+body[data-state=running] .chart-container{border-color:var(--amber);box-shadow:0 0 8px rgba(255,176,32,.15);}
