@@ -935,8 +935,10 @@ async function searchBracket(evalFn, o, onProgress){
       break;
     }
 
-    // Direction from dr sign (user spec): undershoot → -bias, overshoot → +bias.
-    const dir = p.dr < 0 ? -1 : 1;
+    // Direction that reduces |dr|. Empirically +bias → +dr (measured -726.8→+84.6,
+    // -696.8→+115.3, -666.8→+144.9 — same slope ~1m/unit). So to walk dr toward 0:
+    // overshoot (dr>0) → bias more negative; undershoot (dr<0) → bias more positive.
+    const dir = p.dr < 0 ? 1 : -1;
     const nextB = round(clamp(p.bias + dir * probeStep));
     if(nextB === p.bias) break;   // hit range bound
     prev = { bias: p.bias, dr: p.dr, sign: p.sign };
