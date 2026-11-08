@@ -4361,9 +4361,17 @@ function _bbTokens(cfg) {
             _st.preEntryErrDeg = thetaErr * R2D;
             _st.preEntryOmegaDegS = d.omega * R2D;
 
+            // v2.1 PRE_ENTRY_DRIFT gate: coast through most of DRIFT phase.
+            // Prior version fired RCS continuously at 20-30% duty for the full
+            // ~200s coast (124km -> 90km), burning ~400 kg propellant for
+            // near-zero correction. Vacuum GG torque <1 Nm; attitude holds.
+            const DRIFT_GATE_DEG = 5.0;
+            const DRIFT_GATE_RATE = 0.02;   // rad/s = 1.15 deg/s
+            const coastOk = Math.abs(thetaErr) < DRIFT_GATE_DEG * Math.PI/180
+                         && Math.abs(omegaErr) < DRIFT_GATE_RATE;
             const OMEGA_DEADBAND = 0.001;
             let dutyUsed = 0;
-            if (Math.abs(omegaErr) < OMEGA_DEADBAND) {
+            if (coastOk || Math.abs(omegaErr) < OMEGA_DEADBAND) {
               _send(Guidance.cmdRcsDuty(null, idx));
               _st.lastRcsTorque = 0;
             } else {
