@@ -85,7 +85,7 @@
       <div class="grp">bias search window <em>ENTRY_BURN_IMPACT_TARGET_M, metres</em></div>
       <div class="row">
         <label>bias lo <input type="number" id="biasLo" step="1" value="-900"></label>
-        <label>bias hi <input type="number" id="biasHi" step="1" value="-600"></label>
+        <label>bias hi <input type="number" id="biasHi" step="1" value="200"></label>
         <label>start <input type="number" id="biasStart" step="1" value="-750"></label>
         <label>probe step <input type="number" id="biasStep" step="1" min="1" value="30"></label>
         <label>min step <input type="number" id="biasMinStep" step="0.5" min="0.1" value="2.5"></label>
@@ -829,15 +829,16 @@ async function runBiasEval(bias, onTick){
 const LIMITS = { x:42.5, vx:2.5, vy:5, theta:12, omega:8.6, hop:100 };
 function scoreLB(m){
   const c = m.contact;
-  if(!c) return { score: 1e6, fail: 'no-contact' };
-  if(c.crashed) return { score: 1e6, fail: 'crashed' };
-  if(!c.landed) return { score: 1e6, fail: 'not-landed' };
-  if(Math.abs(c.thetaLocal) > LIMITS.theta) return { score: 1e6, fail: 'tilt' };
-  if(Math.abs(c.vx) > LIMITS.vx) return { score: 1e6, fail: 'vx' };
-  if(Math.abs(c.vy) > LIMITS.vy) return { score: 1e6, fail: 'vy' };
-  if(Math.abs(c.omega) > LIMITS.omega) return { score: 1e6, fail: 'omega' };
-  if(Math.abs(c.downrange) > LIMITS.x) return { score: 1e6, fail: 'downrange' };
-  if(m.hop_mm > LIMITS.hop) return { score: 1e6, fail: 'hop' };
+  const dr = c ? c.downrange : NaN;
+  if(!c) return { score: 1e6, fail: 'no-contact', downrange: NaN };
+  if(c.crashed) return { score: 1e6, fail: 'crashed', downrange: dr };
+  if(!c.landed) return { score: 1e6, fail: 'not-landed', downrange: dr };
+  if(Math.abs(c.thetaLocal) > LIMITS.theta) return { score: 1e6, fail: 'tilt:' + c.thetaLocal.toFixed(2), downrange: dr };
+  if(Math.abs(c.vx) > LIMITS.vx) return { score: 1e6, fail: 'vx:' + c.vx.toFixed(2), downrange: dr };
+  if(Math.abs(c.vy) > LIMITS.vy) return { score: 1e6, fail: 'vy:' + c.vy.toFixed(2), downrange: dr };
+  if(Math.abs(c.omega) > LIMITS.omega) return { score: 1e6, fail: 'omega:' + c.omega.toFixed(2), downrange: dr };
+  if(Math.abs(c.downrange) > LIMITS.x) return { score: 1e6, fail: 'downrange:' + c.downrange.toFixed(1), downrange: dr };
+  if(m.hop_mm > LIMITS.hop) return { score: 1e6, fail: 'hop:' + m.hop_mm.toFixed(1), downrange: dr };
 
   const fuelUsedKg = (Number.isFinite(m.fuel.start) && Number.isFinite(m.fuel.remaining))
     ? Math.max(0, m.fuel.start - m.fuel.remaining) : 0;
@@ -855,10 +856,16 @@ function scoreLB(m){
   };
   const score = parts.x + parts.vx + parts.theta + parts.omega
               + parts.vy + parts.hop + parts.tiltInt + parts.fuel + parts.time;
-  return { score, ok: true, parts };
+  return { score, ok: true, parts, downrange: dr };
 }
 
-// ===== SEARCH: bracket + golden =====
+// ===== SEARCH: walk by downrange sign → bracket → golden =====
+// Score-based downhill walk can't work in a hard-fail region: every score is 1e6, so
+// comparison gives no direction signal. Downrange (contact.x offset from pad, +east/
+// overshoot, -west/undershoot) gives a real signed gradient even when score is flat.
+// Walk direction from dr sign (undershoot → more negative bias, overshoot → more
+// positive bias), bracket when sign flips (crossed zero), then golden-section on
+// SCORE inside the bracket.
 async function searchBracket(evalFn, o, onProgress){
   const round = b => Math.round(b*10)/10;
   const cache = new Map();
@@ -873,46 +880,104 @@ async function searchBracket(evalFn, o, onProgress){
     }
     return cache.get(b);
   };
+
+  // Probe: { bias, score, ok, dr, sign }. dr = signed downrange from contact (NaN if no contact).
+  const probe = async b => {
+    const r = await ev(b);
+    const dr = (r.m && r.m.contact && Number.isFinite(r.m.contact.downrange))
+      ? r.m.contact.downrange : NaN;
+    const sign = Number.isFinite(dr) ? (dr >= 0 ? 1 : -1) : 0;
+    return { bias: r.bias, score: r.score, ok: !!r.ok, dr, sign, r };
+  };
+
   const start = round(clamp(o.start != null ? o.start : (o.lo+o.hi)/2));
-  const r0 = await ev(start);
-  if(stop()) return finish();
-  const rp = await ev(start + o.step);
-  const rm = await ev(start - o.step);
-  let a, c;
-  if(r0.score <= rp.score && r0.score <= rm.score){ a = rm.bias; c = rp.bias; }
-  else {
-    const dir = (rp.score < rm.score) ? 1 : -1;
-    let prev = r0, cur = (dir > 0 ? rp : rm), st = o.step;
-    a = (dir > 0 ? rm.bias : rp.bias); c = null;
-    while(!stop()){
-      if(cur.bias <= o.lo + 1e-9 || cur.bias >= o.hi - 1e-9){ a = prev.bias; c = cur.bias; break; }
-      st *= 2;
-      const nxt = await ev(cur.bias + dir * st);
-      if(nxt.bias === cur.bias){ a = prev.bias; c = cur.bias; break; }
-      if(nxt.score > cur.score){ a = prev.bias; c = nxt.bias; break; }
-      prev = cur; cur = nxt;
-    }
-    if(a > c){ const t = a; a = c; c = t; }
-  }
-  const PHI = 0.6180339887;
-  let x1 = c - PHI*(c-a), x2 = a + PHI*(c-a), f1 = null, f2 = null;
-  while(!stop() && (c-a) > o.minStep){
-    if(f1 == null) f1 = (await ev(x1)).score;
-    if(f2 == null) f2 = (await ev(x2)).score;
+  const step0 = o.step;
+  const maxIter = o.maxIter || 32;
+  const minStep = o.minStep;
+
+  // ---- Phase 1: coarse walk. Direction from dr sign. Bracket when sign flips. ----
+  let probeStep = step0;
+  let bias = start;
+  let prev = null;
+  let bracketLo = null, bracketHi = null;
+  const feasible = [];
+
+  for(let iter=0; iter<maxIter; iter++){
     if(stop()) break;
-    if(f1 <= f2){ c = x2; x2 = x1; f2 = f1; x1 = c - PHI*(c-a); f1 = null; }
-    else { a = x1; x1 = x2; f1 = f2; x2 = a + PHI*(c-a); f2 = null; }
+    const p = await probe(bias);
+
+    if(p.ok){
+      feasible.push({ bias: p.bias, dr: p.dr });
+      log('[search] feasible @ bias='+p.bias.toFixed(1)+' dr='+(Number.isFinite(p.dr)?p.dr.toFixed(1):'?')+'m', 'ok');
+      probeStep = Math.max(minStep, probeStep * 0.5);
+      const nextB = round(clamp(p.bias + probeStep));
+      if(nextB === p.bias) break;
+      if(p.sign !== 0) prev = { bias: p.bias, dr: p.dr, sign: p.sign };
+      bias = nextB;
+      continue;
+    }
+
+    if(p.sign === 0){
+      // No contact / no downrange — no sign signal. Keep walking in last direction, wider.
+      const dir = (prev && prev.sign) ? prev.sign : 1;
+      const nextB = round(clamp(p.bias + dir * probeStep * 2));
+      if(nextB === p.bias) break;
+      bias = nextB;
+      prev = prev ? { bias: p.bias, dr: prev.dr, sign: prev.sign } : { bias: p.bias, dr: NaN, sign: 0 };
+      continue;
+    }
+
+    // Bracket check — real sign flip between consecutive probes.
+    if(prev && prev.sign !== 0 && p.sign !== prev.sign){
+      bracketLo = Math.min(prev.bias, p.bias);
+      bracketHi = Math.max(prev.bias, p.bias);
+      log('[search] bracket: ['+bracketLo.toFixed(1)+', '+bracketHi.toFixed(1)+'] (dr '+prev.dr.toFixed(1)+'→'+p.dr.toFixed(1)+'m)', 'ok');
+      break;
+    }
+
+    // Direction from dr sign (user spec): undershoot → -bias, overshoot → +bias.
+    const dir = p.dr < 0 ? -1 : 1;
+    const nextB = round(clamp(p.bias + dir * probeStep));
+    if(nextB === p.bias) break;   // hit range bound
+    prev = { bias: p.bias, dr: p.dr, sign: p.sign };
+    bias = nextB;
   }
-  return finish();
-  function finish(){
-    const all = [...cache.values()].sort((p,q)=>p.bias-q.bias);
-    const ranked = [...all].sort((p,q)=>p.score-q.score);
-    const best = ranked[0];
-    let lo = null, hi = null;
-    for(const r of all){ if(r.bias < best.bias) lo = r; if(r.bias > best.bias && !hi) hi = r; }
-    const bracketed = !!(lo && hi && lo.score > best.score && hi.score > best.score);
-    return { best, ranked, all, lo, hi, bracketed };
+
+  // ---- Phase 2: golden-section refine on SCORE inside bracket (or feasible region). ----
+  const goldenRefine = async (lo, hi) => {
+    if(hi - lo <= minStep) return;
+    log('[search] phase2 golden on ['+lo.toFixed(1)+', '+hi.toFixed(1)+']', 'ok');
+    const PHI = 0.6180339887;
+    let a = lo, c = hi;
+    let x1 = c - PHI*(c-a), x2 = a + PHI*(c-a);
+    let f1 = null, f2 = null;
+    while(!stop() && (c-a) > minStep){
+      if(f1 == null) f1 = (await ev(x1)).score;
+      if(f2 == null) f2 = (await ev(x2)).score;
+      if(f1 <= f2){ c = x2; x2 = x1; f2 = f1; x1 = c - PHI*(c-a); f1 = null; }
+      else { a = x1; x1 = x2; f1 = f2; x2 = a + PHI*(c-a); f2 = null; }
+    }
+  };
+
+  if(bracketLo !== null && bracketHi !== null){
+    await goldenRefine(bracketLo, bracketHi);
+  } else if(feasible.length >= 2){
+    const bs = feasible.map(f => f.bias);
+    await goldenRefine(Math.min(...bs), Math.max(...bs));
+  } else if(feasible.length === 1){
+    const b = feasible[0].bias;
+    await goldenRefine(clamp(b - step0), clamp(b + step0));
+  } else {
+    log('[search] no bracket, no feasible — widen bias range and retry', 'warn');
   }
+
+  const all = [...cache.values()].sort((p,q)=>p.bias-q.bias);
+  const ranked = [...all].sort((p,q)=>p.score-q.score);
+  const best = ranked[0];
+  let loR = null, hiR = null;
+  for(const r of all){ if(r.bias < best.bias) loR = r; if(r.bias > best.bias && !hiR) hiR = r; }
+  const bracketed = !!(loR && hiR && loR.score > best.score && hiR.score > best.score);
+  return { best, ranked, all, lo: loR, hi: hiR, bracketed };
 }
 
 // ===== RUN SCAN =====
@@ -977,7 +1042,7 @@ async function doScan(){
     const R = await searchBracket(evalFn,
       { lo, hi, step, minStep, start, stop: () => S.abort },
       (r) => {
-        log('  → bias='+r.bias.toFixed(1)+' score='+r.score.toFixed(2)+(r.fail ? ' ['+r.fail+']' : ''), r.ok ? 'ok' : 'warn');
+        const _dr=(r.m&&r.m.contact)?r.m.contact.downrange:NaN; const _drS=Number.isFinite(_dr)?' dr='+_dr.toFixed(1)+'m':''; log('  → bias='+r.bias.toFixed(1)+' score='+r.score.toFixed(2)+_drS+(r.fail ? ' ['+r.fail+']' : ''), r.ok ? 'ok' : 'warn');
       });
     S.searchResult = R;
     setBestDisplay(R.best.ok ? R.best.bias : null, R.best.ok ? R.best.score : null);
