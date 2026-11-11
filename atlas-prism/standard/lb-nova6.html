@@ -98,8 +98,14 @@
         <label>step <input type="number" id="altStep" step="0.1" min="0.1" value="0.5"></label>
       </div>
       <div class="row">
+        <label>V_TD margin m <input type="number" id="lbMargin" step="0.1" min="0" placeholder="preset"></label>
+        <label>H_STALL m <input type="number" id="lbStall" step="0.1" min="0" placeholder="preset"></label>
+        <span class="dim" style="font-size:11px;">blank = preset value &middot; applies to every eval</span>
+      </div>
+      <div class="row">
         <button class="primary" id="altBtn" disabled>Find LB altitude</button>
         <label><input type="checkbox" id="altChain" checked style="width:auto"> then bias search</label>
+        <button class="primary" id="dumpBtn" disabled>Copy last LB ground log</button>
       </div>
 
       <div class="row">
@@ -180,7 +186,7 @@
 
 <!-- ==================== REFERENCE ==================== -->
 <footer class="refbar">
-  <div><span class="k">score</span><span class="f">S = |x|/3 + |vx|/2 + |&theta;|/3 + |&omega;|/3 + |vy|/3 + hop/50 + tilt&#8747;/400 + fuel/20k + time/2k</span> <span class="src">&middot; lower is better</span></div>
+  <div><span class="k">score</span><span class="f">S = |x|/1 + |vx|/0.1 + deadband(&theta;, &omega;, vy, hop, mean tilt)</span> <span class="src">&middot; lower is better &middot; no fuel/time &middot; scores within 0.05 tie</span></div>
   <div><span class="k">limits</span><span class="f">&theta; &le; 12&deg; &middot; vx &le; 2.5 &middot; vy &le; 5 &middot; &omega; &le; 8.6&deg;/s &middot; x &le; 42.5 m &middot; hop &le; 100 mm</span> <span class="src">&middot; any breach = hard fail (1e6)</span></div>
   <div><span class="k">keys</span><kbd>Ctrl</kbd>+<kbd>Enter</kbd> run bias search</div>
   <div class="lg"><span class="k">colour</span>
@@ -275,7 +281,7 @@ const S = {
   running:false, abort:false, evals:0, evalMs:[],
   liveChart:null, prefixPhases:null, saSimTime:0,
   stage:'config', lastWindow:null,
-  altRuns:[], altBest:null,
+  altRuns:[], altBest:null, altTied:[], lastEval:null,
 };
 
 // Current LB ignition altitude (km) from the Setup input; null = leave preset value alone.
@@ -675,6 +681,13 @@ async function runBiasEval(bias, onTick, altKm){
     if(cfg && cfg.rtls) cfg.rtls.LANDING_BURN_ALT_KM = altKm;
     if(g.lbRtlsBlock && g.lbRtlsBlock.constants) g.lbRtlsBlock.constants.LANDING_BURN_ALT_KM = altKm;
   }
+  // Optional anti-stall overrides (same path): blank input = leave the preset value alone.
+  const ovr = { LANDING_BURN_V_TD_MARGIN_M: parseFloat($('lbMargin').value), LANDING_BURN_H_STALL_M: parseFloat($('lbStall').value) };
+  for(const k of Object.keys(ovr)){
+    if(!Number.isFinite(ovr[k])) continue;
+    if(cfg && cfg.rtls) cfg.rtls[k] = ovr[k];
+    if(g.lbRtlsBlock && g.lbRtlsBlock.constants) g.lbRtlsBlock.constants[k] = ovr[k];
+  }
   restoreSnap(S.ebSnap, g);
 
   const m = {
@@ -696,7 +709,7 @@ async function runBiasEval(bias, onTick, altKm){
   let prevGimbalSat = false, prevThrustGap = false, prevLegs = false;
   let prevOmega = null, prevVx = null, prevVy = null, prevT = null;
   let sampleAccum = 0, postContactAccum = 0;
-  let fMaxN = 0;   // max thrust authority (N) of engines lit during LB
+  let fMaxN = 0, fMinN = 0;   // thrust authority (N) of engines lit during LB
   const capS = 200, postS = 3;
   const tStart = state.simTime;
   const maxTicks = Math.ceil(capS / DT());
@@ -763,11 +776,15 @@ async function runBiasEval(bias, onTick, altKm){
 
       // LB peak metrics
       if(ph === 'LANDING_BURN'){
-        let fm = 0;
+        let fm = 0, fn = 0;
         for(const e of (bB.engines || [])){
-          if((e.massFlowRate || 0) > 0 || (e.targetMassFlowRate || 0) > 0) fm += (e.maxMassFlowRate || 0) * (e.Ve || 0);
+          if((e.massFlowRate || 0) > 0 || (e.targetMassFlowRate || 0) > 0){
+            fm += (e.maxMassFlowRate || 0) * (e.Ve || 0);
+            fn += (e.minMassFlowRate || 0) * (e.Ve || 0);
+          }
         }
         if(fm > fMaxN) fMaxN = fm;
+        if(fn > fMinN) fMinN = fn;
         const gAbs = Math.abs(gimbAct);
         if(gAbs > m.peakGimbal) m.peakGimbal = gAbs;
         if(Math.abs(thDeg) > m.peakTilt) m.peakTilt = Math.abs(thDeg);
@@ -809,6 +826,7 @@ async function runBiasEval(bias, onTick, altKm){
         m.contact = {
           t: +simT.toFixed(2), altAGL: +hAGL.toFixed(3), altKm: +(hAGL/1000).toFixed(3),
           downrange: +xp.toFixed(3), vx: +vtG.toFixed(3), vy: +vr.toFixed(3),
+          vyImpact: prevVy != null ? +prevVy.toFixed(3) : null,
           thetaLocal: +thDeg.toFixed(3), omega: +omDeg.toFixed(3), fuel: +fuel.toFixed(1),
           crashed: !!(bB.crashed || state.crashed), landed: !!bB.landed,
         };
@@ -845,6 +863,7 @@ async function runBiasEval(bias, onTick, altKm){
           theta: +thDeg.toFixed(3), omega: +omDeg.toFixed(3),
           gimbal: +gimbAct.toFixed(3), x: +xp.toFixed(2),
           thr: Math.round(thrAct/1000), fuel: +fuel.toFixed(1),
+          tc: Math.round(thrCmd/1000), ld: bB.landed ? 1 : 0, cr: bB.crashed ? 1 : 0,
         });
       }
 
@@ -867,8 +886,32 @@ async function runBiasEval(bias, onTick, altKm){
     m.fuel.remaining = +m.fuel.after_LB.toFixed(0);
   }
   m.hop_mm = +(m.hop_mm * 1000).toFixed(2);
+  S.lastEval = m; $('dumpBtn').disabled = false;
   m.maxQLB = +(m.maxQLB / 1000).toFixed(2);
   m.maxGLB = +m.maxGLB.toFixed(2);
+
+  // Final approach + stall-bounce. hEff ~ h - gRef (gRef = rest height of the hull ref, ~legExt).
+  // finalApproachS: time from first sample within 1.5 m of rest until the contact flag (normal ~2-3 s).
+  // bounceM: how high it climbs back up after first stopping/rising near the ground (stall-bounce).
+  try {
+    const lbG = (m.samples || []).filter(sp => sp.phase === 'LANDING_BURN');
+    if(m.contact && lbG.length >= 5){
+      const gRef = Math.min.apply(null, lbG.map(sp => sp.h * 1000));          // m
+      const ti = lbG.findIndex(sp => sp.h * 1000 <= gRef + 1.5);
+      if(ti >= 0){
+        const after = lbG.slice(ti);
+        m.finalApproachS = +Math.max(0, m.contact.t - after[0].t).toFixed(1);
+        m.gRefM = +gRef.toFixed(2);
+        const si = after.findIndex(sp => sp.vy >= -0.05);                      // stopped or rising
+        if(si >= 0){
+          const sh = after[si].h * 1000;
+          m.bounceM = +(Math.max.apply(null, after.slice(si).map(sp => sp.h * 1000)) - sh).toFixed(1);
+          m.stallT = after[si].t; m.stallHEff = +(sh - gRef).toFixed(2);
+          if(m.bounceM > 0.5) m.events.push({ t: after[si].t, kind: 'stall', msg: 'stalled at hEff~' + m.stallHEff + ' m, climbed ' + m.bounceM + ' m, contact ' + m.finalApproachS + ' s after entering final 1.5 m' });
+        } else m.bounceM = 0;
+      }
+    }
+  } catch(e) {}
 
   // LB thrust-authority telemetry (main burn only: skip 2 s spool-in and the last 30 m).
   // Fmax from engine maxMassFlowRate*Ve if present, else the peak thrust seen.
@@ -883,6 +926,8 @@ async function runBiasEval(bias, onTick, altKm){
         m.lbThr = {
           fMaxKN: +fMaxKN.toFixed(0),
           fMaxFromProps: fMaxN > 0,
+          fMinKN: +(fMinN / 1000).toFixed(0),
+          minFrac: fMinN > 0 ? mainS.filter(sp => sp.thr <= 1.05 * fMinN / 1000).length / mainS.length : 0,
           avgFrac: fr.reduce((a, x) => a + x, 0) / fr.length,
           satFrac: fr.filter(x => x >= 0.97).length / fr.length,
           gimSatFrac: mainS.filter(sp => Math.abs(sp.gimbal) >= 7.9).length / mainS.length,
@@ -922,10 +967,20 @@ async function runBiasEval(bias, onTick, altKm){
   return m;
 }
 
-// ===== SCORING (fixed weights, no UI) =====
-// x and vx dominate (landing accuracy); theta/omega are tiny on any landing so heavily damped;
-// fuel/time are true tie-breakers.
+// ===== SCORING =====
+// Landing accuracy (x, vx) is the signal the bias can actually move, so it is the only
+// thing scored continuously: 1 m of downrange ~ 0.1 m/s of vx. theta / omega / vy / hop /
+// mean tilt only cost anything once they leave a comfort band (db() = 0 inside the band),
+// so touchdown noise like omega=-0.4 deg/s no longer outranks 1 cm of dr.
+// Fuel and mission time are NOT scored (they were run-to-run noise ~ +/-0.01).
+// Scores within TIE_TOL of each other are tied (same rank, no tie-break by fuel/time).
 const LIMITS = { x:42.5, vx:2.5, vy:5, theta:12, omega:8.6, hop:100 };
+const TIE_TOL = 0.05;
+const db = (v, band, scale) => Math.max(0, Math.abs(v) - band) / scale;
+const meanTilt = m => (m.totalTimeS > 0 ? m.tiltInt / m.totalTimeS : 0);
+const hopOf = m => m.hop_mm || 0;
+const vyTD = c => Number.isFinite(c.vyImpact) ? c.vyImpact : c.vy;                // c.vy is post-impulse (~0)
+const approachOf = m => m.finalApproachS || 0;     // s from final 1.5 m to contact flag (stall-bounce shows up here)
 function scoreLB(m){
   const c = m.contact;
   const dr = c ? c.downrange : NaN;
@@ -934,27 +989,22 @@ function scoreLB(m){
   if(!c.landed) return { score: 1e6, fail: 'not-landed', downrange: dr };
   if(Math.abs(c.thetaLocal) > LIMITS.theta) return { score: 1e6, fail: 'tilt:' + c.thetaLocal.toFixed(2), downrange: dr };
   if(Math.abs(c.vx) > LIMITS.vx) return { score: 1e6, fail: 'vx:' + c.vx.toFixed(2), downrange: dr };
-  if(Math.abs(c.vy) > LIMITS.vy) return { score: 1e6, fail: 'vy:' + c.vy.toFixed(2), downrange: dr };
+  if(Math.abs(vyTD(c)) > LIMITS.vy) return { score: 1e6, fail: 'vy:' + vyTD(c).toFixed(2), downrange: dr };
   if(Math.abs(c.omega) > LIMITS.omega) return { score: 1e6, fail: 'omega:' + c.omega.toFixed(2), downrange: dr };
   if(Math.abs(c.downrange) > LIMITS.x) return { score: 1e6, fail: 'downrange:' + c.downrange.toFixed(1), downrange: dr };
-  if(m.hop_mm > LIMITS.hop) return { score: 1e6, fail: 'hop:' + m.hop_mm.toFixed(1), downrange: dr };
+  if(hopOf(m) > LIMITS.hop) return { score: 1e6, fail: 'hop:' + hopOf(m).toFixed(1), downrange: dr };
 
-  const fuelUsedKg = (Number.isFinite(m.fuel.start) && Number.isFinite(m.fuel.remaining))
-    ? Math.max(0, m.fuel.start - m.fuel.remaining) : 0;
-  const missionT = Number.isFinite(m.missionTimeS) ? m.missionTimeS : 0;
   const parts = {
-    x: Math.abs(c.downrange) / 3.0,
-    vx: Math.abs(c.vx) / 2.0,
-    theta: Math.abs(c.thetaLocal) / 3.0,
-    omega: Math.abs(c.omega) / 3.0,
-    vy: Math.abs(c.vy) / 3.0,
-    hop: m.hop_mm / 50.0,
-    tiltInt: m.tiltInt / 400.0,
-    fuel: fuelUsedKg / 20000.0,
-    time: missionT / 2000.0,
+    x: Math.abs(c.downrange) / 1.0,
+    vx: Math.abs(c.vx) / 0.1,
+    theta: db(c.thetaLocal, 1.0, 3.0),
+    omega: db(c.omega, 1.0, 3.0),
+    vy: db(vyTD(c), 1.0, 1.0),
+    hop: db(hopOf(m), 20, 50),
+    tilt: db(meanTilt(m), 1.0, 3.0),
+    approach: db(approachOf(m), 5.0, 5.0),   // long final approach / stall-bounce
   };
-  const score = parts.x + parts.vx + parts.theta + parts.omega
-              + parts.vy + parts.hop + parts.tiltInt + parts.fuel + parts.time;
+  const score = Object.values(parts).reduce((a, x) => a + x, 0);
   return { score, ok: true, parts, downrange: dr };
 }
 
@@ -1172,58 +1222,71 @@ async function doScan(){
 
 
 // ===== ALTITUDE SEARCH =====
-// Altitude only matters from LBA exit onward, so it is scored on altitude-health
-// signals that don't depend on whether this particular bias hit the pad:
-//   landed softly, no stall, thrust not pinned at Fmax, gimbal not pinned, low fuel.
-// x / vx hard limits are deliberately NOT applied here (bias search handles those).
+// Altitude only matters from LBA exit onward (LB reads live hAGL; nothing else is alt-tied),
+// so it is scored on altitude-health signals that don't depend on whether this particular
+// bias hit the pad: x / vx limits are NOT applied here.
+// Duration-biased terms (LB fuel, tilt integral) are gone: higher alt = longer LB = more of
+// both even when the landing is just as good. Mean tilt (deadbanded) replaces tilt integral.
+// Cost is ~0 anywhere neither failure edge is touched, so the pick is the MIDDLE of the
+// tied-best altitudes (max margin from both edges), not the one with the least fuel.
+//   heavy edge: thrust pinned at Fmax (satFrac)   light edge: thrust pinned at Fmin (minFrac) / stall
+const ALT_TIE = 0.1;
 function altCost(m){
   const c = m.contact, t = m.lbThr;
   if(!c) return { cost: 1e6, fail: 'no-contact' };
   if(c.crashed) return { cost: 1e6, fail: 'crashed' };
   if(!c.landed) return { cost: 1e6, fail: 'not-landed' };
   if(t && t.stall) return { cost: 1e6, fail: 'stall' };
-  if(Math.abs(c.vy) > LIMITS.vy) return { cost: 1e6, fail: 'vy:' + c.vy.toFixed(2) };
+  if(Math.abs(vyTD(c)) > LIMITS.vy) return { cost: 1e6, fail: 'vy:' + vyTD(c).toFixed(2) };
   if(Math.abs(c.thetaLocal) > LIMITS.theta) return { cost: 1e6, fail: 'tilt:' + c.thetaLocal.toFixed(2) };
   if(Math.abs(c.omega) > LIMITS.omega) return { cost: 1e6, fail: 'omega:' + c.omega.toFixed(2) };
-  if(m.hop_mm > LIMITS.hop) return { cost: 1e6, fail: 'hop:' + m.hop_mm.toFixed(1) };
-  const lbFuel = Number.isFinite(m.fuel.landing_burn) ? Math.max(0, m.fuel.landing_burn) : 0;
+  if(hopOf(m) > LIMITS.hop) return { cost: 1e6, fail: 'hop:' + hopOf(m).toFixed(1) };
   const parts = {
-    vy: Math.abs(c.vy) / 3.0,
-    theta: Math.abs(c.thetaLocal) / 3.0,
-    omega: Math.abs(c.omega) / 3.0,
-    hop: m.hop_mm / 50.0,
-    tiltInt: m.tiltInt / 400.0,
-    fuel: lbFuel / 20000.0,
+    vy: db(vyTD(c), 1.0, 1.0),
+    theta: db(c.thetaLocal, 1.0, 3.0),
+    omega: db(c.omega, 1.0, 3.0),
+    hop: db(hopOf(m), 20, 50),
+    tilt: db(meanTilt(m), 1.0, 3.0),
+    approach: db(approachOf(m), 5.0, 5.0),
     thrSat: t ? 3.0 * t.satFrac : 0,
+    thrMin: t ? 3.0 * t.minFrac : 0,
     gimSat: t ? 1.0 * t.gimSatFrac : 0,
   };
   const cost = Object.values(parts).reduce((a, x) => a + x, 0);
   return { cost, ok: true, parts };
 }
 
+// LB altitude must stay below LANDING_BURN_ALIGN_ALT_KM (LBA exits when alt <= LANDING_BURN_ALT_KM).
+function alignAltKm(){
+  try {
+    const v = S.ebSnap.guidanceState.guideConfigs.landbackV1.rtls.LANDING_BURN_ALIGN_ALT_KM;
+    if(Number.isFinite(v)) return v;
+  } catch(e) {}
+  return 5;
+}
+
 async function doAltSearch(){
   if(S.running || !S.inited) return;
   const lo = +$('altLo').value, hi = +$('altHi').value, step = +$('altStep').value;
   const minStep = +$('biasMinStep').value;
-  const cur = curAlt();
-  if(![lo,hi,step].every(Number.isFinite) || !(lo < hi) || !(step > 0) || hi >= 5 || lo < 0.3){
-    log('Alt search: need 0.3 \u2264 lo < hi < 5 (LBA ends at 5 km) and step > 0', 'err'); return;
+  const cur = curAlt(), alignKm = alignAltKm();
+  if(![lo,hi,step].every(Number.isFinite) || !(lo < hi) || !(step > 0) || hi >= alignKm || lo < 0.3){
+    log('Alt search: need 0.3 \u2264 lo < hi < LANDING_BURN_ALIGN_ALT_KM (' + alignKm + ') and step > 0', 'err'); return;
   }
   const r2 = a => Math.round(a * 100) / 100;
   const clampA = a => Math.min(hi, Math.max(lo, a));
   S.running = true; S.abort = false;
   startElapsedTimer();
-  S.altRuns = []; S.altBest = null;
-  $('altBtn').disabled = true; $('scanBtn').disabled = true; $('altBtn').disabled = true; $('manualBtn').disabled = true;
+  S.altRuns = []; S.altBest = null; S.altTied = [];
+  $('altBtn').disabled = true; $('scanBtn').disabled = true; $('manualBtn').disabled = true;
   $('manualSweepBtn').disabled = true; $('initBtn').disabled = true; $('scanStopBtn').disabled = false;
   $('altResults').innerHTML = '<div class="dim" style="padding:10px;">ALT SEARCH running\u2026</div>';
   clearLive(); setChip('running'); setStage('scan');
 
   let bias = +$('biasStart').value;
   const cache = new Map();
-  let best = null;
 
-  const evalAlt = async (a, tag) => {
+  const evalAlt = async a => {
     if(S.abort) throw new Error('aborted');
     const t0 = performance.now();
     setFlightPhase('', null);
@@ -1257,34 +1320,31 @@ async function doAltSearch(){
       cache.set(a, r); S.altRuns.push(r);
       const t = m.lbThr;
       log('  \u2192 alt=' + a.toFixed(2) + ' cost=' + (r.ok ? c.cost.toFixed(2) : 'FAIL ' + c.fail) +
-          (t ? ' thr=' + (100 * t.avgFrac).toFixed(0) + '% sat=' + (100 * t.satFrac).toFixed(0) + '% gimSat=' + (100 * t.gimSatFrac).toFixed(0) + '%' : '') +
+          (t ? ' thr=' + (100 * t.avgFrac).toFixed(0) + '% satMax=' + (100 * t.satFrac).toFixed(0) + '% atMin=' + (100 * t.minFrac).toFixed(0) + '% gimSat=' + (100 * t.gimSatFrac).toFixed(0) + '%' : '') +
           (m.contact ? ' vy=' + m.contact.vy.toFixed(2) + ' dr=' + m.contact.downrange.toFixed(1) + 'm' : ''), r.ok ? 'ok' : 'warn');
       renderAltResults();
       return r;
     };
 
-    // Stage 1: coarse sweep lo..hi.
+    // Coarse sweep lo..hi (no refine pass: the pick is the middle of a plateau, so
+    // half-step refinement around one point adds nothing; shrink "step" if you want finer).
     const alts = [];
     for(let a = lo; a <= hi + 1e-9; a += step) alts.push(r2(a));
     if(alts[alts.length - 1] < hi - 1e-9) alts.push(r2(hi));
     for(const a of alts){ if(S.abort) break; await probe(a); }
 
-    // Stage 2: one refine pass \u2014 half-step either side of the coarse winner.
-    const coarseBest = () => S.altRuns.filter(r => r.ok).reduce((a, r) => (!a || r.cost < a.cost) ? r : a, null);
-    best = coarseBest();
-    if(best && !S.abort){
-      for(const a of [best.alt - step / 2, best.alt + step / 2]){
-        if(S.abort) break;
-        if(a < lo - 1e-9 || a > hi + 1e-9) continue;
-        await probe(a);
-      }
-      best = coarseBest();
-    }
-    S.altBest = best;
-    if(best){
-      $('lbAlt').value = best.alt;
+    const oks = S.altRuns.filter(r => r.ok);
+    if(oks.length){
+      const minCost = Math.min(...oks.map(r => r.cost));
+      const tied = oks.filter(r => r.cost - minCost <= ALT_TIE).sort((p, q) => p.alt - q.alt);
+      const mid = (tied[0].alt + tied[tied.length - 1].alt) / 2;
+      S.altBest = tied.reduce((a, r) => Math.abs(r.alt - mid) < Math.abs(a.alt - mid) ? r : a);
+      S.altTied = tied;
+      $('lbAlt').value = S.altBest.alt;
       $('biasStart').value = bias;       // seed the bias search near the pad
-      log('Alt search complete. Best LB alt=' + best.alt.toFixed(2) + ' km (cost ' + best.cost.toFixed(2) + '), probe bias=' + bias.toFixed(1), 'ok');
+      log('Alt search complete. LB alt=' + S.altBest.alt.toFixed(2) + ' km (tied-best span ' +
+          tied[0].alt.toFixed(2) + '\u2013' + tied[tied.length - 1].alt.toFixed(2) + ' km, cost ' + S.altBest.cost.toFixed(2) +
+          '), probe bias=' + bias.toFixed(1), 'ok');
     } else {
       log('Alt search: no altitude in [' + lo + ', ' + hi + '] landed cleanly \u2014 widen range or check stack.', 'warn');
     }
@@ -1294,7 +1354,7 @@ async function doAltSearch(){
     S.running = false;
     stopElapsedTimer();
     renderAltResults();
-    $('altBtn').disabled = !S.inited; $('scanBtn').disabled = !S.inited; $('altBtn').disabled = !S.inited;
+    $('altBtn').disabled = !S.inited; $('scanBtn').disabled = !S.inited;
     $('manualBtn').disabled = !S.inited; $('manualSweepBtn').disabled = !S.inited;
     $('initBtn').disabled = false; $('scanStopBtn').disabled = true;
     setChip('ready'); setStage('results');
@@ -1302,29 +1362,46 @@ async function doAltSearch(){
   if(S.altBest && !S.abort && $('altChain').checked) await doScan();
 }
 
+// Copies the last eval's LB samples within ~8 m of the ground (t,h,vy,thr,thrCmd,landed,crashed,groundedFrames,wasGrounded).
+function dumpLBGround(){
+  const m = S.lastEval;
+  if(!m){ log('No eval yet.', 'warn'); return; }
+  const lb = (m.samples || []).filter(sp => sp.phase === 'LANDING_BURN' || sp.phase === 'POST-TD');
+  const gRef = Math.min.apply(null, lb.map(sp => sp.h * 1000));
+  const rows = lb.filter(sp => sp.h * 1000 <= gRef + 45);
+  const head = 'bias=' + m.bias + ' alt=' + m.alt + ' gRef_m=' + gRef.toFixed(2) + ' finalApproachS=' + m.finalApproachS + ' bounceM=' + m.bounceM +
+    ' stallT=' + m.stallT + ' stallHEff=' + m.stallHEff + ' hop_mm=' + m.hop_mm +
+    ' contact.t=' + (m.contact ? m.contact.t : 'none') + ' vyImpact=' + (m.contact ? m.contact.vyImpact : 'n/a') + ' lbStart.t=' + (m.lbStart ? m.lbStart.t : 'n/a');
+  const txt = head + '\nt,phase,h_m,hEffEst_m,vy,thr_kN,thrCmd_kN,landed,crashed,fuel\n' +
+    rows.map(sp => [sp.t, sp.phase, (sp.h * 1000).toFixed(3), (sp.h * 1000 - gRef).toFixed(2), sp.vy, sp.thr, sp.tc, sp.ld, sp.cr, sp.fuel].join(',')).join('\n');
+  (navigator.clipboard ? navigator.clipboard.writeText(txt) : Promise.reject()).then(
+    () => log('LB ground log copied (' + rows.length + ' rows)', 'ok'), () => { console.log(txt); log('Clipboard blocked \u2014 printed to console', 'warn'); });
+}
+
 function renderAltResults(){
   const host = $('altResults');
   if(!host) return;
   if(!S.altRuns.length){ host.innerHTML = ''; return; }
   const rows = S.altRuns.slice().sort((a, b) => a.alt - b.alt);
+  const tiedSet = new Set(S.altTied || []);
   let html = '<div class="ttl" style="margin:6px 0;">LB altitude search<em> &middot; probe bias ' +
-    (rows[0].bias).toFixed(1) + ' m &middot; cost excludes x/vx &middot; thr% = avg commanded/Fmax during main LB</em></div>' +
+    (rows[0].bias).toFixed(1) + ' m &middot; cost ignores x/vx/fuel &middot; thr% = avg commanded/Fmax in main LB &middot; pick = middle of tied-best span</em></div>' +
     '<table><thead><tr>';
-  ['LB alt km','cost','status','TD vy','TD x (m)','avg thr %','thr sat %','gimbal sat %','LB s','LB fuel kg'].forEach(h => html += '<th>' + h + '</th>');
+  ['LB alt km','cost','status','TD vy','TD x (m)','avg thr %','at Fmax %','at Fmin %','gimbal sat %','LB s'].forEach(h => html += '<th>' + h + '</th>');
   html += '</tr></thead><tbody>';
   for(const r of rows){
-    const m = r.m, c = m.contact, t = m.lbThr, isBest = S.altBest && r === S.altBest;
-    html += '<tr class="' + (isBest ? 'best' : (!r.ok ? 'fail' : '')) + '">' +
+    const m = r.m, c = m.contact, t = m.lbThr, isBest = S.altBest && r === S.altBest, isTied = !isBest && tiedSet.has(r);
+    html += '<tr class="' + ((isBest || isTied) ? 'best' : (!r.ok ? 'fail' : '')) + '">' +
       '<td>' + r.alt.toFixed(2) + '</td>' +
       '<td>' + (r.ok ? r.cost.toFixed(2) : 'FAIL') + '</td>' +
-      '<td>' + (r.ok ? (isBest ? '\u2605 best' : '\u2713 ok') : esc(r.fail || '?')) + '</td>' +
-      '<td>' + (c ? fmt(c.vy, 3) : '\u2014') + '</td>' +
+      '<td>' + (r.ok ? (isBest ? '\u2605 pick' : (isTied ? '\u2248 tied best' : '\u2713 ok')) : esc(r.fail || '?')) + '</td>' +
+      '<td>' + (c ? fmt(vyTD(c), 3) : '\u2014') + '</td>' +
       '<td>' + (c ? fmt(c.downrange, 1) : '\u2014') + '</td>' +
       '<td>' + (t ? (100 * t.avgFrac).toFixed(0) : '\u2014') + '</td>' +
       '<td>' + (t ? (100 * t.satFrac).toFixed(0) : '\u2014') + '</td>' +
+      '<td>' + (t ? (100 * t.minFrac).toFixed(0) : '\u2014') + '</td>' +
       '<td>' + (t ? (100 * t.gimSatFrac).toFixed(0) : '\u2014') + '</td>' +
-      '<td>' + fmt(m.totalTimeS, 1) + '</td>' +
-      '<td>' + fmt(m.fuel && m.fuel.landing_burn, 0) + '</td></tr>';
+      '<td>' + fmt(m.totalTimeS, 1) + '</td></tr>';
   }
   host.innerHTML = html + '</tbody></table>';
 }
@@ -1635,25 +1712,30 @@ function renderResults(){
   const _bestRun = runsAtAlt().filter(r => r.ok).reduce((a,r) => !a || r.score < a.score ? r : a, null);
   const bestBias = _bestRun ? _bestRun.bias : null;
   let html = '<table><thead><tr>';
-  ['#','LB alt','bias','score','status','TD x (m)','TD vx','TD vy','TD θ','TD ω','hop mm','fuel left','LB start km'].forEach(h => html += '<th>'+h+'</th>');
+  ['#','LB alt','bias','score','status','TD x (m)','TD vx','TD vy (impact)','TD θ','TD ω','hop mm','final s','bounce m','fuel left','LB start km'].forEach(h => html += '<th>'+h+'</th>');
   html += '</tr></thead><tbody>';
+  let _rank = 0, _grpScore = null;
   sorted.forEach((r,i) => {
     const isBest = r === _bestRun;
-    const cls = isBest ? 'best' : (!r.ok ? 'fail' : '');
+    const isTied = !isBest && r.ok && _bestRun && (r.score - _bestRun.score) <= TIE_TOL;
+    if(r.ok && (_grpScore === null || r.score - _grpScore > TIE_TOL)){ _rank = i + 1; _grpScore = r.score; }
+    const cls = (isBest || isTied) ? 'best' : (!r.ok ? 'fail' : '');
     const idx = S.runs.indexOf(r);
     const c = r.m.contact, lb = r.m.lbStart;
     html += '<tr class="'+cls+'" data-idx="'+idx+'">';
-    html += '<td>'+(i+1)+'</td>';
+    html += '<td>'+(r.ok ? _rank : '—')+'</td>';
     html += '<td>'+fmt(r.m.alt, 2)+'</td>';
     html += '<td>'+r.bias.toFixed(2)+'</td>';
     html += '<td>'+(r.ok ? r.score.toFixed(2) : 'FAIL')+'</td>';
-    html += '<td>'+(r.ok ? (isBest ? '★ best' : '✓ ok') : esc(r.fail || '?'))+'</td>';
+    html += '<td>'+(r.ok ? (isBest ? '★ best' : (isTied ? '≈ tied best' : '✓ ok')) : esc(r.fail || '?'))+'</td>';
     html += '<td>'+(c ? fmt(c.downrange, 2) : '—')+'</td>';
     html += '<td>'+(c ? fmt(c.vx, 3) : '—')+'</td>';
-    html += '<td>'+(c ? fmt(c.vy, 3) : '—')+'</td>';
+    html += '<td>'+(c ? fmt(vyTD(c), 3) : '—')+'</td>';
     html += '<td>'+(c ? fmt(c.thetaLocal, 2) : '—')+'</td>';
     html += '<td>'+(c ? fmt(c.omega, 2) : '—')+'</td>';
-    html += '<td>'+(c ? fmt(r.m.hop_mm, 1) : '—')+'</td>';
+    html += '<td>'+(c ? fmt(hopOf(r.m), 1) : '—')+'</td>';
+    html += '<td'+(approachOf(r.m) > 5 ? ' class="bad"' : '')+'>'+(c ? fmt(r.m.finalApproachS, 1) : '—')+'</td>';
+    html += '<td'+((r.m.bounceM||0) > 0.5 ? ' class="bad"' : '')+'>'+(c ? fmt(r.m.bounceM, 1) : '—')+'</td>';
     html += '<td>'+fmt(r.m.fuel && r.m.fuel.remaining, 0)+'</td>';
     html += '<td>'+(lb ? fmt(lb.altKm, 2) : '—')+'</td>';
     html += '</tr>';
@@ -1771,15 +1853,14 @@ function renderDetail(r){
   if(r.ok && r.parts){
     const p = r.parts;
     h.push('<h4>Score breakdown</h4><table class="fuel-table"><thead><tr><th>Component</th><th>Reference</th><th>Contribution</th></tr></thead><tbody>');
-    h.push('<tr><td>x (downrange)</td><td>3 m</td><td>'+fmt(p.x,3)+'</td></tr>');
-    h.push('<tr><td>vx</td><td>2 m/s</td><td>'+fmt(p.vx,3)+'</td></tr>');
-    h.push('<tr><td>θ (tilt)</td><td>3°</td><td>'+fmt(p.theta,3)+'</td></tr>');
-    h.push('<tr><td>ω (omega)</td><td>3°/s</td><td>'+fmt(p.omega,3)+'</td></tr>');
-    h.push('<tr><td>vy</td><td>3 m/s</td><td>'+fmt(p.vy,3)+'</td></tr>');
-    h.push('<tr><td>hop</td><td>50 mm</td><td>'+fmt(p.hop,3)+'</td></tr>');
-    h.push('<tr><td>tilt ∫ (LB)</td><td>400°·s</td><td>'+fmt(p.tiltInt,3)+'</td></tr>');
-    h.push('<tr><td>fuel used (MECO→TD)</td><td>20000 kg</td><td>'+fmt(p.fuel,3)+'</td></tr>');
-    h.push('<tr><td>mission time (MECO→TD)</td><td>2000 s</td><td>'+fmt(p.time,3)+'</td></tr>');
+    h.push('<tr><td>x (downrange)</td><td>1 m</td><td>'+fmt(p.x,3)+'</td></tr>');
+    h.push('<tr><td>vx</td><td>0.1 m/s</td><td>'+fmt(p.vx,3)+'</td></tr>');
+    h.push('<tr><td>θ (tilt) beyond 1°</td><td>3°</td><td>'+fmt(p.theta,3)+'</td></tr>');
+    h.push('<tr><td>ω (omega) beyond 1°/s</td><td>3°/s</td><td>'+fmt(p.omega,3)+'</td></tr>');
+    h.push('<tr><td>vy beyond 1 m/s</td><td>1 m/s</td><td>'+fmt(p.vy,3)+'</td></tr>');
+    h.push('<tr><td>hop beyond 20 mm</td><td>50 mm</td><td>'+fmt(p.hop,3)+'</td></tr>');
+    h.push('<tr><td>mean tilt (LB) beyond 1°</td><td>3°</td><td>'+fmt(p.tilt,3)+'</td></tr>');
+    h.push('<tr><td>final approach beyond 5 s</td><td>5 s</td><td>'+fmt(p.approach,3)+'</td></tr>');
     h.push('<tr class="total"><td>Total</td><td></td><td>'+r.score.toFixed(3)+'</td></tr>');
     h.push('</tbody></table>');
   }
@@ -1938,6 +2019,7 @@ function boot(){
   $('initBtn').addEventListener('click', doInit);
   $('scanBtn').addEventListener('click', doScan);
   $('altBtn').addEventListener('click', doAltSearch);
+  $('dumpBtn').addEventListener('click', dumpLBGround);
   $('lbAlt').addEventListener('change', () => { if(S.runs.length) renderResults(); });
   $('scanStopBtn').addEventListener('click', () => { S.abort = true; log('Stop requested', 'warn'); });
   $('manualBtn').addEventListener('click', doManualEval);
