@@ -35,6 +35,8 @@ const GUIDE_CONSTANT_DESCRIPTIONS = {
   'separation.SEPARATION_DURATION_S': 'Fixed duration (s) of the SEPARATED_AXIAL phase, counted from the phase entry (split detected). At the end of this window, the insertion block takes over — regardless of the axial gap.',
 'separation.SPLIT_TIMEOUT_S': 'Maximum time (s) to wait for the split to physically appear after MECO. If the body count never grows, the mission aborts.',
 'separation.LATERAL_TRIGGER_MARGIN_M': 'Margin (m) above the stage engine bell height before the booster lateral/negative-torque kick arms. Prevents firing while the bell still overlaps the interstage.',
+'separation.BOOSTER_SEP_ANG_ACCEL_DEG_S2': 'Angular acceleration (deg/s2, signed) the pneumatic pushers impart to the discarded booster at separation. Fires once, when the stage engine bell has cleared the interstage. Negative = clockwise flip (nose toward the pad). Drives the booster angular velocity toward BOOSTER_SEP_TARGET_OMEGA_DEG_S, then shuts off.',
+'separation.BOOSTER_SEP_TARGET_OMEGA_DEG_S': 'Angular velocity (deg/s, positive) the pusher torque drives the discarded booster to before turning off. Once |omega| reaches this, the pusher stops firing. Higher = faster flip-away; too high can overshoot and tumble the booster.',
   
   // ---- insertion (post-separation stage → payload deployed) ----
   'insertion.GIMBAL_TARGET': 'Which engines participate in gimbal control during the stage burn. "all" engages every gimbal-capable engine (single-nozzle MVac uses one, octaweb uses all).',
@@ -74,6 +76,7 @@ const GUIDE_CONSTANT_DESCRIPTIONS = {
   'done.CIRC_ATT_KP': 'Attitude-hold proportional gain used during the done dwell. Duplicate of insertion.CIRC_ATT_KP, held separately so the dwell can be tuned independently.',
   'done.CIRC_ATT_KD': 'Attitude-hold derivative gain during the done dwell. Duplicate of insertion.CIRC_ATT_KD.',
   'done.DEORBIT_ENABLED': 'Master toggle for the deorbit sequence. When false, mission ends at payload deploy and the suicide block is never dispatched.',
+  'done.PAYLOAD_DEPLOY_OPEN_DELAY_S': 'Seconds between the payload deploy command (actual release + kick) and the open command that unfolds the satellite panels and dish. Visual animation only - no physics effect. Fires exactly once per mission.',
   
   // ---- suicide (generic retrograde-deorbit block) ----
   'suicide.SUICIDE_ROTATE_TOL_DEG': 'Attitude tolerance (deg) for the retrograde alignment at the start of the suicide block. Within this band and with low ω, the rotation completes.',
@@ -166,6 +169,8 @@ const GUIDE_CONSTANT_DESCRIPTIONS = {
   'separation.SEPARATION_DURATION_S': 'Fixed duration (s) of the SEPARATED_AXIAL phase, counted from the phase entry (split detected). At the end of this window, the insertion block takes over — regardless of the axial gap.',
 'separation.SPLIT_TIMEOUT_S': 'Maximum time (s) to wait for the split to physically appear after MECO. If the body count never grows, the mission aborts.',
 'separation.LATERAL_TRIGGER_MARGIN_M': 'Margin (m) above the stage engine bell height before the booster lateral/negative-torque kick arms. Prevents firing while the bell still overlaps the interstage.',
+'separation.BOOSTER_SEP_ANG_ACCEL_DEG_S2': 'Angular acceleration (deg/s2, signed) the pneumatic pushers impart to the discarded booster at separation. Fires once, when the stage engine bell has cleared the interstage. Negative = clockwise flip (nose toward the pad). Drives the booster angular velocity toward BOOSTER_SEP_TARGET_OMEGA_DEG_S, then shuts off.',
+'separation.BOOSTER_SEP_TARGET_OMEGA_DEG_S': 'Angular velocity (deg/s, positive) the pusher torque drives the discarded booster to before turning off. Once |omega| reaches this, the pusher stops firing. Higher = faster flip-away; too high can overshoot and tumble the booster.',
   
   // ---- insertion (post-separation stage → payload deployed) ----
   'insertion.GIMBAL_TARGET': 'Which engines participate in gimbal control during the stage burn. "all" engages every gimbal-capable engine (single-nozzle MVac uses one, octaweb uses all).',
@@ -205,6 +210,7 @@ const GUIDE_CONSTANT_DESCRIPTIONS = {
   'done.CIRC_ATT_KP': 'Attitude-hold proportional gain used during the done dwell. Duplicate of insertion.CIRC_ATT_KP, held separately so the dwell can be tuned independently.',
   'done.CIRC_ATT_KD': 'Attitude-hold derivative gain during the done dwell. Duplicate of insertion.CIRC_ATT_KD.',
   'done.DEORBIT_ENABLED': 'Master toggle for the deorbit sequence. When false, mission ends at payload deploy and the suicide block is never dispatched.',
+  'done.PAYLOAD_DEPLOY_OPEN_DELAY_S': 'Seconds between the payload deploy command (actual release + kick) and the open command that unfolds the satellite panels and dish. Visual animation only - no physics effect. Fires exactly once per mission.',
   
   // ---- suicide (generic retrograde-deorbit block) ----
   'suicide.SUICIDE_ROTATE_TOL_DEG': 'Attitude tolerance (deg) for the retrograde alignment at the start of the suicide block. Within this band and with low ω, the rotation completes.',
@@ -325,6 +331,12 @@ const GUIDE_CONSTANT_DESCRIPTIONS = {
       'Main engine cuts when the predicted impact is this many degrees east of the target. RCS trim closes the remaining gap at ~100× finer resolution.',
     'SUICIDE_TRIM_TOL_DEG':
       'RCS trim tolerance, degrees. Once impact prediction is within this band of the resting-area midpoint, trim latches off — prevents a bang-bang limit cycle.',
+    'SUICIDE_TRIM_FAR_DEG':
+      'Impact-angle error (deg) at which the trim uses full duty. Errors smaller than this scale the duty proportionally.',
+    'SUICIDE_TRIM_MIN_DUTY':
+      'Minimum RCS trim duty. Prevents the trim from chattering around the target when the error is tiny.',
+    'SUICIDE_TRIM_MAX_S':
+      'Maximum duration (s) for the RCS trim after the burn. On timeout, trim ends regardless of convergence.',
   },
 
   // ===========================================================
