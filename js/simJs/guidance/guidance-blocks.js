@@ -5367,7 +5367,7 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
               let t = 0, h = h0, v = v0, m = m0;
               for (let n = 0; n < 2400; n++) {
                 const aero = kA * v * v;
-                const aRefP = thrLateAt(h) * Fmax * cosTilt / m - gLoc + aero;
+                const aRefP = Math.max(thrLateAt(h) * Fmax * cosTilt / m - gLoc + aero, 0);
                 const aNeedP = (v * v - V_TD * V_TD) / (2 * Math.max(h, H_FLOOR));
                 const aReqP = aRefP + LB_KN * (aNeedP - aRefP);
                 let F = m * (aReqP + gLoc - aero) / cosTilt;
@@ -5406,9 +5406,11 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
             // Throttle: zero-effort-to-go law around the THR_LATE reference
             // ================================================================
             const hDen = Math.max(hEff, H_FLOOR);
-            const aNeed = (vDown * vDown - V_TD * V_TD) / (2 * hDen);
-            const aRef = thrLateAt(hEff) * Fmax * cosTilt / M - gLoc + aeroUp;
-            const aReq = aRef + LB_KN * (aNeed - aRef);
+            const vDownPos = Math.max(vDown, 0);   // rising != descending fast
+            const aNeed = (vDownPos * vDownPos - V_TD * V_TD) / (2 * hDen);
+            const aRef = thrLateAt(hEff) * Fmax * cosTilt / M - gLoc + aeroUp;   // unchanged (logging, vRefCurve)
+            const aRefLaw = Math.max(aRef, 0);   // reference below hover must not be mirrored by KN
+            const aReq = aRefLaw + LB_KN * (aNeed - aRefLaw);
             const vRefCurve = Math.sqrt(V_TD * V_TD + 2 * Math.max(aRef, 0) * hDen);
             const Fv = M * (aReq + gLoc - aeroUp) / cosTilt;
             let mdotCmd = Fv / ve / lbEng.length;
@@ -5535,7 +5537,7 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
                 " gRaw=" + gRaw.toFixed(2) + " gEff=" + gEff.toFixed(2) + " kq=" + kq.toFixed(2) +
                 " S=" + Math.round(Sst) + (noAuth ? " [NO-AUTH]" : "") +
                 " | h=" + hEff.toFixed(2) + " vy=" + vRadial.toFixed(2) + " vRef=" + (-vRefCurve).toFixed(2) +
-                " aNeed=" + aNeed.toFixed(2) + " aRef=" + aRef.toFixed(2) + " aReq=" + aReq.toFixed(2) + " F=" + Math.round(thrustCur) + " cmd=" + Math.round(Fcmd) +
+                " aNeed=" + aNeed.toFixed(2) + " aRef=" + aRef.toFixed(2) + " aRefLaw=" + aRefLaw.toFixed(2) + " aReq=" + aReq.toFixed(2) + " F=" + Math.round(thrustCur) + " cmd=" + Math.round(Fcmd) +
                 " thr=" + (100 * Fcmd / Fmax).toFixed(0) + "%" +
                 " | dlt=" + gimbalCmdDeg.toFixed(2) + (gimbalSat ? " [SAT-GIM]" : "") + (thrSat ? " [SAT-THR]" : "") +
                 " fin=" + cAct.toFixed(1) + "->" + cStar.toFixed(1) + " tauFin=" + Math.round(tauFinNext) +
