@@ -186,7 +186,7 @@
 
 <!-- ==================== REFERENCE ==================== -->
 <footer class="refbar">
-  <div><span class="k">score</span><span class="f">S = |x|/1 + |vx|/0.1 + deadband(&theta;, &omega;, vy, hop, mean tilt)</span> <span class="src">&middot; lower is better &middot; no fuel/time &middot; scores within 0.05 tie</span></div>
+  <div><span class="k">score</span><span class="f">S = |x|/1 + vx&sup2;/0.5 + deadband(&theta;, &omega;, vy, hop, mean tilt)</span> <span class="src">&middot; lower is better &middot; no fuel/time &middot; scores within 0.05 tie</span></div>
   <div><span class="k">limits</span><span class="f">&theta; &le; 12&deg; &middot; vx &le; 2.5 &middot; vy &le; 5 &middot; &omega; &le; 8.6&deg;/s &middot; x &le; 42.5 m &middot; hop &le; 100 mm</span> <span class="src">&middot; any breach = hard fail (1e6)</span></div>
   <div><span class="k">keys</span><kbd>Ctrl</kbd>+<kbd>Enter</kbd> run bias search</div>
   <div class="lg"><span class="k">colour</span>
@@ -969,7 +969,10 @@ async function runBiasEval(bias, onTick, altKm){
 
 // ===== SCORING =====
 // Landing accuracy (x, vx) is the signal the bias can actually move, so it is the only
-// thing scored continuously: 1 m of downrange ~ 0.1 m/s of vx. theta / omega / vy / hop /
+// thing scored continuously: 1 m downrange = 1 point; vx is QUADRATIC (energy, not
+// position) — vx^2/0.5, so 0.71 m/s vx = 1 point. Small vx (10-30 cm/s) is barely a
+// blip; near-limit vx (2 m/s) is ~8 points, still proportionate to dr's scale. theta /
+// omega / vy / hop /
 // mean tilt only cost anything once they leave a comfort band (db() = 0 inside the band),
 // so touchdown noise like omega=-0.4 deg/s no longer outranks 1 cm of dr.
 // Fuel and mission time are NOT scored (they were run-to-run noise ~ +/-0.01).
@@ -996,7 +999,7 @@ function scoreLB(m){
 
   const parts = {
     x: Math.abs(c.downrange) / 1.0,
-    vx: Math.abs(c.vx) / 0.1,
+    vx: (c.vx * c.vx) / 0.5,
     theta: db(c.thetaLocal, 1.0, 3.0),
     omega: db(c.omega, 1.0, 3.0),
     vy: db(vyTD(c), 1.0, 1.0),
@@ -1854,7 +1857,7 @@ function renderDetail(r){
     const p = r.parts;
     h.push('<h4>Score breakdown</h4><table class="fuel-table"><thead><tr><th>Component</th><th>Reference</th><th>Contribution</th></tr></thead><tbody>');
     h.push('<tr><td>x (downrange)</td><td>1 m</td><td>'+fmt(p.x,3)+'</td></tr>');
-    h.push('<tr><td>vx</td><td>0.1 m/s</td><td>'+fmt(p.vx,3)+'</td></tr>');
+    h.push('<tr><td>vx&sup2;</td><td>0.5 (0.71 m/s = 1 pt)</td><td>'+fmt(p.vx,3)+'</td></tr>');
     h.push('<tr><td>θ (tilt) beyond 1°</td><td>3°</td><td>'+fmt(p.theta,3)+'</td></tr>');
     h.push('<tr><td>ω (omega) beyond 1°/s</td><td>3°/s</td><td>'+fmt(p.omega,3)+'</td></tr>');
     h.push('<tr><td>vy beyond 1 m/s</td><td>1 m/s</td><td>'+fmt(p.vy,3)+'</td></tr>');
