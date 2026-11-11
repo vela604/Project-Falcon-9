@@ -90,6 +90,18 @@
         <label>min step <input type="number" id="biasMinStep" step="0.5" min="0.1" value="2.5"></label>
       </div>
 
+      <div class="grp">landing burn altitude <em>LANDING_BURN_ALT_KM, km &mdash; used by every eval (search, manual, sweep)</em></div>
+      <div class="row">
+        <label>LB alt <input type="number" id="lbAlt" step="0.05" min="0.3" max="4.9" value="2"></label>
+        <label>alt lo <input type="number" id="altLo" step="0.1" value="1.0"></label>
+        <label>hi <input type="number" id="altHi" step="0.1" value="3.0"></label>
+        <label>step <input type="number" id="altStep" step="0.1" min="0.1" value="0.5"></label>
+      </div>
+      <div class="row">
+        <button class="primary" id="altBtn" disabled>Find LB altitude</button>
+        <label><input type="checkbox" id="altChain" checked style="width:auto"> then bias search</label>
+      </div>
+
       <div class="row">
         <button class="primary" id="initBtn">Init captures</button>
         <button class="primary" id="scanBtn" disabled>Run bias search</button>
@@ -140,6 +152,7 @@
 
   <section class="panel" id="resultsPanel" style="margin-top:14px">
     <h2><span class="tag">0x03</span>Bias search results</h2>
+    <div id="altResults"></div>
     <div id="verdict"></div>
     <div class="landcard" id="landCard" style="display:none">
       <div class="ttl">Bias &rarr; score<em>one point per eval &middot; red = hard fail &middot; ring = best</em></div>
@@ -262,7 +275,16 @@ const S = {
   running:false, abort:false, evals:0, evalMs:[],
   liveChart:null, prefixPhases:null, saSimTime:0,
   stage:'config', lastWindow:null,
+  altRuns:[], altBest:null,
 };
+
+// Current LB ignition altitude (km) from the Setup input; null = leave preset value alone.
+function curAlt(){ const a = parseFloat($('lbAlt').value); return Number.isFinite(a) ? a : null; }
+// Runs made at the currently selected altitude (charts + best-marker only look at these).
+function runsAtAlt(){
+  const a = curAlt();
+  return S.runs.filter(r => a == null || !r.m || r.m.alt == null || Math.abs(r.m.alt - a) < 1e-6);
+}
 
 // ===== STAGE / CHIPS =====
 const STAGES = ['config','init','scan','results'];
@@ -458,7 +480,7 @@ function applyPresetFromSel(){
 function markStale(){
   if(!S.inited || S.running) return;
   S.inited = false;
-  $('scanBtn').disabled = true;
+  $('scanBtn').disabled = true; $('altBtn').disabled = true;
   const st = $('initStatus'); st.classList.add('stale');
   st.textContent = 'Config changed — snapshots are stale. Run INIT captures again.';
   setStage('config');
@@ -511,7 +533,7 @@ async function doInit(){
   if(S.running) return;
   if(!S.locked){ log('Lock a stack first.', 'warn'); return; }
   S.running = true; S.abort = false;
-  $('initBtn').disabled = true; $('scanBtn').disabled = true;
+  $('initBtn').disabled = true; $('scanBtn').disabled = true; $('altBtn').disabled = true;
   $('initStatus').classList.remove('stale');
   setChip('running'); setStage('init');
   startElapsedTimer(); clearLive();
@@ -624,7 +646,7 @@ async function doInit(){
 
     S.inited = true;
     $('initStatus').innerHTML = '<span class="ok">Ready</span> · SA/EB captured · fuel MECO='+fmt(S.fuelAtMeco,0)+'kg, post-boostback='+fmt(S.fuelAfterBoostback,0)+'kg';
-    $('scanBtn').disabled = false;
+    $('scanBtn').disabled = false; $('altBtn').disabled = false;
     $('manualBtn').disabled = false;
     $('manualSweepBtn').disabled = false;
     setChip('ready'); setStage('init');
@@ -642,15 +664,21 @@ async function doInit(){
 }
 
 // ===== BIAS EVAL (rich data capture) =====
-async function runBiasEval(bias, onTick){
+async function runBiasEval(bias, onTick, altKm){
+  if(!Number.isFinite(altKm)) altKm = curAlt();
   const g = deepClone(S.ebSnap.guidanceState);
   const cfg = g.guideConfigs && g.guideConfigs.landbackV1;
   if(cfg && cfg.rtls) cfg.rtls.ENTRY_BURN_IMPACT_TARGET_M = bias;
   if(g.lbRtlsBlock && g.lbRtlsBlock.constants) g.lbRtlsBlock.constants.ENTRY_BURN_IMPACT_TARGET_M = bias;
+  // Same two-line pattern for LB altitude (LBA reads cfg.LANDING_BURN_ALT_KM every tick).
+  if(Number.isFinite(altKm)){
+    if(cfg && cfg.rtls) cfg.rtls.LANDING_BURN_ALT_KM = altKm;
+    if(g.lbRtlsBlock && g.lbRtlsBlock.constants) g.lbRtlsBlock.constants.LANDING_BURN_ALT_KM = altKm;
+  }
   restoreSnap(S.ebSnap, g);
 
   const m = {
-    bias, end:'cap',
+    bias, alt: Number.isFinite(altKm) ? altKm : null, end:'cap',
     phases: S.prefixPhases ? S.prefixPhases.map(p => Object.assign({}, p)) : [],
     lbStart: null, contact: null,
     fuel: { start: S.fuelAtMeco, after_boostback: S.fuelAfterBoostback },
@@ -668,6 +696,7 @@ async function runBiasEval(bias, onTick){
   let prevGimbalSat = false, prevThrustGap = false, prevLegs = false;
   let prevOmega = null, prevVx = null, prevVy = null, prevT = null;
   let sampleAccum = 0, postContactAccum = 0;
+  let fMaxN = 0;   // max thrust authority (N) of engines lit during LB
   const capS = 200, postS = 3;
   const tStart = state.simTime;
   const maxTicks = Math.ceil(capS / DT());
@@ -734,6 +763,11 @@ async function runBiasEval(bias, onTick){
 
       // LB peak metrics
       if(ph === 'LANDING_BURN'){
+        let fm = 0;
+        for(const e of (bB.engines || [])){
+          if((e.massFlowRate || 0) > 0 || (e.targetMassFlowRate || 0) > 0) fm += (e.maxMassFlowRate || 0) * (e.Ve || 0);
+        }
+        if(fm > fMaxN) fMaxN = fm;
         const gAbs = Math.abs(gimbAct);
         if(gAbs > m.peakGimbal) m.peakGimbal = gAbs;
         if(Math.abs(thDeg) > m.peakTilt) m.peakTilt = Math.abs(thDeg);
@@ -835,6 +869,29 @@ async function runBiasEval(bias, onTick){
   m.hop_mm = +(m.hop_mm * 1000).toFixed(2);
   m.maxQLB = +(m.maxQLB / 1000).toFixed(2);
   m.maxGLB = +m.maxGLB.toFixed(2);
+
+  // LB thrust-authority telemetry (main burn only: skip 2 s spool-in and the last 30 m).
+  // Fmax from engine maxMassFlowRate*Ve if present, else the peak thrust seen.
+  try {
+    const lbAll = (m.samples || []).filter(sp => sp.phase === 'LANDING_BURN');
+    if(lbAll.length >= 5 && m.lbStart){
+      const mainS = lbAll.filter(sp => sp.t >= m.lbStart.t + 2 && sp.h * 1000 >= 30);
+      const peakKN = lbAll.reduce((a, sp) => Math.max(a, sp.thr), 0);
+      const fMaxKN = fMaxN > 0 ? fMaxN / 1000 : peakKN;
+      if(mainS.length >= 3 && fMaxKN > 0){
+        const fr = mainS.map(sp => sp.thr / fMaxKN);
+        m.lbThr = {
+          fMaxKN: +fMaxKN.toFixed(0),
+          fMaxFromProps: fMaxN > 0,
+          avgFrac: fr.reduce((a, x) => a + x, 0) / fr.length,
+          satFrac: fr.filter(x => x >= 0.97).length / fr.length,
+          gimSatFrac: mainS.filter(sp => Math.abs(sp.gimbal) >= 7.9).length / mainS.length,
+          stall: mainS.some(sp => sp.vy > 0.5),     // rising during LB
+          n: mainS.length,
+        };
+      }
+    }
+  } catch(e) {}
 
   // LB overshoot signal — during LB (user says the real crossing happens
   // 5–20 s into the burn), does x cross past 0 to the wrong side and swing
@@ -1047,7 +1104,7 @@ async function doScan(){
   startElapsedTimer();
   S.runs = []; S.selectedIdx = -1; S.evals = 0; S.evalMs = []; S.searchResult = null;
   S.lastWindow = { lo, hi };
-  $('scanBtn').disabled = true; $('scanStopBtn').disabled = false;
+  $('scanBtn').disabled = true; $('altBtn').disabled = true; $('scanStopBtn').disabled = false;
   $('initBtn').disabled = true;
   $('resultsTable').innerHTML = '<div id="scanTicker" class="scan-ticker">initializing…</div>';
   $('detailPanel').style.display = 'none';
@@ -1108,9 +1165,168 @@ async function doScan(){
   } finally {
     S.running = false;
     stopElapsedTimer();
-    $('scanBtn').disabled = !S.inited; $('scanStopBtn').disabled = true; $('initBtn').disabled = false;
+    $('scanBtn').disabled = !S.inited; $('altBtn').disabled = !S.inited; $('scanStopBtn').disabled = true; $('initBtn').disabled = false;
     setChip('ready'); setStage('results');
   }
+}
+
+
+// ===== ALTITUDE SEARCH =====
+// Altitude only matters from LBA exit onward, so it is scored on altitude-health
+// signals that don't depend on whether this particular bias hit the pad:
+//   landed softly, no stall, thrust not pinned at Fmax, gimbal not pinned, low fuel.
+// x / vx hard limits are deliberately NOT applied here (bias search handles those).
+function altCost(m){
+  const c = m.contact, t = m.lbThr;
+  if(!c) return { cost: 1e6, fail: 'no-contact' };
+  if(c.crashed) return { cost: 1e6, fail: 'crashed' };
+  if(!c.landed) return { cost: 1e6, fail: 'not-landed' };
+  if(t && t.stall) return { cost: 1e6, fail: 'stall' };
+  if(Math.abs(c.vy) > LIMITS.vy) return { cost: 1e6, fail: 'vy:' + c.vy.toFixed(2) };
+  if(Math.abs(c.thetaLocal) > LIMITS.theta) return { cost: 1e6, fail: 'tilt:' + c.thetaLocal.toFixed(2) };
+  if(Math.abs(c.omega) > LIMITS.omega) return { cost: 1e6, fail: 'omega:' + c.omega.toFixed(2) };
+  if(m.hop_mm > LIMITS.hop) return { cost: 1e6, fail: 'hop:' + m.hop_mm.toFixed(1) };
+  const lbFuel = Number.isFinite(m.fuel.landing_burn) ? Math.max(0, m.fuel.landing_burn) : 0;
+  const parts = {
+    vy: Math.abs(c.vy) / 3.0,
+    theta: Math.abs(c.thetaLocal) / 3.0,
+    omega: Math.abs(c.omega) / 3.0,
+    hop: m.hop_mm / 50.0,
+    tiltInt: m.tiltInt / 400.0,
+    fuel: lbFuel / 20000.0,
+    thrSat: t ? 3.0 * t.satFrac : 0,
+    gimSat: t ? 1.0 * t.gimSatFrac : 0,
+  };
+  const cost = Object.values(parts).reduce((a, x) => a + x, 0);
+  return { cost, ok: true, parts };
+}
+
+async function doAltSearch(){
+  if(S.running || !S.inited) return;
+  const lo = +$('altLo').value, hi = +$('altHi').value, step = +$('altStep').value;
+  const minStep = +$('biasMinStep').value;
+  const cur = curAlt();
+  if(![lo,hi,step].every(Number.isFinite) || !(lo < hi) || !(step > 0) || hi >= 5 || lo < 0.3){
+    log('Alt search: need 0.3 \u2264 lo < hi < 5 (LBA ends at 5 km) and step > 0', 'err'); return;
+  }
+  const r2 = a => Math.round(a * 100) / 100;
+  const clampA = a => Math.min(hi, Math.max(lo, a));
+  S.running = true; S.abort = false;
+  startElapsedTimer();
+  S.altRuns = []; S.altBest = null;
+  $('altBtn').disabled = true; $('scanBtn').disabled = true; $('altBtn').disabled = true; $('manualBtn').disabled = true;
+  $('manualSweepBtn').disabled = true; $('initBtn').disabled = true; $('scanStopBtn').disabled = false;
+  $('altResults').innerHTML = '<div class="dim" style="padding:10px;">ALT SEARCH running\u2026</div>';
+  clearLive(); setChip('running'); setStage('scan');
+
+  let bias = +$('biasStart').value;
+  const cache = new Map();
+  let best = null;
+
+  const evalAlt = async (a, tag) => {
+    if(S.abort) throw new Error('aborted');
+    const t0 = performance.now();
+    setFlightPhase('', null);
+    const m = await runBiasEval(bias, prog => paintLive(prog), a);
+    S.evals++; S.evalMs.push(performance.now() - t0); setEvalCount(S.evals);
+    drawLive(m);
+    return m;
+  };
+
+  try {
+    // Calibration: one eval at the current alt just to learn dr, then jump bias once
+    // (slope ~1, same rule the bias search uses) so the sweep runs near the pad.
+    const a0 = clampA(cur != null ? cur : 2);
+    log('[alt] calibrate bias @ alt=' + a0.toFixed(2) + ' km, bias=' + bias.toFixed(1));
+    const m0 = await evalAlt(a0);
+    const dr0 = m0.contact ? m0.contact.downrange : NaN;
+    if(Number.isFinite(dr0) && Math.abs(dr0) > minStep){
+      bias = Math.round((bias - dr0) * 10) / 10;
+      log('[alt] dr=' + dr0.toFixed(1) + 'm \u2192 probe bias set to ' + bias.toFixed(1), 'ok');
+    } else if(!Number.isFinite(dr0)){
+      log('[alt] calibration had no contact \u2014 sweeping at bias=' + bias.toFixed(1) + ' anyway', 'warn');
+    }
+
+    const probe = async a => {
+      a = r2(clampA(a));
+      if(cache.has(a)) return cache.get(a);
+      log('[alt] eval alt=' + a.toFixed(2) + ' km @ bias=' + bias.toFixed(1));
+      const m = await evalAlt(a);
+      const c = altCost(m);
+      const r = { alt: a, bias, cost: c.cost, ok: !!c.ok, fail: c.fail, parts: c.parts, m };
+      cache.set(a, r); S.altRuns.push(r);
+      const t = m.lbThr;
+      log('  \u2192 alt=' + a.toFixed(2) + ' cost=' + (r.ok ? c.cost.toFixed(2) : 'FAIL ' + c.fail) +
+          (t ? ' thr=' + (100 * t.avgFrac).toFixed(0) + '% sat=' + (100 * t.satFrac).toFixed(0) + '% gimSat=' + (100 * t.gimSatFrac).toFixed(0) + '%' : '') +
+          (m.contact ? ' vy=' + m.contact.vy.toFixed(2) + ' dr=' + m.contact.downrange.toFixed(1) + 'm' : ''), r.ok ? 'ok' : 'warn');
+      renderAltResults();
+      return r;
+    };
+
+    // Stage 1: coarse sweep lo..hi.
+    const alts = [];
+    for(let a = lo; a <= hi + 1e-9; a += step) alts.push(r2(a));
+    if(alts[alts.length - 1] < hi - 1e-9) alts.push(r2(hi));
+    for(const a of alts){ if(S.abort) break; await probe(a); }
+
+    // Stage 2: one refine pass \u2014 half-step either side of the coarse winner.
+    const coarseBest = () => S.altRuns.filter(r => r.ok).reduce((a, r) => (!a || r.cost < a.cost) ? r : a, null);
+    best = coarseBest();
+    if(best && !S.abort){
+      for(const a of [best.alt - step / 2, best.alt + step / 2]){
+        if(S.abort) break;
+        if(a < lo - 1e-9 || a > hi + 1e-9) continue;
+        await probe(a);
+      }
+      best = coarseBest();
+    }
+    S.altBest = best;
+    if(best){
+      $('lbAlt').value = best.alt;
+      $('biasStart').value = bias;       // seed the bias search near the pad
+      log('Alt search complete. Best LB alt=' + best.alt.toFixed(2) + ' km (cost ' + best.cost.toFixed(2) + '), probe bias=' + bias.toFixed(1), 'ok');
+    } else {
+      log('Alt search: no altitude in [' + lo + ', ' + hi + '] landed cleanly \u2014 widen range or check stack.', 'warn');
+    }
+  } catch(e){
+    log('Alt search stopped: ' + e.message, e.message === 'aborted' ? 'warn' : 'err');
+  } finally {
+    S.running = false;
+    stopElapsedTimer();
+    renderAltResults();
+    $('altBtn').disabled = !S.inited; $('scanBtn').disabled = !S.inited; $('altBtn').disabled = !S.inited;
+    $('manualBtn').disabled = !S.inited; $('manualSweepBtn').disabled = !S.inited;
+    $('initBtn').disabled = false; $('scanStopBtn').disabled = true;
+    setChip('ready'); setStage('results');
+  }
+  if(S.altBest && !S.abort && $('altChain').checked) await doScan();
+}
+
+function renderAltResults(){
+  const host = $('altResults');
+  if(!host) return;
+  if(!S.altRuns.length){ host.innerHTML = ''; return; }
+  const rows = S.altRuns.slice().sort((a, b) => a.alt - b.alt);
+  let html = '<div class="ttl" style="margin:6px 0;">LB altitude search<em> &middot; probe bias ' +
+    (rows[0].bias).toFixed(1) + ' m &middot; cost excludes x/vx &middot; thr% = avg commanded/Fmax during main LB</em></div>' +
+    '<table><thead><tr>';
+  ['LB alt km','cost','status','TD vy','TD x (m)','avg thr %','thr sat %','gimbal sat %','LB s','LB fuel kg'].forEach(h => html += '<th>' + h + '</th>');
+  html += '</tr></thead><tbody>';
+  for(const r of rows){
+    const m = r.m, c = m.contact, t = m.lbThr, isBest = S.altBest && r === S.altBest;
+    html += '<tr class="' + (isBest ? 'best' : (!r.ok ? 'fail' : '')) + '">' +
+      '<td>' + r.alt.toFixed(2) + '</td>' +
+      '<td>' + (r.ok ? r.cost.toFixed(2) : 'FAIL') + '</td>' +
+      '<td>' + (r.ok ? (isBest ? '\u2605 best' : '\u2713 ok') : esc(r.fail || '?')) + '</td>' +
+      '<td>' + (c ? fmt(c.vy, 3) : '\u2014') + '</td>' +
+      '<td>' + (c ? fmt(c.downrange, 1) : '\u2014') + '</td>' +
+      '<td>' + (t ? (100 * t.avgFrac).toFixed(0) : '\u2014') + '</td>' +
+      '<td>' + (t ? (100 * t.satFrac).toFixed(0) : '\u2014') + '</td>' +
+      '<td>' + (t ? (100 * t.gimSatFrac).toFixed(0) : '\u2014') + '</td>' +
+      '<td>' + fmt(m.totalTimeS, 1) + '</td>' +
+      '<td>' + fmt(m.fuel && m.fuel.landing_burn, 0) + '</td></tr>';
+  }
+  host.innerHTML = html + '</tbody></table>';
 }
 
 // ===== MANUAL SWEEP =====
@@ -1136,7 +1352,7 @@ async function doManualSweep(){
   S.running = true; S.abort = false;
   $('manualBtn').disabled = true;
   $('manualSweepBtn').disabled = true;
-  $('scanBtn').disabled = true;
+  $('scanBtn').disabled = true; $('altBtn').disabled = true;
   $('initBtn').disabled = true;
   $('scanStopBtn').disabled = false;   // reuse Stop to abort mid-sweep
   setChip('running');
@@ -1182,7 +1398,7 @@ async function doManualSweep(){
     stopElapsedTimer();
     $('manualBtn').disabled = !S.inited;
     $('manualSweepBtn').disabled = !S.inited;
-    $('scanBtn').disabled = !S.inited;
+    $('scanBtn').disabled = !S.inited; $('altBtn').disabled = !S.inited;
     $('initBtn').disabled = false;
     $('scanStopBtn').disabled = true;
     setChip('ready');
@@ -1199,7 +1415,7 @@ async function doManualEval(){
 
   S.running = true; S.abort = false;
   $('manualBtn').disabled = true;
-  $('scanBtn').disabled = true;
+  $('scanBtn').disabled = true; $('altBtn').disabled = true;
   $('initBtn').disabled = true;
   setChip('running');
   startElapsedTimer();
@@ -1232,7 +1448,7 @@ async function doManualEval(){
     S.running = false;
     stopElapsedTimer();
     $('manualBtn').disabled = !S.inited;
-    $('scanBtn').disabled = !S.inited;
+    $('scanBtn').disabled = !S.inited; $('altBtn').disabled = !S.inited;
     $('initBtn').disabled = false;
     setChip('ready');
   }
@@ -1287,7 +1503,8 @@ function drawLandscapeScore(){
   const ctx = cv.getContext('2d'); ctx.setTransform(dpr,0,0,dpr,0,0);
   const padL = 56, padR = 18, padT = 16, padB = 36, pw = W-padL-padR, ph = H-padT-padB;
   ctx.fillStyle = '#000'; ctx.fillRect(0,0,W,H);
-  const rows = S.runs.slice().sort((a,b) => a.bias-b.bias);
+  const rows = runsAtAlt().sort((a,b) => a.bias-b.bias);
+  if(!rows.length){ ctx.fillStyle = '#9aa'; ctx.font = '12px monospace'; ctx.textAlign = 'center'; ctx.fillText('no runs at LB alt '+curAlt()+' km yet', W/2, H/2); return; }
   const bs = rows.map(r => r.bias), bMin = Math.min.apply(null,bs), bMax = Math.max.apply(null,bs);
   const oks = rows.filter(r => r.ok && Number.isFinite(r.score));
   if(!oks.length){
@@ -1337,7 +1554,8 @@ function drawLandscapeDr(){
   const ctx = cv.getContext('2d'); ctx.setTransform(dpr,0,0,dpr,0,0);
   const padL = 56, padR = 18, padT = 16, padB = 36, pw = W-padL-padR, ph = H-padT-padB;
   ctx.fillStyle = '#000'; ctx.fillRect(0,0,W,H);
-  const rows = S.runs.slice().sort((a,b) => a.bias-b.bias);
+  const rows = runsAtAlt().sort((a,b) => a.bias-b.bias);
+  if(!rows.length){ ctx.fillStyle = '#9aa'; ctx.font = '12px monospace'; ctx.textAlign = 'center'; ctx.fillText('no runs at LB alt '+curAlt()+' km yet', W/2, H/2); return; }
   const bs = rows.map(r => r.bias), bMin = Math.min.apply(null,bs), bMax = Math.max.apply(null,bs);
   const okRows = rows.filter(r => r.ok && r.m && r.m.contact && Number.isFinite(r.m.contact.downrange));
   if(!okRows.length){
@@ -1388,7 +1606,7 @@ function drawLandscapeDr(){
     }
   }
   // Ring best-by-score (score is the ranking the user cares about, not |dr|)
-  const best = S.runs.filter(r => r.ok && r.m && r.m.contact && Number.isFinite(r.m.contact.downrange))
+  const best = rows.filter(r => r.ok && r.m && r.m.contact && Number.isFinite(r.m.contact.downrange))
     .reduce((a,r) => (!a || r.score < a.score) ? r : a, null);
   if(best){
     const bx = X(best.bias), by = Y(best.m.contact.downrange), right = bx > W*0.7;
@@ -1414,18 +1632,19 @@ function renderResults(){
     if(a.ok !== b.ok) return a.ok ? -1 : 1;
     return a.score - b.score;
   });
-  const _bestRun = S.runs.filter(r => r.ok).reduce((a,r) => !a || r.score < a.score ? r : a, null);
+  const _bestRun = runsAtAlt().filter(r => r.ok).reduce((a,r) => !a || r.score < a.score ? r : a, null);
   const bestBias = _bestRun ? _bestRun.bias : null;
   let html = '<table><thead><tr>';
-  ['#','bias','score','status','TD x (m)','TD vx','TD vy','TD θ','TD ω','hop mm','fuel left','LB start km'].forEach(h => html += '<th>'+h+'</th>');
+  ['#','LB alt','bias','score','status','TD x (m)','TD vx','TD vy','TD θ','TD ω','hop mm','fuel left','LB start km'].forEach(h => html += '<th>'+h+'</th>');
   html += '</tr></thead><tbody>';
   sorted.forEach((r,i) => {
-    const isBest = r.bias === bestBias;
+    const isBest = r === _bestRun;
     const cls = isBest ? 'best' : (!r.ok ? 'fail' : '');
     const idx = S.runs.indexOf(r);
     const c = r.m.contact, lb = r.m.lbStart;
     html += '<tr class="'+cls+'" data-idx="'+idx+'">';
     html += '<td>'+(i+1)+'</td>';
+    html += '<td>'+fmt(r.m.alt, 2)+'</td>';
     html += '<td>'+r.bias.toFixed(2)+'</td>';
     html += '<td>'+(r.ok ? r.score.toFixed(2) : 'FAIL')+'</td>';
     html += '<td>'+(r.ok ? (isBest ? '★ best' : '✓ ok') : esc(r.fail || '?'))+'</td>';
@@ -1718,6 +1937,8 @@ function boot(){
   $('resetBtn').addEventListener('click', doReset);
   $('initBtn').addEventListener('click', doInit);
   $('scanBtn').addEventListener('click', doScan);
+  $('altBtn').addEventListener('click', doAltSearch);
+  $('lbAlt').addEventListener('change', () => { if(S.runs.length) renderResults(); });
   $('scanStopBtn').addEventListener('click', () => { S.abort = true; log('Stop requested', 'warn'); });
   $('manualBtn').addEventListener('click', doManualEval);
   $('manualSweepBtn').addEventListener('click', doManualSweep);
