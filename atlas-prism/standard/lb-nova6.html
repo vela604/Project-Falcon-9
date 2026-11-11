@@ -1290,37 +1290,66 @@ async function doAltSearch(){
   let bias = +$('biasStart').value;
   const cache = new Map();
 
-  const evalAlt = async a => {
+  const evalAlt = async (a, bOverride) => {
     if(S.abort) throw new Error('aborted');
     const t0 = performance.now();
     setFlightPhase('', null);
-    const m = await runBiasEval(bias, prog => paintLive(prog), a);
+    const m = await runBiasEval(bOverride != null ? bOverride : bias, prog => paintLive(prog), a);
     S.evals++; S.evalMs.push(performance.now() - t0); setEvalCount(S.evals);
     drawLive(m);
     return m;
   };
 
   try {
-    // Calibration: one eval at the current alt just to learn dr, then jump bias once
-    // (slope ~1, same rule the bias search uses) so the sweep runs near the pad.
+    // Calibration: iteratively jump bias at a0 until |dr| is close.
+    // A single jump leaves dr at the residual (real run: -169 -> 38m, ~22% of
+    // original). Iterate bias <- bias - dr until |dr| <= CAL_TOL, max CAL_MAX.
     const a0 = clampA(cur != null ? cur : 2);
-    log('[alt] calibrate bias @ alt=' + a0.toFixed(2) + ' km, bias=' + bias.toFixed(1));
-    const m0 = await evalAlt(a0);
-    const dr0 = m0.contact ? m0.contact.downrange : NaN;
-    if(Number.isFinite(dr0) && Math.abs(dr0) > minStep){
-      bias = Math.round((bias - dr0) * 10) / 10;
-      log('[alt] dr=' + dr0.toFixed(1) + 'm \u2192 probe bias set to ' + bias.toFixed(1), 'ok');
-    } else if(!Number.isFinite(dr0)){
-      log('[alt] calibration had no contact \u2014 sweeping at bias=' + bias.toFixed(1) + ' anyway', 'warn');
+    const CAL_TOL = 5;
+    const CAL_MAX = 4;
+    let workingBias = bias;
+    let lastCalM = null;
+    for(let ci = 1; ci <= CAL_MAX; ci++){
+      const m = await evalAlt(a0, workingBias);
+      lastCalM = m;
+      const dr = m.contact ? m.contact.downrange : NaN;
+      log('[alt] calibrate #' + ci + ' alt=' + a0.toFixed(2) + ' km bias=' + workingBias.toFixed(1) +
+          ' dr=' + (Number.isFinite(dr) ? dr.toFixed(1) + 'm' : 'no-contact'),
+          Number.isFinite(dr) ? 'ok' : 'warn');
+      if(!Number.isFinite(dr)) break;
+      if(Math.abs(dr) <= CAL_TOL) break;
+      const nextB = Math.round((workingBias - dr) * 10) / 10;
+      if(nextB === workingBias) break;
+      workingBias = nextB;
+    }
+    bias = workingBias;
+    {
+      const a0r = r2(a0);
+      if(a0r >= lo - 1e-9 && a0r <= hi + 1e-9 && lastCalM){
+        const c0 = altCost(lastCalM);
+        const r0 = { alt: a0r, bias, cost: c0.cost, ok: !!c0.ok, fail: c0.fail, parts: c0.parts, m: lastCalM };
+        cache.set(a0r, r0); S.altRuns.push(r0);
+        log('[alt] seeded sweep @ alt=' + a0r.toFixed(2) + ' from calibration (bias=' + bias.toFixed(1) + ')', '');
+      }
     }
 
     const probe = async a => {
       a = r2(clampA(a));
       if(cache.has(a)) return cache.get(a);
       log('[alt] eval alt=' + a.toFixed(2) + ' km @ bias=' + bias.toFixed(1));
-      const m = await evalAlt(a);
+      let usedBias = bias;
+      let m = await evalAlt(a, usedBias);
+      // Per-alt calibration: if dr drifted at THIS alt, one more jump here.
+      // One correction max per alt (not iterated) — drift is small once a0 is
+      // calibrated, and this keeps the sweep cheap (~5-10 evals total).
+      const dr1 = m.contact ? m.contact.downrange : NaN;
+      if(Number.isFinite(dr1) && Math.abs(dr1) > CAL_TOL){
+        usedBias = Math.round((bias - dr1) * 10) / 10;
+        log('[alt]   dr=' + dr1.toFixed(1) + 'm > ' + CAL_TOL + ' \u2192 re-eval @ bias=' + usedBias.toFixed(1), 'warn');
+        m = await evalAlt(a, usedBias);
+      }
       const c = altCost(m);
-      const r = { alt: a, bias, cost: c.cost, ok: !!c.ok, fail: c.fail, parts: c.parts, m };
+      const r = { alt: a, bias: usedBias, cost: c.cost, ok: !!c.ok, fail: c.fail, parts: c.parts, m };
       cache.set(a, r); S.altRuns.push(r);
       const t = m.lbThr;
       log('  \u2192 alt=' + a.toFixed(2) + ' cost=' + (r.ok ? c.cost.toFixed(2) : 'FAIL ' + c.fail) +
