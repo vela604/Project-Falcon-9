@@ -689,6 +689,12 @@ function drawOceanArea() {
     const N = 40;
     const depthWorld = 1500;   // real ocean depth (1.5 km)
     const rInner = R - depthWorld;
+    // SAGITTA FIX: overshoot top edge by 500m ABOVE surface (rOuter > R).
+    // Polyline chords between 40 vertices sag ~500m below true arc — that
+    // created visible gap between green Earth (drawn with ctx.arc) and blue
+    // ocean (drawn with lineTo chords). Overshoot + clip-to-disc makes the
+    // top edge = exact disc edge = exact surface. No gap.
+    const rOuter = R + 500;
     
     // Diagnostic — log once when rocket enters ocean zone
     const _rocketPhi = Math.atan2(state.rx, state.ry);
@@ -703,21 +709,29 @@ function drawOceanArea() {
         (_phiNE * 180 / Math.PI).toFixed(2) + '°)');
     }
     
+    const [ecx, ecy] = worldToScreen(0, 0);
+    const eRpx = R / mppOcean;
+    
     ctx.save();
+    // Clip to Earth disc — trims overshoot top edge to exact surface
+    ctx.beginPath();
+    ctx.arc(ecx, ecy, eRpx + 1, 0, Math.PI * 2);
+    ctx.clip();
+    
     ctx.beginPath();
     
-    // Top surface arc — worldToScreen per point (proper side view)
+    // Top edge: overshoot to rOuter (R+500m), gets clipped to R by disc clip
     for (let k = 0; k <= N; k++) {
       const f = k / N;
       const wW = _shoreWobble(f, 1.0);
       const wE = _deepWobble(f, 1.0);
       const phiLocal = (phiStart + wW) + f * ((phiEnd + wE) - (phiStart + wW));
-      const [sx, sy] = worldToScreen(R * Math.sin(phiLocal), R * Math.cos(phiLocal));
+      const [sx, sy] = worldToScreen(rOuter * Math.sin(phiLocal), rOuter * Math.cos(phiLocal));
       if (k === 0) ctx.moveTo(sx, sy);
       else ctx.lineTo(sx, sy);
     }
     
-    // Bottom arc (1.5km below surface) — closed backward
+    // Bottom edge at rInner (R-1500m) — inside disc, no clipping concern
     for (let k = N; k >= 0; k--) {
       const f = k / N;
       const wW = _shoreWobble(f, 1.0);
@@ -730,7 +744,7 @@ function drawOceanArea() {
     ctx.fillStyle = 'rgba(18, 58, 128, 0.98)';
     ctx.fill();
     
-    // Surface highlight — thin bright blue line at surface
+    // Surface highlight — thin line at R, will be partially clipped to 0.5-1px
     ctx.strokeStyle = 'rgba(150, 200, 255, 0.75)';
     ctx.lineWidth = 1.5;
     ctx.beginPath();
