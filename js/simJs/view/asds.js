@@ -17,6 +17,11 @@
   'use strict';
   const ASDS_LENGTH_M = 91;
   const ASDS_HALF = ASDS_LENGTH_M / 2;
+  // Landing zone center is offset from ship's geometric center because
+  // aft (containers + blast wall) occupies the west end.
+  // Ship west edge is LZ_WEST_M west of arcOffsetM; east edge is LZ_EAST_M east.
+  const LZ_WEST_M = 54;
+  const LZ_EAST_M = 37;
   const MIN_GAP_M = 250;
   const LANDING_RADIUS_M = 35;   // usable landing zone half-width
   const DECK_HEIGHT_M = 2;        // deck above sea level (rocket lands here)
@@ -43,19 +48,19 @@
     const zone = _oceanZoneBounds();
 
     // Ocean zone bounds check (with margin so hull edges stay inside)
-    const minOffset = zone.startM + ASDS_HALF;
-    const maxOffset = zone.endM - ASDS_HALF;
-    if (xMeters - ASDS_HALF < zone.startM) {
+    const minOffset = zone.startM + LZ_WEST_M;
+    const maxOffset = zone.endM - LZ_EAST_M;
+    if (xMeters - LZ_WEST_M < zone.startM) {
       return {
         ok: false,
-        error: 'Western hull edge would be ' + Math.round(zone.startM - (xMeters - ASDS_HALF)) +
+        error: 'Western hull edge would be ' + Math.round(zone.startM - (xMeters - LZ_WEST_M)) +
                ' m outside ocean. Minimum valid offset: ' + Math.round(minOffset) + ' m.'
       };
     }
-    if (xMeters + ASDS_HALF > zone.endM) {
+    if (xMeters + LZ_EAST_M > zone.endM) {
       return {
         ok: false,
-        error: 'Eastern hull edge would be ' + Math.round((xMeters + ASDS_HALF) - zone.endM) +
+        error: 'Eastern hull edge would be ' + Math.round((xMeters + LZ_EAST_M) - zone.endM) +
                ' m outside ocean. Maximum valid offset: ' + Math.round(maxOffset) + ' m.'
       };
     }
@@ -138,8 +143,8 @@
 
     function _refreshZoneInfo() {
       const zone = _oceanZoneBounds();
-      const minOffset = zone.startM + ASDS_HALF;
-      const maxOffset = zone.endM - ASDS_HALF;
+      const minOffset = zone.startM + LZ_WEST_M;
+      const maxOffset = zone.endM - LZ_EAST_M;
       zoneInfo.textContent = 'Deployment zone: ' + Math.round(minOffset).toLocaleString() +
         ' – ' + Math.round(maxOffset).toLocaleString() + ' m (' +
         zone.startDeg.toFixed(0) + '° – ' + zone.endDeg.toFixed(0) + '° east). ' +

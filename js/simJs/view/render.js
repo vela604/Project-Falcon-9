@@ -1334,59 +1334,78 @@ function _lzGeo(pad) {
 function _drawASDS(ctx, pad, worldPos, camAng, mpp, pal) {
   const [px, py] = worldToScreen(worldPos.x, worldPos.y);
   const lengthM = Number.isFinite(pad.lengthM) ? pad.lengthM : 91;
-  const halfL = lengthM / 2;
-  const reach = (lengthM / 2 + 60) / mpp;
+  
+  // ASYMMETRIC SHIP — arcOffsetM is the LANDING ZONE CENTER (where rocket
+  // lands), NOT the geometric ship center. Real ASDS layout:
+  //   - Aft (west): 15m containers + 2m blast wall = 17m occupied
+  //   - Landing zone: remaining ~74m from blast wall to bow
+  //   - LZ center is ~54m from west edge, ~37m from east edge
+  //   - Ship geometric center is 8.5m WEST of LZ center
+  const LZ_WEST_M = 54;   // west edge is 54m west of LZ center
+  const LZ_EAST_M = 37;   // east edge is 37m east of LZ center
+  const westEdge = -LZ_WEST_M;
+  const eastEdge = LZ_EAST_M;
+  
+  const reach = (lengthM + 120) / mpp;
   if (px + reach < 0 || px - reach > canvas.width ||
       py + reach < 0 || py - reach > canvas.height) return;
-
+  
   const draftM = 5.0, freeboardM = 2.5;
   const deckY = -freeboardM, hullBotY = draftM;
-  const contH = 8.0, contW = 15.0;
-  const blastH = 3.5, blastW = 2.0;
-
+  const contW = 15.0, contH = 8.0;
+  const blastW = 2.0, blastH = 3.5;
+  
   ctx.save();
-  ctx.translate(px, py);
+  ctx.translate(px, py);   // local (0,0) = LZ center (what user inputs)
   ctx.rotate(-(worldPos.phi - camAng));
   ctx.scale(1 / mpp, 1 / mpp);
-
-  // Submerged hull (rust brown)
+  
+  // ---- Hull below waterline (rust) ----
   ctx.fillStyle = 'rgb(38, 24, 18)';
-  ctx.fillRect(-halfL, 0, lengthM, hullBotY);
+  ctx.fillRect(westEdge, 0, lengthM, hullBotY);
   ctx.strokeStyle = 'rgba(0,0,0,0.35)';
   ctx.lineWidth = 0.15;
-  for (let x = -halfL + 4; x < halfL; x += 5) {
+  for (let x = westEdge + 4; x < eastEdge; x += 5) {
     ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, hullBotY); ctx.stroke();
   }
-
-  // Above-water hull (dark slate)
+  
+  // ---- Hull above waterline (dark slate) ----
   ctx.fillStyle = 'rgb(20, 28, 38)';
-  ctx.fillRect(-halfL, deckY, lengthM, -deckY);
+  ctx.fillRect(westEdge, deckY, lengthM, -deckY);
   ctx.strokeStyle = 'rgba(0,0,0,0.85)';
   ctx.lineWidth = 0.35;
-  ctx.strokeRect(-halfL, deckY, lengthM, hullBotY - deckY);
-
-  // Black deck
+  ctx.strokeRect(westEdge, deckY, lengthM, hullBotY - deckY);
+  
+  // ---- Black deck ----
   ctx.fillStyle = 'rgb(12, 12, 12)';
-  ctx.fillRect(-halfL, deckY - 0.4, lengthM, 0.4);
+  ctx.fillRect(westEdge, deckY - 0.4, lengthM, 0.4);
   ctx.strokeStyle = 'rgba(180, 180, 180, 0.35)';
   ctx.lineWidth = 0.1;
-  ctx.beginPath(); ctx.moveTo(-halfL, deckY - 0.4); ctx.lineTo(halfL, deckY - 0.4); ctx.stroke();
-
-  // Landing X (close zoom)
-  if (mpp < 0.6) {
-    ctx.strokeStyle = 'rgba(255, 230, 120, 0.65)';
+  ctx.beginPath(); ctx.moveTo(westEdge, deckY - 0.4); ctx.lineTo(eastEdge, deckY - 0.4); ctx.stroke();
+  
+  // ---- Landing zone yellow line (full width: blast wall to bow) ----
+  // NO X mark (removed per user request). Line spans the full usable
+  // landing area, from east face of blast wall to the bow with a small
+  // margin. Tick marks at each end mark the boundary.
+  if (mpp < 0.8) {
+    const lzWest = westEdge + contW + blastW;   // blast wall east face
+    const lzEast = eastEdge - 0.5;              // 0.5m margin at bow
+    ctx.strokeStyle = 'rgba(255, 230, 120, 0.70)';
     ctx.lineWidth = 0.4;
-    const zoneR = Number.isFinite(pad.radiusM) ? pad.radiusM : 35;
-    ctx.beginPath(); ctx.moveTo(-zoneR, deckY - 0.5); ctx.lineTo(zoneR, deckY - 0.5); ctx.stroke();
-    ctx.lineWidth = 0.6;
     ctx.beginPath();
-    ctx.moveTo(-4, deckY - 0.5); ctx.lineTo(4, deckY - 4.5);
-    ctx.moveTo(4, deckY - 0.5); ctx.lineTo(-4, deckY - 4.5);
+    ctx.moveTo(lzWest, deckY - 0.5);
+    ctx.lineTo(lzEast, deckY - 0.5);
+    ctx.stroke();
+    // Tick marks
+    ctx.lineWidth = 0.5;
+    ctx.beginPath();
+    ctx.moveTo(lzWest, deckY - 0.5); ctx.lineTo(lzWest, deckY - 2);
+    ctx.moveTo(lzEast, deckY - 0.5); ctx.lineTo(lzEast, deckY - 2);
     ctx.stroke();
   }
-
-  // Aft containers
-  const contX = -halfL + 2;
+  
+  // ---- Aft containers (west) ----
+  const contX = westEdge + 0.5;
   ctx.fillStyle = 'rgb(220, 220, 220)';
   ctx.fillRect(contX, deckY - contH, contW, contH);
   ctx.strokeStyle = 'rgba(0,0,0,0.45)';
@@ -1402,30 +1421,42 @@ function _drawASDS(ctx, pad, worldPos, camAng, mpp, pal) {
   ctx.strokeRect(contX + 1, deckY - contH - 3, contW - 2, 3);
   ctx.fillStyle = 'rgb(180, 60, 60)';
   ctx.fillRect(contX + contW - 3, deckY - contH, 2, 2);
-
-  // Blast wall
+  
+  // ---- Blast wall ----
   const blastX = contX + contW;
   ctx.fillStyle = 'rgb(70, 70, 70)';
   ctx.fillRect(blastX, deckY - blastH, blastW, blastH);
   ctx.strokeStyle = 'rgba(0,0,0,0.9)';
   ctx.lineWidth = 0.25;
   ctx.strokeRect(blastX, deckY - blastH, blastW, blastH);
-
-  // Thrusters
-  [-halfL * 0.75, -halfL * 0.35, halfL * 0.35, halfL * 0.75].forEach(tx => {
+  
+  // ---- Thrusters — proportional along hull ----
+  [0.15, 0.35, 0.65, 0.85].forEach(f => {
+    const tx = westEdge + lengthM * f;
     ctx.fillStyle = 'rgb(18, 18, 18)';
     ctx.beginPath(); ctx.ellipse(tx, hullBotY + 2, 1.6, 2.2, 0, 0, Math.PI * 2); ctx.fill();
     ctx.strokeStyle = 'rgba(80,80,80,0.5)'; ctx.lineWidth = 0.2; ctx.stroke();
   });
-
-  // Waterline
+  
+  // ---- Waterline ----
   ctx.strokeStyle = 'rgba(120, 190, 255, 0.55)';
   ctx.lineWidth = 0.25;
-  ctx.beginPath(); ctx.moveTo(-halfL - 3, 0); ctx.lineTo(halfL + 3, 0); ctx.stroke();
-
+  ctx.beginPath(); ctx.moveTo(westEdge - 3, 0); ctx.lineTo(eastEdge + 3, 0); ctx.stroke();
+  
+  // ---- Water ripples ----
+  ctx.strokeStyle = 'rgba(200, 230, 255, 0.30)';
+  ctx.lineWidth = 0.15;
+  for (let sx = westEdge - 2; sx <= eastEdge + 2; sx += 2.5) {
+    const wob = Math.sin(sx * 0.6 + performance.now() * 0.001) * 0.25;
+    ctx.beginPath();
+    ctx.moveTo(sx, 0);
+    ctx.lineTo(sx + 1, -0.3 + wob);
+    ctx.stroke();
+  }
+  
   ctx.restore();
-
-  // Label
+  
+  // ---- Label — above LZ center (camera focus) ----
   if (mpp > 0.25 && mpp < 25) {
     const labelTxt = pad.name + ' \u00b7 ' + Math.round(pad.arcOffsetM / 1000) + ' km';
     const labelY = py - (freeboardM + contH + 6) / mpp;
