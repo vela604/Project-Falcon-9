@@ -1454,6 +1454,55 @@ function _drawASDS(ctx, pad, worldPos, camAng, mpp, pal) {
     ctx.stroke();
   }
   
+  // ---- Vapour lights at landing zone edges (deck level) ----
+  const _lzWest = westEdge + contW + blastW;
+  const _lzEast = eastEdge - 0.5;
+  const _lightY = deckY - 0.8;
+  
+  [_lzWest, _lzEast].forEach(lx => {
+    if (pal.night > 0.02) {
+      // Night: warm amber glow + small beam going up
+      if (typeof _padSprite === 'function') {
+        if (!_PAD.glowAmb) _PAD.glowAmb = _padSprite('255,190,90');
+        if (_PAD.glowAmb) {
+          const gR = 10;
+          ctx.globalAlpha = Math.min(1, pal.night * 0.9);
+          ctx.drawImage(_PAD.glowAmb, lx - gR, _lightY - gR, gR * 2, gR * 2);
+          ctx.globalAlpha = 1;
+        }
+      }
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      const beamH = 16;
+      const bg = ctx.createLinearGradient(0, _lightY, 0, _lightY - beamH);
+      bg.addColorStop(0, 'rgba(255,196,100,' + (0.28 * pal.night).toFixed(3) + ')');
+      bg.addColorStop(1, 'rgba(255,196,100,0)');
+      ctx.fillStyle = bg;
+      ctx.beginPath();
+      ctx.moveTo(lx - 0.4, _lightY);
+      ctx.lineTo(lx + 0.4, _lightY);
+      ctx.lineTo(lx + 3.5, _lightY - beamH);
+      ctx.lineTo(lx - 3.5, _lightY - beamH);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+    } else {
+      // Day: small warm dot
+      ctx.fillStyle = 'rgba(255, 220, 130, 0.95)';
+      ctx.beginPath();
+      ctx.arc(lx, _lightY, 0.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  });
+  
+  // ---- Human scale reference (on bow deck) ----
+  if (typeof _drawHumanScaleRef === 'function' && mpp < 3) {
+    ctx.save();
+    ctx.translate(_lzEast - 3, deckY);
+    _drawHumanScaleRef(ctx, 0);
+    ctx.restore();
+  }
+  
   ctx.restore();
   
   // ---- Label — above LZ center (camera focus) ----
@@ -1540,6 +1589,11 @@ function drawLandingPads() {
     cg.addColorStop(1, 'rgba(120,230,180,0)');
     ctx.fillStyle = cg; ctx.beginPath(); ctx.arc(0, 0, R * 0.6, 0, Math.PI * 2); ctx.fill();
     ctx.restore();
+    
+    // Human scale reference beside LZ pad (restored after rewrite)
+    if (typeof _drawHumanScaleRef === 'function') {
+      _drawHumanScaleRef(ctx, R + 8);
+    }
     
     if (g.lights.length) {
       if (n > 0.02) {
