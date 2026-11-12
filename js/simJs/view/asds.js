@@ -92,6 +92,24 @@
       lights: false,
     };
     CONFIG.LANDING_PADS.push(pad);
+    // Broadcast to workers — each has its OWN CONFIG instance (loaded
+    // via importScripts at worker boot). Without this, ASDS appears on
+    // main thread's CONFIG but render/physics workers never see it →
+    // planet view shows no marker (LZ-1/2/3 exist at init in all threads,
+    // but runtime-added ASDS is invisible to workers).
+    const _padSnapshot = JSON.parse(JSON.stringify(pad));
+    try {
+      if (typeof WorkerBridge !== 'undefined' && WorkerBridge.send) {
+        WorkerBridge.send({ type: 'addLandingPad', pad: _padSnapshot });
+        console.log('[ASDS] physics worker notified');
+      }
+    } catch (e) { console.warn('[ASDS] physics broadcast failed', e); }
+    try {
+      if (window._renderWorker) {
+        window._renderWorker.postMessage({ type: 'addLandingPad', pad: _padSnapshot });
+        console.log('[ASDS] render worker notified');
+      }
+    } catch (e) { console.warn('[ASDS] render broadcast failed', e); }
     console.log('[ASDS] Deployed ' + pad.name + ' at ' + (xMeters / 1000).toFixed(1) +
                 ' km downrange (' + Math.round(xMeters / CONFIG.EARTH_RADIUS * 180 / Math.PI).toFixed(2) + '° east)');
     return { ok: true, pad };

@@ -272,6 +272,15 @@ if (msg.data.rcsSync) {
       if (typeof _clearAllTrails === 'function') _clearAllTrails();
       break;
     }
+    case 'addLandingPad': {
+      // Runtime pad deployment (ASDS, future user pads). Push into THIS
+      // worker's own CONFIG.LANDING_PADS so drawPadMarkers() + drawLandingPads()
+      // see it on next frame.
+      if (!CONFIG.LANDING_PADS) CONFIG.LANDING_PADS = [];
+      CONFIG.LANDING_PADS.push(msg.pad);
+      console.log('[render] added landing pad: ' + msg.pad.id + ' @ ' + msg.pad.arcOffsetM + 'm');
+      break;
+    }
     case 'trailSample': {
       if (typeof _pushTrailSample === 'function') {
         _pushTrailSample(msg.key, msg.rx, msg.ry, msg.t, msg.vx, msg.vy);

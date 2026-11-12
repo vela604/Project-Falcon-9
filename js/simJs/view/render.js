@@ -1557,14 +1557,19 @@ function drawPadMarkers() {
     pads.forEach((pad, idx) => {
       const w = landingPadWorldPosition(pad, state.simTime);
       const [zx, zy] = worldToScreen(w.x, w.y);
-      ctx.strokeStyle = 'rgba(120,255,170,0.95)';
+      // Distinct colors: LZ = green, ASDS = blue (matches drone ship)
+      const isASDS = !!pad.isASDS;
+      const markerColor = isASDS ? 'rgba(120,180,255,0.95)' : 'rgba(120,255,170,0.95)';
+      const labelColor = isASDS ? 'rgba(140,200,255,0.98)' : 'rgba(140,255,180,0.95)';
+      ctx.strokeStyle = markerColor;
       ctx.beginPath(); ctx.arc(zx, zy, 3.5, 0, Math.PI * 2); ctx.stroke();
       const dist = Math.round(pad.arcOffsetM || 0);
+      const distLabel = dist >= 1000 ? (dist / 1000).toFixed(0) + ' km' : dist + ' m';
       const labelOffsetY = idx * 12;
-      put(pad.id + ' \u2192 ' + dist + ' m',
+      put(pad.id + ' \u2192 ' + distLabel,
           zx + tgX * 9 + outX * 10,
           zy + tgY * 9 + outY * 10 + 3 + labelOffsetY,
-          'left', 'rgba(140,255,180,0.95)');
+          'left', labelColor);
     });
   }
   ctx.restore();

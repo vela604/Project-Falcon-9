@@ -318,7 +318,12 @@ break;
 // No-op — warp UI was removed. Kept as a recognised message type so
 // any stale code path doesn't fall through to the default branch.
 break;
-                case 'reset': {
+                case 'addLandingPad': {
+      if (!CONFIG.LANDING_PADS) CONFIG.LANDING_PADS = [];
+      CONFIG.LANDING_PADS.push(msg.pad);
+      break;
+    }
+    case 'reset': {
   // Reset must ALSO stop the sim loop.
   // Capture whether the loop was suspended mid-guidance-wait, because
   // clearing both the ack expectation and the 5 s fallback timer below
