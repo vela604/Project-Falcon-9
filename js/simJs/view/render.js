@@ -1316,139 +1316,186 @@ function _lzGeo(pad) {
 // follow Earth's local east direction so ASDS hull aligns with the
 // downrange direction as seen from camera.
 // ============================================================================
+// ============================================================================
+// ASDS drone ship — 2D SIDE VIEW (not a flat LZ pad).
+//
+// Real Marmac 304/ASOG class specs:
+//   Length:    91 m (300 ft)
+//   Draft:     ~5–6 m below waterline
+//   Freeboard: ~2–3 m deck above waterline
+//   Deck:      black steel plate, flat
+//   Aft:       stacked shipping containers (white/blue), ~8 m tall
+//   Blast wall: steel wall between containers and landing zone
+//   Thrusters: 4 azimuth pods below hull (submerged)
+//
+// Drawn in local pad frame (y = 0 = sea level, +y = down), rotated to
+// follow Earth's local east direction so ship hull aligns with downrange.
+// ============================================================================
 function _drawASDS(ctx, pad, worldPos, camAng, mpp, pal) {
   const [px, py] = worldToScreen(worldPos.x, worldPos.y);
-  const lengthM = pad.lengthM || 91;
+  const lengthM = Number.isFinite(pad.lengthM) ? pad.lengthM : 91;
   const halfL = lengthM / 2;
-  const reach = (lengthM / 2 + 40) / mpp;
+  const reach = (lengthM / 2 + 60) / mpp;
   if (px + reach < 0 || px - reach > canvas.width ||
       py + reach < 0 || py - reach > canvas.height) return;
-  if (mpp > 80) return;   // too far zoomed-out to see details
+  if (mpp > 120) return;   // too zoomed-out to see detail
 
-  const pal_dark = {
-    hullBelow: 'rgb(58, 32, 32)',      // dark rust below water
-    hullAbove: 'rgb(42, 58, 74)',      // dark blue-grey above water
-    deck: 'rgb(10, 10, 10)',            // black deck
-    deckStripe: 'rgb(200, 200, 200)',   // landing X stripe
-    containerWhite: 'rgb(216, 216, 216)',
-    containerBlue: 'rgb(42, 90, 160)',
-    blastWall: 'rgb(74, 74, 74)',
-    thruster: 'rgb(26, 26, 26)',
-    waterline: 'rgba(140, 200, 255, 0.45)',
+  // ---- Dimensions (meters) ----
+  const draftM      = 5.0;    // hull below waterline
+  const freeboardM  = 2.5;    // deck above waterline
+  const deckY       = -freeboardM;
+  const hullBottomY = draftM;
+  const contH       = 8.0;    // containers
+  const contW       = 15.0;   // container block length (aft)
+  const blastH      = 3.5;    // blast wall height
+  const blastW      = 2.0;    // blast wall thickness
+  const thrusterR   = 1.6;
+
+  // ---- Colors — distinct from LZ's golden plate ----
+  const CO = {
+    hullBelow:   'rgb(38, 24, 18)',      // dark rust/brown below water
+    hullAbove:   'rgb(20, 28, 38)',      // dark slate above water
+    hullEdge:    'rgba(0, 0, 0, 0.85)',
+    deck:        'rgb(12, 12, 12)',      // black steel deck
+    deckEdge:    'rgba(180, 180, 180, 0.35)',
+    container1:  'rgb(220, 220, 220)',   // white
+    container2:  'rgb(52, 98, 168)',     // blue
+    container3:  'rgb(180, 60, 60)',     // red accent
+    blast:       'rgb(70, 70, 70)',      // steel grey
+    blastEdge:   'rgba(0, 0, 0, 0.9)',
+    thruster:    'rgb(18, 18, 18)',
+    waterline:   'rgba(120, 190, 255, 0.55)',
   };
 
-  const deckY = -2;         // deck 2m above waterline
-  const hullBottomY = 5;    // hull 5m below waterline
-  const contHeightM = 8;    // containers 8m tall
-  const contWidthM = 15;    // containers 15m long (aft)
-  const blastHeightM = 3;   // blast wall 3m tall
-  const blastWidthM = 2;    // blast wall thickness
-
   ctx.save();
   ctx.translate(px, py);
   ctx.rotate(-(worldPos.phi - camAng));
-  ctx.scale(1 / mpp, 1 / mpp);   // 1 unit = 1m, +y = down
+  ctx.scale(1 / mpp, 1 / mpp);      // 1 unit = 1 meter, +y = down
 
-  // ---- 1. Thrusters (4 azimuth pods below hull) ----
-  const thrusterXs = [-halfL * 0.72, -halfL * 0.36, halfL * 0.36, halfL * 0.72];
-  thrusterXs.forEach(xp => {
-    ctx.fillStyle = pal_dark.thruster;
-    ctx.fillRect(xp - 1.5, hullBottomY, 3, 2.5);
-    ctx.strokeStyle = 'rgba(0,0,0,0.5)';
-    ctx.lineWidth = 0.2;
-    ctx.strokeRect(xp - 1.5, hullBottomY, 3, 2.5);
-  });
-
-  // ---- 2. Hull — submerged part (dark rust) ----
-  ctx.fillStyle = pal_dark.hullBelow;
+  // ---- 1. Submerged hull (rusty below waterline) ----
+  ctx.fillStyle = CO.hullBelow;
   ctx.fillRect(-halfL, 0, lengthM, hullBottomY);
-
-  // ---- 3. Hull — above waterline (dark blue-grey) ----
-  ctx.fillStyle = pal_dark.hullAbove;
-  ctx.fillRect(-halfL, deckY, lengthM, -deckY);
-
-  // ---- 4. Deck top surface (black) ----
-  ctx.fillStyle = pal_dark.deck;
-  ctx.fillRect(-halfL, deckY - 0.3, lengthM, 0.3);
-
-  // ---- 5. Landing zone stripe (visible when zoomed in) ----
-  if (mpp < 0.5) {
-    ctx.strokeStyle = pal_dark.deckStripe;
-    ctx.lineWidth = 0.4;
-    const zoneHalf = pad.radiusM || 35;
-    ctx.beginPath();
-    ctx.moveTo(-zoneHalf, deckY - 0.35);
-    ctx.lineTo(zoneHalf, deckY - 0.35);
-    ctx.stroke();
+  // subtle vertical hull stiffeners
+  ctx.strokeStyle = 'rgba(0,0,0,0.35)';
+  ctx.lineWidth = 0.15;
+  for (let x = -halfL + 3; x < halfL; x += 5) {
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, hullBottomY); ctx.stroke();
   }
 
-  // ---- 6. Aft containers (west end, above deck) ----
-  const contX = -halfL;
-  // White container block
-  ctx.fillStyle = pal_dark.containerWhite;
-  ctx.fillRect(contX, deckY - contHeightM, contWidthM, contHeightM);
-  ctx.strokeStyle = 'rgba(0,0,0,0.4)';
-  ctx.lineWidth = 0.2;
-  ctx.strokeRect(contX, deckY - contHeightM, contWidthM, contHeightM);
-  // Blue container on top
-  ctx.fillStyle = pal_dark.containerBlue;
-  ctx.fillRect(contX + 1, deckY - contHeightM - 3, contWidthM - 2, 3);
-  ctx.strokeRect(contX + 1, deckY - contHeightM - 3, contWidthM - 2, 3);
-
-  // ---- 7. Blast wall (steel, in front of containers = east side) ----
-  const blastX = contX + contWidthM;
-  ctx.fillStyle = pal_dark.blastWall;
-  ctx.fillRect(blastX, deckY - blastHeightM, blastWidthM, blastHeightM);
-  ctx.strokeRect(blastX, deckY - blastHeightM, blastWidthM, blastHeightM);
-
-  // ---- 8. Hull outline (subtle dark edge) ----
-  ctx.strokeStyle = 'rgba(0,0,0,0.65)';
-  ctx.lineWidth = 0.25;
+  // ---- 2. Above-water hull (dark slate) ----
+  ctx.fillStyle = CO.hullAbove;
+  ctx.fillRect(-halfL, deckY, lengthM, -deckY);
+  ctx.strokeStyle = CO.hullEdge;
+  ctx.lineWidth = 0.35;
   ctx.strokeRect(-halfL, deckY, lengthM, hullBottomY - deckY);
 
-  // ---- 9. Waterline highlight (thin blue line at y=0) ----
-  ctx.strokeStyle = pal_dark.waterline;
-  ctx.lineWidth = 0.15;
+  // ---- 3. Black steel deck (thin dark line on top) ----
+  ctx.fillStyle = CO.deck;
+  ctx.fillRect(-halfL, deckY - 0.4, lengthM, 0.4);
+  ctx.strokeStyle = CO.deckEdge;
+  ctx.lineWidth = 0.1;
+  ctx.beginPath(); ctx.moveTo(-halfL, deckY - 0.4); ctx.lineTo(halfL, deckY - 0.4); ctx.stroke();
+
+  // ---- 4. Landing-zone markings (only visible at close zoom) ----
+  if (mpp < 0.6) {
+    ctx.strokeStyle = 'rgba(255, 230, 120, 0.6)';
+    ctx.lineWidth = 0.4;
+    const zoneR = Number.isFinite(pad.radiusM) ? pad.radiusM : 35;
+    ctx.beginPath();
+    ctx.moveTo(-zoneR, deckY - 0.5);
+    ctx.lineTo(zoneR, deckY - 0.5);
+    ctx.stroke();
+    // X mark
+    ctx.lineWidth = 0.5;
+    ctx.beginPath();
+    ctx.moveTo(-4, deckY - 0.5); ctx.lineTo(4, deckY - 4.5);
+    ctx.moveTo(4, deckY - 0.5);  ctx.lineTo(-4, deckY - 4.5);
+    ctx.stroke();
+  }
+
+  // ---- 5. Aft containers (west end) — stacked shipping boxes ----
+  const contX = -halfL + 2;
+  // White container (bottom)
+  ctx.fillStyle = CO.container1;
+  ctx.fillRect(contX, deckY - contH, contW, contH);
+  ctx.strokeStyle = 'rgba(0,0,0,0.45)';
+  ctx.lineWidth = 0.25;
+  ctx.strokeRect(contX, deckY - contH, contW, contH);
+  // Container corrugation lines
+  ctx.strokeStyle = 'rgba(0,0,0,0.18)';
+  ctx.lineWidth = 0.08;
+  for (let yy = deckY - contH + 1; yy < deckY - 0.5; yy += 1) {
+    ctx.beginPath(); ctx.moveTo(contX + 0.5, yy); ctx.lineTo(contX + contW - 0.5, yy); ctx.stroke();
+  }
+  // Blue container on top (shorter)
+  ctx.fillStyle = CO.container2;
+  ctx.fillRect(contX + 1, deckY - contH - 3, contW - 2, 3);
+  ctx.strokeRect(contX + 1, deckY - contH - 3, contW - 2, 3);
+  // Red accent panel
+  ctx.fillStyle = CO.container3;
+  ctx.fillRect(contX + contW - 3, deckY - contH, 2, 2);
+
+  // ---- 6. Steel blast wall (in front of containers, toward landing zone) ----
+  const blastX = contX + contW;
+  ctx.fillStyle = CO.blast;
+  ctx.fillRect(blastX, deckY - blastH, blastW, blastH);
+  ctx.strokeStyle = CO.blastEdge;
+  ctx.lineWidth = 0.25;
+  ctx.strokeRect(blastX, deckY - blastH, blastW, blastH);
+  // blast wall diagonal cross-brace hint
+  ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+  ctx.lineWidth = 0.12;
   ctx.beginPath();
-  ctx.moveTo(-halfL - 2, 0);
-  ctx.lineTo(halfL + 2, 0);
+  ctx.moveTo(blastX, deckY - blastH);
+  ctx.lineTo(blastX + blastW, deckY);
   ctx.stroke();
 
-  // ---- 10. Subtle water splash ripple at edges ----
-  ctx.strokeStyle = 'rgba(200, 230, 255, 0.35)';
-  ctx.lineWidth = 0.1;
-  for (let sx = -halfL - 1; sx <= halfL + 1; sx += 3) {
-    const wobble = Math.sin(sx * 0.7 + performance.now() * 0.001) * 0.15;
+  // ---- 7. Azimuth thrusters (4 pods below hull) ----
+  const thrusterXs = [-halfL * 0.75, -halfL * 0.35, halfL * 0.35, halfL * 0.75];
+  thrusterXs.forEach(tx => {
+    ctx.fillStyle = CO.thruster;
+    ctx.beginPath();
+    ctx.ellipse(tx, hullBottomY + thrusterR * 0.8, thrusterR, thrusterR * 1.4, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(80,80,80,0.5)';
+    ctx.lineWidth = 0.2;
+    ctx.stroke();
+  });
+
+  // ---- 8. Waterline highlight ----
+  ctx.strokeStyle = CO.waterline;
+  ctx.lineWidth = 0.25;
+  ctx.beginPath();
+  ctx.moveTo(-halfL - 3, 0);
+  ctx.lineTo(halfL + 3, 0);
+  ctx.stroke();
+
+  // Small water ripple patches at bow/stern
+  ctx.strokeStyle = 'rgba(200, 230, 255, 0.30)';
+  ctx.lineWidth = 0.15;
+  for (let sx = -halfL - 2; sx <= halfL + 2; sx += 2.5) {
+    const wob = Math.sin(sx * 0.6 + performance.now() * 0.001) * 0.25;
     ctx.beginPath();
     ctx.moveTo(sx, 0);
-    ctx.lineTo(sx + 1.5, -0.3 + wobble);
+    ctx.lineTo(sx + 1, -0.3 + wob);
     ctx.stroke();
   }
 
   ctx.restore();
 
-  // ---- BRIGHT OUTLINE around ship (distinct from flat LZ pads) ----
-  ctx.save();
-  ctx.translate(px, py);
-  ctx.rotate(-(worldPos.phi - camAng));
-  ctx.scale(1 / mpp, 1 / mpp);
-  ctx.strokeStyle = 'rgba(120, 200, 255, 0.85)';
-  ctx.lineWidth = 0.6;
-  ctx.strokeRect(-halfL, deckY - contHeightM - 3, lengthM, hullBottomY - (deckY - contHeightM - 3));
-  ctx.restore();
-  
-  // ---- Label above ASDS ----
-  if (mpp > 0.3 && mpp < 20) {
+  // ---- 9. Label above ship ----
+  if (mpp > 0.25 && mpp < 25) {
     const labelTxt = pad.name + ' · ' + Math.round(pad.arcOffsetM / 1000) + ' km';
+    const labelY = py - (freeboardM + contH + 6) / mpp;
     ctx.save();
-    ctx.font = '11px "JetBrains Mono", monospace';
+    ctx.font = 'bold 11px "JetBrains Mono", monospace';
     ctx.textAlign = 'center';
     ctx.lineJoin = 'round';
-    ctx.strokeStyle = 'rgba(0,0,0,0.7)';
+    ctx.strokeStyle = 'rgba(0,0,0,0.8)';
     ctx.lineWidth = 3;
-    ctx.strokeText(labelTxt, px, py - (2 + contHeightM + 6) / mpp);
+    ctx.strokeText(labelTxt, px, labelY);
     ctx.fillStyle = 'rgba(140, 200, 255, 0.98)';
-    ctx.fillText(labelTxt, px, py - (2 + contHeightM + 6) / mpp);
+    ctx.fillText(labelTxt, px, labelY);
     ctx.restore();
   }
 }

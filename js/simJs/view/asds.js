@@ -110,7 +110,8 @@
         console.log('[ASDS] render worker notified');
       }
     } catch (e) { console.warn('[ASDS] render broadcast failed', e); }
-    console.log('[ASDS] Deployed ' + pad.name + ' at ' + (xMeters / 1000).toFixed(1) +
+    console.log('[ASDS] Pad object:', JSON.stringify(pad));
+  console.log('[ASDS] Deployed ' + pad.name + ' at ' + (xMeters / 1000).toFixed(1) +
                 ' km downrange (' + Math.round(xMeters / CONFIG.EARTH_RADIUS * 180 / Math.PI).toFixed(2) + '° east)');
     // Refresh follow-body dropdown so the new ASDS appears as a selectable
     // camera target (alongside LZ-1/2/3). Without this the dropdown stays
