@@ -104,62 +104,32 @@ function _cameraTargetIndex() {
 }
 function cameraWorldPosition() {
   if (camera.mode === 'planet') {
-    
     const pz = (typeof camera !== 'undefined' && Number.isFinite(camera.planetZoom)) ? camera.planetZoom : 1;
     if (pz > 1.01) {
-        const b = state.bodies[_cameraTargetIndex()];
-        if (b) {
-          const t = Math.min(1, (pz - 1) / 4);
-          const st = t * t * (3 - 2 * t);
-          return { x: b.rx * st, y: b.ry * st };
-        }
+      const b = state.bodies[_cameraTargetIndex()];
+      if (b) {
+        const t = Math.min(1, (pz - 1) / 4);
+        const st = t * t * (3 - 2 * t);
+        return { x: b.rx * st, y: b.ry * st };
       }
-    return { x: 0, y: 0 };
+    }
+    return { x: 0, y: 0 }; // Earth's center is the planet-view camera anchor
   }
   
   if (!camera.follow) return { x: cameraCenter.x, y: cameraCenter.y };
   const b = state.bodies[_cameraTargetIndex()];
   if (!b) return { x: 0, y: CONFIG.EARTH_RADIUS };
   
-  // Camera anchor = a FIXED fraction of the rocket's geometric height above
-  // its base (0.5 = mid-height). Earlier this used the physical center of
-  // mass, which shifted every time mass moved inside the stack — fuel burn,
-  // staging, legs deploying (their COM swings ~9m as they unfold), payload
-  // release. At high zoom those shifts showed up as the ground sliding a
-  // few pixels during what should look like a still shot.
-  //
-  // Anchor-on-geometry keeps the visual frame steady across every mass-
-  // distribution change. The anchor is still in the body's LOCAL frame, so
-  // it rotates with the rocket during tumbles and gravity turns.
-  // Solo bodies (payloads, fairing halves, ejected packages) have no
-// members — use their own stored height instead of falling back to
-// the active stack's 45 m. Without this, a payload's camera anchor
-// sat 22.5 m from its actual position instead of 4 m, and any spin
-// sent the body revolving around screen-center at 5.6× the correct
-// radius. Same preference order as physics.js's _bodyHeightOf.
-const totalH = (b.members && b.members.length) ?
-  b.members.reduce((s, m) => s + (Number.isFinite(m.height) ? m.height : 0), 0) :
-  (Number.isFinite(b.height) && b.height > 0 ? b.height : (CONFIG.ROCKET_HEIGHT || 45));
-const anchorH = totalH * 0.5;
+  const totalH = (b.members && b.members.length) ?
+    b.members.reduce((s, m) => s + (Number.isFinite(m.height) ? m.height : 0), 0) :
+    (Number.isFinite(b.height) && b.height > 0 ? b.height : (CONFIG.ROCKET_HEIGHT || 45));
+  const anchorH = totalH * 0.5;
   
-  // Anchor at "mid-height" in WORLD-UP direction (radial from Earth),
-  // NOT body-theta direction. Previously the anchor rotated with the
-  // body — so whenever the rocket pitched or spun, the camera target
-  // swung in a circle around CoM, shaking the entire viewport and
-  // making the ground/horizon line vibrate up-down.
-  //
-  // Now the anchor is a fixed world-offset from CoM in the radial
-  // direction (which itself barely moves: CoM only drifts from fuel
-  // burn, not from rotation). Camera is rock-steady during any
-  // attitude change; rocket appears to rotate around its own axis
-  // in view (which is what real rocket pitch looks like from a fixed
-  // observer — the observer doesn't swing).
-  const rLen = Math.hypot(b.rx, b.ry) || 1;
-  const upX = b.rx / rLen;
-  const upY = b.ry / rLen;
+  const cT = Math.cos(b.theta),
+    sT = Math.sin(b.theta);
   return {
-    x: b.rx + anchorH * upX,
-    y: b.ry + anchorH * upY,
+    x: b.rx - anchorH * sT,
+    y: b.ry + anchorH * cT,
   };
 }
 
