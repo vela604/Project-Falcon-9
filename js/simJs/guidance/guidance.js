@@ -814,16 +814,21 @@ if (!_v3State.payloadOpenFired &&
         send(cmdRcsDuty(null, _v3State.stageIdx));
 
         if (_v3Config.done.DEORBIT_ENABLED) {
-          send(cmdMarkIntentionalImpact(_v3State.stageIdx));
-          const env = Derivation.getEnv();
-          _v3State.suicideBlock = FUNDAMENTAL_BLOCKS.suicide.createInstance();
-          _v3State.suicideBlock.start(_v3Config.suicide, _v3State.stageIdx, {
-            restingArea: {
-              midWestDeg: env.REMOTE_AREA_MID_WEST_DEG,
-              westStartDeg: env.REMOTE_AREA_WEST_START_DEG,
-              westEndDeg: env.REMOTE_AREA_WEST_END_DEG,
-            },
-          });
+send(cmdMarkIntentionalImpact(_v3State.stageIdx));
+            const env = Derivation.getEnv();
+            // Mission-level target impact. Compute Earth-fixed angle from the remote
+            // resting area and push it into the config clone. Block reads
+            // cfg.TARGET_IMPACT_EF_DEG first; falls back to restingArea only if unset.
+            // A future mission can override this to any target by replacing the
+            // computation below (e.g. alternate impact sites for different stacks).
+            const _targetMidWestRadV3 = ((env.REMOTE_AREA_MID_WEST_DEG || 0) * Math.PI) / 180;
+            const _targetImpactEfDegV3 = (((env.LAUNCH_SITE_ANGLE_0 || 0) - _targetMidWestRadV3) * 180) / Math.PI;
+            const _suicideCfgV3 = JSON.parse(JSON.stringify(_v3Config.suicide));
+            if (!Number.isFinite(_suicideCfgV3.TARGET_IMPACT_EF_DEG)) {
+              _suicideCfgV3.TARGET_IMPACT_EF_DEG = _targetImpactEfDegV3;
+            }
+            _v3State.suicideBlock = FUNDAMENTAL_BLOCKS.suicide.createInstance();
+            _v3State.suicideBlock.start(_suicideCfgV3, _v3State.stageIdx, {});
           _v3State.missionPhase = 'SUICIDE';
           _v3State.missionPhaseStart = simT;
           console.log('[leoInsertionV3] DONE_DWELL → SUICIDE at t=' + simT.toFixed(2));
@@ -1318,16 +1323,21 @@ if (!_lbState.payloadOpenFired &&
         send(cmdRcsDuty(null, _lbState.stageIdx));
 
         if (_lbConfig.done.DEORBIT_ENABLED) {
-          send(cmdMarkIntentionalImpact(_lbState.stageIdx));
-          const env = Derivation.getEnv();
-          _lbState.suicideBlock = FUNDAMENTAL_BLOCKS.suicide.createInstance();
-          _lbState.suicideBlock.start(_lbConfig.suicide, _lbState.stageIdx, {
-            restingArea: {
-              midWestDeg: env.REMOTE_AREA_MID_WEST_DEG,
-              westStartDeg: env.REMOTE_AREA_WEST_START_DEG,
-              westEndDeg: env.REMOTE_AREA_WEST_END_DEG,
-            },
-          });
+send(cmdMarkIntentionalImpact(_lbState.stageIdx));
+            const env = Derivation.getEnv();
+            // Mission-level target impact. Compute Earth-fixed angle from the remote
+            // resting area and push it into the config clone. Block reads
+            // cfg.TARGET_IMPACT_EF_DEG first; falls back to restingArea only if unset.
+            // A future mission can override this to any target by replacing the
+            // computation below (e.g. alternate impact sites for different stacks).
+            const _targetMidWestRadLB = ((env.REMOTE_AREA_MID_WEST_DEG || 0) * Math.PI) / 180;
+            const _targetImpactEfDegLB = (((env.LAUNCH_SITE_ANGLE_0 || 0) - _targetMidWestRadLB) * 180) / Math.PI;
+            const _suicideCfgLB = JSON.parse(JSON.stringify(_lbConfig.suicide));
+            if (!Number.isFinite(_suicideCfgLB.TARGET_IMPACT_EF_DEG)) {
+              _suicideCfgLB.TARGET_IMPACT_EF_DEG = _targetImpactEfDegLB;
+            }
+            _lbState.suicideBlock = FUNDAMENTAL_BLOCKS.suicide.createInstance();
+            _lbState.suicideBlock.start(_suicideCfgLB, _lbState.stageIdx, {});
           _lbState.missionPhase = 'SUICIDE';
           _lbState.missionPhaseStart = simT;
           console.log('[landbackV1] DONE_DWELL → SUICIDE at t=' + simT.toFixed(2));

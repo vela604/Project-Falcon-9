@@ -2460,6 +2460,11 @@ setState(s) {
 // enough to nudge.
 SUICIDE_TRIM_MIN_DUTY: 0.03,
       SUICIDE_TRIM_MAX_S: 120,
+      // Absolute Earth-fixed angle (degrees) of the desired impact point.
+      // null / out-of-range => fall back to _missionCtx.restingArea or
+      // env.REMOTE_AREA_MID_WEST_DEG. Mission code overrides this per-mission
+      // by passing the value in the config clone at suicideBlock.start().
+      TARGET_IMPACT_EF_DEG: null,
     },
     importantFields: [],
     createInstance: function () {
@@ -2605,10 +2610,22 @@ if (_st.lastCircTriggerLeadS === 0 &&
 
         const cfg = _constants;
         const restingArea = (_missionCtx && _missionCtx.restingArea) || null;
-        const midWestDeg =
-          restingArea && Number.isFinite(restingArea.midWestDeg)
-            ? restingArea.midWestDeg
-            : env.REMOTE_AREA_MID_WEST_DEG || 0;
+        let midWestDeg;
+        // Target impact selection. Priority:
+        //   1. cfg.TARGET_IMPACT_EF_DEG (mission-supplied, absolute Earth-fixed deg)
+        //   2. _missionCtx.restingArea.midWestDeg (legacy, "degrees west of launch")
+        //   3. env.REMOTE_AREA_MID_WEST_DEG (fallback default)
+        // Both 1 and 2 convert to the "west of launch meridian" form the rest of
+        // this case uses via lambdaMidEf = launch_angle - midWestRad.
+        if (Number.isFinite(cfg.TARGET_IMPACT_EF_DEG) && Math.abs(cfg.TARGET_IMPACT_EF_DEG) <= 360) {
+          const launchDeg = ((env.LAUNCH_SITE_ANGLE_0 || 0) * 180) / Math.PI;
+          midWestDeg = launchDeg - cfg.TARGET_IMPACT_EF_DEG;
+        } else {
+          midWestDeg =
+            restingArea && Number.isFinite(restingArea.midWestDeg)
+              ? restingArea.midWestDeg
+              : env.REMOTE_AREA_MID_WEST_DEG || 0;
+        }
 
         switch (_st.phase) {
           // ==========================================================

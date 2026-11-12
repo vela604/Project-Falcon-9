@@ -93,6 +93,7 @@ const GUIDE_CONSTANT_DESCRIPTIONS = {
   'suicide.SUICIDE_TRIM_FAR_DEG': 'Impact-angle error (deg) at which the trim uses full duty. Errors smaller than this scale the duty proportionally.',
   'suicide.SUICIDE_TRIM_MIN_DUTY': 'Minimum RCS trim duty. Prevents the trim from chattering around the target when the error is tiny.',
   'suicide.SUICIDE_TRIM_MAX_S': 'Maximum duration (s) for the RCS trim after the burn. On timeout, trim ends regardless of convergence.',
+  'suicide.TARGET_IMPACT_EF_DEG': 'Absolute Earth-fixed angle (degrees) of the desired impact point. null = fall back to _missionCtx.restingArea (legacy path) or env.REMOTE_AREA_MID_WEST_DEG (default). Mission code overrides per-mission by passing a numeric value in the config clone at suicideBlock.start(). Valid range: [-360, 360]; anything else falls back.',
 },
 
   // landbackV1 — clone of leoInsertionV3 (Landback logic to be added)
@@ -228,6 +229,7 @@ const GUIDE_CONSTANT_DESCRIPTIONS = {
   'suicide.SUICIDE_TRIM_FAR_DEG': 'Impact-angle error (deg) at which the trim uses full duty. Errors smaller than this scale the duty proportionally.',
   'suicide.SUICIDE_TRIM_MIN_DUTY': 'Minimum RCS trim duty. Prevents the trim from chattering around the target when the error is tiny.',
   'suicide.SUICIDE_TRIM_MAX_S': 'Maximum duration (s) for the RCS trim after the burn. On timeout, trim ends regardless of convergence.',
+  'suicide.TARGET_IMPACT_EF_DEG': 'Absolute Earth-fixed angle (degrees) of the desired impact point. null = fall back to _missionCtx.restingArea (legacy path) or env.REMOTE_AREA_MID_WEST_DEG (default). Mission code overrides per-mission by passing a numeric value in the config clone at suicideBlock.start(). Valid range: [-360, 360]; anything else falls back.',
   },
   
   // ===========================================================

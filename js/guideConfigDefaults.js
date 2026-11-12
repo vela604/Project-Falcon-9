@@ -243,6 +243,7 @@ leoInsertionV3: _mkDefault(
   SUICIDE_TRIM_FAR_DEG: 0.5,
   SUICIDE_TRIM_MIN_DUTY: 0.03,
       SUICIDE_TRIM_MAX_S: 120,
+      TARGET_IMPACT_EF_DEG: null,
     },
   },
     ['full-mission', 'expendable'],
@@ -333,6 +334,7 @@ leoInsertionV3: _mkDefault(
   SUICIDE_TRIM_FAR_DEG: 0.5,
   SUICIDE_TRIM_MIN_DUTY: 0.03,
       SUICIDE_TRIM_MAX_S: 120,
+      TARGET_IMPACT_EF_DEG: null,
     },
     mission: {
       TARGET_LANDING_PAD: 'LZ-1',
