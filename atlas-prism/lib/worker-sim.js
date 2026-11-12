@@ -679,25 +679,7 @@ self.onmessage = async (e) => {
         const m = await TunerHook.runEvalValues(values, o);
         result = { ok: true, metrics: m, snap: cpOut.cp || null };
       }
-    } else if (type === 'tuneLead') {
-      // Bootstrap Step 3b: tune lead for one lattice point (CIRC_END evals), entirely inside this worker.
-      // payload: { point, opts: { targetAltKm, maxEvals } }. Returns scalars only (no log array bloat > 40 lines).
-      const o = payload.opts || {};
-      const cache = new TunerUtils.EvalCache();
-      const lr = await TunerCore.tuneLead(payload.point, {
-        hook: TunerHook, cache, targetAltKm: o.targetAltKm,
-        targetApoKm: o.targetApoKm, targetPeriKm: o.targetPeriKm,
-        maxEvals: o.maxEvals || 30,
-      });
-      const mm = lr.metrics || {};
-      result = {
-        ok: lr.ok, inBand: lr.inBand, reason: lr.reason, lead: lr.lead, leadTicks: lr.leadTicks,
-        marginS: lr.marginS, vrEnd: lr.vrEnd, vrMin: lr.vrMin, evals: lr.evals, wallMs: lr.wallMs,
-        stageFuelEngOffKg: mm.stageFuelEngOffKg, coastDeltaV: mm.coastDeltaV, apoCoastKm: mm.apoCoastKm,
-        maxG: mm.maxG, maxQKPa: mm.maxQKPa, maxOmega: mm.maxOmega,
-        log: (lr.log || []).slice(-40),
-      };
-    } else if (type === 'leadEdge' || type === 'leadFull') {
+    }  else if (type === 'leadEdge' || type === 'leadFull') {
       // Parallel lead search. leadEdge: edge + mode + window (tuneLeadV2 windowOnly) on this worker. leadFull: FULL-score a list of lead ticks (payload.lis; [] = just warm the CH cache).
       if (!_saSnapshot) { result = { ok: false, reason: 'no SA snapshot' }; }
       else {
