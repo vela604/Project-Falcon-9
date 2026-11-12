@@ -70,62 +70,100 @@
 
     <section class="panel" id="configPanel">
       <h2><span class="tag">0x01</span>Setup</h2>
-      <div class="row">
-        <label>preset <select id="presetSel"></select></label>
-        <button class="suggest" id="presetLoad">Load preset</button>
+
+      <!-- A · configuration (frozen at INIT unless noted) -->
+      <div class="blk">
+        <div class="blk-t">preset</div>
+        <div class="row pre">
+          <label>preset <select id="presetSel"></select></label>
+          <button class="suggest" id="presetLoad">Load preset</button>
+          <span class="note">fills ascent + bias start from the preset</span>
+        </div>
       </div>
 
-      <div class="grp">ascent <em>frozen at INIT &mdash; changing these needs a new INIT</em></div>
-      <div class="row">
-        <label>MECO kg <input type="number" id="cfgMeco" step="1" value="52612"></label>
-        <label>G <input type="number" id="cfgG" step="0.01" value="0.64"></label>
-        <label>T <input type="number" id="cfgT" step="0.001" value="4.82"></label>
+      <div class="cfggrid">
+        <div class="blk">
+          <div class="blk-t">ascent <em>needs a new INIT when changed</em></div>
+          <div class="row fgrid">
+            <label>MECO kg <input type="number" id="cfgMeco" step="1" value="52612"></label>
+            <label>G <input type="number" id="cfgG" step="0.01" value="0.64"></label>
+            <label>T <input type="number" id="cfgT" step="0.001" value="4.82"></label>
+          </div>
+        </div>
+
+        <div class="blk">
+          <div class="blk-t">landing burn <em>applies to every eval</em></div>
+          <div class="row fgrid">
+            <label>LB alt km <input type="number" id="lbAlt" step="0.05" min="0.3" max="4.9" value="2"></label>
+            <label>V_TD margin m <input type="number" id="lbMargin" step="0.1" min="0" placeholder="preset"></label>
+            <label>H_STALL m <input type="number" id="lbStall" step="0.1" min="0" placeholder="preset"></label>
+          </div>
+          <div class="note">LANDING_BURN_ALT_KM &middot; blank = preset value</div>
+        </div>
       </div>
 
-      <div class="grp">bias search window <em>ENTRY_BURN_IMPACT_TARGET_M, metres</em></div>
-      <div class="row">
-        <label>bias lo <input type="number" id="biasLo" step="1" value="-900"></label>
-        <label>bias hi <input type="number" id="biasHi" step="1" value="200"></label>
-        <label>start <input type="number" id="biasStart" step="1" value="-750"></label>
-        <label>min step <input type="number" id="biasMinStep" step="0.5" min="0.1" value="2.5"></label>
+      <div class="blk">
+        <div class="blk-t">bias search window <em>ENTRY_BURN_IMPACT_TARGET_M &middot; metres</em></div>
+        <div class="row fgrid f4">
+          <label>bias lo <input type="number" id="biasLo" step="1" value="-900"></label>
+          <label>bias hi <input type="number" id="biasHi" step="1" value="200"></label>
+          <label>start <input type="number" id="biasStart" step="1" value="-750"></label>
+          <label>min step <input type="number" id="biasMinStep" step="0.5" min="0.1" value="2.5"></label>
+        </div>
       </div>
 
-      <div class="grp">landing burn altitude <em>LANDING_BURN_ALT_KM, km &mdash; used by every eval (search, manual, sweep)</em></div>
-      <div class="row">
-        <label>LB alt <input type="number" id="lbAlt" step="0.05" min="0.3" max="4.9" value="2"></label>
-        <label>alt lo <input type="number" id="altLo" step="0.1" value="1.0"></label>
-        <label>hi <input type="number" id="altHi" step="0.1" value="3.0"></label>
-        <label>step <input type="number" id="altStep" step="0.1" min="0.1" value="0.5"></label>
-      </div>
-      <div class="row">
-        <label>V_TD margin m <input type="number" id="lbMargin" step="0.1" min="0" placeholder="preset"></label>
-        <label>H_STALL m <input type="number" id="lbStall" step="0.1" min="0" placeholder="preset"></label>
-        <span class="dim" style="font-size:11px;">blank = preset value &middot; applies to every eval</span>
-      </div>
-      <div class="row">
-        <button class="primary" id="altBtn" disabled>Find LB altitude</button>
-        <label><input type="checkbox" id="altChain" checked style="width:auto"> then bias search</label>
-        <button class="primary" id="dumpBtn" disabled>Copy last LB ground log</button>
+      <!-- B · run -->
+      <div class="runbar">
+        <div class="runbtns">
+          <button class="primary" id="initBtn"><i>1</i>Init captures</button>
+          <button class="primary" id="scanBtn" disabled><i>2</i>Run bias search</button>
+          <button class="reset" id="scanStopBtn" disabled title="Aborts a search, altitude search or sweep">Stop</button>
+        </div>
+        <div class="note" id="initStatus">Not initialised &mdash; run INIT first.</div>
       </div>
 
-      <div class="row">
-        <button class="primary" id="initBtn">Init captures</button>
-        <button class="primary" id="scanBtn" disabled>Run bias search</button>
-        <button class="reset" id="scanStopBtn" disabled>Stop</button>
+      <!-- C · tools (all reuse the INIT captures) -->
+      <div class="tools-h">tools <em>need INIT &middot; each eval restarts from the EB snapshot &middot; Stop aborts them</em></div>
+      <div class="tools">
+        <div class="tool">
+          <div class="tool-h"><b>LB altitude finder</b><span>probe ignition altitudes, pick middle of tied-best span</span></div>
+          <div class="row fgrid">
+            <label>alt lo km <input type="number" id="altLo" step="0.1" value="1.0"></label>
+            <label>alt hi km <input type="number" id="altHi" step="0.1" value="3.0"></label>
+            <label>step km <input type="number" id="altStep" step="0.1" min="0.1" value="0.5"></label>
+          </div>
+          <div class="tool-a">
+            <button id="altBtn" disabled>Find LB altitude</button>
+            <label class="chk"><input type="checkbox" id="altChain" checked> then bias search</label>
+          </div>
+        </div>
+
+        <div class="tool">
+          <div class="tool-h"><b>Bias sweep</b><span>N evals from lo to hi, appended to the runs table</span></div>
+          <div class="row fgrid">
+            <label>sweep lo <input type="number" id="sweepLo" step="1" value="-850"></label>
+            <label>sweep hi <input type="number" id="sweepHi" step="1" value="-800"></label>
+            <label>N <input type="number" id="sweepN" step="1" min="1" value="11"></label>
+          </div>
+          <div class="tool-a">
+            <button id="manualSweepBtn" disabled>Sweep &amp; add</button>
+            <span class="note" id="sweepStatus">N includes lo and hi</span>
+          </div>
+        </div>
+
+        <div class="tool">
+          <div class="tool-h"><b>Manual eval</b><span>single eval at one bias, appended to the runs table</span></div>
+          <div class="row fgrid">
+            <label>bias m <input type="number" id="biasManual" step="1" value="-850"></label>
+          </div>
+          <div class="tool-a"><button id="manualBtn" disabled>Eval &amp; add</button></div>
+        </div>
+
+        <div class="tool">
+          <div class="tool-h"><b>Export</b><span>last eval's landing-burn ground log to clipboard</span></div>
+          <div class="tool-a"><button id="dumpBtn" disabled>Copy last LB ground log</button></div>
+        </div>
       </div>
-      <div class="row">
-        <label>manual bias <input type="number" id="biasManual" step="1" value="-850"></label>
-        <button class="primary" id="manualBtn" disabled>Eval &amp; add</button>
-        <span class="dim" style="font-size:11px;">single eval, appended to runs table</span>
-      </div>
-      <div class="row">
-        <label>sweep lo <input type="number" id="sweepLo" step="1" value="-850"></label>
-        <label>hi <input type="number" id="sweepHi" step="1" value="-800"></label>
-        <label>N <input type="number" id="sweepN" step="1" min="1" value="11"></label>
-        <button class="primary" id="manualSweepBtn" disabled>Sweep &amp; add</button>
-        <span class="dim" style="font-size:11px;" id="sweepStatus">N includes lo and hi</span>
-      </div>
-      <div class="row"><span class="dim" id="initStatus">Not initialised &mdash; run INIT first.</span></div>
     </section>
 
     <section class="panel" id="telemetry">
@@ -161,12 +199,16 @@
     <div id="altResults"></div>
     <div id="verdict"></div>
     <div class="landcard" id="landCard" style="display:none">
-      <div class="ttl">Bias &rarr; score<em>one point per eval &middot; red = hard fail &middot; ring = best</em></div>
-      <canvas id="landChart"></canvas>
-      <div class="ttl" style="margin-top:14px;">Bias &rarr; downrange error<em>one point per eval &middot; cyan dashed = pad center (0) &middot; ring = best-by-score</em></div>
-      <canvas id="landChartDr"></canvas>
+      <div class="landbox">
+        <div class="ttl">Bias &rarr; score<em>one point per eval &middot; red = hard fail &middot; ring = best</em></div>
+        <canvas id="landChart"></canvas>
+      </div>
+      <div class="landbox">
+        <div class="ttl">Bias &rarr; downrange error<em>cyan dashed = pad centre (0) &middot; ring = best by score</em></div>
+        <canvas id="landChartDr"></canvas>
+      </div>
     </div>
-    <div id="resultsTable"><div class="dim" style="padding:10px;">No runs yet. Run INIT, then &ldquo;Run bias search&rdquo;.</div></div>
+    <div id="resultsTable"><div class="empty">No runs yet. Run INIT, then &ldquo;Run bias search&rdquo;.</div></div>
     <div id="detailPanel" style="display:none"></div>
   </section>
 </main>
@@ -1284,7 +1326,7 @@ async function doAltSearch(){
   S.altRuns = []; S.altBest = null; S.altTied = [];
   $('altBtn').disabled = true; $('scanBtn').disabled = true; $('manualBtn').disabled = true;
   $('manualSweepBtn').disabled = true; $('initBtn').disabled = true; $('scanStopBtn').disabled = false;
-  $('altResults').innerHTML = '<div class="dim" style="padding:10px;">ALT SEARCH running\u2026</div>';
+  $('altResults').innerHTML = '<div class="empty">ALT SEARCH running\u2026</div>';
   clearLive(); setChip('running'); setStage('scan');
 
   let bias = +$('biasStart').value;
@@ -1302,14 +1344,15 @@ async function doAltSearch(){
 
   try {
     // Calibration: iteratively jump bias at a0 until |dr| is close.
-    // A single jump leaves dr at the residual (real run: -169 -> 38m, ~22% of
-    // original). Iterate bias <- bias - dr until |dr| <= CAL_TOL, max CAL_MAX.
+    // Single jump leaves dr at residual (~22% of original). Iterate bias <- bias - dr.
     const a0 = clampA(cur != null ? cur : 2);
     const CAL_TOL = 5;
     const CAL_MAX = 4;
     let workingBias = bias;
     let lastCalM = null;
+    let lastCalBias = bias;
     for(let ci = 1; ci <= CAL_MAX; ci++){
+      lastCalBias = workingBias;
       const m = await evalAlt(a0, workingBias);
       lastCalM = m;
       const dr = m.contact ? m.contact.downrange : NaN;
@@ -1323,9 +1366,9 @@ async function doAltSearch(){
       workingBias = nextB;
     }
     bias = workingBias;
-    {
+    if(lastCalM && lastCalBias === bias){
       const a0r = r2(a0);
-      if(a0r >= lo - 1e-9 && a0r <= hi + 1e-9 && lastCalM){
+      if(a0r >= lo - 1e-9 && a0r <= hi + 1e-9){
         const c0 = altCost(lastCalM);
         const r0 = { alt: a0r, bias, cost: c0.cost, ok: !!c0.ok, fail: c0.fail, parts: c0.parts, m: lastCalM };
         cache.set(a0r, r0); S.altRuns.push(r0);
@@ -1339,9 +1382,7 @@ async function doAltSearch(){
       log('[alt] eval alt=' + a.toFixed(2) + ' km @ bias=' + bias.toFixed(1));
       let usedBias = bias;
       let m = await evalAlt(a, usedBias);
-      // Per-alt calibration: if dr drifted at THIS alt, one more jump here.
-      // One correction max per alt (not iterated) — drift is small once a0 is
-      // calibrated, and this keeps the sweep cheap (~5-10 evals total).
+      // Per-alt drift correction: if dr drifted at THIS alt, one more jump.
       const dr1 = m.contact ? m.contact.downrange : NaN;
       if(Number.isFinite(dr1) && Math.abs(dr1) > CAL_TOL){
         usedBias = Math.round((bias - dr1) * 10) / 10;
@@ -1417,7 +1458,7 @@ function renderAltResults(){
   if(!S.altRuns.length){ host.innerHTML = ''; return; }
   const rows = S.altRuns.slice().sort((a, b) => a.alt - b.alt);
   const tiedSet = new Set(S.altTied || []);
-  let html = '<div class="ttl" style="margin:6px 0;">LB altitude search<em> &middot; probe bias ' +
+  let html = '<div class="ttl">LB altitude search<em> &middot; probe bias ' +
     (rows[0].bias).toFixed(1) + ' m &middot; cost ignores x/vx/fuel &middot; thr% = avg commanded/Fmax in main LB &middot; pick = middle of tied-best span</em></div>' +
     '<table><thead><tr>';
   ['LB alt km','cost','status','TD vy','TD x (m)','avg thr %','at Fmax %','at Fmin %','gimbal sat %','LB s'].forEach(h => html += '<th>' + h + '</th>');
@@ -1600,7 +1641,7 @@ function renderVerdict(){
 function drawLandscape(){
   const card = $('landCard');
   if(!S.runs.length){ if(card) card.style.display = 'none'; return; }
-  if(card) card.style.display = 'block';
+  if(card) card.style.display = 'grid';
   drawLandscapeScore();
   drawLandscapeDr();
 }
@@ -1608,7 +1649,7 @@ function drawLandscape(){
 function drawLandscapeScore(){
   const cv = $('landChart'), card = $('landCard');
   if(!cv || !card) return;
-  const W = Math.max(320, Math.floor(card.clientWidth - 24)), H = 230, dpr = window.devicePixelRatio || 1;
+  const W = Math.max(280, Math.floor(cv.parentElement.clientWidth - 24)), H = 230, dpr = window.devicePixelRatio || 1;
   cv.width = W*dpr; cv.height = H*dpr; cv.style.width = W+'px'; cv.style.height = H+'px';
   const ctx = cv.getContext('2d'); ctx.setTransform(dpr,0,0,dpr,0,0);
   const padL = 56, padR = 18, padT = 16, padB = 36, pw = W-padL-padR, ph = H-padT-padB;
@@ -1659,7 +1700,7 @@ function drawLandscapeScore(){
 function drawLandscapeDr(){
   const cv = $('landChartDr'), card = $('landCard');
   if(!cv || !card) return;
-  const W = Math.max(320, Math.floor(card.clientWidth - 24)), H = 230, dpr = window.devicePixelRatio || 1;
+  const W = Math.max(280, Math.floor(cv.parentElement.clientWidth - 24)), H = 230, dpr = window.devicePixelRatio || 1;
   cv.width = W*dpr; cv.height = H*dpr; cv.style.width = W+'px'; cv.style.height = H+'px';
   const ctx = cv.getContext('2d'); ctx.setTransform(dpr,0,0,dpr,0,0);
   const padL = 56, padR = 18, padT = 16, padB = 36, pw = W-padL-padR, ph = H-padT-padB;
@@ -1735,7 +1776,7 @@ function renderResults(){
   renderVerdict();
   drawLandscape();
   if(!S.runs.length){
-    $('resultsTable').innerHTML = '<div class="dim" style="padding:10px;">No runs.</div>';
+    $('resultsTable').innerHTML = '<div class="empty">No runs.</div>';
     return;
   }
   const sorted = S.runs.slice().sort((a,b) => {
