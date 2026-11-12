@@ -171,8 +171,8 @@
       <div class="strip">
         <div><span><i class="prompt">$</i><i class="spin"></i><em>elapsed</em><small id="tmFlag">IDLE</small></span><b id="tmElapsed">00:00:00</b></div>
         <div><span><em>evals</em></span><b id="tmEvals">0</b></div>
-        <div><span><em>best bias &middot; score</em></span><b id="tmBest"><span id="tmBestBias">&mdash;</span><small id="tmScore"></small></b></div>
-        <div><span><em>avg eval</em></span><b id="tmAvg">&mdash;</b></div>
+        <div><span><em>operations / sec</em></span><b id="tmOps">&mdash;</b></div>
+        <div><span><em>total operations</em></span><b id="tmTotalOps">&mdash;</b></div>
       </div>
 
       <div class="frail" id="frail">
@@ -324,6 +324,7 @@ const S = {
   liveChart:null, prefixPhases:null, saSimTime:0,
   stage:'config', lastWindow:null,
   altRuns:[], altBest:null, altTied:[], lastEval:null,
+  totalOps:0, opsSampleT:0, opsSampleN:0, opsRate:0,
 };
 
 // Current LB ignition altitude (km) from the Setup input; null = leave preset value alone.
@@ -379,6 +380,28 @@ function paintLive(p){
   if(FPH.indexOf(p.phase) >= 0) setFlightPhase(p.phase, null);
 }
 
+// ===== OPS TRACKING =====
+// One op = one TunerEngine.tick(DT()) call = one 80Hz physics step.
+function _tick(){ TunerEngine.tick(DT()); S.totalOps++; }
+function fmtOps(n){
+  if(!Number.isFinite(n) || n < 0) return '—';
+  if(n >= 1e9) return (n/1e9).toFixed(2) + 'B';
+  if(n >= 1e6) return (n/1e6).toFixed(2) + 'M';
+  if(n >= 1e3) return (n/1e3).toFixed(1) + 'K';
+  return String(Math.round(n));
+}
+function updateOpsDisplay(){
+  const now = performance.now();
+  const dt = S.opsSampleT > 0 ? (now - S.opsSampleT) / 1000 : 0;
+  if(dt >= 0.2){
+    S.opsRate = (S.totalOps - S.opsSampleN) / dt;
+    S.opsSampleT = now;
+    S.opsSampleN = S.totalOps;
+  }
+  const r = $('tmOps'); if(r) r.textContent = fmtOps(S.opsRate);
+  const t = $('tmTotalOps'); if(t) t.textContent = fmtOps(S.totalOps);
+}
+
 // ===== ELAPSED TIMER + BEST DISPLAY =====
 let _elapsedTimer = null;
 const pad2 = n => (n < 10 ? '0' : '') + n;
@@ -389,19 +412,17 @@ function startElapsedTimer(){
   _elapsedTimer = setInterval(() => {
     const s = Math.floor((performance.now() - t0) / 1000);
     $('tmElapsed').textContent = pad2(Math.floor(s/3600))+':'+pad2(Math.floor(s%3600/60))+':'+pad2(s%60);
+    updateOpsDisplay();
   }, 500);
 }
 function stopElapsedTimer(){ if(_elapsedTimer){ clearInterval(_elapsedTimer); _elapsedTimer = null; } }
 function setBestDisplay(bias, score){
-  $('tmBestBias').textContent = (bias != null && Number.isFinite(bias)) ? bias.toFixed(2) : '—';
-  $('tmScore').textContent = (score != null && Number.isFinite(score)) ? ' · ' + score.toFixed(2) : '';
+  // Value moved to the verdict card; telemetry strip now shows ops/sec + total ops.
+  // Kept as no-op so existing call sites don't need to change.
 }
 function setEvalCount(n){
   $('tmEvals').textContent = n; $('stEvalsN').textContent = n;
-  if(S.evalMs.length){
-    const avg = S.evalMs.reduce((a,b)=>a+b,0)/S.evalMs.length/1000;
-    $('tmAvg').innerHTML = avg.toFixed(1)+'<small>s</small>';
-  } else $('tmAvg').textContent = '—';
+  updateOpsDisplay();
 }
 
 const _yieldMC = new MessageChannel();
@@ -565,7 +586,7 @@ async function runUntil(predicate, maxS, label, onProgress){
   const maxTicks = Math.ceil(maxS / DT());
   for(let i=0; i<maxTicks; i++){
     if(state.halted) return { ok:false, reason:'halted', i };
-    TunerEngine.tick(DT());
+    _tick();
     const r = predicate();
     if(r) return { ok:true, result:r, i, simTime:state.simTime };
     if(i % 200 === 0){
@@ -762,7 +783,7 @@ async function runBiasEval(bias, onTick, altKm){
   try {
     for(let i=0; i<maxTicks; i++){
       if(state.halted){ m.end='halted'; break; }
-      TunerEngine.tick(DT());
+      _tick();
       const gs = Guidance.getGuideStatus() || {};
       const bB = findBooster();
       if(!bB){ m.end='no-booster'; break; }
