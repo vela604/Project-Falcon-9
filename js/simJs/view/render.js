@@ -644,246 +644,137 @@ function drawOceanArea() {
   const t = state.simTime;
   
   const eastStartRad = (CONFIG.OCEAN_ZONE_EAST_START_DEG || 2) * Math.PI / 180;
-  const eastEndRad   = (CONFIG.OCEAN_ZONE_EAST_END_DEG   || 60) * Math.PI / 180;
-  
+  const eastEndRad = (CONFIG.OCEAN_ZONE_EAST_END_DEG || 60) * Math.PI / 180;
   const phiStart = phi0 + eastStartRad + omegaE * t;
-  const phiEnd   = phi0 + eastEndRad   + omegaE * t;
+  const phiEnd = phi0 + eastEndRad + omegaE * t;
   
   const mppOcean = metersPerPixel();
   const isPlanet = camera.mode === 'planet';
+  const maxDepthM = 1500;
+  const taperW = 0.03; // 3% at each end → shore deepening
   
-  // ============================================================
-  // Irregular boundary — smooth wavy wobble along the arc.
-  // Two sine frequencies (low + mid) so the shore looks organic,
-  // not a perfect rectangle. Amplitude ~0.9° max.
-  // ============================================================
-  function _shoreWobble(f, seedW) {
-    return 0.015 * Math.sin(f * 8.3 + seedW * 1.1) +
-           0.008 * Math.sin(f * 17.7 + seedW * 2.7);
-  }
-  function _deepWobble(f, seedE) {
-    return 0.012 * Math.sin(f * 6.1 + seedE * 3.2) +
-           0.006 * Math.sin(f * 22.1 + seedE * 1.5);
+  function taperAt(f) {
+    if (f < taperW) return f / taperW;
+    if (f > 1 - taperW) return (1 - f) / taperW;
+    return 1;
   }
   
-  // ============================================================
-  // LOCAL VIEW — ocean as ground fill (SIDE VIEW, correct projection).
-  //
-  // BUG FIX: previous code used (ecx + Rpx*sin(φ), ecy - Rpx*cos(φ))
-  // which is a TOP-DOWN (planet view) polar formula. In local view
-  // (camera near surface, side view), that produced screen positions
-  // entirely off-canvas — ocean fill was invisible even over ocean.
-  //
-  // Correct approach: use worldToScreen() for each arc point, which
-  // handles camera orientation, projection, and zoom properly.
-  //
-  // Fill area: from Earth's surface (radius R) INWARD to radius
-  // R - 1500m (ocean depth). Overlays the green Earth disc, turning
-  // the surface blue in ocean phi range.
-  //
-  // Visibility: rocket must be IN ocean zone (phi 2°-60° east of
-  // launch, i.e., ~500km+ east during ASDS descent). At launch site,
-  // ocean is 222km away — off-screen (correct).
-  // ============================================================
+  // Diagnostic log (once)
+  const _rPhi = ((Math.atan2(state.rx, state.ry) % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+  const _phiNS = ((phiStart % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+  const _phiNE = ((phiEnd % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+  if (_rPhi >= _phiNS && _rPhi <= _phiNE && !globalThis._oceanLogDone) {
+    globalThis._oceanLogDone = true;
+    console.log('[ocean] rocket entered ocean zone at phi=' + (_rPhi * 180 / Math.PI).toFixed(2) + '°');
+  }
+  
+  const [ecx, ecy] = worldToScreen(0, 0);
+  const eRpx = R / mppOcean;
+  const [exS0, eyS0] = worldToScreen(R * Math.sin(phiStart), R * Math.cos(phiStart));
+  const [exS1, eyS1] = worldToScreen(R * Math.sin(phiEnd), R * Math.cos(phiEnd));
+  const angStart = Math.atan2(eyS0 - ecy, exS0 - ecx);
+  const angEnd = Math.atan2(eyS1 - ecy, exS1 - ecx);
+  let dArc = angEnd - angStart;
+  while (dArc < -Math.PI) dArc += Math.PI * 2;
+  while (dArc > Math.PI) dArc -= Math.PI * 2;
+  const anti = dArc < 0;
+  
+  const N = 60;
+  
+  // ============ LOCAL VIEW — arc top + tapered wavy bottom ============
   if (!isPlanet) {
-    // ------------------------------------------------------------
-    // Ocean fill (local view) — FLICKER-FREE by construction.
-    //
-    // Root cause of prior flicker: polyline top edge + clip circle.
-    // Both edges are anti-aliased. When they overlap within ~1px,
-    // rasterizer's fill decision varies frame-to-frame. No amount of
-    // overshoot / opacity / guard can make this stable.
-    //
-    // Fix: DON'T use clip. Top edge is ctx.arc() at exactly eRpx —
-    // mathematically identical to drawEarth's ctx.arc(R), so the ocean
-    // top lands on the exact same rasterized pixels as the disc edge.
-    // No sub-pixel boundary to fight. Bottom edge stays polyline
-    // (wavy floor — no sub-pixel issue down there, it's 50-1500px
-    // below surface).
-    //
-    // Trade-off: ocean shore in local view is a clean arc (no wavy
-    // wobble). ASDS mission just needs "blue below rocket = ocean" —
-    // clean arc is fine. Wavy shore still applies in planet view
-    // (separate rendering path, unaffected).
-    // ------------------------------------------------------------
-    const [ecx, ecy] = worldToScreen(0, 0);
-    const eRpx = R / mppOcean;
-    
-    // Screen angle of ocean start/end points (respects camera rotation).
-    const [ex0, ey0] = worldToScreen(R * Math.sin(phiStart), R * Math.cos(phiStart));
-    const [ex1, ey1] = worldToScreen(R * Math.sin(phiEnd), R * Math.cos(phiEnd));
-    const angStart = Math.atan2(ey0 - ecy, ex0 - ecx);
-    const angEnd = Math.atan2(ey1 - ecy, ex1 - ecx);
-    
-    // Short-way angular span (ocean zone is 58° = 1.01 rad max).
-    let dEnd = angEnd - angStart;
-    while (dEnd < -Math.PI) dEnd += Math.PI * 2;
-    while (dEnd > Math.PI) dEnd -= Math.PI * 2;
-    
-    const antiTop = dEnd < 0;
-    const antiBot = dEnd > 0;
-    
-    const depthWorld = 1500;
-    const rFloorInner = R - depthWorld;
-    const N = 32;
-    
-    // Diagnostic (once)
-    const _rocketPhi = Math.atan2(state.rx, state.ry);
-    const _phiNS = ((phiStart % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
-    const _phiNE = ((phiEnd % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
-    const _rPhi = ((_rocketPhi % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
-    if (_rPhi >= _phiNS && _rPhi <= _phiNE && !globalThis._oceanLogDone) {
-      globalThis._oceanLogDone = true;
-      console.log('[ocean] rocket entered ocean zone at phi=' + (_rPhi * 180 / Math.PI).toFixed(2) + '°');
-    }
-    
+    ctx.save();
     ctx.beginPath();
-    // TOP: exact arc — same as Earth's disc edge
-    ctx.arc(ecx, ecy, eRpx, angStart, angStart + dEnd, antiTop);
-    // BOTTOM: wavy polyline (ocean floor)
-    for (let k = N; k >= 0; k--) {
-      const f = k / N;
-      const phiPoint = phiStart + f * (phiEnd - phiStart);
-      const depthWobble = 200 * Math.sin(f * 8.3 + 1.1) + 100 * Math.sin(f * 17.7 + 2.7);
-      const rFloor = rFloorInner + depthWobble;
-      const [sx, sy] = worldToScreen(rFloor * Math.sin(phiPoint), rFloor * Math.cos(phiPoint));
+    ctx.arc(ecx, ecy, eRpx, angStart, angStart + dArc, anti);
+    for (let k = 0; k <= N; k++) {
+      const fRev = k / N;
+      const f = 1 - fRev;
+      const phi = phiStart + f * (phiEnd - phiStart);
+      const tM = taperAt(f);
+      const depthM = maxDepthM * tM;
+      const wobble = (200 * Math.sin(f * 8.3 + 1.1) + 100 * Math.sin(f * 17.7 + 2.7)) * tM;
+      const r = R - depthM + wobble;
+      const [sx, sy] = worldToScreen(r * Math.sin(phi), r * Math.cos(phi));
       ctx.lineTo(sx, sy);
     }
     ctx.closePath();
     ctx.fillStyle = 'rgb(18, 58, 128)';
     ctx.fill();
-    
-    // Surface highlight — exact arc (same as disc edge)
     ctx.strokeStyle = 'rgb(120, 175, 235)';
     ctx.lineWidth = 1.2;
     ctx.beginPath();
-    ctx.arc(ecx, ecy, eRpx, angStart, angStart + dEnd, antiTop);
-    ctx.stroke();
-    
-    return;
-  }
-  
-  // ============================================================
-  // PLANET VIEW — line vs filled by arc pixel size.
-  // Hysteresis prevents flicker at threshold.
-  // ============================================================
-  // Threshold: switch mode based on REAL 1.5km depth in screen pixels.
-  // If <~5px the whole ocean would be sub-visible — use line.
-  // If >5px real depth is visible — use fill (with real 1.5km, no exaggeration).
-  // Hysteresis at 6/4 so zoom oscillation around threshold doesn't flicker.
-  const realDepthPx = 1500 / mppOcean;
-  if (_oceanDetailMode === 'line' && realDepthPx > 6) _oceanDetailMode = 'filled';
-  else if (_oceanDetailMode === 'filled' && realDepthPx < 4) _oceanDetailMode = 'line';
-  
-  // ============ LINE MODE (sub-pixel) ============
-  if (_oceanDetailMode === 'line') {
-    // Line mode — ctx.arc guarantees exact surface alignment.
-    // Polyline with wobble drifted ±1px from Earth's edge at extreme zoom.
-    // Arc is same curve drawEarth uses → line lands on exact edge pixels.
-    const [ecx, ecy] = worldToScreen(0, 0);
-    const eRpx = R / mppOcean;
-    const [ex0, ey0] = worldToScreen(R * Math.sin(phiStart), R * Math.cos(phiStart));
-    const [ex1, ey1] = worldToScreen(R * Math.sin(phiEnd), R * Math.cos(phiEnd));
-    const angStart = Math.atan2(ey0 - ecy, ex0 - ecx);
-    const angEnd = Math.atan2(ey1 - ecy, ex1 - ecx);
-    let dEnd = angEnd - angStart;
-    while (dEnd < -Math.PI) dEnd += Math.PI * 2;
-    while (dEnd > Math.PI) dEnd -= Math.PI * 2;
-    
-    ctx.save();
-    ctx.strokeStyle = 'rgba(80, 170, 255, 0.85)';
-    ctx.lineWidth = 2;
-    ctx.lineCap = 'round';
-    ctx.beginPath();
-    ctx.arc(ecx, ecy, eRpx, angStart, angStart + dEnd, dEnd < 0);
+    ctx.arc(ecx, ecy, eRpx, angStart, angStart + dArc, anti);
     ctx.stroke();
     ctx.restore();
     return;
   }
   
-  // ============ FILLED MODE — wavy boundary + depth bands ============
-  const N = 60;
-  const pts = [];
-  for (let k = 0; k <= N; k++) {
-    const f = k / N;
-    const wW = _shoreWobble(f, 1.0);
-    const wE = _deepWobble(f, 1.0);
-    const phiLocal = (phiStart + wW) + f * ((phiEnd + wE) - (phiStart + wW));
-    pts.push({ x: R * Math.sin(phiLocal), y: R * Math.cos(phiLocal), phi: phiLocal, f });
+  // ============ PLANET VIEW ============
+  const realDepthPx = maxDepthM / mppOcean;
+  if (_oceanDetailMode === 'line' && realDepthPx > 6) _oceanDetailMode = 'filled';
+  else if (_oceanDetailMode === 'filled' && realDepthPx < 4) _oceanDetailMode = 'line';
+  
+  // LINE MODE — stroke CENTERED at (eRpx - lineDepth/2) so its extent
+  // [eRpx-lineDepth, eRpx] exactly matches fill's extent. No shift at
+  // mode switch.
+  if (_oceanDetailMode === 'line') {
+    const lineDepth = Math.max(realDepthPx, 1.5);
+    ctx.save();
+    ctx.strokeStyle = 'rgba(80, 170, 255, 0.85)';
+    ctx.lineWidth = lineDepth;
+    ctx.lineCap = 'butt';
+    ctx.beginPath();
+    ctx.arc(ecx, ecy, eRpx - lineDepth / 2, angStart, angStart + dArc, anti);
+    ctx.stroke();
+    ctx.restore();
+    return;
   }
   
-  // Clip to Earth
-  const [ecx, ecy] = worldToScreen(0, 0);
-  const eRpx = R / mppOcean;
-  
+  // FILL MODE — variable depth (taper at shore) + annular bands
   ctx.save();
   ctx.beginPath();
-  ctx.arc(ecx, ecy, eRpx + 1, 0, Math.PI * 2);
+  ctx.arc(ecx, ecy, eRpx, angStart, angStart + dArc, anti);
+  for (let k = 0; k <= N; k++) {
+    const fRev = k / N;
+    const f = 1 - fRev;
+    const phi = phiStart + f * (phiEnd - phiStart);
+    const tM = taperAt(f);
+    const depthM = maxDepthM * tM;
+    const r = R - depthM;
+    const [sx, sy] = worldToScreen(r * Math.sin(phi), r * Math.cos(phi));
+    ctx.lineTo(sx, sy);
+  }
+  ctx.closePath();
   ctx.clip();
   
-  // 5 depth bands — solid colors, no gradient (no shimmer)
-  // Real ocean depth = 1500 m (1.5 km). No exaggeration. Bands render
-  // at this exact scale — physically accurate at any zoom. At 6px zoom,
-  // total band is 6px thick (real 1.5km), split into 5 proportional
-  // depth sub-bands. At 50px zoom, band is 50px thick (still real 1.5km).
-  // NO MORE fake 400km depth from 25px*mppOcean.
-  const depthM = 1500;
+  // 5 depth bands — clip trims them where taper reduces depth
   const bands = [
-    { d0: 0.55, d1: 1.00, col: 'rgba(8, 30, 75, 0.98)' },    // abyss
-    { d0: 0.30, d1: 0.55, col: 'rgba(20, 65, 140, 0.97)' },  // deep
-    { d0: 0.12, d1: 0.30, col: 'rgba(55, 130, 200, 0.95)' }, // mid
-    { d0: 0.03, d1: 0.12, col: 'rgba(130, 195, 235, 0.92)' },// shallow
-    { d0: 0.00, d1: 0.03, col: 'rgba(220, 235, 240, 0.90)' },// foam
+    { d0: 0.55, d1: 1.00, col: 'rgb(8, 30, 75)' },
+    { d0: 0.30, d1: 0.55, col: 'rgb(20, 65, 140)' },
+    { d0: 0.12, d1: 0.30, col: 'rgb(55, 130, 200)' },
+    { d0: 0.03, d1: 0.12, col: 'rgb(130, 195, 235)' },
+    { d0: 0.00, d1: 0.03, col: 'rgb(220, 235, 240)' },
   ];
-  
   bands.forEach(band => {
-    const rOuter = R - depthM * band.d0;
-    const rInnerB = R - depthM * band.d1;
+    const rOut = eRpx - (maxDepthM / mppOcean) * band.d0;
+    const rIn = eRpx - (maxDepthM / mppOcean) * band.d1;
     ctx.beginPath();
-    for (let k = 0; k <= N; k++) {
-      const p = pts[k];
-      const [sx, sy] = worldToScreen(rOuter * Math.sin(p.phi), rOuter * Math.cos(p.phi));
-      if (k === 0) ctx.moveTo(sx, sy);
-      else ctx.lineTo(sx, sy);
-    }
-    for (let k = N; k >= 0; k--) {
-      const p = pts[k];
-      const [sx, sy] = worldToScreen(rInnerB * Math.sin(p.phi), rInnerB * Math.cos(p.phi));
-      ctx.lineTo(sx, sy);
-    }
+    ctx.arc(ecx, ecy, rOut, angStart, angStart + dArc, anti);
+    ctx.arc(ecx, ecy, rIn, angStart + dArc, angStart, !anti);
     ctx.closePath();
     ctx.fillStyle = band.col;
     ctx.fill();
   });
   
-  // Shoreline highlight (thin white at surface, follows wavy edge)
-  ctx.strokeStyle = 'rgba(255, 255, 255, 0.65)';
-  ctx.lineWidth = 1.2;
-  ctx.beginPath();
-  for (let k = 0; k <= N; k++) {
-    const p = pts[k];
-    const [sx, sy] = worldToScreen(R * Math.sin(p.phi), R * Math.cos(p.phi));
-    if (k === 0) ctx.moveTo(sx, sy);
-    else ctx.lineTo(sx, sy);
-  }
-  ctx.stroke();
-  
   ctx.restore();
   
-  // OCEAN label
-  const midIdx = Math.round(N / 2);
-  const pMid = pts[midIdx];
-  const [sx, sy] = worldToScreen(pMid.x, pMid.y);
-  const outX = Math.sin(pMid.phi);
-  const outY = -Math.cos(pMid.phi);
+  // Surface highlight — exact arc
   ctx.save();
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.font = '600 11px "JetBrains Mono", monospace';
-  ctx.shadowColor = 'rgba(0,0,0,0.75)';
-  ctx.shadowBlur = 3;
-  ctx.fillStyle = 'rgba(130, 200, 255, 0.98)';
-  ctx.fillText('OCEAN', sx + outX * 16, sy + outY * 16);
+  ctx.strokeStyle = 'rgb(120, 175, 235)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.arc(ecx, ecy, eRpx, angStart, angStart + dArc, anti);
+  ctx.stroke();
   ctx.restore();
 }
 // ===== LAUNCHPAD BEGIN ======================================================
