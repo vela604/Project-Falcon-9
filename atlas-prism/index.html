@@ -86,13 +86,13 @@ footer{margin-top:50px;font:300 12.5px/1.65 var(--sans);letter-spacing:.01em;col
 <canvas id="bg" aria-hidden="true"></canvas>
 <main>
 <nav><div class="l"><a href="../index.html">← Mission Console</a><b>ATLAS PRISM</b></div>
-<div class="r"><a class="btn p" href="standard/sereno-flux.html">Sereno Flux</a><a class="btn" href="standard/pro-alpha.html">Pro-Alpha</a></div></nav>
+<div class="r"><a class="btn p" href="standard/sereno-flux.html">Sereno Flux</a><a class="btn" href="standard/lb-nova6.html">LB NOVA-6</a></div></nav>
 
 <section class="hero">
   <h1><span id="ttl">ATLAS PRISM</span></h1>
   <p class="lead">Guidance Parameters Hub</p>
   <p class="tl">Tune the guidance constants for a target orbit. Pick an engine below; the background replays how a Sereno Flux search converges.</p>
-  <div class="cta"><a class="btn p" href="standard/sereno-flux.html">Open Sereno Flux</a><a class="btn" href="standard/pro-alpha.html">Open Pro-Alpha</a><a class="btn" href="#eng">All engines</a></div>
+  <div class="cta"><a class="btn p" href="standard/sereno-flux.html">Open Sereno Flux</a><a class="btn" href="standard/lb-nova6.html">Open LB NOVA-6</a><a class="btn" href="#eng">All engines</a></div>
 </section>
 
 <h2 id="eng">Rocket types</h2>
@@ -104,10 +104,10 @@ footer{margin-top:50px;font:300 12.5px/1.65 var(--sans);letter-spacing:.01em;col
     <div class="tags"><span class="tag">multi-engine</span><span class="tag">universal</span><span class="tag p">recommended</span><span class="tag g">snapshot-shared</span></div>
     <span class="btn p go">Open engine</span>
   </a>
-  <a class="glass card" href="standard/pro-alpha.html">
-    <div class="card-title">Pro-Alpha Engine</div>
-    <div class="card-desc">Single-thread tuner. Two-phase guided search (MECO outer loop → lane sweep) over the five guidance constants. Fastest path for the 320 km F9 reference point. Deterministic, leaderboard-ranked, drop-in baseline reproduction.</div>
-    <div class="tags"><span class="tag">single-thread</span><span class="tag">320 km reference</span><span class="tag g">baseline-exact</span></div>
+  <a class="glass card" href="standard/lb-nova6.html">
+    <div class="card-title">LB NOVA-6</div>
+    <div class="card-desc">Booster landback tuner for landbackV1. Two-stage search — LB altitude finder (coarse sweep + golden refine inside the feasible band) → bias search (dr-sign walk + bracket + golden on x/vx² scoring). Live telemetry, per-eval hop/bounce tracking, ground-log drill-down, bias→score and bias→downrange landscape charts. INIT once, snapshot-shared evals.</div>
+    <div class="tags"><span class="tag">booster landback</span><span class="tag">two-stage search</span><span class="tag g">diagnostics</span></div>
     <span class="btn go">Open engine</span>
   </a>
 </div>
