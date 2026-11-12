@@ -667,33 +667,84 @@ function drawOceanArea() {
   }
   
   // ============================================================
-  // LOCAL VIEW — ocean as ground fill.
-  // Fills the Earth's disc in the ocean phi range with water color.
-  // When rocket is over ocean zone (ASDS), the ground becomes blue.
-  // When rocket is west of ocean (launch area), no blue visible
-  // (ocean is millions of meters away, off-screen).
+  // LOCAL VIEW — ocean as ground fill (SIDE VIEW, correct projection).
+  //
+  // BUG FIX: previous code used (ecx + Rpx*sin(φ), ecy - Rpx*cos(φ))
+  // which is a TOP-DOWN (planet view) polar formula. In local view
+  // (camera near surface, side view), that produced screen positions
+  // entirely off-canvas — ocean fill was invisible even over ocean.
+  //
+  // Correct approach: use worldToScreen() for each arc point, which
+  // handles camera orientation, projection, and zoom properly.
+  //
+  // Fill area: from Earth's surface (radius R) INWARD to radius
+  // R - 1500m (ocean depth). Overlays the green Earth disc, turning
+  // the surface blue in ocean phi range.
+  //
+  // Visibility: rocket must be IN ocean zone (phi 2°-60° east of
+  // launch, i.e., ~500km+ east during ASDS descent). At launch site,
+  // ocean is 222km away — off-screen (correct).
   // ============================================================
   if (!isPlanet) {
-    const [ecx, ecy] = worldToScreen(0, 0);
-    const Rpx = R / mppOcean;
     const N = 40;
+    const depthWorld = 1500;   // real ocean depth (1.5 km)
+    const rInner = R - depthWorld;
+    
+    // Diagnostic — log once when rocket enters ocean zone
+    const _rocketPhi = Math.atan2(state.rx, state.ry);
+    const _phiNS = ((phiStart % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+    const _phiNE = ((phiEnd % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+    const _rPhi = ((_rocketPhi % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+    if (_rPhi >= _phiNS && _rPhi <= _phiNE && !globalThis._oceanLogDone) {
+      globalThis._oceanLogDone = true;
+      console.log('[ocean] rocket entered ocean zone at phi=' +
+        (_rPhi * 180 / Math.PI).toFixed(2) + '° (zone ' +
+        (_phiNS * 180 / Math.PI).toFixed(2) + '°-' +
+        (_phiNE * 180 / Math.PI).toFixed(2) + '°)');
+    }
     
     ctx.save();
     ctx.beginPath();
-    ctx.moveTo(ecx, ecy);
-    // Surface arc from phiStart to phiEnd with wavy boundary
+    
+    // Top surface arc — worldToScreen per point (proper side view)
     for (let k = 0; k <= N; k++) {
       const f = k / N;
       const wW = _shoreWobble(f, 1.0);
       const wE = _deepWobble(f, 1.0);
       const phiLocal = (phiStart + wW) + f * ((phiEnd + wE) - (phiStart + wW));
-      ctx.lineTo(ecx + Rpx * Math.sin(phiLocal), ecy - Rpx * Math.cos(phiLocal));
+      const [sx, sy] = worldToScreen(R * Math.sin(phiLocal), R * Math.cos(phiLocal));
+      if (k === 0) ctx.moveTo(sx, sy);
+      else ctx.lineTo(sx, sy);
+    }
+    
+    // Bottom arc (1.5km below surface) — closed backward
+    for (let k = N; k >= 0; k--) {
+      const f = k / N;
+      const wW = _shoreWobble(f, 1.0);
+      const wE = _deepWobble(f, 1.0);
+      const phiLocal = (phiStart + wW) + f * ((phiEnd + wE) - (phiStart + wW));
+      const [sx, sy] = worldToScreen(rInner * Math.sin(phiLocal), rInner * Math.cos(phiLocal));
+      ctx.lineTo(sx, sy);
     }
     ctx.closePath();
-    
-    // Solid ocean blue fill. Slightly dark because it's "water at ground level".
     ctx.fillStyle = 'rgba(18, 58, 128, 0.98)';
     ctx.fill();
+    
+    // Surface highlight — thin bright blue line at surface
+    ctx.strokeStyle = 'rgba(150, 200, 255, 0.75)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    for (let k = 0; k <= N; k++) {
+      const f = k / N;
+      const wW = _shoreWobble(f, 1.0);
+      const wE = _deepWobble(f, 1.0);
+      const phiLocal = (phiStart + wW) + f * ((phiEnd + wE) - (phiStart + wW));
+      const [sx, sy] = worldToScreen(R * Math.sin(phiLocal), R * Math.cos(phiLocal));
+      if (k === 0) ctx.moveTo(sx, sy);
+      else ctx.lineTo(sx, sy);
+    }
+    ctx.stroke();
+    
     ctx.restore();
     return;
   }
