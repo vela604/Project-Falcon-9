@@ -743,15 +743,26 @@ default: break;
   }
   function renderConstants(guideName, opts) {
   opts = opts || {};
-  const cfg = Guidance.getGuideConfig(guideName);
-  if (!cfg) {
+  const cfg0 = Guidance.getGuideConfig(guideName);
+  if (!cfg0) {
     constantsHost.innerHTML = '<div style="color:var(--dim);font-style:italic;padding:14px 4px;">This guide has no tunable constants.</div>';
     currentValues = null;
     return;
   }
   const defaults = (typeof getGuideDefaultPreset === 'function') ?
     getGuideDefaultPreset(guideName) : null;
-  defaultValues = defaults ? JSON.parse(JSON.stringify(defaults.constants)) : JSON.parse(JSON.stringify(cfg));
+  defaultValues = defaults ? JSON.parse(JSON.stringify(defaults.constants)) : JSON.parse(JSON.stringify(cfg0));
+  // Compat-fill cfg against fresh defaults so schema drift (new keys in
+  // guideConfigDefaults added since the guide was last started) does not
+  // hide their fields entirely. Iteration below uses the filled bag, so
+  // every key in the current schema gets a row.
+  let cfg = cfg0;
+  if (defaultValues && typeof validateConstantsCompat === 'function') {
+    const _c = validateConstantsCompat(cfg0, defaultValues);
+    if (_c.warnings && _c.warnings.length)
+      console.warn('[gcm] compat fill on render:', _c.warnings);
+    cfg = _c.constants;
+  }
   if (!opts.preserveValues) currentValues = JSON.parse(JSON.stringify(cfg));
   // Expose current target-orbit altitude to the read-only presentation layer
   // (guidance-tester-ui.js) without forcing it to guess the guide name.
@@ -895,11 +906,20 @@ default: break;
     const p = (typeof getPresetById === 'function') ? getPresetById(id) : null;
     if (!p || !p.constants) { presetStat.textContent = 'Preset not found.'; return; }
     const ref = (typeof getGuideDefaultPreset === 'function') ? getGuideDefaultPreset(currentGuide) : null;
-    if (ref && typeof validateConstantsStrict === 'function') {
+    // Compat (not strict) so presets saved against an older schema still
+    // load. Missing -> filled from defaults (warning in console); extra ->
+    // dropped (warning); type mismatches on existing keys -> fallback.
+    let _vals = p.constants;
+    if (ref && typeof validateConstantsCompat === 'function') {
+      const v = validateConstantsCompat(p.constants, ref.constants);
+      if (v.warnings && v.warnings.length)
+        console.warn('[gcm] compat fill on preset load:', v.warnings);
+      _vals = v.constants;
+    } else if (ref && typeof validateConstantsStrict === 'function') {
       const v = validateConstantsStrict(p.constants, ref.constants);
       if (!v.ok) { presetStat.textContent = 'Preset incompatible: ' + v.error; return; }
     }
-    currentValues = JSON.parse(JSON.stringify(p.constants));
+    currentValues = JSON.parse(JSON.stringify(_vals));
 renderConstants(currentGuide, { preserveValues: true });
 presetStat.textContent = `Loaded "${p.name}".`;
   });
@@ -996,11 +1016,18 @@ presetStat.textContent = `Loaded "${p.name}".`;
       return;
     }
     const ref = (typeof getGuideDefaultPreset === 'function') ? getGuideDefaultPreset(currentGuide) : null;
-    if (ref && typeof validateConstantsStrict === 'function') {
+    // Compat for schema-drift tolerance (same rationale as preset load).
+    let _vals = parsed;
+    if (ref && typeof validateConstantsCompat === 'function') {
+      const v = validateConstantsCompat(parsed, ref.constants);
+      if (v.warnings && v.warnings.length)
+        console.warn('[gcm] compat fill on import:', v.warnings);
+      _vals = v.constants;
+    } else if (ref && typeof validateConstantsStrict === 'function') {
       const v = validateConstantsStrict(parsed, ref.constants);
       if (!v.ok) { presetStat.textContent = 'Validation failed: ' + v.error; return; }
     }
-    currentValues = JSON.parse(JSON.stringify(parsed));
+    currentValues = JSON.parse(JSON.stringify(_vals));
 renderConstants(currentGuide, { preserveValues: true });
 presetStat.textContent = 'Imported constants.';
   });
