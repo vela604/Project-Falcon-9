@@ -112,6 +112,11 @@
     } catch (e) { console.warn('[ASDS] render broadcast failed', e); }
     console.log('[ASDS] Deployed ' + pad.name + ' at ' + (xMeters / 1000).toFixed(1) +
                 ' km downrange (' + Math.round(xMeters / CONFIG.EARTH_RADIUS * 180 / Math.PI).toFixed(2) + '° east)');
+    // Refresh follow-body dropdown so the new ASDS appears as a selectable
+    // camera target (alongside LZ-1/2/3). Without this the dropdown stays
+    // at its old contents until the next state-change event (body count
+    // change, FF complete) — user would never see ASDS-1 in the dropdown.
+    if (typeof refreshFollowBodySelect === 'function') refreshFollowBodySelect();
     return { ok: true, pad };
   }
 

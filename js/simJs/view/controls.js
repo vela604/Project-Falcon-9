@@ -320,7 +320,7 @@ function refreshFollowBodySelect() {
   if (typeof CONFIG !== 'undefined' && Array.isArray(CONFIG.LANDING_PADS)) {
     padOpts = CONFIG.LANDING_PADS
       .filter(p => p && p.enabled !== false)
-      .map(p => `<option value="pad:${p.id}">\u{1F6EC} ${p.name || p.id}</option>`)
+      .map(p => `<option value="pad:${p.id}">${p.isASDS ? '\u2693' : '\u{1F6EC}'} ${p.name || p.id}</option>`)
       .join('');
   }
   sel.innerHTML = bodyOpts + padOpts;
