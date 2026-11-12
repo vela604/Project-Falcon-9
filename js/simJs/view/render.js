@@ -767,30 +767,35 @@ function drawOceanArea() {
   // PLANET VIEW — line vs filled by arc pixel size.
   // Hysteresis prevents flicker at threshold.
   // ============================================================
-  const arcPx = ((eastEndRad - eastStartRad) * R) / mppOcean;
-  if (_oceanDetailMode === 'line' && arcPx > 12) _oceanDetailMode = 'filled';
-  else if (_oceanDetailMode === 'filled' && arcPx < 8) _oceanDetailMode = 'line';
+  // Threshold: switch mode based on REAL 1.5km depth in screen pixels.
+  // If <~5px the whole ocean would be sub-visible — use line.
+  // If >5px real depth is visible — use fill (with real 1.5km, no exaggeration).
+  // Hysteresis at 6/4 so zoom oscillation around threshold doesn't flicker.
+  const realDepthPx = 1500 / mppOcean;
+  if (_oceanDetailMode === 'line' && realDepthPx > 6) _oceanDetailMode = 'filled';
+  else if (_oceanDetailMode === 'filled' && realDepthPx < 4) _oceanDetailMode = 'line';
   
   // ============ LINE MODE (sub-pixel) ============
   if (_oceanDetailMode === 'line') {
-    const N = 40;
+    // Line mode — ctx.arc guarantees exact surface alignment.
+    // Polyline with wobble drifted ±1px from Earth's edge at extreme zoom.
+    // Arc is same curve drawEarth uses → line lands on exact edge pixels.
     const [ecx, ecy] = worldToScreen(0, 0);
-    const Rpx = R / mppOcean;
+    const eRpx = R / mppOcean;
+    const [ex0, ey0] = worldToScreen(R * Math.sin(phiStart), R * Math.cos(phiStart));
+    const [ex1, ey1] = worldToScreen(R * Math.sin(phiEnd), R * Math.cos(phiEnd));
+    const angStart = Math.atan2(ey0 - ecy, ex0 - ecx);
+    const angEnd = Math.atan2(ey1 - ecy, ex1 - ecx);
+    let dEnd = angEnd - angStart;
+    while (dEnd < -Math.PI) dEnd += Math.PI * 2;
+    while (dEnd > Math.PI) dEnd -= Math.PI * 2;
+    
     ctx.save();
     ctx.strokeStyle = 'rgba(80, 170, 255, 0.85)';
     ctx.lineWidth = 2;
     ctx.lineCap = 'round';
     ctx.beginPath();
-    for (let k = 0; k <= N; k++) {
-      const f = k / N;
-      const wW = _shoreWobble(f, 1.0);
-      const wE = _deepWobble(f, 1.0);
-      const phiLocal = (phiStart + wW) + f * ((phiEnd + wE) - (phiStart + wW));
-      const x = ecx + Rpx * Math.sin(phiLocal);
-      const y = ecy - Rpx * Math.cos(phiLocal);
-      if (k === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
-    }
+    ctx.arc(ecx, ecy, eRpx, angStart, angStart + dEnd, dEnd < 0);
     ctx.stroke();
     ctx.restore();
     return;
@@ -817,8 +822,12 @@ function drawOceanArea() {
   ctx.clip();
   
   // 5 depth bands — solid colors, no gradient (no shimmer)
-  const depthPx = 25;
-  const depthM = depthPx * mppOcean;
+  // Real ocean depth = 1500 m (1.5 km). No exaggeration. Bands render
+  // at this exact scale — physically accurate at any zoom. At 6px zoom,
+  // total band is 6px thick (real 1.5km), split into 5 proportional
+  // depth sub-bands. At 50px zoom, band is 50px thick (still real 1.5km).
+  // NO MORE fake 400km depth from 25px*mppOcean.
+  const depthM = 1500;
   const bands = [
     { d0: 0.55, d1: 1.00, col: 'rgba(8, 30, 75, 0.98)' },    // abyss
     { d0: 0.30, d1: 0.55, col: 'rgba(20, 65, 140, 0.97)' },  // deep
