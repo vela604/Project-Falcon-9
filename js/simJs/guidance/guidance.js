@@ -460,6 +460,12 @@ const _v3State = {
   fairingOpened: false,
   deployCmdSimTime: null,
 
+  // Mission-level payload clear tracker. Insertion block no longer
+  // verifies payload clearance after its apside-peak exit; this flag
+  // is set once the payload body has physically separated (>= clear
+  // dist) from the stage. Exposed via getStatus for the tuner.
+  payloadCleared: false,
+
   insertionResult: null,
   suicideResult: null,
   // One-shot flag — payload-open command fires exactly once per mission,
@@ -782,6 +788,26 @@ break;
       send(cmdSetAllThrottle(0));
 send(cmdSetGimbalRate(0));
 
+      // ---- Mission-level payload-clear tracking ----
+      // Insertion block exits at apside peak without verifying payload
+      // separation. We track it here so tuner's payloadCleared signal
+      // becomes true once the payload body has physically cleared.
+      if (!_v3State.payloadCleared && _v3State.stageIdx >= 0) {
+        const _stageP = snapshot.bodies[_v3State.stageIdx];
+        if (_stageP && _stageP.payloadReleased) {
+          const _clearDist = (_v3Config.insertion && Number.isFinite(_v3Config.insertion.PAYLOAD_CLEAR_DIST_M))
+            ? _v3Config.insertion.PAYLOAD_CLEAR_DIST_M : 20;
+          const _cleared = snapshot.bodies.some(b =>
+            b && b.payloadBody && b.id !== _stageP.id &&
+            Math.hypot(b.rx - _stageP.rx, b.ry - _stageP.ry) >= _clearDist
+          );
+          if (_cleared) {
+            _v3State.payloadCleared = true;
+            console.log('[leoInsertionV3] payload cleared at t=' + simT.toFixed(2));
+          }
+        }
+      }
+
 // ---- Payload-open command ----
 // After deploy, wait PAYLOAD_DEPLOY_OPEN_DELAY_S seconds, then send
 // a one-shot open command to the deployed payload body. Finding the
@@ -876,6 +902,7 @@ _leoTickV3.start = function () {
   _v3State.splitDetected = false;
   _v3State.fairingOpened = false;
   _v3State.deployCmdSimTime = null;
+  _v3State.payloadCleared = false;
   _v3State.insertionResult = null;
 _v3State.suicideResult = null;
 _v3State.payloadOpenFired = false;
@@ -958,7 +985,7 @@ if (_v3State.insertionBlock) {
       coastDeltaV: ins.coastDeltaV,
       coastTRem: ins.coastTRem,
       deployCommandSimTime: ins.deployCommandSimTime,
-      payloadCleared: ins.payloadCleared,
+      payloadCleared: _v3State.payloadCleared || ins.payloadCleared,
     });
   }
 
@@ -1003,6 +1030,8 @@ const _lbState = {
   splitDetected: false,
   fairingOpened: false,
   deployCmdSimTime: null,
+
+  payloadCleared: false,
 
   insertionResult: null,
   suicideResult: null,
@@ -1291,6 +1320,23 @@ function _landbackTick(snapshot) {
       send(cmdSetAllThrottle(0));
 send(cmdSetGimbalRate(0));
 
+      // ---- Mission-level payload-clear tracking (same as V3) ----
+      if (!_lbState.payloadCleared && _lbState.stageIdx >= 0) {
+        const _stageP = snapshot.bodies[_lbState.stageIdx];
+        if (_stageP && _stageP.payloadReleased) {
+          const _clearDist = (_lbConfig.insertion && Number.isFinite(_lbConfig.insertion.PAYLOAD_CLEAR_DIST_M))
+            ? _lbConfig.insertion.PAYLOAD_CLEAR_DIST_M : 20;
+          const _cleared = snapshot.bodies.some(b =>
+            b && b.payloadBody && b.id !== _stageP.id &&
+            Math.hypot(b.rx - _stageP.rx, b.ry - _stageP.ry) >= _clearDist
+          );
+          if (_cleared) {
+            _lbState.payloadCleared = true;
+            console.log('[landbackV1] payload cleared at t=' + simT.toFixed(2));
+          }
+        }
+      }
+
 // ---- Payload-open command ----
 // After deploy, wait PAYLOAD_DEPLOY_OPEN_DELAY_S seconds, then send
 // a one-shot open command to the deployed payload body. Finding the
@@ -1386,6 +1432,7 @@ _landbackTick.start = function () {
   _lbState.splitDetected = false;
   _lbState.fairingOpened = false;
   _lbState.deployCmdSimTime = null;
+  _lbState.payloadCleared = false;
   _lbState.insertionResult = null;
 _lbState.suicideResult = null;
 _lbState.payloadOpenFired = false;
@@ -1470,7 +1517,7 @@ if (_lbState.insertionBlock) {
       coastDeltaV: ins.coastDeltaV,
       coastTRem: ins.coastTRem,
       deployCommandSimTime: ins.deployCommandSimTime,
-      payloadCleared: ins.payloadCleared,
+      payloadCleared: _lbState.payloadCleared || ins.payloadCleared,
     });
   }
 
