@@ -97,8 +97,7 @@ function _loadSim() {
       '../lib/lattice.js',
       '../lib/hook.js',
       '../lib/registry.js',
-      '../lib/primitives.js',
-      '../engines/pro-alpha.js'
+      '../lib/primitives.js'
     );
     if (typeof TunerEngine === 'undefined') throw new Error('TunerEngine not loaded');
     TunerEngine.init();
