@@ -248,7 +248,7 @@ leoInsertionV3: _mkDefault(
   },
     ['full-mission', 'expendable'],
   135,
-  616
+  586
   ),
   
   landbackV1: _mkDefault(
@@ -395,7 +395,7 @@ leoInsertionV3: _mkDefault(
   },
     ['full-mission', 'expendable'],
   135,
-  616
+  586
   ),
 
   leoInsertion: _mkDefault(
