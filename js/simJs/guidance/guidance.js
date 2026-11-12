@@ -293,6 +293,7 @@ out.v3State = {
   ticks: _v3State.ticks,
   missionPhase: _v3State.missionPhase,
   missionPhaseStart: _v3State.missionPhaseStart,
+  payloadCleared: _v3State.payloadCleared,
   stageIdx: _v3State.stageIdx,
   boosterIdx: _v3State.boosterIdx,
   preSplitBodyCount: _v3State.preSplitBodyCount,
@@ -319,6 +320,7 @@ if (_v3State.suicideBlock) out.v3SuicideBlock = _v3State.suicideBlock.getState()
 out.lbState = {
   init: _lbState.init, ticks: _lbState.ticks,
   missionPhase: _lbState.missionPhase, missionPhaseStart: _lbState.missionPhaseStart,
+  payloadCleared: _lbState.payloadCleared,
   stageIdx: _lbState.stageIdx, boosterIdx: _lbState.boosterIdx,
   preSplitBodyCount: _lbState.preSplitBodyCount,
   mecoTriggered: _lbState.mecoTriggered, splitDetected: _lbState.splitDetected,
@@ -371,6 +373,13 @@ function importGuideState(data) {
 // V3 restore
 if (data.v3State) {
   Object.keys(data.v3State).forEach(k => { _v3State[k] = data.v3State[k]; });
+  // payloadCleared is a per-run transient: any snapshot captured before the
+  // payload exists (SA, EB, CH) must restore as false. Without this, a
+  // just-finished run's "true" survives the restore because the loop above
+  // only copies keys PRESENT in the snapshot — a field absent from every
+  // snapshot leaves the live value in place, which terminates the next run
+  // on tick 0 (makeLeadRunner: if (full && gs.payloadCleared) break).
+  if (!('payloadCleared' in data.v3State)) _v3State.payloadCleared = false;
 }
 if (data.v3AscentBlock) {
   if (!_v3State.ascentBlock) {
@@ -394,6 +403,7 @@ if (data.v3SuicideBlock) {
 // landbackV1 restore
 if (data.lbState) {
   Object.keys(data.lbState).forEach(k => { _lbState[k] = data.lbState[k]; });
+  if (!('payloadCleared' in data.lbState)) _lbState.payloadCleared = false;
 }
 if (data.lbAscentBlock) {
   if (!_lbState.ascentBlock) _lbState.ascentBlock = FUNDAMENTAL_BLOCKS.ascent.createInstance();
