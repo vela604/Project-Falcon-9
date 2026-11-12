@@ -392,11 +392,19 @@ function fmtOps(n){
 }
 function updateOpsDisplay(){
   const now = performance.now();
-  const dt = S.opsSampleT > 0 ? (now - S.opsSampleT) / 1000 : 0;
-  if(dt >= 0.2){
-    S.opsRate = (S.totalOps - S.opsSampleN) / dt;
+  // First call seeds the sample baseline; without this opsSampleT stays 0
+  // forever (the assignment is inside the dt>=0.2 gate, which needs a
+  // non-zero opsSampleT to ever open).
+  if(S.opsSampleT === 0){
     S.opsSampleT = now;
     S.opsSampleN = S.totalOps;
+  } else {
+    const dt = (now - S.opsSampleT) / 1000;
+    if(dt >= 0.2){
+      S.opsRate = (S.totalOps - S.opsSampleN) / dt;
+      S.opsSampleT = now;
+      S.opsSampleN = S.totalOps;
+    }
   }
   const r = $('tmOps'); if(r) r.textContent = fmtOps(S.opsRate);
   const t = $('tmTotalOps'); if(t) t.textContent = fmtOps(S.totalOps);
