@@ -15,6 +15,54 @@
 // ============================================================================
 (function () {
   'use strict';
+
+  // ============================================================
+  // Toast — small bottom-center popup shown on every ASDS deploy.
+  // Visible regardless of call source (manual modal, guidance, future
+  // API). Auto-dismisses after ~2.8s. Self-created on first call.
+  // ============================================================
+  function _showASDSToast(msg, ok) {
+    let el = document.getElementById('asdsToast');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'asdsToast';
+      el.style.cssText = [
+        'position: fixed',
+        'left: 50%',
+        'bottom: 32px',
+        'transform: translate(-50%, 20px)',
+        'z-index: 9999',
+        'padding: 10px 18px',
+        'border-radius: 8px',
+        'background: #0d1424',
+        'color: #dbe6f5',
+        'font-family: "JetBrains Mono", monospace',
+        'font-size: 12.5px',
+        'font-weight: 500',
+        'box-shadow: 0 12px 32px rgba(0,0,0,0.55)',
+        'pointer-events: none',
+        'opacity: 0',
+        'transition: opacity 0.24s ease, transform 0.24s ease',
+        'max-width: min(520px, calc(100vw - 40px))',
+        'text-align: center',
+      ].join(';');
+      document.body.appendChild(el);
+    }
+    el.style.border = '1px solid ' + (ok ? '#78afeb' : '#ff5f7e');
+    el.textContent = msg;
+    el.style.opacity = '0';
+    el.style.transform = 'translate(-50%, 20px)';
+    void el.offsetWidth;
+    el.style.opacity = '1';
+    el.style.transform = 'translate(-50%, 0)';
+    if (el._hideTimer) clearTimeout(el._hideTimer);
+    el._hideTimer = setTimeout(() => {
+      el.style.opacity = '0';
+      el.style.transform = 'translate(-50%, 20px)';
+    }, ok ? 2800 : 4200);
+  }
+
+
   const ASDS_LENGTH_M = 91;
   const ASDS_HALF = ASDS_LENGTH_M / 2;
   // Landing zone center is offset from ship's geometric center because
@@ -126,7 +174,16 @@
     return { ok: true, pad };
   }
 
-  window.deployASDS = deployASDS;
+  // Wrap deployASDS so any caller (modal, guidance, future API) gets
+  // the toast — even on validation failure. Single point of notification.
+  const _origDeployASDS = deployASDS;
+  window.deployASDS = function (xMeters) {
+    const result = _origDeployASDS(xMeters);
+    if (result && !result.ok && result.error) {
+      _showASDSToast('⚠ ' + result.error, false);
+    }
+    return result;
+  };
 
   // ---------------------------------------------------------------
   // Modal wiring
@@ -172,7 +229,7 @@
 
     deployBtn.addEventListener('click', () => {
       const x = parseFloat(input.value);
-      const result = deployASDS(x);
+      const result = window.deployASDS(x);
       if (!result.ok) {
         errEl.textContent = result.error;
         errEl.style.display = 'block';
