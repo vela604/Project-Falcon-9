@@ -111,15 +111,7 @@ function cameraWorldPosition() {
         if (b) {
           const t = Math.min(1, (pz - 1) / 4);
           const st = t * t * (3 - 2 * t);
-          // Round to 200m — reduces render-tick jitter from 80Hz physics
-          // running against 60Hz render. Without this, rocket rx/ry shifts
-          // sub-tick each frame, causing camera target to wiggle and Earth
-          // ground boundary to visibly vibrate up-down.
-          const RND = 200;
-          return {
-            x: Math.round(b.rx * st / RND) * RND,
-            y: Math.round(b.ry * st / RND) * RND
-          };
+          return { x: b.rx * st, y: b.ry * st };
         }
       }
     return { x: 0, y: 0 };
@@ -150,13 +142,24 @@ const totalH = (b.members && b.members.length) ?
   (Number.isFinite(b.height) && b.height > 0 ? b.height : (CONFIG.ROCKET_HEIGHT || 45));
 const anchorH = totalH * 0.5;
   
-  const cT = Math.cos(b.theta),
-    sT = Math.sin(b.theta);
-  // local (0, anchorH) rotated into world — same convention as physics.js's
-  // _rotatedPoint() (local +Y = up-stack, world up = (-sinθ, +cosθ)).
+  // Anchor at "mid-height" in WORLD-UP direction (radial from Earth),
+  // NOT body-theta direction. Previously the anchor rotated with the
+  // body — so whenever the rocket pitched or spun, the camera target
+  // swung in a circle around CoM, shaking the entire viewport and
+  // making the ground/horizon line vibrate up-down.
+  //
+  // Now the anchor is a fixed world-offset from CoM in the radial
+  // direction (which itself barely moves: CoM only drifts from fuel
+  // burn, not from rotation). Camera is rock-steady during any
+  // attitude change; rocket appears to rotate around its own axis
+  // in view (which is what real rocket pitch looks like from a fixed
+  // observer — the observer doesn't swing).
+  const rLen = Math.hypot(b.rx, b.ry) || 1;
+  const upX = b.rx / rLen;
+  const upY = b.ry / rLen;
   return {
-    x: b.rx - anchorH * sT,
-    y: b.ry + anchorH * cT,
+    x: b.rx + anchorH * upX,
+    y: b.ry + anchorH * upY,
   };
 }
 
@@ -674,6 +677,12 @@ function drawOceanArea() {
   
   const mppOcean = metersPerPixel();
   const isPlanet = camera.mode === 'planet';
+  
+  // Local view: DO NOT render the ocean zone at all. Any visible water
+  // marker in local view reads as "a line/light on the ground" rather
+  // than ocean. Planet view (zoomed out) is the proper place to see
+  // the ocean — user can zoom out to inspect it.
+  if (!isPlanet) return;
   
   // Depth band — fills INWARD from surface (into Earth). Fixed pixel depth
   // for stability (no tier-switching flicker). 25px in planet, 10px local.
