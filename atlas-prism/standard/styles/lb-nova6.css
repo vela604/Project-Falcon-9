@@ -86,7 +86,8 @@ body[data-state=running] #stState::after{content:"";width:8px;height:8px;border:
 .strip b{display:block;margin-top:2px;font:700 17px/1.25 var(--mono);color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .strip b small{font:400 10px var(--mono);letter-spacing:.06em;color:var(--dim);margin-left:6px;}
 .strip > div:nth-child(1) b{color:var(--cyan);} .strip > div:nth-child(2) b{color:var(--amber);}
-.strip > div:nth-child(3) b{color:var(--green);} .strip > div:nth-child(4) b{color:var(--violet);}
+.strip > div:nth-child(3) b{color:var(--violet);} .strip > div:nth-child(4) b{color:var(--green);}
+.strip b small.x{color:var(--green);font-size:9px;margin-left:4px;letter-spacing:.02em}
 .strip .prompt{font-style:normal;color:var(--green);font-weight:700;}
 .strip .spin{display:none;flex:0 0 auto;width:9px;height:9px;border:1.5px solid var(--line2);border-top-color:var(--amber);border-radius:50%;animation:sp .8s linear infinite;}
 body[data-state=running] .strip .spin{display:inline-block;} body[data-state=running] .strip .prompt{display:none;}

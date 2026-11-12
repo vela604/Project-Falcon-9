@@ -170,9 +170,9 @@
       <h2><span class="tag">0x02</span>Telemetry</h2>
       <div class="strip">
         <div><span><i class="prompt">$</i><i class="spin"></i><em>elapsed</em><small id="tmFlag">IDLE</small></span><b id="tmElapsed">00:00:00</b></div>
-        <div><span><em>evals</em></span><b id="tmEvals">0</b></div>
-        <div><span><em>operations / sec</em></span><b id="tmOps">&mdash;</b></div>
+        <div><span><em>operations / s</em></span><b id="tmOps">&mdash;</b></div>
         <div><span><em>total operations</em></span><b id="tmTotalOps">&mdash;</b></div>
+        <div><span><em>total sim time</em></span><b id="tmSim">&mdash;</b></div>
       </div>
 
       <div class="frail" id="frail">
@@ -325,6 +325,7 @@ const S = {
   stage:'config', lastWindow:null,
   altRuns:[], altBest:null, altTied:[], lastEval:null,
   totalOps:0, opsSampleT:0, opsSampleN:0, opsRate:0,
+  simAccum:0, opT0:0,
 };
 
 // Current LB ignition altitude (km) from the Setup input; null = leave preset value alone.
@@ -382,7 +383,16 @@ function paintLive(p){
 
 // ===== OPS TRACKING =====
 // One op = one TunerEngine.tick(DT()) call = one 80Hz physics step.
-function _tick(){ TunerEngine.tick(DT()); S.totalOps++; }
+function _tick(){ TunerEngine.tick(DT()); S.totalOps++; S.simAccum += DT(); }
+function fmtDur(sec){
+  if(!Number.isFinite(sec) || sec < 0) return '—';
+  if(sec < 60) return sec.toFixed(sec < 10 ? 2 : 1) + 's';
+  let m = Math.floor(sec / 60); const sc = Math.floor(sec % 60);
+  if(m < 60) return m + 'm ' + pad2(sc) + 's';
+  let h = Math.floor(m / 60); m %= 60;
+  if(h < 24) return h + 'h ' + pad2(m) + 'm';
+  return Math.floor(h / 24) + 'd ' + pad2(h % 24) + 'h';
+}
 function fmtOps(n){
   if(!Number.isFinite(n) || n < 0) return '—';
   if(n >= 1e9) return (n/1e9).toFixed(2) + 'B';
@@ -408,6 +418,17 @@ function updateOpsDisplay(){
   }
   const r = $('tmOps'); if(r) r.textContent = fmtOps(S.opsRate);
   const t = $('tmTotalOps'); if(t) t.textContent = fmtOps(S.totalOps);
+  const sm = $('tmSim');
+  if(sm){
+    const wall = S.opT0 ? (now - S.opT0) / 1000 : 0;
+    if(S.simAccum > 0 && wall > 0.5){
+      sm.innerHTML = fmtDur(S.simAccum) + '<small class="x">×' + fmtOps(S.simAccum / wall) + '</small>';
+    } else if(S.simAccum > 0){
+      sm.innerHTML = fmtDur(S.simAccum);
+    } else {
+      sm.innerHTML = '—';
+    }
+  }
 }
 
 // ===== ELAPSED TIMER + BEST DISPLAY =====
@@ -416,6 +437,14 @@ const pad2 = n => (n < 10 ? '0' : '') + n;
 function startElapsedTimer(){
   if(_elapsedTimer) clearInterval(_elapsedTimer);
   const t0 = performance.now();
+  // Per-operation reset — matches sereno-flux semantics (ops/s, total ops,
+  // total sim time all measure the current INIT/scan/sweep/manual run).
+  S.totalOps = 0;
+  S.simAccum = 0;
+  S.opT0 = t0;
+  S.opsSampleT = 0;
+  S.opsSampleN = 0;
+  S.opsRate = 0;
   $('tmElapsed').textContent = '00:00:00';
   _elapsedTimer = setInterval(() => {
     const s = Math.floor((performance.now() - t0) / 1000);
@@ -429,7 +458,7 @@ function setBestDisplay(bias, score){
   // Kept as no-op so existing call sites don't need to change.
 }
 function setEvalCount(n){
-  $('tmEvals').textContent = n; $('stEvalsN').textContent = n;
+  $('stEvalsN').textContent = n;
   updateOpsDisplay();
 }
 
