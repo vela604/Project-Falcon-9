@@ -2608,6 +2608,208 @@ PRE_ENTRY_ALIGN_ALT_KM         <span class="cmt">// when the retrograde slew sta
     </div>
   </div>
 
+  <!-- 14. lb-nova6 -->
+  <div class="exp glass tool pass">
+    <div class="exp-head">
+      <div>
+        <h3 class="exp-title">LB NOVA-6 — Booster Landback Tuner</h3>
+        <div class="exp-id">atlas-prism · lb-nova6.html</div>
+        <div class="exp-time">12:14 AM <span class="exp-time-day">· Fri, Nov 13, 2026</span></div>
+      </div>
+      <span class="exp-status tool">TOOL</span>
+    </div>
+    <div class="exp-body">
+      <div class="exp-row">
+        <div class="exp-label">Target</div>
+        <div class="exp-value">
+          A browser-based tuning tool for <code>landbackV1</code>. Locks a
+          stack and target orbit, captures the mission's separation and
+          entry-burn states once, then searches two parameters — the
+          booster's entry-burn aim bias and its landing-burn ignition
+          altitude — against the same scoring the mission actually flies
+          on.
+          <p>Runs entirely in the browser at sim speed. No backend, no
+          build step. Deterministic: same stack, same orbit, same
+          environment config produces bit-identical trajectories across
+          reloads.</p>
+        </div>
+      </div>
+      <div class="exp-row">
+        <div class="exp-label">Why two parameters</div>
+        <div class="exp-value">
+          <p>A fixed 2 km landing-burn altitude works for one stack class
+          and fails at both ends of the mass spectrum. Heavy stacks
+          saturate at max mass flow during the final descent and run out
+          of altitude before reaching touchdown speed; light stacks go
+          below the engine's min-flow floor, stall mid-air, and rise.
+          The correct altitude is a per-stack quantity, not a constant.</p>
+          <p>The entry-burn bias controls where the booster's ballistic
+          impact point lands before the final descent. It is the primary
+          landing-accuracy knob, but it is altitude-dependent — the same
+          bias that lands a stack cleanly at 2.5 km can miss by twenty
+          metres at 2.0 km. Bias and altitude are coupled, so tuning them
+          separately, or in one search pass, doesn't converge.</p>
+        </div>
+      </div>
+      <div class="exp-row">
+        <div class="exp-label">Search flow</div>
+        <div class="exp-value">
+          <p>Two stages, run in order. Both use the same INIT capture —
+          SA and EB snapshots stored once per session — so every eval
+          restarts from the entry-burn state, not from liftoff.</p>
+          <pre><span class="cmt">// INIT (once per session)</span>
+capture SEPARATED_AXIAL  →  SA snapshot
+capture ENTRY_BURN       →  EB snapshot   <span class="cmt">// the tuning baseline</span>
+
+<span class="cmt">// STAGE 1 — LB altitude finder</span>
+calibrate bias at the current alt    <span class="cmt">// bias ← bias − dr, until |dr| &lt; 5 m</span>
+coarse-sweep alt over [lo, hi]       <span class="cmt">// 5–10 samples, shared calibrated bias</span>
+per-alt drift correction             <span class="cmt">// if dr &gt; 5 m at a new alt, one jump here</span>
+pick mid of tied-best cost band      <span class="cmt">// most margin from both thrust edges</span>
+
+<span class="cmt">// STAGE 2 — bias search</span>
+walk by downrange sign               <span class="cmt">// overshoot → bias more negative, undershoot → more positive</span>
+bracket on sign flip                 <span class="cmt">// dr crosses zero between two evals</span>
+golden-section on score inside bracket <span class="cmt">// ±30 window around the converged point</span></pre>
+        </div>
+      </div>
+      <div class="exp-row">
+        <div class="exp-label">Scoring</div>
+        <div class="exp-value">
+          <p>Two different scoring functions, one per stage, both different
+          from the mission's own score.</p>
+          <p><strong>Altitude stage — composite cost.</strong> Because LB
+          altitude affects the whole descent, its cost function combines
+          two failure-edge measurements with touchdown quality:</p>
+          <ul>
+            <li><strong>Thrust saturation at Fmax</strong> — fraction of
+            the main burn where thrust is pinned at max. Heavy stacks live
+            here. Primary heavy-edge signal.</li>
+            <li><strong>Thrust saturation at Fmin</strong> — fraction of
+            the main burn where thrust is pinned at min. Light stacks live
+            here. Primary light-edge signal.</li>
+            <li><strong>Gimbal saturation</strong> — fraction of the main
+            burn where gimbal is pegged at its hardware limit.</li>
+            <li><strong>Touchdown quality</strong> — vy, tilt, spin, hop,
+            mean tilt, and final-approach duration, all deadbanded so
+            small noise doesn't dominate.</li>
+          </ul>
+          <p>LB fuel burn and mission time are <em>excluded</em>. Both
+          scale with LB duration: a higher ignition altitude means a
+          longer burn, not a worse burn. Including them would bias the
+          search toward short ignitions regardless of quality.</p>
+          <p><strong>Bias stage — touchdown accuracy.</strong>
+          <code>x/1 + vx²/0.5 + ω²/4</code>, plus deadbanded penalties
+          for tilt, vertical speed, hop, mean tilt, and final-approach
+          duration. Downrange error (x) is linear — the primary accuracy
+          axis. Lateral slide (vx) and spin (ω) are quadratic — they
+          measure energy, not position, and small values are nearly
+          free. Fuel and time again excluded.</p>
+          <p><strong>Tie tolerance</strong> = 0.05. Rows within 0.05 of
+          the best share the same rank in the leaderboard — no fuel or
+          time tiebreak. When physics says "equally good", the tool
+          doesn't force a winner.</p>
+        </div>
+      </div>
+      <div class="exp-row">
+        <div class="exp-label">Key parameters</div>
+        <div class="exp-value">
+          <pre>LB alt lo / hi (km)            <span class="cmt">// altitude sweep window</span>
+alt coarse step (km)           <span class="cmt">// initial sweep resolution (refined inside the feasible band)</span>
+bias lo / hi / start           <span class="cmt">// bias search window</span>
+min step                       <span class="cmt">// golden-section convergence floor</span>
+V_TD margin (m)                <span class="cmt">// anti-stall touchdown-speed margin, blank = preset</span>
+H_STALL (m)                    <span class="cmt">// stall-catch altitude, blank = preset</span></pre>
+          <p><strong>Tuned baseline</strong> (F9 B5 stack, 320 km target,
+          12,000 kg payload, pad LZ-1):
+          <code>LB alt</code> ≈ 2.0 km,
+          <code>bias</code> ≈ −825,
+          <code>MECO_TARGET_BOOSTER_FUEL_KG</code> = 52612,
+          <code>ENTRY_BURN_CUTOFF_VELOCITY_MS</code> ≈ 600. Booster lands
+          inside the pad footprint with legs deployed and touchdown speed
+          inside the safety envelope.</p>
+        </div>
+      </div>
+      <div class="exp-row">
+        <div class="exp-label">Diagnostic surface</div>
+        <div class="exp-value">
+          <ul>
+            <li><strong>Live telemetry</strong> — elapsed, ops/sec, total
+            operations, and sim time with a ×N speedup tag, all reset per
+            operation so a single eval's cost is measurable.</li>
+            <li><strong>Eval-by-eval table</strong> — LB alt, bias, score,
+            status, TD metrics (x, vx, vy-impact, θ, ω), hop, final-approach
+            time, bounce height, fuel remaining, LB start altitude. Click
+            any row for a full detail panel with score breakdown, fuel
+            breakdown, mission timeline, and eight per-phase charts.</li>
+            <li><strong>Bias vs score and bias vs downrange charts</strong>
+            — one point per eval, tied to the currently selected LB
+            altitude so charts don't mix runs from different alts.</li>
+            <li><strong>Ground log export</strong> — last eval's per-tick
+            descent from ~45 m AGL to touchdown: altitude, hEff (leg-tip
+            height above ground), vertical speed, thrust, thrust command,
+            landed/crashed flags, and fuel remaining. Essential for
+            diagnosing landing-burn transients that don't show up in the
+            aggregate metrics.</li>
+          </ul>
+        </div>
+      </div>
+      <div class="exp-row">
+        <div class="exp-label">Result</div>
+        <div class="exp-value">
+          <strong>Deterministic tuned (alt, bias) pair.</strong>
+          After INIT and both stages, the leaderboard shows every eval
+          ranked by score, with tied rows flagged explicitly. The winning
+          pair maps directly to <code>LANDING_BURN_ALT_KM</code> and
+          <code>ENTRY_BURN_IMPACT_TARGET_M</code> in the mission config.
+          <p>Typical run: one INIT (~40 s), one altitude stage (~5 evals),
+          one bias search (~10–15 evals). Wall time 3–5 minutes for the
+          full tuning pass on a stack that has residual fuel for return.</p>
+          <p>A successful run produces a booster that lands inside the
+          pad footprint with touchdown speed, lateral drift, tilt, and
+          spin all inside the safety envelope — verified against the same
+          scoring the mission flies on, not a proxy.</p>
+        </div>
+      </div>
+      <div class="exp-row">
+        <div class="exp-label">Drawbacks</div>
+        <div class="exp-value">
+          <ul>
+            <li><strong>Score surface is nonlinear.</strong> The
+            entry-burn bias surface has cliffs (small bias change flips
+            between "clean landing" and "twenty metres past pad") and
+            plateaus (small bias change does nothing). The search uses
+            bracket + golden-section, not gradient descent — it converges
+            reliably to a local minimum but cannot certify it is the
+            global one.</li>
+            <li><strong>Per-stack, per-alt, per-pad tuning.</strong> A
+            bias that lands a stack at 320 km may not land it at 500 km,
+            and a stack tuned with 12t payload may need different
+            constants with a heavier one. Every mission configuration is
+            its own tuning run.</li>
+            <li><strong>INIT is one-shot per session.</strong> The SA/EB
+            snapshots are captured against the current stack, orbit, and
+            environment config. Changing any of those requires a fresh
+            INIT before further tuning.</li>
+            <li><strong>One stack per session.</strong> The tool tunes one
+            booster at a time. Multi-stack comparisons need separate
+            sessions.</li>
+          </ul>
+        </div>
+      </div>
+      <div class="tags">
+        <span class="tag">browser-based</span>
+        <span class="tag">booster-landback</span>
+        <span class="tag">two-stage-search</span>
+        <span class="tag">deterministic</span>
+        <span class="tag">snapshot-shared</span>
+        <span class="tag">physics-guided</span>
+        <span class="tag">diagnostics</span>
+      </div>
+    </div>
+  </div>
+
+
   <div class="section-header">Lessons That Survived Every Iteration</div>
 
   <div class="exp glass">
