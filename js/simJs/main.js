@@ -461,7 +461,12 @@ function bootstrap() {
   return;
 }
 
-    if (msg.type === 'workerError') {
+    if (msg.type === 'asdsRendered') {
+        console.log('[render-worker] ASDS rendered: ' + msg.id + ' (mpp=' + msg.mpp + ')');
+      } else if (msg.type === 'asdsError') {
+        console.error('[render-worker] ASDS render THREW for ' + msg.id + ': ' + msg.message);
+        if (msg.stack) console.error(msg.stack);
+      } else if (msg.type === 'workerError') {
         console.error('=== RENDER WORKER CRASH ===');
         console.error('  message:', msg.message);
         console.error('  stack:', msg.stack);

@@ -1338,154 +1338,96 @@ function _drawASDS(ctx, pad, worldPos, camAng, mpp, pal) {
   const reach = (lengthM / 2 + 60) / mpp;
   if (px + reach < 0 || px - reach > canvas.width ||
       py + reach < 0 || py - reach > canvas.height) return;
-  if (mpp > 120) return;   // too zoomed-out to see detail
 
-  // ---- Dimensions (meters) ----
-  const draftM      = 5.0;    // hull below waterline
-  const freeboardM  = 2.5;    // deck above waterline
-  const deckY       = -freeboardM;
-  const hullBottomY = draftM;
-  const contH       = 8.0;    // containers
-  const contW       = 15.0;   // container block length (aft)
-  const blastH      = 3.5;    // blast wall height
-  const blastW      = 2.0;    // blast wall thickness
-  const thrusterR   = 1.6;
-
-  // ---- Colors — distinct from LZ's golden plate ----
-  const CO = {
-    hullBelow:   'rgb(38, 24, 18)',      // dark rust/brown below water
-    hullAbove:   'rgb(20, 28, 38)',      // dark slate above water
-    hullEdge:    'rgba(0, 0, 0, 0.85)',
-    deck:        'rgb(12, 12, 12)',      // black steel deck
-    deckEdge:    'rgba(180, 180, 180, 0.35)',
-    container1:  'rgb(220, 220, 220)',   // white
-    container2:  'rgb(52, 98, 168)',     // blue
-    container3:  'rgb(180, 60, 60)',     // red accent
-    blast:       'rgb(70, 70, 70)',      // steel grey
-    blastEdge:   'rgba(0, 0, 0, 0.9)',
-    thruster:    'rgb(18, 18, 18)',
-    waterline:   'rgba(120, 190, 255, 0.55)',
-  };
+  const draftM = 5.0, freeboardM = 2.5;
+  const deckY = -freeboardM, hullBotY = draftM;
+  const contH = 8.0, contW = 15.0;
+  const blastH = 3.5, blastW = 2.0;
 
   ctx.save();
   ctx.translate(px, py);
   ctx.rotate(-(worldPos.phi - camAng));
-  ctx.scale(1 / mpp, 1 / mpp);      // 1 unit = 1 meter, +y = down
+  ctx.scale(1 / mpp, 1 / mpp);
 
-  // ---- 1. Submerged hull (rusty below waterline) ----
-  ctx.fillStyle = CO.hullBelow;
-  ctx.fillRect(-halfL, 0, lengthM, hullBottomY);
-  // subtle vertical hull stiffeners
+  // Submerged hull (rust brown)
+  ctx.fillStyle = 'rgb(38, 24, 18)';
+  ctx.fillRect(-halfL, 0, lengthM, hullBotY);
   ctx.strokeStyle = 'rgba(0,0,0,0.35)';
   ctx.lineWidth = 0.15;
-  for (let x = -halfL + 3; x < halfL; x += 5) {
-    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, hullBottomY); ctx.stroke();
+  for (let x = -halfL + 4; x < halfL; x += 5) {
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, hullBotY); ctx.stroke();
   }
 
-  // ---- 2. Above-water hull (dark slate) ----
-  ctx.fillStyle = CO.hullAbove;
+  // Above-water hull (dark slate)
+  ctx.fillStyle = 'rgb(20, 28, 38)';
   ctx.fillRect(-halfL, deckY, lengthM, -deckY);
-  ctx.strokeStyle = CO.hullEdge;
+  ctx.strokeStyle = 'rgba(0,0,0,0.85)';
   ctx.lineWidth = 0.35;
-  ctx.strokeRect(-halfL, deckY, lengthM, hullBottomY - deckY);
+  ctx.strokeRect(-halfL, deckY, lengthM, hullBotY - deckY);
 
-  // ---- 3. Black steel deck (thin dark line on top) ----
-  ctx.fillStyle = CO.deck;
+  // Black deck
+  ctx.fillStyle = 'rgb(12, 12, 12)';
   ctx.fillRect(-halfL, deckY - 0.4, lengthM, 0.4);
-  ctx.strokeStyle = CO.deckEdge;
+  ctx.strokeStyle = 'rgba(180, 180, 180, 0.35)';
   ctx.lineWidth = 0.1;
   ctx.beginPath(); ctx.moveTo(-halfL, deckY - 0.4); ctx.lineTo(halfL, deckY - 0.4); ctx.stroke();
 
-  // ---- 4. Landing-zone markings (only visible at close zoom) ----
+  // Landing X (close zoom)
   if (mpp < 0.6) {
-    ctx.strokeStyle = 'rgba(255, 230, 120, 0.6)';
+    ctx.strokeStyle = 'rgba(255, 230, 120, 0.65)';
     ctx.lineWidth = 0.4;
     const zoneR = Number.isFinite(pad.radiusM) ? pad.radiusM : 35;
-    ctx.beginPath();
-    ctx.moveTo(-zoneR, deckY - 0.5);
-    ctx.lineTo(zoneR, deckY - 0.5);
-    ctx.stroke();
-    // X mark
-    ctx.lineWidth = 0.5;
+    ctx.beginPath(); ctx.moveTo(-zoneR, deckY - 0.5); ctx.lineTo(zoneR, deckY - 0.5); ctx.stroke();
+    ctx.lineWidth = 0.6;
     ctx.beginPath();
     ctx.moveTo(-4, deckY - 0.5); ctx.lineTo(4, deckY - 4.5);
-    ctx.moveTo(4, deckY - 0.5);  ctx.lineTo(-4, deckY - 4.5);
+    ctx.moveTo(4, deckY - 0.5); ctx.lineTo(-4, deckY - 4.5);
     ctx.stroke();
   }
 
-  // ---- 5. Aft containers (west end) — stacked shipping boxes ----
+  // Aft containers
   const contX = -halfL + 2;
-  // White container (bottom)
-  ctx.fillStyle = CO.container1;
+  ctx.fillStyle = 'rgb(220, 220, 220)';
   ctx.fillRect(contX, deckY - contH, contW, contH);
   ctx.strokeStyle = 'rgba(0,0,0,0.45)';
   ctx.lineWidth = 0.25;
   ctx.strokeRect(contX, deckY - contH, contW, contH);
-  // Container corrugation lines
   ctx.strokeStyle = 'rgba(0,0,0,0.18)';
   ctx.lineWidth = 0.08;
   for (let yy = deckY - contH + 1; yy < deckY - 0.5; yy += 1) {
     ctx.beginPath(); ctx.moveTo(contX + 0.5, yy); ctx.lineTo(contX + contW - 0.5, yy); ctx.stroke();
   }
-  // Blue container on top (shorter)
-  ctx.fillStyle = CO.container2;
+  ctx.fillStyle = 'rgb(52, 98, 168)';
   ctx.fillRect(contX + 1, deckY - contH - 3, contW - 2, 3);
   ctx.strokeRect(contX + 1, deckY - contH - 3, contW - 2, 3);
-  // Red accent panel
-  ctx.fillStyle = CO.container3;
+  ctx.fillStyle = 'rgb(180, 60, 60)';
   ctx.fillRect(contX + contW - 3, deckY - contH, 2, 2);
 
-  // ---- 6. Steel blast wall (in front of containers, toward landing zone) ----
+  // Blast wall
   const blastX = contX + contW;
-  ctx.fillStyle = CO.blast;
+  ctx.fillStyle = 'rgb(70, 70, 70)';
   ctx.fillRect(blastX, deckY - blastH, blastW, blastH);
-  ctx.strokeStyle = CO.blastEdge;
+  ctx.strokeStyle = 'rgba(0,0,0,0.9)';
   ctx.lineWidth = 0.25;
   ctx.strokeRect(blastX, deckY - blastH, blastW, blastH);
-  // blast wall diagonal cross-brace hint
-  ctx.strokeStyle = 'rgba(255,255,255,0.15)';
-  ctx.lineWidth = 0.12;
-  ctx.beginPath();
-  ctx.moveTo(blastX, deckY - blastH);
-  ctx.lineTo(blastX + blastW, deckY);
-  ctx.stroke();
 
-  // ---- 7. Azimuth thrusters (4 pods below hull) ----
-  const thrusterXs = [-halfL * 0.75, -halfL * 0.35, halfL * 0.35, halfL * 0.75];
-  thrusterXs.forEach(tx => {
-    ctx.fillStyle = CO.thruster;
-    ctx.beginPath();
-    ctx.ellipse(tx, hullBottomY + thrusterR * 0.8, thrusterR, thrusterR * 1.4, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(80,80,80,0.5)';
-    ctx.lineWidth = 0.2;
-    ctx.stroke();
+  // Thrusters
+  [-halfL * 0.75, -halfL * 0.35, halfL * 0.35, halfL * 0.75].forEach(tx => {
+    ctx.fillStyle = 'rgb(18, 18, 18)';
+    ctx.beginPath(); ctx.ellipse(tx, hullBotY + 2, 1.6, 2.2, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = 'rgba(80,80,80,0.5)'; ctx.lineWidth = 0.2; ctx.stroke();
   });
 
-  // ---- 8. Waterline highlight ----
-  ctx.strokeStyle = CO.waterline;
+  // Waterline
+  ctx.strokeStyle = 'rgba(120, 190, 255, 0.55)';
   ctx.lineWidth = 0.25;
-  ctx.beginPath();
-  ctx.moveTo(-halfL - 3, 0);
-  ctx.lineTo(halfL + 3, 0);
-  ctx.stroke();
-
-  // Small water ripple patches at bow/stern
-  ctx.strokeStyle = 'rgba(200, 230, 255, 0.30)';
-  ctx.lineWidth = 0.15;
-  for (let sx = -halfL - 2; sx <= halfL + 2; sx += 2.5) {
-    const wob = Math.sin(sx * 0.6 + performance.now() * 0.001) * 0.25;
-    ctx.beginPath();
-    ctx.moveTo(sx, 0);
-    ctx.lineTo(sx + 1, -0.3 + wob);
-    ctx.stroke();
-  }
+  ctx.beginPath(); ctx.moveTo(-halfL - 3, 0); ctx.lineTo(halfL + 3, 0); ctx.stroke();
 
   ctx.restore();
 
-  // ---- 9. Label above ship ----
+  // Label
   if (mpp > 0.25 && mpp < 25) {
-    const labelTxt = pad.name + ' · ' + Math.round(pad.arcOffsetM / 1000) + ' km';
+    const labelTxt = pad.name + ' \u00b7 ' + Math.round(pad.arcOffsetM / 1000) + ' km';
     const labelY = py - (freeboardM + contH + 6) / mpp;
     ctx.save();
     ctx.font = 'bold 11px "JetBrains Mono", monospace';
@@ -1505,67 +1447,69 @@ function drawLandingPads() {
   const pads = landingPads();
   if (!pads.length) return;
   const mpp = metersPerPixel();
-  if (mpp > 60) return;
+  if (mpp > 120) return;
   const camAng = cameraAngle(), nowT = performance.now();
   let PL = null;
+  
   for (let i = 0; i < pads.length; i++) {
     const pad = pads[i];
     const w = landingPadWorldPosition(pad, state.simTime);
     const [px, py] = worldToScreen(w.x, w.y);
-    const reach = (pad.radiusM + 40) / mpp;
-    if (px + reach < 0 || px - reach > canvas.width || py + reach < 0 || py - reach > canvas.height) continue;
-    if (!PL) PL = _padLight(true);
-    const pal = PL.pal, n = pal.night;
     
-    // ASDS — special side-view render. Fallback: lengthM > 50 is unique
-    // to ASDS pads (LZ pads only have radiusM). Catches any case where
-    // isASDS was lost in transmission.
-    const _isASDS = !!(pad.isASDS || (Number.isFinite(pad.lengthM) && pad.lengthM > 50));
+    // BULLETPROOF ASDS detection — THREE independent signals.
+    // If ANY one is true, render as ship. This survives any single
+    // field being lost in message-passing between threads.
+    const _isASDS = (pad.isASDS === true) ||
+                    (Number.isFinite(pad.lengthM) && pad.lengthM >= 50) ||
+                    (typeof pad.id === 'string' && pad.id.indexOf('asds-') === 0);
+    
     if (_isASDS) {
+      if (!PL) PL = _padLight(true);
       try {
-        if (!globalThis._asdsDrawLogged) {
-          globalThis._asdsDrawLogged = true;
-          console.log('[ASDS] _drawASDS triggered for ' + pad.id +
-            ' (isASDS=' + pad.isASDS + ', lengthM=' + pad.lengthM + ', mpp=' + mpp.toFixed(2) + ')');
+        _drawASDS(ctx, pad, w, camAng, mpp, PL.pal);
+        // report back to main thread (worker console is invisible)
+        if (!globalThis._asdsReported) {
+          globalThis._asdsReported = {};
         }
-        _drawASDS(ctx, pad, w, camAng, mpp, pal);
+        if (!globalThis._asdsReported[pad.id]) {
+          globalThis._asdsReported[pad.id] = true;
+          self.postMessage({ type: 'asdsRendered', id: pad.id, mpp: mpp.toFixed(2) });
+        }
       } catch (e) {
-        console.error('[ASDS] _drawASDS threw:', e.message, e.stack);
+        try {
+          self.postMessage({ type: 'asdsError', id: pad.id, message: e.message, stack: e.stack });
+        } catch (e2) {}
       }
       continue;
     }
     
-    const g = _lzGeo(pad), R = pad.radiusM;
-
+    // ---- LZ pad (flat golden plate) — existing rendering ----
+    const reach = (pad.radiusM + 40) / mpp;
+    if (px + reach < 0 || px - reach > canvas.width || py + reach < 0 || py - reach > canvas.height) continue;
+    if (!PL) PL = _padLight(true);
+    const pal = PL.pal, g = _lzGeo(pad), R = pad.radiusM, n = pal.night;
+    
     ctx.save();
     ctx.translate(px, py);
     ctx.rotate(-(w.phi - camAng));
-    ctx.scale(1 / mpp, 1 / mpp);                                   // 1 unit = 1 metre, x = east, y down
+    ctx.scale(1 / mpp, 1 / mpp);
     ctx.lineCap = 'butt'; ctx.lineJoin = 'miter';
     _padDraw(ctx, g.mid, pal, mpp);
-
-    // top surface: concrete at the rim -> bright toward the touchdown point
+    
     const sg = ctx.createLinearGradient(-R, 0, R, 0);
     sg.addColorStop(0, pal.conc); sg.addColorStop(0.2, pal.conc); sg.addColorStop(0.38, pal.whiteDk);
     sg.addColorStop(0.5, pal.white); sg.addColorStop(0.62, pal.whiteDk); sg.addColorStop(0.8, pal.conc); sg.addColorStop(1, pal.conc);
-    ctx.fillStyle = sg; ctx.fillRect(-R, 0, R * 2, 0.75);                  // surface layer is flush with the ground
-
-    // soft target glow hugging the surface (stronger at night)
+    ctx.fillStyle = sg; ctx.fillRect(-R, 0, R * 2, 0.75);
+    
     ctx.save();
     ctx.globalCompositeOperation = 'lighter';
     ctx.translate(0, 0.1); ctx.scale(1, 0.06);
     const cg = ctx.createRadialGradient(0, 0, 0, 0, 0, R * 0.6);
-    cg.addColorStop(0, 'rgba(200,255,225,' + (0.07 + 0.6 * n).toFixed(3) + ')'); cg.addColorStop(1, 'rgba(120,230,180,0)');
+    cg.addColorStop(0, 'rgba(200,255,225,' + (0.07 + 0.6 * n).toFixed(3) + ')');
+    cg.addColorStop(1, 'rgba(120,230,180,0)');
     ctx.fillStyle = cg; ctx.beginPath(); ctx.arc(0, 0, R * 0.6, 0, Math.PI * 2); ctx.fill();
     ctx.restore();
-
-    // ============ HUMAN SCALE REFERENCE ============
-    // One human silhouette 8m east of the pad edge, at ground level.
-    // Gives immediate sense of pad size vs human (pad is usually ~20m
-    // radius, human is 1.75m — pad dwarfs the human by ~12:1).
-    _drawHumanScaleRef(ctx, R + 8);
     
-    // ground vapour lights, both sides
     if (g.lights.length) {
       if (n > 0.02) {
         if (!_PAD.glowAmb) _PAD.glowAmb = _padSprite('255,190,90');
@@ -1574,21 +1518,31 @@ function drawLandingPads() {
         for (const Lg of g.lights) {
           const bh = 26, bw = 4.6;
           const bg = ctx.createLinearGradient(0, -Lg.y, 0, -Lg.y - bh);
-          bg.addColorStop(0, 'rgba(255,196,100,' + (0.20 * n).toFixed(3) + ')'); bg.addColorStop(1, 'rgba(255,196,100,0)');
+          bg.addColorStop(0, 'rgba(255,196,100,' + (0.20 * n).toFixed(3) + ')');
+          bg.addColorStop(1, 'rgba(255,196,100,0)');
           ctx.fillStyle = bg; ctx.beginPath();
-          ctx.moveTo(Lg.x - 0.35, -Lg.y); ctx.lineTo(Lg.x + 0.35, -Lg.y); ctx.lineTo(Lg.x + bw, -Lg.y - bh); ctx.lineTo(Lg.x - bw, -Lg.y - bh);
+          ctx.moveTo(Lg.x - 0.35, -Lg.y); ctx.lineTo(Lg.x + 0.35, -Lg.y);
+          ctx.lineTo(Lg.x + bw, -Lg.y - bh); ctx.lineTo(Lg.x - bw, -Lg.y - bh);
           ctx.closePath(); ctx.fill();
-          if (_PAD.glowAmb) { const rr = Math.max(3.4, mpp * 5); ctx.globalAlpha = Math.min(1, n * 0.9); ctx.drawImage(_PAD.glowAmb, Lg.x - rr, -Lg.y - rr, rr * 2, rr * 2); ctx.globalAlpha = 1; }
+          if (_PAD.glowAmb) {
+            const rr = Math.max(3.4, mpp * 5);
+            ctx.globalAlpha = Math.min(1, n * 0.9);
+            ctx.drawImage(_PAD.glowAmb, Lg.x - rr, -Lg.y - rr, rr * 2, rr * 2);
+            ctx.globalAlpha = 1;
+          }
         }
         ctx.restore();
       } else {
         ctx.fillStyle = 'rgba(255,205,120,0.75)';
-        for (const Lg of g.lights) { ctx.beginPath(); ctx.arc(Lg.x, -Lg.y - 0.05, Math.max(0.28, mpp * 1.1), 0, Math.PI * 2); ctx.fill(); }
+        for (const Lg of g.lights) {
+          ctx.beginPath();
+          ctx.arc(Lg.x, -Lg.y - 0.05, Math.max(0.28, mpp * 1.1), 0, Math.PI * 2);
+          ctx.fill();
+        }
       }
     }
     ctx.restore();
-
-    // floating label when zoomed out (screen-aligned)
+    
     if (mpp > 1.2 && mpp < 14) {
       const txt = mpp > 5 ? pad.id : pad.id + ' \u00b7 ' + Math.round(pad.arcOffsetM) + ' m';
       ctx.save();
