@@ -1860,7 +1860,20 @@ function makeFieldRow(path, reference, values) {
 
     populatePresetDropdown(guideName);
     noConfigEl.style.display = 'none';
-    renderFields(guideName, liveConfig, _referenceConstants);
+    // Pre-fill liveConfig against the current reference schema. A preset or
+    // liveConfig saved against an OLDER schema will have missing keys for
+    // constants added since (LANDING_BURN_V_TD_MARGIN_M, BOOSTER_SEP_*,
+    // PAYLOAD_DEPLOY_OPEN_DELAY_S, ...). Without this fill, those inputs
+    // render blank and the Apply button disables — the "reset fixes it"
+    // symptom is just because reset uses the complete reference bag.
+    let _loadValues = liveConfig;
+    if (typeof validateConstantsCompat === 'function') {
+      const _c = validateConstantsCompat(liveConfig, _referenceConstants);
+      if (_c.warnings && _c.warnings.length)
+        console.warn('[gcm] compat fill on load:', _c.warnings);
+      _loadValues = _c.constants;
+    }
+    renderFields(guideName, _loadValues, _referenceConstants);
 
     configNote.textContent = isGuideActive()
       ? 'A guide is running. Edits apply on the next Start.'
@@ -1924,13 +1937,23 @@ guideSel.addEventListener('change', () => {
     if (typeof getPresetById !== 'function' || typeof validateConstantsStrict !== 'function') return;
     const p = getPresetById(id);
     if (!p || !p.constants) return;
-    const v = validateConstantsStrict(p.constants, _referenceConstants);
+    // Compat (not strict) so a preset saved against an older schema still
+    // fills every field. Missing -> filled from default (warning in console);
+    // extra -> dropped (warning); only type mismatches on existing keys fall
+    // back to default — the strict "missing key" rejection is gone.
+    const v = (typeof validateConstantsCompat === 'function')
+      ? validateConstantsCompat(p.constants, _referenceConstants)
+      : validateConstantsStrict(p.constants, _referenceConstants);
     if (!v.ok) {
       toast('Preset incompatible: ' + v.error);
       return;
     }
-    applyValuesToFields(p.constants);
-    toast('Loaded preset "' + p.name + '" (not applied yet)');
+    const compat = v.constants || p.constants;
+    if (v.warnings && v.warnings.length)
+      console.warn('[gcm] compat fill on preset load:', v.warnings);
+    applyValuesToFields(compat);
+    const filled = (v.warnings && v.warnings.some(w => /Missing|Invalid/.test(w)));
+    toast('Loaded preset "' + p.name + '"' + (filled ? ' (missing fields filled from defaults)' : '') + ' (not applied yet)');
   });
 
   // Reset to code defaults
