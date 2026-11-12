@@ -3161,6 +3161,33 @@ setState(s) {
         // engines fired during LB spool (C = centre; add numbers for outer-ring)
       LANDING_BURN_LEGS_ALT_M: 200,   // AGL altitude to deploy legs during LB
       POST_ENTRY_GRIDFIN_RAMP_DEG_S: 3,    // grid-fin control target ramps 0 -> max at this rate (deg/s); slower = less oscillation (guess, tune in sim)
+      // LB cascade-controller constants — synced from the same-named keys in
+      // guideConfigDefaults.landbackV1.rtls. Values match this file's _cfgN()
+      // fallbacks in the LANDING_BURN case, so adding them here changes the
+      // running config bag (visible to tester + GCM) without changing physics.
+      LANDING_BURN_V_TD_MARGIN_M: 0.2,
+      LANDING_BURN_V_TD_MAX: 1.5,
+      LANDING_BURN_KN: 2.0,
+      LANDING_BURN_REPLAN_S: 1.0,
+      LANDING_BURN_PROF_DT: 0.05,
+      LANDING_BURN_FIN_SHARE: 0.4,
+      LANDING_BURN_FIN_RATE: 40,
+      LANDING_BURN_FIN_CAP: 30,
+      LANDING_BURN_KZ: 0.1,
+      LANDING_BURN_KV: 0.5,
+      LANDING_BURN_VLIM: 2.0,
+      LANDING_BURN_VH: 0.03,
+      LANDING_BURN_ABRK: 0.3,
+      LANDING_BURN_KTH: 1.0,
+      LANDING_BURN_KW: 1.6,
+      LANDING_BURN_SLEW: 4.0,
+      LANDING_BURN_CAP_MAX: 10.0,
+      LANDING_BURN_CAP_BASE: 1.5,
+      LANDING_BURN_CAP_H: 0.04,
+      LANDING_BURN_MCAP: 0.8,
+      LANDING_BURN_GFLOOR: 0.25,
+      LANDING_BURN_NOAUTH: 0.12,
+      LANDING_BURN_H_BLEND: 8.0,
     },
     importantFields: [],
     createInstance: function () {
