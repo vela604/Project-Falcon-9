@@ -211,6 +211,7 @@ function setByPath(obj, path, value) {
 // FAIRING_OPEN_ENABLED: true.
 // ---------------------------------------------------------------------------
 function _leafTypeOf(v) {
+  if (v === undefined)        return 'undefined';
   if (typeof v === 'boolean') return 'boolean';
   if (typeof v === 'string')  return 'string';
   if (typeof v === 'number')  return 'number';
@@ -295,6 +296,75 @@ function _strictRecurse(values, reference, path) {
 }
 
 // ---------------------------------------------------------------------------
+// Safe deep-clone — JSON round-trip but undefined-safe. Plain
+// JSON.parse(JSON.stringify(undefined)) throws SyntaxError, which killed the
+// lenient path if a reference leaf was literally undefined.
+// ---------------------------------------------------------------------------
+function _cloneVal(v) {
+  if (v === undefined) return undefined;
+  return JSON.parse(JSON.stringify(v));
+}
+
+// ---------------------------------------------------------------------------
+// COMPAT VALIDATOR — tolerant of schema drift between a saved preset and the
+// current default preset. Handles both directions silently, with warnings:
+//   - key in reference but not in values  -> FILL from reference   (new key)
+//   - key in values but not in reference  -> DROP                  (removed key)
+//   - type mismatch                       -> FILL from reference   (corrupt)
+// Never returns ok:false on structural drift. Only top-level input not
+// being an object triggers a start-from-defaults recovery.
+//
+// Used on page load (renderFields) and on Apply so a preset saved against an
+// older schema still renders all inputs filled and applies cleanly, instead
+// of leaving blank fields that silently disable the Apply button.
+//
+// Returns { ok, constants, warnings:[] } — constants is always complete
+// against reference; warnings is an audit trail for the console.
+// ---------------------------------------------------------------------------
+function validateConstantsCompat(values, reference) {
+  const warnings = [];
+  if (values === null || typeof values !== 'object' || Array.isArray(values)) {
+    warnings.push('Values unusable at root — starting from defaults');
+    return { ok: true, constants: _cloneVal(reference), warnings };
+  }
+  const out = _compatRecurse(values, reference, '', warnings);
+  return { ok: true, constants: out, warnings };
+}
+
+function _compatRecurse(values, reference, path, warnings) {
+  const refType = _leafTypeOf(reference);
+
+  if (refType === 'object') {
+    if (values === null || typeof values !== 'object' || Array.isArray(values)) {
+      warnings.push('Expected object at "' + (path || '(root)') + '" — using defaults');
+      return _cloneVal(reference);
+    }
+    const out = {};
+    for (const k in reference) {
+      const child = path ? path + '.' + k : k;
+      if (!(k in values)) {
+        warnings.push('Missing "' + child + '" — filled from default');
+        out[k] = _cloneVal(reference[k]);
+      } else {
+        out[k] = _compatRecurse(values[k], reference[k], child, warnings);
+      }
+    }
+    for (const k in values) {
+      if (!(k in reference)) {
+        const child = path ? path + '.' + k : k;
+        warnings.push('Unknown "' + child + '" — dropped');
+      }
+    }
+    return out;
+  }
+
+  if (_leafOk(values, refType)) return values;
+  const child = path || '(root)';
+  warnings.push('Invalid "' + child + '" (' + _leafTypeOf(values) + ' vs ' + refType + ') — using default');
+  return _cloneVal(reference);
+}
+
+// ---------------------------------------------------------------------------
 // LENIENT VALIDATOR — same shape, but any missing / extra / invalid value
 // silently falls back to the reference (default-preset) value.
 //
@@ -321,7 +391,7 @@ function _lenientRecurse(values, reference, path, warnings) {
       const child = path ? path + '.' + k : k;
       if (!(k in src)) {
         warnings.push(`Missing "${child}" — using default`);
-        out[k] = JSON.parse(JSON.stringify(reference[k]));
+        out[k] = _cloneVal(reference[k]);
       } else {
         out[k] = _lenientRecurse(src[k], reference[k], child, warnings);
       }
@@ -342,7 +412,7 @@ function _lenientRecurse(values, reference, path, warnings) {
   if (_leafOk(values, refType)) return values;
   const child = path || '(root)';
   warnings.push(`Invalid "${child}" — using default`);
-  return JSON.parse(JSON.stringify(reference));
+  return _cloneVal(reference);
 }
 
 // ---------------------------------------------------------------------------
