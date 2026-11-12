@@ -844,6 +844,12 @@ setState(s) {
       // to the eject kick. Net-force RCS only, no floor duty.
       COAST_HOLD_2_TRIM_TOL_MPS: 0.0001,
       COAST_HOLD_2_TRIM_FAR_MPS: 0.01,
+      // Velocity offset pre-accounted at the target apside. 0 = no post-
+      // insertion dv (booster delivery / no payload). The MISSION sets this
+      // to the payload eject kick (~3 m/s) when a payload will be released
+      // right after insertion, so the stage ends at target_circ - kick and
+      // the payload ends at target_circ.
+      TARGET_BIAS_MPS: 0,
     },
     importantFields: [],
     createInstance: function () {
@@ -1857,8 +1863,9 @@ const tau_target = tau_desired - dNext.torqueEnvironmental;
               v_target_at_apside = Math.sqrt(GM_c * (2 / r_a_tgt_live - 1 / a_tgt_live));
             }
             const gap = v_target_at_apside - v_live_at_apside;
-            const targetGap = Number.isFinite(env.PAYLOAD_EJECT_KICK_MPS)
-              ? env.PAYLOAD_EJECT_KICK_MPS : 0;
+            const targetGap = Number.isFinite(cfg.TARGET_BIAS_MPS)
+              ? cfg.TARGET_BIAS_MPS
+              : (Number.isFinite(env.PAYLOAD_EJECT_KICK_MPS) ? env.PAYLOAD_EJECT_KICK_MPS : 0);
             const dvError = gap - targetGap;
             _st.coastHold2GapMps = gap;
             _st.coastHold2DvErrorMps = dvError;
@@ -2051,10 +2058,10 @@ const tau_target = tau_desired - dNext.torqueEnvironmental;
                 _st._stageSpeed = _spd;
               } catch (e) { console.log("[DEPLOY-DIAG] err", e); }
               _send(Guidance.cmdRcsDuty(null, idx));
-              _send(Guidance.cmdReleasePayload());
+              // Insertion block no longer releases the payload — that is a
+              // MISSION-level decision now. We just mark the target-apside
+              // crossing and let the DONE phase zero actuators and exit.
               _st.deployCommandSimTime = simT;
-              _deployCmdTick = _st.ticks;
-              _payloadBodyCountAtDeploy = snapshot.bodies.length;
               _st.phase = "DONE";
               _st.phaseStart = simT;
               break;
@@ -2172,125 +2179,31 @@ const tau_target = tau_desired - dNext.torqueEnvironmental;
           // ==========================================================
           // DONE — payload monitor + attitude hold.
           // Mission-level code handles the dwell + suicide dispatch.
+          // ==========================================================
+          // DONE — insertion complete. Zero actuators and exit immediately.
+          // Payload release, clearance monitoring, dwell, and suicide
+          // dispatch all live at mission level now.
           case "DONE": {
             _send(Guidance.cmdSetAllThrottle(0));
             _send(Guidance.cmdSetGimbalRate(0));
-
-            // [DEBUG] SPAWN — first tick payload exists in snapshot.
-            if (!_st._spawnLogged) {
-              for (let _si = 0; _si < snapshot.bodies.length; _si++) {
-                const _sb = snapshot.bodies[_si];
-                if (_sb && _sb.payloadBody) {
-                  _st._spawnLogged = true;
-                  const _sr = Math.hypot(_sb.rx, _sb.ry);
-                  const _svr = (_sb.vx * _sb.rx + _sb.vy * _sb.ry) / _sr;
-                  if (DEBUG_DEPLOY) console.log('[SPAWN-t' + simT.toFixed(4) + ']' +
-                    ' idx=' + _si +
-                    ' vr=' + _svr.toFixed(5) +
-                    ' omega=' + (Number.isFinite(_sb.omega) ? _sb.omega.toFixed(6) : 'NaN') +
-                    ' speed=' + Math.hypot(_sb.vx, _sb.vy).toFixed(4) +
-                    ' deployCmdT=' + (Number.isFinite(_st.deployCommandSimTime) ? _st.deployCommandSimTime.toFixed(4) : 'null') +
-                    ' dtSinceCmd=' + (Number.isFinite(_st.deployCommandSimTime) ? (simT - _st.deployCommandSimTime).toFixed(4) : 'null') +
-                    ' ticksSinceCmd=' + (Number.isFinite(_st.deployCommandSimTime) ? Math.round((simT - _st.deployCommandSimTime) / dt) : 'null'));
-                  break;
-                }
-              }
-            }
-
-            // DEPLOY RESULT: log payload post-eject state once
-            if (!_st._payloadLogged) {
-              var _pb = snapshot.bodies.find(function(x){ return x && x.payloadBody; });
-              if (_pb) {
-                _st._payloadLogged = true;
-                try {
-                  var GM = env.GM_EARTH, Re = env.EARTH_RADIUS;
-                  var _r = Math.hypot(_pb.rx, _pb.ry);
-                  var _vt = (_pb.vx * _pb.ry - _pb.vy * _pb.rx) / _r;
-                  var _spdP = Math.hypot(_pb.vx, _pb.vy);
-                  var _E = 0.5 * _spdP * _spdP - GM / _r;
-                  var _h = _r * _vt;
-                  var _e = Math.sqrt(Math.max(0, 1 + 2 * _E * _h * _h / (GM * GM)));
-                  // [PAY-ORBIT] — full payload orbital diagnostic
-                  try {
-                    var _uxP = _pb.rx / _r, _uyP = _pb.ry / _r;
-                    var _vrP = _pb.vx * _uxP + _pb.vy * _uyP;
-                    var _vcP = Math.sqrt(GM / _r);
-                    var _v2P = _pb.vx * _pb.vx + _pb.vy * _pb.vy;
-                    var _rvP = _pb.rx * _pb.vx + _pb.ry * _pb.vy;
-                    var _exP = ((_v2P - GM / _r) * _pb.rx - _rvP * _pb.vx) / GM;
-                    var _eyP = ((_v2P - GM / _r) * _pb.ry - _rvP * _pb.vy) / GM;
-                    var _eV = Math.sqrt(_exP * _exP + _eyP * _eyP);
-                    if (DEBUG_DEPLOY) console.log('[PAY-ORBIT] r=' + _r.toFixed(2) +
-                      ' vr=' + _vrP.toFixed(6) +
-                      ' vt=' + _vt.toFixed(4) +
-                      ' speed=' + _spdP.toFixed(4) +
-                      ' v_circ=' + _vcP.toFixed(4) +
-                      ' ecc_formula=' + _e.toExponential(3) +
-                      ' ecc_vector=' + _eV.toExponential(3));
-                  } catch (e) {}
-                  var _apoK = -1, _periK = -1;
-                  if (_E < 0) { var _a = -GM / (2 * _E); _apoK = (_a * (1 + _e) - Re) / 1000; _periK = (_a * (1 - _e) - Re) / 1000; }
-                  var _dvx = _pb.vx - (_st._stageVx || 0);
-                  var _dvy = _pb.vy - (_st._stageVy || 0);
-                  var _dv = Math.hypot(_dvx, _dvy);
-                  var _spd0 = _st._stageSpeed || 1;
-                  var _uVx = (_st._stageVx || 0) / _spd0;
-                  var _uVy = (_st._stageVy || 0) / _spd0;
-                  var _dvA = _dvx * _uVx + _dvy * _uVy;
-                  var _dvP = _dvx * (-_uVy) + _dvy * _uVx;
-                  console.log("[DEPLOY-RESULT] payloadSpeed=" + _spdP.toFixed(4) + " dvActual=" + _dv.toFixed(4) + " dvAlong=" + _dvA.toFixed(4) + " dvPerp=" + _dvP.toFixed(5) + " apo=" + _apoK.toFixed(4) + " peri=" + _periK.toFixed(4) + " ecc=" + _e.toExponential(3));
-                  console.log("[DEPLOY-RESULT] err: apoKm=" + (_apoK - _targetApoKm).toFixed(3) + " periKm=" + (_periK - _targetPeriKm).toFixed(3) + " targetApo=" + _targetApoKm + " targetPeri=" + _targetPeriKm);
-                } catch (e2) { console.log("[DEPLOY-RESULT] err", e2); }
-              }
-            }
-
-            // Stage fully OFF in DONE — engines + gimbal zero'd above, RCS
-            // explicitly relinquished too. Mission-level DONE_DWELL used to
-            // keep firing RCS to hold attitude, which burned propellant for
-            // no reason: the suicide block at dwell end rotates to retrograde
-            // on its own anyway.
             _send(Guidance.cmdRcsDuty(null, idx));
-
-            // Payload monitor: wait for at least expectedPayloadCount
-            // payload bodies to spawn and clear the stage.
-            const expected = Number.isInteger(_missionCtx.expectedPayloadCount)
-              ? Math.max(1, _missionCtx.expectedPayloadCount)
-              : 1;
-            const cleared = _countClearedPayloads(snapshot);
-            if (cleared >= expected) {
-              _st.payloadCleared = true;
-              _done = true;
-              _result = {
-                stageBodyIdx: _bodyIdx,
-                deployCommandSimTime: _st.deployCommandSimTime,
-                doneEntrySimTime: _st.phaseStart,
-                coast2TargetThetaInertial: _st.coast2TargetThetaInertial,
-                clearedPayloadCount: cleared,
-                finalApogeeKm: _st.lastApogeeKm,
-                finalPerigeeKm: _st.lastPerigeeKm,
-              };
-              break;
+            if (DEBUG_DEPLOY) {
+              console.log('[INSERTION-DONE-t' + simT.toFixed(4) + ']' +
+                ' apside=' + _st.coast2TargetApside +
+                ' finalApo=' + (Number.isFinite(_st.lastApogeeKm) ? _st.lastApogeeKm.toFixed(2) : '?') +
+                ' finalPeri=' + (Number.isFinite(_st.lastPerigeeKm) ? _st.lastPerigeeKm.toFixed(2) : '?'));
             }
-
-            // Fail-safe timeout
-            const elapsedDone = simT - _st.phaseStart;
-            if (elapsedDone >= cfg.PAYLOAD_CONFIRM_TIMEOUT_S) {
-              _done = true;
-              _result = {
-                stageBodyIdx: _bodyIdx,
-                deployCommandSimTime: _st.deployCommandSimTime,
-                doneEntrySimTime: _st.phaseStart,
-                coast2TargetThetaInertial: _st.coast2TargetThetaInertial,
-                clearedPayloadCount: cleared,
-                timedOut: true,
-                finalApogeeKm: _st.lastApogeeKm,
-                finalPerigeeKm: _st.lastPerigeeKm,
-              };
-              break;
-            }
+            _done = true;
+            _result = {
+              stageBodyIdx: _bodyIdx,
+              deployCommandSimTime: _st.deployCommandSimTime,
+              coast2TargetApside: _st.coast2TargetApside,
+              coast2TargetThetaInertial: _st.coast2TargetThetaInertial,
+              finalApogeeKm: _st.lastApogeeKm,
+              finalPerigeeKm: _st.lastPerigeeKm,
+            };
             break;
           }
-
           default:
             break;
         }
