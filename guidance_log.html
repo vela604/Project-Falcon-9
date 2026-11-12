@@ -1879,6 +1879,12 @@ DONE</pre>
           lunar profile), and the same insertion block can be called
           with different constants for a different target orbit. Only
           the mission-level glue changes.</p>
+          <p>Payload release is a mission-level decision. The insertion
+          block exits at the nearer apside peak (APO or PERI, whichever
+          comes first) with its actuators idle; the mission then
+          decides whether to deploy the payload, dwell, or run a
+          different manoeuvre. The block itself never releases
+          anything.</p>
           <p>All control laws are physics-driven, not tuned-by-hand. The
           upper stage's cutoff prediction reads the engine's own
           shutdown duration and computes the residual impulse using the
@@ -1908,7 +1914,8 @@ COAST_ROTATE        → attitude slew toward burn direction
 COAST_HOLD / WAIT   → attitude hold until apogee is close
 CIRCULARIZE         → circularization burn at apogee
 COAST_ROTATE_2/HOLD_2 → attitude set for release
-PAYLOAD DEPLOY      → release at next apogee crossing
+DONE                → insertion block exits at nearer apside peak
+DONE_DWELL          → payload released by mission, then orbit dwell
 DEORBIT             → (optional) suicide burn onto target zone</pre>
         </div>
       </div>
@@ -1918,7 +1925,9 @@ DEORBIT             → (optional) suicide burn onto target zone</pre>
           <p>These are the ones that decide the mission. Everything else
           either follows from the vehicle record or is a controller
           gain that only needs touching if the vehicle class changes.</p>
-          <pre>TARGET_ORBIT_ALT_KM            <span class="cmt">// the mission's orbit altitude</span>
+          <pre>TARGET_APSIDE1_ALT_KM          <span class="cmt">// first target apside (higher = apo, lower = peri)</span>
+TARGET_APSIDE2_ALT_KM          <span class="cmt">// second target apside (auto-mirrors if only one set)</span>
+TARGET_BIAS_MPS                <span class="cmt">// velocity offset pre-accounted at target apside</span>
 MECO_TARGET_BOOSTER_FUEL_KG    <span class="cmt">// hand-off trigger from ascent (residual fuel)</span>
 SEPARATION_DURATION_S          <span class="cmt">// axial separation window</span>
 STAGE_BURN_AOA_BIAS_DEG        <span class="cmt">// target AoA offset during STAGE_BURN</span>
@@ -1932,9 +1941,9 @@ SUICIDE_DELAY_AFTER_DEPLOY_S   <span class="cmt">// orbit dwell before deorbit</
           runtime, so swapping the engine type in the fleet editor
           carries through without touching the guide.</p>
           <p><strong>Tuned baseline:</strong>
-          <code>PUSH_MAX_GIMBAL_DEG</code> = 0.61,
-          <code>STAGE_BURN_AOA_BIAS_DEG</code> = 0.59,
-          <code>CIRC_TRIGGER_LEAD_S</code> = 5.64. Full simulation
+          <code>PUSH_MAX_GIMBAL_DEG</code> = 0.64,
+          <code>STAGE_BURN_AOA_BIAS_DEG</code> = 1.2,
+          <code>CIRC_TRIGGER_LEAD_S</code> = 8.9875. Full simulation
           run verified: payload delivered with the PID attitude laws.</p>
           <p>Fixed constants (not tunable, not part of retuning):
           <code>STAGE_BURN_AOA_KI</code> = 1.0,
@@ -2064,7 +2073,7 @@ Q   =  u·ax + v·ay
       <div class="exp-row">
         <div class="exp-label">Composition</div>
         <div class="exp-value">
-          <p>The engine is a thin orchestration layer over five reusable primitives — <code>tuneLead</code>, <code>tuneAB</code>, <code>tuneRough</code>, <code>findOptimalMeco</code>, and the eval-cache-aware hook. It defines <em>what to do next</em> and lets the primitives handle <em>how</em>. Every other engine in the tuner composes from the same set, so behaviour stays consistent and improvements to a primitive benefit all engines at once.</p>
+          <p>The engine is a thin orchestration layer over a small set of reusable primitives — <code>tuneLeadV2</code> (lead search), reference selection, the residual band helper, and the eval-cache-aware hook. It defines <em>what to do next</em> and lets the primitives handle <em>how</em>. Every engine in the tuner composes from the same set, so behaviour stays consistent and improvements to a primitive benefit all engines at once.</p>
         </div>
       </div>
       <div class="exp-row">
@@ -2082,6 +2091,229 @@ Q   =  u·ax + v·ay
       </div>
     </div>
   </div>
+  <!-- 12. landbackV1 -->
+  <div class="exp glass pass">
+    <div class="exp-head">
+      <div>
+        <h3 class="exp-title">Landback V1 — Autonomous Booster Return</h3>
+        <div class="exp-id">landbackV1</div>
+        <div class="exp-time">11:49 PM <span class="exp-time-day">· Thu, Nov 12, 2026</span></div>
+      </div>
+      <span class="exp-status pass">DUAL TRACK · STAGE + BOOSTER</span>
+    </div>
+    <div class="exp-body">
+      <div class="exp-row">
+        <div class="exp-label">Target</div>
+        <div class="exp-value">
+          One mission that flies both halves of the rocket — the upper
+          stage to its target orbit, the booster back to the launch-site
+          pad — without any manual input after liftoff. Ascent, MECO,
+          separation, upper-stage burn, coast, circularization, payload
+          release, and booster return are all autonomous. The two halves
+          separate cleanly and never talk to each other again; each
+          completes its own objective independently.
+          <p>Not tuned for one specific rocket. The booster's mass,
+          residual fuel, and thrust authority all come from the vehicle
+          record; the stage's target orbit and payload are set in the
+          mission; the landing pad position is picked from the current
+          launch complex. Only the target orbit, the landing pad id, and
+          the MECO fuel budget need to be set. Any rocket that has the
+          residual fuel for return works.</p>
+        </div>
+      </div>
+      <div class="exp-row">
+        <div class="exp-label">How it works</div>
+        <div class="exp-value">
+          <p>The mission reuses the same block architecture as LEO
+          Insertion V3 — an <strong>ascent</strong> block, an
+          <strong>insertion</strong> block, a <strong>suicide</strong>
+          block for the stage's own deorbit, plus a new
+          <strong>standardRTLS</strong> block that flies the booster
+          home. The mission-level orchestration dispatches these
+          independently: insertion and suicide follow the stage body,
+          standardRTLS follows the booster body.</p>
+          <p>After separation the two bodies are independent physics
+          objects. The booster sees only its own state, its own engines,
+          its own grid fins and legs; the stage sees only its own state
+          and payload. Neither observes the other, so a failure on one
+          side — a bad landing, a missed orbit — doesn't cascade to the
+          other.</p>
+          <p>All control laws are physics-driven. The hoverslam landing
+          burn computes ignition altitude from the booster's current
+          vertical speed, thrust-to-weight, and target touchdown speed,
+          then executes a single continuous deceleration — no hover, no
+          retry. The entry burn fires retrograde through a velocity band
+          sized to keep aero loads bounded, not to hit an exact speed.
+          Grid fins steer the unpowered descents using fin-type-specific
+          authority, blended against the same aero model physics
+          uses.</p>
+          <p>Landing precision comes from the entry-burn aim bias, which
+          shifts where the vehicle's ballistic impact point lies before
+          the final descent. The bias is not derived from a formula —
+          the score surface is nonlinear with cliffs and plateaus, so
+          the landing-pad position, entry-burn cutoff velocity, and
+          landing-burn ignition altitude are tuned empirically against
+          the sim.</p>
+        </div>
+      </div>
+      <div class="exp-row">
+        <div class="exp-label">Mission flow</div>
+        <div class="exp-value">
+          <pre><span class="cmt">// Two-track phase progression — stage and booster run independently</span>
+<span class="cmt">// after SEPARATED_AXIAL hands off both sides</span>
+
+STAGE TRACK                          BOOSTER TRACK
+────────────────────────────         ─────────────────────────────────
+ASCENT (shared, pad → separation)    ASCENT (shared)
+MECO                                 (split)
+STAGE_BURN                           FLIP              <span class="cmt">// nose to tail-first retrograde</span>
+RCS_BOOST                            BOOSTBACK_BURN    <span class="cmt">// reverse downrange, aim home</span>
+COAST_ROTATE/WAIT/HOLD               PRE_ENTRY_STEER   <span class="cmt">// grid-fin aero alignment</span>
+CIRCULARIZE                          ENTRY_BURN        <span class="cmt">// slow before max-Q</span>
+COAST_ROTATE_2/HOLD_2                POST_ENTRY_STEER  <span class="cmt">// fin-guided descent</span>
+DONE                                 LANDING_BURN_ALIGN <span class="cmt">// gimbal zero, coast to LB alt</span>
+DONE_DWELL (payload release)         LANDING_BURN      <span class="cmt">// hoverslam to pad</span>
+SUICIDE (optional stage deorbit)     TOUCHDOWN_COMPLETE</pre>
+        </div>
+      </div>
+      <div class="exp-row">
+        <div class="exp-label">Key constants</div>
+        <div class="exp-value">
+          <p>The ones that decide the mission. Everything else follows
+          from the vehicle record or is a controller gain.</p>
+          <pre>MECO_TARGET_BOOSTER_FUEL_KG    <span class="cmt">// residual booster fuel at MECO (return budget)</span>
+TARGET_APSIDE1_ALT_KM          <span class="cmt">// stage's first target apside</span>
+TARGET_APSIDE2_ALT_KM          <span class="cmt">// stage's second target apside</span>
+TARGET_BIAS_MPS                <span class="cmt">// velocity offset pre-accounted at target apside</span>
+TARGET_IMPACT_EF_DEG           <span class="cmt">// stage deorbit target (Earth-fixed angle)</span>
+TARGET_LANDING_PAD             <span class="cmt">// which pad the booster returns to</span>
+ENTRY_BURN_IMPACT_TARGET_M     <span class="cmt">// primary landing-accuracy knob (bias in metres)</span>
+LANDING_BURN_ALT_KM            <span class="cmt">// LB ignition altitude (secondary accuracy knob)</span>
+LANDING_BURN_V_TD_MARGIN_M     <span class="cmt">// touchdown-speed margin at Fmin decel</span>
+LANDING_BURN_V_TD_MAX          <span class="cmt">// upper cap on touchdown speed</span>
+BOOSTBACK_APPARENT_OFFSET_M    <span class="cmt">// aim short / long at boostback</span></pre>
+          <p>The booster's engines, grid fins, RCS pods, and legs all
+          carry their own type-level properties (thrust authority,
+          slew rates, control angles, mass) that the guide reads at
+          runtime. Swap the hardware in the fleet editor and the guide
+          adapts.</p>
+          <p><strong>Tuned baseline</strong> (F9 B5 stack, 320 km
+          stage target, pad LZ-1):
+          <code>MECO_TARGET_BOOSTER_FUEL_KG</code> = 63250,
+          <code>PUSH_MAX_GIMBAL_DEG</code> = 0.62,
+          <code>ENTRY_BURN_IMPACT_TARGET_M</code> ≈ −686.8,
+          <code>LANDING_BURN_ALT_KM</code> = 2.5. Booster lands inside
+          the pad footprint, stage delivers payload to 320 km.</p>
+        </div>
+      </div>
+      <div class="exp-row">
+        <div class="exp-label">Physics</div>
+        <div class="exp-value">
+          <p>Five physics facts that the return trajectory rests on.</p>
+
+          <p><strong>1. Boostback is a reverse burn after a flip.</strong>
+          The booster leaves MECO nose-first at orbital rates. To return
+          to the launch site it must first rotate to tail-first
+          retrograde — a 180° flip, done with RCS and a one-shot
+          pneumatic pusher (a pre-charged gas charge that fires once
+          and is spent). Then the boostback burn fires retrograde to
+          cancel downrange velocity and pick up return velocity. The
+          exact magnitude is a trade-off against residual fuel: more
+          boostback = tighter landing, less fuel for the rest of the
+          descent.</p>
+
+          <p><strong>2. Entry burn controls aero load, not velocity.</strong>
+          The booster re-enters the dense atmosphere at supersonic
+          speed. An unpowered re-entry produces peak aerodynamic
+          pressure (max-Q) that exceeds the booster's structural
+          limits. The entry burn fires retrograde for a few seconds
+          before max-Q onset, shedding just enough velocity that peak
+          aero load stays inside safe bounds. The cutoff is a velocity
+          target, not a fixed time.</p>
+
+          <p><strong>3. Grid fins steer when engines are off.</strong>
+          Between entry burn and landing burn the engines are off.
+          Attitude control comes entirely from grid fins against the
+          dynamic pressure of the descent. Authority peaks at
+          transonic speeds and drops off in thin high-altitude air and
+          low-speed terminal descent. Fin control angle, slew rate,
+          and acceleration limits are all fin-type properties.</p>
+
+          <p><strong>4. Landing burn is a hoverslam — no hover, no
+          retry.</strong> Thrust-to-weight during the final descent
+          must be greater than 1 (otherwise the booster cannot stop
+          and stay stopped). That means the landing is a single
+          continuous deceleration that reaches zero velocity exactly
+          at the pad surface. Igniting a fraction of a second early
+          means the booster hovers briefly and then climbs; igniting
+          late means impact. There is no second attempt — the
+          trajectory is committed once the burn starts.</p>
+
+          <p><strong>5. Both bodies share the same RCS and gimbal
+          physics as the stage.</strong> The accel-limited gimbal,
+          net-zero-force RCS distributor, and gravity-gradient attitude
+          disturbance handling from LEO Insertion V3 apply to the
+          booster's burns and coasts too. The difference is that the
+          booster's body is shorter and lighter, so its attitude
+          response is faster and its control authority proportionally
+          larger.</p>
+        </div>
+      </div>
+      <div class="exp-row">
+        <div class="exp-label">Result</div>
+        <div class="exp-value">
+          <strong>Stage on orbit, booster on pad.</strong>
+          With default constants and a stack sized for the mission, the
+          stage reaches the target orbit, circularizes, deploys the
+          payload, and (if enabled) executes its own deorbit to a
+          target resting zone. Independently, the booster flips, boosts
+          back, steers down through the atmosphere, and lands on the
+          pad with legs deployed and residual fuel to spare.
+          <p>Both halves are deterministic — same inputs, same outputs,
+          bit-exact across reloads. Landing accuracy depends on the
+          entry-burn bias, which is tuned per (stack, altitude, pad)
+          combination; the same bias that lands a stack at 320 km may
+          not land it at 500 km.</p>
+        </div>
+      </div>
+      <div class="exp-row">
+        <div class="exp-label">Drawbacks</div>
+        <div class="exp-value">
+          <ul>
+            <li><strong>Landing accuracy is bias-tuned, not
+            formula-driven.</strong> The entry-burn bias that lands the
+            booster on the pad has a nonlinear score surface — cliffs,
+            plateaus, and small-scale noise around the optimum.
+            Different stacks, target orbits, or pads need their own
+            bias tuning runs.</li>
+            <li><strong>Grid-fin authority limits descent
+            precision.</strong> High-altitude passes have thin air and
+            limited fin control. Attitude hold during pre-entry and
+            post-entry coasts is tighter when dynamic pressure is high,
+            sloppier when it isn't.</li>
+            <li><strong>Hoverslam is one-shot.</strong> A bad ignition
+            altitude or a mistimed entry-burn cutoff means crash.
+            There's no abort, no hover, no second landing burn.</li>
+            <li><strong>Requires residual booster fuel at MECO.</strong>
+            The MECO fuel budget is the booster's return budget — flip,
+            boostback, entry burn, and landing burn all draw from it.
+            Set too high, the stage misses its orbit; too low, the
+            booster crashes.</li>
+          </ul>
+        </div>
+      </div>
+      <div class="tags">
+        <span class="tag">dual-track</span>
+        <span class="tag">booster-landback</span>
+        <span class="tag">autonomous-return</span>
+        <span class="tag">block-composed</span>
+        <span class="tag">hoverslam</span>
+        <span class="tag">grid-fin-steering</span>
+        <span class="tag">pad-precision</span>
+      </div>
+    </div>
+  </div>
+
 <!-- ==================== SERENO FLUX ENGINE ==================== -->
 <div class="exp glass tool pass">
   <div class="exp-head">
@@ -2127,8 +2359,9 @@ Q   =  u·ax + v·ay
         <p>Under the hood: <code>lib/bootstrap.js</code> (universal
         bootstrap pipeline), <code>lib/worker-pool.js</code> (N-sim worker
         pool), <code>lib/worker-sim.js</code> (per-worker sim + SA/CH
-        snapshot jobs), <code>lib/primitives.js</code> (lead / AB / rough /
-        MECO search), <code>lib/lattice.js</code> (snap, score, verify).</p>
+        snapshot jobs), <code>lib/primitives.js</code> (leadV2 search,
+        reference selection, residual band), <code>lib/lattice.js</code>
+        (snap, score, verify).</p>
       </div>
     </div>
     <div class="exp-row">
@@ -2165,7 +2398,7 @@ Q   =  u·ax + v·ay
         <p><strong>Phase D — verification.</strong> Five bias samples per
         chosen G row (spread across the window, 15% → 90%) are run
         through <code>verifyChain</code>: SA snapshot → CH snapshot →
-        <code>tuneLead</code> → FULL eval. Only FULL-passing points count
+        <code>tuneLeadV2</code> → FULL eval. Only FULL-passing points count
         as verified. If zero verify from champion #1, the engine falls
         back to champion #2, then #3.</p>
         <p><strong>Force modes.</strong> Force MECO skips A and B (Phase C
@@ -2213,8 +2446,9 @@ Q   =  u·ax + v·ay
         Locks (MECO, G, T, bias) and searches for the circularization
         lead that lands signed margin inside a target band. Internally
         dispatches one <code>probeBiasCheckpoint</code> job, which runs
-        <code>tuneLead</code> — a slope-guided interior bisection on the
-        tick lattice — then a FULL eval of the winner. Lead search is
+        <code>tuneLeadV2</code> — an apside-crossing edge search on the
+        tick lattice followed by golden-section refinement over the
+        feasible lead window — then a FULL eval of the winner. Lead search is
         warm-started from the previous (MECO, G, bias) cluster, so
         successive CONVO runs converge faster. Useful when a ZETA winner
         needs its lead tightened to a specific margin window (e.g.
@@ -2235,8 +2469,8 @@ Q   =  u·ax + v·ay
           <code>build=91 reuse=364</code> in the 1000 km log.</li>
           <li><strong>CH checkpoint chain.</strong>
           <code>verifyChain</code> runs ascent → SA snapshot → (restore,
-          bias) → CH snapshot → <code>tuneLead</code> → FULL, all inside
-          one worker. Every <code>tuneLead</code> eval restores from the
+          bias) → CH snapshot → <code>tuneLeadV2</code> → FULL, all inside
+          one worker. Every <code>tuneLeadV2</code> eval restores from the
           CH snapshot instead of re-flying the ascent + stage burn +
           coast to COAST_HOLD. Measured 4–5× speedup versus a scratch
           FULL per candidate in <code>checkpoint-equiv</code>.</li>
