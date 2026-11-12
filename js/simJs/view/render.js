@@ -1306,6 +1306,143 @@ function _lzGeo(pad) {
   return g;
 }
 
+// ============================================================================
+// ASDS drone ship — 2D side view. Real dimensions (OCISLY/ASOG class):
+//   91m length, ~7m total hull depth (5m draft + 2m freeboard).
+//   Deck (black) at 2m above waterline. Aft containers 8m tall.
+//   Steel blast wall 3m tall in front of containers. 4 thruster pods
+//   below hull (mostly submerged).
+// Drawn in local pad frame (y=0 = sea level, +y down), rotated to
+// follow Earth's local east direction so ASDS hull aligns with the
+// downrange direction as seen from camera.
+// ============================================================================
+function _drawASDS(ctx, pad, worldPos, camAng, mpp, pal) {
+  const [px, py] = worldToScreen(worldPos.x, worldPos.y);
+  const lengthM = pad.lengthM || 91;
+  const halfL = lengthM / 2;
+  const reach = (lengthM / 2 + 40) / mpp;
+  if (px + reach < 0 || px - reach > canvas.width ||
+      py + reach < 0 || py - reach > canvas.height) return;
+  if (mpp > 80) return;   // too far zoomed-out to see details
+
+  const pal_dark = {
+    hullBelow: 'rgb(58, 32, 32)',      // dark rust below water
+    hullAbove: 'rgb(42, 58, 74)',      // dark blue-grey above water
+    deck: 'rgb(10, 10, 10)',            // black deck
+    deckStripe: 'rgb(200, 200, 200)',   // landing X stripe
+    containerWhite: 'rgb(216, 216, 216)',
+    containerBlue: 'rgb(42, 90, 160)',
+    blastWall: 'rgb(74, 74, 74)',
+    thruster: 'rgb(26, 26, 26)',
+    waterline: 'rgba(140, 200, 255, 0.45)',
+  };
+
+  const deckY = -2;         // deck 2m above waterline
+  const hullBottomY = 5;    // hull 5m below waterline
+  const contHeightM = 8;    // containers 8m tall
+  const contWidthM = 15;    // containers 15m long (aft)
+  const blastHeightM = 3;   // blast wall 3m tall
+  const blastWidthM = 2;    // blast wall thickness
+
+  ctx.save();
+  ctx.translate(px, py);
+  ctx.rotate(-(worldPos.phi - camAng));
+  ctx.scale(1 / mpp, 1 / mpp);   // 1 unit = 1m, +y = down
+
+  // ---- 1. Thrusters (4 azimuth pods below hull) ----
+  const thrusterXs = [-halfL * 0.72, -halfL * 0.36, halfL * 0.36, halfL * 0.72];
+  thrusterXs.forEach(xp => {
+    ctx.fillStyle = pal_dark.thruster;
+    ctx.fillRect(xp - 1.5, hullBottomY, 3, 2.5);
+    ctx.strokeStyle = 'rgba(0,0,0,0.5)';
+    ctx.lineWidth = 0.2;
+    ctx.strokeRect(xp - 1.5, hullBottomY, 3, 2.5);
+  });
+
+  // ---- 2. Hull — submerged part (dark rust) ----
+  ctx.fillStyle = pal_dark.hullBelow;
+  ctx.fillRect(-halfL, 0, lengthM, hullBottomY);
+
+  // ---- 3. Hull — above waterline (dark blue-grey) ----
+  ctx.fillStyle = pal_dark.hullAbove;
+  ctx.fillRect(-halfL, deckY, lengthM, -deckY);
+
+  // ---- 4. Deck top surface (black) ----
+  ctx.fillStyle = pal_dark.deck;
+  ctx.fillRect(-halfL, deckY - 0.3, lengthM, 0.3);
+
+  // ---- 5. Landing zone stripe (visible when zoomed in) ----
+  if (mpp < 0.5) {
+    ctx.strokeStyle = pal_dark.deckStripe;
+    ctx.lineWidth = 0.4;
+    const zoneHalf = pad.radiusM || 35;
+    ctx.beginPath();
+    ctx.moveTo(-zoneHalf, deckY - 0.35);
+    ctx.lineTo(zoneHalf, deckY - 0.35);
+    ctx.stroke();
+  }
+
+  // ---- 6. Aft containers (west end, above deck) ----
+  const contX = -halfL;
+  // White container block
+  ctx.fillStyle = pal_dark.containerWhite;
+  ctx.fillRect(contX, deckY - contHeightM, contWidthM, contHeightM);
+  ctx.strokeStyle = 'rgba(0,0,0,0.4)';
+  ctx.lineWidth = 0.2;
+  ctx.strokeRect(contX, deckY - contHeightM, contWidthM, contHeightM);
+  // Blue container on top
+  ctx.fillStyle = pal_dark.containerBlue;
+  ctx.fillRect(contX + 1, deckY - contHeightM - 3, contWidthM - 2, 3);
+  ctx.strokeRect(contX + 1, deckY - contHeightM - 3, contWidthM - 2, 3);
+
+  // ---- 7. Blast wall (steel, in front of containers = east side) ----
+  const blastX = contX + contWidthM;
+  ctx.fillStyle = pal_dark.blastWall;
+  ctx.fillRect(blastX, deckY - blastHeightM, blastWidthM, blastHeightM);
+  ctx.strokeRect(blastX, deckY - blastHeightM, blastWidthM, blastHeightM);
+
+  // ---- 8. Hull outline (subtle dark edge) ----
+  ctx.strokeStyle = 'rgba(0,0,0,0.65)';
+  ctx.lineWidth = 0.25;
+  ctx.strokeRect(-halfL, deckY, lengthM, hullBottomY - deckY);
+
+  // ---- 9. Waterline highlight (thin blue line at y=0) ----
+  ctx.strokeStyle = pal_dark.waterline;
+  ctx.lineWidth = 0.15;
+  ctx.beginPath();
+  ctx.moveTo(-halfL - 2, 0);
+  ctx.lineTo(halfL + 2, 0);
+  ctx.stroke();
+
+  // ---- 10. Subtle water splash ripple at edges ----
+  ctx.strokeStyle = 'rgba(200, 230, 255, 0.35)';
+  ctx.lineWidth = 0.1;
+  for (let sx = -halfL - 1; sx <= halfL + 1; sx += 3) {
+    const wobble = Math.sin(sx * 0.7 + performance.now() * 0.001) * 0.15;
+    ctx.beginPath();
+    ctx.moveTo(sx, 0);
+    ctx.lineTo(sx + 1.5, -0.3 + wobble);
+    ctx.stroke();
+  }
+
+  ctx.restore();
+
+  // ---- Label above ASDS ----
+  if (mpp > 0.3 && mpp < 20) {
+    const labelTxt = pad.name + ' · ' + Math.round(pad.arcOffsetM / 1000) + ' km';
+    ctx.save();
+    ctx.font = '11px "JetBrains Mono", monospace';
+    ctx.textAlign = 'center';
+    ctx.lineJoin = 'round';
+    ctx.strokeStyle = 'rgba(0,0,0,0.7)';
+    ctx.lineWidth = 3;
+    ctx.strokeText(labelTxt, px, py - (2 + contHeightM + 6) / mpp);
+    ctx.fillStyle = 'rgba(140, 200, 255, 0.98)';
+    ctx.fillText(labelTxt, px, py - (2 + contHeightM + 6) / mpp);
+    ctx.restore();
+  }
+}
+
 function drawLandingPads() {
   if (camera.mode === 'planet' || typeof landingPads !== 'function') return;
   const pads = landingPads();
@@ -1321,7 +1458,15 @@ function drawLandingPads() {
     const reach = (pad.radiusM + 40) / mpp;
     if (px + reach < 0 || px - reach > canvas.width || py + reach < 0 || py - reach > canvas.height) continue;
     if (!PL) PL = _padLight(true);
-    const pal = PL.pal, g = _lzGeo(pad), R = pad.radiusM, n = pal.night;
+    const pal = PL.pal, n = pal.night;
+    
+    // ASDS — special side-view render (not flat circular LZ pad)
+    if (pad.isASDS) {
+      _drawASDS(ctx, pad, w, camAng, mpp, pal);
+      continue;
+    }
+    
+    const g = _lzGeo(pad), R = pad.radiusM;
 
     ctx.save();
     ctx.translate(px, py);

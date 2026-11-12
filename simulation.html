@@ -386,6 +386,7 @@
                             <div class="rt-section">
   <button class="rt-btn rt-btn-config" id="btnGuideConfig">⚙ Guidance System</button>
   <button class="rt-btn" id="btnTogglePhaseTrack" title="Toggle Mission Phases visibility">📋 Mission Phases</button>
+  <button class="rt-btn" id="btnDeployASDS" title="Deploy Autonomous Spaceport Drone Ship at specified downrange offset" style="border-color: rgba(120,175,235,0.5); color: #78afeb;">🛳 Deploy ASDS</button>
 </div>
               <div class="rt-sep"></div>
               <div class="rt-section rt-row">
@@ -568,7 +569,29 @@
 <option value="landbackV1" selected>Landback V1 (LEO V3 clone)</option>
 </select>
   
-  <script src="js/componentLibrary.js"></script>
+  <!-- ============================================================
+       Deploy ASDS modal — custom input (not browser alert/prompt).
+       Collects downrange offset (meters) + shows validation errors inline.
+       ============================================================ -->
+<div id="asdsModal" style="display:none;position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:9999;background:#0d1424;border:1px solid #1c2b45;border-radius:14px;padding:20px 26px;min-width:360px;max-width:460px;font-family:'JetBrains Mono',monospace;color:#dbe6f5;box-shadow:0 20px 60px rgba(0,0,0,0.7);">
+  <div style="font-size:14px;font-weight:700;letter-spacing:1px;color:#35d6ff;text-transform:uppercase;margin-bottom:14px;">🛳 Deploy ASDS</div>
+
+  <div style="margin-bottom:14px;">
+    <label for="asdsOffsetInput" style="font-size:11.5px;color:#8b9ab6;display:block;margin-bottom:6px;">Downrange offset from launch site (meters)</label>
+    <input type="number" id="asdsOffsetInput" min="0" step="1000" value="500000"
+      style="width:100%;background:#101a30;border:1px solid #1c2b45;color:#dbe6f5;padding:8px 10px;border-radius:6px;font-family:inherit;font-size:13px;box-sizing:border-box;">
+    <div id="asdsZoneInfo" style="font-size:10.5px;color:#6b7d9c;margin-top:6px;line-height:1.5;">Deployment zone: — </div>
+  </div>
+
+  <div id="asdsError" style="display:none;padding:8px 10px;border-radius:6px;background:rgba(255,95,126,0.1);border:1px solid #ff5f7e;color:#ff5f7e;font-size:11.5px;margin-bottom:12px;line-height:1.5;"></div>
+
+  <div style="display:flex;gap:10px;justify-content:flex-end;">
+    <button id="asdsCancelBtn" style="background:#101a30;border:1px solid #1c2b45;color:#dbe6f5;padding:8px 18px;border-radius:7px;cursor:pointer;font-family:inherit;font-size:12.5px;">Cancel</button>
+    <button id="asdsDeployBtn" style="background:#101a30;border:1px solid #4ade80;color:#4ade80;padding:8px 18px;border-radius:7px;cursor:pointer;font-family:inherit;font-size:12.5px;font-weight:500;">Deploy</button>
+  </div>
+</div>
+
+<script src="js/componentLibrary.js"></script>
   <script>
     // Cache the component library on the main thread — the physics worker
     // and FF worker each have their own copy; this one serves the panels
@@ -758,6 +781,7 @@
 <script src="js/simJs/view/rocketArt.js"></script>
   <script src="js/simJs/view/predictedTrajectory.js"></script>
   <script src="js/simJs/view/render.js"></script>
+<script src="js/simJs/view/asds.js"></script>
  <script src="js/simJs/view/telemetry.js"></script>
 <script src="js/simJs/view/lighting.js"></script>
 <script src="js/simJs/view/fastForward.js"></script>
