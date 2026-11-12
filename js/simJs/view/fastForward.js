@@ -253,7 +253,19 @@ try {
     const stackData = (typeof _collectStackDataForGuidance === 'function') ?
   _collectStackDataForGuidance() : null;
 const guideSel = document.getElementById('guideSelect');
-const activeGuide = guideSel ? guideSel.value : null;
+
+// CRITICAL: Only continue guidance through FF if it was ALREADY running
+// when the user clicked Fast Forward. Otherwise FF would silently start
+// the selected guide (default: landbackV1) — user expectation is pure
+// physics time-lapse when guidance isn't engaged.
+const _guideWasActive =
+  (typeof _guideActive !== 'undefined' && _guideActive) ||
+  !!(window.__lastGuideStatus && window.__lastGuideStatus.active);
+const activeGuide = _guideWasActive ? (guideSel ? guideSel.value : null) : null;
+window.__ffGuideWasActive = _guideWasActive;
+console.log(_guideWasActive
+  ? '[FF] Guidance IS active (' + activeGuide + ') — will continue through fast-forward.'
+  : '[FF] Guidance NOT active — running pure physics time-lapse (no guide).');
 
 // Environment state — physics worker receives these as separate
 // setWind / setAtmosphere / setSloshEnabled messages; the FF worker
@@ -316,10 +328,10 @@ const w = new Worker('js/simJs/threads/fastforward.worker.js');
           state.simTime = Math.min(m.simTime, _baseSimTime + durationS);
         }
       } else if (m.type === 'guideStatus') {
-  // Live phase-log update from the FF worker. Forward straight to
-  // onGuidanceStatus so the mission-phase panel updates during FF
-  // instead of freezing and jumping at the end.
-  if (typeof onGuidanceStatus === 'function' && m.status) {
+  // Live phase-log update from the FF worker. Forward only if guidance
+  // was active when FF started — pure-physics FF shouldn't leak phantom
+  // guide phases into the mission-track UI.
+  if (window.__ffGuideWasActive && typeof onGuidanceStatus === 'function' && m.status) {
     try { onGuidanceStatus(m.status); } catch (e) { console.error('[ff] onGuidanceStatus', e); }
   }
 } else if (m.type === 'progressBodies') {
