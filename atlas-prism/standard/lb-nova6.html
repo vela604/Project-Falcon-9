@@ -126,11 +126,11 @@
       <div class="tools-h">tools <em>need INIT &middot; each eval restarts from the EB snapshot &middot; Stop aborts them</em></div>
       <div class="tools">
         <div class="tool">
-          <div class="tool-h"><b>LB altitude finder</b><span>probe ignition altitudes, pick middle of tied-best span</span></div>
+          <div class="tool-h"><b>LB altitude finder</b><span>coarse probe + auto refine, pick middle of tied-best span</span></div>
           <div class="row fgrid">
             <label>alt lo km <input type="number" id="altLo" step="0.1" value="1.0"></label>
             <label>alt hi km <input type="number" id="altHi" step="0.1" value="3.0"></label>
-            <label>step km <input type="number" id="altStep" step="0.1" min="0.1" value="0.5"></label>
+            <label>coarse step km <input type="number" id="altStep" step="0.1" min="0.1" value="0.5"></label>
           </div>
           <div class="tool-a">
             <button id="altBtn" disabled>Find LB altitude</button>
@@ -1406,6 +1406,49 @@ async function doAltSearch(){
     for(let a = lo; a <= hi + 1e-9; a += step) alts.push(r2(a));
     if(alts[alts.length - 1] < hi - 1e-9) alts.push(r2(hi));
     for(const a of alts){ if(S.abort) break; await probe(a); }
+
+    // Golden-section refine inside the feasible band. Coarse sweep at 'step'
+    // resolves only 'step'-km granularity; refine pulls a finer best-cost alt
+    // without needing a finer step input. Cost minimum is usually interior
+    // (both edges are dangerous — low = Fmax saturation, high = Fmin stall).
+    // Skip if band is degenerate (0 or 1 feasible point, or span <= TOL).
+    {
+      const okC = S.altRuns.filter(r => r.ok).sort((p, q) => p.alt - q.alt);
+      if(okC.length >= 2){
+        const passLo = okC[0].alt;
+        const passHi = okC[okC.length - 1].alt;
+        const span = passHi - passLo;
+        const TOL = Math.max(0.05, step * 0.2);
+        if(span > TOL && !S.abort){
+          log('[alt] feasible bracket [' + passLo.toFixed(2) + ', ' + passHi.toFixed(2) + '] span=' + span.toFixed(2) + 'km \u2014 golden refine', 'ok');
+          const PHI = 0.6180339887;
+          let _a = r2(passLo), _b = r2(passHi);
+          let _x1 = r2(_b - PHI*(_b-_a)), _x2 = r2(_a + PHI*(_b-_a));
+          if(_x1 < _x2){
+            let _f1 = null, _f2 = null;
+            const _RMAX = 5;
+            let _ri = 0;
+            while((_b - _a) > TOL && _ri < _RMAX && !S.abort){
+              _ri++;
+              if(_f1 == null){ const _r = await probe(_x1); _f1 = _r.ok ? _r.cost : 1e6; }
+              if(_f2 == null){ const _r = await probe(_x2); _f2 = _r.ok ? _r.cost : 1e6; }
+              if(_f1 <= _f2){
+                _b = _x2; _x2 = _x1; _f2 = _f1;
+                _x1 = r2(_b - PHI*(_b-_a));
+                if(_x1 === _x2) break;
+                _f1 = null;
+              } else {
+                _a = _x1; _x1 = _x2; _f1 = _f2;
+                _x2 = r2(_a + PHI*(_b-_a));
+                if(_x1 === _x2) break;
+                _f2 = null;
+              }
+            }
+            log('[alt] refined to [' + _a.toFixed(2) + ', ' + _b.toFixed(2) + '] in ' + _ri + ' iters', 'ok');
+          }
+        }
+      }
+    }
 
     const oks = S.altRuns.filter(r => r.ok);
     if(oks.length){
