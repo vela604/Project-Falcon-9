@@ -735,8 +735,19 @@ if (elapsedSep >= _v3Config.separation.SEPARATION_DURATION_S) {
   send(cmdRcsDuty(null, sIdx));
   send(cmdRcsDuty(null, bIdx));
   _v3State.lateralArmed = false;
+  // Patch TARGET_BIAS_MPS into the insertion config per-mission.
+  // Payload present -> pre-account for eject kick so stage ends at
+  // target_circ - kick and payload ends at target_circ. No payload ->
+  // 0 (stage ends exactly at target_circ; mission decides post-insertion).
+  const _insCfgV3 = JSON.parse(JSON.stringify(_v3Config.insertion));
+  const _stageBForBiasV3 = snapshot.bodies[sIdx];
+  if (_stageBForBiasV3 && _stageBForBiasV3.payloadId) {
+    const _envBiasV3 = Derivation.getEnv();
+    _insCfgV3.TARGET_BIAS_MPS = (_envBiasV3 && Number.isFinite(_envBiasV3.PAYLOAD_EJECT_KICK_MPS))
+      ? _envBiasV3.PAYLOAD_EJECT_KICK_MPS : 3.0;
+  }
   _v3State.insertionBlock = FUNDAMENTAL_BLOCKS.insertion.createInstance();
-  _v3State.insertionBlock.start(_v3Config.insertion, sIdx, {});
+  _v3State.insertionBlock.start(_insCfgV3, sIdx, {});
   _v3State.missionPhase = 'INSERTION';
   _v3State.missionPhaseStart = simT;
 }
@@ -749,6 +760,15 @@ break;
         _v3State.insertionResult = _v3State.insertionBlock.getResult();
         _v3State.deployCmdSimTime = _v3State.insertionResult
           ? _v3State.insertionResult.deployCommandSimTime : simT;
+        // Mission-level payload release. Insertion exits at target-apside
+        // crossing with actuators zeroed but does NOT release payload.
+        const _stagePostInsV3 = snapshot.bodies[_v3State.stageIdx];
+        if (_stagePostInsV3 && _stagePostInsV3.payloadId && !_stagePostInsV3.payloadReleased) {
+          const _relV3 = cmdReleasePayload();
+          _relV3.targetBodyIdx = _v3State.stageIdx;
+          send(_relV3);
+          console.log('[leoInsertionV3] mission-level payload release at t=' + simT.toFixed(2));
+        }
         _v3State.missionPhase = 'DONE_DWELL';
         _v3State.missionPhaseStart = simT;
       }
@@ -1223,8 +1243,16 @@ function _landbackTick(snapshot) {
     });
     console.log('[landbackV1] booster -> standardRTLS at t=' + simT.toFixed(2));
 
+    // Patch TARGET_BIAS_MPS into the insertion config per-mission.
+    const _insCfgLB = JSON.parse(JSON.stringify(_lbConfig.insertion));
+    const _stageBForBiasLB = snapshot.bodies[sIdx];
+    if (_stageBForBiasLB && _stageBForBiasLB.payloadId) {
+      const _envBiasLB = Derivation.getEnv();
+      _insCfgLB.TARGET_BIAS_MPS = (_envBiasLB && Number.isFinite(_envBiasLB.PAYLOAD_EJECT_KICK_MPS))
+        ? _envBiasLB.PAYLOAD_EJECT_KICK_MPS : 3.0;
+    }
     _lbState.insertionBlock = FUNDAMENTAL_BLOCKS.insertion.createInstance();
-    _lbState.insertionBlock.start(_lbConfig.insertion, sIdx, {});
+    _lbState.insertionBlock.start(_insCfgLB, sIdx, {});
     _lbState.missionPhase = 'INSERTION';
     _lbState.missionPhaseStart = simT;
   }
@@ -1237,6 +1265,14 @@ function _landbackTick(snapshot) {
         _lbState.insertionResult = _lbState.insertionBlock.getResult();
         _lbState.deployCmdSimTime = _lbState.insertionResult
           ? _lbState.insertionResult.deployCommandSimTime : simT;
+        // Mission-level payload release — same rationale as leoInsertionV3.
+        const _stagePostInsLB = snapshot.bodies[_lbState.stageIdx];
+        if (_stagePostInsLB && _stagePostInsLB.payloadId && !_stagePostInsLB.payloadReleased) {
+          const _relLB = cmdReleasePayload();
+          _relLB.targetBodyIdx = _lbState.stageIdx;
+          send(_relLB);
+          console.log('[landbackV1] mission-level payload release at t=' + simT.toFixed(2));
+        }
         _lbState.missionPhase = 'DONE_DWELL';
         _lbState.missionPhaseStart = simT;
       }
