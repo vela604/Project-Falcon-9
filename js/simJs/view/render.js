@@ -107,13 +107,21 @@ function cameraWorldPosition() {
     
     const pz = (typeof camera !== 'undefined' && Number.isFinite(camera.planetZoom)) ? camera.planetZoom : 1;
     if (pz > 1.01) {
-      const b = state.bodies[_cameraTargetIndex()];
-      if (b) {
-        const t = Math.min(1, (pz - 1) / 4);
-        const st = t * t * (3 - 2 * t);
-        return { x: b.rx * st, y: b.ry * st };
+        const b = state.bodies[_cameraTargetIndex()];
+        if (b) {
+          const t = Math.min(1, (pz - 1) / 4);
+          const st = t * t * (3 - 2 * t);
+          // Round to 200m — reduces render-tick jitter from 80Hz physics
+          // running against 60Hz render. Without this, rocket rx/ry shifts
+          // sub-tick each frame, causing camera target to wiggle and Earth
+          // ground boundary to visibly vibrate up-down.
+          const RND = 200;
+          return {
+            x: Math.round(b.rx * st / RND) * RND,
+            y: Math.round(b.ry * st / RND) * RND
+          };
+        }
       }
-    }
     return { x: 0, y: 0 };
   }
   
@@ -540,7 +548,7 @@ function drawRemoteArea() {
   const rSquared = R * R;
   const visible = pts.map(p => {
     if (camera.mode === 'planet') return true;
-    if (camR <= R + 1) return true;
+    if (camR <= R + 0.1) return true;  // only true surface degenerate case
     return (p.x * cam.x + p.y * cam.y) >= rSquared;
   });
   
@@ -667,44 +675,22 @@ function drawOceanArea() {
   const mppOcean = metersPerPixel();
   const isPlanet = camera.mode === 'planet';
   
-  // Arc span in screen pixels — decides detail tier
-  const arcPx = ((eastEndRad - eastStartRad) * R) / mppOcean;
+  // Depth band — fills INWARD from surface (into Earth). Fixed pixel depth
+  // for stability (no tier-switching flicker). 25px in planet, 10px local.
+  const depthPx = isPlanet ? 25 : 3;
+  const depthM = depthPx * mppOcean;
+  const rInner = R - depthM;
   
-  // Very zoomed out — sub-pixel/tiny arc: simple line only
-  if (arcPx < 12) {
-    const N = 32;
-    const [ecx, ecy] = worldToScreen(0, 0);
-    const eRpx = R / mppOcean;
-    ctx.save();
-    ctx.strokeStyle = 'rgba(80, 170, 255, 0.85)';
-    ctx.lineWidth = isPlanet ? 2 : 1.5;
-    ctx.lineCap = 'round';
-    ctx.beginPath();
-    for (let k = 0; k <= N; k++) {
-      const phi = phiStart + (k / N) * (phiEnd - phiStart);
-      const x = eRpx * Math.sin(phi);
-      const y = -eRpx * Math.cos(phi);
-      if (k === 0) ctx.moveTo(ecx + x, ecy + y);
-      else ctx.lineTo(ecx + x, ecy + y);
-    }
-    ctx.stroke();
-    ctx.restore();
-    return;
-  }
-  
-  // Detail tier
-  const detail = mppOcean < 2000 ? 'close' : (mppOcean < 15000 ? 'mid' : 'far');
-  
-  // Build arc points
-  const N = 80;
+  // Arc points — 60 segments (smooth curve)
+  const N = 60;
   const pts = [];
   for (let k = 0; k <= N; k++) {
     const f = k / N;
     const phi = phiStart + f * (phiEnd - phiStart);
-    pts.push({ x: R * Math.sin(phi), y: R * Math.cos(phi), phi });
+    pts.push({ x: R * Math.sin(phi), y: R * Math.cos(phi), phi, f });
   }
   
-  // Visibility — planet view sees all, local view needs horizon test
+  // Visibility — planet always visible, local uses horizon test
   const cam = cameraWorldPosition();
   const camR = Math.hypot(cam.x, cam.y);
   const rSquared = R * R;
@@ -726,115 +712,84 @@ function drawOceanArea() {
   }
   if (!segs.length) return;
   
-  // Depth band — fills INWARD from surface (into Earth disk) so the ocean
-  // is ON the surface, not floating above it. In planet view: visible depth
-  // band. In local view: subtle water surface on horizon (no floating band,
-  // no solid line on ground — fades naturally with the terrain).
-  const depthPx = isPlanet
-    ? (detail === 'close' ? 40 : detail === 'mid' ? 25 : 15)
-    : 12; // local: subtle water surface (not a "line" — has visible depth gradient)
-  const depthM = depthPx * mppOcean;
-  const rInner = R - depthM;
-  
   ctx.save();
-  // Clip to Earth — band never escapes the planet silhouette
+  // Clip to Earth — band never escapes planet silhouette
   const [ecx, ecy] = worldToScreen(0, 0);
   const eRpx = R / mppOcean;
   ctx.beginPath();
   ctx.arc(ecx, ecy, eRpx + 1, 0, Math.PI * 2);
   ctx.clip();
   
+  // ============ 4 DISCRETE DEPTH BANDS (no gradient — solid colors) ============
+  // Layer from deepest (furthest inward) to shallowest (at surface).
+  // Each band is a solid arc — no interpolation → no shimmer.
+  // Colors chosen to look like real ocean: sandy shore, cyan shallows,
+  // medium blue, deep navy.
+  const bands = isPlanet ? [
+    // Planet view — 5 depth bands (shore → abyss)
+    { d0: 0.55, d1: 1.00, col: 'rgba(8, 30, 75, 0.98)' },   // abyss
+    { d0: 0.30, d1: 0.55, col: 'rgba(20, 65, 140, 0.97)' }, // deep
+    { d0: 0.12, d1: 0.30, col: 'rgba(55, 130, 200, 0.95)' },// mid
+    { d0: 0.03, d1: 0.12, col: 'rgba(130, 195, 235, 0.92)' },// shallow cyan
+    { d0: 0.00, d1: 0.03, col: 'rgba(220, 235, 240, 0.90)' },// foam white
+  ] : [
+    // Local view — single subtle water tint (no bands, no solid line).
+    // 3px depth at surface, uniform color, reads as "water is somewhere
+    // on the far side" without drawing a bold band over the ground.
+    { d0: 0.0, d1: 1.00, col: 'rgba(60, 130, 200, 0.55)' },
+  ];
+  
   segs.forEach(seg => {
     if (seg.i1 <= seg.i0) return;
-    
-    // Build filled band: surface arc forward, inner arc backward
-    ctx.beginPath();
-    for (let k = seg.i0; k <= seg.i1; k++) {
-      const [sx, sy] = screenPts[k];
-      if (k === seg.i0) ctx.moveTo(sx, sy);
-      else ctx.lineTo(sx, sy);
-    }
-    for (let k = seg.i1; k >= seg.i0; k--) {
-      const p = pts[k];
-      const [sx, sy] = worldToScreen(rInner * Math.sin(p.phi), rInner * Math.cos(p.phi));
-      ctx.lineTo(sx, sy);
-    }
-    ctx.closePath();
-    
-    // Gradient along the arc: shore (west) → deep (east)
-    const [sx0, sy0] = screenPts[seg.i0];
-    const [sx1, sy1] = screenPts[seg.i1];
-    const grad = ctx.createLinearGradient(sx0, sy0, sx1, sy1);
-    
-    if (detail === 'close') {
-      // Rich detail: dry sand → wet sand → foam → shallow → deep → abyss
-      grad.addColorStop(0.00, 'rgba(230, 200, 150, 0.85)');
-      grad.addColorStop(0.02, 'rgba(255, 235, 180, 0.90)');
-      grad.addColorStop(0.05, 'rgba(200, 240, 240, 0.90)');
-      grad.addColorStop(0.10, 'rgba(140, 200, 235, 0.92)');
-      grad.addColorStop(0.25, 'rgba(80, 155, 220, 0.94)');
-      grad.addColorStop(0.50, 'rgba(40, 100, 180, 0.95)');
-      grad.addColorStop(0.75, 'rgba(20, 60, 140, 0.96)');
-      grad.addColorStop(1.00, 'rgba(5, 20, 60, 0.98)');
-    } else if (detail === 'mid') {
-      // Simplified: shore → shallow → mid → deep
-      grad.addColorStop(0.00, 'rgba(220, 200, 130, 0.80)');
-      grad.addColorStop(0.05, 'rgba(180, 220, 200, 0.85)');
-      grad.addColorStop(0.15, 'rgba(110, 185, 230, 0.90)');
-      grad.addColorStop(0.45, 'rgba(50, 120, 195, 0.94)');
-      grad.addColorStop(0.75, 'rgba(20, 65, 145, 0.96)');
-      grad.addColorStop(1.00, 'rgba(8, 30, 80, 0.97)');
-    } else {
-      // Far: smooth gradient (band is thin, minimal detail)
-      grad.addColorStop(0.00, 'rgba(200, 195, 140, 0.75)');
-      grad.addColorStop(0.15, 'rgba(100, 175, 220, 0.88)');
-      grad.addColorStop(0.60, 'rgba(40, 100, 175, 0.93)');
-      grad.addColorStop(1.00, 'rgba(10, 40, 100, 0.95)');
-    }
-    
-    ctx.fillStyle = grad;
-    ctx.fill();
-    
-    // Close zoom planet view: add water surface gleam + shore foam
-    if (detail === 'close' && isPlanet) {
-      // Surface highlight
-      ctx.strokeStyle = 'rgba(200, 240, 255, 0.55)';
-      ctx.lineWidth = 1.2;
+    bands.forEach(band => {
+      const rOuter = R - depthM * band.d0;
+      const rInnerB = R - depthM * band.d1;
       ctx.beginPath();
+      // Outer arc (deeper part, closer to surface)
       for (let k = seg.i0; k <= seg.i1; k++) {
-        const [sx, sy] = screenPts[k];
-        if (k === seg.i0) ctx.moveTo(sx, sy);
-        else ctx.lineTo(sx, sy);
-      }
-      ctx.stroke();
-      
-      // Shore foam — white arc near the west (shore) edge
-      const foamEnd = Math.min(seg.i1, seg.i0 + 8);
-      const foamR = R - 0.005 * depthM;
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.7)';
-      ctx.lineWidth = 2.5;
-      ctx.lineCap = 'round';
-      ctx.beginPath();
-      for (let k = seg.i0; k <= foamEnd; k++) {
         const p = pts[k];
-        const [sx, sy] = worldToScreen(foamR * Math.sin(p.phi), foamR * Math.cos(p.phi));
+        const [sx, sy] = worldToScreen(rOuter * Math.sin(p.phi), rOuter * Math.cos(p.phi));
         if (k === seg.i0) ctx.moveTo(sx, sy);
         else ctx.lineTo(sx, sy);
       }
+      // Inner arc (back)
+      for (let k = seg.i1; k >= seg.i0; k--) {
+        const p = pts[k];
+        const [sx, sy] = worldToScreen(rInnerB * Math.sin(p.phi), rInnerB * Math.cos(p.phi));
+        ctx.lineTo(sx, sy);
+      }
+      ctx.closePath();
+      ctx.fillStyle = band.col;
+      ctx.fill();
+    });
+  });
+  
+  // Coastline (west edge = shore) — thin white line at eastStart
+  if (isPlanet && segs.length) {
+    const seg0 = segs[0];
+    if (seg0.i0 === 0) {
+      const p0 = pts[0];
+      const [sx, sy] = worldToScreen(p0.x, p0.y);
+      const p1 = pts[1];
+      const [sx1, sy1] = worldToScreen(p1.x, p1.y);
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.75)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(sx, sy);
+      ctx.lineTo(sx1, sy1);
       ctx.stroke();
     }
-  });
+  }
   
   ctx.restore();
   
-  // Ocean label — planet view, mid/far only (close has enough visual detail)
-  if (isPlanet && detail !== 'close') {
+  // OCEAN label — planet view only
+  if (isPlanet) {
     const midIdx = Math.round(N / 2);
     const [sx, sy] = screenPts[midIdx];
     const pMid = pts[midIdx];
     const outX = Math.sin(pMid.phi);
     const outY = -Math.cos(pMid.phi);
-    
     ctx.save();
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
