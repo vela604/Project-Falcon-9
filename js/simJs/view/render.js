@@ -687,83 +687,79 @@ function drawOceanArea() {
   // ============================================================
   if (!isPlanet) {
     // ------------------------------------------------------------
-    // Ocean fill (local view).
-    //   - N=120 vertices (tight polyline, sagitta ~56m)
-    //   - Overshoot R+1500m (guaranteed above any sagitta)
-    //   - Clip at exact eRpx (flush top edge, no flicker)
-    //   - Opaque fill (no alpha blend edge cases)
-    //   - NO off-screen skip (previous version skipped when rocket at
-    //     shore because ocean MIDPOINT is far east; canvas clip already
-    //     handles off-screen cleanup, and skipping caused "no ocean"
-    //     when rocket was in ocean but near the western edge).
-    //   - NO NaN guards (worldToScreen always returns finite for
-    //     valid inputs; guards were silently dropping polygon)
+    // Ocean fill (local view) — FLICKER-FREE by construction.
+    //
+    // Root cause of prior flicker: polyline top edge + clip circle.
+    // Both edges are anti-aliased. When they overlap within ~1px,
+    // rasterizer's fill decision varies frame-to-frame. No amount of
+    // overshoot / opacity / guard can make this stable.
+    //
+    // Fix: DON'T use clip. Top edge is ctx.arc() at exactly eRpx —
+    // mathematically identical to drawEarth's ctx.arc(R), so the ocean
+    // top lands on the exact same rasterized pixels as the disc edge.
+    // No sub-pixel boundary to fight. Bottom edge stays polyline
+    // (wavy floor — no sub-pixel issue down there, it's 50-1500px
+    // below surface).
+    //
+    // Trade-off: ocean shore in local view is a clean arc (no wavy
+    // wobble). ASDS mission just needs "blue below rocket = ocean" —
+    // clean arc is fine. Wavy shore still applies in planet view
+    // (separate rendering path, unaffected).
     // ------------------------------------------------------------
-    const N = 120;
-    const depthWorld = 1500;
-    const rInner = R - depthWorld;
-    const rOuter = R + 1500;
-    
     const [ecx, ecy] = worldToScreen(0, 0);
     const eRpx = R / mppOcean;
     
-    // Diagnostic log (once per session)
+    // Screen angle of ocean start/end points (respects camera rotation).
+    const [ex0, ey0] = worldToScreen(R * Math.sin(phiStart), R * Math.cos(phiStart));
+    const [ex1, ey1] = worldToScreen(R * Math.sin(phiEnd), R * Math.cos(phiEnd));
+    const angStart = Math.atan2(ey0 - ecy, ex0 - ecx);
+    const angEnd = Math.atan2(ey1 - ecy, ex1 - ecx);
+    
+    // Short-way angular span (ocean zone is 58° = 1.01 rad max).
+    let dEnd = angEnd - angStart;
+    while (dEnd < -Math.PI) dEnd += Math.PI * 2;
+    while (dEnd > Math.PI) dEnd -= Math.PI * 2;
+    
+    const antiTop = dEnd < 0;
+    const antiBot = dEnd > 0;
+    
+    const depthWorld = 1500;
+    const rFloorInner = R - depthWorld;
+    const N = 32;
+    
+    // Diagnostic (once)
     const _rocketPhi = Math.atan2(state.rx, state.ry);
     const _phiNS = ((phiStart % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
     const _phiNE = ((phiEnd % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
     const _rPhi = ((_rocketPhi % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
     if (_rPhi >= _phiNS && _rPhi <= _phiNE && !globalThis._oceanLogDone) {
       globalThis._oceanLogDone = true;
-      console.log('[ocean] rocket entered ocean zone at phi=' +
-        (_rPhi * 180 / Math.PI).toFixed(2) + '°');
+      console.log('[ocean] rocket entered ocean zone at phi=' + (_rPhi * 180 / Math.PI).toFixed(2) + '°');
     }
     
-    ctx.save();
     ctx.beginPath();
-    ctx.arc(ecx, ecy, eRpx, 0, Math.PI * 2);
-    ctx.clip();
-    
-    ctx.beginPath();
-    
-    // Top edge (overshoot above surface — clipped back to R)
-    for (let k = 0; k <= N; k++) {
-      const f = k / N;
-      const wW = _shoreWobble(f, 1.0);
-      const wE = _deepWobble(f, 1.0);
-      const phiLocal = (phiStart + wW) + f * ((phiEnd + wE) - (phiStart + wW));
-      const [sx, sy] = worldToScreen(rOuter * Math.sin(phiLocal), rOuter * Math.cos(phiLocal));
-      if (k === 0) ctx.moveTo(sx, sy);
-      else ctx.lineTo(sx, sy);
-    }
-    // Bottom edge (below surface)
+    // TOP: exact arc — same as Earth's disc edge
+    ctx.arc(ecx, ecy, eRpx, angStart, angStart + dEnd, antiTop);
+    // BOTTOM: wavy polyline (ocean floor)
     for (let k = N; k >= 0; k--) {
       const f = k / N;
-      const wW = _shoreWobble(f, 1.0);
-      const wE = _deepWobble(f, 1.0);
-      const phiLocal = (phiStart + wW) + f * ((phiEnd + wE) - (phiStart + wW));
-      const [sx, sy] = worldToScreen(rInner * Math.sin(phiLocal), rInner * Math.cos(phiLocal));
+      const phiPoint = phiStart + f * (phiEnd - phiStart);
+      const depthWobble = 200 * Math.sin(f * 8.3 + 1.1) + 100 * Math.sin(f * 17.7 + 2.7);
+      const rFloor = rFloorInner + depthWobble;
+      const [sx, sy] = worldToScreen(rFloor * Math.sin(phiPoint), rFloor * Math.cos(phiPoint));
       ctx.lineTo(sx, sy);
     }
     ctx.closePath();
     ctx.fillStyle = 'rgb(18, 58, 128)';
     ctx.fill();
     
-    // Surface highlight
+    // Surface highlight — exact arc (same as disc edge)
     ctx.strokeStyle = 'rgb(120, 175, 235)';
     ctx.lineWidth = 1.2;
     ctx.beginPath();
-    for (let k = 0; k <= N; k++) {
-      const f = k / N;
-      const wW = _shoreWobble(f, 1.0);
-      const wE = _deepWobble(f, 1.0);
-      const phiLocal = (phiStart + wW) + f * ((phiEnd + wE) - (phiStart + wW));
-      const [sx, sy] = worldToScreen(R * Math.sin(phiLocal), R * Math.cos(phiLocal));
-      if (k === 0) ctx.moveTo(sx, sy);
-      else ctx.lineTo(sx, sy);
-    }
+    ctx.arc(ecx, ecy, eRpx, angStart, angStart + dEnd, antiTop);
     ctx.stroke();
     
-    ctx.restore();
     return;
   }
   
