@@ -755,6 +755,7 @@ return {
     ((CONFIG.REMOTE_AREA_WEST_START_DEG || 0) + (CONFIG.REMOTE_AREA_WEST_END_DEG || 0)) / 2,
     REMOTE_AREA_WEST_START_DEG: CONFIG.REMOTE_AREA_WEST_START_DEG || 0,
     REMOTE_AREA_WEST_END_DEG: CONFIG.REMOTE_AREA_WEST_END_DEG || 0,
+    LANDING_PADS: CONFIG.LANDING_PADS || [],
     // Payload eject kick — physical hardware spec, read by CIRCULARIZE
     // for cutoff pre-compensation. Same number physics.js applies.
     PAYLOAD_EJECT_KICK_MPS: CONFIG.PAYLOAD_EJECT_KICK_MPS,
