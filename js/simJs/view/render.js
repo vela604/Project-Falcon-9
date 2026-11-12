@@ -687,15 +687,17 @@ function drawOceanArea() {
   // ============================================================
   if (!isPlanet) {
     // ------------------------------------------------------------
-    // FLICKER FIX (v2): three changes kill all frame-to-frame flicker.
-    //   1) N=120 (was 40): tighter polyline → sagitta < 60m → overshoot safe.
-    //   2) Overshoot R+1500m (was R+500m): guaranteed above any sagitta.
-    //   3) Clip uses ctx.arc at EXACT eRpx (no +1): top edge lands on
-    //      exact disc boundary; no sub-pixel fight between clip circle
-    //      and polygon edge → no 1-frame blinks.
-    //   4) Opaque fill (alpha 1.0): no alpha blending edge cases.
-    //   5) NaN guard: skip if any projected coord is invalid.
-    //   6) Off-screen skip: if ocean bbox is far outside viewport, skip.
+    // Ocean fill (local view).
+    //   - N=120 vertices (tight polyline, sagitta ~56m)
+    //   - Overshoot R+1500m (guaranteed above any sagitta)
+    //   - Clip at exact eRpx (flush top edge, no flicker)
+    //   - Opaque fill (no alpha blend edge cases)
+    //   - NO off-screen skip (previous version skipped when rocket at
+    //     shore because ocean MIDPOINT is far east; canvas clip already
+    //     handles off-screen cleanup, and skipping caused "no ocean"
+    //     when rocket was in ocean but near the western edge).
+    //   - NO NaN guards (worldToScreen always returns finite for
+    //     valid inputs; guards were silently dropping polygon)
     // ------------------------------------------------------------
     const N = 120;
     const depthWorld = 1500;
@@ -705,15 +707,7 @@ function drawOceanArea() {
     const [ecx, ecy] = worldToScreen(0, 0);
     const eRpx = R / mppOcean;
     
-    // Off-screen skip — ocean zone center too far from viewport
-    const _midPhi = (phiStart + phiEnd) / 2;
-    const _midSx = worldToScreen(R * Math.sin(_midPhi), R * Math.cos(_midPhi));
-    if (!Number.isFinite(_midSx[0]) || !Number.isFinite(_midSx[1])) return;
-    const _margin = Math.max(canvas.width, canvas.height) * 2;
-    if (_midSx[0] < -_margin || _midSx[0] > canvas.width + _margin ||
-        _midSx[1] < -_margin || _midSx[1] > canvas.height + _margin) return;
-    
-    // Diagnostic log (once)
+    // Diagnostic log (once per session)
     const _rocketPhi = Math.atan2(state.rx, state.ry);
     const _phiNS = ((phiStart % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
     const _phiNE = ((phiEnd % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
@@ -725,62 +719,49 @@ function drawOceanArea() {
     }
     
     ctx.save();
-    // Clip to Earth disc at EXACT eRpx (no +1) — top edge flush with disc
     ctx.beginPath();
     ctx.arc(ecx, ecy, eRpx, 0, Math.PI * 2);
     ctx.clip();
     
     ctx.beginPath();
     
-    // Top edge: overshoot to rOuter, gets clipped to R
-    let _valid = true;
+    // Top edge (overshoot above surface — clipped back to R)
     for (let k = 0; k <= N; k++) {
       const f = k / N;
       const wW = _shoreWobble(f, 1.0);
       const wE = _deepWobble(f, 1.0);
       const phiLocal = (phiStart + wW) + f * ((phiEnd + wE) - (phiStart + wW));
       const [sx, sy] = worldToScreen(rOuter * Math.sin(phiLocal), rOuter * Math.cos(phiLocal));
-      if (!Number.isFinite(sx) || !Number.isFinite(sy)) { _valid = false; break; }
       if (k === 0) ctx.moveTo(sx, sy);
       else ctx.lineTo(sx, sy);
     }
-    
-    if (_valid) {
-      // Bottom edge at rInner
-      for (let k = N; k >= 0; k--) {
-        const f = k / N;
-        const wW = _shoreWobble(f, 1.0);
-        const wE = _deepWobble(f, 1.0);
-        const phiLocal = (phiStart + wW) + f * ((phiEnd + wE) - (phiStart + wW));
-        const [sx, sy] = worldToScreen(rInner * Math.sin(phiLocal), rInner * Math.cos(phiLocal));
-        if (!Number.isFinite(sx) || !Number.isFinite(sy)) { _valid = false; break; }
-        ctx.lineTo(sx, sy);
-      }
+    // Bottom edge (below surface)
+    for (let k = N; k >= 0; k--) {
+      const f = k / N;
+      const wW = _shoreWobble(f, 1.0);
+      const wE = _deepWobble(f, 1.0);
+      const phiLocal = (phiStart + wW) + f * ((phiEnd + wE) - (phiStart + wW));
+      const [sx, sy] = worldToScreen(rInner * Math.sin(phiLocal), rInner * Math.cos(phiLocal));
+      ctx.lineTo(sx, sy);
     }
+    ctx.closePath();
+    ctx.fillStyle = 'rgb(18, 58, 128)';
+    ctx.fill();
     
-    if (_valid) {
-      ctx.closePath();
-      // Opaque fill — no alpha blending
-      ctx.fillStyle = 'rgb(18, 58, 128)';
-      ctx.fill();
-    }
-    
-    // Surface highlight — thin bright line at R
+    // Surface highlight
     ctx.strokeStyle = 'rgb(120, 175, 235)';
     ctx.lineWidth = 1.2;
     ctx.beginPath();
-    let _strokeValid = true;
     for (let k = 0; k <= N; k++) {
       const f = k / N;
       const wW = _shoreWobble(f, 1.0);
       const wE = _deepWobble(f, 1.0);
       const phiLocal = (phiStart + wW) + f * ((phiEnd + wE) - (phiStart + wW));
       const [sx, sy] = worldToScreen(R * Math.sin(phiLocal), R * Math.cos(phiLocal));
-      if (!Number.isFinite(sx) || !Number.isFinite(sy)) { _strokeValid = false; break; }
       if (k === 0) ctx.moveTo(sx, sy);
       else ctx.lineTo(sx, sy);
     }
-    if (_strokeValid) ctx.stroke();
+    ctx.stroke();
     
     ctx.restore();
     return;
