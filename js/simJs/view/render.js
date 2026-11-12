@@ -1427,6 +1427,16 @@ function _drawASDS(ctx, pad, worldPos, camAng, mpp, pal) {
 
   ctx.restore();
 
+  // ---- BRIGHT OUTLINE around ship (distinct from flat LZ pads) ----
+  ctx.save();
+  ctx.translate(px, py);
+  ctx.rotate(-(worldPos.phi - camAng));
+  ctx.scale(1 / mpp, 1 / mpp);
+  ctx.strokeStyle = 'rgba(120, 200, 255, 0.85)';
+  ctx.lineWidth = 0.6;
+  ctx.strokeRect(-halfL, deckY - contHeightM - 3, lengthM, hullBottomY - (deckY - contHeightM - 3));
+  ctx.restore();
+  
   // ---- Label above ASDS ----
   if (mpp > 0.3 && mpp < 20) {
     const labelTxt = pad.name + ' · ' + Math.round(pad.arcOffsetM / 1000) + ' km';
@@ -1460,9 +1470,21 @@ function drawLandingPads() {
     if (!PL) PL = _padLight(true);
     const pal = PL.pal, n = pal.night;
     
-    // ASDS — special side-view render (not flat circular LZ pad)
-    if (pad.isASDS) {
-      _drawASDS(ctx, pad, w, camAng, mpp, pal);
+    // ASDS — special side-view render. Fallback: lengthM > 50 is unique
+    // to ASDS pads (LZ pads only have radiusM). Catches any case where
+    // isASDS was lost in transmission.
+    const _isASDS = !!(pad.isASDS || (Number.isFinite(pad.lengthM) && pad.lengthM > 50));
+    if (_isASDS) {
+      try {
+        if (!globalThis._asdsDrawLogged) {
+          globalThis._asdsDrawLogged = true;
+          console.log('[ASDS] _drawASDS triggered for ' + pad.id +
+            ' (isASDS=' + pad.isASDS + ', lengthM=' + pad.lengthM + ', mpp=' + mpp.toFixed(2) + ')');
+        }
+        _drawASDS(ctx, pad, w, camAng, mpp, pal);
+      } catch (e) {
+        console.error('[ASDS] _drawASDS threw:', e.message, e.stack);
+      }
       continue;
     }
     
@@ -1558,7 +1580,31 @@ function drawPadMarkers() {
       const w = landingPadWorldPosition(pad, state.simTime);
       const [zx, zy] = worldToScreen(w.x, w.y);
       // Distinct colors: LZ = green, ASDS = blue (matches drone ship)
-      const isASDS = !!pad.isASDS;
+      const isASDS = !!(pad.isASDS || (Number.isFinite(pad.lengthM) && pad.lengthM > 50));
+      
+      // ASDS ship icon (planet view) — small flat rectangle instead of circle,
+      // so marker shape itself is distinguishable from LZ circles.
+      if (isASDS) {
+        ctx.save();
+        ctx.strokeStyle = 'rgba(120, 200, 255, 0.95)';
+        ctx.fillStyle = 'rgba(120, 200, 255, 0.25)';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.rect(zx - 6, zy - 2, 12, 4);
+        ctx.fill();
+        ctx.stroke();
+        // Container bump on west end
+        ctx.fillStyle = 'rgba(160, 200, 255, 0.9)';
+        ctx.fillRect(zx - 6, zy - 4, 3, 2);
+        ctx.restore();
+        const dist = Math.round(pad.arcOffsetM || 0);
+        const distLabel = dist >= 1000 ? (dist / 1000).toFixed(0) + ' km' : dist + ' m';
+        put(pad.id + ' \u2192 ' + distLabel,
+            zx + tgX * 12 + outX * 10,
+            zy + tgY * 12 + outY * 10 + 3 + idx * 12,
+            'left', 'rgba(140, 200, 255, 0.98)');
+        return;
+      }
       const markerColor = isASDS ? 'rgba(120,180,255,0.95)' : 'rgba(120,255,170,0.95)';
       const labelColor = isASDS ? 'rgba(140,200,255,0.98)' : 'rgba(140,255,180,0.95)';
       ctx.strokeStyle = markerColor;
