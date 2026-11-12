@@ -629,8 +629,8 @@ async function doInit(){
     vals.insertion = vals.insertion || {};
     vals.insertion.TARGET_APSIDE1_ALT_KM = S.apoKm;
     vals.insertion.TARGET_APSIDE2_ALT_KM = S.periKm;
-    if(!Number.isFinite(vals.insertion.STAGE_BURN_AOA_BIAS_DEG)) vals.insertion.STAGE_BURN_AOA_BIAS_DEG = 0.827;
-    if(!Number.isFinite(vals.insertion.CIRC_TRIGGER_LEAD_S)) vals.insertion.CIRC_TRIGGER_LEAD_S = 4.0125;
+    if(!Number.isFinite(vals.insertion.STAGE_BURN_AOA_BIAS_DEG)) vals.insertion.STAGE_BURN_AOA_BIAS_DEG = 1.200;
+    if(!Number.isFinite(vals.insertion.CIRC_TRIGGER_LEAD_S)) vals.insertion.CIRC_TRIGGER_LEAD_S = 8.9875;
     vals.done = vals.done || {}; vals.done.DEORBIT_ENABLED = false;
     vals.mission = vals.mission || {}; vals.mission.TARGET_LANDING_PAD = 'LZ-1';
     vals.rtls = vals.rtls || {}; vals.rtls.ENTRY_BURN_IMPACT_TARGET_M = bias;

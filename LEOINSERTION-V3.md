@@ -937,7 +937,7 @@ baseline values are marked.
 | `TARGET_ORBIT_ALT_KM` | (deprecated) | legacy fallback, used only when both apside constants are absent |
 | `STAGE_BURN_AOA_KP / KD` | 4.0 / 4.0 | STAGE_BURN gains |
 | `STAGE_BURN_AOA_KI` | 1.0 (fixed) | integral gain |
-| `STAGE_BURN_AOA_BIAS_DEG` | **0.827** (tuned) | target AoA offset |
+| `STAGE_BURN_AOA_BIAS_DEG` | **1.200** (tuned) | target AoA offset |
 | `STAGE_BURN_AOA_BIAS_RATE_DEG_S` | 0.5 (fixed) | bias ramp rate |
 | `STAGE_BURN_CUTOFF_MARGIN_MPS` | 0.0 | extra predicted Δv at cutoff |
 | `COAST_ROTATE_TOL_DEG` | 0.5 | rotate done: angle |

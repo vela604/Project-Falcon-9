@@ -796,13 +796,13 @@ setState(s) {
   // nose perfectly aligned (fastest tilt evolution). Small positive
   // or negative value introduces a perpendicular thrust component
   // that changes the natural tilt growth rate.
-  STAGE_BURN_AOA_BIAS_DEG: 0.827,
+  STAGE_BURN_AOA_BIAS_DEG: 1.200,
     COAST_TARGET_TILT_DEG: -90,
       COAST_ROTATE_TOL_DEG: 0.5,
       COAST_ROTATE_OMEGA_TOL: 0.02,
       COAST_ROTATE_TIMEOUT_S: 240,
       COAST_WAIT_BEFORE_APOGEE_S: 90,
-      CIRC_TRIGGER_LEAD_S: 4.0125,
+      CIRC_TRIGGER_LEAD_S: 8.9875,
       CIRC_DECAY_FRAC: 0.05,
       // Rotate phases (ROTATE / ROTATE_2 / CIRCULARIZE / DONE) keep the same
       // gains — tuning there is fine and shouldn't be touched.
