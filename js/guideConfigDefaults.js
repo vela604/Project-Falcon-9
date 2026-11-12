@@ -215,6 +215,7 @@ leoInsertionV3: _mkDefault(
       PAYLOAD_CONFIRM_TIMEOUT_S: 120,
       COAST_HOLD_2_TRIM_TOL_MPS: 0.0001,
       COAST_HOLD_2_TRIM_FAR_MPS: 0.01,
+      TARGET_BIAS_MPS: 0,
     },
     fairing: {
       HAS_FAIRING: true,
@@ -304,6 +305,7 @@ leoInsertionV3: _mkDefault(
   PAYLOAD_CONFIRM_TIMEOUT_S: 120,
   COAST_HOLD_2_TRIM_TOL_MPS: 0.0001,
   COAST_HOLD_2_TRIM_FAR_MPS: 0.01,
+  TARGET_BIAS_MPS: 0,
     },
     fairing: {
       HAS_FAIRING: true,

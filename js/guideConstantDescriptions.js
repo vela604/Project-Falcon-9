@@ -65,6 +65,7 @@ const GUIDE_CONSTANT_DESCRIPTIONS = {
   'insertion.PAYLOAD_CONFIRM_TIMEOUT_S': 'Fail-safe: if the payload never confirms as cleared, the insertion block ends after this many seconds regardless.',
   'insertion.COAST_HOLD_2_TRIM_TOL_MPS': 'Convergence tolerance (m/s) for the COAST_HOLD_2 axial deltaV trim. Once |gap - eject_kick| falls below this, axial RCS firing stops. Smaller = tighter final orbit, but more RCS chatter at the boundary.',
   'insertion.COAST_HOLD_2_TRIM_FAR_MPS': 'Error (m/s) at which the COAST_HOLD_2 axial trim uses full RCS duty. Duty scales as min(1, |dvError| / FAR). Smaller = more aggressive at small errors (faster convergence, overshoot risk).',
+  'insertion.TARGET_BIAS_MPS': 'Velocity offset (m/s) pre-accounted at the target apside. 0 = stage ends exactly at target_circ (booster delivery / no payload). Set to the payload eject kick (~3 m/s) when a payload will be released right after insertion, so the stage ends at target_circ - kick and the payload ends up at target_circ.',
   
   // ---- fairing (mission-level glue) ----
   'fairing.HAS_FAIRING': 'Whether the stack carries a payload fairing. When false, fairing auto-open is skipped entirely.',
@@ -199,6 +200,7 @@ const GUIDE_CONSTANT_DESCRIPTIONS = {
   'insertion.PAYLOAD_CONFIRM_TIMEOUT_S': 'Fail-safe: if the payload never confirms as cleared, the insertion block ends after this many seconds regardless.',
   'insertion.COAST_HOLD_2_TRIM_TOL_MPS': 'Convergence tolerance (m/s) for the COAST_HOLD_2 axial deltaV trim. Once |gap - eject_kick| falls below this, axial RCS firing stops. Smaller = tighter final orbit, but more RCS chatter at the boundary.',
   'insertion.COAST_HOLD_2_TRIM_FAR_MPS': 'Error (m/s) at which the COAST_HOLD_2 axial trim uses full RCS duty. Duty scales as min(1, |dvError| / FAR). Smaller = more aggressive at small errors (faster convergence, overshoot risk).',
+  'insertion.TARGET_BIAS_MPS': 'Velocity offset (m/s) pre-accounted at the target apside. 0 = stage ends exactly at target_circ (booster delivery / no payload). Set to the payload eject kick (~3 m/s) when a payload will be released right after insertion, so the stage ends at target_circ - kick and the payload ends up at target_circ.',
   
   // ---- fairing (mission-level glue) ----
   'fairing.HAS_FAIRING': 'Whether the stack carries a payload fairing. When false, fairing auto-open is skipped entirely.',
