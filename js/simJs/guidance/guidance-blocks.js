@@ -3086,6 +3086,7 @@ setState(s) {
       LANDING_BURN_THR_LATE: 0.6,
       LANDING_BURN_H_FLOOR_M: 0.1,
       LANDING_BURN_H_OFFSET_M: 0.0,
+      LANDING_HEIGHT_OFFSET_M: 0.0,
       LANDING_BURN_H_CUT_M: 0.0,
       LANDING_BURN_H_STALL_M: 0.5,
         // engines fired during LB spool (C = centre; add numbers for outer-ring)
@@ -5170,6 +5171,7 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
             const V_TD_MIN = _cfgN("LANDING_BURN_V_TD", 0.4);   // v8: floor; adaptive V_TD computed after Fmin
             const H_FLOOR = _cfgN("LANDING_BURN_H_FLOOR_M", 0.1);
             const H_OFF = _cfgN("LANDING_BURN_H_OFFSET_M", 0);
+      const LH_OFF = _cfgN("LANDING_HEIGHT_OFFSET_M", 0);   // additional target clearance on top of leg-tip extension
             const H_CUT = _cfgN("LANDING_BURN_H_CUT_M", 0);
             const H_STALL = _cfgN("LANDING_BURN_H_STALL_M", 0.5);
             const THR_LATE = _cfgN("LANDING_BURN_THR_LATE", 0.6);
@@ -5196,7 +5198,7 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
             const LB_NOAUTH = _cfgN("LANDING_BURN_NOAUTH", 0.12);       // gNet below this fraction of gEff => no lateral authority, hold weathervane angle
 
             const legExt_m = _slamLegTipExtension(body);
-            const hEff = hAGL - legExt_m - H_OFF;
+            const hEff = hAGL - legExt_m - H_OFF - LH_OFF;
             const elapsedAlign = simT - _st.lbAlignStartT;
 
             // ---- Contact detection (fires ONCE, then holds for spool-down) ----
