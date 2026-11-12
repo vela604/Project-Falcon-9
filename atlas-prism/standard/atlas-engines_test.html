@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>PRO ALPHA ENGINE</title>
+<title>ATLAS · ENGINES TEST</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap">
 <link rel="stylesheet" href="styles/engine-theme.css">
@@ -16,8 +16,8 @@
 <!-- ==================== COMMAND BAR ==================== -->
 <header>
   <a class="back" href="../index.html">&lsaquo; Atlas Prism</a>
-  <h1>PRO <em>ALPHA</em></h1>
-  <span class="crumb">engine <b>/</b> leoInsertionV3 <b>/</b> param tuner <b>/</b> single-thread</span>
+  <h1>ATLAS <em>ENGINES</em></h1>
+  <span class="crumb">engine <b>/</b> sim <b>/</b> smoke &amp; eval tests</span>
   <div class="chips">
     <span class="st" id="stState">state <b id="stStateN">idle</b></span>
     <span class="st" id="stStack"><b id="stackLabel">Stack: &hellip;</b></span>
@@ -65,8 +65,6 @@
   </div>
 </section>
 
-<!-- tuner UI (host.js) mounts here -->
-<div id="tunerUIHost"></div>
 
 <!-- ==================== 0x03 · LOG ==================== -->
 <section class="panel">
@@ -103,11 +101,6 @@
 <script src="../lib/sim.js"></script>
 <script src="../lib/lattice.js"></script>
 <script src="../lib/hook.js"></script>
-<script src="../lib/registry.js"></script>
-<script src="../lib/primitives.js"></script>
-<script src="../engines/pro-alpha.js"></script>
-<script src="../engines/_template.js"></script>
-<script src="../ui/host.js"></script>
 
 <script>
 (function () {
@@ -178,11 +171,7 @@
           ' bias=' + ins.STAGE_BURN_AOA_BIAS_DEG +
           ' lead=' + ins.CIRC_TRIGGER_LEAD_S + ' alt=' + (ins.TARGET_APSIDE1_ALT_KM != null ? ins.TARGET_APSIDE1_ALT_KM + '/' + (ins.TARGET_APSIDE2_ALT_KM != null ? ins.TARGET_APSIDE2_ALT_KM : ins.TARGET_APSIDE1_ALT_KM) : '?'));
       // mount the tuner UI (Step 9) — inputs, run/stop, progress, leaderboard with sort tabs
-if (window.TunerUI) window.TunerUI.mount($('tunerUIHost'), {
-  log: (l) => log(l),
-  // tuner runs drive the header state chip + status line (the status mirror below stands down while a run is active)
-  onState: (state, text) => { document.body.toggleAttribute('data-tui', state === 'running'); document.body.setAttribute('data-state', state); document.getElementById('stStateN').textContent = state; statusEl.textContent = text; }
-});
+
 
 statusEl.textContent = 'Ready.';
 $('smokeBtn').disabled = false; $('dumpCfgBtn').disabled = false; $('applyChkBtn').disabled = false;
