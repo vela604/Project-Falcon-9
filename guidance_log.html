@@ -2575,24 +2575,17 @@ PRE_ENTRY_ALIGN_ALT_KM         <span class="cmt">// when the retrograde slew sta
         <div class="exp-label">Drawbacks</div>
         <div class="exp-value">
           <ul>
-            <li><strong>Landing accuracy is bias-tuned, not
-            formula-driven.</strong> The entry-burn bias has a nonlinear
-            score surface — cliffs, plateaus, and small-scale noise
-            around the optimum. Different stacks, target orbits, or pads
-            need their own bias tuning runs.</li>
-            <li><strong>Grid-fin authority limits descent
+            <li><strong>Grid-fin authority bounds descent
             precision.</strong> High-altitude passes have thin air and
             limited fin control. Attitude hold during pre-entry and
             post-entry coasts is tighter when dynamic pressure is high,
-            sloppier when it isn't.</li>
-            <li><strong>Hoverslam is one-shot.</strong> A bad ignition
-            altitude or a mistimed entry-burn cutoff means crash.
-            There's no abort, no hover, no second landing burn.</li>
-            <li><strong>Requires residual booster fuel at
-            separation.</strong> The MECO fuel budget is the booster's
-            return budget — flip, boostback, entry burn, and landing
-            burn all draw from it. Set too high, the stage misses its
-            orbit; too low, the booster crashes.</li>
+            sloppier when it isn't. Physics bound, not a tuning gap.</li>
+            <li><strong>Bias is per-configuration.</strong> The
+            entry-burn bias that lands a booster cleanly at one
+            (stack, orbit, pad) combination is not the right value at
+            another. Each new mission shape gets its own tuning pass;
+            the value itself is not derivable from the vehicle
+            record.</li>
           </ul>
         </div>
       </div>
@@ -2775,25 +2768,20 @@ H_STALL (m)                    <span class="cmt">// stall-catch altitude, blank 
         <div class="exp-label">Drawbacks</div>
         <div class="exp-value">
           <ul>
-            <li><strong>Score surface is nonlinear.</strong> The
-            entry-burn bias surface has cliffs (small bias change flips
-            between "clean landing" and "twenty metres past pad") and
-            plateaus (small bias change does nothing). The search uses
-            bracket + golden-section, not gradient descent — it converges
-            reliably to a local minimum but cannot certify it is the
-            global one.</li>
-            <li><strong>Per-stack, per-alt, per-pad tuning.</strong> A
-            bias that lands a stack at 320 km may not land it at 500 km,
-            and a stack tuned with 12t payload may need different
-            constants with a heavier one. Every mission configuration is
-            its own tuning run.</li>
-            <li><strong>INIT is one-shot per session.</strong> The SA/EB
-            snapshots are captured against the current stack, orbit, and
+            <li><strong>Local minimum, not certified global
+            minimum.</strong> The bias surface has cliffs and plateaus
+            that defeat gradient descent; the tool uses bracket +
+            golden-section to converge reliably to a local minimum. In
+            practice the practical minimum is usually the one the search
+            finds, but the tool does not certify it is the global one.</li>
+            <li><strong>Per-configuration tuning.</strong> A (alt, bias)
+            pair tuned for one stack at 320 km is not the right pair for
+            a different stack, a different target orbit, or a different
+            pad. Each new mission shape is its own tuning run.</li>
+            <li><strong>One stack, one INIT per session.</strong> The
+            SA/EB snapshots are tied to the current stack, orbit, and
             environment config. Changing any of those requires a fresh
-            INIT before further tuning.</li>
-            <li><strong>One stack per session.</strong> The tool tunes one
-            booster at a time. Multi-stack comparisons need separate
-            sessions.</li>
+            INIT; a different booster means a fresh session.</li>
           </ul>
         </div>
       </div>
