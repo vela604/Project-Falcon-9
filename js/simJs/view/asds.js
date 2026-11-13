@@ -92,6 +92,21 @@
   const LANDING_RADIUS_M = 35;   // usable landing zone half-width
   const DECK_HEIGHT_M = 2;        // deck above sea level (rocket lands here)
 
+  // Earth circumference wrap — like 410° → 50° for angles.
+  // If km >= circumference or km < 0, wrap into [0, circumference).
+  // Example: 40500 km → 470 km (one full lap + 470 km).
+  function _wrapKmAroundEarth(km) {
+    const C = 2 * Math.PI * CONFIG.EARTH_RADIUS / 1000;   // km
+    if (!Number.isFinite(km)) return { km: km, wasWrapped: false };
+    if (km < 0 || km >= C) {
+      const wrapped = ((km % C) + C) % C;
+      console.log('[ASDS] Wrapped ' + km.toFixed(2) + ' km → ' + wrapped.toFixed(2) +
+                  ' km (circumference = ' + C.toFixed(2) + ' km)');
+      return { km: wrapped, wasWrapped: true, circumferenceKm: C };
+    }
+    return { km: km, wasWrapped: false };
+  }
+
   function _oceanZoneBounds() {
     const R = CONFIG.EARTH_RADIUS;
     const startDeg = (typeof CONFIG.OCEAN_ZONE_EAST_START_DEG === 'number') ? CONFIG.OCEAN_ZONE_EAST_START_DEG : 2;
@@ -124,6 +139,11 @@
     if (!Number.isFinite(km)) {
       return { ok: false, error: 'km must be a finite number', requestedName: name, requestedKm: km, requestedHeightM: heightM };
     }
+    // Earth circumference wrap — 40500 km becomes 470 km (like 410° → 50°)
+    const _originalKm = km;
+    const _wrap = _wrapKmAroundEarth(km);
+    km = _wrap.km;
+    const _wasWrapped = _wrap.wasWrapped;
     if (!Number.isFinite(heightM) || heightM < 0) heightM = 2;
 
     if (!CONFIG.LANDING_PADS) CONFIG.LANDING_PADS = [];
@@ -218,12 +238,15 @@
       pad: pad,
       requestedName: name,
       appliedName: appliedName,
-      requestedKm: km,
+      requestedKm: _originalKm,
       appliedKm: appliedM / 1000,
       requestedHeightM: heightM,
       appliedHeightM: heightM,
       wasNameAdjusted: wasNameAdjusted,
-      wasPositionAdjusted: wasPositionAdjusted,
+      wasPositionAdjusted: wasPositionAdjusted || _wasWrapped,
+      wasWrapped: _wasWrapped,
+      wrappedFromKm: _wasWrapped ? _originalKm : undefined,
+      wrappedToKm: _wasWrapped ? km : undefined,
     };
   }
 
@@ -237,7 +260,8 @@
     } else if (result && result.ok) {
       const parts = ['🛳 ' + result.appliedName + ' @ ' + result.appliedKm.toFixed(1) + ' km'];
       if (result.wasNameAdjusted) parts.push('(renamed from ' + result.requestedName + ')');
-      if (result.wasPositionAdjusted) parts.push('(moved from ' + result.requestedKm.toFixed(1) + ' km)');
+      if (result.wasWrapped) parts.push('(wrapped from ' + result.wrappedFromKm.toFixed(1) + ' km)');
+      else if (result.wasPositionAdjusted) parts.push('(moved from ' + result.requestedKm.toFixed(1) + ' km)');
       _showASDSToast(parts.join(' '), true);
     }
     return result;
@@ -266,6 +290,12 @@
     const isASDS = !!(pad.isASDS || (Number.isFinite(pad.lengthM) && pad.lengthM >= 50));
     if (!isASDS) return { ok: false, error: 'Pad "' + padIdOrName + '" is not an ASDS.' };
     if (!Number.isFinite(newKm)) return { ok: false, error: 'newKm must be a finite number.' };
+
+    // Earth circumference wrap (same as deployASDS)
+    const _originalNewKm = newKm;
+    const _wrap = _wrapKmAroundEarth(newKm);
+    newKm = _wrap.km;
+    const _wasWrapped = _wrap.wasWrapped;
 
     const xM = Math.round(newKm * 1000);
     const zone = _oceanZoneBounds();
@@ -304,9 +334,12 @@
     return {
       ok: true,
       pad: pad,
-      requestedKm: newKm,
+      requestedKm: _originalNewKm,
       appliedKm: appliedM / 1000,
-      wasPositionAdjusted: wasPositionAdjusted,
+      wasPositionAdjusted: wasPositionAdjusted || _wasWrapped,
+      wasWrapped: _wasWrapped,
+      wrappedFromKm: _wasWrapped ? _originalNewKm : undefined,
+      wrappedToKm: _wasWrapped ? newKm : undefined,
       oldKm: oldOffset / 1000,
     };
   }
@@ -341,10 +374,12 @@
       const zone = _oceanZoneBounds();
       const minKm = (zone.startM + LZ_WEST_M) / 1000;
       const maxKm = (zone.endM - LZ_EAST_M) / 1000;
+      const C = 2 * Math.PI * CONFIG.EARTH_RADIUS / 1000;
       zoneInfo.innerHTML =
         'Deployment zone: <b style="color:#35d6ff;">' + minKm.toFixed(1) + ' – ' + maxKm.toFixed(1) + ' km</b>. ' +
         'Hull: 91 m · Min gap: ' + MIN_GAP_M + ' m.<br>' +
-        'Examples: <code>HOPE, 140, 2</code> · <code>HOPE, 140</code> · <code>HOPE</code> · <code>500</code> · <code>(empty)</code>';
+        'Values ≥ ' + C.toFixed(0) + ' km wrap around Earth (like 410° → 50°).<br>' +
+        'Examples: <code>HOPE, 140, 2</code> · <code>HOPE, 140</code> · <code>HOPE</code> · <code>500</code> · <code>40500</code> (wraps to ' + (40500 % C).toFixed(0) + ')';
     }
 
     function _parseASDSInput(raw) {
@@ -355,9 +390,8 @@
       if (s.indexOf(',') === -1) {
         const num = Number(s);
         if (Number.isFinite(num)) {
-          // Auto-detect: > 10000 = meters (legacy), else km
-          const km = num > 10000 ? num / 1000 : num;
-          return [undefined, km, undefined];
+          // Always interpret as km (label says km; no meter auto-detect)
+          return [undefined, num, undefined];
         }
         return [s, undefined, undefined]; // name only
       }
@@ -370,7 +404,7 @@
       let km;
       if (parts[1]) {
         const n = Number(parts[1]);
-        if (Number.isFinite(n)) km = n > 10000 ? n / 1000 : n;
+        if (Number.isFinite(n)) km = n;
       }
       
       let heightM;
