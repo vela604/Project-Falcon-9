@@ -1439,36 +1439,74 @@ async function searchBracket(evalFn, o, onProgress){
     const _useDrFalsi = (S.mode === 'ASDS') || !anyOk;
 
     if (_useDrFalsi) {
-      log('[search] phase2 regula-falsi on dr (' +
+      // Bracketed secant (Brent-style with safety fallbacks) on dr.
+      // Plain regula-falsi stagnates in flat-slope regions because one
+      // endpoint stays pinned to the initial wide bracket; its secant is
+      // always dominated by the far endpoint. Secant uses only the last
+      // TWO evals and shrinks the step naturally as dr -> 0. In this
+      // landscape (dr slope ~1 far out, ~0.1 near pad) that's a 3x speedup:
+      // 17 evals -> ~5-6 evals, dr 0.5m -> 0.05-0.15m.
+      log('[search] phase2 bracketed-secant on dr (' +
         (S.mode === 'ASDS' ? 'ASDS V-shape' : 'all-crash landscape') +
         ') ['+lo.toFixed(1)+', '+hi.toFixed(1)+']', 'ok');
-      let a = lo, c = hi;
-      let ra = await ev(a), rc = await ev(c);
-      let drA = ra && ra.m && ra.m.contact ? ra.m.contact.downrange : NaN;
-      let drC = rc && rc.m && rc.m.contact ? rc.m.contact.downrange : NaN;
-      if (!Number.isFinite(drA) || !Number.isFinite(drC)) {
-        log('[search] regula-falsi skipped (missing dr at bracket endpoints)', 'warn');
+      const rLo = await ev(lo), rHi = await ev(hi);
+      let drLo = rLo && rLo.m && rLo.m.contact ? rLo.m.contact.downrange : NaN;
+      let drHi = rHi && rHi.m && rHi.m.contact ? rHi.m.contact.downrange : NaN;
+      if (!Number.isFinite(drLo) || !Number.isFinite(drHi)) {
+        log('[search] secant skipped (missing dr at bracket endpoints)', 'warn');
         return;
       }
-      for (let iter = 0; iter < 20; iter++) {
+      if (drLo * drHi > 0) {
+        log('[search] secant skipped (no sign change in bracket)', 'warn');
+        return;
+      }
+      let p1 = { b: lo, dr: drLo };
+      let p2 = { b: hi, dr: drHi };
+      let stallCount = 0;
+      for (let iter = 0; iter < 15; iter++) {
         if (stop()) break;
-        if (Math.abs(a - c) <= minStep) break;
-        const denom = drA - drC;
-        if (Math.abs(denom) < 1e-9) break;
-        let b = a + drA * (c - a) / denom;
-        if (!Number.isFinite(b)) break;
-        b = Math.max(lo, Math.min(hi, b));
-        b = Math.round(b * 10) / 10;
-        if (b === a || b === c) break;
-        const r = await ev(b);
-        const drB = r && r.m && r.m.contact ? r.m.contact.downrange : NaN;
-        if (!Number.isFinite(drB)) break;
-        if (Math.abs(drB) <= minStep) {
-          log('[search] regula-falsi converged |dr|=' + Math.abs(drB).toFixed(2) + 'm @ bias=' + b.toFixed(1), 'ok');
+        if (Math.abs(hi - lo) <= minStep) break;
+        const slope = (p2.dr - p1.dr) / (p2.b - p1.b);
+        let next;
+        if (!Number.isFinite(slope) || Math.abs(slope) < 1e-6) {
+          next = (lo + hi) / 2;
+        } else {
+          next = p2.b - p2.dr / slope;
+        }
+        // Safety: must be strictly inside (lo, hi), must not be too close
+        // to p2 (bias resolution floor is 0.1m, so anything under ~0.05m
+        // is already at the noise floor).
+        if (!Number.isFinite(next) || next <= lo || next >= hi ||
+            Math.abs(next - p2.b) < Math.max(0.05, minStep * 0.3)) {
+          next = (lo + hi) / 2;
+        }
+        next = Math.round(next * 10) / 10;
+        if (next === lo || next === hi || next === p2.b) {
+          log('[search] secant hit bias resolution floor (0.1m) — stopping at bracket w=' + (hi-lo).toFixed(2) + 'm', 'warn');
           break;
         }
-        if (drB * drA < 0) { c = b; drC = drB; }
-        else { a = b; drA = drB; }
+        const r = await ev(next);
+        const drN = r && r.m && r.m.contact ? r.m.contact.downrange : NaN;
+        if (!Number.isFinite(drN)) break;
+        if (Math.abs(drN) <= minStep) {
+          log('[search] secant converged |dr|=' + Math.abs(drN).toFixed(3) + 'm @ bias=' + next.toFixed(1) + ' (bracket w=' + (hi-lo).toFixed(2) + 'm)', 'ok');
+          break;
+        }
+        // Update bracket
+        if (drN * drLo < 0) { hi = next; drHi = drN; } else { lo = next; drLo = drN; }
+        // Advance secant points (old p2 becomes p1)
+        p1 = p2;
+        p2 = { b: next, dr: drN };
+        // Stall guard: if dr barely changed AND step was tiny, we're at
+        // the resolution floor — stop.
+        if (Math.abs(drN - p1.dr) < 0.02 && Math.abs(next - p1.b) < 0.5) {
+          if (++stallCount >= 2) {
+            log('[search] secant stalled (dr change < 0.02m twice) — bias resolution floor, stopping', 'warn');
+            break;
+          }
+        } else {
+          stallCount = 0;
+        }
       }
       return;
     }
@@ -2136,13 +2174,17 @@ function drawLandscapeScore(){
   ctx.fillStyle = '#000'; ctx.fillRect(0,0,W,H);
   const rows = runsAtAlt().sort((a,b) => a.bias-b.bias);
   if(!rows.length){ ctx.fillStyle = '#9aa'; ctx.font = '12px monospace'; ctx.textAlign = 'center'; ctx.fillText('no runs at LB alt '+curAlt()+' km yet', W/2, H/2); return; }
-  const bs = rows.map(r => r.bias), bMin = Math.min.apply(null,bs), bMax = Math.max.apply(null,bs);
   const oks = rows.filter(r => r.ok && Number.isFinite(r.score));
   if(!oks.length){
     ctx.fillStyle = '#ff4d5e'; ctx.font = '12px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText('no successful landing yet ('+rows.length+' probes failed)', W/2, H/2);
     return;
   }
+  // When ANY eval landed, plot only the ok evals. Including far fails
+  // (e.g. a crash probe at 300km) stretches the x-axis so badly that the
+  // ~10 successful evals near the pad collapse to 1px in the middle.
+  const plotRows = oks;
+  const bs = plotRows.map(r => r.bias), bMin = Math.min.apply(null,bs), bMax = Math.max.apply(null,bs);
   const sMin = Math.min.apply(null, oks.map(r=>r.score)), sMax = Math.max.apply(null, oks.map(r=>r.score));
   const sPad = Math.max(0.5, (sMax-sMin)*0.12), sLo = sMin-sPad, sHi = sMax+sPad;
   const bSpan = Math.max(1e-9, bMax-bMin);
@@ -2162,10 +2204,9 @@ function drawLandscapeScore(){
   let started = false;
   for(const r of oks){ const x = X(r.bias), y = Y(r.score); if(!started){ ctx.moveTo(x,y); started = true; } else ctx.lineTo(x,y); }
   ctx.stroke();
-  for(const r of rows){
+  for(const r of plotRows){
     const x = X(r.bias);
-    if(r.ok && Number.isFinite(r.score)){ ctx.fillStyle = '#ffb020'; ctx.beginPath(); ctx.arc(x,Y(r.score),3.5,0,Math.PI*2); ctx.fill(); }
-    else { ctx.fillStyle = '#ff4d5e'; ctx.beginPath(); ctx.arc(x,padT+ph-6,3,0,Math.PI*2); ctx.fill(); }
+    ctx.fillStyle = '#ffb020'; ctx.beginPath(); ctx.arc(x,Y(r.score),3.5,0,Math.PI*2); ctx.fill();
   }
   const best = oks.reduce((a,r) => (!a || r.score < a.score) ? r : a, null);
   const bx = X(best.bias), by = Y(best.score), right = bx > W*0.7;
@@ -2187,13 +2228,17 @@ function drawLandscapeDr(){
   ctx.fillStyle = '#000'; ctx.fillRect(0,0,W,H);
   const rows = runsAtAlt().sort((a,b) => a.bias-b.bias);
   if(!rows.length){ ctx.fillStyle = '#9aa'; ctx.font = '12px monospace'; ctx.textAlign = 'center'; ctx.fillText('no runs at LB alt '+curAlt()+' km yet', W/2, H/2); return; }
-  const bs = rows.map(r => r.bias), bMin = Math.min.apply(null,bs), bMax = Math.max.apply(null,bs);
   const okRows = rows.filter(r => r.ok && r.m && r.m.contact && Number.isFinite(r.m.contact.downrange));
   if(!okRows.length){
     ctx.fillStyle = '#ff4d5e'; ctx.font = '12px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText('no successful landing yet ('+rows.length+' probes failed)', W/2, H/2);
     return;
   }
+  // Hide failed evals (same rationale as score chart) so the successful
+  // cluster around the pad isn't compressed to a 1px column by a far
+  // crash probe.
+  const plotRowsDr = okRows;
+  const bs = plotRowsDr.map(r => r.bias), bMin = Math.min.apply(null,bs), bMax = Math.max.apply(null,bs);
   const drs = okRows.map(r => r.m.contact.downrange);
   let dMin = Math.min.apply(null, drs), dMax = Math.max.apply(null, drs);
   // Ensure 0 is inside the view so the pad-center reference line is visible.
@@ -2227,17 +2272,14 @@ function drawLandscapeDr(){
   let started = false;
   for(const r of okRows){ const x = X(r.bias), y = Y(r.m.contact.downrange); if(!started){ ctx.moveTo(x,y); started = true; } else ctx.lineTo(x,y); }
   ctx.stroke();
-  // Points — cyan for ok, red for fail (pinned to bottom, no dr to plot)
-  for(const r of rows){
+  // Points — only ok evals (fails hidden; far crash probes would compress
+  // the cluster to 1px).
+  for(const r of plotRowsDr){
     const x = X(r.bias);
-    if(r.ok && r.m && r.m.contact && Number.isFinite(r.m.contact.downrange)){
-      ctx.fillStyle = '#35d6ff'; ctx.beginPath(); ctx.arc(x, Y(r.m.contact.downrange), 3.5, 0, Math.PI*2); ctx.fill();
-    } else {
-      ctx.fillStyle = '#ff4d5e'; ctx.beginPath(); ctx.arc(x, padT+ph-6, 3, 0, Math.PI*2); ctx.fill();
-    }
+    ctx.fillStyle = '#35d6ff'; ctx.beginPath(); ctx.arc(x, Y(r.m.contact.downrange), 3.5, 0, Math.PI*2); ctx.fill();
   }
   // Ring best-by-score (score is the ranking the user cares about, not |dr|)
-  const best = rows.filter(r => r.ok && r.m && r.m.contact && Number.isFinite(r.m.contact.downrange))
+  const best = plotRowsDr
     .reduce((a,r) => (!a || r.score < a.score) ? r : a, null);
   if(best){
     const bx = X(best.bias), by = Y(best.m.contact.downrange), right = bx > W*0.7;
