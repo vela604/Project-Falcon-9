@@ -563,10 +563,21 @@ function fuelOf(b){
 function getXfromPad(bB, simT){
   const r = Math.hypot(bB.rx, bB.ry);
   const phiNow = Math.atan2(bB.rx, bB.ry) - CONFIG.EARTH_OMEGA * simT;
-  const padArr = (CONFIG.LANDING_PADS || []).filter(p => p.id === 'LZ-1');
-  const pad = padArr.length ? padArr[0] : { arcOffsetM: 400 };
+  // D3.1: Mode-aware target pad. RTLS uses LZ-1 (fixed at launch site);
+  // ASDS uses the ACTIVE droneship (S.asdsPad, updated per-eval by
+  // runBiasEval after setASDSPosition returns appliedKm). Without this,
+  // downrange is always launch-relative → in ASDS mode dr never changes
+  // as the droneship moves, and the bias walk diverges by the full natural
+  // impact offset every step (300km → 628km → 956km → ...).
+  let targetArcOffsetM;
+  if (S.mode === 'ASDS' && S.asdsPad && Number.isFinite(S.asdsPad.arcOffsetM)) {
+    targetArcOffsetM = S.asdsPad.arcOffsetM;
+  } else {
+    const padArr = (CONFIG.LANDING_PADS || []).filter(p => p.id === 'LZ-1');
+    targetArcOffsetM = padArr.length ? (padArr[0].arcOffsetM || 0) : 400;
+  }
   const Rg = CONFIG.EARTH_RADIUS + (CONFIG.LAUNCH_SITE_ALTITUDE || 0);
-  const padEf = (CONFIG.LAUNCH_SITE_ANGLE_0 || 0) + (pad.arcOffsetM || 0) / Rg;
+  const padEf = (CONFIG.LAUNCH_SITE_ANGLE_0 || 0) + targetArcOffsetM / Rg;
   let xRad = phiNow - padEf;
   while(xRad > Math.PI) xRad -= 2*Math.PI;
   while(xRad < -Math.PI) xRad += 2*Math.PI;
