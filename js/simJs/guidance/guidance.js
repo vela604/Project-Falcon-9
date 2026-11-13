@@ -1036,6 +1036,14 @@ const _lbState = {
   suicideBlock: null,
   rtlsBlock: null,        // standardRTLS (booster) — handed over after SEPARATED_AXIAL
 
+  // ASDS mission support — mission type drives these.
+  //   asdsSpec     : { name, km } parsed from TARGET_LANDING_PAD (e.g. "HOPE,140")
+  //   asdsPad      : actual pad returned by deployASDS() after name/pos adjustment
+  //   asdsDeployed : one-shot flag — deploy only fires once per guide session
+  asdsSpec: null,
+  asdsPad: null,
+  asdsDeployed: false,
+
   mecoTriggered: false,
   splitDetected: false,
   fairingOpened: false,
@@ -1105,8 +1113,46 @@ const _LB_FALLBACK_PADS = [
   { id: 'LZ-3', arcOffsetM: 1000 },
 ];
 let _lbPadWarned = false;
+// Parse a TARGET_LANDING_PAD spec string for ASDS mode.
+//   "HOPE,140"  -> { name: 'HOPE', km: 140 }
+//   "HOPE"      -> { name: 'HOPE', km: 140 }     (default position)
+//   "HOPE,abc"  -> fallback
+//   garbage     -> fallback
+// Fallback is always the same ({ HOPE, 140 }) so a malformed preset produces
+// a predictable mission state rather than an unpredictable crash.
+function _parseASDSSpec(str) {
+  const FALLBACK = { name: 'HOPE', km: 140 };
+  if (typeof str !== 'string') return FALLBACK;
+  const parts = str.split(',');
+  const name = (parts[0] || '').trim();
+  if (!name) return FALLBACK;
+  // If only the name was given, use the default position.
+  if (parts.length === 1) return { name: name, km: 140 };
+  // Name + km.
+  const kmStr = (parts[1] || '').trim();
+  const km = parseFloat(kmStr);
+  if (!Number.isFinite(km) || km <= 0) return FALLBACK;
+  return { name: name, km: km };
+}
+
 function _lbResolveTargetPad() {
   const env = Derivation.getEnv() || {};
+  // ASDS mode: guidance owns the deployed pad — return it directly. No env
+  // lookup, no CONFIG lookup. Name/id/position/heightM all come from the
+  // object deployASDS() actually created, which already accounts for any
+  // collision-renames or position-nudges.
+  if (_lbConfig.rtls && _lbConfig.rtls.MISSION_TYPE === 'ASDS' && _lbState.asdsPad) {
+    const p = _lbState.asdsPad;
+    const Rg = env.EARTH_RADIUS + (env.LAUNCH_SITE_ALTITUDE || 0);
+    const angleEf = (env.LAUNCH_SITE_ANGLE_0 || 0) + p.arcOffsetM / Rg;
+    return {
+      id: p.id,
+      name: p.name,
+      arcOffsetM: p.arcOffsetM,
+      angleEf: angleEf,
+      heightM: Number.isFinite(p.heightM) ? p.heightM : 0,
+    };
+  }
   const id = (_lbConfig.mission && _lbConfig.mission.TARGET_LANDING_PAD) || 'LZ-1';
   // Live CONFIG.LANDING_PADS preferred over the boot-time env snapshot
   // when CONFIG is in scope. Main-thread pages (lb-nova6, testers) have
@@ -1180,6 +1226,36 @@ function _landbackTick(snapshot) {
 
     _lbState.ascentBlock = FUNDAMENTAL_BLOCKS.ascent.createInstance();
     _lbState.ascentBlock.start(_lbConfig.ascent, 0, {});
+  }
+
+  // ---- ASDS deploy (mission type = ASDS) ----
+  // Deploy the droneship once at mission start, before ASCENT hands off.
+  // The pad returned by deployASDS() is authoritative — guidance stores it
+  // and uses it for target lookup (never re-derives from env/CONFIG). Name
+  // and position may differ from the request (HOPE → HOPE-1 on collision,
+  // ±10 km nudge on ocean/gap conflict); we always use what was applied.
+  if (_lbConfig.rtls && _lbConfig.rtls.MISSION_TYPE === 'ASDS' && !_lbState.asdsDeployed) {
+    _lbState.asdsDeployed = true;
+    const _specStr = (_lbConfig.mission && _lbConfig.mission.TARGET_LANDING_PAD) || '';
+    _lbState.asdsSpec = _parseASDSSpec(_specStr);
+    const _deployFn = (typeof globalThis.deployASDS === 'function') ? globalThis.deployASDS : null;
+    if (_deployFn) {
+      const _result = _deployFn(_lbState.asdsSpec.name, _lbState.asdsSpec.km);
+      if (_result && _result.ok) {
+        _lbState.asdsPad = _result.pad;
+        console.log('[landbackV1] ASDS deployed: ' + _result.appliedName +
+          ' @ ' + _result.appliedKm.toFixed(2) + ' km, height=' + _result.appliedHeightM + 'm' +
+          (_result.wasNameAdjusted ? ' (renamed from "' + _result.requestedName + '")' : '') +
+          (_result.wasPositionAdjusted ? ' (moved from ' + _result.requestedKm.toFixed(2) + ' km)' : ''));
+      } else {
+        console.warn('[landbackV1] ASDS deploy FAILED: ' + (_result && _result.error || 'unknown') +
+          ' — mission continues with fallback targeting');
+        _lbState.asdsPad = null;
+      }
+    } else {
+      console.warn('[landbackV1] globalThis.deployASDS not available in this context — ASDS mission will fall back to launch-site targeting');
+      _lbState.asdsPad = null;
+    }
   }
 
   // ---- Mission-level fairing auto-open (phase-independent) ----
@@ -1470,6 +1546,9 @@ _lbState.lastAltKm = 0;
 _lbState.lastAxialGap = 0;
 _lbState.lateralArmed = false;
 _lbState.pusherTorqueFired = false;
+_lbState.asdsSpec = null;
+_lbState.asdsPad = null;
+_lbState.asdsDeployed = false;
 console.log('[landbackV1] started');
 };
 
@@ -1482,6 +1561,9 @@ _landbackTick.stop = function () {
   _lbState.insertionBlock = null;
   _lbState.suicideBlock = null;
   _lbState.rtlsBlock = null;
+  _lbState.asdsSpec = null;
+  _lbState.asdsPad = null;
+  _lbState.asdsDeployed = false;
   console.log('[landbackV1] stopped');
 };
 
