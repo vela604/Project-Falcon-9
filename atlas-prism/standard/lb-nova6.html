@@ -130,7 +130,7 @@
           <label>pos lo m <input type="number" id="posLo" step="100" value="200000"></label>
           <label>pos hi m <input type="number" id="posHi" step="100" value="5000000"></label>
           <label>start m <input type="number" id="posStart" step="100" value="300000"></label>
-          <label>min step m <input type="number" id="posMinStep" step="0.1" min="0.05" value="0.5"></label>
+          <label>min step m <input type="number" id="posMinStep" step="0.05" min="0.02" value="0.1"></label>
         </div>
         <div class="note">droneship deployed via setASDSPosition per eval &middot; guidance snapshot's targetPad patched &middot; metre-level precision</div>
       </div>
@@ -1463,7 +1463,7 @@ async function searchBracket(evalFn, o, onProgress){
       let p1 = { b: lo, dr: drLo };
       let p2 = { b: hi, dr: drHi };
       let stallCount = 0;
-      for (let iter = 0; iter < 15; iter++) {
+      for (let iter = 0; iter < 25; iter++) {
         if (stop()) break;
         if (Math.abs(hi - lo) <= minStep) break;
         const slope = (p2.dr - p1.dr) / (p2.b - p1.b);
@@ -1489,7 +1489,9 @@ async function searchBracket(evalFn, o, onProgress){
         const drN = r && r.m && r.m.contact ? r.m.contact.downrange : NaN;
         if (!Number.isFinite(drN)) break;
         if (Math.abs(drN) <= minStep) {
-          log('[search] secant converged |dr|=' + Math.abs(drN).toFixed(3) + 'm @ bias=' + next.toFixed(1) + ' (bracket w=' + (hi-lo).toFixed(2) + 'm)', 'ok');
+          const _step = Math.abs(next - p2.b);
+          log('[search] secant converged |dr|=' + Math.abs(drN).toFixed(3) + 'm @ bias=' + next.toFixed(1) +
+              ' (last step=' + _step.toFixed(1) + 'm, minStep=' + minStep + 'm)', 'ok');
           break;
         }
         // Update bracket
