@@ -1529,7 +1529,10 @@ async function doAltSearch(){
   $('altResults').innerHTML = '<div class="empty">ALT SEARCH running\u2026</div>';
   clearLive(); setChip('running'); setStage('scan');
 
-  let bias = +$('biasStart').value;
+  // Mode-aware starting target — same variable "bias" throughout doAltSearch
+  // (semantically: RTLS=bias in metres, ASDS=droneship position in metres).
+  let bias = (S.mode === 'ASDS') ? (+$('posStart').value) : (+$('biasStart').value);
+  if(!Number.isFinite(bias)) bias = (S.mode === 'ASDS') ? 300000 : -750;
   const cache = new Map();
 
   const evalAlt = async (a, bOverride) => {
@@ -1551,17 +1554,23 @@ async function doAltSearch(){
     let workingBias = bias;
     let lastCalM = null;
     let lastCalBias = bias;
+    // RTLS: bias -= dr. ASDS: pos += dr. Same sign convention as searchBracket
+    // walk (dr east → RTLS bias more negative / ASDS pos more positive).
+    const _altWalkSign = (S.mode === 'ASDS') ? +1 : -1;
+    const _calLbl = function(v){
+      return (S.mode === 'ASDS') ? ('pos=' + (v/1000).toFixed(3) + 'km') : ('bias=' + v.toFixed(1));
+    };
     for(let ci = 1; ci <= CAL_MAX; ci++){
       lastCalBias = workingBias;
       const m = await evalAlt(a0, workingBias);
       lastCalM = m;
       const dr = m.contact ? m.contact.downrange : NaN;
-      log('[alt] calibrate #' + ci + ' alt=' + a0.toFixed(2) + ' km bias=' + workingBias.toFixed(1) +
+      log('[alt] calibrate #' + ci + ' alt=' + a0.toFixed(2) + ' km ' + _calLbl(workingBias) +
           ' dr=' + (Number.isFinite(dr) ? dr.toFixed(1) + 'm' : 'no-contact'),
           Number.isFinite(dr) ? 'ok' : 'warn');
       if(!Number.isFinite(dr)) break;
       if(Math.abs(dr) <= CAL_TOL) break;
-      const nextB = Math.round((workingBias - dr) * 10) / 10;
+      const nextB = Math.round((workingBias + _altWalkSign * dr) * 10) / 10;
       if(nextB === workingBias) break;
       workingBias = nextB;
     }
@@ -1572,21 +1581,21 @@ async function doAltSearch(){
         const c0 = altCost(lastCalM);
         const r0 = { alt: a0r, bias, cost: c0.cost, ok: !!c0.ok, fail: c0.fail, parts: c0.parts, m: lastCalM };
         cache.set(a0r, r0); S.altRuns.push(r0);
-        log('[alt] seeded sweep @ alt=' + a0r.toFixed(2) + ' from calibration (bias=' + bias.toFixed(1) + ')', '');
+        log('[alt] seeded sweep @ alt=' + a0r.toFixed(2) + ' from calibration (' + _calLbl(bias) + ')', '');
       }
     }
 
     const probe = async a => {
       a = r2(clampA(a));
       if(cache.has(a)) return cache.get(a);
-      log('[alt] eval alt=' + a.toFixed(2) + ' km @ bias=' + bias.toFixed(1));
+      log('[alt] eval alt=' + a.toFixed(2) + ' km @ ' + _calLbl(bias));
       let usedBias = bias;
       let m = await evalAlt(a, usedBias);
       // Per-alt drift correction: if dr drifted at THIS alt, one more jump.
       const dr1 = m.contact ? m.contact.downrange : NaN;
       if(Number.isFinite(dr1) && Math.abs(dr1) > CAL_TOL){
-        usedBias = Math.round((bias - dr1) * 10) / 10;
-        log('[alt]   dr=' + dr1.toFixed(1) + 'm > ' + CAL_TOL + ' \u2192 re-eval @ bias=' + usedBias.toFixed(1), 'warn');
+        usedBias = Math.round((bias + _altWalkSign * dr1) * 10) / 10;
+        log('[alt]   dr=' + dr1.toFixed(1) + 'm > ' + CAL_TOL + ' \u2192 re-eval @ ' + _calLbl(usedBias), 'warn');
         m = await evalAlt(a, usedBias);
       }
       const c = altCost(m);
@@ -1658,10 +1667,17 @@ async function doAltSearch(){
       S.altBest = tied.reduce((a, r) => Math.abs(r.alt - mid) < Math.abs(a.alt - mid) ? r : a);
       S.altTied = tied;
       $('lbAlt').value = S.altBest.alt;
-      $('biasStart').value = bias;       // seed the bias search near the pad
+      // Seed the correct follow-up field based on mode (RTLS uses biasStart,
+      // ASDS uses posStart — those are the search entry points for the
+      // respective modes' doScan manual scan).
+      if (S.mode === 'ASDS') {
+        $('posStart').value = bias;
+      } else {
+        $('biasStart').value = bias;
+      }
       log('Alt search complete. LB alt=' + S.altBest.alt.toFixed(2) + ' km (tied-best span ' +
           tied[0].alt.toFixed(2) + '\u2013' + tied[tied.length - 1].alt.toFixed(2) + ' km, cost ' + S.altBest.cost.toFixed(2) +
-          '), probe bias=' + bias.toFixed(1), 'ok');
+          '), probe ' + _calLbl(bias), 'ok');
     } else {
       log('Alt search: no altitude in [' + lo + ', ' + hi + '] landed cleanly \u2014 widen range or check stack.', 'warn');
     }
