@@ -633,6 +633,8 @@ function markStale(){
   S.inited = false;
   document.querySelectorAll('[data-init-lock="1"]').forEach(function(el){ el.disabled = false; });
   S.asdsPad = null;
+  if($('manualPosBtn')) $('manualPosBtn').disabled = true;
+  if($('manualPosSweepBtn')) $('manualPosSweepBtn').disabled = true;
   $('scanBtn').disabled = true; $('altBtn').disabled = true;
   const st = $('initStatus'); st.classList.add('stale');
   st.textContent = 'Config changed — snapshots are stale. Run INIT captures again.';
@@ -830,6 +832,8 @@ async function doInit(){
     $('scanBtn').disabled = false; $('altBtn').disabled = false;
     $('manualBtn').disabled = false;
     $('manualSweepBtn').disabled = false;
+    if($('manualPosBtn')) $('manualPosBtn').disabled = false;
+    if($('manualPosSweepBtn')) $('manualPosSweepBtn').disabled = false;
     setChip('ready'); setStage('init');
     log('Init complete. Ready for bias search.', 'ok');
   } catch(e){
@@ -1455,6 +1459,8 @@ async function doScan(){
     S.running = false;
     stopElapsedTimer();
     $('scanBtn').disabled = !S.inited; $('altBtn').disabled = !S.inited; $('scanStopBtn').disabled = true; $('initBtn').disabled = false;
+    if($('manualPosBtn')) $('manualPosBtn').disabled = !S.inited;
+    if($('manualPosSweepBtn')) $('manualPosSweepBtn').disabled = !S.inited;
     setChip('ready'); setStage('results');
   }
 }
@@ -1724,13 +1730,17 @@ function renderAltResults(){
 async function doManualSweep(){
   if(S.running) return;
   if(!S.inited){ log('Run INIT first.', 'warn'); return; }
-  const lo = parseFloat($('sweepLo').value);
-  const hi = parseFloat($('sweepHi').value);
-  const N = parseInt($('sweepN').value, 10);
+  const isASDS = (S.mode === 'ASDS');
+  const _loEl = isASDS ? $('posSweepLo') : $('sweepLo');
+  const _hiEl = isASDS ? $('posSweepHi') : $('sweepHi');
+  const _nEl = isASDS ? $('posSweepN') : $('sweepN');
+  const lo = parseFloat(_loEl.value);
+  const hi = parseFloat(_hiEl.value);
+  const N = parseInt(_nEl.value, 10);
   if(!Number.isFinite(lo) || !Number.isFinite(hi) || !Number.isFinite(N) || N < 1){
-    log('Sweep: invalid params (need numeric lo, hi, N\u22651)', 'err'); return;
+    log('Sweep [' + S.mode + ']: invalid params (need numeric lo, hi, N\u22651)', 'err'); return;
   }
-  if(lo > hi){ log('Sweep: need lo \u2264 hi', 'err'); return; }
+  if(lo > hi){ log('Sweep [' + S.mode + ']: need lo \u2264 hi', 'err'); return; }
 
   const biases = [];
   if(N === 1) biases.push(+lo.toFixed(4));
@@ -1746,7 +1756,7 @@ async function doManualSweep(){
   startElapsedTimer();
   clearLive();
 
-  log('Sweep: [' + lo + ', ' + hi + '] N=' + N +
+  log('Sweep [' + S.mode + ']: [' + lo + ', ' + hi + '] N=' + N +
       (N > 1 ? ' step=' + ((hi-lo)/(N-1)).toFixed(3) : ''), 'ok');
 
   try {
@@ -1754,7 +1764,7 @@ async function doManualSweep(){
       if(S.abort){ log('Sweep: aborted at ' + i + '/' + biases.length, 'warn'); break; }
       const b = biases[i];
       $('sweepStatus').textContent = 'eval ' + (i+1) + '/' + N + ' \u00b7 bias=' + b.toFixed(2);
-      log('Sweep eval ' + (i+1) + '/' + N + ': bias=' + b.toFixed(2));
+      log('Sweep eval ' + (i+1) + '/' + N + ': ' + (isASDS ? ('pos='+(b/1000).toFixed(3)+'km') : ('bias='+b.toFixed(2))));
       setFlightPhase('', null);
       const t0 = performance.now();
       try {
@@ -1773,7 +1783,8 @@ async function doManualSweep(){
         const _drS = Number.isFinite(_dr) ? ' dr=' + _dr.toFixed(1) + 'm' : '';
         const _lbO = (r.m && Number.isFinite(r.m.lb_overshoot_m)) ? r.m.lb_overshoot_m : NaN;
         const _lbOS = Number.isFinite(_lbO) ? ' lbOver=' + _lbO.toFixed(2) + 'm' : '';
-        log('  \u2192 bias=' + b.toFixed(2) + ' score=' + sc.score.toFixed(3) + _drS + _lbOS + (sc.fail ? ' [' + sc.fail + ']' : ''), r.ok ? 'ok' : 'warn');
+        const _lbl3 = isASDS ? ('pos='+(b/1000).toFixed(3)+'km') : ('bias='+b.toFixed(2));
+        log('  \u2192 ' + _lbl3 + ' score=' + sc.score.toFixed(3) + _drS + _lbOS + (sc.fail ? ' [' + sc.fail + ']' : ''), r.ok ? 'ok' : 'warn');
       } catch(e){
         log('Sweep eval error @ bias=' + b.toFixed(2) + ': ' + e.message, 'err');
       }
@@ -1797,8 +1808,13 @@ async function doManualSweep(){
 async function doManualEval(){
   if(S.running) return;
   if(!S.inited){ log('Run INIT first.', 'warn'); return; }
-  const b = parseFloat($('biasManual').value);
-  if(!Number.isFinite(b)){ log('Manual: invalid bias', 'err'); return; }
+  const isASDS = (S.mode === 'ASDS');
+  const _inpEl = isASDS ? $('posManual') : $('biasManual');
+  const b = parseFloat(_inpEl.value);
+  if(!Number.isFinite(b)){
+    log('Manual [' + S.mode + ']: invalid ' + (isASDS?'pos':'bias'), 'err');
+    return;
+  }
 
   S.running = true; S.abort = false;
   $('manualBtn').disabled = true;
@@ -1809,7 +1825,7 @@ async function doManualEval(){
   clearLive();
 
   try {
-    log('Manual eval: bias=' + b.toFixed(2));
+    log('Manual [' + S.mode + ']: ' + (isASDS ? ('pos='+(b/1000).toFixed(3)+'km') : ('bias='+b.toFixed(2))));
     setFlightPhase('', null);
     const t0 = performance.now();
     const m = await runBiasEval(b, (prog) => { paintLive(prog); });
@@ -1827,7 +1843,8 @@ async function doManualEval(){
     const _drS = Number.isFinite(_dr) ? ' dr='+_dr.toFixed(1)+'m' : '';
     const _lbO = (r.m && Number.isFinite(r.m.lb_overshoot_m)) ? r.m.lb_overshoot_m : NaN;
     const _lbOS = Number.isFinite(_lbO) ? ' lbOver='+_lbO.toFixed(2)+'m' : '';
-    log('  → bias=' + b.toFixed(2) + ' score=' + sc.score.toFixed(3) + _drS + _lbOS + (sc.fail ? ' ['+sc.fail+']' : ''), r.ok ? 'ok' : 'warn');
+    const _lbl2 = isASDS ? ('pos='+(b/1000).toFixed(3)+'km') : ('bias='+b.toFixed(2));
+    log('  → ' + _lbl2 + ' score=' + sc.score.toFixed(3) + _drS + _lbOS + (sc.fail ? ' ['+sc.fail+']' : ''), r.ok ? 'ok' : 'warn');
     renderResults();
   } catch(e){
     log('Manual eval error: ' + e.message, 'err');
@@ -2371,6 +2388,8 @@ function boot(){
   $('scanStopBtn').addEventListener('click', () => { S.abort = true; log('Stop requested', 'warn'); });
   $('manualBtn').addEventListener('click', doManualEval);
   $('manualSweepBtn').addEventListener('click', doManualSweep);
+  if($('manualPosBtn')) $('manualPosBtn').addEventListener('click', doManualEval);
+  if($('manualPosSweepBtn')) $('manualPosSweepBtn').addEventListener('click', doManualSweep);
   $('presetLoad').addEventListener('click', () => { applyPresetFromSel(); markStale(); });
 
   // Mission-mode toggle — swaps search / manual / sweep blocks between RTLS
