@@ -22,10 +22,10 @@
   // API). Auto-dismisses after ~2.8s. Self-created on first call.
   // ============================================================
   function _showASDSToast(msg, ok) {
-    // DIAGNOSTIC: log to confirm the function is being CALLED. If this
-    // line doesn't appear in console, the deploy code path is broken
-    // before reaching this. If it appears but toast isn't visible, it's
-    // a CSS/stacking issue below.
+    // Worker context (guidance worker, worker-sim): no DOM, no toast.
+    // Silent no-op — deploy/move must still succeed in worker environments
+    // so guidance-driven deploys work.
+    if (typeof document === 'undefined') return;
     console.log('[ASDS-TOAST] called:', msg);
     
     let el = document.getElementById('asdsToast');
@@ -88,7 +88,7 @@
   // Ship west edge is LZ_WEST_M west of arcOffsetM; east edge is LZ_EAST_M east.
   const LZ_WEST_M = 54;
   const LZ_EAST_M = 37;
-  const MIN_GAP_M = 250;
+  const MIN_GAP_M = 120;
   const LANDING_RADIUS_M = 35;   // usable landing zone half-width
   const DECK_HEIGHT_M = 2;        // deck above sea level (rocket lands here)
 
@@ -106,106 +106,139 @@
     return CONFIG.LANDING_PADS.filter(p => p && p.isASDS);
   }
 
-  function deployASDS(xMeters) {
-    if (!Number.isFinite(xMeters)) {
-      return { ok: false, error: 'Offset must be a finite number.' };
+  function deployASDS(arg0, arg1, arg2) {
+    // Signature: deployASDS(name?, km?, heightM?)
+    //   deployASDS()               -> ASDS @ 185 km, height 2 m
+    //   deployASDS('HOPE')         -> HOPE @ 185 km, height 2 m
+    //   deployASDS('HOPE', 140)    -> HOPE @ 140 km, height 2 m
+    //   deployASDS('HOPE', 140, 3) -> HOPE @ 140 km, height 3 m
+    // Legacy: deployASDS(xMeters) -> ASDS @ xMeters/1000 km, height 2 m
+    let name = 'ASDS', km = 185, heightM = 2;
+    if (typeof arg0 === 'number' && arg1 === undefined) {
+      km = arg0 / 1000;
+    } else {
+      if (typeof arg0 === 'string') name = String(arg0).trim() || 'ASDS';
+      if (typeof arg1 === 'number') km = arg1;
+      if (typeof arg2 === 'number') heightM = arg2;
     }
-    xMeters = Math.round(xMeters);
+    if (!Number.isFinite(km)) {
+      return { ok: false, error: 'km must be a finite number', requestedName: name, requestedKm: km, requestedHeightM: heightM };
+    }
+    if (!Number.isFinite(heightM) || heightM < 0) heightM = 2;
+
+    if (!CONFIG.LANDING_PADS) CONFIG.LANDING_PADS = [];
+    const existing = CONFIG.LANDING_PADS.filter(function (p) { return p && p.isASDS; });
+
+    // ---- Name collision: HOPE -> HOPE-1 -> HOPE-2 ... ----
+    const takenNames = new Set();
+    for (let i = 0; i < CONFIG.LANDING_PADS.length; i++) {
+      const p = CONFIG.LANDING_PADS[i];
+      if (p && p.name) takenNames.add(p.name);
+      if (p && p.id) takenNames.add(p.id);
+    }
+    let appliedName = name;
+    let wasNameAdjusted = false;
+    if (takenNames.has(name)) {
+      let found = false;
+      for (let i = 1; i < 100; i++) {
+        const cand = name + '-' + i;
+        if (!takenNames.has(cand)) { appliedName = cand; wasNameAdjusted = true; found = true; break; }
+      }
+      if (!found) {
+        return { ok: false, error: 'Could not find a free name based on "' + name + '"', requestedName: name, requestedKm: km, requestedHeightM: heightM };
+      }
+    }
+
+    // ---- Position: requested, then ±1..±10 km if ocean/gap fail ----
     const zone = _oceanZoneBounds();
-
-    // Ocean zone bounds check (with margin so hull edges stay inside)
-    const minOffset = zone.startM + LZ_WEST_M;
-    const maxOffset = zone.endM - LZ_EAST_M;
-    if (xMeters - LZ_WEST_M < zone.startM) {
-      return {
-        ok: false,
-        error: 'Western hull edge would be ' + Math.round(zone.startM - (xMeters - LZ_WEST_M)) +
-               ' m outside ocean. Minimum valid offset: ' + Math.round(minOffset) + ' m.'
-      };
+    const requestedM = Math.round(km * 1000);
+    function validPos(m) {
+      if (m - LZ_WEST_M < zone.startM) return false;
+      if (m + LZ_EAST_M > zone.endM) return false;
+      for (let i = 0; i < existing.length; i++) {
+        const gap = Math.abs(m - existing[i].arcOffsetM) - ASDS_LENGTH_M;
+        if (gap < MIN_GAP_M) return false;
+      }
+      return true;
     }
-    if (xMeters + LZ_EAST_M > zone.endM) {
-      return {
-        ok: false,
-        error: 'Eastern hull edge would be ' + Math.round((xMeters + LZ_EAST_M) - zone.endM) +
-               ' m outside ocean. Maximum valid offset: ' + Math.round(maxOffset) + ' m.'
-      };
-    }
-
-    // Distance check against existing ASDS
-    const existing = _existingASDS();
-    for (let i = 0; i < existing.length; i++) {
-      const other = existing[i];
-      const centerGap = Math.abs(xMeters - other.arcOffsetM);
-      const hullEdgeGap = centerGap - ASDS_LENGTH_M;
-      if (hullEdgeGap < MIN_GAP_M) {
+    let appliedM = requestedM;
+    let wasPositionAdjusted = false;
+    if (!validPos(requestedM)) {
+      let found = false;
+      for (let d = 1000; d <= 10000; d += 1000) {
+        if (validPos(requestedM + d)) { appliedM = requestedM + d; wasPositionAdjusted = true; found = true; break; }
+        if (validPos(requestedM - d)) { appliedM = requestedM - d; wasPositionAdjusted = true; found = true; break; }
+      }
+      if (!found) {
         return {
           ok: false,
-          error: 'Too close to ' + other.name +
-                 '. Hull-edge gap: ' + Math.round(hullEdgeGap) + ' m (minimum: ' + MIN_GAP_M +
-                 ' m). Need at least ' + (Math.abs(other.arcOffsetM) + ASDS_LENGTH_M + MIN_GAP_M) +
-                 ' m separation from ' + other.name + ' (or ' +
-                 Math.max(0, Math.abs(other.arcOffsetM) - ASDS_LENGTH_M - MIN_GAP_M) + ' m on the near side).'
+          error: 'No valid ASDS position within ±10 km of ' + km + ' km (ocean bounds or 120 m gap conflict).',
+          requestedName: name, requestedKm: km, requestedHeightM: heightM,
         };
       }
     }
 
-    // Deploy
-    const idx = existing.length + 1;
+    // ---- Deploy ----
     const pad = {
-      id: 'asds-' + idx,
-      name: 'ASDS-' + idx,
+      id: appliedName,
+      name: appliedName,
       radiusM: LANDING_RADIUS_M,
-      arcOffsetM: xMeters,
-      heightM: DECK_HEIGHT_M,
+      arcOffsetM: appliedM,
+      heightM: heightM,
       lengthM: ASDS_LENGTH_M,
       enabled: true,
       isASDS: true,
       lights: false,
     };
     CONFIG.LANDING_PADS.push(pad);
-    // Broadcast to workers — each has its OWN CONFIG instance (loaded
-    // via importScripts at worker boot). Without this, ASDS appears on
-    // main thread's CONFIG but render/physics workers never see it →
-    // planet view shows no marker (LZ-1/2/3 exist at init in all threads,
-    // but runtime-added ASDS is invisible to workers).
-    const _padSnapshot = JSON.parse(JSON.stringify(pad));
+
+    // ---- Broadcast to other contexts (worker-safe) ----
+    const _snap = JSON.parse(JSON.stringify(pad));
     try {
       if (typeof WorkerBridge !== 'undefined' && WorkerBridge.send) {
-        WorkerBridge.send({ type: 'addLandingPad', pad: _padSnapshot });
-        console.log('[ASDS] physics worker notified');
+        WorkerBridge.send({ type: 'addLandingPad', pad: _snap });
       }
-    } catch (e) { console.warn('[ASDS] physics broadcast failed', e); }
+    } catch (e) { console.warn('[ASDS] WorkerBridge broadcast failed', e); }
     try {
-      if (window._renderWorker) {
-        window._renderWorker.postMessage({ type: 'addLandingPad', pad: _padSnapshot });
-        console.log('[ASDS] render worker notified');
+      if (typeof window !== 'undefined' && window._renderWorker) {
+        window._renderWorker.postMessage({ type: 'addLandingPad', pad: _snap });
       }
     } catch (e) { console.warn('[ASDS] render broadcast failed', e); }
     try {
-      if (window._serenoPool && typeof window._serenoPool.broadcast === 'function') {
-        const n = window._serenoPool.broadcast({ type: 'addLandingPad', pad: _padSnapshot });
-        if (n > 0) console.log('[ASDS] ' + n + ' pool worker(s) notified');
+      if (typeof window !== 'undefined' && window._serenoPool && typeof window._serenoPool.broadcast === 'function') {
+        window._serenoPool.broadcast({ type: 'addLandingPad', pad: _snap });
       }
-    } catch (e) { console.warn('[ASDS] pool broadcast failed', e); }
-    console.log('[ASDS] Pad object:', JSON.stringify(pad));
-  console.log('[ASDS] Deployed ' + pad.name + ' at ' + (xMeters / 1000).toFixed(1) +
-                ' km downrange (' + Math.round(xMeters / CONFIG.EARTH_RADIUS * 180 / Math.PI).toFixed(2) + '° east)');
-    // Refresh follow-body dropdown so the new ASDS appears as a selectable
-    // camera target (alongside LZ-1/2/3). Without this the dropdown stays
-    // at its old contents until the next state-change event (body count
-    // change, FF complete) — user would never see ASDS-1 in the dropdown.
-    if (typeof refreshFollowBodySelect === 'function') refreshFollowBodySelect();
-    _showASDSToast('🛳 ' + pad.name + ' deployed at ' + (xMeters / 1000).toFixed(1) + ' km', true);
-    return { ok: true, pad };
+    } catch (e) { console.warn('[ASDS] sereno pool broadcast failed', e); }
+
+    try { if (typeof refreshFollowBodySelect === 'function') refreshFollowBodySelect(); } catch (e) {}
+    try { if (typeof forceRenderResync === 'function') forceRenderResync(); } catch (e) {}
+
+    return {
+      ok: true,
+      pad: pad,
+      requestedName: name,
+      appliedName: appliedName,
+      requestedKm: km,
+      appliedKm: appliedM / 1000,
+      requestedHeightM: heightM,
+      appliedHeightM: heightM,
+      wasNameAdjusted: wasNameAdjusted,
+      wasPositionAdjusted: wasPositionAdjusted,
+    };
   }
 
   // Wrap deployASDS so any caller (modal, guidance, future API) gets
   // the toast — even on validation failure. Single point of notification.
   const _origDeployASDS = deployASDS;
-  window.deployASDS = function (xMeters) {
-    const result = _origDeployASDS(xMeters);
+  globalThis.deployASDS = function (arg0, arg1, arg2) {
+    const result = _origDeployASDS(arg0, arg1, arg2);
     if (result && !result.ok && result.error) {
       _showASDSToast('⚠ ' + result.error, false);
+    } else if (result && result.ok) {
+      const parts = ['🛳 ' + result.appliedName + ' @ ' + result.appliedKm.toFixed(1) + ' km'];
+      if (result.wasNameAdjusted) parts.push('(renamed from ' + result.requestedName + ')');
+      if (result.wasPositionAdjusted) parts.push('(moved from ' + result.requestedKm.toFixed(1) + ' km)');
+      _showASDSToast(parts.join(' '), true);
     }
     return result;
   };
@@ -222,82 +255,63 @@
   // SILENT (no toast) — designed for tuner engine batch calls.
   // Validates ocean bounds + 250m gap (self excluded from gap check).
   // ============================================================
-  function setASDSPosition(padId, newXOffsetM) {
-    if (typeof padId !== 'string') {
-      return { ok: false, error: 'padId must be a string.' };
+  function setASDSPosition(padIdOrName, newKm) {
+    if (typeof padIdOrName !== 'string') {
+      return { ok: false, error: 'pad id/name must be a string.' };
     }
-    const pad = (CONFIG.LANDING_PADS || []).find(p => p.id === padId);
-    if (!pad) {
-      return { ok: false, error: 'Pad "' + padId + '" not found.' };
-    }
+    const pad = (CONFIG.LANDING_PADS || []).find(function (p) {
+      return p && (p.id === padIdOrName || p.name === padIdOrName);
+    });
+    if (!pad) return { ok: false, error: 'Pad "' + padIdOrName + '" not found.' };
     const isASDS = !!(pad.isASDS || (Number.isFinite(pad.lengthM) && pad.lengthM >= 50));
-    if (!isASDS) {
-      return { ok: false, error: 'Pad "' + padId + '" is not an ASDS.' };
-    }
-    if (!Number.isFinite(newXOffsetM)) {
-      return { ok: false, error: 'newXOffsetM must be a finite number.' };
-    }
-    newXOffsetM = Math.round(newXOffsetM);
+    if (!isASDS) return { ok: false, error: 'Pad "' + padIdOrName + '" is not an ASDS.' };
+    if (!Number.isFinite(newKm)) return { ok: false, error: 'newKm must be a finite number.' };
+
+    const xM = Math.round(newKm * 1000);
     const zone = _oceanZoneBounds();
-
-    if (newXOffsetM - LZ_WEST_M < zone.startM) {
-      return {
-        ok: false,
-        error: 'Western hull edge would be ' +
-               Math.round(zone.startM - (newXOffsetM - LZ_WEST_M)) +
-               ' m outside ocean. Minimum offset: ' + Math.round(zone.startM + LZ_WEST_M) + ' m.'
-      };
+    const others = _existingASDS().filter(function (p) { return p !== pad; });
+    function validPos(m) {
+      if (m - LZ_WEST_M < zone.startM) return false;
+      if (m + LZ_EAST_M > zone.endM) return false;
+      for (let i = 0; i < others.length; i++) {
+        const gap = Math.abs(m - others[i].arcOffsetM) - ASDS_LENGTH_M;
+        if (gap < MIN_GAP_M) return false;
+      }
+      return true;
     }
-    if (newXOffsetM + LZ_EAST_M > zone.endM) {
-      return {
-        ok: false,
-        error: 'Eastern hull edge would be ' +
-               Math.round((newXOffsetM + LZ_EAST_M) - zone.endM) +
-               ' m outside ocean. Maximum offset: ' + Math.round(zone.endM - LZ_EAST_M) + ' m.'
-      };
-    }
-
-    const others = _existingASDS().filter(p => p.id !== padId);
-    for (let i = 0; i < others.length; i++) {
-      const other = others[i];
-      const centerGap = Math.abs(newXOffsetM - other.arcOffsetM);
-      const hullEdgeGap = centerGap - ASDS_LENGTH_M;
-      if (hullEdgeGap < MIN_GAP_M) {
-        return {
-          ok: false,
-          error: 'Too close to ' + other.name +
-                 '. Hull-edge gap: ' + Math.round(hullEdgeGap) + ' m (min: ' + MIN_GAP_M + ' m).'
-        };
+    let appliedM = xM;
+    let wasPositionAdjusted = false;
+    if (!validPos(xM)) {
+      let found = false;
+      for (let d = 1000; d <= 10000; d += 1000) {
+        if (validPos(xM + d)) { appliedM = xM + d; wasPositionAdjusted = true; found = true; break; }
+        if (validPos(xM - d)) { appliedM = xM - d; wasPositionAdjusted = true; found = true; break; }
+      }
+      if (!found) {
+        return { ok: false, error: 'No valid ASDS position within ±10 km of ' + newKm + ' km.', requestedKm: newKm };
       }
     }
+    const oldOffset = pad.arcOffsetM;
+    pad.arcOffsetM = appliedM;
 
-    const oldOffsetM = pad.arcOffsetM;
-    pad.arcOffsetM = newXOffsetM;
+    const _snap = JSON.parse(JSON.stringify(pad));
+    try { if (typeof WorkerBridge !== 'undefined' && WorkerBridge.send) WorkerBridge.send({ type: 'moveLandingPad', pad: _snap }); } catch (e) {}
+    try { if (typeof window !== 'undefined' && window._renderWorker) window._renderWorker.postMessage({ type: 'moveLandingPad', pad: _snap }); } catch (e) {}
+    try { if (typeof window !== 'undefined' && window._serenoPool && typeof window._serenoPool.broadcast === 'function') window._serenoPool.broadcast({ type: 'moveLandingPad', pad: _snap }); } catch (e) {}
+    try { if (typeof refreshFollowBodySelect === 'function') refreshFollowBodySelect(); } catch (e) {}
+    try { if (typeof forceRenderResync === 'function') forceRenderResync(); } catch (e) {}
 
-    const _padSnapshot = JSON.parse(JSON.stringify(pad));
-    try {
-      if (typeof WorkerBridge !== 'undefined' && WorkerBridge.send) {
-        WorkerBridge.send({ type: 'moveLandingPad', pad: _padSnapshot });
-      }
-    } catch (e) { console.warn('[ASDS] physics move broadcast failed', e); }
-    try {
-      if (window._renderWorker) {
-        window._renderWorker.postMessage({ type: 'moveLandingPad', pad: _padSnapshot });
-      }
-    } catch (e) { console.warn('[ASDS] render move broadcast failed', e); }
-    try {
-      if (window._serenoPool && typeof window._serenoPool.broadcast === 'function') {
-        window._serenoPool.broadcast({ type: 'moveLandingPad', pad: _padSnapshot });
-      }
-    } catch (e) { console.warn('[ASDS] pool move broadcast failed', e); }
-
-    console.log('[ASDS] Moved ' + pad.name + ': ' +
-                (oldOffsetM / 1000).toFixed(2) + ' km -> ' +
-                (newXOffsetM / 1000).toFixed(2) + ' km');
-    return { ok: true, pad };
+    return {
+      ok: true,
+      pad: pad,
+      requestedKm: newKm,
+      appliedKm: appliedM / 1000,
+      wasPositionAdjusted: wasPositionAdjusted,
+      oldKm: oldOffset / 1000,
+    };
   }
 
-  window.setASDSPosition = setASDSPosition;
+  globalThis.setASDSPosition = setASDSPosition;
 
   window.listASDS = function () {
     return (CONFIG.LANDING_PADS || [])
@@ -309,6 +323,7 @@
   // Modal wiring
   // ---------------------------------------------------------------
   function _initASDSModal() {
+    if (typeof document === 'undefined') return;
     const modal = document.getElementById('asdsModal');
     const btn = document.getElementById('btnDeployASDS');
     const input = document.getElementById('asdsOffsetInput');
@@ -370,7 +385,7 @@
     });
   }
 
-  if (typeof window !== 'undefined') {
+  if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     if (document.readyState === 'loading') {
       document.addEventListener('DOMContentLoaded', _initASDSModal);
     } else {
