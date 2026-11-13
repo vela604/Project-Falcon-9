@@ -279,21 +279,18 @@ function landingPads() {
   for (let i = 0; i < len; i++) {
     const p = src[i];
     if (!p || p.enabled === false || !Number.isFinite(p.arcOffsetM)) continue;
+    // Spread-based clone — preserves ALL pad fields (isASDS, lengthM,
+    // and any future additions like deckColor, hasBlastWall, etc.)
+    // without requiring this function to be updated every time a new
+    // pad metadata field is added upstream. Defaults apply only for
+    // missing fields. Order matters: ...p first, overrides after.
     out.push({
+      ...p,
       id: p.id || ('LZ-' + (out.length + 1)),
       name: p.name || p.id || ('Landing Pad ' + (out.length + 1)),
-      arcOffsetM: p.arcOffsetM,
       radiusM: p.radiusM > 0 ? p.radiusM : LANDING_PAD_DEFAULT_RADIUS_M,
       heightM: Number.isFinite(p.heightM) ? p.heightM : 0,
       lights: p.lights !== false,
-      // ASDS fields — MUST be preserved so render code can distinguish
-      // drone ships from flat LZ pads. Previously landingPads() rebuilt
-      // each pad with only 6 fields, stripping isASDS + lengthM, which
-      // made drawLandingPads() fall back to golden-plate LZ rendering
-      // for real ASDS ships. This function runs in every worker
-      // (main, physics, render), so the fix propagates everywhere.
-      isASDS: !!p.isASDS,
-      lengthM: Number.isFinite(p.lengthM) ? p.lengthM : undefined,
     });
   }
   // sanity checks (once per config change): overlaps with each other / launch complex
