@@ -130,7 +130,7 @@
           <label>pos lo m <input type="number" id="posLo" step="100" value="200000"></label>
           <label>pos hi m <input type="number" id="posHi" step="100" value="5000000"></label>
           <label>start m <input type="number" id="posStart" step="100" value="300000"></label>
-          <label>min step m <input type="number" id="posMinStep" step="0.5" min="0.1" value="2.5"></label>
+          <label>min step m <input type="number" id="posMinStep" step="0.1" min="0.05" value="0.5"></label>
         </div>
         <div class="note">droneship deployed via setASDSPosition per eval &middot; guidance snapshot's targetPad patched &middot; metre-level precision</div>
       </div>
@@ -1429,9 +1429,19 @@ async function searchBracket(evalFn, o, onProgress){
   const goldenRefine = async (lo, hi) => {
     if(hi - lo <= minStep) return;
     const anyOk = [...cache.values()].some(r => r.ok);
+    // ASDS mode: dr is the true V-shape signal (pad position vs natural
+    // impact point, purely linear — score = |dr| + noise from tilt
+    // integral + approach time, both bias-invariant). Regula-falsi on dr
+    // converges to dr≈0 systematically. Score-golden meanders in the
+    // tilt/approach noise floor and stops wherever the bracket shrinks
+    // below minStep, which is fine for RTLS (feedback-loop landscape,
+    // score is the only valid signal there) but suboptimal for ASDS.
+    const _useDrFalsi = (S.mode === 'ASDS') || !anyOk;
 
-    if (!anyOk) {
-      log('[search] phase2 regula-falsi on dr (all-crash landscape) ['+lo.toFixed(1)+', '+hi.toFixed(1)+']', 'ok');
+    if (_useDrFalsi) {
+      log('[search] phase2 regula-falsi on dr (' +
+        (S.mode === 'ASDS' ? 'ASDS V-shape' : 'all-crash landscape') +
+        ') ['+lo.toFixed(1)+', '+hi.toFixed(1)+']', 'ok');
       let a = lo, c = hi;
       let ra = await ev(a), rc = await ev(c);
       let drA = ra && ra.m && ra.m.contact ? ra.m.contact.downrange : NaN;
