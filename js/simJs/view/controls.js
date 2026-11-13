@@ -956,6 +956,7 @@ function setGuidanceActive(active) {
   'btnLegs', 'btnDeployGridFins', 'gridFinACW', 'gridFinCW',
   'btnSeparate', 'btnSplitFairing', 'btnReleasePayload',
   'btnEjectPayload', 'btnWindPanel', 'btnFuelPanel', 'btnMergePanel',
+  'btnDeployASDS',
 ];
   disables.forEach(id => {
     const el = document.getElementById(id);

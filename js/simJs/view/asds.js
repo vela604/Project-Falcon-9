@@ -333,21 +333,57 @@
     const deployBtn = document.getElementById('asdsDeployBtn');
     if (!modal || !btn || !input || !deployBtn) return;
 
-    function _refreshZoneInfo() {
-      const zone = _oceanZoneBounds();
-      const minOffset = zone.startM + LZ_WEST_M;
-      const maxOffset = zone.endM - LZ_EAST_M;
-      zoneInfo.textContent = 'Deployment zone: ' + Math.round(minOffset).toLocaleString() +
-        ' – ' + Math.round(maxOffset).toLocaleString() + ' m (' +
-        zone.startDeg.toFixed(0) + '° – ' + zone.endDeg.toFixed(0) + '° east). ' +
-        'Hull length: 91 m, minimum gap: 250 m between ships.';
-      if (Number.isFinite(Number(input.value))) {
-        input.min = Math.round(minOffset);
-        input.max = Math.round(maxOffset);
-      }
+    function _isGuideActive() {
+      return document.body.classList.contains('guide-active');
     }
 
-    btn.addEventListener('click', () => {
+    function _refreshZoneInfo() {
+      const zone = _oceanZoneBounds();
+      const minKm = (zone.startM + LZ_WEST_M) / 1000;
+      const maxKm = (zone.endM - LZ_EAST_M) / 1000;
+      zoneInfo.innerHTML =
+        'Deployment zone: <b style="color:#35d6ff;">' + minKm.toFixed(1) + ' – ' + maxKm.toFixed(1) + ' km</b>. ' +
+        'Hull: 91 m · Min gap: ' + MIN_GAP_M + ' m.<br>' +
+        'Examples: <code>HOPE, 140, 2</code> · <code>HOPE, 140</code> · <code>HOPE</code> · <code>500</code> · <code>(empty)</code>';
+    }
+
+    function _parseASDSInput(raw) {
+      const s = (raw || '').trim();
+      if (!s) return [undefined, undefined, undefined];
+      
+      // Single value — no comma
+      if (s.indexOf(',') === -1) {
+        const num = Number(s);
+        if (Number.isFinite(num)) {
+          // Auto-detect: > 10000 = meters (legacy), else km
+          const km = num > 10000 ? num / 1000 : num;
+          return [undefined, km, undefined];
+        }
+        return [s, undefined, undefined]; // name only
+      }
+      
+      // Comma-separated: NAME, ARC_KM, HEIGHT_M
+      const parts = s.split(',').map(function (p) { return p.trim(); });
+      let name;
+      if (parts[0]) name = parts[0];
+      
+      let km;
+      if (parts[1]) {
+        const n = Number(parts[1]);
+        if (Number.isFinite(n)) km = n > 10000 ? n / 1000 : n;
+      }
+      
+      let heightM;
+      if (parts[2]) {
+        const n = Number(parts[2]);
+        if (Number.isFinite(n)) heightM = n;
+      }
+      
+      return [name, km, heightM];
+    }
+
+    btn.addEventListener('click', function () {
+      if (_isGuideActive()) return;
       modal.style.display = 'block';
       errEl.style.display = 'none';
       _refreshZoneInfo();
@@ -362,25 +398,28 @@
 
     cancelBtn.addEventListener('click', _close);
 
-    deployBtn.addEventListener('click', () => {
-      const x = parseFloat(input.value);
-      const result = window.deployASDS(x);
+    deployBtn.addEventListener('click', function () {
+      if (_isGuideActive()) {
+        errEl.textContent = 'Guidance is running — ASDS deployment is locked.';
+        errEl.style.display = 'block';
+        return;
+      }
+      const args = _parseASDSInput(input.value);
+      const result = window.deployASDS(args[0], args[1], args[2]);
       if (!result.ok) {
         errEl.textContent = result.error;
         errEl.style.display = 'block';
         return;
       }
       _close();
-      // Force a redraw so the new ASDS shows immediately even if sim is paused
       if (typeof forceRenderResync === 'function') forceRenderResync();
     });
 
-    input.addEventListener('keydown', (e) => {
+    input.addEventListener('keydown', function (e) {
       if (e.key === 'Enter') deployBtn.click();
     });
 
-    // Escape closes
-    document.addEventListener('keydown', (e) => {
+    document.addEventListener('keydown', function (e) {
       if (e.key === 'Escape' && modal.style.display === 'block') _close();
     });
   }
