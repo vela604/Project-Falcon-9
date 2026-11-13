@@ -1108,7 +1108,19 @@ let _lbPadWarned = false;
 function _lbResolveTargetPad() {
   const env = Derivation.getEnv() || {};
   const id = (_lbConfig.mission && _lbConfig.mission.TARGET_LANDING_PAD) || 'LZ-1';
-  let pads = Array.isArray(env.LANDING_PADS) ? env.LANDING_PADS : null;
+  // Live CONFIG.LANDING_PADS preferred over the boot-time env snapshot
+  // when CONFIG is in scope. Main-thread pages (lb-nova6, testers) have
+  // CONFIG globally, so a mid-session deployASDS() / setASDSPosition()
+  // is visible here immediately — no re-INIT needed to pick up a new
+  // pad or move an existing one. The guidance worker deliberately does
+  // NOT import config.js, so CONFIG is undefined there and env.LANDING_PADS
+  // (the boot handoff) is used as before.
+  let pads = null;
+  if (typeof CONFIG !== 'undefined' && CONFIG && Array.isArray(CONFIG.LANDING_PADS)) {
+    pads = CONFIG.LANDING_PADS;
+  } else if (Array.isArray(env.LANDING_PADS)) {
+    pads = env.LANDING_PADS;
+  }
   if (!pads) {
     if (!_lbPadWarned) {
       _lbPadWarned = true;
