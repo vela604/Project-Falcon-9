@@ -362,6 +362,7 @@ function log(msg, lvl){
 const S = {
   locked:false, stackId:null, apoKm:320, periKm:320,
   inited:false, saSnap:null, ebSnap:null,
+  mode:'RTLS', asdsPad:null, asdsStartM:300000,
   fuelAtMeco:0, fuelAfterBoostback:0,
   runs:[], searchResult:null, selectedIdx:-1,
   running:false, abort:false, evals:0, evalMs:[],
@@ -630,6 +631,8 @@ function applyPresetFromSel(){
 function markStale(){
   if(!S.inited || S.running) return;
   S.inited = false;
+  document.querySelectorAll('[data-init-lock="1"]').forEach(function(el){ el.disabled = false; });
+  S.asdsPad = null;
   $('scanBtn').disabled = true; $('altBtn').disabled = true;
   const st = $('initStatus'); st.classList.add('stale');
   st.textContent = 'Config changed — snapshots are stale. Run INIT captures again.';
@@ -705,8 +708,21 @@ async function doInit(){
     if(!Number.isFinite(vals.insertion.STAGE_BURN_AOA_BIAS_DEG)) vals.insertion.STAGE_BURN_AOA_BIAS_DEG = 1.200;
     if(!Number.isFinite(vals.insertion.CIRC_TRIGGER_LEAD_S)) vals.insertion.CIRC_TRIGGER_LEAD_S = 8.9875;
     vals.done = vals.done || {}; vals.done.DEORBIT_ENABLED = false;
-    vals.mission = vals.mission || {}; vals.mission.TARGET_LANDING_PAD = 'LZ-1';
-    vals.rtls = vals.rtls || {}; vals.rtls.ENTRY_BURN_IMPACT_TARGET_M = bias;
+    vals.mission = vals.mission || {};
+    vals.rtls = vals.rtls || {};
+    S.mode = $('cfgMission') ? $('cfgMission').value : 'RTLS';
+    if (S.mode === 'ASDS') {
+      const posM = parseFloat($('posStart').value) || 300000;
+      S.asdsStartM = posM;
+      vals.rtls.MISSION_TYPE = 'ASDS';
+      vals.rtls.ENTRY_BURN_IMPACT_TARGET_M = 0;
+      vals.mission.TARGET_LANDING_PAD = 'HOPE,' + (posM / 1000).toFixed(3);
+      log('Init ASDS: droneship HOPE @ ' + (posM/1000).toFixed(3) + ' km, MISSION_TYPE=ASDS', 'ok');
+    } else {
+      vals.rtls.MISSION_TYPE = 'RTLS';
+      vals.rtls.ENTRY_BURN_IMPACT_TARGET_M = bias;
+      vals.mission.TARGET_LANDING_PAD = 'LZ-1';
+    }
 
     const env = { atmosphere:true, slosh:true, imu:false, wind:{enabled:false,speed:0,directionDeg:0}, boosterPct:100, stagePct:100 };
 
@@ -794,8 +810,23 @@ async function doInit(){
       console.log = _origLog; console.error = _origErr;
     }
 
+    if (S.mode === 'ASDS') {
+      const _gs = S.ebSnap && S.ebSnap.guidanceState;
+      let _pad = (_gs && _gs.lbState && _gs.lbState.asdsPad) ? _gs.lbState.asdsPad : null;
+      if (!_pad) {
+        const _cfgPads = (typeof CONFIG !== 'undefined' && CONFIG.LANDING_PADS) ? CONFIG.LANDING_PADS : [];
+        _pad = _cfgPads.find(function(p){ return p && p.isASDS; }) || null;
+      }
+      S.asdsPad = _pad || null;
+      if (_pad) log('ASDS pad captured: ' + _pad.name + ' @ ' + (_pad.arcOffsetM/1000).toFixed(3) + ' km, height ' + (_pad.heightM || 0) + 'm', 'ok');
+      else log('ASDS pad NOT captured — search may fail', 'warn');
+    } else {
+      S.asdsPad = null;
+    }
     S.inited = true;
     $('initStatus').innerHTML = '<span class="ok">Ready</span> · SA/EB captured · fuel MECO='+fmt(S.fuelAtMeco,0)+'kg, post-boostback='+fmt(S.fuelAfterBoostback,0)+'kg';
+    document.querySelectorAll('[data-init-lock="1"]').forEach(function(el){ el.disabled = true; });
+    _updateModeBanner();
     $('scanBtn').disabled = false; $('altBtn').disabled = false;
     $('manualBtn').disabled = false;
     $('manualSweepBtn').disabled = false;
@@ -1750,6 +1781,42 @@ async function doManualEval(){
   }
 }
 
+// ===== MODE BANNER =====
+// Shows current mode (RTLS / ASDS) in the results panel. In ASDS mode,
+// displays the captured pad name + position. In RTLS mode, displays a
+// fuel-margin warning if the best successful run has < 1000 kg left,
+// suggesting the user consider an ASDS mission (avoids boostback cost).
+function _updateModeBanner(){
+  const host = $('modeBanner');
+  if(!host) return;
+  const parts = [];
+  if(S.mode === 'ASDS'){
+    if(S.asdsPad){
+      parts.push('<span class="ok">ASDS</span> · pad <b>' + esc(S.asdsPad.name) + '</b> @ ' +
+        (S.asdsPad.arcOffsetM/1000).toFixed(3) + ' km · deck ' + (S.asdsPad.heightM||0) + ' m');
+    } else if(S.inited){
+      parts.push('<span class="warn">ASDS</span> · pad not captured');
+    } else {
+      parts.push('<span class="dim">ASDS</span> · deploy on INIT');
+    }
+  } else {
+    parts.push('<span class="dim">RTLS</span>');
+    if(S.runs && S.runs.length){
+      let best = null;
+      S.runs.forEach(function(r){
+        if(r.ok && r.m && r.m.fuel && Number.isFinite(r.m.fuel.remaining)){
+          if(!best || r.score < best.score) best = r;
+        }
+      });
+      if(best && best.m.fuel.remaining < 1000){
+        parts.push(' · <span class="warn">⚠ fuel margin low (' +
+          best.m.fuel.remaining.toFixed(0) + ' kg) — consider ASDS mission</span>');
+      }
+    }
+  }
+  host.innerHTML = parts.length ? '<div class="rv-vd">' + parts.join('') + '</div>' : '';
+}
+
 // ===== VERDICT CARD =====
 function renderVerdict(){
   const R = S.searchResult, host = $('verdict');
@@ -1918,6 +1985,7 @@ window.addEventListener('resize', () => { if(S.runs.length) drawLandscape(); });
 
 // ===== RESULTS TABLE =====
 function renderResults(){
+  _updateModeBanner();
   renderVerdict();
   drawLandscape();
   if(!S.runs.length){
@@ -2257,6 +2325,7 @@ function boot(){
     rtlsBlks.forEach(function(id){ var el = $(id); if(el) el.hidden = isASDS; });
     asdsBlks.forEach(function(id){ var el = $(id); if(el) el.hidden = !isASDS; });
     if (typeof S !== 'undefined') S.mode = m;
+    if (typeof _updateModeBanner === 'function') _updateModeBanner();
   }
   if ($('cfgMission')) {
     $('cfgMission').addEventListener('change', _applyModeVisibility);
