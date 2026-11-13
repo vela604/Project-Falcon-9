@@ -1121,18 +1121,123 @@ let _lbPadWarned = false;
 // Fallback is always the same ({ HOPE, 140 }) so a malformed preset produces
 // a predictable mission state rather than an unpredictable crash.
 function _parseASDSSpec(str) {
-  const FALLBACK = { name: 'HOPE', km: 140 };
+  const FALLBACK = { name: 'HOPE', km: 140, heightM: 2 };
   if (typeof str !== 'string') return FALLBACK;
   const parts = str.split(',');
   const name = (parts[0] || '').trim();
   if (!name) return FALLBACK;
-  // If only the name was given, use the default position.
-  if (parts.length === 1) return { name: name, km: 140 };
-  // Name + km.
+  if (parts.length === 1) return { name: name, km: 140, heightM: 2 };
   const kmStr = (parts[1] || '').trim();
   const km = parseFloat(kmStr);
   if (!Number.isFinite(km) || km <= 0) return FALLBACK;
-  return { name: name, km: km };
+  // Optional 3rd part: deck height above sea level (default 2 m)
+  let heightM = 2;
+  if (parts.length >= 3) {
+    const hStr = (parts[2] || '').trim();
+    const h = parseFloat(hStr);
+    if (Number.isFinite(h) && h >= 0) heightM = h;
+  }
+  return { name: name, km: km, heightM: heightM };
+}
+
+// Build an ASDS pad object from a spec + env, mimicking asds.js's validation
+// + fallback logic. Used by worker-context guidance (guidance.worker.js /
+// worker-sim.js) where asds.js can't be imported (config.js deliberately
+// excluded). Hardware constants below mirror asds.js — update both if changed.
+// Returns { pad, wasNameAdjusted, wasPositionAdjusted, requestedName, requestedKm }.
+function _buildASDSPadForGuidance(spec, env) {
+  const ASDS_LENGTH_M = 91;
+  const ASDS_LZ_WEST_M = 54;
+  const ASDS_LZ_EAST_M = 37;
+  const ASDS_MIN_GAP_M = 120;
+  const ASDS_LANDING_RADIUS_M = 35;
+  const ASDS_DECK_HEIGHT_M = 2;
+  const OCEAN_ZONE_START_DEG = Number.isFinite(env.OCEAN_ZONE_EAST_START_DEG) ? env.OCEAN_ZONE_EAST_START_DEG : 2;
+  const OCEAN_ZONE_END_DEG = Number.isFinite(env.OCEAN_ZONE_EAST_END_DEG) ? env.OCEAN_ZONE_EAST_END_DEG : 60;
+  // Earth circumference wrap (like 410° → 50°)
+  const C_km = 2 * Math.PI * env.EARTH_RADIUS / 1000;
+  let km = spec.km;
+  if (Number.isFinite(km) && (km < 0 || km >= C_km)) {
+    km = ((km % C_km) + C_km) % C_km;
+  }
+  const heightM = Number.isFinite(spec.heightM) ? spec.heightM : ASDS_DECK_HEIGHT_M;
+  const requestedName = spec.name;
+  const requestedKm = km;
+
+  // Collect existing ASDS (env boot snapshot + this session's _lbState.asdsPad)
+  const existing = [];
+  const takenNames = new Set();
+  if (Array.isArray(env.LANDING_PADS)) {
+    for (const p of env.LANDING_PADS) {
+      if (!p) continue;
+      if (p.isASDS) existing.push(p);
+      if (p.name) takenNames.add(p.name);
+      if (p.id) takenNames.add(p.id);
+    }
+  }
+  if (_lbState.asdsPad) {
+    existing.push(_lbState.asdsPad);
+    if (_lbState.asdsPad.name) takenNames.add(_lbState.asdsPad.name);
+    if (_lbState.asdsPad.id) takenNames.add(_lbState.asdsPad.id);
+  }
+
+  // Name collision — HOPE → HOPE-1 → HOPE-2 ...
+  let appliedName = requestedName;
+  let wasNameAdjusted = false;
+  if (takenNames.has(requestedName)) {
+    for (let i = 1; i < 100; i++) {
+      const cand = requestedName + '-' + i;
+      if (!takenNames.has(cand)) { appliedName = cand; wasNameAdjusted = true; break; }
+    }
+  }
+
+  // Ocean bounds + gap validation, ±10 km fallback (mirrors asds.js)
+  const R = env.EARTH_RADIUS;
+  const startM = OCEAN_ZONE_START_DEG * Math.PI / 180 * R;
+  const endM = OCEAN_ZONE_END_DEG * Math.PI / 180 * R;
+  const requestedM = Math.round(km * 1000);
+  function validPos(m) {
+    if (m - ASDS_LZ_WEST_M < startM) return false;
+    if (m + ASDS_LZ_EAST_M > endM) return false;
+    for (const p of existing) {
+      const gap = Math.abs(m - p.arcOffsetM) - ASDS_LENGTH_M;
+      if (gap < ASDS_MIN_GAP_M) return false;
+    }
+    return true;
+  }
+  let appliedM = requestedM;
+  let wasPositionAdjusted = false;
+  if (!validPos(requestedM)) {
+    for (let d = 1000; d <= 10000; d += 1000) {
+      if (validPos(requestedM + d)) { appliedM = requestedM + d; wasPositionAdjusted = true; break; }
+      if (validPos(requestedM - d)) { appliedM = requestedM - d; wasPositionAdjusted = true; break; }
+    }
+    // Last resort — fall back to HOPE,140 (predictable, ship always deploys)
+    if (!validPos(appliedM)) {
+      appliedM = 140000;
+      appliedName = (takenNames.has('HOPE') ? 'HOPE-1' : 'HOPE');
+      wasPositionAdjusted = true;
+    }
+  }
+
+  const pad = {
+    id: appliedName,
+    name: appliedName,
+    arcOffsetM: appliedM,
+    radiusM: ASDS_LANDING_RADIUS_M,
+    heightM: heightM,
+    lengthM: ASDS_LENGTH_M,
+    enabled: true,
+    isASDS: true,
+    lights: false,
+  };
+  return {
+    pad: pad,
+    wasNameAdjusted: wasNameAdjusted,
+    wasPositionAdjusted: wasPositionAdjusted,
+    requestedName: requestedName,
+    requestedKm: requestedKm,
+  };
 }
 
 function _lbResolveTargetPad() {
@@ -1263,12 +1368,22 @@ function _landbackTick(snapshot) {
     _lbState.asdsDeployed = true;
     const _specStr = (_lbConfig.mission && _lbConfig.mission.TARGET_LANDING_PAD) || '';
     _lbState.asdsSpec = _parseASDSSpec(_specStr);
-    const _deployFn = (typeof globalThis.deployASDS === 'function') ? globalThis.deployASDS : null;
-    if (_deployFn) {
-      const _result = _deployFn(_lbState.asdsSpec.name, _lbState.asdsSpec.km);
+    // Context detection:
+    //   Main thread (lb-nova6, testers) — asds.js loaded, globalThis.deployASDS
+    //     is a function. Call it: full validation + dual broadcast (main render
+    //     worker + WorkerBridge for physics).
+    //   Guidance worker (guidance.worker.js / worker-sim.js) — asds.js NOT
+    //     loaded (config.js deliberately excluded for scope isolation). Build
+    //     the pad locally from Derivation.getEnv() and send via physicsPort.
+    //     Physics echoes back to main thread, workerBridge relays to render.
+    // Both paths produce the same pad object; guidance stores it in
+    // _lbState.asdsPad regardless of context.
+    const _mainThreadDeploy = (typeof globalThis.deployASDS === 'function');
+    if (_mainThreadDeploy) {
+      const _result = globalThis.deployASDS(_lbState.asdsSpec.name, _lbState.asdsSpec.km, _lbState.asdsSpec.heightM);
       if (_result && _result.ok) {
         _lbState.asdsPad = _result.pad;
-        console.log('[landbackV1] ASDS deployed: ' + _result.appliedName +
+        console.log('[landbackV1] ASDS deployed (main thread): ' + _result.appliedName +
           ' @ ' + _result.appliedKm.toFixed(2) + ' km, height=' + _result.appliedHeightM + 'm' +
           (_result.wasNameAdjusted ? ' (renamed from "' + _result.requestedName + '")' : '') +
           (_result.wasPositionAdjusted ? ' (moved from ' + _result.requestedKm.toFixed(2) + ' km)' : ''));
@@ -1278,8 +1393,15 @@ function _landbackTick(snapshot) {
         _lbState.asdsPad = null;
       }
     } else {
-      console.warn('[landbackV1] globalThis.deployASDS not available in this context — ASDS mission will fall back to launch-site targeting');
-      _lbState.asdsPad = null;
+      const _env = Derivation.getEnv() || {};
+      const _built = _buildASDSPadForGuidance(_lbState.asdsSpec, _env);
+      _lbState.asdsPad = _built.pad;
+      send({ type: 'addLandingPad', pad: _built.pad });
+      console.log('[landbackV1] ASDS deployed (worker-built): ' + _built.pad.name +
+        ' @ ' + (_built.pad.arcOffsetM / 1000).toFixed(2) + ' km, height=' + _built.pad.heightM + 'm' +
+        (_built.wasNameAdjusted ? ' (renamed from "' + _built.requestedName + '")' : '') +
+        (_built.wasPositionAdjusted ? ' (moved from ' + _built.requestedKm.toFixed(2) + ' km)' : '') +
+        ' — sent via physicsPort, awaiting main echo');
     }
   }
 

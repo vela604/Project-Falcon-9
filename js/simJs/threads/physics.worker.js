@@ -275,7 +275,7 @@ return b;
 const ASDS_LENGTH_M = 91;
 const ASDS_LZ_WEST_M = 54;
 const ASDS_LZ_EAST_M = 37;
-const ASDS_MIN_GAP_M = 250;
+const ASDS_MIN_GAP_M = 120;
 const ASDS_LANDING_RADIUS_M = 35;
 const ASDS_DECK_HEIGHT_M = 2;
 
@@ -395,11 +395,13 @@ break;
       } else {
         CONFIG.LANDING_PADS.push(msg.pad);
       }
+      self.postMessage({ type: 'moveLandingPad', pad: msg.pad });
       break;
     }
     case 'addLandingPad': {
       if (!CONFIG.LANDING_PADS) CONFIG.LANDING_PADS = [];
       CONFIG.LANDING_PADS.push(msg.pad);
+      self.postMessage({ type: 'addLandingPad', pad: msg.pad });
       break;
     }
     case 'reset': {
