@@ -797,7 +797,7 @@ case 'setASDSPosition': {
   self.postMessage({ type: 'asdsMoved', pad: JSON.parse(JSON.stringify(pad)), oldOffsetM: oldOffset });
   break;
 }
-case 'openPayload': {case 'openPayload': {
+case 'openPayload': {
   const b = resolveTargetBody(msg.targetBodyIdx);
   if (!b) break;
   // Idempotent — first open wins; subsequent opens are ignored so a
