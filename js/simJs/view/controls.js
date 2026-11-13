@@ -1654,7 +1654,13 @@ function makeFieldRow(path, reference, values) {
       input.type = 'number';
       input.step = 'any';
       input.value = Number.isFinite(curVal) ? curVal : '';
+      if (refVal === null) input.placeholder = 'null';
       input.addEventListener('input', () => {
+        if (refVal === null && input.value.trim() === '') {
+          setByPath(_currentValues, path, null);
+          input.classList.remove('gcm-invalid');
+          return;
+        }
         const v = parseFloat(input.value);
         if (Number.isFinite(v)) {
           setByPath(_currentValues, path, v);
@@ -1796,6 +1802,17 @@ function makeFieldRow(path, reference, values) {
         setByPath(out, path, !!inp.checked);
       } else if (typeof refVal === 'string') {
         setByPath(out, path, String(inp.value));
+      } else if (refVal === null) {
+        // null-typed reference (e.g. TARGET_IMPACT_EF_DEG). Blank input is
+        // a VALID state — preserves the null that means "use fallback".
+        // Only non-blank non-numeric input is invalid.
+        if (inp.value.trim() === '') {
+          setByPath(out, path, null);
+        } else {
+          const v = parseFloat(inp.value);
+          if (!Number.isFinite(v)) return { ok: false, path };
+          setByPath(out, path, v);
+        }
       } else {
         const v = parseFloat(inp.value);
         if (!Number.isFinite(v)) return { ok: false, path };

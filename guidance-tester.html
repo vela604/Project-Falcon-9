@@ -959,7 +959,14 @@ default: break;
       input.step = 'any';
       const v = _getByPath(currentValues, path);
       input.value = Number.isFinite(v) ? v : '';
+      if (refVal === null) input.placeholder = 'null';
       input.addEventListener('input', () => {
+        if (refVal === null && input.value.trim() === '') {
+          _setByPath(currentValues, path, null);
+          input.classList.remove('invalid');
+          _refreshChanged(input, path);
+          return;
+        }
         const parsed = parseFloat(input.value);
         if (Number.isFinite(parsed)) {
           _setByPath(currentValues, path, parsed);
