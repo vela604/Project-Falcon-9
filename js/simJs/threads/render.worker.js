@@ -272,6 +272,20 @@ if (msg.data.rcsSync) {
       if (typeof _clearAllTrails === 'function') _clearAllTrails();
       break;
     }
+    case 'moveLandingPad': {
+      // Update existing pad's position (arcOffsetM). All other pad
+      // fields (id, name, isASDS, lengthM, radiusM, ...) stay as-is.
+      const pads = (CONFIG.LANDING_PADS || []);
+      const p = pads.find(x => x && x.id === msg.pad.id);
+      if (p) {
+        p.arcOffsetM = msg.pad.arcOffsetM;
+      } else {
+        // Pad missing in worker — auto-heal by inserting (edge case:
+        // main thread had it but worker lost sync somehow).
+        CONFIG.LANDING_PADS.push(msg.pad);
+      }
+      break;
+    }
     case 'addLandingPad': {
       // Runtime pad deployment (ASDS, future user pads). Push into THIS
       // worker's own CONFIG.LANDING_PADS so drawPadMarkers() + drawLandingPads()

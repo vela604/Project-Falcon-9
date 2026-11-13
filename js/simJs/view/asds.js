@@ -204,6 +204,90 @@
     return result;
   };
 
+  // ============================================================
+  // Internal command: setASDSPosition(padId, newXOffsetM)
+  // Change an existing ASDS ship's downrange position.
+  // SILENT (no toast) — designed for tuner engine batch calls.
+  // Validates ocean bounds + 250m gap (self excluded from gap check).
+  // ============================================================
+  function setASDSPosition(padId, newXOffsetM) {
+    if (typeof padId !== 'string') {
+      return { ok: false, error: 'padId must be a string.' };
+    }
+    const pad = (CONFIG.LANDING_PADS || []).find(p => p.id === padId);
+    if (!pad) {
+      return { ok: false, error: 'Pad "' + padId + '" not found.' };
+    }
+    const isASDS = !!(pad.isASDS || (Number.isFinite(pad.lengthM) && pad.lengthM >= 50));
+    if (!isASDS) {
+      return { ok: false, error: 'Pad "' + padId + '" is not an ASDS.' };
+    }
+    if (!Number.isFinite(newXOffsetM)) {
+      return { ok: false, error: 'newXOffsetM must be a finite number.' };
+    }
+    newXOffsetM = Math.round(newXOffsetM);
+    const zone = _oceanZoneBounds();
+
+    if (newXOffsetM - LZ_WEST_M < zone.startM) {
+      return {
+        ok: false,
+        error: 'Western hull edge would be ' +
+               Math.round(zone.startM - (newXOffsetM - LZ_WEST_M)) +
+               ' m outside ocean. Minimum offset: ' + Math.round(zone.startM + LZ_WEST_M) + ' m.'
+      };
+    }
+    if (newXOffsetM + LZ_EAST_M > zone.endM) {
+      return {
+        ok: false,
+        error: 'Eastern hull edge would be ' +
+               Math.round((newXOffsetM + LZ_EAST_M) - zone.endM) +
+               ' m outside ocean. Maximum offset: ' + Math.round(zone.endM - LZ_EAST_M) + ' m.'
+      };
+    }
+
+    const others = _existingASDS().filter(p => p.id !== padId);
+    for (let i = 0; i < others.length; i++) {
+      const other = others[i];
+      const centerGap = Math.abs(newXOffsetM - other.arcOffsetM);
+      const hullEdgeGap = centerGap - ASDS_LENGTH_M;
+      if (hullEdgeGap < MIN_GAP_M) {
+        return {
+          ok: false,
+          error: 'Too close to ' + other.name +
+                 '. Hull-edge gap: ' + Math.round(hullEdgeGap) + ' m (min: ' + MIN_GAP_M + ' m).'
+        };
+      }
+    }
+
+    const oldOffsetM = pad.arcOffsetM;
+    pad.arcOffsetM = newXOffsetM;
+
+    const _padSnapshot = JSON.parse(JSON.stringify(pad));
+    try {
+      if (typeof WorkerBridge !== 'undefined' && WorkerBridge.send) {
+        WorkerBridge.send({ type: 'moveLandingPad', pad: _padSnapshot });
+      }
+    } catch (e) { console.warn('[ASDS] physics move broadcast failed', e); }
+    try {
+      if (window._renderWorker) {
+        window._renderWorker.postMessage({ type: 'moveLandingPad', pad: _padSnapshot });
+      }
+    } catch (e) { console.warn('[ASDS] render move broadcast failed', e); }
+
+    console.log('[ASDS] Moved ' + pad.name + ': ' +
+                (oldOffsetM / 1000).toFixed(2) + ' km -> ' +
+                (newXOffsetM / 1000).toFixed(2) + ' km');
+    return { ok: true, pad };
+  }
+
+  window.setASDSPosition = setASDSPosition;
+
+  window.listASDS = function () {
+    return (CONFIG.LANDING_PADS || [])
+      .filter(p => p && (p.isASDS || (Number.isFinite(p.lengthM) && p.lengthM >= 50)))
+      .map(p => ({ id: p.id, name: p.name, arcOffsetM: p.arcOffsetM }));
+  };
+
   // ---------------------------------------------------------------
   // Modal wiring
   // ---------------------------------------------------------------

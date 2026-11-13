@@ -318,7 +318,17 @@ break;
 // No-op — warp UI was removed. Kept as a recognised message type so
 // any stale code path doesn't fall through to the default branch.
 break;
-                case 'addLandingPad': {
+                case 'moveLandingPad': {
+      const pads = (CONFIG.LANDING_PADS || []);
+      const pad = pads.find(x => x && x.id === msg.pad.id);
+      if (pad) {
+        pad.arcOffsetM = msg.pad.arcOffsetM;
+      } else {
+        CONFIG.LANDING_PADS.push(msg.pad);
+      }
+      break;
+    }
+    case 'addLandingPad': {
       if (!CONFIG.LANDING_PADS) CONFIG.LANDING_PADS = [];
       CONFIG.LANDING_PADS.push(msg.pad);
       break;
