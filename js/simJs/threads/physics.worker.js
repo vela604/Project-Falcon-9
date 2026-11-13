@@ -118,17 +118,17 @@ self.onmessage = (e) => {
 
 
       importScripts(
-        '../../componentLibrary.js?v=1793479954682',
-        '../../customDesign.js?v=1793479954682',
-        '../../fleet.js?v=1793479954682',
-        '../../config.js?v=1793479954682',
-        '../core/massProps.js?v=1793479954682',
-        '../core/environment.js?v=1793904735440',
-        '../core/vehicle.js?v=1793904735440',
-        '../core/rcs.js?v=1793904735440',
-        '../core/physics.js?v=1793955995510',
-        '../core/collision.js?v=1793904735440',
-        '../core/stateBuffer.js?v=1793479954682'
+        '../../componentLibrary.js?v=1794598768689',
+        '../../customDesign.js?v=1794598768689',
+        '../../fleet.js?v=1794598768689',
+        '../../config.js?v=1794598768689',
+        '../core/massProps.js?v=1794598768689',
+        '../core/environment.js?v=1794598768689',
+        '../core/vehicle.js?v=1794598768689',
+        '../core/rcs.js?v=1794598768689',
+        '../core/physics.js?v=1794598768689',
+        '../core/collision.js?v=1794598768689',
+        '../core/stateBuffer.js?v=1794598768689'
       );
 
       bootstrapped = true;
@@ -838,6 +838,18 @@ case 'pauseAndCapture': {
       activeBodyIndex: state.activeBodyIndex,
       simTime: state.simTime,
       halted: state.halted,
+      // FF worker has its own CONFIG.LANDING_PADS loaded via its own
+      // importScripts('../../config.js') — LZ-1/2/3 defaults only.
+      // Runtime-deployed ASDS pads (HOPE) exist ONLY in this worker's
+      // CONFIG and never cross into the FF worker via any other path.
+      // Capturing them here lets the render-side fastForward controller
+      // forward them into the FF worker's CONFIG before the FF physics
+      // loop starts, so FF computes with the exact pad set physics had
+      // at pause. Without this: FF runs 510s with no HOPE pad → ground
+      // contact fires at sea level instead of deck → final state differs
+      // → after replaceState, physics resumes from wrong state → ~19 m
+      // eastward LB landing offset (Run A vs Run C in user test).
+      configLandingPads: JSON.parse(JSON.stringify(CONFIG.LANDING_PADS || [])),
     });
     self.postMessage({ type: 'pausedState', data: clone });
   } catch (e) {
@@ -854,6 +866,9 @@ case 'captureFullState': {
       activeBodyIndex: state.activeBodyIndex,
       simTime: state.simTime,
       halted: state.halted,
+      // Same rationale as pauseAndCapture — FF worker needs the runtime
+      // pad set or ASDS lands on sea level instead of deck.
+      configLandingPads: JSON.parse(JSON.stringify(CONFIG.LANDING_PADS || [])),
     });
     self.postMessage({ type: 'fullState', data: clone });
   } catch (e) {
