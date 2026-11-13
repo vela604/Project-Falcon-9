@@ -849,8 +849,61 @@ async function runBiasEval(bias, onTick, altKm){
   if(!Number.isFinite(altKm)) altKm = curAlt();
   const g = deepClone(S.ebSnap.guidanceState);
   const cfg = g.guideConfigs && g.guideConfigs.landbackV1;
-  if(cfg && cfg.rtls) cfg.rtls.ENTRY_BURN_IMPACT_TARGET_M = bias;
-  if(g.lbRtlsBlock && g.lbRtlsBlock.constants) g.lbRtlsBlock.constants.ENTRY_BURN_IMPACT_TARGET_M = bias;
+  
+  // ---- Mode-aware per-eval target override ----
+  // RTLS: 'bias' = ENTRY_BURN_IMPACT_TARGET_M in metres. Standard walk.
+  // ASDS: 'bias' = droneship downrange POSITION in metres. We must (a) move
+  //   the droneship in CONFIG via setASDSPosition so physics sees the new
+  //   rigid surface, and (b) patch the EB snapshot's lbRtlsBlock.missionCtx
+  //   targetPad — the block was already started at EB capture time and
+  //   caches missionCtx.targetPad, so without this patch it would keep
+  //   aiming at the INIT-time position forever.
+  if(S.mode === 'ASDS'){
+    const posM = Math.round(bias);
+    // (a) move the actual droneship (physics rigid surface)
+    if(typeof globalThis.setASDSPosition === 'function' && S.asdsPad){
+      const mv = globalThis.setASDSPosition(S.asdsPad.name, posM / 1000);
+      if(!mv || !mv.ok){
+        log('ASDS move FAILED @ ' + (posM/1000).toFixed(3) + ' km: ' +
+          ((mv && mv.error) || '?'), 'warn');
+      } else if(mv.wasPositionAdjusted){
+        log('ASDS move adjusted ' + (posM/1000).toFixed(3) + ' -> ' +
+          mv.appliedKm.toFixed(3) + ' km (ocean/gap bounds)', 'warn');
+      }
+    }
+    // (b) recompute targetPad + patch EB state so block aims at new pos
+    const _env = (typeof Derivation !== 'undefined') ? (Derivation.getEnv() || {}) : {};
+    const _Rg = (_env.EARTH_RADIUS || CONFIG.EARTH_RADIUS) + (_env.LAUNCH_SITE_ALTITUDE || 0);
+    const _angleEf = (_env.LAUNCH_SITE_ANGLE_0 || 0) + posM / _Rg;
+    const _padName = S.asdsPad ? S.asdsPad.name : 'HOPE';
+    const _heightM = S.asdsPad ? (S.asdsPad.heightM || 2) : 2;
+    const _targetPad = {
+      id: _padName, name: _padName,
+      arcOffsetM: posM,
+      angleEf: _angleEf,
+      heightM: _heightM,
+      radiusM: 35,
+      isASDS: true,
+    };
+    if(g.lbRtlsBlock && g.lbRtlsBlock.missionCtx){
+      g.lbRtlsBlock.missionCtx.targetPad = _targetPad;
+    }
+    if(g.lbState){
+      g.lbState.asdsPad = _targetPad;
+      g.lbState.asdsDeployed = true;
+    }
+    if(cfg && cfg.rtls){
+      cfg.rtls.MISSION_TYPE = 'ASDS';
+      cfg.rtls.ENTRY_BURN_IMPACT_TARGET_M = 0;
+    }
+    if(cfg && cfg.mission){
+      cfg.mission.TARGET_LANDING_PAD = 'HOPE,' + (posM/1000).toFixed(3);
+    }
+  } else {
+    // RTLS: standard bias override
+    if(cfg && cfg.rtls) cfg.rtls.ENTRY_BURN_IMPACT_TARGET_M = bias;
+    if(g.lbRtlsBlock && g.lbRtlsBlock.constants) g.lbRtlsBlock.constants.ENTRY_BURN_IMPACT_TARGET_M = bias;
+  }
   // Same two-line pattern for LB altitude (LBA reads cfg.LANDING_BURN_ALT_KM every tick).
   if(Number.isFinite(altKm)){
     if(cfg && cfg.rtls) cfg.rtls.LANDING_BURN_ALT_KM = altKm;
@@ -1271,8 +1324,11 @@ async function searchBracket(evalFn, o, onProgress){
       break;
     }
 
-    // Proportional jump: bias_needed = bias − dr
-    const nextB = round(clamp(p.bias - p.dr));
+    // Proportional jump — mode-aware:
+    //   RTLS: bias_needed = bias − dr  (dr east of pad → bias more negative, aim west)
+    //   ASDS: pos_needed  = pos  + dr  (dr east of pad → move pad east to match)
+    const _walkSign = (S.mode === 'ASDS') ? +1 : -1;
+    const nextB = round(clamp(p.bias + _walkSign * p.dr));
     if(nextB === p.bias){
       log('[search] bias bound at '+p.bias.toFixed(1)+' (dr='+p.dr.toFixed(1)+'m) — widen bias range', 'warn');
       break;
@@ -1322,11 +1378,14 @@ async function searchBracket(evalFn, o, onProgress){
 // ===== RUN SCAN =====
 async function doScan(){
   if(S.running || !S.inited) return;
-  const lo = +$('biasLo').value, hi = +$('biasHi').value, start = +$('biasStart').value;
-  const minStep = +$('biasMinStep').value;
+  const isASDS = (S.mode === 'ASDS');
+  const lo = isASDS ? +$('posLo').value : +$('biasLo').value;
+  const hi = isASDS ? +$('posHi').value : +$('biasHi').value;
+  const start = isASDS ? +$('posStart').value : +$('biasStart').value;
+  const minStep = isASDS ? +$('posMinStep').value : +$('biasMinStep').value;
   if(![lo,hi,start,minStep].every(Number.isFinite) || !(lo < hi) || !(minStep > 0)){
-    log('Scan: invalid window (need lo < hi, minStep > 0)', 'err');
-    $('initStatus').innerHTML = '<span class="bad">invalid bias window — need lo &lt; hi and minStep &gt; 0</span>';
+    log('Scan [' + S.mode + ']: invalid window (need lo < hi, minStep > 0)', 'err');
+    $('initStatus').innerHTML = '<span class="bad">invalid ' + (isASDS?'pos':'bias') + ' window — need lo &lt; hi and minStep &gt; 0</span>';
     return;
   }
   S.running = true; S.abort = false;
@@ -1341,17 +1400,18 @@ async function doScan(){
   $('landCard').style.display = 'none';
   setEvalCount(0); setBestDisplay(null, null); clearLive();
   setChip('running'); setStage('scan');
-  log('Scan: ['+lo+', '+hi+'] start='+start+' min step='+minStep, 'ok');
+  log('Scan [' + S.mode + ']: ['+lo+', '+hi+'] start='+start+' min step='+minStep, 'ok');
 
   const evalFn = async bias => {
     if(S.abort) throw new Error('aborted');
-    log('Eval bias='+bias.toFixed(1));
+    log(isASDS ? ('Eval pos='+(bias/1000).toFixed(3)+'km') : ('Eval bias='+bias.toFixed(1)));
     const evalN = S.evals + 1;
     const ticker = document.getElementById('scanTicker');
     const onTick = (prog) => {
       paintLive(prog);
+      const _lbl = isASDS ? ('pos ' + (bias/1000).toFixed(3) + 'km') : ('bias ' + bias.toFixed(1));
       if(ticker) ticker.textContent =
-        'EVAL ' + bias.toFixed(1) + '  ·  #' + evalN +
+        'EVAL ' + _lbl + '  ·  #' + evalN +
         '  ·  t=' + prog.t.toFixed(0) + 's' +
         '  ·  ' + (prog.phase || '?').replace(/_/g,' ') +
         '  ·  alt=' + prog.altKm.toFixed(1) + 'km';
