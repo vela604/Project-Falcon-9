@@ -1364,9 +1364,59 @@ async function searchBracket(evalFn, o, onProgress){
     bias = nextB;
   }
 
-  // ---- Phase 2: golden-section refine on SCORE inside bracket (or feasible region). ----
+  // ---- Phase 2: refine inside bracket (or feasible region). ----
+  //
+  // Two modes:
+  //   • Score golden-section — used when at least one eval landed (ok=true).
+  //     Score differentiates, golden converges to the minimum.
+  //   • Dr regula-falsi — used when EVERY eval so far crashed (score all
+  //     1e6). Score is flat => golden ties every compare and converges to
+  //     whichever endpoint the tie-break favors (lo), not to the dr=0
+  //     crossing. dr is near-linear in bias around the crossing, so
+  //     regula-falsi (secant) converges quadratically — 5-6 iters to 2.5m.
+  //     This is what makes ASDS search actually find the pad when LB
+  //     crashes off-pad but would succeed on-pad (near-zero dr).
+  //
+  // RTLS paths always produce at least one landing within a reasonable
+  // bracket, so anyOk=true there and score-golden runs unchanged.
   const goldenRefine = async (lo, hi) => {
     if(hi - lo <= minStep) return;
+    const anyOk = [...cache.values()].some(r => r.ok);
+
+    if (!anyOk) {
+      log('[search] phase2 regula-falsi on dr (all-crash landscape) ['+lo.toFixed(1)+', '+hi.toFixed(1)+']', 'ok');
+      let a = lo, c = hi;
+      let ra = await ev(a), rc = await ev(c);
+      let drA = ra && ra.m && ra.m.contact ? ra.m.contact.downrange : NaN;
+      let drC = rc && rc.m && rc.m.contact ? rc.m.contact.downrange : NaN;
+      if (!Number.isFinite(drA) || !Number.isFinite(drC)) {
+        log('[search] regula-falsi skipped (missing dr at bracket endpoints)', 'warn');
+        return;
+      }
+      for (let iter = 0; iter < 20; iter++) {
+        if (stop()) break;
+        if (Math.abs(a - c) <= minStep) break;
+        const denom = drA - drC;
+        if (Math.abs(denom) < 1e-9) break;
+        let b = a + drA * (c - a) / denom;
+        if (!Number.isFinite(b)) break;
+        b = Math.max(lo, Math.min(hi, b));
+        b = Math.round(b * 10) / 10;
+        if (b === a || b === c) break;
+        const r = await ev(b);
+        const drB = r && r.m && r.m.contact ? r.m.contact.downrange : NaN;
+        if (!Number.isFinite(drB)) break;
+        if (Math.abs(drB) <= minStep) {
+          log('[search] regula-falsi converged |dr|=' + Math.abs(drB).toFixed(2) + 'm @ bias=' + b.toFixed(1), 'ok');
+          break;
+        }
+        if (drB * drA < 0) { c = b; drC = drB; }
+        else { a = b; drA = drB; }
+      }
+      return;
+    }
+
+    // Score-golden — at least one landing found, score differentiates.
     log('[search] phase2 golden on ['+lo.toFixed(1)+', '+hi.toFixed(1)+']', 'ok');
     const PHI = 0.6180339887;
     let a = lo, c = hi;
