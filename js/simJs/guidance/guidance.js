@@ -329,6 +329,14 @@ out.lbState = {
   lastAltKm: _lbState.lastAltKm, lastAxialGap: _lbState.lastAxialGap,
   lateralArmed: _lbState.lateralArmed,
   pusherTorqueFired: _lbState.pusherTorqueFired, payloadOpenFired: _lbState.payloadOpenFired,
+  // ASDS mission state — previously missing here. Without these, a restored
+  // guide (FF worker, or physics worker after replaceState) thinks ASDS was
+  // never deployed, re-fires _buildASDSPadForGuidance, and pushes a DUPLICATE
+  // HOPE pad into the restored worker's CONFIG (same position, but the
+  // duplicate is noise and makes debugging ambiguous).
+  asdsSpec: _lbState.asdsSpec,
+  asdsPad: _lbState.asdsPad,
+  asdsDeployed: _lbState.asdsDeployed,
 };
 if (_lbState.ascentBlock) out.lbAscentBlock = _lbState.ascentBlock.getState();
 if (_lbState.insertionBlock) out.lbInsertionBlock = _lbState.insertionBlock.getState();
