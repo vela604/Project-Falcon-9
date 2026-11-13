@@ -144,7 +144,24 @@
       }
     }
     
-    runJob(type, payload, pin) {
+    // Fire-and-forget broadcast to EVERY worker (active or idle). No id,
+  // no reply, no queue — used for state every worker's CONFIG must share:
+  // currently ASDS pad deploy/move, so each worker's physics sees the
+  // pad as a rigid surface at its heightM.
+  broadcast(msg) {
+    if (!this.workers || !this.workers.length) return 0;
+    let n = 0;
+    for (let i = 0; i < this.workers.length; i++) {
+      const w = this.workers[i];
+      if (w && w.postMessage) {
+        try { w.postMessage(msg); n++; }
+        catch (e) { console.warn('[WorkerPool] broadcast failed to worker ' + i + ':', (e && e.message) || e); }
+      }
+    }
+    return n;
+  }
+
+  runJob(type, payload, pin) {
       return new Promise((resolve, reject) => {
         const id = this.nextId++;
         this.queue.push({ id, type, payload, resolve, reject, pin });

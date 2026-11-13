@@ -637,6 +637,32 @@ self.onmessage = async (e) => {
     }
     return;
   }
+  // ---- ASDS pad broadcasts — fire-and-forget, bypass job queue ----
+  // Placed after hydrate (CONFIG loaded) but before the _loaded gate (pad
+  // state should be mutable even before sim is fully booted). No id, no
+  // reply. Every worker keeps its CONFIG.LANDING_PADS in sync so physics
+  // treats elevated pads (ASDS deck, heightM > 0) as rigid surfaces.
+  if (type === 'addLandingPad' && payload && payload.pad) {
+    try {
+      if (!CONFIG.LANDING_PADS) CONFIG.LANDING_PADS = [];
+      if (!CONFIG.LANDING_PADS.some(p => p.id === payload.pad.id)) {
+        CONFIG.LANDING_PADS.push(payload.pad);
+      }
+    } catch (e) { console.warn('[worker-sim] addLandingPad failed:', (e && e.message) || e); }
+    return;
+  }
+  if (type === 'moveLandingPad' && payload && payload.pad) {
+    try {
+      if (!CONFIG.LANDING_PADS) CONFIG.LANDING_PADS = [payload.pad];
+      else {
+        const _p = CONFIG.LANDING_PADS.find(x => x.id === payload.pad.id);
+        if (_p) Object.assign(_p, payload.pad);
+        else CONFIG.LANDING_PADS.push(payload.pad);
+      }
+    } catch (e) { console.warn('[worker-sim] moveLandingPad failed:', (e && e.message) || e); }
+    return;
+  }
+
   if (!_loaded) {
     self.postMessage({ id, ok: false, error: 'sim not loaded' });
     return;

@@ -198,6 +198,7 @@ table.rv-t{width:100%;border-collapse:collapse;font-size:11.5px;font-variant-num
 <script src="../../js/customDesign.js"></script>
 <script src="../../js/fleet.js"></script>
 <script src="../../js/config.js"></script>
+<script src="../../js/simJs/view/asds.js"></script>
 <script src="../../js/simJs/core/massProps.js"></script>
 <script src="../../js/guideConfigDefaults.js"></script>
 
@@ -357,6 +358,7 @@ table.rv-t{width:100%;border-collapse:collapse;font-size:11.5px;font-variant-num
     log('creating worker pool…');
     const n = (typeof TunerCore.defaultWorkers === 'function') ? TunerCore.defaultWorkers() : 4;
     S.pool = new TunerCore.WorkerPool(n, { workerPath: '../lib/worker-sim.js' });
+    window._serenoPool = S.pool;
     S.pool.onProgress = (msg) => {
       S.workerProgress[msg.tag] = { phase: msg.phase, detail: msg.detail, ts: msg.ts };
       markProgress();   // throttled: the 500 ms ticker below does the actual DOM rebuild

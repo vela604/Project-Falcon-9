@@ -181,6 +181,12 @@
         console.log('[ASDS] render worker notified');
       }
     } catch (e) { console.warn('[ASDS] render broadcast failed', e); }
+    try {
+      if (window._serenoPool && typeof window._serenoPool.broadcast === 'function') {
+        const n = window._serenoPool.broadcast({ type: 'addLandingPad', pad: _padSnapshot });
+        if (n > 0) console.log('[ASDS] ' + n + ' pool worker(s) notified');
+      }
+    } catch (e) { console.warn('[ASDS] pool broadcast failed', e); }
     console.log('[ASDS] Pad object:', JSON.stringify(pad));
   console.log('[ASDS] Deployed ' + pad.name + ' at ' + (xMeters / 1000).toFixed(1) +
                 ' km downrange (' + Math.round(xMeters / CONFIG.EARTH_RADIUS * 180 / Math.PI).toFixed(2) + '° east)');
@@ -279,6 +285,11 @@
         window._renderWorker.postMessage({ type: 'moveLandingPad', pad: _padSnapshot });
       }
     } catch (e) { console.warn('[ASDS] render move broadcast failed', e); }
+    try {
+      if (window._serenoPool && typeof window._serenoPool.broadcast === 'function') {
+        window._serenoPool.broadcast({ type: 'moveLandingPad', pad: _padSnapshot });
+      }
+    } catch (e) { console.warn('[ASDS] pool move broadcast failed', e); }
 
     console.log('[ASDS] Moved ' + pad.name + ': ' +
                 (oldOffsetM / 1000).toFixed(2) + ' km -> ' +
