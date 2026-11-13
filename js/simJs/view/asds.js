@@ -22,43 +22,61 @@
   // API). Auto-dismisses after ~2.8s. Self-created on first call.
   // ============================================================
   function _showASDSToast(msg, ok) {
+    // DIAGNOSTIC: log to confirm the function is being CALLED. If this
+    // line doesn't appear in console, the deploy code path is broken
+    // before reaching this. If it appears but toast isn't visible, it's
+    // a CSS/stacking issue below.
+    console.log('[ASDS-TOAST] called:', msg);
+    
     let el = document.getElementById('asdsToast');
     if (!el) {
       el = document.createElement('div');
       el.id = 'asdsToast';
+      // Critical: z-index = max int32 — above EVERYTHING (even FF modal).
       el.style.cssText = [
         'position: fixed',
         'left: 50%',
         'bottom: 32px',
         'transform: translate(-50%, 20px)',
-        'z-index: 9999',
-        'padding: 10px 18px',
+        'z-index: 2147483647',
+        'padding: 12px 20px',
         'border-radius: 8px',
         'background: #0d1424',
         'color: #dbe6f5',
         'font-family: "JetBrains Mono", monospace',
-        'font-size: 12.5px',
+        'font-size: 13px',
         'font-weight: 500',
-        'box-shadow: 0 12px 32px rgba(0,0,0,0.55)',
+        'box-shadow: 0 12px 32px rgba(0,0,0,0.65)',
         'pointer-events: none',
         'opacity: 0',
         'transition: opacity 0.24s ease, transform 0.24s ease',
-        'max-width: min(520px, calc(100vw - 40px))',
+        'max-width: 520px',
         'text-align: center',
-      ].join(';');
+        'will-change: opacity, transform',
+      ].join(' !important;') + ' !important;';
       document.body.appendChild(el);
+      console.log('[ASDS-TOAST] element created + appended to body');
     }
-    el.style.border = '1px solid ' + (ok ? '#78afeb' : '#ff5f7e');
+    
+    el.style.setProperty('border', '1px solid ' + (ok ? '#78afeb' : '#ff5f7e'), 'important');
     el.textContent = msg;
-    el.style.opacity = '0';
-    el.style.transform = 'translate(-50%, 20px)';
+    el.style.setProperty('opacity', '0', 'important');
+    el.style.setProperty('transform', 'translate(-50%, 20px)', 'important');
+    // Force reflow so the transition kicks in
+    void el.offsetHeight;
     void el.offsetWidth;
-    el.style.opacity = '1';
-    el.style.transform = 'translate(-50%, 0)';
+    // Use rAF — more reliable than immediate setProperty for transitions
+    requestAnimationFrame(() => {
+      el.style.setProperty('opacity', '1', 'important');
+      el.style.setProperty('transform', 'translate(-50%, 0)', 'important');
+      console.log('[ASDS-TOAST] shown (opacity=1)');
+    });
+    
     if (el._hideTimer) clearTimeout(el._hideTimer);
     el._hideTimer = setTimeout(() => {
-      el.style.opacity = '0';
-      el.style.transform = 'translate(-50%, 20px)';
+      el.style.setProperty('opacity', '0', 'important');
+      el.style.setProperty('transform', 'translate(-50%, 20px)', 'important');
+      console.log('[ASDS-TOAST] hidden');
     }, ok ? 2800 : 4200);
   }
 
@@ -171,6 +189,7 @@
     // at its old contents until the next state-change event (body count
     // change, FF complete) — user would never see ASDS-1 in the dropdown.
     if (typeof refreshFollowBodySelect === 'function') refreshFollowBodySelect();
+    _showASDSToast('🛳 ' + pad.name + ' deployed at ' + (xMeters / 1000).toFixed(1) + ' km', true);
     return { ok: true, pad };
   }
 
