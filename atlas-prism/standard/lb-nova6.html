@@ -831,8 +831,20 @@ async function doInit(){
         _pad = _cfgPads.find(function(p){ return p && p.isASDS; }) || null;
       }
       S.asdsPad = _pad || null;
-      if (_pad) log('ASDS pad captured: ' + _pad.name + ' @ ' + (_pad.arcOffsetM/1000).toFixed(3) + ' km, height ' + (_pad.heightM || 0) + 'm', 'ok');
-      else log('ASDS pad NOT captured — search may fail', 'warn');
+      if (_pad) {
+        log('ASDS pad captured: ' + _pad.name + ' @ ' + (_pad.arcOffsetM/1000).toFixed(3) + ' km, height ' + (_pad.heightM || 0) + 'm', 'ok');
+      } else {
+        // Silent null cascades into a LZ-1 fallback (guidance + getXfromPad
+        // both), which makes every eval show launch-relative dr and the
+        // walk runaway. Fail hard here instead — the user needs to fix
+        // posStart and re-INIT.
+        const _posKm = (parseFloat($('posStart').value) || 0) / 1000;
+        throw new Error(
+          'ASDS pad NOT deployed — posStart=' + _posKm.toFixed(1) + ' km is outside the ocean deployment zone ' +
+          '(valid range roughly [250, 6600] km, ±10 km nudge only covers small violations). ' +
+          'Fix posStart and re-INIT.'
+        );
+      }
     } else {
       S.asdsPad = null;
     }
@@ -862,6 +874,12 @@ async function doInit(){
 // ===== BIAS EVAL (rich data capture) =====
 async function runBiasEval(bias, onTick, altKm){
   if(!Number.isFinite(altKm)) altKm = curAlt();
+  // Defensive — INIT hard-fails now when the ASDS pad is missing, but a
+  // corrupted mid-session state (or a future fast-forward edge case) must
+  // not silently produce launch-relative dr again.
+  if(S.mode === 'ASDS' && !S.asdsPad){
+    throw new Error('ASDS pad not deployed — posStart likely out of ocean zone. Re-INIT with a valid posStart.');
+  }
   const g = deepClone(S.ebSnap.guidanceState);
   const cfg = g.guideConfigs && g.guideConfigs.landbackV1;
   
