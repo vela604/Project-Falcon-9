@@ -1449,7 +1449,8 @@ async function doScan(){
       });
     S.searchResult = R;
     setBestDisplay(R.best.ok ? R.best.bias : null, R.best.ok ? R.best.score : null);
-    log(R.best.ok ? 'Search complete. Best bias='+R.best.bias.toFixed(2)+' score='+R.best.score.toFixed(2) : 'Search complete. No landing passed the hard limits.', R.best.ok ? 'ok' : 'warn');
+    const _bestLbl = R.best.ok ? ((S.mode === 'ASDS') ? 'pos='+(R.best.bias/1000).toFixed(3)+'km' : 'bias='+R.best.bias.toFixed(2)) : null;
+    log(R.best.ok ? 'Search complete. Best '+_bestLbl+' score='+R.best.score.toFixed(2) : 'Search complete. No landing passed the hard limits.', R.best.ok ? 'ok' : 'warn');
     renderResults();
   } catch(e){
     log('Scan error: '+e.message, 'err');
@@ -1906,7 +1907,7 @@ function renderVerdict(){
     vd = '<div class="rv-vd bad"><span class="k">All fail</span>Every probed bias breached a hard limit (best reason: <b>'+esc(b.fail||'?')+'</b>). Widen the window or check the ascent config.</div>';
   } else if(R.bracketed){
     st = 'OK'; stc = 'ok';
-    vd = '<div class="rv-vd ok"><span class="k">Bracketed</span>Neighbours <b>'+R.lo.bias.toFixed(1)+'</b> ('+fmt(R.lo.score,2)+') and <b>'+R.hi.bias.toFixed(1)+'</b> ('+fmt(R.hi.score,2)+') both score worse than the best — the minimum is inside the explored range.</div>';
+    vd = '<div class="rv-vd ok"><span class="k">Bracketed</span>Neighbours <b>'+_fmtTarget(R.lo.bias)+'</b> ('+fmt(R.lo.score,2)+') and <b>'+_fmtTarget(R.hi.bias)+'</b> ('+fmt(R.hi.score,2)+') both score worse than the best — the minimum is inside the explored range.</div>';
   } else {
     st = 'EDGE'; stc = 'warn';
     vd = '<div class="rv-vd warn"><span class="k">Not bracketed</span>The best bias sits on the edge of what was explored (or a neighbour failed) — the true minimum may lie outside. Widen the bias window or lower the min step.'+(S.abort ? ' · stopped by user' : '')+'</div>';
@@ -1915,7 +1916,7 @@ function renderVerdict(){
   host.innerHTML = '<div class="rv"><div class="rv-h"><b>BIAS SEARCH</b>' +
     '<span class="in">window ['+w.lo+', '+w.hi+'] m · '+S.runs.length+' evals</span><span class="sp"></span><span class="rv-st '+stc+'">'+st+'</span></div>' +
     '<div class="rv-kpi">' +
-    '<div><span>Best bias</span><b class="c">'+(b.ok ? b.bias.toFixed(2) : '—')+'<small>m</small></b></div>' +
+    '<div><span>Best '+(S.mode === 'ASDS' ? 'position' : 'bias')+'</span><b class="c">'+(b.ok ? _fmtTarget(b.bias) : '—')+'</b></div>' +
     '<div><span>Score</span><b class="g">'+(b.ok ? b.score.toFixed(3) : '—')+'</b></div>' +
     '<div><span>Landed ok</span><b>'+okN+' / '+S.runs.length+'</b></div>' +
     '<div><span>TD x</span><b class="a">'+(c ? fmt(c.downrange,2) : '—')+'<small>m</small></b></div>' +
@@ -1965,8 +1966,8 @@ function drawLandscapeScore(){
   ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
   for(let i=0;i<=4;i++) ctx.fillText((sLo+i*(sHi-sLo)/4).toFixed(2), padL-6, padT+ph-i*ph/4);
   ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-  for(let i=0;i<=4;i++) ctx.fillText((bMin+i*bSpan/4).toFixed(0), padL+i*pw/4, padT+ph+6);
-  ctx.fillStyle = '#35d6ff'; ctx.fillText('bias (m)', padL+pw/2, H-14);
+  for(let i=0;i<=4;i++) ctx.fillText(_fmtChartTick(bMin+i*bSpan/4), padL+i*pw/4, padT+ph+6);
+  ctx.fillStyle = '#35d6ff'; ctx.fillText(_modeAxisLabel(), padL+pw/2, H-14);
   ctx.strokeStyle = '#ffb020'; ctx.lineWidth = 1.5; ctx.beginPath();
   let started = false;
   for(const r of oks){ const x = X(r.bias), y = Y(r.score); if(!started){ ctx.moveTo(x,y); started = true; } else ctx.lineTo(x,y); }
@@ -1983,7 +1984,7 @@ function drawLandscapeScore(){
   ctx.setLineDash([2,3]); ctx.beginPath(); ctx.moveTo(bx,by+7); ctx.lineTo(bx,padT+ph); ctx.stroke(); ctx.setLineDash([]);
   ctx.fillStyle = '#fff'; ctx.font = '10px monospace';
   ctx.textAlign = right ? 'right' : 'left'; ctx.textBaseline = 'bottom';
-  ctx.fillText('best '+best.score.toFixed(2)+' @ '+best.bias.toFixed(1), bx+(right?-10:10), by-8);
+  ctx.fillText('best '+best.score.toFixed(2)+' @ '+_fmtTarget(best.bias), bx+(right?-10:10), by-8);
 }
 
 function drawLandscapeDr(){
@@ -2029,8 +2030,8 @@ function drawLandscapeDr(){
   ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
   for(let i=0;i<=4;i++) ctx.fillText((dLo+i*(dHi-dLo)/4).toFixed(1), padL-6, padT+ph-i*ph/4);
   ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-  for(let i=0;i<=4;i++) ctx.fillText((bMin+i*bSpan/4).toFixed(0), padL+i*pw/4, padT+ph+6);
-  ctx.fillStyle = '#35d6ff'; ctx.fillText('bias (m)', padL+pw/2, H-14);
+  for(let i=0;i<=4;i++) ctx.fillText(_fmtChartTick(bMin+i*bSpan/4), padL+i*pw/4, padT+ph+6);
+  ctx.fillStyle = '#35d6ff'; ctx.fillText(_modeAxisLabel(), padL+pw/2, H-14);
   // Curve through ok points (bias-sorted, so monotone in x)
   ctx.strokeStyle = '#35d6ff'; ctx.lineWidth = 1.5; ctx.beginPath();
   let started = false;
@@ -2055,10 +2056,26 @@ function drawLandscapeDr(){
     ctx.setLineDash([2,3]); ctx.beginPath(); ctx.moveTo(bx,by); ctx.lineTo(bx,yZero); ctx.stroke(); ctx.setLineDash([]);
     ctx.fillStyle = '#fff'; ctx.font = '10px monospace';
     ctx.textAlign = right ? 'right' : 'left'; ctx.textBaseline = 'bottom';
-    ctx.fillText('best '+best.score.toFixed(2)+' @ '+best.bias.toFixed(1)+' (dr='+best.m.contact.downrange.toFixed(1)+'m)', bx+(right?-10:10), by-8);
+    ctx.fillText('best '+best.score.toFixed(2)+' @ '+_fmtTarget(best.bias)+' (dr='+best.m.contact.downrange.toFixed(1)+'m)', bx+(right?-10:10), by-8);
   }
 }
 window.addEventListener('resize', () => { if(S.runs.length) drawLandscape(); });
+
+// ===== TARGET DISPLAY HELPERS (mode-aware) =====
+// RTLS: target is bias (metres). ASDS: target is droneship position (km).
+// Keep display formatting centralised so every consumer reads the same
+// representation regardless of mode.
+function _fmtTarget(v){
+  if(!Number.isFinite(v)) return '—';
+  return (S.mode === 'ASDS') ? ((v/1000).toFixed(3)+' km') : (v.toFixed(2)+' m');
+}
+function _modeAxisLabel(){
+  return (S.mode === 'ASDS') ? 'position (m)' : 'bias (m)';
+}
+function _fmtChartTick(v){
+  if(!Number.isFinite(v)) return '—';
+  return (S.mode === 'ASDS') ? ((v/1000).toFixed(0)+'k') : v.toFixed(0);
+}
 
 // ===== RESULTS TABLE =====
 function renderResults(){
@@ -2076,7 +2093,8 @@ function renderResults(){
   const _bestRun = runsAtAlt().filter(r => r.ok).reduce((a,r) => !a || r.score < a.score ? r : a, null);
   const bestBias = _bestRun ? _bestRun.bias : null;
   let html = '<table><thead><tr>';
-  ['#','LB alt','bias','score','status','TD x (m)','TD vx','TD vy (impact)','TD θ','TD ω','hop mm','final s','bounce m','fuel left','LB start km'].forEach(h => html += '<th>'+h+'</th>');
+  const _colLbl = (S.mode === 'ASDS') ? 'asds km' : 'bias';
+  ['#','LB alt',_colLbl,'score','status','TD x (m)','TD vx','TD vy (impact)','TD θ','TD ω','hop mm','final s','bounce m','fuel left','LB start km'].forEach(h => html += '<th>'+h+'</th>');
   html += '</tr></thead><tbody>';
   let _rank = 0, _grpScore = null;
   sorted.forEach((r,i) => {
@@ -2089,7 +2107,7 @@ function renderResults(){
     html += '<tr class="'+cls+'" data-idx="'+idx+'">';
     html += '<td>'+(r.ok ? _rank : '—')+'</td>';
     html += '<td>'+fmt(r.m.alt, 2)+'</td>';
-    html += '<td>'+r.bias.toFixed(2)+'</td>';
+    html += '<td>'+_fmtTarget(r.bias)+'</td>';
     html += '<td>'+(r.ok ? r.score.toFixed(2) : 'FAIL')+'</td>';
     html += '<td>'+(r.ok ? (isBest ? '★ best' : (isTied ? '≈ tied best' : '✓ ok')) : esc(r.fail || '?'))+'</td>';
     html += '<td>'+(c ? fmt(c.downrange, 2) : '—')+'</td>';
