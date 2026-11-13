@@ -1765,6 +1765,44 @@ function _legTipExtension(body) {
   return Math.max(0, tipApexY);
 }
 
+// Pad-aware local ground radius. Landing pads with heightM > 0 (e.g. ASDS
+// drone ships, deck 2 m above sea level) act as a rigid platform at that
+// altitude. Returns EARTH_RADIUS + LAUNCH_SITE_ALTITUDE + pad.heightM when
+// the body's Earth-fixed position is within any enabled pad's radiusM;
+// otherwise the base ground radius (sea level). Pad surfaces are treated
+// as flat — a real ASDS deck is level, so no curvature correction.
+//
+// Detection is horizontal-only (angle within radiusM of pad center at the
+// current simTime). Vertical position is irrelevant here: whether the
+// booster is 100 m above the pad or 1 m above it, physics should always
+// see the pad surface as the floor. This is what lets the landing-burn
+// descent law aim for hEff = 0 at pad-height + leg-tip extension, not at
+// sea level.
+function _localGroundR(body, baseR, simT) {
+  const pads = CONFIG.LANDING_PADS;
+  if (!pads || !pads.length) return baseR;
+  const r = Math.hypot(body.rx, body.ry);
+  if (!(r > 0)) return baseR;
+  const phiEf = Math.atan2(body.rx, body.ry) - (CONFIG.EARTH_OMEGA || 0) * simT;
+  const launchPhi = CONFIG.LAUNCH_SITE_ANGLE_0 || 0;
+  for (let i = 0; i < pads.length; i++) {
+    const p = pads[i];
+    if (!p || p.enabled === false) continue;
+    const h = Number.isFinite(p.heightM) ? p.heightM : 0;
+    if (h <= 0) continue;
+    const off = Number.isFinite(p.arcOffsetM) ? p.arcOffsetM : 0;
+    const rad = Number.isFinite(p.radiusM) ? p.radiusM : 0;
+    if (rad <= 0) continue;
+    const padPhiEf = launchPhi + off / baseR;
+    let dPhi = phiEf - padPhiEf;
+    while (dPhi > Math.PI) dPhi -= 2 * Math.PI;
+    while (dPhi < -Math.PI) dPhi += 2 * Math.PI;
+    const horizM = Math.abs(dPhi) * baseR;
+    if (horizM <= rad) return baseR + h;
+  }
+  return baseR;
+}
+
 function resolveGroundContact(body, groundR, geom) {
   const half = _bodyWidthOf(body) / 2;
   const H = _bodyHeightOf(body);
@@ -2325,7 +2363,11 @@ if (isActive) {
 }
 
     // ---- Ground contact resolution ----
-    const groundR = CONFIG.EARTH_RADIUS + (CONFIG.LAUNCH_SITE_ALTITUDE || 0);
+    // Pad-aware: if body is over a pad with heightM > 0 (e.g. ASDS deck),
+    // treat that altitude as the rigid floor for this tick. Falls back to
+    // sea level otherwise. Physics treats pads as flat surfaces.
+    const baseGroundR = CONFIG.EARTH_RADIUS + (CONFIG.LAUNCH_SITE_ALTITUDE || 0);
+    const groundR = _localGroundR(body, baseGroundR, state.simTime);
     const contact = resolveGroundContact(body, groundR, geom);
     body._lastContact = contact;
     if (!contact) {

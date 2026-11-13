@@ -1123,7 +1123,15 @@ function _lbResolveTargetPad() {
   }
   const Rg = env.EARTH_RADIUS + (env.LAUNCH_SITE_ALTITUDE || 0);
   const angleEf = (env.LAUNCH_SITE_ANGLE_0 || 0) + p.arcOffsetM / Rg;
-  return { id: p.id, arcOffsetM: p.arcOffsetM, angleEf: angleEf };
+  return {
+    id: p.id,
+    arcOffsetM: p.arcOffsetM,
+    angleEf: angleEf,
+    // Carry pad height so the landing-burn descent law can aim for the
+    // actual pad surface (ASDS decks sit 2 m above sea level; flat ground
+    // pads default to 0). Consumed by guidance-blocks.js LB case's hEff.
+    heightM: Number.isFinite(p.heightM) ? p.heightM : 0,
+  };
 }
 
 function _lbCurrentPhase() {

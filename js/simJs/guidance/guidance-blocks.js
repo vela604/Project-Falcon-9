@@ -5198,7 +5198,15 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
             const LB_NOAUTH = _cfgN("LANDING_BURN_NOAUTH", 0.12);       // gNet below this fraction of gEff => no lateral authority, hold weathervane angle
 
             const legExt_m = _slamLegTipExtension(body);
-            const hEff = hAGL - legExt_m - H_OFF - LH_OFF;
+            // Pad height offset: if the target pad is elevated (e.g. ASDS
+            // deck 2 m above sea level), the descent law must aim for
+            // hEff = 0 at pad-surface + leg-tip, not sea level. Without
+            // this, guidance drives the booster 2 m into the deck before
+            // physics contact fires.
+            const padHeightM = (_missionCtx && _missionCtx.targetPad &&
+              Number.isFinite(_missionCtx.targetPad.heightM))
+              ? _missionCtx.targetPad.heightM : 0;
+            const hEff = hAGL - legExt_m - H_OFF - LH_OFF - padHeightM;
             const elapsedAlign = simT - _st.lbAlignStartT;
 
             // ---- Contact detection (fires ONCE, then holds for spool-down) ----
