@@ -890,6 +890,17 @@ function sendStackDataToGuidance() {
       }
       if (typeof refreshFollowBodySelect === 'function') refreshFollowBodySelect();
       if (typeof forceRenderResync === 'function') forceRenderResync();
+      
+      // Toast for guidance path — deployASDS wrapper only fires when called
+      // directly on main thread. Guidance goes worker→bridge→main, bypassing
+      // the wrapper. Fire toast explicitly here.
+      if (m.type === 'addLandingPad' && typeof window !== 'undefined' &&
+          typeof window.showASDSToast === 'function') {
+        try {
+          window.showASDSToast('\u{1F6F3} ' + (pad.name || pad.id) +
+            ' @ ' + (pad.arcOffsetM / 1000).toFixed(1) + ' km (guidance)', true);
+        } catch (e) {}
+      }
     } catch (err) {
       console.error('[main] ASDS bridge error:', err);
     }

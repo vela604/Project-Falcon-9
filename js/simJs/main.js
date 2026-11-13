@@ -461,7 +461,15 @@ function bootstrap() {
   return;
 }
 
-    if (msg.type === 'padDetect') {
+    if (msg.type === 'renderVersionDiag') {
+      console.log('[render-ver]', msg.version, 'loaded');
+    } else if (msg.type === 'padIterateDiag') {
+      console.log('[pad-iter]', msg.id,
+        '| isASDS:', msg.isASDS, '(' + msg.isASDSType + ')',
+        '| lengthM:', msg.lengthM, '(' + msg.lengthMType + ')',
+        '| radiusM:', msg.radiusM,
+        '| mpp:', msg.mpp);
+    } else if (msg.type === 'padDetect') {
       console.log('[render-worker-DIAG] padDetect:', msg.id,
         msg.isASDSResult ? 'ASDS ✓' : 'LZ ✗',
         JSON.stringify(msg.fields));
