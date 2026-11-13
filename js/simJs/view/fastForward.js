@@ -234,6 +234,23 @@ const guideDataPromise = requestGuidanceState();
 let physData = null, guideData = null;
 try {
   physData = await physDataPromise;
+      // STEP 5: Sync main CONFIG.LANDING_PADS from physics capture — ensures
+      // main matches physics worker's runtime pad state (ASDS deployments
+      // that happened post-boot). Dedupe by id: pads already in main CONFIG
+      // are skipped (they're identical).
+      if (physData && Array.isArray(physData.configLandingPads)) {
+        if (!CONFIG.LANDING_PADS) CONFIG.LANDING_PADS = [];
+        const _mainIds = new Set(CONFIG.LANDING_PADS.map(p => p.id));
+        let _added = 0;
+        for (const _p of physData.configLandingPads) {
+          if (!_mainIds.has(_p.id)) {
+            CONFIG.LANDING_PADS.push(Object.assign({}, _p));
+            _added++;
+          }
+        }
+        console.log('[FF] main CONFIG.LANDING_PADS synced from capture:',
+          physData.configLandingPads.length, 'pads,', _added, 'new');
+      }
   guideData = await guideDataPromise;
 } catch (e) {
   console.error('[fastForward] state capture failed', e);
@@ -417,6 +434,7 @@ const w = new Worker('js/simJs/threads/fastforward.worker.js');
         activeBodyIndex: physData.activeBodyIndex,
         simTime: physData.simTime,
         halted: !!physData.halted,
+        configLandingPads: physData.configLandingPads,
       },
       guidanceState: guideData,
       stackData: stackData,

@@ -6,7 +6,16 @@
 // Receives an initial state snapshot, runs N ticks, returns final state.
 //
 // Protocol:
-//   IN  { type: 'run', storageKeys, fullState, guidanceState, stackData,
+//   IN  {
+      // ASDS pad sync — replace CONFIG.LANDING_PADS from capture so FF
+      // worker has same pad set as physics worker at pause time.
+      // Fixes ASDS nondeterminism: FF worker's default LZ-only CONFIG
+      // caused trajectory divergence when a runtime-deployed ASDS existed.
+      if (msg && msg.fullState && Array.isArray(msg.fullState.configLandingPads)) {
+        CONFIG.LANDING_PADS = msg.fullState.configLandingPads.map(function (p) { return Object.assign({}, p); });
+        console.log('[FF] pads synced from capture:', CONFIG.LANDING_PADS.length);
+      }
+       type: 'run', storageKeys, fullState, guidanceState, stackData,
 //          activeGuide, durationS, progressEveryTicks }
 //   IN  { type: 'abort' }
 //   OUT { type: 'progress', simTime, elapsedS }
