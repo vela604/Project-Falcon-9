@@ -138,7 +138,7 @@ const GUIDE_CONSTANT_DESCRIPTIONS = {
   'rtls.LANDING_BURN_GFLOOR': 'LB_GFLOOR lateral cascade parameter.',
   'rtls.LANDING_BURN_NOAUTH': 'LB_NOAUTH lateral cascade parameter.',
   'rtls.LANDING_BURN_H_BLEND': 'LB_H_BLEND lateral cascade parameter.',
-  'rtls.LANDING_BURN_LEGS_ALT_M': 'Altitude AGL (m) at which LANDING_BURN commands legs deploy. Higher = more margin for full progress before contact; deploy rate is a leg-type property (legs-swingout-4 ships ~0.5/s, so ~2 s from 0 to 1). Set to 200 m for F9-class booster to guarantee legs at 1.0 before touchdown.',
+  'rtls.LANDING_BURN_LEGS_ALT_M': 'Altitude AGL (m) at which LANDING_BURN commands legs deploy. Higher = more margin for full progress before contact; deploy rate is a leg-type property (legs-swingout-4 ships ~0.5/s, so ~2 s from 0 to 1). 500 m default for F9-class booster — allows the ~2 s deploy to complete with margin even when LB descent is fast (~250 m/s at 200 m for zero-boostback trajectories; 200 m gave only ~0.8 s = 40% progress at touchdown).',
   'rtls.LANDING_BURN_ALT_KM': 'Altitude AGL (km) at which POST_ENTRY_STEER hands off to the LANDING_BURN phase. Must be below LANDING_BURN_ALIGN_ALT_KM. This is the landing-burn ignition trigger.',
   'rtls.ENTRY_BURN_ALT_KM': 'Altitude AGL (km) at which PRE_ENTRY_STEER hands off to ENTRY_BURN. The phase must already be in HOLD (aligned, low ω) when this triggers.',
   'rtls.ENTRY_BURN_ENGINES': 'Engines lit for the entry burn at their LOWEST thrust (minMassFlowRate). "C" = centre engine, numbers = outer-ring engine angleDeg (0 and 180 = the two extreme left/right engines). Comma separated. Default "C,0,180" = centre + two extreme outer.',

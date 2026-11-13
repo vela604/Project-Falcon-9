@@ -3098,7 +3098,7 @@ setState(s) {
       LANDING_BURN_H_CUT_M: 0.0,
       LANDING_BURN_H_STALL_M: 0.5,
         // engines fired during LB spool (C = centre; add numbers for outer-ring)
-      LANDING_BURN_LEGS_ALT_M: 200,   // AGL altitude to deploy legs during LB
+      LANDING_BURN_LEGS_ALT_M: 500,   // AGL altitude to deploy legs during LB
       POST_ENTRY_GRIDFIN_RAMP_DEG_S: 3,    // grid-fin control target ramps 0 -> max at this rate (deg/s); slower = less oscillation (guess, tune in sim)
       // LB cascade-controller constants — synced from the same-named keys in
       // guideConfigDefaults.landbackV1.rtls. Values match this file's _cfgN()
@@ -4503,8 +4503,14 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
             _st.ebAlphaNextDeg = (dNext && Number.isFinite(dNext.alphaDeg)) ? dNext.alphaDeg : null;
             let rcsDir = 0;
             _st.ebPredErrM = null;
-            if (active && errM !== null) {
-              if (cfg.MISSION_TYPE === 'ASDS') {
+            // ASDS mode: RCS holds attitude, NO impact-error coupling.
+            // The gate is just "active" — errM computation is irrelevant to
+            // ASDS (attitude target = atan2(relVx, -relVy), no bias, no
+            // impact predictor). RTLS mode: gate stays errM !== null
+            // (impact-error chase requires a valid ballistic prediction).
+            const _asdsAttitudeHold = (cfg.MISSION_TYPE === 'ASDS');
+            if (active && (_asdsAttitudeHold || errM !== null)) {
+              if (_asdsAttitudeHold) {
                 // ---- ASDS mode: retrograde AoA=180 hold ----
                 // Nose points exactly opposite the earth-relative velocity
                 // vector — same target as PRE_ENTRY_STEER's retrograde aim,
@@ -5249,9 +5255,29 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
             // hEff = 0 at pad-surface + leg-tip, not sea level. Without
             // this, guidance drives the booster 2 m into the deck before
             // physics contact fires.
-            const padHeightM = (_missionCtx && _missionCtx.targetPad &&
-              Number.isFinite(_missionCtx.targetPad.heightM))
-              ? _missionCtx.targetPad.heightM : 0;
+            // Pad height is only subtracted when the body is HORIZONTALLY
+            // over the target pad. If the booster drifted off-pad (e.g. a
+            // trajectory miss, or ASDS targeting that hasn't converged),
+            // the actual rigid floor is sea level — subtracting padHeight
+            // would make the descent law fire contact ~2 m too early and
+            // spool the engines before physics sees real ground contact.
+            let padHeightM = 0;
+            if (_missionCtx && _missionCtx.targetPad &&
+                Number.isFinite(_missionCtx.targetPad.heightM) &&
+                _missionCtx.targetPad.heightM > 0) {
+              const _pad = _missionCtx.targetPad;
+              const _rNow = Math.hypot(body.rx, body.ry);
+              if (_rNow > 1) {
+                const _phiEf = Math.atan2(body.rx, body.ry) - (env.EARTH_OMEGA || 0) * simT;
+                const _padPhi = (env.LAUNCH_SITE_ANGLE_0 || 0) + (_pad.arcOffsetM || 0) / _rNow;
+                let _dPhi = _phiEf - _padPhi;
+                while (_dPhi > Math.PI) _dPhi -= 2 * Math.PI;
+                while (_dPhi < -Math.PI) _dPhi += 2 * Math.PI;
+                const _horiz = Math.abs(_dPhi) * _rNow;
+                const _padR = Number.isFinite(_pad.radiusM) ? _pad.radiusM : 35;
+                if (_horiz <= _padR) padHeightM = _pad.heightM;
+              }
+            }
             const hEff = hAGL - legExt_m - H_OFF - LH_OFF - padHeightM;
             const elapsedAlign = simT - _st.lbAlignStartT;
 
