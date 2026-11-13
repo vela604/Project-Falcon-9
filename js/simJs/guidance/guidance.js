@@ -1803,6 +1803,17 @@ function getLandbackV1Config() { return JSON.parse(JSON.stringify(_lbConfig)); }
   if (Number.isInteger(targetBodyIdx)) msg.targetBodyIdx = targetBodyIdx;
   return msg;
 }
+
+// ASDS (Autonomous Spaceport Drone Ship) — downrange landing platforms.
+// deployASDS spawns a new ship at arcOffsetM (metres east of the launch pad).
+// setASDSPosition moves an existing one. Validation (ocean zone bounds +
+// 250 m hull-edge gap) runs in the physics worker.
+function cmdDeployASDS(xMeters) {
+  return { type: "deployASDS", xMeters };
+}
+function cmdSetASDSPosition(padId, newXOffsetM) {
+  return { type: "setASDSPosition", padId, newXOffsetM };
+}
 function cmdPusherTorque(angAccelRadPerS2, targetOmegaRadPerS, targetBodyIdx) {
   const msg = { type: "pusherTorque", angAccel: angAccelRadPerS2, targetOmega: targetOmegaRadPerS };
   if (Number.isInteger(targetBodyIdx)) msg.targetBodyIdx = targetBodyIdx;
@@ -1868,6 +1879,8 @@ _registerTestGuide,
     cmdSetGimbalAccel,
     cmdRcsDuty,
 cmdMarkIntentionalImpact,
+cmdDeployASDS,
+cmdSetASDSPosition,
 cmdPusherTorque,
     // Debug getters
     get lastRawSnapshot() {

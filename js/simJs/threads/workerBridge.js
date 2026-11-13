@@ -56,6 +56,40 @@ const WorkerBridge = {
   if (typeof FastForward !== 'undefined' && FastForward.onFullState) {
     FastForward.onFullState(msg.data);
   }
+} else if (msg.type === 'asdsDeployed') {
+  // Physics worker deployed an ASDS (guidance or other non-main source).
+  // Mirror to main CONFIG + forward to render worker.
+  if (!CONFIG.LANDING_PADS) CONFIG.LANDING_PADS = [];
+  if (!CONFIG.LANDING_PADS.some(p => p.id === msg.pad.id)) {
+    CONFIG.LANDING_PADS.push(msg.pad);
+  }
+  try {
+    if (window._renderWorker) {
+      window._renderWorker.postMessage({ type: 'addLandingPad', pad: msg.pad });
+    }
+  } catch (e) { console.warn('[bridge] asdsDeployed render forward failed', e); }
+  if (typeof refreshFollowBodySelect === 'function') refreshFollowBodySelect();
+  if (typeof forceRenderResync === 'function') forceRenderResync();
+  console.log('[bridge] ASDS deployed via worker: ' + msg.pad.name + ' @ ' + msg.pad.arcOffsetM + ' m');
+} else if (msg.type === 'asdsMoved') {
+  const p = (CONFIG.LANDING_PADS || []).find(x => x.id === msg.pad.id);
+  if (p) Object.assign(p, msg.pad);
+  else if (!CONFIG.LANDING_PADS) CONFIG.LANDING_PADS = [msg.pad];
+  else CONFIG.LANDING_PADS.push(msg.pad);
+  try {
+    if (window._renderWorker) {
+      window._renderWorker.postMessage({ type: 'moveLandingPad', pad: msg.pad });
+    }
+  } catch (e) { console.warn('[bridge] asdsMoved render forward failed', e); }
+  if (typeof refreshFollowBodySelect === 'function') refreshFollowBodySelect();
+  if (typeof forceRenderResync === 'function') forceRenderResync();
+  console.log('[bridge] ASDS moved via worker: ' + msg.pad.name + ' -> ' + msg.pad.arcOffsetM + ' m');
+} else if (msg.type === 'asdsDeployFailed') {
+  console.warn('[bridge] ASDS deploy rejected: ' + msg.error);
+  if (typeof window.showASDSToast === 'function') window.showASDSToast('⚠ ' + msg.error, false);
+} else if (msg.type === 'asdsMoveFailed') {
+  console.warn('[bridge] ASDS move rejected: ' + msg.error);
+  if (typeof window.showASDSToast === 'function') window.showASDSToast('⚠ ' + msg.error, false);
 } else if (msg.type === 'pausedState') {
   if (typeof FastForward !== 'undefined' && FastForward.onPausedState) {
     FastForward.onPausedState(msg.data);

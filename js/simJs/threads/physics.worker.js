@@ -268,6 +268,75 @@ if (b.crashed) return null;
 return b;
 }
 
+// ---- ASDS constants — hardware specs, not tunable ----
+// Duplicated from asds.js (main-thread UI) so the physics worker can
+// validate guidance-issued deploy/move commands without a main-thread
+// round-trip. Same values, keep in sync if specs change.
+const ASDS_LENGTH_M = 91;
+const ASDS_LZ_WEST_M = 54;
+const ASDS_LZ_EAST_M = 37;
+const ASDS_MIN_GAP_M = 250;
+const ASDS_LANDING_RADIUS_M = 35;
+const ASDS_DECK_HEIGHT_M = 2;
+
+function _asdsOceanBounds() {
+  const R = CONFIG.EARTH_RADIUS;
+  const sDeg = Number.isFinite(CONFIG.OCEAN_ZONE_EAST_START_DEG) ? CONFIG.OCEAN_ZONE_EAST_START_DEG : 2;
+  const eDeg = Number.isFinite(CONFIG.OCEAN_ZONE_EAST_END_DEG) ? CONFIG.OCEAN_ZONE_EAST_END_DEG : 60;
+  return { startM: sDeg * Math.PI / 180 * R, endM: eDeg * Math.PI / 180 * R };
+}
+
+function _asdsExisting() {
+  if (!CONFIG.LANDING_PADS) CONFIG.LANDING_PADS = [];
+  return CONFIG.LANDING_PADS.filter(p => p && p.isASDS);
+}
+
+function _asdsValidateDeploy(xMeters) {
+  if (!Number.isFinite(xMeters)) return { ok: false, error: 'Offset must be a finite number.' };
+  xMeters = Math.round(xMeters);
+  const zone = _asdsOceanBounds();
+  if (xMeters - ASDS_LZ_WEST_M < zone.startM) {
+    return { ok: false, error: 'Western hull edge would be ' + Math.round(zone.startM - (xMeters - ASDS_LZ_WEST_M)) + ' m outside ocean. Minimum offset: ' + Math.round(zone.startM + ASDS_LZ_WEST_M) + ' m.' };
+  }
+  if (xMeters + ASDS_LZ_EAST_M > zone.endM) {
+    return { ok: false, error: 'Eastern hull edge would be ' + Math.round((xMeters + ASDS_LZ_EAST_M) - zone.endM) + ' m outside ocean. Maximum offset: ' + Math.round(zone.endM - ASDS_LZ_EAST_M) + ' m.' };
+  }
+  const existing = _asdsExisting();
+  for (let i = 0; i < existing.length; i++) {
+    const other = existing[i];
+    const hullEdgeGap = Math.abs(xMeters - other.arcOffsetM) - ASDS_LENGTH_M;
+    if (hullEdgeGap < ASDS_MIN_GAP_M) {
+      return { ok: false, error: 'Too close to ' + other.name + '. Hull-edge gap: ' + Math.round(hullEdgeGap) + ' m (min: ' + ASDS_MIN_GAP_M + ' m).' };
+    }
+  }
+  return { ok: true };
+}
+
+function _asdsValidateMove(padId, newXOffsetM) {
+  const pad = (CONFIG.LANDING_PADS || []).find(p => p.id === padId);
+  if (!pad) return { ok: false, error: 'Pad "' + padId + '" not found.' };
+  const isASDS = !!(pad.isASDS || (Number.isFinite(pad.lengthM) && pad.lengthM >= 50));
+  if (!isASDS) return { ok: false, error: 'Pad "' + padId + '" is not an ASDS.' };
+  if (!Number.isFinite(newXOffsetM)) return { ok: false, error: 'newXOffsetM must be finite.' };
+  newXOffsetM = Math.round(newXOffsetM);
+  const zone = _asdsOceanBounds();
+  if (newXOffsetM - ASDS_LZ_WEST_M < zone.startM) {
+    return { ok: false, error: 'Outside ocean (west). Min offset: ' + Math.round(zone.startM + ASDS_LZ_WEST_M) + ' m.' };
+  }
+  if (newXOffsetM + ASDS_LZ_EAST_M > zone.endM) {
+    return { ok: false, error: 'Outside ocean (east). Max offset: ' + Math.round(zone.endM - ASDS_LZ_EAST_M) + ' m.' };
+  }
+  const others = _asdsExisting().filter(p => p.id !== padId);
+  for (let i = 0; i < others.length; i++) {
+    const other = others[i];
+    const hullEdgeGap = Math.abs(newXOffsetM - other.arcOffsetM) - ASDS_LENGTH_M;
+    if (hullEdgeGap < ASDS_MIN_GAP_M) {
+      return { ok: false, error: 'Too close to ' + other.name + '. Gap: ' + Math.round(hullEdgeGap) + ' m (min: ' + ASDS_MIN_GAP_M + ' m).' };
+    }
+  }
+  return { ok: true, pad };
+}
+
 // ---- Phase 2: normal dispatch ----
 // Factored out of self.onmessage so the guidance port (above) and the
 // main-thread port run every command through the identical switch — this
@@ -693,7 +762,42 @@ case 'pusherTorque': {
   b._sepTorqueTargetOmega = Number.isFinite(msg.targetOmega) ? msg.targetOmega : null;
   break;
 }
-case 'openPayload': {
+case 'deployASDS': {
+  const v = _asdsValidateDeploy(msg.xMeters);
+  if (!v.ok) {
+    self.postMessage({ type: 'asdsDeployFailed', xMeters: msg.xMeters, error: v.error });
+    break;
+  }
+  const existing = _asdsExisting();
+  const idx = existing.length + 1;
+  const pad = {
+    id: 'asds-' + idx,
+    name: 'ASDS-' + idx,
+    radiusM: ASDS_LANDING_RADIUS_M,
+    arcOffsetM: Math.round(msg.xMeters),
+    heightM: ASDS_DECK_HEIGHT_M,
+    lengthM: ASDS_LENGTH_M,
+    enabled: true,
+    isASDS: true,
+    lights: false,
+  };
+  CONFIG.LANDING_PADS.push(pad);
+  self.postMessage({ type: 'asdsDeployed', pad: JSON.parse(JSON.stringify(pad)) });
+  break;
+}
+case 'setASDSPosition': {
+  const v = _asdsValidateMove(msg.padId, msg.newXOffsetM);
+  if (!v.ok) {
+    self.postMessage({ type: 'asdsMoveFailed', padId: msg.padId, error: v.error });
+    break;
+  }
+  const pad = v.pad;
+  const oldOffset = pad.arcOffsetM;
+  pad.arcOffsetM = Math.round(msg.newXOffsetM);
+  self.postMessage({ type: 'asdsMoved', pad: JSON.parse(JSON.stringify(pad)), oldOffsetM: oldOffset });
+  break;
+}
+case 'openPayload': {case 'openPayload': {
   const b = resolveTargetBody(msg.targetBodyIdx);
   if (!b) break;
   // Idempotent — first open wins; subsequent opens are ignored so a
