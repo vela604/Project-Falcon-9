@@ -6,9 +6,7 @@
 // Receives an initial state snapshot, runs N ticks, returns final state.
 //
 // Protocol:
-//   IN  {
-      
-       type: 'run', storageKeys, fullState, guidanceState, stackData,
+//   IN  { type: 'run', storageKeys, fullState, guidanceState, stackData,
 //          activeGuide, durationS, progressEveryTicks }
 //   IN  { type: 'abort' }
 //   OUT { type: 'progress', simTime, elapsedS }
@@ -104,6 +102,15 @@ state.bodies = msg.fullState.bodies;
     state.activeBodyIndex = msg.fullState.activeBodyIndex;
     state.simTime = msg.fullState.simTime;
     state.halted = !!msg.fullState.halted;
+    
+    // ASDS pad sync — CONFIG.LANDING_PADS from physics capture. Without
+    // this the FF worker runs with LZ-only defaults (config.js boot) and
+    // diverges ~19m when runtime-deployed ASDS pads exist (Run A offset).
+    // Deep-clone so FF worker mutations can't leak to capture payload.
+    if (msg.fullState && Array.isArray(msg.fullState.configLandingPads)) {
+      CONFIG.LANDING_PADS = msg.fullState.configLandingPads.map(function (pp) { return Object.assign({}, pp); });
+      console.log('[FF] pads synced from capture:', CONFIG.LANDING_PADS.length);
+    }
     
     // TEMP DIAG — capture state signature, sent to main thread for display
 (function diagCaptureHash() {
