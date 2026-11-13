@@ -830,3 +830,80 @@ function sendStackDataToGuidance() {
   GuidanceBridge.send({ type: 'stackData', data });
 }
 
+
+
+// ============================================================================
+// ASDS bridge — dedicated-worker message handler for physics.worker.js
+// ============================================================================
+// Physics worker (dispatchCommand 'addLandingPad'/'moveLandingPad') echoes
+// the pad back to main via self.postMessage. Dedicated-worker posts NEVER
+// reach window.addEventListener — they arrive at WorkerBridge.worker's
+// message handler. We attach a PARALLEL listener so we don't disturb
+// the existing handler.
+// ============================================================================
+(function _installASDSBridge() {
+  var ASDS_HANDLER_INSTALLED = true;
+  function _handleASDSMessage(e) {
+    var m = e && e.data;
+    if (!m || typeof m !== 'object') return;
+    if (m.type !== 'addLandingPad' && m.type !== 'moveLandingPad') return;
+    var pad = m.pad;
+    if (!pad || typeof pad !== 'object' || !pad.id) return;
+
+    try {
+      if (!CONFIG.LANDING_PADS) CONFIG.LANDING_PADS = [];
+
+      var idx = -1;
+      for (var i = 0; i < CONFIG.LANDING_PADS.length; i++) {
+        if (CONFIG.LANDING_PADS[i].id === pad.id) { idx = i; break; }
+      }
+
+      if (m.type === 'addLandingPad') {
+        if (idx < 0) {
+          CONFIG.LANDING_PADS.push(pad);
+          console.log('[main] addLandingPad from physics worker:', pad.id,
+            '@', (pad.arcOffsetM / 1000).toFixed(1), 'km');
+        } else {
+          CONFIG.LANDING_PADS[idx].arcOffsetM = pad.arcOffsetM;
+        }
+      } else {
+        if (idx >= 0) {
+          CONFIG.LANDING_PADS[idx].arcOffsetM = pad.arcOffsetM;
+          console.log('[main] moveLandingPad from physics worker:', pad.id,
+            '->', (pad.arcOffsetM / 1000).toFixed(1), 'km');
+        }
+      }
+
+      if (typeof window !== 'undefined' && window._renderWorker) {
+        window._renderWorker.postMessage({ type: m.type, pad: pad });
+      }
+      if (typeof refreshFollowBodySelect === 'function') refreshFollowBodySelect();
+      if (typeof forceRenderResync === 'function') forceRenderResync();
+    } catch (err) {
+      console.error('[main] ASDS bridge error:', err);
+    }
+  }
+
+  function _tryInstall() {
+    if (typeof WorkerBridge !== 'undefined' && WorkerBridge.worker &&
+        typeof WorkerBridge.worker.addEventListener === 'function') {
+      WorkerBridge.worker.addEventListener('message', _handleASDSMessage);
+      console.log('[main] ASDS bridge installed on physics worker');
+      return true;
+    }
+    return false;
+  }
+
+  if (_tryInstall()) return;
+
+  if (typeof WorkerBridge !== 'undefined' && typeof WorkerBridge.onReady === 'function') {
+    WorkerBridge.onReady(function () {
+      if (!_tryInstall()) {
+        var tries = 0;
+        var iv = setInterval(function () {
+          if (_tryInstall() || ++tries > 50) clearInterval(iv);
+        }, 100);
+      }
+    });
+  }
+})();
