@@ -286,6 +286,14 @@ function landingPads() {
       radiusM: p.radiusM > 0 ? p.radiusM : LANDING_PAD_DEFAULT_RADIUS_M,
       heightM: Number.isFinite(p.heightM) ? p.heightM : 0,
       lights: p.lights !== false,
+      // ASDS fields — MUST be preserved so render code can distinguish
+      // drone ships from flat LZ pads. Previously landingPads() rebuilt
+      // each pad with only 6 fields, stripping isASDS + lengthM, which
+      // made drawLandingPads() fall back to golden-plate LZ rendering
+      // for real ASDS ships. This function runs in every worker
+      // (main, physics, render), so the fix propagates everywhere.
+      isASDS: !!p.isASDS,
+      lengthM: Number.isFinite(p.lengthM) ? p.lengthM : undefined,
     });
   }
   // sanity checks (once per config change): overlaps with each other / launch complex

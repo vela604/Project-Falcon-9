@@ -464,11 +464,7 @@ function bootstrap() {
     if (msg.type === 'renderVersionDiag') {
       console.log('[render-ver]', msg.version, 'loaded');
     } else if (msg.type === 'padIterateDiag') {
-      console.log('[pad-iter]', msg.id,
-        '| isASDS:', msg.isASDS, '(' + msg.isASDSType + ')',
-        '| lengthM:', msg.lengthM, '(' + msg.lengthMType + ')',
-        '| radiusM:', msg.radiusM,
-        '| mpp:', msg.mpp);
+      console.log('[pad-iter]', msg.id, '| mpp:', msg.mpp, '| FULL:', msg.FULL_PAD_JSON);
     } else if (msg.type === 'padDetect') {
       console.log('[render-worker-DIAG] padDetect:', msg.id,
         msg.isASDSResult ? 'ASDS ✓' : 'LZ ✗',
