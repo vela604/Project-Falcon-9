@@ -863,27 +863,38 @@ async function runBiasEval(bias, onTick, altKm){
   //   caches missionCtx.targetPad, so without this patch it would keep
   //   aiming at the INIT-time position forever.
   if(S.mode === 'ASDS'){
-    const posM = Math.round(bias);
+    const requestedM = Math.round(bias);
+    // appliedM tracks the ACTUAL pad position after setASDSPosition
+    // validation (ocean-bounds / 120m-gap may nudge by ±10km). The guidance
+    // targetPad and S.asdsPad MUST reflect applied, not requested — otherwise
+    // booster aims at a pad that isn't where the ship actually sits.
+    let appliedM = requestedM;
+    let appliedKm = requestedM / 1000;
     // (a) move the actual droneship (physics rigid surface)
     if(typeof globalThis.setASDSPosition === 'function' && S.asdsPad){
-      const mv = globalThis.setASDSPosition(S.asdsPad.name, posM / 1000);
+      const mv = globalThis.setASDSPosition(S.asdsPad.name, requestedM / 1000);
       if(!mv || !mv.ok){
-        log('ASDS move FAILED @ ' + (posM/1000).toFixed(3) + ' km: ' +
+        log('ASDS move FAILED @ ' + (requestedM/1000).toFixed(3) + ' km: ' +
           ((mv && mv.error) || '?'), 'warn');
-      } else if(mv.wasPositionAdjusted){
-        log('ASDS move adjusted ' + (posM/1000).toFixed(3) + ' -> ' +
-          mv.appliedKm.toFixed(3) + ' km (ocean/gap bounds)', 'warn');
+      } else {
+        appliedKm = mv.appliedKm;
+        appliedM = Math.round(appliedKm * 1000);
+        if(mv.wasPositionAdjusted){
+          log('ASDS move adjusted ' + (requestedM/1000).toFixed(3) + ' -> ' +
+            appliedKm.toFixed(3) + ' km (ocean/gap bounds)', 'warn');
+        }
+        if(S.asdsPad) S.asdsPad.arcOffsetM = appliedM;
       }
     }
-    // (b) recompute targetPad + patch EB state so block aims at new pos
+    // (b) recompute targetPad + patch EB state so block aims at ACTUAL applied pos
     const _env = (typeof Derivation !== 'undefined') ? (Derivation.getEnv() || {}) : {};
     const _Rg = (_env.EARTH_RADIUS || CONFIG.EARTH_RADIUS) + (_env.LAUNCH_SITE_ALTITUDE || 0);
-    const _angleEf = (_env.LAUNCH_SITE_ANGLE_0 || 0) + posM / _Rg;
+    const _angleEf = (_env.LAUNCH_SITE_ANGLE_0 || 0) + appliedM / _Rg;
     const _padName = S.asdsPad ? S.asdsPad.name : 'HOPE';
     const _heightM = S.asdsPad ? (S.asdsPad.heightM || 2) : 2;
     const _targetPad = {
       id: _padName, name: _padName,
-      arcOffsetM: posM,
+      arcOffsetM: appliedM,
       angleEf: _angleEf,
       heightM: _heightM,
       radiusM: 35,
@@ -1400,7 +1411,9 @@ async function doScan(){
   $('initBtn').disabled = true;
   $('resultsTable').innerHTML = '<div id="scanTicker" class="scan-ticker">initializing…</div>';
   $('detailPanel').style.display = 'none';
-  $('verdict').innerHTML = '<div class="rv-wait">BIAS SEARCH running · window ['+lo+', '+hi+'] m</div>';
+  const _searchTitle3 = (S.mode === 'ASDS') ? 'POS SEARCH' : 'BIAS SEARCH';
+  const _winLbl3 = (S.mode === 'ASDS') ? ('['+(lo/1000).toFixed(1)+', '+(hi/1000).toFixed(1)+'] km') : ('['+lo+', '+hi+'] m');
+  $('verdict').innerHTML = '<div class="rv-wait">' + _searchTitle3 + ' running · window ' + _winLbl3 + '</div>';
   $('landCard').style.display = 'none';
   setEvalCount(0); setBestDisplay(null, null); clearLive();
   setChip('running'); setStage('scan');
@@ -1929,8 +1942,10 @@ function renderVerdict(){
     vd = '<div class="rv-vd warn"><span class="k">Not bracketed</span>The best bias sits on the edge of what was explored (or a neighbour failed) — the true minimum may lie outside. Widen the bias window or lower the min step.'+(S.abort ? ' · stopped by user' : '')+'</div>';
   }
   const c = b.m && b.m.contact;
-  host.innerHTML = '<div class="rv"><div class="rv-h"><b>BIAS SEARCH</b>' +
-    '<span class="in">window ['+w.lo+', '+w.hi+'] m · '+S.runs.length+' evals</span><span class="sp"></span><span class="rv-st '+stc+'">'+st+'</span></div>' +
+  const _rvTitle = (S.mode === 'ASDS') ? 'POS SEARCH' : 'BIAS SEARCH';
+  const _rvWin = (S.mode === 'ASDS') ? ('['+(w.lo/1000).toFixed(1)+', '+(w.hi/1000).toFixed(1)+'] km') : ('['+w.lo+', '+w.hi+'] m');
+  host.innerHTML = '<div class="rv"><div class="rv-h"><b>' + _rvTitle + '</b>' +
+    '<span class="in">window ' + _rvWin + ' · '+S.runs.length+' evals</span><span class="sp"></span><span class="rv-st '+stc+'">'+st+'</span></div>' +
     '<div class="rv-kpi">' +
     '<div><span>Best '+(S.mode === 'ASDS' ? 'position' : 'bias')+'</span><b class="c">'+(b.ok ? _fmtTarget(b.bias) : '—')+'</b></div>' +
     '<div><span>Score</span><b class="g">'+(b.ok ? b.score.toFixed(3) : '—')+'</b></div>' +
@@ -2188,7 +2203,7 @@ function renderDetail(r){
   destroyDetailCharts();
 
   const h = [];
-  h.push('<h3>Bias ' + r.bias.toFixed(2) + ' · Score ' + (r.ok ? r.score.toFixed(2) : 'FAIL' + (r.fail ? ' (' + esc(r.fail) + ')' : '')) + '</h3>');
+  h.push('<h3>' + ((S.mode === 'ASDS') ? ('Position ' + (r.bias/1000).toFixed(3) + ' km') : ('Bias ' + r.bias.toFixed(2))) + ' · Score ' + (r.ok ? r.score.toFixed(2) : 'FAIL' + (r.fail ? ' (' + esc(r.fail) + ')' : '')) + '</h3>');
 
   if(m.contact){
     const kpis = [
@@ -2365,7 +2380,7 @@ function drawLive(m){
       responsive: true, maintainAspectRatio: false, animation: false,
       plugins: {
         legend: { labels: { boxWidth: 8, font: { size: 9 }, color: '#94a3b8' } },
-        title: { display: true, text: 'Bias ' + m.bias + ' — alt AGL [km] vs t', color: '#cbd5e1', font: { size: 10 } }
+        title: { display: true, text: ((S.mode === 'ASDS') ? ('Position ' + (m.bias/1000).toFixed(3) + ' km') : ('Bias ' + m.bias)) + ' — alt AGL [km] vs t', color: '#cbd5e1', font: { size: 10 } }
       },
       scales: {
         x: { type: 'linear', grid: { color: '#1f2940' }, ticks: { color: '#64748b', font: { size: 9 } } },
@@ -2438,6 +2453,19 @@ function boot(){
     rtlsBlks.forEach(function(id){ var el = $(id); if(el) el.hidden = isASDS; });
     asdsBlks.forEach(function(id){ var el = $(id); if(el) el.hidden = !isASDS; });
     if (typeof S !== 'undefined') S.mode = m;
+    // Mode-aware label polish — scan button, stage rail title, rail descs.
+    var _scanBtn = $('scanBtn');
+    if(_scanBtn) _scanBtn.innerHTML = '<i>2</i>' + (isASDS ? 'Run pos search' : 'Run bias search');
+    var _scanRailTtl = document.querySelector('.stage-item[data-stage="scan"] .ttl');
+    if(_scanRailTtl) _scanRailTtl.textContent = isASDS ? 'POS SEARCH' : 'BIAS SEARCH';
+    var _configRailDesc = document.querySelector('.stage-item[data-stage="config"] .desc');
+    if(_configRailDesc) _configRailDesc.textContent = isASDS
+      ? 'Preset, mission MECO / G / T and the droneship search window.'
+      : 'Preset, ascent MECO / G / T and the bias search window.';
+    var _resultsRailDesc = document.querySelector('.stage-item[data-stage="results"] .desc');
+    if(_resultsRailDesc) _resultsRailDesc.textContent = isASDS
+      ? 'Best position, position–score curve, margins to limits, fuel and timeline.'
+      : 'Best bias, bias–score curve, margins to limits, fuel and timeline.';
     if (typeof _updateModeBanner === 'function') _updateModeBanner();
   }
   if ($('cfgMission')) {
