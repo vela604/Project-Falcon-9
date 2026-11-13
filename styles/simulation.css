@@ -1866,3 +1866,36 @@ canvas.mini-graph { width: 100%; height: 60px; background: var(--bg); border-rad
 #guidePhaseTrack.user-hidden {
   display: none !important;
 }
+
+
+/* ============================================================
+   ASDS deployment toast — bottom-center, above all UI.
+   Class-based (was inline style with !important override hell —
+   that caused reflow fights & flicker on double-call).
+   ============================================================ */
+.asds-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 32px;
+  transform: translate(-50%, 20px);
+  z-index: 2147483647;
+  padding: 12px 20px;
+  border-radius: 8px;
+  background: #0d1424;
+  color: #dbe6f5;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 13px;
+  font-weight: 500;
+  box-shadow: 0 12px 32px rgba(0,0,0,0.65);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.24s ease, transform 0.24s ease;
+  max-width: 520px;
+  text-align: center;
+}
+.asds-toast.asds-toast-ok { border: 1px solid #78afeb; }
+.asds-toast.asds-toast-err { border: 1px solid #ff5f7e; }
+.asds-toast.show {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}

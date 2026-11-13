@@ -22,61 +22,39 @@
   // API). Auto-dismisses after ~2.8s. Self-created on first call.
   // ============================================================
   function _showASDSToast(msg, ok) {
-    // Worker context (guidance worker, worker-sim): no DOM, no toast.
-    // Silent no-op — deploy/move must still succeed in worker environments
-    // so guidance-driven deploys work.
+    // Worker context — no DOM. Silent no-op (guidance worker uses this
+    // to satisfy function dependency, actual toast appears on main).
     if (typeof document === 'undefined') return;
-    console.log('[ASDS-TOAST] called:', msg);
     
     let el = document.getElementById('asdsToast');
     if (!el) {
       el = document.createElement('div');
       el.id = 'asdsToast';
-      // Critical: z-index = max int32 — above EVERYTHING (even FF modal).
-      el.style.cssText = [
-        'position: fixed',
-        'left: 50%',
-        'bottom: 32px',
-        'transform: translate(-50%, 20px)',
-        'z-index: 2147483647',
-        'padding: 12px 20px',
-        'border-radius: 8px',
-        'background: #0d1424',
-        'color: #dbe6f5',
-        'font-family: "JetBrains Mono", monospace',
-        'font-size: 13px',
-        'font-weight: 500',
-        'box-shadow: 0 12px 32px rgba(0,0,0,0.65)',
-        'pointer-events: none',
-        'opacity: 0',
-        'transition: opacity 0.24s ease, transform 0.24s ease',
-        'max-width: 520px',
-        'text-align: center',
-        'will-change: opacity, transform',
-      ].join(' !important;') + ' !important;';
+      el.className = 'asds-toast';
       document.body.appendChild(el);
-      console.log('[ASDS-TOAST] element created + appended to body');
     }
     
-    el.style.setProperty('border', '1px solid ' + (ok ? '#78afeb' : '#ff5f7e'), 'important');
+    // Track visibility — if toast is ALREADY visible, just update text
+    // and border (NO show-class toggle, NO timer reset mid-animation).
+    // This kills the flicker on rapid double-calls.
+    const wasVisible = el.classList.contains('show');
     el.textContent = msg;
-    el.style.setProperty('opacity', '0', 'important');
-    el.style.setProperty('transform', 'translate(-50%, 20px)', 'important');
-    // Force reflow so the transition kicks in
-    void el.offsetHeight;
-    void el.offsetWidth;
-    // Use rAF — more reliable than immediate setProperty for transitions
-    requestAnimationFrame(() => {
-      el.style.setProperty('opacity', '1', 'important');
-      el.style.setProperty('transform', 'translate(-50%, 0)', 'important');
-      console.log('[ASDS-TOAST] shown (opacity=1)');
-    });
+    el.className = 'asds-toast ' + (ok ? 'asds-toast-ok' : 'asds-toast-err') + (wasVisible ? ' show' : '');
     
-    if (el._hideTimer) clearTimeout(el._hideTimer);
-    el._hideTimer = setTimeout(() => {
-      el.style.setProperty('opacity', '0', 'important');
-      el.style.setProperty('transform', 'translate(-50%, 20px)', 'important');
-      console.log('[ASDS-TOAST] hidden');
+    // Clear any pending hide timer
+    if (el._hideTimer) { clearTimeout(el._hideTimer); el._hideTimer = null; }
+    
+    if (!wasVisible) {
+      // Fresh show — force reflow then add 'show' class for CSS transition
+      void el.offsetWidth;
+      el.classList.add('show');
+    }
+    
+    // Set hide timer (refreshes even when toast was already visible —
+    // so user has full duration from LAST call)
+    el._hideTimer = setTimeout(function () {
+      el.classList.remove('show');
+      el._hideTimer = null;
     }, ok ? 2800 : 4200);
   }
 
@@ -229,6 +207,15 @@
         window._serenoPool.broadcast({ type: 'addLandingPad', pad: _snap });
       }
     } catch (e) { console.warn('[ASDS] sereno pool broadcast failed', e); }
+    // Worker-context broadcast — critical for guidance-triggered deploys.
+    // Guidance worker modifies ITS OWN CONFIG; without this, main thread
+    // never sees the pad. self.postMessage reaches the parent thread
+    // (main.js adds a window 'message' listener to catch it).
+    try {
+      if (typeof importScripts === 'function' && typeof self !== 'undefined' && self.postMessage) {
+        self.postMessage({ type: 'addLandingPad', pad: _snap });
+      }
+    } catch (e) { console.warn('[ASDS] self.postMessage (add) failed', e); }
 
     try { if (typeof refreshFollowBodySelect === 'function') refreshFollowBodySelect(); } catch (e) {}
     try { if (typeof forceRenderResync === 'function') forceRenderResync(); } catch (e) {}
@@ -271,7 +258,9 @@
   // user without going through deployASDS itself — currently used by
   // workerBridge.js's asdsDeployFailed / asdsMoveFailed handlers when
   // physics rejects a guidance-issued ASDS command.
-  window.showASDSToast = _showASDSToast;
+  if (typeof window !== 'undefined') window.showASDSToast = _showASDSToast;
+  // Worker fallback — expose on globalThis (worker's window is undefined)
+  if (typeof globalThis !== 'undefined') globalThis.showASDSToast = _showASDSToast;
 
   // ============================================================
   // Internal command: setASDSPosition(padId, newXOffsetM)
@@ -328,6 +317,7 @@
     try { if (typeof WorkerBridge !== 'undefined' && WorkerBridge.send) WorkerBridge.send({ type: 'moveLandingPad', pad: _snap }); } catch (e) {}
     try { if (typeof window !== 'undefined' && window._renderWorker) window._renderWorker.postMessage({ type: 'moveLandingPad', pad: _snap }); } catch (e) {}
     try { if (typeof window !== 'undefined' && window._serenoPool && typeof window._serenoPool.broadcast === 'function') window._serenoPool.broadcast({ type: 'moveLandingPad', pad: _snap }); } catch (e) {}
+    try { if (typeof importScripts === 'function' && typeof self !== 'undefined' && self.postMessage) self.postMessage({ type: 'moveLandingPad', pad: _snap }); } catch (e) {}
     try { if (typeof refreshFollowBodySelect === 'function') refreshFollowBodySelect(); } catch (e) {}
     try { if (typeof forceRenderResync === 'function') forceRenderResync(); } catch (e) {}
 
@@ -346,11 +336,13 @@
 
   globalThis.setASDSPosition = setASDSPosition;
 
-  window.listASDS = function () {
+  const _listASDS = function () {
     return (CONFIG.LANDING_PADS || [])
-      .filter(p => p && (p.isASDS || (Number.isFinite(p.lengthM) && p.lengthM >= 50)))
-      .map(p => ({ id: p.id, name: p.name, arcOffsetM: p.arcOffsetM }));
+      .filter(function (p) { return p && (p.isASDS || (Number.isFinite(p.lengthM) && p.lengthM >= 50)); })
+      .map(function (p) { return { id: p.id, name: p.name, arcOffsetM: p.arcOffsetM }; });
   };
+  if (typeof window !== 'undefined') window.listASDS = _listASDS;
+  if (typeof globalThis !== 'undefined') globalThis.listASDS = _listASDS;
 
   // ---------------------------------------------------------------
   // Modal wiring

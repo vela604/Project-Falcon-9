@@ -690,3 +690,46 @@ buildGlossaryPanel();
 }
 
 window.addEventListener('DOMContentLoaded', bootstrap);
+
+// ============================================================================
+// Worker → main message listener for ASDS deployment/move.
+//
+// Guidance worker (and any other worker importing asds.js) can't modify
+// main thread's CONFIG directly. It calls self.postMessage() which arrives
+// here. We then:
+//   1. Add/update pad in MAIN CONFIG.LANDING_PADS
+//   2. Rebroadcast to render worker (which has its own CONFIG)
+//   3. Refresh follow dropdown
+// This is the bridge that makes guidance-triggered ASDS deployments
+// actually visible in planet view and clickable in follow dropdown.
+// ============================================================================
+if (typeof window !== 'undefined') {
+  window.addEventListener('message', function (e) {
+    var m = e.data;
+    if (!m || typeof m !== 'object') return;
+    
+    if (m.type === 'addLandingPad' && m.pad) {
+      if (!CONFIG.LANDING_PADS) CONFIG.LANDING_PADS = [];
+      if (!CONFIG.LANDING_PADS.find(function (p) { return p.id === m.pad.id; })) {
+        CONFIG.LANDING_PADS.push(m.pad);
+        console.log('[main] received addLandingPad from worker:', m.pad.id);
+      }
+      if (window._renderWorker) {
+        window._renderWorker.postMessage({ type: 'addLandingPad', pad: m.pad });
+      }
+      if (typeof refreshFollowBodySelect === 'function') refreshFollowBodySelect();
+      if (typeof forceRenderResync === 'function') forceRenderResync();
+    }
+    
+    if (m.type === 'moveLandingPad' && m.pad) {
+      if (CONFIG.LANDING_PADS) {
+        var p = CONFIG.LANDING_PADS.find(function (x) { return x.id === m.pad.id; });
+        if (p) p.arcOffsetM = m.pad.arcOffsetM;
+      }
+      if (window._renderWorker) {
+        window._renderWorker.postMessage({ type: 'moveLandingPad', pad: m.pad });
+      }
+      if (typeof refreshFollowBodySelect === 'function') refreshFollowBodySelect();
+    }
+  });
+}
