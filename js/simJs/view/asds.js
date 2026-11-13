@@ -204,6 +204,12 @@
     return result;
   };
 
+  // Expose the toast helper for other modules that need to notify the
+  // user without going through deployASDS itself — currently used by
+  // workerBridge.js's asdsDeployFailed / asdsMoveFailed handlers when
+  // physics rejects a guidance-issued ASDS command.
+  window.showASDSToast = _showASDSToast;
+
   // ============================================================
   // Internal command: setASDSPosition(padId, newXOffsetM)
   // Change an existing ASDS ship's downrange position.
