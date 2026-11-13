@@ -912,7 +912,7 @@ async function runBiasEval(bias, onTick, altKm){
       cfg.rtls.ENTRY_BURN_IMPACT_TARGET_M = 0;
     }
     if(cfg && cfg.mission){
-      cfg.mission.TARGET_LANDING_PAD = 'HOPE,' + (posM/1000).toFixed(3);
+      cfg.mission.TARGET_LANDING_PAD = _padName + ',' + appliedKm.toFixed(3);
     }
   } else {
     // RTLS: standard bias override
