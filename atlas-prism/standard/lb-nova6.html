@@ -381,6 +381,26 @@ function runsAtAlt(){
   return S.runs.filter(r => a == null || !r.m || r.m.alt == null || Math.abs(r.m.alt - a) < 1e-6);
 }
 
+// ASDS safe bounds — derived from CONFIG.OCEAN_ZONE_EAST_* + hull edges.
+// Mirrors asds.js ASDS_LZ_WEST_M (54 m) / ASDS_LZ_EAST_M (37 m) constants.
+// Clamped 1 km inside each edge so the ±10 km deploy nudge has room.
+// All ASDS entry points (doInit/doScan/doAltSearch/doManualEval/Sweep)
+// clamp to [minM, maxM] so out-of-range seeds deploy at the nearest
+// valid position instead of cascading into an LZ-1 fallback (which made
+// downrange launch-relative and the walk runaway by the full natural
+// impact offset every step).
+function _asdsSafeBounds(){
+  const R = CONFIG.EARTH_RADIUS;
+  const startDeg = Number.isFinite(CONFIG.OCEAN_ZONE_EAST_START_DEG) ? CONFIG.OCEAN_ZONE_EAST_START_DEG : 2;
+  const endDeg   = Number.isFinite(CONFIG.OCEAN_ZONE_EAST_END_DEG)   ? CONFIG.OCEAN_ZONE_EAST_END_DEG   : 60;
+  const ASDS_LZ_WEST_M = 54;
+  const ASDS_LZ_EAST_M = 37;
+  return {
+    minM: startDeg * Math.PI / 180 * R + ASDS_LZ_WEST_M + 1000,
+    maxM: endDeg   * Math.PI / 180 * R - ASDS_LZ_EAST_M - 1000,
+  };
+}
+
 // ===== STAGE / CHIPS =====
 const STAGES = ['config','init','scan','results'];
 function setStage(name){
@@ -725,7 +745,16 @@ async function doInit(){
     vals.rtls = vals.rtls || {};
     S.mode = $('cfgMission') ? $('cfgMission').value : 'RTLS';
     if (S.mode === 'ASDS') {
-      const posM = parseFloat($('posStart').value) || 300000;
+      let posM = parseFloat($('posStart').value) || 300000;
+      {
+        const _z = _asdsSafeBounds();
+        if (posM < _z.minM || posM > _z.maxM) {
+          const _cl = Math.max(_z.minM, Math.min(_z.maxM, posM));
+          log('ASDS posStart clamped ' + (posM/1000).toFixed(3) + ' -> ' + (_cl/1000).toFixed(3) + ' km (ocean bounds)', 'warn');
+          posM = _cl;
+          $('posStart').value = _cl;
+        }
+      }
       S.asdsStartM = posM;
       vals.rtls.MISSION_TYPE = 'ASDS';
       vals.rtls.ENTRY_BURN_IMPACT_TARGET_M = 0;
@@ -1473,14 +1502,28 @@ async function searchBracket(evalFn, o, onProgress){
 async function doScan(){
   if(S.running || !S.inited) return;
   const isASDS = (S.mode === 'ASDS');
-  const lo = isASDS ? +$('posLo').value : +$('biasLo').value;
-  const hi = isASDS ? +$('posHi').value : +$('biasHi').value;
-  const start = isASDS ? +$('posStart').value : +$('biasStart').value;
+  let lo = isASDS ? +$('posLo').value : +$('biasLo').value;
+  let hi = isASDS ? +$('posHi').value : +$('biasHi').value;
+  let start = isASDS ? +$('posStart').value : +$('biasStart').value;
   const minStep = isASDS ? +$('posMinStep').value : +$('biasMinStep').value;
   if(![lo,hi,start,minStep].every(Number.isFinite) || !(lo < hi) || !(minStep > 0)){
     log('Scan [' + S.mode + ']: invalid window (need lo < hi, minStep > 0)', 'err');
     $('initStatus').innerHTML = '<span class="bad">invalid ' + (isASDS?'pos':'bias') + ' window — need lo &lt; hi and minStep &gt; 0</span>';
     return;
+  }
+  if (isASDS) {
+    const _z = _asdsSafeBounds();
+    const _lo = Math.max(lo, _z.minM);
+    const _hi = Math.min(hi, _z.maxM);
+    const _start = Math.max(_z.minM, Math.min(_z.maxM, start));
+    if (_lo !== lo || _hi !== hi || _start !== start) {
+      log('ASDS window clamped [' + (lo/1000).toFixed(1) + ', ' + (hi/1000).toFixed(1) + '] -> [' + (_lo/1000).toFixed(1) + ', ' + (_hi/1000).toFixed(1) + '] km (start ' + (start/1000).toFixed(1) + ' -> ' + (_start/1000).toFixed(1) + ' km)', 'warn');
+    }
+    lo = _lo; hi = _hi; start = _start;
+    if (!(lo < hi)) {
+      log('ASDS window empty after clamp — valid range is [' + (_z.minM/1000).toFixed(1) + ', ' + (_z.maxM/1000).toFixed(1) + '] km', 'err');
+      return;
+    }
   }
   S.running = true; S.abort = false;
   startElapsedTimer();
@@ -1625,6 +1668,14 @@ async function doAltSearch(){
   // (semantically: RTLS=bias in metres, ASDS=droneship position in metres).
   let bias = (S.mode === 'ASDS') ? (+$('posStart').value) : (+$('biasStart').value);
   if(!Number.isFinite(bias)) bias = (S.mode === 'ASDS') ? 300000 : -750;
+  if (S.mode === 'ASDS') {
+    const _z = _asdsSafeBounds();
+    if (bias < _z.minM || bias > _z.maxM) {
+      const _cl = Math.max(_z.minM, Math.min(_z.maxM, bias));
+      log('ASDS altSearch seed clamped ' + (bias/1000).toFixed(3) + ' -> ' + (_cl/1000).toFixed(3) + ' km (ocean bounds)', 'warn');
+      bias = _cl;
+    }
+  }
   const cache = new Map();
 
   const evalAlt = async (a, bOverride) => {
@@ -1851,9 +1902,20 @@ async function doManualSweep(){
   }
   if(lo > hi){ log('Sweep [' + S.mode + ']: need lo \u2264 hi', 'err'); return; }
 
-  const biases = [];
+  let biases = [];
   if(N === 1) biases.push(+lo.toFixed(4));
   else { const step = (hi - lo) / (N - 1); for(let i=0;i<N;i++) biases.push(+(lo + i*step).toFixed(4)); }
+  if (isASDS) {
+    const _z = _asdsSafeBounds();
+    biases = biases.map(function(v){
+      if (v < _z.minM || v > _z.maxM) {
+        const _cl = Math.max(_z.minM, Math.min(_z.maxM, v));
+        log('ASDS sweep pos clamped ' + (v/1000).toFixed(3) + ' -> ' + (_cl/1000).toFixed(3) + ' km (ocean bounds)', 'warn');
+        return _cl;
+      }
+      return v;
+    });
+  }
 
   S.running = true; S.abort = false;
   $('manualBtn').disabled = true;
@@ -1919,10 +1981,18 @@ async function doManualEval(){
   if(!S.inited){ log('Run INIT first.', 'warn'); return; }
   const isASDS = (S.mode === 'ASDS');
   const _inpEl = isASDS ? $('posManual') : $('biasManual');
-  const b = parseFloat(_inpEl.value);
+  let b = parseFloat(_inpEl.value);
   if(!Number.isFinite(b)){
     log('Manual [' + S.mode + ']: invalid ' + (isASDS?'pos':'bias'), 'err');
     return;
+  }
+  if (isASDS) {
+    const _z = _asdsSafeBounds();
+    if (b < _z.minM || b > _z.maxM) {
+      const _cl = Math.max(_z.minM, Math.min(_z.maxM, b));
+      log('ASDS manual bias clamped ' + (b/1000).toFixed(3) + ' -> ' + (_cl/1000).toFixed(3) + ' km (ocean bounds)', 'warn');
+      b = _cl;
+    }
   }
 
   S.running = true; S.abort = false;
