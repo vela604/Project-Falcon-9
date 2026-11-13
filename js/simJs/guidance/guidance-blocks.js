@@ -3053,6 +3053,14 @@ setState(s) {
       "TOUCHDOWN",
     ],
     defaultConstants: {
+      // Mission type — selects the operational profile.
+      //   'RTLS' = Return To Launch Site (boostback-to-landing-pad).
+      //   'ASDS' = Autonomous Spaceport Drone Ship (downrange landing).
+      // ASDS mode skips BOOSTBACK_BURN (downrange velocity is acceptable —
+      // the droneship is positioned along the natural impact trajectory),
+      // zeroes ENTRY_BURN_IMPACT_TARGET_M (aim at pad center), and switches
+      // RCS from impact-error-driven steering to a retrograde AoA=180 hold.
+      MISSION_TYPE: 'RTLS',
       // FLIP — exit window + safety timeout. (Constants for later phases get
       // added as each phase is defined.)
       FLIP_ROTATE_TOL_DEG: 0.5,   // done when |angle error| < this ...
@@ -4446,7 +4454,14 @@ function _bbTokens(cfg) {
             const omegaE = env.EARTH_OMEGA || 0;
             const Rm = env.EARTH_RADIUS;
             const imp = _bbImpact(d.rx, d.ry, d.vx, d.vy, simT, env.GM_EARTH, Rm, omegaE);
-            const biasM = Number.isFinite(cfg.ENTRY_BURN_IMPACT_TARGET_M) ? cfg.ENTRY_BURN_IMPACT_TARGET_M : 0;
+            // ASDS mode: force bias to 0 (aim pad center, no offset).
+            // The RTLS bias knobs landing-site longitude for a launch-pad
+            // return; for ASDS the droneship is already positioned at the
+            // natural impact point, so any bias would push the burn target
+            // off-center.
+            const biasM = (cfg.MISSION_TYPE === 'ASDS')
+              ? 0
+              : (Number.isFinite(cfg.ENTRY_BURN_IMPACT_TARGET_M) ? cfg.ENTRY_BURN_IMPACT_TARGET_M : 0);
             const errM = imp ? _wrapPi(imp.phiEf - padEf) * Rm - biasM : null;
             _st.ebImpactErrM = errM;
             const dtS = (_st.ebPrevT !== null && simT > _st.ebPrevT) ? (simT - _st.ebPrevT) : dt;
@@ -4489,39 +4504,70 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
             let rcsDir = 0;
             _st.ebPredErrM = null;
             if (active && errM !== null) {
-              const warm = (simT - _st.ebSpoolT) >= EB_WARMUP_S && _st.ebErateF !== null && tGo !== null;
-              const mxT = _rcsMaxTorques(snapshot);
-              const aPos = mxT.pos / I, aNeg = mxT.neg / I;
-              const w1 = d.omega + (rcsNow / I) * dt;
-              const wSgn = w1 >= 0 ? 1 : -1;
-              const aB = wSgn > 0 ? aNeg : aPos;
-              if (warm && aB > 1e-9) {
-                const aT = Math.hypot(d.thrustBodyX, d.thrustBodyY) / M;
-                const px = -Math.cos(d.theta), py = -Math.sin(d.theta);
-                const imp2 = _bbImpact(d.rx, d.ry, d.vx + px, d.vy + py, simT, env.GM_EARTH, Rm, omegaE);
-                const S = imp2 ? (_wrapPi(imp2.phiEf - padEf) * Rm - biasM - errM) : 0;
-                const kappa = aT * S;
-                _st.ebKappa = kappa;
-                const T = Math.max(0, tGo);
-                const aw = Math.abs(w1);
-                const ts = aw / aB;
-                let intT;
-                if (ts >= T) intT = wSgn * (aw * T * T / 2 - aB * T * T * T / 6);
-                else intT = wSgn * (aw * aw * aw / (3 * aB * aB) + (aw * aw / (2 * aB)) * (T - ts));
-                const s = errM + _st.ebErateF * T + kappa * intT;
-                _st.ebPredErrM = s;
-                if (T < EB_TGO_MIN_S) rcsDir = aw > EB_W_TOL ? -wSgn : 0;
-                else if (s > EB_TOL_M) rcsDir = 1;
-                else if (s < -EB_TOL_M) rcsDir = -1;
-                else rcsDir = aw > EB_W_TOL ? -wSgn : 0;
+              if (cfg.MISSION_TYPE === 'ASDS') {
+                // ---- ASDS mode: retrograde AoA=180 hold ----
+                // Nose points exactly opposite the earth-relative velocity
+                // vector — same target as PRE_ENTRY_STEER's retrograde aim,
+                // which means the entry burn decelerates the booster
+                // straight along its velocity. Pure-torque RCS only
+                // (no-net-force) so attitude corrections don't shift the
+                // trajectory. Gimbal handles env-torque cancellation
+                // separately below; RCS handles the residual attitude error.
+                const speedRelV_asds = Math.hypot(d.relVx, d.relVy);
+                if (speedRelV_asds > 1) {
+                  // theta_target = atan2(relVx, -relVy) puts body +Y (nose)
+                  // opposite the earth-relative velocity vector.
+                  const theta_tgt = Math.atan2(d.relVx, -d.relVy);
+                  const theta_err = _wrapPi(d.theta - theta_tgt);
+                  const I_now = (dNext && dNext.massProps) ? dNext.massProps.I : I;
+                  // PD on attitude, gains mirror CIRC_ATT_KP / CIRC_ATT_KD.
+                  // Env-torque feedforward is DELIBERATELY omitted: gimbal
+                  // (below) does the env cancel; adding it here would
+                  // double-count and fight the gimbal.
+                  const tau_cmd = -I_now * (0.5 * theta_err + 4.0 * d.omega);
+                  const rcsRes = GuideRCS.targetTorqueRcsNoNetForce(snapshot, tau_cmd, idx);
+                  if (rcsRes && rcsRes.duties && Object.keys(rcsRes.duties).length) {
+                    _send(Guidance.cmdRcsDuty(rcsRes.duties, idx));
+                    _st.lastRcsTorque = Number.isFinite(rcsRes.torqueAchieved) ? rcsRes.torqueAchieved : 0;
+                    rcsDir = tau_cmd >= 0 ? 1 : -1;
+                  } else { _rcsOff(); rcsDir = 0; }
+                } else { _rcsOff(); rcsDir = 0; }
+              } else {
+                // ---- RTLS mode: impact-error-driven RCS (unchanged) ----
+                const warm = (simT - _st.ebSpoolT) >= EB_WARMUP_S && _st.ebErateF !== null && tGo !== null;
+                const mxT = _rcsMaxTorques(snapshot);
+                const aPos = mxT.pos / I, aNeg = mxT.neg / I;
+                const w1 = d.omega + (rcsNow / I) * dt;
+                const wSgn = w1 >= 0 ? 1 : -1;
+                const aB = wSgn > 0 ? aNeg : aPos;
+                if (warm && aB > 1e-9) {
+                  const aT = Math.hypot(d.thrustBodyX, d.thrustBodyY) / M;
+                  const px = -Math.cos(d.theta), py = -Math.sin(d.theta);
+                  const imp2 = _bbImpact(d.rx, d.ry, d.vx + px, d.vy + py, simT, env.GM_EARTH, Rm, omegaE);
+                  const S = imp2 ? (_wrapPi(imp2.phiEf - padEf) * Rm - biasM - errM) : 0;
+                  const kappa = aT * S;
+                  _st.ebKappa = kappa;
+                  const T = Math.max(0, tGo);
+                  const aw = Math.abs(w1);
+                  const ts = aw / aB;
+                  let intT;
+                  if (ts >= T) intT = wSgn * (aw * T * T / 2 - aB * T * T * T / 6);
+                  else intT = wSgn * (aw * aw * aw / (3 * aB * aB) + (aw * aw / (2 * aB)) * (T - ts));
+                  const sp = errM + _st.ebErateF * T + kappa * intT;
+                  _st.ebPredErrM = sp;
+                  if (T < EB_TGO_MIN_S) rcsDir = aw > EB_W_TOL ? -wSgn : 0;
+                  else if (sp > EB_TOL_M) rcsDir = 1;
+                  else if (sp < -EB_TOL_M) rcsDir = -1;
+                  else rcsDir = aw > EB_W_TOL ? -wSgn : 0;
+                }
+                if (rcsDir !== 0) {
+                  const res = rcsDir > 0 ? mxT.rp : mxT.rn;
+                  if (res && res.duties) {
+                    _send(Guidance.cmdRcsDuty(res.duties, idx));
+                    _st.lastRcsTorque = rcsDir > 0 ? mxT.pos : -mxT.neg;
+                  } else { rcsDir = 0; _rcsOff(); }
+                } else _rcsOff();
               }
-              if (rcsDir !== 0) {
-                const res = rcsDir > 0 ? mxT.rp : mxT.rn;
-                if (res && res.duties) {
-                  _send(Guidance.cmdRcsDuty(res.duties, idx));
-                  _st.lastRcsTorque = rcsDir > 0 ? mxT.pos : -mxT.neg;
-                } else { rcsDir = 0; _rcsOff(); }
-              } else _rcsOff();
               if (rcsDir !== 0 && _st.ebRcsDir !== 0 && rcsDir !== _st.ebRcsDir) _st.ebFlips++;
               if (rcsDir !== 0) _st.ebRcsDir = rcsDir;
             } else _rcsOff();
@@ -5554,7 +5600,14 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
         }
 
         const i = PHASES.indexOf(_st.phase);
-        const next = i >= 0 && i < PHASES.length - 1 ? PHASES[i + 1] : null;
+        let next = i >= 0 && i < PHASES.length - 1 ? PHASES[i + 1] : null;
+        // ASDS mode: skip BOOSTBACK_BURN. Downrange velocity after
+        // separation is acceptable — the droneship sits along the natural
+        // impact trajectory, so no reverse-thrust burn is needed. FLIP
+        // hands straight off to PRE_ENTRY_STEER.
+        if (cfg.MISSION_TYPE === 'ASDS' && _st.phase === 'FLIP' && next === 'BOOSTBACK_BURN') {
+          next = 'PRE_ENTRY_STEER';
+        }
 
         if (finished) {
           _goto(next, simT, "done");
