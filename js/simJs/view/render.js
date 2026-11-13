@@ -1539,9 +1539,34 @@ function drawLandingPads() {
     // BULLETPROOF ASDS detection — THREE independent signals.
     // If ANY one is true, render as ship. This survives any single
     // field being lost in message-passing between threads.
+    // ASDS detection — broadened to catch cases where fields might
+    // arrive with different types through message passing.
     const _isASDS = (pad.isASDS === true) ||
-                    (Number.isFinite(pad.lengthM) && pad.lengthM >= 50) ||
+                    (pad.isASDS === 1) ||
+                    (pad.isASDS === 'true') ||
+                    (typeof pad.lengthM === 'number' && pad.lengthM > 0) ||
                     (typeof pad.id === 'string' && pad.id.indexOf('asds-') === 0);
+    
+    // DIAGNOSTIC — report once per pad id (postMessage reaches main console)
+    if (!globalThis._padDetectReported) globalThis._padDetectReported = {};
+    if (!globalThis._padDetectReported[pad.id]) {
+      globalThis._padDetectReported[pad.id] = true;
+      try {
+        self.postMessage({
+          type: 'padDetect',
+          id: pad.id,
+          isASDSResult: _isASDS,
+          fields: {
+            isASDS: pad.isASDS,
+            isASDSType: typeof pad.isASDS,
+            lengthM: pad.lengthM,
+            lengthMType: typeof pad.lengthM,
+            radiusM: pad.radiusM,
+            allKeys: Object.keys(pad)
+          }
+        });
+      } catch (e) {}
+    }
     
     if (_isASDS) {
       if (!PL) PL = _padLight(true);

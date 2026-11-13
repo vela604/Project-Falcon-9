@@ -461,7 +461,11 @@ function bootstrap() {
   return;
 }
 
-    if (msg.type === 'asdsRendered') {
+    if (msg.type === 'padDetect') {
+      console.log('[render-worker-DIAG] padDetect:', msg.id,
+        msg.isASDSResult ? 'ASDS ✓' : 'LZ ✗',
+        JSON.stringify(msg.fields));
+    } else if (msg.type === 'asdsRendered') {
         console.log('[render-worker] ASDS rendered: ' + msg.id + ' (mpp=' + msg.mpp + ')');
       } else if (msg.type === 'asdsError') {
         console.error('[render-worker] ASDS render THREW for ' + msg.id + ': ' + msg.message);
