@@ -292,13 +292,7 @@ if (msg.data.rcsSync) {
       // see it on next frame.
       if (!CONFIG.LANDING_PADS) CONFIG.LANDING_PADS = [];
       CONFIG.LANDING_PADS.push(msg.pad);
-      console.log('[render-DIAG] addLandingPad received:', JSON.stringify({
-        id: msg.pad.id,
-        isASDS: msg.pad.isASDS,
-        isASDSType: typeof msg.pad.isASDS,
-        lengthM: msg.pad.lengthM,
-        lengthMType: typeof msg.pad.lengthM
-      }));
+      console.log('[render] added landing pad: ' + msg.pad.id + ' @ ' + msg.pad.arcOffsetM + 'm');
       break;
     }
     case 'trailSample': {

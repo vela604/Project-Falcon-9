@@ -850,18 +850,7 @@ function sendStackDataToGuidance() {
     var pad = m.pad;
     if (!pad || typeof pad !== 'object' || !pad.id) return;
 
-    // DIAGNOSTIC — log pad fields on receipt from physics worker
-    console.log('[bridge-DIAG] pad received:', JSON.stringify({
-      id: pad.id,
-      name: pad.name,
-      isASDS: pad.isASDS,
-      isASDSType: typeof pad.isASDS,
-      lengthM: pad.lengthM,
-      lengthMType: typeof pad.lengthM,
-      allKeys: Object.keys(pad)
-    }));
-    
-    try {
+try {
       if (!CONFIG.LANDING_PADS) CONFIG.LANDING_PADS = [];
 
       var idx = -1;

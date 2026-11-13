@@ -1523,12 +1523,7 @@ function _drawASDS(ctx, pad, worldPos, camAng, mpp, pal) {
 }
 
 function drawLandingPads() {
-  // RENDER_VER_DIAG — confirms fresh render.js in render worker
-  if (!globalThis._renderVerLogged) {
-    globalThis._renderVerLogged = true;
-    try { self.postMessage({ type: 'renderVersionDiag', version: 'v-asds-debug-2' }); } catch (e) {}
-  }
-  
+
   if (camera.mode === 'planet' || typeof landingPads !== 'function') return;
   const pads = landingPads();
   if (!pads.length) return;
@@ -1547,52 +1542,13 @@ function drawLandingPads() {
     // field being lost in message-passing between threads.
     // ASDS detection — broadened to catch cases where fields might
     // arrive with different types through message passing.
-    // PAD_ITERATE_DIAG — 1 log per pad per second
-    if (!globalThis._pdItDiag) globalThis._pdItDiag = {};
-    var _pdKey = pad.id + '_' + Math.floor(performance.now() / 1000);
-    if (!globalThis._pdItDiag[_pdKey]) {
-      globalThis._pdItDiag[_pdKey] = true;
-      try {
-        self.postMessage({ type: 'padIterateDiag',
-          id: pad.id,
-          isASDS: pad.isASDS,
-          isASDSType: typeof pad.isASDS,
-          lengthM: pad.lengthM,
-          lengthMType: typeof pad.lengthM,
-          radiusM: pad.radiusM,
-          mpp: mpp.toFixed(1)
-        });
-      } catch (e) {}
-    }
-    
     const _isASDS = (pad.isASDS === true) ||
                     (pad.isASDS === 1) ||
                     (pad.isASDS === 'true') ||
                     (typeof pad.lengthM === 'number' && pad.lengthM > 0) ||
                     (typeof pad.id === 'string' && pad.id.indexOf('asds-') === 0);
     
-    // DIAGNOSTIC — report once per pad id (postMessage reaches main console)
-    if (!globalThis._padDetectReported) globalThis._padDetectReported = {};
-    if (!globalThis._padDetectReported[pad.id]) {
-      globalThis._padDetectReported[pad.id] = true;
-      try {
-        self.postMessage({
-          type: 'padDetect',
-          id: pad.id,
-          isASDSResult: _isASDS,
-          fields: {
-            isASDS: pad.isASDS,
-            isASDSType: typeof pad.isASDS,
-            lengthM: pad.lengthM,
-            lengthMType: typeof pad.lengthM,
-            radiusM: pad.radiusM,
-            allKeys: Object.keys(pad)
-          }
-        });
-      } catch (e) {}
-    }
-    
-    if (_isASDS) {
+if (_isASDS) {
       if (!PL) PL = _padLight(true);
       try {
         _drawASDS(ctx, pad, w, camAng, mpp, PL.pal);
