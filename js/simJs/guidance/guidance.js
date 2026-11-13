@@ -1141,17 +1141,42 @@ function _lbResolveTargetPad() {
   // lookup, no CONFIG lookup. Name/id/position/heightM all come from the
   // object deployASDS() actually created, which already accounts for any
   // collision-renames or position-nudges.
-  if (_lbConfig.rtls && _lbConfig.rtls.MISSION_TYPE === 'ASDS' && _lbState.asdsPad) {
-    const p = _lbState.asdsPad;
-    const Rg = env.EARTH_RADIUS + (env.LAUNCH_SITE_ALTITUDE || 0);
-    const angleEf = (env.LAUNCH_SITE_ANGLE_0 || 0) + p.arcOffsetM / Rg;
-    return {
-      id: p.id,
-      name: p.name,
-      arcOffsetM: p.arcOffsetM,
-      angleEf: angleEf,
-      heightM: Number.isFinite(p.heightM) ? p.heightM : 0,
-    };
+  // ASDS mode: prefer the guidance-owned pad (_lbState.asdsPad), which is
+  // authoritative — deployASDS() already resolved name collisions and
+  // position nudges, so its return is what actually exists on the field.
+  if (_lbConfig.rtls && _lbConfig.rtls.MISSION_TYPE === 'ASDS') {
+    let p = _lbState.asdsPad;
+    // Fallback: deployASDS() may have failed (asds.js not loaded, or
+    // validation rejected the request). Try the parsed name from
+    // TARGET_LANDING_PAD — the user may have pre-deployed the droneship
+    // manually (e.g. via deployASDS('HOPE', 130) in console). No raw-
+    // string lookup; _parseASDSSpec already normalised "HOPE, 130" to
+    // { name: 'HOPE', km: 130 }, so we search by 'HOPE'.
+    if (!p) {
+      const _parsed = _lbState.asdsSpec || _parseASDSSpec(_lbConfig.mission && _lbConfig.mission.TARGET_LANDING_PAD);
+      let _padList = null;
+      if (typeof CONFIG !== 'undefined' && CONFIG && Array.isArray(CONFIG.LANDING_PADS)) _padList = CONFIG.LANDING_PADS;
+      else if (Array.isArray(env.LANDING_PADS)) _padList = env.LANDING_PADS;
+      if (_padList) {
+        p = _padList.find(x => x && x.isASDS && (x.id === _parsed.name || x.name === _parsed.name)) || null;
+      }
+      if (p) console.log('[landbackV1] ASDS mode: using pre-deployed pad "' + p.name + '" @ ' + (p.arcOffsetM / 1000).toFixed(2) + ' km');
+      else console.warn('[landbackV1] ASDS mode: droneship "' + _parsed.name + '" not deployed — LB falls back to launch-site targeting');
+    }
+    if (p) {
+      const Rg = env.EARTH_RADIUS + (env.LAUNCH_SITE_ALTITUDE || 0);
+      const angleEf = (env.LAUNCH_SITE_ANGLE_0 || 0) + p.arcOffsetM / Rg;
+      return {
+        id: p.id,
+        name: p.name,
+        arcOffsetM: p.arcOffsetM,
+        angleEf: angleEf,
+        heightM: Number.isFinite(p.heightM) ? p.heightM : 0,
+      };
+    }
+    // No pad found — fall through to RTLS path so the booster has some
+    // target (better to crash at launch site than aim at garbage). The
+    // warning above tells the user why.
   }
   const id = (_lbConfig.mission && _lbConfig.mission.TARGET_LANDING_PAD) || 'LZ-1';
   // Live CONFIG.LANDING_PADS preferred over the boot-time env snapshot
