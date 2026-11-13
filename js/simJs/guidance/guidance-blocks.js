@@ -3437,7 +3437,7 @@ function _slamLegTipExtension(body) {
   const tipApexY = 0.25 * p1y + 0.5 * tipY + 0.25 * p2y;
   if (!body._legSlamOkLogged) {
     body._legSlamOkLogged = true;
-    console.log("[LEG-SLAM-OK] p=" + progress.toFixed(2) + " H=" + H.toFixed(1) + " W=" + W.toFixed(2) +
+    if (DEBUG_RTLS) console.log("[LEG-SLAM-OK] p=" + progress.toFixed(2) + " H=" + H.toFixed(1) + " W=" + W.toFixed(2) +
       " hingeY=" + _hingeY.toFixed(3) + " legLen=" + _legLen.toFixed(2) +
       " tipApex=" + tipApexY.toFixed(2) + " src=" + _src);
   }
@@ -3878,7 +3878,7 @@ function _bbTokens(cfg) {
               _rcsOff();
               if (pusher && (_st.flipPushCmd1 || pushCmdNew)) pusher.set(0, 0);
               _st.flipPushCmd1 = false; _st.flipPushCmd2 = false;
-              console.log("[FLIP-DONE] t=" + (simT - _st.phaseStart).toFixed(1) + "s peakOvershoot=" + _st.flipPeakOver.toFixed(2) +
+              if (DEBUG_RTLS) console.log("[FLIP-DONE] t=" + (simT - _st.phaseStart).toFixed(1) + "s peakOvershoot=" + _st.flipPeakOver.toFixed(2) +
                 "deg maxW=" + _st.flipMaxW.toFixed(1) + "deg/s k=" + _st.flipK.toFixed(2) +
                 " brakeStart t=" + (_st.flipBrakeT === null ? "n/a" : _st.flipBrakeT.toFixed(1)));
               finished = true; break;
@@ -3943,7 +3943,7 @@ function _bbTokens(cfg) {
               }
               if (!_st.flipBrakeSeen) {
                 _st.flipBrakeSeen = true; _st.flipBrakeT = simT - _st.phaseStart;
-                console.log("[FLIP-BRAKE-START] t=" + _st.flipBrakeT.toFixed(1) + " err=" + (_st.flipEu * R2D).toFixed(1) +
+                if (DEBUG_RTLS) console.log("[FLIP-BRAKE-START] t=" + _st.flipBrakeT.toFixed(1) + " err=" + (_st.flipEu * R2D).toFixed(1) +
                   " w=" + (wRelNow * R2D).toFixed(2) + " stop=" + (stopAng === Infinity ? "inf" : (stopAng * R2D).toFixed(1)) +
                   " aero=" + (d.alphaAng * R2D).toFixed(2) + " pusherOn=" + (pushOn1 ? 1 : 0));
               }
@@ -5201,7 +5201,7 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
                 _st.lbSpooled = true;
                 _st.lbSpoolT = simT - _st.lbT0;
                 _st.lbAlignStartT = simT;
-                console.log("[LANDING_BURN-SPOOLED] t=" + simT.toFixed(2) +
+                if (DEBUG_RTLS) console.log("[LANDING_BURN-SPOOLED] t=" + simT.toFixed(2) +
                   " h=" + (hAGL / 1000).toFixed(3) + "km" +
                   " vy=" + vRadial.toFixed(2) + " vx=" + vTangGround.toFixed(2) +
                   " theta=" + thetaLocalDeg.toFixed(2) + "deg w=" + (d.omega * R2D).toFixed(3) +
@@ -5365,7 +5365,7 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
             const V_TD = Math.min(V_TD_MAX, Math.max(V_TD_MIN, Math.sqrt(2 * aMinFmin * V_TD_MARGIN)));
             if (!Number.isFinite(_st.lbVtdLog) || Math.abs(V_TD - _st.lbVtdLog) > 0.05) {
               _st.lbVtdLog = V_TD;
-              console.log("[LB-VTD] t=" + simT.toFixed(2) + " V_TD=" + V_TD.toFixed(3) + " (aMin@Fmin=" + aMinFmin.toFixed(3) + " M=" + M.toFixed(0) + " Fmin=" + (Fmin / 1000).toFixed(0) + "kN margin=" + V_TD_MARGIN + "m floor=" + V_TD_MIN.toFixed(3) + ")");
+              if (DEBUG_RTLS) console.log("[LB-VTD] t=" + simT.toFixed(2) + " V_TD=" + V_TD.toFixed(3) + " (aMin@Fmin=" + aMinFmin.toFixed(3) + " M=" + M.toFixed(0) + " Fmin=" + (Fmin / 1000).toFixed(0) + "kN margin=" + V_TD_MARGIN + "m floor=" + V_TD_MIN.toFixed(3) + ")");
             }
             // v7b: reference throttle height ke saath THR_LATE -> Fmin/Fmax tak girta hai
             const LB_H_BLEND = _cfgN("LANDING_BURN_H_BLEND", 8.0);
@@ -5408,7 +5408,7 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
               prof = _lbRollout(Math.max(hEff, 1), vD0, M, kA);
               _st.lbProf = prof;
               _st.lbReplanT = simT;
-              console.log("[LB-REPLAN] t=" + simT.toFixed(2) + " e=" + elapsedAlign.toFixed(2) +
+              if (DEBUG_RTLS) console.log("[LB-REPLAN] t=" + simT.toFixed(2) + " e=" + elapsedAlign.toFixed(2) +
                 " h=" + hEff.toFixed(1) + " vy=" + vRadial.toFixed(2) +
                 " | rollout tgo=" + prof.tEnd.toFixed(1) + "s predTD h=" + prof.hEnd.toFixed(2) + " v=" + prof.vEnd.toFixed(2) +
                 " | z=" + zNow.toFixed(2) + " zd=" + zdNow.toFixed(3) + " z2=" + z2Now.toFixed(4) +
@@ -5541,7 +5541,7 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
             // ---- Periodic log ----
             if (simT - _st.lbLastLog >= 0.5) {
               _st.lbLastLog = simT;
-              console.log("[LANDING_BURN-SLAM] t=" + simT.toFixed(2) + " e=" + elapsedAlign.toFixed(2) +
+              if (DEBUG_RTLS) console.log("[LANDING_BURN-SLAM] t=" + simT.toFixed(2) + " e=" + elapsedAlign.toFixed(2) +
                 " | th=" + thetaLocalDeg.toFixed(3) + " w=" + (wL * R2D).toFixed(3) +
                 " x=" + xFromPadM.toFixed(2) + " vx=" + vTangGround.toFixed(2) +
                 " | z=" + zNow.toFixed(2) + " zd=" + zdNow.toFixed(3) + " z2=" + z2Now.toFixed(4) +
