@@ -93,6 +93,18 @@
 
         <div class="blk">
           <div class="blk-t">landing burn <em>applies to every eval</em></div>
+
+      <div class="blk">
+        <div class="blk-t">ASDS deploy <em>downrange landing platform (2 m deck)</em></div>
+        <div class="row fgrid">
+          <label>offset m <input type="number" id="asdsDeployM" step="1000" min="0" value="185000"></label>
+        </div>
+        <div class="tool-a">
+          <button id="asdsDeployBtn">Deploy ASDS</button>
+          <span class="note" id="asdsDeployStatus">&mdash;</span>
+        </div>
+        <div class="note">Deploying forces a fresh INIT — guidance env picks up the new pad. Set TARGET_LANDING_PAD to the new pad id (asds-N) in the mission config.</div>
+      </div>
           <div class="row fgrid">
             <label>LB alt km <input type="number" id="lbAlt" step="0.05" min="0.3" max="4.9" value="2"></label>
             <label>V_TD margin m <input type="number" id="lbMargin" step="0.1" min="0" placeholder="preset"></label>
@@ -246,6 +258,7 @@
 <script src="../../js/customDesign.js"></script>
 <script src="../../js/fleet.js"></script>
 <script src="../../js/config.js"></script>
+<script src="../../js/simJs/view/asds.js"></script>
 <script src="../../js/simJs/core/massProps.js"></script>
 <script src="../../js/simJs/core/environment.js"></script>
 <script src="../../js/simJs/core/vehicle.js"></script>
@@ -2211,6 +2224,34 @@ function boot(){
 
   setChip('idle'); setStage('config');
   log('Ready. Lock a stack to begin.', 'ok');
+
+  // ASDS deploy — main-thread tuner means CONFIG.LANDING_PADS mutation is
+  // immediately visible to TunerEngine (no worker bridge needed). Forcing
+  // markStale() invalidates S.inited, so next INIT re-captures stackData
+  // (including the new pad) for the guidance env.
+  const _asdsBtn = $('asdsDeployBtn');
+  if (_asdsBtn) {
+    _asdsBtn.addEventListener('click', () => {
+      const x = parseFloat($('asdsDeployM').value);
+      if (!Number.isFinite(x)) {
+        $('asdsDeployStatus').textContent = 'invalid offset';
+        return;
+      }
+      if (typeof window.deployASDS !== 'function') {
+        $('asdsDeployStatus').textContent = 'asds.js not loaded';
+        return;
+      }
+      const r = window.deployASDS(x);
+      if (r && r.ok) {
+        $('asdsDeployStatus').textContent = r.pad.name + ' @ ' + Math.round(x) + ' m';
+        markStale();
+        log('ASDS deployed: ' + r.pad.name + ' @ ' + Math.round(x) + ' m — re-INIT to apply', 'ok');
+      } else {
+        $('asdsDeployStatus').textContent = (r && r.error) || 'deploy failed';
+        log('ASDS deploy failed: ' + ((r && r.error) || '?'), 'warn');
+      }
+    });
+  }
 }
 
 if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
