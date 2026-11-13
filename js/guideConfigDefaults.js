@@ -340,6 +340,13 @@ leoInsertionV3: _mkDefault(
       TARGET_LANDING_PAD: 'LZ-1',
     },
     rtls: {
+      // Mission type — selects booster return profile.
+      //   'RTLS' = Return To Launch Site (full boostback cycle).
+      //   'ASDS' = Autonomous Spaceport Drone Ship. Mission.TARGET_LANDING_PAD
+      //            is read as "NAME,KM"; droneship is deployed before ascent,
+      //            boostback is skipped, entry-burn bias forced to 0, and RCS
+      //            switched to a retrograde AoA=180 hold.
+      MISSION_TYPE: 'RTLS',
       FLIP_ROTATE_TOL_DEG: 0.5,
       FLIP_OMEGA_TOL: 0.005,
       FLIP_TIMEOUT_S: 120,
