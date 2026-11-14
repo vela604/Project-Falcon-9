@@ -19,7 +19,18 @@
 // Records stamped with mismatched version are ignored (predictions hidden).
 // Cheap, safe. Bump manually.
 const MISSION_PHYSICS_STAMP = '2024-11-15-1';
+
+// Event schema version — bump WHEN NEW EVENTS ARE ADDED to guidance.
+// Does NOT invalidate existing records (events are metadata, not physics).
+// Old records still load; they simply lack the newer event types.
+//
+// IMPORTANT: MISSION_PHYSICS_STAMP must NOT be bumped for event-only
+// changes. Bumping it invalidates ALL existing records. Only bump when
+// trajectory/timing-affecting physics actually changes (mass props,
+// control laws, atmosphere model, etc.).
+const MISSION_EVENT_SCHEMA_VERSION = 1;
 function currentPhysicsVersion() { return MISSION_PHYSICS_STAMP; }
+function currentEventSchemaVersion() { return MISSION_EVENT_SCHEMA_VERSION; }
 
 // FNV-1a 32-bit hash → base36. Deterministic, no crypto.
 function _missionHashStr(str) {
@@ -146,6 +157,9 @@ function getMissionRecord(comboKey) {
 
 function isRecordStale(record) {
   if (!record) return true;
+  // Physics version is the ONLY staleness signal. Adding new events
+  // (MISSION_EVENT_SCHEMA_VERSION bump) does NOT invalidate records —
+  // old records still load fine, just missing the newer event types.
   return record.physicsVersion !== currentPhysicsVersion();
 }
 
@@ -281,6 +295,7 @@ window.captureCurrentMissionRecord = async function () {
   return {
     schemaVersion: 1,
     physicsVersion: currentPhysicsVersion(),
+    eventSchemaVersion: MISSION_EVENT_SCHEMA_VERSION,
     comboKey: session.comboKey,
     partial: _effPartial,
     captureT: state.simTime,
