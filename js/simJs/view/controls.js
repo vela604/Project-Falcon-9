@@ -1487,11 +1487,31 @@ function _syncMissionRecordSession(status) {
           console.log('[missionRecords] prediction loaded:', rec.comboKey,
             '(' + rec.phases.length + ' phases, ' +
             (rec.partial ? 'partial' : 'complete') + ')');
+          if (typeof window.showASDSToast === 'function') {
+            window.showASDSToast('\u2139 Prediction loaded \u2014 ' +
+              rec.phases.length + ' phases (' +
+              (rec.partial ? 'partial' : 'complete') + ')', true);
+          }
           if (window.__lastGuideStatus) {
             try { _renderPhaseTrack(window.__lastGuideStatus); } catch (e) {}
           }
         } else {
           console.log('[missionRecords] no prediction for comboKey:', key);
+          // Distinguish "no record at all" from "record exists but stale
+          // (physics version mismatch)" — the latter is silent hide per
+          // user decision #4, but the user still deserves a hint at
+          // session start so they know why predictions aren't showing.
+          let _reason = 'first run for this config';
+          try {
+            const _all = loadMissionRecords();
+            const _match = _all.find(r => r.comboKey === key);
+            if (_match && isRecordStale(_match)) {
+              _reason = 'record stale (physics version mismatch)';
+            }
+          } catch (e) {}
+          if (typeof window.showASDSToast === 'function') {
+            window.showASDSToast('\u2139 No prediction \u2014 ' + _reason, true);
+          }
         }
       }).catch(function (e) {
         console.warn('[missionRecords] prediction fetch failed:', e);
