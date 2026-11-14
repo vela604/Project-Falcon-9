@@ -458,14 +458,23 @@ function niceGridSpacing(target) {
   return nice * pow;
 }
 
+// Module-level cache — drawEarth writes, drawOceanArea reads. Guarantees
+// both use IDENTICAL (cx, cy, Rpx). Without this, even with matching math,
+// floating-point ordering in separate functions could differ by tiny
+// amounts, causing sub-pixel misalignment at high zoom.
+let _earthScreenInfo = null;
+
 function drawEarth() {
   const mpp = metersPerPixel();
   const [cx, cy] = worldToScreen(0, 0);
   const Rpx = CONFIG.EARTH_RADIUS / mpp;
   if (Rpx < 0.5) return;
-  
+
+  _earthScreenInfo = { cx, cy, Rpx };
+
   // Solid surface only — no outline, no glow. Earth is a closed figure;
-  // its edge is just the boundary of the filled circle.
+  // its edge is just the boundary of the filled circle. Full-circle
+  // ctx.arc uses direct rasterization (not Bezier) — precise at any Rpx.
   ctx.fillStyle = '#0d2b12';
   ctx.beginPath();
   ctx.arc(cx, cy, Rpx, 0, Math.PI * 2);
@@ -642,24 +651,23 @@ function drawOceanArea() {
   const phi0 = CONFIG.LAUNCH_SITE_ANGLE_0 || 0;
   const omegaE = CONFIG.EARTH_OMEGA;
   const t = state.simTime;
-  
+
   const eastStartRad = (CONFIG.OCEAN_ZONE_EAST_START_DEG || 2) * Math.PI / 180;
   const eastEndRad = (CONFIG.OCEAN_ZONE_EAST_END_DEG || 60) * Math.PI / 180;
   const phiStart = phi0 + eastStartRad + omegaE * t;
   const phiEnd = phi0 + eastEndRad + omegaE * t;
-  
+
   const mppOcean = metersPerPixel();
   const isPlanet = camera.mode === 'planet';
   const maxDepthM = 1500;
-  const taperW = 0.03; // 3% at each end → shore deepening
-  
+  const taperW = 0.03;
+
   function taperAt(f) {
     if (f < taperW) return f / taperW;
     if (f > 1 - taperW) return (1 - f) / taperW;
     return 1;
   }
-  
-  // Diagnostic log (once)
+
   const _rPhi = ((Math.atan2(state.rx, state.ry) % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
   const _phiNS = ((phiStart % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
   const _phiNE = ((phiEnd % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
@@ -667,9 +675,16 @@ function drawOceanArea() {
     globalThis._oceanLogDone = true;
     console.log('[ocean] rocket entered ocean zone at phi=' + (_rPhi * 180 / Math.PI).toFixed(2) + '°');
   }
-  
-  const [ecx, ecy] = worldToScreen(0, 0);
-  const eRpx = R / mppOcean;
+
+  // Use CACHED earth screen info (written by drawEarth) so ocean's
+  // coordinates match Earth's edge EXACTLY — no float ordering drift.
+  const _earth = _earthScreenInfo || {
+    cx: worldToScreen(0, 0)[0],
+    cy: worldToScreen(0, 0)[1],
+    Rpx: R / mppOcean
+  };
+  const ecx = _earth.cx, ecy = _earth.cy, eRpx = _earth.Rpx;
+
   const [exS0, eyS0] = worldToScreen(R * Math.sin(phiStart), R * Math.cos(phiStart));
   const [exS1, eyS1] = worldToScreen(R * Math.sin(phiEnd), R * Math.cos(phiEnd));
   const angStart = Math.atan2(eyS0 - ecy, exS0 - ecx);
@@ -678,14 +693,38 @@ function drawOceanArea() {
   while (dArc < -Math.PI) dArc += Math.PI * 2;
   while (dArc > Math.PI) dArc -= Math.PI * 2;
   const anti = dArc < 0;
-  
+
   const N = 60;
-  
-  // ============ LOCAL VIEW — arc top + tapered wavy bottom ============
+
+  // ============================================================================
+  // POLYLINE TOP EDGE — replaces ctx.arc partial for ocean boundary.
+  // PARTIAL ctx.arc uses Bezier approximation internally; error grows with
+  // radius, causing pixel misalignment at high zoom (flicker + ground leak).
+  // Full-circle ctx.arc (drawEarth) uses direct rasterization, no error —
+  // that's why Earth edge is sharp but ocean top was drifting.
+  // Fix: trace the arc as a dense polyline. Vertex count scales with radius
+  // so sagitta (chord-to-arc gap) stays sub-pixel at any zoom.
+  // ============================================================================
+  const _chordMax = Math.max(1, Math.sqrt(Math.max(1, eRpx) * 2));
+  const _arcLenPx = Math.abs(dArc) * eRpx;
+  const N_TOP = Math.max(80, Math.min(4000, Math.ceil(_arcLenPx / _chordMax)));
+
+  function _traceTopArc(rPx, moveFirst, reverse) {
+    const rWorld = rPx * mppOcean;
+    for (let k = 0; k <= N_TOP; k++) {
+      const f = reverse ? (1 - k / N_TOP) : (k / N_TOP);
+      const phi = phiStart + f * (phiEnd - phiStart);
+      const [sx, sy] = worldToScreen(rWorld * Math.sin(phi), rWorld * Math.cos(phi));
+      if (k === 0 && moveFirst) ctx.moveTo(sx, sy);
+      else ctx.lineTo(sx, sy);
+    }
+  }
+
+  // ============ LOCAL VIEW ============
   if (!isPlanet) {
     ctx.save();
     ctx.beginPath();
-    ctx.arc(ecx, ecy, eRpx, angStart, angStart + dArc, anti);
+    _traceTopArc(eRpx, true, false);
     for (let k = 0; k <= N; k++) {
       const fRev = k / N;
       const f = 1 - fRev;
@@ -703,20 +742,18 @@ function drawOceanArea() {
     ctx.strokeStyle = 'rgb(120, 175, 235)';
     ctx.lineWidth = 1.2;
     ctx.beginPath();
-    ctx.arc(ecx, ecy, eRpx, angStart, angStart + dArc, anti);
+    _traceTopArc(eRpx, true, false);
     ctx.stroke();
     ctx.restore();
     return;
   }
-  
+
   // ============ PLANET VIEW ============
   const realDepthPx = maxDepthM / mppOcean;
   if (_oceanDetailMode === 'line' && realDepthPx > 6) _oceanDetailMode = 'filled';
   else if (_oceanDetailMode === 'filled' && realDepthPx < 4) _oceanDetailMode = 'line';
-  
-  // LINE MODE — stroke CENTERED at (eRpx - lineDepth/2) so its extent
-  // [eRpx-lineDepth, eRpx] exactly matches fill's extent. No shift at
-  // mode switch.
+
+  // LINE MODE
   if (_oceanDetailMode === 'line') {
     const lineDepth = Math.max(realDepthPx, 1.5);
     ctx.save();
@@ -724,16 +761,16 @@ function drawOceanArea() {
     ctx.lineWidth = lineDepth;
     ctx.lineCap = 'butt';
     ctx.beginPath();
-    ctx.arc(ecx, ecy, eRpx - lineDepth / 2, angStart, angStart + dArc, anti);
+    _traceTopArc(eRpx - lineDepth / 2, true, false);
     ctx.stroke();
     ctx.restore();
     return;
   }
-  
-  // FILL MODE — variable depth (taper at shore) + annular bands
+
+  // FILL MODE — top edge polyline + bottom polyline (tapered)
   ctx.save();
   ctx.beginPath();
-  ctx.arc(ecx, ecy, eRpx, angStart, angStart + dArc, anti);
+  _traceTopArc(eRpx, true, false);
   for (let k = 0; k <= N; k++) {
     const fRev = k / N;
     const f = 1 - fRev;
@@ -746,8 +783,8 @@ function drawOceanArea() {
   }
   ctx.closePath();
   ctx.clip();
-  
-  // 5 depth bands — clip trims them where taper reduces depth
+
+  // 5 depth bands — each band is a polyline ring (outer fwd, inner rev)
   const bands = [
     { d0: 0.55, d1: 1.00, col: 'rgb(8, 30, 75)' },
     { d0: 0.30, d1: 0.55, col: 'rgb(20, 65, 140)' },
@@ -759,21 +796,21 @@ function drawOceanArea() {
     const rOut = eRpx - (maxDepthM / mppOcean) * band.d0;
     const rIn = eRpx - (maxDepthM / mppOcean) * band.d1;
     ctx.beginPath();
-    ctx.arc(ecx, ecy, rOut, angStart, angStart + dArc, anti);
-    ctx.arc(ecx, ecy, rIn, angStart + dArc, angStart, !anti);
+    _traceTopArc(rOut, true, false);
+    _traceTopArc(rIn, false, true);
     ctx.closePath();
     ctx.fillStyle = band.col;
     ctx.fill();
   });
-  
+
   ctx.restore();
-  
-  // Surface highlight — exact arc
+
+  // Surface highlight — polyline top
   ctx.save();
   ctx.strokeStyle = 'rgb(120, 175, 235)';
   ctx.lineWidth = 1;
   ctx.beginPath();
-  ctx.arc(ecx, ecy, eRpx, angStart, angStart + dArc, anti);
+  _traceTopArc(eRpx, true, false);
   ctx.stroke();
   ctx.restore();
 }
