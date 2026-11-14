@@ -245,7 +245,10 @@ function _farPlacementAlongDir(ecx, ecy, dx, dy, earthPx, iconR, cv) {
   if (dy > _eps) tExitY = (cv.height - ecy) / dy;
   else if (dy < -_eps) tExitY = -ecy / dy;
   const tExit = Math.min(tExitX, tExitY);
-  const dAtEdge = tExit - iconR - 15;             // icon fully visible
+  // Pull 18% inward from edge so icon feels "at infinity" rather than
+  // glued to the canvas boundary. 0.82 multiplier applied AFTER the
+  // edge margin subtraction, so icon never touches the edge either.
+  const dAtEdge = (tExit - iconR - 15) * 0.82;
   const dMin = earthPx + iconR + 25;              // never inside Earth
   const d = Math.max(dAtEdge, dMin);
   return { x: ecx + dx * d, y: ecy + dy * d, dist: d };
