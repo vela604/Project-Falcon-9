@@ -3126,11 +3126,16 @@ if (isSingleNozzle) {
   // by gimbalRad before subtracting bellExit offset). 2px gap so plume
   // doesn't visually "touch" the hull.
   let _boosterPlumeClipY = null;
+  let _boosterPlumeImpactX = 0;
+  let _boosterPlumeImpactY = 0;
+  let _boosterPlumeContact = 0;
+  let _boosterPlumeExists = false;
   if (body.members && body.members[0] && body.members[0].stageRole === 'stage'
       && typeof state !== 'undefined' && state.bodies) {
     const _vCos = Math.cos(visualTheta), _vSin = Math.sin(visualTheta);
     const _gCos = Math.cos(gimbalRad || 0), _gSin = Math.sin(gimbalRad || 0);
     let _bestClip = null;
+    let _bestImpactX = 0;
     for (let _bi = 0; _bi < state.bodies.length; _bi++) {
       if (_bi === bodyIdx) continue;
       const _ob = state.bodies[_bi];
@@ -3157,10 +3162,19 @@ if (isSingleNozzle) {
       if (Math.abs(_pgX) > _obRadius + 2) continue;
       // Clip only if booster top is within reach of the plume
       if (_plumeLocalY > 0 && _plumeLocalY < flameLen) {
-        if (_bestClip === null || _plumeLocalY < _bestClip) _bestClip = _plumeLocalY;
+        if (_bestClip === null || _plumeLocalY < _bestClip) {
+          _bestClip = _plumeLocalY;
+          _bestImpactX = _pgX;
+        }
       }
     }
-    if (_bestClip !== null) _boosterPlumeClipY = Math.max(0, _bestClip - 2);
+    if (_bestClip !== null) {
+      _boosterPlumeExists = true;
+      _boosterPlumeImpactX = _bestImpactX;
+      _boosterPlumeImpactY = _bestClip;
+      _boosterPlumeClipY = Math.max(0, _bestClip - 2);
+      _boosterPlumeContact = Math.max(0, Math.min(1, 1 - _bestClip / Math.max(1, flameLen)));
+    }
   }
   if (_boosterPlumeClipY !== null) {
     ctx.save();
@@ -3252,6 +3266,117 @@ if (isSingleNozzle) {
   ctx.fill();
   ctx.globalCompositeOperation = 'source-over';
   }
+  // ---- BOOSTER IMPACT FAN ----
+  // When plume is clipped by a booster below (stage separation), draw the
+  // same "hitting a surface" effect as ground impingement — hot pool +
+  // sideways fans + stagnation spot. Contact intensity scales with how
+  // deeply the plume is absorbed (1 = fully, 0 = barely reaching).
+  if (_boosterPlumeExists && _boosterPlumeContact > 0.05) {
+    const _ix = _boosterPlumeImpactX;
+    const _iy = _boosterPlumeClipY;
+    const _c = _boosterPlumeContact;
+    const _baseW = W * (0.45 + 0.15 * plumeScale);
+    const _fanLen = _baseW * (1.6 + 3.5 * _c);
+    const _fanThick = _baseW * (0.22 + 0.45 * _c);
+
+    // Hot pool at impact (flattened ellipse, "splashing" outward)
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.translate(_ix, _iy);
+    ctx.scale(1, 0.35);
+    const _poolR = _fanLen * 0.9;
+    const _pool = ctx.createRadialGradient(0, 0, 0, 0, 0, _poolR);
+    _pool.addColorStop(0, PAL.g2_hi);
+    _pool.addColorStop(0.4, PAL.g2_mid);
+    _pool.addColorStop(1, PAL.g1_lo);
+    ctx.fillStyle = _pool;
+    ctx.globalAlpha = Math.min(1, _c * 1.6);
+    ctx.beginPath();
+    ctx.arc(0, 0, _poolR, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    // Two sideways fans (deflected flame spreading along booster top edge)
+    for (const side of [-1, 1]) {
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.translate(_ix, _iy);
+
+      // Outer soft haze
+      ctx.filter = 'blur(7px)';
+      ctx.globalAlpha = 0.65 * _c;
+      const _gO = ctx.createLinearGradient(0, 0, side * _fanLen, 0);
+      _gO.addColorStop(0, PAL.g1_hi);
+      _gO.addColorStop(0.5, PAL.g1_mid);
+      _gO.addColorStop(1, PAL.g1_lo);
+      ctx.fillStyle = _gO;
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      for (let _k = 1; _k <= 12; _k++) {
+        const _f = _k / 12;
+        const _fx = side * _fanLen * _f;
+        const _fy = -_fanThick * Math.pow(1 - _f, 0.6) *
+          (1 + 0.25 * Math.sin(_f * 9 + tNow * 3.1 + (side > 0 ? 1.3 : 4.1)));
+        ctx.lineTo(_fx, _fy);
+      }
+      ctx.lineTo(side * _fanLen, _fanThick * 0.15);
+      for (let _k = 12; _k >= 0; _k--) {
+        const _f = _k / 12;
+        ctx.lineTo(side * _fanLen * _f, _fanThick * 0.4 * Math.pow(1 - _f, 0.6));
+      }
+      ctx.closePath();
+      ctx.fill();
+      ctx.filter = 'none';
+
+      // Mid-bright fan (shorter, tighter)
+      const _fl2 = _fanLen * 0.68;
+      const _ft2 = _fanThick * 0.58;
+      ctx.globalAlpha = 0.85 * _c;
+      ctx.filter = 'blur(3px)';
+      const _gM = ctx.createLinearGradient(0, 0, side * _fl2, 0);
+      _gM.addColorStop(0, PAL.g2_hi);
+      _gM.addColorStop(0.5, PAL.g2_mid);
+      _gM.addColorStop(1, PAL.g2_lo);
+      ctx.fillStyle = _gM;
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      for (let _k = 1; _k <= 10; _k++) {
+        const _f = _k / 10;
+        const _fx = side * _fl2 * _f;
+        const _fy = -_ft2 * Math.pow(1 - _f, 0.6) *
+          (1 + 0.2 * Math.sin(_f * 11 + tNow * 4.3 + side));
+        ctx.lineTo(_fx, _fy);
+      }
+      ctx.lineTo(side * _fl2, _ft2 * 0.1);
+      for (let _k = 10; _k >= 0; _k--) {
+        const _f = _k / 10;
+        ctx.lineTo(side * _fl2 * _f, _ft2 * 0.3 * Math.pow(1 - _f, 0.6));
+      }
+      ctx.closePath();
+      ctx.fill();
+      ctx.filter = 'none';
+
+      ctx.restore();
+    }
+
+    // Bright stagnation spot (small hot core at impact)
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.translate(_ix, _iy);
+    ctx.scale(1, 0.55);
+    const _hotR = _baseW * (0.55 + 0.35 * _c);
+    const _hot = ctx.createRadialGradient(0, 0, 0, 0, 0, _hotR);
+    _hot.addColorStop(0, PAL.flare_hi);
+    _hot.addColorStop(0.45, PAL.flare_mid);
+    _hot.addColorStop(1, PAL.flare_lo);
+    ctx.globalAlpha = _c;
+    ctx.fillStyle = _hot;
+    ctx.beginPath();
+    ctx.arc(0, 0, _hotR, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
   // ---- Ground impingement: plume hits the surface and fans out sideways ----
   // Drawn in the flame frame (origin = nozzle exit, +y along the plume axis).
   // In that frame the ground is a line tilted by psi, so after
