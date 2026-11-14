@@ -21,6 +21,32 @@ self.addEventListener('unhandledrejection', (e) => {
   self.postMessage({ type: 'workerError', message: String(e.reason && e.reason.message || e.reason) });
 });
 
+// ===== __consoleRelay — forward worker console to main thread =====
+// FF worker console.log is invisible in main page console (separate
+// thread). Relay every log line via postMessage so user on mobile can
+// see diagnostics without chrome://inspect.
+(function () {
+  const _msgCount = { n: 0 };
+  const _MAX_RELAY = 1200;
+  function _relay(kind, args) {
+    if (_msgCount.n >= _MAX_RELAY) return;
+    _msgCount.n++;
+    try {
+      const line = Array.prototype.map.call(args, function (a) {
+        if (typeof a === 'string') return a;
+        try { return JSON.stringify(a); } catch (e) { return String(a); }
+      }).join(' ');
+      self.postMessage({ type: 'ffLog', kind: kind, line: line });
+    } catch (e) {}
+  }
+  const _origLog = console.log.bind(console);
+  const _origWarn = console.warn.bind(console);
+  const _origErr = console.error.bind(console);
+  console.log = function () { _origLog.apply(null, arguments); _relay('log', arguments); };
+  console.warn = function () { _origWarn.apply(null, arguments); _relay('warn', arguments); };
+  console.error = function () { _origErr.apply(null, arguments); _relay('err', arguments); };
+})();
+
 // ---- localStorage shim BEFORE importScripts ----
 if (typeof localStorage === 'undefined') {
   const _store = Object.create(null);
@@ -104,13 +130,22 @@ state.bodies = msg.fullState.bodies;
     state.halted = !!msg.fullState.halted;
     
     // ===== FF_DEBUG_BLOCK (auto-added) =====
-    if (msg.tickDebug) globalThis._ffTickDebug = msg.tickDebug;
+    if (msg.tickDebug === false) {
+      globalThis._ffTickDebug = false;
+    } else if (msg.tickDebug) {
+      globalThis._ffTickDebug = msg.tickDebug;
+    } else {
+      // Default ON — every 2000 ticks (25s). Override via
+      // window.__ffTickDebug = { everyNTicks: N } or false.
+      globalThis._ffTickDebug = { everyNTicks: 2000, from: 0, to: 9999 };
+    }
+    // __ffTickDebugDefaultApplied
     
     // [FF-INIT] — one-shot dump of received state. Compare with physics
     // worker state at pause. Any difference means state transfer loses
     // info (actuator spool, RCS, slosh, grid fins, legs progress) and is
     // the root cause of trajectory divergence.
-    if (globalThis._ffTickDebug) {
+    {  // [FF-INIT] always fires
       const _b0i = state.bodies.find(function(b) {
         return b.members && b.members[0] && b.members[0].stageRole === 'booster' && !b.payloadBody;
       });

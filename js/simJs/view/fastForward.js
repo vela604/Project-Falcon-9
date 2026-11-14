@@ -321,6 +321,11 @@ const w = new Worker('js/simJs/threads/fastforward.worker.js');
 
             w.onmessage = (ev) => {
       const m = ev.data;
+      if (m.type === 'ffLog') {
+        var _prefix = m.kind === 'warn' ? '[ffw-WARN] ' : (m.kind === 'err' ? '[ffw-ERR] ' : '[ffw] ');
+        console.log(_prefix + m.line);
+        return;
+      }
       if (m.type === 'diagCapture') {
   const el = document.getElementById('status');
   if (el) el.textContent = 'CAPTURE: ' + m.sig;
