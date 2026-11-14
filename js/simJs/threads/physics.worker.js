@@ -118,17 +118,17 @@ self.onmessage = (e) => {
 
 
       importScripts(
-        '../../componentLibrary.js?v=1794640150926',
-        '../../customDesign.js?v=1794640150926',
-        '../../fleet.js?v=1794640150926',
-        '../../config.js?v=1794640150926',
-        '../core/massProps.js?v=1794640150926',
-        '../core/environment.js?v=1794640150926',
-        '../core/vehicle.js?v=1794640150926',
-        '../core/rcs.js?v=1794640150926',
-        '../core/physics.js?v=1794640150926',
-        '../core/collision.js?v=1794640150926',
-        '../core/stateBuffer.js?v=1794640150926'
+        '../../componentLibrary.js?v=1794641143294',
+        '../../customDesign.js?v=1794641143294',
+        '../../fleet.js?v=1794641143294',
+        '../../config.js?v=1794641143294',
+        '../core/massProps.js?v=1794641143294',
+        '../core/environment.js?v=1794641143294',
+        '../core/vehicle.js?v=1794641143294',
+        '../core/rcs.js?v=1794641143294',
+        '../core/physics.js?v=1794641143294',
+        '../core/collision.js?v=1794641143294',
+        '../core/stateBuffer.js?v=1794641143294'
       );
 
       bootstrapped = true;
@@ -400,8 +400,63 @@ break;
     }
     case 'addLandingPad': {
       if (!CONFIG.LANDING_PADS) CONFIG.LANDING_PADS = [];
-      CONFIG.LANDING_PADS.push(msg.pad);
-      self.postMessage({ type: 'addLandingPad', pad: msg.pad });
+      const _pad = msg.pad;
+      if (!_pad || !_pad.id) break;
+      // ---- Receiver-side conflict shift (defense in depth) ----
+      // Sender-side shift logic (asds.js deployASDS, guidance.js
+      // _buildASDSPadForGuidance) already handles the common case, but
+      // two failure modes bypass it: (a) FF worker may run a stale
+      // guidance.js if its importScripts lacks cachebust, (b) the FF
+      // forward pipeline may relay only addLandingPad and drop the
+      // preceding moveLandingPad. Doing the shift HERE guarantees
+      // consistency regardless of which sender path was taken.
+      // Handles: incoming pad conflicts with existing → shift the
+      // EXISTING pad to nearest valid spot, then add the incoming pad at
+      // its requested position exactly.
+      const _existingConflict = (CONFIG.LANDING_PADS || []).find(function (p) {
+        return p && p.isASDS && p.id !== _pad.id &&
+          (Math.abs((p.arcOffsetM || 0) - (_pad.arcOffsetM || 0)) -
+            (Number.isFinite(_pad.lengthM) ? _pad.lengthM : 91)) < 120;
+      });
+      if (_existingConflict) {
+        const _R = CONFIG.EARTH_RADIUS;
+        const _startDeg = Number.isFinite(CONFIG.OCEAN_ZONE_EAST_START_DEG) ? CONFIG.OCEAN_ZONE_EAST_START_DEG : 2;
+        const _endDeg = Number.isFinite(CONFIG.OCEAN_ZONE_EAST_END_DEG) ? CONFIG.OCEAN_ZONE_EAST_END_DEG : 60;
+        const _startM = _startDeg * Math.PI / 180 * _R;
+        const _endM = _endDeg * Math.PI / 180 * _R;
+        const _LZ_W = 54, _LZ_E = 37, _MIN_GAP = 120, _LEN = 91;
+        const _boundsOk = function (m) {
+          return (m - _LZ_W >= _startM) && (m + _LZ_E <= _endM);
+        };
+        const _others = (CONFIG.LANDING_PADS || []).filter(function (p) {
+          return p && p.id !== _pad.id && p.id !== _existingConflict.id;
+        });
+        _others.push({ id: '_incoming', arcOffsetM: _pad.arcOffsetM || 0 });
+        let _newM = null;
+        for (let d = 1000; d <= 10000; d += 1000) {
+          for (let sgn = -1; sgn <= 1; sgn += 2) {
+            const cand = Math.round((_existingConflict.arcOffsetM || 0) + sgn * d);
+            if (!_boundsOk(cand)) continue;
+            let ok = true;
+            for (let k = 0; k < _others.length; k++) {
+              const gap = Math.abs(cand - _others[k].arcOffsetM) - _LEN;
+              if (gap < _MIN_GAP) { ok = false; break; }
+            }
+            if (ok) { _newM = cand; break; }
+          }
+          if (_newM != null) break;
+        }
+        if (_newM != null) {
+          _existingConflict.arcOffsetM = _newM;
+          self.postMessage({ type: 'moveLandingPad', pad: JSON.parse(JSON.stringify(_existingConflict)) });
+          console.log('[physics] addLandingPad: shifted conflicting ' + _existingConflict.id + ' to ' + (_newM / 1000).toFixed(2) + ' km');
+        }
+      }
+      // Idempotent add — replace if same id already present
+      const _idx = CONFIG.LANDING_PADS.findIndex(function (p) { return p && p.id === _pad.id; });
+      if (_idx >= 0) CONFIG.LANDING_PADS[_idx] = Object.assign({}, _pad);
+      else CONFIG.LANDING_PADS.push(Object.assign({}, _pad));
+      self.postMessage({ type: 'addLandingPad', pad: _pad });
       break;
     }
     case 'reset': {
