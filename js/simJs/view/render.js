@@ -707,7 +707,7 @@ function drawOceanArea() {
   // ============================================================================
   const _chordMax = Math.max(1, Math.sqrt(Math.max(1, eRpx) * 2));
   const _arcLenPx = Math.abs(dArc) * eRpx;
-  const N_TOP = Math.max(80, Math.min(4000, Math.ceil(_arcLenPx / _chordMax)));
+  const N_TOP = Math.max(80, Math.min(8000, Math.ceil(_arcLenPx / _chordMax)));
 
   // Precision guard — Chrome/Skia canvas uses float32 internally.
   // Above 2^24 (16.7M), integer precision is lost → coords quantize to
@@ -716,7 +716,7 @@ function drawOceanArea() {
   // them precisely. Visible portion (0..W) is unaffected; only far-off-
   // screen vertices compress. Because those are off-screen, no visual
   // artifact leaks into the viewport.
-  const _CLAMP_SAFE = 1e6;
+  const _CLAMP_SAFE = 1e5;
   const _cXMin = -_CLAMP_SAFE, _cXMax = canvas.width + _CLAMP_SAFE;
   const _cYMin = -_CLAMP_SAFE, _cYMax = canvas.height + _CLAMP_SAFE;
   const _clampX = (v) => v < _cXMin ? _cXMin : (v > _cXMax ? _cXMax : v);
@@ -766,7 +766,9 @@ function drawOceanArea() {
     ctx.fillStyle = 'rgb(18, 58, 128)';
     ctx.fill();
     ctx.strokeStyle = 'rgb(120, 175, 235)';
-    ctx.lineWidth = 1.2;
+    ctx.lineWidth = 1.8;
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
     ctx.beginPath();
     _traceTopArc(eRpx, true, false);
     ctx.stroke();
@@ -831,10 +833,14 @@ function drawOceanArea() {
 
   ctx.restore();
 
-  // Surface highlight — polyline top
+  // Surface highlight — thicker polyline top masks sub-pixel fill-edge
+  // jitter at extreme zoom (eRpx > 2^24 → Chrome float32 quantization).
+  // lineJoin/lineCap round smooths segment transitions.
   ctx.save();
   ctx.strokeStyle = 'rgb(120, 175, 235)';
-  ctx.lineWidth = 1;
+  ctx.lineWidth = 1.8;
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
   ctx.beginPath();
   _traceTopArc(eRpx, true, false);
   ctx.stroke();
