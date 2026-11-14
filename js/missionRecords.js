@@ -73,11 +73,27 @@ async function computeComboKey(stackId, presetId, guideName) {
   } catch (e) {
     console.warn('[missionRecords] config fetch failed — using empty hash', e);
   }
+  // Physics-affecting environment state — same stack/preset/guide/constants
+  // with different wind or atmosphere toggles is a GENUINELY different
+  // flight, so it must produce a different comboKey. Without this, one
+  // comboKey could mean "wind-off run" yesterday and "wind-on run" today,
+  // and the record silently mispredicts.
+  const envState = {
+    wind: (typeof wind !== 'undefined' && wind) ? {
+      enabled: !!wind.enabled,
+      speed: Number.isFinite(wind.speed) ? Math.round(wind.speed * 100) / 100 : 0,
+      directionDeg: Number.isFinite(wind.directionDeg) ? Math.round(wind.directionDeg * 10) / 10 : 0,
+    } : { enabled: false, speed: 0, directionDeg: 0 },
+    atmosphere: (typeof atmosphereEnabled !== 'undefined') ? !!atmosphereEnabled : true,
+    slosh: (typeof sloshEnabled !== 'undefined') ? !!sloshEnabled : true,
+    imu: (typeof imuEnabled !== 'undefined') ? !!imuEnabled : false,
+  };
   const parts = [
     stackId || '',
     presetId || '',
     guideName || '',
     _missionHashStr(configJSON),
+    _missionHashStr(JSON.stringify(envState)),
   ];
   return _missionHashStr(parts.join('|'));
 }
