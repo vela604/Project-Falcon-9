@@ -2144,6 +2144,22 @@ const speedRel = Math.hypot(relVx, relVy);
       // to a sleeping body's omega — see applySloshStep()'s header.
       applySloshStep(body, dt, false);
     }
+    // Co-rotate with Earth's surface so a settled body stays at its
+    // current EARTH-FIXED position. Without this, the body's INERTIAL
+    // position stays fixed while Earth rotates underneath at ω·R ≈ 465
+    // m/s — which reads as a violent westward slide in the earth-fixed
+    // frame (render + telemetry). Physical truth: an object at rest on
+    // Earth advances its inertial position by the earth-surface velocity
+    // each tick. Angle update keeps theta consistent with the local
+    // vertical rotating under it.
+    const _svx = CONFIG.EARTH_OMEGA * body.ry;
+    const _svy = -CONFIG.EARTH_OMEGA * body.rx;
+    body.vx = _svx;
+    body.vy = _svy;
+    body.omega = -CONFIG.EARTH_OMEGA;
+    body.rx += _svx * dt;
+    body.ry += _svy * dt;
+    body.theta += body.omega * dt;
     return;
   }
   body.settled = false;
@@ -2565,9 +2581,14 @@ const freshImpact = !wasGrounded &&
         body.omega *= damp;
         
         if (body._restFrames > 10 && speed < sleepSpeedThresh && spin < sleepSpinThresh) {
-          body.vx = 0;
-          body.vy = 0;
-          body.omega = 0;
+          // Correct inertial velocity for a body at rest on the rotating
+          // Earth surface: earth-surface velocity + co-rotation omega.
+          // Zeroing these leaves the body fixed in inertial while Earth
+          // rotates under it → visible westward drift in earth-fixed frame.
+          const _svSleep = earthSurfaceVelocity(body.rx, body.ry);
+          body.vx = _svSleep.vx;
+          body.vy = _svSleep.vy;
+          body.omega = -CONFIG.EARTH_OMEGA;
           if (!body.crashed) body.landed = true;
           body.settled = true;
         }
@@ -2581,9 +2602,14 @@ const freshImpact = !wasGrounded &&
       if (tiltDeg > 85) {
   body._fallenFrames = (body._fallenFrames || 0) + 1;
   if (body._fallenFrames * dt > 2.0) {
-    body.vx = 0;
-    body.vy = 0;
-    body.omega = 0;
+    // Same rationale as settle-to-sleep: correct inertial velocity for a
+    // body at rest on the rotating Earth. Prior code set vx=vy=0 which
+    // leaves the body fixed in inertial → 465 m/s westward drift in the
+    // earth-fixed frame (the exact symptom user reported for crash bodies).
+    const _svFallen = earthSurfaceVelocity(body.rx, body.ry);
+    body.vx = _svFallen.vx;
+    body.vy = _svFallen.vy;
+    body.omega = -CONFIG.EARTH_OMEGA;
     body.settled = true;
     // No halt-on-crash pause. The stage crashing into the resting
     // area is the intended endpoint of the suicide-burn mission;
