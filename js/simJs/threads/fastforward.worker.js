@@ -103,6 +103,67 @@ state.bodies = msg.fullState.bodies;
     state.simTime = msg.fullState.simTime;
     state.halted = !!msg.fullState.halted;
     
+    // ===== FF_DEBUG_BLOCK (auto-added) =====
+    if (msg.tickDebug) globalThis._ffTickDebug = msg.tickDebug;
+    
+    // [FF-INIT] — one-shot dump of received state. Compare with physics
+    // worker state at pause. Any difference means state transfer loses
+    // info (actuator spool, RCS, slosh, grid fins, legs progress) and is
+    // the root cause of trajectory divergence.
+    if (globalThis._ffTickDebug) {
+      const _b0i = state.bodies.find(function(b) {
+        return b.members && b.members[0] && b.members[0].stageRole === 'booster' && !b.payloadBody;
+      });
+      if (_b0i) {
+        console.log('[FF-INIT]', JSON.stringify({
+          t: state.simTime,
+          rx: _b0i.rx, ry: _b0i.ry, vx: _b0i.vx, vy: _b0i.vy,
+          theta: _b0i.theta, omega: _b0i.omega,
+          fuel: _b0i.fuelMass || (_b0i.memberFuel && _b0i.memberFuel[0]),
+          engines: _b0i.engines && _b0i.engines.map(function(e) {
+            return { mf: e.massFlowRate, tgt: e.targetMassFlowRate, gimbal: e.gimbalDeg };
+          }),
+          legs: _b0i.legs,
+          gridFins: _b0i.gridFins,
+          slosh: _b0i.slosh
+        }));
+      }
+    }
+    
+    // [FF-TICK] — periodic trajectory log
+    if (typeof physicsStep === 'function' && !physicsStep._ffDebugWrapped) {
+      const _origPhysicsStep = physicsStep;
+      physicsStep = function(dt) {
+        const result = _origPhysicsStep.call(this, dt);
+        if (globalThis._ffTickDebug) {
+          const dbg = globalThis._ffTickDebug;
+          const t = state.simTime;
+          if ((!dbg.from || t >= dbg.from) && (!dbg.to || t <= dbg.to)) {
+            const nTick = Math.round(t / 0.0125);
+            const every = dbg.everyNTicks || 400;
+            if (nTick % every === 0) {
+              const _bB = state.bodies.find(function(b) {
+                return b.members && b.members[0] && b.members[0].stageRole === 'booster' && !b.payloadBody;
+              });
+              if (_bB) {
+                console.log('[FF-TICK] t=' + t.toFixed(4) +
+                  ' rx=' + _bB.rx.toFixed(6) + ' ry=' + _bB.ry.toFixed(6) +
+                  ' vx=' + _bB.vx.toFixed(6) + ' vy=' + _bB.vy.toFixed(6) +
+                  ' theta=' + _bB.theta.toFixed(6) + ' omega=' + _bB.omega.toFixed(6) +
+                  ' fuel=' + (_bB.fuelMass || (_bB.memberFuel && _bB.memberFuel[0]) || 0).toFixed(2) +
+                  ' legs=' + (_bB.legs ? _bB.legs.deployed + '/' + _bB.legs.progress.toFixed(2) : 'none') +
+                  ' gf=' + (_bB.gridFins && _bB.gridFins.L ? _bB.gridFins.L.deploy + ',' + _bB.gridFins.L.control : 'none'));
+              }
+            }
+          }
+        }
+        return result;
+      };
+      physicsStep._ffDebugWrapped = true;
+    }
+    // ===== end FF_DEBUG_BLOCK =====
+
+    
     // ASDS pad sync — CONFIG.LANDING_PADS from physics capture. Without
     // this the FF worker runs with LZ-only defaults (config.js boot) and
     // diverges ~19m when runtime-deployed ASDS pads exist (Run A offset).
@@ -177,6 +238,33 @@ if (typeof Guidance !== 'undefined') {
     Guidance.startGuide(msg.activeGuide);
   }
 }
+// ===== FF_GUIDE_STATE_DIAG (temporary) =====
+if (globalThis._ffTickDebug && msg.guidanceState) {
+  try {
+    var _gs = msg.guidanceState;
+    console.log('[FF-GUIDE-STATE] top-level keys:', Object.keys(_gs).join(', '));
+    // Search recursively for anything ASDS-related
+    function _findASDS(obj, path, depth) {
+      if (!obj || typeof obj !== 'object' || depth > 5) return;
+      Object.keys(obj).forEach(function(k) {
+        var v = obj[k];
+        if (/asds|activeGuide|missionPhase|meco|sep|phase/i.test(k)) {
+          var preview;
+          try { preview = JSON.stringify(v); } catch (e) { preview = String(v); }
+          if (preview && preview.length > 150) preview = preview.slice(0, 150) + '...';
+          console.log('[FF-GUIDE-STATE] ' + path + '.' + k + ' = ' + preview);
+        }
+        if (v && typeof v === 'object' && depth < 5) {
+          _findASDS(v, path + '.' + k, depth + 1);
+        }
+      });
+    }
+    _findASDS(_gs, 'gs', 0);
+  } catch (e) {
+    console.log('[FF-GUIDE-STATE] dump error:', e.message);
+  }
+}
+// ===== end FF_GUIDE_STATE_DIAG =====
     
             // ---- Persistent snapshot wrapper (zero alloc per tick) ----
 const dt = CONFIG.DT;

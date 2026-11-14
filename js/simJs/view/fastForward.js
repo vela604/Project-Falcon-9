@@ -427,6 +427,7 @@ const w = new Worker('js/simJs/threads/fastforward.worker.js');
     };
 
         w.postMessage({
+      tickDebug: (typeof window !== 'undefined' && window.__ffTickDebug) ? window.__ffTickDebug : null,
       type: 'run',
       storageKeys: buildStorageKeys(),
       fullState: {
