@@ -162,6 +162,16 @@ table.rv-t{width:100%;border-collapse:collapse;font-size:11.5px;font-variant-num
     </div>
   </section>
 
+  <!-- ==================== SESSION HISTORY ==================== -->
+  <section class="panel" id="historyPanel" style="margin-top:14px">
+    <h2><span class="tag">0x05</span>Session History</h2>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+      <span class="dim" id="histCount" style="font-size:10.5px;letter-spacing:.1em;">0 entries</span>
+      <button class="reset" id="histClear" style="padding:4px 12px;font-size:10px;">Clear all</button>
+    </div>
+    <div id="histList"><div class="dim" style="padding:10px 12px;font-size:11px;">No completed runs yet — run OPT-MECO, ZETA, or CONVO to populate.</div></div>
+  </section>
+
 </main>
 
 <!-- ==================== STANDBY (CSS hides it once #main is shown) ==================== -->
@@ -1146,6 +1156,7 @@ table.rv-t{width:100%;border-collapse:collapse;font-size:11.5px;font-variant-num
         S.last.meco = best.M;
         S.last.G = best.Gi / 100;
         S.last.bias = best.bi * 0.0001;
+        _saveOptMecoHistory(r, best);
       }
     } catch (e) {
       log('OPT-MECO ERROR: ' + e.message);
@@ -1247,6 +1258,7 @@ table.rv-t{width:100%;border-collapse:collapse;font-size:11.5px;font-variant-num
         S.last.bias = best.bias;
         if (best.lead != null) S.last.lead = best.lead;
       }
+      _saveZetaHistory(meco, G, T, bLo, bHi, biases.length, okN, best, batchId);
       log('ZETA[batch ' + batchId + '] done: ' + okN + '/' + results.length + ' ok' +
           (best ? '  best bias=' + best.bias + ' score=' + fmt(best.score, 3) : ''));
       $('zStatus').innerHTML = okN
@@ -1535,6 +1547,7 @@ table.rv-t{width:100%;border-collapse:collapse;font-size:11.5px;font-variant-num
         (_residualFail ? ' · <b style="color:var(--red)">' + esc(_residualReason) + '</b>' : '') + '</div>';
       setConvoView(resultCard(r, { meco, G, T, bias }, 'CONVO-LEAD · best lead', vd, res, null));
       log('CONVO OK: lead=' + fmt(res.lead, 4) + ' s mode=' + res.mode + ' score=' + fmt(r && r.score, 3));
+      _saveConvoHistory(meco, G, T, bias, res, r);
       $('cStatus').innerHTML = '<span class="ok">lead=' + fmt(res.lead, 4) + ' s · ' + esc(res.mode) + ' · score=' + fmt(r && r.score, 3) + '</span>';
     } catch (e) {
       log('CONVO ERROR: ' + e.message);
@@ -1839,6 +1852,7 @@ table.rv-t{width:100%;border-collapse:collapse;font-size:11.5px;font-variant-num
         }
       }
       setConvoView(resultCard(r, inputs, 'SCORE A CUSTOM LEAD · entered lead', vd, res.ok ? res : null, userLi));
+      if(res.ok) _saveScoreOwnHistory(meco, G, T, bias, fixedLead, r, res);
       $('soStatus').innerHTML = r && r.ok ? '<span class="ok">OK — see CONVO-LEAD</span>' : '<span class="bad">' + esc((r && (r.reason || (r.reasons && r.reasons.join(',')))) || 'failed') + '</span>';
     } catch (e) {
       log('SCORE-OWN ERROR: ' + e.message);
@@ -1907,10 +1921,310 @@ table.rv-t{width:100%;border-collapse:collapse;font-size:11.5px;font-variant-num
   $('soRun').addEventListener('click', runScoreOwn);
 
   // ========================================================================
+  // SESSION HISTORY
+  // ========================================================================
+  // Every completed run (OPT-MECO, ZETA batch, CONVO, score-own) is saved to
+  // localStorage with its config + best result. Each entry gets phase-tagged
+  // restore actions so a good run isn't lost on reload/back. Cap 30 rolling.
+  const HISTORY_KEY = 'sereno-flux.history.v1';
+  const HISTORY_MAX = 30;
+
+  function loadHistory(){
+    try {
+      const raw = localStorage.getItem(HISTORY_KEY);
+      if(!raw) return [];
+      const arr = JSON.parse(raw);
+      return Array.isArray(arr) ? arr : [];
+    } catch(e){ return []; }
+  }
+
+  function saveHistoryEntry(entry){
+    entry.id = 'h_' + Date.now() + '_' + Math.random().toString(36).slice(2,6);
+    entry.ts = Date.now();
+    const h = loadHistory();
+    h.unshift(entry);
+    if(h.length > HISTORY_MAX) h.length = HISTORY_MAX;
+    try{ localStorage.setItem(HISTORY_KEY, JSON.stringify(h)); }catch(e){}
+    renderHistory();
+  }
+
+  function clearHistory(){
+    if(!confirm('Clear ALL session history? This cannot be undone.')) return;
+    try{ localStorage.removeItem(HISTORY_KEY); }catch(e){}
+    renderHistory();
+    log('History cleared');
+  }
+
+  // ---------- Save hooks per phase ----------
+  function _saveOptMecoHistory(r, best){
+    const rowsByM = r.rows || {};
+    const rowsForM = rowsByM[String(best.M)] || {};
+    const row = rowsForM[String(best.Gi)] || {};
+    const biasLo = Number.isFinite(row.lo) ? row.lo * 0.0001 : 0;
+    const biasHi = Number.isFinite(row.hi) ? row.hi * 0.0001 : 0;
+    const _oT = parseFloat(($('oTadv') && $('oTadv').value) || '4.82');
+    saveHistoryEntry({
+      kind: 'optmeco',
+      stackId: S.stackId,
+      orbitApoKm: S.orbitApoKm,
+      orbitPeriKm: S.orbitPeriKm,
+      suicide: !!S.suicide,
+      evals: r.evals || 0,
+      wallS: (r.wallMs || 0) / 1000,
+      goodN: r.good.length,
+      bestMeco: best.M,
+      bestG: best.Gi / 100,
+      biasLo, biasHi,
+      T: Number.isFinite(_oT) ? _oT : 4.82,
+    });
+    log('History saved: OPT-MECO (' + r.good.length + ' verified points)');
+  }
+
+  function _saveZetaHistory(meco, G, T, bLo, bHi, N, okN, best, batchId){
+    saveHistoryEntry({
+      kind: 'zeta',
+      stackId: S.stackId,
+      orbitApoKm: S.orbitApoKm,
+      orbitPeriKm: S.orbitPeriKm,
+      suicide: !!S.suicide,
+      batchId, meco, G, T,
+      biasLo: bLo, biasHi: bHi,
+      N, okN,
+      bestBias: best ? best.bias : null,
+      bestScore: best ? best.score : null,
+      bestLead: best ? best.lead : null,
+    });
+    log('History saved: ZETA batch ' + batchId + ' (' + okN + '/' + N + ' ok)');
+  }
+
+  function _saveConvoHistory(meco, G, T, bias, res, finalR){
+    saveHistoryEntry({
+      kind: 'convo',
+      stackId: S.stackId,
+      orbitApoKm: S.orbitApoKm,
+      orbitPeriKm: S.orbitPeriKm,
+      suicide: !!S.suicide,
+      meco, G, T, bias,
+      bestLead: res.lead,
+      bestScore: res.best.score,
+      mode: res.mode,
+      windowSize: res.W.length,
+      finalScore: finalR && finalR.ok ? finalR.score : null,
+      finalOk: !!(finalR && finalR.ok),
+    });
+    log('History saved: CONVO lead=' + res.lead.toFixed(4) + 's score=' + res.best.score.toFixed(3));
+  }
+
+  function _saveScoreOwnHistory(meco, G, T, bias, fixedLead, directR, res){
+    saveHistoryEntry({
+      kind: 'score-own',
+      stackId: S.stackId,
+      orbitApoKm: S.orbitApoKm,
+      orbitPeriKm: S.orbitPeriKm,
+      suicide: !!S.suicide,
+      meco, G, T, bias,
+      userLead: fixedLead,
+      userScore: directR && directR.ok ? directR.score : null,
+      bestLead: res.lead,
+      bestScore: res.best.score,
+      mode: res.mode,
+      windowSize: res.W.length,
+    });
+    log('History saved: SCORE-OWN entered=' + fixedLead.toFixed(4) + 's best=' + res.lead.toFixed(4) + 's');
+  }
+
+  // ---------- Restore hooks (per kind) ----------
+  function _applySuicideChk(v){
+    if($('suicideChk')) {
+      $('suicideChk').checked = !!v;
+      S.suicide = !!v;
+      if(typeof updateBandHint === 'function') try { updateBandHint(); } catch(e) {}
+    }
+  }
+
+  function _restoreOptMeco(e){
+    if(S.running){ log('Cannot restore — a run is in progress', 'warn'); return; }
+    _applySuicideChk(e.suicide);
+    setTab('zeta');
+    if($('zMeco')) $('zMeco').value = e.bestMeco;
+    if($('zG')) $('zG').value = e.bestG;
+    if($('zT') && Number.isFinite(e.T)) $('zT').value = e.T;
+    if($('zBlo')) $('zBlo').value = e.biasLo;
+    if($('zBhi')) $('zBhi').value = e.biasHi;
+    log('History → ZETA: MECO=' + e.bestMeco + ' G=' + e.bestG.toFixed(2) +
+        ' bias=[' + e.biasLo.toFixed(3) + ', ' + e.biasHi.toFixed(3) + ']');
+  }
+
+  function _restoreZetaBias(e){
+    if(S.running){ log('Cannot restore — a run is in progress', 'warn'); return; }
+    if(e.bestBias == null){ log('No bias saved in this entry', 'warn'); return; }
+    _applySuicideChk(e.suicide);
+    setTab('zeta');
+    if($('zMeco')) $('zMeco').value = e.meco;
+    if($('zG')) $('zG').value = e.G;
+    if($('zT')) $('zT').value = e.T;
+    if($('zBlo')) $('zBlo').value = e.bestBias;
+    if($('zBhi')) $('zBhi').value = e.bestBias;
+    log('History → ZETA bias: MECO=' + e.meco + ' G=' + e.G.toFixed(2) +
+        ' T=' + e.T.toFixed(3) + ' bias=' + e.bestBias.toFixed(4));
+  }
+
+  function _restoreZetaAll(e){
+    if(S.running){ log('Cannot restore — a run is in progress', 'warn'); return; }
+    _applySuicideChk(e.suicide);
+    setTab('zeta');
+    if($('zMeco')) $('zMeco').value = e.meco;
+    if($('zG')) $('zG').value = e.G;
+    if($('zT')) $('zT').value = e.T;
+    if($('zBlo')) $('zBlo').value = e.biasLo;
+    if($('zBhi')) $('zBhi').value = e.biasHi;
+    log('History → ZETA all: MECO=' + e.meco + ' G=' + e.G.toFixed(2) +
+        ' T=' + e.T.toFixed(3) + ' bias=[' + e.biasLo.toFixed(3) + ', ' + e.biasHi.toFixed(3) + ']');
+  }
+
+  function _restoreConvo(e){
+    if(S.running){ log('Cannot restore — a run is in progress', 'warn'); return; }
+    _applySuicideChk(e.suicide);
+    setTab('convo');
+    if($('cMeco')) $('cMeco').value = e.meco;
+    if($('cG')) $('cG').value = e.G;
+    if($('cT')) $('cT').value = e.T;
+    if($('cBias')) $('cBias').value = e.bias;
+    log('History → CONVO: MECO=' + e.meco + ' G=' + e.G.toFixed(2) +
+        ' T=' + e.T.toFixed(3) + ' bias=' + e.bias.toFixed(3) +
+        ' (prev lead=' + e.bestLead.toFixed(4) + 's)');
+  }
+
+  function _useLead(e){
+    if(S.running){ log('Cannot restore — a run is in progress', 'warn'); return; }
+    _applySuicideChk(e.suicide);
+    if($('soMeco')) $('soMeco').value = e.meco;
+    if($('soG')) $('soG').value = e.G;
+    if($('soT')) $('soT').value = e.T;
+    if($('soBias')) $('soBias').value = e.bias;
+    if($('soLead')) $('soLead').value = e.bestLead;
+    log('History → SCORE-OWN: entered lead=' + e.bestLead.toFixed(4) +
+        's (MECO=' + e.meco + ' G=' + e.G.toFixed(2) + ' bias=' + e.bias.toFixed(3) + ')');
+  }
+
+  function _restoreScoreOwn(e){
+    if(S.running){ log('Cannot restore — a run is in progress', 'warn'); return; }
+    _applySuicideChk(e.suicide);
+    if($('soMeco')) $('soMeco').value = e.meco;
+    if($('soG')) $('soG').value = e.G;
+    if($('soT')) $('soT').value = e.T;
+    if($('soBias')) $('soBias').value = e.bias;
+    if($('soLead')) $('soLead').value = (e.userLead != null ? e.userLead : e.bestLead) || '';
+    log('History → SCORE-OWN all: MECO=' + e.meco + ' G=' + e.G.toFixed(2) +
+        ' bias=' + e.bias.toFixed(3) + ' lead=' + (e.userLead != null ? e.userLead : e.bestLead));
+  }
+
+  // ---------- Render ----------
+  function renderHistory(){
+    const host = $('histList');
+    const cnt = $('histCount');
+    if(!host) return;
+    const h = loadHistory();
+    if(cnt) cnt.textContent = h.length + (h.length === 1 ? ' entry' : ' entries');
+    if(!h.length){
+      host.innerHTML = '<div class="dim" style="padding:10px 12px;font-size:11px;">No completed runs yet — run OPT-MECO, ZETA, or CONVO to populate.</div>';
+      return;
+    }
+    const colorMap = { optmeco:'var(--cyan)', zeta:'var(--violet)', convo:'var(--amber)', 'score-own':'var(--amber)' };
+    const labelMap = { optmeco:'OPT-MECO', zeta:'ZETA', convo:'CONVO', 'score-own':'SCORE-OWN' };
+    let html = '';
+    for(const e of h){
+      const color = colorMap[e.kind] || 'var(--dim)';
+      const label = labelMap[e.kind] || e.kind;
+      const ts = new Date(e.ts).toISOString().slice(0, 19).replace('T', ' ');
+      const orbit = (e.orbitApoKm === e.orbitPeriKm) ? (e.orbitApoKm + ' km circular') : (e.orbitApoKm + '/' + e.orbitPeriKm + ' km');
+
+      let detailLine = '';
+      let actions = '';
+
+      if(e.kind === 'optmeco'){
+        detailLine = '<b>' + e.goodN + '</b> verified · <b>' + e.evals + '</b> evals · ' + Math.round(e.wallS) + 's' +
+          ' · <span style="color:var(--cyan)">MECO=' + e.bestMeco + '</span>' +
+          ' <span style="color:var(--cyan)">G=' + (e.bestG || 0).toFixed(2) + '</span>' +
+          ' · bias <span style="color:var(--amber)">[' + (e.biasLo || 0).toFixed(3) + ', ' + (e.biasHi || 0).toFixed(3) + ']</span>';
+        actions = '<button class="suggest" data-act="restore-optmeco" data-id="' + e.id + '" style="padding:2px 8px;font-size:10px;">→ ZETA</button>' +
+          '<button class="reset" data-act="delete" data-id="' + e.id + '" style="padding:2px 8px;font-size:10px;">Delete</button>';
+      } else if(e.kind === 'zeta'){
+        detailLine = 'batch <b>' + e.batchId + '</b> · <b>' + e.N + '</b> rows · <b>' + e.okN + '</b> ok' +
+          ' · MECO=' + e.meco + ' G=' + (e.G || 0).toFixed(2) + ' T=' + (e.T || 0).toFixed(3) +
+          ' · bias [' + (e.biasLo || 0).toFixed(3) + ', ' + (e.biasHi || 0).toFixed(3) + ']';
+        if(e.bestBias != null){
+          detailLine += '<br><span style="color:var(--dim);">best </span>' +
+            '<span style="color:var(--amber);font-weight:700;">bias=' + e.bestBias.toFixed(4) + '</span>' +
+            ' <span style="color:var(--green);font-weight:700;">score=' + (Number.isFinite(e.bestScore) ? e.bestScore.toFixed(3) : '—') + '</span>' +
+            (e.bestLead != null ? ' <span style="color:var(--dim);">lead=' + e.bestLead.toFixed(4) + 's</span>' : '');
+        } else {
+          detailLine += '<br><span style="color:var(--red);">all failed</span>';
+        }
+        actions = '<button class="suggest" data-act="restore-zeta-bias" data-id="' + e.id + '" style="padding:2px 8px;font-size:10px;">Use bias</button>' +
+          '<button class="suggest" data-act="restore-zeta-all" data-id="' + e.id + '" style="padding:2px 8px;font-size:10px;">Load all</button>' +
+          '<button class="reset" data-act="delete" data-id="' + e.id + '" style="padding:2px 8px;font-size:10px;">Delete</button>';
+      } else if(e.kind === 'convo'){
+        detailLine = 'MECO=' + e.meco + ' G=' + (e.G || 0).toFixed(2) + ' T=' + (e.T || 0).toFixed(3) + ' bias=' + (e.bias || 0).toFixed(3) +
+          '<br>lead <span style="color:var(--amber);font-weight:700;">' + (e.bestLead != null ? e.bestLead.toFixed(4) + 's' : '—') + '</span>' +
+          ' <span style="color:var(--green);">score=' + (Number.isFinite(e.bestScore) ? e.bestScore.toFixed(3) : '—') + '</span>' +
+          ' · mode=' + (e.mode || '?') + ' · ' + (e.windowSize || 0) + ' leads';
+        if(e.finalScore != null) detailLine += ' · final run score=' + e.finalScore.toFixed(3);
+        actions = '<button class="suggest" data-act="restore-convo" data-id="' + e.id + '" style="padding:2px 8px;font-size:10px;">Load config</button>' +
+          '<button class="suggest" data-act="use-lead" data-id="' + e.id + '" style="padding:2px 8px;font-size:10px;">Use lead</button>' +
+          '<button class="reset" data-act="delete" data-id="' + e.id + '" style="padding:2px 8px;font-size:10px;">Delete</button>';
+      } else if(e.kind === 'score-own'){
+        detailLine = 'MECO=' + e.meco + ' G=' + (e.G || 0).toFixed(2) + ' T=' + (e.T || 0).toFixed(3) + ' bias=' + (e.bias || 0).toFixed(3) +
+          (e.userLead != null ? ' · entered lead=' + e.userLead.toFixed(4) + 's' : '') +
+          (e.userScore != null ? ' <span style="color:var(--green);">score=' + e.userScore.toFixed(3) + '</span>' : '') +
+          '<br>best lead <span style="color:var(--amber);font-weight:700;">' + (e.bestLead != null ? e.bestLead.toFixed(4) + 's' : '—') + '</span>' +
+          ' score=' + (Number.isFinite(e.bestScore) ? e.bestScore.toFixed(3) : '—') + ' · mode=' + (e.mode || '?');
+        actions = '<button class="suggest" data-act="restore-score-own" data-id="' + e.id + '" style="padding:2px 8px;font-size:10px;">Load all</button>' +
+          '<button class="reset" data-act="delete" data-id="' + e.id + '" style="padding:2px 8px;font-size:10px;">Delete</button>';
+      }
+
+      html += '<div style="border:1px solid var(--line);border-left:2px solid ' + color + ';padding:9px 13px;margin-bottom:6px;background:rgba(255,255,255,.02);">' +
+        '<div style="display:flex;flex-wrap:wrap;gap:4px 14px;align-items:baseline;margin-bottom:5px;font-size:10px;">' +
+          '<span style="color:var(--faint);font-family:var(--mono);">' + ts + '</span>' +
+          '<span style="color:' + color + ';font-weight:700;letter-spacing:.14em;">' + label + '</span>' +
+          '<span style="color:var(--dim);">' + orbit + '</span>' +
+          (e.suicide ? '<span style="color:var(--amber);font-size:9px;letter-spacing:.1em;">SUICIDE</span>' : '') +
+        '</div>' +
+        '<div style="font-size:11px;color:var(--dim);line-height:1.6;margin-bottom:7px;font-family:var(--mono);">' + detailLine + '</div>' +
+        '<div style="display:flex;gap:6px;flex-wrap:wrap;">' + actions + '</div>' +
+      '</div>';
+    }
+    host.innerHTML = html;
+
+    // Wire actions
+    host.querySelectorAll('button[data-act]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const id = btn.dataset.id;
+        const act = btn.dataset.act;
+        const e = loadHistory().find(x => x.id === id);
+        if(!e) return;
+        if(act === 'delete'){
+          const h2 = loadHistory().filter(x => x.id !== id);
+          try{ localStorage.setItem(HISTORY_KEY, JSON.stringify(h2)); }catch(ex){}
+          renderHistory();
+          log('History entry deleted');
+        } else if(act === 'restore-optmeco') _restoreOptMeco(e);
+        else if(act === 'restore-zeta-bias') _restoreZetaBias(e);
+        else if(act === 'restore-zeta-all') _restoreZetaAll(e);
+        else if(act === 'restore-convo') _restoreConvo(e);
+        else if(act === 'use-lead') _useLead(e);
+        else if(act === 'restore-score-own') _restoreScoreOwn(e);
+      });
+    });
+  }
+
+  // ========================================================================
   // BOOT
   // ========================================================================
   $('lockBtn').addEventListener('click', doLock);
   $('resetBtn').addEventListener('click', doReset);
+  if($('histClear')) $('histClear').addEventListener('click', clearHistory);
+  renderHistory();
 
   try {
     if (typeof loadStacks === 'function') loadStacks();
