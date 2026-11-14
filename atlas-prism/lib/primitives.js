@@ -170,10 +170,28 @@ function residualBand(opts) {
     cands.sort((x, y) => x.tmin - y.tmin);
     const W = [];
     for (const v of cands.slice(0, FB_FULLS)) { await full(v.li); W.push(v.li); }
-    const best = pickBest(W);
-    if (!best) return fin({ ok: false, reason: 'no done tick: b1=' + b1 + ' li0=' + o.li0 + ' fallback cands ' + cands.length + ' range [' + minLi + ',' + maxLi + ']', edge: [b1, b1 == null ? null : b1 + 1], window: [] });
+      const best = pickBest(W);
+  if (!best) {
+    // Last resort: fallback window mein bhi koi FULL-done tick nahi mila.
+    // Ab tak jo bhi FULL runs chal chuke hain (fc cache), unme se best-scoring
+    // done result utha lo. Sirf tab fail karo jab ek bhi done run hi na ho.
+    let salvaged = null;
+    for (const [li, r] of fc.entries()) {
+      if (!r || !r.done) continue;
+      if (!Number.isFinite(r.score)) continue;
+      if (!salvaged || r.score < salvaged.score) salvaged = { li, score: r.score, r };
+    }
+    if (salvaged) {
+      say('salvage: fallback had no done tick, reusing best earlier FULL li ' +
+        salvaged.li + ' score ' + f1(salvaged.score));
+      result = { s: { name: 'salvage' }, W: [salvaged.li], best: salvaged, edge: [ctr, ctr + 1] };
+    } else {
+      return fin({ ok: false, reason: 'no done tick: b1=' + b1 + ' li0=' + o.li0 + ' fallback cands ' + cands.length, edge: [b1, b1 == null ? null : b1 + 1], window: [] });
+    }
+  } else {
     W.sort((a, b) => a - b);
     result = { s: { name: 'fallback' }, W, best, edge: [ctr, ctr + 1] };
+  }
   }
 
   const { s, W, best, edge } = result;
