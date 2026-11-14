@@ -269,6 +269,11 @@ window.captureCurrentMissionRecord = async function () {
     phases: phases,
     events: events,
     success: isPartial ? null : (gs.runResult === 'success'),
+    _debug: {
+      runResult: gs.runResult,
+      gsPhase: gs.phase,
+      gsActive: gs.active,
+    },
     successCriteria: {},
     finalMetrics: isPartial ? null : {},
   };

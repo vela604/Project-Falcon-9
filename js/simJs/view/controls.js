@@ -1450,23 +1450,37 @@ function _syncMissionRecordSession(status) {
     if (typeof endGuideSession === 'function') endGuideSession();
   }
   
-  // Capture start hash + FULL snapshot at first valid tick after guide start
+  // Capture start hash + FULL snapshot at first valid tick after guide start.
+  // ROBUSTNESS: capture ONLY when state is clean — single body, simTime near
+  // zero, body has members (booster stack). Prevents reset-transition window
+  // where simTime=0.0125 but bodies still stale from previous run (post-reset
+  // one-snapshot lag).
   if (curActive && window.__guideSession && window.__guideSession.startT === null) {
-    const body = state.bodies && state.bodies[state.activeBodyIndex || 0];
-    if (body && state.simTime > 0 && typeof missionStateHash === 'function') {
+    const _bodies = state.bodies || [];
+    const _body = _bodies[0];
+    const _isCleanStart = _body &&
+      _body.members && _body.members.length > 0 &&
+      _bodies.length === 1 &&
+      state.simTime > 0 && state.simTime < 2.0 &&
+      typeof missionStateHash === 'function';
+    
+    if (_isCleanStart) {
       window.__guideSession.startT = state.simTime;
-      window.__guideSession.startHash = missionStateHash(body, state.simTime);
+      window.__guideSession.startHash = missionStateHash(_body, state.simTime);
       window.__guideSession.startSnapshot = {
         t: state.simTime,
-        bodyId: body.id,
-        rx: body.rx, ry: body.ry,
-        vx: body.vx, vy: body.vy,
-        theta: body.theta, omega: body.omega,
-        fuel: (body.memberFuel && body.memberFuel[0]) || 0,
-        engines: (body.engines || []).map(function (e) {
+        bodyId: _body.id,
+        bodyRole: _body.members[0] ? (_body.members[0].stageRole || 'rocket') : 'unknown',
+        rx: _body.rx, ry: _body.ry,
+        vx: _body.vx, vy: _body.vy,
+        theta: _body.theta, omega: _body.omega,
+        fuel: (_body.memberFuel && _body.memberFuel[0]) || 0,
+        engines: (_body.engines || []).map(function (e) {
           return { id: e.id, mf: e.massFlowRate, gimbal: e.gimbalDeg };
         }),
       };
+      console.log('[missionRecords] clean start captured: t=' + state.simTime.toFixed(4) +
+                  ' body=' + (_body.id || '?') + ' role=' + (_body.members[0].stageRole || 'rocket'));
     }
   }
   
