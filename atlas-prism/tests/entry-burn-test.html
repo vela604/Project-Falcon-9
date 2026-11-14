@@ -52,8 +52,10 @@
     <select id="biasSource">
       <option value="entry_burn" selected>entry_burn (EB snapshot, fast)</option>
       <option value="boostback">boostback (SA snapshot, ~3x slower)</option>
+      <option value="pes_pad">pes_pad (SA snapshot, fixes boostback at cliff edge)</option>
     </select>
   </label>
+  <label id="fixedBBWrap" style="display:none">fixed boostback (m): <input type="number" id="fixedBoostback" value="-3342.35" step="0.01" style="width:90px"></label>
   <label><input type="checkbox" id="attHoldToggle"> ENTRY_BURN_RCS_ATTITUDE_HOLD (ASDS-style)</label><br>
   <label>lo <input type="number" id="sweepLo" value="-900" step="10" style="width:70px"></label>
   <label>hi <input type="number" id="sweepHi" value="200" step="10" style="width:70px"></label>
@@ -300,9 +302,10 @@ async function doInit(){
 }
 
 async function runEval(bias, onProg){
-  const _biasSrc = $('biasSource').value === 'boostback' ? 'boostback' : 'entry_burn';
+  const _biasSrc = $('biasSource').value || 'entry_burn';
   const _attHold = !!$('attHoldToggle').checked;
-  const _baseSnap = (_biasSrc === 'boostback') ? S.saSnap : S.ebSnap;
+  const _useSA = (_biasSrc === 'boostback' || _biasSrc === 'pes_pad');
+  const _baseSnap = _useSA ? S.saSnap : S.ebSnap;
   if(!_baseSnap) throw new Error('Snapshot missing: ' + _biasSrc);
 
   const g = deepClone(_baseSnap.guidanceState);
@@ -312,8 +315,16 @@ async function runEval(bias, onProg){
   if(_biasSrc === 'boostback'){
     cfg.rtls.BOOSTBACK_APPARENT_OFFSET_M = bias;
     cfg.rtls.ENTRY_BURN_IMPACT_TARGET_M = 0;
+    cfg.rtls.PES_PAD_BIAS_M = 0;
+  } else if(_biasSrc === 'pes_pad'){
+    const _fixedBB = +($('fixedBoostback') && $('fixedBoostback').value);
+    if(!Number.isFinite(_fixedBB)) throw new Error('fixed boostback value required for pes_pad mode');
+    cfg.rtls.BOOSTBACK_APPARENT_OFFSET_M = _fixedBB;
+    cfg.rtls.ENTRY_BURN_IMPACT_TARGET_M = 0;
+    cfg.rtls.PES_PAD_BIAS_M = bias;
   } else {
     cfg.rtls.ENTRY_BURN_IMPACT_TARGET_M = bias;
+    cfg.rtls.PES_PAD_BIAS_M = 0;
     if(g.lbRtlsBlock && g.lbRtlsBlock.constants) g.lbRtlsBlock.constants.ENTRY_BURN_IMPACT_TARGET_M = bias;
   }
   cfg.rtls.ENTRY_BURN_RCS_ATTITUDE_HOLD = _attHold;
@@ -321,7 +332,7 @@ async function runEval(bias, onProg){
 
   restoreSnap(_baseSnap, g);
 
-  const capS = (_biasSrc === 'boostback') ? 550 : 300;
+  const capS = (_useSA) ? 550 : 300;
   const tStart = state.simTime;
   const maxTicks = Math.ceil(capS / DT());
   const evalT0 = performance.now();
@@ -698,6 +709,13 @@ function boot(){
   $('initBtn').addEventListener('click', doInit);
   $('sweepBtn').addEventListener('click', doSweep);
   $('stopBtn').addEventListener('click', () => { S.abort = true; log('Stop', 'warn'); });
+  // pes_pad mode needs fixed boostback; other modes don't
+  if ($('biasSource')) {
+    $('biasSource').addEventListener('change', function(){
+      const isPes = $('biasSource').value === 'pes_pad';
+      if ($('fixedBBWrap')) $('fixedBBWrap').style.display = isPes ? 'inline-block' : 'none';
+    });
+  }
   log('Ready.', 'ok');
 }
 

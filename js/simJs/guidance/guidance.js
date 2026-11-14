@@ -1345,12 +1345,15 @@ function _lbResolveTargetPad() {
     if (p) {
       const Rg = env.EARTH_RADIUS + (env.LAUNCH_SITE_ALTITUDE || 0);
       const angleEf = (env.LAUNCH_SITE_ANGLE_0 || 0) + p.arcOffsetM / Rg;
+      const _pesBiasM = Number.isFinite(_lbConfig.rtls && _lbConfig.rtls.PES_PAD_BIAS_M)
+        ? _lbConfig.rtls.PES_PAD_BIAS_M : 0;
       return {
         id: p.id,
         name: p.name,
         arcOffsetM: p.arcOffsetM,
-        angleEf: angleEf,
+        angleEf: angleEf + _pesBiasM / Rg,
         heightM: Number.isFinite(p.heightM) ? p.heightM : 0,
+        pesPadBiasM: _pesBiasM,
       };
     }
     // No pad found — fall through to RTLS path so the booster has some
@@ -1385,14 +1388,17 @@ function _lbResolveTargetPad() {
   }
   const Rg = env.EARTH_RADIUS + (env.LAUNCH_SITE_ALTITUDE || 0);
   const angleEf = (env.LAUNCH_SITE_ANGLE_0 || 0) + p.arcOffsetM / Rg;
+  const _pesBiasM = Number.isFinite(_lbConfig.rtls && _lbConfig.rtls.PES_PAD_BIAS_M)
+    ? _lbConfig.rtls.PES_PAD_BIAS_M : 0;
   return {
     id: p.id,
     arcOffsetM: p.arcOffsetM,
-    angleEf: angleEf,
+    angleEf: angleEf + _pesBiasM / Rg,
     // Carry pad height so the landing-burn descent law can aim for the
     // actual pad surface (ASDS decks sit 2 m above sea level; flat ground
     // pads default to 0). Consumed by guidance-blocks.js LB case's hEff.
     heightM: Number.isFinite(p.heightM) ? p.heightM : 0,
+    pesPadBiasM: _pesBiasM,
   };
 }
 

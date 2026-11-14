@@ -3093,6 +3093,16 @@ setState(s) {
       // permanent if curve smoothness confirmed. Toggle only used by
       // tests/entry-burn-test.html during hypothesis exploration.
       ENTRY_BURN_RCS_ATTITUDE_HOLD: false,
+      // Fine-tuning aim offset applied to PES and LB target pad. Shifted
+      // position in metres (east positive). Continuous knob: unlike
+      // boostback or entry burn bias (tick-triggered cutoffs → staircase
+      // response), PES/LB are closed-loop continuous controllers, so a
+      // 1mm PES_PAD_BIAS_M → ~0.78mm landing shift (PES residual decay
+      // factor). Two-stage tuning pattern: coarse boostback gets within
+      // PES authority envelope (~3m residual), PES_PAD_BIAS_M nulls the
+      // remainder smoothly. Test page (tests/entry-burn-test.html) uses
+      // this for hypothesis verification. Default 0 = no behaviour change.
+      PES_PAD_BIAS_M: 0,
       // POST_ENTRY_STEER
       LANDING_BURN_ALIGN_ALT_KM: 5,        // AGL km: PES stops steering, fin ramps 0, coast to aero equilibrium
       LANDING_BURN_ALT_KM: 2,              // AGL km: PES->LANDING_BURN phase transition (landing-burn ignition)
