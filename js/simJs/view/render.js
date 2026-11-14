@@ -3125,72 +3125,107 @@ if (isSingleNozzle) {
   // (uses visualTheta for world→local), gimbal deflection (undo-rotates
   // by gimbalRad before subtracting bellExit offset). 2px gap so plume
   // doesn't visually "touch" the hull.
+  // ============================================================================
+  // BOOSTER PLUME COLLISION (realistic)
+  //
+  // Physics: plume fires down from stage, hits booster's TOP surface
+  // (interstage top circle in 3D, appears as tilted line in 2D side view).
+  // Plume is wider than booster → outer portions pass around sides. Only
+  // portion within booster's silhouette gets blocked.
+  //
+  // Implementation:
+  //   1. Find nearest booster/rocket body below
+  //   2. Compute its FULL silhouette (interstage top + hull bottom corners)
+  //      in plume-local frame — SUM all member heights (interstage + hull)
+  //   3. Evenodd clip: plume draws everywhere EXCEPT inside silhouette
+  //   4. Impact fan drawn at interstage top edge, rotated with edge angle,
+  //      spanning booster width
+  //
+  // All math in SCREEN PIXELS (worldToScreen first, then rotation).
+  // ============================================================================
   let _boosterPlumeClipY = null;
-  let _boosterPlumeImpactX = 0;
-  let _boosterPlumeImpactY = 0;
+  let _boosterPlumeSil = null;
+  let _boosterPlumeImpactCx = 0, _boosterPlumeImpactCy = 0;
+  let _boosterPlumeImpactAng = 0, _boosterPlumeImpactW = 0;
   let _boosterPlumeContact = 0;
-  let _boosterPlumeExists = false;
-  if (body.members && body.members[0] && body.members[0].stageRole === 'stage'
-      && typeof state !== 'undefined' && state.bodies) {
+  
+  if (body.members && body.members[0] && body.members[0].stageRole === 'stage' &&
+      typeof state !== 'undefined' && state.bodies) {
     const _vCos = Math.cos(visualTheta), _vSin = Math.sin(visualTheta);
     const _gCos = Math.cos(gimbalRad || 0), _gSin = Math.sin(gimbalRad || 0);
-    let _bestClip = null;
-    let _bestImpactX = 0;
+    const _toPlumeFrame = (wx, wy) => {
+      const s = worldToScreen(wx, wy);
+      const dx = s[0] - px, dy = s[1] - py;
+      const x2 = dx * _vCos - dy * _vSin;
+      const y2 = dx * _vSin + dy * _vCos;
+      const x3 = x2 * _gCos + y2 * _gSin;
+      const y3 = -x2 * _gSin + y2 * _gCos;
+      return [x3, y3 - bellExitY_px];
+    };
+    let _best = null;
     for (let _bi = 0; _bi < state.bodies.length; _bi++) {
       if (_bi === bodyIdx) continue;
       const _ob = state.bodies[_bi];
       if (!_ob.members || !_ob.members.length) continue;
-      const _role = _ob.members[0].stageRole;
-      if (_role !== 'booster' && _role !== 'rocket') continue;
-      // Booster top position in world frame (hull top + nose for legacy rocket)
-      const _obH = (_ob.members[0].height || 0) + (_role === 'rocket' ? (_ob.members[0].noseHeightM || 0) : 0);
-      const _obCosT = Math.cos(_ob.theta || 0), _obSinT = Math.sin(_ob.theta || 0);
-      const _bTopX = _ob.rx - _obH * _obSinT;
-      const _bTopY = _ob.ry + _obH * _obCosT;
-      // CRITICAL FIX: convert BOTH endpoints to SCREEN pixels via
-      // worldToScreen before doing rotation math. Previous bug: mixed world
-      // meters (from _ob.rx/ry) with screen pixels (bellExitY_px, flameLen).
-      // Result: clip Y was garbage → plume passed through booster, impact
-      // fan drew at random places in air. Correct unit = screen pixels.
-      const _bTopScreen = worldToScreen(_bTopX, _bTopY);
-      const _dsx = _bTopScreen[0] - px;
-      const _dsy = _bTopScreen[1] - py;
-      // Undo Rotate(-visualTheta) by applying Rotate(+visualTheta).
-      // Canvas Rotate(θ): (x,y) → (x·cosθ - y·sinθ, x·sinθ + y·cosθ)
-      const _lx = _dsx * _vCos - _dsy * _vSin;
-      const _ly = _dsx * _vSin + _dsy * _vCos;
-      // Undo Rotate(gimbalRad) by applying Rotate(-gimbalRad)
-      const _pgX = _lx * _gCos + _ly * _gSin;
-      const _pgY = -_lx * _gSin + _ly * _gCos;
-      // Undo Translate(0, bellExitY_px) — now everything in plume-local px
-      const _plumeLocalY = _pgY - bellExitY_px;
-      // Radius in SCREEN PIXELS (was world meters — over-wide overlap check)
-      const _obRadius = ((_ob.members[0].width || 0) / 2) / mpp;
-      // Skip if booster is off to the side (plume misses its cylinder)
-      if (Math.abs(_pgX) > _obRadius + 2) continue;
-      // Clip only if booster top is within reach of the plume
-      if (_plumeLocalY > 0 && _plumeLocalY < flameLen) {
-        if (_bestClip === null || _plumeLocalY < _bestClip) {
-          _bestClip = _plumeLocalY;
-          _bestImpactX = _pgX;
-        }
+      const _role0 = _ob.members[0].stageRole;
+      if (_role0 !== 'booster' && _role0 !== 'rocket') continue;
+      
+      // FULL height: interstage + hull + (nose for legacy rocket)
+      let _obTotalH = 0;
+      for (let _mi = 0; _mi < _ob.members.length; _mi++) {
+        _obTotalH += (_ob.members[_mi].height || 0);
+      }
+      if (_role0 === 'rocket' && Number.isFinite(_ob.members[0].noseHeightM)) {
+        _obTotalH += _ob.members[0].noseHeightM;
+      }
+      
+      const _obW = _ob.members[0].width || 0;
+      const _halfW = _obW / 2;
+      const _cosT = Math.cos(_ob.theta || 0), _sinT = Math.sin(_ob.theta || 0);
+      
+      // 4 corners in world
+      const _tlW = { x: _ob.rx - _halfW * _cosT - _obTotalH * _sinT, y: _ob.ry - _halfW * _sinT + _obTotalH * _cosT };
+      const _trW = { x: _ob.rx + _halfW * _cosT - _obTotalH * _sinT, y: _ob.ry + _halfW * _sinT + _obTotalH * _cosT };
+      const _blW = { x: _ob.rx - _halfW * _cosT, y: _ob.ry - _halfW * _sinT };
+      const _brW = { x: _ob.rx + _halfW * _cosT, y: _ob.ry + _halfW * _sinT };
+      
+      const _tlP = _toPlumeFrame(_tlW.x, _tlW.y);
+      const _trP = _toPlumeFrame(_trW.x, _trW.y);
+      const _blP = _toPlumeFrame(_blW.x, _blW.y);
+      const _brP = _toPlumeFrame(_brW.x, _brW.y);
+      
+      const _topCy = (_tlP[1] + _trP[1]) / 2;
+      if (_topCy < 5 || _topCy > flameLen) continue;
+      
+      if (_best === null || _topCy < _best.topCy) {
+        _best = { topCy: _topCy, tlP: _tlP, trP: _trP, blP: _blP, brP: _brP };
       }
     }
-    if (_bestClip !== null) {
-      _boosterPlumeExists = true;
-      _boosterPlumeImpactX = _bestImpactX;
-      _boosterPlumeImpactY = _bestClip;
-      _boosterPlumeClipY = Math.max(0, _bestClip - 2);
-      _boosterPlumeContact = Math.max(0, Math.min(1, 1 - _bestClip / Math.max(1, flameLen)));
+    if (_best) {
+      _boosterPlumeSil = { tlP: _best.tlP, trP: _best.trP, blP: _best.blP, brP: _best.brP };
+      _boosterPlumeImpactCx = (_best.tlP[0] + _best.trP[0]) / 2;
+      _boosterPlumeImpactCy = (_best.tlP[1] + _best.trP[1]) / 2;
+      _boosterPlumeImpactAng = Math.atan2(_best.trP[1] - _best.tlP[1], _best.trP[0] - _best.tlP[0]);
+      _boosterPlumeImpactW = Math.hypot(_best.trP[0] - _best.tlP[0], _best.trP[1] - _best.tlP[1]);
+      _boosterPlumeContact = Math.max(0, Math.min(1, 1 - _best.topCy / Math.max(1, flameLen)));
+      _boosterPlumeClipY = _best.topCy;
     }
   }
-  if (_boosterPlumeClipY !== null) {
+  
+  // Evenodd clip: plume draws everywhere EXCEPT inside booster silhouette.
+  // This makes outer plume pass around sides naturally (no full-width plane).
+  if (_boosterPlumeSil) {
     ctx.save();
     ctx.beginPath();
-    ctx.rect(-10000, 0, 20000, _boosterPlumeClipY);
-    ctx.clip();
+    ctx.rect(-50000, -500, 100000, flameLen * 2 + 2000);
+    ctx.moveTo(_boosterPlumeSil.tlP[0], _boosterPlumeSil.tlP[1]);
+    ctx.lineTo(_boosterPlumeSil.trP[0], _boosterPlumeSil.trP[1]);
+    ctx.lineTo(_boosterPlumeSil.brP[0], _boosterPlumeSil.brP[1]);
+    ctx.lineTo(_boosterPlumeSil.blP[0], _boosterPlumeSil.blP[1]);
+    ctx.closePath();
+    ctx.clip('evenodd');
   }
-
+  
   const _plumeOk = _drawPlumeFx(ctx, {
     L: flameLen * (1 + 0.03 * Math.sin(tTurb * 3.1) + 0.02 * Math.sin(tTurb * 7.3 + 1)),
     re: W * plumeScale * widthMul / 2,
@@ -3274,74 +3309,67 @@ if (isSingleNozzle) {
   ctx.fill();
   ctx.globalCompositeOperation = 'source-over';
   }
-  // ---- BOOSTER IMPACT FAN ----
-  // When plume is clipped by a booster below (stage separation), draw the
-  // same "hitting a surface" effect as ground impingement — hot pool +
-  // sideways fans + stagnation spot. Contact intensity scales with how
-  // deeply the plume is absorbed (1 = fully, 0 = barely reaching).
-  if (_boosterPlumeExists && _boosterPlumeContact > 0.05) {
-    const _ix = _boosterPlumeImpactX;
-    const _iy = _boosterPlumeClipY;
+  // ---- BOOSTER IMPACT FAN (tilted, spans booster width) ----
+  if (_boosterPlumeSil && _boosterPlumeContact > 0.05) {
     const _c = _boosterPlumeContact;
-    const _baseW = W * (0.45 + 0.15 * plumeScale);
-    const _fanLen = _baseW * (1.6 + 3.5 * _c);
-    const _fanThick = _baseW * (0.22 + 0.45 * _c);
-
-    // Hot pool at impact (flattened ellipse, "splashing" outward)
+    ctx.save();
+    ctx.translate(_boosterPlumeImpactCx, _boosterPlumeImpactCy);
+    ctx.rotate(_boosterPlumeImpactAng);
+    const _halfEdgeW = _boosterPlumeImpactW / 2;
+    const _fanReach = _halfEdgeW * (0.55 + 0.55 * _c);
+    const _fanThick = _boosterPlumeImpactW * (0.08 + 0.18 * _c);
+    
+    // Hot pool (flattened along edge)
     ctx.save();
     ctx.globalCompositeOperation = 'lighter';
-    ctx.translate(_ix, _iy);
-    ctx.scale(1, 0.35);
-    const _poolR = _fanLen * 0.9;
-    const _pool = ctx.createRadialGradient(0, 0, 0, 0, 0, _poolR);
+    ctx.scale(1, 0.5);
+    const _pool = ctx.createRadialGradient(0, 0, 0, 0, 0, _fanReach);
     _pool.addColorStop(0, PAL.g2_hi);
-    _pool.addColorStop(0.4, PAL.g2_mid);
+    _pool.addColorStop(0.5, PAL.g2_mid);
     _pool.addColorStop(1, PAL.g1_lo);
     ctx.fillStyle = _pool;
-    ctx.globalAlpha = Math.min(1, _c * 1.6);
+    ctx.globalAlpha = Math.min(1, _c * 1.5);
     ctx.beginPath();
-    ctx.arc(0, 0, _poolR, 0, Math.PI * 2);
+    ctx.arc(0, 0, _fanReach, 0, Math.PI * 2);
     ctx.fill();
     ctx.restore();
-
-    // Two sideways fans (deflected flame spreading along booster top edge)
-    for (const side of [-1, 1]) {
+    
+    // Sideways fans (left/right along interstage top edge)
+    for (const _side of [-1, 1]) {
       ctx.save();
       ctx.globalCompositeOperation = 'lighter';
-      ctx.translate(_ix, _iy);
-
+      
       // Outer soft haze
-      ctx.filter = 'blur(7px)';
-      ctx.globalAlpha = 0.65 * _c;
-      const _gO = ctx.createLinearGradient(0, 0, side * _fanLen, 0);
+      ctx.filter = 'blur(6px)';
+      ctx.globalAlpha = 0.55 * _c;
+      const _gO = ctx.createLinearGradient(0, 0, _side * _fanReach, 0);
       _gO.addColorStop(0, PAL.g1_hi);
       _gO.addColorStop(0.5, PAL.g1_mid);
       _gO.addColorStop(1, PAL.g1_lo);
       ctx.fillStyle = _gO;
       ctx.beginPath();
       ctx.moveTo(0, 0);
-      for (let _k = 1; _k <= 12; _k++) {
-        const _f = _k / 12;
-        const _fx = side * _fanLen * _f;
-        const _fy = -_fanThick * Math.pow(1 - _f, 0.6) *
-          (1 + 0.25 * Math.sin(_f * 9 + tNow * 3.1 + (side > 0 ? 1.3 : 4.1)));
+      for (let _k = 1; _k <= 10; _k++) {
+        const _f = _k / 10;
+        const _fx = _side * _fanReach * _f;
+        const _fy = -_fanThick * Math.pow(1 - _f, 0.7) * (1 + 0.2 * Math.sin(_f * 8 + tNow * 3.1 + _side));
         ctx.lineTo(_fx, _fy);
       }
-      ctx.lineTo(side * _fanLen, _fanThick * 0.15);
-      for (let _k = 12; _k >= 0; _k--) {
-        const _f = _k / 12;
-        ctx.lineTo(side * _fanLen * _f, _fanThick * 0.4 * Math.pow(1 - _f, 0.6));
+      ctx.lineTo(_side * _fanReach, _fanThick * 0.2);
+      for (let _k = 10; _k >= 0; _k--) {
+        const _f = _k / 10;
+        ctx.lineTo(_side * _fanReach * _f, _fanThick * 0.4 * Math.pow(1 - _f, 0.7));
       }
       ctx.closePath();
       ctx.fill();
       ctx.filter = 'none';
-
-      // Mid-bright fan (shorter, tighter)
-      const _fl2 = _fanLen * 0.68;
-      const _ft2 = _fanThick * 0.58;
+      
+      // Mid-bright fan (tighter)
+      const _r2 = _fanReach * 0.65;
+      const _t2 = _fanThick * 0.55;
       ctx.globalAlpha = 0.85 * _c;
       ctx.filter = 'blur(3px)';
-      const _gM = ctx.createLinearGradient(0, 0, side * _fl2, 0);
+      const _gM = ctx.createLinearGradient(0, 0, _side * _r2, 0);
       _gM.addColorStop(0, PAL.g2_hi);
       _gM.addColorStop(0.5, PAL.g2_mid);
       _gM.addColorStop(1, PAL.g2_lo);
@@ -3350,32 +3378,30 @@ if (isSingleNozzle) {
       ctx.moveTo(0, 0);
       for (let _k = 1; _k <= 10; _k++) {
         const _f = _k / 10;
-        const _fx = side * _fl2 * _f;
-        const _fy = -_ft2 * Math.pow(1 - _f, 0.6) *
-          (1 + 0.2 * Math.sin(_f * 11 + tNow * 4.3 + side));
+        const _fx = _side * _r2 * _f;
+        const _fy = -_t2 * Math.pow(1 - _f, 0.7) * (1 + 0.15 * Math.sin(_f * 10 + tNow * 4.3 + _side));
         ctx.lineTo(_fx, _fy);
       }
-      ctx.lineTo(side * _fl2, _ft2 * 0.1);
+      ctx.lineTo(_side * _r2, _t2 * 0.15);
       for (let _k = 10; _k >= 0; _k--) {
         const _f = _k / 10;
-        ctx.lineTo(side * _fl2 * _f, _ft2 * 0.3 * Math.pow(1 - _f, 0.6));
+        ctx.lineTo(_side * _r2 * _f, _t2 * 0.35 * Math.pow(1 - _f, 0.7));
       }
       ctx.closePath();
       ctx.fill();
       ctx.filter = 'none';
-
+      
       ctx.restore();
     }
-
-    // Bright stagnation spot (small hot core at impact)
+    
+    // Stagnation spot at impact center
     ctx.save();
     ctx.globalCompositeOperation = 'lighter';
-    ctx.translate(_ix, _iy);
-    ctx.scale(1, 0.55);
-    const _hotR = _baseW * (0.55 + 0.35 * _c);
+    ctx.scale(1, 0.6);
+    const _hotR = _boosterPlumeImpactW * (0.15 + 0.15 * _c);
     const _hot = ctx.createRadialGradient(0, 0, 0, 0, 0, _hotR);
     _hot.addColorStop(0, PAL.flare_hi);
-    _hot.addColorStop(0.45, PAL.flare_mid);
+    _hot.addColorStop(0.5, PAL.flare_mid);
     _hot.addColorStop(1, PAL.flare_lo);
     ctx.globalAlpha = _c;
     ctx.fillStyle = _hot;
@@ -3383,8 +3409,10 @@ if (isSingleNozzle) {
     ctx.arc(0, 0, _hotR, 0, Math.PI * 2);
     ctx.fill();
     ctx.restore();
+    
+    ctx.restore();
   }
-
+  
   // ---- Ground impingement: plume hits the surface and fans out sideways ----
   // Drawn in the flame frame (origin = nozzle exit, +y along the plume axis).
   // In that frame the ground is a line tilted by psi, so after
