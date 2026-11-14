@@ -137,7 +137,7 @@ state.bodies = msg.fullState.bodies;
     } else {
       // Default ON — every 2000 ticks (25s). Override via
       // window.__ffTickDebug = { everyNTicks: N } or false.
-      globalThis._ffTickDebug = { everyNTicks: 2000, from: 0, to: 9999 };
+      globalThis._ffTickDebug = { everyNTicks: 1000, from: 0, to: 9999 };
     }
     // __ffTickDebugDefaultApplied
     
@@ -149,6 +149,27 @@ state.bodies = msg.fullState.bodies;
       const _b0i = state.bodies.find(function(b) {
         return b.members && b.members[0] && b.members[0].stageRole === 'booster' && !b.payloadBody;
       });
+      // [FF-STATE-HASH] — for bit-exact comparison vs [PAUSE-STATE-HASH]
+      if (_b0i) {
+        (function () {
+          var s = '';
+          s += 't=' + state.simTime.toFixed(6);
+          s += '|rx=' + _b0i.rx.toFixed(6) + '|ry=' + _b0i.ry.toFixed(6);
+          s += '|vx=' + _b0i.vx.toFixed(6) + '|vy=' + _b0i.vy.toFixed(6);
+          s += '|th=' + _b0i.theta.toFixed(6) + '|om=' + _b0i.omega.toFixed(6);
+          var fuel = _b0i.fuelMass || (_b0i.memberFuel && _b0i.memberFuel[0]) || 0;
+          s += '|fuel=' + fuel.toFixed(4);
+          if (_b0i.engines) _b0i.engines.forEach(function (e, i) {
+            s += '|e' + i + '=' + (e.massFlowRate || 0).toFixed(4) + '/' + (e.gimbalDeg || 0).toFixed(6);
+          });
+          if (_b0i.legs) s += '|legs=' + _b0i.legs.progress.toFixed(6);
+          if (_b0i.gridFins && _b0i.gridFins.L) s += '|gfL=' + _b0i.gridFins.L.deploy + ',' + _b0i.gridFins.L.control.toFixed(4);
+          if (_b0i.slosh) s += '|sl=' + _b0i.slosh.offset.toFixed(8);
+          var hash = 0;
+          for (var k = 0; k < s.length; k++) hash = ((hash << 5) - hash + s.charCodeAt(k)) | 0;
+          console.log('[FF-STATE-HASH]', (hash >>> 0).toString(16), '|', s.slice(0, 300));
+        })();
+      }
       if (_b0i) {
         console.log('[FF-INIT]', JSON.stringify({
           t: state.simTime,
