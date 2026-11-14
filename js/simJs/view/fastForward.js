@@ -375,20 +375,26 @@ const w = new Worker('js/simJs/threads/fastforward.worker.js');
         // its addLandingPad goes to FF worker CONFIG only. Physics worker
         // still lacks pad → after replaceState, _localGroundR sees sea
         // level → booster falls through deck → crash. Sync here.
-        if (m.fullState && Array.isArray(m.fullState.configLandingPads)) {
-          const _mainIds = new Set((CONFIG.LANDING_PADS || []).map(p => p.id));
-          for (const _p of m.fullState.configLandingPads) {
-            if (!_mainIds.has(_p.id)) {
-              CONFIG.LANDING_PADS.push(Object.assign({}, _p));
+          // Full reconcile — REPLACE existing pads with FF worker final state.
+          // Handles BOTH moves (shifted pads) and adds (HOPE-1 rename) in one message.
+          if (m.fullState && Array.isArray(m.fullState.configLandingPads)) {
+            if (!CONFIG.LANDING_PADS) CONFIG.LANDING_PADS = [];
+            for (let _i = 0; _i < m.fullState.configLandingPads.length; _i++) {
+              const _p = m.fullState.configLandingPads[_i];
+              const _ex = CONFIG.LANDING_PADS.find(function (x) { return x && x.id === _p.id; });
+              if (_ex) {
+                Object.assign(_ex, _p);   // full update: position + name + all fields
+              } else {
+                CONFIG.LANDING_PADS.push(Object.assign({}, _p));
+              }
               try {
                 if (typeof WorkerBridge !== 'undefined' && WorkerBridge.send) {
                   WorkerBridge.send({ type: 'addLandingPad', pad: _p });
-                  console.log('[FF] forwarded FF-created pad to physics:', _p.id);
                 }
-              } catch (e) { console.warn('[FF] pad forward failed', e); }
+              } catch (e) {}
             }
+            console.log('[FF] reconciled ' + m.fullState.configLandingPads.length + ' pads from FF worker');
           }
-        }
   const _wallMs = window.__ffDiag && window.__ffDiag[window.__ffDiag.length - 1]
     ? performance.now() - window.__ffDiag[window.__ffDiag.length - 1].wallStart : NaN;
   window.__ffDiag && window.__ffDiag.push({

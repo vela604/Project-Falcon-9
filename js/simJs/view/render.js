@@ -1507,7 +1507,7 @@ function _drawASDS(ctx, pad, worldPos, camAng, mpp, pal) {
   
   // ---- Label — above LZ center (camera focus) ----
   if (mpp > 0.25 && mpp < 25) {
-    const labelTxt = pad.name + ' \u00b7 ' + Math.round(pad.arcOffsetM / 1000) + ' km';
+    const labelTxt = (pad.id || pad.name) + ' \u00b7 ' + Math.round(pad.arcOffsetM / 1000) + ' km';
     const labelY = py - (freeboardM + contH + 6) / mpp;
     ctx.save();
     ctx.font = 'bold 11px "JetBrains Mono", monospace';

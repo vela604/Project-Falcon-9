@@ -273,26 +273,34 @@ if (msg.data.rcsSync) {
       break;
     }
     case 'moveLandingPad': {
-      // Update existing pad's position (arcOffsetM). All other pad
-      // fields (id, name, isASDS, lengthM, radiusM, ...) stay as-is.
       const pads = (CONFIG.LANDING_PADS || []);
-      const p = pads.find(x => x && x.id === msg.pad.id);
+      const p = pads.find(function(x){ return x && x.id === msg.pad.id; });
       if (p) {
-        p.arcOffsetM = msg.pad.arcOffsetM;
+        // Full Object.assign — not just arcOffsetM. Ensures name, isASDS,
+        // lengthM, radiusM, etc. all reflect the latest state.
+        Object.assign(p, msg.pad);
+        console.log('[render] moved pad: ' + msg.pad.id + ' @ ' + (msg.pad.arcOffsetM/1000).toFixed(1) + ' km');
       } else {
-        // Pad missing in worker — auto-heal by inserting (edge case:
-        // main thread had it but worker lost sync somehow).
+        // Pad missing — auto-heal by inserting
+        if (!CONFIG.LANDING_PADS) CONFIG.LANDING_PADS = [];
         CONFIG.LANDING_PADS.push(msg.pad);
       }
+      if (typeof _bustLandingPadsCache === 'function') _bustLandingPadsCache();
       break;
     }
     case 'addLandingPad': {
-      // Runtime pad deployment (ASDS, future user pads). Push into THIS
-      // worker's own CONFIG.LANDING_PADS so drawPadMarkers() + drawLandingPads()
-      // see it on next frame.
       if (!CONFIG.LANDING_PADS) CONFIG.LANDING_PADS = [];
-      CONFIG.LANDING_PADS.push(msg.pad);
-      console.log('[render] added landing pad: ' + msg.pad.id + ' @ ' + msg.pad.arcOffsetM + 'm');
+      // Upsert by id — replace if exists, append if new. Prevents duplicates
+      // when same message reaches worker multiple times (idempotent).
+      const _ex = CONFIG.LANDING_PADS.find(function(p) { return p && p.id === msg.pad.id; });
+      if (_ex) {
+        Object.assign(_ex, msg.pad);
+        console.log('[render] updated pad: ' + msg.pad.id + ' @ ' + (msg.pad.arcOffsetM/1000).toFixed(1) + ' km');
+      } else {
+        CONFIG.LANDING_PADS.push(msg.pad);
+        console.log('[render] added landing pad: ' + msg.pad.id + ' @ ' + (msg.pad.arcOffsetM/1000).toFixed(1) + ' km');
+      }
+      if (typeof _bustLandingPadsCache === 'function') _bustLandingPadsCache();
       break;
     }
     case 'trailSample': {

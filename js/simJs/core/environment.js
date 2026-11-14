@@ -271,6 +271,15 @@ const LANDING_PAD_DEFAULT_RADIUS_M = 42.5;
 const LAUNCH_COMPLEX_EAST_CLEARANCE_M = 80;   // launch pad's east-side equipment reaches ~75 m
 const _lzState = { src: null, len: -1, list: [] };
 
+// Cache-bust helper — called by render worker after add/move pad so
+// landingPads() doesn't return stale list (src/len key doesn't change on
+// in-place mutation of arcOffsetM, name, etc).
+function _bustLandingPadsCache() {
+  _lzState.src = null;
+  _lzState.len = -1;
+  _lzState.list = [];
+}
+
 function landingPads() {
   const src = CONFIG.LANDING_PADS;
   const len = Array.isArray(src) ? src.length : 0;
