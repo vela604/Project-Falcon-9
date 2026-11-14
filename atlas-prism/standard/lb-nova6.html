@@ -77,7 +77,8 @@
         <div class="row pre">
           <label>preset <select id="presetSel"></select></label>
           <button class="suggest" id="presetLoad">Load preset</button>
-          <span class="note">fills ascent + bias start from the preset</span>
+          <button class="suggest" id="presetSave">Save preset</button>
+          <span class="note">Load fills UI - Save writes current UI + bias to preset</span>
         </div>
       </div>
 
@@ -649,13 +650,104 @@ function applyPresetFromSel(){
   const p = list.find(x => x.id === id);
   if(!p || !p.constants){ log('Preset not found: '+id, 'warn'); return; }
   const c = p.constants;
+  // Ascent
   if(c.ascent){
     if(Number.isFinite(c.ascent.MECO_TARGET_BOOSTER_FUEL_KG)) $('cfgMeco').value = c.ascent.MECO_TARGET_BOOSTER_FUEL_KG;
     if(Number.isFinite(c.ascent.PUSH_MAX_GIMBAL_DEG)) $('cfgG').value = c.ascent.PUSH_MAX_GIMBAL_DEG;
     if(Number.isFinite(c.ascent.PUSH_T_S)) $('cfgT').value = c.ascent.PUSH_T_S;
   }
-  if(c.rtls && Number.isFinite(c.rtls.ENTRY_BURN_IMPACT_TARGET_M)) $('biasStart').value = c.rtls.ENTRY_BURN_IMPACT_TARGET_M;
+  // Mission mode (drives S.mode + search block visibility)
+  if (c.rtls && c.rtls.MISSION_TYPE && $('cfgMission')) {
+    $('cfgMission').value = c.rtls.MISSION_TYPE;
+    try { $('cfgMission').dispatchEvent(new Event('change', { bubbles: true })); } catch(e) {}
+  }
+  // LB tuning overrides
+  if (c.rtls) {
+    if (Number.isFinite(c.rtls.LANDING_BURN_ALT_KM)) $('lbAlt').value = c.rtls.LANDING_BURN_ALT_KM;
+    if (Number.isFinite(c.rtls.LANDING_BURN_V_TD_MARGIN_M)) $('lbMargin').value = c.rtls.LANDING_BURN_V_TD_MARGIN_M;
+    if (Number.isFinite(c.rtls.LANDING_BURN_H_STALL_M)) $('lbStall').value = c.rtls.LANDING_BURN_H_STALL_M;
+  }
+  // Bias field depends on mode
+  const _isAsds = (S.mode === 'ASDS') || (c.rtls && c.rtls.MISSION_TYPE === 'ASDS');
+  if (_isAsds) {
+    if (c.mission && typeof c.mission.TARGET_LANDING_PAD === 'string') {
+      const mm = c.mission.TARGET_LANDING_PAD.match(/^[^,]+,\s*([0-9.]+)/);
+      if (mm) {
+        const _km = parseFloat(mm[1]);
+        if (Number.isFinite(_km)) $('posStart').value = Math.round(_km * 1000);
+      }
+    }
+  } else {
+    if (c.rtls && Number.isFinite(c.rtls.ENTRY_BURN_IMPACT_TARGET_M)) {
+      $('biasStart').value = c.rtls.ENTRY_BURN_IMPACT_TARGET_M;
+    }
+  }
   log('Preset loaded: '+p.name, 'ok');
+}
+
+// Capture current tuner state as a preset constants bag.
+// Base = currently-selected preset (preserves non-UI fields like STAGE_BURN
+// tuning); falls back to guide default if none selected. Overrides: MECO/G/T,
+// mission type, LB alt/margin/stall, and best bias.
+// Bias priority: selected table row > search best > best-scoring ok run.
+function captureCurrentAsPreset(){
+  const selId = $('presetSel').value;
+  const list = listPresets();
+  const cur = list.find(x => x.id === selId);
+  let base;
+  if (cur && cur.constants) {
+    base = deepClone(cur.constants);
+  } else {
+    const d = (typeof getGuideDefaultPreset === 'function') ? getGuideDefaultPreset('landbackV1') : null;
+    base = (d && d.constants) ? deepClone(d.constants) : {};
+  }
+  base.ascent = base.ascent || {};
+  base.rtls = base.rtls || {};
+  base.mission = base.mission || {};
+  // Ascent
+  const _meco = +$('cfgMeco').value;
+  const _g = +$('cfgG').value;
+  const _t = +$('cfgT').value;
+  if (Number.isFinite(_meco)) base.ascent.MECO_TARGET_BOOSTER_FUEL_KG = _meco;
+  if (Number.isFinite(_g)) base.ascent.PUSH_MAX_GIMBAL_DEG = _g;
+  if (Number.isFinite(_t)) base.ascent.PUSH_T_S = _t;
+  // Mission mode
+  const mode = $('cfgMission') ? $('cfgMission').value : 'RTLS';
+  base.rtls.MISSION_TYPE = mode;
+  // LB tuning
+  const _lbAlt = parseFloat($('lbAlt').value);
+  if (Number.isFinite(_lbAlt)) base.rtls.LANDING_BURN_ALT_KM = _lbAlt;
+  const _lbMargin = parseFloat($('lbMargin').value);
+  if (Number.isFinite(_lbMargin)) base.rtls.LANDING_BURN_V_TD_MARGIN_M = _lbMargin;
+  const _lbStall = parseFloat($('lbStall').value);
+  if (Number.isFinite(_lbStall)) base.rtls.LANDING_BURN_H_STALL_M = _lbStall;
+  // Bias
+  let bestBias = null;
+  let biasSource = 'none';
+  if (S.selectedIdx >= 0 && S.runs[S.selectedIdx]) {
+    bestBias = S.runs[S.selectedIdx].bias;
+    biasSource = 'selected-row';
+  } else if (S.searchResult && S.searchResult.best && Number.isFinite(S.searchResult.best.bias)) {
+    bestBias = S.searchResult.best.bias;
+    biasSource = 'search-best';
+  } else if (S.runs.length) {
+    const oks = S.runs.filter(r => r.ok && Number.isFinite(r.score));
+    if (oks.length) {
+      const b = oks.reduce((a, r) => r.score < a.score ? r : a, oks[0]);
+      bestBias = b.bias;
+      biasSource = 'best-ok-run';
+    }
+  }
+  if (Number.isFinite(bestBias)) {
+    if (mode === 'ASDS') {
+      base.rtls.ENTRY_BURN_IMPACT_TARGET_M = 0;
+      base.mission.TARGET_LANDING_PAD = 'HOPE,' + (bestBias / 1000).toFixed(3);
+    } else {
+      base.rtls.ENTRY_BURN_IMPACT_TARGET_M = bestBias;
+      base.mission.TARGET_LANDING_PAD = 'LZ-1';
+    }
+  }
+  return { base, mode, bestBias, biasSource };
 }
 
 // Ascent/preset changes invalidate the SA/EB snapshots.
@@ -2643,6 +2735,57 @@ function boot(){
   if($('manualPosBtn')) $('manualPosBtn').addEventListener('click', doManualEval);
   if($('manualPosSweepBtn')) $('manualPosSweepBtn').addEventListener('click', doManualSweep);
   $('presetLoad').addEventListener('click', () => { applyPresetFromSel(); markStale(); });
+  $('presetSave').addEventListener('click', () => {
+    if (typeof addUserPreset !== 'function') {
+      log('Preset save unavailable - guidancePresets.js not loaded', 'err');
+      return;
+    }
+    const selId = $('presetSel').value;
+    const list = listPresets();
+    const cur = list.find(x => x.id === selId);
+    const isDefault = selId && selId.indexOf('default:') === 0;
+    const isUser = cur && !isDefault;
+    const cap = captureCurrentAsPreset();
+    const _biasTxt = Number.isFinite(cap.bestBias)
+      ? ' bias=' + cap.bestBias.toFixed(2) + ' (' + cap.biasSource + ')'
+      : ' (no bias - config only)';
+    if (isUser) {
+      const _name = cur.name;
+      if (!confirm('Update existing preset "' + _name + '"?\n\nCurrent UI values + best bias will replace preset contents.' + _biasTxt)) return;
+      if (typeof deleteUserPreset === 'function') {
+        try { deleteUserPreset(selId); } catch(e) { log('delete failed: ' + e.message, 'err'); return; }
+      }
+      const rec = addUserPreset({
+        name: _name, description: '',
+        guideName: 'landbackV1',
+        stackId: S.stackId || '', stackName: '',
+        constants: JSON.parse(JSON.stringify(cap.base)),
+      });
+      if (rec) {
+        populatePresetSel();
+        $('presetSel').value = rec.id;
+        log('Preset updated: "' + rec.name + '"' + _biasTxt, 'ok');
+      } else {
+        log('Preset update failed', 'err');
+      }
+    } else {
+      const _name = prompt('Save as new preset - name:', 'LB tune ' + new Date().toISOString().slice(0,10));
+      if (!_name) return;
+      const rec = addUserPreset({
+        name: _name, description: '',
+        guideName: 'landbackV1',
+        stackId: S.stackId || '', stackName: '',
+        constants: JSON.parse(JSON.stringify(cap.base)),
+      });
+      if (rec) {
+        populatePresetSel();
+        $('presetSel').value = rec.id;
+        log('Preset saved: "' + rec.name + '"' + _biasTxt, 'ok');
+      } else {
+        log('Preset save failed', 'err');
+      }
+    }
+  });
 
   // Mission-mode toggle — swaps search / manual / sweep blocks between RTLS
   // (bias-driven) and ASDS (droneship position-driven) variants. Visibility
