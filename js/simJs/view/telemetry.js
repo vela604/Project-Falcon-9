@@ -917,15 +917,35 @@ function drawFigurePanel() {
     const _n = (m.stageRole === 'rocket' && Number.isFinite(m.noseHeightM)) ? m.noseHeightM : 0;
     return s + _h + _n;
   }, 0) || 1;
+  
+  // Full vertical extent = engine bell (below base) + hull + attached payload
+  // (above hull top, only when fairing is separated). Bug: was sizing on hull
+  // only → over-zoomed when fairing separated (satellite cut off) and bell
+  // cut off at base for nearly-horizontal stages.
+  const _bottomMember = members[0];
+  const bellHeight_m = (typeof engineBellHeightForRecord === 'function' && _bottomMember) ?
+    (engineBellHeightForRecord(_bottomMember) || 0) : 0;
+  const _hasFairing = members.some(m => m && m.stageRole === 'payloadSpace');
+  let payloadHeight_m = 0;
+  if (!_hasFairing && body.payloadId && !body.payloadReleased) {
+    const _pl = (typeof getPayload === 'function') ? getPayload(body.payloadId) : null;
+    if (_pl && Number.isFinite(_pl.height) && _pl.height > 0) payloadHeight_m = _pl.height;
+  }
+  const fullExtent_m = bellHeight_m + totalH_m + payloadHeight_m;
+  
   const mppW = widest / (w * 0.30);
-  const mppH = totalH_m / (h * 0.80);
+  const mppH = fullExtent_m / (h * 0.85);
   const mpp = Math.max(mppW, mppH);
   
   const baseX = w / 2;
   const stackHeight_px = totalH_m / mpp;
-  // Place rocket so its vertical MIDPOINT sits at panel center. Rotation
-  // below then pivots around that mid — natural tumble look, no base-hinge.
-  const baseY = Math.min(h * 0.94, h / 2 + stackHeight_px / 2);
+  const bellHeight_px = bellHeight_m / mpp;
+  const payloadHeight_px = payloadHeight_m / mpp;
+  // Center the FULL extent (payload top ↔ bell bottom) at panel mid, so the
+  // rotation pivot (below) is the true midpoint of everything visible, not
+  // just the stage hull. Fixes: satellite cut off + bell cut off + view
+  // centered only on hull.
+  const baseY = h / 2 + ((stackHeight_px + payloadHeight_px) - bellHeight_px) / 2;
   const stackHalfW_px = (widest / mpp) / 2;
   
   // ==== FUEL BAR — left edge of canvas, screen space (not rotated) ====
