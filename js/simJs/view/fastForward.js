@@ -370,6 +370,25 @@ const w = new Worker('js/simJs/threads/fastforward.worker.js');
     }
   }
 } else if (m.type === 'done') {
+        // Fix2b: forward FF-created pads to physics worker.
+        // When guide runs first tick inside FF worker (FF-from-idle case),
+        // its addLandingPad goes to FF worker CONFIG only. Physics worker
+        // still lacks pad → after replaceState, _localGroundR sees sea
+        // level → booster falls through deck → crash. Sync here.
+        if (m.fullState && Array.isArray(m.fullState.configLandingPads)) {
+          const _mainIds = new Set((CONFIG.LANDING_PADS || []).map(p => p.id));
+          for (const _p of m.fullState.configLandingPads) {
+            if (!_mainIds.has(_p.id)) {
+              CONFIG.LANDING_PADS.push(Object.assign({}, _p));
+              try {
+                if (typeof WorkerBridge !== 'undefined' && WorkerBridge.send) {
+                  WorkerBridge.send({ type: 'addLandingPad', pad: _p });
+                  console.log('[FF] forwarded FF-created pad to physics:', _p.id);
+                }
+              } catch (e) { console.warn('[FF] pad forward failed', e); }
+            }
+          }
+        }
   const _wallMs = window.__ffDiag && window.__ffDiag[window.__ffDiag.length - 1]
     ? performance.now() - window.__ffDiag[window.__ffDiag.length - 1].wallStart : NaN;
   window.__ffDiag && window.__ffDiag.push({

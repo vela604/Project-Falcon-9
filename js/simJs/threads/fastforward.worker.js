@@ -342,10 +342,10 @@ self.postMessage({
     activeBodyIndex: state.activeBodyIndex,
     simTime: state.simTime,
     halted: !!state.halted,
-  },
+   configLandingPads: JSON.parse(JSON.stringify(CONFIG.LANDING_PADS || [])), },
     guidanceState: (typeof Guidance !== 'undefined' && Guidance.exportGuideState)
     ? Guidance.exportGuideState() : null,
-});
+}) // donePayloadIncludesPads;
   } catch (err) {
     self.postMessage({ type: 'workerError', message: String(err), stack: err && err.stack });
   }
@@ -359,6 +359,28 @@ function clampFlow(en, cmd) {
 }
 
 function localDispatch(msg) {
+    
+    // ASDS pad sync — FF worker local dispatch (fixes FF-from-idle bug).
+    // When guide starts fresh inside FF worker (no pre-deploy), its first
+    // _landbackTick builds HOPE pad and sends addLandingPad via
+    // localDispatch. Without handling here, command silently drops →
+    // HOPE never enters FF worker CONFIG → _localGroundR sees sea level →
+    // contact fires at 0m AGL → crash.
+    if (msg && msg.type === 'addLandingPad' && msg.pad) {
+      if (!CONFIG.LANDING_PADS) CONFIG.LANDING_PADS = [];
+      if (!CONFIG.LANDING_PADS.some(function(p){ return p.id === msg.pad.id; })) {
+        CONFIG.LANDING_PADS.push(Object.assign({}, msg.pad));
+        console.log('[FF-DISPATCH] addLandingPad:', msg.pad.id, '@', (msg.pad.arcOffsetM/1000).toFixed(1), 'km');
+      }
+      return;
+    }
+    if (msg && msg.type === 'moveLandingPad' && msg.pad) {
+      if (CONFIG.LANDING_PADS) {
+        var _p = CONFIG.LANDING_PADS.find(function(p){ return p.id === msg.pad.id; });
+        if (_p) _p.arcOffsetM = msg.pad.arcOffsetM;
+      }
+      return;
+    }
   let b;
   if (Number.isInteger(msg.targetBodyIdx) && msg.targetBodyIdx >= 0 &&
       msg.targetBodyIdx < state.bodies.length) {
