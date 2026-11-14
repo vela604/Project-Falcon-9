@@ -3115,6 +3115,60 @@ if (isSingleNozzle) {
       }
     }
   } catch (err) { _jets = null; }
+  // ---- Booster plume collision (stage separation) ----
+  // During stage separation, the stage ignites its engine while the
+  // booster is still close below (drift window). Without this clip the
+  // plume draws straight through the booster's hull. Fix: find nearest
+  // booster/rocket body below, compute its top edge in the plume's local
+  // frame, clip plume to stop there. Handles: booster at any tilt
+  // (uses booster's own theta for top position), stage at any tilt
+  // (uses visualTheta for world→local), gimbal deflection (undo-rotates
+  // by gimbalRad before subtracting bellExit offset). 2px gap so plume
+  // doesn't visually "touch" the hull.
+  let _boosterPlumeClipY = null;
+  if (body.members && body.members[0] && body.members[0].stageRole === 'stage'
+      && typeof state !== 'undefined' && state.bodies) {
+    const _vCos = Math.cos(visualTheta), _vSin = Math.sin(visualTheta);
+    const _gCos = Math.cos(gimbalRad || 0), _gSin = Math.sin(gimbalRad || 0);
+    let _bestClip = null;
+    for (let _bi = 0; _bi < state.bodies.length; _bi++) {
+      if (_bi === bodyIdx) continue;
+      const _ob = state.bodies[_bi];
+      if (!_ob.members || !_ob.members.length) continue;
+      const _role = _ob.members[0].stageRole;
+      if (_role !== 'booster' && _role !== 'rocket') continue;
+      // Booster top position in world frame (hull top + nose for legacy rocket)
+      const _obH = (_ob.members[0].height || 0) + (_role === 'rocket' ? (_ob.members[0].noseHeightM || 0) : 0);
+      const _obCosT = Math.cos(_ob.theta || 0), _obSinT = Math.sin(_ob.theta || 0);
+      const _bTopX = _ob.rx - _obH * _obSinT;
+      const _bTopY = _ob.ry + _obH * _obCosT;
+      // World → stage body-local (undo translate + rotate(-visualTheta))
+      const _wdx = _bTopX - body.rx;
+      const _wdy = _bTopY - body.ry;
+      const _lx = _wdx * _vCos - _wdy * _vSin;
+      const _ly = _wdx * _vSin + _wdy * _vCos;
+      // Body-local → post-gimbal (undo rotate(gimbalRad))
+      const _pgX = _lx * _gCos + _ly * _gSin;
+      const _pgY = -_lx * _gSin + _ly * _gCos;
+      // Plume local: y=0 is bell exit, +y is plume direction
+      const _plumeLocalY = _pgY - bellExitY_px;
+      const _obRadius = (_ob.members[0].width || 0) / 2;
+      // Skip if booster is off to the side (plume misses its cylinder)
+      if (Math.abs(_pgX) > _obRadius + 2) continue;
+      // Clip only if booster top is within reach of the plume
+      if (_plumeLocalY > 0 && _plumeLocalY < flameLen) {
+        if (_bestClip === null || _plumeLocalY < _bestClip) _bestClip = _plumeLocalY;
+      }
+    }
+    if (_bestClip !== null) _boosterPlumeClipY = Math.max(0, _bestClip - 2);
+  }
+  if (_boosterPlumeClipY !== null) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(-10000, 0, 20000, _boosterPlumeClipY);
+    ctx.clip();
+  }
+
   const _plumeOk = _drawPlumeFx(ctx, {
     L: flameLen * (1 + 0.03 * Math.sin(tTurb * 3.1) + 0.02 * Math.sin(tTurb * 7.3 + 1)),
     re: W * plumeScale * widthMul / 2,
@@ -3287,6 +3341,9 @@ if (isSingleNozzle) {
       ctx.restore();
     }
   }
+  // Restore booster clip (if applied — balanced against the save above)
+  if (_boosterPlumeClipY !== null) ctx.restore();
+
   // Balanced restore for the outer ctx.save()+translate(0, bellExitY_px)
   // at the top of this block. Without it, every flame frame leaked one
   // save entry and one translate onto the canvas state stack.
