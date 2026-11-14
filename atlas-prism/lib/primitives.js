@@ -24,12 +24,15 @@ function residualBand(opts) {
   // o: { li0, cross(li)->{cross,tToApo,tToPeri,marginS}, full(li)->{score,done,ok,cross}, marginMaxS=20, maxLi=4000, maxWin=40 }
   async function tuneLeadV2(o) {
   const M = o.marginMaxS || 20, maxLi = o.maxLi || 4000, maxWin = o.maxWin || 40;
+  // [NEG] Negative li is now allowed. Default lower bound is symmetric to maxLi;
+  // callers can pin a tighter negative range via o.minLi.
+  const minLi = (o.minLi != null) ? o.minLi : -maxLi;
   const ROLL = o.maxRoll || 3, FB = o.fallbackSpan || 10, FB_FULLS = o.fallbackFulls || 8;
   const log = [], say = (s) => { log.push(s); if (o.onLog) o.onLog(s); };
   const cc = new Map(), fc = new Map(), vc = new Map(); let nC = 0, nF = 0;
   const cross = async (li) => { if (!cc.has(li)) { nC++; cc.set(li, await o.cross(li)); } return cc.get(li); };
   const full  = async (li) => { if (!fc.has(li)) { nF++; fc.set(li, await o.full(li)); } return fc.get(li); };
-  const clamp = (x) => Math.max(0, Math.min(maxLi, x));
+  const clamp = (x) => Math.max(minLi, Math.min(maxLi, x));  // [NEG] was Math.max(0, ...)
   const fin = (x) => Object.assign({ evals: nC + nF, crossEvals: nC, fullEvals: nF, log }, x);
   const isNum = (x) => typeof x === 'number' && !Number.isNaN(x);
   const scoreOf = (r) => (r && r.done && Number.isFinite(r.score)) ? r.score : Infinity;
@@ -72,7 +75,8 @@ function residualBand(opts) {
 
   const buildWindow = async (seed, dir) => {
     const cv = seed.v.c, v0 = seed.li, lim = maxWin - 1;
-    const okAt = async (li) => { if (li < 0 || li > maxLi) return false; const x = await view(li); return x.valid && x.c === cv && x.tmin <= M; };
+    // [NEG] floor is minLi, not 0
+    const okAt = async (li) => { if (li < minLi || li > maxLi) return false; const x = await view(li); return x.valid && x.c === cv && x.tmin <= M; };
     let good = v0, bad = null, step = 1;
     while (bad === null && Math.abs(good - v0) < lim) {
       let p = clamp(good + dir * step);
@@ -114,7 +118,8 @@ function residualBand(opts) {
     for (let j = b1 + 1; j <= b1 + 4 && j <= maxLi; j++) { const v = await view(j); if (v.valid && v.c === 2) { e2 = j; break; } }
     const lowLi = b1 - 1, highLi = (e2 != null ? e2 : b1 + 2) + 1;
     const sides = [];
-    if (lowLi >= 0)    sides.push({ name: 'below(c1)', start: lowLi,  dir: -1, want: 1, v: await view(lowLi) });
+    // [NEG] allow the below-edge side to extend into negative li
+    if (lowLi >= minLi) sides.push({ name: 'below(c1)', start: lowLi,  dir: -1, want: 1, v: await view(lowLi) });
     if (highLi <= maxLi) sides.push({ name: 'above(c2)', start: highLi, dir: +1, want: 2, v: await view(highLi) });
     for (const s of sides) say('edge 1|2 at ' + b1 + '|' + (b1 + 1) + (e2 != null ? ' (c2 from ' + e2 + ')' : ' (no c2 seen)') + '  ' + s.name + ' li ' +
       s.start + ' c' + s.v.c + ' tApo ' + f1(s.v.ta) + ' tPeri ' + f1(s.v.tp) + (s.v.nan ? ' [NaN->0]' : ''));
@@ -123,7 +128,7 @@ function residualBand(opts) {
     for (const s of cand) {
       let seed = null;
       for (let i = 0; i < ROLL; i++) {
-        const li = s.start + s.dir * i; if (li < 0 || li > maxLi) break;
+        const li = s.start + s.dir * i; if (li < minLi || li > maxLi) break;   // [NEG] was li < 0
         const v = await view(li);
         if (!v.valid || v.c !== s.want || v.tmin > M) continue;
         const ff = await full(li);
@@ -158,7 +163,7 @@ function residualBand(opts) {
     say('fallback: +-' + FB + ' around ' + ctr);
     const cands = [];
     for (let li = ctr - FB; li <= ctr + FB + 2; li++) {
-      if (li < 0 || li > maxLi) continue;
+      if (li < minLi || li > maxLi) continue;   // [NEG] was li < 0
       const v = await view(li);
       if (v.valid && (v.c === 1 || v.c === 2) && v.tmin <= M) cands.push(v);
     }
@@ -166,7 +171,7 @@ function residualBand(opts) {
     const W = [];
     for (const v of cands.slice(0, FB_FULLS)) { await full(v.li); W.push(v.li); }
     const best = pickBest(W);
-    if (!best) return fin({ ok: false, reason: 'no done tick: b1=' + b1 + ' li0=' + o.li0 + ' fallback cands ' + cands.length, edge: [b1, b1 == null ? null : b1 + 1], window: [] });
+    if (!best) return fin({ ok: false, reason: 'no done tick: b1=' + b1 + ' li0=' + o.li0 + ' fallback cands ' + cands.length + ' range [' + minLi + ',' + maxLi + ']', edge: [b1, b1 == null ? null : b1 + 1], window: [] });
     W.sort((a, b) => a - b);
     result = { s: { name: 'fallback' }, W, best, edge: [ctr, ctr + 1] };
   }
