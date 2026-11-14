@@ -3384,7 +3384,7 @@ const isTopMember = (idx === stackMembers.length - 1);
 const puffForThisMember = (isTopMember && puffProgress >= 0) ?
   puffProgress : -1;
 drawRocketArt(ctx, mW, mH, mpp, {
-      legsProgress: (isActive && idx === 0) ? legs.progress : 0,
+      legsProgress: (idx === 0) ? ((body.legs && Number.isFinite(body.legs.progress)) ? body.legs.progress : (isActive && typeof legs !== "undefined" && legs && Number.isFinite(legs.progress) ? legs.progress : 0)) : 0,
       noseHeightM: m.noseHeightM,
       boosterInterstageHeightM: (m.stageRole === 'booster' && memberAbove && memberAbove.stageRole === 'interstage')
         ? memberAbove.height : null,
@@ -3795,8 +3795,13 @@ function renderFrame() {
   if (!camera) return;
   _updateTrail();
   
-  const r = Math.hypot(state.rx, state.ry);
-  const altitude = altitudeFromR(r);
+  // Sky uses CAMERA target's altitude, not active body's. Fixes sky
+  // mismatch when following a different body (e.g., satellite active,
+  // booster followed → sky should be blue at ground, was black from space).
+  const _skyIdx = (typeof _cameraTargetIndex === 'function') ? _cameraTargetIndex() : state.activeBodyIndex;
+  const _skyBody = (state.bodies && state.bodies[_skyIdx]) ? state.bodies[_skyIdx] : b;
+  const _skyR = _skyBody ? Math.hypot(_skyBody.rx, _skyBody.ry) : Math.hypot(state.rx, state.ry);
+  const altitude = altitudeFromR(_skyR);
   
   drawSky(altitude);
   

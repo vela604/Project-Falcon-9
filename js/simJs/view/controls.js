@@ -234,14 +234,7 @@ function bindCameraControls() {
         camera.followPadId = raw.slice(4);
         camera.followBodyIndex = state.activeBodyIndex;
         camera.follow = true;
-        // auto-zoom-ASDS: if following an ASDS and current zoom is very
-        // high, reduce it so the whole 91m drone ship fits in viewport
-        // (otherwise it fills 900+ px and looks like a flat bar).
-        const _padRec = (CONFIG.LANDING_PADS || []).find(p => p.id === camera.followPadId);
-        if (_padRec && _padRec.isASDS && camera.zoom > 3) {
-          camera.zoom = 1.2;   // ~80px ASDS, whole ship visible
-          console.log('[ASDS] follow zoom adjusted to 1.2 for full ship view');
-        }
+
       } else {
         camera.followPadId = null;
         camera.followBodyIndex = parseInt(raw, 10) || 0;
