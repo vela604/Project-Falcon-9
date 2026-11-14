@@ -77,8 +77,7 @@
         <div class="row pre">
           <label>preset <select id="presetSel"></select></label>
           <button class="suggest" id="presetLoad">Load preset</button>
-          <button class="suggest" id="presetSave">Save preset</button>
-          <span class="note">Load fills UI - Save writes current UI + bias to preset</span>
+          <span class="note">Loads ascent + bias + mission + LB tuning</span>
         </div>
       </div>
 
@@ -254,6 +253,14 @@
     </div>
     <div id="resultsTable"><div class="empty">No runs yet. Run INIT, then &ldquo;Run bias search&rdquo;.</div></div>
     <div id="detailPanel" style="display:none"></div>
+
+    <div id="historyPanel" style="margin-top:18px; border-top:1px solid #333; padding-top:14px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+        <b style="color:#35d6ff; font-size:12px;">Search history</b>
+        <button id="historyClearBtn" style="font-size:10px; padding:2px 10px;">Clear all</button>
+      </div>
+      <div id="historyList"><div class="empty" style="color:#666;">No past searches yet.</div></div>
+    </div>
   </section>
 </main>
 
@@ -686,70 +693,6 @@ function applyPresetFromSel(){
   log('Preset loaded: '+p.name, 'ok');
 }
 
-// Capture current tuner state as a preset constants bag.
-// Base = currently-selected preset (preserves non-UI fields like STAGE_BURN
-// tuning); falls back to guide default if none selected. Overrides: MECO/G/T,
-// mission type, LB alt/margin/stall, and best bias.
-// Bias priority: selected table row > search best > best-scoring ok run.
-function captureCurrentAsPreset(){
-  const selId = $('presetSel').value;
-  const list = listPresets();
-  const cur = list.find(x => x.id === selId);
-  let base;
-  if (cur && cur.constants) {
-    base = deepClone(cur.constants);
-  } else {
-    const d = (typeof getGuideDefaultPreset === 'function') ? getGuideDefaultPreset('landbackV1') : null;
-    base = (d && d.constants) ? deepClone(d.constants) : {};
-  }
-  base.ascent = base.ascent || {};
-  base.rtls = base.rtls || {};
-  base.mission = base.mission || {};
-  // Ascent
-  const _meco = +$('cfgMeco').value;
-  const _g = +$('cfgG').value;
-  const _t = +$('cfgT').value;
-  if (Number.isFinite(_meco)) base.ascent.MECO_TARGET_BOOSTER_FUEL_KG = _meco;
-  if (Number.isFinite(_g)) base.ascent.PUSH_MAX_GIMBAL_DEG = _g;
-  if (Number.isFinite(_t)) base.ascent.PUSH_T_S = _t;
-  // Mission mode
-  const mode = $('cfgMission') ? $('cfgMission').value : 'RTLS';
-  base.rtls.MISSION_TYPE = mode;
-  // LB tuning
-  const _lbAlt = parseFloat($('lbAlt').value);
-  if (Number.isFinite(_lbAlt)) base.rtls.LANDING_BURN_ALT_KM = _lbAlt;
-  const _lbMargin = parseFloat($('lbMargin').value);
-  if (Number.isFinite(_lbMargin)) base.rtls.LANDING_BURN_V_TD_MARGIN_M = _lbMargin;
-  const _lbStall = parseFloat($('lbStall').value);
-  if (Number.isFinite(_lbStall)) base.rtls.LANDING_BURN_H_STALL_M = _lbStall;
-  // Bias
-  let bestBias = null;
-  let biasSource = 'none';
-  if (S.selectedIdx >= 0 && S.runs[S.selectedIdx]) {
-    bestBias = S.runs[S.selectedIdx].bias;
-    biasSource = 'selected-row';
-  } else if (S.searchResult && S.searchResult.best && Number.isFinite(S.searchResult.best.bias)) {
-    bestBias = S.searchResult.best.bias;
-    biasSource = 'search-best';
-  } else if (S.runs.length) {
-    const oks = S.runs.filter(r => r.ok && Number.isFinite(r.score));
-    if (oks.length) {
-      const b = oks.reduce((a, r) => r.score < a.score ? r : a, oks[0]);
-      bestBias = b.bias;
-      biasSource = 'best-ok-run';
-    }
-  }
-  if (Number.isFinite(bestBias)) {
-    if (mode === 'ASDS') {
-      base.rtls.ENTRY_BURN_IMPACT_TARGET_M = 0;
-      base.mission.TARGET_LANDING_PAD = 'HOPE,' + (bestBias / 1000).toFixed(3);
-    } else {
-      base.rtls.ENTRY_BURN_IMPACT_TARGET_M = bestBias;
-      base.mission.TARGET_LANDING_PAD = 'LZ-1';
-    }
-  }
-  return { base, mode, bestBias, biasSource };
-}
 
 // Ascent/preset changes invalidate the SA/EB snapshots.
 function markStale(){
@@ -1740,6 +1683,7 @@ async function doScan(){
     $('scanBtn').disabled = !S.inited; $('altBtn').disabled = !S.inited; $('scanStopBtn').disabled = true; $('initBtn').disabled = false;
     if($('manualPosBtn')) $('manualPosBtn').disabled = !S.inited;
     if($('manualPosSweepBtn')) $('manualPosSweepBtn').disabled = !S.inited;
+    saveHistoryEntry('scan');
     setChip('ready'); setStage('results');
   }
 }
@@ -1976,6 +1920,7 @@ async function doAltSearch(){
     $('altBtn').disabled = !S.inited; $('scanBtn').disabled = !S.inited;
     $('manualBtn').disabled = !S.inited; $('manualSweepBtn').disabled = !S.inited;
     $('initBtn').disabled = false; $('scanStopBtn').disabled = true;
+    saveHistoryEntry('alt');
     setChip('ready'); setStage('results');
   }
   if(S.altBest && !S.abort && $('altChain').checked) await doScan();
@@ -2113,6 +2058,7 @@ async function doManualSweep(){
     $('scanBtn').disabled = !S.inited; $('altBtn').disabled = !S.inited;
     $('initBtn').disabled = false;
     $('scanStopBtn').disabled = true;
+    saveHistoryEntry('sweep');
     setChip('ready');
     $('sweepStatus').textContent = 'N includes lo and hi';
   }
@@ -2176,6 +2122,7 @@ async function doManualEval(){
     $('manualBtn').disabled = !S.inited;
     $('scanBtn').disabled = !S.inited; $('altBtn').disabled = !S.inited;
     $('initBtn').disabled = false;
+    saveHistoryEntry('manual');
     setChip('ready');
   }
 }
@@ -2709,6 +2656,205 @@ function checkModules(){
   return false;
 }
 
+// ===== SEARCH HISTORY =====
+// Persisted in localStorage across page reloads/back. Each entry is one
+// completed search (scan, sweep, manual eval, or alt-search). Cap at 20
+// entries (rolling). Each entry carries configSnapshot so "Load config"
+// can restore MECO/G/T/mission/LB tuning + bias with one click.
+const HISTORY_KEY = 'lb-nova6.history.v1';
+const HISTORY_MAX = 20;
+
+function loadHistory(){
+  try {
+    const raw = localStorage.getItem(HISTORY_KEY);
+    if (!raw) return [];
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) ? arr : [];
+  } catch(e){ return []; }
+}
+
+function saveHistoryEntry(kind){
+  const cfgSnapshot = {
+    meco: +$('cfgMeco').value,
+    g: +$('cfgG').value,
+    t: +$('cfgT').value,
+    missionType: $('cfgMission') ? $('cfgMission').value : 'RTLS',
+    lbAlt: parseFloat($('lbAlt').value),
+    lbMargin: parseFloat($('lbMargin').value),
+    lbStall: parseFloat($('lbStall').value),
+  };
+  let entry = null;
+
+  if (kind === 'alt') {
+    if (!S.altRuns || !S.altRuns.length) return;
+    const oks = S.altRuns.filter(r => r.ok);
+    const best = S.altBest || (oks.length ? oks.reduce((a, r) => r.cost < a.cost ? r : a, oks[0]) : null);
+    entry = {
+      id: 'h_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+      ts: Date.now(),
+      kind: 'alt',
+      mode: S.mode,
+      window: { altLo: +$('altLo').value, altHi: +$('altHi').value },
+      N: S.altRuns.length,
+      okCount: oks.length,
+      searchBest: best ? {
+        bias: best.bias,
+        alt: best.alt,
+        cost: best.cost,
+        fail: best.fail || null,
+      } : null,
+      configSnapshot: cfgSnapshot,
+    };
+  } else {
+    const runs = S.runs || [];
+    if (!runs.length) return;
+    const oks = runs.filter(r => r.ok && Number.isFinite(r.score));
+    const best = oks.length ? oks.reduce((a, r) => r.score < a.score ? r : a, oks[0]) : null;
+    entry = {
+      id: 'h_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+      ts: Date.now(),
+      kind: kind || 'scan',
+      mode: S.mode,
+      window: S.lastWindow || null,
+      N: runs.length,
+      okCount: oks.length,
+      searchBest: best ? {
+        bias: best.bias,
+        score: best.score,
+        fail: best.fail || null,
+        dr: best.m && best.m.contact ? best.m.contact.downrange : null,
+      } : null,
+      configSnapshot: cfgSnapshot,
+    };
+  }
+
+  const history = loadHistory();
+  history.unshift(entry);
+  if (history.length > HISTORY_MAX) history.length = HISTORY_MAX;
+  try { localStorage.setItem(HISTORY_KEY, JSON.stringify(history)); } catch(e){}
+  renderHistory();
+  const _bestStr = entry.searchBest
+    ? ('best ' + (entry.searchBest.bias != null ? 'bias=' + entry.searchBest.bias.toFixed(2) : '') +
+       (entry.searchBest.score != null ? ' score=' + entry.searchBest.score.toFixed(2) : '') +
+       (entry.searchBest.alt != null ? ' alt=' + entry.searchBest.alt.toFixed(2) : ''))
+    : 'no ok runs';
+  log('History saved: ' + kind + ' - ' + entry.N + ' runs - ' + _bestStr, 'ok');
+}
+
+function renderHistory(){
+  const host = $('historyList');
+  if (!host) return;
+  const history = loadHistory();
+  if (!history.length) {
+    host.innerHTML = '<div class="empty" style="color:#666;">No past searches yet.</div>';
+    return;
+  }
+  const _fmtTs = (ts) => {
+    const d = new Date(ts);
+    return d.toISOString().slice(0, 16).replace('T', ' ');
+  };
+  let html = '';
+  for (const e of history) {
+    const isASDS = e.mode === 'ASDS';
+    const modeColor = isASDS ? '#35d6ff' : '#ffb020';
+    let winStr = '';
+    if (e.window) {
+      if (e.window.altLo != null) {
+        winStr = 'alt=[' + e.window.altLo + ', ' + e.window.altHi + '] km';
+      } else if (isASDS) {
+        winStr = 'window=[' + (e.window.lo / 1000).toFixed(1) + ', ' + (e.window.hi / 1000).toFixed(1) + '] km';
+      } else {
+        winStr = 'window=[' + e.window.lo + ', ' + e.window.hi + '] m';
+      }
+    }
+    let bestStr = 'no ok runs';
+    if (e.searchBest) {
+      const parts = [];
+      if (isASDS) parts.push('pos=' + (e.searchBest.bias / 1000).toFixed(3) + ' km');
+      else parts.push('bias=' + e.searchBest.bias.toFixed(2));
+      if (e.searchBest.score != null) parts.push('score=' + e.searchBest.score.toFixed(2));
+      if (e.searchBest.cost != null) parts.push('cost=' + e.searchBest.cost.toFixed(2));
+      if (e.searchBest.alt != null) parts.push('alt=' + e.searchBest.alt.toFixed(2) + ' km');
+      if (e.searchBest.dr != null) parts.push('dr=' + e.searchBest.dr.toFixed(1) + ' m');
+      if (e.searchBest.fail) parts.push('[' + e.searchBest.fail + ']');
+      bestStr = parts.join(' \u00b7 ');
+    }
+    html += '<div class="hist-card" data-id="' + e.id + '" style="background:#0a0a0a; border:1px solid #222; padding:8px 10px; margin-bottom:6px; font-size:11px; font-family:monospace;">';
+    html += '<div style="display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin-bottom:4px; color:#888;">';
+    html += '<span style="color:#666;">' + _fmtTs(e.ts) + '</span>';
+    html += '<span style="color:' + modeColor + '; font-weight:bold;">' + e.mode + '</span>';
+    html += '<span>' + (e.kind || 'scan') + '</span>';
+    if (winStr) html += '<span>' + winStr + '</span>';
+    html += '<span>' + e.N + ' runs \u00b7 ' + e.okCount + ' ok</span>';
+    html += '</div>';
+    html += '<div style="color:#4ade80; margin-bottom:6px;">' + bestStr + '</div>';
+    html += '<div style="display:flex; gap:6px;">';
+    html += '<button class="hist-use" data-id="' + e.id + '" style="font-size:10px; padding:2px 8px;">Use bias</button>';
+    html += '<button class="hist-load-cfg" data-id="' + e.id + '" style="font-size:10px; padding:2px 8px;">Load config</button>';
+    html += '<button class="hist-del" data-id="' + e.id + '" style="font-size:10px; padding:2px 8px; color:#ff4d5e;">Delete</button>';
+    html += '</div></div>';
+  }
+  host.innerHTML = html;
+
+  host.querySelectorAll('.hist-use').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const id = btn.dataset.id;
+      const e = loadHistory().find(x => x.id === id);
+      if (!e || !e.searchBest) { log('No best bias in this entry', 'warn'); return; }
+      const isASDS = e.mode === 'ASDS';
+      if (isASDS) {
+        $('posStart').value = Math.round(e.searchBest.bias);
+        if (S.mode !== 'ASDS') log('NOTE: history entry is ASDS - switch mission type to ASDS + re-INIT to use', 'warn');
+      } else {
+        $('biasStart').value = e.searchBest.bias;
+        if (S.mode !== 'RTLS') log('NOTE: history entry is RTLS - switch mission type to RTLS + re-INIT to use', 'warn');
+      }
+      log('Bias start set from history: ' + (isASDS ? (e.searchBest.bias / 1000).toFixed(3) + ' km' : e.searchBest.bias.toFixed(2)), 'ok');
+      markStale();
+    });
+  });
+  host.querySelectorAll('.hist-load-cfg').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const id = btn.dataset.id;
+      const e = loadHistory().find(x => x.id === id);
+      if (!e) return;
+      const c = e.configSnapshot || {};
+      if ($('cfgMeco') && Number.isFinite(c.meco)) $('cfgMeco').value = c.meco;
+      if ($('cfgG') && Number.isFinite(c.g)) $('cfgG').value = c.g;
+      if ($('cfgT') && Number.isFinite(c.t)) $('cfgT').value = c.t;
+      if ($('cfgMission') && c.missionType) {
+        $('cfgMission').value = c.missionType;
+        try { $('cfgMission').dispatchEvent(new Event('change', { bubbles: true })); } catch(ex) {}
+      }
+      if ($('lbAlt') && Number.isFinite(c.lbAlt)) $('lbAlt').value = c.lbAlt;
+      if ($('lbMargin') && Number.isFinite(c.lbMargin)) $('lbMargin').value = c.lbMargin;
+      if ($('lbStall') && Number.isFinite(c.lbStall)) $('lbStall').value = c.lbStall;
+      if (e.searchBest) {
+        if (e.mode === 'ASDS') $('posStart').value = Math.round(e.searchBest.bias);
+        else $('biasStart').value = e.searchBest.bias;
+      }
+      log('Config restored from history ' + new Date(e.ts).toISOString().slice(0, 16).replace('T', ' '), 'ok');
+      markStale();
+    });
+  });
+  host.querySelectorAll('.hist-del').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const id = btn.dataset.id;
+      const hist = loadHistory().filter(x => x.id !== id);
+      try { localStorage.setItem(HISTORY_KEY, JSON.stringify(hist)); } catch(ex){}
+      renderHistory();
+      log('History entry deleted', 'ok');
+    });
+  });
+}
+
+function clearHistory(){
+  if (!confirm('Clear all search history? This cannot be undone.')) return;
+  try { localStorage.removeItem(HISTORY_KEY); } catch(e){}
+  renderHistory();
+  log('History cleared', 'ok');
+}
+
 // ===== BOOT =====
 function boot(){
   window._origConsoleLog = console.log;
@@ -2736,57 +2882,7 @@ function boot(){
   if($('manualPosBtn')) $('manualPosBtn').addEventListener('click', doManualEval);
   if($('manualPosSweepBtn')) $('manualPosSweepBtn').addEventListener('click', doManualSweep);
   $('presetLoad').addEventListener('click', () => { applyPresetFromSel(); markStale(); });
-  $('presetSave').addEventListener('click', () => {
-    if (typeof addUserPreset !== 'function') {
-      log('Preset save unavailable - guidancePresets.js not loaded', 'err');
-      return;
-    }
-    const selId = $('presetSel').value;
-    const list = listPresets();
-    const cur = list.find(x => x.id === selId);
-    const isDefault = selId && selId.indexOf('default:') === 0;
-    const isUser = cur && !isDefault;
-    const cap = captureCurrentAsPreset();
-    const _biasTxt = Number.isFinite(cap.bestBias)
-      ? ' bias=' + cap.bestBias.toFixed(2) + ' (' + cap.biasSource + ')'
-      : ' (no bias - config only)';
-    if (isUser) {
-      const _name = cur.name;
-      if (!confirm('Update existing preset "' + _name + '"?\n\nCurrent UI values + best bias will replace preset contents.' + _biasTxt)) return;
-      if (typeof deleteUserPreset === 'function') {
-        try { deleteUserPreset(selId); } catch(e) { log('delete failed: ' + e.message, 'err'); return; }
-      }
-      const rec = addUserPreset({
-        name: _name, description: '',
-        guideName: 'landbackV1',
-        stackId: S.stackId || '', stackName: '',
-        constants: JSON.parse(JSON.stringify(cap.base)),
-      });
-      if (rec) {
-        populatePresetSel();
-        $('presetSel').value = rec.id;
-        log('Preset updated: "' + rec.name + '"' + _biasTxt, 'ok');
-      } else {
-        log('Preset update failed', 'err');
-      }
-    } else {
-      const _name = prompt('Save as new preset - name:', 'LB tune ' + new Date().toISOString().slice(0,10));
-      if (!_name) return;
-      const rec = addUserPreset({
-        name: _name, description: '',
-        guideName: 'landbackV1',
-        stackId: S.stackId || '', stackName: '',
-        constants: JSON.parse(JSON.stringify(cap.base)),
-      });
-      if (rec) {
-        populatePresetSel();
-        $('presetSel').value = rec.id;
-        log('Preset saved: "' + rec.name + '"' + _biasTxt, 'ok');
-      } else {
-        log('Preset save failed', 'err');
-      }
-    }
-  });
+  if ($('historyClearBtn')) $('historyClearBtn').addEventListener('click', clearHistory);
 
   // Mission-mode toggle — swaps search / manual / sweep blocks between RTLS
   // (bias-driven) and ASDS (droneship position-driven) variants. Visibility
@@ -2828,6 +2924,7 @@ function boot(){
     }
   });
 
+  renderHistory();
   setChip('idle'); setStage('config');
   log('Ready. Lock a stack to begin.', 'ok');
 
