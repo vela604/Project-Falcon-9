@@ -309,7 +309,10 @@ function refreshFollowBodySelect() {
   const current = sel.value;
   const bodyOpts = state.bodies.map((b, i) => {
     let label;
-    if (b.isActive) label = 'Active';
+    // Use state.activeBodyIndex (source of truth), NOT b.isActive (legacy
+    // stale flag — set once at boot, never updated on Take Control). Bug:
+    // "Active" label stuck on original body 0 after switching.
+    if (i === state.activeBodyIndex) label = 'Active';
     else if (b.payloadBody && b.payloadBody.record) label = 'Payload: ' + b.payloadBody.record.name;
     else if (b.fairingHalf && b.fairingHalf.record) label = 'Fairing ' + (b.fairingHalf.side > 0 ? 'R' : 'L');
     else if (b.members && b.members.length && b.members[0].name) label = b.members[0].name;
