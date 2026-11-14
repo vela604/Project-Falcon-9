@@ -709,14 +709,40 @@ function drawOceanArea() {
   const _arcLenPx = Math.abs(dArc) * eRpx;
   const N_TOP = Math.max(80, Math.min(4000, Math.ceil(_arcLenPx / _chordMax)));
 
+  // Precision guard — Chrome/Skia canvas uses float32 internally.
+  // Above 2^24 (16.7M), integer precision is lost → coords quantize to
+  // pixel grid → visible flicker / frozen offset at high zoom.
+  // Clamp all vertex coords to a safe ±1M range so canvas can render
+  // them precisely. Visible portion (0..W) is unaffected; only far-off-
+  // screen vertices compress. Because those are off-screen, no visual
+  // artifact leaks into the viewport.
+  const _CLAMP_SAFE = 1e6;
+  const _cXMin = -_CLAMP_SAFE, _cXMax = canvas.width + _CLAMP_SAFE;
+  const _cYMin = -_CLAMP_SAFE, _cYMax = canvas.height + _CLAMP_SAFE;
+  const _clampX = (v) => v < _cXMin ? _cXMin : (v > _cXMax ? _cXMax : v);
+  const _clampY = (v) => v < _cYMin ? _cYMin : (v > _cYMax ? _cYMax : v);
+
+  // One-time diagnostic — captures the actual eRpx / N_TOP at first ocean
+  // draw so future bug reports have concrete numbers.
+  if (!globalThis._oceanTraceDiagDone) {
+    globalThis._oceanTraceDiagDone = true;
+    console.log('[ocean-trace] eRpx=' + eRpx.toFixed(0) +
+      ' N_TOP=' + N_TOP +
+      ' mpp=' + mppOcean.toFixed(4) +
+      ' zoom=' + (typeof camera !== 'undefined' ? camera.zoom : '?') +
+      ' needClamp=' + (eRpx > _CLAMP_SAFE ? 'YES' : 'no'));
+  }
+
   function _traceTopArc(rPx, moveFirst, reverse) {
     const rWorld = rPx * mppOcean;
     for (let k = 0; k <= N_TOP; k++) {
       const f = reverse ? (1 - k / N_TOP) : (k / N_TOP);
       const phi = phiStart + f * (phiEnd - phiStart);
       const [sx, sy] = worldToScreen(rWorld * Math.sin(phi), rWorld * Math.cos(phi));
-      if (k === 0 && moveFirst) ctx.moveTo(sx, sy);
-      else ctx.lineTo(sx, sy);
+      const cx = _clampX(sx);
+      const cy = _clampY(sy);
+      if (k === 0 && moveFirst) ctx.moveTo(cx, cy);
+      else ctx.lineTo(cx, cy);
     }
   }
 
