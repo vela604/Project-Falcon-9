@@ -1795,7 +1795,7 @@ if (typeof window !== 'undefined' &&
 // countdown — regardless of what phase the guide is in or whether the
 // user is also flying some other body in the background.
 const _followingPayload = !!(b && b.payloadBody);
-if (b && (_COUNTDOWN_PHASES[_phase] || _followingPayload)) {
+if (b && !b.landed && !b.crashed && !b.settled && (_COUNTDOWN_PHASES[_phase] || _followingPayload)) {
   const _r = Math.hypot(b.rx, b.ry);
   const _ux = b.rx / _r, _uy = b.ry / _r;
   const _ex = b.ry / _r, _ey = -b.rx / _r;
@@ -1813,7 +1813,8 @@ if (b && (_COUNTDOWN_PHASES[_phase] || _followingPayload)) {
   const _tRem = _isApoNext ? _tApo : (_isPeriNext ? _tPeri : Infinity);
   const _nextApsisLabel = _isApoNext ? 'TO APOGEE' : 'TO PERIGEE';
 
-  if (Number.isFinite(_tRem) && _tRem > 0) {
+  const MAX_SANE_COUNTDOWN_S = 6 * 3600;   // 6 hours — max plausible half-period
+  if (Number.isFinite(_tRem) && _tRem > 0.1 && _tRem < MAX_SANE_COUNTDOWN_S) {
   // Format: mm:ss.hh (minutes can exceed 60 for a long coast).
   const fmtT = (sec) => {
     if (!Number.isFinite(sec) || sec < 0) sec = 0;
