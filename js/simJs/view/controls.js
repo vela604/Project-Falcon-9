@@ -1409,15 +1409,65 @@ const seq = Array.isArray(status.phaseSequence) && status.phaseSequence.length ?
     
     const tabsEl = row.querySelector('.gp-tabs');
     const trelEl = row.querySelector('.gp-trel');
+    
+    // ─── Round 3: prediction drift display ───
+    const _rec = window.__currentMissionRecord;
+    const predicted = (_rec && _rec.phases && !_rec.partial)
+      ? _rec.phases.find(p => p.name === ph)
+      : null;
+    
+    let _driftKind = null;
+    let _driftVal = 0;
+    if (predicted) {
+      if (entry && entry.endT !== null && entry.endT !== undefined) {
+        const _actualDur = entry.endT - entry.startT;
+        const _predDur = predicted.endT - predicted.startT;
+        _driftKind = 'done';
+        _driftVal = _actualDur - _predDur;
+        if (Math.abs(_driftVal) > 5.0) window.__predictionDriftExceeded = true;
+      } else if (ph === curPhase && entry) {
+        _driftKind = 'active';
+      } else {
+        _driftKind = 'future';
+      }
+    }
+    
     if (entry && Number.isFinite(entry.startT)) {
       tabsEl.textContent = 'T+' + _fmtHMS(entry.startT);
-      if (entry.endT !== null && entry.endT !== undefined) {
-        trelEl.textContent = '+' + _fmtHMS(entry.endT - entry.startT);
-      } else {
-        trelEl.textContent = '+' + _fmtHMS(Math.max(0, simTime - entry.startT));
-      }
     } else {
       tabsEl.textContent = '';
+    }
+    
+    trelEl.className = 'gp-trel';
+    if (_driftKind === 'done') {
+      const _absD = Math.abs(_driftVal);
+      const _sign = _driftVal >= 0 ? '+' : '';
+      const _driftStr = _sign + _driftVal.toFixed(1) + 's';
+      trelEl.textContent = '+' + _fmtHMS(entry.endT - entry.startT);
+      if (_absD <= 2.0) {
+        trelEl.textContent += ' \u2713';
+        trelEl.classList.add('gp-trel-match');
+      } else if (_absD <= 5.0) {
+        trelEl.textContent += ' (' + _driftStr + ')';
+        trelEl.classList.add('gp-trel-warn');
+      } else {
+        trelEl.textContent += ' (' + _driftStr + ')';
+        trelEl.classList.add('gp-trel-drift');
+      }
+    } else if (_driftKind === 'active') {
+      const _elapsed = Math.max(0, simTime - entry.startT);
+      const _predDur = predicted.endT - predicted.startT;
+      trelEl.textContent = '+' + _fmtHMS(_elapsed) + ' / pred ' + _fmtHMS(_predDur);
+      trelEl.classList.add('gp-trel-active-pred');
+    } else if (_driftKind === 'future' && !window.__predictionDriftExceeded) {
+      const _predDur = predicted.endT - predicted.startT;
+      trelEl.textContent = 'pred ' + _fmtHMS(_predDur);
+      trelEl.classList.add('gp-trel-future-pred');
+    } else if (entry && entry.endT !== null && entry.endT !== undefined) {
+      trelEl.textContent = '+' + _fmtHMS(entry.endT - entry.startT);
+    } else if (entry && Number.isFinite(entry.startT)) {
+      trelEl.textContent = '+' + _fmtHMS(Math.max(0, simTime - entry.startT));
+    } else {
       trelEl.textContent = '';
     }
     
@@ -1446,8 +1496,36 @@ function _syncMissionRecordSession(status) {
     if (stk && guideSel && guideSel.value && typeof startGuideSession === 'function') {
       startGuideSession(stk.id, guideSel.value);
     }
+    // Round 3 — fetch mission record for prediction overlay. Reset drift
+    // flag so this guide sequence starts fresh. comboKey promise resolves
+    // asynchronously (config fetch via GuidanceBridge); after resolve,
+    // store record and trigger immediate re-render so predictions appear
+    // without waiting for next status tick.
+    window.__currentMissionRecord = null;
+    window.__predictionDriftExceeded = false;
+    if (window.__guideSession && window.__guideSession.comboKeyPromise) {
+      window.__guideSession.comboKeyPromise.then(function (key) {
+        const rec = (typeof window.getMissionRecord === 'function')
+          ? window.getMissionRecord(key) : null;
+        window.__currentMissionRecord = rec;
+        if (rec) {
+          console.log('[missionRecords] prediction loaded:', rec.comboKey,
+            '(' + rec.phases.length + ' phases, ' +
+            (rec.partial ? 'partial' : 'complete') + ')');
+          if (window.__lastGuideStatus) {
+            try { _renderPhaseTrack(window.__lastGuideStatus); } catch (e) {}
+          }
+        } else {
+          console.log('[missionRecords] no prediction for comboKey:', key);
+        }
+      }).catch(function (e) {
+        console.warn('[missionRecords] prediction fetch failed:', e);
+      });
+    }
   } else if (!curActive && prevActive) {
     if (typeof endGuideSession === 'function') endGuideSession();
+    window.__currentMissionRecord = null;
+    window.__predictionDriftExceeded = false;
   }
   
   // Capture start hash + FULL snapshot at first valid tick after guide start.

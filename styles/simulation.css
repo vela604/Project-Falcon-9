@@ -1932,3 +1932,29 @@ canvas.mini-graph { width: 100%; height: 60px; background: var(--bg); border-rad
     margin-top: 4px;
   }
 }
+
+
+/* ============================================================
+   Round 3 — predictive UI drift classes (guidePhaseTrack)
+   ============================================================ */
+.gp-trel.gp-trel-match {
+  color: var(--green) !important;
+  font-weight: 600;
+}
+.gp-trel.gp-trel-warn {
+  color: var(--yellow) !important;
+}
+.gp-trel.gp-trel-drift {
+  color: var(--danger) !important;
+  font-weight: 600;
+}
+.gp-trel.gp-trel-active-pred {
+  color: var(--cyan) !important;
+  font-style: italic;
+  opacity: 0.85;
+}
+.gp-trel.gp-trel-future-pred {
+  color: var(--dim) !important;
+  font-style: italic;
+  opacity: 0.70;
+}
