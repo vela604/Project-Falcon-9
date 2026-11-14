@@ -2388,9 +2388,9 @@ Q   =  u·ax + v·ay
   <div class="exp glass pass">
     <div class="exp-head">
       <div>
-        <h3 class="exp-title">RTLS Landback — Autonomous Booster Return</h3>
+        <h3 class="exp-title">Booster Return — RTLS + ASDS</h3>
         <div class="exp-id">standardRTLS · landbackV1</div>
-        <div class="exp-time">12:09 AM <span class="exp-time-day">· Fri, Nov 11, 2026</span></div>
+        <div class="exp-time">12:09 AM <span class="exp-time-day">· Fri, Nov 11, 2026 · updated Nov 15, 2026</span></div>
       </div>
       <span class="exp-status pass">BOOSTER RETURN BLOCK</span>
     </div>
@@ -2399,19 +2399,22 @@ Q   =  u·ax + v·ay
         <div class="exp-label">Target</div>
         <div class="exp-value">
           An autonomous booster-return block that flies a first stage from
-          separation back to the launch-site pad. Runs on the booster body
-          alone after SEPARATED_AXIAL hands off control — from flip-through-retrograde
+          separation back to either the launch-site pad (RTLS) or a
+          downrange droneship (ASDS). Runs on the booster body alone after
+          SEPARATED_AXIAL hands off control — from flip-through-retrograde
           to hoverslam touchdown — with no manual input at any point.
           <p>Not tuned for one specific booster. The block reads residual
           fuel, engine thrust, fin authority, and leg geometry from the
           vehicle record; the return pad is picked from the current launch
-          complex. Any booster that has the residual fuel for return works.</p>
+          complex (RTLS) or the currently deployed droneship (ASDS). Any
+          booster that has the residual fuel for return works.</p>
         </div>
       </div>
       <div class="exp-row">
         <div class="exp-label">How it works</div>
         <div class="exp-value">
-          <p>An eight-phase state machine. Each phase has a bounded
+          <p>An eight-phase state machine, with two configurations
+          selected by <code>MISSION_TYPE</code>. Each phase has a bounded
           objective and a defined exit condition; the block advances
           itself, never waiting for external input.</p>
           <ul>
@@ -2420,13 +2423,15 @@ Q   =  u·ax + v·ay
             on the stopping angle: computes the bang-bang time-to-go each
             tick from the current angular rate and the available torque, and
             fires the pusher at the brake point.</li>
-            <li><strong>BOOSTBACK_BURN</strong> — reverse downrange velocity
-            and pick up return velocity. Fires a subset of the booster's
-            engines (centre + two opposing outer engines by default),
-            aiming the ballistic impact point at the pad via a leapfrog
-            predictor. Outer engines cut first when the predicted error
-            falls below the side-cut threshold; the centre engine finishes
-            the burn on a throttle taper.</li>
+            <li><strong>BOOSTBACK_BURN</strong> <em>(RTLS only)</em> —
+            reverse downrange velocity and pick up return velocity. Fires a
+            subset of the booster's engines (centre + two opposing outer
+            engines by default), aiming the ballistic impact point at the
+            pad via a leapfrog predictor. Outer engines cut first when the
+            predicted error falls below the side-cut threshold; the centre
+            engine finishes the burn on a throttle taper. <em>Skipped in
+            ASDS mode</em> — downrange velocity is acceptable, the droneship
+            sits along the natural impact trajectory.</li>
             <li><strong>PRE_ENTRY_STEER</strong> — coast down, align
             retrograde via grid fins, hold attitude until the entry-burn
             altitude. No engine burn; the fins carry the aero load.</li>
@@ -2434,7 +2439,10 @@ Q   =  u·ax + v·ay
             max-Q onset. Fires at lowest throttle for a velocity-band cutoff
             sized to keep aero loads bounded, not to hit an exact speed.
             Gimbal-only attitude hold cancels the environment torque through
-            the burn.</li>
+            the burn. <em>In ASDS mode</em>, the steering loop uses a
+            retrograde AoA=180 hold rather than impact-error steering —
+            the burn is purely decelerating, aiming the pad center by
+            construction rather than by bias tuning.</li>
             <li><strong>POST_ENTRY_STEER</strong> — fin-guided descent
             through the atmosphere, closed-loop on the predicted impact
             point. Authority comes entirely from the grid fins; the loop
@@ -2449,7 +2457,11 @@ Q   =  u·ax + v·ay
             required deceleration from the current vertical speed and the
             altitude-to-go, throttles the centre engine continuously to
             reach zero velocity exactly at the leg-tip contact point. Legs
-            deploy at a preset altitude during the burn.</li>
+            deploy at a preset altitude during the burn. <em>Pad height
+            aware</em>: pads with a non-zero deck height (ASDS decks sit
+            2 m above sea level) become rigid surfaces for ground contact,
+            and the descent law aims for the actual deck surface plus
+            leg-tip extension, not sea level.</li>
             <li><strong>TOUCHDOWN_COMPLETE</strong> — engines off, hold
             steady, report touchdown speed, lateral drift, tilt, and hop
             magnitude. The block ends here; mission control downstream
@@ -2466,8 +2478,7 @@ Q   =  u·ax + v·ay
       <div class="exp-row">
         <div class="exp-label">Phase flow</div>
         <div class="exp-value">
-          <pre><span class="cmt">// Booster body only — stage runs its own mission in parallel</span>
-<span class="cmt">// (LEO Insertion V3 documents the stage track)</span>
+          <pre><span class="cmt">// RTLS: return to launch site</span>
 
 FLIP                 → nose-first → tail-first retrograde, RCS + pusher
 BOOSTBACK_BURN       → cancel downrange, aim at pad, taper to cutoff
@@ -2476,6 +2487,17 @@ ENTRY_BURN           → velocity-band retro burn, aero load bounded
 POST_ENTRY_STEER     → fin-guided descent, closed-loop on impact point
 LANDING_BURN_ALIGN   → fins ramp to zero, gimbal neutral, ballistic fall
 LANDING_BURN         → hoverslam to pad, legs deploy, V_TD adaptive
+TOUCHDOWN_COMPLETE   → engines off, hold, report touchdown metrics
+
+<span class="cmt">// ASDS: droneship, no boostback</span>
+
+FLIP                 → nose-first → tail-first retrograde, RCS + pusher
+<span class="cmt">                     (BOOSTBACK_BURN skipped)</span>
+PRE_ENTRY_STEER      → grid-fin retrograde alignment during coast
+ENTRY_BURN           → velocity-band retro burn, retrograde AoA=180 hold
+POST_ENTRY_STEER     → fin-guided descent, closed-loop on impact point
+LANDING_BURN_ALIGN   → fins ramp to zero, gimbal neutral, ballistic fall
+LANDING_BURN         → hoverslam to deck (pad height aware), legs deploy
 TOUCHDOWN_COMPLETE   → engines off, hold, report touchdown metrics</pre>
         </div>
       </div>
@@ -2484,23 +2506,31 @@ TOUCHDOWN_COMPLETE   → engines off, hold, report touchdown metrics</pre>
         <div class="exp-value">
           <p>The ones that decide the return. Everything else follows from
           the vehicle record or is a controller gain.</p>
-          <pre>TARGET_LANDING_PAD             <span class="cmt">// which pad the booster returns to</span>
+          <pre>MISSION_TYPE                   <span class="cmt">// 'RTLS' or 'ASDS' — selects the return profile</span>
+TARGET_LANDING_PAD             <span class="cmt">// RTLS: pad id (LZ-1) · ASDS: "NAME,KM" (HOPE,140)</span>
 MECO_TARGET_BOOSTER_FUEL_KG    <span class="cmt">// residual fuel at separation (return budget)</span>
-ENTRY_BURN_IMPACT_TARGET_M     <span class="cmt">// primary landing-accuracy knob</span>
+ENTRY_BURN_IMPACT_TARGET_M     <span class="cmt">// RTLS: primary landing-accuracy knob</span>
 LANDING_BURN_ALT_KM            <span class="cmt">// LB ignition altitude</span>
 LANDING_BURN_V_TD_MARGIN_M     <span class="cmt">// touchdown-speed margin at Fmin decel</span>
 LANDING_BURN_V_TD_MAX          <span class="cmt">// upper cap on touchdown speed</span>
 ENTRY_BURN_CUTOFF_VELOCITY_MS  <span class="cmt">// when entry burn spools down</span>
-BOOSTBACK_APPARENT_OFFSET_M    <span class="cmt">// aim short / long at boostback</span>
+BOOSTBACK_APPARENT_OFFSET_M    <span class="cmt">// RTLS: aim short / long at boostback</span>
 PRE_ENTRY_ALIGN_ALT_KM         <span class="cmt">// when the retrograde slew starts</span></pre>
-          <p><strong>Tuned baseline</strong> (F9 B5 booster, pad LZ-1,
-          separation at MECO 52612 kg residual, 12,000 kg payload on the
-          stage):
+          <p><strong>Tuned baseline</strong> (F9 B5 booster, 12,000 kg
+          payload on the stage, separation at MECO 52612 kg residual):</p>
+          <p><strong>RTLS</strong> (pad LZ-1):
           <code>ENTRY_BURN_IMPACT_TARGET_M</code> ≈ −825,
           <code>LANDING_BURN_ALT_KM</code> = 2.0,
           <code>ENTRY_BURN_CUTOFF_VELOCITY_MS</code> ≈ 600. Booster lands
           inside the pad footprint with legs deployed and residual fuel
           to spare.</p>
+          <p><strong>ASDS</strong> (droneship HOPE @ ~328 km):
+          <code>ENTRY_BURN_IMPACT_TARGET_M</code> = 0,
+          <code>LANDING_BURN_ALT_KM</code> = 2.0,
+          <code>ENTRY_BURN_CUTOFF_VELOCITY_MS</code> ≈ 600. Droneship
+          position is the primary knob — the pad sits where the booster
+          naturally comes down, so no bias tuning is needed. Booster
+          lands on the deck with legs deployed.</p>
         </div>
       </div>
       <div class="exp-row">
@@ -2526,7 +2556,9 @@ PRE_ENTRY_ALIGN_ALT_KM         <span class="cmt">// when the retrograde slew sta
           booster would land without further thrust, and the burn aims
           to move that impact point to the pad. Exact magnitude is a
           trade-off against residual fuel: more boostback = tighter
-          landing, less fuel for the rest of the descent.</p>
+          landing, less fuel for the rest of the descent. ASDS mode skips
+          this entirely — the droneship sits along the natural trajectory,
+          so the booster saves that fuel for landing.</p>
 
           <p><strong>3. Entry burn controls aero load, not velocity.</strong>
           The booster re-enters at supersonic speed. Unpowered re-entry
@@ -2552,7 +2584,9 @@ PRE_ENTRY_ALIGN_ALT_KM         <span class="cmt">// when the retrograde slew sta
           surface. Igniting a fraction of a second early means the
           booster hovers briefly and then climbs; igniting late means
           impact. There is no second attempt — the trajectory is
-          committed once the burn starts.</p>
+          committed once the burn starts. ASDS deck height (2 m above
+          sea level) is subtracted from the altitude-to-go so the
+          hoverslam aims for the deck surface, not sea level.</p>
         </div>
       </div>
       <div class="exp-row">
@@ -2560,15 +2594,22 @@ PRE_ENTRY_ALIGN_ALT_KM         <span class="cmt">// when the retrograde slew sta
         <div class="exp-value">
           <strong>Booster on pad, stage on orbit.</strong>
           With default constants, a 12,000 kg payload, and a stack sized
-          for the mission, the booster completes all eight phases and
-          lands inside the pad footprint with legs deployed and residual
+          for the mission, the booster completes all phases and lands
+          inside the target footprint with legs deployed and residual
           fuel to spare. Meanwhile the stage reaches its 320 km target
           orbit, circularizes, and deploys the 12,000 kg payload — the
           two tracks run independently after separation.
-          <p>Landing accuracy depends on the entry-burn bias, which is
-          tuned empirically per (stack, target orbit, pad) combination.
-          The same bias that lands a stack at 320 km may not land it at
-          500 km.</p>
+          <p><strong>RTLS</strong>: landing accuracy depends on the
+          entry-burn bias, which is tuned empirically per (stack, target
+          orbit, pad) combination. The same bias that lands a stack at
+          320 km may not land it at 500 km.</p>
+          <p><strong>ASDS</strong>: the droneship position is the primary
+          knob, not a control bias. Deploy the droneship where the
+          booster naturally comes down, and the block lands there without
+          bias tuning. Drone-ship position tolerances are tight — a
+          mis-placed ship means an off-pad landing and a lost booster —
+          but the search (see LB NOVA-6) finds the right position
+          reliably.</p>
         </div>
       </div>
       <div class="exp-row">
@@ -2580,18 +2621,24 @@ PRE_ENTRY_ALIGN_ALT_KM         <span class="cmt">// when the retrograde slew sta
             limited fin control. Attitude hold during pre-entry and
             post-entry coasts is tighter when dynamic pressure is high,
             sloppier when it isn't. Physics bound, not a tuning gap.</li>
-            <li><strong>Bias is per-configuration.</strong> The
+            <li><strong>RTLS bias is per-configuration.</strong> The
             entry-burn bias that lands a booster cleanly at one
             (stack, orbit, pad) combination is not the right value at
             another. Each new mission shape gets its own tuning pass;
             the value itself is not derivable from the vehicle
             record.</li>
+            <li><strong>ASDS requires an accurate droneship position.</strong>
+            The pad has to be where the booster naturally comes down —
+            a mis-placed ship means an off-pad landing. The block does
+            not self-correct for pad-position error; that is the tuner's
+            job.</li>
           </ul>
         </div>
       </div>
       <div class="tags">
         <span class="tag">booster-return</span>
         <span class="tag">rtls</span>
+        <span class="tag">asds</span>
         <span class="tag">autonomous</span>
         <span class="tag">hoverslam</span>
         <span class="tag">grid-fin-steering</span>
@@ -2605,9 +2652,9 @@ PRE_ENTRY_ALIGN_ALT_KM         <span class="cmt">// when the retrograde slew sta
   <div class="exp glass tool pass">
     <div class="exp-head">
       <div>
-        <h3 class="exp-title">LB NOVA-6 — Booster Landback Tuner</h3>
+        <h3 class="exp-title">LB NOVA-6 — Booster Return Tuner</h3>
         <div class="exp-id">atlas-prism · lb-nova6.html</div>
-        <div class="exp-time">12:14 AM <span class="exp-time-day">· Fri, Nov 12, 2026</span></div>
+        <div class="exp-time">12:14 AM <span class="exp-time-day">· Fri, Nov 12, 2026 · updated Nov 15, 2026</span></div>
       </div>
       <span class="exp-status tool">TOOL</span>
     </div>
@@ -2615,12 +2662,18 @@ PRE_ENTRY_ALIGN_ALT_KM         <span class="cmt">// when the retrograde slew sta
       <div class="exp-row">
         <div class="exp-label">Target</div>
         <div class="exp-value">
-          A browser-based tuning tool for <code>landbackV1</code>. Locks a
-          stack and target orbit, captures the mission's separation and
-          entry-burn states once, then searches two parameters — the
-          booster's entry-burn aim bias and its landing-burn ignition
-          altitude — against the same scoring the mission actually flies
-          on.
+          A browser-based tuning tool for <code>landbackV1</code> in both
+          mission modes. Locks a stack and target orbit, captures the
+          mission's separation and entry-burn states once, then searches
+          the mission-critical tuning parameter against the same scoring
+          the mission actually flies on:
+          <p><strong>RTLS mode</strong> — two parameters: the booster's
+          entry-burn aim bias and its landing-burn ignition altitude.</p>
+          <p><strong>ASDS mode</strong> — the droneship's downrange
+          position, plus the same landing-burn altitude. Pad position
+          replaces entry-burn bias as the primary knob — the ship sits
+          where the booster naturally comes down, and the LB altitude
+          still needs its own pass.</p>
           <p>Runs entirely in the browser at sim speed. No backend, no
           build step. Deterministic: same stack, same orbit, same
           environment config produces bit-identical trajectories across
@@ -2628,7 +2681,7 @@ PRE_ENTRY_ALIGN_ALT_KM         <span class="cmt">// when the retrograde slew sta
         </div>
       </div>
       <div class="exp-row">
-        <div class="exp-label">Why two parameters</div>
+        <div class="exp-label">Why these parameters</div>
         <div class="exp-value">
           <p>A fixed 2 km landing-burn altitude works for one stack class
           and fails at both ends of the mass spectrum. Heavy stacks
@@ -2636,12 +2689,20 @@ PRE_ENTRY_ALIGN_ALT_KM         <span class="cmt">// when the retrograde slew sta
           of altitude before reaching touchdown speed; light stacks go
           below the engine's min-flow floor, stall mid-air, and rise.
           The correct altitude is a per-stack quantity, not a constant.</p>
-          <p>The entry-burn bias controls where the booster's ballistic
-          impact point lands before the final descent. It is the primary
-          landing-accuracy knob, but it is altitude-dependent — the same
-          bias that lands a stack cleanly at 2.5 km can miss by twenty
-          metres at 2.0 km. Bias and altitude are coupled, so tuning them
-          separately, or in one search pass, doesn't converge.</p>
+          <p><strong>RTLS</strong>: the entry-burn bias controls where
+          the booster's ballistic impact point lands before the final
+          descent. It is the primary landing-accuracy knob, but it is
+          altitude-dependent — the same bias that lands a stack cleanly
+          at 2.5 km can miss by twenty metres at 2.0 km. Bias and
+          altitude are coupled, so tuning them separately, or in one
+          search pass, doesn't converge.</p>
+          <p><strong>ASDS</strong>: the droneship position is the primary
+          knob. Unlike the entry-burn bias — which is a tick-triggered
+          burn cutoff, so its response curve has cliffs at each cutoff
+          boundary — pad position is a continuous physical quantity.
+          A 1 mm pad shift moves the aim 1 mm. The landscape is a clean
+          V-shape, monotone on each side, no cliffs. Search converges
+          faster and to tighter precision than RTLS mode.</p>
         </div>
       </div>
       <div class="exp-row">
@@ -2649,21 +2710,29 @@ PRE_ENTRY_ALIGN_ALT_KM         <span class="cmt">// when the retrograde slew sta
         <div class="exp-value">
           <p>Two stages, run in order. Both use the same INIT capture —
           SA and EB snapshots stored once per session — so every eval
-          restarts from the entry-burn state, not from liftoff.</p>
+          restarts from the entry-burn state, not from liftoff. The
+          search mode (RTLS bias / ASDS pos) is selected before INIT;
+          switching modes requires a fresh INIT.</p>
           <pre><span class="cmt">// INIT (once per session)</span>
 capture SEPARATED_AXIAL  →  SA snapshot
 capture ENTRY_BURN       →  EB snapshot   <span class="cmt">// the tuning baseline</span>
+<span class="cmt">// select MISSION_TYPE first — pad state differs between RTLS and ASDS</span>
 
-<span class="cmt">// STAGE 1 — LB altitude finder</span>
+<span class="cmt">// STAGE 1 — LB altitude finder (both modes)</span>
 calibrate bias at the current alt    <span class="cmt">// bias ← bias − dr, until |dr| &lt; 5 m</span>
 coarse-sweep alt over [lo, hi]       <span class="cmt">// 5–10 samples, shared calibrated bias</span>
 per-alt drift correction             <span class="cmt">// if dr &gt; 5 m at a new alt, one jump here</span>
 pick mid of tied-best cost band      <span class="cmt">// most margin from both thrust edges</span>
 
-<span class="cmt">// STAGE 2 — bias search</span>
-walk by downrange sign               <span class="cmt">// overshoot → bias more negative, undershoot → more positive</span>
-bracket on sign flip                 <span class="cmt">// dr crosses zero between two evals</span>
-golden-section on score inside bracket <span class="cmt">// ±30 window around the converged point</span></pre>
+<span class="cmt">// STAGE 2 — position search (mode-specific)</span>
+RTLS: walk bias by downrange sign    <span class="cmt">// overshoot → bias more negative, undershoot → more positive</span>
+      bracket on sign flip
+      golden-section on score inside bracket
+
+ASDS: walk pos by downrange sign     <span class="cmt">// overshoot → pos more positive, undershoot → more negative</span>
+      bracket on sign flip
+      regula-falsi on downrange (dr) inside bracket   <span class="cmt">// dr is the V-shape signal</span>
+      converges to sub-metre in 5–7 evals</pre>
         </div>
       </div>
       <div class="exp-row">
@@ -2691,7 +2760,7 @@ golden-section on score inside bracket <span class="cmt">// ±30 window around t
           scale with LB duration: a higher ignition altitude means a
           longer burn, not a worse burn. Including them would bias the
           search toward short ignitions regardless of quality.</p>
-          <p><strong>Bias stage — touchdown accuracy.</strong>
+          <p><strong>Position stage — touchdown accuracy.</strong>
           <code>x/1 + vx²/0.5 + ω²/4</code>, plus deadbanded penalties
           for tilt, vertical speed, hop, mean tilt, and final-approach
           duration. Downrange error (x) is linear — the primary accuracy
@@ -2702,25 +2771,49 @@ golden-section on score inside bracket <span class="cmt">// ±30 window around t
           the best share the same rank in the leaderboard — no fuel or
           time tiebreak. When physics says "equally good", the tool
           doesn't force a winner.</p>
+          <p><strong>ASDS precision</strong>: because pad position is
+          continuous, the position search routinely reaches sub-metre
+          downrange error (typically 3–5 cm on the tuned baseline). This
+          matches the tuner's own precision floor from the bias-rounding
+          and LB descent law, not a search limitation.</p>
         </div>
       </div>
       <div class="exp-row">
         <div class="exp-label">Key parameters</div>
         <div class="exp-value">
-          <pre>LB alt lo / hi (km)            <span class="cmt">// altitude sweep window</span>
+          <pre><span class="cmt">// mode</span>
+mission type                   <span class="cmt">// RTLS or ASDS — selects which param is tuned</span>
+
+<span class="cmt">// altitude stage (both modes)</span>
+LB alt lo / hi (km)            <span class="cmt">// altitude sweep window</span>
 alt coarse step (km)           <span class="cmt">// initial sweep resolution (refined inside the feasible band)</span>
-bias lo / hi / start           <span class="cmt">// bias search window</span>
-min step                       <span class="cmt">// golden-section convergence floor</span>
 V_TD margin (m)                <span class="cmt">// anti-stall touchdown-speed margin, blank = preset</span>
-H_STALL (m)                    <span class="cmt">// stall-catch altitude, blank = preset</span></pre>
+H_STALL (m)                    <span class="cmt">// stall-catch altitude, blank = preset</span>
+
+<span class="cmt">// position stage — RTLS mode</span>
+bias lo / hi / start           <span class="cmt">// entry-burn bias search window (metres)</span>
+min step                       <span class="cmt">// convergence floor</span>
+
+<span class="cmt">// position stage — ASDS mode</span>
+pos lo / hi / start (m)        <span class="cmt">// droneship downrange search window</span>
+pos min step (m)               <span class="cmt">// convergence floor (default 0.1 m)</span></pre>
           <p><strong>Tuned baseline</strong> (F9 B5 stack, 320 km target,
-          12,000 kg payload, pad LZ-1):
+          12,000 kg payload):</p>
+          <p><strong>RTLS</strong> (pad LZ-1):
           <code>LB alt</code> ≈ 2.0 km,
           <code>bias</code> ≈ −825,
           <code>MECO_TARGET_BOOSTER_FUEL_KG</code> = 52612,
           <code>ENTRY_BURN_CUTOFF_VELOCITY_MS</code> ≈ 600. Booster lands
           inside the pad footprint with legs deployed and touchdown speed
           inside the safety envelope.</p>
+          <p><strong>ASDS</strong> (droneship HOPE):
+          <code>LB alt</code> ≈ 2.9 km,
+          <code>pos</code> ≈ 328.20 km,
+          <code>MECO_TARGET_BOOSTER_FUEL_KG</code> = 52612,
+          <code>ENTRY_BURN_CUTOFF_VELOCITY_MS</code> ≈ 600,
+          <code>ENTRY_BURN_IMPACT_TARGET_M</code> = 0 (aim pad center).
+          Booster lands on the deck with sub-metre downrange error and
+          legs deployed.</p>
         </div>
       </div>
       <div class="exp-row">
@@ -2730,36 +2823,54 @@ H_STALL (m)                    <span class="cmt">// stall-catch altitude, blank 
             <li><strong>Live telemetry</strong> — elapsed, ops/sec, total
             operations, and sim time with a ×N speedup tag, all reset per
             operation so a single eval's cost is measurable.</li>
-            <li><strong>Eval-by-eval table</strong> — LB alt, bias, score,
-            status, TD metrics (x, vx, vy-impact, θ, ω), hop, final-approach
-            time, bounce height, fuel remaining, LB start altitude. Click
-            any row for a full detail panel with score breakdown, fuel
-            breakdown, mission timeline, and eight per-phase charts.</li>
-            <li><strong>Bias vs score and bias vs downrange charts</strong>
-            — one point per eval, tied to the currently selected LB
-            altitude so charts don't mix runs from different alts.</li>
+            <li><strong>Eval-by-eval table</strong> — LB alt, bias or
+            pos (mode-dependent column), score, status, TD metrics
+            (x, vx, vy-impact, θ, ω), hop, final-approach time, bounce
+            height, fuel remaining, LB start altitude. Click any row for
+            a full detail panel with score breakdown, fuel breakdown,
+            mission timeline, and eight per-phase charts.</li>
+            <li><strong>Bias/pos vs score and bias/pos vs downrange
+            charts</strong> — one point per eval, tied to the currently
+            selected LB altitude so charts don't mix runs from different
+            alts. Both charts hide failed evals when at least one landed,
+            so the successful cluster around the target isn't compressed
+            to a single pixel column by a far crash probe.</li>
             <li><strong>Ground log export</strong> — last eval's per-tick
             descent from ~45 m AGL to touchdown: altitude, hEff (leg-tip
             height above ground), vertical speed, thrust, thrust command,
             landed/crashed flags, and fuel remaining. Essential for
             diagnosing landing-burn transients that don't show up in the
             aggregate metrics.</li>
+            <li><strong>Search history</strong> — every completed search
+            (scan, sweep, manual eval, alt-search) persisted to
+            localStorage (rolling 20 entries). Each entry stores the
+            config snapshot at run time plus the best result. Three
+            per-entry actions: <em>Use bias</em> (fills the search start
+            field), <em>Load config</em> (restores MECO / G / T / mission
+            type / LB tuning + search start), <em>Delete</em>. Survives
+            page reload / back.</li>
           </ul>
         </div>
       </div>
       <div class="exp-row">
         <div class="exp-label">Result</div>
         <div class="exp-value">
-          <strong>Deterministic tuned (alt, bias) pair.</strong>
+          <strong>Deterministic tuned (alt, bias/pos) tuple.</strong>
           After INIT and both stages, the leaderboard shows every eval
           ranked by score, with tied rows flagged explicitly. The winning
-          pair maps directly to <code>LANDING_BURN_ALT_KM</code> and
-          <code>ENTRY_BURN_IMPACT_TARGET_M</code> in the mission config.
+          tuple maps directly to the mission config:
+          <p><strong>RTLS</strong>: <code>LANDING_BURN_ALT_KM</code> +
+          <code>ENTRY_BURN_IMPACT_TARGET_M</code>.</p>
+          <p><strong>ASDS</strong>: <code>LANDING_BURN_ALT_KM</code> +
+          the droneship <code>arcOffsetM</code> (via
+          <code>setASDSPosition</code>) + <code>TARGET_LANDING_PAD</code>
+          = <code>"HOPE,km"</code>.</p>
           <p>Typical run: one INIT (~40 s), one altitude stage (~5 evals),
-          one bias search (~10–15 evals). Wall time 3–5 minutes for the
-          full tuning pass on a stack that has residual fuel for return.</p>
+          one position search (~5–15 evals depending on mode). Wall time
+          3–6 minutes for the full tuning pass on a stack that has
+          residual fuel for return.</p>
           <p>A successful run produces a booster that lands inside the
-          pad footprint with touchdown speed, lateral drift, tilt, and
+          target footprint with touchdown speed, lateral drift, tilt, and
           spin all inside the safety envelope — verified against the same
           scoring the mission flies on, not a proxy.</p>
         </div>
@@ -2768,31 +2879,38 @@ H_STALL (m)                    <span class="cmt">// stall-catch altitude, blank 
         <div class="exp-label">Drawbacks</div>
         <div class="exp-value">
           <ul>
-            <li><strong>Local minimum, not certified global
+            <li><strong>RTLS: local minimum, not certified global
             minimum.</strong> The bias surface has cliffs and plateaus
-            that defeat gradient descent; the tool uses bracket +
-            golden-section to converge reliably to a local minimum. In
-            practice the practical minimum is usually the one the search
-            finds, but the tool does not certify it is the global one.</li>
-            <li><strong>Per-configuration tuning.</strong> A (alt, bias)
-            pair tuned for one stack at 320 km is not the right pair for
-            a different stack, a different target orbit, or a different
-            pad. Each new mission shape is its own tuning run.</li>
+            — a consequence of the entry-burn cutoff being a tick-triggered
+            burn event, so the response is a staircase with ~7 m
+            downrange jumps at each cutoff boundary. The tool uses
+            bracket + golden-section to converge reliably to a local
+            minimum inside the practical basin. In practice the practical
+            minimum is usually the one the search finds, but the tool
+            does not certify it is the global one.</li>
+            <li><strong>ASDS: no cliffs, but still per-configuration.</strong>
+            The V-shape is smooth and converges tighter than RTLS, but
+            a (alt, pos) pair tuned for one stack at 320 km is still not
+            the right pair for a different stack, orbit, or environment
+            config. Each new mission shape is its own tuning run.</li>
             <li><strong>One stack, one INIT per session.</strong> The
-            SA/EB snapshots are tied to the current stack, orbit, and
-            environment config. Changing any of those requires a fresh
-            INIT; a different booster means a fresh session.</li>
+            SA/EB snapshots are tied to the current stack, orbit, mission
+            type, and environment config. Changing any of those requires
+            a fresh INIT; a different booster means a fresh session.</li>
           </ul>
         </div>
       </div>
       <div class="tags">
         <span class="tag">browser-based</span>
-        <span class="tag">booster-landback</span>
+        <span class="tag">booster-return</span>
+        <span class="tag">rtls</span>
+        <span class="tag">asds</span>
         <span class="tag">two-stage-search</span>
         <span class="tag">deterministic</span>
         <span class="tag">snapshot-shared</span>
         <span class="tag">physics-guided</span>
         <span class="tag">diagnostics</span>
+        <span class="tag">search-history</span>
       </div>
     </div>
   </div>
