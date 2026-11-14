@@ -1204,27 +1204,89 @@ function _buildASDSPadForGuidance(spec, env) {
   const startM = OCEAN_ZONE_START_DEG * Math.PI / 180 * R;
   const endM = OCEAN_ZONE_END_DEG * Math.PI / 180 * R;
   const requestedM = Math.round(km * 1000);
-  function validPos(m) {
+  function boundsOk(m) {
     if (m - ASDS_LZ_WEST_M < startM) return false;
     if (m + ASDS_LZ_EAST_M > endM) return false;
-    for (const p of existing) {
-      const gap = Math.abs(m - p.arcOffsetM) - ASDS_LENGTH_M;
-      if (gap < ASDS_MIN_GAP_M) return false;
-    }
     return true;
   }
   let appliedM = requestedM;
   let wasPositionAdjusted = false;
-  if (!validPos(requestedM)) {
+  if (!boundsOk(requestedM)) {
+    let found = false;
     for (let d = 1000; d <= 10000; d += 1000) {
-      if (validPos(requestedM + d)) { appliedM = requestedM + d; wasPositionAdjusted = true; break; }
-      if (validPos(requestedM - d)) { appliedM = requestedM - d; wasPositionAdjusted = true; break; }
+      if (boundsOk(requestedM + d)) { appliedM = requestedM + d; wasPositionAdjusted = true; found = true; break; }
+      if (boundsOk(requestedM - d)) { appliedM = requestedM - d; wasPositionAdjusted = true; found = true; break; }
     }
-    // Last resort — fall back to HOPE,140 (predictable, ship always deploys)
-    if (!validPos(appliedM)) {
+    if (!found) {
       appliedM = 140000;
       appliedName = (takenNames.has('HOPE') ? 'HOPE-1' : 'HOPE');
       wasPositionAdjusted = true;
+    }
+  }
+
+  // ---- Shift conflicting existing pads out of the way ----
+  // Latest deploy wins requested position EXACTLY. Any existing pad within
+  // hull-gap is moved to nearest valid spot. Lets pre-deploy HOPE @ 328.204
+  // and guide-driven deploy @ 328.204 co-exist: pre-existing HOPE shifts
+  // out, guide's pad (HOPE-1 by name collision) takes 328.204 exactly —
+  // fixes the 19m/1km off-target bug seen when pre-deploy + guide ASDS
+  // combine. Same policy as asds.js deployASDS.
+  const shifts = [];
+  const conflicting = existing.filter(function (p) {
+    return (Math.abs(appliedM - (p.arcOffsetM || 0)) - ASDS_LENGTH_M) < ASDS_MIN_GAP_M;
+  });
+  if (conflicting.length) {
+    const otherPads = [];
+    for (let i = 0; i < existing.length; i++) {
+      if (conflicting.indexOf(existing[i]) < 0) {
+        otherPads.push({ arcOffsetM: existing[i].arcOffsetM, name: existing[i].name });
+      }
+    }
+    otherPads.push({ arcOffsetM: appliedM, name: appliedName });
+    let shiftAbort = false;
+    for (let i = 0; i < conflicting.length; i++) {
+      const p = conflicting[i];
+      let newM = null;
+      for (let d = 1000; d <= 10000; d += 1000) {
+        let hit = false;
+        for (let sgn = -1; sgn <= 1; sgn += 2) {
+          const cand = Math.round((p.arcOffsetM || 0) + sgn * d);
+          if (cand - ASDS_LZ_WEST_M < startM) continue;
+          if (cand + ASDS_LZ_EAST_M > endM) continue;
+          let ok = true;
+          for (let j = 0; j < otherPads.length; j++) {
+            const gap = Math.abs(cand - otherPads[j].arcOffsetM) - ASDS_LENGTH_M;
+            if (gap < ASDS_MIN_GAP_M) { ok = false; break; }
+          }
+          if (ok) { newM = cand; hit = true; break; }
+        }
+        if (hit) break;
+      }
+      if (newM == null) { shiftAbort = true; break; }
+      shifts.push({
+        id: p.id, name: p.name,
+        oldM: p.arcOffsetM, newM: newM,
+        pad: Object.assign({}, p, { arcOffsetM: newM }),
+      });
+      otherPads.push({ arcOffsetM: newM, name: p.name });
+    }
+    if (shiftAbort) {
+      // Cannot shift — old ±10km nudge fallback for the NEW pad.
+      shifts.length = 0;
+      for (let d = 1000; d <= 10000; d += 1000) {
+        let hit = false;
+        for (let sgn = -1; sgn <= 1; sgn += 2) {
+          const cand = Math.round(requestedM + sgn * d);
+          if (!boundsOk(cand)) continue;
+          let ok = true;
+          for (let k = 0; k < existing.length; k++) {
+            const gap = Math.abs(cand - existing[k].arcOffsetM) - ASDS_LENGTH_M;
+            if (gap < ASDS_MIN_GAP_M) { ok = false; break; }
+          }
+          if (ok) { appliedM = cand; wasPositionAdjusted = true; hit = true; break; }
+        }
+        if (hit) break;
+      }
     }
   }
 
@@ -1241,6 +1303,7 @@ function _buildASDSPadForGuidance(spec, env) {
   };
   return {
     pad: pad,
+    shifts: shifts,
     wasNameAdjusted: wasNameAdjusted,
     wasPositionAdjusted: wasPositionAdjusted,
     requestedName: requestedName,
@@ -1404,11 +1467,26 @@ function _landbackTick(snapshot) {
       const _env = Derivation.getEnv() || {};
       const _built = _buildASDSPadForGuidance(_lbState.asdsSpec, _env);
       _lbState.asdsPad = _built.pad;
+      // Broadcast shift moves FIRST, then the add — downstream CONFIGs
+      // see moved pads before the new arrival, no transient 2-pads-same-spot.
+      if (_built.shifts && _built.shifts.length) {
+        for (let _si = 0; _si < _built.shifts.length; _si++) {
+          send({ type: 'moveLandingPad', pad: _built.shifts[_si].pad });
+        }
+      }
       send({ type: 'addLandingPad', pad: _built.pad });
+      let _shiftTxt = '';
+      if (_built.shifts && _built.shifts.length) {
+        _shiftTxt = ' (shifted: ' + _built.shifts.map(function (sh) {
+          const _dm = sh.newM - sh.oldM;
+          return sh.name + '→' + (sh.newM / 1000).toFixed(2) + 'km (' + (_dm >= 0 ? '+' : '') + (_dm / 1000).toFixed(2) + 'km)';
+        }).join(', ') + ')';
+      }
       console.log('[landbackV1] ASDS deployed (worker-built): ' + _built.pad.name +
         ' @ ' + (_built.pad.arcOffsetM / 1000).toFixed(2) + ' km, height=' + _built.pad.heightM + 'm' +
         (_built.wasNameAdjusted ? ' (renamed from "' + _built.requestedName + '")' : '') +
         (_built.wasPositionAdjusted ? ' (moved from ' + _built.requestedKm.toFixed(2) + ' km)' : '') +
+        _shiftTxt +
         ' — sent via physicsPort, awaiting main echo');
     }
   }
