@@ -3084,24 +3084,23 @@ setState(s) {
       ENTRY_BURN_GIMBAL_ENGINES: "C",      // engines that gimbal to cancel env torque (subset of above; expand if SATURATED)
       ENTRY_BURN_CUTOFF_VELOCITY_MS: 600,  // cutoff when Earth-relative speed falls to this value
       ENTRY_BURN_IMPACT_TARGET_M: -825,   // m: bias burn target west so post-cutoff drag/fin drift lands near pad
-      // Experimental (default off): when true, RTLS entry burn switches from
-      // impact-error steering to ASDS-style retrograde AoA=180 hold. Entry
-      // burn becomes purely decelerating (no trajectory steering), so
-      // ENTRY_BURN_IMPACT_TARGET_M bias has zero effect. Tests hypothesis:
-      // decoupling entry burn from the feedback loop makes the bias-vs-dr
-      // landscape smoother (like ASDS pad-position search). Promote to
-      // permanent if curve smoothness confirmed. Toggle only used by
-      // tests/entry-burn-test.html during hypothesis exploration.
+      // Experimental (default off): RTLS entry burn uses ASDS-style
+      // retrograde AoA=180 hold instead of impact-error steering.
+      // Hypothesis tested 2025-11: boostback bias gives a MONOTONE
+      // dr-vs-bias curve (good — walk-search direction reliable),
+      // BUT the curve is a staircase with ~7m cliffs at every
+      // burn-cutoff tick boundary. Discrete quantization, not fixable
+      // by fine actuators on top (PES tested, also staircase).
+      // Smooth RTLS tuning requires guidance architecture change
+      // (continuous burn-cutoff ramp). Parked. Diagnostic tooling
+      // preserved in tests/entry-burn-test.html.
       ENTRY_BURN_RCS_ATTITUDE_HOLD: false,
       // Fine-tuning aim offset applied to PES and LB target pad. Shifted
-      // position in metres (east positive). Continuous knob: unlike
-      // boostback or entry burn bias (tick-triggered cutoffs → staircase
-      // response), PES/LB are closed-loop continuous controllers, so a
-      // 1mm PES_PAD_BIAS_M → ~0.78mm landing shift (PES residual decay
-      // factor). Two-stage tuning pattern: coarse boostback gets within
-      // PES authority envelope (~3m residual), PES_PAD_BIAS_M nulls the
-      // remainder smoothly. Test page (tests/entry-burn-test.html) uses
-      // this for hypothesis verification. Default 0 = no behaviour change.
+      // position in metres (east positive). Tested as the "fine stage"
+      // half of a coarse+fine tuning scheme — did NOT eliminate the
+      // boostback cliff (PES/LB internal quantization still produces
+      // discrete jumps). Coarse+fine idea parked; constant stays
+      // harmless and dormant at 0. No production impact.
       PES_PAD_BIAS_M: 0,
       // POST_ENTRY_STEER
       LANDING_BURN_ALIGN_ALT_KM: 5,        // AGL km: PES stops steering, fin ramps 0, coast to aero equilibrium
