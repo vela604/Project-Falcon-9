@@ -1350,7 +1350,14 @@ function _drawASDS(ctx, pad, worldPos, camAng, mpp, pal) {
   if (px + reach < 0 || px - reach > canvas.width ||
       py + reach < 0 || py - reach > canvas.height) return;
   
-  const draftM = 5.0, freeboardM = 2.5;
+  // RENDER-FRAME FIX: worldPos points to DECK position (pad.heightM above
+  // sea level, what physics uses for booster contact). But all geometry
+  // below assumes y=0 = WATERLINE. Without translate below, ship renders
+  // pad.heightM too high — booster lands on brown waterline band instead
+  // of black deck. Fix: freeboardM = pad.heightM (was hardcoded 2.5), and
+  // translate origin down by pad.heightM after scale.
+  const deckHeightM = Number.isFinite(pad.heightM) ? pad.heightM : 2;
+  const draftM = 5.0, freeboardM = deckHeightM;
   const deckY = -freeboardM, hullBotY = draftM;
   const contW = 15.0, contH = 8.0;
   const blastW = 2.0, blastH = 3.5;
@@ -1359,6 +1366,7 @@ function _drawASDS(ctx, pad, worldPos, camAng, mpp, pal) {
   ctx.translate(px, py);   // local (0,0) = LZ center (what user inputs)
   ctx.rotate(-(worldPos.phi - camAng));
   ctx.scale(1 / mpp, 1 / mpp);
+  if (deckHeightM !== 0) ctx.translate(0, deckHeightM);   // origin → sea level
   
   // ---- Hull below waterline (rust) ----
   ctx.fillStyle = 'rgb(38, 24, 18)';
