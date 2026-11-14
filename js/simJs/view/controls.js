@@ -1450,12 +1450,23 @@ function _syncMissionRecordSession(status) {
     if (typeof endGuideSession === 'function') endGuideSession();
   }
   
-  // Capture start hash at first valid tick after guide start
+  // Capture start hash + FULL snapshot at first valid tick after guide start
   if (curActive && window.__guideSession && window.__guideSession.startT === null) {
     const body = state.bodies && state.bodies[state.activeBodyIndex || 0];
     if (body && state.simTime > 0 && typeof missionStateHash === 'function') {
       window.__guideSession.startT = state.simTime;
       window.__guideSession.startHash = missionStateHash(body, state.simTime);
+      window.__guideSession.startSnapshot = {
+        t: state.simTime,
+        bodyId: body.id,
+        rx: body.rx, ry: body.ry,
+        vx: body.vx, vy: body.vy,
+        theta: body.theta, omega: body.omega,
+        fuel: (body.memberFuel && body.memberFuel[0]) || 0,
+        engines: (body.engines || []).map(function (e) {
+          return { id: e.id, mf: e.massFlowRate, gimbal: e.gimbalDeg };
+        }),
+      };
     }
   }
   

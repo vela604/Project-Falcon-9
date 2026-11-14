@@ -110,8 +110,16 @@ function saveMissionRecords(records) {
 // mismatch) return null — caller treats as "no record", hides predictions.
 function getMissionRecord(comboKey) {
   if (!comboKey) return null;
+  // User records take priority over defaults
   const user = loadMissionRecords().find(r => r.comboKey === comboKey);
-  if (user && !isRecordStale(user)) return user;
+  if (user && !isRecordStale(user)) {
+    // Partial: optimistic — comboKey match is enough. Only physicsVersion
+    // staleness disqualifies (already checked above).
+    // Complete: same — hash gate applied at CALLER level (Round 3 UI)
+    // only if record.complete + initial hash mismatch. This function
+    // returns the record regardless; caller decides trust level.
+    return user;
+  }
   if (typeof DEFAULT_MISSION_RECORDS !== 'undefined' && Array.isArray(DEFAULT_MISSION_RECORDS)) {
     const def = DEFAULT_MISSION_RECORDS.find(r => r.comboKey === comboKey);
     if (def && !isRecordStale(def)) return def;
@@ -247,13 +255,16 @@ window.captureCurrentMissionRecord = async function () {
       durationS: state.simTime,
     },
     initialStateHash: session.startHash || missionStateHash(body, state.simTime),
-    initialStateSnapshot: {
-      t: session.startT || state.simTime,
+    initialStateSnapshot: session.startSnapshot || {
+      t: state.simTime,
       bodyId: body.id,
       rx: body.rx, ry: body.ry,
       vx: body.vx, vy: body.vy,
       theta: body.theta, omega: body.omega,
       fuel: (body.memberFuel && body.memberFuel[0]) || 0,
+      engines: (body.engines || []).map(function (e) {
+        return { id: e.id, mf: e.massFlowRate, gimbal: e.gimbalDeg };
+      }),
     },
     phases: phases,
     events: events,
