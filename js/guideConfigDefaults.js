@@ -399,6 +399,11 @@ leoInsertionV3: _mkDefault(
       LANDING_BURN_NOAUTH: 0.12,
       LANDING_BURN_H_BLEND: 8.0,
       POST_ENTRY_GRIDFIN_RAMP_DEG_S: 3,
+      // Parked experimental toggles (asds shift policy / PES fine-stage).
+      // Match guidance-blocks.js defaultConstants so compat validation
+      // doesn't drop them on preset load. Behaviour unchanged.
+      ENTRY_BURN_RCS_ATTITUDE_HOLD: false,
+      PES_PAD_BIAS_M: 0,
     },
   },
     ['full-mission', 'expendable'],
