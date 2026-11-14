@@ -1935,26 +1935,17 @@ canvas.mini-graph { width: 100%; height: 60px; background: var(--bg); border-rad
 
 
 /* ============================================================
-   Round 3 — predictive UI drift classes (guidePhaseTrack)
+   Predicted phase-time styling — dimmer than actual, so the user
+   can tell "this is a prediction, not real yet". Same format and
+   position as actual — just lighter opacity / italic.
    ============================================================ */
-.gp-trel.gp-trel-match {
-  color: var(--green) !important;
-  font-weight: 600;
-}
-.gp-trel.gp-trel-warn {
-  color: var(--yellow) !important;
-}
-.gp-trel.gp-trel-drift {
-  color: var(--danger) !important;
-  font-weight: 600;
-}
-.gp-trel.gp-trel-active-pred {
-  color: var(--cyan) !important;
-  font-style: italic;
-  opacity: 0.85;
-}
-.gp-trel.gp-trel-future-pred {
+.gp-tabs.gp-tabs-pred {
   color: var(--dim) !important;
   font-style: italic;
-  opacity: 0.70;
+  opacity: 0.75;
+}
+.gp-trel.gp-trel-pred {
+  color: var(--dim) !important;
+  font-style: italic;
+  opacity: 0.60;
 }
