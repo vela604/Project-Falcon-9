@@ -3147,17 +3147,25 @@ if (isSingleNozzle) {
       const _obCosT = Math.cos(_ob.theta || 0), _obSinT = Math.sin(_ob.theta || 0);
       const _bTopX = _ob.rx - _obH * _obSinT;
       const _bTopY = _ob.ry + _obH * _obCosT;
-      // World → stage body-local (undo translate + rotate(-visualTheta))
-      const _wdx = _bTopX - body.rx;
-      const _wdy = _bTopY - body.ry;
-      const _lx = _wdx * _vCos - _wdy * _vSin;
-      const _ly = _wdx * _vSin + _wdy * _vCos;
-      // Body-local → post-gimbal (undo rotate(gimbalRad))
+      // CRITICAL FIX: convert BOTH endpoints to SCREEN pixels via
+      // worldToScreen before doing rotation math. Previous bug: mixed world
+      // meters (from _ob.rx/ry) with screen pixels (bellExitY_px, flameLen).
+      // Result: clip Y was garbage → plume passed through booster, impact
+      // fan drew at random places in air. Correct unit = screen pixels.
+      const _bTopScreen = worldToScreen(_bTopX, _bTopY);
+      const _dsx = _bTopScreen[0] - px;
+      const _dsy = _bTopScreen[1] - py;
+      // Undo Rotate(-visualTheta) by applying Rotate(+visualTheta).
+      // Canvas Rotate(θ): (x,y) → (x·cosθ - y·sinθ, x·sinθ + y·cosθ)
+      const _lx = _dsx * _vCos - _dsy * _vSin;
+      const _ly = _dsx * _vSin + _dsy * _vCos;
+      // Undo Rotate(gimbalRad) by applying Rotate(-gimbalRad)
       const _pgX = _lx * _gCos + _ly * _gSin;
       const _pgY = -_lx * _gSin + _ly * _gCos;
-      // Plume local: y=0 is bell exit, +y is plume direction
+      // Undo Translate(0, bellExitY_px) — now everything in plume-local px
       const _plumeLocalY = _pgY - bellExitY_px;
-      const _obRadius = (_ob.members[0].width || 0) / 2;
+      // Radius in SCREEN PIXELS (was world meters — over-wide overlap check)
+      const _obRadius = ((_ob.members[0].width || 0) / 2) / mpp;
       // Skip if booster is off to the side (plume misses its cylinder)
       if (Math.abs(_pgX) > _obRadius + 2) continue;
       // Clip only if booster top is within reach of the plume
