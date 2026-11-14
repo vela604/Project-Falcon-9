@@ -190,74 +190,98 @@ const SimLighting = (function () {
   }
 
   function drawSun(ctx, cv, dens, se) {
-    // Replaced floating sun disc with a directional arrow so the planet
-    // view reads as a compass, not a UI icon. Arrow points from off-screen
-    // edge toward Earth, ending just above the planet's surface.
-    const dir = sunScreenDir();
-    const earthPx = CONFIG.EARTH_RADIUS / metersPerPixel();
-    const earthCenter = worldToScreen(0, 0);
-    const ang = Math.atan2(dir[1], dir[0]);
-    const edgeDist = Math.hypot(cv.width, cv.height) * 1.5;
-    const sx = earthCenter[0] + dir[0] * edgeDist;
-    const sy = earthCenter[1] + dir[1] * edgeDist;
-    const ex = earthCenter[0] + dir[0] * (earthPx + 20);
-    const ey = earthCenter[1] + dir[1] * (earthPx + 20);
-    ctx.save();
-    ctx.strokeStyle = 'rgba(255, 210, 100, 0.45)';
-    ctx.lineWidth = 2.5;
-    ctx.setLineDash([12, 8]);
-    ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(ex, ey); ctx.stroke();
-    ctx.setLineDash([]);
-    const headLen = 14;
-    ctx.beginPath();
-    ctx.moveTo(ex, ey);
-    ctx.lineTo(ex - headLen * Math.cos(ang - 0.35), ey - headLen * Math.sin(ang - 0.35));
-    ctx.lineTo(ex - headLen * Math.cos(ang + 0.35), ey - headLen * Math.sin(ang + 0.35));
-    ctx.closePath();
-    ctx.fillStyle = 'rgba(255, 210, 100, 0.65)';
-    ctx.fill();
-    const labelDist = earthPx + 105;
-    const tx = earthCenter[0] + dir[0] * labelDist;
-    const ty = earthCenter[1] + dir[1] * labelDist;
-    ctx.fillStyle = 'rgba(255, 220, 140, 0.85)';
-    ctx.font = 'bold 11px "JetBrains Mono", monospace';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.shadowColor = 'rgba(0,0,0,0.85)';
-    ctx.shadowBlur = 4;
-    ctx.fillText('SUNLIGHT', tx, ty);
-    ctx.restore();
-  }
+  // Sun as bright glow disc placed at farthest-visible along its direction,
+  // capped outside Earth — same "at infinity" feel as moon. Replaces the
+  // old line+arrow metaphor.
+  const dir = sunScreenDir();
+  const earthPx = CONFIG.EARTH_RADIUS / metersPerPixel();
+  const ec = worldToScreen(0, 0);
+  const sunR = 16;
+  const place = _farPlacementAlongDir(ec[0], ec[1], dir[0], dir[1], earthPx, sunR, cv);
+  const x = place.x, y = place.y;
+  if (x < -sunR * 3.5 || y < -sunR * 3.5 || x > cv.width + sunR * 3.5 || y > cv.height + sunR * 3.5) return;
+  ctx.save();
+  // Outer warm glow (soft, wide)
+  const gOuter = ctx.createRadialGradient(x, y, 0, x, y, sunR * 3.5);
+  gOuter.addColorStop(0, 'rgba(255, 240, 180, 0.55)');
+  gOuter.addColorStop(0.35, 'rgba(255, 210, 100, 0.30)');
+  gOuter.addColorStop(1, 'rgba(255, 180, 60, 0)');
+  ctx.fillStyle = gOuter;
+  ctx.beginPath(); ctx.arc(x, y, sunR * 3.5, 0, TAU); ctx.fill();
+  // Inner hot disc
+  const gInner = ctx.createRadialGradient(x, y, 0, x, y, sunR);
+  gInner.addColorStop(0, 'rgba(255, 252, 240, 0.98)');
+  gInner.addColorStop(0.5, 'rgba(255, 235, 150, 0.95)');
+  gInner.addColorStop(1, 'rgba(255, 200, 80, 0.65)');
+  ctx.fillStyle = gInner;
+  ctx.beginPath(); ctx.arc(x, y, sunR, 0, TAU); ctx.fill();
+  // Thin rim
+  ctx.strokeStyle = 'rgba(255, 220, 130, 0.55)';
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.arc(x, y, sunR, 0, TAU); ctx.stroke();
+  // SUNLIGHT label
+  ctx.font = 'bold 11px "JetBrains Mono", monospace';
+  ctx.textAlign = 'center';
+  const _lblBelow = (y + sunR + 18 < cv.height);
+  ctx.textBaseline = _lblBelow ? 'top' : 'bottom';
+  ctx.shadowColor = 'rgba(0,0,0,0.85)';
+  ctx.shadowBlur = 4;
+  ctx.fillStyle = 'rgba(255, 220, 140, 0.92)';
+  ctx.fillText('SUNLIGHT', x, _lblBelow ? y + sunR + 6 : y - sunR - 6);
+  ctx.restore();
+}
 
   // Planet view: moon disc with its true phase, at the screen edge in the moon's direction.
-  function drawMoon(ctx, cv) {
-    const cam = cameraWorldPosition(), m = moonDir(), K = 1000;
-    const a = worldToScreen(cam.x, cam.y), b = worldToScreen(cam.x + m.x * K, cam.y + m.y * K);
-    let dx = b[0] - a[0], dy = b[1] - a[1]; const l = Math.hypot(dx, dy) || 1; dx /= l; dy /= l;
-    const ec = worldToScreen(0, 0), earthPx = CONFIG.EARTH_RADIUS / metersPerPixel();
-    const x = ec[0] + dx * (earthPx + 70), y = ec[1] + dy * (earthPx + 70), r = 11;
-    if (x < -r || y < -r || x > cv.width + r || y > cv.height + r) return;
-    // Phase: lit side faces the Sun. Terminator is an ellipse of half-width r*|cos psi|.
-    const sd = sunScreenDir(), sx = sd[0], sy = sd[1];   // parallel rays: Sun direction as seen on screen
-    const psi = moonElong(), c = Math.cos(psi);
-    ctx.save();
-    ctx.translate(x, y); ctx.rotate(Math.atan2(sy, sx));
-    ctx.beginPath(); ctx.arc(0, 0, r, 0, TAU); ctx.clip();
-    ctx.fillStyle = 'rgba(30,34,48,0.9)'; ctx.fillRect(-r, -r, 2 * r, 2 * r);       // dark limb
-    ctx.fillStyle = '#e4e6ec';
-    ctx.beginPath();
-    ctx.arc(0, 0, r, -Math.PI / 2, Math.PI / 2, false);                            // lit half (toward +x = Sun)
-    ctx.ellipse(0, 0, Math.abs(c) * r, r, 0, Math.PI / 2, -Math.PI / 2, c > 0);    // terminator
-    ctx.fill();
-    ctx.restore();
-    ctx.save();
-    ctx.strokeStyle = 'rgba(190,200,225,0.35)'; ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.arc(x, y, r, 0, TAU); ctx.stroke();
-    ctx.fillStyle = 'rgba(200,210,235,0.8)'; ctx.font = 'bold 10px "JetBrains Mono", monospace';
-    ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-    ctx.fillText('MOON ' + Math.round(moonIllum() * 100) + '%', x, y + r + 4);
-    ctx.restore();
-  }
+  // Farthest-visible placement of an icon along a screen-space direction
+// from Earth's screen center. Prefer canvas edge (icon fully visible),
+// but cap so it never enters Earth's silhouette + clearance — when
+// zoomed in enough that canvas edge < cap, icon goes off-screen rather
+// than overlapping Earth.
+function _farPlacementAlongDir(ecx, ecy, dx, dy, earthPx, iconR, cv) {
+  const _eps = 1e-6;
+  let tExitX = Infinity, tExitY = Infinity;
+  if (dx > _eps) tExitX = (cv.width - ecx) / dx;
+  else if (dx < -_eps) tExitX = -ecx / dx;
+  if (dy > _eps) tExitY = (cv.height - ecy) / dy;
+  else if (dy < -_eps) tExitY = -ecy / dy;
+  const tExit = Math.min(tExitX, tExitY);
+  const dAtEdge = tExit - iconR - 15;             // icon fully visible
+  const dMin = earthPx + iconR + 25;              // never inside Earth
+  const d = Math.max(dAtEdge, dMin);
+  return { x: ecx + dx * d, y: ecy + dy * d, dist: d };
+}
+
+function drawMoon(ctx, cv) {
+  const cam = cameraWorldPosition(), m = moonDir(), K = 1000;
+  const a = worldToScreen(cam.x, cam.y), b = worldToScreen(cam.x + m.x * K, cam.y + m.y * K);
+  let dx = b[0] - a[0], dy = b[1] - a[1]; const l = Math.hypot(dx, dy) || 1; dx /= l; dy /= l;
+  const ec = worldToScreen(0, 0), earthPx = CONFIG.EARTH_RADIUS / metersPerPixel();
+  const r = 11;
+  const place = _farPlacementAlongDir(ec[0], ec[1], dx, dy, earthPx, r, cv);
+  const x = place.x, y = place.y;
+  if (x < -r || y < -r || x > cv.width + r || y > cv.height + r) return;
+  const sd = sunScreenDir(), sx = sd[0], sy = sd[1];
+  const psi = moonElong(), c = Math.cos(psi);
+  ctx.save();
+  ctx.translate(x, y); ctx.rotate(Math.atan2(sy, sx));
+  ctx.beginPath(); ctx.arc(0, 0, r, 0, TAU); ctx.clip();
+  ctx.fillStyle = 'rgba(30,34,48,0.9)'; ctx.fillRect(-r, -r, 2 * r, 2 * r);
+  ctx.fillStyle = '#e4e6ec';
+  ctx.beginPath();
+  ctx.arc(0, 0, r, -Math.PI / 2, Math.PI / 2, false);
+  ctx.ellipse(0, 0, Math.abs(c) * r, r, 0, Math.PI / 2, -Math.PI / 2, c > 0);
+  ctx.fill();
+  ctx.restore();
+  // Outline + label — flip label above/below if at edge
+  ctx.save();
+  ctx.strokeStyle = 'rgba(190,200,225,0.35)'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.arc(x, y, r, 0, TAU); ctx.stroke();
+  ctx.fillStyle = 'rgba(200,210,235,0.85)'; ctx.font = 'bold 10px "JetBrains Mono", monospace';
+  const _lblBelow = (y + r + 14 < cv.height);
+  ctx.textAlign = 'center'; ctx.textBaseline = _lblBelow ? 'top' : 'bottom';
+  ctx.fillText('MOON ' + Math.round(moonIllum() * 100) + '%', x, _lblBelow ? y + r + 4 : y - r - 4);
+  ctx.restore();
+}
 
   // Called right after drawSky().
   function drawBackdrop(ctx, cv, altitude) {
