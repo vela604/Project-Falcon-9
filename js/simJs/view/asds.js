@@ -194,12 +194,14 @@
         }
       }
       otherPads.push({ arcOffsetM: appliedM, name: appliedName });
+      // Minimum center-to-center shift = half_hull + MIN_GAP + half_hull = 45.5 + 120 + 45.5 = 211m
+      const _MIN_SHIFT_M = Math.round(ASDS_LENGTH_M / 2 + MIN_GAP_M + ASDS_LENGTH_M / 2);
       for (let i = 0; i < conflicting.length; i++) {
         const p = conflicting[i];
         let newM = null;
-        for (let d = 1000; d <= 10000; d += 1000) {
+        for (let d = _MIN_SHIFT_M; d <= 10000; d += 100) {
           let hit = false;
-          for (let sgn = -1; sgn <= 1; sgn += 2) {
+          for (let sgn = 1; sgn >= -1; sgn -= 2) {  // east (+1) first, west (-1) fallback
             const cand = Math.round(p.arcOffsetM + sgn * d);
             if (!boundsOk(cand)) continue;
             let ok = true;

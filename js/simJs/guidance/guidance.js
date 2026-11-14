@@ -1244,12 +1244,14 @@ function _buildASDSPadForGuidance(spec, env) {
     }
     otherPads.push({ arcOffsetM: appliedM, name: appliedName });
     let shiftAbort = false;
+    // Minimum center-to-center shift = half_hull + MIN_GAP + half_hull = 45.5 + 120 + 45.5 = 211m
+    const _MIN_SHIFT_M = Math.round(ASDS_LENGTH_M / 2 + ASDS_MIN_GAP_M + ASDS_LENGTH_M / 2);
     for (let i = 0; i < conflicting.length; i++) {
       const p = conflicting[i];
       let newM = null;
-      for (let d = 1000; d <= 10000; d += 1000) {
+      for (let d = _MIN_SHIFT_M; d <= 10000; d += 100) {
         let hit = false;
-        for (let sgn = -1; sgn <= 1; sgn += 2) {
+        for (let sgn = 1; sgn >= -1; sgn -= 2) {  // east (+1) first
           const cand = Math.round((p.arcOffsetM || 0) + sgn * d);
           if (cand - ASDS_LZ_WEST_M < startM) continue;
           if (cand + ASDS_LZ_EAST_M > endM) continue;
@@ -1273,9 +1275,10 @@ function _buildASDSPadForGuidance(spec, env) {
     if (shiftAbort) {
       // Cannot shift — old ±10km nudge fallback for the NEW pad.
       shifts.length = 0;
-      for (let d = 1000; d <= 10000; d += 1000) {
+      const _MIN_SHIFT_FB = Math.round(ASDS_LENGTH_M / 2 + ASDS_MIN_GAP_M + ASDS_LENGTH_M / 2);
+      for (let d = _MIN_SHIFT_FB; d <= 10000; d += 100) {
         let hit = false;
-        for (let sgn = -1; sgn <= 1; sgn += 2) {
+        for (let sgn = 1; sgn >= -1; sgn -= 2) {  // east (+1) first
           const cand = Math.round(requestedM + sgn * d);
           if (!boundsOk(cand)) continue;
           let ok = true;
