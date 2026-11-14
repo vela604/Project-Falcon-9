@@ -34,12 +34,13 @@ function _missionHashStr(str) {
 // Body + time hash for bit-exact replay comparison. Includes body.id and
 // state.simTime per agent's B1/B2 additions. Applied at first tick
 // (t = CONFIG.DT) to gate prediction trust.
-function missionStateHash(body, simTime) {
+function missionStateHash(body, simTime, bodyIdx) {
   if (!body) return '';
+  const idx = Number.isInteger(bodyIdx) ? bodyIdx : 0;
   const t = (simTime !== undefined) ? simTime :
             (typeof state !== 'undefined' ? state.simTime : 0);
   const parts = [
-    String(body.id || ''),
+    'idx:' + idx,
     t.toFixed(6),
     Number(body.rx || 0).toFixed(6),
     Number(body.ry || 0).toFixed(6),
@@ -294,7 +295,7 @@ window.captureCurrentMissionRecord = async function () {
       recordedBy: 'manual',
       durationS: state.simTime,
     },
-    initialStateHash: session.startHash || missionStateHash(body, state.simTime),
+    initialStateHash: session.startHash || missionStateHash(body, state.simTime, state.activeBodyIndex),
     initialStateSnapshot: session.startSnapshot || {
       t: state.simTime,
       bodyId: body.id,

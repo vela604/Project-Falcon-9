@@ -1518,7 +1518,7 @@ function _syncMissionRecordSession(status) {
     
     if (_isCleanStart) {
       window.__guideSession.startT = state.simTime;
-      window.__guideSession.startHash = missionStateHash(_body, state.simTime);
+      window.__guideSession.startHash = missionStateHash(_body, state.simTime, 0);
       window.__guideSession.startSnapshot = {
         t: state.simTime,
         bodyId: _body.id,
