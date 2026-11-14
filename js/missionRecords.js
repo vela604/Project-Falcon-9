@@ -138,8 +138,11 @@ function upsertUserMissionRecord(record) {
   if (idx >= 0) records[idx] = record;
   else records.push(record);
   saveMissionRecords(records);
-  console.log('[missionRecords] saved:', record.comboKey,
-              '(' + (record.success ? 'success' : 'failed') + ')');
+  const _statusLabel = record.success === true ? 'success' :
+                     record.success === false ? 'failed' :
+                     'partial';
+  const _inferredNote = (record._debug && record._debug.inferredSuccess === true) ? ' (inferred)' : '';
+  console.log('[missionRecords] saved:', record.comboKey, '(' + _statusLabel + ')' + _inferredNote);
 }
 
 function deleteUserMissionRecord(comboKey) {
@@ -164,6 +167,11 @@ function startGuideSession(stackId, guideName) {
     startHash: null,
     startT: null,
   };
+  // Reset auto-save / phase-tracking flags at each guide start so a new
+  // guide sequence is clean.
+  window.__autoSavedForSession = false;
+  window.__prevGuidePhase = null;
+  window.__prevRunResult = null;
   window.__guideSession.comboKeyPromise = computeComboKey(stackId, '', guideName)
     .then(function (k) {
       if (window.__guideSession) window.__guideSession.comboKey = k;
@@ -225,6 +233,22 @@ window.captureCurrentMissionRecord = async function () {
 
   const isPartial = !gs.runResult || gs.runResult === 'in-progress';
   
+  // Fallback success inference — if guide hit a terminal phase but runResult
+  // is stale (agent's state machine can lag DONE by the payload-clear
+  // distance threshold, up to 120s), infer success from terminal events.
+  // Prevents blocking the user when the guide actually finished successfully.
+  let inferredSuccess = null;
+  if (isPartial && (gs.phase === 'DONE' || gs.phase === 'END')) {
+    const _evts = gs.events || [];
+    const _hasPayloadSuccess = _evts.some(e => e.name === 'PAYLOAD_RELEASE' || e.name === 'PAYLOAD_OPEN');
+    const _hasLandingSuccess = _evts.some(e => e.name === 'TOUCHDOWN_COMPLETE' || e.name === 'LANDED');
+    const _hasFailure = _evts.some(e => e.name === 'IMPACT' || e.name === 'CRASH' || e.name === 'FAILED');
+    if (_hasFailure) inferredSuccess = false;
+    else if (_hasPayloadSuccess || _hasLandingSuccess) inferredSuccess = true;
+  }
+  const _effPartial = inferredSuccess !== null ? false : isPartial;
+  const _effSuccess = inferredSuccess !== null ? inferredSuccess : (isPartial ? null : (gs.runResult === 'success'));
+  
   // Only phases with BOTH startT and endT set (fully completed)
   const phases = Object.entries(gs.phaseLog || {})
     .filter(([_, e]) => typeof e.startT === 'number' && typeof e.endT === 'number')
@@ -241,7 +265,7 @@ window.captureCurrentMissionRecord = async function () {
     schemaVersion: 1,
     physicsVersion: currentPhysicsVersion(),
     comboKey: session.comboKey,
-    partial: isPartial,
+    partial: _effPartial,
     captureT: state.simTime,
     currentPhase: gs.phase || null,
     metadata: {
@@ -268,14 +292,15 @@ window.captureCurrentMissionRecord = async function () {
     },
     phases: phases,
     events: events,
-    success: isPartial ? null : (gs.runResult === 'success'),
+    success: _effSuccess,
     _debug: {
       runResult: gs.runResult,
       gsPhase: gs.phase,
       gsActive: gs.active,
+      inferredSuccess: inferredSuccess !== null ? inferredSuccess : 'no-inference',
     },
     successCriteria: {},
-    finalMetrics: isPartial ? null : {},
+    finalMetrics: _effPartial ? null : {},
   };
 };;
 

@@ -1484,23 +1484,49 @@ function _syncMissionRecordSession(status) {
     }
   }
   
-  // Auto-save on END transition (success only)
+  // Auto-save on terminal transition — either runResult flips to
+  // 'success' OR phase enters DONE/END (whichever fires first).
+  // Second path is FALLBACK for when agent's runResult state machine
+  // lags DONE by up to 120s waiting for payload-clear distance
+  // threshold — inference in captureCurrentMissionRecord upgrades the
+  // record to "complete" based on terminal events.
   const prevResult = window.__prevRunResult;
   const curResult = status && status.runResult;
-  if (prevResult === 'in-progress' && curResult === 'success' &&
+  const prevPhase = window.__prevGuidePhase;
+  const curPhase = status && status.phase;
+  const isTerminalPhase = (curPhase === 'DONE' || curPhase === 'END');
+  const enteredTerminal = isTerminalPhase && prevPhase !== curPhase;
+  const becameSuccess = (prevResult === 'in-progress' && curResult === 'success');
+  const shouldAutoSave = (becameSuccess || enteredTerminal) && !window.__autoSavedForSession;
+  
+  if (shouldAutoSave &&
       typeof window.captureCurrentMissionRecord === 'function' &&
       typeof saveMissionRecordWithPolicy === 'function') {
+    window.__autoSavedForSession = true;
     window.captureCurrentMissionRecord().then(function (rec) {
-      if (!rec || rec.error) return;
+      if (!rec || rec.error) {
+        window.__autoSavedForSession = false;
+        return;
+      }
       var res = saveMissionRecordWithPolicy(rec);
       if (res.action === 'saved' && typeof window.showASDSToast === 'function') {
-        window.showASDSToast('✓ Auto-saved: ' + rec.phases.length + ' phases', true);
+        var _inferred = rec._debug && rec._debug.inferredSuccess === true;
+        var _tag = rec.success === true
+          ? (_inferred ? '✓ Auto-saved (inferred): ' : '✓ Auto-saved: ')
+          : rec.success === false
+            ? '⚠ Auto-saved (failed): '
+            : '⏸ Auto-saved (partial): ';
+        window.showASDSToast(_tag + rec.phases.length + ' phases', rec.success !== false);
       }
-    }).catch(function (e) { console.warn('[missionRecords] auto-save fail', e); });
+    }).catch(function (e) {
+      window.__autoSavedForSession = false;
+      console.warn('[missionRecords] auto-save fail', e);
+    });
   }
   // failed → skip (per user decision #3)
   
   window.__prevGuideActiveForRecord = curActive;
+  window.__prevGuidePhase = curPhase;
   if (curResult) window.__prevRunResult = curResult;
 }
 
