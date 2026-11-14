@@ -1356,7 +1356,22 @@ function _drawASDS(ctx, pad, worldPos, camAng, mpp, pal) {
   // pad.heightM too high — booster lands on brown waterline band instead
   // of black deck. Fix: freeboardM = pad.heightM (was hardcoded 2.5), and
   // translate origin down by pad.heightM after scale.
-  const deckHeightM = Number.isFinite(pad.heightM) ? pad.heightM : 2;
+  // Defensive: fallback to 2 if heightM is 0, negative, missing, or
+  // non-numeric (e.g., string from IPC). Real ASDS deck = 2m above water.
+  // If heightM somehow arrives as 0 on a device (data path issue, stale
+  // cache), old code would collapse ship to waterline — looks "submerged."
+  const deckHeightM = (Number.isFinite(pad.heightM) && pad.heightM > 0) ? pad.heightM : 2;
+  
+  // One-time diagnostic (per session) — helps debug device-specific issues.
+  // User reports iPad showed ship submerged; this log captures pad state
+  // + canvas metrics so iPad behavior can be verified via Safari console.
+  if (typeof globalThis !== 'undefined' && !globalThis._asdsDeckDiag) {
+    globalThis._asdsDeckDiag = true;
+    console.log('[ASDS-deck] pad.id=' + pad.id + ' heightM=' + pad.heightM +
+      ' type=' + typeof pad.heightM + ' → deckHeightM=' + deckHeightM +
+      ' | mpp=' + mpp.toFixed(4) + ' | canvas=' + canvas.width + 'x' + canvas.height +
+      ' | dpr=' + (window.devicePixelRatio || 1));
+  }
   const draftM = 5.0, freeboardM = deckHeightM;
   const deckY = -freeboardM, hullBotY = draftM;
   const contW = 15.0, contH = 8.0;
