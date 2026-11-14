@@ -24,6 +24,12 @@
 
 const Guidance = (function () {
   let _physicsSend = null; // (msg) => void, wired by guidance.worker.js
+  // Mission event log — non-phase-transition moments the phase timeline
+  // cannot capture (MECO, fairing deploy, touchdown contact, etc.).
+  // Emitted via logEvent(name, t?) below; exposed on getGuideStatus as
+  // status.events = [{ name, t }]. Consumed by mission-records feature.
+  // Preserved across fast-forward state transfer (export/import).
+  let _eventLog = [];
   let _lastRawSnapshot = null; // most recent snapshot exactly as received
   let _lastMeasuredSnapshot = null; // post-IMU copy handed to tick()
 
@@ -213,6 +219,7 @@ const GUIDE_PHASE_SEQUENCES = {
     _phaseLog = {};
     _lastSeenPhase = null;
     _guideStartT = null;
+    _eventLog = [];
     if (typeof GUIDES[name].start === "function") {
       try {
         GUIDES[name].start();
@@ -238,7 +245,51 @@ const GUIDE_PHASE_SEQUENCES = {
     console.log("[guidance] stopped:", name);
   }
 
-  function setActiveGuide(name) {
+  // Log a mission event. Called by guidance-blocks.js at specific moments
+// (via Guidance.logEvent) and inline below at mission-level events.
+// t defaults to _lastSimTime — the current tick's sim time. Optional
+// 2nd arg lets a caller pass an explicit time (blocks pass simT).
+function logEvent(name, t) {
+  if (typeof name !== 'string' || !name) return;
+  _eventLog.push({ name, t: Number.isFinite(t) ? t : _lastSimTime });
+}
+
+// Compute runResult from current mission state. 'in-progress' while running,
+// settles to 'success' or 'failed' at END phase. Per-guide rules:
+//   leoInsertionV3 — payload deployed & not crashed → success
+//   landbackV1     — booster landed & not crashed & payload (if any) safe → success
+// Failures: payload never released, payload crashed, booster crash, timer abort.
+function _computeLtV3RunResult() {
+  if (_v3State.missionPhase !== 'END') return 'in-progress';
+  const snap = _lastMeasuredSnapshot;
+  if (!snap || !Array.isArray(snap.bodies)) return 'in-progress';
+  const stage = snap.bodies[_v3State.stageIdx];
+  if (stage && stage.payloadId && !stage.payloadReleased) return 'failed';
+  const payload = snap.bodies.find(b => b && b.payloadBody);
+  if (payload && payload.crashed) return 'failed';
+  return 'success';
+}
+function _computeLbRunResult() {
+  if (_lbState.missionPhase !== 'END') return 'in-progress';
+  const snap = _lastMeasuredSnapshot;
+  if (!snap || !Array.isArray(snap.bodies)) return 'in-progress';
+  const booster = snap.bodies[_lbState.boosterIdx];
+  if (!booster) return 'failed';
+  if (!booster.landed || booster.crashed) return 'failed';
+  const stage = snap.bodies[_lbState.stageIdx];
+  if (stage && stage.payloadId && !stage.payloadReleased) return 'failed';
+  const payload = snap.bodies.find(b => b && b.payloadBody);
+  if (payload && payload.crashed) return 'failed';
+  return 'success';
+}
+function _computeRunResult() {
+  if (!_activeGuide) return 'in-progress';
+  if (_activeGuide === 'leoInsertionV3') return _computeLtV3RunResult();
+  if (_activeGuide === 'landbackV1') return _computeLbRunResult();
+  return 'in-progress';
+}
+
+function setActiveGuide(name) {
     _activeGuide = name && GUIDES[name] ? name : null;
   }
   function getActiveGuide() {
@@ -253,6 +304,8 @@ const GUIDE_PHASE_SEQUENCES = {
     const g = GUIDES[_activeGuide];
     const out = { active: _activeGuide };
     if (typeof g.getStatus === "function") Object.assign(out, g.getStatus());
+    out.events = _eventLog.slice();
+    out.runResult = _computeRunResult();
     const rawSeq = GUIDE_PHASE_SEQUENCES[_activeGuide] || [];
     const transformed = _applyPhaseDisplay(
       _activeGuide,
@@ -283,6 +336,7 @@ const GUIDE_PHASE_SEQUENCES = {
         out.guideConfigs[name] = getGuideConfig(name);
       });
       out.phaseLog = JSON.parse(JSON.stringify(_phaseLog || {}));
+      out.eventLog = _eventLog.slice();
 out.lastSeenPhase = _lastSeenPhase;
 out.guideStartT = _guideStartT;
 out.lastSimTime = _lastSimTime;
@@ -374,6 +428,7 @@ function importGuideState(data) {
       if (data.phaseLog && typeof data.phaseLog === "object") {
         _phaseLog = JSON.parse(JSON.stringify(data.phaseLog));
       }
+      _eventLog = (data.eventLog && Array.isArray(data.eventLog)) ? data.eventLog.slice() : [];
       if (data.lastSeenPhase !== undefined) _lastSeenPhase = data.lastSeenPhase;
       if (data.guideStartT !== undefined) _guideStartT = data.guideStartT;
       if (data.lastSimTime !== undefined) _lastSimTime = data.lastSimTime;
@@ -617,6 +672,7 @@ function _leoTickV3(snapshot) {
           cmd.targetBodyIdx = _v3State.stageIdx;
           send(cmd);
           _v3State.fairingOpened = true;
+          logEvent('FAIRING_DEPLOY');
           console.log('[leoInsertionV3] fairing open at t=' + simT.toFixed(2) +
             ' alt=' + altKm.toFixed(2) + ' km');
         }
@@ -640,6 +696,7 @@ function _leoTickV3(snapshot) {
     case 'WAIT_SPLIT': {
   if (snapshot.bodies.length > _v3State.preSplitBodyCount) {
   _v3State.splitDetected = true;
+  logEvent('STAGE_SEPARATION');
   _v3State.stageIdx = 0;
   const boosterIdx = snapshot.bodies.findIndex((b, i) =>
     i !== _v3State.stageIdx && b && !b.isActive);
@@ -791,6 +848,7 @@ break;
           const _relV3 = cmdReleasePayload();
           _relV3.targetBodyIdx = _v3State.stageIdx;
           send(_relV3);
+          logEvent('PAYLOAD_RELEASE');
           console.log('[leoInsertionV3] mission-level payload release at t=' + simT.toFixed(2));
         }
         _v3State.missionPhase = 'DONE_DWELL';
@@ -842,6 +900,7 @@ if (!_v3State.payloadOpenFired &&
   if (_payIdx >= 0) {
     send(cmdOpenPayload(_payIdx));
     _v3State.payloadOpenFired = true;
+    logEvent('PAYLOAD_OPEN');
   }
 }
 
@@ -859,6 +918,7 @@ if (!_v3State.payloadOpenFired &&
 
         if (_v3Config.done.DEORBIT_ENABLED) {
 send(cmdMarkIntentionalImpact(_v3State.stageIdx));
+            logEvent('DEORBIT_START');
             const env = Derivation.getEnv();
             // Mission-level target impact. Compute Earth-fixed angle from the remote
             // resting area and push it into the config clone. Block reads
@@ -888,6 +948,7 @@ send(cmdMarkIntentionalImpact(_v3State.stageIdx));
       _v3State.suicideBlock.tick(snapshot);
       if (_v3State.suicideBlock.isDone()) {
         _v3State.suicideResult = _v3State.suicideBlock.getResult();
+        logEvent('IMPACT');
         _v3State.missionPhase = 'END';
         _v3State.missionPhaseStart = simT;
         console.log('[leoInsertionV3] SUICIDE done at t=' + simT.toFixed(2));
@@ -1519,6 +1580,7 @@ function _landbackTick(snapshot) {
           cmd.targetBodyIdx = _lbState.stageIdx;
           send(cmd);
           _lbState.fairingOpened = true;
+          logEvent('FAIRING_DEPLOY');
           console.log('[landbackV1] fairing open at t=' + simT.toFixed(2) +
             ' alt=' + altKm.toFixed(2) + ' km');
         }
@@ -1548,6 +1610,7 @@ function _landbackTick(snapshot) {
     case 'WAIT_SPLIT': {
   if (snapshot.bodies.length > _lbState.preSplitBodyCount) {
   _lbState.splitDetected = true;
+  logEvent('STAGE_SEPARATION');
   _lbState.stageIdx = 0;
   const boosterIdx = snapshot.bodies.findIndex((b, i) =>
     i !== _lbState.stageIdx && b && !b.isActive);
@@ -1653,6 +1716,7 @@ function _landbackTick(snapshot) {
           const _relLB = cmdReleasePayload();
           _relLB.targetBodyIdx = _lbState.stageIdx;
           send(_relLB);
+          logEvent('PAYLOAD_RELEASE');
           console.log('[landbackV1] mission-level payload release at t=' + simT.toFixed(2));
         }
         _lbState.missionPhase = 'DONE_DWELL';
@@ -1701,6 +1765,7 @@ if (!_lbState.payloadOpenFired &&
   if (_payIdx >= 0) {
     send(cmdOpenPayload(_payIdx));
     _lbState.payloadOpenFired = true;
+    logEvent('PAYLOAD_OPEN');
   }
 }
 
@@ -1718,6 +1783,7 @@ if (!_lbState.payloadOpenFired &&
 
         if (_lbConfig.done.DEORBIT_ENABLED) {
 send(cmdMarkIntentionalImpact(_lbState.stageIdx));
+            logEvent('DEORBIT_START');
             const env = Derivation.getEnv();
             // Mission-level target impact. Compute Earth-fixed angle from the remote
             // resting area and push it into the config clone. Block reads
@@ -1747,6 +1813,7 @@ send(cmdMarkIntentionalImpact(_lbState.stageIdx));
       _lbState.suicideBlock.tick(snapshot);
       if (_lbState.suicideBlock.isDone()) {
         _lbState.suicideResult = _lbState.suicideBlock.getResult();
+        logEvent('IMPACT');
         _lbState.missionPhase = 'END';
         _lbState.missionPhaseStart = simT;
         console.log('[landbackV1] SUICIDE done at t=' + simT.toFixed(2));
@@ -2185,6 +2252,7 @@ function cmdOpenPayload(targetBodyIdx) {
     listGuides,
     getGuideStatus,
     getGuideStatusLabel,
+    logEvent,
     setLeoInsertionV3,
     setLandbackV1,
 getLandbackV1Config,
