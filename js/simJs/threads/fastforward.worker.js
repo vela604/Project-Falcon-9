@@ -21,32 +21,6 @@ self.addEventListener('unhandledrejection', (e) => {
   self.postMessage({ type: 'workerError', message: String(e.reason && e.reason.message || e.reason) });
 });
 
-// ===== __consoleRelay — forward worker console to main thread =====
-// FF worker console.log is invisible in main page console (separate
-// thread). Relay every log line via postMessage so user on mobile can
-// see diagnostics without chrome://inspect.
-(function () {
-  const _msgCount = { n: 0 };
-  const _MAX_RELAY = 1200;
-  function _relay(kind, args) {
-    if (_msgCount.n >= _MAX_RELAY) return;
-    _msgCount.n++;
-    try {
-      const line = Array.prototype.map.call(args, function (a) {
-        if (typeof a === 'string') return a;
-        try { return JSON.stringify(a); } catch (e) { return String(a); }
-      }).join(' ');
-      self.postMessage({ type: 'ffLog', kind: kind, line: line });
-    } catch (e) {}
-  }
-  const _origLog = console.log.bind(console);
-  const _origWarn = console.warn.bind(console);
-  const _origErr = console.error.bind(console);
-  console.log = function () { _origLog.apply(null, arguments); _relay('log', arguments); };
-  console.warn = function () { _origWarn.apply(null, arguments); _relay('warn', arguments); };
-  console.error = function () { _origErr.apply(null, arguments); _relay('err', arguments); };
-})();
-
 // ---- localStorage shim BEFORE importScripts ----
 if (typeof localStorage === 'undefined') {
   const _store = Object.create(null);
@@ -100,6 +74,12 @@ self.onmessage = async (e) => {
       '../guidance/guidance-blocks.js',
       '../guidance/guidance.js'
     );
+    // [FF-BOOT] — confirm CONFIG.LANDING_PADS loaded from importScripts.
+    // N=3 for fresh boot (LZ-1/2/3 defaults). Run-handler then overwrites
+    // with captured pad set (N=4 for ASDS missions). Persistent diagnostic.
+    try {
+      console.log('[FF-BOOT] CONFIG.LANDING_PADS after importScripts:', (CONFIG.LANDING_PADS || []).length, 'pads');
+    } catch (e) {}
     
    // ---- Cache the component library ----
 // getComponentType() is called 20-40× per tick via physicsStep and
@@ -141,82 +121,12 @@ state.bodies = msg.fullState.bodies;
     }
     // __ffTickDebugDefaultApplied
     
-    // [FF-INIT] — one-shot dump of received state. Compare with physics
     // worker state at pause. Any difference means state transfer loses
     // info (actuator spool, RCS, slosh, grid fins, legs progress) and is
     // the root cause of trajectory divergence.
-    {  // [FF-INIT] always fires
-      const _b0i = state.bodies.find(function(b) {
-        return b.members && b.members[0] && b.members[0].stageRole === 'booster' && !b.payloadBody;
-      });
-      // [FF-STATE-HASH] — for bit-exact comparison vs [PAUSE-STATE-HASH]
-      if (_b0i) {
-        (function () {
-          var s = '';
-          s += 't=' + state.simTime.toFixed(6);
-          s += '|rx=' + _b0i.rx.toFixed(6) + '|ry=' + _b0i.ry.toFixed(6);
-          s += '|vx=' + _b0i.vx.toFixed(6) + '|vy=' + _b0i.vy.toFixed(6);
-          s += '|th=' + _b0i.theta.toFixed(6) + '|om=' + _b0i.omega.toFixed(6);
-          var fuel = _b0i.fuelMass || (_b0i.memberFuel && _b0i.memberFuel[0]) || 0;
-          s += '|fuel=' + fuel.toFixed(4);
-          if (_b0i.engines) _b0i.engines.forEach(function (e, i) {
-            s += '|e' + i + '=' + (e.massFlowRate || 0).toFixed(4) + '/' + (e.gimbalDeg || 0).toFixed(6);
-          });
-          if (_b0i.legs) s += '|legs=' + _b0i.legs.progress.toFixed(6);
-          if (_b0i.gridFins && _b0i.gridFins.L) s += '|gfL=' + _b0i.gridFins.L.deploy + ',' + _b0i.gridFins.L.control.toFixed(4);
-          if (_b0i.slosh) s += '|sl=' + _b0i.slosh.offset.toFixed(8);
-          var hash = 0;
-          for (var k = 0; k < s.length; k++) hash = ((hash << 5) - hash + s.charCodeAt(k)) | 0;
-          console.log('[FF-STATE-HASH]', (hash >>> 0).toString(16), '|', s.slice(0, 300));
-        })();
-      }
-      if (_b0i) {
-        console.log('[FF-INIT]', JSON.stringify({
-          t: state.simTime,
-          rx: _b0i.rx, ry: _b0i.ry, vx: _b0i.vx, vy: _b0i.vy,
-          theta: _b0i.theta, omega: _b0i.omega,
-          fuel: _b0i.fuelMass || (_b0i.memberFuel && _b0i.memberFuel[0]),
-          engines: _b0i.engines && _b0i.engines.map(function(e) {
-            return { mf: e.massFlowRate, tgt: e.targetMassFlowRate, gimbal: e.gimbalDeg };
-          }),
-          legs: _b0i.legs,
-          gridFins: _b0i.gridFins,
-          slosh: _b0i.slosh
-        }));
-      }
-    }
     
-    // [FF-TICK] — periodic trajectory log
-    if (typeof physicsStep === 'function' && !physicsStep._ffDebugWrapped) {
-      const _origPhysicsStep = physicsStep;
-      physicsStep = function(dt) {
-        const result = _origPhysicsStep.call(this, dt);
-        if (globalThis._ffTickDebug) {
-          const dbg = globalThis._ffTickDebug;
-          const t = state.simTime;
-          if ((!dbg.from || t >= dbg.from) && (!dbg.to || t <= dbg.to)) {
-            const nTick = Math.round(t / 0.0125);
-            const every = dbg.everyNTicks || 400;
-            if (nTick % every === 0) {
-              const _bB = state.bodies.find(function(b) {
-                return b.members && b.members[0] && b.members[0].stageRole === 'booster' && !b.payloadBody;
-              });
-              if (_bB) {
-                console.log('[FF-TICK] t=' + t.toFixed(4) +
-                  ' rx=' + _bB.rx.toFixed(6) + ' ry=' + _bB.ry.toFixed(6) +
-                  ' vx=' + _bB.vx.toFixed(6) + ' vy=' + _bB.vy.toFixed(6) +
-                  ' theta=' + _bB.theta.toFixed(6) + ' omega=' + _bB.omega.toFixed(6) +
-                  ' fuel=' + (_bB.fuelMass || (_bB.memberFuel && _bB.memberFuel[0]) || 0).toFixed(2) +
-                  ' legs=' + (_bB.legs ? _bB.legs.deployed + '/' + _bB.legs.progress.toFixed(2) : 'none') +
-                  ' gf=' + (_bB.gridFins && _bB.gridFins.L ? _bB.gridFins.L.deploy + ',' + _bB.gridFins.L.control : 'none'));
-              }
-            }
-          }
-        }
-        return result;
-      };
-      physicsStep._ffDebugWrapped = true;
-    }
+    
+    
     // ===== end FF_DEBUG_BLOCK =====
 
     
@@ -294,33 +204,7 @@ if (typeof Guidance !== 'undefined') {
     Guidance.startGuide(msg.activeGuide);
   }
 }
-// ===== FF_GUIDE_STATE_DIAG (temporary) =====
-if (globalThis._ffTickDebug && msg.guidanceState) {
-  try {
-    var _gs = msg.guidanceState;
-    console.log('[FF-GUIDE-STATE] top-level keys:', Object.keys(_gs).join(', '));
-    // Search recursively for anything ASDS-related
-    function _findASDS(obj, path, depth) {
-      if (!obj || typeof obj !== 'object' || depth > 5) return;
-      Object.keys(obj).forEach(function(k) {
-        var v = obj[k];
-        if (/asds|activeGuide|missionPhase|meco|sep|phase/i.test(k)) {
-          var preview;
-          try { preview = JSON.stringify(v); } catch (e) { preview = String(v); }
-          if (preview && preview.length > 150) preview = preview.slice(0, 150) + '...';
-          console.log('[FF-GUIDE-STATE] ' + path + '.' + k + ' = ' + preview);
-        }
-        if (v && typeof v === 'object' && depth < 5) {
-          _findASDS(v, path + '.' + k, depth + 1);
-        }
-      });
-    }
-    _findASDS(_gs, 'gs', 0);
-  } catch (e) {
-    console.log('[FF-GUIDE-STATE] dump error:', e.message);
-  }
-}
-// ===== end FF_GUIDE_STATE_DIAG =====
+
     
             // ---- Persistent snapshot wrapper (zero alloc per tick) ----
 const dt = CONFIG.DT;
@@ -348,8 +232,7 @@ const startSimT = state.simTime;
 // every control loop downstream (RCS slew, cutoff timing, etc).
 for (let i = 0; i < maxTicks; i++) {
   if (i === 0) {
-  console.log('[FF-BOOT] t=' + state.simTime.toFixed(6) + ' bodies=' + state.bodies.length + ' body0.rx=' + state.bodies[0].rx.toFixed(6) + ' body0.ry=' + state.bodies[0].ry.toFixed(6));
-}
+  }
   if (_abort) break;
   
   // 1. Legs
@@ -442,7 +325,7 @@ catch (ge) {
 }
     
     self.__ffwDiag.actualEnd = state.simTime;
-    self.__ffwDiag.actualTicks = typeof i !== 'undefined' ? i : -1;
+    self.__ffwDiag.actualTicks = Math.round((state.simTime - self.__ffwDiag.startSimTime) / self.__ffwDiag.dt);
     self.__ffwDiag.loopOvershoot = state.simTime - self.__ffwDiag.expectedEnd;
     self.__ffwDiag.wallMs = performance.now() - self.__ffwDiag.startWallMs;
     console.log('[ffw] done: actualEnd=' + state.simTime.toFixed(3) +
