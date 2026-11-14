@@ -65,13 +65,30 @@
 
 <div class="panel">
   <b>Landscape: bias → downrange error</b>
-  <span class="status">— cyan = zero line. smooth = monotone curve crossing 0 once</span><br>
+  <span class="status">cyan = zero line</span><br>
   <canvas id="chart" width="900" height="280"></canvas>
+</div>
+
+<div class="panel">
+  <b>Score vs bias</b>
+  <span class="status">fails (score=1e6) not plotted</span><br>
+  <canvas id="scoreChart" width="900" height="220"></canvas>
+</div>
+
+<div class="panel">
+  <b>Local slope d(dr) / d(bias)</b>
+  <span class="status">red bar = cliff (&gt;5x median) &middot; cyan = negative slope (unexpected)</span><br>
+  <canvas id="slopeChart" width="900" height="220"></canvas>
 </div>
 
 <div class="panel">
   <b>Smoothness metrics</b><br>
   <div class="metrics" id="metrics">—</div>
+</div>
+
+<div class="panel">
+  <b>Analysis</b><br>
+  <div id="analysis" style="font-size:11px; color:#ccc; line-height:1.5;">—</div>
 </div>
 
 <div class="panel">
@@ -389,7 +406,7 @@ async function doSweep(){
         const drStr = r.contact ? r.contact.downrange.toFixed(1) + 'm' : 'no-contact';
         log('  → dr=' + drStr + ' score=' + (r.ok ? r.score.toFixed(2) : 'FAIL ' + r.fail) + ' wall=' + r.wallS.toFixed(0) + 's', r.ok ? 'ok' : 'warn');
         renderResults();
-        drawChart();
+        drawCharts();
       } catch(e){ log('eval error: ' + e.message, 'err'); }
     }
     computeMetrics();
@@ -473,6 +490,166 @@ function drawChart(){
   const _att = !!$('attHoldToggle').checked;
   ctx.fillStyle = '#35d6ff'; ctx.font = '11px monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'top';
   ctx.fillText('src=' + _src + '  attHold=' + (_att ? 'ON' : 'off') + '  N=' + pts.length, padL, 4);
+}
+
+function drawScoreChart(){
+  const cv = $('scoreChart');
+  const ctx = cv.getContext('2d');
+  const W = cv.width, H = cv.height;
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle = '#0a0a0a'; ctx.fillRect(0,0,W,H);
+  const pts = S.runs.filter(r => r.ok && Number.isFinite(r.score) && r.score < 1e5).sort((a,b)=>a.bias-b.bias);
+  if(!pts.length){
+    ctx.fillStyle = '#555'; ctx.font = '12px monospace'; ctx.textAlign = 'center';
+    ctx.fillText('no valid scores', W/2, H/2); return;
+  }
+  const padL=60,padR=20,padT=20,padB=30;
+  const pw = W-padL-padR, ph = H-padT-padB;
+  const bs = pts.map(p=>p.bias), ss = pts.map(p=>p.score);
+  const bMin = Math.min(...bs), bMax = Math.max(...bs);
+  const sMin = Math.min(...ss), sMax = Math.max(...ss);
+  const sPad = Math.max(0.1, (sMax-sMin)*0.1);
+  const bSpan = Math.max(1e-9, bMax-bMin);
+  const sLo = sMin - sPad, sHi = sMax + sPad;
+  const X = b => padL + (b-bMin)/bSpan*pw;
+  const Y = s => padT+ph - (s-sLo)/Math.max(1e-9, sHi-sLo)*ph;
+  ctx.strokeStyle = '#333'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(padL,padT); ctx.lineTo(padL,padT+ph); ctx.lineTo(padL+pw,padT+ph); ctx.stroke();
+  ctx.fillStyle = '#888'; ctx.font = '10px monospace';
+  ctx.textAlign='right'; ctx.textBaseline='middle';
+  for(let i=0;i<=4;i++) ctx.fillText((sLo + i*(sHi-sLo)/4).toFixed(2), padL-6, padT+ph-i*ph/4);
+  ctx.textAlign='center'; ctx.textBaseline='top';
+  for(let i=0;i<=4;i++) ctx.fillText((bMin+i*bSpan/4).toFixed(0), padL+i*pw/4, padT+ph+6);
+  ctx.strokeStyle = '#4ade80'; ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  for(let i=0;i<pts.length;i++){
+    const x=X(pts[i].bias), y=Y(pts[i].score);
+    if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+  }
+  ctx.stroke();
+  for(const p of pts){
+    ctx.fillStyle = '#4ade80'; ctx.beginPath();
+    ctx.arc(X(p.bias), Y(p.score), 3.5, 0, Math.PI*2); ctx.fill();
+  }
+  ctx.fillStyle = '#4ade80'; ctx.font = '11px monospace'; ctx.textAlign='left'; ctx.textBaseline='top';
+  ctx.fillText('valid: ' + pts.length + ' / ' + S.runs.length, padL, 4);
+}
+
+function drawSlopeChart(){
+  const cv = $('slopeChart');
+  const ctx = cv.getContext('2d');
+  const W = cv.width, H = cv.height;
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle = '#0a0a0a'; ctx.fillRect(0,0,W,H);
+  const pts = S.runs.filter(r => r.contact && Number.isFinite(r.contact.downrange)).sort((a,b)=>a.bias-b.bias);
+  if(pts.length < 2){
+    ctx.fillStyle='#555'; ctx.font='12px monospace'; ctx.textAlign='center';
+    ctx.fillText('need ≥2 points', W/2, H/2); return;
+  }
+  const segs = [];
+  for(let i=1;i<pts.length;i++){
+    const dx = pts[i].bias - pts[i-1].bias;
+    if(dx <= 0) continue;
+    const dy = pts[i].contact.downrange - pts[i-1].contact.downrange;
+    segs.push({ biasMid: (pts[i].bias+pts[i-1].bias)/2, slope: dy/dx, dx, dy });
+  }
+  if(!segs.length){
+    ctx.fillStyle='#555'; ctx.fillText('no valid segments', W/2, H/2); return;
+  }
+  const absSlopes = segs.map(s=>Math.abs(s.slope)).sort((a,b)=>a-b);
+  const median = absSlopes[Math.floor(absSlopes.length/2)] || 1;
+  const cliffThr = Math.max(0.1, median*5);
+  const maxAbs = Math.max(...segs.map(s=>Math.abs(s.slope))) || 1;
+  const vMax = Math.max(maxAbs, cliffThr*1.2);
+  const padL=60,padR=20,padT=20,padB=30;
+  const pw = W-padL-padR, ph = H-padT-padB;
+  const bs = segs.map(s=>s.biasMid);
+  const bMin = Math.min(...bs), bMax = Math.max(...bs);
+  const bSpan = Math.max(1e-9, bMax-bMin);
+  const midY = padT + ph/2;
+  const X = b => padL + (b-bMin)/bSpan*pw;
+  const Y = s => midY - (s/vMax)*ph/2;
+  ctx.strokeStyle='#444'; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(padL,midY); ctx.lineTo(padL+pw,midY); ctx.stroke();
+  const barW = Math.max(3, Math.min(24, pw / Math.max(1, segs.length) * 0.6));
+  for(const sg of segs){
+    const x = X(sg.biasMid);
+    const y = Y(sg.slope);
+    const isCliff = Math.abs(sg.slope) > cliffThr;
+    const isNeg = sg.slope < 0;
+    ctx.fillStyle = isNeg ? '#35d6ff' : (isCliff ? '#ff4d5e' : '#ffb020');
+    const h = Math.abs(y - midY);
+    ctx.fillRect(x - barW/2, sg.slope >= 0 ? y : midY, barW, h);
+  }
+  ctx.fillStyle='#888'; ctx.font='10px monospace';
+  ctx.textAlign='right'; ctx.textBaseline='middle';
+  for(let i=0;i<=4;i++){
+    const v = vMax - i*(vMax*2)/4;
+    ctx.fillText(v.toFixed(2), padL-6, padT+i*ph/4);
+  }
+  ctx.textAlign='center'; ctx.textBaseline='top';
+  for(let i=0;i<=4;i++) ctx.fillText((bMin+i*bSpan/4).toFixed(0), padL+i*pw/4, padT+ph+6);
+  ctx.fillStyle='#ff4d5e'; ctx.font='11px monospace'; ctx.textAlign='left'; ctx.textBaseline='top';
+  ctx.fillText('slope m/m  (median='+median.toFixed(2)+', cliff>'+cliffThr.toFixed(2)+')', padL, 4);
+}
+
+function computeAnalysis(){
+  const host = $('analysis');
+  if(!host) return;
+  const pts = S.runs.filter(r => r.contact && Number.isFinite(r.contact.downrange)).sort((a,b)=>a.bias-b.bias);
+  if(pts.length < 2){ host.textContent = 'need ≥2 points'; return; }
+  const segs = [];
+  for(let i=1;i<pts.length;i++){
+    const dx = pts[i].bias - pts[i-1].bias;
+    if(dx <= 0) continue;
+    const dy = pts[i].contact.downrange - pts[i-1].contact.downrange;
+    segs.push({ b0: pts[i-1].bias, b1: pts[i].bias, dr0: pts[i-1].contact.downrange, dr1: pts[i].contact.downrange, slope: dy/dx, dx, dy });
+  }
+  if(!segs.length){ host.textContent = 'no valid segments'; return; }
+  const absSlopes = segs.map(s=>Math.abs(s.slope)).sort((a,b)=>a-b);
+  const median = absSlopes[Math.floor(absSlopes.length/2)];
+  const cliffThr = Math.max(0.1, median*5);
+  const cliffs = segs.filter(s => Math.abs(s.slope) > cliffThr);
+  let dirChanges = 0;
+  for(let i=1;i<segs.length;i++){
+    if(Math.sign(segs[i].slope) !== Math.sign(segs[i-1].slope)) dirChanges++;
+  }
+  let zeroCross = null;
+  for(let i=1;i<pts.length;i++){
+    const d0 = pts[i-1].contact.downrange, d1 = pts[i].contact.downrange;
+    if((d0 <= 0 && d1 >= 0) || (d0 >= 0 && d1 <= 0)){
+      const frac = (d0 === d1) ? 0.5 : Math.abs(d0)/(Math.abs(d0)+Math.abs(d1));
+      zeroCross = pts[i-1].bias + frac*(pts[i].bias - pts[i-1].bias);
+      break;
+    }
+  }
+  let cliffCross = null;
+  if(cliffs.length === 1){
+    const c = cliffs[0];
+    if((c.dr0 <= 0 && c.dr1 >= 0) || (c.dr0 >= 0 && c.dr1 <= 0)){
+      const frac = Math.abs(c.dr0)/(Math.abs(c.dr0)+Math.abs(c.dr1));
+      cliffCross = c.b0 + frac*(c.b1 - c.b0);
+    }
+  }
+  let html = '';
+  html += 'points: ' + pts.length + ' | segments: ' + segs.length + '<br>';
+  html += 'median |slope| = ' + median.toFixed(3) + ' m/m | cliff threshold (5x median) = ' + cliffThr.toFixed(3) + '<br>';
+  html += 'monotonicity: ' + (dirChanges === 0 ? '<span style="color:#4ade80">PURE (all dr deltas same sign)</span>' : '<span style="color:#ffb020">' + dirChanges + ' direction change(s) — unexpected</span>') + '<br>';
+  if(zeroCross !== null) html += 'zero-crossing bias &asymp; ' + zeroCross.toFixed(2) + ' m (linear interp)<br>';
+  if(cliffCross !== null) html += '<span style="color:#ff4d5e">zero-crossing falls INSIDE a cliff at bias &asymp; ' + cliffCross.toFixed(2) + ' m — precision limit here</span><br>';
+  html += 'cliffs detected: ' + cliffs.length + (cliffs.length ? ' (slope &gt; ' + cliffThr.toFixed(2) + ' m/m):<br>' : '') ;
+  for(const c of cliffs.slice(0, 10)){
+    html += '&nbsp;&nbsp;bias [' + c.b0.toFixed(2) + ' &rarr; ' + c.b1.toFixed(2) + ']: slope ' + c.slope.toFixed(2) + ' (Δdr = ' + c.dy.toFixed(2) + ' m over Δb = ' + c.dx.toFixed(2) + ' m)<br>';
+  }
+  if(median < 0.01) html += '<span style="color:#ffb020">median slope near zero &mdash; bias has weak authority in this range</span><br>';
+  host.innerHTML = html;
+}
+
+function drawCharts(){
+  drawChart();
+  drawScoreChart();
+  drawSlopeChart();
+  computeAnalysis();
 }
 
 function computeMetrics(){
