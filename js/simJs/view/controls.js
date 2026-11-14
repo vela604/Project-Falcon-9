@@ -999,6 +999,38 @@ function _syncGuidanceLock(status) {
 // ============================================================================
 // Right toolbar — guidance selection + start/stop.
 // ============================================================================
+function _bindRecordMissionButton() {
+  const btn = document.getElementById('btnRecordMission');
+  if (!btn) return;
+  if (btn.dataset.wired) return;
+  btn.dataset.wired = '1';
+  btn.addEventListener('click', function () {
+    if (typeof window.captureCurrentMissionRecord !== 'function') {
+      if (typeof window.showASDSToast === 'function') window.showASDSToast('⚠ Recorder not loaded', false);
+      return;
+    }
+    window.captureCurrentMissionRecord().then(function (rec) {
+      if (!rec || rec.error) {
+        if (typeof window.showASDSToast === 'function') window.showASDSToast('⚠ ' + (rec ? rec.error : 'no data'), false);
+        return;
+      }
+      if (typeof saveMissionRecordWithPolicy !== 'function') return;
+      var res = saveMissionRecordWithPolicy(rec);
+      if (typeof window.showASDSToast === 'function') {
+        if (res.action === 'saved') {
+          window.showASDSToast('✓ Recorded: ' + rec.phases.length + ' phases' +
+            (rec.partial ? ' (partial)' : ' (complete)') +
+            (rec.currentPhase ? ' · ' + rec.currentPhase : ''), true);
+        } else {
+          window.showASDSToast('ℹ ' + (res.reason || 'skipped'), true);
+        }
+      }
+    }).catch(function (e) {
+      if (typeof window.showASDSToast === 'function') window.showASDSToast('⚠ ' + e.message, false);
+    });
+  });
+}
+
 function bindGuidanceToolbar() {
   const toolbar = document.getElementById('rightToolbar');
   const toggle = document.getElementById('rightToolbarToggle');
@@ -1083,6 +1115,7 @@ try {
   // a guide is running.
   const abortBtn = document.getElementById('btnGuideAbort');
   if (abortBtn) abortBtn.addEventListener('click', abortGuidance);
+  _bindRecordMissionButton();
 
   // Toggle Mission Phases panel visibility (class + !important CSS)
   const phaseBtn = document.getElementById('btnTogglePhaseTrack');
@@ -1402,6 +1435,50 @@ const seq = Array.isArray(status.phaseSequence) && status.phaseSequence.length ?
 // Called by workerBridge.js whenever the guidance worker pushes a status
 // update (or an immediate ack from a guidanceCommand). Updates the right
 // toolbar's live readout.
+function _syncMissionRecordSession(status) {
+  const curActive = !!(status && status.active);
+  const prevActive = !!window.__prevGuideActiveForRecord;
+  
+  // Guide just started
+  if (curActive && !prevActive) {
+    const stk = (typeof getActiveStack === 'function') ? getActiveStack() : null;
+    const guideSel = document.getElementById('guideSelect');
+    if (stk && guideSel && guideSel.value && typeof startGuideSession === 'function') {
+      startGuideSession(stk.id, guideSel.value);
+    }
+  } else if (!curActive && prevActive) {
+    if (typeof endGuideSession === 'function') endGuideSession();
+  }
+  
+  // Capture start hash at first valid tick after guide start
+  if (curActive && window.__guideSession && window.__guideSession.startT === null) {
+    const body = state.bodies && state.bodies[state.activeBodyIndex || 0];
+    if (body && state.simTime > 0 && typeof missionStateHash === 'function') {
+      window.__guideSession.startT = state.simTime;
+      window.__guideSession.startHash = missionStateHash(body, state.simTime);
+    }
+  }
+  
+  // Auto-save on END transition (success only)
+  const prevResult = window.__prevRunResult;
+  const curResult = status && status.runResult;
+  if (prevResult === 'in-progress' && curResult === 'success' &&
+      typeof window.captureCurrentMissionRecord === 'function' &&
+      typeof saveMissionRecordWithPolicy === 'function') {
+    window.captureCurrentMissionRecord().then(function (rec) {
+      if (!rec || rec.error) return;
+      var res = saveMissionRecordWithPolicy(rec);
+      if (res.action === 'saved' && typeof window.showASDSToast === 'function') {
+        window.showASDSToast('✓ Auto-saved: ' + rec.phases.length + ' phases', true);
+      }
+    }).catch(function (e) { console.warn('[missionRecords] auto-save fail', e); });
+  }
+  // failed → skip (per user decision #3)
+  
+  window.__prevGuideActiveForRecord = curActive;
+  if (curResult) window.__prevRunResult = curResult;
+}
+
 function onGuidanceStatus(status) {
   const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
   
@@ -1411,6 +1488,7 @@ function onGuidanceStatus(status) {
   // Idempotent — the function bails if the state hasn't changed.
   _syncGuidanceLock(status);
   _renderPhaseTrack(status);
+  _syncMissionRecordSession(status);
   // Farewell sequence — driven by phase transitions. Fires the
   // "GOING FOR FINAL BURN" / "JUST ADJUSTING" / "GOOD BYE" messages
   // during the suicide-burn flow.

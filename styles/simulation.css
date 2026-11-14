@@ -1899,3 +1899,36 @@ canvas.mini-graph { width: 100%; height: 60px; background: var(--bg); border-rad
   opacity: 1;
   transform: translate(-50%, 0);
 }
+
+
+/* Guide phase panel — record mission button */
+#guidePhaseTrack .gpt-record-btn {
+  width: 100%;
+  margin-top: 6px;
+  padding: 6px 10px;
+  background: rgba(53, 214, 255, 0.15);
+  border: 1px solid var(--cyan);
+  border-radius: 6px;
+  color: var(--cyan);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+#guidePhaseTrack .gpt-record-btn:hover:not(:disabled) {
+  background: var(--cyan);
+  color: #000;
+}
+#guidePhaseTrack .gpt-record-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+@media (min-width: 1024px) {
+  #guidePhaseTrack .gpt-record-btn {
+    padding: 3px 8px;
+    font-size: 9px;
+    margin-top: 4px;
+  }
+}

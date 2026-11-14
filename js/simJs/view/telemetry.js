@@ -417,7 +417,13 @@ function updateTelemetry() {
   // _tempState being current).
   const _tNow = state.simTime;
   const _lastSimTime = (typeof updateTelemetry._lastSim === 'number') ? updateTelemetry._lastSim : _tNow - CONFIG.DT;
-  const _dtThermal = (_tNow > _lastSimTime && _tNow - _lastSimTime < 30) ? (_tNow - _lastSimTime) : CONFIG.DT;
+  // PAUSE-GATE: when sim is paused/halted, thermal decay must freeze.
+// Without this, wall-clock render loop keeps ticking _thermalTickBody
+// every frame → temperature decays toward ambient despite physics frozen.
+// _thermalTickBody early-returns on dt<=0, so passing 0 is a no-op.
+const _isPaused = (typeof state !== 'undefined' && state.halted) ||
+                  (typeof simPaused !== 'undefined' && simPaused);
+const _dtThermal = _isPaused ? 0 : ((_tNow > _lastSimTime && _tNow - _lastSimTime < 30) ? (_tNow - _lastSimTime) : CONFIG.DT);
   updateTelemetry._lastSim = _tNow;
   for (let _ti = 0; _ti < state.bodies.length; _ti++) _thermalTickBody(state.bodies[_ti], _dtThermal);
 
