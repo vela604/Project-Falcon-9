@@ -2153,25 +2153,25 @@ const engineBell = (() => {
       ctx.lineCap = 'round';
       // outer tube
       ctx.strokeStyle = _tint('#0c0e12', Math.max(0.5, kOut));
-      ctx.lineWidth = Math.max(1.6, W * 0.042);
+      ctx.lineWidth = Math.max(2.4, W * 0.085);
       ctx.beginPath(); ctx.moveTo(pmX, pmY); ctx.lineTo(tipApexX, tipApexY); ctx.stroke();
       ctx.strokeStyle = _tint('#3a4049', kOut);
-      ctx.lineWidth = Math.max(0.9, W * 0.020);
+      ctx.lineWidth = Math.max(1.8, W * 0.045);
       ctx.beginPath(); ctx.moveTo(pmX, pmY); ctx.lineTo(tipApexX, tipApexY); ctx.stroke();
       // chrome inner rod (extends from 32% of the tube)
       const rodStartFrac = 0.32;
       const rx1 = pmX + (tipApexX - pmX) * rodStartFrac;
       const ry1 = pmY + (tipApexY - pmY) * rodStartFrac;
       ctx.strokeStyle = _tint('#b9c1ca', Math.max(0.35, kOut));
-      ctx.lineWidth = Math.max(1, W * 0.024);
+      ctx.lineWidth = Math.max(1.8, W * 0.050);
       ctx.beginPath(); ctx.moveTo(rx1, ry1); ctx.lineTo(tipApexX, tipApexY); ctx.stroke();
       ctx.strokeStyle = _tint('#ffffff', Math.max(0.5, kOut), 0.85);
-      ctx.lineWidth = Math.max(0.5, W * 0.007);
+      ctx.lineWidth = Math.max(0.8, W * 0.014);
       ctx.beginPath(); ctx.moveTo(rx1 - side * W * 0.004, ry1); ctx.lineTo(tipApexX - side * W * 0.004, tipApexY); ctx.stroke();
       // piston collar + upper ball joint
       ctx.fillStyle = _tint('#15181d', kOut);
-      ctx.beginPath(); ctx.arc(rx1, ry1, W * 0.026, 0, Math.PI * 2); ctx.fill();
-      ctx.beginPath(); ctx.arc(pmX, pmY, W * 0.024, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(rx1, ry1, W * 0.045, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(pmX, pmY, W * 0.040, 0, Math.PI * 2); ctx.fill();
     }
 
     // panel body — shaded across its width (outer edge catches the light)
