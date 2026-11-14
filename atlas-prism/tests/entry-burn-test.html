@@ -1,0 +1,529 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Entry Burn Landscape Test</title>
+<style>
+  body { font-family: monospace; background:#000; color:#ddd; padding:10px; font-size:12px; }
+  h1 { color:#35d6ff; margin:0 0 10px; font-size:15px; }
+  .panel { background:#111; border:1px solid #333; padding:8px; margin-bottom:8px; }
+  label { display:inline-block; margin-right:8px; margin-bottom:4px; }
+  input, select { background:#000; color:#fff; border:1px solid #444; padding:3px; font-family:monospace; font-size:11px; }
+  button { background:#1a1a1a; color:#35d6ff; border:1px solid #35d6ff; padding:4px 10px; cursor:pointer; font-family:monospace; font-size:11px; }
+  button:disabled { color:#555; border-color:#333; cursor:default; }
+  #log { background:#000; border:1px solid #222; padding:6px; height:180px; overflow-y:auto; font-size:11px; }
+  #log div { color:#888; }
+  #log div.ok { color:#4ade80; }
+  #log div.warn { color:#ffb020; }
+  #log div.err { color:#ff4d5e; }
+  canvas { background:#000; border:1px solid #333; display:block; max-width:100%; }
+  table { border-collapse:collapse; font-size:11px; }
+  th, td { border:1px solid #333; padding:3px 8px; text-align:right; }
+  th { background:#1a1a1a; color:#888; }
+  .status { color:#888; margin-left:8px; font-size:11px; }
+  .metrics { background:#0a1a2a; border:1px solid #35d6ff; padding:6px; color:#35d6ff; }
+</style>
+</head>
+<body>
+
+<h1>Entry Burn Landscape Test — RTLS smoothness hypothesis</h1>
+
+<div class="panel">
+  <label>Stack: <select id="stackSel"></select></label>
+  <button id="lockBtn">Lock</button>
+  <span class="status" id="lockStatus">—</span>
+</div>
+
+<div class="panel">
+  <b>Config</b><br>
+  <label>MECO kg <input type="number" id="mecoKg" value="52612" step="1" style="width:80px"></label>
+  <label>G <input type="number" id="pushG" value="0.64" step="0.01" style="width:60px"></label>
+  <label>T <input type="number" id="pushT" value="4.82" step="0.001" style="width:60px"></label>
+  <label>apside1 km <input type="number" id="apo1" value="320" step="10" style="width:60px"></label>
+  <label>apside2 km <input type="number" id="apo2" value="320" step="10" style="width:60px"></label>
+  <button id="initBtn" disabled>INIT (SA + EB)</button>
+  <span class="status" id="initStatus">not initialised</span>
+</div>
+
+<div class="panel">
+  <b>Sweep</b><br>
+  <label>bias source:
+    <select id="biasSource">
+      <option value="entry_burn" selected>entry_burn (EB snapshot, fast)</option>
+      <option value="boostback">boostback (SA snapshot, ~3x slower)</option>
+    </select>
+  </label>
+  <label><input type="checkbox" id="attHoldToggle"> ENTRY_BURN_RCS_ATTITUDE_HOLD (ASDS-style)</label><br>
+  <label>lo <input type="number" id="sweepLo" value="-900" step="10" style="width:70px"></label>
+  <label>hi <input type="number" id="sweepHi" value="200" step="10" style="width:70px"></label>
+  <label>N <input type="number" id="sweepN" value="7" step="1" min="2" max="21" style="width:50px"></label>
+  <button id="sweepBtn" disabled>Run sweep</button>
+  <button id="stopBtn" disabled>Stop</button>
+  <span class="status" id="sweepStatus">—</span>
+</div>
+
+<div class="panel">
+  <b>Landscape: bias → downrange error</b>
+  <span class="status">— cyan = zero line. smooth = monotone curve crossing 0 once</span><br>
+  <canvas id="chart" width="900" height="280"></canvas>
+</div>
+
+<div class="panel">
+  <b>Smoothness metrics</b><br>
+  <div class="metrics" id="metrics">—</div>
+</div>
+
+<div class="panel">
+  <b>Results</b>
+  <table id="results"><thead><tr>
+    <th>#</th><th>bias (m)</th><th>dr (m)</th><th>score</th><th>landed</th><th>crashed</th><th>wall (s)</th>
+  </tr></thead><tbody></tbody></table>
+</div>
+
+<div class="panel">
+  <b>Log</b>
+  <div id="log"></div>
+</div>
+
+<!-- SIM MODULES -->
+<script src="../../js/componentLibrary.js"></script>
+<script src="../../js/customDesign.js"></script>
+<script src="../../js/fleet.js"></script>
+<script src="../../js/config.js"></script>
+<script src="../../js/simJs/view/asds.js"></script>
+<script src="../../js/simJs/core/massProps.js"></script>
+<script src="../../js/simJs/core/environment.js"></script>
+<script src="../../js/simJs/core/vehicle.js"></script>
+<script src="../../js/simJs/core/rcs.js"></script>
+<script src="../../js/simJs/core/physics.js"></script>
+<script src="../../js/simJs/core/collision.js"></script>
+<script src="../../js/simJs/guidance/imu.js"></script>
+<script src="../../js/simJs/guidance/derivation.js"></script>
+<script src="../../js/simJs/guidance/guidercs.js"></script>
+<script src="../../js/simJs/guidance/guidance-blocks.js"></script>
+<script src="../../js/simJs/guidance/guidance.js"></script>
+<script src="../../js/guideConfigDefaults.js"></script>
+
+<script>
+(function(){
+'use strict';
+
+const $ = id => document.getElementById(id);
+const DT = () => CONFIG.DT;
+const S = { locked:false, stackId:null, inited:false, saSnap:null, ebSnap:null, runs:[], running:false, abort:false };
+
+function log(msg, lvl){
+  const lf = $('log');
+  const d = document.createElement('div');
+  d.textContent = '[' + new Date().toISOString().slice(11,19) + '] ' + msg;
+  if(lvl) d.className = lvl;
+  lf.appendChild(d);
+  lf.scrollTop = lf.scrollHeight;
+  (window._origLog || console.log).call(console, msg);
+}
+
+function deepClone(x, memo){
+  memo = memo || new WeakMap();
+  if(x === null || typeof x !== 'object') return x;
+  if(memo.has(x)) return memo.get(x);
+  if(Array.isArray(x)){ const a=[]; memo.set(x,a); for(let i=0;i<x.length;i++)a[i]=deepClone(x[i],memo); return a; }
+  const o={}; memo.set(x,o); for(const k of Object.keys(x)){ try{o[k]=deepClone(x[k],memo);}catch(e){o[k]=null;} } return o;
+}
+
+const _yieldMC = new MessageChannel();
+const _yieldQ = [];
+_yieldMC.port1.onmessage = () => { const fn = _yieldQ.shift(); if(fn) fn(); };
+function yieldBrowser(){ return new Promise(r => { _yieldQ.push(r); _yieldMC.port2.postMessage(0); }); }
+
+function _tick(){ TunerEngine.tick(DT()); }
+
+function captureSnap(){
+  const st = {};
+  Object.keys(state).forEach(k => { if(k==='bodies')return; try{st[k]=deepClone(state[k]);}catch(e){st[k]=null;} });
+  return { bodies: deepClone(state.bodies), stateKeysSnapshot: st, simTime: state.simTime, activeBodyIndex: state.activeBodyIndex, guidanceState: Guidance.exportGuideState() };
+}
+
+function restoreSnap(snap, gOverride){
+  Object.keys(snap.stateKeysSnapshot).forEach(k => { try{state[k]=deepClone(snap.stateKeysSnapshot[k]);}catch(e){} });
+  state.simTime = snap.simTime;
+  state.activeBodyIndex = snap.activeBodyIndex;
+  const sb = snap.bodies;
+  while(state.bodies.length > sb.length) state.bodies.pop();
+  while(state.bodies.length < sb.length) state.bodies.push({});
+  for(let i=0;i<sb.length;i++){
+    const s = sb[i], d = state.bodies[i];
+    Object.keys(d).forEach(k => delete d[k]);
+    Object.keys(s).forEach(k => { d[k] = deepClone(s[k]); });
+  }
+  if(snap.stateKeysSnapshot.halted === undefined) state.halted = false;
+  Guidance.importGuideState(deepClone(gOverride || snap.guidanceState));
+}
+
+function findBooster(){
+  for(const b of state.bodies) if(b && b.members && b.members[0] && b.members[0].stageRole==='booster' && !b.payloadBody) return b;
+  return null;
+}
+
+function getXfromPad(bB, simT){
+  const phiNow = Math.atan2(bB.rx, bB.ry) - CONFIG.EARTH_OMEGA * simT;
+  const padArr = (CONFIG.LANDING_PADS || []).filter(p => p.id === 'LZ-1');
+  const pad = padArr.length ? padArr[0] : { arcOffsetM: 400 };
+  const Rg = CONFIG.EARTH_RADIUS + (CONFIG.LAUNCH_SITE_ALTITUDE || 0);
+  const padEf = (CONFIG.LAUNCH_SITE_ANGLE_0 || 0) + (pad.arcOffsetM || 0) / Rg;
+  let xRad = phiNow - padEf;
+  while(xRad > Math.PI) xRad -= 2*Math.PI;
+  while(xRad < -Math.PI) xRad += 2*Math.PI;
+  return xRad * Rg;
+}
+
+async function runUntil(pred, maxS, onProg){
+  const maxTicks = Math.ceil(maxS / DT());
+  for(let i=0; i<maxTicks; i++){
+    if(state.halted) return { ok:false, reason:'halted', simTime: state.simTime };
+    _tick();
+    const r = pred();
+    if(r) return { ok:true, result:r, simTime: state.simTime };
+    if(i % 200 === 0){ await yieldBrowser(); if(onProg) onProg(state.simTime); }
+  }
+  return { ok:false, reason:'timeout', simTime: state.simTime };
+}
+
+function populateStackSel(){
+  let list = [];
+  try { list = (loadStacks() || []).filter(s => s && s.sequence === 'standard' && s.locked); } catch(e){}
+  const el = $('stackSel');
+  if(!list.length){ el.innerHTML = '<option value="">(no locked standard stacks)</option>'; return; }
+  el.innerHTML = list.map(s => '<option value="'+s.id+'">'+s.name+'</option>').join('');
+}
+
+function doLock(){
+  const id = $('stackSel').value;
+  if(!id){ log('No stack', 'err'); return; }
+  try { setSelectedStackId(id); } catch(e){ log('setSelectedStackId failed: '+e.message, 'err'); return; }
+  S.locked = true; S.stackId = id;
+  $('lockBtn').disabled = true; $('stackSel').disabled = true; $('initBtn').disabled = false;
+  $('lockStatus').textContent = 'LOCKED ' + id;
+  log('Locked ' + id, 'ok');
+}
+
+async function doInit(){
+  if(S.running || !S.locked) return;
+  S.running = true; S.abort = false;
+  $('initBtn').disabled = true; $('sweepBtn').disabled = true;
+  $('initStatus').textContent = 'INIT running…';
+
+  const meco = +$('mecoKg').value, G = +$('pushG').value, T = +$('pushT').value;
+  const apo1 = +$('apo1').value, apo2 = +$('apo2').value;
+  if(![meco,G,T,apo1,apo2].every(Number.isFinite)){ log('Invalid config', 'err'); S.running=false; $('initBtn').disabled=false; return; }
+
+  const preset = (typeof getGuideDefaultPreset === 'function') ? getGuideDefaultPreset('landbackV1') : null;
+  const vals = preset && preset.constants ? deepClone(preset.constants) : {};
+  vals.ascent = vals.ascent || {};
+  vals.ascent.MECO_TARGET_BOOSTER_FUEL_KG = meco;
+  vals.ascent.PUSH_MAX_GIMBAL_DEG = G;
+  vals.ascent.PUSH_T_S = T;
+  vals.insertion = vals.insertion || {};
+  vals.insertion.TARGET_APSIDE1_ALT_KM = apo1;
+  vals.insertion.TARGET_APSIDE2_ALT_KM = apo2;
+  vals.done = vals.done || {};
+  vals.done.DEORBIT_ENABLED = false;
+  vals.rtls = vals.rtls || {};
+  vals.rtls.MISSION_TYPE = 'RTLS';
+  vals.rtls.ENTRY_BURN_IMPACT_TARGET_M = -825;
+  vals.rtls.ENTRY_BURN_RCS_ATTITUDE_HOLD = false;  // default off during INIT
+  vals.mission = vals.mission || {};
+  vals.mission.TARGET_LANDING_PAD = 'LZ-1';
+
+  const env = { atmosphere:true, slosh:true, imu:false, wind:{enabled:false,speed:0,directionDeg:0}, boosterPct:100, stagePct:100 };
+
+  try {
+    log('TunerEngine.init()');
+    TunerEngine.init();
+    log('prepareRun(landbackV1)');
+    TunerEngine.prepareRun('landbackV1', vals, env);
+    log('running to SEPARATED_AXIAL…');
+    const _orig = console.log; console.log = function(){};
+    try {
+      const saRes = await runUntil(
+        () => { const gs = Guidance.getGuideStatus(); return gs && gs.phase === 'SEPARATED_AXIAL' ? gs : null; },
+        400,
+        (t) => { $('initStatus').textContent = 'SA… t=' + t.toFixed(0) + 's'; }
+      );
+      if(!saRes.ok) throw new Error('SA not reached: ' + saRes.reason);
+      S.saSnap = captureSnap();
+      log('SA captured t=' + saRes.simTime.toFixed(1), 'ok');
+
+      $('initStatus').textContent = 'SA → EB…';
+      const ebRes = await runUntil(
+        () => { const gs = Guidance.getGuideStatus(); return gs && gs.rtlsPhase === 'ENTRY_BURN' ? gs : null; },
+        1200,
+        (t) => { $('initStatus').textContent = 'EB… t=' + t.toFixed(0) + 's'; }
+      );
+      if(!ebRes.ok) throw new Error('EB not reached: ' + ebRes.reason);
+      S.ebSnap = captureSnap();
+      log('EB captured t=' + ebRes.simTime.toFixed(1), 'ok');
+    } finally { console.log = _orig; }
+
+    S.inited = true;
+    $('initStatus').textContent = 'READY';
+    $('sweepBtn').disabled = false;
+    log('INIT complete', 'ok');
+  } catch(e){
+    log('INIT FAILED: ' + e.message, 'err');
+    $('initStatus').textContent = 'ERROR: ' + e.message;
+  } finally {
+    S.running = false;
+    $('initBtn').disabled = false;
+  }
+}
+
+async function runEval(bias, onProg){
+  const _biasSrc = $('biasSource').value === 'boostback' ? 'boostback' : 'entry_burn';
+  const _attHold = !!$('attHoldToggle').checked;
+  const _baseSnap = (_biasSrc === 'boostback') ? S.saSnap : S.ebSnap;
+  if(!_baseSnap) throw new Error('Snapshot missing: ' + _biasSrc);
+
+  const g = deepClone(_baseSnap.guidanceState);
+  const cfg = g.guideConfigs && g.guideConfigs.landbackV1;
+  if(!cfg) throw new Error('Config missing');
+
+  if(_biasSrc === 'boostback'){
+    cfg.rtls.BOOSTBACK_APPARENT_OFFSET_M = bias;
+    cfg.rtls.ENTRY_BURN_IMPACT_TARGET_M = 0;
+  } else {
+    cfg.rtls.ENTRY_BURN_IMPACT_TARGET_M = bias;
+    if(g.lbRtlsBlock && g.lbRtlsBlock.constants) g.lbRtlsBlock.constants.ENTRY_BURN_IMPACT_TARGET_M = bias;
+  }
+  cfg.rtls.ENTRY_BURN_RCS_ATTITUDE_HOLD = _attHold;
+  if(g.lbRtlsBlock && g.lbRtlsBlock.constants) g.lbRtlsBlock.constants.ENTRY_BURN_RCS_ATTITUDE_HOLD = _attHold;
+
+  restoreSnap(_baseSnap, g);
+
+  const capS = (_biasSrc === 'boostback') ? 550 : 300;
+  const tStart = state.simTime;
+  const maxTicks = Math.ceil(capS / DT());
+  const evalT0 = performance.now();
+  let contact = null;
+
+  const _origLog = console.log, _origErr = console.error;
+  console.log = function(){}; console.error = function(){};
+  try {
+    for(let i=0; i<maxTicks; i++){
+      if(S.abort || state.halted) break;
+      _tick();
+      const bB = findBooster();
+      if(!bB) break;
+      const simT = state.simTime;
+      const r = Math.hypot(bB.rx, bB.ry);
+      const hAGL = r - CONFIG.EARTH_RADIUS - (CONFIG.LAUNCH_SITE_ALTITUDE || 0);
+      const vr = (bB.vx*bB.rx + bB.vy*bB.ry) / r;
+      const xp = getXfromPad(bB, simT);
+      if(!contact && (bB.landed || bB.crashed)){
+        const lv = Math.atan2(-bB.rx, bB.ry);
+        let th = bB.theta - lv;
+        while(th > Math.PI) th -= 2*Math.PI;
+        while(th < -Math.PI) th += 2*Math.PI;
+        contact = {
+          t: simT, altAGL: hAGL, downrange: xp,
+          vx: (bB.vx*bB.ry - bB.vy*bB.rx)/r - CONFIG.EARTH_OMEGA*r,
+          vy: vr, thetaLocal: th * 180/Math.PI, omega: bB.omega * 180/Math.PI,
+          landed: !!bB.landed, crashed: !!bB.crashed,
+        };
+        break;
+      }
+      if(i % 200 === 0){ await yieldBrowser(); if(onProg) onProg({ t: simT - tStart, dr: xp }); }
+    }
+  } finally { console.log = _origLog; console.error = _origErr; }
+
+  const wallS = (performance.now() - evalT0) / 1000;
+  let score = 1e6, ok = false, fail = '';
+  if(!contact) fail = 'no-contact';
+  else if(contact.crashed) fail = 'crashed';
+  else if(!contact.landed) fail = 'not-landed';
+  else if(Math.abs(contact.thetaLocal) > 12) fail = 'tilt';
+  else if(Math.abs(contact.vx) > 2.5) fail = 'vx';
+  else if(Math.abs(contact.vy) > 5) fail = 'vy';
+  else if(Math.abs(contact.downrange) > 42.5) fail = 'downrange';
+  else {
+    ok = true;
+    score = Math.abs(contact.downrange) + (contact.vx*contact.vx)/0.5 + (contact.omega*contact.omega)/4;
+  }
+  return { bias, biasSrc: _biasSrc, attHold: _attHold, contact, score, ok, fail, wallS };
+}
+
+async function doSweep(){
+  if(S.running || !S.inited) return;
+  const lo = +$('sweepLo').value, hi = +$('sweepHi').value, N = parseInt($('sweepN').value, 10);
+  if(![lo,hi,N].every(Number.isFinite) || N < 2 || hi <= lo){ log('Invalid sweep', 'err'); return; }
+
+  S.running = true; S.abort = false;
+  $('sweepBtn').disabled = true; $('initBtn').disabled = true; $('stopBtn').disabled = false;
+  S.runs = [];
+  $('results').querySelector('tbody').innerHTML = '';
+  $('metrics').textContent = '—';
+
+  const step = (hi - lo) / (N - 1);
+  const biases = [];
+  for(let i=0; i<N; i++) biases.push(+(lo + i*step).toFixed(1));
+
+  const _src = $('biasSource').value;
+  const _att = !!$('attHoldToggle').checked;
+  log('SWEEP: src=' + _src + ' attHold=' + _att + ' lo=' + lo + ' hi=' + hi + ' N=' + N, 'ok');
+
+  try {
+    for(let i=0; i<biases.length; i++){
+      if(S.abort) break;
+      const b = biases[i];
+      $('sweepStatus').textContent = 'eval ' + (i+1) + '/' + N + ' bias=' + b;
+      log('eval ' + (i+1) + '/' + N + ' bias=' + b);
+      try {
+        const r = await runEval(b, (p) => {
+          $('sweepStatus').textContent = 'eval ' + (i+1) + '/' + N + ' bias=' + b + ' t=' + p.t.toFixed(0) + 's';
+        });
+        S.runs.push(r);
+        const drStr = r.contact ? r.contact.downrange.toFixed(1) + 'm' : 'no-contact';
+        log('  → dr=' + drStr + ' score=' + (r.ok ? r.score.toFixed(2) : 'FAIL ' + r.fail) + ' wall=' + r.wallS.toFixed(0) + 's', r.ok ? 'ok' : 'warn');
+        renderResults();
+        drawChart();
+      } catch(e){ log('eval error: ' + e.message, 'err'); }
+    }
+    computeMetrics();
+  } finally {
+    S.running = false;
+    $('sweepBtn').disabled = !S.inited;
+    $('initBtn').disabled = false;
+    $('stopBtn').disabled = true;
+    $('sweepStatus').textContent = S.abort ? 'stopped' : 'done';
+  }
+}
+
+function renderResults(){
+  const tbody = $('results').querySelector('tbody');
+  tbody.innerHTML = S.runs.map((r, i) => {
+    const dr = r.contact ? r.contact.downrange.toFixed(1) : '—';
+    return '<tr><td>' + (i+1) + '</td><td>' + r.bias.toFixed(1) + '</td><td>' + dr + '</td><td>' + (r.ok ? r.score.toFixed(2) : 'FAIL') + '</td><td>' + (r.contact?.landed ? 'Y' : '—') + '</td><td>' + (r.contact?.crashed ? 'Y' : '—') + '</td><td>' + r.wallS.toFixed(0) + '</td></tr>';
+  }).join('');
+}
+
+function drawChart(){
+  const cv = $('chart');
+  const ctx = cv.getContext('2d');
+  const W = cv.width, H = cv.height;
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle = '#0a0a0a'; ctx.fillRect(0,0,W,H);
+
+  const pts = S.runs.filter(r => r.contact && Number.isFinite(r.contact.downrange));
+  if(!pts.length){
+    ctx.fillStyle = '#555'; ctx.font = '12px monospace'; ctx.textAlign = 'center';
+    ctx.fillText('no data', W/2, H/2); return;
+  }
+
+  const padL = 60, padR = 20, padT = 20, padB = 30;
+  const pw = W - padL - padR, ph = H - padT - padB;
+  const bs = pts.map(p => p.bias);
+  const drs = pts.map(p => p.contact.downrange);
+  const bMin = Math.min(...bs), bMax = Math.max(...bs);
+  let dMin = Math.min(...drs), dMax = Math.max(...drs);
+  if(dMin > 0) dMin = 0;
+  if(dMax < 0) dMax = 0;
+  const padD = Math.max(1, (dMax - dMin) * 0.1);
+  dMin -= padD; dMax += padD;
+  const bSpan = Math.max(1e-9, bMax - bMin), dSpan = Math.max(1e-9, dMax - dMin);
+  const X = b => padL + (b - bMin) / bSpan * pw;
+  const Y = d => padT + ph - (d - dMin) / dSpan * ph;
+
+  ctx.strokeStyle = '#333'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(padL, padT); ctx.lineTo(padL, padT+ph); ctx.lineTo(padL+pw, padT+ph); ctx.stroke();
+
+  const y0 = Y(0);
+  ctx.strokeStyle = '#35d6ff'; ctx.setLineDash([4,3]);
+  ctx.beginPath(); ctx.moveTo(padL, y0); ctx.lineTo(padL+pw, y0); ctx.stroke();
+  ctx.setLineDash([]);
+
+  ctx.fillStyle = '#888'; ctx.font = '10px monospace';
+  ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+  for(let i=0; i<=4; i++){
+    const v = dMin + i*(dMax-dMin)/4;
+    ctx.fillText(v.toFixed(0), padL-6, padT+ph-i*ph/4);
+  }
+  ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+  for(let i=0; i<=4; i++){
+    const v = bMin + i*bSpan/4;
+    ctx.fillText(v.toFixed(0), padL+i*pw/4, padT+ph+6);
+  }
+
+  ctx.strokeStyle = '#ffb020'; ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  for(let i=0; i<pts.length; i++){
+    const x = X(pts[i].bias), y = Y(pts[i].contact.downrange);
+    if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+  }
+  ctx.stroke();
+  for(const p of pts){
+    ctx.fillStyle = p.ok ? '#4ade80' : '#ff4d5e';
+    ctx.beginPath(); ctx.arc(X(p.bias), Y(p.contact.downrange), 3.5, 0, Math.PI*2); ctx.fill();
+  }
+
+  const _src = $('biasSource').value;
+  const _att = !!$('attHoldToggle').checked;
+  ctx.fillStyle = '#35d6ff'; ctx.font = '11px monospace'; ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+  ctx.fillText('src=' + _src + '  attHold=' + (_att ? 'ON' : 'off') + '  N=' + pts.length, padL, 4);
+}
+
+function computeMetrics(){
+  const pts = S.runs.filter(r => r.contact && Number.isFinite(r.contact.downrange)).sort((a,b) => a.bias - b.bias);
+  if(pts.length < 3){ $('metrics').textContent = 'need ≥3 data points'; return; }
+
+  let signChanges = 0, prevSign = 0;
+  for(let i=1; i<pts.length; i++){
+    const dd = pts[i].contact.downrange - pts[i-1].contact.downrange;
+    const sgn = Math.sign(dd);
+    if(sgn !== 0 && prevSign !== 0 && sgn !== prevSign) signChanges++;
+    if(sgn !== 0) prevSign = sgn;
+  }
+
+  const n = pts.length;
+  const xs = pts.map(p => p.bias);
+  const ys = pts.map(p => p.contact.downrange);
+  const xm = xs.reduce((a,x)=>a+x,0)/n, ym = ys.reduce((a,y)=>a+y,0)/n;
+  let ssX=0, ssY=0, ssXY=0;
+  for(let i=0; i<n; i++){ ssX += (xs[i]-xm)**2; ssY += (ys[i]-ym)**2; ssXY += (xs[i]-xm)*(ys[i]-ym); }
+  const r2 = (ssX*ssY > 0) ? (ssXY*ssXY)/(ssX*ssY) : 0;
+
+  let curv = 0;
+  const dSpan = Math.max(1, Math.max(...ys) - Math.min(...ys));
+  for(let i=1; i<n-1; i++) curv += Math.abs(ys[i+1] - 2*ys[i] + ys[i-1]) / dSpan;
+  curv = curv / Math.max(1, n-2);
+
+  const fails = S.runs.filter(r => !r.ok).length;
+  const _src = $('biasSource').value;
+  const _att = !!$('attHoldToggle').checked;
+  const summary = 'src=' + _src + '  attHold=' + (_att ? 'ON' : 'off') +
+    '  |  signChanges=' + signChanges +
+    '  |  R²=' + r2.toFixed(4) +
+    '  |  curv=' + curv.toFixed(3) +
+    '  |  fails=' + fails + '/' + S.runs.length +
+    '  |  N=' + n;
+  $('metrics').textContent = summary;
+  log('METRICS: ' + summary, r2 > 0.95 ? 'ok' : 'warn');
+}
+
+function boot(){
+  window._origLog = console.log;
+  log('Entry Burn Test booting…');
+  populateStackSel();
+  $('lockBtn').addEventListener('click', doLock);
+  $('initBtn').addEventListener('click', doInit);
+  $('sweepBtn').addEventListener('click', doSweep);
+  $('stopBtn').addEventListener('click', () => { S.abort = true; log('Stop', 'warn'); });
+  log('Ready.', 'ok');
+}
+
+if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
+else boot();
+
+})();
+</script>
+</body>
+</html>
