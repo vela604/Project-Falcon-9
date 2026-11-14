@@ -118,17 +118,17 @@ self.onmessage = (e) => {
 
 
       importScripts(
-        '../../componentLibrary.js?v=1794643066296',
-        '../../customDesign.js?v=1794643066296',
-        '../../fleet.js?v=1794643066296',
-        '../../config.js?v=1794643066296',
-        '../core/massProps.js?v=1794643066296',
-        '../core/environment.js?v=1794643066296',
-        '../core/vehicle.js?v=1794643066296',
-        '../core/rcs.js?v=1794643066296',
-        '../core/physics.js?v=1794643066296',
-        '../core/collision.js?v=1794643066296',
-        '../core/stateBuffer.js?v=1794643066296'
+        '../../componentLibrary.js?v=1794643648001',
+        '../../customDesign.js?v=1794643648001',
+        '../../fleet.js?v=1794643648001',
+        '../../config.js?v=1794643648001',
+        '../core/massProps.js?v=1794643648001',
+        '../core/environment.js?v=1794643648001',
+        '../core/vehicle.js?v=1794643648001',
+        '../core/rcs.js?v=1794643648001',
+        '../core/physics.js?v=1794643648001',
+        '../core/collision.js?v=1794643648001',
+        '../core/stateBuffer.js?v=1794643648001'
       );
 
       bootstrapped = true;
@@ -275,7 +275,7 @@ return b;
 const ASDS_LENGTH_M = 91;
 const ASDS_LZ_WEST_M = 54;
 const ASDS_LZ_EAST_M = 37;
-const ASDS_MIN_GAP_M = 120;
+const ASDS_MIN_GAP_M = 200;
 const ASDS_LANDING_RADIUS_M = 35;
 const ASDS_DECK_HEIGHT_M = 2;
 
@@ -416,7 +416,7 @@ break;
       const _existingConflict = (CONFIG.LANDING_PADS || []).find(function (p) {
         return p && p.isASDS && p.id !== _pad.id &&
           (Math.abs((p.arcOffsetM || 0) - (_pad.arcOffsetM || 0)) -
-            (Number.isFinite(_pad.lengthM) ? _pad.lengthM : 91)) < 120;
+            (Number.isFinite(_pad.lengthM) ? _pad.lengthM : 91)) < 200;
       });
       if (_existingConflict) {
         const _R = CONFIG.EARTH_RADIUS;
@@ -424,7 +424,7 @@ break;
         const _endDeg = Number.isFinite(CONFIG.OCEAN_ZONE_EAST_END_DEG) ? CONFIG.OCEAN_ZONE_EAST_END_DEG : 60;
         const _startM = _startDeg * Math.PI / 180 * _R;
         const _endM = _endDeg * Math.PI / 180 * _R;
-        const _LZ_W = 54, _LZ_E = 37, _MIN_GAP = 120, _LEN = 91;
+        const _LZ_W = 54, _LZ_E = 37, _MIN_GAP = 200, _LEN = 91;
         const _boundsOk = function (m) {
           return (m - _LZ_W >= _startM) && (m + _LZ_E <= _endM);
         };

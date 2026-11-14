@@ -1157,7 +1157,7 @@ function _buildASDSPadForGuidance(spec, env) {
   const ASDS_LENGTH_M = 91;
   const ASDS_LZ_WEST_M = 54;
   const ASDS_LZ_EAST_M = 37;
-  const ASDS_MIN_GAP_M = 120;
+  const ASDS_MIN_GAP_M = 200;
   const ASDS_LANDING_RADIUS_M = 35;
   const ASDS_DECK_HEIGHT_M = 2;
   const OCEAN_ZONE_START_DEG = Number.isFinite(env.OCEAN_ZONE_EAST_START_DEG) ? env.OCEAN_ZONE_EAST_START_DEG : 2;

@@ -66,7 +66,7 @@
   // Ship west edge is LZ_WEST_M west of arcOffsetM; east edge is LZ_EAST_M east.
   const LZ_WEST_M = 54;
   const LZ_EAST_M = 37;
-  const MIN_GAP_M = 120;
+  const MIN_GAP_M = 200;
   const LANDING_RADIUS_M = 35;   // usable landing zone half-width
   const DECK_HEIGHT_M = 2;        // deck above sea level (rocket lands here)
 
