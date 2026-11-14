@@ -147,32 +147,81 @@
       }
     }
 
-    // ---- Position: requested, then ±1..±10 km if ocean/gap fail ----
+    // ---- Position policy: new pad deploys at EXACT requested position;
+    // ---- existing pads that conflict are shifted to nearest valid spot.
+    // Rationale: user may have manual-deployed HOPE @ 328.204, then the
+    // guide (or another script) issues deployASDS at the same spot. Under
+    // the old ±10km nudge fallback, the new pad moved to 329.204 (1 km
+    // east of intended), which made booster aim at the wrong pad. Under
+    // the new policy the pre-existing HOPE shifts out of the way and the
+    // new pad takes 328.204 exactly. Out-of-ocean-bounds is a physical
+    // constraint so it still falls back ±10 km; gap conflicts between
+    // existing pads are handled by shifting the OLD pad, not the new one.
     const zone = _oceanZoneBounds();
     const requestedM = Math.round(km * 1000);
-    function validPos(m) {
+    function boundsOk(m) {
       if (m - LZ_WEST_M < zone.startM) return false;
       if (m + LZ_EAST_M > zone.endM) return false;
-      for (let i = 0; i < existing.length; i++) {
-        const gap = Math.abs(m - existing[i].arcOffsetM) - ASDS_LENGTH_M;
-        if (gap < MIN_GAP_M) return false;
-      }
       return true;
     }
     let appliedM = requestedM;
     let wasPositionAdjusted = false;
-    if (!validPos(requestedM)) {
+    if (!boundsOk(requestedM)) {
       let found = false;
       for (let d = 1000; d <= 10000; d += 1000) {
-        if (validPos(requestedM + d)) { appliedM = requestedM + d; wasPositionAdjusted = true; found = true; break; }
-        if (validPos(requestedM - d)) { appliedM = requestedM - d; wasPositionAdjusted = true; found = true; break; }
+        if (boundsOk(requestedM + d)) { appliedM = requestedM + d; wasPositionAdjusted = true; found = true; break; }
+        if (boundsOk(requestedM - d)) { appliedM = requestedM - d; wasPositionAdjusted = true; found = true; break; }
       }
       if (!found) {
         return {
           ok: false,
-          error: 'No valid ASDS position within ±10 km of ' + km + ' km (ocean bounds or 120 m gap conflict).',
+          error: 'Requested position ' + (requestedM/1000).toFixed(2) + ' km is outside ocean bounds and no valid ±10 km fallback exists.',
           requestedName: name, requestedKm: km, requestedHeightM: heightM,
         };
+      }
+    }
+
+    // ---- Shift conflicting existing pads out of the way ----
+    const conflicting = existing.filter(function (p) {
+      return (Math.abs(appliedM - p.arcOffsetM) - ASDS_LENGTH_M) < MIN_GAP_M;
+    });
+    const shifts = [];
+    if (conflicting.length) {
+      const otherPads = [];
+      for (let i = 0; i < existing.length; i++) {
+        if (conflicting.indexOf(existing[i]) < 0) {
+          otherPads.push({ arcOffsetM: existing[i].arcOffsetM, name: existing[i].name });
+        }
+      }
+      otherPads.push({ arcOffsetM: appliedM, name: appliedName });
+      for (let i = 0; i < conflicting.length; i++) {
+        const p = conflicting[i];
+        let newM = null;
+        for (let d = 1000; d <= 10000; d += 1000) {
+          let hit = false;
+          for (let sgn = -1; sgn <= 1; sgn += 2) {
+            const cand = Math.round(p.arcOffsetM + sgn * d);
+            if (!boundsOk(cand)) continue;
+            let ok = true;
+            for (let j = 0; j < otherPads.length; j++) {
+              const gap = Math.abs(cand - otherPads[j].arcOffsetM) - ASDS_LENGTH_M;
+              if (gap < MIN_GAP_M) { ok = false; break; }
+            }
+            if (ok) { newM = cand; hit = true; break; }
+          }
+          if (hit) break;
+        }
+        if (newM == null) {
+          return {
+            ok: false,
+            error: 'Cannot place ' + appliedName + ' at ' + (appliedM/1000).toFixed(2) +
+              ' km — conflicting pad ' + p.name + ' has no valid shift position within ±10 km.',
+            requestedName: name, requestedKm: km, requestedHeightM: heightM,
+          };
+        }
+        shifts.push({ id: p.id, name: p.name, oldM: p.arcOffsetM, newM: newM });
+        p.arcOffsetM = newM;
+        otherPads.push({ arcOffsetM: newM, name: p.name });
       }
     }
 
@@ -191,6 +240,27 @@
     CONFIG.LANDING_PADS.push(pad);
 
     // ---- Broadcast to other contexts (worker-safe) ----
+    // Broadcast shifts FIRST, then the add — consumers see moved pads
+    // before the new arrival, no transient 2-pads-at-same-spot.
+    for (let i = 0; i < shifts.length; i++) {
+      const sh = shifts[i];
+      const movedPad = CONFIG.LANDING_PADS.find(function (x) { return x.id === sh.id; });
+      if (!movedPad) continue;
+      const _mSnap = JSON.parse(JSON.stringify(movedPad));
+      try {
+        if (typeof WorkerBridge !== 'undefined' && WorkerBridge.send) WorkerBridge.send({ type: 'moveLandingPad', pad: _mSnap });
+      } catch (e) { console.warn('[ASDS] shift WorkerBridge failed', e); }
+      try {
+        if (typeof window !== 'undefined' && window._renderWorker) window._renderWorker.postMessage({ type: 'moveLandingPad', pad: _mSnap });
+      } catch (e) { console.warn('[ASDS] shift render failed', e); }
+      try {
+        if (typeof window !== 'undefined' && window._serenoPool && typeof window._serenoPool.broadcast === 'function') window._serenoPool.broadcast({ type: 'moveLandingPad', pad: _mSnap });
+      } catch (e) { console.warn('[ASDS] shift sereno failed', e); }
+      try {
+        if (typeof importScripts === 'function' && typeof self !== 'undefined' && self.postMessage) self.postMessage({ type: 'moveLandingPad', pad: _mSnap });
+      } catch (e) { console.warn('[ASDS] shift self failed', e); }
+    }
+
     const _snap = JSON.parse(JSON.stringify(pad));
     try {
       if (typeof WorkerBridge !== 'undefined' && WorkerBridge.send) {
@@ -223,6 +293,7 @@
     return {
       ok: true,
       pad: pad,
+      shifts: shifts,
       requestedName: name,
       appliedName: appliedName,
       requestedKm: _originalKm,
@@ -249,7 +320,14 @@
       if (result.wasNameAdjusted) parts.push('(renamed from ' + result.requestedName + ')');
       if (result.wasWrapped) parts.push('(wrapped from ' + result.wrappedFromKm.toFixed(1) + ' km)');
       else if (result.wasPositionAdjusted) parts.push('(moved from ' + result.requestedKm.toFixed(1) + ' km)');
-      _showASDSToast(parts.join(' '), true);
+      if (result.shifts && result.shifts.length) {
+        for (let i = 0; i < result.shifts.length; i++) {
+          const sh = result.shifts[i];
+          const _dm = sh.newM - sh.oldM;
+          parts.push(sh.name + ' shifted to ' + (sh.newM / 1000).toFixed(1) + ' km (' + (_dm >= 0 ? '+' : '') + (_dm / 1000).toFixed(1) + ' km)');
+        }
+      }
+      _showASDSToast(parts.join(', '), true);
     }
     return result;
   };
