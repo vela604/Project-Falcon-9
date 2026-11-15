@@ -515,7 +515,7 @@ window.captureCurrentMissionRecord = async function () {
   const events = (gs.events || []).slice();
   
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     physicsVersion: currentPhysicsVersion(),
     eventSchemaVersion: MISSION_EVENT_SCHEMA_VERSION,
     comboKey: session.comboKey,
@@ -572,23 +572,7 @@ window.captureCurrentMissionRecord = async function () {
     // (_bodyTempWeighted, which aggregates members and returns max
     // peak across them). Skip gracefully when function/state unavailable
     // (e.g. tester2 without telemetry.js loaded).
-    peaks: (function(){
-      const _raw = Array.isArray(gs.peaks) ? gs.peaks.slice() : [];
-      if (!_raw.length) return _raw;
-      if (typeof _bodyTempWeighted !== 'function') return _raw;
-      if (typeof state === 'undefined' || !state || !Array.isArray(state.bodies)) return _raw;
-      return _raw.map(function(p){
-        try {
-          const b = state.bodies[p.bodyIdx];
-          if (!b) return p;
-          const t = _bodyTempWeighted(b);
-          if (t && Number.isFinite(t.peakK) && t.peakK > 0) {
-            p.peakTemp_K = t.peakK;
-          }
-        } catch (e) {}
-        return p;
-      });
-    })(),
+    peaks: Array.isArray(gs.peaks) ? gs.peaks.slice() : [],
     success: _effSuccess,
     // Phase 1 — derived quick-access times. Saves preset-card / panel
     // from re-scanning the events array to show MECO / Booster Land /

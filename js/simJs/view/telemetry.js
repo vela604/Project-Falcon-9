@@ -195,66 +195,9 @@ function _memberTau(m) {
   return _THERMAL_TAU_BULK;
 }
 
-function _thermalTickOneMember(b, m, idx, dt) {
-  if (!b || !m) return;
-  if (!(dt > 0) || dt > 30) return;
-  const r = Math.hypot(b.rx, b.ry);
-  if (!(r > 1)) return;
-  const alt_m = r - CONFIG.EARTH_RADIUS;
-  const sv = earthSurfaceVelocity(b.rx, b.ry);
-  const wv = (typeof windInertialVector === 'function') ? windInertialVector(b.rx, b.ry) : { wx: 0, wy: 0 };
-  const relVx = b.vx - (sv.vx + wv.wx);
-  const relVy = b.vy - (sv.vy + wv.wy);
-  const speedRel = Math.hypot(relVx, relVy);
+function _thermalTickOneMember(b, m, idx, dt) {}
 
-  const members = Array.isArray(b.members) ? b.members : [];
-  const heatingScale = members.length ? _fairingShieldFactor(m, members) : 1.0;
-
-  const Teq = (typeof skinEquilibriumK === 'function')
-    ? skinEquilibriumK(alt_m, speedRel, heatingScale) : 288.15;
-
-
-  // ── Thermal debug (once per member) ────────────────────────────────
-  if (typeof window !== 'undefined') {
-    if (!window.__thermalDebugOnce) window.__thermalDebugOnce = {};
-    const _k = _memberKey(b, m, idx);
-    if (!window.__thermalDebugOnce[_k]) {
-      window.__thermalDebugOnce[_k] = 1;
-      const _bRole = (b.members && b.members[0] && b.members[0].stageRole) || 'solo';
-      const _mRole = (m && m.stageRole) || 'solo';
-      const _mW = (m && Number.isFinite(m.width)) ? m.width : '?';
-      const _mH = (m && Number.isFinite(m.height)) ? m.height : '?';
-      console.log('[thermal] body=' + _bRole + ' member=' + _mRole +
-        ' idx=' + idx + ' H=' + _mH + ' W=' + _mW +
-        ' shield=' + heatingScale.toFixed(3) + ' Teq=' + Teq.toFixed(0) + 'K');
-    }
-  }
-
-  const key = _memberKey(b, m, idx);
-  let st = _tempState.get(key);
-  if (!st) { st = { T: 288.15, peakK: 288.15 }; _tempState.set(key, st); }
-  const tau = _memberTau(m);
-  const alpha = 1 - Math.exp(-dt / tau);
-  st.T += (Teq - st.T) * alpha;
-  if (Teq > st.peakK) st.peakK = Teq;
-}
-
-function _thermalTickBody(b, dt) {
-  if (!b) return;
-  if (!Array.isArray(b.members) || !b.members.length) {
-    // Solo body (released payload, fairing half, emergency-eject package).
-    const fakeM = {
-      height: Number.isFinite(b.height) ? b.height : 1,
-      width: Number.isFinite(b.width) ? b.width : 1,
-      stageRole: null,
-    };
-    _thermalTickOneMember(b, fakeM, 0, dt);
-    return;
-  }
-  for (let i = 0; i < b.members.length; i++) {
-    _thermalTickOneMember(b, b.members[i], i, dt);
-  }
-}
+function _thermalTickBody(b, dt) {}
 
 // Mass-weighted average of every member's thermal state — this is what
 // the body's displayed temperature should be. Heavy tank dominates,
@@ -266,77 +209,13 @@ function _thermalTickBody(b, dt) {
 // for peak values. Falls back to null when guidance has no peak for this
 // body (free-flight / no active guide / bodyIdx not tracked yet) — callers
 // then use their own _bodyTempWeighted peak.
-function _peakTempFromGuidance(bodyIdx) {
-  try {
-    const gs = (typeof window !== 'undefined') ? window.__lastGuideStatus : null;
-    if (!gs || !Array.isArray(gs.peaks)) return null;
-    const p = gs.peaks.find(x => x && x.bodyIdx === bodyIdx);
-    if (p && Number.isFinite(p.peakTemp_K)) return p.peakTemp_K;
-  } catch (e) {}
-  return null;
-}
+function _peakTempFromGuidance(bodyIdx) { return null; }
 
-function _bodyTempWeighted(b) {
-  const DEFAULT = { T: 288.15, peakK: 288.15 };
-  if (!b) return DEFAULT;
-  const members = Array.isArray(b.members) ? b.members : null;
-  if (!members || !members.length) {
-    const fakeM = {
-      height: Number.isFinite(b.height) ? b.height : 1,
-      width: Number.isFinite(b.width) ? b.width : 1,
-      stageRole: null,
-    };
-    return _tempState.get(_memberKey(b, fakeM, 0)) || DEFAULT;
-  }
-  let totalM = 0, sumT = 0, sumPk = 0, maxPk = 0;
-  for (let i = 0; i < members.length; i++) {
-    const m = members[i];
-    const st = _tempState.get(_memberKey(b, m, i));
-    if (!st) continue;
-    const mass = _memberThermalMassKg(b, m, i);
-    totalM += mass;
-    sumT += st.T * mass;
-    sumPk += st.peakK * mass;
-    if (Number.isFinite(st.peakK) && st.peakK > maxPk) maxPk = st.peakK;
-  }
-  if (totalM <= 0) return DEFAULT;
-  // T = mass-weighted average (current body temperature).
-  // peakK = MAX of member peaks, NOT weighted average. Weighted-avg peak
-  // was non-monotonic: as the hot booster tank burned fuel, its thermal
-  // mass dropped, shifting the weighted average toward the colder stage
-  // under fairing — making displayed Tmax DECREASE mid-ascent even though
-  // every individual member's peak was monotonic. Peak = "highest temp
-  // any part of this body has ever reached", which is max-of-peaks.
-  return { T: sumT / totalM, peakK: maxPk > 0 ? maxPk : sumPk / totalM };
-}
+function _bodyTempWeighted(b) { return { T: 288.15, peakK: 288.15 }; }
 
 // Per-member read for a specific role (booster / stage / payload display).
 // member matches by stageRole, OR by body kind for solo bodies.
-function _roleTempWeighted(body, role) {
-  if (!body) return null;
-  const members = Array.isArray(body.members) ? body.members : [];
-  if (!members.length) return _bodyTempWeighted(body);
-  let totalM = 0, sumT = 0, sumPk = 0, maxPk = 0;
-  for (let i = 0; i < members.length; i++) {
-    const m = members[i];
-    if (!m) continue;
-    const mRole = m.stageRole || 'rocket';
-    // For 'booster' role, include interstage members too (they fly together).
-    const include = (role === 'booster')
-      ? (mRole === 'booster' || mRole === 'interstage')
-      : (mRole === role);
-    if (!include) continue;
-    const st = _tempState.get(_memberKey(body, m, i));
-    if (!st) continue;
-    const mass = _memberThermalMassKg(body, m, i);
-    totalM += mass;
-    sumT += st.T * mass;
-    sumPk += st.peakK * mass;
-    if (Number.isFinite(st.peakK) && st.peakK > maxPk) maxPk = st.peakK;
-  }
-  if (totalM <= 0) return null;
-  return { T: sumT / totalM, peakK: maxPk > 0 ? maxPk : sumPk / totalM };
-}
+function _roleTempWeighted(body, role) { return _bodyTempWeighted(body); }
 
 // Time from current 2-body state to the next apogee (seconds). Exact
 // via Kepler's equation. Used by the direction HUD's burn countdown —
@@ -427,8 +306,7 @@ function initTelemetryPanel() {
   });
 }
 
-function updateTelemetry() {
-  // Thermal update — pure-read derived quantity, ticked for every body
+function updateTelemetry() {  // Thermal update — pure-read derived quantity, ticked for every body
   // before any display reads (per-body list + active cell both rely on
   // _tempState being current).
   const _tNow = state.simTime;
@@ -441,7 +319,6 @@ const _isPaused = (typeof state !== 'undefined' && state.halted) ||
                   (typeof simPaused !== 'undefined' && simPaused);
 const _dtThermal = _isPaused ? 0 : ((_tNow > _lastSimTime && _tNow - _lastSimTime < 30) ? (_tNow - _lastSimTime) : CONFIG.DT);
   updateTelemetry._lastSim = _tNow;
-  for (let _ti = 0; _ti < state.bodies.length; _ti++) _thermalTickBody(state.bodies[_ti], _dtThermal);
 
   const r = Math.hypot(state.rx, state.ry);
   const altitude = altitudeFromR(r); // frame-independent
@@ -593,11 +470,6 @@ set('t-vr', fmt(vRadial, 2)); // frame-independent
   set('t-rho', fmt(rho, 4));
   {
     const _ab = state.bodies[state.activeBodyIndex];
-    const _tst = _ab ? _bodyTempWeighted(_ab) : null;
-    const _guidancePeakK_a = _peakTempFromGuidance(state.activeBodyIndex);
-    const _peakK_a = _guidancePeakK_a != null ? _guidancePeakK_a : (_tst ? _tst.peakK : null);
-    set('t-temp', _tst ? fmt(_tst.T, 0) + ' K' : '—');
-    set('t-maxT', _peakK_a != null ? fmt(_peakK_a, 0) + ' K' : '—');
   }
   set('t-duty', Math.round((lastForces.dutyTop || 0) * 100) + '%');
   
@@ -648,11 +520,6 @@ const _sloshOffsetCm = fmt((_sloshBody && _sloshBody.slosh ? _sloshBody.slosh.of
   setC('tc-fuel', fuelPct + '% | ' + fuelMassStr);
   setC('tc-g', grav.g.toFixed(4) + ' m/s²');
   setC('tc-rho', rho.toFixed(4) + ' kg/m³');
-  const _tstC = _abC ? _bodyTempWeighted(_abC) : null;
-  const _guidancePeakC = _peakTempFromGuidance(state.activeBodyIndex);
-  const _peakC = _guidancePeakC != null ? _guidancePeakC : (_tstC ? _tstC.peakK : null);
-  setC('tc-temp', _tstC ? (_tstC.T - 273.15).toFixed(0) + ' °C' : '—');
-  setC('tc-maxT', _peakC != null ? (_peakC - 273.15).toFixed(0) + ' °C' : '—');
 
   
   const maxThrustAll = ENGINES.reduce((s, e) => s + e.Fmax, 0);
@@ -730,13 +597,9 @@ else tag = 'D' + i;
   }
   const relTag = isAct ? '' : ' vs A';
   
-  const _tst = _bodyTempWeighted(b);
-  const _peakKB = _peakTempFromGuidance(i);
-  const _tStr = _tst ? `${_tst.T.toFixed(0)}K (pk ${(_peakKB != null ? _peakKB : _tst.peakK).toFixed(0)})` : '—';
   return `<div class="${cls}">
   <div class="tb-line"><span class="tb-label">${tag} pos</span><span class="tb-val">${alt.toFixed(0)}m</span></div>
   <div class="tb-line"><span class="tb-label">vx,vy</span><span class="tb-val">${b.vx.toFixed(1)}, ${b.vy.toFixed(1)}</span></div>
-  <div class="tb-line"><span class="tb-label">T</span><span class="tb-val">${_tStr}</span></div>
   <div class="tb-line"><span class="tb-label">Δpos${relTag}</span><span class="tb-val">${dpStr}</span></div>
   <div class="tb-line"><span class="tb-label">Δv${relTag}</span><span class="tb-val">${dvStr}</span></div>
 </div>`;

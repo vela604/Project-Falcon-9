@@ -848,11 +848,6 @@ function _rdmPeaksTable(peaks) {
       ? (p.peakG >= 0.01 ? p.peakG.toFixed(2) + ' G' : '< 0.01 G')
       : '\u2014';
     const gTime = _rdmFormatHMS(p.peakG_t);
-
-    // Child bodies (bodyIdx > 0) split from the active body at some point.
-    // Their peak tracking starts at split — pre-split acceleration lives
-    // in body #0's history. Show reference when child peak is suspiciously
-    // lower than parent peak (indicates attachment-phase was higher).
     const isChild = p.bodyIdx > 0;
     const parentRefG = (isChild && activePeakG > 1 && p.peakG < activePeakG * 0.5)
       ? activePeakG
@@ -866,24 +861,10 @@ function _rdmPeaksTable(peaks) {
     const gPostTag = (isChild && Number.isFinite(p.peakG) && p.peakG < activePeakG * 0.5 && activePeakG > 1)
       ? ' <span class="rdm-pk-posttag">post-split</span>'
       : '';
-
-    // Peak temperature — always displayed in °C for consistency within a
-    // record. Negative °C correctly signals cold-space conditions (e.g.
-    // payload in LEO ambient at 250 K → -23 °C). Mixing °C and K based on
-    // a threshold broke visual consistency across bodies of one record.
-    const tK = Number.isFinite(p.peakTemp_K) ? p.peakTemp_K : null;
-    const tempVal = tK != null
-      ? ((tK - 273.15).toFixed(0) + ' \u00b0C')
-      : null;
-    const tempRow = (tempVal !== null)
-      ? '<div class="rdm-pk-row"><span class="rdm-pk-key">Peak temp</span><span class="rdm-pk-val">' + tempVal + '</span></div>'
-      : '';
-
     return '<div class="rdm-pk-block">'
       + '<div class="rdm-pk-header">Body #' + (p.bodyIdx != null ? p.bodyIdx : '?') + ' <span class="rdm-pk-tag">' + tagLine + '</span></div>'
       + '<div class="rdm-pk-row"><span class="rdm-pk-key">Peak Q</span><span class="rdm-pk-val">' + qVal + (qTime ? ' @ T+' + qTime : '') + '</span></div>'
       + '<div class="rdm-pk-row"><span class="rdm-pk-key">Peak G</span><span class="rdm-pk-val">' + gVal + (gTime ? ' @ T+' + gTime : '') + gPostTag + '</span></div>'
-      + tempRow
       + gNote
       + '</div>';
   }).join('');

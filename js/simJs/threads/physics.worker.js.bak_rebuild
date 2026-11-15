@@ -1,0 +1,1384 @@
+// ============================================================================
+// physics.worker.js — physics on its own thread.
+//
+// CRITICAL ORDER: the worker does NOT load config.js/fleet.js at script
+// start. It waits for a `hydrate` message from the main thread that
+// populates a localStorage shim, and ONLY THEN runs importScripts. If we
+// loaded config.js before hydration, it would read an empty localStorage
+// and silently fall back to the DEFAULT vehicle — meaning the whole
+// simulation would be running the wrong mass, wrong fuel capacity, wrong
+// engine layout, for every session.
+//
+// OPTIMIZATION #1 (Step 2): the per-tick "hot" numeric fields (position,
+// velocity, orientation, fuel, per-engine massFlowRate/currentF/gimbalDeg) no
+// longer travel inside the cloned `data` object from serializeForMain().
+// They're written into a Float64Array (see stateBuffer.js) and moved to the
+// main thread via Transferable Objects — zero-copy, no structured clone.
+// Everything else (flags, legs, rcsCmd, engine meta/ids) still goes through
+// the existing cloned snapshot, unchanged.
+// ============================================================================
+
+self.addEventListener('error', (e) => {
+  self.postMessage({
+    type: 'workerError',
+    message: e.message,
+    filename: e.filename,
+    lineno: e.lineno,
+    stack: e.error && e.error.stack,
+  });
+});
+
+self.addEventListener('unhandledrejection', (e) => {
+  self.postMessage({
+    type: 'workerError',
+    message: 'Unhandled rejection: ' + (e.reason && e.reason.message || e.reason),
+    stack: e.reason && e.reason.stack,
+  });
+});
+
+// ---- LocalStorage shim — MUST exist before the hydrate message arrives ----
+if (typeof localStorage === 'undefined') {
+  const _store = Object.create(null);
+  globalThis.localStorage = {
+    getItem: (k) => (k in _store ? _store[k] : null),
+    setItem: (k, v) => { _store[k] = String(v); },
+    removeItem: (k) => { delete _store[k]; },
+    clear: () => { for (const k in _store) delete _store[k]; },
+    key: (i) => Object.keys(_store)[i] ?? null,
+    get length() { return Object.keys(_store).length; },
+  };
+}
+
+// ---- Loop state ----
+let bootstrapped = false;
+let running = false;
+let paused = false;
+let trajectoryEnabled = false;
+let lastTrajTime = 0;
+let pendingTrajectoryTransfer = null;
+
+// ---- PHASE 3: guidance worker's direct port ----
+// Set once, when main thread transfers it via 'connectGuidance' (see
+// self.onmessage below). From then on, anything the guidance worker posts
+// down this port runs through the EXACT SAME dispatchCommand() a human UI
+// message would — this worker has no way to tell the two apart, which is
+// the isolation property Phase 3 wants (guidance can only affect physics
+// through message types this worker already handles).
+let guidancePort = null;
+// [LATENCY TEST] variables
+let _latHist = {}, _latLastPrint = 0;
+
+// ---- Optimization #2: dedicated trajectory worker (see trajectory.worker.js) ----
+// The leapfrog integration used to run inline in workerLoop(), sharing this
+// worker's 12 ms tick budget with the actual physics substeps. It's now
+// computed on its own thread; this worker only fires a tiny request message
+// and picks up the answer whenever it arrives (see trajectoryWorker.onmessage
+// below, and the tick-loop section further down).
+let trajectoryWorker = null;
+let trajectoryWorkerReady = false;
+let trajectoryRequestInFlight = false;
+
+// ---- Hot-state double buffer (Optimization #1) ----
+// Two buffers ping-pong between this worker and the main thread. The worker
+// only ever writes into a buffer it currently owns (popped from
+// `availableHotBuffers`); the main thread transfers each buffer straight
+// back after decoding it (see workerBridge.js, Step 3).
+let availableHotBuffers = [];
+let hotBufferStarvedCount = 0;
+let lastHotBufferWarnTime = 0;
+
+// ---- PHASE 1: mass-flow command clamp ----
+// Converts/clamps a commanded engine mass flow rate (kg/s) into this
+// engine's valid range:
+//  - 0 (or any non-positive/NaN command) is always "off" — the floor
+//    below does NOT apply to zero, that's the intentional asymmetry.
+//  - Anything above the engine's max is capped down. Infinity is used
+//    deliberately by the quick MAX command (see setAllThrottle) and
+//    caps cleanly to whatever this specific engine's max is.
+//  - Anything else nonzero is floored at the combustion-stability
+//    minimum (minMassFlowRate).
+function clampMassFlowCommand(eng, cmd) {
+  if (!(cmd > 0)) return 0;
+  const capped = Math.min(cmd, eng.maxMassFlowRate || 0);
+  return Math.max(capped, eng.minMassFlowRate || 0);
+}
+
+// ---- Message handler ----
+self.onmessage = (e) => {
+  const msg = e.data;
+
+  // ---- Phase 1: hydrate (must arrive BEFORE any other message) ----
+  if (msg.type === 'hydrate' && !bootstrapped) {
+    try {
+      for (const k in msg.keys) {
+        const v = msg.keys[k];
+        if (v === null || v === undefined) localStorage.removeItem(k);
+        else localStorage.setItem(k, v);
+      }
+
+
+      importScripts(
+        '../../componentLibrary.js?v=1794746421140',
+        '../../customDesign.js?v=1794746421140',
+        '../../fleet.js?v=1794746421140',
+        '../../config.js?v=1794746421140',
+        '../core/massProps.js?v=1794746421140',
+        '../core/environment.js?v=1794746421140',
+        '../core/vehicle.js?v=1794746421140',
+        '../core/rcs.js?v=1794746421140',
+        '../core/physics.js?v=1794746421140',
+        '../core/collision.js?v=1794746421140',
+        '../core/stateBuffer.js?v=1794746421140'
+      );
+
+      bootstrapped = true;
+
+      // ---- Optimization #2: spawn the dedicated trajectory worker ----
+      // Forwarding the SAME hydrate keys this worker just used means
+      // CONFIG resolves inside it exactly the way it does here and in
+      // render_worker.js (same selected vehicle, same fleet) — no
+      // divergent-CONFIG risk. Spawned once, reused for the whole session.
+      trajectoryWorker = new Worker('trajectory.worker.js');
+      trajectoryWorker.onmessage = (te) => {
+        const tmsg = te.data;
+        if (tmsg.type === 'ready') {
+          trajectoryWorkerReady = true;
+        } else if (tmsg.type === 'result') {
+          trajectoryRequestInFlight = false;
+          // Guard against a stale answer landing AFTER the trajectory
+          // checkbox was turned off mid-flight — 'setTrajectoryEnabled'
+          // already nulled state.trajectory/pendingTrajectoryTransfer in
+          // that case, and we must not let this late message resurrect it.
+          if (trajectoryEnabled) {
+            state.trajectory = tmsg.data;
+            pendingTrajectoryTransfer = tmsg.data;
+          }
+        } else if (tmsg.type === 'bootError' || tmsg.type === 'computeError') {
+          trajectoryRequestInFlight = false;
+          console.error('[physics_worker] trajectory worker ' + tmsg.type + ':', tmsg.message);
+        }
+      };
+      trajectoryWorker.onerror = (err) => {
+        // A crash here must not leave trajectoryRequestInFlight stuck true
+        // forever (that would silently stop all future trajectory requests
+        // since the gate below never sends another one while it's true).
+        trajectoryRequestInFlight = false;
+        console.error('[physics_worker] trajectory worker crashed:', err.message);
+      };
+      trajectoryWorker.postMessage({ type: 'hydrate', keys: msg.keys });
+
+      globalThis.SIM_STACK_MEMBERS = getActiveStackMembers();
+
+      resetState(0);
+
+      // Seed the double buffer — allocate both up front, never inside the
+      // tick loop.
+      availableHotBuffers = [createHotStateBuffer(), createHotStateBuffer()];
+
+      const snap = serializeForMain();
+
+      // The very first snapshot needs its hot fields too (state.bodies[i].rx
+      // etc. must not be undefined for the first render frame) — encode one
+      // here the same way workerLoop() does, before workerLoop even starts.
+      const bootHotBuf = availableHotBuffers.pop();
+      encodeHotState(bootHotBuf, state.bodies);
+      snap.hotBuffer = bootHotBuf.buffer;
+
+      self.postMessage({ type: 'ready', data: snap }, [bootHotBuf.buffer]);
+
+      setTimeout(workerLoop, 0);
+    } catch (err) {
+      console.error('  stack:', err && err.stack);
+      // Post a synthetic error so main thread knows
+      self.postMessage({ type: 'bootError', message: String(err), stack: err && err.stack });
+    }
+    return;
+  }
+
+  if (!bootstrapped) return; // ignore anything before hydration
+
+  // ---- PHASE 3: guidance worker connects here once, right after its own
+  // boot (see workerBridge.js). e.ports[0] is one end of a MessageChannel
+  // whose other end guidance.worker.js already holds — from this point on
+  // guidance posts commands straight down that port, and its onmessage
+  // below routes them through the identical dispatchCommand() a human UI
+  // message goes through. Handled here (outside dispatchCommand) because
+  // it needs e.ports, which only exists on the original MessageEvent. ----
+  if (msg.type === 'connectGuidance') {
+  guidancePort = e.ports && e.ports[0];
+  if (guidancePort) {
+    guidancePort.onmessage = (ge) => {
+      const m = ge.data;
+      
+      // Sync ack — guidance has finished processing the snapshot we
+      // sent and has queued all its commands. FIFO ordering guarantees
+      // those command messages arrived BEFORE this ack, so state is
+      // already mutated. Resume the physics loop.
+      if (m && m.type === '__guidanceReady') {
+        if (_waitingForGuidance) {
+          _waitingForGuidance = false;
+          if (_guidanceWaitTimer) {
+            clearTimeout(_guidanceWaitTimer);
+            _guidanceWaitTimer = null;
+          }
+          workerLoop();
+        }
+        return;
+      }
+      
+      // [LATENCY TEST] how many physics ticks passed between the snapshot that
+      // produced a command and the moment physics receives that command.
+      if (m && m._st !== undefined) {
+        const lat = Math.round((state.simTime - m._st) / CONFIG.DT);
+        _latHist[lat] = (_latHist[lat] || 0) + 1;
+        if (state.simTime - _latLastPrint >= 5) {
+          _latLastPrint = state.simTime;
+          self.postMessage({ type: 'latDbg', hist: _latHist, simTime: state.simTime });
+        }
+      }
+      dispatchCommand(m);
+    };
+  }
+  return;
+}
+
+  dispatchCommand(msg);
+};
+
+// ---- Phase 3 Extension, Plan B — body-targeted commands ----
+// Returns the target body, or null if the command should be dropped.
+// A null/undefined targetBodyIdx resolves to the active body — human-UI
+// commands never set this field, so they're completely unaffected by
+// this mechanism.
+//
+// Guidance (running on its own worker, routed through the SAME
+// dispatchCommand as the human UI — see connectGuidance above) can set
+// targetBodyIdx to reach a specific discarded/landed body — e.g. firing
+// RCS on a booster that's no longer the active body — without needing
+// takeControl first.
+function resolveTargetBody(targetBodyIdx) {
+  if (targetBodyIdx == null) return state.bodies[state.activeBodyIndex] || null;
+  if (!Number.isInteger(targetBodyIdx)) return null;
+  if (targetBodyIdx < 0 || targetBodyIdx >= state.bodies.length) return null;
+  const b = state.bodies[targetBodyIdx];
+if (!b) return null;
+// A4 — settled bodies are NOT rejected: a nonzero rcsDuty command must
+// be able to wake a landed/resting body via _bodyHasActiveInput.
+if (b.crashed) return null;
+return b;
+}
+
+// ---- ASDS constants — hardware specs, not tunable ----
+// Duplicated from asds.js (main-thread UI) so the physics worker can
+// validate guidance-issued deploy/move commands without a main-thread
+// round-trip. Same values, keep in sync if specs change.
+const ASDS_LENGTH_M = 91;
+const ASDS_LZ_WEST_M = 54;
+const ASDS_LZ_EAST_M = 37;
+const ASDS_MIN_GAP_M = 200;
+const ASDS_LANDING_RADIUS_M = 35;
+const ASDS_DECK_HEIGHT_M = 2;
+
+function _asdsOceanBounds() {
+  const R = CONFIG.EARTH_RADIUS;
+  const sDeg = Number.isFinite(CONFIG.OCEAN_ZONE_EAST_START_DEG) ? CONFIG.OCEAN_ZONE_EAST_START_DEG : 2;
+  const eDeg = Number.isFinite(CONFIG.OCEAN_ZONE_EAST_END_DEG) ? CONFIG.OCEAN_ZONE_EAST_END_DEG : 60;
+  return { startM: sDeg * Math.PI / 180 * R, endM: eDeg * Math.PI / 180 * R };
+}
+
+function _asdsExisting() {
+  if (!CONFIG.LANDING_PADS) CONFIG.LANDING_PADS = [];
+  return CONFIG.LANDING_PADS.filter(p => p && p.isASDS);
+}
+
+function _asdsValidateDeploy(xMeters) {
+  if (!Number.isFinite(xMeters)) return { ok: false, error: 'Offset must be a finite number.' };
+  xMeters = Math.round(xMeters);
+  const zone = _asdsOceanBounds();
+  if (xMeters - ASDS_LZ_WEST_M < zone.startM) {
+    return { ok: false, error: 'Western hull edge would be ' + Math.round(zone.startM - (xMeters - ASDS_LZ_WEST_M)) + ' m outside ocean. Minimum offset: ' + Math.round(zone.startM + ASDS_LZ_WEST_M) + ' m.' };
+  }
+  if (xMeters + ASDS_LZ_EAST_M > zone.endM) {
+    return { ok: false, error: 'Eastern hull edge would be ' + Math.round((xMeters + ASDS_LZ_EAST_M) - zone.endM) + ' m outside ocean. Maximum offset: ' + Math.round(zone.endM - ASDS_LZ_EAST_M) + ' m.' };
+  }
+  const existing = _asdsExisting();
+  for (let i = 0; i < existing.length; i++) {
+    const other = existing[i];
+    const hullEdgeGap = Math.abs(xMeters - other.arcOffsetM) - ASDS_LENGTH_M;
+    if (hullEdgeGap < ASDS_MIN_GAP_M) {
+      return { ok: false, error: 'Too close to ' + other.name + '. Hull-edge gap: ' + Math.round(hullEdgeGap) + ' m (min: ' + ASDS_MIN_GAP_M + ' m).' };
+    }
+  }
+  return { ok: true };
+}
+
+function _asdsValidateMove(padId, newXOffsetM) {
+  const pad = (CONFIG.LANDING_PADS || []).find(p => p.id === padId);
+  if (!pad) return { ok: false, error: 'Pad "' + padId + '" not found.' };
+  const isASDS = !!(pad.isASDS || (Number.isFinite(pad.lengthM) && pad.lengthM >= 50));
+  if (!isASDS) return { ok: false, error: 'Pad "' + padId + '" is not an ASDS.' };
+  if (!Number.isFinite(newXOffsetM)) return { ok: false, error: 'newXOffsetM must be finite.' };
+  newXOffsetM = Math.round(newXOffsetM);
+  const zone = _asdsOceanBounds();
+  if (newXOffsetM - ASDS_LZ_WEST_M < zone.startM) {
+    return { ok: false, error: 'Outside ocean (west). Min offset: ' + Math.round(zone.startM + ASDS_LZ_WEST_M) + ' m.' };
+  }
+  if (newXOffsetM + ASDS_LZ_EAST_M > zone.endM) {
+    return { ok: false, error: 'Outside ocean (east). Max offset: ' + Math.round(zone.endM - ASDS_LZ_EAST_M) + ' m.' };
+  }
+  const others = _asdsExisting().filter(p => p.id !== padId);
+  for (let i = 0; i < others.length; i++) {
+    const other = others[i];
+    const hullEdgeGap = Math.abs(newXOffsetM - other.arcOffsetM) - ASDS_LENGTH_M;
+    if (hullEdgeGap < ASDS_MIN_GAP_M) {
+      return { ok: false, error: 'Too close to ' + other.name + '. Gap: ' + Math.round(hullEdgeGap) + ' m (min: ' + ASDS_MIN_GAP_M + ' m).' };
+    }
+  }
+  return { ok: true, pad };
+}
+
+// ---- Phase 2: normal dispatch ----
+// Factored out of self.onmessage so the guidance port (above) and the
+// main-thread port run every command through the identical switch — this
+// worker cannot distinguish a human-issued command from a guidance-issued
+// one, by construction, which is exactly the "guidance can only affect
+// physics through message types the physics worker already handles"
+// property Phase 3 needs.
+function dispatchCommand(msg) {
+  switch (msg.type) {
+    case 'start':
+running = true;
+// Force the first step's pacing check to pass immediately.
+_lastStepWallTime = 0;
+break;
+    case 'stop':
+      running = false;
+      break;
+    case 'pauseSim':
+      paused = true;
+      break;
+    case 'setTrajectoryEnabled': {
+      trajectoryEnabled = !!msg.enabled;
+      // If just turned off, clear any stale trajectory so the render worker
+      // doesn't draw a frozen one from the last enabled frame.
+      if (!trajectoryEnabled) {
+        state.trajectory = null;
+        pendingTrajectoryTransfer = null;
+      }
+      break;
+    }
+    case 'setSloshEnabled': {
+      // Phase 2A — diagnostic toggle from the main thread's UI checkbox.
+      // applySloshStep() reads CONFIG.SLOSH_ENABLED fresh every tick, so
+      // just flipping this is enough; when turned off, zero every body's
+      // slosh state immediately rather than waiting for the next tick's
+      // decay-to-zero branch, so the figure/telemetry don't show a frozen
+      // nonzero offset for one extra frame.
+      CONFIG.SLOSH_ENABLED = !!msg.enabled;
+      if (!CONFIG.SLOSH_ENABLED) {
+        state.bodies.forEach(b => { b.slosh = { offset: 0, velocity: 0 }; });
+      }
+      break;
+    }
+    case 'resumeSim':
+      paused = false;
+      break;
+    case 'warp':
+// No-op — warp UI was removed. Kept as a recognised message type so
+// any stale code path doesn't fall through to the default branch.
+break;
+                case 'moveLandingPad': {
+      const pads = (CONFIG.LANDING_PADS || []);
+      const pad = pads.find(x => x && x.id === msg.pad.id);
+      if (pad) {
+        pad.arcOffsetM = msg.pad.arcOffsetM;
+      } else {
+        CONFIG.LANDING_PADS.push(msg.pad);
+      }
+      self.postMessage({ type: 'moveLandingPad', pad: msg.pad });
+      break;
+    }
+    case 'addLandingPad': {
+      if (!CONFIG.LANDING_PADS) CONFIG.LANDING_PADS = [];
+      const _pad = msg.pad;
+      if (!_pad || !_pad.id) break;
+      // ---- Receiver-side conflict shift (defense in depth) ----
+      // Sender-side shift logic (asds.js deployASDS, guidance.js
+      // _buildASDSPadForGuidance) already handles the common case, but
+      // two failure modes bypass it: (a) FF worker may run a stale
+      // guidance.js if its importScripts lacks cachebust, (b) the FF
+      // forward pipeline may relay only addLandingPad and drop the
+      // preceding moveLandingPad. Doing the shift HERE guarantees
+      // consistency regardless of which sender path was taken.
+      // Handles: incoming pad conflicts with existing → shift the
+      // EXISTING pad to nearest valid spot, then add the incoming pad at
+      // its requested position exactly.
+      const _existingConflict = (CONFIG.LANDING_PADS || []).find(function (p) {
+        return p && p.isASDS && p.id !== _pad.id &&
+          (Math.abs((p.arcOffsetM || 0) - (_pad.arcOffsetM || 0)) -
+            (Number.isFinite(_pad.lengthM) ? _pad.lengthM : 91)) < 200;
+      });
+      if (_existingConflict) {
+        const _R = CONFIG.EARTH_RADIUS;
+        const _startDeg = Number.isFinite(CONFIG.OCEAN_ZONE_EAST_START_DEG) ? CONFIG.OCEAN_ZONE_EAST_START_DEG : 2;
+        const _endDeg = Number.isFinite(CONFIG.OCEAN_ZONE_EAST_END_DEG) ? CONFIG.OCEAN_ZONE_EAST_END_DEG : 60;
+        const _startM = _startDeg * Math.PI / 180 * _R;
+        const _endM = _endDeg * Math.PI / 180 * _R;
+        const _LZ_W = 54, _LZ_E = 37, _MIN_GAP = 200, _LEN = 91;
+        const _boundsOk = function (m) {
+          return (m - _LZ_W >= _startM) && (m + _LZ_E <= _endM);
+        };
+        const _others = (CONFIG.LANDING_PADS || []).filter(function (p) {
+          return p && p.id !== _pad.id && p.id !== _existingConflict.id;
+        });
+        _others.push({ id: '_incoming', arcOffsetM: _pad.arcOffsetM || 0 });
+        let _newM = null;
+        for (let d = 1000; d <= 10000; d += 1000) {
+          for (let sgn = -1; sgn <= 1; sgn += 2) {
+            const cand = Math.round((_existingConflict.arcOffsetM || 0) + sgn * d);
+            if (!_boundsOk(cand)) continue;
+            let ok = true;
+            for (let k = 0; k < _others.length; k++) {
+              const gap = Math.abs(cand - _others[k].arcOffsetM) - _LEN;
+              if (gap < _MIN_GAP) { ok = false; break; }
+            }
+            if (ok) { _newM = cand; break; }
+          }
+          if (_newM != null) break;
+        }
+        if (_newM != null) {
+          _existingConflict.arcOffsetM = _newM;
+          self.postMessage({ type: 'moveLandingPad', pad: JSON.parse(JSON.stringify(_existingConflict)) });
+          console.log('[physics] addLandingPad: shifted conflicting ' + _existingConflict.id + ' to ' + (_newM / 1000).toFixed(2) + ' km');
+        }
+      }
+      // Idempotent add — replace if same id already present
+      const _idx = CONFIG.LANDING_PADS.findIndex(function (p) { return p && p.id === _pad.id; });
+      if (_idx >= 0) CONFIG.LANDING_PADS[_idx] = Object.assign({}, _pad);
+      else CONFIG.LANDING_PADS.push(Object.assign({}, _pad));
+      self.postMessage({ type: 'addLandingPad', pad: _pad });
+      break;
+    }
+    case 'reset': {
+  // Reset must ALSO stop the sim loop.
+  // Capture whether the loop was suspended mid-guidance-wait, because
+  // clearing both the ack expectation and the 5 s fallback timer below
+  // leaves no next iteration scheduled — the loop dies permanently and
+  // the whole pipeline freezes (no snapshots, Start does nothing).
+  const wasWaiting = _waitingForGuidance;
+  running = false;
+  paused = false;
+  _waitingForGuidance = false;
+  if (_guidanceWaitTimer) { clearTimeout(_guidanceWaitTimer); _guidanceWaitTimer = null; }
+  _lastStepWallTime = 0;
+  resetState(msg.alt || 0);
+  // Kick the loop back to life if we just killed its only wake-up source.
+  if (wasWaiting) {
+    setTimeout(workerLoop, 0);
+  }
+  break;
+}
+
+    case 'spawnInOrbit': {
+      resetState(msg.alt || 400000);
+      const b = state.bodies[0];
+      if (!b) break;
+      const r0 = Math.hypot(b.rx, b.ry);
+      const phi = Math.atan2(b.rx, b.ry);
+      const vOrb = Math.sqrt(CONFIG.GM_EARTH / r0) * (msg.speedFactor || 1.0);
+      b.vx = vOrb * Math.cos(phi);
+      b.vy = -vOrb * Math.sin(phi);
+      b.omega = 0;
+      b.theta = -phi;
+      state.halted = false;
+      state.simTime = 0;
+      break;
+    }
+    
+    // Debug teleport — reposition the active body at a specific altitude
+// and velocity state on the launch meridian. Skips the ~60 s of real
+// ascent so MECO/separation can be tested immediately.
+//
+// Params:
+//   altKm        target altitude AGL (km)
+//   vRad         radial velocity, +up (m/s)
+//   vTan         tangential velocity, +east (m/s)
+//   thetaRelDeg  attitude from local vertical, +east tilt (deg)
+//   omega        angular velocity (rad/s)
+//   enginesOff   if true, zero out all engine commands + state
+case 'debugTeleport': {
+  const b = state.bodies[state.activeBodyIndex];
+  if (!b) break;
+  const R0 = CONFIG.EARTH_RADIUS + (CONFIG.LAUNCH_SITE_ALTITUDE || 0);
+  b.rx = 0;
+  b.ry = R0 + (msg.altKm || 0) * 1000;
+  b.vx = msg.vTan || 0;
+  b.vy = msg.vRad || 0;
+//   thetaInertialDeg  body theta in inertial frame, degrees// tester's _thetaRel column prints on the launch meridian, where
+// localVert = 0). Passed directly, no sign gymnastics.
+b.theta = (msg.thetaInertialDeg || 0) * Math.PI / 180;
+b.omega = msg.omega || 0;
+  if (msg.enginesOff && b.engines) {
+    b.engines.forEach(e => { e.massFlowRate = 0; e.targetMassFlowRate = 0; });
+  }
+  // Fresh trajectory — reset slosh history.
+  if (b.slosh) b.slosh = { offset: 0, velocity: 0, rawOffset: 0, rawVelocity: 0, angMomentum: 0 };
+  state.simTime = 0;
+  state.halted = false;
+  break;
+}
+    
+    // PHASE 1: setGroupThrottle/setCenterThrottle/setAllThrottle now carry
+    // a commanded mass flow rate (kg/s) in msg.value, not a 0..1 fraction —
+    // converted from the UI's percent at the control layer (controls.js).
+    // clampMassFlowCommand() below applies the same clamp to every engine
+    // it touches, so it's the one place command-floor/ceiling logic lives.
+        case 'setGroupThrottle': {
+      const b = resolveTargetBody(msg.targetBodyIdx);
+      if (!b) break;
+      // Only cancel pending separate/release on NON-ZERO throttle commands.
+      // Guidance's DONE/CIRCULARIZE/DEPLOY_PAYLOAD phases fire
+      // setAllThrottle(0) every tick as housekeeping; the old unconditional
+      // cancel would clobber an in-flight pendingRelease waiting for engine
+      // spool-down, and the payload would never spawn.
+      if (msg.value > 0 && typeof cancelPendingSequences === 'function') cancelPendingSequences(b);
+      if (!b.engines) break;
+      msg.angles.forEach(a => {
+        const eng = b.engines.find(en => en.angleDeg === a);
+        if (eng) eng.targetMassFlowRate = clampMassFlowCommand(eng, msg.value);
+      });
+      break;
+    }
+        case 'setCenterThrottle': {
+      const b = resolveTargetBody(msg.targetBodyIdx);
+      if (!b) break;
+      if (msg.value > 0 && typeof cancelPendingSequences === 'function') cancelPendingSequences(b);
+      if (!b.engines) break;
+      b.engines.filter(en => en.isCenter).forEach(en => {
+        en.targetMassFlowRate = clampMassFlowCommand(en, msg.value);
+      });
+      break;
+    }
+        case 'setAllThrottle': {
+      const b = resolveTargetBody(msg.targetBodyIdx);
+      if (!b) break;
+      if (msg.value > 0 && typeof cancelPendingSequences === 'function') cancelPendingSequences(b);
+      if (!b.engines) break;
+      b.engines.forEach(en => { en.targetMassFlowRate = clampMassFlowCommand(en, msg.value); });
+      break;
+    }
+    case 'setGimbal': {
+  const b = resolveTargetBody(msg.targetBodyIdx);
+  if (!b) break;
+  if (typeof cancelPendingSequences === 'function') cancelPendingSequences(b);
+  if (!b.engines) break;
+  // PHASE 3 human precedence: an angle command from the human UI (slider)
+  // always wins over an in-progress guidance rate command — clear the
+  // rate field back to NaN so applyActuatorRateLimitsForBody's rate
+  // branch falls through to the angle-slew branch below on the very next
+  // tick, using the targetGimbalDeg this sets.
+  b.engines.filter(en => en.gimbal).forEach(en => {
+    const lim = en.gimbalMaxDeg;   // per-engine (thruster-type property)
+    en.targetGimbalDeg = Math.max(-lim, Math.min(lim, msg.deg));
+    en.targetGimbalRateDegS = NaN;
+    en.targetGimbalAccelDegS2 = NaN;
+  });
+  break;
+}
+    // PHASE 3: rate, not angle — guidance commands how fast the gimbal
+    // should move, physics integrates. See applyActuatorRateLimitsForBody
+    // in physics.js for the integration + clamp-to-gimbalMaxDeg side.
+    // Does NOT touch targetGimbalDeg (ignored while rate mode is active,
+    // per the arbitration rule — ignoring it rather than writing to it
+    // means setGimbal doesn't need to know rate mode exists to win back
+    // control; it just always sets both fields itself, above).
+        case 'setGimbalRate': {
+  const b = resolveTargetBody(msg.targetBodyIdx);
+  if (!b || !b.engines) break;
+  const onlyCenter = (msg.target === 'center');
+  b.engines.filter(en => en.gimbal && (!onlyCenter || en.isCenter))
+    .forEach(en => {
+      const lim = en.gimbalRateDegS;   // per-engine (thruster-type property)
+      en.targetGimbalRateDegS = Math.max(-lim, Math.min(lim, msg.degPerSec));
+      en.targetGimbalAccelDegS2 = NaN;
+    });
+  break;
+}
+    // Guidance alpha command (deg/s^2), clamped per engine to its own accel limit
+    // (see applyActuatorRateLimitsForBody in physics.js). Mirrors sim.js 'setGimbalAccel'.
+    case 'setGimbalAccel': {
+  const b = resolveTargetBody(msg.targetBodyIdx);
+  if (!b || !b.engines) break;
+  const onlyCenter = (msg.target === 'center');
+  b.engines.filter(en => en.gimbal && (!onlyCenter || en.isCenter))
+    .forEach(en => {
+      const lim = en.gimbalAccelDegS2;
+      en.targetGimbalAccelDegS2 = Math.max(-lim, Math.min(lim, msg.degPerSec2));
+    });
+  break;
+}
+    case 'rcs': {
+      const b = resolveTargetBody(msg.targetBodyIdx);
+      if (!b) break;
+      if (typeof ensureRcsState === 'function') ensureRcsState(b);
+      if (b.rcsCmd) b.rcsCmd[msg.key] = !!msg.on;
+      // PHASE 3 human precedence: a boolean RCS command from the human UI
+      // always wins over an in-progress guidance duty command.
+      b.rcsDuty = null;
+      break;
+    }
+    // PHASE 3: full nozzle-level duty command. Overrides the boolean
+    // rcsCmd mechanism for this body — computeRCSForBody (rcs.js) checks
+    // rcsDuty first and only falls back to rcsCmd when it's null/absent.
+    case 'rcsDuty': {
+  const b = resolveTargetBody(msg.targetBodyIdx);
+  if (!b) break;
+  // A3 — restore round-2 Issue C: null/undefined duties payload means
+  // "relinquish duty control, fall back to boolean rcsCmd path". An
+  // explicit object (even one with only zero-valued nozzles) means
+  // "still holding duty control". Without this, guidance can never
+  // hand control back, and {} permanently locks out the boolean path.
+  if (msg.duties == null) {
+    b.rcsDuty = null;
+    break;
+  }
+  const clampDuty = (v) => Math.max(0, Math.min(1, Number.isFinite(v) ? v : 0));
+  const duties = {};
+  const src = msg.duties || {};
+  Object.keys(src).forEach(podId => {
+    const d = src[podId] || {};
+    duties[podId] = { lat: clampDuty(d.lat), up: clampDuty(d.up), dn: clampDuty(d.dn) };
+  });
+  b.rcsDuty = duties;
+  break;
+}
+    case 'legs': {
+      const b = resolveTargetBody(msg.targetBodyIdx);
+      if (!b) break;
+      if (!b.legs) b.legs = { deployed: false, progress: 0 };
+      b.legs.deployed = !!msg.deployed;
+      break;
+    }
+    
+        case 'gridFinsDeploy': {
+      const b = resolveTargetBody(msg.targetBodyIdx);
+      if (!b || !b.gridFins) break;
+      // Envelope comes from the fin type's own typeConstants (same source
+      // updateGridFins reads), so a fin type with a different swing only
+      // edits its own seed values.
+      const gfType = (typeof bodyGridFinType === 'function') ? bodyGridFinType(b) : null;
+      const maxDeploy = (gfType && gfType.typeConstants &&
+          Number.isFinite(gfType.typeConstants.maxDeployDeg)) ?
+        gfType.typeConstants.maxDeployDeg : 90;
+      // Deployed: all targets → 0. Stowed: per-fin sign (L=+, R=−, FB=+;
+      // FB covers both F and B, which mirror internally).
+      // Per-fin angle command: msg.angles = { L?, R?, FB? } in the SAME signed
+      // convention as the fin state (0 = deployed; L/FB +maxDeploy and R
+      // -maxDeploy = stowed; the opposite sign swings the fin toward the
+      // nose). Missing keys leave that fin's target untouched.
+      if (msg.angles && typeof msg.angles === 'object') {
+        ['L', 'R', 'FB'].forEach(k => {
+          const f = b.gridFins[k];
+          const v = msg.angles[k];
+          if (!f || !Number.isFinite(v)) return;
+          f.targetDeploy = Math.max(-maxDeploy, Math.min(maxDeploy, v));
+        });
+        break;
+      }
+      ['L', 'R', 'FB'].forEach(k => {
+        const f = b.gridFins[k];
+        if (!f) return;
+        if (msg.deployed) f.targetDeploy = 0;
+        else f.targetDeploy = (k === 'R') ? -maxDeploy : maxDeploy;
+      });
+      break;
+    }
+case 'gridFinsControl': {
+  const b = resolveTargetBody(msg.targetBodyIdx);
+  if (!b || !b.gridFins) break;
+  // Angle target for F/B control. Physical envelope is a hardware
+  // property of the fin type (typeConstants.maxControlDeg) — read
+  // from there rather than hardcoding. updateGridFins() forces
+  // control back to 0 if FB isn't deployed.
+  // First member that actually carries fins (not blindly members[0] —
+  // after separation the fins may sit on a different member).
+  const gfType = (typeof bodyGridFinType === 'function') ? bodyGridFinType(b) : null;
+const maxCtrl = (gfType && gfType.typeConstants &&
+    Number.isFinite(gfType.typeConstants.maxControlDeg)) ?
+  gfType.typeConstants.maxControlDeg : 30;
+  const f = b.gridFins.FB;
+  if (f && Number.isFinite(msg.controlDeg)) {
+    f.targetControl = Math.max(-maxCtrl, Math.min(maxCtrl, msg.controlDeg));
+  }
+  break;
+}
+    
+        case 'setFuelMass': {
+      const b = resolveTargetBody(msg.targetBodyIdx);
+      if (!b) break;
+      const members = b.members || [];
+      const total = Math.max(0, msg.value || 0);
+      if (Array.isArray(b.memberFuel) && b.memberFuel.length === members.length && members.length) {
+        // Distribute proportionally to each member's tank capacity.
+        // Kept for the guidance command builder (cmdSetFuelMass) which
+        // still expresses a "total load" intent.
+        const maxes = members.map((m, i) => {
+          if (typeof memberMaxFuel === 'function') return memberMaxFuel(m, members[i + 1] || null);
+          return 0;
+        });
+        const sumMax = maxes.reduce((s, x) => s + x, 0);
+        if (sumMax > 0) {
+          b.memberFuel = maxes.map(mx => total * (mx / sumMax));
+        } else {
+          b.memberFuel = members.map(() => 0);
+        }
+      }
+      b.fuelMass = total;
+      break;
+    }
+    // setBottomFuel — the fueling-panel's command. Writes ONLY the bottom
+    // member's tank. All engines live on the bottom member
+    // (buildEnginesForRecord is called on members[0] only), so that is
+    // the only tank consumed during flight; stage tanks stay at whatever
+    // load the build set them to. The total body.fuelMass is recomputed
+    // as the sum so every other reader (fuel bar, telemetry) stays
+    // consistent.
+    case 'setBottomFuel': {
+      const b = resolveTargetBody(msg.targetBodyIdx);
+      if (!b) break;
+      const value = Math.max(0, msg.value || 0);
+      if (Array.isArray(b.memberFuel) && b.memberFuel.length) {
+        b.memberFuel[0] = value;
+        let total = 0;
+        for (let k = 0; k < b.memberFuel.length; k++) total += b.memberFuel[k];
+        b.fuelMass = total;
+      } else {
+        b.fuelMass = value;
+      }
+      break;
+    }
+    case 'setAtmosphere': {
+      // Toggle global in the worker's own environment.js copy. Effects
+      // are immediate: airDensity() returns 0 on the very next physics
+      // step, zeroing drag + aero torque everywhere.
+      atmosphereEnabled = !!msg.enabled;
+      break;
+    }
+    case 'setWind': {
+      if (typeof msg.enabled === 'boolean') wind.enabled = msg.enabled;
+      if (Number.isFinite(msg.speed)) wind.speed = msg.speed;
+      if (Number.isFinite(msg.directionDeg)) wind.directionDeg = msg.directionDeg;
+      break;
+    }
+    case 'separate': {
+  // Two-phase: this now commands engine shutdown and defers the
+  // actual member slice until thrust has spooled down. The split
+  // itself is triggered by _checkPendingSeparate() inside physicsStep.
+  const b = resolveTargetBody(msg.targetBodyIdx);
+  if (!b) break;
+  if (typeof requestSeparate === 'function') requestSeparate(b);
+  break;
+}
+    case 'splitFairing': {
+      const b = resolveTargetBody(msg.targetBodyIdx);
+      if (!b) break;
+      if (typeof splitFairingOnActiveBody === 'function') splitFairingOnActiveBody(b);
+      break;
+    }
+    
+    case 'releasePayload': {
+  // Two-phase: command engine shutdown, defer actual release until
+  // thrust spools to ~0 (or skip the wait if already coasting).
+  // Emergency eject bypasses this — see emergencyEjectPayload.
+  const b = resolveTargetBody(msg.targetBodyIdx);
+  if (!b) break;
+  if (typeof requestReleasePayload === 'function') requestReleasePayload(msg, b);
+  break;
+}
+    case 'emergencyEject': {
+  const b = resolveTargetBody(msg.targetBodyIdx);
+  if (!b) break;
+  if (typeof emergencyEjectPayload === 'function') emergencyEjectPayload(b);
+  break;
+}
+        case 'takeControl': {
+  if (typeof takeControlOfBody === 'function') {
+    takeControlOfBody(msg.idx, { keepEnginesAlive: !!msg.keepEnginesAlive });
+  }
+  break;
+}
+    case 'markIntentionalImpact': {
+  const b = resolveTargetBody(msg.targetBodyIdx);
+  if (b) b.intentionalImpact = true;
+  break;
+}
+case 'pusherTorque': {
+  const b = resolveTargetBody(msg.targetBodyIdx);
+  if (!b) break;
+  b._sepTorqueAngAccel = Number.isFinite(msg.angAccel) ? msg.angAccel : 0;
+  b._sepTorqueTargetOmega = Number.isFinite(msg.targetOmega) ? msg.targetOmega : null;
+  break;
+}
+case 'deployASDS': {
+  const v = _asdsValidateDeploy(msg.xMeters);
+  if (!v.ok) {
+    self.postMessage({ type: 'asdsDeployFailed', xMeters: msg.xMeters, error: v.error });
+    break;
+  }
+  const existing = _asdsExisting();
+  const idx = existing.length + 1;
+  const pad = {
+    id: 'asds-' + idx,
+    name: 'ASDS-' + idx,
+    radiusM: ASDS_LANDING_RADIUS_M,
+    arcOffsetM: Math.round(msg.xMeters),
+    heightM: ASDS_DECK_HEIGHT_M,
+    lengthM: ASDS_LENGTH_M,
+    enabled: true,
+    isASDS: true,
+    lights: false,
+  };
+  CONFIG.LANDING_PADS.push(pad);
+  self.postMessage({ type: 'asdsDeployed', pad: JSON.parse(JSON.stringify(pad)) });
+  break;
+}
+case 'setASDSPosition': {
+  const v = _asdsValidateMove(msg.padId, msg.newXOffsetM);
+  if (!v.ok) {
+    self.postMessage({ type: 'asdsMoveFailed', padId: msg.padId, error: v.error });
+    break;
+  }
+  const pad = v.pad;
+  const oldOffset = pad.arcOffsetM;
+  pad.arcOffsetM = Math.round(msg.newXOffsetM);
+  self.postMessage({ type: 'asdsMoved', pad: JSON.parse(JSON.stringify(pad)), oldOffsetM: oldOffset });
+  break;
+}
+case 'openPayload': {
+  const b = resolveTargetBody(msg.targetBodyIdx);
+  if (!b) break;
+  // Idempotent — first open wins; subsequent opens are ignored so a
+  // re-fire doesn't restart the animation.
+  if (!Number.isFinite(b.payloadOpenedAt)) {
+    b.payloadOpenedAt = state.simTime;
+  }
+  break;
+}
+
+    // ---- Fast-forward support ----
+// captureFullState: return a DEEP CLONE of the worker's canonical
+// state, so the main thread can run its own physicsStep + guidance
+// loop without touching the worker.
+
+// Atomic pause + capture. Replaces the old "pauseSim, wait 400ms,
+// then captureFullState" sequence in fastForward.js, which depended
+// on wall-clock timing — the 400ms wait could drain 0, 1, or 2 extra
+// physics steps depending on machine load, making the captured state
+// non-deterministic between FF attempts with identical inputs.
+//
+// This handler pauses FIRST, THEN clones — so the captured state is
+// exactly the last tick before pause, every time. The 400ms wait can
+// be removed from fastForward.js entirely.
+case 'pauseAndCapture': {
+  // Atomic pause + state clone. Replaces fastForward.js's old
+  // "pauseSim, wait 400 ms, then captureFullState" sequence, which
+  // depended on wall-clock timing — machine load could shift the
+  // number of pre-pause physics ticks by ±1, making two identical
+  // FF attempts start from slightly different states.
+  paused = true;
+  console.log('[CAPTURE] t=' + state.simTime.toFixed(6) + ' bodies=' + state.bodies.length + ' body0.rx=' + state.bodies[0].rx.toFixed(6) + ' body0.ry=' + state.bodies[0].ry.toFixed(6));
+  try {
+    const clone = structuredClone({
+      bodies: state.bodies,
+      activeBodyIndex: state.activeBodyIndex,
+      simTime: state.simTime,
+      halted: state.halted,
+      // FF worker has its own CONFIG.LANDING_PADS loaded via its own
+      // importScripts('../../config.js') — LZ-1/2/3 defaults only.
+      // Runtime-deployed ASDS pads (HOPE) exist ONLY in this worker's
+      // CONFIG and never cross into the FF worker via any other path.
+      // Capturing them here lets the render-side fastForward controller
+      // forward them into the FF worker's CONFIG before the FF physics
+      // loop starts, so FF computes with the exact pad set physics had
+      // at pause. Without this: FF runs 510s with no HOPE pad → ground
+      // contact fires at sea level instead of deck → final state differs
+      // → after replaceState, physics resumes from wrong state → ~19 m
+      // eastward LB landing offset (Run A vs Run C in user test).
+      configLandingPads: JSON.parse(JSON.stringify(CONFIG.LANDING_PADS || [])),
+    });
+    self.postMessage({ type: 'pausedState', data: clone });
+  } catch (e) {
+    self.postMessage({ type: 'pausedStateError', message: String(e) });
+  }
+  break;
+}
+
+
+case 'captureFullState': {
+  try {
+    const clone = structuredClone({
+      bodies: state.bodies,
+      activeBodyIndex: state.activeBodyIndex,
+      simTime: state.simTime,
+      halted: state.halted,
+      // Same rationale as pauseAndCapture — FF worker needs the runtime
+      // pad set or ASDS lands on sea level instead of deck.
+      configLandingPads: JSON.parse(JSON.stringify(CONFIG.LANDING_PADS || [])),
+    });
+    self.postMessage({ type: 'fullState', data: clone });
+  } catch (e) {
+    self.postMessage({ type: 'fullStateError', message: String(e) });
+  }
+  break;
+}
+// replaceState: overwrite the worker's state with a body list
+// produced by a main-thread fast-forward run.
+case 'replaceState': {
+  if (!msg.bodies || !Array.isArray(msg.bodies)) {
+    console.warn('[physics] replaceState: invalid bodies', msg);
+    break;
+  }
+  state.bodies = msg.bodies;
+  state.activeBodyIndex = Math.max(0, Math.min(msg.bodies.length - 1, msg.activeBodyIndex || 0));
+  state.simTime = Number.isFinite(msg.simTime) ? msg.simTime : state.simTime;
+  state.halted = !!msg.halted;
+  state.bodies.forEach(b => { if (!b.pwmClocks) b.pwmClocks = {}; });
+  pendingSeparate = null;
+  pendingRelease = null;
+  self.postMessage({ type: 'replaceStateAck' }); // ← naya ack
+  break;
+}
+// ---- Optimization #1: main thread hands a decoded buffer back so we
+//      can reuse it next tick instead of allocating a new one. ----
+case 'returnHotBuffer': {
+      if (msg.buffer) availableHotBuffers.push(new Float64Array(msg.buffer));
+      break;
+    }
+  }
+}
+
+// ---- Snapshot serialization ----
+// NOTE (Optimization #1, Step 2): rx, ry, vx, vy, theta, omega, fuelMass,
+// and each engine's massFlowRate/currentF/gimbalDeg are DELIBERATELY left out
+// below — they now travel every tick via the hot-state Float64Array
+// (encodeHotState in stateBuffer.js), not through this cloned object.
+//
+// OPTIMIZATION #5 (object pooling): this function used to call .map() on
+// state.bodies AND on every body's .engines array on every single tick
+// (~500/s), allocating a brand-new object graph — outer bodies array, one
+// object per body, one array + one object per engine — even though almost
+// none of these fields change tick-to-tick (they only change on rare
+// structural events: staging, fairing split, or a throttle/gimbal command).
+// That's dozens of small short-lived allocations per second doing nothing
+// but generating GC pressure.
+//
+// Fix: keep one persistent cache object per body/engine (_bodyCacheAt /
+// _engineCacheAt below) and overwrite its fields in place each tick instead
+// of allocating fresh ones. The cache arrays are only resized (never
+// spliced) when the number of bodies/engines actually changes, which only
+// happens on those same rare structural events. `self.postMessage` still
+// structured-clones this object on its way to the main thread — reusing the
+// object on the SENDING side is what removes the allocation, the receiver
+// always gets an independent copy regardless.
+const _snapCache = {
+  separationFlash: null,
+  lastPayloadRelease: null,
+  activeBodyIndex: 0,
+  simTime: 0,
+  halted: false,
+  lastForces: { firing: {}, pod: {} },
+  bodies: [],
+};
+let _separationFlashCache = null;
+let _lastPayloadReleaseCache = null;
+let _pusherPuffCache = null;
+const _emptyForceObj = {};
+
+function _bodyCacheAt(i) {
+  let c = _snapCache.bodies[i];
+  if (!c) {
+    c = { legs: null, engines: [] };
+    _snapCache.bodies[i] = c;
+  }
+  return c;
+}
+
+function _engineCacheAt(bodyCache, j) {
+  let c = bodyCache.engines[j];
+  if (!c) {
+    c = {};
+    bodyCache.engines[j] = c;
+  }
+  return c;
+}
+
+function serializeForMain() {
+  const out = _snapCache;
+  
+  if (separationFlash) {
+    const f = _separationFlashCache || (_separationFlashCache = {});
+    f.id = separationFlash.id;
+    f.rx = separationFlash.rx;
+    f.ry = separationFlash.ry;
+    out.separationFlash = f;
+  } else {
+    out.separationFlash = null;
+  }
+  
+  if (lastPayloadRelease) {
+  const r = _lastPayloadReleaseCache || (_lastPayloadReleaseCache = {});
+  r.id = lastPayloadRelease.id;
+  r.rx = lastPayloadRelease.rx;
+  r.ry = lastPayloadRelease.ry;
+  r.ux = lastPayloadRelease.ux;
+  r.uy = lastPayloadRelease.uy;
+  out.lastPayloadRelease = r;
+} else {
+  out.lastPayloadRelease = null;
+}
+
+if (pusherPuff) {
+  const pp = _pusherPuffCache || (_pusherPuffCache = {});
+  pp.id = pusherPuff.id;
+  pp.rx = pusherPuff.rx;
+  pp.ry = pusherPuff.ry;
+  pp.theta = pusherPuff.theta;
+  pp.topOffset = pusherPuff.topOffset;
+  pp.halfWidth = pusherPuff.halfWidth;
+  pp.bodyIdx = pusherPuff.bodyIdx;
+  out.pusherPuff = pp;
+} else {
+  out.pusherPuff = null;
+}
+  
+  out.activeBodyIndex = state.activeBodyIndex;
+  out.simTime = state.simTime;
+  out.halted = state.halted;
+  
+  const lf = out.lastForces;
+  lf.mainFx = lastForces.mainFx || 0;
+  lf.mainFy = lastForces.mainFy || 0;
+  lf.mainTorque = lastForces.mainTorque || 0;
+  lf.rcsFx = lastForces.rcsFx || 0;
+  lf.rcsFy = lastForces.rcsFy || 0;
+  lf.rcsTorque = lastForces.rcsTorque || 0;
+  lf.dragTorque = lastForces.dragTorque || 0;
+  lf.aoaDeg = lastForces.aoaDeg || 0;
+  lf.dutyTop = lastForces.dutyTop || 0;
+  lf.mdot = lastForces.mdot || 0;
+  lf.firing = lastForces.firing || _emptyForceObj;
+  lf.pod = lastForces.pod || _emptyForceObj;
+  
+  // Reused array: length only changes on staging/fairing-split/reset
+  // (state.bodies is only ever pushed to or wholesale-replaced elsewhere,
+  // never spliced mid-array), so this never reallocs on a normal tick.
+  out.bodies.length = state.bodies.length;
+  for (let i = 0; i < state.bodies.length; i++) {
+    const b = state.bodies[i];
+    const bc = _bodyCacheAt(i);
+    
+    bc.id = b.id;
+    bc.members = b.members;
+    bc.dryMass = b.dryMass;
+    bc.crashed = b.crashed;
+    bc.landed = b.landed;
+    bc.settled = b.settled;
+    bc.isActive = b.isActive;
+    bc.isDiscarded = b.isDiscarded;
+    bc.payloadId = b.payloadId;
+bc.payloadReleased = b.payloadReleased;
+// Flag set by emergencyEjectPayload / releasePayloadOnActiveBody
+// (emergency path). Read by main-thread button-enablement guards
+// (canSplitFairingNow, canReleasePayloadNow, canEject) AND by
+// workerBridge.js's auto-follow-camera logic. Without this line the
+// main-thread mirror's `active.emergencyEject` is always undefined,
+// so every guard against re-splitting/re-releasing an ejected body
+// silently passes and its buttons wrongly enable after Take Control.
+bc.emergencyEject = b.emergencyEject;
+// Fairing-recovery chute state. Without this copy, the main-thread
+// mirror's body.chute is always undefined — the physics worker
+// deploys the canopy internally, but the renderer never gets the
+// typeId needed to look up the canopy silhouette, so nothing is
+// drawn. Progress ALSO arrives via hot-buffer slot 14; decodeHotState
+// overwrites this cold progress with the hot value each tick, so
+// both paths stay consistent.
+if (b.chute) {
+  if (!bc.chute) bc.chute = {};
+  bc.chute.typeId = b.chute.typeId;
+  bc.chute.deployed = b.chute.deployed;
+  bc.chute.progress = b.chute.progress;
+} else {
+      bc.chute = null;
+}
+// Grid fins — cold copy. The hot scalars (L/R/FB.deploy, FB.control)
+// travel via the Float64Array each tick; what's copied here is only the
+// shape so the receiver has objects to decode into. targets stay at
+// whatever the last command set them to.
+if (b.gridFins) {
+  if (!bc.gridFins) {
+    bc.gridFins = {
+      L:  { deploy:  90, control: 0, targetDeploy:  90, targetControl: 0 },
+      R:  { deploy: -90, control: 0, targetDeploy: -90, targetControl: 0 },
+      FB: { deploy:  90, control: 0, targetDeploy:  90, targetControl: 0 },
+    };
+  }
+  ['L', 'R', 'FB'].forEach(k => {
+    const src = b.gridFins[k], dst = bc.gridFins[k];
+    if (!src || !dst) return;
+    dst.targetDeploy = src.targetDeploy;
+    dst.targetControl = src.targetControl;
+    if (Number.isFinite(src.deployRate)) dst.deployRate = src.deployRate;
+    if (Number.isFinite(src.controlRate)) dst.controlRate = src.controlRate;
+  });
+} else {
+  bc.gridFins = null;
+}
+    
+    if (b.legs) {
+      if (!bc.legs) bc.legs = {};
+      bc.legs.deployed = b.legs.deployed;
+      bc.legs.progress = b.legs.progress;
+    } else {
+      bc.legs = null;
+    }
+    
+    const srcEngines = b.engines || [];
+    bc.engines.length = srcEngines.length;
+    for (let j = 0; j < srcEngines.length; j++) {
+      const en = srcEngines[j];
+      const ec = _engineCacheAt(bc, j);
+      ec.id = en.id;
+ec.angleDeg = en.angleDeg;
+ec.x = en.x;
+ec.y = en.y;
+ec.isCenter = en.isCenter;
+      ec.gimbal = en.gimbal;
+      ec.Fmax = en.Fmax;
+      ec.Fmin = en.Fmin;
+      ec.Ve = en.Ve;
+      // PHASE 1: mass-flow limits/target travel here (they only change on
+      // the same rare structural events as everything else in this
+      // clone); massFlowRate itself is hot-path and comes via the buffer.
+      ec.maxMassFlowRate = en.maxMassFlowRate;
+      ec.minMassFlowRate = en.minMassFlowRate;
+      ec.targetMassFlowRate = en.targetMassFlowRate;
+ec.targetGimbalDeg = en.targetGimbalDeg;
+// Phase 3 — Issue 6 restoration: guidance's rate command needs to
+// round-trip back to the main-thread mirror and the guidance
+// snapshot, otherwise it appears to vanish every tick.
+ec.targetGimbalRateDegS = en.targetGimbalRateDegS;
+// Gimbal accel model: guidance reads the actual gimbal rate state and the pending alpha
+// command to solve its next alpha, plus this engine's actuator limits (thruster-type
+// properties; constants, so cold-path cost only).
+ec.gimbalRateActDegS = en.gimbalRateActDegS;
+ec.targetGimbalAccelDegS2 = en.targetGimbalAccelDegS2;
+ec.gimbalMaxDeg = en.gimbalMaxDeg;
+ec.gimbalRateDegS = en.gimbalRateDegS;
+ec.gimbalAccelDegS2 = en.gimbalAccelDegS2;
+// Spool transients — needed by guidance (STAGE_BURN predictive
+// cutoff, CIRCULARIZE spool Δv compensation) and anything else
+// that wants to know how long the engine takes to spin up/down.
+// Without these forwarded, the main-thread engine object showed
+// `shutdownDurationS: undefined` even though the fleet record and
+// the worker's own engine object both carry the value.
+ec.startupDurationS = en.startupDurationS;
+ec.shutdownDurationS = en.shutdownDurationS;
+    }
+    
+    // Per-member fuel — array parallel to members[]. Small (2-4 entries)
+// so cloning it every tick is cheap, and guidance needs it for its
+// own stackMassProps (which reads per-tank levels after separation).
+bc.memberFuel = Array.isArray(b.memberFuel) ? b.memberFuel.slice() : [];
+// Payload-open timestamp — set once by the openPayload command, read by
+// the render side to animate the satellite unfolding.
+if (Number.isFinite(b.payloadOpenedAt)) bc.payloadOpenedAt = b.payloadOpenedAt;
+else delete bc.payloadOpenedAt;
+bc.rcsCmd = b.rcsCmd;
+// Phase 3 — Issue 6 restoration: same reasoning as
+// targetGimbalRateDegS above.
+bc.rcsDuty = b.rcsDuty;
+    bc.lastRcs = b.lastRcs;
+    bc.payloadBody = b.payloadBody;
+    bc.fairingHalf = b.fairingHalf;
+    bc.height = b.height;
+bc.width = b.width;
+// IMU accelerometer readings — see physics.js's assignment for why
+// these are PROPER (non-gravitational) accelerations.
+bc.accelX = b._lastAccelX || 0;
+bc.accelY = b._lastAccelY || 0;
+bc.q_Pa = b._lastQ_Pa || 0;
+bc._inheritPeaksFrom = b._inheritPeaksFrom;
+bc._inheritPeakQ = b._inheritPeakQ;
+    
+    out.bodies[i] = bc;
+  }
+  
+  return out;
+}
+
+// ---- Worker loop ----
+// Sync-to-guidance state. When running, physics does not schedule its own
+// next iteration via setTimeout — it posts a snapshot, then waits for the
+// guidance worker to ack that it has consumed it and queued its commands.
+// This forces EVERY physicsStep to see commands derived from the
+// immediately preceding snapshot: cmd latency 0 at 100%, determinism
+// regardless of main-thread / worker jitter.
+let _waitingForGuidance = false;
+let _guidanceWaitTimer = null;
+let _lastStepWallTime = 0;
+
+function workerLoop() {
+  // Only used by the hot-buffer starvation warning below. Physics stepping
+  // is now purely per-iteration at CONFIG.DT cadence; wall-clock only
+  // gates that one warning so we don't spam console.
+  const loopStart = performance.now();
+  
+  // Legs animate on SIM time, not wall-clock. Previously this used
+  // wall-clock dtReal, so a laggy browser advanced legs slower than a
+  // smooth one — a source of divergence from the FF worker, which steps
+  // legs by exactly CONFIG.DT per tick. Sim-time binding makes both paths
+  // bit-identical.
+  updateLegs(CONFIG.DT);
+  // Expire the separation flash after 1 s wall time. By then the render
+  // worker's own 0.35 s visual has long since finished, so there's no
+  // reason to keep shipping it in every snapshot.
+  if (separationFlash && performance.now() - separationFlash.t0Real > 1000) {
+    separationFlash = null;
+  }
+  if (lastPayloadRelease && performance.now() - lastPayloadRelease.t0Real > 2000) {
+  lastPayloadRelease = null;
+}
+if (pusherPuff && performance.now() - pusherPuff.t0Real > 1000) {
+  pusherPuff = null;
+}
+  
+  if (running && !paused && !state.halted) {
+  // Wall-clock pacing: only step if CONFIG.DT has elapsed since the
+  // last step. Combined with the guidance-ack sync below, this keeps
+  // the sim at real-time (80 Hz) when possible, and slows gracefully
+  // when the guidance round-trip is longer than CONFIG.DT. Determinism
+  // is preserved either way — sim time always advances by exactly one
+  // CONFIG.DT per step, and every step sees the guidance commands
+  // derived from the previous snapshot.
+  const now = performance.now();
+  const target = CONFIG.DT * 1000;
+  if (_lastStepWallTime > 0 && now - _lastStepWallTime < target - 0.5) {
+    setTimeout(workerLoop, Math.max(0, target - (now - _lastStepWallTime)));
+    return;
+  }
+  _lastStepWallTime = now;
+  
+  physicsStep(CONFIG.DT);
+  if (state.halted) running = false;
+}
+
+  // Skip requesting the leapfrog compute entirely when no consumer wants
+  // the trajectory (trajectory checkbox off) — `pendingTrajectoryTransfer`
+  // is still sent as null on every snapshot when disabled (below), so the
+  // render worker's cached copy clears the moment the toggle flips off.
+  //
+  // OPTIMIZATION #2: this no longer computes anything itself — it only
+  // fires a tiny request at the dedicated trajectory worker (4 numbers)
+  // and returns immediately. `trajectoryRequestInFlight` is a simple
+  // backpressure guard so a slow/backed-up worker never gets a second
+  // request queued on top of one it hasn't answered yet; the ~16 ms gate
+  // then naturally re-fires next tick once it's free again. The actual
+  // result is applied later in trajectoryWorker.onmessage above, whenever
+  // it arrives — same hand-off into pendingTrajectoryTransfer as before,
+  // just decoupled from this tick's timing.
+  if (trajectoryEnabled && trajectoryWorkerReady && !trajectoryRequestInFlight &&
+    performance.now() - lastTrajTime >= 16) {
+    lastTrajTime = performance.now();
+    const active = state.bodies[state.activeBodyIndex];
+    if (active) {
+      trajectoryRequestInFlight = true;
+      trajectoryWorker.postMessage({
+        type: 'compute',
+        rx: active.rx, ry: active.ry, vx: active.vx, vy: active.vy,
+        maxSamples: 500, maxTimeSec: 1200,
+      });
+    } else {
+      state.trajectory = null;
+      pendingTrajectoryTransfer = null;
+    }
+  }
+
+  const data = serializeForMain();
+  const transfers = [];
+  if (pendingTrajectoryTransfer) {
+    data.trajectory = pendingTrajectoryTransfer;
+    if (pendingTrajectoryTransfer.pointsXy && pendingTrajectoryTransfer.pointsXy.buffer) {
+      transfers.push(pendingTrajectoryTransfer.pointsXy.buffer);
+    }
+    if (pendingTrajectoryTransfer.pointsXyEarthFixed && pendingTrajectoryTransfer.pointsXyEarthFixed.buffer) {
+      transfers.push(pendingTrajectoryTransfer.pointsXyEarthFixed.buffer);
+    }
+    pendingTrajectoryTransfer = null;
+  } else {
+    data.trajectory = null;
+  }
+
+  // ---- Optimization #1: hot fields go out as a transferred Float64Array
+  //      instead of being cloned inside `data`. ----
+  let hotBuf = availableHotBuffers.pop();
+  if (!hotBuf) {
+    // Main thread hasn't returned a buffer yet (shouldn't normally happen —
+    // it transfers one back synchronously on receipt). Allocate a one-off
+    // fallback so this tick's render update still goes out; log it (rate-
+    // limited) so a persistent pattern is visible instead of silently
+    // eating an allocation every tick.
+    hotBuf = createHotStateBuffer();
+    hotBufferStarvedCount++;
+    if (loopStart - lastHotBufferWarnTime > 5000) {
+      lastHotBufferWarnTime = loopStart;
+      console.warn('[physics_worker] hot buffer starved', hotBufferStarvedCount, 'times so far — main thread is not returning buffers promptly.');
+    }
+  }
+  const encodeResult = encodeHotState(hotBuf, state.bodies);
+  if (!encodeResult.ok) {
+    console.warn('[physics_worker] hot state buffer capacity exceeded', encodeResult);
+  }
+  data.hotBuffer = hotBuf.buffer;
+  transfers.push(hotBuf.buffer);
+
+        self.postMessage({ type: 'state', data }, transfers);
+    
+    // Scheduling:
+    //   - Running: wait for the guidance ack to the snapshot we just sent.
+    //     Ack arrives AFTER guidance has queued all its commands (FIFO
+    //     MessageChannel ordering), so the next physicsStep is guaranteed
+    //     to see them. 100% cmd latency 0.
+    //   - Paused / stopped / halted: poll on the CONFIG.DT clock so we
+    //     notice state flips promptly.
+    if (running && !paused && !state.halted) {
+  _waitingForGuidance = true;
+  _guidanceWaitTimer = setTimeout(() => {
+    // Safety net — if guidance never acks (worker dead, port not yet
+    // connected), resume anyway so the sim can't hang forever.
+    //
+    // The old value was 100 ms, which was generous compared to the
+    // typical ~1 ms round-trip but not generous enough for GC pauses
+    // or CPU contention spikes. When it fired during a slow-but-alive
+    // round-trip, physics stepped forward WITHOUT the current tick's
+    // guidance commands — a silent, intermittent break of the
+    // "command latency 0, 100% of the time" contract. 5000 ms is a
+    // genuine "worker is dead or port never connected" threshold, and
+    // logs loudly if it ever fires so the failure mode is visible
+    // instead of silently producing nondeterminism.
+    if (_waitingForGuidance) {
+      _waitingForGuidance = false;
+      _guidanceWaitTimer = null;
+      console.error(
+        '[physics_worker] guidance sync timeout at t=' +
+        state.simTime.toFixed(3) +
+        's — physics is stepping WITHOUT this tick\'s guidance commands. ' +
+        'Either the guidance worker is dead, the port failed to connect, ' +
+        'or the round-trip exceeded 5000 ms.'
+      );
+      workerLoop();
+    }
+  }, 5000);
+} else {
+      setTimeout(workerLoop, CONFIG.DT * 1000);
+    }
+    }
