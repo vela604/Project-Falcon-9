@@ -351,17 +351,20 @@ let _maxQFired = false;
 
 function _phaseBodyTag(displayPhase) {
   if (!displayPhase) return '?';
-  if (displayPhase === 'ASCENT' || displayPhase === 'MECO' || displayPhase === 'SEPARATION' ||
-      displayPhase === 'FLIP' || displayPhase === 'BOOSTBACK_BURN' ||
-      displayPhase === 'PRE_ENTRY_STEER' || displayPhase === 'ENTRY_BURN' ||
-      displayPhase === 'POST_ENTRY_STEER' || displayPhase === 'LANDING_BURN' ||
-      displayPhase === 'TOUCHDOWN_COMPLETE') return 'booster';
-  if (displayPhase === 'ORBIT_BURN' || displayPhase === 'APOGEE_TRIM' ||
-      displayPhase === 'COAST' || displayPhase === 'CIRCULARIZE' ||
-      displayPhase === 'PAYLOAD_DEPLOY' || displayPhase === 'FAIRING_DEPLOY' ||
-      displayPhase === 'DEORBIT') return 'stage';
-  if (displayPhase === 'CHUTE_DEPLOY' || displayPhase === 'SPLASHDOWN') return 'fairing';
-  if (displayPhase === 'PAYLOAD_RELEASE' || displayPhase === 'PAYLOAD_OPEN') return 'payload';
+  // Normalize: display names use spaces (ORBIT BURN), raw names use
+  // underscores (ORBIT_BURN). Handle both.
+  const p = String(displayPhase).replace(/_/g, ' ').toUpperCase();
+  if (p === 'ASCENT' || p === 'MECO' || p === 'SEPARATION' ||
+      p === 'FLIP' || p === 'BOOSTBACK BURN' ||
+      p === 'PRE ENTRY STEER' || p === 'ENTRY BURN' ||
+      p === 'POST ENTRY STEER' || p === 'LANDING BURN' ||
+      p === 'TOUCHDOWN COMPLETE') return 'booster';
+  if (p === 'ORBIT BURN' || p === 'APOGEE TRIM' ||
+      p === 'COAST' || p === 'CIRCULARIZE' ||
+      p === 'PAYLOAD DEPLOY' || p === 'FAIRING DEPLOY' ||
+      p === 'DEORBIT') return 'stage';
+  if (p === 'CHUTE DEPLOY' || p === 'SPLASHDOWN') return 'fairing';
+  if (p === 'PAYLOAD RELEASE' || p === 'PAYLOAD OPEN') return 'payload';
   return '?';
 }
 
