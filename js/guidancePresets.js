@@ -453,9 +453,10 @@ function _lenientRecurse(values, reference, path, warnings) {
 // ---------------------------------------------------------------------------
 function exportFullBackup() {
   return {
-    version: 1,
+    version: 2,
     exportedAt: new Date().toISOString(),
     presets: loadUserPresets(),
+    records: (typeof loadMissionRecords === 'function') ? loadMissionRecords() : [],
   };
 }
 
@@ -471,36 +472,34 @@ function importFullBackup(raw) {
   let parsed = raw;
   if (typeof raw === 'string') {
     try { parsed = JSON.parse(raw); }
-    catch (e) { return { ok: false, error: 'JSON parse error: ' + e.message, imported: 0, skipped: 0, warnings }; }
+    catch (e) { return { ok: false, error: 'JSON parse error: ' + e.message, imported: 0, recordsImported: 0, skipped: 0, warnings }; }
   }
   if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.presets)) {
-    return { ok: false, error: 'Backup must be an object with a "presets" array', imported: 0, skipped: 0, warnings };
+    return { ok: false, error: 'Backup must be an object with a "presets" array', imported: 0, recordsImported: 0, skipped: 0, warnings };
   }
   const incoming = [];
   let skipped = 0;
   for (let i = 0; i < parsed.presets.length; i++) {
     const p = parsed.presets[i];
-    if (!p || typeof p !== 'object') { skipped++; warnings.push(`Preset #${i + 1}: not an object — skipped`); continue; }
+    if (!p || typeof p !== 'object') { skipped++; warnings.push('Preset #' + (i + 1) + ': not an object - skipped'); continue; }
     const guideName = typeof p.guideName === 'string' ? p.guideName : '';
     const name = typeof p.name === 'string' ? p.name.trim() : '';
-    if (!guideName || !name) { skipped++; warnings.push(`Preset #${i + 1}: missing name or guideName — skipped`); continue; }
+    if (!guideName || !name) { skipped++; warnings.push('Preset #' + (i + 1) + ': missing name or guideName - skipped'); continue; }
 
-    // Lenient constants fill-in against the guide's default preset schema
     const defaultPreset = getGuideDefaultPreset(guideName);
     let constants;
     if (defaultPreset) {
       const res = validateConstantsLenient(p.constants || {}, defaultPreset.constants);
       if (!res.ok) {
         skipped++;
-        warnings.push(`Preset "${name}": constants unusable — skipped`);
+        warnings.push('Preset "' + name + '": constants unusable - skipped');
         continue;
       }
       constants = res.constants;
-      res.warnings.forEach(w => warnings.push(`Preset "${name}": ${w}`));
+      res.warnings.forEach(w => warnings.push('Preset "' + name + '": ' + w));
     } else {
-      // Guide not recognised — keep raw constants (best-effort), warn.
       constants = (p.constants && typeof p.constants === 'object') ? p.constants : {};
-      warnings.push(`Preset "${name}": unknown guide "${guideName}" — schema unchecked`);
+      warnings.push('Preset "' + name + '": unknown guide "' + guideName + '" - schema unchecked');
     }
 
     incoming.push({
@@ -510,7 +509,10 @@ function importFullBackup(raw) {
       guideName,
       stackId: typeof p.stackId === 'string' ? p.stackId : '',
       stackName: typeof p.stackName === 'string' ? p.stackName : '',
+      stackType: typeof p.stackType === 'string' ? p.stackType : '',
       tags: Array.isArray(p.tags) ? p.tags.map(String) : [],
+      mecoTimeS: Number.isFinite(p.mecoTimeS) ? p.mecoTimeS : null,
+      payloadDeployTimeS: Number.isFinite(p.payloadDeployTimeS) ? p.payloadDeployTimeS : null,
       constants,
       createdAt: Date.now(),
       updatedAt: Date.now(),
@@ -518,7 +520,28 @@ function importFullBackup(raw) {
     });
   }
   saveUserPresets(incoming);
-  return { ok: true, imported: incoming.length, skipped, warnings };
+
+  // Records — merge by comboKey. Same comboKey in backup overwrites
+  // existing; new comboKeys append. Preserves user's newer captures.
+  let recordsImported = 0;
+  if (Array.isArray(parsed.records) && parsed.records.length > 0 &&
+      typeof loadMissionRecords === 'function' && typeof saveMissionRecords === 'function') {
+    try {
+      const existing = loadMissionRecords();
+      const byKey = new Map();
+      existing.forEach(r => { if (r && r.comboKey) byKey.set(r.comboKey, r); });
+      parsed.records.forEach(r => {
+        if (!r || !r.comboKey) return;
+        byKey.set(r.comboKey, r);
+        recordsImported++;
+      });
+      saveMissionRecords(Array.from(byKey.values()));
+    } catch (e) {
+      warnings.push('Records import failed: ' + e.message);
+    }
+  }
+
+  return { ok: true, imported: incoming.length, recordsImported, skipped, warnings };
 }
 
 // ---------------------------------------------------------------------------

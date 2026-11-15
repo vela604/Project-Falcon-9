@@ -263,7 +263,7 @@ leoInsertionV3: _mkDefault(
       TARGET_IMPACT_EF_DEG: null,
     },
   },
-    ['leo-320km', '12t', 'author-tuned', 'rtls-tuned'],
+    ['leo-320km', '12t', 'author-tuned'],
   135,
   586
   ),
@@ -527,7 +527,7 @@ leoInsertionV3: _mkDefault(
       PES_PAD_BIAS_M: 0,
     },
   },
-    ['leo-320km', '12t', 'author-tuned', 'rtls-tuned'],
+    ['leo-320km', '12t', 'author-tuned'],
   135,
   586
   ),

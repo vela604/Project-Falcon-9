@@ -662,8 +662,8 @@ a.back:hover{box-shadow:0 6px 24px rgba(111,176,255,.35)}
   <!-- backup -->
   <div id="backupRow">
     <span class="lbl">Backup:</span>
-    <button class="btn" id="btnBackupExport">Export All Presets</button>
-    <button class="btn" id="btnBackupImport">Import Backup…</button>
+    <button class="btn" id="btnBackupExport">Export All (Presets + Records)</button>
+    <button class="btn" id="btnBackupImport">Import Backup (Presets + Records)…</button>
     <div class="spacer"></div>
     <span class="lbl" id="backupStatus"></span>
   </div>
@@ -805,7 +805,8 @@ a.back:hover{box-shadow:0 6px 24px rgba(111,176,255,.35)}
     <div class="modal-body">
       <div style="font-size:12.5px;color:var(--dim);line-height:1.55;margin-bottom:10px;">
         Paste a full-backup JSON. This will <strong style="color:var(--danger)">replace all your user presets</strong>.
-        Missing or invalid values fall back to the code defaults — the import is lenient by design.
+        Records (if present in the file) are <strong>merged</strong> with existing — same-comboKey records overwrite, new ones append.
+        Missing or invalid preset constants fall back to code defaults — the import is lenient by design.
       </div>
       <textarea class="field-textarea" id="backupImportText" rows="12" spellcheck="false"
         placeholder='{ "version": 1, "presets": [ ... ] }'></textarea>

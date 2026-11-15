@@ -1107,7 +1107,8 @@ if (_editingPresetId) {
     }
     $('backupImportError').style.display = 'none';
     $('backupImportModal').style.display = 'none';
-    const summary = 'Imported ' + res.imported +
+    const summary = 'Imported ' + res.imported + ' preset' + (res.imported === 1 ? '' : 's') +
+      (res.recordsImported > 0 ? ' + ' + res.recordsImported + ' record' + (res.recordsImported === 1 ? '' : 's') : '') +
       (res.skipped ? ' · skipped ' + res.skipped : '') +
       (res.warnings.length ? ' · ' + res.warnings.length + ' warnings' : '');
     $('backupStatus').textContent = summary;
