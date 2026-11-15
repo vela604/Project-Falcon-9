@@ -59,7 +59,7 @@ const Guidance = (function () {
     _lastMeasuredSnapshot = measure(rawSnapshot);
     _lastSimTime = _lastMeasuredSnapshot.simTime || 0;
     tick(_lastMeasuredSnapshot);
-    _trackBodyTelemetry(_lastMeasuredSnapshot);
+    _trackBodyTelemetry(_lastRawSnapshot);
 
     if (_activeGuide && GUIDES[_activeGuide]) {
       const g = GUIDES[_activeGuide];
@@ -67,7 +67,7 @@ const Guidance = (function () {
       const ph = st && st.phase;
       if (ph && ph !== _lastSeenPhase) {
         const nowT = _lastSimTime;
-        const fuelNow = _snapMemberFuel(_lastMeasuredSnapshot);
+        const fuelNow = _snapMemberFuel(_lastRawSnapshot);
         if (_lastSeenPhase && _phaseLog[_lastSeenPhase]) {
           _phaseLog[_lastSeenPhase].endT = nowT;
           _phaseLog[_lastSeenPhase].fuelEnd = fuelNow;
@@ -289,6 +289,18 @@ function _diffFuel(prev, cur) {
   return out;
 }
 
+function _computeBodyTag(b) {
+  if (!b) return '?';
+  if (b.payloadBody) return 'payload';
+  if (b.fairingHalf) return 'fairing';
+  if (b.members && b.members[0] && b.members[0].stageRole) return b.members[0].stageRole;
+  if (b.isActive) return 'active';
+  return '?';
+}
+
+const _VR_HYST_BAND = 1.0;
+const _KARMAN_ALT_M = 100000;
+
 function _trackBodyTelemetry(snap) {
   if (!snap || !Array.isArray(snap.bodies)) return;
   const T = snap.simTime;
@@ -302,25 +314,54 @@ function _trackBodyTelemetry(snap) {
     const r = Math.hypot(b.rx, b.ry);
     if (!(r > 1)) continue;
     const alt = r - Re;
-    if (!_bodyTrackState[i]) _bodyTrackState[i] = { karmanAbove: null, vrSign: 0 };
+    if (!_bodyTrackState[i]) _bodyTrackState[i] = { karmanAbove: null, vrState: 'neutral' };
     const ts = _bodyTrackState[i];
-    const isAbove = alt >= 100000;
+
+    // Karman crossing: per-body, both directions.
+    const isAbove = alt >= _KARMAN_ALT_M;
     if (ts.karmanAbove === null) ts.karmanAbove = isAbove;
     else if (ts.karmanAbove !== isAbove) {
       logEvent(isAbove ? 'KARMAN_UP' : 'KARMAN_DOWN', T);
       ts.karmanAbove = isAbove;
     }
+
+    // APOGEE / PERIGEE via hysteresis state machine. Plain vr-sign flip at
+    // 0 fires every few ticks in a near-circular orbit (vr oscillates at
+    // ±0.1 m/s as floating-point noise, triggering hundreds of spurious
+    // events during long orbital coasts). Hysteresis band ±1 m/s:
+    // direction state changes ONLY when vr is clearly climbing (>+1) or
+    // clearly descending (<-1). APOGEE fires on descending-after-climb,
+    // PERIGEE on climbing-after-descend. Elliptical orbit → exactly one
+    // of each per apsis trip. Circular orbit (vr peaks at ±0.5) → neither
+    // fires. State machine also survives FF/export round-trip.
     const vr = (b.vx * b.rx + b.vy * b.ry) / r;
-    const sgn = vr > 0.1 ? 1 : (vr < -0.1 ? -1 : 0);
-    if (sgn !== 0 && ts.vrSign !== 0 && sgn !== ts.vrSign) {
-      logEvent(ts.vrSign > 0 ? 'APOGEE_CROSS' : 'PERIGEE_CROSS', T);
+    if (vr > _VR_HYST_BAND) {
+      if (ts.vrState === 'descending') logEvent('PERIGEE_CROSS', T);
+      ts.vrState = 'climbing';
+    } else if (vr < -_VR_HYST_BAND) {
+      if (ts.vrState === 'climbing') logEvent('APOGEE_CROSS', T);
+      ts.vrState = 'descending';
     }
-    if (sgn !== 0) ts.vrSign = sgn;
-    if (!_peakTracker[i]) _peakTracker[i] = { Q_Pa: 0, Q_t: 0, G: 0, G_t: 0 };
+
+    // Per-body peaks (MAX_Q, MAX_G). bodyTag-at-peak — captured at the
+    // moment the peak fires, NOT at END. bodyIdx 0 starts as 'booster'
+    // (full stack) and becomes 'stage' after separation; capturing
+    // bodyTag at peak time means ascent-Q maps to 'booster' not 'stage'.
+    if (!_peakTracker[i]) {
+      _peakTracker[i] = { Q_Pa: 0, Q_t: 0, Q_bodyTag: '?', G: 0, G_t: 0, G_bodyTag: '?' };
+    }
     const Q = Number.isFinite(b.Q_Pa) ? b.Q_Pa : 0;
-    if (Q > _peakTracker[i].Q_Pa) { _peakTracker[i].Q_Pa = Q; _peakTracker[i].Q_t = T; }
+    if (Q > _peakTracker[i].Q_Pa) {
+      _peakTracker[i].Q_Pa = Q;
+      _peakTracker[i].Q_t = T;
+      _peakTracker[i].Q_bodyTag = _computeBodyTag(b);
+    }
     const G = Math.hypot(b.ax || 0, b.ay || 0) / g0;
-    if (G > _peakTracker[i].G) { _peakTracker[i].G = G; _peakTracker[i].G_t = T; }
+    if (G > _peakTracker[i].G) {
+      _peakTracker[i].G = G;
+      _peakTracker[i].G_t = T;
+      _peakTracker[i].G_bodyTag = _computeBodyTag(b);
+    }
   }
 }
 
@@ -378,23 +419,13 @@ function setActiveGuide(name) {
     out.runResult = _computeRunResult();
     out.peaks = [];
     {
-      const snap = _lastMeasuredSnapshot;
-      const bodyList = (snap && Array.isArray(snap.bodies)) ? snap.bodies : [];
       for (const idxStr in _peakTracker) {
         const idx = parseInt(idxStr, 10);
         const pk = _peakTracker[idx];
-        const b = bodyList[idx];
-        let bodyTag = '?';
-        if (b) {
-          if (b.payloadBody) bodyTag = 'payload';
-          else if (b.fairingHalf) bodyTag = 'fairing';
-          else if (b.members && b.members[0] && b.members[0].stageRole) bodyTag = b.members[0].stageRole;
-          else if (b.isActive) bodyTag = 'active';
-        }
         out.peaks.push({
-          bodyIdx: idx, bodyTag,
-          peakQ_kPa: pk.Q_Pa / 1000, peakQ_t: pk.Q_t,
-          peakG: pk.G, peakG_t: pk.G_t,
+          bodyIdx: idx,
+          peakQ_kPa: pk.Q_Pa / 1000, peakQ_t: pk.Q_t, peakQ_bodyTag: pk.Q_bodyTag || '?',
+          peakG: pk.G, peakG_t: pk.G_t, peakG_bodyTag: pk.G_bodyTag || '?',
         });
       }
     }
@@ -429,6 +460,8 @@ function setActiveGuide(name) {
       });
       out.phaseLog = JSON.parse(JSON.stringify(_phaseLog || {}));
       out.eventLog = _eventLog.slice();
+      out.peakTracker = JSON.parse(JSON.stringify(_peakTracker));
+      out.bodyTrackState = JSON.parse(JSON.stringify(_bodyTrackState));
 out.lastSeenPhase = _lastSeenPhase;
 out.guideStartT = _guideStartT;
 out.lastSimTime = _lastSimTime;
@@ -521,6 +554,8 @@ function importGuideState(data) {
         _phaseLog = JSON.parse(JSON.stringify(data.phaseLog));
       }
       _eventLog = (data.eventLog && Array.isArray(data.eventLog)) ? data.eventLog.slice() : [];
+      _peakTracker = (data.peakTracker && typeof data.peakTracker === 'object') ? data.peakTracker : {};
+      _bodyTrackState = (data.bodyTrackState && typeof data.bodyTrackState === 'object') ? data.bodyTrackState : {};
       if (data.lastSeenPhase !== undefined) _lastSeenPhase = data.lastSeenPhase;
       if (data.guideStartT !== undefined) _guideStartT = data.guideStartT;
       if (data.lastSimTime !== undefined) _lastSimTime = data.lastSimTime;
