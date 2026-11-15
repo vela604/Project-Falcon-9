@@ -234,6 +234,43 @@ const startSimT = state.simTime;
 for (let i = 0; i < maxTicks; i++) {
   if (i === 0) {
   }
+  // TEMP DIAG — fuelDelta investigation. Dump body shape + phaseLog
+  // at t≈300s (mid-ORBIT BURN, after MECO/SEP, before COAST). Report
+  // what memberFuel/fuelMass/members fields look like to main thread.
+  if (i === 24000 && !globalThis._ffFuelDiagDone) {
+    globalThis._ffFuelDiagDone = true;
+    const b = state.bodies[0];
+    const _gs = (typeof Guidance !== 'undefined' && Guidance.getGuideStatus)
+      ? Guidance.getGuideStatus() : null;
+    const _pl = _gs && _gs.phaseLog ? _gs.phaseLog : null;
+    let _plSummary = {};
+    if (_pl) {
+      for (const k in _pl) {
+        const e = _pl[k];
+        _plSummary[k] = {
+          hasFuelDelta: Array.isArray(e.fuelDelta),
+          fuelDeltaLen: Array.isArray(e.fuelDelta) ? e.fuelDelta.length : -1,
+          fuelStart: e.fuelStart,
+          fuelEnd: e.fuelEnd,
+          hasStartEnd: (typeof e.startT === 'number' && typeof e.endT === 'number'),
+        };
+      }
+    }
+    self.postMessage({
+      type: 'ffFuelDiag',
+      simTime: state.simTime,
+      bodyKeys: b ? Object.keys(b).join(',') : 'no-body',
+      hasMemberFuel: !!(b && Array.isArray(b.memberFuel)),
+      memberFuelLen: (b && Array.isArray(b.memberFuel)) ? b.memberFuel.length : -1,
+      memberFuel0: (b && Array.isArray(b.memberFuel)) ? b.memberFuel[0] : null,
+      fuelMass: b ? b.fuelMass : null,
+      hasMembers: !!(b && Array.isArray(b.members)),
+      membersLen: (b && Array.isArray(b.members)) ? b.members.length : -1,
+      memberIds: (b && Array.isArray(b.members)) ? b.members.map(m => m && m.id).join(',') : '',
+      phaseLogSummary: _plSummary,
+      phaseLogKeys: _pl ? Object.keys(_pl).join(',') : '',
+    });
+  }
   if (_abort) break;
   
   // 1. Legs
