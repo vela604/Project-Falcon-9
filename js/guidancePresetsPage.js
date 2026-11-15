@@ -328,8 +328,8 @@ card.innerHTML = `
     const _recCount = (typeof getMissionRecordsForPreset === 'function')
       ? getMissionRecordsForPreset(p.id).length : 0;
     const _recLabel = _recCount > 0
-      ? '\u{1F4CA} Recorded Data (' + _recCount + ')'
-      : '\u{1F4CA} Recorded Data';
+      ? 'Recorded Data (' + _recCount + ')'
+      : 'Recorded Data';
     if (opts.mode === 'default') {
       const copyBtn = mkBtn('Copy', 'btn', () => copyPreset(p.id));
       const cmpBtn  = mkBtn('Compare…', 'btn', () => openDiffPicker(p));
@@ -824,15 +824,14 @@ if (_editingPresetId) {
   }
 
   function _rdmEnvIcon(env) {
-    if (!env) return '?';
-    const hasWind = env.wind && env.wind.enabled && Number(env.wind.speed) > 0;
-    return hasWind ? '\u{1F32C}' : '\u2600';
+    // Emoji-free professional presentation — no icon prefix.
+    return '';
   }
 
   function _rdmRecordCard(rec) {
     const success = rec.success;
     const statusClass = success === true ? 'success' : (success === false ? 'failed' : 'partial');
-    const statusText  = success === true ? '\u2713 SUCCESS' : (success === false ? '\u2717 FAILED' : '\u25d0 PARTIAL');
+    const statusText  = success === true ? 'SUCCESS' : (success === false ? 'FAILED' : 'PARTIAL');
 
     const captured = rec.metadata && rec.metadata.recordedAt
       ? new Date(rec.metadata.recordedAt).toLocaleString()
@@ -908,7 +907,7 @@ if (_editingPresetId) {
       body.innerHTML = '<div class="rdm-empty">'
         + '<strong>No records captured for this preset yet.</strong><br><br>'
         + 'To capture: open <strong>simulation.html</strong>, load this preset from the GCM modal, '
-        + 'run a full mission, then click <strong>\u{1F4F8} Record</strong> in the mission phase panel at the end. '
+        + 'run a full mission, then click <strong>Record</strong> in the mission phase panel at the end. '
         + 'The record will appear here automatically.'
         + '</div>';
       $('recordedDataModal').style.display = 'flex';
@@ -924,7 +923,7 @@ if (_editingPresetId) {
       const recordsHtml = g.records.map(_rdmRecordCard).join('');
       return '<div class="rdm-env-group">'
         + '<div class="rdm-env-header">'
-        + '<span class="rdm-env-label">' + _rdmEnvIcon(g.env) + ' ' + escapeHtml(_rdmEnvLabel(g.env)) + '</span>'
+        + '<span class="rdm-env-label">' + escapeHtml(_rdmEnvLabel(g.env)) + '</span>'
         + '<span class="rdm-env-detail">' + g.records.length + ' record' + (g.records.length === 1 ? '' : 's') + '</span>'
         + '</div>'
         + recordsHtml
