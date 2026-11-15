@@ -56,24 +56,24 @@ self.onmessage = async (e) => {
     // Physics side loads first (defines state, buildPodEntries, etc.).
     // Guidance modules use IIFE scoping, so no namespace collisions with
     // physics.js's module-level helpers.
-    const _FFW_CACHE_VERSION = '20241116-34';  // BUMP: on ANY guidance/* change. Sed pattern below MUST match both 20241115-* and 20241116-34* prefixes.
+    const _FFW_CACHE_VERSION = '20241116-35';  // BUMP: on ANY guidance/* change. Sed pattern below MUST match both 20241115-* and 20241116-35* prefixes.
 importScripts(
-  '../../componentLibrary.js?v=20241116-34',
-  '../../customDesign.js?v=20241116-34',
-  '../../fleet.js?v=20241116-34',
-  '../../config.js?v=20241116-34',
-  '../core/massProps.js?v=20241116-34',
-  '../core/environment.js?v=20241116-34',
-  '../core/vehicle.js?v=20241116-34',
-  '../core/rcs.js?v=20241116-34',
-  '../core/physics.js?v=20241116-34',
-  '../core/collision.js?v=20241116-34',
-  '../core/stateBuffer.js?v=20241116-34',
-  '../guidance/imu.js?v=20241116-34',
-  '../guidance/derivation.js?v=20241116-34',
-  '../guidance/guidercs.js?v=20241116-34',
-  '../guidance/guidance-blocks.js?v=20241116-34',
-  '../guidance/guidance.js?v=20241116-34'
+  '../../componentLibrary.js?v=20241116-35',
+  '../../customDesign.js?v=20241116-35',
+  '../../fleet.js?v=20241116-35',
+  '../../config.js?v=20241116-35',
+  '../core/massProps.js?v=20241116-35',
+  '../core/environment.js?v=20241116-35',
+  '../core/vehicle.js?v=20241116-35',
+  '../core/rcs.js?v=20241116-35',
+  '../core/physics.js?v=20241116-35',
+  '../core/collision.js?v=20241116-35',
+  '../core/stateBuffer.js?v=20241116-35',
+  '../guidance/imu.js?v=20241116-35',
+  '../guidance/derivation.js?v=20241116-35',
+  '../guidance/guidercs.js?v=20241116-35',
+  '../guidance/guidance-blocks.js?v=20241116-35',
+  '../guidance/guidance.js?v=20241116-35'
 );
     // [FF-BOOT] — confirm CONFIG.LANDING_PADS loaded from importScripts.
     // N=3 for fresh boot (LZ-1/2/3 defaults). Run-handler then overwrites

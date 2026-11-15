@@ -22,7 +22,7 @@
 //   - guidercs.js   → GuideRCS.*     : torque → RCS duty tables
 // ============================================================================
 
-const GUIDANCE_BUILD_STAMP = 'guid-20241116-33';
+const GUIDANCE_BUILD_STAMP = 'guid-20241116-34';
 const Guidance = (function () {
   let _physicsSend = null; // (msg) => void, wired by guidance.worker.js
   // Mission event log — non-phase-transition moments the phase timeline
@@ -651,6 +651,12 @@ function setActiveGuide(name) {
     if (typeof g.getStatus === "function") Object.assign(out, g.getStatus());
     out.events = _eventLog.slice();
     out.runResult = _computeRunResult();
+    // Expose tracker-init history on _debug for capture
+    try {
+      if (!out._debug) out._debug = {};
+      out._debug.trackerInitLog = (Array.isArray(globalThis.__trackerInitLog))
+        ? globalThis.__trackerInitLog.slice() : [];
+    } catch(_e) {}
     // Tracker init log — when was each body's _peakTracker first created?
     // Reveals FF-initiated tracker resets (body 0 reinit at split) and
     // payloadBody field presence (payload init 288 = field missing).
