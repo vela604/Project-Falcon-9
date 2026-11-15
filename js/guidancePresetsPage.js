@@ -35,7 +35,9 @@
 // anymore — showing them here would be misleading.
 //
 // Extend this list when a new guide becomes the production one.
-const CURRENT_GUIDES = ['leoInsertionV3', 'landbackV1'];
+const _ACTIVE_GUIDES_FULL = ['leoInsertionV3', 'landbackV1'];
+const CURRENT_GUIDES = _ACTIVE_GUIDES_FULL.filter(g => 
+  !(typeof GUIDE_HIDDEN_FROM_UI !== 'undefined' && GUIDE_HIDDEN_FROM_UI.has(g)));
 
 // Get all guides that have a config API AND are still current. Used by
 // the sidebar, the reference section, and the "Add preset" modal's

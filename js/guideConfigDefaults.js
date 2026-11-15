@@ -23,6 +23,15 @@
 // ============================================================================
 
 const GUIDE_DEFAULT_STACK_ID = 'stk_falcon9-b5';
+
+// Guides that are REGISTERED in guidance.js and STILL WORK if started
+// programmatically, but should NOT appear in any user-facing dropdown /
+// sidebar / preset picker. Useful for archived guides the author wants
+// to keep code-reachable (tuning scripts, historical presets) but not
+// clutter the user's UI.
+//
+// Add a guide name here to hide it. Remove to unhide.
+const GUIDE_HIDDEN_FROM_UI = new Set(['leoInsertionV3']);
 const GUIDE_DEFAULT_STACK_NAME = 'Falcon 9 Block 5';
 
 // ============================================================================

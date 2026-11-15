@@ -1050,8 +1050,9 @@ function bindGuidanceToolbar() {
 // so a newly-added guide (e.g. leoInsertionV3) is selectable via the
 // right-toolbar Start even before the config modal is opened.
 try {
-  const allGuides = (typeof Guidance !== 'undefined' && Guidance.listGuides) ?
-    Guidance.listGuides() : [];
+  const allGuides = ((typeof Guidance !== 'undefined' && Guidance.listGuides) ?
+    Guidance.listGuides() : []).filter(g =>
+    !(typeof GUIDE_HIDDEN_FROM_UI !== 'undefined' && GUIDE_HIDDEN_FROM_UI.has(g)));
   if (allGuides.length) {
     const existing = new Set(Array.from(sel.options).map(o => o.value));
     allGuides.forEach(g => {
@@ -1723,9 +1724,11 @@ let _renderToken = 0; // async guard for rapid guide switches
   // Dropdowns
   // ----------------------------------------------------------------
     function populateGuideDropdown() {
-  const all = (typeof Guidance !== 'undefined' && Guidance.listGuides) ?
+  const _allRaw = (typeof Guidance !== 'undefined' && Guidance.listGuides) ?
     Guidance.listGuides() :
     [];
+  const all = _allRaw.filter(g =>
+    !(typeof GUIDE_HIDDEN_FROM_UI !== 'undefined' && GUIDE_HIDDEN_FROM_UI.has(g)));
   const withCfg = (typeof Guidance !== 'undefined' && Guidance.listGuidesWithConfig) ?
     new Set(Guidance.listGuidesWithConfig()) :
     new Set();
