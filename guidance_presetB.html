@@ -430,102 +430,130 @@ a.back:hover{box-shadow:0 6px 24px rgba(111,176,255,.35)}
 }
 
 /* ============================================================
-   Phase 2 — Recorded Data panel (theme-matched: aurora glass +
-   gold accents + cyan timings, same palette as rest of the page)
+   Recorded Data panel — full theme alignment with page system:
+   · Cards mirror .preset-card (translucent surface, blue-tinted border,
+     subtle top-highlight)
+   · Section labels mirror .preset-section-label (gold, thin border)
+   · Badges mirror .preset-badge (pill, mono, tinted)
+   · Buttons mirror .btn (glass, blue hover sweep)
+   · Data values use --cyan; accents use --gold; borders use --border
    ============================================================ */
+
+/* ---- summary line ---- */
 .rdm-summary {
   font-family: var(--font-mono);
   font-size: 11.5px;
   color: var(--dim);
-  padding: 2px 0 12px;
-  border-bottom: 1px solid var(--border);
-  margin-bottom: 16px;
+  letter-spacing: .3px;
+  padding: 0 0 14px;
+  border-bottom: 1px dashed rgba(255,255,255,.09);
+  margin-bottom: 18px;
 }
-.rdm-env-group { margin-bottom: 20px; }
+
+/* ---- env group wrapper ---- */
+.rdm-env-group { margin-bottom: 22px; }
+.rdm-env-group:last-child { margin-bottom: 0; }
+
+/* ---- env header — mirrors .preset-section-label ---- */
 .rdm-env-header {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   justify-content: space-between;
-  padding: 10px 16px;
-  background: linear-gradient(135deg, rgba(255,179,71,.08), rgba(255,179,71,.02));
-  border: 1px solid rgba(255,179,71,.32);
-  border-radius: 10px 10px 0 0;
-  border-bottom: none;
   gap: 12px;
-}
-.rdm-env-label {
-  font-family: var(--font-mono);
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--gold);
-  letter-spacing: .4px;
-  flex: 1;
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-.rdm-env-detail {
   font-family: var(--font-mono);
   font-size: 10.5px;
-  color: var(--dim);
-  white-space: nowrap;
+  letter-spacing: 1.4px;
+  text-transform: uppercase;
+  color: var(--gold);
+  margin: 0 0 10px;
+  padding-bottom: 7px;
+  border-bottom: 1px solid var(--border);
 }
+.rdm-env-label { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.rdm-env-detail { color: var(--dim); letter-spacing: .8px; white-space: nowrap; text-transform: none; }
+
+/* ---- record card — mirrors .preset-card ---- */
 .rdm-record {
   border: 1px solid var(--border);
-  border-radius: 0 0 10px 10px;
-  padding: 14px 16px;
-  background: rgba(255,255,255,.025);
+  border-top-color: rgba(190,220,255,.22);
+  border-radius: 10px;
+  background: rgba(255,255,255,.035);
+  padding: 14px 16px 12px;
+  box-shadow: inset 0 1px 0 rgba(190,220,255,.06);
+  transition: border-color .3s, box-shadow .3s;
+  margin-bottom: 10px;
 }
-.rdm-record + .rdm-record {
-  border-radius: 0;
-  border-top: none;
+.rdm-record:last-child { margin-bottom: 0; }
+.rdm-record:hover {
+  border-color: rgba(111,176,255,.5);
+  box-shadow: inset 0 1px 0 rgba(190,220,255,.10), 0 8px 24px rgba(0,0,10,.35), 0 0 20px rgba(111,176,255,.12);
 }
-.rdm-record + .rdm-record:last-child { border-radius: 0 0 10px 10px; }
-.rdm-record:not(:only-child):not(:last-child) {
-  border-radius: 0;
-  border-top: none;
-}
+
+/* ---- record head ---- */
 .rdm-record-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 12px;
+  margin-bottom: 14px;
   flex-wrap: wrap;
 }
+
+/* ---- status badge — mirrors .preset-badge ---- */
 .rdm-status {
   font-family: var(--font-mono);
-  font-size: 10.5px;
+  font-size: 10px;
   font-weight: 700;
-  letter-spacing: .6px;
+  letter-spacing: .5px;
   padding: 3px 10px;
-  border-radius: 6px;
+  border-radius: 7px;
   text-transform: uppercase;
 }
-.rdm-status.success { background: rgba(94,234,212,.12); color: var(--green); border: 1px solid rgba(94,234,212,.35); }
-.rdm-status.failed  { background: rgba(230,114,126,.12); color: var(--danger); border: 1px solid rgba(230,114,126,.35); }
-.rdm-status.partial { background: rgba(255,179,71,.12); color: var(--gold); border: 1px solid rgba(255,179,71,.35); }
+.rdm-status.success  { color: var(--green); background: rgba(94,234,212,.10);  border: 1px solid rgba(94,234,212,.32); }
+.rdm-status.failed   { color: #e6727e;      background: rgba(230,114,126,.10); border: 1px solid rgba(230,114,126,.32); }
+.rdm-status.partial  { color: var(--gold);  background: rgba(255,179,71,.10);  border: 1px solid rgba(255,179,71,.32); }
+
+/* ---- timestamp ---- */
 .rdm-time {
   font-family: var(--font-mono);
   font-size: 10.5px;
   color: var(--dim);
+  letter-spacing: .3px;
 }
+
+/* ---- section label — mirrors .preset-section-label ---- */
+.rdm-section-label {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 1.4px;
+  text-transform: uppercase;
+  color: var(--gold);
+  margin: 18px 0 10px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}
+.rdm-section-label:first-of-type { margin-top: 8px; }
+
+/* ---- key timings ---- */
 .rdm-timeline {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 10px;
+  gap: 14px;
   padding: 12px 0;
-  border-top: 1px dashed rgba(255,255,255,.08);
-  border-bottom: 1px dashed rgba(255,255,255,.08);
-  margin-bottom: 12px;
+  margin-bottom: 4px;
+  border-top: 1px dashed rgba(255,255,255,.09);
+  border-bottom: 1px dashed rgba(255,255,255,.09);
 }
-@media(max-width:520px) { .rdm-timeline { grid-template-columns: 1fr; gap: 6px; padding: 8px 0; } }
+@media (max-width: 520px) {
+  .rdm-timeline { grid-template-columns: 1fr; gap: 8px; padding: 10px 0; }
+}
 .rdm-tl-item { display: flex; flex-direction: column; gap: 4px; }
 .rdm-tl-label {
   font-family: var(--font-mono);
   font-size: 9.5px;
-  color: var(--dim);
   letter-spacing: .8px;
   text-transform: uppercase;
+  color: var(--dim);
 }
 .rdm-tl-value {
   font-family: var(--font-mono);
@@ -535,54 +563,225 @@ a.back:hover{box-shadow:0 6px 24px rgba(111,176,255,.35)}
   letter-spacing: .3px;
 }
 .rdm-tl-value.missing { color: var(--dim); font-weight: 400; font-size: 12px; font-style: italic; }
+
+/* ---- peaks ---- */
+.rdm-peaks {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.rdm-pk-block {
+  padding: 10px 14px;
+  background: rgba(255,255,255,.025);
+  border: 1px solid var(--border);
+  border-left: 2px solid rgba(111,176,255,.40);
+  border-radius: 8px;
+}
+.rdm-pk-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: .3px;
+  margin-bottom: 6px;
+}
+
+/* ---- peak identity tag — mirrors .preset-badge.stacktype ---- */
+.rdm-pk-tag {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: .4px;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: rgba(111,176,255,.08);
+  border: 1px solid rgba(111,176,255,.26);
+  color: #b9d6ff;
+}
+
+.rdm-pk-row {
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  padding: 2px 0;
+  letter-spacing: .2px;
+}
+.rdm-pk-key { color: var(--dim); }
+.rdm-pk-val { color: var(--cyan); font-weight: 600; }
+
+/* ---- peak parent-ref hint ---- */
+.rdm-pk-hint {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--dim);
+  font-style: italic;
+  padding: 6px 0 0;
+  border-top: 1px dashed rgba(255,255,255,.06);
+  margin-top: 6px;
+  line-height: 1.55;
+}
+.rdm-pk-posttag {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: .4px;
+  text-transform: uppercase;
+  color: var(--dim);
+  background: rgba(120,175,255,.08);
+  border: 1px solid rgba(120,175,255,.18);
+  padding: 1px 6px;
+  border-radius: 4px;
+  margin-left: 6px;
+}
+
+/* ---- phases ---- */
+.rdm-ph-row {
+  padding: 8px 0;
+  border-bottom: 1px dashed rgba(255,255,255,.06);
+}
+.rdm-ph-row:last-child { border-bottom: none; }
+.rdm-ph-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+}
+.rdm-ph-name {
+  flex: 1;
+  min-width: 120px;
+  color: var(--text);
+  font-weight: 600;
+  letter-spacing: .2px;
+}
+.rdm-ph-time { color: var(--cyan); font-size: 11px; letter-spacing: .2px; }
+.rdm-ph-dur  { color: var(--dim);  font-size: 11px; text-align: right; min-width: 60px; letter-spacing: .2px; }
+.rdm-ph-fuel {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: #b9d6ff;
+  padding: 3px 0 0 12px;
+  opacity: .9;
+  letter-spacing: .2px;
+}
+
+/* ---- events ---- */
+.rdm-ev-note {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--dim);
+  font-style: italic;
+  padding: 4px 0 10px;
+  line-height: 1.55;
+  border-bottom: 1px dashed rgba(255,255,255,.06);
+  margin-bottom: 6px;
+}
+.rdm-ev-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 5px 0;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  border-bottom: 1px solid rgba(255,255,255,.03);
+}
+.rdm-ev-row:last-child { border-bottom: none; }
+.rdm-ev-label { color: var(--text); letter-spacing: .2px; }
+
+/* ---- event count badge — mirrors .preset-badge ---- */
+.rdm-ev-count {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: .4px;
+  color: var(--gold);
+  background: rgba(255,179,71,.10);
+  border: 1px solid rgba(255,179,71,.28);
+  padding: 1px 6px;
+  border-radius: 5px;
+  margin-left: 6px;
+}
+.rdm-ev-time {
+  color: var(--cyan);
+  font-weight: 600;
+  text-align: right;
+  white-space: nowrap;
+  letter-spacing: .2px;
+}
+
+/* ---- collapsible section button — mirrors .btn ---- */
 .rdm-section-btn {
   display: flex;
   align-items: center;
   justify-content: space-between;
   width: 100%;
-  padding: 8px 12px;
-  background: rgba(255,255,255,.03);
+  padding: 8px 14px;
+  background: rgba(255,255,255,.04);
   border: 1px solid var(--border);
-  border-radius: 7px;
+  border-radius: 8px;
   color: var(--text);
   font-family: var(--font-mono);
-  font-size: 11.5px;
+  font-size: 11px;
   font-weight: 600;
+  letter-spacing: .4px;
+  text-transform: uppercase;
   cursor: pointer;
-  margin-top: 6px;
-  transition: border-color .2s, background .2s;
+  margin-top: 8px;
+  transition: border-color .2s, background .2s, color .2s;
 }
 .rdm-section-btn:hover {
-  border-color: rgba(255,179,71,.5);
-  background: rgba(255,179,71,.06);
+  border-color: rgba(111,176,255,.5);
+  background: rgba(111,176,255,.06);
+  color: #fff;
+}
+.rdm-section-btn.open {
+  border-color: rgba(111,176,255,.55);
+  background: rgba(111,176,255,.08);
+  color: #fff;
 }
 .rdm-section-btn .rdm-chevron {
   color: var(--dim);
   font-size: 10px;
-  transition: transform .2s;
+  transition: transform .2s, color .2s;
   display: inline-block;
 }
+.rdm-section-btn:hover .rdm-chevron,
+.rdm-section-btn.open .rdm-chevron { color: #fff; }
 .rdm-section-btn.open .rdm-chevron { transform: rotate(90deg); }
+
 .rdm-section-body {
   display: none;
-  padding: 8px 12px 10px;
+  padding: 10px 4px 6px;
   font-family: var(--font-mono);
   font-size: 11.5px;
-  border-left: 2px solid rgba(255,179,71,.3);
-  margin: 4px 6px 0;
 }
 .rdm-section-btn.open + .rdm-section-body { display: block; }
+
+/* ---- row inside sections ---- */
 .rdm-row {
   display: flex;
   justify-content: space-between;
   gap: 10px;
-  padding: 3px 0;
-  border-bottom: 1px solid rgba(255,255,255,.03);
+  padding: 4px 0;
+  border-bottom: 1px dashed rgba(255,255,255,.04);
 }
 .rdm-row:last-child { border-bottom: none; }
-.rdm-row-label { color: var(--dim); }
+.rdm-row-label { color: var(--dim); letter-spacing: .2px; }
 .rdm-row-value { color: var(--text); text-align: right; white-space: nowrap; }
-.rdm-row-value.cyan { color: var(--cyan); }
+.rdm-row-value.cyan { color: var(--cyan); font-weight: 600; }
+
+/* ---- empty states ---- */
 .rdm-empty {
   padding: 44px 24px;
   text-align: center;
@@ -593,47 +792,12 @@ a.back:hover{box-shadow:0 6px 24px rgba(111,176,255,.35)}
   border-radius: 10px;
   line-height: 1.7;
 }
-.rdm-empty strong { color: var(--gold); font-style: normal; font-family: var(--font-mono); }
-.rdm-actions {
-  display: flex;
-  gap: 8px;
-  justify-content: flex-end;
-  margin-top: 10px;
-  padding-top: 10px;
-  border-top: 1px solid rgba(255,255,255,.05);
-}
-.rdm-reassign {
-  width: auto;
-  min-width: 180px;
-  max-width: 260px;
-  padding: 6px 10px;
-  font-size: 11.5px;
-  background: rgba(0,0,0,.35);
-  border: 1px solid var(--border);
-  color: var(--text);
-  border-radius: 8px;
-  font-family: var(--font-mono);
-}
-.rdm-reassign:focus {
-  outline: none;
-  border-color: var(--cyan);
-  box-shadow: 0 0 0 3px rgba(111,176,255,.2);
-}
-
-
-
-/* Record card redesign — section labels, peaks, phases, events */
-.rdm-section-label {
-  font-family: var(--font-mono);
-  font-size: 9.5px;
-  letter-spacing: 1.2px;
-  text-transform: uppercase;
+.rdm-empty strong {
   color: var(--gold);
-  margin: 14px 0 8px;
-  padding-bottom: 4px;
-  border-bottom: 1px solid rgba(255,179,71,.20);
+  font-style: normal;
+  font-family: var(--font-mono);
+  font-weight: 600;
 }
-.rdm-section-label:first-of-type { margin-top: 8px; }
 .rdm-empty-inline {
   color: var(--dim);
   font-style: italic;
@@ -641,155 +805,18 @@ a.back:hover{box-shadow:0 6px 24px rgba(111,176,255,.35)}
   padding: 4px 0;
 }
 
-/* Peaks section */
-.rdm-peaks {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 8px;
-  margin-bottom: 12px;
-}
-.rdm-pk-block {
-  padding: 8px 12px;
-  background: rgba(255,255,255,.025);
-  border: 1px solid rgba(255,255,255,.08);
-  border-left: 3px solid rgba(255,179,71,.5);
-  border-radius: 6px;
-}
-.rdm-pk-header {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--text);
-  margin-bottom: 5px;
+/* ---- actions row ---- */
+.rdm-actions {
   display: flex;
+  gap: 8px;
+  justify-content: flex-end;
   align-items: center;
-  gap: 8px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px dashed rgba(255,255,255,.09);
   flex-wrap: wrap;
 }
-.rdm-pk-tag {
-  font-family: var(--font-mono);
-  font-size: 9.5px;
-  font-weight: 600;
-  letter-spacing: .4px;
-  text-transform: uppercase;
-  color: var(--gold);
-  background: rgba(255,179,71,.12);
-  border: 1px solid rgba(255,179,71,.32);
-  padding: 1px 7px;
-  border-radius: 4px;
-}
-.rdm-pk-row {
-  display: flex;
-  justify-content: space-between;
-  font-family: var(--font-mono);
-  font-size: 11.5px;
-  padding: 2px 0;
-}
-.rdm-pk-key { color: var(--dim); }
-.rdm-pk-val { color: var(--cyan); font-weight: 600; }
 
-/* Phases */
-.rdm-ph-row {
-  padding: 6px 0;
-  border-bottom: 1px solid rgba(255,255,255,.04);
-}
-.rdm-ph-row:last-child { border-bottom: none; }
-.rdm-ph-head {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-  font-family: var(--font-mono);
-  font-size: 11.5px;
-  flex-wrap: wrap;
-}
-.rdm-ph-name {
-  font-weight: 700;
-  color: var(--text);
-  flex: 1;
-  min-width: 100px;
-}
-.rdm-ph-time {
-  color: var(--cyan);
-  font-size: 11px;
-}
-.rdm-ph-dur {
-  color: var(--dim);
-  font-size: 11px;
-  text-align: right;
-  min-width: 55px;
-}
-.rdm-ph-fuel {
-  font-family: var(--font-mono);
-  font-size: 10.5px;
-  color: #d8d8d8;
-  padding: 2px 0 0 12px;
-  opacity: .85;
-}
-
-/* Events */
-.rdm-ev-note {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  color: var(--dim);
-  font-style: italic;
-  padding: 4px 0 8px;
-  line-height: 1.5;
-  border-bottom: 1px dashed rgba(255,255,255,.05);
-  margin-bottom: 6px;
-}
-.rdm-ev-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 10px;
-  padding: 4px 0;
-  font-family: var(--font-mono);
-  font-size: 11.5px;
-  border-bottom: 1px solid rgba(255,255,255,.03);
-}
-.rdm-ev-row:last-child { border-bottom: none; }
-.rdm-ev-label { color: var(--text); }
-.rdm-ev-count {
-  color: var(--gold);
-  font-weight: 700;
-  font-size: 10px;
-  padding: 1px 5px;
-  background: rgba(255,179,71,.15);
-  border-radius: 3px;
-  margin-left: 4px;
-}
-.rdm-ev-time {
-  color: var(--cyan);
-  font-weight: 600;
-  text-align: right;
-  white-space: nowrap;
-}
-
-
-
-/* Peaks: parent-reference hint for child bodies */
-.rdm-pk-hint {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  color: var(--dim);
-  padding: 4px 0 2px;
-  border-top: 1px dashed rgba(255,255,255,.06);
-  margin-top: 4px;
-  line-height: 1.4;
-}
-.rdm-pk-posttag {
-  font-family: var(--font-mono);
-  font-size: 9px;
-  font-weight: 600;
-  letter-spacing: .4px;
-  text-transform: uppercase;
-  color: var(--dim);
-  background: rgba(255,255,255,.06);
-  border: 1px solid rgba(255,255,255,.14);
-  padding: 0 5px;
-  border-radius: 3px;
-  margin-left: 4px;
-}
 </style>
 </head>
 <body>
