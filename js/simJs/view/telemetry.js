@@ -57,45 +57,6 @@ const NOTATION_GLOSSARY = {
 };
 
 // ---------------------------------------------------------------------------
-// Thermal — PER-MEMBER derived quantity. No physics state, main-thread only.
-//
-// Why per-member (and not per-body):
-//   A "body" may carry multiple members with very different exposure. The
-//   stage body has [stage_tank, fairing]. The fairing sits OUTSIDE the
-//   airstream, sees full heat flux (~500 K at max-Q); the stage tank is
-//   INSIDE the fairing, shielded by the bow shock, sees ~2% of that flux
-//   and stays near ambient (~290 K). Averaging those into ONE per-body
-//   temperature would be physically meaningless.
-//
-// What each member gets:
-//   - own T, peakK (mass-weighted body display picks up the weighted avg)
-//   - own thermal time constant (thick tank 30 s, thin fairing 6 s)
-//   - own exposure factor (fairing-shielded = 0.02, exposed = 1.0)
-//   - own thermal mass (fuel tank: fuel + 6% dry; shell: H·W·30 kg/m²)
-//
-// Two simplifications, both flagged here so they're not buried:
-//  1. 0.02 = "residual fraction of free-stream heat flux that reaches a
-//     downstream member behind a blunt fairing". Hypersonic literature
-//     gives 2-5%; 2% is the conservative low end. NOT a whole-body fudge —
-//     applied PER MEMBER, only when a fairing actually sits above it in
-//     the stack.
-//  2. Thermal mass uses an area/height heuristic instead of the full mass
-//     model — pulling stackMassProps() every tick per body is expensive on
-//     the main thread; the heuristic is close enough that the thermal
-//     waveform shape and peak are right.
-// ---------------------------------------------------------------------------
-const _FAIRING_FULL_SHIELD_OVERHANG = 0.25;  // (ΔD/D) at which shielding saturates
-const _FAIRING_SHOCK_EXTENT_D = 2.5;         // shock-wake extent behind fairing base, × fairing diameter
-function _memberShieldedByFairing(m, allMembers) {
-  // A member is shielded if a payloadSpace sits ABOVE it in the stack
-  // (members are ordered bottom→top).
-  const idx = allMembers.indexOf(m);
-  if (idx < 0) return false;
-  for (let i = idx + 1; i < allMembers.length; i++) {
-    if (allMembers[i] && allMembers[i].stageRole === 'payloadSpace') return true;
-  }
-  return false;
-}
 // Time from current 2-body state to the next apogee (seconds). Exact
 // via Kepler's equation. Used by the direction HUD's burn countdown —
 // same math the guidance worker runs, inlined here because telemetry
