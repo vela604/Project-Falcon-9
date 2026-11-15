@@ -477,6 +477,10 @@ if (tcBtn) tcBtn.addEventListener('click', () => {
   // pilot handover. Physics worker respects keepEnginesAlive.
   const guideRunning = document.body.classList.contains('guide-active');
   WorkerBridge.send({ type: 'takeControl', idx, keepEnginesAlive: guideRunning });
+  // Re-render phase panel for new active body (per-body view once bodyTag lands)
+  if (typeof window.__rerenderPhaseTrack === 'function') {
+    setTimeout(function(){ try { window.__rerenderPhaseTrack(); } catch(e){} }, 50);
+  }
   if (typeof camera !== 'undefined') {
     camera.followBodyIndex = idx;
     camera.follow = true;
@@ -1634,10 +1638,84 @@ function _syncMissionRecordSession(status) {
   if (curResult) window.__prevRunResult = curResult;
 }
 
+
+// ─────────────────────────────────────────────────────────────────────
+// Special-event toast system. Fires a queue-drained toast for events
+// user cares about during mission (MECO, Fairing Split, Payload Deploy,
+// Touchdown, etc). Works for both live play and FF catch-up (events
+// queued at same tick, drained at 1.2s intervals). Skips historical
+// events (t <= lastToastedT) to prevent re-firing on every status push.
+// Auto-hooks into onGuidanceStatus below. Zero config needed — when
+// agent ships LIFTOFF / MAX_Q / LANDING_BURN events, toasts auto-fire.
+// ─────────────────────────────────────────────────────────────────────
+(function(){
+  const SPECIAL = {
+    'LIFTOFF':           { icon: '🚀', label: 'Liftoff' },
+    'MAX_Q':             { icon: '🌪', label: 'Max Q' },
+    'MECO':              { icon: '🔥', label: 'MECO' },
+    'FAIRING_DEPLOY':    { icon: '💥', label: 'Fairing Split' },
+    'PAYLOAD_RELEASE':   { icon: '📦', label: 'Payload Deploy' },
+    'LANDING_BURN':      { icon: '🔥', label: 'Landing Burn' },
+    'TOUCHDOWN_COMPLETE':{ icon: '🎯', label: 'Touchdown' },
+    'IMPACT':            { icon: '💥', label: 'Impact' },
+  };
+  let _lastT = 0;
+  let _lastSim = -1;
+  let _queue = [];
+  let _busy = false;
+  function _fmtT(t) {
+    const m = Math.floor(t / 60).toString().padStart(2, '0');
+    const s = (t % 60).toFixed(1).padStart(4, '0');
+    return 'T+' + m + ':' + s;
+  }
+  function _drain() {
+    if (_busy || !_queue.length) return;
+    _busy = true;
+    const msg = _queue.shift();
+    if (typeof window.showASDSToast === 'function') {
+      window.showASDSToast(msg, true);
+    }
+    setTimeout(function(){ _busy = false; _drain(); }, 1200);
+  }
+  window._checkSpecialEventsToasts = function(status) {
+    if (!status || !status.active) { _lastT = 0; _lastSim = -1; return; }
+    const simTime = Number(status.simTime) || 0;
+    if (simTime < _lastSim - 5) _lastT = 0;   // reset detected
+    _lastSim = simTime;
+    if (!Array.isArray(status.events)) return;
+    status.events.forEach(function(e){
+      if (!e || !e.name || !Number.isFinite(e.t)) return;
+      if (e.t <= _lastT) return;
+      _lastT = e.t;
+      const cfg = SPECIAL[e.name];
+      if (!cfg) return;
+      _queue.push(cfg.icon + ' ' + cfg.label + '  ·  ' + _fmtT(e.t));
+      _drain();
+    });
+  };
+})();
+
+
+// Public helper — re-renders phase track from current status. Used by
+// Take Control to switch panel to newly-controlled body's phase view
+// (once agent ships bodyTag on phaseLog, this filters by active role).
+window.__rerenderPhaseTrack = function() {
+  try {
+    if (typeof _renderPhaseTrack === 'function' && window.__lastGuideStatus) {
+      _renderPhaseTrack(window.__lastGuideStatus);
+    }
+  } catch (e) { /* noop */ }
+};
+
 function onGuidanceStatus(status) {
   const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
   
   window.__lastGuideStatus = status;
+  
+  // Special-event toasts (Liftoff / Max Q / MECO / Fairing / Payload / Landing / Touchdown)
+  if (typeof window._checkSpecialEventsToasts === 'function') {
+    try { window._checkSpecialEventsToasts(status); } catch (e) { console.warn('[toast-events]', e); }
+  }
   
   // Sync the guidance-active lock every time we hear from the worker.
   // Idempotent — the function bails if the state hasn't changed.
