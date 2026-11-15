@@ -3149,10 +3149,15 @@ body.rcsCmd = (typeof _blankRcsCmd === 'function') ? _blankRcsCmd() : null;
 body.chute = (fairingMember && fairingMember.chuteTypeId) ?
   { typeId: fairingMember.chuteTypeId, deployed: false, progress: 0 } :
   null;
-// Emergency eject keeps fairing attached → payload remains shielded.
-// Same inheritance policy as normal release: peakG yes, peakQ no.
+// Emergency eject body shape: members = [fairingHalf], payload riding
+// inside via payloadId. The fairing half IS the outer surface — it felt
+// the full ascent 27 kPa before eject, and remains the outer surface
+// post-eject. So the BODY (as a fairing-shell carrying shielded cargo)
+// DOES inherit peakQ. Contrast with normal payload release (bare
+// satellite, no fairing shell) — there _inheritPeakQ stays false because
+// satellite itself was shielded during ascent.
 body._inheritPeaksFrom = state.activeBodyIndex;
-body._inheritPeakQ = false;
+body._inheritPeakQ = true;
 
 state.bodies.push(body);
 // Same active-body flip as releasePayloadOnActiveBody — emergency eject
