@@ -266,7 +266,7 @@ leoInsertionV3: _mkDefault(
   'leoInsertionV3-serenoFlux05': _mkDefault(
     'leoInsertionV3',
     'F9 LEO - 320 km - SERENO FLUX - ideal scale 0.5',
-    'SERENO FLUX search engine result on the same 320 km circular target with second-stage deorbit. Ideal scale 0.5 configuration. MECO 61333 kg, G 0.64, stage-burn bias 2.7796, circularize lead 1.9125 s - all found by the author SERENO FLUX search, not by hand. Higher MECO residual than the author baseline reflects a different burn profile the search found favourable. RTLS altitude and entry-burn bias not yet tuned for this preset; leoInsertionV3 mission only.',
+    'SERENO FLUX search engine result on the same 320 km circular target with second-stage deorbit. Ideal scale 0.5 configuration. MECO 61333 kg, G 0.64, stage-burn bias 2.7796, circularize lead 1.9125 s - all found by the author SERENO FLUX search, not by hand. Higher MECO residual than the author baseline reflects a different burn profile the search found favourable. Now RTLS-tuned too: LANDING_BURN_ALT_KM 2.47 km, ENTRY_BURN_IMPACT_TARGET_M -752.76 m (pad LZ-1). Combines the SERENO FLUX-optimal ascent/insertion with a tuned booster-return pair on the same stack.',
     {
       ascent: {
         INITIAL_COAST_S: 4.9,
@@ -348,8 +348,16 @@ leoInsertionV3: _mkDefault(
         SUICIDE_TRIM_MAX_S: 120,
         TARGET_IMPACT_EF_DEG: null,
       },
+      mission: {
+        TARGET_LANDING_PAD: 'LZ-1',
+      },
+      rtls: {
+        MISSION_TYPE: 'RTLS',
+        LANDING_BURN_ALT_KM: 2.47,
+        ENTRY_BURN_IMPACT_TARGET_M: -752.76,
+      },
     },
-    ['full-mission', 'sereno-flux', 'search-result', 'ideal-scale-0.5', 'expendable'],
+    ['full-mission', 'sereno-flux', 'rtls-tuned', 'search-result', 'ideal-scale-0.5', 'expendable'],
     null,
     null,
     'default:leoInsertionV3-serenoFlux05'
