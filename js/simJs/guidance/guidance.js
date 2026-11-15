@@ -314,15 +314,6 @@ function logEvent(name, t, extra) {
 // available (main-thread contexts — respects atmosphereEnabled toggle),
 // falls back to Derivation's mirror (worker context — atmosphere assumed
 // on; divergence only when user disables atmosphere in sim).
-function _skinTempForPoint(altM, speedRelMps) {
-  try {
-    if (typeof skinEquilibriumK === 'function') return skinEquilibriumK(altM, speedRelMps, 1);
-    if (typeof Derivation !== 'undefined' && typeof Derivation.skinEquilibriumK === 'function') {
-      return Derivation.skinEquilibriumK(altM, speedRelMps, 1);
-    }
-  } catch (e) {}
-  return NaN;
-}
 
 // ---- Per-body telemetry tracking (peaks + discrete crossings) ----
 let _bodyTrackState = {};
@@ -389,29 +380,6 @@ function _computeBodyTag(b) {
 const _VR_HYST_BAND = 2.0;
 const _KARMAN_ALT_M = 100000;
 
-function _readSkinPeakTemp(b) {
-  // Payload bodies expected at LEO ambient (250K). Fallback: if skinTemps
-  // is empty/missing on a payload body (known FF snapshot quirk), report
-  // 250 not 288.15 (surface-ambient default). Prevents payload showing
-  // fake warm value from pre-launch initial.
-  const isPayload = !!(b && (
-    b.payloadBody ||
-    (!b.fairingHalf &&
-     Array.isArray(b.members) && b.members.length === 0 &&
-     Number.isFinite(b.dryMass) && b.dryMass > 0)
-  ));
-  const fallbackK = isPayload ? 250.0 : 288.15;
-  if (!b || !b.skinTemps) return { K: fallbackK, t: 0 };
-  let pk = 0, pt = 0;
-  for (const k in b.skinTemps) {
-    const v = b.skinTemps[k];
-    if (v && Number.isFinite(v.peakK) && v.peakK > pk) {
-      pk = v.peakK;
-      pt = Number.isFinite(v.peakT) ? v.peakT : 0;
-    }
-  }
-  return pk > 0 ? { K: pk, t: pt } : { K: fallbackK, t: 0 };
-}
 
 function _trackBodyTelemetry(snap) {
   if (!snap || !Array.isArray(snap.bodies)) return;
