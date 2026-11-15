@@ -582,6 +582,7 @@ function maybeForwardGuidanceSnapshot() {
   // per-tank distribution exactly (especially after separation, when
   // the stage's tank is no longer a proportional share of a lump).
   memberFuel: Array.isArray(b.memberFuel) ? b.memberFuel.slice() : [],
+  skinTemps: b.skinTemps || {},
   // Landing gear position sensor
   legs: b.legs ? { deployed: !!b.legs.deployed, progress: b.legs.progress || 0 } : null,
   // Slosh — physically a nav-filter estimate derived from IMU residuals,

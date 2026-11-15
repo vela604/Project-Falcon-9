@@ -389,6 +389,19 @@ function _computeBodyTag(b) {
 const _VR_HYST_BAND = 2.0;
 const _KARMAN_ALT_M = 100000;
 
+function _readSkinPeakTemp(b) {
+  if (!b || !b.skinTemps) return { K: 288.15, t: 0 };
+  let pk = 0, pt = 0;
+  for (const k in b.skinTemps) {
+    const v = b.skinTemps[k];
+    if (v && Number.isFinite(v.peakK) && v.peakK > pk) {
+      pk = v.peakK;
+      pt = Number.isFinite(v.peakT) ? v.peakT : 0;
+    }
+  }
+  return pk > 0 ? { K: pk, t: pt } : { K: 288.15, t: 0 };
+}
+
 function _trackBodyTelemetry(snap) {
   if (!snap || !Array.isArray(snap.bodies)) return;
   const T = snap.simTime;
@@ -694,7 +707,8 @@ function setActiveGuide(name) {
           bodyIdx: idx,
           peakQ_kPa: pk.Q_Pa / 1000, peakQ_t: pk.Q_t, peakQ_bodyTag: pk.Q_bodyTag || '?',
           peakG: pk.G, peakG_t: pk.G_t, peakG_bodyTag: pk.G_bodyTag || '?',
-          peakTemp_K: pk.Temp_K || 0, peakTemp_t: pk.Temp_t || 0,
+          peakTemp_K: (function(){const _b=bodyList[idx]||(snap&&snap.bodies&&snap.bodies[idx]);return _readSkinPeakTemp(_b).K;})(),
+          peakTemp_t: (function(){const _b=bodyList[idx]||(snap&&snap.bodies&&snap.bodies[idx]);return _readSkinPeakTemp(_b).t;})(),
         });
       }
     }

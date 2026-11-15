@@ -56,24 +56,24 @@ self.onmessage = async (e) => {
     // Physics side loads first (defines state, buildPodEntries, etc.).
     // Guidance modules use IIFE scoping, so no namespace collisions with
     // physics.js's module-level helpers.
-    const _FFW_CACHE_VERSION = '20241117-1';  // BUMP: on ANY guidance/* change. Sed pattern below MUST match both 20241115-* and 20241117-1* prefixes.
+    const _FFW_CACHE_VERSION = '20241117-2';  // BUMP: on ANY guidance/* change. Sed pattern below MUST match both 20241115-* and 20241117-2* prefixes.
 importScripts(
-  '../../componentLibrary.js?v=20241117-1',
-  '../../customDesign.js?v=20241117-1',
-  '../../fleet.js?v=20241117-1',
-  '../../config.js?v=20241117-1',
-  '../core/massProps.js?v=20241117-1',
-  '../core/environment.js?v=20241117-1',
-  '../core/vehicle.js?v=20241117-1',
-  '../core/rcs.js?v=20241117-1',
-  '../core/physics.js?v=20241117-1',
-  '../core/collision.js?v=20241117-1',
-  '../core/stateBuffer.js?v=20241117-1',
-  '../guidance/imu.js?v=20241117-1',
-  '../guidance/derivation.js?v=20241117-1',
-  '../guidance/guidercs.js?v=20241117-1',
-  '../guidance/guidance-blocks.js?v=20241117-1',
-  '../guidance/guidance.js?v=20241117-1'
+  '../../componentLibrary.js?v=20241117-2',
+  '../../customDesign.js?v=20241117-2',
+  '../../fleet.js?v=20241117-2',
+  '../../config.js?v=20241117-2',
+  '../core/massProps.js?v=20241117-2',
+  '../core/environment.js?v=20241117-2',
+  '../core/vehicle.js?v=20241117-2',
+  '../core/rcs.js?v=20241117-2',
+  '../core/physics.js?v=20241117-2',
+  '../core/collision.js?v=20241117-2',
+  '../core/stateBuffer.js?v=20241117-2',
+  '../guidance/imu.js?v=20241117-2',
+  '../guidance/derivation.js?v=20241117-2',
+  '../guidance/guidercs.js?v=20241117-2',
+  '../guidance/guidance-blocks.js?v=20241117-2',
+  '../guidance/guidance.js?v=20241117-2'
 );
     // [FF-BOOT] — confirm CONFIG.LANDING_PADS loaded from importScripts.
     // N=3 for fresh boot (LZ-1/2/3 defaults). Run-handler then overwrites

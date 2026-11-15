@@ -118,17 +118,17 @@ self.onmessage = (e) => {
 
 
       importScripts(
-        '../../componentLibrary.js?v=1794747176317',
-        '../../customDesign.js?v=1794747176317',
-        '../../fleet.js?v=1794747176317',
-        '../../config.js?v=1794747176317',
-        '../core/massProps.js?v=1794747176317',
-        '../core/environment.js?v=1794747176317',
-        '../core/vehicle.js?v=1794747176317',
-        '../core/rcs.js?v=1794747176317',
-        '../core/physics.js?v=1794747176317',
-        '../core/collision.js?v=1794747176317',
-        '../core/stateBuffer.js?v=1794747176317'
+        '../../componentLibrary.js?v=1794747255958',
+        '../../customDesign.js?v=1794747255958',
+        '../../fleet.js?v=1794747255958',
+        '../../config.js?v=1794747255958',
+        '../core/massProps.js?v=1794747255958',
+        '../core/environment.js?v=1794747255958',
+        '../core/vehicle.js?v=1794747255958',
+        '../core/rcs.js?v=1794747255958',
+        '../core/physics.js?v=1794747255958',
+        '../core/collision.js?v=1794747255958',
+        '../core/stateBuffer.js?v=1794747255958'
       );
 
       bootstrapped = true;
@@ -1189,6 +1189,7 @@ ec.shutdownDurationS = en.shutdownDurationS;
 // so cloning it every tick is cheap, and guidance needs it for its
 // own stackMassProps (which reads per-tank levels after separation).
 bc.memberFuel = Array.isArray(b.memberFuel) ? b.memberFuel.slice() : [];
+bc.skinTemps = b.skinTemps || {};
 // Payload-open timestamp — set once by the openPayload command, read by
 // the render side to animate the satellite unfolding.
 if (Number.isFinite(b.payloadOpenedAt)) bc.payloadOpenedAt = b.payloadOpenedAt;
