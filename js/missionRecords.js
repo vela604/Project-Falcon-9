@@ -79,7 +79,15 @@ async function computeComboKey(stackId, presetId, guideName) {
   let configJSON = '{}';
   try {
     if (typeof GuidanceBridge !== 'undefined' && GuidanceBridge.ready) {
+      // Simulation.html — worker bridge available
       const cfg = await GuidanceBridge.requestGuideConfig(guideName);
+      if (cfg) configJSON = JSON.stringify(cfg);
+    } else if (typeof Guidance !== 'undefined' && typeof Guidance.getGuideConfig === 'function') {
+      // Single-thread context (tester2.html) — Guidance is loaded directly,
+      // no bridge. Query config synchronously so comboKey matches
+      // simulation.html's worker path (same effective constants →
+      // same configJSON → same hash).
+      const cfg = Guidance.getGuideConfig(guideName);
       if (cfg) configJSON = JSON.stringify(cfg);
     }
   } catch (e) {
@@ -549,7 +557,18 @@ window.captureCurrentMissionRecord = async function () {
         } catch (e) { return null; }
       })(),
     },
-    initialStateHash: session.startHash || missionStateHash(body, state.simTime, state.activeBodyIndex),
+    initialStateHash: (function(){
+      // If session.startHash is missing OR a fake tester2 placeholder
+      // (starts with 'tester2-'), recompute from current body. NOTE:
+      // this reflects CAPTURE-TIME body, not true start — proper fix
+      // requires tester2 to capture real start snapshot at t≈0. At
+      // least it's a valid hash, not a string placeholder.
+      const _h = session.startHash;
+      if (_h && !/^tester2-/.test(_h)) return _h;
+      try {
+        return missionStateHash(body, state.simTime, state.activeBodyIndex);
+      } catch (e) { return _h || ''; }
+    })(),
     initialStateSnapshot: session.startSnapshot || {
       t: state.simTime,
       bodyId: body.id,
