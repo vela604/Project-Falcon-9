@@ -134,7 +134,7 @@ a.back:hover{box-shadow:0 8px 26px rgba(255,255,255,.4)}
 .preset-spec{display:flex;align-items:baseline;gap:8px;font-family:var(--font-mono);font-size:12.5px}
 .preset-spec .spec-k{font-size:10px;letter-spacing:.8px;text-transform:uppercase;color:var(--dim)}
 .preset-spec .spec-v{font-weight:600}
-.preset-spec.orbit .spec-v{color:var(--green)}.preset-spec.meco .spec-v{color:var(--gold)}.preset-spec.deploy .spec-v{color:var(--purple)}
+.preset-spec.orbit .spec-v{color:var(--green)}.preset-spec.meco .spec-v{color:var(--gold)}.preset-spec.land .spec-v{color:var(--cyan)}.preset-spec.deploy .spec-v{color:var(--purple)}
 .preset-desc{font-size:12.5px;color:var(--dim);line-height:1.55;margin:7px 0 9px}
 .preset-stackline{font-family:var(--font-mono);font-size:11.5px;color:var(--dim);margin:6px 0 2px}
 .preset-stackline .sl-name{color:var(--text);font-weight:600}
@@ -720,16 +720,7 @@ a.back:hover{box-shadow:0 6px 24px rgba(111,176,255,.35)}
   </div>
 </div>
 
-<div class="field-grid-2">
-  <div>
-    <label class="field-label" for="pmMecoTime">MECO at T+ (seconds, optional)</label>
-    <input class="field-input" type="number" id="pmMecoTime" min="0" step="1" placeholder="e.g. 138">
-  </div>
-  <div>
-    <label class="field-label" for="pmDeployTime">Payload deploy at T+ (seconds, optional)</label>
-    <input class="field-input" type="number" id="pmDeployTime" min="0" step="1" placeholder="e.g. 590">
-  </div>
-</div>
+
 
       <div style="display:flex;align-items:center;justify-content:space-between;margin-top:14px;">
         <span class="field-label" style="margin:0;">Constants</span>

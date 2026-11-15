@@ -239,6 +239,21 @@ function formatHMS(totalSec) {
     }
   }
 
+  // Phase 3 — timings source
+  function _getPreferredRecordForSpecs(presetId) {
+    if (!presetId || typeof getMissionRecordsForPreset !== 'function') return null;
+    const recs = getMissionRecordsForPreset(presetId);
+    if (!recs.length) return null;
+    const successes = recs.filter(r => r.success === true);
+    const pool = successes.length ? successes : recs;
+    pool.sort((a, b) => {
+      const ta = Date.parse((a.metadata && a.metadata.recordedAt) || 0) || 0;
+      const tb = Date.parse((b.metadata && b.metadata.recordedAt) || 0) || 0;
+      return tb - ta;
+    });
+    return pool[0];
+  }
+
   function renderPresetCard(p, opts) {
     const card = document.createElement('div');
     card.className = 'preset-card' + (opts.mode === 'default' ? ' is-default' : '');
@@ -286,31 +301,24 @@ if (Number.isFinite(orbitKm)) {
     `</div>`
   );
 }
-const mecoS = Number.isFinite(p.mecoTimeS) ? p.mecoTimeS : null;
-if (mecoS != null) {
-  const hms = formatHMS(mecoS);
-  if (hms) {
+// Phase 3 — timings from preferred record
+const _specRec = _getPreferredRecordForSpecs(p.id);
+if (_specRec) {
+  const _pushTiming = (kind, label, sec) => {
+    if (!Number.isFinite(sec) || sec < 0) return;
+    const hms = formatHMS(sec);
+    if (!hms) return;
     specs.push(
-      `<div class="preset-spec meco">` +
-      `<span class="spec-k">MECO</span>` +
-      `<span class="spec-v">T+${hms}</span>` +
-      `</div>`
+      '<div class="preset-spec ' + kind + '">' +
+      '<span class="spec-k">' + label + '</span>' +
+      '<span class="spec-v">T+' + hms + '</span>' +
+      '</div>'
     );
-  }
+  };
+  _pushTiming('meco',   'MECO',           _specRec.mecoS);
+  _pushTiming('land',   'Booster land',   _specRec.boosterLandS);
+  _pushTiming('deploy', 'Payload deploy', _specRec.payloadDeployS);
 }
-const deployS = Number.isFinite(p.payloadDeployTimeS) ? p.payloadDeployTimeS : null;
-if (deployS != null) {
-  const hms = formatHMS(deployS);
-  if (hms) {
-    specs.push(
-      `<div class="preset-spec deploy">` +
-      `<span class="spec-k">Payload deploy</span>` +
-      `<span class="spec-v">T+${hms}</span>` +
-      `</div>`
-    );
-  }
-}
-
 card.innerHTML = `
   <div class="preset-head">
     <div>
@@ -448,10 +456,6 @@ stackSel.innerHTML = stacks.map(s =>
   $('pmName').value = p.name;
   $('pmDesc').value = p.description || '';
   $('pmTags').value = (p.tags || []).join(', ');
-  $('pmDeployTime').value = Number.isFinite(p.payloadDeployTimeS) ?
-  String(p.payloadDeployTimeS) : '';
-$('pmMecoTime').value = Number.isFinite(p.mecoTimeS) ?
-  String(p.mecoTimeS) : '';
   guideSel.value = p.guideName;
       if (p.stackId) stackSel.value = p.stackId;
       _modalReference = _schemaForEdit(p.guideName, p.constants);
@@ -462,8 +466,6 @@ $('pmMecoTime').value = Number.isFinite(p.mecoTimeS) ?
   $('pmName').value = '';
   $('pmDesc').value = '';
   $('pmTags').value = '';
-$('pmDeployTime').value = '';
-$('pmMecoTime').value = '';
       // Pre-fill guidance with sidebar selection, else first
       guideSel.value = _selectedGuide || guides[0] || '';
       // Pre-fill stack with active, else first
@@ -737,37 +739,10 @@ if (!name) { $('pmError').textContent = 'Name is required.'; $('pmError').style.
 
     const tags = $('pmTags').value.split(',').map(s => s.trim()).filter(Boolean);
 
-// Optional deploy time — blank or invalid input → null (not saved).
-// Optional deploy/MECO times — blank or invalid → null (not saved).
-const rawDeploy = $('pmDeployTime').value.trim();
-let deployTimeS = null;
-if (rawDeploy !== '') {
-  const parsed = parseFloat(rawDeploy);
-  if (!Number.isFinite(parsed) || parsed < 0) {
-    $('pmError').textContent = 'Payload deploy time must be a non-negative number of seconds (or blank).';
-    $('pmError').style.display = '';
-    return;
-  }
-  deployTimeS = parsed;
-}
-const rawMeco = $('pmMecoTime').value.trim();
-let mecoTimeS = null;
-if (rawMeco !== '') {
-  const parsed = parseFloat(rawMeco);
-  if (!Number.isFinite(parsed) || parsed < 0) {
-    $('pmError').textContent = 'MECO time must be a non-negative number of seconds (or blank).';
-    $('pmError').style.display = '';
-    return;
-  }
-  mecoTimeS = parsed;
-}
-
 if (_editingPresetId) {
   const u = updateUserPreset(_editingPresetId, {
     name, description: $('pmDesc').value.trim(),
     guideName: guide, stackId, stackName, stackType, tags,
-    payloadDeployTimeS: deployTimeS,
-    mecoTimeS: mecoTimeS,
     constants: r.values,
   });
   if (!u) { $('pmError').textContent = 'Update failed.'; $('pmError').style.display = ''; return; }
@@ -776,8 +751,6 @@ if (_editingPresetId) {
   const c = addUserPreset({
     name, description: $('pmDesc').value.trim(),
     guideName: guide, stackId, stackName, stackType, tags,
-    payloadDeployTimeS: deployTimeS,
-    mecoTimeS: mecoTimeS,
     constants: r.values,
   });
   if (!c) { $('pmError').textContent = 'Save failed.'; $('pmError').style.display = ''; return; }

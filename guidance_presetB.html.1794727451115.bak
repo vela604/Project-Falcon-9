@@ -1,0 +1,1796 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Guidance Presets — Rocket Sim</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#050505; --panel:rgba(22,22,22,.55); --panel-2:rgba(34,34,34,.5); --border:rgba(255,255,255,.14);
+  --cyan:#f5f5f5; --green:#ffffff; --gold:#b8b8b8; --yellow:#d0d0d0; --danger:#e6727e; --purple:#a8a8a8;
+  --text:#f2f2f2; --dim:#9a9a9a; --ink:#0a0a0a;
+  --font-head:'Space Grotesk',system-ui,sans-serif; --font-mono:'JetBrains Mono','Consolas',monospace;
+  --font-display:var(--font-head);
+  --glass:blur(20px) saturate(170%); --ease:cubic-bezier(.2,.8,.2,1);
+}
+html.szad{--font-display:'SZAD',var(--font-head)}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;min-height:100%;background:var(--bg);color:var(--text);font-family:var(--font-head);font-size:14px}
+body{overflow-x:hidden}
+::selection{background:var(--gold);color:var(--ink)}
+*{scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.4) transparent}
+
+/* ===== background ===== */
+#bg{position:fixed;inset:0;z-index:-1;overflow:hidden;background:radial-gradient(120% 90% at 50% 0%,#181818,#050505 60%)}
+.aur{position:absolute;width:60vmax;height:60vmax;border-radius:50%;filter:blur(90px);opacity:.5;will-change:transform}
+.aur.a{background:radial-gradient(circle,#ffffff,transparent 65%);top:-22vmax;left:-14vmax}
+.aur.b{background:radial-gradient(circle,#cfcfcf,transparent 65%);opacity:.28;bottom:-26vmax;right:-16vmax;}
+.aur.c{background:radial-gradient(circle,#8a8a8a,transparent 65%);top:30%;left:45%;opacity:.3;}
+
+#grid{position:absolute;left:-50%;right:-50%;bottom:-8%;height:62%;transform:perspective(520px) rotateX(62deg);transform-origin:50% 100%;
+  background-image:linear-gradient(rgba(255,255,255,.22) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.22) 1px,transparent 1px);
+  background-size:64px 64px;
+  -webkit-mask-image:linear-gradient(to top,#000 5%,transparent 85%);mask-image:linear-gradient(to top,#000 5%,transparent 85%)}
+
+#stars{position:absolute;inset:0;width:100%;height:100%}
+#bg::after{content:"";position:absolute;inset:0;background:radial-gradient(ellipse at center,transparent 45%,rgba(0,0,0,.65))}
+
+/* ===== top bar ===== */
+#topBar{position:sticky;top:0;z-index:50;display:flex;align-items:center;gap:14px;padding:13px 28px;
+  background:rgba(8,8,8,.62);-webkit-backdrop-filter:var(--glass);backdrop-filter:var(--glass);
+  border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:13px}
+.brand{font-family:var(--font-head);font-size:17px;font-weight:700;letter-spacing:2px;text-decoration:none;
+  background:linear-gradient(90deg,var(--cyan),var(--gold));-webkit-background-clip:text;background-clip:text;color:transparent}
+.brand-sub{color:var(--dim)}.spacer{flex:1}
+a.back{color:var(--ink);background:linear-gradient(90deg,var(--cyan),var(--gold));padding:6px 14px;border-radius:7px;
+  text-decoration:none;font-size:12px;font-weight:700;transition:transform .25s var(--ease),box-shadow .25s}
+a.back:hover{box-shadow:0 8px 26px rgba(255,255,255,.4)}
+
+#app{max-width:1240px;margin:0 auto;padding:18px 24px 70px;display:flex;flex-direction:column;gap:20px}
+
+/* ===== hero (the one big heading) ===== */
+#hero{padding:44px 4px 18px;}
+.hero-kicker{font-family:var(--font-mono);font-size:11.5px;letter-spacing:3px;text-transform:uppercase;color:var(--gold)}
+.hero-kicker::before{content:"";display:inline-block;width:34px;height:1px;margin-right:12px;vertical-align:middle;background:rgba(255,255,255,.5)}
+
+.hero-title{font-family:var(--font-display);font-weight:700;font-size:clamp(40px,8.5vw,96px);line-height:.95;letter-spacing:2px;margin:14px 0 10px;
+  text-transform:uppercase;background:linear-gradient(100deg,#fff 0%,var(--cyan) 38%,var(--gold) 78%,#fff 100%);background-size:220% 100%;
+  -webkit-background-clip:text;background-clip:text;color:transparent;}
+
+.hero-sub{max-width:560px;color:var(--dim);font-size:14.5px;line-height:1.6}
+
+/* ===== glass surfaces ===== */
+.stat-card,#backupRow,#sidebar,#mainPane,#constantsRef,.modal-card{
+  background:linear-gradient(145deg,rgba(255,255,255,.075),rgba(255,255,255,.02) 40%),var(--panel);
+  -webkit-backdrop-filter:var(--glass);backdrop-filter:var(--glass);
+  border:1px solid var(--border);border-top-color:rgba(255,255,255,.28);
+  box-shadow:0 18px 50px rgba(0,0,0,.45),inset 0 1px 0 rgba(255,255,255,.14),inset 0 0 40px rgba(255,255,255,.03)}
+.stat-card,.preset-card{position:relative;overflow:hidden;transition:transform .35s var(--ease),border-color .3s,box-shadow .3s}
+.stat-card:hover,.preset-card:hover{border-color:rgba(255,255,255,.45);box-shadow:0 22px 50px rgba(0,0,0,.5),0 0 34px rgba(255,255,255,.12)}
+
+#statsRow{display:flex;gap:16px;flex-wrap:wrap}
+.stat-card{flex:1 1 200px;border-radius:12px;padding:20px 22px;}
+
+.stat-num{font-family:var(--font-mono);font-size:38px;font-weight:700;line-height:1;
+  background:linear-gradient(180deg,#fff,var(--cyan));-webkit-background-clip:text;background-clip:text;color:transparent}
+.stat-card:nth-child(3) .stat-num{background:linear-gradient(180deg,#fff,var(--gold));-webkit-background-clip:text;background-clip:text}
+.stat-label{font-family:var(--font-mono);font-size:10.5px;letter-spacing:1.2px;text-transform:uppercase;color:var(--dim);margin-top:9px}
+.stat-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px}
+.stat-chip{font-family:var(--font-mono);font-size:10.5px;padding:3px 10px;border-radius:7px;background:rgba(255,255,255,.09);border:1px solid rgba(255,255,255,.28);color:#d8d8d8}
+
+#backupRow{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:12px 18px;border-radius:10px;font-family:var(--font-mono);font-size:12px}
+#backupRow .lbl{color:var(--dim);margin-right:6px}
+
+/* ===== buttons: inverted-text fill sweep ===== */
+.btn{position:relative;overflow:hidden;isolation:isolate;background:rgba(255,255,255,.05);border:1px solid var(--border);color:var(--text);
+  padding:8px 15px;border-radius:7px;cursor:pointer;font-family:var(--font-head);font-size:12.5px;font-weight:600;
+  transition:color .3s,border-color .3s,transform .25s var(--ease),box-shadow .3s}
+.btn::before{content:"";position:absolute;inset:0;z-index:-1;background:linear-gradient(90deg,var(--cyan),var(--gold));transform:translateX(-101%);transition:transform .3s var(--ease)}
+.btn:hover:not(:disabled){color:var(--ink);border-color:transparent;box-shadow:0 8px 24px rgba(255,255,255,.35)}
+.btn:hover:not(:disabled)::before{transform:none}
+
+.btn-accent{border-color:rgba(255,255,255,.5);color:var(--cyan)}
+.btn-danger{border-color:rgba(230,114,126,.5);color:var(--danger)}
+.btn-danger::before{background:#e6727e}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+
+/* ===== layout ===== */
+#layout{display:grid;grid-template-columns:270px minmax(0,1fr);gap:20px;align-items:start}
+@media(max-width:900px){#layout{grid-template-columns:1fr}#sidebar{position:static!important}}
+#sidebar{border-radius:12px;padding:14px;position:sticky;top:76px}
+.sidebar-filter{display:flex;align-items:center;gap:8px;padding:8px 4px 12px;border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:11.5px;color:var(--dim)}
+.sidebar-filter input{accent-color:var(--cyan)}
+#guideList{display:flex;flex-direction:column;gap:5px;margin-top:10px;max-height:60vh;overflow-y:auto}
+.guide-item{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 13px;border-radius:10px;background:transparent;border:1px solid transparent;
+  cursor:pointer;font-family:var(--font-mono);font-size:12px;color:var(--dim);text-align:left;transition:all .25s var(--ease)}
+.guide-item:hover{background:rgba(255,255,255,.07);color:var(--text);}
+.guide-item.active{background:linear-gradient(90deg,var(--cyan),var(--gold));color:var(--ink);font-weight:700;box-shadow:0 8px 28px rgba(255,255,255,.3)}
+.guide-item .guide-count{font-size:10.5px;padding:2px 8px;border-radius:7px;background:rgba(255,255,255,.07);color:var(--dim)}
+.guide-item.active .guide-count{background:rgba(0,0,0,.2);color:var(--ink)}
+
+#mainPane{border-radius:12px;padding:22px 24px;min-height:400px;}
+.pane-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:16px;flex-wrap:wrap}
+.pane-title{font-family:var(--font-head);font-size:22px;font-weight:700;letter-spacing:1px}
+.pane-sub{font-family:var(--font-mono);font-size:11.5px;color:var(--dim)}
+.preset-section-label{font-family:var(--font-mono);font-size:10.5px;letter-spacing:1.4px;text-transform:uppercase;color:var(--gold);margin:20px 0 10px;padding-bottom:7px;border-bottom:1px solid var(--border)}
+
+.preset-card{border:1px solid var(--border);border-radius:10px;background:rgba(255,255,255,.035);padding:16px 18px;margin-bottom:12px;}
+
+.preset-card.is-default{border-color:rgba(255,255,255,.5);background:linear-gradient(135deg,rgba(255,255,255,.09),rgba(255,255,255,.015))}
+
+
+.preset-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:6px;flex-wrap:wrap}
+.preset-name{font-size:15px;font-weight:600}
+.preset-meta{display:flex;gap:6px;flex-wrap:wrap;margin-top:5px}
+.preset-badge{font-family:var(--font-mono);font-size:10px;letter-spacing:.4px;padding:2px 9px;border-radius:7px}
+.preset-badge.default{color:var(--ink);background:var(--gold);font-weight:700}
+.preset-badge.stack{color:var(--dim);background:rgba(154,154,154,.1);border:1px solid rgba(154,154,154,.28)}
+.preset-badge.stacktype,.preset-badge.tag{color:#d8d8d8;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.24);text-transform:none}
+.preset-badge.outdated{color:var(--danger);background:rgba(230,114,126,.09);border:1px solid rgba(230,114,126,.32)}
+.preset-specs{display:flex;gap:28px;flex-wrap:wrap;margin-top:10px;padding:10px 0;border-top:1px dashed rgba(255,255,255,.09);border-bottom:1px dashed rgba(255,255,255,.09)}
+.preset-spec{display:flex;align-items:baseline;gap:8px;font-family:var(--font-mono);font-size:12.5px}
+.preset-spec .spec-k{font-size:10px;letter-spacing:.8px;text-transform:uppercase;color:var(--dim)}
+.preset-spec .spec-v{font-weight:600}
+.preset-spec.orbit .spec-v{color:var(--green)}.preset-spec.meco .spec-v{color:var(--gold)}.preset-spec.deploy .spec-v{color:var(--purple)}
+.preset-desc{font-size:12.5px;color:var(--dim);line-height:1.55;margin:7px 0 9px}
+.preset-stackline{font-family:var(--font-mono);font-size:11.5px;color:var(--dim);margin:6px 0 2px}
+.preset-stackline .sl-name{color:var(--text);font-weight:600}
+.preset-stackline .sl-type{color:#d8d8d8;margin-left:6px;padding:1px 7px;border-radius:7px;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.24);font-size:10px}
+.preset-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:4px}
+.preset-actions .btn{padding:5px 12px;font-size:11.5px}
+.preset-empty{padding:26px 16px;text-align:center;color:var(--dim);font-size:12.5px;font-style:italic;border:1px dashed var(--border);border-radius:12px}
+
+/* ===== modals ===== */
+.modal-backdrop{position:fixed;inset:0;z-index:100;background:rgba(0,0,0,.74);-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px);display:flex;align-items:center;justify-content:center;padding:24px 16px;}
+.modal-card{width:min(760px,96vw);max-height:90vh;display:flex;flex-direction:column;border-radius:14px;overflow:hidden;}
+
+.modal-header{padding:15px 22px;border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:14px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--gold);display:flex;align-items:center;justify-content:space-between}
+.modal-close{background:transparent;border:1px solid transparent;color:var(--dim);width:28px;height:28px;border-radius:50%;cursor:pointer;font-size:13px;transition:all .2s}
+.modal-close:hover{color:var(--danger);border-color:var(--danger);transform:rotate(90deg)}
+.modal-body{flex:1;overflow-y:auto;padding:16px 22px 22px}
+.modal-footer{display:flex;justify-content:flex-end;gap:8px;padding:13px 22px;border-top:1px solid var(--border);background:rgba(0,0,0,.2)}
+.field-label{display:block;font-size:11px;color:var(--dim);font-family:var(--font-mono);letter-spacing:.3px;margin:10px 0 4px}
+.field-input,.field-textarea,.field-select,.cf-field input{width:100%;background:rgba(0,0,0,.35);border:1px solid var(--border);color:var(--text);padding:9px 12px;border-radius:10px;font-family:var(--font-mono);font-size:12.5px;transition:border-color .2s,box-shadow .2s}
+.field-input:focus,.field-textarea:focus,.field-select:focus,.cf-field input:focus{outline:none;border-color:var(--cyan);box-shadow:0 0 0 3px rgba(255,255,255,.18)}
+.field-textarea{resize:vertical}
+.field-grid-2{display:grid;grid-template-columns:1fr 1fr;gap:10px 16px}
+@media(max-width:560px){.field-grid-2{grid-template-columns:1fr}}
+.cf-section{border:1px solid var(--border);border-radius:10px;margin-top:12px;overflow:hidden}
+.cf-section.is-important{border-color:rgba(255,255,255,.4);background:rgba(255,255,255,.035)}
+.cf-section-header{padding:10px 15px;font-family:var(--font-mono);font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--cyan);background:rgba(255,255,255,.06);border-bottom:1px solid var(--border);cursor:pointer;user-select:none}
+.cf-section.is-important .cf-section-header{color:var(--gold);background:rgba(255,255,255,.08)}
+.cf-section[data-collapsed="1"] .cf-section-body{display:none}
+.cf-section-body{padding:11px 15px 13px;display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:9px 16px}
+.cf-field{display:flex;flex-direction:column;gap:3px}
+.cf-field label{font-size:10.5px;color:var(--dim);font-family:var(--font-mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cf-field input{padding:6px 10px;font-size:12px;border-radius:8px}
+.cf-field input.cf-invalid{border-color:var(--danger)}
+.modal-error{padding:9px 12px;border-radius:10px;background:rgba(230,114,126,.09);border:1px solid var(--danger);color:var(--danger);font-size:11.5px;line-height:1.45;margin-top:12px;white-space:pre-wrap;word-break:break-word}
+.diff-table{width:100%;border-collapse:collapse;font-family:var(--font-mono);font-size:11.5px}
+.diff-table th,.diff-table td{padding:7px 10px;text-align:left;border-bottom:1px solid rgba(255,255,255,.06)}
+.diff-table th{color:var(--dim);font-size:10.5px;text-transform:uppercase}
+.diff-table td.path{color:#d8d8d8}
+.diff-table tr.diff-added td.val-b,.diff-table tr.diff-changed td.val-b{color:var(--green)}
+.diff-table tr.diff-removed td.val-a,.diff-table tr.diff-changed td.val-a{color:var(--danger)}
+.diff-none{padding:20px;text-align:center;color:var(--dim);font-style:italic}
+
+#toast{position:fixed;left:50%;bottom:28px;transform:translate(-50%,16px);padding:11px 20px;border-radius:7px;background:rgba(18,18,18,.88);-webkit-backdrop-filter:var(--glass);backdrop-filter:var(--glass);
+  border:1px solid var(--cyan);color:var(--text);font-family:var(--font-mono);font-size:12px;box-shadow:0 12px 40px rgba(0,0,0,.5),0 0 30px rgba(255,255,255,.2);
+  opacity:0;pointer-events:none;transition:opacity .3s,transform .4s var(--ease);z-index:200;max-width:min(560px,calc(100vw - 40px))}
+#toast.show{opacity:1;transform:translate(-50%,0)}
+
+/* ===== constants reference ===== */
+#constantsRef{border-radius:12px;padding:22px 24px 14px}
+#constantsRef .ref-head{display:grid;grid-template-columns:1fr auto;align-items:center;gap:0 16px;cursor:pointer;user-select:none;margin-bottom:14px}
+#constantsRef .ref-head>div{grid-column:1}
+#constantsRef .ref-head::after{content:"Hide ▴";grid-column:2;grid-row:1/3;font-family:var(--font-mono);font-size:11.5px;font-weight:700;padding:8px 16px;border-radius:7px;border:1px solid var(--border);transition:all .25s}
+#constantsRef .ref-head:hover::after{background:linear-gradient(90deg,var(--cyan),var(--gold));color:var(--ink);border-color:transparent}
+#constantsRef.collapsed .ref-head{margin-bottom:8px}
+#constantsRef.collapsed .ref-head::after{content:"Show ▾"}
+#constantsRef.collapsed #refGuideList{display:none}
+.ref-title{font-family:var(--font-display);font-size:clamp(22px,4vw,34px);letter-spacing:3px;text-transform:uppercase;font-weight:700;color:var(--gold)}
+.ref-sub{font-family:var(--font-mono);font-size:11.5px;color:var(--dim);margin-top:5px}
+.ref-guide{border:1px solid var(--border);border-radius:10px;margin-top:10px;overflow:hidden;background:rgba(255,255,255,.03)}
+.ref-guide-header{padding:12px 18px;cursor:pointer;user-select:none;display:flex;align-items:center;justify-content:space-between;font-family:var(--font-mono);font-size:12.5px;font-weight:600;background:rgba(255,255,255,.05);transition:color .2s,background .2s}
+.ref-guide-header:hover{color:var(--ink);background:linear-gradient(90deg,var(--cyan),var(--gold))}
+.ref-guide-header:hover .ref-guide-chevron{color:var(--ink)}
+.ref-guide-chevron{color:var(--dim);font-size:12px;transition:transform .25s var(--ease)}
+.ref-guide.open .ref-guide-chevron{transform:rotate(90deg)}
+.ref-guide-body{display:none;padding:12px 18px 16px}.ref-guide.open .ref-guide-body{display:block;}
+.ref-section{margin-top:14px}.ref-section:first-child{margin-top:0}
+.ref-section-label{font-family:var(--font-mono);font-size:10.5px;letter-spacing:1px;text-transform:uppercase;color:var(--dim);margin-bottom:6px;padding-bottom:4px;border-bottom:1px dashed rgba(255,255,255,.08)}
+.ref-section.is-important .ref-section-label{color:var(--gold);border-bottom-color:rgba(255,255,255,.3)}
+.ref-row{padding:8px 0;border-bottom:1px solid rgba(255,255,255,.04)}.ref-row:last-child{border-bottom:none}
+.ref-key{font-family:var(--font-mono);font-size:12px;color:#d8d8d8;font-weight:600;word-break:break-all}
+.ref-desc{font-size:12px;opacity:.8;margin-top:2px;line-height:1.6}
+.ref-missing{font-family:var(--font-mono);font-size:11px;color:var(--dim);font-style:italic;padding:7px 0}
+
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{transition:none!important}}
+
+/* ===== v6 base: azure & amber, background actually visible ===== */
+:root{--bg:#040814;--cyan:#6fb0ff;--gold:#9db4ff;--yellow:#c3d2ff;--green:#5eead4;--purple:#a9b8ff;--ink:#06101f;--text:#eaf1ff;--dim:#8fa3c4;
+  --border:rgba(120,175,255,.17);--panel:rgba(9,18,42,.36);--panel-2:rgba(16,30,66,.4);
+  --acc:linear-gradient(90deg,#c4e2ff,#5f9bff);
+  --acc-warm:linear-gradient(90deg,#8fc2ff,#ffb347);
+  --warm:#ffb347;--warm-soft:#ffd59a}
+html{background:var(--bg)}
+body{background:transparent!important}
+#bg{background:radial-gradient(75% 60% at 72% 8%,rgba(60,120,255,.35),transparent 70%),radial-gradient(60% 50% at 8% 100%,rgba(110,90,255,.2),transparent 70%),linear-gradient(180deg,#071230,#040814 65%)}
+.aur.a{background:radial-gradient(circle,#2a6bff,transparent 65%);opacity:.32}
+.aur.b{background:radial-gradient(circle,#5b6cff,transparent 65%);opacity:.16}
+.aur.c{background:radial-gradient(circle,#5b3bff,transparent 65%);opacity:.22}
+#grid{opacity:.22;background-image:linear-gradient(rgba(120,175,255,.3) 1px,transparent 1px),linear-gradient(90deg,rgba(120,175,255,.3) 1px,transparent 1px)}
+.stat-card,#backupRow,#sidebar,#mainPane,#constantsRef,.modal-card{border-top-color:rgba(190,220,255,.32);
+  box-shadow:0 20px 50px rgba(0,0,10,.5),inset 0 1px 0 rgba(190,220,255,.18),inset 0 0 60px rgba(60,120,255,.05)}
+.topbar,#topBar{background:rgba(5,11,28,.55)}
+.brand{color:#fff;-webkit-text-fill-color:#fff;text-shadow:0 0 22px rgba(111,176,255,.55)}
+.hero-kicker{color:var(--gold)}
+.hero-kicker::before{background:var(--gold)}
+.hero-title{background:linear-gradient(100deg,#fff 5%,#b4d8ff 45%,#6f9bff 100%);-webkit-background-clip:text;background-clip:text;color:transparent}
+#hero{border-bottom-color:rgba(120,175,255,.2)}
+.hero-sub{color:#9fb3d6}
+.stat-num{background:linear-gradient(180deg,#fff,#6fb0ff);-webkit-background-clip:text;background-clip:text;color:transparent}
+.stat-card:nth-child(3) .stat-num{background:linear-gradient(180deg,#fff,#9db4ff);-webkit-background-clip:text;background-clip:text;color:transparent}
+.stat-chip{color:#b9d6ff;background:rgba(111,176,255,.1);border-color:rgba(111,176,255,.3)}
+a.back,.guide-item.active,.preset-badge.default{background:var(--acc);color:var(--ink)}
+.guide-item.active{box-shadow:0 6px 26px rgba(111,176,255,.3)}
+.guide-item:hover{background:rgba(111,176,255,.09)}
+.btn::before,.ref-guide-header:hover,#constantsRef .ref-head:hover::after{background:var(--acc)}
+.btn:hover:not(:disabled),a.back:hover{box-shadow:0 6px 24px rgba(111,176,255,.35)}
+.btn-accent{border-color:rgba(157,180,255,.55);color:var(--gold)}
+.btn-danger::before{background:#ff6b86}
+.preset-card.is-default{border-color:rgba(157,180,255,.5);background:linear-gradient(135deg,rgba(157,180,255,.1),rgba(157,180,255,.015))}
+.stat-card:hover,.preset-card:hover{border-color:rgba(111,176,255,.5);box-shadow:0 20px 50px rgba(0,0,10,.5),0 0 30px rgba(111,176,255,.14)}
+.preset-section-label,.ref-title{color:var(--gold)}
+.modal-header,.cf-section-header{color:#bcd8ff}
+.cf-section.is-important{border-color:rgba(157,180,255,.4);background:rgba(157,180,255,.035)}
+.cf-section.is-important .cf-section-header{color:var(--gold);background:rgba(157,180,255,.08)}
+.ref-section.is-important .ref-section-label{color:var(--gold);border-bottom-color:rgba(157,180,255,.3)}
+.preset-badge.stacktype,.preset-badge.tag,.preset-spec .spec-k{color:#b9d6ff}
+.preset-badge.stacktype,.preset-badge.tag{background:rgba(111,176,255,.08);border:1px solid rgba(111,176,255,.26)}
+.ref-key,.diff-table td.path{color:#9ccbff}
+.field-input:focus,.field-textarea:focus,.field-select:focus,.cf-field input:focus{border-color:#6fb0ff;box-shadow:0 0 0 3px rgba(111,176,255,.2)}
+#toast{border-color:var(--cyan);box-shadow:0 12px 40px rgba(0,0,10,.5),0 0 30px rgba(111,176,255,.25)}
+
+/* ===== v7: see-through glass ===== */
+:/* ===== v7 → v12: glass opacity = average of v3 (.36) & v6b (.22) ===== */
+:root{--panel:rgba(9,18,42,.29);--panel-2:rgba(16,30,66,.33);--glass:blur(14px) saturate(155%)}
+.stat-card,#backupRow,#sidebar,#mainPane,#constantsRef{background:linear-gradient(145deg,rgba(255,255,255,.05),rgba(255,255,255,.008) 40%),var(--panel)}
+.modal-card{background:linear-gradient(145deg,rgba(255,255,255,.05),rgba(255,255,255,.01) 40%),rgba(8,16,38,.86)}
+#topBar{background:rgba(5,11,28,.32)}
+.preset-card{background:rgba(255,255,255,.025)}
+#hero{min-height:calc(100vh - 72px);display:flex;flex-direction:column;justify-content:flex-end;padding:40px 4px 44px;border-bottom:0}
+#hero::after{content:"SCROLL  \2193";margin-top:34px;font-family:var(--font-mono);font-size:10.5px;letter-spacing:3px;color:var(--dim)}
+.hero-sub{max-width:520px}
+
+/* ===== v8: pinned hero + scroll-scrubbed 3D scatter ===== */
+#hero{min-height:0!important;height:150vh;display:block!important;padding:0!important;border:0!important;position:relative}
+#hero::after{content:none!important}
+#heroInner{transform-origin:0 0;position:sticky;top:78px;padding:30px 4px 0;perspective:1000px}
+#heroInner::after{content:"SCROLL  \2193";display:block;margin-top:30px;font:10.5px/1 var(--font-mono);letter-spacing:3px;color:var(--dim);opacity:var(--cue,1)}
+.hero-title{background:none!important;-webkit-background-clip:initial!important;background-clip:initial!important;color:#fff!important;transform-style:preserve-3d}
+.hl{display:inline-block;will-change:transform,opacity,filter}
+.hero-kicker,.hero-sub{will-change:transform,opacity}
+#sand{position:fixed;inset:0;width:100%;height:100%;pointer-events:none;z-index:5}
+#milkyWrap{position:absolute;inset:0;will-change:transform}
+#mwRot{position:absolute;inset:0;will-change:transform;animation:mwdrift 260s ease-in-out infinite alternate}
+#milky,#twinkle{position:absolute}
+@keyframes mwdrift{from{transform:rotate(-3.5deg) scale(1)}to{transform:rotate(3.5deg) scale(1.04)}}
+@media(prefers-reduced-motion:reduce){#mwRot{animation:none}}
+#grid{opacity:.11}
+
+/* ===== v9: realistic night sky (visual base) ===== */
+#grid{display:none}
+.aur.a{opacity:.14}.aur.b{opacity:.05}.aur.c{opacity:.09}
+#bg{background:radial-gradient(90% 40% at 50% 112%,rgba(40,110,150,.16),transparent 70%),radial-gradient(75% 55% at 70% 0%,rgba(40,90,220,.18),transparent 70%),linear-gradient(180deg,#050c20,#03060f 70%)}
+
+/* ===== v11: floating header ===== */
+#topBar{position:sticky;top:12px;z-index:50;width:min(1240px,calc(100% - 28px));margin:12px auto 0;border-radius:13px;
+  border:1px solid rgba(150,190,255,.13);background:rgba(6,12,30,.30);-webkit-backdrop-filter:blur(10px) saturate(150%);backdrop-filter:blur(10px) saturate(150%);
+  box-shadow:0 10px 30px rgba(0,0,12,.35),inset 0 1px 0 rgba(200,225,255,.07);padding:10px 12px 10px 24px;gap:14px}
+#topBar a.back{padding:9px 18px;border-radius:7px;font-size:12.5px;line-height:1.2;letter-spacing:.2px}
+@media(max-width:600px){#topBar{width:calc(100% - 20px);margin-top:10px;top:10px;padding:8px 8px 8px 16px;gap:10px}.brand-sub{display:none}.brand{font-size:15px;letter-spacing:2px;white-space:nowrap}#topBar a.back{white-space:nowrap;padding:8px 13px;font-size:11.5px}}
+
+/* ===== v3 gold injections (toned down to v3 level) ===== */
+#bg{background:
+  radial-gradient(60% 50% at 8% 100%,rgba(255,150,40,.16),transparent 70%),
+  radial-gradient(75% 55% at 70% 0%,rgba(40,90,220,.18),transparent 70%),
+  linear-gradient(180deg,#061020,#03060f 70%)}
+
+.aur.b{background:radial-gradient(circle,#ffb060,transparent 65%);opacity:.13}
+
+.btn:hover:not(:disabled),a.back:hover{box-shadow:0 6px 24px rgba(255,179,71,.28)}
+
+.btn-accent{border-color:rgba(255,185,90,.60);color:#ffd8a4}
+
+.stat-card:nth-child(3) .stat-num{background:linear-gradient(180deg,#fff,#ffb347);-webkit-background-clip:text;background-clip:text;color:transparent}
+.stat-card:nth-child(3){border-color:rgba(255,179,71,.14)}
+
+.preset-card.is-default{
+  border-color:rgba(255,179,71,.42);
+  background:linear-gradient(135deg,rgba(255,179,71,.07),rgba(255,179,71,.012));
+  box-shadow:0 12px 34px rgba(0,0,0,.42),0 0 16px rgba(255,179,71,.045)
+}
+
+.brand{font-family:var(--font-display);font-size:18px;letter-spacing:3px;color:#fff;-webkit-text-fill-color:#fff;text-shadow:0 0 22px rgba(255,179,71,.30),0 0 34px rgba(111,176,255,.30)}
+
+.ref-title{font-family:var(--font-head);font-size:15px;letter-spacing:2.5px}
+.pane-title{font-family:var(--font-display);font-size:25px;letter-spacing:1.5px}
+
+#goldRim{
+  position:fixed;left:0;right:0;bottom:0;height:40vh;
+  z-index:-1;pointer-events:none;
+  background:radial-gradient(65% 100% at 50% 100%,
+    rgba(255,175,70,.11) 0%,
+    rgba(255,150,45,.03) 40%,
+    transparent 72%);
+  mix-blend-mode:screen;
+}
+
+/* ===== FINAL font-family corrections ===== */
+.ref-title{font-family:var(--font-head);font-size:15px;letter-spacing:2.5px}
+.pane-title{font-family:var(--font-display);font-size:25px;letter-spacing:1.5px}
+
+/* ===== FINAL: reduce glow, restore v3 panel opacity ===== */
+
+/* --- v3-level opaque panels (was .22 see-through) --- */
+:root{
+  --panel:rgba(9,18,42,.36);
+  --panel-2:rgba(16,30,66,.40);
+  --glass:blur(20px) saturate(170%);
+}
+.stat-card,#backupRow,#sidebar,#mainPane,#constantsRef{
+  background:linear-gradient(145deg,rgba(255,255,255,.075),rgba(255,255,255,.02) 40%),var(--panel);
+}
+.modal-card{
+  background:linear-gradient(145deg,rgba(255,255,255,.075),rgba(255,255,255,.02) 40%),rgba(10,20,46,.90);
+}
+.preset-card{background:rgba(255,255,255,.035)}
+#topBar{background:rgba(5,11,28,.55)}
+
+/* --- tone DOWN gold glow --- */
+#bg{background:
+  radial-gradient(60% 50% at 8% 100%,rgba(255,150,40,.12),transparent 70%),
+  radial-gradient(75% 55% at 70% 0%,rgba(40,90,220,.18),transparent 70%),
+  linear-gradient(180deg,#061020,#03060f 70%)}
+.aur.b{background:radial-gradient(circle,#ffb060,transparent 65%);opacity:.10}
+
+#goldRim{
+  position:fixed;left:0;right:0;bottom:0;height:28vh;
+  z-index:-1;pointer-events:none;
+  background:radial-gradient(65% 100% at 50% 100%,
+    rgba(255,175,70,.10) 0%,
+    rgba(255,150,45,.03) 45%,
+    transparent 72%);
+  mix-blend-mode:screen;
+}
+
+/* --- softer button / card glow --- */
+.btn:hover:not(:disabled),a.back:hover{box-shadow:0 6px 22px rgba(255,179,71,.28)}
+.btn-accent:hover:not(:disabled){box-shadow:0 6px 22px rgba(255,179,71,.28)}
+.btn-accent{border-color:rgba(255,185,90,.62);color:#ffd8a4}
+
+.preset-card.is-default{
+  border-color:rgba(255,179,71,.48);
+  background:linear-gradient(135deg,rgba(255,179,71,.08),rgba(255,179,71,.015));
+  box-shadow:0 12px 34px rgba(0,0,0,.42);
+}
+.stat-card:nth-child(3){border-color:rgba(255,179,71,.15)}
+
+/* --- SZAD font positions (kept) --- */
+.ref-title{font-family:var(--font-head);font-size:15px;letter-spacing:2.5px}
+.pane-title{font-family:var(--font-display);font-size:25px;letter-spacing:1.5px}
+.brand{font-family:var(--font-display);font-size:18px;letter-spacing:3px;color:#fff;-webkit-text-fill-color:#fff;text-shadow:0 0 22px rgba(255,179,71,.28),0 0 34px rgba(111,176,255,.28)}
+
+/* ===== GOLD TEXT (v3 rich #ffb347 or rgba(255, 179, 71)) — button fills stay BLUE ===== */
+:root{--gold:#ffb347}
+
+/* Buttons / CTAs / tabs / tabs-hover — BLUE gradient fills (no gold) */
+.btn::before{background:var(--acc)}
+a.back{background:var(--acc);color:var(--ink)}
+a.back:hover{box-shadow:0 6px 24px rgba(111,176,255,.35)}
+.ref-guide-header:hover{background:var(--acc)}
+#constantsRef .ref-head:hover::after{background:var(--acc)}
+.guide-item.active{background:var(--acc);color:var(--ink);box-shadow:0 6px 26px rgba(111,176,255,.30)}
+.preset-badge.default{background:var(--acc);color:var(--ink)}
+
+
+/* ===== sky marks: bounding box + leader + typed label + constellation figures ===== */
+#skyLabels{position:fixed;inset:0;z-index:8;pointer-events:none;overflow:hidden}
+#skyLabels svg.mk{position:absolute;left:0;top:0;width:100%;height:100%;overflow:visible}
+.mk-draw{fill:none;stroke-dasharray:1 1;stroke-dashoffset:1;
+  transition:stroke-dashoffset var(--d,.7s) cubic-bezier(.45,0,.2,1) var(--dl,0s)}
+.mk.on .mk-draw{stroke-dashoffset:0}
+.mk-box{stroke:rgba(255,179,71,.95);stroke-width:1.2;filter:drop-shadow(0 0 4px rgba(255,179,71,.6))}
+.mk-corner{stroke:#ffd9a8;stroke-width:2.4;stroke-linecap:square}
+.mk-leader{stroke:rgba(255,179,71,.85);stroke-width:1}
+.mk-lab{stroke:rgba(255,179,71,.6);stroke-width:1}
+.mk-labbg{fill:rgba(5,11,28,.8);opacity:0;transition:opacity .4s ease var(--dl,0s)}
+.mk.on .mk-labbg{opacity:1}
+.mk-fline{stroke:rgba(255,200,130,.9);stroke-width:1.15;stroke-linecap:round;filter:drop-shadow(0 0 3px rgba(255,179,71,.55))}
+.mk-fstar,.mk-dot{fill:#ffe6c4;opacity:0;transform-box:fill-box;transform-origin:center;transform:scale(.2);
+  filter:drop-shadow(0 0 5px rgba(255,179,71,.95));
+  transition:opacity .3s ease var(--dl,0s),transform .45s cubic-bezier(.2,.9,.3,1.4) var(--dl,0s)}
+.mk.on .mk-fstar,.mk.on .mk-dot{opacity:1;transform:scale(1)}
+.mk-txt{transition:opacity .35s ease}
+.mk-t1{fill:#ffd3a3;font:500 10.5px 'JetBrains Mono','Consolas',monospace;letter-spacing:2.2px}
+.mk-t2{fill:rgba(255,211,163,.62);font:400 9px 'JetBrains Mono','Consolas',monospace;letter-spacing:1.2px}
+.mk-caret{fill:#ffd3a3;animation:mkBlink .6s steps(1) infinite}
+@keyframes mkBlink{50%{opacity:0}}
+/* erase: lines retract fast, text fades */
+.mk.out .mk-draw{transition-duration:.45s !important;transition-delay:0s !important;transition-timing-function:ease-in}
+.mk.out .mk-fstar,.mk.out .mk-dot,.mk.out .mk-labbg{opacity:0;transition-delay:0s !important}
+.mk.out .mk-txt{opacity:0}
+@media(prefers-reduced-motion:reduce){
+  .mk-draw,.mk-fstar,.mk-dot,.mk-labbg,.mk-txt{transition:none !important}
+  .mk-caret{animation:none}
+}
+
+/* ============================================================
+   Phase 2 — Recorded Data panel (theme-matched: aurora glass +
+   gold accents + cyan timings, same palette as rest of the page)
+   ============================================================ */
+.rdm-summary {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--dim);
+  padding: 2px 0 12px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 16px;
+}
+.rdm-env-group { margin-bottom: 20px; }
+.rdm-env-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  background: linear-gradient(135deg, rgba(255,179,71,.08), rgba(255,179,71,.02));
+  border: 1px solid rgba(255,179,71,.32);
+  border-radius: 10px 10px 0 0;
+  border-bottom: none;
+  gap: 12px;
+}
+.rdm-env-label {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--gold);
+  letter-spacing: .4px;
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.rdm-env-detail {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--dim);
+  white-space: nowrap;
+}
+.rdm-record {
+  border: 1px solid var(--border);
+  border-radius: 0 0 10px 10px;
+  padding: 14px 16px;
+  background: rgba(255,255,255,.025);
+}
+.rdm-record + .rdm-record {
+  border-radius: 0;
+  border-top: none;
+}
+.rdm-record + .rdm-record:last-child { border-radius: 0 0 10px 10px; }
+.rdm-record:not(:only-child):not(:last-child) {
+  border-radius: 0;
+  border-top: none;
+}
+.rdm-record-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+.rdm-status {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: .6px;
+  padding: 3px 10px;
+  border-radius: 6px;
+  text-transform: uppercase;
+}
+.rdm-status.success { background: rgba(94,234,212,.12); color: var(--green); border: 1px solid rgba(94,234,212,.35); }
+.rdm-status.failed  { background: rgba(230,114,126,.12); color: var(--danger); border: 1px solid rgba(230,114,126,.35); }
+.rdm-status.partial { background: rgba(255,179,71,.12); color: var(--gold); border: 1px solid rgba(255,179,71,.35); }
+.rdm-time {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--dim);
+}
+.rdm-timeline {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  padding: 12px 0;
+  border-top: 1px dashed rgba(255,255,255,.08);
+  border-bottom: 1px dashed rgba(255,255,255,.08);
+  margin-bottom: 12px;
+}
+@media(max-width:520px) { .rdm-timeline { grid-template-columns: 1fr; gap: 6px; padding: 8px 0; } }
+.rdm-tl-item { display: flex; flex-direction: column; gap: 4px; }
+.rdm-tl-label {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  color: var(--dim);
+  letter-spacing: .8px;
+  text-transform: uppercase;
+}
+.rdm-tl-value {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--cyan);
+  letter-spacing: .3px;
+}
+.rdm-tl-value.missing { color: var(--dim); font-weight: 400; font-size: 12px; font-style: italic; }
+.rdm-section-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 8px 12px;
+  background: rgba(255,255,255,.03);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  margin-top: 6px;
+  transition: border-color .2s, background .2s;
+}
+.rdm-section-btn:hover {
+  border-color: rgba(255,179,71,.5);
+  background: rgba(255,179,71,.06);
+}
+.rdm-section-btn .rdm-chevron {
+  color: var(--dim);
+  font-size: 10px;
+  transition: transform .2s;
+  display: inline-block;
+}
+.rdm-section-btn.open .rdm-chevron { transform: rotate(90deg); }
+.rdm-section-body {
+  display: none;
+  padding: 8px 12px 10px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  border-left: 2px solid rgba(255,179,71,.3);
+  margin: 4px 6px 0;
+}
+.rdm-section-btn.open + .rdm-section-body { display: block; }
+.rdm-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 3px 0;
+  border-bottom: 1px solid rgba(255,255,255,.03);
+}
+.rdm-row:last-child { border-bottom: none; }
+.rdm-row-label { color: var(--dim); }
+.rdm-row-value { color: var(--text); text-align: right; white-space: nowrap; }
+.rdm-row-value.cyan { color: var(--cyan); }
+.rdm-empty {
+  padding: 44px 24px;
+  text-align: center;
+  color: var(--dim);
+  font-style: italic;
+  font-size: 12.5px;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  line-height: 1.7;
+}
+.rdm-empty strong { color: var(--gold); font-style: normal; font-family: var(--font-mono); }
+.rdm-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(255,255,255,.05);
+}
+
+</style>
+</head>
+<body>
+<div id="bg"><div class="aur a"></div><div class="aur b"></div><div class="aur c"></div><div id="milkyWrap"><div id="mwRot"><canvas id="milky"></canvas><canvas id="twinkle"></canvas></div></div><div id="grid"></div><canvas id="orbit"></canvas></div>
+
+<div id="skyLabels"></div>
+<div id="goldRim"></div>
+<div id="topBar">
+  <a class="brand" href="index.html">🚀 ROCKET SIM</a>
+  <span class="brand-sub">Guidance Presets</span>
+  <div class="spacer"></div>
+  <a class="back" href="simulation.html">Open Simulator →</a>
+</div>
+
+<div id="app">
+
+  <header id="hero"><div id="heroInner">
+    <div class="hero-kicker">Mission Control · Tuning Bay</div>
+    <h1 class="hero-title">Guidance<br>Presets</h1>
+    <p class="hero-sub">Tune, compare and back up every flight-guidance configuration — all in one place.</p>
+  </div></header>
+
+  <!-- stats -->
+  <div id="statsRow">
+    <div class="stat-card">
+      <div class="stat-num" id="statTotalPresets">0</div>
+      <div class="stat-label">Total User Presets</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-num" id="statStacksCount">0</div>
+      <div class="stat-label">Stacks Covered</div>
+      <div class="stat-chips" id="statStackChips"></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-num" id="statGuidesCount">0</div>
+      <div class="stat-label">Guides Tuned</div>
+    </div>
+  </div>
+
+  <!-- backup -->
+  <div id="backupRow">
+    <span class="lbl">Backup:</span>
+    <button class="btn" id="btnBackupExport">Export All Presets</button>
+    <button class="btn" id="btnBackupImport">Import Backup…</button>
+    <div class="spacer"></div>
+    <span class="lbl" id="backupStatus"></span>
+  </div>
+
+  <!-- main layout -->
+  <div id="layout">
+    <aside id="sidebar">
+      <div class="sidebar-filter">
+        <input type="checkbox" id="filterActiveStack">
+        <label for="filterActiveStack">Only active stack</label>
+      </div>
+      <div id="guideList"></div>
+    </aside>
+
+    <section id="mainPane">
+      <div id="mainEmpty" class="preset-empty">
+        Select a guidance on the left to see its presets.
+      </div>
+      <div id="mainContent" style="display:none;">
+        <div class="pane-head">
+          <div>
+            <div class="pane-title" id="paneGuideName">—</div>
+            <div class="pane-sub" id="paneGuideMeta">—</div>
+          </div>
+          <button class="btn btn-accent" id="btnAddPreset">+ Add Preset</button>
+        </div>
+        <div id="defaultSection"></div>
+        <div id="userSection"></div>
+      </div>
+        </section>
+    </div>
+    
+    <!-- ===================== Constants reference ===================== -->
+    <section id="constantsRef">
+      <div class="ref-head">
+        <div class="ref-title">Constants Reference</div>
+        <div class="ref-sub">Plain-language description of every tunable constant, per guidance.</div>
+      </div>
+      <div id="refGuideList"></div>
+    </section>
+    </div>
+    
+    <!-- ===================== Add / Edit preset modal ===================== -->
+    <div id="presetModal" class="modal-backdrop" style="display:none;">
+  <div class="modal-card">
+    <div class="modal-header">
+      <span id="presetModalTitle">Add Preset</span>
+      <button class="modal-close" id="presetModalClose">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="field-grid-2">
+        <div>
+          <label class="field-label" for="pmName">Name *</label>
+          <input class="field-input" type="text" id="pmName" maxlength="80">
+        </div>
+        <div>
+          <label class="field-label" for="pmGuide">Guidance *</label>
+          <select class="field-select" id="pmGuide"></select>
+        </div>
+      </div>
+      <label class="field-label" for="pmDesc">Description</label>
+      <textarea class="field-textarea" id="pmDesc" rows="2" maxlength="400"></textarea>
+      <div class="field-grid-2">
+  <div>
+    <label class="field-label" for="pmStack">Stack *</label>
+    <select class="field-select" id="pmStack"></select>
+  </div>
+  <div>
+    <label class="field-label" for="pmTags">Tags (comma-separated)</label>
+    <input class="field-input" type="text" id="pmTags" maxlength="200">
+  </div>
+</div>
+
+<div class="field-grid-2">
+  <div>
+    <label class="field-label" for="pmMecoTime">MECO at T+ (seconds, optional)</label>
+    <input class="field-input" type="number" id="pmMecoTime" min="0" step="1" placeholder="e.g. 138">
+  </div>
+  <div>
+    <label class="field-label" for="pmDeployTime">Payload deploy at T+ (seconds, optional)</label>
+    <input class="field-input" type="number" id="pmDeployTime" min="0" step="1" placeholder="e.g. 590">
+  </div>
+</div>
+
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:14px;">
+        <span class="field-label" style="margin:0;">Constants</span>
+        <div style="display:flex;gap:8px;">
+          <button class="btn" type="button" id="pmLoadDefaults">Load defaults</button>
+          <button class="btn" type="button" id="pmPasteJson">Paste JSON</button>
+        </div>
+      </div>
+
+      <div id="pmPasteWrap" style="display:none;margin-top:8px;">
+        <textarea class="field-textarea" id="pmPasteText" rows="8" spellcheck="false"
+          placeholder='{ "TARGET_ORBIT_ALT_KM": 320, ... }'></textarea>
+        <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:6px;">
+          <button class="btn" type="button" id="pmPasteCancel">Cancel</button>
+          <button class="btn btn-accent" type="button" id="pmPasteConfirm">Validate &amp; Fill</button>
+        </div>
+      </div>
+
+      <div id="pmFieldsHost"></div>
+
+      <div class="modal-error" id="pmError" style="display:none;"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" id="presetModalCancel">Cancel</button>
+      <button class="btn btn-accent" id="presetModalSave">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===================== Diff modal ===================== -->
+<div id="diffModal" class="modal-backdrop" style="display:none;">
+  <div class="modal-card">
+    <div class="modal-header">
+      <span>Compare Presets</span>
+      <button class="modal-close" id="diffModalClose">✕</button>
+    </div>
+    <div class="modal-body" id="diffBody"></div>
+    <div class="modal-footer">
+      <button class="btn" id="diffModalCancel">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===================== Recorded Data modal (Phase 2) ===================== -->
+<div id="recordedDataModal" class="modal-backdrop" style="display:none;">
+  <div class="modal-card" style="width:min(880px,96vw);">
+    <div class="modal-header">
+      <span id="recordedDataTitle">RECORDED DATA</span>
+      <button class="modal-close" id="recordedDataClose">✕</button>
+    </div>
+    <div class="modal-body" id="recordedDataBody"></div>
+    <div class="modal-footer">
+      <button class="btn" id="recordedDataCancel">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===================== Backup import modal ===================== -->
+<div id="backupImportModal" class="modal-backdrop" style="display:none;">
+  <div class="modal-card">
+    <div class="modal-header">
+      <span>Import Backup</span>
+      <button class="modal-close" id="backupImportClose">✕</button>
+    </div>
+    <div class="modal-body">
+      <div style="font-size:12.5px;color:var(--dim);line-height:1.55;margin-bottom:10px;">
+        Paste a full-backup JSON. This will <strong style="color:var(--danger)">replace all your user presets</strong>.
+        Missing or invalid values fall back to the code defaults — the import is lenient by design.
+      </div>
+      <textarea class="field-textarea" id="backupImportText" rows="12" spellcheck="false"
+        placeholder='{ "version": 1, "presets": [ ... ] }'></textarea>
+      <div class="modal-error" id="backupImportError" style="display:none;"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" id="backupImportCancel">Cancel</button>
+      <button class="btn btn-danger" id="backupImportConfirm">Replace &amp; Import</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script src="js/szadFont.js"></script>
+<script>
+(function(){
+  try{ if(typeof loadSzadFont==='function'){ loadSzadFont().then(function(ok){ if(ok&&typeof SZAD_FONT_FAMILY!=='undefined'){
+    document.documentElement.style.setProperty('--font-display',"'"+SZAD_FONT_FAMILY+"',var(--font-head)");} }); } }catch(e){}
+  var cr=document.getElementById('constantsRef');
+  if(cr){var hd=cr.querySelector('.ref-head');hd.addEventListener('click',function(){cr.classList.toggle('collapsed');});}
+})();
+</script>
+
+<script>
+/* ===== Realistic Galaxy (Perfect Diagonal Angle) ===== */
+(function(){
+  'use strict';
+  var cv = document.getElementById('milky');
+  var tw = document.getElementById('twinkle');
+  var labelHost = document.getElementById('skyLabels');
+  if (!cv || !tw || !labelHost) return;
+
+  var DEG = Math.PI/180, TAU = Math.PI*2;
+  var still = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+// === Camera Setup ===
+var FOV = 115;
+var camRA = 21 * 15 * DEG;
+var camDec = 48 * DEG; // Adjusted to center the diagonal
+var roll = 0 * DEG; // 0 = Perfect Bottom-Left to Top-Right (/)
+var GAIN = 1.8;            
+
+  var sinCamDec = Math.sin(camDec), cosCamDec = Math.cos(camDec);
+  var cosRoll = Math.cos(roll), sinRoll = Math.sin(roll);
+
+  // === Noise ===
+  function rng(s){return function(){s|=0;s=s+0x6D2B79F5|0;var t=Math.imul(s^s>>>15,1|s);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
+  var perm = new Uint8Array(512);
+  (function(){var a=[],i,j,t,r=rng(77);for(i=0;i<256;i++)a[i]=i;for(i=255;i>0;i--){j=(r()*(i+1))|0;t=a[i];a[i]=a[j];a[j]=t;}for(i=0;i<512;i++)perm[i]=a[i&255];})();
+  function fd(t){return t*t*t*(t*(t*6-15)+10);}
+  function gr(h,x,y){switch(h&7){case 0:return x+y;case 1:return x-y;case 2:return -x+y;case 3:return -x-y;case 4:return x;case 5:return -x;case 6:return y;default:return -y;}}
+  function pn(x,y){var X=Math.floor(x),Y=Math.floor(y),xf=x-X,yf=y-Y;X&=255;Y&=255;var u=fd(xf),v=fd(yf),aa=perm[perm[X]+Y],ab=perm[perm[X]+Y+1],ba=perm[perm[X+1]+Y],bb=perm[perm[X+1]+Y+1],x1=gr(aa,xf,yf)*(1-u)+gr(ba,xf-1,yf)*u,x2=gr(ab,xf,yf-1)*(1-u)+gr(bb,xf-1,yf-1)*u;return x1*(1-v)+x2*v;}
+  function fbm(x,y,o){var s=0,a=.5,f=1;for(var i=0;i<o;i++){s+=a*pn(x*f,y*f);f*=2.03;a*=.5;}return s;}
+  function ss(a,b,x){var t=(x-a)/(b-a);t=t<0?0:t>1?1:t;return t*t*(3-2*t);}
+  function g2(x){return Math.exp(-.5*x*x);}
+  function dl(a,b){var d=Math.abs(a-b)%360;return d>180?360-d:d;}
+  function clamp(v,a,b){return v<a?a:v>b?b:v;}
+
+  // === Equatorial -> Galactic ===
+  var M00=-0.0548755604,M01=-0.8734370902,M02=-0.4838350155, M10= 0.4941094279,M11=-0.4448296300,M12= 0.7469822445, M20=-0.8676661490,M21=-0.1980763734,M22= 0.4559837762;
+  var GL=0,GB=0;
+  function toGal(ra,dec){
+    var cd=Math.cos(dec),x=cd*Math.cos(ra),y=cd*Math.sin(ra),z=Math.sin(dec);
+    var gx=M00*x+M01*y+M02*z,gy=M10*x+M11*y+M12*z,gz=M20*x+M21*y+M22*z;
+    GB=Math.asin(clamp(gz,-1,1))/DEG;GL=Math.atan2(gy,gx)/DEG;
+  }
+
+  // === Milky Way Model ===
+  var sL=0,sD=0,sE=0,sW=0;
+  function mwSample(l,b){
+    var ab=b<0?-b:b;
+    if(ab>50){sL=.0006*Math.exp(-(ab-50)/11);sD=0;sE=0;sW=0;return;}
+    var lon=.16+.95*g2(dl(l,0)/42)+.55*g2(dl(l,29)/10)+.85*g2(dl(l,77)/11)+.52*g2(dl(l,123)/13)+.34*g2(dl(l,148)/13)+.14*g2(dl(l,176)/17);
+    var sb=3.2+2.8*g2(dl(l,0)/70);
+    var cl=clamp(.78+1.25*fbm(l*.078+11.3,b*.14+4.1,4),.22,1.55);
+    var fine=1+.55*fbm(l*.5+3.1,b*.62+8.7,3);
+    var core=g2(b/sb), halo=.13*Math.exp(-ab/11);
+    var L=lon*(core*cl*fine*.95+halo*(.6+.5*cl));
+    
+    var rs=.22+.80*ss(20,42,l)*(1-ss(80,100,l));
+    var rc=1.4+3.0*fbm(l*.045+3.7,.5,3);
+    var lw=2.0+2.0*(fbm(l*.10+9,b*.09,2)+.3);
+    var lane=g2((b-rc)/lw);
+    var ridge=clamp(.55+1.5*fbm(l*.15+31,b*.30+7,4),0,1);
+    var blobs=ss(-.02,.34,fbm(l*.085+40,b*.17+2,4));
+    var fil=ss(.05,.40,1-Math.abs(fbm(l*.22+55,b*.40+9,3))*3.0);
+    var env=g2(b/(sb*1.25));
+    var dust=rs*lane*(.28+.80*ridge)+.42*blobs*env+.20*fil*env*(.35+rs);
+    dust+=.50*g2(dl(l,108)/6)*g2((b-15)/5.5)+.42*g2(dl(l,119)/6)*g2((b-17)/5)+.38*g2(dl(l,157)/6)*g2((b+17)/5)+.30*g2(dl(l,170)/5)*g2((b+15)/5);
+    dust=.92*(1-Math.exp(-1.7*dust));
+    sD=dust;
+    L*=(1-dust);
+    
+    var e=.40*g2(dl(l,85.9)/2.1)*g2((b+.4)/1.5)+.24*g2(dl(l,78.2)/3.2)*g2((b-2.1)/2.6)+.22*g2(dl(l,134.6)/2.4)*g2((b-.9)/1.4)+.17*g2(dl(l,138)/2.1)*g2((b-1.5)/1.3)+.15*g2(dl(l,160.6)/3.6)*g2((b+12.1)/2.5);
+    sE=e;
+    L+=e*.30;
+    sL=L;
+    sW=clamp(.60*g2(dl(l,0)/60)+.22*g2(dl(l,77)/14)+.10,0,1);
+  }
+
+  // === Stereographic Projection ===
+  var kProj = 500, CX = 0, CY = 0;
+
+  function screenToSky(sx, sy) {
+    var dx = sx - CX, dy = sy - CY;
+    var x1 = dx * cosRoll + dy * sinRoll;
+    var y1 = -dx * sinRoll + dy * cosRoll;
+    var rho = Math.sqrt(x1*x1 + y1*y1);
+    
+    if (rho < 1e-3) return { ra: camRA, dec: camDec };
+    var c = 2 * Math.atan(rho / kProj);
+    var sinc = Math.sin(c), cosc = Math.cos(c);
+    var dec = Math.asin(clamp(cosc*sinCamDec - y1*sinc*cosCamDec/rho, -1, 1));
+    var ra = camRA + Math.atan2(x1*sinc, rho*cosCamDec*cosc + y1*sinCamDec*sinc);
+    return { ra: ra, dec: dec };
+  }
+
+  function skyToScreen(raRad, decRad) {
+    var cosc = sinCamDec*Math.sin(decRad) + cosCamDec*Math.cos(decRad)*Math.cos(raRad-camRA);
+    if (cosc < -0.99) return null;
+    var denom = 1 + cosc;
+    if (denom < 0.01) return null;
+    
+    var x1 = kProj*Math.cos(decRad)*Math.sin(raRad-camRA)/denom;
+    var y1 = -kProj*(cosCamDec*Math.sin(decRad) - sinCamDec*Math.cos(decRad)*Math.cos(raRad-camRA))/denom;
+    
+    var x = x1 * cosRoll - y1 * sinRoll;
+    var y = x1 * sinRoll + y1 * cosRoll;
+    
+    return { x: CX + x, y: CY + y };
+  }
+
+  // === Exact Targets ===
+  // (RA in hours, Dec in degrees, J2000)
+  var CONSTELLATIONS = [
+    {name:'Ursa Major',ra:12.0,dec:56},{name:'Ursa Minor',ra:15.4,dec:75},
+    {name:'Cassiopeia',ra:1.0,dec:60.5},{name:'Cepheus',ra:22.3,dec:69},
+    {name:'Cygnus',ra:20.4,dec:42},{name:'Lyra',ra:18.85,dec:36.5},
+    {name:'Draco',ra:17.2,dec:60},{name:'Hercules',ra:17.0,dec:30},
+    {name:'Bootes',ra:14.7,dec:30},{name:'Corona Borealis',ra:15.85,dec:31.5},
+    {name:'Aquila',ra:19.7,dec:8},{name:'Sagitta',ra:19.8,dec:18.5},
+    {name:'Vulpecula',ra:20.2,dec:25},{name:'Delphinus',ra:20.65,dec:14.5},
+    {name:'Equuleus',ra:21.2,dec:9.5},{name:'Pegasus',ra:23.6,dec:21},
+    {name:'Andromeda',ra:1.1,dec:37},{name:'Triangulum',ra:2.1,dec:33},
+    {name:'Aries',ra:2.6,dec:22},{name:'Perseus',ra:3.3,dec:46},
+    {name:'Auriga',ra:5.7,dec:42},{name:'Taurus',ra:4.8,dec:20},
+    {name:'Gemini',ra:7.0,dec:24},{name:'Orion',ra:5.6,dec:0},
+    {name:'Canis Minor',ra:7.6,dec:6},{name:'Cancer',ra:8.6,dec:20},
+    {name:'Leo',ra:10.9,dec:17},{name:'Leo Minor',ra:10.0,dec:33},
+    {name:'Lynx',ra:8.0,dec:45},{name:'Canes Venatici',ra:13.1,dec:40},
+    {name:'Coma Berenices',ra:12.9,dec:24},{name:'Lacerta',ra:22.5,dec:45},
+    {name:'Camelopardalis',ra:5.0,dec:67},{name:'Virgo',ra:13.2,dec:-3},
+    {name:'Ophiuchus',ra:17.4,dec:-5}
+  ];
+
+  // g = generic glow (r in objScale units, c = rgb, a = alpha); no g = drawn by special code in drawDSOs
+  var DEEP_SKY = [
+    {name:'Andromeda Galaxy (M31)',ra:.712,dec:41.27},
+    {name:'Triangulum Galaxy (M33)',ra:1.564,dec:30.66,g:{r:.9,c:'200,215,255',a:.22}},
+    {name:'Pleiades (M45)',ra:3.79,dec:24.12},
+    {name:'Double Cluster (NGC 869/884)',ra:2.345,dec:57.13},
+    {name:'Hercules Cluster (M13)',ra:16.695,dec:36.46},
+    {name:'Orion Nebula (M42)',ra:5.588,dec:-5.39,g:{r:.8,c:'255,170,200',a:.30}},
+    {name:'Ring Nebula (M57)',ra:18.893,dec:33.03,g:{r:.5,c:'160,230,255',a:.45}},
+    {name:'Dumbbell Nebula (M27)',ra:19.993,dec:22.72,g:{r:.5,c:'170,255,210',a:.35}},
+    {name:'Whirlpool Galaxy (M51)',ra:13.498,dec:47.20,g:{r:.5,c:'230,235,255',a:.30}},
+    {name:'Pinwheel Galaxy (M101)',ra:14.053,dec:54.35,g:{r:.6,c:'230,235,255',a:.22}},
+    {name:'Bode\u2019s Galaxy (M81)',ra:9.926,dec:69.07,g:{r:.6,c:'255,240,220',a:.30}},
+    {name:'Beehive Cluster (M44)',ra:8.667,dec:19.67,g:{r:.9,c:'255,245,225',a:.22}},
+    {name:'Globular Cluster (M92)',ra:17.285,dec:43.136,g:{r:.4,c:'255,245,225',a:.34}},
+    {name:'Globular Cluster (M3)',ra:13.703,dec:28.38,g:{r:.4,c:'255,245,225',a:.34}},
+    {name:'Globular Cluster (M15)',ra:21.5,dec:12.167,g:{r:.4,c:'255,245,225',a:.34}},
+    {name:'Gemini Cluster (M35)',ra:6.148,dec:24.34,g:{r:.6,c:'210,225,255',a:.22}},
+    {name:'Auriga Cluster (M37)',ra:5.87,dec:32.55,g:{r:.5,c:'255,240,220',a:.24}},
+    {name:'Cluster (M34)',ra:2.702,dec:42.78,g:{r:.6,c:'210,225,255',a:.20}},
+    {name:'Cluster (M39)',ra:21.53,dec:48.43,g:{r:.6,c:'210,225,255',a:.20}},
+    {name:'Crab Nebula (M1)',ra:5.575,dec:22.01,g:{r:.4,c:'255,200,160',a:.32}},
+    {name:'North America Nebula',ra:20.98,dec:44.33,g:{r:1.4,c:'255,130,150',a:.12}},
+    {name:'Veil Nebula',ra:20.94,dec:31.7,g:{r:1.0,c:'150,200,255',a:.14}},
+    {name:'Heart Nebula (IC 1805)',ra:2.55,dec:61.45,g:{r:1.0,c:'255,110,130',a:.12}},
+    {name:'California Nebula',ra:4.01,dec:36.42,g:{r:1.2,c:'255,100,120',a:.10}}
+  ];
+
+  // [name, RA h, Dec deg, V mag, B-V, constellation]
+  var NAMED_STARS = [
+    ['Polaris',2.530,89.264,1.98,0.60,'Ursa Minor'],['Kochab',14.845,74.156,2.08,1.47,'Ursa Minor'],['Pherkad',15.345,71.834,3.05,0.05,'Ursa Minor'],
+    ['Dubhe',11.062,61.751,1.79,1.07,'Ursa Major'],['Merak',11.031,56.382,2.37,-0.02,'Ursa Major'],['Phecda',11.897,53.695,2.44,0.00,'Ursa Major'],
+    ['Megrez',12.257,57.033,3.31,0.08,'Ursa Major'],['Alioth',12.900,55.960,1.77,-0.02,'Ursa Major'],['Mizar',13.399,54.925,2.04,0.02,'Ursa Major'],['Alkaid',13.792,49.313,1.86,-0.19,'Ursa Major'],
+    ['Schedar',0.675,56.537,2.24,1.17,'Cassiopeia'],['Caph',0.153,59.150,2.28,0.34,'Cassiopeia'],['Navi',0.945,60.717,2.47,-0.15,'Cassiopeia'],['Ruchbah',1.430,60.235,2.68,0.13,'Cassiopeia'],['Segin',1.907,63.670,3.38,-0.15,'Cassiopeia'],
+    ['Alderamin',21.310,62.586,2.45,0.22,'Cepheus'],['Alfirk',21.478,70.561,3.23,-0.22,'Cepheus'],['Errai',23.655,77.633,3.21,1.03,'Cepheus'],
+    ['Deneb',20.690,45.280,1.25,0.09,'Cygnus'],['Sadr',20.370,40.257,2.20,0.67,'Cygnus'],['Albireo',19.512,27.960,3.18,1.10,'Cygnus'],['Gienah',20.770,33.970,2.46,1.03,'Cygnus'],['Delta Cygni',19.750,45.131,2.87,-0.03,'Cygnus'],
+    ['Vega',18.615,38.784,0.03,0.00,'Lyra'],['Sheliak',18.834,33.363,3.52,0.00,'Lyra'],['Sulafat',18.982,32.690,3.24,-0.05,'Lyra'],
+    ['Altair',19.846,8.868,0.76,0.22,'Aquila'],['Tarazed',19.771,10.613,2.72,1.52,'Aquila'],['Alshain',19.922,6.407,3.71,0.86,'Aquila'],
+    ['Markab',23.079,15.205,2.49,-0.04,'Pegasus'],['Scheat',23.063,28.083,2.42,1.67,'Pegasus'],['Algenib',0.220,15.184,2.83,-0.19,'Pegasus'],['Enif',21.736,9.875,2.39,1.52,'Pegasus'],
+    ['Alpheratz',0.140,29.091,2.06,-0.11,'Andromeda'],['Mirach',1.162,35.621,2.05,1.58,'Andromeda'],['Almach',2.065,42.330,2.26,1.37,'Andromeda'],
+    ['Hamal',2.120,23.462,2.00,1.15,'Aries'],['Sheratan',1.911,20.808,2.64,0.13,'Aries'],['Menkar',3.038,4.090,2.53,1.63,'Cetus'],
+    ['Mirfak',3.405,49.861,1.79,0.48,'Perseus'],['Algol',3.136,40.956,2.12,-0.05,'Perseus'],
+    ['Capella',5.278,45.998,0.08,0.80,'Auriga'],['Menkalinan',5.992,44.947,1.90,0.08,'Auriga'],
+    ['Betelgeuse',5.919,7.407,0.50,1.85,'Orion'],['Rigel',5.242,-8.202,0.13,-0.03,'Orion'],['Bellatrix',5.419,6.350,1.64,-0.22,'Orion'],
+    ['Alnitak',5.679,-1.943,1.74,-0.21,'Orion'],['Alnilam',5.604,-1.202,1.69,-0.18,'Orion'],['Mintaka',5.533,-0.299,2.23,-0.18,'Orion'],['Saiph',5.796,-9.670,2.07,-0.17,'Orion'],
+    ['Aldebaran',4.599,16.509,0.86,1.54,'Taurus'],['Elnath',5.438,28.608,1.65,-0.13,'Taurus'],['Alcyone',3.791,24.105,2.87,-0.09,'Taurus'],
+    ['Castor',7.577,31.888,1.58,0.03,'Gemini'],['Pollux',7.755,28.026,1.14,1.00,'Gemini'],['Procyon',7.655,5.225,0.34,0.42,'Canis Minor'],
+    ['Regulus',10.140,11.967,1.35,-0.11,'Leo'],['Algieba',10.333,19.842,2.01,1.14,'Leo'],['Zosma',11.235,20.524,2.56,0.13,'Leo'],['Denebola',11.818,14.572,2.14,0.09,'Leo'],
+    ['Arcturus',14.261,19.182,-0.05,1.23,'Bootes'],['Muphrid',13.911,18.398,2.68,0.58,'Bootes'],['Alphecca',15.578,26.715,2.23,0.03,'Corona Borealis'],
+    ['Cor Caroli',12.934,38.318,2.90,-0.12,'Canes Venatici'],['Vindemiatrix',13.036,10.959,2.83,0.94,'Virgo'],['Spica',13.420,-11.161,0.97,-0.23,'Virgo'],
+    ['Thuban',14.073,64.376,3.65,-0.05,'Draco'],['Eltanin',17.943,51.489,2.23,1.52,'Draco'],['Rastaban',17.507,52.301,2.79,0.99,'Draco'],
+    ['Rasalhague',17.582,12.560,2.07,0.16,'Ophiuchus'],['Kornephoros',16.504,21.490,2.77,0.94,'Hercules'],['Rasalgethi',17.244,14.390,3.48,1.16,'Hercules'],
+    ['Sirius',6.752,-16.716,-1.46,0.00,'Canis Major'],['Antares',16.490,-26.432,1.06,1.83,'Scorpius']
+  ];
+
+  // === Star Catalog ===
+  var CAT =
+  '2 31.8 89 15.9 1.98 0.60;'+
+  '11 3.7 61 45.1 1.79 1.07;11 1.8 56 22.9 2.37 -0.02;11 53.8 53 41.7 2.44 0.00;12 15.4 57 1.9 3.31 0.08;12 54.0 55 57.6 1.77 -0.02;13 23.9 54 55.5 2.04 0.02;13 47.5 49 18.8 1.86 -0.19;'+
+  '8 30.3 60 43.1 3.36 0.85;8 59.2 48 2.5 3.14 0.19;9 3.6 47 9.4 3.60 0.00;10 17.1 42 54.9 3.45 0.03;10 22.3 41 29.9 3.05 1.60;11 9.7 44 29.9 3.01 1.14;9 32.9 51 40.6 3.17 0.46;9 50.8 59 2.3 3.80 0.28;11 46.1 47 46.8 3.71 1.20;11 18.5 33 5.5 3.48 1.40;11 18.2 31 31.8 3.79 0.60;9 52.1 54 3.1 4.59 0.00;'+
+  '14 50.7 74 9.3 2.08 1.47;15 20.7 71 50.0 3.05 0.05;17 32.2 86 35.2 4.36 0.06;16 46.0 82 2.2 4.21 0.89;15 44.1 77 47.7 4.32 0.04;16 17.9 75 45.3 4.95 0.42;'+
+  '0 40.5 56 32.2 2.24 1.17;0 9.2 59 9.0 2.28 0.34;0 56.7 60 43.0 2.47 -0.15;1 25.8 60 14.1 2.68 0.13;1 54.4 63 40.2 3.38 -0.15;0 49.1 57 48.9 3.44 0.57;1 10.3 55 8.9 4.33 0.10;2 29.9 67 24.2 4.52 0.20;'+
+  '21 18.6 62 35.1 2.45 0.22;21 28.7 70 33.7 3.23 -0.22;23 39.3 77 37.9 3.21 1.03;22 10.9 58 12.1 3.35 1.57;22 49.7 66 12.0 3.52 1.50;22 29.2 58 24.9 3.75 0.60;21 43.5 58 46.8 4.08 2.35;20 29.6 62 59.6 4.22 0.10;20 45.3 61 50.0 3.43 0.92;22 3.8 64 37.7 4.29 0.10;21 45.5 61 7.3 4.29 0.60;'+
+  '17 56.6 51 29.3 2.23 1.52;17 30.4 52 18.1 2.79 0.99;14 4.4 64 22.6 3.65 -0.05;15 24.9 58 57.9 3.29 1.16;19 12.4 67 39.7 3.07 0.98;17 8.8 65 42.9 3.17 -0.12;16 24.0 61 30.8 2.74 0.91;18 21.0 72 43.9 3.57 0.50;16 1.9 58 33.9 4.01 0.52;12 33.5 69 47.3 3.87 -0.12;11 31.4 69 19.9 3.84 1.65;17 32.2 55 10.3 4.88 0.10;18 51.2 59 23.4 4.66 0.98;'+
+  '20 41.4 45 16.8 1.25 0.09;20 22.2 40 15.4 2.20 0.67;19 30.7 27 57.6 3.18 1.10;20 46.2 33 58.2 2.46 1.03;19 45.0 45 7.9 2.87 -0.03;21 13.0 30 13.6 3.20 0.99;19 56.3 35 5.0 3.89 1.03;19 29.7 51 43.8 3.79 0.05;19 17.1 53 22.1 3.77 0.90;21 4.9 43 55.7 3.72 1.67;21 14.8 38 2.7 3.74 0.35;20 57.2 41 10.0 3.94 0.04;20 13.6 46 44.0 3.79 1.50;19 36.6 50 13.3 4.48 0.40;'+
+  '18 36.9 38 47.0 0.03 0.00;18 50.1 33 21.8 3.52 0.00;18 59.0 32 41.4 3.24 -0.05;18 54.5 36 53.9 4.30 1.60;18 44.8 37 36.0 4.36 0.19;18 44.3 39 40.2 4.59 0.16;19 13.4 39 8.5 4.39 -0.10;'+
+  '19 50.8 8 52.1 0.76 0.22;19 46.3 10 36.8 2.72 1.52;19 55.3 6 24.4 3.71 0.86;19 25.5 3 6.9 3.36 0.32;19 5.4 13 51.8 2.99 0.01;19 52.5 1 0.3 3.90 0.80;'+
+  '23 4.8 15 12.3 2.49 -0.04;23 3.8 28 5.0 2.42 1.67;0 13.2 15 11.0 2.83 -0.19;21 44.2 9 52.5 2.39 1.52;22 41.5 10 49.9 3.40 -0.09;22 43.0 30 13.3 2.94 0.86;'+
+  '0 8.4 29 5.4 2.06 -0.11;1 9.7 35 37.2 2.05 1.58;2 3.9 42 19.8 2.26 1.37;0 39.3 30 51.7 3.27 1.28;'+
+  '2 9.6 34 59.2 3.00 0.14;1 53.1 29 34.7 3.41 0.49;2 7.2 23 27.8 2.00 1.15;1 54.6 20 48.5 2.64 0.13;'+
+  '3 24.3 49 51.7 1.79 0.48;3 8.2 40 57.3 2.12 -0.05;3 54.1 31 53.0 2.85 -0.20;3 57.9 40 0.6 2.89 -0.18;3 42.9 47 47.3 3.01 -0.13;3 4.8 53 30.4 2.93 0.70;'+
+  '5 16.7 45 59.9 0.08 0.80;5 59.5 44 56.8 1.90 0.08;5 59.7 37 12.8 2.62 -0.08;4 57.0 33 9.9 2.69 1.50;5 2.0 43 49.4 2.99 0.55;5 6.5 41 14.5 3.17 -0.18;'+
+  '4 35.9 16 30.6 0.86 1.54;5 26.3 28 36.5 1.65 -0.13;5 37.7 21 8.5 3.00 -0.19;3 47.5 24 6.3 2.87 -0.09;3 49.2 24 3.2 3.62 -0.08;3 44.9 24 6.7 3.70 -0.11;3 45.8 24 22.8 3.87 -0.07;3 46.3 23 56.9 4.18 -0.06;'+
+  '7 34.6 31 53.3 1.58 0.03;7 45.3 28 1.6 1.14 1.00;6 37.7 16 24.0 1.93 0.00;6 43.9 25 7.9 3.06 1.40;6 23.0 22 30.8 2.88 1.64;6 14.9 22 30.4 3.28 1.60;7 20.1 21 58.9 3.53 0.34;7 4.1 20 34.2 3.79 0.80;'+
+  '5 55.2 7 24.4 0.50 1.85;5 25.1 6 21.0 1.64 -0.22;5 35.1 9 56.0 3.54 -0.16;4 49.8 6 57.7 3.19 0.45;7 39.3 5 13.5 0.34 0.42;7 27.2 8 17.4 2.89 -0.09;'+
+  '8 16.5 9 11.1 3.52 1.48;8 44.7 18 9.2 3.94 1.08;8 43.3 21 28.1 4.66 0.00;8 46.7 28 45.6 4.02 1.00;8 59.0 11 51.5 4.25 0.10;'+
+  '10 8.4 11 58.0 1.35 -0.11;11 49.1 14 34.3 2.14 0.09;10 20.0 19 50.5 2.01 1.14;11 14.1 20 31.4 2.56 0.13;11 14.2 15 25.8 3.33 0.00;9 52.8 26 0.4 3.88 1.20;10 16.7 23 25.0 3.44 0.31;9 45.9 23 46.4 2.98 0.80;10 7.3 16 45.8 3.52 0.00;'+
+  '13 2.2 10 57.5 2.83 0.94;11 50.7 1 45.9 3.61 0.55;12 55.6 3 23.9 3.38 1.57;12 56.0 38 19.1 2.90 -0.12;12 33.8 41 21.5 4.26 0.59;13 11.9 27 52.7 4.26 0.57;13 10.0 17 31.0 4.32 0.40;12 26.6 28 16.4 4.36 1.10;'+
+  '14 15.7 19 11.0 -0.05 1.23;14 45.0 27 4.5 2.70 0.97;14 32.1 38 18.5 3.03 0.19;15 2.0 40 23.4 3.50 0.97;13 54.7 18 23.9 2.68 0.58;15 15.5 33 18.9 3.47 0.95;14 31.8 30 22.0 3.57 1.30;14 41.5 13 43.7 3.78 0.00;';
+
+  var STARS = [];
+  CAT.split(';').forEach(function(row){
+    var p = row.trim().split(/\s+/).map(Number);
+    if (p.length < 6 || p.some(isNaN)) return;
+    STARS.push({ ra:(p[0]+p[1]/60)*15*DEG, dec:(p[2]+p[3]/60)*DEG, m:p[4], bv:p[5] });
+  });
+
+  // named stars missing from the catalog get added, so every marker lands on a visible star
+  NAMED_STARS.forEach(function(n){
+    var ra=n[1]*15*DEG, dec=n[2]*DEG, found=false;
+    for (var i=0;i<STARS.length;i++){
+      var c=Math.sin(dec)*Math.sin(STARS[i].dec)+Math.cos(dec)*Math.cos(STARS[i].dec)*Math.cos(ra-STARS[i].ra);
+      if (c>Math.cos(0.4*DEG)){ found=true; break; }
+    }
+    if(!found) STARS.push({ra:ra,dec:dec,m:n[3],bv:n[4]});
+  });
+
+  // === B-V -> RGB ===
+  var rgbCache = {};
+  function bvRGB(bv){
+    var key = Math.round(bv*20);
+    if (rgbCache[key]) return rgbCache[key];
+    var b = clamp(key/20,-.3,2), T = 4600*(1/(.92*b+1.7)+1/(.92*b+.62)), t = T/100, r,g,bl;
+    if(t<=66){r=255;g=99.4708025861*Math.log(t)-161.1195681661;}else{r=329.698727446*Math.pow(t-60,-.1332047592);g=288.1221695283*Math.pow(t-60,-.0755148492);}
+    if(t>=66)bl=255;else if(t<=19)bl=0;else bl=138.5177312231*Math.log(t-10)-305.0447927307;
+    r=clamp(r,0,255);g=clamp(g,0,255);bl=clamp(bl,0,255);
+    var w=.30;r+=(255-r)*w;g+=(255-g)*w;bl+=(255-bl)*w;
+    return rgbCache[key]=[r|0,g|0,bl|0];
+  }
+
+  // === State ===
+  var lastW = 0, lastH = 0, D = 1, cW = 0, cH = 0;
+  var twkStars = [], raf = 0, lastTw = 0;
+  var labelTimer = null, visObjs = [];
+
+  function build() {
+    if (labelTimer) { clearTimeout(labelTimer); labelTimer = null; }
+    clearMarks();
+
+    var W = Math.round(innerWidth * 1.15);
+    var H = Math.round(innerHeight * 1.15);
+    D = Math.min(devicePixelRatio || 1, 1.5, 2600 / W);
+    cW = W; cH = H;
+    lastW = innerWidth; lastH = innerHeight;
+
+    [cv, tw].forEach(function(c){
+      c.width = Math.round(W*D); c.height = Math.round(H*D);
+      c.style.width = W + 'px'; c.style.height = H + 'px';
+      c.style.left = (-(W - innerWidth)/2) + 'px';
+      c.style.top = (-(H - innerHeight)/2) + 'px';
+    });
+
+    kProj = (Math.min(W, H) / 2) / Math.tan(FOV * DEG / 4);
+    CX = W / 2; CY = H / 2;
+
+    var x = cv.getContext('2d');
+    x.setTransform(D, 0, 0, D, 0, 0);
+    x.clearRect(0, 0, W, H);
+
+    // Milky way render
+    var K = Math.max(2, Math.ceil(W / 600));
+    var gw = Math.ceil(W / K), gh = Math.ceil(H / K);
+    var img = new ImageData(gw, gh), dat = img.data;
+    var lumArr = new Float32Array(gw * gh);
+    var dstArr = new Float32Array(gw * gh);
+
+    for (var gy = 0; gy < gh; gy++) {
+      for (var gx = 0; gx < gw; gx++) {
+        var sx = (gx + 0.5) * K, sy = (gy + 0.5) * K;
+        var sky = screenToSky(sx, sy);
+        toGal(sky.ra, sky.dec);
+        mwSample(GL, GB);
+        
+        var a = 1 - Math.exp(-1.45 * sL * GAIN); a *= 0.88;
+        
+        var w = sW;
+        var cr = 90 + (255-90)*w;   
+        var cg = 130 + (160-130)*w; 
+        var cb = 255;               
+        
+        var e = clamp(sE*2.5, 0, 0.9);
+        cr += (255-cr)*e*0.8; 
+        cg += (80-cg)*e*0.8; 
+        cb += (150-cb)*e*0.5;
+        
+        var dk = sD*0.6;
+        cr *= 1-dk*0.2; cg *= 1-dk*0.4; cb *= 1-dk*0.6;
+        
+        var abG = GB < 0 ? -GB : GB;
+        var patch = clamp(0.05 + 1.5*fbm(GL*0.035+5.5, GB*0.06+2.1, 3) + 0.35, 0, 1); patch *= patch;
+        var G = (0.006 + 0.10*Math.exp(-abG/14) + 0.07*Math.exp(-abG/5.5)) * patch * (1 - 0.55*sD);
+        
+        var ao = a + G*(1-a);
+        cr = (cr*a + 38*G*(1-a))/ao;
+        cg = (cg*a + 66*G*(1-a))/ao;
+        cb = (cb*a + 185*G*(1-a))/ao;
+        
+        var i = gy*gw + gx;
+        lumArr[i] = a; dstArr[i] = sD;
+        dat[i*4] = cr; dat[i*4+1] = cg; dat[i*4+2] = cb;
+        dat[i*4+3] = Math.round(255*ao);
+      }
+    }
+    var oc = document.createElement('canvas');
+    oc.width = gw; oc.height = gh;
+    oc.getContext('2d').putImageData(img, 0, 0);
+    x.imageSmoothingEnabled = true;
+    x.imageSmoothingQuality = 'high';
+    x.drawImage(oc, 0, 0, gw*K, gh*K);
+
+    // Star haze
+    var samp = function(px, py){
+      var i = Math.min(gh-1, Math.max(0, (py/K)|0))*gw + Math.min(gw-1, Math.max(0, (px/K)|0));
+      return { lum: lumArr[i], dst: dstArr[i] };
+    };
+    var LV = [0.06, 0.1, 0.15, 0.22];
+    var bk = [[],[],[],[]];
+    var NH = Math.min(30000, Math.round(W*H/90));
+    for (var k = 0; k < NH; k++) {
+      var hx = Math.random()*W, hy = Math.random()*H;
+      var s = samp(hx, hy);
+      if (Math.random() < s.lum*0.9*(1-s.dst*0.8)) bk[(Math.random()*4)|0].push(hx, hy);
+    }
+    for (var kk = 0; kk < 4; kk++) {
+      x.fillStyle = 'rgba(215,228,255,' + LV[kk] + ')';
+      var A = bk[kk];
+      for (var j = 0; j < A.length; j += 2) x.fillRect(A[j], A[j+1], 0.8, 0.8);
+    }
+
+    // Statistical stars
+    twkStars = [];
+    var NS = Math.round(W*H/120); 
+    var COLS = [['255,255,255',.5],['185,205,255',.2],['205,218,255',.14],['255,232,205',.08],['255,200,160',.05],['170,190,255',.03]];
+    for (var k2 = 0; k2 < NS; k2++) {
+      var sx2 = Math.random()*W, sy2 = Math.random()*H;
+      var s2 = samp(sx2, sy2);
+      if (Math.random() > 0.15 + 0.85*Math.min(1, s2.lum*1.8)) continue;
+      var m = Math.pow(Math.random(), 4); 
+      var rr = 0.3 + m*1.5;
+      var a2 = (0.3 + 0.7*Math.pow(m, 0.25)) * (1 - s2.dst*0.85);
+      if (a2 < 0.05) continue;
+      var r = Math.random(), acc = 0, colC = '255,255,255';
+      for (var ci = 0; ci < COLS.length; ci++) { acc += COLS[ci][1]; if (r < acc) { colC = COLS[ci][0]; break; } }
+      if (m > 0.35 && m < 0.8 && twkStars.length < 200) {
+        twkStars.push({ x: sx2, y: sy2, r: rr, c: colC, ph: Math.random()*6.3, sp: 0.8+Math.random()*1.8 });
+        continue;
+      }
+      if (m >= 0.8) {
+        var gg = x.createRadialGradient(sx2, sy2, 0, sx2, sy2, rr*6);
+        gg.addColorStop(0, 'rgba('+colC+',.35)');
+        gg.addColorStop(1, 'rgba('+colC+',0)');
+        x.fillStyle = gg;
+        x.fillRect(sx2-rr*6, sy2-rr*6, rr*12, rr*12);
+      }
+      x.fillStyle = 'rgba('+colC+','+a2.toFixed(2)+')';
+      x.beginPath(); x.arc(sx2, sy2, rr, 0, TAU); x.fill();
+    }
+
+    // Catalog stars
+    var sc = clamp(Math.sqrt(kProj/800), 0.85, 1.4);
+    for (var ci2 = 0; ci2 < STARS.length; ci2++) {
+      var st = STARS[ci2];
+      var p = skyToScreen(st.ra, st.dec);
+      if (!p || p.x < -20 || p.x > cW+20 || p.y < -20 || p.y > cH+20) continue;
+      drawStar(x, p.x, p.y, st.m, st.bv, sc);
+    }
+
+    drawDSOs(x);
+    paintTw(performance.now());
+    computeVisible();
+
+    if (!still) raf = requestAnimationFrame(tick);
+    labelTimer = setTimeout(showLabel, 900);
+    window.__skyDone = true;
+  }
+
+  function drawStar(x, px, py, m, bv, sc) {
+    var c = bvRGB(bv);
+    var rc = (0.36 + 0.5*Math.sqrt(Math.max(0, 6.9-m)))*sc;
+    var a = clamp(0.24 + 0.15*(6.9-m), 0.12, 1);
+    var cs = c[0]+','+c[1]+','+c[2];
+    if (m < 4.2) {
+      var rh = (1.8 + (4.2-m)*2.3)*sc;
+      var g = x.createRadialGradient(px, py, 0, px, py, rh);
+      g.addColorStop(0, 'rgba('+cs+','+(0.10+0.05*(4.2-m)).toFixed(2)+')');
+      g.addColorStop(1, 'rgba('+cs+',0)');
+      x.fillStyle = g;
+      x.fillRect(px-rh, py-rh, rh*2, rh*2);
+    }
+    x.fillStyle = 'rgba('+cs+','+a.toFixed(2)+')';
+    x.beginPath(); x.arc(px, py, rc, 0, TAU); x.fill();
+    if (m < 1.6) {
+      var L = (1.6-m)*5+3;
+      x.strokeStyle = 'rgba('+cs+',.22)'; x.lineWidth = 0.6;
+      x.beginPath();
+      x.moveTo(px-L, py); x.lineTo(px+L, py);
+      x.moveTo(px, py-L); x.lineTo(px, py+L);
+      x.stroke();
+    }
+  }
+
+  function glow(x, px, py, rx, ry, ang, rgb, a) {
+    x.save();
+    x.translate(px, py); x.rotate(ang); x.scale(1, ry/rx);
+    var g = x.createRadialGradient(0, 0, 0, 0, 0, rx);
+    g.addColorStop(0, 'rgba('+rgb+','+a+')');
+    g.addColorStop(0.45, 'rgba('+rgb+','+(a*0.45)+')');
+    g.addColorStop(1, 'rgba('+rgb+',0)');
+    x.fillStyle = g;
+    x.beginPath(); x.arc(0, 0, rx, 0, TAU); x.fill();
+    x.restore();
+  }
+
+  function drawDSOs(x) {
+    var objScale = kProj * 0.012;
+    var m31 = skyToScreen(0.712*15*DEG, 41.27*DEG);
+    if (m31) {
+      glow(x, m31.x, m31.y, 2.0*objScale, 0.62*objScale, 35*DEG, '255,210,225', 0.45);
+      glow(x, m31.x, m31.y, 0.55*objScale, 0.34*objScale, 35*DEG, '255,240,255', 0.50);
+    }
+    var m45 = skyToScreen(3.79*15*DEG, 24.12*DEG);
+    if (m45) glow(x, m45.x, m45.y, 1.5*objScale, 1.5*objScale, 0, '150,185,255', 0.15);
+    var dc1 = skyToScreen(2.3167*15*DEG, 57.13*DEG);
+    if (dc1) glow(x, dc1.x, dc1.y, 0.42*objScale, 0.42*objScale, 0, '235,240,255', 0.34);
+    var dc2 = skyToScreen(2.3733*15*DEG, 57.13*DEG);
+    if (dc2) glow(x, dc2.x, dc2.y, 0.42*objScale, 0.42*objScale, 0, '235,240,255', 0.34);
+    var m13 = skyToScreen(16.695*15*DEG, 36.46*DEG);
+    if (m13) glow(x, m13.x, m13.y, 0.22*objScale, 0.22*objScale, 0, '255,245,225', 0.34);
+    for (var di = 0; di < DEEP_SKY.length; di++) {
+      var d = DEEP_SKY[di]; if (!d.g) continue;
+      var dp = skyToScreen(d.ra*15*DEG, d.dec*DEG); if (!dp) continue;
+      var rr = Math.max(2.2, d.g.r*objScale);
+      glow(x, dp.x, dp.y, rr, rr, 0, d.g.c, d.g.a);
+    }
+  }
+
+  function paintTw(t) {
+    var tx = tw.getContext('2d');
+    tx.setTransform(D, 0, 0, D, 0, 0);
+    tx.clearRect(0, 0, cW, cH);
+    for (var i = 0; i < twkStars.length; i++) {
+      var s = twkStars[i];
+      var a = still ? 0.8 : 0.4 + 0.6*(0.5 + 0.5*Math.sin(t*0.001*s.sp + s.ph));
+      tx.fillStyle = 'rgba('+s.c+','+a.toFixed(2)+')';
+      tx.beginPath(); tx.arc(s.x, s.y, s.r, 0, TAU); tx.fill();
+    }
+  }
+
+  function tick(t) {
+    if (document.hidden) { raf = 0; return; }
+    if (t - lastTw > 45) { lastTw = t; paintTw(t); }
+    raf = requestAnimationFrame(tick);
+  }
+
+  // === Labels & Crosshairs ===
+  var mwRotEl = document.getElementById('mwRot'), mwWrapEl = document.getElementById('milkyWrap');
+  var ALL_TARGETS = [], seen = {}, lastName = '', activeMark = null;
+  CONSTELLATIONS.forEach(function(o){ ALL_TARGETS.push({name:o.name, tag:'\u2726', type:'constellation', ra:o.ra, dec:o.dec}); });
+  DEEP_SKY.forEach(function(o){ ALL_TARGETS.push({name:o.name, tag:'\u25C6', type:'deep-sky', ra:o.ra, dec:o.dec}); });
+  NAMED_STARS.forEach(function(o){ ALL_TARGETS.push({name:o[0]+' \u00B7 '+o[5], tag:'\u2605', type:'star', ra:o[1], dec:o[2]}); });
+
+  function cssMatrix(el) {
+    try {
+      var t = getComputedStyle(el).transform;
+      return (!t || t === 'none') ? new DOMMatrix() : new DOMMatrix(t);
+    } catch (e) { return { a:1,b:0,c:0,d:1,e:0,f:0 }; }
+  }
+
+  // canvas screen position -> real viewport position (the canvas drifts/rotates and parallax-scrolls)
+  function toViewport(sx, sy) {
+    var ox = innerWidth/2, oy = innerHeight/2;
+    var m = cssMatrix(mwRotEl), w = cssMatrix(mwWrapEl);
+    var dx = sx - ox, dy = sy - oy;
+    return {
+      x: m.a*dx + m.c*dy + m.e + ox + w.e,
+      y: m.b*dx + m.d*dy + m.f + oy + w.f
+    };
+  }
+
+  function project(o) {
+    var p = skyToScreen(o.ra*15*DEG, o.dec*DEG);
+    if (!p) return null;
+    return toViewport(p.x - (cW - innerWidth)/2, p.y - (cH - innerHeight)/2);
+  }
+
+  function computeVisible() {
+    visObjs = [];
+    var margin = 60, topSafe = 120, bottomSafe = innerHeight - 60;
+    for (var i = 0; i < ALL_TARGETS.length; i++) {
+      var o = ALL_TARGETS[i], p = project(o);
+      if (!p) continue;
+      if (p.x > margin && p.x < innerWidth - margin && p.y > topSafe && p.y < bottomSafe)
+        visObjs.push({ o:o, sx:p.x, sy:p.y });
+    }
+  }
+
+// === Priority Queue (Most Famous First) ===
+var PRIORITY_QUEUE = [
+  'Andromeda Galaxy (M31)', 'Orion Nebula (M42)', 'Pleiades (M45)', 
+  'Orion', 'Ursa Major', 'Cassiopeia', 'Polaris', 'Vega', 'Cygnus', 
+  'Betelgeuse', 'Hercules Cluster (M13)', 'Ring Nebula (M57)', 
+  'Taurus', 'Ursa Minor', 'Lyra', 'Pegasus', 'Andromeda', 'Perseus',
+  'Double Cluster (NGC 869/884)', 'Whirlpool Galaxy (M51)', 'Sirius',
+  'Bootes', 'Arcturus', 'Cepheus', 'Gemini', 'Draco'
+];
+
+function pickTarget() {
+  var fresh = visObjs.filter(function(v){ return !seen[v.o.name] && v.o.name !== lastName; });
+  if (!fresh.length) { seen = {}; fresh = visObjs.filter(function(v){ return v.o.name !== lastName; }); }
+  if (!fresh.length) fresh = visObjs;
+
+  // 1. Try to find the highest priority famous object that is currently visible on screen
+  for (var i = 0; i < PRIORITY_QUEUE.length; i++) {
+    var targetName = PRIORITY_QUEUE[i];
+    if (seen[targetName]) continue; // Skip if already shown recently
+    
+    var match = fresh.find(function(v) {
+      return v.o.name === targetName || v.o.name.startsWith(targetName + ' ') || v.o.name.startsWith(targetName + ' ·');
+    });
+    if (match) return match;
+  }
+
+  // 2. Fallback: If none of the famous objects are visible, pick a random one
+  // mix the types: stars 40%, constellations 40%, deep-sky 20%
+  var w = { star:.4, constellation:.4, 'deep-sky':.2 }, pool = {}, tot = 0, k;
+  fresh.forEach(function(v){ (pool[v.o.type] = pool[v.o.type] || []).push(v); });
+  for (k in pool) tot += w[k];
+  var r = Math.random()*tot, type = null;
+  for (k in pool) { r -= w[k]; if (r <= 0) { type = k; break; } }
+  if (!type) type = Object.keys(pool)[0];
+  var list = pool[type];
+  return list[Math.floor(Math.random()*list.length)];
+}
+
+  /* ---- constellation stick figures: points by star name, or extra [RA h, Dec deg] ---- */
+  var NS_IDX = {};
+  NAMED_STARS.forEach(function(n){ NS_IDX[n[0]] = [n[1], n[2]]; });
+  var EXTRA = {
+    'Yildun':[17.537,86.586],'Eps UMi':[16.766,82.037],'Zeta UMi':[15.734,77.795],'Eta UMi':[16.292,75.755],
+    'Iota Cep':[22.828,66.200],'Zeta Cep':[22.181,58.201],
+    'Zeta Lyr':[18.746,37.605],'Delta2 Lyr':[18.908,36.899],
+    'Delta And':[0.655,30.861],'Mu And':[0.946,38.499],'Nu And':[0.830,41.079],
+    'Gamma Per':[3.080,53.506],'Delta Per':[3.715,47.788],'Eps Per':[3.964,40.010],'Zeta Per':[3.902,31.884],
+    'Theta Aur':[5.995,37.213],'Iota Aur':[4.950,33.166],
+    'Gamma Tau':[4.330,15.628],'Tianguan':[5.627,21.143],
+    'Alhena':[6.628,16.399],'Tejat':[6.383,22.514],'Mebsuta':[6.732,25.131],'Wasat':[7.335,21.982],
+    'Eta Leo':[10.122,16.763],'Adhafera':[10.278,23.417],'Rasalas':[9.879,26.007],'Eps Leo':[9.764,23.774],'Chertan':[11.237,15.430],
+    'Izar':[14.750,27.074],'Seginus':[14.535,38.308],'Nekkar':[15.032,40.391],'Delta Boo':[15.258,33.315],'Rho Boo':[14.531,30.371],
+    'Theta CrB':[15.549,31.359],'Nusakan':[15.464,29.106],'Gamma CrB':[15.713,26.296],'Delta CrB':[15.826,26.068],'Eps CrB':[15.960,26.878],'Iota CrB':[16.024,29.851],
+    'Grumium':[17.892,56.873],'Nu Dra':[17.536,55.173],
+    'Zeta Her':[16.688,31.603],'Eps Her':[17.005,30.926],'Pi Her':[17.251,36.809],'Eta Her':[16.715,38.922],'Delta Her':[17.250,24.839],
+    'Chara':[12.562,41.357],'Porrima':[12.694,-1.449],'Zavijava':[11.845,1.765],
+    'Cebalrai':[17.724,4.567],'Sabik':[17.173,-15.725],'Zeta Oph':[16.619,-10.567],
+    'Gomeisa':[7.452,8.289],
+    'Alpha Tri':[1.884,29.579],'Beta Tri':[2.159,34.987],'Gamma Tri':[2.288,33.847],
+    'Sualocin':[20.660,15.912],'Rotanev':[20.626,14.595],'Gamma Del':[20.777,16.124],'Delta Del':[20.724,15.075],
+    'Gamma Sge':[19.979,19.492],'Delta Sge':[19.789,18.534],'Alpha Sge':[19.668,18.014],'Beta Sge':[19.684,17.476]
+  };
+  var FIG = {
+    'Ursa Major':[['Dubhe','Merak','Phecda','Megrez','Dubhe'],['Megrez','Alioth','Mizar','Alkaid']],
+    'Ursa Minor':[['Polaris','Yildun','Eps UMi','Zeta UMi','Eta UMi','Pherkad','Kochab','Zeta UMi']],
+    'Cassiopeia':[['Caph','Schedar','Navi','Ruchbah','Segin']],
+    'Cepheus':[['Alderamin','Zeta Cep','Iota Cep','Errai','Alfirk','Alderamin']],
+    'Cygnus':[['Deneb','Sadr','Albireo'],['Delta Cygni','Sadr','Gienah']],
+    'Lyra':[['Vega','Zeta Lyr','Sheliak','Sulafat','Delta2 Lyr','Zeta Lyr']],
+    'Aquila':[['Tarazed','Altair','Alshain']],
+    'Pegasus':[['Alpheratz','Scheat','Markab','Algenib','Alpheratz'],['Markab','Enif']],
+    'Andromeda':[['Alpheratz','Delta And','Mirach','Almach'],['Mirach','Mu And','Nu And']],
+    'Aries':[['Hamal','Sheratan']],
+    'Triangulum':[['Alpha Tri','Beta Tri','Gamma Tri','Alpha Tri']],
+    'Perseus':[['Algol','Mirfak','Gamma Per'],['Mirfak','Delta Per','Eps Per','Zeta Per']],
+    'Auriga':[['Capella','Menkalinan','Theta Aur','Elnath','Iota Aur','Capella']],
+    'Taurus':[['Elnath','Aldebaran','Gamma Tau'],['Aldebaran','Tianguan']],
+    'Gemini':[['Tejat','Mebsuta','Castor','Pollux','Wasat','Alhena']],
+    'Orion':[['Betelgeuse','Bellatrix','Mintaka','Alnilam','Alnitak','Betelgeuse'],['Alnitak','Saiph','Rigel','Mintaka']],
+    'Canis Minor':[['Procyon','Gomeisa']],
+    'Leo':[['Regulus','Eta Leo','Algieba','Adhafera','Rasalas','Eps Leo'],['Algieba','Zosma','Denebola','Chertan','Zosma']],
+    'Bootes':[['Arcturus','Rho Boo','Seginus','Nekkar','Delta Boo','Izar','Arcturus'],['Arcturus','Muphrid']],
+    'Corona Borealis':[['Theta CrB','Nusakan','Alphecca','Gamma CrB','Delta CrB','Eps CrB','Iota CrB']],
+    'Canes Venatici':[['Cor Caroli','Chara']],
+    'Virgo':[['Zavijava','Porrima','Vindemiatrix'],['Porrima','Spica']],
+    'Draco':[['Eltanin','Rastaban','Nu Dra','Grumium','Eltanin']],
+    'Hercules':[['Kornephoros','Zeta Her','Eps Her','Pi Her','Eta Her','Zeta Her'],['Eps Her','Delta Her','Rasalgethi']],
+    'Ophiuchus':[['Rasalhague','Cebalrai','Sabik','Zeta Oph']],
+    'Delphinus':[['Sualocin','Gamma Del','Delta Del','Rotanev','Sualocin']],
+    'Sagitta':[['Gamma Sge','Delta Sge','Alpha Sge'],['Delta Sge','Beta Sge']]
+  };
+  function buildFig(name) {
+    var ch = FIG[name]; if (!ch) return null;
+    var pts = [], idx = {}, edges = [];
+    function id(n) {
+      if (idx[n] !== undefined) return idx[n];
+      var c = EXTRA[n] || NS_IDX[n]; if (!c) return -1;
+      idx[n] = pts.length; pts.push([c[0], c[1]]); return idx[n];
+    }
+    ch.forEach(function(c){
+      for (var i = 0; i < c.length - 1; i++) {
+        var a = id(c[i]), b = id(c[i+1]);
+        if (a >= 0 && b >= 0) edges.push([a, b]);
+      }
+    });
+    return edges.length ? { pts:pts, edges:edges, sp:[] } : null;
+  }
+
+  function kindOf(o) {
+    if (o.type === 'star') return 'star';
+    if (o.type === 'constellation') return 'constellation';
+    if (/Galaxy/.test(o.name)) return 'galaxy';
+    if (/Nebula/.test(o.name)) return 'nebula';
+    if (/Cluster|Pleiades/.test(o.name)) return 'star cluster';
+    return 'deep-sky object';
+  }
+
+  // box size (px) for each kind of target
+  function boxFor(o) {
+    var s = kProj * 0.012, w, h, a = 0;
+    if (o.type === 'star') { w = h = 40; }
+    else if (o.type === 'constellation') { w = 96; h = 72; }
+    else {
+      if (/\(M31\)/.test(o.name)) { w = 4.4*s; h = 1.6*s; a = 35*DEG; }
+      else if (/Double Cluster/.test(o.name)) { w = 2.6*s; h = 1.2*s; }
+      else if (/Pleiades/.test(o.name)) { w = h = 3.4*s; }
+      else if (/\(M13\)/.test(o.name)) { w = h = 1.0*s; }
+      else if (o.g) { w = h = 2*o.g.r*s + 10; }
+      else { w = h = 1.4*s; }
+      w = Math.max(40, w); h = Math.max(40, h);
+    }
+    return { w:w, h:h, ang:a };
+  }
+
+  /* ---- SVG helpers ---- */
+  var NS = 'http://www.w3.org/2000/svg';
+  function S(tag, cls, parent, attrs) {
+    var e = document.createElementNS(NS, tag);
+    if (cls) e.setAttribute('class', cls);
+    if (attrs) for (var k in attrs) e.setAttribute(k, attrs[k]);
+    if (parent) parent.appendChild(e);
+    return e;
+  }
+  function draw(el, dur, delay) {
+    el.setAttribute('pathLength', '1');
+    el.style.setProperty('--d', dur + 'ms');
+    el.style.setProperty('--dl', delay + 'ms');
+  }
+  function delay(el, ms) { el.style.setProperty('--dl', ms + 'ms'); }
+
+  var markTimers = [], trackRaf = 0;
+  function later(fn, ms) { var id = setTimeout(fn, ms); markTimers.push(id); return id; }
+  function clearMarks() {
+    markTimers.forEach(clearTimeout); markTimers = [];
+    labelHost.innerHTML = '';
+    activeMark = null;
+  }
+
+  function geom(m) {
+    if (m.fig) {
+      var xs = [], ys = [];
+      m.fig.pts.forEach(function(p, i){
+        var q = project({ra:p[0], dec:p[1]});
+        m.fig.sp[i] = q;
+        if (q) { xs.push(q.x); ys.push(q.y); }
+      });
+      if (!xs.length) return null;
+      var pad = 22,
+          x0 = Math.min.apply(null, xs) - pad, x1 = Math.max.apply(null, xs) + pad,
+          y0 = Math.min.apply(null, ys) - pad, y1 = Math.max.apply(null, ys) + pad;
+      return { cx:(x0+x1)/2, cy:(y0+y1)/2, hw:Math.max(26,(x1-x0)/2), hh:Math.max(26,(y1-y0)/2), rot:0 };
+    }
+    var p = project(m.o); if (!p) return null;
+    var mt = cssMatrix(mwRotEl);
+    return { cx:p.x, cy:p.y, hw:m.w/2, hh:m.h/2, rot:Math.atan2(mt.b, mt.a) + m.ang };
+  }
+
+  function updateMark(m) {
+    if (!m) return;
+    var g = geom(m); if (!g) return;
+    var hw = g.hw, hh = g.hh, t = Math.min(10, hw*.5, hh*.5);
+    m.boxG.setAttribute('transform', 'translate(' + g.cx.toFixed(1) + ' ' + g.cy.toFixed(1) + ') rotate(' + (g.rot/DEG).toFixed(2) + ')');
+    m.boxP.setAttribute('d', 'M' + (-hw) + ' ' + (-hh) + 'H' + hw + 'V' + hh + 'H' + (-hw) + 'Z');
+    m.corP.setAttribute('d',
+      'M' + (-hw) + ' ' + (-hh+t) + 'V' + (-hh) + 'H' + (-hw+t) +
+      'M' + (hw-t) + ' ' + (-hh) + 'H' + hw + 'V' + (-hh+t) +
+      'M' + hw + ' ' + (hh-t) + 'V' + hh + 'H' + (hw-t) +
+      'M' + (-hw+t) + ' ' + hh + 'H' + (-hw) + 'V' + (hh-t));
+
+    if (m.fig) {
+      m.fig.edges.forEach(function(e, i){
+        var a = m.fig.sp[e[0]], b = m.fig.sp[e[1]];
+        m.flines[i].setAttribute('d', (a && b) ? 'M' + a.x.toFixed(1) + ' ' + a.y.toFixed(1) + 'L' + b.x.toFixed(1) + ' ' + b.y.toFixed(1) : '');
+      });
+      m.fstars.forEach(function(c, i){
+        var q = m.fig.sp[i];
+        if (q) { c.setAttribute('cx', q.x.toFixed(1)); c.setAttribute('cy', q.y.toFixed(1)); }
+      });
+    }
+
+    // anchor = the box corner that sits furthest to the label side / top
+    if (m.flip === undefined) m.flip = (g.cx + hw + 40 + m.LW > innerWidth - 8);
+    var dir = m.flip ? -1 : 1, cs = Math.cos(g.rot), sn = Math.sin(g.rot), best = null, bs = -1e9;
+    [[-1,-1],[1,-1],[1,1],[-1,1]].forEach(function(s){
+      var x = g.cx + s[0]*hw*cs - s[1]*hh*sn, y = g.cy + s[0]*hw*sn + s[1]*hh*cs, sc = dir*x - y;
+      if (sc > bs) { bs = sc; best = { x:x, y:y }; }
+    });
+    var ey = clamp(best.y - 18, m.LH/2 + 8, innerHeight - m.LH/2 - 8);
+    var kx = best.x + dir*16, lx0 = kx + dir*14, lx = dir > 0 ? lx0 : lx0 - m.LW, ly = ey - m.LH/2;
+    m.leader.setAttribute('d', 'M' + best.x.toFixed(1) + ' ' + best.y.toFixed(1) + 'L' + kx.toFixed(1) + ' ' + ey.toFixed(1) + 'L' + lx0.toFixed(1) + ' ' + ey.toFixed(1));
+    var rd = 'M' + lx.toFixed(1) + ' ' + ly.toFixed(1) + 'h' + m.LW + 'v' + m.LH + 'h' + (-m.LW) + 'Z';
+    m.labP.setAttribute('d', rd);
+    m.labBg.setAttribute('x', lx.toFixed(1)); m.labBg.setAttribute('y', ly.toFixed(1));
+    m.labBg.setAttribute('width', m.LW); m.labBg.setAttribute('height', m.LH);
+    m.t1.setAttribute('x', (lx + 10).toFixed(1)); m.t1.setAttribute('y', (ly + 15).toFixed(1));
+    m.t2.setAttribute('x', (lx + 10).toFixed(1)); m.t2.setAttribute('y', (ly + 28).toFixed(1));
+    if (m.car) {
+      var L = m.car.line === 1 ? m.l1 : m.l2;
+      m.caret.setAttribute('x', (lx + 10 + L*m.car.frac + 1).toFixed(1));
+      m.caret.setAttribute('y', (ly + (m.car.line === 1 ? 6 : 20)).toFixed(1));
+      m.caret.style.display = '';
+    } else m.caret.style.display = 'none';
+  }
+
+  function placeMark() { updateMark(activeMark); }
+  function track() {
+    if (!activeMark || !activeMark.svg.isConnected) { trackRaf = 0; return; }
+    updateMark(activeMark);
+    trackRaf = requestAnimationFrame(track);
+  }
+
+  function typeInto(m, el, str, speed, line, done) {
+    var i = 0;
+    (function step() {
+      i++;
+      el.textContent = str.slice(0, i);
+      m.car = { line:line, frac:i/str.length };
+      if (i < str.length) later(step, speed); else if (done) done();
+    })();
+  }
+
+  function showLabel() {
+    computeVisible();
+    clearMarks();
+    if (visObjs.length === 0) { labelTimer = setTimeout(showLabel, 2500); return; }
+
+    var pick = pickTarget(), o = pick.o;
+    seen[o.name] = 1; lastName = o.name;
+
+    var parts = o.name.split(' \u00B7 ');
+    var s1 = (o.tag + ' ' + parts[0]).toUpperCase();
+    var s2 = kindOf(o) + (parts[1] ? ' \u00B7 ' + parts[1] : '');
+
+    var svg = S('svg', 'mk', labelHost);
+    var bx = boxFor(o);
+    var fig = (o.type === 'constellation') ? buildFig(o.name) : null;
+    var m = { o:o, svg:svg, w:bx.w, h:bx.h, ang:bx.ang, fig:fig, LH:36, car:null };
+
+    // figure layer (below the box)
+    if (fig) {
+      var fg = S('g', null, svg);
+      m.flines = fig.edges.map(function(){ return S('path', 'mk-draw mk-fline', fg); });
+      m.fstars = fig.pts.map(function(){ return S('circle', 'mk-fstar', fg, { r:2.6 }); });
+    }
+    // box
+    m.boxG = S('g', null, svg);
+    m.boxP = S('path', 'mk-draw mk-box', m.boxG);
+    m.corP = S('path', 'mk-draw mk-corner', m.boxG);
+    if (!fig) m.dot = S('circle', 'mk-dot', m.boxG, { r:2.8, cx:0, cy:0 });
+    // leader + label
+    m.leader = S('path', 'mk-draw mk-leader', svg);
+    m.labBg = S('rect', 'mk-labbg', svg, { rx:3 });
+    m.labP = S('path', 'mk-draw mk-lab', svg);
+    var tg = S('g', 'mk-txt', svg);
+    m.t1 = S('text', 'mk-t1', tg);
+    m.t2 = S('text', 'mk-t2', tg);
+    m.caret = S('rect', 'mk-caret', tg, { width:5, height:11 });
+    m.caret.style.display = 'none';
+
+    // measure the finished text so the label box is the right size from the first frame
+    m.t1.textContent = s1; m.t2.textContent = s2;
+    m.l1 = m.t1.getComputedTextLength(); m.l2 = m.t2.getComputedTextLength();
+    m.LW = Math.ceil(Math.max(m.l1, m.l2) + 22);
+    m.t1.textContent = ''; m.t2.textContent = '';
+
+    activeMark = m;
+    updateMark(m);
+    if (!trackRaf) trackRaf = requestAnimationFrame(track);
+
+    // ---- timeline ----
+    var T_BOX = 700, T_FIG = 650, EDGE_STEP = 260, EDGE_DUR = 420, T_LEAD = 650;
+    draw(m.boxP, T_BOX, 0);
+    draw(m.corP, 400, 550);
+    if (m.dot) delay(m.dot, 350);
+    var figEnd = 0;
+    if (fig) {
+      var seenNode = {};
+      fig.edges.forEach(function(e, i){
+        var d0 = T_FIG + i*EDGE_STEP;
+        draw(m.flines[i], EDGE_DUR, d0);
+        if (seenNode[e[0]] === undefined) { seenNode[e[0]] = d0; }
+        if (seenNode[e[1]] === undefined || seenNode[e[1]] > d0 + EDGE_DUR) { if (seenNode[e[1]] === undefined) seenNode[e[1]] = d0 + EDGE_DUR; }
+      });
+      fig.pts.forEach(function(p, i){ delay(m.fstars[i], seenNode[i] !== undefined ? seenNode[i] : 0); });
+      figEnd = T_FIG + fig.edges.length*EDGE_STEP + EDGE_DUR;
+    }
+    draw(m.leader, 350, T_LEAD);
+    draw(m.labP, 450, T_LEAD + 300);
+    delay(m.labBg, T_LEAD + 300);
+    var typeStart = T_LEAD + 300 + 450;
+    var SP1 = 42, SP2 = 22;
+    var typeEnd = typeStart + s1.length*SP1 + 120 + s2.length*SP2;
+
+    if (still) {
+      m.t1.textContent = s1; m.t2.textContent = s2;
+    } else {
+      later(function(){
+        typeInto(m, m.t1, s1, SP1, 1, function(){
+          later(function(){
+            typeInto(m, m.t2, s2, SP2, 2, function(){
+              later(function(){ m.car = null; }, 500);
+            });
+          }, 120);
+        });
+      }, typeStart);
+    }
+
+    void svg.getBoundingClientRect();
+    svg.classList.add('on');
+
+    var total = still ? 400 : Math.max(typeEnd, figEnd);
+    var holdMs = 3500, fadeMs = 700, gapMs = 400 + Math.random()*600;
+    later(function(){ m.car = null; svg.classList.remove('on'); svg.classList.add('out'); }, total + holdMs);
+    later(function(){ if (activeMark === m) { clearMarks(); } }, total + holdMs + fadeMs);
+
+    labelTimer = setTimeout(showLabel, total + holdMs + fadeMs + gapMs);
+  }
+
+  // keep the marker glued to its star while the page scrolls (background parallax)
+  addEventListener('scroll', placeMark, { passive: true });
+
+  // === Init ===
+  build();
+  if (!still) {
+    raf = requestAnimationFrame(tick);
+    document.addEventListener('visibilitychange', function() {
+      if (!document.hidden && !raf) raf = requestAnimationFrame(tick);
+    });
+    var wrap = document.getElementById('milkyWrap');
+    if (wrap) addEventListener('scroll', function() {
+      wrap.style.transform = 'translate3d(0,' + (-scrollY*0.04).toFixed(1) + 'px,0)';
+    }, { passive: true });
+  }
+
+  var rtm = 0;
+  addEventListener('resize', function() {
+    clearTimeout(rtm);
+    rtm = setTimeout(function() {
+      if (innerWidth === lastW && Math.abs(innerHeight - lastH) < 160) return;
+      build();
+    }, 320);
+  });
+})();
+</script>
+
+<script>
+/* ===== hero sand-scatter (v6 scroll feel preserved) ===== */
+(function(){
+  var h=document.querySelector('.hero-title'),k=document.querySelector('.hero-kicker'),sb=document.querySelector('.hero-sub'),hi=document.getElementById('heroInner'),st=document.getElementById('statsRow');
+  if(!h||!hi||!st||matchMedia('(prefers-reduced-motion: reduce)').matches)return;
+  var L=[],f=document.createDocumentFragment();
+  [].slice.call(h.childNodes).forEach(function(nd){
+    if(nd.nodeType===3){[].slice.call(nd.textContent).forEach(function(ch){var s=document.createElement('span');s.className='hl';s.textContent=ch;L.push(s);f.appendChild(s);});}
+    else f.appendChild(nd.cloneNode());});
+  h.textContent='';h.appendChild(f);
+  var rs=L.map(function(_,i){return Math.abs((Math.sin(i*12.9898+1.7)*43758.5453)%1);});
+  L.forEach(function(s,i){var t=i/(L.length-1);s.style.color='rgb('+Math.round(255-133*t)+','+Math.round(255-89*t)+',255)';});
+  var wraps=['statsRow','backupRow','layout','constantsRef'].map(function(id){return document.getElementById(id);}).filter(Boolean);
+  var cs=0,ts=0,ce=0,te=0,raf=0,A0=1,T1=1,X=1,cl=function(v){return Math.max(0,Math.min(1,v));};
+  function docTop(el){var t=0;while(el){t+=el.offsetTop;el=el.offsetParent;}return t;}
+  function measure(){var vh=innerHeight;A0=docTop(st)-(78+hi.offsetHeight);T1=Math.max(110,vh*.2);X=Math.max(60,vh*.1);}
+  function A(){return docTop(st)-scrollY-(78+hi.offsetHeight);}
+  var cv=document.createElement('canvas');cv.id='sand';document.body.appendChild(cv);
+  var cx2=cv.getContext('2d'),P=null,cleared=true;
+  function szCanvas(){var D=Math.min(devicePixelRatio||1,2);cv.width=Math.round(innerWidth*D);cv.height=Math.round(innerHeight*D);cx2.setTransform(D,0,0,D,0,0);cleared=false;}
+  function build(step){
+    var cs0=getComputedStyle(h),hr=hi.getBoundingClientRect(),sc=1-.28*cs,W=hi.offsetWidth,Hh=h.offsetTop+h.offsetHeight+12,fs=parseFloat(cs0.fontSize);
+    var oc=document.createElement('canvas');oc.width=W;oc.height=Hh;var o=oc.getContext('2d',{willReadFrequently:true});
+    o.font=cs0.fontWeight+' '+fs+'px '+cs0.fontFamily;o.textBaseline='alphabetic';o.fillStyle='#fff';
+    var out=[],tot=0;
+    L.forEach(function(sp){var ch=sp.firstChild&&sp.firstChild.nodeValue;if(!ch||!ch.trim())return;
+      var pr=document.createElement('span');pr.style.cssText='display:inline-block;width:0;height:0';sp.appendChild(pr);
+      var r=sp.getBoundingClientRect(),bl=pr.getBoundingClientRect().top;sp.removeChild(pr);
+      var lx=(r.left-hr.left)/sc,by=(bl-hr.top)/sc,lw=r.width/sc;
+      var x0=Math.max(0,Math.floor(lx-6)),y0=Math.max(0,Math.floor(by-fs*.95)),w=Math.min(W-x0,Math.ceil(lw+12)),hh=Math.min(Hh-y0,Math.ceil(fs*1.3));
+      if(w<=0||hh<=0)return;
+      o.clearRect(0,0,W,Hh);o.fillText(ch.toUpperCase(),lx,by);
+      var d=o.getImageData(x0,y0,w,hh).data,g={c:sp.style.color||'#fff',s:step,x:[],y:[],th:[],vx:[],vy:[],n:0};
+      for(var yy=0;yy<hh;yy+=step)for(var xx=0;xx<w;xx+=step){var sum=0,cnt=0;
+        for(var a=0;a<step&&yy+a<hh;a++)for(var b=0;b<step&&xx+b<w;b++){sum+=d[((yy+a)*w+xx+b)*4+3];cnt++;}
+        if(sum/cnt>120){var px=x0+xx,py=y0+yy;
+          g.x.push(px);g.y.push(py);g.th.push((px/W*.5+py/Hh*.1+Math.random()*.4)*.45);g.vx.push(40+Math.random()*260);g.vy.push((Math.random()-.75)*240);}}
+      g.n=g.x.length;tot+=g.n;out.push(g);});
+    return {g:out,tot:tot};
+  }
+  function sample(){P=null;try{var r=build(2);if(r.tot>14000)r=build(3);if(r.tot>0)P=r.g;}catch(err){P=null;}}
+  function sand(e,s){
+    if(e<.0005){if(!cleared){cx2.clearRect(0,0,innerWidth,innerHeight);cleared=true;}return !!P;}
+    if(!P)sample();if(!P)return false;
+    cx2.clearRect(0,0,innerWidth,innerHeight);
+    if(e>=.9999){cleared=true;return true;}
+    cleared=false;var r=hi.getBoundingClientRect(),sc=1-.28*s,fi=1;
+    cx2.save();cx2.translate(r.left,r.top);cx2.scale(sc,sc);
+    P.forEach(function(g){cx2.fillStyle=g.c;
+      for(var i=0;i<g.n;i++){var u=(e-g.th[i])/.55;
+        if(u<=0){cx2.globalAlpha=fi;cx2.fillRect(g.x[i],g.y[i],g.s,g.s);continue;}
+        if(u>=1)continue;
+        var dd=u*u*(1.2-.2*u),sz=g.s*(1-.5*u);cx2.globalAlpha=(1-u*u)*fi;
+        cx2.fillRect(g.x[i]+g.vx[i]*dd+Math.sin(g.y[i]*.06+u*6)*10*u,g.y[i]+g.vy[i]*dd+u*u*40,sz,sz);}});
+    cx2.restore();cx2.globalAlpha=1;return true;}
+  if(document.fonts&&document.fonts.addEventListener)document.fonts.addEventListener('loadingdone',function(){P=null;});
+  function draw(){var s=cs,e=ce,mid=L.length/2;window.__hp=.25*s+.75*e;
+    hi.style.transform='scale('+(1-.28*s).toFixed(4)+')';
+    var ok=sand(e,s),fo=ok?(1-cl(e/.012)):(1-cl((e-.12)*1.2));L.forEach(function(sp){sp.style.opacity=fo.toFixed(3);});
+    k.style.opacity=(1-cl(e*2.2)).toFixed(3);k.style.transform='translateY('+(-e*30).toFixed(1)+'px)';
+    sb.style.opacity=(1-cl(e*2)).toFixed(3);sb.style.transform='translateY('+(-e*60).toFixed(1)+'px)';sb.style.filter=e>.01?'blur('+(e*6).toFixed(1)+'px)':'none';
+    hi.style.setProperty('--cue',(1-cl(s*3)).toFixed(3));}
+  function reveal(){var vh=innerHeight;wraps.forEach(function(w){var r=w.getBoundingClientRect(),q=cl((vh*.97-r.top)/Math.min(vh*.32,Math.max(40,r.height*.6)));if(scrollY+vh>=document.documentElement.scrollHeight-6)q=1;
+    if(q>=1){w.style.opacity='';w.style.transform='';}else{w.style.opacity=q.toFixed(3);w.style.transform='translateY('+((1-q)*46).toFixed(1)+'px) scale('+(.97+.03*q).toFixed(3)+')';}});}
+  function loop(){cs+=(ts-cs)*.05;ce+=(te-ce)*.05;if(Math.abs(ts-cs)<.0008)cs=ts;if(Math.abs(te-ce)<.0008)ce=te;draw();raf=(cs!==ts||ce!==te)?requestAnimationFrame(loop):0;}
+  function onScroll(){ts=cl(scrollY/Math.max(1,A0-T1));te=cl((T1-A())/(T1+X));reveal();if(!raf)raf=requestAnimationFrame(loop);}
+  function onResize(){measure();szCanvas();P=null;onScroll();}
+  szCanvas();measure();addEventListener('scroll',onScroll,{passive:true});addEventListener('resize',onResize);addEventListener('load',onResize);
+  document.addEventListener('click',function(){setTimeout(onScroll,60);});
+  draw();reveal();onScroll();
+})();
+</script>
+
+<script>
+/* ===== meteor streaks ===== */
+(function(){
+  var c=document.getElementById('orbit');if(!c||matchMedia('(prefers-reduced-motion: reduce)').matches)return;
+  var x=c.getContext('2d'),W,H,met=[],next=2000,last=0;
+  function R(a,b){return a+Math.random()*(b-a);}
+  function size(){var D=Math.min(devicePixelRatio||1,2);W=innerWidth;H=innerHeight;c.width=W*D;c.height=H*D;x.setTransform(D,0,0,D,0,0);}
+  function frame(ts){var dt=Math.min(ts-last,50);last=ts;x.clearRect(0,0,W,H);
+    next-=dt;if(next<=0){var sp=R(.5,.95),an=R(2.4,2.8);met.push({x:R(.25,1.05)*W,y:R(-.05,.45)*H,vx:Math.cos(an)*sp,vy:Math.sin(an)*sp,l:R(90,210)});next=R(3500,8500);}
+    met=met.filter(function(m){m.x+=m.vx*dt;m.y+=m.vy*dt;var d=Math.hypot(m.vx,m.vy),tx=m.x-m.vx/d*m.l,ty=m.y-m.vy/d*m.l,g=x.createLinearGradient(tx,ty,m.x,m.y);
+      g.addColorStop(0,'rgba(170,210,255,0)');g.addColorStop(1,'rgba(255,215,155,.95)');x.strokeStyle=g;x.lineWidth=1.6;x.beginPath();x.moveTo(tx,ty);x.lineTo(m.x,m.y);x.stroke();
+      x.fillStyle='#fff';x.shadowColor='#ffcf87';x.shadowBlur=10;x.beginPath();x.arc(m.x,m.y,1.5,0,6.3);x.fill();x.shadowBlur=0;return m.x>-250&&m.y<H+250;});
+    if(!document.hidden)requestAnimationFrame(frame);}
+  size();addEventListener('resize',size);
+  document.addEventListener('visibilitychange',function(){if(!document.hidden){last=performance.now();requestAnimationFrame(frame);}});
+  requestAnimationFrame(frame);
+})();
+</script>
+
+<script src="js/guideConfigDefaults.js"></script>
+<script src="js/guidancePresets.js"></script>
+<script src="js/missionRecords.js"></script>
+<script src="js/guideConstantDescriptions.js"></script>
+<script src="js/guidancePresetsPage.js"></script>
+</body>
+</html>
