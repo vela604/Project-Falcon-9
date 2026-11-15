@@ -80,21 +80,26 @@ function listAllStacks() {
   return [{ id: GUIDE_DEFAULT_STACK_ID, name: GUIDE_DEFAULT_STACK_NAME, type: 'standard' }];
 }
 
-// The "active" stack — the one the sim is flying. Reads the selection
-// key, resolves it against the stack store, and falls back to the
-// first stack (or the code default) if the pointer is stale.
-function activeStack() {
-  const stacks = listAllStacks();
-  const selId = localStorage.getItem(_SEL_STACK_KEY) || '';
-  const hit = stacks.find(s => s.id === selId);
-  if (hit) return hit;
-  return stacks[0] || { id: GUIDE_DEFAULT_STACK_ID, name: GUIDE_DEFAULT_STACK_NAME };
-}
-
-  // Active stack from fleet.js — returns null if fleet.js isn't loaded.
+  // The "active" stack — the one the sim is flying. Prefers fleet.js's
+  // getActiveStack when available; otherwise reads the selection key
+  // straight from localStorage. This page does not load fleet.js, so
+  // the localStorage path is the primary one here.
+  //
+  // (Bug fix: file previously had TWO activeStack() definitions — the
+  // second shadowed the first and always returned null since fleet.js
+  // is not loaded. The "only active stack" sidebar filter never worked.)
   function activeStack() {
-    if (typeof getActiveStack !== 'function') return null;
-    try { return getActiveStack(); } catch (e) { return null; }
+    if (typeof getActiveStack === 'function') {
+      try {
+        const s = getActiveStack();
+        if (s) return s;
+      } catch (e) {}
+    }
+    const stacks = listAllStacks();
+    const selId = localStorage.getItem(_SEL_STACK_KEY) || '';
+    const hit = stacks.find(s => s.id === selId);
+    if (hit) return hit;
+    return stacks[0] || { id: GUIDE_DEFAULT_STACK_ID, name: GUIDE_DEFAULT_STACK_NAME };
   }
 
   // ----------------------------------------------------------------
@@ -162,15 +167,12 @@ function formatHMS(totalSec) {
 
     host.innerHTML = '';
     guides.forEach(g => {
-      const def = getGuideDefaultPreset(g);
+      const defaults = getAllDefaultPresetsForGuide(g);
       const users = getUserPresetsForGuide(g);
-      let count = (def ? 1 : 0) + users.length;
+      let count = defaults.length + users.length;
 
-      // Active-stack filter: keep a guide visible if it (or its default)
-      // has any preset bound to the active stack, OR if there are no
-      // user presets at all yet (so the user can always add one).
       if (onlyActive && activeId) {
-        const matchDefault = def && def.stackId === activeId;
+        const matchDefault = defaults.some(d => d.stackId === activeId);
         const matchUser = users.some(u => u.stackId === activeId);
         if (!matchDefault && !matchUser) return;
       }
@@ -205,17 +207,19 @@ function formatHMS(totalSec) {
     $('mainContent').style.display = '';
 
     $('paneGuideName').textContent = _selectedGuide;
-    const def = getGuideDefaultPreset(_selectedGuide);
+    const defaults = getAllDefaultPresetsForGuide(_selectedGuide);
     const users = getUserPresetsForGuide(_selectedGuide);
+    const totalCount = defaults.length + users.length;
     $('paneGuideMeta').textContent =
-      `${(def ? 1 : 0) + users.length} preset${(def ? 1 : 0) + users.length === 1 ? '' : 's'} ` +
-      `· ${users.length} user · ${def ? 1 : 0} default`;
+      `${totalCount} preset${totalCount === 1 ? '' : 's'} ` +
+      `· ${users.length} user · ${defaults.length} default${defaults.length === 1 ? '' : 's'}`;
 
-    // Default
     const defSec = $('defaultSection');
-    if (def) {
-      defSec.innerHTML = '<div class="preset-section-label">Default (protected)</div>';
-      defSec.appendChild(renderPresetCard(def, { mode: 'default' }));
+    if (defaults.length) {
+      defSec.innerHTML = defaults.length > 1
+        ? '<div class="preset-section-label">Defaults (protected)</div>'
+        : '<div class="preset-section-label">Default (protected)</div>';
+      defaults.forEach(d => defSec.appendChild(renderPresetCard(d, { mode: 'default' })));
     } else {
       defSec.innerHTML = '';
     }
@@ -237,14 +241,15 @@ function formatHMS(totalSec) {
     const card = document.createElement('div');
     card.className = 'preset-card' + (opts.mode === 'default' ? ' is-default' : '');
 
-    // Outdated schema flag — user preset whose constants don't pass
-    // strict validation against the current default.
+    // Outdated schema flag — user preset whose constants don't match
+    // ANY current default for this guide.
     let outdated = false;
     if (opts.mode === 'user' && typeof validateConstantsStrict === 'function') {
-      const def = getGuideDefaultPreset(p.guideName);
-      if (def) {
-        const v = validateConstantsStrict(p.constants, def.constants);
-        if (!v.ok) outdated = true;
+      const defs = getAllDefaultPresetsForGuide(p.guideName);
+      if (defs.length) {
+        const anyMatch = defs.some(d =>
+          validateConstantsStrict(p.constants, d.constants).ok);
+        outdated = !anyMatch;
       }
     }
 
@@ -345,6 +350,32 @@ card.innerHTML = `
     return b;
   }
 
+  // Edit-modal reference schema. Starts from the baseline default and
+  // merges in any extra keys the preset being edited carries (SERENO
+  // FLUX has mission.* / rtls.* that baseline doesn't). Prevents silent
+  // drops of those fields on save.
+  function _schemaForEdit(guideName, currentConstants) {
+    const base = (getGuideDefaultPreset(guideName) || {}).constants || null;
+    if (!base) return null;
+    if (!currentConstants || typeof currentConstants !== 'object') return base;
+    const merged = JSON.parse(JSON.stringify(base));
+    function merge(target, source) {
+      for (const k in source) {
+        const sv = source[k];
+        if (sv !== null && typeof sv === 'object' && !Array.isArray(sv)) {
+          if (!(k in target) || target[k] === null || typeof target[k] !== 'object') {
+            target[k] = {};
+          }
+          merge(target[k], sv);
+        } else if (!(k in target)) {
+          target[k] = sv;
+        }
+      }
+    }
+    merge(merged, currentConstants);
+    return merged;
+  }
+
   // ----------------------------------------------------------------
   // Actions
   // ----------------------------------------------------------------
@@ -412,7 +443,7 @@ $('pmMecoTime').value = Number.isFinite(p.mecoTimeS) ?
   String(p.mecoTimeS) : '';
   guideSel.value = p.guideName;
       if (p.stackId) stackSel.value = p.stackId;
-      _modalReference = getGuideDefaultPreset(p.guideName)?.constants || null;
+      _modalReference = _schemaForEdit(p.guideName, p.constants);
       _modalValues = clone(p.constants || {});
       renderModalFields();
     } else {
@@ -663,14 +694,17 @@ function collectKnownStacks() {
       $('pmError').style.display = '';
       return;
     }
-    const v = validateConstantsStrict(parsed, _modalReference);
+    let v = validateConstantsStrict(parsed, _modalReference);
+    if (!v.ok && _editingPresetId && typeof validateConstantsLenient === 'function') {
+      v = validateConstantsLenient(parsed, _modalReference);
+    }
     if (!v.ok) {
       $('pmError').textContent = 'Validation: ' + v.error;
       $('pmError').style.display = '';
       return;
     }
     $('pmError').style.display = 'none';
-    applyModalValues(parsed);
+    applyModalValues(v.constants || parsed);
     $('pmPasteWrap').style.display = 'none';
     toast('Filled from pasted JSON');
   });
@@ -781,9 +815,9 @@ if (_editingPresetId) {
   }
 
   function allPresetsFor(guideName) {
-    const def = getGuideDefaultPreset(guideName);
+    const defs = getAllDefaultPresetsForGuide(guideName);
     const user = getUserPresetsForGuide(guideName);
-    return def ? [def, ...user] : user;
+    return [...defs, ...user];
   }
 
   // Flatten a nested constants object into a Map<path, value>.

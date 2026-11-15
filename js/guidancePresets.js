@@ -74,9 +74,11 @@ function getPresetsForGuideAndStack(guideName, stackType) {
 // Union of default + user presets for a given guide. Default always first.
 // Order within each group is insertion order (default = single, user = chronological).
 function getAllPresetsForGuide(guideName) {
-  const def = getGuideDefaultPreset(guideName);
+  const defs = (typeof getAllDefaultPresetsForGuide === 'function')
+    ? getAllDefaultPresetsForGuide(guideName)
+    : (getGuideDefaultPreset(guideName) ? [getGuideDefaultPreset(guideName)] : []);
   const user = getUserPresetsForGuide(guideName);
-  return def ? [def, ...user] : user;
+  return [...defs, ...user];
 }
 
 // Resolve any preset id (default or user). Returns null if not found.
