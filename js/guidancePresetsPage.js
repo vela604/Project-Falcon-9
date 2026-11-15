@@ -867,12 +867,13 @@ function _rdmPeaksTable(peaks) {
       ? ' <span class="rdm-pk-posttag">post-split</span>'
       : '';
 
-    // Peak temperature — client-side enrichment added at capture. May be
-    // absent on older records (pre-this-patch) → show "—".
+    // Peak temperature — always displayed in °C for consistency within a
+    // record. Negative °C correctly signals cold-space conditions (e.g.
+    // payload in LEO ambient at 250 K → -23 °C). Mixing °C and K based on
+    // a threshold broke visual consistency across bodies of one record.
     const tK = Number.isFinite(p.peakTemp_K) ? p.peakTemp_K : null;
-    const tC = tK != null ? (tK - 273.15) : null;
     const tempVal = tK != null
-      ? (tC >= 0 ? tC.toFixed(0) + ' \u00b0C' : (tK).toFixed(0) + ' K')
+      ? ((tK - 273.15).toFixed(0) + ' \u00b0C')
       : null;
     const tempRow = (tempVal !== null)
       ? '<div class="rdm-pk-row"><span class="rdm-pk-key">Peak temp</span><span class="rdm-pk-val">' + tempVal + '</span></div>'
