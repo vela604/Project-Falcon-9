@@ -85,28 +85,33 @@ const Guidance = (function () {
       } catch (_e) {}
     }
     // rtls sub-phase tracking (booster-side, orbitalMissionGNCV1)
+    // Mirror the block's own _st.phaseLog into _phaseLog — the block
+    // authoritatively tracks every phase transition internally.
     if (_activeGuide === 'orbitalMissionGNCV1' && typeof _lbState !== 'undefined' && _lbState && _lbState.rtlsBlock) {
       try {
-        const _rs = _lbState.rtlsBlock.getStatus();
-        const _curRtls = (_rs && _rs.phase) ? _rs.phase : null;
-        const _rtlsDone = _lbState.rtlsBlock.isDone();
-        const _nowT = _lastSimTime;
-        const _fuelNow = _snapMemberFuel(_lastRawSnapshot || _lastMeasuredSnapshot);
-        if (_curRtls && _curRtls !== 'DONE' && _curRtls !== _lastRtlsPhase) {
-          if (_lastRtlsPhase && _phaseLog[_lastRtlsPhase] && _phaseLog[_lastRtlsPhase].endT === null) {
-            _phaseLog[_lastRtlsPhase].endT = _nowT;
-            _phaseLog[_lastRtlsPhase].fuelEnd = _fuelNow;
-            _phaseLog[_lastRtlsPhase].fuelDelta = _diffFuel(_phaseLog[_lastRtlsPhase].fuelStart, _fuelNow);
+        const _bst = _lbState.rtlsBlock.getState();
+        const _bpLog = (_bst && _bst.st && _bst.st.phaseLog) ? _bst.st.phaseLog : null;
+        if (_bpLog) {
+          const _fuelNow = _snapMemberFuel(_lastRawSnapshot || _lastMeasuredSnapshot);
+          for (const _pn in _bpLog) {
+            const _be = _bpLog[_pn];
+            if (!_be) continue;
+            const _existing = _phaseLog[_pn];
+            if (!_existing || _existing._fromRtls !== true) {
+              _phaseLog[_pn] = {
+                startT: _be.startT,
+                endT: (_be.endT != null) ? _be.endT : null,
+                fuelStart: _fuelNow,
+                fuelEnd: (_be.endT != null) ? _fuelNow : null,
+                fuelDelta: [],
+                bodyTag: 'booster',
+                _fromRtls: true,
+              };
+            } else if (_be.endT != null && _existing.endT == null) {
+              _existing.endT = _be.endT;
+              _existing.fuelEnd = _fuelNow;
+            }
           }
-          _lastRtlsPhase = _curRtls;
-          if (!_phaseLog[_curRtls]) {
-            _phaseLog[_curRtls] = { startT: _nowT, endT: null, fuelStart: _fuelNow, fuelEnd: null, fuelDelta: null, bodyTag: 'booster' };
-          }
-        } else if (_rtlsDone && _lastRtlsPhase && _phaseLog[_lastRtlsPhase] && _phaseLog[_lastRtlsPhase].endT === null) {
-          _phaseLog[_lastRtlsPhase].endT = _nowT;
-          _phaseLog[_lastRtlsPhase].fuelEnd = _fuelNow;
-          _phaseLog[_lastRtlsPhase].fuelDelta = _diffFuel(_phaseLog[_lastRtlsPhase].fuelStart, _fuelNow);
-          _lastRtlsPhase = null;
         }
       } catch (_e) {}
     }
