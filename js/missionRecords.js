@@ -211,7 +211,16 @@ function startGuideSession(stackId, guideName, presetId, presetName) {
   window.__guideSession.comboKeyPromise = computeComboKey(stackId, presetId || '', guideName)
     .then(function (k) {
       if (window.__guideSession) window.__guideSession.comboKey = k;
+      console.log('[missionRecords] comboKeyPromise resolved:', k, '(', stackId, presetId || '(no preset)', guideName, ')');
       return k;
+    })
+    .catch(function (e) {
+      // Defensive — capture's await-catch was silently swallowing this
+      // rejection, leaving session.comboKey null and producing
+      // 'comboKey not ready' error with no diagnostic trail.
+      console.warn('[missionRecords] comboKeyPromise REJECTED:', e && e.message ? e.message : e);
+      console.warn('[missionRecords] comboKeyPromise reject stack:', e && e.stack ? e.stack : '(none)');
+      return null;
     });
   console.log('[missionRecords] session started:', stackId, guideName,
               presetId ? ('· preset ' + (presetName || presetId)) : '· no preset');
@@ -289,13 +298,41 @@ window.captureCurrentMissionRecord = async function () {
   if (!gs.active) return { error: 'no active guide' };
 
   const session = window.__guideSession;
-  if (!session) return { error: 'guide session not initialized' };
+  if (!session) {
+    console.warn('[missionRecords] capture failed: session is null', {
+      gsActive: gs.active, gsPhase: gs.phase, simTime: state.simTime,
+    });
+    return { error: 'guide session not initialized' };
+  }
+  // Entry-point diagnostic — small, cheap, tells us comboKey presence
+  // and promise presence in one line. Left in permanently (one line).
+  console.log('[missionRecords] capture entry:',
+    'comboKey=' + (session.comboKey || 'null'),
+    'hasPromise=' + !!session.comboKeyPromise,
+    'stackId=' + session.stackId,
+    'guideName=' + session.guideName);
   
   // comboKey — wait for async if still pending
   if (!session.comboKey && session.comboKeyPromise) {
     try { await session.comboKeyPromise; } catch (e) {}
   }
-  if (!session.comboKey) return { error: 'comboKey not ready — try again in 1s' };
+  if (!session.comboKey) {
+    // Rich diagnostic — what state was the session in when we gave up?
+    // Helps distinguish (a) promise still pending, (b) promise rejected,
+    // (c) session was force-replaced without comboKeyPromise set.
+    const _dbg = {
+      hasComboKey: !!session.comboKey,
+      hasComboKeyPromise: !!session.comboKeyPromise,
+      promiseType: session.comboKeyPromise ? typeof session.comboKeyPromise : 'null',
+      hasStackId: !!session.stackId,
+      hasGuideName: !!session.guideName,
+      sessionKeys: Object.keys(session).join(','),
+      gsActive: gs.active,
+      gsPhase: gs.phase,
+    };
+    console.warn('[missionRecords] capture failed at comboKey gate:', _dbg);
+    return { error: 'comboKey not ready — try again in 1s', _debug_comboKey: _dbg };
+  }
 
   const stk = (typeof getActiveStack === 'function') ? getActiveStack() : null;
   if (!stk) return { error: 'no active stack' };
