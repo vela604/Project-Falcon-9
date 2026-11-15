@@ -2434,35 +2434,48 @@ if (!faded) {
 
     const finalEndState = captureState();
 
-    try { Guidance.stopGuide(); } catch (e) {}
-    try { if (typeof endGuideSession === 'function') endGuideSession(); } catch(e) {}
-    // Partial-on-stop fallback. If mission never reached END phase (user
-    // stopped mid-flight, duration cap hit before END, etc), runResult
-    // stayed 'in-progress' — the auto-save trigger above requires a
-    // 'in-progress → success' transition which never fired. Capture the
-    // partial state so user has a record for post-hoc reference (phases
-    // completed so far, events fired, peaks accumulated). Same comboKey,
-    // marked partial:true by missionRecords capture logic.
-    try {
-      if (_prevRunResult === 'in-progress') {
+    // PARTIAL CAPTURE — MUST fire BEFORE stopGuide + endGuideSession.
+    // Both of those clear live guide state (Guidance.getGuideStatus ->
+    // { active: null }, session cache -> null). captureCurrentMissionRecord
+    // reads guide state on entry — if it fires after the clears, it gets
+    // an empty record (comboKey=undefined, phase=?, runResult=undefined).
+    // So: capture first (while state is live), then stop+end, then save.
+    let _partialRec = null;
+    if (_prevRunResult === 'in-progress') {
+      try {
         const _capFn = (typeof window.captureCurrentMissionRecord === 'function')
           ? window.captureCurrentMissionRecord
           : (typeof captureCurrentMissionRecord === 'function' ? captureCurrentMissionRecord : null);
+        if (_capFn) {
+          const _r = _capFn();
+          // captureCurrentMissionRecord may be async (Promise) or sync
+          // (record). Handle both.
+          _partialRec = (_r && typeof _r.then === 'function') ? await _r : _r;
+          // Force partial:true — mid-flight capture, runResult was
+          // in-progress, but by now stopGuide already cleared state so
+          // capture may report success:null / partial:false. User stopped
+          // mid-flight, record IS partial.
+          if (_partialRec) _partialRec.partial = true;
+        }
+      } catch(e) { console.warn('[tester2] pre-stop capture failed:', e); }
+    }
+
+    try { Guidance.stopGuide(); } catch (e) {}
+    try { if (typeof endGuideSession === 'function') endGuideSession(); } catch(e) {}
+
+    if (_partialRec) {
+      try {
         const _saveFn = (typeof saveMissionRecordWithPolicy === 'function')
           ? saveMissionRecordWithPolicy
           : (typeof window.saveMissionRecordWithPolicy === 'function' ? window.saveMissionRecordWithPolicy : null);
-        if (_capFn && _saveFn) {
-          Promise.resolve(_capFn()).then(function(rec){
-            if (rec) {
-              _saveFn(rec);
-              console.log('[missionRecords] partial saved on stop (tester2):',
-                rec.comboKey, 'phase=' + (rec.currentPhase || '?'),
-                'partial=' + !!rec.partial);
-            }
-          }).catch(function(e){ console.warn('[tester2] partial save failed:', e); });
+        if (_saveFn) {
+          _saveFn(_partialRec);
+          console.log('[missionRecords] partial saved on stop (tester2):',
+            _partialRec.comboKey, 'phase=' + (_partialRec.currentPhase || '?'),
+            'partial=' + !!_partialRec.partial);
         }
-      }
-    } catch(e) { console.warn('[tester2] partial-on-stop failed:', e); }
+      } catch(e) { console.warn('[tester2] partial save failed:', e); }
+    }
 
     if (peakQ_state) captures.push({ type: 'peak', label: `PEAK Q = ${(peakQ_kPa / 1000).toFixed(2)} kPa`, simTime: peakQ_state.simTime, state: peakQ_state });
     if (peakG_state) captures.push({ type: 'peak', label: `PEAK G = ${peakG.toFixed(2)} g`, simTime: peakG_state.simTime, state: peakG_state });
