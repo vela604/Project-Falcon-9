@@ -323,9 +323,6 @@ try {
         } else if (typeof _d.guidanceStamp === 'string' && _d.guidanceStamp.indexOf('guid-') === 0) {
           console.log('[FF-SELFDIAG] ✓ FF worker running ' + _d.guidanceStamp);
         }
-        if (_d.initTempKProbe && _d.initTempKProbe.payloadVal !== 250.0) {
-          console.warn('[FF-SELFDIAG] ⚠️ payload init should be 250 but is ' + _d.initTempKProbe.payloadVal + ' (pre-20241116-31 code)');
-        }
       }
     } catch(_ce) { console.warn('[FF-SELFDIAG] main handler failed', _ce); }
   });
