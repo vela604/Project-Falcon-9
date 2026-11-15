@@ -182,12 +182,32 @@ function residualBand(opts) {
       if (!salvaged || r.score < salvaged.score) salvaged = { li, score: r.score, r };
     }
     if (salvaged) {
-      say('salvage: fallback had no done tick, reusing best earlier FULL li ' +
-        salvaged.li + ' score ' + f1(salvaged.score));
-      result = { s: { name: 'salvage' }, W: [salvaged.li], best: salvaged, edge: [ctr, ctr + 1] };
-    } else {
-      return fin({ ok: false, reason: 'no done tick: b1=' + b1 + ' li0=' + o.li0 + ' fallback cands ' + cands.length, edge: [b1, b1 == null ? null : b1 + 1], window: [] });
+  say('salvage: fallback had no done tick, reusing best earlier FULL li ' +
+      salvaged.li + ' score ' + f1(salvaged.score));
+  result = { s: { name: 'salvage' }, W: [salvaged.li], best: salvaged, edge: [ctr, ctr + 1] };
+} else {
+  // Final last-try: poore search history (vc = sab cross views) mein se
+  // woh li chuno jiska min(tApo, tPeri) sabse chota ho — matlab apside
+  // crossing ke sabse qareeb — aur uspe ek FULL run karke wahi result
+  // final fallback ke taur par return karo.
+  let closest = null;
+  for (const v of vc.values()) {
+    if (!v || !v.valid || !Number.isFinite(v.tmin)) continue;
+    if (!closest || v.tmin < closest.tmin) closest = v;
+  }
+  if (closest) {
+    say('last-try: closest apside li ' + closest.li + ' tmin ' + f1(closest.tmin) + 's — one FULL run');
+    const rLast = await full(closest.li);
+    if (rLast) {
+      result = { s: { name: 'last-try' }, W: [closest.li],
+                 best: { li: closest.li, score: scoreOf(rLast), r: rLast },
+                 edge: [ctr, ctr + 1] };
     }
+  }
+  if (!result) {
+    return fin({ ok: false, reason: 'no done tick: b1=' + b1 + ' li0=' + o.li0 + ' fallback cands ' + cands.length, edge: [b1, b1 == null ? null : b1 + 1], window: [] });
+  }
+}
   } else {
     W.sort((a, b) => a - b);
     result = { s: { name: 'fallback' }, W, best, edge: [ctr, ctr + 1] };
