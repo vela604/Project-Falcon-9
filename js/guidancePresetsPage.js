@@ -35,7 +35,7 @@
 // anymore — showing them here would be misleading.
 //
 // Extend this list when a new guide becomes the production one.
-const CURRENT_GUIDES = ['leoInsertionV3'];
+const CURRENT_GUIDES = ['leoInsertionV3', 'landbackV1'];
 
 // Get all guides that have a config API AND are still current. Used by
 // the sidebar, the reference section, and the "Add preset" modal's
