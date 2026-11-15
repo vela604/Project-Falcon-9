@@ -428,6 +428,29 @@ function _trackBodyTelemetry(snap) {
     // bodyTag at peak time means ascent-Q maps to 'booster' not 'stage'.
     if (!_peakTracker[i]) {
       _peakTracker[i] = { Q_Pa: 0, Q_t: 0, Q_bodyTag: '?', G: 0, G_t: 0, G_bodyTag: '?' };
+      // Peak inheritance on split — physics.js split handlers set
+      // _inheritPeaksFrom (parent index) + _inheritPeakQ (bool). Rules:
+      //   · peakG: ALWAYS inherited — thrust G propagates mechanically
+      //     through attached structure, no shielding possible.
+      //   · peakQ: inherited only if _inheritPeakQ === true (booster,
+      //     fairing — exposed to atmosphere during ascent). Payload
+      //     disables inheritance because fairing SHIELDS it from Q;
+      //     payload's own peakQ starts at its (near-zero) release state.
+      const _pIdx = Number.isInteger(b._inheritPeaksFrom) ? b._inheritPeaksFrom : -1;
+      if (_pIdx >= 0 && _peakTracker[_pIdx]) {
+        const _pPk = _peakTracker[_pIdx];
+        const _role = _computeBodyTag(b);
+        if (_pPk.G > 0) {
+          _peakTracker[i].G = _pPk.G;
+          _peakTracker[i].G_t = _pPk.G_t;
+          _peakTracker[i].G_bodyTag = _role || 'inherited';
+        }
+        if (b._inheritPeakQ === true && _pPk.Q_Pa > 0) {
+          _peakTracker[i].Q_Pa = _pPk.Q_Pa;
+          _peakTracker[i].Q_t = _pPk.Q_t;
+          _peakTracker[i].Q_bodyTag = _role || 'inherited';
+        }
+      }
     }
     const _qx = Number.isFinite(b.Q_Pa) ? b.Q_Pa
               : (Number.isFinite(b._lastQ_Pa) ? b._lastQ_Pa : 0);

@@ -118,17 +118,17 @@ self.onmessage = (e) => {
 
 
       importScripts(
-        '../../componentLibrary.js?v=1794724644845',
-        '../../customDesign.js?v=1794724644845',
-        '../../fleet.js?v=1794724644845',
-        '../../config.js?v=1794724644845',
-        '../core/massProps.js?v=1794724644845',
-        '../core/environment.js?v=1794724644845',
-        '../core/vehicle.js?v=1794724644845',
-        '../core/rcs.js?v=1794724644845',
-        '../core/physics.js?v=1794724644845',
-        '../core/collision.js?v=1794724644845',
-        '../core/stateBuffer.js?v=1794724644845'
+        '../../componentLibrary.js?v=1794731666014',
+        '../../customDesign.js?v=1794731666014',
+        '../../fleet.js?v=1794731666014',
+        '../../config.js?v=1794731666014',
+        '../core/massProps.js?v=1794731666014',
+        '../core/environment.js?v=1794731666014',
+        '../core/vehicle.js?v=1794731666014',
+        '../core/rcs.js?v=1794731666014',
+        '../core/physics.js?v=1794731666014',
+        '../core/collision.js?v=1794731666014',
+        '../core/stateBuffer.js?v=1794731666014'
       );
 
       bootstrapped = true;
@@ -1207,6 +1207,8 @@ bc.width = b.width;
 bc.accelX = b._lastAccelX || 0;
 bc.accelY = b._lastAccelY || 0;
 bc.q_Pa = b._lastQ_Pa || 0;
+bc._inheritPeaksFrom = b._inheritPeaksFrom;
+bc._inheritPeakQ = b._inheritPeakQ;
     
     out.bodies[i] = bc;
   }

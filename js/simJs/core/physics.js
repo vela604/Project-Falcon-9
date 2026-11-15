@@ -3149,6 +3149,10 @@ body.rcsCmd = (typeof _blankRcsCmd === 'function') ? _blankRcsCmd() : null;
 body.chute = (fairingMember && fairingMember.chuteTypeId) ?
   { typeId: fairingMember.chuteTypeId, deployed: false, progress: 0 } :
   null;
+// Emergency eject keeps fairing attached → payload remains shielded.
+// Same inheritance policy as normal release: peakG yes, peakQ no.
+body._inheritPeaksFrom = state.activeBodyIndex;
+body._inheritPeakQ = false;
 
 state.bodies.push(body);
 // Same active-body flip as releasePayloadOnActiveBody — emergency eject
@@ -3345,6 +3349,12 @@ discarded.isActive = false;
   discarded.collisionGracePeriod = 1.0; // ← ye add karo
   if (typeof ensureRcsState === 'function') ensureRcsState(discarded);
   discarded.payloadId = null; // ← add — booster detach hote hi payload chhod deta hai
+  // Peak-tracker inheritance hint (read by guidance._trackBodyTelemetry).
+  // Booster was fully exposed during ascent → inherits BOTH parent peakQ
+  // and peakG. Guidance copies parent's peak state into this new body's
+  // _peakTracker on first sighting, then continues own tracking.
+  discarded._inheritPeaksFrom = state.activeBodyIndex;
+  discarded._inheritPeakQ = true;
   
   active.members = remaining;
 active.memberFuel = remainingFuelArr;
@@ -3539,6 +3549,10 @@ half.fairingHalf = { record: psRec, side };
 half.chute = psRec.chuteTypeId ?
   { typeId: psRec.chuteTypeId, deployed: false, progress: 0 } :
   null;
+// Fairings were the outer surface during ascent → inherit BOTH parent
+// peakQ and peakG. They experienced the full ascent Q directly.
+half._inheritPeaksFrom = state.activeBodyIndex;
+half._inheritPeakQ = true;
 state.bodies.push(half);
 });
   
@@ -3630,6 +3644,12 @@ body.rx = payloadRx;
   body.collisionGracePeriod = 1.5; // ← ye add karo
   body.payloadBody = { record: pl }; // render marker
   body.emergencyEject = emergency;   // render/cue can key off this later
+  // Payload was SHIELDED by the fairing during ascent → peakQ inheritance
+  // DISABLED. Payload's own peakQ tracking starts from release moment
+  // (which is ~0 in LEO). peakG IS inherited because thrust G propagates
+  // mechanically through the fairing/stage/payload stack — no shielding.
+  body._inheritPeaksFrom = state.activeBodyIndex;
+  body._inheritPeakQ = false;
   state.bodies.push(body);
 // Control transfers to the newly-released payload — active body flips
 // so camera / telemetry / figure panel follow the thing the user just
