@@ -189,10 +189,12 @@ function deleteUserMissionRecord(comboKey) {
 // ---------------------------------------------------------------------------
 window.__guideSession = null;
 
-function startGuideSession(stackId, guideName) {
+function startGuideSession(stackId, guideName, presetId, presetName) {
   window.__guideSession = {
     stackId: stackId,
     guideName: guideName,
+    presetId: presetId || '',
+    presetName: presetName || '',
     comboKey: null,
     comboKeyPromise: null,
     startHash: null,
@@ -203,12 +205,16 @@ function startGuideSession(stackId, guideName) {
   window.__autoSavedForSession = false;
   window.__prevGuidePhase = null;
   window.__prevRunResult = null;
-  window.__guideSession.comboKeyPromise = computeComboKey(stackId, '', guideName)
+  // Phase 1 — comboKey now includes presetId. Same guide+stack but
+  // different preset → different comboKey → separate record slots.
+  // Records then group correctly in the "Recorded Data" panel by preset.
+  window.__guideSession.comboKeyPromise = computeComboKey(stackId, presetId || '', guideName)
     .then(function (k) {
       if (window.__guideSession) window.__guideSession.comboKey = k;
       return k;
     });
-  console.log('[missionRecords] session started:', stackId, guideName);
+  console.log('[missionRecords] session started:', stackId, guideName,
+              presetId ? ('· preset ' + (presetName || presetId)) : '· no preset');
 }
 
 function endGuideSession() {
@@ -237,6 +243,29 @@ function saveMissionRecordWithPolicy(record) {
   
   upsertUserMissionRecord(record);
   return { action: 'saved' };
+}
+
+// Phase 1 — record lookup helpers for the preset panel.
+// A preset's records are all records whose metadata.presetId matches.
+// Grouped by env so the panel can show "1 env" (common) or "N envs"
+// (rare multi-env tuning sessions) cleanly.
+function getMissionRecordsForPreset(presetId) {
+  if (!presetId) return [];
+  return loadMissionRecords().filter(function(r){
+    return r && r.metadata && r.metadata.presetId === presetId;
+  });
+}
+
+function getRecordsGroupedByEnvForPreset(presetId) {
+  const recs = getMissionRecordsForPreset(presetId);
+  const groups = {};
+  recs.forEach(function(r){
+    const env = r.metadata.env || {};
+    const key = JSON.stringify(env);
+    if (!groups[key]) groups[key] = { env: env, records: [] };
+    groups[key].records.push(r);
+  });
+  return Object.values(groups);
 }
 
 window.captureCurrentMissionRecord = async function () {
@@ -311,12 +340,29 @@ window.captureCurrentMissionRecord = async function () {
     metadata: {
       stackId: stk.id,
       stackName: stk.name,
-      presetId: '',
-      presetName: '',
+      presetId: session.presetId || '',
+      presetName: session.presetName || '',
       guideName: session.guideName,
       recordedAt: new Date().toISOString(),
       recordedBy: 'manual',
       durationS: state.simTime,
+      // Phase 1 — env snapshot for panel grouping. Without this, "which env
+      // produced this record" is only recoverable via the one-way comboKey
+      // hash. With it, the panel groups records by exact env cleanly.
+      env: (function(){
+        try {
+          return {
+            wind: (typeof wind !== 'undefined' && wind) ? {
+              enabled: !!wind.enabled,
+              speed: Number.isFinite(wind.speed) ? Math.round(wind.speed*100)/100 : 0,
+              directionDeg: Number.isFinite(wind.directionDeg) ? Math.round(wind.directionDeg*10)/10 : 0,
+            } : { enabled: false, speed: 0, directionDeg: 0 },
+            atmosphere: (typeof atmosphereEnabled !== 'undefined') ? !!atmosphereEnabled : true,
+            slosh: (typeof sloshEnabled !== 'undefined') ? !!sloshEnabled : true,
+            imu: (typeof imuEnabled !== 'undefined') ? !!imuEnabled : false,
+          };
+        } catch (e) { return null; }
+      })(),
     },
     initialStateHash: session.startHash || missionStateHash(body, state.simTime, state.activeBodyIndex),
     initialStateSnapshot: session.startSnapshot || {
@@ -337,6 +383,22 @@ window.captureCurrentMissionRecord = async function () {
     // Empty for pre-v2 captures (agent didn't ship peaks yet).
     peaks: Array.isArray(gs.peaks) ? gs.peaks.slice() : [],
     success: _effSuccess,
+    // Phase 1 — derived quick-access times. Saves preset-card / panel
+    // from re-scanning the events array to show MECO / Booster Land /
+    // Payload Deploy on the spec strip. Null when event absent (e.g.
+    // LEO missions never fire TOUCHDOWN_COMPLETE, so boosterLandS=null).
+    mecoS: (function(){
+      const _e = (events.find(function(x){ return x.name === 'MECO'; }) || {}).t;
+      return Number.isFinite(_e) ? _e : null;
+    })(),
+    boosterLandS: (function(){
+      const _e = (events.find(function(x){ return x.name === 'TOUCHDOWN_COMPLETE'; }) || {}).t;
+      return Number.isFinite(_e) ? _e : null;
+    })(),
+    payloadDeployS: (function(){
+      const _e = (events.find(function(x){ return x.name === 'PAYLOAD_RELEASE'; }) || {}).t;
+      return Number.isFinite(_e) ? _e : null;
+    })(),
     _debug: {
       runResult: gs.runResult,
       gsPhase: gs.phase,
@@ -372,4 +434,6 @@ if (typeof globalThis !== 'undefined') {
   globalThis.deleteUserMissionRecord = deleteUserMissionRecord;
   globalThis.currentPhysicsVersion = currentPhysicsVersion;
   globalThis.isRecordStale = isRecordStale;
+  globalThis.getMissionRecordsForPreset = getMissionRecordsForPreset;
+  globalThis.getRecordsGroupedByEnvForPreset = getRecordsGroupedByEnvForPreset;
 }

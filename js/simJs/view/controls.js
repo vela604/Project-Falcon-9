@@ -1471,7 +1471,14 @@ function _syncMissionRecordSession(status) {
     const stk = (typeof getActiveStack === 'function') ? getActiveStack() : null;
     const guideSel = document.getElementById('guideSelect');
     if (stk && guideSel && guideSel.value && typeof startGuideSession === 'function') {
-      startGuideSession(stk.id, guideSel.value);
+      // Phase 1 — pass the preset context if user selected one via GCM
+      // modal AND it matches the current guide + stack. Mismatch (stale
+      // window.__activePreset from a previous guide/stack) → null presetId
+      // so we don't misattribute a run.
+      const _ap = window.__activePreset;
+      const _valid = _ap && _ap.guideName === guideSel.value && _ap.stackId === stk.id;
+      startGuideSession(stk.id, guideSel.value,
+        _valid ? _ap.id : '', _valid ? _ap.name : '');
     }
     // Round 3 — fetch mission record for prediction overlay. Reset drift
     // flag so this guide sequence starts fresh. comboKey promise resolves
@@ -2164,10 +2171,22 @@ guideSel.addEventListener('change', () => {
   // Preset selection — fills fields only, no auto-apply.
   presetSel.addEventListener('change', () => {
     const id = presetSel.value;
-    if (!id) return;
+    if (!id) { window.__activePreset = null; return; }
     if (typeof getPresetById !== 'function' || typeof validateConstantsStrict !== 'function') return;
     const p = getPresetById(id);
-    if (!p || !p.constants) return;
+    if (!p || !p.constants) { window.__activePreset = null; return; }
+    // Phase 1 — track selected preset for record binding. Persists across
+    // guide starts until user clears / changes preset. startGuideSession
+    // reads this (via _syncMissionRecordSession) to include presetId in
+    // comboKey + record metadata.
+    window.__activePreset = {
+      id: p.id,
+      name: p.name,
+      guideName: p.guideName,
+      stackId: p.stackId,
+      stackName: p.stackName,
+      stackType: p.stackType || '',
+    };
     // Compat (not strict) so a preset saved against an older schema still
     // fills every field. Missing -> filled from default (warning in console);
     // extra -> dropped (warning); only type mismatches on existing keys fall
