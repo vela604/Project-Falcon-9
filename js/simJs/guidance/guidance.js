@@ -265,13 +265,30 @@ function _snapMemberFuel(snap) {
   if (!snap || !Array.isArray(snap.bodies)) return map;
   for (let bi = 0; bi < snap.bodies.length; bi++) {
     const b = snap.bodies[bi];
-    if (!b || !Array.isArray(b.members) || !Array.isArray(b.memberFuel)) continue;
-    for (let i = 0; i < b.members.length; i++) {
-      const m = b.members[i];
-      if (!m || !m.id) continue;
-      const f = Number.isFinite(b.memberFuel[i]) ? b.memberFuel[i] : 0;
-      if (!map[m.id]) map[m.id] = { memberId: m.id, role: m.stageRole || '?', fuel: 0 };
-      map[m.id].fuel += f;
+    if (!b) continue;
+    // Preferred: per-member via b.members[i].id + b.memberFuel[i].
+    // Present in main-thread serializeForMain; also present in FF worker
+    // physics state (via _makeBody / performSeparate preserving arrays).
+    if (Array.isArray(b.members) && Array.isArray(b.memberFuel)) {
+      for (let i = 0; i < b.members.length; i++) {
+        const m = b.members[i];
+        if (!m || !m.id) continue;
+        const fv = Number.isFinite(b.memberFuel[i]) ? b.memberFuel[i] : 0;
+        if (!map[m.id]) map[m.id] = { memberId: m.id, role: m.stageRole || '?', fuel: 0 };
+        map[m.id].fuel += fv;
+      }
+      continue;
+    }
+    // Fallback: body-level aggregate. FF worker may forward only fuelMass
+    // for a body without the per-member arrays (compact snapshot). Key by
+    // bottom-member id when available; fall back to synthetic key by role
+    // so multi-body aggregation still groups correctly across ticks.
+    const _role = (b.members && b.members[0] && b.members[0].stageRole) || 'body';
+    const _mid  = (b.members && b.members[0] && b.members[0].id) || ('_agg_' + _role);
+    const _tf   = Number.isFinite(b.fuelMass) ? b.fuelMass : 0;
+    if (_tf > 0) {
+      if (!map[_mid]) map[_mid] = { memberId: _mid, role: _role, fuel: 0 };
+      map[_mid].fuel += _tf;
     }
   }
   return map;
@@ -298,7 +315,7 @@ function _computeBodyTag(b) {
   return '?';
 }
 
-const _VR_HYST_BAND = 1.0;
+const _VR_HYST_BAND = 2.0;
 const _KARMAN_ALT_M = 100000;
 
 function _trackBodyTelemetry(snap) {
@@ -311,10 +328,15 @@ function _trackBodyTelemetry(snap) {
   for (let i = 0; i < snap.bodies.length; i++) {
     const b = snap.bodies[i];
     if (!b) continue;
+    // Skip peak tracking for crashed/settled bodies — the crash impulse
+    // itself (velocity → 0 in one tick) produces fictitious accelerations
+    // in the 1000+ g range, which are not meaningful physical G loads.
+    // Peak freeze at pre-crash value is the correct behavior.
+    if (b.crashed || b.settled) continue;
     const r = Math.hypot(b.rx, b.ry);
     if (!(r > 1)) continue;
     const alt = r - Re;
-    if (!_bodyTrackState[i]) _bodyTrackState[i] = { karmanAbove: null, vrState: 'neutral' };
+    if (!_bodyTrackState[i]) _bodyTrackState[i] = { karmanAbove: null, vrState: 'neutral', lastApogeeT: -Infinity, lastPerigeeT: -Infinity };
     const ts = _bodyTrackState[i];
 
     // Karman crossing: per-body, both directions.
@@ -335,11 +357,26 @@ function _trackBodyTelemetry(snap) {
     // of each per apsis trip. Circular orbit (vr peaks at ±0.5) → neither
     // fires. State machine also survives FF/export round-trip.
     const vr = (b.vx * b.rx + b.vy * b.ry) / r;
+    // Rate limit: 30 s minimum between same-type apsis events per body.
+    // Hysteresis alone is insufficient because legitimate RCS attitude
+    // pulses during coast can swing vr by ±1-2 m/s on a ~2 s period,
+    // producing rapid legitimate-looking crossings that aren't true
+    // apsis events. The rate limit is a safety net — real orbital
+    // apsides are ~45 min apart, so 30 s blocks nothing physical.
+    const APSE_RATE_LIMIT_S = 30;
     if (vr > _VR_HYST_BAND) {
-      if (ts.vrState === 'descending') logEvent('PERIGEE_CROSS', T);
+      if (ts.vrState === 'descending' &&
+          (!Number.isFinite(ts.lastPerigeeT) || T - ts.lastPerigeeT >= APSE_RATE_LIMIT_S)) {
+        logEvent('PERIGEE_CROSS', T);
+        ts.lastPerigeeT = T;
+      }
       ts.vrState = 'climbing';
     } else if (vr < -_VR_HYST_BAND) {
-      if (ts.vrState === 'climbing') logEvent('APOGEE_CROSS', T);
+      if (ts.vrState === 'climbing' &&
+          (!Number.isFinite(ts.lastApogeeT) || T - ts.lastApogeeT >= APSE_RATE_LIMIT_S)) {
+        logEvent('APOGEE_CROSS', T);
+        ts.lastApogeeT = T;
+      }
       ts.vrState = 'descending';
     }
 
