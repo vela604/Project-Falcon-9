@@ -59,7 +59,7 @@ const Guidance = (function () {
     _lastMeasuredSnapshot = measure(rawSnapshot);
     _lastSimTime = _lastMeasuredSnapshot.simTime || 0;
     tick(_lastMeasuredSnapshot);
-    _trackBodyTelemetry(_lastRawSnapshot);
+    _trackBodyTelemetry(_lastRawSnapshot || _lastMeasuredSnapshot);
 
     if (_activeGuide && GUIDES[_activeGuide]) {
       const g = GUIDES[_activeGuide];
@@ -67,7 +67,25 @@ const Guidance = (function () {
       const ph = st && st.phase;
       if (ph && ph !== _lastSeenPhase) {
         const nowT = _lastSimTime;
-        const fuelNow = _snapMemberFuel(_lastRawSnapshot);
+        const fuelNow = _snapMemberFuel(_lastRawSnapshot || _lastMeasuredSnapshot);
+        // One-shot FF-PHASE-DIAG — proves this block runs in the current
+        // context (FF worker vs main thread). Includes fuelNow entry count
+        // so user can confirm data is actually populated on first phase
+        // transition. Auto-silent after first fire. Logs to whichever
+        // worker's console user is inspecting.
+        if (typeof globalThis !== 'undefined' && !globalThis._phaseDiagDone) {
+          globalThis._phaseDiagDone = true;
+          const _snapForDiag = _lastRawSnapshot || _lastMeasuredSnapshot;
+          const _b0 = _snapForDiag && _snapForDiag.bodies && _snapForDiag.bodies[0];
+          try {
+            console.log('[PHASE-DIAG] phase=' + ph +
+              ' fuelNow_entries=' + Object.keys(fuelNow).length +
+              ' members_len=' + (_b0 && Array.isArray(_b0.members) ? _b0.members.length : 'n/a') +
+              ' memberFuel_len=' + (_b0 && Array.isArray(_b0.memberFuel) ? _b0.memberFuel.length : 'n/a') +
+              ' fuelMass=' + (_b0 && Number.isFinite(_b0.fuelMass) ? _b0.fuelMass.toFixed(1) : 'n/a') +
+              ' rawSnapshotPresent=' + (!!_lastRawSnapshot));
+          } catch(_e){}
+        }
         if (_lastSeenPhase && _phaseLog[_lastSeenPhase]) {
           _phaseLog[_lastSeenPhase].endT = nowT;
           _phaseLog[_lastSeenPhase].fuelEnd = fuelNow;
@@ -270,7 +288,10 @@ function _snapMemberFuel(snap) {
     // Present in main-thread serializeForMain; also present in FF worker
     // physics state (via _makeBody / performSeparate preserving arrays).
     if (Array.isArray(b.members) && Array.isArray(b.memberFuel)) {
-      for (let i = 0; i < b.members.length; i++) {
+      // Bound by min() so a mid-transition body whose memberFuel[] still
+      // holds stale pre-separation slots cannot produce phantom entries.
+      const _n = Math.min(b.members.length, b.memberFuel.length);
+      for (let i = 0; i < _n; i++) {
         const m = b.members[i];
         if (!m || !m.id) continue;
         const fv = Number.isFinite(b.memberFuel[i]) ? b.memberFuel[i] : 0;
