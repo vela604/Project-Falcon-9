@@ -2447,15 +2447,51 @@ if (!faded) {
           ? window.captureCurrentMissionRecord
           : (typeof captureCurrentMissionRecord === 'function' ? captureCurrentMissionRecord : null);
         if (_capFn) {
-          const _r = _capFn();
-          // captureCurrentMissionRecord may be async (Promise) or sync
-          // (record). Handle both.
+          // DIAG: gs state right before capture. Reveals if guide is
+          // still active and what phase/runResult it reports.
+          try {
+            const _gsD = (typeof Guidance !== 'undefined' && Guidance.getGuideStatus) ? Guidance.getGuideStatus() : null;
+            console.log('[tester2] capture-pre-diag: gs.active=' + (_gsD && _gsD.active),
+              'gs.phase=' + (_gsD && _gsD.phase),
+              'gs.runResult=' + (_gsD && _gsD.runResult),
+              'session=' + (window.__guideSession ? (window.__guideSession.stackId + '|' + window.__guideSession.guideName) : 'none'));
+          } catch(_e){}
+
+          let _r = _capFn();
           _partialRec = (_r && typeof _r.then === 'function') ? await _r : _r;
-          // Force partial:true — mid-flight capture, runResult was
-          // in-progress, but by now stopGuide already cleared state so
-          // capture may report success:null / partial:false. User stopped
-          // mid-flight, record IS partial.
           if (_partialRec) _partialRec.partial = true;
+
+          // DIAG: what capture returned
+          try {
+            console.log('[tester2] capture-result: comboKey=' + (_partialRec && _partialRec.comboKey),
+              'phase=' + (_partialRec && _partialRec.currentPhase),
+              'phasesLen=' + (_partialRec && _partialRec.phases && _partialRec.phases.length),
+              'eventsLen=' + (_partialRec && _partialRec.events && _partialRec.events.length),
+              'runResult_inRecord=' + (_partialRec && _partialRec._debug && _partialRec._debug.runResult));
+          } catch(_e){}
+
+          // RETRY: comboKey is computed asynchronously (needs
+          // GuidanceBridge.requestGuideConfig round-trip). If first
+          // capture returned before comboKey resolved, wait 200ms and
+          // retry once. Guide state still live at this point (stopGuide
+          // hasn't run yet).
+          if (_partialRec && !_partialRec.comboKey) {
+            console.warn('[tester2] capture: comboKey missing, retrying after 200ms');
+            await new Promise(function(res){ setTimeout(res, 200); });
+            try {
+              let _r2 = _capFn();
+              const _rec2 = (_r2 && typeof _r2.then === 'function') ? await _r2 : _r2;
+              if (_rec2) {
+                _rec2.partial = true;
+                try {
+                  console.log('[tester2] capture-retry-result: comboKey=' + _rec2.comboKey,
+                    'phase=' + _rec2.currentPhase,
+                    'phasesLen=' + (_rec2.phases && _rec2.phases.length));
+                } catch(_e){}
+                if (_rec2.comboKey) _partialRec = _rec2;
+              }
+            } catch(e2) { console.warn('[tester2] retry failed:', e2); }
+          }
         }
       } catch(e) { console.warn('[tester2] pre-stop capture failed:', e); }
     }
