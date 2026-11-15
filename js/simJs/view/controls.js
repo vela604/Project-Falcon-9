@@ -1650,14 +1650,14 @@ function _syncMissionRecordSession(status) {
 // ─────────────────────────────────────────────────────────────────────
 (function(){
   const SPECIAL = {
-    'LIFTOFF':           { icon: '🚀', label: 'Liftoff' },
-    'MAX_Q':             { icon: '🌪', label: 'Max Q' },
-    'MECO':              { icon: '🔥', label: 'MECO' },
-    'FAIRING_DEPLOY':    { icon: '💥', label: 'Fairing Split' },
-    'PAYLOAD_RELEASE':   { icon: '📦', label: 'Payload Deploy' },
-    'LANDING_BURN':      { icon: '🔥', label: 'Landing Burn' },
-    'TOUCHDOWN_COMPLETE':{ icon: '🎯', label: 'Touchdown' },
-    'IMPACT':            { icon: '💥', label: 'Impact' },
+    'LIFTOFF':            { label: 'LIFTOFF' },
+    'MAX_Q':              { label: 'MAX Q' },
+    'MECO':               { label: 'MECO' },
+    'FAIRING_DEPLOY':     { label: 'FAIRING SPLIT' },
+    'PAYLOAD_RELEASE':    { label: 'PAYLOAD DEPLOY' },
+    'LANDING_BURN':       { label: 'LANDING BURN' },
+    'TOUCHDOWN_COMPLETE': { label: 'TOUCHDOWN' },
+    'IMPACT':             { label: 'IMPACT' },
   };
   let _lastT = 0;
   let _lastSim = -1;
@@ -1668,14 +1668,41 @@ function _syncMissionRecordSession(status) {
     const s = (t % 60).toFixed(1).padStart(4, '0');
     return 'T+' + m + ':' + s;
   }
+  function _fmtHMSEvent(tSec) {
+    if (!Number.isFinite(tSec) || tSec < 0) tSec = 0;
+    const s = Math.floor(tSec);
+    const hh = String(Math.floor(s / 3600)).padStart(2, '0');
+    const mm = String(Math.floor((s % 3600) / 60)).padStart(2, '0');
+    const ss = String(s % 60).padStart(2, '0');
+    return 'T+' + hh + ':' + mm + ':' + ss;
+  }
+  function _showEventToast(label, tSec) {
+    const host = document.getElementById('eventToastHost');
+    if (!host) return;
+    const box = document.createElement('div');
+    box.className = 'event-toast';
+    const lbl = document.createElement('div');
+    lbl.className = 'et-label';
+    lbl.textContent = label;
+    const time = document.createElement('div');
+    time.className = 'et-time';
+    time.textContent = _fmtHMSEvent(tSec);
+    box.appendChild(lbl);
+    box.appendChild(time);
+    host.appendChild(box);
+    setTimeout(function(){
+      box.classList.add('leaving');
+      setTimeout(function(){
+        if (box.parentNode) box.parentNode.removeChild(box);
+      }, 350);
+    }, 2200);
+  }
   function _drain() {
     if (_busy || !_queue.length) return;
     _busy = true;
-    const msg = _queue.shift();
-    if (typeof window.showASDSToast === 'function') {
-      window.showASDSToast(msg, true);
-    }
-    setTimeout(function(){ _busy = false; _drain(); }, 1200);
+    const ev = _queue.shift();
+    _showEventToast(ev.label, ev.t);
+    setTimeout(function(){ _busy = false; _drain(); }, 1400);
   }
   window._checkSpecialEventsToasts = function(status) {
     if (!status || !status.active) { _lastT = 0; _lastSim = -1; return; }
@@ -1689,7 +1716,7 @@ function _syncMissionRecordSession(status) {
       _lastT = e.t;
       const cfg = SPECIAL[e.name];
       if (!cfg) return;
-      _queue.push(cfg.icon + ' ' + cfg.label + '  ·  ' + _fmtT(e.t));
+      _queue.push({ label: cfg.label, t: e.t });
       _drain();
     });
   };

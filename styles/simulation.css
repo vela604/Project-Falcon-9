@@ -1949,3 +1949,71 @@ canvas.mini-graph { width: 100%; height: 60px; background: var(--bg); border-rad
   font-style: italic;
   opacity: 0.60;
 }
+
+
+/* ============================================================
+   Special-event toast — top-center box, mirrors directionHUD
+   palette (cyan time / gold label / dark glass panel).
+   No emoji, no info banner — dedicated mission-event visual.
+   ============================================================ */
+#eventToastHost {
+  position: absolute;
+  top: 130px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 28;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: center;
+}
+.event-toast {
+  background: rgba(13, 20, 36, 0.94);
+  -webkit-backdrop-filter: blur(10px);
+          backdrop-filter: blur(10px);
+  border: 1px solid var(--panel-border);
+  border-top-color: rgba(190, 220, 255, 0.32);
+  border-radius: 10px;
+  padding: 8px 22px 10px;
+  box-shadow:
+    0 8px 24px rgba(0, 0, 0, 0.5),
+    inset 0 1px 0 rgba(190, 220, 255, 0.06);
+  font-family: var(--font-mono);
+  text-align: center;
+  min-width: 170px;
+  opacity: 0;
+  transform: translateY(-8px);
+  animation: eventToastIn 0.35s ease-out forwards;
+  will-change: opacity, transform;
+}
+.event-toast.leaving {
+  animation: eventToastOut 0.35s ease-in forwards;
+}
+.event-toast .et-label {
+  color: var(--gold);
+  font-size: 10.5px;
+  letter-spacing: 1.6px;
+  text-transform: uppercase;
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+.event-toast .et-time {
+  color: var(--cyan);
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+}
+@keyframes eventToastIn {
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes eventToastOut {
+  from { opacity: 1; transform: translateY(0); }
+  to   { opacity: 0; transform: translateY(-8px); }
+}
+@media (max-width: 760px) {
+  #eventToastHost { top: 108px; gap: 6px; }
+  .event-toast { padding: 6px 16px 8px; min-width: 140px; }
+  .event-toast .et-label { font-size: 9.5px; letter-spacing: 1.2px; }
+  .event-toast .et-time { font-size: 14px; }
+}
