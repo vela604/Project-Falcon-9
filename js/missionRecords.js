@@ -294,7 +294,28 @@ window.captureCurrentMissionRecord = async function () {
   const body = state.bodies[activeIdx];
   if (!body) return { error: 'no active body' };
 
-  const gs = (typeof window !== 'undefined' && window.__lastGuideStatus) || {};
+  // Prefer the worker-pushed cached status (set by controls.js's
+  // onGuidanceStatus). Fall back to a LIVE Guidance.getGuideStatus() call
+  // when the cache is missing or stale — needed on:
+  //   1. Single-thread pages (guidance-tester2.html) where no worker
+  //      pushes status, so __lastGuideStatus never gets set.
+  //   2. Fresh page loads before the first worker tick has arrived.
+  //   3. Force-captured captures where the caller triggered capture
+  //      without a full status pipeline running.
+  // Zero side effects: only reads, does not cache the live result back
+  // into __lastGuideStatus (worker push should own that field).
+  let gs = (typeof window !== 'undefined' && window.__lastGuideStatus) || null;
+  if (!gs || !gs.active) {
+    try {
+      if (typeof Guidance !== 'undefined' && typeof Guidance.getGuideStatus === 'function') {
+        const _live = Guidance.getGuideStatus();
+        if (_live && _live.active) gs = _live;
+      }
+    } catch (e) {
+      // Guidance lookup failed — fall through with gs as-is (null).
+    }
+  }
+  if (!gs) gs = {};
   if (!gs.active) return { error: 'no active guide' };
 
   const session = window.__guideSession;
