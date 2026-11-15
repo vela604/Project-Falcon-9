@@ -56,24 +56,24 @@ self.onmessage = async (e) => {
     // Physics side loads first (defines state, buildPodEntries, etc.).
     // Guidance modules use IIFE scoping, so no namespace collisions with
     // physics.js's module-level helpers.
-    const _FFW_CACHE_VERSION = '20241117-18';  // BUMP: on ANY guidance/* change. Sed pattern below MUST match both 20241115-* and 20241117-18* prefixes.
+    const _FFW_CACHE_VERSION = '20241117-19';  // BUMP: on ANY guidance/* change. Sed pattern below MUST match both 20241115-* and 20241117-19* prefixes.
 importScripts(
-  '../../componentLibrary.js?v=20241117-18',
-  '../../customDesign.js?v=20241117-18',
-  '../../fleet.js?v=20241117-18',
-  '../../config.js?v=20241117-18',
-  '../core/massProps.js?v=20241117-18',
-  '../core/environment.js?v=20241117-18',
-  '../core/vehicle.js?v=20241117-18',
-  '../core/rcs.js?v=20241117-18',
-  '../core/physics.js?v=20241117-18',
-  '../core/collision.js?v=20241117-18',
-  '../core/stateBuffer.js?v=20241117-18',
-  '../guidance/imu.js?v=20241117-18',
-  '../guidance/derivation.js?v=20241117-18',
-  '../guidance/guidercs.js?v=20241117-18',
-  '../guidance/guidance-blocks.js?v=20241117-18',
-  '../guidance/guidance.js?v=20241117-18'
+  '../../componentLibrary.js?v=20241117-19',
+  '../../customDesign.js?v=20241117-19',
+  '../../fleet.js?v=20241117-19',
+  '../../config.js?v=20241117-19',
+  '../core/massProps.js?v=20241117-19',
+  '../core/environment.js?v=20241117-19',
+  '../core/vehicle.js?v=20241117-19',
+  '../core/rcs.js?v=20241117-19',
+  '../core/physics.js?v=20241117-19',
+  '../core/collision.js?v=20241117-19',
+  '../core/stateBuffer.js?v=20241117-19',
+  '../guidance/imu.js?v=20241117-19',
+  '../guidance/derivation.js?v=20241117-19',
+  '../guidance/guidercs.js?v=20241117-19',
+  '../guidance/guidance-blocks.js?v=20241117-19',
+  '../guidance/guidance.js?v=20241117-19'
 );
     // [FF-BOOT] — confirm CONFIG.LANDING_PADS loaded from importScripts.
     // N=3 for fresh boot (LZ-1/2/3 defaults). Run-handler then overwrites
@@ -102,7 +102,6 @@ importScripts(
           cacheBust: _FFW_CACHE_VERSION,
           guidanceStamp: _diagStamp,
           hasGuidanceBuildStamp: (typeof GUIDANCE_BUILD_STAMP !== 'undefined'),
-          hasSkinEquilibriumK: (typeof skinEquilibriumK === 'function'),
           hasTrackTelemetry: (typeof _trackBodyTelemetry === 'function'),
           initTempKProbe: _diagInit,
         });

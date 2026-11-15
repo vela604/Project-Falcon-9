@@ -1317,52 +1317,11 @@ function deriveForState(snapshot, idx, overrideBody, gimbalOverrideDeg, gimbalOv
   // Skin equilibrium temperature (K) — mirror of environment.js's version.
   // Guidance worker doesn't load environment.js, so this local copy uses
   // the same _ATM model it already carries. Used by guidance.js peak-temp
-  // tracker for peaks[].peakTemp_K per body. Body-level only (no member
   // weighting) — that stays in telemetry.js on the main thread.
-  function skinEquilibriumK(altM, speedRelMps, heatingScale) {
-    heatingScale = Number.isFinite(heatingScale) ? heatingScale : 1;
-    const alt = Math.max(0, altM);
-    const atm = _ATM.state(alt);
-    const T_air = atm.T;
-    const rho = atm.rho;
-    const hasAir = rho > 1e-9;
-    const a_sound = Math.sqrt(1.4 * 287.05287 * T_air);
-    const M = (hasAir && a_sound > 0 && speedRelMps > 0) ? speedRelMps / a_sound : 0;
-    const T_rec = hasAir ? Math.min(3000, T_air * (1 + 0.9 * 0.2 * M * M)) : 0;
-    const T_space = 250;
-    let T_env;
-    if (!hasAir) T_env = T_space;
-    else if (alt < 80000) T_env = T_air;
-    else if (alt > 120000) T_env = T_space;
-    else T_env = T_air + (T_space - T_air) * (alt - 80000) / 40000;
-    let h_conv;
-    if (!hasAir) h_conv = 0;
-    else {
-      const forced = 0.03 * rho * Math.max(0, speedRelMps) * 1000 * heatingScale;
-      const natural = (rho > 1e-4) ? 5 * heatingScale : 0;
-      h_conv = Math.max(forced, natural);
-    }
-    const sigma = 5.670374e-8;
-    const eps = 0.85;
-    const T_env_4 = T_env * T_env * T_env * T_env;
-    const rhs = h_conv * T_rec + eps * sigma * T_env_4;
-    let T = Math.max(T_env, Math.min(T_rec > 0 ? T_rec : T_env, 500));
-    for (let i = 0; i < 8; i++) {
-      const T2 = T * T;
-      const f = h_conv * T + eps * sigma * T2 * T2 - rhs;
-      const df = h_conv + 4 * eps * sigma * T * T * T;
-      if (df <= 1e-12) break;
-      T -= f / df;
-      if (T < 4) T = 4;
-      if (T > 3000) T = 3000;
-    }
-    return T;
-  }
-
+  
   return {
     // Stack data
     setStackData, getStackData, getMemberRecord, getTypeById, getEnv, getStackPayloadMass,
-    skinEquilibriumK,
     // Derivation
     // Derivation
 derive, deriveAllBodies, deriveForState, gridFinAero,
