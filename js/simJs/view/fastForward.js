@@ -309,6 +309,27 @@ const _wBuildStampFF = (typeof window !== 'undefined' && window.__WORKER_BUILD_S
   || ('w_' + Date.now());
 try { if (typeof window !== 'undefined') window.__WORKER_BUILD_STAMP = _wBuildStampFF; } catch(_e){}
 const w = new Worker('js/simJs/threads/fastforward.worker.js?v=' + _wBuildStampFF);
+// Catch FF worker self-diagnostics and log to MAIN console (SPCK visible).
+// Ground truth proof of which guidance.js FF actually loaded — bypasses
+// Chrome's aggressive worker file cache uncertainty.
+try {
+  w.addEventListener('message', function(_diagEv) {
+    try {
+      const _d = _diagEv && _diagEv.data;
+      if (_d && _d.type === 'ffSelfDiag') {
+        console.log('[FF-SELFDIAG]', JSON.stringify(_d));
+        if (_d.guidanceStamp === 'MISSING') {
+          console.warn('[FF-SELFDIAG] ⚠️ FF worker running PRE-20241116-33 guidance.js (cache issue confirmed)');
+        } else if (typeof _d.guidanceStamp === 'string' && _d.guidanceStamp.indexOf('guid-') === 0) {
+          console.log('[FF-SELFDIAG] ✓ FF worker running ' + _d.guidanceStamp);
+        }
+        if (_d.initTempKProbe && _d.initTempKProbe.payloadVal !== 250.0) {
+          console.warn('[FF-SELFDIAG] ⚠️ payload init should be 250 but is ' + _d.initTempKProbe.payloadVal + ' (pre-20241116-31 code)');
+        }
+      }
+    } catch(_ce) { console.warn('[FF-SELFDIAG] main handler failed', _ce); }
+  });
+} catch(_le) { console.warn('[FF-SELFDIAG] addEventListener failed', _le); }
     _state.ffWorker = w;
     const _baseSimTime = physData.simTime;
     // ── FF diag: exact base + duration + final ──

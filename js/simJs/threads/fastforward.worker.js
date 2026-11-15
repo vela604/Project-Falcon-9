@@ -80,6 +80,33 @@ importScripts(
     // with captured pad set (N=4 for ASDS missions). Persistent diagnostic.
     try {
       console.log('[FF-BOOT] CONFIG.LANDING_PADS after importScripts:', (CONFIG.LANDING_PADS || []).length, 'pads');
+      // PostMessage-based self-diag — reaches main thread (worker console
+      // invisible in SPCK). Ground truth: which guidance.js version is
+      // ACTUALLY running in FF, regardless of cache.
+      try {
+        const _diagStamp = (typeof GUIDANCE_BUILD_STAMP !== 'undefined') ? GUIDANCE_BUILD_STAMP : 'MISSING';
+        const _diagInit = (function(){
+          try {
+            // Reproduce _initTempK computation to detect pre/post patch
+            const bPayload = { payloadBody: {} };
+            const bNormal = { payloadBody: null };
+            return {
+              payloadVal: bPayload.payloadBody ? 250.0 : 288.15,
+              normalVal: bNormal.payloadBody ? 250.0 : 288.15,
+            };
+          } catch(e) { return { error: e.message }; }
+        })();
+        self.postMessage({
+          type: 'ffSelfDiag',
+          stage: 'boot',
+          cacheBust: _FFW_CACHE_VERSION,
+          guidanceStamp: _diagStamp,
+          hasGuidanceBuildStamp: (typeof GUIDANCE_BUILD_STAMP !== 'undefined'),
+          hasSkinEquilibriumK: (typeof skinEquilibriumK === 'function'),
+          hasTrackTelemetry: (typeof _trackBodyTelemetry === 'function'),
+          initTempKProbe: _diagInit,
+        });
+      } catch(_e) { console.warn('[FF-SELFDIAG] postMessage failed', _e); }
       // BUILD-STAMP diagnostic — ground truth for "which guidance.js did FF
       // worker actually load". If your log shows OLD stamp values, browser
       // is still serving cached worker files (chrome://settings/clearBrowserData
