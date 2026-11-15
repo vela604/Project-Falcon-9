@@ -22,7 +22,7 @@
 //   - guidercs.js   → GuideRCS.*     : torque → RCS duty tables
 // ============================================================================
 
-const GUIDANCE_BUILD_STAMP = 'guid-20241116-34';
+const GUIDANCE_BUILD_STAMP = 'guid-20241117-35';
 const Guidance = (function () {
   let _physicsSend = null; // (msg) => void, wired by guidance.worker.js
   // Mission event log — non-phase-transition moments the phase timeline
@@ -702,12 +702,17 @@ function setActiveGuide(name) {
       for (const idxStr in _peakTracker) {
         const idx = parseInt(idxStr, 10);
         const pk = _peakTracker[idx];
+        const _bt = (_lastMeasuredSnapshot && _lastMeasuredSnapshot.bodies && _lastMeasuredSnapshot.bodies[idx]) || null;
+        const _rsp = _readSkinPeakTemp(_bt);
+        const _useTracker = (_rsp.t <= 0 && pk && Number.isFinite(pk.Temp_K) && pk.Temp_K > 0);
+        const _tempKFinal = _useTracker ? pk.Temp_K : _rsp.K;
+        const _tempTFinal = _useTracker ? (Number.isFinite(pk.Temp_t) ? pk.Temp_t : 0) : _rsp.t;
         out.peaks.push({
           bodyIdx: idx,
           peakQ_kPa: pk.Q_Pa / 1000, peakQ_t: pk.Q_t, peakQ_bodyTag: pk.Q_bodyTag || '?',
           peakG: pk.G, peakG_t: pk.G_t, peakG_bodyTag: pk.G_bodyTag || '?',
-          peakTemp_K: _readSkinPeakTemp((_lastMeasuredSnapshot && _lastMeasuredSnapshot.bodies && _lastMeasuredSnapshot.bodies[idx]) || null).K,
-          peakTemp_t: _readSkinPeakTemp((_lastMeasuredSnapshot && _lastMeasuredSnapshot.bodies && _lastMeasuredSnapshot.bodies[idx]) || null).t,
+          peakTemp_K: _tempKFinal,
+          peakTemp_t: _tempTFinal,
         });
       }
     }
