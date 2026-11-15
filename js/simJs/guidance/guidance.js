@@ -350,13 +350,18 @@ function _trackBodyTelemetry(snap) {
     if (!_peakTracker[i]) {
       _peakTracker[i] = { Q_Pa: 0, Q_t: 0, Q_bodyTag: '?', G: 0, G_t: 0, G_bodyTag: '?' };
     }
-    const Q = Number.isFinite(b.Q_Pa) ? b.Q_Pa : 0;
-    if (Q > _peakTracker[i].Q_Pa) {
-      _peakTracker[i].Q_Pa = Q;
+    const _qx = Number.isFinite(b.Q_Pa) ? b.Q_Pa
+              : (Number.isFinite(b._lastQ_Pa) ? b._lastQ_Pa : 0);
+    if (_qx > _peakTracker[i].Q_Pa) {
+      _peakTracker[i].Q_Pa = _qx;
       _peakTracker[i].Q_t = T;
       _peakTracker[i].Q_bodyTag = _computeBodyTag(b);
     }
-    const G = Math.hypot(b.ax || 0, b.ay || 0) / g0;
+    const _ax = Number.isFinite(b.ax) ? b.ax
+              : (Number.isFinite(b._lastAccelX) ? b._lastAccelX : 0);
+    const _ay = Number.isFinite(b.ay) ? b.ay
+              : (Number.isFinite(b._lastAccelY) ? b._lastAccelY : 0);
+    const G = Math.hypot(_ax, _ay) / g0;
     if (G > _peakTracker[i].G) {
       _peakTracker[i].G = G;
       _peakTracker[i].G_t = T;
