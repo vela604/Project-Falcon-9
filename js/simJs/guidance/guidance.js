@@ -448,14 +448,7 @@ function _trackBodyTelemetry(snap) {
     // (full stack) and becomes 'stage' after separation; capturing
     // bodyTag at peak time means ascent-Q maps to 'booster' not 'stage'.
     if (!_peakTracker[i]) {
-      const _isPayloadBody = !!(
-        b.payloadBody ||
-        (!b.fairingHalf &&
-         Array.isArray(b.members) && b.members.length === 0 &&
-         Number.isFinite(b.dryMass) && b.dryMass > 0)
-      );
-      const _initTempK = (_isPayloadBody ? 250.0 : 288.15);
-      _peakTracker[i] = { Q_Pa: 0, Q_t: 0, Q_bodyTag: '?', G: 0, G_t: 0, G_bodyTag: '?', Temp_K: _initTempK, Temp_t: 0, Temp_lagged: _initTempK };
+      _peakTracker[i] = { Q_Pa: 0, Q_t: 0, Q_bodyTag: '?', G: 0, G_t: 0, G_bodyTag: '?' };
       // DIAG: log every tracker creation — reveals WHEN each body's
       // tracker initializes. Body 0 reinit at split moment = tracker
       // reset bug confirmed. Body 4 payload init with 288.15 = payloadBody
@@ -466,8 +459,6 @@ function _trackBodyTelemetry(snap) {
           globalThis.__trackerInitLog.push({
             bodyIdx: i, t: T,
             role: _computeBodyTag(b),
-            initTempK: _initTempK,
-            isPayloadBody: _isPayloadBody,
             payloadBodyPresent: !!b.payloadBody,
             membersLen: (b.members ? b.members.length : 0),
             dryMass: (Number.isFinite(b.dryMass) ? b.dryMass : null),
@@ -496,15 +487,6 @@ function _trackBodyTelemetry(snap) {
           _peakTracker[i].Q_Pa = _pPk.Q_Pa;
           _peakTracker[i].Q_t = _pPk.Q_t;
           _peakTracker[i].Q_bodyTag = _role || 'inherited';
-          // Peak temp bundled with Q — same shielding rule (fairing
-          // shields payload from atmospheric heating like it does from Q).
-          if (Number.isFinite(_pPk.Temp_K) && _pPk.Temp_K > 0) {
-            _peakTracker[i].Temp_K = _pPk.Temp_K;
-            _peakTracker[i].Temp_t = _pPk.Temp_t;
-            // Carry lagged thermal state from parent — new body continues
-            // from parent's current temp, avoids cold-start catch-up lag.
-            _peakTracker[i].Temp_lagged = Number.isFinite(_pPk.Temp_lagged) ? _pPk.Temp_lagged : _pPk.Temp_K;
-          }
         }
       }
     }
@@ -524,10 +506,6 @@ function _trackBodyTelemetry(snap) {
           if (_pPkC.Q_Pa > _peakTracker[i].Q_Pa) {
             _peakTracker[i].Q_Pa = _pPkC.Q_Pa;
             _peakTracker[i].Q_t = _pPkC.Q_t;
-          }
-          if (Number.isFinite(_pPkC.Temp_K) && _pPkC.Temp_K > _peakTracker[i].Temp_K) {
-            _peakTracker[i].Temp_K = _pPkC.Temp_K;
-            _peakTracker[i].Temp_t = _pPkC.Temp_t;
           }
         }
       }
@@ -551,8 +529,6 @@ function _trackBodyTelemetry(snap) {
     }
     // Skin temp peak — body-level equilibrium at each tick. Atmospheric
     // heating drives the value; LEO bodies at rho ~0 settle to 250 K.
-    if (!Number.isFinite(_peakTracker[i].Temp_K)) _peakTracker[i].Temp_K = 0;
-    if (!Number.isFinite(_peakTracker[i].Temp_t)) _peakTracker[i].Temp_t = 0;
     const _omegaE = env.EARTH_OMEGA || 0;
     const _svx = _omegaE * b.ry;
     const _svy = -_omegaE * b.rx;
