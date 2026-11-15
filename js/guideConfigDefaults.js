@@ -653,6 +653,48 @@ leoInsertionV3: _mkDefault(
 };
 
 // ---------------------------------------------------------------------------
+// Second landbackV1 default — SERENO FLUX profile.
+// Clones landbackV1's baseline constants, overrides the SERENO FLUX values.
+// Placed AFTER the object literal so `GUIDE_DEFAULT_PRESETS.landbackV1` is
+// fully resolved when this runs (avoids TDZ inside the literal itself).
+// Adding as a second default keeps multi-default UI working: sidebar count,
+// main pane card, diff picker, GCM modal preset dropdown all show both.
+// ---------------------------------------------------------------------------
+(function addSerenoFluxLandback() {
+  const base = JSON.parse(JSON.stringify(GUIDE_DEFAULT_PRESETS.landbackV1.constants));
+  // SERENO FLUX ascent overrides (from search-engine result)
+  base.ascent.MECO_TARGET_BOOSTER_FUEL_KG = 61333;
+  base.ascent.PUSH_MAX_GIMBAL_DEG = 0.64;
+  // SERENO FLUX insertion overrides
+  base.insertion.STAGE_BURN_AOA_BIAS_DEG = 2.7796;
+  base.insertion.CIRC_TRIGGER_LEAD_S = 1.9125;
+  // SERENO FLUX RTLS tune (booster return to LZ-1)
+  base.rtls.LANDING_BURN_ALT_KM = 2.47;
+  base.rtls.ENTRY_BURN_IMPACT_TARGET_M = -752.76;
+  // Ensure required landback keys present (cloned from baseline already has
+  // them, so this is belt-and-suspenders for future baseline edits)
+  if (!base.mission) base.mission = { TARGET_LANDING_PAD: 'LZ-1' };
+  if (!base.rtls.MISSION_TYPE) base.rtls.MISSION_TYPE = 'RTLS';
+
+  GUIDE_DEFAULT_PRESETS['landbackV1-serenoFlux05'] = _mkDefault(
+    'landbackV1',
+    'F9 Landback — SERENO FLUX — ideal scale 0.5',
+    'SERENO FLUX search result — ideal scale 0.5 configuration. ' +
+    'Combines SERENO FLUX-optimal LEO ascent + insertion with RTLS booster ' +
+    'return to LZ-1. MECO 61333 kg, G 0.64, stage-burn bias 2.7796, ' +
+    'circularize lead 1.9125 s — all found by search (not hand-tuned). ' +
+    'Booster return tuned for RTLS landing burn at 2.47 km alt, entry burn ' +
+    'impact target -752.76 m (LZ-1).',
+    base,
+    ['full-mission', 'sereno-flux', 'rtls-tuned', 'search-result', 'ideal-scale-0.5'],
+    135,
+    586,
+    'default:landbackV1-serenoFlux05'
+  );
+})();
+
+
+// ---------------------------------------------------------------------------
 // GUIDE_IMPORTANT_FIELDS — curated short list per guide. Path syntax uses
 // dot notation for nested values. Order in the array = order in the UI.
 //
