@@ -99,7 +99,7 @@ const GUIDE_PHASE_SEQUENCES = {
     'COAST_ROTATE_2', 'COAST_HOLD_2', 'DONE',
     'SUICIDE_ROTATE', 'SUICIDE_BURN', 'SUICIDE_COAST',
   ],
-  landbackV1: [
+  orbitalMissionGNCV1: [
     'ASCENT', 'MECO_SPOOL', 'SEPARATED_AXIAL', 'STAGE_BURN', 'RCS_BOOST',
     'COAST_ROTATE', 'COAST_WAIT', 'COAST_HOLD', 'CIRCULARIZE',
     'COAST_ROTATE_2', 'COAST_HOLD_2', 'DONE',
@@ -128,7 +128,7 @@ const GUIDE_PHASE_SEQUENCES = {
     SUICIDE_BURN: 'DEORBIT',
     SUICIDE_COAST: 'IMPACT',
   },
-  landbackV1: {
+  orbitalMissionGNCV1: {
     COAST_ROTATE: 'COAST',
     COAST_WAIT: 'COAST',
     COAST_HOLD: 'COAST',
@@ -452,7 +452,7 @@ function _trackBodyTelemetry(snap) {
 // Compute runResult from current mission state. 'in-progress' while running,
 // settles to 'success' or 'failed' at END phase. Per-guide rules:
 //   leoInsertionV3 — payload deployed & not crashed → success
-//   landbackV1     — booster landed & not crashed & payload (if any) safe → success
+//   orbitalMissionGNCV1     — booster landed & not crashed & payload (if any) safe → success
 // Failures: payload never released, payload crashed, booster crash, timer abort.
 function _computeLtV3RunResult() {
   if (_v3State.missionPhase !== 'END') return 'in-progress';
@@ -480,7 +480,7 @@ function _computeLbRunResult() {
 function _computeRunResult() {
   if (!_activeGuide) return 'in-progress';
   if (_activeGuide === 'leoInsertionV3') return _computeLtV3RunResult();
-  if (_activeGuide === 'landbackV1') return _computeLbRunResult();
+  if (_activeGuide === 'orbitalMissionGNCV1') return _computeLbRunResult();
   return 'in-progress';
 }
 
@@ -579,7 +579,7 @@ if (_v3State.ascentBlock) out.v3AscentBlock = _v3State.ascentBlock.getState();
 if (_v3State.insertionBlock) out.v3InsertionBlock = _v3State.insertionBlock.getState();
 if (_v3State.suicideBlock) out.v3SuicideBlock = _v3State.suicideBlock.getState();
 
-// landbackV1 mission state + block states for FF mid-flight support.
+// orbitalMissionGNCV1 mission state + block states for FF mid-flight support.
 out.lbState = {
   init: _lbState.init, ticks: _lbState.ticks,
   missionPhase: _lbState.missionPhase, missionPhaseStart: _lbState.missionPhaseStart,
@@ -674,7 +674,7 @@ if (data.v3SuicideBlock) {
   _v3State.suicideBlock.setState(data.v3SuicideBlock);
 }
 
-// landbackV1 restore
+// orbitalMissionGNCV1 restore
 if (data.lbState) {
   Object.keys(data.lbState).forEach(k => { _lbState[k] = data.lbState[k]; });
   if (!('payloadCleared' in data.lbState)) _lbState.payloadCleared = false;
@@ -692,7 +692,7 @@ if (data.lbSuicideBlock) {
   _lbState.suicideBlock.setState(data.lbSuicideBlock);
 }
 if (data.lbRtlsBlock) {
-  if (!_lbState.rtlsBlock) _lbState.rtlsBlock = FUNDAMENTAL_BLOCKS.standardRTLS.createInstance();
+  if (!_lbState.rtlsBlock) _lbState.rtlsBlock = FUNDAMENTAL_BLOCKS.returnHomeV3.createInstance();
   _lbState.rtlsBlock.setState(data.lbRtlsBlock);
 }
     } catch (e) {
@@ -1295,9 +1295,9 @@ if (_v3State.insertionBlock) {
 GUIDES.leoInsertionV3 = _leoTickV3;
 
 // ============================================================================
-// landbackV1 — EXACT CLONE of leoInsertionV3 (renamed). Starting point for the
+// orbitalMissionGNCV1 — EXACT CLONE of leoInsertionV3 (renamed). Starting point for the
 // Landback logic. Same phases, same blocks, same config shape. Only the
-// identifiers differ (_lb* / _landbackTick / setLandbackV1 / getLandbackV1Config).
+// identifiers differ (_lb* / _landbackTick / setOrbitalMissionGNCV1 / getOrbitalMissionGNCV1Config).
 // Edit THIS copy freely — leoInsertionV3 stays untouched.
 // ============================================================================
 
@@ -1314,7 +1314,7 @@ const _lbState = {
   ascentBlock: null,
   insertionBlock: null,
   suicideBlock: null,
-  rtlsBlock: null,        // standardRTLS (booster) — handed over after SEPARATED_AXIAL
+  rtlsBlock: null,        // returnHomeV3 (booster) — handed over after SEPARATED_AXIAL
 
   // ASDS mission support — mission type drives these.
   //   asdsSpec     : { name, km } parsed from TARGET_LANDING_PAD (e.g. "HOPE,140")
@@ -1380,10 +1380,10 @@ mission: { TARGET_LANDING_PAD: 'LZ-1' },
   if (F && F.ascent) _lbConfig.ascent = JSON.parse(JSON.stringify(F.ascent.defaultConstants));
   if (F && F.insertion) _lbConfig.insertion = JSON.parse(JSON.stringify(F.insertion.defaultConstants));
   if (F && F.suicide) _lbConfig.suicide = JSON.parse(JSON.stringify(F.suicide.defaultConstants));
-  if (F && F.standardRTLS) _lbConfig.rtls = JSON.parse(JSON.stringify(F.standardRTLS.defaultConstants));
+  if (F && F.returnHomeV3) _lbConfig.rtls = JSON.parse(JSON.stringify(F.returnHomeV3.defaultConstants));
 })();
 
-// ---- Mission-level target landing pad (landbackV1) ----
+// ---- Mission-level target landing pad (orbitalMissionGNCV1) ----
 // Pad id comes from _lbConfig.mission.TARGET_LANDING_PAD. Position = Earth-fixed angle
 // (launch-site angle + arcOffsetM / R, + = east). Uses env.LANDING_PADS if the boot handoff
 // carries it; otherwise falls back to a table mirroring config.js CONFIG.LANDING_PADS.
@@ -1611,8 +1611,8 @@ function _lbResolveTargetPad() {
       if (_padList) {
         p = _padList.find(x => x && x.isASDS && (x.id === _parsed.name || x.name === _parsed.name)) || null;
       }
-      if (p) console.log('[landbackV1] ASDS mode: using pre-deployed pad "' + p.name + '" @ ' + (p.arcOffsetM / 1000).toFixed(2) + ' km');
-      else console.warn('[landbackV1] ASDS mode: droneship "' + _parsed.name + '" not deployed — LB falls back to launch-site targeting');
+      if (p) console.log('[orbitalMissionGNCV1] ASDS mode: using pre-deployed pad "' + p.name + '" @ ' + (p.arcOffsetM / 1000).toFixed(2) + ' km');
+      else console.warn('[orbitalMissionGNCV1] ASDS mode: droneship "' + _parsed.name + '" not deployed — LB falls back to launch-site targeting');
     }
     if (p) {
       const Rg = env.EARTH_RADIUS + (env.LAUNCH_SITE_ALTITUDE || 0);
@@ -1649,13 +1649,13 @@ function _lbResolveTargetPad() {
   if (!pads) {
     if (!_lbPadWarned) {
       _lbPadWarned = true;
-      console.warn('[landbackV1] env.LANDING_PADS not in boot handoff — using built-in pad table (mirror of config.js)');
+      console.warn('[orbitalMissionGNCV1] env.LANDING_PADS not in boot handoff — using built-in pad table (mirror of config.js)');
     }
     pads = _LB_FALLBACK_PADS;
   }
   const p = pads.find(x => x && x.id === id && x.enabled !== false);
   if (!p) {
-    console.warn('[landbackV1] target pad "' + id + '" not found / disabled — RTLS falls back to the launch site');
+    console.warn('[orbitalMissionGNCV1] target pad "' + id + '" not found / disabled — RTLS falls back to the launch site');
     return null;
   }
   const Rg = env.EARTH_RADIUS + (env.LAUNCH_SITE_ALTITUDE || 0);
@@ -1735,12 +1735,12 @@ function _landbackTick(snapshot) {
       const _result = globalThis.deployASDS(_lbState.asdsSpec.name, _lbState.asdsSpec.km, _lbState.asdsSpec.heightM);
       if (_result && _result.ok) {
         _lbState.asdsPad = _result.pad;
-        console.log('[landbackV1] ASDS deployed (main thread): ' + _result.appliedName +
+        console.log('[orbitalMissionGNCV1] ASDS deployed (main thread): ' + _result.appliedName +
           ' @ ' + _result.appliedKm.toFixed(2) + ' km, height=' + _result.appliedHeightM + 'm' +
           (_result.wasNameAdjusted ? ' (renamed from "' + _result.requestedName + '")' : '') +
           (_result.wasPositionAdjusted ? ' (moved from ' + _result.requestedKm.toFixed(2) + ' km)' : ''));
       } else {
-        console.warn('[landbackV1] ASDS deploy FAILED: ' + (_result && _result.error || 'unknown') +
+        console.warn('[orbitalMissionGNCV1] ASDS deploy FAILED: ' + (_result && _result.error || 'unknown') +
           ' — mission continues with fallback targeting');
         _lbState.asdsPad = null;
       }
@@ -1763,7 +1763,7 @@ function _landbackTick(snapshot) {
           return sh.name + '→' + (sh.newM / 1000).toFixed(2) + 'km (' + (_dm >= 0 ? '+' : '') + (_dm / 1000).toFixed(2) + 'km)';
         }).join(', ') + ')';
       }
-      console.log('[landbackV1] ASDS deployed (worker-built): ' + _built.pad.name +
+      console.log('[orbitalMissionGNCV1] ASDS deployed (worker-built): ' + _built.pad.name +
         ' @ ' + (_built.pad.arcOffsetM / 1000).toFixed(2) + ' km, height=' + _built.pad.heightM + 'm' +
         (_built.wasNameAdjusted ? ' (renamed from "' + _built.requestedName + '")' : '') +
         (_built.wasPositionAdjusted ? ' (moved from ' + _built.requestedKm.toFixed(2) + ' km)' : '') +
@@ -1792,17 +1792,17 @@ function _landbackTick(snapshot) {
           send(cmd);
           _lbState.fairingOpened = true;
           logEvent('FAIRING_DEPLOY');
-          console.log('[landbackV1] fairing open at t=' + simT.toFixed(2) +
+          console.log('[orbitalMissionGNCV1] fairing open at t=' + simT.toFixed(2) +
             ' alt=' + altKm.toFixed(2) + ' km');
         }
       }
     }
   }
 
-  // ---- Booster block (standardRTLS) — runs in parallel with the stage's mission phases ----
+  // ---- Booster block (returnHomeV3) — runs in parallel with the stage's mission phases ----
   if (_lbState.rtlsBlock && !_lbState.rtlsBlock.isDone()) {
     try { _lbState.rtlsBlock.tick(snapshot); }
-    catch (e) { console.error('[landbackV1] rtls tick failed', e); }
+    catch (e) { console.error('[orbitalMissionGNCV1] rtls tick failed', e); }
   }
 
   switch (_lbState.missionPhase) {
@@ -1836,7 +1836,7 @@ function _landbackTick(snapshot) {
   break;
 }
   if (simT - _lbState.missionPhaseStart > _lbConfig.separation.SPLIT_TIMEOUT_S) {
-    console.warn('[landbackV1] split timeout');
+    console.warn('[orbitalMissionGNCV1] split timeout');
     _lbState.missionPhase = 'END';
   }
   break;
@@ -1880,14 +1880,14 @@ function _landbackTick(snapshot) {
     _lbState.lateralArmed = false;
 
     const relAx = (stageBody.vx - boosterBody.vx) * upX + (stageBody.vy - boosterBody.vy) * upY;
-    console.log('[landbackV1] SEP handoff t=' + simT.toFixed(2) + ' elapsed=' + elapsedSep.toFixed(2) +
+    console.log('[orbitalMissionGNCV1] SEP handoff t=' + simT.toFixed(2) + ' elapsed=' + elapsedSep.toFixed(2) +
       ' axialGap=' + axialGap.toFixed(2) + 'm bellH=' + stageBellH.toFixed(2) + 'm relAxialV=' + relAx.toFixed(3) +
       'm/s boosterOmega=' + ((boosterBody.omega || 0) * 180 / Math.PI).toFixed(3) + 'deg/s');
 
     const _rt = _lbConfig.rtls || {};
     const _sp = _lbConfig.separation;
     _lbState.pusherTorqueFired = false;
-    _lbState.rtlsBlock = FUNDAMENTAL_BLOCKS.standardRTLS.createInstance();
+    _lbState.rtlsBlock = FUNDAMENTAL_BLOCKS.returnHomeV3.createInstance();
     _lbState.rtlsBlock.start(_lbConfig.rtls, bIdx, {
       targetPad: _lbResolveTargetPad(),
       pusher: {
@@ -1897,7 +1897,7 @@ function _landbackTick(snapshot) {
         set: function (a, w) { _lbState.pusherTorqueFired = (a !== 0 && w > 0); send(cmdPusherTorque(a, w, bIdx)); },
       },
     });
-    console.log('[landbackV1] booster -> standardRTLS at t=' + simT.toFixed(2));
+    console.log('[orbitalMissionGNCV1] booster -> returnHomeV3 at t=' + simT.toFixed(2));
 
     // Patch TARGET_BIAS_MPS into the insertion config per-mission.
     const _insCfgLB = JSON.parse(JSON.stringify(_lbConfig.insertion));
@@ -1928,7 +1928,7 @@ function _landbackTick(snapshot) {
           _relLB.targetBodyIdx = _lbState.stageIdx;
           send(_relLB);
           logEvent('PAYLOAD_RELEASE');
-          console.log('[landbackV1] mission-level payload release at t=' + simT.toFixed(2));
+          console.log('[orbitalMissionGNCV1] mission-level payload release at t=' + simT.toFixed(2));
         }
         _lbState.missionPhase = 'DONE_DWELL';
         _lbState.missionPhaseStart = simT;
@@ -1955,7 +1955,7 @@ send(cmdSetGimbalRate(0));
           );
           if (_cleared) {
             _lbState.payloadCleared = true;
-            console.log('[landbackV1] payload cleared at t=' + simT.toFixed(2));
+            console.log('[orbitalMissionGNCV1] payload cleared at t=' + simT.toFixed(2));
           }
         }
       }
@@ -2011,7 +2011,7 @@ send(cmdMarkIntentionalImpact(_lbState.stageIdx));
             _lbState.suicideBlock.start(_suicideCfgLB, _lbState.stageIdx, {});
           _lbState.missionPhase = 'SUICIDE';
           _lbState.missionPhaseStart = simT;
-          console.log('[landbackV1] DONE_DWELL → SUICIDE at t=' + simT.toFixed(2));
+          console.log('[orbitalMissionGNCV1] DONE_DWELL → SUICIDE at t=' + simT.toFixed(2));
         } else {
           _lbState.missionPhase = 'END';
           _lbState.missionPhaseStart = simT;
@@ -2027,7 +2027,7 @@ send(cmdMarkIntentionalImpact(_lbState.stageIdx));
         logEvent('IMPACT');
         _lbState.missionPhase = 'END';
         _lbState.missionPhaseStart = simT;
-        console.log('[landbackV1] SUICIDE done at t=' + simT.toFixed(2));
+        console.log('[orbitalMissionGNCV1] SUICIDE done at t=' + simT.toFixed(2));
       }
       break;
     }
@@ -2069,7 +2069,7 @@ _lbState.pusherTorqueFired = false;
 _lbState.asdsSpec = null;
 _lbState.asdsPad = null;
 _lbState.asdsDeployed = false;
-console.log('[landbackV1] started');
+console.log('[orbitalMissionGNCV1] started');
 };
 
 _landbackTick.stop = function () {
@@ -2084,7 +2084,7 @@ _landbackTick.stop = function () {
   _lbState.asdsSpec = null;
   _lbState.asdsPad = null;
   _lbState.asdsDeployed = false;
-  console.log('[landbackV1] stopped');
+  console.log('[orbitalMissionGNCV1] stopped');
 };
 
 _landbackTick.getStatus = function () {
@@ -2223,7 +2223,7 @@ if (_lbState.insertionBlock) {
 };
 
 
-GUIDES.landbackV1 = _landbackTick;
+GUIDES.orbitalMissionGNCV1 = _landbackTick;
 
 
 
@@ -2246,12 +2246,12 @@ GUIDES.landbackV1 = _landbackTick;
 }
 function getLeoInsertionV3Config() { return JSON.parse(JSON.stringify(_v3Config)); }
 
-  function setLandbackV1(patch) {
+  function setOrbitalMissionGNCV1(patch) {
   if (!patch) return;
   // rtls schema check — filter unknown sub-keys against block defaultConstants
   const _rtlsSchema = (typeof FUNDAMENTAL_BLOCKS !== 'undefined' &&
-                       FUNDAMENTAL_BLOCKS.standardRTLS &&
-                       FUNDAMENTAL_BLOCKS.standardRTLS.defaultConstants) || null;
+                       FUNDAMENTAL_BLOCKS.returnHomeV3 &&
+                       FUNDAMENTAL_BLOCKS.returnHomeV3.defaultConstants) || null;
   Object.keys(patch).forEach(k => {
     if (!(k in _lbConfig)) return;
     const cur = _lbConfig[k];
@@ -2264,7 +2264,7 @@ function getLeoInsertionV3Config() { return JSON.parse(JSON.stringify(_v3Config)
           if (sk in _rtlsSchema) cur[sk] = nxt[sk];
           else dropped.push(sk);
         });
-        if (dropped.length) console.log('[landbackV1] rtls stale keys dropped: ' + dropped.join(', '));
+        if (dropped.length) console.log('[orbitalMissionGNCV1] rtls stale keys dropped: ' + dropped.join(', '));
       } else {
         Object.assign(cur, nxt);
       }
@@ -2272,9 +2272,9 @@ function getLeoInsertionV3Config() { return JSON.parse(JSON.stringify(_v3Config)
       _lbConfig[k] = nxt;
     }
   });
-  console.log('[landbackV1] constants updated');
+  console.log('[orbitalMissionGNCV1] constants updated');
 }
-function getLandbackV1Config() { return JSON.parse(JSON.stringify(_lbConfig)); }
+function getOrbitalMissionGNCV1Config() { return JSON.parse(JSON.stringify(_lbConfig)); }
   // ============================================================================
   // Guide config API — table + accessors.
   //
@@ -2287,9 +2287,9 @@ function getLandbackV1Config() { return JSON.parse(JSON.stringify(_lbConfig)); }
     get: () => getLeoInsertionV3Config(),
     set: (vals) => setLeoInsertionV3(vals),
   },
-  landbackV1: {
-    get: () => getLandbackV1Config(),
-    set: (vals) => setLandbackV1(vals),
+  orbitalMissionGNCV1: {
+    get: () => getOrbitalMissionGNCV1Config(),
+    set: (vals) => setOrbitalMissionGNCV1(vals),
   },
 };
 
@@ -2465,8 +2465,8 @@ function cmdOpenPayload(targetBodyIdx) {
     getGuideStatusLabel,
     logEvent,
     setLeoInsertionV3,
-    setLandbackV1,
-getLandbackV1Config,
+    setOrbitalMissionGNCV1,
+getOrbitalMissionGNCV1Config,
 setMissionBody,
 getLeoInsertionV3Config,
 // Stage 2 test hook — see _registerTestGuide below.

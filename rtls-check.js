@@ -1,4 +1,4 @@
-// rtls-check.js — offline numerical verification for the standardRTLS block.
+// rtls-check.js — offline numerical verification for the returnHomeV3 block.
 // Run:  node rtls-check.js   (from the folder that contains guidance-blocks.js)
 //
 // Stubs Guidance / GuideRCS / Derivation, models the 1-tick command latency
@@ -18,7 +18,7 @@ let S;
 global.Derivation={getEnv:()=>({DT}),derive:()=>({rx:S.rx,ry:S.ry,vx:S.vx,vy:S.vy,theta:S.th,omega:S.w,
   massProps:{I,M:2e4},alphaAng:0,gVecX:0,gVecY:0,dragVecX:0,dragVecY:0,thrustBodyX:0,thrustBodyY:0,altitudeAGL:150000})};
 eval(fs.readFileSync('guidance-blocks.js','utf8')+';global.FB=FUNDAMENTAL_BLOCKS;');
-const B=FB.standardRTLS;
+const B=FB.returnHomeV3;
 function run(th0deg, w0, orbit){
   const b=B.createInstance(); b.start(JSON.parse(JSON.stringify(B.defaultConstants)),0,{});
   const wo = orbit? 0.0011:0; let ang=0.0;

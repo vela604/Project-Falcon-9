@@ -273,7 +273,7 @@ const guideSel = document.getElementById('guideSelect');
 
 // CRITICAL: Only continue guidance through FF if it was ALREADY running
 // when the user clicked Fast Forward. Otherwise FF would silently start
-// the selected guide (default: landbackV1) — user expectation is pure
+// the selected guide (default: orbitalMissionGNCV1) — user expectation is pure
 // physics time-lapse when guidance isn't engaged.
 const _guideWasActive =
   (typeof _guideActive !== 'undefined' && _guideActive) ||

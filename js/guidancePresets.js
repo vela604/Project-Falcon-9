@@ -22,6 +22,36 @@
 
 const GUIDANCE_PRESETS_KEY = 'rocketSim.guidancePresets.v1';
 
+// One-time migration — legacy 'landbackV1' preset records remapped to
+// 'orbitalMissionGNCV1'. Runs every load (fast no-op if no legacy records
+// present); reads/writes raw localStorage directly so it works before any
+// loadUserPresets call.
+(function _migrateLegacyGuideNames() {
+  try {
+    const raw = localStorage.getItem(GUIDANCE_PRESETS_KEY);
+    if (!raw) return;
+    const list = JSON.parse(raw);
+    if (!Array.isArray(list)) return;
+    let changed = false;
+    for (let i = 0; i < list.length; i++) {
+      const p = list[i];
+      if (!p) continue;
+      if (p.guideName === 'landbackV1') { p.guideName = 'orbitalMissionGNCV1'; changed = true; }
+      if (p.id === 'default:landbackV1') { p.id = 'default:orbitalMissionGNCV1'; changed = true; }
+      if (typeof p.id === 'string' && p.id.indexOf('landbackV1-') === 0) {
+        p.id = 'orbitalMissionGNCV1-' + p.id.slice('landbackV1-'.length);
+        changed = true;
+      }
+    }
+    if (changed) {
+      localStorage.setItem(GUIDANCE_PRESETS_KEY, JSON.stringify(list));
+      console.log('[guidancePresets] migrated legacy presets landbackV1 \u2192 orbitalMissionGNCV1');
+    }
+  } catch (e) {
+    console.warn('[guidancePresets] preset migration failed:', e);
+  }
+})();
+
 // ---------------------------------------------------------------------------
 // Storage primitives
 // ---------------------------------------------------------------------------

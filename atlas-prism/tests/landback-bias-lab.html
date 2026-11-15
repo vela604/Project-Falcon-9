@@ -147,7 +147,7 @@ td.l{text-align:left}
 'use strict';
 const $ = (id) => document.getElementById(id);
 const S = { inited:false, saSnap:null, ebSnap:null, lbSnap:null, running:false };
-const guideName = 'landbackV1';
+const guideName = 'orbitalMissionGNCV1';
 let charts = [];
 
 function deepClone(x, memo) {
@@ -234,7 +234,7 @@ $('rebuildBtn').addEventListener('click', function(){
     try{
       const bias=parseFloat($('bias').value);
       const g=deepClone(S.ebSnap.guidanceState);
-      if(g.guideConfigs&&g.guideConfigs.landbackV1&&g.guideConfigs.landbackV1.rtls) g.guideConfigs.landbackV1.rtls.ENTRY_BURN_IMPACT_TARGET_M=bias;
+      if(g.guideConfigs&&g.guideConfigs.orbitalMissionGNCV1&&g.guideConfigs.orbitalMissionGNCV1.rtls) g.guideConfigs.orbitalMissionGNCV1.rtls.ENTRY_BURN_IMPACT_TARGET_M=bias;
       if(g.lbRtlsBlock&&g.lbRtlsBlock.constants) g.lbRtlsBlock.constants.ENTRY_BURN_IMPACT_TARGET_M=bias;
       restoreSnap(S.ebSnap, g);
       let lbSnap=null;
@@ -588,7 +588,7 @@ function readScanCfg(){
 }
 function rebuildLBAFor(bias){
   const g=deepClone(S.ebSnap.guidanceState);
-  if(g.guideConfigs&&g.guideConfigs.landbackV1&&g.guideConfigs.landbackV1.rtls) g.guideConfigs.landbackV1.rtls.ENTRY_BURN_IMPACT_TARGET_M=bias;
+  if(g.guideConfigs&&g.guideConfigs.orbitalMissionGNCV1&&g.guideConfigs.orbitalMissionGNCV1.rtls) g.guideConfigs.orbitalMissionGNCV1.rtls.ENTRY_BURN_IMPACT_TARGET_M=bias;
   if(g.lbRtlsBlock&&g.lbRtlsBlock.constants) g.lbRtlsBlock.constants.ENTRY_BURN_IMPACT_TARGET_M=bias;
   restoreSnap(S.ebSnap,g);
   for(let i=0;i<400*80;i++){ if(state.halted)break; TunerEngine.tick(CONFIG.DT); const gs=Guidance.getGuideStatus(); if(gs&&gs.rtlsPhase==='LANDING_BURN_ALIGN')return captureSnap(); }
@@ -662,7 +662,7 @@ $('scanApplyBtn').addEventListener('click',function(){ if(!SC.last)return; $('bi
 function withOverrides(ov){
   const g=deepClone(S.lbSnap.guidanceState);
   for(const k of Object.keys(ov)){
-    if(g.guideConfigs&&g.guideConfigs.landbackV1&&g.guideConfigs.landbackV1.rtls) g.guideConfigs.landbackV1.rtls[k]=ov[k];
+    if(g.guideConfigs&&g.guideConfigs.orbitalMissionGNCV1&&g.guideConfigs.orbitalMissionGNCV1.rtls) g.guideConfigs.orbitalMissionGNCV1.rtls[k]=ov[k];
     if(g.lbRtlsBlock&&g.lbRtlsBlock.constants) g.lbRtlsBlock.constants[k]=ov[k];
   }
   return g;

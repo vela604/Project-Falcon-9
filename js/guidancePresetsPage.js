@@ -35,7 +35,7 @@
 // anymore — showing them here would be misleading.
 //
 // Extend this list when a new guide becomes the production one.
-const _ACTIVE_GUIDES_FULL = ['leoInsertionV3', 'landbackV1'];
+const _ACTIVE_GUIDES_FULL = ['leoInsertionV3', 'orbitalMissionGNCV1'];
 const CURRENT_GUIDES = _ACTIVE_GUIDES_FULL.filter(g => 
   !(typeof GUIDE_HIDDEN_FROM_UI !== 'undefined' && GUIDE_HIDDEN_FROM_UI.has(g)));
 

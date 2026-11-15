@@ -18,7 +18,7 @@
 <header>
   <a class="back" href="../index.html">&lsaquo; Atlas Prism</a>
   <h1>LB <em>NOVA-6</em></h1>
-  <span class="crumb">engine <b>/</b> landbackV1 <b>/</b> booster bias search</span>
+  <span class="crumb">engine <b>/</b> orbitalMissionGNCV1 <b>/</b> booster bias search</span>
   <div class="chips">
     <span class="st" id="stState">state <b id="stStateN">idle</b></span>
     <span class="st" id="stPhase">stage <b id="stPhaseN">&mdash;</b></span>
@@ -37,7 +37,7 @@
     <button class="reset" id="resetBtn" disabled>Reset</button>
   </div>
   <span class="dim" id="lockStatus">Select stack + apsides, then LOCK.</span>
-  <div class="hint">locked standard-sequence stacks only &middot; guidance landbackV1 only</div>
+  <div class="hint">locked standard-sequence stacks only &middot; guidance orbitalMissionGNCV1 only</div>
 </section>
 
 <!-- ==================== STAGE RAIL ==================== -->
@@ -634,14 +634,14 @@ function listPresets(){
   const out = [];
   try {
     if(typeof getGuideDefaultPreset === 'function'){
-      const p = getGuideDefaultPreset('landbackV1');
-      if(p) out.push({ id: 'default:landbackV1', name: p.name + ' (built-in)', constants: p.constants });
+      const p = getGuideDefaultPreset('orbitalMissionGNCV1');
+      if(p) out.push({ id: 'default:orbitalMissionGNCV1', name: p.name + ' (built-in)', constants: p.constants });
     }
   } catch(e) { log('listPresets default err: '+e.message, 'err'); }
   try {
     if(typeof getAllPresetsForGuide === 'function'){
-      const ps = getAllPresetsForGuide('landbackV1') || [];
-      ps.forEach(p => { if(p.id && p.id !== 'default:landbackV1') out.push({ id: p.id, name: p.name, constants: p.constants }); });
+      const ps = getAllPresetsForGuide('orbitalMissionGNCV1') || [];
+      ps.forEach(p => { if(p.id && p.id !== 'default:orbitalMissionGNCV1') out.push({ id: p.id, name: p.name, constants: p.constants }); });
     }
   } catch(e) {}
   return out;
@@ -806,8 +806,8 @@ async function doInit(){
 
     log('Initializing TunerEngine…');
     TunerEngine.init();
-    log('TunerEngine ready. prepareRun(landbackV1)…');
-    TunerEngine.prepareRun('landbackV1', vals, env);
+    log('TunerEngine ready. prepareRun(orbitalMissionGNCV1)…');
+    TunerEngine.prepareRun('orbitalMissionGNCV1', vals, env);
     log('prepareRun OK. Starting ascent loop (this takes ~20-40s, browser stays responsive)…');
 
     const _origLog = console.log;
@@ -946,7 +946,7 @@ async function runBiasEval(bias, onTick, altKm){
     throw new Error('ASDS pad not deployed — posStart likely out of ocean zone. Re-INIT with a valid posStart.');
   }
   const g = deepClone(S.ebSnap.guidanceState);
-  const cfg = g.guideConfigs && g.guideConfigs.landbackV1;
+  const cfg = g.guideConfigs && g.guideConfigs.orbitalMissionGNCV1;
   
   // ---- Mode-aware per-eval target override ----
   // RTLS: 'bias' = ENTRY_BURN_IMPACT_TARGET_M in metres. Standard walk.
@@ -1727,7 +1727,7 @@ function altCost(m){
 // LB altitude must stay below LANDING_BURN_ALIGN_ALT_KM (LBA exits when alt <= LANDING_BURN_ALT_KM).
 function alignAltKm(){
   try {
-    const v = S.ebSnap.guidanceState.guideConfigs.landbackV1.rtls.LANDING_BURN_ALIGN_ALT_KM;
+    const v = S.ebSnap.guidanceState.guideConfigs.orbitalMissionGNCV1.rtls.LANDING_BURN_ALIGN_ALT_KM;
     if(Number.isFinite(v)) return v;
   } catch(e) {}
   return 5;

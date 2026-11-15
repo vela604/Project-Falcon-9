@@ -3040,8 +3040,8 @@ setState(s) {
   // handler returns true when its exit condition is met. A phase gets a
   // timeout only if its <PHASE>_TIMEOUT_S constant exists (see TIMEOUT_KEY).
   // ==========================================================================
-  standardRTLS: {
-    name: "standardRTLS",
+  returnHomeV3: {
+    name: "returnHomeV3",
     displayName: "Standard RTLS (Landback)",
     description:
       "Booster return-to-launch-site. Flip → boostback → pre-entry steer → entry burn → post-entry steer → landing burn → touchdown. Controls the booster body only.",
@@ -3109,7 +3109,7 @@ setState(s) {
       LANDING_BURN_ALT_KM: 2,              // AGL km: PES->LANDING_BURN phase transition (landing-burn ignition)
       LANDING_BURN_ENGINES: "C",
       // LB cascade-controller constants (Claude v6, tunable via preset
-      // landbackV1.rtls). Not in GUIDE_IMPORTANT_FIELDS.
+      // orbitalMissionGNCV1.rtls). Not in GUIDE_IMPORTANT_FIELDS.
       LANDING_BURN_V_TD: 0.4,
       LANDING_BURN_THR_LATE: 0.6,
       LANDING_BURN_H_FLOOR_M: 0.1,
@@ -3121,7 +3121,7 @@ setState(s) {
       LANDING_BURN_LEGS_ALT_M: 200,   // AGL altitude to deploy legs during LB
       POST_ENTRY_GRIDFIN_RAMP_DEG_S: 3,    // grid-fin control target ramps 0 -> max at this rate (deg/s); slower = less oscillation (guess, tune in sim)
       // LB cascade-controller constants — synced from the same-named keys in
-      // guideConfigDefaults.landbackV1.rtls. Values match this file's _cfgN()
+      // guideConfigDefaults.orbitalMissionGNCV1.rtls. Values match this file's _cfgN()
       // fallbacks in the LANDING_BURN case, so adding them here changes the
       // running config bag (visible to tester + GCM) without changing physics.
       LANDING_BURN_V_TD_MARGIN_M: 0.2,
@@ -3295,13 +3295,13 @@ setState(s) {
             elapsed: simT - (_st.startSimTime || 0),
             phaseLog: JSON.parse(JSON.stringify(_st.phaseLog)),
           };
-          console.log("[standardRTLS] DONE at t=" + simT.toFixed(2));
+          console.log("[returnHomeV3] DONE at t=" + simT.toFixed(2));
           return;
         }
         _st.phase = next;
         _st.phaseStart = simT;
         _st.phaseLog[next] = { startT: simT, endT: null, reason: null };
-        console.log("[standardRTLS] " + cur + " → " + next + " at t=" + simT.toFixed(2) + " (" + (reason || "done") + ")");
+        console.log("[returnHomeV3] " + cur + " → " + next + " at t=" + simT.toFixed(2) + " (" + (reason || "done") + ")");
       }
 
       // ---------------------------------------------------------------------
@@ -3873,7 +3873,7 @@ function _bbTokens(cfg) {
               const tPush = _flipTime(eNeg, wRelNow, mx.pos / I + (eNeg < 0 ? 0 : aPush), mx.neg / I + (eNeg < 0 ? aPush : 0));
               const tabTxt = [];
               for (let a = -180; a < 180; a += 45) tabTxt.push(a + ":" + (aeroAt(a / R2D, 0) * R2D).toFixed(2));
-              console.log("[standardRTLS] FLIP dir=" + (_st.flipDir > 0 ? "+" : "-") +
+              console.log("[returnHomeV3] FLIP dir=" + (_st.flipDir > 0 ? "+" : "-") +
                 " err=" + (_st.flipEu * R2D).toFixed(1) + "deg omega=" + (wRelNow * R2D).toFixed(2) +
                 "deg/s  t(+)=" + tPos.toFixed(1) + "s t(-)=" + tNeg.toFixed(1) + "s t(-,+pusher)=" + tPush.toFixed(1) + "s (no-aero est)" +
                 " rcsAccel+=" + (mx.pos / I * R2D).toFixed(2) + " rcsAccel-=" + (mx.neg / I * R2D).toFixed(2) + "deg/s2" +
@@ -4020,7 +4020,7 @@ function _bbTokens(cfg) {
             const toks = _bbTokens(cfg);
             const burnSet = engines.filter(function (e) { return _bbInSet(e, toks); });
             if (!burnSet.length) {
-              console.warn("[standardRTLS] BOOSTBACK: no engine matches BOOSTBACK_ENGINES='" + cfg.BOOSTBACK_ENGINES + "' — skipping phase");
+              console.warn("[returnHomeV3] BOOSTBACK: no engine matches BOOSTBACK_ENGINES='" + cfg.BOOSTBACK_ENGINES + "' — skipping phase");
               finished = true; break;
             }
             const centerSet = burnSet.filter(function (e) { return e.isCenter; });
@@ -4056,7 +4056,7 @@ function _bbTokens(cfg) {
               _st.bbInit = true;
               _st.bbStage = "THREE";
               _send(Guidance.cmdSetAllThrottle(0));   // everything not in the burn set stays off
-              console.log("[standardRTLS] BOOSTBACK start: engines=" + toks.join(",") +
+              console.log("[returnHomeV3] BOOSTBACK start: engines=" + toks.join(",") +
                 " tgtEf=" + (tgtEf * R2D).toFixed(4) + "deg (pad " + (pad ? pad.id : "launch-site") +
                 " + offset " + offM + "m) err0=" + (e0 ? (e0.err * R2D).toFixed(3) : "n/a") + "deg");
             }
@@ -4065,19 +4065,19 @@ function _bbTokens(cfg) {
             if (_st.bbStage === "THREE") {
               if (eAll && eAll.err <= 0) {
                 _st.bbStage = "SPOOL";
-                console.log("[standardRTLS] BOOSTBACK THREE → SPOOL (cutoff, err=" + (e0 ? (e0.err * R2D).toFixed(4) : "n/a") + "deg) t=" + simT.toFixed(2));
+                console.log("[returnHomeV3] BOOSTBACK THREE → SPOOL (cutoff, err=" + (e0 ? (e0.err * R2D).toFixed(4) : "n/a") + "deg) t=" + simT.toFixed(2));
               } else if (e0 && e0.err * mPerRad <= sideCutM) {
                 _st.bbStage = "CENTER";
-                console.log("[standardRTLS] BOOSTBACK THREE → CENTER (outer engines off, err=" + (e0.err * R2D).toFixed(4) + "deg) t=" + simT.toFixed(2));
+                console.log("[returnHomeV3] BOOSTBACK THREE → CENTER (outer engines off, err=" + (e0.err * R2D).toFixed(4) + "deg) t=" + simT.toFixed(2));
               }
             }
             if (_st.bbStage === "CENTER" && eAll && eAll.err <= 0) {
               _st.bbStage = "SPOOL";
-              console.log("[standardRTLS] BOOSTBACK CENTER → SPOOL (cutoff, err=" + (e0 ? (e0.err * R2D).toFixed(4) : "n/a") + "deg) t=" + simT.toFixed(2));
+              console.log("[returnHomeV3] BOOSTBACK CENTER → SPOOL (cutoff, err=" + (e0 ? (e0.err * R2D).toFixed(4) : "n/a") + "deg) t=" + simT.toFixed(2));
             }
             if (_st.bbStage !== "SPOOL" && !(fuel0 > BB_FUEL_EMPTY_KG)) {
               _st.bbStage = "SPOOL";
-              console.warn("[standardRTLS] BOOSTBACK out of fuel → SPOOL");
+              console.warn("[returnHomeV3] BOOSTBACK out of fuel → SPOOL");
             }
 
             // ---- throttle ----
@@ -4186,7 +4186,7 @@ function _bbTokens(cfg) {
             if (_st.bbStage === "SPOOL" && mdotNow < 1) {
               _send(Guidance.cmdSetAllThrottle(0));
               _send(Guidance.cmdSetGimbalRate(0));
-              console.log("[standardRTLS] BOOSTBACK done t=" + simT.toFixed(2) + " finalErr=" +
+              console.log("[returnHomeV3] BOOSTBACK done t=" + simT.toFixed(2) + " finalErr=" +
                 (_st.bbErrDeg != null ? _st.bbErrDeg.toFixed(4) : "n/a") + "deg fuel=" + Math.round(fuel0) + "kg");
               finished = true; break;
             }
@@ -4235,7 +4235,7 @@ function _bbTokens(cfg) {
               _send(Guidance.cmdSetGimbalRate(0));
               _send(Guidance.cmdRcsDuty(null, idx));
               _st.lastRcsTorque = 0;
-              console.log("[standardRTLS] PRE_ENTRY_STEER start t=" + simT.toFixed(2) +
+              console.log("[returnHomeV3] PRE_ENTRY_STEER start t=" + simT.toFixed(2) +
                 " alt=" + altKm.toFixed(1) + "km vr=" + vrSign.toFixed(1) +
                 "m/s — grid fins deployed, DRIFT mode (align at " + (cfg.PRE_ENTRY_ALIGN_ALT_KM || 90) + "km, lateral-only RCS)");
             }
@@ -4246,7 +4246,7 @@ function _bbTokens(cfg) {
             // ---- HOLD: PD trim on current air-relative retrograde, handoff at burnAltKm ----
             if (_st.preEntrySub === 'HOLD') {
               if (altKm <= burnAltKm) {
-                console.log("[standardRTLS] PRE_ENTRY_HOLD → ENTRY_BURN trigger t=" + simT.toFixed(2) +
+                console.log("[returnHomeV3] PRE_ENTRY_HOLD → ENTRY_BURN trigger t=" + simT.toFixed(2) +
                   " alt=" + altKm.toFixed(1) + "km");
                 finished = true;
                 break;
@@ -4338,7 +4338,7 @@ function _bbTokens(cfg) {
               _st.preEntryPrevTgt = null;
               _st.preEntryPrevT = null;
               const thetaErrExit = _wrapPi(_st.preEntryTargetTheta - d.theta);
-              console.log("[standardRTLS] PRE_ENTRY_DRIFT → HOLD t=" + simT.toFixed(2) +
+              console.log("[returnHomeV3] PRE_ENTRY_DRIFT → HOLD t=" + simT.toFixed(2) +
                 " alt=" + altKm.toFixed(1) + "km thetaErr=" + (thetaErrExit * R2D).toFixed(2) +
                 "deg w=" + (d.omega * R2D).toFixed(3) + "deg/s");
               break;
@@ -4414,7 +4414,7 @@ function _bbTokens(cfg) {
             const burnToks = _ebTokens(cfg.ENTRY_BURN_ENGINES, "C,0,180");
             const burnSet = engines.filter(function (e) { return _bbInSet(e, burnToks); });
             if (!burnSet.length) {
-              console.warn("[standardRTLS] ENTRY_BURN: no engine matches ENTRY_BURN_ENGINES='" + cfg.ENTRY_BURN_ENGINES + "' - skip");
+              console.warn("[returnHomeV3] ENTRY_BURN: no engine matches ENTRY_BURN_ENGINES='" + cfg.ENTRY_BURN_ENGINES + "' - skip");
               finished = true; break;
             }
             const gimToks = _ebTokens(cfg.ENTRY_BURN_GIMBAL_ENGINES, "C");
@@ -4434,7 +4434,7 @@ function _bbTokens(cfg) {
               _st.ebVdotF = null;
               _st.ebErateF = null;
               _send(Guidance.cmdSetAllThrottle(0));
-              console.log("[standardRTLS] ENTRY_BURN start t=" + simT.toFixed(2) +
+              console.log("[returnHomeV3] ENTRY_BURN start t=" + simT.toFixed(2) +
                 " alt=" + altKm.toFixed(1) + "km engines=" + burnToks.join(",") +
                 " gimbal=" + gimToks.join(",") + " (full throttle, cutoff " +
                 (Number.isFinite(cfg.ENTRY_BURN_CUTOFF_VELOCITY_MS) ? cfg.ENTRY_BURN_CUTOFF_VELOCITY_MS : 600) +
@@ -4446,7 +4446,7 @@ function _bbTokens(cfg) {
             if (_st.ebStage !== "SPOOL" && speedRelV <= vCut) {
               _st.ebStage = "SPOOL";
               if (typeof Guidance !== 'undefined' && Guidance.logEvent) Guidance.logEvent('ENTRY_BURN_CUTOFF');
-              console.log("[standardRTLS] ENTRY_BURN -> SPOOL cutoff t=" + simT.toFixed(2) +
+              console.log("[returnHomeV3] ENTRY_BURN -> SPOOL cutoff t=" + simT.toFixed(2) +
                 " v=" + speedRelV.toFixed(1) + " alt=" + altKm.toFixed(1) + "km impactErr=" +
                 (_st.ebImpactErrM != null ? (_st.ebImpactErrM / 1000).toFixed(2) + "km" : "n/a"));
             }
@@ -4468,7 +4468,7 @@ function _bbTokens(cfg) {
               if (ready) {
                 _st.ebSpooled = true;
                 _st.ebSpoolT = simT;
-                console.log("[standardRTLS] ENTRY_BURN engines at full thrust t=" + simT.toFixed(2));
+                console.log("[returnHomeV3] ENTRY_BURN engines at full thrust t=" + simT.toFixed(2));
               }
             }
             const active = _st.ebSpooled && _st.ebStage === "BURN";
@@ -4634,7 +4634,7 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
               _st.ebTauEnv = tauEnv;
               _st.ebTauAvail = Ramp;
               if (sat && !_st.ebGimbalSat)
-                console.warn("[standardRTLS] ENTRY_BURN gimbal SATURATED t=" + simT.toFixed(2));
+                console.warn("[returnHomeV3] ENTRY_BURN gimbal SATURATED t=" + simT.toFixed(2));
               _st.ebGimbalSat = sat;
               const gimTarget = gimbals.every(function (e) { return e.isCenter; }) ? "center" : "all";
               _send(_gimbalCmdMsg(gReqDeg, gimbals[0], dt, gimTarget));
@@ -4656,7 +4656,7 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
               _send(Guidance.cmdSetAllThrottle(0));
               _send(Guidance.cmdSetGimbalRate(0));
               _rcsOff();
-              console.log("[standardRTLS] ENTRY_BURN done t=" + simT.toFixed(2) + " v=" + speedRelV.toFixed(1) +
+              console.log("[returnHomeV3] ENTRY_BURN done t=" + simT.toFixed(2) + " v=" + speedRelV.toFixed(1) +
                 " alt=" + altKm.toFixed(1) + "km impactErr=" + (errM != null ? (errM / 1000).toFixed(3) + "km" : "n/a") +
                 " flips=" + _st.ebFlips);
               finished = true; break;
@@ -4713,7 +4713,7 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
               _rcsOff();
               _send(Guidance.cmdGridFinsDeploy(true));
               if (DEBUG_RTLS) console.log("[RTLS-VERMARK] passive-v1 phase=POST_ENTRY t="+simT.toFixed(2)+" PASSIVE-TEST-PRESENT");
-              console.log("[standardRTLS] POST_ENTRY_STEER (closed loop v4) start t=" + simT.toFixed(2) +
+              console.log("[returnHomeV3] POST_ENTRY_STEER (closed loop v4) start t=" + simT.toFixed(2) +
                 " alt=" + altKm.toFixed(1) + "km v=" + Math.hypot(d.relVx, d.relVy).toFixed(0) + "m/s" +
                 " — FIN-ONLY (RCS disabled), first " + PES_VALIDATE_S + "s: NO commands (model validation)");
               try {
@@ -4735,7 +4735,7 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
               if (!_st.pesDone) {
                 _st.pesDone = true;
                 _rcsOff();
-                console.log("[standardRTLS] POST_ENTRY_STEER touchdown t=" + simT.toFixed(2) +
+                console.log("[returnHomeV3] POST_ENTRY_STEER touchdown t=" + simT.toFixed(2) +
                   " vacImpactErr=" + (_st.pesVacErrM != null ? (_st.pesVacErrM / 1000).toFixed(3) + "km" : "n/a") +
                   " groundErr=" + (_st.pesGroundErrM != null ? (_st.pesGroundErrM / 1000).toFixed(3) + "km" : "n/a"));
               }
@@ -4764,7 +4764,7 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
             const vacErrDbgKm = impDbg ? (_wrapPi(impDbg.phiEf - padEfDbg) * env.EARTH_RADIUS / 1000) : null;
             const lbAlignAltKm = Number.isFinite(cfg.LANDING_BURN_ALIGN_ALT_KM) ? cfg.LANDING_BURN_ALIGN_ALT_KM : 5;
             if (altKm <= lbAlignAltKm) {
-              console.log("[standardRTLS] POST_ENTRY_STEER → LANDING_BURN_ALIGN t=" + simT.toFixed(2) +
+              console.log("[returnHomeV3] POST_ENTRY_STEER → LANDING_BURN_ALIGN t=" + simT.toFixed(2) +
                 " alt=" + altKm.toFixed(2) + "km" +
                 " alpha=" + (Number.isFinite(d.alphaDeg) ? d.alphaDeg.toFixed(2) : "n/a") + "deg" +
                 " w=" + (d.omega * R2D).toFixed(3) + "deg/s" +
@@ -5093,7 +5093,7 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
               _send(Guidance.cmdSetAllThrottle(0));
               _send(Guidance.cmdRcsDuty(null, idx));
               _st.lastRcsTorque = 0;
-              console.log("[standardRTLS] LANDING_BURN_ALIGN start t=" + simT.toFixed(2) +
+              console.log("[returnHomeV3] LANDING_BURN_ALIGN start t=" + simT.toFixed(2) +
                 " alt=" + altKm.toFixed(2) + "km finCmd=" + _st.lbaFinCmd.toFixed(1) +
                 " alpha=" + (Number.isFinite(d.alphaDeg) ? d.alphaDeg.toFixed(2) : "n/a") + "deg" +
                 " w=" + (d.omega * R2D).toFixed(3) + "deg/s — fin ramp to 0, coast to equilibrium");
@@ -5113,7 +5113,7 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
               _send(Guidance.cmdGridFinsControl(0));
               _send(Guidance.cmdRcsDuty(null, idx));
               _send(Guidance.cmdSetGimbalRate(0));
-              console.log("[standardRTLS] LANDING_BURN_ALIGN → LANDING_BURN trigger t=" + simT.toFixed(2) +
+              console.log("[returnHomeV3] LANDING_BURN_ALIGN → LANDING_BURN trigger t=" + simT.toFixed(2) +
                 " alt=" + altKm.toFixed(2) + "km" +
                 " alpha=" + (Number.isFinite(d.alphaDeg) ? d.alphaDeg.toFixed(2) : "n/a") + "deg" +
                 " w=" + (d.omega * R2D).toFixed(3) + "deg/s" +
@@ -5186,7 +5186,7 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
               _send(Guidance.cmdSetGimbalRate(0));
               _send(Guidance.cmdRcsDuty(null, idx));
               const vGroundMag = Math.hypot(vRadial, vTangGround);
-              console.log("[standardRTLS] LANDING_BURN start t=" + simT.toFixed(2) +
+              console.log("[returnHomeV3] LANDING_BURN start t=" + simT.toFixed(2) +
                 " alt=" + (d.altitudeAGL / 1000).toFixed(2) + "km" +
                 " vGround=" + vGroundMag.toFixed(0) + "m/s" +
                 " (vRad=" + vRadial.toFixed(1) + " vTangGround=" + vTangGround.toFixed(1) + ")" +
@@ -5208,7 +5208,7 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
             const lbEng = (body.engines || []).filter(e => _bbInSet(e, lbToks));
             const gimbalsLB = (body.engines || []).filter(e => e.gimbal);
             if (!lbEng.length) {
-              if (DEBUG_RTLS) console.warn("[standardRTLS] LANDING_BURN: no engine matches LANDING_BURN_ENGINES='" + cfg.LANDING_BURN_ENGINES + "'");
+              if (DEBUG_RTLS) console.warn("[returnHomeV3] LANDING_BURN: no engine matches LANDING_BURN_ENGINES='" + cfg.LANDING_BURN_ENGINES + "'");
               break;
             }
 
@@ -5306,7 +5306,7 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
               _send(Guidance.cmdSetGimbalRate(0));
               _send(Guidance.cmdGridFinsControl(0));
               _rcsOff();
-              console.log("[standardRTLS] LANDING_BURN contact t=" + simT.toFixed(2) +
+              console.log("[returnHomeV3] LANDING_BURN contact t=" + simT.toFixed(2) +
                 " altitudeAGL=" + hAGL.toFixed(3) + "m hEff=" + hEff.toFixed(3) + "m" +
                 " vy=" + vRadial.toFixed(3) + "m/s" +
                 " x=" + xFromPadM.toFixed(3) + "m vx=" + vTangGround.toFixed(3) + "m/s" +
@@ -5336,7 +5336,7 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
               if (vRadial > _st.lbVyMax) _st.lbVyMax = vRadial;
               // verbose POSTCUT logging removed — hop metrics reported at TOUCHDOWN_COMPLETE
               if (mdotPost < 1.0 || elapsedContact > 4.0) {
-                console.log("[standardRTLS] LANDING_BURN engines spooled down t=" + simT.toFixed(2) +
+                console.log("[returnHomeV3] LANDING_BURN engines spooled down t=" + simT.toFixed(2) +
                   " mdot=" + mdotPost.toFixed(2) + "kg/s F=" + Math.round(thrustPost) + "N" +
                   " landed=" + (!!body.landed) + " crashed=" + (!!body.crashed) +
                   " elapsed=" + elapsedContact.toFixed(2) + "s — advancing to TOUCHDOWN_COMPLETE");
@@ -5351,7 +5351,7 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
               _st.lbLegsDeployed = true;
               if (typeof Guidance !== 'undefined' && Guidance.logEvent) Guidance.logEvent('LEGS_DEPLOY');
               _send(Guidance.cmdLegs(true));
-              console.log("[standardRTLS] LANDING_BURN legs deploy t=" + simT.toFixed(2) + " alt=" + hAGL.toFixed(1) + "m");
+              console.log("[returnHomeV3] LANDING_BURN legs deploy t=" + simT.toFixed(2) + " alt=" + hAGL.toFixed(1) + "m");
             }
 
             // ---- Common quantities ----
@@ -5624,7 +5624,7 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
               const Rm2 = env2 ? env2.EARTH_RADIUS : 6371000;
               const rT = Math.hypot(body2.rx, body2.ry);
               const altT = rT - Rm2 - ((env2 && env2.LAUNCH_SITE_ALTITUDE) || 0);
-              console.log("[standardRTLS] TOUCHDOWN_COMPLETE t=" + simT.toFixed(2) +
+              console.log("[returnHomeV3] TOUCHDOWN_COMPLETE t=" + simT.toFixed(2) +
                 " altAGL=" + altT.toFixed(3) + "m" +
                 " landed=" + (!!body2.landed) + " crashed=" + (!!body2.crashed) + " settled=" + (!!body2.settled) +
                 " hop_mm=" + ((_st.lbMaxAltSinceMin - _st.lbMinAltAGL) * 1000).toFixed(4) +
@@ -5655,16 +5655,16 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
         }
         const tmo = cfg[TIMEOUT_KEY[_st.phase]];
         if (Number.isFinite(tmo) && simT - _st.phaseStart > tmo) {
-          console.warn("[standardRTLS] " + _st.phase + " timeout");
+          console.warn("[returnHomeV3] " + _st.phase + " timeout");
           _goto(next, simT, "timeout");
         }
       }
 
       return {
         start(constants, bodyIdx, missionCtx) {
-          if (!constants) throw new Error("standardRTLS.start: constants required");
+          if (!constants) throw new Error("returnHomeV3.start: constants required");
           if (!Number.isInteger(bodyIdx))
-            throw new Error("standardRTLS.start: bodyIdx required");
+            throw new Error("returnHomeV3.start: bodyIdx required");
           _constants = JSON.parse(JSON.stringify(constants));
           _bodyIdx = bodyIdx;
           _missionCtx = missionCtx || {};

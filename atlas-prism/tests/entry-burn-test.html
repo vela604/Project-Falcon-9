@@ -240,7 +240,7 @@ async function doInit(){
   const apo1 = +$('apo1').value, apo2 = +$('apo2').value;
   if(![meco,G,T,apo1,apo2].every(Number.isFinite)){ log('Invalid config', 'err'); S.running=false; $('initBtn').disabled=false; return; }
 
-  const preset = (typeof getGuideDefaultPreset === 'function') ? getGuideDefaultPreset('landbackV1') : null;
+  const preset = (typeof getGuideDefaultPreset === 'function') ? getGuideDefaultPreset('orbitalMissionGNCV1') : null;
   const vals = preset && preset.constants ? deepClone(preset.constants) : {};
   vals.ascent = vals.ascent || {};
   vals.ascent.MECO_TARGET_BOOSTER_FUEL_KG = meco;
@@ -263,8 +263,8 @@ async function doInit(){
   try {
     log('TunerEngine.init()');
     TunerEngine.init();
-    log('prepareRun(landbackV1)');
-    TunerEngine.prepareRun('landbackV1', vals, env);
+    log('prepareRun(orbitalMissionGNCV1)');
+    TunerEngine.prepareRun('orbitalMissionGNCV1', vals, env);
     log('running to SEPARATED_AXIAL…');
     const _orig = console.log; console.log = function(){};
     try {
@@ -309,7 +309,7 @@ async function runEval(bias, onProg){
   if(!_baseSnap) throw new Error('Snapshot missing: ' + _biasSrc);
 
   const g = deepClone(_baseSnap.guidanceState);
-  const cfg = g.guideConfigs && g.guideConfigs.landbackV1;
+  const cfg = g.guideConfigs && g.guideConfigs.orbitalMissionGNCV1;
   if(!cfg) throw new Error('Config missing');
 
   if(_biasSrc === 'boostback'){

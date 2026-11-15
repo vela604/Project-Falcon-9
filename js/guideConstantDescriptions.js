@@ -96,8 +96,8 @@ const GUIDE_CONSTANT_DESCRIPTIONS = {
   'suicide.TARGET_IMPACT_EF_DEG': 'Absolute Earth-fixed angle (degrees) of the desired impact point. null = fall back to _missionCtx.restingArea (legacy path) or env.REMOTE_AREA_MID_WEST_DEG (default). Mission code overrides per-mission by passing a numeric value in the config clone at suicideBlock.start(). Valid range: [-360, 360]; anything else falls back.',
 },
 
-  // landbackV1 — clone of leoInsertionV3 (Landback logic to be added)
-  landbackV1: {
+  // orbitalMissionGNCV1 — clone of leoInsertionV3 (Landback logic to be added)
+  orbitalMissionGNCV1: {
   // ---- mission (booster landing target) ----
   'mission.TARGET_LANDING_PAD': 'Which landing site the booster returns to. RTLS mode: a pad id from CONFIG.LANDING_PADS (LZ-1, LZ-2, LZ-3). ASDS mode: "NAME,KM" (e.g. "HOPE,140") — the mission deploys a droneship at that name and downrange km before ascent, uses whatever name/position deployASDS returns (may append -1, -2 on collision, or ±10 km nudge on ocean/gap conflict), and uses that pad for the entry-burn and landing-burn targets. Malformed specs fall back to "HOPE,140".',
   // ---- rtls (booster return) ----

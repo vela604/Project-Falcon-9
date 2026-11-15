@@ -1,4 +1,4 @@
-// rtls-bb-check.js — offline check of standardRTLS BOOSTBACK_BURN. Run: node rtls-bb-check.js
+// rtls-bb-check.js — offline check of returnHomeV3 BOOSTBACK_BURN. Run: node rtls-bb-check.js
 // Models: point-mass gravity + Earth rotation, 9 Merlin-like engines (3 s startup, 2 s shutdown,
 // 0.5/s throttle slew, 39% floor), gimbal accel cmd, 1-tick command latency, planar attitude.
 const fs=require('fs');
@@ -15,7 +15,7 @@ const mk=()=>{const E=[{isCenter:true,angleDeg:null,x:0}];for(let a=0;a<360;a+=4
 global.Derivation={getEnv:()=>({DT,GM_EARTH:GM,EARTH_RADIUS:RE,EARTH_OMEGA:WE,LAUNCH_SITE_ANGLE_0:0}),
  derive:()=>({rx:S.rx,ry:S.ry,vx:S.vx,vy:S.vy,theta:S.th,omega:S.w,massProps:{I,M:S.M,comX:0,comY:COMY}})};
 eval(fs.readFileSync('guidance-blocks.js','utf8')+';global.FB=FUNDAMENTAL_BLOCKS;');
-const B=FB.standardRTLS;
+const B=FB.returnHomeV3;
 function apply(c){ if(!c)return; const E=S.E;
   const set=(e,v)=>{ e.tgt = v===0?0:(v===Infinity?MAXF:Math.max(MINF*MAXF,Math.min(MAXF,v))); };
   if(c.t==='all')E.forEach(e=>set(e,c.v));
@@ -63,7 +63,7 @@ function run(name,{dtheta0=0, w0=0, cfg={}, downrangeKm=40, alt=70000, vh=900, v
   let x=S.rx,y=S.ry,vx=S.vx,vy=S.vy,tt=0;const h=0.05; 
   while(Math.hypot(x,y)>RE&&tt<4000){const r=Math.hypot(x,y);vx+=-GM*x/r**3*h;vy+=-GM*y/r**3*h;x+=vx*h;y+=vy*h;tt+=h;}
   const impEf=(Math.atan2(x,y)-WE*(t+tt))*180/Math.PI, tgt=(400/RE)*180/Math.PI+(C.BOOSTBACK_APPARENT_OFFSET_DEG||0);
-  const stg=logs.filter(l=>/THREE|CENTER|SPOOL|done|WARN/.test(l)).map(l=>l.replace('[standardRTLS] ',''));
+  const stg=logs.filter(l=>/THREE|CENTER|SPOOL|done|WARN/.test(l)).map(l=>l.replace('[returnHomeV3] ',''));
   console.log(`\n== ${name}: end t=${done&&done.toFixed(1)}s  trueImpactErr=${(impEf-tgt).toFixed(4)}deg (${((impEf-tgt)*Math.PI/180*RE).toFixed(0)} m)  fuel=${(fuel0-S.fuel).toFixed(0)}kg  maxAttErr=${maxAtt.toFixed(1)}deg maxGimbal=${maxGim.toFixed(2)}deg`);
   console.log('   '+logs[0]); stg.forEach(l=>console.log('   '+l));
 }

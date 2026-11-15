@@ -53,7 +53,7 @@ const GUIDE_COMPATIBLE_STACK_TYPES = {
   // Heavy (two stages) not supported by current single-stage V3 logic.
   // SSO has no stage → not supported.
   leoInsertionV3: ['standard', 'legacy'],
-  landbackV1: ['standard', 'legacy'],
+  orbitalMissionGNCV1: ['standard', 'legacy'],
   // Same mission shape as V3.
   leoInsertionV2: ['standard', 'legacy'],
   leoInsertion:   ['standard', 'legacy'],
@@ -372,8 +372,8 @@ leoInsertionV3: _mkDefault(
     'default:leoInsertionV3-serenoFlux05'
   ),
 
-  landbackV1: _mkDefault(
-  'landbackV1',
+  orbitalMissionGNCV1: _mkDefault(
+  'orbitalMissionGNCV1',
   'Author Baseline',
   'First hand-tuned preset by the author. 52612 kg MECO residual + RTLS booster return to LZ-1 - the original manual tune. Kept as tribute; not the optimal tune for this stack.',
   {
@@ -653,15 +653,15 @@ leoInsertionV3: _mkDefault(
 };
 
 // ---------------------------------------------------------------------------
-// Second landbackV1 default — SERENO FLUX profile.
-// Clones landbackV1's baseline constants, overrides the SERENO FLUX values.
-// Placed AFTER the object literal so `GUIDE_DEFAULT_PRESETS.landbackV1` is
+// Second orbitalMissionGNCV1 default — SERENO FLUX profile.
+// Clones orbitalMissionGNCV1's baseline constants, overrides the SERENO FLUX values.
+// Placed AFTER the object literal so `GUIDE_DEFAULT_PRESETS.orbitalMissionGNCV1` is
 // fully resolved when this runs (avoids TDZ inside the literal itself).
 // Adding as a second default keeps multi-default UI working: sidebar count,
 // main pane card, diff picker, GCM modal preset dropdown all show both.
 // ---------------------------------------------------------------------------
 (function addSerenoFluxLandback() {
-  const base = JSON.parse(JSON.stringify(GUIDE_DEFAULT_PRESETS.landbackV1.constants));
+  const base = JSON.parse(JSON.stringify(GUIDE_DEFAULT_PRESETS.orbitalMissionGNCV1.constants));
   // SERENO FLUX ascent overrides (from search-engine result)
   base.ascent.MECO_TARGET_BOOSTER_FUEL_KG = 61333;
   base.ascent.PUSH_MAX_GIMBAL_DEG = 0.64;
@@ -676,15 +676,15 @@ leoInsertionV3: _mkDefault(
   if (!base.mission) base.mission = { TARGET_LANDING_PAD: 'LZ-1' };
   if (!base.rtls.MISSION_TYPE) base.rtls.MISSION_TYPE = 'RTLS';
 
-  GUIDE_DEFAULT_PRESETS['landbackV1-serenoFlux05'] = _mkDefault(
-    'landbackV1',
+  GUIDE_DEFAULT_PRESETS['orbitalMissionGNCV1-serenoFlux05'] = _mkDefault(
+    'orbitalMissionGNCV1',
     'LEO-320 F9B5',
     'SERENO FLUX searched best at ideal scale 0.5. Target 320 x 320 km circular, 12t payload. Full mission: ascent + insertion + stage deorbit + RTLS booster to LZ-1.',
     base,
     ['leo-320km', '12t', 'scale-0.5', 'sereno-flux', 'lb-nova6'],
     135,
     586,
-    'default:landbackV1-serenoFlux05'
+    'default:orbitalMissionGNCV1-serenoFlux05'
   );
 })();
 
@@ -732,7 +732,7 @@ const GUIDE_IMPORTANT_FIELDS = {
   'ascent.THROTTLE_FRAC',
   'insertion.STAGE_BURN_CUTOFF_MARGIN_MPS',
   ],
-  landbackV1: [
+  orbitalMissionGNCV1: [
   'insertion.TARGET_APSIDE1_ALT_KM',
   'insertion.TARGET_APSIDE2_ALT_KM',
   'ascent.MECO_TARGET_BOOSTER_FUEL_KG',

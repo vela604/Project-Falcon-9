@@ -110,7 +110,7 @@ td.l{text-align:left}
 'use strict';
 const $ = (id) => document.getElementById(id);
 const S = { inited:false, saSnap:null, ebSnap:null, lbSnap:null, running:false };
-const guideName = 'landbackV1';
+const guideName = 'orbitalMissionGNCV1';
 let charts = [];
 
 function deepClone(x, memo) {
@@ -197,7 +197,7 @@ $('rebuildBtn').addEventListener('click', function(){
     try{
       const bias=parseFloat($('bias').value);
       const g=deepClone(S.ebSnap.guidanceState);
-      if(g.guideConfigs&&g.guideConfigs.landbackV1&&g.guideConfigs.landbackV1.rtls) g.guideConfigs.landbackV1.rtls.ENTRY_BURN_IMPACT_TARGET_M=bias;
+      if(g.guideConfigs&&g.guideConfigs.orbitalMissionGNCV1&&g.guideConfigs.orbitalMissionGNCV1.rtls) g.guideConfigs.orbitalMissionGNCV1.rtls.ENTRY_BURN_IMPACT_TARGET_M=bias;
       if(g.lbRtlsBlock&&g.lbRtlsBlock.constants) g.lbRtlsBlock.constants.ENTRY_BURN_IMPACT_TARGET_M=bias;
       restoreSnap(S.ebSnap, g);
       let lbSnap=null;
