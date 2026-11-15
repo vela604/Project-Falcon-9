@@ -325,19 +325,28 @@ card.innerHTML = `
 `;
 
     const actions = card.querySelector('.preset-actions');
+    const _recCount = (typeof getMissionRecordsForPreset === 'function')
+      ? getMissionRecordsForPreset(p.id).length : 0;
+    const _recLabel = _recCount > 0
+      ? '\u{1F4CA} Recorded Data (' + _recCount + ')'
+      : '\u{1F4CA} Recorded Data';
     if (opts.mode === 'default') {
       const copyBtn = mkBtn('Copy', 'btn', () => copyPreset(p.id));
       const cmpBtn  = mkBtn('Compare…', 'btn', () => openDiffPicker(p));
+      const recBtn  = mkBtn(_recLabel, 'btn', () => openRecordedDataPanel(p));
       actions.appendChild(copyBtn);
       actions.appendChild(cmpBtn);
+      actions.appendChild(recBtn);
     } else {
       const editBtn = mkBtn('Edit', 'btn', () => openPresetModal(p.id));
       const copyBtn = mkBtn('Copy', 'btn', () => copyPreset(p.id));
       const cmpBtn  = mkBtn('Compare…', 'btn', () => openDiffPicker(p));
+      const recBtn  = mkBtn(_recLabel, 'btn', () => openRecordedDataPanel(p));
       const delBtn  = mkBtn('Delete', 'btn btn-danger', () => deletePreset(p.id));
       actions.appendChild(editBtn);
       actions.appendChild(copyBtn);
       actions.appendChild(cmpBtn);
+      actions.appendChild(recBtn);
       actions.appendChild(delBtn);
     }
     return card;
@@ -784,6 +793,190 @@ if (_editingPresetId) {
   // "+ Add Preset" button
   // ----------------------------------------------------------------
   $('btnAddPreset').addEventListener('click', () => openPresetModal(null));
+
+  // ----------------------------------------------------------------
+  // Phase 2 — Recorded Data panel
+  // Shows all records for the given preset, grouped by env combination.
+  // Uses getRecordsGroupedByEnvForPreset() (Phase 1 export).
+  // ----------------------------------------------------------------
+  function _rdmFormatHMS(sec) {
+    if (!Number.isFinite(sec) || sec < 0) return null;
+    const s = Math.floor(sec);
+    const hh = String(Math.floor(s / 3600)).padStart(2, '0');
+    const mm = String(Math.floor((s % 3600) / 60)).padStart(2, '0');
+    const ss = String(s % 60).padStart(2, '0');
+    return hh + ':' + mm + ':' + ss;
+  }
+
+  function _rdmEnvLabel(env) {
+    if (!env) return 'Unknown environment';
+    const parts = [];
+    const hasWind = env.wind && env.wind.enabled && Number(env.wind.speed) > 0;
+    if (hasWind) {
+      parts.push('Wind ' + env.wind.speed + ' m/s @ ' + env.wind.directionDeg + '\u00b0');
+    } else {
+      parts.push('No wind');
+    }
+    parts.push(env.atmosphere ? 'Atmosphere' : 'Vacuum');
+    if (env.slosh) parts.push('Slosh');
+    if (env.imu) parts.push('IMU noise');
+    return parts.join(' \u00b7 ');
+  }
+
+  function _rdmEnvIcon(env) {
+    if (!env) return '?';
+    const hasWind = env.wind && env.wind.enabled && Number(env.wind.speed) > 0;
+    return hasWind ? '\u{1F32C}' : '\u2600';
+  }
+
+  function _rdmRecordCard(rec) {
+    const success = rec.success;
+    const statusClass = success === true ? 'success' : (success === false ? 'failed' : 'partial');
+    const statusText  = success === true ? '\u2713 SUCCESS' : (success === false ? '\u2717 FAILED' : '\u25d0 PARTIAL');
+
+    const captured = rec.metadata && rec.metadata.recordedAt
+      ? new Date(rec.metadata.recordedAt).toLocaleString()
+      : '\u2014';
+
+    const mecoS    = _rdmFormatHMS(rec.mecoS);
+    const landS    = _rdmFormatHMS(rec.boosterLandS);
+    const deployS  = _rdmFormatHMS(rec.payloadDeployS);
+
+    const phases = Array.isArray(rec.phases) ? rec.phases : [];
+    const events = Array.isArray(rec.events) ? rec.events : [];
+
+    const phasesHtml = phases.map(p => {
+      const dur = Number.isFinite(p.durationS) ? '+' + p.durationS.toFixed(1) + 's' : '\u2014';
+      return '<div class="rdm-row">'
+        + '<span class="rdm-row-label">' + escapeHtml(p.name) + '</span>'
+        + '<span class="rdm-row-value">' + dur + '</span>'
+        + '</div>';
+    }).join('');
+
+    const eventsHtml = events.map(e => {
+      const t = _rdmFormatHMS(e.t);
+      return '<div class="rdm-row">'
+        + '<span class="rdm-row-label">' + escapeHtml(e.name) + '</span>'
+        + '<span class="rdm-row-value cyan">' + (t ? 'T+' + t : '\u2014') + '</span>'
+        + '</div>';
+    }).join('');
+
+    return '<div class="rdm-record">'
+      + '<div class="rdm-record-head">'
+      + '<span class="rdm-status ' + statusClass + '">' + statusText + '</span>'
+      + '<span class="rdm-time">' + escapeHtml(captured) + '</span>'
+      + '</div>'
+      + '<div class="rdm-timeline">'
+      + '<div class="rdm-tl-item">'
+      + '<span class="rdm-tl-label">MECO</span>'
+      + '<span class="rdm-tl-value' + (mecoS ? '' : ' missing') + '">' + (mecoS ? 'T+' + mecoS : '\u2014') + '</span>'
+      + '</div>'
+      + '<div class="rdm-tl-item">'
+      + '<span class="rdm-tl-label">Booster Land</span>'
+      + '<span class="rdm-tl-value' + (landS ? '' : ' missing') + '">' + (landS ? 'T+' + landS : '\u2014') + '</span>'
+      + '</div>'
+      + '<div class="rdm-tl-item">'
+      + '<span class="rdm-tl-label">Payload Deploy</span>'
+      + '<span class="rdm-tl-value' + (deployS ? '' : ' missing') + '">' + (deployS ? 'T+' + deployS : '\u2014') + '</span>'
+      + '</div>'
+      + '</div>'
+      + '<button class="rdm-section-btn" type="button">'
+      + '<span>Phases (' + phases.length + ')</span>'
+      + '<span class="rdm-chevron">\u25b8</span>'
+      + '</button>'
+      + '<div class="rdm-section-body">' + (phasesHtml || '<em>(no phases captured)</em>') + '</div>'
+      + '<button class="rdm-section-btn" type="button">'
+      + '<span>Events (' + events.length + ')</span>'
+      + '<span class="rdm-chevron">\u25b8</span>'
+      + '</button>'
+      + '<div class="rdm-section-body">' + (eventsHtml || '<em>(no events captured)</em>') + '</div>'
+      + '<div class="rdm-actions">'
+      + '<button class="btn" data-copy-record="' + escapeHtml(rec.comboKey || '') + '">Copy JSON</button>'
+      + '</div>'
+      + '</div>';
+  }
+
+  function openRecordedDataPanel(preset) {
+    const groups = (typeof getRecordsGroupedByEnvForPreset === 'function')
+      ? getRecordsGroupedByEnvForPreset(preset.id) : [];
+    const total = groups.reduce((s, g) => s + g.records.length, 0);
+
+    $('recordedDataTitle').textContent = 'RECORDED DATA \u2014 ' + preset.name;
+    const body = $('recordedDataBody');
+
+    if (!total) {
+      body.innerHTML = '<div class="rdm-empty">'
+        + '<strong>No records captured for this preset yet.</strong><br><br>'
+        + 'To capture: open <strong>simulation.html</strong>, load this preset from the GCM modal, '
+        + 'run a full mission, then click <strong>\u{1F4F8} Record</strong> in the mission phase panel at the end. '
+        + 'The record will appear here automatically.'
+        + '</div>';
+      $('recordedDataModal').style.display = 'flex';
+      return;
+    }
+
+    const summary = '<div class="rdm-summary">'
+      + groups.length + ' environment' + (groups.length === 1 ? '' : 's')
+      + ' \u00b7 ' + total + ' record' + (total === 1 ? '' : 's')
+      + '</div>';
+
+    const groupsHtml = groups.map(g => {
+      const recordsHtml = g.records.map(_rdmRecordCard).join('');
+      return '<div class="rdm-env-group">'
+        + '<div class="rdm-env-header">'
+        + '<span class="rdm-env-label">' + _rdmEnvIcon(g.env) + ' ' + escapeHtml(_rdmEnvLabel(g.env)) + '</span>'
+        + '<span class="rdm-env-detail">' + g.records.length + ' record' + (g.records.length === 1 ? '' : 's') + '</span>'
+        + '</div>'
+        + recordsHtml
+        + '</div>';
+    }).join('');
+
+    body.innerHTML = summary + groupsHtml;
+
+    // Wire collapsible sections
+    body.querySelectorAll('.rdm-section-btn').forEach(btn => {
+      btn.addEventListener('click', () => btn.classList.toggle('open'));
+    });
+
+    // Wire Copy JSON per record
+    body.querySelectorAll('[data-copy-record]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const key = btn.getAttribute('data-copy-record');
+        const allRecs = groups.flatMap(g => g.records);
+        const rec = allRecs.find(r => (r.comboKey || '') === key);
+        if (!rec) { toast('Record not found'); return; }
+        const json = JSON.stringify(rec, null, 2);
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(json).then(
+            () => toast('Record JSON copied (' + json.length + ' chars)'),
+            () => toast('Clipboard write failed')
+          );
+        } else {
+          const ta = document.createElement('textarea');
+          ta.value = json;
+          document.body.appendChild(ta);
+          ta.select();
+          try { document.execCommand('copy'); toast('Record JSON copied'); }
+          catch (e) { toast('Copy failed'); }
+          document.body.removeChild(ta);
+        }
+      });
+    });
+
+    $('recordedDataModal').style.display = 'flex';
+  }
+
+  // Modal wiring (close handlers)
+  if ($('recordedDataClose')) {
+    $('recordedDataClose').addEventListener('click', () => { $('recordedDataModal').style.display = 'none'; });
+    $('recordedDataCancel').addEventListener('click', () => { $('recordedDataModal').style.display = 'none'; });
+    $('recordedDataModal').addEventListener('click', (e) => {
+      if (e.target === $('recordedDataModal')) $('recordedDataModal').style.display = 'none';
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && $('recordedDataModal').style.display === 'flex') $('recordedDataModal').style.display = 'none';
+    });
+  }
 
   // ----------------------------------------------------------------
   // Diff view — minimal path-by-path comparison
