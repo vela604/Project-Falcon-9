@@ -263,7 +263,7 @@ leoInsertionV3: _mkDefault(
       TARGET_IMPACT_EF_DEG: null,
     },
   },
-    ['leo-320km', '12t', 'author-tuned'],
+    ['leo-320km', '12t', 'author-tuned', 'rtls-tuned'],
   135,
   586
   ),
@@ -374,8 +374,8 @@ leoInsertionV3: _mkDefault(
 
   landbackV1: _mkDefault(
   'landbackV1',
-  'F9 Landback — V1 (clone of LEO V3)',
-  'Autonomous Falcon 9 ascent to a 320 km LEO, payload deploy at apogee, and retrograde deorbit for a controlled resting-site impact. Tuned for the Block 5 stack with axial stage separation.',
+  'Author Baseline',
+  'First hand-tuned preset by the author. 52612 kg MECO residual + RTLS booster return to LZ-1 - the original manual tune. Kept as tribute; not the optimal tune for this stack.',
   {
     ascent: {
     INITIAL_COAST_S: 4.9,
