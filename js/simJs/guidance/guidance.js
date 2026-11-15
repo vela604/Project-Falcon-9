@@ -707,8 +707,8 @@ function setActiveGuide(name) {
           bodyIdx: idx,
           peakQ_kPa: pk.Q_Pa / 1000, peakQ_t: pk.Q_t, peakQ_bodyTag: pk.Q_bodyTag || '?',
           peakG: pk.G, peakG_t: pk.G_t, peakG_bodyTag: pk.G_bodyTag || '?',
-          peakTemp_K: (function(){const _b=bodyList[idx]||(snap&&snap.bodies&&snap.bodies[idx]);return _readSkinPeakTemp(_b).K;})(),
-          peakTemp_t: (function(){const _b=bodyList[idx]||(snap&&snap.bodies&&snap.bodies[idx]);return _readSkinPeakTemp(_b).t;})(),
+          peakTemp_K: _readSkinPeakTemp((_lastMeasuredSnapshot && _lastMeasuredSnapshot.bodies && _lastMeasuredSnapshot.bodies[idx]) || null).K,
+          peakTemp_t: _readSkinPeakTemp((_lastMeasuredSnapshot && _lastMeasuredSnapshot.bodies && _lastMeasuredSnapshot.bodies[idx]) || null).t,
         });
       }
     }
