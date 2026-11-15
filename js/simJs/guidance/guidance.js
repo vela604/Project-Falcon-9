@@ -441,7 +441,7 @@ function _trackBodyTelemetry(snap) {
     // (full stack) and becomes 'stage' after separation; capturing
     // bodyTag at peak time means ascent-Q maps to 'booster' not 'stage'.
     if (!_peakTracker[i]) {
-      _peakTracker[i] = { Q_Pa: 0, Q_t: 0, Q_bodyTag: '?', G: 0, G_t: 0, G_bodyTag: '?', Temp_K: 0, Temp_t: 0 };
+      _peakTracker[i] = { Q_Pa: 0, Q_t: 0, Q_bodyTag: '?', G: 0, G_t: 0, G_bodyTag: '?', Temp_K: 0, Temp_t: 0, Temp_lagged: 288.15 };
       // Peak inheritance on split — physics.js split handlers set
       // _inheritPeaksFrom (parent index) + _inheritPeakQ (bool). Rules:
       //   · peakG: ALWAYS inherited — thrust G propagates mechanically
@@ -468,6 +468,9 @@ function _trackBodyTelemetry(snap) {
           if (Number.isFinite(_pPk.Temp_K) && _pPk.Temp_K > 0) {
             _peakTracker[i].Temp_K = _pPk.Temp_K;
             _peakTracker[i].Temp_t = _pPk.Temp_t;
+            // Carry lagged thermal state from parent — new body continues
+            // from parent's current temp, avoids cold-start catch-up lag.
+            _peakTracker[i].Temp_lagged = Number.isFinite(_pPk.Temp_lagged) ? _pPk.Temp_lagged : _pPk.Temp_K;
           }
         }
       }
@@ -511,9 +514,29 @@ function _trackBodyTelemetry(snap) {
     const _rvy = b.vy - _svy - _wy;
     const _speedRelTemp = Math.hypot(_rvx, _rvy);
     const _tempK = _skinTempForPoint(alt, _speedRelTemp);
-    if (Number.isFinite(_tempK) && _tempK > _peakTracker[i].Temp_K) {
-      _peakTracker[i].Temp_K = _tempK;
-      _peakTracker[i].Temp_t = T;
+    // First-order thermal lag — real skin has thermal mass so peak actual
+    // is well below instantaneous equilibrium. Time constants:
+    //   · Metal tank (booster, stage): 30s — thick aluminium-lithium,
+    //     high thermal mass. Real F9 measured ~400-500 K peak during
+    //     ascent/re-entry even though instantaneous equilibrium reaches
+    //     ~750 K (NASA infrared imaging confirms).
+    //   · Fairing composite (CFRP): 6s — thin skin, faster response.
+    //   · Payload: 10s — irrelevant (no atmosphere exposure).
+    //   · Default: 20s.
+    if (!Number.isFinite(_peakTracker[i].Temp_lagged)) _peakTracker[i].Temp_lagged = 288.15;
+    if (Number.isFinite(_tempK)) {
+      const _roleTagT = _computeBodyTag(b);
+      let _tauT = 20;
+      if (_roleTagT === 'booster' || _roleTagT === 'stage') _tauT = 30;
+      else if (_roleTagT === 'fairing') _tauT = 6;
+      else if (_roleTagT === 'payload') _tauT = 10;
+      const _dtT = (env && Number.isFinite(env.DT)) ? env.DT : 0.0125;
+      const _alphaT = 1 - Math.exp(-_dtT / _tauT);
+      _peakTracker[i].Temp_lagged += (_tempK - _peakTracker[i].Temp_lagged) * _alphaT;
+      if (_peakTracker[i].Temp_lagged > _peakTracker[i].Temp_K) {
+        _peakTracker[i].Temp_K = _peakTracker[i].Temp_lagged;
+        _peakTracker[i].Temp_t = T;
+      }
     }
   }
 }
