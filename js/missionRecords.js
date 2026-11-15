@@ -518,6 +518,12 @@ window.captureCurrentMissionRecord = async function () {
       // Array of { memberId, role, fuelUsed } for members that drained
       // >1g during the phase. Empty for pre-v2 phaseLog entries.
       fuelDelta: Array.isArray(e.fuelDelta) ? e.fuelDelta.slice() : [],
+      // Schema v3: body role attribution. phaseLog carries it from
+      // agent's guidance.js (ASCENT/MECO/SEPARATION=booster,
+      // ORBIT_BURN/COAST/etc=stage, CHUTE_DEPLOY/SPLASHDOWN=fairing).
+      // v2 historical records have null — filter treats null as
+      // "show for all roles" (or hides gracefully).
+      bodyTag: e.bodyTag || null,
     }));
   
   const events = (gs.events || []).slice();
