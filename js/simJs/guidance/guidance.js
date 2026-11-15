@@ -59,23 +59,23 @@ const Guidance = (function () {
     _lastMeasuredSnapshot = measure(rawSnapshot);
     _lastSimTime = _lastMeasuredSnapshot.simTime || 0;
     tick(_lastMeasuredSnapshot);
+    _trackBodyTelemetry(_lastMeasuredSnapshot);
 
-    // Phase-log update: compare the guide's current phase to the last
-    // one we recorded. On change, freeze the old phase's endT and open a
-    // new entry. Runs every tick (cheap — just a string compare) so the
-    // recorded times are as precise as possible.
     if (_activeGuide && GUIDES[_activeGuide]) {
       const g = GUIDES[_activeGuide];
       const st = typeof g.getStatus === "function" ? g.getStatus() : null;
       const ph = st && st.phase;
       if (ph && ph !== _lastSeenPhase) {
         const nowT = _lastSimTime;
+        const fuelNow = _snapMemberFuel(_lastMeasuredSnapshot);
         if (_lastSeenPhase && _phaseLog[_lastSeenPhase]) {
           _phaseLog[_lastSeenPhase].endT = nowT;
+          _phaseLog[_lastSeenPhase].fuelEnd = fuelNow;
+          _phaseLog[_lastSeenPhase].fuelDelta = _diffFuel(_phaseLog[_lastSeenPhase].fuelStart, fuelNow);
         }
         _lastSeenPhase = ph;
         if (_guideStartT === null) _guideStartT = nowT;
-        _phaseLog[ph] = { startT: nowT, endT: null };
+        _phaseLog[ph] = { startT: nowT, endT: null, fuelStart: fuelNow, fuelEnd: null, fuelDelta: null };
       }
     }
   }
@@ -220,6 +220,8 @@ const GUIDE_PHASE_SEQUENCES = {
     _lastSeenPhase = null;
     _guideStartT = null;
     _eventLog = [];
+    _bodyTrackState = {};
+    _peakTracker = {};
     if (typeof GUIDES[name].start === "function") {
       try {
         GUIDES[name].start();
@@ -252,6 +254,74 @@ const GUIDE_PHASE_SEQUENCES = {
 function logEvent(name, t) {
   if (typeof name !== 'string' || !name) return;
   _eventLog.push({ name, t: Number.isFinite(t) ? t : _lastSimTime });
+}
+
+// ---- Per-body telemetry tracking (peaks + discrete crossings) ----
+let _bodyTrackState = {};
+let _peakTracker = {};
+
+function _snapMemberFuel(snap) {
+  const map = {};
+  if (!snap || !Array.isArray(snap.bodies)) return map;
+  for (let bi = 0; bi < snap.bodies.length; bi++) {
+    const b = snap.bodies[bi];
+    if (!b || !Array.isArray(b.members) || !Array.isArray(b.memberFuel)) continue;
+    for (let i = 0; i < b.members.length; i++) {
+      const m = b.members[i];
+      if (!m || !m.id) continue;
+      const f = Number.isFinite(b.memberFuel[i]) ? b.memberFuel[i] : 0;
+      if (!map[m.id]) map[m.id] = { memberId: m.id, role: m.stageRole || '?', fuel: 0 };
+      map[m.id].fuel += f;
+    }
+  }
+  return map;
+}
+
+function _diffFuel(prev, cur) {
+  if (!prev || !cur) return [];
+  const out = [];
+  for (const id in cur) {
+    const c = cur[id];
+    const p = prev[id];
+    const used = (p ? p.fuel : 0) - c.fuel;
+    if (used > 0.001) out.push({ memberId: c.memberId, role: c.role, fuelUsed: used });
+  }
+  return out;
+}
+
+function _trackBodyTelemetry(snap) {
+  if (!snap || !Array.isArray(snap.bodies)) return;
+  const T = snap.simTime;
+  const env = Derivation.getEnv();
+  if (!env) return;
+  const Re = env.EARTH_RADIUS + (env.LAUNCH_SITE_ALTITUDE || 0);
+  const g0 = 9.80665;
+  for (let i = 0; i < snap.bodies.length; i++) {
+    const b = snap.bodies[i];
+    if (!b) continue;
+    const r = Math.hypot(b.rx, b.ry);
+    if (!(r > 1)) continue;
+    const alt = r - Re;
+    if (!_bodyTrackState[i]) _bodyTrackState[i] = { karmanAbove: null, vrSign: 0 };
+    const ts = _bodyTrackState[i];
+    const isAbove = alt >= 100000;
+    if (ts.karmanAbove === null) ts.karmanAbove = isAbove;
+    else if (ts.karmanAbove !== isAbove) {
+      logEvent(isAbove ? 'KARMAN_UP' : 'KARMAN_DOWN', T);
+      ts.karmanAbove = isAbove;
+    }
+    const vr = (b.vx * b.rx + b.vy * b.ry) / r;
+    const sgn = vr > 0.1 ? 1 : (vr < -0.1 ? -1 : 0);
+    if (sgn !== 0 && ts.vrSign !== 0 && sgn !== ts.vrSign) {
+      logEvent(ts.vrSign > 0 ? 'APOGEE_CROSS' : 'PERIGEE_CROSS', T);
+    }
+    if (sgn !== 0) ts.vrSign = sgn;
+    if (!_peakTracker[i]) _peakTracker[i] = { Q_Pa: 0, Q_t: 0, G: 0, G_t: 0 };
+    const Q = Number.isFinite(b.Q_Pa) ? b.Q_Pa : 0;
+    if (Q > _peakTracker[i].Q_Pa) { _peakTracker[i].Q_Pa = Q; _peakTracker[i].Q_t = T; }
+    const G = Math.hypot(b.ax || 0, b.ay || 0) / g0;
+    if (G > _peakTracker[i].G) { _peakTracker[i].G = G; _peakTracker[i].G_t = T; }
+  }
 }
 
 // Compute runResult from current mission state. 'in-progress' while running,
@@ -306,6 +376,28 @@ function setActiveGuide(name) {
     if (typeof g.getStatus === "function") Object.assign(out, g.getStatus());
     out.events = _eventLog.slice();
     out.runResult = _computeRunResult();
+    out.peaks = [];
+    {
+      const snap = _lastMeasuredSnapshot;
+      const bodyList = (snap && Array.isArray(snap.bodies)) ? snap.bodies : [];
+      for (const idxStr in _peakTracker) {
+        const idx = parseInt(idxStr, 10);
+        const pk = _peakTracker[idx];
+        const b = bodyList[idx];
+        let bodyTag = '?';
+        if (b) {
+          if (b.payloadBody) bodyTag = 'payload';
+          else if (b.fairingHalf) bodyTag = 'fairing';
+          else if (b.members && b.members[0] && b.members[0].stageRole) bodyTag = b.members[0].stageRole;
+          else if (b.isActive) bodyTag = 'active';
+        }
+        out.peaks.push({
+          bodyIdx: idx, bodyTag,
+          peakQ_kPa: pk.Q_Pa / 1000, peakQ_t: pk.Q_t,
+          peakG: pk.G, peakG_t: pk.G_t,
+        });
+      }
+    }
     const rawSeq = GUIDE_PHASE_SEQUENCES[_activeGuide] || [];
     const transformed = _applyPhaseDisplay(
       _activeGuide,

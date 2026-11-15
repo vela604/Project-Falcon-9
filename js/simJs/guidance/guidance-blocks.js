@@ -1643,6 +1643,7 @@ const tau_target = tau_desired - dNext.torqueEnvironmental;
 
             if (v_err <= cutoffThreshold) {
               _st.circAchieved = true;
+              if (typeof Guidance !== 'undefined' && Guidance.logEvent) Guidance.logEvent('ORBIT_ACHIEVED');
               _send(Guidance.cmdSetAllThrottle(0));
               _send(Guidance.cmdSetGimbalRate(0));
               _st.phase = "COAST_ROTATE_2";

@@ -2686,6 +2686,26 @@ const aProperY = aY - gAcc.ay;
 // guidance worker has GM_EARTH and its own position).
 body._lastAccelX = Number.isFinite(aProperX) ? aProperX : 0;
 body._lastAccelY = Number.isFinite(aProperY) ? aProperY : 0;
+// Per-body dynamic pressure, computed once at end of tick for guidance's
+// per-body peak-Q tracker. q = 0.5*rho*|v_rel|^2, same form as
+// computeDragAero — kept as a separate lightweight block so guidance (a
+// different worker) sees per-body Q_Pa in its snapshot without
+// duplicating the atmosphere model.
+{
+  const _qR = Math.hypot(body.rx, body.ry);
+  const _qAlt = Math.max(0, _qR - CONFIG.EARTH_RADIUS - (CONFIG.LAUNCH_SITE_ALTITUDE || 0));
+  const _qRho = (typeof airDensity === 'function') ? airDensity(_qAlt) : 0;
+  if (_qRho > 0) {
+    const _qSv = earthSurfaceVelocity(body.rx, body.ry);
+    const _qWv = (typeof windInertialVector === 'function') ? windInertialVector(body.rx, body.ry) : { wx: 0, wy: 0 };
+    const _qRvx = body.vx - _qSv.vx - _qWv.wx;
+    const _qRvy = body.vy - _qSv.vy - _qWv.wy;
+    const _qSp = Math.hypot(_qRvx, _qRvy);
+    body._lastQ_Pa = 0.5 * _qRho * _qSp * _qSp;
+  } else {
+    body._lastQ_Pa = 0;
+  }
+}
 const cosT = Math.cos(body.theta), sinT = Math.sin(body.theta);
 // Body frame: lateral = +right = (cosθ, sinθ);
     //             axial   = +up    = (-sinθ, cosθ)

@@ -545,6 +545,7 @@ function maybeForwardGuidanceSnapshot() {
   rx: b.rx, ry: b.ry, vx: b.vx, vy: b.vy, theta: b.theta, omega: b.omega,
   // IMU accelerometer — body-frame, proper (non-gravitational) accel
   ax: b.accelX || 0, ay: b.accelY || 0,
+  Q_Pa: b.q_Pa || 0,
   // Body-own geometry + dry mass. Used by guidance's fallback path for
   // member-less bodies (fairing halves, ejected packages, released
   // payloads) — same numbers physics's own _bodyHeightOf/_bodyWidthOf/

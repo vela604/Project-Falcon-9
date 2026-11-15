@@ -118,17 +118,17 @@ self.onmessage = (e) => {
 
 
       importScripts(
-        '../../componentLibrary.js?v=1794689112101',
-        '../../customDesign.js?v=1794689112101',
-        '../../fleet.js?v=1794689112101',
-        '../../config.js?v=1794689112101',
-        '../core/massProps.js?v=1794689112101',
-        '../core/environment.js?v=1794689112101',
-        '../core/vehicle.js?v=1794689112101',
-        '../core/rcs.js?v=1794689112101',
-        '../core/physics.js?v=1794689112101',
-        '../core/collision.js?v=1794689112101',
-        '../core/stateBuffer.js?v=1794689112101'
+        '../../componentLibrary.js?v=1794700940226',
+        '../../customDesign.js?v=1794700940226',
+        '../../fleet.js?v=1794700940226',
+        '../../config.js?v=1794700940226',
+        '../core/massProps.js?v=1794700940226',
+        '../core/environment.js?v=1794700940226',
+        '../core/vehicle.js?v=1794700940226',
+        '../core/rcs.js?v=1794700940226',
+        '../core/physics.js?v=1794700940226',
+        '../core/collision.js?v=1794700940226',
+        '../core/stateBuffer.js?v=1794700940226'
       );
 
       bootstrapped = true;
@@ -1206,6 +1206,7 @@ bc.width = b.width;
 // these are PROPER (non-gravitational) accelerations.
 bc.accelX = b._lastAccelX || 0;
 bc.accelY = b._lastAccelY || 0;
+bc.q_Pa = b._lastQ_Pa || 0;
     
     out.bodies[i] = bc;
   }
