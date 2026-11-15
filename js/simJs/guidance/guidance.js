@@ -22,6 +22,7 @@
 //   - guidercs.js   → GuideRCS.*     : torque → RCS duty tables
 // ============================================================================
 
+const GUIDANCE_BUILD_STAMP = 'guid-20241116-33';
 const Guidance = (function () {
   let _physicsSend = null; // (msg) => void, wired by guidance.worker.js
   // Mission event log — non-phase-transition moments the phase timeline

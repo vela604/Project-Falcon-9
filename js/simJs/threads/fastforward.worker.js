@@ -56,30 +56,38 @@ self.onmessage = async (e) => {
     // Physics side loads first (defines state, buildPodEntries, etc.).
     // Guidance modules use IIFE scoping, so no namespace collisions with
     // physics.js's module-level helpers.
-    const _FFW_CACHE_VERSION = '20241116-32';
+    const _FFW_CACHE_VERSION = '20241116-33';  // BUMP: on ANY guidance/* change. Sed pattern below MUST match both 20241115-* and 20241116-* prefixes.
 importScripts(
-  '../../componentLibrary.js?v=20241115-2',
-  '../../customDesign.js?v=20241115-2',
-  '../../fleet.js?v=20241115-2',
-  '../../config.js?v=20241115-2',
-  '../core/massProps.js?v=20241115-2',
-  '../core/environment.js?v=20241115-2',
-  '../core/vehicle.js?v=20241115-2',
-  '../core/rcs.js?v=20241115-2',
-  '../core/physics.js?v=20241115-2',
-  '../core/collision.js?v=20241115-2',
-  '../core/stateBuffer.js?v=20241115-2',
-  '../guidance/imu.js?v=20241115-2',
-  '../guidance/derivation.js?v=20241115-2',
-  '../guidance/guidercs.js?v=20241115-2',
-  '../guidance/guidance-blocks.js?v=20241115-2',
-  '../guidance/guidance.js?v=20241116-32'
+  '../../componentLibrary.js?v=20241116-33',
+  '../../customDesign.js?v=20241116-33',
+  '../../fleet.js?v=20241116-33',
+  '../../config.js?v=20241116-33',
+  '../core/massProps.js?v=20241116-33',
+  '../core/environment.js?v=20241116-33',
+  '../core/vehicle.js?v=20241116-33',
+  '../core/rcs.js?v=20241116-33',
+  '../core/physics.js?v=20241116-33',
+  '../core/collision.js?v=20241116-33',
+  '../core/stateBuffer.js?v=20241116-33',
+  '../guidance/imu.js?v=20241116-33',
+  '../guidance/derivation.js?v=20241116-33',
+  '../guidance/guidercs.js?v=20241116-33',
+  '../guidance/guidance-blocks.js?v=20241116-33',
+  '../guidance/guidance.js?v=20241116-33'
 );
     // [FF-BOOT] — confirm CONFIG.LANDING_PADS loaded from importScripts.
     // N=3 for fresh boot (LZ-1/2/3 defaults). Run-handler then overwrites
     // with captured pad set (N=4 for ASDS missions). Persistent diagnostic.
     try {
       console.log('[FF-BOOT] CONFIG.LANDING_PADS after importScripts:', (CONFIG.LANDING_PADS || []).length, 'pads');
+      // BUILD-STAMP diagnostic — ground truth for "which guidance.js did FF
+      // worker actually load". If your log shows OLD stamp values, browser
+      // is still serving cached worker files (chrome://settings/clearBrowserData
+      // → Cached images and files, NOT just Ctrl+Shift+R).
+      try {
+        console.log('[FF-BUILD] cacheBust=' + _FFW_CACHE_VERSION +
+          ' guidanceStamp=' + (typeof GUIDANCE_BUILD_STAMP !== 'undefined' ? GUIDANCE_BUILD_STAMP : 'MISSING'));
+      } catch(_e) {}
     } catch (e) {}
     
    // ---- Cache the component library ----
