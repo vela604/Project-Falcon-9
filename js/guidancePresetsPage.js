@@ -832,6 +832,8 @@ if (_editingPresetId) {
 
 function _rdmPeaksTable(peaks) {
   if (!peaks || !peaks.length) return '<em class="rdm-empty-inline">(no peak data)</em>';
+  const activeBody = peaks.find(p => p.bodyIdx === 0);
+  const activePeakG = activeBody && Number.isFinite(activeBody.peakG) ? activeBody.peakG : 0;
   return peaks.map(p => {
     const tagQ = p.peakQ_bodyTag || '?';
     const tagG = p.peakG_bodyTag || '?';
@@ -846,10 +848,30 @@ function _rdmPeaksTable(peaks) {
       ? (p.peakG >= 0.01 ? p.peakG.toFixed(2) + ' G' : '< 0.01 G')
       : '\u2014';
     const gTime = _rdmFormatHMS(p.peakG_t);
+
+    // Child bodies (bodyIdx > 0) split from the active body at some point.
+    // Their peak tracking starts at split — pre-split acceleration lives
+    // in body #0's history. Show reference when child peak is suspiciously
+    // lower than parent peak (indicates attachment-phase was higher).
+    const isChild = p.bodyIdx > 0;
+    const parentRefG = (isChild && activePeakG > 1 && p.peakG < activePeakG * 0.5)
+      ? activePeakG
+      : null;
+    const parentRefTime = parentRefG ? _rdmFormatHMS(activeBody.peakG_t) : null;
+    const gNote = parentRefG
+      ? '<div class="rdm-pk-hint">Body #0 peak during attach: '
+        + parentRefG.toFixed(2) + ' G' + (parentRefTime ? ' @ T+' + parentRefTime : '')
+        + ' \u2014 pre-split data not tracked for this body</div>'
+      : '';
+    const gPostTag = (isChild && Number.isFinite(p.peakG) && p.peakG < activePeakG * 0.5 && activePeakG > 1)
+      ? ' <span class="rdm-pk-posttag">post-split</span>'
+      : '';
+
     return '<div class="rdm-pk-block">'
       + '<div class="rdm-pk-header">Body #' + (p.bodyIdx != null ? p.bodyIdx : '?') + ' <span class="rdm-pk-tag">' + tagLine + '</span></div>'
       + '<div class="rdm-pk-row"><span class="rdm-pk-key">Peak Q</span><span class="rdm-pk-val">' + qVal + (qTime ? ' @ T+' + qTime : '') + '</span></div>'
-      + '<div class="rdm-pk-row"><span class="rdm-pk-key">Peak G</span><span class="rdm-pk-val">' + gVal + (gTime ? ' @ T+' + gTime : '') + '</span></div>'
+      + '<div class="rdm-pk-row"><span class="rdm-pk-key">Peak G</span><span class="rdm-pk-val">' + gVal + (gTime ? ' @ T+' + gTime : '') + gPostTag + '</span></div>'
+      + gNote
       + '</div>';
   }).join('');
 }
