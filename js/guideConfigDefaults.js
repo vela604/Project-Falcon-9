@@ -527,7 +527,7 @@ leoInsertionV3: _mkDefault(
       PES_PAD_BIAS_M: 0,
     },
   },
-    ['full-mission', 'expendable'],
+    ['leo-320km', '12t', 'author-tuned', 'rtls-tuned'],
   135,
   586
   ),
@@ -681,7 +681,7 @@ leoInsertionV3: _mkDefault(
     'SERENO FLUX 0.5',
     'SERENO FLUX searched best at ideal scale 0.5. Target 320 x 320 km circular, 12t payload. Full mission: ascent + insertion + stage deorbit + RTLS booster to LZ-1.',
     base,
-    ['full-mission', 'sereno-flux', 'rtls-tuned', 'search-result', 'ideal-scale-0.5'],
+    ['leo-320km', '12t', 'scale-0.5', 'sereno-flux', 'lb-nova6'],
     135,
     586,
     'default:landbackV1-serenoFlux05'
