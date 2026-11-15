@@ -3160,7 +3160,7 @@ body._inheritPeaksFrom = state.activeBodyIndex;
 body._inheritPeakQ = true;
 body.skinTemps={};
 if(active.skinTemps&&fairingMember&&fairingMember.id&&active.skinTemps[fairingMember.id]){body.skinTemps[fairingMember.id]=Object.assign({},active.skinTemps[fairingMember.id]);delete active.skinTemps[fairingMember.id];}
-if(!Object.keys(body.skinTemps).length){body.skinTemps[body.id]={T:250.0,peakK:250.0,peakT:0,tau:_TH_TAU_PAY,shield:1.0};}
+if(!Object.keys(body.skinTemps).length){body.skinTemps[body.id]={T:250.0,peakK:250.0,peakT:0,tau:10,shield:1.0};}
 
 state.bodies.push(body);
 // Same active-body flip as releasePayloadOnActiveBody — emergency eject
@@ -3656,7 +3656,7 @@ body.rx = payloadRx;
   body.collisionGracePeriod = 1.5; // ← ye add karo
   body.payloadBody = { record: pl }; // render marker
   body.skinTemps={};
-  body.skinTemps[body.id]={T:250.0,peakK:250.0,peakT:0,tau:_TH_TAU_PAY,shield:1.0};
+  body.skinTemps[body.id]={T:250.0,peakK:250.0,peakT:0,tau:10,shield:1.0};
   body.emergencyEject = emergency;   // render/cue can key off this later
   // Payload was SHIELDED by the fairing during ascent → peakQ inheritance
   // DISABLED. Payload's own peakQ tracking starts from release moment
