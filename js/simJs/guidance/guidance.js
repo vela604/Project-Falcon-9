@@ -63,9 +63,16 @@ const Guidance = (function () {
     _trackBodyTelemetry(_lastRawSnapshot || _lastMeasuredSnapshot);
     if (!_liftoffFired && _lastMeasuredSnapshot && Array.isArray(_lastMeasuredSnapshot.bodies) && _lastMeasuredSnapshot.bodies.length > 0) {
       const _b0 = _lastMeasuredSnapshot.bodies[0];
-      if (_b0 && Array.isArray(_b0.engines) && _b0.engines.some(_e => _e && Number.isFinite(_e.mf) && _e.mf > 0)) {
-        _liftoffFired = true;
-        logEvent('LIFTOFF', _lastSimTime);
+      if (_b0 && Number.isFinite(_b0.rx) && Number.isFinite(_b0.ry)) {
+        const _r0 = Math.hypot(_b0.rx, _b0.ry);
+        const _env0 = (typeof Derivation !== 'undefined' && Derivation.getEnv) ? Derivation.getEnv() : null;
+        const _Re0 = (_env0 && Number.isFinite(_env0.EARTH_RADIUS)) ? _env0.EARTH_RADIUS : 6371000;
+        const _siteAlt0 = (_env0 && Number.isFinite(_env0.LAUNCH_SITE_ALTITUDE)) ? _env0.LAUNCH_SITE_ALTITUDE : 0;
+        const _alt0 = _r0 - _Re0 - _siteAlt0;
+        if (_alt0 > 0.5) {
+          _liftoffFired = true;
+          logEvent('LIFTOFF', _lastSimTime);
+        }
       }
     }
     if (!_landingBurnFired && typeof _lbState !== 'undefined' && _lbState && _lbState.rtlsBlock && !_lbState.rtlsBlock.isDone()) {
@@ -92,7 +99,7 @@ const Guidance = (function () {
         }
         _lastSeenPhase = ph;
         if (_guideStartT === null) _guideStartT = nowT;
-        _phaseLog[ph] = { startT: nowT, endT: null, fuelStart: fuelNow, fuelEnd: null, fuelDelta: null };
+        _phaseLog[ph] = { startT: nowT, endT: null, fuelStart: fuelNow, fuelEnd: null, fuelDelta: null, bodyTag: (function() { const map = GUIDE_PHASE_DISPLAY[_activeGuide] || {}; const d = (ph in map) ? map[ph] : ph; return (d === null) ? '?' : _phaseBodyTag(d); })() };
       }
     }
   }
@@ -278,6 +285,7 @@ const GUIDE_PHASE_SEQUENCES = {
     _guideStartT = null;
     _liftoffFired = false;
     _landingBurnFired = false;
+    _maxQFired = false;
     // Only reset per-run trackers on a genuinely fresh start. FF worker
     // appears to call startGuide at split (mid-mission), which was wiping
     // _peakTracker and losing ascent peaks. Guard: if any events already
@@ -339,6 +347,7 @@ let _bodyTrackState = {};
 let _peakTracker = {};
 let _liftoffFired = false;
 let _landingBurnFired = false;
+let _maxQFired = false;
 
 function _phaseBodyTag(displayPhase) {
   if (!displayPhase) return '?';
@@ -554,8 +563,8 @@ function _trackBodyTelemetry(snap) {
       _peakTracker[i].Q_t = T;
       _peakTracker[i].Q_bodyTag = _computeBodyTag(b);
     }
-    if (!_peakTracker[i].maxQFired && _peakTracker[i].Q_Pa > 5000 && _qx < _peakTracker[i].Q_Pa * 0.98) {
-      _peakTracker[i].maxQFired = true;
+    if (!_maxQFired && _peakTracker[i].Q_Pa > 5000 && _qx < _peakTracker[i].Q_Pa * 0.98) {
+      _maxQFired = true;
       logEvent('MAX_Q', _peakTracker[i].Q_t, {
         peakQ_kPa: _peakTracker[i].Q_Pa / 1000,
         bodyTag: _peakTracker[i].Q_bodyTag || _computeBodyTag(b)
