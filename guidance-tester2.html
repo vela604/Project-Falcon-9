@@ -2478,6 +2478,48 @@ if (!faded) {
               await new Promise(function(res){ setTimeout(res, 50); });
               console.log('[tester2] session after 50ms wait:',
                 window.__guideSession ? (window.__guideSession.stackId + '|' + window.__guideSession.guideName) : 'STILL NONE');
+              // DUMP full session contents — reveals if startSnapshot /
+              // startHash (set only on first throttled onGuidanceStatus
+              // tick in simulation.html) are missing in tester2.
+              try {
+                console.log('[tester2] session-full-dump:', JSON.stringify(window.__guideSession));
+              } catch(_je) {}
+
+              // FORCE-populate startSnapshot + startHash if missing.
+              // captureCurrentMissionRecord may early-return before
+              // comboKey computation if these are absent (they gate the
+              // "is this a real session?" check internally). Use current
+              // body state as snapshot — not bit-exact to guide-start
+              // moment, but sufficient for partial capture (hash field is
+              // bookkeeping-only per earlier agreement; comboKey uses
+              // stackId/presetId/guideName/cfg which are all present).
+              try {
+                const _sess = window.__guideSession;
+                const _b0 = state.bodies && state.bodies[0];
+                if (_sess && (!_sess.startSnapshot || !_sess.startHash)) {
+                  if (!_sess.startSnapshot && _b0) {
+                    _sess.startSnapshot = {
+                      t: state.simTime,
+                      bodyId: _b0.id,
+                      bodyRole: (_b0.members && _b0.members[0] && _b0.members[0].stageRole) || 'booster',
+                      rx: _b0.rx, ry: _b0.ry, vx: _b0.vx, vy: _b0.vy,
+                      theta: _b0.theta, omega: _b0.omega,
+                      fuel: _b0.fuelMass,
+                    };
+                    console.log('[tester2] force-populated session.startSnapshot');
+                  }
+                  if (!_sess.startHash) {
+                    _sess.startHash = 'tester2-fallback-' + state.simTime.toFixed(4);
+                    console.log('[tester2] force-populated session.startHash');
+                  }
+                  console.log('[tester2] session-post-populate:', JSON.stringify({
+                    stackId: _sess.stackId, guideName: _sess.guideName,
+                    presetId: _sess.presetId,
+                    hasStart: !!_sess.startSnapshot,
+                    hasHash: !!_sess.startHash,
+                  }));
+                }
+              } catch(_pe) { console.warn('[tester2] force-populate failed:', _pe); }
             } catch(_se) { console.warn('[tester2] forced startGuideSession failed:', _se); }
           }
 
