@@ -68,24 +68,6 @@ const Guidance = (function () {
       if (ph && ph !== _lastSeenPhase) {
         const nowT = _lastSimTime;
         const fuelNow = _snapMemberFuel(_lastRawSnapshot || _lastMeasuredSnapshot);
-        // One-shot FF-PHASE-DIAG — proves this block runs in the current
-        // context (FF worker vs main thread). Includes fuelNow entry count
-        // so user can confirm data is actually populated on first phase
-        // transition. Auto-silent after first fire. Logs to whichever
-        // worker's console user is inspecting.
-        if (typeof globalThis !== 'undefined' && !globalThis._phaseDiagDone) {
-          globalThis._phaseDiagDone = true;
-          const _snapForDiag = _lastRawSnapshot || _lastMeasuredSnapshot;
-          const _b0 = _snapForDiag && _snapForDiag.bodies && _snapForDiag.bodies[0];
-          try {
-            console.log('[PHASE-DIAG] phase=' + ph +
-              ' fuelNow_entries=' + Object.keys(fuelNow).length +
-              ' members_len=' + (_b0 && Array.isArray(_b0.members) ? _b0.members.length : 'n/a') +
-              ' memberFuel_len=' + (_b0 && Array.isArray(_b0.memberFuel) ? _b0.memberFuel.length : 'n/a') +
-              ' fuelMass=' + (_b0 && Number.isFinite(_b0.fuelMass) ? _b0.fuelMass.toFixed(1) : 'n/a') +
-              ' rawSnapshotPresent=' + (!!_lastRawSnapshot));
-          } catch(_e){}
-        }
         if (_lastSeenPhase && _phaseLog[_lastSeenPhase]) {
           _phaseLog[_lastSeenPhase].endT = nowT;
           _phaseLog[_lastSeenPhase].fuelEnd = fuelNow;
@@ -167,41 +149,80 @@ const GUIDE_PHASE_SEQUENCES = {
   // Apply the display transform to a raw (sequence, log) pair and return
   // the display-ready versions plus the current phase's display name.
   function _applyPhaseDisplay(guideName, rawSeq, rawLog, rawCurrentPhase) {
-    const map = GUIDE_PHASE_DISPLAY[guideName] || {};
-    const displaySeq = [];
-    const rawToDisp = {};
-    rawSeq.forEach((ph) => {
-      const disp = ph in map ? map[ph] : ph;
-      rawToDisp[ph] = disp;
-      if (disp === null) return; // hidden
-      if (!displaySeq.includes(disp)) displaySeq.push(disp);
-    });
-    const displayLog = {};
-    rawSeq.forEach((ph) => {
-      const disp = rawToDisp[ph];
-      if (disp === null) return; // hidden
-      const e = rawLog[ph];
-      if (!e) return;
-      const cur = displayLog[disp];
-      if (!cur) {
-        displayLog[disp] = { startT: e.startT, endT: e.endT };
-      } else {
-        if (
-          Number.isFinite(e.startT) &&
-          (!Number.isFinite(cur.startT) || e.startT < cur.startT)
-        ) {
-          cur.startT = e.startT;
-        }
-        if (e.endT === null || e.endT === undefined) {
-          cur.endT = null;
-        } else if (cur.endT !== null && cur.endT !== undefined) {
-          if (e.endT > cur.endT) cur.endT = e.endT;
+  const map = GUIDE_PHASE_DISPLAY[guideName] || {};
+  const displaySeq = [];
+  const rawToDisp = {};
+  rawSeq.forEach((ph) => {
+    const disp = ph in map ? map[ph] : ph;
+    rawToDisp[ph] = disp;
+    if (disp === null) return;
+    if (!displaySeq.includes(disp)) displaySeq.push(disp);
+  });
+  const displayLog = {};
+  // Helper: merge one raw phase entry (e) into the display entry (cur).
+  // Called on both first-occurrence and subsequent raw phases for the
+  // same display bucket (e.g. COAST = COAST_ROTATE + COAST_WAIT + COAST_HOLD).
+  // Full-field copy on first, merge by field type on rest:
+  //   · startT: earliest non-null
+  //   · endT: latest non-null (null if any sub-phase is still active)
+  //   · fuelStart: taken with earliest startT
+  //   · fuelEnd: taken with latest endT
+  //   · fuelDelta: summed per memberId across all sub-phases
+  function _mergeDisplayInto(cur, e) {
+    if (!cur) {
+      const copy = JSON.parse(JSON.stringify(e));
+      // Ensure fuelDelta is an array so downstream code (mission-records,
+      // tester) sees [] not undefined even when no fuel was consumed.
+      if (!Array.isArray(copy.fuelDelta)) copy.fuelDelta = [];
+      return copy;
+    }
+    // startT: earliest
+    if (Number.isFinite(e.startT) &&
+        (!Number.isFinite(cur.startT) || e.startT < cur.startT)) {
+      cur.startT = e.startT;
+      if (e.fuelStart !== undefined) cur.fuelStart = e.fuelStart;
+    }
+    // endT: latest, null if any sub still running
+    if (e.endT === null || e.endT === undefined) {
+      cur.endT = null;
+    } else if (cur.endT !== null && cur.endT !== undefined) {
+      if (e.endT > cur.endT) {
+        cur.endT = e.endT;
+        if (e.fuelEnd !== undefined) cur.fuelEnd = e.fuelEnd;
+      }
+    }
+    // fuelDelta: sum by memberId
+    if (Array.isArray(e.fuelDelta) && e.fuelDelta.length) {
+      if (!Array.isArray(cur.fuelDelta)) cur.fuelDelta = [];
+      const byId = {};
+      for (let i = 0; i < cur.fuelDelta.length; i++) {
+        const fd = cur.fuelDelta[i];
+        if (fd && fd.memberId) byId[fd.memberId] = fd;
+      }
+      for (let i = 0; i < e.fuelDelta.length; i++) {
+        const fd = e.fuelDelta[i];
+        if (!fd || !fd.memberId) continue;
+        const ex = byId[fd.memberId];
+        if (ex) ex.fuelUsed += fd.fuelUsed;
+        else {
+          const c = { memberId: fd.memberId, role: fd.role, fuelUsed: fd.fuelUsed };
+          cur.fuelDelta.push(c);
+          byId[fd.memberId] = c;
         }
       }
-    });
-    const curDisp = rawCurrentPhase ? rawToDisp[rawCurrentPhase] || null : null;
-    return { displaySeq, displayLog, curDisp };
+    }
+    return cur;
   }
+  rawSeq.forEach((ph) => {
+    const disp = rawToDisp[ph];
+    if (disp === null) return;
+    const e = rawLog[ph];
+    if (!e) return;
+    displayLog[disp] = _mergeDisplayInto(displayLog[disp], e);
+  });
+  const curDisp = rawCurrentPhase ? rawToDisp[rawCurrentPhase] || null : null;
+  return { displaySeq, displayLog, curDisp };
+}
 
   // Rolling log of { [phaseName]: { startT, endT } } for the active guide.
   // endT is null while a phase is still in progress. Reset on every
