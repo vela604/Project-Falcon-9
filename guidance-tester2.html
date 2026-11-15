@@ -2625,10 +2625,22 @@ if (!faded) {
             ? saveMissionRecordWithPolicy
             : (typeof window.saveMissionRecordWithPolicy === 'function' ? window.saveMissionRecordWithPolicy : null);
           if (_saveFn) {
-            _saveFn(_partialRec);
-            console.log('[missionRecords] partial saved on stop (tester2):',
-              _partialRec.comboKey, 'phase=' + (_partialRec.currentPhase || '?'),
-              'partial=' + !!_partialRec.partial);
+            // Capture the action returned by saveMissionRecordWithPolicy —
+            // returns { action: 'saved' | 'skipped' | 'overwritten', reason?: string }
+            // or similar. If undefined (older API), log 'unknown'.
+            let _sr = null;
+            try { _sr = _saveFn(_partialRec); } catch(_se) { console.warn('[tester2] save threw:', _se); }
+            const _act = (_sr && _sr.action) || (_sr === true ? 'saved' : (_sr === false ? 'skipped' : 'unknown'));
+            const _rsn = (_sr && _sr.reason) ? (' reason=' + _sr.reason) : '';
+            if (_act === 'saved' || _act === 'overwritten' || _sr === true) {
+              console.log('[missionRecords] partial saved on stop (tester2):',
+                _partialRec.comboKey, 'phase=' + (_partialRec.currentPhase || '?'),
+                'partial=' + !!_partialRec.partial, 'action=' + _act + _rsn);
+            } else {
+              console.warn('[missionRecords] partial save ' + _act + ' (tester2):',
+                _partialRec.comboKey, 'phase=' + (_partialRec.currentPhase || '?'),
+                'partial=' + !!_partialRec.partial + _rsn);
+            }
           }
         } catch(e) { console.warn('[tester2] partial save failed:', e); }
       }
