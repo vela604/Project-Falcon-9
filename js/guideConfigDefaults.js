@@ -62,17 +62,25 @@ function isGuideCompatibleWithStackType(guideName, stackType) {
   return list.includes(stackType);
 }
 function getCompatibleGuidesForStackType(stackType) {
-  const guides = Object.keys(GUIDE_DEFAULT_PRESETS);
-  return guides.filter(g => isGuideCompatibleWithStackType(g, stackType));
+  // Dedupe by guideName — multiple presets per guide possible.
+  const seen = new Set();
+  const out = [];
+  for (const k in GUIDE_DEFAULT_PRESETS) {
+    const p = GUIDE_DEFAULT_PRESETS[k];
+    if (!p || !p.guideName || seen.has(p.guideName)) continue;
+    seen.add(p.guideName);
+    if (isGuideCompatibleWithStackType(p.guideName, stackType)) out.push(p.guideName);
+  }
+  return out;
 }
 
 
 // ---------------------------------------------------------------------------
 // Default preset factory — stamps the shared metadata onto a constants bag.
 // ---------------------------------------------------------------------------
-function _mkDefault(guideName, name, description, constants, tags, mecoTimeS, payloadDeployTimeS) {
+function _mkDefault(guideName, name, description, constants, tags, mecoTimeS, payloadDeployTimeS, presetId) {
   return {
-    id: 'default:' + guideName,
+    id: presetId || ('default:' + guideName),
     name,
     description,
     guideName,
@@ -162,8 +170,8 @@ STAGE_BURN_LOCK_TILT_DEG: 90,
   
 leoInsertionV3: _mkDefault(
   'leoInsertionV3',
-  'F9 LEO — 320 km',
-  'Autonomous Falcon 9 ascent to a two-apside target orbit — circular (apside1 == apside2) or elliptical (apo = max(a1,a2), peri = min(a1,a2)) — with payload deploy at the nearer post-burn apside, and retrograde deorbit for a controlled resting-site impact. Tuned for the Block 5 stack with axial stage separation. Includes apside-aware scoring, COAST_HOLD_2 axial Δv trim (TOL/FAR) to place the stage exactly at target_peri − eject_kick before deploy, and self-healing apside derivation (single apside auto-mirrors to both — circular).',
+  'F9 LEO — 320 km (Author baseline)',
+  'First-generation hand-tune by the author - kept as tribute. NOT the best preset for this stack. 52612 kg MECO residual was the first ever manual bias tuning pass by the author. Superseded by SERENO FLUX results but shipped unchanged so the journey starting point stays visible.\n\nAutonomous Falcon 9 ascent to a two-apside target orbit — circular (apside1 == apside2) or elliptical (apo = max(a1,a2), peri = min(a1,a2)) — with payload deploy at the nearer post-burn apside, and retrograde deorbit for a controlled resting-site impact. Tuned for the Block 5 stack with axial stage separation. Includes apside-aware scoring, COAST_HOLD_2 axial Δv trim (TOL/FAR) to place the stage exactly at target_peri − eject_kick before deploy, and self-healing apside derivation (single apside auto-mirrors to both — circular).',
   {
     ascent: {
     INITIAL_COAST_S: 4.9,
@@ -251,6 +259,102 @@ leoInsertionV3: _mkDefault(
   586
   ),
   
+  // Additional default preset for leoInsertionV3 — SERENO FLUX search
+  // result. Multiple defaults per guide supported via distinct keys.
+  // getGuideDefaultPreset('leoInsertionV3') returns the baseline above
+  // (exact key match); getAllDefaultPresetsForGuide returns both.
+  'leoInsertionV3-serenoFlux05': _mkDefault(
+    'leoInsertionV3',
+    'F9 LEO - 320 km - SERENO FLUX - ideal scale 0.5',
+    'SERENO FLUX search engine result on the same 320 km circular target with second-stage deorbit. Ideal scale 0.5 configuration. MECO 61333 kg, G 0.64, stage-burn bias 2.7796, circularize lead 1.9125 s - all found by the author SERENO FLUX search, not by hand. Higher MECO residual than the author baseline reflects a different burn profile the search found favourable. RTLS altitude and entry-burn bias not yet tuned for this preset; leoInsertionV3 mission only.',
+    {
+      ascent: {
+        INITIAL_COAST_S: 4.9,
+        PUSH_T_S: 4.82,
+        PUSH_MAX_GIMBAL_DEG: 0.64,
+        PUSH_EAST_SIGN: -1,
+        HOLD_PD_KP: 1.0,
+        HOLD_PD_KD: 2.0,
+        HOLD_PD_KI: 0.3,
+        GIMBAL_CMD_TAU_S: 0.1,
+        THROTTLE_FRAC: 1.0,
+        THROTTLE_ALT_LOW_KM: 8,
+        THROTTLE_ALT_HIGH_KM: 13,
+        THROTTLE_FRAC_LOW: 0.7,
+        GIMBAL_TARGET: 'center',
+        MECO_TARGET_BOOSTER_FUEL_KG: 61333,
+      },
+      separation: {
+        SEPARATION_DURATION_S: 3,
+        SPLIT_TIMEOUT_S: 15,
+        LATERAL_TRIGGER_MARGIN_M: 0.3,
+        BOOSTER_SEP_ANG_ACCEL_DEG_S2: -1,
+        BOOSTER_SEP_TARGET_OMEGA_DEG_S: 10,
+      },
+      insertion: {
+        GIMBAL_TARGET: 'all',
+        STAGE_BURN_CUTOFF_MARGIN_MPS: 0.0,
+        STAGE_BURN_AOA_KP: 4.0,
+        STAGE_BURN_AOA_KD: 4.0,
+        STAGE_BURN_AOA_KI: 1.0,
+        STAGE_BURN_AOA_BIAS_RATE_DEG_S: 0.5,
+        STAGE_BURN_AOA_BIAS_DEG: 2.7796,
+        COAST_TARGET_TILT_DEG: -90,
+        COAST_ROTATE_TOL_DEG: 0.5,
+        COAST_ROTATE_OMEGA_TOL: 0.02,
+        COAST_ROTATE_TIMEOUT_S: 240,
+        COAST_WAIT_BEFORE_APOGEE_S: 90,
+        CIRC_TRIGGER_LEAD_S: 1.9125,
+        CIRC_DECAY_FRAC: 0.05,
+        CIRC_ATT_KP: 0.5,
+        CIRC_ATT_KD: 4.0,
+        COAST_HOLD_ATT_KP: 15.0,
+        COAST_HOLD_ATT_KD: 5.0,
+        COAST_HOLD_ATT_KI: 0.0,
+        COAST_BURN_MULTIPLIER: 4.0,
+        TARGET_APSIDE1_ALT_KM: 320,
+        TARGET_APSIDE2_ALT_KM: 320,
+        PAYLOAD_CLEAR_DIST_M: 20,
+        PAYLOAD_CONFIRM_TIMEOUT_S: 120,
+        COAST_HOLD_2_TRIM_TOL_MPS: 0.0001,
+        COAST_HOLD_2_TRIM_FAR_MPS: 0.01,
+        TARGET_BIAS_MPS: 0,
+      },
+      fairing: {
+        HAS_FAIRING: true,
+        FAIRING_OPEN_ALT_KM: 80,
+        FAIRING_OPEN_ENABLED: true,
+      },
+      done: {
+        SUICIDE_DELAY_AFTER_DEPLOY_S: 1800,
+        CIRC_ATT_KP: 0.5,
+        CIRC_ATT_KD: 4,
+        DEORBIT_ENABLED: true,
+        PAYLOAD_DEPLOY_OPEN_DELAY_S: 5,
+      },
+      suicide: {
+        SUICIDE_ROTATE_TOL_DEG: 1.0,
+        SUICIDE_ROTATE_OMEGA_TOL: 0.02,
+        SUICIDE_ROTATE_TIMEOUT_S: 120,
+        SUICIDE_ATT_KP: 0.5,
+        SUICIDE_ATT_KD: 4.0,
+        SUICIDE_PREDICT_DT_S: 2,
+        SUICIDE_PREDICT_HORIZON_S: 4000,
+        SUICIDE_BURN_MAX_S: 600,
+        SUICIDE_BURN_COARSE_MARGIN_DEG: 0.5,
+        SUICIDE_TRIM_TOL_DEG: 0.1,
+        SUICIDE_TRIM_FAR_DEG: 0.5,
+        SUICIDE_TRIM_MIN_DUTY: 0.03,
+        SUICIDE_TRIM_MAX_S: 120,
+        TARGET_IMPACT_EF_DEG: null,
+      },
+    },
+    ['full-mission', 'sereno-flux', 'search-result', 'ideal-scale-0.5', 'expendable'],
+    null,
+    null,
+    'default:leoInsertionV3-serenoFlux05'
+  ),
+
   landbackV1: _mkDefault(
   'landbackV1',
   'F9 Landback — V1 (clone of LEO V3)',
@@ -639,8 +743,29 @@ const GUIDE_IMPORTANT_FIELDS = {
 // ---------------------------------------------------------------------------
 // Public accessors.
 // ---------------------------------------------------------------------------
+// Primary default preset for a guide — ONE per guide. Exact key match
+// wins (baseline preset stored under guide name); fallback scans for
+// first preset whose guideName matches. Backward-compatible with every
+// existing caller.
 function getGuideDefaultPreset(guideName) {
-  return GUIDE_DEFAULT_PRESETS[guideName] || null;
+  if (GUIDE_DEFAULT_PRESETS[guideName]) return GUIDE_DEFAULT_PRESETS[guideName];
+  for (const k in GUIDE_DEFAULT_PRESETS) {
+    const p = GUIDE_DEFAULT_PRESETS[k];
+    if (p && p.guideName === guideName) return p;
+  }
+  return null;
+}
+
+// ALL default presets shipped for a guide — baseline plus any additional
+// variants (e.g. SERENO FLUX results). Consumers presenting a preset
+// picker should call this for the full set, not getGuideDefaultPreset.
+function getAllDefaultPresetsForGuide(guideName) {
+  const out = [];
+  for (const k in GUIDE_DEFAULT_PRESETS) {
+    const p = GUIDE_DEFAULT_PRESETS[k];
+    if (p && p.guideName === guideName) out.push(p);
+  }
+  return out;
 }
 
 function getGuideImportantFields(guideName) {
@@ -649,7 +774,6 @@ function getGuideImportantFields(guideName) {
 
 // Deep clone — used so callers never mutate the code-resident objects.
 function cloneDefaultPreset(guideName) {
-  const p = GUIDE_DEFAULT_PRESETS[guideName];
-  if (!p) return null;
-  return JSON.parse(JSON.stringify(p));
+  const p = getGuideDefaultPreset(guideName);
+  return p ? JSON.parse(JSON.stringify(p)) : null;
 }
