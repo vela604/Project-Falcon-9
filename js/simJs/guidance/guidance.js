@@ -394,7 +394,12 @@ function _readSkinPeakTemp(b) {
   // is empty/missing on a payload body (known FF snapshot quirk), report
   // 250 not 288.15 (surface-ambient default). Prevents payload showing
   // fake warm value from pre-launch initial.
-  const isPayload = !!(b && b.payloadBody);
+  const isPayload = !!(b && (
+    b.payloadBody ||
+    (!b.fairingHalf &&
+     Array.isArray(b.members) && b.members.length === 0 &&
+     Number.isFinite(b.dryMass) && b.dryMass > 0)
+  ));
   const fallbackK = isPayload ? 250.0 : 288.15;
   if (!b || !b.skinTemps) return { K: fallbackK, t: 0 };
   let pk = 0, pt = 0;
