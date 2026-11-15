@@ -61,6 +61,22 @@ const Guidance = (function () {
     _lastSimTime = _lastMeasuredSnapshot.simTime || 0;
     tick(_lastMeasuredSnapshot);
     _trackBodyTelemetry(_lastRawSnapshot || _lastMeasuredSnapshot);
+    if (!_liftoffFired && _lastMeasuredSnapshot && Array.isArray(_lastMeasuredSnapshot.bodies) && _lastMeasuredSnapshot.bodies.length > 0) {
+      const _b0 = _lastMeasuredSnapshot.bodies[0];
+      if (_b0 && Array.isArray(_b0.engines) && _b0.engines.some(_e => _e && Number.isFinite(_e.mf) && _e.mf > 0)) {
+        _liftoffFired = true;
+        logEvent('LIFTOFF', _lastSimTime);
+      }
+    }
+    if (!_landingBurnFired && typeof _lbState !== 'undefined' && _lbState && _lbState.rtlsBlock && !_lbState.rtlsBlock.isDone()) {
+      try {
+        const _rts = _lbState.rtlsBlock.getStatus();
+        if (_rts && _rts.phase === 'LANDING_BURN') {
+          _landingBurnFired = true;
+          logEvent('LANDING_BURN', _lastSimTime);
+        }
+      } catch (_e) {}
+    }
 
     if (_activeGuide && GUIDES[_activeGuide]) {
       const g = GUIDES[_activeGuide];
@@ -169,12 +185,13 @@ const GUIDE_PHASE_SEQUENCES = {
   //   · fuelStart: taken with earliest startT
   //   · fuelEnd: taken with latest endT
   //   · fuelDelta: summed per memberId across all sub-phases
-  function _mergeDisplayInto(cur, e) {
+  function _mergeDisplayInto(cur, e, dispName) {
     if (!cur) {
       const copy = JSON.parse(JSON.stringify(e));
       // Ensure fuelDelta is an array so downstream code (mission-records,
       // tester) sees [] not undefined even when no fuel was consumed.
       if (!Array.isArray(copy.fuelDelta)) copy.fuelDelta = [];
+      if (!copy.bodyTag) copy.bodyTag = _phaseBodyTag(dispName);
       return copy;
     }
     // startT: earliest
@@ -219,7 +236,7 @@ const GUIDE_PHASE_SEQUENCES = {
     if (disp === null) return;
     const e = rawLog[ph];
     if (!e) return;
-    displayLog[disp] = _mergeDisplayInto(displayLog[disp], e);
+    displayLog[disp] = _mergeDisplayInto(displayLog[disp], e, disp);
   });
   const curDisp = rawCurrentPhase ? rawToDisp[rawCurrentPhase] || null : null;
   return { displaySeq, displayLog, curDisp };
@@ -259,6 +276,8 @@ const GUIDE_PHASE_SEQUENCES = {
     _phaseLog = {};
     _lastSeenPhase = null;
     _guideStartT = null;
+    _liftoffFired = false;
+    _landingBurnFired = false;
     // Only reset per-run trackers on a genuinely fresh start. FF worker
     // appears to call startGuide at split (mid-mission), which was wiping
     // _peakTracker and losing ascent peaks. Guard: if any events already
@@ -318,6 +337,24 @@ function logEvent(name, t, extra) {
 // ---- Per-body telemetry tracking (peaks + discrete crossings) ----
 let _bodyTrackState = {};
 let _peakTracker = {};
+let _liftoffFired = false;
+let _landingBurnFired = false;
+
+function _phaseBodyTag(displayPhase) {
+  if (!displayPhase) return '?';
+  if (displayPhase === 'ASCENT' || displayPhase === 'MECO' || displayPhase === 'SEPARATION' ||
+      displayPhase === 'FLIP' || displayPhase === 'BOOSTBACK_BURN' ||
+      displayPhase === 'PRE_ENTRY_STEER' || displayPhase === 'ENTRY_BURN' ||
+      displayPhase === 'POST_ENTRY_STEER' || displayPhase === 'LANDING_BURN' ||
+      displayPhase === 'TOUCHDOWN_COMPLETE') return 'booster';
+  if (displayPhase === 'ORBIT_BURN' || displayPhase === 'APOGEE_TRIM' ||
+      displayPhase === 'COAST' || displayPhase === 'CIRCULARIZE' ||
+      displayPhase === 'PAYLOAD_DEPLOY' || displayPhase === 'FAIRING_DEPLOY' ||
+      displayPhase === 'DEORBIT') return 'stage';
+  if (displayPhase === 'CHUTE_DEPLOY' || displayPhase === 'SPLASHDOWN') return 'fairing';
+  if (displayPhase === 'PAYLOAD_RELEASE' || displayPhase === 'PAYLOAD_OPEN') return 'payload';
+  return '?';
+}
 
 function _snapMemberFuel(snap) {
   const map = {};
@@ -516,6 +553,13 @@ function _trackBodyTelemetry(snap) {
       _peakTracker[i].Q_Pa = _qx;
       _peakTracker[i].Q_t = T;
       _peakTracker[i].Q_bodyTag = _computeBodyTag(b);
+    }
+    if (!_peakTracker[i].maxQFired && _peakTracker[i].Q_Pa > 5000 && _qx < _peakTracker[i].Q_Pa * 0.98) {
+      _peakTracker[i].maxQFired = true;
+      logEvent('MAX_Q', _peakTracker[i].Q_t, {
+        peakQ_kPa: _peakTracker[i].Q_Pa / 1000,
+        bodyTag: _peakTracker[i].Q_bodyTag || _computeBodyTag(b)
+      });
     }
     const _ax = Number.isFinite(b.ax) ? b.ax
               : (Number.isFinite(b._lastAccelX) ? b._lastAccelX : 0);

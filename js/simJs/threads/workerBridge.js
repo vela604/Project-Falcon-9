@@ -45,7 +45,7 @@ const WorkerBridge = {
     const _wBuildStampWB = (typeof window !== 'undefined' && window.__WORKER_BUILD_STAMP)
       || ('w_' + Date.now());
     try { if (typeof window !== 'undefined') window.__WORKER_BUILD_STAMP = _wBuildStampWB; } catch(_e){}
-    this.worker = new Worker('js/simJs/threads/physics.worker.js?v=1794760278676' + _wBuildStampWB);
+    this.worker = new Worker('js/simJs/threads/physics.worker.js?v=1794760395780' + _wBuildStampWB);
     this.worker.onmessage = (e) => {
       const msg = e.data;
       if (msg.type === 'state') {
@@ -425,7 +425,7 @@ const GuidanceBridge = {
     const _wBuildStampWB2 = (typeof window !== 'undefined' && window.__WORKER_BUILD_STAMP)
       || ('w_' + Date.now());
     try { if (typeof window !== 'undefined') window.__WORKER_BUILD_STAMP = _wBuildStampWB2; } catch(_e){}
-    this.worker = new Worker('js/simJs/threads/guidance.worker.js?v=1794760278676' + _wBuildStampWB2);
+    this.worker = new Worker('js/simJs/threads/guidance.worker.js?v=1794760395780' + _wBuildStampWB2);
     this.worker.onmessage = (e) => {
       const msg = e.data;
       if (msg.type === 'snapDbg') {
