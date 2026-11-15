@@ -2457,6 +2457,25 @@ if (!faded) {
               'session=' + (window.__guideSession ? (window.__guideSession.stackId + '|' + window.__guideSession.guideName) : 'none'));
           } catch(_e){}
 
+          // SYNC window.__lastGuideStatus from Guidance.getGuideStatus().
+          // Capture gate (c) reads window.__lastGuideStatus (set by
+          // workerBridge in simulation.html worker path). Tester2 is
+          // single-thread — workerBridge never fires, __lastGuideStatus
+          // stays undefined/stale → gate returns 'no active guide' error
+          // object → capture-result shows undefined comboKey/phase.
+          // Sync every capture call: cheap, idempotent, closes the gap.
+          try {
+            const _gsSync = (typeof Guidance !== 'undefined' && Guidance.getGuideStatus) ? Guidance.getGuideStatus() : null;
+            if (_gsSync && _gsSync.active) {
+              window.__lastGuideStatus = _gsSync;
+              console.log('[tester2] synced window.__lastGuideStatus:',
+                'active=' + _gsSync.active, 'phase=' + _gsSync.phase,
+                'runResult=' + _gsSync.runResult);
+            } else {
+              console.warn('[tester2] Guidance.getGuideStatus returned no active guide — capture will fail');
+            }
+          } catch(_se){ console.warn('[tester2] __lastGuideStatus sync failed:', _se); }
+
           // FORCE session reinit if missing. Diag showed session=none
           // despite gs live — Render's _syncMissionRecordSession didn't
           // persist window.__guideSession in this single-thread tester2
@@ -2527,13 +2546,16 @@ if (!faded) {
           _partialRec = (_r && typeof _r.then === 'function') ? await _r : _r;
           if (_partialRec) _partialRec.partial = true;
 
-          // DIAG: what capture returned
+          // DIAG: what capture returned (including .error field if capture
+          // early-returned via one of its gates — 'no active guide' /
+          // 'comboKey not ready' / etc).
           try {
             console.log('[tester2] capture-result: comboKey=' + (_partialRec && _partialRec.comboKey),
               'phase=' + (_partialRec && _partialRec.currentPhase),
               'phasesLen=' + (_partialRec && _partialRec.phases && _partialRec.phases.length),
               'eventsLen=' + (_partialRec && _partialRec.events && _partialRec.events.length),
-              'runResult_inRecord=' + (_partialRec && _partialRec._debug && _partialRec._debug.runResult));
+              'runResult_inRecord=' + (_partialRec && _partialRec._debug && _partialRec._debug.runResult),
+              'error=' + (_partialRec && _partialRec.error ? _partialRec.error : 'none'));
           } catch(_e){}
 
           // RETRY: comboKey is computed asynchronously (needs
