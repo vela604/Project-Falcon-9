@@ -166,8 +166,27 @@ function isRecordStale(record) {
 function upsertUserMissionRecord(record) {
   const records = loadMissionRecords();
   const idx = records.findIndex(r => r.comboKey === record.comboKey);
-  if (idx >= 0) records[idx] = record;
-  else records.push(record);
+  if (idx >= 0) {
+    const existing = records[idx];
+    // Defense-in-depth: policy-enforcing callers (saveMissionRecordWithPolicy)
+    // already filter these cases, but a direct caller (e.g. tester2 partial-
+    // on-stop, external scripts) can bypass. Prevent data loss here too.
+    const _incomingPartial  = !!record.partial;
+    const _existingPartial  = !!existing.partial;
+    const _incomingFailed   = record.success === false;
+    const _existingSuccess  = existing.success === true;
+    if (_incomingPartial && !_existingPartial) {
+      console.warn('[missionRecords] upsert SKIPPED: partial cannot overwrite complete', record.comboKey);
+      return { action: 'skipped', reason: 'partial cannot overwrite complete' };
+    }
+    if (_incomingFailed && _existingSuccess) {
+      console.warn('[missionRecords] upsert SKIPPED: failed cannot overwrite success', record.comboKey);
+      return { action: 'skipped', reason: 'failed cannot overwrite success' };
+    }
+    records[idx] = record;
+  } else {
+    records.push(record);
+  }
   saveMissionRecords(records);
   const _statusLabel = record.success === true ? 'success' :
                      record.success === false ? 'failed' :
