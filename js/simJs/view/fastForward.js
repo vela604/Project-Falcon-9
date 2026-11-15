@@ -321,20 +321,6 @@ const w = new Worker('js/simJs/threads/fastforward.worker.js');
 
             w.onmessage = (ev) => {
       const m = ev.data;
-      if (m.type === 'ffFuelDiag') {
-        console.log('=== FF FUELDIAG ===');
-        console.log('simTime:', m.simTime);
-        console.log('bodyKeys:', m.bodyKeys);
-        console.log('hasMemberFuel:', m.hasMemberFuel, '| len:', m.memberFuelLen);
-        console.log('memberFuel[0]:', m.memberFuel0);
-        console.log('fuelMass:', m.fuelMass);
-        console.log('hasMembers:', m.hasMembers, '| len:', m.membersLen);
-        console.log('memberIds:', m.memberIds);
-        console.log('phaseLogKeys:', m.phaseLogKeys);
-        console.log('phaseLogSummary:', JSON.stringify(m.phaseLogSummary, null, 2));
-        console.log('=== END FF FUELDIAG ===');
-        return;
-      }
       if (m.type === 'diagCapture') {
   const el = document.getElementById('status');
   if (el) el.textContent = 'CAPTURE: ' + m.sig;

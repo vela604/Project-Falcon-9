@@ -269,13 +269,17 @@ window.captureCurrentMissionRecord = async function () {
   // distance threshold, up to 120s), infer success from terminal events.
   // Prevents blocking the user when the guide actually finished successfully.
   let inferredSuccess = null;
+  let inferredAt = null;     // 'DONE' | 'END' — which phase triggered inference
+  let inferredMode = null;   // 'payload_deployed' | 'touchdown' | 'impact'
   if (isPartial && (gs.phase === 'DONE' || gs.phase === 'END')) {
     const _evts = gs.events || [];
     const _hasPayloadSuccess = _evts.some(e => e.name === 'PAYLOAD_RELEASE' || e.name === 'PAYLOAD_OPEN');
     const _hasLandingSuccess = _evts.some(e => e.name === 'TOUCHDOWN_COMPLETE' || e.name === 'LANDED');
     const _hasFailure = _evts.some(e => e.name === 'IMPACT' || e.name === 'CRASH' || e.name === 'FAILED');
-    if (_hasFailure) inferredSuccess = false;
-    else if (_hasPayloadSuccess || _hasLandingSuccess) inferredSuccess = true;
+    if (_hasFailure) { inferredSuccess = false; inferredMode = 'impact'; }
+    else if (_hasPayloadSuccess) { inferredSuccess = true; inferredMode = 'payload_deployed'; }
+    else if (_hasLandingSuccess) { inferredSuccess = true; inferredMode = 'touchdown'; }
+    if (inferredSuccess !== null) inferredAt = gs.phase;
   }
   const _effPartial = inferredSuccess !== null ? false : isPartial;
   const _effSuccess = inferredSuccess !== null ? inferredSuccess : (isPartial ? null : (gs.runResult === 'success'));
@@ -338,6 +342,17 @@ window.captureCurrentMissionRecord = async function () {
       gsPhase: gs.phase,
       gsActive: gs.active,
       inferredSuccess: inferredSuccess !== null ? inferredSuccess : 'no-inference',
+      inferredAt: inferredAt,
+      inferredMode: inferredMode,
+      // Mission scope — 'DONE' means payload deployed and mission is
+      // considered complete at this user's operating envelope; 'END'
+      // means full suicide-burn + impact sequence ran. Future readers
+      // use this to know whether phase list is truncated vs full.
+      missionScope: inferredAt,
+      // Capture-time counters — record's phase count vs full END-list.
+      phaseCountAtCapture: phases.length,
+      eventsCountAtCapture: events.length,
+      peaksCountAtCapture: Array.isArray(gs.peaks) ? gs.peaks.length : 0,
     },
     successCriteria: {},
     finalMetrics: _effPartial ? null : {},
