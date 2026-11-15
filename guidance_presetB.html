@@ -620,6 +620,151 @@ a.back:hover{box-shadow:0 6px 24px rgba(111,176,255,.35)}
   box-shadow: 0 0 0 3px rgba(111,176,255,.2);
 }
 
+
+
+/* Record card redesign — section labels, peaks, phases, events */
+.rdm-section-label {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+  color: var(--gold);
+  margin: 14px 0 8px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid rgba(255,179,71,.20);
+}
+.rdm-section-label:first-of-type { margin-top: 8px; }
+.rdm-empty-inline {
+  color: var(--dim);
+  font-style: italic;
+  font-size: 11.5px;
+  padding: 4px 0;
+}
+
+/* Peaks section */
+.rdm-peaks {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.rdm-pk-block {
+  padding: 8px 12px;
+  background: rgba(255,255,255,.025);
+  border: 1px solid rgba(255,255,255,.08);
+  border-left: 3px solid rgba(255,179,71,.5);
+  border-radius: 6px;
+}
+.rdm-pk-header {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 5px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.rdm-pk-tag {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: .4px;
+  text-transform: uppercase;
+  color: var(--gold);
+  background: rgba(255,179,71,.12);
+  border: 1px solid rgba(255,179,71,.32);
+  padding: 1px 7px;
+  border-radius: 4px;
+}
+.rdm-pk-row {
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  padding: 2px 0;
+}
+.rdm-pk-key { color: var(--dim); }
+.rdm-pk-val { color: var(--cyan); font-weight: 600; }
+
+/* Phases */
+.rdm-ph-row {
+  padding: 6px 0;
+  border-bottom: 1px solid rgba(255,255,255,.04);
+}
+.rdm-ph-row:last-child { border-bottom: none; }
+.rdm-ph-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  flex-wrap: wrap;
+}
+.rdm-ph-name {
+  font-weight: 700;
+  color: var(--text);
+  flex: 1;
+  min-width: 100px;
+}
+.rdm-ph-time {
+  color: var(--cyan);
+  font-size: 11px;
+}
+.rdm-ph-dur {
+  color: var(--dim);
+  font-size: 11px;
+  text-align: right;
+  min-width: 55px;
+}
+.rdm-ph-fuel {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: #d8d8d8;
+  padding: 2px 0 0 12px;
+  opacity: .85;
+}
+
+/* Events */
+.rdm-ev-note {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--dim);
+  font-style: italic;
+  padding: 4px 0 8px;
+  line-height: 1.5;
+  border-bottom: 1px dashed rgba(255,255,255,.05);
+  margin-bottom: 6px;
+}
+.rdm-ev-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+  padding: 4px 0;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  border-bottom: 1px solid rgba(255,255,255,.03);
+}
+.rdm-ev-row:last-child { border-bottom: none; }
+.rdm-ev-label { color: var(--text); }
+.rdm-ev-count {
+  color: var(--gold);
+  font-weight: 700;
+  font-size: 10px;
+  padding: 1px 5px;
+  background: rgba(255,179,71,.15);
+  border-radius: 3px;
+  margin-left: 4px;
+}
+.rdm-ev-time {
+  color: var(--cyan);
+  font-weight: 600;
+  text-align: right;
+  white-space: nowrap;
+}
+
 </style>
 </head>
 <body>

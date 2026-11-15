@@ -806,79 +806,143 @@ if (_editingPresetId) {
     return '';
   }
 
-  function _rdmRecordCard(rec) {
-    const success = rec.success;
-    const statusClass = success === true ? 'success' : (success === false ? 'failed' : 'partial');
-    const statusText  = success === true ? 'SUCCESS' : (success === false ? 'FAILED' : 'PARTIAL');
+  function _rdmEventLabel(name) {
+  const MAP = {
+    MECO: 'MECO',
+    STAGE_SEPARATION: 'Stage separation',
+    FAIRING_DEPLOY: 'Fairing deploy',
+    KARMAN_UP: 'K\u00e1rm\u00e1n line up',
+    KARMAN_DOWN: 'K\u00e1rm\u00e1n line down',
+    APOGEE_CROSS: 'Apogee',
+    PERIGEE_CROSS: 'Perigee',
+    GRID_FINS_DEPLOY: 'Grid fins deploy',
+    ENTRY_BURN_START: 'Entry burn start',
+    ENTRY_BURN_CUTOFF: 'Entry burn cutoff',
+    LEGS_DEPLOY: 'Legs deploy',
+    TOUCHDOWN_CONTACT: 'Touchdown contact',
+    TOUCHDOWN_COMPLETE: 'Touchdown complete',
+    ORBIT_ACHIEVED: 'Orbit achieved',
+    PAYLOAD_RELEASE: 'Payload release',
+    PAYLOAD_OPEN: 'Payload open',
+    IMPACT: 'Impact',
+    DEORBIT_START: 'Deorbit start',
+  };
+  return MAP[name] || name.replace(/_/g, ' ').toLowerCase();
+}
 
-    const captured = rec.metadata && rec.metadata.recordedAt
-      ? new Date(rec.metadata.recordedAt).toLocaleString()
+function _rdmPeaksTable(peaks) {
+  if (!peaks || !peaks.length) return '<em class="rdm-empty-inline">(no peak data)</em>';
+  return peaks.map(p => {
+    const tagQ = p.peakQ_bodyTag || '?';
+    const tagG = p.peakG_bodyTag || '?';
+    const tagLine = (tagQ === tagG)
+      ? escapeHtml(tagQ)
+      : escapeHtml(tagQ) + ' \u2192 ' + escapeHtml(tagG);
+    const qVal = Number.isFinite(p.peakQ_kPa)
+      ? (p.peakQ_kPa >= 0.01 ? p.peakQ_kPa.toFixed(2) + ' kPa' : '< 0.01 kPa')
       : '\u2014';
-
-    // Derive from events when the derived fields are missing — records
-    // captured before Phase 1 don't carry mecoS/boosterLandS/payloadDeployS,
-    // but the same values are recoverable from events[] (bit-identical).
-    const _evT = (name) => {
-      const ev = (rec.events || []).find(e => e && e.name === name);
-      return ev && Number.isFinite(ev.t) ? ev.t : null;
-    };
-    const mecoS    = _rdmFormatHMS(rec.mecoS != null ? rec.mecoS : _evT('MECO'));
-    const landS    = _rdmFormatHMS(rec.boosterLandS != null ? rec.boosterLandS : _evT('TOUCHDOWN_COMPLETE'));
-    const deployS  = _rdmFormatHMS(rec.payloadDeployS != null ? rec.payloadDeployS : _evT('PAYLOAD_RELEASE'));
-
-    const phases = Array.isArray(rec.phases) ? rec.phases : [];
-    const events = Array.isArray(rec.events) ? rec.events : [];
-
-    const phasesHtml = phases.map(p => {
-      const dur = Number.isFinite(p.durationS) ? '+' + p.durationS.toFixed(1) + 's' : '\u2014';
-      return '<div class="rdm-row">'
-        + '<span class="rdm-row-label">' + escapeHtml(p.name) + '</span>'
-        + '<span class="rdm-row-value">' + dur + '</span>'
-        + '</div>';
-    }).join('');
-
-    const eventsHtml = events.map(e => {
-      const t = _rdmFormatHMS(e.t);
-      return '<div class="rdm-row">'
-        + '<span class="rdm-row-label">' + escapeHtml(e.name) + '</span>'
-        + '<span class="rdm-row-value cyan">' + (t ? 'T+' + t : '\u2014') + '</span>'
-        + '</div>';
-    }).join('');
-
-    return '<div class="rdm-record">'
-      + '<div class="rdm-record-head">'
-      + '<span class="rdm-status ' + statusClass + '">' + statusText + '</span>'
-      + '<span class="rdm-time">' + escapeHtml(captured) + '</span>'
-      + '</div>'
-      + '<div class="rdm-timeline">'
-      + '<div class="rdm-tl-item">'
-      + '<span class="rdm-tl-label">MECO</span>'
-      + '<span class="rdm-tl-value' + (mecoS ? '' : ' missing') + '">' + (mecoS ? 'T+' + mecoS : '\u2014') + '</span>'
-      + '</div>'
-      + '<div class="rdm-tl-item">'
-      + '<span class="rdm-tl-label">Booster Land</span>'
-      + '<span class="rdm-tl-value' + (landS ? '' : ' missing') + '">' + (landS ? 'T+' + landS : '\u2014') + '</span>'
-      + '</div>'
-      + '<div class="rdm-tl-item">'
-      + '<span class="rdm-tl-label">Payload Deploy</span>'
-      + '<span class="rdm-tl-value' + (deployS ? '' : ' missing') + '">' + (deployS ? 'T+' + deployS : '\u2014') + '</span>'
-      + '</div>'
-      + '</div>'
-      + '<button class="rdm-section-btn" type="button">'
-      + '<span>Phases (' + phases.length + ')</span>'
-      + '<span class="rdm-chevron">\u25b8</span>'
-      + '</button>'
-      + '<div class="rdm-section-body">' + (phasesHtml || '<em>(no phases captured)</em>') + '</div>'
-      + '<button class="rdm-section-btn" type="button">'
-      + '<span>Events (' + events.length + ')</span>'
-      + '<span class="rdm-chevron">\u25b8</span>'
-      + '</button>'
-      + '<div class="rdm-section-body">' + (eventsHtml || '<em>(no events captured)</em>') + '</div>'
-      + '<div class="rdm-actions">'
-      + '<button class="btn" data-copy-record="' + escapeHtml(rec.comboKey || '') + '">Copy JSON</button>'
-      + '</div>'
+    const qTime = _rdmFormatHMS(p.peakQ_t);
+    const gVal = Number.isFinite(p.peakG)
+      ? (p.peakG >= 0.01 ? p.peakG.toFixed(2) + ' G' : '< 0.01 G')
+      : '\u2014';
+    const gTime = _rdmFormatHMS(p.peakG_t);
+    return '<div class="rdm-pk-block">'
+      + '<div class="rdm-pk-header">Body #' + (p.bodyIdx != null ? p.bodyIdx : '?') + ' <span class="rdm-pk-tag">' + tagLine + '</span></div>'
+      + '<div class="rdm-pk-row"><span class="rdm-pk-key">Peak Q</span><span class="rdm-pk-val">' + qVal + (qTime ? ' @ T+' + qTime : '') + '</span></div>'
+      + '<div class="rdm-pk-row"><span class="rdm-pk-key">Peak G</span><span class="rdm-pk-val">' + gVal + (gTime ? ' @ T+' + gTime : '') + '</span></div>'
       + '</div>';
-  }
+  }).join('');
+}
+
+function _rdmPhasesTable(phases) {
+  if (!phases.length) return '<em class="rdm-empty-inline">(no phases captured)</em>';
+  return phases.map(p => {
+    const startT = _rdmFormatHMS(p.startT) || '\u2014';
+    const endT = _rdmFormatHMS(p.endT) || '\u2014';
+    const dur = Number.isFinite(p.durationS) ? p.durationS.toFixed(1) + 's' : '\u2014';
+    let fuelLine = '';
+    if (Array.isArray(p.fuelDelta) && p.fuelDelta.length) {
+      const parts = p.fuelDelta.map(fd => {
+        const kg = Number.isFinite(fd.fuelUsed) ? fd.fuelUsed : 0;
+        const fmt = kg >= 1000 ? (kg / 1000).toFixed(2) + ' t' : Math.round(kg) + ' kg';
+        return escapeHtml(fd.role || '?') + ': ' + fmt;
+      });
+      fuelLine = '<div class="rdm-ph-fuel">' + parts.join(' \u00b7 ') + '</div>';
+    }
+    return '<div class="rdm-ph-row">'
+      + '<div class="rdm-ph-head">'
+      + '<span class="rdm-ph-name">' + escapeHtml(p.name) + '</span>'
+      + '<span class="rdm-ph-time">T+' + startT + ' \u2192 T+' + endT + '</span>'
+      + '<span class="rdm-ph-dur">' + dur + '</span>'
+      + '</div>'
+      + fuelLine
+      + '</div>';
+  }).join('');
+}
+
+function _rdmEventsTable(events) {
+  if (!events.length) return '<em class="rdm-empty-inline">(no events captured)</em>';
+  const groups = {};
+  events.forEach(e => {
+    if (!groups[e.name]) groups[e.name] = [];
+    groups[e.name].push(e.t);
+  });
+  return Object.keys(groups).map(name => {
+    const times = groups[name].filter(t => Number.isFinite(t)).sort((a, b) => a - b);
+    if (!times.length) return '';
+    const label = _rdmEventLabel(name);
+    if (times.length === 1) {
+      return '<div class="rdm-ev-row"><span class="rdm-ev-label">' + escapeHtml(label) + '</span><span class="rdm-ev-time">T+' + _rdmFormatHMS(times[0]) + '</span></div>';
+    }
+    const t0 = _rdmFormatHMS(times[0]);
+    const t1 = _rdmFormatHMS(times[times.length - 1]);
+    const range = t0 === t1 ? 'T+' + t0 : 'T+' + t0 + ' \u2013 T+' + t1;
+    return '<div class="rdm-ev-row"><span class="rdm-ev-label">' + escapeHtml(label) + ' <span class="rdm-ev-count">\u00d7 ' + times.length + '</span></span><span class="rdm-ev-time">' + range + '</span></div>';
+  }).join('');
+}
+
+function _rdmRecordCard(rec) {
+  const success = rec.success;
+  const statusClass = success === true ? 'success' : (success === false ? 'failed' : 'partial');
+  const statusText  = success === true ? 'SUCCESS' : (success === false ? 'FAILED' : 'PARTIAL');
+  const captured = rec.metadata && rec.metadata.recordedAt
+    ? new Date(rec.metadata.recordedAt).toLocaleString()
+    : '\u2014';
+
+  const _evT = (name) => {
+    const ev = (rec.events || []).find(e => e && e.name === name);
+    return ev && Number.isFinite(ev.t) ? ev.t : null;
+  };
+  const mecoS    = _rdmFormatHMS(rec.mecoS != null ? rec.mecoS : _evT('MECO'));
+  const landS    = _rdmFormatHMS(rec.boosterLandS != null ? rec.boosterLandS : _evT('TOUCHDOWN_COMPLETE'));
+  const deployS  = _rdmFormatHMS(rec.payloadDeployS != null ? rec.payloadDeployS : _evT('PAYLOAD_RELEASE'));
+
+  const phases = Array.isArray(rec.phases) ? rec.phases : [];
+  const events = Array.isArray(rec.events) ? rec.events : [];
+  const peaks  = Array.isArray(rec.peaks)  ? rec.peaks  : [];
+
+  return '<div class="rdm-record">'
+    + '<div class="rdm-record-head">'
+    + '<span class="rdm-status ' + statusClass + '">' + statusText + '</span>'
+    + '<span class="rdm-time">' + escapeHtml(captured) + '</span>'
+    + '</div>'
+    + '<div class="rdm-section-label">Key Timings</div>'
+    + '<div class="rdm-timeline">'
+    + '<div class="rdm-tl-item"><span class="rdm-tl-label">MECO</span><span class="rdm-tl-value' + (mecoS ? '' : ' missing') + '">' + (mecoS ? 'T+' + mecoS : '\u2014') + '</span></div>'
+    + '<div class="rdm-tl-item"><span class="rdm-tl-label">Booster land</span><span class="rdm-tl-value' + (landS ? '' : ' missing') + '">' + (landS ? 'T+' + landS : '\u2014') + '</span></div>'
+    + '<div class="rdm-tl-item"><span class="rdm-tl-label">Payload deploy</span><span class="rdm-tl-value' + (deployS ? '' : ' missing') + '">' + (deployS ? 'T+' + deployS : '\u2014') + '</span></div>'
+    + '</div>'
+    + '<div class="rdm-section-label">Peaks (per body)</div>'
+    + '<div class="rdm-peaks">' + _rdmPeaksTable(peaks) + '</div>'
+    + '<button class="rdm-section-btn" type="button"><span>Phases (' + phases.length + ')</span><span class="rdm-chevron">\u25b8</span></button>'
+    + '<div class="rdm-section-body">' + _rdmPhasesTable(phases) + '</div>'
+    + '<button class="rdm-section-btn" type="button"><span>Events (' + events.length + ')</span><span class="rdm-chevron">\u25b8</span></button>'
+    + '<div class="rdm-section-body"><div class="rdm-ev-note">Events grouped by type. Multi-body events (K\u00e1rm\u00e1n crossings, etc.) show count + time range \u2014 per-body attribution requires schema update (planned).</div>' + _rdmEventsTable(events) + '</div>'
+    + '<div class="rdm-actions">'
+    + '<button class="btn" data-copy-record="' + escapeHtml(rec.comboKey || '') + '">Copy JSON</button>'
+    + '</div>'
+    + '</div>';
+}
 
   function openRecordedDataPanel(preset) {
     const groups = (typeof getRecordsGroupedByEnvForPreset === 'function')
