@@ -216,6 +216,24 @@
 <script src="js/guidancePresets.js?v=1793941274960"></script>
 <script src="js/guideConstantDescriptions.js?v=1793941274960"></script>
 
+<!-- Mission Records tester2 wire — single-thread Guidance (main scope, no
+     WorkerBridge). Shim maps GuidanceBridge.requestGuideConfig to sync
+     Guidance.getGuideConfig so computeComboKey works. missionRecords.js
+     loads AFTER the shim so its IIFE + window exports see it. -->
+<script>
+(function _mrTesterShim() {
+  if (typeof window.GuidanceBridge === 'undefined') {
+    window.GuidanceBridge = {
+      requestGuideConfig: function(name) {
+        try { return Promise.resolve(Guidance.getGuideConfig(name)); }
+        catch(e) { return Promise.resolve(null); }
+      }
+    };
+  }
+})();
+</script>
+<script src="js/missionRecords.js"></script>
+
 <script>
 (function () {
   'use strict';
@@ -2154,6 +2172,19 @@ if (!faded) {
     try { Guidance.stopGuide(); } catch (e) {}
     try { Guidance.startGuide(currentGuide); } catch (e) {
       console.error('[tester] startGuide failed:', e);
+      running = false;
+      startBtn.disabled = false; stopBtn.disabled = true;
+      return;
+    }
+    try {
+      if (typeof startGuideSession === 'function') {
+        const _stk = (typeof getActiveStack === 'function') ? getActiveStack() : null;
+        const _stkId = (_stk && _stk.id) || 'stk_falcon9-b5';
+        startGuideSession(_stkId, currentGuide);
+        console.log('[missionRecords] session started (tester2):', _stkId, currentGuide);
+      }
+    } catch(e) { console.warn('[tester2] startGuideSession failed:', e); }
+    if (false) {
       statusTextEl.textContent = 'startGuide failed: ' + e.message;
       running = false;
       startBtn.disabled = false; stopBtn.disabled = true;
@@ -2164,6 +2195,7 @@ if (!faded) {
     const dt = CONFIG.DT;
     const maxTicks = Math.ceil(durationS / dt);
 
+    let _prevRunResult = 'in-progress';
     let prevPhase = null;
     let pendingHold2Capture = false;    // reset per run
     // COAST_HOLD_2 phase-change capture is deferred by 1 tick: guidance
@@ -2233,6 +2265,35 @@ if (!faded) {
       // Event detection — identical to numerical.
       const gs = (Guidance.getGuideStatus && Guidance.getGuideStatus()) || {};
       _coastSnapUpdate(gs, state.bodies[state.activeBodyIndex]);
+      // Mission-record auto-save on success transition. runResult becomes
+      // 'success' the tick guidance phase hits END — same gate as
+      // simulation.html. Async capture (comboKey hashing) fires off the
+      // current status via missionRecords.js.
+      {
+        const _curRR = (gs && gs.runResult) || 'in-progress';
+        if (_prevRunResult === 'in-progress' && _curRR === 'success') {
+          try {
+            const _capFn = (typeof window.captureCurrentMissionRecord === 'function')
+              ? window.captureCurrentMissionRecord
+              : (typeof captureCurrentMissionRecord === 'function' ? captureCurrentMissionRecord : null);
+            const _saveFn = (typeof saveMissionRecordWithPolicy === 'function')
+              ? saveMissionRecordWithPolicy
+              : (typeof window.saveMissionRecordWithPolicy === 'function' ? window.saveMissionRecordWithPolicy : null);
+            if (_capFn) {
+              Promise.resolve(_capFn()).then(function(rec){
+                if (rec && _saveFn) {
+                  _saveFn(rec);
+                  console.log('[missionRecords] auto-saved (tester2):', rec.comboKey,
+                    rec.metadata && rec.metadata.guideName ? '(' + rec.metadata.guideName + ')' : '');
+                } else if (rec) {
+                  console.warn('[tester2] capture succeeded, saveMissionRecordWithPolicy unavailable');
+                }
+              }).catch(function(e){ console.warn('[tester2] auto-save failed:', e); });
+            }
+          } catch(e) { console.warn('[tester2] auto-save trigger failed:', e); }
+        }
+        _prevRunResult = _curRR;
+      }
       RunStamp.track(gs, state.simTime);
       const body = state.bodies[state.activeBodyIndex];
 
@@ -2382,6 +2443,7 @@ if (!faded) {
     const finalEndState = captureState();
 
     try { Guidance.stopGuide(); } catch (e) {}
+    try { if (typeof endGuideSession === 'function') endGuideSession(); } catch(e) {}
 
     if (peakQ_state) captures.push({ type: 'peak', label: `PEAK Q = ${(peakQ_kPa / 1000).toFixed(2)} kPa`, simTime: peakQ_state.simTime, state: peakQ_state });
     if (peakG_state) captures.push({ type: 'peak', label: `PEAK G = ${peakG.toFixed(2)} g`, simTime: peakG_state.simTime, state: peakG_state });
