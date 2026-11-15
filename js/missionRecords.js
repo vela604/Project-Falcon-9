@@ -116,16 +116,55 @@ async function computeComboKey(stackId, presetId, guideName) {
 const MISSION_RECORDS_KEY = 'rocketSim.missionRecords.v1';
 let _missionRecordsCache = null;
 
+
+// Records with partial=true AND success=true are internally inconsistent.
+// Created when tester2 mutated a captured success record to add partial
+// flag (marking "not full-END") without clearing success. For payload-
+// mission envelope, success implies complete → normalize to partial=false.
+function _normalizePartialSuccessConflict(records) {
+  let fixed = 0;
+  records.forEach(r => {
+    if (r && r.partial === true && r.success === true) {
+      r.partial = false;
+      if (!r._debug) r._debug = {};
+      r._debug._normalizedPartialConflict = true;
+      fixed++;
+    }
+  });
+  if (fixed > 0) {
+    console.log('[missionRecords] normalized ' + fixed + ' record(s): partial+success -> partial=false');
+  }
+  return fixed;
+}
+
 function loadMissionRecords() {
-  if (_missionRecordsCache) return _missionRecordsCache;
+  if (_missionRecordsCache) {
+    if (!_missionRecordsCache.__normalized) {
+      const _fixed = _normalizePartialSuccessConflict(_missionRecordsCache);
+      try { Object.defineProperty(_missionRecordsCache, '__normalized', { value: true, enumerable: false, configurable: true }); } catch (e) { _missionRecordsCache.__normalized = true; }
+      if (_fixed > 0) {
+        try { localStorage.setItem(MISSION_RECORDS_KEY, JSON.stringify(_missionRecordsCache)); } catch (e) {}
+      }
+    }
+    return _missionRecordsCache;
+  }
   try {
     const raw = localStorage.getItem(MISSION_RECORDS_KEY);
     if (raw) {
-      const p = JSON.parse(raw);
-      if (Array.isArray(p)) { _missionRecordsCache = p; return p; }
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        const _fixed = _normalizePartialSuccessConflict(parsed);
+        _missionRecordsCache = parsed;
+        try { Object.defineProperty(parsed, '__normalized', { value: true, enumerable: false, configurable: true }); } catch (e) { parsed.__normalized = true; }
+        if (_fixed > 0) {
+          try { localStorage.setItem(MISSION_RECORDS_KEY, JSON.stringify(parsed)); } catch (e) {}
+        }
+        return parsed;
+      }
     }
   } catch (e) { /* fall through */ }
   _missionRecordsCache = [];
+  try { Object.defineProperty(_missionRecordsCache, '__normalized', { value: true, enumerable: false, configurable: true }); } catch (e) { _missionRecordsCache.__normalized = true; }
   return [];
 }
 
@@ -316,7 +355,14 @@ function saveMissionRecordWithPolicy(record) {
   const existing = records.find(function (r) { return r.comboKey === record.comboKey; });
   
   if (existing) {
-    if (record.partial && !existing.partial) {
+    // Decision #5: partial must NOT overwrite complete.
+    // Edge case: partial=true+success=true (tester2 mutation quirk) is
+    // effectively complete. Treat as complete to prevent quirk records
+    // overwriting cleaner complete records.
+    const _incomingEffectiveComplete = !record.partial || (record.partial === true && record.success === true);
+    const _existingEffectiveComplete = !existing.partial || (existing.partial === true && existing.success === true);
+    if (!_incomingEffectiveComplete && _existingEffectiveComplete) {
+      console.log('[missionRecords] savePolicy SKIPPED: complete exists (partial incoming)', record.comboKey);
       return { action: 'skipped', reason: 'complete record already exists' };
     }
     // All other cases: overwrite (complete→complete, partial→partial, complete→partial)
