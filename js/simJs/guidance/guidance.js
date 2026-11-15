@@ -295,6 +295,20 @@ function logEvent(name, t) {
   _eventLog.push({ name, t: Number.isFinite(t) ? t : _lastSimTime });
 }
 
+// Skin equilibrium temperature. Prefers environment.js's version when
+// available (main-thread contexts — respects atmosphereEnabled toggle),
+// falls back to Derivation's mirror (worker context — atmosphere assumed
+// on; divergence only when user disables atmosphere in sim).
+function _skinTempForPoint(altM, speedRelMps) {
+  try {
+    if (typeof skinEquilibriumK === 'function') return skinEquilibriumK(altM, speedRelMps, 1);
+    if (typeof Derivation !== 'undefined' && typeof Derivation.skinEquilibriumK === 'function') {
+      return Derivation.skinEquilibriumK(altM, speedRelMps, 1);
+    }
+  } catch (e) {}
+  return NaN;
+}
+
 // ---- Per-body telemetry tracking (peaks + discrete crossings) ----
 let _bodyTrackState = {};
 let _peakTracker = {};
@@ -427,7 +441,7 @@ function _trackBodyTelemetry(snap) {
     // (full stack) and becomes 'stage' after separation; capturing
     // bodyTag at peak time means ascent-Q maps to 'booster' not 'stage'.
     if (!_peakTracker[i]) {
-      _peakTracker[i] = { Q_Pa: 0, Q_t: 0, Q_bodyTag: '?', G: 0, G_t: 0, G_bodyTag: '?' };
+      _peakTracker[i] = { Q_Pa: 0, Q_t: 0, Q_bodyTag: '?', G: 0, G_t: 0, G_bodyTag: '?', Temp_K: 0, Temp_t: 0 };
       // Peak inheritance on split — physics.js split handlers set
       // _inheritPeaksFrom (parent index) + _inheritPeakQ (bool). Rules:
       //   · peakG: ALWAYS inherited — thrust G propagates mechanically
@@ -449,6 +463,12 @@ function _trackBodyTelemetry(snap) {
           _peakTracker[i].Q_Pa = _pPk.Q_Pa;
           _peakTracker[i].Q_t = _pPk.Q_t;
           _peakTracker[i].Q_bodyTag = _role || 'inherited';
+          // Peak temp bundled with Q — same shielding rule (fairing
+          // shields payload from atmospheric heating like it does from Q).
+          if (Number.isFinite(_pPk.Temp_K) && _pPk.Temp_K > 0) {
+            _peakTracker[i].Temp_K = _pPk.Temp_K;
+            _peakTracker[i].Temp_t = _pPk.Temp_t;
+          }
         }
       }
     }
@@ -468,6 +488,32 @@ function _trackBodyTelemetry(snap) {
       _peakTracker[i].G = G;
       _peakTracker[i].G_t = T;
       _peakTracker[i].G_bodyTag = _computeBodyTag(b);
+    }
+    // Skin temp peak — body-level equilibrium at each tick. Atmospheric
+    // heating drives the value; LEO bodies at rho ~0 settle to 250 K.
+    if (!Number.isFinite(_peakTracker[i].Temp_K)) _peakTracker[i].Temp_K = 0;
+    if (!Number.isFinite(_peakTracker[i].Temp_t)) _peakTracker[i].Temp_t = 0;
+    const _omegaE = env.EARTH_OMEGA || 0;
+    const _svx = _omegaE * b.ry;
+    const _svy = -_omegaE * b.rx;
+    let _wx = 0, _wy = 0;
+    const _w = snap.wind;
+    if (_w && _w.enabled && _w.speed > 0) {
+      const _upX = b.rx / r, _upY = b.ry / r;
+      const _eastX = _upY, _eastY = -_upX;
+      const _rad = (_w.directionDeg || 0) * Math.PI / 180;
+      const _dirX = _eastX * Math.cos(_rad) + _upX * Math.sin(_rad);
+      const _dirY = _eastY * Math.cos(_rad) + _upY * Math.sin(_rad);
+      _wx = _dirX * _w.speed;
+      _wy = _dirY * _w.speed;
+    }
+    const _rvx = b.vx - _svx - _wx;
+    const _rvy = b.vy - _svy - _wy;
+    const _speedRelTemp = Math.hypot(_rvx, _rvy);
+    const _tempK = _skinTempForPoint(alt, _speedRelTemp);
+    if (Number.isFinite(_tempK) && _tempK > _peakTracker[i].Temp_K) {
+      _peakTracker[i].Temp_K = _tempK;
+      _peakTracker[i].Temp_t = T;
     }
   }
 }
@@ -533,6 +579,7 @@ function setActiveGuide(name) {
           bodyIdx: idx,
           peakQ_kPa: pk.Q_Pa / 1000, peakQ_t: pk.Q_t, peakQ_bodyTag: pk.Q_bodyTag || '?',
           peakG: pk.G, peakG_t: pk.G_t, peakG_bodyTag: pk.G_bodyTag || '?',
+          peakTemp_K: pk.Temp_K || 0, peakTemp_t: pk.Temp_t || 0,
         });
       }
     }
