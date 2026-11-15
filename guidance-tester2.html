@@ -2175,6 +2175,37 @@ if (!faded) {
       startBtn.disabled = false; stopBtn.disabled = true;
       return;
     }
+    // Capture proper startSnapshot IMMEDIATELY after startGuide — state is
+    // reset to t=0, bodies are the full stack. This is the ONLY correct
+    // moment for the record's initialStateSnapshot; fake-populating from
+    // mid-mission state (t=650, staged bodies, drained fuel) produces
+    // replay-invalid records.
+    try {
+      if (typeof startGuideSession === 'function' && typeof getActiveStack === 'function') {
+        const _stkS = getActiveStack();
+        const _stkIdS = (_stkS && _stkS.id) || 'stk_falcon9-b5';
+        const _presetIdS = (presetSel && presetSel.value) ? presetSel.value : ('default:' + currentGuide);
+        const _presetNameS = (presetSel && presetSel.selectedIndex >= 0 && presetSel.options[presetSel.selectedIndex])
+          ? presetSel.options[presetSel.selectedIndex].text : '';
+        startGuideSession(_stkIdS, currentGuide, _presetIdS, _presetNameS);
+        try { window.__activePreset = _presetIdS; } catch(_pe){}
+        const _b0S = state.bodies && state.bodies[0];
+        if (_b0S && window.__guideSession) {
+          window.__guideSession.startSnapshot = {
+            t: state.simTime,
+            bodyId: _b0S.id,
+            bodyRole: (_b0S.members && _b0S.members[0] && _b0S.members[0].stageRole) || 'booster',
+            rx: _b0S.rx, ry: _b0S.ry,
+            vx: _b0S.vx, vy: _b0S.vy,
+            theta: _b0S.theta, omega: _b0S.omega,
+            fuel: _b0S.fuelMass,
+          };
+          window.__guideSession.startHash = 'tester2-start-' + state.simTime.toFixed(4);
+          console.log('[tester2] session initialized at guide start: t=' + state.simTime.toFixed(4),
+            'stack=' + _stkIdS, 'preset=' + _presetIdS);
+        }
+      }
+    } catch(_se) { console.warn('[tester2] session init at startGuide failed:', _se); }
     if (false) {
       statusTextEl.textContent = 'startGuide failed: ' + e.message;
       running = false;
@@ -2537,28 +2568,9 @@ if (!faded) {
                 const _sess = window.__guideSession;
                 const _b0 = state.bodies && state.bodies[0];
                 if (_sess && (!_sess.startSnapshot || !_sess.startHash)) {
-                  if (!_sess.startSnapshot && _b0) {
-                    _sess.startSnapshot = {
-                      t: state.simTime,
-                      bodyId: _b0.id,
-                      bodyRole: (_b0.members && _b0.members[0] && _b0.members[0].stageRole) || 'booster',
-                      rx: _b0.rx, ry: _b0.ry, vx: _b0.vx, vy: _b0.vy,
-                      theta: _b0.theta, omega: _b0.omega,
-                      fuel: _b0.fuelMass,
-                    };
-                    console.log('[tester2] force-populated session.startSnapshot');
-                  }
-                  if (!_sess.startHash) {
-                    _sess.startHash = 'tester2-fallback-' + state.simTime.toFixed(4);
-                    console.log('[tester2] force-populated session.startHash');
-                  }
-                  console.log('[tester2] session-post-populate:', JSON.stringify({
-                    stackId: _sess.stackId, guideName: _sess.guideName,
-                    presetId: _sess.presetId,
-                    hasStart: !!_sess.startSnapshot,
-                    hasHash: !!_sess.startHash,
-                  }));
-                }
+                console.warn('[tester2] capture skipped: session lacks startSnapshot/startHash. Record would be replay-invalid. Ensure fresh INIT + guide start.');
+                return;
+              }
               } catch(_pe) { console.warn('[tester2] force-populate failed:', _pe); }
             } catch(_se) { console.warn('[tester2] forced startGuideSession failed:', _se); }
           }

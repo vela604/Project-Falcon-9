@@ -441,7 +441,8 @@ function _trackBodyTelemetry(snap) {
     // (full stack) and becomes 'stage' after separation; capturing
     // bodyTag at peak time means ascent-Q maps to 'booster' not 'stage'.
     if (!_peakTracker[i]) {
-      _peakTracker[i] = { Q_Pa: 0, Q_t: 0, Q_bodyTag: '?', G: 0, G_t: 0, G_bodyTag: '?', Temp_K: 0, Temp_t: 0, Temp_lagged: 288.15 };
+      const _initTempK = (b.payloadBody ? 250.0 : 288.15);
+      _peakTracker[i] = { Q_Pa: 0, Q_t: 0, Q_bodyTag: '?', G: 0, G_t: 0, G_bodyTag: '?', Temp_K: _initTempK, Temp_t: 0, Temp_lagged: _initTempK };
       // Peak inheritance on split — physics.js split handlers set
       // _inheritPeaksFrom (parent index) + _inheritPeakQ (bool). Rules:
       //   · peakG: ALWAYS inherited — thrust G propagates mechanically
@@ -471,6 +472,30 @@ function _trackBodyTelemetry(snap) {
             // Carry lagged thermal state from parent — new body continues
             // from parent's current temp, avoids cold-start catch-up lag.
             _peakTracker[i].Temp_lagged = Number.isFinite(_pPk.Temp_lagged) ? _pPk.Temp_lagged : _pPk.Temp_K;
+          }
+        }
+      }
+    }
+    // Continuous inheritance retry — every tick, re-check parent's peaks.
+    // Handles cases where child tracker got reset mid-flight (e.g. FF
+    // worker state transfer) or parent's peaks continue climbing post-
+    // split. Only RAISES child values (never lowers). No-op for body 0.
+    {
+      const _pIdxC = Number.isInteger(b._inheritPeaksFrom) ? b._inheritPeaksFrom : -1;
+      if (_pIdxC >= 0 && _pIdxC !== i && _peakTracker[_pIdxC]) {
+        const _pPkC = _peakTracker[_pIdxC];
+        if (_pPkC.G > _peakTracker[i].G) {
+          _peakTracker[i].G = _pPkC.G;
+          _peakTracker[i].G_t = _pPkC.G_t;
+        }
+        if (b._inheritPeakQ === true) {
+          if (_pPkC.Q_Pa > _peakTracker[i].Q_Pa) {
+            _peakTracker[i].Q_Pa = _pPkC.Q_Pa;
+            _peakTracker[i].Q_t = _pPkC.Q_t;
+          }
+          if (Number.isFinite(_pPkC.Temp_K) && _pPkC.Temp_K > _peakTracker[i].Temp_K) {
+            _peakTracker[i].Temp_K = _pPkC.Temp_K;
+            _peakTracker[i].Temp_t = _pPkC.Temp_t;
           }
         }
       }
