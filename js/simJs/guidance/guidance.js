@@ -84,6 +84,32 @@ const Guidance = (function () {
         }
       } catch (_e) {}
     }
+    // rtls sub-phase tracking (booster-side, orbitalMissionGNCV1)
+    if (_activeGuide === 'orbitalMissionGNCV1' && typeof _lbState !== 'undefined' && _lbState && _lbState.rtlsBlock) {
+      try {
+        const _rs = _lbState.rtlsBlock.getStatus();
+        const _curRtls = (_rs && _rs.phase) ? _rs.phase : null;
+        const _rtlsDone = _lbState.rtlsBlock.isDone();
+        const _nowT = _lastSimTime;
+        const _fuelNow = _snapMemberFuel(_lastRawSnapshot || _lastMeasuredSnapshot);
+        if (_curRtls && _curRtls !== 'DONE' && _curRtls !== _lastRtlsPhase) {
+          if (_lastRtlsPhase && _phaseLog[_lastRtlsPhase] && _phaseLog[_lastRtlsPhase].endT === null) {
+            _phaseLog[_lastRtlsPhase].endT = _nowT;
+            _phaseLog[_lastRtlsPhase].fuelEnd = _fuelNow;
+            _phaseLog[_lastRtlsPhase].fuelDelta = _diffFuel(_phaseLog[_lastRtlsPhase].fuelStart, _fuelNow);
+          }
+          _lastRtlsPhase = _curRtls;
+          if (!_phaseLog[_curRtls]) {
+            _phaseLog[_curRtls] = { startT: _nowT, endT: null, fuelStart: _fuelNow, fuelEnd: null, fuelDelta: null, bodyTag: 'booster' };
+          }
+        } else if (_rtlsDone && _lastRtlsPhase && _phaseLog[_lastRtlsPhase] && _phaseLog[_lastRtlsPhase].endT === null) {
+          _phaseLog[_lastRtlsPhase].endT = _nowT;
+          _phaseLog[_lastRtlsPhase].fuelEnd = _fuelNow;
+          _phaseLog[_lastRtlsPhase].fuelDelta = _diffFuel(_phaseLog[_lastRtlsPhase].fuelStart, _fuelNow);
+          _lastRtlsPhase = null;
+        }
+      } catch (_e) {}
+    }
 
     if (_activeGuide && GUIDES[_activeGuide]) {
       const g = GUIDES[_activeGuide];
@@ -124,7 +150,10 @@ const GUIDE_PHASE_SEQUENCES = {
     'SUICIDE_ROTATE', 'SUICIDE_BURN', 'SUICIDE_COAST',
   ],
   orbitalMissionGNCV1: [
-    'ASCENT', 'MECO_SPOOL', 'SEPARATED_AXIAL', 'STAGE_BURN', 'RCS_BOOST',
+    'ASCENT', 'MECO_SPOOL', 'SEPARATED_AXIAL',
+    'FLIP', 'BOOSTBACK_BURN', 'PRE_ENTRY_STEER', 'ENTRY_BURN',
+    'POST_ENTRY_STEER', 'LANDING_BURN_ALIGN', 'LANDING_BURN', 'TOUCHDOWN_COMPLETE',
+    'STAGE_BURN', 'RCS_BOOST',
     'COAST_ROTATE', 'COAST_WAIT', 'COAST_HOLD', 'CIRCULARIZE',
     'COAST_ROTATE_2', 'COAST_HOLD_2', 'DONE',
     'SUICIDE_ROTATE', 'SUICIDE_BURN', 'SUICIDE_COAST',
@@ -286,6 +315,7 @@ const GUIDE_PHASE_SEQUENCES = {
     _liftoffFired = false;
     _landingBurnFired = false;
     _maxQFired = false;
+    _lastRtlsPhase = null;
     // Only reset per-run trackers on a genuinely fresh start. FF worker
     // appears to call startGuide at split (mid-mission), which was wiping
     // _peakTracker and losing ascent peaks. Guard: if any events already
@@ -348,6 +378,7 @@ let _peakTracker = {};
 let _liftoffFired = false;
 let _landingBurnFired = false;
 let _maxQFired = false;
+let _lastRtlsPhase = null;
 
 function _phaseBodyTag(displayPhase) {
   if (!displayPhase) return '?';
@@ -357,7 +388,7 @@ function _phaseBodyTag(displayPhase) {
   if (p === 'ASCENT' || p === 'MECO' || p === 'SEPARATION' ||
       p === 'FLIP' || p === 'BOOSTBACK BURN' ||
       p === 'PRE ENTRY STEER' || p === 'ENTRY BURN' ||
-      p === 'POST ENTRY STEER' || p === 'LANDING BURN' ||
+      p === 'POST ENTRY STEER' || p === 'LANDING BURN' || p === 'LANDING BURN ALIGN' ||
       p === 'TOUCHDOWN COMPLETE') return 'booster';
   if (p === 'ORBIT BURN' || p === 'APOGEE TRIM' ||
       p === 'COAST' || p === 'CIRCULARIZE' ||
