@@ -28,7 +28,7 @@ const MISSION_PHYSICS_STAMP = '2024-11-15-1';
 // changes. Bumping it invalidates ALL existing records. Only bump when
 // trajectory/timing-affecting physics actually changes (mass props,
 // control laws, atmosphere model, etc.).
-const MISSION_EVENT_SCHEMA_VERSION = 1;
+const MISSION_EVENT_SCHEMA_VERSION = 2;
 function currentPhysicsVersion() { return MISSION_PHYSICS_STAMP; }
 function currentEventSchemaVersion() { return MISSION_EVENT_SCHEMA_VERSION; }
 
@@ -288,12 +288,16 @@ window.captureCurrentMissionRecord = async function () {
       startT: e.startT,
       endT: e.endT,
       durationS: e.endT - e.startT,
+      // Schema v2: per-member fuel consumption during this phase.
+      // Array of { memberId, role, fuelUsed } for members that drained
+      // >1g during the phase. Empty for pre-v2 phaseLog entries.
+      fuelDelta: Array.isArray(e.fuelDelta) ? e.fuelDelta.slice() : [],
     }));
   
   const events = (gs.events || []).slice();
   
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     physicsVersion: currentPhysicsVersion(),
     eventSchemaVersion: MISSION_EVENT_SCHEMA_VERSION,
     comboKey: session.comboKey,
@@ -324,6 +328,10 @@ window.captureCurrentMissionRecord = async function () {
     },
     phases: phases,
     events: events,
+    // Schema v2: per-body peak telemetry (MAX_Q, MAX_G). Array of
+    // { bodyIdx, bodyTag, peakQ_kPa, peakQ_t, peakG, peakG_t }.
+    // Empty for pre-v2 captures (agent didn't ship peaks yet).
+    peaks: Array.isArray(gs.peaks) ? gs.peaks.slice() : [],
     success: _effSuccess,
     _debug: {
       runResult: gs.runResult,

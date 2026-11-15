@@ -1588,7 +1588,9 @@ function _syncMissionRecordSession(status) {
           : rec.success === false
             ? '⚠ Auto-saved (failed): '
             : '⏸ Auto-saved (partial): ';
-        window.showASDSToast(_tag + rec.phases.length + ' phases', rec.success !== false);
+        var _peakTag = (Array.isArray(rec.peaks) && rec.peaks.length)
+          ? ' \u00b7 ' + rec.peaks.length + ' peaks' : '';
+        window.showASDSToast(_tag + rec.phases.length + ' phases' + _peakTag, rec.success !== false);
       }
     }).catch(function (e) {
       window.__autoSavedForSession = false;
