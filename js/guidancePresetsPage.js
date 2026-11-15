@@ -810,9 +810,16 @@ if (_editingPresetId) {
       ? new Date(rec.metadata.recordedAt).toLocaleString()
       : '\u2014';
 
-    const mecoS    = _rdmFormatHMS(rec.mecoS);
-    const landS    = _rdmFormatHMS(rec.boosterLandS);
-    const deployS  = _rdmFormatHMS(rec.payloadDeployS);
+    // Derive from events when the derived fields are missing — records
+    // captured before Phase 1 don't carry mecoS/boosterLandS/payloadDeployS,
+    // but the same values are recoverable from events[] (bit-identical).
+    const _evT = (name) => {
+      const ev = (rec.events || []).find(e => e && e.name === name);
+      return ev && Number.isFinite(ev.t) ? ev.t : null;
+    };
+    const mecoS    = _rdmFormatHMS(rec.mecoS != null ? rec.mecoS : _evT('MECO'));
+    const landS    = _rdmFormatHMS(rec.boosterLandS != null ? rec.boosterLandS : _evT('TOUCHDOWN_COMPLETE'));
+    const deployS  = _rdmFormatHMS(rec.payloadDeployS != null ? rec.payloadDeployS : _evT('PAYLOAD_RELEASE'));
 
     const phases = Array.isArray(rec.phases) ? rec.phases : [];
     const events = Array.isArray(rec.events) ? rec.events : [];
@@ -1270,6 +1277,16 @@ if (_editingPresetId) {
   // ----------------------------------------------------------------
   // Boot
   // ----------------------------------------------------------------
+  // Backfill presetId on legacy records BEFORE rendering so first paint
+  // already shows correct record counts on preset cards.
+  if (typeof backfillPresetIdOnRecords === 'function') {
+    try {
+      const _backfilled = backfillPresetIdOnRecords();
+      if (_backfilled > 0) toast('Linked ' + _backfilled + ' record' + (_backfilled === 1 ? '' : 's') + ' to default presets');
+    } catch (e) {
+      console.warn('[guidancePresetsPage] backfill failed', e);
+    }
+  }
   renderStats();
   const guides = allConfigurableGuides();
   if (guides.length) _selectedGuide = guides[0];

@@ -1477,8 +1477,23 @@ function _syncMissionRecordSession(status) {
       // so we don't misattribute a run.
       const _ap = window.__activePreset;
       const _valid = _ap && _ap.guideName === guideSel.value && _ap.stackId === stk.id;
-      startGuideSession(stk.id, guideSel.value,
-        _valid ? _ap.id : '', _valid ? _ap.name : '');
+      // Fallback to baseline default when no explicit preset was selected
+      // (user started guide without touching GCM modal's preset dropdown).
+      // Starting that way uses the guide's code-default constants, which
+      // ARE the baseline preset — so binding to default:<guideName> is
+      // semantically correct AND lets the recorded-data panel find it
+      // (panel filters by exact presetId match).
+      let _pid, _pname;
+      if (_valid) {
+        _pid = _ap.id;
+        _pname = _ap.name;
+      } else {
+        _pid = 'default:' + guideSel.value;
+        const _def = (typeof getGuideDefaultPreset === 'function')
+          ? getGuideDefaultPreset(guideSel.value) : null;
+        _pname = _def ? _def.name : '';
+      }
+      startGuideSession(stk.id, guideSel.value, _pid, _pname);
     }
     // Round 3 — fetch mission record for prediction overlay. Reset drift
     // flag so this guide sequence starts fresh. comboKey promise resolves

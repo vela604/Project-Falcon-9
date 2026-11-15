@@ -268,6 +268,39 @@ function getRecordsGroupedByEnvForPreset(presetId) {
   return Object.values(groups);
 }
 
+
+// ---------------------------------------------------------------------------
+// One-time backfill — records captured before the preset-binding fix have
+// metadata.presetId = '' (empty). Without presetId they can't be filtered
+// by the "Recorded Data" panel (which matches on exact preset ID).
+//
+// Assigns such records to the baseline default of their guideName
+// (default:<guide>), the most likely preset at capture time. Idempotent
+// — runs once per browser session. Tags records with _presetInferred:true.
+// ---------------------------------------------------------------------------
+function backfillPresetIdOnRecords() {
+  if (typeof window !== 'undefined' && window.__presetIdBackfilled) return 0;
+  if (typeof window !== 'undefined') window.__presetIdBackfilled = true;
+  let count = 0;
+  try {
+    const records = loadMissionRecords();
+    records.forEach(function(r) {
+      if (r && r.metadata && !r.metadata.presetId && r.metadata.guideName) {
+        r.metadata.presetId = 'default:' + r.metadata.guideName;
+        r.metadata._presetInferred = true;
+        count++;
+      }
+    });
+    if (count > 0) {
+      saveMissionRecords(records);
+      try { console.log('[missionRecords] backfilled presetId on ' + count + ' records'); } catch(e){}
+    }
+  } catch (e) {
+    try { console.warn('[missionRecords] backfill failed', e); } catch(e2){}
+  }
+  return count;
+}
+
 window.captureCurrentMissionRecord = async function () {
   if (typeof state === 'undefined' || !state.bodies) {
     return { error: 'no state' };
@@ -435,5 +468,6 @@ if (typeof globalThis !== 'undefined') {
   globalThis.currentPhysicsVersion = currentPhysicsVersion;
   globalThis.isRecordStale = isRecordStale;
   globalThis.getMissionRecordsForPreset = getMissionRecordsForPreset;
+  globalThis.backfillPresetIdOnRecords = backfillPresetIdOnRecords;
   globalThis.getRecordsGroupedByEnvForPreset = getRecordsGroupedByEnvForPreset;
 }
