@@ -179,8 +179,8 @@ STAGE_BURN_LOCK_TILT_DEG: 90,
   
 leoInsertionV3: _mkDefault(
   'leoInsertionV3',
-  'F9 LEO — 320 km (Author baseline)',
-  'First-generation hand-tune by the author - kept as tribute. NOT the best preset for this stack. 52612 kg MECO residual was the first ever manual bias tuning pass by the author. Superseded by SERENO FLUX results but shipped unchanged so the journey starting point stays visible.\n\nAutonomous Falcon 9 ascent to a two-apside target orbit — circular (apside1 == apside2) or elliptical (apo = max(a1,a2), peri = min(a1,a2)) — with payload deploy at the nearer post-burn apside, and retrograde deorbit for a controlled resting-site impact. Tuned for the Block 5 stack with axial stage separation. Includes apside-aware scoring, COAST_HOLD_2 axial Δv trim (TOL/FAR) to place the stage exactly at target_peri − eject_kick before deploy, and self-healing apside derivation (single apside auto-mirrors to both — circular).',
+  'Author Baseline',
+  'First hand-tuned preset by the author. 52612 kg MECO residual - the original manual bias search. Kept as tribute; not the optimal tune for this stack.',
   {
     ascent: {
     INITIAL_COAST_S: 4.9,
@@ -263,7 +263,7 @@ leoInsertionV3: _mkDefault(
       TARGET_IMPACT_EF_DEG: null,
     },
   },
-    ['full-mission', 'expendable'],
+    ['leo-320km', '12t', 'author-tuned'],
   135,
   586
   ),
@@ -274,8 +274,8 @@ leoInsertionV3: _mkDefault(
   // (exact key match); getAllDefaultPresetsForGuide returns both.
   'leoInsertionV3-serenoFlux05': _mkDefault(
     'leoInsertionV3',
-    'F9 LEO - 320 km - SERENO FLUX - ideal scale 0.5',
-    'SERENO FLUX search engine result on the same 320 km circular target with second-stage deorbit. Ideal scale 0.5 configuration. MECO 61333 kg, G 0.64, stage-burn bias 2.7796, circularize lead 1.9125 s - all found by the author SERENO FLUX search, not by hand. Higher MECO residual than the author baseline reflects a different burn profile the search found favourable. Now RTLS-tuned too: LANDING_BURN_ALT_KM 2.47 km, ENTRY_BURN_IMPACT_TARGET_M -752.76 m (pad LZ-1). Combines the SERENO FLUX-optimal ascent/insertion with a tuned booster-return pair on the same stack.',
+    'SERENO FLUX 0.5',
+    'SERENO FLUX searched best at ideal scale 0.5. Target 320 x 320 km circular, 12t payload. Full mission: ascent + insertion + stage deorbit + RTLS booster to LZ-1.',
     {
       ascent: {
         INITIAL_COAST_S: 4.9,
@@ -366,7 +366,7 @@ leoInsertionV3: _mkDefault(
         ENTRY_BURN_IMPACT_TARGET_M: -752.76,
       },
     },
-    ['full-mission', 'sereno-flux', 'rtls-tuned', 'search-result', 'ideal-scale-0.5', 'expendable'],
+    ['leo-320km', '12t', 'scale-0.5', 'sereno-flux', 'lb-nova6'],
     null,
     null,
     'default:leoInsertionV3-serenoFlux05'
@@ -678,13 +678,8 @@ leoInsertionV3: _mkDefault(
 
   GUIDE_DEFAULT_PRESETS['landbackV1-serenoFlux05'] = _mkDefault(
     'landbackV1',
-    'F9 Landback — SERENO FLUX — ideal scale 0.5',
-    'SERENO FLUX search result — ideal scale 0.5 configuration. ' +
-    'Combines SERENO FLUX-optimal LEO ascent + insertion with RTLS booster ' +
-    'return to LZ-1. MECO 61333 kg, G 0.64, stage-burn bias 2.7796, ' +
-    'circularize lead 1.9125 s — all found by search (not hand-tuned). ' +
-    'Booster return tuned for RTLS landing burn at 2.47 km alt, entry burn ' +
-    'impact target -752.76 m (LZ-1).',
+    'SERENO FLUX 0.5',
+    'SERENO FLUX searched best at ideal scale 0.5. Target 320 x 320 km circular, 12t payload. Full mission: ascent + insertion + stage deorbit + RTLS booster to LZ-1.',
     base,
     ['full-mission', 'sereno-flux', 'rtls-tuned', 'search-result', 'ideal-scale-0.5'],
     135,
