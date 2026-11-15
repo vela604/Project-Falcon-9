@@ -56,24 +56,24 @@ self.onmessage = async (e) => {
     // Physics side loads first (defines state, buildPodEntries, etc.).
     // Guidance modules use IIFE scoping, so no namespace collisions with
     // physics.js's module-level helpers.
-    const _FFW_CACHE_VERSION = '20241117-21';  // BUMP: on ANY guidance/* change. Sed pattern below MUST match both 20241115-* and 20241117-21* prefixes.
+    const _FFW_CACHE_VERSION = '20241117-23';  // BUMP: on ANY guidance/* change. Sed pattern below MUST match both 20241115-* and 20241117-23* prefixes.
 importScripts(
-  '../../componentLibrary.js?v=20241117-21',
-  '../../customDesign.js?v=20241117-21',
-  '../../fleet.js?v=20241117-21',
-  '../../config.js?v=20241117-21',
-  '../core/massProps.js?v=20241117-21',
-  '../core/environment.js?v=20241117-21',
-  '../core/vehicle.js?v=20241117-21',
-  '../core/rcs.js?v=20241117-21',
-  '../core/physics.js?v=20241117-21',
-  '../core/collision.js?v=20241117-21',
-  '../core/stateBuffer.js?v=20241117-21',
-  '../guidance/imu.js?v=20241117-21',
-  '../guidance/derivation.js?v=20241117-21',
-  '../guidance/guidercs.js?v=20241117-21',
-  '../guidance/guidance-blocks.js?v=20241117-21',
-  '../guidance/guidance.js?v=20241117-21'
+  '../../componentLibrary.js?v=20241117-23',
+  '../../customDesign.js?v=20241117-23',
+  '../../fleet.js?v=20241117-23',
+  '../../config.js?v=20241117-23',
+  '../core/massProps.js?v=20241117-23',
+  '../core/environment.js?v=20241117-23',
+  '../core/vehicle.js?v=20241117-23',
+  '../core/rcs.js?v=20241117-23',
+  '../core/physics.js?v=20241117-23',
+  '../core/collision.js?v=20241117-23',
+  '../core/stateBuffer.js?v=20241117-23',
+  '../guidance/imu.js?v=20241117-23',
+  '../guidance/derivation.js?v=20241117-23',
+  '../guidance/guidercs.js?v=20241117-23',
+  '../guidance/guidance-blocks.js?v=20241117-23',
+  '../guidance/guidance.js?v=20241117-23'
 );
     // [FF-BOOT] — confirm CONFIG.LANDING_PADS loaded from importScripts.
     // N=3 for fresh boot (LZ-1/2/3 defaults). Run-handler then overwrites
@@ -85,17 +85,6 @@ importScripts(
       // ACTUALLY running in FF, regardless of cache.
       try {
         const _diagStamp = (typeof GUIDANCE_BUILD_STAMP !== 'undefined') ? GUIDANCE_BUILD_STAMP : 'MISSING';
-        const _diagInit = (function(){
-          try {
-            // Reproduce _initTempK computation to detect pre/post patch
-            const bPayload = { payloadBody: {} };
-            const bNormal = { payloadBody: null };
-            return {
-              payloadVal: bPayload.payloadBody ? 250.0 : 288.15,
-              normalVal: bNormal.payloadBody ? 250.0 : 288.15,
-            };
-          } catch(e) { return { error: e.message }; }
-        })();
         self.postMessage({
           type: 'ffSelfDiag',
           stage: 'boot',
@@ -103,7 +92,6 @@ importScripts(
           guidanceStamp: _diagStamp,
           hasGuidanceBuildStamp: (typeof GUIDANCE_BUILD_STAMP !== 'undefined'),
           hasTrackTelemetry: (typeof _trackBodyTelemetry === 'function'),
-          initTempKProbe: _diagInit,
         });
       } catch(_e) { console.warn('[FF-SELFDIAG] postMessage failed', _e); }
       // BUILD-STAMP diagnostic — ground truth for "which guidance.js did FF

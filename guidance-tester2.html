@@ -1960,8 +1960,6 @@ if (!faded) {
   function _captureTemperatures() {
     const out = { booster: null, stage: null, payload: null };
     if (!state || !Array.isArray(state.bodies)) return out;
-    // Find the current booster / stage / payload bodies (same role logic
-    // as _updateTempRows in the HUD).
     const roles = { booster: null, stage: null, payload: null };
     for (const b of state.bodies) {
       if (!b) continue;
