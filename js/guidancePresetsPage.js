@@ -867,10 +867,22 @@ function _rdmPeaksTable(peaks) {
       ? ' <span class="rdm-pk-posttag">post-split</span>'
       : '';
 
+    // Peak temperature — client-side enrichment added at capture. May be
+    // absent on older records (pre-this-patch) → show "—".
+    const tK = Number.isFinite(p.peakTemp_K) ? p.peakTemp_K : null;
+    const tC = tK != null ? (tK - 273.15) : null;
+    const tempVal = tK != null
+      ? (tC >= 0 ? tC.toFixed(0) + ' \u00b0C' : (tK).toFixed(0) + ' K')
+      : null;
+    const tempRow = (tempVal !== null)
+      ? '<div class="rdm-pk-row"><span class="rdm-pk-key">Peak temp</span><span class="rdm-pk-val">' + tempVal + '</span></div>'
+      : '';
+
     return '<div class="rdm-pk-block">'
       + '<div class="rdm-pk-header">Body #' + (p.bodyIdx != null ? p.bodyIdx : '?') + ' <span class="rdm-pk-tag">' + tagLine + '</span></div>'
       + '<div class="rdm-pk-row"><span class="rdm-pk-key">Peak Q</span><span class="rdm-pk-val">' + qVal + (qTime ? ' @ T+' + qTime : '') + '</span></div>'
       + '<div class="rdm-pk-row"><span class="rdm-pk-key">Peak G</span><span class="rdm-pk-val">' + gVal + (gTime ? ' @ T+' + gTime : '') + gPostTag + '</span></div>'
+      + tempRow
       + gNote
       + '</div>';
   }).join('');
