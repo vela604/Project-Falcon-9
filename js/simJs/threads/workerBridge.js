@@ -42,7 +42,10 @@ const WorkerBridge = {
   pendingMessages: [],
   
   init() {
-    this.worker = new Worker('js/simJs/threads/physics.worker.js');
+    const _wBuildStampWB = (typeof window !== 'undefined' && window.__WORKER_BUILD_STAMP)
+      || ('w_' + Date.now());
+    try { if (typeof window !== 'undefined') window.__WORKER_BUILD_STAMP = _wBuildStampWB; } catch(_e){}
+    this.worker = new Worker('js/simJs/threads/physics.worker.js?v=' + _wBuildStampWB);
     this.worker.onmessage = (e) => {
       const msg = e.data;
       if (msg.type === 'state') {
@@ -419,7 +422,10 @@ const GuidanceBridge = {
   pendingMessages: [],
   
   init() {
-    this.worker = new Worker('js/simJs/threads/guidance.worker.js');
+    const _wBuildStampWB2 = (typeof window !== 'undefined' && window.__WORKER_BUILD_STAMP)
+      || ('w_' + Date.now());
+    try { if (typeof window !== 'undefined') window.__WORKER_BUILD_STAMP = _wBuildStampWB2; } catch(_e){}
+    this.worker = new Worker('js/simJs/threads/guidance.worker.js?v=' + _wBuildStampWB2);
     this.worker.onmessage = (e) => {
       const msg = e.data;
       if (msg.type === 'snapDbg') {

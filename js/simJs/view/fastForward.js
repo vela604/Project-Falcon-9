@@ -301,7 +301,14 @@ const envState = {
   imuEnabled: !!(typeof imuEnabled !== 'undefined' && imuEnabled),
 };
 
-const w = new Worker('js/simJs/threads/fastforward.worker.js');
+// Cachebust FF worker file URL — Android Chrome aggressively caches
+// worker .js files (Ctrl+Shift+R does not reliably bypass). Without
+// this, FF worker runs STALE code with old importScripts URLs →
+// guidance patches don't apply → tester2/sim.html thermal diverge.
+const _wBuildStampFF = (typeof window !== 'undefined' && window.__WORKER_BUILD_STAMP)
+  || ('w_' + Date.now());
+try { if (typeof window !== 'undefined') window.__WORKER_BUILD_STAMP = _wBuildStampFF; } catch(_e){}
+const w = new Worker('js/simJs/threads/fastforward.worker.js?v=' + _wBuildStampFF);
     _state.ffWorker = w;
     const _baseSimTime = physData.simTime;
     // ── FF diag: exact base + duration + final ──

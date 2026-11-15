@@ -452,7 +452,10 @@ function bootstrap() {
     if (renderScale <= 0) renderScale = 1;
     const initW = Math.max(1, mainCanvas.clientWidth || window.innerWidth) * renderScale;
     const initH = Math.max(1, mainCanvas.clientHeight || window.innerHeight) * renderScale;
-    const renderWorker = new Worker('js/simJs/threads/render.worker.js');
+    const _wBuildStampMain = (typeof window !== 'undefined' && window.__WORKER_BUILD_STAMP)
+      || ('w_' + Date.now());
+    try { if (typeof window !== 'undefined') window.__WORKER_BUILD_STAMP = _wBuildStampMain; } catch(_e){}
+    const renderWorker = new Worker('js/simJs/threads/render.worker.js?v=' + _wBuildStampMain);
     window._renderWorker = renderWorker;
     
     renderWorker.onmessage = (e) => {
