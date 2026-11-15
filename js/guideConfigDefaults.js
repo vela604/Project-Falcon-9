@@ -274,7 +274,7 @@ leoInsertionV3: _mkDefault(
   // (exact key match); getAllDefaultPresetsForGuide returns both.
   'leoInsertionV3-serenoFlux05': _mkDefault(
     'leoInsertionV3',
-    'SERENO FLUX 0.5',
+    'LEO-320 F9B5',
     'SERENO FLUX searched best at ideal scale 0.5. Target 320 x 320 km circular, 12t payload. Full mission: ascent + insertion + stage deorbit + RTLS booster to LZ-1.',
     {
       ascent: {
@@ -678,7 +678,7 @@ leoInsertionV3: _mkDefault(
 
   GUIDE_DEFAULT_PRESETS['landbackV1-serenoFlux05'] = _mkDefault(
     'landbackV1',
-    'SERENO FLUX 0.5',
+    'LEO-320 F9B5',
     'SERENO FLUX searched best at ideal scale 0.5. Target 320 x 320 km circular, 12t payload. Full mission: ascent + insertion + stage deorbit + RTLS booster to LZ-1.',
     base,
     ['leo-320km', '12t', 'scale-0.5', 'sereno-flux', 'lb-nova6'],
