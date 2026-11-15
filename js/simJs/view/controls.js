@@ -1330,11 +1330,63 @@ function _renderPhaseTrack(status) {
 // and log the worker sent are already in display-space, so comparing
 // against the raw phase would leave every row unhighlighted whenever
 // a rename/merge map is configured.
-const curPhase = status.phaseDisplay || status.phase || null;
-const seq = Array.isArray(status.phaseSequence) && status.phaseSequence.length ?
-  status.phaseSequence :
-  (curPhase ? [curPhase] : []);
-  const seqKey = seq.join('|');
+// ══════ Per-body filter (v3+ bodyTag) ══════
+  // Active role determines which phases show:
+  //   Take Control booster  → only bodyTag='booster' rows
+  //   Take Control stage    → only bodyTag='stage' rows
+  //   Take Control fairing  → only bodyTag='fairing' rows
+  //   Take Control payload  → only bodyTag='payload' rows
+  // ASCENT excluded per user (redundant — LIFTOFF toast already marks T+0).
+  // Legacy fallback: if NO bodyTag exists on any phaseLog entry (v2/pre-
+  // commit-1), show full unfiltered list (minus ASCENT) so old records
+  // still render cleanly. v3 records filter as designed.
+  const _activeIdx = state.activeBodyIndex || 0;
+  const _activeBody = state.bodies && state.bodies[_activeIdx];
+  let _activeRole = 'stage';
+  if (_activeBody) {
+    if (_activeBody.payloadBody) _activeRole = 'payload';
+    else if (_activeBody.fairingHalf) _activeRole = 'fairing';
+    else if (_activeBody.members && _activeBody.members[0]) {
+      if (_activeBody.members[0].stageRole === 'booster') _activeRole = 'booster';
+    }
+  }
+  
+  const curPhase = status.phaseDisplay || status.phase || null;
+  const _rawSeq = (Array.isArray(status.phaseSequence) && status.phaseSequence.length)
+    ? status.phaseSequence
+    : (curPhase ? [curPhase] : []);
+  const _logPre = status.phaseLog || {};
+  const _hasAnyBodyTag = Object.values(_logPre).some(e => e && e.bodyTag);
+  let seq;
+  if (!_hasAnyBodyTag) {
+    // Legacy — no filter
+    seq = _rawSeq.filter(ph => ph !== 'ASCENT');
+  } else {
+    seq = _rawSeq.filter(ph => {
+      if (ph === 'ASCENT') return false;
+      const entry = _logPre[ph];
+      if (!entry) return false;
+      const tag = entry.bodyTag;
+      return !tag || tag === _activeRole;
+    });
+  }
+  const seqKey = _activeRole + '|' + seq.join('|');
+  
+  // Header reflects active role
+  try {
+    const _tEl = trackBox.querySelector('.gpt-title');
+    if (_tEl) _tEl.textContent = 'MISSION PHASES \u2014 ' + _activeRole.toUpperCase();
+  } catch (e) {}
+  
+  // Empty-state guard (fairing/payload currently have no tagged phases)
+  if (!seq.length) {
+    host.innerHTML = '<div class="gpt-empty">No phases captured for ' + _activeRole + ' yet.</div>';
+    const _cntEl = document.getElementById('guidePhaseCount');
+    if (_cntEl) _cntEl.textContent = '0/0';
+    _phaseTrackLastSeq = seqKey;
+    _phaseTrackRows = {};
+    return;
+  }
   
   // Rebuild DOM only when the sequence changes (guide switch / restart).
   if (seqKey !== _phaseTrackLastSeq) {
