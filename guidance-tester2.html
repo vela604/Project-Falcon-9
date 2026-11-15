@@ -2457,6 +2457,30 @@ if (!faded) {
               'session=' + (window.__guideSession ? (window.__guideSession.stackId + '|' + window.__guideSession.guideName) : 'none'));
           } catch(_e){}
 
+          // FORCE session reinit if missing. Diag showed session=none
+          // despite gs live — Render's _syncMissionRecordSession didn't
+          // persist window.__guideSession in this single-thread tester2
+          // context (or cleared it early). captureCurrentMissionRecord
+          // needs session.stackId + session.guideName + session.presetId
+          // to compute comboKey = hash(stackId|presetId|guideName|cfg).
+          // Force-fire startGuideSession here (idempotent on their side —
+          // repeated calls just refresh the same session).
+          if (!window.__guideSession && typeof startGuideSession === 'function') {
+            try {
+              const _stk0 = (typeof getActiveStack === 'function') ? getActiveStack() : null;
+              const _stkId0 = (_stk0 && _stk0.id) || 'stk_falcon9-b5';
+              const _guide0 = (typeof Guidance !== 'undefined' && Guidance.getActiveGuide) ? Guidance.getActiveGuide() : currentGuide;
+              startGuideSession(_stkId0, _guide0);
+              console.log('[tester2] forced startGuideSession before capture:', _stkId0, _guide0,
+                'sessionAfter=' + (window.__guideSession ? (window.__guideSession.stackId + '|' + window.__guideSession.guideName) : 'still-none'));
+              // Small async gap in case startGuideSession sets globals via
+              // Promise / microtask.
+              await new Promise(function(res){ setTimeout(res, 50); });
+              console.log('[tester2] session after 50ms wait:',
+                window.__guideSession ? (window.__guideSession.stackId + '|' + window.__guideSession.guideName) : 'STILL NONE');
+            } catch(_se) { console.warn('[tester2] forced startGuideSession failed:', _se); }
+          }
+
           let _r = _capFn();
           _partialRec = (_r && typeof _r.then === 'function') ? await _r : _r;
           if (_partialRec) _partialRec.partial = true;
