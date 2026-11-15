@@ -566,10 +566,7 @@ window.captureCurrentMissionRecord = async function () {
     // Schema v2: per-body peak telemetry (MAX_Q, MAX_G). Array of
     // { bodyIdx, bodyTag, peakQ_kPa, peakQ_t, peakG, peakG_t }.
     // Empty for pre-v2 captures (agent didn't ship peaks yet).
-    // Schema v2 + client-side peakTemp_K enrichment. Physics peaks
-    // array has {bodyIdx, bodyTag, peakQ_*, peakG_*}. We add peakTemp_K
     // per body from telemetry.js's per-member thermal tracker
-    // (_bodyTempWeighted, which aggregates members and returns max
     // peak across them). Skip gracefully when function/state unavailable
     // (e.g. tester2 without telemetry.js loaded).
     peaks: Array.isArray(gs.peaks) ? gs.peaks.slice() : [],

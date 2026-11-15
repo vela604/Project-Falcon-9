@@ -84,85 +84,8 @@ const NOTATION_GLOSSARY = {
 //     the main thread; the heuristic is close enough that the thermal
 //     waveform shape and peak are right.
 // ---------------------------------------------------------------------------
-const _tempState = new Map();  // key = 'm:' + member.id (or 'b:'+body.id+':idx' for solo bodies)
-const _THERMAL_TAU_BULK = 30;  // s — thick metal tank (fuel-carrying member)
-const _THERMAL_TAU_SKIN = 6;   // s — thin shell (fairing, interstage, nose)
-const _FAIRING_SHIELD_FLOOR = 0.02;   // residual free-stream flux fraction behind a FULLY-shielding (bulged) fairing
 const _FAIRING_FULL_SHIELD_OVERHANG = 0.25;  // (ΔD/D) at which shielding saturates
 const _FAIRING_SHOCK_EXTENT_D = 2.5;         // shock-wake extent behind fairing base, × fairing diameter
-
-// Geometry-dependent fairing shield factor. Replaces the old flat 0.02
-// magic number, which was wrong when the fairing wasn't bulged: a fairing
-// flush with the stage (same diameter) has its wall essentially in the
-// free stream and provides no aero heating reduction at all.
-//
-//   overhang = (fairingBulgeWidth − memberTankWidth) / fairingBulgeWidth
-//
-//   overhang ≈ 0    → flush, no shield, factor = 1.0
-//   overhang ≈ 0.29 → F9 (5.2 m bulge over 3.7 m tank) → factor = 0.02 (fully inside shock)
-//
-// Linear interpolation between those, clamped at [_FAIRING_SHIELD_FLOOR, 1].
-//
-// The 0.25 saturation threshold is calibrated against hypersonic blunt-body
-// shock standoff (~0.14 × D): a surface more than ~0.28·D inside the shock
-// envelope is fully shadowed. F9's 0.29 sits right at the saturation point.
-function _fairingShieldFactor(m, allMembers) {
-  const idx = allMembers.indexOf(m);
-  if (idx < 0) return 1.0;
-  let fairingIdx = -1;
-  let fairing = null;
-  for (let i = idx + 1; i < allMembers.length; i++) {
-    if (allMembers[i] && allMembers[i].stageRole === 'payloadSpace') {
-      fairingIdx = i;
-      fairing = allMembers[i];
-      break;
-    }
-  }
-  if (!fairing) return 1.0;
-
-  // Fairing reference width — prefer bulge (widest section, sets shock size),
-  // then cap, then plain body width.
-  const fairingW =
-    (fairing.params && Number.isFinite(fairing.params.bulgeWidth) && fairing.params.bulgeWidth > 0)
-      ? fairing.params.bulgeWidth
-    : (fairing.params && Number.isFinite(fairing.params.capWidth) && fairing.params.capWidth > 0)
-      ? fairing.params.capWidth
-    : (Number.isFinite(fairing.width) ? fairing.width : 0);
-
-  // Member reference width — tank diameter for fuel-carrying members,
-  // outer body width otherwise.
-  const memberW =
-    (m.fuel && Number.isFinite(m.fuel.tankWidth) && m.fuel.tankWidth > 0)
-      ? m.fuel.tankWidth
-    : (Number.isFinite(m.width) ? m.width : 0);
-
-  if (!(fairingW > 0) || !(memberW > 0)) return 0.5;   // missing geometry → partial
-  if (fairingW <= memberW) return 1.0;                 // fairing not wider → no shield
-
-  const overhang = (fairingW - memberW) / fairingW;
-  const overhangFactor = Math.min(1, overhang / _FAIRING_FULL_SHIELD_OVERHANG);
-
-  // Axial distance from fairing base DOWN to this member's top. Members form
-  // a contiguous stack, so sum the heights of members BETWEEN the two.
-  let distance = 0;
-  for (let i = idx + 1; i < fairingIdx; i++) {
-    if (allMembers[i] && Number.isFinite(allMembers[i].height)) {
-      distance += allMembers[i].height;
-    }
-  }
-  const shockExtent = fairingW * _FAIRING_SHOCK_EXTENT_D;
-  const distanceFactor = shockExtent > 0 ? Math.max(0, 1 - distance / shockExtent) : 0;
-
-  const shieldStrength = overhangFactor * distanceFactor;
-  const scale = 1 - (1 - _FAIRING_SHIELD_FLOOR) * shieldStrength;
-  return Math.max(_FAIRING_SHIELD_FLOOR, Math.min(1, scale));
-}
-
-function _memberKey(b, m, idx) {
-  if (m && m.id) return 'm:' + m.id;
-  return 'b:' + (b && b.id ? b.id : '?') + ':' + idx;
-}
-
 function _memberShieldedByFairing(m, allMembers) {
   // A member is shielded if a payloadSpace sits ABOVE it in the stack
   // (members are ordered bottom→top).
@@ -173,50 +96,6 @@ function _memberShieldedByFairing(m, allMembers) {
   }
   return false;
 }
-
-function _memberThermalMassKg(b, m, idx) {
-  if (!m) return 1;
-  const maxFuel = (typeof memberMaxFuel === 'function') ? memberMaxFuel(m, null) : 0;
-  if (maxFuel > 0) {
-    const memberFuel = (Array.isArray(b.memberFuel) && Number.isFinite(b.memberFuel[idx]))
-      ? b.memberFuel[idx] : 0;
-    return memberFuel + maxFuel * 0.06;
-  }
-  // Shell-ish member (fairing, interstage, nose)
-  const H = Number.isFinite(m.height) ? m.height : 1;
-  const W = Number.isFinite(m.width) ? m.width : 1;
-  return Math.max(1, H * W * 30);
-}
-
-function _memberTau(m) {
-  if (!m) return _THERMAL_TAU_BULK;
-  const role = m.stageRole;
-  if (role === 'payloadSpace' || role === 'nose' || role === 'interstage') return _THERMAL_TAU_SKIN;
-  return _THERMAL_TAU_BULK;
-}
-
-function _thermalTickOneMember(b, m, idx, dt) {}
-
-function _thermalTickBody(b, dt) {}
-
-// Mass-weighted average of every member's thermal state — this is what
-// the body's displayed temperature should be. Heavy tank dominates,
-// so a lightweight hot fairing won't wrongly drag the stage-tank reading
-// upward.
-
-// Peak temp canonical source — guidance's peaks[] is what records persist,
-// so reading the same field guarantees live panel == Recorded Data panel
-// for peak values. Falls back to null when guidance has no peak for this
-// body (free-flight / no active guide / bodyIdx not tracked yet) — callers
-// then use their own _bodyTempWeighted peak.
-function _peakTempFromGuidance(bodyIdx) { return null; }
-
-function _bodyTempWeighted(b) { return { T: 288.15, peakK: 288.15 }; }
-
-// Per-member read for a specific role (booster / stage / payload display).
-// member matches by stageRole, OR by body kind for solo bodies.
-function _roleTempWeighted(body, role) { return _bodyTempWeighted(body); }
-
 // Time from current 2-body state to the next apogee (seconds). Exact
 // via Kepler's equation. Used by the direction HUD's burn countdown —
 // same math the guidance worker runs, inlined here because telemetry
@@ -308,13 +187,10 @@ function initTelemetryPanel() {
 
 function updateTelemetry() {  // Thermal update — pure-read derived quantity, ticked for every body
   // before any display reads (per-body list + active cell both rely on
-  // _tempState being current).
   const _tNow = state.simTime;
   const _lastSimTime = (typeof updateTelemetry._lastSim === 'number') ? updateTelemetry._lastSim : _tNow - CONFIG.DT;
   // PAUSE-GATE: when sim is paused/halted, thermal decay must freeze.
-// Without this, wall-clock render loop keeps ticking _thermalTickBody
 // every frame → temperature decays toward ambient despite physics frozen.
-// _thermalTickBody early-returns on dt<=0, so passing 0 is a no-op.
 const _isPaused = (typeof state !== 'undefined' && state.halted) ||
                   (typeof simPaused !== 'undefined' && simPaused);
 const _dtThermal = _isPaused ? 0 : ((_tNow > _lastSimTime && _tNow - _lastSimTime < 30) ? (_tNow - _lastSimTime) : CONFIG.DT);
