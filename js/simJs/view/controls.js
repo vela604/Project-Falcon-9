@@ -1470,15 +1470,22 @@ function _syncMissionRecordSession(status) {
   if (curActive && !prevActive) {
     const stk = (typeof getActiveStack === 'function') ? getActiveStack() : null;
     const guideSel = document.getElementById('guideSelect');
-    if (stk && guideSel && guideSel.value && typeof startGuideSession === 'function') {
+    // Guide name resolution — visible <select> first (simulation.html),
+    // __activePreset second (GCM modal / tester2), status.active third
+    // (worker push arg). Closes cross-page parity when guideSelect
+    // doesn't exist (guidance-tester2.html single-thread context).
+    const _guideName = (guideSel && guideSel.value)
+      || (window.__activePreset && window.__activePreset.guideName)
+      || (status && status.active)
+      || '';
+    if (stk && _guideName && typeof startGuideSession === 'function') {
       // Phase 1 — pass the preset context if user selected one via GCM
       // modal AND it matches the current guide + stack. Mismatch (stale
-      // window.__activePreset from a previous guide/stack) → null presetId
-      // so we don't misattribute a run.
+      // window.__activePreset from a previous guide/stack) → baseline
+      // default so we don't misattribute a run.
       const _ap = window.__activePreset;
-      const _valid = _ap && _ap.guideName === guideSel.value && _ap.stackId === stk.id;
-      // Fallback to baseline default when no explicit preset was selected
-      // (user started guide without touching GCM modal's preset dropdown).
+      const _valid = _ap && _ap.guideName === _guideName && _ap.stackId === stk.id;
+      // Fallback to baseline default when no explicit preset was selected.
       // Starting that way uses the guide's code-default constants, which
       // ARE the baseline preset — so binding to default:<guideName> is
       // semantically correct AND lets the recorded-data panel find it
@@ -1488,12 +1495,12 @@ function _syncMissionRecordSession(status) {
         _pid = _ap.id;
         _pname = _ap.name;
       } else {
-        _pid = 'default:' + guideSel.value;
+        _pid = 'default:' + _guideName;
         const _def = (typeof getGuideDefaultPreset === 'function')
-          ? getGuideDefaultPreset(guideSel.value) : null;
+          ? getGuideDefaultPreset(_guideName) : null;
         _pname = _def ? _def.name : '';
       }
-      startGuideSession(stk.id, guideSel.value, _pid, _pname);
+      startGuideSession(stk.id, _guideName, _pid, _pname);
     }
     // Round 3 — fetch mission record for prediction overlay. Reset drift
     // flag so this guide sequence starts fresh. comboKey promise resolves
