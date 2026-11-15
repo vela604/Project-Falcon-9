@@ -390,7 +390,13 @@ const _VR_HYST_BAND = 2.0;
 const _KARMAN_ALT_M = 100000;
 
 function _readSkinPeakTemp(b) {
-  if (!b || !b.skinTemps) return { K: 288.15, t: 0 };
+  // Payload bodies expected at LEO ambient (250K). Fallback: if skinTemps
+  // is empty/missing on a payload body (known FF snapshot quirk), report
+  // 250 not 288.15 (surface-ambient default). Prevents payload showing
+  // fake warm value from pre-launch initial.
+  const isPayload = !!(b && b.payloadBody);
+  const fallbackK = isPayload ? 250.0 : 288.15;
+  if (!b || !b.skinTemps) return { K: fallbackK, t: 0 };
   let pk = 0, pt = 0;
   for (const k in b.skinTemps) {
     const v = b.skinTemps[k];
@@ -399,7 +405,7 @@ function _readSkinPeakTemp(b) {
       pt = Number.isFinite(v.peakT) ? v.peakT : 0;
     }
   }
-  return pk > 0 ? { K: pk, t: pt } : { K: 288.15, t: 0 };
+  return pk > 0 ? { K: pk, t: pt } : { K: fallbackK, t: 0 };
 }
 
 function _trackBodyTelemetry(snap) {
