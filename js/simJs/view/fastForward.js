@@ -308,7 +308,7 @@ const envState = {
 const _wBuildStampFF = (typeof window !== 'undefined' && window.__WORKER_BUILD_STAMP)
   || ('w_' + Date.now());
 try { if (typeof window !== 'undefined') window.__WORKER_BUILD_STAMP = _wBuildStampFF; } catch(_e){}
-const w = new Worker('js/simJs/threads/fastforward.worker.js?v=' + _wBuildStampFF);
+const w = new Worker('js/simJs/threads/fastforward.worker.js?v=1794753004879' + _wBuildStampFF);
 // Catch FF worker self-diagnostics and log to MAIN console (SPCK visible).
 // Ground truth proof of which guidance.js FF actually loaded — bypasses
 // Chrome's aggressive worker file cache uncertainty.

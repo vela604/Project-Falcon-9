@@ -455,7 +455,7 @@ function bootstrap() {
     const _wBuildStampMain = (typeof window !== 'undefined' && window.__WORKER_BUILD_STAMP)
       || ('w_' + Date.now());
     try { if (typeof window !== 'undefined') window.__WORKER_BUILD_STAMP = _wBuildStampMain; } catch(_e){}
-    const renderWorker = new Worker('js/simJs/threads/render.worker.js?v=' + _wBuildStampMain);
+    const renderWorker = new Worker('js/simJs/threads/render.worker.js?v=1794753004879' + _wBuildStampMain);
     window._renderWorker = renderWorker;
     
     renderWorker.onmessage = (e) => {
