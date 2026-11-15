@@ -2588,17 +2588,28 @@ if (!faded) {
     try { if (typeof endGuideSession === 'function') endGuideSession(); } catch(e) {}
 
     if (_partialRec) {
-      try {
-        const _saveFn = (typeof saveMissionRecordWithPolicy === 'function')
-          ? saveMissionRecordWithPolicy
-          : (typeof window.saveMissionRecordWithPolicy === 'function' ? window.saveMissionRecordWithPolicy : null);
-        if (_saveFn) {
-          _saveFn(_partialRec);
-          console.log('[missionRecords] partial saved on stop (tester2):',
-            _partialRec.comboKey, 'phase=' + (_partialRec.currentPhase || '?'),
-            'partial=' + !!_partialRec.partial);
-        }
-      } catch(e) { console.warn('[tester2] partial save failed:', e); }
+      // Skip my partial save if Render's auto-save already fired this
+      // session (window.__autoSavedForSession set true by their save
+      // logic). Avoids duplicate-save race where my partial:true could
+      // overwrite their complete:true (or vice versa depending on
+      // ordering). User's real records come from their end-to-end
+      // auto-save path; my fallback only fills the gap where their
+      // pipeline missed (e.g. guide stopped pre-END).
+      if (window.__autoSavedForSession === true) {
+        console.log('[tester2] partial save skipped — Render auto-save already recorded this session (' + _partialRec.comboKey + ')');
+      } else {
+        try {
+          const _saveFn = (typeof saveMissionRecordWithPolicy === 'function')
+            ? saveMissionRecordWithPolicy
+            : (typeof window.saveMissionRecordWithPolicy === 'function' ? window.saveMissionRecordWithPolicy : null);
+          if (_saveFn) {
+            _saveFn(_partialRec);
+            console.log('[missionRecords] partial saved on stop (tester2):',
+              _partialRec.comboKey, 'phase=' + (_partialRec.currentPhase || '?'),
+              'partial=' + !!_partialRec.partial);
+          }
+        } catch(e) { console.warn('[tester2] partial save failed:', e); }
+      }
     }
 
     if (peakQ_state) captures.push({ type: 'peak', label: `PEAK Q = ${(peakQ_kPa / 1000).toFixed(2)} kPa`, simTime: peakQ_state.simTime, state: peakQ_state });
