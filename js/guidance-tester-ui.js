@@ -270,7 +270,10 @@
     const tau = _memberTau(m);
     const alpha = 1 - Math.exp(-dt / tau);
     st.T += (Teq - st.T) * alpha;
-    if (Teq > st.peakK) st.peakK = Teq;
+    // Peak tracks LAGGED temp, not instantaneous equilibrium. Real skin
+    // thermal mass means peak actual < peak equilibrium by 1.5-2x (matches
+    // NASA F9 measurements: booster ~450 K real vs ~750 K equilibrium).
+    if (st.T > st.peakK) st.peakK = st.T;
   }
   
   function _thermalTickBody(b, dt) {
@@ -360,7 +363,25 @@
   window.__tempStateClear = function () { _tempState.clear(); };
   window.__tempStateGet = function (b, m, i) { return _tempState.get(_memberKey(b, m, i)); };
 
-    /* ---------- Build the flight deck (hero) ---------- */
+    // Canonical peak temp from guidance's tracker (matches mission-record
+  // peaks[].peakTemp_K). Returns null when no active guide / no data.
+  // Tester UI prefers this over _tempState.peakK when available, so live
+  // display + record + event capture all show the same number.
+  function _guidancePeakTempK(body) {
+    try {
+      if (!body || typeof Guidance === 'undefined' || !Guidance.getGuideStatus) return null;
+      const gs = Guidance.getGuideStatus();
+      if (!gs || !Array.isArray(gs.peaks)) return null;
+      const bodies = (typeof state !== 'undefined' && state && state.bodies) ? state.bodies : [];
+      const idx = bodies.indexOf(body);
+      if (idx < 0) return null;
+      const pk = gs.peaks.find(p => p && p.bodyIdx === idx);
+      return (pk && Number.isFinite(pk.peakTemp_K) && pk.peakTemp_K > 0) ? pk.peakTemp_K : null;
+    } catch (e) { return null; }
+  }
+  window.__guidancePeakTempK = _guidancePeakTempK;
+
+  /* ---------- Build the flight deck (hero) ---------- */
   (function buildDeck() {
     const pane = $('paneTele'); if (!pane) return;
     const card = pane.querySelector('.plot-card.main');
@@ -479,7 +500,10 @@
         ? window.__roleTempWeighted(b, role) : null;
       const stFb = st || (typeof window.__bodyTempWeighted === 'function' ? window.__bodyTempWeighted(b) : null);
       const T = stFb ? stFb.T : 288.15;
-      const pk = stFb ? stFb.peakK : 288.15;
+      // Prefer guidance canonical peak (matches record). Fallback to local
+      // _tempState.peakK for free-flight / no active guide.
+      const _gpk = _guidancePeakTempK(b);
+      const pk = (_gpk != null) ? _gpk : (stFb ? stFb.peakK : 288.15);
       return '<div class="temp-row"><span class="tr-lbl">' + label +
         '</span><span class="tr-val"><b>' + T.toFixed(0) + '</b> K <i>pk ' + pk.toFixed(0) + '</i></span></div>';
     };

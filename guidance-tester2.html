@@ -1978,16 +1978,15 @@ if (!faded) {
       if (!body) return null;
       const st = (role && typeof window.__roleTempWeighted === 'function')
         ? window.__roleTempWeighted(body, role) : null;
-      if (st && Number.isFinite(st.T) && Number.isFinite(st.peakK)) {
-        return { T: st.T, pk: st.peakK };
-      }
-      if (typeof window.__bodyTempWeighted === 'function') {
-        const stFb = window.__bodyTempWeighted(body);
-        if (stFb && Number.isFinite(stFb.T) && Number.isFinite(stFb.peakK)) {
-          return { T: stFb.T, pk: stFb.peakK };
-        }
-      }
-      return null;
+      const stFb = st || (typeof window.__bodyTempWeighted === 'function' ? window.__bodyTempWeighted(body) : null);
+      if (!stFb || !Number.isFinite(stFb.T)) return null;
+      // Prefer guidance canonical peak (matches mission-record peaks[]
+      // .peakTemp_K). Live T stays local — per-member weighted value is
+      // the physically meaningful "right now" number.
+      const _gpk = (typeof window.__guidancePeakTempK === 'function')
+        ? window.__guidancePeakTempK(body) : null;
+      const pk = (_gpk != null) ? _gpk : (Number.isFinite(stFb.peakK) ? stFb.peakK : stFb.T);
+      return { T: stFb.T, pk };
     };
     out.booster = rollup(roles.booster, 'booster');
     out.stage = rollup(roles.stage, 'stage');
