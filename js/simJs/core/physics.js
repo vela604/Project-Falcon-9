@@ -3158,6 +3158,9 @@ body.chute = (fairingMember && fairingMember.chuteTypeId) ?
 // satellite itself was shielded during ascent.
 body._inheritPeaksFrom = state.activeBodyIndex;
 body._inheritPeakQ = true;
+body.skinTemps={};
+if(active.skinTemps&&fairingMember&&fairingMember.id&&active.skinTemps[fairingMember.id]){body.skinTemps[fairingMember.id]=Object.assign({},active.skinTemps[fairingMember.id]);delete active.skinTemps[fairingMember.id];}
+if(!Object.keys(body.skinTemps).length){body.skinTemps[body.id]={T:250.0,peakK:250.0,peakT:0,tau:_TH_TAU_PAY,shield:1.0};}
 
 state.bodies.push(body);
 // Same active-body flip as releasePayloadOnActiveBody — emergency eject
@@ -3360,6 +3363,7 @@ discarded.isActive = false;
   // _peakTracker on first sighting, then continues own tracking.
   discarded._inheritPeaksFrom = state.activeBodyIndex;
   discarded._inheritPeakQ = true;
+  if(active.skinTemps){discarded.skinTemps={};for(const dm of discardedMembers){if(dm&&dm.id&&active.skinTemps[dm.id]){discarded.skinTemps[dm.id]=Object.assign({},active.skinTemps[dm.id]);delete active.skinTemps[dm.id];}}}
   
   active.members = remaining;
 active.memberFuel = remainingFuelArr;
@@ -3558,11 +3562,14 @@ half.chute = psRec.chuteTypeId ?
 // peakQ and peakG. They experienced the full ascent Q directly.
 half._inheritPeaksFrom = state.activeBodyIndex;
 half._inheritPeakQ = true;
+half.skinTemps={};
+if(active.skinTemps&&psRec.id&&active.skinTemps[psRec.id]){half.skinTemps[psRec.id]=Object.assign({},active.skinTemps[psRec.id]);}
 state.bodies.push(half);
 });
   
   // Rebuild ENGINES (bottom member may have changed if fairing was on top
   // — actually bottom unchanged here, but safe to call).
+  if(active.skinTemps&&psRec.id)delete active.skinTemps[psRec.id];
   rebuildEnginesForBody(active);
   
   return true;
@@ -3648,6 +3655,8 @@ body.rx = payloadRx;
   body.bornAt = state.simTime;
   body.collisionGracePeriod = 1.5; // ← ye add karo
   body.payloadBody = { record: pl }; // render marker
+  body.skinTemps={};
+  body.skinTemps[body.id]={T:250.0,peakK:250.0,peakT:0,tau:_TH_TAU_PAY,shield:1.0};
   body.emergencyEject = emergency;   // render/cue can key off this later
   // Payload was SHIELDED by the fairing during ascent → peakQ inheritance
   // DISABLED. Payload's own peakQ tracking starts from release moment
