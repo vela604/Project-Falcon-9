@@ -298,9 +298,16 @@ const GUIDE_PHASE_SEQUENCES = {
 // (via Guidance.logEvent) and inline below at mission-level events.
 // t defaults to _lastSimTime — the current tick's sim time. Optional
 // 2nd arg lets a caller pass an explicit time (blocks pass simT).
-function logEvent(name, t) {
+function logEvent(name, t, extra) {
   if (typeof name !== 'string' || !name) return;
-  _eventLog.push({ name, t: Number.isFinite(t) ? t : _lastSimTime });
+  const _entry = { name, t: Number.isFinite(t) ? t : _lastSimTime };
+  if (extra && typeof extra === 'object') {
+    for (const k in extra) {
+      if (k === 'name' || k === 't') continue;
+      _entry[k] = extra[k];
+    }
+  }
+  _eventLog.push(_entry);
 }
 
 // Skin equilibrium temperature. Prefers environment.js's version when
@@ -474,6 +481,17 @@ function _trackBodyTelemetry(snap) {
             dryMass: (Number.isFinite(b.dryMass) ? b.dryMass : null),
             fairingHalf: !!b.fairingHalf,
           });
+        try {
+          logEvent('TRACKER_INIT', T, {
+            b: i, role: _computeBodyTag(b),
+            initK: Math.round(_initTempK * 10) / 10,
+            isPayload: _isPayloadBody ? 1 : 0,
+            payloadBody: b.payloadBody ? 1 : 0,
+            mem: Array.isArray(b.members) ? b.members.length : -1,
+            dryMass: Number.isFinite(b.dryMass) ? Math.round(b.dryMass) : -1,
+            fairingHalf: b.fairingHalf ? 1 : 0
+          });
+        } catch(_le) {}
         }
       } catch(_ie) {}
       // Peak inheritance on split — physics.js split handlers set
@@ -594,6 +612,9 @@ function _trackBodyTelemetry(snap) {
       if (_peakTracker[i].Temp_lagged > _peakTracker[i].Temp_K) {
         _peakTracker[i].Temp_K = _peakTracker[i].Temp_lagged;
         _peakTracker[i].Temp_t = T;
+        // Diagnostic: log every peak raise. Reveals climb sequence +
+        // any tracker reset (peak goes back to 288.15 after being 758).
+        try { logEvent('TEMP_PEAK_RAISE', T, { b: i, K: Math.round(_tempK), lagK: Math.round(_peakTracker[i].Temp_lagged) }); } catch(_le) {}
       }
     }
   }
