@@ -56,7 +56,7 @@ self.onmessage = async (e) => {
     // Physics side loads first (defines state, buildPodEntries, etc.).
     // Guidance modules use IIFE scoping, so no namespace collisions with
     // physics.js's module-level helpers.
-    const _FFW_CACHE_VERSION = '20241116-10';
+    const _FFW_CACHE_VERSION = '20241116-11';
 importScripts(
   '../../componentLibrary.js?v=20241115-2',
   '../../customDesign.js?v=20241115-2',
@@ -73,7 +73,7 @@ importScripts(
   '../guidance/derivation.js?v=20241115-2',
   '../guidance/guidercs.js?v=20241115-2',
   '../guidance/guidance-blocks.js?v=20241115-2',
-  '../guidance/guidance.js?v=20241116-10'
+  '../guidance/guidance.js?v=20241116-11'
 );
     // [FF-BOOT] — confirm CONFIG.LANDING_PADS loaded from importScripts.
     // N=3 for fresh boot (LZ-1/2/3 defaults). Run-handler then overwrites
