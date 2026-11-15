@@ -260,8 +260,16 @@ function getRecordsGroupedByEnvForPreset(presetId) {
   const recs = getMissionRecordsForPreset(presetId);
   const groups = {};
   recs.forEach(function(r){
-    const env = r.metadata.env || {};
-    const key = JSON.stringify(env);
+    // Group by env payload only (ignore _envInferred tag) so inferred-env
+    // records group with actual-env records of identical env contents.
+    const env = (r.metadata && r.metadata.env) || {};
+    const envForKey = {
+      wind: env.wind,
+      atmosphere: env.atmosphere,
+      slosh: env.slosh,
+      imu: env.imu,
+    };
+    const key = JSON.stringify(envForKey);
     if (!groups[key]) groups[key] = { env: env, records: [] };
     groups[key].records.push(r);
   });
@@ -285,11 +293,28 @@ function backfillPresetIdOnRecords() {
   try {
     const records = loadMissionRecords();
     records.forEach(function(r) {
-      if (r && r.metadata && !r.metadata.presetId && r.metadata.guideName) {
+      if (!r || !r.metadata) return;
+      let _changed = false;
+      if (!r.metadata.presetId && r.metadata.guideName) {
         r.metadata.presetId = 'default:' + r.metadata.guideName;
         r.metadata._presetInferred = true;
-        count++;
+        _changed = true;
       }
+      // Env backfill — pre-Phase-1 records captured before env was stored.
+      // Fill with default env (wind off, atmosphere on, slosh on, imu off),
+      // which is the current default AND matches all the user's existing
+      // records. Tag _envInferred so UI can show '(assumed)' hint.
+      if (!r.metadata.env) {
+        r.metadata.env = {
+          wind: { enabled: false, speed: 0, directionDeg: 0 },
+          atmosphere: true,
+          slosh: true,
+          imu: false,
+        };
+        r.metadata._envInferred = true;
+        _changed = true;
+      }
+      if (_changed) count++;
     });
     if (count > 0) {
       saveMissionRecords(records);
