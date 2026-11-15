@@ -2566,7 +2566,18 @@ if (!faded) {
 
           let _r = _capFn();
           _partialRec = (_r && typeof _r.then === 'function') ? await _r : _r;
-          if (_partialRec) _partialRec.partial = true;
+          // ONLY force partial=true if capture did NOT infer success.
+          // User's operating scope: 650s DONE + payload deployed = actual
+          // mission success. captureCurrentMissionRecord correctly returns
+          // {partial:false, success:true} for that case (their inference
+          // logic). Forcing partial=true here would create contradiction
+          // {partial:true, success:true} → upsert guard blocks against
+          // existing {partial:false, success:true} → latest 650s capture
+          // LOST. Only mutate when truly mid-mission (before DONE, no
+          // payload, no success inference).
+          if (_partialRec && _partialRec.success !== true) {
+            _partialRec.partial = true;
+          }
 
           // DIAG: what capture returned (including .error field if capture
           // early-returned via one of its gates — 'no active guide' /
@@ -2592,7 +2603,7 @@ if (!faded) {
               let _r2 = _capFn();
               const _rec2 = (_r2 && typeof _r2.then === 'function') ? await _r2 : _r2;
               if (_rec2) {
-                _rec2.partial = true;
+                if (_rec2.success !== true) _rec2.partial = true;
                 try {
                   console.log('[tester2] capture-retry-result: comboKey=' + _rec2.comboKey,
                     'phase=' + _rec2.currentPhase,
