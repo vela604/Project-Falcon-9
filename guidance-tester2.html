@@ -1957,24 +1957,6 @@ if (!faded) {
     }
   }
 
-  function _captureTemperatures() {
-    const out = { booster: null, stage: null, payload: null };
-    if (!state || !Array.isArray(state.bodies)) return out;
-    const roles = { booster: null, stage: null, payload: null };
-    for (const b of state.bodies) {
-      if (!b) continue;
-      const r0 = (b.members && b.members[0] && b.members[0].stageRole) || null;
-      if (b.payloadBody && !roles.payload) roles.payload = b;
-      else if (b.fairingHalf) continue;
-      else if (r0 === 'booster' && !roles.booster) roles.booster = b;
-      else if (r0 === 'stage' && !roles.stage) roles.stage = b;
-    }
-    out.booster = null;
-    out.stage = null;
-    out.payload = null;
-    return out;
-  }
-
   function captureState() {
     const idx = state.activeBodyIndex;
     const b = state.bodies[idx];
@@ -2042,7 +2024,6 @@ if (!faded) {
       coastTRem: _coastSnap.snappedHold2 ? _coastSnap.tRem : gs.coastTRem,
       apogeeKmGuide: gs.apogeeKm,
       perigeeKmGuide: gs.perigeeKm,
-      temperatures: _captureTemperatures(),
       stageBurnLocked: !!gs.stageBurnLocked,
       suicideTrimDone: !!gs.suicideTrimDone,
       suicideDlambdaDeg: gs.suicideDlambdaDeg,
@@ -2094,9 +2075,6 @@ if (!faded) {
           ${Number.isFinite(s.circTargetV) ? `<span><span class="k">v_circ</span> ${fmt(s.circCurrentV, 2)} / ${fmt(s.circTargetV, 2)}</span>` : ''}
           ${Number.isFinite(s.coastDeltaV) ? `<span><span class="k">coast Δv</span> ${fmt(s.coastDeltaV, 2)} m/s</span>` : ''}
           ${Number.isFinite(s.coastTRem) ? `<span><span class="k">t_rem</span> ${fmt(s.coastTRem, 2)} s</span>` : ''}
-          ${s.temperatures && s.temperatures.booster ? `<span><span class="k">T booster</span> ${fmt(s.temperatures.booster.T, 0)} K (pk ${fmt(s.temperatures.booster.pk, 0)})</span>` : ''}
-          ${s.temperatures && s.temperatures.stage ? `<span><span class="k">T stage</span> ${fmt(s.temperatures.stage.T, 0)} K (pk ${fmt(s.temperatures.stage.pk, 0)})</span>` : ''}
-          ${s.temperatures && s.temperatures.payload ? `<span><span class="k">T payload</span> ${fmt(s.temperatures.payload.T, 0)} K (pk ${fmt(s.temperatures.payload.pk, 0)})</span>` : ''}
           ${s.crashed ? '<span class="warn">CRASHED</span>' : ''}
           ${s.landed ? '<span class="hi">LANDED</span>' : ''}
           ${s.halted ? '<span class="warn">HALTED</span>' : ''}
@@ -2730,9 +2708,6 @@ if (!faded) {
       'fuel left (t)': summary.fuelLeft_t != null ? summary.fuelLeft_t.toFixed(3) : '—',
       'peak Q (kPa)': summary.maxQ_kPa != null ? summary.maxQ_kPa.toFixed(2) : '—',
       'peak G': summary.maxG != null ? summary.maxG.toFixed(2) : '—',
-      'booster T peak (K)': finalSt && finalSt.temperatures && finalSt.temperatures.booster ? finalSt.temperatures.booster.pk.toFixed(0) : '—',
-      'stage T peak (K)': finalSt && finalSt.temperatures && finalSt.temperatures.stage ? finalSt.temperatures.stage.pk.toFixed(0) : '—',
-      'payload T peak (K)': finalSt && finalSt.temperatures && finalSt.temperatures.payload ? finalSt.temperatures.payload.pk.toFixed(0) : '—',
       'captures': summary.capturesCount,
     }).map(([k, v]) => `<span><span class="k">${k}</span> <span class="v">${v}</span></span>`).join('');
 
