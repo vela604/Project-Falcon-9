@@ -259,9 +259,16 @@ const GUIDE_PHASE_SEQUENCES = {
     _phaseLog = {};
     _lastSeenPhase = null;
     _guideStartT = null;
+    // Only reset per-run trackers on a genuinely fresh start. FF worker
+    // appears to call startGuide at split (mid-mission), which was wiping
+    // _peakTracker and losing ascent peaks. Guard: if any events already
+    // fired, keep trackers. Real fresh runs have empty _eventLog.
+    const _midMission = (_eventLog && _eventLog.length > 0);
     _eventLog = [];
-    _bodyTrackState = {};
-    _peakTracker = {};
+    if (!_midMission) {
+      _bodyTrackState = {};
+      _peakTracker = {};
+    }
     if (typeof GUIDES[name].start === "function") {
       try {
         GUIDES[name].start();
@@ -442,8 +449,33 @@ function _trackBodyTelemetry(snap) {
     // (full stack) and becomes 'stage' after separation; capturing
     // bodyTag at peak time means ascent-Q maps to 'booster' not 'stage'.
     if (!_peakTracker[i]) {
-      const _initTempK = (b.payloadBody ? 250.0 : 288.15);
+      const _isPayloadBody = !!(
+        b.payloadBody ||
+        (!b.fairingHalf &&
+         Array.isArray(b.members) && b.members.length === 0 &&
+         Number.isFinite(b.dryMass) && b.dryMass > 0)
+      );
+      const _initTempK = (_isPayloadBody ? 250.0 : 288.15);
       _peakTracker[i] = { Q_Pa: 0, Q_t: 0, Q_bodyTag: '?', G: 0, G_t: 0, G_bodyTag: '?', Temp_K: _initTempK, Temp_t: 0, Temp_lagged: _initTempK };
+      // DIAG: log every tracker creation — reveals WHEN each body's
+      // tracker initializes. Body 0 reinit at split moment = tracker
+      // reset bug confirmed. Body 4 payload init with 288.15 = payloadBody
+      // field missing from FF snapshot.
+      try {
+        if (typeof globalThis !== 'undefined') {
+          if (!Array.isArray(globalThis.__trackerInitLog)) globalThis.__trackerInitLog = [];
+          globalThis.__trackerInitLog.push({
+            bodyIdx: i, t: T,
+            role: _computeBodyTag(b),
+            initTempK: _initTempK,
+            isPayloadBody: _isPayloadBody,
+            payloadBodyPresent: !!b.payloadBody,
+            membersLen: (b.members ? b.members.length : 0),
+            dryMass: (Number.isFinite(b.dryMass) ? b.dryMass : null),
+            fairingHalf: !!b.fairingHalf,
+          });
+        }
+      } catch(_ie) {}
       // Peak inheritance on split — physics.js split handlers set
       // _inheritPeaksFrom (parent index) + _inheritPeakQ (bool). Rules:
       //   · peakG: ALWAYS inherited — thrust G propagates mechanically
@@ -619,6 +651,13 @@ function setActiveGuide(name) {
     if (typeof g.getStatus === "function") Object.assign(out, g.getStatus());
     out.events = _eventLog.slice();
     out.runResult = _computeRunResult();
+    // Tracker init log — when was each body's _peakTracker first created?
+    // Reveals FF-initiated tracker resets (body 0 reinit at split) and
+    // payloadBody field presence (payload init 288 = field missing).
+    try {
+      out.trackerInitLog = (Array.isArray(globalThis.__trackerInitLog))
+        ? globalThis.__trackerInitLog.slice() : [];
+    } catch(_ie) { out.trackerInitLog = []; }
     out.peaks = [];
     {
       for (const idxStr in _peakTracker) {
