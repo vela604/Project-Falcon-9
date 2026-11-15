@@ -260,16 +260,8 @@ function getRecordsGroupedByEnvForPreset(presetId) {
   const recs = getMissionRecordsForPreset(presetId);
   const groups = {};
   recs.forEach(function(r){
-    // Group by env payload only (ignore _envInferred tag) so inferred-env
-    // records group with actual-env records of identical env contents.
     const env = (r.metadata && r.metadata.env) || {};
-    const envForKey = {
-      wind: env.wind,
-      atmosphere: env.atmosphere,
-      slosh: env.slosh,
-      imu: env.imu,
-    };
-    const key = JSON.stringify(envForKey);
+    const key = JSON.stringify(env);
     if (!groups[key]) groups[key] = { env: env, records: [] };
     groups[key].records.push(r);
   });
@@ -285,47 +277,6 @@ function getRecordsGroupedByEnvForPreset(presetId) {
 // Assigns such records to the baseline default of their guideName
 // (default:<guide>), the most likely preset at capture time. Idempotent
 // — runs once per browser session. Tags records with _presetInferred:true.
-// ---------------------------------------------------------------------------
-function backfillPresetIdOnRecords() {
-  if (typeof window !== 'undefined' && window.__presetIdBackfilled) return 0;
-  if (typeof window !== 'undefined') window.__presetIdBackfilled = true;
-  let count = 0;
-  try {
-    const records = loadMissionRecords();
-    records.forEach(function(r) {
-      if (!r || !r.metadata) return;
-      let _changed = false;
-      if (!r.metadata.presetId && r.metadata.guideName) {
-        r.metadata.presetId = 'default:' + r.metadata.guideName;
-        r.metadata._presetInferred = true;
-        _changed = true;
-      }
-      // Env backfill — pre-Phase-1 records captured before env was stored.
-      // Fill with default env (wind off, atmosphere on, slosh on, imu off),
-      // which is the current default AND matches all the user's existing
-      // records. Tag _envInferred so UI can show '(assumed)' hint.
-      if (!r.metadata.env) {
-        r.metadata.env = {
-          wind: { enabled: false, speed: 0, directionDeg: 0 },
-          atmosphere: true,
-          slosh: true,
-          imu: false,
-        };
-        r.metadata._envInferred = true;
-        _changed = true;
-      }
-      if (_changed) count++;
-    });
-    if (count > 0) {
-      saveMissionRecords(records);
-      try { console.log('[missionRecords] backfilled presetId on ' + count + ' records'); } catch(e){}
-    }
-  } catch (e) {
-    try { console.warn('[missionRecords] backfill failed', e); } catch(e2){}
-  }
-  return count;
-}
-
 window.captureCurrentMissionRecord = async function () {
   if (typeof state === 'undefined' || !state.bodies) {
     return { error: 'no state' };
@@ -493,6 +444,5 @@ if (typeof globalThis !== 'undefined') {
   globalThis.currentPhysicsVersion = currentPhysicsVersion;
   globalThis.isRecordStale = isRecordStale;
   globalThis.getMissionRecordsForPreset = getMissionRecordsForPreset;
-  globalThis.backfillPresetIdOnRecords = backfillPresetIdOnRecords;
   globalThis.getRecordsGroupedByEnvForPreset = getRecordsGroupedByEnvForPreset;
 }

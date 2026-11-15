@@ -798,7 +798,6 @@ if (_editingPresetId) {
     if (env.slosh) parts.push('Slosh');
     if (env.imu) parts.push('IMU noise');
     let label = parts.join(' \u00b7 ');
-    if (env._envInferred) label += ' (assumed)';
     return label;
   }
 
@@ -876,25 +875,6 @@ if (_editingPresetId) {
       + '</button>'
       + '<div class="rdm-section-body">' + (eventsHtml || '<em>(no events captured)</em>') + '</div>'
       + '<div class="rdm-actions">'
-      + (function(){
-          const guide = rec.metadata && rec.metadata.guideName;
-          if (!guide) return '';
-          const defs = (typeof getAllDefaultPresetsForGuide === 'function') ? getAllDefaultPresetsForGuide(guide) : [];
-          const users = (typeof getUserPresetsForGuide === 'function') ? getUserPresetsForGuide(guide) : [];
-          const all = [...defs, ...users];
-          if (!all.length) return '';
-          const curId = rec.metadata.presetId || '';
-          const opts = all.map(pr =>
-            '<option value="' + escapeHtml(pr.id) + '"' + (pr.id === curId ? ' selected' : '') + '>' +
-            escapeHtml(pr.name) + '</option>'
-          ).join('');
-          return '<select class="field-select rdm-reassign" '
-            + 'data-record="' + escapeHtml(rec.comboKey || '') + '" '
-            + 'data-guide="' + escapeHtml(guide) + '">'
-            + '<option value="">Reassign preset...</option>'
-            + opts
-            + '</select>';
-        })()
       + '<button class="btn" data-copy-record="' + escapeHtml(rec.comboKey || '') + '">Copy JSON</button>'
       + '</div>'
       + '</div>';
@@ -940,37 +920,6 @@ if (_editingPresetId) {
     // Wire collapsible sections
     body.querySelectorAll('.rdm-section-btn').forEach(btn => {
       btn.addEventListener('click', () => btn.classList.toggle('open'));
-    });
-
-    // Wire reassign dropdown per record
-    body.querySelectorAll('.rdm-reassign').forEach(sel => {
-      sel.addEventListener('change', () => {
-        const key = sel.getAttribute('data-record');
-        const newPid = sel.value;
-        if (!key || !newPid) return;
-        try {
-          const records = loadMissionRecords();
-          const idx = records.findIndex(r => (r.comboKey || '') === key);
-          if (idx < 0) { toast('Record not found'); return; }
-          const rec = records[idx];
-          let newName = newPid;
-          try {
-            const _p = (typeof getPresetById === 'function') ? getPresetById(newPid) : null;
-            if (_p && _p.name) newName = _p.name;
-          } catch (e) {}
-          rec.metadata.presetId = newPid;
-          rec.metadata.presetName = newName;
-          rec.metadata._presetInferred = false;
-          saveMissionRecords(records);
-          toast('Reassigned to "' + newName + '"');
-          $('recordedDataModal').style.display = 'none';
-          renderSidebar();
-          renderMain();
-        } catch (err) {
-          console.error('[reassign] failed', err);
-          toast('Reassign failed: ' + err.message);
-        }
-      });
     });
 
     // Wire Copy JSON per record
@@ -1333,16 +1282,6 @@ if (_editingPresetId) {
   // ----------------------------------------------------------------
   // Boot
   // ----------------------------------------------------------------
-  // Backfill presetId on legacy records BEFORE rendering so first paint
-  // already shows correct record counts on preset cards.
-  if (typeof backfillPresetIdOnRecords === 'function') {
-    try {
-      const _backfilled = backfillPresetIdOnRecords();
-      if (_backfilled > 0) toast('Linked ' + _backfilled + ' record' + (_backfilled === 1 ? '' : 's') + ' to default presets');
-    } catch (e) {
-      console.warn('[guidancePresetsPage] backfill failed', e);
-    }
-  }
   renderStats();
   const guides = allConfigurableGuides();
   if (guides.length) _selectedGuide = guides[0];
