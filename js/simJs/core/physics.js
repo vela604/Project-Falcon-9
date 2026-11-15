@@ -2842,7 +2842,6 @@ const cosT = Math.cos(body.theta), sinT = Math.sin(body.theta);
     // gravity is already subtracted out above (aProperX/Y), so adding
     // g_local again would double-count it. See prompt_2phase_fixes.md.
     body._prevAxialProperAccel = Number.isFinite(axial) ? axial : 0;
-    _thTick(body, dt);
     }
     
     // ============================================================
