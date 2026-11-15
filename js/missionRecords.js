@@ -130,8 +130,61 @@ function loadMissionRecords() {
 }
 
 function saveMissionRecords(records) {
-  localStorage.setItem(MISSION_RECORDS_KEY, JSON.stringify(records));
-  _missionRecordsCache = null;
+  // Defense-in-depth at storage boundary. Multiple callers exist:
+  //   - saveMissionRecordWithPolicy (has guards)
+  //   - upsertUserMissionRecord (has guards, after recent fix)
+  //   - tester2's partial-on-stop (bypasses both, calls here directly)
+  // Without a guard here, tester2's partial save overwrites the
+  // success record written moments earlier in the same session.
+  //
+  // Read current storage, walk the incoming array, replace any
+  // dangerous transition (partial-over-complete, failed-over-success)
+  // with the existing record. Preserves the good record's data.
+  let current = [];
+  try {
+    const raw = localStorage.getItem(MISSION_RECORDS_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) current = parsed;
+    }
+  } catch (e) { current = []; }
+  const currentByKey = new Map();
+  current.forEach(r => { if (r && r.comboKey) currentByKey.set(r.comboKey, r); });
+
+  const filtered = [];
+  let blocked = 0;
+  for (let i = 0; i < records.length; i++) {
+    const r = records[i];
+    if (!r || !r.comboKey) { filtered.push(r); continue; }
+    const existing = currentByKey.get(r.comboKey);
+    if (existing) {
+      if (r.partial && !existing.partial) {
+        console.warn('[missionRecords] saveMissionRecords BLOCKED: partial cannot overwrite complete', r.comboKey);
+        filtered.push(existing);
+        blocked++;
+        continue;
+      }
+      if (r.success === false && existing.success === true) {
+        console.warn('[missionRecords] saveMissionRecords BLOCKED: failed cannot overwrite success', r.comboKey);
+        filtered.push(existing);
+        blocked++;
+        continue;
+      }
+    }
+    filtered.push(r);
+  }
+
+  try {
+    localStorage.setItem(MISSION_RECORDS_KEY, JSON.stringify(filtered));
+    _missionRecordsCache = null;
+    if (blocked > 0) {
+      console.log('[missionRecords] saveMissionRecords: ' + blocked + ' dangerous transition(s) blocked');
+    }
+    return true;
+  } catch (e) {
+    console.error('[missionRecords] save failed', e);
+    return false;
+  }
 }
 
 // Lookup: user records take priority over defaults. Stale records (physics
