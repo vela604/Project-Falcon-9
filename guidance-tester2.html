@@ -2176,14 +2176,6 @@ if (!faded) {
       startBtn.disabled = false; stopBtn.disabled = true;
       return;
     }
-    try {
-      if (typeof startGuideSession === 'function') {
-        const _stk = (typeof getActiveStack === 'function') ? getActiveStack() : null;
-        const _stkId = (_stk && _stk.id) || 'stk_falcon9-b5';
-        startGuideSession(_stkId, currentGuide);
-        console.log('[missionRecords] session started (tester2):', _stkId, currentGuide);
-      }
-    } catch(e) { console.warn('[tester2] startGuideSession failed:', e); }
     if (false) {
       statusTextEl.textContent = 'startGuide failed: ' + e.message;
       running = false;
@@ -2444,6 +2436,33 @@ if (!faded) {
 
     try { Guidance.stopGuide(); } catch (e) {}
     try { if (typeof endGuideSession === 'function') endGuideSession(); } catch(e) {}
+    // Partial-on-stop fallback. If mission never reached END phase (user
+    // stopped mid-flight, duration cap hit before END, etc), runResult
+    // stayed 'in-progress' — the auto-save trigger above requires a
+    // 'in-progress → success' transition which never fired. Capture the
+    // partial state so user has a record for post-hoc reference (phases
+    // completed so far, events fired, peaks accumulated). Same comboKey,
+    // marked partial:true by missionRecords capture logic.
+    try {
+      if (_prevRunResult === 'in-progress') {
+        const _capFn = (typeof window.captureCurrentMissionRecord === 'function')
+          ? window.captureCurrentMissionRecord
+          : (typeof captureCurrentMissionRecord === 'function' ? captureCurrentMissionRecord : null);
+        const _saveFn = (typeof saveMissionRecordWithPolicy === 'function')
+          ? saveMissionRecordWithPolicy
+          : (typeof window.saveMissionRecordWithPolicy === 'function' ? window.saveMissionRecordWithPolicy : null);
+        if (_capFn && _saveFn) {
+          Promise.resolve(_capFn()).then(function(rec){
+            if (rec) {
+              _saveFn(rec);
+              console.log('[missionRecords] partial saved on stop (tester2):',
+                rec.comboKey, 'phase=' + (rec.currentPhase || '?'),
+                'partial=' + !!rec.partial);
+            }
+          }).catch(function(e){ console.warn('[tester2] partial save failed:', e); });
+        }
+      }
+    } catch(e) { console.warn('[tester2] partial-on-stop failed:', e); }
 
     if (peakQ_state) captures.push({ type: 'peak', label: `PEAK Q = ${(peakQ_kPa / 1000).toFixed(2)} kPa`, simTime: peakQ_state.simTime, state: peakQ_state });
     if (peakG_state) captures.push({ type: 'peak', label: `PEAK G = ${peakG.toFixed(2)} g`, simTime: peakG_state.simTime, state: peakG_state });
