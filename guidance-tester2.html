@@ -2489,9 +2489,31 @@ if (!faded) {
               const _stk0 = (typeof getActiveStack === 'function') ? getActiveStack() : null;
               const _stkId0 = (_stk0 && _stk0.id) || 'stk_falcon9-b5';
               const _guide0 = (typeof Guidance !== 'undefined' && Guidance.getActiveGuide) ? Guidance.getActiveGuide() : currentGuide;
-              startGuideSession(_stkId0, _guide0);
+              // Preset parity: comboKey includes presetId. If user has a
+              // preset selected in the dropdown, use its exact ID. If not,
+              // fall back to 'default:' + guideName — this matches
+              // simulation.html's _syncMissionRecordSession fallback for
+              // "no explicit preset = code-default constants = baseline."
+              // Result: same effective config across pages → same comboKey
+              // → cross-page record discovery works.
+              const _presetIdForSession = (presetSel && presetSel.value)
+                ? presetSel.value
+                : ('default:' + _guide0);
+              let _presetNameForSession = '';
+              try {
+                if (presetSel && presetSel.selectedIndex >= 0 &&
+                    presetSel.options[presetSel.selectedIndex]) {
+                  _presetNameForSession = presetSel.options[presetSel.selectedIndex].text || '';
+                }
+              } catch(_pe){}
+              // Expose for Render's _syncMissionRecordSession fallback to
+              // consume on the full-END auto-save path (currently doesn't
+              // pick up presetSel — see coordination message).
+              try { window.__activePreset = _presetIdForSession; } catch(_pe){}
+              startGuideSession(_stkId0, _guide0, _presetIdForSession, _presetNameForSession);
               console.log('[tester2] forced startGuideSession before capture:', _stkId0, _guide0,
-                'sessionAfter=' + (window.__guideSession ? (window.__guideSession.stackId + '|' + window.__guideSession.guideName) : 'still-none'));
+                'presetId=' + _presetIdForSession,
+                'sessionAfter=' + (window.__guideSession ? (window.__guideSession.stackId + '|' + window.__guideSession.guideName + '|' + window.__guideSession.presetId) : 'still-none'));
               // Small async gap in case startGuideSession sets globals via
               // Promise / microtask.
               await new Promise(function(res){ setTimeout(res, 50); });
