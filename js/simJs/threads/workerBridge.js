@@ -45,7 +45,7 @@ const WorkerBridge = {
     const _wBuildStampWB = (typeof window !== 'undefined' && window.__WORKER_BUILD_STAMP)
       || ('w_' + Date.now());
     try { if (typeof window !== 'undefined') window.__WORKER_BUILD_STAMP = _wBuildStampWB; } catch(_e){}
-    this.worker = new Worker('js/simJs/threads/physics.worker.js?v=' + _wBuildStampWB);
+    this.worker = new Worker('js/simJs/threads/physics.worker.js?v=1794751561902' + _wBuildStampWB);
     this.worker.onmessage = (e) => {
       const msg = e.data;
       if (msg.type === 'state') {
@@ -425,7 +425,7 @@ const GuidanceBridge = {
     const _wBuildStampWB2 = (typeof window !== 'undefined' && window.__WORKER_BUILD_STAMP)
       || ('w_' + Date.now());
     try { if (typeof window !== 'undefined') window.__WORKER_BUILD_STAMP = _wBuildStampWB2; } catch(_e){}
-    this.worker = new Worker('js/simJs/threads/guidance.worker.js?v=' + _wBuildStampWB2);
+    this.worker = new Worker('js/simJs/threads/guidance.worker.js?v=1794751561902' + _wBuildStampWB2);
     this.worker.onmessage = (e) => {
       const msg = e.data;
       if (msg.type === 'snapDbg') {
@@ -582,7 +582,6 @@ function maybeForwardGuidanceSnapshot() {
   // per-tank distribution exactly (especially after separation, when
   // the stage's tank is no longer a proportional share of a lump).
   memberFuel: Array.isArray(b.memberFuel) ? b.memberFuel.slice() : [],
-  skinTemps: b.skinTemps || {},
   // Landing gear position sensor
   legs: b.legs ? { deployed: !!b.legs.deployed, progress: b.legs.progress || 0 } : null,
   // Slosh — physically a nav-filter estimate derived from IMU residuals,

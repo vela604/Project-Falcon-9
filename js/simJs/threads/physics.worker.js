@@ -1189,7 +1189,6 @@ ec.shutdownDurationS = en.shutdownDurationS;
 // so cloning it every tick is cheap, and guidance needs it for its
 // own stackMassProps (which reads per-tank levels after separation).
 bc.memberFuel = Array.isArray(b.memberFuel) ? b.memberFuel.slice() : [];
-bc.skinTemps = b.skinTemps || {};
 // Payload-open timestamp — set once by the openPayload command, read by
 // the render side to animate the satellite unfolding.
 if (Number.isFinite(b.payloadOpenedAt)) bc.payloadOpenedAt = b.payloadOpenedAt;
