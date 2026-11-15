@@ -260,6 +260,22 @@ function _thermalTickBody(b, dt) {
 // the body's displayed temperature should be. Heavy tank dominates,
 // so a lightweight hot fairing won't wrongly drag the stage-tank reading
 // upward.
+
+// Peak temp canonical source — guidance's peaks[] is what records persist,
+// so reading the same field guarantees live panel == Recorded Data panel
+// for peak values. Falls back to null when guidance has no peak for this
+// body (free-flight / no active guide / bodyIdx not tracked yet) — callers
+// then use their own _bodyTempWeighted peak.
+function _peakTempFromGuidance(bodyIdx) {
+  try {
+    const gs = (typeof window !== 'undefined') ? window.__lastGuideStatus : null;
+    if (!gs || !Array.isArray(gs.peaks)) return null;
+    const p = gs.peaks.find(x => x && x.bodyIdx === bodyIdx);
+    if (p && Number.isFinite(p.peakTemp_K)) return p.peakTemp_K;
+  } catch (e) {}
+  return null;
+}
+
 function _bodyTempWeighted(b) {
   const DEFAULT = { T: 288.15, peakK: 288.15 };
   if (!b) return DEFAULT;
@@ -578,8 +594,10 @@ set('t-vr', fmt(vRadial, 2)); // frame-independent
   {
     const _ab = state.bodies[state.activeBodyIndex];
     const _tst = _ab ? _bodyTempWeighted(_ab) : null;
+    const _guidancePeakK_a = _peakTempFromGuidance(state.activeBodyIndex);
+    const _peakK_a = _guidancePeakK_a != null ? _guidancePeakK_a : (_tst ? _tst.peakK : null);
     set('t-temp', _tst ? fmt(_tst.T, 0) + ' K' : '—');
-    set('t-maxT', _tst ? fmt(_tst.peakK, 0) + ' K' : '—');
+    set('t-maxT', _peakK_a != null ? fmt(_peakK_a, 0) + ' K' : '—');
   }
   set('t-duty', Math.round((lastForces.dutyTop || 0) * 100) + '%');
   
@@ -631,8 +649,10 @@ const _sloshOffsetCm = fmt((_sloshBody && _sloshBody.slosh ? _sloshBody.slosh.of
   setC('tc-g', grav.g.toFixed(4) + ' m/s²');
   setC('tc-rho', rho.toFixed(4) + ' kg/m³');
   const _tstC = _abC ? _bodyTempWeighted(_abC) : null;
+  const _guidancePeakC = _peakTempFromGuidance(state.activeBodyIndex);
+  const _peakC = _guidancePeakC != null ? _guidancePeakC : (_tstC ? _tstC.peakK : null);
   setC('tc-temp', _tstC ? (_tstC.T - 273.15).toFixed(0) + ' °C' : '—');
-  setC('tc-maxT', _tstC ? (_tstC.peakK - 273.15).toFixed(0) + ' °C' : '—');
+  setC('tc-maxT', _peakC != null ? (_peakC - 273.15).toFixed(0) + ' °C' : '—');
 
   
   const maxThrustAll = ENGINES.reduce((s, e) => s + e.Fmax, 0);
@@ -711,7 +731,8 @@ else tag = 'D' + i;
   const relTag = isAct ? '' : ' vs A';
   
   const _tst = _bodyTempWeighted(b);
-  const _tStr = _tst ? `${_tst.T.toFixed(0)}K (pk ${_tst.peakK.toFixed(0)})` : '—';
+  const _peakKB = _peakTempFromGuidance(i);
+  const _tStr = _tst ? `${_tst.T.toFixed(0)}K (pk ${(_peakKB != null ? _peakKB : _tst.peakK).toFixed(0)})` : '—';
   return `<div class="${cls}">
   <div class="tb-line"><span class="tb-label">${tag} pos</span><span class="tb-val">${alt.toFixed(0)}m</span></div>
   <div class="tb-line"><span class="tb-label">vx,vy</span><span class="tb-val">${b.vx.toFixed(1)}, ${b.vy.toFixed(1)}</span></div>
