@@ -1971,26 +1971,9 @@ if (!faded) {
       else if (r0 === 'booster' && !roles.booster) roles.booster = b;
       else if (r0 === 'stage' && !roles.stage) roles.stage = b;
     }
-    // Pull from the per-member thermal model. Returned shape uses pk
-    // (matches the display field name); source shape uses peakK — the
-    // rollup normalises. Falls back to body mass-weighted, then null.
-    const rollup = (body, role) => {
-      if (!body) return null;
-      const st = (role && typeof window.__roleTempWeighted === 'function')
-        ? window.__roleTempWeighted(body, role) : null;
-      const stFb = st || (typeof window.__bodyTempWeighted === 'function' ? window.__bodyTempWeighted(body) : null);
-      if (!stFb || !Number.isFinite(stFb.T)) return null;
-      // Prefer guidance canonical peak (matches mission-record peaks[]
-      // .peakTemp_K). Live T stays local — per-member weighted value is
-      // the physically meaningful "right now" number.
-      const _gpk = (typeof window.__guidancePeakTempK === 'function')
-        ? window.__guidancePeakTempK(body) : null;
-      const pk = (_gpk != null) ? _gpk : (Number.isFinite(stFb.peakK) ? stFb.peakK : stFb.T);
-      return { T: stFb.T, pk };
-    };
-    out.booster = rollup(roles.booster, 'booster');
-    out.stage = rollup(roles.stage, 'stage');
-    out.payload = rollup(roles.payload, null);
+    out.booster = null;
+    out.stage = null;
+    out.payload = null;
     return out;
   }
 
@@ -2147,9 +2130,6 @@ if (!faded) {
     running = true; abort = false;
     startBtn.disabled = true; stopBtn.disabled = false;
     captures = [];
-    if (typeof window.__tempState === 'object' && window.__tempState && typeof window.__tempState.clear === 'function') {
-      window.__tempState.clear();
-    }
     _resetCoastSnap();
 
     const runTunables = JSON.parse(JSON.stringify(currentValues));
@@ -2250,7 +2230,6 @@ if (!faded) {
 
       if (typeof updateLegs === 'function') updateLegs(dt);
       physicsStep(dt);
-      if (typeof window.__thermalTickAll === 'function') window.__thermalTickAll(dt);
       ticksRun++;
 
       const snap = buildSnapshot();
