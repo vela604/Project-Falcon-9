@@ -2029,3 +2029,117 @@ canvas.mini-graph { width: 100%; height: 60px; background: var(--bg); border-rad
   font-family: var(--font-mono);
   line-height: 1.5;
 }
+
+
+/* ============================================================
+   Phase zoom — current + next phase enlarged, live counters,
+   progress fill, center duration label. Works vertical (mobile)
+   and horizontal (desktop) via CSS var --progress.
+   ============================================================ */
+.gp-name {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+.gp-name-text { line-height: 1.15; }
+.gp-live {
+  display: none;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--cyan);
+  letter-spacing: 0.3px;
+  line-height: 1.1;
+}
+.gp-row.zoomed .gp-live { display: block; }
+.gp-row.zoomed .gp-name-text {
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+.gp-row.zoomed.cur .gp-name-text { color: var(--cyan); }
+.gp-row.zoomed.next .gp-name-text { color: var(--text); }
+.gp-row.zoomed.cur .gp-live { color: var(--cyan); }
+.gp-row.zoomed.next .gp-live { color: var(--gold); }
+.gp-row.zoomed .gp-dot {
+  transform: scale(1.6);
+  transition: transform 0.3s ease, box-shadow 0.3s ease;
+}
+.gp-row.zoomed.cur .gp-dot {
+  background: var(--cyan);
+  box-shadow: 0 0 14px var(--cyan), 0 0 5px var(--cyan);
+  animation: gpPulseZoom 1.5s ease-in-out infinite;
+}
+.gp-row.zoomed.next .gp-dot {
+  background: var(--gold);
+  box-shadow: 0 0 10px var(--gold);
+  border-color: var(--gold);
+}
+@keyframes gpPulseZoom {
+  0%, 100% { transform: scale(1.6); box-shadow: 0 0 10px var(--cyan); }
+  50% { transform: scale(1.85); box-shadow: 0 0 20px var(--cyan), 0 0 8px var(--cyan); }
+}
+
+/* Progress fill on the line between cur and next phase */
+.gp-line-out { position: relative; }
+.gp-line-fill {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: calc(var(--progress, 0) * 100%);
+  background: linear-gradient(180deg, var(--cyan), var(--gold));
+  border-radius: 1px;
+  transition: height 0.18s linear;
+  pointer-events: none;
+  opacity: 0.85;
+}
+.gp-row:not(.zoomed) .gp-line-fill { display: none; }
+.gp-row.zoomed:not(.cur) .gp-line-fill { display: none; }
+
+/* Center duration label on the connector */
+.gp-dur-label {
+  position: absolute;
+  top: 50%;
+  left: 8px;
+  transform: translateY(-50%);
+  font-family: var(--font-mono);
+  font-size: 8.5px;
+  font-weight: 600;
+  color: var(--gold);
+  background: rgba(13, 20, 36, 0.9);
+  border: 1px solid var(--panel-border);
+  padding: 1px 5px;
+  border-radius: 3px;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.25s ease;
+}
+.gp-row.zoomed.cur .gp-dur-label:not(:empty) { opacity: 1; }
+
+/* ============================================================
+   Horizontal layout (>=1024px) — phase track becomes strip
+   ============================================================ */
+@media (min-width: 1024px) {
+  .gp-row.zoomed .gp-name {
+    align-items: center;
+    gap: 1px;
+  }
+  .gp-row.zoomed .gp-name-text { font-size: 10px; }
+  .gp-row.zoomed .gp-live { font-size: 9px; }
+  .gp-line-fill {
+    /* horizontal: fill by width, full height */
+    width: calc(var(--progress, 0) * 100%);
+    height: 100%;
+    background: linear-gradient(90deg, var(--cyan), var(--gold));
+    transition: width 0.18s linear;
+  }
+  .gp-dur-label {
+    top: -14px;
+    left: 50%;
+    transform: translateX(-50%);
+  }
+  .gp-row.zoomed.cur .gp-dur-label:not(:empty) { opacity: 1; }
+}

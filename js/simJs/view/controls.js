@@ -1488,7 +1488,7 @@ function _renderPhaseTrack(status) {
         '<div class="gp-line-in"></div>';
       const lastLine = (i === seq.length - 1) ?
         '<div class="gp-line-out" style="background:transparent;"></div>' :
-        '<div class="gp-line-out"></div>';
+        '<div class="gp-line-out"><div class="gp-line-fill"></div><div class="gp-dur-label"></div></div>';
       row.innerHTML = `
         <div class="gp-time">
           <div class="gp-tabs"></div>
@@ -1499,8 +1499,8 @@ function _renderPhaseTrack(status) {
           <div class="gp-dot"></div>
           ${lastLine}
         </div>
-        <div class="gp-name"></div>`;
-      row.querySelector('.gp-name').textContent = _displayPhaseName(ph);
+        <div class="gp-name"><div class="gp-name-text"></div><div class="gp-live"></div></div>`;
+      row.querySelector('.gp-name-text').textContent = _displayPhaseName(ph);
       host.appendChild(row);
       _phaseTrackRows[ph] = row;
     });
@@ -1508,6 +1508,40 @@ function _renderPhaseTrack(status) {
   
   const log = _logPre;
   const simTime = status.simTime || 0;
+  // Phase zoom: find currently-active phase (has startT, no endT) and the
+  // one immediately after. Only these two get 'zoomed' styling + live
+  // counters + progress fill. All others stay normal.
+  let _curRowPhase = null, _nextRowPhase = null;
+  for (let _i = 0; _i < seq.length; _i++) {
+    const _ph = seq[_i];
+    const _e2 = _logPre[_ph];
+    if (!_e2 || _e2.__pending) continue;
+    const _isActive = (_e2.endT === null || _e2.endT === undefined) && Number.isFinite(_e2.startT);
+    if (_isActive) {
+      _curRowPhase = _ph;
+      _nextRowPhase = seq[_i + 1] || null;
+      break;
+    }
+  }
+  const _curEntry = _curRowPhase ? _logPre[_curRowPhase] : null;
+  const _nextEntry = _nextRowPhase ? _logPre[_nextRowPhase] : null;
+  const _curStart = _curEntry && !_curEntry.__pending && Number.isFinite(_curEntry.startT) ? _curEntry.startT : null;
+  let _nextStart = null;
+  if (_nextEntry && !_nextEntry.__pending && Number.isFinite(_nextEntry.startT)) {
+    _nextStart = _nextEntry.startT;
+  } else if (_nextRowPhase) {
+    const _recG = window.__currentMissionRecord;
+    if (_recG && _recG.phases && !_recG.partial) {
+      const _predG = _recG.phases.find(p => p.name === _nextRowPhase);
+      if (_predG && Number.isFinite(_predG.startT)) _nextStart = _predG.startT;
+    }
+  }
+  const _curElapsed = _curStart != null ? Math.max(0, simTime - _curStart) : null;
+  const _nextIn = _nextStart != null ? Math.max(0, _nextStart - simTime) : null;
+  const _curDur = _curStart != null && _nextStart != null && _nextStart > _curStart ? (_nextStart - _curStart) : null;
+  const _progress = _curStart != null && _nextStart != null && _nextStart > _curStart
+    ? Math.min(1, Math.max(0, (simTime - _curStart) / (_nextStart - _curStart)))
+    : 0;
   let doneCount = 0;
   
   seq.forEach(ph => {
@@ -1552,7 +1586,20 @@ function _renderPhaseTrack(status) {
     
     const tabsEl = row.querySelector('.gp-tabs');
     const trelEl = row.querySelector('.gp-trel');
-    
+    const liveEl = row.querySelector('.gp-live');
+    const fillEl = row.querySelector('.gp-line-fill');
+    const durEl = row.querySelector('.gp-dur-label');
+
+    const _isCur = (ph === _curRowPhase && _curRowPhase !== null);
+    const _isNext = (ph === _nextRowPhase && _nextRowPhase !== null);
+    if (_isCur) row.classList.add('zoomed', 'cur');
+    else if (_isNext) row.classList.add('zoomed', 'next');
+
+    // Reset live/fill/dur (only set when zoomed)
+    if (liveEl) liveEl.textContent = '';
+    if (fillEl) fillEl.style.setProperty('--progress', '0');
+    if (durEl) durEl.textContent = '';
+
     // Prediction lookup — fills top/bottom with predicted values for
     // phases that haven't started yet, using the SAME 2-line format as
     // actual data. Predicted numbers render slightly dimmer (via CSS)
@@ -1561,35 +1608,51 @@ function _renderPhaseTrack(status) {
     const predicted = (_rec && _rec.phases && !_rec.partial)
       ? _rec.phases.find(p => p.name === ph)
       : null;
-    
-    // Top line: T+ start time (actual if phase started, else predicted)
-    if (entry && Number.isFinite(entry.startT)) {
-      tabsEl.textContent = 'T+' + _fmtHMS(entry.startT);
+
+    if (_isCur) {
+      // Current phase: start T+ on left, live elapsed on right, fill+dur set.
+      tabsEl.textContent = _curStart != null ? 'T+' + _fmtHMS(_curStart) : '';
       tabsEl.className = 'gp-tabs';
-    } else if (predicted) {
-      tabsEl.textContent = 'T+' + _fmtHMS(predicted.startT);
-      tabsEl.className = 'gp-tabs gp-tabs-pred';
-    } else {
-      tabsEl.textContent = '';
-      tabsEl.className = 'gp-tabs';
-    }
-    
-    // Bottom line: +duration (actual end−start, or elapsed while active,
-    // or predicted duration for a future phase)
-    if (entry && entry.endT !== null && entry.endT !== undefined) {
-      trelEl.textContent = '+' + _fmtHMS(entry.endT - entry.startT);
-      trelEl.className = 'gp-trel';
-    } else if (entry && Number.isFinite(entry.startT)) {
-      trelEl.textContent = '+' + _fmtHMS(Math.max(0, simTime - entry.startT));
-      trelEl.className = 'gp-trel';
-    } else if (predicted) {
-      trelEl.textContent = '+' + _fmtHMS(predicted.endT - predicted.startT);
-      trelEl.className = 'gp-trel gp-trel-pred';
-    } else {
       trelEl.textContent = '';
       trelEl.className = 'gp-trel';
+      if (liveEl && _curElapsed != null) liveEl.textContent = '+' + _fmtHMS(_curElapsed);
+      if (fillEl && _progress > 0) fillEl.style.setProperty('--progress', _progress.toFixed(4));
+      if (durEl && _curDur != null) durEl.textContent = _fmtHMS(_curDur);
+    } else if (_isNext) {
+      // Next phase: start T+ on left, T- countdown on right.
+      tabsEl.textContent = _nextStart != null ? 'T+' + _fmtHMS(_nextStart) : '';
+      tabsEl.className = 'gp-tabs';
+      trelEl.textContent = '';
+      trelEl.className = 'gp-trel';
+      if (liveEl) liveEl.textContent = _nextIn != null ? 'T-' + _fmtHMS(_nextIn) : 'T-\u2014';
+    } else {
+      // Normal phases — original layout (start T+ + duration)
+      if (entry && Number.isFinite(entry.startT)) {
+        tabsEl.textContent = 'T+' + _fmtHMS(entry.startT);
+        tabsEl.className = 'gp-tabs';
+      } else if (predicted) {
+        tabsEl.textContent = 'T+' + _fmtHMS(predicted.startT);
+        tabsEl.className = 'gp-tabs gp-tabs-pred';
+      } else {
+        tabsEl.textContent = '';
+        tabsEl.className = 'gp-tabs';
+      }
+
+      if (entry && entry.endT !== null && entry.endT !== undefined) {
+        trelEl.textContent = '+' + _fmtHMS(entry.endT - entry.startT);
+        trelEl.className = 'gp-trel';
+      } else if (entry && Number.isFinite(entry.startT)) {
+        trelEl.textContent = '+' + _fmtHMS(Math.max(0, simTime - entry.startT));
+        trelEl.className = 'gp-trel';
+      } else if (predicted) {
+        trelEl.textContent = '+' + _fmtHMS(predicted.endT - predicted.startT);
+        trelEl.className = 'gp-trel gp-trel-pred';
+      } else {
+        trelEl.textContent = '';
+        trelEl.className = 'gp-trel';
+      }
     }
-    
+
     // Scroll the newly-active row into view, but only on the transition.
     if (cls === 'active' && !wasActive && typeof row.scrollIntoView === 'function') {
       row.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
