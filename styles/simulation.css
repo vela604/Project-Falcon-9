@@ -2302,3 +2302,46 @@ canvas.mini-graph { width: 100%; height: 60px; background: var(--bg); border-rad
   #guidePhaseTrack .gp-row.next .gp-live { position: static; }
   #guidePhaseTrack .gp-line-fill { background: var(--gp-cyan) !important; }
 }
+
+
+/* ===== v5 — NEXT label fix + phase colours ===== */
+
+/* NEXT: pill + T- sit right above the name, never clipped */
+#guidePhaseTrack .gp-row.next .gp-live {
+  position: absolute;
+  left: 4px;
+  top: auto;
+  bottom: calc(50% + 9px);
+  white-space: nowrap;
+  color: var(--gp-gold);
+  z-index: 2;
+}
+#guidePhaseTrack .gp-row.next .gp-live::before { background: var(--gp-gold); color: #1a1300; }
+
+/* DONE: green family */
+#guidePhaseTrack .gp-row.done .gp-name  { color: #c9f7dc; opacity: 1; }
+#guidePhaseTrack .gp-row.done .gp-tabs  { color: #4ade80; opacity: 1; }
+#guidePhaseTrack .gp-row.done .gp-trel  { color: #86efac; opacity: 0.9; }
+
+/* FUTURE: lavender-blue, clearly readable */
+#guidePhaseTrack .gp-row.future .gp-name { color: #b7c7ff; opacity: 1; }
+#guidePhaseTrack .gp-row.future .gp-tabs,
+#guidePhaseTrack .gp-row.future .gp-tabs.gp-tabs-pred {
+  color: #a9bcf5 !important;
+  font-style: normal;
+  opacity: 1;
+}
+#guidePhaseTrack .gp-row.future .gp-trel,
+#guidePhaseTrack .gp-row.future .gp-trel.gp-trel-pred {
+  color: #8ea3dd !important;
+  font-style: normal;
+  opacity: 1;
+}
+#guidePhaseTrack .gp-row.future .gp-dot { border-color: #8ea3dd; }
+#guidePhaseTrack .gp-row.future .gp-line-in,
+#guidePhaseTrack .gp-row.future .gp-line-out { background: rgba(142, 163, 221, 0.35); }
+
+/* keep NEXT row's own colours on top of the future palette */
+#guidePhaseTrack .gp-row.next .gp-name { color: var(--text); opacity: 1; }
+#guidePhaseTrack .gp-row.next .gp-tabs { color: var(--gp-gold) !important; }
+#guidePhaseTrack .gp-row.next .gp-dot  { border-color: var(--gp-gold); }
