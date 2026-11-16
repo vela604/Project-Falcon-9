@@ -1311,6 +1311,34 @@ function _fmtHMS(sec) {
 let _phaseTrackLastSeq = null;
 let _phaseTrackRows = {}; // phase name -> row element
 
+// ══════ Per-body panel: curated labels + cross-role phases ══════
+const _PHASE_DISPLAY_MAP = {
+  'MECO': 'MECO',
+  'SEPARATION': 'Stage Separation',
+  'FLIP': 'Landback',
+  'BOOSTBACK_BURN': 'Boostback Burn',
+  'PRE_ENTRY_STEER': 'Pre-entry Steer',
+  'ENTRY_BURN': 'Re-entry Burn',
+  'POST_ENTRY_STEER': 'Grid Fin Steer',
+  'LANDING_BURN_ALIGN': 'Landing Burn Align',
+  'LANDING_BURN': 'Landing Burn',
+  'TOUCHDOWN_COMPLETE': 'Touchdown Complete',
+  'ORBIT BURN': 'Orbit Burn',
+  'APOGEE TRIM': 'Apogee Trim',
+  'COAST': 'Coast',
+  'CIRCULARIZE': 'Circularize Burn',
+  'PAYLOAD DEPLOY': 'Payload Deploy',
+  'DEORBIT': 'De-orbit',
+  'Liftoff': 'Liftoff',
+  'Fairing Release': 'Fairing Release',
+  'Chute Deploy': 'Chute Deploy',
+  'Ocean Splash': 'Ocean Splash',
+  'Payload Release': 'Payload Release',
+};
+const _PHASE_CROSS_ROLE = {
+  'SEPARATION': ['booster', 'stage'],
+};
+
 function _renderPhaseTrack(status) {
   const host = document.getElementById('guidePhaseList');
   const trackBox = document.getElementById('guidePhaseTrack');
@@ -1352,20 +1380,53 @@ function _renderPhaseTrack(status) {
   }
   
   const curPhase = status.phaseDisplay || status.phase || null;
-  const _rawSeq = (Array.isArray(status.phaseSequence) && status.phaseSequence.length)
-    ? status.phaseSequence
+  let _rawSeq = (Array.isArray(status.phaseSequence) && status.phaseSequence.length)
+    ? status.phaseSequence.slice()
     : (curPhase ? [curPhase] : []);
-  const _logPre = status.phaseLog || {};
+  
+  // Clone phaseLog to avoid mutating snapshot; inject synthetic entries
+  const _logPre = Object.assign({}, status.phaseLog || {});
+  const _events = status.events || [];
+  function _evt(name) {
+    return _events.find(function(e){ return e && e.name === name && Number.isFinite(e.t); });
+  }
+  
+  // Synthetic phases from events (not tracked as phases by agent)
+  if (_activeRole === 'booster') {
+    const _lift = _evt('LIFTOFF');
+    if (_lift && !_logPre['Liftoff']) {
+      _logPre['Liftoff'] = { startT: _lift.t, endT: _lift.t + 0.001, bodyTag: 'booster', __synthetic: true };
+      if (_rawSeq.indexOf('Liftoff') < 0) _rawSeq = ['Liftoff'].concat(_rawSeq);
+    }
+  }
+  if (_activeRole === 'fairing') {
+    const _fr = _evt('FAIRING_DEPLOY');
+    const _cd = _evt('CHUTE_DEPLOY');
+    const _sd = _evt('SPLASHDOWN');
+    const _fOrder = [];
+    if (_fr && !_logPre['Fairing Release']) { _logPre['Fairing Release'] = { startT: _fr.t, endT: _fr.t + 0.001, bodyTag: 'fairing', __synthetic: true }; _fOrder.push('Fairing Release'); }
+    if (_cd && !_logPre['Chute Deploy']) { _logPre['Chute Deploy'] = { startT: _cd.t, endT: _cd.t + 0.001, bodyTag: 'fairing', __synthetic: true }; _fOrder.push('Chute Deploy'); }
+    if (_sd && !_logPre['Ocean Splash']) { _logPre['Ocean Splash'] = { startT: _sd.t, endT: _sd.t + 0.001, bodyTag: 'fairing', __synthetic: true }; _fOrder.push('Ocean Splash'); }
+    _fOrder.forEach(function(n){ if (_rawSeq.indexOf(n) < 0) _rawSeq.push(n); });
+  }
+  if (_activeRole === 'payload') {
+    const _pr = _evt('PAYLOAD_RELEASE');
+    if (_pr && !_logPre['Payload Release']) {
+      _logPre['Payload Release'] = { startT: _pr.t, endT: _pr.t + 0.001, bodyTag: 'payload', __synthetic: true };
+      if (_rawSeq.indexOf('Payload Release') < 0) _rawSeq.push('Payload Release');
+    }
+  }
+  
   const _hasAnyBodyTag = Object.values(_logPre).some(e => e && e.bodyTag);
   let seq;
   if (!_hasAnyBodyTag) {
-    // Legacy — no filter
     seq = _rawSeq.filter(ph => ph !== 'ASCENT');
   } else {
     seq = _rawSeq.filter(ph => {
       if (ph === 'ASCENT') return false;
       const entry = _logPre[ph];
       if (!entry) return false;
+      if (_PHASE_CROSS_ROLE[ph] && _PHASE_CROSS_ROLE[ph].indexOf(_activeRole) >= 0) return true;
       const tag = entry.bodyTag;
       return !tag || tag === _activeRole;
     });
@@ -1414,13 +1475,13 @@ function _renderPhaseTrack(status) {
           ${lastLine}
         </div>
         <div class="gp-name"></div>`;
-      row.querySelector('.gp-name').textContent = ph;
+      row.querySelector('.gp-name').textContent = _PHASE_DISPLAY_MAP[ph] || ph;
       host.appendChild(row);
       _phaseTrackRows[ph] = row;
     });
   }
   
-  const log = status.phaseLog || {};
+  const log = _logPre;
   const simTime = status.simTime || 0;
   let doneCount = 0;
   
