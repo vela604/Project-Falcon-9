@@ -2220,3 +2220,54 @@ canvas.mini-graph { width: 100%; height: 60px; background: var(--bg); border-rad
     animation: gpScanH 1.6s linear infinite;
   }
 }
+
+/* ===== v3 polish — append at END ===== */
+.gp-row { position: relative; }
+
+/* highlight = clean cards, no cut edges */
+.gp-row.cur,
+.gp-row.next {
+  border-radius: 10px;
+  box-shadow: none;
+  margin: 2px 0;
+}
+.gp-row.cur  { background: rgba(53, 214, 255, 0.06); border: 1px solid rgba(53, 214, 255, 0.22); }
+.gp-row.next { background: rgba(255, 210, 63, 0.05); border: 1px solid rgba(255, 210, 63, 0.22); }
+
+/* future phases: T+ and length clearly readable */
+.gp-row.future .gp-name { color: rgba(200, 215, 235, 0.85); }
+.gp-row.future .gp-tabs { color: rgba(200, 215, 235, 0.85); }
+.gp-row.future .gp-trel { color: rgba(200, 215, 235, 0.70); }
+.gp-row .gp-tabs.gp-tabs-pred { color: rgba(200, 215, 235, 0.85) !important; font-style: normal; opacity: 1; }
+.gp-row .gp-trel.gp-trel-pred { color: rgba(200, 215, 235, 0.70) !important; font-style: normal; opacity: 1; }
+
+/* progress fill: thick + solid */
+.gp-row.cur .gp-line-out {
+  flex: 1;
+  width: 4px;
+  background: rgba(53, 214, 255, 0.22);
+  border-radius: 2px;
+}
+.gp-line-fill {
+  background: var(--cyan) !important;
+  box-shadow: 0 0 8px var(--cyan);
+  border-radius: 2px;
+  opacity: 1;
+}
+
+/* NEXT row: room for the T- label so it never clips */
+.gp-row.next { min-height: 76px; }
+.gp-row.next .gp-line-in { flex: 0 0 26px; }
+.gp-row.next .gp-time { padding-top: 28px; }
+.gp-row.next .gp-name { padding-top: 28px; }
+.gp-row.next .gp-live { top: 8px; left: 4px; z-index: 2; opacity: 1; }
+
+@media (min-width: 1024px) {
+  #guidePhaseTrack .gp-row.cur .gp-line-out { width: auto; height: 4px; }
+  #guidePhaseTrack .gp-row.next { min-height: 0; }
+  #guidePhaseTrack .gp-row.next .gp-line-in { flex: 1; }
+  #guidePhaseTrack .gp-row.next .gp-time,
+  #guidePhaseTrack .gp-row.next .gp-name { padding-top: 0; }
+  #guidePhaseTrack .gp-row.next .gp-live { position: static; }
+  #guidePhaseTrack .gp-line-fill { background: var(--cyan) !important; }
+}
