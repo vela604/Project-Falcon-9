@@ -1312,29 +1312,18 @@ let _phaseTrackLastSeq = null;
 let _phaseTrackRows = {}; // phase name -> row element
 
 // ══════ Per-body panel: curated labels + cross-role phases ══════
-const _PHASE_DISPLAY_MAP = {
-  'MECO': 'MECO',
-  'SEPARATION': 'Stage Separation',
-  'FLIP': 'Landback',
-  'BOOSTBACK_BURN': 'Boostback Burn',
-  'PRE_ENTRY_STEER': 'Pre-entry Steer',
-  'ENTRY_BURN': 'Re-entry Burn',
-  'POST_ENTRY_STEER': 'Grid Fin Steer',
-  'LANDING_BURN_ALIGN': 'Landing Burn Align',
-  'LANDING_BURN': 'Landing Burn',
-  'TOUCHDOWN_COMPLETE': 'Touchdown Complete',
-  'ORBIT BURN': 'Orbit Burn',
-  'APOGEE TRIM': 'Apogee Trim',
-  'COAST': 'Coast',
-  'CIRCULARIZE': 'Circularize Burn',
-  'PAYLOAD DEPLOY': 'Payload Deploy',
-  'DEORBIT': 'De-orbit',
-  'Liftoff': 'Liftoff',
-  'Fairing Release': 'Fairing Release',
-  'Chute Deploy': 'Chute Deploy',
-  'Ocean Splash': 'Ocean Splash',
-  'Payload Release': 'Payload Release',
-};
+// English display names derived from phase codes. Snake_case → Title Case
+// with a small acronym allowlist kept uppercase (MECO, RCS, etc.).
+// No custom curated labels — every phase in phaseLog shows its own name.
+const _KEEP_UPPER = new Set(['MECO', 'RCS', 'IMU', 'TWR', 'GNC', 'GNCV1', 'ASDS', 'LEO', 'GPS', 'PID']);
+function _displayPhaseName(ph) {
+  if (!ph) return '';
+  return ph.split(/[\s_]+/).map(function(w) {
+    const up = w.toUpperCase();
+    if (_KEEP_UPPER.has(up)) return up;
+    return w.charAt(0).toUpperCase() + w.slice(1).toLowerCase();
+  }).join(' ');
+}
 const _PHASE_CROSS_ROLE = {
   'SEPARATION': ['booster', 'stage'],
 };
@@ -1511,7 +1500,7 @@ function _renderPhaseTrack(status) {
           ${lastLine}
         </div>
         <div class="gp-name"></div>`;
-      row.querySelector('.gp-name').textContent = _PHASE_DISPLAY_MAP[ph] || ph;
+      row.querySelector('.gp-name').textContent = _displayPhaseName(ph);
       host.appendChild(row);
       _phaseTrackRows[ph] = row;
     });
