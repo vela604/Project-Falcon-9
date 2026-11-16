@@ -1531,7 +1531,7 @@ function _renderPhaseTrack(status) {
     _nextStart = _nextEntry.startT;
   } else if (_nextRowPhase) {
     const _recG = window.__currentMissionRecord;
-    if (_recG && _recG.phases && !_recG.partial) {
+    if (_recG && _recG.phases) {
       const _predG = _recG.phases.find(p => p.name === _nextRowPhase);
       if (_predG && Number.isFinite(_predG.startT)) _nextStart = _predG.startT;
     }
@@ -1618,6 +1618,7 @@ function _renderPhaseTrack(status) {
       if (liveEl && _curElapsed != null) liveEl.textContent = '+' + _fmtHMS(_curElapsed);
       if (fillEl && _progress > 0) fillEl.style.setProperty('--progress', _progress.toFixed(4));
       if (durEl && _curDur != null) durEl.textContent = _fmtHMS(_curDur);
+      if (_curDur == null) row.classList.add('no-total');
     } else if (_isNext) {
       // Next phase: start T+ on left, T- countdown on right.
       tabsEl.textContent = _nextStart != null ? 'T+' + _fmtHMS(_nextStart) : '';

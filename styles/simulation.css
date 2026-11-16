@@ -2030,12 +2030,13 @@ canvas.mini-graph { width: 100%; height: 60px; background: var(--bg); border-rad
   line-height: 1.5;
 }
 
-.gp-row { transition: min-height 0.4s ease, min-width 0.4s ease; }
+.gp-row { transition: min-height 0.4s ease, min-width 0.4s ease, background 0.3s ease; }
 
 .gp-name {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
+  justify-content: center;
   gap: 2px;
   position: relative;
 }
@@ -2047,14 +2048,25 @@ canvas.mini-graph { width: 100%; height: 60px; background: var(--bg); border-rad
   font-family: var(--font-mono);
   font-size: 10px;
   font-weight: 600;
-  color: var(--cyan);
   letter-spacing: 0.3px;
   line-height: 1.1;
+  color: var(--cyan);
 }
 
 .gp-row.zoomed .gp-live { display: block; }
 
-/* ---- connecting line + progress fill ---- */
+/* ================= READABILITY (faded but readable) ================= */
+.gp-row.future .gp-name { opacity: 1; color: rgba(165, 185, 210, 0.72); }
+.gp-row.future .gp-tabs { color: rgba(165, 185, 210, 0.62); }
+.gp-row.future .gp-trel { color: rgba(165, 185, 210, 0.50); }
+.gp-row.future .gp-dot  { border-color: rgba(53, 214, 255, 0.40); }
+
+.gp-row .gp-tabs.gp-tabs-pred { color: rgba(165, 185, 210, 0.60) !important; opacity: 1; }
+.gp-row .gp-trel.gp-trel-pred { color: rgba(165, 185, 210, 0.48) !important; opacity: 1; }
+
+.gp-row.done .gp-trel { color: rgba(165, 185, 210, 0.85); opacity: 1; }
+
+/* ================= CONNECTING LINE + PROGRESS ================= */
 .gp-line-out { position: relative; }
 
 .gp-line-fill {
@@ -2062,12 +2074,15 @@ canvas.mini-graph { width: 100%; height: 60px; background: var(--bg); border-rad
   top: 0;
   left: 0;
   width: 100%;
-  height: calc(var(--progress, 0) * 100%);
+  height: 100%;
+  transform-origin: top;
+  transform: scaleY(var(--progress, 0));
+  transition: transform 0.18s linear;
   background: linear-gradient(180deg, var(--cyan), var(--gold));
+  box-shadow: 0 0 6px rgba(53, 214, 255, 0.5);
   border-radius: 1px;
-  transition: height 0.18s linear;
+  opacity: 0.95;
   pointer-events: none;
-  opacity: 0.9;
 }
 
 .gp-row:not(.zoomed) .gp-line-fill,
@@ -2094,60 +2109,114 @@ canvas.mini-graph { width: 100%; height: 60px; background: var(--bg); border-rad
 
 .gp-row.zoomed.cur .gp-dur-label:not(:empty) { opacity: 1; }
 
-/* ---- CURRENT phase: dot upar, line neeche lambi, T+ naam ke neeche ---- */
-.gp-row.cur { min-height: 130px; }
+/* total unknown (no prediction) -> indeterminate scanner instead of dead line */
+.gp-row.cur.no-total .gp-line-out::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(180deg, transparent, var(--cyan), transparent) 0 0 / 100% 35% no-repeat;
+  animation: gpScanV 1.6s linear infinite;
+}
+
+@keyframes gpScanV { from { background-position: 0 0%; } to { background-position: 0 100%; } }
+@keyframes gpScanH { from { background-position: 0% 0; } to { background-position: 100% 0; } }
+
+/* ================= CURRENT PHASE (vertical) ================= */
+.gp-row.cur {
+  --gp-cur-h: 140px;
+  min-height: var(--gp-cur-h);
+  background: linear-gradient(90deg, rgba(53, 214, 255, 0.12), rgba(53, 214, 255, 0) 90%);
+  border-radius: 8px;
+  box-shadow: inset 2px 0 0 var(--cyan);
+}
+
 .gp-row.cur .gp-line-in { flex: 0 0 6px; }
-.gp-row.cur .gp-line-out { flex: 1; }
+.gp-row.cur .gp-line-out { flex: 1; background: rgba(53, 214, 255, 0.20); }
 .gp-row.cur .gp-time { justify-content: flex-start; padding-top: 8px; }
 .gp-row.cur .gp-name { justify-content: flex-start; padding-top: 8px; }
-.gp-row.cur .gp-name-text { color: var(--cyan); }
+.gp-row.cur .gp-name-text { color: var(--cyan); text-shadow: 0 0 8px rgba(53, 214, 255, 0.45); }
 .gp-row.cur .gp-live { color: var(--cyan); }
 
-/* ---- NEXT phase: T- naam ke upar ---- */
-.gp-row.next { min-height: 60px; }
-.gp-row.next .gp-name { justify-content: center; }
-.gp-row.next .gp-live {
-  position: absolute;
-  left: 4px;
-  bottom: calc(50% + 9px);
-  color: var(--gold);
-}
-.gp-row.next .gp-dot {
-  border-color: var(--gold);
-  box-shadow: 0 0 6px rgba(255, 210, 63, 0.5);
+.gp-row.cur .gp-live::before,
+.gp-row.next .gp-live::before {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 1px;
+  vertical-align: 1px;
 }
 
-/* ---- Laptop (horizontal) ---- */
+.gp-row.cur .gp-live::before  { content: 'NOW';  background: var(--cyan); color: #00131c; }
+.gp-row.next .gp-live::before { content: 'NEXT'; background: var(--gold); color: #1a1300; }
+
+/* ================= NEXT PHASE (vertical) ================= */
+.gp-row.next {
+  min-height: 64px;
+  background: linear-gradient(90deg, rgba(255, 210, 63, 0.09), rgba(255, 210, 63, 0) 90%);
+  border-radius: 8px;
+  box-shadow: inset 2px 0 0 rgba(255, 210, 63, 0.7);
+}
+
+.gp-row.next .gp-line-in { flex: 0 0 18px; background: linear-gradient(180deg, rgba(53, 214, 255, 0.6), var(--gold)); }
+.gp-row.next .gp-time { justify-content: flex-start; padding-top: 20px; }
+.gp-row.next .gp-name { justify-content: flex-start; padding-top: 20px; }
+.gp-row.next .gp-name-text { color: var(--text); }
+.gp-row.next .gp-tabs { color: var(--gold); }
+.gp-row.next .gp-dot { border-color: var(--gold); box-shadow: 0 0 8px rgba(255, 210, 63, 0.55); }
+.gp-row.next .gp-live { position: absolute; left: 4px; top: 0; color: var(--gold); }
+
+/* ================= LAPTOP (horizontal) ================= */
 @media (min-width: 1024px) {
-  .gp-row.cur { min-height: 0; min-width: 260px; }
-  .gp-row.next { min-height: 0; min-width: 110px; }
-
-  .gp-row.cur .gp-line-in { flex: 0 0 6px; }
-  .gp-row.cur .gp-time {
-    align-items: flex-start;
-    justify-content: center;
-    padding: 0 0 0 4px;
-  }
-  .gp-row.cur .gp-name {
-    align-items: flex-start;
-    justify-content: flex-start;
-    text-align: left;
-    padding: 0 0 0 2px;
+  #guidePhaseTrack .gp-row.cur {
+    min-width: 280px;
+    min-height: 0;
+    background: linear-gradient(180deg, rgba(53, 214, 255, 0.12), rgba(53, 214, 255, 0) 90%);
+    box-shadow: inset 0 2px 0 var(--cyan);
   }
 
-  .gp-row.next .gp-name { align-items: center; justify-content: flex-start; }
-  .gp-row.next .gp-live { position: static; }
+  #guidePhaseTrack .gp-row.next {
+    min-width: 120px;
+    min-height: 0;
+    background: linear-gradient(180deg, rgba(255, 210, 63, 0.09), rgba(255, 210, 63, 0) 90%);
+    box-shadow: inset 0 2px 0 rgba(255, 210, 63, 0.7);
+  }
 
-  .gp-line-fill {
-    width: calc(var(--progress, 0) * 100%);
-    height: 100%;
+  #guidePhaseTrack .gp-row.done .gp-line-in,
+  #guidePhaseTrack .gp-row.done .gp-line-out,
+  #guidePhaseTrack .gp-row.active .gp-line-in { background: var(--green); }
+
+  #guidePhaseTrack .gp-row.future .gp-line-in,
+  #guidePhaseTrack .gp-row.future .gp-line-out { background: rgba(53, 214, 255, 0.22); }
+
+  #guidePhaseTrack .gp-row.cur .gp-line-out { background: rgba(53, 214, 255, 0.25); }
+  #guidePhaseTrack .gp-row.next .gp-line-in { flex: 1; background: linear-gradient(90deg, rgba(53, 214, 255, 0.6), var(--gold)); }
+  #guidePhaseTrack .gp-row.cur .gp-line-in { flex: 0 0 8px; }
+
+  #guidePhaseTrack .gp-row.cur .gp-time { align-items: flex-start; justify-content: center; padding: 0 0 0 4px; }
+  #guidePhaseTrack .gp-row.cur .gp-name { align-items: flex-start; justify-content: flex-start; padding: 0 0 0 4px; text-align: left; }
+  #guidePhaseTrack .gp-row.next .gp-time { align-items: center; padding: 0; }
+  #guidePhaseTrack .gp-row.next .gp-name { align-items: center; justify-content: flex-start; padding: 0; }
+  #guidePhaseTrack .gp-row.next .gp-live { position: static; order: -1; }
+
+  #guidePhaseTrack .gp-line-fill {
+    transform-origin: left;
+    transform: scaleX(var(--progress, 0));
+    transition: transform 0.18s linear;
     background: linear-gradient(90deg, var(--cyan), var(--gold));
-    transition: width 0.18s linear;
   }
 
-  .gp-dur-label {
+  #guidePhaseTrack .gp-dur-label {
     top: -14px;
     left: 50%;
     transform: translateX(-50%);
+  }
+
+  #guidePhaseTrack .gp-row.cur.no-total .gp-line-out::after {
+    background: linear-gradient(90deg, transparent, var(--cyan), transparent) 0 0 / 35% 100% no-repeat;
+    animation: gpScanH 1.6s linear infinite;
   }
 }
