@@ -2220,54 +2220,85 @@ canvas.mini-graph { width: 100%; height: 60px; background: var(--bg); border-rad
     animation: gpScanH 1.6s linear infinite;
   }
 }
+/* ===== v4 — continuous rail, clean highlight ===== */
+#guidePhaseTrack { --gp-gold: #ffd23f; --gp-cyan: #35d6ff; }
 
-/* ===== v3 polish — append at END ===== */
-.gp-row { position: relative; }
+/* one continuous rail: dot touches the lines, all lines same width */
+.gp-dot { margin: 0; }
+.gp-line-in, .gp-line-out { width: 3px; }
+.gp-row.cur .gp-line-out { width: 3px; border-radius: 0; }
 
-/* highlight = clean cards, no cut edges */
+/* highlight rows: no border, no margin, no radius -> rail never breaks */
 .gp-row.cur,
 .gp-row.next {
-  border-radius: 10px;
-  box-shadow: none;
-  margin: 2px 0;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
 }
-.gp-row.cur  { background: rgba(53, 214, 255, 0.06); border: 1px solid rgba(53, 214, 255, 0.22); }
-.gp-row.next { background: rgba(255, 210, 63, 0.05); border: 1px solid rgba(255, 210, 63, 0.22); }
-
-/* future phases: T+ and length clearly readable */
-.gp-row.future .gp-name { color: rgba(200, 215, 235, 0.85); }
-.gp-row.future .gp-tabs { color: rgba(200, 215, 235, 0.85); }
-.gp-row.future .gp-trel { color: rgba(200, 215, 235, 0.70); }
-.gp-row .gp-tabs.gp-tabs-pred { color: rgba(200, 215, 235, 0.85) !important; font-style: normal; opacity: 1; }
-.gp-row .gp-trel.gp-trel-pred { color: rgba(200, 215, 235, 0.70) !important; font-style: normal; opacity: 1; }
-
-/* progress fill: thick + solid */
-.gp-row.cur .gp-line-out {
-  flex: 1;
-  width: 4px;
-  background: rgba(53, 214, 255, 0.22);
-  border-radius: 2px;
+.gp-row.cur {
+  background: linear-gradient(90deg, rgba(53, 214, 255, 0.14), rgba(53, 214, 255, 0) 85%);
+  box-shadow: inset 2px 0 0 var(--gp-cyan);
 }
+.gp-row.next {
+  background: linear-gradient(90deg, rgba(255, 210, 63, 0.11), rgba(255, 210, 63, 0) 85%);
+  box-shadow: inset 2px 0 0 var(--gp-gold);
+}
+
+/* progress fill: solid, same width as the rail */
 .gp-line-fill {
-  background: var(--cyan) !important;
-  box-shadow: 0 0 8px var(--cyan);
-  border-radius: 2px;
-  opacity: 1;
+  background: var(--gp-cyan) !important;
+  box-shadow: 0 0 8px var(--gp-cyan);
+  border-radius: 0;
 }
 
-/* NEXT row: room for the T- label so it never clips */
-.gp-row.next { min-height: 76px; }
-.gp-row.next .gp-line-in { flex: 0 0 26px; }
-.gp-row.next .gp-time { padding-top: 28px; }
-.gp-row.next .gp-name { padding-top: 28px; }
-.gp-row.next .gp-live { top: 8px; left: 4px; z-index: 2; opacity: 1; }
+/* CURRENT: dot at top, text lines up with the dot */
+.gp-row.cur .gp-line-in { flex: 0 0 6px; }
+.gp-row.cur .gp-time,
+.gp-row.cur .gp-name { padding-top: 5px; }
 
+/* NEXT: dot + name dead-center, T- label sits in the space above */
+.gp-row.next { min-height: 72px; }
+.gp-row.next .gp-line-in {
+  flex: 1;
+  background: linear-gradient(180deg, rgba(53, 214, 255, 0.55), var(--gp-gold));
+}
+.gp-row.next .gp-time,
+.gp-row.next .gp-name { padding-top: 0; justify-content: center; }
+.gp-row.next .gp-dot {
+  border-color: var(--gp-gold);
+  box-shadow: 0 0 8px rgba(255, 210, 63, 0.6);
+}
+.gp-row.next .gp-tabs { color: var(--gp-gold); }
+.gp-row.next .gp-live {
+  position: absolute;
+  top: 8px;
+  left: 108px;
+  color: var(--gp-gold);
+}
+
+/* pills: explicit colors so they can't vanish */
+.gp-row.cur  .gp-live::before { background: var(--gp-cyan); color: #00131c; }
+.gp-row.next .gp-live::before { background: var(--gp-gold); color: #1a1300; }
+
+/* ===== laptop (horizontal) ===== */
 @media (min-width: 1024px) {
-  #guidePhaseTrack .gp-row.cur .gp-line-out { width: auto; height: 4px; }
-  #guidePhaseTrack .gp-row.next { min-height: 0; }
-  #guidePhaseTrack .gp-row.next .gp-line-in { flex: 1; }
-  #guidePhaseTrack .gp-row.next .gp-time,
-  #guidePhaseTrack .gp-row.next .gp-name { padding-top: 0; }
+  #guidePhaseTrack .gp-dot { margin: 0; }
+  #guidePhaseTrack .gp-line-in,
+  #guidePhaseTrack .gp-line-out { width: auto; height: 3px; }
+  #guidePhaseTrack .gp-row.cur .gp-line-out { width: auto; height: 3px; }
+
+  #guidePhaseTrack .gp-row.cur {
+    background: linear-gradient(180deg, rgba(53, 214, 255, 0.14), rgba(53, 214, 255, 0) 85%);
+    box-shadow: inset 0 2px 0 var(--gp-cyan);
+  }
+  #guidePhaseTrack .gp-row.next {
+    min-height: 0;
+    background: linear-gradient(180deg, rgba(255, 210, 63, 0.11), rgba(255, 210, 63, 0) 85%);
+    box-shadow: inset 0 2px 0 var(--gp-gold);
+  }
+  #guidePhaseTrack .gp-row.next .gp-line-in {
+    background: linear-gradient(90deg, rgba(53, 214, 255, 0.55), var(--gp-gold));
+  }
   #guidePhaseTrack .gp-row.next .gp-live { position: static; }
-  #guidePhaseTrack .gp-line-fill { background: var(--cyan) !important; }
+  #guidePhaseTrack .gp-line-fill { background: var(--gp-cyan) !important; }
 }
