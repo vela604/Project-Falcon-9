@@ -1338,6 +1338,32 @@ const _PHASE_DISPLAY_MAP = {
 const _PHASE_CROSS_ROLE = {
   'SEPARATION': ['booster', 'stage'],
 };
+const _PHASE_KNOWN_ROLE = {
+  // Booster sub-phases
+  'Liftoff': 'booster',
+  'MECO': 'booster',
+  'FLIP': 'booster',
+  'BOOSTBACK_BURN': 'booster',
+  'PRE_ENTRY_STEER': 'booster',
+  'ENTRY_BURN': 'booster',
+  'POST_ENTRY_STEER': 'booster',
+  'LANDING_BURN_ALIGN': 'booster',
+  'LANDING_BURN': 'booster',
+  'TOUCHDOWN_COMPLETE': 'booster',
+  // Stage sub-phases
+  'ORBIT BURN': 'stage',
+  'APOGEE TRIM': 'stage',
+  'COAST': 'stage',
+  'CIRCULARIZE': 'stage',
+  'PAYLOAD DEPLOY': 'stage',
+  'DEORBIT': 'stage',
+  // Fairing sub-phases
+  'Fairing Release': 'fairing',
+  'Chute Deploy': 'fairing',
+  'Ocean Splash': 'fairing',
+  // Payload
+  'Payload Release': 'payload',
+};
 
 function _renderPhaseTrack(status) {
   const host = document.getElementById('guidePhaseList');
@@ -1380,6 +1406,8 @@ function _renderPhaseTrack(status) {
   }
   
   const curPhase = status.phaseDisplay || status.phase || null;
+  // Booster role: ASCENT maps to Liftoff for active-row highlighting
+  const _curPhaseForClass = (curPhase === 'ASCENT' && _activeRole === 'booster') ? 'Liftoff' : curPhase;
   let _rawSeq = (Array.isArray(status.phaseSequence) && status.phaseSequence.length)
     ? status.phaseSequence.slice()
     : (curPhase ? [curPhase] : []);
@@ -1392,45 +1420,53 @@ function _renderPhaseTrack(status) {
   }
   
   // Synthetic phases from events (not tracked as phases by agent)
+  // Always inject synthetic phases for active role (pending when event
+  // hasn't fired yet, so user sees upcoming phases, not empty panel).
   if (_activeRole === 'booster') {
-    const _lift = _evt('LIFTOFF');
-    if (_lift && !_logPre['Liftoff']) {
-      _logPre['Liftoff'] = { startT: _lift.t, endT: _lift.t + 0.001, bodyTag: 'booster', __synthetic: true };
+    if (!_logPre['Liftoff']) {
+      const _asc = _logPre['ASCENT'];
+      // Liftoff takes ASCENT's timing (ASCENT is filtered out for booster).
+      // If ASCENT hasn't fired yet, pending with T+00:00:00 placeholder.
+      _logPre['Liftoff'] = _asc
+        ? { startT: _asc.startT, endT: _asc.endT, bodyTag: 'booster', __synthetic: true }
+        : { startT: 0, endT: null, bodyTag: 'booster', __synthetic: true, __pending: true };
       if (_rawSeq.indexOf('Liftoff') < 0) _rawSeq = ['Liftoff'].concat(_rawSeq);
     }
   }
   if (_activeRole === 'fairing') {
-    const _fr = _evt('FAIRING_DEPLOY');
-    const _cd = _evt('CHUTE_DEPLOY');
-    const _sd = _evt('SPLASHDOWN');
-    const _fOrder = [];
-    if (_fr && !_logPre['Fairing Release']) { _logPre['Fairing Release'] = { startT: _fr.t, endT: _fr.t + 0.001, bodyTag: 'fairing', __synthetic: true }; _fOrder.push('Fairing Release'); }
-    if (_cd && !_logPre['Chute Deploy']) { _logPre['Chute Deploy'] = { startT: _cd.t, endT: _cd.t + 0.001, bodyTag: 'fairing', __synthetic: true }; _fOrder.push('Chute Deploy'); }
-    if (_sd && !_logPre['Ocean Splash']) { _logPre['Ocean Splash'] = { startT: _sd.t, endT: _sd.t + 0.001, bodyTag: 'fairing', __synthetic: true }; _fOrder.push('Ocean Splash'); }
-    _fOrder.forEach(function(n){ if (_rawSeq.indexOf(n) < 0) _rawSeq.push(n); });
+    const _injectFairing = function(name, eventName) {
+      if (_logPre[name]) return;
+      const _ev = _evt(eventName);
+      _logPre[name] = _ev
+        ? { startT: _ev.t, endT: _ev.t + 0.001, bodyTag: 'fairing', __synthetic: true }
+        : { startT: 0, endT: null, bodyTag: 'fairing', __synthetic: true, __pending: true };
+      if (_rawSeq.indexOf(name) < 0) _rawSeq.push(name);
+    };
+    _injectFairing('Fairing Release', 'FAIRING_DEPLOY');
+    _injectFairing('Chute Deploy', 'CHUTE_DEPLOY');
+    _injectFairing('Ocean Splash', 'SPLASHDOWN');
   }
   if (_activeRole === 'payload') {
-    const _pr = _evt('PAYLOAD_RELEASE');
-    if (_pr && !_logPre['Payload Release']) {
-      _logPre['Payload Release'] = { startT: _pr.t, endT: _pr.t + 0.001, bodyTag: 'payload', __synthetic: true };
+    if (!_logPre['Payload Release']) {
+      const _ev = _evt('PAYLOAD_RELEASE');
+      _logPre['Payload Release'] = _ev
+        ? { startT: _ev.t, endT: _ev.t + 0.001, bodyTag: 'payload', __synthetic: true }
+        : { startT: 0, endT: null, bodyTag: 'payload', __synthetic: true, __pending: true };
       if (_rawSeq.indexOf('Payload Release') < 0) _rawSeq.push('Payload Release');
     }
   }
   
-  const _hasAnyBodyTag = Object.values(_logPre).some(e => e && e.bodyTag);
-  let seq;
-  if (!_hasAnyBodyTag) {
-    seq = _rawSeq.filter(ph => ph !== 'ASCENT');
-  } else {
-    seq = _rawSeq.filter(ph => {
-      if (ph === 'ASCENT') return false;
-      const entry = _logPre[ph];
-      if (!entry) return false;
-      if (_PHASE_CROSS_ROLE[ph] && _PHASE_CROSS_ROLE[ph].indexOf(_activeRole) >= 0) return true;
-      const tag = entry.bodyTag;
-      return !tag || tag === _activeRole;
-    });
-  }
+  // Filter via 3-tier: cross-role → entry.bodyTag → static role map.
+  // Static map handles future phases (not yet in phaseLog) so user sees
+  // upcoming phases from sim start, not empty panel.
+  let seq = _rawSeq.filter(ph => {
+    if (ph === 'ASCENT') return false;
+    if (_PHASE_CROSS_ROLE[ph] && _PHASE_CROSS_ROLE[ph].indexOf(_activeRole) >= 0) return true;
+    const entry = _logPre[ph];
+    if (entry && entry.bodyTag) return entry.bodyTag === _activeRole;
+    const knownRole = _PHASE_KNOWN_ROLE[ph];
+    return knownRole === _activeRole;
+  });
   const seqKey = _activeRole + '|' + seq.join('|');
   
   // Header reflects active role
@@ -1515,7 +1551,7 @@ function _renderPhaseTrack(status) {
   let cls;
   if (entry && entry.endT !== null && entry.endT !== undefined) {
     cls = 'done'; doneCount++;
-  } else if (ph === curPhase) {
+  } else if (ph === _curPhaseForClass) {
     cls = 'active';
   } else {
     cls = 'future';
