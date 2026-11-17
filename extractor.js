@@ -3,7 +3,7 @@ const path = require('path');
 const readline = require('readline');
 
 // Configuration - runs from parent directory, targets repo
-const REPO_ROOT = path.join(__dirname, 'Project-Falcon-9');
+const REPO_ROOT = __dirname;
 const ALLOWED_EXTENSIONS = ['.js', '.html', '.css', '.json', '.txt', '.md', '.jsx', '.ts', '.tsx', '.glsl', '.vue', '.svelte'];
 const MAX_FILE_SIZE = 2 * 1024 * 1024;
 
@@ -202,7 +202,7 @@ function startBundler() {
                 return;
             }
             
-            const OUTPUT_FILE = path.join(__dirname, filename.trim() + '.txt');
+            const OUTPUT_FILE = path.join(__dirname, '..', filename.trim() + '.txt');
             
             console.log(`\n⚙️ Bundling ${selectedFiles.length} files (${formatSize(selectedSize)})...\n`);
             
