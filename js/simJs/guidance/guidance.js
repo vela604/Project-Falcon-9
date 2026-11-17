@@ -480,7 +480,7 @@ function _trackBodyTelemetry(snap) {
     // itself (velocity → 0 in one tick) produces fictitious accelerations
     // in the 1000+ g range, which are not meaningful physical G loads.
     // Peak freeze at pre-crash value is the correct behavior.
-    if (b.crashed || b.settled) continue;
+    if (b.crashed || b.settled || b.landed) continue; // BUG-3 FIX: landed bodies also freeze peaks. A chute splashdown / soft landing zeroes velocity in one tick, producing a ~50 G contact-impulse spike that is a numerical artifact, not a physical load.
     const r = Math.hypot(b.rx, b.ry);
     if (!(r > 1)) continue;
     const alt = r - Re;
@@ -581,7 +581,7 @@ function _trackBodyTelemetry(snap) {
     // split. Only RAISES child values (never lowers). No-op for body 0.
     {
       const _pIdxC = Number.isInteger(b._inheritPeaksFrom) ? b._inheritPeaksFrom : -1;
-      if (_pIdxC >= 0 && _pIdxC !== i && _peakTracker[_pIdxC]) {
+      if (false && _pIdxC >= 0 && _pIdxC !== i && _peakTracker[_pIdxC]) { // BUG-4 FIX: continuous inheritance DISABLED. It re-copied the parent peaks every tick forever, leaking the parent post-separation peaks (e.g. stage deorbit G) into already-separated children (booster, payload). Inheritance is correctly applied ONCE at tracker creation above (= peaks at the moment of separation).
         const _pPkC = _peakTracker[_pIdxC];
         if (_pPkC.G > _peakTracker[i].G) {
           _peakTracker[i].G = _pPkC.G;
