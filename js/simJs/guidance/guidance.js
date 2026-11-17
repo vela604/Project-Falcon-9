@@ -184,7 +184,7 @@ const GUIDE_PHASE_SEQUENCES = {
     DONE: 'MISSION COMPLETE',
     SUICIDE_ROTATE: 'DEORBIT',
     SUICIDE_BURN: 'DEORBIT',
-    SUICIDE_COAST: 'IMPACT',
+    SUICIDE_COAST: 'IMPACT_COAST',
   },
   orbitalMissionGNCV1: {
     COAST_ROTATE: 'COAST',
@@ -200,7 +200,7 @@ const GUIDE_PHASE_SEQUENCES = {
     DONE: 'MISSION COMPLETE',
     SUICIDE_ROTATE: 'DEORBIT',
     SUICIDE_BURN: 'DEORBIT',
-    SUICIDE_COAST: 'IMPACT',
+    SUICIDE_COAST: 'IMPACT_COAST',
   },
 };
 
@@ -398,7 +398,7 @@ function _phaseBodyTag(displayPhase) {
   if (p === 'ORBIT BURN' || p === 'APOGEE TRIM' ||
       p === 'COAST' || p === 'CIRCULARIZE' ||
       p === 'PAYLOAD DEPLOY' || p === 'FAIRING DEPLOY' ||
-      p === 'DEORBIT' || p === 'DEORBIT COMPLETE' || p === 'STAGE IMPACT' || p === 'MISSION COMPLETE' || p === 'IMPACT') return 'stage';
+      p === 'DEORBIT' || p === 'DEORBIT COMPLETE' || p === 'STAGE IMPACT' || p === 'MISSION COMPLETE' || p === 'IMPACT COAST') return 'stage';
   if (p === 'CHUTE DEPLOY' || p === 'SPLASHDOWN' || p === 'FAIRING SPLASHDOWN') return 'fairing';
   if (p === 'PAYLOAD RELEASE' || p === 'PAYLOAD OPEN') return 'payload';
   return '?';
