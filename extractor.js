@@ -2,73 +2,63 @@ const fs = require('fs');
 const path = require('path');
 const readline = require('readline');
 
+// Configuration
 const OUTPUT_FILE = 'agent_alpha_bundle.txt';
 const ALLOWED_EXTENSIONS = ['.js', '.html', '.css', '.json', '.txt', '.md', '.jsx', '.ts', '.tsx', '.glsl', '.vue', '.svelte'];
-const MAX_FILE_SIZE = 2 * 1024 * 1024;
+const MAX_FILE_SIZE = 2 * 1024 * 1024; // 2MB
 
 const rl = readline.createInterface({
   input: process.stdin,
   output: process.stdout
 });
 
-// Simplified .gitignore parser
+// Load .gitignore patterns
 function loadGitignore() {
   const patterns = [];
   try {
-    const gitignoreContent = fs.readFileSync('.gitignore', 'utf8');
-    const lines = gitignoreContent.split('\n');
+    const content = fs.readFileSync('.gitignore', 'utf8');
+    const lines = content.split('\n');
     
     for (let line of lines) {
       line = line.trim();
       if (line && !line.startsWith('#')) {
-        // Remove trailing slash for directories
-        if (line.endsWith('/')) {
-          line = line.slice(0, -1);
-        }
+        if (line.endsWith('/')) line = line.slice(0, -1);
         patterns.push(line);
       }
     }
   } catch (err) {
-    // No .gitignore file, that's fine
+    // No .gitignore, that's fine
   }
   return patterns;
 }
 
-// Check if a file/directory should be ignored
+// Check if path should be ignored
 function shouldIgnore(filePath, patterns) {
   const normalizedPath = filePath.replace(/\\/g, '/');
   const fileName = path.basename(filePath);
   
   for (const pattern of patterns) {
-    // Exact match
-    if (fileName === pattern || normalizedPath === pattern) {
-      return true;
-    }
+    if (fileName === pattern || normalizedPath === pattern) return true;
     
-    // Wildcard patterns
     if (pattern.includes('*')) {
       const regexPattern = pattern
         .replace(/\./g, '\\.')
         .replace(/\*/g, '.*')
         .replace(/\?/g, '.');
       const regex = new RegExp(`^${regexPattern}$`);
-      if (regex.test(fileName) || regex.test(normalizedPath)) {
-        return true;
-      }
+      if (regex.test(fileName) || regex.test(normalizedPath)) return true;
     }
     
-    // Directory patterns (if pattern doesn't contain /, it matches any directory with that name)
     if (!pattern.includes('/')) {
       const pathParts = normalizedPath.split('/');
-      if (pathParts.includes(pattern)) {
-        return true;
-      }
+      if (pathParts.includes(pattern)) return true;
     }
   }
   
   return false;
 }
 
+// Recursively get all valid files
 function getFiles(dir, fileList = [], gitignorePatterns) {
   const files = fs.readdirSync(dir);
   
@@ -76,7 +66,6 @@ function getFiles(dir, fileList = [], gitignorePatterns) {
     const filePath = path.join(dir, file);
     const relativePath = path.relative('.', filePath);
     
-    // Check gitignore
     if (shouldIgnore(relativePath, gitignorePatterns) || shouldIgnore(file, gitignorePatterns)) {
       continue;
     }
@@ -87,7 +76,7 @@ function getFiles(dir, fileList = [], gitignorePatterns) {
       getFiles(filePath, fileList, gitignorePatterns);
     } else {
       const ext = path.extname(file).toLowerCase();
-      if (ALLOWED_EXTENSIONS.includes(ext) && file !== OUTPUT_FILE && file !== 'alpha_bundler.js') {
+      if (ALLOWED_EXTENSIONS.includes(ext) && file !== OUTPUT_FILE && file !== 'extractor.js') {
         if (stat.size <= MAX_FILE_SIZE) {
           fileList.push({
             path: relativePath,
@@ -102,24 +91,61 @@ function getFiles(dir, fileList = [], gitignorePatterns) {
   return fileList;
 }
 
+// Group files by directory
 function groupByDirectory(files) {
   const groups = {};
   for (const file of files) {
     const dir = file.dir || '.';
-    if (!groups[dir]) {
-      groups[dir] = [];
-    }
+    if (!groups[dir]) groups[dir] = [];
     groups[dir].push(file);
   }
   return groups;
 }
 
+// Format file size
 function formatSize(bytes) {
   if (bytes < 1024) return bytes + ' B';
   if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
   return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
 }
 
+// Parse user selection
+function parseSelection(input, totalFiles) {
+  const selection = {
+    mode: 'none', // 'all', 'numbers', 'exclude', 'quit'
+    numbers: [],
+    excludePatterns: []
+  };
+  
+  const trimmed = input.trim();
+  
+  if (!trimmed) {
+    selection.mode = 'all';
+    return selection;
+  }
+  
+  if (trimmed.toLowerCase() === 'q' || trimmed.toLowerCase() === 'quit') {
+    selection.mode = 'quit';
+    return selection;
+  }
+  
+  // Check if it's comma-separated numbers
+  const parts = trimmed.split(',').map(s => s.trim());
+  const allNumbers = parts.every(p => /^\d+$/.test(p));
+  
+  if (allNumbers && parts.length > 0) {
+    selection.mode = 'numbers';
+    selection.numbers = parts.map(p => parseInt(p, 10)).filter(n => n >= 1 && n <= totalFiles);
+    return selection;
+  }
+  
+  // Otherwise treat as folder exclusion patterns
+  selection.mode = 'exclude';
+  selection.excludePatterns = parts.map(p => p.toLowerCase());
+  return selection;
+}
+
+// Main bundler logic
 function startBundler() {
   console.log('\n🔍 Scanning directory (respecting .gitignore)...\n');
   
@@ -136,41 +162,49 @@ function startBundler() {
   const totalSize = files.reduce((sum, f) => sum + f.size, 0);
   
   console.log('📂 Files grouped by directory:\n');
-  console.log('='.repeat(60));
+  console.log('='.repeat(70));
   
   let fileIndex = 1;
-  const fileMap = {};
   
   for (const [dir, dirFiles] of Object.entries(groups).sort()) {
     console.log(`\n📁 ${dir}/ (${dirFiles.length} files)`);
     for (const file of dirFiles) {
       console.log(`   [${fileIndex}] ${file.name} (${formatSize(file.size)})`);
-      fileMap[fileIndex] = file;
+      file.index = fileIndex;
       fileIndex++;
     }
   }
   
-  console.log('\n' + '='.repeat(60));
+  console.log('\n' + '='.repeat(70));
   console.log(`\n📊 Summary:`);
   console.log(`   Total files: ${files.length}`);
   console.log(`   Total size: ${formatSize(totalSize)}`);
   console.log(`   Directories: ${Object.keys(groups).length}`);
   
-  rl.question('\n💡 Options:\n   • Press ENTER to bundle all files\n   • Type folder names to exclude (comma-separated): e.g., "node_modules,dist,tests"\n   • Type "q" to quit\n\n👉 Your choice: ', (answer) => {
-    if (answer.trim().toLowerCase() === 'q') {
+  rl.question('\n💡 Selection Options:\n   • ENTER → bundle all files\n   • Numbers → select specific files (e.g., "1,5,12")\n   • Folder names → exclude folders (e.g., "tests,docs")\n   • "q" → quit\n\n👉 Your choice: ', (answer) => {
+    const selection = parseSelection(answer, files.length);
+    
+    if (selection.mode === 'quit') {
       console.log('Cancelled.');
       rl.close();
       return;
     }
     
-    let selectedFiles = [...files];
+    let selectedFiles = [];
     
-    // If user wants to exclude specific folders
-    if (answer.trim()) {
-      const excludePatterns = answer.split(',').map(s => s.trim().toLowerCase());
+    if (selection.mode === 'all') {
+      selectedFiles = [...files];
+    } else if (selection.mode === 'numbers') {
+      if (selection.numbers.length === 0) {
+        console.log('❌ No valid file numbers selected.');
+        rl.close();
+        return;
+      }
+      selectedFiles = files.filter(f => selection.numbers.includes(f.index));
+    } else if (selection.mode === 'exclude') {
       selectedFiles = files.filter(f => {
         const pathLower = f.path.toLowerCase();
-        return !excludePatterns.some(pattern =>
+        return !selection.excludePatterns.some(pattern =>
           pathLower.includes(pattern.toLowerCase())
         );
       });
@@ -182,7 +216,9 @@ function startBundler() {
       return;
     }
     
-    console.log(`\n⚙️ Bundling ${selectedFiles.length} files...\n`);
+    const selectedSize = selectedFiles.reduce((sum, f) => sum + f.size, 0);
+    
+    console.log(`\n⚙️ Bundling ${selectedFiles.length} files (${formatSize(selectedSize)})...\n`);
     
     let output = '';
     let bundledSize = 0;
@@ -204,12 +240,12 @@ function startBundler() {
     
     fs.writeFileSync(OUTPUT_FILE, output, 'utf8');
     
-    console.log('\n' + '='.repeat(60));
+    console.log('\n' + '='.repeat(70));
     console.log(`🎉 SUCCESS!`);
     console.log(`   Output: ${OUTPUT_FILE}`);
     console.log(`   Files bundled: ${selectedFiles.length}`);
     console.log(`   Bundle size: ${formatSize(bundledSize)}`);
-    console.log('='.repeat(60) + '\n');
+    console.log('='.repeat(70) + '\n');
     
     rl.close();
   });
