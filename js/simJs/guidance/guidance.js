@@ -398,8 +398,8 @@ function _phaseBodyTag(displayPhase) {
   if (p === 'ORBIT BURN' || p === 'APOGEE TRIM' ||
       p === 'COAST' || p === 'CIRCULARIZE' ||
       p === 'PAYLOAD DEPLOY' || p === 'FAIRING DEPLOY' ||
-      p === 'DEORBIT') return 'stage';
-  if (p === 'CHUTE DEPLOY' || p === 'SPLASHDOWN') return 'fairing';
+      p === 'DEORBIT' || p === 'DEORBIT COMPLETE' || p === 'STAGE IMPACT' || p === 'MISSION COMPLETE' || p === 'IMPACT') return 'stage';
+  if (p === 'CHUTE DEPLOY' || p === 'SPLASHDOWN' || p === 'FAIRING SPLASHDOWN') return 'fairing';
   if (p === 'PAYLOAD RELEASE' || p === 'PAYLOAD OPEN') return 'payload';
   return '?';
 }
@@ -476,6 +476,41 @@ function _trackBodyTelemetry(snap) {
   for (let i = 0; i < snap.bodies.length; i++) {
     const b = snap.bodies[i];
     if (!b) continue;
+
+    // --- Event transition detection (runs BEFORE skip check) ---
+    if (!_bodyTrackState[i]) _bodyTrackState[i] = { karmanAbove: null, vrState: 'neutral', lastApogeeT: -Infinity, lastPerigeeT: -Infinity };
+    const _ts_ev = _bodyTrackState[i];
+
+    // Chute deploy detection
+    if (b.chute) {
+        if (_ts_ev.chuteWasDeployed === undefined) {
+            _ts_ev.chuteWasDeployed = !!b.chute.deployed;
+        } else if (b.chute.deployed && !_ts_ev.chuteWasDeployed) {
+            _ts_ev.chuteWasDeployed = true;
+            logEvent('CHUTE_DEPLOY', T, { bodyTag: _computeBodyTag(b) });
+        }
+    }
+
+    // Fairing splashdown detection
+    if (b.fairingHalf) {
+        if (_ts_ev.fairingWasDown === undefined) {
+            _ts_ev.fairingWasDown = !!(b.landed || b.crashed);
+        } else if ((b.landed || b.crashed) && !_ts_ev.fairingWasDown) {
+            _ts_ev.fairingWasDown = true;
+            logEvent('FAIRING_SPLASHDOWN', T, { bodyTag: 'fairing' });
+        }
+    }
+
+    // Stage impact detection (body crashes after deorbit)
+    const _isStageBody = (i === _lbState.stageIdx) || (i === _v3State.stageIdx);
+    if (_isStageBody) {
+        if (_ts_ev.stageWasDown === undefined) {
+            _ts_ev.stageWasDown = !!b.crashed;
+        } else if (b.crashed && !_ts_ev.stageWasDown) {
+            _ts_ev.stageWasDown = true;
+            logEvent('STAGE_IMPACT', T, { bodyTag: 'stage' });
+        }
+    }
     // Skip peak tracking for crashed/settled bodies — the crash impulse
     // itself (velocity → 0 in one tick) produces fictitious accelerations
     // in the 1000+ g range, which are not meaningful physical G loads.
@@ -1023,6 +1058,7 @@ function _v3CurrentPhase() {
     if (_v3State.suicideBlock) return _v3State.suicideBlock.getStatus().phase;
     return '?';
   }
+  if (mp === 'END') return 'END';
   return '?';
 }
 
@@ -1370,7 +1406,7 @@ send(cmdMarkIntentionalImpact(_v3State.stageIdx));
       _v3State.suicideBlock.tick(snapshot);
       if (_v3State.suicideBlock.isDone()) {
         _v3State.suicideResult = _v3State.suicideBlock.getResult();
-        logEvent('IMPACT');
+        logEvent('DEORBIT_COMPLETE');
         _v3State.missionPhase = 'END';
         _v3State.missionPhaseStart = simT;
         console.log('[leoInsertionV3] SUICIDE done at t=' + simT.toFixed(2));
@@ -1899,6 +1935,7 @@ function _lbCurrentPhase() {
     if (_lbState.suicideBlock) return _lbState.suicideBlock.getStatus().phase;
     return '?';
   }
+  if (mp === 'END') return 'END';
   return '?';
 }
 
@@ -2235,7 +2272,7 @@ send(cmdMarkIntentionalImpact(_lbState.stageIdx));
       _lbState.suicideBlock.tick(snapshot);
       if (_lbState.suicideBlock.isDone()) {
         _lbState.suicideResult = _lbState.suicideBlock.getResult();
-        logEvent('IMPACT');
+        logEvent('DEORBIT_COMPLETE');
         _lbState.missionPhase = 'END';
         _lbState.missionPhaseStart = simT;
         console.log('[orbitalMissionGNCV1] SUICIDE done at t=' + simT.toFixed(2));
