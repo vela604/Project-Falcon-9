@@ -398,7 +398,7 @@ function _phaseBodyTag(displayPhase) {
   if (p === 'ORBIT BURN' || p === 'APOGEE TRIM' ||
       p === 'COAST' || p === 'CIRCULARIZE' ||
       p === 'PAYLOAD DEPLOY' || p === 'FAIRING DEPLOY' ||
-      p === 'DEORBIT' || p === 'DEORBIT COMPLETE' || p === 'STAGE IMPACT' || p === 'MISSION COMPLETE' || p === 'IMPACT COAST') return 'stage';
+      p === 'DEORBIT' || p === 'DEORBIT COMPLETE' || p === 'MISSION COMPLETE' || p === 'IMPACT COAST') return 'stage';
   if (p === 'CHUTE DEPLOY' || p === 'SPLASHDOWN' || p === 'FAIRING SPLASHDOWN') return 'fairing';
   if (p === 'PAYLOAD RELEASE' || p === 'PAYLOAD OPEN') return 'payload';
   return '?';
@@ -501,17 +501,7 @@ function _trackBodyTelemetry(snap) {
         }
     }
 
-    // Stage impact detection (body crashes after deorbit)
-    const _isStageBody = (i === _lbState.stageIdx) || (i === _v3State.stageIdx);
-    if (_isStageBody) {
-        if (_ts_ev.stageWasDown === undefined) {
-            _ts_ev.stageWasDown = !!b.crashed;
-        } else if (b.crashed && !_ts_ev.stageWasDown) {
-            _ts_ev.stageWasDown = true;
-            logEvent('STAGE_IMPACT', T, { bodyTag: 'stage' });
-        }
-    }
-    // Skip peak tracking for crashed/settled bodies — the crash impulse
+        // Skip peak tracking for crashed/settled bodies — the crash impulse
     // itself (velocity → 0 in one tick) produces fictitious accelerations
     // in the 1000+ g range, which are not meaningful physical G loads.
     // Peak freeze at pre-crash value is the correct behavior.
