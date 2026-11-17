@@ -1346,6 +1346,8 @@ const _PHASE_KNOWN_ROLE = {
   'CIRCULARIZE': 'stage',
   'PAYLOAD DEPLOY': 'stage',
   'DEORBIT': 'stage',
+  'MISSION COMPLETE': 'stage',
+  'IMPACT': 'stage',
   // Fairing sub-phases
   'Fairing Release': 'fairing',
   'Chute Deploy': 'fairing',
@@ -1918,6 +1920,13 @@ function _syncMissionRecordSession(status) {
       _lastT = e.t;
       const cfg = SPECIAL[e.name];
       if (!cfg) return;
+      // One-shot per mission: LIFTOFF, MAX_Q, MECO etc should toast once.
+      // Duplicate agent emissions (known bug in LIFTOFF/MAX_Q) would spam.
+      // Allow IMPACT and TOUCHDOWN_COMPLETE to re-fire (multi-body events).
+      if (!_seenOneShots) _seenOneShots = {};
+      const _ONESHOT = { LIFTOFF:1, MAX_Q:1, MECO:1, FAIRING_DEPLOY:1, PAYLOAD_RELEASE:1, LANDING_BURN:1 };
+      if (_ONESHOT[e.name] && _seenOneShots[e.name]) return;
+      _seenOneShots[e.name] = true;
       _queue.push({ label: cfg.label, t: e.t });
       _drain();
     });
