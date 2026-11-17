@@ -317,9 +317,6 @@ const GUIDE_PHASE_SEQUENCES = {
     _phaseLog = {};
     _lastSeenPhase = null;
     _guideStartT = null;
-    _liftoffFired = false;
-    _landingBurnFired = false;
-    _maxQFired = false;
     _lastRtlsPhase = null;
     // Only reset per-run trackers on a genuinely fresh start. FF worker
     // appears to call startGuide at split (mid-mission), which was wiping
@@ -330,6 +327,9 @@ const GUIDE_PHASE_SEQUENCES = {
     if (!_midMission) {
       _bodyTrackState = {};
       _peakTracker = {};
+      _liftoffFired = false;
+      _landingBurnFired = false;
+      _maxQFired = false;
     }
     if (typeof GUIDES[name].start === "function") {
       try {
@@ -754,6 +754,9 @@ function setActiveGuide(name) {
 out.lastSeenPhase = _lastSeenPhase;
 out.guideStartT = _guideStartT;
 out.lastSimTime = _lastSimTime;
+out.liftoffFired = _liftoffFired;
+out.landingBurnFired = _landingBurnFired;
+out.maxQFired = _maxQFired;
 
 // V3 mission state + block states for FF mid-flight support.
 out.v3State = {
@@ -845,6 +848,9 @@ function importGuideState(data) {
       _eventLog = (data.eventLog && Array.isArray(data.eventLog)) ? data.eventLog.slice() : [];
       _peakTracker = (data.peakTracker && typeof data.peakTracker === 'object') ? data.peakTracker : {};
       _bodyTrackState = (data.bodyTrackState && typeof data.bodyTrackState === 'object') ? data.bodyTrackState : {};
+      if (data.liftoffFired !== undefined) _liftoffFired = !!data.liftoffFired;
+      if (data.landingBurnFired !== undefined) _landingBurnFired = !!data.landingBurnFired;
+      if (data.maxQFired !== undefined) _maxQFired = !!data.maxQFired;
       if (data.lastSeenPhase !== undefined) _lastSeenPhase = data.lastSeenPhase;
       if (data.guideStartT !== undefined) _guideStartT = data.guideStartT;
       if (data.lastSimTime !== undefined) _lastSimTime = data.lastSimTime;
