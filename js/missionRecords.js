@@ -211,7 +211,7 @@ function saveMissionRecords(records) {
         blocked++;
         continue;
       }
-      if (r.success === false && existing.success === true) {
+      if (r && r.success === false && existing && existing.success === true) {
         console.warn('[missionRecords] saveMissionRecords BLOCKED: failed cannot overwrite success', r.comboKey);
         filtered.push(existing);
         blocked++;
@@ -366,8 +366,8 @@ function upsertUserMissionRecord(record) {
     // on-stop, external scripts) can bypass. Prevent data loss here too.
     const _incomingPartial  = !!record.partial;
     const _existingPartial  = !!existing.partial;
-    const _incomingFailed   = record.success === false;
-    const _existingSuccess  = existing.success === true;
+    const _incomingFailed   = record && record.success === false;
+    const _existingSuccess  = existing && existing.success === true;
     if (_incomingPartial && !_existingPartial) {
       console.warn('[missionRecords] upsert SKIPPED: partial cannot overwrite complete', record.comboKey);
       return { action: 'skipped', reason: 'partial cannot overwrite complete' };
@@ -481,8 +481,8 @@ function saveMissionRecordWithPolicy(record) {
     // Edge case: partial=true+success=true (tester2 mutation quirk) is
     // effectively complete. Treat as complete to prevent quirk records
     // overwriting cleaner complete records.
-    const _incomingEffectiveComplete = !record.partial || (record.partial === true && record.success === true);
-    const _existingEffectiveComplete = !existing.partial || (existing.partial === true && existing.success === true);
+    const _incomingEffectiveComplete = !record.partial || (record.partial === true && record && record.success === true);
+    const _existingEffectiveComplete = !existing.partial || (existing.partial === true && existing && existing.success === true);
     if (!_incomingEffectiveComplete && _existingEffectiveComplete) {
       console.log('[missionRecords] savePolicy SKIPPED: complete exists (partial incoming)', record.comboKey);
       return { action: 'skipped', reason: 'complete record already exists' };
