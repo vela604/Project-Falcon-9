@@ -28,7 +28,7 @@ const MISSION_PHYSICS_STAMP = '2024-11-15-1';
 // changes. Bumping it invalidates ALL existing records. Only bump when
 // trajectory/timing-affecting physics actually changes (mass props,
 // control laws, atmosphere model, etc.).
-const MISSION_EVENT_SCHEMA_VERSION = 2;
+const MISSION_EVENT_SCHEMA_VERSION = 3;
 function currentPhysicsVersion() { return MISSION_PHYSICS_STAMP; }
 function currentEventSchemaVersion() { return MISSION_EVENT_SCHEMA_VERSION; }
 

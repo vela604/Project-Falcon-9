@@ -516,7 +516,7 @@ function _trackBodyTelemetry(snap) {
     const isAbove = alt >= _KARMAN_ALT_M;
     if (ts.karmanAbove === null) ts.karmanAbove = isAbove;
     else if (ts.karmanAbove !== isAbove) {
-      logEvent(isAbove ? 'KARMAN_UP' : 'KARMAN_DOWN', T);
+      logEvent(isAbove ? 'KARMAN_UP' : 'KARMAN_DOWN', T, { bodyIdx: i, bodyId: b.id });
       ts.karmanAbove = isAbove;
     }
 
@@ -540,14 +540,14 @@ function _trackBodyTelemetry(snap) {
     if (vr > _VR_HYST_BAND) {
       if (ts.vrState === 'descending' &&
           (!Number.isFinite(ts.lastPerigeeT) || T - ts.lastPerigeeT >= APSE_RATE_LIMIT_S)) {
-        logEvent('PERIGEE_CROSS', T);
+        logEvent('PERIGEE_CROSS', T, { bodyIdx: i, bodyId: b.id });
         ts.lastPerigeeT = T;
       }
       ts.vrState = 'climbing';
     } else if (vr < -_VR_HYST_BAND) {
       if (ts.vrState === 'climbing' &&
           (!Number.isFinite(ts.lastApogeeT) || T - ts.lastApogeeT >= APSE_RATE_LIMIT_S)) {
-        logEvent('APOGEE_CROSS', T);
+        logEvent('APOGEE_CROSS', T, { bodyIdx: i, bodyId: b.id });
         ts.lastApogeeT = T;
       }
       ts.vrState = 'descending';
