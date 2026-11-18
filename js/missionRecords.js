@@ -218,7 +218,19 @@ function saveMissionRecords(records) {
         continue;
       }
     }
-    filtered.push(r);
+        // Same duration guard as upsertUserMissionRecord (defense-in-depth for
+    // direct callers like tester2 that bypass the policy functions).
+    if (r.success === true && existing.success === true) {
+        const _rDur = Number.isFinite(r.durationS) ? r.durationS : 0;
+        const _eDur = Number.isFinite(existing.durationS) ? existing.durationS : 0;
+        if (_rDur < _eDur) {
+            console.warn('[missionRecords] saveMissionRecords BLOCKED: shorter success would overwrite longer', r.comboKey);
+            filtered.push(existing);
+            blocked++;
+            continue;
+        }
+    }
+filtered.push(r);
   }
 
   try {
@@ -283,7 +295,18 @@ function upsertUserMissionRecord(record) {
       console.warn('[missionRecords] upsert SKIPPED: failed cannot overwrite success', record.comboKey);
       return { action: 'skipped', reason: 'failed cannot overwrite success' };
     }
-    records[idx] = record;
+        // Duration preservation: a shorter successful capture must not overwrite
+    // a longer one. Same comboKey = same config = same mission, so a shorter
+    // record is just an early capture, not a new outcome.
+    if (record.success === true && existing.success === true) {
+        const _inDur = Number.isFinite(record.durationS) ? record.durationS : 0;
+        const _exDur = Number.isFinite(existing.durationS) ? existing.durationS : 0;
+        if (_inDur < _exDur) {
+            console.log('[missionRecords] upsert SKIPPED: shorter success (' + _inDur.toFixed(1) + 's) preserved longer (' + _exDur.toFixed(1) + 's)', record.comboKey);
+            return { action: 'skipped', reason: 'shorter success cannot overwrite longer success' };
+        }
+    }
+records[idx] = record;
   } else {
     records.push(record);
   }
