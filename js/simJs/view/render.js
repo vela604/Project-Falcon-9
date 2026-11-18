@@ -2397,6 +2397,17 @@ function drawGroundFx(pass) {
 // Returns false if offscreen canvases are unavailable (caller falls back).
 // ============================================================================
 const _PLX = { BW: 320, BH: 640, ok: null, buf: null, bctx: null, tcv: null, tctx: null, noise: null };
+// Commit e23018b fixed a typo ('rgb0a' -> 'rgba') in the nozzle-edge
+// softening pass in _drawPlumeFx. Before that fix addColorStop() threw
+// SyntaxError on the bad colour and the surrounding catch{} swallowed it,
+// so the ENTIRE pass was a silent no-op. Fixing the typo turned the pass
+// ON for the first time -- and it blurs the whole top 16% of the plume
+// buffer AFTER the jets/shock-diamonds/nozzle-exit blob are drawn, not
+// just the side edges its comment claims. That is the visual regression.
+// OFF preserves the pre-e23018b pixels exactly, with no per-frame throw
+// and no wasted blur work. Flip to true only if that pass is reworked
+// into a side-edge-only mask.
+const PLUME_SOFT_NOZZLE_EDGES = false;
 
 function _plMakeCanvas(w, h) {
   let c = null;
@@ -2733,7 +2744,7 @@ const s0 = (hasJets && re > 0) ? Math.min(1, (reEng / re) * 0.97) : 1;   // star
   // Soften the crisp side edges right under the nozzles: the turbulence mask is ~0 there,
   // so the polygon edges would otherwise stay razor sharp. Cross-fade the top part of the
   // plume into a blurred copy of itself, fully blurred at the nozzle, sharp again by ~16%.
-  try {
+  if (PLUME_SOFT_NOZZLE_EDGES) try {
     const HB = Math.round(BH * 0.16);
     T.setTransform(1, 0, 0, 1, 0, 0);
     T.globalAlpha = 1;
