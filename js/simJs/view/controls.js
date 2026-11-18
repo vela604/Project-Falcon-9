@@ -1867,6 +1867,9 @@ function _syncMissionRecordSession(status) {
   let _lastSim = -1;
   let _queue = [];
   let _busy = false;
+  // One-shot latch: which SPECIAL events already toasted this mission.
+  // Cleared on guide stop and on sim-reset detection, same as _lastT.
+  let _seenOneShots = {};
   function _fmtT(t) {
     const m = Math.floor(t / 60).toString().padStart(2, '0');
     const s = (t % 60).toFixed(1).padStart(4, '0');
@@ -1909,9 +1912,9 @@ function _syncMissionRecordSession(status) {
     setTimeout(function(){ _busy = false; _drain(); }, 1400);
   }
   window._checkSpecialEventsToasts = function(status) {
-    if (!status || !status.active) { _lastT = 0; _lastSim = -1; return; }
+    if (!status || !status.active) { _lastT = 0; _lastSim = -1; _seenOneShots = {}; return; }
     const simTime = Number(status.simTime) || 0;
-    if (simTime < _lastSim - 5) _lastT = 0;   // reset detected
+    if (simTime < _lastSim - 5) { _lastT = 0; _seenOneShots = {}; }   // reset detected
     _lastSim = simTime;
     if (!Array.isArray(status.events)) return;
     status.events.forEach(function(e){
