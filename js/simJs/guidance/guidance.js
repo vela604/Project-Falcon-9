@@ -71,7 +71,7 @@ const Guidance = (function () {
         const _alt0 = _r0 - _Re0 - _siteAlt0;
         if (_alt0 > 0.5) {
           _liftoffFired = true;
-          logEvent('LIFTOFF', _lastSimTime);
+          logEvent('LIFTOFF', _lastSimTime, { bodyIdx: 0 });
         }
       }
     }
@@ -80,7 +80,7 @@ const Guidance = (function () {
         const _rts = _lbState.rtlsBlock.getStatus();
         if (_rts && _rts.phase === 'LANDING_BURN') {
           _landingBurnFired = true;
-          logEvent('LANDING_BURN', _lastSimTime);
+          logEvent('LANDING_BURN', _lastSimTime, { bodyIdx: _lbState.boosterIdx >= 0 ? _lbState.boosterIdx : 0 });
         }
       } catch (_e) {}
     }
@@ -487,7 +487,7 @@ function _trackBodyTelemetry(snap) {
             _ts_ev.chuteWasDeployed = !!b.chute.deployed;
         } else if (b.chute.deployed && !_ts_ev.chuteWasDeployed) {
             _ts_ev.chuteWasDeployed = true;
-            logEvent('CHUTE_DEPLOY', T, { bodyTag: _computeBodyTag(b) });
+            logEvent('CHUTE_DEPLOY', T, { bodyTag: _computeBodyTag(b), bodyIdx: i, bodyId: b.id });
         }
     }
 
@@ -497,7 +497,7 @@ function _trackBodyTelemetry(snap) {
             _ts_ev.fairingWasDown = !!(b.landed || b.crashed);
         } else if ((b.landed || b.crashed) && !_ts_ev.fairingWasDown) {
             _ts_ev.fairingWasDown = true;
-            logEvent('FAIRING_SPLASHDOWN', T, { bodyTag: 'fairing' });
+            logEvent('FAIRING_SPLASHDOWN', T, { bodyTag: 'fairing', bodyIdx: i, bodyId: b.id });
         }
     }
 
@@ -631,7 +631,7 @@ function _trackBodyTelemetry(snap) {
       _maxQFired = true;
       logEvent('MAX_Q', _peakTracker[i].Q_t, {
         peakQ_kPa: _peakTracker[i].Q_Pa / 1000,
-        bodyTag: _peakTracker[i].Q_bodyTag || _computeBodyTag(b)
+        bodyTag: _peakTracker[i].Q_bodyTag || _computeBodyTag(b), bodyIdx: i, bodyId: b.id
       });
     }
     const _ax = Number.isFinite(b.ax) ? b.ax
@@ -1120,7 +1120,7 @@ function _leoTickV3(snapshot) {
           cmd.targetBodyIdx = _v3State.stageIdx;
           send(cmd);
           _v3State.fairingOpened = true;
-          logEvent('FAIRING_DEPLOY');
+          logEvent('FAIRING_DEPLOY', simT, { bodyIdx: _v3State.stageIdx });
           console.log('[leoInsertionV3] fairing open at t=' + simT.toFixed(2) +
             ' alt=' + altKm.toFixed(2) + ' km');
         }
@@ -1296,7 +1296,7 @@ break;
           const _relV3 = cmdReleasePayload();
           _relV3.targetBodyIdx = _v3State.stageIdx;
           send(_relV3);
-          logEvent('PAYLOAD_RELEASE');
+          logEvent('PAYLOAD_RELEASE', simT, { bodyIdx: _v3State.stageIdx });
           console.log('[leoInsertionV3] mission-level payload release at t=' + simT.toFixed(2));
         }
         _v3State.missionPhase = 'DONE_DWELL';
@@ -1366,7 +1366,7 @@ if (!_v3State.payloadOpenFired &&
 
         if (_v3Config.done.DEORBIT_ENABLED) {
 send(cmdMarkIntentionalImpact(_v3State.stageIdx));
-            logEvent('DEORBIT_START');
+            logEvent('DEORBIT_START', simT, { bodyIdx: _v3State.stageIdx });
             const env = Derivation.getEnv();
             // Mission-level target impact. Compute Earth-fixed angle from the remote
             // resting area and push it into the config clone. Block reads
@@ -1396,7 +1396,7 @@ send(cmdMarkIntentionalImpact(_v3State.stageIdx));
       _v3State.suicideBlock.tick(snapshot);
       if (_v3State.suicideBlock.isDone()) {
         _v3State.suicideResult = _v3State.suicideBlock.getResult();
-        logEvent('DEORBIT_COMPLETE');
+        logEvent('DEORBIT_COMPLETE', simT, { bodyIdx: _v3State.stageIdx });
         _v3State.missionPhase = 'END';
         _v3State.missionPhaseStart = simT;
         console.log('[leoInsertionV3] SUICIDE done at t=' + simT.toFixed(2));
@@ -2029,7 +2029,7 @@ function _landbackTick(snapshot) {
           cmd.targetBodyIdx = _lbState.stageIdx;
           send(cmd);
           _lbState.fairingOpened = true;
-          logEvent('FAIRING_DEPLOY');
+          logEvent('FAIRING_DEPLOY', simT, { bodyIdx: _lbState.stageIdx });
           console.log('[orbitalMissionGNCV1] fairing open at t=' + simT.toFixed(2) +
             ' alt=' + altKm.toFixed(2) + ' km');
         }
@@ -2165,7 +2165,7 @@ function _landbackTick(snapshot) {
           const _relLB = cmdReleasePayload();
           _relLB.targetBodyIdx = _lbState.stageIdx;
           send(_relLB);
-          logEvent('PAYLOAD_RELEASE');
+          logEvent('PAYLOAD_RELEASE', simT, { bodyIdx: _lbState.stageIdx });
           console.log('[orbitalMissionGNCV1] mission-level payload release at t=' + simT.toFixed(2));
         }
         _lbState.missionPhase = 'DONE_DWELL';
@@ -2232,7 +2232,7 @@ if (!_lbState.payloadOpenFired &&
 
         if (_lbConfig.done.DEORBIT_ENABLED) {
 send(cmdMarkIntentionalImpact(_lbState.stageIdx));
-            logEvent('DEORBIT_START');
+            logEvent('DEORBIT_START', simT, { bodyIdx: _lbState.stageIdx });
             const env = Derivation.getEnv();
             // Mission-level target impact. Compute Earth-fixed angle from the remote
             // resting area and push it into the config clone. Block reads
@@ -2262,7 +2262,7 @@ send(cmdMarkIntentionalImpact(_lbState.stageIdx));
       _lbState.suicideBlock.tick(snapshot);
       if (_lbState.suicideBlock.isDone()) {
         _lbState.suicideResult = _lbState.suicideBlock.getResult();
-        logEvent('DEORBIT_COMPLETE');
+        logEvent('DEORBIT_COMPLETE', simT, { bodyIdx: _lbState.stageIdx });
         _lbState.missionPhase = 'END';
         _lbState.missionPhaseStart = simT;
         console.log('[orbitalMissionGNCV1] SUICIDE done at t=' + simT.toFixed(2));

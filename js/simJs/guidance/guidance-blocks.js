@@ -558,7 +558,7 @@ if (residual <= target) shouldFire = true;
   
   if (shouldFire) {
     _mecoTriggered = true;
-    if (typeof Guidance !== 'undefined' && Guidance.logEvent) Guidance.logEvent('MECO');
+    if (typeof Guidance !== 'undefined' && Guidance.logEvent) Guidance.logEvent('MECO', undefined, { bodyIdx: _bodyIdx });
     _mecoSimTime = simT;
     _apogeeAtMeco_km = Number.isFinite(apogeeKm) ? apogeeKm : null;
     const localVert = Math.atan2(-body.rx, body.ry);
@@ -1643,7 +1643,7 @@ const tau_target = tau_desired - dNext.torqueEnvironmental;
 
             if (v_err <= cutoffThreshold) {
               _st.circAchieved = true;
-              if (typeof Guidance !== 'undefined' && Guidance.logEvent) Guidance.logEvent('ORBIT_ACHIEVED');
+              if (typeof Guidance !== 'undefined' && Guidance.logEvent) Guidance.logEvent('ORBIT_ACHIEVED', undefined, { bodyIdx: _bodyIdx });
               _send(Guidance.cmdSetAllThrottle(0));
               _send(Guidance.cmdSetGimbalRate(0));
               _st.phase = "COAST_ROTATE_2";
@@ -4230,7 +4230,7 @@ function _bbTokens(cfg) {
               _st.preEntryPrevTgt = null;
               _st.preEntryPrevT = null;
               _send(Guidance.cmdGridFinsDeploy(true));
-              if (typeof Guidance !== 'undefined' && Guidance.logEvent) Guidance.logEvent('GRID_FINS_DEPLOY');
+              if (typeof Guidance !== 'undefined' && Guidance.logEvent) Guidance.logEvent('GRID_FINS_DEPLOY', undefined, { bodyIdx: _bodyIdx });
               _send(Guidance.cmdSetAllThrottle(0));
               _send(Guidance.cmdSetGimbalRate(0));
               _send(Guidance.cmdRcsDuty(null, idx));
@@ -4423,7 +4423,7 @@ function _bbTokens(cfg) {
               _st.ebInit = true;
               _st.ebSpooled = false;
               _st.ebStage = "BURN";
-              if (typeof Guidance !== 'undefined' && Guidance.logEvent) Guidance.logEvent('ENTRY_BURN_START');
+              if (typeof Guidance !== 'undefined' && Guidance.logEvent) Guidance.logEvent('ENTRY_BURN_START', undefined, { bodyIdx: _bodyIdx });
               _st.ebGimbalSat = false;
               _st.ebRcsDir = 0;
               _st.ebFlips = 0;
@@ -4445,7 +4445,7 @@ function _bbTokens(cfg) {
             _st.ebSpeedMs = speedRelV;
             if (_st.ebStage !== "SPOOL" && speedRelV <= vCut) {
               _st.ebStage = "SPOOL";
-              if (typeof Guidance !== 'undefined' && Guidance.logEvent) Guidance.logEvent('ENTRY_BURN_CUTOFF');
+              if (typeof Guidance !== 'undefined' && Guidance.logEvent) Guidance.logEvent('ENTRY_BURN_CUTOFF', undefined, { bodyIdx: _bodyIdx });
               console.log("[returnHomeV3] ENTRY_BURN -> SPOOL cutoff t=" + simT.toFixed(2) +
                 " v=" + speedRelV.toFixed(1) + " alt=" + altKm.toFixed(1) + "km impactErr=" +
                 (_st.ebImpactErrM != null ? (_st.ebImpactErrM / 1000).toFixed(2) + "km" : "n/a"));
@@ -5295,7 +5295,7 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
             // ---- Contact detection (fires ONCE, then holds for spool-down) ----
             if (!_st.lbContactFired && (body.landed || body.crashed || hEff <= H_CUT || (-vRadial < 0.15 && hEff < H_STALL))) {
               _st.lbContactFired = true;
-              if (typeof Guidance !== 'undefined' && Guidance.logEvent) Guidance.logEvent('TOUCHDOWN_CONTACT');
+              if (typeof Guidance !== 'undefined' && Guidance.logEvent) Guidance.logEvent('TOUCHDOWN_CONTACT', undefined, { bodyIdx: _bodyIdx });
               _st.lbContactTime = simT;
               _st.lbLastCutLog = simT;
               _st.lbContactAltAGL = hAGL;
@@ -5349,7 +5349,7 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
             // ---- Legs deploy (once, below LANDING_BURN_LEGS_ALT_M AGL) ----
             if (!_st.lbLegsDeployed && hAGL <= _cfgN("LANDING_BURN_LEGS_ALT_M", 200)) {
               _st.lbLegsDeployed = true;
-              if (typeof Guidance !== 'undefined' && Guidance.logEvent) Guidance.logEvent('LEGS_DEPLOY');
+              if (typeof Guidance !== 'undefined' && Guidance.logEvent) Guidance.logEvent('LEGS_DEPLOY', undefined, { bodyIdx: _bodyIdx });
               _send(Guidance.cmdLegs(true));
               console.log("[returnHomeV3] LANDING_BURN legs deploy t=" + simT.toFixed(2) + " alt=" + hAGL.toFixed(1) + "m");
             }
@@ -5619,7 +5619,7 @@ const rcsNow = Number.isFinite(_st.lastRcsTorque) ? _st.lastRcsTorque : 0;
             _rcsOff();
             if (!_st.tcLogged) {
               _st.tcLogged = true;
-              if (typeof Guidance !== 'undefined' && Guidance.logEvent) Guidance.logEvent('TOUCHDOWN_COMPLETE');
+              if (typeof Guidance !== 'undefined' && Guidance.logEvent) Guidance.logEvent('TOUCHDOWN_COMPLETE', undefined, { bodyIdx: _bodyIdx });
               const env2 = Derivation.getEnv();
               const Rm2 = env2 ? env2.EARTH_RADIUS : 6371000;
               const rT = Math.hypot(body2.rx, body2.ry);
