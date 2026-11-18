@@ -2256,11 +2256,7 @@ const engineBell = (() => {
 // transform at this point has an off-canvas origin, so any local
 // translate lands the image outside the visible buffer.)
 
-// FRONT legs
-if (showLegs) {
-  drawLandingLeg(-1, false);
-  drawLandingLeg(1, false);
-}
+// (Early leg pass removed — legs draw once, AFTER the engine bells.)
   
   // ---- Body ----
   // Three visual cases:
