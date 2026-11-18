@@ -2137,6 +2137,15 @@ const engineBell = (() => {
     // ---- look: stowed = light A-frame panel hugging the hull (hull-coloured cap),
     // deployed = dark carbon legs with a chrome telescoping piston and a bright foot. ----
     const dp = Math.min(1, Math.max(0, p / 0.35)); const dps = dp * dp * (3 - 2 * dp);
+// Leg strokes + small extents are fractions of body width W, so the leg
+// keeps IDENTICAL proportions in the main canvas, the figure panel and
+// every static preview. The old absolute pixel floors (2.4 / 1.8 / 1.1 /
+// 0.8 ...) were tuned for the main canvas and made the piston 3-6x too
+// thick on the much smaller figure-panel rocket. Bare constants are
+// normalised at LEG_REF_W = main-canvas body width at default zoom.
+// 0.3px is a sub-hairline render guard only, NOT a design floor.
+const LEG_REF_W = 40;
+const legPx = (frac) => Math.max(0.3, W * frac);
     const cs = Math.cos(currentSweep), sn = Math.sin(currentSweep);
     // outward in-plane normal of the leg panel (rotates with the leg), plus a viewer tilt
     // The OUTER face of the leg always faces away from the hull, so the leg on the sun's side
@@ -2153,20 +2162,20 @@ const engineBell = (() => {
       ctx.lineCap = 'round';
       // outer tube
       ctx.strokeStyle = _tint('#0c0e12', Math.max(0.5, kOut));
-      ctx.lineWidth = Math.max(2.4, W * 0.085);
+      ctx.lineWidth = legPx(0.085);
       ctx.beginPath(); ctx.moveTo(pmX, pmY); ctx.lineTo(tipApexX, tipApexY); ctx.stroke();
       ctx.strokeStyle = _tint('#3a4049', kOut);
-      ctx.lineWidth = Math.max(1.8, W * 0.045);
+      ctx.lineWidth = legPx(0.045);
       ctx.beginPath(); ctx.moveTo(pmX, pmY); ctx.lineTo(tipApexX, tipApexY); ctx.stroke();
       // chrome inner rod (extends from 32% of the tube)
       const rodStartFrac = 0.32;
       const rx1 = pmX + (tipApexX - pmX) * rodStartFrac;
       const ry1 = pmY + (tipApexY - pmY) * rodStartFrac;
       ctx.strokeStyle = _tint('#b9c1ca', Math.max(0.35, kOut));
-      ctx.lineWidth = Math.max(1.8, W * 0.050);
+      ctx.lineWidth = legPx(0.050);
       ctx.beginPath(); ctx.moveTo(rx1, ry1); ctx.lineTo(tipApexX, tipApexY); ctx.stroke();
       ctx.strokeStyle = _tint('#ffffff', Math.max(0.5, kOut), 0.85);
-      ctx.lineWidth = Math.max(0.8, W * 0.014);
+      ctx.lineWidth = legPx(0.014);
       ctx.beginPath(); ctx.moveTo(rx1 - side * W * 0.004, ry1); ctx.lineTo(tipApexX - side * W * 0.004, tipApexY); ctx.stroke();
       // piston collar + upper ball joint
       ctx.fillStyle = _tint('#15181d', kOut);
@@ -2189,7 +2198,7 @@ const engineBell = (() => {
     legGrad.addColorStop(1, _tint(panelHex, Math.max(0.12, kEdgeI * 0.62)));
     ctx.fillStyle = legGrad;
     ctx.strokeStyle = _tint(_mixHex('#59616c', '#000000', dps), Math.max(0.35, kOut), 0.95);
-    ctx.lineWidth = 1.1;
+    ctx.lineWidth = legPx(1.1 / LEG_REF_W);
     ctx.beginPath();
     ctx.moveTo(j1x, jY);
     ctx.lineTo(p1x, p1y);
@@ -2211,7 +2220,7 @@ const engineBell = (() => {
 
     // panel seams (composite skin joints) running up the leg
     ctx.strokeStyle = _tint(panelHex, kOut * 0.45, 0.55);
-    ctx.lineWidth = 0.6;
+    ctx.lineWidth = legPx(0.6 / LEG_REF_W);
     ctx.beginPath();
     for (const f of [0.28, 0.5]) {
       ctx.moveTo(j1x + (p1x - j1x) * 0.0 + (j2x - j1x) * f * 0.0, jY);
@@ -2222,30 +2231,30 @@ const engineBell = (() => {
 
     // rim: dark inner cut + lit outer edge
     ctx.strokeStyle = _tint('#000000', 1, 0.9);
-    ctx.lineWidth = Math.max(1.1, W * 0.016);
+    ctx.lineWidth = legPx(0.016);
     ctx.beginPath(); ctx.moveTo(j1x, jY); ctx.lineTo(cutoutApexX, cutoutApexY); ctx.lineTo(j2x, jY); ctx.stroke();
     ctx.strokeStyle = _tint('#ffffff', kOut, 0.12 + 0.30 * kOut);
-    ctx.lineWidth = 0.8;
+    ctx.lineWidth = legPx(0.8 / LEG_REF_W);
     ctx.beginPath(); ctx.moveTo(j1x, jY); ctx.lineTo(p1x, p1y); ctx.stroke();
 
     // upper ball-joint bolt visible on the stowed cap
     if (dps < 0.7) {
       const bx = pivotX + (tipX - pivotX) * 0.14 + side * W * 0.02, by = pivotY + (tipY - pivotY) * 0.14;
       ctx.fillStyle = _tint('#14171b', Math.max(0.4, kOut), 0.95 * (1 - dps));
-      ctx.beginPath(); ctx.arc(bx, by, Math.max(1, W * 0.024), 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(bx, by, legPx(0.024), 0, Math.PI * 2); ctx.fill();
       ctx.fillStyle = _tint('#ffffff', kOut, 0.35 * (1 - dps));
-      ctx.beginPath(); ctx.arc(bx - W * 0.006, by - W * 0.006, Math.max(0.4, W * 0.007), 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(bx - W * 0.006, by - W * 0.006, legPx(0.007), 0, Math.PI * 2); ctx.fill();
     }
     // foot pad (deployed): bright landing plate across the tip
     if (dps > 0.25) {
       ctx.save();
       ctx.translate(tipApexX, tipApexY); ctx.rotate(currentSweep);
-      const fw = Math.max(2, W * 0.085), fh = Math.max(1.2, W * 0.026);
+      const fw = legPx(0.085), fh = legPx(0.026);
       ctx.beginPath();
       if (ctx.roundRect) ctx.roundRect(-fw / 2, -fh / 2, fw, fh, fh * 0.5); else ctx.rect(-fw / 2, -fh / 2, fw, fh);
       ctx.fillStyle = _tint('#e4e8ed', Math.max(0.3, kOut), dps);
       ctx.fill();
-      ctx.strokeStyle = _tint('#000000', 1, 0.7 * dps); ctx.lineWidth = 0.7; ctx.stroke();
+      ctx.strokeStyle = _tint('#000000', 1, 0.7 * dps); ctx.lineWidth = legPx(0.7 / LEG_REF_W); ctx.stroke();
       ctx.restore();
     }
   }
