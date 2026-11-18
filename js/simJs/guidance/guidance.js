@@ -1144,7 +1144,7 @@ function _leoTickV3(snapshot) {
     case 'WAIT_SPLIT': {
   if (snapshot.bodies.length > _v3State.preSplitBodyCount) {
   _v3State.splitDetected = true;
-  logEvent('STAGE_SEPARATION');
+  logEvent('STAGE_SEPARATION', simT, { bodyIdx: _v3State.stageIdx });
   _v3State.stageIdx = 0;
   const boosterIdx = snapshot.bodies.findIndex((b, i) =>
     i !== _v3State.stageIdx && b && !b.isActive);
@@ -1348,7 +1348,7 @@ if (!_v3State.payloadOpenFired &&
   if (_payIdx >= 0) {
     send(cmdOpenPayload(_payIdx));
     _v3State.payloadOpenFired = true;
-    logEvent('PAYLOAD_OPEN');
+    logEvent('PAYLOAD_OPEN', simT, { bodyIdx: _payIdx });
   }
 }
 
@@ -2059,7 +2059,7 @@ function _landbackTick(snapshot) {
     case 'WAIT_SPLIT': {
   if (snapshot.bodies.length > _lbState.preSplitBodyCount) {
   _lbState.splitDetected = true;
-  logEvent('STAGE_SEPARATION');
+  logEvent('STAGE_SEPARATION', simT, { bodyIdx: _lbState.stageIdx });
   _lbState.stageIdx = 0;
   const boosterIdx = snapshot.bodies.findIndex((b, i) =>
     i !== _lbState.stageIdx && b && !b.isActive);
@@ -2214,7 +2214,7 @@ if (!_lbState.payloadOpenFired &&
   if (_payIdx >= 0) {
     send(cmdOpenPayload(_payIdx));
     _lbState.payloadOpenFired = true;
-    logEvent('PAYLOAD_OPEN');
+    logEvent('PAYLOAD_OPEN', simT, { bodyIdx: _payIdx });
   }
 }
 
