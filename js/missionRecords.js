@@ -275,6 +275,87 @@ function isRecordStale(record) {
   return record.physicsVersion !== currentPhysicsVersion();
 }
 
+// ---------------------------------------------------------------------------
+// Field-level record merge. A shorter successful record ENRICHES the longer
+// one instead of being discarded: new events/phases/peaks (e.g. added by a
+// code update) are slotted into the longer record at the correct position,
+// while the longer record's existing data is never deleted. Only merges when
+// physicsVersion matches (different physics = different trajectories).
+// ---------------------------------------------------------------------------
+function _mergeEventKey(e) {
+  const bi = (e.bodyIdx !== undefined && e.bodyIdx !== null) ? e.bodyIdx : 'na';
+  return e.name + '|' + bi;
+}
+function _mergeEventArrays(baseEvents, updateEvents) {
+  const TIME_TOL = 60;
+  const groupBy = (arr) => {
+    const g = {};
+    arr.forEach(e => { const k = _mergeEventKey(e); (g[k] = g[k] || []).push(e); });
+    Object.keys(g).forEach(k => g[k].sort((a, b) => a.t - b.t));
+    return g;
+  };
+  const baseG = groupBy(baseEvents), updateG = groupBy(updateEvents);
+  const allKeys = new Set([...Object.keys(baseG), ...Object.keys(updateG)]);
+  const merged = [];
+  allKeys.forEach(k => {
+    const bg = baseG[k] || [], ug = updateG[k] || [];
+    if (!bg.length) { ug.forEach(e => merged.push(JSON.parse(JSON.stringify(e)))); return; }
+    if (!ug.length) { bg.forEach(e => merged.push(JSON.parse(JSON.stringify(e)))); return; }
+    const usedBase = {};
+    ug.forEach(ue => {
+      let bestIdx = -1, bestDt = Infinity;
+      bg.forEach((be, i) => { if (usedBase[i]) return; const dt = Math.abs(be.t - ue.t); if (dt < bestDt) { bestDt = dt; bestIdx = i; } });
+      if (bestIdx >= 0 && bestDt <= TIME_TOL) { usedBase[bestIdx] = true; merged.push(Object.assign({}, bg[bestIdx], ue)); }
+      else merged.push(JSON.parse(JSON.stringify(ue)));
+    });
+    bg.forEach((be, i) => { if (!usedBase[i]) merged.push(JSON.parse(JSON.stringify(be))); });
+  });
+  return merged.sort((a, b) => a.t - b.t);
+}
+function _mergePhaseArrays(basePhases, updatePhases) {
+  const merged = basePhases.map(p => JSON.parse(JSON.stringify(p)));
+  const names = new Set(merged.map(p => p.name));
+  updatePhases.forEach(up => {
+    if (!names.has(up.name)) { merged.push(JSON.parse(JSON.stringify(up))); names.add(up.name); return; }
+    const bp = merged.find(p => p.name === up.name);
+    if (!bp) return;
+    Object.keys(up).forEach(k => { if (bp[k] === undefined || bp[k] === null) bp[k] = JSON.parse(JSON.stringify(up[k])); });
+    if (Number(up.endT) > Number(bp.endT)) { bp.endT = up.endT; bp.durationS = bp.endT - bp.startT; }
+  });
+  return merged.sort((a, b) => a.startT - b.startT);
+}
+function _mergePeakArrays(basePeaks, updatePeaks) {
+  const merged = basePeaks.map(p => JSON.parse(JSON.stringify(p)));
+  const idxs = new Set(merged.map(p => p.bodyIdx));
+  updatePeaks.forEach(up => {
+    if (!idxs.has(up.bodyIdx)) { merged.push(JSON.parse(JSON.stringify(up))); idxs.add(up.bodyIdx); return; }
+    const bp = merged.find(p => p.bodyIdx === up.bodyIdx);
+    if (!bp) return;
+    if (Number(up.peakQ_kPa) > Number(bp.peakQ_kPa)) { bp.peakQ_kPa = up.peakQ_kPa; bp.peakQ_t = up.peakQ_t; bp.peakQ_bodyTag = up.peakQ_bodyTag; }
+    if (Number(up.peakG) > Number(bp.peakG)) { bp.peakG = up.peakG; bp.peakG_t = up.peakG_t; bp.peakG_bodyTag = up.peakG_bodyTag; }
+  });
+  return merged.sort((a, b) => a.bodyIdx - b.bodyIdx);
+}
+function _mergeFindEventTime(events, name) {
+  const e = events.find(x => x.name === name);
+  return (e && Number.isFinite(e.t)) ? e.t : null;
+}
+function mergeMissionRecords(base, update) {
+  const merged = JSON.parse(JSON.stringify(base));
+  merged.eventSchemaVersion = Math.max(Number(base.eventSchemaVersion) || 0, Number(update.eventSchemaVersion) || 0);
+  merged.durationS = Math.max(Number(base.durationS) || 0, Number(update.durationS) || 0);
+  merged.captureT = Math.max(Number(base.captureT) || 0, Number(update.captureT) || 0);
+  merged.events = _mergeEventArrays(base.events || [], update.events || []);
+  merged.phases = _mergePhaseArrays(base.phases || [], update.phases || []);
+  merged.peaks = _mergePeakArrays(base.peaks || [], update.peaks || []);
+  merged.mecoS = _mergeFindEventTime(merged.events, 'MECO');
+  merged.boosterLandS = _mergeFindEventTime(merged.events, 'TOUCHDOWN_COMPLETE');
+  merged.payloadDeployS = _mergeFindEventTime(merged.events, 'PAYLOAD_RELEASE');
+  if (!merged._debug) merged._debug = {};
+  merged._debug.mergedFromUpdate = true;
+  merged._debug.mergeCount = ((base._debug && base._debug.mergeCount) || 0) + 1;
+  return merged;
+}
 function upsertUserMissionRecord(record) {
   const records = loadMissionRecords();
   const idx = records.findIndex(r => r.comboKey === record.comboKey);
@@ -306,6 +387,16 @@ function upsertUserMissionRecord(record) {
             return { action: 'skipped', reason: 'shorter success cannot overwrite longer success' };
         }
     }
+// Field-level merge: a shorter successful record enriches the longer one
+const _inDur = Number.isFinite(record.durationS) ? record.durationS : 0;
+const _exDur = Number.isFinite(existing.durationS) ? existing.durationS : 0;
+if (_inDur < _exDur && record.success === true && existing.success === true &&
+    record.physicsVersion === existing.physicsVersion) {
+  records[idx] = mergeMissionRecords(existing, record);
+  console.log('[missionRecords] MERGED shorter (' + _inDur.toFixed(1) + 's) into longer (' + _exDur.toFixed(1) + 's):', record.comboKey);
+  saveMissionRecords(records);
+  return { action: 'merged', reason: 'shorter record merged into longer' };
+}
 records[idx] = record;
   } else {
     records.push(record);
@@ -672,4 +763,5 @@ if (typeof globalThis !== 'undefined') {
   globalThis.isRecordStale = isRecordStale;
   globalThis.getMissionRecordsForPreset = getMissionRecordsForPreset;
   globalThis.getRecordsGroupedByEnvForPreset = getRecordsGroupedByEnvForPreset;
+  globalThis.mergeMissionRecords = mergeMissionRecords;
 }
