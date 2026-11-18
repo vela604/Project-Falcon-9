@@ -1468,34 +1468,60 @@ function _renderPhaseTrack(status) {
     }
   }
   if (_activeRole === 'fairing') {
-    // eventNames is a LIST: guidance emits FAIRING_SPLASHDOWN, the old
-    // code looked for SPLASHDOWN and therefore never matched anything.
-    const _injectFairing = function (name, eventNames) {
-      if (_logPre[name]) return;
-      const _hit = _evtFor(eventNames, _activeIdx, _activeBody && _activeBody.id);
-      _logPre[name] = _hit
-        ? { startT: _hit.t,
-            endT: _hit.predicted ? null : _hit.t + 0.001,
-            bodyTag: 'fairing', __synthetic: true,
-            __predicted: _hit.predicted, __pending: _hit.predicted }
-        : { startT: null, endT: null,
-            bodyTag: 'fairing', __synthetic: true, __pending: true };
-      if (_rawSeq.indexOf(name) < 0) _rawSeq.push(name);
-    };
-    _injectFairing('Fairing Release', ['FAIRING_DEPLOY']);
-    _injectFairing('Chute Deploy', ['CHUTE_DEPLOY']);
-    _injectFairing('Ocean Splash', ['FAIRING_SPLASHDOWN', 'SPLASHDOWN']);
+    // Interval-chaining: each fairing phase spans until the NEXT event
+    // fires LIVE. The currently-running phase keeps endT=null so the
+    // generic active/next/zoom/T+/T- machinery picks it up.
+    const _fairingSeq = [
+      { name: 'Fairing Release', events: ['FAIRING_DEPLOY'] },
+      { name: 'Chute Deploy',    events: ['CHUTE_DEPLOY'] },
+      { name: 'Ocean Splash',    events: ['FAIRING_SPLASHDOWN', 'SPLASHDOWN'] }
+    ];
+    const _hits = [];
+    for (let _fi = 0; _fi < _fairingSeq.length; _fi++) {
+      _hits.push({ name: _fairingSeq[_fi].name, hit: _evtFor(_fairingSeq[_fi].events, _activeIdx) });
+    }
+    for (let _fi = 0; _fi < _hits.length; _fi++) {
+      const _cur = _hits[_fi];
+      const _next = _hits[_fi + 1];
+      if (_logPre[_cur.name]) continue;
+      const _curFiredLive  = !!(_cur.hit && !_cur.hit.predicted);
+      const _nextFiredLive = !!(_next && _next.hit && !_next.hit.predicted);
+      const _isTerminal = (_fi === _hits.length - 1);
+      if (_curFiredLive) {
+        let _endT;
+        if (_isTerminal) { _endT = _cur.hit.t; }
+        else if (_nextFiredLive) { _endT = _next.hit.t; }
+        else { _endT = null; }   // still running -> active
+        _logPre[_cur.name] = {
+          startT: _cur.hit.t, endT: _endT,
+          bodyTag: 'fairing', __synthetic: true,
+          __predicted: false, __pending: false
+        };
+      } else if (_cur.hit) {
+        _logPre[_cur.name] = {
+          startT: _cur.hit.t, endT: null,
+          bodyTag: 'fairing', __synthetic: true,
+          __predicted: true, __pending: true
+        };
+      } else {
+        _logPre[_cur.name] = {
+          startT: null, endT: null,
+          bodyTag: 'fairing', __synthetic: true,
+          __pending: true
+        };
+      }
+      if (_rawSeq.indexOf(_cur.name) < 0) _rawSeq.push(_cur.name);
+    }
   }
   if (_activeRole === 'payload') {
     if (!_logPre['Payload Release']) {
-      const _hit = _evtFor(['PAYLOAD_RELEASE'], _activeIdx, _activeBody && _activeBody.id);
-      _logPre['Payload Release'] = _hit
-        ? { startT: _hit.t,
-            endT: _hit.predicted ? null : _hit.t + 0.001,
-            bodyTag: 'payload', __synthetic: true,
-            __predicted: _hit.predicted, __pending: _hit.predicted }
-        : { startT: null, endT: null,
-            bodyTag: 'payload', __synthetic: true, __pending: true };
+      const _hit = _evtFor(['PAYLOAD_RELEASE'], _activeIdx);
+      const _firedLive = !!(_hit && !_hit.predicted);
+      _logPre['Payload Release'] = _firedLive
+        ? { startT: _hit.t, endT: _hit.t, bodyTag: 'payload', __synthetic: true, __predicted: false, __pending: false }
+        : (_hit
+            ? { startT: _hit.t, endT: null, bodyTag: 'payload', __synthetic: true, __predicted: true, __pending: true }
+            : { startT: null, endT: null, bodyTag: 'payload', __synthetic: true, __pending: true });
       if (_rawSeq.indexOf('Payload Release') < 0) _rawSeq.push('Payload Release');
     }
   }
@@ -1582,7 +1608,7 @@ function _renderPhaseTrack(status) {
   const _nextEntry = _nextRowPhase ? _logPre[_nextRowPhase] : null;
   const _curStart = _curEntry && !_curEntry.__pending && Number.isFinite(_curEntry.startT) ? _curEntry.startT : null;
   let _nextStart = null;
-  if (_nextEntry && !_nextEntry.__pending && Number.isFinite(_nextEntry.startT)) {
+  if (_nextEntry && Number.isFinite(_nextEntry.startT) && (!_nextEntry.__pending || _nextEntry.__synthetic)) {
     _nextStart = _nextEntry.startT;
   } else if (_nextRowPhase) {
     const _recG = window.__currentMissionRecord;
