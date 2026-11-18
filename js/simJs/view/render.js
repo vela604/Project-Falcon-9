@@ -2751,7 +2751,7 @@ const s0 = (hasJets && re > 0) ? Math.min(1, (reEng / re) * 0.97) : 1;   // star
     T.fillRect(0, 0, BW, HB);              // T only holds the top strip, so clearing the rest is fine
     const bg2 = b.createLinearGradient(0, 0, 0, HB);
     bg2.addColorStop(0, 'rgba(0,0,0,1)');
-    bg2.addColorStop(0.5, 'rgb0a(0,0,0,0.6)');
+    bg2.addColorStop(0.5, 'rgba(0,0,0,0.6)');
     bg2.addColorStop(1, 'rgba(0,0,0,0)');
     b.save();
     b.setTransform(1, 0, 0, 1, 0, 0);
