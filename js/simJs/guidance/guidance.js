@@ -110,6 +110,7 @@ const Guidance = (function () {
             } else if (_be.endT != null && _existing.endT == null) {
               _existing.endT = _be.endT;
               _existing.fuelEnd = _fuelNow;
+              _existing.fuelDelta = _filterFuelDeltaByRole(_diffFuel(_existing.fuelStart, _fuelNow), 'booster');
             }
           }
         }
@@ -126,7 +127,7 @@ const Guidance = (function () {
         if (_lastSeenPhase && _phaseLog[_lastSeenPhase]) {
           _phaseLog[_lastSeenPhase].endT = nowT;
           _phaseLog[_lastSeenPhase].fuelEnd = fuelNow;
-          _phaseLog[_lastSeenPhase].fuelDelta = _diffFuel(_phaseLog[_lastSeenPhase].fuelStart, fuelNow);
+          _phaseLog[_lastSeenPhase].fuelDelta = _filterFuelDeltaByRole(_diffFuel(_phaseLog[_lastSeenPhase].fuelStart, fuelNow), _phaseLog[_lastSeenPhase].bodyTag);
         }
         _lastSeenPhase = ph;
         if (_guideStartT === null) _guideStartT = nowT;
@@ -451,6 +452,21 @@ function _diffFuel(prev, cur) {
     if (used > 0.001) out.push({ memberId: c.memberId, role: c.role, fuelUsed: used });
   }
   return out;
+}
+
+// Filter fuelDelta to only the members belonging to a phase's body.
+// Prevents cross-contamination (booster fuel leaking into a stage phase just
+// because both burned inside the same time window). bodyTag '?' / unknown
+// returns the array unfiltered.
+function _filterFuelDeltaByRole(fuelDeltaArr, bodyTag) {
+  if (!Array.isArray(fuelDeltaArr)) return [];
+  if (!bodyTag || bodyTag === '?') return fuelDeltaArr;
+  var roleMap = { 'booster': ['booster'], 'stage': ['stage'] };
+  var roles = roleMap[bodyTag];
+  if (!roles) return fuelDeltaArr;
+  return fuelDeltaArr.filter(function (fd) {
+    return fd && fd.role && roles.indexOf(fd.role) !== -1;
+  });
 }
 
 function _computeBodyTag(b) {
