@@ -1417,19 +1417,37 @@ function _renderPhaseTrack(status) {
   // chute + splash down). Prefer the one tagged with this body index;
   // guidance events do not carry bodyIdx yet, so today this falls back
   // to the first occurrence. Becomes exact once bodyIdx is emitted.
-  function _evtFor(names, bodyIdx) {
+  function _evtFor(names, bodyIdx, bodyId) {
     const want = Array.isArray(names) ? names : [names];
-    const pick = function (list, isPred) {
+    // LIVE events (this run): bodyIdx is the stable key; bodyId is a valid
+    // secondary signal because ids are assigned at spawn and never change
+    // within a single run. Either matching is a genuine hit.
+    const pickLive = function (list) {
+      let byId = null, fb = null;
+      for (let i = 0; i < list.length; i++) {
+        const e = list[i];
+        if (!e || want.indexOf(e.name) < 0 || !Number.isFinite(e.t)) continue;
+        if (Number.isInteger(bodyIdx) && e.bodyIdx === bodyIdx) return { t: e.t, predicted: false };
+        if (bodyId && e.bodyId === bodyId && !byId) byId = { t: e.t, predicted: false };
+        if (!fb) fb = { t: e.t, predicted: false };
+      }
+      return byId || fb;
+    };
+    // RECORD events (a previous run): bodyIdx ONLY. Record bodyIds were
+    // generated from Date.now()/Math.random() at capture time and can never
+    // equal the ids of the current run, so bodyId must NOT take part in
+    // record matching (per Alpha's contract).
+    const pickRecord = function (list) {
       let fb = null;
       for (let i = 0; i < list.length; i++) {
         const e = list[i];
         if (!e || want.indexOf(e.name) < 0 || !Number.isFinite(e.t)) continue;
-        if (Number.isInteger(bodyIdx) && e.bodyIdx === bodyIdx) return { t: e.t, predicted: isPred };
-        if (!fb) fb = { t: e.t, predicted: isPred };
+        if (Number.isInteger(bodyIdx) && e.bodyIdx === bodyIdx) return { t: e.t, predicted: true };
+        if (!fb) fb = { t: e.t, predicted: true };
       }
       return fb;
     };
-    return pick(_events, false) || pick(_recEvents, true);
+    return pickLive(_events) || pickRecord(_recEvents);
   }
   function _evt(name) {
     return _events.find(function(e){ return e && e.name === name && Number.isFinite(e.t); });
@@ -1454,7 +1472,7 @@ function _renderPhaseTrack(status) {
     // code looked for SPLASHDOWN and therefore never matched anything.
     const _injectFairing = function (name, eventNames) {
       if (_logPre[name]) return;
-      const _hit = _evtFor(eventNames, _activeIdx);
+      const _hit = _evtFor(eventNames, _activeIdx, _activeBody && _activeBody.id);
       _logPre[name] = _hit
         ? { startT: _hit.t,
             endT: _hit.predicted ? null : _hit.t + 0.001,
@@ -1470,10 +1488,14 @@ function _renderPhaseTrack(status) {
   }
   if (_activeRole === 'payload') {
     if (!_logPre['Payload Release']) {
-      const _ev = _evt('PAYLOAD_RELEASE');
-      _logPre['Payload Release'] = _ev
-        ? { startT: _ev.t, endT: _ev.t + 0.001, bodyTag: 'payload', __synthetic: true }
-        : { startT: 0, endT: null, bodyTag: 'payload', __synthetic: true, __pending: true };
+      const _hit = _evtFor(['PAYLOAD_RELEASE'], _activeIdx, _activeBody && _activeBody.id);
+      _logPre['Payload Release'] = _hit
+        ? { startT: _hit.t,
+            endT: _hit.predicted ? null : _hit.t + 0.001,
+            bodyTag: 'payload', __synthetic: true,
+            __predicted: _hit.predicted, __pending: _hit.predicted }
+        : { startT: null, endT: null,
+            bodyTag: 'payload', __synthetic: true, __pending: true };
       if (_rawSeq.indexOf('Payload Release') < 0) _rawSeq.push('Payload Release');
     }
   }
@@ -1907,6 +1929,7 @@ function _syncMissionRecordSession(status) {
     'LANDING_BURN':       { label: 'LANDING BURN' },
     'TOUCHDOWN_COMPLETE': { label: 'TOUCHDOWN' },
     'IMPACT':             { label: 'IMPACT' },
+    'DEORBIT_COMPLETE':   { label: 'DEORBIT' },
   };
   let _lastT = 0;
   let _lastSim = -1;
@@ -1972,7 +1995,7 @@ function _syncMissionRecordSession(status) {
       // Duplicate agent emissions (known bug in LIFTOFF/MAX_Q) would spam.
       // Allow IMPACT and TOUCHDOWN_COMPLETE to re-fire (multi-body events).
       if (!_seenOneShots) _seenOneShots = {};
-      const _ONESHOT = { LIFTOFF:1, MAX_Q:1, MECO:1, FAIRING_DEPLOY:1, PAYLOAD_RELEASE:1, LANDING_BURN:1 };
+      const _ONESHOT = { LIFTOFF:1, MAX_Q:1, MECO:1, FAIRING_DEPLOY:1, PAYLOAD_RELEASE:1, LANDING_BURN:1, DEORBIT_COMPLETE:1 };
       if (_ONESHOT[e.name] && _seenOneShots[e.name]) return;
       _seenOneShots[e.name] = true;
       _queue.push({ label: cfg.label, t: e.t });
