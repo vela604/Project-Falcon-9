@@ -1406,6 +1406,31 @@ function _renderPhaseTrack(status) {
   // Clone phaseLog to avoid mutating snapshot; inject synthetic entries
   const _logPre = Object.assign({}, status.phaseLog || {});
   const _events = status.events || [];
+  // Mission record carries fairing/payload times in EVENTS, not phases
+  // (the record has zero bodyTag:"fairing" phase entries), so the phase
+  // lookup below can never supply them. This is the fallback source.
+  const _recEvents = (window.__currentMissionRecord &&
+    Array.isArray(window.__currentMissionRecord.events))
+    ? window.__currentMissionRecord.events : [];
+  // Returns { t, predicted } or null. Live status wins; record = predicted.
+  // Multiple events can share a name (two fairing halves each deploy a
+  // chute + splash down). Prefer the one tagged with this body index;
+  // guidance events do not carry bodyIdx yet, so today this falls back
+  // to the first occurrence. Becomes exact once bodyIdx is emitted.
+  function _evtFor(names, bodyIdx) {
+    const want = Array.isArray(names) ? names : [names];
+    const pick = function (list, isPred) {
+      let fb = null;
+      for (let i = 0; i < list.length; i++) {
+        const e = list[i];
+        if (!e || want.indexOf(e.name) < 0 || !Number.isFinite(e.t)) continue;
+        if (Number.isInteger(bodyIdx) && e.bodyIdx === bodyIdx) return { t: e.t, predicted: isPred };
+        if (!fb) fb = { t: e.t, predicted: isPred };
+      }
+      return fb;
+    };
+    return pick(_events, false) || pick(_recEvents, true);
+  }
   function _evt(name) {
     return _events.find(function(e){ return e && e.name === name && Number.isFinite(e.t); });
   }
@@ -1425,17 +1450,23 @@ function _renderPhaseTrack(status) {
     }
   }
   if (_activeRole === 'fairing') {
-    const _injectFairing = function(name, eventName) {
+    // eventNames is a LIST: guidance emits FAIRING_SPLASHDOWN, the old
+    // code looked for SPLASHDOWN and therefore never matched anything.
+    const _injectFairing = function (name, eventNames) {
       if (_logPre[name]) return;
-      const _ev = _evt(eventName);
-      _logPre[name] = _ev
-        ? { startT: _ev.t, endT: _ev.t + 0.001, bodyTag: 'fairing', __synthetic: true }
-        : { startT: 0, endT: null, bodyTag: 'fairing', __synthetic: true, __pending: true };
+      const _hit = _evtFor(eventNames, _activeIdx);
+      _logPre[name] = _hit
+        ? { startT: _hit.t,
+            endT: _hit.predicted ? null : _hit.t + 0.001,
+            bodyTag: 'fairing', __synthetic: true,
+            __predicted: _hit.predicted, __pending: _hit.predicted }
+        : { startT: null, endT: null,
+            bodyTag: 'fairing', __synthetic: true, __pending: true };
       if (_rawSeq.indexOf(name) < 0) _rawSeq.push(name);
     };
-    _injectFairing('Fairing Release', 'FAIRING_DEPLOY');
-    _injectFairing('Chute Deploy', 'CHUTE_DEPLOY');
-    _injectFairing('Ocean Splash', 'SPLASHDOWN');
+    _injectFairing('Fairing Release', ['FAIRING_DEPLOY']);
+    _injectFairing('Chute Deploy', ['CHUTE_DEPLOY']);
+    _injectFairing('Ocean Splash', ['FAIRING_SPLASHDOWN', 'SPLASHDOWN']);
   }
   if (_activeRole === 'payload') {
     if (!_logPre['Payload Release']) {
@@ -1628,6 +1659,20 @@ function _renderPhaseTrack(status) {
       trelEl.textContent = '';
       trelEl.className = 'gp-trel';
       if (liveEl) liveEl.textContent = _nextIn != null ? 'T-' + _fmtHMS(_nextIn) : 'T-\u2014';
+    } else if (entry && entry.__predicted && Number.isFinite(entry.startT)) {
+      // Known from the mission record but not fired yet — predicted styling,
+      // and NO elapsed counter (it hasn't started).
+      tabsEl.textContent = 'T+' + _fmtHMS(entry.startT);
+      tabsEl.className = 'gp-tabs gp-tabs-pred';
+      trelEl.textContent = '';
+      trelEl.className = 'gp-trel gp-trel-pred';
+    } else if (entry && entry.__pending) {
+      // Genuinely unknown. startT used to be 0 here, which rendered as
+      // T+00:00:00 plus a live simTime-0 elapsed that just kept counting.
+      tabsEl.textContent = 'T+\u2014';
+      tabsEl.className = 'gp-tabs gp-tabs-pred';
+      trelEl.textContent = '';
+      trelEl.className = 'gp-trel';
     } else {
       // Normal phases — original layout (start T+ + duration)
       if (entry && Number.isFinite(entry.startT)) {
