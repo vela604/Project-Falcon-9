@@ -2459,7 +2459,7 @@ setState(s) {
       SUICIDE_BURN_COARSE_MARGIN_DEG: 0.5,
       SUICIDE_TRIM_TOL_DEG: 0.1,
       SUICIDE_TRIM_TOL_M: 200,
-      SUICIDE_TRIM_FAR_M: 5000,
+      SUICIDE_TRIM_FAR_M: 55597, // = legacy 0.5 deg; gain unchanged, deadband does the fine work
       SUICIDE_TRIM_FAR_DEG: 0.5,
       // Lowered from 0.15 — at small errors (just above TOL), 15% duty
 // accumulates meaningful Δv over the long remaining fall time and
@@ -2837,6 +2837,9 @@ if (_st.lastCircTriggerLeadS === 0 &&
   
   if (_st.suicideTrimStartT === 0) _st.suicideTrimStartT = simT;
   if (simT - _st.suicideTrimStartT > cfg.SUICIDE_TRIM_MAX_S) {
+    console.log('[suicide] trim TIMEOUT after ' + cfg.SUICIDE_TRIM_MAX_S
+      + 's, residual err=' + (_st.suicideDlambda != null
+        ? (_st.suicideDlambda * env.EARTH_RADIUS).toFixed(0) + 'm' : 'n/a'));
     _st.suicideTrimDone = true;
     _send(Guidance.cmdRcsDuty(null, idx));
     _done = true;
@@ -2882,9 +2885,17 @@ if (_st.lastCircTriggerLeadS === 0 &&
   const TRIM_FAR_M = Number.isFinite(cfg.SUICIDE_TRIM_FAR_M)
     ? cfg.SUICIDE_TRIM_FAR_M
     : cfg.SUICIDE_TRIM_FAR_DEG * _M_PER_DEG;
+  if (!_st._trimEntryLogged) {
+    _st._trimEntryLogged = true;
+    console.log('[suicide] COAST trim start err=' + E_m.toFixed(0) + 'm'
+      + ' tol=' + TRIM_TOL_M.toFixed(0) + 'm far=' + TRIM_FAR_M.toFixed(0) + 'm'
+      + ' maxS=' + cfg.SUICIDE_TRIM_MAX_S + ' tau=' + tau);
+  }
   
   // Converged → RCS off, done.
   if (Math.abs(E_m) < TRIM_TOL_M) {
+    console.log('[suicide] trim CONVERGED err=' + E_m.toFixed(1) + 'm'
+      + ' after ' + (simT - _st.suicideTrimStartT).toFixed(1) + 's');
     _st.suicideTrimDone = true;
     _send(Guidance.cmdRcsDuty(null, idx));
     _done = true;
@@ -2907,8 +2918,15 @@ if (_st.lastCircTriggerLeadS === 0 &&
   // ahead.
   const prevE = _st._prevTrimE_rad;
   _st._prevTrimE_rad = E_rad;
-  const dE = (Number.isFinite(prevE) && dt > 0) ?
-    (E_rad - prevE) / dt : 0;
+  const _dEraw = (Number.isFinite(prevE) && dt > 0) ? (E_rad - prevE) / dt : 0;
+  // A single 12.5 ms tick amplifies predictor jitter 80x; times tau=10 that is
+  // 800x into the lead term, flipping firing direction every few ticks.
+  // EMA over ~0.5 s cuts that noise gain ~40x.
+  const _aTrim = dt > 0 ? Math.min(1, dt / 0.5) : 1;
+  _st._trimDEma = Number.isFinite(_st._trimDEma)
+    ? _st._trimDEma + _aTrim * (_dEraw - _st._trimDEma)
+    : _dEraw;
+  const dE = _st._trimDEma;
   const tau = Number.isFinite(cfg.SUICIDE_TRIM_LEAD_S) ?
     cfg.SUICIDE_TRIM_LEAD_S : 10;
   const E_lead_deg = (E_rad + tau * dE) * 180 / Math.PI;
@@ -2935,6 +2953,13 @@ if (_st.lastCircTriggerLeadS === 0 &&
     break;
   }
   
+  if (_st._trimLogT === undefined || simT - _st._trimLogT >= 2) {
+    _st._trimLogT = simT;
+    console.log('[suicide] trim t=' + simT.toFixed(1)
+      + ' err=' + E_m.toFixed(0) + 'm lead=' + E_lead_m.toFixed(0) + 'm'
+      + ' dir=' + direction + ' duty=' + duty.toFixed(4)
+      + ' elapsed=' + (simT - _st.suicideTrimStartT).toFixed(0) + 's');
+  }
   const duties = GuideRCS.postSeparationAxialDuty(snapshot, idx, direction);
   if (!duties) {
     _send(Guidance.cmdRcsDuty(null, idx));
@@ -2976,6 +3001,10 @@ if (_st.lastCircTriggerLeadS === 0 &&
           _st.suicideDlambda = null;
               _st.suicideTrimDone = false;
   _st.suicideTrimStartT = 0;
+          _st._trimEntryLogged = false;
+          _st._trimLogT = undefined;
+          _st._trimDEma = undefined;
+          _st._prevTrimE_rad = undefined;
   },
 
         tick(snapshot) {
