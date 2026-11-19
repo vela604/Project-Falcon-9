@@ -2450,7 +2450,7 @@ setState(s) {
       SUICIDE_ROTATE_TIMEOUT_S: 120,
       SUICIDE_ATT_KP: 0.5,
       SUICIDE_ATT_KD: 4.0,
-      SUICIDE_PREDICT_DT_S: 2,
+      SUICIDE_PREDICT_DT_S: 1, // Reduced from 2 to 1 for exact surface crossing resolution
       SUICIDE_PREDICT_HORIZON_S: 4000,
       SUICIDE_BURN_MAX_S: 600,
       SUICIDE_BURN_COARSE_MARGIN_DEG: 0.5,
@@ -2531,9 +2531,17 @@ SUICIDE_TRIM_MIN_DUTY: 0.03,
           const vxh = pvx + 0.5 * ax * dtPred;
           const vyh = pvy + 0.5 * ay * dtPred;
           const nx = px + vxh * dtPred;
-          const ny = py + vyh * dtPred;
-          const nr = Math.hypot(nx, ny);
-          const nr3 = nr * nr * nr;
+const ny = py + vyh * dtPred;
+const nr = Math.hypot(nx, ny);
+if (nr <= R) {
+  const f = (r - R) / Math.max(1e-9, r - nr);
+  const ix = px + (nx - px) * f;
+  const iy = py + (ny - py) * f;
+  const ti = t + f * dtPred;
+  const phiEf = Math.atan2(ix, iy) - omegaE * (simTimeNow + ti);
+  return { phiEf, tImpact: ti, rImpact: R };
+}
+const nr3 = nr * nr * nr;
           pvx = vxh + 0.5 * ((-GM * nx) / nr3) * dtPred;
           pvy = vyh + 0.5 * ((-GM * ny) / nr3) * dtPred;
           px = nx;
