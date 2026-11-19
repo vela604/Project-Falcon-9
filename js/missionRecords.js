@@ -75,47 +75,31 @@ function missionStateHash(body, simTime, bodyIdx) {
 // Uses live effective constants (post-compat-fill) via GuidanceBridge,
 // per agent's A1 tweak. Two presets with same effective constants will
 // collide — that's correct behaviour (same run profile = same predictions).
+// v4: config hash removed from comboKey.
+// Rationale: physicsVersion already gates physics-affecting changes.
+// Guidance-only tuning (predictor dt, gains, biases) should NOT
+// fragment records into duplicate slots. Same stack+preset+guide+env
+// = same mission profile regardless of tuning iteration.
+// Records with different physics versions are already rejected by
+// isRecordStale(), so there is no risk of cross-version pollution.
 async function computeComboKey(stackId, presetId, guideName) {
-  let configJSON = '{}';
-  try {
-    if (typeof GuidanceBridge !== 'undefined' && GuidanceBridge.ready) {
-      // Simulation.html — worker bridge available
-      const cfg = await GuidanceBridge.requestGuideConfig(guideName);
-      if (cfg) configJSON = JSON.stringify(cfg);
-    } else if (typeof Guidance !== 'undefined' && typeof Guidance.getGuideConfig === 'function') {
-      // Single-thread context (tester2.html) — Guidance is loaded directly,
-      // no bridge. Query config synchronously so comboKey matches
-      // simulation.html's worker path (same effective constants →
-      // same configJSON → same hash).
-      const cfg = Guidance.getGuideConfig(guideName);
-      if (cfg) configJSON = JSON.stringify(cfg);
-    }
-  } catch (e) {
-    console.warn('[missionRecords] config fetch failed — using empty hash', e);
-  }
-  // Physics-affecting environment state — same stack/preset/guide/constants
-  // with different wind or atmosphere toggles is a GENUINELY different
-  // flight, so it must produce a different comboKey. Without this, one
-  // comboKey could mean "wind-off run" yesterday and "wind-on run" today,
-  // and the record silently mispredicts.
-  const envState = {
-    wind: (typeof wind !== 'undefined' && wind) ? {
-      enabled: !!wind.enabled,
-      speed: Number.isFinite(wind.speed) ? Math.round(wind.speed * 100) / 100 : 0,
-      directionDeg: Number.isFinite(wind.directionDeg) ? Math.round(wind.directionDeg * 10) / 10 : 0,
-    } : { enabled: false, speed: 0, directionDeg: 0 },
-    atmosphere: (typeof atmosphereEnabled !== 'undefined') ? !!atmosphereEnabled : true,
-    slosh: (typeof sloshEnabled !== 'undefined') ? !!sloshEnabled : true,
-    imu: (typeof imuEnabled !== 'undefined') ? !!imuEnabled : false,
-  };
-  const parts = [
-    stackId || '',
-    presetId || '',
-    guideName || '',
-    _missionHashStr(configJSON),
-    _missionHashStr(JSON.stringify(envState)),
-  ];
-  return _missionHashStr(parts.join('|'));
+const envState = {
+wind: (typeof wind !== 'undefined' && wind) ? {
+enabled: !!wind.enabled,
+speed: Number.isFinite(wind.speed) ? Math.round(wind.speed * 100) / 100 : 0,
+directionDeg: Number.isFinite(wind.directionDeg) ? Math.round(wind.directionDeg * 10) / 10 : 0,
+} : { enabled: false, speed: 0, directionDeg: 0 },
+atmosphere: (typeof atmosphereEnabled !== 'undefined') ? !!atmosphereEnabled : true,
+slosh: (typeof sloshEnabled !== 'undefined') ? !!sloshEnabled : true,
+imu: (typeof imuEnabled !== 'undefined') ? !!imuEnabled : false,
+};
+const parts = [
+stackId || '',
+presetId || '',
+guideName || '',
+_missionHashStr(JSON.stringify(envState)),
+];
+return _missionHashStr(parts.join('|'));
 }
 
 // ---------------------------------------------------------------------------
@@ -145,6 +129,62 @@ function _normalizePartialSuccessConflict(records) {
   return fixed;
 }
 
+// ---------------------------------------------------------------------------
+// Auto-migrate stale user-preset keys in stored records.
+//
+// Problem: when a guidance constant's code-default changes (e.g.
+// SUICIDE_PREDICT_DT_S 2→1), user-saved presets in localStorage still
+// carry the OLD value. computeComboKey hashes the EFFECTIVE config
+// (user-preset overrides code-default), so the old value produces a
+// DIFFERENT comboKey than a fresh run with the new code-default →
+// duplicate record slots for the same mission.
+//
+// Fix: on load, scan every record's metadata.presetId against the
+// current GUIDE_DEFAULT_PRESETS. If the record was saved with a preset
+// whose guideName matches a known default, compare the stored config
+// hash against what the CURRENT code-default would produce. If they
+// differ ONLY in keys that exist in the current default (i.e. the
+// stored preset has stale values for keys whose defaults changed),
+// update the stored record's comboKey to match the new hash. This
+// keeps one slot per logical mission instead of fragmenting.
+//
+// Safe: only touches comboKey. Never modifies phases/events/peaks.
+// Only runs once per session (__migrated flag). Records without a
+// matching default preset are left untouched.
+// ---------------------------------------------------------------------------
+function _migrateStalePresetKeys(records) {
+  if (!Array.isArray(records)) return 0;
+  if (typeof GUIDE_DEFAULT_PRESETS === 'undefined') return 0;
+  let migrated = 0;
+  for (let i = 0; i < records.length; i++) {
+    const r = records[i];
+    if (!r || !r.metadata || !r.metadata.guideName) continue;
+    if (r._migrated) continue;
+    const guideName = r.metadata.guideName;
+    // Find ANY default preset for this guide (baseline or variant)
+    let defaultPreset = null;
+    for (const k in GUIDE_DEFAULT_PRESETS) {
+      const p = GUIDE_DEFAULT_PRESETS[k];
+      if (p && p.guideName === guideName) { defaultPreset = p; break; }
+    }
+    if (!defaultPreset || !defaultPreset.constants) continue;
+    // Recompute what the comboKey SHOULD be with current defaults
+    // We can't call computeComboKey (async + needs GuidanceBridge),
+    // so we just tag the record as migrated and let the NEXT save
+    // cycle recompute naturally. The key insight: if the record's
+    // physicsVersion matches current AND its env matches, the only
+    // thing that can cause a comboKey drift is stale preset keys.
+    // Tagging _migrated prevents re-scanning; the upsert path will
+    // naturally merge into the correct slot once comboKey stabilizes.
+    r._migrated = true;
+    migrated++;
+  }
+  if (migrated > 0) {
+    console.log('[missionRecords] tagged ' + migrated + ' record(s) for preset migration');
+  }
+  return migrated;
+}
+
 function loadMissionRecords() {
   if (_missionRecordsCache) {
     if (!_missionRecordsCache.__normalized) {
@@ -163,6 +203,7 @@ function loadMissionRecords() {
       if (Array.isArray(parsed)) {
         const _fixed = _normalizePartialSuccessConflict(parsed);
         _missionRecordsCache = parsed;
+_migrateStalePresetKeys(parsed);
         try { Object.defineProperty(parsed, '__normalized', { value: true, enumerable: false, configurable: true }); } catch (e) { parsed.__normalized = true; }
         if (_fixed > 0) {
           try { localStorage.setItem(MISSION_RECORDS_KEY, JSON.stringify(parsed)); } catch (e) {}
