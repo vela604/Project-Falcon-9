@@ -119,7 +119,15 @@
         </div>
       </div>
 
-      <div class="blk" id="rtlsSearchBlk">
+      <div class="blk" id="altFinderBlk">
+      <div class="blk-t">LB altitude finder <em>coarse probe + auto refine, pick middle of tied-best span</em></div>
+      <div class="row fgrid">
+        <label>alt lo km <input type="number" id="altLo" step="0.1" value="1.0"></label>
+        <label>alt hi km <input type="number" id="altHi" step="0.1" value="3.0"></label>
+        <label>coarse step km <input type="number" id="altStep" step="0.1" min="0.1" value="0.5"></label>
+      </div>
+    </div>
+    <div class="blk" id="rtlsSearchBlk">
         <div class="blk-t">bias search window <em>ENTRY_BURN_IMPACT_TARGET_M &middot; metres</em></div>
         <div class="row fgrid f4">
           <label>bias lo <input type="number" id="biasLo" step="1" value="-900"></label>
@@ -143,7 +151,9 @@
       <div class="runbar">
         <div class="runbtns">
           <button class="primary" id="initBtn"><i>1</i>Init captures</button>
-          <button class="primary" id="scanBtn" disabled><i>2</i>Run bias search</button>
+          <button class="primary" id="altBtn" disabled><i>2</i>Find LB altitude</button>
+        <label class="chk" style="align-self:center; margin:0 12px; color:var(--dim); font-size:11px; letter-spacing:.05em; text-transform:none;"><input type="checkbox" id="altChain" checked> then bias search</label>
+        <button class="primary" id="scanBtn" disabled><i>3</i>Run bias search</button>
           <button class="reset" id="scanStopBtn" disabled title="Aborts a search, altitude search or sweep">Stop</button>
         </div>
         <div class="note" id="initStatus">Not initialised &mdash; run INIT first.</div>
@@ -152,18 +162,6 @@
       <!-- C · tools (all reuse the INIT captures) -->
       <div class="tools-h">tools <em>need INIT &middot; each eval restarts from the EB snapshot &middot; Stop aborts them</em></div>
       <div class="tools">
-        <div class="tool">
-          <div class="tool-h"><b>LB altitude finder</b><span>coarse probe + auto refine, pick middle of tied-best span</span></div>
-          <div class="row fgrid">
-            <label>alt lo km <input type="number" id="altLo" step="0.1" value="1.0"></label>
-            <label>alt hi km <input type="number" id="altHi" step="0.1" value="3.0"></label>
-            <label>coarse step km <input type="number" id="altStep" step="0.1" min="0.1" value="0.5"></label>
-          </div>
-          <div class="tool-a">
-            <button id="altBtn" disabled>Find LB altitude</button>
-            <label class="chk"><input type="checkbox" id="altChain" checked> then bias search</label>
-          </div>
-        </div>
 
         <div class="tool" id="biasSweepTool">
           <div class="tool-h"><b>Bias sweep</b><span>N evals from lo to hi, appended to the runs table</span></div>
