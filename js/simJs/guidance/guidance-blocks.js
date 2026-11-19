@@ -2713,7 +2713,7 @@ if (_st.lastCircTriggerLeadS === 0 &&
               // AUTOMATED DEORBIT FEASIBILITY CHECK
               const _bdy = snapshot.bodies[_st.stageIdx];
               const _tgt = _st.targetPhiEf || _st.impactPhiEf || null;
-              const _window = _checkDeorbitWindow(_bdy, _tgt, cfg, t);
+              const _window = _checkDeorbitWindow(_bdy, _tgt, cfg, snapshot.simTime);
               if (!_window.ready) {
                 if (!_st._windowWaitLogged) {
                   console.log('[suicide] Holding retrograde: ' + _window.reason);
