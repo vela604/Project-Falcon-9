@@ -41,6 +41,45 @@
 const DEBUG_DEPLOY = false;
 const DEBUG_RTLS = false;   // false = silence per-tick spam (FLIP/BB/DRIFT/ENTRY_BURN/PES diagnostic logs); true = verbose
 
+// ---------------------------------------------------------------------------
+// Automated Deorbit Window & Feasibility Check
+// Checks if stage has enough fuel (60% margin) and hasn't passed the target.
+// ---------------------------------------------------------------------------
+function _checkDeorbitWindow(body, targetPhiEf, cfg, simTime) {
+  const g0 = 9.80665, Isp = cfg.SUICIDE_ISP_S || 311;
+  const GM = 3.986004418e14, R = 6371000, omegaE = 7.2921159e-5;
+  const rx = body.rx, ry = body.ry, vx = body.vx, vy = body.vy;
+  const r = Math.hypot(rx, ry), v = Math.hypot(vx, vy);
+  const dryMass = body.dryMass || 4000;
+  const fuelMass = (body.memberFuel && body.memberFuel[0]) || 0;
+  const totalMass = dryMass + fuelMass;
+  const usableFuel = fuelMass * 0.60;
+  
+  if (targetPhiEf !== undefined && targetPhiEf !== null && Number.isFinite(targetPhiEf)) {
+    const phiInertial = Math.atan2(rx, ry);
+    const phiEf = phiInertial - omegaE * simTime;
+    let dPhi = targetPhiEf - phiEf;
+    while (dPhi > Math.PI) dPhi -= 2 * Math.PI;
+    while (dPhi < -Math.PI) dPhi += 2 * Math.PI;
+    
+    if (dPhi < -0.087) { // Passed target (~ -5 degrees)
+      return { ready: false, reason: 'Passed target (dPhi=' + (dPhi * 180/Math.PI).toFixed(1) + 'deg), waiting for next orbit' };
+    }
+  }
+  
+  const rpTarget = R + 60000;
+  const a_new = (r + rpTarget) / 2;
+  const v_new = Math.sqrt(GM * (2/r - 1/a_new));
+  const deltaV_required = Math.abs(v - v_new);
+  const massRatio = Math.exp(-deltaV_required / (Isp * g0));
+  const fuelRequired = totalMass - (totalMass * massRatio);
+  
+  if (fuelRequired > usableFuel) {
+    return { ready: false, reason: 'Insufficient fuel (need ' + fuelRequired.toFixed(0) + 'kg, have ' + usableFuel.toFixed(0) + 'kg usable)' };
+  }
+  return { ready: true, fuelRequired: fuelRequired, deltaV: deltaV_required };
+}
+
 function _gClamp(x, lo, hi) { return x < lo ? lo : (x > hi ? hi : x); }
 
 // 2-tick Newtonian law (final rate vf = 0): alpha so that the gimbal reaches
@@ -2671,6 +2710,21 @@ if (_st.lastCircTriggerLeadS === 0 &&
                 (cfg.SUICIDE_ROTATE_TOL_DEG * Math.PI) / 180 &&
               Math.abs(omegaRel) < cfg.SUICIDE_ROTATE_OMEGA_TOL
             ) {
+              // AUTOMATED DEORBIT FEASIBILITY CHECK
+              const _bdy = state.bodies[_st.stageIdx] || state.bodies[state.activeBodyIndex];
+              const _tgt = _st.targetPhiEf || _st.impactPhiEf || null;
+              const _window = _checkDeorbitWindow(_bdy, _tgt, cfg, t);
+              if (!_window.ready) {
+                if (!_st._windowWaitLogged) {
+                  console.log('[suicide] Holding retrograde: ' + _window.reason);
+                  _st._windowWaitLogged = true;
+                }
+                break;
+              }
+              _st._windowWaitLogged = false;
+              _st.fuelRequired = _window.fuelRequired;
+              _st.fuelStart = (_bdy.memberFuel && _bdy.memberFuel[0]) || 0;
+
               _send(Guidance.cmdRcsDuty(null, idx));
               _st.phase = "SUICIDE_BURN";
               _st.phaseStart = simT;
@@ -2700,6 +2754,18 @@ if (_st.lastCircTriggerLeadS === 0 &&
 
           // ==========================================================
           case "SUICIDE_BURN": {
+            // AUTOMATED FUEL CUTOFF SAFETY NET
+            if (_st.fuelRequired && _st.fuelStart !== undefined) {
+              const _bdy = state.bodies[_st.stageIdx] || state.bodies[state.activeBodyIndex];
+              const _curFuel = (_bdy.memberFuel && _bdy.memberFuel[0]) || 0;
+              const _burned = _st.fuelStart - _curFuel;
+              if (_burned >= _st.fuelRequired * 0.95) {
+                _st.phase = "SUICIDE_COAST";
+                console.log('[suicide] Fuel cutoff: burned ' + _burned.toFixed(0) + 'kg / ' + _st.fuelRequired.toFixed(0) + 'kg');
+                break;
+              }
+            }
+
             const burnS = simT - _st.suicideBurnStartT;
             if (burnS >= cfg.SUICIDE_BURN_MAX_S) {
               _send(Guidance.cmdSetAllThrottle(0));
