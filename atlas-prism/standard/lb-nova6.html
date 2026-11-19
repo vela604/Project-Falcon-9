@@ -90,6 +90,10 @@
             <label>G <input type="number" id="cfgG" step="0.01" value="0.64" data-init-lock="1"></label>
             <label>T <input type="number" id="cfgT" step="0.001" value="4.82" data-init-lock="1"></label>
           </div>
+          <div class="row fgrid f2" style="margin-top:8px;">
+              <label id="rtlsPadLabel">RTLS Pad <select id="rtlsPadSel" data-init-lock="1"></select></label>
+              <label id="asdsPadLabel" hidden>ASDS Pad Name <input type="text" id="asdsPadName" data-init-lock="1" value="HOPE" placeholder="e.g., HOPE"></label>
+          </div>
         </div>
 
         <div class="blk">
@@ -629,6 +633,23 @@ function populateStackSel(){
   }
   el.innerHTML = list.map(s => '<option value="'+esc(s.id)+'">'+esc(s.name)+' · '+s.members.length+' members</option>').join('');
 }
+function populateRtlsPads(){
+  const sel = $('rtlsPadSel');
+  if(!sel) return;
+  sel.innerHTML = '';
+  const pads = (typeof CONFIG !== 'undefined' && CONFIG.LANDING_PADS) ? CONFIG.LANDING_PADS : [];
+  const rtlsPads = pads.filter(p => !p.isASDS);
+  if(!rtlsPads.length){
+    sel.innerHTML = '<option value="LZ-1">LZ-1</option>';
+    return;
+  }
+  rtlsPads.forEach(p => {
+    const opt = document.createElement('option');
+    opt.value = p.id;
+    opt.textContent = p.name || p.id;
+    sel.appendChild(opt);
+  });
+}
 
 function listPresets(){
   const out = [];
@@ -794,12 +815,15 @@ async function doInit(){
       S.asdsStartM = posM;
       vals.rtls.MISSION_TYPE = 'ASDS';
       vals.rtls.ENTRY_BURN_IMPACT_TARGET_M = 0;
-      vals.mission.TARGET_LANDING_PAD = 'HOPE,' + (posM / 1000).toFixed(3);
-      log('Init ASDS: droneship HOPE @ ' + (posM/1000).toFixed(3) + ' km, MISSION_TYPE=ASDS', 'ok');
+      const asdsName = $('asdsPadName') ? ($('asdsPadName').value.trim() || 'HOPE') : 'HOPE';
+      vals.mission.TARGET_LANDING_PAD = asdsName + ',' + (posM / 1000).toFixed(3);
+      log('Init ASDS: droneship ' + asdsName + ' @ ' + (posM/1000).toFixed(3) + ' km, MISSION_TYPE=ASDS', 'ok');
     } else {
       vals.rtls.MISSION_TYPE = 'RTLS';
       vals.rtls.ENTRY_BURN_IMPACT_TARGET_M = bias;
-      vals.mission.TARGET_LANDING_PAD = 'LZ-1';
+      const rtlsPad = $('rtlsPadSel') ? $('rtlsPadSel').value : 'LZ-1';
+      vals.mission.TARGET_LANDING_PAD = rtlsPad;
+      log('Init RTLS: pad ' + rtlsPad + ', bias=' + bias, 'ok');
     }
 
     const env = { atmosphere:true, slosh:true, imu:false, wind:{enabled:false,speed:0,directionDeg:0}, boosterPct:100, stagePct:100 };
@@ -2679,6 +2703,8 @@ function saveHistoryEntry(kind){
     g: +$('cfgG').value,
     t: +$('cfgT').value,
     missionType: $('cfgMission') ? $('cfgMission').value : 'RTLS',
+    rtlsPadId: $('rtlsPadSel') ? $('rtlsPadSel').value : 'LZ-1',
+    asdsPadName: $('asdsPadName') ? ($('asdsPadName').value.trim() || 'HOPE') : 'HOPE',
     lbAlt: parseFloat($('lbAlt').value),
     lbMargin: parseFloat($('lbMargin').value),
     lbStall: parseFloat($('lbStall').value),
@@ -2826,6 +2852,9 @@ function renderHistory(){
         $('cfgMission').value = c.missionType;
         try { $('cfgMission').dispatchEvent(new Event('change', { bubbles: true })); } catch(ex) {}
       }
+      if ($('rtlsPadSel') && c.rtlsPadId) $('rtlsPadSel').value = c.rtlsPadId;
+      if ($('asdsPadName') && c.asdsPadName) $('asdsPadName').value = c.asdsPadName;
+      if (typeof _applyModeVisibility === 'function') _applyModeVisibility();
       if ($('lbAlt') && Number.isFinite(c.lbAlt)) $('lbAlt').value = c.lbAlt;
       if ($('lbMargin') && Number.isFinite(c.lbMargin)) $('lbMargin').value = c.lbMargin;
       if ($('lbStall') && Number.isFinite(c.lbStall)) $('lbStall').value = c.lbStall;
@@ -2867,6 +2896,7 @@ function boot(){
   log('All modules loaded OK', 'ok');
 
   populateStackSel();
+  populateRtlsPads();
   populatePresetSel();
 
   $('lockBtn').addEventListener('click', doLock);
@@ -2895,6 +2925,10 @@ function boot(){
     var asdsBlks = ['asdsSearchBlk', 'manualAsdsTool', 'asdsSweepTool'];
     rtlsBlks.forEach(function(id){ var el = $(id); if(el) el.hidden = isASDS; });
     asdsBlks.forEach(function(id){ var el = $(id); if(el) el.hidden = !isASDS; });
+    var rtlsPadLabel = $('rtlsPadLabel');
+    var asdsPadLabel = $('asdsPadLabel');
+    if (rtlsPadLabel) rtlsPadLabel.hidden = isASDS;
+    if (asdsPadLabel) asdsPadLabel.hidden = !isASDS;
     if (typeof S !== 'undefined') S.mode = m;
     // Mode-aware label polish — scan button, stage rail title, rail descs.
     var _scanBtn = $('scanBtn');
