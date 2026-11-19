@@ -2711,7 +2711,7 @@ if (_st.lastCircTriggerLeadS === 0 &&
               Math.abs(omegaRel) < cfg.SUICIDE_ROTATE_OMEGA_TOL
             ) {
               // AUTOMATED DEORBIT FEASIBILITY CHECK
-              const _bdy = state.bodies[_st.stageIdx] || state.bodies[state.activeBodyIndex];
+              const _bdy = (typeof snap !== 'undefined' ? snap.bodies : state.bodies)[_st.stageIdx];
               const _tgt = _st.targetPhiEf || _st.impactPhiEf || null;
               const _window = _checkDeorbitWindow(_bdy, _tgt, cfg, t);
               if (!_window.ready) {
@@ -2756,7 +2756,7 @@ if (_st.lastCircTriggerLeadS === 0 &&
           case "SUICIDE_BURN": {
             // AUTOMATED FUEL CUTOFF SAFETY NET
             if (_st.fuelRequired && _st.fuelStart !== undefined) {
-              const _bdy = state.bodies[_st.stageIdx] || state.bodies[state.activeBodyIndex];
+              const _bdy = (typeof snap !== 'undefined' ? snap.bodies : state.bodies)[_st.stageIdx];
               const _curFuel = (_bdy.memberFuel && _bdy.memberFuel[0]) || 0;
               const _burned = _st.fuelStart - _curFuel;
               if (_burned >= _st.fuelRequired * 0.95) {
