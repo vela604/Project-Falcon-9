@@ -1947,6 +1947,87 @@ function _lbCurrentPhase() {
 
 // (shared helpers _stageBellHeightForBody / _discardedStackTop_m are reused from above)
 
+// ---------------------------------------------------------------------------
+// Computed deorbit trigger (replaces the fixed SUICIDE_DELAY_AFTER_DEPLOY_S).
+// Evaluated at 1 Hz while the stage coasts with engine+RCS OFF, so waiting is
+// free. Fires when a nominal retrograde deorbit burn would land just past the
+// coarse target, AND the burn fits inside 60% of remaining fuel. If the window
+// is missed it simply keeps coasting and catches the next orbit.
+// ---------------------------------------------------------------------------
+let _deorbitPreviewBlock = null;
+let _dwLastLogT = -1e9;
+function _deorbitTriggerLB(snapshot, simT) {
+  const cfgSu = _lbConfig.suicide;
+  const env = Derivation.getEnv();
+  const dt = Number.isFinite(env.DT) ? env.DT : 0.0125;
+  if (Math.floor(simT) === Math.floor(simT - dt)) return false; // 1 Hz, stateless
+
+  const idx = _lbState.stageIdx;
+  const b = snapshot && snapshot.bodies && snapshot.bodies[idx];
+  if (!b) return false;
+  const d = Derivation.derive(snapshot, idx);
+  if (!d || !d.massProps) return false;
+  const M = d.massProps.M;
+  if (!(M > 0)) return false;
+
+  let fuel = 0;
+  if (Array.isArray(b.memberFuel)) {
+    for (let i = 0; i < b.memberFuel.length; i++) {
+      if (Number.isFinite(b.memberFuel[i])) fuel += b.memberFuel[i];
+    }
+  }
+  const usable = fuel * 0.60;
+  const Ve = (b.engines && b.engines[0] && Number.isFinite(b.engines[0].Ve))
+    ? b.engines[0].Ve : 0;
+  if (!(Ve > 0)) return false;
+
+  const GM = env.GM_EARTH, R = env.EARTH_RADIUS;
+  const r = Math.hypot(b.rx, b.ry), v = Math.hypot(b.vx, b.vy);
+  if (!(r > R) || !(v > 1)) return false;
+
+  // Perigee below the surface: _predictImpact hits on r <= R, so a 60 km
+  // perigee would never register an impact.
+  const a = (r + (R - 30000)) / 2;
+  const vNew = Math.sqrt(Math.max(0, GM * (2 / r - 1 / a)));
+  const dv = v - vNew;
+  if (!(dv > 0)) return false;
+  const fuelNeed = M * (1 - Math.exp(-dv / Ve));
+
+  const tgtRad = (env.LAUNCH_SITE_ANGLE_0 || 0)
+    - ((env.REMOTE_AREA_MID_WEST_DEG || 0) * Math.PI) / 180;
+  const doLog = (simT - _dwLastLogT) >= 30;
+
+  if (fuelNeed > usable) {
+    if (doLog) { _dwLastLogT = simT;
+      console.log('[deorbit] hold: fuel need=' + fuelNeed.toFixed(0)
+        + 'kg usable=' + usable.toFixed(0) + 'kg (60% of ' + fuel.toFixed(0) + 'kg)'); }
+    return false;
+  }
+
+  if (!_deorbitPreviewBlock) {
+    _deorbitPreviewBlock = FUNDAMENTAL_BLOCKS.suicide.createInstance();
+  }
+  const pw = _deorbitPreviewBlock.previewWindow(snapshot, idx, cfgSu, simT, tgtRad, dv);
+  if (!pw) {
+    if (doLog) { _dwLastLogT = simT;
+      console.log('[deorbit] hold: no impact solution yet (dv=' + dv.toFixed(1) + 'm/s)'); }
+    return false;
+  }
+
+  const margin = ((Number.isFinite(cfgSu.SUICIDE_BURN_COARSE_MARGIN_DEG)
+    ? cfgSu.SUICIDE_BURN_COARSE_MARGIN_DEG : 0.5) * Math.PI) / 180;
+  const band = (2 * Math.PI) / 180;
+  const errM = pw.errRad * R;
+  const ready = pw.errRad > margin && pw.errRad < margin + band;
+
+  if (doLog || ready) { _dwLastLogT = simT;
+    console.log('[deorbit] t=' + simT.toFixed(0) + ' dv=' + dv.toFixed(1)
+      + 'm/s fuelNeed=' + fuelNeed.toFixed(0) + '/' + usable.toFixed(0)
+      + 'kg err=' + (errM / 1000).toFixed(1) + 'km coast='
+      + pw.tImpact.toFixed(0) + 's -> ' + (ready ? 'TRIGGER' : 'wait')); }
+  return ready;
+}
+
 function _landbackTick(snapshot) {
   _lbState.ticks++;
   if (!snapshot || !Array.isArray(snapshot.bodies) || !snapshot.bodies.length) return;
@@ -2243,7 +2324,10 @@ if (!_lbState.payloadOpenFired &&
         ? _lbState.deployCmdSimTime : _lbState.missionPhaseStart;
       const dwellS = simT - deployT;
 
-      if (dwellS >= _lbConfig.done.SUICIDE_DELAY_AFTER_DEPLOY_S) {
+      const _deorbitReadyLB = _lbConfig.done.DEORBIT_ENABLED
+        ? _deorbitTriggerLB(snapshot, simT)
+        : (dwellS >= _lbConfig.done.SUICIDE_DELAY_AFTER_DEPLOY_S);
+      if (_deorbitReadyLB) {
         send(cmdRcsDuty(null, _lbState.stageIdx));
 
         if (_lbConfig.done.DEORBIT_ENABLED) {

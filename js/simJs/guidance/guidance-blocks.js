@@ -3044,6 +3044,27 @@ if (_st.lastCircTriggerLeadS === 0 &&
             suicideTrimDone: !!_st.suicideTrimDone,
           };
         },
+
+        // Read-only deorbit window preview. Reuses this instance's _predictImpact
+        // so there is exactly ONE impact predictor in the codebase. Never started,
+        // never ticked -> sends no commands, burns no fuel.
+        previewWindow(snapshot, bodyIdx, cfg, simT, targetEfRad, dvRetro) {
+          const b = snapshot && snapshot.bodies && snapshot.bodies[bodyIdx];
+          if (!b) return null;
+          const env = Derivation.getEnv();
+          const sp = Math.hypot(b.vx, b.vy);
+          if (!(sp > 1)) return null;
+          const ux = b.vx / sp, uy = b.vy / sp;
+          const imp = _predictImpact(
+            b.rx, b.ry, b.vx - ux * dvRetro, b.vy - uy * dvRetro, simT,
+            cfg.SUICIDE_PREDICT_DT_S, cfg.SUICIDE_PREDICT_HORIZON_S,
+            env.GM_EARTH, env.EARTH_RADIUS, env.EARTH_OMEGA);
+          if (!imp) return null;
+          let e = imp.phiEf - targetEfRad;
+          while (e > Math.PI) e -= 2 * Math.PI;
+          while (e < -Math.PI) e += 2 * Math.PI;
+          return { impactEf: imp.phiEf, errRad: e, tImpact: imp.tImpact };
+        },
         getBodyIdx() {
           return _bodyIdx;
         },
