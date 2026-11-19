@@ -121,7 +121,7 @@
           <label>bias lo <input type="number" id="biasLo" step="1" value="-900"></label>
           <label>bias hi <input type="number" id="biasHi" step="1" value="200"></label>
           <label>start <input type="number" id="biasStart" step="1" value="-750"></label>
-          <label>min step <input type="number" id="biasMinStep" step="0.5" min="0.1" value="2.5"></label>
+          <label>min step <input type="number" id="biasMinStep" step="0.1" min="0.01" value="0.1"></label>
         </div>
       </div>
       <div class="blk" id="asdsSearchBlk" hidden>
@@ -130,7 +130,7 @@
           <label>pos lo m <input type="number" id="posLo" step="100" value="200000"></label>
           <label>pos hi m <input type="number" id="posHi" step="100" value="5000000"></label>
           <label>start m <input type="number" id="posStart" step="100" value="300000"></label>
-          <label>min step m <input type="number" id="posMinStep" step="0.05" min="0.02" value="0.1"></label>
+          <label>min step m <input type="number" id="posMinStep" step="0.01" min="0.01" value="0.01"></label>
         </div>
         <div class="note">droneship deployed via setASDSPosition per eval &middot; guidance snapshot's targetPad patched &middot; metre-level precision</div>
       </div>
@@ -1367,7 +1367,7 @@ function scoreLB(m){
 // positive bias), bracket when sign flips (crossed zero), then golden-section on
 // SCORE inside the bracket.
 async function searchBracket(evalFn, o, onProgress){
-  const round = b => Math.round(b*10)/10;
+  const round = b => Math.round(b*100)/100;
   const cache = new Map();
   const stop = () => !!(o.stop && o.stop());
   const clamp = b => Math.min(o.hi, Math.max(o.lo, b));
@@ -1401,61 +1401,64 @@ async function searchBracket(evalFn, o, onProgress){
   //      we're already inside golden resolution — bracket tightly and hand off.
   //      No fixed probe step anymore. ----
   let bias = start;
-  let prev = null;
-  let bracketLo = null, bracketHi = null;
-  const feasible = [];
-  const NO_CONTACT_STEP = 100;   // fallback walk only (start normally has contact)
+let bracketLo = null, bracketHi = null;
+const feasible = [];
+const NO_CONTACT_STEP = 100;
 
-  for(let iter=0; iter<maxIter; iter++){
+let p = await probe(bias);
+let iter = 0;
+let step = (S.mode === 'ASDS') ? 1000 : 50; // Exponential base step
+let dir = 0;
+
+while(iter < maxIter){
+    iter++;
     if(stop()) break;
-    const p = await probe(bias);
 
     if(p.sign === 0){
-      const dir = (prev && prev.sign) ? prev.sign : -1;
-      const nextB = round(clamp(p.bias + dir * NO_CONTACT_STEP));
-      if(nextB === p.bias) break;
-      log('[search] no-contact @ bias='+p.bias.toFixed(1)+' → step '+dir+'*'+NO_CONTACT_STEP, 'warn');
-      prev = { bias: p.bias, dr: NaN, sign: 0 };
-      bias = nextB;
-      continue;
+        const d = dir || -1;
+        const nextB = round(clamp(p.bias + d * NO_CONTACT_STEP));
+        if(nextB === p.bias) break;
+        log('[search] no-contact @ bias='+p.bias.toFixed(2)+' → step '+d+'*'+NO_CONTACT_STEP, 'warn');
+        p = await probe(nextB);
+        continue;
     }
 
-    if(prev && prev.sign !== 0 && p.sign !== prev.sign){
-      bracketLo = Math.min(prev.bias, p.bias);
-      bracketHi = Math.max(prev.bias, p.bias);
-      log('[search] bracket: ['+bracketLo.toFixed(1)+', '+bracketHi.toFixed(1)+'] (dr '+prev.dr.toFixed(1)+'→'+p.dr.toFixed(1)+'m)', 'ok');
-      break;
-    }
+    if(dir === 0) dir = p.sign; // Lock direction on first valid sign
 
     if(p.ok){
-      feasible.push({ bias: p.bias, dr: p.dr });
-      log('[search] feasible @ bias='+p.bias.toFixed(1)+' dr='+p.dr.toFixed(1)+'m score='+p.score.toFixed(3), 'ok');
+        feasible.push({ bias: p.bias, dr: p.dr });
+        log('[search] feasible @ bias='+p.bias.toFixed(2)+' dr='+p.dr.toFixed(2)+'m score='+p.score.toFixed(3), 'ok');
     }
 
-    // Natural convergence — |dr| under golden resolution. Fixed ±30 bracket
-    // (width 60) matches the best historical geometry: contains the true score
-    // basin around the converged bias without wandering into distant basins.
     if(Math.abs(p.dr) <= minStep){
-      bracketLo = clamp(p.bias - 30);
-      bracketHi = clamp(p.bias + 30);
-      log('[search] |dr|='+Math.abs(p.dr).toFixed(2)+'m ≤ minStep '+minStep+
-          ' → refine ['+bracketLo.toFixed(1)+', '+bracketHi.toFixed(1)+'] (±30)', 'ok');
-      break;
+        bracketLo = clamp(p.bias - 30);
+        bracketHi = clamp(p.bias + 30);
+        log('[search] |dr|='+Math.abs(p.dr).toFixed(2)+'m ≤ minStep '+minStep+
+            ' → refine ['+bracketLo.toFixed(2)+', '+bracketHi.toFixed(2)+'] (±30)', 'ok');
+        break;
     }
 
-    // Proportional jump — mode-aware:
-    //   RTLS: bias_needed = bias − dr  (dr east of pad → bias more negative, aim west)
-    //   ASDS: pos_needed  = pos  + dr  (dr east of pad → move pad east to match)
-    const _walkSign = (S.mode === 'ASDS') ? +1 : -1;
-    const nextB = round(clamp(p.bias + _walkSign * p.dr));
+    let nextB = round(clamp(p.bias + dir * step));
     if(nextB === p.bias){
-      log('[search] bias bound at '+p.bias.toFixed(1)+' (dr='+p.dr.toFixed(1)+'m) — widen bias range', 'warn');
-      break;
+        nextB = round(clamp(p.bias + dir * Math.max(step, 10))); // Force minimum 10m jump
     }
-    log('[search] jump bias '+p.bias.toFixed(1)+' → '+nextB.toFixed(1)+' (dr '+p.dr.toFixed(1)+'m)', '');
-    prev = { bias: p.bias, dr: p.dr, sign: p.sign };
-    bias = nextB;
-  }
+    if(nextB === p.bias){
+        log('[search] bound reached at '+p.bias.toFixed(2)+' — widen range', 'warn');
+        break;
+    }
+
+    let pNext = await probe(nextB);
+
+    if(pNext.sign !== dir && pNext.sign !== 0){
+        bracketLo = Math.min(p.bias, pNext.bias);
+        bracketHi = Math.max(p.bias, pNext.bias);
+        log('[search] bracket found via exponential search: ['+bracketLo.toFixed(2)+', '+bracketHi.toFixed(2)+'] (dr '+p.dr.toFixed(2)+' → '+pNext.dr.toFixed(2)+'m)', 'ok');
+        break;
+    }
+
+    p = pNext;
+    step *= 2; // Exponential growth
+}
 
   // ---- Phase 2: refine inside bracket (or feasible region). ----
   //
@@ -1536,7 +1539,7 @@ async function searchBracket(evalFn, o, onProgress){
         if (!Number.isFinite(drN)) break;
         if (Math.abs(drN) <= minStep) {
           const _step = Math.abs(next - p2.b);
-          log('[search] secant converged |dr|=' + Math.abs(drN).toFixed(3) + 'm @ bias=' + next.toFixed(1) +
+          log('[search] secant converged |dr|=' + Math.abs(drN).toFixed(3) + 'm @ bias=' + next.toFixed(2) +
               ' (last step=' + _step.toFixed(1) + 'm, minStep=' + minStep + 'm)', 'ok');
           break;
         }
@@ -1639,7 +1642,7 @@ async function doScan(){
 
   const evalFn = async bias => {
     if(S.abort) throw new Error('aborted');
-    log(isASDS ? ('Eval pos='+(bias/1000).toFixed(3)+'km') : ('Eval bias='+bias.toFixed(1)));
+    log(isASDS ? ('Eval pos='+(bias/1000).toFixed(4)+'km') : ('Eval bias='+bias.toFixed(2)));
     const evalN = S.evals + 1;
     const ticker = document.getElementById('scanTicker');
     const onTick = (prog) => {
@@ -1676,7 +1679,7 @@ async function doScan(){
     const R = await searchBracket(evalFn,
       { lo, hi, minStep, start, stop: () => S.abort },
       (r) => {
-        const _dr=(r.m&&r.m.contact)?r.m.contact.downrange:NaN; const _drS=Number.isFinite(_dr)?' dr='+_dr.toFixed(1)+'m':''; const _lbO=(r.m&&Number.isFinite(r.m.lb_overshoot_m))?r.m.lb_overshoot_m:NaN; const _lbOS=Number.isFinite(_lbO)?' lbOver='+_lbO.toFixed(2)+'m':''; log('  → bias='+r.bias.toFixed(1)+' score='+r.score.toFixed(2)+_drS+_lbOS+(r.fail ? ' ['+r.fail+']' : ''), r.ok ? 'ok' : 'warn');
+        const _dr=(r.m&&r.m.contact)?r.m.contact.downrange:NaN; const _drS=Number.isFinite(_dr)?' dr='+_dr.toFixed(2)+'m':''; const _lbO=(r.m&&Number.isFinite(r.m.lb_overshoot_m))?r.m.lb_overshoot_m:NaN; const _lbOS=Number.isFinite(_lbO)?' lbOver='+_lbO.toFixed(2)+'m':''; log('  → bias='+r.bias.toFixed(2)+' score='+r.score.toFixed(2)+_drS+_lbOS+(r.fail ? ' ['+r.fail+']' : ''), r.ok ? 'ok' : 'warn');
       });
     S.searchResult = R;
     setBestDisplay(R.best.ok ? R.best.bias : null, R.best.ok ? R.best.score : null);
@@ -1854,7 +1857,19 @@ async function doAltSearch(){
     const alts = [];
     for(let a = lo; a <= hi + 1e-9; a += step) alts.push(r2(a));
     if(alts[alts.length - 1] < hi - 1e-9) alts.push(r2(hi));
-    for(const a of alts){ if(S.abort) break; await probe(a); }
+    // Sweep high to low, break on high-vy crash
+alts.reverse();
+for(const a of alts){
+    if(S.abort) break;
+    const r = await probe(a);
+    if (r && r.m && r.m.contact && r.m.contact.crashed) {
+        const vyImpact = Math.abs(vyTD(r.m.contact));
+        if (vyImpact > LIMITS.vy) {
+            log('[alt] breaking sweep: high-vy crash (' + vyImpact.toFixed(1) + ' m/s) at ' + a + ' km, lower alts will also crash', 'warn');
+            break;
+        }
+    }
+}
 
     // Golden-section refine inside the feasible band. Coarse sweep at 'step'
     // resolves only 'step'-km granularity; refine pulls a finer best-cost alt
@@ -2049,7 +2064,7 @@ async function doManualSweep(){
         const runBest = S.runs.filter(x => x.ok).reduce((a,x) => x.score < a.score ? x : a, {score: Infinity});
         if(runBest.score < Infinity) setBestDisplay(runBest.bias, runBest.score);
         const _dr = (r.m && r.m.contact) ? r.m.contact.downrange : NaN;
-        const _drS = Number.isFinite(_dr) ? ' dr=' + _dr.toFixed(1) + 'm' : '';
+        const _drS = Number.isFinite(_dr) ? ' dr=' + _dr.toFixed(2) + 'm' : '';
         const _lbO = (r.m && Number.isFinite(r.m.lb_overshoot_m)) ? r.m.lb_overshoot_m : NaN;
         const _lbOS = Number.isFinite(_lbO) ? ' lbOver=' + _lbO.toFixed(2) + 'm' : '';
         const _lbl3 = isASDS ? ('pos='+(b/1000).toFixed(3)+'km') : ('bias='+b.toFixed(2));
@@ -2118,7 +2133,7 @@ async function doManualEval(){
     const runBest = S.runs.filter(x => x.ok).reduce((a,x) => x.score < a.score ? x : a, {score: Infinity});
     if(runBest.score < Infinity) setBestDisplay(runBest.bias, runBest.score);
     const _dr = (r.m && r.m.contact) ? r.m.contact.downrange : NaN;
-    const _drS = Number.isFinite(_dr) ? ' dr='+_dr.toFixed(1)+'m' : '';
+    const _drS = Number.isFinite(_dr) ? ' dr='+_dr.toFixed(2)+'m' : '';
     const _lbO = (r.m && Number.isFinite(r.m.lb_overshoot_m)) ? r.m.lb_overshoot_m : NaN;
     const _lbOS = Number.isFinite(_lbO) ? ' lbOver='+_lbO.toFixed(2)+'m' : '';
     const _lbl2 = isASDS ? ('pos='+(b/1000).toFixed(3)+'km') : ('bias='+b.toFixed(2));
@@ -2351,7 +2366,7 @@ window.addEventListener('resize', () => { if(S.runs.length) drawLandscape(); });
 // representation regardless of mode.
 function _fmtTarget(v){
   if(!Number.isFinite(v)) return '—';
-  return (S.mode === 'ASDS') ? ((v/1000).toFixed(3)+' km') : (v.toFixed(2)+' m');
+  return (S.mode === 'ASDS') ? ((v/1000).toFixed(4)+' km') : (v.toFixed(2)+' m');
 }
 function _modeAxisLabel(){
   return (S.mode === 'ASDS') ? 'position (m)' : 'bias (m)';
