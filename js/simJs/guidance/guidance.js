@@ -1985,13 +1985,35 @@ function _deorbitTriggerLB(snapshot, simT) {
   const r = Math.hypot(b.rx, b.ry), v = Math.hypot(b.vx, b.vy);
   if (!(r > R) || !(v > 1)) return false;
 
-  // Perigee below the surface: _predictImpact hits on r <= R, so a 60 km
-  // perigee would never register an impact.
-  const a = (r + (R - 30000)) / 2;
-  const vNew = Math.sqrt(Math.max(0, GM * (2 / r - 1 / a)));
-  const dv = v - vNew;
+  // Entry steepness beats fuel economy here. A grazing entry (perigee just
+  // below the surface) gives gamma ~ -0.86 deg and a ~2135 s coast skimming
+  // thick atmosphere -> large drag error uprange. 600 km depth gives
+  // gamma ~ -4.0 deg and ~1038 s coast: ~4.7x shorter dense-air path.
+  // More dv => later burn => shorter coast => smaller final impact error.
+  const DEPTH_M = 600000;
+  let rpTarget = R - DEPTH_M;
+  let a = (r + rpTarget) / 2;
+  let vNew = Math.sqrt(Math.max(0, GM * (2 / r - 1 / a)));
+  let dv = v - vNew;
+  let fuelNeed = M * (1 - Math.exp(-dv / Ve));
+  let _clamped = false;
+  if (fuelNeed > usable && usable > 0) {
+    // Largest burn the 60% budget allows, exact from the rocket equation.
+    const dvMax = Ve * Math.log(M / Math.max(1, M - usable));
+    if (dvMax > 0 && dvMax < dv) {
+      const vNc = v - dvMax;
+      const invA = 2 / r - (vNc * vNc) / GM;
+      if (invA > 0) {
+        dv = dvMax;
+        a = 1 / invA;
+        rpTarget = 2 * a - r;
+        vNew = vNc;
+        fuelNeed = M * (1 - Math.exp(-dv / Ve));
+        _clamped = true;
+      }
+    }
+  }
   if (!(dv > 0)) return false;
-  const fuelNeed = M * (1 - Math.exp(-dv / Ve));
 
   const tgtRad = (env.LAUNCH_SITE_ANGLE_0 || 0)
     - ((env.REMOTE_AREA_MID_WEST_DEG || 0) * Math.PI) / 180;
@@ -2023,7 +2045,9 @@ function _deorbitTriggerLB(snapshot, simT) {
   if (doLog || ready) { _dwLastLogT = simT;
     console.log('[deorbit] t=' + simT.toFixed(0) + ' dv=' + dv.toFixed(1)
       + 'm/s fuelNeed=' + fuelNeed.toFixed(0) + '/' + usable.toFixed(0)
-      + 'kg err=' + (errM / 1000).toFixed(1) + 'km coast='
+      + 'kg rp=' + ((rpTarget - R) / 1000).toFixed(0) + 'km'
+      + (_clamped ? ' [BUDGET-CLAMPED]' : '')
+      + ' err=' + (errM / 1000).toFixed(1) + 'km coast='
       + pw.tImpact.toFixed(0) + 's -> ' + (ready ? 'TRIGGER' : 'wait')); }
   return ready;
 }
@@ -2363,6 +2387,18 @@ send(cmdMarkIntentionalImpact(_lbState.stageIdx));
       if (_lbState.suicideBlock.isDone()) {
         _lbState.suicideResult = _lbState.suicideBlock.getResult();
         logEvent('DEORBIT_COMPLETE', simT, { bodyIdx: _lbState.stageIdx });
+        const _tr = _lbState.suicideResult || {};
+        const _errM = Number.isFinite(_tr.suicideErrorM)
+          ? _tr.suicideErrorM
+          : (Number.isFinite(_tr.suicideDlambdaDeg)
+            ? _tr.suicideDlambdaDeg * Math.PI / 180 * Derivation.getEnv().EARTH_RADIUS
+            : null);
+        logEvent('DEORBIT_TRIM_DONE', simT, {
+          bodyIdx: _lbState.stageIdx,
+          errorM: _errM,
+          converged: !!_tr.trimConverged,
+          timedOut: !!_tr.trimTimedOut,
+        });
         _lbState.missionPhase = 'END';
         _lbState.missionPhaseStart = simT;
         console.log('[orbitalMissionGNCV1] SUICIDE done at t=' + simT.toFixed(2));
