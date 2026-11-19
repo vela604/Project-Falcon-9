@@ -98,18 +98,6 @@
 
         <div class="blk">
           <div class="blk-t">landing burn <em>applies to every eval</em></div>
-
-      <div class="blk" id="manualDeployTool">
-        <div class="blk-t">ASDS deploy <em>manual deploy helper (ASDS search block replaces this in ASDS mode)</em></div>
-        <div class="row fgrid">
-          <label>offset m <input type="number" id="asdsDeployM" step="1000" min="0" value="185000"></label>
-        </div>
-        <div class="tool-a">
-          <button id="asdsDeployBtn">Deploy ASDS</button>
-          <span class="note" id="asdsDeployStatus">&mdash;</span>
-        </div>
-        <div class="note">Deploying forces a fresh INIT — guidance env picks up the new pad. Set TARGET_LANDING_PAD to the new pad id (asds-N) in the mission config.</div>
-      </div>
           <div class="row fgrid">
             <label>LB alt km <input type="number" id="lbAlt" step="0.05" min="0.3" max="4.9" value="2"></label>
             <label>V_TD margin m <input type="number" id="lbMargin" step="0.1" min="0" placeholder="preset"></label>
@@ -2919,7 +2907,7 @@ function boot(){
   function _applyModeVisibility() {
     var m = $('cfgMission') ? $('cfgMission').value : 'RTLS';
     var isASDS = (m === 'ASDS');
-    var rtlsBlks = ['rtlsSearchBlk', 'manualBiasTool', 'biasSweepTool', 'manualDeployTool'];
+    var rtlsBlks = ['rtlsSearchBlk', 'manualBiasTool', 'biasSweepTool'];
     var asdsBlks = ['asdsSearchBlk', 'manualAsdsTool', 'asdsSweepTool'];
     rtlsBlks.forEach(function(id){ var el = $(id); if(el) el.hidden = isASDS; });
     asdsBlks.forEach(function(id){ var el = $(id); if(el) el.hidden = !isASDS; });
