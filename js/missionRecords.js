@@ -205,7 +205,7 @@ function saveMissionRecords(records) {
     if (!r || !r.comboKey) { filtered.push(r); continue; }
     const existing = currentByKey.get(r.comboKey);
     if (existing) {
-      if (r.partial && !existing.partial) {
+      if (r && r.partial && !existing.partial) {
         console.warn('[missionRecords] saveMissionRecords BLOCKED: partial cannot overwrite complete', r.comboKey);
         filtered.push(existing);
         blocked++;
@@ -364,8 +364,8 @@ function upsertUserMissionRecord(record) {
     // Defense-in-depth: policy-enforcing callers (saveMissionRecordWithPolicy)
     // already filter these cases, but a direct caller (e.g. tester2 partial-
     // on-stop, external scripts) can bypass. Prevent data loss here too.
-    const _incomingPartial  = !!record.partial;
-    const _existingPartial  = !!existing.partial;
+    const _incomingPartial  = !!(record && record.partial);
+    const _existingPartial  = !!(existing && existing.partial);
     const _incomingFailed   = record && record.success === false;
     const _existingSuccess  = existing && existing.success === true;
     if (_incomingPartial && !_existingPartial) {
