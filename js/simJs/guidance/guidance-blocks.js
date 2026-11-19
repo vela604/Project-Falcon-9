@@ -2889,7 +2889,8 @@ if (_st.lastCircTriggerLeadS === 0 &&
     _st._trimEntryLogged = true;
     console.log('[suicide] COAST trim start err=' + E_m.toFixed(0) + 'm'
       + ' tol=' + TRIM_TOL_M.toFixed(0) + 'm far=' + TRIM_FAR_M.toFixed(0) + 'm'
-      + ' maxS=' + cfg.SUICIDE_TRIM_MAX_S + ' tau=' + tau);
+      + ' maxS=' + cfg.SUICIDE_TRIM_MAX_S
+      + ' tau=' + (Number.isFinite(cfg.SUICIDE_TRIM_LEAD_S) ? cfg.SUICIDE_TRIM_LEAD_S : 10));
   }
   
   // Converged → RCS off, done.
