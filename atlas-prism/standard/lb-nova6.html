@@ -92,7 +92,7 @@
           </div>
           <div class="row fgrid f2" style="margin-top:8px;">
               <label id="rtlsPadLabel">RTLS Pad <select id="rtlsPadSel" data-init-lock="1"></select></label>
-              <label id="asdsPadLabel" hidden>ASDS Pad Name <input type="text" id="asdsPadName" data-init-lock="1" value="HOPE" placeholder="e.g., HOPE"></label>
+              <label id="asdsPadLabel" style="display:none;">ASDS Pad Name <input type="text" id="asdsPadName" data-init-lock="1" value="HOPE" placeholder="e.g., HOPE"></label>
           </div>
         </div>
 
@@ -2927,8 +2927,8 @@ function boot(){
     asdsBlks.forEach(function(id){ var el = $(id); if(el) el.hidden = !isASDS; });
     var rtlsPadLabel = $('rtlsPadLabel');
     var asdsPadLabel = $('asdsPadLabel');
-    if (rtlsPadLabel) rtlsPadLabel.hidden = isASDS;
-    if (asdsPadLabel) asdsPadLabel.hidden = !isASDS;
+    if (rtlsPadLabel) rtlsPadLabel.style.display = isASDS ? 'none' : '';
+    if (asdsPadLabel) asdsPadLabel.style.display = isASDS ? '' : 'none';
     if (typeof S !== 'undefined') S.mode = m;
     // Mode-aware label polish — scan button, stage rail title, rail descs.
     var _scanBtn = $('scanBtn');
