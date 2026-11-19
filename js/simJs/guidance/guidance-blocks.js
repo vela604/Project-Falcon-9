@@ -2458,6 +2458,8 @@ setState(s) {
       SUICIDE_BURN_MAX_S: 600,
       SUICIDE_BURN_COARSE_MARGIN_DEG: 0.5,
       SUICIDE_TRIM_TOL_DEG: 0.1,
+      SUICIDE_TRIM_TOL_M: 200,
+      SUICIDE_TRIM_FAR_M: 5000,
       SUICIDE_TRIM_FAR_DEG: 0.5,
       // Lowered from 0.15 — at small errors (just above TOL), 15% duty
 // accumulates meaningful Δv over the long remaining fall time and
@@ -2869,9 +2871,20 @@ if (_st.lastCircTriggerLeadS === 0 &&
   _st.suicideImpactEf = impact.phiEf;
   _st.suicideDlambda = E_rad;
   const E_deg = E_rad * 180 / Math.PI;
+  // Downrange error in metres. 1 deg of Earth-fixed angle = R * pi/180.
+  const _M_PER_DEG = (Math.PI / 180) * env.EARTH_RADIUS;
+  const E_m = E_rad * env.EARTH_RADIUS;
+  // Prefer metre constants; else convert the legacy degree ones (exact unit
+  // conversion, so old presets keep their current behaviour).
+  const TRIM_TOL_M = Number.isFinite(cfg.SUICIDE_TRIM_TOL_M)
+    ? cfg.SUICIDE_TRIM_TOL_M
+    : cfg.SUICIDE_TRIM_TOL_DEG * _M_PER_DEG;
+  const TRIM_FAR_M = Number.isFinite(cfg.SUICIDE_TRIM_FAR_M)
+    ? cfg.SUICIDE_TRIM_FAR_M
+    : cfg.SUICIDE_TRIM_FAR_DEG * _M_PER_DEG;
   
   // Converged → RCS off, done.
-  if (Math.abs(E_deg) < cfg.SUICIDE_TRIM_TOL_DEG) {
+  if (Math.abs(E_m) < TRIM_TOL_M) {
     _st.suicideTrimDone = true;
     _send(Guidance.cmdRcsDuty(null, idx));
     _done = true;
@@ -2881,6 +2894,7 @@ if (_st.lastCircTriggerLeadS === 0 &&
       trimTimedOut: false,
       suicideImpactEfDeg: impact.phiEf * 180 / Math.PI,
       suicideDlambdaDeg: E_deg,
+      suicideErrorM: E_m,
     };
     break;
   }
@@ -2898,6 +2912,7 @@ if (_st.lastCircTriggerLeadS === 0 &&
   const tau = Number.isFinite(cfg.SUICIDE_TRIM_LEAD_S) ?
     cfg.SUICIDE_TRIM_LEAD_S : 10;
   const E_lead_deg = (E_rad + tau * dE) * 180 / Math.PI;
+  const E_lead_m = (E_rad + tau * dE) * env.EARTH_RADIUS;
   
   // Direction from the LEAD error's sign (not raw E). When lead
   // crosses zero, direction flips too — firing reverses to
@@ -2908,13 +2923,13 @@ if (_st.lastCircTriggerLeadS === 0 &&
   // goes to zero as E_lead → 0. That's the fix for overshoot:
   // previously MIN_DUTY forced 3% firing at tiny errors, which
   // accumulated into a huge overshoot over the remaining fall.
-  const FAR = cfg.SUICIDE_TRIM_FAR_DEG;
-  let duty = Math.min(1, Math.abs(E_lead_deg) / Math.max(FAR, 1e-6));
+  const FAR = TRIM_FAR_M;
+  let duty = Math.min(1, Math.abs(E_lead_m) / Math.max(FAR, 1e-6));
   
   // Deadband is a chatter guard, NOT a floor — it means "don't
   // fire at all when lead error is negligible", not "fire at
   // least this much".
-  const DEADBAND_DUTY = 0.02;
+  const DEADBAND_DUTY = Math.min(0.5, (TRIM_TOL_M / 2) / Math.max(TRIM_FAR_M, 1e-6));
   if (duty < DEADBAND_DUTY) {
     _send(Guidance.cmdRcsDuty(null, idx));
     break;
