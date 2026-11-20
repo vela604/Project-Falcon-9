@@ -1,7 +1,8 @@
 # Falcon Heavy — architecture and implementation gates
 
-**Status:** Phase 1A assembly-definition groundwork and a Phase 1B.1
-geometry-only kernel are under development/review. Neither is connected to the
+**Status:** Phase 1A assembly-definition groundwork, a Phase 1B.1
+geometry-only kernel and a Phase 1B.3 calculation-only mass-properties adapter
+are under development/review. None is connected to the
 flight simulation; Falcon Heavy is **not yet flyable**. Do not interpret an
 assembly record or passing geometry tests as runtime support.
 
@@ -152,3 +153,54 @@ by any HTML page or connected to the physics worker, renderer, or aero.
   legs, attachment struts and other appendages are **excluded**.
 - The side-core centreline offset `d` is supplied explicitly by the caller and
   is never inferred.
+
+## 7. Phase 1B.3 composite mass-properties adapter (calculation only)
+
+`js/simJs/core/vehicleAssemblyMassProps.js` (`globalThis.VehicleAssemblyMassProps`)
+composes three per-core component arrays into one rigid composite (total mass,
+COM, pitch-plane MOI via the parallel-axis theorem). It is pure, **not
+flight-ready, not wired into flight** and not loaded by any page. See
+`docs/PHASE-1B3-CURRENT-SECTION.md` for the full contract.
+
+**Intended upstream data flow (illustrative, not a final runtime API; not
+implemented in this phase).** Based on the supplied `massProps.js` excerpt:
+
+```js
+// Central core: the COMPLETE axial stack, so member baseOffset / stageOverlapM
+// are applied by stackMassProps itself. Cargo is already included when
+// centralPayloadMass > 0 -- do not add it again.
+const centerComponents = stackMassProps(
+  centralMembers, centralFuelMass, centralLegsProgress, centralPayloadMass,
+  centralSloshOffset, centralMemberFuels, centralGridFinsLive
+).components;
+
+// Each side core: its own single-member stack (integrated nose).
+const leftComponents = stackMassProps(
+  [leftRocketRecord], leftFuelMass, leftLegsProgress, 0,
+  leftSloshOffset, [leftFuelMass], leftGridFinsLive
+).components;
+const rightComponents = stackMassProps(
+  [rightRocketRecord], rightFuelMass, rightLegsProgress, 0,
+  rightSloshOffset, [rightFuelMass], rightGridFinsLive
+).components;
+
+VehicleAssemblyMassProps.resolveVehicleAssemblyMassProps({
+  geometry, // from resolveVehicleAssemblyGeometry()
+  cores: [
+    { instanceId: 'center',     components: centerComponents },
+    { instanceId: 'side-left',  components: leftComponents },
+    { instanceId: 'side-right', components: rightComponents },
+  ],
+});
+```
+
+Rules: (1) never concatenate raw `memberComponents()` outputs across central
+members; (2) each array is local to its own core base-centre and the adapter
+adds `geometry.cores[].origin` exactly once; (3) arguments must reflect each
+core's own live state and `fuelMassTotal` must match the per-member fuel values;
+(4) `stackMassProps()` calls `getActiveStack()` for frozen interstage data, so
+correct active-stack context is an upstream integration dependency (a side
+rocket's `m.id` is looked up in that map); (5) the excerpt is not the complete
+`massProps.js`, so no end-to-end upstream execution is claimed; (6) geometry
+origins/offsets are kernel conventions, not verified against real Falcon Heavy
+structure; struts, attachment and separation hardware mass are excluded.
