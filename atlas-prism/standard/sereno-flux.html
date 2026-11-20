@@ -296,7 +296,6 @@ table.rv-t{width:100%;border-collapse:collapse;font-size:11.5px;font-variant-num
     for (const stk of stacks) {
       if (!stk) continue;
       if (stk.sequence !== 'standard') continue;
-      if (!stk.locked) continue;
       out.push(stk);
     }
     return out;
