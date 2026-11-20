@@ -607,7 +607,7 @@ function getXfromPad(bB, simT){
 function eligibleStacks(){
   try {
     const stacks = loadStacks() || [];
-    return stacks.filter(s => s && s.sequence === 'standard' && s.locked);
+    return stacks.filter(s => s && s.sequence === 'standard');
   } catch(e) { return []; }
 }
 function populateStackSel(){
