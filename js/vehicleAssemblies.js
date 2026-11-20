@@ -151,8 +151,12 @@ function _assemblyCheckStack(label, members, fleet, stack, errors) {
 }
 
 // Validate references without mutating storage or pruning missing records.
-// Reusing one booster design record in both side slots is intentional: the
-// future runtime must instantiate separate physical bodies and state for each.
+// Side cores are existing stageRole "rocket" fleet records (integrated nose),
+// not boosters. Each must belong to the same family as the central stack's
+// bottom booster. Reusing one rocket design record in both side slots is
+// intentional: the future runtime must instantiate separate physical bodies
+// and state for each. The fleet record itself is the design source; no
+// persisted legacy stack record is required.
 function validateVehicleAssembly(assembly, sources) {
   const errors = [];
   const fleet = sources && Array.isArray(sources.fleet) ? sources.fleet : loadFleet();
@@ -178,6 +182,7 @@ function validateVehicleAssembly(assembly, sources) {
 
   const centralStack = stacks.find((stack) => stack && stack.id === assembly.centralStackId) || null;
   result.centralStack = centralStack;
+  let centralFamilyId = null;
   if (!centralStack) {
     errors.push('Central stack "' + assembly.centralStackId + '" was not found.');
   } else {
@@ -185,6 +190,10 @@ function validateVehicleAssembly(assembly, sources) {
     const bottom = members.length ? fleet.find((record) => record && record.id === members[0]) : null;
     if (!bottom || bottom.stageRole !== 'booster') {
       errors.push('Central stack must begin with a valid booster record.');
+    } else if (typeof bottom.familyId !== 'string' || !bottom.familyId.trim()) {
+      errors.push('Central stack bottom booster must have a non-empty familyId.');
+    } else {
+      centralFamilyId = bottom.familyId;
     }
     result.centralValidation = _assemblyCheckStack(
       'Central stack', members, fleet, centralStack, errors
@@ -216,15 +225,23 @@ function validateVehicleAssembly(assembly, sources) {
         errors.push('Side-core ' + slotId + ': fleet record "' + slot.recordId + '" was not found.');
         return;
       }
-      if (record.stageRole !== 'booster') {
-        errors.push('Side-core ' + slotId + ': record must have stageRole "booster" (got "' + (record.stageRole || 'unknown') + '").');
+      if (record.stageRole !== 'rocket') {
+        errors.push('Side-core ' + slotId + ': record must have stageRole "rocket" (got "' + (record.stageRole || 'unknown') + '").');
         return;
+      }
+      if (!(typeof record.noseHeightM === 'number' && Number.isFinite(record.noseHeightM) && record.noseHeightM > 0)) {
+        errors.push('Side-core ' + slotId + ': record must have a finite positive noseHeightM.');
+      }
+      if (typeof record.familyId !== 'string' || !record.familyId.trim()) {
+        errors.push('Side-core ' + slotId + ': record must have a non-empty familyId.');
+      } else if (centralFamilyId !== null && record.familyId !== centralFamilyId) {
+        errors.push('Side-core ' + slotId + ': familyId "' + record.familyId + '" does not match the central stack bottom booster family "' + centralFamilyId + '".');
       }
       _assemblyCheckStack(
         'Side-core ' + slotId,
         [record.id],
         fleet,
-        { sequence: 'custom', payloadId: null },
+        { sequence: 'legacy', payloadId: null },
         errors
       );
     });
