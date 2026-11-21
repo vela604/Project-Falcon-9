@@ -1,8 +1,9 @@
 # Falcon Heavy — architecture and implementation gates
 
 **Status:** Phase 1A assembly-definition groundwork, a Phase 1B.1
-geometry-only kernel and a Phase 1B.3 calculation-only mass-properties adapter
-are under development/review. None is connected to the
+geometry-only kernel, a Phase 1B.3 calculation-only mass-properties adapter and
+a Phase 1B.4 calculation-only propulsion/fuel model are under
+development/review. None is connected to the
 flight simulation; Falcon Heavy is **not yet flyable**. Do not interpret an
 assembly record or passing geometry tests as runtime support.
 
@@ -204,3 +205,65 @@ rocket's `m.id` is looked up in that map); (5) the excerpt is not the complete
 `massProps.js`, so no end-to-end upstream execution is claimed; (6) geometry
 origins/offsets are kernel conventions, not verified against real Falcon Heavy
 structure; struts, attachment and separation hardware mass are excluded.
+
+## 8. Phase 1B.4 propulsion and fuel model (calculation only)
+
+`js/simJs/core/assemblyPropulsion.js` (`globalThis.AssemblyPropulsion`) is a pure,
+standalone model. It is **calculation-only, not flight-ready**, is **not loaded by
+any page** and is **not connected to flight physics**, `state.bodies`, the physics
+worker, the renderer or the live flight loop. Falcon Heavy remains **not yet
+flyable**. Existing Falcon 9 records and behaviour are unchanged: the module adds
+no field to any record and never wraps or reassigns `buildEnginesForRecord()`.
+
+- **Explicit inputs only.** `{ assembly, fleet, stacks }` are passed by the caller.
+  Nothing is read from storage or an implicit "selected assembly". The assembly is
+  first validated with `validateVehicleAssembly()` and the model fails closed.
+  Required functions come from an optional `deps` object or, failing that, the
+  globals `validateVehicleAssembly`, `buildEnginesForRecord`, `memberMaxFuel` and
+  `getComponentType`.
+- **Three independent engine packs**, in the fixed order `center`, `side-left`,
+  `side-right`, each from a separate `buildEnginesForRecord(record)` call. The
+  returned engine objects are validated, then shallow-cloned before ownership
+  metadata (`coreInstanceId`, `memberId`, `memberIndex`, `tankKey`, `uid`) is
+  attached; the builder's own objects are never modified. `engine.id` stays the
+  component-library slot id. Nested mutable objects shared between output engines
+  are rejected, so the same side rocket record used for both side slots yields
+  independent engine objects.
+- **Engine validation (fail closed).** `Ve`, `veVacuum`, `maxMassFlowRate` and
+  `Fmax` must be finite and `> 0`; `minMassFlowRate`, `Fmin`, `massFlowRate` and
+  `targetMassFlowRate` must be finite and `>= 0`; `minMassFlowRate` must not exceed
+  `maxMassFlowRate`; and both `massFlowRate` and `targetMassFlowRate` must not
+  exceed `maxMassFlowRate` (equality is valid). Zero current/target flow is valid:
+  no positive minimum is imposed on idle engines.
+- **Fuel capacity descriptors** exist for exactly three tanks: `center:0`,
+  `side-left:0` and `side-right:0`. The centre core's capacity is computed with its
+  actual next axial member; side cores receive an explicit literal `null` so the
+  central stack context cannot leak in. No initial fuel fraction and no geometry is
+  invented.
+- **Record isolation for capacity.** The production `boosterDerivedMasses()` reads
+  `rec._bdmCache.key` and, on a cache miss, writes `rec._bdmCache.key` and
+  `rec._bdmCache.value` **in place** on the nested cache object. A bare
+  `{ ...record }` would still share that object with the Fleet record. Each
+  `memberMaxFuel()` call therefore receives an ephemeral copy: a shallow copy of
+  the record plus, if `_bdmCache` is an object, a separate shallow copy of that
+  cache container (key and value preserved so a valid cache hit still works). The
+  caller's Fleet records and their cache objects are never mutated; unrelated
+  nested design data is not deep-cloned.
+- **Fuel concepts stay separate.** Central `memberFuel[]` holds the axial stack's
+  fuel only. Side fuel is independent per side and is never placed in the central
+  `memberFuel[]`. The total displayed Heavy fuel is a separate sum and must never
+  be assigned to the central body's `fuelMass`.
+- **Starvation planner.** `planFuelStarvation()` is a pure per-tank planner.
+  Central RCS demand is charged to `center:0` only. The per-tank scale is
+  `demand > 0 ? min(1, available / (demand * dt)) : 1`, i.e. the **average**
+  availability over the fixed timestep. It is an approximation of mid-tick cutoff,
+  not an exact transient simulation. RK4 force integration and engine shutdown
+  belong to a later physics-integration phase and are intentionally not
+  implemented.
+- **Not resolved here.** The future Fleet/Stacks geometry gap remains
+  intentionally unresolved: this phase adds no lateral offsets, no attachment
+  geometry, no combined aerodynamics and no flight wiring.
+
+Verification of this module is by `tests/assembly-propulsion.test.cjs`, which uses
+synthetic fixtures only and Node built-ins; a passing run validates the
+calculation layer only, not physical flight support.
